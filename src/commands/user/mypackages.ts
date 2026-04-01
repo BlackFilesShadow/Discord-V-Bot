@@ -1,4 +1,12 @@
-import { SlashCommandBuilder, ChatInputCommandInteraction, EmbedBuilder } from 'discord.js';
+import {
+  SlashCommandBuilder,
+  ChatInputCommandInteraction,
+  EmbedBuilder,
+  ActionRowBuilder,
+  StringSelectMenuBuilder,
+  StringSelectMenuOptionBuilder,
+  ComponentType,
+} from 'discord.js';
 import { Command } from '../../types';
 import prisma from '../../database/prisma';
 
@@ -7,6 +15,7 @@ import prisma from '../../database/prisma';
  * - Übersicht, Suche und Verwaltung aller eigenen Pakete/Dateien
  * - Filter, Sortierung, Bulk-Operationen
  * - Soft-Delete, Restore
+ * - Dropdown-basiertes Löschen einzelner Dateien
  */
 const mypackagesCommand: Command = {
   data: new SlashCommandBuilder()
@@ -45,6 +54,9 @@ const mypackagesCommand: Command = {
         .addStringOption(opt =>
           opt.setName('paketname').setDescription('Name des Pakets').setRequired(true)
         )
+    )
+    .addSubcommand(sub =>
+      sub.setName('delete-file').setDescription('Einzelne Dateien aus deinen Paketen löschen (Dropdown)')
     ),
 
   execute: async (interaction: ChatInputCommandInteraction) => {
@@ -73,6 +85,9 @@ const mypackagesCommand: Command = {
         break;
       case 'restore':
         await handleRestore(interaction, dbUser.id);
+        break;
+      case 'delete-file':
+        await handleDeleteFile(interaction, dbUser.id);
         break;
     }
   },
@@ -213,6 +228,176 @@ async function handleRestore(interaction: ChatInputCommandInteraction, userId: s
 
   await interaction.editReply({
     content: `✅ Paket "${paketname}" wurde wiederhergestellt.`,
+  });
+}
+
+/**
+ * Dropdown-basiertes Löschen einzelner Dateien.
+ * Hersteller wählt zuerst ein Paket, dann die Dateien zum Löschen.
+ */
+async function handleDeleteFile(interaction: ChatInputCommandInteraction, userId: string) {
+  // Pakete des Users laden
+  const packages = await prisma.package.findMany({
+    where: { userId, isDeleted: false },
+    include: {
+      files: {
+        where: { isDeleted: false },
+        select: { id: true, originalName: true, fileSize: true },
+      },
+    },
+    take: 25,
+    orderBy: { createdAt: 'desc' },
+  });
+
+  const packagesWithFiles = packages.filter(p => p.files.length > 0);
+
+  if (packagesWithFiles.length === 0) {
+    await interaction.editReply({ content: '📦 Du hast keine Pakete mit Dateien.' });
+    return;
+  }
+
+  // Schritt 1: Paket-Dropdown
+  const pkgSelect = new StringSelectMenuBuilder()
+    .setCustomId('myfiles_pkg_select')
+    .setPlaceholder('📦 Paket auswählen...')
+    .addOptions(
+      packagesWithFiles.map(pkg =>
+        new StringSelectMenuOptionBuilder()
+          .setLabel(pkg.name)
+          .setDescription(`${pkg.files.length} Datei(en)`)
+          .setValue(pkg.id)
+          .setEmoji('📦')
+      )
+    );
+
+  const pkgRow = new ActionRowBuilder<StringSelectMenuBuilder>().addComponents(pkgSelect);
+
+  const embed = new EmbedBuilder()
+    .setTitle('🗑️ Datei löschen')
+    .setDescription('Wähle zuerst ein Paket, dann die Datei(en) zum Löschen.')
+    .setColor(0xff6600)
+    .setTimestamp();
+
+  const response = await interaction.editReply({ embeds: [embed], components: [pkgRow] });
+
+  const pkgCollector = response.createMessageComponentCollector({
+    componentType: ComponentType.StringSelect,
+    time: 120_000,
+  });
+
+  pkgCollector.on('collect', async (pkgInteraction) => {
+    if (pkgInteraction.customId !== 'myfiles_pkg_select') return;
+
+    const selectedPkgId = pkgInteraction.values[0];
+    const pkg = packagesWithFiles.find(p => p.id === selectedPkgId);
+
+    if (!pkg || pkg.files.length === 0) {
+      await pkgInteraction.update({
+        embeds: [new EmbedBuilder().setTitle('❌ Keine Dateien').setColor(0xff0000)],
+        components: [],
+      });
+      return;
+    }
+
+    // Schritt 2: Datei-Dropdown (Mehrfachauswahl)
+    const fileSelect = new StringSelectMenuBuilder()
+      .setCustomId('myfiles_file_select')
+      .setPlaceholder('📄 Datei(en) zum Löschen auswählen...')
+      .setMinValues(1)
+      .setMaxValues(Math.min(pkg.files.length, 25))
+      .addOptions(
+        pkg.files.slice(0, 25).map(file =>
+          new StringSelectMenuOptionBuilder()
+            .setLabel(file.originalName)
+            .setDescription(`${formatBytes(Number(file.fileSize))}`)
+            .setValue(file.id)
+            .setEmoji('📄')
+        )
+      );
+
+    const fileRow = new ActionRowBuilder<StringSelectMenuBuilder>().addComponents(fileSelect);
+
+    const fileEmbed = new EmbedBuilder()
+      .setTitle(`🗑️ Dateien löschen — ${pkg.name}`)
+      .setDescription(`Wähle eine oder mehrere Dateien zum Löschen.\n**${pkg.files.length} Datei(en)** vorhanden.`)
+      .setColor(0xff6600)
+      .setTimestamp();
+
+    const updateResponse = await pkgInteraction.update({ embeds: [fileEmbed], components: [fileRow] });
+
+    const fileCollector = updateResponse.createMessageComponentCollector({
+      componentType: ComponentType.StringSelect,
+      time: 120_000,
+    });
+
+    fileCollector.on('collect', async (fileInteraction) => {
+      if (fileInteraction.customId !== 'myfiles_file_select') return;
+
+      const selectedFileIds = fileInteraction.values;
+      const fs = await import('fs/promises');
+
+      let deleted = 0;
+      const deletedNames: string[] = [];
+
+      for (const fileId of selectedFileIds) {
+        const upload = await prisma.upload.findUnique({ where: { id: fileId } });
+        if (!upload || upload.userId !== userId) continue;
+
+        // Soft-Delete in DB
+        await prisma.upload.update({
+          where: { id: fileId },
+          data: { isDeleted: true, deletedAt: new Date() },
+        });
+
+        // Datei vom Filesystem löschen
+        try { await fs.unlink(upload.filePath); } catch { /* Datei existiert evtl. nicht mehr */ }
+
+        // Paket-Statistiken aktualisieren
+        await prisma.package.update({
+          where: { id: upload.packageId },
+          data: {
+            fileCount: { decrement: 1 },
+            totalSize: { decrement: upload.fileSize },
+          },
+        });
+
+        deletedNames.push(upload.originalName);
+        deleted++;
+      }
+
+      const { logAudit } = await import('../../utils/logger');
+      logAudit('FILES_DELETED_BY_MANUFACTURER', 'UPLOAD', {
+        userId,
+        packageId: selectedPkgId,
+        deletedFiles: deletedNames,
+        count: deleted,
+      });
+
+      const doneEmbed = new EmbedBuilder()
+        .setTitle('✅ Dateien gelöscht')
+        .setDescription(
+          `**${deleted} Datei(en)** aus **${pkg.name}** gelöscht:\n\n` +
+          deletedNames.map(n => `• ~~${n}~~`).join('\n')
+        )
+        .setColor(0x00ff00)
+        .setTimestamp();
+
+      await fileInteraction.update({ embeds: [doneEmbed], components: [] });
+    });
+
+    fileCollector.on('end', async (_, reason) => {
+      if (reason === 'time') {
+        try { await interaction.editReply({ components: [] }); } catch {}
+      }
+    });
+
+    pkgCollector.stop('collected');
+  });
+
+  pkgCollector.on('end', async (_, reason) => {
+    if (reason === 'time') {
+      try { await interaction.editReply({ components: [] }); } catch {}
+    }
   });
 }
 
