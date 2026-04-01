@@ -1,10 +1,19 @@
-import { SlashCommandBuilder, ChatInputCommandInteraction, EmbedBuilder, PermissionFlagsBits } from 'discord.js';
+import {
+  SlashCommandBuilder,
+  ChatInputCommandInteraction,
+  EmbedBuilder,
+  ActionRowBuilder,
+  ButtonBuilder,
+  ButtonStyle,
+  ComponentType,
+} from 'discord.js';
 import { Command } from '../../types';
 import prisma from '../../database/prisma';
+import { config } from '../../config';
 
 /**
  * /help Command (Sektion 4):
- * Help-Menü mit Übersicht aller Commands.
+ * Help-Menü mit Pagination (Pfeil-Buttons) — alle Kategorien in einem Fenster switchbar.
  */
 const helpCommand: Command = {
   data: new SlashCommandBuilder()
@@ -13,7 +22,7 @@ const helpCommand: Command = {
     .addStringOption(opt =>
       opt
         .setName('category')
-        .setDescription('Kategorie anzeigen')
+        .setDescription('Direkt zu einer Kategorie springen')
         .setRequired(false)
         .addChoices(
           { name: 'Registrierung', value: 'registration' },
@@ -29,192 +38,249 @@ const helpCommand: Command = {
 
   execute: async (interaction: ChatInputCommandInteraction) => {
     const category = interaction.options.getString('category');
+    const isAdmin = await checkIsAdmin(interaction.user.id);
 
+    const pages = buildPages(isAdmin);
+
+    let currentPage = 0;
     if (category) {
-      await showCategoryHelp(interaction, category);
-    } else {
-      await showMainHelp(interaction);
+      const idx = pages.findIndex(p => p.id === category);
+      if (idx >= 0) currentPage = idx;
     }
+
+    const row = buildButtons(currentPage, pages.length);
+    const response = await interaction.reply({
+      embeds: [pages[currentPage].embed],
+      components: [row],
+      ephemeral: true,
+    });
+
+    const collector = response.createMessageComponentCollector({
+      componentType: ComponentType.Button,
+      time: 300_000,
+    });
+
+    collector.on('collect', async (btn) => {
+      if (btn.user.id !== interaction.user.id) {
+        await btn.reply({ content: 'Das ist nicht dein Help-Menü.', ephemeral: true });
+        return;
+      }
+
+      if (btn.customId === 'help_prev') {
+        currentPage = Math.max(0, currentPage - 1);
+      } else if (btn.customId === 'help_next') {
+        currentPage = Math.min(pages.length - 1, currentPage + 1);
+      } else if (btn.customId === 'help_first') {
+        currentPage = 0;
+      } else if (btn.customId === 'help_last') {
+        currentPage = pages.length - 1;
+      }
+
+      await btn.update({
+        embeds: [pages[currentPage].embed],
+        components: [buildButtons(currentPage, pages.length)],
+      });
+    });
+
+    collector.on('end', async () => {
+      try {
+        await interaction.editReply({ components: [] });
+      } catch {
+        // Message may be deleted
+      }
+    });
   },
 };
 
-async function showMainHelp(interaction: ChatInputCommandInteraction) {
-  const embed = new EmbedBuilder()
-    .setTitle('📖 Discord-V-Bot – Hilfe')
-    .setDescription('Übersicht aller verfügbaren Commands. Verwende `/help <kategorie>` für Details.')
-    .setColor(0x0099ff)
-    .addFields(
-      {
-        name: '📝 Registrierung',
-        value: '`/register manufacturer` – Als Hersteller registrieren\n`/register verify` – Einmal-Passwort eingeben',
-        inline: false,
-      },
-      {
-        name: '📤 Upload & Download',
-        value: '`/upload` – Dateien/Pakete hochladen\n`/download` – Dateien/Pakete herunterladen\n`/search` – Pakete suchen',
-        inline: false,
-      },
-      {
-        name: '📦 Pakete',
-        value: '`/mypackages` – Eigene Pakete anzeigen\n`/mypackages delete` – Paket löschen\n`/mypackages restore` – Paket wiederherstellen',
-        inline: false,
-      },
-      {
-        name: '🎉 Giveaway',
-        value: '`/giveaway start` – Giveaway starten\n`/giveaway enter` – Teilnehmen\n`/giveaway info` – Info anzeigen',
-        inline: false,
-      },
-      {
-        name: '⭐ Level & XP',
-        value: '`/level` – Dein Level anzeigen\n`/leaderboard` – Top-User anzeigen',
-        inline: false,
-      },
-      {
-        name: '📊 Umfragen',
-        value: '`/poll create` – Umfrage erstellen\n`/poll vote` – Abstimmen\n`/poll results` – Ergebnisse anzeigen',
-        inline: false,
-      },
-      {
-        name: '🛡️ Moderation',
-        value: '`/kick` `/ban` `/mute` `/warn` – Moderationsaktionen\n`/appeal` – Beschwerde einreichen',
-        inline: false,
-      },
-      {
-        name: '⚙️ Admin',
-        value: 'Verwende `/help admin` für die vollständige Admin-Übersicht.',
-        inline: false,
-      },
-    )
-    .setFooter({ text: 'Discord-V-Bot v1.0' })
-    .setTimestamp();
-
-  await interaction.reply({ embeds: [embed], ephemeral: true });
+async function checkIsAdmin(userId: string): Promise<boolean> {
+  if (userId === config.discord.ownerId) return true;
+  const dbUser = await prisma.user.findUnique({ where: { discordId: userId } });
+  return !!dbUser && ['ADMIN', 'DEVELOPER', 'SUPER_ADMIN'].includes(dbUser.role);
 }
 
-async function showCategoryHelp(interaction: ChatInputCommandInteraction, category: string) {
-  const embed = new EmbedBuilder().setColor(0x0099ff).setTimestamp();
+function buildButtons(current: number, total: number): ActionRowBuilder<ButtonBuilder> {
+  return new ActionRowBuilder<ButtonBuilder>().addComponents(
+    new ButtonBuilder()
+      .setCustomId('help_first')
+      .setEmoji('⏮')
+      .setStyle(ButtonStyle.Secondary)
+      .setDisabled(current === 0),
+    new ButtonBuilder()
+      .setCustomId('help_prev')
+      .setEmoji('◀')
+      .setStyle(ButtonStyle.Primary)
+      .setDisabled(current === 0),
+    new ButtonBuilder()
+      .setCustomId('help_page_indicator')
+      .setLabel(`${current + 1} / ${total}`)
+      .setStyle(ButtonStyle.Secondary)
+      .setDisabled(true),
+    new ButtonBuilder()
+      .setCustomId('help_next')
+      .setEmoji('▶')
+      .setStyle(ButtonStyle.Primary)
+      .setDisabled(current >= total - 1),
+    new ButtonBuilder()
+      .setCustomId('help_last')
+      .setEmoji('⏭')
+      .setStyle(ButtonStyle.Secondary)
+      .setDisabled(current >= total - 1),
+  );
+}
 
-  switch (category) {
-    case 'registration':
-      embed
-        .setTitle('📝 Registrierung – Hilfe')
+interface HelpPage { id: string; embed: EmbedBuilder; }
+
+function buildPages(isAdmin: boolean): HelpPage[] {
+  const pages: HelpPage[] = [
+    {
+      id: 'overview',
+      embed: new EmbedBuilder()
+        .setTitle('📖 Discord-V-Bot – Hilfe')
+        .setDescription('Verwende ◀ ▶ um durch die Kategorien zu navigieren.')
+        .setColor(0x0099ff)
+        .addFields(
+          { name: '📝 Registrierung', value: 'Hersteller werden & verifizieren', inline: true },
+          { name: '📤 Upload & Download', value: 'Dateien hoch-/herunterladen', inline: true },
+          { name: '📦 Pakete', value: 'Eigene Pakete verwalten', inline: true },
+          { name: '🎉 Giveaway', value: 'Giveaways erstellen & teilnehmen', inline: true },
+          { name: '⭐ Level & XP', value: 'Level, XP & Leaderboard', inline: true },
+          { name: '📊 Umfragen', value: 'Umfragen erstellen & abstimmen', inline: true },
+          { name: '🛡️ Moderation', value: 'Kick, Ban, Mute, Warn', inline: true },
+          { name: '🔗 Feeds', value: 'News & Social Media Feeds', inline: true },
+          { name: '🛠️ Auto-Rollen', value: 'Automatische Rollenvergabe', inline: true },
+        )
+        .setFooter({ text: 'Seite 1 – Übersicht' })
+        .setTimestamp(),
+    },
+    {
+      id: 'registration',
+      embed: new EmbedBuilder()
+        .setTitle('📝 Registrierung')
         .setDescription('Registriere dich als Hersteller, um Pakete hochzuladen.')
+        .setColor(0x0099ff)
         .addFields(
-          { name: '/register manufacturer [reason]', value: 'Sende eine Hersteller-Anfrage an den Admin. Optional mit Begründung.', inline: false },
-          { name: '/register verify <password>', value: 'Gib dein Einmal-Passwort ein, um deinen GUID-Bereich zu aktivieren.', inline: false },
-        );
-      break;
-
-    case 'upload':
-      embed
-        .setTitle('📤 Upload & Download – Hilfe')
+          { name: '/register manufacturer [reason]', value: 'Sende eine Hersteller-Anfrage an den Admin.' },
+          { name: '/register verify <password>', value: 'Gib dein Einmal-Passwort ein.' },
+        )
+        .setFooter({ text: 'Seite 2 – Registrierung' }),
+    },
+    {
+      id: 'upload',
+      embed: new EmbedBuilder()
+        .setTitle('📤 Upload & Download')
         .setDescription('Lade Dateien hoch oder herunter.')
+        .setColor(0x0099ff)
         .addFields(
-          { name: '/upload <paketname> <datei>', value: 'Lade eine Datei in ein bestehendes oder neues Paket hoch (XML, JSON, bis 2 GB).', inline: false },
-          { name: '/download <paketname> [datei]', value: 'Lade ein ganzes Paket oder eine einzelne Datei herunter (ZIP/TAR/Einzeldatei).', inline: false },
-          { name: '/search <suchbegriff>', value: 'Suche nach Paketen, Dateien oder Nutzern.', inline: false },
-        );
-      break;
-
-    case 'packages':
-      embed
-        .setTitle('📦 Pakete – Hilfe')
+          { name: '/upload', value: 'Lade eine Datei hoch (XML, JSON, bis 2 GB). Dropdown-Menü für Format-Auswahl.' },
+          { name: '/download <paketname>', value: 'Lade ein Paket oder Datei herunter. Dropdown für Hersteller & Format.' },
+          { name: '/search <suchbegriff>', value: 'Suche nach Paketen, Dateien oder Nutzern.' },
+        )
+        .setFooter({ text: 'Seite 3 – Upload & Download' }),
+    },
+    {
+      id: 'packages',
+      embed: new EmbedBuilder()
+        .setTitle('📦 Pakete')
         .setDescription('Verwalte deine eigenen Pakete.')
+        .setColor(0x0099ff)
         .addFields(
-          { name: '/mypackages list', value: 'Zeige alle deine Pakete mit Metadaten.', inline: false },
-          { name: '/mypackages info <paket>', value: 'Detailansicht eines Pakets.', inline: false },
-          { name: '/mypackages delete <paket>', value: 'Paket löschen (Soft-Delete, Restore möglich).', inline: false },
-          { name: '/mypackages restore <paket>', value: 'Gelöschtes Paket wiederherstellen.', inline: false },
-        );
-      break;
-
-    case 'giveaway':
-      embed
-        .setTitle('🎉 Giveaway – Hilfe')
+          { name: '/mypackages list', value: 'Zeige alle deine Pakete.' },
+          { name: '/mypackages info <paket>', value: 'Detailansicht eines Pakets.' },
+          { name: '/mypackages delete <paket>', value: 'Paket löschen (Soft-Delete).' },
+          { name: '/mypackages restore <paket>', value: 'Gelöschtes Paket wiederherstellen.' },
+        )
+        .setFooter({ text: 'Seite 4 – Pakete' }),
+    },
+    {
+      id: 'giveaway',
+      embed: new EmbedBuilder()
+        .setTitle('🎉 Giveaway')
         .setDescription('Erstelle und verwalte Giveaways.')
+        .setColor(0x0099ff)
         .addFields(
-          { name: '/giveaway start <preis> <dauer> [beschreibung]', value: 'Starte ein neues Giveaway. Dauer z.B.: 1h, 30m, 2d.', inline: false },
-          { name: '/giveaway enter <id>', value: 'Nimm an einem Giveaway teil.', inline: false },
-          { name: '/giveaway info <id>', value: 'Zeige Infos zu einem Giveaway.', inline: false },
-          { name: '/giveaway end <id>', value: 'Beende ein Giveaway vorzeitig (nur Ersteller/Admin).', inline: false },
-        );
-      break;
-
-    case 'level':
-      embed
-        .setTitle('⭐ Level & XP – Hilfe')
-        .setDescription('Sammle XP durch Aktivität und steige im Level auf.')
+          { name: '/giveaway start <preis> <dauer>', value: 'Starte ein neues Giveaway.' },
+          { name: '/giveaway enter <id>', value: 'Nimm an einem Giveaway teil.' },
+          { name: '/giveaway info <id>', value: 'Zeige Infos zu einem Giveaway.' },
+          { name: '/giveaway end <id>', value: 'Beende ein Giveaway vorzeitig.' },
+        )
+        .setFooter({ text: 'Seite 5 – Giveaway' }),
+    },
+    {
+      id: 'level',
+      embed: new EmbedBuilder()
+        .setTitle('⭐ Level & XP')
+        .setDescription('Sammle XP durch Aktivität.')
+        .setColor(0x0099ff)
         .addFields(
-          { name: '/level [user]', value: 'Zeige dein Level und XP oder das eines anderen Users.', inline: false },
-          { name: '/leaderboard [seite]', value: 'Zeige die Top-User nach Level/XP.', inline: false },
-        );
-      break;
-
-    case 'polls':
-      embed
-        .setTitle('📊 Umfragen – Hilfe')
+          { name: '/level [user]', value: 'Zeige dein Level oder das eines anderen Users.' },
+          { name: '/leaderboard [seite]', value: 'Zeige die Top-User nach Level/XP.' },
+        )
+        .setFooter({ text: 'Seite 6 – Level & XP' }),
+    },
+    {
+      id: 'polls',
+      embed: new EmbedBuilder()
+        .setTitle('📊 Umfragen')
         .setDescription('Erstelle Umfragen und Abstimmungen.')
+        .setColor(0x0099ff)
         .addFields(
-          { name: '/poll create <titel> <optionen>', value: 'Erstelle eine neue Umfrage. Optionen mit Komma trennen.', inline: false },
-          { name: '/poll vote <id> <option>', value: 'Stimme in einer Umfrage ab.', inline: false },
-          { name: '/poll results <id>', value: 'Zeige die Ergebnisse einer Umfrage.', inline: false },
-          { name: '/poll end <id>', value: 'Beende eine Umfrage vorzeitig.', inline: false },
-        );
-      break;
-
-    case 'moderation':
-      embed
-        .setTitle('🛡️ Moderation – Hilfe')
+          { name: '/poll create <titel> <optionen>', value: 'Erstelle eine neue Umfrage.' },
+          { name: '/poll vote <id> <option>', value: 'Stimme in einer Umfrage ab.' },
+          { name: '/poll results <id>', value: 'Zeige die Ergebnisse.' },
+          { name: '/poll end <id>', value: 'Beende eine Umfrage vorzeitig.' },
+        )
+        .setFooter({ text: 'Seite 7 – Umfragen' }),
+    },
+    {
+      id: 'moderation',
+      embed: new EmbedBuilder()
+        .setTitle('🛡️ Moderation')
         .setDescription('Moderationstools für Admins und Moderatoren.')
+        .setColor(0x0099ff)
         .addFields(
-          { name: '/kick <user> <grund>', value: 'Nutzer kicken.', inline: false },
-          { name: '/ban <user> <grund> [dauer]', value: 'Nutzer bannen (permanent oder temporär).', inline: false },
-          { name: '/mute <user> <grund> [dauer]', value: 'Nutzer muten.', inline: false },
-          { name: '/warn <user> <grund>', value: 'Nutzer verwarnen.', inline: false },
-          { name: '/appeal <case-id> <begründung>', value: 'Beschwerde gegen Moderation einreichen.', inline: false },
-        );
-      break;
+          { name: '/kick <user> <grund>', value: 'Nutzer kicken.' },
+          { name: '/ban <user> <grund> [dauer]', value: 'Nutzer bannen.' },
+          { name: '/mute <user> <grund> [dauer]', value: 'Nutzer muten.' },
+          { name: '/warn <user> <grund>', value: 'Nutzer verwarnen.' },
+          { name: '/appeal <case-id> <begründung>', value: 'Beschwerde einreichen.' },
+        )
+        .setFooter({ text: 'Seite 8 – Moderation' }),
+    },
+  ];
 
-    case 'admin': {
-      // Dev-Auth: Nur Admins/Developer sehen erweiterte Admin-Hilfe (Sektion 4)
-      const dbUser = await prisma.user.findUnique({ where: { discordId: interaction.user.id } });
-      const isAdmin = dbUser && ['ADMIN', 'DEVELOPER', 'SUPER_ADMIN'].includes(dbUser.role);
-
-      if (!isAdmin) {
-        embed
-          .setTitle('⚙️ Admin-Commands')
-          .setDescription('❌ Du benötigst Admin- oder Developer-Rechte, um die Admin-Hilfe zu sehen.');
-        break;
-      }
-
-      embed
-        .setTitle('⚙️ Admin-Commands – Hilfe')
+  if (isAdmin) {
+    pages.push({
+      id: 'admin',
+      embed: new EmbedBuilder()
+        .setTitle('⚙️ Admin-Commands')
         .setDescription('Alle Admin/Developer-Commands.')
+        .setColor(0xff9900)
         .addFields(
-          { name: '/admin-approve <user>', value: 'Hersteller-Anfrage annehmen', inline: true },
-          { name: '/admin-deny <user>', value: 'Hersteller-Anfrage ablehnen', inline: true },
-          { name: '/admin-list-users', value: 'Alle Nutzer/Hersteller anzeigen', inline: true },
+          { name: '/admin-approve <user>', value: 'Hersteller annehmen', inline: true },
+          { name: '/admin-deny <user>', value: 'Hersteller ablehnen', inline: true },
+          { name: '/admin-list-users', value: 'Alle Nutzer anzeigen', inline: true },
           { name: '/admin-list-pakete', value: 'Alle Pakete anzeigen', inline: true },
-          { name: '/admin-logs <filter>', value: 'Live-Log-Stream', inline: true },
-          { name: '/admin-delete <target>', value: 'Löschen (Soft/Hard)', inline: true },
-          { name: '/admin-broadcast <msg>', value: 'Broadcast an alle', inline: true },
+          { name: '/admin-logs', value: 'Live-Log-Stream', inline: true },
+          { name: '/admin-delete', value: 'Löschen (Soft/Hard)', inline: true },
+          { name: '/admin-broadcast', value: 'Broadcast an alle', inline: true },
           { name: '/admin-stats', value: 'Systemstatistiken', inline: true },
-          { name: '/admin-validate <target>', value: 'Manuelle Validierung', inline: true },
-          { name: '/admin-reset-password <user>', value: 'Passwort zurücksetzen', inline: true },
-          { name: '/admin-toggle-upload <user>', value: 'Uploadrechte togglen', inline: true },
-          { name: '/admin-export <bereich>', value: 'Daten exportieren', inline: true },
+          { name: '/admin-validate', value: 'Manuelle Validierung', inline: true },
+          { name: '/admin-reset-password', value: 'Passwort zurücksetzen', inline: true },
+          { name: '/admin-toggle-upload', value: 'Uploadrechte togglen', inline: true },
+          { name: '/admin-export', value: 'Daten exportieren', inline: true },
           { name: '/admin-error-report', value: 'Fehlerberichte', inline: true },
-          { name: '/admin-config', value: 'Konfiguration', inline: true },
-          { name: '/admin-audit <filter>', value: 'Audit-Log', inline: true },
-          { name: '/admin-appeals', value: 'Appeals verwalten', inline: true },
-          { name: '/admin-security', value: 'Security-Events', inline: true },
-          { name: '/admin-monitor', value: 'Live-Monitoring', inline: true },
-        );
-      break;
-    }
+          { name: '/admin-config', value: 'Bot-Konfiguration', inline: true },
+          { name: '/admin-audit', value: 'Audit-Log', inline: true },
+          { name: '/admin-appeals', value: 'Beschwerden verwalten', inline: true },
+          { name: '/admin-security', value: 'Sicherheitsübersicht', inline: true },
+          { name: '/admin-monitor', value: 'System-Monitoring', inline: true },
+          { name: '/feed', value: 'Feed-Management', inline: true },
+        )
+        .setFooter({ text: `Seite ${pages.length + 1} – Admin` }),
+    });
   }
 
-  await interaction.reply({ embeds: [embed], ephemeral: true });
+  return pages;
 }
 
 export default helpCommand;

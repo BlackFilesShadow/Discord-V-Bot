@@ -1,4 +1,4 @@
-import { SlashCommandBuilder, ChatInputCommandInteraction, EmbedBuilder } from 'discord.js';
+import { SlashCommandBuilder, ChatInputCommandInteraction, EmbedBuilder, ActionRowBuilder, ButtonBuilder, ButtonStyle } from 'discord.js';
 import { Command } from '../../types';
 import { createManufacturerRequest, verifyOneTimePassword } from '../../modules/registration/register';
 import prisma from '../../database/prisma';
@@ -73,10 +73,21 @@ async function handleManufacturerRegistration(interaction: ChatInputCommandInter
           { name: 'GUID', value: result.userId || 'N/A', inline: true },
         )
         .setColor(0x0099ff)
-        .setTimestamp()
-        .setFooter({ text: 'Verwende /admin-approve oder /admin-deny' });
+        .setTimestamp();
 
-      await ownerUser.send({ embeds: [adminEmbed] });
+      const approveBtn = new ButtonBuilder()
+        .setCustomId(`approve_manufacturer_${interaction.user.id}`)
+        .setLabel('✅ Annehmen')
+        .setStyle(ButtonStyle.Success);
+
+      const denyBtn = new ButtonBuilder()
+        .setCustomId(`deny_manufacturer_${interaction.user.id}`)
+        .setLabel('❌ Ablehnen')
+        .setStyle(ButtonStyle.Danger);
+
+      const row = new ActionRowBuilder<ButtonBuilder>().addComponents(approveBtn, denyBtn);
+
+      await ownerUser.send({ embeds: [adminEmbed], components: [row] });
     } catch (e) {
       // Admin-PN konnte nicht gesendet werden
     }

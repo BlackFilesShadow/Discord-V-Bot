@@ -75,6 +75,11 @@ export const config = {
     steamApiKey: optionalEnv('STEAM_API_KEY'),
   },
 
+  // Developer
+  developer: {
+    password: optionalEnv('DEV_PASSWORD', ''),
+  },
+
   // Logging
   logging: {
     level: optionalEnv('LOG_LEVEL', 'info'),

@@ -13,7 +13,7 @@
     "declaration": true,
     "declarationMap": true,
     "sourceMap": true,
-    "moduleResolution": "node",
+    "moduleResolution": "node10",
     "baseUrl": "./src",
     "paths": {
       "@utils/*": ["utils/*"],
@@ -24,7 +24,8 @@
       "@dashboard/*": ["dashboard/*"],
       "@database/*": ["database/*"],
       "@types/*": ["types/*"]
-    }
+    },
+    "ignoreDeprecations": "5.0"
   },
   "include": ["src/**/*.ts", "prisma/seed.ts"],
   "exclude": ["node_modules", "dist", "tests"]
