@@ -1,0 +1,309 @@
+import {
+  SlashCommandBuilder,
+  ChatInputCommandInteraction,
+  EmbedBuilder,
+} from 'discord.js';
+import { Command } from '../../types';
+import prisma from '../../database/prisma';
+import {
+  createPoll,
+  createPollEmbed,
+  votePoll,
+  endPoll,
+  getPollVotes,
+  PollOption,
+} from '../../modules/polls/pollSystem';
+import { grantEventXp } from '../../modules/xp/xpManager';
+
+/**
+ * /poll Command (Sektion 10):
+ * - Schnelle Umfragen und Abstimmungen per Command
+ * - Anonyme oder öffentliche Votes, Mehrfachauswahl, Zeitlimit
+ * - Ergebnisse als Live-Embed
+ * - Automatische Auswertung
+ */
+const pollCommand: Command = {
+  data: new SlashCommandBuilder()
+    .setName('poll')
+    .setDescription('Umfragen und Abstimmungen erstellen und verwalten')
+    .addSubcommand(sub =>
+      sub
+        .setName('erstellen')
+        .setDescription('Neue Umfrage erstellen')
+        .addStringOption(opt =>
+          opt.setName('titel').setDescription('Titel der Umfrage').setRequired(true)
+        )
+        .addStringOption(opt =>
+          opt.setName('optionen').setDescription('Optionen (kommagetrennt, max 10)').setRequired(true)
+        )
+        .addStringOption(opt =>
+          opt.setName('beschreibung').setDescription('Beschreibung der Umfrage').setRequired(false)
+        )
+        .addStringOption(opt =>
+          opt
+            .setName('typ')
+            .setDescription('Umfrage-Typ')
+            .setRequired(false)
+            .addChoices(
+              { name: 'Öffentlich', value: 'PUBLIC' },
+              { name: 'Anonym', value: 'ANONYMOUS' },
+            )
+        )
+        .addBooleanOption(opt =>
+          opt.setName('mehrfach').setDescription('Mehrfachauswahl erlauben?').setRequired(false)
+        )
+        .addIntegerOption(opt =>
+          opt.setName('max-stimmen').setDescription('Max. Stimmen pro User').setRequired(false).setMinValue(1).setMaxValue(10)
+        )
+        .addIntegerOption(opt =>
+          opt.setName('dauer-minuten').setDescription('Dauer in Minuten (0 = unbegrenzt)').setRequired(false).setMinValue(1).setMaxValue(43200)
+        )
+    )
+    .addSubcommand(sub =>
+      sub
+        .setName('abstimmen')
+        .setDescription('Für eine Option abstimmen')
+        .addStringOption(opt =>
+          opt.setName('poll-id').setDescription('Umfrage-ID').setRequired(true)
+        )
+        .addIntegerOption(opt =>
+          opt.setName('option').setDescription('Optionsnummer (1-10)').setRequired(true).setMinValue(1).setMaxValue(10)
+        )
+    )
+    .addSubcommand(sub =>
+      sub
+        .setName('ergebnis')
+        .setDescription('Aktuelle Ergebnisse anzeigen')
+        .addStringOption(opt =>
+          opt.setName('poll-id').setDescription('Umfrage-ID').setRequired(true)
+        )
+    )
+    .addSubcommand(sub =>
+      sub
+        .setName('beenden')
+        .setDescription('Umfrage manuell beenden')
+        .addStringOption(opt =>
+          opt.setName('poll-id').setDescription('Umfrage-ID').setRequired(true)
+        )
+    )
+    .addSubcommand(sub =>
+      sub
+        .setName('liste')
+        .setDescription('Aktive Umfragen anzeigen')
+    ),
+
+  execute: async (interaction: ChatInputCommandInteraction) => {
+    const sub = interaction.options.getSubcommand();
+
+    switch (sub) {
+      case 'erstellen': {
+        await interaction.deferReply();
+
+        const titel = interaction.options.getString('titel', true);
+        const optionenStr = interaction.options.getString('optionen', true);
+        const beschreibung = interaction.options.getString('beschreibung');
+        const typ = (interaction.options.getString('typ') || 'PUBLIC') as 'PUBLIC' | 'ANONYMOUS';
+        const mehrfach = interaction.options.getBoolean('mehrfach') || false;
+        const maxStimmen = interaction.options.getInteger('max-stimmen') || 1;
+        const dauer = interaction.options.getInteger('dauer-minuten') || null;
+
+        const optionen = optionenStr.split(',').map(o => o.trim()).filter(o => o.length > 0);
+        if (optionen.length < 2 || optionen.length > 10) {
+          await interaction.editReply({ content: '❌ Bitte 2 bis 10 Optionen angeben (kommagetrennt).' });
+          return;
+        }
+
+        // User erstellen falls nötig
+        await prisma.user.upsert({
+          where: { discordId: interaction.user.id },
+          create: { discordId: interaction.user.id, username: interaction.user.username },
+          update: {},
+        });
+
+        const dbUser = await prisma.user.findUnique({ where: { discordId: interaction.user.id } });
+        if (!dbUser) {
+          await interaction.editReply({ content: '❌ Interner Fehler.' });
+          return;
+        }
+
+        const { pollId, options } = await createPoll(
+          dbUser.id,
+          interaction.channelId,
+          titel,
+          beschreibung,
+          optionen,
+          typ,
+          mehrfach,
+          maxStimmen,
+          dauer,
+        );
+
+        const endsAt = dauer ? new Date(Date.now() + dauer * 60 * 1000) : null;
+        const embed = createPollEmbed(titel, beschreibung, options, typ, endsAt, {}, 0);
+        embed.setFooter({ text: `Poll-ID: ${pollId.substring(0, 8)}... | Reagiere oder nutze /poll abstimmen` });
+
+        const msg = await interaction.editReply({ embeds: [embed] });
+
+        // Message-ID speichern + Reaktionen hinzufügen
+        await prisma.poll.update({
+          where: { id: pollId },
+          data: { messageId: msg.id },
+        });
+
+        // Reaktionen für Optionen hinzufügen
+        for (const opt of options) {
+          try {
+            await msg.react(opt.emoji);
+          } catch { /* Emoji might not be available */ }
+        }
+        break;
+      }
+
+      case 'abstimmen': {
+        await interaction.deferReply({ ephemeral: true });
+
+        const pollId = interaction.options.getString('poll-id', true);
+        const optionNum = interaction.options.getInteger('option', true);
+
+        const dbUser = await prisma.user.findUnique({ where: { discordId: interaction.user.id } });
+        if (!dbUser) {
+          await interaction.editReply({ content: '❌ Du bist nicht registriert.' });
+          return;
+        }
+
+        const optionId = `opt_${optionNum - 1}`;
+        const result = await votePoll(pollId, dbUser.id, optionId);
+
+        await interaction.editReply({ content: result.success ? `✅ ${result.message}` : `❌ ${result.message}` });
+
+        // Event-XP für Abstimmung vergeben (Sektion 8: Event-XP)
+        if (result.success) {
+          try {
+            await grantEventXp(dbUser.id, 5, 'POLL_VOTE', pollId);
+          } catch { /* XP-Vergabe nicht kritisch */ }
+        }
+
+        // Live-Embed updaten
+        if (result.success) {
+          const poll = await prisma.poll.findUnique({ where: { id: pollId } });
+          if (poll?.messageId) {
+            try {
+              const channel = await interaction.client.channels.fetch(poll.channelId);
+              if (channel && 'messages' in channel) {
+                const msg = await (channel as any).messages.fetch(poll.messageId);
+                const votes = await getPollVotes(pollId);
+                const options = poll.options as unknown as PollOption[];
+                const totalVotes = Object.values(votes).reduce((a, b) => a + b, 0);
+                const embed = createPollEmbed(
+                  poll.title, poll.description, options, poll.pollType,
+                  poll.endsAt, votes, totalVotes,
+                );
+                embed.setFooter({ text: `Poll-ID: ${pollId.substring(0, 8)}... | Reagiere oder nutze /poll abstimmen` });
+                await msg.edit({ embeds: [embed] });
+              }
+            } catch { /* Could not update embed */ }
+          }
+        }
+        break;
+      }
+
+      case 'ergebnis': {
+        await interaction.deferReply();
+
+        const pollId = interaction.options.getString('poll-id', true);
+        const poll = await prisma.poll.findUnique({ where: { id: pollId } });
+
+        if (!poll) {
+          await interaction.editReply({ content: '❌ Umfrage nicht gefunden.' });
+          return;
+        }
+
+        const votes = await getPollVotes(pollId);
+        const options = poll.options as unknown as PollOption[];
+        const totalVotes = Object.values(votes).reduce((a, b) => a + b, 0);
+
+        const embed = createPollEmbed(
+          poll.title, poll.description, options, poll.pollType,
+          poll.endsAt, votes, totalVotes,
+        );
+
+        if (poll.status === 'ENDED') {
+          embed.setTitle(`📊 Umfrage beendet: ${poll.title}`);
+          embed.setColor(0x95a5a6);
+        }
+
+        await interaction.editReply({ embeds: [embed] });
+        break;
+      }
+
+      case 'beenden': {
+        await interaction.deferReply();
+
+        const pollId = interaction.options.getString('poll-id', true);
+        const poll = await prisma.poll.findUnique({ where: { id: pollId } });
+
+        if (!poll) {
+          await interaction.editReply({ content: '❌ Umfrage nicht gefunden.' });
+          return;
+        }
+
+        // Nur Ersteller oder Admins dürfen beenden
+        const dbUser = await prisma.user.findUnique({ where: { discordId: interaction.user.id } });
+        if (poll.creatorId !== dbUser?.id && !interaction.memberPermissions?.has('Administrator')) {
+          await interaction.editReply({ content: '❌ Nur der Ersteller oder Admins können Umfragen beenden.' });
+          return;
+        }
+
+        const result = await endPoll(pollId);
+        const resultLines = result.results.map((r, i) => {
+          const medal = i === 0 ? '🥇' : i === 1 ? '🥈' : i === 2 ? '🥉' : `${i + 1}.`;
+          return `${medal} **${r.option}** — ${r.votes} Stimmen (${r.percentage}%)`;
+        });
+
+        const embed = new EmbedBuilder()
+          .setTitle(`📊 Umfrage beendet: ${result.title}`)
+          .setDescription(resultLines.join('\n'))
+          .setColor(0x2ecc71)
+          .addFields(
+            { name: '🏆 Gewinner', value: result.winner, inline: true },
+            { name: '🗳️ Stimmen gesamt', value: `${result.totalVotes}`, inline: true },
+          )
+          .setTimestamp();
+
+        await interaction.editReply({ embeds: [embed] });
+        break;
+      }
+
+      case 'liste': {
+        await interaction.deferReply();
+
+        const polls = await prisma.poll.findMany({
+          where: { status: 'ACTIVE' },
+          orderBy: { createdAt: 'desc' },
+          take: 10,
+        });
+
+        if (polls.length === 0) {
+          await interaction.editReply({ content: '📋 Keine aktiven Umfragen.' });
+          return;
+        }
+
+        const lines = polls.map((p: any, i: number) => {
+          const end = p.endsAt ? `<t:${Math.floor(p.endsAt.getTime() / 1000)}:R>` : '∞';
+          return `**${i + 1}.** ${p.title}\n   ${p.totalVotes} Stimmen | Endet: ${end}\n   ID: \`${p.id.substring(0, 8)}...\``;
+        });
+
+        const embed = new EmbedBuilder()
+          .setTitle('📊 Aktive Umfragen')
+          .setDescription(lines.join('\n\n'))
+          .setColor(0x3498db)
+          .setTimestamp();
+
+        await interaction.editReply({ embeds: [embed] });
+        break;
+      }
+    }
+  },
+};
+
+export default pollCommand;

@@ -1,0 +1,19 @@
+{
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    "rootDir": ".",
+    "baseUrl": ".",
+    "noEmit": true,
+    "paths": {
+      "@utils/*": ["src/utils/*"],
+      "@modules/*": ["src/modules/*"],
+      "@commands/*": ["src/commands/*"],
+      "@events/*": ["src/events/*"],
+      "@middleware/*": ["src/middleware/*"],
+      "@dashboard/*": ["src/dashboard/*"],
+      "@database/*": ["src/database/*"],
+      "@types/*": ["src/types/*"]
+    }
+  },
+  "include": ["src/**/*.ts", "tests/**/*.ts"]
+}

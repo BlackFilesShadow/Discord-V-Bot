@@ -1,0 +1,33 @@
+# Dependencies
+node_modules/
+
+# Build output
+dist/
+
+# Environment
+.env
+
+# Uploads & Storage
+uploads/
+storage/
+
+# Logs
+logs/
+
+# Database
+prisma/migrations/
+
+# IDE
+.vscode/settings.json
+.idea/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Coverage
+coverage/
+
+# Debug
+*.log
+npm-debug.log*
