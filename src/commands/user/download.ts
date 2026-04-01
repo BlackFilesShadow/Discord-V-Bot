@@ -10,7 +10,7 @@ import {
 } from 'discord.js';
 import { Command } from '../../types';
 import prisma from '../../database/prisma';
-import { downloadSingleFile, downloadPackageAsZip } from '../../modules/download/downloadHandler';
+import { downloadSingleFile } from '../../modules/download/downloadHandler';
 
 /**
  * /download Command (Sektion 3):
@@ -127,21 +127,12 @@ const downloadCommand: Command = {
         return;
       }
 
-      // ── Schritt 2: Pakete/Dateien-Dropdown ──
+      // ── Schritt 2: Dateien-Dropdown ──
       const options: StringSelectMenuOptionBuilder[] = [];
 
       for (const pkg of packages) {
-        // Komplettes Paket als ZIP
-        options.push(
-          new StringSelectMenuOptionBuilder()
-            .setLabel(`📦 ${pkg.name} (ZIP)`)
-            .setDescription(`Komplettes Paket · ${pkg.files.length} Datei(en)`)
-            .setValue(`zip_${pkg.id}`)
-            .setEmoji('📦')
-        );
-
         // Einzelne Dateien
-        for (const file of pkg.files.slice(0, 23)) {
+        for (const file of pkg.files) {
           options.push(
             new StringSelectMenuOptionBuilder()
               .setLabel(file.originalName)
@@ -157,7 +148,7 @@ const downloadCommand: Command = {
 
       const fileSelect = new StringSelectMenuBuilder()
         .setCustomId('dl_file')
-        .setPlaceholder('📂 Paket oder Datei auswählen...')
+        .setPlaceholder('📂 Datei auswählen...')
         .addOptions(options.slice(0, 25));
 
       const fileRow = new ActionRowBuilder<StringSelectMenuBuilder>().addComponents(fileSelect);
@@ -166,7 +157,7 @@ const downloadCommand: Command = {
         .setTitle(`📥 ${manufacturer.username}`)
         .setDescription(
           `**${packages.length} Paket(e)** verfügbar.\n\n` +
-          `Wähle ein komplettes Paket (ZIP) oder eine einzelne Datei.`
+          `Wähle eine Datei zum Download aus.`
         )
         .setColor(0x0099ff)
         .setTimestamp();
@@ -193,35 +184,7 @@ const downloadCommand: Command = {
         });
 
         try {
-          if (val.startsWith('zip_')) {
-            const pkgId = val.replace('zip_', '');
-            const pkg = packages.find(p => p.id === pkgId);
-            const result = await downloadPackageAsZip(pkgId, interaction.user.id);
-
-            if (!result.success || !result.zipBuffer) {
-              await interaction.editReply({
-                embeds: [new EmbedBuilder().setTitle('❌ Fehler').setDescription(result.message).setColor(0xff0000)],
-                components: [],
-              });
-              return;
-            }
-
-            const attachment = new AttachmentBuilder(result.zipBuffer, {
-              name: result.fileName || `${pkg?.name || 'paket'}.zip`,
-            });
-
-            const doneEmbed = new EmbedBuilder()
-              .setTitle('📥 Paket-Download')
-              .setDescription(`**${pkg?.name}** von **${manufacturer.username}**`)
-              .addFields(
-                { name: '📄 Dateien', value: (pkg?.files.length ?? 0).toString(), inline: true },
-                { name: '📊 Format', value: 'ZIP', inline: true },
-              )
-              .setColor(0x00ff00)
-              .setTimestamp();
-
-            await interaction.editReply({ embeds: [doneEmbed], files: [attachment], components: [] });
-          } else if (val.startsWith('file_')) {
+          if (val.startsWith('file_')) {
             const fileId = val.replace('file_', '');
             const result = await downloadSingleFile(fileId, interaction.user.id);
 

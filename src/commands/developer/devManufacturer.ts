@@ -2,6 +2,7 @@ import {
   SlashCommandBuilder,
   ChatInputCommandInteraction,
   EmbedBuilder,
+  PermissionFlagsBits,
 } from 'discord.js';
 import { Command } from '../../types';
 import prisma from '../../database/prisma';
@@ -33,7 +34,8 @@ const devManufacturerCommand: Command = {
     .addSubcommand(sub =>
       sub.setName('list')
         .setDescription('Alle registrierten Hersteller auflisten')
-    ) as SlashCommandBuilder,
+    )
+    .setDefaultMemberPermissions(PermissionFlagsBits.Administrator) as SlashCommandBuilder,
   devOnly: true,
 
   execute: async (interaction: ChatInputCommandInteraction) => {

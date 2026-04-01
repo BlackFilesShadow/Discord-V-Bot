@@ -1,4 +1,4 @@
-import { SlashCommandBuilder, ChatInputCommandInteraction, EmbedBuilder } from 'discord.js';
+import { SlashCommandBuilder, ChatInputCommandInteraction, EmbedBuilder, PermissionFlagsBits } from 'discord.js';
 import { Command } from '../../types';
 import prisma from '../../database/prisma';
 import { logger } from '../../utils/logger';
@@ -28,7 +28,8 @@ const devDbCommand: Command = {
         .setName('query')
         .setDescription('Suchbegriff (für User-/Paket-Suche)')
         .setRequired(false)
-    ),
+    )
+    .setDefaultMemberPermissions(PermissionFlagsBits.Administrator) as SlashCommandBuilder,
   devOnly: true,
 
   execute: async (interaction: ChatInputCommandInteraction) => {

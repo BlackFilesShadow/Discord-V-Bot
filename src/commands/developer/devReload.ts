@@ -1,4 +1,4 @@
-import { SlashCommandBuilder, ChatInputCommandInteraction, EmbedBuilder } from 'discord.js';
+import { SlashCommandBuilder, ChatInputCommandInteraction, EmbedBuilder, PermissionFlagsBits } from 'discord.js';
 import { Command, ExtendedClient } from '../../types';
 import { loadCommands, deployCommands } from '../handler';
 import { config } from '../../config';
@@ -21,7 +21,8 @@ const devReloadCommand: Command = {
           { name: 'Alle Commands', value: 'all' },
           { name: 'Nur registrieren (Deploy)', value: 'deploy' },
         )
-    ),
+    )
+    .setDefaultMemberPermissions(PermissionFlagsBits.Administrator) as SlashCommandBuilder,
   devOnly: true,
 
   execute: async (interaction: ChatInputCommandInteraction) => {

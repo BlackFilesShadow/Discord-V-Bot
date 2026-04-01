@@ -1,4 +1,4 @@
-import { SlashCommandBuilder, ChatInputCommandInteraction, EmbedBuilder } from 'discord.js';
+import { SlashCommandBuilder, ChatInputCommandInteraction, EmbedBuilder, PermissionFlagsBits } from 'discord.js';
 import { Command } from '../../types';
 import prisma from '../../database/prisma';
 import os from 'os';
@@ -22,7 +22,8 @@ const devEvalCommand: Command = {
           { name: 'Memory', value: 'memory' },
           { name: 'Bot-Uptime', value: 'uptime' },
         )
-    ),
+    )
+    .setDefaultMemberPermissions(PermissionFlagsBits.Administrator) as SlashCommandBuilder,
   devOnly: true,
 
   execute: async (interaction: ChatInputCommandInteraction) => {

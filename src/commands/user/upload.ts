@@ -16,23 +16,40 @@ import axios from 'axios';
  * - XML/JSON Validierung mit detailliertem Feedback
  * - Format wird automatisch aus dem Dateinamen erkannt
  */
+const builder = new SlashCommandBuilder()
+  .setName('upload')
+  .setDescription('Dateien in ein Paket hochladen (bis zu 10 Dateien)')
+  .addStringOption(opt =>
+    opt.setName('paketname').setDescription('Name des Pakets').setRequired(true)
+  )
+  .addAttachmentOption(opt =>
+    opt.setName('datei').setDescription('Datei 1 (XML/JSON, max 2 GB)').setRequired(true)
+  )
+  .addStringOption(opt =>
+    opt.setName('beschreibung').setDescription('Optionale Beschreibung des Pakets').setRequired(false)
+  );
+
+// Datei 2–10 als optionale Attachments
+for (let i = 2; i <= 10; i++) {
+  builder.addAttachmentOption(opt =>
+    opt.setName(`datei${i}`).setDescription(`Datei ${i} (optional)`).setRequired(false)
+  );
+}
+
 const uploadCommand: Command = {
-  data: new SlashCommandBuilder()
-    .setName('upload')
-    .setDescription('Datei in ein Paket hochladen')
-    .addStringOption(opt =>
-      opt.setName('paketname').setDescription('Name des Pakets').setRequired(true)
-    )
-    .addAttachmentOption(opt =>
-      opt.setName('datei').setDescription('Die zu uploadende Datei (XML/JSON, max 2 GB)').setRequired(true)
-    )
-    .addStringOption(opt =>
-      opt.setName('beschreibung').setDescription('Optionale Beschreibung des Pakets').setRequired(false)
-    ),
+  data: builder,
 
   execute: async (interaction: ChatInputCommandInteraction) => {
     const paketname = interaction.options.getString('paketname', true);
-    const attachment = interaction.options.getAttachment('datei', true);
+
+    // Alle angehängten Dateien sammeln (1–10)
+    const attachments: { url: string; name: string | null; contentType: string | null }[] = [];
+    const first = interaction.options.getAttachment('datei', true);
+    attachments.push(first);
+    for (let i = 2; i <= 10; i++) {
+      const att = interaction.options.getAttachment(`datei${i}`);
+      if (att) attachments.push(att);
+    }
 
     // User aus DB holen
     const dbUser = await prisma.user.findUnique({
@@ -55,7 +72,37 @@ const uploadCommand: Command = {
     await interaction.deferReply({ ephemeral: true });
 
     const beschreibung = interaction.options.getString('beschreibung') || undefined;
-    await processAndReply(interaction, dbUser, paketname, attachment, beschreibung);
+
+    // Alle Dateien nacheinander in dasselbe Paket uploaden
+    const results: { name: string; success: boolean; embed: EmbedBuilder }[] = [];
+    for (const att of attachments) {
+      const result = await processAndReply(interaction, dbUser, paketname, att, beschreibung, attachments.length > 1);
+      results.push(result);
+    }
+
+    // Zusammenfassungs-Embed bei mehreren Dateien
+    if (attachments.length > 1) {
+      const successCount = results.filter(r => r.success).length;
+      const failCount = results.length - successCount;
+      const summaryEmbed = new EmbedBuilder()
+        .setTitle(`📦 Upload-Zusammenfassung: ${paketname}`)
+        .setDescription(
+          `**${successCount}/${results.length}** Dateien erfolgreich hochgeladen.` +
+          (failCount > 0 ? `\n❌ ${failCount} fehlgeschlagen.` : '')
+        )
+        .setColor(failCount === 0 ? 0x00ff00 : 0xffaa00)
+        .setTimestamp();
+
+      for (const r of results) {
+        summaryEmbed.addFields({
+          name: `${r.success ? '✅' : '❌'} ${r.name}`,
+          value: r.success ? 'Erfolgreich' : 'Fehlgeschlagen',
+          inline: true,
+        });
+      }
+
+      await interaction.editReply({ embeds: [summaryEmbed] });
+    }
   },
 };
 
@@ -68,9 +115,11 @@ async function processAndReply(
   paketname: string,
   attachment: { url: string; name: string | null; contentType: string | null },
   beschreibung?: string,
-): Promise<void> {
+  isMulti?: boolean,
+): Promise<{ name: string; success: boolean; embed: EmbedBuilder }> {
   // Paket erstellen/finden (GUID-gebunden)
   const pkg = await getOrCreatePackage(dbUser.id, paketname, beschreibung);
+  const fileName = attachment.name || 'unknown';
 
   try {
     const response = await axios.get(attachment.url, {
@@ -84,7 +133,7 @@ async function processAndReply(
       dbUser.id,
       pkg.id,
       fileBuffer,
-      attachment.name || 'unknown',
+      fileName,
       attachment.contentType || 'application/octet-stream'
     );
 
@@ -96,7 +145,7 @@ async function processAndReply(
     if (result.success) {
       embed.addFields(
         { name: '📦 Paket', value: paketname, inline: true },
-        { name: '📄 Datei', value: attachment.name || 'unknown', inline: true },
+        { name: '📄 Datei', value: fileName, inline: true },
         { name: '📊 Größe', value: formatBytes(fileBuffer.length), inline: true },
       );
 
@@ -132,11 +181,23 @@ async function processAndReply(
       embed.setDescription(result.message);
     }
 
-    await interaction.editReply({ embeds: [embed] });
+    // Bei Einzel-Upload direkt antworten, bei Multi kommt Zusammenfassung
+    if (!isMulti) {
+      await interaction.editReply({ embeds: [embed] });
+    }
+
+    return { name: fileName, success: result.success, embed };
   } catch (error) {
-    await interaction.editReply({
-      content: `❌ Fehler beim Download der Datei: ${error instanceof Error ? error.message : 'Unbekannter Fehler'}`,
-    });
+    const embed = new EmbedBuilder()
+      .setTitle('❌ Upload fehlgeschlagen')
+      .setDescription(`Fehler beim Download der Datei: ${error instanceof Error ? error.message : 'Unbekannter Fehler'}`)
+      .setColor(0xff0000);
+
+    if (!isMulti) {
+      await interaction.editReply({ embeds: [embed] });
+    }
+
+    return { name: fileName, success: false, embed };
   }
 }
 

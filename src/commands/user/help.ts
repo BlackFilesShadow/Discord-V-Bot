@@ -12,8 +12,10 @@ import prisma from '../../database/prisma';
 import { config } from '../../config';
 
 /**
- * /help Command (Sektion 4):
- * Help-Menü mit Pagination (Pfeil-Buttons) — alle Kategorien in einem Fenster switchbar.
+ * /help Command:
+ * Info-Tafel mit Pagination — alle Commands mit Kurzerklärung.
+ * Admin-Seiten nur für Admins sichtbar.
+ * DEV-Seiten nur für authentifizierte Developer sichtbar.
  */
 const helpCommand: Command = {
   data: new SlashCommandBuilder()
@@ -25,6 +27,7 @@ const helpCommand: Command = {
         .setDescription('Direkt zu einer Kategorie springen')
         .setRequired(false)
         .addChoices(
+          { name: 'Übersicht', value: 'overview' },
           { name: 'Registrierung', value: 'registration' },
           { name: 'Upload & Download', value: 'upload' },
           { name: 'Pakete', value: 'packages' },
@@ -32,15 +35,14 @@ const helpCommand: Command = {
           { name: 'Level & XP', value: 'level' },
           { name: 'Umfragen', value: 'polls' },
           { name: 'Moderation', value: 'moderation' },
-          { name: 'Admin', value: 'admin' },
         )
     ),
 
   execute: async (interaction: ChatInputCommandInteraction) => {
     const category = interaction.options.getString('category');
-    const isAdmin = await checkIsAdmin(interaction.user.id);
+    const { isAdmin, isDev } = await checkUserRoles(interaction.user.id);
 
-    const pages = buildPages(isAdmin);
+    const pages = buildPages(isAdmin, isDev);
 
     let currentPage = 0;
     if (category) {
@@ -92,10 +94,16 @@ const helpCommand: Command = {
   },
 };
 
-async function checkIsAdmin(userId: string): Promise<boolean> {
-  if (userId === config.discord.ownerId) return true;
+async function checkUserRoles(userId: string): Promise<{ isAdmin: boolean; isDev: boolean }> {
+  const isOwner = userId === config.discord.ownerId;
+  if (isOwner) return { isAdmin: true, isDev: true };
+
   const dbUser = await prisma.user.findUnique({ where: { discordId: userId } });
-  return !!dbUser && ['ADMIN', 'DEVELOPER', 'SUPER_ADMIN'].includes(dbUser.role);
+  if (!dbUser) return { isAdmin: false, isDev: false };
+
+  const isAdmin = ['ADMIN', 'SUPER_ADMIN', 'DEVELOPER'].includes(dbUser.role);
+  const isDev = dbUser.role === 'DEVELOPER';
+  return { isAdmin, isDev };
 }
 
 function buildButtons(current: number, total: number): ActionRowBuilder<ButtonBuilder> {
@@ -130,13 +138,18 @@ function buildButtons(current: number, total: number): ActionRowBuilder<ButtonBu
 
 interface HelpPage { id: string; embed: EmbedBuilder; }
 
-function buildPages(isAdmin: boolean): HelpPage[] {
+function buildPages(isAdmin: boolean, isDev: boolean): HelpPage[] {
   const pages: HelpPage[] = [
+    // ── Seite 1: Übersicht ──
     {
       id: 'overview',
       embed: new EmbedBuilder()
-        .setTitle('📖 Discord-V-Bot – Hilfe')
-        .setDescription('Verwende ◀ ▶ um durch die Kategorien zu navigieren.')
+        .setTitle('📖 V-Bot – Command-Übersicht')
+        .setDescription(
+          'Verwende ◀ ▶ um durch die Kategorien zu blättern.\n' +
+          'Jede Seite zeigt die verfügbaren Commands mit Kurzerklärung.\n\n' +
+          '**Kategorien:**'
+        )
         .setColor(0x0099ff)
         .addFields(
           { name: '📝 Registrierung', value: 'Hersteller werden & verifizieren', inline: true },
@@ -152,45 +165,50 @@ function buildPages(isAdmin: boolean): HelpPage[] {
         .setFooter({ text: 'Seite 1 – Übersicht' })
         .setTimestamp(),
     },
+    // ── Seite 2: Registrierung ──
     {
       id: 'registration',
       embed: new EmbedBuilder()
         .setTitle('📝 Registrierung')
-        .setDescription('Registriere dich als Hersteller, um Pakete hochzuladen.')
+        .setDescription('Werde Hersteller, um Pakete hochzuladen.')
         .setColor(0x0099ff)
         .addFields(
-          { name: '/register manufacturer [reason]', value: 'Sende eine Hersteller-Anfrage an den Admin.' },
-          { name: '/register verify <password>', value: 'Gib dein Einmal-Passwort ein.' },
+          { name: '`/register manufacturer [reason]`', value: 'Sende eine Hersteller-Anfrage an den Admin.' },
+          { name: '`/register verify <password>`', value: 'Gib dein Einmal-Passwort (OTP) ein, um dich zu verifizieren.' },
         )
         .setFooter({ text: 'Seite 2 – Registrierung' }),
     },
+    // ── Seite 3: Upload & Download ──
     {
       id: 'upload',
       embed: new EmbedBuilder()
         .setTitle('📤 Upload & Download')
-        .setDescription('Lade Dateien hoch oder herunter.')
+        .setDescription('Lade XML/JSON-Dateien hoch oder lade Pakete herunter.')
         .setColor(0x0099ff)
         .addFields(
-          { name: '/upload', value: 'Lade eine Datei hoch (XML, JSON, bis 2 GB). Dropdown-Menü für Format-Auswahl.' },
-          { name: '/download <paketname>', value: 'Lade ein Paket oder Datei herunter. Dropdown für Hersteller & Format.' },
-          { name: '/search <suchbegriff>', value: 'Suche nach Paketen, Dateien oder Nutzern.' },
+          { name: '`/upload <paketname> <datei> [datei2..datei10] [beschreibung]`', value: 'Lade bis zu **10 Dateien** (XML/JSON) gleichzeitig in ein Paket hoch.' },
+          { name: '`/download`', value: 'Wähle zuerst einen Hersteller, dann eine einzelne Datei zum Download.' },
+          { name: '`/search <suchbegriff>`', value: 'Suche nach Paketen, Dateien oder Herstellern.' },
         )
         .setFooter({ text: 'Seite 3 – Upload & Download' }),
     },
+    // ── Seite 4: Pakete ──
     {
       id: 'packages',
       embed: new EmbedBuilder()
-        .setTitle('📦 Pakete')
-        .setDescription('Verwalte deine eigenen Pakete.')
+        .setTitle('📦 Meine Pakete')
+        .setDescription('Verwalte deine eigenen Pakete als Hersteller.')
         .setColor(0x0099ff)
         .addFields(
-          { name: '/mypackages list', value: 'Zeige alle deine Pakete.' },
-          { name: '/mypackages info <paket>', value: 'Detailansicht eines Pakets.' },
-          { name: '/mypackages delete <paket>', value: 'Paket löschen (Soft-Delete).' },
-          { name: '/mypackages restore <paket>', value: 'Gelöschtes Paket wiederherstellen.' },
+          { name: '`/mypackages list`', value: 'Zeige alle deine Pakete an.' },
+          { name: '`/mypackages info <paket>`', value: 'Detailansicht eines Pakets (Dateien, Größe, Status).' },
+          { name: '`/mypackages delete <paket>`', value: 'Paket löschen (Soft-Delete, wiederherstellbar).' },
+          { name: '`/mypackages restore <paket>`', value: 'Gelöschtes Paket wiederherstellen.' },
+          { name: '`/mypackages delete-file`', value: 'Einzelne Datei aus einem Paket löschen (Dropdown).' },
         )
         .setFooter({ text: 'Seite 4 – Pakete' }),
     },
+    // ── Seite 5: Giveaway ──
     {
       id: 'giveaway',
       embed: new EmbedBuilder()
@@ -198,85 +216,122 @@ function buildPages(isAdmin: boolean): HelpPage[] {
         .setDescription('Erstelle und verwalte Giveaways.')
         .setColor(0x0099ff)
         .addFields(
-          { name: '/giveaway start <preis> <dauer>', value: 'Starte ein neues Giveaway.' },
-          { name: '/giveaway enter <id>', value: 'Nimm an einem Giveaway teil.' },
-          { name: '/giveaway info <id>', value: 'Zeige Infos zu einem Giveaway.' },
-          { name: '/giveaway end <id>', value: 'Beende ein Giveaway vorzeitig.' },
+          { name: '`/giveaway start <preis> <dauer>`', value: 'Starte ein neues Giveaway mit Preis und Dauer.' },
+          { name: '`/giveaway enter <id>`', value: 'Nimm an einem laufenden Giveaway teil.' },
+          { name: '`/giveaway info <id>`', value: 'Zeige Infos zu einem Giveaway an.' },
+          { name: '`/giveaway end <id>`', value: 'Beende ein Giveaway vorzeitig (nur Ersteller).' },
         )
         .setFooter({ text: 'Seite 5 – Giveaway' }),
     },
+    // ── Seite 6: Level & XP ──
     {
       id: 'level',
       embed: new EmbedBuilder()
         .setTitle('⭐ Level & XP')
-        .setDescription('Sammle XP durch Aktivität.')
+        .setDescription('Sammle XP durch Aktivität im Server.')
         .setColor(0x0099ff)
         .addFields(
-          { name: '/level [user]', value: 'Zeige dein Level oder das eines anderen Users.' },
-          { name: '/leaderboard [seite]', value: 'Zeige die Top-User nach Level/XP.' },
+          { name: '`/level [user]`', value: 'Zeige dein Level oder das eines anderen Users.' },
+          { name: '`/leaderboard [seite]`', value: 'Zeige das Leaderboard (Top-User nach XP).' },
         )
         .setFooter({ text: 'Seite 6 – Level & XP' }),
     },
+    // ── Seite 7: Umfragen ──
     {
       id: 'polls',
       embed: new EmbedBuilder()
         .setTitle('📊 Umfragen')
-        .setDescription('Erstelle Umfragen und Abstimmungen.')
+        .setDescription('Erstelle Umfragen und stimme ab.')
         .setColor(0x0099ff)
         .addFields(
-          { name: '/poll create <titel> <optionen>', value: 'Erstelle eine neue Umfrage.' },
-          { name: '/poll vote <id> <option>', value: 'Stimme in einer Umfrage ab.' },
-          { name: '/poll results <id>', value: 'Zeige die Ergebnisse.' },
-          { name: '/poll end <id>', value: 'Beende eine Umfrage vorzeitig.' },
+          { name: '`/poll create <titel> <optionen>`', value: 'Erstelle eine neue Umfrage mit Optionen.' },
+          { name: '`/poll vote <id> <option>`', value: 'Stimme in einer Umfrage ab.' },
+          { name: '`/poll results <id>`', value: 'Zeige die aktuellen Ergebnisse.' },
+          { name: '`/poll end <id>`', value: 'Beende eine laufende Umfrage vorzeitig.' },
         )
         .setFooter({ text: 'Seite 7 – Umfragen' }),
     },
+    // ── Seite 8: Moderation ──
     {
       id: 'moderation',
       embed: new EmbedBuilder()
         .setTitle('🛡️ Moderation')
-        .setDescription('Moderationstools für Admins und Moderatoren.')
+        .setDescription('Moderationstools (benötigt entsprechende Rechte).')
         .setColor(0x0099ff)
         .addFields(
-          { name: '/kick <user> <grund>', value: 'Nutzer kicken.' },
-          { name: '/ban <user> <grund> [dauer]', value: 'Nutzer bannen.' },
-          { name: '/mute <user> <grund> [dauer]', value: 'Nutzer muten.' },
-          { name: '/warn <user> <grund>', value: 'Nutzer verwarnen.' },
-          { name: '/appeal <case-id> <begründung>', value: 'Beschwerde einreichen.' },
+          { name: '`/kick <user> <grund>`', value: 'Nutzer aus dem Server kicken.' },
+          { name: '`/ban <user> <grund> [dauer]`', value: 'Nutzer bannen (optional: temporär).' },
+          { name: '`/mute <user> <grund> [dauer]`', value: 'Nutzer stummschalten.' },
+          { name: '`/warn <user> <grund>`', value: 'Nutzer verwarnen (Verwarnungspunkte).' },
+          { name: '`/appeal <case-id> <begründung>`', value: 'Beschwerde gegen eine Moderation einreichen.' },
         )
         .setFooter({ text: 'Seite 8 – Moderation' }),
     },
   ];
 
+  // ── Admin-Seiten (nur für Admins) ──
   if (isAdmin) {
     pages.push({
-      id: 'admin',
+      id: 'admin1',
       embed: new EmbedBuilder()
-        .setTitle('⚙️ Admin-Commands')
-        .setDescription('Alle Admin/Developer-Commands.')
+        .setTitle('⚙️ Admin-Commands (1/2)')
+        .setDescription('Nur für Admins sichtbar. Erfordert Admin-Rolle in der Datenbank.')
         .setColor(0xff9900)
         .addFields(
-          { name: '/admin-approve <user>', value: 'Hersteller annehmen', inline: true },
-          { name: '/admin-deny <user>', value: 'Hersteller ablehnen', inline: true },
-          { name: '/admin-list-users', value: 'Alle Nutzer anzeigen', inline: true },
-          { name: '/admin-list-pakete', value: 'Alle Pakete anzeigen', inline: true },
-          { name: '/admin-logs', value: 'Live-Log-Stream', inline: true },
-          { name: '/admin-delete', value: 'Löschen (Soft/Hard)', inline: true },
-          { name: '/admin-broadcast', value: 'Broadcast an alle', inline: true },
-          { name: '/admin-stats', value: 'Systemstatistiken', inline: true },
-          { name: '/admin-validate', value: 'Manuelle Validierung', inline: true },
-          { name: '/admin-reset-password', value: 'Passwort zurücksetzen', inline: true },
-          { name: '/admin-toggle-upload', value: 'Uploadrechte togglen', inline: true },
-          { name: '/admin-export', value: 'Daten exportieren', inline: true },
-          { name: '/admin-error-report', value: 'Fehlerberichte', inline: true },
-          { name: '/admin-config', value: 'Bot-Konfiguration', inline: true },
-          { name: '/admin-audit', value: 'Audit-Log', inline: true },
-          { name: '/admin-appeals', value: 'Beschwerden verwalten', inline: true },
-          { name: '/admin-security', value: 'Sicherheitsübersicht', inline: true },
-          { name: '/admin-monitor', value: 'System-Monitoring', inline: true },
-          { name: '/feed', value: 'Feed-Management', inline: true },
+          { name: '`/admin-approve <user|user_id>`', value: 'Hersteller-Anfrage annehmen.' },
+          { name: '`/admin-deny <user|user_id>`', value: 'Hersteller-Anfrage ablehnen.' },
+          { name: '`/admin-list-users`', value: 'Alle registrierten Nutzer anzeigen.' },
+          { name: '`/admin-list-pakete`', value: 'Alle Pakete im System anzeigen.' },
+          { name: '`/admin-logs`', value: 'Live-Log-Stream ansehen.' },
+          { name: '`/admin-delete <typ> <id>`', value: 'Soft- oder Hard-Delete von Einträgen.' },
+          { name: '`/admin-broadcast <nachricht>`', value: 'Broadcast-Nachricht an alle Nutzer.' },
+          { name: '`/admin-stats`', value: 'Systemstatistiken anzeigen.' },
+          { name: '`/admin-validate <datei-id>`', value: 'Manuelle Datei-Validierung.' },
         )
-        .setFooter({ text: `Seite ${pages.length + 1} – Admin` }),
+        .setFooter({ text: `Seite ${pages.length + 1} – Admin (1/2)` }),
+    });
+    pages.push({
+      id: 'admin2',
+      embed: new EmbedBuilder()
+        .setTitle('⚙️ Admin-Commands (2/2)')
+        .setDescription('Weitere Admin-Commands.')
+        .setColor(0xff9900)
+        .addFields(
+          { name: '`/admin-reset-password <user>`', value: 'Passwort eines Nutzers zurücksetzen.' },
+          { name: '`/admin-toggle-upload <user>`', value: 'Uploadrechte eines Nutzers an/aus.' },
+          { name: '`/admin-export <typ>`', value: 'Daten als CSV/JSON exportieren.' },
+          { name: '`/admin-error-report`', value: 'Fehlerberichte anzeigen.' },
+          { name: '`/admin-config <key> <value>`', value: 'Bot-Konfiguration ändern.' },
+          { name: '`/admin-audit`', value: 'Audit-Log einsehen.' },
+          { name: '`/admin-appeals`', value: 'Beschwerden verwalten.' },
+          { name: '`/admin-security`', value: 'Sicherheitsübersicht anzeigen.' },
+          { name: '`/admin-monitor`', value: 'System-Monitoring (CPU, RAM, DB).' },
+          { name: '`/feed <aktion>`', value: 'Feed-Management (hinzufügen/entfernen).' },
+        )
+        .setFooter({ text: `Seite ${pages.length + 2} – Admin (2/2)` }),
+    });
+  }
+
+  // ── DEV-Seiten (nur für Developer) ──
+  if (isDev) {
+    pages.push({
+      id: 'developer',
+      embed: new EmbedBuilder()
+        .setTitle('🔐 Developer-Commands')
+        .setDescription(
+          'Nur im DEV-Bereich sichtbar. Erfordert `/dev-login` mit Passwort.\n' +
+          'DEV-Session ist **2 Stunden** gültig.'
+        )
+        .setColor(0xff0000)
+        .addFields(
+          { name: '`/dev-login`', value: 'Developer-Bereich freischalten (Passwort-Modal).' },
+          { name: '`/dev-eval <check>`', value: 'Systemdiagnostik (System/DB/Memory/Uptime).' },
+          { name: '`/dev-db <aktion>`', value: 'Datenbankmanagement (Tabellen/User-Suche/Cleanup).' },
+          { name: '`/dev-reload`', value: 'Commands hot-reloaden ohne Bot-Neustart.' },
+          { name: '`/dev-admin <aktion>`', value: 'Admin-Rollen verwalten (add/remove/list).' },
+          { name: '`/dev-manufacturer <aktion>`', value: 'Hersteller verwalten (remove/list).' },
+        )
+        .setFooter({ text: `Seite ${pages.length + 1} – Developer` }),
     });
   }
 
