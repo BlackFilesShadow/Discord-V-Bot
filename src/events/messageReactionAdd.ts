@@ -3,6 +3,7 @@ import { BotEvent } from '../types';
 import { logger, logAudit } from '../utils/logger';
 import prisma from '../database/prisma';
 import { votePoll, getPollVotes, createPollEmbed, PollOption } from '../modules/polls/pollSystem';
+import { createGiveawayEmbed } from '../modules/giveaway/giveawayManager';
 import { grantEventXp } from '../modules/xp/xpManager';
 
 /**
@@ -87,6 +88,20 @@ const messageReactionAddEvent: BotEvent = {
             userId: dbUser.id,
             prize: giveaway.prize,
           });
+
+          // Live-Embed updaten: Teilnehmerzahl aktualisieren
+          try {
+            const participantCount = await prisma.giveawayEntry.count({
+              where: { giveawayId: giveaway.id },
+            });
+            const creator = await prisma.user.findUnique({
+              where: { id: giveaway.creatorId },
+              select: { username: true },
+            });
+            const embed = createGiveawayEmbed(giveaway, participantCount, creator?.username);
+            embed.addFields({ name: '🆔 ID', value: giveaway.id, inline: false });
+            await r.message.edit({ embeds: [embed] });
+          } catch { /* Embed-Update nicht kritisch */ }
         } catch {
           // Bereits teilgenommen (unique constraint violation)
         }
