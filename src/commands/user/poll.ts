@@ -70,6 +70,9 @@ const pollCommand: Command = {
               { name: 'Wochen', value: 'weeks' },
             )
         )
+        .addRoleOption(opt =>
+          opt.setName('benachrichtigungs-rolle').setDescription('Rolle die bei Beendigung gepingt wird (optional)').setRequired(false)
+        )
     )
     .addSubcommand(sub =>
       sub
@@ -119,6 +122,7 @@ const pollCommand: Command = {
         const maxStimmen = interaction.options.getInteger('max-stimmen') || 1;
         const dauerWert = interaction.options.getInteger('dauer') || null;
         const dauerEinheit = interaction.options.getString('dauer-einheit') || 'minutes';
+        const notifyRole = interaction.options.getRole('benachrichtigungs-rolle');
 
         // Dauer in Minuten umrechnen
         let dauer: number | null = null;
@@ -161,11 +165,12 @@ const pollCommand: Command = {
           mehrfach,
           maxStimmen,
           dauer,
+          notifyRole?.id || null,
         );
 
         const endsAt = dauer ? new Date(Date.now() + dauer * 60 * 1000) : null;
         const embed = createPollEmbed(titel, beschreibung, options, typ, endsAt, {}, 0);
-        embed.setFooter({ text: `Poll-ID: ${pollId.substring(0, 8)}... | Reagiere oder nutze /poll abstimmen` });
+        embed.setFooter({ text: `Poll-ID: ${pollId} | Reagiere oder nutze /poll abstimmen` });
 
         const msg = await interaction.editReply({ embeds: [embed] });
 
@@ -223,7 +228,7 @@ const pollCommand: Command = {
                   poll.title, poll.description, options, poll.pollType,
                   poll.endsAt, votes, totalVotes,
                 );
-                embed.setFooter({ text: `Poll-ID: ${pollId.substring(0, 8)}... | Reagiere oder nutze /poll abstimmen` });
+                embed.setFooter({ text: `Poll-ID: ${pollId} | Reagiere oder nutze /poll abstimmen` });
                 await msg.edit({ embeds: [embed] });
               }
             } catch { /* Could not update embed */ }
@@ -295,6 +300,13 @@ const pollCommand: Command = {
           )
           .setTimestamp();
 
+        // Rollen-Ping bei manueller Beendigung als separate Nachricht
+        if (poll.notifyRoleId && interaction.channel && 'send' in interaction.channel) {
+          await interaction.channel.send({
+            content: `<@&${poll.notifyRoleId}> 📊 Umfrage **${result.title}** wurde beendet!`,
+          });
+        }
+
         await interaction.editReply({ embeds: [embed] });
         break;
       }
@@ -315,7 +327,7 @@ const pollCommand: Command = {
 
         const lines = polls.map((p: any, i: number) => {
           const end = p.endsAt ? `<t:${Math.floor(p.endsAt.getTime() / 1000)}:R>` : '∞';
-          return `**${i + 1}.** ${p.title}\n   ${p.totalVotes} Stimmen | Endet: ${end}\n   ID: \`${p.id.substring(0, 8)}...\``;
+          return `**${i + 1}.** ${p.title}\n   ${p.totalVotes} Stimmen | Endet: ${end}\n   ID: \`${p.id}\``;
         });
 
         const embed = new EmbedBuilder()

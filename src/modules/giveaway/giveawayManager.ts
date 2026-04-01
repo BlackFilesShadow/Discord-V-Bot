@@ -27,6 +27,7 @@ export async function createGiveaway(params: {
   minRole?: string;
   blacklistRoles?: string[];
   customEmoji?: string;
+  notifyRoleId?: string;
 }): Promise<{ success: boolean; giveawayId?: string; message: string }> {
   const creator = await prisma.user.findUnique({
     where: { discordId: params.creatorDiscordId },
@@ -50,6 +51,7 @@ export async function createGiveaway(params: {
       minRole: params.minRole,
       blacklistRoles: params.blacklistRoles || undefined,
       customEmoji: params.customEmoji || '🎉',
+      notifyRoleId: params.notifyRoleId,
     },
   });
 
@@ -275,9 +277,10 @@ export function startGiveawayScheduler(client: Client): void {
               { name: '👥 Teilnehmer', value: participantCount.toString(), inline: true },
             );
 
-            // Gewinner in Channel erwähnen
+            // Rollen-Ping + Gewinner-Erwähnung
+            const rolePing = giveaway.notifyRoleId ? `<@&${giveaway.notifyRoleId}> ` : '';
             await channel.send({
-              content: `🎉 Glückwunsch ${winnerMentions}! Du hast **${giveaway.prize}** gewonnen!`,
+              content: `${rolePing}🎉 Glückwunsch ${winnerMentions}! Du hast **${giveaway.prize}** gewonnen!`,
               embeds: [winnerEmbed],
             });
           } else {
@@ -286,7 +289,8 @@ export function startGiveawayScheduler(client: Client): void {
               { name: '😢 Ergebnis', value: 'Keine Teilnehmer', inline: true },
             );
 
-            await channel.send({ embeds: [winnerEmbed] });
+            const rolePing = giveaway.notifyRoleId ? `<@&${giveaway.notifyRoleId}> ` : '';
+            await channel.send({ content: rolePing || undefined, embeds: [winnerEmbed] });
           }
 
           // Original-Embed aktualisieren

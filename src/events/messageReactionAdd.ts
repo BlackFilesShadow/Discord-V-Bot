@@ -209,7 +209,7 @@ const messageReactionAddEvent: BotEvent = {
             poll.title, poll.description, options, poll.pollType,
             poll.endsAt, votes, totalVotes,
           );
-          embed.setFooter({ text: `Poll-ID: ${poll.id.substring(0, 8)}... | Reagiere oder nutze /poll abstimmen` });
+          embed.setFooter({ text: `Poll-ID: ${poll.id} | Reagiere oder nutze /poll abstimmen` });
           await r.message.edit({ embeds: [embed] });
         } catch {}
       }

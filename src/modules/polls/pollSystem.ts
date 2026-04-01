@@ -32,6 +32,7 @@ export async function createPoll(
   allowMultiple: boolean,
   maxChoices: number,
   durationMinutes: number | null,
+  notifyRoleId: string | null,
 ): Promise<{ pollId: string; options: PollOption[] }> {
   const pollOptions: PollOption[] = options.map((text, i) => ({
     id: `opt_${i}`,
@@ -52,6 +53,7 @@ export async function createPoll(
       allowMultiple,
       maxChoices,
       endsAt,
+      notifyRoleId,
     },
   });
 
@@ -270,7 +272,10 @@ export function startPollScheduler(client: Client): void {
               )
               .setTimestamp();
 
-            await channel.send({ embeds: [embed] });
+            // Rollen-Ping bei Beendigung (optional)
+            const mentionContent = poll.notifyRoleId ? `<@&${poll.notifyRoleId}> 📊 Umfrage **${result.title}** wurde beendet!` : undefined;
+
+            await channel.send({ content: mentionContent, embeds: [embed] });
 
             // Originalnachricht updaten falls vorhanden
             if (poll.messageId) {

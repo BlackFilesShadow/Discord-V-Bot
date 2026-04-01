@@ -425,6 +425,7 @@ model Giveaway {
   minRole       String?  // Mindestrolle
   blacklistRoles Json?   // Blacklisted Rollen
   customEmoji   String?  // Custom-Emoji für Teilnahme
+  notifyRoleId  String?  // Rolle die bei Beendigung gepingt wird
   createdAt     DateTime @default(now())
   updatedAt     DateTime @updatedAt
 
@@ -598,6 +599,7 @@ model Poll {
   status      PollStatus @default(ACTIVE)
   totalVotes  Int      @default(0)
   results     Json?    // Ergebnisse nach Abschluss
+  notifyRoleId String?  // Rolle die bei Beendigung gepingt wird
   createdAt   DateTime @default(now())
   updatedAt   DateTime @updatedAt
 

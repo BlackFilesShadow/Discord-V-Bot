@@ -38,6 +38,9 @@ const giveawayCommand: Command = {
         .addStringOption(opt =>
           opt.setName('emoji').setDescription('Custom Emoji für Teilnahme (Standard: 🎉)').setRequired(false)
         )
+        .addRoleOption(opt =>
+          opt.setName('benachrichtigungs-rolle').setDescription('Rolle die bei Beendigung gepingt wird (optional)').setRequired(false)
+        )
     )
     .addSubcommand(sub =>
       sub
@@ -91,6 +94,7 @@ async function handleStart(interaction: ChatInputCommandInteraction) {
   const winnerCount = interaction.options.getInteger('gewinner') || 1;
   const minRole = interaction.options.getRole('mindestrolle');
   const customEmoji = interaction.options.getString('emoji') || '🎉';
+  const notifyRole = interaction.options.getRole('benachrichtigungs-rolle');
 
   // Dauer parsen
   const durationSeconds = parseDuration(durationStr);
@@ -108,6 +112,7 @@ async function handleStart(interaction: ChatInputCommandInteraction) {
     winnerCount,
     minRole: minRole?.id,
     customEmoji,
+    notifyRoleId: notifyRole?.id,
   });
 
   if (!result.success) {
@@ -226,8 +231,21 @@ async function handleEnd(interaction: ChatInputCommandInteraction) {
     await interaction.editReply({
       content: `🎉 Giveaway beendet! Gewinner: ${winnerMentions} – **${giveaway.prize}**`,
     });
+
+    // Rollen-Ping als separate Nachricht im Channel
+    if (giveaway.notifyRoleId && interaction.channel && 'send' in interaction.channel) {
+      await interaction.channel.send({
+        content: `<@&${giveaway.notifyRoleId}> 🎉 Giveaway **${giveaway.prize}** beendet! Gewinner: ${winnerMentions}`,
+      });
+    }
   } else {
     await interaction.editReply({ content: `Giveaway beendet. ${result.message}` });
+
+    if (giveaway.notifyRoleId && interaction.channel && 'send' in interaction.channel) {
+      await interaction.channel.send({
+        content: `<@&${giveaway.notifyRoleId}> 🎉 Giveaway **${giveaway.prize}** wurde beendet. ${result.message}`,
+      });
+    }
   }
 }
 

@@ -12,20 +12,7 @@
     "resolveJsonModule": true,
     "declaration": true,
     "declarationMap": true,
-    "sourceMap": true,
-    "moduleResolution": "node10",
-    "baseUrl": "./src",
-    "paths": {
-      "@utils/*": ["utils/*"],
-      "@modules/*": ["modules/*"],
-      "@commands/*": ["commands/*"],
-      "@events/*": ["events/*"],
-      "@middleware/*": ["middleware/*"],
-      "@dashboard/*": ["dashboard/*"],
-      "@database/*": ["database/*"],
-      "@types/*": ["types/*"]
-    },
-    "ignoreDeprecations": "5.0"
+    "sourceMap": true
   },
   "include": ["src/**/*.ts", "prisma/seed.ts"],
   "exclude": ["node_modules", "dist", "tests"]
