@@ -5,11 +5,11 @@ import {
   PermissionFlagsBits,
 } from 'discord.js';
 import { Command } from '../../types';
-import { approveManufacturer, denyManufacturer } from '../../modules/registration/register';
-import { logger, logAudit } from '../../utils/logger';
+import { approveManufacturer } from '../../modules/registration/register';
+import { logger } from '../../utils/logger';
 
 /**
- * /admin-approve [user] — Hersteller-Anfrage annehmen.
+ * /admin-approve [user | user_id] — Hersteller-Anfrage annehmen.
  * Developer-Bereich: Admin kann annehmen, Einmal-Passwort wird generiert.
  */
 const adminApproveCommand: Command = {
@@ -17,7 +17,10 @@ const adminApproveCommand: Command = {
     .setName('admin-approve')
     .setDescription('Hersteller-Anfrage annehmen')
     .addUserOption(opt =>
-      opt.setName('user').setDescription('User dessen Anfrage angenommen wird').setRequired(true)
+      opt.setName('user').setDescription('User dessen Anfrage angenommen wird').setRequired(false)
+    )
+    .addStringOption(opt =>
+      opt.setName('user_id').setDescription('Alternativ: Discord-ID des Users').setRequired(false)
     )
     .setDefaultMemberPermissions(PermissionFlagsBits.Administrator) as SlashCommandBuilder,
   adminOnly: true,
@@ -25,18 +28,39 @@ const adminApproveCommand: Command = {
   execute: async (interaction: ChatInputCommandInteraction) => {
     await interaction.deferReply({ ephemeral: true });
 
-    const targetUser = interaction.options.getUser('user', true);
+    const targetUser = interaction.options.getUser('user');
+    const userIdStr = interaction.options.getString('user_id');
 
-    const result = await approveManufacturer(targetUser.id, interaction.user.id);
+    // Discord-ID ermitteln: User-Option oder String-Fallback
+    let discordId: string;
+    let displayName: string;
+
+    if (targetUser) {
+      discordId = targetUser.id;
+      displayName = targetUser.username;
+    } else if (userIdStr) {
+      discordId = userIdStr.replace(/[<@!>]/g, '').trim();
+      displayName = discordId;
+      try {
+        const fetched = await interaction.client.users.fetch(discordId);
+        displayName = fetched.username;
+      } catch { /* ID wird als Display verwendet */ }
+    } else {
+      await interaction.editReply({ content: '❌ Bitte gib einen **User** oder eine **User-ID** an.' });
+      return;
+    }
+
+    const result = await approveManufacturer(discordId, interaction.user.id);
 
     if (!result.success) {
-      await interaction.editReply({ content: `❌ ${result.message}` });
+      await interaction.editReply({ content: `❌ ${result.message}\n\n🔍 Gesuchte Discord-ID: \`${discordId}\`` });
       return;
     }
 
     // OTP dem User per DM senden
     try {
-      const dm = await targetUser.createDM();
+      const dmUser = targetUser || await interaction.client.users.fetch(discordId);
+      const dm = await dmUser.createDM();
       await dm.send({
         embeds: [
           new EmbedBuilder()
@@ -52,10 +76,10 @@ const adminApproveCommand: Command = {
         ],
       });
     } catch {
-      logger.warn(`Konnte DM an ${targetUser.id} nicht senden.`);
+      logger.warn(`Konnte DM an ${discordId} nicht senden.`);
     }
 
-    await interaction.editReply({ content: `✅ Hersteller-Anfrage von ${targetUser.username} angenommen. OTP wurde per DM gesendet.` });
+    await interaction.editReply({ content: `✅ Hersteller-Anfrage von **${displayName}** angenommen. OTP wurde per DM gesendet.` });
   },
 };
 

@@ -56,9 +56,15 @@ export async function createManufacturerRequest(discordId: string, username: str
  * Hersteller-Anfrage annehmen (Admin).
  * Sektion 1: Bei Annahme: Einmal-Passwort, GUID-basierte Bereichserstellung.
  */
-export async function approveManufacturer(userId: string, adminDiscordId: string) {
+export async function approveManufacturer(discordId: string, adminDiscordId: string) {
+  // Discord-ID → interne UUID auflösen
+  const user = await prisma.user.findUnique({ where: { discordId } });
+  if (!user) {
+    return { success: false, message: 'User nicht in der Datenbank gefunden.' };
+  }
+
   const request = await prisma.manufacturerRequest.findUnique({
-    where: { userId },
+    where: { userId: user.id },
     include: { user: true },
   });
 
@@ -77,7 +83,7 @@ export async function approveManufacturer(userId: string, adminDiscordId: string
 
   // Anfrage aktualisieren
   await prisma.manufacturerRequest.update({
-    where: { userId },
+    where: { userId: user.id },
     data: {
       status: 'APPROVED',
       reviewedBy: adminDiscordId,
@@ -88,7 +94,7 @@ export async function approveManufacturer(userId: string, adminDiscordId: string
   // Einmal-Passwort speichern
   await prisma.oneTimePassword.create({
     data: {
-      userId,
+      userId: user.id,
       passwordHash: otpHash,
       expiresAt,
     },
@@ -96,7 +102,7 @@ export async function approveManufacturer(userId: string, adminDiscordId: string
 
   // User-Rolle auf MANUFACTURER setzen
   await prisma.user.update({
-    where: { id: userId },
+    where: { id: user.id },
     data: {
       isManufacturer: true,
       role: 'MANUFACTURER',
@@ -106,7 +112,7 @@ export async function approveManufacturer(userId: string, adminDiscordId: string
   });
 
   logAudit('MANUFACTURER_APPROVED', 'REGISTRATION', {
-    userId,
+    userId: user.id,
     approvedBy: adminDiscordId,
     otpExpiresAt: expiresAt.toISOString(),
   });
@@ -123,9 +129,15 @@ export async function approveManufacturer(userId: string, adminDiscordId: string
 /**
  * Hersteller-Anfrage ablehnen (Admin).
  */
-export async function denyManufacturer(userId: string, adminDiscordId: string, adminNote?: string) {
+export async function denyManufacturer(discordId: string, adminDiscordId: string, adminNote?: string) {
+  // Discord-ID → interne UUID auflösen
+  const user = await prisma.user.findUnique({ where: { discordId } });
+  if (!user) {
+    return { success: false, message: 'User nicht in der Datenbank gefunden.' };
+  }
+
   const request = await prisma.manufacturerRequest.findUnique({
-    where: { userId },
+    where: { userId: user.id },
   });
 
   if (!request) {
@@ -137,7 +149,7 @@ export async function denyManufacturer(userId: string, adminDiscordId: string, a
   }
 
   await prisma.manufacturerRequest.update({
-    where: { userId },
+    where: { userId: user.id },
     data: {
       status: 'DENIED',
       adminNote,
@@ -147,7 +159,7 @@ export async function denyManufacturer(userId: string, adminDiscordId: string, a
   });
 
   logAudit('MANUFACTURER_DENIED', 'REGISTRATION', {
-    userId,
+    userId: user.id,
     deniedBy: adminDiscordId,
     adminNote,
   });
