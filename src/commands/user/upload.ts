@@ -3,10 +3,6 @@ import {
   ChatInputCommandInteraction,
   EmbedBuilder,
   AttachmentBuilder,
-  ActionRowBuilder,
-  StringSelectMenuBuilder,
-  StringSelectMenuOptionBuilder,
-  ComponentType,
 } from 'discord.js';
 import { Command } from '../../types';
 import prisma from '../../database/prisma';
@@ -16,26 +12,27 @@ import axios from 'axios';
 /**
  * /upload Command (Sektion 2):
  * - Upload von Dateien in eigenen GUID-Bereich
- * - Dropdown-Menü: Hersteller-Name → Format (JSON/XML/Paket)
+ * - Paketname + Datei direkt angeben
  * - XML/JSON Validierung mit detailliertem Feedback
+ * - Format wird automatisch aus dem Dateinamen erkannt
  */
 const uploadCommand: Command = {
   data: new SlashCommandBuilder()
     .setName('upload')
     .setDescription('Datei in ein Paket hochladen')
     .addStringOption(opt =>
-      opt.setName('paketname').setDescription('Name des Pakets').setRequired(false)
+      opt.setName('paketname').setDescription('Name des Pakets').setRequired(true)
     )
     .addAttachmentOption(opt =>
-      opt.setName('datei').setDescription('Die zu uploadende Datei (XML/JSON, max 2 GB)').setRequired(false)
+      opt.setName('datei').setDescription('Die zu uploadende Datei (XML/JSON, max 2 GB)').setRequired(true)
     )
     .addStringOption(opt =>
       opt.setName('beschreibung').setDescription('Optionale Beschreibung des Pakets').setRequired(false)
     ),
 
   execute: async (interaction: ChatInputCommandInteraction) => {
-    const paketname = interaction.options.getString('paketname');
-    const attachment = interaction.options.getAttachment('datei');
+    const paketname = interaction.options.getString('paketname', true);
+    const attachment = interaction.options.getAttachment('datei', true);
 
     // User aus DB holen
     const dbUser = await prisma.user.findUnique({
@@ -54,111 +51,13 @@ const uploadCommand: Command = {
       return;
     }
 
-    // Ohne Argumente: Dropdown-Menü anzeigen
-    if (!paketname || !attachment) {
-      await showUploadMenu(interaction, dbUser);
-      return;
-    }
-
-    // Mit Argumenten: Direkt hochladen
+    // Direkt hochladen — kein Dropdown nötig, Format wird automatisch erkannt
     await interaction.deferReply({ ephemeral: true });
 
     const beschreibung = interaction.options.getString('beschreibung') || undefined;
     await processAndReply(interaction, dbUser, paketname, attachment, beschreibung);
   },
 };
-
-/**
- * Zeigt das Hersteller-Upload-Dropdown-Menü an.
- */
-async function showUploadMenu(
-  interaction: ChatInputCommandInteraction,
-  dbUser: { id: string; username: string; guid?: string | null },
-): Promise<void> {
-  // Vorhandene Pakete des Users laden
-  const userPackages = await prisma.package.findMany({
-    where: { userId: dbUser.id, isDeleted: false },
-    select: { name: true },
-    take: 20,
-  });
-
-  const embed = new EmbedBuilder()
-    .setTitle(`📤 Upload-Bereich — ${dbUser.username}`)
-    .setDescription(
-      `Willkommen im Upload-Bereich!\n\n` +
-      `**Wähle das Format** aus dem Dropdown-Menü unten.\n` +
-      `Anschließend verwende:\n` +
-      `\`/upload <paketname> <datei>\`\n\n` +
-      (userPackages.length > 0
-        ? `**Deine Pakete:** ${userPackages.map(p => `\`${p.name}\``).join(', ')}`
-        : '📦 Du hast noch keine Pakete.')
-    )
-    .setColor(0x0099ff)
-    .setTimestamp();
-
-  const formatSelect = new StringSelectMenuBuilder()
-    .setCustomId('upload_format_select')
-    .setPlaceholder('📂 Format auswählen...')
-    .addOptions(
-      new StringSelectMenuOptionBuilder()
-        .setLabel('JSON-Datei')
-        .setDescription('Eine einzelne JSON-Datei hochladen')
-        .setValue('json')
-        .setEmoji('📄'),
-      new StringSelectMenuOptionBuilder()
-        .setLabel('XML-Datei')
-        .setDescription('Eine einzelne XML-Datei hochladen')
-        .setValue('xml')
-        .setEmoji('📋'),
-      new StringSelectMenuOptionBuilder()
-        .setLabel('Paket (mehrere Dateien)')
-        .setDescription('Ein Paket mit mehreren Dateien hochladen')
-        .setValue('paket')
-        .setEmoji('📦'),
-    );
-
-  const row = new ActionRowBuilder<StringSelectMenuBuilder>().addComponents(formatSelect);
-
-  const response = await interaction.reply({
-    embeds: [embed],
-    components: [row],
-    ephemeral: true,
-  });
-
-  const collector = response.createMessageComponentCollector({
-    componentType: ComponentType.StringSelect,
-    time: 120_000,
-  });
-
-  collector.on('collect', async (menuInteraction) => {
-    const selected = menuInteraction.values[0];
-    const formatLabels: Record<string, string> = {
-      json: 'JSON-Datei (.json)',
-      xml: 'XML-Datei (.xml)',
-      paket: 'Paket (mehrere Dateien)',
-    };
-
-    const instructionEmbed = new EmbedBuilder()
-      .setTitle(`📤 Upload — ${formatLabels[selected]}`)
-      .setDescription(
-        `**Format:** ${formatLabels[selected]}\n\n` +
-        `Verwende jetzt folgenden Command:\n\n` +
-        `\`/upload <paketname> <datei>\`\n\n` +
-        `Ziehe deine ${selected === 'paket' ? 'Dateien' : selected.toUpperCase() + '-Datei'} ` +
-        `in das Datei-Feld. Die Validierung erfolgt automatisch.`
-      )
-      .setColor(0x00ff00)
-      .setTimestamp();
-
-    await menuInteraction.update({ embeds: [instructionEmbed], components: [] });
-  });
-
-  collector.on('end', async (_, reason) => {
-    if (reason === 'time') {
-      try { await interaction.editReply({ components: [] }); } catch {}
-    }
-  });
-}
 
 /**
  * Verarbeitet den Upload und antwortet mit Feedback.
