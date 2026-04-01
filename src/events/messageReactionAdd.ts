@@ -1,7 +1,9 @@
-import { Events, MessageReaction, User, PartialMessageReaction, PartialUser } from 'discord.js';
+import { Events, MessageReaction, User, PartialMessageReaction, PartialUser, EmbedBuilder } from 'discord.js';
 import { BotEvent } from '../types';
 import { logger, logAudit } from '../utils/logger';
 import prisma from '../database/prisma';
+import { votePoll, getPollVotes, createPollEmbed, PollOption } from '../modules/polls/pollSystem';
+import { grantEventXp } from '../modules/xp/xpManager';
 
 /**
  * MessageReactionAdd-Event: Reaktion auf eine Nachricht.
@@ -139,6 +141,77 @@ const messageReactionAddEvent: BotEvent = {
         } catch (e) {
           logger.error('Reaction-Role Fehler:', e);
         }
+        return;
+      }
+
+      // ===== SEKTION 10: POLL-VOTES PER REAKTION =====
+      const poll = await prisma.poll.findFirst({
+        where: {
+          messageId,
+          status: 'ACTIVE',
+        },
+      });
+
+      if (poll) {
+        const options = poll.options as unknown as PollOption[];
+        const matchedOption = options.find(opt => opt.emoji === emoji);
+        if (!matchedOption) return;
+
+        const dbUser = await prisma.user.findUnique({ where: { discordId: u.id } });
+        if (!dbUser) return;
+
+        // Bei Einzelwahl: vorherige Reaktionen entfernen
+        if (!poll.allowMultiple) {
+          const existingVotes = await prisma.pollVote.findMany({
+            where: { pollId: poll.id, userId: dbUser.id },
+          });
+
+          if (existingVotes.length > 0) {
+            // Bestehende Stimme(n) aus DB löschen
+            await prisma.pollVote.deleteMany({
+              where: { pollId: poll.id, userId: dbUser.id },
+            });
+            await prisma.poll.update({
+              where: { id: poll.id },
+              data: { totalVotes: { decrement: existingVotes.length } },
+            });
+
+            // Vorherige Emoji-Reaktionen des Users entfernen
+            for (const oldVote of existingVotes) {
+              if (oldVote.optionId === matchedOption.id) continue;
+              const oldOption = options.find(o => o.id === oldVote.optionId);
+              if (oldOption) {
+                const msgReactions = r.message.reactions.cache.get(oldOption.emoji);
+                if (msgReactions) {
+                  try { await msgReactions.users.remove(u.id); } catch {}
+                }
+              }
+            }
+          }
+        }
+
+        // Stimme abgeben
+        const result = await votePoll(poll.id, dbUser.id, matchedOption.id);
+
+        if (result.success) {
+          try { await grantEventXp(dbUser.id, 5, 'POLL_VOTE', poll.id); } catch {}
+        } else if (result.message.includes('bereits')) {
+          // Bereits für diese Option gestimmt → Reaktion entfernen
+          try { await r.users.remove(u.id); } catch {}
+          return;
+        }
+
+        // Live-Embed updaten
+        try {
+          const votes = await getPollVotes(poll.id);
+          const totalVotes = Object.values(votes).reduce((a, b) => a + b, 0);
+          const embed = createPollEmbed(
+            poll.title, poll.description, options, poll.pollType,
+            poll.endsAt, votes, totalVotes,
+          );
+          embed.setFooter({ text: `Poll-ID: ${poll.id.substring(0, 8)}... | Reagiere oder nutze /poll abstimmen` });
+          await r.message.edit({ embeds: [embed] });
+        } catch {}
       }
     } catch (error) {
       logger.error('MessageReactionAdd Fehler:', error);

@@ -56,7 +56,19 @@ const pollCommand: Command = {
           opt.setName('max-stimmen').setDescription('Max. Stimmen pro User').setRequired(false).setMinValue(1).setMaxValue(10)
         )
         .addIntegerOption(opt =>
-          opt.setName('dauer-minuten').setDescription('Dauer in Minuten (0 = unbegrenzt)').setRequired(false).setMinValue(1).setMaxValue(43200)
+          opt.setName('dauer').setDescription('Dauer der Umfrage').setRequired(false).setMinValue(1)
+        )
+        .addStringOption(opt =>
+          opt
+            .setName('dauer-einheit')
+            .setDescription('Einheit der Dauer')
+            .setRequired(false)
+            .addChoices(
+              { name: 'Minuten', value: 'minutes' },
+              { name: 'Stunden', value: 'hours' },
+              { name: 'Tage', value: 'days' },
+              { name: 'Wochen', value: 'weeks' },
+            )
         )
     )
     .addSubcommand(sub =>
@@ -105,7 +117,20 @@ const pollCommand: Command = {
         const typ = (interaction.options.getString('typ') || 'PUBLIC') as 'PUBLIC' | 'ANONYMOUS';
         const mehrfach = interaction.options.getBoolean('mehrfach') || false;
         const maxStimmen = interaction.options.getInteger('max-stimmen') || 1;
-        const dauer = interaction.options.getInteger('dauer-minuten') || null;
+        const dauerWert = interaction.options.getInteger('dauer') || null;
+        const dauerEinheit = interaction.options.getString('dauer-einheit') || 'minutes';
+
+        // Dauer in Minuten umrechnen
+        let dauer: number | null = null;
+        if (dauerWert) {
+          const multipliers: Record<string, number> = {
+            minutes: 1,
+            hours: 60,
+            days: 60 * 24,
+            weeks: 60 * 24 * 7,
+          };
+          dauer = dauerWert * (multipliers[dauerEinheit] || 1);
+        }
 
         const optionen = optionenStr.split(',').map(o => o.trim()).filter(o => o.length > 0);
         if (optionen.length < 2 || optionen.length > 10) {

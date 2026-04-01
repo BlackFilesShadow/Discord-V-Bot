@@ -244,7 +244,7 @@ function buildPages(isAdmin: boolean, isDev: boolean): HelpPage[] {
         .setDescription('Erstelle Umfragen und stimme ab.')
         .setColor(0x0099ff)
         .addFields(
-          { name: '`/poll create <titel> <optionen>`', value: 'Erstelle eine neue Umfrage mit Optionen.' },
+          { name: '`/poll erstellen <titel> <optionen> [dauer] [einheit]`', value: 'Erstelle eine Umfrage. Dauer in Min/Std/Tage/Wochen.' },
           { name: '`/poll vote <id> <option>`', value: 'Stimme in einer Umfrage ab.' },
           { name: '`/poll results <id>`', value: 'Zeige die aktuellen Ergebnisse.' },
           { name: '`/poll end <id>`', value: 'Beende eine laufende Umfrage vorzeitig.' },
