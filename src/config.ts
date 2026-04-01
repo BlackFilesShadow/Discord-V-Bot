@@ -56,10 +56,15 @@ export const config = {
     chunkSize: 10 * 1024 * 1024, // 10 MB chunks
   },
 
-  // AI
+  // AI (Multi-Provider: Groq → Gemini → OpenAI Fallback)
   ai: {
+    provider: optionalEnv('AI_PROVIDER', 'groq') as 'groq' | 'gemini' | 'openai',
+    groqApiKey: optionalEnv('GROQ_API_KEY'),
+    groqModel: optionalEnv('GROQ_MODEL', 'llama-3.3-70b-versatile'),
+    geminiApiKey: optionalEnv('GEMINI_API_KEY'),
+    geminiModel: optionalEnv('GEMINI_MODEL', 'gemini-2.0-flash'),
     openaiApiKey: optionalEnv('OPENAI_API_KEY'),
-    model: optionalEnv('AI_MODEL', 'gpt-4'),
+    openaiModel: optionalEnv('OPENAI_MODEL', 'gpt-4'),
   },
 
   // Externe APIs

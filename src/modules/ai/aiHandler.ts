@@ -29,7 +29,7 @@ interface AiResponse {
  */
 export async function answerQuestion(question: string, context?: string): Promise<AiResponse> {
   try {
-    const response = await callOpenAI([
+    const response = await callAI([
       { role: 'system', content: 'Du bist ein hilfreicher Assistent für einen Discord-Server. Antworte kurz und präzise auf Deutsch.' },
       ...(context ? [{ role: 'system', content: `Kontext: ${context}` }] : []),
       { role: 'user', content: question },
@@ -48,7 +48,7 @@ export async function answerQuestion(question: string, context?: string): Promis
  */
 export async function analyzeSentiment(text: string): Promise<AiResponse> {
   try {
-    const response = await callOpenAI([
+    const response = await callAI([
       {
         role: 'system',
         content: 'Analysiere das Sentiment des folgenden Texts. Antworte im JSON-Format: {"score": -1 bis 1, "label": "positiv|neutral|negativ", "confidence": 0-1}',
@@ -75,7 +75,7 @@ export async function analyzeSentiment(text: string): Promise<AiResponse> {
  */
 export async function detectToxicity(text: string, userId?: string): Promise<AiResponse> {
   try {
-    const response = await callOpenAI([
+    const response = await callAI([
       {
         role: 'system',
         content: 'Analysiere ob der folgende Text toxisch, beleidigend, hasserfüllt oder unangemessen ist. Antworte im JSON-Format: {"toxic": true/false, "score": 0-1, "categories": ["hate", "harassment", "violence", "sexual", "spam"], "explanation": "..."}',
@@ -119,7 +119,7 @@ export async function detectToxicity(text: string, userId?: string): Promise<AiR
  */
 export async function translateText(text: string, targetLang: string = 'de'): Promise<AiResponse> {
   try {
-    const response = await callOpenAI([
+    const response = await callAI([
       {
         role: 'system',
         content: `Übersetze den folgenden Text nach ${targetLang}. Gib nur die Übersetzung zurück.`,
@@ -139,7 +139,7 @@ export async function translateText(text: string, targetLang: string = 'de'): Pr
  */
 export async function analyzeContext(messages: string[]): Promise<AiResponse> {
   try {
-    const response = await callOpenAI([
+    const response = await callAI([
       {
         role: 'system',
         content: 'Analysiere den Kontext der folgenden Nachrichten eines Discord-Channels. Identifiziere potenzielle Konflikte, Regel-Verstöße oder Eskalationen. Antworte im JSON-Format: {"risk_level": "low|medium|high", "issues": [...], "recommendations": [...]}',
@@ -167,7 +167,7 @@ export async function getModerationAdvice(
   previousActions?: string[]
 ): Promise<AiResponse> {
   try {
-    const response = await callOpenAI([
+    const response = await callAI([
       {
         role: 'system',
         content: 'Du bist ein erfahrener Discord-Moderator. Gib basierend auf der Situation einen Moderationshinweis. Berücksichtige bisherige Aktionen und Eskalationsstufen.',
@@ -185,31 +185,102 @@ export async function getModerationAdvice(
 }
 
 /**
- * OpenAI API aufrufen.
+ * OpenAI-kompatible API aufrufen (OpenAI, Groq — gleiches Format).
  */
-async function callOpenAI(messages: { role: string; content: string }[]): Promise<string> {
-  if (!config.ai.openaiApiKey) {
-    throw new Error('OpenAI API Key nicht konfiguriert.');
-  }
-
+async function callOpenAICompatible(
+  baseUrl: string,
+  apiKey: string,
+  model: string,
+  messages: { role: string; content: string }[],
+): Promise<string> {
   const response = await axios.post(
-    'https://api.openai.com/v1/chat/completions',
-    {
-      model: config.ai.model,
-      messages,
-      max_tokens: 1000,
-      temperature: 0.7,
-    },
+    `${baseUrl}/chat/completions`,
+    { model, messages, max_tokens: 1000, temperature: 0.7 },
     {
       headers: {
-        Authorization: `Bearer ${config.ai.openaiApiKey}`,
+        Authorization: `Bearer ${apiKey}`,
         'Content-Type': 'application/json',
       },
       timeout: 30000,
-    }
+    },
+  );
+  return response.data.choices[0]?.message?.content || '';
+}
+
+/**
+ * Google Gemini API aufrufen.
+ */
+async function callGemini(
+  apiKey: string,
+  model: string,
+  messages: { role: string; content: string }[],
+): Promise<string> {
+  // Gemini verwendet ein anderes Format
+  const contents = messages.map(m => ({
+    role: m.role === 'assistant' ? 'model' : m.role === 'system' ? 'user' : m.role,
+    parts: [{ text: m.content }],
+  }));
+
+  const response = await axios.post(
+    `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${apiKey}`,
+    { contents, generationConfig: { maxOutputTokens: 1000, temperature: 0.7 } },
+    { headers: { 'Content-Type': 'application/json' }, timeout: 30000 },
   );
 
-  return response.data.choices[0]?.message?.content || '';
+  return response.data.candidates?.[0]?.content?.parts?.[0]?.text || '';
+}
+
+/**
+ * AI-API aufrufen mit Multi-Provider-Fallback.
+ * Reihenfolge: Konfigurierter Provider → Fallback auf nächsten verfügbaren.
+ */
+async function callAI(messages: { role: string; content: string }[]): Promise<string> {
+  const providers = getProviderOrder();
+
+  for (const provider of providers) {
+    try {
+      switch (provider) {
+        case 'groq':
+          if (config.ai.groqApiKey) {
+            return await callOpenAICompatible(
+              'https://api.groq.com/openai/v1',
+              config.ai.groqApiKey,
+              config.ai.groqModel,
+              messages,
+            );
+          }
+          break;
+        case 'gemini':
+          if (config.ai.geminiApiKey) {
+            return await callGemini(config.ai.geminiApiKey, config.ai.geminiModel, messages);
+          }
+          break;
+        case 'openai':
+          if (config.ai.openaiApiKey) {
+            return await callOpenAICompatible(
+              'https://api.openai.com/v1',
+              config.ai.openaiApiKey,
+              config.ai.openaiModel,
+              messages,
+            );
+          }
+          break;
+      }
+    } catch (error) {
+      logger.warn(`AI-Provider ${provider} fehlgeschlagen, versuche nächsten...`, { error: String(error) });
+    }
+  }
+
+  throw new Error('Kein AI-Provider verfügbar. Konfiguriere GROQ_API_KEY, GEMINI_API_KEY oder OPENAI_API_KEY.');
+}
+
+/**
+ * Provider-Reihenfolge basierend auf Konfiguration.
+ */
+function getProviderOrder(): ('groq' | 'gemini' | 'openai')[] {
+  const all: ('groq' | 'gemini' | 'openai')[] = ['groq', 'gemini', 'openai'];
+  const primary = config.ai.provider;
+  return [primary, ...all.filter(p => p !== primary)];
 }
 
 // ===== AUTO-RESPONDER (Sektion 4) =====
@@ -289,7 +360,7 @@ export async function processAutoResponse(
 
       if (rule.useAi && rule.aiPrompt) {
         try {
-          const aiResp = await callOpenAI([
+          const aiResp = await callAI([
             { role: 'system', content: rule.aiPrompt },
             { role: 'user', content },
           ]);
@@ -346,31 +417,10 @@ export async function executeAiModule(moduleId: string, input: string): Promise<
   if (!mod.isActive) return { success: false, error: 'Modul ist deaktiviert.' };
 
   try {
-    if (!config.ai.openaiApiKey) {
-      throw new Error('OpenAI API Key nicht konfiguriert.');
-    }
-
-    const response = await axios.post(
-      'https://api.openai.com/v1/chat/completions',
-      {
-        model: config.ai.model,
-        messages: [
-          { role: 'system', content: mod.systemPrompt },
-          { role: 'user', content: input },
-        ],
-        max_tokens: mod.maxTokens,
-        temperature: mod.temperature,
-      },
-      {
-        headers: {
-          Authorization: `Bearer ${config.ai.openaiApiKey}`,
-          'Content-Type': 'application/json',
-        },
-        timeout: 30000,
-      }
-    );
-
-    const result = response.data.choices[0]?.message?.content || '';
+    const result = await callAI([
+      { role: 'system', content: mod.systemPrompt },
+      { role: 'user', content: input },
+    ]);
     return { success: true, result };
   } catch (error) {
     logger.error(`Custom AI Module ${moduleId} Fehler:`, error);
