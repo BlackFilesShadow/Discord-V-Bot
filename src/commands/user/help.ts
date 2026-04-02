@@ -100,11 +100,15 @@ async function checkUserRoles(userId: string): Promise<{ isAdmin: boolean; isDev
   const isOwner = userId === config.discord.ownerId;
   if (isOwner) return { isAdmin: true, isDev: true };
 
+  // DEV-Session prüfen
+  const { devAuthenticatedUsers } = require('../../events/interactionCreate');
+  const sessionValid = devAuthenticatedUsers?.get(userId) > Date.now();
+
   const dbUser = await prisma.user.findUnique({ where: { discordId: userId } });
   if (!dbUser) return { isAdmin: false, isDev: false };
 
   const isAdmin = ['ADMIN', 'SUPER_ADMIN', 'DEVELOPER'].includes(dbUser.role);
-  const isDev = dbUser.role === 'DEVELOPER';
+  const isDev = dbUser.role === 'DEVELOPER' && sessionValid;
   return { isAdmin, isDev };
 }
 
