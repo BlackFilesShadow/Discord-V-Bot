@@ -1,10 +1,10 @@
 {
   "compilerOptions": {
     "target": "ES2022",
-    "module": "commonjs",
+    "module": "Node16",
     "lib": ["ES2022"],
     "outDir": "./dist",
-    "rootDir": "./src",
+    "rootDir": "./",
     "strict": true,
     "esModuleInterop": true,
     "skipLibCheck": true,
@@ -12,8 +12,11 @@
     "resolveJsonModule": true,
     // "declaration": true,
     // "declarationMap": true,
-    "sourceMap": true
+    "sourceMap": true,
+    "moduleResolution": "node16",
+    "types": ["jest"],
+    "typeRoots": ["./node_modules/@types", "./types"]
   },
-  "include": ["src/**/*.ts", "prisma/seed.ts"],
-  "exclude": ["node_modules", "dist", "tests"]
+  "include": ["src/**/*.ts", "prisma/seed.ts", "tests/**/*.ts"],
+  "exclude": ["node_modules", "dist"]
 }

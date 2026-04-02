@@ -31,12 +31,22 @@ const leaderboardCommand: Command = {
         .setRequired(false)
         .setMinValue(1)
     )
+    .addStringOption(opt =>
+      opt
+        .setName('modus')
+        .setDescription('Feed-Modus: einmalig oder Intervall')
+        .setRequired(false)
+        .addChoices(
+          { name: 'Einmalig', value: 'once' },
+          { name: 'Intervall (Feed)', value: 'feed' },
+        )
+    )
     .addIntegerOption(opt =>
       opt
-        .setName('dauer')
-        .setDescription('Anzeigedauer in Sekunden (optional, 10–300)')
-        .setMinValue(10)
-        .setMaxValue(300)
+        .setName('intervall')
+        .setDescription('Feed-Intervall in Minuten (nur bei Feed)')
+        .setMinValue(1)
+        .setMaxValue(1440)
         .setRequired(false)
     ),
 
@@ -137,20 +147,38 @@ const leaderboardCommand: Command = {
       )
       .setFooter({ text: `Seite ${page}/${totalPages} ${Brand.dot} ${total} Mitglieder ${Brand.dot} ${Brand.footerText}` });
 
-    const dauer = interaction.options.getInteger('dauer');
-    const reply = await interaction.editReply({ embeds: [embed] });
+    const modus = interaction.options.getString('modus') || 'once';
+    const intervall = interaction.options.getInteger('intervall') || 60;
 
-    // Wenn Dauer gesetzt, Nachricht nach Ablauf löschen oder als abgelaufen markieren
-    if (dauer && dauer >= 10 && dauer <= 300) {
-      setTimeout(async () => {
+    if (modus === 'feed') {
+      // Feed-Modus: Leaderboard wird im Intervall gepostet
+      await interaction.editReply({ content: `⏳ Leaderboard-Feed wird alle ${intervall} Minuten gepostet. Zum Stoppen: /leaderboard mit Modus 'once' ausführen.`, embeds: [] });
+
+      // Feed-Logik: Intervall speichern (in-memory, pro Channel)
+      // Hinweis: Für produktiven Einsatz sollte ein persistenter Speicher genutzt werden!
+      const gAny = globalThis as any;
+      if (!gAny.leaderboardFeeds) gAny.leaderboardFeeds = {};
+      const channelId = interaction.channelId;
+      if (gAny.leaderboardFeeds[channelId]) {
+        clearInterval(gAny.leaderboardFeeds[channelId]);
+      }
+      gAny.leaderboardFeeds[channelId] = setInterval(async () => {
         try {
-          // Versuche zu löschen, falls Bot Rechte hat
-          await interaction.deleteReply();
-        } catch (err) {
-          // Falls nicht löschbar, als abgelaufen markieren
-          await interaction.editReply({ content: '⏰ Leaderboard abgelaufen.', embeds: [] });
-        }
-      }, dauer * 1000);
+          await (interaction.channel as any)?.send({ embeds: [embed] });
+        } catch {}
+      }, intervall * 60 * 1000);
+      // Direkt initial posten
+      await (interaction.channel as any)?.send({ embeds: [embed] });
+      return;
+    } else {
+      // Einmalige Anzeige
+      await interaction.editReply({ embeds: [embed] });
+      // Feed ggf. stoppen
+      const gAny = globalThis as any;
+      if (gAny.leaderboardFeeds && gAny.leaderboardFeeds[interaction.channelId]) {
+        clearInterval(gAny.leaderboardFeeds[interaction.channelId]);
+        delete gAny.leaderboardFeeds[interaction.channelId];
+      }
     }
   },
 };

@@ -1,9 +1,10 @@
 {
   "extends": "./tsconfig.json",
   "compilerOptions": {
-    "rootDir": ".",
+    
     "baseUrl": ".",
     "noEmit": true,
+    "moduleResolution": "node",
     "paths": {
       "@utils/*": ["src/utils/*"],
       "@modules/*": ["src/modules/*"],

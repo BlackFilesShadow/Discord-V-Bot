@@ -192,7 +192,7 @@ export async function verifyOneTimePassword(userId: string, password: string) {
   }
 
   // Passwort gegen alle gültigen OTPs prüfen
-  const { verifyPassword } = await import('../../utils/password');
+  const { verifyPassword } = await import('../../utils/password.js');
   let matchedOtp = null;
 
   for (const otp of otps) {

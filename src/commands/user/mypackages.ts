@@ -191,7 +191,7 @@ async function handleInfo(interaction: ChatInputCommandInteraction, userId: stri
 
 async function handleDelete(interaction: ChatInputCommandInteraction, userId: string) {
   const paketname = interaction.options.getString('paketname', true);
-  const { deletePackage } = await import('../../modules/upload/uploadHandler');
+  const { deletePackage } = await import('../../modules/upload/uploadHandler.js');
 
   const pkg = await prisma.package.findFirst({
     where: { userId, name: paketname, isDeleted: false },
@@ -211,7 +211,7 @@ async function handleDelete(interaction: ChatInputCommandInteraction, userId: st
 
 async function handleRestore(interaction: ChatInputCommandInteraction, userId: string) {
   const paketname = interaction.options.getString('paketname', true);
-  const { restorePackage } = await import('../../modules/upload/uploadHandler');
+  const { restorePackage } = await import('../../modules/upload/uploadHandler.js');
 
   const pkg = await prisma.package.findFirst({
     where: { userId, name: paketname, isDeleted: true },
@@ -363,7 +363,7 @@ async function handleDeleteFile(interaction: ChatInputCommandInteraction, userId
         deleted++;
       }
 
-      const { logAudit } = await import('../../utils/logger');
+      const { logAudit } = await import('../../utils/logger.js');
       logAudit('FILES_DELETED_BY_MANUFACTURER', 'UPLOAD', {
         userId,
         packageId: selectedPkgId,
