@@ -47,6 +47,16 @@ const levelCommand: Command = {
       where: { xp: { gt: ld.xp } },
     }) + 1;
 
+    // XP-Konfiguration laden (pro Server)
+    const guildId = interaction.guildId;
+    let xpConfig = null;
+    if (guildId) {
+      xpConfig = await prisma.xpConfig.findUnique({ where: { id: guildId } });
+    }
+    const minXp = xpConfig?.messageXpMin ?? 15;
+    const maxXp = xpConfig?.messageXpMax ?? 25;
+    const multiplier = xpConfig?.levelMultiplier ?? 1.0;
+
     const embed = vEmbed(Colors.Gold)
       .setTitle(`⭐  ${targetUser.username}`)
       .setThumbnail(targetUser.displayAvatarURL())
