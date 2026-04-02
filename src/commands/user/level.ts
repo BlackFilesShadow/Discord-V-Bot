@@ -1,6 +1,7 @@
 import { SlashCommandBuilder, ChatInputCommandInteraction, EmbedBuilder } from 'discord.js';
 import { Command } from '../../types';
 import prisma from '../../database/prisma';
+import { Colors, Brand, vEmbed, progressBar } from '../../utils/embedDesign';
 
 /**
  * /level Command (Sektion 8):
@@ -38,28 +39,29 @@ const levelCommand: Command = {
     const progressPercent = Math.min(100, Math.floor((xpProgress / xpNeeded) * 100));
 
     // Fortschrittsbalken
-    const barLength = 20;
-    const filled = Math.floor((progressPercent / 100) * barLength);
-    const progressBar = '█'.repeat(filled) + '░'.repeat(barLength - filled);
+    const barLength = 16;
+    const bar = progressBar(xpProgress, xpNeeded, barLength);
 
     // Rang berechnen
     const rank = await prisma.levelData.count({
       where: { xp: { gt: ld.xp } },
     }) + 1;
 
-    const embed = new EmbedBuilder()
-      .setTitle(`⭐ Level von ${targetUser.username}`)
-      .setColor(0xffd700)
+    const embed = vEmbed(Colors.Gold)
+      .setTitle(`⭐  ${targetUser.username}`)
       .setThumbnail(targetUser.displayAvatarURL())
-      .addFields(
-        { name: '🏆 Level', value: ld.level.toString(), inline: true },
-        { name: '✨ XP', value: `${currentXp.toLocaleString('de-DE')}`, inline: true },
-        { name: '🏅 Rang', value: `#${rank}`, inline: true },
-        { name: '📊 Fortschritt', value: `${progressBar} ${progressPercent}%\n${xpProgress.toLocaleString('de-DE')} / ${xpNeeded.toLocaleString('de-DE')} XP`, inline: false },
-        { name: '💬 Nachrichten', value: ld.totalMessages.toLocaleString('de-DE'), inline: true },
-        { name: '🎙️ Voice (Min)', value: ld.voiceMinutes.toLocaleString('de-DE'), inline: true },
+      .setDescription(
+        `${Brand.divider}\n\n` +
+        `🏆 **Level ${ld.level}** ${Brand.dot} Rang **#${rank}**\n\n` +
+        `${bar}  **${progressPercent}%**\n` +
+        `┃ ${xpProgress.toLocaleString('de-DE')} / ${xpNeeded.toLocaleString('de-DE')} XP\n\n` +
+        Brand.divider
       )
-      .setTimestamp();
+      .addFields(
+        { name: '✨ Gesamt-XP', value: `**${currentXp.toLocaleString('de-DE')}**`, inline: true },
+        { name: '💬 Nachrichten', value: `**${ld.totalMessages.toLocaleString('de-DE')}**`, inline: true },
+        { name: '🎙️ Voice', value: `**${ld.voiceMinutes.toLocaleString('de-DE')}** Min`, inline: true },
+      );
 
     await interaction.editReply({ embeds: [embed] });
   },

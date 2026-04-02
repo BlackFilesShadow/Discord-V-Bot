@@ -9,6 +9,8 @@ import {
 } from 'discord.js';
 import { Command } from '../../types';
 import prisma from '../../database/prisma';
+import { Colors, Brand, vEmbed, formatBytes } from '../../utils/embedDesign';
+import { createBotEmbed } from '../../utils/embedUtil';
 
 /**
  * /mypackages Command (Sektion 2):
@@ -120,14 +122,7 @@ async function handleList(interaction: ChatInputCommandInteraction, userId: stri
     return;
   }
 
-  const embed = new EmbedBuilder()
-    .setTitle('📦 Deine Pakete')
-    .setColor(0x0099ff)
-    .setTimestamp()
-    .setFooter({ text: `${packages.length} Paket(e) gefunden` });
-
-  for (const pkg of packages.slice(0, 25)) {
-    embed.addFields({
+    const fields = packages.slice(0, 25).map(pkg => ({
       name: `📦 ${pkg.name}`,
       value: [
         `📊 Dateien: ${pkg._count.files}`,
@@ -137,10 +132,15 @@ async function handleList(interaction: ChatInputCommandInteraction, userId: stri
         `🔹 Status: ${pkg.status}`,
       ].join('\n'),
       inline: true,
+    }));
+    const embed = createBotEmbed({
+      title: '📦 Deine Pakete',
+      color: Colors.Primary,
+      fields,
+      footer: `${packages.length} Paket(e) ${Brand.dot} ${Brand.footerText}`,
+      timestamp: true,
     });
-  }
-
-  await interaction.editReply({ embeds: [embed] });
+    await interaction.editReply({ embeds: [embed] });
 }
 
 async function handleInfo(interaction: ChatInputCommandInteraction, userId: string) {
@@ -162,10 +162,8 @@ async function handleInfo(interaction: ChatInputCommandInteraction, userId: stri
     return;
   }
 
-  const embed = new EmbedBuilder()
-    .setTitle(`📦 Paket: ${pkg.name}`)
-    .setColor(0x0099ff)
-    .setTimestamp()
+  const embed = vEmbed(Colors.Primary)
+    .setTitle(`📦  Paket: ${pkg.name}`)
     .addFields(
       { name: '🆔 Paket-ID', value: pkg.id, inline: true },
       { name: '💾 Gesamtgröße', value: formatBytes(Number(pkg.totalSize)), inline: true },
@@ -399,14 +397,6 @@ async function handleDeleteFile(interaction: ChatInputCommandInteraction, userId
       try { await interaction.editReply({ components: [] }); } catch {}
     }
   });
-}
-
-function formatBytes(bytes: number): string {
-  if (bytes === 0) return '0 B';
-  const k = 1024;
-  const sizes = ['B', 'KB', 'MB', 'GB'];
-  const i = Math.floor(Math.log(bytes) / Math.log(k));
-  return `${(bytes / Math.pow(k, i)).toFixed(2)} ${sizes[i]}`;
 }
 
 export default mypackagesCommand;

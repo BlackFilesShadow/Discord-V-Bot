@@ -1,6 +1,7 @@
 import prisma from '../../database/prisma';
 import { logAudit } from '../../utils/logger';
 import { Client, EmbedBuilder, TextChannel } from 'discord.js';
+import { Colors, Brand, vEmbed, percentBar } from '../../utils/embedDesign';
 
 /**
  * Poll-System Modul (Sektion 10):
@@ -17,7 +18,7 @@ export interface PollOption {
   emoji: string;
 }
 
-const DEFAULT_EMOJIS = ['1️⃣', '2️⃣', '3️⃣', '4️⃣', '5️⃣', '6️⃣', '7️⃣', '8️⃣', '9️⃣', '🔟'];
+export const DEFAULT_EMOJIS = ['1️⃣', '2️⃣', '3️⃣', '4️⃣', '5️⃣', '6️⃣', '7️⃣', '8️⃣', '9️⃣', '🔟'];
 
 /**
  * Erstellt eine neue Umfrage.
@@ -79,30 +80,28 @@ export function createPollEmbed(
   const optionLines = options.map(opt => {
     const voteCount = votes[opt.id] || 0;
     const percentage = totalVotes > 0 ? Math.round((voteCount / totalVotes) * 100) : 0;
-    const barLength = 15;
-    const filled = Math.round((percentage / 100) * barLength);
-    const bar = '█'.repeat(filled) + '░'.repeat(barLength - filled);
-    return `${opt.emoji} **${opt.text}**\n${bar} ${percentage}% (${voteCount} Stimmen)`;
+    const bar = percentBar(percentage, 14);
+    return `${opt.emoji} **${opt.text}**\n┃ ${bar}  **${percentage}%** (${voteCount})`;
   });
 
-  const embed = new EmbedBuilder()
-    .setTitle(`📊 ${title}`)
+  const embed = vEmbed(Colors.Poll)
+    .setTitle(`📊  ${title}`)
     .setDescription(
-      (description ? `${description}\n\n` : '') +
-      optionLines.join('\n\n')
+      (description ? `> ${description}\n\n` : '') +
+      `${Brand.divider}\n\n` +
+      optionLines.join('\n\n') +
+      `\n\n${Brand.divider}`
     )
-    .setColor(0x3498db)
     .addFields(
-      { name: 'Typ', value: pollType === 'ANONYMOUS' ? '🔒 Anonym' : '👁️ Öffentlich', inline: true },
-      { name: 'Stimmen', value: `${totalVotes}`, inline: true },
-    )
-    .setTimestamp();
+      { name: '📋 Typ', value: pollType === 'ANONYMOUS' ? '🔒 Anonym' : '👁️ Öffentlich', inline: true },
+      { name: '🗳️ Stimmen', value: `**${totalVotes}**`, inline: true },
+    );
 
   if (endsAt) {
     embed.addFields({ name: '⏰ Endet', value: `<t:${Math.floor(endsAt.getTime() / 1000)}:R>`, inline: true });
   }
 
-  embed.setFooter({ text: 'Reagiere mit dem entsprechenden Emoji um abzustimmen!' });
+  embed.setFooter({ text: `${Brand.footerText} ${Brand.dot} Reagiere mit dem Emoji um abzustimmen` });
 
   return embed;
 }
@@ -258,19 +257,18 @@ export function startPollScheduler(client: Client): void {
           const channel = await client.channels.fetch(poll.channelId) as TextChannel;
           if (channel) {
             const resultLines = result.results.map((r, i) => {
-              const medal = i === 0 ? '🥇' : i === 1 ? '🥈' : i === 2 ? '🥉' : `${i + 1}.`;
-              return `${medal} **${r.option}** — ${r.votes} Stimmen (${r.percentage}%)`;
+              const medal = i === 0 ? '🥇' : i === 1 ? '🥈' : i === 2 ? '🥉' : `**${i + 1}.**`;
+              const bar = percentBar(r.percentage, 10);
+              return `${medal} **${r.option}**\n┃ ${bar}  **${r.percentage}%** (${r.votes} Stimmen)`;
             });
 
-            const embed = new EmbedBuilder()
-              .setTitle(`📊 Umfrage beendet: ${result.title}`)
-              .setDescription(resultLines.join('\n'))
-              .setColor(0x2ecc71)
+            const embed = vEmbed(Colors.Success)
+              .setTitle(`📊  Umfrage beendet: ${result.title}`)
+              .setDescription(`${Brand.divider}\n\n` + resultLines.join('\n\n') + `\n\n${Brand.divider}`)
               .addFields(
-                { name: '🏆 Gewinner', value: result.winner, inline: true },
-                { name: '🗳️ Stimmen gesamt', value: `${result.totalVotes}`, inline: true },
-              )
-              .setTimestamp();
+                { name: '🏆 Gewinner', value: `**${result.winner}**`, inline: true },
+                { name: '🗳️ Stimmen', value: `**${result.totalVotes}**`, inline: true },
+              );
 
             // Rollen-Ping bei Beendigung (optional)
             const mentionContent = poll.notifyRoleId ? `<@&${poll.notifyRoleId}> 📊 Umfrage **${result.title}** wurde beendet!` : undefined;

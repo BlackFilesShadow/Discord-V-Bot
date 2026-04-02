@@ -9,6 +9,9 @@ import {
 import { grantEventXp } from '../../modules/xp/xpManager';
 import prisma from '../../database/prisma';
 
+import { Colors, Brand, vEmbed } from '../../utils/embedDesign';
+import { createBotEmbed } from '../../utils/embedUtil';
+
 /**
  * /giveaway Command (Sektion 6): Giveaway-System.
  */
@@ -129,13 +132,27 @@ async function handleStart(interaction: ChatInputCommandInteraction) {
     return;
   }
 
-  const embed = createGiveawayEmbed(
-    giveaway,
-    0,
-    interaction.user.username
-  );
 
-  embed.addFields({ name: '🆔 ID', value: giveaway.id, inline: false });
+  // Neues Embed-Design mit createBotEmbed
+  const embed = createBotEmbed({
+    title: '🎉 GIVEAWAY',
+    description: [
+      giveaway.description ? `> ${giveaway.description}` : undefined,
+      '━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━',
+      `🏆 **Preis:** ${giveaway.prize}`,
+      `⏰ **Endet:** <t:${Math.floor(giveaway.endsAt.getTime() / 1000)}:R>`,
+      `👥 **Teilnehmer:** 0`,
+      `🎁 **Von:** ${interaction.user.username}`,
+      '━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━',
+      `*Reagiere mit ${giveaway.customEmoji || '🎉'} um teilzunehmen!*`,
+    ].filter(Boolean).join('\n'),
+    fields: [
+      { name: '🆔 ID', value: giveaway.id, inline: false },
+    ],
+    color: Colors.Giveaway,
+    footer: `${Brand.footerText} • Giveaway`,
+    timestamp: true,
+  });
 
   const msg = await interaction.editReply({ embeds: [embed] });
 
@@ -187,14 +204,26 @@ async function handleInfo(interaction: ChatInputCommandInteraction) {
     return;
   }
 
-  const embed = createGiveawayEmbed(
-    giveaway,
-    giveaway._count.entries,
-    giveaway.creator.username
-  );
-
-  embed.addFields({ name: '🆔 ID', value: giveaway.id, inline: false });
-
+  // Neues Embed-Design mit createBotEmbed
+  const embed = createBotEmbed({
+    title: '🎉 GIVEAWAY',
+    description: [
+      giveaway.description ? `> ${giveaway.description}` : undefined,
+      '━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━',
+      `🏆 **Preis:** ${giveaway.prize}`,
+      `⏰ **Endet:** <t:${Math.floor(giveaway.endsAt.getTime() / 1000)}:R>`,
+      `👥 **Teilnehmer:** ${giveaway._count.entries}`,
+      `🎁 **Von:** ${giveaway.creator.username}`,
+      '━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━',
+      `*Reagiere mit ${giveaway.customEmoji || '🎉'} um teilzunehmen!*`,
+    ].filter(Boolean).join('\n'),
+    fields: [
+      { name: '🆔 ID', value: giveaway.id, inline: false },
+    ],
+    color: Colors.Giveaway,
+    footer: `${Brand.footerText} • Giveaway`,
+    timestamp: true,
+  });
   await interaction.editReply({ embeds: [embed] });
 }
 
@@ -267,23 +296,24 @@ async function handleList(interaction: ChatInputCommandInteraction) {
     return;
   }
 
-  const embed = new EmbedBuilder()
-    .setTitle('🎉 Aktive Giveaways')
-    .setColor(0xff69b4)
-    .setTimestamp();
+  const fields = activeGiveaways.map(g => ({
+    name: `🏆 ${g.prize}`,
+    value: [
+      `⏰ Endet: <t:${Math.floor(g.endsAt.getTime() / 1000)}:R>`,
+      `👥 Teilnehmer: **${g._count.entries}**`,
+      `🎁 Von: ${g.creator.username}`,
+      `\`${g.id}\``,
+    ].join('\n'),
+    inline: true,
+  }));
 
-  for (const g of activeGiveaways) {
-    embed.addFields({
-      name: `🏆 ${g.prize}`,
-      value: [
-        `⏰ Endet: <t:${Math.floor(g.endsAt.getTime() / 1000)}:R>`,
-        `👥 Teilnehmer: ${g._count.entries}`,
-        `🎁 Von: ${g.creator.username}`,
-        `🆔 \`${g.id}\``,
-      ].join('\n'),
-      inline: true,
-    });
-  }
+  const embed = createBotEmbed({
+    title: '🎉 Aktive Giveaways',
+    color: Colors.Giveaway,
+    fields,
+    footer: `${Brand.footerText} • Giveaway`,
+    timestamp: true,
+  });
 
   await interaction.editReply({ embeds: [embed] });
 }

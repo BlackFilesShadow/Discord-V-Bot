@@ -43,6 +43,14 @@ export async function downloadSingleFile(
     return { success: false, message: 'Datei nicht mehr verfügbar.' };
   }
 
+  // Sicherheitscheck: Pfad darf nicht außerhalb des Upload-Verzeichnisses liegen
+  const resolvedPath = path.resolve(upload.filePath);
+  const uploadRoot = path.resolve(config.upload.dir);
+  if (!resolvedPath.startsWith(uploadRoot)) {
+    logger.error(`Path traversal blocked: ${resolvedPath} outside ${uploadRoot}`);
+    return { success: false, message: 'Dateizugriff verweigert.' };
+  }
+
   // Rate-Limit prüfen
   if (downloaderDiscordId) {
     const rl = await checkRateLimit(downloaderDiscordId, 'download');

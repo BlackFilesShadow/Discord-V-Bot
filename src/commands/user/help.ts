@@ -10,6 +10,8 @@ import {
 import { Command } from '../../types';
 import prisma from '../../database/prisma';
 import { config } from '../../config';
+import { Colors, Brand, vEmbed } from '../../utils/embedDesign';
+import { createBotEmbed } from '../../utils/embedUtil';
 
 /**
  * /help Command:
@@ -143,129 +145,140 @@ function buildPages(isAdmin: boolean, isDev: boolean): HelpPage[] {
     // ── Seite 1: Übersicht ──
     {
       id: 'overview',
-      embed: new EmbedBuilder()
-        .setTitle('📖 V-Bot – Command-Übersicht')
-        .setDescription(
-          'Verwende ◀ ▶ um durch die Kategorien zu blättern.\n' +
-          'Jede Seite zeigt die verfügbaren Commands mit Kurzerklärung.\n\n' +
-          '**Kategorien:**'
-        )
-        .setColor(0x0099ff)
-        .addFields(
-          { name: '📝 Registrierung', value: 'Hersteller werden & verifizieren', inline: true },
-          { name: '📤 Upload & Download', value: 'Dateien hoch-/herunterladen', inline: true },
-          { name: '📦 Pakete', value: 'Eigene Pakete verwalten', inline: true },
-          { name: '🎉 Giveaway', value: 'Giveaways erstellen & teilnehmen', inline: true },
-          { name: '⭐ Level & XP', value: 'Level, XP & Leaderboard', inline: true },
-          { name: '📊 Umfragen', value: 'Umfragen erstellen & abstimmen', inline: true },
-          { name: '🛡️ Moderation', value: 'Kick, Ban, Mute, Warn', inline: true },
-          { name: '🔗 Feeds', value: 'News & Social Media Feeds', inline: true },
-          { name: '🛠️ Auto-Rollen', value: 'Automatische Rollenvergabe', inline: true },
-        )
-        .setFooter({ text: 'Seite 1 – Übersicht' })
-        .setTimestamp(),
+      embed: createBotEmbed({
+        title: '📖  V-Bot — Command-Übersicht',
+        description: '> Willkommen beim **V-Bot**! Blättere mit ◀ ▶ durch die Kategorien.\n\n' + Brand.divider,
+        color: Colors.Primary,
+        fields: [
+          { name: '📝 Registrierung', value: '`Seite 2`', inline: true },
+          { name: '📤 Upload & Download', value: '`Seite 3`', inline: true },
+          { name: '📦 Pakete', value: '`Seite 4`', inline: true },
+          { name: '🎉 Giveaway', value: '`Seite 5`', inline: true },
+          { name: '⭐ Level & XP', value: '`Seite 6`', inline: true },
+          { name: '📊 Umfragen', value: '`Seite 7`', inline: true },
+          { name: '🛡️ Moderation', value: '`Seite 8`', inline: true },
+          { name: '🔗 Feeds', value: '`/feed`', inline: true },
+          { name: '🛠️ Auto-Rollen', value: '`/autorole`', inline: true },
+        ],
+        footer: `Seite 1 ${Brand.dot} Übersicht ${Brand.dot} ${Brand.footerText}`,
+        timestamp: true,
+      }),
     },
     // ── Seite 2: Registrierung ──
     {
       id: 'registration',
-      embed: new EmbedBuilder()
-        .setTitle('📝 Registrierung')
-        .setDescription('Werde Hersteller, um Pakete hochzuladen.')
-        .setColor(0x0099ff)
-        .addFields(
-          { name: '`/register manufacturer [reason]`', value: 'Sende eine Hersteller-Anfrage an den Admin.' },
-          { name: '`/register verify <password>`', value: 'Gib dein Einmal-Passwort (OTP) ein, um dich zu verifizieren.' },
-        )
-        .setFooter({ text: 'Seite 2 – Registrierung' }),
+      embed: createBotEmbed({
+        title: '📝  Registrierung',
+        description: '> Werde Hersteller, um Pakete hochzuladen.\n\n' + Brand.divider,
+        color: Colors.Primary,
+        fields: [
+          { name: '`/register manufacturer`', value: '┃ Sende eine Hersteller-Anfrage an den Admin.' },
+          { name: '`/register verify <password>`', value: '┃ Gib dein Einmal-Passwort (OTP) ein.' },
+        ],
+        footer: `Seite 2 ${Brand.dot} Registrierung ${Brand.dot} ${Brand.footerText}`,
+        timestamp: true,
+      }),
     },
     // ── Seite 3: Upload & Download ──
     {
       id: 'upload',
-      embed: new EmbedBuilder()
-        .setTitle('📤 Upload & Download')
-        .setDescription('Lade XML/JSON-Dateien hoch oder lade Pakete herunter.')
-        .setColor(0x0099ff)
-        .addFields(
-          { name: '`/upload <paketname> <datei> [datei2..datei10] [beschreibung]`', value: 'Lade bis zu **10 Dateien** (XML/JSON) gleichzeitig in ein Paket hoch.' },
-          { name: '`/download`', value: 'Wähle zuerst einen Hersteller, dann eine einzelne Datei zum Download.' },
-          { name: '`/search <suchbegriff>`', value: 'Suche nach Paketen, Dateien oder Herstellern.' },
-        )
-        .setFooter({ text: 'Seite 3 – Upload & Download' }),
+      embed: createBotEmbed({
+        title: '📤  Upload & Download',
+        description: '> Lade XML/JSON-Dateien hoch oder lade Pakete herunter.\n\n' + Brand.divider,
+        color: Colors.Primary,
+        fields: [
+          { name: '`/upload <paketname> <datei> [...]`', value: '┃ Bis zu **10 Dateien** gleichzeitig hochladen.' },
+          { name: '`/download`', value: '┃ Hersteller → Datei auswählen und herunterladen.' },
+          { name: '`/search <suchbegriff>`', value: '┃ Pakete, Dateien oder Hersteller suchen.' },
+        ],
+        footer: `Seite 3 ${Brand.dot} Upload & Download ${Brand.dot} ${Brand.footerText}`,
+        timestamp: true,
+      }),
     },
     // ── Seite 4: Pakete ──
     {
       id: 'packages',
-      embed: new EmbedBuilder()
-        .setTitle('📦 Meine Pakete')
-        .setDescription('Verwalte deine eigenen Pakete als Hersteller.')
-        .setColor(0x0099ff)
-        .addFields(
-          { name: '`/mypackages list`', value: 'Zeige alle deine Pakete an.' },
-          { name: '`/mypackages info <paket>`', value: 'Detailansicht eines Pakets (Dateien, Größe, Status).' },
-          { name: '`/mypackages delete <paket>`', value: 'Paket löschen (Soft-Delete, wiederherstellbar).' },
-          { name: '`/mypackages restore <paket>`', value: 'Gelöschtes Paket wiederherstellen.' },
-          { name: '`/mypackages delete-file`', value: 'Einzelne Datei aus einem Paket löschen (Dropdown).' },
-        )
-        .setFooter({ text: 'Seite 4 – Pakete' }),
+      embed: createBotEmbed({
+        title: '📦  Meine Pakete',
+        description: '> Verwalte deine eigenen Pakete als Hersteller.\n\n' + Brand.divider,
+        color: 0x0099ff,
+        fields: [
+          { name: '`/mypackages list`', value: '┃ Alle deine Pakete anzeigen.' },
+          { name: '`/mypackages info <paket>`', value: '┃ Detailansicht eines Pakets.' },
+          { name: '`/mypackages delete <paket>`', value: '┃ Paket löschen (Soft-Delete).' },
+          { name: '`/mypackages restore <paket>`', value: '┃ Gelöschtes Paket wiederherstellen.' },
+          { name: '`/mypackages delete-file`', value: '┃ Einzelne Datei löschen (Dropdown).' },
+        ],
+        footer: `Seite 4 ${Brand.dot} Pakete ${Brand.dot} ${Brand.footerText}`,
+        timestamp: true,
+      }),
     },
     // ── Seite 5: Giveaway ──
     {
       id: 'giveaway',
-      embed: new EmbedBuilder()
-        .setTitle('🎉 Giveaway')
-        .setDescription('Erstelle und verwalte Giveaways.')
-        .setColor(0x0099ff)
-        .addFields(
-          { name: '`/giveaway start <preis> <dauer>`', value: 'Starte ein neues Giveaway mit Preis und Dauer.' },
-          { name: '`/giveaway enter <id>`', value: 'Nimm an einem laufenden Giveaway teil.' },
-          { name: '`/giveaway info <id>`', value: 'Zeige Infos zu einem Giveaway an.' },
-          { name: '`/giveaway end <id>`', value: 'Beende ein Giveaway vorzeitig (nur Ersteller).' },
-        )
-        .setFooter({ text: 'Seite 5 – Giveaway' }),
+      embed: createBotEmbed({
+        title: '🎉  Giveaway',
+        description: '> Erstelle und verwalte Giveaways.\n\n' + Brand.divider,
+        color: Colors.Giveaway,
+        fields: [
+          { name: '`/giveaway start <preis> <dauer>`', value: '┃ Neues Giveaway mit Preis und Dauer starten.' },
+          { name: '`/giveaway enter <id>`', value: '┃ An einem Giveaway teilnehmen.' },
+          { name: '`/giveaway info <id>`', value: '┃ Infos zu einem Giveaway anzeigen.' },
+          { name: '`/giveaway end <id>`', value: '┃ Giveaway vorzeitig beenden.' },
+        ],
+        footer: `Seite 5 ${Brand.dot} Giveaway ${Brand.dot} ${Brand.footerText}`,
+        timestamp: true,
+      }),
     },
     // ── Seite 6: Level & XP ──
     {
       id: 'level',
-      embed: new EmbedBuilder()
-        .setTitle('⭐ Level & XP')
-        .setDescription('Sammle XP durch Aktivität im Server.')
-        .setColor(0x0099ff)
-        .addFields(
-          { name: '`/level [user]`', value: 'Zeige dein Level oder das eines anderen Users.' },
-          { name: '`/leaderboard [seite]`', value: 'Zeige das Leaderboard (Top-User nach XP).' },
-        )
-        .setFooter({ text: 'Seite 6 – Level & XP' }),
+      embed: createBotEmbed({
+        title: '⭐  Level & XP',
+        description: '> Sammle XP durch Aktivität im Server.\n\n' + Brand.divider,
+        color: Colors.Gold,
+        fields: [
+          { name: '`/level [user]`', value: '┃ Dein Level oder das eines anderen Users.' },
+          { name: '`/leaderboard [seite]`', value: '┃ Top-User nach XP anzeigen.' },
+        ],
+        footer: `Seite 6 ${Brand.dot} Level & XP ${Brand.dot} ${Brand.footerText}`,
+        timestamp: true,
+      }),
     },
     // ── Seite 7: Umfragen ──
     {
       id: 'polls',
-      embed: new EmbedBuilder()
-        .setTitle('📊 Umfragen')
-        .setDescription('Erstelle Umfragen und stimme ab.')
-        .setColor(0x0099ff)
-        .addFields(
-          { name: '`/poll erstellen <titel> <optionen> [dauer] [einheit]`', value: 'Erstelle eine Umfrage. Dauer in Min/Std/Tage/Wochen.' },
-          { name: '`/poll vote <id> <option>`', value: 'Stimme in einer Umfrage ab.' },
-          { name: '`/poll results <id>`', value: 'Zeige die aktuellen Ergebnisse.' },
-          { name: '`/poll end <id>`', value: 'Beende eine laufende Umfrage vorzeitig.' },
-        )
-        .setFooter({ text: 'Seite 7 – Umfragen' }),
+      embed: createBotEmbed({
+        title: '📊  Umfragen',
+        description: '> Erstelle Umfragen und stimme ab.\n\n' + Brand.divider,
+        color: Colors.Poll,
+        fields: [
+          { name: '`/poll erstellen <titel> <optionen>`', value: '┃ Umfrage erstellen (Dauer: Min/Std/Tage/Wochen).' },
+          { name: '`/poll abstimmen <id> <option>`', value: '┃ In einer Umfrage abstimmen.' },
+          { name: '`/poll ergebnis <id>`', value: '┃ Aktuelle Ergebnisse anzeigen.' },
+          { name: '`/poll beenden <id>`', value: '┃ Umfrage vorzeitig beenden.' },
+        ],
+        footer: `Seite 7 ${Brand.dot} Umfragen ${Brand.dot} ${Brand.footerText}`,
+        timestamp: true,
+      }),
     },
     // ── Seite 8: Moderation ──
     {
       id: 'moderation',
-      embed: new EmbedBuilder()
-        .setTitle('🛡️ Moderation')
-        .setDescription('Moderationstools (benötigt entsprechende Rechte).')
-        .setColor(0x0099ff)
-        .addFields(
-          { name: '`/kick <user> <grund>`', value: 'Nutzer aus dem Server kicken.' },
-          { name: '`/ban <user> <grund> [dauer]`', value: 'Nutzer bannen (optional: temporär).' },
-          { name: '`/mute <user> <grund> [dauer]`', value: 'Nutzer stummschalten.' },
-          { name: '`/warn <user> <grund>`', value: 'Nutzer verwarnen (Verwarnungspunkte).' },
-          { name: '`/appeal <case-id> <begründung>`', value: 'Beschwerde gegen eine Moderation einreichen.' },
-        )
-        .setFooter({ text: 'Seite 8 – Moderation' }),
+      embed: createBotEmbed({
+        title: '🛡️  Moderation',
+        description: '> Moderationstools (benötigt entsprechende Rechte).\n\n' + Brand.divider,
+        color: Colors.Moderation,
+        fields: [
+          { name: '`/kick <user> <grund>`', value: '┃ Nutzer aus dem Server kicken.' },
+          { name: '`/ban <user> <grund> [dauer]`', value: '┃ Nutzer bannen (optional: temporär).' },
+          { name: '`/mute <user> <grund> [dauer]`', value: '┃ Nutzer stummschalten.' },
+          { name: '`/warn <user> <grund>`', value: '┃ Nutzer verwarnen.' },
+          { name: '`/appeal <case-id> <begründung>`', value: '┃ Beschwerde einreichen.' },
+        ],
+        footer: `Seite 8 ${Brand.dot} Moderation ${Brand.dot} ${Brand.footerText}`,
+        timestamp: true,
+      }),
     },
   ];
 
@@ -273,42 +286,46 @@ function buildPages(isAdmin: boolean, isDev: boolean): HelpPage[] {
   if (isAdmin) {
     pages.push({
       id: 'admin1',
-      embed: new EmbedBuilder()
-        .setTitle('⚙️ Admin-Commands (1/2)')
-        .setDescription('Nur für Admins sichtbar. Erfordert Admin-Rolle in der Datenbank.')
-        .setColor(0xff9900)
-        .addFields(
-          { name: '`/admin-approve <user|user_id>`', value: 'Hersteller-Anfrage annehmen.' },
-          { name: '`/admin-deny <user|user_id>`', value: 'Hersteller-Anfrage ablehnen.' },
-          { name: '`/admin-list-users`', value: 'Alle registrierten Nutzer anzeigen.' },
-          { name: '`/admin-list-pakete`', value: 'Alle Pakete im System anzeigen.' },
-          { name: '`/admin-logs`', value: 'Live-Log-Stream ansehen.' },
-          { name: '`/admin-delete <typ> <id>`', value: 'Soft- oder Hard-Delete von Einträgen.' },
-          { name: '`/admin-broadcast <nachricht>`', value: 'Broadcast-Nachricht an alle Nutzer.' },
-          { name: '`/admin-stats`', value: 'Systemstatistiken anzeigen.' },
-          { name: '`/admin-validate <datei-id>`', value: 'Manuelle Datei-Validierung.' },
-        )
-        .setFooter({ text: `Seite ${pages.length + 1} – Admin (1/2)` }),
+      embed: createBotEmbed({
+        title: '⚙️  Admin-Commands (1/2)',
+        description: '> Erfordert Admin-Rolle in der Datenbank.\n\n' + Brand.divider,
+        color: Colors.Admin,
+        fields: [
+          { name: '`/admin-approve <user>`', value: '┃ Hersteller-Anfrage annehmen.' },
+          { name: '`/admin-deny <user>`', value: '┃ Hersteller-Anfrage ablehnen.' },
+          { name: '`/admin-list-users`', value: '┃ Registrierte Nutzer anzeigen.' },
+          { name: '`/admin-list-pakete`', value: '┃ Alle Pakete im System.' },
+          { name: '`/admin-logs`', value: '┃ Live-Log-Stream.' },
+          { name: '`/admin-delete <typ> <id>`', value: '┃ Soft-/Hard-Delete.' },
+          { name: '`/admin-broadcast`', value: '┃ Broadcast-Nachricht.' },
+          { name: '`/admin-stats`', value: '┃ Systemstatistiken.' },
+          { name: '`/admin-validate`', value: '┃ Manuelle Validierung.' },
+        ],
+        footer: `Seite ${pages.length + 1} ${Brand.dot} Admin 1/2 ${Brand.dot} ${Brand.footerText}`,
+        timestamp: true,
+      }),
     });
     pages.push({
       id: 'admin2',
-      embed: new EmbedBuilder()
-        .setTitle('⚙️ Admin-Commands (2/2)')
-        .setDescription('Weitere Admin-Commands.')
-        .setColor(0xff9900)
-        .addFields(
-          { name: '`/admin-reset-password <user>`', value: 'Passwort eines Nutzers zurücksetzen.' },
-          { name: '`/admin-toggle-upload <user>`', value: 'Uploadrechte eines Nutzers an/aus.' },
-          { name: '`/admin-export <typ>`', value: 'Daten als CSV/JSON exportieren.' },
-          { name: '`/admin-error-report`', value: 'Fehlerberichte anzeigen.' },
-          { name: '`/admin-config <key> <value>`', value: 'Bot-Konfiguration ändern.' },
-          { name: '`/admin-audit`', value: 'Audit-Log einsehen.' },
-          { name: '`/admin-appeals`', value: 'Beschwerden verwalten.' },
-          { name: '`/admin-security`', value: 'Sicherheitsübersicht anzeigen.' },
-          { name: '`/admin-monitor`', value: 'System-Monitoring (CPU, RAM, DB).' },
-          { name: '`/feed <aktion>`', value: 'Feed-Management (hinzufügen/entfernen).' },
-        )
-        .setFooter({ text: `Seite ${pages.length + 2} – Admin (2/2)` }),
+      embed: createBotEmbed({
+        title: '⚙️  Admin-Commands (2/2)',
+        description: '> Weitere Admin-Commands.\n\n' + Brand.divider,
+        color: Colors.Admin,
+        fields: [
+          { name: '`/admin-reset-password`', value: '┃ Passwort zurücksetzen.' },
+          { name: '`/admin-toggle-upload`', value: '┃ Uploadrechte an/aus.' },
+          { name: '`/admin-export`', value: '┃ Daten exportieren.' },
+          { name: '`/admin-error-report`', value: '┃ Fehlerberichte.' },
+          { name: '`/admin-config`', value: '┃ Bot-Konfiguration.' },
+          { name: '`/admin-audit`', value: '┃ Audit-Log.' },
+          { name: '`/admin-appeals`', value: '┃ Beschwerden verwalten.' },
+          { name: '`/admin-security`', value: '┃ Sicherheitsübersicht.' },
+          { name: '`/admin-monitor`', value: '┃ System-Monitoring.' },
+          { name: '`/feed <aktion>`', value: '┃ Feed-Management.' },
+        ],
+        footer: `Seite ${pages.length + 2} ${Brand.dot} Admin 2/2 ${Brand.dot} ${Brand.footerText}`,
+        timestamp: true,
+      }),
     });
   }
 
@@ -316,22 +333,21 @@ function buildPages(isAdmin: boolean, isDev: boolean): HelpPage[] {
   if (isDev) {
     pages.push({
       id: 'developer',
-      embed: new EmbedBuilder()
-        .setTitle('🔐 Developer-Commands')
-        .setDescription(
-          'Nur im DEV-Bereich sichtbar. Erfordert `/dev-login` mit Passwort.\n' +
-          'DEV-Session ist **2 Stunden** gültig.'
-        )
-        .setColor(0xff0000)
-        .addFields(
-          { name: '`/dev-login`', value: 'Developer-Bereich freischalten (Passwort-Modal).' },
-          { name: '`/dev-eval <check>`', value: 'Systemdiagnostik (System/DB/Memory/Uptime).' },
-          { name: '`/dev-db <aktion>`', value: 'Datenbankmanagement (Tabellen/User-Suche/Cleanup).' },
-          { name: '`/dev-reload`', value: 'Commands hot-reloaden ohne Bot-Neustart.' },
-          { name: '`/dev-admin <aktion>`', value: 'Admin-Rollen verwalten (add/remove/list).' },
-          { name: '`/dev-manufacturer <aktion>`', value: 'Hersteller verwalten (remove/list).' },
-        )
-        .setFooter({ text: `Seite ${pages.length + 1} – Developer` }),
+      embed: createBotEmbed({
+        title: '🔐  Developer-Commands',
+        description: '> Erfordert `/dev-login` mit Passwort. Session: **2 Stunden**.\n\n' + Brand.divider,
+        color: Colors.Dev,
+        fields: [
+          { name: '`/dev-login`', value: '┃ Developer-Bereich freischalten.' },
+          { name: '`/dev-eval <check>`', value: '┃ Systemdiagnostik.' },
+          { name: '`/dev-db <aktion>`', value: '┃ Datenbankmanagement.' },
+          { name: '`/dev-reload`', value: '┃ Commands hot-reloaden.' },
+          { name: '`/dev-admin <aktion>`', value: '┃ Admin-Rollen verwalten.' },
+          { name: '`/dev-manufacturer <aktion>`', value: '┃ Hersteller verwalten.' },
+        ],
+        footer: `Seite ${pages.length + 1} ${Brand.dot} Developer ${Brand.dot} ${Brand.footerText}`,
+        timestamp: true,
+      }),
     });
   }
 

@@ -531,6 +531,34 @@ model LevelReward {
   @@index([level])
 }
 
+// Server-spezifische Levelrollen
+model LevelRole {
+  id        String   @id @default(uuid())
+  guildId   String  // Discord Server ID
+  level     Int
+  roleId    String  // Discord Rollen-ID
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@unique([guildId, level])
+  @@index([guildId])
+  @@index([roleId])
+}
+
+// Server-spezifische Level-Up-Nachrichten
+model LevelUpMessage {
+  id        String   @id @default(uuid())
+  guildId   String  // Discord Server ID
+  level     Int
+  message   String  // Nachricht (kann Platzhalter enthalten)
+  isActive  Boolean @default(true)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@unique([guildId, level])
+  @@index([guildId])
+}
+
 // ============================================================
 // SEKTION 9: Automatische Rollenvergabe
 // ============================================================

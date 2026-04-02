@@ -1,6 +1,7 @@
 import { SlashCommandBuilder, ChatInputCommandInteraction, EmbedBuilder } from 'discord.js';
 import { Command } from '../../types';
 import { searchPackages } from '../../modules/download/downloadHandler';
+import { Colors, Brand, vEmbed } from '../../utils/embedDesign';
 
 /**
  * /search Command (Sektion 3):
@@ -35,11 +36,9 @@ const searchCommand: Command = {
       return;
     }
 
-    const embed = new EmbedBuilder()
-      .setTitle(`🔍 Suchergebnisse für "${query}"`)
-      .setColor(0x0099ff)
-      .setFooter({ text: `${results.length} Ergebnis(se)` })
-      .setTimestamp();
+    const embed = vEmbed(Colors.Info)
+      .setTitle(`🔍  Suchergebnisse für "${query}"`)
+      .setFooter({ text: `${results.length} Ergebnis(se) ${Brand.dot} ${Brand.footerText}` });
 
     for (const pkg of results.slice(0, 10)) {
       embed.addFields({

@@ -8,6 +8,8 @@ import { Command } from '../../types';
 import prisma from '../../database/prisma';
 import { checkUploadPermission, getOrCreatePackage, processUpload } from '../../modules/upload/uploadHandler';
 import axios from 'axios';
+import { Colors, Brand, vEmbed, formatBytes } from '../../utils/embedDesign';
+import { createBotEmbed } from '../../utils/embedUtil';
 
 /**
  * /upload Command (Sektion 2):
@@ -84,14 +86,14 @@ const uploadCommand: Command = {
     if (attachments.length > 1) {
       const successCount = results.filter(r => r.success).length;
       const failCount = results.length - successCount;
-      const summaryEmbed = new EmbedBuilder()
-        .setTitle(`📦 Upload-Zusammenfassung: ${paketname}`)
+      const summaryEmbed = vEmbed(failCount === 0 ? Colors.Success : Colors.Warning)
+        .setTitle(`📦  Upload: ${paketname}`)
         .setDescription(
+          `${Brand.divider}\n\n` +
           `**${successCount}/${results.length}** Dateien erfolgreich hochgeladen.` +
-          (failCount > 0 ? `\n❌ ${failCount} fehlgeschlagen.` : '')
-        )
-        .setColor(failCount === 0 ? 0x00ff00 : 0xffaa00)
-        .setTimestamp();
+          (failCount > 0 ? `\n❌ ${failCount} fehlgeschlagen.` : '') +
+          `\n\n${Brand.divider}`
+        );
 
       for (const r of results) {
         summaryEmbed.addFields({
@@ -137,10 +139,8 @@ async function processAndReply(
       attachment.contentType || 'application/octet-stream'
     );
 
-    const embed = new EmbedBuilder()
-      .setTitle(result.success ? '✅ Upload erfolgreich' : '❌ Upload fehlgeschlagen')
-      .setColor(result.success ? 0x00ff00 : 0xff0000)
-      .setTimestamp();
+    const embed = vEmbed(result.success ? Colors.Upload : Colors.Error)
+      .setTitle(result.success ? '✅  Upload erfolgreich' : '❌  Upload fehlgeschlagen');
 
     if (result.success) {
       embed.addFields(
@@ -185,28 +185,20 @@ async function processAndReply(
     if (!isMulti) {
       await interaction.editReply({ embeds: [embed] });
     }
-
     return { name: fileName, success: result.success, embed };
   } catch (error) {
-    const embed = new EmbedBuilder()
-      .setTitle('❌ Upload fehlgeschlagen')
-      .setDescription(`Fehler beim Download der Datei: ${error instanceof Error ? error.message : 'Unbekannter Fehler'}`)
-      .setColor(0xff0000);
-
+    const embed = createBotEmbed({
+      title: '❌ Upload fehlgeschlagen',
+      description: `Fehler beim Download der Datei: ${error instanceof Error ? error.message : 'Unbekannter Fehler'}`,
+      color: Colors.Error,
+      footer: `${Brand.footerText} • Upload`,
+      timestamp: true,
+    });
     if (!isMulti) {
       await interaction.editReply({ embeds: [embed] });
     }
-
     return { name: fileName, success: false, embed };
   }
-}
-
-function formatBytes(bytes: number): string {
-  if (bytes === 0) return '0 B';
-  const k = 1024;
-  const sizes = ['B', 'KB', 'MB', 'GB'];
-  const i = Math.floor(Math.log(bytes) / Math.log(k));
-  return `${(bytes / Math.pow(k, i)).toFixed(2)} ${sizes[i]}`;
 }
 
 export default uploadCommand;

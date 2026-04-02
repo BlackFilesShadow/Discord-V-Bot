@@ -1,6 +1,7 @@
 import prisma from '../../database/prisma';
 import { logger, logAudit } from '../../utils/logger';
 import { Client, EmbedBuilder, TextChannel } from 'discord.js';
+import { Colors, Brand, vEmbed } from '../../utils/embedDesign';
 import crypto from 'crypto';
 
 /**
@@ -83,36 +84,33 @@ export function createGiveawayEmbed(giveaway: {
   winnerId?: string | null;
   winnerCount?: number;
 }, participantCount: number, creatorUsername?: string): EmbedBuilder {
-  const embed = new EmbedBuilder()
-    .setTitle(`🎉 GIVEAWAY: ${giveaway.prize}`)
-    .setColor(giveaway.status === 'ENDED' ? 0x808080 : 0xff69b4)
-    .setTimestamp();
-
-  if (giveaway.description) {
-    embed.setDescription(giveaway.description);
-  }
-
   const emoji = giveaway.customEmoji || '🎉';
   const timeLeft = giveaway.endsAt.getTime() - Date.now();
+  const isActive = giveaway.status === 'ACTIVE' && timeLeft > 0;
 
-  if (giveaway.status === 'ACTIVE' && timeLeft > 0) {
-    embed.addFields(
-      { name: '🏆 Preis', value: giveaway.prize, inline: true },
-      { name: '⏰ Endet', value: `<t:${Math.floor(giveaway.endsAt.getTime() / 1000)}:R>`, inline: true },
-      { name: '👥 Teilnehmer', value: participantCount.toString(), inline: true },
-    );
-    embed.setFooter({ text: `Reagiere mit ${emoji} um teilzunehmen!` });
-  } else if (giveaway.status === 'ENDED') {
-    embed.addFields(
-      { name: '🏆 Preis', value: giveaway.prize, inline: true },
-      { name: '👥 Teilnehmer', value: participantCount.toString(), inline: true },
-    );
-    embed.setFooter({ text: 'Giveaway beendet' });
+  const embed = vEmbed(isActive ? Colors.Giveaway : Colors.Neutral)
+    .setTitle(`🎉  GIVEAWAY`);
+
+  const descParts: string[] = [];
+  if (giveaway.description) descParts.push(`> ${giveaway.description}`);
+  descParts.push(Brand.divider);
+  descParts.push(`\n🏆 **Preis:** ${giveaway.prize}`);
+
+  if (isActive) {
+    descParts.push(`⏰ **Endet:** <t:${Math.floor(giveaway.endsAt.getTime() / 1000)}:R>`);
+    descParts.push(`👥 **Teilnehmer:** ${participantCount}`);
+    if (creatorUsername) descParts.push(`🎁 **Von:** ${creatorUsername}`);
+    descParts.push(`\n${Brand.divider}`);
+    descParts.push(`\n*Reagiere mit ${emoji} um teilzunehmen!*`);
+  } else {
+    descParts.push(`👥 **Teilnehmer:** ${participantCount}`);
+    if (creatorUsername) descParts.push(`🎁 **Von:** ${creatorUsername}`);
+    descParts.push(`\n${Brand.divider}`);
+    descParts.push(`\n*Giveaway beendet*`);
   }
 
-  if (creatorUsername) {
-    embed.addFields({ name: '🎁 Von', value: creatorUsername, inline: true });
-  }
+  embed.setDescription(descParts.join('\n'));
+  embed.setFooter({ text: `${Brand.footerText} ${Brand.dot} Giveaway` });
 
   return embed;
 }
@@ -260,10 +258,9 @@ export function startGiveawayScheduler(client: Client): void {
           const channel = await client.channels.fetch(giveaway.channelId) as TextChannel;
           if (!channel) continue;
 
-          const winnerEmbed = new EmbedBuilder()
-            .setTitle(`🎉 GIVEAWAY BEENDET: ${giveaway.prize}`)
-            .setColor(0x00ff00)
-            .setTimestamp();
+          const winnerEmbed = vEmbed(Colors.Success)
+            .setTitle(`🎉  GIVEAWAY BEENDET`)
+            .setFooter({ text: `${Brand.footerText} ${Brand.dot} Giveaway` });
 
           if (giveaway.description) {
             winnerEmbed.setDescription(giveaway.description);
@@ -271,10 +268,13 @@ export function startGiveawayScheduler(client: Client): void {
 
           if (result.success && result.winners.length > 0) {
             const winnerMentions = result.winners.map(w => `<@${w.discordId}>`).join(', ');
-            winnerEmbed.addFields(
-              { name: '🏆 Preis', value: giveaway.prize, inline: true },
-              { name: '🎊 Gewinner', value: winnerMentions, inline: true },
-              { name: '👥 Teilnehmer', value: participantCount.toString(), inline: true },
+            winnerEmbed.setDescription(
+              `${Brand.divider}\n\n` +
+              `🏆 **Preis:** ${giveaway.prize}\n` +
+              `🎊 **Gewinner:** ${winnerMentions}\n` +
+              `👥 **Teilnehmer:** ${participantCount}\n\n` +
+              (giveaway.description ? `> ${giveaway.description}\n\n` : '') +
+              Brand.divider
             );
 
             // Rollen-Ping + Gewinner-Erwähnung
@@ -284,9 +284,12 @@ export function startGiveawayScheduler(client: Client): void {
               embeds: [winnerEmbed],
             });
           } else {
-            winnerEmbed.addFields(
-              { name: '🏆 Preis', value: giveaway.prize, inline: true },
-              { name: '😢 Ergebnis', value: 'Keine Teilnehmer', inline: true },
+            winnerEmbed.setDescription(
+              `${Brand.divider}\n\n` +
+              `🏆 **Preis:** ${giveaway.prize}\n` +
+              `😢 **Ergebnis:** Keine Teilnehmer\n\n` +
+              (giveaway.description ? `> ${giveaway.description}\n\n` : '') +
+              Brand.divider
             );
 
             const rolePing = giveaway.notifyRoleId ? `<@&${giveaway.notifyRoleId}> ` : '';

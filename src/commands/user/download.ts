@@ -11,6 +11,8 @@ import {
 import { Command } from '../../types';
 import prisma from '../../database/prisma';
 import { downloadSingleFile } from '../../modules/download/downloadHandler';
+import { Colors, Brand, vEmbed, formatBytes } from '../../utils/embedDesign';
+import { createBotEmbed } from '../../utils/embedUtil';
 
 /**
  * /download Command (Sektion 3):
@@ -58,14 +60,18 @@ const downloadCommand: Command = {
     }
 
     // ── Schritt 1: Hersteller-Dropdown ──
-    const embed = new EmbedBuilder()
-      .setTitle('📥 Download-Bereich')
-      .setDescription(
-        `**${manufacturers.length} Hersteller** verfügbar.\n\n` +
-        `Wähle einen Hersteller aus dem Dropdown-Menü.`
-      )
-      .setColor(0x0099ff)
-      .setTimestamp();
+    const embed = createBotEmbed({
+      title: '📥 Download-Bereich',
+      description: [
+        Brand.divider,
+        `**${manufacturers.length} Hersteller** verfügbar.`,
+        'Wähle einen Hersteller aus dem Dropdown.',
+        Brand.divider,
+      ].join('\n'),
+      color: Colors.Download,
+      footer: `${Brand.footerText} • Download`,
+      timestamp: true,
+    });
 
     const manufacturerSelect = new StringSelectMenuBuilder()
       .setCustomId('dl_manufacturer')
@@ -121,7 +127,7 @@ const downloadCommand: Command = {
 
       if (packages.length === 0 || !manufacturer) {
         await mfgInteraction.update({
-          embeds: [new EmbedBuilder().setTitle('❌ Keine Pakete').setDescription('Dieser Hersteller hat keine verfügbaren Pakete.').setColor(0xff0000)],
+          embeds: [vEmbed(Colors.Error).setTitle('❌  Keine Pakete').setDescription('Dieser Hersteller hat keine verfügbaren Pakete.')],
           components: [],
         });
         return;
@@ -153,14 +159,18 @@ const downloadCommand: Command = {
 
       const fileRow = new ActionRowBuilder<StringSelectMenuBuilder>().addComponents(fileSelect);
 
-      const detailEmbed = new EmbedBuilder()
-        .setTitle(`📥 ${manufacturer.username}`)
-        .setDescription(
-          `**${packages.length} Paket(e)** verfügbar.\n\n` +
-          `Wähle eine Datei zum Download aus.`
-        )
-        .setColor(0x0099ff)
-        .setTimestamp();
+      const detailEmbed = createBotEmbed({
+        title: `📥 ${manufacturer.username}`,
+        description: [
+          Brand.divider,
+          `**${packages.length} Paket(e)** verfügbar.`,
+          'Wähle eine Datei zum Download.',
+          Brand.divider,
+        ].join('\n'),
+        color: Colors.Download,
+        footer: `${Brand.footerText} • Download`,
+        timestamp: true,
+      });
 
       const updateResponse = await mfgInteraction.update({
         embeds: [detailEmbed],
@@ -179,7 +189,7 @@ const downloadCommand: Command = {
         const val = fileInteraction.values[0];
 
         await fileInteraction.update({
-          embeds: [new EmbedBuilder().setTitle('⏳ Download wird vorbereitet...').setColor(0xffaa00)],
+          embeds: [vEmbed(Colors.Warning).setTitle('⏳  Download wird vorbereitet...')],
           components: [],
         });
 
@@ -202,7 +212,7 @@ const downloadCommand: Command = {
 
             if (!result.success || !result.filePath) {
               await interaction.editReply({
-                embeds: [new EmbedBuilder().setTitle('❌ Fehler').setDescription(result.message).setColor(0xff0000)],
+                embeds: [vEmbed(Colors.Error).setTitle('❌  Fehler').setDescription(result.message)],
                 components: [],
               });
               return;
@@ -212,17 +222,19 @@ const downloadCommand: Command = {
               name: result.fileName || fileName,
             });
 
-            const doneEmbed = new EmbedBuilder()
-              .setTitle('📥 Datei-Download')
-              .setDescription(`**${fileName}** aus **${pkgName}** von **${manufacturer.username}**`)
-              .setColor(0x00ff00)
-              .setTimestamp();
+            const doneEmbed = vEmbed(Colors.Success)
+              .setTitle('📥  Datei-Download')
+              .setDescription(
+                `${Brand.divider}\n\n` +
+                `📄 **${fileName}**\naus **${pkgName}** von **${manufacturer.username}**\n\n` +
+                Brand.divider
+              );
 
             await interaction.editReply({ embeds: [doneEmbed], files: [attachment], components: [] });
           }
         } catch (error) {
           await interaction.editReply({
-            embeds: [new EmbedBuilder().setTitle('❌ Download fehlgeschlagen').setDescription('Bitte versuche es erneut.').setColor(0xff0000)],
+            embeds: [vEmbed(Colors.Error).setTitle('❌  Download fehlgeschlagen').setDescription('Bitte versuche es erneut.')],
             components: [],
           });
         }
@@ -245,13 +257,5 @@ const downloadCommand: Command = {
     });
   },
 };
-
-function formatBytes(bytes: number): string {
-  if (bytes === 0) return '0 B';
-  const k = 1024;
-  const sizes = ['B', 'KB', 'MB', 'GB'];
-  const i = Math.floor(Math.log(bytes) / Math.log(k));
-  return `${(bytes / Math.pow(k, i)).toFixed(2)} ${sizes[i]}`;
-}
 
 export default downloadCommand;

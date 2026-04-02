@@ -1,6 +1,7 @@
 import { SlashCommandBuilder, ChatInputCommandInteraction, EmbedBuilder } from 'discord.js';
 import { Command } from '../../types';
 import prisma from '../../database/prisma';
+import { Colors, Brand, vEmbed } from '../../utils/embedDesign';
 
 /**
  * /leaderboard Command (Sektion 8):
@@ -29,6 +30,14 @@ const leaderboardCommand: Command = {
         .setDescription('Seite der Bestenliste')
         .setRequired(false)
         .setMinValue(1)
+    )
+    .addIntegerOption(opt =>
+      opt
+        .setName('dauer')
+        .setDescription('Anzeigedauer in Sekunden (optional, 10–300)')
+        .setMinValue(10)
+        .setMaxValue(300)
+        .setRequired(false)
     ),
 
   execute: async (interaction: ChatInputCommandInteraction) => {
@@ -118,14 +127,31 @@ const leaderboardCommand: Command = {
       ownRankStr = `\n\n📍 Dein Rang: **#${ownRank}** (Level ${dbUser.levelData.level}, ${Number(dbUser.levelData.xp).toLocaleString('de-DE')} XP)`;
     }
 
-    const embed = new EmbedBuilder()
-      .setTitle(`🏆 Bestenliste — ${sortLabel}`)
-      .setColor(0xffd700)
-      .setDescription(lines.join('\n') + ownRankStr)
-      .setFooter({ text: `Seite ${page}/${totalPages} • ${total} Mitglieder gesamt` })
-      .setTimestamp();
+    const embed = vEmbed(Colors.Gold)
+      .setTitle(`🏆  Bestenliste — ${sortLabel}`)
+      .setDescription(
+        `${Brand.divider}\n\n` +
+        lines.join('\n') +
+        ownRankStr +
+        `\n\n${Brand.divider}`
+      )
+      .setFooter({ text: `Seite ${page}/${totalPages} ${Brand.dot} ${total} Mitglieder ${Brand.dot} ${Brand.footerText}` });
 
-    await interaction.editReply({ embeds: [embed] });
+    const dauer = interaction.options.getInteger('dauer');
+    const reply = await interaction.editReply({ embeds: [embed] });
+
+    // Wenn Dauer gesetzt, Nachricht nach Ablauf löschen oder als abgelaufen markieren
+    if (dauer && dauer >= 10 && dauer <= 300) {
+      setTimeout(async () => {
+        try {
+          // Versuche zu löschen, falls Bot Rechte hat
+          await interaction.deleteReply();
+        } catch (err) {
+          // Falls nicht löschbar, als abgelaufen markieren
+          await interaction.editReply({ content: '⏰ Leaderboard abgelaufen.', embeds: [] });
+        }
+      }, dauer * 1000);
+    }
   },
 };
 

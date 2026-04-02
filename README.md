@@ -174,3 +174,19 @@ Diese maximal moderne und sichere Checkliste sowie die Developer-Übersicht biet
 
 **Ziel:**
 Eine kompromisslos sichere, nachvollziehbare und fehlerfreie OAuth2-Organisation, die alle Angriffsvektoren minimiert und maximale Kontrolle über Rechte und Tokens bietet.
+
+---
+
+## 📝 Aktueller Entwicklungsstand & ToDo (Stand: 01.04.2026)
+
+### Offene Aufgaben (Session-Fortschritt)
+
+- [x] LevelRole und LevelUpMessage Modelle zu schema.prisma hinzufügen
+- [ ] Prisma-Migration für neue Modelle ausführen (Fehler: DB-User benötigt CREATE DATABASE-Rechte für Shadow-DB)
+- [ ] Levelrollen- und Level-Up-Logik im Bot implementieren (pro Server, individuell)
+- [ ] Leaderboard-Logik für dynamische Anzeige anpassen (immer aktuell, Anzeigedauer konfigurierbar)
+
+**Hinweis:**
+- Die neuen Modelle für server-spezifische Levelrollen und Level-Up-Nachrichten sind im Schema vorhanden, Migration ist aber wegen fehlender Rechte noch nicht angewendet.
+- Nächster Schritt: Migration ausführen (DB-User-Rechte prüfen/erweitern oder alternative Migration lokal mit SQLite).
+- Danach: Bot-Logik für Levelrollen und Level-Up-Messages implementieren, Leaderboard dynamisieren.

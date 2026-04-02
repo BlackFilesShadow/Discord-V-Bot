@@ -12,8 +12,11 @@ import {
   endPoll,
   getPollVotes,
   PollOption,
+  DEFAULT_EMOJIS,
 } from '../../modules/polls/pollSystem';
 import { grantEventXp } from '../../modules/xp/xpManager';
+import { Colors, Brand, vEmbed, percentBar } from '../../utils/embedDesign';
+import { createBotEmbed } from '../../utils/embedUtil';
 
 /**
  * /poll Command (Sektion 10):
@@ -169,9 +172,21 @@ const pollCommand: Command = {
         );
 
         const endsAt = dauer ? new Date(Date.now() + dauer * 60 * 1000) : null;
-        const embed = createPollEmbed(titel, beschreibung, options, typ, endsAt, {}, 0);
-        embed.setFooter({ text: `Poll-ID: ${pollId} | Reagiere oder nutze /poll abstimmen` });
-
+        // Neues Embed-Design mit createBotEmbed
+        const embed = createBotEmbed({
+          title: `📊 ${titel}`,
+          description: [
+            beschreibung ? `> ${beschreibung}` : undefined,
+            Brand.divider,
+            options.map((opt, i) => `${DEFAULT_EMOJIS[i]} ${opt}`).join('\n'),
+            Brand.divider,
+            endsAt ? `⏰ Endet: <t:${Math.floor(endsAt.getTime() / 1000)}:R>` : '⏰ Kein Zeitlimit',
+            `Poll-ID: \`${pollId}\``,
+          ].filter(Boolean).join('\n'),
+          color: Colors.Poll,
+          footer: `${Brand.footerText} • Poll`,
+          timestamp: true,
+        });
         const msg = await interaction.editReply({ embeds: [embed] });
 
         // Message-ID speichern + Reaktionen hinzufügen
@@ -228,7 +243,7 @@ const pollCommand: Command = {
                   poll.title, poll.description, options, poll.pollType,
                   poll.endsAt, votes, totalVotes,
                 );
-                embed.setFooter({ text: `Poll-ID: ${pollId} | Reagiere oder nutze /poll abstimmen` });
+                embed.setFooter({ text: `Poll-ID: ${pollId} ${Brand.dot} ${Brand.footerText}` });
                 await msg.edit({ embeds: [embed] });
               }
             } catch { /* Could not update embed */ }
@@ -252,16 +267,26 @@ const pollCommand: Command = {
         const options = poll.options as unknown as PollOption[];
         const totalVotes = Object.values(votes).reduce((a, b) => a + b, 0);
 
-        const embed = createPollEmbed(
-          poll.title, poll.description, options, poll.pollType,
-          poll.endsAt, votes, totalVotes,
-        );
-
-        if (poll.status === 'ENDED') {
-          embed.setTitle(`📊 Umfrage beendet: ${poll.title}`);
-          embed.setColor(0x95a5a6);
-        }
-
+        // Neues Embed-Design mit createBotEmbed
+        const optionLines = options.map((opt, i) => {
+          const pct = totalVotes > 0 ? Math.round((votes[opt.id] || 0) / totalVotes * 100) : 0;
+          const bar = percentBar(pct, 10);
+          return `${DEFAULT_EMOJIS[i]} ${opt.text}\n┃ ${bar}  **${pct}%** (${votes[opt.id] || 0} Stimmen)`;
+        });
+        const embed = createBotEmbed({
+          title: poll.status === 'ENDED' ? `📊 Umfrage beendet: ${poll.title}` : `📊 ${poll.title}`,
+          description: [
+            poll.description ? `> ${poll.description}` : undefined,
+            Brand.divider,
+            optionLines.join('\n\n'),
+            Brand.divider,
+            `Gesamtstimmen: **${totalVotes}**`,
+            `Poll-ID: \`${pollId}\``,
+          ].filter(Boolean).join('\n'),
+          color: poll.status === 'ENDED' ? Colors.Neutral : Colors.Poll,
+          footer: `${Brand.footerText} • Poll`,
+          timestamp: true,
+        });
         await interaction.editReply({ embeds: [embed] });
         break;
       }
@@ -286,19 +311,22 @@ const pollCommand: Command = {
 
         const result = await endPoll(pollId);
         const resultLines = result.results.map((r, i) => {
-          const medal = i === 0 ? '🥇' : i === 1 ? '🥈' : i === 2 ? '🥉' : `${i + 1}.`;
-          return `${medal} **${r.option}** — ${r.votes} Stimmen (${r.percentage}%)`;
+          const medal = i === 0 ? '🥇' : i === 1 ? '🥈' : i === 2 ? '🥉' : `**${i + 1}.**`;
+          const bar = percentBar(r.percentage, 10);
+          return `${medal} **${r.option}**\n┃ ${bar}  **${r.percentage}%** (${r.votes} Stimmen)`;
         });
 
-        const embed = new EmbedBuilder()
-          .setTitle(`📊 Umfrage beendet: ${result.title}`)
-          .setDescription(resultLines.join('\n'))
-          .setColor(0x2ecc71)
-          .addFields(
-            { name: '🏆 Gewinner', value: result.winner, inline: true },
-            { name: '🗳️ Stimmen gesamt', value: `${result.totalVotes}`, inline: true },
+        const embed = vEmbed(Colors.Success)
+          .setTitle(`📊  Umfrage beendet: ${result.title}`)
+          .setDescription(
+            `${Brand.divider}\n\n` +
+            resultLines.join('\n\n') +
+            `\n\n${Brand.divider}`
           )
-          .setTimestamp();
+          .addFields(
+            { name: '🏆 Gewinner', value: `**${result.winner}**`, inline: true },
+            { name: '🗳️ Stimmen', value: `**${result.totalVotes}**`, inline: true },
+          );
 
         // Rollen-Ping bei manueller Beendigung als separate Nachricht
         if (poll.notifyRoleId && interaction.channel && 'send' in interaction.channel) {
@@ -325,17 +353,25 @@ const pollCommand: Command = {
           return;
         }
 
-        const lines = polls.map((p: any, i: number) => {
+        const fields = polls.map((p: any, i: number) => {
           const end = p.endsAt ? `<t:${Math.floor(p.endsAt.getTime() / 1000)}:R>` : '∞';
-          return `**${i + 1}.** ${p.title}\n   ${p.totalVotes} Stimmen | Endet: ${end}\n   ID: \`${p.id}\``;
+          return {
+            name: `📊 ${p.title}`,
+            value: [
+              `🗳️ ${p.totalVotes} Stimmen`,
+              `⏰ ${end}`,
+              `ID: \`${p.id}\``,
+            ].join(' | '),
+            inline: false,
+          };
         });
-
-        const embed = new EmbedBuilder()
-          .setTitle('📊 Aktive Umfragen')
-          .setDescription(lines.join('\n\n'))
-          .setColor(0x3498db)
-          .setTimestamp();
-
+        const embed = createBotEmbed({
+          title: '📊 Aktive Umfragen',
+          color: Colors.Poll,
+          fields,
+          footer: `${Brand.footerText} • Poll`,
+          timestamp: true,
+        });
         await interaction.editReply({ embeds: [embed] });
         break;
       }

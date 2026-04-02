@@ -3,6 +3,7 @@ import { Command } from '../../types';
 import { createManufacturerRequest, verifyOneTimePassword } from '../../modules/registration/register';
 import prisma from '../../database/prisma';
 import { config } from '../../config';
+import { Colors, Brand, vEmbed } from '../../utils/embedDesign';
 
 /**
  * /register Command (Sektion 1):
@@ -52,11 +53,9 @@ async function handleManufacturerRegistration(interaction: ChatInputCommandInter
     reason
   );
 
-  const embed = new EmbedBuilder()
-    .setTitle(result.success ? '✅ Anfrage gesendet' : '❌ Fehler')
-    .setDescription(result.message)
-    .setColor(result.success ? 0x00ff00 : 0xff0000)
-    .setTimestamp();
+  const embed = vEmbed(result.success ? Colors.Success : Colors.Error)
+    .setTitle(result.success ? '✅  Anfrage gesendet' : '❌  Fehler')
+    .setDescription(result.message);
 
   if (result.success) {
     embed.addFields({ name: 'Status', value: 'Warte auf Admin-Bestätigung', inline: true });
@@ -64,16 +63,18 @@ async function handleManufacturerRegistration(interaction: ChatInputCommandInter
     // Admin per PN benachrichtigen (Sektion 1: Anfrage an Admin per PN)
     try {
       const ownerUser = await interaction.client.users.fetch(config.discord.ownerId);
-      const adminEmbed = new EmbedBuilder()
-        .setTitle('📋 Neue Hersteller-Anfrage')
-        .setDescription(`**${interaction.user.username}** (${interaction.user.id}) möchte Hersteller werden.`)
-        .addFields(
-          { name: 'Grund', value: reason || 'Kein Grund angegeben', inline: false },
-          { name: 'User-ID', value: interaction.user.id, inline: true },
-          { name: 'GUID', value: result.userId || 'N/A', inline: true },
+      const adminEmbed = vEmbed(Colors.Info)
+        .setTitle('📋  Neue Hersteller-Anfrage')
+        .setDescription(
+          `${Brand.divider}\n\n` +
+          `👤 **${interaction.user.username}** möchte Hersteller werden.\n\n` +
+          Brand.divider
         )
-        .setColor(0x0099ff)
-        .setTimestamp();
+        .addFields(
+          { name: '📝 Grund', value: reason || 'Kein Grund angegeben', inline: false },
+          { name: '🆔 User-ID', value: `\`${interaction.user.id}\``, inline: true },
+          { name: '🔑 GUID', value: `\`${result.userId || 'N/A'}\``, inline: true },
+        );
 
       const approveBtn = new ButtonBuilder()
         .setCustomId(`approve_manufacturer_${interaction.user.id}`)
@@ -113,11 +114,9 @@ async function handlePasswordVerification(interaction: ChatInputCommandInteracti
 
   const result = await verifyOneTimePassword(user.id, password);
 
-  const embed = new EmbedBuilder()
-    .setTitle(result.success ? '✅ Verifizierung erfolgreich' : '❌ Verifizierung fehlgeschlagen')
-    .setDescription(result.message)
-    .setColor(result.success ? 0x00ff00 : 0xff0000)
-    .setTimestamp();
+  const embed = vEmbed(result.success ? Colors.Success : Colors.Error)
+    .setTitle(result.success ? '✅  Verifizierung erfolgreich' : '❌  Verifizierung fehlgeschlagen')
+    .setDescription(result.message);
 
   if (result.success) {
     embed.addFields(

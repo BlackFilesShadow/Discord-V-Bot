@@ -1,6 +1,7 @@
 import { SlashCommandBuilder, ChatInputCommandInteraction, EmbedBuilder, PermissionFlagsBits } from 'discord.js';
 import { Command } from '../../types';
 import { createModerationCase, createAppeal } from '../../modules/moderation/caseManager';
+import { Colors, Brand, vEmbed } from '../../utils/embedDesign';
 
 /**
  * /kick Command (Sektion 4: Kick).
@@ -29,16 +30,14 @@ export const kickCommand: Command = {
       guild: interaction.guild,
     });
 
-    const embed = new EmbedBuilder()
-      .setTitle(result.success ? '🦶 Nutzer gekickt' : '❌ Fehler')
+    const embed = vEmbed(result.success ? Colors.Warning : Colors.Error)
+      .setTitle(result.success ? '🦶  Nutzer gekickt' : '❌  Fehler')
       .setDescription(result.message)
-      .setColor(result.success ? 0xff9900 : 0xff0000)
       .addFields(
-        { name: 'Nutzer', value: `${targetUser.tag}`, inline: true },
-        { name: 'Grund', value: reason, inline: true },
-        { name: 'Case', value: result.caseNumber ? `#${result.caseNumber}` : 'N/A', inline: true },
-      )
-      .setTimestamp();
+        { name: '👤 Nutzer', value: `${targetUser.tag}`, inline: true },
+        { name: '📝 Grund', value: reason, inline: true },
+        { name: '📋 Case', value: result.caseNumber ? `#${result.caseNumber}` : 'N/A', inline: true },
+      );
 
     await interaction.editReply({ embeds: [embed] });
   },
@@ -76,17 +75,15 @@ export const banCommand: Command = {
       guild: interaction.guild,
     });
 
-    const embed = new EmbedBuilder()
-      .setTitle(result.success ? '🔨 Nutzer gebannt' : '❌ Fehler')
+    const embed = vEmbed(result.success ? Colors.Error : Colors.Error)
+      .setTitle(result.success ? '🔨  Nutzer gebannt' : '❌  Fehler')
       .setDescription(result.message)
-      .setColor(result.success ? 0xff0000 : 0xff0000)
       .addFields(
-        { name: 'Nutzer', value: `${targetUser.tag}`, inline: true },
-        { name: 'Grund', value: reason, inline: true },
-        { name: 'Dauer', value: duration ? `${duration} Minuten` : 'Permanent', inline: true },
-        { name: 'Case', value: result.caseNumber ? `#${result.caseNumber}` : 'N/A', inline: true },
-      )
-      .setTimestamp();
+        { name: '👤 Nutzer', value: `${targetUser.tag}`, inline: true },
+        { name: '📝 Grund', value: reason, inline: true },
+        { name: '⏰ Dauer', value: duration ? `${duration} Minuten` : 'Permanent', inline: true },
+        { name: '📋 Case', value: result.caseNumber ? `#${result.caseNumber}` : 'N/A', inline: true },
+      );
 
     await interaction.editReply({ embeds: [embed] });
   },
@@ -124,17 +121,15 @@ export const muteCommand: Command = {
       guild: interaction.guild,
     });
 
-    const embed = new EmbedBuilder()
-      .setTitle(result.success ? '🔇 Nutzer gemutet' : '❌ Fehler')
+    const embed = vEmbed(result.success ? Colors.Warning : Colors.Error)
+      .setTitle(result.success ? '🔇  Nutzer gemutet' : '❌  Fehler')
       .setDescription(result.message)
-      .setColor(result.success ? 0xffcc00 : 0xff0000)
       .addFields(
-        { name: 'Nutzer', value: `${targetUser.tag}`, inline: true },
-        { name: 'Grund', value: reason, inline: true },
-        { name: 'Dauer', value: duration ? `${duration} Minuten` : '28 Tage', inline: true },
-        { name: 'Case', value: result.caseNumber ? `#${result.caseNumber}` : 'N/A', inline: true },
-      )
-      .setTimestamp();
+        { name: '👤 Nutzer', value: `${targetUser.tag}`, inline: true },
+        { name: '📝 Grund', value: reason, inline: true },
+        { name: '⏰ Dauer', value: duration ? `${duration} Minuten` : '28 Tage', inline: true },
+        { name: '📋 Case', value: result.caseNumber ? `#${result.caseNumber}` : 'N/A', inline: true },
+      );
 
     await interaction.editReply({ embeds: [embed] });
   },
@@ -167,16 +162,14 @@ export const warnCommand: Command = {
       guild: interaction.guild,
     });
 
-    const embed = new EmbedBuilder()
-      .setTitle(result.success ? '⚠️ Nutzer verwarnt' : '❌ Fehler')
+    const embed = vEmbed(result.success ? Colors.Warning : Colors.Error)
+      .setTitle(result.success ? '⚠️  Nutzer verwarnt' : '❌  Fehler')
       .setDescription(result.message)
-      .setColor(result.success ? 0xffdd00 : 0xff0000)
       .addFields(
-        { name: 'Nutzer', value: `${targetUser.tag}`, inline: true },
-        { name: 'Grund', value: reason, inline: true },
-        { name: 'Case', value: result.caseNumber ? `#${result.caseNumber}` : 'N/A', inline: true },
-      )
-      .setTimestamp();
+        { name: '👤 Nutzer', value: `${targetUser.tag}`, inline: true },
+        { name: '📝 Grund', value: reason, inline: true },
+        { name: '📋 Case', value: result.caseNumber ? `#${result.caseNumber}` : 'N/A', inline: true },
+      );
 
     await interaction.editReply({ embeds: [embed] });
   },
@@ -204,11 +197,9 @@ export const appealCommand: Command = {
 
     const result = await createAppeal(caseNumber, interaction.user.id, reason);
 
-    const embed = new EmbedBuilder()
-      .setTitle(result.success ? '📋 Appeal eingereicht' : '❌ Fehler')
-      .setDescription(result.message)
-      .setColor(result.success ? 0x0099ff : 0xff0000)
-      .setTimestamp();
+    const embed = vEmbed(result.success ? Colors.Info : Colors.Error)
+      .setTitle(result.success ? '📋  Appeal eingereicht' : '❌  Fehler')
+      .setDescription(result.message);
 
     await interaction.editReply({ embeds: [embed] });
   },
