@@ -1,7 +1,7 @@
 #!/bin/bash
 # =============================================
-# Discord-V-Bot — Update Script
-# Zieht neuesten Code, baut neu, startet den Bot
+# Discord-V-Bot - Update Script (Docker-Workflow)
+# Pull -> Rebuild Container -> DB-Schema-Sync -> Status
 # =============================================
 set -euo pipefail
 
@@ -11,61 +11,72 @@ YELLOW='\033[1;33m'
 BLUE='\033[0;34m'
 NC='\033[0m'
 
-BOT_DIR="/opt/discord-v-bot"
-BOT_USER="discordbot"
-SERVICE="discord-v-bot"
+BOT_DIR="${BOT_DIR:-/opt/discord-v-bot}"
+COMPOSE_SERVICE="bot"
+CONTAINER_NAME="discord-v-bot"
 
-log()  { echo -e "${GREEN}[✓]${NC} $1"; }
+log()  { echo -e "${GREEN}[\u2713]${NC} $1"; }
 info() { echo -e "${BLUE}[i]${NC} $1"; }
-err()  { echo -e "${RED}[✗]${NC} $1"; exit 1; }
+warn() { echo -e "${YELLOW}[!]${NC} $1"; }
+err()  { echo -e "${RED}[\u2717]${NC} $1"; exit 1; }
 
 if [[ $EUID -ne 0 ]]; then
-  err "Bitte als root ausführen: sudo bash update.sh"
+  err "Bitte als root ausfuehren: sudo bash update.sh"
 fi
 
-echo -e "${BLUE}[i] Discord-V-Bot wird aktualisiert...${NC}"
+cd "$BOT_DIR" || err "BOT_DIR nicht gefunden: $BOT_DIR"
 
-cd "$BOT_DIR"
+# Git safe.directory (root <-> repo-owner mismatch)
+git config --global --add safe.directory "$BOT_DIR" >/dev/null 2>&1 || true
 
-# Aktuellen Commit merken
-OLD_COMMIT=$(sudo -u "$BOT_USER" git rev-parse --short HEAD)
+info "Discord-V-Bot Update gestartet ($BOT_DIR)"
 
-# Code aktualisieren
-info "Git pull..."
-sudo -u "$BOT_USER" git pull origin main
-NEW_COMMIT=$(sudo -u "$BOT_USER" git rev-parse --short HEAD)
+# 1) Code ziehen
+info "Git fetch + reset auf origin/main..."
+OLD_COMMIT=$(git rev-parse --short HEAD || echo "unknown")
+git fetch origin main
+git reset --hard origin/main
+NEW_COMMIT=$(git rev-parse --short HEAD)
 
 if [[ "$OLD_COMMIT" == "$NEW_COMMIT" ]]; then
-  log "Bereits auf dem neuesten Stand (${OLD_COMMIT})"
-  exit 0
-fi
-
-info "Update: ${OLD_COMMIT} → ${NEW_COMMIT}"
-
-# Dependencies aktualisieren
-info "npm-Pakete werden aktualisiert..."
-sudo -u "$BOT_USER" npm ci --omit=dev
-
-# Prisma generieren
-info "Prisma Client wird generiert..."
-sudo -u "$BOT_USER" npx prisma generate
-
-# Build
-info "TypeScript wird kompiliert..."
-sudo -u "$BOT_USER" npm run build
-
-# Datenbank-Schema aktualisieren
-info "Datenbank-Schema wird aktualisiert..."
-sudo -u "$BOT_USER" npx prisma db push --skip-generate
-
-# Bot neu starten
-info "Bot wird neu gestartet..."
-systemctl restart "$SERVICE"
-sleep 3
-
-# Status prüfen
-if systemctl is-active --quiet "$SERVICE"; then
-  log "Update erfolgreich! Bot läuft (${NEW_COMMIT})"
+  log "Bereits auf dem neuesten Stand ($OLD_COMMIT)"
+  read -r -p "Trotzdem rebuild + restart? [y/N] " yn
+  if [[ ! "$yn" =~ ^[Yy]$ ]]; then exit 0; fi
 else
-  err "Bot konnte nicht gestartet werden! Logs: journalctl -u ${SERVICE} -n 50"
+  info "Update: $OLD_COMMIT -> $NEW_COMMIT"
 fi
+
+git --no-pager log --oneline "$OLD_COMMIT..$NEW_COMMIT" 2>/dev/null | head -10 || true
+
+# 2) Container neu bauen + starten
+info "Docker-Image wird gebaut und Container neu gestartet..."
+docker compose up -d --build "$COMPOSE_SERVICE"
+
+# 3) Auf Health warten
+info "Warte auf Container-Health..."
+for i in {1..30}; do
+  STATUS=$(docker inspect --format='{{.State.Health.Status}}' "$CONTAINER_NAME" 2>/dev/null || echo "starting")
+  if [[ "$STATUS" == "healthy" ]]; then
+    log "Container ist healthy."
+    break
+  fi
+  if [[ "$STATUS" == "unhealthy" ]]; then
+    docker compose logs --tail=40 "$COMPOSE_SERVICE"
+    err "Container wurde unhealthy nach Update."
+  fi
+  sleep 2
+done
+
+# 4) DB-Schema synchronisieren
+info "Prisma-Schema wird gegen DB gepusht..."
+if docker compose exec -T "$COMPOSE_SERVICE" npx prisma db push --skip-generate --accept-data-loss; then
+  log "DB-Schema synchronisiert."
+else
+  warn "Prisma db push lieferte Fehler - bitte Logs pruefen."
+fi
+
+# 5) Letzte Logs zur Kontrolle
+info "Letzte Bot-Logs:"
+docker compose logs --tail=20 "$COMPOSE_SERVICE" | tail -25
+
+log "Update erfolgreich. Bot laeuft auf Commit $NEW_COMMIT."

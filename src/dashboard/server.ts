@@ -1,5 +1,7 @@
 import express from 'express';
 import session from 'express-session';
+import connectPgSimple from 'connect-pg-simple';
+import { Pool } from 'pg';
 import helmet from 'helmet';
 import cors from 'cors';
 import rateLimit from 'express-rate-limit';
@@ -44,7 +46,20 @@ export function startDashboard(): void {
   app.use(express.urlencoded({ extended: true }));
 
   // Session (Sektion 12: Session-Management)
+  // Persistenter Session-Store auf Postgres -> kein MemoryStore-Leak,
+  // ueberlebt Container-Restarts.
+  const PgStore = connectPgSimple(session);
+  const sessionPool = new Pool({ connectionString: process.env.DATABASE_URL });
+  const sessionStore = new PgStore({
+    pool: sessionPool,
+    tableName: 'session',
+    createTableIfMissing: true,
+    pruneSessionInterval: 60 * 15, // alle 15 min aufraeumen
+  });
+  sessionPool.on('error', err => logger.error('Session-Pool-Fehler:', err));
+
   app.use(session({
+    store: sessionStore,
     secret: config.dashboard.sessionSecret,
     resave: false,
     saveUninitialized: false,
