@@ -1,5 +1,5 @@
 import prisma from '../../database/prisma';
-import { logAudit } from '../../utils/logger';
+import { logAudit, logger } from '../../utils/logger';
 import { Client, EmbedBuilder, TextChannel } from 'discord.js';
 import { Colors, Brand, vEmbed, percentBar } from '../../utils/embedDesign';
 
@@ -275,20 +275,20 @@ export function startPollScheduler(client: Client): void {
 
             await channel.send({ content: mentionContent, embeds: [embed] });
 
-            // Originalnachricht updaten falls vorhanden
+            // Originalnachricht updaten falls vorhanden (Buttons entfernen)
             if (poll.messageId) {
               try {
                 const msg = await channel.messages.fetch(poll.messageId);
-                await msg.edit({ embeds: [embed] });
+                await msg.edit({ embeds: [embed], components: [] });
               } catch { /* Message possibly deleted */ }
             }
           }
         } catch (error) {
-          // Fehler bei einzelner Umfrage nicht den Scheduler stoppen
+          logger.error('Poll-Scheduler: Fehler beim Beenden einer Umfrage', { pollId: poll.id, error });
         }
       }
     } catch (error) {
-      // Scheduler-Fehler ignorieren
+      logger.error('Poll-Scheduler: Allgemeiner Fehler', { error });
     }
-  }, 30_000); // Alle 30 Sekunden prüfen
+  }, 5_000); // Alle 5 Sekunden prüfen
 }

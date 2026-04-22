@@ -92,10 +92,28 @@ adminRouter.patch('/users/:id/upload-rights', async (req: Request, res: Response
     const id = req.params.id as string;
     const { enabled, reason } = req.body;
 
+    // WICHTIG: isManufacturer und role MUESSEN konsistent gehalten werden,
+    // sonst entstehen halbgare Hersteller-Zustaende, die /register manufacturer
+    // blockieren oder Permission-Checks falsch passieren lassen.
+    // Aktuelle Rolle laden, damit wir Admin/Dev-Rollen nicht ueberschreiben.
+    const current = await prisma.user.findUnique({
+      where: { id },
+      select: { role: true },
+    });
+    const isPrivileged = current && ['ADMIN', 'SUPER_ADMIN', 'DEVELOPER'].includes(current.role);
+
+    const data: { isManufacturer: boolean; role?: 'USER' | 'MANUFACTURER'; manufacturerApprovedAt?: Date | null } = {
+      isManufacturer: !!enabled,
+    };
+    if (!isPrivileged) {
+      data.role = enabled ? 'MANUFACTURER' : 'USER';
+      data.manufacturerApprovedAt = enabled ? new Date() : null;
+    }
+
     const user = await prisma.user.update({
       where: { id },
-      data: { isManufacturer: !!enabled },
-      select: { id: true, username: true, isManufacturer: true },
+      data: data as any,
+      select: { id: true, username: true, isManufacturer: true, role: true },
     });
 
     await createAuditLogEntry(

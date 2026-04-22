@@ -2,6 +2,9 @@ import {
   SlashCommandBuilder,
   ChatInputCommandInteraction,
   EmbedBuilder,
+  ActionRowBuilder,
+  ButtonBuilder,
+  ButtonStyle,
 } from 'discord.js';
 import { Command } from '../../types';
 import prisma from '../../database/prisma';
@@ -172,35 +175,36 @@ const pollCommand: Command = {
         );
 
         const endsAt = dauer ? new Date(Date.now() + dauer * 60 * 1000) : null;
-        // Neues Embed-Design mit createBotEmbed
-        const embed = createBotEmbed({
-          title: `📊 ${titel}`,
-          description: [
-            beschreibung ? `> ${beschreibung}` : undefined,
-            Brand.divider,
-            options.map((opt, i) => `${DEFAULT_EMOJIS[i]} ${opt}`).join('\n'),
-            Brand.divider,
-            endsAt ? `⏰ Endet: <t:${Math.floor(endsAt.getTime() / 1000)}:R>` : '⏰ Kein Zeitlimit',
-            `Poll-ID: \`${pollId}\``,
-          ].filter(Boolean).join('\n'),
-          color: Colors.Poll,
-          footer: `${Brand.footerText} • Poll`,
-          timestamp: true,
-        });
-        const msg = await interaction.editReply({ embeds: [embed] });
+        // Gleiches Embed-Format wie beim Live-Update (Konsistenz)
+        const initialVotes: Record<string, number> = {};
+        for (const opt of options) initialVotes[opt.id] = 0;
+        const embed = createPollEmbed(titel, beschreibung, options, typ, endsAt, initialVotes, 0);
+        embed.setFooter({ text: `Poll-ID: ${pollId} | Klicke einen Button um abzustimmen` });
 
-        // Message-ID speichern + Reaktionen hinzufügen
+        // Buttons (max 5 pro ActionRow, max 2 Rows = 10 Buttons)
+        const rows: ActionRowBuilder<ButtonBuilder>[] = [];
+        for (let rowIdx = 0; rowIdx < Math.ceil(options.length / 5); rowIdx++) {
+          const row = new ActionRowBuilder<ButtonBuilder>();
+          const slice = options.slice(rowIdx * 5, rowIdx * 5 + 5);
+          for (const opt of slice) {
+            row.addComponents(
+              new ButtonBuilder()
+                .setCustomId(`poll_vote_${pollId}_${opt.id}`)
+                .setLabel(opt.text.slice(0, 80))
+                .setEmoji(opt.emoji)
+                .setStyle(ButtonStyle.Primary),
+            );
+          }
+          rows.push(row);
+        }
+
+        const msg = await interaction.editReply({ embeds: [embed], components: rows });
+
+        // Message-ID speichern (keine Bot-Reaktionen: Bot soll nicht mitzählen)
         await prisma.poll.update({
           where: { id: pollId },
           data: { messageId: msg.id },
         });
-
-        // Reaktionen für Optionen hinzufügen
-        for (const opt of options) {
-          try {
-            await msg.react(opt.emoji);
-          } catch { /* Emoji might not be available */ }
-        }
         break;
       }
 
@@ -333,6 +337,14 @@ const pollCommand: Command = {
           await interaction.channel.send({
             content: `<@&${poll.notifyRoleId}> 📊 Umfrage **${result.title}** wurde beendet!`,
           });
+        }
+
+        // Original-Poll-Nachricht mit Ergebnis aktualisieren (Buttons entfernen)
+        if (poll.messageId && interaction.channel && 'messages' in interaction.channel) {
+          try {
+            const msg = await (interaction.channel as any).messages.fetch(poll.messageId);
+            await msg.edit({ embeds: [embed], components: [] });
+          } catch { /* Original-Nachricht evtl. gelöscht */ }
         }
 
         await interaction.editReply({ embeds: [embed] });

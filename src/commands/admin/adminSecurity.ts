@@ -114,7 +114,7 @@ const adminSecurityCommand: Command = {
             `   **${e.eventType}** [${e.severity}]\n` +
             `   ${e.description}\n` +
             `   ${e.ipAddress ? `IP: \`${e.ipAddress}\`` : ''}${e.user ? ` User: <@${e.user.discordId}>` : ''}\n` +
-            `   ID: \`${e.id.substring(0, 8)}...\``;
+            `   ID: \`${e.id}\``;
         });
 
         const embed = new EmbedBuilder()
@@ -187,7 +187,7 @@ const adminSecurityCommand: Command = {
         });
 
         logAudit('SECURITY_EVENT_RESOLVED', 'SECURITY', { eventId, adminId: interaction.user.id });
-        await interaction.editReply({ content: `✅ Security-Event \`${eventId.substring(0, 8)}...\` als gelöst markiert.` });
+        await interaction.editReply({ content: `✅ Security-Event \`${eventId}\` als gelöst markiert.` });
         break;
       }
     }

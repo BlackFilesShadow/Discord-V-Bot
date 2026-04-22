@@ -1,9 +1,12 @@
-import { Events, GuildMember } from 'discord.js';
+import { Events, GuildMember, TextChannel, AttachmentBuilder } from 'discord.js';
 import { BotEvent } from '../types';
 import { logger, logAudit } from '../utils/logger';
 import prisma from '../database/prisma';
 import { generateGuid } from '../utils/guid';
 import { detectRaid } from '../utils/rateLimiter';
+import { getWelcomeConfig, renderWelcomeMessage } from '../modules/welcome/welcomeManager';
+import { answerQuestion } from '../modules/ai/aiHandler';
+import { resolveCustomEmotes } from '../modules/ai/emoteResolver';
 
 // Anti-Raid: Speichert Join-Timestamps
 const recentJoins: Map<string, number[]> = new Map();
@@ -97,6 +100,45 @@ const guildMemberAddEvent: BotEvent = {
       });
 
       logger.info(`Neuer Nutzer: ${m.user.username} (GUID: ${user.id})`);
+
+      // ===== WELCOME-NACHRICHT (mit optionalen Medien & AI) =====
+      try {
+        const wcfg = await getWelcomeConfig(m.guild.id);
+        if (wcfg && wcfg.enabled && wcfg.channelId) {
+          const channel = m.guild.channels.cache.get(wcfg.channelId) as TextChannel | undefined;
+          if (channel?.isTextBased()) {
+            const userMention = `<@${m.user.id}>`;
+            const memberCount = m.guild.memberCount;
+
+            let messageText: string;
+            if (wcfg.mode === 'ai') {
+              const prompt = renderWelcomeMessage(wcfg.message, {
+                user: m.user.username,
+                guild: m.guild.name,
+                memberCount,
+              });
+              const r = await answerQuestion(
+                `Erzeuge eine kurze, freundliche, einladende Begr\u00fc\u00dfung. Anweisung: ${prompt}\n\nNeuer Nutzer: ${m.user.username}\nServer: ${m.guild.name}\nMitgliederzahl: ${memberCount}\n\nGib NUR den Begr\u00fc\u00dfungstext zur\u00fcck (max. 600 Zeichen).`
+              );
+              messageText = r.success && r.result ? `${userMention} ${r.result.trim()}` : `${userMention} Willkommen auf ${m.guild.name}!`;
+            } else {
+              messageText = renderWelcomeMessage(wcfg.message, {
+                user: userMention,
+                guild: m.guild.name,
+                memberCount,
+              });
+            }
+
+            const files = wcfg.mediaUrl ? [new AttachmentBuilder(wcfg.mediaUrl)] : undefined;
+            const finalText = resolveCustomEmotes(messageText, m.guild);
+            await channel.send({ content: finalText.slice(0, 2000), files }).catch(err => {
+              logger.warn(`Welcome-Nachricht konnte nicht gesendet werden:`, err);
+            });
+          }
+        }
+      } catch (welcomeErr) {
+        logger.error('Welcome-System Fehler:', welcomeErr);
+      }
     } catch (error) {
       logger.error(`Fehler bei guildMemberAdd für ${m.user.username}:`, error);
     }

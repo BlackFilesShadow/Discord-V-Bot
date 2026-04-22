@@ -58,6 +58,7 @@ const adminApproveCommand: Command = {
     }
 
     // OTP dem User per DM senden
+    let dmSent = false;
     try {
       const dmUser = targetUser || await interaction.client.users.fetch(discordId);
       const dm = await dmUser.createDM();
@@ -75,11 +76,29 @@ const adminApproveCommand: Command = {
             .setTimestamp(),
         ],
       });
+      dmSent = true;
     } catch {
       logger.warn(`Konnte DM an ${discordId} nicht senden.`);
     }
 
-    await interaction.editReply({ content: `✅ Hersteller-Anfrage von **${displayName}** angenommen. OTP wurde per DM gesendet.` });
+    if (dmSent) {
+      await interaction.editReply({ content: `✅ Hersteller-Anfrage von **${displayName}** angenommen. OTP wurde per DM gesendet.` });
+    } else {
+      // DM fehlgeschlagen: OTP dem Admin ephemeral anzeigen
+      await interaction.editReply({
+        embeds: [
+          new EmbedBuilder()
+            .setTitle('\u26a0\ufe0f Anfrage angenommen \u2014 aber DM fehlgeschlagen')
+            .setDescription(
+              `**${displayName}** hat DMs deaktiviert.\n\n` +
+              `**Einmal-Passwort (manuell weiterleiten):**\n\`\`\`${result.otp}\`\`\`\n` +
+              `**G\u00fcltig bis:** <t:${Math.floor((result.expiresAt as Date).getTime() / 1000)}:R>\n\n` +
+              `Bitte sende das Passwort dem Nutzer \u00fcber einen sicheren Weg. Es ist nur einmal verwendbar.`
+            )
+            .setColor(0xff8800),
+        ],
+      });
+    }
   },
 };
 

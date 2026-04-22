@@ -1,4 +1,11 @@
-import { SlashCommandBuilder, ChatInputCommandInteraction, EmbedBuilder } from 'discord.js';
+import {
+  SlashCommandBuilder,
+  ChatInputCommandInteraction,
+  EmbedBuilder,
+  ActionRowBuilder,
+  ButtonBuilder,
+  ButtonStyle,
+} from 'discord.js';
 import { Command } from '../../types';
 import {
   createGiveaway,
@@ -144,7 +151,7 @@ async function handleStart(interaction: ChatInputCommandInteraction) {
       `👥 **Teilnehmer:** 0`,
       `🎁 **Von:** ${interaction.user.username}`,
       '━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━',
-      `*Reagiere mit ${giveaway.customEmoji || '🎉'} um teilzunehmen!*`,
+      `*Klicke auf den Button um teilzunehmen!*`,
     ].filter(Boolean).join('\n'),
     fields: [
       { name: '🆔 ID', value: giveaway.id, inline: false },
@@ -154,10 +161,19 @@ async function handleStart(interaction: ChatInputCommandInteraction) {
     timestamp: true,
   });
 
-  const msg = await interaction.editReply({ embeds: [embed] });
+  // Teilnahme-Button
+  const row = new ActionRowBuilder<ButtonBuilder>().addComponents(
+    new ButtonBuilder()
+      .setCustomId(`giveaway_enter_${giveaway.id}`)
+      .setLabel('Teilnehmen')
+      .setEmoji(customEmoji)
+      .setStyle(ButtonStyle.Success),
+  );
 
-  // Reaktion hinzufügen
-  await msg.react(customEmoji).catch(() => msg.react('🎉'));
+  const msg = await interaction.editReply({ embeds: [embed], components: [row] });
+
+  // Keine Bot-Reaktion: Bot soll nicht als Teilnehmer zählen.
+  // Nutzer klicken den Button zum Teilnehmen.
 
   // Message-ID speichern
   await prisma.giveaway.update({

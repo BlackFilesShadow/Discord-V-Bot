@@ -101,7 +101,7 @@ export function createGiveawayEmbed(giveaway: {
     descParts.push(`👥 **Teilnehmer:** ${participantCount}`);
     if (creatorUsername) descParts.push(`🎁 **Von:** ${creatorUsername}`);
     descParts.push(`\n${Brand.divider}`);
-    descParts.push(`\n*Reagiere mit ${emoji} um teilzunehmen!*`);
+    descParts.push(`\n*Klicke auf den Button um teilzunehmen!*`);
   } else {
     descParts.push(`👥 **Teilnehmer:** ${participantCount}`);
     if (creatorUsername) descParts.push(`🎁 **Von:** ${creatorUsername}`);
@@ -236,7 +236,7 @@ export async function drawWinners(giveawayId: string): Promise<{
  * Sektion 6: Automatische Gewinnerermittlung nach Ablauf.
  */
 export function startGiveawayScheduler(client: Client): void {
-  const CHECK_INTERVAL = 10000; // Alle 10 Sekunden
+  const CHECK_INTERVAL = 3000; // Alle 3 Sekunden
 
   setInterval(async () => {
     try {
@@ -296,11 +296,11 @@ export function startGiveawayScheduler(client: Client): void {
             await channel.send({ content: rolePing || undefined, embeds: [winnerEmbed] });
           }
 
-          // Original-Embed aktualisieren
+          // Original-Embed aktualisieren (Buttons entfernen)
           if (giveaway.messageId) {
             try {
               const msg = await channel.messages.fetch(giveaway.messageId);
-              await msg.edit({ embeds: [winnerEmbed] });
+              await msg.edit({ embeds: [winnerEmbed], components: [] });
             } catch { /* Nachricht nicht mehr vorhanden */ }
           }
         } catch (error) {

@@ -108,7 +108,7 @@ const feedCommand: Command = {
             { name: 'Typ', value: typ, inline: true },
             { name: 'Channel', value: `<#${channel.id}>`, inline: true },
             { name: 'Intervall', value: `${intervall}s`, inline: true },
-            { name: 'ID', value: `\`${feedId.substring(0, 8)}...\``, inline: true },
+            { name: 'ID', value: `\`${feedId}\``, inline: false },
           )
           .setTimestamp();
 
@@ -137,7 +137,7 @@ const feedCommand: Command = {
           return `${status} ${emoji} **${f.name}** (${f.feedType})\n` +
             `   Channel: <#${f.channelId}> | Intervall: ${f.interval}s\n` +
             `   Letzte Prüfung: ${lastCheck}\n` +
-            `   ID: \`${f.id.substring(0, 8)}...\``;
+            `   ID: \`${f.id}\``;
         });
 
         const embed = new EmbedBuilder()

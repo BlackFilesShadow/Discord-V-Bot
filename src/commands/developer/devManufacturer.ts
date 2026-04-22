@@ -28,7 +28,10 @@ const devManufacturerCommand: Command = {
           opt.setName('user').setDescription('Hersteller-User').setRequired(false)
         )
         .addStringOption(opt =>
-          opt.setName('user_id').setDescription('Alternativ: Discord-ID des Herstellers').setRequired(false)
+          opt.setName('user_id').setDescription('Alternativ: Discord-ID, interne GUID oder Username').setRequired(false)
+        )
+        .addBooleanOption(opt =>
+          opt.setName('force').setDescription('Auch entfernen wenn isManufacturer=false (nur Aufr\u00e4umen)').setRequired(false)
         )
     )
     .addSubcommand(sub =>
@@ -39,6 +42,17 @@ const devManufacturerCommand: Command = {
   devOnly: true,
 
   execute: async (interaction: ChatInputCommandInteraction) => {
+    // SOFORT defern (innerhalb der 3-Sekunden-Frist von Discord),
+    // bevor wir irgendeine Logik ausfuehren \u2013 sonst Code 10062.
+    try {
+      if (!interaction.deferred && !interaction.replied) {
+        await interaction.deferReply({ ephemeral: true });
+      }
+    } catch (deferErr) {
+      logger.warn(`dev-manufacturer: deferReply fehlgeschlagen: ${(deferErr as Error).message}`);
+      return;
+    }
+
     const subcommand = interaction.options.getSubcommand();
 
     if (subcommand === 'remove') {
@@ -49,33 +63,9 @@ const devManufacturerCommand: Command = {
   },
 };
 
-async function handleRemove(interaction: ChatInputCommandInteraction): Promise<void> {
-  await interaction.deferReply({ ephemeral: true });
-
-  const targetUser = interaction.options.getUser('user');
-  const userIdStr = interaction.options.getString('user_id');
-
-  let discordId: string;
-  let displayName: string;
-
-  if (targetUser) {
-    discordId = targetUser.id;
-    displayName = targetUser.username;
-  } else if (userIdStr) {
-    discordId = userIdStr.replace(/[<@!>]/g, '').trim();
-    displayName = discordId;
-    try {
-      const fetched = await interaction.client.users.fetch(discordId);
-      displayName = fetched.username;
-    } catch { /* ID als Display */ }
-  } else {
-    await interaction.editReply({ content: '❌ Bitte gib einen **User** oder eine **User-ID** an.' });
-    return;
-  }
-
-  // User in DB finden
-  const dbUser = await prisma.user.findUnique({
-    where: { discordId },
+async function findManufacturer(where: { discordId?: string; id?: string }) {
+  return prisma.user.findUnique({
+    where: where as any,
     include: {
       packages: {
         include: {
@@ -85,14 +75,98 @@ async function handleRemove(interaction: ChatInputCommandInteraction): Promise<v
       manufacturerRequest: true,
     },
   });
+}
 
-  if (!dbUser) {
-    await interaction.editReply({ content: `❌ User **${displayName}** nicht in der Datenbank gefunden.` });
+async function findByUsername(username: string) {
+  // case-insensitive Suche, gibt erste Trefferin zur\u00fcck
+  return prisma.user.findFirst({
+    where: { username: { equals: username, mode: 'insensitive' } },
+    include: {
+      packages: {
+        include: {
+          files: { select: { id: true, filePath: true, originalName: true } },
+        },
+      },
+      manufacturerRequest: true,
+    },
+  });
+}
+
+async function handleRemove(interaction: ChatInputCommandInteraction): Promise<void> {
+  // defer wurde bereits in execute() aufgerufen
+
+  const targetUser = interaction.options.getUser('user');
+  const userIdStr = interaction.options.getString('user_id');
+  const force = interaction.options.getBoolean('force') ?? false;
+
+  let dbUser: Awaited<ReturnType<typeof findManufacturer>> | null = null;
+  let displayName: string;
+  let lookupMethod = '';
+
+  if (targetUser) {
+    dbUser = await findManufacturer({ discordId: targetUser.id });
+    displayName = targetUser.username;
+    lookupMethod = `Discord-User-Picker (id=${targetUser.id})`;
+  } else if (userIdStr) {
+    const cleaned = userIdStr.replace(/[<@!>]/g, '').trim();
+    const isUuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(cleaned);
+    const isSnowflake = /^\d{17,20}$/.test(cleaned);
+    if (isUuid) {
+      dbUser = await findManufacturer({ id: cleaned });
+      lookupMethod = `GUID (${cleaned})`;
+    } else if (isSnowflake) {
+      dbUser = await findManufacturer({ discordId: cleaned });
+      lookupMethod = `Discord-ID (${cleaned})`;
+    } else {
+      // Fallback: Username
+      dbUser = await findByUsername(cleaned);
+      lookupMethod = `Username (${cleaned})`;
+    }
+    // Wenn Discord-ID-Suche fehlschl\u00e4gt, Username-Fallback versuchen
+    if (!dbUser && !isUuid) {
+      const byName = await findByUsername(cleaned);
+      if (byName) {
+        dbUser = byName;
+        lookupMethod += ' \u2192 fallback Username';
+      }
+    }
+    displayName = dbUser?.username || cleaned;
+    if (dbUser) {
+      try {
+        const fetched = await interaction.client.users.fetch(dbUser.discordId);
+        displayName = fetched.username;
+      } catch { /* ID als Display */ }
+    }
+  } else {
+    await interaction.editReply({ content: '❌ Bitte gib einen **User**, eine **Discord-ID**, eine **GUID** oder einen **Username** an.' });
     return;
   }
 
-  if (!dbUser.isManufacturer) {
-    await interaction.editReply({ content: `❌ **${displayName}** ist kein Hersteller.` });
+  const discordId = dbUser?.discordId ?? '';
+
+  // User in DB finden
+  if (!dbUser) {
+    const searched = userIdStr ? `\`${userIdStr}\`` : `<@${targetUser?.id}>`;
+    await interaction.editReply({
+      content:
+        `\u274c User **${displayName}** nicht in der Datenbank gefunden.\n` +
+        `\u2022 Suchart: ${lookupMethod}\n` +
+        `\u2022 Eingabe: ${searched}\n\n` +
+        `Tipp: Mit \`/dev-manufacturer list\` siehst du alle Hersteller mit Discord-ID und GUID.`,
+    });
+    return;
+  }
+
+  if (!dbUser.isManufacturer && !force) {
+    await interaction.editReply({
+      content:
+        `\u274c **${displayName}** ist kein Hersteller (isManufacturer=false).\n` +
+        `\u2022 Discord-ID: \`${dbUser.discordId}\`\n` +
+        `\u2022 GUID: \`${dbUser.id}\`\n` +
+        `\u2022 Rolle: \`${dbUser.role}\` | Status: \`${dbUser.status}\`\n` +
+        `\u2022 Suchart: ${lookupMethod}\n\n` +
+        `Wenn du trotzdem Pakete/Daten aufr\u00e4umen willst, nutze die Option \`force:true\`.`,
+    });
     return;
   }
 
@@ -106,40 +180,68 @@ async function handleRemove(interaction: ChatInputCommandInteraction): Promise<v
     totalSize += pkg.totalSize;
   }
 
-  // Alle Pakete hard-deleten (Dateien + DB-Einträge)
+  // ATOMARE STATUS-AENDERUNG ZUERST: User sofort vom Hersteller-Status entfernen,
+  // damit er waehrend des Cleanups nicht parallel weiter uploaden kann (Race-Schutz).
+  // ManufacturerRequest und OTPs werden in derselben Transaction geloescht, damit die
+  // DB nie in einem halbgaren Zustand zurueckbleibt (User=USER aber Request=APPROVED).
+  let requestsDeleted: { count: number };
+  let otpsDeleted: { count: number };
+  try {
+    [, requestsDeleted, otpsDeleted] = await prisma.$transaction([
+      prisma.user.update({
+        where: { id: dbUser.id },
+        data: {
+          isManufacturer: false,
+          role: 'USER',
+          manufacturerApprovedAt: null,
+          manufacturerApprovedBy: null,
+        },
+      }),
+      prisma.manufacturerRequest.deleteMany({ where: { userId: dbUser.id } }),
+      prisma.oneTimePassword.deleteMany({ where: { userId: dbUser.id } }),
+    ]);
+  } catch (txErr) {
+    const msg = (txErr as Error).message;
+    logger.error(`dev-manufacturer remove: Transaction fehlgeschlagen fuer ${dbUser.id}: ${msg}`);
+    await interaction.editReply({
+      content:
+        `\u274c Reset fehlgeschlagen \u2013 DB-Transaction abgebrochen.\n` +
+        `\u2022 User: \`${displayName}\` (Discord \`${dbUser.discordId}\`, GUID \`${dbUser.id}\`)\n` +
+        `\u2022 Fehler: \`${msg}\`\n\n` +
+        `Der Hersteller-Status wurde NICHT geaendert. Bitte Logs pruefen und erneut versuchen.`,
+    });
+    return;
+  }
+
+  // DANACH: Pakete/Dateien aufraeumen (best-effort, nicht-transactional wegen Filesystem).
+  // Selbst wenn hier etwas schief geht, ist der User schon kein Hersteller mehr und kann
+  // sich sauber neu registrieren. Verwaiste Dateien koennen manuell weggeraeumt werden.
   for (const pkg of dbUser.packages) {
-    await deletePackage(pkg.id, interaction.user.id, true);
+    try {
+      await deletePackage(pkg.id, interaction.user.id, true);
+    } catch (err) {
+      logger.error(`Paket ${pkg.id} konnte nicht geloescht werden: ${(err as Error).message}`);
+    }
   }
 
   // Upload-Verzeichnis des Users komplett löschen
   const userDir = path.join(config.upload.dir, dbUser.id);
+  let dirDeleted = false;
   try {
     await fs.rm(userDir, { recursive: true, force: true });
-  } catch { /* Verzeichnis existiert evtl. nicht */ }
-
-  // Hersteller-Anfrage löschen
-  if (dbUser.manufacturerRequest) {
-    await prisma.manufacturerRequest.delete({
-      where: { userId: dbUser.id },
-    });
+    dirDeleted = true;
+    logger.info(`Upload-Bereich gelöscht: ${userDir}`);
+  } catch (err) {
+    logger.error(`Konnte Upload-Bereich nicht löschen (${userDir}): ${(err as Error).message}`);
   }
-
-  // Hersteller-Status entfernen, Rolle auf USER zurücksetzen
-  await prisma.user.update({
-    where: { id: dbUser.id },
-    data: {
-      isManufacturer: false,
-      role: 'USER',
-      manufacturerApprovedAt: null,
-      manufacturerApprovedBy: null,
-    },
-  });
 
   logAudit('MANUFACTURER_REMOVED_BY_DEV', 'ADMIN', {
     removedUser: discordId,
     removedBy: interaction.user.id,
     packagesDeleted: totalPackages,
     filesDeleted: totalFiles,
+    otpsDeleted: otpsDeleted.count,
+    requestsDeleted: requestsDeleted.count,
     totalSize: totalSize.toString(),
   });
 
@@ -150,6 +252,7 @@ async function handleRemove(interaction: ChatInputCommandInteraction): Promise<v
       { name: '📦 Pakete gelöscht', value: totalPackages.toString(), inline: true },
       { name: '📄 Dateien gelöscht', value: totalFiles.toString(), inline: true },
       { name: '💾 Speicher freigegeben', value: formatBytes(Number(totalSize)), inline: true },
+      { name: '📂 Upload-Bereich', value: dirDeleted ? '✅ gelöscht' : '⚠️ nicht entfernt', inline: true },
       { name: '👤 Neue Rolle', value: 'USER', inline: true },
     )
     .setColor(0xff0000)
@@ -180,7 +283,7 @@ async function handleRemove(interaction: ChatInputCommandInteraction): Promise<v
 }
 
 async function handleList(interaction: ChatInputCommandInteraction): Promise<void> {
-  await interaction.deferReply({ ephemeral: true });
+  // defer wurde bereits in execute() aufgerufen
 
   const manufacturers = await prisma.user.findMany({
     where: { isManufacturer: true },
@@ -206,11 +309,12 @@ async function handleList(interaction: ChatInputCommandInteraction): Promise<voi
       name: `🏭 ${m.username}`,
       value: [
         `🆔 Discord: \`${m.discordId}\``,
+        `🔑 GUID: \`${m.id}\``,
         `📦 Pakete: ${m._count.packages}`,
         `📅 Seit: ${m.manufacturerApprovedAt?.toLocaleDateString('de-DE') || 'unbekannt'}`,
         `🔹 Rolle: ${m.role}`,
       ].join('\n'),
-      inline: true,
+      inline: false,
     });
   }
 

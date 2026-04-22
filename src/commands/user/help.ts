@@ -41,57 +41,49 @@ const helpCommand: Command = {
     ),
 
   execute: async (interaction: ChatInputCommandInteraction) => {
-    const category = interaction.options.getString('category');
-    const { isAdmin, isDev } = await checkUserRoles(interaction.user.id);
+    await interaction.deferReply({ ephemeral: true });
 
+    const { isAdmin, isDev } = await checkUserRoles(interaction.user.id);
     const pages = buildPages(isAdmin, isDev);
 
-    let currentPage = 0;
-    if (category) {
-      const idx = pages.findIndex(p => p.id === category);
-      if (idx >= 0) currentPage = idx;
+    // Optional: direkt zu einer Kategorie springen
+    const requested = interaction.options.getString('category');
+    let current = 0;
+    if (requested) {
+      const idx = pages.findIndex(p => p.id === requested);
+      if (idx >= 0) current = idx;
     }
 
-    const row = buildButtons(currentPage, pages.length);
-    const response = await interaction.reply({
-      embeds: [pages[currentPage].embed],
-      components: [row],
-      ephemeral: true,
+    const message = await interaction.editReply({
+      embeds: [pages[current].embed],
+      components: pages.length > 1 ? [buildButtons(current, pages.length)] : [],
     });
 
-    const collector = response.createMessageComponentCollector({
+    if (pages.length <= 1) return;
+
+    const collector = message.createMessageComponentCollector({
       componentType: ComponentType.Button,
-      time: 300_000,
+      time: 5 * 60 * 1000, // 5 Minuten
+      filter: i => i.user.id === interaction.user.id,
     });
 
-    collector.on('collect', async (btn) => {
-      if (btn.user.id !== interaction.user.id) {
-        await btn.reply({ content: 'Das ist nicht dein Help-Menü.', ephemeral: true });
-        return;
-      }
+    collector.on('collect', async btn => {
+      if (btn.customId === 'help_first') current = 0;
+      else if (btn.customId === 'help_prev') current = Math.max(0, current - 1);
+      else if (btn.customId === 'help_next') current = Math.min(pages.length - 1, current + 1);
+      else if (btn.customId === 'help_last') current = pages.length - 1;
+      else return;
 
-      if (btn.customId === 'help_prev') {
-        currentPage = Math.max(0, currentPage - 1);
-      } else if (btn.customId === 'help_next') {
-        currentPage = Math.min(pages.length - 1, currentPage + 1);
-      } else if (btn.customId === 'help_first') {
-        currentPage = 0;
-      } else if (btn.customId === 'help_last') {
-        currentPage = pages.length - 1;
-      }
-
-      await btn.update({
-        embeds: [pages[currentPage].embed],
-        components: [buildButtons(currentPage, pages.length)],
-      });
+      try {
+        await btn.update({
+          embeds: [pages[current].embed],
+          components: [buildButtons(current, pages.length)],
+        });
+      } catch { /* ignore */ }
     });
 
     collector.on('end', async () => {
-      try {
-        await interaction.editReply({ components: [] });
-      } catch {
-        // Message may be deleted
-      }
+      try { await interaction.editReply({ components: [] }); } catch { /* ignore */ }
     });
   },
 };
@@ -244,6 +236,12 @@ function buildPages(isAdmin: boolean, isDev: boolean): HelpPage[] {
         fields: [
           { name: '`/level [user]`', value: '┃ Dein Level oder das eines anderen Users.' },
           { name: '`/leaderboard [seite]`', value: '┃ Top-User nach XP anzeigen.' },
+          { name: '`/xp-config show`', value: '┃ *(Admin)* Aktuelle XP-Konfiguration ansehen.' },
+          { name: '`/xp-config rate`', value: '┃ *(Admin)* XP-Raten und Multiplikator anpassen.' },
+          { name: '`/xp-config xp-rolle-add` / `xp-rolle-remove` / `xp-rolle-list`', value: '┃ *(Admin)* Rollen festlegen, die XP sammeln dürfen.' },
+          { name: '`/xp-config xp-channel-add` / `xp-channel-remove` / `xp-channel-list` / `xp-channel-clear`', value: '┃ *(Admin)* Strikte Kanal-Whitelist für XP.' },
+          { name: '`/xp-config max-level` / `max-rolle`', value: '┃ *(Admin)* Endlevel + Belohnungsrolle festlegen.' },
+          { name: '`/xp-config levelrole`', value: '┃ *(Admin)* Rolle für ein bestimmtes Level vergeben.' },
         ],
         footer: `Seite 6 ${Brand.dot} Level & XP ${Brand.dot} ${Brand.footerText}`,
         timestamp: true,

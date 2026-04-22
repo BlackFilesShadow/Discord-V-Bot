@@ -14,7 +14,10 @@ import { logger, logAudit } from '../utils/logger';
 import { checkRateLimit } from '../utils/rateLimiter';
 import prisma from '../database/prisma';
 import { approveManufacturer, denyManufacturer } from '../modules/registration/register';
+import { votePoll, getPollVotes, createPollEmbed } from '../modules/polls/pollSystem';
+import { createGiveawayEmbed } from '../modules/giveaway/giveawayManager';
 import { config } from '../config';
+import { timingSafeEqual } from 'crypto';
 
 // Pending Dev-Passwort-Verifizierungen
 const pendingDevAuth = new Map<string, { commandName: string; userId: string; expires: number }>();
@@ -24,6 +27,63 @@ const pendingDevAuth = new Map<string, { commandName: string; userId: string; ex
 const devAuthenticatedUsers = new Map<string, number>();
 
 const DEV_SESSION_MS = 2 * 60 * 60 * 1000; // 2 Stunden
+
+// Brute-Force-Schutz: pro User max. 5 Fehlversuche, dann 15 Min Lockout
+const devAuthFails = new Map<string, { count: number; lockedUntil: number }>();
+const DEV_AUTH_MAX_FAILS = 5;
+const DEV_AUTH_LOCKOUT_MS = 15 * 60 * 1000;
+
+// Periodisches Cleanup für pendingDevAuth & devAuthFails (alle 5 Min)
+setInterval(() => {
+  const now = Date.now();
+  for (const [k, v] of pendingDevAuth.entries()) {
+    if (v.expires < now) pendingDevAuth.delete(k);
+  }
+  for (const [k, v] of devAuthFails.entries()) {
+    if (v.lockedUntil < now && v.count < DEV_AUTH_MAX_FAILS) devAuthFails.delete(k);
+    else if (v.lockedUntil > 0 && v.lockedUntil < now) devAuthFails.delete(k);
+  }
+  for (const [k, v] of devAuthenticatedUsers.entries()) {
+    if (v < now) devAuthenticatedUsers.delete(k);
+  }
+}, 5 * 60 * 1000).unref?.();
+
+/**
+ * Timing-safe Passwort-Vergleich (verhindert Timing-Attack auf DEV_PASSWORD).
+ */
+function safeEqual(a: string, b: string): boolean {
+  const bufA = Buffer.from(a, 'utf8');
+  const bufB = Buffer.from(b, 'utf8');
+  // Wenn Längen unterschiedlich → Vergleich auf gleichlange Puffer und false zurück
+  if (bufA.length !== bufB.length) {
+    // Trotzdem vergleichen, um konstante Laufzeit zu erzwingen
+    const max = Math.max(bufA.length, bufB.length, 1);
+    const padA = Buffer.alloc(max);
+    const padB = Buffer.alloc(max);
+    bufA.copy(padA);
+    bufB.copy(padB);
+    timingSafeEqual(padA, padB);
+    return false;
+  }
+  return timingSafeEqual(bufA, bufB);
+}
+
+// In-Memory Rate-Limit: 30 Commands / 60s pro User (synchron, 0ms)
+const inMemRateLimit = new Map<string, { count: number; windowStart: number }>();
+const RL_WINDOW = 60_000;
+const RL_MAX = 30;
+
+function checkInMemoryRateLimit(userId: string): boolean {
+  const now = Date.now();
+  const entry = inMemRateLimit.get(userId);
+  if (!entry || now - entry.windowStart > RL_WINDOW) {
+    inMemRateLimit.set(userId, { count: 1, windowStart: now });
+    return true;
+  }
+  if (entry.count >= RL_MAX) return false;
+  entry.count++;
+  return true;
+}
 
 /**
  * Prüft ob ein User Owner oder Guild-Owner ist.
@@ -72,6 +132,14 @@ const interactionCreateEvent: BotEvent = {
         await handleManufacturerButton(btn);
         return;
       }
+      if (btn.customId.startsWith('poll_vote_')) {
+        await handlePollVoteButton(btn);
+        return;
+      }
+      if (btn.customId.startsWith('giveaway_enter_')) {
+        await handleGiveawayEnterButton(btn);
+        return;
+      }
       // Help-Pagination wird direkt vom Collector in help.ts verarbeitet — hier nichts tun
     }
 
@@ -85,20 +153,22 @@ const interactionCreateEvent: BotEvent = {
       return;
     }
 
-    // Rate-Limit prüfen
-    const rateLimitResult = await checkRateLimit(i.user.id, 'command');
-    if (!rateLimitResult.allowed) {
-      await i.reply({
-        content: `⚠️ Rate-Limit erreicht. Bitte warte bis ${rateLimitResult.resetAt.toLocaleTimeString('de-DE')}.`,
-        ephemeral: true,
-      });
+    // In-memory Rate-Limit (synchron, 0 DB-Calls) um Discord's 3s-Timeout einzuhalten.
+    // DB-basiertes Rate-Limit läuft zusätzlich in Hintergrund-Jobs.
+    if (!checkInMemoryRateLimit(i.user.id)) {
+      try {
+        await i.reply({
+          content: `⚠️ Zu viele Commands. Bitte einen Moment warten.`,
+          ephemeral: true,
+        });
+      } catch { /* interaction evtl. abgelaufen */ }
       return;
     }
 
     // ──────────────────────────────────────────
     // PERMISSION-CHECK für Admin/Dev-Commands
     // ──────────────────────────────────────────
-    if (command.adminOnly || command.devOnly) {
+    if (command.adminOnly || command.devOnly || command.manufacturerOnly) {
       const userId = i.user.id;
 
       // 1) Owner/Guild-Owner → IMMER durchlassen
@@ -109,6 +179,22 @@ const interactionCreateEvent: BotEvent = {
       else if (command.devOnly) {
         if (!config.developer.password) {
           await i.reply({ content: '🔒 Developer-Passwort nicht konfiguriert.', ephemeral: true });
+          return;
+        }
+
+        // Lockout-Check vor Modal
+        const fails = devAuthFails.get(userId);
+        if (fails && fails.lockedUntil > Date.now()) {
+          const remainMin = Math.ceil((fails.lockedUntil - Date.now()) / 60_000);
+          await i.reply({
+            content: `🔒 Zu viele Fehlversuche. Dev-Login gesperrt für **${remainMin} Min.**`,
+            ephemeral: true,
+          });
+          logAudit('DEV_AUTH_BLOCKED_LOCKED', 'SECURITY', {
+            userId,
+            command: i.commandName,
+            remainMin,
+          });
           return;
         }
 
@@ -159,6 +245,39 @@ const interactionCreateEvent: BotEvent = {
         }
         // Admin-Rolle vorhanden → durchlassen
       }
+      // 4) Manufacturer-Commands → AUSSCHLIESSLICH isManufacturer=true UND status=ACTIVE
+      //    Admins/Developer haben hier KEINEN Bypass — Upload ist ausnahmslos
+      //    der Hersteller-Rolle vorbehalten.
+      else if (command.manufacturerOnly) {
+        const dbUser = await prisma.user.findUnique({ where: { discordId: userId } });
+        if (!dbUser) {
+          await i.reply({
+            content: '🔒 Du bist nicht registriert. Verwende `/register manufacturer` um Hersteller zu werden.',
+            ephemeral: true,
+          });
+          return;
+        }
+        if (!dbUser.isManufacturer) {
+          await i.reply({
+            content: '🔒 Nur registrierte **Hersteller** dürfen diesen Command nutzen. Beantrage Hersteller-Status mit `/register manufacturer`.',
+            ephemeral: true,
+          });
+          logAudit('MANUFACTURER_COMMAND_DENIED', 'SECURITY', {
+            userId,
+            command: i.commandName,
+            reason: 'Kein Hersteller',
+          });
+          return;
+        }
+        if (dbUser.status !== 'ACTIVE') {
+          await i.reply({
+            content: `🔒 Dein Account ist noch nicht aktiviert (Status: \`${dbUser.status}\`). Verwende \`/register verify password:DEIN_OTP\` mit dem Einmal-Passwort aus der DM.`,
+            ephemeral: true,
+          });
+          return;
+        }
+        // Hersteller aktiv → durchlassen
+      }
     }
 
     // Command ausführen
@@ -172,14 +291,27 @@ const interactionCreateEvent: BotEvent = {
       });
 
       await command.execute(i);
-    } catch (error) {
+    } catch (error: any) {
+      // 10062 (Unknown interaction) und 40060 (Already acknowledged) silently behandeln —
+      // diese sind nicht durch Code-Bugs, sondern durch Discord-Latenz/Cold-Start verursacht.
+      const code = error?.code ?? error?.rawError?.code;
+      if (code === 10062 || code === 40060) {
+        logger.warn(`Command ${i.commandName}: Interaction abgelaufen (${code}) — ignoriert.`);
+        return;
+      }
+
       logger.error(`Fehler bei Command ${i.commandName}:`, error);
 
       const errorMessage = '❌ Ein Fehler ist aufgetreten. Bitte versuche es erneut.';
-      if (i.replied || i.deferred) {
-        await i.followUp({ content: errorMessage, ephemeral: true });
-      } else {
-        await i.reply({ content: errorMessage, ephemeral: true });
+      try {
+        if (i.replied || i.deferred) {
+          await i.followUp({ content: errorMessage, ephemeral: true });
+        } else {
+          await i.reply({ content: errorMessage, ephemeral: true });
+        }
+      } catch (replyError: any) {
+        // Ignorieren wenn Antwort nicht mehr möglich
+        logger.warn(`Konnte Fehler-Antwort nicht senden für ${i.commandName}: ${replyError?.message}`);
       }
     }
   },
@@ -214,19 +346,52 @@ async function handleDevPasswordModal(modal: ModalSubmitInteraction): Promise<vo
     return;
   }
 
+  // Lockout-Check vor dem Vergleich
+  const fails = devAuthFails.get(modal.user.id);
+  if (fails && fails.lockedUntil > Date.now()) {
+    const remainMin = Math.ceil((fails.lockedUntil - Date.now()) / 60_000);
+    await modal.reply({
+      content: `🔒 Zu viele Fehlversuche. Gesperrt für **${remainMin} Min.**`,
+      ephemeral: true,
+    });
+    return;
+  }
+
   const enteredPassword = modal.fields.getTextInputValue('dev_password');
 
-  if (enteredPassword !== config.developer.password) {
+  if (!safeEqual(enteredPassword, config.developer.password)) {
     pendingDevAuth.delete(modal.customId);
+
+    // Fehlversuch zählen
+    const cur = devAuthFails.get(modal.user.id) ?? { count: 0, lockedUntil: 0 };
+    cur.count++;
+    if (cur.count >= DEV_AUTH_MAX_FAILS) {
+      cur.lockedUntil = Date.now() + DEV_AUTH_LOCKOUT_MS;
+      logAudit('DEV_AUTH_LOCKOUT', 'SECURITY', {
+        userId: modal.user.id,
+        command: pendingData.commandName,
+        fails: cur.count,
+        lockoutMin: DEV_AUTH_LOCKOUT_MS / 60_000,
+      });
+    }
+    devAuthFails.set(modal.user.id, cur);
+
     logAudit('DEV_AUTH_FAILED', 'SECURITY', {
       userId: modal.user.id,
       command: pendingData.commandName,
+      fails: cur.count,
     });
-    await modal.reply({ content: '❌ Falsches Developer-Passwort.', ephemeral: true });
+
+    const remaining = DEV_AUTH_MAX_FAILS - cur.count;
+    const msg = cur.lockedUntil > Date.now()
+      ? `🔒 Zu viele Fehlversuche. Gesperrt für **${DEV_AUTH_LOCKOUT_MS / 60_000} Min.**`
+      : `❌ Falsches Developer-Passwort. Noch **${remaining}** Versuche bis Sperre.`;
+    await modal.reply({ content: msg, ephemeral: true });
     return;
   }
 
   pendingDevAuth.delete(modal.customId);
+  devAuthFails.delete(modal.user.id); // Reset bei Erfolg
 
   logAudit('DEV_AUTH_SUCCESS', 'AUTH', {
     userId: modal.user.id,
@@ -259,15 +424,36 @@ async function handleManufacturerButton(btn: ButtonInteraction): Promise<void> {
   const isApprove = btn.customId.startsWith('approve_manufacturer_');
   const targetUserId = btn.customId.replace(/^(approve|deny)_manufacturer_/, '');
 
+  // SOFORT acknowledgen – DM-Versand kann >3s dauern (Discord Token läuft sonst ab)
+  try {
+    await btn.deferUpdate();
+  } catch {
+    // bereits acknowledged – dann verwenden wir editReply
+  }
+
   try {
     if (isApprove) {
       const result = await approveManufacturer(targetUserId, btn.user.id);
       if (!result.success) {
-        await btn.reply({ content: `❌ ${result.message}`, ephemeral: true });
+        // Buttons sicher entfernen, damit nicht erneut geklickt werden kann.
+        // Wenn das gelingt, brauchen wir KEIN zus\u00e4tzliches followUp mit derselben
+        // Nachricht (verhindert das doppelte Anzeigen der Meldung).
+        let edited = false;
+        try {
+          const staleEmbed = EmbedBuilder.from(btn.message.embeds[0])
+            .setColor(0x808080)
+            .setFooter({ text: `\u26a0\ufe0f Bereits bearbeitet \u2014 ${result.message}` });
+          await btn.editReply({ embeds: [staleEmbed], components: [] });
+          edited = true;
+        } catch { /* Edit kann scheitern, dann unten followUp als Fallback */ }
+        if (!edited) {
+          try { await btn.followUp({ content: `\u26a0\ufe0f ${result.message}`, ephemeral: true }); } catch { /* ignore */ }
+        }
         return;
       }
 
       // OTP dem User per DM senden
+      let dmSent = false;
       try {
         const targetUser = await btn.client.users.fetch(targetUserId);
         await targetUser.send({
@@ -278,25 +464,61 @@ async function handleManufacturerButton(btn: ButtonInteraction): Promise<void> {
                 `Deine Anfrage wurde angenommen.\n\n` +
                 `**Dein Einmal-Passwort:** \`${result.otp}\`\n\n` +
                 `⚠️ Dieses Passwort ist **30 Minuten gültig** und kann nur **einmal** verwendet werden.\n` +
+                `⚠️ Falls bereits ein älteres Passwort offen war, ist es jetzt **ungültig** — nutze nur das hier!\n` +
                 `Verwende \`/register verify\` um dich zu verifizieren.`
               )
               .setColor(0x00ff00)
               .setTimestamp(),
           ],
         });
+        dmSent = true;
       } catch {
         logger.warn(`Konnte DM an ${targetUserId} nicht senden.`);
+      }
+
+      // Fallback: wenn DM fehlschl\u00e4gt, Admin per ephemeral followUp das OTP zeigen,
+      // damit es manuell weitergegeben werden kann.
+      if (!dmSent) {
+        try {
+          await btn.followUp({
+            ephemeral: true,
+            embeds: [
+              new EmbedBuilder()
+                .setTitle('\u26a0\ufe0f DM an Nutzer fehlgeschlagen')
+                .setDescription(
+                  `Der Nutzer hat DMs von Server-Mitgliedern deaktiviert.\n\n` +
+                  `**Einmal-Passwort (manuell weiterleiten):**\n\`\`\`${result.otp}\`\`\`\n` +
+                  `**G\u00fcltig bis:** <t:${Math.floor((result.expiresAt as Date).getTime() / 1000)}:R>\n\n` +
+                  `Bitte sende das Passwort dem Nutzer \u00fcber einen sicheren Kanal (z.B. tempor\u00e4rer privater Kanal). ` +
+                  `Das Passwort ist nur einmal verwendbar und l\u00e4uft in 30 Minuten ab.`
+                )
+                .setColor(0xff8800),
+            ],
+          });
+        } catch (followErr) {
+          logger.error('Auch Admin-Fallback-Anzeige fehlgeschlagen:', followErr);
+        }
       }
 
       const updatedEmbed = EmbedBuilder.from(btn.message.embeds[0])
         .setColor(0x00ff00)
         .setFooter({ text: `✅ Angenommen von ${btn.user.username}` });
 
-      await btn.update({ embeds: [updatedEmbed], components: [] });
+      await btn.editReply({ embeds: [updatedEmbed], components: [] });
     } else {
       const result = await denyManufacturer(targetUserId, btn.user.id);
       if (!result.success) {
-        await btn.reply({ content: `❌ ${result.message}`, ephemeral: true });
+        let edited = false;
+        try {
+          const staleEmbed = EmbedBuilder.from(btn.message.embeds[0])
+            .setColor(0x808080)
+            .setFooter({ text: `\u26a0\ufe0f Bereits bearbeitet \u2014 ${result.message}` });
+          await btn.editReply({ embeds: [staleEmbed], components: [] });
+          edited = true;
+        } catch { /* */ }
+        if (!edited) {
+          try { await btn.followUp({ content: `\u26a0\ufe0f ${result.message}`, ephemeral: true }); } catch { /* ignore */ }
+        }
         return;
       }
 
@@ -319,14 +541,205 @@ async function handleManufacturerButton(btn: ButtonInteraction): Promise<void> {
         .setColor(0xff0000)
         .setFooter({ text: `❌ Abgelehnt von ${btn.user.username}` });
 
-      await btn.update({ embeds: [updatedEmbed], components: [] });
+      await btn.editReply({ embeds: [updatedEmbed], components: [] });
     }
   } catch (error) {
     logger.error('Fehler bei Hersteller-Button:', error);
-    if (!btn.replied) {
-      await btn.reply({ content: '❌ Ein Fehler ist aufgetreten.', ephemeral: true });
-    }
+    // Buttons trotzdem entfernen, um Endlos-Klicken zu vermeiden
+    try {
+      await btn.editReply({ components: [] });
+    } catch { /* */ }
+    try {
+      if (btn.deferred || btn.replied) {
+        await btn.followUp({ content: '❌ Ein Fehler ist aufgetreten.', ephemeral: true });
+      } else {
+        await btn.reply({ content: '❌ Ein Fehler ist aufgetreten.', ephemeral: true });
+      }
+    } catch { /* Interaction unbrauchbar */ }
   }
 }
 
 export default interactionCreateEvent;
+
+/**
+ * Poll-Button: Stimme abgeben / zurückziehen per Button-Klick.
+ * CustomId-Format: `poll_vote_{pollId}_{optionId}`
+ */
+async function handlePollVoteButton(btn: ButtonInteraction): Promise<void> {
+  try {
+    await btn.deferReply({ ephemeral: true });
+
+    // customId parsen: poll_vote_<pollId>_<opt_N>
+    const rest = btn.customId.substring('poll_vote_'.length);
+    const lastUnderscore = rest.lastIndexOf('_opt_');
+    if (lastUnderscore === -1) {
+      await btn.editReply({ content: '❌ Ungültiger Button.' });
+      return;
+    }
+    const pollId = rest.substring(0, lastUnderscore);
+    const optionId = rest.substring(lastUnderscore + 1);
+
+    const dbUser = await prisma.user.upsert({
+      where: { discordId: btn.user.id },
+      create: { discordId: btn.user.id, username: btn.user.username },
+      update: {},
+    });
+
+    const poll = await prisma.poll.findUnique({ where: { id: pollId } });
+    if (!poll) {
+      await btn.editReply({ content: '❌ Umfrage nicht gefunden.' });
+      return;
+    }
+    if (poll.status !== 'ACTIVE' || (poll.endsAt && poll.endsAt <= new Date())) {
+      await btn.editReply({ content: '❌ Umfrage ist nicht mehr aktiv.' });
+      return;
+    }
+
+    // Toggle-Logik: bestehende Stimme? → zurückziehen. Sonst → abgeben.
+    const existing = await prisma.pollVote.findFirst({
+      where: { pollId, userId: dbUser.id, optionId },
+    });
+
+    let userMessage: string;
+    if (existing) {
+      await prisma.pollVote.delete({ where: { id: existing.id } });
+      await prisma.poll.update({
+        where: { id: pollId },
+        data: { totalVotes: { decrement: 1 } },
+      });
+      userMessage = '↩️ Deine Stimme wurde zurückgezogen.';
+      logAudit('POLL_VOTE_REMOVED', 'POLL', { pollId, userId: dbUser.id, optionId });
+    } else {
+      // Bei Einzelwahl: vorherige Stimmen des Users löschen
+      if (!poll.allowMultiple) {
+        const prev = await prisma.pollVote.findMany({
+          where: { pollId, userId: dbUser.id },
+        });
+        if (prev.length > 0) {
+          await prisma.pollVote.deleteMany({
+            where: { pollId, userId: dbUser.id },
+          });
+          await prisma.poll.update({
+            where: { id: pollId },
+            data: { totalVotes: { decrement: prev.length } },
+          });
+        }
+      }
+
+      const result = await votePoll(pollId, dbUser.id, optionId);
+      if (!result.success) {
+        await btn.editReply({ content: `❌ ${result.message}` });
+        return;
+      }
+      userMessage = '✅ Stimme abgegeben!';
+    }
+
+    await btn.editReply({ content: userMessage });
+
+    // Original-Nachricht aktualisieren
+    try {
+      const votes = await getPollVotes(pollId);
+      const totalVotes = Object.values(votes).reduce<number>((a, b) => a + (b as number), 0);
+      const options = poll.options as any;
+      const embed = createPollEmbed(
+        poll.title, poll.description, options, poll.pollType,
+        poll.endsAt, votes, totalVotes,
+      );
+      embed.setFooter({ text: `Poll-ID: ${pollId} | Klicke einen Button um abzustimmen` });
+      await btn.message.edit({ embeds: [embed], components: btn.message.components });
+    } catch (e) {
+      logger.error('Poll-Embed-Update nach Button fehlgeschlagen:', e);
+    }
+  } catch (error) {
+    logger.error('Fehler bei Poll-Button:', error);
+    try {
+      if (btn.deferred) await btn.editReply({ content: '❌ Ein Fehler ist aufgetreten.' });
+      else await btn.reply({ content: '❌ Ein Fehler ist aufgetreten.', ephemeral: true });
+    } catch { /* ignore */ }
+  }
+}
+
+/**
+ * Giveaway-Button: Toggle Teilnahme.
+ * CustomId-Format: `giveaway_enter_{giveawayId}`
+ */
+async function handleGiveawayEnterButton(btn: ButtonInteraction): Promise<void> {
+  try {
+    await btn.deferReply({ ephemeral: true });
+
+    const giveawayId = btn.customId.substring('giveaway_enter_'.length);
+
+    const giveaway = await prisma.giveaway.findUnique({ where: { id: giveawayId } });
+    if (!giveaway) {
+      await btn.editReply({ content: '❌ Giveaway nicht gefunden.' });
+      return;
+    }
+    if (giveaway.status !== 'ACTIVE' || giveaway.endsAt <= new Date()) {
+      await btn.editReply({ content: '❌ Giveaway ist nicht mehr aktiv.' });
+      return;
+    }
+
+    // Rollen-Checks
+    if (giveaway.minRole && btn.guild) {
+      const member = await btn.guild.members.fetch(btn.user.id);
+      if (!member.roles.cache.has(giveaway.minRole)) {
+        await btn.editReply({ content: '❌ Du benötigst eine bestimmte Rolle, um an diesem Giveaway teilzunehmen.' });
+        return;
+      }
+    }
+    if (giveaway.blacklistRoles && btn.guild) {
+      const member = await btn.guild.members.fetch(btn.user.id);
+      const blacklisted = giveaway.blacklistRoles as string[];
+      if (blacklisted.some(roleId => member.roles.cache.has(roleId))) {
+        await btn.editReply({ content: '❌ Du bist von diesem Giveaway ausgeschlossen.' });
+        return;
+      }
+    }
+
+    const dbUser = await prisma.user.upsert({
+      where: { discordId: btn.user.id },
+      create: { discordId: btn.user.id, username: btn.user.username },
+      update: {},
+    });
+
+    // Toggle: bereits Teilnehmer? → austragen. Sonst → eintragen.
+    const existing = await prisma.giveawayEntry.findFirst({
+      where: { giveawayId, userId: dbUser.id },
+    });
+
+    let userMessage: string;
+    if (existing) {
+      await prisma.giveawayEntry.delete({ where: { id: existing.id } });
+      userMessage = '↩️ Teilnahme zurückgezogen.';
+      logAudit('GIVEAWAY_LEAVE', 'GIVEAWAY', { giveawayId, userId: dbUser.id });
+    } else {
+      await prisma.giveawayEntry.create({
+        data: { giveawayId, userId: dbUser.id },
+      });
+      userMessage = '🎉 Du nimmst jetzt teil!';
+      logAudit('GIVEAWAY_ENTER', 'GIVEAWAY', { giveawayId, userId: dbUser.id });
+    }
+
+    await btn.editReply({ content: userMessage });
+
+    // Original-Embed aktualisieren
+    try {
+      const participantCount = await prisma.giveawayEntry.count({ where: { giveawayId } });
+      const creator = await prisma.user.findUnique({
+        where: { id: giveaway.creatorId },
+        select: { username: true },
+      });
+      const embed = createGiveawayEmbed(giveaway, participantCount, creator?.username);
+      embed.addFields({ name: '🆔 ID', value: giveaway.id, inline: false });
+      await btn.message.edit({ embeds: [embed], components: btn.message.components });
+    } catch (e) {
+      logger.error('Giveaway-Embed-Update nach Button fehlgeschlagen:', e);
+    }
+  } catch (error) {
+    logger.error('Fehler bei Giveaway-Button:', error);
+    try {
+      if (btn.deferred) await btn.editReply({ content: '❌ Ein Fehler ist aufgetreten.' });
+      else await btn.reply({ content: '❌ Ein Fehler ist aufgetreten.', ephemeral: true });
+    } catch { /* ignore */ }
+  }
+}

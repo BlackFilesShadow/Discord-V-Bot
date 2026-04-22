@@ -138,7 +138,7 @@ const autoroleCommand: Command = {
             { name: 'Rolle', value: `<@&${role.id}>`, inline: true },
             { name: 'Trigger', value: trigger, inline: true },
             { name: 'Wert', value: triggerValue || 'N/A', inline: true },
-            { name: 'ID', value: `\`${autoRole.id.substring(0, 8)}...\``, inline: true },
+            { name: 'ID', value: `\`${autoRole.id}\``, inline: false },
             { name: 'Zeitlimit', value: expiresAt ? `${durationHours}h` : 'Permanent', inline: true },
           )
           .setTimestamp();
@@ -161,7 +161,8 @@ const autoroleCommand: Command = {
           const status = ar.isActive ? '🟢' : '🔴';
           const expiry = ar.expiresAt ? `⏰ ${ar.expiresAt.toLocaleDateString('de-DE')}` : '∞';
           return `${status} **${i + 1}.** <@&${ar.roleId}> — **${ar.triggerType}**${ar.triggerValue ? ` (${ar.triggerValue})` : ''}\n` +
-            `   ID: \`${ar.id.substring(0, 8)}...\` | ${expiry}`;
+            `   ID: \`${ar.id}\`\n` +
+            `   Status: ${expiry}`;
         });
 
         const embed = new EmbedBuilder()

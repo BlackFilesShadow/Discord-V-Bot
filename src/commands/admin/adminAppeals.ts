@@ -93,7 +93,7 @@ const adminAppealsCommand: Command = {
 
         const lines = appeals.map((a: any, i: number) => {
           const time = a.createdAt.toLocaleString('de-DE');
-          return `**${i + 1}.** ID: \`${a.id.substring(0, 8)}...\`\n` +
+          return `**${i + 1}.** ID: \`${a.id}\`\n` +
             `   User: <@${a.user.discordId}> | Fall #${a.case.caseNumber} (${a.case.action})\n` +
             `   Moderator: <@${a.case.moderator.discordId}>\n` +
             `   Grund: ${a.reason.substring(0, 100)}\n` +

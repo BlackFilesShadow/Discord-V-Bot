@@ -13,6 +13,7 @@ import prisma from '../../database/prisma';
 import { downloadSingleFile } from '../../modules/download/downloadHandler';
 import { Colors, Brand, vEmbed, formatBytes } from '../../utils/embedDesign';
 import { createBotEmbed } from '../../utils/embedUtil';
+import { logger } from '../../utils/logger';
 
 /**
  * /download Command (Sektion 3):
@@ -27,51 +28,31 @@ const downloadCommand: Command = {
     .setDescription('Dateien oder Pakete von Herstellern herunterladen'),
 
   execute: async (interaction: ChatInputCommandInteraction) => {
-    // Hersteller laden, die mindestens 1 aktives Paket ODER Einzeldatei haben
+    // Hersteller laden, die mindestens 1 aktives Paket mit g\u00fcltiger Datei haben.
+    // Strikt nur isManufacturer=true \u2014 Admin/Dev-Uploads gibt es nicht mehr,
+    // /upload ist ausnahmslos der Hersteller-Rolle vorbehalten.
     const manufacturers = await prisma.user.findMany({
       where: {
         isManufacturer: true,
-        OR: [
-          {
-            packages: {
-              some: {
-                isDeleted: false,
-                files: { some: { isDeleted: false, isQuarantined: false } },
-              },
-            },
+        packages: {
+          some: {
+            isDeleted: false,
+            files: { some: { isDeleted: false, isQuarantined: false } },
           },
-          {
-            uploads: {
-              some: {
-                isDeleted: false,
-                isQuarantined: false,
-                package: {
-                  // Einzeldatei ohne Paket (Dummy-Paket oder spezieller Name)
-                  name: 'Einzeldownload',
-                  isDeleted: false,
-                },
-              },
-            },
-          },
-        ],
+        },
       },
       select: {
         id: true,
         username: true,
         discordId: true,
         packages: {
-          where: { isDeleted: false },
+          where: {
+            isDeleted: false,
+            files: { some: { isDeleted: false, isQuarantined: false } },
+          },
           include: {
             files: { where: { isDeleted: false, isQuarantined: false }, select: { id: true, originalName: true, fileSize: true } },
           },
-        },
-        uploads: {
-          where: {
-            isDeleted: false,
-            isQuarantined: false,
-            package: { name: 'Einzeldownload', isDeleted: false },
-          },
-          select: { id: true, originalName: true, fileSize: true },
         },
       },
       take: 25,
@@ -114,14 +95,21 @@ const downloadCommand: Command = {
 
     const row = new ActionRowBuilder<StringSelectMenuBuilder>().addComponents(manufacturerSelect);
 
-    const response = await interaction.reply({
+    await interaction.reply({
       embeds: [embed],
       components: [row],
       ephemeral: true,
     });
 
     // ── Collector Schritt 1: Hersteller gewählt ──
-    const mfgCollector = response.createMessageComponentCollector({
+    if (!interaction.channel) {
+      await interaction.editReply({
+        embeds: [vEmbed(Colors.Error).setTitle('❌  Fehler').setDescription('Kein Channel gefunden.')],
+        components: [],
+      });
+      return;
+    }
+    const mfgCollector = interaction.channel.createMessageComponentCollector({
       componentType: ComponentType.StringSelect,
       time: 120_000,
     });
@@ -129,56 +117,57 @@ const downloadCommand: Command = {
     mfgCollector.on('collect', async (mfgInteraction) => {
       if (mfgInteraction.customId !== 'dl_manufacturer') return;
 
+      // SOFORT acknowledgen — DB-Query kann >3s dauern
+      try { await mfgInteraction.deferUpdate(); } catch { /* evtl. schon ack */ }
+
       const selectedUserId = mfgInteraction.values[0];
 
-
-      // Hersteller-Objekt holen
-      const manufacturer = manufacturers.find(m => m.id === selectedUserId);
-      if (!manufacturer) {
-        await mfgInteraction.update({
-          embeds: [vEmbed(Colors.Error).setTitle('❌  Fehler').setDescription('Hersteller nicht gefunden.')],
+      // Hersteller-Objekt FRISCH aus DB laden (nicht aus stale closure)
+      const manufacturer = await prisma.user.findUnique({
+        where: { id: selectedUserId },
+        select: {
+          id: true,
+          username: true,
+          discordId: true,
+          packages: {
+            where: {
+              isDeleted: false,
+              files: { some: { isDeleted: false, isQuarantined: false } },
+            },
+            include: {
+              files: {
+                where: { isDeleted: false, isQuarantined: false },
+                select: { id: true, originalName: true, fileSize: true },
+              },
+            },
+            orderBy: { createdAt: 'desc' },
+          },
+        },
+      });
+      if (!manufacturer || manufacturer.packages.length === 0) {
+        await interaction.editReply({
+          embeds: [vEmbed(Colors.Error).setTitle('❌  Fehler').setDescription('Hersteller hat keine Pakete oder wurde nicht gefunden.')],
           components: [],
         });
         return;
       }
 
-      // ── Schritt 2: Dateien- und Paket-Dropdown ──
+      // ── Schritt 2: Paket-Dropdown (nur Pakete, keine Einzeldateien) ──
       const options: StringSelectMenuOptionBuilder[] = [];
-      // Pakete als Option
       for (const pkg of manufacturer.packages) {
         options.push(
           new StringSelectMenuOptionBuilder()
-            .setLabel(`📦 Paket: ${pkg.name}`)
-            .setDescription(`Alle Dateien (${pkg.files.length}) aus Paket ${pkg.name}`)
+            .setLabel(`📦 ${pkg.name}`)
+            .setDescription(`${pkg.files.length} Datei(en)`)
             .setValue(`package_${pkg.id}`)
             .setEmoji('📦')
         );
-        // Einzeldateien im Paket
-        for (const file of pkg.files) {
-          options.push(
-            new StringSelectMenuOptionBuilder()
-              .setLabel(file.originalName)
-              .setDescription(`aus ${pkg.name} · ${formatBytes(Number(file.fileSize))}`)
-              .setValue(`file_${file.id}`)
-              .setEmoji('📄')
-          );
-        }
         if (options.length >= 25) break;
-      }
-      // Einzeldateien ohne Paket als eigene Einträge
-      for (const file of manufacturer.uploads) {
-        options.push(
-          new StringSelectMenuOptionBuilder()
-            .setLabel(file.originalName)
-            .setDescription(`Einzeldownload · ${formatBytes(Number(file.fileSize))}`)
-            .setValue(`file_${file.id}`)
-            .setEmoji('📄')
-        );
       }
 
       const fileSelect = new StringSelectMenuBuilder()
         .setCustomId('dl_file')
-        .setPlaceholder('📦 Paket oder Datei auswählen...')
+        .setPlaceholder('📦 Paket auswählen...')
         .addOptions(options.slice(0, 25));
 
       const fileRow = new ActionRowBuilder<StringSelectMenuBuilder>().addComponents(fileSelect);
@@ -187,8 +176,8 @@ const downloadCommand: Command = {
         title: `📥 ${manufacturer.username}`,
         description: [
           Brand.divider,
-          `**${manufacturer.packages.length} Paket(e)** und **${manufacturer.uploads.length} Einzeldatei(en)** verfügbar.`,
-          'Wähle ein Paket (Ordner) oder eine Datei zum Download.',
+          `**${manufacturer.packages.length} Paket(e)** verfügbar.`,
+          'Wähle ein Paket (Ordner) zum Download.',
           Brand.divider,
         ].join('\n'),
         color: Colors.Download,
@@ -196,13 +185,20 @@ const downloadCommand: Command = {
         timestamp: true,
       });
 
-      const updateResponse = await mfgInteraction.update({
+      await interaction.editReply({
         embeds: [detailEmbed],
         components: [fileRow],
       });
 
       // ── Collector Schritt 2: Datei/Paket gewählt ──
-      const fileCollector = updateResponse.createMessageComponentCollector({
+      if (!interaction.channel) {
+        await interaction.editReply({
+          embeds: [vEmbed(Colors.Error).setTitle('❌  Fehler').setDescription('Kein Channel gefunden.')],
+          components: [],
+        });
+        return;
+      }
+      const fileCollector = interaction.channel.createMessageComponentCollector({
         componentType: ComponentType.StringSelect,
         time: 120_000,
       });
@@ -212,94 +208,105 @@ const downloadCommand: Command = {
 
         const val = fileInteraction.values[0];
 
-        await fileInteraction.update({
+        // SOFORT acknowledgen — Download/IO kann >3s dauern
+        try { await fileInteraction.deferUpdate(); } catch { /* evtl. schon ack */ }
+
+        await interaction.editReply({
           embeds: [vEmbed(Colors.Warning).setTitle('⏳  Download wird vorbereitet...')],
           components: [],
         });
 
         try {
-          if (val.startsWith('file_')) {
-            // Einzeldatei-Download wie bisher
-            const fileId = val.replace('file_', '');
-            const result = await downloadSingleFile(fileId, interaction.user.id);
-            let fileName = 'download';
-            let pkgName = '';
-            // Suche Datei in Paketen
-            for (const pkg of manufacturer.packages) {
-              const f = pkg.files.find((f: { id: string }) => f.id === fileId);
-              if (f) {
-                fileName = f.originalName;
-                pkgName = pkg.name;
-                break;
-              }
-            }
-            // Falls nicht gefunden, suche in Einzeldateien
-            if (!pkgName) {
-              const single = manufacturer.uploads.find((f: { id: string }) => f.id === fileId);
-              if (single) {
-                fileName = single.originalName;
-                pkgName = 'Einzeldownload';
-              }
-            }
-            if (!result.success || !result.filePath) {
-              await interaction.editReply({
-                embeds: [vEmbed(Colors.Error).setTitle('❌  Fehler').setDescription(result.message)],
-                components: [],
-              });
-              return;
-            }
-            const attachment = new AttachmentBuilder(result.filePath, {
-              name: result.fileName || fileName,
-            });
-            const doneEmbed = vEmbed(Colors.Success)
-              .setTitle('📥  Datei-Download')
-              .setDescription(
-                `${Brand.divider}\n\n` +
-                `📄 **${fileName}**\naus **${pkgName}** von **${manufacturer.username}**\n\n` +
-                Brand.divider
-              );
-            await interaction.editReply({ embeds: [doneEmbed], files: [attachment], components: [] });
-          } else if (val.startsWith('package_')) {
+          if (val.startsWith('package_')) {
             // Paket-Download: Alle Dateien als Discord-Uploads in Gruppen à 10
             const packageId = val.replace('package_', '');
-            const pkg = manufacturer.packages.find((p: { id: string }) => p.id === packageId);
-            if (!pkg) {
-              await interaction.editReply({
-                embeds: [vEmbed(Colors.Error).setTitle('❌  Fehler').setDescription('Paket nicht gefunden.')],
-                components: [],
-              });
-              return;
-            }
-            if (!pkg.files.length) {
+            const pkg = manufacturer.packages.find(p => p.id === packageId);
+            const files: any[] = pkg?.files ?? [];
+            const pkgName = pkg?.name ?? '';
+            if (!files.length) {
               await interaction.editReply({
                 embeds: [vEmbed(Colors.Error).setTitle('❌  Fehler').setDescription('Das Paket enthält keine Dateien.')],
                 components: [],
               });
               return;
             }
+
+            // Discord-Limit: 25 MB pro Anhang (Boost-frei). Größere Dateien als Hinweis.
+            const DISCORD_MAX_BYTES = 25 * 1024 * 1024;
+            const tooLarge: { name: string; size: number }[] = [];
+            const sendable = files.filter(f => {
+              if (Number(f.fileSize) > DISCORD_MAX_BYTES) {
+                tooLarge.push({ name: f.originalName, size: Number(f.fileSize) });
+                return false;
+              }
+              return true;
+            });
+
             // Dateien in 10er-Gruppen aufteilen
-            const fileGroups = [];
-            for (let i = 0; i < pkg.files.length; i += 10) {
-              fileGroups.push(pkg.files.slice(i, i + 10));
+            const fileGroups: any[][] = [];
+            for (let i = 0; i < sendable.length; i += 10) {
+              fileGroups.push(sendable.slice(i, i + 10));
             }
+
+            if (fileGroups.length === 0 && tooLarge.length > 0) {
+              await interaction.editReply({
+                embeds: [
+                  vEmbed(Colors.Warning)
+                    .setTitle('⚠️  Dateien zu groß für Discord')
+                    .setDescription(
+                      `Alle Dateien überschreiten das Discord-Limit von **25 MB**.\n\n` +
+                      tooLarge.map(t => `• \`${t.name}\` (${formatBytes(t.size)})`).join('\n') +
+                      `\n\nNutze das Web-Dashboard für große Dateien.`
+                    ),
+                ],
+                components: [],
+              });
+              return;
+            }
+
             for (let i = 0; i < fileGroups.length; i++) {
               const group = fileGroups[i];
-              const attachments = [];
+              const attachments: AttachmentBuilder[] = [];
+              const failed: string[] = [];
               for (const file of group) {
-                const result = await downloadSingleFile(file.id, interaction.user.id);
-                if (result.success && result.filePath) {
-                  attachments.push(new AttachmentBuilder(result.filePath, { name: result.fileName || file.originalName }));
+                try {
+                  const result = await downloadSingleFile(file.id, interaction.user.id);
+                  if (result.success && result.filePath) {
+                    attachments.push(new AttachmentBuilder(result.filePath, { name: result.fileName || file.originalName }));
+                  } else {
+                    failed.push(file.originalName);
+                  }
+                } catch {
+                  failed.push(file.originalName);
                 }
               }
+
+              const descLines = [
+                Brand.divider,
+                ``,
+                `**${group.length} Datei(en) aus Paket ${pkgName}**`,
+                `Hersteller: **${manufacturer.username}**`,
+                `Nachricht ${i + 1} von ${fileGroups.length}`,
+              ];
+              if (failed.length) descLines.push(``, `⚠️ Fehlgeschlagen: ${failed.map(f => `\`${f}\``).join(', ')}`);
+              if (i === fileGroups.length - 1 && tooLarge.length) {
+                descLines.push(``, `⚠️ Übersprungen (>25 MB):`, ...tooLarge.map(t => `• \`${t.name}\` (${formatBytes(t.size)})`));
+              }
+              descLines.push(``, Brand.divider);
+
               const embed = vEmbed(Colors.Success)
-                .setTitle(`📦 Paket-Download: ${pkg.name}`)
-                .setDescription(
-                  `${Brand.divider}\n\n` +
-                  `**${group.length} Datei(en) aus Paket ${pkg.name}**\n` +
-                  `Hersteller: **${manufacturer.username}**\n` +
-                  `Nachricht ${i + 1} von ${fileGroups.length}\n\n` +
-                  Brand.divider
-                );
+                .setTitle(`📦 Paket-Download: ${pkgName}`)
+                .setDescription(descLines.join('\n'));
+
+              if (attachments.length === 0) {
+                if (i === 0) {
+                  await interaction.editReply({ embeds: [embed], components: [] });
+                } else {
+                  await interaction.followUp({ embeds: [embed], ephemeral: true });
+                }
+                continue;
+              }
+
               if (i === 0) {
                 await interaction.editReply({ embeds: [embed], files: attachments, components: [] });
               } else {
@@ -308,29 +315,25 @@ const downloadCommand: Command = {
             }
           }
         } catch (error) {
-          await interaction.editReply({
-            embeds: [vEmbed(Colors.Error).setTitle('❌  Download fehlgeschlagen').setDescription('Bitte versuche es erneut.')],
-            components: [],
-          });
+          logger.error('Download-Fehler:', error as Error);
+          try {
+            await interaction.editReply({
+              embeds: [vEmbed(Colors.Error).setTitle('❌  Download fehlgeschlagen').setDescription((error as Error)?.message || 'Bitte versuche es erneut.')],
+              components: [],
+            });
+          } catch { /* */ }
         }
       });
 
-      fileCollector.on('end', async (_, reason) => {
-        if (reason === 'time') {
+        fileCollector.on('end', async (_, reason) => {
           try { await interaction.editReply({ components: [] }); } catch {}
-        }
+        });
+
+        // Schritt-1-Collector stoppen
+        mfgCollector.stop('collected');
       });
-
-      // Schritt-1-Collector stoppen
-      mfgCollector.stop('collected');
-    });
-
-    mfgCollector.on('end', async (_, reason) => {
-      if (reason === 'time') {
-        try { await interaction.editReply({ components: [] }); } catch {}
-      }
-    });
-  },
+    // }); // Überflüssig, Collector ist bereits korrekt abgeschlossen
+  } // Ende execute
 };
 
 export default downloadCommand;

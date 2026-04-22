@@ -21,6 +21,7 @@ export interface Command {
   permissions?: PermissionResolvable[];
   adminOnly?: boolean;
   devOnly?: boolean;
+  manufacturerOnly?: boolean;
   execute: (interaction: ChatInputCommandInteraction) => Promise<void>;
 }
 

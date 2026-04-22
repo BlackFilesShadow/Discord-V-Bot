@@ -37,12 +37,7 @@ export async function checkRateLimit(
   const windowStart = new Date(now.getTime() - config.windowMs);
 
   try {
-    // Aufräumen abgelaufener Einträge
-    await prisma.rateLimitEntry.deleteMany({
-      where: { expiresAt: { lt: now } },
-    });
-
-    // Bestehenden Eintrag suchen
+    // Bestehenden Eintrag suchen (kein deleteMany im Hot-Path!)
     const existing = await prisma.rateLimitEntry.findUnique({
       where: { identifier_action: { identifier, action } },
     });
@@ -155,4 +150,21 @@ export function detectSpam(
   }
 
   return false;
+}
+
+/**
+ * Periodische Bereinigung abgelaufener Rate-Limit-Einträge.
+ * Läuft alle 5 Minuten statt auf jedem Command-Call.
+ */
+let cleanupStarted = false;
+export function startRateLimitCleanup(): void {
+  if (cleanupStarted) return;
+  cleanupStarted = true;
+  setInterval(async () => {
+    try {
+      await prisma.rateLimitEntry.deleteMany({
+        where: { expiresAt: { lt: new Date() } },
+      });
+    } catch { /* ignore */ }
+  }, 5 * 60 * 1000);
 }

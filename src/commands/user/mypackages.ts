@@ -60,6 +60,7 @@ const mypackagesCommand: Command = {
     .addSubcommand(sub =>
       sub.setName('delete-file').setDescription('Einzelne Dateien aus deinen Paketen löschen (Dropdown)')
     ),
+  manufacturerOnly: true,
 
   execute: async (interaction: ChatInputCommandInteraction) => {
     await interaction.deferReply({ ephemeral: true });

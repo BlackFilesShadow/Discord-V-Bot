@@ -14,6 +14,7 @@
 
 generator client {
   provider = "prisma-client-js"
+  binaryTargets = ["native", "linux-musl", "debian-openssl-3.0.x"]
 }
 
 datasource db {
@@ -515,6 +516,13 @@ model XpConfig {
   levelUpRoleIds    Json?    // {level: roleId} Mapping
   levelMultiplier   Float    @default(1.0)
   isActive          Boolean  @default(true)
+  // XP nur an User mit einer dieser Rollen vergeben (leer = alle)
+  allowedRoleIds    Json?    // string[] mit Discord-Rollen-IDs
+  // XP nur in diesen Kanälen vergeben (leer = alle Kanäle)
+  allowedChannelIds Json?    // string[] mit Discord-Channel-IDs
+  // Max-Level (Endstufe) und Belohnungsrolle bei Erreichen
+  maxLevel          Int      @default(20)
+  maxLevelRoleId    String?  // Discord-Rollen-ID, optional
   createdAt         DateTime @default(now())
   updatedAt         DateTime @updatedAt
 }

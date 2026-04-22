@@ -1,6 +1,43 @@
+// Prisma muss VOR dem Import des Commands gemockt werden,
+// damit der Command die Mock-Instanz erhaelt (kein echter DB-Call).
+jest.mock('../../../database/prisma', () => ({
+  __esModule: true,
+  default: {
+    levelData: {
+      findMany: jest.fn().mockResolvedValue([
+        {
+          xp: 1500,
+          level: 5,
+          totalMessages: 120,
+          voiceMinutes: 45,
+          user: { discordId: '123' },
+        },
+      ]),
+      count: jest.fn().mockResolvedValue(1),
+    },
+    user: {
+      findUnique: jest.fn().mockResolvedValue({
+        discordId: '123',
+        levelData: { xp: 1500, level: 5 },
+      }),
+    },
+  },
+}));
+
 import leaderboardCommand from '../leaderboard';
 
 describe('Leaderboard Command', () => {
+  afterEach(() => {
+    // Feed-Intervalle aufraeumen, damit Jest sauber beendet
+    const gAny = globalThis as any;
+    if (gAny.leaderboardFeeds) {
+      for (const key of Object.keys(gAny.leaderboardFeeds)) {
+        clearInterval(gAny.leaderboardFeeds[key]);
+        delete gAny.leaderboardFeeds[key];
+      }
+    }
+  });
+
   it('sollte ohne Fehler ausgeführt werden (einmalig)', async () => {
     const interaction: any = {
       deferReply: jest.fn().mockResolvedValue(undefined),

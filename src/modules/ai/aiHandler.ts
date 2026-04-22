@@ -2,6 +2,8 @@ import axios from 'axios';
 import { config } from '../../config';
 import { logger, logAudit } from '../../utils/logger';
 import prisma from '../../database/prisma';
+import { liveSearch, looksFactQuestion, formatSearchResultsForPrompt } from './webSearch';
+import { asksAboutCommands, formatCatalogForPrompt } from './commandCatalog';
 
 /**
  * AI-Integration (Sektion 4):
@@ -25,20 +27,141 @@ interface AiResponse {
 }
 
 /**
+ * Liefert den aktuellen Zeitstempel als deutscher String f\u00fcr System-Prompts.
+ * Damit kennt die AI immer Tag/Monat/Jahr/Uhrzeit.
+ */
+export function getLiveTimeContext(): string {
+  const now = new Date();
+  const fmt = new Intl.DateTimeFormat('de-DE', {
+    weekday: 'long',
+    year: 'numeric',
+    month: 'long',
+    day: 'numeric',
+    hour: '2-digit',
+    minute: '2-digit',
+    timeZone: 'Europe/Berlin',
+  });
+  const dateOnly = new Intl.DateTimeFormat('de-DE', {
+    weekday: 'long', year: 'numeric', month: 'long', day: 'numeric', timeZone: 'Europe/Berlin',
+  }).format(now);
+  const timeOnly = new Intl.DateTimeFormat('de-DE', {
+    hour: '2-digit', minute: '2-digit', timeZone: 'Europe/Berlin',
+  }).format(now);
+  const weekday = new Intl.DateTimeFormat('de-DE', { weekday: 'long', timeZone: 'Europe/Berlin' }).format(now);
+  // Tageszeit ableiten (Berlin-Zeit)
+  const hour = Number(new Intl.DateTimeFormat('de-DE', { hour: '2-digit', hour12: false, timeZone: 'Europe/Berlin' }).format(now));
+  let daypart = 'Nacht';
+  if (hour >= 5 && hour < 11) daypart = 'Morgen';
+  else if (hour >= 11 && hour < 14) daypart = 'Mittag';
+  else if (hour >= 14 && hour < 18) daypart = 'Nachmittag';
+  else if (hour >= 18 && hour < 22) daypart = 'Abend';
+  // Jahreszeit (Nordhalbkugel, meteorologisch)
+  const month = now.getMonth() + 1;
+  let season = 'Winter';
+  if (month >= 3 && month <= 5) season = 'Fr\u00fchling';
+  else if (month >= 6 && month <= 8) season = 'Sommer';
+  else if (month >= 9 && month <= 11) season = 'Herbst';
+  return [
+    'AUTORITATIVE ZEIT- UND DATUMSANGABEN (Europe/Berlin) - diese Werte sind FAKT, nutze sie direkt:',
+    `- Vollst\u00e4ndig: ${fmt.format(now)}`,
+    `- Heutiges Datum: ${dateOnly}`,
+    `- Wochentag: ${weekday}`,
+    `- Aktuelle Uhrzeit: ${timeOnly} Uhr`,
+    `- Tageszeit: ${daypart}`,
+    `- Jahreszeit: ${season}`,
+    `- Jahr: ${now.getFullYear()}`,
+    '',
+    'REGELN fuer Zeit-/Datumsfragen:',
+    `- Fragt der Nutzer nach Datum, Wochentag, Uhrzeit, Tageszeit, Jahr oder Jahreszeit: antworte DIREKT und SICHER mit obigen Werten. NIEMALS "weiss ich nicht" oder "nicht tagesaktuell" sagen.`,
+    `- NIEMALS Tageszeit halluzinieren (z.B. nicht "Nacht" sagen, wenn oben "${daypart}" steht).`,
+    '- Antworte natuerlich und kurz, wiederhole Datum/Uhrzeit nicht doppelt im Satz.',
+    '- Vermeide Doppelungen wie "Fr\u00fchlingsabend, es ist Abend".',
+  ].join('\n');
+}
+
+/**
+ * Persona / Charakter des Bots f\u00fcr alle Konversations-Antworten.
+ */
+export const BOT_PERSONA = [
+  'Du bist V-Bot, der freundliche Assistent dieses Discord-Servers.',
+  'Du sprichst Deutsch, bist h\u00f6flich, hilfsbereit, ruhig und angenehm im Umgang.',
+  'Du bist niemals aufdringlich, nicht belehrend und nicht \u00fcberschwenglich.',
+  'Antworte klar, pr\u00e4zise und mit nat\u00fcrlicher Pers\u00f6nlichkeit.',
+  'Verwende sparsam Emojis (max. 1\u20132 pro Antwort), nur wenn es passt.',
+  'Wenn du etwas nicht wei\u00dft, sag es ehrlich \u2013 erfinde keine Fakten.',
+  '',
+  'FOKUS-REGEL: Antworte GENAU auf das, was gefragt wurde \u2013 nichts mehr.',
+  '- Wenn der Nutzer "der Bundeskanzler" fragt (ohne Land), meint er Deutschland (deutscher Server). Antworte NUR mit Deutschland, NICHT zusaetzlich Oesterreich/Schweiz.',
+  '- Wenn er "der Praesident" fragt (ohne Land), meint er Deutschland.',
+  '- Liste keine Alternativen aus anderen Laendern auf, ausser der Nutzer fragt explizit danach ("in Oesterreich", "weltweit", "in allen Laendern").',
+  '- Bringe keine ungefragten Zusatzinfos, Hintergruende oder Disclaimer ein. Direkte, kurze Antwort.',
+  '',
+  'COMMANDS / FUNKTIONEN: Wenn der Nutzer dich fragt, welche Commands du hast oder was du kannst, erklaere die oeffentlichen Slash-Commands aus dem Katalog (wird bei Bedarf eingespeist) verstaendlich und ausfuehrlich, aber nicht uebertrieben. Erwaehne dabei NIEMALS Developer- oder Admin-Commands \u2013 diese existieren fuer dich nicht.',
+].join('\n');
+
+/**
+ * Wissensgrenzen / Knowledge-Cutoff Hinweis.
+ * Verhindert, dass der Bot ver\u00e4nderliche Fakten (Politik, Sport, Nachrichten,
+ * aktuelle Amtstr\u00e4ger, Preise, Wetter, Rekorde) als sicher pr\u00e4sentiert,
+ * obwohl sein Trainingsstand vor dem aktuellen Datum liegt.
+ */
+export function getKnowledgeBoundary(): string {
+  const year = new Date().getFullYear();
+  return [
+    `WICHTIG \u2013 Wissensstand: Dein internes Trainingswissen endet vor ${year}.`,
+    '',
+    'PRIORITAET DER QUELLEN (in dieser Reihenfolge nutzen):',
+    '1. AUTORITATIVE ZEIT- UND DATUMSANGABEN (oben im Prompt) \u2192 fuer ALLES rund um Datum, Uhrzeit, Wochentag, Tageszeit, Jahreszeit, Jahr.',
+    '2. AKTUELLE WEB-RECHERCHE (falls vorhanden) \u2192 fuer alle anderen zeitabhaengigen Fakten (Politik, Personen, Sport, Preise, Releases). Nutze sie SELBSTBEWUSST und KONKRET, erfinde nichts hinzu.',
+    '3. Stabiles Allgemeinwissen \u2192 Mathematik, Geographie, Geschichte vor 2023, Naturwissenschaft, Sprache, Programmierung, Kultur, Definitionen, Erklaerungen, Anleitungen.',
+    '',
+    'NUR wenn KEINE Web-Recherche vorhanden ist UND die Frage einen aktuellen Zustand verlangt, der sich seit deinem Trainingsende geaendert haben koennte (amtierende Politiker, juengste Wahlergebnisse, aktuelle Sportstandings, Tageskurse, Wetter, neueste Releases), darfst du keine konkrete Aussage als sicher praesentieren.',
+    'In diesem Fall sage kurz: "Dazu habe ich gerade keine aktuellen Daten."',
+    '',
+    'STILREGELN:',
+    '- Verweigere NIEMALS die Antwort auf Datum, Uhrzeit, Wochentag, Tageszeit oder Jahreszeit \u2013 diese stehen IMMER im Zeit-Block oben.',
+    '- Verweigere NIEMALS die Antwort auf Allgemeinwissen, Erklaerungen, Definitionen, Anleitungen, Meinungen oder Smalltalk.',
+    '- Nenne KEINE Quellen in der Antwort. Sage NICHT "laut Wikipedia", "laut meinen Quellen", "meinen Recherchen zufolge" o.ae. Antworte einfach direkt mit dem Fakt, als waere es selbstverstaendliches Wissen.',
+    '- Erwaehne deinen Wissensstand oder Trainingsende NICHT von dir aus. Nur wenn der Nutzer explizit fragt.',
+  ].join('\n');
+}
+
+/**
  * Wissensfrage beantworten.
  */
 export async function answerQuestion(question: string, context?: string): Promise<AiResponse> {
   try {
+    // Live-Web-Recherche bei Fakt-/Aktualitaetsfragen
+    let liveBlock: string | null = null;
+    if (looksFactQuestion(question)) {
+      try {
+        const hits = await liveSearch(question);
+        liveBlock = formatSearchResultsForPrompt(hits);
+        if (liveBlock) {
+          logger.info(`Live-Suche fuer AI: ${hits.length} Treffer fuer "${question.slice(0, 80)}"`);
+        }
+      } catch (e) {
+        logger.warn('Live-Suche fehlgeschlagen, fahre ohne Web-Kontext fort:', { e: String(e) });
+      }
+    }
+
+    // Command-Katalog nur einspeisen, wenn der Nutzer danach fragt (Token-schonend).
+    const catalogBlock: string | null = asksAboutCommands(question) ? formatCatalogForPrompt() : null;
+
     const response = await callAI([
-      { role: 'system', content: 'Du bist ein hilfreicher Assistent für einen Discord-Server. Antworte kurz und präzise auf Deutsch.' },
-      ...(context ? [{ role: 'system', content: `Kontext: ${context}` }] : []),
+      { role: 'system', content: BOT_PERSONA },
+      { role: 'system', content: getLiveTimeContext() },
+      { role: 'system', content: getKnowledgeBoundary() },
+      ...(catalogBlock ? [{ role: 'system', content: catalogBlock }] : []),
+      ...(liveBlock ? [{ role: 'system', content: liveBlock }] : []),
+      ...(context ? [{ role: 'system', content: context }] : []),
       { role: 'user', content: question },
     ]);
 
     return { success: true, result: response };
   } catch (error) {
     logger.error('AI Wissensfrage Fehler:', error);
-    return { success: false, error: 'AI nicht verfügbar.' };
+    return { success: false, error: 'AI nicht verf\u00fcgbar.' };
   }
 }
 
@@ -215,11 +338,43 @@ async function callGemini(
   model: string,
   messages: { role: string; content: string }[],
 ): Promise<string> {
-  // Gemini verwendet ein anderes Format
-  const contents = messages.map(m => ({
-    role: m.role === 'assistant' ? 'model' : m.role === 'system' ? 'user' : m.role,
-    parts: [{ text: m.content }],
-  }));
+  // Gemini hat keine "system"-Rolle und erwartet alternierend user/model.
+  // Strategie:
+  //   1) Alle aufeinanderfolgenden System-Messages am Anfang werden zu EINER
+  //      "user"-Preamble zusammengefasst (mit klarem Marker).
+  //   2) Danach folgen normale user/model-Wechsel.
+  //   3) Aufeinanderfolgende gleiche Rollen werden zu einer Message gemerged,
+  //      damit Gemini nicht meckert.
+  const systemBuf: string[] = [];
+  const tail: { role: 'user' | 'model'; text: string }[] = [];
+  let inTail = false;
+  for (const m of messages) {
+    if (!inTail && m.role === 'system') {
+      systemBuf.push(m.content);
+    } else {
+      inTail = true;
+      const role: 'user' | 'model' = m.role === 'assistant' ? 'model' : 'user';
+      // System-Messages, die NACH einer user/assistant-Message kommen (z.B. Live-Recherche),
+      // werden als zusaetzlicher user-Kontext eingefuegt.
+      const text = m.role === 'system' ? `[SYSTEM]\n${m.content}` : m.content;
+      tail.push({ role, text });
+    }
+  }
+
+  const merged: { role: 'user' | 'model'; text: string }[] = [];
+  if (systemBuf.length > 0) {
+    merged.push({ role: 'user', text: `[SYSTEM-PREAMBLE]\n${systemBuf.join('\n\n')}` });
+  }
+  for (const t of tail) {
+    const last = merged[merged.length - 1];
+    if (last && last.role === t.role) {
+      last.text += `\n\n${t.text}`;
+    } else {
+      merged.push(t);
+    }
+  }
+
+  const contents = merged.map(m => ({ role: m.role, parts: [{ text: m.text }] }));
 
   const response = await axios.post(
     `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${apiKey}`,

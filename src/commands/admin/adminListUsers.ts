@@ -75,7 +75,8 @@ const adminListUsersCommand: Command = {
       const idx = (page - 1) * perPage + i + 1;
       const mfgBadge = u.isManufacturer ? '🏭' : '';
       return `**${idx}.** <@${u.discordId}> ${mfgBadge}\n` +
-        `   GUID: \`${u.id.substring(0, 8)}...\` | Rolle: \`${u.role}\` | Status: \`${u.status}\`\n` +
+        `   GUID: \`${u.id}\`\n` +
+        `   Rolle: \`${u.role}\` | Status: \`${u.status}\`\n` +
         `   Pakete: ${u._count.packages} | Uploads: ${u._count.uploads} | Downloads: ${u._count.downloads}`;
     });
 

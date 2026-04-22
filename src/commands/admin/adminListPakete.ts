@@ -85,7 +85,7 @@ const adminListPaketeCommand: Command = {
       const sizeStr = formatBytes(Number(p.totalSize));
       const statusEmoji = p.status === 'ACTIVE' ? '🟢' : p.status === 'QUARANTINED' ? '🟡' : p.status === 'DELETED' ? '🔴' : '🔵';
       return `**${idx}.** ${statusEmoji} **${p.name}** von <@${p.user.discordId}>\n` +
-        `   GUID: \`${p.id.substring(0, 8)}...\` | Status: \`${p.status}\`\n` +
+        `   GUID: \`${p.id}\` | Status: \`${p.status}\`\n` +
         `   Dateien: ${p._count.files} | Größe: ${sizeStr} | Downloads: ${p._count.downloads}\n` +
         `   Erstellt: ${p.createdAt.toLocaleDateString('de-DE')}`;
     });

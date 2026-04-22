@@ -31,3 +31,4 @@ coverage/
 # Debug
 *.log
 npm-debug.log*
+backup/

@@ -40,15 +40,18 @@ export async function checkUploadPermission(userId: string): Promise<{ allowed: 
   });
 
   if (!user) {
+    logger.warn(`checkUploadPermission DENIED: user ${userId} nicht gefunden`);
     return { allowed: false, reason: 'User nicht gefunden.' };
   }
 
   if (user.status !== 'ACTIVE') {
-    return { allowed: false, reason: 'Account nicht aktiv.' };
+    logger.warn(`checkUploadPermission DENIED: user ${user.discordId} status=${user.status}`);
+    return { allowed: false, reason: `Account nicht aktiv (Status: \`${user.status}\`).` };
   }
 
-  if (!user.isManufacturer && user.role !== 'ADMIN' && user.role !== 'SUPER_ADMIN' && user.role !== 'DEVELOPER') {
-    return { allowed: false, reason: 'Keine Upload-Berechtigung. Registriere dich als Hersteller.' };
+  if (!user.isManufacturer) {
+    logger.warn(`checkUploadPermission DENIED: user ${user.discordId} role=${user.role} isManufacturer=${user.isManufacturer}`);
+    return { allowed: false, reason: `Keine Upload-Berechtigung. Upload ist ausschlie\u00dflich der Rolle **Hersteller** vorbehalten. Registriere dich mit \`/register manufacturer\`.` };
   }
 
   return { allowed: true };
@@ -121,30 +124,46 @@ export async function processUpload(
   // SHA-256 Hash berechnen (Integritätsprüfung)
   const fileHash = sha256Hash(fileBuffer);
 
-  // Dateiname generieren (sicher, keine Pfad-Traversal)
+  // packageId & userId müssen UUID sein (verhindert Pfad-Injection)
+  const uuidRe = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+  if (!uuidRe.test(userId) || !uuidRe.test(packageId)) {
+    return { success: false, message: 'Ungültige User- oder Paket-ID.' };
+  }
+
+  // Dateiname generieren (sicher, keine Pfad-Traversal, keine Hidden-Files)
   const safeFileName = `${crypto.randomBytes(8).toString('hex')}_${sanitizeFilename(originalName)}`;
   const userDir = ensureUserUploadDir(userId);
   const packageDir = path.join(userDir, packageId);
 
-  if (!existsSync(packageDir)) {
-    mkdirSync(packageDir, { recursive: true });
+  // Final-Path muss innerhalb der Upload-Root liegen
+  const filePath = path.join(packageDir, safeFileName);
+  if (!isPathSafe(filePath) || !isPathSafe(packageDir)) {
+    logger.error(`Path-Traversal blockiert: ${filePath}`);
+    return { success: false, message: 'Sicherheitsprüfung fehlgeschlagen.' };
   }
 
-  const filePath = path.join(packageDir, safeFileName);
+  // Erst in Staging-Verzeichnis schreiben — Virenscan vor Aktivierung
+  const stagingDir = path.join(config.upload.dir, '.staging');
+  if (!existsSync(stagingDir)) {
+    mkdirSync(stagingDir, { recursive: true, mode: 0o700 });
+  }
+  const stagingPath = path.join(stagingDir, `${crypto.randomBytes(16).toString('hex')}_${safeFileName}`);
+  await fs.writeFile(stagingPath, fileBuffer, { mode: 0o600 });
 
-  // Datei speichern
-  await fs.writeFile(filePath, fileBuffer);
-
-  // Virenscan (Sektion 2: ClamAV oder heuristischer Fallback)
-  const scanResult = await scanFile(filePath, userId);
+  // Virenscan VOR dem Move in den aktiven Bereich (Sektion 2)
+  const scanResult = await scanFile(stagingPath, userId);
   if (!scanResult.clean) {
-    // Datei in Quarantäne verschieben
+    // Datei aus Staging in Quarantäne verschieben — nie aktiv gewesen
     const quarantineDir = path.join(config.upload.dir, '.quarantine');
     if (!existsSync(quarantineDir)) {
-      mkdirSync(quarantineDir, { recursive: true });
+      mkdirSync(quarantineDir, { recursive: true, mode: 0o700 });
     }
-    const quarantinePath = path.join(quarantineDir, safeFileName);
-    await fs.rename(filePath, quarantinePath);
+    const quarantinePath = path.join(quarantineDir, `${Date.now()}_${safeFileName}`);
+    try {
+      await fs.rename(stagingPath, quarantinePath);
+    } catch {
+      try { await fs.unlink(stagingPath); } catch { /* */ }
+    }
 
     logAudit('UPLOAD_QUARANTINED_VIRUS', 'SECURITY', {
       userId,
@@ -158,6 +177,12 @@ export async function processUpload(
       message: `Datei "${originalName}" wurde als verdächtig erkannt und in Quarantäne verschoben. Bedrohungen: ${scanResult.threats.join(', ')}`,
     };
   }
+
+  // Scan ok — jetzt in aktiven Bereich verschieben
+  if (!existsSync(packageDir)) {
+    mkdirSync(packageDir, { recursive: true, mode: 0o755 });
+  }
+  await fs.rename(stagingPath, filePath);
 
   // Dateityp bestimmen
   const fileType = ext === '.xml' ? 'XML' : ext === '.json' ? 'JSON' : 'OTHER';
@@ -320,13 +345,26 @@ export async function restorePackage(packageId: string) {
 }
 
 /**
- * Sanitize Dateiname (Sicherheit: keine Pfad-Traversal).
+ * Sanitize Dateiname (Sicherheit: keine Pfad-Traversal, keine Hidden-Files).
  */
 function sanitizeFilename(name: string): string {
-  return name
+  const cleaned = name
     .replace(/[^a-zA-Z0-9._-]/g, '_')
     .replace(/\.{2,}/g, '.')
+    .replace(/^\.+/, '_')           // keine führenden Punkte (.htaccess, .env)
+    .replace(/[._-]+$/, '')         // keine trailing dots/underscores
     .substring(0, 200);
+  // Fallback falls leer nach Sanitize
+  return cleaned || `file_${Date.now()}`;
+}
+
+/**
+ * Prüft, ob ein Pfad sicher unterhalb der Upload-Root liegt.
+ */
+function isPathSafe(targetPath: string): boolean {
+  const resolved = path.resolve(targetPath);
+  const root = path.resolve(config.upload.dir);
+  return resolved === root || resolved.startsWith(root + path.sep);
 }
 
 function formatBytes(bytes: number): string {

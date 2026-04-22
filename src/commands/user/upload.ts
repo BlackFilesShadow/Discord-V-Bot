@@ -40,6 +40,7 @@ for (let i = 2; i <= 10; i++) {
 
 const uploadCommand: Command = {
   data: builder,
+  manufacturerOnly: true,
 
   execute: async (interaction: ChatInputCommandInteraction) => {
     const paketname = interaction.options.getString('paketname', true);
@@ -59,19 +60,37 @@ const uploadCommand: Command = {
     });
 
     if (!dbUser) {
-      await interaction.reply({ content: '❌ Du bist nicht registriert. Verwende `/register manufacturer`.', ephemeral: true });
+      try {
+        await interaction.reply({ content: '❌ Du bist nicht registriert. Verwende `/register manufacturer`.', ephemeral: true });
+      } catch {}
       return;
     }
 
     // Uploadrechte prüfen (Sektion 1: nur eigener GUID-Bereich)
     const permission = await checkUploadPermission(dbUser.id);
     if (!permission.allowed) {
-      await interaction.reply({ content: `❌ ${permission.reason}`, ephemeral: true });
+      // Hilfreichere Meldung: prüfe ob bereits eine Hersteller-Anfrage läuft
+      let extra = '';
+      try {
+        const req = await prisma.manufacturerRequest.findUnique({ where: { userId: dbUser.id } });
+        if (req?.status === 'PENDING') {
+          extra = '\n⏳ Deine Hersteller-Anfrage ist **noch nicht angenommen**. Bitte warte auf die Admin-Bestätigung.';
+        } else if (req?.status === 'APPROVED' && dbUser.status !== 'ACTIVE') {
+          extra = '\n🔑 Anfrage angenommen, aber dein Account ist noch nicht aktiv. Verwende `/register verify password:DEIN_OTP` mit dem Einmal-Passwort aus der DM.';
+        } else if (req?.status === 'DENIED') {
+          extra = '\n❌ Deine letzte Hersteller-Anfrage wurde abgelehnt. Du kannst eine neue Anfrage stellen.';
+        }
+      } catch { /* DB optional */ }
+      try {
+        await interaction.reply({ content: `❌ ${permission.reason}${extra}`, ephemeral: true });
+      } catch {}
       return;
     }
 
     // Direkt hochladen — kein Dropdown nötig, Format wird automatisch erkannt
-    await interaction.deferReply({ ephemeral: true });
+    try {
+      await interaction.deferReply({ ephemeral: true });
+    } catch {}
 
     const beschreibung = interaction.options.getString('beschreibung') || undefined;
 
@@ -103,7 +122,9 @@ const uploadCommand: Command = {
         });
       }
 
-      await interaction.editReply({ embeds: [summaryEmbed] });
+      try {
+        await interaction.editReply({ embeds: [summaryEmbed] });
+      } catch {}
     }
   },
 };
@@ -183,7 +204,9 @@ async function processAndReply(
 
     // Bei Einzel-Upload direkt antworten, bei Multi kommt Zusammenfassung
     if (!isMulti) {
-      await interaction.editReply({ embeds: [embed] });
+      try {
+        await interaction.editReply({ embeds: [embed] });
+      } catch {}
     }
     return { name: fileName, success: result.success, embed };
   } catch (error) {
@@ -195,7 +218,9 @@ async function processAndReply(
       timestamp: true,
     });
     if (!isMulti) {
-      await interaction.editReply({ embeds: [embed] });
+      try {
+        await interaction.editReply({ embeds: [embed] });
+      } catch {}
     }
     return { name: fileName, success: false, embed };
   }

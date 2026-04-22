@@ -22,6 +22,34 @@ export async function createModerationCase(params: {
 }): Promise<{ success: boolean; caseNumber?: number; message: string }> {
   const { targetDiscordId, moderatorDiscordId, action, reason, duration, guild } = params;
 
+  // Safety-Guards (Sektion 4)
+  if (targetDiscordId === moderatorDiscordId) {
+    return { success: false, message: '❌ Du kannst dich nicht selbst moderieren.' };
+  }
+  if (targetDiscordId === guild.client.user?.id) {
+    return { success: false, message: '❌ Der Bot kann nicht gegen sich selbst aktionieren.' };
+  }
+
+  // Hierarchie-Check: Moderator muss höhere Rolle haben als Target
+  const targetMember = await guild.members.fetch(targetDiscordId).catch(() => null);
+  const modMember = await guild.members.fetch(moderatorDiscordId).catch(() => null);
+  if (targetMember && modMember && guild.ownerId !== moderatorDiscordId) {
+    if (targetMember.roles.highest.position >= modMember.roles.highest.position) {
+      return { success: false, message: '❌ Ziel-Nutzer hat gleich hohe oder höhere Rolle.' };
+    }
+  }
+  // Bot-Hierarchie-Check
+  const botMember = guild.members.me;
+  if (targetMember && botMember && action !== 'WARN') {
+    if (targetMember.roles.highest.position >= botMember.roles.highest.position) {
+      return { success: false, message: '❌ Bot-Rolle ist nicht hoch genug für diese Aktion.' };
+    }
+  }
+  // Target nicht im Server (für KICK/MUTE relevant)
+  if (!targetMember && (action === 'KICK' || action === 'MUTE' || action === 'TEMP_MUTE')) {
+    return { success: false, message: '❌ Nutzer ist nicht (mehr) auf dem Server.' };
+  }
+
   // User-GUIDs auflösen
   const targetUser = await prisma.user.upsert({
     where: { discordId: targetDiscordId },
@@ -64,7 +92,7 @@ export async function createModerationCase(params: {
 
   // Discord-Aktion ausführen
   try {
-    const member = await guild.members.fetch(targetDiscordId).catch(() => null);
+    const member = targetMember;
 
     switch (action) {
       case 'KICK':

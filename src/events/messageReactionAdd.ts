@@ -1,4 +1,4 @@
-import { Events, MessageReaction, User, PartialMessageReaction, PartialUser, EmbedBuilder } from 'discord.js';
+import { Events, MessageReaction, User, PartialMessageReaction, PartialUser, EmbedBuilder, TextChannel } from 'discord.js';
 import { BotEvent } from '../types';
 import { logger, logAudit } from '../utils/logger';
 import prisma from '../database/prisma';
@@ -48,19 +48,33 @@ const messageReactionAddEvent: BotEvent = {
         const requiredEmoji = giveaway.customEmoji || '🎉';
         if (emoji !== requiredEmoji && r.emoji.toString() !== requiredEmoji) return;
 
-        const dbUser = await prisma.user.findUnique({
+        // User automatisch anlegen falls noch nicht registriert
+        const fullUser = u.partial ? await u.fetch().catch(() => null) : (u as User);
+        const username = fullUser?.username || 'Unknown';
+        const dbUser = await prisma.user.upsert({
           where: { discordId: u.id },
+          create: { discordId: u.id, username },
+          update: {},
         });
 
-        if (!dbUser) return;
+        // Helper: Blockierte Reaktion entfernen + Hinweis im Channel (auto-delete)
+        const blockAndNotify = async (reason: string) => {
+          try { await r.users.remove(u.id); } catch { /* ignore */ }
+          if (r.message.channel && 'send' in r.message.channel) {
+            try {
+              const notice = await (r.message.channel as TextChannel).send({
+                content: `<@${u.id}> ❌ ${reason}`,
+              });
+              setTimeout(() => { notice.delete().catch(() => {}); }, 8000);
+            } catch { /* ignore */ }
+          }
+        };
 
         // Mindestrolle prüfen
         if (giveaway.minRole && r.message.guild) {
           const member = await r.message.guild.members.fetch(u.id);
           if (!member.roles.cache.has(giveaway.minRole)) {
-            try {
-              await u.send(`❌ Du benötigst eine bestimmte Rolle, um an diesem Giveaway teilzunehmen.`);
-            } catch { /* DMs deaktiviert */ }
+            await blockAndNotify('Du benötigst eine bestimmte Rolle, um an diesem Giveaway teilzunehmen.');
             return;
           }
         }
@@ -70,6 +84,7 @@ const messageReactionAddEvent: BotEvent = {
           const member = await r.message.guild.members.fetch(u.id);
           const blacklisted = giveaway.blacklistRoles as string[];
           if (blacklisted.some(roleId => member.roles.cache.has(roleId))) {
+            await blockAndNotify('Du bist von diesem Giveaway ausgeschlossen.');
             return;
           }
         }
@@ -101,7 +116,7 @@ const messageReactionAddEvent: BotEvent = {
             const embed = createGiveawayEmbed(giveaway, participantCount, creator?.username);
             embed.addFields({ name: '🆔 ID', value: giveaway.id, inline: false });
             await r.message.edit({ embeds: [embed] });
-          } catch { /* Embed-Update nicht kritisch */ }
+          } catch (e) { logger.error('Giveaway-Embed-Update fehlgeschlagen:', e); }
         } catch {
           // Bereits teilgenommen (unique constraint violation)
         }

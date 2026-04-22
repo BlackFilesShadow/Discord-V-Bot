@@ -20,7 +20,49 @@ export async function createManufacturerRequest(discordId: string, username: str
     update: { username },
   });
 
-  // Prüfe ob bereits eine Anfrage existiert
+  // SELBSTHEILUNG fuer asymmetrische Zustaende:
+  // Wenn nur EINE der beiden Hersteller-Flaggen gesetzt ist (z.B. weil das
+  // Dashboard fruehe nur isManufacturer toggled hat, oder ein alter Code-Pfad
+  // role MANUFACTURER ohne isManufacturer setzte), gilt der User als NICHT
+  // verifizierter Hersteller. Wir raeumen den halben Zustand still auf,
+  // damit /register manufacturer wieder funktioniert.
+  if (user.isManufacturer !== (user.role === 'MANUFACTURER')) {
+    await prisma.user.update({
+      where: { id: user.id },
+      data: {
+        isManufacturer: false,
+        role: user.role === 'MANUFACTURER' ? 'USER' : user.role,
+        manufacturerApprovedAt: null,
+        manufacturerApprovedBy: null,
+      },
+    });
+    user.isManufacturer = false;
+    if (user.role === 'MANUFACTURER') user.role = 'USER';
+    logAudit('MANUFACTURER_STATE_REPAIRED', 'REGISTRATION', {
+      userId: user.id,
+      discordId,
+      reason: 'Asymmetrischer Zustand isManufacturer != role==MANUFACTURER',
+    });
+  }
+
+  // MASTER-Wahrheit: User-Flag. Nur wer wirklich isManufacturer=true UND
+  // role=MANUFACTURER ist, gilt als verifizierter Hersteller. Alles andere
+  // (alte APPROVED-Requests, abgelaufene OTPs, halbfertige Zustaende) wird
+  // beim erneuten /register manufacturer als "frischer Start" behandelt.
+  if (user.isManufacturer && user.role === 'MANUFACTURER') {
+    // Diagnose-freundliche Antwort: User und Dev sehen sofort die
+    // benoetigten Identifier, um den Status ggf. zurueckzusetzen.
+    return {
+      success: false,
+      message:
+        'Du bist bereits als Hersteller registriert.\n' +
+        `\u2022 Discord-ID: \`${discordId}\`\n` +
+        `\u2022 GUID: \`${user.id}\`\n\n` +
+        'Wenn das ein Fehler ist, bitte einen Developer um Reset via `/dev-manufacturer remove`.',
+    };
+  }
+
+  // Pr\u00fcfe ob bereits eine Anfrage existiert
   const existing = await prisma.manufacturerRequest.findUnique({
     where: { userId: user.id },
   });
@@ -29,13 +71,42 @@ export async function createManufacturerRequest(discordId: string, username: str
     if (existing.status === 'PENDING') {
       return { success: false, message: 'Du hast bereits eine offene Anfrage.' };
     }
+    // APPROVED-Sonderfall: Pruefe, ob noch ein gueltiger, ungenutzter OTP existiert.
+    // Wenn ja: NICHT zuruecksetzen \u2013 sonst wuerden wir den per DM verschickten OTP
+    // widerrufen. Stattdessen den User darauf hinweisen, dass er nur noch verifizieren muss.
     if (existing.status === 'APPROVED') {
-      return { success: false, message: 'Du bist bereits als Hersteller registriert.' };
+      const validOtp = await prisma.oneTimePassword.findFirst({
+        where: {
+          userId: user.id,
+          isUsed: false,
+          isRevoked: false,
+          expiresAt: { gt: new Date() },
+        },
+      });
+      if (validOtp) {
+        return {
+          success: false,
+          message:
+            'Deine Anfrage wurde bereits angenommen. Du hast einen gueltigen OTP per DM erhalten \u2013 verifiziere ihn mit `/register verify <passwort>`.',
+        };
+      }
     }
-    // Bei DENIED: Neue Anfrage erlauben
+    // APPROVED ohne gueltigen OTP, oder DENIED: User ist (laut User-Flag oben) KEIN
+    // Hersteller mehr, also war das eine alte/verwaiste Anfrage. Wir setzen sie auf
+    // PENDING zurueck und widerrufen vorsorglich alle alten OTPs.
     await prisma.manufacturerRequest.update({
       where: { userId: user.id },
-      data: { status: 'PENDING', reason, adminNote: null, reviewedBy: null, reviewedAt: null },
+      data: {
+        status: 'PENDING',
+        reason,
+        adminNote: null,
+        reviewedBy: null,
+        reviewedAt: null,
+      },
+    });
+    await prisma.oneTimePassword.updateMany({
+      where: { userId: user.id, isUsed: false, isRevoked: false },
+      data: { isRevoked: true },
     });
   } else {
     await prisma.manufacturerRequest.create({
@@ -91,6 +162,12 @@ export async function approveManufacturer(discordId: string, adminDiscordId: str
     },
   });
 
+  // Alte ungenutzte OTPs sofort widerrufen (verhindert Mehrdeutigkeit)
+  await prisma.oneTimePassword.updateMany({
+    where: { userId: user.id, isUsed: false, isRevoked: false },
+    data: { isRevoked: true },
+  });
+
   // Einmal-Passwort speichern
   await prisma.oneTimePassword.create({
     data: {
@@ -100,16 +177,10 @@ export async function approveManufacturer(discordId: string, adminDiscordId: str
     },
   });
 
-  // User-Rolle auf MANUFACTURER setzen
-  await prisma.user.update({
-    where: { id: user.id },
-    data: {
-      isManufacturer: true,
-      role: 'MANUFACTURER',
-      manufacturerApprovedAt: new Date(),
-      manufacturerApprovedBy: adminDiscordId,
-    },
-  });
+  // WICHTIG: Hersteller-Rolle/-Flag werden hier NICHT gesetzt.
+  // Sie werden erst nach erfolgreicher OTP-Verifizierung in
+  // verifyOneTimePassword() aktiviert. So gilt der User offiziell
+  // erst als Hersteller, wenn er auch wirklich verifiziert hat.
 
   logAudit('MANUFACTURER_APPROVED', 'REGISTRATION', {
     userId: user.id,
@@ -184,11 +255,33 @@ export async function verifyOneTimePassword(userId: string, password: string) {
   });
 
   if (otps.length === 0) {
+    // User-Status mit pruefen, damit wir aussagekraeftige Meldungen liefern
+    const user = await prisma.user.findUnique({ where: { id: userId } });
+    const anyOtp = await prisma.oneTimePassword.findFirst({
+      where: { userId },
+      orderBy: { createdAt: 'desc' },
+    });
+    let reason = 'Kein g\u00fcltiges Einmal-Passwort gefunden.';
+    if (user?.isManufacturer && user.role === 'MANUFACTURER') {
+      // Bereits vollstaendig verifiziert \u2013 kein neuer OTP n\u00f6tig.
+      reason = 'Du bist bereits als Hersteller verifiziert. Du brauchst keinen weiteren OTP. Falls du Probleme hast, wende dich an einen Admin.';
+    } else if (anyOtp) {
+      const fmt = (d: Date) => d.toLocaleString('de-DE', { timeZone: 'Europe/Berlin' });
+      if (anyOtp.isUsed && anyOtp.usedAt) {
+        reason = `Dein letzter OTP (erstellt ${fmt(anyOtp.createdAt)}) wurde bereits am ${fmt(anyOtp.usedAt)} verwendet. Frage einen Admin nach einem neuen.`;
+      } else if (anyOtp.isRevoked) {
+        reason = 'Dein Einmal-Passwort wurde widerrufen. Frage einen Admin nach einem neuen.';
+      } else if (anyOtp.expiresAt <= new Date()) {
+        reason = `Dein Einmal-Passwort ist am ${fmt(anyOtp.expiresAt)} abgelaufen (30 Min G\u00fcltigkeit). Frage einen Admin nach einem neuen.`;
+      }
+    } else {
+      reason = 'Du hast noch kein Einmal-Passwort. Beantrage zuerst Hersteller-Status mit `/register manufacturer`.';
+    }
     logSecurity('OTP_VERIFY_FAILED', 'MEDIUM', {
       userId,
-      reason: 'Kein gültiges OTP gefunden',
+      reason,
     });
-    return { success: false, message: 'Kein gültiges Einmal-Passwort gefunden oder abgelaufen.' };
+    return { success: false, message: reason };
   }
 
   // Passwort gegen alle gültigen OTPs prüfen
@@ -208,7 +301,7 @@ export async function verifyOneTimePassword(userId: string, password: string) {
       userId,
       reason: 'Falsches Passwort',
     });
-    return { success: false, message: 'Ungültiges Passwort.' };
+    return { success: false, message: 'Ungültiges Passwort. Prüfe Groß-/Kleinschreibung und kopiere den OTP exakt aus der DM (ohne Leerzeichen).' };
   }
 
   // OTP als verwendet markieren (sofort ungültig)
@@ -223,10 +316,20 @@ export async function verifyOneTimePassword(userId: string, password: string) {
     data: { isRevoked: true },
   });
 
-  // Uploadrechte aktivieren
+  // Uploadrechte aktivieren (defensiv: isManufacturer + role + status setzen)
+  // Hersteller-Status jetzt aktivieren (vorher nur Anfrage APPROVED + OTP).
+  // Wir holen reviewedBy aus der ManufacturerRequest, damit
+  // manufacturerApprovedBy korrekt den Admin enth\u00e4lt.
+  const req = await prisma.manufacturerRequest.findUnique({ where: { userId } });
   await prisma.user.update({
     where: { id: userId },
-    data: { status: 'ACTIVE' },
+    data: {
+      status: 'ACTIVE',
+      isManufacturer: true,
+      role: 'MANUFACTURER',
+      manufacturerApprovedAt: new Date(),
+      manufacturerApprovedBy: req?.reviewedBy ?? null,
+    },
   });
 
   logAudit('OTP_VERIFIED', 'REGISTRATION', {

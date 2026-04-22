@@ -14,12 +14,16 @@ import guildMemberAddEvent from './events/guildMemberAdd';
 import guildMemberRemoveEvent from './events/guildMemberRemove';
 import messageCreateEvent from './events/messageCreate';
 import messageReactionAddEvent from './events/messageReactionAdd';
+import messageReactionRemoveEvent from './events/messageReactionRemove';
 import voiceStateUpdateEvent from './events/voiceStateUpdate';
 
 // Module importieren
 import { startGiveawayScheduler } from './modules/giveaway/giveawayManager';
 import { startFeedScheduler } from './modules/feeds/feedManager';
 import { startPollScheduler } from './modules/polls/pollSystem';
+import { startRateLimitCleanup } from './utils/rateLimiter';
+import { startDashboard } from './dashboard/server';
+import { processExpiredCases } from './modules/moderation/caseManager';
 
 /**
  * Discord-V-Bot Haupteinstiegspunkt.
@@ -78,6 +82,7 @@ async function main(): Promise<void> {
     guildMemberRemoveEvent,
     messageCreateEvent,
     messageReactionAddEvent,
+    messageReactionRemoveEvent,
     voiceStateUpdateEvent,
   ];
 
@@ -100,6 +105,26 @@ async function main(): Promise<void> {
   startGiveawayScheduler(client);
   startFeedScheduler(client);
   startPollScheduler(client);
+  startRateLimitCleanup();
+
+  // Moderation-Scheduler: Temp-Bans/Mutes alle 60s prüfen
+  setInterval(async () => {
+    try {
+      for (const guild of client.guilds.cache.values()) {
+        const n = await processExpiredCases(guild);
+        if (n > 0) logger.info(`Moderation: ${n} abgelaufene Cases aufgehoben (Guild ${guild.id}).`);
+      }
+    } catch (err) {
+      logger.error('Moderation-Scheduler Fehler:', err as Error);
+    }
+  }, 60_000);
+
+  // Web-Dashboard starten (für Healthcheck und Admin-UI)
+  try {
+    startDashboard();
+  } catch (error) {
+    logger.error('Dashboard konnte nicht gestartet werden:', error);
+  }
 
   logger.info('Discord-V-Bot vollständig gestartet.');
 
