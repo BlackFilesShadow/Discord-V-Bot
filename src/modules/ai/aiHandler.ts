@@ -160,7 +160,12 @@ export async function answerQuestion(question: string, context?: string): Promis
 
     return { success: true, result: response };
   } catch (error) {
-    logger.error('AI Wissensfrage Fehler:', error);
+    const err = error as Error;
+    logger.error('AI Wissensfrage Fehler:', {
+      message: err?.message,
+      stack: err?.stack?.split('\n').slice(0, 5).join('\n'),
+      name: err?.name,
+    });
     return { success: false, error: 'AI nicht verf\u00fcgbar.' };
   }
 }
@@ -392,41 +397,66 @@ async function callGemini(
 async function callAI(messages: { role: string; content: string }[]): Promise<string> {
   const providers = getProviderOrder();
 
+  // Erkennt transiente Fehler (Netzwerk-Glitches, Rate-Limits, 5xx) – diese rechtfertigen einen Retry.
+  const isTransient = (e: unknown): boolean => {
+    const err = e as { code?: string; response?: { status?: number }; message?: string };
+    const status = err?.response?.status;
+    if (status && (status === 429 || status >= 500)) return true;
+    const code = err?.code || '';
+    if (['ECONNRESET', 'ETIMEDOUT', 'ECONNREFUSED', 'ENOTFOUND', 'EAI_AGAIN', 'ECONNABORTED'].includes(code)) return true;
+    if (/timeout|network|socket hang up/i.test(err?.message || '')) return true;
+    return false;
+  };
+
+  const callProvider = async (provider: 'groq' | 'gemini' | 'openai'): Promise<string | null> => {
+    switch (provider) {
+      case 'groq':
+        if (!config.ai.groqApiKey) return null;
+        return await callOpenAICompatible(
+          'https://api.groq.com/openai/v1',
+          config.ai.groqApiKey,
+          config.ai.groqModel,
+          messages,
+        );
+      case 'gemini':
+        if (!config.ai.geminiApiKey) return null;
+        return await callGemini(config.ai.geminiApiKey, config.ai.geminiModel, messages);
+      case 'openai':
+        if (!config.ai.openaiApiKey) return null;
+        return await callOpenAICompatible(
+          'https://api.openai.com/v1',
+          config.ai.openaiApiKey,
+          config.ai.openaiModel,
+          messages,
+        );
+    }
+  };
+
+  let lastError: unknown = null;
   for (const provider of providers) {
-    try {
-      switch (provider) {
-        case 'groq':
-          if (config.ai.groqApiKey) {
-            return await callOpenAICompatible(
-              'https://api.groq.com/openai/v1',
-              config.ai.groqApiKey,
-              config.ai.groqModel,
-              messages,
-            );
-          }
-          break;
-        case 'gemini':
-          if (config.ai.geminiApiKey) {
-            return await callGemini(config.ai.geminiApiKey, config.ai.geminiModel, messages);
-          }
-          break;
-        case 'openai':
-          if (config.ai.openaiApiKey) {
-            return await callOpenAICompatible(
-              'https://api.openai.com/v1',
-              config.ai.openaiApiKey,
-              config.ai.openaiModel,
-              messages,
-            );
-          }
-          break;
+    for (let attempt = 1; attempt <= 2; attempt++) {
+      try {
+        const result = await callProvider(provider);
+        if (result === null) break; // Kein API-Key konfiguriert -> nächster Provider
+        return result;
+      } catch (error) {
+        lastError = error;
+        const transient = isTransient(error);
+        const errMsg = (error as Error)?.message || String(error);
+        logger.warn(
+          `AI-Provider ${provider} Versuch ${attempt}/2 fehlgeschlagen${transient ? ' (transient)' : ''}: ${errMsg}`,
+        );
+        if (transient && attempt === 1) {
+          await new Promise(r => setTimeout(r, 400));
+          continue; // gleicher Provider, zweiter Versuch
+        }
+        break; // nächster Provider
       }
-    } catch (error) {
-      logger.warn(`AI-Provider ${provider} fehlgeschlagen, versuche nächsten...`, { error: String(error) });
     }
   }
 
-  throw new Error('Kein AI-Provider verfügbar. Konfiguriere GROQ_API_KEY, GEMINI_API_KEY oder OPENAI_API_KEY.');
+  const detail = lastError ? `: ${(lastError as Error)?.message || String(lastError)}` : '';
+  throw new Error(`Kein AI-Provider verfügbar${detail}`);
 }
 
 /**

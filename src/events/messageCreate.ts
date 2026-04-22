@@ -12,6 +12,16 @@ import { getLevelUpMessage, getMaxLevelRewardMessage } from '../modules/xp/level
 // Anti-Spam: Nachrichtenhistorie pro User
 const messageHistory: Map<string, { content: string; timestamp: number }[]> = new Map();
 
+// Dedup: verarbeitete Message-IDs (defensiv gegen Gateway-Replays bei Reconnect).
+const processedMessages: Map<string, number> = new Map();
+const PROCESSED_TTL_MS = 60 * 1000; // 60s reichen, Discord redeliver-Fenster ist kurz.
+setInterval(() => {
+  const cutoff = Date.now() - PROCESSED_TTL_MS;
+  for (const [id, ts] of processedMessages) {
+    if (ts < cutoff) processedMessages.delete(id);
+  }
+}, 60 * 1000).unref?.();
+
 // Periodischer Cleanup: Eintr\u00e4ge \u00e4lter als 5 Min entfernen, leere User droppen
 setInterval(() => {
   const cutoff = Date.now() - 5 * 60 * 1000;
@@ -36,6 +46,13 @@ const messageCreateEvent: BotEvent = {
     // Bots ignorieren
     if (msg.author.bot) return;
     if (!msg.guild) return;
+
+    // Dedup: dieselbe Nachricht nie zweimal verarbeiten (Gateway kann nach Reconnect replayen).
+    if (processedMessages.has(msg.id)) {
+      logger.warn(`Doppelte messageCreate fuer ${msg.id} ignoriert (Gateway-Replay).`);
+      return;
+    }
+    processedMessages.set(msg.id, Date.now());
 
     // Channel mit send()-Methode casten
     const channel = msg.channel as TextChannel;
@@ -301,7 +318,7 @@ const messageCreateEvent: BotEvent = {
             }
           } else {
             await channel.send({
-              content: `<@${msg.author.id}> ❌ AI-Fehler: ${r.error || 'unbekannt'}`,
+              content: `<@${msg.author.id}> 🤔 Hmm, da hat gerade etwas nicht geklappt. Versuch's bitte gleich nochmal.`,
               allowedMentions: { users: [msg.author.id] },
             });
           }
