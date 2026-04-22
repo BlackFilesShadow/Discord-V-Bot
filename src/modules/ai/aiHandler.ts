@@ -324,6 +324,7 @@ async function callOpenAICompatible(
   apiKey: string,
   model: string,
   messages: { role: string; content: string }[],
+  extraHeaders?: Record<string, string>,
 ): Promise<string> {
   const response = await axios.post(
     `${baseUrl}/chat/completions`,
@@ -332,6 +333,7 @@ async function callOpenAICompatible(
       headers: {
         Authorization: `Bearer ${apiKey}`,
         'Content-Type': 'application/json',
+        ...(extraHeaders || {}),
       },
       timeout: 30000,
     },
@@ -412,7 +414,9 @@ async function callAI(messages: { role: string; content: string }[]): Promise<st
     return false;
   };
 
-  const callProvider = async (provider: 'groq' | 'gemini' | 'openai'): Promise<string | null> => {
+  const callProvider = async (
+    provider: 'groq' | 'cerebras' | 'openrouter' | 'gemini' | 'openai',
+  ): Promise<string | null> => {
     switch (provider) {
       case 'groq':
         if (!config.ai.groqApiKey) return null;
@@ -421,6 +425,27 @@ async function callAI(messages: { role: string; content: string }[]): Promise<st
           config.ai.groqApiKey,
           config.ai.groqModel,
           messages,
+        );
+      case 'cerebras':
+        if (!config.ai.cerebrasApiKey) return null;
+        return await callOpenAICompatible(
+          'https://api.cerebras.ai/v1',
+          config.ai.cerebrasApiKey,
+          config.ai.cerebrasModel,
+          messages,
+        );
+      case 'openrouter':
+        if (!config.ai.openrouterApiKey) return null;
+        return await callOpenAICompatible(
+          'https://openrouter.ai/api/v1',
+          config.ai.openrouterApiKey,
+          config.ai.openrouterModel,
+          messages,
+          {
+            // OpenRouter empfiehlt diese Header zur Identifikation/Ranking.
+            'HTTP-Referer': 'https://github.com/BlackFilesShadow/Discord-V-Bot',
+            'X-Title': 'Discord-V-Bot',
+          },
         );
       case 'gemini':
         if (!config.ai.geminiApiKey) return null;
@@ -481,8 +506,14 @@ async function callAI(messages: { role: string; content: string }[]): Promise<st
 /**
  * Provider-Reihenfolge basierend auf Konfiguration.
  */
-function getProviderOrder(): ('groq' | 'gemini' | 'openai')[] {
-  const all: ('groq' | 'gemini' | 'openai')[] = ['groq', 'gemini', 'openai'];
+function getProviderOrder(): ('groq' | 'cerebras' | 'openrouter' | 'gemini' | 'openai')[] {
+  const all: ('groq' | 'cerebras' | 'openrouter' | 'gemini' | 'openai')[] = [
+    'groq',
+    'cerebras',
+    'openrouter',
+    'gemini',
+    'openai',
+  ];
   const primary = config.ai.provider;
   return [primary, ...all.filter(p => p !== primary)];
 }

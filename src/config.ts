@@ -56,11 +56,20 @@ export const config = {
     chunkSize: 10 * 1024 * 1024, // 10 MB chunks
   },
 
-  // AI (Multi-Provider: Groq → Gemini → OpenAI Fallback)
+  // AI (Multi-Provider Fallback: Groq → Cerebras → OpenRouter → Gemini → OpenAI)
   ai: {
-    provider: optionalEnv('AI_PROVIDER', 'groq') as 'groq' | 'gemini' | 'openai',
+    provider: optionalEnv('AI_PROVIDER', 'groq') as
+      | 'groq'
+      | 'cerebras'
+      | 'openrouter'
+      | 'gemini'
+      | 'openai',
     groqApiKey: optionalEnv('GROQ_API_KEY'),
     groqModel: optionalEnv('GROQ_MODEL', 'llama-3.3-70b-versatile'),
+    cerebrasApiKey: optionalEnv('CEREBRAS_API_KEY'),
+    cerebrasModel: optionalEnv('CEREBRAS_MODEL', 'llama-3.3-70b'),
+    openrouterApiKey: optionalEnv('OPENROUTER_API_KEY'),
+    openrouterModel: optionalEnv('OPENROUTER_MODEL', 'meta-llama/llama-3.3-70b-instruct:free'),
     geminiApiKey: optionalEnv('GEMINI_API_KEY'),
     geminiModel: optionalEnv('GEMINI_MODEL', 'gemini-2.0-flash'),
     openaiApiKey: optionalEnv('OPENAI_API_KEY'),
