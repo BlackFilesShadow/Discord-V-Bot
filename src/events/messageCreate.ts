@@ -241,6 +241,9 @@ const messageCreateEvent: BotEvent = {
 
       // @everyone/@here ignorieren – muss explizite User-Mention sein
       if ((isMentioned || isReplyToBot) && !msg.mentions.everyone) {
+        logger.info(
+          `AI Mention empfangen msgId=${msg.id} userId=${msg.author.id} channelId=${msg.channelId} reply=${isReplyToBot} mention=${isMentioned}`,
+        );
         // Mention aus dem Text entfernen, damit die Frage sauber ist
         const question = msg.content
           .replace(new RegExp(`<@!?${botId}>`, 'g'), '')
