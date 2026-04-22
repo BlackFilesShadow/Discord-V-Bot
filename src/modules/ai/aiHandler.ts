@@ -464,11 +464,17 @@ async function callAI(messages: { role: string; content: string }[]): Promise<st
   let lastError: unknown = null;
   let allRateLimited = true; // wird false sobald ein Nicht-429 auftritt oder Provider gar nicht versucht wurde
   let anyAttempted = false;
+  logger.info(`callAI start, provider-Reihenfolge: ${providers.join(' -> ')}`);
   for (const provider of providers) {
     for (let attempt = 1; attempt <= 2; attempt++) {
       try {
+        logger.info(`callAI versuche provider=${provider} attempt=${attempt}`);
         const result = await callProvider(provider);
-        if (result === null) break; // Kein API-Key konfiguriert -> nächster Provider
+        if (result === null) {
+          logger.info(`callAI provider=${provider} hat keinen API-Key (null), naechster.`);
+          break;
+        }
+        logger.info(`callAI provider=${provider} ERFOLG (${result.length} chars)`);
         return result;
       } catch (error) {
         anyAttempted = true;
