@@ -320,8 +320,12 @@ const messageCreateEvent: BotEvent = {
               }
             }
           } else {
+            const userMsg =
+              r.error === 'RATE_LIMIT'
+                ? '⏳ Mein KI-Kontingent ist gerade ausgeschöpft (Rate-Limit). Bitte versuch es in ein paar Minuten nochmal.'
+                : "🤔 Hmm, da hat gerade etwas nicht geklappt. Versuch's bitte gleich nochmal.";
             await channel.send({
-              content: `<@${msg.author.id}> 🤔 Hmm, da hat gerade etwas nicht geklappt. Versuch's bitte gleich nochmal.`,
+              content: `<@${msg.author.id}> ${userMsg}`,
               allowedMentions: { users: [msg.author.id] },
             });
           }

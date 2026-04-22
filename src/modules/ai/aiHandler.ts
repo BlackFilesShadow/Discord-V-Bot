@@ -160,12 +160,16 @@ export async function answerQuestion(question: string, context?: string): Promis
 
     return { success: true, result: response };
   } catch (error) {
-    const err = error as Error;
+    const err = error as Error & { code?: string };
     logger.error('AI Wissensfrage Fehler:', {
       message: err?.message,
       stack: err?.stack?.split('\n').slice(0, 5).join('\n'),
       name: err?.name,
+      code: err?.code,
     });
+    if (err?.code === 'RATE_LIMIT' || /RATE_LIMIT|status code 429/.test(err?.message || '')) {
+      return { success: false, error: 'RATE_LIMIT' };
+    }
     return { success: false, error: 'AI nicht verf\u00fcgbar.' };
   }
 }
@@ -433,6 +437,8 @@ async function callAI(messages: { role: string; content: string }[]): Promise<st
   };
 
   let lastError: unknown = null;
+  let allRateLimited = true; // wird false sobald ein Nicht-429 auftritt oder Provider gar nicht versucht wurde
+  let anyAttempted = false;
   for (const provider of providers) {
     for (let attempt = 1; attempt <= 2; attempt++) {
       try {
@@ -440,12 +446,20 @@ async function callAI(messages: { role: string; content: string }[]): Promise<st
         if (result === null) break; // Kein API-Key konfiguriert -> nächster Provider
         return result;
       } catch (error) {
+        anyAttempted = true;
         lastError = error;
+        const status = (error as { response?: { status?: number } })?.response?.status;
+        const is429 = status === 429;
+        if (!is429) allRateLimited = false;
         const transient = isTransient(error);
         const errMsg = (error as Error)?.message || String(error);
         logger.warn(
           `AI-Provider ${provider} Versuch ${attempt}/2 fehlgeschlagen${transient ? ' (transient)' : ''}: ${errMsg}`,
         );
+        if (is429) {
+          // 429 retry am gleichen Provider ist sinnlos – sofort weiter.
+          break;
+        }
         if (transient && attempt === 1) {
           await new Promise(r => setTimeout(r, 400));
           continue; // gleicher Provider, zweiter Versuch
@@ -455,6 +469,11 @@ async function callAI(messages: { role: string; content: string }[]): Promise<st
     }
   }
 
+  if (anyAttempted && allRateLimited) {
+    const e = new Error('RATE_LIMIT: Alle AI-Provider sind aktuell rate-limited (429).');
+    (e as Error & { code?: string }).code = 'RATE_LIMIT';
+    throw e;
+  }
   const detail = lastError ? `: ${(lastError as Error)?.message || String(lastError)}` : '';
   throw new Error(`Kein AI-Provider verfügbar${detail}`);
 }
