@@ -101,6 +101,34 @@ async function main(): Promise<void> {
   // Commands bei Discord registrieren – IMMER global (auf allen Servern verfügbar)
   await deployCommands(client, config.discord.token, config.discord.clientId);
 
+  // ZUSÄTZLICH: Per-Guild-Sync für SOFORTIGE Sichtbarkeit auf bestehenden Servern.
+  // Globale Commands brauchen bei Discord bis zu 1h Propagation, guild-scoped sind instant.
+  // Discord zeigt Guild-Commands bevorzugt an, wodurch keine Duplikate entstehen.
+  client.once('clientReady', async () => {
+    try {
+      for (const guild of client.guilds.cache.values()) {
+        try {
+          await deployCommands(client, config.discord.token, config.discord.clientId, guild.id);
+          logger.info(`Commands per-Guild gesynct für ${guild.name} (${guild.id}) – sofort sichtbar`);
+        } catch (e) {
+          logger.warn(`Per-Guild-Sync für ${guild.id} fehlgeschlagen:`, e as Error);
+        }
+      }
+    } catch (e) {
+      logger.error('Per-Guild Command-Sync Fehler:', e);
+    }
+  });
+
+  // Wenn der Bot einem NEUEN Server beitritt: sofort Guild-Commands deployen.
+  client.on('guildCreate', async (guild) => {
+    try {
+      await deployCommands(client, config.discord.token, config.discord.clientId, guild.id);
+      logger.info(`Bot beigetreten zu ${guild.name} (${guild.id}) – Commands sofort registriert`);
+    } catch (e) {
+      logger.warn(`guildCreate-Sync für ${guild.id} fehlgeschlagen:`, e as Error);
+    }
+  });
+
   // Scheduler starten
   startGiveawayScheduler(client);
   startFeedScheduler(client);

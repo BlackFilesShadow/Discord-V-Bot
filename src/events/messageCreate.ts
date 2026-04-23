@@ -47,6 +47,15 @@ const messageCreateEvent: BotEvent = {
     if (msg.author.bot) return;
     if (!msg.guild) return;
 
+    // STALE-MESSAGE-FILTER: Nachrichten älter als 30s ignorieren.
+    // Schutz gegen Gateway-Replays nach Container-Restart, die zu Doppelantworten
+    // führen würden (alter Container hat schon geantwortet, neuer bekommt Replay).
+    const ageMs = Date.now() - msg.createdTimestamp;
+    if (ageMs > 30_000) {
+      logger.warn(`messageCreate ignoriert: ${ageMs}ms alt (Gateway-Replay nach Restart vermutet) msgId=${msg.id}`);
+      return;
+    }
+
     // Dedup: dieselbe Nachricht nie zweimal verarbeiten (Gateway kann nach Reconnect replayen).
     if (processedMessages.has(msg.id)) {
       logger.warn(`Doppelte messageCreate fuer ${msg.id} ignoriert (Gateway-Replay).`);

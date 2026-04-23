@@ -74,40 +74,17 @@ export async function loadCommands(client: ExtendedClient): Promise<void> {
  */
 export async function deployCommands(client: ExtendedClient, token: string, clientId: string, guildId?: string): Promise<void> {
   const rest = new REST({ version: '10' }).setToken(token);
-
   const commandData = client.commands.map(c => c.data.toJSON());
 
-  // 1) Globalen Scope leeren (verhindert Duplikate beim Guild-Deploy).
-  try {
-    const globalExisting = (await rest.get(Routes.applicationCommands(clientId))) as unknown[];
-    if (Array.isArray(globalExisting) && globalExisting.length > 0) {
-      await rest.put(Routes.applicationCommands(clientId), { body: [] });
-      logger.info(`${globalExisting.length} globale Commands entfernt.`);
-    }
-  } catch (e) {
-    logger.warn('Konnte globale Commands nicht pr\u00fcfen/loeschen:', e as Error);
-  }
-
-  // 2) Guild-Scope leeren \u2013 falls eine guildId konfiguriert ist UND
-  //    wir global deployen wollen (sonst Duplikate). Beim Guild-Deploy
-  //    ist das Leeren ueberfluessig, weil rest.put dort gleich ueberschreibt.
-  if (!guildId) {
-    // Beim globalen Deploy haben wir keine guildId, koennen also keinen
-    // konkreten Guild-Scope leeren. Das ist OK \u2013 Admins, die vorher per
-    // Guild deployt hatten, muessen einmalig manuell mit guildId deployen
-    // und dann zurueck wechseln, ODER der Bot war ohnehin nur global.
-  }
-
+  // GUILD-DEPLOY: nur Guild-Scope schreiben - instant verfuegbar.
+  // GLOBAL-DEPLOY: nur globalen Scope schreiben (kann bis 1h propagieren).
+  // Niemals den jeweils anderen Scope loeschen, sonst entstehen Luecken.
   try {
     if (guildId) {
-      await rest.put(Routes.applicationGuildCommands(clientId, guildId), {
-        body: commandData,
-      });
-      logger.info(`${commandData.length} Commands auf Guild ${guildId} registriert.`);
+      await rest.put(Routes.applicationGuildCommands(clientId, guildId), { body: commandData });
+      logger.info(`${commandData.length} Commands auf Guild ${guildId} registriert (instant).`);
     } else {
-      await rest.put(Routes.applicationCommands(clientId), {
-        body: commandData,
-      });
+      await rest.put(Routes.applicationCommands(clientId), { body: commandData });
       logger.info(`${commandData.length} globale Commands registriert.`);
     }
   } catch (error) {
