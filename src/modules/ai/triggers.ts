@@ -1,11 +1,13 @@
-// Globale AI-Trigger für "stell dich vor"
+// Globale AI-Trigger – feuern auf JEDEM Server, auf dem der Bot ist.
+// Können nicht über /ai-trigger gelöscht werden, da sie hardcoded sind.
 export const GLOBAL_AI_TRIGGERS: AiTrigger[] = [
+  // ===== INTRO =====
   {
     id: 'intro1',
     trigger: 'stell dich vor',
     triggerType: 'keyword',
     responseMode: 'ai',
-    aiPrompt: 'Du bist V-Bot, der freundliche Assistent dieses Discord-Servers. Stelle dich locker, sympathisch und mit maximal einem passenden Emoji vor. Halte dich kurz, sei nicht steif, sondern einladend und cool. Beispiel: „Hey, ich bin V-Bot – dein digitaler Helfer hier! Sag Bescheid, wenn du was brauchst. 😎“',
+    aiPrompt: 'Stell dich locker und kurz vor (max. 2 Sätze, 1 Emoji). Kein „Hallo zusammen", kein Pathos – wie ein Kumpel der reinschneit.',
     cooldownSeconds: 10,
     createdAt: '2026-04-23T00:00:00.000Z',
     createdBy: 'system',
@@ -15,7 +17,7 @@ export const GLOBAL_AI_TRIGGERS: AiTrigger[] = [
     trigger: 'stell dich vor',
     triggerType: 'keyword',
     responseMode: 'ai',
-    aiPrompt: 'Du bist V-Bot, der smarte Discord-Bot. Begrüße die Nutzer locker, stelle dich mit maximal einem Emoji vor und erwähne, dass du für Fragen und Hilfe da bist. Sei freundlich, nicht zu förmlich, und bring einen Hauch Humor ein.',
+    aiPrompt: 'Begrüße locker und kurz, sag was du machst (Slash-Commands, Hilfe, Trigger, AI). Max. 2 Sätze, 1 Emoji, Tick Humor.',
     cooldownSeconds: 10,
     createdAt: '2026-04-23T00:00:00.000Z',
     createdBy: 'system',
@@ -25,7 +27,7 @@ export const GLOBAL_AI_TRIGGERS: AiTrigger[] = [
     trigger: 'stell dich vor',
     triggerType: 'keyword',
     responseMode: 'ai',
-    aiPrompt: 'Du bist V-Bot, der entspannte Bot auf diesem Server. Stell dich kurz und sympathisch vor, nutze ein Emoji, und lade die Nutzer ein, dich bei Fragen oder Problemen einfach zu taggen. Kein Standardtext, sondern immer ein bisschen anders!',
+    aiPrompt: 'Stell dich entspannt vor, lade Leute ein dich bei Fragen einfach zu taggen. Kein Standardtext, immer leicht anders.',
     cooldownSeconds: 10,
     createdAt: '2026-04-23T00:00:00.000Z',
     createdBy: 'system',
@@ -35,8 +37,76 @@ export const GLOBAL_AI_TRIGGERS: AiTrigger[] = [
     trigger: 'stell dich vor',
     triggerType: 'keyword',
     responseMode: 'ai',
-    aiPrompt: 'Du bist V-Bot, der digitale Kumpel für diesen Server. Begrüße die Nutzer mit einem lockeren Spruch und einem Emoji, stelle dich vor und sag, dass du immer ein offenes Ohr hast. Sei dabei freundlich und nicht zu steif.',
+    aiPrompt: 'Sag locker wer du bist und dass du immer ein offenes Ohr hast. Bisschen trocken, nicht steif.',
     cooldownSeconds: 10,
+    createdAt: '2026-04-23T00:00:00.000Z',
+    createdBy: 'system',
+  },
+
+  // ===== STAR WARS / ORDER 66 =====
+  {
+    id: 'order66',
+    trigger: 'order 66',
+    triggerType: 'keyword',
+    responseMode: 'text',
+    responseText: 'Lang lebe das Imperium. ||| Die Jedi werden fallen. ||| Befehl bestätigt. Eliminierung eingeleitet. ||| Für das Imperium gibt es kein Zurück. ||| Die Ordnung wird wiederhergestellt.',
+    cooldownSeconds: 15,
+    createdAt: '2026-04-23T00:00:00.000Z',
+    createdBy: 'system',
+  },
+
+  // ===== SPARTAN / 300 =====
+  {
+    id: 'handwerk',
+    trigger: 'was ist euer handwerk',
+    triggerType: 'keyword',
+    responseMode: 'text',
+    responseText: 'ARHUUUU! ||| Spartaner! Was ist euer Handwerk?! ||| Kampf. Ehre. Ruhm. ||| Wir kämpfen im Schatten und siegen im Licht. ||| Heute kämpfen wir, morgen erinnern sie sich an uns.',
+    cooldownSeconds: 15,
+    createdAt: '2026-04-23T00:00:00.000Z',
+    createdBy: 'system',
+  },
+
+  // ===== HERKUNFT / ERSCHAFFER =====
+  {
+    id: 'erschaffer',
+    trigger: 'wer hat dich (gebaut|erschaffen|erstellt|programmiert|gemacht|entwickelt|gecodet)',
+    triggerType: 'regex',
+    responseMode: 'text',
+    responseText: 'Ich wurde von **Void_Architect** erschaffen.\nMeine Aufgabe: unterstützen, helfen, Infos liefern – effizient, klar, zuverlässig. Mit einem Schuss Persönlichkeit obendrauf.',
+    cooldownSeconds: 30,
+    createdAt: '2026-04-23T00:00:00.000Z',
+    createdBy: 'system',
+  },
+
+  // ===== COMMANDS / WAS KANNST DU =====
+  {
+    id: 'commands',
+    trigger: 'wie funktionieren deine commands',
+    triggerType: 'keyword',
+    responseMode: 'ai',
+    aiPrompt: 'Erkläre kurz und locker, wie deine Commands funktionieren: Slash-Commands (/), es gibt User-, Admin- und Developer-Commands, letztere nur für Berechtigte. Nenne 3-5 Beispiele wie /help, /level, /ai. Max. 800 Zeichen, kein Roman.',
+    cooldownSeconds: 30,
+    createdAt: '2026-04-23T00:00:00.000Z',
+    createdBy: 'system',
+  },
+  {
+    id: 'wascannstdu',
+    trigger: 'was kannst du',
+    triggerType: 'keyword',
+    responseMode: 'ai',
+    aiPrompt: 'Sag locker und kurz, was du draufhast: Slash-Commands für User/Admin, AI-Antworten via Mention, Level/XP-System, Moderation, Polls, Giveaways, Uploads. Max. 4 Sätze, 1 Emoji.',
+    cooldownSeconds: 30,
+    createdAt: '2026-04-23T00:00:00.000Z',
+    createdBy: 'system',
+  },
+  {
+    id: 'wasbistdu',
+    trigger: 'was bist du',
+    triggerType: 'keyword',
+    responseMode: 'ai',
+    aiPrompt: 'Sag kurz und entspannt was du bist (Discord-Bot mit AI, Multi-Server, Slash-Commands). Max. 2 Sätze.',
+    cooldownSeconds: 30,
     createdAt: '2026-04-23T00:00:00.000Z',
     createdBy: 'system',
   },
