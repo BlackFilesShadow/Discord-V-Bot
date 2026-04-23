@@ -458,58 +458,105 @@ const messageCreateEvent: BotEvent = {
           }
 
           // Max-Level erreicht? → Belohnungsrolle vergeben
-          if (newLevel >= maxLevel && xpConfig?.maxLevelRoleId && msg.member) {
+          if (newLevel >= maxLevel && xpConfig?.maxLevelRoleId && msg.member && msg.guild) {
             try {
               if (!msg.member.roles.cache.has(xpConfig.maxLevelRoleId)) {
-                await msg.member.roles.add(xpConfig.maxLevelRoleId, `Max-Level (${maxLevel}) erreicht`);
-                await prisma.userRoleAssignment.create({
-                  data: {
+                const me = msg.guild.members.me;
+                const targetRole = msg.guild.roles.cache.get(xpConfig.maxLevelRoleId);
+                if (!targetRole) {
+                  logger.warn(`Max-Level-Rolle ${xpConfig.maxLevelRoleId} existiert nicht in Guild ${msg.guildId}`);
+                } else if (!me?.permissions.has('ManageRoles')) {
+                  logger.warn(`Bot hat keine ManageRoles-Permission in Guild ${msg.guildId}`);
+                } else if (me.roles.highest.comparePositionTo(targetRole) <= 0) {
+                  logger.warn(`Bot-Rolle (${me.roles.highest.name}) steht NICHT über Max-Level-Rolle (${targetRole.name}) in Guild ${msg.guildId}`);
+                } else {
+                  await msg.member.roles.add(xpConfig.maxLevelRoleId, `Max-Level (${maxLevel}) erreicht`);
+                  await prisma.userRoleAssignment.create({
+                    data: {
+                      userId: user.id,
+                      roleId: xpConfig.maxLevelRoleId,
+                      assignedBy: 'auto',
+                      reason: `Max-Level (${maxLevel}) Belohnung`,
+                    },
+                  });
+                  await channel.send({
+                    content: getMaxLevelRewardMessage(msg.author.toString(), xpConfig.maxLevelRoleId),
+                    allowedMentions: { users: [msg.author.id] },
+                  });
+                  logAudit('MAX_LEVEL_ROLE_GRANTED', 'LEVEL', {
                     userId: user.id,
                     roleId: xpConfig.maxLevelRoleId,
-                    assignedBy: 'auto',
-                    reason: `Max-Level (${maxLevel}) Belohnung`,
-                  },
-                });
-                await channel.send({
-                  content: getMaxLevelRewardMessage(msg.author.toString(), xpConfig.maxLevelRoleId),
-                  allowedMentions: { users: [msg.author.id] },
-                });
-                logAudit('MAX_LEVEL_ROLE_GRANTED', 'LEVEL', {
-                  userId: user.id,
-                  roleId: xpConfig.maxLevelRoleId,
-                  level: maxLevel,
-                });
+                    level: maxLevel,
+                  });
+                }
               }
             } catch (e) {
               logger.error('Max-Level-Rolle konnte nicht vergeben werden:', e);
             }
           }
 
-          // Level-Belohnung prüfen (Sektion 8: Levelaufstieg mit Rollen und Belohnungen)
-          const reward = await prisma.levelReward.findUnique({
-            where: { level: newLevel },
-          });
+          // Level-Belohnung prüfen — Rolle aus LevelRole (per Guild konfigurierbar via /xp-config levelrole)
+          // sowie Fallback aus globaler LevelReward-Tabelle.
+          let rewardRoleId: string | null = null;
+          let rewardText: string | null = null;
 
-          if (reward?.roleId && msg.member) {
+          if (msg.guildId) {
+            const guildLevelRole = await prisma.levelRole.findUnique({
+              where: { guildId_level: { guildId: msg.guildId, level: newLevel } },
+            });
+            if (guildLevelRole?.roleId) {
+              rewardRoleId = guildLevelRole.roleId;
+            }
+          }
+
+          // Fallback: globale Level-Belohnung
+          if (!rewardRoleId) {
+            const globalReward = await prisma.levelReward.findUnique({
+              where: { level: newLevel },
+            });
+            if (globalReward?.roleId) rewardRoleId = globalReward.roleId;
+            if (globalReward?.reward) rewardText = globalReward.reward;
+          }
+
+          if (rewardRoleId && msg.member && msg.guild) {
             try {
-              await msg.member.roles.add(reward.roleId, `Level ${newLevel} erreicht`);
+              if (!msg.member.roles.cache.has(rewardRoleId)) {
+                const me = msg.guild.members.me;
+                const targetRole = msg.guild.roles.cache.get(rewardRoleId);
+                if (!targetRole) {
+                  logger.warn(`Level-Belohnungsrolle ${rewardRoleId} (Level ${newLevel}) existiert nicht in Guild ${msg.guildId}`);
+                } else if (!me?.permissions.has('ManageRoles')) {
+                  logger.warn(`Bot hat keine ManageRoles-Permission in Guild ${msg.guildId} — Level ${newLevel} Rolle nicht vergeben`);
+                } else if (me.roles.highest.comparePositionTo(targetRole) <= 0) {
+                  logger.warn(`Bot-Rolle (${me.roles.highest.name}) steht NICHT über Level-Rolle (${targetRole.name}) in Guild ${msg.guildId} — Level ${newLevel} Rolle nicht vergeben`);
+                } else {
+                  await msg.member.roles.add(rewardRoleId, `Level ${newLevel} erreicht`);
 
-              await prisma.userRoleAssignment.create({
-                data: {
-                  userId: user.id,
-                  roleId: reward.roleId,
-                  assignedBy: 'auto',
-                  reason: `Level ${newLevel} Belohnung`,
-                },
-              });
+                  await prisma.userRoleAssignment.create({
+                    data: {
+                      userId: user.id,
+                      roleId: rewardRoleId,
+                      assignedBy: 'auto',
+                      reason: `Level ${newLevel} Belohnung`,
+                    },
+                  });
 
-              if (reward.reward) {
-                await channel.send({
-                  content: `🏆 ${msg.author} erhält Belohnung: **${reward.reward}**`,
-                });
+                  logAudit('LEVEL_ROLE_GRANTED', 'LEVEL', {
+                    userId: user.id,
+                    roleId: rewardRoleId,
+                    level: newLevel,
+                    guildId: msg.guildId,
+                  });
+
+                  if (rewardText) {
+                    await channel.send({
+                      content: `🏆 ${msg.author} erhält Belohnung: **${rewardText}**`,
+                    });
+                  }
+                }
               }
             } catch (e) {
-              logger.error(`Level-Belohnung konnte nicht vergeben werden:`, e);
+              logger.error(`Level-Belohnung konnte nicht vergeben werden (Rolle ${rewardRoleId}, Level ${newLevel}):`, e);
             }
           }
 
