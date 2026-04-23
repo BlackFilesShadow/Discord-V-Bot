@@ -39,7 +39,8 @@ const devReloadCommand: Command = {
         const newCount = client.commands.size;
 
         // Bei Discord registrieren (Guild-spezifisch wenn konfiguriert, sonst global)
-        await deployCommands(client, config.discord.token, config.discord.clientId, config.discord.guildId || undefined);
+        // Commands immer global deployen (guildId nicht übergeben)
+        await deployCommands(client, config.discord.token, config.discord.clientId);
 
         const embed = new EmbedBuilder()
           .setTitle('🔄 Commands neugeladen')
@@ -55,7 +56,8 @@ const devReloadCommand: Command = {
         logger.info(`Dev-Reload: ${newCount} Commands neugeladen von ${interaction.user.tag}`);
       } else {
         // Nur bei Discord neu registrieren
-        await deployCommands(client, config.discord.token, config.discord.clientId, config.discord.guildId || undefined);
+        // Commands immer global deployen (guildId nicht übergeben)
+        await deployCommands(client, config.discord.token, config.discord.clientId);
 
         const embed = new EmbedBuilder()
           .setTitle('📡 Commands deployed')

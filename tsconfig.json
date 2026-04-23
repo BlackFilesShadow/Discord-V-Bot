@@ -14,7 +14,7 @@
     // "declarationMap": true,
     "sourceMap": true,
     "moduleResolution": "node16",
-    "types": ["jest"],
+    "types": ["jest", "node"],
     "typeRoots": ["./node_modules/@types", "./types"]
   },
   "include": ["src/**/*.ts", "prisma/seed.ts", "tests/**/*.ts"],

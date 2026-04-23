@@ -15,7 +15,8 @@ async function deploy(): Promise<void> {
   client.commands = new Collection();
 
   await loadCommands(client);
-  await deployCommands(client, config.discord.token, config.discord.clientId, config.discord.guildId);
+  // Commands immer global deployen (guildId nicht übergeben)
+  await deployCommands(client, config.discord.token, config.discord.clientId);
 
   logger.info('Commands erfolgreich deployed.');
   process.exit(0);

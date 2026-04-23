@@ -1,3 +1,46 @@
+// Globale AI-Trigger für "stell dich vor"
+export const GLOBAL_AI_TRIGGERS: AiTrigger[] = [
+  {
+    id: 'intro1',
+    trigger: 'stell dich vor',
+    triggerType: 'keyword',
+    responseMode: 'ai',
+    aiPrompt: 'Du bist V-Bot, der freundliche Assistent dieses Discord-Servers. Stelle dich locker, sympathisch und mit maximal einem passenden Emoji vor. Halte dich kurz, sei nicht steif, sondern einladend und cool. Beispiel: „Hey, ich bin V-Bot – dein digitaler Helfer hier! Sag Bescheid, wenn du was brauchst. 😎“',
+    cooldownSeconds: 10,
+    createdAt: '2026-04-23T00:00:00.000Z',
+    createdBy: 'system',
+  },
+  {
+    id: 'intro2',
+    trigger: 'stell dich vor',
+    triggerType: 'keyword',
+    responseMode: 'ai',
+    aiPrompt: 'Du bist V-Bot, der smarte Discord-Bot. Begrüße die Nutzer locker, stelle dich mit maximal einem Emoji vor und erwähne, dass du für Fragen und Hilfe da bist. Sei freundlich, nicht zu förmlich, und bring einen Hauch Humor ein.',
+    cooldownSeconds: 10,
+    createdAt: '2026-04-23T00:00:00.000Z',
+    createdBy: 'system',
+  },
+  {
+    id: 'intro3',
+    trigger: 'stell dich vor',
+    triggerType: 'keyword',
+    responseMode: 'ai',
+    aiPrompt: 'Du bist V-Bot, der entspannte Bot auf diesem Server. Stell dich kurz und sympathisch vor, nutze ein Emoji, und lade die Nutzer ein, dich bei Fragen oder Problemen einfach zu taggen. Kein Standardtext, sondern immer ein bisschen anders!',
+    cooldownSeconds: 10,
+    createdAt: '2026-04-23T00:00:00.000Z',
+    createdBy: 'system',
+  },
+  {
+    id: 'intro4',
+    trigger: 'stell dich vor',
+    triggerType: 'keyword',
+    responseMode: 'ai',
+    aiPrompt: 'Du bist V-Bot, der digitale Kumpel für diesen Server. Begrüße die Nutzer mit einem lockeren Spruch und einem Emoji, stelle dich vor und sag, dass du immer ein offenes Ohr hast. Sei dabei freundlich und nicht zu steif.',
+    cooldownSeconds: 10,
+    createdAt: '2026-04-23T00:00:00.000Z',
+    createdBy: 'system',
+  },
+];
 import prisma from '../../database/prisma';
 
 /**
@@ -33,10 +76,15 @@ export interface AiTrigger {
 const KEY = (guildId: string) => `triggers:${guildId}`;
 
 export async function listTriggers(guildId: string): Promise<AiTrigger[]> {
+  // Globale Trigger immer zuerst
+  const global = GLOBAL_AI_TRIGGERS;
   const cfg = await prisma.botConfig.findUnique({ where: { key: KEY(guildId) } });
-  if (!cfg) return [];
+  if (!cfg) return global;
   const arr = cfg.value as unknown;
-  return Array.isArray(arr) ? (arr as AiTrigger[]) : [];
+  const guildTriggers = Array.isArray(arr) ? (arr as AiTrigger[]) : [];
+  // Kombiniere globale und guild-spezifische Trigger (guild überschreibt id-Kollisionen)
+  const ids = new Set(guildTriggers.map(t => t.id));
+  return [...global.filter(t => !ids.has(t.id)), ...guildTriggers];
 }
 
 export async function saveTriggers(guildId: string, triggers: AiTrigger[], updatedBy: string): Promise<void> {
