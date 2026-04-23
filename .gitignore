@@ -15,7 +15,10 @@ storage/
 logs/
 
 # Database
-prisma/migrations/
+# prisma/migrations/ MUSS committed werden, sonst landen Schema-Aenderungen
+# nicht in Production. Nur die lokale dev.db ignorieren.
+prisma/dev.db
+prisma/dev.db-journal
 
 # IDE
 .vscode/settings.json
