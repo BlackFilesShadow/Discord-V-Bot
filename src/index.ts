@@ -24,6 +24,7 @@ import { startPollScheduler } from './modules/polls/pollSystem';
 import { startRateLimitCleanup } from './utils/rateLimiter';
 import { startDashboard } from './dashboard/server';
 import { processExpiredCases } from './modules/moderation/caseManager';
+import { acquireSingletonLock } from './utils/singleton';
 
 /**
  * Discord-V-Bot Haupteinstiegspunkt.
@@ -46,6 +47,9 @@ async function main(): Promise<void> {
     logger.error('Datenbankverbindung fehlgeschlagen:', error);
     process.exit(1);
   }
+
+  // Singleton-Lock: Verhindert dass zwei Instanzen mit demselben Token laufen.
+  await acquireSingletonLock();
 
   // Client erstellen mit allen notwendigen Intents
   const client = new Client({
