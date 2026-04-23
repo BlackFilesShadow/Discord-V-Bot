@@ -80,6 +80,7 @@ export async function createModerationCase(params: {
   // Case in DB erstellen
   const modCase = await prisma.moderationCase.create({
     data: {
+      guildId: guild.id, // Guild-Trennung
       targetUserId: targetUser.id,
       moderatorId: modUser.id,
       action,

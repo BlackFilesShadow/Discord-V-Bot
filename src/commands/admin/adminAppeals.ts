@@ -71,11 +71,21 @@ const adminAppealsCommand: Command = {
 
     const sub = interaction.options.getSubcommand();
 
+    // Guild-Trennung: Admins dürfen NUR Appeals ihrer eigenen Guild verwalten.
+    const guildId = interaction.guildId;
+    if (!guildId) {
+      await interaction.editReply({ content: '❌ Nur auf Servern verfügbar.' });
+      return;
+    }
+
     switch (sub) {
       case 'liste': {
         const status = interaction.options.getString('status') || 'PENDING';
         const appeals = await prisma.appeal.findMany({
-          where: { status: status as any },
+          where: {
+            status: status as any,
+            case: { guildId },
+          },
           take: 15,
           orderBy: { createdAt: 'desc' },
           include: {
@@ -125,6 +135,12 @@ const adminAppealsCommand: Command = {
           return;
         }
 
+        // Guild-Trennung erzwingen
+        if (appeal.case.guildId && appeal.case.guildId !== guildId) {
+          await interaction.editReply({ content: '❌ Dieser Appeal gehört zu einem anderen Server. Nur dortige Admins dürfen ihn bearbeiten.' });
+          return;
+        }
+
         await prisma.appeal.update({
           where: { id: appealId },
           data: {
@@ -171,6 +187,12 @@ const adminAppealsCommand: Command = {
           return;
         }
 
+        // Guild-Trennung erzwingen
+        if (appeal.case.guildId && appeal.case.guildId !== guildId) {
+          await interaction.editReply({ content: '❌ Dieser Appeal gehört zu einem anderen Server. Nur dortige Admins dürfen ihn bearbeiten.' });
+          return;
+        }
+
         await prisma.appeal.update({
           where: { id: appealId },
           data: {
@@ -206,6 +228,12 @@ const adminAppealsCommand: Command = {
 
         if (!appeal || appeal.status !== 'PENDING') {
           await interaction.editReply({ content: '❌ Appeal nicht gefunden oder bereits bearbeitet.' });
+          return;
+        }
+
+        // Guild-Trennung erzwingen
+        if (appeal.case.guildId && appeal.case.guildId !== guildId) {
+          await interaction.editReply({ content: '❌ Dieser Appeal gehört zu einem anderen Server. Nur dortige Admins dürfen ihn bearbeiten.' });
           return;
         }
 

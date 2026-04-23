@@ -24,6 +24,10 @@ const adminStatsCommand: Command = {
   execute: async (interaction: ChatInputCommandInteraction) => {
     await interaction.deferReply({ ephemeral: true });
 
+    // Guild-Trennung: Moderationszahlen nur f\u00fcr aktuelle Guild,
+    // globale Daten (User, Pakete, Uploads, Downloads) bleiben global.
+    const guildId = interaction.guildId;
+
     // Nutzungsstatistiken
     const [
       totalUsers,
@@ -48,9 +52,9 @@ const adminStatsCommand: Command = {
       prisma.package.count({ where: { status: 'QUARANTINED' } }),
       prisma.upload.count(),
       prisma.download.count(),
-      prisma.moderationCase.count(),
-      prisma.moderationCase.count({ where: { isActive: true } }),
-      prisma.appeal.count({ where: { status: 'PENDING' } }),
+      prisma.moderationCase.count({ where: guildId ? { guildId } : {} }),
+      prisma.moderationCase.count({ where: { isActive: true, ...(guildId ? { guildId } : {}) } }),
+      prisma.appeal.count({ where: { status: 'PENDING', ...(guildId ? { case: { guildId } } : {}) } }),
       prisma.giveaway.count({ where: { status: 'ACTIVE' } }),
       prisma.poll.count(),
       prisma.securityEvent.count(),

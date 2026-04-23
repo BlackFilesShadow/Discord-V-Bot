@@ -270,6 +270,7 @@ enum DownloadType {
 model ModerationCase {
   id            String   @id @default(uuid())
   caseNumber    Int      @unique @default(autoincrement())
+  guildId       String?  // Discord-Guild-ID (für Guild-Trennung; nullable für Legacy-Records)
   targetUserId  String
   targetUser    User     @relation("TargetUser", fields: [targetUserId], references: [id], onDelete: Cascade)
   moderatorId   String
@@ -294,6 +295,7 @@ model ModerationCase {
   @@index([action])
   @@index([isActive])
   @@index([caseNumber])
+  @@index([guildId])
 }
 
 enum ModerationAction {
