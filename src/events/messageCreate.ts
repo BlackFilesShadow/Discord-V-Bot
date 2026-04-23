@@ -200,7 +200,14 @@ const messageCreateEvent: BotEvent = {
                     ? `${matched.aiPrompt}\n\nNachricht des Nutzers: ${msg.content}`
                     : msg.content,
                 );
-                responseText = r.success && r.result ? r.result : '_(AI nicht verf\u00fcgbar)_';
+                if (r.success && r.result) {
+                  responseText = r.result;
+                } else if (r.error === 'RATE_LIMIT') {
+                  responseText = '⏳ Mein KI-Kontingent ist gerade ausgeschöpft. Bitte versuch es in ein paar Minuten nochmal.';
+                } else {
+                  // Fallback: stiller Skip statt hässlicher Fehlermeldung
+                  return;
+                }
               } else {
                 // Mehrere Varianten getrennt durch ||| -> zuf\u00e4llig eine ausw\u00e4hlen
                 const raw = matched.responseText || '';
