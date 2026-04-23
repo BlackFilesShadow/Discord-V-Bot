@@ -35,13 +35,22 @@ export async function acquireSingletonLock(): Promise<void> {
     const v = existing.value as unknown as LockValue;
     const age = now - (v?.ts ?? 0);
     if (v?.instanceId && v.instanceId !== instanceId && age < STALE_THRESHOLD_MS) {
-      logger.error(
-        `SINGLETON-KONFLIKT: Andere Bot-Instanz aktiv ` +
-        `(instance=${v.instanceId} host=${v.hostname} pid=${v.pid} ageMs=${age}). ` +
-        `Beende, um Doppelantworten zu vermeiden. Stoppe die andere Instanz, dann neu starten.`,
-      );
-      // Hard-Exit ohne weitere Heartbeats — Discord-Token bleibt unbelastet.
-      process.exit(2);
+      // Gleicher Hostname = alte Container-Instanz auf demselben Host wurde
+      // gekillt ohne Release. Wir wissen, sie ist tot (wir laufen ja jetzt
+      // auf demselben Host). -> Force-Takeover, kein Konflikt.
+      if (v.hostname === os.hostname()) {
+        logger.warn(
+          `Singleton-Lock von alter Instanz auf demselben Host gefunden ` +
+          `(${v.instanceId}, ageMs=${age}). Uebernehme Lock.`,
+        );
+      } else {
+        logger.error(
+          `SINGLETON-KONFLIKT: Andere Bot-Instanz aktiv ` +
+          `(instance=${v.instanceId} host=${v.hostname} pid=${v.pid} ageMs=${age}). ` +
+          `Beende, um Doppelantworten zu vermeiden. Stoppe die andere Instanz, dann neu starten.`,
+        );
+        process.exit(2);
+      }
     }
   }
 
@@ -60,6 +69,19 @@ export async function acquireSingletonLock(): Promise<void> {
   });
 
   logger.info(`Singleton-Lock erworben: instance=${instanceId}`);
+
+  // Lock bei Shutdown freigeben (verhindert Restart-Loop)
+  const release = async () => {
+    try {
+      await prisma.botConfig.deleteMany({
+        where: { key: LOCK_KEY, value: { path: ['instanceId'], equals: instanceId } },
+      });
+      logger.info('Singleton-Lock freigegeben.');
+    } catch { /* shutdown best-effort */ }
+  };
+  process.once('SIGTERM', release);
+  process.once('SIGINT', release);
+  process.once('beforeExit', release);
 
   // Heartbeat
   setInterval(async () => {
