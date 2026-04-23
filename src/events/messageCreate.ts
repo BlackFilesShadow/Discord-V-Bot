@@ -160,10 +160,12 @@ const messageCreateEvent: BotEvent = {
     }
 
     // ===== SEKTION 4: AI AUTO-RESPONDER =====
+    let autoResponded = false;
     try {
       const autoResp = await processAutoResponse(msg.content, msg.author.id, msg.channelId);
       if (autoResp.shouldRespond && autoResp.response) {
         await msg.reply({ content: autoResp.response });
+        autoResponded = true;
       }
     } catch (error) {
       logger.error('Auto-Responder Fehler:', error);
@@ -172,6 +174,9 @@ const messageCreateEvent: BotEvent = {
     // ===== SEKTION 4: AI MENTION-RESPONDER (ChatGPT-Style) =====
     // Bot antwortet wenn er direkt erwähnt wird oder die Nachricht eine Reply auf den Bot ist
     try {
+      // Wenn bereits eine Auto-Response gefeuert hat, KEINE zweite Antwort schicken.
+      if (autoResponded) throw new Error('__skip_mention__');
+
       const botId = msg.client.user?.id;
       const isMentioned = botId ? msg.mentions.users.has(botId) : false;
       const isReplyToBot =
@@ -346,7 +351,9 @@ const messageCreateEvent: BotEvent = {
         }
       }
     } catch (error) {
-      logger.error('AI Mention-Responder Fehler:', error);
+      if ((error as Error).message !== '__skip_mention__') {
+        logger.error('AI Mention-Responder Fehler:', error);
+      }
     }
 
     // ===== SEKTION 8: XP-VERGABE =====
