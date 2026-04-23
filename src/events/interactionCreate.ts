@@ -171,8 +171,11 @@ const interactionCreateEvent: BotEvent = {
     if (command.adminOnly || command.devOnly || command.manufacturerOnly) {
       const userId = i.user.id;
 
-      // 1) Owner/Guild-Owner → IMMER durchlassen
-      if (isOwnerOrGuildOwner(userId, i)) {
+      // 1) Owner/Guild-Owner → IMMER durchlassen (NUR für Admin/Dev,
+      //    NICHT für Manufacturer-Commands! Uploads sind an einen GUID-Bereich
+      //    gebunden, der nur durch echte /register manufacturer Verifizierung
+      //    entsteht. Owner muss sich genauso registrieren.)
+      if (isOwnerOrGuildOwner(userId, i) && !command.manufacturerOnly) {
         // Keine Prüfung nötig — direkt ausführen
       }
       // 2) Dev-Commands → Passwort-Authentifizierung (2h Session)

@@ -54,16 +54,18 @@ const uploadCommand: Command = {
       if (att) attachments.push(att);
     }
 
-    // User aus DB holen
-    const dbUser = await prisma.user.findUnique({
+    // User aus DB holen (oder leise anlegen, falls nur ein Owner-Bypass-Pfad
+    // hier ankam und die Registrierung noch nie ausgefuehrt wurde). Der
+    // Permission-Check unten meldet dann sauber "kein Hersteller" statt eines
+    // irrefuehrenden "nicht registriert".
+    let dbUser = await prisma.user.findUnique({
       where: { discordId: interaction.user.id },
     });
 
     if (!dbUser) {
-      try {
-        await interaction.reply({ content: '❌ Du bist nicht registriert. Verwende `/register manufacturer`.', ephemeral: true });
-      } catch {}
-      return;
+      dbUser = await prisma.user.create({
+        data: { discordId: interaction.user.id, username: interaction.user.username },
+      });
     }
 
     // Uploadrechte prüfen (Sektion 1: nur eigener GUID-Bereich)

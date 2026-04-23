@@ -173,6 +173,7 @@ const messageCreateEvent: BotEvent = {
     try {
       const autoResp = await processAutoResponse(msg.content, msg.author.id, msg.channelId);
       if (autoResp.shouldRespond && autoResp.response) {
+        logger.info(`AUTO-RESPONDER feuert msgId=${msg.id} userId=${msg.author.id}`);
         await msg.reply({ content: autoResp.response });
         autoResponded = true;
       }
@@ -239,6 +240,7 @@ const messageCreateEvent: BotEvent = {
               try {
                 // Custom-Emojis :name: zur Sendezeit aufl\u00f6sen (Cache aktuell, alte Trigger profitieren auch)
                 const finalText = resolveCustomEmotes(responseText, msg.guild);
+                logger.info(`TRIGGER feuert msgId=${msg.id} triggerId=${matched.id} guildId=${msg.guildId}`);
                 await msg.reply({
                   content: finalText.slice(0, 2000),
                   files,
