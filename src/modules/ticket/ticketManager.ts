@@ -43,6 +43,15 @@ export async function createTicket(opts: {
     return { success: false, message: 'Bot-Owner ist nicht konfiguriert. Anfrage nicht moeglich.' };
   }
 
+  // Self-Ticket verhindern: Owner kann kein Ticket an sich selbst stellen
+  // (waere ein sinnloser Selbst-Echo-Loop in der DM-Bridge).
+  if (opts.userDiscordId === ownerId) {
+    return {
+      success: false,
+      message: 'Du bist selbst der Owner – ein Ticket an dich selbst ergibt keinen Sinn. Lass einen anderen User `/ticket open` benutzen.',
+    };
+  }
+
   // Rate-Limit: max. 1 PENDING-Ticket pro User
   const existing = await prisma.ticket.findFirst({
     where: { userDiscordId: opts.userDiscordId, status: { in: ['PENDING', 'OPEN'] } },
@@ -135,8 +144,11 @@ export async function acceptTicket(ticketId: string, ownerDiscordId: string, cli
         vEmbed(Colors.Success)
           .setTitle(`✅  Ticket #${ticket.ticketNumber} angenommen`)
           .setDescription(
-            'Der Owner hat deine Anfrage angenommen. Du kannst jetzt direkt hier in der DM mit ihm chatten – ich leite alles weiter.\n\n' +
-            'Beende den Chat mit `/ticket close`.',
+            'Der Owner hat deine Anfrage angenommen.\n\n' +
+            '**So antwortest du:**\n' +
+            '➜ Schreib einfach hier in dieser DM an mich – jede Nachricht wird automatisch an den Owner weitergeleitet.\n' +
+            '➜ Antworten vom Owner bekommst du ebenfalls hier in der DM.\n\n' +
+            'Beende den Chat jederzeit mit `/ticket close`.',
           ),
       ],
     });
