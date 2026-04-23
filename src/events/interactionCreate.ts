@@ -16,6 +16,7 @@ import prisma from '../database/prisma';
 import { approveManufacturer, denyManufacturer } from '../modules/registration/register';
 import { votePoll, getPollVotes, createPollEmbed } from '../modules/polls/pollSystem';
 import { createGiveawayEmbed } from '../modules/giveaway/giveawayManager';
+import { acceptTicket, denyTicket } from '../modules/ticket/ticketManager';
 import { config } from '../config';
 import { timingSafeEqual } from 'crypto';
 
@@ -138,6 +139,10 @@ const interactionCreateEvent: BotEvent = {
       }
       if (btn.customId.startsWith('giveaway_enter_')) {
         await handleGiveawayEnterButton(btn);
+        return;
+      }
+      if (btn.customId.startsWith('ticket_accept_') || btn.customId.startsWith('ticket_deny_')) {
+        await handleTicketButton(btn);
         return;
       }
       // Help-Pagination wird direkt vom Collector in help.ts verarbeitet — hier nichts tun
@@ -743,6 +748,37 @@ async function handleGiveawayEnterButton(btn: ButtonInteraction): Promise<void> 
     try {
       if (btn.deferred) await btn.editReply({ content: '❌ Ein Fehler ist aufgetreten.' });
       else await btn.reply({ content: '❌ Ein Fehler ist aufgetreten.', ephemeral: true });
+    } catch { /* ignore */ }
+  }
+}
+
+/**
+ * Ticket-Buttons (Akzeptieren / Ablehnen) aus der Owner-DM.
+ * CustomId: ticket_accept_<ticketId> | ticket_deny_<ticketId>
+ */
+async function handleTicketButton(btn: ButtonInteraction): Promise<void> {
+  try {
+    const isAccept = btn.customId.startsWith('ticket_accept_');
+    const ticketId = btn.customId.replace(/^ticket_(accept|deny)_/, '');
+    await btn.deferReply({ ephemeral: false });
+
+    const result = isAccept
+      ? await acceptTicket(ticketId, btn.user.id, btn.client)
+      : await denyTicket(ticketId, btn.user.id, btn.client);
+
+    await btn.editReply({ content: (result.success ? (isAccept ? '✅ ' : '❌ ') : '⚠️ ') + result.message });
+
+    // Buttons aus der urspruenglichen DM entfernen, damit nichts doppelt gedrueckt wird
+    try {
+      if (btn.message.editable) {
+        await btn.message.edit({ components: [] });
+      }
+    } catch { /* DM-Edit kann scheitern */ }
+  } catch (e) {
+    logger.error('Fehler bei Ticket-Button:', e);
+    try {
+      if (btn.deferred) await btn.editReply({ content: '❌ Fehler bei Ticket-Aktion.' });
+      else await btn.reply({ content: '❌ Fehler bei Ticket-Aktion.', ephemeral: true });
     } catch { /* ignore */ }
   }
 }

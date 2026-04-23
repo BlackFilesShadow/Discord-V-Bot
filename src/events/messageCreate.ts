@@ -8,6 +8,7 @@ import { answerQuestion } from '../modules/ai/aiHandler';
 import { listTriggers, findMatchingTrigger, isOnCooldown, renderTemplate } from '../modules/ai/triggers';
 import { resolveCustomEmotes } from '../modules/ai/emoteResolver';
 import { getLevelUpMessage, getMaxLevelRewardMessage } from '../modules/xp/levelMessages.js';
+import { handleTicketDm } from '../modules/ticket/ticketManager';
 
 // Anti-Spam: Nachrichtenhistorie pro User
 const messageHistory: Map<string, { content: string; timestamp: number }[]> = new Map();
@@ -45,7 +46,15 @@ const messageCreateEvent: BotEvent = {
 
     // Bots ignorieren
     if (msg.author.bot) return;
-    if (!msg.guild) return;
+    if (!msg.guild) {
+      // DM: pruefe Ticket-Bridge
+      try {
+        await handleTicketDm(msg);
+      } catch (e) {
+        logger.error('Ticket-DM Bridge Fehler:', e);
+      }
+      return;
+    }
 
     // STALE-MESSAGE-FILTER: Nachrichten älter als 30s ignorieren.
     // Schutz gegen Gateway-Replays nach Container-Restart, die zu Doppelantworten
@@ -326,15 +335,26 @@ const messageCreateEvent: BotEvent = {
 
           const r = await answerQuestion(question, context);
           if (r.success && r.result) {
-            // Discord-Limit: 2000 Zeichen pro Nachricht – ggf. splitten
-            // Wir senden bewusst KEIN reply(), damit Discord die Frage nicht nochmal als Quote anzeigt.
-            const mention = `<@${msg.author.id}> `;
-            const firstChunkBudget = 1900 - mention.length;
-            const first = r.result.slice(0, firstChunkBudget);
-            const rest = r.result.slice(firstChunkBudget);
-            await channel.send({
-              content: mention + first,
-              allowedMentions: { users: [msg.author.id] },
+            // Bot-Reply zeigt den Author bereits an -> KEIN zusaetzliches @mention im Text.
+            // Auch in der AI-Antwort enthaltene @-Mentions/Usernamen am Anfang strippen,
+            // damit der User nicht doppelt markiert/angesprochen wird.
+            let cleaned = r.result
+              // Discord-Mentions <@123> raus
+              .replace(/<@!?\d+>/g, '')
+              // "@username" am Zeilenanfang raus
+              .replace(/^\s*@[\w.]+[,:\s]*/i, '')
+              // doppelte Leerzeichen
+              .replace(/[ \t]{2,}/g, ' ')
+              .trim();
+            if (cleaned.length === 0) cleaned = '...';
+            // Discord-Limit: 2000 Zeichen pro Nachricht – ggf. splitten.
+            // Als reply() damit der User per Discord-Reply-Pfeil angesprochen wird (1x markiert).
+            const firstChunkBudget = 1900;
+            const first = cleaned.slice(0, firstChunkBudget);
+            const rest = cleaned.slice(firstChunkBudget);
+            await msg.reply({
+              content: first,
+              allowedMentions: { repliedUser: true, parse: [] },
             });
             if (rest.length > 0) {
               const more = rest.match(/[\s\S]{1,1900}/g) || [];
@@ -347,9 +367,9 @@ const messageCreateEvent: BotEvent = {
               r.error === 'RATE_LIMIT'
                 ? '⏳ Mein KI-Kontingent ist gerade ausgeschöpft (Rate-Limit). Bitte versuch es in ein paar Minuten nochmal.'
                 : "🤔 Hmm, da hat gerade etwas nicht geklappt. Versuch's bitte gleich nochmal.";
-            await channel.send({
-              content: `<@${msg.author.id}> ${userMsg}`,
-              allowedMentions: { users: [msg.author.id] },
+            await msg.reply({
+              content: userMsg,
+              allowedMentions: { repliedUser: true, parse: [] },
             });
           }
 

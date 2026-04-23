@@ -996,3 +996,48 @@ model ApiKey {
   @@index([keyHash])
   @@index([keyPrefix])
 }
+
+// ============================================================
+// TICKET-SYSTEM (Sektion: Owner-Kontakt via DM-Bridge)
+// ============================================================
+
+enum TicketStatus {
+  PENDING   // Wartet auf Owner-Entscheidung
+  OPEN      // Owner hat akzeptiert, Chat aktiv
+  DENIED    // Owner hat abgelehnt
+  CLOSED    // Beendet
+}
+
+model Ticket {
+  id              String        @id @default(uuid())
+  ticketNumber    Int           @unique @default(autoincrement())
+  userDiscordId   String        // Anfrage-Steller
+  username        String
+  guildId         String?       // Server, von dem die Anfrage kam
+  guildName       String?
+  subject         String
+  initialMessage  String        @db.Text
+  status          TicketStatus  @default(PENDING)
+  ownerDiscordId  String        // Empfaenger (Bot-Owner)
+  ownerNoticeMsgId String?      // Discord MessageId der DM mit Buttons (zum spaeteren Editieren)
+  createdAt       DateTime      @default(now())
+  updatedAt       DateTime      @updatedAt
+  closedAt        DateTime?
+  messages        TicketMessage[]
+
+  @@index([userDiscordId])
+  @@index([status])
+  @@index([ticketNumber])
+}
+
+model TicketMessage {
+  id            String    @id @default(uuid())
+  ticketId      String
+  ticket        Ticket    @relation(fields: [ticketId], references: [id], onDelete: Cascade)
+  fromDiscordId String    // Wer hat geschrieben
+  fromRole      String    // 'USER' | 'OWNER'
+  content       String    @db.Text
+  createdAt     DateTime  @default(now())
+
+  @@index([ticketId])
+}
