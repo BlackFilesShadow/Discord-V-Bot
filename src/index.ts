@@ -98,8 +98,8 @@ async function main(): Promise<void> {
   // Bot einloggen
   await client.login(config.discord.token);
 
-  // Commands bei Discord registrieren
-  await deployCommands(client, config.discord.token, config.discord.clientId, config.discord.guildId);
+  // Commands bei Discord registrieren – IMMER global (auf allen Servern verfügbar)
+  await deployCommands(client, config.discord.token, config.discord.clientId);
 
   // Scheduler starten
   startGiveawayScheduler(client);
