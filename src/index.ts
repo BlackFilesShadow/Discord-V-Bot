@@ -95,17 +95,12 @@ async function main(): Promise<void> {
     logger.info(`Event registriert: ${event.name}${event.once ? ' (once)' : ''}`);
   }
 
-  // Bot einloggen
-  await client.login(config.discord.token);
-
-  // Commands bei Discord registrieren – IMMER global (auf allen Servern verfügbar)
-  await deployCommands(client, config.discord.token, config.discord.clientId);
-
   // ZUSÄTZLICH: Per-Guild-Sync für SOFORTIGE Sichtbarkeit auf bestehenden Servern.
   // Globale Commands brauchen bei Discord bis zu 1h Propagation, guild-scoped sind instant.
-  // Discord zeigt Guild-Commands bevorzugt an, wodurch keine Duplikate entstehen.
+  // Listener MUSS vor client.login registriert werden, sonst verpassen wir das Ready-Event.
   client.once('clientReady', async () => {
     try {
+      logger.info(`Per-Guild-Sync startet für ${client.guilds.cache.size} Guild(s)...`);
       for (const guild of client.guilds.cache.values()) {
         try {
           await deployCommands(client, config.discord.token, config.discord.clientId, guild.id);
@@ -128,6 +123,12 @@ async function main(): Promise<void> {
       logger.warn(`guildCreate-Sync für ${guild.id} fehlgeschlagen:`, e as Error);
     }
   });
+
+  // Bot einloggen
+  await client.login(config.discord.token);
+
+  // Commands bei Discord registrieren – IMMER global (auf allen Servern verfügbar)
+  await deployCommands(client, config.discord.token, config.discord.clientId);
 
   // Scheduler starten
   startGiveawayScheduler(client);
