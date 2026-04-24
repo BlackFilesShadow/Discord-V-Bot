@@ -1216,3 +1216,81 @@ model TranslatedPost {
   @@index([guildId, isActive])
   @@index([nextRunAt, isActive])
 }
+
+// ─── Phase B (Quick-Wins User) ───────────────────────────────────────────
+
+// /feedback: User-eingereichte Bug-Reports / Ideen / Lob.
+// Geht in Admin-Channel (per BotConfig.feedbackChannelId) und in DB.
+model Feedback {
+  id          String   @id @default(cuid())
+  guildId     String?
+  userId      String   // Discord-User-ID des Einreichers
+  username    String
+  category    String   // 'BUG' | 'IDEA' | 'PRAISE' | 'OTHER'
+  subject     String   @db.VarChar(120)
+  message     String   @db.Text
+  attachmentUrl String?
+  status      String   @default("OPEN") // 'OPEN' | 'IN_REVIEW' | 'RESOLVED' | 'WONTFIX'
+  adminNote   String?  @db.Text
+  reviewedBy  String?  // Discord-ID des Admins
+  reviewedAt  DateTime?
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  @@index([guildId, status, createdAt])
+  @@index([userId])
+}
+
+// /erinnerung: User setzt Reminder per DM oder Channel.
+// Scheduler prueft alle 30s nextDueAt <= now() AND isActive.
+model Reminder {
+  id          String   @id @default(cuid())
+  userId      String   // Discord-User-ID
+  guildId     String?
+  channelId   String?  // Wenn null → DM
+  message     String   @db.Text
+  dueAt       DateTime
+  isRecurring Boolean  @default(false)
+  recurrenceMs Int?    // Bei isRecurring=true: Intervall in ms
+  isActive    Boolean  @default(true)
+  fireCount   Int      @default(0)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  @@index([userId, isActive])
+  @@index([dueAt, isActive])
+}
+
+// /selfrole: Admin baut Self-Role-Menu, User bekommt/entfernt Rolle per Button.
+// Eine Message kann mehrere SelfRoleOption haben (bis zu 25 Buttons in 5 Rows).
+model SelfRoleMenu {
+  id          String           @id @default(cuid())
+  guildId     String
+  channelId   String
+  messageId   String?          @unique // gefuellt nach erstem Post
+  title       String           @db.VarChar(120)
+  description String?          @db.Text
+  mode        String           @default("MULTI") // 'MULTI' | 'SINGLE' (Single = nur eine Rolle gleichzeitig)
+  isActive    Boolean          @default(true)
+  createdBy   String
+  createdAt   DateTime         @default(now())
+  updatedAt   DateTime         @updatedAt
+  options     SelfRoleOption[]
+
+  @@index([guildId, isActive])
+}
+
+model SelfRoleOption {
+  id          String       @id @default(cuid())
+  menuId      String
+  menu        SelfRoleMenu @relation(fields: [menuId], references: [id], onDelete: Cascade)
+  roleId      String
+  label       String       @db.VarChar(80)
+  emoji       String?
+  description String?      @db.VarChar(100)
+  position    Int          @default(0)
+  createdAt   DateTime     @default(now())
+
+  @@index([menuId, position])
+  @@unique([menuId, roleId])
+}

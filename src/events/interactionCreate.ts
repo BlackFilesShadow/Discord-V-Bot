@@ -127,6 +127,15 @@ const interactionCreateEvent: BotEvent = {
         await handleDevPasswordModal(modal);
         return;
       }
+      if (modal.customId.startsWith('feedback_modal_')) {
+        try {
+          const { handleFeedbackModal } = await import('../commands/user/feedback.js');
+          await handleFeedbackModal(modal);
+        } catch (e) {
+          logger.error('Feedback-Modal-Handler-Fehler:', e as Error);
+        }
+        return;
+      }
     }
 
     // Button-Interaktionen verarbeiten (Approve/Deny Hersteller)
@@ -146,6 +155,15 @@ const interactionCreateEvent: BotEvent = {
       }
       if (btn.customId.startsWith('ticket_accept_') || btn.customId.startsWith('ticket_deny_')) {
         await handleTicketButton(btn);
+        return;
+      }
+      if (btn.customId.startsWith('selfrole_')) {
+        try {
+          const { handleSelfRoleButton } = await import('../modules/selfrole/selfRoleMenu.js');
+          await handleSelfRoleButton(btn);
+        } catch (e) {
+          logger.error('SelfRole-Button-Handler-Fehler:', e as Error);
+        }
         return;
       }
       // Help-Pagination wird direkt vom Collector in help.ts verarbeitet — hier nichts tun

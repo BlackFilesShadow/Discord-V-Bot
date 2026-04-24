@@ -203,6 +203,14 @@ async function main(): Promise<void> {
   startPollScheduler(client);
   startRateLimitCleanup();
 
+  // Phase B: Reminder-Scheduler
+  try {
+    const { startReminderScheduler } = await import('./modules/reminders/reminderScheduler.js');
+    startReminderScheduler(client);
+  } catch (e) {
+    logger.warn('Reminder-Scheduler-Init fehlgeschlagen:', e as Error);
+  }
+
   // Moderation-Scheduler: Temp-Bans/Mutes alle 60s prüfen
   setInterval(async () => {
     try {

@@ -107,4 +107,9 @@ export const config = {
     metricsToken: optionalEnv('METRICS_TOKEN', ''), // Optional: Bearer-Token-Schutz fuer /metrics
     errorWebhookUrl: optionalEnv('ERROR_WEBHOOK_URL', ''), // Discord-Webhook fuer Error-Push
   },
+
+  // Phase B: Quick-Wins
+  features: {
+    feedbackChannelId: optionalEnv('FEEDBACK_CHANNEL_ID', ''), // Optional: alle /feedback gehen zusaetzlich hierher
+  },
 } as const;
