@@ -1,6 +1,7 @@
 import type { Guild, GuildMember, User as DiscordUser, GuildBasedChannel } from 'discord.js';
 import prisma from '../../database/prisma';
 import { logger } from '../../utils/logger';
+import { getGuildProfile } from './guildAwareness';
 
 /**
  * Server-/User-Kontext-Block fuer den AI-Prompt.
@@ -29,12 +30,25 @@ export async function buildServerUserContext(opts: ServerUserContextOptions): Pr
       `Servername: ${guild.name}`,
       `Mitglieder: ${guild.memberCount}`,
     ];
+    // Owner: bevorzugt aus GuildProfile-Cache (kein Discord-API-Call), sonst fetchOwner.
+    let ownerName: string | null = null;
     try {
-      const owner = await guild.fetchOwner({ cache: true });
-      if (owner) serverParts.push(`Owner: ${owner.user.username}`);
+      const profile = await getGuildProfile(guild.id);
+      if (profile?.ownerName) ownerName = profile.ownerName;
+      if (profile?.description) serverParts.push(`Beschreibung: ${profile.description.slice(0, 200)}`);
+      if (profile?.preferredLocale) serverParts.push(`Sprache: ${profile.preferredLocale}`);
     } catch {
       /* optional */
     }
+    if (!ownerName) {
+      try {
+        const owner = await guild.fetchOwner({ cache: true });
+        if (owner) ownerName = owner.user.username;
+      } catch {
+        /* optional */
+      }
+    }
+    if (ownerName) serverParts.push(`Owner: ${ownerName}`);
     if (channel && 'name' in channel && channel.name) {
       serverParts.push(`Kanal: #${channel.name}`);
     }

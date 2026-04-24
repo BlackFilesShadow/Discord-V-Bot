@@ -1042,3 +1042,29 @@ model TicketMessage {
   @@index([ticketId])
   @@index([createdAt])
 }
+
+// ============================================================
+// SEKTION 13: Guild-Awareness (Phase 6)
+// Stammdaten pro Discord-Guild, in der der Bot Mitglied ist.
+// Wird vom GuildAwareness-Modul aktuell gehalten und in AI-Prompts
+// eingespeist, damit die AI weiss, auf welchem Server sie ist.
+// ============================================================
+
+model GuildProfile {
+  guildId       String   @id // Discord-Guild-ID
+  name          String
+  ownerId       String? // Discord-User-ID des Server-Owners
+  ownerName     String?
+  memberCount   Int      @default(0)
+  channelCount  Int      @default(0)
+  roleCount     Int      @default(0)
+  iconUrl       String?
+  preferredLocale String?
+  description   String?  @db.Text
+  features      Json? // string[] mit Discord-Guild-Features
+  joinedAt      DateTime @default(now())
+  lastSyncedAt  DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  @@index([name])
+}

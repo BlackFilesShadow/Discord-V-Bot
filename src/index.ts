@@ -113,6 +113,13 @@ async function main(): Promise<void> {
           logger.warn(`Per-Guild-Sync für ${guild.id} fehlgeschlagen:`, e as Error);
         }
       }
+      // Phase 6: Guild-Stammdaten cachen / persistieren
+      try {
+        const { bootstrapGuildAwareness } = await import('./modules/ai/guildAwareness.js');
+        await bootstrapGuildAwareness(client);
+      } catch (e) {
+        logger.warn('GuildAwareness-Bootstrap fehlgeschlagen:', e as Error);
+      }
     } catch (e) {
       logger.error('Per-Guild Command-Sync Fehler:', e);
     }
@@ -125,6 +132,23 @@ async function main(): Promise<void> {
       logger.info(`Bot beigetreten zu ${guild.name} (${guild.id}) – Commands sofort registriert`);
     } catch (e) {
       logger.warn(`guildCreate-Sync für ${guild.id} fehlgeschlagen:`, e as Error);
+    }
+    // Phase 6: Stammdaten der neuen Guild persistieren
+    try {
+      const { syncGuild } = await import('./modules/ai/guildAwareness.js');
+      await syncGuild(guild);
+    } catch (e) {
+      logger.warn(`GuildAwareness-Sync für ${guild.id} fehlgeschlagen:`, e as Error);
+    }
+  });
+
+  // Bei Aenderungen an der Guild (Name, Owner, Beschreibung): Stammdaten aktualisieren
+  client.on('guildUpdate', async (_oldGuild, newGuild) => {
+    try {
+      const { syncGuild } = await import('./modules/ai/guildAwareness.js');
+      await syncGuild(newGuild);
+    } catch (e) {
+      logger.warn(`GuildAwareness-Update für ${newGuild.id} fehlgeschlagen:`, e as Error);
     }
   });
 
