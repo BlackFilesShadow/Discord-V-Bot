@@ -1093,6 +1093,12 @@ model GuildKnowledge {
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
+  // Phase 9 (RAG): Embedding-Cache. Vektor wird als JSON-Array von Floats serialisiert,
+  // damit auch ohne pgvector-Extension semantische Suche moeglich ist (JS-Fallback).
+  embedding      String?   @db.Text
+  embeddingModel String?
+  embeddedAt     DateTime?
+
   @@index([guildId])
   @@index([guildId, isActive])
 }

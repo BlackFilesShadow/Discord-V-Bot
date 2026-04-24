@@ -119,6 +119,16 @@ async function main(): Promise<void> {
         await bootstrapGuildAwareness(client);
         // Phase 7: Auto-Sync Channels/Rules alle 60 min
         startContentSyncLoop(client);
+        // Phase 9 (RAG): pgvector pruefen + Embeddings fuer alle aktiven Snippets nachziehen.
+        try {
+          const { checkPgvectorAvailability, backfillEmbeddings } = await import('./modules/ai/embeddings.js');
+          await checkPgvectorAvailability();
+          void backfillEmbeddings().catch((e) => {
+            logger.warn('Embedding-Backfill fehlgeschlagen:', e as Error);
+          });
+        } catch (e) {
+          logger.warn('RAG-Initialisierung fehlgeschlagen:', e as Error);
+        }
       } catch (e) {
         logger.warn('GuildAwareness-Bootstrap fehlgeschlagen:', e as Error);
       }

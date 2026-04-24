@@ -1,8 +1,10 @@
 import prisma from '../../database/prisma';
 import { logger } from '../../utils/logger';
+import { cosineSimilarity, embedKnowledgeSnippet, getQueryEmbedding } from './embeddings';
 
 /**
  * Phase 8: Per-Guild Knowledge-Snippets.
+ * Phase 9: Semantische Retrieval ueber Embeddings (Cosine), Fallback Keyword-Match.
  *
  * Owner/Admin koennen kompakte Faktenbloecke hinterlegen, die der AI bei
  * passenden Anfragen mit in den Prompt fliessen. Match laeuft ueber das
@@ -32,9 +34,33 @@ function tokenize(s: string): Set<string> {
   );
 }
 
+// Mindest-Cosine-Score, ab dem ein Snippet als relevant gilt. Empirisch:
+// Gemini text-embedding-004 liefert fuer wirklich verwandte Themen >0.55.
+const SEMANTIC_MIN_SCORE = 0.55;
+
+function keywordFallback(
+  rows: Array<{ id: string; label: string; content: string }>,
+  question: string,
+  limit: number,
+): KnowledgeSnippet[] {
+  const qTokens = tokenize(question);
+  if (qTokens.size === 0) return [];
+  return rows
+    .map((s) => {
+      const lTokens = tokenize(s.label);
+      let score = 0;
+      for (const t of lTokens) if (qTokens.has(t)) score += 1;
+      return { snip: s, score };
+    })
+    .filter((s) => s.score > 0)
+    .sort((a, b) => b.score - a.score)
+    .slice(0, limit)
+    .map((s) => ({ id: s.snip.id, label: s.snip.label, content: s.snip.content }));
+}
+
 /**
- * Liefert bis zu N Snippets, deren Label-Tokens in der Frage vorkommen.
- * Sortiert nach Anzahl der Treffer.
+ * Liefert bis zu N relevante Snippets per semantischer Aehnlichkeit (Cosine).
+ * Fallback: Keyword-Match auf Label-Tokens, falls keine Embeddings verfuegbar.
  */
 export async function findRelevantKnowledge(
   guildId: string,
@@ -44,23 +70,43 @@ export async function findRelevantKnowledge(
   try {
     const all = await prisma.guildKnowledge.findMany({
       where: { guildId, isActive: true },
-      select: { id: true, label: true, content: true },
-      take: 100,
+      select: { id: true, label: true, content: true, embedding: true, embeddingModel: true },
+      take: 200,
     });
     if (all.length === 0) return [];
-    const qTokens = tokenize(question);
-    if (qTokens.size === 0) return [];
-    const scored = all
-      .map((s) => {
-        const lTokens = tokenize(s.label);
-        let score = 0;
-        for (const t of lTokens) if (qTokens.has(t)) score += 1;
-        return { snip: s, score };
-      })
-      .filter((s) => s.score > 0)
-      .sort((a, b) => b.score - a.score)
-      .slice(0, limit);
-    return scored.map((s) => s.snip);
+
+    // Semantischer Pfad: Frage embedden, mit allen Snippet-Embeddings vergleichen.
+    const qEmb = await getQueryEmbedding(question);
+    if (qEmb) {
+      const scored: Array<{ snip: KnowledgeSnippet; score: number }> = [];
+      for (const row of all) {
+        if (!row.embedding || !row.embeddingModel) continue;
+        // Nur gleiche Modelle/Dimensionen vergleichen.
+        if (row.embeddingModel !== qEmb.model) continue;
+        let vec: number[] | null = null;
+        try {
+          vec = JSON.parse(row.embedding) as number[];
+        } catch {
+          vec = null;
+        }
+        if (!vec || vec.length !== qEmb.vector.length) continue;
+        const score = cosineSimilarity(qEmb.vector, vec);
+        if (score >= SEMANTIC_MIN_SCORE) {
+          scored.push({ snip: { id: row.id, label: row.label, content: row.content }, score });
+        }
+      }
+      if (scored.length > 0) {
+        scored.sort((a, b) => b.score - a.score);
+        return scored.slice(0, limit).map((s) => s.snip);
+      }
+    }
+
+    // Fallback: Keyword-Match (Phase 8 Verhalten).
+    return keywordFallback(
+      all.map((r) => ({ id: r.id, label: r.label, content: r.content })),
+      question,
+      limit,
+    );
   } catch (e) {
     logger.warn('findRelevantKnowledge fehlgeschlagen:', { guildId, e: String(e) });
     return [];
@@ -99,6 +145,13 @@ export async function addKnowledge(
   const row = await prisma.guildKnowledge.create({
     data: { guildId, label: cleanLabel, content: cleanContent, createdBy },
   });
+
+  // Phase 9: Embedding asynchron generieren (kein await blockiert die Response).
+  // Bei Fehlschlag (kein Provider) bleibt das Feld leer und Retrieval faellt auf Keyword zurueck.
+  void embedKnowledgeSnippet(row.id).catch((e) => {
+    logger.warn(`addKnowledge: Embedding fehlgeschlagen fuer ${row.id}: ${String(e)}`);
+  });
+
   return { ok: true, message: `Snippet hinzugefuegt (#${row.id.slice(0, 8)}).`, id: row.id };
 }
 
