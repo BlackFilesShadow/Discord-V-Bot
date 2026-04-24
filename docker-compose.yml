@@ -2,7 +2,9 @@ version: '3.8'
 
 services:
   postgres:
-    image: postgres:16-alpine
+    # Phase 9.1: pgvector-fae$higes Postgres-16-Image (binary-kompatibel zu postgres:16-alpine,
+    # pgdata-Volume bleibt unveraendert). Aktiviert die `vector`-Extension fuer RAG-Phasen.
+    image: pgvector/pgvector:pg16
     container_name: discord-v-bot-postgres
     restart: unless-stopped
     environment:

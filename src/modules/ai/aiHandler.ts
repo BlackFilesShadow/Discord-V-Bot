@@ -488,7 +488,7 @@ async function callGemini(
  * AI-API aufrufen mit Multi-Provider-Fallback.
  * Reihenfolge: Konfigurierter Provider → Fallback auf nächsten verfügbaren.
  */
-async function callAI(messages: { role: string; content: string }[]): Promise<string> {
+export async function callAI(messages: { role: string; content: string }[]): Promise<string> {
   const providers = await getProviderOrder();
 
   // Erkennt transiente Fehler (Netzwerk-Glitches, Rate-Limits, 5xx) – diese rechtfertigen einen Retry.

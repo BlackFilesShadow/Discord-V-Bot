@@ -177,29 +177,86 @@ export async function setPersonaOverride(
 
 /**
  * Erstellt einen kompakten Brief des Servers aus Stammdaten + Rules + Top-Channels.
- * Wird in syncGuildContent aufgerufen, kein eigenes LLM noetig (deterministisch).
+ *
+ * Phase 11: Bevorzugt LLM-generierte Zusammenfassung (callAI mit deterministischen
+ * Server-Fakten als Eingabe). Bei Provider-Fehlern oder leerer Antwort faellt die
+ * Funktion auf die deterministische Variante (Phase 8) zurueck. So bleibt das Feld
+ * `aiBrief` immer gefuellt, ohne harte Abhaengigkeit von einem AI-Provider.
  */
 export async function regenerateAiBrief(guildId: string): Promise<string | null> {
   const p = await prisma.guildProfile.findUnique({ where: { guildId } });
   if (!p) return null;
-  const lines: string[] = [];
-  lines.push(`"${p.name}" ist ein Discord-Server mit ${p.memberCount} Mitgliedern.`);
-  if (p.description) lines.push(`Beschreibung: ${p.description.slice(0, 240)}.`);
-  if (p.preferredLocale) lines.push(`Sprache: ${p.preferredLocale}.`);
+
+  // 1. Strukturierte Fakten zusammenstellen (gleiche Datenquellen wie Phase 8).
+  const facts: string[] = [];
+  facts.push(`Servername: "${p.name}"`);
+  facts.push(`Mitglieder: ${p.memberCount}`);
+  if (p.description) facts.push(`Beschreibung: ${p.description.slice(0, 400)}`);
+  if (p.preferredLocale) facts.push(`Sprache: ${p.preferredLocale}`);
   const ch = Array.isArray(p.channelsJson) ? (p.channelsJson as Array<{ name: string; type: string }>) : [];
   if (ch.length > 0) {
-    const cats = ch.filter((c) => c.type === 'category').map((c) => c.name).slice(0, 6);
-    const text = ch.filter((c) => c.type === 'text').map((c) => `#${c.name}`).slice(0, 8);
-    if (cats.length > 0) lines.push(`Kategorien: ${cats.join(', ')}.`);
-    if (text.length > 0) lines.push(`Wichtige Text-Channels: ${text.join(', ')}.`);
+    const cats = ch.filter((c) => c.type === 'category').map((c) => c.name).slice(0, 8);
+    const text = ch.filter((c) => c.type === 'text').map((c) => `#${c.name}`).slice(0, 12);
+    if (cats.length > 0) facts.push(`Kategorien: ${cats.join(', ')}`);
+    if (text.length > 0) facts.push(`Wichtige Text-Channels: ${text.join(', ')}`);
   }
-  if (p.rulesText) {
-    const firstSentence = p.rulesText.split(/[.!?]\s/).slice(0, 2).join('. ');
-    if (firstSentence) lines.push(`Regelwerk-Kern: ${firstSentence.slice(0, 280)}.`);
+  if (p.rulesText) facts.push(`Regelwerk-Auszug: ${p.rulesText.slice(0, 600)}`);
+  const knowledgeRows = await prisma.guildKnowledge.findMany({
+    where: { guildId, isActive: true },
+    select: { label: true },
+    orderBy: { createdAt: 'desc' },
+    take: 20,
+  });
+  if (knowledgeRows.length > 0) {
+    facts.push(`Hinterlegte Knowledge-Snippets (${knowledgeRows.length}): ${knowledgeRows.map((r) => r.label).join(', ')}`);
   }
-  const knowledgeCount = await prisma.guildKnowledge.count({ where: { guildId, isActive: true } });
-  if (knowledgeCount > 0) lines.push(`Es sind ${knowledgeCount} kuratierte Knowledge-Snippets hinterlegt.`);
-  const brief = lines.join(' ').slice(0, 1500);
+
+  // 2. Deterministische Variante als Fallback vorhalten.
+  const deterministic = (() => {
+    const lines: string[] = [];
+    lines.push(`"${p.name}" ist ein Discord-Server mit ${p.memberCount} Mitgliedern.`);
+    if (p.description) lines.push(`Beschreibung: ${p.description.slice(0, 240)}.`);
+    if (p.preferredLocale) lines.push(`Sprache: ${p.preferredLocale}.`);
+    if (ch.length > 0) {
+      const cats = ch.filter((c) => c.type === 'category').map((c) => c.name).slice(0, 6);
+      const text = ch.filter((c) => c.type === 'text').map((c) => `#${c.name}`).slice(0, 8);
+      if (cats.length > 0) lines.push(`Kategorien: ${cats.join(', ')}.`);
+      if (text.length > 0) lines.push(`Wichtige Text-Channels: ${text.join(', ')}.`);
+    }
+    if (p.rulesText) {
+      const firstSentence = p.rulesText.split(/[.!?]\s/).slice(0, 2).join('. ');
+      if (firstSentence) lines.push(`Regelwerk-Kern: ${firstSentence.slice(0, 280)}.`);
+    }
+    if (knowledgeRows.length > 0) lines.push(`Es sind ${knowledgeRows.length} kuratierte Knowledge-Snippets hinterlegt.`);
+    return lines.join(' ').slice(0, 1500);
+  })();
+
+  // 3. LLM-Brief versuchen (lazy import vermeidet Zyklus).
+  let brief = deterministic;
+  try {
+    const { callAI } = await import('./aiHandler.js');
+    const sysPrompt = [
+      'Du verdichtest Discord-Server-Stammdaten zu einem praezisen, dichten Brief.',
+      'Maximal 6 Saetze, deutsch, sachlich und neutral. Keine Anrede, keine Floskeln, keine Wiederholungen.',
+      'Beschreibe Charakter und Themenfelder des Servers, nenne wichtigste Channels/Kategorien knapp.',
+      'Erfinde NICHTS. Nutze nur die gelieferten Fakten.',
+      'Keine Markdown-Formatierung, keine Aufzaehlungen, kein Code-Block.',
+    ].join('\n');
+    const userPrompt = ['Server-Fakten:', ...facts.map((f) => `- ${f}`)].join('\n');
+    const llm = await callAI([
+      { role: 'system', content: sysPrompt },
+      { role: 'user', content: userPrompt },
+    ]);
+    const cleaned = llm.trim().replace(/^["'`]+|["'`]+$/g, '').slice(0, 1500);
+    if (cleaned.length >= 40) {
+      brief = cleaned;
+    } else {
+      logger.warn(`regenerateAiBrief: LLM-Antwort zu kurz (${cleaned.length}ch), nutze deterministischen Fallback.`);
+    }
+  } catch (e) {
+    logger.warn(`regenerateAiBrief: LLM-Call fehlgeschlagen (${String(e)}), nutze deterministischen Fallback.`);
+  }
+
   await prisma.guildProfile.update({
     where: { guildId },
     data: { aiBrief: brief, aiBriefAt: new Date() },
