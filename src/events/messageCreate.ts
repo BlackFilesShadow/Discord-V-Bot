@@ -5,6 +5,7 @@ import prisma from '../database/prisma';
 import { checkRateLimit, detectSpam } from '../utils/rateLimiter';
 import { processAutoResponse } from '../modules/ai/aiHandler';
 import { answerQuestion } from '../modules/ai/aiHandler';
+import { buildServerUserContext } from '../modules/ai/contextBuilder';
 import { listTriggers, findMatchingTrigger, isOnCooldown, renderTemplate } from '../modules/ai/triggers';
 import { resolveCustomEmotes } from '../modules/ai/emoteResolver';
 import { getLevelUpMessage, getMaxLevelRewardMessage } from '../modules/xp/levelMessages.js';
@@ -219,11 +220,17 @@ const messageCreateEvent: BotEvent = {
 
               let responseText: string;
               if (matched.responseMode === 'ai') {
+                const triggerCtx = await buildServerUserContext({
+                  guild: msg.guild,
+                  channel: msg.channel as any,
+                  member: msg.member ?? undefined,
+                  user: msg.author,
+                });
                 const r = await answerQuestion(
                   matched.aiPrompt
                     ? `${matched.aiPrompt}\n\nNachricht des Nutzers: ${msg.content}`
                     : msg.content,
-                  { mode: 'trigger' },
+                  { mode: 'trigger', context: triggerCtx ?? undefined },
                 );
                 if (r.success && r.result) {
                   responseText = r.result;
@@ -334,7 +341,16 @@ const messageCreateEvent: BotEvent = {
             }
           } catch { /* Kontext ist optional */ }
 
-          const r = await answerQuestion(question, { mode: 'chat', context });
+          // Server-/User-Stammdaten als zusaetzlicher Kontext-Block (Phase 5)
+          const serverUserCtx = await buildServerUserContext({
+            guild: msg.guild,
+            channel: msg.channel as any,
+            member: msg.member ?? undefined,
+            user: msg.author,
+          });
+          const mergedContext = [serverUserCtx, context].filter(Boolean).join('\n\n') || undefined;
+
+          const r = await answerQuestion(question, { mode: 'chat', context: mergedContext });
           if (r.success && r.result) {
             // Bot-Reply zeigt den Author bereits an -> KEIN zusaetzliches @mention im Text.
             // Auch in der AI-Antwort enthaltene @-Mentions/Usernamen am Anfang strippen,
