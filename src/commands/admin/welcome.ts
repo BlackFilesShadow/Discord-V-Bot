@@ -15,6 +15,7 @@ import {
   renderWelcomeMessage,
 } from '../../modules/welcome/welcomeManager';
 import { answerQuestion, BOT_PERSONA } from '../../modules/ai/aiHandler';
+import { sanitizeForPrompt, withTimeout } from '../../utils/safeSend';
 import { saveAttachment, deleteMediaIfLocal } from '../../modules/ai/mediaStorage';
 import { resolveCustomEmotes } from '../../modules/ai/emoteResolver';
 
@@ -165,12 +166,22 @@ export const welcomeCommand: Command = {
 
       let messageText: string;
       if (cfg.mode === 'ai') {
-        const prompt = renderWelcomeMessage(cfg.message, { user: interaction.user.username, guild: interaction.guild.name, memberCount });
-        const r = await answerQuestion(
-          `Erzeuge eine kurze, freundliche, einladende Begrüßung. Anweisung: ${prompt}\n\nNutzer: ${interaction.user.username}\nServer: ${interaction.guild.name}\nMitgliederzahl: ${memberCount}\n\nGib NUR den Begrüßungstext zurück (max. 600 Zeichen).`,
-          { mode: 'welcome' },
+        // Variablen vor dem Einsetzen sanitisieren – verhindert Prompt-Injection
+        // über Username/Guildname/Custom-Template.
+        const safeUser = sanitizeForPrompt(interaction.user.username, 100);
+        const safeGuild = sanitizeForPrompt(interaction.guild.name, 100);
+        const safeTemplate = sanitizeForPrompt(cfg.message, 1000);
+        const prompt = renderWelcomeMessage(safeTemplate, { user: safeUser, guild: safeGuild, memberCount });
+        // 8-Sekunden-Timeout – Fallback auf statischen Text wenn LLM zu langsam.
+        const r = await withTimeout(
+          answerQuestion(
+            `Erzeuge eine kurze, freundliche, einladende Begrüßung. Anweisung: ${prompt}\n\nNutzer: ${safeUser}\nServer: ${safeGuild}\nMitgliederzahl: ${memberCount}\n\nGib NUR den Begrüßungstext zurück (max. 600 Zeichen).`,
+            { mode: 'welcome' },
+          ),
+          8000,
+          'welcome.ai',
         );
-        messageText = r.success && r.result ? `${userMention} ${r.result.trim()}` : `${userMention} Willkommen!`;
+        messageText = r && r.success && r.result ? `${userMention} ${r.result.trim()}` : `${userMention} Willkommen!`;
       } else {
         messageText = renderWelcomeMessage(cfg.message, { user: userMention, guild: interaction.guild.name, memberCount });
       }

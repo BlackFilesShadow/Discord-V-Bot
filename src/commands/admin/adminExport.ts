@@ -7,7 +7,6 @@ import {
 import { Command } from '../../types';
 import prisma from '../../database/prisma';
 import { logAudit } from '../../utils/logger';
-import archiver from 'archiver';
 import fs from 'fs';
 import path from 'path';
 import { config } from '../../config';

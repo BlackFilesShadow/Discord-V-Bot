@@ -79,4 +79,23 @@ fi
 info "Letzte Bot-Logs:"
 docker compose logs --tail=20 "$COMPOSE_SERVICE" | tail -25
 
+# 6) Login-Detection: warte bis "Bot eingeloggt" in den Logs auftaucht.
+#    Faengt verzoegerte Crashes / Token-Probleme, die der Docker-Healthcheck
+#    nicht erkennt (Container "healthy" aber Discord-Login schlug fehl).
+info "Pruefe Discord-Login..."
+LOGIN_OK=0
+for i in {1..15}; do
+  if docker compose logs --tail=80 "$COMPOSE_SERVICE" 2>/dev/null | grep -q "Bot eingeloggt als"; then
+    LOGIN_OK=1
+    break
+  fi
+  sleep 2
+done
+
+if [[ "$LOGIN_OK" -eq 1 ]]; then
+  log "Discord-Login bestaetigt."
+else
+  warn "Kein 'Bot eingeloggt'-Log innerhalb von 30s gefunden \u2013 bitte 'docker compose logs $COMPOSE_SERVICE' pruefen."
+fi
+
 log "Update erfolgreich. Bot laeuft auf Commit $NEW_COMMIT."

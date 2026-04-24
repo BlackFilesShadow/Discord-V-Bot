@@ -4,6 +4,8 @@ import { createManufacturerRequest, verifyOneTimePassword } from '../../modules/
 import prisma from '../../database/prisma';
 import { config } from '../../config';
 import { Colors, Brand, vEmbed } from '../../utils/embedDesign';
+import { safeSend } from '../../utils/safeSend';
+import { logger } from '../../utils/logger';
 
 /**
  * /register Command (Sektion 1):
@@ -88,9 +90,15 @@ async function handleManufacturerRegistration(interaction: ChatInputCommandInter
 
       const row = new ActionRowBuilder<ButtonBuilder>().addComponents(approveBtn, denyBtn);
 
-      await ownerUser.send({ embeds: [adminEmbed], components: [row] });
+      const dm = await ownerUser.createDM();
+      const sent = await safeSend(dm, { embeds: [adminEmbed], components: [row] });
+      if (!sent) {
+        logger.warn(`register.manufacturer: Admin-PN an Owner ${config.discord.ownerId} nicht zustellbar.`);
+        embed.addFields({ name: '⚠️ Hinweis', value: 'Admin-Benachrichtigung konnte nicht zugestellt werden, dein Antrag ist aber gespeichert.', inline: false });
+      }
     } catch (e) {
-      // Admin-PN konnte nicht gesendet werden
+      logger.warn(`register.manufacturer: Owner-Lookup fehlgeschlagen: ${String(e)}`);
+      embed.addFields({ name: '⚠️ Hinweis', value: 'Admin-Benachrichtigung konnte nicht zugestellt werden, dein Antrag ist aber gespeichert.', inline: false });
     }
   }
 

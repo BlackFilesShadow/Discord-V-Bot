@@ -6,6 +6,7 @@ import {
 import { Command } from '../../types';
 import prisma from '../../database/prisma';
 import { logAudit, logger } from '../../utils/logger';
+import { safeDm } from '../../utils/safeSend';
 
 /**
  * /admin-broadcast [msg] — Nachricht an alle Nutzer/Hersteller.
@@ -48,16 +49,21 @@ const adminBroadcastCommand: Command = {
 
     const users = await prisma.user.findMany({ where, select: { discordId: true } });
 
+    // Truncation auf Discord-Limit (2000 – Header).
+    const safeMessage = message.slice(0, 1900);
+    const payload = `📢 **Broadcast-Nachricht:**\n\n${safeMessage}`;
+
     let sent = 0;
     let failed = 0;
 
     for (const user of users) {
       try {
         const discordUser = await interaction.client.users.fetch(user.discordId);
-        const dm = await discordUser.createDM();
-        await dm.send(`📢 **Broadcast-Nachricht:**\n\n${message}`);
-        sent++;
-      } catch {
+        // safeDm erzwingt allowedMentions: { parse: [] } – keine @everyone-Injection.
+        const result = await safeDm(discordUser, payload);
+        if (result) sent++; else failed++;
+      } catch (e) {
+        logger.debug(`Broadcast: User ${user.discordId} unerreichbar: ${String(e)}`);
         failed++;
       }
     }

@@ -6,6 +6,7 @@ import { generateGuid } from '../utils/guid';
 import { detectRaid } from '../utils/rateLimiter';
 import { getWelcomeConfig, renderWelcomeMessage } from '../modules/welcome/welcomeManager';
 import { answerQuestion } from '../modules/ai/aiHandler';
+import { sanitizeForPrompt, withTimeout, safeSend } from '../utils/safeSend';
 import { resolveCustomEmotes } from '../modules/ai/emoteResolver';
 import { syncMemberProfile } from '../modules/ai/memberAwareness';
 
@@ -116,16 +117,23 @@ const guildMemberAddEvent: BotEvent = {
 
             let messageText: string;
             if (wcfg.mode === 'ai') {
-              const prompt = renderWelcomeMessage(wcfg.message, {
-                user: m.user.username,
-                guild: m.guild.name,
+              const safeUser = sanitizeForPrompt(m.user.username, 100);
+              const safeGuild = sanitizeForPrompt(m.guild.name, 100);
+              const safeTemplate = sanitizeForPrompt(wcfg.message, 1000);
+              const prompt = renderWelcomeMessage(safeTemplate, {
+                user: safeUser,
+                guild: safeGuild,
                 memberCount,
               });
-              const r = await answerQuestion(
-                `Erzeuge eine kurze, freundliche, einladende Begrüßung. Anweisung: ${prompt}\n\nNeuer Nutzer: ${m.user.username}\nServer: ${m.guild.name}\nMitgliederzahl: ${memberCount}\n\nGib NUR den Begrüßungstext zurück (max. 600 Zeichen).`,
-                { mode: 'welcome' },
+              const r = await withTimeout(
+                answerQuestion(
+                  `Erzeuge eine kurze, freundliche, einladende Begrüßung. Anweisung: ${prompt}\n\nNeuer Nutzer: ${safeUser}\nServer: ${safeGuild}\nMitgliederzahl: ${memberCount}\n\nGib NUR den Begrüßungstext zurück (max. 600 Zeichen).`,
+                  { mode: 'welcome' },
+                ),
+                8000,
+                'guildMemberAdd.welcome.ai',
               );
-              messageText = r.success && r.result ? `${userMention} ${r.result.trim()}` : `${userMention} Willkommen auf ${m.guild.name}!`;
+              messageText = r && r.success && r.result ? `${userMention} ${r.result.trim()}` : `${userMention} Willkommen auf ${m.guild.name}!`;
             } else {
               messageText = renderWelcomeMessage(wcfg.message, {
                 user: userMention,
@@ -136,8 +144,11 @@ const guildMemberAddEvent: BotEvent = {
 
             const files = wcfg.mediaUrl ? [new AttachmentBuilder(wcfg.mediaUrl)] : undefined;
             const finalText = resolveCustomEmotes(messageText, m.guild);
-            await channel.send({ content: finalText.slice(0, 2000), files }).catch(err => {
-              logger.warn(`Welcome-Nachricht konnte nicht gesendet werden:`, err);
+            // safeSend setzt allowedMentions parse:[] – Ping nur fuer den neuen User selbst.
+            await safeSend(channel, {
+              content: finalText.slice(0, 2000),
+              files,
+              allowedMentions: { users: [m.user.id], parse: [] },
             });
           }
         }

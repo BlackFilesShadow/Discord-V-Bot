@@ -30,6 +30,13 @@ jobs:
       - name: Generate Prisma Client
         run: npx prisma generate
 
+      - name: Validate Prisma schema
+        run: npx prisma validate
+
+      - name: ESLint (warnings only - non-blocking)
+        run: npx eslint "src/**/*.ts" --max-warnings=9999
+        continue-on-error: true
+
       - name: TypeScript Build
         run: npm run build
 
