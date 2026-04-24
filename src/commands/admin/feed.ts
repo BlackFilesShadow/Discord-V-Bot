@@ -7,7 +7,52 @@ import {
 import { Command } from '../../types';
 import prisma from '../../database/prisma';
 import { createFeed } from '../../modules/feeds/feedManager';
-import { logAudit } from '../../utils/logger';
+import { logAudit, logger } from '../../utils/logger';
+
+/**
+ * Validiert einen Feed-Source-Wert je nach Typ. Verhindert das stumme
+ * Anlegen kaputter Feeds.
+ */
+function validateFeedSource(typ: string, source: string): { ok: true } | { ok: false; reason: string } {
+  const trimmed = source.trim();
+  if (!trimmed) return { ok: false, reason: 'URL/Quelle darf nicht leer sein.' };
+  if (trimmed.length > 2048) return { ok: false, reason: 'URL/Quelle ueberschreitet 2048 Zeichen.' };
+
+  switch (typ) {
+    case 'RSS':
+    case 'NEWS':
+    case 'WEBHOOK': {
+      try {
+        const u = new URL(trimmed);
+        if (!['http:', 'https:'].includes(u.protocol)) {
+          return { ok: false, reason: 'Nur http:// oder https:// URLs erlaubt.' };
+        }
+        if (u.hostname === 'localhost' || u.hostname.startsWith('127.') || u.hostname === '0.0.0.0') {
+          return { ok: false, reason: 'Lokale/private Hosts sind nicht erlaubt (SSRF-Schutz).' };
+        }
+        return { ok: true };
+      } catch {
+        return { ok: false, reason: 'Ungueltige URL.' };
+      }
+    }
+    case 'TWITCH': {
+      // Twitch-Channelname: 4-25 Zeichen, alphanumerisch + _.
+      if (!/^[A-Za-z0-9_]{4,25}$/.test(trimmed)) {
+        return { ok: false, reason: 'Twitch-Channelname muss 4-25 Zeichen aus [A-Za-z0-9_] sein.' };
+      }
+      return { ok: true };
+    }
+    case 'STEAM': {
+      // Steam App-ID: numerisch.
+      if (!/^\d{1,10}$/.test(trimmed)) {
+        return { ok: false, reason: 'Steam-App-ID muss numerisch sein (z.B. 730).' };
+      }
+      return { ok: true };
+    }
+    default:
+      return { ok: true };
+  }
+}
 
 /**
  * /feed Command (Sektion 7):
@@ -96,9 +141,23 @@ const feedCommand: Command = {
         const channel = interaction.options.getChannel('channel', true);
         const intervall = interaction.options.getInteger('intervall') || 300;
 
-        const feedId = await createFeed(
-          name, typ, url, channel.id, intervall, interaction.user.id,
-        );
+        // Quelle/URL validieren BEVOR wir die DB anfassen.
+        const v = validateFeedSource(typ, url);
+        if (!v.ok) {
+          await interaction.editReply({ content: `❌ Feed-Quelle ungueltig: ${v.reason}` });
+          return;
+        }
+
+        let feedId: string;
+        try {
+          feedId = await createFeed(
+            name, typ, url.trim(), channel.id, intervall, interaction.user.id,
+          );
+        } catch (e) {
+          logger.warn(`feed.erstellen fehlgeschlagen: ${String(e)}`);
+          await interaction.editReply({ content: `❌ Feed konnte nicht angelegt werden: ${String((e as Error)?.message ?? e).slice(0, 500)}` });
+          return;
+        }
 
         const embed = new EmbedBuilder()
           .setTitle('📡 Feed erstellt')

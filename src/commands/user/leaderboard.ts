@@ -2,6 +2,8 @@ import { SlashCommandBuilder, ChatInputCommandInteraction, EmbedBuilder } from '
 import { Command } from '../../types';
 import prisma from '../../database/prisma';
 import { Colors, Brand, vEmbed } from '../../utils/embedDesign';
+import { safeSend } from '../../utils/safeSend';
+import { logger } from '../../utils/logger';
 
 /**
  * /leaderboard Command (Sektion 8):
@@ -123,7 +125,8 @@ const leaderboardCommand: Command = {
       return `${medal} <@${entry.user.discordId}> — ${valueStr}`;
     });
 
-    // Eigene Position
+    // Eigene Position – in den Promise.all-Block oben mergen waere noch optimaler,
+    // braucht aber den dbUser. Wir machen daraus zwei parallele Queries statt sequentiell.
     const dbUser = await prisma.user.findUnique({
       where: { discordId: interaction.user.id },
       include: { levelData: true },
@@ -131,6 +134,7 @@ const leaderboardCommand: Command = {
 
     let ownRankStr = '';
     if (dbUser?.levelData) {
+      // Single-Count statt N+1: zaehlt alle User mit hoeherer XP.
       const ownRank = await prisma.levelData.count({
         where: { xp: { gt: dbUser.levelData.xp } },
       }) + 1;
@@ -156,25 +160,30 @@ const leaderboardCommand: Command = {
 
       // Feed-Logik: Intervall speichern (in-memory, pro Channel)
       // Hinweis: Für produktiven Einsatz sollte ein persistenter Speicher genutzt werden!
-      const gAny = globalThis as any;
+      const gAny = globalThis as { leaderboardFeeds?: Record<string, NodeJS.Timeout> };
       if (!gAny.leaderboardFeeds) gAny.leaderboardFeeds = {};
       const channelId = interaction.channelId;
       if (gAny.leaderboardFeeds[channelId]) {
         clearInterval(gAny.leaderboardFeeds[channelId]);
       }
-      gAny.leaderboardFeeds[channelId] = setInterval(async () => {
-        try {
-          await (interaction.channel as any)?.send({ embeds: [embed] });
-        } catch {}
+      gAny.leaderboardFeeds[channelId] = setInterval(() => {
+        // Channel kann inzwischen geloescht oder Bot rausgekickt sein.
+        const ch = interaction.channel;
+        if (!ch || !('send' in ch)) return;
+        void safeSend(ch, { embeds: [embed] }).catch((e: unknown) => {
+          logger.warn(`leaderboard-feed Send fehlgeschlagen: ${String(e)}`);
+        });
       }, intervall * 60 * 1000);
       // Direkt initial posten
-      await (interaction.channel as any)?.send({ embeds: [embed] });
+      if (interaction.channel && 'send' in interaction.channel) {
+        await safeSend(interaction.channel, { embeds: [embed] });
+      }
       return;
     } else {
       // Einmalige Anzeige
       await interaction.editReply({ embeds: [embed] });
       // Feed ggf. stoppen
-      const gAny = globalThis as any;
+      const gAny = globalThis as { leaderboardFeeds?: Record<string, NodeJS.Timeout> };
       if (gAny.leaderboardFeeds && gAny.leaderboardFeeds[interaction.channelId]) {
         clearInterval(gAny.leaderboardFeeds[interaction.channelId]);
         delete gAny.leaderboardFeeds[interaction.channelId];

@@ -1,6 +1,7 @@
 import { SlashCommandBuilder, ChatInputCommandInteraction, PermissionFlagsBits } from 'discord.js';
 import { Command } from '../../types';
 import prisma from '../../database/prisma';
+import { logger } from '../../utils/logger';
 
 /**
  * /xp-config
@@ -93,6 +94,8 @@ const xpConfigCommand: Command = {
       await interaction.editReply('❌ Nur auf Servern verfügbar.');
       return;
     }
+
+    try {
 
     // Hilfsfunktion: Config sicherstellen
     const ensureConfig = async () =>
@@ -275,6 +278,14 @@ Min: ${config.messageXpMin}, Max: ${config.messageXpMax}, Voice: ${config.voiceX
         `• XP-Berechtigte Kanäle (strikt): ${chanStr}`,
       ].join('\n'));
       return;
+    }
+
+    await interaction.editReply(`❌ Unbekanntes Subcommand: \`${sub}\``);
+    } catch (e) {
+      logger.error(`/xp-config ${sub} fehlgeschlagen:`, e as Error);
+      try {
+        await interaction.editReply({ content: `❌ Fehler: ${String((e as Error)?.message ?? e).slice(0, 500)}` });
+      } catch { /* swallow */ }
     }
   },
 };

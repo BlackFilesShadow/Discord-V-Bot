@@ -49,18 +49,25 @@ const devEvalCommand: Command = {
       }
 
       case 'db': {
-        const [userCount, pkgCount, uploadCount] = await Promise.all([
-          prisma.user.count(),
-          prisma.package.count(),
-          prisma.upload.count(),
-        ]);
-        embed
-          .setTitle('🗄️ Datenbank-Statistik')
-          .addFields(
-            { name: 'Users', value: userCount.toString(), inline: true },
-            { name: 'Pakete', value: pkgCount.toString(), inline: true },
-            { name: 'Uploads', value: uploadCount.toString(), inline: true },
-          );
+        try {
+          const [userCount, pkgCount, uploadCount] = await Promise.all([
+            prisma.user.count(),
+            prisma.package.count(),
+            prisma.upload.count(),
+          ]);
+          embed
+            .setTitle('🗄️ Datenbank-Statistik')
+            .addFields(
+              { name: 'Users', value: userCount.toString(), inline: true },
+              { name: 'Pakete', value: pkgCount.toString(), inline: true },
+              { name: 'Uploads', value: uploadCount.toString(), inline: true },
+            );
+        } catch (e) {
+          embed
+            .setColor(0xe74c3c)
+            .setTitle('❌ DB nicht erreichbar')
+            .setDescription(String((e as Error)?.message ?? e).slice(0, 1000));
+        }
         break;
       }
 

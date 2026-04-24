@@ -7,8 +7,12 @@ import {
 import { Command } from '../../types';
 import prisma from '../../database/prisma';
 import { validateFile } from '../../utils/validator';
-import { logAudit } from '../../utils/logger';
+import { logAudit, logger } from '../../utils/logger';
+import { withTimeout } from '../../utils/safeSend';
 import fs from 'fs';
+
+const MAX_VALIDATE_BYTES = 50 * 1024 * 1024; // 50 MB
+const VALIDATE_TIMEOUT_MS = 30_000;
 
 /**
  * /admin-validate [paket|datei] — Manuelle (Re-)Validierung, Fehleranalyse, Quarantäne.
@@ -77,7 +81,32 @@ const adminValidateCommand: Command = {
             continue;
           }
 
-          const validation = await validateFile(file.filePath);
+          let stat: fs.Stats;
+          try {
+            stat = fs.statSync(file.filePath);
+          } catch (e) {
+            results.push(`❌ **${file.originalName}**: stat fehlgeschlagen`);
+            invalidCount++;
+            logger.warn(`adminValidate stat ${file.id}: ${(e as Error).message}`);
+            continue;
+          }
+          if (stat.size > MAX_VALIDATE_BYTES) {
+            results.push(`⚠️ **${file.originalName}**: übersprungen (>50 MB)`);
+            invalidCount++;
+            continue;
+          }
+
+          let validation: Awaited<ReturnType<typeof validateFile>>;
+          try {
+            const v = await withTimeout(validateFile(file.filePath), VALIDATE_TIMEOUT_MS, `validateFile:${file.id}`);
+            if (v === null) throw new Error('Timeout');
+            validation = v;
+          } catch (e) {
+            results.push(`❌ **${file.originalName}**: Validator-Fehler/Timeout`);
+            invalidCount++;
+            logger.error(`adminValidate validateFile ${file.id} fehlgeschlagen:`, e as Error);
+            continue;
+          }
 
           await prisma.upload.update({
             where: { id: file.id },
@@ -140,7 +169,22 @@ const adminValidateCommand: Command = {
           return;
         }
 
-        const validation = await validateFile(upload.filePath);
+        const stat = fs.statSync(upload.filePath);
+        if (stat.size > MAX_VALIDATE_BYTES) {
+          await interaction.editReply({ content: '⚠️ Datei zu groß (>50 MB) für On-Demand-Validierung.' });
+          return;
+        }
+
+        let validation: Awaited<ReturnType<typeof validateFile>>;
+        try {
+          const v = await withTimeout(validateFile(upload.filePath), VALIDATE_TIMEOUT_MS, `validateFile:${dateiId}`);
+          if (v === null) throw new Error('Timeout');
+          validation = v;
+        } catch (e) {
+          logger.error(`adminValidate datei ${dateiId} fehlgeschlagen:`, e as Error);
+          await interaction.editReply({ content: `❌ Validator-Fehler: ${String((e as Error)?.message ?? e).slice(0, 500)}` });
+          return;
+        }
 
         await prisma.upload.update({
           where: { id: dateiId },

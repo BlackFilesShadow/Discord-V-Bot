@@ -20,6 +20,8 @@ import {
 import { grantEventXp } from '../../modules/xp/xpManager';
 import { Colors, Brand, vEmbed, percentBar } from '../../utils/embedDesign';
 import { createBotEmbed } from '../../utils/embedUtil';
+import { safeSend } from '../../utils/safeSend';
+import { logger } from '../../utils/logger';
 
 /**
  * /poll Command (Sektion 10):
@@ -115,8 +117,24 @@ const pollCommand: Command = {
 
   execute: async (interaction: ChatInputCommandInteraction) => {
     const sub = interaction.options.getSubcommand();
+    try {
+      await runPollSubcommand(sub, interaction);
+    } catch (e) {
+      logger.error(`/poll ${sub} fehlgeschlagen:`, e as Error);
+      const msg = `❌ Interner Fehler: ${String((e as Error)?.message ?? e).slice(0, 500)}`;
+      try {
+        if (interaction.deferred || interaction.replied) {
+          await interaction.editReply({ content: msg });
+        } else {
+          await interaction.reply({ content: msg, ephemeral: true });
+        }
+      } catch { /* swallow */ }
+    }
+  },
+};
 
-    switch (sub) {
+async function runPollSubcommand(sub: string, interaction: ChatInputCommandInteraction): Promise<void> {
+  switch (sub) {
       case 'erstellen': {
         await interaction.deferReply();
 
@@ -332,10 +350,12 @@ const pollCommand: Command = {
             { name: '🗳️ Stimmen', value: `**${result.totalVotes}**`, inline: true },
           );
 
-        // Rollen-Ping bei manueller Beendigung als separate Nachricht
+        // Rollen-Ping bei manueller Beendigung als separate Nachricht.
+        // safeSend setzt allowedMentions auf nur diese Rolle, kein @everyone-Bypass.
         if (poll.notifyRoleId && interaction.channel && 'send' in interaction.channel) {
-          await interaction.channel.send({
+          await safeSend(interaction.channel, {
             content: `<@&${poll.notifyRoleId}> 📊 Umfrage **${result.title}** wurde beendet!`,
+            allowedMentions: { roles: [poll.notifyRoleId], parse: [] },
           });
         }
 
@@ -388,7 +408,6 @@ const pollCommand: Command = {
         break;
       }
     }
-  },
-};
+}
 
 export default pollCommand;

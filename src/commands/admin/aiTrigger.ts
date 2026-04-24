@@ -118,11 +118,10 @@ export const aiTriggerCommand: Command = {
         media = saved.localPath;
       }
 
-      // Falls Trigger mit gleicher ID schon Media hatte: alte Datei l\u00f6schen
+      // Falls Trigger mit gleicher ID schon Media hatte: alte Datei merken,
+      // aber ERST nach erfolgreichem DB-Add l\u00f6schen (Race-Schutz).
       const existing = (await listTriggers(guildId)).find(t => t.id === id);
-      if (existing?.mediaUrl) {
-        await deleteMediaIfLocal(existing.mediaUrl);
-      }
+      const oldMediaToDelete = existing?.mediaUrl;
 
       const trigger: AiTrigger = {
         id,
@@ -139,6 +138,18 @@ export const aiTriggerCommand: Command = {
       };
 
       const result = await addTrigger(guildId, trigger);
+      if (result.ok) {
+        // Add erfolgreich: alte Media erst jetzt entfernen
+        if (oldMediaToDelete) {
+          await deleteMediaIfLocal(oldMediaToDelete);
+        }
+      } else {
+        // Add fehlgeschlagen: gerade hochgeladene neue Media wieder l\u00f6schen,
+        // damit kein verwaister Upload zur\u00fcckbleibt.
+        if (mediaAttachment && media && !media.startsWith('http')) {
+          await deleteMediaIfLocal(media);
+        }
+      }
       const embed = vEmbed(result.ok ? Colors.Success : Colors.Error)
         .setTitle(result.ok ? '\u2705 Trigger hinzugef\u00fcgt' : '\u274c Fehler')
         .setDescription(result.message);
@@ -186,10 +197,12 @@ export const aiTriggerCommand: Command = {
     if (sub === 'remove') {
       const id = interaction.options.getString('id', true);
       const existing = (await listTriggers(guildId)).find(t => t.id === id);
-      if (existing?.mediaUrl) {
+      // Erst DB-Eintrag entfernen, dann Media: sonst kann Media weg sein, w\u00e4hrend
+      // der Trigger noch in der DB steht und ins Leere zeigt.
+      const result = await removeTrigger(guildId, id, interaction.user.id);
+      if (result.ok && existing?.mediaUrl) {
         await deleteMediaIfLocal(existing.mediaUrl);
       }
-      const result = await removeTrigger(guildId, id, interaction.user.id);
       await interaction.editReply({
         embeds: [vEmbed(result.ok ? Colors.Success : Colors.Error).setDescription(result.message)],
       });
@@ -198,10 +211,11 @@ export const aiTriggerCommand: Command = {
 
     if (sub === 'clear') {
       const all = await listTriggers(guildId);
+      // Erst DB leeren, dann Media: verhindert verwaiste Triggers ohne Media.
+      await clearTriggers(guildId, interaction.user.id);
       for (const t of all) {
         if (t.mediaUrl) await deleteMediaIfLocal(t.mediaUrl);
       }
-      await clearTriggers(guildId, interaction.user.id);
       await interaction.editReply({
         embeds: [vEmbed(Colors.Success).setDescription('\u2705 Alle Trigger gel\u00f6scht.')],
       });

@@ -4,6 +4,8 @@ import {
   EmbedBuilder,
   AttachmentBuilder,
   ActionRowBuilder,
+  ButtonBuilder,
+  ButtonStyle,
   StringSelectMenuBuilder,
   StringSelectMenuOptionBuilder,
   ComponentType,
@@ -55,7 +57,8 @@ const downloadCommand: Command = {
           },
         },
       },
-      take: 25,
+      orderBy: { username: 'asc' },
+      take: 200,
     });
 
     if (manufacturers.length === 0) {
@@ -66,38 +69,61 @@ const downloadCommand: Command = {
       return;
     }
 
-    // ── Schritt 1: Hersteller-Dropdown ──
-    const embed = createBotEmbed({
-      title: '📥 Download-Bereich',
-      description: [
-        Brand.divider,
-        `**${manufacturers.length} Hersteller** verfügbar.`,
-        'Wähle einen Hersteller aus dem Dropdown.',
-        Brand.divider,
-      ].join('\n'),
-      color: Colors.Download,
-      footer: `${Brand.footerText} • Download`,
-      timestamp: true,
-    });
+    // Paginierung: 25 Hersteller pro Seite
+    const PAGE_SIZE = 25;
+    const totalPages = Math.max(1, Math.ceil(manufacturers.length / PAGE_SIZE));
+    let currentPage = 0;
 
-    const manufacturerSelect = new StringSelectMenuBuilder()
-      .setCustomId('dl_manufacturer')
-      .setPlaceholder('🏭 Hersteller auswählen...')
-      .addOptions(
-        manufacturers.map(m =>
-          new StringSelectMenuOptionBuilder()
-            .setLabel(m.username)
-            .setDescription(`${m.packages.length} Paket(e)`)
-            .setValue(m.id)
-            .setEmoji('🏭')
-        )
-      );
+    const buildManufacturerView = (page: number): { embed: EmbedBuilder; rows: ActionRowBuilder<StringSelectMenuBuilder | ButtonBuilder>[] } => {
+      const slice = manufacturers.slice(page * PAGE_SIZE, page * PAGE_SIZE + PAGE_SIZE);
+      const embed = createBotEmbed({
+        title: '📥 Download-Bereich',
+        description: [
+          Brand.divider,
+          `**${manufacturers.length} Hersteller** verfügbar.`,
+          totalPages > 1 ? `Seite **${page + 1} / ${totalPages}**` : 'Wähle einen Hersteller aus dem Dropdown.',
+          Brand.divider,
+        ].join('\n'),
+        color: Colors.Download,
+        footer: `${Brand.footerText} • Download`,
+        timestamp: true,
+      });
+      const select = new StringSelectMenuBuilder()
+        .setCustomId('dl_manufacturer')
+        .setPlaceholder('🏭 Hersteller auswählen...')
+        .addOptions(
+          slice.map(m =>
+            new StringSelectMenuOptionBuilder()
+              .setLabel(m.username.slice(0, 100))
+              .setDescription(`${m.packages.length} Paket(e)`)
+              .setValue(m.id)
+              .setEmoji('🏭')
+          )
+        );
+      const rows: ActionRowBuilder<StringSelectMenuBuilder | ButtonBuilder>[] = [
+        new ActionRowBuilder<StringSelectMenuBuilder>().addComponents(select),
+      ];
+      if (totalPages > 1) {
+        const prev = new ButtonBuilder()
+          .setCustomId('dl_mfg_prev')
+          .setLabel('◀ Zurück')
+          .setStyle(ButtonStyle.Secondary)
+          .setDisabled(page === 0);
+        const next = new ButtonBuilder()
+          .setCustomId('dl_mfg_next')
+          .setLabel('Weiter ▶')
+          .setStyle(ButtonStyle.Secondary)
+          .setDisabled(page >= totalPages - 1);
+        rows.push(new ActionRowBuilder<ButtonBuilder>().addComponents(prev, next));
+      }
+      return { embed, rows };
+    };
 
-    const row = new ActionRowBuilder<StringSelectMenuBuilder>().addComponents(manufacturerSelect);
+    const initial = buildManufacturerView(currentPage);
 
     await interaction.reply({
-      embeds: [embed],
-      components: [row],
+      embeds: [initial.embed],
+      components: initial.rows,
       ephemeral: true,
     });
 
@@ -110,12 +136,26 @@ const downloadCommand: Command = {
       return;
     }
     const mfgCollector = interaction.channel.createMessageComponentCollector({
-      componentType: ComponentType.StringSelect,
       time: 120_000,
     });
 
     mfgCollector.on('collect', async (mfgInteraction) => {
+      // Pagination-Buttons handhaben
+      if (mfgInteraction.customId === 'dl_mfg_prev' || mfgInteraction.customId === 'dl_mfg_next') {
+        if (mfgInteraction.user.id !== interaction.user.id) {
+          try { await mfgInteraction.reply({ content: '❌ Diese Auswahl ist nicht für dich.', ephemeral: true }); } catch {}
+          return;
+        }
+        currentPage += mfgInteraction.customId === 'dl_mfg_next' ? 1 : -1;
+        currentPage = Math.max(0, Math.min(totalPages - 1, currentPage));
+        try { await mfgInteraction.deferUpdate(); } catch {}
+        const view = buildManufacturerView(currentPage);
+        await interaction.editReply({ embeds: [view.embed], components: view.rows });
+        return;
+      }
+
       if (mfgInteraction.customId !== 'dl_manufacturer') return;
+      if (mfgInteraction.componentType !== ComponentType.StringSelect) return;
 
       // SOFORT acknowledgen — DB-Query kann >3s dauern
       try { await mfgInteraction.deferUpdate(); } catch { /* evtl. schon ack */ }
