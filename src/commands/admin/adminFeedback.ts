@@ -125,8 +125,10 @@ const adminFeedbackCommand: Command = {
 
   async execute(interaction: ChatInputCommandInteraction) {
     const sub = interaction.options.getSubcommand();
-    // Nur 'channel' mit scope=global darf ohne Guild laufen.
-    if (!interaction.guildId && sub !== 'channel') {
+    const ownerCall = !!config.discord.ownerId && interaction.user.id === config.discord.ownerId;
+    // Owner darf alle Subcommands ohne Guild aufrufen (cross-guild Verwaltung).
+    // Sonst: nur 'channel' (mit scope=global) ist ausserhalb einer Guild zulaessig.
+    if (!interaction.guildId && !ownerCall && sub !== 'channel') {
       await interaction.reply({ content: 'Nur in Guilds verwendbar.', ephemeral: true });
       return;
     }
@@ -145,12 +147,21 @@ const adminFeedbackCommand: Command = {
   },
 };
 
+function isOwner(interaction: ChatInputCommandInteraction): boolean {
+  return !!config.discord.ownerId && interaction.user.id === config.discord.ownerId;
+}
+
 async function handleListe(interaction: ChatInputCommandInteraction): Promise<void> {
   await interaction.deferReply({ ephemeral: true });
   const status = interaction.options.getString('status') ?? undefined;
   const category = interaction.options.getString('kategorie') ?? undefined;
+  const owner = isOwner(interaction);
   const items = await prisma.feedback.findMany({
-    where: { guildId: interaction.guildId!, ...(status ? { status } : {}), ...(category ? { category } : {}) },
+    where: {
+      ...(owner ? {} : { guildId: interaction.guildId! }),
+      ...(status ? { status } : {}),
+      ...(category ? { category } : {}),
+    },
     orderBy: { createdAt: 'desc' },
     take: 25,
   });
@@ -158,38 +169,62 @@ async function handleListe(interaction: ChatInputCommandInteraction): Promise<vo
     await interaction.editReply({ embeds: [vEmbed(Colors.Info).setTitle('Keine Feedbacks gefunden')] });
     return;
   }
+  // Guild-Namen aufloesen (Owner-Modus: cross-guild)
+  const guildNames = new Map<string, string>();
+  if (owner) {
+    const ids = [...new Set(items.map((i) => i.guildId).filter((g): g is string => !!g))];
+    for (const gid of ids) {
+      const g = interaction.client.guilds.cache.get(gid)
+        ?? await interaction.client.guilds.fetch(gid).catch(() => null);
+      if (g) guildNames.set(gid, g.name);
+    }
+  }
   const lines = items.map((f) => {
     const cat = CATEGORY_LABEL[f.category] ?? f.category;
-    return `\`${f.id.slice(0, 8)}\` · ${cat} · **${f.status}** · ${fmtDate(f.createdAt)} · <@${f.userId}>\n  > ${f.subject.slice(0, 80)}`;
+    const where = owner && f.guildId
+      ? ` · _${guildNames.get(f.guildId) ?? f.guildId}_`
+      : '';
+    return `\`${f.id.slice(0, 8)}\` · ${cat} · **${f.status}** · ${fmtDate(f.createdAt)} · <@${f.userId}>${where}\n  > ${f.subject.slice(0, 80)}`;
   });
   await interaction.editReply({
     embeds: [vEmbed(Colors.Info)
-      .setTitle(`Feedbacks (${items.length})`)
+      .setTitle(`Feedbacks (${items.length})${owner ? ' · alle Guilds' : ''}`)
       .setDescription(lines.join('\n').slice(0, 4000))
       .setFooter({ text: 'Detail: /admin-feedback zeigen id:<8-Zeichen>' })],
   });
 }
 
-async function findByPrefix(guildId: string, idInput: string) {
+async function findByPrefix(interaction: ChatInputCommandInteraction, idInput: string) {
+  const owner = isOwner(interaction);
   return prisma.feedback.findFirst({
-    where: { guildId, OR: [{ id: idInput }, { id: { startsWith: idInput } }] },
+    where: {
+      ...(owner ? {} : { guildId: interaction.guildId! }),
+      OR: [{ id: idInput }, { id: { startsWith: idInput } }],
+    },
   });
 }
 
 async function handleZeigen(interaction: ChatInputCommandInteraction): Promise<void> {
   await interaction.deferReply({ ephemeral: true });
   const id = interaction.options.getString('id', true).trim();
-  const fb = await findByPrefix(interaction.guildId!, id);
+  const fb = await findByPrefix(interaction, id);
   if (!fb) {
     await interaction.editReply({ content: `Kein Feedback mit ID \`${id}\` gefunden.` });
     return;
   }
   const cat = CATEGORY_LABEL[fb.category] ?? fb.category;
+  let serverField = 'DM';
+  if (fb.guildId) {
+    const g = interaction.client.guilds.cache.get(fb.guildId)
+      ?? await interaction.client.guilds.fetch(fb.guildId).catch(() => null);
+    serverField = g ? `**${g.name}**\n\`${fb.guildId}\`` : `\`${fb.guildId}\``;
+  }
   const embed = vEmbed(STATUS_COLORS[(fb.status as StatusValue)] ?? Colors.Info)
     .setTitle(`${cat} • ${fb.subject}`)
     .setDescription(fb.message.slice(0, 3500))
     .addFields(
       { name: 'Von', value: `<@${fb.userId}> (\`${fb.userId}\`)`, inline: true },
+      { name: 'Server', value: serverField, inline: true },
       { name: 'Status', value: `\`${fb.status}\``, inline: true },
       { name: 'Erstellt', value: fmtDate(fb.createdAt), inline: true },
       { name: 'ID', value: `\`${fb.id}\``, inline: false },
@@ -203,7 +238,7 @@ async function handleStatus(interaction: ChatInputCommandInteraction): Promise<v
   await interaction.deferReply({ ephemeral: true });
   const id = interaction.options.getString('id', true).trim();
   const wert = interaction.options.getString('wert', true) as StatusValue;
-  const fb = await findByPrefix(interaction.guildId!, id);
+  const fb = await findByPrefix(interaction, id);
   if (!fb) {
     await interaction.editReply({ content: `Kein Feedback mit ID \`${id}\` gefunden.` });
     return;
@@ -222,7 +257,7 @@ async function handleNotiz(interaction: ChatInputCommandInteraction): Promise<vo
   await interaction.deferReply({ ephemeral: true });
   const id = interaction.options.getString('id', true).trim();
   const text = interaction.options.getString('text', true).trim();
-  const fb = await findByPrefix(interaction.guildId!, id);
+  const fb = await findByPrefix(interaction, id);
   if (!fb) {
     await interaction.editReply({ content: `Kein Feedback mit ID \`${id}\` gefunden.` });
     return;
