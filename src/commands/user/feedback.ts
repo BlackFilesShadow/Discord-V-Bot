@@ -153,13 +153,26 @@ export async function handleFeedbackModal(modal: ModalSubmitInteraction): Promis
     if (channelId) {
       try {
         const ch = await modal.client.channels.fetch(channelId).catch(() => null);
+        let serverField = 'DM';
+        if (modal.guildId) {
+          let gName = modal.guild?.name;
+          if (!gName) {
+            try {
+              const g = await modal.client.guilds.fetch(modal.guildId).catch(() => null);
+              gName = g?.name;
+            } catch { /* */ }
+          }
+          serverField = gName
+            ? `**${gName}**\n\`${modal.guildId}\``
+            : `\`${modal.guildId}\``;
+        }
         if (ch && ch.isTextBased()) {
           const embed = vEmbed(colorOf[category])
             .setTitle(`${labelDe[category]} • ${subject}`)
             .setDescription(message)
             .addFields(
               { name: 'Von', value: `<@${modal.user.id}> (\`${modal.user.id}\`)`, inline: true },
-              { name: 'Server', value: modal.guildId ? `\`${modal.guildId}\`` : 'DM', inline: true },
+              { name: 'Server', value: serverField, inline: true },
               { name: 'Status', value: '`OPEN`', inline: true },
               { name: 'ID', value: `\`${fb.id}\``, inline: false },
             )
