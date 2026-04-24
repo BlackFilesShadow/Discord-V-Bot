@@ -255,15 +255,45 @@ export async function handleTicketDm(msg: Message): Promise<boolean> {
       content: `${header}\n${body}`,
       allowedMentions: { parse: [] },
     });
-    // Bestaetigung an Sender (kurz, kein Spam)
+    // Bestaetigung an Sender: Reaction + klare Ticket-Referenz (besonders wichtig
+    // wenn der Owner mehrere offene Tickets hat und wissen muss, an welches die
+    // letzte Nachricht ging).
     try { await msg.react('📨'); } catch { /* DM-React kann fehlschlagen */ }
-  } catch (e) {
-    logger.warn(`Ticket #${ticket.ticketNumber}: Relay-DM an ${targetId} fehlgeschlagen`, { e: String(e) });
     try {
       await msg.reply({
-        content: `⚠️ Konnte Nachricht nicht zustellen (DM blockiert?). Ticket bleibt offen.`,
+        content: `↳ weitergeleitet · Ticket #${ticket.ticketNumber}`,
+        allowedMentions: { parse: [] },
+      });
+    } catch { /* DM-Reply optional */ }
+  } catch (e) {
+    logger.warn(`Ticket #${ticket.ticketNumber}: Relay-DM an ${targetId} fehlgeschlagen`, { e: String(e) });
+    // Sender informieren
+    try {
+      await msg.reply({
+        content: `⚠️ Konnte Nachricht nicht zustellen (Empfaenger hat DMs blockiert?). Ticket #${ticket.ticketNumber} bleibt offen.`,
+        allowedMentions: { parse: [] },
       });
     } catch { /* ignore */ }
+    // Wenn der USER schreibt und seine Nachricht den Owner nicht erreicht,
+    // bekommt der Owner zumindest eine Audit-Spur. Wenn der OWNER schreibt
+    // und der User DMs blockiert hat, bekommt der Owner zusaetzlich eine
+    // ausdrueckliche Notiz (damit er nicht denkt, die Antwort ging raus).
+    if (fromRole === 'OWNER') {
+      try {
+        const owner = await msg.client.users.fetch(ticket.ownerDiscordId);
+        await owner.send({
+          content:
+            `⚠️ Ticket #${ticket.ticketNumber}: Deine Antwort konnte ${ticket.username} ` +
+            `nicht erreichen (DMs blockiert / Bot geblockt). Ticket bleibt offen.`,
+          allowedMentions: { parse: [] },
+        });
+      } catch { /* ignore */ }
+    }
+    logAudit('TICKET_RELAY_FAILED', 'TICKET', {
+      ticketNumber: ticket.ticketNumber,
+      fromRole,
+      targetId,
+    });
   }
   return true;
 }

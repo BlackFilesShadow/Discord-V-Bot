@@ -1,4 +1,4 @@
-import {
+ import {
   SlashCommandBuilder,
   ChatInputCommandInteraction,
   EmbedBuilder,
@@ -28,16 +28,17 @@ const helpCommand: Command = {
         .setName('category')
         .setDescription('Direkt zu einer Kategorie springen')
         .setRequired(false)
-        .addChoices(
-          { name: 'Übersicht', value: 'overview' },
-          { name: 'Registrierung', value: 'registration' },
-          { name: 'Upload & Download', value: 'upload' },
-          { name: 'Pakete', value: 'packages' },
-          { name: 'Giveaway', value: 'giveaway' },
-          { name: 'Level & XP', value: 'level' },
-          { name: 'Umfragen', value: 'polls' },
-          { name: 'Moderation', value: 'moderation' },
-        )
+            .addChoices(
+              { name: 'Übersicht', value: 'overview' },
+              { name: 'Registrierung', value: 'registration' },
+              { name: 'Upload & Download', value: 'upload' },
+              { name: 'Pakete', value: 'packages' },
+              { name: 'Support', value: 'support' },
+              { name: 'Giveaway', value: 'giveaway' },
+              { name: 'Level & XP', value: 'level' },
+              { name: 'Umfragen', value: 'polls' },
+              { name: 'Moderation', value: 'moderation' }
+            )
     ),
 
   execute: async (interaction: ChatInputCommandInteraction) => {
@@ -149,10 +150,11 @@ function buildPages(isAdmin: boolean, isDev: boolean): HelpPage[] {
           { name: '📝 Registrierung', value: '`Seite 2`', inline: true },
           { name: '📤 Upload & Download', value: '`Seite 3`', inline: true },
           { name: '📦 Pakete', value: '`Seite 4`', inline: true },
-          { name: '🎉 Giveaway', value: '`Seite 5`', inline: true },
-          { name: '⭐ Level & XP', value: '`Seite 6`', inline: true },
-          { name: '📊 Umfragen', value: '`Seite 7`', inline: true },
-          { name: '🛡️ Moderation', value: '`Seite 8`', inline: true },
+          { name: '🎟️ Support', value: '`Seite 5`', inline: true },
+          { name: '🎉 Giveaway', value: '`Seite 6`', inline: true },
+          { name: '⭐ Level & XP', value: '`Seite 7`', inline: true },
+          { name: '📊 Umfragen', value: '`Seite 8`', inline: true },
+          { name: '🛡️ Moderation', value: '`Seite 9`', inline: true },
           { name: '🔗 Feeds', value: '`/feed`', inline: true },
           { name: '🛠️ Auto-Rollen', value: '`/autorole`', inline: true },
         ],
@@ -192,6 +194,22 @@ function buildPages(isAdmin: boolean, isDev: boolean): HelpPage[] {
       }),
     },
     // ── Seite 4: Pakete ──
+        // ── Seite 5: Support ──
+        {
+          id: 'support',
+          embed: createBotEmbed({
+            title: '🎟️  Support & Tickets',
+            description: '> Kontaktiere den Owner direkt per Ticket-System. Alle Anfragen werden archiviert und sind für dich einsehbar.\n\n' + Brand.divider,
+            color: Colors.Info,
+            fields: [
+              { name: '`/ticket open <betreff> <nachricht>`', value: '┃ Erstelle ein neues Support-Ticket. Der Owner wird per DM benachrichtigt.' },
+              { name: '`/ticket close`', value: '┃ Schließe dein aktuelles Ticket. Es wird archiviert und bleibt einsehbar.' },
+              { name: '`/ticket status`', value: '┃ Zeigt eine Liste deiner letzten Tickets (inkl. Status und Betreff).' },
+            ],
+            footer: `Seite 5 ${Brand.dot} Support ${Brand.dot} ${Brand.footerText}`,
+            timestamp: true,
+          }),
+        },
     {
       id: 'packages',
       embed: createBotEmbed({
@@ -210,6 +228,7 @@ function buildPages(isAdmin: boolean, isDev: boolean): HelpPage[] {
       }),
     },
     // ── Seite 5: Giveaway ──
+      // ── Seite 6: Giveaway ──
     {
       id: 'giveaway',
       embed: createBotEmbed({
@@ -222,11 +241,12 @@ function buildPages(isAdmin: boolean, isDev: boolean): HelpPage[] {
           { name: '`/giveaway info <id>`', value: '┃ Infos zu einem Giveaway anzeigen.' },
           { name: '`/giveaway end <id>`', value: '┃ Giveaway vorzeitig beenden.' },
         ],
-        footer: `Seite 5 ${Brand.dot} Giveaway ${Brand.dot} ${Brand.footerText}`,
+        footer: `Seite 6 ${Brand.dot} Giveaway ${Brand.dot} ${Brand.footerText}`,
         timestamp: true,
       }),
     },
     // ── Seite 6: Level & XP ──
+      // ── Seite 7: Level & XP ──
     {
       id: 'level',
       embed: createBotEmbed({
@@ -243,11 +263,12 @@ function buildPages(isAdmin: boolean, isDev: boolean): HelpPage[] {
           { name: '`/xp-config max-level` / `max-rolle`', value: '┃ *(Admin)* Endlevel + Belohnungsrolle festlegen.' },
           { name: '`/xp-config levelrole`', value: '┃ *(Admin)* Rolle für ein bestimmtes Level vergeben.' },
         ],
-        footer: `Seite 6 ${Brand.dot} Level & XP ${Brand.dot} ${Brand.footerText}`,
+        footer: `Seite 7 ${Brand.dot} Level & XP ${Brand.dot} ${Brand.footerText}`,
         timestamp: true,
       }),
     },
     // ── Seite 7: Umfragen ──
+      // ── Seite 8: Umfragen ──
     {
       id: 'polls',
       embed: createBotEmbed({
@@ -260,11 +281,12 @@ function buildPages(isAdmin: boolean, isDev: boolean): HelpPage[] {
           { name: '`/poll ergebnis <id>`', value: '┃ Aktuelle Ergebnisse anzeigen.' },
           { name: '`/poll beenden <id>`', value: '┃ Umfrage vorzeitig beenden.' },
         ],
-        footer: `Seite 7 ${Brand.dot} Umfragen ${Brand.dot} ${Brand.footerText}`,
+        footer: `Seite 8 ${Brand.dot} Umfragen ${Brand.dot} ${Brand.footerText}`,
         timestamp: true,
       }),
     },
     // ── Seite 8: Moderation ──
+      // ── Seite 9: Moderation ──
     {
       id: 'moderation',
       embed: createBotEmbed({
@@ -278,7 +300,7 @@ function buildPages(isAdmin: boolean, isDev: boolean): HelpPage[] {
           { name: '`/warn <user> <grund>`', value: '┃ Nutzer verwarnen.' },
           { name: '`/appeal <case-id> <begründung>`', value: '┃ Beschwerde einreichen.' },
         ],
-        footer: `Seite 8 ${Brand.dot} Moderation ${Brand.dot} ${Brand.footerText}`,
+        footer: `Seite 9 ${Brand.dot} Moderation ${Brand.dot} ${Brand.footerText}`,
         timestamp: true,
       }),
     },

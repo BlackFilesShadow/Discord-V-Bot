@@ -13,7 +13,7 @@
 // 12. Discord OAuth2-Organisation
 
 generator client {
-  provider = "prisma-client-js"
+  provider      = "prisma-client-js"
   binaryTargets = ["native", "linux-musl", "debian-openssl-3.0.x"]
 }
 
@@ -27,44 +27,44 @@ datasource db {
 // ============================================================
 
 model User {
-  id            String   @id @default(uuid()) // Kryptografisch sichere GUID (UUIDv4)
-  discordId     String   @unique
-  username      String
-  discriminator String   @default("")
-  email         String?
-  role          UserRole @default(USER)
-  status        UserStatus @default(ACTIVE)
-  isManufacturer Boolean @default(false)
+  id                     String     @id @default(uuid()) // Kryptografisch sichere GUID (UUIDv4)
+  discordId              String     @unique
+  username               String
+  discriminator          String     @default("")
+  email                  String?
+  role                   UserRole   @default(USER)
+  status                 UserStatus @default(ACTIVE)
+  isManufacturer         Boolean    @default(false)
   manufacturerApprovedAt DateTime?
   manufacturerApprovedBy String?
-  createdAt     DateTime @default(now())
-  updatedAt     DateTime @updatedAt
+  createdAt              DateTime   @default(now())
+  updatedAt              DateTime   @updatedAt
 
   // Relations
-  packages        Package[]
-  uploads         Upload[]
-  downloads       Download[]
-  moderationCases ModerationCase[]    @relation("TargetUser")
-  moderationActions ModerationCase[]  @relation("ModeratorUser")
-  appeals         Appeal[]
-  giveawayEntries GiveawayEntry[]
-  giveawaysCreated Giveaway[]
-  xpRecords       XpRecord[]
-  levelData       LevelData?
-  pollVotes       PollVote[]
-  auditLogs       AuditLog[]         @relation("AuditUser")
-  auditActions    AuditLog[]         @relation("AuditActor")
-  sessions        Session[]
-  oauthTokens     OAuthToken[]
-  twoFactorAuth   TwoFactorAuth?
+  packages            Package[]
+  uploads             Upload[]
+  downloads           Download[]
+  moderationCases     ModerationCase[]     @relation("TargetUser")
+  moderationActions   ModerationCase[]     @relation("ModeratorUser")
+  appeals             Appeal[]
+  giveawayEntries     GiveawayEntry[]
+  giveawaysCreated    Giveaway[]
+  xpRecords           XpRecord[]
+  levelData           LevelData?
+  pollVotes           PollVote[]
+  auditLogs           AuditLog[]           @relation("AuditUser")
+  auditActions        AuditLog[]           @relation("AuditActor")
+  sessions            Session[]
+  oauthTokens         OAuthToken[]
+  twoFactorAuth       TwoFactorAuth?
   manufacturerRequest ManufacturerRequest?
-  oneTimePasswords OneTimePassword[]
-  roleAssignments UserRoleAssignment[]
-  inviteTracking  InviteTracking[]
-  feedSubscriptions FeedSubscription[]
-  gdprConsent     GdprConsent?
-  securityEvents  SecurityEvent[]    @relation("SecurityUser")
-  apiKeys         ApiKey[]
+  oneTimePasswords    OneTimePassword[]
+  roleAssignments     UserRoleAssignment[]
+  inviteTracking      InviteTracking[]
+  feedSubscriptions   FeedSubscription[]
+  gdprConsent         GdprConsent?
+  securityEvents      SecurityEvent[]      @relation("SecurityUser")
+  apiKeys             ApiKey[]
 
   @@index([discordId])
   @@index([role])
@@ -92,16 +92,16 @@ enum UserStatus {
 
 // Hersteller-Anfragen (Admin per PN)
 model ManufacturerRequest {
-  id          String   @id @default(uuid())
-  userId      String   @unique
-  user        User     @relation(fields: [userId], references: [id], onDelete: Cascade)
-  status      RequestStatus @default(PENDING)
-  reason      String?
-  adminNote   String?
-  reviewedBy  String?
-  reviewedAt  DateTime?
-  createdAt   DateTime @default(now())
-  updatedAt   DateTime @updatedAt
+  id         String        @id @default(uuid())
+  userId     String        @unique
+  user       User          @relation(fields: [userId], references: [id], onDelete: Cascade)
+  status     RequestStatus @default(PENDING)
+  reason     String?
+  adminNote  String?
+  reviewedBy String?
+  reviewedAt DateTime?
+  createdAt  DateTime      @default(now())
+  updatedAt  DateTime      @updatedAt
 
   @@index([status])
 }
@@ -114,15 +114,15 @@ enum RequestStatus {
 
 // Einmal-Passwörter (hochkomplex, zeitlich limitiert, GUID-gebunden)
 model OneTimePassword {
-  id          String   @id @default(uuid())
-  userId      String
-  user        User     @relation(fields: [userId], references: [id], onDelete: Cascade)
-  passwordHash String  // Argon2 Hash
-  expiresAt   DateTime
-  usedAt      DateTime?
-  isUsed      Boolean  @default(false)
-  isRevoked   Boolean  @default(false)
-  createdAt   DateTime @default(now())
+  id           String    @id @default(uuid())
+  userId       String
+  user         User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  passwordHash String // Argon2 Hash
+  expiresAt    DateTime
+  usedAt       DateTime?
+  isUsed       Boolean   @default(false)
+  isRevoked    Boolean   @default(false)
+  createdAt    DateTime  @default(now())
 
   @@index([userId])
   @@index([expiresAt])
@@ -134,25 +134,25 @@ model OneTimePassword {
 
 // Pakete (GUID-gebunden, frei benennbar)
 model Package {
-  id            String   @id @default(uuid())
+  id            String        @id @default(uuid())
   userId        String
-  user          User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  user          User          @relation(fields: [userId], references: [id], onDelete: Cascade)
   name          String
   description   String?
   status        PackageStatus @default(ACTIVE)
-  isDeleted     Boolean  @default(false) // Soft-Delete
+  isDeleted     Boolean       @default(false) // Soft-Delete
   deletedAt     DateTime?
   deletedBy     String?
-  totalSize     BigInt   @default(0)
-  fileCount     Int      @default(0)
-  downloadCount Int      @default(0)
-  createdAt     DateTime @default(now())
-  updatedAt     DateTime @updatedAt
+  totalSize     BigInt        @default(0)
+  fileCount     Int           @default(0)
+  downloadCount Int           @default(0)
+  createdAt     DateTime      @default(now())
+  updatedAt     DateTime      @updatedAt
 
   // Relations
-  files         Upload[]
-  downloads     Download[]
-  validations   ValidationResult[]
+  files       Upload[]
+  downloads   Download[]
+  validations ValidationResult[]
 
   @@unique([userId, name]) // Keine Namenskonflikte pro GUID-Bereich
   @@index([userId])
@@ -170,28 +170,28 @@ enum PackageStatus {
 
 // Einzelne Dateien (bis 2 GB, Chunked-Upload)
 model Upload {
-  id              String   @id @default(uuid())
-  userId          String
-  user            User     @relation(fields: [userId], references: [id], onDelete: Cascade)
-  packageId       String
-  package         Package  @relation(fields: [packageId], references: [id], onDelete: Cascade)
-  fileName        String
-  originalName    String
-  filePath        String
-  fileSize        BigInt
-  mimeType        String
-  fileHash        String   // SHA-256 Integrity Hash
-  fileType        FileType
-  isValid         Boolean  @default(false)
+  id               String           @id @default(uuid())
+  userId           String
+  user             User             @relation(fields: [userId], references: [id], onDelete: Cascade)
+  packageId        String
+  package          Package          @relation(fields: [packageId], references: [id], onDelete: Cascade)
+  fileName         String
+  originalName     String
+  filePath         String
+  fileSize         BigInt
+  mimeType         String
+  fileHash         String // SHA-256 Integrity Hash
+  fileType         FileType
+  isValid          Boolean          @default(false)
   validationStatus ValidationStatus @default(PENDING)
-  isQuarantined   Boolean  @default(false)
+  isQuarantined    Boolean          @default(false)
   quarantineReason String?
-  isDeleted       Boolean  @default(false)
-  deletedAt       DateTime?
-  chunkCount      Int      @default(1)
-  isChunked       Boolean  @default(false)
-  createdAt       DateTime @default(now())
-  updatedAt       DateTime @updatedAt
+  isDeleted        Boolean          @default(false)
+  deletedAt        DateTime?
+  chunkCount       Int              @default(1)
+  isChunked        Boolean          @default(false)
+  createdAt        DateTime         @default(now())
+  updatedAt        DateTime         @updatedAt
 
   // Relations
   validations     ValidationResult[]
@@ -226,10 +226,10 @@ model ValidationResult {
   packageId   String?
   package     Package? @relation(fields: [packageId], references: [id], onDelete: Cascade)
   isValid     Boolean
-  errors      Json?    // Detaillierte Fehlerliste
-  warnings    Json?    // Warnungen
-  suggestions Json?    // Vorschläge
-  validatedBy String?  // "system" oder Admin-GUID
+  errors      Json? // Detaillierte Fehlerliste
+  warnings    Json? // Warnungen
+  suggestions Json? // Vorschläge
+  validatedBy String? // "system" oder Admin-GUID
   createdAt   DateTime @default(now())
 
   @@index([uploadId])
@@ -238,17 +238,17 @@ model ValidationResult {
 
 // Download-Tracking
 model Download {
-  id          String   @id @default(uuid())
-  userId      String?
-  user        User?    @relation(fields: [userId], references: [id], onDelete: SetNull)
-  packageId   String?
-  package     Package? @relation(fields: [packageId], references: [id], onDelete: SetNull)
-  uploadId    String?
-  upload      Upload?  @relation(fields: [uploadId], references: [id], onDelete: SetNull)
+  id           String       @id @default(uuid())
+  userId       String?
+  user         User?        @relation(fields: [userId], references: [id], onDelete: SetNull)
+  packageId    String?
+  package      Package?     @relation(fields: [packageId], references: [id], onDelete: SetNull)
+  uploadId     String?
+  upload       Upload?      @relation(fields: [uploadId], references: [id], onDelete: SetNull)
   downloadType DownloadType
-  ipAddress   String?
-  userAgent   String?
-  createdAt   DateTime @default(now())
+  ipAddress    String?
+  userAgent    String?
+  createdAt    DateTime     @default(now())
 
   @@index([userId])
   @@index([packageId])
@@ -268,27 +268,27 @@ enum DownloadType {
 
 // Moderationsfall (Kick, Ban, Mute, Warn, Case-Management)
 model ModerationCase {
-  id            String   @id @default(uuid())
-  caseNumber    Int      @unique @default(autoincrement())
-  guildId       String?  // Discord-Guild-ID (für Guild-Trennung; nullable für Legacy-Records)
-  targetUserId  String
-  targetUser    User     @relation("TargetUser", fields: [targetUserId], references: [id], onDelete: Cascade)
-  moderatorId   String
-  moderator     User     @relation("ModeratorUser", fields: [moderatorId], references: [id], onDelete: Cascade)
-  action        ModerationAction
-  reason        String
-  details       String?
-  duration      Int?     // Dauer in Minuten (für Mute/Ban)
-  expiresAt     DateTime?
-  escalationLevel Int    @default(0)
-  isActive      Boolean  @default(true)
-  revokedAt     DateTime?
-  revokedBy     String?
-  createdAt     DateTime @default(now())
-  updatedAt     DateTime @updatedAt
+  id              String           @id @default(uuid())
+  caseNumber      Int              @unique @default(autoincrement())
+  guildId         String? // Discord-Guild-ID (für Guild-Trennung; nullable für Legacy-Records)
+  targetUserId    String
+  targetUser      User             @relation("TargetUser", fields: [targetUserId], references: [id], onDelete: Cascade)
+  moderatorId     String
+  moderator       User             @relation("ModeratorUser", fields: [moderatorId], references: [id], onDelete: Cascade)
+  action          ModerationAction
+  reason          String
+  details         String?
+  duration        Int? // Dauer in Minuten (für Mute/Ban)
+  expiresAt       DateTime?
+  escalationLevel Int              @default(0)
+  isActive        Boolean          @default(true)
+  revokedAt       DateTime?
+  revokedBy       String?
+  createdAt       DateTime         @default(now())
+  updatedAt       DateTime         @updatedAt
 
   // Relations
-  appeals       Appeal[]
+  appeals Appeal[]
 
   @@index([targetUserId])
   @@index([moderatorId])
@@ -312,18 +312,18 @@ enum ModerationAction {
 
 // Appeal-System
 model Appeal {
-  id            String   @id @default(uuid())
-  caseId        String
-  case          ModerationCase @relation(fields: [caseId], references: [id], onDelete: Cascade)
-  userId        String
-  user          User     @relation(fields: [userId], references: [id], onDelete: Cascade)
-  reason        String
-  status        AppealStatus @default(PENDING)
-  reviewedBy    String?
-  reviewNote    String?
-  reviewedAt    DateTime?
-  createdAt     DateTime @default(now())
-  updatedAt     DateTime @updatedAt
+  id         String         @id @default(uuid())
+  caseId     String
+  case       ModerationCase @relation(fields: [caseId], references: [id], onDelete: Cascade)
+  userId     String
+  user       User           @relation(fields: [userId], references: [id], onDelete: Cascade)
+  reason     String
+  status     AppealStatus   @default(PENDING)
+  reviewedBy String?
+  reviewNote String?
+  reviewedAt DateTime?
+  createdAt  DateTime       @default(now())
+  updatedAt  DateTime       @updatedAt
 
   @@index([caseId])
   @@index([userId])
@@ -339,16 +339,16 @@ enum AppealStatus {
 
 // Auto-Mod Filter
 model AutoModFilter {
-  id          String   @id @default(uuid())
-  pattern     String   // Regex oder Keyword
-  filterType  FilterType
-  action      ModerationAction @default(FILTER)
-  severity    Int      @default(1)
-  isActive    Boolean  @default(true)
-  channelIds  Json?    // Optionale Channel-Beschränkung
-  createdBy   String
-  createdAt   DateTime @default(now())
-  updatedAt   DateTime @updatedAt
+  id         String           @id @default(uuid())
+  pattern    String // Regex oder Keyword
+  filterType FilterType
+  action     ModerationAction @default(FILTER)
+  severity   Int              @default(1)
+  isActive   Boolean          @default(true)
+  channelIds Json? // Optionale Channel-Beschränkung
+  createdBy  String
+  createdAt  DateTime         @default(now())
+  updatedAt  DateTime         @updatedAt
 
   @@index([filterType])
   @@index([isActive])
@@ -368,31 +368,31 @@ enum FilterType {
 
 // Invite-Tracking
 model InviteTracking {
-  id          String   @id @default(uuid())
-  inviteCode  String   @unique
-  inviterId   String
-  inviter     User     @relation(fields: [inviterId], references: [id], onDelete: Cascade)
-  usesCount   Int      @default(0)
-  maxUses     Int?
-  expiresAt   DateTime?
-  channelId   String?
-  createdAt   DateTime @default(now())
+  id         String    @id @default(uuid())
+  inviteCode String    @unique
+  inviterId  String
+  inviter    User      @relation(fields: [inviterId], references: [id], onDelete: Cascade)
+  usesCount  Int       @default(0)
+  maxUses    Int?
+  expiresAt  DateTime?
+  channelId  String?
+  createdAt  DateTime  @default(now())
 
   @@index([inviterId])
 }
 
 // AI-Analyse (Sentiment, Toxicity)
 model AiAnalysis {
-  id            String   @id @default(uuid())
-  messageId     String
-  channelId     String
-  userId        String
-  analysisType  AiAnalysisType
-  score         Float
-  label         String?
-  details       Json?
-  actionTaken   String?
-  createdAt     DateTime @default(now())
+  id           String         @id @default(uuid())
+  messageId    String
+  channelId    String
+  userId       String
+  analysisType AiAnalysisType
+  score        Float
+  label        String?
+  details      Json?
+  actionTaken  String?
+  createdAt    DateTime       @default(now())
 
   @@index([userId])
   @@index([analysisType])
@@ -413,27 +413,27 @@ enum AiAnalysisType {
 // ============================================================
 
 model Giveaway {
-  id            String   @id @default(uuid())
-  creatorId     String
-  creator       User     @relation(fields: [creatorId], references: [id], onDelete: Cascade)
-  channelId     String
-  messageId     String?  // Embed-Nachricht ID
-  prize         String   // Frei wählbarer Item-/Gegenstandsname
-  description   String?
-  duration      Int      // Dauer in Sekunden
-  endsAt        DateTime
-  winnerId      String?
-  winnerCount   Int      @default(1)
-  status        GiveawayStatus @default(ACTIVE)
-  minRole       String?  // Mindestrolle
-  blacklistRoles Json?   // Blacklisted Rollen
-  customEmoji   String?  // Custom-Emoji für Teilnahme
-  notifyRoleId  String?  // Rolle die bei Beendigung gepingt wird
-  createdAt     DateTime @default(now())
-  updatedAt     DateTime @updatedAt
+  id             String         @id @default(uuid())
+  creatorId      String
+  creator        User           @relation(fields: [creatorId], references: [id], onDelete: Cascade)
+  channelId      String
+  messageId      String? // Embed-Nachricht ID
+  prize          String // Frei wählbarer Item-/Gegenstandsname
+  description    String?
+  duration       Int // Dauer in Sekunden
+  endsAt         DateTime
+  winnerId       String?
+  winnerCount    Int            @default(1)
+  status         GiveawayStatus @default(ACTIVE)
+  minRole        String? // Mindestrolle
+  blacklistRoles Json? // Blacklisted Rollen
+  customEmoji    String? // Custom-Emoji für Teilnahme
+  notifyRoleId   String? // Rolle die bei Beendigung gepingt wird
+  createdAt      DateTime       @default(now())
+  updatedAt      DateTime       @updatedAt
 
   // Relations
-  entries       GiveawayEntry[]
+  entries GiveawayEntry[]
 
   @@index([status])
   @@index([endsAt])
@@ -448,13 +448,13 @@ enum GiveawayStatus {
 }
 
 model GiveawayEntry {
-  id          String   @id @default(uuid())
-  giveawayId  String
-  giveaway    Giveaway @relation(fields: [giveawayId], references: [id], onDelete: Cascade)
-  userId      String
-  user        User     @relation(fields: [userId], references: [id], onDelete: Cascade)
-  isWinner    Boolean  @default(false)
-  enteredAt   DateTime @default(now())
+  id         String   @id @default(uuid())
+  giveawayId String
+  giveaway   Giveaway @relation(fields: [giveawayId], references: [id], onDelete: Cascade)
+  userId     String
+  user       User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  isWinner   Boolean  @default(false)
+  enteredAt  DateTime @default(now())
 
   @@unique([giveawayId, userId]) // Keine Mehrfachteilnahme
   @@index([giveawayId])
@@ -466,16 +466,16 @@ model GiveawayEntry {
 // ============================================================
 
 model LevelData {
-  id          String   @id @default(uuid())
-  userId      String   @unique
-  user        User     @relation(fields: [userId], references: [id], onDelete: Cascade)
-  xp          BigInt   @default(0)
-  level       Int      @default(0)
-  totalMessages Int    @default(0)
-  voiceMinutes Int     @default(0)
-  lastXpGain  DateTime?
-  createdAt   DateTime @default(now())
-  updatedAt   DateTime @updatedAt
+  id            String    @id @default(uuid())
+  userId        String    @unique
+  user          User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  xp            BigInt    @default(0)
+  level         Int       @default(0)
+  totalMessages Int       @default(0)
+  voiceMinutes  Int       @default(0)
+  lastXpGain    DateTime?
+  createdAt     DateTime  @default(now())
+  updatedAt     DateTime  @updatedAt
 
   @@index([level])
   @@index([xp])
@@ -515,28 +515,28 @@ model XpConfig {
   voiceXpPerMinute  Int      @default(5)
   eventXpBonus      Int      @default(50)
   xpCooldownSeconds Int      @default(60) // Anti-Spam
-  levelUpRoleIds    Json?    // {level: roleId} Mapping
+  levelUpRoleIds    Json? // {level: roleId} Mapping
   levelMultiplier   Float    @default(1.0)
   isActive          Boolean  @default(true)
   // XP nur an User mit einer dieser Rollen vergeben (leer = alle)
-  allowedRoleIds    Json?    // string[] mit Discord-Rollen-IDs
+  allowedRoleIds    Json? // string[] mit Discord-Rollen-IDs
   // XP nur in diesen Kanälen vergeben (leer = alle Kanäle)
-  allowedChannelIds Json?    // string[] mit Discord-Channel-IDs
+  allowedChannelIds Json? // string[] mit Discord-Channel-IDs
   // Max-Level (Endstufe) und Belohnungsrolle bei Erreichen
   maxLevel          Int      @default(20)
-  maxLevelRoleId    String?  // Discord-Rollen-ID, optional
+  maxLevelRoleId    String? // Discord-Rollen-ID, optional
   createdAt         DateTime @default(now())
   updatedAt         DateTime @updatedAt
 }
 
 // Level-Belohnungen
 model LevelReward {
-  id          String   @id @default(uuid())
-  level       Int      @unique
-  roleId      String?  // Discord Rolle
-  reward      String?  // Beschreibung der Belohnung
-  isActive    Boolean  @default(true)
-  createdAt   DateTime @default(now())
+  id        String   @id @default(uuid())
+  level     Int      @unique
+  roleId    String? // Discord Rolle
+  reward    String? // Beschreibung der Belohnung
+  isActive  Boolean  @default(true)
+  createdAt DateTime @default(now())
 
   @@index([level])
 }
@@ -544,9 +544,9 @@ model LevelReward {
 // Server-spezifische Levelrollen
 model LevelRole {
   id        String   @id @default(uuid())
-  guildId   String  // Discord Server ID
+  guildId   String // Discord Server ID
   level     Int
-  roleId    String  // Discord Rollen-ID
+  roleId    String // Discord Rollen-ID
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
@@ -558,10 +558,10 @@ model LevelRole {
 // Server-spezifische Level-Up-Nachrichten
 model LevelUpMessage {
   id        String   @id @default(uuid())
-  guildId   String  // Discord Server ID
+  guildId   String // Discord Server ID
   level     Int
-  message   String  // Nachricht (kann Platzhalter enthalten)
-  isActive  Boolean @default(true)
+  message   String // Nachricht (kann Platzhalter enthalten)
+  isActive  Boolean  @default(true)
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
@@ -574,19 +574,19 @@ model LevelUpMessage {
 // ============================================================
 
 model AutoRole {
-  id          String   @id @default(uuid())
-  roleId      String
-  roleName    String
-  triggerType AutoRoleTrigger
-  triggerValue String?  // z.B. Emoji, Level, Event-Name
-  channelId   String?  // Für Reaction-Roles
-  messageId   String?  // Für Reaction-Roles
-  isActive    Boolean  @default(true)
-  expiresAt   DateTime? // Zeitlimitierte Rollen
+  id             String          @id @default(uuid())
+  roleId         String
+  roleName       String
+  triggerType    AutoRoleTrigger
+  triggerValue   String? // z.B. Emoji, Level, Event-Name
+  channelId      String? // Für Reaction-Roles
+  messageId      String? // Für Reaction-Roles
+  isActive       Boolean         @default(true)
+  expiresAt      DateTime? // Zeitlimitierte Rollen
   blacklistRoles Json? // Blacklisted Rollen
   whitelistRoles Json? // Whitelist Rollen
-  createdAt   DateTime @default(now())
-  updatedAt   DateTime @updatedAt
+  createdAt      DateTime        @default(now())
+  updatedAt      DateTime        @updatedAt
 
   @@index([triggerType])
   @@index([isActive])
@@ -603,15 +603,15 @@ enum AutoRoleTrigger {
 }
 
 model UserRoleAssignment {
-  id          String   @id @default(uuid())
-  userId      String
-  user        User     @relation(fields: [userId], references: [id], onDelete: Cascade)
-  roleId      String
-  assignedBy  String   // "auto" oder Admin-GUID
-  reason      String?
-  expiresAt   DateTime?
-  isActive    Boolean  @default(true)
-  createdAt   DateTime @default(now())
+  id         String    @id @default(uuid())
+  userId     String
+  user       User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  roleId     String
+  assignedBy String // "auto" oder Admin-GUID
+  reason     String?
+  expiresAt  DateTime?
+  isActive   Boolean   @default(true)
+  createdAt  DateTime  @default(now())
 
   @@index([userId])
   @@index([roleId])
@@ -623,26 +623,26 @@ model UserRoleAssignment {
 // ============================================================
 
 model Poll {
-  id          String   @id @default(uuid())
-  creatorId   String
-  channelId   String
-  messageId   String?
-  title       String
-  description String?
-  options     Json     // Array von {id, text, emoji}
-  pollType    PollType @default(PUBLIC)
-  allowMultiple Boolean @default(false)
-  maxChoices  Int      @default(1)
-  endsAt      DateTime?
-  status      PollStatus @default(ACTIVE)
-  totalVotes  Int      @default(0)
-  results     Json?    // Ergebnisse nach Abschluss
-  notifyRoleId String?  // Rolle die bei Beendigung gepingt wird
-  createdAt   DateTime @default(now())
-  updatedAt   DateTime @updatedAt
+  id            String     @id @default(uuid())
+  creatorId     String
+  channelId     String
+  messageId     String?
+  title         String
+  description   String?
+  options       Json // Array von {id, text, emoji}
+  pollType      PollType   @default(PUBLIC)
+  allowMultiple Boolean    @default(false)
+  maxChoices    Int        @default(1)
+  endsAt        DateTime?
+  status        PollStatus @default(ACTIVE)
+  totalVotes    Int        @default(0)
+  results       Json? // Ergebnisse nach Abschluss
+  notifyRoleId  String? // Rolle die bei Beendigung gepingt wird
+  createdAt     DateTime   @default(now())
+  updatedAt     DateTime   @updatedAt
 
   // Relations
-  votes       PollVote[]
+  votes PollVote[]
 
   @@index([status])
   @@index([channelId])
@@ -661,13 +661,13 @@ enum PollStatus {
 }
 
 model PollVote {
-  id          String   @id @default(uuid())
-  pollId      String
-  poll        Poll     @relation(fields: [pollId], references: [id], onDelete: Cascade)
-  userId      String
-  user        User     @relation(fields: [userId], references: [id], onDelete: Cascade)
-  optionId    String
-  createdAt   DateTime @default(now())
+  id        String   @id @default(uuid())
+  pollId    String
+  poll      Poll     @relation(fields: [pollId], references: [id], onDelete: Cascade)
+  userId    String
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  optionId  String
+  createdAt DateTime @default(now())
 
   @@unique([pollId, userId, optionId]) // Eine Stimme pro Option pro User
   @@index([pollId])
@@ -679,16 +679,16 @@ model PollVote {
 // ============================================================
 
 model Session {
-  id          String   @id @default(uuid())
-  userId      String
-  user        User     @relation(fields: [userId], references: [id], onDelete: Cascade)
-  token       String   @unique
-  deviceInfo  String?  // Device-Bindung
-  ipAddress   String?
-  expiresAt   DateTime
-  isActive    Boolean  @default(true)
+  id           String   @id @default(uuid())
+  userId       String
+  user         User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  token        String   @unique
+  deviceInfo   String? // Device-Bindung
+  ipAddress    String?
+  expiresAt    DateTime
+  isActive     Boolean  @default(true)
   lastActivity DateTime @default(now())
-  createdAt   DateTime @default(now())
+  createdAt    DateTime @default(now())
 
   @@index([userId])
   @@index([token])
@@ -697,34 +697,34 @@ model Session {
 }
 
 model OAuthToken {
-  id              String   @id @default(uuid())
+  id              String    @id @default(uuid())
   userId          String
-  user            User     @relation(fields: [userId], references: [id], onDelete: Cascade)
-  accessTokenEnc  String?  // Optional: Access-Token nur im RAM (Sektion 12)
-  refreshTokenEnc String?  // Verschlüsselter Refresh-Token
-  tokenType       String   @default("Bearer")
+  user            User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  accessTokenEnc  String? // Optional: Access-Token nur im RAM (Sektion 12)
+  refreshTokenEnc String? // Verschlüsselter Refresh-Token
+  tokenType       String    @default("Bearer")
   scope           String
   expiresAt       DateTime
   lastRefresh     DateTime?
-  createdAt       DateTime @default(now())
-  updatedAt       DateTime @updatedAt
+  createdAt       DateTime  @default(now())
+  updatedAt       DateTime  @updatedAt
 
   @@index([userId])
   @@index([expiresAt])
 }
 
 model TwoFactorAuth {
-  id                  String   @id @default(uuid())
-  userId              String   @unique
-  user                User     @relation(fields: [userId], references: [id], onDelete: Cascade)
-  secretEnc           String?  // Verschlüsselter TOTP Secret
-  isEnabled           Boolean  @default(false)
-  backupCodes         Json?    // Verschlüsselte Backup-Codes
-  webauthnEnabled     Boolean  @default(false)
-  webauthnCredentials Json?    // Array von WebAuthn Credentials
+  id                  String    @id @default(uuid())
+  userId              String    @unique
+  user                User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  secretEnc           String? // Verschlüsselter TOTP Secret
+  isEnabled           Boolean   @default(false)
+  backupCodes         Json? // Verschlüsselte Backup-Codes
+  webauthnEnabled     Boolean   @default(false)
+  webauthnCredentials Json? // Array von WebAuthn Credentials
   verifiedAt          DateTime?
-  createdAt           DateTime @default(now())
-  updatedAt           DateTime @updatedAt
+  createdAt           DateTime  @default(now())
+  updatedAt           DateTime  @updatedAt
 }
 
 // ============================================================
@@ -732,11 +732,11 @@ model TwoFactorAuth {
 // ============================================================
 
 model AuditLog {
-  id          String   @id @default(uuid())
+  id          String        @id @default(uuid())
   actorId     String?
-  actor       User?    @relation("AuditActor", fields: [actorId], references: [id], onDelete: SetNull)
+  actor       User?         @relation("AuditActor", fields: [actorId], references: [id], onDelete: SetNull)
   targetId    String?
-  target      User?    @relation("AuditUser", fields: [targetId], references: [id], onDelete: SetNull)
+  target      User?         @relation("AuditUser", fields: [targetId], references: [id], onDelete: SetNull)
   action      String
   category    AuditCategory
   details     Json?
@@ -744,8 +744,8 @@ model AuditLog {
   userAgent   String?
   channelId   String?
   guildId     String?
-  isImmutable Boolean  @default(true) // Revisionssicher, unveränderbar
-  createdAt   DateTime @default(now())
+  isImmutable Boolean       @default(true) // Revisionssicher, unveränderbar
+  createdAt   DateTime      @default(now())
 
   @@index([actorId])
   @@index([targetId])
@@ -776,19 +776,19 @@ enum AuditCategory {
 
 // Security-Events
 model SecurityEvent {
-  id          String   @id @default(uuid())
+  id          String            @id @default(uuid())
   userId      String?
-  user        User?    @relation("SecurityUser", fields: [userId], references: [id], onDelete: SetNull)
+  user        User?             @relation("SecurityUser", fields: [userId], references: [id], onDelete: SetNull)
   eventType   SecurityEventType
   severity    SecuritySeverity
   description String
   details     Json?
   ipAddress   String?
   userAgent   String?
-  isResolved  Boolean  @default(false)
+  isResolved  Boolean           @default(false)
   resolvedBy  String?
   resolvedAt  DateTime?
-  createdAt   DateTime @default(now())
+  createdAt   DateTime          @default(now())
 
   @@index([eventType])
   @@index([severity])
@@ -823,13 +823,13 @@ enum SecuritySeverity {
 
 // IP Blacklist/Whitelist
 model IpList {
-  id          String   @id @default(uuid())
-  ipAddress   String   @unique
-  listType    ListType
-  reason      String?
-  addedBy     String
-  expiresAt   DateTime?
-  createdAt   DateTime @default(now())
+  id        String    @id @default(uuid())
+  ipAddress String    @unique
+  listType  ListType
+  reason    String?
+  addedBy   String
+  expiresAt DateTime?
+  createdAt DateTime  @default(now())
 
   @@index([listType])
   @@index([ipAddress])
@@ -845,24 +845,24 @@ enum ListType {
 // ============================================================
 
 model GdprConsent {
-  id              String   @id @default(uuid())
-  userId          String   @unique
-  user            User     @relation(fields: [userId], references: [id], onDelete: Cascade)
-  dataProcessing  Boolean  @default(false)
-  analytics       Boolean  @default(false)
-  marketing       Boolean  @default(false)
-  consentVersion  String   @default("1.0")
-  ipAddress       String?
-  consentedAt     DateTime @default(now())
-  withdrawnAt     DateTime?
-  updatedAt       DateTime @updatedAt
+  id             String    @id @default(uuid())
+  userId         String    @unique
+  user           User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  dataProcessing Boolean   @default(false)
+  analytics      Boolean   @default(false)
+  marketing      Boolean   @default(false)
+  consentVersion String    @default("1.0")
+  ipAddress      String?
+  consentedAt    DateTime  @default(now())
+  withdrawnAt    DateTime?
+  updatedAt      DateTime  @updatedAt
 
   @@index([userId])
 }
 
 // Automatische Datenlöschung (DSGVO)
 model DataDeletionRequest {
-  id          String   @id @default(uuid())
+  id          String         @id @default(uuid())
   userId      String
   discordId   String
   requestType DeletionType
@@ -870,7 +870,7 @@ model DataDeletionRequest {
   scheduledAt DateTime
   completedAt DateTime?
   details     Json?
-  createdAt   DateTime @default(now())
+  createdAt   DateTime       @default(now())
 
   @@index([status])
   @@index([scheduledAt])
@@ -895,19 +895,19 @@ enum DeletionStatus {
 // ============================================================
 
 model Feed {
-  id          String   @id @default(uuid())
+  id          String    @id @default(uuid())
   name        String
   feedType    FeedType
   url         String
-  channelId   String   // Ziel-Channel
-  interval    Int      @default(300) // Sekunden
+  channelId   String // Ziel-Channel
+  interval    Int       @default(300) // Sekunden
   lastChecked DateTime?
   lastItemId  String?
-  isActive    Boolean  @default(true)
-  filters     Json?    // Filterregeln
+  isActive    Boolean   @default(true)
+  filters     Json? // Filterregeln
   createdBy   String
-  createdAt   DateTime @default(now())
-  updatedAt   DateTime @updatedAt
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
 
   // Relations
   subscriptions FeedSubscription[]
@@ -927,13 +927,13 @@ enum FeedType {
 }
 
 model FeedSubscription {
-  id          String   @id @default(uuid())
-  feedId      String
-  feed        Feed     @relation(fields: [feedId], references: [id], onDelete: Cascade)
-  userId      String
-  user        User     @relation(fields: [userId], references: [id], onDelete: Cascade)
-  notifyDm    Boolean  @default(false)
-  createdAt   DateTime @default(now())
+  id        String   @id @default(uuid())
+  feedId    String
+  feed      Feed     @relation(fields: [feedId], references: [id], onDelete: Cascade)
+  userId    String
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  notifyDm  Boolean  @default(false)
+  createdAt DateTime @default(now())
 
   @@unique([feedId, userId])
   @@index([feedId])
@@ -961,7 +961,7 @@ model BotConfig {
 // Rate-Limiting Tracking
 model RateLimitEntry {
   id          String   @id @default(uuid())
-  identifier  String   // User-ID oder IP
+  identifier  String // User-ID oder IP
   action      String
   count       Int      @default(1)
   windowStart DateTime @default(now())
@@ -977,18 +977,18 @@ model RateLimitEntry {
 // ============================================================
 
 model ApiKey {
-  id          String       @id @default(uuid())
+  id          String    @id @default(uuid())
   userId      String
   name        String
-  keyHash     String       @unique  // SHA-256 Hash des API-Keys
-  keyPrefix   String                // Erste 8 Zeichen für Identifikation
-  permissions Json         @default("[]") // Array von erlaubten Aktionen
-  rateLimit   Int          @default(100)  // Requests pro Minute
-  isActive    Boolean      @default(true)
+  keyHash     String    @unique // SHA-256 Hash des API-Keys
+  keyPrefix   String // Erste 8 Zeichen für Identifikation
+  permissions Json      @default("[]") // Array von erlaubten Aktionen
+  rateLimit   Int       @default(100) // Requests pro Minute
+  isActive    Boolean   @default(true)
   lastUsedAt  DateTime?
   expiresAt   DateTime?
-  createdAt   DateTime     @default(now())
-  updatedAt   DateTime     @updatedAt
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
 
   user User @relation(fields: [userId], references: [id])
 
@@ -1002,28 +1002,28 @@ model ApiKey {
 // ============================================================
 
 enum TicketStatus {
-  PENDING   // Wartet auf Owner-Entscheidung
-  OPEN      // Owner hat akzeptiert, Chat aktiv
-  DENIED    // Owner hat abgelehnt
-  CLOSED    // Beendet
+  PENDING // Wartet auf Owner-Entscheidung
+  OPEN // Owner hat akzeptiert, Chat aktiv
+  DENIED // Owner hat abgelehnt
+  CLOSED // Beendet
 }
 
 model Ticket {
-  id              String        @id @default(uuid())
-  ticketNumber    Int           @unique @default(autoincrement())
-  userDiscordId   String        // Anfrage-Steller
-  username        String
-  guildId         String?       // Server, von dem die Anfrage kam
-  guildName       String?
-  subject         String
-  initialMessage  String        @db.Text
-  status          TicketStatus  @default(PENDING)
-  ownerDiscordId  String        // Empfaenger (Bot-Owner)
-  ownerNoticeMsgId String?      // Discord MessageId der DM mit Buttons (zum spaeteren Editieren)
-  createdAt       DateTime      @default(now())
-  updatedAt       DateTime      @updatedAt
-  closedAt        DateTime?
-  messages        TicketMessage[]
+  id               String          @id @default(uuid())
+  ticketNumber     Int             @unique @default(autoincrement())
+  userDiscordId    String // Anfrage-Steller
+  username         String
+  guildId          String? // Server, von dem die Anfrage kam
+  guildName        String?
+  subject          String
+  initialMessage   String          @db.Text
+  status           TicketStatus    @default(PENDING)
+  ownerDiscordId   String // Empfaenger (Bot-Owner)
+  ownerNoticeMsgId String? // Discord MessageId der DM mit Buttons (zum spaeteren Editieren)
+  createdAt        DateTime        @default(now())
+  updatedAt        DateTime        @updatedAt
+  closedAt         DateTime?
+  messages         TicketMessage[]
 
   @@index([userDiscordId])
   @@index([status])
@@ -1031,13 +1031,14 @@ model Ticket {
 }
 
 model TicketMessage {
-  id            String    @id @default(uuid())
+  id            String   @id @default(uuid())
   ticketId      String
-  ticket        Ticket    @relation(fields: [ticketId], references: [id], onDelete: Cascade)
-  fromDiscordId String    // Wer hat geschrieben
-  fromRole      String    // 'USER' | 'OWNER'
-  content       String    @db.Text
-  createdAt     DateTime  @default(now())
+  ticket        Ticket   @relation(fields: [ticketId], references: [id], onDelete: Cascade)
+  fromDiscordId String // Wer hat geschrieben
+  fromRole      String // 'USER' | 'OWNER'
+  content       String   @db.Text
+  createdAt     DateTime @default(now())
 
   @@index([ticketId])
+  @@index([createdAt])
 }

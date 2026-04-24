@@ -44,7 +44,12 @@ export async function grantEventXp(
 
   // Level-Up prüfen
   const currentXp = Number(updated.xp);
-  const newLevel = calculateLevel(currentXp);
+  // MaxLevel-Cap: nutzt erste aktive XpConfig (analog zu messageCreate-XP),
+  // damit Event-XP nicht ueber das konfigurierte Endlevel hinaus pusht.
+  const xpConfigCap = await prisma.xpConfig.findFirst({ where: { isActive: true } });
+  const maxLevel = xpConfigCap?.maxLevel ?? 20;
+  let newLevel = calculateLevel(currentXp);
+  if (newLevel > maxLevel) newLevel = maxLevel;
   let leveledUp = false;
 
   if (newLevel > updated.level) {
@@ -208,3 +213,7 @@ function calculateLevel(xp: number): number {
 function xpForLevel(level: number): number {
   return 100 * (level * level) + 50 * level;
 }
+
+// Re-Export fuer Konsumenten ausserhalb (z.B. voiceStateUpdate.ts), damit
+// alle XP-Quellen exakt dieselbe Level-Formel verwenden.
+export { calculateLevel, xpForLevel };
