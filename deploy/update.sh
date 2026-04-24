@@ -86,7 +86,7 @@ if [[ -d "$SQL_DIR" ]]; then
     info "Wende ${#SQL_FILES[@]} SQL-Skript(e) aus deploy/sql/ an..."
     for f in "${SQL_FILES[@]}"; do
       name="$(basename "$f")"
-      if docker compose exec -T postgres psql -U "${POSTGRES_USER:-discord_bot}" -d "${POSTGRES_DB:-discord_v_bot}" -v ON_ERROR_STOP=1 < "$f" >/dev/null 2>&1; then
+      if docker compose exec -T postgres psql -U "${POSTGRES_USER:-discordbot}" -d "${POSTGRES_DB:-discord_v_bot}" -v ON_ERROR_STOP=1 < "$f" >/dev/null 2>&1; then
         log "SQL angewendet: $name"
       else
         warn "SQL fehlgeschlagen: $name (siehe psql-Output)"
