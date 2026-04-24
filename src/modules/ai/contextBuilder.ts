@@ -1,4 +1,5 @@
 import type { Guild, GuildMember, User as DiscordUser, GuildBasedChannel } from 'discord.js';
+import { ChannelType } from 'discord.js';
 import prisma from '../../database/prisma';
 import { logger } from '../../utils/logger';
 import { getGuildProfile } from './guildAwareness';
@@ -92,7 +93,21 @@ export async function buildServerUserContext(opts: ServerUserContextOptions): Pr
       if (typeof cachedProfile.emojiCount === 'number') counts.push(`${cachedProfile.emojiCount} Emojis`);
       if (typeof cachedProfile.stickerCount === 'number') counts.push(`${cachedProfile.stickerCount} Sticker`);
       if (counts.length > 0) serverParts.push(`Inventar: ${counts.join(', ')}`);
-      serverParts.push(`Strukturen: ${cachedProfile.channelCount} Kanaele, ${cachedProfile.roleCount} Rollen`);
+      // Live-Aufschluesselung der Kanaele nach Typ (DB-Cache enthielt frueher
+      // die Roh-Summe inkl. Kategorien/Threads -> AI berichtete falsch).
+      const chanCounts = countChannelsByType(guild);
+      const totalReal = chanCounts.text + chanCounts.voice + chanCounts.stage + chanCounts.forum + chanCounts.announcement;
+      const chanParts: string[] = [];
+      if (chanCounts.text) chanParts.push(`${chanCounts.text} Text`);
+      if (chanCounts.voice) chanParts.push(`${chanCounts.voice} Voice`);
+      if (chanCounts.stage) chanParts.push(`${chanCounts.stage} Stage`);
+      if (chanCounts.forum) chanParts.push(`${chanCounts.forum} Forum`);
+      if (chanCounts.announcement) chanParts.push(`${chanCounts.announcement} News`);
+      if (chanCounts.category) chanParts.push(`${chanCounts.category} Kategorien`);
+      if (chanCounts.thread) chanParts.push(`${chanCounts.thread} Threads`);
+      serverParts.push(
+        `Strukturen: ${totalReal} Kanaele${chanParts.length ? ` (${chanParts.join(', ')})` : ''}, ${cachedProfile.roleCount} Rollen`,
+      );
     }
     if (channel && 'name' in channel && channel.name) {
       serverParts.push(`Kanal: #${channel.name}`);
@@ -260,3 +275,32 @@ export async function buildServerUserContext(opts: ServerUserContextOptions): Pr
     lines.join('\n'),
   ].join('\n');
 }
+
+/**
+ * Zaehlt Kanaele im Guild-Cache nach Typ. Trennt "echte" Kanaele (Text/Voice/
+ * Stage/Forum/News) von Kategorien und Threads, damit die AI keine inflationaere
+ * Gesamtsumme ausgibt (Kategorien sind fuer User unsichtbare Container).
+ */
+function countChannelsByType(guild: Guild): {
+  text: number; voice: number; category: number; thread: number;
+  stage: number; forum: number; announcement: number;
+} {
+  const out = { text: 0, voice: 0, category: 0, thread: 0, stage: 0, forum: 0, announcement: 0 };
+  for (const ch of guild.channels.cache.values()) {
+    switch (ch.type) {
+      case ChannelType.GuildText: out.text++; break;
+      case ChannelType.GuildVoice: out.voice++; break;
+      case ChannelType.GuildCategory: out.category++; break;
+      case ChannelType.GuildAnnouncement: out.announcement++; break;
+      case ChannelType.AnnouncementThread:
+      case ChannelType.PublicThread:
+      case ChannelType.PrivateThread: out.thread++; break;
+      case ChannelType.GuildStageVoice: out.stage++; break;
+      case ChannelType.GuildForum:
+      case ChannelType.GuildMedia: out.forum++; break;
+      default: break;
+    }
+  }
+  return out;
+}
+

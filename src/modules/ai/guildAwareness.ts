@@ -162,7 +162,18 @@ export async function syncGuild(guild: Guild): Promise<GuildProfileLite | null> 
       ownerId: guild.ownerId ?? null,
       ownerName,
       memberCount: guild.memberCount ?? 0,
-      channelCount: guild.channels.cache.size,
+      // "Echte" Kanaele: ohne Kategorien (Container) und ohne Threads.
+      channelCount: guild.channels.cache.filter((c) => {
+        switch (c.type) {
+          case ChannelType.GuildCategory:
+          case ChannelType.AnnouncementThread:
+          case ChannelType.PublicThread:
+          case ChannelType.PrivateThread:
+            return false;
+          default:
+            return true;
+        }
+      }).size,
       roleCount: guild.roles.cache.size,
       iconUrl: guild.iconURL() ?? null,
       preferredLocale: guild.preferredLocale ?? null,
