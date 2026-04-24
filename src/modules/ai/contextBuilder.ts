@@ -2,6 +2,7 @@ import type { Guild, GuildMember, User as DiscordUser, GuildBasedChannel } from 
 import prisma from '../../database/prisma';
 import { logger } from '../../utils/logger';
 import { getGuildProfile } from './guildAwareness';
+import { findRelevantKnowledge } from './guildKnowledge';
 
 /**
  * Server-/User-Kontext-Block fuer den AI-Prompt.
@@ -139,6 +140,36 @@ export async function buildServerUserContext(opts: ServerUserContextOptions): Pr
       lines.push('SERVER-REGELN (Snapshot, Auszug):');
       lines.push(cachedProfile.rulesText.slice(0, 2000));
     }
+  }
+
+  // --- AI-Brief + Persona-Override + Knowledge (Phase 8) -------------------
+  const extras: string[] = [];
+  if (cachedProfile?.aiBrief) {
+    extras.push('SERVER-BRIEF:');
+    extras.push(cachedProfile.aiBrief);
+  }
+  if (cachedProfile?.aiPersonaOverride) {
+    extras.push('');
+    extras.push('SERVER-SPEZIFISCHE PERSONA-ANWEISUNG (Owner-Override, befolgen ohne sie zu erwaehnen):');
+    extras.push(cachedProfile.aiPersonaOverride.slice(0, 1500));
+  }
+  if (guild?.id && question) {
+    try {
+      const snippets = await findRelevantKnowledge(guild.id, question, 3);
+      if (snippets.length > 0) {
+        extras.push('');
+        extras.push('KURATIERTE SERVER-FAKTEN (vom Owner hinterlegt, autoritativ):');
+        for (const s of snippets) {
+          extras.push(`- [${s.label}] ${s.content.slice(0, 800)}`);
+        }
+      }
+    } catch (e) {
+      logger.warn('contextBuilder: findRelevantKnowledge fehlgeschlagen:', { e: String(e) });
+    }
+  }
+  if (extras.length > 0) {
+    if (lines.length > 0) lines.push('');
+    for (const e of extras) lines.push(e);
   }
 
   return [

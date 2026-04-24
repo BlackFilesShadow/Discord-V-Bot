@@ -1066,9 +1066,33 @@ model GuildProfile {
   channelsJson  Json? // Array<{ name, type, parent? }> ohne IDs
   rulesText     String?  @db.Text // Inhalt des Rules-Channels (Topic + erste Pins)
   contentSyncedAt DateTime?
+  // Phase 8: Custom Persona-Override und AI-Brief
+  aiPersonaOverride String? @db.Text // Owner kann zusaetzlichen Persona-Hinweis setzen
+  aiBrief        String?  @db.Text // Auto-generierter Kurz-Brief des Servers
+  aiBriefAt      DateTime?
   joinedAt      DateTime @default(now())
   lastSyncedAt  DateTime @default(now())
   updatedAt     DateTime @updatedAt
 
+  knowledge     GuildKnowledge[]
+
   @@index([name])
+}
+
+// Phase 8: Owner/Admin koennen pro Guild eigene Wissens-Snippets hinterlegen,
+// die der AI bei thematisch passenden Anfragen eingespeist werden (kompakter
+// keyword-basierter Match in contextBuilder).
+model GuildKnowledge {
+  id        String   @id @default(uuid())
+  guildId   String
+  guild     GuildProfile @relation(fields: [guildId], references: [guildId], onDelete: Cascade)
+  label     String // Kurzer Titel, dient zugleich als Schluesselwort-Trigger
+  content   String   @db.Text // Faktenblock, max ~2000 Zeichen empfohlen
+  createdBy String // Discord-User-ID des Erstellers
+  isActive  Boolean  @default(true)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([guildId])
+  @@index([guildId, isActive])
 }

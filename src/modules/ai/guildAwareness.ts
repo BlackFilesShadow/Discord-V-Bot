@@ -43,6 +43,9 @@ export interface GuildProfileLite {
   channels: ChannelSnapshot[] | null;
   rulesText: string | null;
   contentSyncedAt: Date | null;
+  aiPersonaOverride: string | null;
+  aiBrief: string | null;
+  aiBriefAt: Date | null;
   lastSyncedAt: Date;
 }
 
@@ -63,6 +66,9 @@ function toLite(row: any): GuildProfileLite {
     channels: Array.isArray(row.channelsJson) ? (row.channelsJson as ChannelSnapshot[]) : null,
     rulesText: row.rulesText ?? null,
     contentSyncedAt: row.contentSyncedAt ?? null,
+    aiPersonaOverride: row.aiPersonaOverride ?? null,
+    aiBrief: row.aiBrief ?? null,
+    aiBriefAt: row.aiBriefAt ?? null,
     lastSyncedAt: row.lastSyncedAt ?? new Date(),
   };
 }
@@ -297,6 +303,13 @@ export async function syncGuildContent(guild: Guild): Promise<void> {
       });
     });
     cache.set(guild.id, { profile: toLite(row), cachedAt: Date.now() });
+    // Phase 8: deterministischen AI-Brief aktualisieren (kein LLM-Call)
+    try {
+      const { regenerateAiBrief } = await import('./guildKnowledge.js');
+      await regenerateAiBrief(guild.id);
+    } catch (e) {
+      logger.warn('regenerateAiBrief fehlgeschlagen:', { guildId: guild.id, e: String(e) });
+    }
     logger.info(`GuildAwareness: Content gesynct fuer ${guild.name} (${channels.length} Kanaele, Rules: ${rulesText ? 'ja' : 'nein'})`);
   } catch (e) {
     logger.warn('syncGuildContent fehlgeschlagen:', { guildId: guild.id, e: String(e) });
