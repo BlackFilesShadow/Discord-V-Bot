@@ -188,12 +188,12 @@ async function handleEnter(interaction: ChatInputCommandInteraction) {
   const giveawayId = interaction.options.getString('id', true);
   const result = await enterGiveaway(giveawayId, interaction.user.id);
 
-  // Event-XP für Giveaway-Teilnahme (Sektion 8: Event-XP)
-  if (result.success) {
+  // Event-XP für Giveaway-Teilnahme (Sektion 8: Event-XP, guild-getrennt)
+  if (result.success && interaction.guildId) {
     try {
       const dbUser = await prisma.user.findUnique({ where: { discordId: interaction.user.id } });
       if (dbUser) {
-        await grantEventXp(dbUser.id, 10, 'GIVEAWAY_ENTRY', giveawayId);
+        await grantEventXp(dbUser.id, interaction.guildId, 10, 'GIVEAWAY_ENTRY', giveawayId);
       }
     } catch { /* XP grant not critical */ }
   }

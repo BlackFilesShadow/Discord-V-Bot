@@ -55,6 +55,12 @@ const leaderboardCommand: Command = {
   execute: async (interaction: ChatInputCommandInteraction) => {
     await interaction.deferReply();
 
+    const guildId = interaction.guildId;
+    if (!guildId) {
+      await interaction.editReply({ content: '❌ Leaderboard nur in Servern verfügbar.' });
+      return;
+    }
+
     const sortBy = (interaction.options.getString('sortierung') || 'xp') as string;
     const page = (interaction.options.getInteger('seite') || 1);
     const perPage = 10;
@@ -84,12 +90,13 @@ const leaderboardCommand: Command = {
 
     const [entries, total] = await Promise.all([
       prisma.levelData.findMany({
+        where: { guildId },
         orderBy,
         skip,
         take: perPage,
         include: { user: true },
       }),
-      prisma.levelData.count(),
+      prisma.levelData.count({ where: { guildId } }),
     ]);
 
     const totalPages = Math.ceil(total / perPage);
@@ -125,20 +132,22 @@ const leaderboardCommand: Command = {
       return `${medal} <@${entry.user.discordId}> — ${valueStr}`;
     });
 
-    // Eigene Position – in den Promise.all-Block oben mergen waere noch optimaler,
-    // braucht aber den dbUser. Wir machen daraus zwei parallele Queries statt sequentiell.
+    // Eigene Position in DIESER Guild
     const dbUser = await prisma.user.findUnique({
       where: { discordId: interaction.user.id },
-      include: { levelData: true },
     });
 
     let ownRankStr = '';
-    if (dbUser?.levelData) {
-      // Single-Count statt N+1: zaehlt alle User mit hoeherer XP.
-      const ownRank = await prisma.levelData.count({
-        where: { xp: { gt: dbUser.levelData.xp } },
-      }) + 1;
-      ownRankStr = `\n\n📍 Dein Rang: **#${ownRank}** (Level ${dbUser.levelData.level}, ${Number(dbUser.levelData.xp).toLocaleString('de-DE')} XP)`;
+    if (dbUser) {
+      const ownLd = await prisma.levelData.findUnique({
+        where: { userId_guildId: { userId: dbUser.id, guildId } },
+      });
+      if (ownLd) {
+        const ownRank = await prisma.levelData.count({
+          where: { guildId, xp: { gt: ownLd.xp } },
+        }) + 1;
+        ownRankStr = `\n\n📍 Dein Rang: **#${ownRank}** (Level ${ownLd.level}, ${Number(ownLd.xp).toLocaleString('de-DE')} XP)`;
+      }
     }
 
     const embed = vEmbed(Colors.Gold)

@@ -418,17 +418,18 @@ const messageCreateEvent: BotEvent = {
       }
     }
 
-    // ===== SEKTION 8: XP-VERGABE =====
+    // ===== SEKTION 8: XP-VERGABE (guild-getrennt) =====
     try {
+      // Kein XP in DMs / ohne Guild-Kontext.
+      if (!msg.guildId) return;
+
       const user = await prisma.user.findUnique({
         where: { discordId: msg.author.id },
       });
 
       if (user) {
         // Guild-spezifische XP-Konfiguration (id == guildId)
-        const xpConfig = msg.guildId
-          ? await prisma.xpConfig.findUnique({ where: { id: msg.guildId } })
-          : null;
+        const xpConfig = await prisma.xpConfig.findUnique({ where: { id: msg.guildId } });
 
         // XP-System global deaktiviert?
         if (xpConfig && xpConfig.isActive === false) return;
@@ -456,7 +457,7 @@ const messageCreateEvent: BotEvent = {
         const cooldownSeconds = xpConfig?.xpCooldownSeconds || 60;
 
         const levelData = await prisma.levelData.findUnique({
-          where: { userId: user.id },
+          where: { userId_guildId: { userId: user.id, guildId: msg.guildId! } },
         });
 
         const now = new Date();
@@ -476,9 +477,10 @@ const messageCreateEvent: BotEvent = {
 
         // XP vergeben
         const updated = await prisma.levelData.upsert({
-          where: { userId: user.id },
+          where: { userId_guildId: { userId: user.id, guildId: msg.guildId! } },
           create: {
             userId: user.id,
+            guildId: msg.guildId!,
             xp: BigInt(totalXp),
             totalMessages: 1,
             lastXpGain: now,
@@ -494,6 +496,7 @@ const messageCreateEvent: BotEvent = {
         await prisma.xpRecord.create({
           data: {
             userId: user.id,
+            guildId: msg.guildId!,
             amount: totalXp,
             source: 'MESSAGE',
             channelId: msg.channelId,
@@ -508,7 +511,7 @@ const messageCreateEvent: BotEvent = {
 
         if (newLevel > updated.level) {
           await prisma.levelData.update({
-            where: { userId: user.id },
+            where: { userId_guildId: { userId: user.id, guildId: msg.guildId! } },
             data: { level: newLevel },
           });
 

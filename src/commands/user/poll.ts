@@ -243,10 +243,10 @@ async function runPollSubcommand(sub: string, interaction: ChatInputCommandInter
 
         await interaction.editReply({ content: result.success ? `✅ ${result.message}` : `❌ ${result.message}` });
 
-        // Event-XP für Abstimmung vergeben (Sektion 8: Event-XP)
-        if (result.success) {
+        // Event-XP für Abstimmung vergeben (Sektion 8: Event-XP, guild-getrennt)
+        if (result.success && interaction.guildId) {
           try {
-            await grantEventXp(dbUser.id, 5, 'POLL_VOTE', pollId);
+            await grantEventXp(dbUser.id, interaction.guildId, 5, 'POLL_VOTE', pollId);
           } catch { /* XP-Vergabe nicht kritisch */ }
         }
 

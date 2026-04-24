@@ -55,10 +55,10 @@ const guildMemberAddEvent: BotEvent = {
         },
       });
 
-      // Level-Data initialisieren (Sektion 8)
+      // Level-Data initialisieren für DIESE Guild (Sektion 8, guild-getrennt)
       await prisma.levelData.upsert({
-        where: { userId: user.id },
-        create: { userId: user.id },
+        where: { userId_guildId: { userId: user.id, guildId: m.guild.id } },
+        create: { userId: user.id, guildId: m.guild.id },
         update: {},
       });
 

@@ -10,15 +10,21 @@ jest.mock('../../../database/prisma', () => ({
           level: 5,
           totalMessages: 120,
           voiceMinutes: 45,
+          guildId: 'g1',
           user: { discordId: '123' },
         },
       ]),
       count: jest.fn().mockResolvedValue(1),
+      findUnique: jest.fn().mockResolvedValue({
+        xp: 1500n,
+        level: 5,
+        guildId: 'g1',
+      }),
     },
     user: {
       findUnique: jest.fn().mockResolvedValue({
+        id: 'u1',
         discordId: '123',
-        levelData: { xp: 1500, level: 5 },
       }),
     },
   },
@@ -47,6 +53,7 @@ describe('Leaderboard Command', () => {
       },
       editReply: jest.fn().mockResolvedValue(undefined),
       user: { id: '123' },
+      guildId: 'g1',
       channelId: 'test',
       channel: { send: jest.fn() },
     };
@@ -63,6 +70,7 @@ describe('Leaderboard Command', () => {
         getInteger: jest.fn().mockReturnValue(1),
       },
       editReply: jest.fn().mockResolvedValue(undefined),
+      guildId: 'g1',
       channelId: 'feedtest',
       channel: { send: jest.fn() },
       user: { id: '123' },

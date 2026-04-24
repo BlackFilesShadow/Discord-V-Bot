@@ -224,7 +224,10 @@ const messageReactionAddEvent: BotEvent = {
         const result = await votePoll(poll.id, dbUser.id, matchedOption.id);
 
         if (result.success) {
-          try { await grantEventXp(dbUser.id, 5, 'POLL_VOTE', poll.id); } catch {}
+          const pollGuildId = r.message.guildId;
+          if (pollGuildId) {
+            try { await grantEventXp(dbUser.id, pollGuildId, 5, 'POLL_VOTE', poll.id); } catch { /* */ }
+          }
         } else if (result.message.includes('bereits')) {
           // Bereits für diese Option gestimmt → Reaktion entfernen
           try { await r.users.remove(u.id); } catch {}

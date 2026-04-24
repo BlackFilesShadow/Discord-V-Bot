@@ -235,19 +235,27 @@ apiRouter.get('/moderation', async (req: Request, res: Response) => {
 });
 
 /**
- * Level- & XP-Leaderboard.
+ * Level- & XP-Leaderboard (pro Guild).
+ * Query-Param `guildId` ist erforderlich.
  */
 apiRouter.get('/leaderboard', async (req: Request, res: Response) => {
   try {
+    const guildId = (req.query.guildId as string | undefined)?.trim();
+    if (!guildId) {
+      res.status(400).json({ error: 'guildId Query-Parameter erforderlich' });
+      return;
+    }
     const limit = parseInt(req.query.limit as string) || 50;
 
     const entries = await prisma.levelData.findMany({
+      where: { guildId },
       take: limit,
       orderBy: { xp: 'desc' },
       include: { user: { select: { username: true, discordId: true } } },
     });
 
     res.json({
+      guildId,
       entries: entries.map((e: any) => ({
         ...e,
         xp: e.xp.toString(),

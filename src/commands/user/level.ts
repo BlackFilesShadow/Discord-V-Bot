@@ -18,19 +18,32 @@ const levelCommand: Command = {
   execute: async (interaction: ChatInputCommandInteraction) => {
     await interaction.deferReply();
 
+    const guildId = interaction.guildId;
+    if (!guildId) {
+      await interaction.editReply({ content: '❌ /level nur in Servern verfügbar.' });
+      return;
+    }
+
     const targetUser = interaction.options.getUser('user') || interaction.user;
 
     const dbUser = await prisma.user.findUnique({
       where: { discordId: targetUser.id },
-      include: { levelData: true },
     });
 
-    if (!dbUser || !dbUser.levelData) {
-      await interaction.editReply({ content: `❌ Keine Level-Daten für ${targetUser.username} gefunden.` });
+    if (!dbUser) {
+      await interaction.editReply({ content: `❌ Keine Daten für ${targetUser.username} gefunden.` });
       return;
     }
 
-    const ld = dbUser.levelData;
+    const ld = await prisma.levelData.findUnique({
+      where: { userId_guildId: { userId: dbUser.id, guildId } },
+    });
+
+    if (!ld) {
+      await interaction.editReply({ content: `❌ Keine Level-Daten für ${targetUser.username} auf diesem Server.` });
+      return;
+    }
+
     const currentXp = Number(ld.xp);
     const xpForCurrentLevel = xpForLevel(ld.level);
     const xpForNextLevel = xpForLevel(ld.level + 1);
@@ -42,20 +55,10 @@ const levelCommand: Command = {
     const barLength = 16;
     const bar = progressBar(xpProgress, xpNeeded, barLength);
 
-    // Rang berechnen
+    // Rang berechnen (nur in dieser Guild)
     const rank = await prisma.levelData.count({
-      where: { xp: { gt: ld.xp } },
+      where: { guildId, xp: { gt: ld.xp } },
     }) + 1;
-
-    // XP-Konfiguration laden (pro Server)
-    const guildId = interaction.guildId;
-    let xpConfig = null;
-    if (guildId) {
-      xpConfig = await prisma.xpConfig.findUnique({ where: { id: guildId } });
-    }
-    const minXp = xpConfig?.messageXpMin ?? 15;
-    const maxXp = xpConfig?.messageXpMax ?? 25;
-    const multiplier = xpConfig?.levelMultiplier ?? 1.0;
 
     const embed = vEmbed(Colors.Gold)
       .setTitle(`⭐  ${targetUser.username}`)

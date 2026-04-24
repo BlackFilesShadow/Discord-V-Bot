@@ -50,7 +50,7 @@ model User {
   giveawayEntries     GiveawayEntry[]
   giveawaysCreated    Giveaway[]
   xpRecords           XpRecord[]
-  levelData           LevelData?
+  levelData           LevelData[]
   pollVotes           PollVote[]
   auditLogs           AuditLog[]           @relation("AuditUser")
   auditActions        AuditLog[]           @relation("AuditActor")
@@ -467,8 +467,9 @@ model GiveawayEntry {
 
 model LevelData {
   id            String    @id @default(uuid())
-  userId        String    @unique
+  userId        String
   user          User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  guildId       String
   xp            BigInt    @default(0)
   level         Int       @default(0)
   totalMessages Int       @default(0)
@@ -477,6 +478,8 @@ model LevelData {
   createdAt     DateTime  @default(now())
   updatedAt     DateTime  @updatedAt
 
+  @@unique([userId, guildId])
+  @@index([guildId])
   @@index([level])
   @@index([xp])
 }
@@ -485,6 +488,7 @@ model XpRecord {
   id          String   @id @default(uuid())
   userId      String
   user        User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  guildId     String
   amount      Int
   source      XpSource
   channelId   String?
@@ -492,6 +496,7 @@ model XpRecord {
   createdAt   DateTime @default(now())
 
   @@index([userId])
+  @@index([guildId])
   @@index([source])
   @@index([createdAt])
 }

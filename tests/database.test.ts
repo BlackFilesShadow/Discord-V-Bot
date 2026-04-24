@@ -180,6 +180,7 @@ describe('Datenbank-Schema (Sektion 1-12)', () => {
     it('sollte XP-Daten upserten können', async () => {
       const mockLevel = {
         userId: 'user-uuid',
+        guildId: 'guild-1',
         xp: BigInt(150),
         level: 2,
       };
@@ -187,8 +188,8 @@ describe('Datenbank-Schema (Sektion 1-12)', () => {
       (prisma.levelData.upsert as jest.Mock).mockResolvedValue(mockLevel);
 
       const levelData = await prisma.levelData.upsert({
-        where: { userId: 'user-uuid' },
-        create: { userId: 'user-uuid', xp: 150, level: 2 },
+        where: { userId_guildId: { userId: 'user-uuid', guildId: 'guild-1' } },
+        create: { userId: 'user-uuid', guildId: 'guild-1', xp: 150, level: 2 },
         update: { xp: 150, level: 2 },
       });
 

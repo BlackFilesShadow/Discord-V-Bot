@@ -131,7 +131,6 @@ export async function buildServerUserContext(opts: ServerUserContextOptions): Pr
           status: true,
           isManufacturer: true,
           createdAt: true,
-          levelData: { select: { level: true, xp: true, totalMessages: true } },
         },
       });
       if (dbUser) {
@@ -139,9 +138,18 @@ export async function buildServerUserContext(opts: ServerUserContextOptions): Pr
         if (dbUser.status && dbUser.status !== 'ACTIVE') {
           lines.push(`- Status: ${dbUser.status}`);
         }
-        if (dbUser.levelData) {
-          const xpStr = dbUser.levelData.xp.toString();
-          lines.push(`- Level: ${dbUser.levelData.level} (XP: ${xpStr}, Nachrichten: ${dbUser.levelData.totalMessages})`);
+        // Level/XP nur für die aktuelle Guild (XP ist guild-getrennt).
+        if (member?.guild?.id) {
+          const userRow = await prisma.user.findUnique({ where: { discordId: discordUser.id }, select: { id: true } });
+          if (userRow) {
+            const ld = await prisma.levelData.findUnique({
+              where: { userId_guildId: { userId: userRow.id, guildId: member.guild.id } },
+              select: { level: true, xp: true, totalMessages: true },
+            });
+            if (ld) {
+              lines.push(`- Level: ${ld.level} (XP: ${ld.xp.toString()}, Nachrichten: ${ld.totalMessages})`);
+            }
+          }
         }
       }
     } catch (e) {

@@ -124,11 +124,17 @@ describe('Dashboard API Routes (Sektion 7)', () => {
   });
 
   describe('GET /api/leaderboard', () => {
-    it('sollte Leaderboard-Daten zurückgeben', async () => {
+    it('sollte Leaderboard-Daten zurückgeben (mit guildId)', async () => {
       const app = createTestApp({ userId: 'test' });
-      const res = await request(app).get('/api/leaderboard?limit=10');
+      const res = await request(app).get('/api/leaderboard?guildId=g1&limit=10');
       expect(res.status).toBe(200);
       expect(res.body).toHaveProperty('entries');
+    });
+
+    it('sollte 400 ohne guildId zurückgeben', async () => {
+      const app = createTestApp({ userId: 'test' });
+      const res = await request(app).get('/api/leaderboard?limit=10');
+      expect(res.status).toBe(400);
     });
   });
 });

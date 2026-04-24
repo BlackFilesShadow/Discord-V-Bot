@@ -9,19 +9,21 @@ import { logger, logAudit } from '../../utils/logger';
  */
 
 /**
- * Event-XP vergeben.
+ * Event-XP vergeben (pro Guild getrennt).
  * Sektion 8: XP für Event-Teilnahme.
  */
 export async function grantEventXp(
   userId: string,
+  guildId: string,
   amount: number,
   eventType: string,
   eventId?: string,
 ): Promise<{ newXp: number; leveledUp: boolean; newLevel?: number }> {
   const updated = await prisma.levelData.upsert({
-    where: { userId },
+    where: { userId_guildId: { userId, guildId } },
     create: {
       userId,
+      guildId,
       xp: BigInt(amount),
       totalMessages: 0,
       lastXpGain: new Date(),
@@ -36,6 +38,7 @@ export async function grantEventXp(
   await prisma.xpRecord.create({
     data: {
       userId,
+      guildId,
       amount,
       source: 'EVENT',
       description: `${eventType}${eventId ? ` (${eventId})` : ''}`,
@@ -44,8 +47,6 @@ export async function grantEventXp(
 
   // Level-Up prüfen
   const currentXp = Number(updated.xp);
-  // MaxLevel-Cap: nutzt erste aktive XpConfig (analog zu messageCreate-XP),
-  // damit Event-XP nicht ueber das konfigurierte Endlevel hinaus pusht.
   const xpConfigCap = await prisma.xpConfig.findFirst({ where: { isActive: true } });
   const maxLevel = xpConfigCap?.maxLevel ?? 20;
   let newLevel = calculateLevel(currentXp);
@@ -54,13 +55,14 @@ export async function grantEventXp(
 
   if (newLevel > updated.level) {
     await prisma.levelData.update({
-      where: { userId },
+      where: { userId_guildId: { userId, guildId } },
       data: { level: newLevel },
     });
     leveledUp = true;
 
     logAudit('LEVEL_UP', 'LEVEL', {
       userId,
+      guildId,
       newLevel,
       totalXp: currentXp,
       source: eventType,
@@ -69,6 +71,7 @@ export async function grantEventXp(
 
   logAudit('EVENT_XP_GRANTED', 'LEVEL', {
     userId,
+    guildId,
     amount,
     eventType,
     eventId,
@@ -78,22 +81,25 @@ export async function grantEventXp(
 }
 
 /**
- * XP eines Users zurücksetzen (für Events oder manuell).
+ * XP eines Users in einer Guild zurücksetzen.
  * Sektion 8: XP-Reset.
  */
 export async function resetUserXp(
   userId: string,
+  guildId: string,
   resetBy: string,
   reason: string = 'Manual reset',
 ): Promise<boolean> {
-  const levelData = await prisma.levelData.findUnique({ where: { userId } });
+  const levelData = await prisma.levelData.findUnique({
+    where: { userId_guildId: { userId, guildId } },
+  });
   if (!levelData) return false;
 
   const previousXp = Number(levelData.xp);
   const previousLevel = levelData.level;
 
   await prisma.levelData.update({
-    where: { userId },
+    where: { userId_guildId: { userId, guildId } },
     data: {
       xp: BigInt(0),
       level: 0,
@@ -103,10 +109,10 @@ export async function resetUserXp(
     },
   });
 
-  // XP-Record für Reset
   await prisma.xpRecord.create({
     data: {
       userId,
+      guildId,
       amount: -previousXp,
       source: 'RESET',
       description: reason,
@@ -115,6 +121,7 @@ export async function resetUserXp(
 
   logAudit('XP_RESET', 'LEVEL', {
     userId,
+    guildId,
     resetBy,
     reason,
     previousXp,
@@ -125,13 +132,15 @@ export async function resetUserXp(
 }
 
 /**
- * Massen-XP-Reset (z.B. für Saison-Events).
+ * Massen-XP-Reset für eine Guild (z.B. für Saison-Events).
  */
 export async function resetAllXp(
+  guildId: string,
   resetBy: string,
   reason: string = 'Season reset',
 ): Promise<number> {
   const result = await prisma.levelData.updateMany({
+    where: { guildId },
     data: {
       xp: BigInt(0),
       level: 0,
@@ -142,6 +151,7 @@ export async function resetAllXp(
   });
 
   logAudit('XP_MASS_RESET', 'LEVEL', {
+    guildId,
     resetBy,
     reason,
     affectedUsers: result.count,

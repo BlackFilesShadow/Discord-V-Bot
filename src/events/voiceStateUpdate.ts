@@ -61,14 +61,15 @@ const voiceStateUpdateEvent: BotEvent = {
       const guildId = guild?.id;
       const voiceChannelId = oldState.channelId || undefined;
 
+      // Kein XP ohne Guild-Kontext.
+      if (!guildId) return;
+
       try {
         const dbUser = await prisma.user.findUnique({ where: { discordId: userId } });
         if (!dbUser) return;
 
         // Guild-spezifische XP-Konfiguration (id == guildId), analog Message-XP
-        const xpConfig = guildId
-          ? await prisma.xpConfig.findUnique({ where: { id: guildId } })
-          : null;
+        const xpConfig = await prisma.xpConfig.findUnique({ where: { id: guildId } });
 
         // XP-System global deaktiviert?
         if (xpConfig && xpConfig.isActive === false) return;
@@ -94,7 +95,9 @@ const voiceStateUpdateEvent: BotEvent = {
 
         // XP-Cooldown (Anti-Spam, identisch zu Message-XP)
         const cooldownSeconds = xpConfig?.xpCooldownSeconds ?? 60;
-        const existingLD = await prisma.levelData.findUnique({ where: { userId: dbUser.id } });
+        const existingLD = await prisma.levelData.findUnique({
+          where: { userId_guildId: { userId: dbUser.id, guildId } },
+        });
         if (existingLD?.lastXpGain) {
           const since = Date.now() - existingLD.lastXpGain.getTime();
           if (since < cooldownSeconds * 1000) return;
@@ -106,9 +109,10 @@ const voiceStateUpdateEvent: BotEvent = {
         const xpGained = Math.min(Math.floor(durationMinutes * xpPerMinute * multiplier), 500);
 
         const levelData = await prisma.levelData.upsert({
-          where: { userId: dbUser.id },
+          where: { userId_guildId: { userId: dbUser.id, guildId } },
           create: {
             userId: dbUser.id,
+            guildId,
             xp: BigInt(xpGained),
             voiceMinutes: durationMinutes,
             lastXpGain: new Date(),
@@ -124,6 +128,7 @@ const voiceStateUpdateEvent: BotEvent = {
         await prisma.xpRecord.create({
           data: {
             userId: dbUser.id,
+            guildId,
             amount: xpGained,
             source: 'VOICE',
             channelId: voiceChannelId,
@@ -138,12 +143,13 @@ const voiceStateUpdateEvent: BotEvent = {
 
         if (newLevel > levelData.level) {
           await prisma.levelData.update({
-            where: { userId: dbUser.id },
+            where: { userId_guildId: { userId: dbUser.id, guildId } },
             data: { level: newLevel },
           });
 
           logAudit('LEVEL_UP', 'LEVEL', {
             userId: dbUser.id,
+            guildId,
             newLevel,
             totalXp: currentXp,
             source: 'VOICE',

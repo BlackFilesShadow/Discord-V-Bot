@@ -37,7 +37,9 @@ const helpCommand: Command = {
               { name: 'Giveaway', value: 'giveaway' },
               { name: 'Level & XP', value: 'level' },
               { name: 'Umfragen', value: 'polls' },
-              { name: 'Moderation', value: 'moderation' }
+              { name: 'Moderation', value: 'moderation' },
+              { name: 'Utility & Tools', value: 'utility' },
+              { name: 'KI & Auto', value: 'ai' }
             )
     ),
 
@@ -155,6 +157,8 @@ function buildPages(isAdmin: boolean, isDev: boolean): HelpPage[] {
           { name: '⭐ Level & XP', value: '`Seite 7`', inline: true },
           { name: '📊 Umfragen', value: '`Seite 8`', inline: true },
           { name: '🛡️ Moderation', value: '`Seite 9`', inline: true },
+          { name: '🧰 Utility & Tools', value: '`Seite 10`', inline: true },
+          { name: '🤖 KI & Auto', value: '`Seite 11`', inline: true },
           { name: '🔗 Feeds', value: '`/feed`', inline: true },
           { name: '🛠️ Auto-Rollen', value: '`/autorole`', inline: true },
         ],
@@ -304,6 +308,44 @@ function buildPages(isAdmin: boolean, isDev: boolean): HelpPage[] {
         timestamp: true,
       }),
     },
+    // ── Seite 10: Utility & Tools (Phase A + B) ──
+    {
+      id: 'utility',
+      embed: createBotEmbed({
+        title: '🧰  Utility & Tools',
+        description: '> Persönliche Helfer: Status, Erinnerungen, Feedback, Self-Roles.\n\n' + Brand.divider,
+        color: Colors.Info,
+        fields: [
+          { name: '`/ping`', value: '┃ Misst Bot- und WebSocket-Latenz.' },
+          { name: '`/status`', value: '┃ Bot-Health: Uptime, DB-Roundtrip, Heap, OS.' },
+          { name: '`/feedback <kategorie>`', value: '┃ Bug, Idee, Lob oder Sonstiges einreichen (Modal).' },
+          { name: '`/erinnerung setzen <dauer> <einheit> <text>`', value: '┃ Erinnerung per DM oder Channel; auch wiederkehrend.' },
+          { name: '`/erinnerung liste`', value: '┃ Deine aktiven Erinnerungen anzeigen.' },
+          { name: '`/erinnerung loeschen <id>`', value: '┃ Erinnerung deaktivieren.' },
+          { name: '`/help [category]`', value: '┃ Diese Command-Übersicht (mit Pagination).' },
+        ],
+        footer: `Seite 10 ${Brand.dot} Utility & Tools ${Brand.dot} ${Brand.footerText}`,
+        timestamp: true,
+      }),
+    },
+    // ── Seite 11: KI & Auto ──
+    {
+      id: 'ai',
+      embed: createBotEmbed({
+        title: '🤖  KI & Auto',
+        description: '> KI-gestützte Funktionen und Automatisierungen.\n\n' + Brand.divider,
+        color: Colors.Teal,
+        fields: [
+          { name: '`/ai-trigger`', value: '┃ *(Admin)* Auto-Antworten auf Schlüsselwörter konfigurieren.' },
+          { name: '`/translate-post`', value: '┃ *(Admin)* Beiträge automatisch übersetzen lassen.' },
+          { name: '`/welcome`', value: '┃ *(Admin)* Willkommens-Nachrichten mit Variablen.' },
+          { name: '`/autorole`', value: '┃ *(Admin)* Rollen automatisch beim Beitritt vergeben.' },
+          { name: '`/feed`', value: '┃ *(Admin)* RSS/News-Feeds in Channel posten.' },
+        ],
+        footer: `Seite 11 ${Brand.dot} KI & Auto ${Brand.dot} ${Brand.footerText}`,
+        timestamp: true,
+      }),
+    },
   ];
 
   // ── Admin-Seiten (nur für Admins) ──
@@ -346,6 +388,8 @@ function buildPages(isAdmin: boolean, isDev: boolean): HelpPage[] {
           { name: '`/admin-security`', value: '┃ Sicherheitsübersicht.' },
           { name: '`/admin-monitor`', value: '┃ System-Monitoring.' },
           { name: '`/feed <aktion>`', value: '┃ Feed-Management.' },
+          { name: '`/selfrole`', value: '┃ Self-Role-Menüs (Buttons) erstellen/verwalten.' },
+          { name: '`/xp-config`', value: '┃ XP-Raten, Whitelists, Level-Rollen.' },
         ],
         footer: `Seite ${pages.length + 2} ${Brand.dot} Admin 2/2 ${Brand.dot} ${Brand.footerText}`,
         timestamp: true,
