@@ -7,7 +7,9 @@ import {
 } from 'discord.js';
 import { Command } from '../../types';
 import prisma from '../../database/prisma';
+import { Prisma } from '@prisma/client';
 import { Colors, vEmbed } from '../../utils/embedDesign';
+import { config } from '../../config';
 import { logger, logAudit } from '../../utils/logger';
 
 /**
@@ -110,16 +112,24 @@ const adminFeedbackCommand: Command = {
           o.setName('channel').setDescription('Zielchannel (leer = entfernen)').addChannelTypes(
             ChannelType.GuildText, ChannelType.GuildAnnouncement,
           ),
+        )
+        .addStringOption((o) =>
+          o.setName('scope').setDescription('guild = nur dieser Server, global = Owner-Fallback fuer alle Guilds')
+            .addChoices(
+              { name: 'Guild (nur dieser Server)', value: 'guild' },
+              { name: 'Global (Owner-Fallback)', value: 'global' },
+            ),
         ),
     ) as SlashCommandBuilder,
   adminOnly: true,
 
   async execute(interaction: ChatInputCommandInteraction) {
-    if (!interaction.guildId) {
+    const sub = interaction.options.getSubcommand();
+    // Nur 'channel' mit scope=global darf ohne Guild laufen.
+    if (!interaction.guildId && sub !== 'channel') {
       await interaction.reply({ content: 'Nur in Guilds verwendbar.', ephemeral: true });
       return;
     }
-    const sub = interaction.options.getSubcommand();
     try {
       if (sub === 'liste') return await handleListe(interaction);
       if (sub === 'zeigen') return await handleZeigen(interaction);
@@ -230,10 +240,44 @@ async function handleNotiz(interaction: ChatInputCommandInteraction): Promise<vo
 async function handleChannel(interaction: ChatInputCommandInteraction): Promise<void> {
   await interaction.deferReply({ ephemeral: true });
   const channel = interaction.options.getChannel('channel') as TextChannel | null;
+  const scope = (interaction.options.getString('scope') ?? 'guild') as 'guild' | 'global';
+
+  if (scope === 'global') {
+    // Nur Owner darf den globalen Fallback setzen.
+    if (!config.discord.ownerId || interaction.user.id !== config.discord.ownerId) {
+      await interaction.editReply({ content: 'Nur der Bot-Owner darf den globalen Feedback-Channel setzen.' });
+      return;
+    }
+    await prisma.botConfig.upsert({
+      where: { key: 'globalFeedbackChannelId' },
+      create: {
+        key: 'globalFeedbackChannelId',
+        value: channel?.id ?? Prisma.JsonNull,
+        category: 'feedback',
+        description: 'Owner-Fallback-Channel: empfaengt /feedback aus Guilds ohne eigenen Channel.',
+        updatedBy: interaction.user.id,
+      },
+      update: { value: channel?.id ?? Prisma.JsonNull, updatedBy: interaction.user.id },
+    });
+    logAudit('FEEDBACK_GLOBAL_CHANNEL_SET', 'ADMIN', { channelId: channel?.id ?? null, by: interaction.user.id });
+    await interaction.editReply({
+      embeds: [vEmbed(Colors.Success)
+        .setTitle('Globaler Feedback-Channel aktualisiert')
+        .setDescription(channel
+          ? `/feedback aus Guilds ohne eigenen Channel landet jetzt in <#${channel.id}>.`
+          : 'Globaler Fallback deaktiviert.')],
+    });
+    return;
+  }
+
+  if (!interaction.guildId) {
+    await interaction.editReply({ content: 'Guild-Scope nur in Guilds verwendbar.' });
+    return;
+  }
   await prisma.guildProfile.upsert({
-    where: { guildId: interaction.guildId! },
+    where: { guildId: interaction.guildId },
     create: {
-      guildId: interaction.guildId!,
+      guildId: interaction.guildId,
       name: interaction.guild?.name ?? 'unknown',
       feedbackChannelId: channel?.id ?? null,
     },

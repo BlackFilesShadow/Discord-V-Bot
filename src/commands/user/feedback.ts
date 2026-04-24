@@ -140,6 +140,15 @@ export async function handleFeedbackModal(modal: ModalSubmitInteraction): Promis
         if (gp?.feedbackChannelId) channelId = gp.feedbackChannelId;
       } catch { /* */ }
     }
+    // Globaler Owner-Channel aus BotConfig (per /admin-feedback channel scope:global gesetzt).
+    if (!channelId) {
+      try {
+        const cfg = await prisma.botConfig.findUnique({ where: { key: 'globalFeedbackChannelId' } });
+        const v = cfg?.value as unknown;
+        if (typeof v === 'string' && v) channelId = v;
+      } catch { /* */ }
+    }
+    // Letzter Fallback: ENV-Channel
     if (!channelId) channelId = config.features.feedbackChannelId || null;
     if (channelId) {
       try {
