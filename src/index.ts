@@ -186,7 +186,7 @@ async function main(): Promise<void> {
   // /metrics frueh verfuegbar sind. deployCommands() unten kann minutenlang dauern
   // (globaler Sync/Rate-Limits) und darf den HTTP-Server nicht blockieren.
   try {
-    startDashboard();
+    startDashboard(client);
   } catch (error) {
     logger.error('Dashboard konnte nicht gestartet werden:', error);
   }

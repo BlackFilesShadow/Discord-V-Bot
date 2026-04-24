@@ -7,8 +7,9 @@ import cors from 'cors';
 import rateLimit from 'express-rate-limit';
 import { config } from '../config';
 import { logger, logAudit } from '../utils/logger';
-import { authRouter, apiRouter, adminRouter, testRouter } from './routes';
+import { authRouter, apiRouter, adminRouter, testRouter, webhookRouter, setWebhookClient } from './routes';
 import { metricsRegistry } from '../utils/metrics';
+import type { Client } from 'discord.js';
 
 /**
  * Web-Dashboard Server (Sektion 7 & 12):
@@ -17,8 +18,9 @@ import { metricsRegistry } from '../utils/metrics';
  * - Developer-Bereich: Erweiterte Logs, Analytics, Fehlerberichte, API-Keys, Feature-Toggles
  */
 
-export function startDashboard(): void {
+export function startDashboard(client?: Client): void {
   const app = express();
+  if (client) setWebhookClient(client);
 
   // Security Middleware (Sektion 4: Sicherheit)
   app.use(helmet());
@@ -83,6 +85,9 @@ export function startDashboard(): void {
 
   // Routes
   app.use('/auth', loginLimiter, authRouter);
+  // Webhook-Endpunkt OHNE Session-Auth (eigene HMAC-Pruefung im Router).
+  // MUSS vor dem JSON-Bodyparser bleiben? -> raw-Parser ist im Router lokal.
+  app.use('/webhooks', apiLimiter, webhookRouter);
   app.use('/api', apiLimiter, apiRouter);
   app.use('/admin', apiLimiter, adminRouter);
   app.use('/test', apiLimiter, testRouter);

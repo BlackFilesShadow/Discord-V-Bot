@@ -910,6 +910,8 @@ model Feed {
   lastItemId  String?
   isActive    Boolean   @default(true)
   filters     Json? // Filterregeln
+  mentionRoles String[] @default([]) // Rollen, die bei jedem neuen Eintrag gepingt werden
+  webhookSecret String? // HMAC-Secret fuer eingehende Webhook-Posts (nur WEBHOOK-Typ)
   createdBy   String
   createdAt   DateTime  @default(now())
   updatedAt   DateTime  @updatedAt

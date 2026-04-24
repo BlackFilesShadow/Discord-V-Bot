@@ -389,6 +389,8 @@ function buildPages(isAdmin: boolean, isDev: boolean): HelpPage[] {
           { name: '`/admin-security`', value: '┃ Sicherheitsübersicht.' },
           { name: '`/admin-monitor`', value: '┃ System-Monitoring.' },
           { name: '`/feed <aktion>`', value: '┃ Feed-Management.' },
+          { name: '`/feed rolle-add` / `rolle-remove` / `rolle-list`', value: '┃ Rollen pingen wenn neuer Feed-Eintrag kommt.' },
+          { name: '`/feed webhook-info` / `webhook-rotate`', value: '┃ Eingehende Webhook-URL + Secret fuer WEBHOOK-Feeds.' },
           { name: '`/selfrole`', value: '┃ Self-Role-Menüs (Buttons) erstellen/verwalten.' },
           { name: '`/xp-config`', value: '┃ XP-Raten, Whitelists, Level-Rollen.' },
           { name: '`/admin-feedback`', value: '┃ Feedback-Eintraege verwalten + Notification-Channel.' },

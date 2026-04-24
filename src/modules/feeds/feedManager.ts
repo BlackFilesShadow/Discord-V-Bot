@@ -179,6 +179,15 @@ async function processFeed(client: Client, feedId: string): Promise<void> {
   const channel = await client.channels.fetch(feed.channelId).catch(() => null) as TextChannel | null;
   if (!channel) return;
 
+  // Role-Pings vorbereiten (gemeinsam fuer alle Feed-Typen).
+  const roleIds = (feed.mentionRoles ?? []).filter((id) => /^\d+$/.test(id));
+  const pingPrefix = roleIds.length ? roleIds.map((id) => `<@&${id}>`).join(' ') : '';
+  const sendOpts = (embed: EmbedBuilder) => ({
+    ...(pingPrefix ? { content: pingPrefix } : {}),
+    embeds: [embed],
+    allowedMentions: { roles: roleIds, parse: [] as ('everyone' | 'roles' | 'users')[] },
+  });
+
   try {
     switch (feed.feedType) {
       case 'RSS':
@@ -193,7 +202,7 @@ async function processFeed(client: Client, feedId: string): Promise<void> {
             .setFooter({ text: `📡 ${feed.name}` })
             .setTimestamp(item.pubDate ? new Date(item.pubDate) : new Date());
 
-          await channel.send({ embeds: [embed] });
+          await channel.send(sendOpts(embed));
         }
 
         if (latestId) {
@@ -227,7 +236,7 @@ async function processFeed(client: Client, feedId: string): Promise<void> {
             embed.setImage(streamInfo.thumbnailUrl);
           }
 
-          await channel.send({ embeds: [embed] });
+          await channel.send(sendOpts(embed));
         }
 
         await prisma.feed.update({
@@ -255,7 +264,7 @@ async function processFeed(client: Client, feedId: string): Promise<void> {
             .setFooter({ text: `📡 ${feed.name}` })
             .setTimestamp(new Date(item.date));
 
-          await channel.send({ embeds: [embed] });
+          await channel.send(sendOpts(embed));
         }
 
         if (items.length > 0) {

@@ -7,6 +7,8 @@ import {
 import { Command } from '../../types';
 import prisma from '../../database/prisma';
 import { createFeed } from '../../modules/feeds/feedManager';
+import { generateWebhookSecret } from '../../modules/feeds/webhookReceiver';
+import { config } from '../../config';
 import { logAudit, logger } from '../../utils/logger';
 
 /**
@@ -20,8 +22,7 @@ function validateFeedSource(typ: string, source: string): { ok: true } | { ok: f
 
   switch (typ) {
     case 'RSS':
-    case 'NEWS':
-    case 'WEBHOOK': {
+    case 'NEWS': {
       try {
         const u = new URL(trimmed);
         if (!['http:', 'https:'].includes(u.protocol)) {
@@ -34,6 +35,12 @@ function validateFeedSource(typ: string, source: string): { ok: true } | { ok: f
       } catch {
         return { ok: false, reason: 'Ungueltige URL.' };
       }
+    }
+    case 'WEBHOOK': {
+      // Bei WEBHOOK ist die "URL" nur ein Quelltext/Label fuer den Webhook-Sender.
+      // Wir akzeptieren beliebige Bezeichner (z.B. 'github-prod', 'grafana').
+      if (trimmed.length > 200) return { ok: false, reason: 'Label/Quelle max 200 Zeichen.' };
+      return { ok: true };
     }
     case 'TWITCH': {
       // Twitch-Channelname: 4-25 Zeichen, alphanumerisch + _.
@@ -125,6 +132,38 @@ const feedCommand: Command = {
           opt.setName('feed-id').setDescription('Feed-ID').setRequired(true)
         )
     )
+    .addSubcommand(sub =>
+      sub
+        .setName('rolle-add')
+        .setDescription('Rolle hinzufuegen, die bei jedem neuen Feed-Eintrag gepingt wird')
+        .addStringOption(opt => opt.setName('feed-id').setDescription('Feed-ID').setRequired(true))
+        .addRoleOption(opt => opt.setName('rolle').setDescription('Zu pingende Rolle').setRequired(true)),
+    )
+    .addSubcommand(sub =>
+      sub
+        .setName('rolle-remove')
+        .setDescription('Rolle aus Feed-Pings entfernen')
+        .addStringOption(opt => opt.setName('feed-id').setDescription('Feed-ID').setRequired(true))
+        .addRoleOption(opt => opt.setName('rolle').setDescription('Rolle').setRequired(true)),
+    )
+    .addSubcommand(sub =>
+      sub
+        .setName('rolle-list')
+        .setDescription('Alle gepingten Rollen eines Feeds anzeigen')
+        .addStringOption(opt => opt.setName('feed-id').setDescription('Feed-ID').setRequired(true)),
+    )
+    .addSubcommand(sub =>
+      sub
+        .setName('webhook-info')
+        .setDescription('Webhook-URL + Secret eines WEBHOOK-Feeds anzeigen (ephemeral)')
+        .addStringOption(opt => opt.setName('feed-id').setDescription('Feed-ID').setRequired(true)),
+    )
+    .addSubcommand(sub =>
+      sub
+        .setName('webhook-rotate')
+        .setDescription('Neues Webhook-Secret generieren (altes wird sofort ungueltig)')
+        .addStringOption(opt => opt.setName('feed-id').setDescription('Feed-ID').setRequired(true)),
+    )
     .setDefaultMemberPermissions(PermissionFlagsBits.ManageChannels) as SlashCommandBuilder,
   adminOnly: true,
 
@@ -159,6 +198,13 @@ const feedCommand: Command = {
           return;
         }
 
+        // Bei WEBHOOK-Typ direkt ein Secret generieren.
+        let webhookSecret: string | null = null;
+        if (typ === 'WEBHOOK') {
+          webhookSecret = generateWebhookSecret();
+          await prisma.feed.update({ where: { id: feedId }, data: { webhookSecret } });
+        }
+
         const embed = new EmbedBuilder()
           .setTitle('📡 Feed erstellt')
           .setColor(0x2ecc71)
@@ -170,6 +216,15 @@ const feedCommand: Command = {
             { name: 'ID', value: `\`${feedId}\``, inline: false },
           )
           .setTimestamp();
+        if (webhookSecret) {
+          const base = (config.dashboard?.url || '').replace(/\/$/, '');
+          const wurl = base ? `${base}/webhooks/feed/${feedId}` : `/webhooks/feed/${feedId}`;
+          embed.addFields(
+            { name: 'Webhook URL', value: '```' + wurl + '```' },
+            { name: 'Secret', value: '```' + webhookSecret + '```' },
+            { name: 'Hinweis', value: 'Details: `/feed webhook-info`. Rotation: `/feed webhook-rotate`.' },
+          );
+        }
 
         await interaction.editReply({ embeds: [embed] });
         break;
@@ -257,6 +312,88 @@ const feedCommand: Command = {
         });
 
         await interaction.editReply({ content: `🔔 Du erhältst jetzt DM-Benachrichtigungen für **${feed.name}**.` });
+        break;
+      }
+
+      case 'rolle-add': {
+        const feedId = interaction.options.getString('feed-id', true);
+        const role = interaction.options.getRole('rolle', true);
+        const feed = await prisma.feed.findUnique({ where: { id: feedId } });
+        if (!feed) { await interaction.editReply({ content: '❌ Feed nicht gefunden.' }); return; }
+        const current = new Set(feed.mentionRoles ?? []);
+        current.add(role.id);
+        await prisma.feed.update({ where: { id: feedId }, data: { mentionRoles: Array.from(current) } });
+        logAudit('FEED_ROLE_ADDED', 'FEED', { feedId, roleId: role.id, by: interaction.user.id });
+        await interaction.editReply({ content: `✅ Rolle <@&${role.id}> wird ab jetzt bei neuen Eintraegen von **${feed.name}** gepingt.` });
+        break;
+      }
+
+      case 'rolle-remove': {
+        const feedId = interaction.options.getString('feed-id', true);
+        const role = interaction.options.getRole('rolle', true);
+        const feed = await prisma.feed.findUnique({ where: { id: feedId } });
+        if (!feed) { await interaction.editReply({ content: '❌ Feed nicht gefunden.' }); return; }
+        const next = (feed.mentionRoles ?? []).filter((id) => id !== role.id);
+        await prisma.feed.update({ where: { id: feedId }, data: { mentionRoles: next } });
+        logAudit('FEED_ROLE_REMOVED', 'FEED', { feedId, roleId: role.id, by: interaction.user.id });
+        await interaction.editReply({ content: `🗑️ Rolle <@&${role.id}> entfernt.` });
+        break;
+      }
+
+      case 'rolle-list': {
+        const feedId = interaction.options.getString('feed-id', true);
+        const feed = await prisma.feed.findUnique({ where: { id: feedId } });
+        if (!feed) { await interaction.editReply({ content: '❌ Feed nicht gefunden.' }); return; }
+        const ids = feed.mentionRoles ?? [];
+        await interaction.editReply({
+          content: ids.length
+            ? `📣 Pings bei **${feed.name}**: ${ids.map((id) => `<@&${id}>`).join(' ')}`
+            : `Keine Rollen-Pings konfiguriert fuer **${feed.name}**.`,
+        });
+        break;
+      }
+
+      case 'webhook-info': {
+        const feedId = interaction.options.getString('feed-id', true);
+        const feed = await prisma.feed.findUnique({ where: { id: feedId } });
+        if (!feed) { await interaction.editReply({ content: '❌ Feed nicht gefunden.' }); return; }
+        if (feed.feedType !== 'WEBHOOK') {
+          await interaction.editReply({ content: 'Dieser Feed ist kein WEBHOOK-Typ.' });
+          return;
+        }
+        if (!feed.webhookSecret) {
+          await interaction.editReply({ content: 'Noch kein Secret. Erst `/feed webhook-rotate` ausfuehren.' });
+          return;
+        }
+        const base = (config.dashboard?.url || '').replace(/\/$/, '');
+        const url = base ? `${base}/webhooks/feed/${feed.id}` : `/webhooks/feed/${feed.id}`;
+        const embed = new EmbedBuilder()
+          .setTitle('🔗 Webhook-Endpoint')
+          .setColor(0x3498db)
+          .addFields(
+            { name: 'POST URL', value: '```' + url + '```' },
+            { name: 'Secret', value: '```' + feed.webhookSecret + '```' },
+            { name: 'HMAC-Header (empfohlen)', value: '```X-V-Webhook-Signature: sha256=<hex hmac sha256(secret, body)>```' },
+            { name: 'Token-Header (Fallback)', value: '```X-V-Webhook-Token: <secret>```' },
+            { name: 'Body (JSON)', value: '```{ "title": "...", "description": "...", "url": "https://...", "image": "https://...", "color": 3447003 }```' },
+          )
+          .setFooter({ text: 'Secret nicht teilen. Bei Verdacht: webhook-rotate.' });
+        await interaction.editReply({ embeds: [embed] });
+        break;
+      }
+
+      case 'webhook-rotate': {
+        const feedId = interaction.options.getString('feed-id', true);
+        const feed = await prisma.feed.findUnique({ where: { id: feedId } });
+        if (!feed) { await interaction.editReply({ content: '❌ Feed nicht gefunden.' }); return; }
+        if (feed.feedType !== 'WEBHOOK') {
+          await interaction.editReply({ content: 'Dieser Feed ist kein WEBHOOK-Typ.' });
+          return;
+        }
+        const secret = generateWebhookSecret();
+        await prisma.feed.update({ where: { id: feedId }, data: { webhookSecret: secret } });
+        logAudit('FEED_WEBHOOK_SECRET_ROTATED', 'FEED', { feedId, by: interaction.user.id });
+        await interaction.editReply({ content: `🔁 Neues Secret generiert. Anzeigen mit \`/feed webhook-info feed-id:${feedId}\`.` });
         break;
       }
     }
