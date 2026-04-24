@@ -4,6 +4,7 @@ import { logger, logAudit } from '../../utils/logger';
 import prisma from '../../database/prisma';
 import { liveSearch, looksFactQuestion, formatSearchResultsForPrompt } from './webSearch';
 import { asksAboutCommands, formatCatalogForPromptFocused } from './commandCatalog';
+import { recordCall, getRankedProviders, ProviderName } from './providerStats';
 
 /**
  * AI-Integration (Sektion 4):
@@ -488,7 +489,7 @@ async function callGemini(
  * Reihenfolge: Konfigurierter Provider → Fallback auf nächsten verfügbaren.
  */
 async function callAI(messages: { role: string; content: string }[]): Promise<string> {
-  const providers = getProviderOrder();
+  const providers = await getProviderOrder();
 
   // Erkennt transiente Fehler (Netzwerk-Glitches, Rate-Limits, 5xx) – diese rechtfertigen einen Retry.
   const isTransient = (e: unknown): boolean => {
@@ -554,6 +555,7 @@ async function callAI(messages: { role: string; content: string }[]): Promise<st
   logger.info(`callAI start, provider-Reihenfolge: ${providers.join(' -> ')}`);
   for (const provider of providers) {
     for (let attempt = 1; attempt <= 2; attempt++) {
+      const t0 = Date.now();
       try {
         logger.info(`callAI versuche provider=${provider} attempt=${attempt}`);
         const result = await callProvider(provider);
@@ -561,11 +563,14 @@ async function callAI(messages: { role: string; content: string }[]): Promise<st
           logger.info(`callAI provider=${provider} hat keinen API-Key (null), naechster.`);
           break;
         }
-        logger.info(`callAI provider=${provider} ERFOLG (${result.length} chars)`);
+        const latency = Date.now() - t0;
+        logger.info(`callAI provider=${provider} ERFOLG (${result.length} chars, ${latency}ms)`);
+        void recordCall(provider as ProviderName, 'success', latency);
         return result;
       } catch (error) {
         anyAttempted = true;
         lastError = error;
+        const latency = Date.now() - t0;
         const status = (error as { response?: { status?: number } })?.response?.status;
         const is429 = status === 429;
         if (!is429) allRateLimited = false;
@@ -574,7 +579,9 @@ async function callAI(messages: { role: string; content: string }[]): Promise<st
         logger.warn(
           `AI-Provider ${provider} Versuch ${attempt}/2 fehlgeschlagen${transient ? ' (transient)' : ''}: ${errMsg}`,
         );
+        // Stats nur beim letzten Versuch (oder 429) aufzeichnen, damit Retries nicht doppelt zaehlen.
         if (is429) {
+          void recordCall(provider as ProviderName, 'rateLimit', latency, errMsg);
           // 429 retry am gleichen Provider ist sinnlos – sofort weiter.
           break;
         }
@@ -582,6 +589,7 @@ async function callAI(messages: { role: string; content: string }[]): Promise<st
           await new Promise(r => setTimeout(r, 400));
           continue; // gleicher Provider, zweiter Versuch
         }
+        void recordCall(provider as ProviderName, 'failure', latency, errMsg);
         break; // nächster Provider
       }
     }
@@ -597,9 +605,16 @@ async function callAI(messages: { role: string; content: string }[]): Promise<st
 }
 
 /**
- * Provider-Reihenfolge basierend auf Konfiguration.
+ * Provider-Reihenfolge: adaptiv aus persistenten Stats (success rate + latenz),
+ * Fallback auf Konfig-Reihenfolge wenn DB nicht verfuegbar.
  */
-function getProviderOrder(): ('groq' | 'cerebras' | 'openrouter' | 'gemini' | 'openai')[] {
+async function getProviderOrder(): Promise<('groq' | 'cerebras' | 'openrouter' | 'gemini' | 'openai')[]> {
+  try {
+    const ranked = await getRankedProviders();
+    if (ranked.length > 0) return ranked;
+  } catch (e) {
+    logger.warn(`getProviderOrder: getRankedProviders fehlgeschlagen, Fallback Konfig: ${String(e)}`);
+  }
   const all: ('groq' | 'cerebras' | 'openrouter' | 'gemini' | 'openai')[] = [
     'groq',
     'cerebras',
