@@ -75,6 +75,26 @@ else
   warn "Prisma db push lieferte Fehler - bitte Logs pruefen."
 fi
 
+# 4b) Zusaetzliche idempotente SQL-Skripte (deploy/sql/*.sql) anwenden.
+#     Erlaubt additive Indices/Extensions ohne Prisma-Schema-Aenderung.
+SQL_DIR="$(cd "$(dirname "$0")" && pwd)/sql"
+if [[ -d "$SQL_DIR" ]]; then
+  shopt -s nullglob
+  SQL_FILES=("$SQL_DIR"/*.sql)
+  shopt -u nullglob
+  if (( ${#SQL_FILES[@]} > 0 )); then
+    info "Wende ${#SQL_FILES[@]} SQL-Skript(e) aus deploy/sql/ an..."
+    for f in "${SQL_FILES[@]}"; do
+      name="$(basename "$f")"
+      if docker compose exec -T postgres psql -U "${POSTGRES_USER:-discord_bot}" -d "${POSTGRES_DB:-discord_v_bot}" -v ON_ERROR_STOP=1 < "$f" >/dev/null 2>&1; then
+        log "SQL angewendet: $name"
+      else
+        warn "SQL fehlgeschlagen: $name (siehe psql-Output)"
+      fi
+    done
+  fi
+fi
+
 # 5) Letzte Logs zur Kontrolle
 info "Letzte Bot-Logs:"
 docker compose logs --tail=20 "$COMPOSE_SERVICE" | tail -25

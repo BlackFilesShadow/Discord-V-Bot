@@ -8,6 +8,7 @@ import rateLimit from 'express-rate-limit';
 import { config } from '../config';
 import { logger, logAudit } from '../utils/logger';
 import { authRouter, apiRouter, adminRouter, testRouter } from './routes';
+import { metricsRegistry } from '../utils/metrics';
 
 /**
  * Web-Dashboard Server (Sektion 7 & 12):
@@ -91,9 +92,35 @@ export function startDashboard(): void {
     res.json({ status: 'ok', uptime: process.uptime() });
   });
 
+  // Prometheus-Metriken (text/plain). Optional Token-geschuetzt via METRICS_TOKEN.
+  if (config.monitoring.metricsEnabled) {
+    app.get('/metrics', async (req, res) => {
+      const token = config.monitoring.metricsToken;
+      if (token) {
+        const auth = req.headers.authorization || '';
+        const provided = auth.startsWith('Bearer ') ? auth.slice(7) : '';
+        if (provided !== token) {
+          res.status(401).type('text/plain').send('unauthorized');
+          return;
+        }
+      }
+      try {
+        res.set('Content-Type', metricsRegistry.contentType);
+        res.send(await metricsRegistry.metrics());
+      } catch (err) {
+        logger.error('Metrics-Export-Fehler:', err as Error);
+        res.status(500).type('text/plain').send('metrics error');
+      }
+    });
+    logger.info('Metrics: /metrics aktiv' + (config.monitoring.metricsToken ? ' (Bearer-geschuetzt)' : ' (offen)'));
+  }
+
   // Error Handler
   app.use((err: Error, _req: express.Request, res: express.Response, _next: express.NextFunction) => {
     logger.error('Dashboard-Fehler:', err);
+    // Push an Error-Sink (Discord-Webhook, falls konfiguriert)
+    // Lazy-Import vermeidet Zirkel-Abhängigkeiten beim Boot.
+    import('../utils/errorSink.js').then(m => m.reportError(err, { source: 'dashboard' })).catch(() => { /* */ });
     res.status(500).json({ error: 'Interner Serverfehler' });
   });
 

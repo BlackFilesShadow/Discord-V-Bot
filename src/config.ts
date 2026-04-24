@@ -100,4 +100,11 @@ export const config = {
     windowMs: parseInt(optionalEnv('RATE_LIMIT_WINDOW_MS', '60000'), 10),
     maxRequests: parseInt(optionalEnv('RATE_LIMIT_MAX_REQUESTS', '30'), 10),
   },
+
+  // Monitoring / Telemetrie
+  monitoring: {
+    metricsEnabled: optionalEnv('METRICS_ENABLED', 'true') !== 'false',
+    metricsToken: optionalEnv('METRICS_TOKEN', ''), // Optional: Bearer-Token-Schutz fuer /metrics
+    errorWebhookUrl: optionalEnv('ERROR_WEBHOOK_URL', ''), // Discord-Webhook fuer Error-Push
+  },
 } as const;

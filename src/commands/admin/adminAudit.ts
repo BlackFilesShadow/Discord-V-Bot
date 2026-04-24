@@ -48,6 +48,20 @@ const adminAuditCommand: Command = {
     )
     .addSubcommand(sub =>
       sub
+        .setName('volltext')
+        .setDescription('Audit-Volltextsuche über action+details')
+        .addStringOption(opt =>
+          opt.setName('query').setDescription('Suchbegriff (case-insensitive)').setRequired(true)
+        )
+        .addIntegerOption(opt =>
+          opt.setName('tage').setDescription('Letzten X Tage').setRequired(false).setMinValue(1).setMaxValue(365)
+        )
+        .addIntegerOption(opt =>
+          opt.setName('limit').setDescription('Max Ergebnisse (1-50)').setRequired(false).setMinValue(1).setMaxValue(50)
+        )
+    )
+    .addSubcommand(sub =>
+      sub
         .setName('compliance')
         .setDescription('Compliance-Check durchführen')
     )
@@ -111,6 +125,47 @@ const adminAuditCommand: Command = {
           .setFooter({ text: `${logs.length} Ergebnisse • Letzte ${days} Tage` })
           .setTimestamp();
 
+        await interaction.editReply({ embeds: [embed] });
+        break;
+      }
+
+      case 'volltext': {
+        const query = interaction.options.getString('query', true).trim();
+        const days = interaction.options.getInteger('tage') || 30;
+        const limit = interaction.options.getInteger('limit') || 20;
+        if (query.length < 2) {
+          await interaction.editReply({ content: '❌ Suchbegriff zu kurz (min. 2 Zeichen).' });
+          return;
+        }
+        const since = new Date(Date.now() - days * 24 * 60 * 60 * 1000);
+        // Volltextsuche via ILIKE auf action + details::text.
+        // Trigram-Index (siehe Migration) macht das auch bei großen Tabellen schnell.
+        const rows = await prisma.$queryRaw<Array<{
+          id: string; action: string; category: string; createdAt: Date;
+          actorId: string | null; targetId: string | null; details: unknown; isImmutable: boolean;
+        }>>`
+          SELECT id, action, category, "createdAt", "actorId", "targetId", details, "isImmutable"
+          FROM "AuditLog"
+          WHERE "createdAt" >= ${since}
+            AND (action ILIKE ${'%' + query + '%'} OR details::text ILIKE ${'%' + query + '%'})
+          ORDER BY "createdAt" DESC
+          LIMIT ${limit}
+        `;
+        if (rows.length === 0) {
+          await interaction.editReply({ content: `🔍 Keine Treffer für **${query}** in den letzten ${days} Tagen.` });
+          return;
+        }
+        const lines = rows.map(r => {
+          const t = new Date(r.createdAt).toLocaleString('de-DE');
+          const detailsPreview = r.details ? JSON.stringify(r.details).slice(0, 120) : '';
+          return `\`${t}\` **${r.action}** [${r.category}]${r.isImmutable ? ' 🔒' : ''}\n  ${detailsPreview ? '`' + detailsPreview + '`' : ''}`;
+        });
+        const embed = new EmbedBuilder()
+          .setTitle(`🔎 Volltextsuche: "${query.slice(0, 40)}"`)
+          .setDescription(lines.join('\n\n').slice(0, 4000))
+          .setColor(0x9b59b6)
+          .setFooter({ text: `${rows.length} Ergebnisse • Letzte ${days} Tage` })
+          .setTimestamp();
         await interaction.editReply({ embeds: [embed] });
         break;
       }

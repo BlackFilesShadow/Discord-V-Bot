@@ -12,6 +12,9 @@ import {
 import { BotEvent, ExtendedClient } from '../types';
 import { logger, logAudit } from '../utils/logger';
 import { checkRateLimit } from '../utils/rateLimiter';
+import { checkCooldown } from '../utils/cooldown';
+import { commandCounter, commandDurationHistogram, rateLimitedCounter } from '../utils/metrics';
+import { reportError } from '../utils/errorSink';
 import prisma from '../database/prisma';
 import { approveManufacturer, denyManufacturer } from '../modules/registration/register';
 import { votePoll, getPollVotes, createPollEmbed } from '../modules/polls/pollSystem';
@@ -161,6 +164,8 @@ const interactionCreateEvent: BotEvent = {
     // In-memory Rate-Limit (synchron, 0 DB-Calls) um Discord's 3s-Timeout einzuhalten.
     // DB-basiertes Rate-Limit läuft zusätzlich in Hintergrund-Jobs.
     if (!checkInMemoryRateLimit(i.user.id)) {
+      rateLimitedCounter.inc({ kind: 'in_memory' });
+      commandCounter.inc({ command: i.commandName, status: 'ratelimit' });
       try {
         await i.reply({
           content: `⚠️ Zu viele Commands. Bitte einen Moment warten.`,
@@ -168,6 +173,22 @@ const interactionCreateEvent: BotEvent = {
         });
       } catch { /* interaction evtl. abgelaufen */ }
       return;
+    }
+
+    // Per-Command-Cooldown (Owner umgeht Cooldown)
+    if (command.cooldown && !isOwnerOrGuildOwner(i.user.id, i)) {
+      const cd = checkCooldown(i.user.id, i.commandName, command.cooldown);
+      if (!cd.ok) {
+        rateLimitedCounter.inc({ kind: 'cooldown' });
+        commandCounter.inc({ command: i.commandName, status: 'cooldown' });
+        try {
+          await i.reply({
+            content: `⏳ Bitte noch **${cd.remainingSec}s** warten, bevor du \`/${i.commandName}\` erneut nutzt.`,
+            ephemeral: true,
+          });
+        } catch { /* */ }
+        return;
+      }
     }
 
     // ──────────────────────────────────────────
@@ -289,6 +310,7 @@ const interactionCreateEvent: BotEvent = {
     }
 
     // Command ausführen
+    const stopTimer = commandDurationHistogram.startTimer({ command: i.commandName });
     try {
       logAudit('COMMAND_EXECUTE', 'SYSTEM', {
         userId: i.user.id,
@@ -299,16 +321,25 @@ const interactionCreateEvent: BotEvent = {
       });
 
       await command.execute(i);
+      commandCounter.inc({ command: i.commandName, status: 'success' });
     } catch (error: any) {
       // 10062 (Unknown interaction) und 40060 (Already acknowledged) silently behandeln —
       // diese sind nicht durch Code-Bugs, sondern durch Discord-Latenz/Cold-Start verursacht.
       const code = error?.code ?? error?.rawError?.code;
       if (code === 10062 || code === 40060) {
         logger.warn(`Command ${i.commandName}: Interaction abgelaufen (${code}) — ignoriert.`);
+        commandCounter.inc({ command: i.commandName, status: 'expired' });
         return;
       }
 
       logger.error(`Fehler bei Command ${i.commandName}:`, error);
+      commandCounter.inc({ command: i.commandName, status: 'error' });
+      reportError(error, {
+        source: 'command',
+        command: i.commandName,
+        userId: i.user.id,
+        guildId: i.guildId ?? undefined,
+      });
 
       const errorMessage = '❌ Ein Fehler ist aufgetreten. Bitte versuche es erneut.';
       try {
@@ -321,6 +352,8 @@ const interactionCreateEvent: BotEvent = {
         // Ignorieren wenn Antwort nicht mehr möglich
         logger.warn(`Konnte Fehler-Antwort nicht senden für ${i.commandName}: ${replyError?.message}`);
       }
+    } finally {
+      stopTimer();
     }
   },
 };
