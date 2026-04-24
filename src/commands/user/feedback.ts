@@ -8,7 +8,7 @@ import {
   ModalSubmitInteraction,
   TextChannel,
 } from 'discord.js';
-import { Command, ExtendedClient } from '../../types';
+import { Command } from '../../types';
 import prisma from '../../database/prisma';
 import { config } from '../../config';
 import { Colors, Brand, vEmbed } from '../../utils/embedDesign';

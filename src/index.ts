@@ -228,14 +228,14 @@ async function main(): Promise<void> {
   // Graceful Shutdown
   const shutdown = async (signal: string) => {
     logger.info(`${signal} empfangen. Fahre herunter...`);
-    client.destroy();
+    await client.destroy();
     await prisma.$disconnect();
     logger.info('Bot heruntergefahren.');
     process.exit(0);
   };
 
-  process.on('SIGINT', () => shutdown('SIGINT'));
-  process.on('SIGTERM', () => shutdown('SIGTERM'));
+  process.on('SIGINT', () => { void shutdown('SIGINT'); });
+  process.on('SIGTERM', () => { void shutdown('SIGTERM'); });
   process.on('unhandledRejection', (error) => {
     logger.error('Unhandled Rejection:', error);
   });

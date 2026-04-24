@@ -2,7 +2,6 @@ import {
   SlashCommandBuilder,
   ChatInputCommandInteraction,
   ChannelType,
-  TextChannel,
 } from 'discord.js';
 import { Command } from '../../types';
 import prisma from '../../database/prisma';
