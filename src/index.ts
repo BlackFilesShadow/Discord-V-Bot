@@ -182,8 +182,20 @@ async function main(): Promise<void> {
   // Bot einloggen
   await client.login(config.discord.token);
 
-  // Commands bei Discord registrieren – IMMER global (auf allen Servern verfügbar)
-  await deployCommands(client, config.discord.token, config.discord.clientId);
+  // Web-Dashboard SOFORT nach Login starten, damit Healthcheck (/health) und
+  // /metrics frueh verfuegbar sind. deployCommands() unten kann minutenlang dauern
+  // (globaler Sync/Rate-Limits) und darf den HTTP-Server nicht blockieren.
+  try {
+    startDashboard();
+  } catch (error) {
+    logger.error('Dashboard konnte nicht gestartet werden:', error);
+  }
+
+  // Commands bei Discord registrieren – IMMER global (auf allen Servern verfügbar).
+  // Bewusst NICHT awaiten: globaler Sync kann sehr lange dauern; per-Guild-Sync
+  // im ready-Event hat die Commands bereits sofort sichtbar gemacht.
+  void deployCommands(client, config.discord.token, config.discord.clientId)
+    .catch((e) => logger.error('Globaler deployCommands fehlgeschlagen:', e as Error));
 
   // Scheduler starten
   startGiveawayScheduler(client);
@@ -202,13 +214,6 @@ async function main(): Promise<void> {
       logger.error('Moderation-Scheduler Fehler:', err as Error);
     }
   }, 60_000);
-
-  // Web-Dashboard starten (für Healthcheck und Admin-UI)
-  try {
-    startDashboard();
-  } catch (error) {
-    logger.error('Dashboard konnte nicht gestartet werden:', error);
-  }
 
   logger.info('Discord-V-Bot vollständig gestartet.');
 
