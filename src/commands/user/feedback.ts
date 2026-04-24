@@ -177,7 +177,15 @@ export async function handleFeedbackModal(modal: ModalSubmitInteraction): Promis
               { name: 'ID', value: `\`${fb.id}\``, inline: false },
             )
             .setFooter({ text: `${Brand.footerText} • Feedback` });
-          await safeSend(ch as TextChannel, { embeds: [embed], allowedMentions: { parse: [] } });
+          const sent = await safeSend(ch as TextChannel, { embeds: [embed], allowedMentions: { parse: [] } });
+          if (sent?.id) {
+            try {
+              await prisma.feedback.update({
+                where: { id: fb.id },
+                data: { notifyChannelId: channelId, notifyMessageId: sent.id },
+              });
+            } catch { /* */ }
+          }
         }
       } catch (e) {
         logger.warn('Feedback-Channel-Notify fehlgeschlagen:', e as Error);

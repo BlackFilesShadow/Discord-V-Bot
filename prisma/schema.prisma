@@ -1243,6 +1243,8 @@ model Feedback {
   adminNote   String?  @db.Text
   reviewedBy  String?  // Discord-ID des Admins
   reviewedAt  DateTime?
+  notifyChannelId String? // Channel, in den die Notify-Nachricht gepostet wurde
+  notifyMessageId String? // Message-ID der Notify-Nachricht (fuer Live-Status-Update)
   createdAt   DateTime @default(now())
   updatedAt   DateTime @updatedAt
 

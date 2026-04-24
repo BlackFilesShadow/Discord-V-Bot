@@ -151,6 +151,52 @@ function isOwner(interaction: ChatInputCommandInteraction): boolean {
   return !!config.discord.ownerId && interaction.user.id === config.discord.ownerId;
 }
 
+const CATEGORY_COLOR: Record<string, number> = {
+  BUG: Colors.Error,
+  IDEA: Colors.Info,
+  PRAISE: Colors.Success,
+  OTHER: Colors.Neutral,
+};
+
+/**
+ * Aktualisiert die im urspruenglichen Notify-Channel gepostete Embed-Nachricht
+ * (Status-Feld + Admin-Notiz). Stillschweigend, falls Channel/Message weg.
+ */
+async function refreshNotifyEmbed(
+  interaction: ChatInputCommandInteraction,
+  fb: { id: string; category: string; subject: string; message: string; userId: string; guildId: string | null; status: string; adminNote: string | null; reviewedBy: string | null; reviewedAt: Date | null; createdAt: Date; notifyChannelId: string | null; notifyMessageId: string | null; },
+): Promise<void> {
+  if (!fb.notifyChannelId || !fb.notifyMessageId) return;
+  try {
+    const ch = await interaction.client.channels.fetch(fb.notifyChannelId).catch(() => null);
+    if (!ch || !ch.isTextBased()) return;
+    const msg = await (ch as TextChannel).messages.fetch(fb.notifyMessageId).catch(() => null);
+    if (!msg) return;
+    const cat = CATEGORY_LABEL[fb.category] ?? fb.category;
+    let serverField = 'DM';
+    if (fb.guildId) {
+      const g = interaction.client.guilds.cache.get(fb.guildId)
+        ?? await interaction.client.guilds.fetch(fb.guildId).catch(() => null);
+      serverField = g ? `**${g.name}**\n\`${fb.guildId}\`` : `\`${fb.guildId}\``;
+    }
+    const color = STATUS_COLORS[(fb.status as StatusValue)] ?? CATEGORY_COLOR[fb.category] ?? Colors.Info;
+    const embed = vEmbed(color)
+      .setTitle(`${cat} • ${fb.subject}`)
+      .setDescription(fb.message.slice(0, 3500))
+      .addFields(
+        { name: 'Von', value: `<@${fb.userId}> (\`${fb.userId}\`)`, inline: true },
+        { name: 'Server', value: serverField, inline: true },
+        { name: 'Status', value: `\`${fb.status}\``, inline: true },
+        { name: 'ID', value: `\`${fb.id}\``, inline: false },
+      );
+    if (fb.adminNote) embed.addFields({ name: 'Admin-Notiz', value: fb.adminNote.slice(0, 1024) });
+    if (fb.reviewedBy) embed.addFields({ name: 'Bearbeitet von', value: `<@${fb.reviewedBy}> · ${fmtDate(fb.reviewedAt)}`, inline: true });
+    await msg.edit({ embeds: [embed], allowedMentions: { parse: [] } }).catch(() => null);
+  } catch (e) {
+    logger.warn('refreshNotifyEmbed fehlgeschlagen:', e as Error);
+  }
+}
+
 async function handleListe(interaction: ChatInputCommandInteraction): Promise<void> {
   await interaction.deferReply({ ephemeral: true });
   const status = interaction.options.getString('status') ?? undefined;
@@ -248,6 +294,9 @@ async function handleStatus(interaction: ChatInputCommandInteraction): Promise<v
     data: { status: wert, reviewedBy: interaction.user.id, reviewedAt: new Date() },
   });
   logAudit('FEEDBACK_STATUS_CHANGED', 'ADMIN', { feedbackId: fb.id, from: fb.status, to: wert, by: interaction.user.id });
+  // Original-Notify-Embed updaten (Farbe + Status + Notiz).
+  const fresh = await prisma.feedback.findUnique({ where: { id: fb.id } });
+  if (fresh) await refreshNotifyEmbed(interaction, fresh);
   await interaction.editReply({
     embeds: [vEmbed(STATUS_COLORS[wert]).setTitle('Status aktualisiert').setDescription(`\`${fb.id}\` → **${wert}**`)],
   });
@@ -267,6 +316,8 @@ async function handleNotiz(interaction: ChatInputCommandInteraction): Promise<vo
     data: { adminNote: text, reviewedBy: interaction.user.id, reviewedAt: new Date() },
   });
   logAudit('FEEDBACK_NOTE_SET', 'ADMIN', { feedbackId: fb.id, by: interaction.user.id });
+  const fresh = await prisma.feedback.findUnique({ where: { id: fb.id } });
+  if (fresh) await refreshNotifyEmbed(interaction, fresh);
   await interaction.editReply({
     embeds: [vEmbed(Colors.Success).setTitle('Notiz gespeichert').setDescription(`\`${fb.id}\``)],
   });
