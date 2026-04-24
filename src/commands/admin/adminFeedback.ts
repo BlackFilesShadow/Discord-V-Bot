@@ -1,0 +1,250 @@
+import {
+  SlashCommandBuilder,
+  ChatInputCommandInteraction,
+  PermissionFlagsBits,
+  ChannelType,
+  TextChannel,
+} from 'discord.js';
+import { Command } from '../../types';
+import prisma from '../../database/prisma';
+import { Colors, vEmbed } from '../../utils/embedDesign';
+import { logger, logAudit } from '../../utils/logger';
+
+/**
+ * /admin-feedback — Verwaltung der via /feedback eingereichten Eintraege.
+ *
+ * Subcommands:
+ *   - liste     Letzte 25 Feedbacks (optional Status-Filter)
+ *   - zeigen    Detailansicht einer ID
+ *   - status    Status setzen (OPEN | IN_REVIEW | RESOLVED | WONTFIX)
+ *   - notiz     Admin-Notiz an einem Feedback ablegen
+ *   - channel   Discord-Channel fuer Echtzeit-Notifications setzen/entfernen
+ */
+
+const STATUS_VALUES = ['OPEN', 'IN_REVIEW', 'RESOLVED', 'WONTFIX'] as const;
+type StatusValue = typeof STATUS_VALUES[number];
+
+const STATUS_COLORS: Record<StatusValue, number> = {
+  OPEN: Colors.Warning,
+  IN_REVIEW: Colors.Info,
+  RESOLVED: Colors.Success,
+  WONTFIX: Colors.Neutral,
+};
+
+const CATEGORY_LABEL: Record<string, string> = {
+  BUG: '🐛 Bug',
+  IDEA: '💡 Idee',
+  PRAISE: '🌟 Lob',
+  OTHER: '📩 Sonstiges',
+};
+
+function fmtDate(d: Date | null | undefined): string {
+  if (!d) return '-';
+  return new Intl.DateTimeFormat('de-DE', {
+    day: '2-digit', month: '2-digit', year: '2-digit', hour: '2-digit', minute: '2-digit',
+    timeZone: 'Europe/Berlin',
+  }).format(d);
+}
+
+const adminFeedbackCommand: Command = {
+  data: new SlashCommandBuilder()
+    .setName('admin-feedback')
+    .setDescription('Verwaltung der via /feedback eingereichten Eintraege')
+    .setDefaultMemberPermissions(PermissionFlagsBits.ManageGuild)
+    .addSubcommand((sub) =>
+      sub
+        .setName('liste')
+        .setDescription('Letzte Feedbacks dieser Guild')
+        .addStringOption((o) =>
+          o.setName('status').setDescription('Optional: nach Status filtern')
+            .addChoices(
+              { name: 'Offen', value: 'OPEN' },
+              { name: 'In Pruefung', value: 'IN_REVIEW' },
+              { name: 'Geloest', value: 'RESOLVED' },
+              { name: 'Wird nicht behoben', value: 'WONTFIX' },
+            ),
+        )
+        .addStringOption((o) =>
+          o.setName('kategorie').setDescription('Optional: nach Kategorie filtern')
+            .addChoices(
+              { name: 'Bug', value: 'BUG' },
+              { name: 'Idee', value: 'IDEA' },
+              { name: 'Lob', value: 'PRAISE' },
+              { name: 'Sonstiges', value: 'OTHER' },
+            ),
+        ),
+    )
+    .addSubcommand((sub) =>
+      sub
+        .setName('zeigen')
+        .setDescription('Detailansicht einer Feedback-ID')
+        .addStringOption((o) => o.setName('id').setDescription('Feedback-ID (auch 8-Zeichen-Praefix)').setRequired(true)),
+    )
+    .addSubcommand((sub) =>
+      sub
+        .setName('status')
+        .setDescription('Status eines Feedbacks setzen')
+        .addStringOption((o) => o.setName('id').setDescription('Feedback-ID').setRequired(true))
+        .addStringOption((o) =>
+          o.setName('wert').setDescription('Neuer Status').setRequired(true)
+            .addChoices(
+              { name: 'Offen', value: 'OPEN' },
+              { name: 'In Pruefung', value: 'IN_REVIEW' },
+              { name: 'Geloest', value: 'RESOLVED' },
+              { name: 'Wird nicht behoben', value: 'WONTFIX' },
+            ),
+        ),
+    )
+    .addSubcommand((sub) =>
+      sub
+        .setName('notiz')
+        .setDescription('Admin-Notiz an einem Feedback ablegen')
+        .addStringOption((o) => o.setName('id').setDescription('Feedback-ID').setRequired(true))
+        .addStringOption((o) => o.setName('text').setDescription('Notiztext').setRequired(true).setMaxLength(1000)),
+    )
+    .addSubcommand((sub) =>
+      sub
+        .setName('channel')
+        .setDescription('Discord-Channel fuer Echtzeit-Feedback-Posts setzen/entfernen')
+        .addChannelOption((o) =>
+          o.setName('channel').setDescription('Zielchannel (leer = entfernen)').addChannelTypes(
+            ChannelType.GuildText, ChannelType.GuildAnnouncement,
+          ),
+        ),
+    ) as SlashCommandBuilder,
+  adminOnly: true,
+
+  async execute(interaction: ChatInputCommandInteraction) {
+    if (!interaction.guildId) {
+      await interaction.reply({ content: 'Nur in Guilds verwendbar.', ephemeral: true });
+      return;
+    }
+    const sub = interaction.options.getSubcommand();
+    try {
+      if (sub === 'liste') return await handleListe(interaction);
+      if (sub === 'zeigen') return await handleZeigen(interaction);
+      if (sub === 'status') return await handleStatus(interaction);
+      if (sub === 'notiz') return await handleNotiz(interaction);
+      if (sub === 'channel') return await handleChannel(interaction);
+    } catch (e) {
+      logger.error('admin-feedback fehlgeschlagen:', e as Error);
+      const msg = `Fehler: ${String((e as Error)?.message ?? e)}`;
+      if (interaction.deferred || interaction.replied) await interaction.editReply(msg);
+      else await interaction.reply({ content: msg, ephemeral: true });
+    }
+  },
+};
+
+async function handleListe(interaction: ChatInputCommandInteraction): Promise<void> {
+  await interaction.deferReply({ ephemeral: true });
+  const status = interaction.options.getString('status') ?? undefined;
+  const category = interaction.options.getString('kategorie') ?? undefined;
+  const items = await prisma.feedback.findMany({
+    where: { guildId: interaction.guildId!, ...(status ? { status } : {}), ...(category ? { category } : {}) },
+    orderBy: { createdAt: 'desc' },
+    take: 25,
+  });
+  if (items.length === 0) {
+    await interaction.editReply({ embeds: [vEmbed(Colors.Info).setTitle('Keine Feedbacks gefunden')] });
+    return;
+  }
+  const lines = items.map((f) => {
+    const cat = CATEGORY_LABEL[f.category] ?? f.category;
+    return `\`${f.id.slice(0, 8)}\` · ${cat} · **${f.status}** · ${fmtDate(f.createdAt)} · <@${f.userId}>\n  > ${f.subject.slice(0, 80)}`;
+  });
+  await interaction.editReply({
+    embeds: [vEmbed(Colors.Info)
+      .setTitle(`Feedbacks (${items.length})`)
+      .setDescription(lines.join('\n').slice(0, 4000))
+      .setFooter({ text: 'Detail: /admin-feedback zeigen id:<8-Zeichen>' })],
+  });
+}
+
+async function findByPrefix(guildId: string, idInput: string) {
+  return prisma.feedback.findFirst({
+    where: { guildId, OR: [{ id: idInput }, { id: { startsWith: idInput } }] },
+  });
+}
+
+async function handleZeigen(interaction: ChatInputCommandInteraction): Promise<void> {
+  await interaction.deferReply({ ephemeral: true });
+  const id = interaction.options.getString('id', true).trim();
+  const fb = await findByPrefix(interaction.guildId!, id);
+  if (!fb) {
+    await interaction.editReply({ content: `Kein Feedback mit ID \`${id}\` gefunden.` });
+    return;
+  }
+  const cat = CATEGORY_LABEL[fb.category] ?? fb.category;
+  const embed = vEmbed(STATUS_COLORS[(fb.status as StatusValue)] ?? Colors.Info)
+    .setTitle(`${cat} • ${fb.subject}`)
+    .setDescription(fb.message.slice(0, 3500))
+    .addFields(
+      { name: 'Von', value: `<@${fb.userId}> (\`${fb.userId}\`)`, inline: true },
+      { name: 'Status', value: `\`${fb.status}\``, inline: true },
+      { name: 'Erstellt', value: fmtDate(fb.createdAt), inline: true },
+      { name: 'ID', value: `\`${fb.id}\``, inline: false },
+    );
+  if (fb.adminNote) embed.addFields({ name: 'Admin-Notiz', value: fb.adminNote.slice(0, 1024) });
+  if (fb.reviewedBy) embed.addFields({ name: 'Bearbeitet von', value: `<@${fb.reviewedBy}> · ${fmtDate(fb.reviewedAt)}` });
+  await interaction.editReply({ embeds: [embed] });
+}
+
+async function handleStatus(interaction: ChatInputCommandInteraction): Promise<void> {
+  await interaction.deferReply({ ephemeral: true });
+  const id = interaction.options.getString('id', true).trim();
+  const wert = interaction.options.getString('wert', true) as StatusValue;
+  const fb = await findByPrefix(interaction.guildId!, id);
+  if (!fb) {
+    await interaction.editReply({ content: `Kein Feedback mit ID \`${id}\` gefunden.` });
+    return;
+  }
+  await prisma.feedback.update({
+    where: { id: fb.id },
+    data: { status: wert, reviewedBy: interaction.user.id, reviewedAt: new Date() },
+  });
+  logAudit('FEEDBACK_STATUS_CHANGED', 'ADMIN', { feedbackId: fb.id, from: fb.status, to: wert, by: interaction.user.id });
+  await interaction.editReply({
+    embeds: [vEmbed(STATUS_COLORS[wert]).setTitle('Status aktualisiert').setDescription(`\`${fb.id}\` → **${wert}**`)],
+  });
+}
+
+async function handleNotiz(interaction: ChatInputCommandInteraction): Promise<void> {
+  await interaction.deferReply({ ephemeral: true });
+  const id = interaction.options.getString('id', true).trim();
+  const text = interaction.options.getString('text', true).trim();
+  const fb = await findByPrefix(interaction.guildId!, id);
+  if (!fb) {
+    await interaction.editReply({ content: `Kein Feedback mit ID \`${id}\` gefunden.` });
+    return;
+  }
+  await prisma.feedback.update({
+    where: { id: fb.id },
+    data: { adminNote: text, reviewedBy: interaction.user.id, reviewedAt: new Date() },
+  });
+  logAudit('FEEDBACK_NOTE_SET', 'ADMIN', { feedbackId: fb.id, by: interaction.user.id });
+  await interaction.editReply({
+    embeds: [vEmbed(Colors.Success).setTitle('Notiz gespeichert').setDescription(`\`${fb.id}\``)],
+  });
+}
+
+async function handleChannel(interaction: ChatInputCommandInteraction): Promise<void> {
+  await interaction.deferReply({ ephemeral: true });
+  const channel = interaction.options.getChannel('channel') as TextChannel | null;
+  await prisma.guildProfile.upsert({
+    where: { guildId: interaction.guildId! },
+    create: {
+      guildId: interaction.guildId!,
+      name: interaction.guild?.name ?? 'unknown',
+      feedbackChannelId: channel?.id ?? null,
+    },
+    update: { feedbackChannelId: channel?.id ?? null },
+  });
+  logAudit('FEEDBACK_CHANNEL_SET', 'ADMIN', { guildId: interaction.guildId, channelId: channel?.id ?? null, by: interaction.user.id });
+  await interaction.editReply({
+    embeds: [vEmbed(Colors.Success)
+      .setTitle('Feedback-Channel aktualisiert')
+      .setDescription(channel ? `Neue /feedback-Eintraege werden in <#${channel.id}> gespiegelt.` : 'Channel-Notification deaktiviert.')],
+  });
+}
+
+export default adminFeedbackCommand;

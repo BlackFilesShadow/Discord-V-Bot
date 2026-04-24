@@ -128,8 +128,19 @@ export async function handleFeedbackModal(modal: ModalSubmitInteraction): Promis
       category,
     });
 
-    // Admin-Channel-Notify, wenn konfiguriert
-    const channelId = config.features.feedbackChannelId;
+    // Admin-Channel-Notify: pro Guild (GuildProfile.feedbackChannelId)
+    // mit Fallback auf globalen ENV-Channel.
+    let channelId: string | null = null;
+    if (modal.guildId) {
+      try {
+        const gp = await prisma.guildProfile.findUnique({
+          where: { guildId: modal.guildId },
+          select: { feedbackChannelId: true },
+        });
+        if (gp?.feedbackChannelId) channelId = gp.feedbackChannelId;
+      } catch { /* */ }
+    }
+    if (!channelId) channelId = config.features.feedbackChannelId || null;
     if (channelId) {
       try {
         const ch = await modal.client.channels.fetch(channelId).catch(() => null);

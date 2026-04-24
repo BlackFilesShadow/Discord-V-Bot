@@ -1096,6 +1096,8 @@ model GuildProfile {
   isLarge                  Boolean?
   botCount                 Int?
   topRolesJson             Json? // [{ name, color, position, memberCount? }]
+  // Feedback-Channel: wenn gesetzt, werden /feedback-Embeds dorthin gespiegelt
+  feedbackChannelId        String?
   joinedAt      DateTime @default(now())
   lastSyncedAt  DateTime @default(now())
   updatedAt     DateTime @updatedAt

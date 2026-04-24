@@ -64,6 +64,8 @@ function fmtDate(d: Date | null | undefined): string {
   }).format(d);
 }
 
+function pad(n: number): string { return String(n).padStart(2, '0'); }
+
 function buildRolePings(interaction: ChatInputCommandInteraction): string | null {
   const ids: string[] = [];
   for (const k of ['rolle1', 'rolle2', 'rolle3'] as const) {
@@ -108,12 +110,76 @@ const translatePostCommand: Command = {
     .addSubcommand((sub) =>
       sub
         .setName('recurring')
-        .setDescription('Wiederkehrend posten (DAILY:HH:MM oder WEEKLY:MON:HH:MM, MON|TUE|WED|THU|FRI|SAT|SUN)')
+        .setDescription('Wiederkehrend posten (Profi: HOURLY:MM | DAILY:HH:MM | WEEKLY:DAY:HH:MM | MONTHLY:DD:HH:MM)')
         .addStringOption((o) => o.setName('text').setDescription('Originaltext').setRequired(true).setMaxLength(3500))
         .addStringOption((o) => o.setName('zielsprache').setDescription('Zielsprache').setRequired(true).addChoices(...languageChoices()))
         .addChannelOption((o) => o.setName('channel').setDescription('Zielchannel').setRequired(true).addChannelTypes(ChannelType.GuildText, ChannelType.GuildAnnouncement))
-        .addStringOption((o) => o.setName('cron').setDescription('z.B. DAILY:09:00 oder WEEKLY:MON:18:30').setRequired(true))
+        .addStringOption((o) => o.setName('cron').setDescription('z.B. DAILY:09:00, WEEKLY:MON:18:30, MONTHLY:23:11:45, HOURLY:15').setRequired(true))
         .addStringOption((o) => o.setName('quellsprache').setDescription('Quellsprache (Auto-Detect wenn leer)').addChoices(...languageChoices()))
+        .addAttachmentOption((o) => o.setName('bild').setDescription('Optionales Bild'))
+        .addRoleOption((o) => o.setName('rolle1').setDescription('Rolle 1 anpingen'))
+        .addRoleOption((o) => o.setName('rolle2').setDescription('Rolle 2 anpingen'))
+        .addRoleOption((o) => o.setName('rolle3').setDescription('Rolle 3 anpingen')),
+    )
+    .addSubcommand((sub) =>
+      sub
+        .setName('stuendlich')
+        .setDescription('Jede Stunde zur gewaehlten Minute posten')
+        .addStringOption((o) => o.setName('text').setDescription('Originaltext').setRequired(true).setMaxLength(3500))
+        .addStringOption((o) => o.setName('zielsprache').setDescription('Zielsprache').setRequired(true).addChoices(...languageChoices()))
+        .addChannelOption((o) => o.setName('channel').setDescription('Zielchannel').setRequired(true).addChannelTypes(ChannelType.GuildText, ChannelType.GuildAnnouncement))
+        .addIntegerOption((o) => o.setName('minute').setDescription('Minute (0-59)').setRequired(true).setMinValue(0).setMaxValue(59))
+        .addStringOption((o) => o.setName('quellsprache').setDescription('Quellsprache').addChoices(...languageChoices()))
+        .addAttachmentOption((o) => o.setName('bild').setDescription('Optionales Bild'))
+        .addRoleOption((o) => o.setName('rolle1').setDescription('Rolle 1 anpingen'))
+        .addRoleOption((o) => o.setName('rolle2').setDescription('Rolle 2 anpingen'))
+        .addRoleOption((o) => o.setName('rolle3').setDescription('Rolle 3 anpingen')),
+    )
+    .addSubcommand((sub) =>
+      sub
+        .setName('taeglich')
+        .setDescription('Jeden Tag zur gewaehlten Uhrzeit posten')
+        .addStringOption((o) => o.setName('text').setDescription('Originaltext').setRequired(true).setMaxLength(3500))
+        .addStringOption((o) => o.setName('zielsprache').setDescription('Zielsprache').setRequired(true).addChoices(...languageChoices()))
+        .addChannelOption((o) => o.setName('channel').setDescription('Zielchannel').setRequired(true).addChannelTypes(ChannelType.GuildText, ChannelType.GuildAnnouncement))
+        .addIntegerOption((o) => o.setName('stunde').setDescription('Stunde (0-23)').setRequired(true).setMinValue(0).setMaxValue(23))
+        .addIntegerOption((o) => o.setName('minute').setDescription('Minute (0-59)').setRequired(true).setMinValue(0).setMaxValue(59))
+        .addStringOption((o) => o.setName('quellsprache').setDescription('Quellsprache').addChoices(...languageChoices()))
+        .addAttachmentOption((o) => o.setName('bild').setDescription('Optionales Bild'))
+        .addRoleOption((o) => o.setName('rolle1').setDescription('Rolle 1 anpingen'))
+        .addRoleOption((o) => o.setName('rolle2').setDescription('Rolle 2 anpingen'))
+        .addRoleOption((o) => o.setName('rolle3').setDescription('Rolle 3 anpingen')),
+    )
+    .addSubcommand((sub) =>
+      sub
+        .setName('woechentlich')
+        .setDescription('Jede Woche an festem Wochentag und Uhrzeit posten')
+        .addStringOption((o) => o.setName('text').setDescription('Originaltext').setRequired(true).setMaxLength(3500))
+        .addStringOption((o) => o.setName('zielsprache').setDescription('Zielsprache').setRequired(true).addChoices(...languageChoices()))
+        .addChannelOption((o) => o.setName('channel').setDescription('Zielchannel').setRequired(true).addChannelTypes(ChannelType.GuildText, ChannelType.GuildAnnouncement))
+        .addStringOption((o) => o.setName('wochentag').setDescription('Wochentag').setRequired(true).addChoices(
+          { name: 'Montag', value: 'MON' }, { name: 'Dienstag', value: 'TUE' }, { name: 'Mittwoch', value: 'WED' },
+          { name: 'Donnerstag', value: 'THU' }, { name: 'Freitag', value: 'FRI' }, { name: 'Samstag', value: 'SAT' }, { name: 'Sonntag', value: 'SUN' },
+        ))
+        .addIntegerOption((o) => o.setName('stunde').setDescription('Stunde (0-23)').setRequired(true).setMinValue(0).setMaxValue(23))
+        .addIntegerOption((o) => o.setName('minute').setDescription('Minute (0-59)').setRequired(true).setMinValue(0).setMaxValue(59))
+        .addStringOption((o) => o.setName('quellsprache').setDescription('Quellsprache').addChoices(...languageChoices()))
+        .addAttachmentOption((o) => o.setName('bild').setDescription('Optionales Bild'))
+        .addRoleOption((o) => o.setName('rolle1').setDescription('Rolle 1 anpingen'))
+        .addRoleOption((o) => o.setName('rolle2').setDescription('Rolle 2 anpingen'))
+        .addRoleOption((o) => o.setName('rolle3').setDescription('Rolle 3 anpingen')),
+    )
+    .addSubcommand((sub) =>
+      sub
+        .setName('monatlich')
+        .setDescription('Jeden Monat an festem Tag und Uhrzeit posten (z.B. 23. um 11:45)')
+        .addStringOption((o) => o.setName('text').setDescription('Originaltext').setRequired(true).setMaxLength(3500))
+        .addStringOption((o) => o.setName('zielsprache').setDescription('Zielsprache').setRequired(true).addChoices(...languageChoices()))
+        .addChannelOption((o) => o.setName('channel').setDescription('Zielchannel').setRequired(true).addChannelTypes(ChannelType.GuildText, ChannelType.GuildAnnouncement))
+        .addIntegerOption((o) => o.setName('tag').setDescription('Tag im Monat (1-31)').setRequired(true).setMinValue(1).setMaxValue(31))
+        .addIntegerOption((o) => o.setName('stunde').setDescription('Stunde (0-23)').setRequired(true).setMinValue(0).setMaxValue(23))
+        .addIntegerOption((o) => o.setName('minute').setDescription('Minute (0-59)').setRequired(true).setMinValue(0).setMaxValue(59))
+        .addStringOption((o) => o.setName('quellsprache').setDescription('Quellsprache').addChoices(...languageChoices()))
         .addAttachmentOption((o) => o.setName('bild').setDescription('Optionales Bild'))
         .addRoleOption((o) => o.setName('rolle1').setDescription('Rolle 1 anpingen'))
         .addRoleOption((o) => o.setName('rolle2').setDescription('Rolle 2 anpingen'))
@@ -142,7 +208,28 @@ const translatePostCommand: Command = {
       if (sub === 'delete') return await handleDelete(interaction);
       if (sub === 'now') return await handleNow(interaction);
       if (sub === 'schedule') return await handleSchedule(interaction);
-      if (sub === 'recurring') return await handleRecurring(interaction);
+      if (sub === 'recurring') return await handleRecurring(interaction, interaction.options.getString('cron', true));
+      if (sub === 'stuendlich') {
+        const m = interaction.options.getInteger('minute', true);
+        return await handleRecurring(interaction, `HOURLY:${pad(m)}`);
+      }
+      if (sub === 'taeglich') {
+        const h = interaction.options.getInteger('stunde', true);
+        const m = interaction.options.getInteger('minute', true);
+        return await handleRecurring(interaction, `DAILY:${pad(h)}:${pad(m)}`);
+      }
+      if (sub === 'woechentlich') {
+        const wd = interaction.options.getString('wochentag', true);
+        const h = interaction.options.getInteger('stunde', true);
+        const m = interaction.options.getInteger('minute', true);
+        return await handleRecurring(interaction, `WEEKLY:${wd}:${pad(h)}:${pad(m)}`);
+      }
+      if (sub === 'monatlich') {
+        const d = interaction.options.getInteger('tag', true);
+        const h = interaction.options.getInteger('stunde', true);
+        const m = interaction.options.getInteger('minute', true);
+        return await handleRecurring(interaction, `MONTHLY:${pad(d)}:${pad(h)}:${pad(m)}`);
+      }
     } catch (e) {
       logger.error('translate-post fehlgeschlagen:', e as Error);
       const msg = `Fehler: ${String((e as Error)?.message ?? e)}`;
@@ -247,18 +334,17 @@ async function handleSchedule(interaction: ChatInputCommandInteraction): Promise
   });
 }
 
-async function handleRecurring(interaction: ChatInputCommandInteraction): Promise<void> {
+async function handleRecurring(interaction: ChatInputCommandInteraction, cron: string): Promise<void> {
   await interaction.deferReply({ ephemeral: true });
   const text = interaction.options.getString('text', true);
   const target = interaction.options.getString('zielsprache', true);
   const source = interaction.options.getString('quellsprache') ?? undefined;
   const channel = interaction.options.getChannel('channel', true);
   const image = interaction.options.getAttachment('bild');
-  const cron = interaction.options.getString('cron', true);
   const rolePings = buildRolePings(interaction);
 
   if (!LANGUAGE_CODES.includes(target)) throw new Error(`Unbekannte Zielsprache: ${target}`);
-  if (!parseRecurrence(cron)) throw new Error('Cron ungueltig. Format: DAILY:HH:MM oder WEEKLY:MON:HH:MM.');
+  if (!parseRecurrence(cron)) throw new Error('Cron ungueltig. Format: HOURLY:MM | DAILY:HH:MM | WEEKLY:DAY:HH:MM | MONTHLY:DD:HH:MM.');
   const next = nextRunFromRecurrence(cron);
   if (!next) throw new Error('Konnte naechsten Ausfuehrungszeitpunkt nicht berechnen.');
 

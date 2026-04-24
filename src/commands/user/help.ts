@@ -338,6 +338,7 @@ function buildPages(isAdmin: boolean, isDev: boolean): HelpPage[] {
         fields: [
           { name: '`/ai-trigger`', value: '┃ *(Admin)* Auto-Antworten auf Schlüsselwörter konfigurieren.' },
           { name: '`/translate-post`', value: '┃ *(Admin)* Beiträge automatisch übersetzen lassen.' },
+          { name: '`/translate-post stuendlich/taeglich/woechentlich/monatlich`', value: '┃ Wiederkehrende Posts mit freier Stunden-/Minuten-/Tag-Wahl.' },
           { name: '`/welcome`', value: '┃ *(Admin)* Willkommens-Nachrichten mit Variablen.' },
           { name: '`/autorole`', value: '┃ *(Admin)* Rollen automatisch beim Beitritt vergeben.' },
           { name: '`/feed`', value: '┃ *(Admin)* RSS/News-Feeds in Channel posten.' },
@@ -390,6 +391,7 @@ function buildPages(isAdmin: boolean, isDev: boolean): HelpPage[] {
           { name: '`/feed <aktion>`', value: '┃ Feed-Management.' },
           { name: '`/selfrole`', value: '┃ Self-Role-Menüs (Buttons) erstellen/verwalten.' },
           { name: '`/xp-config`', value: '┃ XP-Raten, Whitelists, Level-Rollen.' },
+          { name: '`/admin-feedback`', value: '┃ Feedback-Eintraege verwalten + Notification-Channel.' },
         ],
         footer: `Seite ${pages.length + 2} ${Brand.dot} Admin 2/2 ${Brand.dot} ${Brand.footerText}`,
         timestamp: true,
