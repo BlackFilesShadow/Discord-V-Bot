@@ -48,7 +48,7 @@ export const aiCommand: Command = {
 
       if (sub === 'ask') {
         const q = interaction.options.getString('frage', true);
-        const r = await answerQuestion(q);
+        const r = await answerQuestion(q, { mode: 'oneshot' });
         title = '🤖  AI-Antwort';
         body = r.success ? r.result || '_(leer)_' : `❌ ${r.error}`;
       } else if (sub === 'sentiment') {

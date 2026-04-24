@@ -223,6 +223,7 @@ const messageCreateEvent: BotEvent = {
                   matched.aiPrompt
                     ? `${matched.aiPrompt}\n\nNachricht des Nutzers: ${msg.content}`
                     : msg.content,
+                  { mode: 'trigger' },
                 );
                 if (r.success && r.result) {
                   responseText = r.result;
@@ -333,7 +334,7 @@ const messageCreateEvent: BotEvent = {
             }
           } catch { /* Kontext ist optional */ }
 
-          const r = await answerQuestion(question, context);
+          const r = await answerQuestion(question, { mode: 'chat', context });
           if (r.success && r.result) {
             // Bot-Reply zeigt den Author bereits an -> KEIN zusaetzliches @mention im Text.
             // Auch in der AI-Antwort enthaltene @-Mentions/Usernamen am Anfang strippen,

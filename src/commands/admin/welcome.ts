@@ -167,7 +167,8 @@ export const welcomeCommand: Command = {
       if (cfg.mode === 'ai') {
         const prompt = renderWelcomeMessage(cfg.message, { user: interaction.user.username, guild: interaction.guild.name, memberCount });
         const r = await answerQuestion(
-          `Erzeuge eine kurze, freundliche, einladende Begr\u00fc\u00dfung. Anweisung: ${prompt}\n\nNutzer: ${interaction.user.username}\nServer: ${interaction.guild.name}\nMitgliederzahl: ${memberCount}\n\nGib NUR den Begr\u00fc\u00dfungstext zur\u00fcck (max. 600 Zeichen).`
+          `Erzeuge eine kurze, freundliche, einladende Begrüßung. Anweisung: ${prompt}\n\nNutzer: ${interaction.user.username}\nServer: ${interaction.guild.name}\nMitgliederzahl: ${memberCount}\n\nGib NUR den Begrüßungstext zurück (max. 600 Zeichen).`,
+          { mode: 'welcome' },
         );
         messageText = r.success && r.result ? `${userMention} ${r.result.trim()}` : `${userMention} Willkommen!`;
       } else {

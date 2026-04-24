@@ -118,7 +118,8 @@ const guildMemberAddEvent: BotEvent = {
                 memberCount,
               });
               const r = await answerQuestion(
-                `Erzeuge eine kurze, freundliche, einladende Begr\u00fc\u00dfung. Anweisung: ${prompt}\n\nNeuer Nutzer: ${m.user.username}\nServer: ${m.guild.name}\nMitgliederzahl: ${memberCount}\n\nGib NUR den Begr\u00fc\u00dfungstext zur\u00fcck (max. 600 Zeichen).`
+                `Erzeuge eine kurze, freundliche, einladende Begrüßung. Anweisung: ${prompt}\n\nNeuer Nutzer: ${m.user.username}\nServer: ${m.guild.name}\nMitgliederzahl: ${memberCount}\n\nGib NUR den Begrüßungstext zurück (max. 600 Zeichen).`,
+                { mode: 'welcome' },
               );
               messageText = r.success && r.result ? `${userMention} ${r.result.trim()}` : `${userMention} Willkommen auf ${m.guild.name}!`;
             } else {

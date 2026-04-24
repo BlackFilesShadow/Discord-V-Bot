@@ -152,17 +152,46 @@ export function getKnowledgeBoundary(): string {
 
 /**
  * Wissensfrage beantworten.
+ *
+ * `mode` steuert, welche System-Bloecke in den Prompt fliessen
+ * (Token-/Latenz-Optimierung):
+ * - `chat`     (Default): Persona + Zeit + Knowledge-Boundary + Catalog (on-demand) + Web-Recherche (bei Faktfragen)
+ * - `oneshot`  Slash-Command /ai ask: identisch zu `chat`
+ * - `trigger`  Owner-Trigger-Antwort: Persona + Zeit; Web-Recherche nur bei klarer Faktfrage; KEIN Catalog
+ * - `welcome`  Begruessungs-Generierung: Persona + Zeit; KEINE Knowledge-Boundary, KEIN Catalog, KEINE Web-Recherche
+ *
+ * Zweite Parameter rueckwaerts-kompatibel: ein String wird als `context` interpretiert.
  */
-export async function answerQuestion(question: string, context?: string): Promise<AiResponse> {
+export type AnswerMode = 'chat' | 'welcome' | 'trigger' | 'oneshot';
+export interface AnswerOptions {
+  mode?: AnswerMode;
+  context?: string;
+}
+
+export async function answerQuestion(
+  question: string,
+  optionsOrContext?: string | AnswerOptions,
+): Promise<AiResponse> {
+  const opts: AnswerOptions =
+    typeof optionsOrContext === 'string'
+      ? { context: optionsOrContext }
+      : (optionsOrContext ?? {});
+  const mode: AnswerMode = opts.mode ?? 'chat';
+  const context = opts.context;
+
+  const wantWebSearch = mode === 'chat' || mode === 'oneshot' || mode === 'trigger';
+  const wantCatalog = mode === 'chat' || mode === 'oneshot';
+  const wantKnowledgeBoundary = mode !== 'welcome';
+
   try {
     // Live-Web-Recherche bei Fakt-/Aktualitaetsfragen
     let liveBlock: string | null = null;
-    if (looksFactQuestion(question)) {
+    if (wantWebSearch && looksFactQuestion(question)) {
       try {
         const hits = await liveSearch(question);
         liveBlock = formatSearchResultsForPrompt(hits);
         if (liveBlock) {
-          logger.info(`Live-Suche fuer AI: ${hits.length} Treffer fuer "${question.slice(0, 80)}"`);
+          logger.info(`Live-Suche fuer AI [${mode}]: ${hits.length} Treffer fuer "${question.slice(0, 80)}"`);
         }
       } catch (e) {
         logger.warn('Live-Suche fehlgeschlagen, fahre ohne Web-Kontext fort:', { e: String(e) });
@@ -172,15 +201,16 @@ export async function answerQuestion(question: string, context?: string): Promis
     // Command-Katalog nur einspeisen, wenn der Nutzer danach fragt (Token-schonend).
     // Fokussierte Variante: liefert nur die im Text erwaehnten Commands +
     // relevantes Glossar, faellt sonst auf den Voll-Katalog zurueck.
-    const catalogBlock: string | null = asksAboutCommands(question) ? formatCatalogForPromptFocused(question) : null;
+    const catalogBlock: string | null =
+      wantCatalog && asksAboutCommands(question) ? formatCatalogForPromptFocused(question) : null;
 
     const response = await callAI([
       { role: 'system', content: BOT_PERSONA },
       { role: 'system', content: getLiveTimeContext() },
-      { role: 'system', content: getKnowledgeBoundary() },
-      ...(catalogBlock ? [{ role: 'system', content: catalogBlock }] : []),
-      ...(liveBlock ? [{ role: 'system', content: liveBlock }] : []),
-      ...(context ? [{ role: 'system', content: context }] : []),
+      ...(wantKnowledgeBoundary ? [{ role: 'system' as const, content: getKnowledgeBoundary() }] : []),
+      ...(catalogBlock ? [{ role: 'system' as const, content: catalogBlock }] : []),
+      ...(liveBlock ? [{ role: 'system' as const, content: liveBlock }] : []),
+      ...(context ? [{ role: 'system' as const, content: context }] : []),
       { role: 'user', content: question },
     ]);
 
