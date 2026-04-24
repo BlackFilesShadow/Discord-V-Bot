@@ -15,7 +15,27 @@ export interface PublicCommandDoc {
   short: string;           // einzeiler
   details: string;         // 1\u20133 Saetze in Klartext
   examples?: string[];     // optional konkrete Beispielaufrufe
+  /** Voraussetzungen (z.B. "verifizierter Hersteller", "Mod-Rolle"). */
+  requires?: string;
+  /** Limits / Quoten (z.B. "max 10 Dateien", "60s Cooldown"). */
+  limits?: string;
+  /** Verwandte Commands (Querverweise) – als reine Namen z.B. "/upload". */
+  related?: string[];
 }
+
+/**
+ * Mini-Glossar fuer Begriffe, die der Bot oft erklaeren muss.
+ * Wird zusammen mit dem Katalog eingespeist.
+ */
+export const GLOSSARY: { term: string; explanation: string }[] = [
+  { term: 'GUID',         explanation: 'Eindeutige interne ID, die jeder User & jeder Hersteller-Bereich automatisch bekommt.' },
+  { term: 'OTP',          explanation: 'Einmal-Passwort per DM, gueltig 30 Min, zur Hersteller-Verifikation.' },
+  { term: 'Soft-Delete',  explanation: 'Markiert als geloescht, aber wiederherstellbar. Echter Loeschvorgang nur durch Admin.' },
+  { term: 'Hersteller',   explanation: 'Verifizierter User mit eigenem GUID-Bereich, der Pakete hochladen darf.' },
+  { term: 'Auto-Rolle',   explanation: 'Rolle, die der Bot automatisch nach einem Trigger (Join/Reaction/Level/...) vergibt.' },
+  { term: 'Ticket',       explanation: 'Privater Support-Chat zwischen User und Owner per DM-Bridge. Wird archiviert, nie geloescht.' },
+  { term: 'XP-Cooldown',  explanation: 'Mindestabstand zwischen zwei XP-Vergaben pro User (Anti-Spam, Standard 60s).' },
+];
 
 export const PUBLIC_COMMAND_CATALOG: PublicCommandDoc[] = [
   // ----- Hilfe / Info -----
@@ -50,6 +70,9 @@ export const PUBLIC_COMMAND_CATALOG: PublicCommandDoc[] = [
     details:
       'Nur f\u00fcr verifizierte Hersteller. Du gibst einen Paketnamen an und h\u00e4ngst bis zu 10 Dateien an. Dateien werden validiert (XML/JSON-Schema) und im eigenen GUID-Bereich gespeichert.',
     examples: ['/upload paketname:MeinPaket datei:file.xml'],
+    requires: 'verifizierter Hersteller (siehe /register manufacturer + /register verify)',
+    limits: 'max. 10 Dateien pro Aufruf, 2 GB pro Datei, nur XML/JSON',
+    related: ['/mypackages list', '/register manufacturer'],
   },
   {
     name: '/mypackages list',
@@ -175,6 +198,61 @@ export const PUBLIC_COMMAND_CATALOG: PublicCommandDoc[] = [
     details: 'Per Case-Nummer (steht in der Mod-Nachricht) und Begr\u00fcndung. Wird vom Mod-Team gepr\u00fcft.',
     examples: ['/appeal case:42 begruendung:War ein Missverst\u00e4ndnis'],
   },
+
+  // ----- Moderation (Mod-Rolle erforderlich) -----
+  {
+    name: '/kick',
+    short: 'Einen Nutzer kicken.',
+    details: 'Entfernt den User vom Server. Er kann mit neuem Invite zurueckkommen. Aktion wird im Mod-Log dokumentiert.',
+    examples: ['/kick user:@spam grund:Werbung'],
+    requires: 'Mod-/Admin-Rolle in der Datenbank',
+    related: ['/ban', '/warn'],
+  },
+  {
+    name: '/ban',
+    short: 'Einen Nutzer bannen (optional temporaer).',
+    details: 'Permanent oder zeitlich begrenzt. Bei Dauer in Minuten wird der Ban automatisch wieder aufgehoben. Wird im Mod-Log dokumentiert.',
+    examples: ['/ban user:@trouble grund:Toxisch dauer:1440'],
+    requires: 'Mod-/Admin-Rolle',
+    related: ['/kick', '/appeal'],
+  },
+  {
+    name: '/mute',
+    short: 'Einen Nutzer stummschalten (Discord-Timeout).',
+    details: 'Setzt einen Timeout (Standard: 60 Min, max. 28 Tage). User kann nichts schreiben oder reagieren.',
+    examples: ['/mute user:@laut grund:Spam dauer:30'],
+    requires: 'Mod-/Admin-Rolle',
+  },
+  {
+    name: '/warn',
+    short: 'Einen Nutzer verwarnen.',
+    details: 'Erzeugt einen Warn-Eintrag im Modul. Mehrere Warns koennen Auto-Mute/Ban triggern (je nach Konfiguration).',
+    examples: ['/warn user:@regelbruch grund:Off-Topic'],
+    requires: 'Mod-/Admin-Rolle',
+    related: ['/appeal'],
+  },
+
+  // ----- Support / Tickets -----
+  {
+    name: '/ticket open',
+    short: 'Neues Support-Ticket an den Owner senden.',
+    details: 'Owner bekommt deine Anfrage per DM mit Annehmen/Ablehnen-Buttons. Bei Annahme entsteht eine private DM-Bridge: alles was du dem Bot per DM schreibst, geht direkt zum Owner und umgekehrt.',
+    examples: ['/ticket open betreff:Frage nachricht:"Wie funktioniert Upload?"'],
+    limits: '1 offenes Ticket pro User; max. 150 Zeichen Betreff, 1500 Zeichen Nachricht',
+    related: ['/ticket close', '/ticket status'],
+  },
+  {
+    name: '/ticket close',
+    short: 'Eigenes aktives Ticket schliessen.',
+    details: 'Beendet die DM-Bridge. Das Ticket wird archiviert (nie geloescht), du kannst es per /ticket status weiterhin einsehen.',
+    related: ['/ticket open', '/ticket status'],
+  },
+  {
+    name: '/ticket status',
+    short: 'Status deiner letzten Tickets anzeigen.',
+    details: 'Listet die letzten Tickets mit Nummer, Betreff und Status (PENDING/OPEN/CLOSED/DENIED).',
+    related: ['/ticket open'],
+  },
 ];
 
 /**
@@ -187,12 +265,74 @@ export function asksAboutCommands(question: string): boolean {
     /was\s+(kannst|machst)\s+du\b/.test(q) ||
     /\b(welche|wie viele)\s+(commands?|befehle|funktionen|features)\b/.test(q) ||
     /\b(hilfe|help)\b/.test(q) ||
-    /\bwie\s+(funktioniert|nutze|benutze)\s+(ich\s+)?(der\s+|den\s+|die\s+|das\s+)?bot\b/.test(q)
+    /\bwie\s+(funktioniert|nutze|benutze)\s+(ich\s+)?(der\s+|den\s+|die\s+|das\s+)?bot\b/.test(q) ||
+    /\/[a-z][a-z-]*/i.test(q) // Slash-Command direkt erwaehnt (z.B. "wie geht /upload?")
   );
 }
 
 /**
- * Formatiert den Katalog als kompakter System-Prompt-Block fuer die AI.
+ * Findet die im Text erwaehnten Commands (mit oder ohne Subcommand).
+ * Gibt eine Liste der passenden Katalogeintraege zurueck.
+ *
+ * Beispiele:
+ *  - "wie nutze ich /poll abstimmen?"  -> [/poll abstimmen]
+ *  - "was macht /ticket?"              -> alle /ticket *-Subcommands
+ *  - "kann ich /upload nutzen"         -> [/upload]
+ */
+export function findReferencedCommands(question: string): PublicCommandDoc[] {
+  const q = question.toLowerCase();
+  const matches: PublicCommandDoc[] = [];
+  const seen = new Set<string>();
+
+  // 1) Exakter Subcommand-Match: "/poll abstimmen"
+  for (const c of PUBLIC_COMMAND_CATALOG) {
+    const needle = c.name.toLowerCase();
+    if (q.includes(needle) && !seen.has(c.name)) {
+      matches.push(c);
+      seen.add(c.name);
+    }
+  }
+  if (matches.length > 0) return matches;
+
+  // 2) Fallback: Basis-Command ohne Subcommand erwaehnt -> alle Subcommands liefern
+  const baseRegex = /\/([a-z][a-z-]*)/gi;
+  const bases = new Set<string>();
+  for (const m of q.matchAll(baseRegex)) bases.add(m[1].toLowerCase());
+
+  for (const base of bases) {
+    for (const c of PUBLIC_COMMAND_CATALOG) {
+      if (seen.has(c.name)) continue;
+      const cmdBase = c.name.toLowerCase().split(/\s+/)[0]; // "/poll erstellen" -> "/poll"
+      if (cmdBase === `/${base}`) {
+        matches.push(c);
+        seen.add(c.name);
+      }
+    }
+  }
+
+  return matches;
+}
+
+/**
+ * Formatiert einen einzelnen Katalog-Eintrag als kompakter Block.
+ */
+function formatEntry(c: PublicCommandDoc): string {
+  const lines: string[] = [];
+  lines.push(`- ${c.name} \u2014 ${c.short}`);
+  lines.push(`  ${c.details}`);
+  if (c.requires) lines.push(`  Voraussetzung: ${c.requires}`);
+  if (c.limits)   lines.push(`  Limits: ${c.limits}`);
+  if (c.related && c.related.length > 0) {
+    lines.push(`  Verwandt: ${c.related.join(', ')}`);
+  }
+  if (c.examples && c.examples.length > 0) {
+    lines.push(`  Beispiel: ${c.examples.join(' | ')}`);
+  }
+  return lines.join('\n');
+}
+
+/**
+ * Formatiert den vollen Katalog als kompakter System-Prompt-Block fuer die AI.
  * Wird nur bei Bedarf eingespeist (Token-Schonung).
  */
 export function formatCatalogForPrompt(): string {
@@ -200,20 +340,50 @@ export function formatCatalogForPrompt(): string {
     'KATALOG DER \u00d6FFENTLICHEN COMMANDS (nur diese darfst du erw\u00e4hnen \u2013 NIEMALS Dev- oder Admin-Commands):',
     '',
   ];
-  for (const c of PUBLIC_COMMAND_CATALOG) {
-    lines.push(`- ${c.name} \u2014 ${c.short}`);
-    lines.push(`  ${c.details}`);
-    if (c.examples && c.examples.length > 0) {
-      lines.push(`  Beispiel: ${c.examples.join(' | ')}`);
-    }
+  for (const c of PUBLIC_COMMAND_CATALOG) lines.push(formatEntry(c));
+  lines.push('');
+  lines.push('GLOSSAR:');
+  for (const g of GLOSSARY) lines.push(`- ${g.term}: ${g.explanation}`);
+  lines.push('');
+  lines.push(answerRules());
+  return lines.join('\n');
+}
+
+/**
+ * Formatiert nur die im Text erwaehnten Commands. Token-schonender als der
+ * volle Katalog, deutlich praeziser. Faellt auf den Voll-Katalog zurueck,
+ * wenn keine konkreten Commands erkannt wurden, der Nutzer aber generisch
+ * nach Commands gefragt hat.
+ */
+export function formatCatalogForPromptFocused(question: string): string {
+  const matches = findReferencedCommands(question);
+  if (matches.length === 0) return formatCatalogForPrompt();
+
+  const lines: string[] = [
+    'KATALOG-AUSZUG (nur die im Nutzertext erwaehnten Commands):',
+    '',
+  ];
+  for (const c of matches) lines.push(formatEntry(c));
+  lines.push('');
+  lines.push('GLOSSAR (relevante Begriffe):');
+  for (const g of GLOSSARY) {
+    const t = g.term.toLowerCase();
+    if (question.toLowerCase().includes(t)) lines.push(`- ${g.term}: ${g.explanation}`);
   }
   lines.push('');
-  lines.push('ANTWORT-REGELN beim Erkl\u00e4ren von Commands:');
-  lines.push('- Erkl\u00e4re nur, was wirklich gefragt wurde. Keine vollst\u00e4ndige Auflistung, wenn der Nutzer nur ein Thema will.');
-  lines.push('- Sprich Nutzer und Owner gleichermassen verst\u00e4ndlich an, ohne zu bevormunden.');
-  lines.push('- Erw\u00e4hne NIEMALS Developer- oder Admin-Commands (z.B. /dev-*, /admin-*, xp-config). Diese existieren f\u00fcr dich nicht.');
-  lines.push('- Erfinde keine Commands oder Optionen, die nicht im Katalog stehen.');
-  lines.push('- Bei Folgefragen ("wie geht das genau?", "was passiert dann?") darfst du auf Basis des Katalogs ausf\u00fchrlicher werden.');
-  lines.push('- Halte die Sprache locker und kurz, kein Marketing-Ton.');
+  lines.push(answerRules());
   return lines.join('\n');
+}
+
+function answerRules(): string {
+  return [
+    'ANTWORT-REGELN beim Erkl\u00e4ren von Commands:',
+    '- Erkl\u00e4re nur, was wirklich gefragt wurde. Keine vollst\u00e4ndige Auflistung, wenn der Nutzer nur ein Thema will.',
+    '- Sprich Nutzer und Owner gleichermassen verst\u00e4ndlich an, ohne zu bevormunden.',
+    '- Erw\u00e4hne NIEMALS Developer- oder Admin-Commands (z.B. /dev-*, /admin-*, xp-config). Diese existieren f\u00fcr dich nicht.',
+    '- Erfinde keine Commands oder Optionen, die nicht im Katalog stehen. Wenn der Nutzer einen Command nennt, der nicht im Katalog ist: sag klar "den Command gibt es nicht".',
+    '- Bei Folgefragen ("wie geht das genau?", "was passiert dann?") darfst du auf Basis des Katalogs ausf\u00fchrlicher werden.',
+    '- Halte die Sprache locker und kurz, kein Marketing-Ton.',
+    '- Wenn ein Beispielaufruf vorhanden ist, zeige ihn (das hilft dem Nutzer mehr als reine Beschreibung).',
+  ].join('\n');
 }

@@ -3,7 +3,7 @@ import { config } from '../../config';
 import { logger, logAudit } from '../../utils/logger';
 import prisma from '../../database/prisma';
 import { liveSearch, looksFactQuestion, formatSearchResultsForPrompt } from './webSearch';
-import { asksAboutCommands, formatCatalogForPrompt } from './commandCatalog';
+import { asksAboutCommands, formatCatalogForPromptFocused } from './commandCatalog';
 
 /**
  * AI-Integration (Sektion 4):
@@ -170,7 +170,9 @@ export async function answerQuestion(question: string, context?: string): Promis
     }
 
     // Command-Katalog nur einspeisen, wenn der Nutzer danach fragt (Token-schonend).
-    const catalogBlock: string | null = asksAboutCommands(question) ? formatCatalogForPrompt() : null;
+    // Fokussierte Variante: liefert nur die im Text erwaehnten Commands +
+    // relevantes Glossar, faellt sonst auf den Voll-Katalog zurueck.
+    const catalogBlock: string | null = asksAboutCommands(question) ? formatCatalogForPromptFocused(question) : null;
 
     const response = await callAI([
       { role: 'system', content: BOT_PERSONA },
