@@ -36,6 +36,79 @@ const INFOBOX_KEYS = [
   'Geschaeftsfuehrer', 'Gesch\u00e4ftsf\u00fchrer', 'CEO',
 ];
 
+/**
+ * Domain-spezifische Themen, fuer die wir gezielt eine zusaetzliche
+ * Wikipedia-Suche mit kanonischem Begriff durchfuehren und vertrauens-
+ * wuerdige offizielle Quellen als Hintergrund-Wissen einblenden.
+ *
+ * Trigger: einer der `keywords` muss in der Frage vorkommen (case-insensitive).
+ * `wikiQuery`: kanonischer Suchbegriff fuer Wikipedia.
+ * `sources`: offizielle / verlaessliche URLs, die der AI als Hinweis dienen.
+ */
+interface DomainTopic {
+  id: string;
+  keywords: RegExp;
+  wikiQuery: string;
+  sources: { title: string; url: string; note: string }[];
+}
+
+const DOMAIN_TOPICS: DomainTopic[] = [
+  {
+    id: 'nitrado',
+    keywords: /\b(nitrado)\b/i,
+    wikiQuery: 'Nitrado',
+    sources: [
+      { title: 'Nitrado Hilfe-Center', url: 'https://help.nitrado.net/', note: 'Offizielle Hilfe & Tutorials zu Nitrado-Gameservern' },
+      { title: 'Nitrado Webinterface', url: 'https://server.nitrado.net/', note: 'Server-Verwaltung (Restart, Mods, Konfig)' },
+    ],
+  },
+  {
+    id: 'fs25',
+    keywords: /\b(fs ?25|ls ?25|farming[\s-]?simulator(\s*25)?|landwirtschafts[\s-]?simulator(\s*25)?)\b/i,
+    wikiQuery: 'Landwirtschafts-Simulator 25',
+    sources: [
+      { title: 'Farming Simulator 25 (offiziell)', url: 'https://www.farming-simulator.com/', note: 'Hersteller-Seite GIANTS Software' },
+      { title: 'ModHub (offizieller Mod-Katalog)', url: 'https://www.farming-simulator.com/mods.php', note: 'Geprueftes Mod-Verzeichnis fuer FS25' },
+    ],
+  },
+  {
+    id: 'giants',
+    keywords: /\b(giants(\s*software)?)\b/i,
+    wikiQuery: 'Giants Software',
+    sources: [
+      { title: 'GIANTS Software', url: 'https://www.giants-software.com/', note: 'Entwicklerstudio des Farming Simulator' },
+    ],
+  },
+  {
+    id: 'modhub',
+    keywords: /\b(mod[\s-]?hub)\b/i,
+    wikiQuery: 'Farming Simulator ModHub',
+    sources: [
+      { title: 'ModHub', url: 'https://www.farming-simulator.com/mods.php', note: 'Offizielles, gepruefes Mod-Verzeichnis' },
+    ],
+  },
+  {
+    id: 'gameserver',
+    keywords: /\b(game[\s-]?server|gameserver)\b/i,
+    wikiQuery: 'Spieleserver',
+    sources: [
+      { title: 'Nitrado Gameserver', url: 'https://server.nitrado.net/', note: 'Beispiel-Anbieter fuer Gameserver-Hosting' },
+    ],
+  },
+  {
+    id: 'pterodactyl',
+    keywords: /\b(pterodactyl|pelican[\s-]?panel)\b/i,
+    wikiQuery: 'Pterodactyl Panel',
+    sources: [
+      { title: 'Pterodactyl Panel', url: 'https://pterodactyl.io/', note: 'Open-Source-Gameserver-Verwaltungspanel' },
+    ],
+  },
+];
+
+function detectDomainTopics(question: string): DomainTopic[] {
+  return DOMAIN_TOPICS.filter((t) => t.keywords.test(question));
+}
+
 function stripWikiMarkup(s: string): string {
   return s
     .replace(/<ref[^>]*>[\s\S]*?<\/ref>/gi, '')
@@ -236,6 +309,9 @@ export function looksFactQuestion(question: string): boolean {
   // Reine Datum-/Zeit-Fragen werden vom Zeit-Block beantwortet, keine Web-Suche noetig
   if (/^(was f[\u00fcu]r ein tag|welcher tag|welcher wochentag|wie sp[\u00e4a]t|wie viel uhr|wieviel uhr|welches datum|welches jahr|welche jahreszeit)\b/.test(q)) return false;
 
+  // Domain-Themen (Nitrado, FS25, Giants, ModHub, Gameserver, Pterodactyl) immer recherchieren
+  if (detectDomainTopics(q).length > 0) return true;
+
   // Alles andere mit Frage-/Fakten-Charakter \u2192 Web-Suche
   if (/\?$/.test(q)) return true;
   if (/\b(wer|was|wo|wann|wieso|warum|wie viel|wie viele|welche?r?|welches)\b/.test(q)) return true;
@@ -256,14 +332,36 @@ export function looksFactQuestion(question: string): boolean {
 export async function liveSearch(question: string): Promise<WebSearchResult[]> {
   const results: WebSearchResult[] = [];
 
+  // Domain-spezifische Themen erkennen (Nitrado, FS25, Giants, ModHub, ...)
+  const topics = detectDomainTopics(question);
+
   // Parallel suchen, um Latenz zu minimieren
-  const [wikiHits, ddg] = await Promise.all([
-    searchWikipedia(question, 3),
+  const wikiTasks: Promise<WebSearchResult[]>[] = [searchWikipedia(question, 3)];
+  for (const t of topics) {
+    wikiTasks.push(searchWikipedia(t.wikiQuery, 1));
+  }
+
+  const [ddg, ...wikiResultGroups] = await Promise.all([
     searchDuckDuckGo(question),
+    ...wikiTasks,
   ]);
 
-  for (const w of wikiHits) results.push(w);
+  for (const group of wikiResultGroups) {
+    for (const w of group) {
+      if (!results.some((r) => r.url === w.url || r.snippet === w.snippet)) results.push(w);
+    }
+  }
   if (ddg && !results.some((r) => r.snippet === ddg.snippet)) results.push(ddg);
+
+  // Domain-Wissen als Zusatzquelle: offizielle, vertrauenswuerdige URLs
+  for (const t of topics) {
+    const lines = t.sources.map((s) => `- ${s.title}: ${s.url} (${s.note})`);
+    results.push({
+      source: 'Domain-Wissen',
+      title: `Vertrauenswuerdige Quellen zu ${t.id.toUpperCase()}`,
+      snippet: lines.join('\n'),
+    });
+  }
 
   // Fallback: wenn nichts gefunden, REST-Summary fuer die Frage selbst
   if (results.length === 0) {
