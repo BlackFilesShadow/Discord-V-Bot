@@ -352,7 +352,13 @@ const messageCreateEvent: BotEvent = {
           });
           const mergedContext = [serverUserCtx, context].filter(Boolean).join('\n\n') || undefined;
 
-          const r = await answerQuestion(question, { mode: 'chat', context: mergedContext });
+          const r = await answerQuestion(question, {
+            mode: 'chat',
+            context: mergedContext,
+            userId: msg.author.id,
+            channelId: msg.channel.id,
+            guildId: msg.guildId,
+          });
           if (r.success && r.result) {
             // Bot-Reply zeigt den Author bereits an -> KEIN zusaetzliches @mention im Text.
             // Auch in der AI-Antwort enthaltene @-Mentions/Usernamen am Anfang strippen,

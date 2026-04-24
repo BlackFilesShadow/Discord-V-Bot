@@ -46,6 +46,7 @@ export interface GuildProfileLite {
   aiPersonaOverride: string | null;
   aiBrief: string | null;
   aiBriefAt: Date | null;
+  serverCreatedAt: Date | null;
   lastSyncedAt: Date;
 }
 
@@ -69,6 +70,7 @@ function toLite(row: any): GuildProfileLite {
     aiPersonaOverride: row.aiPersonaOverride ?? null,
     aiBrief: row.aiBrief ?? null,
     aiBriefAt: row.aiBriefAt ?? null,
+    serverCreatedAt: row.serverCreatedAt ?? null,
     lastSyncedAt: row.lastSyncedAt ?? new Date(),
   };
 }
@@ -97,6 +99,7 @@ export async function syncGuild(guild: Guild): Promise<GuildProfileLite | null> 
       preferredLocale: guild.preferredLocale ?? null,
       description: guild.description ?? null,
       features: (guild.features as unknown as string[]) ?? [],
+      serverCreatedAt: guild.createdAt ?? null,
       lastSyncedAt: new Date(),
     };
 
@@ -114,6 +117,7 @@ export async function syncGuild(guild: Guild): Promise<GuildProfileLite | null> 
         preferredLocale: data.preferredLocale,
         description: data.description,
         features: data.features,
+        serverCreatedAt: data.serverCreatedAt,
         lastSyncedAt: data.lastSyncedAt,
       },
     });

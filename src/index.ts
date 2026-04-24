@@ -129,6 +129,21 @@ async function main(): Promise<void> {
         } catch (e) {
           logger.warn('RAG-Initialisierung fehlgeschlagen:', e as Error);
         }
+        // Phase 14 (Conversation Memory): Cleanup-Loop starten.
+        try {
+          const { startConversationCleanupLoop, cleanupOld } = await import('./modules/ai/conversationMemory.js');
+          void cleanupOld();
+          startConversationCleanupLoop();
+        } catch (e) {
+          logger.warn('ConversationMemory-Init fehlgeschlagen:', e as Error);
+        }
+        // Phase 17 (TranslatedPost-Scheduler): Polling-Loop starten.
+        try {
+          const { startTranslatedPostScheduler } = await import('./modules/ai/translatedPostScheduler.js');
+          startTranslatedPostScheduler(client);
+        } catch (e) {
+          logger.warn('TranslatedPost-Scheduler-Init fehlgeschlagen:', e as Error);
+        }
       } catch (e) {
         logger.warn('GuildAwareness-Bootstrap fehlgeschlagen:', e as Error);
       }

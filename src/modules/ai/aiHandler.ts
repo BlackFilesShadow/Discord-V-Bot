@@ -167,6 +167,11 @@ export type AnswerMode = 'chat' | 'welcome' | 'trigger' | 'oneshot';
 export interface AnswerOptions {
   mode?: AnswerMode;
   context?: string;
+  // Phase 14: Conversation Memory. Wenn beide gesetzt sind, wird der vorherige
+  // Verlauf in den Prompt geladen und die neue Frage + Antwort persistiert.
+  userId?: string;
+  channelId?: string;
+  guildId?: string | null;
 }
 
 export async function answerQuestion(
@@ -205,6 +210,18 @@ export async function answerQuestion(
     const catalogBlock: string | null =
       wantCatalog && asksAboutCommands(question) ? formatCatalogForPromptFocused(question) : null;
 
+    // Phase 14: Conversation Memory laden (nur fuer chat/oneshot, wenn Identifier gesetzt).
+    const useMemory = (mode === 'chat' || mode === 'oneshot') && !!opts.userId && !!opts.channelId;
+    let memoryTurns: { role: 'user' | 'assistant'; content: string }[] = [];
+    if (useMemory) {
+      try {
+        const { getRecentTurns } = await import('./conversationMemory.js');
+        memoryTurns = await getRecentTurns(opts.userId!, opts.channelId!);
+      } catch (e) {
+        logger.warn(`conversationMemory laden fehlgeschlagen: ${String(e)}`);
+      }
+    }
+
     const response = await callAI([
       { role: 'system', content: BOT_PERSONA },
       { role: 'system', content: getLiveTimeContext() },
@@ -212,8 +229,22 @@ export async function answerQuestion(
       ...(catalogBlock ? [{ role: 'system' as const, content: catalogBlock }] : []),
       ...(liveBlock ? [{ role: 'system' as const, content: liveBlock }] : []),
       ...(context ? [{ role: 'system' as const, content: context }] : []),
+      ...memoryTurns.map((t) => ({ role: t.role, content: t.content })),
       { role: 'user', content: question },
     ]);
+
+    // Phase 14: Turn persistieren (best-effort, blockiert die Antwort nicht).
+    if (useMemory && response) {
+      void (async () => {
+        try {
+          const { recordTurn } = await import('./conversationMemory.js');
+          await recordTurn(opts.userId!, opts.channelId!, 'user', question, opts.guildId ?? null);
+          await recordTurn(opts.userId!, opts.channelId!, 'assistant', response, opts.guildId ?? null);
+        } catch (e) {
+          logger.warn(`conversationMemory.recordTurn fehlgeschlagen: ${String(e)}`);
+        }
+      })();
+    }
 
     return { success: true, result: response };
   } catch (error) {

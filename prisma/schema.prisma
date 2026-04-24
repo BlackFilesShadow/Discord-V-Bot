@@ -1062,6 +1062,8 @@ model GuildProfile {
   preferredLocale String?
   description   String?  @db.Text
   features      Json? // string[] mit Discord-Guild-Features
+  // Phase 17a: Server-Erstellungsdatum (von Discord), damit Bot "wann wurde der Server erschaffen" beantworten kann.
+  serverCreatedAt DateTime?
   // Phase 7: Channels & Rules Snapshot
   channelsJson  Json? // Array<{ name, type, parent? }> ohne IDs
   rulesText     String?  @db.Text // Inhalt des Rules-Channels (Topic + erste Pins)
@@ -1117,4 +1119,50 @@ model AiProviderStat {
   lastFailureAt    DateTime?
   lastError        String?
   updatedAt        DateTime  @updatedAt
+}
+
+// Phase 14: Conversation Memory. Speichert pro (userId, channelId) die letzten
+// Turns zwischen User und Bot, damit /ai mit Kontext zu vorhergehenden Nachrichten
+// antworten kann. TTL wird im Modul (conversationMemory.ts) angewandt - hier nur
+// die Persistenz. Indexed nach (channelId, userId, createdAt) fuer schnelles Tail.
+model AiConversationTurn {
+  id        String   @id @default(uuid())
+  userId    String
+  channelId String
+  guildId   String?
+  role      String // 'user' | 'assistant'
+  content   String   @db.Text
+  createdAt DateTime @default(now())
+
+  @@index([userId, channelId, createdAt])
+  @@index([createdAt])
+}
+
+// Phase 17: Auto-Translate Scheduled Messages.
+// Speichert geplante / wiederkehrende Posts mit Auto-Translation.
+// - mode = 'once'         -> einmaliger Post zum scheduledFor
+// - mode = 'recurring'    -> recurrenceCron / recurrenceWeekday + recurrenceTime
+// - mode = 'now'          -> sofort (wird nach Versand auf isActive=false gesetzt)
+model TranslatedPost {
+  id             String    @id @default(uuid())
+  guildId        String
+  channelId      String
+  createdBy      String
+  sourceText     String    @db.Text
+  sourceLang     String // ISO-Kurzcode der Quellsprache (de/en/fr/...)
+  targetLang     String // ISO-Kurzcode der Zielsprache
+  translatedText String?   @db.Text // Wird beim ersten Versand befuellt + gecached
+  imageUrl       String? // Optionale Bild-URL (Discord-Attachment-Link)
+  rolePings      String? // Comma-separated Discord-Role-IDs
+  mode           String // 'now' | 'once' | 'recurring'
+  scheduledFor   DateTime?
+  recurrenceCron String? // Vereinfacht: "WEEKLY:MON:09:00" oder "DAILY:09:00"
+  nextRunAt      DateTime?
+  lastRunAt      DateTime?
+  isActive       Boolean   @default(true)
+  createdAt      DateTime  @default(now())
+  updatedAt      DateTime  @updatedAt
+
+  @@index([guildId, isActive])
+  @@index([nextRunAt, isActive])
 }

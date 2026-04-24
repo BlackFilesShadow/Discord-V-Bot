@@ -39,12 +39,68 @@ function isConfigured(p: ProviderName): boolean {
   }
 }
 
+// =====================================================================
+// Phase 12: In-Memory Cooldowns. Bei 429 wird der Provider fuer N Sekunden
+// komplett aus der Ranking-Liste entfernt (statt nur Score-Penalty). Backoff
+// waechst exponentiell bei wiederholten 429: 30s -> 60s -> 120s -> max 300s.
+// State ist pro Bot-Prozess; nach Restart leer (gewollt: frischer Versuch).
+// =====================================================================
+interface CooldownState { until: number; consecutive: number; }
+const cooldowns = new Map<ProviderName, CooldownState>();
+const COOLDOWN_BASE_MS = 30_000;
+const COOLDOWN_MAX_MS = 300_000;
+
+export function markRateLimited(provider: ProviderName): number {
+  const prev = cooldowns.get(provider);
+  const consecutive = (prev?.consecutive ?? 0) + 1;
+  const ms = Math.min(COOLDOWN_BASE_MS * Math.pow(2, consecutive - 1), COOLDOWN_MAX_MS);
+  const until = Date.now() + ms;
+  cooldowns.set(provider, { until, consecutive });
+  logger.info(`providerStats: ${provider} cooldown ${Math.round(ms / 1000)}s (${consecutive}x 429 in Folge)`);
+  return ms;
+}
+
+export function clearCooldown(provider: ProviderName): void {
+  cooldowns.delete(provider);
+}
+
+export function isOnCooldown(provider: ProviderName): boolean {
+  const c = cooldowns.get(provider);
+  if (!c) return false;
+  if (Date.now() >= c.until) {
+    cooldowns.delete(provider);
+    return false;
+  }
+  return true;
+}
+
+export function getCooldownRemainingMs(provider: ProviderName): number {
+  const c = cooldowns.get(provider);
+  if (!c) return 0;
+  return Math.max(0, c.until - Date.now());
+}
+
+export function getAllCooldowns(): Array<{ provider: ProviderName; remainingMs: number; consecutive: number }> {
+  const out: Array<{ provider: ProviderName; remainingMs: number; consecutive: number }> = [];
+  for (const p of ALL_PROVIDERS) {
+    const c = cooldowns.get(p);
+    if (c && Date.now() < c.until) {
+      out.push({ provider: p, remainingMs: c.until - Date.now(), consecutive: c.consecutive });
+    }
+  }
+  return out;
+}
+
 export async function recordCall(
   provider: ProviderName,
   outcome: 'success' | 'failure' | 'rateLimit',
   latencyMs: number,
   error?: string,
 ): Promise<void> {
+  // Phase 12: Bei Erfolg den eventuellen Cooldown clearen.
+  if (outcome === 'success') clearCooldown(provider);
+  // Bei 429: Cooldown-Backoff aktivieren (in-memory).
+  if (outcome === 'rateLimit') markRateLimited(provider);
   try {
     const now = new Date();
     const data: Record<string, unknown> = {};
@@ -121,6 +177,8 @@ export async function getRankedProviders(): Promise<ProviderName[]> {
   const primary = config.ai.provider as ProviderName;
   const scored = stats
     .filter((s) => s.configured)
+    // Phase 12: Provider im Cooldown (429-Strafe) ueberspringen.
+    .filter((s) => !isOnCooldown(s.provider))
     .map((s) => {
       const total = s.successCount + s.failureCount + s.rateLimitCount;
       const successScore = (s.successCount + 1) / (total + 2);
@@ -131,7 +189,11 @@ export async function getRankedProviders(): Promise<ProviderName[]> {
     })
     .sort((a, b) => b.score - a.score)
     .map((x) => x.provider);
-  return scored.length > 0 ? scored : [primary];
+  // Wenn ALLE konfigurierten Provider auf Cooldown sind: wenigstens den Primary
+  // zurueckgeben (callAI versucht ihn dann; bekommt im Worst-Case wieder 429,
+  // ist aber besser als komplett 0 Provider).
+  if (scored.length === 0) return [primary];
+  return scored;
 }
 
 /**

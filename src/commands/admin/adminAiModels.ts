@@ -13,6 +13,8 @@ import {
   getStats,
   getRankedProviders,
   probeProvider,
+  getAllCooldowns,
+  clearCooldown,
 } from '../../modules/ai/providerStats';
 
 async function isAdminOrOwner(discordId: string): Promise<boolean> {
@@ -93,19 +95,22 @@ const adminAiModelsCommand: Command = {
 
     if (sub === 'status') {
       const stats = await getStats();
+      const cooldowns = new Map(getAllCooldowns().map((c) => [c.provider, c]));
       const lines = stats.map((s) => {
         const cfg = s.configured ? '✅' : '⚪';
         const total = s.successCount + s.failureCount + s.rateLimitCount;
         const rate = total > 0 ? `${Math.round(s.successRate * 100)}%` : '—';
         const avg = s.avgLatencyMs > 0 ? `${s.avgLatencyMs}ms` : '—';
-        return `${cfg} \`${s.provider.padEnd(10)}\` ${rate.padStart(4)} | ${avg.padStart(7)} | ✓${s.successCount} ✗${s.failureCount} ⏱${s.rateLimitCount} | last ok: ${fmtDate(s.lastSuccessAt)}`;
+        const cd = cooldowns.get(s.provider);
+        const cdStr = cd ? ` ⏳${Math.ceil(cd.remainingMs / 1000)}s` : '';
+        return `${cfg} \`${s.provider.padEnd(10)}\` ${rate.padStart(4)} | ${avg.padStart(7)} | ✓${s.successCount} ✗${s.failureCount} ⏱${s.rateLimitCount}${cdStr} | last ok: ${fmtDate(s.lastSuccessAt)}`;
       });
       await interaction.editReply({
         embeds: [
           vEmbed(Colors.Info)
             .setTitle('🤖 AI-Provider Status')
             .setDescription(['```', ...lines, '```'].join('\n').slice(0, 4000))
-            .setFooter({ text: 'success-rate | avg-latenz | ✓ok ✗fail ⏱429' }),
+            .setFooter({ text: 'success-rate | avg-latenz | ✓ok ✗fail ⏱429 ⏳cooldown' }),
         ],
       });
       return;
@@ -159,14 +164,16 @@ const adminAiModelsCommand: Command = {
       const target = interaction.options.getString('provider', true);
       if (target === 'all') {
         await prisma.aiProviderStat.deleteMany({});
+        for (const p of ALL_PROVIDERS) clearCooldown(p);
       } else {
         await prisma.aiProviderStat.deleteMany({ where: { provider: target } });
+        clearCooldown(target as ProviderName);
       }
       await interaction.editReply({
         embeds: [
           vEmbed(Colors.Success)
             .setTitle('🧹 Statistik zurueckgesetzt')
-            .setDescription(target === 'all' ? 'Alle Provider-Stats geloescht.' : `Stats fuer \`${target}\` geloescht.`),
+            .setDescription(target === 'all' ? 'Alle Provider-Stats + Cooldowns geloescht.' : `Stats + Cooldown fuer \`${target}\` geloescht.`),
         ],
       });
       return;

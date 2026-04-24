@@ -59,6 +59,16 @@ export async function buildServerUserContext(opts: ServerUserContextOptions): Pr
       }
     }
     if (ownerName) serverParts.push(`Owner: ${ownerName}`);
+    // Phase 17a: Server-Erstellungsdatum (von Discord), damit Bot Fragen wie
+    // "wann wurde dieser Server erstellt" beantworten kann.
+    if (cachedProfile?.serverCreatedAt) {
+      const created = cachedProfile.serverCreatedAt;
+      const dateStr = new Intl.DateTimeFormat('de-DE', {
+        day: '2-digit', month: 'long', year: 'numeric', timeZone: 'Europe/Berlin',
+      }).format(created);
+      const days = Math.floor((Date.now() - created.getTime()) / 86400000);
+      serverParts.push(`Server erstellt am: ${dateStr} (vor ${days} Tagen)`);
+    }
     if (channel && 'name' in channel && channel.name) {
       serverParts.push(`Kanal: #${channel.name}`);
     }
