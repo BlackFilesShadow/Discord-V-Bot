@@ -127,7 +127,15 @@ import prisma from '../../database/prisma';
  *  - ai:   AI generiert Antwort mit aiPrompt als zus\u00e4tzlichem System-Hinweis
  */
 
-export const MAX_TRIGGERS_PER_GUILD = 10;
+export const MAX_TRIGGERS_PER_GUILD = 25;
+
+/** Liefert nur die guild-eigenen Trigger (ohne globale). Fuer Limit-Check & Verwaltung. */
+async function listGuildOnly(guildId: string): Promise<AiTrigger[]> {
+  const cfg = await prisma.botConfig.findUnique({ where: { key: KEY(guildId) } });
+  if (!cfg) return [];
+  const arr = cfg.value as unknown;
+  return Array.isArray(arr) ? (arr as AiTrigger[]) : [];
+}
 
 export interface AiTrigger {
   id: string;             // kurze ID (z.B. nanoid 6)
@@ -172,11 +180,12 @@ export async function saveTriggers(guildId: string, triggers: AiTrigger[], updat
 }
 
 export async function addTrigger(guildId: string, trigger: AiTrigger): Promise<{ ok: boolean; message: string }> {
-  const list = await listTriggers(guildId);
-  if (list.length >= MAX_TRIGGERS_PER_GUILD) {
-    return { ok: false, message: `Maximal ${MAX_TRIGGERS_PER_GUILD} Trigger pro Server erlaubt.` };
+  const guildOnly = await listGuildOnly(guildId);
+  if (guildOnly.length >= MAX_TRIGGERS_PER_GUILD) {
+    return { ok: false, message: `Maximal ${MAX_TRIGGERS_PER_GUILD} eigene Trigger pro Server erlaubt (globale Trigger zaehlen nicht mit).` };
   }
-  if (list.some(t => t.id === trigger.id)) {
+  const combined = await listTriggers(guildId);
+  if (combined.some(t => t.id === trigger.id)) {
     return { ok: false, message: `Trigger-ID "${trigger.id}" existiert bereits.` };
   }
   // Regex validieren
@@ -184,15 +193,18 @@ export async function addTrigger(guildId: string, trigger: AiTrigger): Promise<{
     try { new RegExp(trigger.trigger); }
     catch { return { ok: false, message: 'Ung\u00fcltiges Regex-Pattern.' }; }
   }
-  list.push(trigger);
-  await saveTriggers(guildId, list, trigger.createdBy);
-  return { ok: true, message: `Trigger "${trigger.id}" gespeichert (${list.length}/${MAX_TRIGGERS_PER_GUILD}).` };
+  guildOnly.push(trigger);
+  await saveTriggers(guildId, guildOnly, trigger.createdBy);
+  return { ok: true, message: `Trigger "${trigger.id}" gespeichert (${guildOnly.length}/${MAX_TRIGGERS_PER_GUILD}).` };
 }
 
 export async function removeTrigger(guildId: string, id: string, updatedBy: string): Promise<{ ok: boolean; message: string }> {
-  const list = await listTriggers(guildId);
-  const filtered = list.filter(t => t.id !== id);
-  if (filtered.length === list.length) {
+  const guildOnly = await listGuildOnly(guildId);
+  const filtered = guildOnly.filter(t => t.id !== id);
+  if (filtered.length === guildOnly.length) {
+    if (GLOBAL_AI_TRIGGERS.some(t => t.id === id)) {
+      return { ok: false, message: `Trigger "${id}" ist ein globaler Trigger und kann nicht entfernt werden.` };
+    }
     return { ok: false, message: `Kein Trigger mit ID "${id}" gefunden.` };
   }
   await saveTriggers(guildId, filtered, updatedBy);
