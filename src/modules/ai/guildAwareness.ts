@@ -1,4 +1,5 @@
-import type { Client, Guild } from 'discord.js';
+import type { Client, Guild, GuildBasedChannel } from 'discord.js';
+import { ChannelType } from 'discord.js';
 import prisma from '../../database/prisma';
 import { logger } from '../../utils/logger';
 
@@ -19,6 +20,14 @@ import { logger } from '../../utils/logger';
  */
 
 const CACHE_TTL_MS = 10 * 60 * 1000; // 10 min
+const CONTENT_SYNC_INTERVAL_MS = 60 * 60 * 1000; // 60 min
+const CONTENT_STALE_AFTER_MS = 50 * 60 * 1000; // Sync, wenn aelter als 50 min
+
+export interface ChannelSnapshot {
+  name: string;
+  type: string;
+  parent?: string | null;
+}
 
 export interface GuildProfileLite {
   guildId: string;
@@ -31,6 +40,9 @@ export interface GuildProfileLite {
   preferredLocale: string | null;
   description: string | null;
   features: string[] | null;
+  channels: ChannelSnapshot[] | null;
+  rulesText: string | null;
+  contentSyncedAt: Date | null;
   lastSyncedAt: Date;
 }
 
@@ -48,6 +60,9 @@ function toLite(row: any): GuildProfileLite {
     preferredLocale: row.preferredLocale ?? null,
     description: row.description ?? null,
     features: Array.isArray(row.features) ? (row.features as string[]) : null,
+    channels: Array.isArray(row.channelsJson) ? (row.channelsJson as ChannelSnapshot[]) : null,
+    rulesText: row.rulesText ?? null,
+    contentSyncedAt: row.contentSyncedAt ?? null,
     lastSyncedAt: row.lastSyncedAt ?? new Date(),
   };
 }
@@ -167,4 +182,160 @@ export function assertGuildScope(
 /** Nur fuer Tests / Hot-Reload. */
 export function _clearGuildAwarenessCache(): void {
   cache.clear();
+}
+
+// ---------------------------------------------------------------------------
+// Phase 7: Channels & Rules Auto-Sync (alle 60 min)
+// ---------------------------------------------------------------------------
+
+function channelTypeLabel(t: ChannelType): string {
+  switch (t) {
+    case ChannelType.GuildText: return 'text';
+    case ChannelType.GuildVoice: return 'voice';
+    case ChannelType.GuildCategory: return 'category';
+    case ChannelType.GuildAnnouncement: return 'news';
+    case ChannelType.GuildStageVoice: return 'stage';
+    case ChannelType.GuildForum: return 'forum';
+    case ChannelType.GuildMedia: return 'media';
+    case ChannelType.PublicThread:
+    case ChannelType.PrivateThread:
+    case ChannelType.AnnouncementThread: return 'thread';
+    default: return 'other';
+  }
+}
+
+function snapshotChannels(guild: Guild): ChannelSnapshot[] {
+  const out: ChannelSnapshot[] = [];
+  // Sortiere Categories zuerst, dann Kanaele in Position-Reihenfolge.
+  const channels = Array.from(guild.channels.cache.values()).sort((a, b) => {
+    const ap = (a as any).position ?? 0;
+    const bp = (b as any).position ?? 0;
+    return ap - bp;
+  });
+  for (const ch of channels) {
+    if (!('name' in ch) || !ch.name) continue;
+    // Threads ausblenden, das blaeht den Snapshot zu sehr auf.
+    if ([ChannelType.PublicThread, ChannelType.PrivateThread, ChannelType.AnnouncementThread].includes(ch.type)) continue;
+    const parent = (ch as any).parent?.name ?? null;
+    out.push({
+      name: ch.name.slice(0, 60),
+      type: channelTypeLabel(ch.type),
+      parent,
+    });
+    if (out.length >= 80) break; // Prompt-Schutz
+  }
+  return out;
+}
+
+async function snapshotRules(guild: Guild): Promise<string | null> {
+  const parts: string[] = [];
+  const rulesChannel: GuildBasedChannel | null = guild.rulesChannel ?? null;
+  const candidates: GuildBasedChannel[] = [];
+  if (rulesChannel) candidates.push(rulesChannel);
+  // Fallback-Suche: Channels mit "regel" oder "rules" im Namen
+  for (const ch of guild.channels.cache.values()) {
+    if (!('name' in ch) || !ch.name) continue;
+    if (ch === rulesChannel) continue;
+    if (/regel|rules|verhalten|kodex/i.test(ch.name)) candidates.push(ch);
+    if (candidates.length >= 3) break;
+  }
+
+  for (const ch of candidates) {
+    try {
+      // Channel-Topic
+      const topic = (ch as any).topic as string | undefined;
+      if (topic && topic.trim()) parts.push(`# ${ch.name}\n${topic.trim()}`);
+
+      // Pinned Messages (max 5, je 800 Zeichen) – nur Text-Channels
+      if ('messages' in ch && typeof (ch as any).messages?.fetchPinned === 'function') {
+        const pins = await (ch as any).messages.fetchPinned().catch(() => null);
+        if (pins) {
+          let i = 0;
+          for (const m of pins.values()) {
+            const text = (m.content || '').trim();
+            if (!text) continue;
+            parts.push(text.slice(0, 800));
+            if (++i >= 5) break;
+          }
+        }
+      }
+    } catch {
+      /* darf fehlen */
+    }
+    if (parts.join('\n').length > 4000) break;
+  }
+  if (parts.length === 0) return null;
+  return parts.join('\n\n').slice(0, 5000);
+}
+
+/**
+ * Schreibt Channel-Liste + Rules-Text in das GuildProfile und aktualisiert den Cache.
+ * Best-effort: Fehler werden geloggt, brechen aber nichts ab.
+ */
+export async function syncGuildContent(guild: Guild): Promise<void> {
+  try {
+    const channels = snapshotChannels(guild);
+    const rulesText = await snapshotRules(guild);
+    const row = await prisma.guildProfile.update({
+      where: { guildId: guild.id },
+      data: {
+        channelsJson: channels as any,
+        rulesText,
+        contentSyncedAt: new Date(),
+      },
+    }).catch(async (e) => {
+      // Falls noch kein Stammdatensatz existiert, erst Stammdaten anlegen.
+      logger.warn('syncGuildContent: GuildProfile fehlt, lege an:', { guildId: guild.id, e: String(e) });
+      await syncGuild(guild);
+      return prisma.guildProfile.update({
+        where: { guildId: guild.id },
+        data: {
+          channelsJson: channels as any,
+          rulesText,
+          contentSyncedAt: new Date(),
+        },
+      });
+    });
+    cache.set(guild.id, { profile: toLite(row), cachedAt: Date.now() });
+    logger.info(`GuildAwareness: Content gesynct fuer ${guild.name} (${channels.length} Kanaele, Rules: ${rulesText ? 'ja' : 'nein'})`);
+  } catch (e) {
+    logger.warn('syncGuildContent fehlgeschlagen:', { guildId: guild.id, e: String(e) });
+  }
+}
+
+let contentSyncTimer: NodeJS.Timeout | null = null;
+
+/**
+ * Startet die periodische Auto-Sync-Schleife (60 min).
+ * Initialer Sync laeuft sofort bei Start, weitere Laeufe alle 60 min.
+ * Pro Lauf werden nur Guilds mit veraltetem Snapshot (> 50 min) verarbeitet.
+ */
+export function startContentSyncLoop(client: Client): void {
+  if (contentSyncTimer) return;
+  const tick = async () => {
+    const guilds = Array.from(client.guilds.cache.values());
+    const now = Date.now();
+    for (const g of guilds) {
+      try {
+        const cached = cache.get(g.id)?.profile;
+        const last = cached?.contentSyncedAt?.getTime() ?? 0;
+        if (now - last < CONTENT_STALE_AFTER_MS) continue;
+        await syncGuildContent(g);
+      } catch (e) {
+        logger.warn(`Content-Sync-Tick Guild ${g.id} fehlgeschlagen:`, { e: String(e) });
+      }
+    }
+  };
+  // Erstlauf nach 30s (gibt clientReady Zeit), dann periodisch.
+  setTimeout(() => { void tick(); }, 30_000).unref?.();
+  contentSyncTimer = setInterval(() => { void tick(); }, CONTENT_SYNC_INTERVAL_MS);
+  contentSyncTimer.unref?.();
+  logger.info('GuildAwareness: Content-Sync-Loop gestartet (alle 60 min).');
+}
+
+export function stopContentSyncLoop(): void {
+  if (contentSyncTimer) {
+    clearInterval(contentSyncTimer);
+    contentSyncTimer = null;
+  }
 }

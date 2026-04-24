@@ -115,8 +115,10 @@ async function main(): Promise<void> {
       }
       // Phase 6: Guild-Stammdaten cachen / persistieren
       try {
-        const { bootstrapGuildAwareness } = await import('./modules/ai/guildAwareness.js');
+        const { bootstrapGuildAwareness, startContentSyncLoop } = await import('./modules/ai/guildAwareness.js');
         await bootstrapGuildAwareness(client);
+        // Phase 7: Auto-Sync Channels/Rules alle 60 min
+        startContentSyncLoop(client);
       } catch (e) {
         logger.warn('GuildAwareness-Bootstrap fehlgeschlagen:', e as Error);
       }

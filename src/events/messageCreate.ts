@@ -225,6 +225,7 @@ const messageCreateEvent: BotEvent = {
                   channel: msg.channel as any,
                   member: msg.member ?? undefined,
                   user: msg.author,
+                  question: msg.content,
                 });
                 const r = await answerQuestion(
                   matched.aiPrompt
@@ -347,6 +348,7 @@ const messageCreateEvent: BotEvent = {
             channel: msg.channel as any,
             member: msg.member ?? undefined,
             user: msg.author,
+            question,
           });
           const mergedContext = [serverUserCtx, context].filter(Boolean).join('\n\n') || undefined;
 

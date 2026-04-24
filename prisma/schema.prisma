@@ -1062,6 +1062,10 @@ model GuildProfile {
   preferredLocale String?
   description   String?  @db.Text
   features      Json? // string[] mit Discord-Guild-Features
+  // Phase 7: Channels & Rules Snapshot
+  channelsJson  Json? // Array<{ name, type, parent? }> ohne IDs
+  rulesText     String?  @db.Text // Inhalt des Rules-Channels (Topic + erste Pins)
+  contentSyncedAt DateTime?
   joinedAt      DateTime @default(now())
   lastSyncedAt  DateTime @default(now())
   updatedAt     DateTime @updatedAt

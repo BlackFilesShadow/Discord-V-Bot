@@ -17,14 +17,23 @@ export interface ServerUserContextOptions {
   channel?: GuildBasedChannel | null;
   member?: GuildMember | null;
   user?: DiscordUser | null;
+  /**
+   * Phase 7: Original-Frage des Nutzers. Wird genutzt, um Kanal-/Regel-Snapshot
+   * nur bei thematisch passenden Anfragen einzublenden (Token-Schutz).
+   */
+  question?: string | null;
 }
 
+const CHANNELS_QUESTION_RE = /\b(kanal|kanaele|kanäle|channel(s)?|wo (kann|finde|soll)|welcher channel|welcher kanal|in welchem)\b/i;
+const RULES_QUESTION_RE = /\b(regel|regeln|rules|regelwerk|verhalten|kodex|netiquette|verboten|erlaubt)\b/i;
+
 export async function buildServerUserContext(opts: ServerUserContextOptions): Promise<string | null> {
-  const { guild, channel, member, user } = opts;
+  const { guild, channel, member, user, question } = opts;
 
   const lines: string[] = [];
 
   // --- Server-Block ---------------------------------------------------------
+  let cachedProfile: Awaited<ReturnType<typeof getGuildProfile>> = null;
   if (guild) {
     const serverParts: string[] = [
       `Servername: ${guild.name}`,
@@ -33,10 +42,10 @@ export async function buildServerUserContext(opts: ServerUserContextOptions): Pr
     // Owner: bevorzugt aus GuildProfile-Cache (kein Discord-API-Call), sonst fetchOwner.
     let ownerName: string | null = null;
     try {
-      const profile = await getGuildProfile(guild.id);
-      if (profile?.ownerName) ownerName = profile.ownerName;
-      if (profile?.description) serverParts.push(`Beschreibung: ${profile.description.slice(0, 200)}`);
-      if (profile?.preferredLocale) serverParts.push(`Sprache: ${profile.preferredLocale}`);
+      cachedProfile = await getGuildProfile(guild.id);
+      if (cachedProfile?.ownerName) ownerName = cachedProfile.ownerName;
+      if (cachedProfile?.description) serverParts.push(`Beschreibung: ${cachedProfile.description.slice(0, 200)}`);
+      if (cachedProfile?.preferredLocale) serverParts.push(`Sprache: ${cachedProfile.preferredLocale}`);
     } catch {
       /* optional */
     }
@@ -105,6 +114,32 @@ export async function buildServerUserContext(opts: ServerUserContextOptions): Pr
   }
 
   if (lines.length === 0) return null;
+
+  // --- Channels-/Rules-Block (Phase 7) -------------------------------------
+  // Nur einblenden, wenn die Frage thematisch passt – sonst Token-Verschwendung.
+  if (cachedProfile && question) {
+    if (CHANNELS_QUESTION_RE.test(question) && cachedProfile.channels && cachedProfile.channels.length > 0) {
+      const grouped: Record<string, string[]> = {};
+      for (const c of cachedProfile.channels) {
+        const key = c.parent ?? '(ohne Kategorie)';
+        if (!grouped[key]) grouped[key] = [];
+        grouped[key].push(`#${c.name} (${c.type})`);
+      }
+      const out: string[] = [];
+      for (const [cat, list] of Object.entries(grouped)) {
+        out.push(`${cat}: ${list.slice(0, 12).join(', ')}`);
+        if (out.join('\n').length > 1500) break;
+      }
+      lines.push('');
+      lines.push('SERVER-KANAELE (Snapshot):');
+      for (const o of out) lines.push(`- ${o}`);
+    }
+    if (RULES_QUESTION_RE.test(question) && cachedProfile.rulesText) {
+      lines.push('');
+      lines.push('SERVER-REGELN (Snapshot, Auszug):');
+      lines.push(cachedProfile.rulesText.slice(0, 2000));
+    }
+  }
 
   return [
     'AKTUELLER GESPRAECHSKONTEXT (verwende diese Daten, wenn der Nutzer nach Server, Kanal, sich selbst oder seinem Profil fragt; erfinde nichts):',
