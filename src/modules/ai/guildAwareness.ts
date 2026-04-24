@@ -29,6 +29,15 @@ export interface ChannelSnapshot {
   parent?: string | null;
 }
 
+export interface RoleSnapshot {
+  name: string;
+  color: number;
+  position: number;
+  hoist?: boolean;
+  managed?: boolean;
+  memberCount?: number;
+}
+
 export interface GuildProfileLite {
   guildId: string;
   name: string;
@@ -47,6 +56,25 @@ export interface GuildProfileLite {
   aiBrief: string | null;
   aiBriefAt: Date | null;
   serverCreatedAt: Date | null;
+  // Phase 18: Erweiterte Server-Stammdaten
+  verificationLevel: string | null;
+  premiumTier: number | null;
+  premiumSubscriptionCount: number | null;
+  vanityUrlCode: string | null;
+  bannerUrl: string | null;
+  splashUrl: string | null;
+  afkChannelName: string | null;
+  afkTimeoutSec: number | null;
+  systemChannelName: string | null;
+  rulesChannelName: string | null;
+  publicUpdatesChannelName: string | null;
+  nsfwLevel: string | null;
+  mfaLevel: string | null;
+  emojiCount: number | null;
+  stickerCount: number | null;
+  isLarge: boolean | null;
+  botCount: number | null;
+  topRoles: RoleSnapshot[] | null;
   lastSyncedAt: Date;
 }
 
@@ -71,8 +99,47 @@ function toLite(row: any): GuildProfileLite {
     aiBrief: row.aiBrief ?? null,
     aiBriefAt: row.aiBriefAt ?? null,
     serverCreatedAt: row.serverCreatedAt ?? null,
+    verificationLevel: row.verificationLevel ?? null,
+    premiumTier: row.premiumTier ?? null,
+    premiumSubscriptionCount: row.premiumSubscriptionCount ?? null,
+    vanityUrlCode: row.vanityUrlCode ?? null,
+    bannerUrl: row.bannerUrl ?? null,
+    splashUrl: row.splashUrl ?? null,
+    afkChannelName: row.afkChannelName ?? null,
+    afkTimeoutSec: row.afkTimeoutSec ?? null,
+    systemChannelName: row.systemChannelName ?? null,
+    rulesChannelName: row.rulesChannelName ?? null,
+    publicUpdatesChannelName: row.publicUpdatesChannelName ?? null,
+    nsfwLevel: row.nsfwLevel ?? null,
+    mfaLevel: row.mfaLevel ?? null,
+    emojiCount: row.emojiCount ?? null,
+    stickerCount: row.stickerCount ?? null,
+    isLarge: row.isLarge ?? null,
+    botCount: row.botCount ?? null,
+    topRoles: Array.isArray(row.topRolesJson) ? (row.topRolesJson as RoleSnapshot[]) : null,
     lastSyncedAt: row.lastSyncedAt ?? new Date(),
   };
+}
+
+function verificationLabel(level: number | undefined): string | null {
+  switch (level) {
+    case 0: return 'NONE';
+    case 1: return 'LOW';
+    case 2: return 'MEDIUM';
+    case 3: return 'HIGH';
+    case 4: return 'VERY_HIGH';
+    default: return null;
+  }
+}
+
+function nsfwLabel(level: number | undefined): string | null {
+  switch (level) {
+    case 0: return 'DEFAULT';
+    case 1: return 'EXPLICIT';
+    case 2: return 'SAFE';
+    case 3: return 'AGE_RESTRICTED';
+    default: return null;
+  }
 }
 
 /**
@@ -87,6 +154,8 @@ export async function syncGuild(guild: Guild): Promise<GuildProfileLite | null> 
     } catch {
       /* darf fehlen */
     }
+    // Phase 18: zusaetzliche Discord-Stammdaten ziehen.
+    const botCount = guild.members.cache.filter((m) => m.user.bot).size || null;
     const data = {
       guildId: guild.id,
       name: guild.name,
@@ -100,6 +169,24 @@ export async function syncGuild(guild: Guild): Promise<GuildProfileLite | null> 
       description: guild.description ?? null,
       features: (guild.features as unknown as string[]) ?? [],
       serverCreatedAt: guild.createdAt ?? null,
+      // Phase 18
+      verificationLevel: verificationLabel(guild.verificationLevel as unknown as number),
+      premiumTier: typeof guild.premiumTier === 'number' ? guild.premiumTier : null,
+      premiumSubscriptionCount: guild.premiumSubscriptionCount ?? null,
+      vanityUrlCode: guild.vanityURLCode ?? null,
+      bannerUrl: guild.bannerURL() ?? null,
+      splashUrl: guild.splashURL() ?? null,
+      afkChannelName: guild.afkChannel?.name ?? null,
+      afkTimeoutSec: guild.afkTimeout ?? null,
+      systemChannelName: guild.systemChannel?.name ?? null,
+      rulesChannelName: guild.rulesChannel?.name ?? null,
+      publicUpdatesChannelName: guild.publicUpdatesChannel?.name ?? null,
+      nsfwLevel: nsfwLabel(guild.nsfwLevel as unknown as number),
+      mfaLevel: guild.mfaLevel === 1 ? 'ELEVATED' : 'NONE',
+      emojiCount: guild.emojis.cache.size || null,
+      stickerCount: guild.stickers.cache.size || null,
+      isLarge: guild.large ?? null,
+      botCount,
       lastSyncedAt: new Date(),
     };
 
@@ -118,6 +205,23 @@ export async function syncGuild(guild: Guild): Promise<GuildProfileLite | null> 
         description: data.description,
         features: data.features,
         serverCreatedAt: data.serverCreatedAt,
+        verificationLevel: data.verificationLevel,
+        premiumTier: data.premiumTier,
+        premiumSubscriptionCount: data.premiumSubscriptionCount,
+        vanityUrlCode: data.vanityUrlCode,
+        bannerUrl: data.bannerUrl,
+        splashUrl: data.splashUrl,
+        afkChannelName: data.afkChannelName,
+        afkTimeoutSec: data.afkTimeoutSec,
+        systemChannelName: data.systemChannelName,
+        rulesChannelName: data.rulesChannelName,
+        publicUpdatesChannelName: data.publicUpdatesChannelName,
+        nsfwLevel: data.nsfwLevel,
+        mfaLevel: data.mfaLevel,
+        emojiCount: data.emojiCount,
+        stickerCount: data.stickerCount,
+        isLarge: data.isLarge,
+        botCount: data.botCount,
         lastSyncedAt: data.lastSyncedAt,
       },
     });
@@ -214,8 +318,7 @@ function channelTypeLabel(t: ChannelType): string {
   }
 }
 
-function snapshotChannels(guild: Guild): ChannelSnapshot[] {
-  const out: ChannelSnapshot[] = [];
+function snapshotChannels(guild: Guild): ChannelSnapshot[] {  const out: ChannelSnapshot[] = [];
   // Sortiere Categories zuerst, dann Kanaele in Position-Reihenfolge.
   const channels = Array.from(guild.channels.cache.values()).sort((a, b) => {
     const ap = (a as any).position ?? 0;
@@ -235,6 +338,22 @@ function snapshotChannels(guild: Guild): ChannelSnapshot[] {
     if (out.length >= 80) break; // Prompt-Schutz
   }
   return out;
+}
+
+function snapshotTopRoles(guild: Guild): RoleSnapshot[] {
+  // Top-Rollen nach Position sortiert (hoechste zuerst), @everyone und managed Bot-Rollen filtern.
+  const roles = Array.from(guild.roles.cache.values())
+    .filter((r) => r.name !== '@everyone')
+    .sort((a, b) => b.position - a.position)
+    .slice(0, 25);
+  return roles.map((r) => ({
+    name: r.name.slice(0, 60),
+    color: r.color,
+    position: r.position,
+    hoist: r.hoist,
+    managed: r.managed,
+    memberCount: r.members?.size ?? 0,
+  }));
 }
 
 async function snapshotRules(guild: Guild): Promise<string | null> {
@@ -286,11 +405,13 @@ export async function syncGuildContent(guild: Guild): Promise<void> {
   try {
     const channels = snapshotChannels(guild);
     const rulesText = await snapshotRules(guild);
+    const topRoles = snapshotTopRoles(guild);
     const row = await prisma.guildProfile.update({
       where: { guildId: guild.id },
       data: {
         channelsJson: channels as any,
         rulesText,
+        topRolesJson: topRoles as any,
         contentSyncedAt: new Date(),
       },
     }).catch(async (e) => {
@@ -302,6 +423,7 @@ export async function syncGuildContent(guild: Guild): Promise<void> {
         data: {
           channelsJson: channels as any,
           rulesText,
+          topRolesJson: topRoles as any,
           contentSyncedAt: new Date(),
         },
       });

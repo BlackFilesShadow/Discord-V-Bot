@@ -1072,13 +1072,63 @@ model GuildProfile {
   aiPersonaOverride String? @db.Text // Owner kann zusaetzlichen Persona-Hinweis setzen
   aiBrief        String?  @db.Text // Auto-generierter Kurz-Brief des Servers
   aiBriefAt      DateTime?
+  // Phase 18: Erweiterte Server-Stammdaten fuer praezise AI-Kontextualisierung
+  verificationLevel        String? // NONE/LOW/MEDIUM/HIGH/VERY_HIGH
+  premiumTier              Int? // Boost-Stufe 0..3
+  premiumSubscriptionCount Int? // Anzahl aktiver Boosts
+  vanityUrlCode            String?
+  bannerUrl                String?
+  splashUrl                String?
+  afkChannelName           String?
+  afkTimeoutSec            Int?
+  systemChannelName        String?
+  rulesChannelName         String?
+  publicUpdatesChannelName String?
+  nsfwLevel                String?
+  mfaLevel                 String? // NONE/ELEVATED
+  emojiCount               Int?
+  stickerCount             Int?
+  isLarge                  Boolean?
+  botCount                 Int?
+  topRolesJson             Json? // [{ name, color, position, memberCount? }]
   joinedAt      DateTime @default(now())
   lastSyncedAt  DateTime @default(now())
   updatedAt     DateTime @updatedAt
 
   knowledge     GuildKnowledge[]
+  members       GuildMemberProfile[]
 
   @@index([name])
+}
+
+// Phase 18: Pro Guild eine kompakte Member-Profil-Zeile.
+// Wird via messageCreate (throttled) und guildMemberAdd / guildMemberUpdate /
+// guildMemberRemove gepflegt. Erlaubt der AI, exakt zu wissen, wer welche
+// Rolle hat, wann er beigetreten ist und wann er zuletzt aktiv war.
+model GuildMemberProfile {
+  id            String       @id @default(uuid())
+  guildId       String
+  guild         GuildProfile @relation(fields: [guildId], references: [guildId], onDelete: Cascade)
+  discordId     String
+  username      String?
+  nickname      String?
+  joinedAt      DateTime?
+  topRolesJson  Json? // string[] der Top-Rollennamen (max 8)
+  isBoosting    Boolean      @default(false)
+  boostingSince DateTime?
+  isPending     Boolean      @default(false)
+  timeoutUntil  DateTime?
+  isLeft        Boolean      @default(false) // gesetzt bei guildMemberRemove
+  leftAt        DateTime?
+  messageCount  Int          @default(0) // Pro Guild gezaehlt
+  lastSeenAt    DateTime     @default(now())
+  createdAt     DateTime     @default(now())
+  updatedAt     DateTime     @updatedAt
+
+  @@unique([guildId, discordId])
+  @@index([guildId])
+  @@index([discordId])
+  @@index([guildId, lastSeenAt])
 }
 
 // Phase 8: Owner/Admin koennen pro Guild eigene Wissens-Snippets hinterlegen,

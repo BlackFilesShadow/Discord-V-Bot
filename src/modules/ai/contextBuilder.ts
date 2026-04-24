@@ -3,6 +3,7 @@ import prisma from '../../database/prisma';
 import { logger } from '../../utils/logger';
 import { getGuildProfile } from './guildAwareness';
 import { findRelevantKnowledge } from './guildKnowledge';
+import { getMemberProfile } from './memberAwareness';
 
 /**
  * Server-/User-Kontext-Block fuer den AI-Prompt.
@@ -27,6 +28,7 @@ export interface ServerUserContextOptions {
 
 const CHANNELS_QUESTION_RE = /\b(kanal|kanaele|kanäle|channel(s)?|wo (kann|finde|soll)|welcher channel|welcher kanal|in welchem)\b/i;
 const RULES_QUESTION_RE = /\b(regel|regeln|rules|regelwerk|verhalten|kodex|netiquette|verboten|erlaubt)\b/i;
+const ROLES_QUESTION_RE = /\b(rolle|rollen|role(s)?|rang|raenge|hierarchie)\b/i;
 
 export async function buildServerUserContext(opts: ServerUserContextOptions): Promise<string | null> {
   const { guild, channel, member, user, question } = opts;
@@ -68,6 +70,29 @@ export async function buildServerUserContext(opts: ServerUserContextOptions): Pr
       }).format(created);
       const days = Math.floor((Date.now() - created.getTime()) / 86400000);
       serverParts.push(`Server erstellt am: ${dateStr} (vor ${days} Tagen)`);
+    }
+    // Phase 18: Erweiterte Stammdaten (Boost, Verifizierung, AFK, Vanity, NSFW).
+    if (cachedProfile) {
+      if (cachedProfile.premiumTier !== null && cachedProfile.premiumTier !== undefined) {
+        const boosts = cachedProfile.premiumSubscriptionCount ?? 0;
+        serverParts.push(`Boost-Level: Tier ${cachedProfile.premiumTier} (${boosts} Boosts)`);
+      }
+      if (cachedProfile.verificationLevel) serverParts.push(`Verifizierung: ${cachedProfile.verificationLevel}`);
+      if (cachedProfile.vanityUrlCode) serverParts.push(`Vanity-URL: discord.gg/${cachedProfile.vanityUrlCode}`);
+      if (cachedProfile.afkChannelName) {
+        const min = cachedProfile.afkTimeoutSec ? Math.round(cachedProfile.afkTimeoutSec / 60) : null;
+        serverParts.push(`AFK-Channel: #${cachedProfile.afkChannelName}${min ? ` (Timeout ${min} min)` : ''}`);
+      }
+      if (cachedProfile.systemChannelName) serverParts.push(`System-Channel: #${cachedProfile.systemChannelName}`);
+      if (cachedProfile.rulesChannelName) serverParts.push(`Regel-Channel: #${cachedProfile.rulesChannelName}`);
+      if (cachedProfile.nsfwLevel && cachedProfile.nsfwLevel !== 'DEFAULT') serverParts.push(`NSFW-Level: ${cachedProfile.nsfwLevel}`);
+      if (cachedProfile.mfaLevel === 'ELEVATED') serverParts.push(`2FA fuer Mods: aktiviert`);
+      const counts: string[] = [];
+      if (typeof cachedProfile.botCount === 'number') counts.push(`${cachedProfile.botCount} Bots`);
+      if (typeof cachedProfile.emojiCount === 'number') counts.push(`${cachedProfile.emojiCount} Emojis`);
+      if (typeof cachedProfile.stickerCount === 'number') counts.push(`${cachedProfile.stickerCount} Sticker`);
+      if (counts.length > 0) serverParts.push(`Inventar: ${counts.join(', ')}`);
+      serverParts.push(`Strukturen: ${cachedProfile.channelCount} Kanaele, ${cachedProfile.roleCount} Rollen`);
     }
     if (channel && 'name' in channel && channel.name) {
       serverParts.push(`Kanal: #${channel.name}`);
@@ -149,6 +174,45 @@ export async function buildServerUserContext(opts: ServerUserContextOptions): Pr
       lines.push('');
       lines.push('SERVER-REGELN (Snapshot, Auszug):');
       lines.push(cachedProfile.rulesText.slice(0, 2000));
+    }
+    if (ROLES_QUESTION_RE.test(question) && cachedProfile.topRoles && cachedProfile.topRoles.length > 0) {
+      lines.push('');
+      lines.push('SERVER-ROLLEN (Top, sortiert nach Hierarchie):');
+      for (const r of cachedProfile.topRoles.slice(0, 15)) {
+        const flags: string[] = [];
+        if (r.hoist) flags.push('hoist');
+        if (r.managed) flags.push('managed');
+        const flagStr = flags.length ? ` [${flags.join(',')}]` : '';
+        const cnt = typeof r.memberCount === 'number' ? ` – ${r.memberCount} Mitglieder` : '';
+        lines.push(`- ${r.name}${flagStr}${cnt}`);
+      }
+    }
+  }
+
+  // --- Per-Guild Member-Profil (Phase 18) ---------------------------------
+  if (guild && discordUser) {
+    try {
+      const mp = await getMemberProfile(guild.id, discordUser.id);
+      if (mp) {
+        const extras: string[] = [];
+        if (mp.isBoosting && mp.boostingSince) {
+          const since = new Intl.DateTimeFormat('de-DE', { day: '2-digit', month: '2-digit', year: 'numeric', timeZone: 'Europe/Berlin' }).format(mp.boostingSince);
+          extras.push(`- Boostet diesen Server seit ${since}`);
+        }
+        if (mp.timeoutUntil && mp.timeoutUntil.getTime() > Date.now()) {
+          extras.push(`- Aktuell im Timeout bis ${mp.timeoutUntil.toISOString().slice(0, 16).replace('T', ' ')} UTC`);
+        }
+        if (typeof mp.messageCount === 'number' && mp.messageCount > 0) {
+          extras.push(`- Nachrichten auf diesem Server (seit Tracking): ${mp.messageCount}`);
+        }
+        if (extras.length > 0) {
+          lines.push('');
+          lines.push('USER-AKTIVITAET (dieser Server):');
+          for (const e of extras) lines.push(e);
+        }
+      }
+    } catch {
+      /* best-effort */
     }
   }
 

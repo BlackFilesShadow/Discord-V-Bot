@@ -7,6 +7,7 @@ import { detectRaid } from '../utils/rateLimiter';
 import { getWelcomeConfig, renderWelcomeMessage } from '../modules/welcome/welcomeManager';
 import { answerQuestion } from '../modules/ai/aiHandler';
 import { resolveCustomEmotes } from '../modules/ai/emoteResolver';
+import { syncMemberProfile } from '../modules/ai/memberAwareness';
 
 // Anti-Raid: Speichert Join-Timestamps
 const recentJoins: Map<string, number[]> = new Map();
@@ -36,6 +37,9 @@ const guildMemberAddEvent: BotEvent = {
     }
 
     try {
+      // Phase 18: Per-Guild Member-Profil pflegen (best-effort).
+      void syncMemberProfile(m);
+
       // User in DB registrieren mit GUID (Sektion 1)
       const user = await prisma.user.upsert({
         where: { discordId: m.user.id },

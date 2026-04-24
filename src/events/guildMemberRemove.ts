@@ -1,6 +1,7 @@
 import { Events, GuildMember } from 'discord.js';
 import { BotEvent } from '../types';
 import { logger, logAudit } from '../utils/logger';
+import { markMemberLeft } from '../modules/ai/memberAwareness';
 
 /**
  * GuildMemberRemove-Event: Nutzer verlässt den Server.
@@ -18,6 +19,9 @@ const guildMemberRemoveEvent: BotEvent = {
       joinedAt: m.joinedAt?.toISOString(),
       roles: m.roles.cache.map(r => r.name),
     });
+
+    // Phase 18: Member-Profil als verlassen markieren (best-effort).
+    void markMemberLeft(m.guild.id, m.user.id);
 
     logger.info(`Nutzer verlassen: ${m.user.username} (${m.user.id})`);
   },

@@ -6,6 +6,7 @@ import { checkRateLimit, detectSpam } from '../utils/rateLimiter';
 import { processAutoResponse } from '../modules/ai/aiHandler';
 import { answerQuestion } from '../modules/ai/aiHandler';
 import { buildServerUserContext } from '../modules/ai/contextBuilder';
+import { trackMemberActivity } from '../modules/ai/memberAwareness';
 import { listTriggers, findMatchingTrigger, isOnCooldown, renderTemplate } from '../modules/ai/triggers';
 import { resolveCustomEmotes } from '../modules/ai/emoteResolver';
 import { getLevelUpMessage, getMaxLevelRewardMessage } from '../modules/xp/levelMessages.js';
@@ -72,6 +73,11 @@ const messageCreateEvent: BotEvent = {
       return;
     }
     processedMessages.set(msg.id, Date.now());
+
+    // Phase 18: Per-Guild Member-Profil-Tracking (throttled, best-effort).
+    if (msg.member) {
+      void trackMemberActivity(msg.member);
+    }
 
     // Channel mit send()-Methode casten
     const channel = msg.channel as TextChannel;
