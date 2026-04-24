@@ -231,6 +231,37 @@ export async function answerQuestion(
 }
 
 /**
+ * Robust JSON aus einer LLM-Antwort extrahieren.
+ *
+ * Modelle liefern oft ```json ... ``` Code-Fences, fuehrenden Text wie
+ * "Hier ist das Ergebnis:" oder einen abschliessenden Kommentar. Reines
+ * `JSON.parse` schlaegt dann mit "Unexpected non-whitespace character after JSON" fehl.
+ * Diese Hilfsfunktion entfernt Fences und schneidet auf das groesste {..}/[..]-Substring zu.
+ */
+function extractJson<T = any>(raw: string): T {
+  let s = (raw ?? '').trim();
+  // Code-Fence entfernen
+  s = s.replace(/^```(?:json)?\s*/i, '').replace(/```\s*$/i, '').trim();
+  // Versuch 1: direkt
+  try { return JSON.parse(s) as T; } catch { /* weiter */ }
+  // Versuch 2: groesstes ausgewogenes Objekt/Array zwischen erstem { bzw. [ und letztem } bzw. ]
+  const firstObj = s.indexOf('{');
+  const firstArr = s.indexOf('[');
+  let start = -1;
+  if (firstObj === -1) start = firstArr;
+  else if (firstArr === -1) start = firstObj;
+  else start = Math.min(firstObj, firstArr);
+  const lastObj = s.lastIndexOf('}');
+  const lastArr = s.lastIndexOf(']');
+  const end = Math.max(lastObj, lastArr);
+  if (start !== -1 && end > start) {
+    const candidate = s.slice(start, end + 1);
+    return JSON.parse(candidate) as T;
+  }
+  throw new Error('Keine JSON-Struktur in der AI-Antwort gefunden.');
+}
+
+/**
  * Sentiment-Analyse einer Nachricht.
  * Sektion 4: Sentiment-Analyse.
  */
@@ -239,12 +270,12 @@ export async function analyzeSentiment(text: string): Promise<AiResponse> {
     const response = await callAI([
       {
         role: 'system',
-        content: 'Analysiere das Sentiment des folgenden Texts. Antworte im JSON-Format: {"score": -1 bis 1, "label": "positiv|neutral|negativ", "confidence": 0-1}',
+        content: 'Analysiere das Sentiment des folgenden Texts. Antworte AUSSCHLIESSLICH mit reinem JSON, ohne Code-Fences, ohne erklaerenden Text davor oder danach. Format: {"score": -1 bis 1, "label": "positiv|neutral|negativ", "confidence": 0-1}',
       },
       { role: 'user', content: text },
     ]);
 
-    const parsed = JSON.parse(response);
+    const parsed = extractJson<{ score: number; label: string; confidence: number }>(response);
     return {
       success: true,
       score: parsed.score,
@@ -266,12 +297,12 @@ export async function detectToxicity(text: string, userId?: string): Promise<AiR
     const response = await callAI([
       {
         role: 'system',
-        content: 'Analysiere ob der folgende Text toxisch, beleidigend, hasserfüllt oder unangemessen ist. Antworte im JSON-Format: {"toxic": true/false, "score": 0-1, "categories": ["hate", "harassment", "violence", "sexual", "spam"], "explanation": "..."}',
+        content: 'Analysiere ob der folgende Text toxisch, beleidigend, hasserfüllt oder unangemessen ist. Antworte AUSSCHLIESSLICH mit reinem JSON, ohne Code-Fences, ohne erklaerenden Text. Format: {"toxic": true/false, "score": 0-1, "categories": ["hate", "harassment", "violence", "sexual", "spam"], "explanation": "..."}',
       },
       { role: 'user', content: text },
     ]);
 
-    const parsed = JSON.parse(response);
+    const parsed = extractJson<any>(response);
 
     // In DB speichern
     if (userId) {
@@ -330,12 +361,12 @@ export async function analyzeContext(messages: string[]): Promise<AiResponse> {
     const response = await callAI([
       {
         role: 'system',
-        content: 'Analysiere den Kontext der folgenden Nachrichten eines Discord-Channels. Identifiziere potenzielle Konflikte, Regel-Verstöße oder Eskalationen. Antworte im JSON-Format: {"risk_level": "low|medium|high", "issues": [...], "recommendations": [...]}',
+        content: 'Analysiere den Kontext der folgenden Nachrichten eines Discord-Channels. Identifiziere potenzielle Konflikte, Regel-Verstöße oder Eskalationen. Antworte AUSSCHLIESSLICH mit reinem JSON, ohne Code-Fences, ohne erklaerenden Text. Format: {"risk_level": "low|medium|high", "issues": [...], "recommendations": [...]}',
       },
       { role: 'user', content: messages.join('\n---\n') },
     ]);
 
-    const parsed = JSON.parse(response);
+    const parsed = extractJson<any>(response);
     return {
       success: true,
       label: parsed.risk_level,
