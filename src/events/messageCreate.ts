@@ -15,6 +15,49 @@ import { handleTicketDm } from '../modules/ticket/ticketManager';
 // Anti-Spam: Nachrichtenhistorie pro User
 const messageHistory: Map<string, { content: string; timestamp: number }[]> = new Map();
 
+/**
+ * Markdown-bewusstes Splitting fuer Discord-Nachrichten (max ~2000 Zeichen).
+ *
+ * Ziele:
+ * - bevorzugt an Zeilenumbruechen splitten, damit Saetze nicht zerschnitten werden
+ * - niemals einen offenen ```code-fence``` ueber mehrere Nachrichten ziehen,
+ *   sondern den Fence am Splitpunkt schliessen und im naechsten Chunk wieder
+ *   oeffnen (mit derselben Sprache, falls erkennbar).
+ */
+function splitForDiscord(text: string, maxLen = 1900): string[] {
+  if (text.length <= maxLen) return [text];
+
+  const out: string[] = [];
+  let remaining = text;
+
+  while (remaining.length > maxLen) {
+    let cut = remaining.lastIndexOf('\n', maxLen);
+    if (cut < Math.floor(maxLen * 0.5)) {
+      // Keine sinnvolle Zeilen-Grenze gefunden - hart schneiden
+      cut = maxLen;
+    }
+    let chunk = remaining.slice(0, cut);
+    remaining = remaining.slice(cut).replace(/^\n/, '');
+
+    // Code-Fence-Bilanz pruefen: ungerade Anzahl ``` => offener Block
+    const fenceMatches = chunk.match(/```/g);
+    const fenceCount = fenceMatches ? fenceMatches.length : 0;
+    if (fenceCount % 2 === 1) {
+      // Sprache des letzten Fence ermitteln (falls vorhanden), um sie im
+      // naechsten Chunk wieder zu eroeffnen.
+      const lastFence = chunk.lastIndexOf('```');
+      const afterFence = chunk.slice(lastFence + 3);
+      const langMatch = afterFence.match(/^([a-zA-Z0-9_+-]{0,20})\b/);
+      const lang = langMatch ? langMatch[1] : '';
+      chunk = chunk + '\n```';
+      remaining = '```' + lang + '\n' + remaining;
+    }
+    out.push(chunk);
+  }
+  if (remaining.length > 0) out.push(remaining);
+  return out;
+}
+
 // Dedup: verarbeitete Message-IDs (defensiv gegen Gateway-Replays bei Reconnect).
 const processedMessages: Map<string, number> = new Map();
 const PROCESSED_TTL_MS = 60 * 1000; // 60s reichen, Discord redeliver-Fenster ist kurz.
@@ -496,18 +539,17 @@ const messageCreateEvent: BotEvent = {
               .replace(/[ \t]{2,}/g, ' ')
               .trim();
             if (cleaned.length === 0) cleaned = '...';
-            const firstChunkBudget = 1900;
-            const first = cleaned.slice(0, firstChunkBudget);
-            const rest = cleaned.slice(firstChunkBudget);
+            // Markdown-bewusstes Chunking: Wir versuchen an Zeilenumbruechen
+            // zu splitten und niemals einen offenen Code-Fence (```) ueber
+            // mehrere Nachrichten ziehen zu lassen. Discord rendert sonst
+            // den Codeblock kaputt.
+            const chunks = splitForDiscord(cleaned, 1900);
             await msg.reply({
-              content: first,
+              content: chunks[0],
               allowedMentions: { repliedUser: true, parse: [] },
             });
-            if (rest.length > 0) {
-              const more = rest.match(/[\s\S]{1,1900}/g) || [];
-              for (const c of more) {
-                await channel.send({ content: c, allowedMentions: { parse: [] } });
-              }
+            for (const c of chunks.slice(1)) {
+              await channel.send({ content: c, allowedMentions: { parse: [] } });
             }
           } else {
             const userMsg =

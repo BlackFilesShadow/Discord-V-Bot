@@ -15,7 +15,11 @@ import { logger } from '../../utils/logger';
  */
 
 const MAX_TURNS_PER_CONTEXT = 10;
-const MAX_CONTENT_PER_TURN = 2000;
+// Bot-Antworten koennen via Chunking >2000 Zeichen erreichen. Wir speichern
+// daher bis 4000 Zeichen pro Turn, damit das Memory die vollstaendige
+// vorherige Antwort enthaelt und Bezuege ("wie eben gesagt", "und das
+// andere?") nicht ins Leere gehen.
+const MAX_CONTENT_PER_TURN = 4000;
 const TTL_MS = 24 * 60 * 60 * 1000;
 
 export type ConversationRole = 'user' | 'assistant';

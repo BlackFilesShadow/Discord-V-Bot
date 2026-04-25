@@ -304,7 +304,14 @@ export function looksFactQuestion(question: string): boolean {
 
   // Reine Mathe-/Code-Fragen brauchen kein Web
   if (/^[\d\s+\-*/()=.,]+$/.test(q)) return false;
-  if (/\b(code|programmiere|schreib mir (ein|eine)|implementiere|debug|funktion|class|console\.log)\b/.test(q)) return false;
+  // Code-Fragen ueberspringen die Web-Suche, ABER nur wenn sie keinen
+  // Bezug auf API-Versionen / Releases / Jahresangaben haben. Beispiel:
+  // "schreib mir code fuer die openai api 2025" muss recherchiert werden,
+  // weil sich die API zwischen Trainingsende und heute geaendert haben kann.
+  if (/\b(code|programmiere|schreib mir (ein|eine)|implementiere|debug|funktion|class|console\.log)\b/.test(q)) {
+    const needsLiveData = /\b(api|sdk|version|release|deprecated|endpoint|2024|2025|2026|2027|aktuell|neueste?n?|breaking change)\b/.test(q);
+    if (!needsLiveData) return false;
+  }
 
   // Reine Datum-/Zeit-Fragen werden vom Zeit-Block beantwortet, keine Web-Suche noetig
   if (/^(was f[\u00fcu]r ein tag|welcher tag|welcher wochentag|wie sp[\u00e4a]t|wie viel uhr|wieviel uhr|welches datum|welches jahr|welche jahreszeit)\b/.test(q)) return false;

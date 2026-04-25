@@ -172,6 +172,8 @@ async function handleRemove(interaction: ChatInputCommandInteraction): Promise<v
 
   // Statistiken sammeln vor dem Löschen
   const totalPackages = dbUser.packages.length;
+  const activePackages = dbUser.packages.filter((p) => !p.isDeleted).length;
+  const softDeletedPackages = totalPackages - activePackages;
   let totalFiles = 0;
   let totalSize = BigInt(0);
 
@@ -245,11 +247,16 @@ async function handleRemove(interaction: ChatInputCommandInteraction): Promise<v
     totalSize: totalSize.toString(),
   });
 
+  const pkgValue =
+    softDeletedPackages > 0
+      ? `${totalPackages} (davon ${activePackages} aktiv, ${softDeletedPackages} soft-deleted)`
+      : totalPackages.toString();
+
   const embed = new EmbedBuilder()
     .setTitle('🗑️ Hersteller entfernt')
     .setDescription(`**${displayName}** wurde als Hersteller entfernt.`)
     .addFields(
-      { name: '📦 Pakete gelöscht', value: totalPackages.toString(), inline: true },
+      { name: '📦 Pakete gelöscht', value: pkgValue, inline: true },
       { name: '📄 Dateien gelöscht', value: totalFiles.toString(), inline: true },
       { name: '💾 Speicher freigegeben', value: formatBytes(Number(totalSize)), inline: true },
       { name: '📂 Upload-Bereich', value: dirDeleted ? '✅ gelöscht' : '⚠️ nicht entfernt', inline: true },
@@ -298,16 +305,20 @@ async function handleList(interaction: ChatInputCommandInteraction): Promise<voi
     return;
   }
 
-  // Für jeden Hersteller: Nur eindeutige Paketnamen (case-insensitive, isDeleted: false)
-  const packageCounts: Record<string, number> = {};
+  // Pro Hersteller: aktive Pakete (isDeleted=false) UND gesamt (inkl. Soft-
+  // Delete) zaehlen. Letztere Zahl entspricht dem, was /dev-manufacturer
+  // remove tatsaechlich physisch wegraeumt - so entsteht kein Widerspruch
+  // zwischen "5 Pakete laut list" und "6 Pakete geloescht laut remove".
+  const packageCounts: Record<string, { active: number; total: number }> = {};
   for (const m of manufacturers) {
     const pkgs = await prisma.package.findMany({
-      where: { userId: m.id, isDeleted: false },
-      select: { name: true },
+      where: { userId: m.id },
+      select: { name: true, isDeleted: true },
     });
-    // Nur eindeutige Namen (case-insensitive)
-    const uniqueNames = new Set(pkgs.map(p => p.name.toLowerCase()));
-    packageCounts[m.id] = uniqueNames.size;
+    const activeNames = new Set(
+      pkgs.filter((p) => !p.isDeleted).map((p) => p.name.toLowerCase()),
+    );
+    packageCounts[m.id] = { active: activeNames.size, total: pkgs.length };
   }
 
   const embed = new EmbedBuilder()
@@ -317,12 +328,17 @@ async function handleList(interaction: ChatInputCommandInteraction): Promise<voi
     .setTimestamp();
 
   for (const m of manufacturers.slice(0, 25)) {
+    const pc = packageCounts[m.id];
+    const pkgLine =
+      pc.total > pc.active
+        ? `📦 Pakete: ${pc.active} aktiv (${pc.total - pc.active} soft-deleted, gesamt ${pc.total})`
+        : `📦 Pakete: ${pc.active}`;
     embed.addFields({
       name: `🏭 ${m.username}`,
       value: [
         `🆔 Discord: \`${m.discordId}\``,
         `🔑 GUID: \`${m.id}\``,
-        `📦 Pakete: ${packageCounts[m.id]}`,
+        pkgLine,
         `📅 Seit: ${m.manufacturerApprovedAt?.toLocaleDateString('de-DE') || 'unbekannt'}`,
         `🔹 Rolle: ${m.role}`,
       ].join('\n'),
