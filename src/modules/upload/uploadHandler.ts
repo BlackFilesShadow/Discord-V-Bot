@@ -62,10 +62,15 @@ export async function checkUploadPermission(userId: string): Promise<{ allowed: 
  * Sektion 2: Paketname frei wählbar, GUID-gebunden, keine Namenskonflikte.
  */
 export async function getOrCreatePackage(userId: string, packageName: string, description?: string) {
-  const existing = await prisma.package.findFirst({
-    where: { userId, name: packageName, isDeleted: false },
-  });
 
+  // Case-insensitive Check auf Paketnamen (isDeleted=false)
+  const existing = await prisma.package.findFirst({
+    where: {
+      userId,
+      isDeleted: false,
+      name: { equals: packageName, mode: 'insensitive' },
+    },
+  });
   if (existing) {
     throw new DuplicatePackageNameError(packageName);
   }

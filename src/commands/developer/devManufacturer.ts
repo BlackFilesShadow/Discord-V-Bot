@@ -298,10 +298,16 @@ async function handleList(interaction: ChatInputCommandInteraction): Promise<voi
     return;
   }
 
-  // Für jeden Hersteller die aktiven Pakete zählen (isDeleted: false, userId: m.id)
+  // Für jeden Hersteller: Nur eindeutige Paketnamen (case-insensitive, isDeleted: false)
   const packageCounts: Record<string, number> = {};
   for (const m of manufacturers) {
-    packageCounts[m.id] = await prisma.package.count({ where: { userId: m.id, isDeleted: false } });
+    const pkgs = await prisma.package.findMany({
+      where: { userId: m.id, isDeleted: false },
+      select: { name: true },
+    });
+    // Nur eindeutige Namen (case-insensitive)
+    const uniqueNames = new Set(pkgs.map(p => p.name.toLowerCase()));
+    packageCounts[m.id] = uniqueNames.size;
   }
 
   const embed = new EmbedBuilder()
