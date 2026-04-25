@@ -171,7 +171,7 @@ async function runDuePosts(client: Client): Promise<void> {
 async function sendPost(client: Client, post: {
   id: string; guildId: string; channelId: string; sourceText: string; sourceLang: string; targetLang: string;
   translatedText: string | null; imageUrl: string | null; rolePings: string | null; mode: string; recurrenceCron: string | null;
-  customTitle: string | null;
+  customTitle?: string | null;
 }): Promise<void> {
   // Channel laden.
   const ch = await client.channels.fetch(post.channelId).catch(() => null);
