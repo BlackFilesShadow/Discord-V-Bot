@@ -1,5 +1,5 @@
 import type { Guild, GuildMember, User as DiscordUser, GuildBasedChannel } from 'discord.js';
-import { ChannelType } from 'discord.js';
+import { ChannelType, PermissionFlagsBits } from 'discord.js';
 import prisma from '../../database/prisma';
 import { logger } from '../../utils/logger';
 import { getGuildProfile } from './guildAwareness';
@@ -30,6 +30,29 @@ export interface ServerUserContextOptions {
 const CHANNELS_QUESTION_RE = /\b(kanal|kanaele|kanäle|channel(s)?|wo (kann|finde|soll)|welcher channel|welcher kanal|in welchem)\b/i;
 const RULES_QUESTION_RE = /\b(regel|regeln|rules|regelwerk|verhalten|kodex|netiquette|verboten|erlaubt)\b/i;
 const ROLES_QUESTION_RE = /\b(rolle|rollen|role(s)?|rang|raenge|hierarchie)\b/i;
+
+/**
+ * Heuristik: Erkennt sensible / nicht-Community-Kanaele anhand des Namens.
+ * Wird zusaetzlich zur Permission-Pruefung (@everyone darf den Kanal nicht sehen)
+ * verwendet, damit auch oeffentliche Mod-/Admin-/Log-Kanaele rausgefiltert werden.
+ */
+const SENSITIVE_NAME_RE = /(^|[-_・·•\s])(admin|mod(s)?|moderation|moderator(en)?|staff|team(intern)?|intern|internal|hidden|geheim|privat(e)?|owner|leitung|fuehrung|führung|log(s|ging)?|audit|audit-?log|trace|debug|console|terminal|report(s)?|meldung(en)?|melden|ticket(s)?|support-intern|raid|raid-alarm|alert(s)?|warn(ung(en)?)?|sec(urity)?|sicherheit|antiraid|backup|sandbox|dev|developer|test(s|ing)?)([-_・·•\s]|$)/i;
+
+function isSensitiveChannel(guild: Guild, channelName: string): boolean {
+  if (SENSITIVE_NAME_RE.test(channelName)) return true;
+  // Kanal im Live-Cache suchen (case-insensitive) und @everyone-Sicht pruefen.
+  const live = guild.channels.cache.find((c) => 'name' in c && (c as any).name?.toLowerCase() === channelName.toLowerCase());
+  if (!live) return false;
+  const everyone = guild.roles.everyone;
+  try {
+    const perms = (live as any).permissionsFor?.(everyone);
+    if (perms && !perms.has(PermissionFlagsBits.ViewChannel)) return true;
+  } catch {
+    /* ignore */
+  }
+  return false;
+}
+
 
 export async function buildServerUserContext(opts: ServerUserContextOptions): Promise<string | null> {
   const { guild, channel, member, user, question } = opts;
@@ -179,7 +202,18 @@ export async function buildServerUserContext(opts: ServerUserContextOptions): Pr
   if (cachedProfile && question) {
     if (CHANNELS_QUESTION_RE.test(question) && cachedProfile.channels && cachedProfile.channels.length > 0) {
       const grouped: Record<string, string[]> = {};
+      let filteredCount = 0;
       for (const c of cachedProfile.channels) {
+        // Sensible / Admin-/Mod-/Log-Kanaele NIE an die AI weitergeben.
+        if (guild && isSensitiveChannel(guild, c.name)) {
+          filteredCount++;
+          continue;
+        }
+        // Kategorien, deren Name selbst sensitiv ist, ebenfalls ueberspringen.
+        if (c.parent && SENSITIVE_NAME_RE.test(c.parent)) {
+          filteredCount++;
+          continue;
+        }
         const key = c.parent ?? '(ohne Kategorie)';
         if (!grouped[key]) grouped[key] = [];
         grouped[key].push(`#${c.name} (${c.type})`);
@@ -190,8 +224,11 @@ export async function buildServerUserContext(opts: ServerUserContextOptions): Pr
         if (out.join('\n').length > 1500) break;
       }
       lines.push('');
-      lines.push('SERVER-KANAELE (Snapshot):');
+      lines.push('SERVER-KANAELE (NUR Community-Kanaele - Admin/Mod/Log/Privat sind bereits gefiltert):');
       for (const o of out) lines.push(`- ${o}`);
+      if (filteredCount > 0) {
+        lines.push(`- (${filteredCount} sensible/private Kanaele aus dem Listing entfernt - nicht erwaehnen, nicht erraten, nicht auflisten)`);
+      }
     }
     if (RULES_QUESTION_RE.test(question) && cachedProfile.rulesText) {
       lines.push('');
@@ -200,14 +237,22 @@ export async function buildServerUserContext(opts: ServerUserContextOptions): Pr
     }
     if (ROLES_QUESTION_RE.test(question) && cachedProfile.topRoles && cachedProfile.topRoles.length > 0) {
       lines.push('');
-      lines.push('SERVER-ROLLEN (Top, sortiert nach Hierarchie):');
-      for (const r of cachedProfile.topRoles.slice(0, 15)) {
+      lines.push('SERVER-ROLLEN (Top, Community-relevant - Admin/Mod/Bot/managed gefiltert):');
+      let roleFiltered = 0;
+      const visibleRoles = cachedProfile.topRoles.filter((r) => {
+        if (r.managed) { roleFiltered++; return false; }
+        if (SENSITIVE_NAME_RE.test(r.name)) { roleFiltered++; return false; }
+        return true;
+      });
+      for (const r of visibleRoles.slice(0, 15)) {
         const flags: string[] = [];
         if (r.hoist) flags.push('hoist');
-        if (r.managed) flags.push('managed');
         const flagStr = flags.length ? ` [${flags.join(',')}]` : '';
         const cnt = typeof r.memberCount === 'number' ? ` – ${r.memberCount} Mitglieder` : '';
         lines.push(`- ${r.name}${flagStr}${cnt}`);
+      }
+      if (roleFiltered > 0) {
+        lines.push(`- (${roleFiltered} sensible/managed Rollen gefiltert - nicht erwaehnen, nicht raten)`);
       }
     }
   }
