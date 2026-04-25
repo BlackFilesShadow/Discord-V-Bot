@@ -1,8 +1,40 @@
-import type { Client, TextChannel, NewsChannel, ThreadChannel } from 'discord.js';
-import { ChannelType } from 'discord.js';
+import type { Client, Guild, TextChannel, NewsChannel, ThreadChannel } from 'discord.js';
+import { ChannelType, EmbedBuilder } from 'discord.js';
 import prisma from '../../database/prisma';
 import { logger } from '../../utils/logger';
-import { translate } from './translator';
+import { Colors, Brand } from '../../utils/embedDesign';
+import { translate, getLanguageName, SUPPORTED_LANGUAGES } from './translator';
+
+/**
+ * Baut das Standard-Embed fuer uebersetzte Posts.
+ * - Blaues Branding (Colors.Info)
+ * - Server-Name automatisch aus Guild
+ * - Flagge + Sprachname als Author
+ * - Optionales Bild
+ */
+export function buildTranslatePostEmbed(opts: {
+  guild: Guild | null;
+  translated: string;
+  targetLang: string;
+  imageUrl?: string | null;
+}): EmbedBuilder {
+  const lang = SUPPORTED_LANGUAGES.find((l) => l.code === opts.targetLang);
+  const flag = lang?.emoji ?? '🌐';
+  const langName = lang?.name ?? getLanguageName(opts.targetLang);
+  const guildName = opts.guild?.name ?? 'Server';
+  const guildIcon = opts.guild?.iconURL({ size: 128 }) ?? undefined;
+
+  const embed = new EmbedBuilder()
+    .setColor(Colors.Info) // Blau – wie gewuenscht
+    .setAuthor({ name: `${flag}  ${guildName}`, iconURL: guildIcon })
+    .setTitle(`${flag} Übersetzte Nachricht · ${langName}`)
+    .setDescription(`${Brand.divider}\n${opts.translated}\n${Brand.divider}`)
+    .setFooter({ text: `${Brand.name} • ${guildName}`, iconURL: guildIcon })
+    .setTimestamp();
+
+  if (opts.imageUrl) embed.setImage(opts.imageUrl);
+  return embed;
+}
 
 /**
  * Phase 17: Scheduler fuer TranslatedPosts.
@@ -158,29 +190,35 @@ async function sendPost(client: Client, post: {
   const prefixParts: string[] = [];
   if (wantsEveryone) prefixParts.push('@everyone');
   prefixParts.push(...realRoleIds.map((id) => `<@&${id}>`));
-  const pings = prefixParts.join(' ');
+  const pingContent = prefixParts.join(' ');
 
-  const content = pings ? `${pings}\n${translated}` : translated;
-
-  // Discord max 2000ch fuer content; bei Overflow splitten.
-  const chunks: string[] = [];
-  let buf = content;
-  while (buf.length > 1900) {
-    const cut = buf.lastIndexOf('\n', 1900);
-    const at = cut > 500 ? cut : 1900;
-    chunks.push(buf.slice(0, at));
+  // Embed-Beschreibung darf max 4096 Zeichen haben; bei Overflow splitten.
+  const MAX_DESC = 3800;
+  const segments: string[] = [];
+  let buf = translated;
+  while (buf.length > MAX_DESC) {
+    const cut = buf.lastIndexOf('\n', MAX_DESC);
+    const at = cut > 500 ? cut : MAX_DESC;
+    segments.push(buf.slice(0, at));
     buf = buf.slice(at);
   }
-  chunks.push(buf);
+  segments.push(buf);
 
   const channel = ch as TextChannel | NewsChannel | ThreadChannel;
+  const guild = channel.guild ?? null;
   const parseTypes: ('everyone' | 'roles' | 'users')[] = wantsEveryone ? ['everyone'] : [];
   let firstSent = true;
-  for (const c of chunks) {
+  for (const seg of segments) {
+    const embed = buildTranslatePostEmbed({
+      guild,
+      translated: seg,
+      targetLang: post.targetLang,
+      imageUrl: firstSent ? post.imageUrl : null,
+    });
     await channel.send({
-      content: c,
-      // Bild nur an die erste Nachricht haengen.
-      ...(firstSent && post.imageUrl ? { files: [{ attachment: post.imageUrl }] } : {}),
+      // Pings als Content (Embeds triggern keine Mentions).
+      content: firstSent && pingContent ? pingContent : undefined,
+      embeds: [embed],
       allowedMentions: { roles: realRoleIds, parse: parseTypes },
     });
     firstSent = false;

@@ -13,7 +13,7 @@ import { config } from '../../config';
 import prisma from '../../database/prisma';
 import { logger } from '../../utils/logger';
 import { SUPPORTED_LANGUAGES, LANGUAGE_CODES, getLanguageName, translate } from '../../modules/ai/translator';
-import { nextRunFromRecurrence, parseRecurrence } from '../../modules/ai/translatedPostScheduler';
+import { nextRunFromRecurrence, parseRecurrence, buildTranslatePostEmbed } from '../../modules/ai/translatedPostScheduler';
 
 /**
  * Phase 17: /translate-post
@@ -281,12 +281,17 @@ async function handleNow(interaction: ChatInputCommandInteraction): Promise<void
   const prefixParts: string[] = [];
   if (wantsEveryone) prefixParts.push('@everyone');
   prefixParts.push(...realRoleIds.map((id) => `<@&${id}>`));
-  const pingPrefix = prefixParts.join(' ');
-  const content = pingPrefix ? `${pingPrefix}\n${translated}` : translated;
+  const pingContent = prefixParts.join(' ');
   const parseTypes: ('everyone' | 'roles' | 'users')[] = wantsEveryone ? ['everyone'] : [];
+  const embed = buildTranslatePostEmbed({
+    guild: interaction.guild,
+    translated,
+    targetLang: target,
+    imageUrl: image?.url ?? null,
+  });
   await (ch as TextChannel | NewsChannel | ThreadChannel).send({
-    content,
-    ...(image ? { files: [{ attachment: image.url }] } : {}),
+    content: pingContent || undefined,
+    embeds: [embed],
     allowedMentions: { roles: realRoleIds, parse: parseTypes },
   });
   await prisma.translatedPost.update({ where: { id: post.id }, data: { lastRunAt: new Date(), isActive: false } });
