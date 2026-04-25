@@ -174,12 +174,19 @@ const adminAuditCommand: Command = {
         // DSGVO und Sicherheits-Compliance-Checks
         const [
           usersWithoutConsent,
+          usersWithoutConsentList,
           pendingDeletions,
           expiredSessions,
           expiredOtps,
           orphanedData,
         ] = await Promise.all([
           prisma.user.count({ where: { gdprConsent: null } }),
+          prisma.user.findMany({
+            where: { gdprConsent: null },
+            select: { username: true, discordId: true, createdAt: true },
+            orderBy: { createdAt: 'asc' },
+            take: 20,
+          }),
           prisma.dataDeletionRequest.count({ where: { status: 'PENDING' } }),
           prisma.session.count({ where: { expiresAt: { lt: new Date() }, isActive: true } }),
           prisma.oneTimePassword.count({ where: { expiresAt: { lt: new Date() }, isUsed: false, isRevoked: false } }),
@@ -193,6 +200,16 @@ const adminAuditCommand: Command = {
         if (expiredOtps > 0) issues.push(`⚠️ **${expiredOtps}** abgelaufene OTPs nicht widerrufen`);
         if (orphanedData > 0) issues.push(`⚠️ **${orphanedData}** gelöschte Dateien > 90 Tage (Aufbewahrung prüfen)`);
 
+        let userListText = '';
+        if (usersWithoutConsentList.length > 0) {
+          userListText = usersWithoutConsentList.map(u =>
+            `• ${u.username} (Discord: ${u.discordId}, seit: ${u.createdAt.toLocaleDateString('de-DE')})`
+          ).join('\n');
+          if (usersWithoutConsent > usersWithoutConsentList.length) {
+            userListText += `\n...und ${usersWithoutConsent - usersWithoutConsentList.length} weitere.`;
+          }
+        }
+
         const status = issues.length === 0 ? '✅ Alle Compliance-Checks bestanden!' : issues.join('\n');
 
         const embed = new EmbedBuilder()
@@ -201,7 +218,17 @@ const adminAuditCommand: Command = {
           .setColor(issues.length === 0 ? 0x00ff00 : 0xffcc00)
           .setTimestamp();
 
-        await interaction.editReply({ embeds: [embed] });
+        if (userListText) {
+          embed.addFields({ name: 'User ohne DSGVO-Einwilligung', value: userListText });
+        }
+
+        // Button für Export (wird als Hinweistext angezeigt, da Discord.js v14 keine Buttons im EditReply ohne Interaktion unterstützt)
+        let exportHint = '';
+        if (usersWithoutConsent > 0) {
+          exportHint = '\nDu kannst mit `/admin-audit export` alle User-Daten als Datei exportieren.';
+        }
+
+        await interaction.editReply({ embeds: [embed], content: exportHint || undefined });
         break;
       }
 
