@@ -274,13 +274,20 @@ async function handleNow(interaction: ChatInputCommandInteraction): Promise<void
   // Senden via Channel-Fetch.
   const ch = await interaction.client.channels.fetch(channel.id);
   if (!ch || !('send' in ch)) throw new Error('Channel nicht erreichbar.');
-  const allowedRoleIds = (rolePings ?? '').split(',').filter(Boolean);
-  const pingPrefix = allowedRoleIds.map((id) => `<@&${id}>`).join(' ');
+  const allRoleIds = (rolePings ?? '').split(',').filter(Boolean);
+  // @everyone-Rolle (id === guildId) separat als Literal rendern, sonst zeigt Discord "@@everyone".
+  const wantsEveryone = allRoleIds.includes(interaction.guildId!);
+  const realRoleIds = allRoleIds.filter((id) => id !== interaction.guildId);
+  const prefixParts: string[] = [];
+  if (wantsEveryone) prefixParts.push('@everyone');
+  prefixParts.push(...realRoleIds.map((id) => `<@&${id}>`));
+  const pingPrefix = prefixParts.join(' ');
   const content = pingPrefix ? `${pingPrefix}\n${translated}` : translated;
+  const parseTypes: ('everyone' | 'roles' | 'users')[] = wantsEveryone ? ['everyone'] : [];
   await (ch as TextChannel | NewsChannel | ThreadChannel).send({
     content,
     ...(image ? { files: [{ attachment: image.url }] } : {}),
-    allowedMentions: { roles: allowedRoleIds, parse: [] },
+    allowedMentions: { roles: realRoleIds, parse: parseTypes },
   });
   await prisma.translatedPost.update({ where: { id: post.id }, data: { lastRunAt: new Date(), isActive: false } });
 

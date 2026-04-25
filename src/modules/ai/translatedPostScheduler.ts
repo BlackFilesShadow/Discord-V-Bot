@@ -147,13 +147,18 @@ async function sendPost(client: Client, post: {
       await prisma.translatedPost.update({ where: { id: post.id }, data: { translatedText: translated } });
     }
   }
-  // Role-Pings vorbereiten.
-  const pings = (post.rolePings ?? '')
+  // Role-Pings vorbereiten. @everyone-Rolle (id === guildId) separat als Literal rendern,
+  // sonst zeigt Discord "@@everyone" (Rollenname enthaelt bereits "@").
+  const allIds = (post.rolePings ?? '')
     .split(',')
     .map((s) => s.trim())
-    .filter((s) => /^\d+$/.test(s))
-    .map((id) => `<@&${id}>`)
-    .join(' ');
+    .filter((s) => /^\d+$/.test(s));
+  const wantsEveryone = allIds.includes(post.guildId);
+  const realRoleIds = allIds.filter((id) => id !== post.guildId);
+  const prefixParts: string[] = [];
+  if (wantsEveryone) prefixParts.push('@everyone');
+  prefixParts.push(...realRoleIds.map((id) => `<@&${id}>`));
+  const pings = prefixParts.join(' ');
 
   const content = pings ? `${pings}\n${translated}` : translated;
 
@@ -169,14 +174,14 @@ async function sendPost(client: Client, post: {
   chunks.push(buf);
 
   const channel = ch as TextChannel | NewsChannel | ThreadChannel;
-  const allowedRoleIds = (post.rolePings ?? '').split(',').map((s) => s.trim()).filter((s) => /^\d+$/.test(s));
+  const parseTypes: ('everyone' | 'roles' | 'users')[] = wantsEveryone ? ['everyone'] : [];
   let firstSent = true;
   for (const c of chunks) {
     await channel.send({
       content: c,
       // Bild nur an die erste Nachricht haengen.
       ...(firstSent && post.imageUrl ? { files: [{ attachment: post.imageUrl }] } : {}),
-      allowedMentions: { roles: allowedRoleIds, parse: [] },
+      allowedMentions: { roles: realRoleIds, parse: parseTypes },
     });
     firstSent = false;
   }
