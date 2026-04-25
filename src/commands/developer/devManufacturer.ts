@@ -288,7 +288,7 @@ async function handleList(interaction: ChatInputCommandInteraction): Promise<voi
   const manufacturers = await prisma.user.findMany({
     where: { isManufacturer: true },
     include: {
-      _count: { select: { packages: true } },
+      _count: { select: { packages: { where: { isDeleted: false } } } },
     },
     orderBy: { manufacturerApprovedAt: 'desc' },
   });
