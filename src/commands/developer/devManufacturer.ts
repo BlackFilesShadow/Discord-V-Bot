@@ -288,7 +288,7 @@ async function handleList(interaction: ChatInputCommandInteraction): Promise<voi
   const manufacturers = await prisma.user.findMany({
     where: { isManufacturer: true },
     include: {
-      _count: { select: { packages: { where: { isDeleted: false } } } },
+      packages: { where: { isDeleted: false }, select: { id: true } },
     },
     orderBy: { manufacturerApprovedAt: 'desc' },
   });
@@ -310,7 +310,7 @@ async function handleList(interaction: ChatInputCommandInteraction): Promise<voi
       value: [
         `🆔 Discord: \`${m.discordId}\``,
         `🔑 GUID: \`${m.id}\``,
-        `📦 Pakete: ${m._count.packages}`,
+        `📦 Pakete: ${m.packages.length}`,
         `📅 Seit: ${m.manufacturerApprovedAt?.toLocaleDateString('de-DE') || 'unbekannt'}`,
         `🔹 Rolle: ${m.role}`,
       ].join('\n'),
@@ -319,6 +319,7 @@ async function handleList(interaction: ChatInputCommandInteraction): Promise<voi
   }
 
   await interaction.editReply({ embeds: [embed] });
+  return;
 }
 
 function formatBytes(bytes: number): string {
