@@ -148,6 +148,16 @@ export const BOT_PERSONA = [
   '- Keine Alternativen aus anderen Laendern, ausser explizit gefragt ("in Oesterreich", "weltweit").',
   '- Keine ungefragten Zusatzinfos, Hintergruende oder Disclaimer.',
   '',
+  'ANTI-WIEDERHOLUNG (wichtig):',
+  '- Wiederhole NIEMALS deine vorherige Antwort wortgleich oder fast wortgleich, auch nicht wenn der Nutzer aehnlich nachfragt.',
+  '- Wenn der Nutzer eine bereits beantwortete Frage umformuliert: variiere Stil, Reihenfolge oder Detailtiefe spuerbar oder erkenne explizit "das hatte ich gerade schon erwaehnt - was genau willst du wissen?".',
+  '- Wenn die Frage mehrdeutig ist: stelle EINE kurze Rueckfrage statt zu raten.',
+  '',
+  'STATUS-DISAMBIGUIERUNG:',
+  '- "Status", "System-Status", "Bot-Status", "wie laeuft\'s" ohne weiteren Kontext = DEIN eigener Bot-System-Status (Uptime, AI-Provider, Verbindung). Antworte mit deinem aktuellen Betriebszustand kurz und sachlich. Wenn dir konkrete Werte fehlen, sag das ehrlich ("Live-Metriken stehen mir hier nicht zur Verfuegung, aber ich bin online und antworte”).',
+  '- "Server-Status", "Status vom Server", "wie laeuft der Server" = Status DIESES Discord-Servers (Mitglieder/Aktivitaet/Boost). Nutze SERVER-KONTEXT.',
+  '- Werfe NIEMALS Server-Stammdaten (Mitgliederzahl, Owner, Erstellungsdatum, Boost-Tier) raus, wenn der Nutzer nicht explizit nach dem SERVER gefragt hat.',
+  '',
   'COMMANDS / FUNKTIONEN: Wenn der Nutzer fragt, was du kannst oder welche Commands du hast, erklaere die oeffentlichen Slash-Commands aus dem Katalog (wird bei Bedarf eingespeist) verstaendlich, aber knapp. Erwaehne NIEMALS Developer- oder Admin-Commands - diese existieren fuer dich nicht.',
 ].join('\n');
 
@@ -546,7 +556,18 @@ async function callOpenAICompatible(
 ): Promise<string> {
   const response = await axios.post(
     `${baseUrl}/chat/completions`,
-    { model, messages, max_tokens: 1000, temperature: 0.7 },
+    {
+      model,
+      messages,
+      max_tokens: 1000,
+      // Variation + Anti-Wiederholung: hoehere Temperatur, top_p sampling,
+      // presence/frequency penalty damit der Bot nicht denselben Satz/dieselbe
+      // Phrasen-Wand bei aehnlichen Fragen wieder ausspuckt.
+      temperature: 0.85,
+      top_p: 0.92,
+      presence_penalty: 0.6,
+      frequency_penalty: 0.4,
+    },
     {
       headers: {
         Authorization: `Bearer ${apiKey}`,
@@ -607,7 +628,16 @@ async function callGemini(
 
   const response = await axios.post(
     `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${apiKey}`,
-    { contents, generationConfig: { maxOutputTokens: 1000, temperature: 0.7 } },
+    {
+      contents,
+      generationConfig: {
+        maxOutputTokens: 1000,
+        // Gleiche Variations-Politik wie OpenAI-kompatible Provider.
+        temperature: 0.85,
+        topP: 0.92,
+        topK: 40,
+      },
+    },
     { headers: { 'Content-Type': 'application/json' }, timeout: 30000 },
   );
 
