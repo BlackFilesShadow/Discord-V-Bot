@@ -47,6 +47,8 @@ const adminTicketsCommand: Command = {
         )
     ) as SlashCommandBuilder,
 
+  adminOnly: true,
+
   execute: async (interaction: ChatInputCommandInteraction) => {
     await interaction.deferReply({ ephemeral: true });
 

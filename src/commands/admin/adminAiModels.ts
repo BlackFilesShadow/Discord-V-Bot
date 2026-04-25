@@ -82,6 +82,8 @@ const adminAiModelsCommand: Command = {
         ),
     ) as SlashCommandBuilder,
 
+  adminOnly: true,
+
   execute: async (interaction: ChatInputCommandInteraction) => {
     await interaction.deferReply({ ephemeral: true });
     if (!(await isAdminOrOwner(interaction.user.id))) {

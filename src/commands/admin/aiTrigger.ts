@@ -57,7 +57,7 @@ export const aiTriggerCommand: Command = {
     .addSubcommand(sc => sc
       .setName('clear')
       .setDescription('Alle Trigger l\u00f6schen')),
-
+  adminOnly: true,
   execute: async (interaction: ChatInputCommandInteraction) => {
     if (!interaction.guildId) {
       await interaction.reply({ content: 'Nur in Servern verf\u00fcgbar.', ephemeral: true });

@@ -50,6 +50,8 @@ export const welcomeCommand: Command = {
       .setName('disable')
       .setDescription('Willkommens-System deaktivieren')),
 
+  adminOnly: true,
+
   execute: async (interaction: ChatInputCommandInteraction) => {
     if (!interaction.guildId || !interaction.guild) {
       await interaction.reply({ content: 'Nur in Servern verf\u00fcgbar.', ephemeral: true });

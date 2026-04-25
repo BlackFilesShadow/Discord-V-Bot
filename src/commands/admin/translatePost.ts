@@ -200,6 +200,8 @@ const translatePostCommand: Command = {
         .addStringOption((o) => o.setName('id').setDescription('Post-ID (siehe /translate-post list)').setRequired(true)),
     ) as SlashCommandBuilder,
 
+  adminOnly: true,
+
   async execute(interaction: ChatInputCommandInteraction) {
     if (!interaction.guild) {
       await interaction.reply({ content: 'Nur in Guilds verwendbar.', ephemeral: true });
