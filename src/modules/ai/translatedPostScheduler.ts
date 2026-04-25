@@ -24,12 +24,17 @@ export function buildTranslatePostEmbed(opts: {
   const guildName = opts.guild?.name ?? 'Server';
   const guildIcon = opts.guild?.iconURL({ size: 128 }) ?? undefined;
 
+  // Fallback fuer leere Inhalte verhindert Discord-API-Error (description must be 1-4096).
+  const body = opts.translated && opts.translated.trim().length > 0
+    ? opts.translated
+    : '_(leer)_';
+
   const embed = new EmbedBuilder()
     .setColor(Colors.Info) // Blau – wie gewuenscht
     .setAuthor({ name: `${flag}  ${guildName}`, iconURL: guildIcon })
     .setTitle(`${flag} Übersetzte Nachricht · ${langName}`)
-    .setDescription(`${Brand.divider}\n${opts.translated}\n${Brand.divider}`)
-    .setFooter({ text: `${Brand.name} • ${guildName}`, iconURL: guildIcon })
+    .setDescription(`${Brand.divider}\n${body}\n${Brand.divider}`)
+    .setFooter({ text: Brand.name, iconURL: guildIcon })
     .setTimestamp();
 
   if (opts.imageUrl) embed.setImage(opts.imageUrl);
@@ -202,7 +207,8 @@ async function sendPost(client: Client, post: {
     segments.push(buf.slice(0, at));
     buf = buf.slice(at);
   }
-  segments.push(buf);
+  if (buf.length > 0) segments.push(buf);
+  if (segments.length === 0) segments.push(translated || '_(leer)_');
 
   const channel = ch as TextChannel | NewsChannel | ThreadChannel;
   const guild = channel.guild ?? null;
