@@ -37,23 +37,36 @@ function languageChoices() {
   return SUPPORTED_LANGUAGES.map((l) => ({ name: `${l.emoji} ${l.name}`, value: l.code }));
 }
 
-/** Akzeptiert ISO `2026-04-25T14:30` oder deutsches `25.04.2026 14:30`. */
+/** Akzeptiert deutsches `25.04.2026` oder `25.4.2026` (1-2-stellige Tag/Monat). */
 function parseScheduledDate(input: string): Date | null {
-  // ISO direkt versuchen.
-  const iso = new Date(input);
-  if (!Number.isNaN(iso.getTime())) return iso;
-  // DD.MM.YYYY HH:MM
-  const m = input.trim().match(/^(\d{2})\.(\d{2})\.(\d{4})\s+(\d{2}):(\d{2})$/);
-  if (!m) return null;
-  const [, dd, mm, yyyy, hh, mi] = m;
-  // Eingabe ist Berlin-lokal -> UTC umrechnen
+  // Form 1: DD.MM.YYYY HH:MM (wenn HH:MM dabei) oder nur DD.MM.YYYY.
+  const trimmed = input.trim();
+  const fullMatch = trimmed.match(/^(\d{1,2})\.(\d{1,2})\.(\d{4})(?:\s+(\d{1,2}):(\d{1,2}))?$/);
+  if (!fullMatch) return null;
+  const [, dd, mm, yyyy, hh, mi] = fullMatch;
+  const day = Number(dd), month = Number(mm) - 1, year = Number(yyyy);
+  const hour = hh !== undefined ? Number(hh) : 0;
+  const minute = mi !== undefined ? Number(mi) : 0;
+  if (month < 0 || month > 11 || day < 1 || day > 31 || hour < 0 || hour > 23 || minute < 0 || minute > 59) return null;
+  // Eingabe ist Berlin-lokal -> UTC umrechnen, DST-aware.
+  const probe = new Date(Date.UTC(year, month, day, hour, minute, 0));
   const berlinFmt = new Intl.DateTimeFormat('de-DE', { timeZone: 'Europe/Berlin', timeZoneName: 'shortOffset' });
-  const offsetPart = berlinFmt.formatToParts(new Date()).find((p) => p.type === 'timeZoneName')?.value ?? 'GMT+1';
+  const offsetPart = berlinFmt.formatToParts(probe).find((p) => p.type === 'timeZoneName')?.value ?? 'GMT+1';
   const offMatch = offsetPart.match(/([+-]?\d{1,2})/);
   const offsetH = offMatch ? Number(offMatch[1]) : 1;
-  const utcMs = Date.UTC(Number(yyyy), Number(mm) - 1, Number(dd), Number(hh), Number(mi), 0) - offsetH * 3_600_000;
+  const utcMs = probe.getTime() - offsetH * 3_600_000;
   const d = new Date(utcMs);
-  return Number.isNaN(d.getTime()) ? null : d;
+  // Round-trip-Check: das berechnete Datum muss in Berlin wieder dem Input entsprechen.
+  // Verhindert, dass z.B. 31.02.2026 als 03.03.2026 still durchgewinkt wird.
+  const back = new Intl.DateTimeFormat('de-DE', {
+    day: '2-digit', month: '2-digit', year: 'numeric', hour: '2-digit', minute: '2-digit',
+    timeZone: 'Europe/Berlin', hour12: false,
+  }).formatToParts(d);
+  const got = (t: string) => Number(back.find((p) => p.type === t)?.value ?? '0');
+  if (got('day') !== day || got('month') !== month + 1 || got('year') !== year || got('hour') !== hour || got('minute') !== minute) {
+    return null;
+  }
+  return d;
 }
 
 function fmtDate(d: Date | null | undefined): string {
@@ -84,10 +97,10 @@ const translatePostCommand: Command = {
       sub
         .setName('now')
         .setDescription('Sofort uebersetzen und posten')
-        .addStringOption((o) => o.setName('text').setDescription('Originaltext').setRequired(true).setMaxLength(3500))
+        .addStringOption((o) => o.setName('text').setDescription('Originaltext').setRequired(true).setMaxLength(4000))
         .addStringOption((o) => o.setName('zielsprache').setDescription('Zielsprache').setRequired(true).addChoices(...languageChoices()))
         .addChannelOption((o) => o.setName('channel').setDescription('Zielchannel').setRequired(true).addChannelTypes(ChannelType.GuildText, ChannelType.GuildAnnouncement))
-        .addStringOption((o) => o.setName('titel').setDescription('Eigener Embed-Titel (optional)').setMaxLength(200))
+        .addStringOption((o) => o.setName('titel').setDescription('Embed-Titel (Pflicht)').setRequired(true).setMaxLength(200))
         .addStringOption((o) => o.setName('quellsprache').setDescription('Quellsprache (Auto-Detect wenn leer)').addChoices(...languageChoices()))
         .addAttachmentOption((o) => o.setName('bild').setDescription('Optionales Bild'))
         .addRoleOption((o) => o.setName('rolle1').setDescription('Rolle 1 anpingen'))
@@ -98,13 +111,13 @@ const translatePostCommand: Command = {
       sub
         .setName('schedule')
         .setDescription('Einmalig zu festem Zeitpunkt posten')
-        .addStringOption((o) => o.setName('text').setDescription('Originaltext').setRequired(true).setMaxLength(3500))
+        .addStringOption((o) => o.setName('text').setDescription('Originaltext').setRequired(true).setMaxLength(4000))
         .addStringOption((o) => o.setName('zielsprache').setDescription('Zielsprache').setRequired(true).addChoices(...languageChoices()))
         .addChannelOption((o) => o.setName('channel').setDescription('Zielchannel').setRequired(true).addChannelTypes(ChannelType.GuildText, ChannelType.GuildAnnouncement))
         .addStringOption((o) => o.setName('datum').setDescription('Datum DD.MM.YYYY (Europe/Berlin)').setRequired(true))
         .addIntegerOption((o) => o.setName('stunde').setDescription('Stunde (0-23)').setRequired(true).setMinValue(0).setMaxValue(23))
         .addIntegerOption((o) => o.setName('minute').setDescription('Minute (0-59)').setRequired(true).setMinValue(0).setMaxValue(59))
-        .addStringOption((o) => o.setName('titel').setDescription('Eigener Embed-Titel (optional)').setMaxLength(200))
+        .addStringOption((o) => o.setName('titel').setDescription('Embed-Titel (Pflicht)').setRequired(true).setMaxLength(200))
         .addStringOption((o) => o.setName('quellsprache').setDescription('Quellsprache (Auto-Detect wenn leer)').addChoices(...languageChoices()))
         .addAttachmentOption((o) => o.setName('bild').setDescription('Optionales Bild'))
         .addRoleOption((o) => o.setName('rolle1').setDescription('Rolle 1 anpingen'))
@@ -115,11 +128,11 @@ const translatePostCommand: Command = {
       sub
         .setName('stuendlich')
         .setDescription('Jede Stunde zur gewaehlten Minute posten')
-        .addStringOption((o) => o.setName('text').setDescription('Originaltext').setRequired(true).setMaxLength(3500))
+        .addStringOption((o) => o.setName('text').setDescription('Originaltext').setRequired(true).setMaxLength(4000))
         .addStringOption((o) => o.setName('zielsprache').setDescription('Zielsprache').setRequired(true).addChoices(...languageChoices()))
         .addChannelOption((o) => o.setName('channel').setDescription('Zielchannel').setRequired(true).addChannelTypes(ChannelType.GuildText, ChannelType.GuildAnnouncement))
         .addIntegerOption((o) => o.setName('minute').setDescription('Minute (0-59)').setRequired(true).setMinValue(0).setMaxValue(59))
-        .addStringOption((o) => o.setName('titel').setDescription('Eigener Embed-Titel (optional)').setMaxLength(200))
+        .addStringOption((o) => o.setName('titel').setDescription('Embed-Titel (Pflicht)').setRequired(true).setMaxLength(200))
         .addStringOption((o) => o.setName('quellsprache').setDescription('Quellsprache').addChoices(...languageChoices()))
         .addAttachmentOption((o) => o.setName('bild').setDescription('Optionales Bild'))
         .addRoleOption((o) => o.setName('rolle1').setDescription('Rolle 1 anpingen'))
@@ -130,12 +143,12 @@ const translatePostCommand: Command = {
       sub
         .setName('taeglich')
         .setDescription('Jeden Tag zur gewaehlten Uhrzeit posten')
-        .addStringOption((o) => o.setName('text').setDescription('Originaltext').setRequired(true).setMaxLength(3500))
+        .addStringOption((o) => o.setName('text').setDescription('Originaltext').setRequired(true).setMaxLength(4000))
         .addStringOption((o) => o.setName('zielsprache').setDescription('Zielsprache').setRequired(true).addChoices(...languageChoices()))
         .addChannelOption((o) => o.setName('channel').setDescription('Zielchannel').setRequired(true).addChannelTypes(ChannelType.GuildText, ChannelType.GuildAnnouncement))
         .addIntegerOption((o) => o.setName('stunde').setDescription('Stunde (0-23)').setRequired(true).setMinValue(0).setMaxValue(23))
         .addIntegerOption((o) => o.setName('minute').setDescription('Minute (0-59)').setRequired(true).setMinValue(0).setMaxValue(59))
-        .addStringOption((o) => o.setName('titel').setDescription('Eigener Embed-Titel (optional)').setMaxLength(200))
+        .addStringOption((o) => o.setName('titel').setDescription('Embed-Titel (Pflicht)').setRequired(true).setMaxLength(200))
         .addStringOption((o) => o.setName('quellsprache').setDescription('Quellsprache').addChoices(...languageChoices()))
         .addAttachmentOption((o) => o.setName('bild').setDescription('Optionales Bild'))
         .addRoleOption((o) => o.setName('rolle1').setDescription('Rolle 1 anpingen'))
@@ -146,7 +159,7 @@ const translatePostCommand: Command = {
       sub
         .setName('woechentlich')
         .setDescription('Jede Woche an festem Wochentag und Uhrzeit posten')
-        .addStringOption((o) => o.setName('text').setDescription('Originaltext').setRequired(true).setMaxLength(3500))
+        .addStringOption((o) => o.setName('text').setDescription('Originaltext').setRequired(true).setMaxLength(4000))
         .addStringOption((o) => o.setName('zielsprache').setDescription('Zielsprache').setRequired(true).addChoices(...languageChoices()))
         .addChannelOption((o) => o.setName('channel').setDescription('Zielchannel').setRequired(true).addChannelTypes(ChannelType.GuildText, ChannelType.GuildAnnouncement))
         .addStringOption((o) => o.setName('wochentag').setDescription('Wochentag').setRequired(true).addChoices(
@@ -155,7 +168,7 @@ const translatePostCommand: Command = {
         ))
         .addIntegerOption((o) => o.setName('stunde').setDescription('Stunde (0-23)').setRequired(true).setMinValue(0).setMaxValue(23))
         .addIntegerOption((o) => o.setName('minute').setDescription('Minute (0-59)').setRequired(true).setMinValue(0).setMaxValue(59))
-        .addStringOption((o) => o.setName('titel').setDescription('Eigener Embed-Titel (optional)').setMaxLength(200))
+        .addStringOption((o) => o.setName('titel').setDescription('Embed-Titel (Pflicht)').setRequired(true).setMaxLength(200))
         .addStringOption((o) => o.setName('quellsprache').setDescription('Quellsprache').addChoices(...languageChoices()))
         .addAttachmentOption((o) => o.setName('bild').setDescription('Optionales Bild'))
         .addRoleOption((o) => o.setName('rolle1').setDescription('Rolle 1 anpingen'))
@@ -166,13 +179,13 @@ const translatePostCommand: Command = {
       sub
         .setName('monatlich')
         .setDescription('Jeden Monat an festem Tag und Uhrzeit posten (z.B. 23. um 11:45)')
-        .addStringOption((o) => o.setName('text').setDescription('Originaltext').setRequired(true).setMaxLength(3500))
+        .addStringOption((o) => o.setName('text').setDescription('Originaltext').setRequired(true).setMaxLength(4000))
         .addStringOption((o) => o.setName('zielsprache').setDescription('Zielsprache').setRequired(true).addChoices(...languageChoices()))
         .addChannelOption((o) => o.setName('channel').setDescription('Zielchannel').setRequired(true).addChannelTypes(ChannelType.GuildText, ChannelType.GuildAnnouncement))
         .addIntegerOption((o) => o.setName('tag').setDescription('Tag im Monat (1-31)').setRequired(true).setMinValue(1).setMaxValue(31))
         .addIntegerOption((o) => o.setName('stunde').setDescription('Stunde (0-23)').setRequired(true).setMinValue(0).setMaxValue(23))
         .addIntegerOption((o) => o.setName('minute').setDescription('Minute (0-59)').setRequired(true).setMinValue(0).setMaxValue(59))
-        .addStringOption((o) => o.setName('titel').setDescription('Eigener Embed-Titel (optional)').setMaxLength(200))
+        .addStringOption((o) => o.setName('titel').setDescription('Embed-Titel (Pflicht)').setRequired(true).setMaxLength(200))
         .addStringOption((o) => o.setName('quellsprache').setDescription('Quellsprache').addChoices(...languageChoices()))
         .addAttachmentOption((o) => o.setName('bild').setDescription('Optionales Bild'))
         .addRoleOption((o) => o.setName('rolle1').setDescription('Rolle 1 anpingen'))

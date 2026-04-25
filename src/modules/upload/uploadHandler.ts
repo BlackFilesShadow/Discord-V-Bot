@@ -63,9 +63,9 @@ export async function checkUploadPermission(userId: string): Promise<{ allowed: 
  */
 export async function getOrCreatePackage(userId: string, packageName: string, description?: string) {
 
-  // Case-insensitive Check auf AKTIVE Paketnamen (isDeleted=false). Soft-deleted
-  // Pakete mit demselben Namen werden ignoriert — ein neuer Upload erstellt einen
-  // frischen Datensatz und der alte (soft-deleted) bleibt als Audit-Spur erhalten.
+  // Case-insensitive Match auf AKTIVES Paket. Wenn vorhanden → wiederverwenden.
+  // So koennen Multi-File-Uploads alle Dateien in dasselbe Paket schreiben, und
+  // ein zweiter /upload mit gleichem Namen reichert das vorhandene Paket an.
   const existingActive = await prisma.package.findFirst({
     where: {
       userId,
@@ -74,11 +74,11 @@ export async function getOrCreatePackage(userId: string, packageName: string, de
     },
   });
   if (existingActive) {
-    throw new DuplicatePackageNameError(packageName);
+    return existingActive;
   }
 
-  // Soft-deleted Eintrag mit gleichem Namen? -> reaktivieren, statt neuen Datensatz
-  // anzulegen. Verhindert ewige Akkumulation und respektiert das @@unique([userId,name]).
+  // Soft-deleted Eintrag mit gleichem Namen? -> reaktivieren statt neu anlegen,
+  // damit das @@unique([userId,name]) nicht verletzt wird.
   const existingSoftDeleted = await prisma.package.findFirst({
     where: {
       userId,
@@ -99,8 +99,6 @@ export async function getOrCreatePackage(userId: string, packageName: string, de
         fileCount: 0,
       },
     });
-    // Alte (soft-deleted) Datei-Eintraege endgueltig loeschen, damit der reaktivierte
-    // Container leer ist und die fileCount/totalSize-Statistik wieder bei 0 startet.
     await prisma.upload.deleteMany({ where: { packageId: restored.id } });
     logAudit('PACKAGE_RESTORED_ON_UPLOAD', 'UPLOAD', { packageId: restored.id, userId, packageName });
     return restored;
@@ -109,8 +107,8 @@ export async function getOrCreatePackage(userId: string, packageName: string, de
   // Race-Condition-Schutz: ein zeitgleicher zweiter Upload mit demselben
   // Namen koennte den findFirst-Check umgehen. Der DB-seitige Partial-Unique-
   // Index idx_pkg_user_lower_name_active (deploy/sql/002_*.sql) faengt das ab
-  // und liefert einen P2002-Fehler, den wir hier in eine saubere
-  // DuplicatePackageNameError uebersetzen.
+  // und liefert einen P2002-Fehler — in diesem Fall einfach den Datensatz holen,
+  // statt einen kuenstlichen Fehler zu werfen.
   let pkg;
   try {
     pkg = await prisma.package.create({
@@ -122,6 +120,10 @@ export async function getOrCreatePackage(userId: string, packageName: string, de
     });
   } catch (err: any) {
     if (err?.code === 'P2002') {
+      const concurrent = await prisma.package.findFirst({
+        where: { userId, isDeleted: false, name: { equals: packageName, mode: 'insensitive' } },
+      });
+      if (concurrent) return concurrent;
       throw new DuplicatePackageNameError(packageName);
     }
     throw err;
