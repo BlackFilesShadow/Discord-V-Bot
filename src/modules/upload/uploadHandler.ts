@@ -63,16 +63,47 @@ export async function checkUploadPermission(userId: string): Promise<{ allowed: 
  */
 export async function getOrCreatePackage(userId: string, packageName: string, description?: string) {
 
-  // Case-insensitive Check auf Paketnamen (isDeleted=false)
-  const existing = await prisma.package.findFirst({
+  // Case-insensitive Check auf AKTIVE Paketnamen (isDeleted=false). Soft-deleted
+  // Pakete mit demselben Namen werden ignoriert — ein neuer Upload erstellt einen
+  // frischen Datensatz und der alte (soft-deleted) bleibt als Audit-Spur erhalten.
+  const existingActive = await prisma.package.findFirst({
     where: {
       userId,
       isDeleted: false,
       name: { equals: packageName, mode: 'insensitive' },
     },
   });
-  if (existing) {
+  if (existingActive) {
     throw new DuplicatePackageNameError(packageName);
+  }
+
+  // Soft-deleted Eintrag mit gleichem Namen? -> reaktivieren, statt neuen Datensatz
+  // anzulegen. Verhindert ewige Akkumulation und respektiert das @@unique([userId,name]).
+  const existingSoftDeleted = await prisma.package.findFirst({
+    where: {
+      userId,
+      isDeleted: true,
+      name: { equals: packageName, mode: 'insensitive' },
+    },
+  });
+  if (existingSoftDeleted) {
+    const restored = await prisma.package.update({
+      where: { id: existingSoftDeleted.id },
+      data: {
+        isDeleted: false,
+        deletedAt: null,
+        deletedBy: null,
+        status: 'ACTIVE',
+        description: description ?? existingSoftDeleted.description,
+        totalSize: BigInt(0),
+        fileCount: 0,
+      },
+    });
+    // Alte (soft-deleted) Datei-Eintraege endgueltig loeschen, damit der reaktivierte
+    // Container leer ist und die fileCount/totalSize-Statistik wieder bei 0 startet.
+    await prisma.upload.deleteMany({ where: { packageId: restored.id } });
+    logAudit('PACKAGE_RESTORED_ON_UPLOAD', 'UPLOAD', { packageId: restored.id, userId, packageName });
+    return restored;
   }
 
   // Race-Condition-Schutz: ein zeitgleicher zweiter Upload mit demselben

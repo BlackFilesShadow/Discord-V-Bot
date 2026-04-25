@@ -1,6 +1,9 @@
 import prisma from '../../database/prisma';
 import { generateOneTimePassword, hashPassword } from '../../utils/password';
 import { logger, logAudit, logSecurity } from '../../utils/logger';
+import { config } from '../../config';
+import fs from 'fs/promises';
+import path from 'path';
 
 /**
  * Registrierungsmodul (Sektion 1):
@@ -331,7 +334,37 @@ export async function verifyOneTimePassword(userId: string, password: string) {
       manufacturerApprovedBy: req?.reviewedBy ?? null,
     },
   });
-
+  // FRESH-START: Bei Aktivierung als Hersteller alle alten Paketreste hart loeschen,
+  // damit der User mit komplett leerem GUID-Bereich startet (keine "Name bereits vergeben"-
+  // Konflikte aus vorherigen Sessions, falls dev-manufacturer remove unvollstaendig war).
+  try {
+    const oldPackages = await prisma.package.findMany({
+      where: { userId },
+      include: { files: { select: { filePath: true } } },
+    });
+    for (const pkg of oldPackages) {
+      for (const file of pkg.files) {
+        try { await fs.unlink(file.filePath); } catch { /* schon weg */ }
+      }
+    }
+    if (oldPackages.length > 0) {
+      // Prisma-Cascade loescht Upload + ValidationResult + Download via FK onDelete: Cascade.
+      await prisma.package.deleteMany({ where: { userId } });
+    }
+    // Upload-Verzeichnis des Users komplett wegraeumen (faengt orphan files ab).
+    try {
+      const userDir = path.join(config.upload.dir, userId);
+      await fs.rm(userDir, { recursive: true, force: true });
+    } catch { /* dir existiert evtl. nicht */ }
+    if (oldPackages.length > 0) {
+      logAudit('FRESH_MANUFACTURER_CLEANUP', 'REGISTRATION', {
+        userId,
+        packagesPurged: oldPackages.length,
+      });
+    }
+  } catch (cleanupErr) {
+    logger.warn(`Fresh-Start Cleanup fehlgeschlagen fuer ${userId}: ${(cleanupErr as Error).message}`);
+  }
   logAudit('OTP_VERIFIED', 'REGISTRATION', {
     userId,
     message: 'GUID-Bereich aktiviert, Uploadrechte freigeschaltet',
