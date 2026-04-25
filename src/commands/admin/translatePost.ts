@@ -87,6 +87,7 @@ const translatePostCommand: Command = {
         .addStringOption((o) => o.setName('text').setDescription('Originaltext').setRequired(true).setMaxLength(3500))
         .addStringOption((o) => o.setName('zielsprache').setDescription('Zielsprache').setRequired(true).addChoices(...languageChoices()))
         .addChannelOption((o) => o.setName('channel').setDescription('Zielchannel').setRequired(true).addChannelTypes(ChannelType.GuildText, ChannelType.GuildAnnouncement))
+        .addStringOption((o) => o.setName('titel').setDescription('Eigener Embed-Titel (optional)').setMaxLength(200))
         .addStringOption((o) => o.setName('quellsprache').setDescription('Quellsprache (Auto-Detect wenn leer)').addChoices(...languageChoices()))
         .addAttachmentOption((o) => o.setName('bild').setDescription('Optionales Bild'))
         .addRoleOption((o) => o.setName('rolle1').setDescription('Rolle 1 anpingen'))
@@ -100,21 +101,10 @@ const translatePostCommand: Command = {
         .addStringOption((o) => o.setName('text').setDescription('Originaltext').setRequired(true).setMaxLength(3500))
         .addStringOption((o) => o.setName('zielsprache').setDescription('Zielsprache').setRequired(true).addChoices(...languageChoices()))
         .addChannelOption((o) => o.setName('channel').setDescription('Zielchannel').setRequired(true).addChannelTypes(ChannelType.GuildText, ChannelType.GuildAnnouncement))
-        .addStringOption((o) => o.setName('zeitpunkt').setDescription('ISO 2026-04-25T14:30 oder DD.MM.YYYY HH:MM (Europe/Berlin)').setRequired(true))
-        .addStringOption((o) => o.setName('quellsprache').setDescription('Quellsprache (Auto-Detect wenn leer)').addChoices(...languageChoices()))
-        .addAttachmentOption((o) => o.setName('bild').setDescription('Optionales Bild'))
-        .addRoleOption((o) => o.setName('rolle1').setDescription('Rolle 1 anpingen'))
-        .addRoleOption((o) => o.setName('rolle2').setDescription('Rolle 2 anpingen'))
-        .addRoleOption((o) => o.setName('rolle3').setDescription('Rolle 3 anpingen')),
-    )
-    .addSubcommand((sub) =>
-      sub
-        .setName('recurring')
-        .setDescription('Wiederkehrend posten (Profi: HOURLY:MM | DAILY:HH:MM | WEEKLY:DAY:HH:MM | MONTHLY:DD:HH:MM)')
-        .addStringOption((o) => o.setName('text').setDescription('Originaltext').setRequired(true).setMaxLength(3500))
-        .addStringOption((o) => o.setName('zielsprache').setDescription('Zielsprache').setRequired(true).addChoices(...languageChoices()))
-        .addChannelOption((o) => o.setName('channel').setDescription('Zielchannel').setRequired(true).addChannelTypes(ChannelType.GuildText, ChannelType.GuildAnnouncement))
-        .addStringOption((o) => o.setName('cron').setDescription('z.B. DAILY:09:00, WEEKLY:MON:18:30, MONTHLY:23:11:45, HOURLY:15').setRequired(true))
+        .addStringOption((o) => o.setName('datum').setDescription('Datum DD.MM.YYYY (Europe/Berlin)').setRequired(true))
+        .addIntegerOption((o) => o.setName('stunde').setDescription('Stunde (0-23)').setRequired(true).setMinValue(0).setMaxValue(23))
+        .addIntegerOption((o) => o.setName('minute').setDescription('Minute (0-59)').setRequired(true).setMinValue(0).setMaxValue(59))
+        .addStringOption((o) => o.setName('titel').setDescription('Eigener Embed-Titel (optional)').setMaxLength(200))
         .addStringOption((o) => o.setName('quellsprache').setDescription('Quellsprache (Auto-Detect wenn leer)').addChoices(...languageChoices()))
         .addAttachmentOption((o) => o.setName('bild').setDescription('Optionales Bild'))
         .addRoleOption((o) => o.setName('rolle1').setDescription('Rolle 1 anpingen'))
@@ -129,6 +119,7 @@ const translatePostCommand: Command = {
         .addStringOption((o) => o.setName('zielsprache').setDescription('Zielsprache').setRequired(true).addChoices(...languageChoices()))
         .addChannelOption((o) => o.setName('channel').setDescription('Zielchannel').setRequired(true).addChannelTypes(ChannelType.GuildText, ChannelType.GuildAnnouncement))
         .addIntegerOption((o) => o.setName('minute').setDescription('Minute (0-59)').setRequired(true).setMinValue(0).setMaxValue(59))
+        .addStringOption((o) => o.setName('titel').setDescription('Eigener Embed-Titel (optional)').setMaxLength(200))
         .addStringOption((o) => o.setName('quellsprache').setDescription('Quellsprache').addChoices(...languageChoices()))
         .addAttachmentOption((o) => o.setName('bild').setDescription('Optionales Bild'))
         .addRoleOption((o) => o.setName('rolle1').setDescription('Rolle 1 anpingen'))
@@ -144,6 +135,7 @@ const translatePostCommand: Command = {
         .addChannelOption((o) => o.setName('channel').setDescription('Zielchannel').setRequired(true).addChannelTypes(ChannelType.GuildText, ChannelType.GuildAnnouncement))
         .addIntegerOption((o) => o.setName('stunde').setDescription('Stunde (0-23)').setRequired(true).setMinValue(0).setMaxValue(23))
         .addIntegerOption((o) => o.setName('minute').setDescription('Minute (0-59)').setRequired(true).setMinValue(0).setMaxValue(59))
+        .addStringOption((o) => o.setName('titel').setDescription('Eigener Embed-Titel (optional)').setMaxLength(200))
         .addStringOption((o) => o.setName('quellsprache').setDescription('Quellsprache').addChoices(...languageChoices()))
         .addAttachmentOption((o) => o.setName('bild').setDescription('Optionales Bild'))
         .addRoleOption((o) => o.setName('rolle1').setDescription('Rolle 1 anpingen'))
@@ -163,6 +155,7 @@ const translatePostCommand: Command = {
         ))
         .addIntegerOption((o) => o.setName('stunde').setDescription('Stunde (0-23)').setRequired(true).setMinValue(0).setMaxValue(23))
         .addIntegerOption((o) => o.setName('minute').setDescription('Minute (0-59)').setRequired(true).setMinValue(0).setMaxValue(59))
+        .addStringOption((o) => o.setName('titel').setDescription('Eigener Embed-Titel (optional)').setMaxLength(200))
         .addStringOption((o) => o.setName('quellsprache').setDescription('Quellsprache').addChoices(...languageChoices()))
         .addAttachmentOption((o) => o.setName('bild').setDescription('Optionales Bild'))
         .addRoleOption((o) => o.setName('rolle1').setDescription('Rolle 1 anpingen'))
@@ -179,6 +172,7 @@ const translatePostCommand: Command = {
         .addIntegerOption((o) => o.setName('tag').setDescription('Tag im Monat (1-31)').setRequired(true).setMinValue(1).setMaxValue(31))
         .addIntegerOption((o) => o.setName('stunde').setDescription('Stunde (0-23)').setRequired(true).setMinValue(0).setMaxValue(23))
         .addIntegerOption((o) => o.setName('minute').setDescription('Minute (0-59)').setRequired(true).setMinValue(0).setMaxValue(59))
+        .addStringOption((o) => o.setName('titel').setDescription('Eigener Embed-Titel (optional)').setMaxLength(200))
         .addStringOption((o) => o.setName('quellsprache').setDescription('Quellsprache').addChoices(...languageChoices()))
         .addAttachmentOption((o) => o.setName('bild').setDescription('Optionales Bild'))
         .addRoleOption((o) => o.setName('rolle1').setDescription('Rolle 1 anpingen'))
@@ -208,7 +202,6 @@ const translatePostCommand: Command = {
       if (sub === 'delete') return await handleDelete(interaction);
       if (sub === 'now') return await handleNow(interaction);
       if (sub === 'schedule') return await handleSchedule(interaction);
-      if (sub === 'recurring') return await handleRecurring(interaction, interaction.options.getString('cron', true));
       if (sub === 'stuendlich') {
         const m = interaction.options.getInteger('minute', true);
         return await handleRecurring(interaction, `HOURLY:${pad(m)}`);
@@ -246,6 +239,7 @@ async function handleNow(interaction: ChatInputCommandInteraction): Promise<void
   const source = interaction.options.getString('quellsprache') ?? undefined;
   const channel = interaction.options.getChannel('channel', true);
   const image = interaction.options.getAttachment('bild');
+  const customTitle = interaction.options.getString('titel') ?? null;
   const rolePings = buildRolePings(interaction);
 
   if (!LANGUAGE_CODES.includes(target)) throw new Error(`Unbekannte Zielsprache: ${target}`);
@@ -266,6 +260,7 @@ async function handleNow(interaction: ChatInputCommandInteraction): Promise<void
       translatedText: translated,
       imageUrl: image?.url ?? null,
       rolePings,
+      customTitle,
       mode: 'now',
       nextRunAt: new Date(),
       isActive: true,
@@ -288,6 +283,7 @@ async function handleNow(interaction: ChatInputCommandInteraction): Promise<void
     translated,
     targetLang: target,
     imageUrl: image?.url ?? null,
+    customTitle,
   });
   await (ch as TextChannel | NewsChannel | ThreadChannel).send({
     content: pingContent || undefined,
@@ -310,12 +306,15 @@ async function handleSchedule(interaction: ChatInputCommandInteraction): Promise
   const source = interaction.options.getString('quellsprache') ?? undefined;
   const channel = interaction.options.getChannel('channel', true);
   const image = interaction.options.getAttachment('bild');
-  const when = interaction.options.getString('zeitpunkt', true);
+  const customTitle = interaction.options.getString('titel') ?? null;
+  const datum = interaction.options.getString('datum', true);
+  const stunde = interaction.options.getInteger('stunde', true);
+  const minute = interaction.options.getInteger('minute', true);
   const rolePings = buildRolePings(interaction);
 
   if (!LANGUAGE_CODES.includes(target)) throw new Error(`Unbekannte Zielsprache: ${target}`);
-  const date = parseScheduledDate(when);
-  if (!date) throw new Error('Zeitpunkt ungueltig (ISO 2026-04-25T14:30 oder DD.MM.YYYY HH:MM).');
+  const date = parseScheduledDate(`${datum} ${pad(stunde)}:${pad(minute)}`);
+  if (!date) throw new Error('Datum ungueltig. Format: DD.MM.YYYY (z.B. 25.04.2026).');
   if (date.getTime() < Date.now() - 60_000) throw new Error('Zeitpunkt liegt in der Vergangenheit.');
 
   const post = await prisma.translatedPost.create({
@@ -328,6 +327,7 @@ async function handleSchedule(interaction: ChatInputCommandInteraction): Promise
       targetLang: target,
       imageUrl: image?.url ?? null,
       rolePings,
+      customTitle,
       mode: 'once',
       scheduledFor: date,
       nextRunAt: date,
@@ -353,6 +353,7 @@ async function handleRecurring(interaction: ChatInputCommandInteraction, cron: s
   const source = interaction.options.getString('quellsprache') ?? undefined;
   const channel = interaction.options.getChannel('channel', true);
   const image = interaction.options.getAttachment('bild');
+  const customTitle = interaction.options.getString('titel') ?? null;
   const rolePings = buildRolePings(interaction);
 
   if (!LANGUAGE_CODES.includes(target)) throw new Error(`Unbekannte Zielsprache: ${target}`);
@@ -370,6 +371,7 @@ async function handleRecurring(interaction: ChatInputCommandInteraction, cron: s
       targetLang: target,
       imageUrl: image?.url ?? null,
       rolePings,
+      customTitle,
       mode: 'recurring',
       recurrenceCron: cron.toUpperCase(),
       nextRunAt: next,

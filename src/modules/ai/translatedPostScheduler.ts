@@ -17,6 +17,7 @@ export function buildTranslatePostEmbed(opts: {
   translated: string;
   targetLang: string;
   imageUrl?: string | null;
+  customTitle?: string | null;
 }): EmbedBuilder {
   const lang = SUPPORTED_LANGUAGES.find((l) => l.code === opts.targetLang);
   const flag = lang?.emoji ?? '🌐';
@@ -29,10 +30,15 @@ export function buildTranslatePostEmbed(opts: {
     ? opts.translated
     : '_(leer)_';
 
+  // Titel: benutzerdefiniert > Default mit Sprache.
+  const title = opts.customTitle && opts.customTitle.trim().length > 0
+    ? `${flag} ${opts.customTitle.trim().slice(0, 240)}`
+    : `${flag} Übersetzte Nachricht · ${langName}`;
+
   const embed = new EmbedBuilder()
     .setColor(Colors.Info) // Blau – wie gewuenscht
     .setAuthor({ name: `${flag}  ${guildName}`, iconURL: guildIcon })
-    .setTitle(`${flag} Übersetzte Nachricht · ${langName}`)
+    .setTitle(title)
     .setDescription(`${Brand.divider}\n${body}\n${Brand.divider}`)
     .setFooter({ text: Brand.name, iconURL: guildIcon })
     .setTimestamp();
@@ -165,6 +171,7 @@ async function runDuePosts(client: Client): Promise<void> {
 async function sendPost(client: Client, post: {
   id: string; guildId: string; channelId: string; sourceText: string; sourceLang: string; targetLang: string;
   translatedText: string | null; imageUrl: string | null; rolePings: string | null; mode: string; recurrenceCron: string | null;
+  customTitle: string | null;
 }): Promise<void> {
   // Channel laden.
   const ch = await client.channels.fetch(post.channelId).catch(() => null);
@@ -220,6 +227,7 @@ async function sendPost(client: Client, post: {
       translated: seg,
       targetLang: post.targetLang,
       imageUrl: firstSent ? post.imageUrl : null,
+      customTitle: post.customTitle,
     });
     await channel.send({
       // Pings als Content (Embeds triggern keine Mentions).

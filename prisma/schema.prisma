@@ -1211,6 +1211,7 @@ model TranslatedPost {
   sourceLang     String // ISO-Kurzcode der Quellsprache (de/en/fr/...)
   targetLang     String // ISO-Kurzcode der Zielsprache
   translatedText String?   @db.Text // Wird beim ersten Versand befuellt + gecached
+  customTitle    String?   @db.VarChar(200) // Optionaler benutzerdefinierter Embed-Titel
   imageUrl       String? // Optionale Bild-URL (Discord-Attachment-Link)
   rolePings      String? // Comma-separated Discord-Role-IDs
   mode           String // 'now' | 'once' | 'recurring'
