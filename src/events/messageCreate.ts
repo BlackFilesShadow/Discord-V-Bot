@@ -184,7 +184,7 @@ const messageCreateEvent: BotEvent = {
       logger.error('Auto-Mod Fehler:', error);
     }
 
-    // ===== "STELL DICH VOR" – Priorität vor allen AI/Trigger/Auto-Respondern =====
+    // ===== "STELL DICH VOR" / "WAS KANNST DU" – Priorität vor allen AI/Trigger/Auto-Respondern =====
     try {
       const botId = msg.client.user?.id;
       const isMentioned = botId ? msg.mentions.users.has(botId) : false;
@@ -200,27 +200,84 @@ const messageCreateEvent: BotEvent = {
           .replace(new RegExp(`<@!?${botId}>`, 'g'), '')
           .trim()
           .toLowerCase();
+
+        const ABOUT_TEXT =
+          '🤖 **Discord-V-Bot – Dein smarter Community-Manager**\n\n' +
+          'Hallo! Ich bin **Discord-V-Bot** – dein vielseitiger, sicherer und datenschutzkonformer ' +
+          'All-in-One-Bot für Discord-Server mit Anspruch.\n' +
+          'Ob Community, Entwicklerteam oder Organisation: Ich unterstütze dich bei allem, was moderne Server brauchen.\n\n' +
+          '🔒 **Datenschutz made in EU** – DSGVO-Ready, Consent-Management, Audit-Logs.\n' +
+          '🛡️ **Sicherheit first** – Virenscan, Rechteverwaltung, 2FA, OTP-Login.\n' +
+          '📦 **Datei- & Paketverwaltung** – bis 2 GB pro Datei, Validierung, Soft-Delete.\n' +
+          '🏭 **Hersteller- & User-Management** – Bewerbungen, Rollen, Statistiken.\n' +
+          '📝 **Feedback-, Support- & Appeal-System** für faire Community-Entscheidungen.\n' +
+          '⚙️ **Automatisierung** – Reminder, Scheduler, XP/Level, Self-Roles, Polls, Giveaways.\n' +
+          '🌐 **Dashboard & API** für externe Tools.\n\n' +
+          'Frag mich `was kannst du?` für eine detaillierte Funktions-Übersicht.\n' +
+          'Oder nutze `/help` für alle Befehle.';
+
+        const FEATURES_TEXT =
+          '🛠️ **Meine Funktionen im Detail**\n\n' +
+          '**🔒 Datenschutz & Compliance**\n' +
+          '• DSGVO-Einwilligungs-Management & Audit-Logs\n' +
+          '• Compliance-Check (`/admin-audit compliance`) inkl. Übersicht & Export\n' +
+          '• Datenexport (Audit, User, Pakete) als JSON/CSV\n\n' +
+          '**📦 Datei- & Paketverwaltung**\n' +
+          '• Upload bis zu 10 Dateien gleichzeitig (XML/JSON, bis 2 GB)\n' +
+          '• Virenscan, Hash-Integritätsprüfung, Validierung\n' +
+          '• Pakete pro Hersteller einzigartig (case-insensitive), Soft-Delete\n' +
+          '• Download-Übersicht mit Statistiken\n\n' +
+          '**🏭 Hersteller- & User-Management**\n' +
+          '• Hersteller-Bewerbung, Admin-Review, Status-Reset\n' +
+          '• Rollen- und Rechteverwaltung, Self-Role-Menüs\n' +
+          '• OTP-Login & Zwei-Faktor-Authentifizierung\n\n' +
+          '**🛡️ Moderation & Sicherheit**\n' +
+          '• Auto-Mod (Spam, Caps, Links, Invites, Mention-Spam, Regex)\n' +
+          '• Bann/Kick/Mute mit Case-Management & Appeal-System\n' +
+          '• Rate-Limiting, Security-Events-Logging, API-Key-Verwaltung\n\n' +
+          '**📝 Feedback & Support**\n' +
+          '• Feedback-System pro Guild + globalem Fallback-Channel\n' +
+          '• Ticket-System per DM-Bridge\n' +
+          '• Appeal-Modul für Bann-Einsprüche\n\n' +
+          '**🤖 KI-Features**\n' +
+          '• ChatGPT-Style Antworten bei Erwähnung (mit Verlaufs-Kontext)\n' +
+          '• Auto-Responder & Owner-definierte Trigger pro Guild\n' +
+          '• Member-Awareness, RAG mit pgvector\n' +
+          '• Auto-Übersetzung (`/translate-post`) in 10 Sprachen, mit Rollen-Ping & Scheduler\n\n' +
+          '**📊 Audit & Transparenz**\n' +
+          '• Lückenlose Aktions-Protokollierung (Volltext-Suche)\n' +
+          '• Audit-Export für jeden Zeitraum\n\n' +
+          '**⚙️ Community & Automatisierung**\n' +
+          '• Level- & XP-System mit Levelrollen + Level-Up-Nachrichten\n' +
+          '• Reminder-Scheduler (täglich/wöchentlich/monatlich/stündlich)\n' +
+          '• Giveaways, Polls, Self-Role-Menüs\n' +
+          '• Automatische Rollenvergabe & Eventrollen\n\n' +
+          '**🌐 Dashboard & API**\n' +
+          '• Web-Dashboard zur Verwaltung\n' +
+          '• REST-API & Webhooks für externe Integrationen\n\n' +
+          'Tipp: `/help` zeigt dir alle verfügbaren Slash-Commands.';
+
+        // 1) "Stell dich vor" / "Wer bist du" -> ABOUT
         if (
           cleaned.includes('stell dich vor') ||
           cleaned.includes('stelle dich vor') ||
           cleaned.includes('wer bist du') ||
-          cleaned.includes('was kannst du')
+          cleaned === 'vorstellen'
         ) {
-          const fsp = await import('fs/promises');
-          const path = await import('path');
-          let aboutText = '';
-          try {
-            aboutText = await fsp.readFile(path.join(__dirname, '../../about.md'), 'utf-8');
-          } catch {
-            try {
-              aboutText = await fsp.readFile(path.join(process.cwd(), 'about.md'), 'utf-8');
-            } catch {
-              aboutText = '🤖 Discord-V-Bot – Dein smarter Community-Manager';
-            }
-          }
           logger.info(`STELL-DICH-VOR feuert msgId=${msg.id} userId=${msg.author.id}`);
-          // Discord 2000-Zeichen-Limit: in Chunks splitten
-          const chunks = aboutText.match(/[\s\S]{1,1900}/g) || [aboutText];
+          await msg.reply({ content: ABOUT_TEXT, allowedMentions: { repliedUser: true, parse: [] } });
+          return;
+        }
+
+        // 2) "Was kannst du" -> FEATURES (in Chunks, da > 2000 Zeichen)
+        if (
+          cleaned.includes('was kannst du') ||
+          cleaned.includes('was machst du') ||
+          cleaned.includes('deine funktionen') ||
+          cleaned.includes('was kannst du alles')
+        ) {
+          logger.info(`WAS-KANNST-DU feuert msgId=${msg.id} userId=${msg.author.id}`);
+          const chunks = FEATURES_TEXT.match(/[\s\S]{1,1900}/g) || [FEATURES_TEXT];
           await msg.reply({ content: chunks[0], allowedMentions: { repliedUser: true, parse: [] } });
           for (const c of chunks.slice(1)) {
             await channel.send({ content: c, allowedMentions: { parse: [] } });
@@ -229,7 +286,7 @@ const messageCreateEvent: BotEvent = {
         }
       }
     } catch (e) {
-      logger.error('Stell-dich-vor Fehler:', e);
+      logger.error('Stell-dich-vor / Was-kannst-du Fehler:', e);
     }
 
     // ===== SEKTION 4: AI AUTO-RESPONDER =====
