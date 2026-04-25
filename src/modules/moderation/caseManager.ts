@@ -1,6 +1,21 @@
 import prisma from '../../database/prisma';
 import { logger, logAudit } from '../../utils/logger';
-import { GuildMember, Guild } from 'discord.js';
+import { GuildMember, Guild, PermissionFlagsBits, type PermissionResolvable } from 'discord.js';
+
+/**
+ * Defense-in-depth: Welche Discord-Permission der Moderator MINDESTENS
+ * besitzen muss, um die jeweilige Aktion auszuloesen. Wird zusaetzlich zu
+ * Discords setDefaultMemberPermissions geprueft, falls der Manager je aus
+ * einem anderen Kontext (Dashboard/API) aufgerufen wird.
+ */
+const REQUIRED_PERMISSION: Record<string, PermissionResolvable> = {
+  KICK: PermissionFlagsBits.KickMembers,
+  BAN: PermissionFlagsBits.BanMembers,
+  TEMP_BAN: PermissionFlagsBits.BanMembers,
+  MUTE: PermissionFlagsBits.ModerateMembers,
+  TEMP_MUTE: PermissionFlagsBits.ModerateMembers,
+  WARN: PermissionFlagsBits.ModerateMembers,
+};
 
 /**
  * Case-Manager (Sektion 4):
@@ -33,6 +48,24 @@ export async function createModerationCase(params: {
   // Hierarchie-Check: Moderator muss höhere Rolle haben als Target
   const targetMember = await guild.members.fetch(targetDiscordId).catch(() => null);
   const modMember = await guild.members.fetch(moderatorDiscordId).catch(() => null);
+
+  // Defense-in-depth: explizite Permission-Pruefung im Backend
+  // (Discord erzwingt setDefaultMemberPermissions bereits am Slash-Command,
+  // aber falls der Manager je via Dashboard/API/Eval aufgerufen wird,
+  // verhindern wir hier eine Privilege-Eskalation.)
+  const requiredPerm = REQUIRED_PERMISSION[action];
+  if (requiredPerm && guild.ownerId !== moderatorDiscordId) {
+    if (!modMember) {
+      return { success: false, message: '❌ Moderator nicht im Server gefunden.' };
+    }
+    if (!modMember.permissions.has(requiredPerm)) {
+      logger.warn(
+        `Backend-Perm-Check abgelehnt: ${moderatorDiscordId} ohne ${String(requiredPerm)} fuer ${action} in ${guild.id}`,
+      );
+      return { success: false, message: '❌ Du hast nicht die noetige Berechtigung fuer diese Aktion.' };
+    }
+  }
+
   if (targetMember && modMember && guild.ownerId !== moderatorDiscordId) {
     if (targetMember.roles.highest.position >= modMember.roles.highest.position) {
       return { success: false, message: '❌ Ziel-Nutzer hat gleich hohe oder höhere Rolle.' };

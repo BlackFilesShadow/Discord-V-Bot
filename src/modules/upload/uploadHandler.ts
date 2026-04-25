@@ -75,13 +75,26 @@ export async function getOrCreatePackage(userId: string, packageName: string, de
     throw new DuplicatePackageNameError(packageName);
   }
 
-  const pkg = await prisma.package.create({
-    data: {
-      userId,
-      name: packageName,
-      description,
-    },
-  });
+  // Race-Condition-Schutz: ein zeitgleicher zweiter Upload mit demselben
+  // Namen koennte den findFirst-Check umgehen. Der DB-seitige Partial-Unique-
+  // Index idx_pkg_user_lower_name_active (deploy/sql/002_*.sql) faengt das ab
+  // und liefert einen P2002-Fehler, den wir hier in eine saubere
+  // DuplicatePackageNameError uebersetzen.
+  let pkg;
+  try {
+    pkg = await prisma.package.create({
+      data: {
+        userId,
+        name: packageName,
+        description,
+      },
+    });
+  } catch (err: any) {
+    if (err?.code === 'P2002') {
+      throw new DuplicatePackageNameError(packageName);
+    }
+    throw err;
+  }
 
   logAudit('PACKAGE_CREATED', 'UPLOAD', {
     packageId: pkg.id,
