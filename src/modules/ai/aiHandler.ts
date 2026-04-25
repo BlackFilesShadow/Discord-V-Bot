@@ -76,7 +76,9 @@ export function getLiveTimeContext(): string {
     'REGELN fuer Zeit-/Datumsfragen:',
     `- Fragt der Nutzer nach Datum, Wochentag, Uhrzeit, Tageszeit, Jahr oder Jahreszeit: antworte DIREKT und SICHER mit obigen Werten. NIEMALS "weiss ich nicht" oder "nicht tagesaktuell" sagen.`,
     `- NIEMALS Tageszeit halluzinieren (z.B. nicht "Nacht" sagen, wenn oben "${daypart}" steht).`,
-    '- Antworte natuerlich und kurz, wiederhole Datum/Uhrzeit nicht doppelt im Satz.',
+    '- Gib JEDEN Wert (Wochentag, Datum, Uhrzeit, Monat, Jahr) HOECHSTENS EINMAL pro Antwort aus. Kein Teil darf doppelt vorkommen.',
+    `- Vorzugsformat fuer kombinierte Fragen ("Tag/Datum/Uhrzeit/Jahr/Monat"): EIN Satz - z.B. "Heute ist ${weekday}, ${dateOnly}, ${timeOnly} Uhr." Punkt. KEIN nachgeschobenes "Jahr 2026, Monat April".`,
+    '- Wenn Datum bereits den Monat und das Jahr enthaelt, sind Monat und Jahr damit beantwortet - NICHT noch einmal extra anfuegen.',
     '- Vermeide Doppelungen wie "Fr\u00fchlingsabend, es ist Abend".',
   ].join('\n');
 }
