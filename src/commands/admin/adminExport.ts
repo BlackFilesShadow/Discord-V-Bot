@@ -9,6 +9,7 @@ import prisma from '../../database/prisma';
 import { logAudit } from '../../utils/logger';
 import fs from 'fs';
 import path from 'path';
+import crypto from 'crypto';
 import { config } from '../../config';
 import { Writable } from 'stream';
 
@@ -106,13 +107,24 @@ const adminExportCommand: Command = {
         // Discord-Attachment-Grenze (Default 25 MB) ueberschritten wird.
         const tmpDir = path.join(config.upload.dir, '_exports');
         try { fs.mkdirSync(tmpDir, { recursive: true }); } catch { /* ok */ }
-        const fileName = `audit_logs_${category}_${days}d_${Date.now()}.json`;
+        // Filename-Kollisions-Schutz: Date.now() (ms) reicht bei simultanen
+        // Admin-Exports nicht; deshalb 6 Hex-Zeichen Random anhaengen.
+        const fileName =
+          `audit_logs_${category}_${days}d_${Date.now()}_${crypto.randomBytes(3).toString('hex')}.json`;
         const tmpPath = path.join(tmpDir, fileName);
         const out = fs.createWriteStream(tmpPath, { encoding: 'utf-8' });
+        // Persistenter Error-Listener: muss VOR jedem write() registriert sein,
+        // sonst kann ein synchron geworfener Stream-Error den Promise-Pfad
+        // ueberholen und das Promise haengt unaufloesbar.
+        let streamErr: Error | null = null;
+        out.on('error', (e) => { streamErr = e; });
         const writeJson = (s: string) => new Promise<void>((res, rej) => {
+          if (streamErr) return rej(streamErr);
           if (out.write(s)) return res();
-          out.once('drain', () => res());
-          out.once('error', rej);
+          const onDrain = () => { out.off('error', onErr); res(); };
+          const onErr = (e: Error) => { out.off('drain', onDrain); rej(e); };
+          out.once('drain', onDrain);
+          out.once('error', onErr);
         });
 
         const PAGE = 1000;
@@ -124,7 +136,11 @@ const adminExportCommand: Command = {
         while (true) {
           const page: any[] = await prisma.auditLog.findMany({
             where,
-            orderBy: { createdAt: 'desc' },
+            // Stabile Sortierung: createdAt allein ist nicht eindeutig
+            // (mehrere Logs in derselben ms moeglich). Mit id als
+            // Tie-Breaker bleibt der Cursor deterministisch und es
+            // koennen weder Eintraege doppelt noch verloren gehen.
+            orderBy: [{ createdAt: 'desc' }, { id: 'desc' }],
             take: PAGE,
             ...(cursor ? { skip: 1, cursor: { id: cursor } } : {}),
           });
@@ -149,22 +165,29 @@ const adminExportCommand: Command = {
           category, days, count: total, bytes: stat.size, adminId: interaction.user.id,
         });
 
-        if (stat.size > MAX_DISCORD) {
-          await interaction.editReply({
-            content:
-              `📋 ${total} Log-Eintraege exportiert (${category}, letzte ${days} Tage).\n` +
-              `⚠️ Datei ist ${(stat.size / 1024 / 1024).toFixed(1)} MB und uebersteigt das Discord-Limit.\n` +
-              `Pfad auf dem Server: \`${tmpPath}\`\n` +
-              `Bitte per SSH/Dashboard abholen.`,
-          });
-        } else {
-          const attachment = new AttachmentBuilder(tmpPath, { name: fileName });
-          await interaction.editReply({
-            content: `📋 ${total} Log-Eintraege exportiert (${category}, letzte ${days} Tage):`,
-            files: [attachment],
-          });
-          // Cleanup nach erfolgreicher Auslieferung (best effort)
-          fs.unlink(tmpPath, () => {});
+        // Cleanup-Garantie: tmpPath darf nicht verwaisen wenn editReply wirft
+        // (z.B. abgelaufene Interaction). Bei zu grosser Datei lassen wir sie
+        // bewusst stehen, damit der Admin sie per SSH abholen kann.
+        let keepFile = false;
+        try {
+          if (stat.size > MAX_DISCORD) {
+            keepFile = true;
+            await interaction.editReply({
+              content:
+                `📋 ${total} Log-Eintraege exportiert (${category}, letzte ${days} Tage).\n` +
+                `⚠️ Datei ist ${(stat.size / 1024 / 1024).toFixed(1)} MB und uebersteigt das Discord-Limit.\n` +
+                `Pfad auf dem Server: \`${tmpPath}\`\n` +
+                `Bitte per SSH/Dashboard abholen.`,
+            });
+          } else {
+            const attachment = new AttachmentBuilder(tmpPath, { name: fileName });
+            await interaction.editReply({
+              content: `📋 ${total} Log-Eintraege exportiert (${category}, letzte ${days} Tage):`,
+              files: [attachment],
+            });
+          }
+        } finally {
+          if (!keepFile) fs.unlink(tmpPath, () => {});
         }
         break;
       }

@@ -272,7 +272,11 @@ export async function answerQuestion(
         logger.info(`AI-Rate-Limit ueberschritten fuer user=${opts.userId} (mode=${mode})`);
         return { success: false, error: 'RATE_LIMIT' };
       }
-    } catch { /* fail-open: bei DB-Fehler nicht blockieren */ }
+    } catch (e) {
+      // Fail-open: bei Rate-Limiter-Fehler nicht blockieren, aber laut
+      // protokollieren, damit eine DoS-Lage am Limiter nicht unentdeckt bleibt.
+      logger.warn(`AI-Rate-Limiter fail-open fuer user=${opts.userId}: ${e}`);
+    }
   }
 
   const wantWebSearch = mode === 'chat' || mode === 'oneshot' || mode === 'trigger';
