@@ -172,7 +172,16 @@ async function fetchSteamNews(appId: string): Promise<{
 /**
  * Feed aktualisieren und neue Einträge posten.
  */
+// Phase 2.3: Backoff-Map. Ein Feed mit n Fehlern in Folge wird fuer
+// min(2^(n-1) * 60s, 30 min) ausgesetzt. Sobald processFeed wieder
+// erfolgreich ist, wird der Eintrag entfernt.
+const feedBackoff = new Map<string, { count: number; until: number }>();
+
 async function processFeed(client: Client, feedId: string): Promise<void> {
+  // Phase 2.3: Backoff-Check. Wenn der Feed in der Sperrzone ist, ueberspringen.
+  const bo = feedBackoff.get(feedId);
+  if (bo && bo.until > Date.now()) return;
+
   const feed = await prisma.feed.findUnique({ where: { id: feedId } });
   if (!feed || !feed.isActive) return;
 
@@ -288,7 +297,16 @@ async function processFeed(client: Client, feedId: string): Promise<void> {
     }
   } catch (error) {
     logger.error(`Feed-Verarbeitung fehlgeschlagen für ${feed.name}:`, error);
+    // Phase 2.3: in-memory Backoff-Marker setzen. Bei wiederholten Fehlern
+    // verlaengert sich die Sperrzeit exponentiell (max. 30 min).
+    const prev = feedBackoff.get(feedId)?.count ?? 0;
+    const count = prev + 1;
+    const delayMs = Math.min(60_000 * 2 ** Math.min(count - 1, 5), 30 * 60_000);
+    feedBackoff.set(feedId, { count, until: Date.now() + delayMs });
+    return;
   }
+  // Erfolgreiche Verarbeitung -> Backoff loeschen.
+  if (feedBackoff.has(feedId)) feedBackoff.delete(feedId);
 }
 
 /**

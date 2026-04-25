@@ -5,6 +5,7 @@ import prisma from '../../database/prisma';
 import { liveSearch, looksFactQuestion, formatSearchResultsForPrompt } from './webSearch';
 import { asksAboutCommands, formatCatalogForPromptFocused } from './commandCatalog';
 import { recordCall, getRankedProviders, ProviderName } from './providerStats';
+import { checkRateLimit } from '../../utils/rateLimiter';
 
 /**
  * AI-Integration (Sektion 4):
@@ -261,6 +262,18 @@ export async function answerQuestion(
       : (optionsOrContext ?? {});
   const mode: AnswerMode = opts.mode ?? 'chat';
   const context = opts.context;
+
+  // Phase 2.2: Per-User-Rate-Limit, um Provider-Budget und Latenz zu schuetzen.
+  // Nur fuer interaktive Modi (chat/oneshot/trigger), nicht fuer welcome-DMs.
+  if (opts.userId && mode !== 'welcome') {
+    try {
+      const rl = await checkRateLimit(opts.userId, 'ai');
+      if (!rl.allowed) {
+        logger.info(`AI-Rate-Limit ueberschritten fuer user=${opts.userId} (mode=${mode})`);
+        return { success: false, error: 'RATE_LIMIT' };
+      }
+    } catch { /* fail-open: bei DB-Fehler nicht blockieren */ }
+  }
 
   const wantWebSearch = mode === 'chat' || mode === 'oneshot' || mode === 'trigger';
   const wantCatalog = mode === 'chat' || mode === 'oneshot';
