@@ -103,6 +103,12 @@ const uploadCommand: Command = {
       results.push(result);
     }
 
+    // Wenn ein Upload fehlgeschlagen ist (z.B. wegen DuplicatePackageNameError), sofort abbrechen und Fehler anzeigen
+    if (results.some(r => !r.success)) {
+      await interaction.editReply({ embeds: [results.find(r => !r.success)!.embed] });
+      return;
+    }
+
     // Zusammenfassungs-Embed bei mehreren Dateien
     if (attachments.length > 1) {
       const successCount = results.filter(r => r.success).length;
