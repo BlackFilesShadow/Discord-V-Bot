@@ -257,25 +257,46 @@ const messageCreateEvent: BotEvent = {
           '• REST-API & Webhooks für externe Integrationen\n\n' +
           'Tipp: `/help` zeigt dir alle verfügbaren Slash-Commands.';
 
+        // Normalisiere fuer striktes Matching: nur Buchstaben/Ziffern/Spaces, kollabierte Spaces
+        const normalized = cleaned
+          .replace(/[^\p{L}\p{N}\s]/gu, ' ')
+          .replace(/\s+/g, ' ')
+          .trim();
+
+        // Whitelist exakter Trigger-Phrasen (case-insensitive). Nur wenn die
+        // bereinigte Nachricht GENAU einer dieser Phrasen entspricht, antworten
+        // wir mit dem Vorstellungs-/Funktions-Text. Sonst geht alles an die KI.
+        const ABOUT_TRIGGERS = new Set([
+          'stell dich vor',
+          'stelle dich vor',
+          'stell dich bitte vor',
+          'stelle dich bitte vor',
+          'wer bist du',
+          'wer bist du eigentlich',
+          'vorstellen',
+        ]);
+
+        const FEATURES_TRIGGERS = new Set([
+          'was kannst du',
+          'was kannst du alles',
+          'was kannst du eigentlich',
+          'was kannst du so',
+          'deine funktionen',
+          'zeig deine funktionen',
+          'zeige deine funktionen',
+          'was sind deine funktionen',
+          'welche funktionen hast du',
+        ]);
+
         // 1) "Stell dich vor" / "Wer bist du" -> ABOUT
-        if (
-          cleaned.includes('stell dich vor') ||
-          cleaned.includes('stelle dich vor') ||
-          cleaned.includes('wer bist du') ||
-          cleaned === 'vorstellen'
-        ) {
+        if (ABOUT_TRIGGERS.has(normalized)) {
           logger.info(`STELL-DICH-VOR feuert msgId=${msg.id} userId=${msg.author.id}`);
           await msg.reply({ content: ABOUT_TEXT, allowedMentions: { repliedUser: true, parse: [] } });
           return;
         }
 
         // 2) "Was kannst du" -> FEATURES (in Chunks, da > 2000 Zeichen)
-        if (
-          cleaned.includes('was kannst du') ||
-          cleaned.includes('was machst du') ||
-          cleaned.includes('deine funktionen') ||
-          cleaned.includes('was kannst du alles')
-        ) {
+        if (FEATURES_TRIGGERS.has(normalized)) {
           logger.info(`WAS-KANNST-DU feuert msgId=${msg.id} userId=${msg.author.id}`);
           const chunks = FEATURES_TEXT.match(/[\s\S]{1,1900}/g) || [FEATURES_TEXT];
           await msg.reply({ content: chunks[0], allowedMentions: { repliedUser: true, parse: [] } });
@@ -413,7 +434,98 @@ const messageCreateEvent: BotEvent = {
             allowedMentions: { users: [msg.author.id] },
           });
         } else {
-          // ...existing code...
+          // "Tippt..."-Indikator
+          await channel.sendTyping().catch(() => {});
+
+          // Letzte ~15 Nachrichten als Konversations-Kontext (inkl. Bot-Antworten,
+          // damit der Bot weiss, was er selbst eben gesagt hat und Pronomen wie
+          // "er", "sie", "das" auf vorherige Nachrichten beziehen kann).
+          let context: string | undefined;
+          try {
+            const recent = await msg.channel.messages.fetch({ limit: 15, before: msg.id });
+            const me = msg.client.user?.id;
+            const ctxLines = Array.from(recent.values())
+              .reverse()
+              .filter(m => {
+                const txt = m.content?.trim() || '';
+                return txt.length > 0;
+              })
+              .slice(-12)
+              .map(m => {
+                const isBot = m.author.id === me;
+                const speaker = isBot ? 'V-Bot (du selbst)' : m.author.username;
+                let txt = m.content;
+                for (const [, user] of m.mentions.users) {
+                  txt = txt.replace(new RegExp(`<@!?${user.id}>`, 'g'), `@${user.username}`);
+                }
+                return `${speaker}: ${txt.slice(0, 400)}`;
+              });
+            if (ctxLines.length > 0) {
+              context = [
+                'Hier ist der bisherige Verlauf des Gespraechs in diesem Channel (chronologisch, aelteste zuerst).',
+                'Nutze ihn, um Pronomen (er, sie, es, das, ihn, ihm) und Bezuege ("der oben genannte", "wie eben gesagt") aufzuloesen.',
+                'Achte besonders auf deine eigenen vorherigen Antworten ("V-Bot (du selbst)") - du musst konsistent bleiben.',
+                '',
+                ctxLines.join('\n'),
+                '',
+                `Aktueller Sprecher der naechsten Frage: ${msg.author.username}`,
+              ].join('\n');
+            }
+          } catch { /* Kontext ist optional */ }
+
+          const serverUserCtx = await buildServerUserContext({
+            guild: msg.guild,
+            channel: msg.channel as any,
+            member: msg.member ?? undefined,
+            user: msg.author,
+            question,
+          });
+          const mergedContext = [serverUserCtx, context].filter(Boolean).join('\n\n') || undefined;
+
+          const r = await answerQuestion(question, {
+            mode: 'chat',
+            context: mergedContext,
+            userId: msg.author.id,
+            channelId: msg.channel.id,
+            guildId: msg.guildId,
+          });
+          if (r.success && r.result) {
+            let cleaned = r.result
+              .replace(/<@!?\d+>/g, '')
+              .replace(/^\s*@[\w.]+[,:\s]*/i, '')
+              .replace(/[ \t]{2,}/g, ' ')
+              .trim();
+            if (cleaned.length === 0) cleaned = '...';
+            const firstChunkBudget = 1900;
+            const first = cleaned.slice(0, firstChunkBudget);
+            const rest = cleaned.slice(firstChunkBudget);
+            await msg.reply({
+              content: first,
+              allowedMentions: { repliedUser: true, parse: [] },
+            });
+            if (rest.length > 0) {
+              const more = rest.match(/[\s\S]{1,1900}/g) || [];
+              for (const c of more) {
+                await channel.send({ content: c, allowedMentions: { parse: [] } });
+              }
+            }
+          } else {
+            const userMsg =
+              r.error === 'RATE_LIMIT'
+                ? '⏳ Mein KI-Kontingent ist gerade ausgeschöpft (Rate-Limit). Bitte versuch es in ein paar Minuten nochmal.'
+                : "🤔 Hmm, da hat gerade etwas nicht geklappt. Versuch's bitte gleich nochmal.";
+            await msg.reply({
+              content: userMsg,
+              allowedMentions: { repliedUser: true, parse: [] },
+            });
+          }
+
+          logAudit('AI_MENTION_RESPONSE', 'AI', {
+            userId: msg.author.id,
+            channelId: msg.channelId,
+            questionLength: question.length,
+          });
+          return;
         }
       }
     } catch (error) {
