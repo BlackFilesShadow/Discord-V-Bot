@@ -96,14 +96,37 @@ const uploadCommand: Command = {
 
     const beschreibung = interaction.options.getString('beschreibung') || undefined;
 
+    // Paket EINMALIG anlegen (oder Fehler bei Duplikat). So landen Multi-File-
+    // Uploads im selben Paket und ein zweiter /upload mit gleichem Namen wird
+    // sauber als Duplikat abgelehnt.
+    let pkg;
+    try {
+      pkg = await getOrCreatePackage(dbUser.id, paketname, beschreibung);
+    } catch (e) {
+      if (e instanceof DuplicatePackageNameError) {
+        await interaction.editReply({
+          embeds: [
+            vEmbed(Colors.Error)
+              .setTitle('❌ Doppelter Paketname')
+              .setDescription(
+                `${(e as Error).message}\n\n` +
+                `Bitte waehle einen anderen Namen oder loesche das vorhandene Paket zuerst mit \`/delete paketname:${paketname}\`.`,
+              ),
+          ],
+        });
+        return;
+      }
+      throw e;
+    }
+
     // Alle Dateien nacheinander in dasselbe Paket uploaden
     const results: { name: string; success: boolean; embed: EmbedBuilder }[] = [];
     for (const att of attachments) {
-      const result = await processAndReply(interaction, dbUser, paketname, att, beschreibung, attachments.length > 1);
+      const result = await processAndReply(interaction, dbUser, pkg.id, paketname, att, attachments.length > 1);
       results.push(result);
     }
 
-    // Wenn ein Upload fehlgeschlagen ist (z.B. wegen DuplicatePackageNameError), sofort abbrechen und Fehler anzeigen
+    // Wenn ein Upload fehlgeschlagen ist, sofort abbrechen und Fehler anzeigen
     if (results.some(r => !r.success)) {
       await interaction.editReply({ embeds: [results.find(r => !r.success)!.embed] });
       return;
@@ -143,27 +166,11 @@ const uploadCommand: Command = {
 async function processAndReply(
   interaction: ChatInputCommandInteraction,
   dbUser: { id: string; username: string },
+  packageId: string,
   paketname: string,
   attachment: { url: string; name: string | null; contentType: string | null },
-  beschreibung?: string,
   isMulti?: boolean,
 ): Promise<{ name: string; success: boolean; embed: EmbedBuilder }> {
-  // Paket erstellen/finden (GUID-gebunden)
-  let pkg;
-  try {
-    pkg = await getOrCreatePackage(dbUser.id, paketname, beschreibung);
-  } catch (e) {
-    if (e instanceof DuplicatePackageNameError) {
-      return {
-        name: paketname,
-        success: false,
-        embed: vEmbed(Colors.Error)
-          .setTitle('❌ Upload fehlgeschlagen')
-          .setDescription((e as Error).message),
-      };
-    }
-    throw e;
-  }
   const fileName = attachment.name || 'unknown';
 
   try {
@@ -176,7 +183,7 @@ async function processAndReply(
 
     const result = await processUpload(
       dbUser.id,
-      pkg.id,
+      packageId,
       fileBuffer,
       fileName,
       attachment.contentType || 'application/octet-stream'

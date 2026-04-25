@@ -63,9 +63,12 @@ export async function checkUploadPermission(userId: string): Promise<{ allowed: 
  */
 export async function getOrCreatePackage(userId: string, packageName: string, description?: string) {
 
-  // Case-insensitive Match auf AKTIVES Paket. Wenn vorhanden → wiederverwenden.
-  // So koennen Multi-File-Uploads alle Dateien in dasselbe Paket schreiben, und
-  // ein zweiter /upload mit gleichem Namen reichert das vorhandene Paket an.
+  // STRIKT: Wenn bereits ein AKTIVES Paket mit gleichem Namen existiert,
+  // wirf DuplicatePackageNameError. So bekommt der User eine klare Warnung
+  // und Dateien landen NICHT versehentlich im falschen Paket.
+  // Multi-File-Uploads innerhalb EINES /upload-Aufrufs muessen das Paket
+  // genau einmal vor der Schleife anlegen und danach nur noch processUpload
+  // mit der pkg.id verwenden.
   const existingActive = await prisma.package.findFirst({
     where: {
       userId,
@@ -74,11 +77,12 @@ export async function getOrCreatePackage(userId: string, packageName: string, de
     },
   });
   if (existingActive) {
-    return existingActive;
+    throw new DuplicatePackageNameError(packageName);
   }
 
   // Soft-deleted Eintrag mit gleichem Namen? -> reaktivieren statt neu anlegen,
-  // damit das @@unique([userId,name]) nicht verletzt wird.
+  // damit das @@unique([userId,name]) nicht verletzt wird. Der Slot ist frei,
+  // weil das alte Paket geloescht wurde.
   const existingSoftDeleted = await prisma.package.findFirst({
     where: {
       userId,
@@ -104,11 +108,11 @@ export async function getOrCreatePackage(userId: string, packageName: string, de
     return restored;
   }
 
-  // Race-Condition-Schutz: ein zeitgleicher zweiter Upload mit demselben
-  // Namen koennte den findFirst-Check umgehen. Der DB-seitige Partial-Unique-
-  // Index idx_pkg_user_lower_name_active (deploy/sql/002_*.sql) faengt das ab
-  // und liefert einen P2002-Fehler — in diesem Fall einfach den Datensatz holen,
-  // statt einen kuenstlichen Fehler zu werfen.
+  // Race-Condition: ein zeitgleicher zweiter /upload mit demselben Namen
+  // koennte den findFirst-Check umgehen. Der DB-seitige Partial-Unique-Index
+  // idx_pkg_user_lower_name_active (deploy/sql/002_*.sql) faengt das ab und
+  // liefert einen P2002-Fehler — wir werfen dann auch hier den Duplicate-Error
+  // statt das vorhandene Paket zurueckzugeben.
   let pkg;
   try {
     pkg = await prisma.package.create({
@@ -120,10 +124,6 @@ export async function getOrCreatePackage(userId: string, packageName: string, de
     });
   } catch (err: any) {
     if (err?.code === 'P2002') {
-      const concurrent = await prisma.package.findFirst({
-        where: { userId, isDeleted: false, name: { equals: packageName, mode: 'insensitive' } },
-      });
-      if (concurrent) return concurrent;
       throw new DuplicatePackageNameError(packageName);
     }
     throw err;
