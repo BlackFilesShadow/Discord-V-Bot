@@ -67,7 +67,7 @@ export async function getOrCreatePackage(userId: string, packageName: string, de
   });
 
   if (existing) {
-    return existing;
+    throw new DuplicatePackageNameError(packageName);
   }
 
   const pkg = await prisma.package.create({
@@ -534,4 +534,11 @@ export async function processChunkedUpload(
     complete: false,
     message: `Chunk ${chunkIndex + 1}/${totalChunks} empfangen`,
   };
+}
+
+export class DuplicatePackageNameError extends Error {
+  constructor(name: string) {
+    super(`Du hast bereits ein Paket mit dem Namen "${name}". Bitte wähle einen anderen Namen.`);
+    this.name = 'DuplicatePackageNameError';
+  }
 }

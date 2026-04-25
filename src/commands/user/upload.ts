@@ -6,7 +6,7 @@ import {
 } from 'discord.js';
 import { Command } from '../../types';
 import prisma from '../../database/prisma';
-import { checkUploadPermission, getOrCreatePackage, processUpload } from '../../modules/upload/uploadHandler';
+import { checkUploadPermission, getOrCreatePackage, processUpload, DuplicatePackageNameError } from '../../modules/upload/uploadHandler';
 import axios from 'axios';
 import { Colors, Brand, vEmbed, formatBytes } from '../../utils/embedDesign';
 import { createBotEmbed } from '../../utils/embedUtil';
@@ -143,7 +143,21 @@ async function processAndReply(
   isMulti?: boolean,
 ): Promise<{ name: string; success: boolean; embed: EmbedBuilder }> {
   // Paket erstellen/finden (GUID-gebunden)
-  const pkg = await getOrCreatePackage(dbUser.id, paketname, beschreibung);
+  let pkg;
+  try {
+    pkg = await getOrCreatePackage(dbUser.id, paketname, beschreibung);
+  } catch (e) {
+    if (e instanceof DuplicatePackageNameError) {
+      return {
+        name: paketname,
+        success: false,
+        embed: vEmbed(Colors.Error)
+          .setTitle('❌ Upload fehlgeschlagen')
+          .setDescription((e as Error).message),
+      };
+    }
+    throw e;
+  }
   const fileName = attachment.name || 'unknown';
 
   try {
