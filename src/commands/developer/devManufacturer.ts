@@ -298,6 +298,12 @@ async function handleList(interaction: ChatInputCommandInteraction): Promise<voi
     return;
   }
 
+  // Für jeden Hersteller die aktiven Pakete zählen (isDeleted: false, userId: m.id)
+  const packageCounts: Record<string, number> = {};
+  for (const m of manufacturers) {
+    packageCounts[m.id] = await prisma.package.count({ where: { userId: m.id, isDeleted: false } });
+  }
+
   const embed = new EmbedBuilder()
     .setTitle('🏭 Registrierte Hersteller')
     .setDescription(`**${manufacturers.length}** Hersteller insgesamt`)
@@ -310,7 +316,7 @@ async function handleList(interaction: ChatInputCommandInteraction): Promise<voi
       value: [
         `🆔 Discord: \`${m.discordId}\``,
         `🔑 GUID: \`${m.id}\``,
-        `📦 Pakete: ${m.packages.length}`,
+        `📦 Pakete: ${packageCounts[m.id]}`,
         `📅 Seit: ${m.manufacturerApprovedAt?.toLocaleDateString('de-DE') || 'unbekannt'}`,
         `🔹 Rolle: ${m.role}`,
       ].join('\n'),
