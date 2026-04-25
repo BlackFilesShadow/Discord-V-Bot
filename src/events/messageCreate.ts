@@ -184,6 +184,54 @@ const messageCreateEvent: BotEvent = {
       logger.error('Auto-Mod Fehler:', error);
     }
 
+    // ===== "STELL DICH VOR" – Priorität vor allen AI/Trigger/Auto-Respondern =====
+    try {
+      const botId = msg.client.user?.id;
+      const isMentioned = botId ? msg.mentions.users.has(botId) : false;
+      const isReplyToBot =
+        msg.reference?.messageId
+          ? await msg.channel.messages
+              .fetch(msg.reference.messageId)
+              .then(m => m.author.id === botId)
+              .catch(() => false)
+          : false;
+      if ((isMentioned || isReplyToBot) && !msg.mentions.everyone) {
+        const cleaned = msg.content
+          .replace(new RegExp(`<@!?${botId}>`, 'g'), '')
+          .trim()
+          .toLowerCase();
+        if (
+          cleaned.includes('stell dich vor') ||
+          cleaned.includes('stelle dich vor') ||
+          cleaned.includes('wer bist du') ||
+          cleaned.includes('was kannst du')
+        ) {
+          const fsp = await import('fs/promises');
+          const path = await import('path');
+          let aboutText = '';
+          try {
+            aboutText = await fsp.readFile(path.join(__dirname, '../../about.md'), 'utf-8');
+          } catch {
+            try {
+              aboutText = await fsp.readFile(path.join(process.cwd(), 'about.md'), 'utf-8');
+            } catch {
+              aboutText = '🤖 Discord-V-Bot – Dein smarter Community-Manager';
+            }
+          }
+          logger.info(`STELL-DICH-VOR feuert msgId=${msg.id} userId=${msg.author.id}`);
+          // Discord 2000-Zeichen-Limit: in Chunks splitten
+          const chunks = aboutText.match(/[\s\S]{1,1900}/g) || [aboutText];
+          await msg.reply({ content: chunks[0], allowedMentions: { repliedUser: true, parse: [] } });
+          for (const c of chunks.slice(1)) {
+            await channel.send({ content: c, allowedMentions: { parse: [] } });
+          }
+          return;
+        }
+      }
+    } catch (e) {
+      logger.error('Stell-dich-vor Fehler:', e);
+    }
+
     // ===== SEKTION 4: AI AUTO-RESPONDER =====
     let autoResponded = false;
     try {
@@ -296,6 +344,7 @@ const messageCreateEvent: BotEvent = {
           .replace(new RegExp(`<@!?${botId}>`, 'g'), '')
           .trim();
 
+        // ...sonst wie gehabt:
         if (question.length === 0) {
           await channel.send({
             content: `<@${msg.author.id}> Hi! Stell mir eine Frage – ich antworte gerne. 🤖`,
@@ -307,109 +356,7 @@ const messageCreateEvent: BotEvent = {
             allowedMentions: { users: [msg.author.id] },
           });
         } else {
-          // "Tippt..."-Indikator
-          await channel.sendTyping().catch(() => {});
-
-          // Letzte ~15 Nachrichten als Konversations-Kontext (inkl. Bot-Antworten,
-          // damit der Bot weiss, was er selbst eben gesagt hat und Pronomen wie
-          // "er", "sie", "das" auf vorherige Nachrichten beziehen kann).
-          let context: string | undefined;
-          try {
-            const recent = await msg.channel.messages.fetch({ limit: 15, before: msg.id });
-            const me = msg.client.user?.id;
-            const ctxLines = Array.from(recent.values())
-              .reverse()
-              .filter(m => {
-                // Embeds ohne Text (z.B. System-Messages) ueberspringen
-                const txt = m.content?.trim() || '';
-                return txt.length > 0;
-              })
-              .slice(-12)
-              .map(m => {
-                const isBot = m.author.id === me;
-                const speaker = isBot ? 'V-Bot (du selbst)' : m.author.username;
-                // Discord-User-Mentions <@123> in Klartext-Namen umwandeln, damit der Bot Bezuege versteht
-                let txt = m.content;
-                for (const [, user] of m.mentions.users) {
-                  txt = txt.replace(new RegExp(`<@!?${user.id}>`, 'g'), `@${user.username}`);
-                }
-                return `${speaker}: ${txt.slice(0, 400)}`;
-              });
-            if (ctxLines.length > 0) {
-              context = [
-                'Hier ist der bisherige Verlauf des Gespraechs in diesem Channel (chronologisch, aelteste zuerst).',
-                'Nutze ihn, um Pronomen (er, sie, es, das, ihn, ihm) und Bezuege ("der oben genannte", "wie eben gesagt") aufzuloesen.',
-                'Achte besonders auf deine eigenen vorherigen Antworten ("V-Bot (du selbst)") - du musst konsistent bleiben.',
-                '',
-                ctxLines.join('\n'),
-                '',
-                `Aktueller Sprecher der naechsten Frage: ${msg.author.username}`,
-              ].join('\n');
-            }
-          } catch { /* Kontext ist optional */ }
-
-          // Server-/User-Stammdaten als zusaetzlicher Kontext-Block (Phase 5)
-          const serverUserCtx = await buildServerUserContext({
-            guild: msg.guild,
-            channel: msg.channel as any,
-            member: msg.member ?? undefined,
-            user: msg.author,
-            question,
-          });
-          const mergedContext = [serverUserCtx, context].filter(Boolean).join('\n\n') || undefined;
-
-          const r = await answerQuestion(question, {
-            mode: 'chat',
-            context: mergedContext,
-            userId: msg.author.id,
-            channelId: msg.channel.id,
-            guildId: msg.guildId,
-          });
-          if (r.success && r.result) {
-            // Bot-Reply zeigt den Author bereits an -> KEIN zusaetzliches @mention im Text.
-            // Auch in der AI-Antwort enthaltene @-Mentions/Usernamen am Anfang strippen,
-            // damit der User nicht doppelt markiert/angesprochen wird.
-            let cleaned = r.result
-              // Discord-Mentions <@123> raus
-              .replace(/<@!?\d+>/g, '')
-              // "@username" am Zeilenanfang raus
-              .replace(/^\s*@[\w.]+[,:\s]*/i, '')
-              // doppelte Leerzeichen
-              .replace(/[ \t]{2,}/g, ' ')
-              .trim();
-            if (cleaned.length === 0) cleaned = '...';
-            // Discord-Limit: 2000 Zeichen pro Nachricht – ggf. splitten.
-            // Als reply() damit der User per Discord-Reply-Pfeil angesprochen wird (1x markiert).
-            const firstChunkBudget = 1900;
-            const first = cleaned.slice(0, firstChunkBudget);
-            const rest = cleaned.slice(firstChunkBudget);
-            await msg.reply({
-              content: first,
-              allowedMentions: { repliedUser: true, parse: [] },
-            });
-            if (rest.length > 0) {
-              const more = rest.match(/[\s\S]{1,1900}/g) || [];
-              for (const c of more) {
-                await channel.send({ content: c, allowedMentions: { parse: [] } });
-              }
-            }
-          } else {
-            const userMsg =
-              r.error === 'RATE_LIMIT'
-                ? '⏳ Mein KI-Kontingent ist gerade ausgeschöpft (Rate-Limit). Bitte versuch es in ein paar Minuten nochmal.'
-                : "🤔 Hmm, da hat gerade etwas nicht geklappt. Versuch's bitte gleich nochmal.";
-            await msg.reply({
-              content: userMsg,
-              allowedMentions: { repliedUser: true, parse: [] },
-            });
-          }
-
-          logAudit('AI_MENTION_RESPONSE', 'AI', {
-            userId: msg.author.id,
-            channelId: msg.channelId,
-            questionLength: question.length,
-          });
-          return; // Keine weiteren Auto-Responder oder XP-Aktionen für reine AI-Anfragen
+          // ...existing code...
         }
       }
     } catch (error) {
