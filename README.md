@@ -161,6 +161,158 @@ Wenn jemand fragt „Welche Admin-Channels gibt es?" → höfliche Verweigerung 
 
 ---
 
+## Berechtigungs-Tabelle (alle Commands)
+
+### Berechtigungs-Stufen
+| Stufe | Bedeutung | Wie erlangen? |
+|---|---|---|
+| 🟢 **Public** | Jeder Server-Member | automatisch |
+| 🔵 **Member-Berechtigung** | Discord-Permission nötig (z.B. `Kick Members`) | Server-Admin vergibt Rolle |
+| 🟡 **Hersteller** | DB-Flag `isManufacturer=true` | `/register manufacturer` → Admin-Approval → OTP-Verify |
+| 🟠 **Bot-Admin** | DB-Rolle `ADMIN` | `/dev-admin add` (durch Owner) **oder** Discord-Server-Owner automatisch |
+| 🔴 **Developer/Owner** | Discord-User-ID = `OWNER_ID` aus `.env` | hard-coded in Bot-Konfig |
+
+> **Owner-Bypass:** Der Bot-Owner und Discord-Server-Owner umgehen `adminOnly`/`devOnly`-Checks automatisch (außer `manufacturerOnly` — das gilt strikt).
+> **Doppel-Layer:** Discord-seitig schützt `setDefaultMemberPermissions(...)` die Sichtbarkeit. Bot-seitig prüft der Handler erneut die DB-Rolle.
+
+---
+
+### 🟢 Public-Commands (jeder darf)
+
+| Command | Beschreibung | Zusatz-Check |
+|---|---|---|
+| `/ping` | Latency-Test | — |
+| `/status` | Eigener Account-Status | — |
+| `/help` | Hilfe-Übersicht | — |
+| `/stell-dich-vor` | Bot-Selbstvorstellung | — |
+| `/level [user]` | Eigenes oder fremdes Level | — |
+| `/leaderboard` | XP-Bestenliste der Guild | — |
+| `/ai ask` | Frage an KI | Rate-Limit pro User |
+| `/ai sentiment` | Sentiment eines Texts | Rate-Limit |
+| `/ai toxicity` | Toxicity-Check | Rate-Limit |
+| `/ai translate` | Text übersetzen | Rate-Limit |
+| `/poll erstellen` | Umfrage starten | — |
+| `/poll abstimmen` | An Umfrage teilnehmen | — |
+| `/poll ergebnis` | Ergebnis ansehen | — |
+| `/poll beenden` | Eigene Umfrage beenden | nur Ersteller |
+| `/poll liste` | Aktive Umfragen | — |
+| `/giveaway start` | Giveaway starten | — |
+| `/giveaway enter` | Teilnehmen | — |
+| `/giveaway info` | Details ansehen | — |
+| `/giveaway end` | Eigenes Giveaway beenden | nur Ersteller |
+| `/giveaway list` | Aktive Giveaways | — |
+| `/erinnerung setzen` | Reminder setzen | — |
+| `/erinnerung liste` | Eigene Reminder | — |
+| `/erinnerung loeschen` | Reminder löschen | nur eigene |
+| `/search` | Pakete/Dateien suchen | — |
+| `/download` | Datei/Paket herunterladen | Rate-Limit |
+| `/feedback` | Feedback einreichen | — |
+| `/ticket open\|close\|status` | Support-Ticket | — |
+| `/register manufacturer` | Hersteller-Antrag stellen | 1× pro User |
+| `/register verify` | OTP einlösen | OTP gültig + nicht abgelaufen |
+| `/appeal` | Moderations-Entscheidung anfechten | hatte aktiven Case |
+
+### 🔵 Member-Berechtigungs-Commands (Discord-Permission nötig)
+
+| Command | Discord-Permission | Wirkung |
+|---|---|---|
+| `/kick` | `Kick Members` | User kicken |
+| `/ban` | `Ban Members` | User bannen (optional Dauer) |
+| `/mute` | `Moderate Members` | Timeout setzen |
+| `/warn` | `Moderate Members` | Verwarnung mit DB-Eintrag |
+
+### 🟡 Hersteller-Commands (DB-Flag `isManufacturer`)
+
+| Command | Beschreibung | Owner-Bypass? |
+|---|---|---|
+| `/upload` | Multi-File-Upload (bis 10 Dateien, 2 GB/Datei) | ❌ nein |
+| `/mypackages list` | Eigene Pakete listen | ❌ |
+| `/mypackages info` | Paket-Details | ❌ |
+| `/mypackages delete` | Paket Soft-Deleten | ❌ |
+| `/mypackages restore` | Soft-Deleted wiederherstellen | ❌ |
+| `/mypackages delete-file` | Einzelne Datei löschen (Dropdown) | ❌ |
+
+### 🟠 Bot-Admin-Commands (DB-Rolle `ADMIN`)
+
+Sichtbar mit Discord-Permission `Manage Guild` oder `Administrator` (je nach Command). Server-Owner ist automatisch Bot-Admin.
+
+#### Server-Konfiguration
+| Command | Beschreibung |
+|---|---|
+| `/admin-config anzeigen\|setzen\|loeschen` | Bot-Settings pro Server |
+| `/admin-stats` | Server-/Bot-Statistik |
+| `/admin-monitor` | Live-Monitoring-Dashboard |
+| `/admin-toggle-upload` | Uploads global an/aus |
+| `/welcome set\|test\|show\|disable` | Begrüßungs-System |
+| `/xp-config rate\|levelrole\|xp-rolle-*\|xp-channel-*\|max-level\|max-rolle\|show` | XP-System konfigurieren |
+| `/selfrole erstellen\|option-*\|post\|liste\|loeschen` | Reaction-Role-Menüs (`Manage Roles`) |
+| `/autorole erstellen\|liste\|loeschen\|toggle\|blacklist\|whitelist` | Auto-Roles (`Manage Roles`) |
+
+#### Content & Moderation
+| Command | Beschreibung |
+|---|---|
+| `/translate-post now\|schedule\|stuendlich\|taeglich\|woechentlich\|monatlich\|list\|delete` | Auto-Translate-Posts |
+| `/feed erstellen\|loeschen\|toggle\|abonnieren\|rolle-*\|webhook-*` | RSS/Webhook-Feeds (`Manage Channels`) |
+| `/ai-trigger add\|list\|remove\|clear` | KI-Trigger-Wörter |
+| `/admin-knowledge add\|remove\|persona` | Server-Wissensbasis (RAG) + Persona-Override |
+| `/admin-aimodels probe\|reset` | AI-Provider-Status testen/zurücksetzen |
+| `/admin-broadcast` | Nachricht an Zielgruppe senden |
+| `/admin-tickets list\|close` | Support-Tickets verwalten |
+| `/admin-feedback liste\|zeigen\|status\|notiz\|channel` | Feedback-Inbox |
+| `/admin-appeals liste\|genehmigen\|ablehnen\|eskalieren` | Appeals bearbeiten |
+| `/admin-security events\|blacklist\|whitelist\|ip-entfernen\|resolve` | Security-Events + IP-Listen |
+
+#### Hersteller- & Daten-Verwaltung
+| Command | Beschreibung |
+|---|---|
+| `/admin-approve` | Hersteller-Antrag annehmen → OTP wird DM-versendet |
+| `/admin-deny` | Hersteller-Antrag ablehnen |
+| `/admin-reset-password` | Hersteller-OTP neu generieren |
+| `/admin-list-users` | Alle User mit Filter |
+| `/admin-list-pakete` | Alle Pakete (auch Soft-Deleted) |
+| `/admin-validate paket\|datei\|quarantaene` | Validierung erneut ausführen |
+| `/admin-delete paket\|datei\|restore\|bulk` | Paket/Datei löschen oder wiederherstellen |
+| `/admin-export pakete\|logs\|nutzer` | DSGVO-Export als JSON/ZIP |
+
+#### Logging & Audit
+| Command | Beschreibung |
+|---|---|
+| `/admin-logs filter` | Bot-Logs filtern (Kategorie/Zeit) |
+| `/admin-audit suchen\|volltext\|compliance\|export` | Audit-Log durchsuchen |
+| `/admin-error-report schwere` | Letzte Errors gruppiert |
+
+### 🔴 Developer/Owner-Commands (Bot-Owner exklusiv)
+
+Sichtbar nur für Discord-`Administrator`. Bot-Handler prüft zusätzlich gegen `OWNER_ID` aus `.env`. **Niemals** in der KI-Selbstvorstellung erwähnt.
+
+| Command | Beschreibung | Risiko |
+|---|---|---|
+| `/dev-login` | Developer-Session starten | niedrig |
+| `/dev-admin add\|remove\|list` | Bot-Admins ernennen/entziehen | hoch (Rollen-Vergabe) |
+| `/dev-manufacturer remove\|list` | Hersteller komplett entfernen + alle Daten löschen | sehr hoch |
+| `/dev-reload scope` | Commands/Events live neu laden | mittel |
+| `/dev-db action\|query` | Direkte DB-Operationen | sehr hoch |
+| `/dev-eval check` | Code-Eval / Diagnostik | sehr hoch |
+
+---
+
+### Berechtigungs-Logik (Pseudocode)
+
+```
+handleCommand(cmd, user):
+  if cmd.devOnly         → require(user.id === OWNER_ID)
+  if cmd.adminOnly       → require(user.id === OWNER_ID OR guildOwner OR DB.role === ADMIN)
+  if cmd.manufacturerOnly → require(DB.isManufacturer === true)   // KEIN Owner-Bypass
+  if cmd.cooldown        → check(rateLimit) // Owner umgeht
+  → execute
+```
+
+**Doppel-Schutz:** Discord-seitig blendet `setDefaultMemberPermissions` Commands aus, wenn die Member-Permission fehlt. Selbst wenn ein User den Command erraten würde — der Handler verweigert die Ausführung.
+
+
+
+---
+
 ## Vermarktungs-Argumente (Pitch-Material)
 
 **Für Server-Owner:**
