@@ -4,6 +4,8 @@
     
     "baseUrl": ".",
     "noEmit": true,
+    "isolatedModules": true,
+    "module": "CommonJS",
     "moduleResolution": "node",
     "paths": {
       "@utils/*": ["src/utils/*"],

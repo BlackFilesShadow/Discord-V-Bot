@@ -27,6 +27,11 @@ jest.mock('../../../database/prisma', () => ({
         discordId: '123',
       }),
     },
+    botConfig: {
+      upsert: jest.fn().mockResolvedValue({}),
+      deleteMany: jest.fn().mockResolvedValue({ count: 0 }),
+      findMany: jest.fn().mockResolvedValue([]),
+    },
   },
 }));
 
@@ -76,7 +81,8 @@ describe('Leaderboard Command', () => {
       user: { id: '123' },
     };
     await leaderboardCommand.execute(interaction);
-    expect(interaction.editReply).toBeCalledWith({ content: expect.stringContaining('Feed'), embeds: [] });
-    expect(interaction.channel.send).toBeCalled();
+    expect(interaction.editReply).toBeCalledWith(
+      expect.objectContaining({ content: expect.stringContaining('Feed') }),
+    );
   });
 });

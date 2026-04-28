@@ -9,7 +9,7 @@
     "dev": "ts-node src/index.ts",
     "dev:watch": "nodemon --exec ts-node src/index.ts",
     "lint": "eslint src/ --ext .ts",
-    "test": "jest --coverage",
+    "test": "jest --coverage --forceExit",
     "test:watch": "jest --watch",
     "db:generate": "prisma generate",
     "db:push": "prisma db push",
