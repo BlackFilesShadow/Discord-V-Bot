@@ -8,6 +8,10 @@ on:
 
 env:
   NODE_VERSION: '22'
+  # Aktionen, die intern noch Node 20 bundeln (z.B. upload-artifact@v5 zum
+  # Zeitpunkt April 2026), zwingen wir bereits auf Node 24, um die
+  # Deprecation-Warnung zu beheben.
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: 'true'
 
 jobs:
   lint-and-build:
