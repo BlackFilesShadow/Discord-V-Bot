@@ -902,21 +902,21 @@ enum DeletionStatus {
 // ============================================================
 
 model Feed {
-  id          String    @id @default(uuid())
-  name        String
-  feedType    FeedType
-  url         String
-  channelId   String // Ziel-Channel
-  interval    Int       @default(300) // Sekunden
-  lastChecked DateTime?
-  lastItemId  String?
-  isActive    Boolean   @default(true)
-  filters     Json? // Filterregeln
-  mentionRoles String[] @default([]) // Rollen, die bei jedem neuen Eintrag gepingt werden
+  id            String    @id @default(uuid())
+  name          String
+  feedType      FeedType
+  url           String
+  channelId     String // Ziel-Channel
+  interval      Int       @default(300) // Sekunden
+  lastChecked   DateTime?
+  lastItemId    String?
+  isActive      Boolean   @default(true)
+  filters       Json? // Filterregeln
+  mentionRoles  String[]  @default([]) // Rollen, die bei jedem neuen Eintrag gepingt werden
   webhookSecret String? // HMAC-Secret fuer eingehende Webhook-Posts (nur WEBHOOK-Typ)
-  createdBy   String
-  createdAt   DateTime  @default(now())
-  updatedAt   DateTime  @updatedAt
+  createdBy     String
+  createdAt     DateTime  @default(now())
+  updatedAt     DateTime  @updatedAt
 
   // Relations
   subscriptions FeedSubscription[]
@@ -1060,27 +1060,27 @@ model TicketMessage {
 // ============================================================
 
 model GuildProfile {
-  guildId       String   @id // Discord-Guild-ID
-  name          String
-  ownerId       String? // Discord-User-ID des Server-Owners
-  ownerName     String?
-  memberCount   Int      @default(0)
-  channelCount  Int      @default(0)
-  roleCount     Int      @default(0)
-  iconUrl       String?
-  preferredLocale String?
-  description   String?  @db.Text
-  features      Json? // string[] mit Discord-Guild-Features
+  guildId                  String    @id // Discord-Guild-ID
+  name                     String
+  ownerId                  String? // Discord-User-ID des Server-Owners
+  ownerName                String?
+  memberCount              Int       @default(0)
+  channelCount             Int       @default(0)
+  roleCount                Int       @default(0)
+  iconUrl                  String?
+  preferredLocale          String?
+  description              String?   @db.Text
+  features                 Json? // string[] mit Discord-Guild-Features
   // Phase 17a: Server-Erstellungsdatum (von Discord), damit Bot "wann wurde der Server erschaffen" beantworten kann.
-  serverCreatedAt DateTime?
+  serverCreatedAt          DateTime?
   // Phase 7: Channels & Rules Snapshot
-  channelsJson  Json? // Array<{ name, type, parent? }> ohne IDs
-  rulesText     String?  @db.Text // Inhalt des Rules-Channels (Topic + erste Pins)
-  contentSyncedAt DateTime?
+  channelsJson             Json? // Array<{ name, type, parent? }> ohne IDs
+  rulesText                String?   @db.Text // Inhalt des Rules-Channels (Topic + erste Pins)
+  contentSyncedAt          DateTime?
   // Phase 8: Custom Persona-Override und AI-Brief
-  aiPersonaOverride String? @db.Text // Owner kann zusaetzlichen Persona-Hinweis setzen
-  aiBrief        String?  @db.Text // Auto-generierter Kurz-Brief des Servers
-  aiBriefAt      DateTime?
+  aiPersonaOverride        String?   @db.Text // Owner kann zusaetzlichen Persona-Hinweis setzen
+  aiBrief                  String?   @db.Text // Auto-generierter Kurz-Brief des Servers
+  aiBriefAt                DateTime?
   // Phase 18: Erweiterte Server-Stammdaten fuer praezise AI-Kontextualisierung
   verificationLevel        String? // NONE/LOW/MEDIUM/HIGH/VERY_HIGH
   premiumTier              Int? // Boost-Stufe 0..3
@@ -1102,12 +1102,12 @@ model GuildProfile {
   topRolesJson             Json? // [{ name, color, position, memberCount? }]
   // Feedback-Channel: wenn gesetzt, werden /feedback-Embeds dorthin gespiegelt
   feedbackChannelId        String?
-  joinedAt      DateTime @default(now())
-  lastSyncedAt  DateTime @default(now())
-  updatedAt     DateTime @updatedAt
+  joinedAt                 DateTime  @default(now())
+  lastSyncedAt             DateTime  @default(now())
+  updatedAt                DateTime  @updatedAt
 
-  knowledge     GuildKnowledge[]
-  members       GuildMemberProfile[]
+  knowledge GuildKnowledge[]
+  members   GuildMemberProfile[]
 
   @@index([name])
 }
@@ -1146,15 +1146,15 @@ model GuildMemberProfile {
 // die der AI bei thematisch passenden Anfragen eingespeist werden (kompakter
 // keyword-basierter Match in contextBuilder).
 model GuildKnowledge {
-  id        String   @id @default(uuid())
+  id        String       @id @default(uuid())
   guildId   String
   guild     GuildProfile @relation(fields: [guildId], references: [guildId], onDelete: Cascade)
   label     String // Kurzer Titel, dient zugleich als Schluesselwort-Trigger
-  content   String   @db.Text // Faktenblock, max ~2000 Zeichen empfohlen
+  content   String       @db.Text // Faktenblock, max ~2000 Zeichen empfohlen
   createdBy String // Discord-User-ID des Erstellers
-  isActive  Boolean  @default(true)
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
+  isActive  Boolean      @default(true)
+  createdAt DateTime     @default(now())
+  updatedAt DateTime     @updatedAt
 
   // Phase 9 (RAG): Embedding-Cache. Vektor wird als JSON-Array von Floats serialisiert,
   // damit auch ohne pgvector-Extension semantische Suche moeglich ist (JS-Fallback).
@@ -1170,16 +1170,16 @@ model GuildKnowledge {
 // Wird nach jedem callAI-Aufruf in providerStats.recordCall() aktualisiert.
 // Dient als Grundlage fuer adaptive Provider-Reihenfolge (success rate gewichtet).
 model AiProviderStat {
-  id               String    @id @default(uuid())
-  provider         String    @unique // 'groq' | 'cerebras' | 'openrouter' | 'gemini' | 'openai'
-  successCount     Int       @default(0)
-  failureCount     Int       @default(0)
-  rateLimitCount   Int       @default(0)
-  totalLatencyMs   BigInt    @default(0) // Summe ueber alle Erfolge -> Avg = totalLatencyMs / successCount
-  lastSuccessAt    DateTime?
-  lastFailureAt    DateTime?
-  lastError        String?
-  updatedAt        DateTime  @updatedAt
+  id             String    @id @default(uuid())
+  provider       String    @unique // 'groq' | 'cerebras' | 'openrouter' | 'gemini' | 'openai'
+  successCount   Int       @default(0)
+  failureCount   Int       @default(0)
+  rateLimitCount Int       @default(0)
+  totalLatencyMs BigInt    @default(0) // Summe ueber alle Erfolge -> Avg = totalLatencyMs / successCount
+  lastSuccessAt  DateTime?
+  lastFailureAt  DateTime?
+  lastError      String?
+  updatedAt      DateTime  @updatedAt
 }
 
 // Phase 14: Conversation Memory. Speichert pro (userId, channelId) die letzten
@@ -1234,22 +1234,22 @@ model TranslatedPost {
 // /feedback: User-eingereichte Bug-Reports / Ideen / Lob.
 // Geht in Admin-Channel (per BotConfig.feedbackChannelId) und in DB.
 model Feedback {
-  id          String   @id @default(cuid())
-  guildId     String?
-  userId      String   // Discord-User-ID des Einreichers
-  username    String
-  category    String   // 'BUG' | 'IDEA' | 'PRAISE' | 'OTHER'
-  subject     String   @db.VarChar(120)
-  message     String   @db.Text
-  attachmentUrl String?
-  status      String   @default("OPEN") // 'OPEN' | 'IN_REVIEW' | 'RESOLVED' | 'WONTFIX'
-  adminNote   String?  @db.Text
-  reviewedBy  String?  // Discord-ID des Admins
-  reviewedAt  DateTime?
+  id              String    @id @default(cuid())
+  guildId         String?
+  userId          String // Discord-User-ID des Einreichers
+  username        String
+  category        String // 'BUG' | 'IDEA' | 'PRAISE' | 'OTHER'
+  subject         String    @db.VarChar(120)
+  message         String    @db.Text
+  attachmentUrl   String?
+  status          String    @default("OPEN") // 'OPEN' | 'IN_REVIEW' | 'RESOLVED' | 'WONTFIX'
+  adminNote       String?   @db.Text
+  reviewedBy      String? // Discord-ID des Admins
+  reviewedAt      DateTime?
   notifyChannelId String? // Channel, in den die Notify-Nachricht gepostet wurde
   notifyMessageId String? // Message-ID der Notify-Nachricht (fuer Live-Status-Update)
-  createdAt   DateTime @default(now())
-  updatedAt   DateTime @updatedAt
+  createdAt       DateTime  @default(now())
+  updatedAt       DateTime  @updatedAt
 
   @@index([guildId, status, createdAt])
   @@index([userId])
@@ -1258,18 +1258,18 @@ model Feedback {
 // /erinnerung: User setzt Reminder per DM oder Channel.
 // Scheduler prueft alle 30s nextDueAt <= now() AND isActive.
 model Reminder {
-  id          String   @id @default(cuid())
-  userId      String   // Discord-User-ID
-  guildId     String?
-  channelId   String?  // Wenn null → DM
-  message     String   @db.Text
-  dueAt       DateTime
-  isRecurring Boolean  @default(false)
-  recurrenceMs Int?    // Bei isRecurring=true: Intervall in ms
-  isActive    Boolean  @default(true)
-  fireCount   Int      @default(0)
-  createdAt   DateTime @default(now())
-  updatedAt   DateTime @updatedAt
+  id           String   @id @default(cuid())
+  userId       String // Discord-User-ID
+  guildId      String?
+  channelId    String? // Wenn null → DM
+  message      String   @db.Text
+  dueAt        DateTime
+  isRecurring  Boolean  @default(false)
+  recurrenceMs Int? // Bei isRecurring=true: Intervall in ms
+  isActive     Boolean  @default(true)
+  fireCount    Int      @default(0)
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
 
   @@index([userId, isActive])
   @@index([dueAt, isActive])
@@ -1305,6 +1305,6 @@ model SelfRoleOption {
   position    Int          @default(0)
   createdAt   DateTime     @default(now())
 
-  @@index([menuId, position])
   @@unique([menuId, roleId])
+  @@index([menuId, position])
 }
