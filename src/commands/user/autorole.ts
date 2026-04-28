@@ -97,7 +97,6 @@ const autoroleCommand: Command = {
         )
     )
     .setDefaultMemberPermissions(PermissionFlagsBits.ManageRoles) as SlashCommandBuilder,
-  adminOnly: true,
 
   execute: async (interaction: ChatInputCommandInteraction) => {
     await interaction.deferReply({ ephemeral: true });

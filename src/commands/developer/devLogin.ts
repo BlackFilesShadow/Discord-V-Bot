@@ -14,8 +14,7 @@ import { Command } from '../../types';
 const devLoginCommand: Command = {
   data: new SlashCommandBuilder()
     .setName('dev-login')
-    .setDescription('🔐 Developer-Bereich freischalten (Passwort-Eingabe)')
-    .setDefaultMemberPermissions(PermissionFlagsBits.Administrator) as SlashCommandBuilder,
+    .setDescription('🔐 Developer-Bereich freischalten (Passwort-Eingabe)'),
   devOnly: true,
 
   execute: async (interaction: ChatInputCommandInteraction) => {

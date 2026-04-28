@@ -1,15 +1,17 @@
-import { SlashCommandBuilder, ChatInputCommandInteraction } from 'discord.js';
+import { SlashCommandBuilder, ChatInputCommandInteraction, PermissionFlagsBits } from 'discord.js';
 import { Command } from '../../types';
 import { Colors, Brand, vEmbed } from '../../utils/embedDesign';
 
 /**
- * /ping — schnelle Latenz-Anzeige.
+ * /ping — schnelle Latenz-Anzeige (Developer-only).
  * Misst Round-Trip (defer -> editReply) sowie WebSocket-Heartbeat.
  */
 const pingCommand: Command = {
   data: new SlashCommandBuilder()
     .setName('ping')
-    .setDescription('Misst Bot- und WebSocket-Latenz'),
+    .setDescription('🔒 Bot- und WebSocket-Latenz (Developer)')
+    .setDefaultMemberPermissions(PermissionFlagsBits.Administrator) as SlashCommandBuilder,
+  devOnly: true,
   cooldown: 5,
   execute: async (interaction: ChatInputCommandInteraction) => {
     const start = Date.now();

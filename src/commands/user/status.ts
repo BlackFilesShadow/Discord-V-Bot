@@ -1,4 +1,4 @@
-import { SlashCommandBuilder, ChatInputCommandInteraction } from 'discord.js';
+import { SlashCommandBuilder, ChatInputCommandInteraction, PermissionFlagsBits } from 'discord.js';
 import os from 'os';
 import { Command } from '../../types';
 import prisma from '../../database/prisma';
@@ -26,7 +26,9 @@ function formatUptime(ms: number): string {
 const statusCommand: Command = {
   data: new SlashCommandBuilder()
     .setName('status')
-    .setDescription('Zeigt Bot-Status, Uptime und Health-Info'),
+    .setDescription('🔒 Bot-Status, Uptime und Health-Info (Developer)')
+    .setDefaultMemberPermissions(PermissionFlagsBits.Administrator) as SlashCommandBuilder,
+  devOnly: true,
   cooldown: 10,
   execute: async (interaction: ChatInputCommandInteraction) => {
     await interaction.deferReply({ ephemeral: true });

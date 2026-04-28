@@ -84,7 +84,7 @@ const xpConfigCommand: Command = {
         .setDescription('Aktuelle XP-Konfiguration anzeigen')
     )
     .setDefaultMemberPermissions(PermissionFlagsBits.Administrator) as SlashCommandBuilder,
-  adminOnly: true,
+  devOnly: true,
 
   execute: async (interaction: ChatInputCommandInteraction) => {
     await interaction.deferReply({ ephemeral: true });

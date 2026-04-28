@@ -165,7 +165,6 @@ const feedCommand: Command = {
         .addStringOption(opt => opt.setName('feed-id').setDescription('Feed-ID').setRequired(true)),
     )
     .setDefaultMemberPermissions(PermissionFlagsBits.ManageChannels) as SlashCommandBuilder,
-  adminOnly: true,
 
   execute: async (interaction: ChatInputCommandInteraction) => {
     await interaction.deferReply({ ephemeral: true });

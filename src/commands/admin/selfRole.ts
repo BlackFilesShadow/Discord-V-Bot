@@ -64,7 +64,6 @@ const selfRoleCommand: Command = {
       .setDescription('Menu komplett löschen (DB + Discord-Message)')
       .addStringOption(o => o.setName('menu-id').setDescription('Menu-ID').setRequired(true))
     ),
-  adminOnly: true,
   execute: async (interaction: ChatInputCommandInteraction) => {
     const sub = interaction.options.getSubcommand();
     if (!interaction.guildId) {
