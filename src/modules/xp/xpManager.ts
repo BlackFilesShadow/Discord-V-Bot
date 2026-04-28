@@ -1,5 +1,5 @@
 import prisma from '../../database/prisma';
-import { logger, logAudit } from '../../utils/logger';
+import { logAudit } from '../../utils/logger';
 
 /**
  * XP-Manager (Sektion 8):

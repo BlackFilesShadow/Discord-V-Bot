@@ -1,4 +1,4 @@
-import { Events, MessageReaction, User, PartialMessageReaction, PartialUser, EmbedBuilder, TextChannel } from 'discord.js';
+import { Events, MessageReaction, User, PartialMessageReaction, PartialUser, TextChannel } from 'discord.js';
 import { BotEvent } from '../types';
 import { logger, logAudit } from '../utils/logger';
 import prisma from '../database/prisma';

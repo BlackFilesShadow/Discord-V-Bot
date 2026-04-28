@@ -4,7 +4,6 @@ import { config } from './config';
 import { loadCommands, deployCommands } from './commands/handler';
 import { logger } from './utils/logger';
 import prisma from './database/prisma';
-import path from 'path';
 import fs from 'fs';
 
 // Events importieren

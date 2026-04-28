@@ -2,7 +2,7 @@ import { Events, Message, TextChannel, AttachmentBuilder } from 'discord.js';
 import { BotEvent } from '../types';
 import { logger, logAudit } from '../utils/logger';
 import prisma from '../database/prisma';
-import { checkRateLimit, detectSpam } from '../utils/rateLimiter';
+import { detectSpam } from '../utils/rateLimiter';
 import { answerQuestion } from '../modules/ai/aiHandler';
 import { buildServerUserContext } from '../modules/ai/contextBuilder';
 import { trackMemberActivity } from '../modules/ai/memberAwareness';
@@ -148,7 +148,7 @@ const messageCreateEvent: BotEvent = {
           await channel.send({
             content: `⚠️ ${msg.author}, Spam erkannt! Bitte halte dich an die Serverregeln.`,
           });
-        } catch (e) {
+        } catch (_e) {
           // Möglicherweise fehlende Berechtigungen
         }
         return;
@@ -216,7 +216,7 @@ const messageCreateEvent: BotEvent = {
             await channel.send({
               content: `⚠️ ${msg.author}, deine Nachricht wurde durch den Auto-Mod entfernt.`,
             });
-          } catch (e) {
+          } catch (_e) {
             // Möglicherweise fehlende Berechtigungen
           }
           return;

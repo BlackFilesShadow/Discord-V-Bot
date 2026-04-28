@@ -1,6 +1,6 @@
 import axios from 'axios';
 import { config } from '../../config';
-import { logger, logAudit } from '../../utils/logger';
+import { logger } from '../../utils/logger';
 import prisma from '../../database/prisma';
 import { liveSearch, looksFactQuestion, formatSearchResultsForPrompt } from './webSearch';
 import { asksAboutCommands, formatCatalogForPromptFocused } from './commandCatalog';
@@ -536,7 +536,7 @@ export async function translateText(text: string, targetLang: string = 'de'): Pr
     ]);
 
     return { success: true, result: response };
-  } catch (error) {
+  } catch (_error) {
     return { success: false, error: 'Übersetzung fehlgeschlagen.' };
   }
 }
@@ -561,7 +561,7 @@ export async function analyzeContext(messages: string[]): Promise<AiResponse> {
       label: parsed.risk_level,
       details: parsed,
     };
-  } catch (error) {
+  } catch (_error) {
     return { success: false, error: 'Kontext-Analyse fehlgeschlagen.' };
   }
 }
@@ -587,7 +587,7 @@ export async function getModerationAdvice(
     ]);
 
     return { success: true, result: response };
-  } catch (error) {
+  } catch (_error) {
     return { success: false, error: 'Moderationshinweis nicht verfügbar.' };
   }
 }

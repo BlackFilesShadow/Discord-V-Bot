@@ -24,8 +24,7 @@ import { logger, logAudit } from '../../utils/logger';
  *   - channel   Discord-Channel fuer Echtzeit-Notifications setzen/entfernen
  */
 
-const STATUS_VALUES = ['OPEN', 'IN_REVIEW', 'RESOLVED', 'WONTFIX'] as const;
-type StatusValue = typeof STATUS_VALUES[number];
+type StatusValue = 'OPEN' | 'IN_REVIEW' | 'RESOLVED' | 'WONTFIX';
 
 const STATUS_COLORS: Record<StatusValue, number> = {
   OPEN: Colors.Warning,

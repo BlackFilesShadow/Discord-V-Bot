@@ -11,7 +11,6 @@ import {
 } from 'discord.js';
 import { BotEvent, ExtendedClient } from '../types';
 import { logger, logAudit } from '../utils/logger';
-import { checkRateLimit } from '../utils/rateLimiter';
 import { checkCooldown } from '../utils/cooldown';
 import { commandCounter, commandDurationHistogram, rateLimitedCounter } from '../utils/metrics';
 import { reportError } from '../utils/errorSink';

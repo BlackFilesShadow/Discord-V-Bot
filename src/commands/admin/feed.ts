@@ -243,7 +243,7 @@ const feedCommand: Command = {
           RSS: '📰', TWITCH: '🟣', TWITTER: '🐦', STEAM: '🎮', NEWS: '📰', WEBHOOK: '🔗', CUSTOM: '⚙️',
         };
 
-        const lines = feeds.map((f: any, i: number) => {
+        const lines = feeds.map((f: any, _i: number) => {
           const status = f.isActive ? '🟢' : '🔴';
           const emoji = typeEmoji[f.feedType] || '📡';
           const lastCheck = f.lastChecked ? f.lastChecked.toLocaleString('de-DE') : 'Nie';

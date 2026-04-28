@@ -32,7 +32,7 @@ function signatureOf(source: string, message: string): string {
 
 function shortHostname(): string {
   try {
-    // eslint-disable-next-line @typescript-eslint/no-require-imports
+     
     return require('os').hostname().slice(0, 32);
   } catch {
     return 'unknown';

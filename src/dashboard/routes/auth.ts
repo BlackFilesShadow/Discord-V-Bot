@@ -135,7 +135,7 @@ authRouter.get('/callback', async (req: Request, res: Response) => {
     });
 
     // Session erstellen (mit Device-Bindung)
-    const dbSession = await prisma.session.create({
+    await prisma.session.create({
       data: {
         userId: dbUser.id,
         token: sessionToken,
@@ -207,7 +207,7 @@ authRouter.post('/2fa/setup', async (req: Request, res: Response) => {
   }
 
   // TOTP-Secret generieren
-  const { secret, otpAuthUrl, base32 } = generate2FASecret(user.username, 'Discord-V-Bot');
+  const { otpAuthUrl, base32 } = generate2FASecret(user.username, 'Discord-V-Bot');
   const backupCodes = generateBackupCodes(10);
 
   // Secret verschlüsselt speichern (noch nicht aktiviert)

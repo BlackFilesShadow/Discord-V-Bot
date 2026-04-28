@@ -2,7 +2,6 @@ import {
   ButtonBuilder,
   ButtonStyle,
   ActionRowBuilder,
-  EmbedBuilder,
   Client,
   Message,
 } from 'discord.js';

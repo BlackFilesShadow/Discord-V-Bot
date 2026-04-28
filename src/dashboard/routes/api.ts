@@ -38,7 +38,7 @@ apiRouter.get('/stats', async (req: Request, res: Response) => {
     const days = parseInt(req.query.days as string) || 30;
     const analytics = await getAnalytics(days);
     res.json(analytics);
-  } catch (error) {
+  } catch (_error) {
     res.status(500).json({ error: 'Fehler beim Laden der Statistiken' });
   }
 });
@@ -50,7 +50,7 @@ apiRouter.get('/alerts', async (_req: Request, res: Response) => {
   try {
     const alerts = await checkAlerts();
     res.json({ alerts });
-  } catch (error) {
+  } catch (_error) {
     res.status(500).json({ error: 'Fehler beim Laden der Alerts' });
   }
 });
@@ -84,7 +84,7 @@ apiRouter.get('/users', async (req: Request, res: Response) => {
     ]);
 
     res.json({ users, total, page, totalPages: Math.ceil(total / perPage) });
-  } catch (error) {
+  } catch (_error) {
     res.status(500).json({ error: 'Fehler beim Laden der User' });
   }
 });
@@ -124,7 +124,7 @@ apiRouter.get('/packages', async (req: Request, res: Response) => {
       page,
       totalPages: Math.ceil(total / perPage),
     });
-  } catch (error) {
+  } catch (_error) {
     res.status(500).json({ error: 'Fehler beim Laden der Pakete' });
   }
 });
@@ -158,7 +158,7 @@ apiRouter.get('/audit-logs', async (req: Request, res: Response) => {
     ]);
 
     res.json({ logs, total, page, totalPages: Math.ceil(total / perPage) });
-  } catch (error) {
+  } catch (_error) {
     res.status(500).json({ error: 'Fehler beim Laden der Logs' });
   }
 });
@@ -183,7 +183,7 @@ apiRouter.get('/security-events', async (req: Request, res: Response) => {
     });
 
     res.json({ events });
-  } catch (error) {
+  } catch (_error) {
     res.status(500).json({ error: 'Fehler beim Laden der Security-Events' });
   }
 });
@@ -203,7 +203,7 @@ apiRouter.get('/giveaways', async (_req: Request, res: Response) => {
     });
 
     res.json({ giveaways });
-  } catch (error) {
+  } catch (_error) {
     res.status(500).json({ error: 'Fehler beim Laden der Giveaways' });
   }
 });
@@ -229,7 +229,7 @@ apiRouter.get('/moderation', async (req: Request, res: Response) => {
     });
 
     res.json({ cases });
-  } catch (error) {
+  } catch (_error) {
     res.status(500).json({ error: 'Fehler beim Laden der Moderationsfälle' });
   }
 });
@@ -261,7 +261,7 @@ apiRouter.get('/leaderboard', async (req: Request, res: Response) => {
         xp: e.xp.toString(),
       })),
     });
-  } catch (error) {
+  } catch (_error) {
     res.status(500).json({ error: 'Fehler beim Laden des Leaderboards' });
   }
 });
@@ -275,7 +275,7 @@ apiRouter.get('/config', async (_req: Request, res: Response) => {
       orderBy: [{ category: 'asc' }, { key: 'asc' }],
     });
     res.json({ configs });
-  } catch (error) {
+  } catch (_error) {
     res.status(500).json({ error: 'Fehler beim Laden der Konfiguration' });
   }
 });

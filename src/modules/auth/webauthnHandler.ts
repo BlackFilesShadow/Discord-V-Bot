@@ -1,6 +1,6 @@
 import crypto from 'crypto';
 import prisma from '../../database/prisma';
-import { logger, logAudit } from '../../utils/logger';
+import { logAudit } from '../../utils/logger';
 
 /**
  * FIDO2/WebAuthn Support (Sektion 12):

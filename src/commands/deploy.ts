@@ -1,4 +1,4 @@
-import { Client, Collection, GatewayIntentBits, Partials } from 'discord.js';
+import { Client, Collection, GatewayIntentBits } from 'discord.js';
 import { ExtendedClient } from '../types';
 import { config } from '../config';
 import { loadCommands, deployCommands } from './handler';

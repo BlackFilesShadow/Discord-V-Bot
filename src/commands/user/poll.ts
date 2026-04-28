@@ -1,7 +1,6 @@
 import {
   SlashCommandBuilder,
   ChatInputCommandInteraction,
-  EmbedBuilder,
   ActionRowBuilder,
   ButtonBuilder,
   ButtonStyle,
@@ -385,7 +384,7 @@ async function runPollSubcommand(sub: string, interaction: ChatInputCommandInter
           return;
         }
 
-        const fields = polls.map((p: any, i: number) => {
+        const fields = polls.map((p: any, _i: number) => {
           const end = p.endsAt ? `<t:${Math.floor(p.endsAt.getTime() / 1000)}:R>` : '∞';
           return {
             name: `📊 ${p.title}`,

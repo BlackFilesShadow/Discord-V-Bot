@@ -98,7 +98,7 @@ export async function checkRateLimit(
       remaining: config.maxRequests - 1,
       resetAt: new Date(now.getTime() + config.windowMs),
     };
-  } catch (error) {
+  } catch (_error) {
     // Bei DB-Fehler: Erlauben (fail-open nur für Rate-Limiting)
     return {
       allowed: true,

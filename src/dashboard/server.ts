@@ -6,7 +6,7 @@ import helmet from 'helmet';
 import cors from 'cors';
 import rateLimit from 'express-rate-limit';
 import { config } from '../config';
-import { logger, logAudit } from '../utils/logger';
+import { logger } from '../utils/logger';
 import { authRouter, apiRouter, adminRouter, testRouter, webhookRouter, setWebhookClient } from './routes';
 import { metricsRegistry } from '../utils/metrics';
 import type { Client } from 'discord.js';

@@ -6,7 +6,6 @@ import {
   SlashCommandBuilder,
   SlashCommandOptionsOnlyBuilder,
   SlashCommandSubcommandsOnlyBuilder,
-  SlashCommandSubcommandBuilder,
 } from 'discord.js';
 
 /**

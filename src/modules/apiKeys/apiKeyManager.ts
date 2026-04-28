@@ -1,6 +1,6 @@
 import crypto from 'crypto';
 import prisma from '../../database/prisma';
-import { logger, logAudit } from '../../utils/logger';
+import { logAudit } from '../../utils/logger';
 import { sha256Hash } from '../../utils/security';
 
 /**

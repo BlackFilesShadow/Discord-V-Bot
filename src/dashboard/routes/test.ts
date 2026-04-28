@@ -1,6 +1,5 @@
 import { Router, Request, Response } from 'express';
 import prisma from '../../database/prisma';
-import { logger, logAudit } from '../../utils/logger';
 import { validateFile } from '../../utils/validator';
 import { getAllFeatureToggles, setFeatureToggle } from '../../modules/featureToggles/featureToggleManager';
 import path from 'path';
@@ -43,7 +42,7 @@ testRouter.get('/health', async (_req: Request, res: Response) => {
     const start = Date.now();
     await prisma.$queryRaw`SELECT 1`;
     checks.database = { status: 'ok', latency: Date.now() - start };
-  } catch (error) {
+  } catch (_error) {
     checks.database = { status: 'error', details: 'DB nicht erreichbar' };
   }
 
@@ -91,7 +90,7 @@ testRouter.post('/validate', async (req: Request, res: Response) => {
     fs.writeFileSync(tmpFile, content);
     const result = await validateFile(tmpFile);
     res.json({ result });
-  } catch (error) {
+  } catch (_error) {
     res.status(500).json({ error: 'Validierung fehlgeschlagen.' });
   } finally {
     try { fs.unlinkSync(tmpFile); } catch { /* cleanup */ }
@@ -116,7 +115,7 @@ testRouter.get('/db-stats', async (_req: Request, res: Response) => {
       tables: { users, packages, uploads, downloads, moderationCases: cases, giveaways },
       timestamp: new Date().toISOString(),
     });
-  } catch (error) {
+  } catch (_error) {
     res.status(500).json({ error: 'DB-Statistiken nicht verfügbar.' });
   }
 });

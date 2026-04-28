@@ -3,7 +3,6 @@ import {
   decrypt,
   sha256Hash,
   generate2FASecret,
-  verify2FAToken,
   generateBackupCodes,
   generateCsrfToken,
   generateNonce,

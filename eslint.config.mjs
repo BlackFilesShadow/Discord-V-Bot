@@ -55,11 +55,26 @@ export default [
     },
   },
   {
-    // Tests duerfen lockerer sein.
-    files: ['tests/**/*.ts', 'src/**/__tests__/**/*.ts'],
+    // Tests duerfen lockerer sein, brauchen aber den TS-Parser.
+    files: ['tests/**/*.ts', 'src/**/__tests__/**/*.ts', 'scripts/**/*.ts'],
+    languageOptions: {
+      parser: tsparser,
+      parserOptions: {
+        project: './tsconfig.test.json',
+        tsconfigRootDir: import.meta.dirname,
+      },
+    },
+    plugins: {
+      '@typescript-eslint': tseslint,
+    },
     rules: {
       '@typescript-eslint/no-floating-promises': 'off',
       '@typescript-eslint/no-misused-promises': 'off',
+      '@typescript-eslint/no-unused-vars': ['warn', {
+        argsIgnorePattern: '^_',
+        varsIgnorePattern: '^_',
+        caughtErrorsIgnorePattern: '^_',
+      }],
     },
   },
 ];

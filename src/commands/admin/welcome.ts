@@ -14,7 +14,7 @@ import {
   disableWelcome,
   renderWelcomeMessage,
 } from '../../modules/welcome/welcomeManager';
-import { answerQuestion, BOT_PERSONA } from '../../modules/ai/aiHandler';
+import { answerQuestion } from '../../modules/ai/aiHandler';
 import { sanitizeForPrompt, withTimeout } from '../../utils/safeSend';
 import { saveAttachment, deleteMediaIfLocal } from '../../modules/ai/mediaStorage';
 import { resolveCustomEmotes } from '../../modules/ai/emoteResolver';

@@ -134,7 +134,7 @@ const adminExportCommand: Command = {
         let total = 0;
         let first = true;
         await writeJson('[');
-        // eslint-disable-next-line no-constant-condition
+         
         while (true) {
           const page = await prisma.auditLog.findMany({
             where,

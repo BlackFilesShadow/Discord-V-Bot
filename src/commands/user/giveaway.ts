@@ -1,7 +1,6 @@
 import {
   SlashCommandBuilder,
   ChatInputCommandInteraction,
-  EmbedBuilder,
   ActionRowBuilder,
   ButtonBuilder,
   ButtonStyle,
@@ -9,14 +8,13 @@ import {
 import { Command } from '../../types';
 import {
   createGiveaway,
-  createGiveawayEmbed,
   enterGiveaway,
   drawWinners,
 } from '../../modules/giveaway/giveawayManager';
 import { grantEventXp } from '../../modules/xp/xpManager';
 import prisma from '../../database/prisma';
 
-import { Colors, Brand, vEmbed } from '../../utils/embedDesign';
+import { Colors, Brand } from '../../utils/embedDesign';
 import { createBotEmbed } from '../../utils/embedUtil';
 
 /**

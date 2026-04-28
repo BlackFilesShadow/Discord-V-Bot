@@ -1,6 +1,6 @@
 import prisma from '../../database/prisma';
 import { logger, logAudit } from '../../utils/logger';
-import { GuildMember, Guild, PermissionFlagsBits, type PermissionResolvable } from 'discord.js';
+import { Guild, PermissionFlagsBits, type PermissionResolvable } from 'discord.js';
 import { postModLog } from './modLog';
 
 /**

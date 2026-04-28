@@ -84,7 +84,6 @@ export function createGiveawayEmbed(giveaway: {
   winnerId?: string | null;
   winnerCount?: number;
 }, participantCount: number, creatorUsername?: string): EmbedBuilder {
-  const emoji = giveaway.customEmoji || '🎉';
   const timeLeft = giveaway.endsAt.getTime() - Date.now();
   const isActive = giveaway.status === 'ACTIVE' && timeLeft > 0;
 

@@ -54,7 +54,7 @@ adminRouter.patch('/users/:id/role', async (req: Request, res: Response) => {
     );
 
     res.json({ user });
-  } catch (error) {
+  } catch (_error) {
     res.status(500).json({ error: 'Fehler beim Ändern der Rolle' });
   }
 });
@@ -82,7 +82,7 @@ adminRouter.patch('/users/:id/status', async (req: Request, res: Response) => {
     );
 
     res.json({ user });
-  } catch (error) {
+  } catch (_error) {
     res.status(500).json({ error: 'Fehler beim Ändern des Status' });
   }
 });
@@ -123,7 +123,7 @@ adminRouter.patch('/users/:id/upload-rights', async (req: Request, res: Response
     );
 
     res.json({ user });
-  } catch (error) {
+  } catch (_error) {
     res.status(500).json({ error: 'Fehler beim Ändern der Upload-Rechte' });
   }
 });
@@ -156,7 +156,7 @@ adminRouter.patch('/packages/:id/status', async (req: Request, res: Response) =>
     );
 
     res.json({ package: pkg });
-  } catch (error) {
+  } catch (_error) {
     res.status(500).json({ error: 'Fehler beim Ändern des Paket-Status' });
   }
 });
@@ -191,7 +191,7 @@ adminRouter.put('/config/:key', async (req: Request, res: Response) => {
     );
 
     res.json({ config });
-  } catch (error) {
+  } catch (_error) {
     res.status(500).json({ error: 'Fehler beim Setzen der Konfiguration' });
   }
 });
@@ -208,7 +208,7 @@ adminRouter.delete('/config/:key', async (req: Request, res: Response) => {
     );
 
     res.json({ success: true });
-  } catch (error) {
+  } catch (_error) {
     res.status(500).json({ error: 'Fehler beim Löschen der Konfiguration' });
   }
 });
@@ -240,7 +240,7 @@ adminRouter.post('/security/ip-block', async (req: Request, res: Response) => {
     );
 
     res.json({ entry });
-  } catch (error) {
+  } catch (_error) {
     res.status(500).json({ error: 'Fehler beim Sperren der IP' });
   }
 });
@@ -257,7 +257,7 @@ adminRouter.delete('/security/ip-block/:id', async (req: Request, res: Response)
     );
 
     res.json({ success: true });
-  } catch (error) {
+  } catch (_error) {
     res.status(500).json({ error: 'Fehler beim Entsperren der IP' });
   }
 });
@@ -276,7 +276,7 @@ adminRouter.patch('/security/events/:id/resolve', async (req: Request, res: Resp
     });
 
     res.json({ event });
-  } catch (error) {
+  } catch (_error) {
     res.status(500).json({ error: 'Fehler beim Auflösen des Events' });
   }
 });
@@ -319,7 +319,7 @@ adminRouter.patch('/appeals/:id', async (req: Request, res: Response) => {
     );
 
     res.json({ appeal });
-  } catch (error) {
+  } catch (_error) {
     res.status(500).json({ error: 'Fehler beim Bearbeiten des Appeals' });
   }
 });
@@ -336,7 +336,7 @@ adminRouter.post('/gdpr/deletion', async (req: Request, res: Response) => {
 
     const result = await processDataDeletionRequest(requestId);
     res.json({ success: result });
-  } catch (error) {
+  } catch (_error) {
     res.status(500).json({ error: 'Fehler bei der Datenlöschung' });
   }
 });
@@ -352,7 +352,7 @@ adminRouter.get('/feeds', async (_req: Request, res: Response) => {
       },
     });
     res.json({ feeds });
-  } catch (error) {
+  } catch (_error) {
     res.status(500).json({ error: 'Fehler beim Laden der Feeds' });
   }
 });
@@ -369,7 +369,7 @@ adminRouter.delete('/feeds/:id', async (req: Request, res: Response) => {
     );
 
     res.json({ success: true });
-  } catch (error) {
+  } catch (_error) {
     res.status(500).json({ error: 'Fehler beim Löschen des Feeds' });
   }
 });
@@ -384,7 +384,7 @@ adminRouter.get('/sessions', async (_req: Request, res: Response) => {
       include: { user: { select: { username: true, discordId: true, role: true } } },
     });
     res.json({ sessions, count: sessions.length });
-  } catch (error) {
+  } catch (_error) {
     res.status(500).json({ error: 'Fehler beim Laden der Sessions' });
   }
 });
@@ -401,7 +401,7 @@ adminRouter.delete('/sessions/:id', async (req: Request, res: Response) => {
     );
 
     res.json({ success: true });
-  } catch (error) {
+  } catch (_error) {
     res.status(500).json({ error: 'Fehler beim Beenden der Session' });
   }
 });

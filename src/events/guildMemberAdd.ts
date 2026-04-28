@@ -2,7 +2,6 @@ import { Events, GuildMember, TextChannel, AttachmentBuilder } from 'discord.js'
 import { BotEvent } from '../types';
 import { logger, logAudit } from '../utils/logger';
 import prisma from '../database/prisma';
-import { generateGuid } from '../utils/guid';
 import { detectRaid } from '../utils/rateLimiter';
 import { getWelcomeConfig, renderWelcomeMessage } from '../modules/welcome/welcomeManager';
 import { answerQuestion } from '../modules/ai/aiHandler';
