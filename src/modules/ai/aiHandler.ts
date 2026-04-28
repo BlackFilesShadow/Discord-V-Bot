@@ -473,8 +473,15 @@ export async function analyzeSentiment(text: string): Promise<AiResponse> {
 /**
  * Toxicity-Detection.
  * Sektion 4: Toxicity-Detection.
+ *
+ * K2: Persistierung nur wenn vollstaendiger Nachrichten-Kontext (userId +
+ * messageId + channelId) uebergeben wurde – sonst Analyse zurueckgeben, aber
+ * nichts in `aiAnalysis` schreiben (verhindert Daten-Pollution mit '').
  */
-export async function detectToxicity(text: string, userId?: string): Promise<AiResponse> {
+export async function detectToxicity(
+  text: string,
+  context?: { userId: string; messageId: string; channelId: string },
+): Promise<AiResponse> {
   try {
     const response = await callAI([
       {
@@ -486,15 +493,15 @@ export async function detectToxicity(text: string, userId?: string): Promise<AiR
 
     const parsed = extractJson<any>(response);
 
-    // In DB speichern
-    if (userId) {
+    // Nur persistieren wenn vollstaendiger Nachrichten-Kontext vorliegt.
+    if (context && context.userId && context.messageId && context.channelId) {
       await prisma.aiAnalysis.create({
         data: {
-          messageId: '',
-          channelId: '',
-          userId,
+          messageId: context.messageId,
+          channelId: context.channelId,
+          userId: context.userId,
           analysisType: 'TOXICITY',
-          score: parsed.score || 0,
+          score: typeof parsed.score === 'number' ? parsed.score : 0,
           label: parsed.toxic ? 'toxic' : 'safe',
           details: parsed,
           actionTaken: parsed.toxic ? 'flagged' : 'none',
@@ -827,147 +834,3 @@ async function getProviderOrder(): Promise<('groq' | 'cerebras' | 'openrouter' |
   return [primary, ...all.filter(p => p !== primary)];
 }
 
-// ===== AUTO-RESPONDER (Sektion 4) =====
-
-interface AutoResponderRule {
-  id: string;
-  trigger: string;
-  triggerType: 'keyword' | 'regex' | 'intent';
-  response?: string;
-  useAi: boolean;
-  aiPrompt?: string;
-  channels?: string[];
-  cooldownSeconds: number;
-  isActive: boolean;
-}
-
-// In-Memory Auto-Responder Regeln und Cooldowns
-const autoResponderRules: Map<string, AutoResponderRule> = new Map();
-const autoResponderCooldowns: Map<string, number> = new Map();
-
-/**
- * Auto-Responder Registrierung.
- * Sektion 4: Automatischer Antwort-Assistent.
- */
-export function registerAutoResponder(rule: AutoResponderRule): void {
-  autoResponderRules.set(rule.id, rule);
-  logger.info(`Auto-Responder registriert: ${rule.id} (trigger: ${rule.trigger})`);
-}
-
-export function removeAutoResponder(id: string): boolean {
-  return autoResponderRules.delete(id);
-}
-
-export function getAutoResponders(): AutoResponderRule[] {
-  return Array.from(autoResponderRules.values());
-}
-
-/**
- * Auto-Responder: Nachricht prüfen und ggf. automatisch antworten.
- */
-export async function processAutoResponse(
-  content: string,
-  userId: string,
-  channelId: string,
-): Promise<{ shouldRespond: boolean; response?: string }> {
-  for (const rule of autoResponderRules.values()) {
-    if (!rule.isActive) continue;
-
-    // Channel-Beschränkung
-    if (rule.channels && rule.channels.length > 0 && !rule.channels.includes(channelId)) {
-      continue;
-    }
-
-    // Cooldown prüfen
-    const cooldownKey = `${rule.id}:${userId}`;
-    const lastUsed = autoResponderCooldowns.get(cooldownKey) || 0;
-    if (Date.now() - lastUsed < rule.cooldownSeconds * 1000) continue;
-
-    // Trigger prüfen
-    let matches = false;
-    switch (rule.triggerType) {
-      case 'keyword':
-        matches = content.toLowerCase().includes(rule.trigger.toLowerCase());
-        break;
-      case 'regex':
-        try { matches = new RegExp(rule.trigger, 'i').test(content); } catch { /* invalid regex */ }
-        break;
-      case 'intent':
-        // Einfache Intent-Erkennung per Keyword-Gruppen
-        const intentKeywords = rule.trigger.split(',').map(k => k.trim().toLowerCase());
-        matches = intentKeywords.some(k => content.toLowerCase().includes(k));
-        break;
-    }
-
-    if (matches) {
-      autoResponderCooldowns.set(cooldownKey, Date.now());
-
-      if (rule.useAi && rule.aiPrompt) {
-        try {
-          const aiResp = await callAI([
-            { role: 'system', content: rule.aiPrompt },
-            { role: 'user', content },
-          ]);
-          return { shouldRespond: true, response: aiResp };
-        } catch {
-          return { shouldRespond: false };
-        }
-      }
-
-      return { shouldRespond: true, response: rule.response || '' };
-    }
-  }
-
-  return { shouldRespond: false };
-}
-
-// ===== CUSTOM AI MODULES (Sektion 4) =====
-
-interface CustomAiModule {
-  id: string;
-  name: string;
-  description: string;
-  systemPrompt: string;
-  maxTokens: number;
-  temperature: number;
-  isActive: boolean;
-}
-
-const customAiModules: Map<string, CustomAiModule> = new Map();
-
-/**
- * Custom AI Module registrieren.
- * Sektion 4: Benutzerdefinierte AI-Module.
- */
-export function registerAiModule(module: CustomAiModule): void {
-  customAiModules.set(module.id, module);
-  logger.info(`Custom AI Module registriert: ${module.name} (${module.id})`);
-}
-
-export function removeAiModule(id: string): boolean {
-  return customAiModules.delete(id);
-}
-
-export function getAiModules(): CustomAiModule[] {
-  return Array.from(customAiModules.values());
-}
-
-/**
- * Custom AI Module ausführen.
- */
-export async function executeAiModule(moduleId: string, input: string): Promise<AiResponse> {
-  const mod = customAiModules.get(moduleId);
-  if (!mod) return { success: false, error: 'Modul nicht gefunden.' };
-  if (!mod.isActive) return { success: false, error: 'Modul ist deaktiviert.' };
-
-  try {
-    const result = await callAI([
-      { role: 'system', content: mod.systemPrompt },
-      { role: 'user', content: input },
-    ]);
-    return { success: true, result };
-  } catch (error) {
-    logger.error(`Custom AI Module ${moduleId} Fehler:`, error);
-    return { success: false, error: 'Modul-Ausführung fehlgeschlagen.' };
-  }
-}

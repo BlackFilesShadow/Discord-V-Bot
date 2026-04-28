@@ -3,7 +3,6 @@ import { BotEvent } from '../types';
 import { logger, logAudit } from '../utils/logger';
 import prisma from '../database/prisma';
 import { checkRateLimit, detectSpam } from '../utils/rateLimiter';
-import { processAutoResponse } from '../modules/ai/aiHandler';
 import { answerQuestion } from '../modules/ai/aiHandler';
 import { buildServerUserContext } from '../modules/ai/contextBuilder';
 import { trackMemberActivity } from '../modules/ai/memberAwareness';
@@ -353,25 +352,9 @@ const messageCreateEvent: BotEvent = {
       logger.error('Stell-dich-vor / Was-kannst-du Fehler:', e);
     }
 
-    // ===== SEKTION 4: AI AUTO-RESPONDER =====
-    let autoResponded = false;
-    try {
-      const autoResp = await processAutoResponse(msg.content, msg.author.id, msg.channelId);
-      if (autoResp.shouldRespond && autoResp.response) {
-        logger.info(`AUTO-RESPONDER feuert msgId=${msg.id} userId=${msg.author.id}`);
-        await msg.reply({ content: autoResp.response });
-        autoResponded = true;
-      }
-    } catch (error) {
-      logger.error('Auto-Responder Fehler:', error);
-    }
-
     // ===== SEKTION 4: AI MENTION-RESPONDER (ChatGPT-Style) =====
     // Bot antwortet wenn er direkt erwähnt wird oder die Nachricht eine Reply auf den Bot ist
     try {
-      // Wenn bereits eine Auto-Response gefeuert hat, KEINE zweite Antwort schicken.
-      if (autoResponded) throw new Error('__skip_mention__');
-
       const botId = msg.client.user?.id;
       const isMentioned = botId ? msg.mentions.users.has(botId) : false;
       const isReplyToBot =
@@ -571,9 +554,7 @@ const messageCreateEvent: BotEvent = {
         }
       }
     } catch (error) {
-      if ((error as Error).message !== '__skip_mention__') {
-        logger.error('AI Mention-Responder Fehler:', error);
-      }
+      logger.error('AI Mention-Responder Fehler:', error);
     }
 
     // ===== SEKTION 8: XP-VERGABE (guild-getrennt) =====
@@ -581,11 +562,25 @@ const messageCreateEvent: BotEvent = {
       // Kein XP in DMs / ohne Guild-Kontext.
       if (!msg.guildId) return;
 
-      const user = await prisma.user.findUnique({
+      // BUGFIX: Vorher wurde nur findUnique verwendet → User, die nie via
+      // guildMemberAdd registriert wurden (z. B. bereits vor dem Bot auf
+      // dem Server, oder Bot war beim Join offline), bekamen NIE XP.
+      // Jetzt: upsert garantiert, dass jeder aktive Schreiber in der DB
+      // existiert. Damit erfasst das XP-System wirklich alle User.
+      const user = await prisma.user.upsert({
         where: { discordId: msg.author.id },
+        create: {
+          discordId: msg.author.id,
+          username: msg.author.username,
+          discriminator: msg.author.discriminator || '',
+        },
+        update: {
+          username: msg.author.username,
+          discriminator: msg.author.discriminator || '',
+        },
       });
 
-      if (user) {
+      {
         // Guild-spezifische XP-Konfiguration (id == guildId)
         const xpConfig = await prisma.xpConfig.findUnique({ where: { id: msg.guildId } });
 

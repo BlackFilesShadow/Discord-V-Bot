@@ -2,6 +2,7 @@ import {
   SlashCommandBuilder,
   ChatInputCommandInteraction,
   PermissionFlagsBits,
+  MessageFlags,
 } from 'discord.js';
 import { Command } from '../../types';
 import { Colors, vEmbed } from '../../utils/embedDesign';
@@ -50,7 +51,7 @@ const adminTicketsCommand: Command = {
   adminOnly: true,
 
   execute: async (interaction: ChatInputCommandInteraction) => {
-    await interaction.deferReply({ ephemeral: true });
+    await interaction.deferReply({ flags: MessageFlags.Ephemeral });
 
     if (!(await isAdminOrOwner(interaction.user.id))) {
       await interaction.editReply({

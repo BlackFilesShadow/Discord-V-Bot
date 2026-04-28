@@ -4,7 +4,9 @@ import {
   EmbedBuilder,
   PermissionFlagsBits,
   AttachmentBuilder,
+  MessageFlags,
 } from 'discord.js';
+import { Prisma } from '@prisma/client';
 import { Command } from '../../types';
 import prisma from '../../database/prisma';
 
@@ -77,7 +79,7 @@ const adminAuditCommand: Command = {
   adminOnly: true,
 
   execute: async (interaction: ChatInputCommandInteraction) => {
-    await interaction.deferReply({ ephemeral: true });
+    await interaction.deferReply({ flags: MessageFlags.Ephemeral });
 
     const sub = interaction.options.getSubcommand();
 
@@ -89,10 +91,10 @@ const adminAuditCommand: Command = {
         const days = interaction.options.getInteger('tage') || 7;
 
         const since = new Date(Date.now() - days * 24 * 60 * 60 * 1000);
-        const where: Record<string, unknown> = { createdAt: { gte: since } };
+        const where: Prisma.AuditLogWhereInput = { createdAt: { gte: since } };
 
         if (action) where.action = { contains: action, mode: 'insensitive' };
-        if (category) where.category = category;
+        if (category) where.category = category as Prisma.AuditLogWhereInput['category'];
         if (targetUser) {
           const dbUser = await prisma.user.findUnique({ where: { discordId: targetUser.id } });
           if (dbUser) {
@@ -112,7 +114,7 @@ const adminAuditCommand: Command = {
           return;
         }
 
-        const lines = logs.map((l: any) => {
+        const lines = logs.map((l) => {
           const t = l.createdAt.toLocaleString('de-DE');
           const actor = l.actor ? `<@${l.actor.discordId}>` : 'System';
           return `\`${t}\` **${l.action}** [${l.category}]\n   Akteur: ${actor}${l.isImmutable ? ' 🔒' : ''}`;

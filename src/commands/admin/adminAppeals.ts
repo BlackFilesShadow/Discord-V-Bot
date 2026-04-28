@@ -3,7 +3,9 @@ import {
   ChatInputCommandInteraction,
   EmbedBuilder,
   PermissionFlagsBits,
+  MessageFlags,
 } from 'discord.js';
+import { AppealStatus } from '@prisma/client';
 import { Command } from '../../types';
 import prisma from '../../database/prisma';
 import { logAudit, logger } from '../../utils/logger';
@@ -67,15 +69,15 @@ const adminAppealsCommand: Command = {
   adminOnly: true,
 
   execute: async (interaction: ChatInputCommandInteraction) => {
-    await interaction.deferReply({ ephemeral: true });
+    await interaction.deferReply({ flags: MessageFlags.Ephemeral });
 
     const sub = interaction.options.getSubcommand();
 
     switch (sub) {
       case 'liste': {
-        const status = interaction.options.getString('status') || 'PENDING';
+        const status = (interaction.options.getString('status') || 'PENDING') as AppealStatus;
         const appeals = await prisma.appeal.findMany({
-          where: { status: status as any },
+          where: { status },
           take: 15,
           orderBy: { createdAt: 'desc' },
           include: {
@@ -91,7 +93,7 @@ const adminAppealsCommand: Command = {
           return;
         }
 
-        const lines = appeals.map((a: any, i: number) => {
+        const lines = appeals.map((a, i: number) => {
           const time = a.createdAt.toLocaleString('de-DE');
           return `**${i + 1}.** ID: \`${a.id}\`\n` +
             `   User: <@${a.user.discordId}> | Fall #${a.case.caseNumber} (${a.case.action})\n` +
@@ -125,21 +127,22 @@ const adminAppealsCommand: Command = {
           return;
         }
 
-        await prisma.appeal.update({
-          where: { id: appealId },
-          data: {
-            status: 'APPROVED',
-            reviewedBy: interaction.user.id,
-            reviewNote: note,
-            reviewedAt: new Date(),
-          },
-        });
-
-        // Moderationsfall deaktivieren
-        await prisma.moderationCase.update({
-          where: { id: appeal.caseId },
-          data: { isActive: false, revokedAt: new Date(), revokedBy: interaction.user.id },
-        });
+        // Atomar: Appeal genehmigen + Moderationsfall aufheben
+        await prisma.$transaction([
+          prisma.appeal.update({
+            where: { id: appealId },
+            data: {
+              status: 'APPROVED',
+              reviewedBy: interaction.user.id,
+              reviewNote: note,
+              reviewedAt: new Date(),
+            },
+          }),
+          prisma.moderationCase.update({
+            where: { id: appeal.caseId },
+            data: { isActive: false, revokedAt: new Date(), revokedBy: interaction.user.id },
+          }),
+        ]);
 
         // User per DM benachrichtigen
         try {
@@ -183,7 +186,7 @@ const adminAppealsCommand: Command = {
 
         try {
           const user = await interaction.client.users.fetch(appeal.user.discordId);
-          await user.send(`❌ Dein Appeal für Fall #${appeal.case.caseNumber} wurde **abgelehnt**.\n${note ? `Grund: ${note}` : ''}`);
+          await user.send(`❌ Dein Appeal für Fall #${appeal.case.caseNumber} wurde **abgelehnt**.${note ? `\nGrund: ${note}` : ''}`);
         } catch {
           logger.warn(`Konnte DM für Appeal nicht senden.`);
         }
@@ -201,7 +204,7 @@ const adminAppealsCommand: Command = {
 
         const appeal = await prisma.appeal.findUnique({
           where: { id: appealId },
-          include: { case: true },
+          include: { case: true, user: true },
         });
 
         if (!appeal || appeal.status !== 'PENDING') {
@@ -209,15 +212,25 @@ const adminAppealsCommand: Command = {
           return;
         }
 
-        await prisma.appeal.update({
-          where: { id: appealId },
-          data: { status: 'ESCALATED' },
-        });
+        // Atomar: Appeal eskalieren + Eskalationsstufe erhöhen
+        await prisma.$transaction([
+          prisma.appeal.update({
+            where: { id: appealId },
+            data: { status: 'ESCALATED' },
+          }),
+          prisma.moderationCase.update({
+            where: { id: appeal.caseId },
+            data: { escalationLevel: { increment: 1 } },
+          }),
+        ]);
 
-        await prisma.moderationCase.update({
-          where: { id: appeal.caseId },
-          data: { escalationLevel: { increment: 1 } },
-        });
+        // User per DM benachrichtigen
+        try {
+          const user = await interaction.client.users.fetch(appeal.user.discordId);
+          await user.send(`⬆️ Dein Appeal für Fall #${appeal.case.caseNumber} wurde **eskaliert** und wird durch eine höhere Instanz geprüft.`);
+        } catch {
+          logger.warn(`Konnte DM für eskalierten Appeal nicht senden.`);
+        }
 
         logAudit('APPEAL_ESCALATED', 'APPEAL', {
           appealId, caseNumber: appeal.case.caseNumber, adminId: interaction.user.id,

@@ -3,10 +3,35 @@ import {
   ChatInputCommandInteraction,
   EmbedBuilder,
   PermissionFlagsBits,
+  MessageFlags,
 } from 'discord.js';
+import fs from 'fs/promises';
 import { Command } from '../../types';
 import prisma from '../../database/prisma';
-import { logAudit } from '../../utils/logger';
+import { logAudit, logger } from '../../utils/logger';
+
+/**
+ * Löscht Files vom Filesystem. Best-effort – ein fehlender File ist kein Fehler.
+ * Wird vor jedem Hard-Delete einer Package-Cascade aufgerufen, damit keine
+ * Orphan-Files auf der Disk zurückbleiben.
+ */
+async function unlinkPackageFiles(packageIds: string[]): Promise<number> {
+  if (packageIds.length === 0) return 0;
+  const uploads = await prisma.upload.findMany({
+    where: { packageId: { in: packageIds } },
+    select: { id: true, filePath: true },
+  });
+  let removed = 0;
+  for (const u of uploads) {
+    try {
+      await fs.unlink(u.filePath);
+      removed++;
+    } catch (e) {
+      logger.warn(`adminDelete: unlink ${u.filePath} fehlgeschlagen: ${(e as Error).message}`);
+    }
+  }
+  return removed;
+}
 
 /**
  * /admin-delete [user|paket|datei] — Löschen (Soft/Hard), Restore, Bulk-Operationen.
@@ -58,7 +83,7 @@ const adminDeleteCommand: Command = {
   adminOnly: true,
 
   execute: async (interaction: ChatInputCommandInteraction) => {
-    await interaction.deferReply({ ephemeral: true });
+    await interaction.deferReply({ flags: MessageFlags.Ephemeral });
 
     const sub = interaction.options.getSubcommand();
 
@@ -77,11 +102,13 @@ const adminDeleteCommand: Command = {
         }
 
         if (hard) {
+          // K2: zuerst Files vom Filesystem entfernen, dann DB-Cascade.
+          const fsRemoved = await unlinkPackageFiles([pkg.id]);
           await prisma.package.delete({ where: { id: pkg.id } });
           logAudit('PACKAGE_HARD_DELETED', 'ADMIN', {
-            packageId: pkg.id, packageName: pkg.name, adminId: interaction.user.id,
+            packageId: pkg.id, packageName: pkg.name, adminId: interaction.user.id, fsRemoved,
           });
-          await interaction.editReply({ content: `🗑️ Paket **${pkg.name}** endgültig gelöscht.` });
+          await interaction.editReply({ content: `🗑️ Paket **${pkg.name}** endgültig gelöscht (${fsRemoved} Datei(en) entfernt).` });
         } else {
           await prisma.package.update({
             where: { id: pkg.id },
@@ -99,17 +126,32 @@ const adminDeleteCommand: Command = {
         const dateiId = interaction.options.getString('datei-id', true);
         const upload = await prisma.upload.findUnique({ where: { id: dateiId } });
 
-        if (!upload) {
-          await interaction.editReply({ content: '❌ Datei nicht gefunden.' });
+        if (!upload || upload.isDeleted) {
+          await interaction.editReply({ content: '❌ Datei nicht gefunden oder bereits gelöscht.' });
           return;
         }
 
-        await prisma.upload.update({
-          where: { id: dateiId },
-          data: { isDeleted: true, deletedAt: new Date() },
-        });
+        // K3: DB + Stats + FS in einer Transaktion (Stats konsistent halten).
+        await prisma.$transaction([
+          prisma.upload.update({
+            where: { id: dateiId },
+            data: { isDeleted: true, deletedAt: new Date() },
+          }),
+          prisma.package.update({
+            where: { id: upload.packageId },
+            data: {
+              fileCount: { decrement: 1 },
+              totalSize: { decrement: upload.fileSize },
+            },
+          }),
+        ]);
+
+        // FS-Cleanup best-effort, blockiert die Antwort nicht.
+        try { await fs.unlink(upload.filePath); }
+        catch (e) { logger.warn(`adminDelete datei: unlink ${upload.filePath} fehlgeschlagen: ${(e as Error).message}`); }
+
         logAudit('FILE_DELETED', 'ADMIN', {
-          uploadId: dateiId, fileName: upload.originalName, adminId: interaction.user.id,
+          uploadId: dateiId, fileName: upload.originalName, packageId: upload.packageId, adminId: interaction.user.id,
         });
         await interaction.editReply({ content: `🗑️ Datei **${upload.originalName}** gelöscht.` });
         break;
@@ -146,11 +188,17 @@ const adminDeleteCommand: Command = {
         }
 
         if (hard) {
+          // K2/K3: erst Files unlinken, dann Cascade.
+          const userPackages = await prisma.package.findMany({
+            where: { userId: dbUser.id },
+            select: { id: true },
+          });
+          const fsRemoved = await unlinkPackageFiles(userPackages.map(p => p.id));
           const deleted = await prisma.package.deleteMany({ where: { userId: dbUser.id } });
           logAudit('BULK_HARD_DELETE', 'ADMIN', {
-            userId: dbUser.id, count: deleted.count, adminId: interaction.user.id,
+            userId: dbUser.id, count: deleted.count, fsRemoved, adminId: interaction.user.id,
           });
-          await interaction.editReply({ content: `🗑️ ${deleted.count} Pakete von ${targetUser.username} endgültig gelöscht.` });
+          await interaction.editReply({ content: `🗑️ ${deleted.count} Pakete von ${targetUser.username} endgültig gelöscht (${fsRemoved} Datei(en) entfernt).` });
         } else {
           const updated = await prisma.package.updateMany({
             where: { userId: dbUser.id, isDeleted: false },

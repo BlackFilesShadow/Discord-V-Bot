@@ -3,11 +3,11 @@ import {
   ChatInputCommandInteraction,
   EmbedBuilder,
   PermissionFlagsBits,
+  MessageFlags,
 } from 'discord.js';
+import { Prisma } from '@prisma/client';
 import { Command } from '../../types';
 import prisma from '../../database/prisma';
-import fs from 'fs';
-import path from 'path';
 
 /**
  * /admin-logs [filter] — Live-Log-Stream mit Filteroptionen.
@@ -43,15 +43,15 @@ const adminLogsCommand: Command = {
   adminOnly: true,
 
   execute: async (interaction: ChatInputCommandInteraction) => {
-    await interaction.deferReply({ ephemeral: true });
+    await interaction.deferReply({ flags: MessageFlags.Ephemeral });
 
     const filter = interaction.options.getString('filter') || 'ALL';
     const count = interaction.options.getInteger('anzahl') || 15;
     const targetUser = interaction.options.getUser('user');
 
-    const where: Record<string, unknown> = {};
+    const where: Prisma.AuditLogWhereInput = {};
     if (filter !== 'ALL') {
-      where.category = filter;
+      where.category = filter as Prisma.AuditLogWhereInput['category'];
     }
     if (targetUser) {
       const dbUser = await prisma.user.findUnique({ where: { discordId: targetUser.id } });
@@ -75,7 +75,7 @@ const adminLogsCommand: Command = {
       return;
     }
 
-    const lines = logs.map((log: any) => {
+    const lines = logs.map((log) => {
       const time = log.createdAt.toLocaleString('de-DE');
       const actor = log.actor ? `<@${log.actor.discordId}>` : 'System';
       const target = log.target ? ` → <@${log.target.discordId}>` : '';

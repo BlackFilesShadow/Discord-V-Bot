@@ -7,6 +7,7 @@ import {
   ActionRowBuilder,
   ModalSubmitInteraction,
   TextChannel,
+  MessageFlags,
 } from 'discord.js';
 import { Command } from '../../types';
 import prisma from '../../database/prisma';
@@ -57,7 +58,7 @@ const feedbackCommand: Command = {
   execute: async (interaction: ChatInputCommandInteraction) => {
     const category = interaction.options.getString('kategorie', true) as Category;
     if (!VALID.includes(category)) {
-      await interaction.reply({ content: '❌ Ungueltige Kategorie.', ephemeral: true });
+      await interaction.reply({ content: '❌ Ungueltige Kategorie.', flags: MessageFlags.Ephemeral });
       return;
     }
 
@@ -96,18 +97,18 @@ export async function handleFeedbackModal(modal: ModalSubmitInteraction): Promis
   if (!modal.customId.startsWith('feedback_modal_')) return;
   const category = modal.customId.replace('feedback_modal_', '') as Category;
   if (!VALID.includes(category)) {
-    await modal.reply({ content: '❌ Ungueltige Kategorie.', ephemeral: true });
+    await modal.reply({ content: '❌ Ungueltige Kategorie.', flags: MessageFlags.Ephemeral });
     return;
   }
 
   const subject = modal.fields.getTextInputValue('subject').trim().slice(0, 120);
   const message = modal.fields.getTextInputValue('message').trim().slice(0, 2000);
   if (!subject || !message) {
-    await modal.reply({ content: '❌ Betreff und Beschreibung duerfen nicht leer sein.', ephemeral: true });
+    await modal.reply({ content: '❌ Betreff und Beschreibung duerfen nicht leer sein.', flags: MessageFlags.Ephemeral });
     return;
   }
 
-  await modal.deferReply({ ephemeral: true });
+  await modal.deferReply({ flags: MessageFlags.Ephemeral });
 
   try {
     const fb = await prisma.feedback.create({

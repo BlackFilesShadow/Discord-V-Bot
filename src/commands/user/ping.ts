@@ -1,4 +1,4 @@
-import { SlashCommandBuilder, ChatInputCommandInteraction, PermissionFlagsBits } from 'discord.js';
+import { SlashCommandBuilder, ChatInputCommandInteraction, PermissionFlagsBits, MessageFlags } from 'discord.js';
 import { Command } from '../../types';
 import { Colors, Brand, vEmbed } from '../../utils/embedDesign';
 
@@ -15,7 +15,7 @@ const pingCommand: Command = {
   cooldown: 5,
   execute: async (interaction: ChatInputCommandInteraction) => {
     const start = Date.now();
-    await interaction.deferReply({ ephemeral: true });
+    await interaction.deferReply({ flags: MessageFlags.Ephemeral });
     const rtt = Date.now() - start;
     const wsPing = interaction.client.ws.ping;
 

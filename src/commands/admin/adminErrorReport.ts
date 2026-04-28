@@ -3,7 +3,9 @@ import {
   ChatInputCommandInteraction,
   EmbedBuilder,
   PermissionFlagsBits,
+  MessageFlags,
 } from 'discord.js';
+import { Prisma } from '@prisma/client';
 import { Command } from '../../types';
 import prisma from '../../database/prisma';
 
@@ -38,15 +40,15 @@ const adminErrorReportCommand: Command = {
   adminOnly: true,
 
   execute: async (interaction: ChatInputCommandInteraction) => {
-    await interaction.deferReply({ ephemeral: true });
+    await interaction.deferReply({ flags: MessageFlags.Ephemeral });
 
     const severity = interaction.options.getString('schwere') || 'ALL';
     const unresolvedOnly = interaction.options.getBoolean('ungeloest') ?? true;
     const count = interaction.options.getInteger('anzahl') || 15;
 
-    const where: Record<string, unknown> = {};
+    const where: Prisma.SecurityEventWhereInput = {};
     if (severity !== 'ALL') {
-      where.severity = severity;
+      where.severity = severity as Prisma.SecurityEventWhereInput['severity'];
     }
     if (unresolvedOnly) {
       where.isResolved = false;
@@ -76,7 +78,7 @@ const adminErrorReportCommand: Command = {
       return;
     }
 
-    const lines = events.map((e: any) => {
+    const lines = events.map((e) => {
       const severityEmoji: string = ({ CRITICAL: '🔴', HIGH: '🟠', MEDIUM: '🟡', LOW: '🔵' } as Record<string, string>)[e.severity] || '⚪';
       const time = e.createdAt.toLocaleString('de-DE');
       const user = e.user ? `<@${e.user.discordId}>` : 'Unbekannt';

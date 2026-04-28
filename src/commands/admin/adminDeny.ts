@@ -3,6 +3,7 @@ import {
   ChatInputCommandInteraction,
   EmbedBuilder,
   PermissionFlagsBits,
+  MessageFlags,
 } from 'discord.js';
 import { Command } from '../../types';
 import { denyManufacturer } from '../../modules/registration/register';
@@ -28,7 +29,7 @@ const adminDenyCommand: Command = {
   adminOnly: true,
 
   execute: async (interaction: ChatInputCommandInteraction) => {
-    await interaction.deferReply({ ephemeral: true });
+    await interaction.deferReply({ flags: MessageFlags.Ephemeral });
 
     const targetUser = interaction.options.getUser('user');
     const userIdStr = interaction.options.getString('user_id');

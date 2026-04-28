@@ -28,7 +28,8 @@ const pendingDevAuth = new Map<string, { commandName: string; userId: string; ex
 
 // Temporär authentifizierte Developer-Users (userId → expiresTimestamp)
 // DEV-Session: 2 Stunden gültig
-const devAuthenticatedUsers = new Map<string, number>();
+// Exportiert, damit /help (und andere) den Session-Status sauber per Import prüfen können.
+export const devAuthenticatedUsers = new Map<string, number>();
 
 const DEV_SESSION_MS = 2 * 60 * 60 * 1000; // 2 Stunden
 

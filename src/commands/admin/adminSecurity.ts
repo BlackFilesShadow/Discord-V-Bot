@@ -3,7 +3,10 @@ import {
   ChatInputCommandInteraction,
   EmbedBuilder,
   PermissionFlagsBits,
+  MessageFlags,
 } from 'discord.js';
+import { isIP } from 'net';
+import { Prisma } from '@prisma/client';
 import { Command } from '../../types';
 import prisma from '../../database/prisma';
 import { logAudit } from '../../utils/logger';
@@ -48,7 +51,7 @@ const adminSecurityCommand: Command = {
           opt.setName('grund').setDescription('Begründung').setRequired(true)
         )
         .addIntegerOption(opt =>
-          opt.setName('dauer-stunden').setDescription('Dauer in Stunden (0 = permanent)').setRequired(false)
+          opt.setName('dauer-stunden').setDescription('Dauer in Stunden (0 = permanent)').setRequired(false).setMinValue(0).setMaxValue(8760)
         )
     )
     .addSubcommand(sub =>
@@ -82,16 +85,16 @@ const adminSecurityCommand: Command = {
   adminOnly: true,
 
   execute: async (interaction: ChatInputCommandInteraction) => {
-    await interaction.deferReply({ ephemeral: true });
+    await interaction.deferReply({ flags: MessageFlags.Ephemeral });
 
     const sub = interaction.options.getSubcommand();
 
     switch (sub) {
       case 'events': {
         const type = interaction.options.getString('typ') || 'ALL';
-        const where: Record<string, unknown> = {};
+        const where: Prisma.SecurityEventWhereInput = {};
         if (type !== 'ALL') {
-          where.eventType = type;
+          where.eventType = type as Prisma.SecurityEventWhereInput['eventType'];
         }
 
         const events = await prisma.securityEvent.findMany({
@@ -106,7 +109,7 @@ const adminSecurityCommand: Command = {
           return;
         }
 
-        const lines = events.map((e: any) => {
+        const lines = events.map((e) => {
           const emoji: string = ({ CRITICAL: '🔴', HIGH: '🟠', MEDIUM: '🟡', LOW: '🔵' } as Record<string, string>)[e.severity] || '⚪';
           const resolved = e.isResolved ? '✅' : '⏳';
           const time = e.createdAt.toLocaleString('de-DE');
@@ -128,9 +131,14 @@ const adminSecurityCommand: Command = {
       }
 
       case 'blacklist': {
-        const ip = interaction.options.getString('ip', true);
+        const ip = interaction.options.getString('ip', true).trim();
         const reason = interaction.options.getString('grund', true);
         const hours = interaction.options.getInteger('dauer-stunden') || 0;
+
+        if (isIP(ip) === 0) {
+          await interaction.editReply({ content: '❌ Ungültige IP-Adresse (IPv4 oder IPv6 erwartet).' });
+          return;
+        }
 
         const expiresAt = hours > 0 ? new Date(Date.now() + hours * 60 * 60 * 1000) : null;
 
@@ -146,8 +154,13 @@ const adminSecurityCommand: Command = {
       }
 
       case 'whitelist': {
-        const ip = interaction.options.getString('ip', true);
+        const ip = interaction.options.getString('ip', true).trim();
         const reason = interaction.options.getString('grund', true);
+
+        if (isIP(ip) === 0) {
+          await interaction.editReply({ content: '❌ Ungültige IP-Adresse (IPv4 oder IPv6 erwartet).' });
+          return;
+        }
 
         await prisma.ipList.upsert({
           where: { ipAddress: ip },
@@ -161,7 +174,11 @@ const adminSecurityCommand: Command = {
       }
 
       case 'ip-entfernen': {
-        const ip = interaction.options.getString('ip', true);
+        const ip = interaction.options.getString('ip', true).trim();
+        if (isIP(ip) === 0) {
+          await interaction.editReply({ content: '❌ Ungültige IP-Adresse.' });
+          return;
+        }
         const existing = await prisma.ipList.findUnique({ where: { ipAddress: ip } });
         if (!existing) {
           await interaction.editReply({ content: '❌ IP nicht in der Liste.' });
@@ -178,6 +195,10 @@ const adminSecurityCommand: Command = {
         const event = await prisma.securityEvent.findUnique({ where: { id: eventId } });
         if (!event) {
           await interaction.editReply({ content: '❌ Security-Event nicht gefunden.' });
+          return;
+        }
+        if (event.isResolved) {
+          await interaction.editReply({ content: `ℹ️ Event \`${eventId}\` ist bereits gelöst.` });
           return;
         }
 

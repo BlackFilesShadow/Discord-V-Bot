@@ -3,9 +3,12 @@ import {
   ChatInputCommandInteraction,
   EmbedBuilder,
   PermissionFlagsBits,
+  MessageFlags,
 } from 'discord.js';
+import { Prisma } from '@prisma/client';
 import { Command } from '../../types';
 import prisma from '../../database/prisma';
+import { formatBytes } from '../../utils/embedDesign';
 
 /**
  * /admin-list-pakete — Alle Pakete und Inhalte (GUID, Metadaten, Validierungsstatus).
@@ -38,16 +41,16 @@ const adminListPaketeCommand: Command = {
   adminOnly: true,
 
   execute: async (interaction: ChatInputCommandInteraction) => {
-    await interaction.deferReply({ ephemeral: true });
+    await interaction.deferReply({ flags: MessageFlags.Ephemeral });
 
     const statusFilter = interaction.options.getString('status') || 'ALL';
     const targetUser = interaction.options.getUser('user');
     const page = interaction.options.getInteger('seite') || 1;
     const perPage = 10;
 
-    const where: Record<string, unknown> = {};
+    const where: Prisma.PackageWhereInput = {};
     if (statusFilter !== 'ALL') {
-      where.status = statusFilter;
+      where.status = statusFilter as Prisma.PackageWhereInput['status'];
     }
     if (targetUser) {
       const dbUser = await prisma.user.findUnique({ where: { discordId: targetUser.id } });
@@ -80,7 +83,7 @@ const adminListPaketeCommand: Command = {
       return;
     }
 
-    const lines = packages.map((p: any, i: number) => {
+    const lines = packages.map((p, i: number) => {
       const idx = (page - 1) * perPage + i + 1;
       const sizeStr = formatBytes(Number(p.totalSize));
       const statusEmoji = p.status === 'ACTIVE' ? '🟢' : p.status === 'QUARANTINED' ? '🟡' : p.status === 'DELETED' ? '🔴' : '🔵';
@@ -100,13 +103,5 @@ const adminListPaketeCommand: Command = {
     await interaction.editReply({ embeds: [embed] });
   },
 };
-
-function formatBytes(bytes: number): string {
-  if (bytes === 0) return '0 B';
-  const k = 1024;
-  const sizes = ['B', 'KB', 'MB', 'GB'];
-  const i = Math.floor(Math.log(bytes) / Math.log(k));
-  return `${parseFloat((bytes / Math.pow(k, i)).toFixed(2))} ${sizes[i]}`;
-}
 
 export default adminListPaketeCommand;

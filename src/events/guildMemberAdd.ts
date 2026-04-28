@@ -70,8 +70,9 @@ const guildMemberAddEvent: BotEvent = {
       });
 
       // Auto-Rollen vergeben (Sektion 9: Rollen nach Beitritt)
+      // Multi-Guild: NUR AutoRoles dieser Guild beruecksichtigen.
       const autoRoles = await prisma.autoRole.findMany({
-        where: { triggerType: 'JOIN', isActive: true },
+        where: { guildId: m.guild.id, triggerType: 'JOIN', isActive: true },
       });
 
       for (const autoRole of autoRoles) {

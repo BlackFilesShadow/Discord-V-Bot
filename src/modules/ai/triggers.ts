@@ -114,7 +114,7 @@ export const GLOBAL_AI_TRIGGERS: AiTrigger[] = [
 import prisma from '../../database/prisma';
 
 /**
- * AI-Trigger pro Guild (max 10).
+ * AI-Trigger pro Guild (max 25, siehe MAX_TRIGGERS_PER_GUILD).
  * Persistiert in BotConfig (key=`triggers:<guildId>`, value=Json[]).
  *
  * Trigger-Typen:

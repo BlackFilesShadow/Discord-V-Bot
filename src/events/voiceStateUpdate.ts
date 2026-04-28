@@ -65,8 +65,17 @@ const voiceStateUpdateEvent: BotEvent = {
       if (!guildId) return;
 
       try {
-        const dbUser = await prisma.user.findUnique({ where: { discordId: userId } });
-        if (!dbUser) return;
+        // BUGFIX: Vorher findUnique → User ohne DB-Eintrag bekamen kein
+        // Voice-XP. Jetzt: upsert stellt sicher, dass jeder aktive Voice-
+        // Teilnehmer in der DB existiert. Konsistent zu Message-XP.
+        const member = newState.member ?? oldState.member;
+        const username = member?.user.username ?? 'unknown';
+        const discriminator = member?.user.discriminator ?? '';
+        const dbUser = await prisma.user.upsert({
+          where: { discordId: userId },
+          create: { discordId: userId, username, discriminator },
+          update: { username, discriminator },
+        });
 
         // Guild-spezifische XP-Konfiguration (id == guildId), analog Message-XP
         const xpConfig = await prisma.xpConfig.findUnique({ where: { id: guildId } });

@@ -3,15 +3,17 @@ import {
   ChatInputCommandInteraction,
   PermissionFlagsBits,
   AttachmentBuilder,
+  MessageFlags,
 } from 'discord.js';
+import { Prisma } from '@prisma/client';
 import { Command } from '../../types';
 import prisma from '../../database/prisma';
 import { logAudit } from '../../utils/logger';
 import fs from 'fs';
+import fsp from 'fs/promises';
 import path from 'path';
 import crypto from 'crypto';
 import { config } from '../../config';
-import { Writable } from 'stream';
 
 /**
  * /admin-export [bereich|paket] — Export für Backup, Analyse, Compliance.
@@ -61,7 +63,7 @@ const adminExportCommand: Command = {
   adminOnly: true,
 
   execute: async (interaction: ChatInputCommandInteraction) => {
-    await interaction.deferReply({ ephemeral: true });
+    await interaction.deferReply({ flags: MessageFlags.Ephemeral });
 
     const sub = interaction.options.getSubcommand();
 
@@ -96,9 +98,9 @@ const adminExportCommand: Command = {
         const days = interaction.options.getInteger('tage') || 30;
         const since = new Date(Date.now() - days * 24 * 60 * 60 * 1000);
 
-        const where: Record<string, unknown> = { createdAt: { gte: since } };
+        const where: Prisma.AuditLogWhereInput = { createdAt: { gte: since } };
         if (category !== 'ALL') {
-          where.category = category;
+          where.category = category as Prisma.AuditLogWhereInput['category'];
         }
 
         // Streaming-Export per Cursor-Pagination, damit auch >10k Eintraege
@@ -106,7 +108,7 @@ const adminExportCommand: Command = {
         // Datei und haengen sie an, bzw. bieten Download-URL an wenn die
         // Discord-Attachment-Grenze (Default 25 MB) ueberschritten wird.
         const tmpDir = path.join(config.upload.dir, '_exports');
-        try { fs.mkdirSync(tmpDir, { recursive: true }); } catch { /* ok */ }
+        try { await fsp.mkdir(tmpDir, { recursive: true }); } catch { /* ok */ }
         // Filename-Kollisions-Schutz: Date.now() (ms) reicht bei simultanen
         // Admin-Exports nicht; deshalb 6 Hex-Zeichen Random anhaengen.
         const fileName =
@@ -134,7 +136,7 @@ const adminExportCommand: Command = {
         await writeJson('[');
         // eslint-disable-next-line no-constant-condition
         while (true) {
-          const page: any[] = await prisma.auditLog.findMany({
+          const page = await prisma.auditLog.findMany({
             where,
             // Stabile Sortierung: createdAt allein ist nicht eindeutig
             // (mehrere Logs in derselben ms moeglich). Mit id als
@@ -159,7 +161,7 @@ const adminExportCommand: Command = {
         await writeJson('\n]\n');
         await new Promise<void>((res) => out.end(() => res()));
 
-        const stat = fs.statSync(tmpPath);
+        const stat = await fsp.stat(tmpPath);
         const MAX_DISCORD = 25 * 1024 * 1024; // konservativ (Boost-Tier-1)
         logAudit('LOG_EXPORT', 'ADMIN', {
           category, days, count: total, bytes: stat.size, adminId: interaction.user.id,
@@ -187,7 +189,7 @@ const adminExportCommand: Command = {
             });
           }
         } finally {
-          if (!keepFile) fs.unlink(tmpPath, () => {});
+          if (!keepFile) fsp.unlink(tmpPath).catch(() => {});
         }
         break;
       }

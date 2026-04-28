@@ -1,6 +1,7 @@
 import prisma from '../../database/prisma';
 import { logger, logAudit } from '../../utils/logger';
 import { GuildMember, Guild, PermissionFlagsBits, type PermissionResolvable } from 'discord.js';
+import { postModLog } from './modLog';
 
 /**
  * Defense-in-depth: Welche Discord-Permission der Moderator MINDESTENS
@@ -185,6 +186,19 @@ export async function createModerationCase(params: {
     guildId: guild.id,
   });
 
+  // Mod-Log (öffentlicher Channel) — best-effort, blockiert nichts
+  await postModLog(guild, {
+    action,
+    caseNumber: modCase.caseNumber,
+    targetUserId: targetDiscordId,
+    targetUsername: targetMember?.user.username ?? targetUser.username ?? undefined,
+    moderatorUserId: moderatorDiscordId,
+    moderatorUsername: modMember?.user.username ?? modUser.username ?? undefined,
+    reason,
+    durationMinutes: duration,
+    escalationLevel,
+  });
+
   return {
     success: true,
     caseNumber: modCase.caseNumber,
@@ -194,11 +208,16 @@ export async function createModerationCase(params: {
 
 /**
  * Appeal erstellen (Sektion 4: Appeal-System).
+ *
+ * @param expectedGuildId  Wenn gesetzt, wird geprüft, dass der Case zu dieser
+ *                          Guild gehört. Verhindert Cross-Guild-Appeals (User
+ *                          aus Guild A fügt Beschwerde gegen Case in Guild B ein).
  */
 export async function createAppeal(
   caseNumber: number,
   userDiscordId: string,
-  reason: string
+  reason: string,
+  expectedGuildId?: string,
 ): Promise<{ success: boolean; message: string }> {
   const modCase = await prisma.moderationCase.findUnique({
     where: { caseNumber },
@@ -206,6 +225,14 @@ export async function createAppeal(
 
   if (!modCase) {
     return { success: false, message: `Case #${caseNumber} nicht gefunden.` };
+  }
+
+  // Cross-Guild-Schutz: Appeal nur in der Origin-Guild des Cases.
+  if (expectedGuildId && modCase.guildId && modCase.guildId !== expectedGuildId) {
+    return {
+      success: false,
+      message: 'Dieser Case gehört zu einem anderen Server. Reiche den Appeal dort ein.',
+    };
   }
 
   const user = await prisma.user.findUnique({
@@ -316,6 +343,15 @@ export async function processExpiredCases(guild: Guild): Promise<number> {
         caseNumber: modCase.caseNumber,
         action: modCase.action,
         targetUserId: modCase.targetUserId,
+      });
+
+      // Mod-Log für automatische Aufhebung (best-effort)
+      await postModLog(guild, {
+        action: `${modCase.action}_EXPIRED`,
+        caseNumber: modCase.caseNumber,
+        targetUserId: modCase.targetUser.discordId,
+        targetUsername: modCase.targetUser.username ?? undefined,
+        reason: 'Temporäre Mod-Aktion automatisch abgelaufen.',
       });
     } catch (error) {
       logger.error(`Fehler beim Aufheben von Case #${modCase.caseNumber}:`, error);

@@ -1,79 +1,83 @@
-import { SlashCommandBuilder, ChatInputCommandInteraction, EmbedBuilder } from 'discord.js';
+import {
+  SlashCommandBuilder,
+  ChatInputCommandInteraction,
+  MessageFlags,
+} from 'discord.js';
 import { Command } from '../../types';
 import prisma from '../../database/prisma';
 import { Colors, Brand, vEmbed, progressBar } from '../../utils/embedDesign';
 
 /**
- * /level Command (Sektion 8):
- * - Transparente XP- und Level-Anzeige im Profil oder per Command
+ * /level (Sektion 8):
+ * Transparente XP- und Level-Anzeige.
+ *
+ * Wenn der Ziel-User noch keinen DB-Eintrag oder keine LevelData fuer diese
+ * Guild hat, wird Level 0 / 0 XP angezeigt (statt Fehler). Konsistent zum
+ * gefixten XP-System (jeder aktive Schreiber wird automatisch erfasst).
  */
 const levelCommand: Command = {
   data: new SlashCommandBuilder()
     .setName('level')
     .setDescription('Zeige Level und XP an')
+    .setDMPermission(false)
     .addUserOption(opt =>
       opt.setName('user').setDescription('User dessen Level angezeigt werden soll').setRequired(false)
     ),
 
   execute: async (interaction: ChatInputCommandInteraction) => {
-    await interaction.deferReply();
-
     const guildId = interaction.guildId;
     if (!guildId) {
-      await interaction.editReply({ content: '❌ /level nur in Servern verfügbar.' });
+      await interaction.reply({ content: '❌ /level nur in Servern verfügbar.', flags: MessageFlags.Ephemeral });
       return;
     }
+    await interaction.deferReply();
 
-    const targetUser = interaction.options.getUser('user') || interaction.user;
+    const targetUser = interaction.options.getUser('user') ?? interaction.user;
 
     const dbUser = await prisma.user.findUnique({
       where: { discordId: targetUser.id },
     });
 
-    if (!dbUser) {
-      await interaction.editReply({ content: `❌ Keine Daten für ${targetUser.username} gefunden.` });
-      return;
-    }
+    const ld = dbUser
+      ? await prisma.levelData.findUnique({
+          where: { userId_guildId: { userId: dbUser.id, guildId } },
+        })
+      : null;
 
-    const ld = await prisma.levelData.findUnique({
-      where: { userId_guildId: { userId: dbUser.id, guildId } },
-    });
+    const level = ld?.level ?? 0;
+    const currentXp = ld ? Number(ld.xp) : 0;
+    const totalMessages = ld?.totalMessages ?? 0;
+    const voiceMinutes = ld?.voiceMinutes ?? 0;
 
-    if (!ld) {
-      await interaction.editReply({ content: `❌ Keine Level-Daten für ${targetUser.username} auf diesem Server.` });
-      return;
-    }
-
-    const currentXp = Number(ld.xp);
-    const xpForCurrentLevel = xpForLevel(ld.level);
-    const xpForNextLevel = xpForLevel(ld.level + 1);
+    const xpForCurrentLevel = xpForLevel(level);
+    const xpForNextLevel = xpForLevel(level + 1);
     const xpProgress = currentXp - xpForCurrentLevel;
     const xpNeeded = xpForNextLevel - xpForCurrentLevel;
-    const progressPercent = Math.min(100, Math.floor((xpProgress / xpNeeded) * 100));
+    const progressPercent = xpNeeded > 0 ? Math.min(100, Math.floor((xpProgress / xpNeeded) * 100)) : 0;
+    const bar = progressBar(xpProgress, xpNeeded, 16);
 
-    // Fortschrittsbalken
-    const barLength = 16;
-    const bar = progressBar(xpProgress, xpNeeded, barLength);
-
-    // Rang berechnen (nur in dieser Guild)
-    const rank = await prisma.levelData.count({
-      where: { guildId, xp: { gt: ld.xp } },
-    }) + 1;
+    let rankStr = '—';
+    if (ld) {
+      const rank = await prisma.levelData.count({
+        where: { guildId, xp: { gt: ld.xp } },
+      }) + 1;
+      rankStr = `#${rank}`;
+    }
 
     const embed = vEmbed(Colors.Gold)
       .setTitle(`⭐  ${targetUser.username}`)
       .setThumbnail(targetUser.displayAvatarURL())
       .setDescription(
         `${Brand.divider}\n\n` +
-        `🏆 **Level ${ld.level}** ${Brand.dot} Rang **#${rank}**\n\n` +
+        `🏆 **Level ${level}** ${Brand.dot} Rang **${rankStr}**\n\n` +
         `${bar}  **${progressPercent}%**\n` +
         `┃ ${xpProgress.toLocaleString('de-DE')} / ${xpNeeded.toLocaleString('de-DE')} XP\n\n` +
         Brand.divider
       )
       .addFields(
         { name: '✨ Gesamt-XP', value: `**${currentXp.toLocaleString('de-DE')}**`, inline: true },
-        { name: '💬 Nachrichten', value: `**${ld.totalMessages.toLocaleString('de-DE')}**`, inline: true },
-        { name: '🎙️ Voice', value: `**${ld.voiceMinutes.toLocaleString('de-DE')}** Min`, inline: true },
+        { name: '💬 Nachrichten', value: `**${totalMessages.toLocaleString('de-DE')}**`, inline: true },
+        { name: '🎙️ Voice', value: `**${voiceMinutes.toLocaleString('de-DE')}** Min`, inline: true },
       );
 
     await interaction.editReply({ embeds: [embed] });

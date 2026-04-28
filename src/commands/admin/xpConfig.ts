@@ -1,4 +1,4 @@
-import { SlashCommandBuilder, ChatInputCommandInteraction, PermissionFlagsBits } from 'discord.js';
+import { SlashCommandBuilder, ChatInputCommandInteraction, PermissionFlagsBits, MessageFlags } from 'discord.js';
 import { Command } from '../../types';
 import prisma from '../../database/prisma';
 import { logger } from '../../utils/logger';
@@ -15,10 +15,10 @@ const xpConfigCommand: Command = {
       sub
         .setName('rate')
         .setDescription('XP-Raten einstellen')
-        .addIntegerOption(opt => opt.setName('min').setDescription('Min XP/Nachricht').setRequired(false))
-        .addIntegerOption(opt => opt.setName('max').setDescription('Max XP/Nachricht').setRequired(false))
-        .addIntegerOption(opt => opt.setName('voice').setDescription('XP/Voice-Minute').setRequired(false))
-        .addNumberOption(opt => opt.setName('multiplier').setDescription('XP-Multiplikator').setRequired(false))
+        .addIntegerOption(opt => opt.setName('min').setDescription('Min XP/Nachricht').setRequired(false).setMinValue(0).setMaxValue(10000))
+        .addIntegerOption(opt => opt.setName('max').setDescription('Max XP/Nachricht').setRequired(false).setMinValue(0).setMaxValue(10000))
+        .addIntegerOption(opt => opt.setName('voice').setDescription('XP/Voice-Minute').setRequired(false).setMinValue(0).setMaxValue(10000))
+        .addNumberOption(opt => opt.setName('multiplier').setDescription('XP-Multiplikator').setRequired(false).setMinValue(0).setMaxValue(100))
     )
     .addSubcommand(sub =>
       sub
@@ -87,7 +87,7 @@ const xpConfigCommand: Command = {
   devOnly: true,
 
   execute: async (interaction: ChatInputCommandInteraction) => {
-    await interaction.deferReply({ ephemeral: true });
+    await interaction.deferReply({ flags: MessageFlags.Ephemeral });
     const sub = interaction.options.getSubcommand();
     const guildId = interaction.guildId;
     if (!guildId) {
@@ -110,20 +110,23 @@ const xpConfigCommand: Command = {
       const max = interaction.options.getInteger('max');
       const voice = interaction.options.getInteger('voice');
       const multiplier = interaction.options.getNumber('multiplier');
-      const config = await prisma.xpConfig.upsert({
+
+      // Konsistenzprüfung: effektives min darf nicht > effektives max sein.
+      const current = await ensureConfig();
+      const effMin = min ?? current.messageXpMin;
+      const effMax = max ?? current.messageXpMax;
+      if (effMin > effMax) {
+        await interaction.editReply(`❌ Min-XP (${effMin}) darf nicht größer als Max-XP (${effMax}) sein.`);
+        return;
+      }
+
+      const config = await prisma.xpConfig.update({
         where: { id: guildId },
-        update: {
+        data: {
           ...(min !== null ? { messageXpMin: min } : {}),
           ...(max !== null ? { messageXpMax: max } : {}),
           ...(voice !== null ? { voiceXpPerMinute: voice } : {}),
           ...(multiplier !== null ? { levelMultiplier: multiplier } : {}),
-        },
-        create: {
-          id: guildId,
-          messageXpMin: min ?? 15,
-          messageXpMax: max ?? 25,
-          voiceXpPerMinute: voice ?? 5,
-          levelMultiplier: multiplier ?? 1.0,
         },
       });
       await interaction.editReply(`✅ XP-Konfiguration aktualisiert:
@@ -236,10 +239,10 @@ Min: ${config.messageXpMin}, Max: ${config.messageXpMax}, Voice: ${config.voiceX
 
     if (sub === 'max-level') {
       const level = interaction.options.getInteger('level', true);
-      await prisma.xpConfig.upsert({
+      await ensureConfig();
+      await prisma.xpConfig.update({
         where: { id: guildId },
-        update: { maxLevel: level },
-        create: { id: guildId, maxLevel: level },
+        data: { maxLevel: level },
       });
       await interaction.editReply(`✅ Max-Level auf **${level}** gesetzt.`);
       return;
@@ -247,10 +250,10 @@ Min: ${config.messageXpMin}, Max: ${config.messageXpMax}, Voice: ${config.voiceX
 
     if (sub === 'max-rolle') {
       const role = interaction.options.getRole('role');
-      await prisma.xpConfig.upsert({
+      await ensureConfig();
+      await prisma.xpConfig.update({
         where: { id: guildId },
-        update: { maxLevelRoleId: role?.id ?? null },
-        create: { id: guildId, maxLevelRoleId: role?.id ?? null },
+        data: { maxLevelRoleId: role?.id ?? null },
       });
       if (role) {
         await interaction.editReply(`✅ Bei Erreichen des Max-Levels wird automatisch <@&${role.id}> vergeben.`);

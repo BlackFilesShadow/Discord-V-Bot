@@ -1,4 +1,4 @@
-import { SlashCommandBuilder, ChatInputCommandInteraction, PermissionFlagsBits } from 'discord.js';
+import { SlashCommandBuilder, ChatInputCommandInteraction, PermissionFlagsBits, MessageFlags } from 'discord.js';
 import os from 'os';
 import { Command } from '../../types';
 import prisma from '../../database/prisma';
@@ -31,7 +31,7 @@ const statusCommand: Command = {
   devOnly: true,
   cooldown: 10,
   execute: async (interaction: ChatInputCommandInteraction) => {
-    await interaction.deferReply({ ephemeral: true });
+    await interaction.deferReply({ flags: MessageFlags.Ephemeral });
 
     const client = interaction.client;
     const uptimeMs = client.uptime ?? 0;

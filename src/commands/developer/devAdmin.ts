@@ -3,10 +3,10 @@ import {
   ChatInputCommandInteraction,
   EmbedBuilder,
   PermissionFlagsBits,
+  MessageFlags,
 } from 'discord.js';
 import { Command } from '../../types';
 import prisma from '../../database/prisma';
-import { logger } from '../../utils/logger';
 import { logAudit } from '../../utils/logger';
 
 /**
@@ -44,7 +44,7 @@ const devAdminCommand: Command = {
   devOnly: true,
 
   execute: async (interaction: ChatInputCommandInteraction) => {
-    await interaction.deferReply({ ephemeral: true });
+    await interaction.deferReply({ flags: MessageFlags.Ephemeral });
 
     const sub = interaction.options.getSubcommand();
 
@@ -107,9 +107,11 @@ const devAdminCommand: Command = {
           where: { discordId: targetUser.id },
         });
 
-        if (!dbUser || !['ADMIN', 'SUPER_ADMIN'].includes(dbUser.role)) {
+        if (!dbUser || dbUser.role !== 'ADMIN') {
           await interaction.editReply({
-            content: `❌ **${targetUser.username}** ist kein Admin.`,
+            content: dbUser && ['SUPER_ADMIN', 'DEVELOPER'].includes(dbUser.role)
+              ? `⛔ **${targetUser.username}** ist \`${dbUser.role}\` — dieser Befehl entfernt nur reine ADMIN-Rollen.`
+              : `❌ **${targetUser.username}** ist kein Admin.`,
           });
           return;
         }

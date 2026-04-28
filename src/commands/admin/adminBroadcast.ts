@@ -2,7 +2,9 @@ import {
   SlashCommandBuilder,
   ChatInputCommandInteraction,
   PermissionFlagsBits,
+  MessageFlags,
 } from 'discord.js';
+import { Prisma } from '@prisma/client';
 import { Command } from '../../types';
 import prisma from '../../database/prisma';
 import { logAudit, logger } from '../../utils/logger';
@@ -35,16 +37,16 @@ const adminBroadcastCommand: Command = {
   adminOnly: true,
 
   execute: async (interaction: ChatInputCommandInteraction) => {
-    await interaction.deferReply({ ephemeral: true });
+    await interaction.deferReply({ flags: MessageFlags.Ephemeral });
 
     const message = interaction.options.getString('nachricht', true);
     const target = interaction.options.getString('zielgruppe') || 'ALL';
 
-    const where: Record<string, unknown> = { status: 'ACTIVE' };
+    const where: Prisma.UserWhereInput = { status: 'ACTIVE' };
     if (target === 'MANUFACTURER') {
       where.isManufacturer = true;
     } else if (target !== 'ALL') {
-      where.role = target;
+      where.role = target as Prisma.UserWhereInput['role'];
     }
 
     const users = await prisma.user.findMany({ where, select: { discordId: true } });

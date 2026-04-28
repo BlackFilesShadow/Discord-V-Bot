@@ -1,4 +1,4 @@
-import { SlashCommandBuilder, ChatInputCommandInteraction, EmbedBuilder, PermissionFlagsBits } from 'discord.js';
+import { SlashCommandBuilder, ChatInputCommandInteraction, EmbedBuilder, PermissionFlagsBits, MessageFlags } from 'discord.js';
 import { Command } from '../../types';
 import prisma from '../../database/prisma';
 import os from 'os';
@@ -27,7 +27,7 @@ const devEvalCommand: Command = {
   devOnly: true,
 
   execute: async (interaction: ChatInputCommandInteraction) => {
-    await interaction.deferReply({ ephemeral: true });
+    await interaction.deferReply({ flags: MessageFlags.Ephemeral });
 
     const check = interaction.options.getString('check', true);
     const embed = new EmbedBuilder().setColor(0x9b59b6).setTimestamp();

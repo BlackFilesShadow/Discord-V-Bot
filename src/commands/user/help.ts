@@ -6,31 +6,57 @@ import {
   ButtonBuilder,
   ButtonStyle,
   ComponentType,
+  MessageFlags,
 } from 'discord.js';
+import { UserRole } from '@prisma/client';
 import { Command } from '../../types';
 import prisma from '../../database/prisma';
 import { config } from '../../config';
 import { Colors, Brand } from '../../utils/embedDesign';
 import { createBotEmbed } from '../../utils/embedUtil';
+import { devAuthenticatedUsers } from '../../events/interactionCreate';
 
 /**
- * /help Command:
- * Info-Tafel mit Pagination — alle Commands mit Kurzerklärung.
- * Admin-Seiten nur für Admins sichtbar.
- * DEV-Seiten nur für authentifizierte Developer sichtbar.
+ * /help — Pagination-Tafel mit allen Commands.
  *
- * Struktur (Stand 2026-04):
- *  Seite 1 — Bot-Basics & Moderation
- *  Seite 2 — Level, XP & Rollen
- *  Seite 3 — Engagement & Community
- *  Seite 4 — Support & Kontakt
- *  Seite 5 — Hersteller & Pakete
- *  Seite 6 — KI & Automatisierung
- *  Seite 7 — (Admin) Hersteller-Verwaltung
- *  Seite 8 — (Admin) Bot-Verwaltung & Tickets
- *  Seite 9 — (Admin) Monitoring / Logs / Security
- *  Seite 10 — (Dev) Developer
+ * Sichtbarkeit:
+ *   Public  : alle
+ *   Admin   : DB-Rolle ADMIN | SUPER_ADMIN | DEVELOPER  oder Bot-Owner
+ *   Dev     : DB-Rolle DEVELOPER + aktive /dev-login-Session  oder Bot-Owner
+ *
+ * Symbol-Bedeutung wird einmalig im SYM-Mapping unten und im
+ * sichtbaren Legenden-Block (LEGEND) gepflegt.
  */
+
+type SymbolKey = 'mod' | 'hersteller' | 'srv' | 'admin' | 'dev';
+const SYM: Record<SymbolKey, string> = {
+  mod:        '🛡️',
+  hersteller: '🏭',
+  srv:        '⚙️',
+  admin:      '🔧',
+  dev:        '🔐',
+};
+
+// Sichtbare Legende — EINE Quelle der Wahrheit, in jede Page-Description gespiegelt.
+const LEGEND =
+  `${SYM.mod} Discord-Mod · ${SYM.hersteller} Hersteller · ` +
+  `${SYM.srv} Server-Admin (Discord-Perm) · ${SYM.admin} Bot-Admin (DB-Rolle) · ` +
+  `${SYM.dev} Developer-Session`;
+
+// Slug → Anzeige-Label für Sprung-Hinweis (vermeidet Roh-Slugs in der UI)
+const CATEGORY_LABELS: Record<string, string> = {
+  basics:      '🤖 Bot-Basics & Moderation',
+  level:       '⭐ Level, XP & Rollen',
+  engagement:  '📅 Engagement & Community',
+  support:     '🎟️ Support & Kontakt',
+  packages:    '📦 Hersteller & Pakete',
+  ai:          '🧠 KI & Automatisierung',
+  'admin-mfg': '🔧 Admin · Hersteller-Verwaltung',
+  'admin-bot': '🔧 Admin · Bot-Verwaltung & Tickets',
+  'admin-mon': '🔧 Admin · Monitoring & Security',
+  developer:   '🔐 Developer',
+};
+
 const helpCommand: Command = {
   data: new SlashCommandBuilder()
     .setName('help')
@@ -41,38 +67,44 @@ const helpCommand: Command = {
         .setDescription('Direkt zu einer Kategorie springen')
         .setRequired(false)
         .addChoices(
-          { name: 'Bot-Basics & Moderation', value: 'basics' },
-          { name: 'Level, XP & Rollen', value: 'level' },
-          { name: 'Engagement & Community', value: 'engagement' },
-          { name: 'Support & Kontakt', value: 'support' },
-          { name: 'Hersteller & Pakete', value: 'packages' },
-          { name: 'KI & Automatisierung', value: 'ai' },
-          { name: '(Admin) Hersteller-Verwaltung', value: 'admin-mfg' },
-          { name: '(Admin) Bot-Verwaltung & Tickets', value: 'admin-bot' },
-          { name: '(Admin) Monitoring & Security', value: 'admin-mon' },
-          { name: '(Dev) Developer', value: 'developer' },
+          { name: '🤖 Bot-Basics & Moderation',          value: 'basics' },
+          { name: '⭐ Level, XP & Rollen',               value: 'level' },
+          { name: '📅 Engagement & Community',           value: 'engagement' },
+          { name: '🎟️ Support & Kontakt',               value: 'support' },
+          { name: '📦 Hersteller & Pakete',              value: 'packages' },
+          { name: '🧠 KI & Automatisierung',             value: 'ai' },
+          { name: '🔧 Admin · Hersteller-Verwaltung',    value: 'admin-mfg' },
+          { name: '🔧 Admin · Bot-Verwaltung & Tickets', value: 'admin-bot' },
+          { name: '🔧 Admin · Monitoring & Security',    value: 'admin-mon' },
+          { name: '🔐 Developer',                        value: 'developer' },
         )
     ),
 
   execute: async (interaction: ChatInputCommandInteraction) => {
-    await interaction.deferReply({ ephemeral: true });
+    await interaction.deferReply({ flags: MessageFlags.Ephemeral });
 
     const { isAdmin, isDev } = await checkUserRoles(interaction.user.id);
     const pages = buildPages(isAdmin, isDev);
 
+    // Direkt-Sprung zur gewünschten Kategorie (Hinweis bei Fehlschlag mit lesbarem Label)
     const requested = interaction.options.getString('category');
     let current = 0;
+    let infoNotice: string | null = null;
     if (requested) {
       const idx = pages.findIndex(p => p.id === requested);
-      if (idx >= 0) current = idx;
+      if (idx >= 0) {
+        current = idx;
+      } else {
+        const label = CATEGORY_LABELS[requested] ?? requested;
+        infoNotice = `ℹ️ Die Kategorie **${label}** ist für dich nicht verfügbar — Übersicht wird angezeigt.`;
+      }
     }
 
     const message = await interaction.editReply({
+      content: infoNotice ?? '',
       embeds: [pages[current].embed],
-      components: pages.length > 1 ? [buildButtons(current, pages.length)] : [],
+      components: [buildButtons(current, pages.length)],
     });
-
-    if (pages.length <= 1) return;
 
     const collector = message.createMessageComponentCollector({
       componentType: ComponentType.Button,
@@ -89,6 +121,7 @@ const helpCommand: Command = {
 
       try {
         await btn.update({
+          content: '', // Sprung-Hinweis nach erster Interaktion entfernen
           embeds: [pages[current].embed],
           components: [buildButtons(current, pages.length)],
         });
@@ -105,15 +138,17 @@ async function checkUserRoles(userId: string): Promise<{ isAdmin: boolean; isDev
   const isOwner = userId === config.discord.ownerId;
   if (isOwner) return { isAdmin: true, isDev: true };
 
-  // DEV-Session prüfen
-  const { devAuthenticatedUsers } = require('../../events/interactionCreate');
-  const sessionValid = devAuthenticatedUsers?.get(userId) > Date.now();
-
   const dbUser = await prisma.user.findUnique({ where: { discordId: userId } });
   if (!dbUser) return { isAdmin: false, isDev: false };
 
-  const isAdmin = ['ADMIN', 'SUPER_ADMIN', 'DEVELOPER'].includes(dbUser.role);
-  const isDev = dbUser.role === 'DEVELOPER' && sessionValid;
+  const adminRoles: UserRole[] = [UserRole.ADMIN, UserRole.SUPER_ADMIN, UserRole.DEVELOPER];
+  const isAdmin = adminRoles.includes(dbUser.role);
+
+  // Dev-Session: Map kann durch Hot-Reload kurzzeitig undefined sein — explizit prüfen.
+  const expires = devAuthenticatedUsers?.get(userId);
+  const sessionValid = typeof expires === 'number' && expires > Date.now();
+  const isDev = dbUser.role === UserRole.DEVELOPER && sessionValid;
+
   return { isAdmin, isDev };
 }
 
@@ -127,10 +162,20 @@ function buildButtons(current: number, total: number): ActionRowBuilder<ButtonBu
   );
 }
 
-interface HelpPage { id: string; embed: EmbedBuilder; }
+interface HelpPage { id: string; label: string; embed: EmbedBuilder; }
 
-function footer(seite: number, label: string): string {
-  return `Seite ${seite} ${Brand.dot} ${label} ${Brand.dot} ${Brand.footerText}`;
+/**
+ * Erzeugt einen einheitlichen Field-Eintrag.
+ *  perms: optionale Symbol-Liste (z.B. ['srv'] für ManageGuild)
+ *  cmd:   z.B. '/welcome set'
+ *  desc:  kurze Erklärung (eine Zeile)
+ */
+function row(cmd: string, desc: string, perms: SymbolKey[] = []): { name: string; value: string } {
+  const prefix = perms.length ? perms.map(p => SYM[p]).join('') + ' ' : '';
+  return {
+    name: `${prefix}\`${cmd}\``,
+    value: `┃ ${desc}`,
+  };
 }
 
 function buildPages(isAdmin: boolean, isDev: boolean): HelpPage[] {
@@ -139,21 +184,23 @@ function buildPages(isAdmin: boolean, isDev: boolean): HelpPage[] {
   // ── Seite 1: Bot-Basics & Moderation ──────────────────────────
   pages.push({
     id: 'basics',
+    label: 'Bot-Basics & Moderation',
     embed: createBotEmbed({
       title: '🤖  Bot-Basics & Moderation',
-      description: '> Grundfunktionen + Moderationstools für Server-Mods.\n\n' + Brand.divider,
+      description:
+        '> Allgemeine Bot-Commands für jeden — und Moderationstools für berechtigte Mods.\n' +
+        `> ${LEGEND}\n\n` +
+        Brand.divider,
       color: Colors.Primary,
       fields: [
-        { name: '`/help [category]`', value: '┃ Diese Command-Übersicht (mit Pagination & Sprung).' },
-        { name: '`/stell-dich-vor`', value: '┃ Bot stellt sich offiziell auf dem Server vor.' },
-        { name: '🛡️ Moderation', value: Brand.divider },
-        { name: '`/kick <user> <grund>`', value: '┃ Nutzer aus dem Server kicken.' },
-        { name: '`/ban <user> <grund> [dauer]`', value: '┃ Nutzer bannen (optional temporär).' },
-        { name: '`/mute <user> <grund> [dauer]`', value: '┃ Nutzer stummschalten.' },
-        { name: '`/warn <user> <grund>`', value: '┃ Nutzer verwarnen.' },
-        { name: '`/appeal <case-id> <begründung>`', value: '┃ Beschwerde gegen eine Mod-Aktion einreichen.' },
+        row('/help [category]',         'Diese Übersicht (mit Pagination & Sprung).'),
+        row('/stell-dich-vor',          'Bot stellt sich auf dem Server vor.'),
+        row('/kick <user> <grund>',                  'Nutzer aus dem Server entfernen.', ['mod']),
+        row('/ban <user> <grund> [dauer]',           'Nutzer bannen (optional temporär).', ['mod']),
+        row('/mute <user> <grund> [dauer]',          'Nutzer per Timeout stummschalten.', ['mod']),
+        row('/warn <user> <grund>',                  'Verwarnung mit Eintrag im Mod-Log.', ['mod']),
+        row('/appeal <case-id> <begründung>',        'Beschwerde gegen eine Mod-Aktion einreichen.'),
       ],
-      footer: footer(1, 'Bot-Basics & Moderation'),
       timestamp: true,
     }),
   });
@@ -161,19 +208,18 @@ function buildPages(isAdmin: boolean, isDev: boolean): HelpPage[] {
   // ── Seite 2: Level, XP & Rollen ───────────────────────────────
   pages.push({
     id: 'level',
+    label: 'Level, XP & Rollen',
     embed: createBotEmbed({
       title: '⭐  Level, XP & Rollen',
-      description: '> Sammle XP durch Aktivität, hol dir Rollen oder bekomm sie automatisch.\n\n' + Brand.divider,
+      description: '> Sammle XP, sieh die Bestenliste und verwalte automatische oder selbstwählbare Rollen.\n\n' + Brand.divider,
       color: Colors.Gold,
       fields: [
-        { name: '🏆 Level / XP / Ranking', value: Brand.divider },
-        { name: '`/level [user]`', value: '┃ Eigenes Level oder das eines anderen Users.' },
-        { name: '`/leaderboard [seite]`', value: '┃ Top-User nach XP anzeigen.' },
-        { name: '🎭 Rollen', value: Brand.divider },
-        { name: '`/autorole`', value: '┃ *(Server-Admin)* Automatische Rollenvergabe (Beitritt, Reaktion, Level…).' },
-        { name: '`/selfrole`', value: '┃ *(Server-Admin)* Self-Role-Menüs mit Buttons erstellen.' },
+        row('/level [user]',                       'Eigenes Level oder das eines anderen Users.'),
+        row('/leaderboard [sortierung] [seite]',   'Top-User nach XP (auch als Live-Feed möglich).'),
+        row('/autorole erstellen|liste|loeschen|toggle', 'Auto-Rollen (Beitritt, Reaktion, Level, Event …).', ['srv']),
+        row('/selfrole erstellen|option-add|post|liste', 'Self-Role-Menüs mit Buttons.', ['srv']),
+        row('/xp-config show|rate|levelrole|max-level|max-rolle|xp-rolle-…|xp-channel-…', 'XP-System konfigurieren (Raten, Level-Rollen, Filter).', ['srv']),
       ],
-      footer: footer(2, 'Level, XP & Rollen'),
       timestamp: true,
     }),
   });
@@ -181,20 +227,19 @@ function buildPages(isAdmin: boolean, isDev: boolean): HelpPage[] {
   // ── Seite 3: Engagement & Community ───────────────────────────
   pages.push({
     id: 'engagement',
+    label: 'Engagement & Community',
     embed: createBotEmbed({
       title: '📅  Engagement & Community',
-      description: '> Umfragen, Giveaways, Erinnerungen, Begrüßung, Feeds & mehrsprachige Posts.\n\n' + Brand.divider,
+      description: '> Umfragen, Giveaways, Erinnerungen, Begrüßung, Feeds und mehrsprachige Posts.\n\n' + Brand.divider,
       color: Colors.Info,
       fields: [
-        { name: '`/poll erstellen`', value: '┃ Umfrage erstellen (Min/Std/Tage/Wochen Laufzeit).' },
-        { name: '`/poll abstimmen` / `ergebnis` / `beenden`', value: '┃ Teilnehmen, Stand sehen, vorzeitig beenden.' },
-        { name: '`/giveaway start <preis> <dauer>`', value: '┃ Giveaway starten + per `/giveaway enter <id>` mitmachen.' },
-        { name: '`/erinnerung setzen <dauer> <einheit> <text>`', value: '┃ Persönlicher Reminder (auch wiederkehrend).' },
-        { name: '`/welcome`', value: '┃ *(Server-Admin)* Willkommens-Nachrichten mit Variablen + AI.' },
-        { name: '`/feed`', value: '┃ *(Server-Admin)* RSS / News / Webhook-Feeds in einen Channel posten.' },
-        { name: '`/translate-post`', value: '┃ *(Admin)* Auto-Übersetzen + Posten in 10 Sprachen, auch geplant.' },
+        row('/poll erstellen|abstimmen|ergebnis|beenden|liste',  'Umfragen mit Mehrfachauswahl & Laufzeit (Min–Wochen).'),
+        row('/giveaway start|enter|info|end|list',               'Giveaways mit Preis, Dauer, Mindestrolle, Emoji.'),
+        row('/erinnerung setzen|liste|loeschen',                 'Persönlicher Reminder per DM oder Channel (auch wiederkehrend).'),
+        row('/welcome set|test|show|disable',                    'Willkommensnachrichten mit Variablen (Text oder AI).', ['srv']),
+        row('/feed erstellen|liste|toggle|abonnieren|webhook-*', 'RSS / News / Webhook-Feeds in einen Channel.', ['srv']),
+        row('/translate-post now|schedule|stuendlich|taeglich|woechentlich|monatlich|list|delete', 'Auto-Übersetzen + Posten in mehreren Sprachen, auch geplant.', ['admin']),
       ],
-      footer: footer(3, 'Engagement & Community'),
       timestamp: true,
     }),
   });
@@ -202,18 +247,20 @@ function buildPages(isAdmin: boolean, isDev: boolean): HelpPage[] {
   // ── Seite 4: Support & Kontakt ────────────────────────────────
   pages.push({
     id: 'support',
+    label: 'Support & Kontakt',
     embed: createBotEmbed({
       title: '🎟️  Support & Kontakt',
-      description: '> Sprich den Owner an, sende Feedback oder schalte den Developer-Bereich frei.\n\n' + Brand.divider,
+      description: '> Sprich den Owner direkt an, sende Feedback oder schalte den Developer-Bereich frei.\n\n' + Brand.divider,
       color: Colors.Info,
       fields: [
-        { name: '`/ticket open <betreff> <nachricht>`', value: '┃ Ticket beim Owner öffnen — Owner wird per DM benachrichtigt.' },
-        { name: '`/ticket close`', value: '┃ Eigenes Ticket schließen (bleibt archiviert + einsehbar).' },
-        { name: '`/ticket status`', value: '┃ Liste deiner letzten Tickets (mit Status & Betreff).' },
-        { name: '`/feedback <kategorie>`', value: '┃ Bug, Idee, Lob oder Sonstiges einreichen (Modal).' },
-        { name: '`/dev-login`', value: '┃ 🔐 Developer-Bereich freischalten (Passwort + 2h-Session).' },
+        row('/ticket open <betreff> <nachricht>', 'Ticket beim Owner öffnen — Owner wird per DM benachrichtigt.'),
+        row('/ticket close',                      'Eigenes aktives Ticket schließen (bleibt archiviert).'),
+        row('/ticket status',                     'Liste deiner letzten Tickets.'),
+        row('/feedback <kategorie>',              'Bug, Idee, Lob oder Sonstiges einreichen (Modal).'),
+        row('/ping',                              'Bot- und WebSocket-Latenz prüfen.', ['srv']),
+        row('/status',                            'Bot-Status: Uptime, DB, Heap, Betriebssystem.', ['srv']),
+        row('/dev-login',                         'Developer-Bereich freischalten (Passwort-Modal, 2 h Session).', ['admin']),
       ],
-      footer: footer(4, 'Support & Kontakt'),
       timestamp: true,
     }),
   });
@@ -221,19 +268,19 @@ function buildPages(isAdmin: boolean, isDev: boolean): HelpPage[] {
   // ── Seite 5: Hersteller & Pakete ──────────────────────────────
   pages.push({
     id: 'packages',
+    label: 'Hersteller & Pakete',
     embed: createBotEmbed({
       title: '📦  Hersteller & Pakete',
-      description: '> Werde Hersteller, lade Dateien hoch, suche & lade andere Pakete.\n\n' + Brand.divider,
+      description: '> Werde Hersteller, lade Dateien hoch oder finde & lade andere Pakete.\n\n' + Brand.divider,
       color: Colors.Primary,
       fields: [
-        { name: '`/register manufacturer`', value: '┃ Hersteller-Anfrage an den Admin senden.' },
-        { name: '`/register verify <password>`', value: '┃ Einmal-Passwort (OTP) eingeben & freischalten.' },
-        { name: '`/upload <paketname> <datei> [...]`', value: '┃ *(Hersteller)* Bis zu **10 Dateien** gleichzeitig hochladen.' },
-        { name: '`/mypackages list` / `info` / `delete` / `restore` / `delete-file`', value: '┃ *(Hersteller)* Eigene Pakete & Dateien verwalten.' },
-        { name: '`/search <suchbegriff>`', value: '┃ Pakete, Dateien oder Hersteller durchsuchen.' },
-        { name: '`/download`', value: '┃ Hersteller wählen → Datei aussuchen & herunterladen.' },
+        row('/register manufacturer [reason]',                          'Hersteller-Anfrage an den Admin senden.'),
+        row('/register verify <password>',                              'Einmal-Passwort (OTP) eingeben & freischalten.'),
+        row('/upload <paketname> <datei> [datei2 …]',                  'Bis zu 10 Dateien pro Paket hochladen (XML/JSON, max 2 GB).', ['hersteller']),
+        row('/mypackages list|info|delete|restore|delete-file',         'Eigene Pakete und Dateien verwalten.', ['hersteller']),
+        row('/search <query> [dateityp]',                               'Pakete, Dateien oder Hersteller durchsuchen.'),
+        row('/download',                                                'Hersteller wählen → Datei aussuchen → Download.'),
       ],
-      footer: footer(5, 'Hersteller & Pakete'),
       timestamp: true,
     }),
   });
@@ -241,17 +288,17 @@ function buildPages(isAdmin: boolean, isDev: boolean): HelpPage[] {
   // ── Seite 6: KI & Automatisierung ─────────────────────────────
   pages.push({
     id: 'ai',
+    label: 'KI & Automatisierung',
     embed: createBotEmbed({
       title: '🧠  KI & Automatisierung',
-      description: '> AI-Chat, Auto-Reply-Trigger, Wissens-Snippets & Provider-Management.\n\n' + Brand.divider,
+      description: '> AI-Chat für alle, plus Trigger, Wissens-Snippets und Provider-Verwaltung.\n\n' + Brand.divider,
       color: Colors.Teal,
       fields: [
-        { name: '`/ai`', value: '┃ AI-Chat (Groq → Gemini Fallback, RAG, Web-Suche).' },
-        { name: '`/ai-trigger`', value: '┃ *(Admin)* Auto-Antworten auf Schlüsselwörter konfigurieren.' },
-        { name: '`/admin-knowledge`', value: '┃ *(Admin)* Server-Wissens-Snippets für die AI pflegen.' },
-        { name: '`/admin-aimodels`', value: '┃ *(Admin)* AI-Provider-Health, Reihenfolge & Live-Probe.' },
+        row('/ai ask|sentiment|toxicity|translate', 'AI-Chat (Groq → Gemini Fallback, RAG, Web-Suche).'),
+        row('/ai-trigger add|list|remove|clear',    'Auto-Antworten auf Schlüsselwörter (Keyword/Regex/Mention).', ['admin']),
+        row('/admin-knowledge add|list|remove|persona', 'Server-Wissens-Snippets für die AI pflegen.', ['admin']),
+        row('/admin-aimodels status|order|probe|reset', 'AI-Provider-Health, Reihenfolge, Live-Probe.', ['admin']),
       ],
-      footer: footer(6, 'KI & Automatisierung'),
       timestamp: true,
     }),
   });
@@ -260,59 +307,59 @@ function buildPages(isAdmin: boolean, isDev: boolean): HelpPage[] {
   if (isAdmin) {
     pages.push({
       id: 'admin-mfg',
+      label: 'Admin · Hersteller-Verwaltung',
       embed: createBotEmbed({
-        title: '👥  (Admin) Hersteller-Verwaltung',
-        description: '> Anfragen prüfen, Pakete validieren, Uploadrechte & Passwörter verwalten.\n\n' + Brand.divider,
+        title: '🔧  Admin · Hersteller-Verwaltung',
+        description: '> Anfragen prüfen, Pakete validieren, Uploadrechte und Passwörter verwalten.\n\n' + Brand.divider,
         color: Colors.Admin,
         fields: [
-          { name: '`/admin-approve <user>`', value: '┃ Hersteller-Anfrage annehmen.' },
-          { name: '`/admin-deny <user>`', value: '┃ Hersteller-Anfrage ablehnen.' },
-          { name: '`/admin-list-users`', value: '┃ Alle Nutzer & Hersteller anzeigen.' },
-          { name: '`/admin-list-pakete`', value: '┃ Alle Pakete & Inhalte.' },
-          { name: '`/admin-validate`', value: '┃ Pakete oder Dateien manuell (re-)validieren.' },
-          { name: '`/admin-delete <typ> <id>`', value: '┃ Pakete/Dateien löschen oder wiederherstellen.' },
-          { name: '`/admin-toggle-upload`', value: '┃ Uploadrechte eines Users temporär entziehen / wiederherstellen.' },
-          { name: '`/admin-reset-password`', value: '┃ Passwort/Token eines Users zurücksetzen.' },
+          row('/admin-approve <user>',                                     'Hersteller-Anfrage annehmen.', ['admin']),
+          row('/admin-deny <user> [grund]',                                'Hersteller-Anfrage ablehnen.', ['admin']),
+          row('/admin-list-users [filter] [seite]',                        'Alle Nutzer & Hersteller anzeigen.', ['admin']),
+          row('/admin-list-pakete [status] [user] [seite]',                'Alle Pakete im System.', ['admin']),
+          row('/admin-validate paket|datei|quarantaene',                   'Pakete oder Dateien manuell (re-)validieren.', ['admin']),
+          row('/admin-delete paket|datei|restore|bulk',                    'Pakete oder Dateien löschen / wiederherstellen.', ['admin']),
+          row('/admin-toggle-upload <user> <aktivieren> [grund]',          'Uploadrechte temporär entziehen / freigeben.', ['admin']),
+          row('/admin-reset-password <user> [ablauf-minuten]',             'Token / Einmal-Passwort zurücksetzen.', ['admin']),
         ],
-        footer: footer(pages.length + 1, 'Admin · Hersteller-Verwaltung'),
         timestamp: true,
       }),
     });
 
     pages.push({
       id: 'admin-bot',
+      label: 'Admin · Bot-Verwaltung',
       embed: createBotEmbed({
-        title: '⚙️  (Admin) Bot-Verwaltung & Tickets',
-        description: '> Konfiguration, Broadcast, Tickets, Feedback, Appeals.\n\n' + Brand.divider,
+        title: '🔧  Admin · Bot-Verwaltung & Tickets',
+        description: '> Konfiguration, Broadcast, Tickets, Feedback und Mod-Appeals.\n\n' + Brand.divider,
         color: Colors.Admin,
         fields: [
-          { name: '`/admin-config`', value: '┃ Bot-Konfiguration live anpassen.' },
-          { name: '`/admin-broadcast`', value: '┃ Broadcast-Nachricht an alle Nutzer oder Hersteller.' },
-          { name: '`/admin-tickets`', value: '┃ Tickets verwalten und schließen.' },
-          { name: '`/admin-feedback`', value: '┃ Eingereichtes Feedback verwalten + Notification-Channel.' },
-          { name: '`/admin-appeals`', value: '┃ Moderations-Appeals verwalten.' },
+          row('/admin-config anzeigen|setzen|loeschen',     'Bot-Konfiguration live anpassen.', ['admin']),
+          row('/admin-broadcast <nachricht> [zielgruppe]',  'Broadcast-Nachricht an Nutzer oder Hersteller.', ['admin']),
+          row('/admin-tickets list|close',                  'Tickets verwalten und schließen.', ['admin']),
+          row('/admin-feedback liste|zeigen|status|notiz|channel', 'Feedback verwalten + Notification-Channel.', ['admin']),
+          row('/admin-appeals liste|genehmigen|ablehnen|eskalieren', 'Moderations-Appeals bearbeiten.', ['admin']),
         ],
-        footer: footer(pages.length + 1, 'Admin · Bot-Verwaltung'),
         timestamp: true,
       }),
     });
 
     pages.push({
       id: 'admin-mon',
+      label: 'Admin · Monitoring & Security',
       embed: createBotEmbed({
-        title: '📊  (Admin) Monitoring / Logs / Security',
-        description: '> System-Health, Audit, Sicherheits-Events & Backups.\n\n' + Brand.divider,
+        title: '🔧  Admin · Monitoring / Logs / Security',
+        description: '> System-Health, Audit, Sicherheits-Events und Datenexporte.\n\n' + Brand.divider,
         color: Colors.Admin,
         fields: [
-          { name: '`/admin-stats`', value: '┃ System- und Nutzungsstatistiken.' },
-          { name: '`/admin-monitor`', value: '┃ Live-Monitoring aller Komponenten.' },
-          { name: '`/admin-logs`', value: '┃ Live-Logs & Aktionsprotokoll.' },
-          { name: '`/admin-audit`', value: '┃ Audit-Log + Compliance-Check.' },
-          { name: '`/admin-security`', value: '┃ Security-Events & IP-Management.' },
-          { name: '`/admin-error-report`', value: '┃ Fehlerberichte & Security-Events anzeigen.' },
-          { name: '`/admin-export`', value: '┃ Daten exportieren (Backup, Analyse, Compliance).' },
+          row('/admin-stats',                                      'System- und Nutzungsstatistiken.', ['admin']),
+          row('/admin-monitor',                                    'Live-Monitoring aller Komponenten.', ['admin']),
+          row('/admin-logs [filter] [anzahl] [user]',              'Live-Logs & Aktionsprotokoll.', ['admin']),
+          row('/admin-audit suchen|volltext|compliance|export',    'Audit-Log + Compliance-Check.', ['admin']),
+          row('/admin-security events|blacklist|whitelist|resolve','Security-Events & IP-Management.', ['admin']),
+          row('/admin-error-report [schwere] [ungeloest] [anzahl]','Fehlerberichte anzeigen.', ['admin']),
+          row('/admin-export pakete|logs|nutzer',                  'Backup, Audit-Export, GDPR-Datenexport.', ['admin']),
         ],
-        footer: footer(pages.length + 1, 'Admin · Monitoring & Security'),
         timestamp: true,
       }),
     });
@@ -322,27 +369,33 @@ function buildPages(isAdmin: boolean, isDev: boolean): HelpPage[] {
   if (isDev) {
     pages.push({
       id: 'developer',
+      label: 'Developer',
       embed: createBotEmbed({
         title: '🔐  Developer',
-        description: '> Erfordert `/dev-login` mit Passwort. Session: **2 Stunden**.\n\n' + Brand.divider,
+        description: '> Erfordert `/dev-login` mit Passwort. Session läuft **2 Stunden**.\n\n' + Brand.divider,
         color: Colors.Dev,
         fields: [
-          { name: '`/dev-admin <aktion>`', value: '┃ Admin-Rollen & DB-Permissions verwalten.' },
-          { name: '`/dev-manufacturer <aktion>`', value: '┃ Hersteller verwalten (Status, Reset, Cleanup).' },
-          { name: '`/dev-db <aktion>`', value: '┃ Datenbank-Management (Migrations, Inspect, Cleanup).' },
-          { name: '`/dev-eval <check>`', value: '┃ Diagnostik & Systemcheck.' },
-          { name: '`/dev-reload`', value: '┃ Commands hot-reloaden (ohne Neustart).' },
-          { name: '`/ping`', value: '┃ Bot- und WebSocket-Latenz.' },
-          { name: '`/status`', value: '┃ Bot-Status, Uptime, DB-Roundtrip, Heap, OS.' },
-          { name: '`/xp-config`', value: '┃ XP-System konfigurieren (Raten, Rollen, Max-Level, Whitelists).' },
+          row('/dev-admin add|remove|list',          'Admin-Rollen verwalten.', ['dev']),
+          row('/dev-manufacturer remove|list',       'Hersteller komplett entfernen / auflisten.', ['dev']),
+          row('/dev-db <action> [query]',            'Datenbank-Management (Migrations, Inspect, Cleanup).', ['dev']),
+          row('/dev-eval <check>',                   'Diagnostik & Systemcheck.', ['dev']),
+          row('/dev-reload [scope]',                 'Commands hot-reloaden (ohne Neustart).', ['dev']),
         ],
-        footer: footer(pages.length + 1, 'Developer'),
         timestamp: true,
       }),
     });
   }
 
+  // Footer mit korrekter Seitenzahl NACH allen pushes setzen — reihenfolge-robust
+  pages.forEach((p, i) => {
+    p.embed.setFooter({ text: pageFooter(i + 1, p.label) });
+  });
+
   return pages;
+}
+
+function pageFooter(seite: number, label: string): string {
+  return `Seite ${seite} ${Brand.dot} ${label} ${Brand.dot} ${Brand.footerText}`;
 }
 
 export default helpCommand;

@@ -3,7 +3,9 @@ import {
   ChatInputCommandInteraction,
   EmbedBuilder,
   PermissionFlagsBits,
+  MessageFlags,
 } from 'discord.js';
+import { Prisma } from '@prisma/client';
 import { Command } from '../../types';
 import prisma from '../../database/prisma';
 import { logAudit } from '../../utils/logger';
@@ -50,14 +52,14 @@ const adminConfigCommand: Command = {
   adminOnly: true,
 
   execute: async (interaction: ChatInputCommandInteraction) => {
-    await interaction.deferReply({ ephemeral: true });
+    await interaction.deferReply({ flags: MessageFlags.Ephemeral });
 
     const sub = interaction.options.getSubcommand();
 
     switch (sub) {
       case 'anzeigen': {
         const category = interaction.options.getString('kategorie');
-        const where: Record<string, unknown> = {};
+        const where: Prisma.BotConfigWhereInput = {};
         if (category) {
           where.category = category;
         }
@@ -98,9 +100,9 @@ const adminConfigCommand: Command = {
         const valueStr = interaction.options.getString('wert', true);
         const description = interaction.options.getString('beschreibung');
 
-        let value: unknown;
+        let value: Prisma.InputJsonValue;
         try {
-          value = JSON.parse(valueStr);
+          value = JSON.parse(valueStr) as Prisma.InputJsonValue;
         } catch {
           value = valueStr;
         }
@@ -109,8 +111,8 @@ const adminConfigCommand: Command = {
 
         await prisma.botConfig.upsert({
           where: { key },
-          create: { key, value: value as any, category, description: description || undefined, updatedBy: interaction.user.id },
-          update: { value: value as any, description: description || undefined, updatedBy: interaction.user.id },
+          create: { key, value, category, description: description || undefined, updatedBy: interaction.user.id },
+          update: { value, description: description || undefined, updatedBy: interaction.user.id },
         });
 
         logAudit('CONFIG_UPDATED', 'CONFIG', {

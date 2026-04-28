@@ -47,9 +47,14 @@ function keywordFallback(
   if (qTokens.size === 0) return [];
   return rows
     .map((s) => {
+      // L2: Label-Treffer doppelt gewichten, Content-Treffer einfach. So gewinnt
+      // ein passendes Label gegenueber einem zufaelligen Content-Token-Match,
+      // wir verlieren aber keine Snippets, die das Stichwort nur im Inhalt haben.
       const lTokens = tokenize(s.label);
+      const cTokens = tokenize(s.content);
       let score = 0;
-      for (const t of lTokens) if (qTokens.has(t)) score += 1;
+      for (const t of lTokens) if (qTokens.has(t)) score += 2;
+      for (const t of cTokens) if (qTokens.has(t)) score += 1;
       return { snip: s, score };
     })
     .filter((s) => s.score > 0)

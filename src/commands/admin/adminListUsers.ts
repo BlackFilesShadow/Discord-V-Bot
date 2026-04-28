@@ -3,7 +3,9 @@ import {
   ChatInputCommandInteraction,
   EmbedBuilder,
   PermissionFlagsBits,
+  MessageFlags,
 } from 'discord.js';
+import { Prisma } from '@prisma/client';
 import { Command } from '../../types';
 import prisma from '../../database/prisma';
 
@@ -36,18 +38,18 @@ const adminListUsersCommand: Command = {
   adminOnly: true,
 
   execute: async (interaction: ChatInputCommandInteraction) => {
-    await interaction.deferReply({ ephemeral: true });
+    await interaction.deferReply({ flags: MessageFlags.Ephemeral });
 
     const filter = interaction.options.getString('filter') || 'ALL';
     const page = interaction.options.getInteger('seite') || 1;
     const perPage = 15;
 
-    const where: Record<string, unknown> = {};
+    const where: Prisma.UserWhereInput = {};
     if (filter !== 'ALL') {
       if (filter === 'BANNED' || filter === 'PENDING_VERIFICATION') {
-        where.status = filter;
+        where.status = filter as Prisma.UserWhereInput['status'];
       } else {
-        where.role = filter;
+        where.role = filter as Prisma.UserWhereInput['role'];
       }
     }
 
@@ -71,7 +73,7 @@ const adminListUsersCommand: Command = {
       return;
     }
 
-    const lines = users.map((u: any, i: number) => {
+    const lines = users.map((u, i: number) => {
       const idx = (page - 1) * perPage + i + 1;
       const mfgBadge = u.isManufacturer ? '🏭' : '';
       return `**${idx}.** <@${u.discordId}> ${mfgBadge}\n` +

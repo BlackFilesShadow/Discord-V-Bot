@@ -22,20 +22,20 @@ export const aiCommand: Command = {
     .addSubcommand(sc =>
       sc.setName('ask')
         .setDescription('Stelle eine Wissensfrage')
-        .addStringOption(o => o.setName('frage').setDescription('Deine Frage').setRequired(true)))
+        .addStringOption(o => o.setName('frage').setDescription('Deine Frage').setRequired(true).setMaxLength(2000)))
     .addSubcommand(sc =>
       sc.setName('sentiment')
         .setDescription('Analysiere Sentiment eines Textes')
-        .addStringOption(o => o.setName('text').setDescription('Text').setRequired(true)))
+        .addStringOption(o => o.setName('text').setDescription('Text').setRequired(true).setMaxLength(2000)))
     .addSubcommand(sc =>
       sc.setName('toxicity')
         .setDescription('Prüfe Text auf Toxizität')
-        .addStringOption(o => o.setName('text').setDescription('Text').setRequired(true)))
+        .addStringOption(o => o.setName('text').setDescription('Text').setRequired(true).setMaxLength(2000)))
     .addSubcommand(sc =>
       sc.setName('translate')
         .setDescription('Übersetze einen Text')
-        .addStringOption(o => o.setName('text').setDescription('Text').setRequired(true))
-        .addStringOption(o => o.setName('sprache').setDescription('Zielsprache (z.B. en, de, fr)').setRequired(false))),
+        .addStringOption(o => o.setName('text').setDescription('Text').setRequired(true).setMaxLength(2000))
+        .addStringOption(o => o.setName('sprache').setDescription('Zielsprache (z.B. en, de, fr)').setRequired(false).setMaxLength(20))),
 
   execute: async (interaction: ChatInputCommandInteraction) => {
     await interaction.deferReply();
@@ -82,7 +82,7 @@ export const aiCommand: Command = {
     } catch (err) {
       const embed = vEmbed(Colors.Error)
         .setTitle('❌  AI-Fehler')
-        .setDescription(String(err).slice(0, 2000));
+        .setDescription((err as Error)?.message?.slice(0, 2000) || 'Unbekannter Fehler');
       await interaction.editReply({ embeds: [embed] });
     }
   },

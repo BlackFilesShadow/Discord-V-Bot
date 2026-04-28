@@ -189,10 +189,15 @@ export async function getRankedProviders(): Promise<ProviderName[]> {
     })
     .sort((a, b) => b.score - a.score)
     .map((x) => x.provider);
-  // Wenn ALLE konfigurierten Provider auf Cooldown sind: wenigstens den Primary
-  // zurueckgeben (callAI versucht ihn dann; bekommt im Worst-Case wieder 429,
-  // ist aber besser als komplett 0 Provider).
-  if (scored.length === 0) return [primary];
+  // Wenn ALLE konfigurierten Provider auf Cooldown sind: wenigstens einen
+  // konfigurierten Provider zurueckgeben (callAI versucht ihn dann; bekommt
+  // im Worst-Case wieder 429, ist aber besser als komplett 0 Provider).
+  // H12: Falls primary nicht konfiguriert ist, ersten beliebigen konfigurierten waehlen.
+  if (scored.length === 0) {
+    if (isConfigured(primary)) return [primary];
+    const anyConfigured = ALL_PROVIDERS.find((p) => isConfigured(p));
+    return anyConfigured ? [anyConfigured] : [];
+  }
   return scored;
 }
 

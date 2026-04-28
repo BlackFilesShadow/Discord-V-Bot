@@ -4,6 +4,7 @@ import {
   PermissionFlagsBits,
   ChannelType,
   TextChannel,
+  MessageFlags,
 } from 'discord.js';
 import { Command } from '../../types';
 import prisma from '../../database/prisma';
@@ -129,7 +130,7 @@ const adminFeedbackCommand: Command = {
     // Owner darf alle Subcommands ohne Guild aufrufen (cross-guild Verwaltung).
     // Sonst: nur 'channel' (mit scope=global) ist ausserhalb einer Guild zulaessig.
     if (!interaction.guildId && !ownerCall && sub !== 'channel') {
-      await interaction.reply({ content: 'Nur in Guilds verwendbar.', ephemeral: true });
+      await interaction.reply({ content: 'Nur in Guilds verwendbar.', flags: MessageFlags.Ephemeral });
       return;
     }
     try {
@@ -142,7 +143,7 @@ const adminFeedbackCommand: Command = {
       logger.error('admin-feedback fehlgeschlagen:', e as Error);
       const msg = `Fehler: ${String((e as Error)?.message ?? e)}`;
       if (interaction.deferred || interaction.replied) await interaction.editReply(msg);
-      else await interaction.reply({ content: msg, ephemeral: true });
+      else await interaction.reply({ content: msg, flags: MessageFlags.Ephemeral });
     }
   },
 };
@@ -198,7 +199,7 @@ async function refreshNotifyEmbed(
 }
 
 async function handleListe(interaction: ChatInputCommandInteraction): Promise<void> {
-  await interaction.deferReply({ ephemeral: true });
+  await interaction.deferReply({ flags: MessageFlags.Ephemeral });
   const status = interaction.options.getString('status') ?? undefined;
   const category = interaction.options.getString('kategorie') ?? undefined;
   const owner = isOwner(interaction);
@@ -251,7 +252,7 @@ async function findByPrefix(interaction: ChatInputCommandInteraction, idInput: s
 }
 
 async function handleZeigen(interaction: ChatInputCommandInteraction): Promise<void> {
-  await interaction.deferReply({ ephemeral: true });
+  await interaction.deferReply({ flags: MessageFlags.Ephemeral });
   const id = interaction.options.getString('id', true).trim();
   const fb = await findByPrefix(interaction, id);
   if (!fb) {
@@ -281,7 +282,7 @@ async function handleZeigen(interaction: ChatInputCommandInteraction): Promise<v
 }
 
 async function handleStatus(interaction: ChatInputCommandInteraction): Promise<void> {
-  await interaction.deferReply({ ephemeral: true });
+  await interaction.deferReply({ flags: MessageFlags.Ephemeral });
   const id = interaction.options.getString('id', true).trim();
   const wert = interaction.options.getString('wert', true) as StatusValue;
   const fb = await findByPrefix(interaction, id);
@@ -303,7 +304,7 @@ async function handleStatus(interaction: ChatInputCommandInteraction): Promise<v
 }
 
 async function handleNotiz(interaction: ChatInputCommandInteraction): Promise<void> {
-  await interaction.deferReply({ ephemeral: true });
+  await interaction.deferReply({ flags: MessageFlags.Ephemeral });
   const id = interaction.options.getString('id', true).trim();
   const text = interaction.options.getString('text', true).trim();
   const fb = await findByPrefix(interaction, id);
@@ -324,7 +325,7 @@ async function handleNotiz(interaction: ChatInputCommandInteraction): Promise<vo
 }
 
 async function handleChannel(interaction: ChatInputCommandInteraction): Promise<void> {
-  await interaction.deferReply({ ephemeral: true });
+  await interaction.deferReply({ flags: MessageFlags.Ephemeral });
   const channel = interaction.options.getChannel('channel') as TextChannel | null;
   const scope = (interaction.options.getString('scope') ?? 'guild') as 'guild' | 'global';
 

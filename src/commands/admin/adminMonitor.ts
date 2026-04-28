@@ -3,12 +3,15 @@ import {
   ChatInputCommandInteraction,
   EmbedBuilder,
   PermissionFlagsBits,
+  MessageFlags,
 } from 'discord.js';
 import { Command } from '../../types';
 import prisma from '../../database/prisma';
 import os from 'os';
 import { config } from '../../config';
-import fs from 'fs';
+import fs from 'fs/promises';
+import { constants as fsConstants } from 'fs';
+import { formatBytes } from '../../utils/embedDesign';
 
 /**
  * /admin-monitor — Live-Monitoring aller Systemkomponenten.
@@ -22,7 +25,7 @@ const adminMonitorCommand: Command = {
   adminOnly: true,
 
   execute: async (interaction: ChatInputCommandInteraction) => {
-    await interaction.deferReply({ ephemeral: true });
+    await interaction.deferReply({ flags: MessageFlags.Ephemeral });
 
     // Datenbank prüfen
     let dbStatus = '✅ Verbunden';
@@ -44,16 +47,17 @@ const adminMonitorCommand: Command = {
     const freeMem = os.freemem();
     const usedMemPercent = Math.round(((totalMem - freeMem) / totalMem) * 100);
 
-    // Upload-Verzeichnis
+    // Upload-Verzeichnis (async)
     let uploadDirExists = false;
     let uploadDirWritable = false;
     try {
-      uploadDirExists = fs.existsSync(config.upload.dir);
-      if (uploadDirExists) {
-        fs.accessSync(config.upload.dir, fs.constants.W_OK);
+      await fs.access(config.upload.dir, fsConstants.F_OK);
+      uploadDirExists = true;
+      try {
+        await fs.access(config.upload.dir, fsConstants.W_OK);
         uploadDirWritable = true;
-      }
-    } catch { /* ignore */ }
+      } catch { /* not writable */ }
+    } catch { /* missing */ }
 
     // Aktive Echtzeit-Tasks
     const [activeGiveaways, activePolls, activeFeeds, activeSessions, unresolvedSecurity] = await Promise.all([
@@ -130,14 +134,6 @@ function formatUptime(seconds: number): string {
   const m = Math.floor((seconds % 3600) / 60);
   const s = Math.floor(seconds % 60);
   return `${d}d ${h}h ${m}m ${s}s`;
-}
-
-function formatBytes(bytes: number): string {
-  if (bytes === 0) return '0 B';
-  const k = 1024;
-  const sizes = ['B', 'KB', 'MB', 'GB', 'TB'];
-  const i = Math.floor(Math.log(bytes) / Math.log(k));
-  return `${parseFloat((bytes / Math.pow(k, i)).toFixed(2))} ${sizes[i]}`;
 }
 
 export default adminMonitorCommand;

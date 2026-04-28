@@ -2,6 +2,7 @@ import { Events, ActivityType } from 'discord.js';
 import { BotEvent, ExtendedClient } from '../types';
 import { logger } from '../utils/logger';
 import { guildGauge, wsLatencyGauge } from '../utils/metrics';
+import { restoreAllFeeds } from '../modules/leaderboard/leaderboardFeed';
 
 /**
  * Ready-Event: Bot ist verbunden und bereit.
@@ -28,6 +29,13 @@ const readyEvent: BotEvent = {
     };
     updateGauges();
     setInterval(updateGauges, 30_000).unref?.();
+
+    // Persistente Leaderboard-Feeds wiederherstellen (best-effort).
+    try {
+      await restoreAllFeeds(c);
+    } catch (e) {
+      logger.warn('Leaderboard-Feed-Restore fehlgeschlagen', e as Error);
+    }
   },
 };
 

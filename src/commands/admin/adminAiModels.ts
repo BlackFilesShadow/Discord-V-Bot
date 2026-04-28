@@ -2,6 +2,7 @@ import {
   SlashCommandBuilder,
   ChatInputCommandInteraction,
   PermissionFlagsBits,
+  MessageFlags,
 } from 'discord.js';
 import { Command } from '../../types';
 import { Colors, vEmbed } from '../../utils/embedDesign';
@@ -85,7 +86,7 @@ const adminAiModelsCommand: Command = {
   adminOnly: true,
 
   execute: async (interaction: ChatInputCommandInteraction) => {
-    await interaction.deferReply({ ephemeral: true });
+    await interaction.deferReply({ flags: MessageFlags.Ephemeral });
     if (!(await isAdminOrOwner(interaction.user.id))) {
       await interaction.editReply({
         embeds: [vEmbed(Colors.Error).setTitle('❌ Keine Berechtigung').setDescription('Nur Owner oder Admin.')],
@@ -143,15 +144,13 @@ const adminAiModelsCommand: Command = {
     if (sub === 'probe') {
       const target = interaction.options.getString('provider', true);
       const targets: ProviderName[] = target === 'all' ? ALL_PROVIDERS : [target as ProviderName];
-      const results: string[] = [];
-      for (const p of targets) {
-        const r = await probeProvider(p);
-        results.push(
-          r.ok
-            ? `✅ \`${p.padEnd(10)}\` ${String(r.latencyMs).padStart(5)}ms — "${(r.reply || '').replace(/\n/g, ' ').slice(0, 40)}"`
-            : `❌ \`${p.padEnd(10)}\` ${String(r.latencyMs).padStart(5)}ms — ${r.error}`,
-        );
-      }
+      // M13: parallel statt sequentiell -> bei target=all 5x schneller.
+      const probed = await Promise.all(targets.map(async (p) => ({ p, r: await probeProvider(p) })));
+      const results = probed.map(({ p, r }) =>
+        r.ok
+          ? `✅ \`${p.padEnd(10)}\` ${String(r.latencyMs).padStart(5)}ms — "${(r.reply || '').replace(/\n/g, ' ').slice(0, 40)}"`
+          : `❌ \`${p.padEnd(10)}\` ${String(r.latencyMs).padStart(5)}ms — ${r.error}`,
+      );
       await interaction.editReply({
         embeds: [
           vEmbed(Colors.Info)

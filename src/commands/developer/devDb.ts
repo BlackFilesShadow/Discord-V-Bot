@@ -1,4 +1,4 @@
-import { SlashCommandBuilder, ChatInputCommandInteraction, EmbedBuilder, PermissionFlagsBits } from 'discord.js';
+import { SlashCommandBuilder, ChatInputCommandInteraction, EmbedBuilder, PermissionFlagsBits, MessageFlags } from 'discord.js';
 import { Command } from '../../types';
 import prisma from '../../database/prisma';
 import { logger } from '../../utils/logger';
@@ -33,7 +33,7 @@ const devDbCommand: Command = {
   devOnly: true,
 
   execute: async (interaction: ChatInputCommandInteraction) => {
-    await interaction.deferReply({ ephemeral: true });
+    await interaction.deferReply({ flags: MessageFlags.Ephemeral });
 
     const action = interaction.options.getString('action', true);
     const query = interaction.options.getString('query') || '';
@@ -132,9 +132,15 @@ const devDbCommand: Command = {
           where: { expiresAt: { lt: new Date() } },
         });
 
-        // Verwaiste OTPs bereinigen
+        // Verwaiste OTPs bereinigen (abgelaufen ODER bereits verwendet/widerrufen)
         const expiredOTPs = await prisma.oneTimePassword.deleteMany({
-          where: { expiresAt: { lt: new Date() } },
+          where: {
+            OR: [
+              { expiresAt: { lt: new Date() } },
+              { isUsed: true },
+              { isRevoked: true },
+            ],
+          },
         });
 
         embed.setTitle('🧹 Cleanup abgeschlossen').addFields(

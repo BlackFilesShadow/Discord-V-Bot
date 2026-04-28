@@ -1,4 +1,4 @@
-import { SlashCommandBuilder, ChatInputCommandInteraction, EmbedBuilder, PermissionFlagsBits } from 'discord.js';
+import { SlashCommandBuilder, ChatInputCommandInteraction, EmbedBuilder, PermissionFlagsBits, MessageFlags } from 'discord.js';
 import { Command, ExtendedClient } from '../../types';
 import { loadCommands, deployCommands } from '../handler';
 import { config } from '../../config';
@@ -26,7 +26,7 @@ const devReloadCommand: Command = {
   devOnly: true,
 
   execute: async (interaction: ChatInputCommandInteraction) => {
-    await interaction.deferReply({ ephemeral: true });
+    await interaction.deferReply({ flags: MessageFlags.Ephemeral });
 
     const scope = interaction.options.getString('scope', true);
     const client = interaction.client as ExtendedClient;

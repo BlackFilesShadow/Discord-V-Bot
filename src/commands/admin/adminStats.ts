@@ -3,12 +3,15 @@ import {
   ChatInputCommandInteraction,
   EmbedBuilder,
   PermissionFlagsBits,
+  MessageFlags,
 } from 'discord.js';
 import { Command } from '../../types';
 import prisma from '../../database/prisma';
 import os from 'os';
-import fs from 'fs';
+import fs from 'fs/promises';
+import path from 'path';
 import { config } from '../../config';
+import { formatBytes } from '../../utils/embedDesign';
 
 /**
  * /admin-stats — System-, Nutzungs-, Sicherheitsstatistiken.
@@ -22,7 +25,7 @@ const adminStatsCommand: Command = {
   adminOnly: true,
 
   execute: async (interaction: ChatInputCommandInteraction) => {
-    await interaction.deferReply({ ephemeral: true });
+    await interaction.deferReply({ flags: MessageFlags.Ephemeral });
 
 
     // Nutzungsstatistiken
@@ -65,10 +68,10 @@ const adminStatsCommand: Command = {
     const freeMem = os.freemem();
     const cpus = os.cpus();
 
-    // Upload-Verzeichnisgröße
+    // Upload-Verzeichnisgröße (asynchron — darf Event Loop nicht blockieren)
     let uploadDirSize = 0;
     try {
-      uploadDirSize = getDirSize(config.upload.dir);
+      uploadDirSize = await getDirSize(config.upload.dir);
     } catch { /* ignore */ }
 
     const embed = new EmbedBuilder()
@@ -129,24 +132,23 @@ function formatUptime(seconds: number): string {
   return `${d}d ${h}h ${m}m`;
 }
 
-function formatBytes(bytes: number): string {
-  if (bytes === 0) return '0 B';
-  const k = 1024;
-  const sizes = ['B', 'KB', 'MB', 'GB', 'TB'];
-  const i = Math.floor(Math.log(bytes) / Math.log(k));
-  return `${parseFloat((bytes / Math.pow(k, i)).toFixed(2))} ${sizes[i]}`;
-}
-
-function getDirSize(dirPath: string): number {
-  if (!fs.existsSync(dirPath)) return 0;
+async function getDirSize(dirPath: string): Promise<number> {
   let total = 0;
-  const entries = fs.readdirSync(dirPath, { withFileTypes: true });
+  let entries;
+  try {
+    entries = await fs.readdir(dirPath, { withFileTypes: true });
+  } catch {
+    return 0;
+  }
   for (const entry of entries) {
-    const fullPath = `${dirPath}/${entry.name}`;
+    const fullPath = path.join(dirPath, entry.name);
     if (entry.isDirectory()) {
-      total += getDirSize(fullPath);
+      total += await getDirSize(fullPath);
     } else {
-      total += fs.statSync(fullPath).size;
+      try {
+        const st = await fs.stat(fullPath);
+        total += st.size;
+      } catch { /* ignore */ }
     }
   }
   return total;

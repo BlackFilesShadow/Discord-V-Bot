@@ -4,6 +4,7 @@ import {
   PermissionFlagsBits,
   ChannelType,
   TextChannel,
+  MessageFlags,
 } from 'discord.js';
 import { Command } from '../../types';
 import prisma from '../../database/prisma';
@@ -67,7 +68,7 @@ const selfRoleCommand: Command = {
   execute: async (interaction: ChatInputCommandInteraction) => {
     const sub = interaction.options.getSubcommand();
     if (!interaction.guildId) {
-      await interaction.reply({ content: '❌ Nur in Servern verfügbar.', ephemeral: true });
+      await interaction.reply({ content: '❌ Nur in Servern verfügbar.', flags: MessageFlags.Ephemeral });
       return;
     }
     try {
@@ -77,7 +78,7 @@ const selfRoleCommand: Command = {
       const msg = `❌ Fehler: ${String((e as Error)?.message ?? e).slice(0, 400)}`;
       try {
         if (interaction.deferred || interaction.replied) await interaction.editReply({ content: msg });
-        else await interaction.reply({ content: msg, ephemeral: true });
+        else await interaction.reply({ content: msg, flags: MessageFlags.Ephemeral });
       } catch { /* */ }
     }
   },
@@ -92,7 +93,7 @@ async function runSub(sub: string, interaction: ChatInputCommandInteraction): Pr
     const beschreibung = interaction.options.getString('beschreibung');
     const modus = interaction.options.getString('modus') ?? 'MULTI';
 
-    await interaction.deferReply({ ephemeral: true });
+    await interaction.deferReply({ flags: MessageFlags.Ephemeral });
     const menu = await prisma.selfRoleMenu.create({
       data: {
         guildId,
@@ -132,7 +133,7 @@ async function runSub(sub: string, interaction: ChatInputCommandInteraction): Pr
     const emoji = interaction.options.getString('emoji');
     const desc = interaction.options.getString('beschreibung');
 
-    await interaction.deferReply({ ephemeral: true });
+    await interaction.deferReply({ flags: MessageFlags.Ephemeral });
     const menu = await prisma.selfRoleMenu.findUnique({
       where: { id: menuId },
       include: { options: true },
@@ -179,7 +180,7 @@ async function runSub(sub: string, interaction: ChatInputCommandInteraction): Pr
   if (sub === 'option-remove') {
     const menuId = interaction.options.getString('menu-id', true);
     const rolle = interaction.options.getRole('rolle', true);
-    await interaction.deferReply({ ephemeral: true });
+    await interaction.deferReply({ flags: MessageFlags.Ephemeral });
     const menu = await prisma.selfRoleMenu.findUnique({ where: { id: menuId } });
     if (!menu || menu.guildId !== guildId) {
       await interaction.editReply({ content: '❌ Menu nicht gefunden.' });
@@ -199,7 +200,7 @@ async function runSub(sub: string, interaction: ChatInputCommandInteraction): Pr
 
   if (sub === 'post') {
     const menuId = interaction.options.getString('menu-id', true);
-    await interaction.deferReply({ ephemeral: true });
+    await interaction.deferReply({ flags: MessageFlags.Ephemeral });
     const menu = await getMenuFull(menuId);
     if (!menu || menu.guildId !== guildId) {
       await interaction.editReply({ content: '❌ Menu nicht gefunden.' });
@@ -223,7 +224,7 @@ async function runSub(sub: string, interaction: ChatInputCommandInteraction): Pr
   }
 
   if (sub === 'liste') {
-    await interaction.deferReply({ ephemeral: true });
+    await interaction.deferReply({ flags: MessageFlags.Ephemeral });
     const menus = await prisma.selfRoleMenu.findMany({
       where: { guildId },
       include: { options: true },
@@ -248,7 +249,7 @@ async function runSub(sub: string, interaction: ChatInputCommandInteraction): Pr
 
   if (sub === 'loeschen') {
     const menuId = interaction.options.getString('menu-id', true);
-    await interaction.deferReply({ ephemeral: true });
+    await interaction.deferReply({ flags: MessageFlags.Ephemeral });
     const menu = await prisma.selfRoleMenu.findUnique({ where: { id: menuId } });
     if (!menu || menu.guildId !== guildId) {
       await interaction.editReply({ content: '❌ Menu nicht gefunden.' });

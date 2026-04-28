@@ -3,7 +3,9 @@ import {
   ChatInputCommandInteraction,
   EmbedBuilder,
   PermissionFlagsBits,
+  MessageFlags,
 } from 'discord.js';
+import { Prisma } from '@prisma/client';
 import { Command } from '../../types';
 import prisma from '../../database/prisma';
 import { deletePackage } from '../../modules/upload/uploadHandler';
@@ -11,6 +13,7 @@ import { logger, logAudit } from '../../utils/logger';
 import fs from 'fs/promises';
 import path from 'path';
 import { config } from '../../config';
+import { formatBytes } from '../../utils/embedDesign';
 
 /**
  * /dev-manufacturer — Hersteller-Verwaltung (DEV-Bereich).
@@ -46,7 +49,7 @@ const devManufacturerCommand: Command = {
     // bevor wir irgendeine Logik ausfuehren \u2013 sonst Code 10062.
     try {
       if (!interaction.deferred && !interaction.replied) {
-        await interaction.deferReply({ ephemeral: true });
+        await interaction.deferReply({ flags: MessageFlags.Ephemeral });
       }
     } catch (deferErr) {
       logger.warn(`dev-manufacturer: deferReply fehlgeschlagen: ${(deferErr as Error).message}`);
@@ -63,9 +66,9 @@ const devManufacturerCommand: Command = {
   },
 };
 
-async function findManufacturer(where: { discordId?: string; id?: string }) {
+async function findManufacturer(where: Prisma.UserWhereUniqueInput) {
   return prisma.user.findUnique({
-    where: where as any,
+    where,
     include: {
       packages: {
         include: {
@@ -348,14 +351,6 @@ async function handleList(interaction: ChatInputCommandInteraction): Promise<voi
 
   await interaction.editReply({ embeds: [embed] });
   return;
-}
-
-function formatBytes(bytes: number): string {
-  if (bytes === 0) return '0 B';
-  const k = 1024;
-  const sizes = ['B', 'KB', 'MB', 'GB'];
-  const i = Math.floor(Math.log(bytes) / Math.log(k));
-  return `${(bytes / Math.pow(k, i)).toFixed(2)} ${sizes[i]}`;
 }
 
 export default devManufacturerCommand;

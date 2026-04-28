@@ -1,4 +1,4 @@
-import { SlashCommandBuilder, ChatInputCommandInteraction, EmbedBuilder, ActionRowBuilder, ButtonBuilder, ButtonStyle } from 'discord.js';
+import { SlashCommandBuilder, ChatInputCommandInteraction, ActionRowBuilder, ButtonBuilder, ButtonStyle, MessageFlags } from 'discord.js';
 import { Command } from '../../types';
 import { createManufacturerRequest, verifyOneTimePassword } from '../../modules/registration/register';
 import prisma from '../../database/prisma';
@@ -46,7 +46,7 @@ const registerCommand: Command = {
 };
 
 async function handleManufacturerRegistration(interaction: ChatInputCommandInteraction) {
-  await interaction.deferReply({ ephemeral: true });
+  await interaction.deferReply({ flags: MessageFlags.Ephemeral });
 
   const reason = interaction.options.getString('reason') || undefined;
   const result = await createManufacturerRequest(
@@ -107,7 +107,7 @@ async function handleManufacturerRegistration(interaction: ChatInputCommandInter
 
 async function handlePasswordVerification(interaction: ChatInputCommandInteraction) {
   // Ephemeral damit das Passwort nicht sichtbar ist
-  await interaction.deferReply({ ephemeral: true });
+  await interaction.deferReply({ flags: MessageFlags.Ephemeral });
 
   const password = interaction.options.getString('password', true);
 

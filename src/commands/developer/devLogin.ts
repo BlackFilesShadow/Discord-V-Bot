@@ -2,6 +2,7 @@ import {
   SlashCommandBuilder,
   ChatInputCommandInteraction,
   PermissionFlagsBits,
+  MessageFlags,
 } from 'discord.js';
 import { Command } from '../../types';
 
@@ -22,7 +23,7 @@ const devLoginCommand: Command = {
     // (interactionCreate.ts hat das Modal bereits verarbeitet)
     await interaction.reply({
       content: '✅ Du bist bereits als Developer authentifiziert. Deine Session ist aktiv.',
-      ephemeral: true,
+      flags: MessageFlags.Ephemeral,
     });
   },
 };

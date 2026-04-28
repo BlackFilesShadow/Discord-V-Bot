@@ -6,11 +6,16 @@ import {
   StringSelectMenuBuilder,
   StringSelectMenuOptionBuilder,
   ComponentType,
+  MessageFlags,
 } from 'discord.js';
+import { Prisma } from '@prisma/client';
+import fs from 'fs/promises';
 import { Command } from '../../types';
 import prisma from '../../database/prisma';
 import { Colors, Brand, vEmbed, formatBytes } from '../../utils/embedDesign';
 import { createBotEmbed } from '../../utils/embedUtil';
+import { deletePackage, restorePackage } from '../../modules/upload/uploadHandler';
+import { logAudit } from '../../utils/logger';
 
 /**
  * /mypackages Command (Sektion 2):
@@ -63,7 +68,7 @@ const mypackagesCommand: Command = {
   manufacturerOnly: true,
 
   execute: async (interaction: ChatInputCommandInteraction) => {
-    await interaction.deferReply({ ephemeral: true });
+    await interaction.deferReply({ flags: MessageFlags.Ephemeral });
 
     const dbUser = await prisma.user.findUnique({
       where: { discordId: interaction.user.id },
@@ -100,7 +105,7 @@ async function handleList(interaction: ChatInputCommandInteraction, userId: stri
   const filter = interaction.options.getString('filter') || undefined;
   const sortierung = interaction.options.getString('sortierung') || 'newest';
 
-  let orderBy: any;
+  let orderBy: Prisma.PackageOrderByWithRelationInput;
   switch (sortierung) {
     case 'oldest': orderBy = { createdAt: 'asc' }; break;
     case 'biggest': orderBy = { totalSize: 'desc' }; break;
@@ -148,7 +153,7 @@ async function handleInfo(interaction: ChatInputCommandInteraction, userId: stri
   const paketname = interaction.options.getString('paketname', true);
 
   const pkg = await prisma.package.findFirst({
-    where: { userId, name: paketname },
+    where: { userId, name: paketname, isDeleted: false },
     include: {
       files: {
         where: { isDeleted: false },
@@ -180,7 +185,7 @@ async function handleInfo(interaction: ChatInputCommandInteraction, userId: stri
 
   // Dateien auflisten
   if (pkg.files.length > 0) {
-    const fileList = pkg.files.slice(0, 15).map((f: any) =>
+    const fileList = pkg.files.slice(0, 15).map(f =>
       `• **${f.originalName}** (${formatBytes(Number(f.fileSize))}) - ${f.validationStatus} ${f.isValid ? '✅' : '❌'}`
     ).join('\n');
 
@@ -192,7 +197,6 @@ async function handleInfo(interaction: ChatInputCommandInteraction, userId: stri
 
 async function handleDelete(interaction: ChatInputCommandInteraction, userId: string) {
   const paketname = interaction.options.getString('paketname', true);
-  const { deletePackage } = await import('../../modules/upload/uploadHandler.js');
 
   const pkg = await prisma.package.findFirst({
     where: { userId, name: paketname, isDeleted: false },
@@ -212,7 +216,6 @@ async function handleDelete(interaction: ChatInputCommandInteraction, userId: st
 
 async function handleRestore(interaction: ChatInputCommandInteraction, userId: string) {
   const paketname = interaction.options.getString('paketname', true);
-  const { restorePackage } = await import('../../modules/upload/uploadHandler.js');
 
   const pkg = await prisma.package.findFirst({
     where: { userId, name: paketname, isDeleted: true },
@@ -282,6 +285,7 @@ async function handleDeleteFile(interaction: ChatInputCommandInteraction, userId
   const pkgCollector = response.createMessageComponentCollector({
     componentType: ComponentType.StringSelect,
     time: 120_000,
+    filter: i => i.user.id === interaction.user.id,
   });
 
   pkgCollector.on('collect', async (pkgInteraction) => {
@@ -327,13 +331,13 @@ async function handleDeleteFile(interaction: ChatInputCommandInteraction, userId
     const fileCollector = updateResponse.createMessageComponentCollector({
       componentType: ComponentType.StringSelect,
       time: 120_000,
+      filter: i => i.user.id === interaction.user.id,
     });
 
     fileCollector.on('collect', async (fileInteraction) => {
       if (fileInteraction.customId !== 'myfiles_file_select') return;
 
       const selectedFileIds = fileInteraction.values;
-      const fs = await import('fs/promises');
 
       let deleted = 0;
       const deletedNames: string[] = [];
@@ -364,7 +368,6 @@ async function handleDeleteFile(interaction: ChatInputCommandInteraction, userId
         deleted++;
       }
 
-      const { logAudit } = await import('../../utils/logger.js');
       logAudit('FILES_DELETED_BY_MANUFACTURER', 'UPLOAD', {
         userId,
         packageId: selectedPkgId,

@@ -1,6 +1,7 @@
 import {
   SlashCommandBuilder,
   ChatInputCommandInteraction,
+  MessageFlags,
 } from 'discord.js';
 import { Command } from '../../types';
 import { Colors, vEmbed } from '../../utils/embedDesign';
@@ -34,7 +35,7 @@ const ticketCommand: Command = {
 
   execute: async (interaction: ChatInputCommandInteraction) => {
     const sub = interaction.options.getSubcommand();
-    await interaction.deferReply({ ephemeral: true });
+    await interaction.deferReply({ flags: MessageFlags.Ephemeral });
 
     if (sub === 'open') {
       const subject = interaction.options.getString('betreff', true);

@@ -3,13 +3,15 @@ import {
   ChatInputCommandInteraction,
   EmbedBuilder,
   PermissionFlagsBits,
+  MessageFlags,
 } from 'discord.js';
 import { Command } from '../../types';
 import prisma from '../../database/prisma';
 import { validateFile } from '../../utils/validator';
 import { logAudit, logger } from '../../utils/logger';
 import { withTimeout } from '../../utils/safeSend';
-import fs from 'fs';
+import fs from 'fs/promises';
+import type { Stats } from 'fs';
 
 const MAX_VALIDATE_BYTES = 50 * 1024 * 1024; // 50 MB
 const VALIDATE_TIMEOUT_MS = 30_000;
@@ -53,7 +55,7 @@ const adminValidateCommand: Command = {
   adminOnly: true,
 
   execute: async (interaction: ChatInputCommandInteraction) => {
-    await interaction.deferReply({ ephemeral: true });
+    await interaction.deferReply({ flags: MessageFlags.Ephemeral });
 
     const sub = interaction.options.getSubcommand();
 
@@ -75,19 +77,13 @@ const adminValidateCommand: Command = {
         let invalidCount = 0;
 
         for (const file of pkg.files) {
-          if (!fs.existsSync(file.filePath)) {
+          // K1: async stat statt fs.existsSync + fs.statSync (blockiert Event-Loop nicht).
+          let stat: Stats;
+          try {
+            stat = await fs.stat(file.filePath);
+          } catch {
             results.push(`❌ **${file.originalName}**: Datei nicht gefunden`);
             invalidCount++;
-            continue;
-          }
-
-          let stat: fs.Stats;
-          try {
-            stat = fs.statSync(file.filePath);
-          } catch (e) {
-            results.push(`❌ **${file.originalName}**: stat fehlgeschlagen`);
-            invalidCount++;
-            logger.warn(`adminValidate stat ${file.id}: ${(e as Error).message}`);
             continue;
           }
           if (stat.size > MAX_VALIDATE_BYTES) {
@@ -164,12 +160,14 @@ const adminValidateCommand: Command = {
           return;
         }
 
-        if (!fs.existsSync(upload.filePath)) {
+        // K1: async stat statt sync.
+        let stat: Stats;
+        try {
+          stat = await fs.stat(upload.filePath);
+        } catch {
           await interaction.editReply({ content: '❌ Datei auf dem Server nicht gefunden.' });
           return;
         }
-
-        const stat = fs.statSync(upload.filePath);
         if (stat.size > MAX_VALIDATE_BYTES) {
           await interaction.editReply({ content: '⚠️ Datei zu groß (>50 MB) für On-Demand-Validierung.' });
           return;

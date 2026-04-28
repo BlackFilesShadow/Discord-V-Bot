@@ -3,6 +3,7 @@ import {
   ChatInputCommandInteraction,
   PermissionFlagsBits,
   ChannelType,
+  MessageFlags,
 } from 'discord.js';
 import { Command } from '../../types';
 import { Colors, vEmbed } from '../../utils/embedDesign';
@@ -34,13 +35,13 @@ export const aiTriggerCommand: Command = {
           { name: 'Regex', value: 'regex' },
           { name: 'Mention (nur bei @V-Bot)', value: 'mention' },
         ))
-      .addStringOption(o => o.setName('pattern').setDescription('Suchmuster').setRequired(true))
+      .addStringOption(o => o.setName('pattern').setDescription('Suchmuster').setRequired(true).setMaxLength(500))
       .addStringOption(o => o.setName('modus').setDescription('Antwort-Modus').setRequired(true)
         .addChoices(
           { name: 'Text (statisch, mit Variablen)', value: 'text' },
           { name: 'AI (generiert Antwort)', value: 'ai' },
         ))
-      .addStringOption(o => o.setName('antwort').setDescription('Text ODER AI-Anweisung. Mehrere zuf\u00e4llige Antworten mit ||| trennen. Vars: {user} {time} {date}').setRequired(true))
+      .addStringOption(o => o.setName('antwort').setDescription('Text ODER AI-Anweisung. Mehrere zufällige Antworten mit ||| trennen. Vars: {user} {time} {date}').setRequired(true).setMaxLength(2000))
       .addChannelOption(o => o.setName('channel').setDescription('Optional: Trigger nur in diesem Channel aktiv (leer = \u00fcberall)').setRequired(false)
         .addChannelTypes(ChannelType.GuildText, ChannelType.GuildAnnouncement, ChannelType.PublicThread, ChannelType.PrivateThread))
       .addAttachmentOption(o => o.setName('datei').setDescription('Optional: Bild/Video direkt hochladen (JPG/PNG/GIF/WEBP/MP4/WEBM/MOV, max 25 MB)').setRequired(false))
@@ -60,10 +61,10 @@ export const aiTriggerCommand: Command = {
   adminOnly: true,
   execute: async (interaction: ChatInputCommandInteraction) => {
     if (!interaction.guildId) {
-      await interaction.reply({ content: 'Nur in Servern verf\u00fcgbar.', ephemeral: true });
+      await interaction.reply({ content: 'Nur in Servern verfügbar.', flags: MessageFlags.Ephemeral });
       return;
     }
-    await interaction.deferReply({ ephemeral: true });
+    await interaction.deferReply({ flags: MessageFlags.Ephemeral });
     const sub = interaction.options.getSubcommand();
     const guildId = interaction.guildId;
 
@@ -75,6 +76,17 @@ export const aiTriggerCommand: Command = {
       }
       const triggerType = interaction.options.getString('typ', true) as AiTrigger['triggerType'];
       const pattern = interaction.options.getString('pattern', true);
+      // K1: Regex-Pattern bei Erstellung validieren, sonst crasht jeder messageCreate-Match.
+      if (triggerType === 'regex') {
+        try {
+          new RegExp(pattern);
+        } catch (e) {
+          await interaction.editReply({
+            embeds: [vEmbed(Colors.Error).setDescription(`❌ Ungültiger Regex: ${(e as Error).message}`)],
+          });
+          return;
+        }
+      }
       const responseMode = interaction.options.getString('modus', true) as AiTrigger['responseMode'];
       const antwortRaw = interaction.options.getString('antwort', true);
       // Custom-Emojis :name: -> <:name:id> aufl\u00f6sen (nur f\u00fcr text-Modus sinnvoll, aber harmlos f\u00fcr ai)
@@ -173,12 +185,16 @@ export const aiTriggerCommand: Command = {
 
     if (sub === 'list') {
       const list = await listTriggers(guildId);
+      const shown = list.slice(0, 10);
       const embed = vEmbed(Colors.Info)
-        .setTitle(`\ud83e\udd16 AI-Trigger (${list.length}/${MAX_TRIGGERS_PER_GUILD})`);
+        .setTitle(`🤖 AI-Trigger (${list.length}/${MAX_TRIGGERS_PER_GUILD})`);
       if (list.length === 0) {
-        embed.setDescription('_Keine Trigger konfiguriert._\n\nF\u00fcge welche mit `/ai-trigger add` hinzu.');
+        embed.setDescription('_Keine Trigger konfiguriert._\n\nFüge welche mit `/ai-trigger add` hinzu.');
       } else {
-        for (const t of list.slice(0, 10)) {
+        if (list.length > shown.length) {
+          embed.setDescription(`_Zeige erste ${shown.length} von ${list.length} Triggern._`);
+        }
+        for (const t of shown) {
           const preview = t.responseMode === 'text'
             ? (t.responseText || '').slice(0, 100)
             : `(AI) ${(t.aiPrompt || '').slice(0, 100)}`;

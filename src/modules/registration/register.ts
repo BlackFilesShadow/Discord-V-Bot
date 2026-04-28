@@ -324,6 +324,13 @@ export async function verifyOneTimePassword(userId: string, password: string) {
   // Wir holen reviewedBy aus der ManufacturerRequest, damit
   // manufacturerApprovedBy korrekt den Admin enth\u00e4lt.
   const req = await prisma.manufacturerRequest.findUnique({ where: { userId } });
+  // H4 Guard: Snapshot des Users VOR dem Update, damit der Fresh-Start-Cleanup
+  // ausschliesslich beim Erst-Aktivieren laeuft (verhindert Datenverlust, falls
+  // dieser Pfad jemals fuer bereits aktive Hersteller wiederverwendet wird).
+  const userBefore = await prisma.user.findUnique({
+    where: { id: userId },
+    select: { isManufacturer: true },
+  });
   await prisma.user.update({
     where: { id: userId },
     data: {
@@ -337,7 +344,8 @@ export async function verifyOneTimePassword(userId: string, password: string) {
   // FRESH-START: Bei Aktivierung als Hersteller alle alten Paketreste hart loeschen,
   // damit der User mit komplett leerem GUID-Bereich startet (keine "Name bereits vergeben"-
   // Konflikte aus vorherigen Sessions, falls dev-manufacturer remove unvollstaendig war).
-  try {
+  // H4 Guard: NUR beim Erst-Aktivieren ausfuehren.
+  if (userBefore && !userBefore.isManufacturer) try {
     const oldPackages = await prisma.package.findMany({
       where: { userId },
       include: { files: { select: { filePath: true } } },
@@ -364,6 +372,12 @@ export async function verifyOneTimePassword(userId: string, password: string) {
     }
   } catch (cleanupErr) {
     logger.warn(`Fresh-Start Cleanup fehlgeschlagen fuer ${userId}: ${(cleanupErr as Error).message}`);
+  }
+  else if (userBefore?.isManufacturer) {
+    logAudit('FRESH_MANUFACTURER_CLEANUP_SKIPPED', 'REGISTRATION', {
+      userId,
+      reason: 'User war bereits Hersteller; Cleanup uebersprungen',
+    });
   }
   logAudit('OTP_VERIFIED', 'REGISTRATION', {
     userId,

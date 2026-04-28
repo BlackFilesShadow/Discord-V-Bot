@@ -580,6 +580,7 @@ model LevelUpMessage {
 
 model AutoRole {
   id             String          @id @default(uuid())
+  guildId        String? // Multi-Guild-Trennung (nullable für Altdaten; neue Einträge IMMER gesetzt)
   roleId         String
   roleName       String
   triggerType    AutoRoleTrigger
@@ -593,6 +594,7 @@ model AutoRole {
   createdAt      DateTime        @default(now())
   updatedAt      DateTime        @updatedAt
 
+  @@index([guildId])
   @@index([triggerType])
   @@index([isActive])
 }

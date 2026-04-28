@@ -124,8 +124,10 @@ const messageReactionAddEvent: BotEvent = {
       }
 
       // ===== SEKTION 9: REACTION-ROLES =====
+      // Multi-Guild: nur AutoRoles dieser Guild matchen.
       const reactionRole = await prisma.autoRole.findFirst({
         where: {
+          guildId: r.message.guildId ?? undefined,
           triggerType: 'REACTION',
           messageId,
           triggerValue: emoji,
