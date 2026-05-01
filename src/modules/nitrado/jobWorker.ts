@@ -32,6 +32,7 @@ import { emitGuildEvent } from '../../dashboard/socket/emitter';
 const JOB_POLL_INTERVAL_MS = 10_000;
 const MAX_PARALLEL = 4;
 const BACKOFF_BASE_SECONDS = 30;
+const STALE_RUNNING_MS = 5 * 60 * 1000; // RUNNING-Jobs ohne Update >5min werden recovered
 
 let timer: NodeJS.Timeout | null = null;
 let running = false;
@@ -43,19 +44,24 @@ interface JobPayload {
 }
 
 async function executeJob(jobId: string): Promise<void> {
-  // Hole Job + zugehoerige Connection (verschluesselter Token).
+  // Hole Job + zugehoerige Connection getrennt — `NitradoJob` hat im Schema
+  // keine deklarierte Prisma-Relation zu `NitradoConnection` (nur die FK-Spalte
+  // `nitradoConnId`), daher ist `include: { nitradoConn }` zur Laufzeit ungueltig.
   // eslint-disable-next-line local/no-unscoped-prisma-query -- Worker hat Job-ID aus eigenem PENDING->RUNNING-Claim, Scope ist im executeJob-Body durch Job.guildId gebunden.
-  const job = await prisma.nitradoJob.findUnique({
-    where: { id: jobId },
-    include: {
-      nitradoConn: { select: { id: true, guildId: true, encryptedToken: true, nitradoServerId: true, status: true } },
-    } as never,
-  }) as (Awaited<ReturnType<typeof prisma.nitradoJob.findUnique>> & {
-    nitradoConn: { id: string; guildId: string; encryptedToken: string; nitradoServerId: string | null; status: string } | null;
-  }) | null;
-
+  const job = await prisma.nitradoJob.findUnique({ where: { id: jobId } });
   if (!job) return;
-  const conn = job.nitradoConn;
+
+  let conn: { id: string; guildId: string; encryptedToken: string; nitradoServerId: string | null; status: string } | null = null;
+  try {
+    conn = await prisma.nitradoConnection.findFirst({
+      where: { id: job.nitradoConnId, guildId: job.guildId },
+      select: { id: true, guildId: true, encryptedToken: true, nitradoServerId: true, status: true },
+    });
+  } catch (e) {
+    await failJob(job.id, job.guildId, job.attempts, job.maxAttempts, `Connection-Lookup fehlgeschlagen: ${(e as Error).message}`, true);
+    return;
+  }
+
   if (!conn || conn.status !== 'ACTIVE') {
     await failJob(job.id, job.guildId, job.attempts, job.maxAttempts, 'Connection inaktiv oder geloescht', /*permanent*/ true);
     return;
@@ -137,6 +143,19 @@ async function pollOnce(): Promise<void> {
   if (running) return;
   running = true;
   try {
+    // Recovery: RUNNING-Jobs, die laenger als STALE_RUNNING_MS keine
+    // updatedAt-Aenderung mehr hatten, sind nach Crash/Deploy verwaist
+    // und werden wieder auf PENDING zurueckgesetzt.
+    const staleCutoff = new Date(Date.now() - STALE_RUNNING_MS);
+    // eslint-disable-next-line local/no-unscoped-prisma-query -- Recovery-Sweep ueber alle Guilds; betrifft nur eigene Job-Outbox.
+    const stale = await prisma.nitradoJob.updateMany({
+      where: { status: 'RUNNING', updatedAt: { lt: staleCutoff } },
+      data: { status: 'PENDING', updatedAt: new Date() },
+    });
+    if (stale.count > 0) {
+      logger.warn(`NitradoJob-Worker: ${stale.count} verwaiste RUNNING-Jobs auf PENDING zurueckgesetzt`);
+    }
+
     // Atomar: PENDING -> RUNNING fuer max MAX_PARALLEL Jobs deren nextRunAt erreicht ist.
     // eslint-disable-next-line local/no-unscoped-prisma-query -- Worker scannt globale Outbox; Scope-Check erfolgt im executeJob.
     const candidates = await prisma.nitradoJob.findMany({
