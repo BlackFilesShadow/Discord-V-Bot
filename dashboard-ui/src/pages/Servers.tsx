@@ -1,10 +1,11 @@
 import { Link } from 'react-router-dom';
 import { useQuery } from '@tanstack/react-query';
-import { ExternalLink, Crown, Shield, Server as ServerIcon } from 'lucide-react';
-import { api } from '@/lib/api';
+import { ExternalLink, Crown, Shield, Server as ServerIcon, Terminal, Activity } from 'lucide-react';
+import { api, ApiError } from '@/lib/api';
 import { Shell } from '@/components/Shell';
 import { Card } from '@/components/ui/Card';
 import { Button } from '@/components/ui/Button';
+import { useAuth } from '@/lib/auth';
 
 interface Guild {
   id: string;
@@ -17,7 +18,18 @@ interface Guild {
   inviteUrl?: string;
 }
 
+interface DevSnapshot {
+  botReady: boolean;
+  uptimeSec: number;
+  guildCount: number;
+  memory: { rss: number; heapUsed: number; heapTotal: number };
+  nodeVersion: string;
+}
+
 export default function Servers() {
+  const { user } = useAuth();
+  const isDev = user?.role === 'DEVELOPER';
+
   const { data, isLoading, isError, error, refetch } = useQuery({
     queryKey: ['guilds'],
     queryFn: () => api.get<{ guilds: Guild[] }>('/api/v2/guilds'),
@@ -66,9 +78,66 @@ export default function Servers() {
             {data.guilds.map(g => <GuildCard key={g.id} g={g} />)}
           </div>
         )}
+
+        {isDev && <DevFooter />}
       </div>
     </Shell>
   );
+}
+
+function DevFooter() {
+  const snap = useQuery({
+    queryKey: ['dev-snapshot'],
+    queryFn: () => api.get<DevSnapshot>('/api/v2/dev/snapshot'),
+    retry: false,
+    refetchInterval: 15_000,
+    staleTime: 10_000,
+  });
+
+  const sessionMissing = snap.isError && snap.error instanceof ApiError && (snap.error.status === 401 || snap.error.status === 403);
+
+  return (
+    <footer className="mt-10 border-t border-border pt-4 text-xs text-muted">
+      <div className="flex flex-wrap items-center gap-3">
+        <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded bg-accent/15 text-accent font-medium">
+          <Terminal className="h-3 w-3" /> DEV
+        </span>
+        {snap.data ? (
+          <>
+            <span className="inline-flex items-center gap-1">
+              <Activity className="h-3 w-3" />
+              {snap.data.botReady ? 'Bot online' : 'Bot offline'}
+            </span>
+            <span>Uptime: {fmtUptime(snap.data.uptimeSec)}</span>
+            <span>Guilds: {snap.data.guildCount}</span>
+            <span>RSS: {fmtMb(snap.data.memory.rss)}</span>
+            <span>Heap: {fmtMb(snap.data.memory.heapUsed)} / {fmtMb(snap.data.memory.heapTotal)}</span>
+            <span>Node {snap.data.nodeVersion}</span>
+          </>
+        ) : sessionMissing ? (
+          <span>Live-Stats erfordern aktive DEV-Session.</span>
+        ) : snap.isLoading ? (
+          <span>Lade Bot-Stats…</span>
+        ) : (
+          <span>Bot-Stats nicht verfuegbar.</span>
+        )}
+        <Link to="/dev" className="ml-auto text-accent hover:underline">DEV-Konsole &rarr;</Link>
+      </div>
+    </footer>
+  );
+}
+
+function fmtUptime(sec: number): string {
+  const d = Math.floor(sec / 86400);
+  const h = Math.floor((sec % 86400) / 3600);
+  const m = Math.floor((sec % 3600) / 60);
+  if (d > 0) return `${d}d ${h}h ${m}m`;
+  if (h > 0) return `${h}h ${m}m`;
+  return `${m}m`;
+}
+
+function fmtMb(bytes: number): string {
+  return `${Math.round(bytes / 1024 / 1024)} MB`;
 }
 
 function GuildCard({ g }: { g: Guild }) {
