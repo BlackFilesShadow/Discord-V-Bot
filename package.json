@@ -4,6 +4,7 @@
   "description": "Maximaler Discord-Bot mit GUID-basierter Usertrennung, Upload/Download-System, Moderation, AI, Giveaways, Leveling, Polls, OAuth2 Dashboard",
   "main": "dist/index.js",
   "scripts": {
+    "postinstall": "prisma generate",
     "build": "tsc",
     "start": "node dist/index.js",
     "dev": "ts-node src/index.ts",
