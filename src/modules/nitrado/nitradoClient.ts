@@ -1,15 +1,20 @@
 /**
  * Nitrado-API-Client.
  *
- * Doku-Referenzen (Stand 2025): https://doc.nitrado.net/
+ * Doku-Referenzen (Stand 2026): https://doc.nitrado.net/
  *  - GET    /services                          -> alle Services des Tokens
- *  - GET    /services/{id}/gameservers          -> Gameserver-Details
- *  - GET    /services/{id}/gameservers/games/dayz/whitelist -> Whitelist-Liste
- *  - POST   /services/{id}/gameservers/games/dayz/whitelist (identifier=)
- *  - DELETE /services/{id}/gameservers/games/dayz/whitelist (identifier=)
+ *  - GET    /services/{id}/gameservers          -> Gameserver-Details (data.gameserver.*)
+ *  - POST   /services/{id}/gameservers/settings (category, key, value) -> Settings setzen
  *  - GET    /services/{id}/gameservers/file_server/list?dir=...
  *  - GET    /services/{id}/gameservers/file_server/download?file=...
  *  - POST   /services/{id}/gameservers/restart
+ *
+ * DayZ-Whitelist:
+ *   Es gibt KEINEN dedizierten REST-Endpoint /games/dayz/whitelist (404).
+ *   Die Whitelist wird ueber das `priority`-Setting in `settings.general`
+ *   verwaltet (newline-separierte Spielernamen). `whitelist`=true muss
+ *   zusaetzlich gesetzt sein, damit `priority` als harte Whitelist greift.
+ *   Aenderungen erfolgen Read-Modify-Write via /gameservers/settings.
  *
  * Designziele:
  *   - axios-basiert, Bearer-Token im Header
@@ -53,6 +58,22 @@ export interface NitradoWhitelistEntry {
 
 function sleep(ms: number): Promise<void> {
   return new Promise(r => setTimeout(r, ms));
+}
+
+function parseLines(raw: string): string[] {
+  return raw
+    .split(/\r?\n/)
+    .map(l => l.trim())
+    .filter(l => l.length > 0);
+}
+
+function dedupe(items: string[]): string[] {
+  const seen = new Set<string>();
+  const out: string[] = [];
+  for (const it of items) {
+    if (!seen.has(it)) { seen.add(it); out.push(it); }
+  }
+  return out;
 }
 
 export class NitradoClient {
@@ -122,29 +143,66 @@ export class NitradoClient {
     return res.data.services ?? [];
   }
 
+  /**
+   * Liest das `priority`-Setting (Whitelist) aus den DayZ-Server-Settings.
+   * Liefert eine entduplizierte, getrimmte Liste der Spielernamen.
+   */
   async getWhitelist(serviceId: string): Promise<NitradoWhitelistEntry[]> {
-    const res = await this.request<{ data: { settings: { whitelist?: string } } }>(
-      'GET',
-      `/services/${serviceId}/gameservers`,
-    );
-    const raw = res.data?.settings?.whitelist ?? '';
-    return raw
-      .split(/\r?\n/)
-      .map(l => l.trim())
-      .filter(l => l.length > 0)
-      .map(identifier => ({ identifier }));
+    const raw = await this.getPrioritySetting(serviceId);
+    return parseLines(raw).map(identifier => ({ identifier }));
+  }
+
+  /**
+   * Atomarer Read-Modify-Write der DayZ-Priority-Liste.
+   * `mutator` erhaelt die aktuelle Liste und gibt die neue zurueck.
+   * Liefert true, wenn ein Schreibzugriff stattgefunden hat.
+   */
+  private async mutatePriority(
+    serviceId: string,
+    mutator: (current: string[]) => string[],
+  ): Promise<boolean> {
+    const current = parseLines(await this.getPrioritySetting(serviceId));
+    const next = dedupe(mutator(current).map(s => s.trim()).filter(s => s.length > 0));
+    // Reihenfolge-stabile Diff-Pruefung
+    if (current.length === next.length && current.every((v, i) => v === next[i])) return false;
+    await this.setSetting(serviceId, 'general', 'priority', next.join('\r\n'));
+    return true;
   }
 
   async addToWhitelist(serviceId: string, identifier: string): Promise<void> {
-    await this.request<unknown>('POST', `/services/${serviceId}/gameservers/games/dayz/whitelist`, {
-      data: new URLSearchParams({ identifier }).toString(),
-      headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-    });
+    const id = identifier.trim();
+    if (!id) throw new NitradoApiError('Leerer Identifier', null, 'whitelist');
+    await this.mutatePriority(serviceId, list =>
+      list.includes(id) ? list : [...list, id],
+    );
+    // Sicherstellen, dass die Whitelist-Funktion ueberhaupt aktiv ist.
+    // Idempotent: Nitrado akzeptiert mehrfaches Setzen desselben Wertes.
+    await this.setSetting(serviceId, 'general', 'whitelist', 'true').catch(() => undefined);
   }
 
   async removeFromWhitelist(serviceId: string, identifier: string): Promise<void> {
-    await this.request<unknown>('DELETE', `/services/${serviceId}/gameservers/games/dayz/whitelist`, {
-      data: new URLSearchParams({ identifier }).toString(),
+    const id = identifier.trim();
+    if (!id) throw new NitradoApiError('Leerer Identifier', null, 'whitelist');
+    await this.mutatePriority(serviceId, list => list.filter(e => e !== id));
+  }
+
+  /** Liefert den aktuellen `priority`-String (newline-separiert) oder ''. */
+  private async getPrioritySetting(serviceId: string): Promise<string> {
+    const res = await this.request<{ data: { gameserver?: { settings?: { general?: Record<string, string> } } } }>(
+      'GET',
+      `/services/${serviceId}/gameservers`,
+    );
+    return res.data?.gameserver?.settings?.general?.priority ?? '';
+  }
+
+  /**
+   * Setzt eine einzelne Server-Setting.
+   * Endpoint laut Nitrado: POST /services/{id}/gameservers/settings
+   * Body (form-urlencoded): category, key, value
+   */
+  private async setSetting(serviceId: string, category: string, key: string, value: string): Promise<void> {
+    await this.request<unknown>('POST', `/services/${serviceId}/gameservers/settings`, {
+      data: new URLSearchParams({ category, key, value }).toString(),
       headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
     });
   }
