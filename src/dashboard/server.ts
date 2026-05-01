@@ -8,6 +8,8 @@ import rateLimit from 'express-rate-limit';
 import { config } from '../config';
 import { logger } from '../utils/logger';
 import { authRouter, apiRouter, adminRouter, testRouter, webhookRouter, setWebhookClient } from './routes';
+import { v2Router } from './routes/v2';
+import { setDashboardClient } from './clientRegistry';
 import { metricsRegistry } from '../utils/metrics';
 import type { Client } from 'discord.js';
 
@@ -20,7 +22,10 @@ import type { Client } from 'discord.js';
 
 export function startDashboard(client?: Client): void {
   const app = express();
-  if (client) setWebhookClient(client);
+  if (client) {
+    setWebhookClient(client);
+    setDashboardClient(client);
+  }
 
   // Security Middleware (Sektion 4: Sicherheit)
   app.use(helmet());
@@ -89,6 +94,7 @@ export function startDashboard(client?: Client): void {
   // MUSS vor dem JSON-Bodyparser bleiben? -> raw-Parser ist im Router lokal.
   app.use('/webhooks', apiLimiter, webhookRouter);
   app.use('/api', apiLimiter, apiRouter);
+  app.use('/api/v2', apiLimiter, v2Router);
   app.use('/admin', apiLimiter, adminRouter);
   app.use('/test', apiLimiter, testRouter);
 
