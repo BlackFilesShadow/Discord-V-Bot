@@ -13,6 +13,7 @@ import { Router } from 'express';
 import { requireGuildPermission } from '../../middleware/auth';
 import prisma from '../../../database/prisma';
 import { logAudit } from '../../../utils/logger';
+import { emitGuildEvent } from '../../socket/emitter';
 
 export const whitelistRouter = Router({ mergeParams: true });
 
@@ -73,6 +74,7 @@ whitelistRouter.post('/', requireGuildPermission('whitelist.manage'), async (req
     throw e;
   }
   logAudit('WHITELIST_ADD', 'WHITELIST', { guildId: scope.guildId, slotId: connId, gameId, actor: scope.actorDiscordId });
+  emitGuildEvent(scope.guildId, { type: 'whitelist.changed', payload: { guildId: scope.guildId, action: 'added' } });
   res.status(201).json({ ok: true });
 });
 
@@ -94,6 +96,7 @@ whitelistRouter.delete('/:gameId', requireGuildPermission('whitelist.manage'), a
     });
   });
   logAudit('WHITELIST_REMOVE', 'WHITELIST', { guildId: scope.guildId, slotId: connId, gameId, actor: scope.actorDiscordId });
+  emitGuildEvent(scope.guildId, { type: 'whitelist.changed', payload: { guildId: scope.guildId, action: 'removed' } });
   res.json({ ok: true });
 });
 
@@ -151,5 +154,6 @@ whitelistRouter.post('/requests/:id/decision', requireGuildPermission('whitelist
   logAudit('WHITELIST_REQUEST_DECISION', 'WHITELIST', {
     guildId: scope.guildId, requestId: reqRow.id, approve, actor: scope.actorDiscordId,
   });
+  emitGuildEvent(scope.guildId, { type: 'whitelist.changed', payload: { guildId: scope.guildId, entryId: reqRow.id, action: 'decided' } });
   res.json({ ok: true });
 });

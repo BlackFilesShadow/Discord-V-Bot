@@ -1,0 +1,46 @@
+/**
+ * Typed Emit-Helpers fuer Sockets.
+ *
+ * REST-Routen importieren `emitGuildEvent`/`emitDevLog` und feuern damit
+ * Updates in die jeweiligen Namespaces. Wenn Socket.IO nicht initialisiert
+ * ist (z.B. in Tests), werden die Calls stillschweigend verworfen.
+ */
+
+import type { Server as IOServer } from 'socket.io';
+
+let io: IOServer | null = null;
+
+export function setIo(instance: IOServer): void {
+  io = instance;
+}
+
+export type GuildEvent =
+  | { type: 'whitelist.changed'; payload: { guildId: string; entryId?: string; action: 'added' | 'removed' | 'requested' | 'decided' } }
+  | { type: 'nitrado.job.updated'; payload: { guildId: string; jobId: string; status: string } }
+  | { type: 'permissions.updated'; payload: { guildId: string; userDiscordId: string } }
+  | { type: 'economy.tx'; payload: { guildId: string; userDiscordId: string; type: string } }
+  | { type: 'casino.round'; payload: { guildId: string; gameType: string; payout: string } }
+  | { type: 'faction.changed'; payload: { guildId: string; factionId: string } };
+
+/**
+ * Sendet Event an alle Clients im Room des betreffenden Guild-Namespace.
+ */
+export function emitGuildEvent(guildId: string, event: GuildEvent): void {
+  if (!io) return;
+  io.of('/guild').to(`g:${guildId}`).emit(event.type, event.payload);
+}
+
+export interface DevLogLine {
+  ts: number;
+  level: string;
+  message: string;
+  meta?: Record<string, unknown>;
+}
+
+/**
+ * Pusht eine Log-Zeile in den /dev-Namespace.
+ */
+export function emitDevLog(line: DevLogLine): void {
+  if (!io) return;
+  io.of('/dev').emit('log', line);
+}

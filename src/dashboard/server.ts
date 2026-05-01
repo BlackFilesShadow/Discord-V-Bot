@@ -1,4 +1,5 @@
 import express from 'express';
+import http from 'http';
 import session from 'express-session';
 import connectPgSimple from 'connect-pg-simple';
 import { Pool } from 'pg';
@@ -10,6 +11,7 @@ import { logger } from '../utils/logger';
 import { authRouter, apiRouter, adminRouter, testRouter, webhookRouter, setWebhookClient } from './routes';
 import { v2Router } from './routes/v2';
 import { setDashboardClient } from './clientRegistry';
+import { initSocketIo } from './socket';
 import { metricsRegistry } from '../utils/metrics';
 import type { Client } from 'discord.js';
 
@@ -66,7 +68,7 @@ export function startDashboard(client?: Client): void {
   });
   sessionPool.on('error', err => logger.error('Session-Pool-Fehler:', err));
 
-  app.use(session({
+  const sessionMiddleware = session({
     store: sessionStore,
     secret: config.dashboard.sessionSecret,
     resave: false,
@@ -77,7 +79,8 @@ export function startDashboard(client?: Client): void {
       maxAge: config.security.sessionTimeoutMinutes * 60 * 1000,
       sameSite: 'lax',
     },
-  }));
+  });
+  app.use(sessionMiddleware);
 
   // Request-Logging
   app.use((req, _res, next) => {
@@ -135,7 +138,10 @@ export function startDashboard(client?: Client): void {
     res.status(500).json({ error: 'Interner Serverfehler' });
   });
 
-  app.listen(config.dashboard.port, () => {
+  const httpServer = http.createServer(app);
+  initSocketIo(httpServer, sessionMiddleware);
+
+  httpServer.listen(config.dashboard.port, () => {
     logger.info(`Dashboard gestartet auf Port ${config.dashboard.port}`);
   });
 }
