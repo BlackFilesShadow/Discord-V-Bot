@@ -168,6 +168,31 @@ export async function updateToken(
 }
 
 /**
+ * Aktualisiert die verknuepfte Nitrado-Service-ID (oder loescht sie via null).
+ * Ohne Service-ID kann der Slot keine Whitelist-/ADM-Operationen ausfuehren.
+ */
+export async function updateServiceId(
+  guildId: GuildId,
+  slot: number,
+  nitradoServerId: string | null,
+): Promise<NitradoConnectionRow | null> {
+  if (nitradoServerId !== null) {
+    const trimmed = nitradoServerId.trim();
+    if (!/^\d{1,20}$/.test(trimmed)) throw new Error('Service-ID muss numerisch sein (1..20 Stellen)');
+    nitradoServerId = trimmed;
+  }
+  const updated = await prisma.nitradoConnection.updateMany({
+    where: { guildId, slot },
+    data: { nitradoServerId },
+  });
+  if (updated.count === 0) return null;
+  const row = await prisma.nitradoConnection.findUnique({
+    where: { guildId_slot: { guildId, slot } },
+  });
+  return row ? rowToConn(row) : null;
+}
+
+/**
  * Aktualisiert nur das frei waehlbare Anzeige-Alias eines Slots.
  * `alias5` ist unveraenderlich (eindeutige System-Kennung).
  */

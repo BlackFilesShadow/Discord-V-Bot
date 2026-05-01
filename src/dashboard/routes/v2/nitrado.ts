@@ -8,7 +8,7 @@
  */
 import { Router } from 'express';
 import { requireGuildOwner } from '../../middleware/auth';
-import { listSlots, createSlot, deleteSlot, getSlot, getDecryptedToken, updateToken, updateAlias } from '../../../modules/nitrado/repository';
+import { listSlots, createSlot, deleteSlot, getSlot, getDecryptedToken, updateToken, updateAlias, updateServiceId } from '../../../modules/nitrado/repository';
 import { NitradoClient } from '../../../modules/nitrado/nitradoClient';
 import { asUserDiscordId, asNitradoConnId } from '../../../types/scope';
 import { logAuditDb, logger } from '../../../utils/logger';
@@ -121,6 +121,58 @@ nitradoRouter.patch('/:slot/alias', requireGuildOwner, async (req, res) => {
     details: { slot, alias: updated.alias, alias5: updated.alias5 },
   });
   res.json({ ok: true, slot: updated.slot, alias: updated.alias, alias5: updated.alias5 });
+});
+
+/**
+ * PATCH /:slot/service  body: { nitradoServerId: string | null }
+ *
+ * Verknuepft den Slot mit einer konkreten Nitrado-Service-ID. Ohne diese
+ * Verknuepfung koennen weder Whitelist-Jobs noch ADM-Sync ausgefuehrt werden
+ * (Worker setzt entsprechende Jobs auf DEAD). Owner-only.
+ *
+ * `null` entfernt die Verknuepfung wieder.
+ */
+nitradoRouter.patch('/:slot/service', requireGuildOwner, async (req, res) => {
+  const scope = req.guildScope!;
+  const slot = Number(String(req.params.slot));
+  if (!Number.isInteger(slot) || slot < 1 || slot > 5) { res.status(400).json({ error: 'slot 1..5' }); return; }
+  const { nitradoServerId } = req.body ?? {};
+  if (nitradoServerId !== null && typeof nitradoServerId !== 'string') {
+    res.status(400).json({ error: 'nitradoServerId muss String oder null sein.' }); return;
+  }
+  const existing = await getSlot(scope.guildId, slot);
+  if (!existing) { res.status(404).json({ error: 'Slot nicht gefunden.' }); return; }
+
+  // Wenn gesetzt: gegen Nitrado-API pruefen, dass die Service-ID dem Token-Owner gehoert
+  let normalized: string | null = nitradoServerId;
+  if (typeof nitradoServerId === 'string') {
+    const trimmed = nitradoServerId.trim();
+    if (!/^\d{1,20}$/.test(trimmed)) { res.status(400).json({ error: 'Service-ID muss numerisch sein.' }); return; }
+    try {
+      const token = await getDecryptedToken(scope.guildId, asNitradoConnId(existing.id));
+      const services = await new NitradoClient(token).listServices();
+      const found = services.find(s => String(s.id) === trimmed);
+      if (!found) { res.status(400).json({ error: 'Service-ID gehoert nicht zu diesem Token.' }); return; }
+    } catch (e) {
+      logger.error('Nitrado-Service-Check:', e as Error);
+      res.status(502).json({ error: 'Nitrado-API-Fehler bei Service-Pruefung.' }); return;
+    }
+    normalized = trimmed;
+  }
+
+  let updated;
+  try {
+    updated = await updateServiceId(scope.guildId, slot, normalized);
+  } catch (e) {
+    res.status(400).json({ error: (e as Error).message }); return;
+  }
+  if (!updated) { res.status(404).json({ error: 'Slot nicht gefunden.' }); return; }
+
+  logAuditDb('NITRADO_SLOT_SERVICE_UPDATED', 'NITRADO', {
+    actorUserId: req.auth!.userId, guildId: scope.guildId,
+    details: { slot, alias5: updated.alias5, nitradoServerId: updated.nitradoServerId },
+  });
+  res.json({ ok: true, slot: updated.slot, nitradoServerId: updated.nitradoServerId });
 });
 
 nitradoRouter.delete('/:slot', requireGuildOwner, async (req, res) => {

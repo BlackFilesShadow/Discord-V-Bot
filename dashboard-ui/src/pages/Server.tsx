@@ -186,6 +186,8 @@ function NitradoTab({ guildId, isOwner, slots }: { guildId: string; isOwner: boo
 
 function SlotRow({ guildId, slot, onDelete }: { guildId: string; slot: Slot; onDelete: () => void }) {
   const [showToken, setShowToken] = useState(false);
+  const [showService, setShowService] = useState(false);
+  const noService = !slot.nitradoServerId;
   return (
     <Card className="!p-4">
       <div className="flex items-start gap-3">
@@ -197,10 +199,20 @@ function SlotRow({ guildId, slot, onDelete }: { guildId: string; slot: Slot; onD
             <h3 className="font-semibold text-white truncate">{slot.alias}</h3>
             <span className="font-mono text-[10px] text-muted bg-bg-elev px-1.5 py-0.5 rounded">{slot.alias5}</span>
             <span className={`text-xs font-medium ${statusColor(slot.status)}`}>{slot.status}</span>
+            {noService && (
+              <span className="text-[10px] font-semibold text-warn bg-warn/10 border border-warn/30 px-1.5 py-0.5 rounded inline-flex items-center gap-1">
+                <AlertTriangle className="h-3 w-3" /> Service fehlt
+              </span>
+            )}
           </div>
           <p className="text-xs text-muted mt-0.5 inline-flex items-center gap-1">
             <ServerIcon className="h-3 w-3" /> Nitrado-Service: {slot.nitradoServerId ?? '—'}
           </p>
+          {noService && (
+            <p className="text-[11px] text-warn mt-1">
+              Ohne Service-ID schlagen Whitelist-Sync und ADM-Sync fehl. Bitte Service verknuepfen.
+            </p>
+          )}
         </div>
         <div className="flex flex-col sm:flex-row gap-1.5 shrink-0">
           <Link to={`/servers/${guildId}/server/${slot.slot}`}>
@@ -208,7 +220,10 @@ function SlotRow({ guildId, slot, onDelete }: { guildId: string; slot: Slot; onD
               Konfigurieren <ChevronRight className="h-3.5 w-3.5 ml-1" />
             </Button>
           </Link>
-          <Button size="sm" variant="ghost" onClick={() => setShowToken(t => !t)}>
+          <Button size="sm" variant={noService ? 'primary' : 'ghost'} onClick={() => setShowService(s => !s)} title="Nitrado-Service verknuepfen">
+            <ServerIcon className="h-3.5 w-3.5" />
+          </Button>
+          <Button size="sm" variant="ghost" onClick={() => setShowToken(t => !t)} title="Token rotieren">
             <KeyRound className="h-3.5 w-3.5" />
           </Button>
           <Button size="sm" variant="danger" onClick={onDelete}>
@@ -217,7 +232,68 @@ function SlotRow({ guildId, slot, onDelete }: { guildId: string; slot: Slot; onD
         </div>
       </div>
       {showToken && <UpdateTokenForm guildId={guildId} slot={slot.slot} onDone={() => setShowToken(false)} />}
+      {showService && <ServicePicker guildId={guildId} slot={slot.slot} current={slot.nitradoServerId} onDone={() => setShowService(false)} />}
     </Card>
+  );
+}
+
+interface NitradoService {
+  id: number | string;
+  status?: string;
+  details?: { name?: string; address?: string; game?: string };
+}
+
+function ServicePicker({ guildId, slot, current, onDone }: { guildId: string; slot: number; current: string | null; onDone: () => void }) {
+  const qc = useQueryClient();
+  const [selected, setSelected] = useState<string>(current ?? '');
+  const [err, setErr] = useState<string | null>(null);
+
+  const services = useQuery({
+    queryKey: ['nitrado-services', guildId, slot],
+    queryFn: () => api.get<{ services: NitradoService[] }>(`/api/v2/guilds/${guildId}/nitrado/${slot}/services`),
+    staleTime: 60_000,
+  });
+
+  const mut = useMutation({
+    mutationFn: (id: string | null) => api.patch(`/api/v2/guilds/${guildId}/nitrado/${slot}/service`, { nitradoServerId: id }),
+    onSuccess: () => {
+      setErr(null);
+      void qc.invalidateQueries({ queryKey: ['dashboard', guildId] });
+      onDone();
+    },
+    onError: (e) => setErr(e instanceof ApiError ? e.message : 'Unbekannter Fehler'),
+  });
+
+  return (
+    <div className="mt-4 pt-4 border-t border-border">
+      <label className="text-xs text-muted mb-2 block">
+        Nitrado-Service auswaehlen (Liste kommt vom Nitrado-Account des Tokens)
+      </label>
+      {services.isLoading && <p className="text-xs text-muted">Lade Services...</p>}
+      {services.isError && <p className="text-xs text-danger">Konnte Services nicht laden: {services.error instanceof ApiError ? services.error.message : 'Fehler'}</p>}
+      {services.data && (
+        <div className="flex flex-col sm:flex-row gap-2">
+          <Select value={selected} onChange={e => setSelected(e.target.value)} className="flex-1">
+            <option value="">— keine Verknuepfung —</option>
+            {services.data.services.map(s => (
+              <option key={String(s.id)} value={String(s.id)}>
+                #{s.id} {s.details?.name ? `· ${s.details.name}` : ''}{s.details?.game ? ` · ${s.details.game}` : ''}{s.status ? ` · ${s.status}` : ''}
+              </option>
+            ))}
+          </Select>
+          <Button
+            size="sm"
+            onClick={() => mut.mutate(selected || null)}
+            disabled={mut.isPending || selected === (current ?? '')}
+            loading={mut.isPending}
+          >
+            Speichern
+          </Button>
+          <Button size="sm" variant="ghost" onClick={onDone}>Abbrechen</Button>
+        </div>
+      )}
+      {err && <p className="text-danger text-xs mt-2">{err}</p>}
+    </div>
   );
 }
 
