@@ -11,7 +11,7 @@ import { requireGuildOwner } from '../../middleware/auth';
 import { listGrants, setGrantScope, deleteGrant } from '../../../modules/permissions/repository';
 import { asUserDiscordId, NON_DELEGABLE_SCOPES, PERMISSION_SCOPES } from '../../../types/scope';
 import type { PermissionScope } from '../../../types/scope';
-import { logAudit } from '../../../utils/logger';
+import { logAuditDb } from '../../../utils/logger';
 import { emitGuildEvent } from '../../socket/emitter';
 
 export const permissionsRouter = Router({ mergeParams: true });
@@ -43,7 +43,7 @@ permissionsRouter.put('/:userDiscordId/:scope', requireGuildOwner, async (req, r
   if (!perm) { res.status(400).json({ error: 'Unbekannter Scope.' }); return; }
   if (NON_DELEGABLE_SCOPES.has(perm)) { res.status(403).json({ error: 'Scope nicht delegierbar.' }); return; }
   const out = await setGrantScope(scope.guildId, target, perm, true, asUserDiscordId(scope.actorDiscordId));
-  logAudit('PERM_GRANTED', 'PERMISSIONS', { guildId: scope.guildId, target, perm, actor: scope.actorDiscordId });
+  logAuditDb('PERM_GRANTED', 'ADMIN', { actorUserId: req.auth!.userId, guildId: scope.guildId, details: { target, perm } });
   emitGuildEvent(scope.guildId, { type: 'permissions.updated', payload: { guildId: scope.guildId, userDiscordId: target } });
   res.json({ permissions: out.permissions });
 });
@@ -55,7 +55,7 @@ permissionsRouter.delete('/:userDiscordId/:scope', requireGuildOwner, async (req
   const perm = parseScope(String(req.params.scope));
   if (!perm) { res.status(400).json({ error: 'Unbekannter Scope.' }); return; }
   const out = await setGrantScope(scope.guildId, target, perm, false, asUserDiscordId(scope.actorDiscordId));
-  logAudit('PERM_REVOKED', 'PERMISSIONS', { guildId: scope.guildId, target, perm, actor: scope.actorDiscordId });
+  logAuditDb('PERM_REVOKED', 'ADMIN', { actorUserId: req.auth!.userId, guildId: scope.guildId, details: { target, perm } });
   emitGuildEvent(scope.guildId, { type: 'permissions.updated', payload: { guildId: scope.guildId, userDiscordId: target } });
   res.json({ permissions: out.permissions });
 });
@@ -65,7 +65,7 @@ permissionsRouter.delete('/:userDiscordId', requireGuildOwner, async (req, res) 
   let target;
   try { target = asUserDiscordId(String(req.params.userDiscordId)); } catch { res.status(400).json({ error: 'userDiscordId ungueltig.' }); return; }
   await deleteGrant(scope.guildId, target);
-  logAudit('PERM_USER_PURGED', 'PERMISSIONS', { guildId: scope.guildId, target, actor: scope.actorDiscordId });
+  logAuditDb('PERM_USER_PURGED', 'ADMIN', { actorUserId: req.auth!.userId, guildId: scope.guildId, details: { target } });
   emitGuildEvent(scope.guildId, { type: 'permissions.updated', payload: { guildId: scope.guildId, userDiscordId: target } });
   res.json({ ok: true });
 });

@@ -779,6 +779,14 @@ enum AuditCategory {
   AI
   FEED
   APPEAL
+  TICKET
+  NITRADO
+  ECONOMY
+  CASINO
+  DASHBOARD
+  WHITELIST
+  FACTION
+  SERVER_SETTINGS
 }
 
 // Security-Events

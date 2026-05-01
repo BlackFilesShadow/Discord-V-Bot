@@ -12,7 +12,7 @@ import { Router } from 'express';
 import { requireGuildPermission } from '../../middleware/auth';
 import prisma from '../../../database/prisma';
 import { asUserDiscordId } from '../../../types/scope';
-import { logAudit } from '../../../utils/logger';
+import { logAuditDb } from '../../../utils/logger';
 import { emitGuildEvent } from '../../socket/emitter';
 
 export const factionsRouter = Router({ mergeParams: true });
@@ -78,7 +78,7 @@ factionsRouter.post('/', requireGuildPermission('factions.manage'), async (req, 
         joinPolicy: policy,
       },
     });
-    logAudit('FACTION_CREATED', 'FACTION', { guildId: scope.guildId, slotId: connId, factionId: f.id, name, actor: scope.actorDiscordId });
+    logAuditDb('FACTION_CREATED', 'FACTION', { actorUserId: req.auth!.userId, guildId: scope.guildId, details: { slotId: connId, factionId: f.id, name } });
     emitGuildEvent(scope.guildId, { type: 'faction.changed', payload: { guildId: scope.guildId, factionId: f.id } });
     res.status(201).json({ id: f.id, name: f.name });
   } catch (e) {
@@ -95,7 +95,7 @@ factionsRouter.delete('/:id', requireGuildPermission('factions.manage'), async (
     where: { id: String(req.params.id), guildId: scope.guildId },
   });
   if (out.count === 0) { res.status(404).json({ error: 'Fraktion nicht gefunden.' }); return; }
-  logAudit('FACTION_DELETED', 'FACTION', { guildId: scope.guildId, factionId: String(req.params.id), actor: scope.actorDiscordId });
+  logAuditDb('FACTION_DELETED', 'FACTION', { actorUserId: req.auth!.userId, guildId: scope.guildId, details: { factionId: String(req.params.id) } });
   emitGuildEvent(scope.guildId, { type: 'faction.changed', payload: { guildId: scope.guildId, factionId: String(req.params.id) } });
   res.json({ ok: true });
 });
@@ -117,7 +117,7 @@ factionsRouter.post('/:id/members', requireGuildPermission('factions.manage'), a
     create: { factionId: f.id, userDiscordId: target, role: r },
     update: { role: r },
   });
-  logAudit('FACTION_MEMBER_ADDED', 'FACTION', { guildId: scope.guildId, factionId: f.id, target, role: r, actor: scope.actorDiscordId });
+  logAuditDb('FACTION_MEMBER_ADDED', 'FACTION', { actorUserId: req.auth!.userId, guildId: scope.guildId, details: { factionId: f.id, target, role: r } });
   emitGuildEvent(scope.guildId, { type: 'faction.changed', payload: { guildId: scope.guildId, factionId: f.id } });
   res.status(201).json({ ok: true });
 });
@@ -133,7 +133,7 @@ factionsRouter.delete('/:id/members/:userDiscordId', requireGuildPermission('fac
     where: { factionId: f.id, userDiscordId: target },
   });
   if (out.count === 0) { res.status(404).json({ error: 'Member nicht gefunden.' }); return; }
-  logAudit('FACTION_MEMBER_REMOVED', 'FACTION', { guildId: scope.guildId, factionId: f.id, target, actor: scope.actorDiscordId });
+  logAuditDb('FACTION_MEMBER_REMOVED', 'FACTION', { actorUserId: req.auth!.userId, guildId: scope.guildId, details: { factionId: f.id, target } });
   emitGuildEvent(scope.guildId, { type: 'faction.changed', payload: { guildId: scope.guildId, factionId: f.id } });
   res.json({ ok: true });
 });

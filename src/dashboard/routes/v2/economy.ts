@@ -12,7 +12,7 @@ import {
   getConfig, upsertConfig, getOrCreateAccount, recentTransactions, adminPay,
 } from '../../../modules/economy/repository';
 import { asUserDiscordId } from '../../../types/scope';
-import { logAudit } from '../../../utils/logger';
+import { logAuditDb } from '../../../utils/logger';
 
 export const economyRouter = Router({ mergeParams: true });
 
@@ -43,7 +43,7 @@ economyRouter.put('/config', requireGuildPermission('economy.manage'), async (re
   if (b.bankChannelId === null || (typeof b.bankChannelId === 'string' && /^\d{17,20}$/.test(b.bankChannelId))) patch.bankChannelId = b.bankChannelId;
 
   const cfg = await upsertConfig(scope.guildId, patch);
-  logAudit('ECONOMY_CONFIG_UPDATED', 'ECONOMY', { guildId: scope.guildId, patch, actor: scope.actorDiscordId });
+  logAuditDb('ECONOMY_CONFIG_UPDATED', 'ECONOMY', { actorUserId: req.auth!.userId, guildId: scope.guildId, details: { fields: Object.keys(patch) } });
   res.json({
     currencyName: cfg.currencyName,
     emoji: cfg.emoji,
@@ -92,8 +92,9 @@ economyRouter.post('/accounts/:userDiscordId/admin-pay', requireGuildPermission(
       reason,
       actorDiscordId: asUserDiscordId(scope.actorDiscordId),
     });
-    logAudit('ECONOMY_ADMIN_PAY', 'ECONOMY', {
-      guildId: scope.guildId, target, delta: bigDelta.toString(), reason, actor: scope.actorDiscordId,
+    logAuditDb('ECONOMY_ADMIN_PAY', 'ECONOMY', {
+      actorUserId: req.auth!.userId, guildId: scope.guildId,
+      details: { target, delta: bigDelta.toString(), reason },
     });
     res.json({ ok: true });
   } catch (e) {

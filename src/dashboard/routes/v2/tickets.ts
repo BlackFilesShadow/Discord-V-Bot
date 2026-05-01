@@ -13,7 +13,7 @@
 import { Router } from 'express';
 import { requireGuildOwner, requireGuildPermission } from '../../middleware/auth';
 import prisma from '../../../database/prisma';
-import { logAudit } from '../../../utils/logger';
+import { logAuditDb } from '../../../utils/logger';
 import { emitGuildEvent } from '../../socket/emitter';
 import { tryGetDashboardClient } from '../../clientRegistry';
 import { postTemplateEmbed } from '../../../modules/tickets/ticketSystem';
@@ -179,7 +179,7 @@ ticketsRouter.post('/', requireGuildOwner, async (req, res) => {
       isActive: (v.data.isActive as boolean | undefined) ?? true,
     },
   });
-  logAudit('TICKET_TEMPLATE_CREATED', 'TICKET', { guildId: scope.guildId, templateId: created.id, slot: created.slot, actor: scope.actorDiscordId });
+  logAuditDb('TICKET_TEMPLATE_CREATED', 'TICKET', { actorUserId: req.auth!.userId, guildId: scope.guildId, details: { templateId: created.id, slot: created.slot, label: created.label } });
   emitGuildEvent(scope.guildId, { type: 'tickets.changed', payload: { guildId: scope.guildId, templateId: created.id } });
   res.status(201).json(serialize(created));
 });
@@ -201,7 +201,7 @@ ticketsRouter.put('/:id', requireGuildOwner, async (req, res) => {
   }
 
   const updated = await prisma.ticketTemplate.update({ where: { id }, data: v.data });
-  logAudit('TICKET_TEMPLATE_UPDATED', 'TICKET', { guildId: scope.guildId, templateId: id, fields: Object.keys(v.data), actor: scope.actorDiscordId });
+  logAuditDb('TICKET_TEMPLATE_UPDATED', 'TICKET', { actorUserId: req.auth!.userId, guildId: scope.guildId, details: { templateId: id, fields: Object.keys(v.data) } });
   emitGuildEvent(scope.guildId, { type: 'tickets.changed', payload: { guildId: scope.guildId, templateId: id } });
   res.json(serialize(updated));
 });
@@ -213,7 +213,7 @@ ticketsRouter.delete('/:id', requireGuildOwner, async (req, res) => {
   if (!existing || existing.guildId !== scope.guildId) { res.status(404).json({ error: 'Template nicht gefunden.' }); return; }
 
   await prisma.ticketTemplate.delete({ where: { id } });
-  logAudit('TICKET_TEMPLATE_DELETED', 'TICKET', { guildId: scope.guildId, templateId: id, actor: scope.actorDiscordId });
+  logAuditDb('TICKET_TEMPLATE_DELETED', 'TICKET', { actorUserId: req.auth!.userId, guildId: scope.guildId, details: { templateId: id, slot: existing.slot, label: existing.label } });
   emitGuildEvent(scope.guildId, { type: 'tickets.changed', payload: { guildId: scope.guildId, templateId: id } });
   res.status(204).end();
 });

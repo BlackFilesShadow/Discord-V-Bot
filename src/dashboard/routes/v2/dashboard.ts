@@ -13,7 +13,7 @@ import { listSlots } from '../../../modules/nitrado/repository';
 import { listGrants } from '../../../modules/permissions/repository';
 import { asUserDiscordId } from '../../../types/scope';
 import prisma from '../../../database/prisma';
-import { logAudit } from '../../../utils/logger';
+import { logAuditDb } from '../../../utils/logger';
 import { emitGuildEvent } from '../../socket/emitter';
 
 export const dashboardRouter = Router({ mergeParams: true });
@@ -95,7 +95,7 @@ dashboardRouter.patch('/server/:slot/settings', requireGuildPermission('whitelis
     create: { guildId: scope.guildId, nitradoConnId: conn.id, ...data },
     update: data,
   });
-  logAudit('SERVER_SETTINGS_UPDATED', 'SERVER_SETTINGS', { guildId: scope.guildId, slotId: conn.id, fields: Object.keys(data), actor: scope.actorDiscordId });
+  logAuditDb('SERVER_SETTINGS_UPDATED', 'SERVER_SETTINGS', { actorUserId: req.auth!.userId, guildId: scope.guildId, details: { slotId: conn.id, fields: Object.keys(data) } });
   emitGuildEvent(scope.guildId, { type: 'settings.changed', payload: { guildId: scope.guildId, slotId: conn.id } });
   res.json({
     whitelistActive: s.whitelistActive,

@@ -10,7 +10,7 @@ import { Router } from 'express';
 import { requireGuildPermission } from '../../middleware/auth';
 import prisma from '../../../database/prisma';
 import type { CasinoGameType } from '@prisma/client';
-import { logAudit } from '../../../utils/logger';
+import { logAuditDb } from '../../../utils/logger';
 
 export const casinoRouter = Router({ mergeParams: true });
 
@@ -55,7 +55,7 @@ casinoRouter.put('/games/:type', requireGuildPermission('casino.manage'), async 
     create: { guildId: scope.guildId, type: t, ...data },
     update: data,
   });
-  logAudit('CASINO_GAME_UPDATED', 'CASINO', { guildId: scope.guildId, type: t, actor: scope.actorDiscordId });
+  logAuditDb('CASINO_GAME_UPDATED', 'CASINO', { actorUserId: req.auth!.userId, guildId: scope.guildId, details: { type: t, fields: Object.keys(data) } });
   res.json({
     type: g.type, enabled: g.enabled, winChancePct: g.winChancePct,
     minBet: g.minBet.toString(), maxBet: g.maxBet.toString(), payoutMult: g.payoutMult,

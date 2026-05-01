@@ -1,7 +1,7 @@
 import { useState } from 'react';
 import { Link, useParams } from 'react-router-dom';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
-import { Plus, Trash2, KeyRound, Server as ServerIcon, Shield, AlertTriangle, ChevronRight, Ticket, Settings2, Send, Power, Tag } from 'lucide-react';
+import { Plus, Trash2, KeyRound, Server as ServerIcon, Shield, AlertTriangle, ChevronRight, Ticket, Settings2, Send, Power, Tag, Activity } from 'lucide-react';
 import { api, ApiError } from '@/lib/api';
 import { Shell } from '@/components/Shell';
 import { Card, CardHeader, CardTitle, CardDesc } from '@/components/ui/Card';
@@ -10,7 +10,7 @@ import { Input } from '@/components/ui/Input';
 import { Select } from '@/components/ui/Select';
 import { useGuildLiveUpdates } from '@/lib/useGuildLiveUpdates';
 
-type Tab = 'nitrado' | 'aliases' | 'permissions' | 'tickets';
+type Tab = 'nitrado' | 'aliases' | 'permissions' | 'tickets' | 'audit';
 
 interface TabDef {
   key: Tab;
@@ -24,6 +24,7 @@ const TABS: ReadonlyArray<TabDef> = [
   { key: 'aliases', label: 'Server-Aliase', icon: Tag, ownerOnly: true },
   { key: 'permissions', label: 'Berechtigungen', icon: Shield, ownerOnly: true },
   { key: 'tickets', label: 'Tickets', icon: Ticket },
+  { key: 'audit', label: 'Audit-Log', icon: Activity, ownerOnly: true },
 ];
 
 interface Slot {
@@ -115,6 +116,7 @@ export default function Server() {
             {tab === 'aliases' && guildId && isOwner && <AliasesTab guildId={guildId} slots={dash.data.slots} />}
             {tab === 'permissions' && guildId && isOwner && <PermissionsTab guildId={guildId} />}
             {tab === 'tickets' && guildId && <TicketsTab guildId={guildId} isOwner={isOwner} />}
+            {tab === 'audit' && guildId && isOwner && <AuditTab guildId={guildId} />}
           </>
         )}
       </div>
@@ -838,5 +840,150 @@ function AliasRow({ guildId, slot }: { guildId: string; slot: Slot }) {
         </p>
       )}
     </Card>
+  );
+}
+// ============================================================================
+// Audit-Log (Owner-only)
+// ============================================================================
+
+interface AuditEntry {
+  id: string;
+  action: string;
+  category: string;
+  createdAt: string;
+  actor: { discordId: string; username: string | null } | null;
+  target: { discordId: string; username: string | null } | null;
+  channelId: string | null;
+  details: unknown;
+}
+
+interface AuditPage {
+  entries: AuditEntry[];
+  limit: number;
+  hasMore: boolean;
+}
+
+interface AuditCategoriesResp {
+  categories: { category: string; count: number }[];
+}
+
+function AuditTab({ guildId }: { guildId: string }) {
+  const [category, setCategory] = useState<string>('');
+  const [actionFilter, setActionFilter] = useState<string>('');
+  const [pages, setPages] = useState<AuditEntry[]>([]);
+  const [cursor, setCursor] = useState<string | undefined>(undefined);
+  const [open, setOpen] = useState<Record<string, boolean>>({});
+
+  const cats = useQuery({
+    queryKey: ['audit-cats', guildId],
+    queryFn: () => api.get<AuditCategoriesResp>(`/api/v2/guilds/${guildId}/audit/categories`),
+  });
+
+  const qs = new URLSearchParams();
+  qs.set('limit', '50');
+  if (category) qs.set('category', category);
+  if (actionFilter.trim()) qs.set('action', actionFilter.trim());
+  if (cursor) qs.set('before', cursor);
+  const qsKey = qs.toString();
+
+  const list = useQuery({
+    queryKey: ['audit', guildId, qsKey],
+    queryFn: async () => {
+      const data = await api.get<AuditPage>(`/api/v2/guilds/${guildId}/audit?${qsKey}`);
+      setPages(prev => cursor ? [...prev, ...data.entries] : data.entries);
+      return data;
+    },
+  });
+
+  function resetAndReload() {
+    setCursor(undefined);
+    setPages([]);
+    list.refetch();
+  }
+
+  return (
+    <div className="space-y-4">
+      <Card>
+        <CardHeader>
+          <CardTitle>Audit-Log</CardTitle>
+          <CardDesc>Letzte Aktionen in diesem Server (nur fuer Owner sichtbar).</CardDesc>
+        </CardHeader>
+        <div className="grid sm:grid-cols-3 gap-3 mt-3">
+          <div>
+            <label className="block text-xs text-muted mb-1">Kategorie</label>
+            <Select value={category} onChange={e => { setCategory(e.target.value); setCursor(undefined); setPages([]); }}>
+              <option value="">Alle</option>
+              {cats.data?.categories.map(c => (
+                <option key={c.category} value={c.category}>{c.category} ({c.count})</option>
+              ))}
+            </Select>
+          </div>
+          <div className="sm:col-span-2">
+            <label className="block text-xs text-muted mb-1">Aktion enthaelt</label>
+            <div className="flex gap-2">
+              <Input value={actionFilter} onChange={e => setActionFilter(e.target.value)} placeholder="z.B. TICKET_TEMPLATE_" />
+              <Button onClick={resetAndReload} disabled={list.isFetching}>Suchen</Button>
+            </div>
+          </div>
+        </div>
+      </Card>
+
+      {list.isLoading && pages.length === 0 && <div className="h-24 rounded-xl skeleton" />}
+      {list.isError && (
+        <Card>
+          <p className="text-danger text-sm">Fehler: {(list.error as ApiError).message}</p>
+        </Card>
+      )}
+
+      {pages.length === 0 && !list.isLoading && (
+        <Card><p className="text-muted text-sm">Keine Eintraege.</p></Card>
+      )}
+
+      {pages.length > 0 && (
+        <Card>
+          <ul className="divide-y divide-border">
+            {pages.map(e => {
+              const expanded = !!open[e.id];
+              const date = new Date(e.createdAt);
+              return (
+                <li key={e.id} className="py-2">
+                  <button
+                    type="button"
+                    onClick={() => setOpen(o => ({ ...o, [e.id]: !o[e.id] }))}
+                    className="w-full text-left flex items-start gap-3 hover:bg-bg-elev/40 rounded px-2 py-1 focus-ring"
+                  >
+                    <span className="text-xs text-muted shrink-0 w-32 tabular-nums">{date.toLocaleString()}</span>
+                    <span className="text-xs px-1.5 py-0.5 rounded bg-accent/15 text-accent shrink-0">{e.category}</span>
+                    <span className="font-medium text-white text-sm flex-1 truncate">{e.action}</span>
+                    <span className="text-xs text-muted truncate max-w-[12rem]">
+                      {e.actor?.username ?? e.actor?.discordId ?? '—'}
+                    </span>
+                  </button>
+                  {expanded && (
+                    <pre className="ml-2 mt-2 p-2 rounded bg-bg/60 border border-border text-xs text-muted overflow-x-auto">
+{JSON.stringify({ actor: e.actor, target: e.target, channelId: e.channelId, details: e.details }, null, 2)}
+                    </pre>
+                  )}
+                </li>
+              );
+            })}
+          </ul>
+          {list.data?.hasMore && (
+            <div className="mt-3 flex justify-center">
+              <Button
+                onClick={() => {
+                  const last = pages[pages.length - 1];
+                  if (last) setCursor(last.createdAt);
+                }}
+                disabled={list.isFetching}
+                loading={list.isFetching}
+              >
+                Mehr laden
+              </Button>
+            </div>
+          )}
+        </Card>
+      )}
+    </div>
   );
 }

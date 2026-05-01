@@ -11,7 +11,7 @@ import { requireGuildOwner } from '../../middleware/auth';
 import { listSlots, createSlot, deleteSlot, getSlot, getDecryptedToken, updateToken, updateAlias } from '../../../modules/nitrado/repository';
 import { NitradoClient } from '../../../modules/nitrado/nitradoClient';
 import { asUserDiscordId, asNitradoConnId } from '../../../types/scope';
-import { logAudit, logger } from '../../../utils/logger';
+import { logAuditDb, logger } from '../../../utils/logger';
 
 export const nitradoRouter = Router({ mergeParams: true });
 
@@ -55,8 +55,9 @@ nitradoRouter.post('/', requireGuildOwner, async (req, res) => {
     nitradoServerId: nitradoServerId ?? null,
     addedBy: asUserDiscordId(scope.actorDiscordId),
   });
-  logAudit('NITRADO_SLOT_CREATED', 'NITRADO', {
-    guildId: scope.guildId, slot, alias, alias5: created.alias5, actor: scope.actorDiscordId,
+  logAuditDb('NITRADO_SLOT_CREATED', 'NITRADO', {
+    actorUserId: req.auth!.userId, guildId: scope.guildId,
+    details: { slot, alias, alias5: created.alias5 },
   });
   res.status(201).json({
     id: created.id,
@@ -89,8 +90,9 @@ nitradoRouter.patch('/:slot/token', requireGuildOwner, async (req, res) => {
   const updated = await updateToken(scope.guildId, slot, token);
   if (!updated) { res.status(500).json({ error: 'Update fehlgeschlagen.' }); return; }
 
-  logAudit('NITRADO_SLOT_TOKEN_UPDATED', 'NITRADO', {
-    guildId: scope.guildId, slot, alias5: updated.alias5, actor: scope.actorDiscordId,
+  logAuditDb('NITRADO_SLOT_TOKEN_UPDATED', 'NITRADO', {
+    actorUserId: req.auth!.userId, guildId: scope.guildId,
+    details: { slot, alias5: updated.alias5 },
   });
   res.json({ ok: true, slot: updated.slot, status: updated.status });
 });
@@ -114,8 +116,9 @@ nitradoRouter.patch('/:slot/alias', requireGuildOwner, async (req, res) => {
     res.status(400).json({ error: (e as Error).message }); return;
   }
   if (!updated) { res.status(404).json({ error: 'Slot nicht gefunden.' }); return; }
-  logAudit('NITRADO_SLOT_ALIAS_UPDATED', 'NITRADO', {
-    guildId: scope.guildId, slot, alias: updated.alias, alias5: updated.alias5, actor: scope.actorDiscordId,
+  logAuditDb('NITRADO_SLOT_ALIAS_UPDATED', 'NITRADO', {
+    actorUserId: req.auth!.userId, guildId: scope.guildId,
+    details: { slot, alias: updated.alias, alias5: updated.alias5 },
   });
   res.json({ ok: true, slot: updated.slot, alias: updated.alias, alias5: updated.alias5 });
 });
@@ -126,7 +129,7 @@ nitradoRouter.delete('/:slot', requireGuildOwner, async (req, res) => {
   if (!Number.isInteger(slot) || slot < 1 || slot > 5) { res.status(400).json({ error: 'slot 1..5' }); return; }
   const id = await deleteSlot(scope.guildId, slot);
   if (!id) { res.status(404).json({ error: 'Slot nicht gefunden.' }); return; }
-  logAudit('NITRADO_SLOT_DELETED', 'NITRADO', { guildId: scope.guildId, slot, id, actor: scope.actorDiscordId });
+  logAuditDb('NITRADO_SLOT_DELETED', 'NITRADO', { actorUserId: req.auth!.userId, guildId: scope.guildId, details: { slot, id } });
   res.json({ ok: true, deletedId: id });
 });
 

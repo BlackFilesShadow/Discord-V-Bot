@@ -113,6 +113,80 @@ export function logAudit(action: string, category: string, details: Record<strin
 }
 
 /**
+ * Audit-Log mit DB-Persistenz (Phase 6E).
+ * Schreibt zusaetzlich zu Winston in die `AuditLog`-Tabelle, damit das
+ * Dashboard-Audit-Panel echte historische Daten anzeigen kann.
+ *
+ * Wichtige Felder in `meta`:
+ *   - actorUserId  (User.id, NICHT discordId — fuer FK)
+ *   - guildId      (string, fuer Per-Guild-Filter)
+ *   - targetUserId (User.id, optional)
+ *   - channelId    (optional)
+ *
+ * Best-effort: DB-Fehler werden geschluckt und nur ins normale Log geschrieben.
+ */
+export function logAuditDb(
+  action: string,
+  category: string,
+  meta: {
+    actorUserId?: string | null;
+    guildId?: string | null;
+    targetUserId?: string | null;
+    channelId?: string | null;
+    details?: Record<string, unknown>;
+    ip?: string | null;
+    userAgent?: string | null;
+  },
+): void {
+  // 1. Winston (immer)
+  logAudit(action, category, {
+    actor: meta.actorUserId, guildId: meta.guildId,
+    target: meta.targetUserId, channel: meta.channelId,
+    ...meta.details,
+  });
+
+  // 2. DB (best-effort, async, kein await)
+  void persistAuditRow(action, category, meta).catch((e: unknown) => {
+    logger.warn('logAuditDb: DB-Persistierung fehlgeschlagen', {
+      action, category, err: (e as Error).message,
+    });
+  });
+}
+
+async function persistAuditRow(
+  action: string,
+  category: string,
+  meta: {
+    actorUserId?: string | null;
+    guildId?: string | null;
+    targetUserId?: string | null;
+    channelId?: string | null;
+    details?: Record<string, unknown>;
+    ip?: string | null;
+    userAgent?: string | null;
+  },
+): Promise<void> {
+  // Lazy-Import gegen Zirkularitaet (logger laedt prisma laedt logger).
+  const prismaMod = await import('../database/prisma.js');
+  const prisma = prismaMod.default as unknown as { auditLog: { create: (args: { data: Record<string, unknown> }) => Promise<unknown> } };
+  await prisma.auditLog.create({
+    data: {
+      actorId: meta.actorUserId ?? null,
+      targetId: meta.targetUserId ?? null,
+      action,
+      // Cast: Migration `20260502120000_add_audit_categories_v2` erweitert das Enum.
+      category: category as never,
+      details: (meta.details ?? null) as never,
+      channelId: meta.channelId ?? null,
+      guildId: meta.guildId ?? null,
+      ipAddress: meta.ip ?? null,
+      userAgent: meta.userAgent ?? null,
+      isImmutable: true,
+    },
+  });
+}
+
+/**
  * Security-Event loggen.
  */
 export function logSecurity(event: string, severity: string, details: Record<string, unknown>): void {

@@ -12,7 +12,7 @@ import { requireGuildPermission } from '../../middleware/auth';
 import prisma from '../../../database/prisma';
 import { getSlot } from '../../../modules/nitrado/repository';
 import { asUserDiscordId } from '../../../types/scope';
-import { logAudit } from '../../../utils/logger';
+import { logAuditDb } from '../../../utils/logger';
 
 export const economyLinkRouter = Router({ mergeParams: true });
 
@@ -54,7 +54,7 @@ economyLinkRouter.delete('/:userDiscordId', requireGuildPermission('economy.mana
   const out = await prisma.economyLink.deleteMany({
     where: { guildId: scope.guildId, nitradoConnId: connId, userDiscordId: target },
   });
-  logAudit('ECONOMY_LINK_REMOVED', 'ECONOMY', { guildId: scope.guildId, slotId: connId, target, actor: scope.actorDiscordId });
+  logAuditDb('ECONOMY_LINK_REMOVED', 'ECONOMY', { actorUserId: req.auth!.userId, guildId: scope.guildId, details: { slotId: connId, target } });
   res.json({ ok: true, deleted: out.count });
 });
 
@@ -78,6 +78,6 @@ economyLinkRouter.post('/grant', requireGuildPermission('economy.manage'), async
   const link = await prisma.economyLink.create({
     data: { guildId: scope.guildId, nitradoConnId: connId, userDiscordId: target, gameId },
   });
-  logAudit('ECONOMY_LINK_GRANTED', 'ECONOMY', { guildId: scope.guildId, slotId: connId, target, gameId, actor: scope.actorDiscordId });
+  logAuditDb('ECONOMY_LINK_GRANTED', 'ECONOMY', { actorUserId: req.auth!.userId, guildId: scope.guildId, details: { slotId: connId, target, gameId } });
   res.status(201).json({ userDiscordId: link.userDiscordId, gameId: link.gameId, linkedAt: link.linkedAt });
 });
