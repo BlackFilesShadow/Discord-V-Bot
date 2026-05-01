@@ -41,6 +41,62 @@ export function getDiscordAccessToken(sessionToken: string | undefined): string 
   return cached.accessToken;
 }
 
+/**
+ * Wie getDiscordAccessToken, aber versucht bei Cache-Miss einen Refresh
+ * via gespeichertem refresh_token. Loest den "nach Container-Restart sind
+ * Owner-Guilds ohne Bot weg"-Effekt.
+ */
+export async function ensureDiscordAccessToken(sessionToken: string | undefined): Promise<string | null> {
+  const direct = getDiscordAccessToken(sessionToken);
+  if (direct) return direct;
+  if (!sessionToken) return null;
+
+  const dbSession = await prisma.session.findUnique({
+    where: { token: sessionToken },
+    select: { userId: true, isActive: true, expiresAt: true },
+  });
+  if (!dbSession || !dbSession.isActive || dbSession.expiresAt <= new Date()) return null;
+
+  const latestToken = await prisma.oAuthToken.findFirst({
+    where: { userId: dbSession.userId },
+    orderBy: { createdAt: 'desc' },
+  });
+  if (!latestToken?.refreshTokenEnc) return null;
+
+  try {
+    const refreshToken = decrypt(latestToken.refreshTokenEnc, config.security.encryptionKey);
+    const tokenResponse = await axios.post(DISCORD_TOKEN_URL, new URLSearchParams({
+      client_id: config.discord.clientId,
+      client_secret: config.discord.clientSecret,
+      grant_type: 'refresh_token',
+      refresh_token: refreshToken,
+    }), { headers: { 'Content-Type': 'application/x-www-form-urlencoded' }, timeout: 5000 });
+
+    const { access_token, refresh_token: newRefresh, expires_in } = tokenResponse.data;
+    tokenCache.set(sessionToken, {
+      accessToken: access_token,
+      expiresAt: new Date(Date.now() + expires_in * 1000),
+    });
+
+    await prisma.oAuthToken.delete({ where: { id: latestToken.id } });
+    await prisma.oAuthToken.create({
+      data: {
+        userId: dbSession.userId,
+        refreshTokenEnc: newRefresh ? encrypt(newRefresh, config.security.encryptionKey) : null,
+        tokenType: 'Bearer',
+        scope: latestToken.scope,
+        expiresAt: new Date(Date.now() + expires_in * 1000),
+        lastRefresh: new Date(),
+      },
+    });
+    logAudit('TOKEN_REFRESHED', 'AUTH', { userId: dbSession.userId, source: 'ensureDiscordAccessToken' });
+    return access_token;
+  } catch (e) {
+    logger.warn('ensureDiscordAccessToken: Refresh fehlgeschlagen.', { err: (e as Error).message });
+    return null;
+  }
+}
+
 const DISCORD_AUTH_URL = 'https://discord.com/api/oauth2/authorize';
 const DISCORD_TOKEN_URL = 'https://discord.com/api/oauth2/token';
 const DISCORD_API_URL = 'https://discord.com/api/v10';

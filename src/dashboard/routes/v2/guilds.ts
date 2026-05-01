@@ -24,7 +24,7 @@ import axios from 'axios';
 import { tryGetDashboardClient, getDashboardClient } from '../../clientRegistry';
 import { getOrCreate, get as getDashLink } from '../../../modules/dashboard/repository';
 import { asGuildId, asUserDiscordId } from '../../../types/scope';
-import { getDiscordAccessToken } from '../auth';
+import { ensureDiscordAccessToken } from '../auth';
 import { config } from '../../../config';
 import { logger } from '../../../utils/logger';
 import prisma from '../../../database/prisma';
@@ -58,7 +58,7 @@ guildsRouter.get('/', async (req, res) => {
   // Schritt 1: Discord-API holen (nur fuer owner=true und Namen/Icons)
   let userGuilds: DiscordUserGuild[] = [];
   const sessionToken = (req.session as { sessionToken?: string }).sessionToken;
-  const accessToken = getDiscordAccessToken(sessionToken);
+  const accessToken = await ensureDiscordAccessToken(sessionToken);
   if (accessToken) {
     try {
       const r = await axios.get<DiscordUserGuild[]>('https://discord.com/api/v10/users/@me/guilds', {
