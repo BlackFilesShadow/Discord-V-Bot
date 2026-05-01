@@ -1,7 +1,7 @@
 import { useState } from 'react';
 import { Link, useParams } from 'react-router-dom';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
-import { Plus, Trash2, KeyRound, Server as ServerIcon, Shield, AlertTriangle, ChevronRight } from 'lucide-react';
+import { Plus, Trash2, KeyRound, Server as ServerIcon, Shield, AlertTriangle, ChevronRight, Ticket, Settings2 } from 'lucide-react';
 import { api, ApiError } from '@/lib/api';
 import { Shell } from '@/components/Shell';
 import { Card, CardHeader, CardTitle, CardDesc } from '@/components/ui/Card';
@@ -10,6 +10,19 @@ import { Input } from '@/components/ui/Input';
 import { useGuildLiveUpdates } from '@/lib/useGuildLiveUpdates';
 
 type Tab = 'nitrado' | 'permissions' | 'tickets';
+
+interface TabDef {
+  key: Tab;
+  label: string;
+  icon: typeof ServerIcon;
+  ownerOnly?: boolean;
+}
+
+const TABS: ReadonlyArray<TabDef> = [
+  { key: 'nitrado', label: 'Nitrado-Slots', icon: Settings2 },
+  { key: 'permissions', label: 'Berechtigungen', icon: Shield, ownerOnly: true },
+  { key: 'tickets', label: 'Tickets', icon: Ticket },
+];
 
 interface Slot {
   id: string;
@@ -42,17 +55,38 @@ export default function Server() {
     enabled: !!guildId,
   });
 
-  const tabs: ReadonlyArray<{ key: Tab; label: string; ownerOnly?: boolean }> = [
-    { key: 'nitrado', label: 'Nitrado-Slots' },
-    { key: 'permissions', label: 'Berechtigungen', ownerOnly: true },
-    { key: 'tickets', label: 'Tickets' },
-  ];
+  const tabs = TABS;
 
   const isOwner = dash.data?.isOwner ?? false;
   const visibleTabs = tabs.filter(t => !t.ownerOnly || isOwner);
 
+  const sidebar = (
+    <nav className="space-y-1" aria-label="Server-Bereiche">
+      {visibleTabs.map(t => {
+        const Icon = t.icon;
+        const active = tab === t.key;
+        return (
+          <button
+            key={t.key}
+            type="button"
+            onClick={() => setTab(t.key)}
+            className={`w-full flex items-center gap-2 px-3 py-2 rounded-md text-sm font-medium text-left transition-colors focus-ring ${
+              active
+                ? 'bg-accent/15 text-accent border border-accent/30 shadow-glow-sm'
+                : 'text-muted hover:text-white hover:bg-bg-elev border border-transparent'
+            }`}
+            aria-current={active ? 'page' : undefined}
+          >
+            <Icon className="h-4 w-4 shrink-0" />
+            <span className="truncate">{t.label}</span>
+          </button>
+        );
+      })}
+    </nav>
+  );
+
   return (
-    <Shell title={dash.data?.alias5 ? `Server ${dash.data.alias5}` : 'Server'} back="/servers">
+    <Shell title={dash.data?.alias5 ? `Server ${dash.data.alias5}` : 'Server'} back="/servers" sidebar={sidebar}>
       <div className="max-w-5xl mx-auto">
         {dash.isLoading && <div className="h-24 rounded-xl skeleton" />}
         {dash.isError && (
@@ -74,24 +108,6 @@ export default function Server() {
               </div>
               <p className="text-muted text-sm">{dash.data.slots.length} Slots &middot; {dash.data.grantsCount} delegierte Berechtigungen</p>
             </header>
-
-            {/* Chip-Tabs (mobil-freundlich) */}
-            <div className="flex flex-wrap gap-2 mb-6 -mx-1 px-1 overflow-x-auto">
-              {visibleTabs.map(t => (
-                <button
-                  key={t.key}
-                  type="button"
-                  onClick={() => setTab(t.key)}
-                  className={`px-4 py-2 rounded-full text-sm font-medium whitespace-nowrap transition-all focus-ring ${
-                    tab === t.key
-                      ? 'bg-accent text-white shadow-glow-sm'
-                      : 'bg-bg-card text-muted hover:bg-bg-elev hover:text-white border border-border'
-                  }`}
-                >
-                  {t.label}
-                </button>
-              ))}
-            </div>
 
             {tab === 'nitrado' && guildId && <NitradoTab guildId={guildId} isOwner={isOwner} slots={dash.data.slots} />}
             {tab === 'permissions' && guildId && isOwner && <PermissionsTab guildId={guildId} />}
