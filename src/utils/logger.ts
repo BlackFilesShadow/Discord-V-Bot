@@ -168,7 +168,13 @@ async function persistAuditRow(
 ): Promise<void> {
   // Lazy-Import gegen Zirkularitaet (logger laedt prisma laedt logger).
   const prismaMod = await import('../database/prisma.js');
-  const prisma = prismaMod.default as unknown as { auditLog: { create: (args: { data: Record<string, unknown> }) => Promise<unknown> } };
+  // CJS/ESM-Interop: Bei `export default` mit Node16+CJS landet der echte
+  // Client je nach Bundler unter `.default` oder `.default.default`.
+  const raw = prismaMod.default as unknown as { auditLog?: unknown; default?: { auditLog?: unknown } };
+  const prisma = (raw && 'auditLog' in raw && raw.auditLog
+    ? raw
+    : raw?.default) as unknown as { auditLog: { create: (args: { data: Record<string, unknown> }) => Promise<unknown> } };
+  if (!prisma?.auditLog) throw new Error('PrismaClient.auditLog nicht verfuegbar (Interop-Problem)');
   await prisma.auditLog.create({
     data: {
       actorId: meta.actorUserId ?? null,
