@@ -9,7 +9,7 @@ import { Input } from '@/components/ui/Input';
 import { Switch } from '@/components/ui/Switch';
 import { Select } from '@/components/ui/Select';
 import { useGuildLiveUpdates } from '@/lib/useGuildLiveUpdates';
-import { Settings, Users, Shield, Coins, Link as LinkIcon, Trash2, Plus, Check, X, Banknote, Dice5 } from 'lucide-react';
+import { Settings, Users, Shield, Coins, Link as LinkIcon, Trash2, Plus, Check, X, Banknote, Dice5, RefreshCw } from 'lucide-react';
 
 type Tab = 'settings' | 'factions' | 'whitelist' | 'economy' | 'links';
 
@@ -328,8 +328,19 @@ interface WhitelistRequest {
   createdAt: string;
 }
 
+interface SyncDiff {
+  direction: 'pull' | 'push' | 'merge';
+  mode: 'preview' | 'apply';
+  counts: { local: number; remote: number; both: number; onlyLocal: number; onlyRemote: number };
+  onlyLocal: string[];
+  onlyRemote: string[];
+}
+
 function WhitelistPanel({ guildId, slot }: { guildId: string; slot: string }) {
   const qc = useQueryClient();
+  const [syncDirection, setSyncDirection] = useState<'pull' | 'push' | 'merge'>('merge');
+  const [syncDiff, setSyncDiff] = useState<SyncDiff | null>(null);
+  const [syncResult, setSyncResult] = useState<string | null>(null);
   const qs = `?slot=${slot}`;
   const [newId, setNewId] = useState('');
   const [reasonById, setReasonById] = useState<Record<string, string>>({});
@@ -368,6 +379,30 @@ function WhitelistPanel({ guildId, slot }: { guildId: string; slot: string }) {
     },
   });
 
+  const sync = useMutation({
+    mutationFn: (vars: { mode: 'preview' | 'apply'; direction: 'pull' | 'push' | 'merge' }) =>
+      api.post<{ ok: boolean; preview?: boolean; applied?: boolean; diff: SyncDiff; dbInserted?: number; dbDeleted?: number; jobsCreated?: number }>(
+        `/api/v2/guilds/${guildId}/whitelist/sync${qs}`,
+        vars,
+      ),
+    onSuccess: (res, vars) => {
+      setSyncDiff(res.diff);
+      if (vars.mode === 'apply') {
+        const parts: string[] = [];
+        if (typeof res.dbInserted === 'number') parts.push(`${res.dbInserted} lokal hinzugefuegt`);
+        if (typeof res.dbDeleted === 'number') parts.push(`${res.dbDeleted} lokal entfernt`);
+        if (typeof res.jobsCreated === 'number') parts.push(`${res.jobsCreated} Nitrado-Jobs erstellt`);
+        setSyncResult(parts.length ? parts.join(' · ') : 'Bereits synchron');
+      } else {
+        setSyncResult(null);
+      }
+      void qc.invalidateQueries({ queryKey: ['whitelist', guildId, slot] });
+    },
+    onError: (err: Error) => {
+      setSyncResult(`Fehler: ${err.message}`);
+    },
+  });
+
   return (
     <div className="space-y-6">
       <Card>
@@ -402,6 +437,82 @@ function WhitelistPanel({ guildId, slot }: { guildId: string; slot: string }) {
               </Button>
             </div>
           ))}
+        </div>
+
+        <div className="mt-6 pt-4 border-t border-border space-y-3">
+          <div className="flex items-center gap-2">
+            <RefreshCw className="h-4 w-4 text-muted" />
+            <h4 className="text-sm font-semibold text-white">Synchronisation DB &harr; Nitrado</h4>
+          </div>
+          <div className="flex flex-wrap items-center gap-2 text-xs">
+            <span className="text-muted">Richtung:</span>
+            {(['merge', 'pull', 'push'] as const).map(d => (
+              <button
+                key={d}
+                type="button"
+                onClick={() => setSyncDirection(d)}
+                className={`px-2 py-1 rounded border ${syncDirection === d ? 'bg-bg-elev border-primary text-white' : 'border-border text-muted hover:text-white'}`}
+              >
+                {d === 'merge' ? 'Merge (beide vereinen)' : d === 'pull' ? 'Pull (Nitrado -> DB)' : 'Push (DB -> Nitrado)'}
+              </button>
+            ))}
+          </div>
+          <div className="flex flex-wrap gap-2">
+            <Button
+              size="sm"
+              variant="ghost"
+              disabled={sync.isPending}
+              onClick={() => { setSyncResult(null); sync.mutate({ mode: 'preview', direction: syncDirection }); }}
+            >
+              Vorschau
+            </Button>
+            <Button
+              size="sm"
+              disabled={sync.isPending}
+              onClick={() => {
+                if (!confirm(`Synchronisation (${syncDirection}) jetzt ausfuehren?`)) return;
+                setSyncResult(null);
+                sync.mutate({ mode: 'apply', direction: syncDirection });
+              }}
+            >
+              Anwenden
+            </Button>
+            {sync.isPending && <span className="text-xs text-muted self-center">Laeuft…</span>}
+          </div>
+          {syncResult && <p className="text-xs text-green-400">{syncResult}</p>}
+          {syncDiff && (
+            <div className="bg-bg-elev rounded-md border border-border p-3 text-xs space-y-2">
+              <div className="flex flex-wrap gap-3 text-muted">
+                <span>Lokal: <span className="text-white font-mono">{syncDiff.counts.local}</span></span>
+                <span>Nitrado: <span className="text-white font-mono">{syncDiff.counts.remote}</span></span>
+                <span>Gemeinsam: <span className="text-white font-mono">{syncDiff.counts.both}</span></span>
+                <span>Nur lokal: <span className="text-yellow-400 font-mono">{syncDiff.counts.onlyLocal}</span></span>
+                <span>Nur Nitrado: <span className="text-yellow-400 font-mono">{syncDiff.counts.onlyRemote}</span></span>
+              </div>
+              {syncDiff.onlyLocal.length > 0 && (
+                <div>
+                  <div className="text-muted mb-1">Nur in DB ({syncDiff.onlyLocal.length}):</div>
+                  <div className="flex flex-wrap gap-1">
+                    {syncDiff.onlyLocal.slice(0, 50).map(n => (
+                      <span key={`l-${n}`} className="px-1.5 py-0.5 rounded bg-bg border border-border font-mono">{n}</span>
+                    ))}
+                    {syncDiff.onlyLocal.length > 50 && <span className="text-muted">+{syncDiff.onlyLocal.length - 50} weitere…</span>}
+                  </div>
+                </div>
+              )}
+              {syncDiff.onlyRemote.length > 0 && (
+                <div>
+                  <div className="text-muted mb-1">Nur auf Nitrado ({syncDiff.onlyRemote.length}):</div>
+                  <div className="flex flex-wrap gap-1">
+                    {syncDiff.onlyRemote.slice(0, 50).map(n => (
+                      <span key={`r-${n}`} className="px-1.5 py-0.5 rounded bg-bg border border-border font-mono">{n}</span>
+                    ))}
+                    {syncDiff.onlyRemote.length > 50 && <span className="text-muted">+{syncDiff.onlyRemote.length - 50} weitere…</span>}
+                  </div>
+                </div>
+              )}
+            </div>
+          )}
         </div>
       </Card>
 

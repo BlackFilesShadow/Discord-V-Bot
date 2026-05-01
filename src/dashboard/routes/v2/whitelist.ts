@@ -12,8 +12,11 @@
 import { Router } from 'express';
 import { requireGuildPermission } from '../../middleware/auth';
 import prisma from '../../../database/prisma';
-import { logAuditDb } from '../../../utils/logger';
+import { logAuditDb, logger } from '../../../utils/logger';
 import { emitGuildEvent } from '../../socket/emitter';
+import { getDecryptedToken } from '../../../modules/nitrado/repository';
+import { NitradoClient } from '../../../modules/nitrado/nitradoClient';
+import { asNitradoConnId } from '../../../types/scope';
 
 export const whitelistRouter = Router({ mergeParams: true });
 
@@ -163,4 +166,131 @@ whitelistRouter.post('/requests/:id/decision', requireGuildPermission('whitelist
   });
   emitGuildEvent(scope.guildId, { type: 'whitelist.changed', payload: { guildId: scope.guildId, entryId: reqRow.id, action: 'decided' } });
   res.json({ ok: true });
+});
+
+/**
+ * POST /sync  body: { mode?: 'preview' | 'apply', direction?: 'pull' | 'push' | 'merge' }
+ *
+ * Gleicht lokale `WhitelistEntry`-Tabelle und Nitrado-Whitelist (settings.general.whitelist) ab.
+ *
+ * direction:
+ *   - 'pull'   : Nitrado ist Source-of-Truth. Lokal fehlende werden in DB importiert,
+ *                lokal ueberzaehlige werden aus DB geloescht. Nitrado bleibt unangetastet.
+ *   - 'push'   : DB ist Source-of-Truth. Es entsteht 1 NitradoJob WHITELIST_SYNC,
+ *                der die Nitrado-Liste komplett auf den DB-Stand setzt.
+ *   - 'merge'  : (default) Vereinigung beider Listen. Lokal fehlende werden importiert,
+ *                Nitrado fehlende werden via WHITELIST_ADD-Jobs nachgetragen.
+ *
+ * mode:
+ *   - 'preview' (default): kein Schreibzugriff, nur Diff-Bericht
+ *   - 'apply'           : fuehrt die Aenderungen aus
+ */
+whitelistRouter.post('/sync', requireGuildPermission('whitelist.manage'), async (req, res) => {
+  const scope = req.guildScope!;
+  const connId = await activeSlotId(scope.guildId, req.query.slot);
+  if (!connId) { res.status(404).json({ error: 'Kein Nitrado-Slot.' }); return; }
+
+  const mode = (req.body?.mode === 'apply') ? 'apply' : 'preview';
+  const direction = (['pull', 'push', 'merge'].includes(req.body?.direction))
+    ? req.body.direction as 'pull' | 'push' | 'merge'
+    : 'merge';
+
+  const conn = await prisma.nitradoConnection.findFirst({
+    where: { id: connId, guildId: scope.guildId },
+    select: { id: true, nitradoServerId: true, status: true },
+  });
+  if (!conn) { res.status(404).json({ error: 'Slot nicht gefunden.' }); return; }
+  if (!conn.nitradoServerId) { res.status(400).json({ error: 'Slot hat keine Nitrado-Service-ID.' }); return; }
+  if (conn.status !== 'ACTIVE') { res.status(400).json({ error: `Slot ist ${conn.status}.` }); return; }
+
+  // 1) Beide Quellen lesen
+  let nitradoList: string[];
+  try {
+    const token = await getDecryptedToken(scope.guildId, asNitradoConnId(conn.id));
+    const remote = await new NitradoClient(token).getWhitelist(conn.nitradoServerId);
+    nitradoList = remote.map(r => r.identifier);
+  } catch (e) {
+    logger.error('Whitelist-Sync: Nitrado-Read fehlgeschlagen', e as Error);
+    res.status(502).json({ error: 'Nitrado-API nicht erreichbar.' }); return;
+  }
+  const localRows = await prisma.whitelistEntry.findMany({
+    where: { guildId: scope.guildId, nitradoConnId: connId },
+    select: { gameId: true },
+  });
+  const localList = localRows.map(r => r.gameId);
+
+  const localSet = new Set(localList);
+  const remoteSet = new Set(nitradoList);
+  const onlyLocal = localList.filter(n => !remoteSet.has(n));   // bei push: nach Nitrado nachtragen
+  const onlyRemote = nitradoList.filter(n => !localSet.has(n)); // bei pull: in DB importieren
+  const both = localList.filter(n => remoteSet.has(n));
+
+  const diff = {
+    direction, mode,
+    counts: { local: localList.length, remote: nitradoList.length, both: both.length, onlyLocal: onlyLocal.length, onlyRemote: onlyRemote.length },
+    onlyLocal, onlyRemote,
+  };
+
+  if (mode === 'preview') { res.json({ ok: true, preview: true, diff }); return; }
+
+  // 2) APPLY
+  let dbInserted = 0, dbDeleted = 0, jobsCreated = 0;
+
+  if (direction === 'pull' || direction === 'merge') {
+    // Nitrado -> DB: onlyRemote in DB einfuegen
+    for (const name of onlyRemote) {
+      try {
+        await prisma.whitelistEntry.create({
+          data: {
+            guildId: scope.guildId, nitradoConnId: connId, gameId: name,
+            source: 'IMPORT', approvedByDiscordId: scope.actorDiscordId,
+          },
+        });
+        dbInserted++;
+      } catch (e) {
+        if ((e as { code?: string }).code !== 'P2002') throw e;
+      }
+    }
+  }
+  if (direction === 'pull') {
+    // pull: lokal ueberzaehlige loeschen
+    if (onlyLocal.length > 0) {
+      const r = await prisma.whitelistEntry.deleteMany({
+        where: { guildId: scope.guildId, nitradoConnId: connId, gameId: { in: onlyLocal } },
+      });
+      dbDeleted = r.count;
+    }
+  }
+  if (direction === 'push' || direction === 'merge') {
+    // DB -> Nitrado: pro onlyLocal-Eintrag ein WHITELIST_ADD-Job
+    // (Worker serialisiert pro Connection, daher kein Datenverlust)
+    for (const name of onlyLocal) {
+      await prisma.nitradoJob.create({
+        data: {
+          guildId: scope.guildId, nitradoConnId: connId,
+          operation: 'WHITELIST_ADD', payload: { gameId: name },
+        },
+      });
+      jobsCreated++;
+    }
+  }
+  if (direction === 'push') {
+    // push: in Nitrado ueberzaehlige entfernen
+    for (const name of onlyRemote) {
+      await prisma.nitradoJob.create({
+        data: {
+          guildId: scope.guildId, nitradoConnId: connId,
+          operation: 'WHITELIST_REMOVE', payload: { gameId: name },
+        },
+      });
+      jobsCreated++;
+    }
+  }
+
+  logAuditDb('WHITELIST_SYNC', 'WHITELIST', {
+    actorUserId: req.auth!.userId, guildId: scope.guildId,
+    details: { direction, dbInserted, dbDeleted, jobsCreated, ...diff.counts },
+  });
+  emitGuildEvent(scope.guildId, { type: 'whitelist.changed', payload: { guildId: scope.guildId, action: 'added' } });
+  res.json({ ok: true, applied: true, diff, dbInserted, dbDeleted, jobsCreated });
 });
