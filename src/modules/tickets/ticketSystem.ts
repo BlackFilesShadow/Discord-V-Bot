@@ -397,12 +397,19 @@ async function openTicketLocked(btn: ButtonInteraction, t: Awaited<ReturnType<ty
       )
       .setFooter({ text: `V-Bot Ticket-System  •  Slot ${t.slot}` });
 
-    const mentionLine = effectiveStaffRoleId ? `<@&${effectiveStaffRoleId}> <@${btn.user.id}>` : `<@${btn.user.id}>`;
+    const mentionRoleIds = Array.isArray((t as unknown as { mentionRoleIds?: unknown }).mentionRoleIds)
+      ? ((t as unknown as { mentionRoleIds: unknown[] }).mentionRoleIds.filter((r): r is string => typeof r === 'string'))
+      : [];
+    // Keine User-Mention mehr (User wird im Embed-Field "Eroeffnet von" referenziert).
+    // Nur explizit konfigurierte Rollen werden gepingt.
+    const mentionLine = mentionRoleIds.length > 0
+      ? mentionRoleIds.map(r => `<@&${r}>`).join(' ')
+      : '';
     await channel.send({
-      content: mentionLine,
+      content: mentionLine || undefined,
       embeds: [welcome],
       components: [buildCloseButton(instance.id)],
-      allowedMentions: { users: [btn.user.id], roles: effectiveStaffRoleId ? [effectiveStaffRoleId] : [] },
+      allowedMentions: { parse: [], roles: mentionRoleIds, users: [] },
     });
 
     for (let i = 1; i < messages.length; i++) {

@@ -1082,6 +1082,7 @@ model TicketTemplate {
   postedMessageId     String? // ID der zuletzt geposteten Embed-Nachricht (zum Edit)
   categoryId          String? // Discord-Category, unter der Ticket-Channels erstellt werden (optional)
   staffRoleId         String? // Rolle die mit-Zugriff auf jeden Ticket-Channel bekommt (optional)
+  mentionRoleIds      String[]         @default([]) // Rollen die beim Ticket-Open im Channel erwaehnt werden (max 5)
   transcriptChannelId String // Channel fuer Transcript-Uploads beim Close
   archiveChannelId    String? // Optionaler separater Archiv-Channel (zusaetzlich zu Transcript)
   isActive            Boolean          @default(true)

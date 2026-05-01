@@ -38,6 +38,7 @@ interface TemplateBody {
   postChannelId?: string;
   categoryId?: string | null;
   staffRoleId?: string | null;
+  mentionRoleIds?: unknown;
   transcriptChannelId?: string;
   archiveChannelId?: string | null;
   isActive?: boolean;
@@ -108,6 +109,17 @@ function validateBody(b: TemplateBody, partial: boolean): { ok: true; data: Reco
     if (b.staffRoleId === null) data.staffRoleId = null;
     else if (typeof b.staffRoleId === 'string' && SNOWFLAKE_RE.test(b.staffRoleId)) data.staffRoleId = b.staffRoleId;
     else return { ok: false, error: 'staffRoleId ungueltig.' };
+  }
+
+  if (b.mentionRoleIds !== undefined) {
+    if (!Array.isArray(b.mentionRoleIds)) return { ok: false, error: 'mentionRoleIds muss ein Array sein.' };
+    if (b.mentionRoleIds.length > 5) return { ok: false, error: 'Maximal 5 Mention-Rollen.' };
+    const cleaned: string[] = [];
+    for (const r of b.mentionRoleIds) {
+      if (typeof r !== 'string' || !SNOWFLAKE_RE.test(r)) return { ok: false, error: 'mentionRoleIds: ungueltige Rollen-ID.' };
+      if (!cleaned.includes(r)) cleaned.push(r);
+    }
+    data.mentionRoleIds = cleaned;
   }
 
   if (b.archiveChannelId !== undefined) {
@@ -195,6 +207,7 @@ function serialize(t: TicketTemplate) {
     postedMessageId: t.postedMessageId,
     categoryId: t.categoryId,
     staffRoleId: t.staffRoleId,
+    mentionRoleIds: t.mentionRoleIds ?? [],
     transcriptChannelId: t.transcriptChannelId,
     archiveChannelId: t.archiveChannelId,
     isActive: t.isActive,
@@ -279,6 +292,7 @@ ticketsRouter.post('/', requireGuildOwner, async (req, res) => {
       archiveChannelId: (v.data.archiveChannelId as string | null | undefined) ?? null,
       categoryId: (v.data.categoryId as string | null | undefined) ?? null,
       staffRoleId: (v.data.staffRoleId as string | null | undefined) ?? null,
+      mentionRoleIds: (v.data.mentionRoleIds as string[] | undefined) ?? [],
       isActive: (v.data.isActive as boolean | undefined) ?? true,
     },
   });

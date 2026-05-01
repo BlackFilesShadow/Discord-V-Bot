@@ -703,6 +703,7 @@ interface TicketTemplate {
   postedMessageId: string | null;
   categoryId: string | null;
   staffRoleId: string | null;
+  mentionRoleIds: string[];
   transcriptChannelId: string;
   archiveChannelId: string | null;
   isActive: boolean;
@@ -915,6 +916,7 @@ function TicketEditModal({
   const [archiveChannelId, setArchiveChannelId] = useState(existing?.archiveChannelId ?? '');
   const [categoryId, setCategoryId] = useState(existing?.categoryId ?? '');
   const [staffRoleId, setStaffRoleId] = useState(existing?.staffRoleId ?? '');
+  const [mentionRoleIds, setMentionRoleIds] = useState<string[]>(existing?.mentionRoleIds ?? []);
   const [err, setErr] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
 
@@ -986,6 +988,7 @@ function TicketEditModal({
         archiveChannelId: archiveChannelId || null,
         categoryId: categoryId || null,
         staffRoleId: staffRoleId || null,
+        mentionRoleIds,
       };
       if (existing) {
         await api.put(`/api/v2/guilds/${guildId}/tickets/${existing.id}`, body);
@@ -1209,11 +1212,40 @@ function TicketEditModal({
               </Select>
             </label>
             <label className="block">
-              <span className="text-xs text-muted">Staff-Rolle (Mit-Zugriff + Mention, optional)</span>
+              <span className="text-xs text-muted">Staff-Rolle (Mit-Zugriff auf Ticket-Channel, optional)</span>
               <Select value={staffRoleId} onChange={e => setStaffRoleId(e.target.value)}>
                 <option value="">— keine —</option>
                 {roles.filter(r => !r.managed).map(r => <option key={r.id} value={r.id}>@{r.name}</option>)}
               </Select>
+            </label>
+            <label className="block sm:col-span-2">
+              <span className="text-xs text-muted">
+                Rollen die beim Ticket-Open erwähnt werden
+                <span className="text-[10px] ml-1">(max 5 — werden im Ticket-Channel gepingt; ohne Auswahl wird niemand erwähnt)</span>
+              </span>
+              <div className="mt-1 flex flex-wrap gap-1.5 rounded-lg border border-border bg-bg p-2 max-h-40 overflow-y-auto">
+                {roles.filter(r => !r.managed && r.name !== '@everyone').map(r => {
+                  const checked = mentionRoleIds.includes(r.id);
+                  const disabled = !checked && mentionRoleIds.length >= 5;
+                  return (
+                    <button
+                      type="button"
+                      key={r.id}
+                      disabled={disabled}
+                      onClick={() => setMentionRoleIds(prev => checked ? prev.filter(x => x !== r.id) : [...prev, r.id])}
+                      className={`text-xs px-2 py-1 rounded-md border transition ${
+                        checked
+                          ? 'border-primary bg-primary/15 text-primary'
+                          : disabled
+                            ? 'border-border bg-bg-card text-muted opacity-40 cursor-not-allowed'
+                            : 'border-border bg-bg-card text-fg hover:border-primary/50'
+                      }`}
+                    >
+                      @{r.name}
+                    </button>
+                  );
+                })}
+              </div>
             </label>
           </div>
 
