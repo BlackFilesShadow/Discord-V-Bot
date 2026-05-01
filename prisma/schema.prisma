@@ -1445,6 +1445,9 @@ model ServerSettings {
   permaOnly                 Boolean           @default(false)
   whitelistChannelId        String?
   whitelistRequestChannelId String?
+  whitelistInfoMessageId       String?
+  whitelistApproveLogChannelId String?
+  whitelistDenyLogChannelId    String?
   createdAt                 DateTime          @default(now())
   updatedAt                 DateTime          @updatedAt
 

@@ -57,7 +57,28 @@ export const whitelistCommand: Command = {
     });
     logAudit('WL_REQUEST_CREATED', 'WHITELIST', { guildId: scope.guildId, requestId: created.id, requester: scope.actorDiscordId, gameId: id });
     emitGuildEvent(scope.guildId, { type: 'whitelist.changed', payload: { guildId: scope.guildId, action: 'requested', entryId: created.id } });
-    await reply(i, `Anfrage gestellt (\`${created.id}\`). Owner/Mod entscheidet darueber.`);
+
+    // Approval-Embed in den konfigurierten Request-Kanal posten + User-DM
+    try {
+      const { postWhitelistApprovalEmbed, notifyRequesterPending } = await import('../../modules/whitelist/whitelistChannels.js');
+      await Promise.allSettled([
+        postWhitelistApprovalEmbed({
+          guildId: scope.guildId, nitradoConnId: scope.nitradoConnId!, requestId: created.id,
+          requesterDiscordId: scope.actorDiscordId, gameId: id,
+        }),
+        notifyRequesterPending(scope.guildId, scope.actorDiscordId, id),
+      ]);
+    } catch { /* nicht-fatal */ }
+
+    // Bestaetigung an User (ephemeral)
+    const ack = new EmbedBuilder()
+      .setTitle('Whitelist-Anfrage gestellt')
+      .setColor(0x5865F2)
+      .setDescription('Deine Anfrage wurde dem zustaendigen Server-Team weitergeleitet. Bitte warte auf die Entscheidung.')
+      .addFields({ name: 'Beantragter Name', value: `\`${id}\`` })
+      .setFooter({ text: `Request-ID: ${created.id}` })
+      .setTimestamp(new Date());
+    await i.reply({ embeds: [ack], flags: MessageFlags.Ephemeral });
   }),
 };
 

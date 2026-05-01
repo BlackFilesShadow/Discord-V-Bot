@@ -294,3 +294,116 @@ whitelistRouter.post('/sync', requireGuildPermission('whitelist.manage'), async 
   emitGuildEvent(scope.guildId, { type: 'whitelist.changed', payload: { guildId: scope.guildId, action: 'added' } });
   res.json({ ok: true, applied: true, diff, dbInserted, dbDeleted, jobsCreated });
 });
+
+/**
+ * GET /channels  Owner: liefert die 4 Whitelist-Kanal-IDs.
+ */
+whitelistRouter.get('/channels', requireGuildPermission('whitelist.manage'), async (req, res) => {
+  const scope = req.guildScope!;
+  const connId = await activeSlotId(scope.guildId, req.query.slot);
+  if (!connId) { res.status(404).json({ error: 'Kein Nitrado-Slot.' }); return; }
+  const settings = await prisma.serverSettings.findUnique({
+    where: { guildId_nitradoConnId: { guildId: scope.guildId, nitradoConnId: connId } },
+  });
+  res.json({
+    infoChannelId: settings?.whitelistChannelId ?? null,
+    requestChannelId: settings?.whitelistRequestChannelId ?? null,
+    approveLogChannelId: settings?.whitelistApproveLogChannelId ?? null,
+    denyLogChannelId: settings?.whitelistDenyLogChannelId ?? null,
+    infoMessageId: settings?.whitelistInfoMessageId ?? null,
+  });
+});
+
+/**
+ * PUT /channels  Owner: setzt eine oder mehrere Kanal-IDs.
+ * body: { infoChannelId?, requestChannelId?, approveLogChannelId?, denyLogChannelId? }
+ * (null = entfernen). Wenn infoChannelId gesetzt/geaendert wird, wird das
+ * Info-Embed automatisch (re)posted.
+ */
+whitelistRouter.put('/channels', requireGuildPermission('whitelist.manage'), async (req, res) => {
+  const scope = req.guildScope!;
+  const connId = await activeSlotId(scope.guildId, req.query.slot);
+  if (!connId) { res.status(404).json({ error: 'Kein Nitrado-Slot.' }); return; }
+
+  const body = req.body ?? {};
+  const validateId = (v: unknown): string | null | undefined => {
+    if (v === undefined) return undefined;
+    if (v === null || v === '') return null;
+    if (typeof v !== 'string' || !/^\d{17,20}$/.test(v)) {
+      throw new Error('Ungueltige Channel-ID');
+    }
+    return v;
+  };
+
+  let upd: Record<string, string | null>;
+  try {
+    upd = {};
+    const i = validateId(body.infoChannelId);          if (i !== undefined) upd.whitelistChannelId = i;
+    const r = validateId(body.requestChannelId);       if (r !== undefined) upd.whitelistRequestChannelId = r;
+    const a = validateId(body.approveLogChannelId);    if (a !== undefined) upd.whitelistApproveLogChannelId = a;
+    const d = validateId(body.denyLogChannelId);       if (d !== undefined) upd.whitelistDenyLogChannelId = d;
+  } catch (e) {
+    res.status(400).json({ error: (e as Error).message }); return;
+  }
+
+  // Wenn Info-Channel veraendert wird, alte messageId zuruecksetzen
+  const before = await prisma.serverSettings.findUnique({
+    where: { guildId_nitradoConnId: { guildId: scope.guildId, nitradoConnId: connId } },
+  });
+  if ('whitelistChannelId' in upd && upd.whitelistChannelId !== before?.whitelistChannelId) {
+    upd.whitelistInfoMessageId = null;
+  }
+
+  const after = await prisma.serverSettings.upsert({
+    where: { guildId_nitradoConnId: { guildId: scope.guildId, nitradoConnId: connId } },
+    create: { guildId: scope.guildId, nitradoConnId: connId, ...upd },
+    update: upd,
+  });
+
+  // Auto-Post Info-Embed wenn InfoChannel gesetzt
+  let infoResult: { posted: boolean; updated: boolean; messageId?: string } | null = null;
+  if (after.whitelistChannelId) {
+    try {
+      const { ensureWhitelistInfoEmbed } = await import('../../../modules/whitelist/whitelistChannels.js');
+      infoResult = await ensureWhitelistInfoEmbed(scope.guildId, connId);
+    } catch (e) {
+      logger.warn(`Whitelist-Info-Embed Post fehlgeschlagen: ${(e as Error).message}`);
+    }
+  }
+
+  logAuditDb('WHITELIST_CHANNELS_SET', 'WHITELIST', {
+    actorUserId: req.auth!.userId, guildId: scope.guildId,
+    details: { upd, infoResult },
+  });
+
+  res.json({
+    ok: true,
+    infoChannelId: after.whitelistChannelId,
+    requestChannelId: after.whitelistRequestChannelId,
+    approveLogChannelId: after.whitelistApproveLogChannelId,
+    denyLogChannelId: after.whitelistDenyLogChannelId,
+    infoMessageId: after.whitelistInfoMessageId,
+    infoResult,
+  });
+});
+
+/**
+ * POST /channels/info/repost  Owner: postet das Info-Embed neu (loescht ggf. das alte).
+ */
+whitelistRouter.post('/channels/info/repost', requireGuildPermission('whitelist.manage'), async (req, res) => {
+  const scope = req.guildScope!;
+  const connId = await activeSlotId(scope.guildId, req.query.slot);
+  if (!connId) { res.status(404).json({ error: 'Kein Nitrado-Slot.' }); return; }
+  // Reset MessageId, damit wirklich neu gepostet wird
+  await prisma.serverSettings.updateMany({
+    where: { guildId: scope.guildId, nitradoConnId: connId },
+    data: { whitelistInfoMessageId: null },
+  });
+  try {
+    const { ensureWhitelistInfoEmbed } = await import('../../../modules/whitelist/whitelistChannels.js');
+    const r = await ensureWhitelistInfoEmbed(scope.guildId, connId);
+    res.json({ ok: true, ...r });
+  } catch (e) {
+    res.status(500).json({ error: (e as Error).message });
+  }
+});

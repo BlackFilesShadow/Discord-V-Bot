@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { useParams } from 'react-router-dom';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { api } from '@/lib/api';
@@ -336,6 +336,14 @@ interface SyncDiff {
   onlyRemote: string[];
 }
 
+interface WhitelistChannelsState {
+  infoChannelId: string | null;
+  requestChannelId: string | null;
+  approveLogChannelId: string | null;
+  denyLogChannelId: string | null;
+  infoMessageId: string | null;
+}
+
 function WhitelistPanel({ guildId, slot }: { guildId: string; slot: string }) {
   const qc = useQueryClient();
   const [syncDirection, setSyncDirection] = useState<'pull' | 'push' | 'merge'>('merge');
@@ -556,7 +564,167 @@ function WhitelistPanel({ guildId, slot }: { guildId: string; slot: string }) {
           ))}
         </div>
       </Card>
+
+      <WhitelistChannelsCard guildId={guildId} slot={slot} />
     </div>
+  );
+}
+
+// ----------------------------------------------------------------------------
+// Whitelist-Channels (Kanal-Integration)
+// ----------------------------------------------------------------------------
+
+function WhitelistChannelsCard({ guildId, slot }: { guildId: string; slot: string }) {
+  const qc = useQueryClient();
+  const qs = `?slot=${slot}`;
+
+  const channels = useQuery({
+    queryKey: ['guild-channels', guildId],
+    queryFn: () => api.get<{ channels: ChannelOption[] }>(`/api/v2/guilds/${guildId}/channels`),
+    retry: false,
+  });
+  const cfg = useQuery({
+    queryKey: ['whitelist-channels', guildId, slot],
+    queryFn: () => api.get<WhitelistChannelsState>(`/api/v2/guilds/${guildId}/whitelist/channels${qs}`),
+    retry: false,
+  });
+
+  const [draft, setDraft] = useState<WhitelistChannelsState>({
+    infoChannelId: null, requestChannelId: null,
+    approveLogChannelId: null, denyLogChannelId: null,
+    infoMessageId: null,
+  });
+  const [msg, setMsg] = useState<{ ok: boolean; text: string } | null>(null);
+
+  useEffect(() => {
+    if (cfg.data) setDraft(cfg.data);
+  }, [cfg.data]);
+
+  const save = useMutation({
+    mutationFn: (body: Omit<WhitelistChannelsState, 'infoMessageId'>) =>
+      api.put<{ ok: boolean; infoResult?: { posted: boolean; updated: boolean; messageId?: string } | null } & WhitelistChannelsState>(
+        `/api/v2/guilds/${guildId}/whitelist/channels${qs}`, body,
+      ),
+    onSuccess: res => {
+      const parts = ['Gespeichert.'];
+      if (res.infoResult?.posted) parts.push('Info-Embed neu gepostet.');
+      else if (res.infoResult?.updated) parts.push('Info-Embed aktualisiert.');
+      setMsg({ ok: true, text: parts.join(' ') });
+      void qc.invalidateQueries({ queryKey: ['whitelist-channels', guildId, slot] });
+    },
+    onError: (e: Error) => setMsg({ ok: false, text: `Fehler: ${e.message}` }),
+  });
+
+  const repost = useMutation({
+    mutationFn: () => api.post<{ ok: boolean; posted: boolean; updated: boolean }>(
+      `/api/v2/guilds/${guildId}/whitelist/channels/info/repost${qs}`, {},
+    ),
+    onSuccess: () => {
+      setMsg({ ok: true, text: 'Info-Embed neu gepostet.' });
+      void qc.invalidateQueries({ queryKey: ['whitelist-channels', guildId, slot] });
+    },
+    onError: (e: Error) => setMsg({ ok: false, text: `Fehler: ${e.message}` }),
+  });
+
+  const channelsForbidden = channels.isError;
+  const opts = (channels.data?.channels ?? []).filter(c => c.type === 0 || c.type === 5); // Text + Announcement
+
+  return (
+    <Card>
+      <CardHeader><CardTitle>Kanal-Integration (Whitelist)</CardTitle></CardHeader>
+      {channelsForbidden && (
+        <p className="text-xs text-yellow-400 mb-3">
+          Channel-Liste nicht verfuegbar (nur Owner kann Kanaele waehlen).
+        </p>
+      )}
+      <div className="space-y-4">
+        <ChannelPicker
+          label="Info-Kanal (1× Command-Erklaerung als Embed)"
+          help="Sobald ein Kanal gewaehlt wird, postet der Bot dort automatisch genau ein Embed mit der /whitelist-Anleitung. Wechselst du den Kanal, wird das Embed neu gepostet."
+          value={draft.infoChannelId}
+          onChange={v => setDraft({ ...draft, infoChannelId: v })}
+          options={opts}
+          forbidden={channelsForbidden}
+        />
+        <ChannelPicker
+          label="Whitelist-Annahme-Kanal (Approval mit Buttons)"
+          help="Hier landen Anfragen als Embed mit Annehmen/Ablehnen-Buttons. Nur Mitglieder mit 'Server verwalten' koennen entscheiden."
+          value={draft.requestChannelId}
+          onChange={v => setDraft({ ...draft, requestChannelId: v })}
+          options={opts}
+          forbidden={channelsForbidden}
+        />
+        <ChannelPicker
+          label="Log-Kanal: ANGENOMMEN"
+          help="Jede Annahme wird strikt nur in diesem Kanal protokolliert (mit Antragsteller, Spielername, Admin)."
+          value={draft.approveLogChannelId}
+          onChange={v => setDraft({ ...draft, approveLogChannelId: v })}
+          options={opts}
+          forbidden={channelsForbidden}
+        />
+        <ChannelPicker
+          label="Log-Kanal: ABGELEHNT"
+          help="Jede Ablehnung wird strikt nur in diesem Kanal protokolliert."
+          value={draft.denyLogChannelId}
+          onChange={v => setDraft({ ...draft, denyLogChannelId: v })}
+          options={opts}
+          forbidden={channelsForbidden}
+        />
+
+        <div className="flex flex-wrap gap-2">
+          <Button
+            disabled={save.isPending || channelsForbidden}
+            onClick={() => { setMsg(null); save.mutate({
+              infoChannelId: draft.infoChannelId,
+              requestChannelId: draft.requestChannelId,
+              approveLogChannelId: draft.approveLogChannelId,
+              denyLogChannelId: draft.denyLogChannelId,
+            }); }}
+          >
+            {save.isPending ? 'Speichere…' : 'Speichern'}
+          </Button>
+          <Button
+            variant="ghost"
+            disabled={repost.isPending || !draft.infoChannelId}
+            onClick={() => { setMsg(null); repost.mutate(); }}
+          >
+            Info-Embed neu posten
+          </Button>
+        </div>
+        {msg && (
+          <p className={`text-xs ${msg.ok ? 'text-green-400' : 'text-danger'}`}>{msg.text}</p>
+        )}
+      </div>
+    </Card>
+  );
+}
+
+function ChannelPicker({
+  label, help, value, onChange, options, forbidden,
+}: {
+  label: string;
+  help?: string;
+  value: string | null;
+  onChange: (v: string | null) => void;
+  options: ChannelOption[];
+  forbidden: boolean;
+}) {
+  return (
+    <label className="text-sm block">
+      <span className="text-white font-medium">{label}</span>
+      {help && <span className="block text-xs text-muted mb-1">{help}</span>}
+      <select
+        className="w-full bg-bg-elev border border-border rounded-md px-2 py-1.5 text-sm text-white disabled:opacity-50"
+        value={value ?? ''}
+        disabled={forbidden}
+        onChange={e => onChange(e.target.value === '' ? null : e.target.value)}
+      >
+        <option value="">— nicht gesetzt —</option>
+        {options.map(c => (
+          <option key={c.id} value={c.id}>#{c.name}</option>
+        ))}
+      </select>
+    </label>
   );
 }
 

@@ -196,6 +196,15 @@ const interactionCreateEvent: BotEvent = {
         }
         return;
       }
+      if (btn.customId.startsWith('wlreq:a:') || btn.customId.startsWith('wlreq:d:')) {
+        try {
+          const { handleWhitelistApprovalButton } = await import('../modules/whitelist/whitelistApprovalButton.js');
+          await handleWhitelistApprovalButton(btn);
+        } catch (e) {
+          logger.error('Whitelist-Approval-Button-Handler-Fehler:', e as Error);
+        }
+        return;
+      }
       // Help-Pagination wird direkt vom Collector in help.ts verarbeitet — hier nichts tun
     }
 
