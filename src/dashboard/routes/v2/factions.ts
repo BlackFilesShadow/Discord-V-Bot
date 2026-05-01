@@ -246,7 +246,10 @@ factionsRouter.get('/', requireGuildPermission('factions.view'), async (req, res
   if (!connId) { res.status(404).json({ error: 'Kein Nitrado-Slot.' }); return; }
   const rows = await prisma.faction.findMany({
     where: { guildId: scope.guildId, nitradoConnId: connId },
-    include: { _count: { select: { members: true } } },
+    include: {
+      _count: { select: { members: true } },
+      members: { select: { userDiscordId: true, role: true, joinedAt: true }, orderBy: { joinedAt: 'asc' } },
+    },
     orderBy: { name: 'asc' },
   });
   res.json({
@@ -268,6 +271,7 @@ factionsRouter.get('/', requireGuildPermission('factions.view'), async (req, res
       status: f.status,
       isActive: f.isActive,
       memberCount: f._count.members,
+      members: f.members.map(m => ({ userDiscordId: m.userDiscordId, role: m.role, joinedAt: m.joinedAt.toISOString() })),
       createdAt: f.createdAt.toISOString(),
       updatedAt: f.updatedAt.toISOString(),
     })),

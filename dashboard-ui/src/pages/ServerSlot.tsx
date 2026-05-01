@@ -183,6 +183,7 @@ interface FactionRow {
   status: string;
   isActive: boolean;
   memberCount: number;
+  members: Array<{ userDiscordId: string; role: string; joinedAt: string }>;
   createdAt: string;
   updatedAt: string;
 }
@@ -451,6 +452,24 @@ function FactionSystemConfigCard({ guildId, slot }: { guildId: string; slot: str
   );
 }
 
+function FactionMemberInline({ guildId, userId }: { guildId: string; userId: string }) {
+  const q = useQuery({
+    queryKey: ['factionMember', guildId, userId],
+    queryFn: () => api.get<FactionMemberOption>(`/api/v2/guilds/${guildId}/factions/lookups/members/${userId}`),
+    enabled: !!userId && SNOWFLAKE_RE.test(userId),
+    staleTime: 5 * 60_000,
+  });
+  const label = q.data?.displayName || q.data?.globalName || q.data?.username || `ID ${userId}`;
+  return (
+    <div className="flex items-center gap-2 min-w-0">
+      {q.data?.avatarUrl
+        ? <img src={q.data.avatarUrl} alt="" className="h-6 w-6 rounded-full flex-shrink-0" />
+        : <div className="h-6 w-6 rounded-full bg-black/40 flex-shrink-0" />}
+      <span className="text-sm text-white truncate">{label}</span>
+    </div>
+  );
+}
+
 function FactionsPanel({ guildId, slot }: { guildId: string; slot: string }) {
   const qc = useQueryClient();
   const qs = `?slot=${slot}`;
@@ -519,11 +538,20 @@ function FactionsPanel({ guildId, slot }: { guildId: string; slot: string }) {
     },
   });
 
+  const removeMember = useMutation({
+    mutationFn: (vars: { factionId: string; userDiscordId: string }) =>
+      api.del(`/api/v2/guilds/${guildId}/factions/${vars.factionId}/members/${vars.userDiscordId}${qs}`),
+    onSuccess: () => {
+      void qc.invalidateQueries({ queryKey: ['factions', guildId, slot] });
+    },
+  });
+
   async function handleUpload(field: 'flagUrl' | 'bannerUrl' | 'mediaUrl', file: File | null) {
     if (!file) return;
     setUploadErr(null);
+    const kind = field === 'flagUrl' ? 'flag' : field === 'bannerUrl' ? 'banner' : 'media';
     try {
-      const r = await api.upload<{ url: string }>(`/api/v2/guilds/${guildId}/factions/upload${qs}`, file);
+      const r = await api.upload<{ url: string }>(`/api/v2/guilds/${guildId}/factions/upload${qs}&kind=${kind}`, file);
       setDraft(d => ({ ...d, [field]: r.url }));
     } catch (e) {
       setUploadErr((e as Error).message);
@@ -743,6 +771,69 @@ function FactionsPanel({ guildId, slot }: { guildId: string; slot: string }) {
           rows={3}
           className="w-full rounded-md bg-bg-elev border border-border px-3 py-2 text-sm text-white placeholder:text-muted focus:outline-none focus:border-accent"
         />
+
+        {editingId && (() => {
+          const editingFaction = list.data?.factions.find(x => x.id === editingId);
+          if (!editingFaction) return null;
+          return (
+            <div className="rounded-md border border-border bg-bg-elev p-3 space-y-2">
+              <p className="text-sm text-white font-medium">Mitglieder ({editingFaction.members.length})</p>
+              <div className="space-y-1 max-h-48 overflow-y-auto">
+                {editingFaction.members.length === 0 && (
+                  <p className="text-xs text-muted">Noch keine Mitglieder hinzugefuegt.</p>
+                )}
+                {editingFaction.members.map(m => (
+                  <div key={m.userDiscordId} className="flex items-center justify-between gap-2 px-2 py-1 rounded bg-black/30">
+                    <div className="flex items-center gap-2 min-w-0">
+                      <span className="text-xs text-muted w-20 flex-shrink-0">{m.role}</span>
+                      <FactionMemberInline guildId={guildId} userId={m.userDiscordId} />
+                    </div>
+                    <Button
+                      size="sm"
+                      variant="ghost"
+                      onClick={() => removeMember.mutate({ factionId: editingId, userDiscordId: m.userDiscordId })}
+                      disabled={removeMember.isPending}
+                      title="Mitglied entfernen"
+                    >
+                      <Trash2 className="h-3 w-3" />
+                    </Button>
+                  </div>
+                ))}
+              </div>
+              <div className="flex gap-2 items-center pt-2 border-t border-border">
+                <div className="flex-1">
+                  <MemberCombobox
+                    guildId={guildId}
+                    value={memberDraft[editingId]?.user ?? ''}
+                    onChange={uid => setMemberDraft(s => ({ ...s, [editingId]: { user: uid, role: s[editingId]?.role ?? 'MEMBER' } }))}
+                    placeholder="Mitglied suchen…"
+                  />
+                </div>
+                <Select
+                  value={memberDraft[editingId]?.role ?? 'MEMBER'}
+                  onChange={e => setMemberDraft(s => ({ ...s, [editingId]: { user: s[editingId]?.user ?? '', role: e.target.value } }))}
+                  className="w-32"
+                >
+                  <option value="MEMBER">MEMBER</option>
+                  <option value="LEADER">LEADER</option>
+                  <option value="TREASURER">TREASURER</option>
+                  <option value="PENDING">PENDING</option>
+                </Select>
+                <Button
+                  size="sm"
+                  disabled={!SNOWFLAKE_RE.test(memberDraft[editingId]?.user ?? '') || addMember.isPending}
+                  onClick={() => addMember.mutate({
+                    factionId: editingId,
+                    user: memberDraft[editingId]?.user ?? '',
+                    role: memberDraft[editingId]?.role ?? 'MEMBER',
+                  })}
+                >
+                  <Plus className="h-3 w-3 mr-1" />Hinzufuegen
+                </Button>
+              </div>
+            </div>
+          );
+        })()}
 
         {/* Upload-Bereich */}
         <div className="grid gap-3 md:grid-cols-2">
