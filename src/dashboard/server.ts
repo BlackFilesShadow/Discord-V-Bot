@@ -32,6 +32,11 @@ export function startDashboard(client?: Client): void {
     setDashboardClient(client);
   }
 
+  // Hinter Reverse-Proxy (Caddy/nginx) -> X-Forwarded-* honorieren,
+  // sonst sieht Express die Verbindung als HTTP und setzt secure-Cookies
+  // nicht -> OAuth-State geht verloren -> CSRF-Mismatch.
+  app.set('trust proxy', 1);
+
   // Security Middleware (Sektion 4: Sicherheit)
   app.use(helmet());
   app.use(cors({
