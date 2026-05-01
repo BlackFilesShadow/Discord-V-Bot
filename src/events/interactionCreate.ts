@@ -120,6 +120,18 @@ const interactionCreateEvent: BotEvent = {
   execute: async (interaction: unknown) => {
     const i = interaction as Interaction;
 
+    // Autocomplete-Dispatch (vor Command-Routing, damit isChatInputCommand spaeter greift)
+    if (i.isAutocomplete && i.isAutocomplete()) {
+      const client = i.client as ExtendedClient;
+      const cmd = client.commands.get(i.commandName);
+      if (cmd?.autocomplete) {
+        try { await cmd.autocomplete(i); } catch (e) {
+          logger.error(`Autocomplete-Fehler /${i.commandName}:`, e as Error);
+        }
+      }
+      return;
+    }
+
     // Modal-Submit verarbeiten (Dev-Passwort)
     if ('isModalSubmit' in i && (i as ModalSubmitInteraction).isModalSubmit()) {
       const modal = i as ModalSubmitInteraction;

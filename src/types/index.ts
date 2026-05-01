@@ -1,4 +1,5 @@
 import {
+  AutocompleteInteraction,
   ChatInputCommandInteraction,
   Client,
   Collection,
@@ -22,6 +23,7 @@ export interface Command {
   devOnly?: boolean;
   manufacturerOnly?: boolean;
   execute: (interaction: ChatInputCommandInteraction) => Promise<void>;
+  autocomplete?: (interaction: AutocompleteInteraction) => Promise<void>;
 }
 
 /**

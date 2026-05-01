@@ -15,6 +15,7 @@ export async function loadCommands(client: ExtendedClient): Promise<void> {
     path.join(__dirname, 'user'),
     path.join(__dirname, 'admin'),
     path.join(__dirname, 'developer'),
+    path.join(__dirname, 'dashboard'),
   ];
 
   for (const dir of commandDirs) {

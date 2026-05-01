@@ -1,0 +1,139 @@
+/**
+ * Phase 3 — Whitelist-Commands (4 Stueck).
+ *
+ * /whitelist erstellt eine Anfrage (Member). /wl-add, /wl-remove, /wl-list
+ * verlangen `whitelist.manage` bzw. `whitelist.view`. Nitrado-Push
+ * laeuft asynchron via `NitradoJob`-Outbox (Worker bringt es zur API).
+ */
+
+import {
+  SlashCommandBuilder, ChatInputCommandInteraction, EmbedBuilder, MessageFlags,
+} from 'discord.js';
+import type { Command } from '../../types';
+import prisma from '../../database/prisma';
+import { withGuildScope } from '../middleware/withGuildScope';
+import { logAudit } from '../../utils/logger';
+import { emitGuildEvent } from '../../dashboard/socket/emitter';
+
+const STEAM64 = /^7656\d{13}$/;
+
+async function reply(i: ChatInputCommandInteraction, content: string, ephemeral = true): Promise<void> {
+  if (ephemeral) await i.reply({ content, flags: MessageFlags.Ephemeral });
+  else await i.reply({ content });
+}
+
+// ============================================================
+// /whitelist — Member stellt Anfrage
+// ============================================================
+export const whitelistCommand: Command = {
+  data: new SlashCommandBuilder()
+    .setName('whitelist')
+    .setDescription('Stellt eine Whitelist-Anfrage fuer dich oder eine Gameserver-ID.')
+    .addStringOption(o => o.setName('id').setDescription('Steam64 (17 Stellen, beginnt mit 7656)').setRequired(true).setMinLength(17).setMaxLength(17)) as SlashCommandBuilder,
+  execute: withGuildScope({}, async (i, scope) => {
+    const id = i.options.getString('id', true).trim();
+    if (!STEAM64.test(id)) { await reply(i, 'Ungueltige Steam64-ID.'); return; }
+
+    // Schon auf Whitelist?
+    const existing = await prisma.whitelistEntry.findUnique({
+      where: { guildId_nitradoConnId_gameId: { guildId: scope.guildId, nitradoConnId: scope.nitradoConnId!, gameId: id } },
+    });
+    if (existing) { await reply(i, 'Diese ID ist bereits auf der Whitelist.'); return; }
+
+    // Schon offene Anfrage?
+    const open = await prisma.whitelistRequest.findFirst({
+      where: { guildId: scope.guildId, nitradoConnId: scope.nitradoConnId!, gameId: id, status: 'PENDING' },
+    });
+    if (open) { await reply(i, 'Es gibt bereits eine offene Anfrage fuer diese ID.'); return; }
+
+    const created = await prisma.whitelistRequest.create({
+      data: {
+        guildId: scope.guildId, nitradoConnId: scope.nitradoConnId!,
+        channelId: i.channelId, requesterDiscordId: scope.actorDiscordId, gameId: id,
+      },
+    });
+    logAudit('WL_REQUEST_CREATED', 'WHITELIST', { guildId: scope.guildId, requestId: created.id, requester: scope.actorDiscordId, gameId: id });
+    emitGuildEvent(scope.guildId, { type: 'whitelist.changed', payload: { guildId: scope.guildId, action: 'requested', entryId: created.id } });
+    await reply(i, `Anfrage gestellt (\`${created.id}\`). Owner/Mod entscheidet darueber.`);
+  }),
+};
+
+// ============================================================
+// /wl-add — direkter Eintrag (managed)
+// ============================================================
+export const wlAddCommand: Command = {
+  data: new SlashCommandBuilder()
+    .setName('wl-add')
+    .setDescription('Owner/Berechtigt: Fuegt eine Steam64 direkt zur Whitelist hinzu (synced).')
+    .addStringOption(o => o.setName('id').setDescription('Steam64').setRequired(true).setMinLength(17).setMaxLength(17)) as SlashCommandBuilder,
+  execute: withGuildScope({ requirePerm: 'whitelist.manage' }, async (i, scope) => {
+    const id = i.options.getString('id', true).trim();
+    if (!STEAM64.test(id)) { await reply(i, 'Ungueltige Steam64-ID.'); return; }
+    try {
+      await prisma.$transaction(async tx => {
+        await tx.whitelistEntry.create({
+          data: {
+            guildId: scope.guildId, nitradoConnId: scope.nitradoConnId!,
+            gameId: id, source: 'DIRECT', approvedByDiscordId: scope.actorDiscordId,
+          },
+        });
+        await tx.nitradoJob.create({
+          data: { guildId: scope.guildId, nitradoConnId: scope.nitradoConnId!, operation: 'WHITELIST_ADD', payload: { gameId: id } },
+        });
+      });
+    } catch (e) {
+      if ((e as { code?: string }).code === 'P2002') { await reply(i, 'Bereits auf der Whitelist.'); return; }
+      throw e;
+    }
+    logAudit('WL_ADD', 'WHITELIST', { guildId: scope.guildId, slotId: scope.nitradoConnId, gameId: id, actor: scope.actorDiscordId });
+    emitGuildEvent(scope.guildId, { type: 'whitelist.changed', payload: { guildId: scope.guildId, action: 'added' } });
+    await reply(i, `\`${id}\` zur Whitelist hinzugefuegt (Sync laeuft).`);
+  }),
+};
+
+// ============================================================
+// /wl-remove
+// ============================================================
+export const wlRemoveCommand: Command = {
+  data: new SlashCommandBuilder()
+    .setName('wl-remove')
+    .setDescription('Owner/Berechtigt: Entfernt eine Steam64 von der Whitelist.')
+    .addStringOption(o => o.setName('id').setDescription('Steam64').setRequired(true).setMinLength(17).setMaxLength(17)) as SlashCommandBuilder,
+  execute: withGuildScope({ requirePerm: 'whitelist.manage' }, async (i, scope) => {
+    const id = i.options.getString('id', true).trim();
+    if (!STEAM64.test(id)) { await reply(i, 'Ungueltige Steam64-ID.'); return; }
+    const result = await prisma.$transaction(async tx => {
+      const out = await tx.whitelistEntry.deleteMany({
+        where: { guildId: scope.guildId, nitradoConnId: scope.nitradoConnId!, gameId: id },
+      });
+      if (out.count > 0) {
+        await tx.nitradoJob.create({
+          data: { guildId: scope.guildId, nitradoConnId: scope.nitradoConnId!, operation: 'WHITELIST_REMOVE', payload: { gameId: id } },
+        });
+      }
+      return out.count;
+    });
+    if (result === 0) { await reply(i, 'ID nicht in der Whitelist.'); return; }
+    logAudit('WL_REMOVE', 'WHITELIST', { guildId: scope.guildId, slotId: scope.nitradoConnId, gameId: id, actor: scope.actorDiscordId });
+    emitGuildEvent(scope.guildId, { type: 'whitelist.changed', payload: { guildId: scope.guildId, action: 'removed' } });
+    await reply(i, `\`${id}\` entfernt (Sync laeuft).`);
+  }),
+};
+
+// ============================================================
+// /wl-list — listet lokale DB-Spiegel
+// ============================================================
+export const wlListCommand: Command = {
+  data: new SlashCommandBuilder().setName('wl-list').setDescription('Owner/Berechtigt: Zeigt aktuelle Whitelist (max 50 Eintraege).'),
+  execute: withGuildScope({ requirePerm: 'whitelist.view' }, async (i, scope) => {
+    const rows = await prisma.whitelistEntry.findMany({
+      where: { guildId: scope.guildId, nitradoConnId: scope.nitradoConnId! },
+      orderBy: { approvedAt: 'desc' },
+      take: 50,
+    });
+    if (rows.length === 0) { await reply(i, '_Whitelist leer_'); return; }
+    const lines = rows.map(r => `\`${r.gameId}\` ⟵ <@${r.approvedByDiscordId}> (${r.source})`).join('\n');
+    const e = new EmbedBuilder().setTitle(`Whitelist (${rows.length})`).setDescription(lines.slice(0, 4000));
+    await i.reply({ embeds: [e], flags: MessageFlags.Ephemeral });
+  }),
+};
