@@ -1480,14 +1480,18 @@ model Faction {
   nitradoConnId      String
   nitradoConn        NitradoConnection @relation(fields: [nitradoConnId], references: [id], onDelete: Cascade)
   name               String            @db.VarChar(60)
-  flagUrl            String            @db.Text
+  flagUrl            String?           @db.Text // optional: URL ODER lokaler Pfad /uploads/factions/...
   bannerUrl          String?           @db.Text
-  mediaUrl           String?           @db.Text // optionales JPG/MP4
+  mediaUrl           String?           @db.Text // optionales JPG/MP4 (Armband/Logo)
   leaderDiscordId    String?
+  deputyDiscordId    String? // Stellvertretung (separat von Treasurer)
   treasurerDiscordId String?
   embedChannelId     String?
   embedMessageId     String?
   joinPolicy         String            @default("REQUEST") // 'OPEN' | 'REQUEST' | 'CLOSED'
+  status             String            @default("ACTIVE") @db.VarChar(16) // 'ACTIVE' | 'RECRUITING' | 'INACTIVE' | 'ARCHIVED'
+  description        String?           @db.Text
+  color              String?           @db.VarChar(7) // Hex z.B. '#dc2626'
   isActive           Boolean           @default(true)
   createdAt          DateTime          @default(now())
   updatedAt          DateTime          @updatedAt

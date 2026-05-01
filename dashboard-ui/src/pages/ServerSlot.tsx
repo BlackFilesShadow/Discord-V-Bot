@@ -168,44 +168,125 @@ export default function ServerSlot() {
 interface FactionRow {
   id: string;
   name: string;
-  flagUrl: string;
+  flagUrl: string | null;
   bannerUrl: string | null;
   mediaUrl: string | null;
+  description: string | null;
+  color: string | null;
   leaderDiscordId: string | null;
+  deputyDiscordId: string | null;
   treasurerDiscordId: string | null;
   embedChannelId: string | null;
+  embedMessageId: string | null;
   joinPolicy: string;
+  status: string;
   isActive: boolean;
   memberCount: number;
+  createdAt: string;
+  updatedAt: string;
+}
+
+interface FactionDraft {
+  name: string;
+  description: string;
+  color: string;
+  flagUrl: string;
+  bannerUrl: string;
+  mediaUrl: string;
+  leaderDiscordId: string;
+  deputyDiscordId: string;
+  treasurerDiscordId: string;
+  embedChannelId: string;
+  joinPolicy: string;
+  status: string;
+}
+
+const EMPTY_DRAFT: FactionDraft = {
+  name: '', description: '', color: '#dc2626',
+  flagUrl: '', bannerUrl: '', mediaUrl: '',
+  leaderDiscordId: '', deputyDiscordId: '', treasurerDiscordId: '', embedChannelId: '',
+  joinPolicy: 'REQUEST', status: 'ACTIVE',
+};
+
+const STATUS_OPTIONS: Array<[string, string]> = [
+  ['ACTIVE', '🟢 Aktiv'],
+  ['RECRUITING', '🟡 Rekrutiert'],
+  ['INACTIVE', '⚪ Inaktiv'],
+  ['ARCHIVED', '⚫ Archiviert'],
+];
+
+const PRESET_COLORS = ['#dc2626', '#ea580c', '#facc15', '#16a34a', '#0ea5e9', '#7c3aed', '#db2777', '#475569'];
+
+function draftFromRow(f: FactionRow): FactionDraft {
+  return {
+    name: f.name,
+    description: f.description ?? '',
+    color: f.color ?? '#dc2626',
+    flagUrl: f.flagUrl ?? '',
+    bannerUrl: f.bannerUrl ?? '',
+    mediaUrl: f.mediaUrl ?? '',
+    leaderDiscordId: f.leaderDiscordId ?? '',
+    deputyDiscordId: f.deputyDiscordId ?? '',
+    treasurerDiscordId: f.treasurerDiscordId ?? '',
+    embedChannelId: f.embedChannelId ?? '',
+    joinPolicy: f.joinPolicy,
+    status: f.status,
+  };
 }
 
 function FactionsPanel({ guildId, slot }: { guildId: string; slot: string }) {
   const qc = useQueryClient();
   const qs = `?slot=${slot}`;
-  const [draft, setDraft] = useState({ name: '', flagUrl: '', joinPolicy: 'REQUEST', leaderDiscordId: '', embedChannelId: '' });
+  const [draft, setDraft] = useState<FactionDraft>(EMPTY_DRAFT);
+  const [editingId, setEditingId] = useState<string | null>(null);
   const [memberDraft, setMemberDraft] = useState<Record<string, { user: string; role: string }>>({});
+  const [uploadErr, setUploadErr] = useState<string | null>(null);
 
   const list = useQuery({
     queryKey: ['factions', guildId, slot],
     queryFn: () => api.get<{ factions: FactionRow[] }>(`/api/v2/guilds/${guildId}/factions${qs}`),
   });
 
+  const buildPayload = (b: FactionDraft) => ({
+    name: b.name.trim(),
+    description: b.description.trim() || null,
+    color: b.color || null,
+    flagUrl: b.flagUrl || null,
+    bannerUrl: b.bannerUrl || null,
+    mediaUrl: b.mediaUrl || null,
+    leaderDiscordId: b.leaderDiscordId.trim() || null,
+    deputyDiscordId: b.deputyDiscordId.trim() || null,
+    treasurerDiscordId: b.treasurerDiscordId.trim() || null,
+    embedChannelId: b.embedChannelId.trim() || null,
+    joinPolicy: b.joinPolicy,
+    status: b.status,
+  });
+
   const create = useMutation({
-    mutationFn: (b: typeof draft) => api.post(`/api/v2/guilds/${guildId}/factions${qs}`, {
-      name: b.name,
-      flagUrl: b.flagUrl,
-      joinPolicy: b.joinPolicy,
-      leaderDiscordId: b.leaderDiscordId || undefined,
-      embedChannelId: b.embedChannelId || undefined,
-    }),
+    mutationFn: (b: FactionDraft) => api.post(`/api/v2/guilds/${guildId}/factions${qs}`, buildPayload(b)),
     onSuccess: () => {
-      setDraft({ name: '', flagUrl: '', joinPolicy: 'REQUEST', leaderDiscordId: '', embedChannelId: '' });
+      setDraft(EMPTY_DRAFT);
+      void qc.invalidateQueries({ queryKey: ['factions', guildId, slot] });
+    },
+  });
+
+  const update = useMutation({
+    mutationFn: (vars: { id: string; b: FactionDraft }) =>
+      api.patch(`/api/v2/guilds/${guildId}/factions/${vars.id}${qs}`, buildPayload(vars.b)),
+    onSuccess: () => {
+      setEditingId(null);
+      setDraft(EMPTY_DRAFT);
       void qc.invalidateQueries({ queryKey: ['factions', guildId, slot] });
     },
   });
 
   const remove = useMutation({
     mutationFn: (id: string) => api.del(`/api/v2/guilds/${guildId}/factions/${id}${qs}`),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['factions', guildId, slot] }),
+  });
+
+  const republish = useMutation({
+    mutationFn: (id: string) => api.post(`/api/v2/guilds/${guildId}/factions/${id}/republish${qs}`),
     onSuccess: () => qc.invalidateQueries({ queryKey: ['factions', guildId, slot] }),
   });
 
@@ -220,8 +301,36 @@ function FactionsPanel({ guildId, slot }: { guildId: string; slot: string }) {
     },
   });
 
-  const validUrl = (s: string) => /^https?:\/\/.{4,}$/i.test(s);
-  const validId = (s: string) => !s || SNOWFLAKE_RE.test(s);
+  async function handleUpload(field: 'flagUrl' | 'bannerUrl' | 'mediaUrl', file: File | null) {
+    if (!file) return;
+    setUploadErr(null);
+    try {
+      const r = await api.upload<{ url: string }>(`/api/v2/guilds/${guildId}/factions/upload${qs}`, file);
+      setDraft(d => ({ ...d, [field]: r.url }));
+    } catch (e) {
+      setUploadErr((e as Error).message);
+    }
+  }
+
+  const validId = (s: string) => !s || SNOWFLAKE_RE.test(s.trim());
+  const formValid =
+    draft.name.trim().length >= 2 && draft.name.trim().length <= 60
+    && validId(draft.leaderDiscordId)
+    && validId(draft.deputyDiscordId)
+    && validId(draft.treasurerDiscordId)
+    && validId(draft.embedChannelId);
+
+  function startEdit(f: FactionRow) {
+    setEditingId(f.id);
+    setDraft(draftFromRow(f));
+    setUploadErr(null);
+  }
+
+  function cancelEdit() {
+    setEditingId(null);
+    setDraft(EMPTY_DRAFT);
+    setUploadErr(null);
+  }
 
   return (
     <Card>
@@ -229,83 +338,227 @@ function FactionsPanel({ guildId, slot }: { guildId: string; slot: string }) {
       {list.isLoading && <p className="text-muted">Lade…</p>}
       {list.error && <p className="text-red-400 text-sm">{(list.error as Error).message}</p>}
 
+      {/* Liste bestehender Fraktionen */}
       <div className="space-y-2 mb-6">
         {list.data?.factions.length === 0 && <p className="text-muted text-sm">Keine Fraktionen.</p>}
-        {list.data?.factions.map(f => (
-          <div key={f.id} className="bg-bg-elev rounded-md border border-border p-3 space-y-2">
-            <div className="flex items-center justify-between">
-              <div className="flex items-center gap-3">
-                <img src={f.flagUrl} alt="" className="h-8 w-8 rounded object-cover bg-black" />
-                <div>
-                  <p className="text-white font-medium">{f.name}</p>
-                  <p className="text-muted text-xs">{f.joinPolicy} · {f.memberCount} Members</p>
+        {list.data?.factions.map(f => {
+          const statusLabel = STATUS_OPTIONS.find(([k]) => k === f.status)?.[1] ?? f.status;
+          return (
+            <div key={f.id} className="bg-bg-elev rounded-md border border-border p-3 space-y-2"
+                 style={f.color ? { borderLeft: `4px solid ${f.color}` } : undefined}>
+              <div className="flex items-center justify-between">
+                <div className="flex items-center gap-3 min-w-0">
+                  {f.flagUrl
+                    ? <img src={f.flagUrl} alt="" className="h-10 w-10 rounded object-cover bg-black flex-shrink-0" />
+                    : <div className="h-10 w-10 rounded bg-black/40 flex-shrink-0 flex items-center justify-center text-muted text-xs">—</div>}
+                  <div className="min-w-0">
+                    <p className="text-white font-medium truncate">{f.name}</p>
+                    <p className="text-muted text-xs">
+                      {statusLabel} · {f.joinPolicy} · {f.memberCount} Mitglieder
+                      {f.embedChannelId && f.embedMessageId ? ' · 📌 Embed live' : f.embedChannelId ? ' · ⚠ Embed nicht gepostet' : ''}
+                    </p>
+                  </div>
+                </div>
+                <div className="flex gap-1 flex-shrink-0">
+                  {f.embedChannelId && (
+                    <Button size="sm" variant="ghost" onClick={() => republish.mutate(f.id)} disabled={republish.isPending}>
+                      <RefreshCw className="h-3 w-3" />
+                    </Button>
+                  )}
+                  <Button size="sm" variant="ghost" onClick={() => startEdit(f)}>
+                    <Settings className="h-3 w-3" />
+                  </Button>
+                  <Button size="sm" variant="danger" onClick={() => { if (confirm(`Fraktion "${f.name}" wirklich loeschen?`)) remove.mutate(f.id); }}>
+                    <Trash2 className="h-3 w-3" />
+                  </Button>
                 </div>
               </div>
-              <Button size="sm" variant="danger" onClick={() => remove.mutate(f.id)}>
-                <Trash2 className="h-3 w-3" />
-              </Button>
-            </div>
 
-            <div className="flex gap-2 pt-2 border-t border-border">
-              <Input
-                placeholder="Discord-ID hinzufuegen"
-                value={memberDraft[f.id]?.user ?? ''}
-                onChange={e => setMemberDraft(s => ({ ...s, [f.id]: { user: e.target.value.trim(), role: s[f.id]?.role ?? 'MEMBER' } }))}
-              />
-              <Select
-                value={memberDraft[f.id]?.role ?? 'MEMBER'}
-                onChange={e => setMemberDraft(s => ({ ...s, [f.id]: { user: s[f.id]?.user ?? '', role: e.target.value } }))}
-                className="w-32"
-              >
-                <option value="MEMBER">MEMBER</option>
-                <option value="LEADER">LEADER</option>
-                <option value="TREASURER">TREASURER</option>
-                <option value="PENDING">PENDING</option>
-              </Select>
-              <Button
-                size="sm"
-                disabled={!SNOWFLAKE_RE.test(memberDraft[f.id]?.user ?? '') || addMember.isPending}
-                onClick={() => addMember.mutate({
-                  factionId: f.id,
-                  user: memberDraft[f.id]?.user ?? '',
-                  role: memberDraft[f.id]?.role ?? 'MEMBER',
-                })}
-              >
-                <Plus className="h-3 w-3" />
-              </Button>
+              <div className="flex gap-2 pt-2 border-t border-border">
+                <Input
+                  placeholder="Discord-ID hinzufuegen"
+                  value={memberDraft[f.id]?.user ?? ''}
+                  onChange={e => setMemberDraft(s => ({ ...s, [f.id]: { user: e.target.value.trim(), role: s[f.id]?.role ?? 'MEMBER' } }))}
+                />
+                <Select
+                  value={memberDraft[f.id]?.role ?? 'MEMBER'}
+                  onChange={e => setMemberDraft(s => ({ ...s, [f.id]: { user: s[f.id]?.user ?? '', role: e.target.value } }))}
+                  className="w-32"
+                >
+                  <option value="MEMBER">MEMBER</option>
+                  <option value="LEADER">LEADER</option>
+                  <option value="TREASURER">TREASURER</option>
+                  <option value="PENDING">PENDING</option>
+                </Select>
+                <Button
+                  size="sm"
+                  disabled={!SNOWFLAKE_RE.test(memberDraft[f.id]?.user ?? '') || addMember.isPending}
+                  onClick={() => addMember.mutate({
+                    factionId: f.id,
+                    user: memberDraft[f.id]?.user ?? '',
+                    role: memberDraft[f.id]?.role ?? 'MEMBER',
+                  })}
+                >
+                  <Plus className="h-3 w-3" />
+                </Button>
+              </div>
+            </div>
+          );
+        })}
+      </div>
+
+      {/* Form: Neue Fraktion ODER Bearbeiten */}
+      <div className="border-t border-border pt-4 space-y-3">
+        <div className="flex items-center justify-between">
+          <p className="text-sm text-white/80">{editingId ? 'Fraktion bearbeiten' : 'Neue Fraktion'}</p>
+          {editingId && <Button size="sm" variant="ghost" onClick={cancelEdit}><X className="h-3 w-3 mr-1" />Abbrechen</Button>}
+        </div>
+
+        <div className="grid gap-2 md:grid-cols-2">
+          <Input
+            placeholder="Fraktionsname * (2-60)"
+            value={draft.name}
+            onChange={e => setDraft({ ...draft, name: e.target.value })}
+            maxLength={60}
+          />
+          <Select value={draft.status} onChange={e => setDraft({ ...draft, status: e.target.value })}>
+            {STATUS_OPTIONS.map(([v, l]) => <option key={v} value={v}>{l}</option>)}
+          </Select>
+
+          <Select value={draft.joinPolicy} onChange={e => setDraft({ ...draft, joinPolicy: e.target.value })}>
+            <option value="OPEN">🔓 OPEN — direkter Beitritt</option>
+            <option value="REQUEST">✋ REQUEST — Bewerbung erforderlich</option>
+            <option value="CLOSED">🔒 CLOSED — nur Einladung</option>
+          </Select>
+          <Input
+            placeholder="Embed-Channel-ID (optional)"
+            value={draft.embedChannelId}
+            onChange={e => setDraft({ ...draft, embedChannelId: e.target.value.trim() })}
+            maxLength={20}
+          />
+
+          <Input
+            placeholder="Leitung — Discord-ID (optional)"
+            value={draft.leaderDiscordId}
+            onChange={e => setDraft({ ...draft, leaderDiscordId: e.target.value.trim() })}
+            maxLength={20}
+          />
+          <Input
+            placeholder="Stellvertretung — Discord-ID (optional)"
+            value={draft.deputyDiscordId}
+            onChange={e => setDraft({ ...draft, deputyDiscordId: e.target.value.trim() })}
+            maxLength={20}
+          />
+          <Input
+            placeholder="Schatzmeister — Discord-ID (optional)"
+            value={draft.treasurerDiscordId}
+            onChange={e => setDraft({ ...draft, treasurerDiscordId: e.target.value.trim() })}
+            maxLength={20}
+          />
+          <div className="flex items-center gap-2">
+            <input
+              type="color"
+              value={draft.color}
+              onChange={e => setDraft({ ...draft, color: e.target.value })}
+              className="h-9 w-12 rounded border border-border bg-transparent cursor-pointer"
+              title="Fraktionsfarbe"
+            />
+            <div className="flex gap-1">
+              {PRESET_COLORS.map(c => (
+                <button
+                  key={c} type="button"
+                  onClick={() => setDraft({ ...draft, color: c })}
+                  className="h-6 w-6 rounded border border-border"
+                  style={{ background: c }}
+                  title={c}
+                />
+              ))}
             </div>
           </div>
-        ))}
-      </div>
-
-      <div className="border-t border-border pt-4 space-y-3">
-        <p className="text-sm text-white/80">Neue Fraktion</p>
-        <div className="grid gap-2 md:grid-cols-2">
-          <Input placeholder="Name (2-60)" value={draft.name} onChange={e => setDraft({ ...draft, name: e.target.value })} maxLength={60} />
-          <Input placeholder="Flag-URL (https://…)" value={draft.flagUrl} onChange={e => setDraft({ ...draft, flagUrl: e.target.value })} />
-          <Select value={draft.joinPolicy} onChange={e => setDraft({ ...draft, joinPolicy: e.target.value })}>
-            <option value="OPEN">OPEN — jeder darf joinen</option>
-            <option value="REQUEST">REQUEST — Antrag erforderlich</option>
-            <option value="CLOSED">CLOSED — nur Invite</option>
-          </Select>
-          <Input placeholder="Leader-Discord-ID (optional)" value={draft.leaderDiscordId} onChange={e => setDraft({ ...draft, leaderDiscordId: e.target.value.trim() })} maxLength={20} />
-          <Input placeholder="Embed-Channel-ID (optional)" value={draft.embedChannelId} onChange={e => setDraft({ ...draft, embedChannelId: e.target.value.trim() })} maxLength={20} />
         </div>
-        <Button
-          disabled={
-            create.isPending
-            || draft.name.trim().length < 2
-            || !validUrl(draft.flagUrl)
-            || !validId(draft.leaderDiscordId)
-            || !validId(draft.embedChannelId)
-          }
-          onClick={() => create.mutate(draft)}
-        >
-          {create.isPending ? 'Erstelle…' : 'Erstellen'}
-        </Button>
-        {create.error && <p className="text-red-400 text-xs">{(create.error as Error).message}</p>}
+
+        <textarea
+          placeholder="Beschreibung (optional, max. 1000 Zeichen)"
+          value={draft.description}
+          onChange={e => setDraft({ ...draft, description: e.target.value })}
+          maxLength={1000}
+          rows={3}
+          className="w-full rounded-md bg-bg-elev border border-border px-3 py-2 text-sm text-white placeholder:text-muted focus:outline-none focus:border-accent"
+        />
+
+        {/* Upload-Bereich */}
+        <div className="grid gap-3 md:grid-cols-2">
+          <FileUploadField
+            label="Logo / Flagge (JPG, PNG, GIF, WEBP, MP4 — optional)"
+            currentUrl={draft.flagUrl}
+            onUpload={f => handleUpload('flagUrl', f)}
+            onClear={() => setDraft(d => ({ ...d, flagUrl: '' }))}
+          />
+          <FileUploadField
+            label="Banner / Armband (JPG, PNG, GIF, WEBP, MP4 — optional)"
+            currentUrl={draft.bannerUrl}
+            onUpload={f => handleUpload('bannerUrl', f)}
+            onClear={() => setDraft(d => ({ ...d, bannerUrl: '' }))}
+          />
+        </div>
+
+        {uploadErr && <p className="text-red-400 text-xs">{uploadErr}</p>}
+
+        <div className="flex items-center gap-2">
+          {editingId ? (
+            <Button
+              disabled={!formValid || update.isPending}
+              onClick={() => update.mutate({ id: editingId, b: draft })}
+            >
+              {update.isPending ? 'Speichere…' : 'Speichern'}
+            </Button>
+          ) : (
+            <Button
+              disabled={!formValid || create.isPending}
+              onClick={() => create.mutate(draft)}
+            >
+              {create.isPending ? 'Erstelle…' : 'Erstellen'}
+            </Button>
+          )}
+          {(create.error || update.error) && (
+            <p className="text-red-400 text-xs">{((create.error || update.error) as Error).message}</p>
+          )}
+        </div>
       </div>
     </Card>
+  );
+}
+
+function FileUploadField({ label, currentUrl, onUpload, onClear }: {
+  label: string;
+  currentUrl: string;
+  onUpload: (file: File) => void;
+  onClear: () => void;
+}) {
+  const isVideo = currentUrl.endsWith('.mp4');
+  return (
+    <div className="space-y-2">
+      <label className="text-xs text-muted block">{label}</label>
+      <div className="flex items-center gap-2">
+        <input
+          type="file"
+          accept="image/jpeg,image/png,image/gif,image/webp,video/mp4"
+          onChange={e => { const f = e.target.files?.[0]; if (f) onUpload(f); e.target.value = ''; }}
+          className="text-xs text-white file:mr-2 file:px-2 file:py-1 file:rounded file:border-0 file:bg-accent file:text-white file:cursor-pointer"
+        />
+        {currentUrl && (
+          <Button size="sm" variant="ghost" onClick={onClear}><X className="h-3 w-3" /></Button>
+        )}
+      </div>
+      {currentUrl && (
+        <div className="flex items-center gap-2 text-xs text-muted">
+          {isVideo
+            ? <video src={currentUrl} className="h-12 w-12 rounded object-cover bg-black" muted />
+            : <img src={currentUrl} alt="" className="h-12 w-12 rounded object-cover bg-black" />}
+          <span className="truncate">{currentUrl}</span>
+        </div>
+      )}
+    </div>
   );
 }
 

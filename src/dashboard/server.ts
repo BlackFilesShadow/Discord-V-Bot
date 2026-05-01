@@ -140,12 +140,24 @@ export function startDashboard(client?: Client): void {
     logger.info('Metrics: /metrics aktiv' + (config.monitoring.metricsToken ? ' (Bearer-geschuetzt)' : ' (offen)'));
   }
 
+  // Statische Auslieferung der hochgeladenen Faction-Assets.
+  // Pfad-Schema: /uploads/factions/<guildId>/<factionId>/<kind>.<ext>
+  const uploadsDir = path.resolve(process.cwd(), 'uploads');
+  if (fs.existsSync(uploadsDir)) {
+    app.use('/uploads', express.static(uploadsDir, {
+      index: false,
+      maxAge: '1h',
+      // Verhindert Path-Traversal-Tricks (express.static normalisiert bereits).
+      dotfiles: 'deny',
+    }));
+  }
+
   // Phase 4: Statische Auslieferung des Vite-Frontends + SPA-Fallback.
   // Build-Output liegt in src/dashboard/public (vom dashboard-ui via `npm run build:ui`).
   const publicDir = path.resolve(__dirname, 'public');
   if (fs.existsSync(publicDir)) {
     app.use(express.static(publicDir, { index: false, maxAge: '1h' }));
-    app.get(/^\/(?!api|auth|admin|test|webhooks|metrics|health|socket\.io).*/, (_req, res, next) => {
+    app.get(/^\/(?!api|auth|admin|test|webhooks|metrics|health|uploads|socket\.io).*/, (_req, res, next) => {
       const indexHtml = path.join(publicDir, 'index.html');
       if (!fs.existsSync(indexHtml)) { next(); return; }
       res.sendFile(indexHtml);

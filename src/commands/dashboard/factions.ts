@@ -61,14 +61,14 @@ export const factionCommand: Command = {
     if (!f) { await reply(i, 'Fraktion nicht gefunden.'); return; }
     const e = new EmbedBuilder()
       .setTitle(f.name)
-      .setThumbnail(f.flagUrl)
       .addFields(
         { name: 'Leader', value: f.leaderDiscordId ? `<@${f.leaderDiscordId}>` : '_offen_', inline: true },
         { name: 'Treasurer', value: f.treasurerDiscordId ? `<@${f.treasurerDiscordId}>` : '_offen_', inline: true },
         { name: 'Mitglieder', value: String(f._count.members), inline: true },
         { name: 'Beitritt', value: f.joinPolicy, inline: true },
       );
-    if (f.bannerUrl) e.setImage(f.bannerUrl);
+    if (f.flagUrl && /^https?:\/\//i.test(f.flagUrl)) e.setThumbnail(f.flagUrl);
+    if (f.bannerUrl && /^https?:\/\//i.test(f.bannerUrl)) e.setImage(f.bannerUrl);
     await i.reply({ embeds: [e] });
   }),
 };
