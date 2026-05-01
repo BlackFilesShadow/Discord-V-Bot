@@ -1494,7 +1494,7 @@ model WhitelistEntry {
   guildId             String
   nitradoConnId       String
   nitradoConn         NitradoConnection @relation(fields: [nitradoConnId], references: [id], onDelete: Cascade)
-  gameId              String // Steam64
+  gameId              String // Spielername (Nitrado managed Whitelist by name)
   approvedByDiscordId String
   source              String            @default("DIRECT") // 'DIRECT' | 'REQUEST' | 'IMPORT'
   approvedAt          DateTime          @default(now())

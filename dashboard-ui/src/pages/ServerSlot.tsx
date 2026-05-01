@@ -48,7 +48,7 @@ interface CasinoStatRow {
   payout: string;
 }
 
-const STEAM64_RE = /^7656\d{13}$/;
+const NAME_RE = /^[^\r\n\t]{1,64}$/;
 const SNOWFLAKE_RE = /^\d{17,20}$/;
 
 export default function ServerSlot() {
@@ -371,17 +371,17 @@ function WhitelistPanel({ guildId, slot }: { guildId: string; slot: string }) {
   return (
     <div className="space-y-6">
       <Card>
-        <CardHeader><CardTitle>Whitelist (Steam64)</CardTitle></CardHeader>
+        <CardHeader><CardTitle>Whitelist (Spielername)</CardTitle></CardHeader>
         <div className="flex gap-2 mb-4">
           <Input
-            placeholder="7656119……… (17 Stellen)"
+            placeholder="Spielername (1-64 Zeichen)"
             value={newId}
-            onChange={e => setNewId(e.target.value.trim())}
-            maxLength={17}
+            onChange={e => setNewId(e.target.value)}
+            maxLength={64}
           />
           <Button
-            disabled={!STEAM64_RE.test(newId) || add.isPending}
-            onClick={() => add.mutate(newId)}
+            disabled={!NAME_RE.test(newId.trim()) || add.isPending}
+            onClick={() => add.mutate(newId.trim())}
           >
             <Plus className="h-3 w-3 mr-1" /> Hinzufuegen
           </Button>

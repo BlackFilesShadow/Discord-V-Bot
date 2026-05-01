@@ -17,7 +17,12 @@ import { emitGuildEvent } from '../../socket/emitter';
 
 export const whitelistRouter = Router({ mergeParams: true });
 
-const STEAM64_RE = /^7656\d{13}$/;
+// Nitrado verwaltet die Whitelist per Spielername. Wir validieren nur Form
+// und Laenge — alles andere geht 1:1 an Nitrado.
+const NAME_RE = /^[^\r\n\t]{1,64}$/;
+function isValidName(s: unknown): s is string {
+  return typeof s === 'string' && NAME_RE.test(s.trim()) && s.trim().length >= 1;
+}
 
 async function activeSlotId(guildId: string, slotParam: unknown): Promise<string | null> {
   if (typeof slotParam === 'string' && /^[1-5]$/.test(slotParam)) {
@@ -48,8 +53,9 @@ whitelistRouter.post('/', requireGuildPermission('whitelist.manage'), async (req
   const scope = req.guildScope!;
   const connId = await activeSlotId(scope.guildId, req.query.slot);
   if (!connId) { res.status(404).json({ error: 'Kein Nitrado-Slot.' }); return; }
-  const { gameId, source } = req.body ?? {};
-  if (typeof gameId !== 'string' || !STEAM64_RE.test(gameId)) { res.status(400).json({ error: 'gameId muss Steam64 sein.' }); return; }
+  const { gameId: rawId, source } = req.body ?? {};
+  if (!isValidName(rawId)) { res.status(400).json({ error: 'Name erforderlich (1-64 Zeichen, keine Zeilenumbrueche).' }); return; }
+  const gameId = (rawId as string).trim();
   const src = (source === 'REQUEST' || source === 'IMPORT') ? source : 'DIRECT';
 
   try {
@@ -82,8 +88,8 @@ whitelistRouter.delete('/:gameId', requireGuildPermission('whitelist.manage'), a
   const scope = req.guildScope!;
   const connId = await activeSlotId(scope.guildId, req.query.slot);
   if (!connId) { res.status(404).json({ error: 'Kein Nitrado-Slot.' }); return; }
-  const gameId = String(req.params.gameId);
-  if (!STEAM64_RE.test(gameId)) { res.status(400).json({ error: 'gameId muss Steam64 sein.' }); return; }
+  const gameId = String(req.params.gameId).trim();
+  if (!isValidName(gameId)) { res.status(400).json({ error: 'Ungueltiger Name.' }); return; }
   await prisma.$transaction(async tx => {
     await tx.whitelistEntry.deleteMany({
       where: { guildId: scope.guildId, nitradoConnId: connId, gameId },

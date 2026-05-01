@@ -15,7 +15,10 @@ import { withGuildScope } from '../middleware/withGuildScope';
 import { logAudit } from '../../utils/logger';
 import { emitGuildEvent } from '../../dashboard/socket/emitter';
 
-const STEAM64 = /^7656\d{13}$/;
+// Nitrado verwaltet die Whitelist per Spielername. Wir validieren nur Form
+// und Laenge — alles andere geht 1:1 an Nitrado.
+const NAME_RE = /^[^\r\n\t]{1,64}$/;
+function isValidName(s: string): boolean { return NAME_RE.test(s) && s.length >= 1; }
 
 async function reply(i: ChatInputCommandInteraction, content: string, ephemeral = true): Promise<void> {
   if (ephemeral) await i.reply({ content, flags: MessageFlags.Ephemeral });
@@ -28,11 +31,11 @@ async function reply(i: ChatInputCommandInteraction, content: string, ephemeral 
 export const whitelistCommand: Command = {
   data: new SlashCommandBuilder()
     .setName('whitelist')
-    .setDescription('Stellt eine Whitelist-Anfrage fuer dich oder eine Gameserver-ID.')
-    .addStringOption(o => o.setName('id').setDescription('Steam64 (17 Stellen, beginnt mit 7656)').setRequired(true).setMinLength(17).setMaxLength(17)) as SlashCommandBuilder,
+    .setDescription('Stellt eine Whitelist-Anfrage fuer deinen Spielernamen.')
+    .addStringOption(o => o.setName('id').setDescription('Spielername (1-64 Zeichen)').setRequired(true).setMinLength(1).setMaxLength(64)) as SlashCommandBuilder,
   execute: withGuildScope({}, async (i, scope) => {
     const id = i.options.getString('id', true).trim();
-    if (!STEAM64.test(id)) { await reply(i, 'Ungueltige Steam64-ID.'); return; }
+    if (!isValidName(id)) { await reply(i, 'Ungueltiger Name (1-64 Zeichen).'); return; }
 
     // Schon auf Whitelist?
     const existing = await prisma.whitelistEntry.findUnique({
@@ -64,11 +67,11 @@ export const whitelistCommand: Command = {
 export const wlAddCommand: Command = {
   data: new SlashCommandBuilder()
     .setName('wl-add')
-    .setDescription('Owner/Berechtigt: Fuegt eine Steam64 direkt zur Whitelist hinzu (synced).')
-    .addStringOption(o => o.setName('id').setDescription('Steam64').setRequired(true).setMinLength(17).setMaxLength(17)) as SlashCommandBuilder,
+    .setDescription('Owner/Berechtigt: Fuegt einen Spielernamen direkt zur Whitelist hinzu (synced).')
+    .addStringOption(o => o.setName('id').setDescription('Spielername (1-64 Zeichen)').setRequired(true).setMinLength(1).setMaxLength(64)) as SlashCommandBuilder,
   execute: withGuildScope({ requirePerm: 'whitelist.manage' }, async (i, scope) => {
     const id = i.options.getString('id', true).trim();
-    if (!STEAM64.test(id)) { await reply(i, 'Ungueltige Steam64-ID.'); return; }
+    if (!isValidName(id)) { await reply(i, 'Ungueltiger Name (1-64 Zeichen).'); return; }
     try {
       await prisma.$transaction(async tx => {
         await tx.whitelistEntry.create({
@@ -97,11 +100,11 @@ export const wlAddCommand: Command = {
 export const wlRemoveCommand: Command = {
   data: new SlashCommandBuilder()
     .setName('wl-remove')
-    .setDescription('Owner/Berechtigt: Entfernt eine Steam64 von der Whitelist.')
-    .addStringOption(o => o.setName('id').setDescription('Steam64').setRequired(true).setMinLength(17).setMaxLength(17)) as SlashCommandBuilder,
+    .setDescription('Owner/Berechtigt: Entfernt einen Spielernamen von der Whitelist.')
+    .addStringOption(o => o.setName('id').setDescription('Spielername (1-64 Zeichen)').setRequired(true).setMinLength(1).setMaxLength(64)) as SlashCommandBuilder,
   execute: withGuildScope({ requirePerm: 'whitelist.manage' }, async (i, scope) => {
     const id = i.options.getString('id', true).trim();
-    if (!STEAM64.test(id)) { await reply(i, 'Ungueltige Steam64-ID.'); return; }
+    if (!isValidName(id)) { await reply(i, 'Ungueltiger Name (1-64 Zeichen).'); return; }
     const result = await prisma.$transaction(async tx => {
       const out = await tx.whitelistEntry.deleteMany({
         where: { guildId: scope.guildId, nitradoConnId: scope.nitradoConnId!, gameId: id },
