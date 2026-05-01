@@ -7,6 +7,11 @@
 
 import tseslint from '@typescript-eslint/eslint-plugin';
 import tsparser from '@typescript-eslint/parser';
+import noUnscopedPrismaQuery from './eslint-rules/no-unscoped-prisma-query.js';
+
+const localRules = {
+  rules: { 'no-unscoped-prisma-query': noUnscopedPrismaQuery },
+};
 
 export default [
   {
@@ -34,6 +39,7 @@ export default [
     },
     plugins: {
       '@typescript-eslint': tseslint,
+      'local': localRules,
     },
     rules: {
       // Sicherheit / Stabilitaet \u2013 hier schlaegt ESLint die Bugs der Audit
@@ -46,6 +52,8 @@ export default [
         varsIgnorePattern: '^_',
         caughtErrorsIgnorePattern: '^_',
       }],
+      // Phase 3.5 Isolation-Doktrin: Cross-Guild-Leak-Schutz auf AST-Ebene.
+      'local/no-unscoped-prisma-query': 'error',
       // Codequalitaet \u2013 erlaubt aber hinterlaesst gelben Hint
       '@typescript-eslint/no-explicit-any': 'off',
       '@typescript-eslint/no-non-null-assertion': 'off',
