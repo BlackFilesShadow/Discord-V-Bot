@@ -61,6 +61,8 @@ export async function upsertConfig(
   guildId: GuildId,
   patch: Partial<Omit<EconomyConfigRow, 'guildId'>>,
 ): Promise<EconomyConfigRow> {
+  // Validierung gegen merged (DEFAULTS + patch), damit fehlende Felder beim
+  // Create vernuenftige Werte bekommen.
   const merged = { ...DEFAULT_CONFIG, ...patch };
   if (merged.startBalance < 0) throw new Error('startBalance darf nicht negativ sein');
   if (merged.playtimeRewardPercent < 0 || merged.playtimeRewardPercent > 1000) {
@@ -69,10 +71,13 @@ export async function upsertConfig(
   if (merged.bankInterestPercent < 0 || merged.bankInterestPercent > 100) {
     throw new Error('bankInterestPercent 0..100');
   }
+  // WICHTIG: Update darf NUR die explizit uebergebenen Felder ueberschreiben.
+  // Vorher wurde `update: merged` verwendet — das hat alle nicht-uebergebenen
+  // Felder auf DEFAULT zurueckgesetzt (z.B. Bank-Save loescht Currency).
   const row = await prisma.economyConfig.upsert({
     where: { guildId },
     create: { guildId, ...merged },
-    update: merged,
+    update: patch,
   });
   return {
     guildId: row.guildId as GuildId,

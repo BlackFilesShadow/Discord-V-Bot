@@ -11,6 +11,7 @@ import { requireGuildPermission } from '../../middleware/auth';
 import prisma from '../../../database/prisma';
 import type { CasinoGameType } from '@prisma/client';
 import { logAuditDb } from '../../../utils/logger';
+import { emitGuildEvent } from '../../socket/emitter';
 
 export const casinoRouter = Router({ mergeParams: true });
 
@@ -56,6 +57,7 @@ casinoRouter.put('/games/:type', requireGuildPermission('casino.manage'), async 
     update: data,
   });
   logAuditDb('CASINO_GAME_UPDATED', 'CASINO', { actorUserId: req.auth!.userId, guildId: scope.guildId, details: { type: t, fields: Object.keys(data) } });
+  emitGuildEvent(scope.guildId, { type: 'settings.changed', payload: { guildId: scope.guildId, slotId: '' } });
   res.json({
     type: g.type, enabled: g.enabled, winChancePct: g.winChancePct,
     minBet: g.minBet.toString(), maxBet: g.maxBet.toString(), payoutMult: g.payoutMult,

@@ -28,7 +28,7 @@ export function useGuildLiveUpdates(guildId: string | undefined): void {
     ];
 
     const handlers: Record<string, (...args: unknown[]) => void> = {
-      'settings.changed':     () => invalidate([['settings', guildId], ['dashboard', guildId], ['nitrado', guildId]]),
+      'settings.changed':     () => invalidate([['settings', guildId], ['dashboard', guildId], ['nitrado', guildId], ['economy', guildId], ['casino-games', guildId], ['casino-stats', guildId]]),
       'faction.changed':      () => invalidate([['factions', guildId]]),
       'whitelist.changed':    () => invalidate([['whitelist', guildId]]),
       'permissions.updated':  () => invalidate([['permissions', guildId]]),

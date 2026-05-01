@@ -33,7 +33,7 @@ export const whitelistCommand: Command = {
     .setName('whitelist')
     .setDescription('Stellt eine Whitelist-Anfrage fuer deinen Spielernamen.')
     .addStringOption(o => o.setName('id').setDescription('Spielername (1-64 Zeichen)').setRequired(true).setMinLength(1).setMaxLength(64)) as SlashCommandBuilder,
-  execute: withGuildScope({}, async (i, scope) => {
+  execute: withGuildScope({ requireSlotToggle: 'whitelistActive' }, async (i, scope) => {
     const id = i.options.getString('id', true).trim();
     if (!isValidName(id)) { await reply(i, 'Ungueltiger Name (1-64 Zeichen).'); return; }
 

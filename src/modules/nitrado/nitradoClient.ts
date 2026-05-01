@@ -243,4 +243,35 @@ export class NitradoClient {
       headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
     });
   }
+
+  /**
+   * Liefert den aktuellen Server-Status (Nitrado: `query.server_state` oder
+   * top-level `status`). Werte typischerweise: 'started', 'stopped',
+   * 'restarting', 'stopping', 'installing', 'updating', 'suspended'.
+   * Liefert 'unknown' wenn die API kein verwertbares Feld liefert.
+   */
+  async getServiceStatus(serviceId: string): Promise<string> {
+    const res = await this.request<{
+      data: {
+        gameserver?: {
+          status?: string;
+          query?: { server_state?: string };
+        };
+      };
+    }>('GET', `/services/${serviceId}/gameservers`);
+    const gs = res.data?.gameserver;
+    return (gs?.query?.server_state || gs?.status || 'unknown').toLowerCase();
+  }
+
+  /**
+   * Startet einen gestoppten Server. Nitrado-API hat keinen dedizierten
+   * Start-Endpoint — der Restart-Endpoint funktioniert auch fuer den Cold-Start
+   * (Server-State wechselt von 'stopped' zu 'restarting' -> 'started').
+   */
+  async start(serviceId: string, message?: string): Promise<void> {
+    await this.request<unknown>('POST', `/services/${serviceId}/gameservers/restart`, {
+      data: new URLSearchParams({ message: message ?? 'Auto-Start by V-Bot (PermaOnly)' }).toString(),
+      headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+    });
+  }
 }

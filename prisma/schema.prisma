@@ -1732,7 +1732,7 @@ model NitradoJob {
   id            String           @id @default(cuid())
   guildId       String
   nitradoConnId String
-  operation     String           @db.VarChar(40) // 'WHITELIST_ADD' | 'WHITELIST_REMOVE' | 'KEEPALIVE' | 'DOWNLOAD_ADM'
+  operation     String           @db.VarChar(40) // 'WHITELIST_ADD' | 'WHITELIST_REMOVE' | 'KEEPALIVE' | 'DOWNLOAD_ADM' | 'RESTART_IF_DOWN'
   payload       Json
   status        NitradoJobStatus @default(PENDING)
   attempts      Int              @default(0)

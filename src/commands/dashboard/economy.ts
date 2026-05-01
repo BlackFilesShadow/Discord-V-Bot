@@ -41,7 +41,7 @@ export const linkCommand: Command = {
     .setName('link')
     .setDescription('Verknuepft deinen Discord-Account mit deiner Spielfigur (Steam64 oder Charname).')
     .addStringOption(o => o.setName('id').setDescription('Steam64-ID (17 Stellen) oder Charname').setRequired(true).setMaxLength(64)),
-  execute: withGuildScope({}, async (i, scope) => {
+  execute: withGuildScope({ requireSlotToggle: 'economyActive' }, async (i, scope) => {
     const id = i.options.getString('id', true).trim();
     if (!isValidGameId(id)) { await reply(i, 'Ungueltige ID. Bitte Steam64 (17 Stellen, beginnt mit 7656) oder Charname (3..32 Zeichen).'); return; }
 
@@ -71,7 +71,7 @@ export const unlinkCommand: Command = {
   data: new SlashCommandBuilder()
     .setName('unlink')
     .setDescription('Loescht deine Spielfigur-Verknuepfung im aktiven Server.'),
-  execute: withGuildScope({}, async (i, scope) => {
+  execute: withGuildScope({ requireSlotToggle: 'economyActive' }, async (i, scope) => {
     const out = await prisma.economyLink.deleteMany({
       where: { guildId: scope.guildId, nitradoConnId: scope.nitradoConnId!, userDiscordId: scope.actorDiscordId },
     });
@@ -89,7 +89,7 @@ export const statusCommand: Command = {
     .setName('status')
     .setDescription('Zeigt deinen Verknuepfungs- und Konto-Status.')
     .addUserOption(o => o.setName('user').setDescription('Optional anderer User').setRequired(false)) as SlashCommandBuilder,
-  execute: withGuildScope({}, async (i, scope) => {
+  execute: withGuildScope({ requireSlotToggle: 'economyActive' }, async (i, scope) => {
     const target = i.options.getUser('user') ?? i.user;
     const targetId = asUserDiscordId(target.id);
     const link = await prisma.economyLink.findUnique({
@@ -113,7 +113,7 @@ export const statusCommand: Command = {
 // ============================================================
 export const balanceCommand: Command = {
   data: new SlashCommandBuilder().setName('balance').setDescription('Dein Kontostand und die letzten 5 Transaktionen.'),
-  execute: withGuildScope({}, async (i, scope) => {
+  execute: withGuildScope({ requireSlotToggle: 'economyActive' }, async (i, scope) => {
     const acc = await getOrCreateAccount(scope.guildId, scope.actorDiscordId);
     const cfg = await getConfig(scope.guildId);
     const txs = await recentTransactions(scope.guildId, scope.actorDiscordId, 5);
@@ -141,7 +141,7 @@ export const payCommand: Command = {
     .addUserOption(o => o.setName('user').setDescription('Empfaenger').setRequired(true))
     .addIntegerOption(o => o.setName('betrag').setDescription('Betrag').setRequired(true).setMinValue(1).setMaxValue(1_000_000_000))
     .addStringOption(o => o.setName('grund').setDescription('Grund (max 100)').setRequired(false).setMaxLength(100)) as SlashCommandBuilder,
-  execute: withGuildScope({}, async (i, scope) => {
+  execute: withGuildScope({ requireSlotToggle: 'economyActive' }, async (i, scope) => {
     const target = i.options.getUser('user', true);
     if (target.bot) { await reply(i, 'Bots koennen keine Coins erhalten.'); return; }
     if (target.id === i.user.id) { await reply(i, 'Du kannst dir nicht selbst Coins senden.'); return; }
@@ -243,7 +243,7 @@ export const depositCommand: Command = {
     .setName('deposit')
     .setDescription('Bringt Coins von Wallet auf die Bank.')
     .addIntegerOption(o => o.setName('betrag').setDescription('Betrag').setRequired(true).setMinValue(1).setMaxValue(1_000_000_000)) as SlashCommandBuilder,
-  execute: withGuildScope({}, async (i, scope) => {
+  execute: withGuildScope({ requireSlotToggle: 'economyActive' }, async (i, scope) => {
     const amount = BigInt(i.options.getInteger('betrag', true));
     try { await deposit(scope.guildId, scope.actorDiscordId, amount); }
     catch (e) { await reply(i, `Fehlgeschlagen: ${(e as Error).message}`); return; }
@@ -260,7 +260,7 @@ export const withdrawCommand: Command = {
     .setName('withdraw')
     .setDescription('Hebt Coins von der Bank auf die Wallet ab.')
     .addIntegerOption(o => o.setName('betrag').setDescription('Betrag').setRequired(true).setMinValue(1).setMaxValue(1_000_000_000)) as SlashCommandBuilder,
-  execute: withGuildScope({}, async (i, scope) => {
+  execute: withGuildScope({ requireSlotToggle: 'economyActive' }, async (i, scope) => {
     const amount = BigInt(i.options.getInteger('betrag', true));
     try { await withdraw(scope.guildId, scope.actorDiscordId, amount); }
     catch (e) { await reply(i, `Fehlgeschlagen: ${(e as Error).message}`); return; }
@@ -278,7 +278,7 @@ export const transferCommand: Command = {
     .setDescription('Sende Coins von deiner Bank an die Bank eines anderen Users.')
     .addUserOption(o => o.setName('user').setDescription('Empfaenger').setRequired(true))
     .addIntegerOption(o => o.setName('betrag').setDescription('Betrag').setRequired(true).setMinValue(1).setMaxValue(1_000_000_000)) as SlashCommandBuilder,
-  execute: withGuildScope({}, async (i, scope) => {
+  execute: withGuildScope({ requireSlotToggle: 'economyActive' }, async (i, scope) => {
     const target = i.options.getUser('user', true);
     if (target.bot) { await reply(i, 'Bots koennen keine Coins erhalten.'); return; }
     if (target.id === i.user.id) { await reply(i, 'Self-Transfer nicht erlaubt.'); return; }
@@ -300,7 +300,7 @@ export const transferCommand: Command = {
 // ============================================================
 export const bankCommand: Command = {
   data: new SlashCommandBuilder().setName('bank').setDescription('Zeigt Wallet, Bank und Zinssatz.'),
-  execute: withGuildScope({}, async (i, scope) => {
+  execute: withGuildScope({ requireSlotToggle: 'economyActive' }, async (i, scope) => {
     const acc = await getOrCreateAccount(scope.guildId, scope.actorDiscordId);
     const cfg = await getConfig(scope.guildId);
     const e = new EmbedBuilder()

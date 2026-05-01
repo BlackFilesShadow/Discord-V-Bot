@@ -33,6 +33,13 @@ export interface WithGuildScopeOptions {
    * Sonst wird der "aktive" Slot der Guild benutzt (Lowest active slot).
    */
   acceptSlotOption?: boolean;
+  /**
+   * Wenn gesetzt: prueft ob das Toggle in `ServerSettings` (per Slot) `true` ist.
+   * Ist es `false`, wird der Command mit einer freundlichen Meldung abgewiesen.
+   * Greift nur, wenn `nitradoConnId` aufgeloest werden konnte (also nicht
+   * fuer `guildOnly`-Commands).
+   */
+  requireSlotToggle?: 'whitelistActive' | 'economyActive';
 }
 
 async function resolveActiveSlotId(guildId: string, slotOverride?: number): Promise<NitradoConnId | null> {
@@ -120,6 +127,25 @@ export function withGuildScope(opts: WithGuildScopeOptions, handler: ScopedHandl
         flags: MessageFlags.Ephemeral,
       });
       return;
+    }
+
+    if (opts.requireSlotToggle && nitradoConnId) {
+      const settings = await prisma.serverSettings.findUnique({
+        where: { guildId_nitradoConnId: { guildId, nitradoConnId } },
+        select: { whitelistActive: true, economyActive: true },
+      });
+      const enabled = settings ? settings[opts.requireSlotToggle] : false;
+      if (!enabled) {
+        const labels: Record<string, string> = {
+          whitelistActive: 'Das Whitelist-System ist fuer diesen Server deaktiviert.',
+          economyActive: 'Das Economy-System ist fuer diesen Server deaktiviert.',
+        };
+        await interaction.reply({
+          content: `${labels[opts.requireSlotToggle]} Aktivierung im Dashboard → Server → Slot → Server-Toggles.`,
+          flags: MessageFlags.Ephemeral,
+        });
+        return;
+      }
     }
 
     try {

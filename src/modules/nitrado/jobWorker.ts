@@ -96,6 +96,18 @@ async function executeJob(jobId: string): Promise<void> {
         if (!ok) throw new Error('Token ungueltig');
         break;
       }
+      case 'RESTART_IF_DOWN': {
+        if (!conn.nitradoServerId) throw new Error('Kein nitradoServerId fuer RESTART_IF_DOWN');
+        const status = await client.getServiceStatus(conn.nitradoServerId);
+        // Nur starten wenn wirklich gestoppt; restarting/started/stopping = no-op
+        if (status === 'stopped' || status === 'suspended') {
+          await client.start(conn.nitradoServerId);
+          logAudit('NITRADO_AUTO_START', 'NITRADO', { guildId: job.guildId, jobId: job.id, details: { nitradoConnId: conn.id, statusBefore: status } });
+        } else {
+          logger.debug(`PermaOnly skip: server ${conn.nitradoServerId} status=${status}`);
+        }
+        break;
+      }
       default:
         throw new Error(`Unbekannte Operation: ${job.operation}`);
     }

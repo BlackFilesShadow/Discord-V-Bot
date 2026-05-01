@@ -13,6 +13,7 @@ import {
 } from '../../../modules/economy/repository';
 import { asUserDiscordId } from '../../../types/scope';
 import { logAuditDb } from '../../../utils/logger';
+import { emitGuildEvent } from '../../socket/emitter';
 
 export const economyRouter = Router({ mergeParams: true });
 
@@ -44,6 +45,7 @@ economyRouter.put('/config', requireGuildPermission('economy.manage'), async (re
 
   const cfg = await upsertConfig(scope.guildId, patch);
   logAuditDb('ECONOMY_CONFIG_UPDATED', 'ECONOMY', { actorUserId: req.auth!.userId, guildId: scope.guildId, details: { fields: Object.keys(patch) } });
+  emitGuildEvent(scope.guildId, { type: 'settings.changed', payload: { guildId: scope.guildId, slotId: '' } });
   res.json({
     currencyName: cfg.currencyName,
     emoji: cfg.emoji,

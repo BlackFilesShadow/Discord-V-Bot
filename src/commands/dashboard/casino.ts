@@ -133,7 +133,7 @@ export const slotCommand: Command = {
     .setName('slot')
     .setDescription('Slot-Maschine: Win-Chance & Payout aus Casino-Config.')
     .addIntegerOption(o => o.setName('einsatz').setDescription('Einsatz').setRequired(true).setMinValue(1).setMaxValue(1_000_000)) as SlashCommandBuilder,
-  execute: withGuildScope({}, async (i, scope) => {
+  execute: withGuildScope({ requireSlotToggle: 'economyActive' }, async (i, scope) => {
     const bet = BigInt(i.options.getInteger('einsatz', true));
     let out;
     try {
@@ -166,7 +166,7 @@ export const coinflipCommand: Command = {
       { name: 'Kopf', value: 'KOPF' }, { name: 'Zahl', value: 'ZAHL' },
     ))
     .addIntegerOption(o => o.setName('einsatz').setDescription('Einsatz').setRequired(true).setMinValue(1).setMaxValue(1_000_000)) as SlashCommandBuilder,
-  execute: withGuildScope({}, async (i, scope) => {
+  execute: withGuildScope({ requireSlotToggle: 'economyActive' }, async (i, scope) => {
     const choice = i.options.getString('seite', true) as 'KOPF' | 'ZAHL';
     const bet = BigInt(i.options.getInteger('einsatz', true));
     let out;
@@ -203,7 +203,7 @@ export const diceCommand: Command = {
     .setDescription('Wuerfelt 1..6. Wenn deine Zahl faellt, gewinnst du payoutMult * Einsatz.')
     .addIntegerOption(o => o.setName('zahl').setDescription('Tippe 1..6').setRequired(true).setMinValue(1).setMaxValue(6))
     .addIntegerOption(o => o.setName('einsatz').setDescription('Einsatz').setRequired(true).setMinValue(1).setMaxValue(1_000_000)) as SlashCommandBuilder,
-  execute: withGuildScope({}, async (i, scope) => {
+  execute: withGuildScope({ requireSlotToggle: 'economyActive' }, async (i, scope) => {
     const tip = i.options.getInteger('zahl', true);
     const bet = BigInt(i.options.getInteger('einsatz', true));
     let out;
@@ -236,7 +236,7 @@ export const blackjackCommand: Command = {
     .setName('blackjack')
     .setDescription('Vereinfachtes Blackjack: Spieler & Dealer ziehen je 2 Karten + 1 optional. Naher an 21 gewinnt.')
     .addIntegerOption(o => o.setName('einsatz').setDescription('Einsatz').setRequired(true).setMinValue(1).setMaxValue(1_000_000)) as SlashCommandBuilder,
-  execute: withGuildScope({}, async (i, scope) => {
+  execute: withGuildScope({ requireSlotToggle: 'economyActive' }, async (i, scope) => {
     const bet = BigInt(i.options.getInteger('einsatz', true));
     let out;
     try {
@@ -294,7 +294,7 @@ export const casinoStatsCommand: Command = {
     .setName('casino-stats')
     .setDescription('Zeigt Casino-Statistik fuer dich oder einen anderen User.')
     .addUserOption(o => o.setName('user').setDescription('Optional anderer User').setRequired(false)) as SlashCommandBuilder,
-  execute: withGuildScope({}, async (i, scope) => {
+  execute: withGuildScope({ requireSlotToggle: 'economyActive' }, async (i, scope) => {
     const target = i.options.getUser('user') ?? i.user;
     const targetId: UserDiscordId = asUserDiscordId(target.id);
     const rows = await prisma.casinoRound.findMany({
