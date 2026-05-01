@@ -17,7 +17,7 @@ export function setIo(instance: IOServer): void {
 export type GuildEvent =
   | { type: 'whitelist.changed'; payload: { guildId: string; entryId?: string; action: 'added' | 'removed' | 'requested' | 'decided' } }
   | { type: 'nitrado.job.updated'; payload: { guildId: string; jobId: string; status: string } }
-  | { type: 'permissions.updated'; payload: { guildId: string; userDiscordId: string } }
+  | { type: 'permissions.updated'; payload: { guildId: string; userDiscordId?: string; roleDiscordId?: string } }
   | { type: 'economy.tx'; payload: { guildId: string; userDiscordId: string; type: string } }
   | { type: 'casino.round'; payload: { guildId: string; gameType: string; payout: string } }
   | { type: 'faction.changed'; payload: { guildId: string; factionId: string } }

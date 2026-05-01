@@ -8,6 +8,7 @@ import { Card, CardHeader, CardTitle, CardDesc } from '@/components/ui/Card';
 import { Button } from '@/components/ui/Button';
 import { Input } from '@/components/ui/Input';
 import { Select } from '@/components/ui/Select';
+import { Combobox, type ComboboxOption } from '@/components/ui/Combobox';
 import { useGuildLiveUpdates } from '@/lib/useGuildLiveUpdates';
 
 type Tab = 'nitrado' | 'aliases' | 'permissions' | 'tickets' | 'audit';
@@ -419,14 +420,66 @@ interface Grant {
   updatedAt: string;
 }
 
+interface RoleGrant {
+  roleDiscordId: string;
+  permissions: string[];
+  grantedBy: string;
+  updatedAt: string;
+}
+
+interface PermsResponse {
+  grants: Grant[];
+  roleGrants: RoleGrant[];
+  availableScopes: string[];
+}
+
+interface MemberOption { id: string; username: string; displayName: string; avatar: string | null; bot: boolean }
+
 function PermissionsTab({ guildId }: { guildId: string }) {
   const qc = useQueryClient();
   const q = useQuery({
     queryKey: ['permissions', guildId],
-    queryFn: () => api.get<{ grants: Grant[]; availableScopes: string[] }>(`/api/v2/guilds/${guildId}/permissions`),
+    queryFn: () => api.get<PermsResponse>(`/api/v2/guilds/${guildId}/permissions`),
   });
-  const [newUser, setNewUser] = useState('');
+  const rolesQ = useQuery({
+    queryKey: ['guild-roles', guildId],
+    queryFn: () => api.get<{ roles: DiscordRole[] }>(`/api/v2/guilds/${guildId}/roles`),
+  });
+
+  const [mode, setMode] = useState<'user' | 'role'>('user');
+  const [pickedUser, setPickedUser] = useState<string | null>(null);
+  const [pickedRole, setPickedRole] = useState<string | null>(null);
   const [newScope, setNewScope] = useState('');
+  const [memberQuery, setMemberQuery] = useState('');
+
+  // Member-Suche server-seitig (Discord-API).
+  const membersQ = useQuery({
+    queryKey: ['guild-members', guildId, memberQuery],
+    queryFn: () => api.get<{ members: MemberOption[] }>(
+      `/api/v2/guilds/${guildId}/members?limit=20${memberQuery ? `&q=${encodeURIComponent(memberQuery)}` : ''}`,
+    ),
+    placeholderData: prev => prev,
+  });
+
+  const memberOptions: ComboboxOption[] = (membersQ.data?.members ?? []).map(m => ({
+    id: m.id,
+    label: m.displayName || m.username,
+    hint: m.id,
+    avatar: m.avatar
+      ? `https://cdn.discordapp.com/avatars/${m.id}/${m.avatar}.png?size=64`
+      : `https://cdn.discordapp.com/embed/avatars/${(BigInt(m.id) >> 22n) % 6n}.png`,
+    disabled: m.bot,
+  }));
+
+  const roleOptions: ComboboxOption[] = (rolesQ.data?.roles ?? [])
+    .filter(r => r.id !== guildId && !r.managed) // @everyone hat dieselbe ID wie die Guild + managed-Bots filtern.
+    .sort((a, b) => b.position - a.position)
+    .map(r => ({
+      id: r.id,
+      label: r.name,
+      hint: r.id,
+      color: r.color && r.color !== '#000000' ? r.color : null,
+    }));
 
   const grant = useMutation({
     mutationFn: (vars: { user: string; scope: string }) =>
@@ -442,16 +495,89 @@ function PermissionsTab({ guildId }: { guildId: string }) {
     mutationFn: (user: string) => api.del(`/api/v2/guilds/${guildId}/permissions/${user}`),
     onSuccess: () => qc.invalidateQueries({ queryKey: ['permissions', guildId] }),
   });
+  const grantRole = useMutation({
+    mutationFn: (vars: { role: string; scope: string }) =>
+      api.put(`/api/v2/guilds/${guildId}/permissions/roles/${vars.role}/${vars.scope}`),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['permissions', guildId] }),
+  });
+  const revokeRole = useMutation({
+    mutationFn: (vars: { role: string; scope: string }) =>
+      api.del(`/api/v2/guilds/${guildId}/permissions/roles/${vars.role}/${vars.scope}`),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['permissions', guildId] }),
+  });
+  const purgeRole = useMutation({
+    mutationFn: (role: string) => api.del(`/api/v2/guilds/${guildId}/permissions/roles/${role}`),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['permissions', guildId] }),
+  });
+
+  function submit(): void {
+    if (!newScope) return;
+    if (mode === 'user' && pickedUser) {
+      grant.mutate({ user: pickedUser, scope: newScope }, {
+        onSuccess: () => { setPickedUser(null); setNewScope(''); },
+      });
+    } else if (mode === 'role' && pickedRole) {
+      grantRole.mutate({ role: pickedRole, scope: newScope }, {
+        onSuccess: () => { setPickedRole(null); setNewScope(''); },
+      });
+    }
+  }
+
+  const canSubmit =
+    !!newScope &&
+    ((mode === 'user' && !!pickedUser) || (mode === 'role' && !!pickedRole)) &&
+    !grant.isPending && !grantRole.isPending;
+
+  const roleNameById = (id: string): { name: string; color: string | null } => {
+    const r = rolesQ.data?.roles.find(x => x.id === id);
+    if (!r) return { name: id, color: null };
+    return { name: r.name, color: r.color && r.color !== '#000000' ? r.color : null };
+  };
 
   return (
     <div className="space-y-4">
       <Card>
         <CardHeader>
           <CardTitle><Shield className="h-4 w-4 inline mr-1" /> Berechtigung erteilen</CardTitle>
-          <CardDesc>Gib einem Mitglied gezielte Rechte fuer dieses Dashboard.</CardDesc>
+          <CardDesc>Direkt aus der Mitglieder- bzw. Rollen-Liste deines Servers auswaehlen.</CardDesc>
         </CardHeader>
+
+        <div className="inline-flex rounded-lg bg-bg-elev border border-border p-1 mb-3">
+          {(['user', 'role'] as const).map(m => (
+            <button
+              key={m}
+              type="button"
+              onClick={() => { setMode(m); setPickedUser(null); setPickedRole(null); }}
+              className={`px-3 py-1.5 text-xs rounded-md transition-colors ${
+                mode === m ? 'bg-accent/20 text-accent' : 'text-muted hover:text-white'
+              }`}
+            >
+              {m === 'user' ? 'Mitglied' : 'Rolle'}
+            </button>
+          ))}
+        </div>
+
         <div className="grid gap-2 sm:grid-cols-[1fr_1fr_auto]">
-          <Input value={newUser} onChange={e => setNewUser(e.target.value)} placeholder="Discord-ID" />
+          {mode === 'user' ? (
+            <Combobox
+              value={pickedUser}
+              onChange={id => setPickedUser(id)}
+              options={memberOptions}
+              onSearch={setMemberQuery}
+              loading={membersQ.isFetching}
+              placeholder="Mitglied suchen..."
+              emptyText={memberQuery ? 'Keine Treffer.' : 'Tippe einen Namen...'}
+            />
+          ) : (
+            <Combobox
+              value={pickedRole}
+              onChange={id => setPickedRole(id)}
+              options={roleOptions}
+              loading={rolesQ.isLoading}
+              placeholder="Rolle waehlen..."
+              emptyText="Keine Rollen verfuegbar."
+            />
+          )}
           <select
             value={newScope}
             onChange={e => setNewScope(e.target.value)}
@@ -461,9 +587,9 @@ function PermissionsTab({ guildId }: { guildId: string }) {
             {q.data?.availableScopes.map(s => <option key={s} value={s}>{s}</option>)}
           </select>
           <Button
-            disabled={!/^\d{17,20}$/.test(newUser) || !newScope || grant.isPending}
-            loading={grant.isPending}
-            onClick={() => grant.mutate({ user: newUser, scope: newScope })}
+            disabled={!canSubmit}
+            loading={grant.isPending || grantRole.isPending}
+            onClick={submit}
           >
             Erteilen
           </Button>
@@ -472,38 +598,91 @@ function PermissionsTab({ guildId }: { guildId: string }) {
 
       {q.isLoading && <div className="h-20 rounded-xl skeleton" />}
 
-      {q.data && q.data.grants.length === 0 && (
-        <p className="text-muted text-sm">Noch keine delegierten Rechte.</p>
-      )}
-
-      {q.data && q.data.grants.map(g => (
-        <Card key={g.userDiscordId} className="!p-4">
-          <div className="flex items-start gap-3 flex-wrap">
-            <div className="min-w-0 flex-1">
-              <code className="text-white text-sm">{g.userDiscordId}</code>
-              <div className="flex flex-wrap gap-1 mt-2">
-                {g.permissions.length === 0 && <span className="text-xs text-muted">— keine —</span>}
-                {g.permissions.map(p => (
-                  <button
-                    key={p}
-                    onClick={() => revoke.mutate({ user: g.userDiscordId, scope: p })}
-                    className="text-[10px] bg-accent/20 text-accent hover:bg-danger/30 hover:text-danger px-2 py-0.5 rounded inline-flex items-center gap-1 transition-colors"
-                    title="Entziehen"
-                    type="button"
-                  >
-                    {p} <Trash2 className="h-2.5 w-2.5" />
-                  </button>
-                ))}
+      {/* User-Grants */}
+      <div className="space-y-2">
+        <h3 className="text-xs uppercase tracking-wider text-muted px-1">Mitglieder ({q.data?.grants.length ?? 0})</h3>
+        {q.data && q.data.grants.length === 0 && (
+          <p className="text-muted text-sm">Noch keine delegierten Mitglieder-Rechte.</p>
+        )}
+        {q.data && q.data.grants.map(g => (
+          <Card key={g.userDiscordId} className="!p-4">
+            <div className="flex items-start gap-3 flex-wrap">
+              <div className="min-w-0 flex-1">
+                <code className="text-white text-sm font-mono">{g.userDiscordId}</code>
+                <div className="flex flex-wrap gap-1 mt-2">
+                  {g.permissions.length === 0 && <span className="text-xs text-muted">— keine —</span>}
+                  {g.permissions.map(p => (
+                    <button
+                      key={p}
+                      onClick={() => revoke.mutate({ user: g.userDiscordId, scope: p })}
+                      className="text-[10px] bg-accent/20 text-accent hover:bg-danger/30 hover:text-danger px-2 py-0.5 rounded inline-flex items-center gap-1 transition-colors"
+                      title="Entziehen"
+                      type="button"
+                    >
+                      {p} <Trash2 className="h-2.5 w-2.5" />
+                    </button>
+                  ))}
+                </div>
               </div>
+              <Button size="sm" variant="danger" onClick={() => {
+                if (confirm(`Alle Rechte von ${g.userDiscordId} entfernen?`)) purge.mutate(g.userDiscordId);
+              }}>
+                Alle entziehen
+              </Button>
             </div>
-            <Button size="sm" variant="danger" onClick={() => {
-              if (confirm(`Alle Rechte von ${g.userDiscordId} entfernen?`)) purge.mutate(g.userDiscordId);
-            }}>
-              Alle entziehen
-            </Button>
-          </div>
-        </Card>
-      ))}
+          </Card>
+        ))}
+      </div>
+
+      {/* Role-Grants */}
+      <div className="space-y-2">
+        <h3 className="text-xs uppercase tracking-wider text-muted px-1">Rollen ({q.data?.roleGrants.length ?? 0})</h3>
+        {q.data && q.data.roleGrants.length === 0 && (
+          <p className="text-muted text-sm">Noch keine Rollen-basierten Rechte.</p>
+        )}
+        {q.data && q.data.roleGrants.map(g => {
+          const r = roleNameById(g.roleDiscordId);
+          return (
+            <Card key={g.roleDiscordId} className="!p-4">
+              <div className="flex items-start gap-3 flex-wrap">
+                <div className="min-w-0 flex-1">
+                  <div className="flex items-center gap-2">
+                    {r.color && (
+                      <span
+                        className="h-2.5 w-2.5 rounded-full"
+                        style={{ background: r.color, boxShadow: `0 0 8px ${r.color}66` }}
+                      />
+                    )}
+                    <span className="text-white text-sm font-medium" style={r.color ? { color: r.color } : undefined}>
+                      @{r.name}
+                    </span>
+                    <code className="text-[10px] text-muted font-mono">{g.roleDiscordId}</code>
+                  </div>
+                  <div className="flex flex-wrap gap-1 mt-2">
+                    {g.permissions.length === 0 && <span className="text-xs text-muted">— keine —</span>}
+                    {g.permissions.map(p => (
+                      <button
+                        key={p}
+                        onClick={() => revokeRole.mutate({ role: g.roleDiscordId, scope: p })}
+                        className="text-[10px] bg-accent/20 text-accent hover:bg-danger/30 hover:text-danger px-2 py-0.5 rounded inline-flex items-center gap-1 transition-colors"
+                        title="Entziehen"
+                        type="button"
+                      >
+                        {p} <Trash2 className="h-2.5 w-2.5" />
+                      </button>
+                    ))}
+                  </div>
+                </div>
+                <Button size="sm" variant="danger" onClick={() => {
+                  if (confirm(`Alle Rechte der Rolle @${r.name} entfernen?`)) purgeRole.mutate(g.roleDiscordId);
+                }}>
+                  Alle entziehen
+                </Button>
+              </div>
+            </Card>
+          );
+        })}
+      </div>
     </div>
   );
 }

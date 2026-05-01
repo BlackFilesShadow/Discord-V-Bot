@@ -119,11 +119,34 @@ export function requireGuildPermission(perm: PermissionScope) {
     const isOwner = guild.ownerId === req.auth.discordId;
     let permsSet: Set<PermissionScope> = new Set();
     if (!isOwner) {
+      // 1) User-spezifische Grants
       const grant = await prisma.guildPermissionGrant.findUnique({
         where: { guildId_userDiscordId: { guildId, userDiscordId: req.auth.discordId } },
       });
       const list = Array.isArray(grant?.permissions) ? (grant!.permissions as string[]) : [];
       permsSet = new Set(list as PermissionScope[]);
+
+      // 2) Role-Grants: alle Rollen des Users in dieser Guild zu einer Vereinigung mergen.
+      try {
+        const member = guild.members.cache.get(req.auth.discordId)
+          ?? await guild.members.fetch(req.auth.discordId).catch(() => null);
+        const roleIds = member ? Array.from(member.roles.cache.keys()) : [];
+        if (roleIds.length > 0) {
+          const roleGrants = await prisma.guildPermissionRoleGrant.findMany({
+            where: { guildId, roleDiscordId: { in: roleIds } },
+          });
+          for (const r of roleGrants) {
+            const arr = Array.isArray(r.permissions) ? (r.permissions as string[]) : [];
+            for (const s of arr) permsSet.add(s as PermissionScope);
+          }
+        }
+      } catch (e) {
+        // Member-Fetch kann fehlschlagen (User nicht mehr in Guild). Dann gibt's keine Role-Grants.
+        logAudit('GUILD_MEMBER_FETCH_FAILED', 'SECURITY', {
+          userId: req.auth.userId, discordId: req.auth.discordId, guildId,
+          err: (e as Error).message,
+        });
+      }
     }
 
     const scope: GuildScope = {

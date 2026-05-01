@@ -216,3 +216,52 @@ guildsRouter.get('/:guildId/roles', async (req, res) => {
     .sort((a, b) => b.position - a.position);
   res.json({ roles });
 });
+
+/**
+ * Liefert bis zu 25 Mitglieder einer Guild fuer Autocomplete.
+ * Owner-only (User-IDs sind sensibel).
+ *
+ * Query:
+ *   ?q=<prefix>     Discord-API-Member-Search (Prefix). Ohne `q`: Cache-Top.
+ *   ?limit=<1..25>  optionales Limit (default 25, max 25 von Discord).
+ */
+guildsRouter.get('/:guildId/members', async (req, res) => {
+  if (!req.auth) { res.status(401).end(); return; }
+  const client = tryGetDashboardClient();
+  if (!client) { res.status(503).json({ error: 'Bot nicht bereit.' }); return; }
+  let guildId;
+  try { guildId = asGuildId(String(req.params.guildId)); } catch {
+    res.status(400).json({ error: 'guildId ungueltig.' }); return;
+  }
+  const guild = client.guilds.cache.get(guildId);
+  if (!guild) { res.status(404).json({ error: 'Bot nicht in Guild.' }); return; }
+  if (guild.ownerId !== req.auth.discordId) { res.status(403).json({ error: 'Nicht Owner.' }); return; }
+
+  const rawQ = typeof req.query.q === 'string' ? req.query.q.trim() : '';
+  const rawLimit = Number.parseInt(String(req.query.limit ?? '25'), 10);
+  const limit = Math.min(Math.max(Number.isFinite(rawLimit) ? rawLimit : 25, 1), 25);
+
+  // Hard-Limit/Sanitize: max 64 Zeichen, kein Steuerzeichen.
+  const q = rawQ.slice(0, 64).replace(/[\u0000-\u001f]/g, '');
+
+  try {
+    let members;
+    if (q.length > 0) {
+      // Discord-API: Prefix-Search (queryt server-side).
+      members = await guild.members.search({ query: q, limit });
+    } else {
+      // Ohne Query: liefere die Top-25 aus dem Cache (z.B. zuletzt aktive).
+      members = guild.members.cache.first(limit);
+    }
+    const result = (Array.from(members.values?.() ?? members)).map(m => ({
+      id: m.id,
+      username: m.user.username,
+      displayName: m.displayName ?? m.user.globalName ?? m.user.username,
+      avatar: m.user.displayAvatarURL({ size: 64 }),
+      bot: m.user.bot,
+    }));
+    res.json({ members: result });
+  } catch (e) {
+    res.status(502).json({ error: 'Discord-Member-Search fehlgeschlagen.', detail: (e as Error).message });
+  }
+});

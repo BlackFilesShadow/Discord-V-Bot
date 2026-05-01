@@ -1434,6 +1434,22 @@ model GuildPermissionGrant {
   @@index([guildId])
 }
 
+/// Wie GuildPermissionGrant, aber zielt auf eine Discord-ROLLE statt auf einen
+/// einzelnen User. Beim Permission-Check werden alle Rollen des aktiven Users
+/// in der Guild gegen diese Tabelle geprueft (Vereinigung aller Rollen-Scopes).
+model GuildPermissionRoleGrant {
+  id                 String   @id @default(cuid())
+  guildId            String
+  roleDiscordId      String
+  permissions        Json // wie oben: Array von Scope-Strings
+  grantedByDiscordId String
+  createdAt          DateTime @default(now())
+  updatedAt          DateTime @updatedAt
+
+  @@unique([guildId, roleDiscordId])
+  @@index([guildId])
+}
+
 // Settings pro (Guild + Nitrado-Slot). Whitelist/Economy/PermaOnly-Toggles.
 model ServerSettings {
   id                        String            @id @default(cuid())
