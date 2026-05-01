@@ -421,10 +421,10 @@ function FactionSystemConfigCard({ guildId, slot }: { guildId: string; slot: str
 
   return (
     <div className="rounded-md border border-border bg-bg-elev p-3 mb-4">
-      <p className="text-sm text-white font-medium mb-1">Sammel-Channel für Fraktionen</p>
+      <p className="text-sm text-white font-medium mb-1">Sammel-Channel (Server-weit)</p>
       <p className="text-xs text-muted mb-2">
-        Alle Fraktionen ohne eigenen Embed-Channel werden hier veröffentlicht.
-        Zusätzlich pflegt der Bot eine Übersichtsliste, die bei jeder Änderung aktualisiert wird.
+        Server-Default: Fraktionen ohne <em>eigenen</em> Embed-Channel werden hier gepostet.
+        Zusätzlich pflegt der Bot hier eine automatisch aktualisierte Übersichtsliste aller Fraktionen.
       </p>
       <div className="flex gap-2 items-center">
         <div className="flex-1">
@@ -632,7 +632,23 @@ function FactionsPanel({ guildId, slot }: { guildId: string; slot: string }) {
       <div className="border-t border-border pt-4 space-y-3">
         <div className="flex items-center justify-between">
           <p className="text-sm text-white/80">{editingId ? 'Fraktion bearbeiten' : 'Neue Fraktion'}</p>
-          {editingId && <Button size="sm" variant="ghost" onClick={cancelEdit}><X className="h-3 w-3 mr-1" />Abbrechen</Button>}
+          <div className="flex gap-2">
+            {editingId && (
+              <Button
+                size="sm"
+                variant="danger"
+                onClick={() => {
+                  if (editingId && confirm('Diese Fraktion wirklich löschen? Alle Mitgliedschaften werden entfernt.')) {
+                    remove.mutate(editingId);
+                    cancelEdit();
+                  }
+                }}
+              >
+                <Trash2 className="h-3 w-3 mr-1" />Fraktion löschen
+              </Button>
+            )}
+            {editingId && <Button size="sm" variant="ghost" onClick={cancelEdit}><X className="h-3 w-3 mr-1" />Abbrechen</Button>}
+          </div>
         </div>
 
         <div className="grid gap-2 md:grid-cols-2">
@@ -652,11 +668,12 @@ function FactionsPanel({ guildId, slot }: { guildId: string; slot: string }) {
             <option value="CLOSED">🔒 CLOSED — nur Einladung</option>
           </Select>
           <div>
+            <span className="block text-xs text-muted mb-1">Eigener Embed-Channel (optional)</span>
             <FactionChannelSelect
               guildId={guildId}
               value={draft.embedChannelId}
               onChange={id => setDraft({ ...draft, embedChannelId: id })}
-              placeholder="— Sammel-Channel verwenden —"
+              placeholder="— Server-Sammel-Channel nutzen —"
             />
           </div>
 

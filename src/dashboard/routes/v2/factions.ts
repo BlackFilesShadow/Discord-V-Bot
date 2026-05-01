@@ -20,6 +20,7 @@ import { Router } from 'express';
 import multer from 'multer';
 import * as path from 'node:path';
 import * as fs from 'node:fs/promises';
+import { randomUUID } from 'node:crypto';
 import { requireGuildPermission } from '../../middleware/auth';
 import prisma from '../../../database/prisma';
 import { asUserDiscordId } from '../../../types/scope';
@@ -461,6 +462,46 @@ factionsRouter.delete('/:id', requireGuildPermission('factions.manage'), async (
   emitGuildEvent(scope.guildId, { type: 'faction.changed', payload: { guildId: scope.guildId, factionId: id } });
   res.json({ ok: true });
 });
+/**
+ * Draft-Upload (ohne Faction-ID): wird beim Anlegen einer neuen Fraktion verwendet,
+ * solange noch keine ID existiert. Datei wird unter `_drafts/<uuid>.<ext>` abgelegt
+ * und die zurueckgegebene URL spaeter in `flagUrl|bannerUrl|mediaUrl` persistiert.
+ */
+factionsRouter.post(
+  '/upload',
+  requireGuildPermission('factions.manage'),
+  upload.single('file'),
+  async (req, res) => {
+    const scope = req.guildScope!;
+    const kind = String(req.query.kind ?? '').toLowerCase();
+    if (!ALLOWED_KIND.has(kind)) {
+      res.status(400).json({ error: 'kind muss flag|banner|media sein.' });
+      return;
+    }
+    const file = req.file;
+    if (!file) { res.status(400).json({ error: 'Keine Datei.' }); return; }
+    if (!ALLOWED_MIME.has(file.mimetype)) {
+      res.status(400).json({ error: 'Unerlaubter MIME-Type.' });
+      return;
+    }
+    if (file.size > MAX_UPLOAD_BYTES) {
+      res.status(400).json({ error: `Datei zu gross (max ${MAX_UPLOAD_BYTES / 1024 / 1024} MB).` });
+      return;
+    }
+    const ext = extFor(file.mimetype);
+    const dir = path.join(UPLOADS_BASE, scope.guildId, '_drafts');
+    await fs.mkdir(dir, { recursive: true });
+    const filename = `${kind}-${randomUUID()}${ext}`;
+    await fs.writeFile(path.join(dir, filename), file.buffer);
+    const publicUrl = `/uploads/factions/${scope.guildId}/_drafts/${filename}`;
+    logAuditDb('FACTION_ASSET_UPLOADED', 'FACTION', {
+      actorUserId: req.auth!.userId, guildId: scope.guildId,
+      details: { kind, draft: true, mime: file.mimetype, size: file.size },
+    });
+    res.json({ url: publicUrl });
+  },
+);
+
 
 factionsRouter.post(
   '/:id/upload',
