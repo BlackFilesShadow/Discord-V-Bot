@@ -80,8 +80,57 @@ export default function Servers() {
         )}
 
         {isDev && <DevFooter />}
+
+        <CreditsCard />
       </div>
     </Shell>
+  );
+}
+
+function CreditsCard() {
+  return (
+    <div className="mt-12 mx-auto max-w-2xl">
+      <div className="relative rounded-2xl p-[1.5px] bg-gradient-to-br from-red-500/70 via-red-700/40 to-red-900/70 shadow-[0_0_40px_-8px_rgba(239,68,68,0.45)]">
+        <div className="rounded-[14px] bg-gradient-to-b from-[#0c0c12]/95 to-[#06060a]/95 backdrop-blur-md p-6 sm:p-8">
+          <div className="flex items-center justify-center gap-3 mb-5">
+            <span className="h-px flex-1 bg-gradient-to-r from-transparent to-red-500/40" />
+            <span className="text-[11px] tracking-[0.35em] text-red-400/90 uppercase font-semibold">Credits</span>
+            <span className="h-px flex-1 bg-gradient-to-l from-transparent to-red-500/40" />
+          </div>
+
+          <div className="grid gap-5 sm:grid-cols-2 text-sm">
+            <div>
+              <div className="text-[10px] uppercase tracking-wider text-muted mb-1">Entwicklung &amp; Design</div>
+              <div className="text-white font-semibold text-base">Void_architect</div>
+            </div>
+            <div>
+              <div className="text-[10px] uppercase tracking-wider text-muted mb-1">Gewidmet an</div>
+              <div className="text-white font-semibold text-base">Ash of Phoenix</div>
+            </div>
+          </div>
+
+          <div className="mt-6">
+            <div className="text-[10px] uppercase tracking-wider text-muted mb-2 text-center">Mitglieder</div>
+            <div className="flex flex-wrap justify-center gap-2">
+              {['BeatsOneElite', 'Blubbi', 'Celinchen0502', 'EoX-Kyrios', 'Mabra'].map(n => (
+                <span
+                  key={n}
+                  className="px-3 py-1 text-xs rounded-full bg-red-500/10 border border-red-500/30 text-red-200/95
+                             shadow-[inset_0_1px_0_rgba(255,255,255,0.06),0_0_12px_-4px_rgba(239,68,68,0.55)]
+                             hover:bg-red-500/15 hover:border-red-500/50 transition-colors"
+                >
+                  {n}
+                </span>
+              ))}
+            </div>
+          </div>
+
+          <div className="mt-6 text-center text-[10px] tracking-widest text-muted/70 uppercase">
+            V-Bot
+          </div>
+        </div>
+      </div>
+    </div>
   );
 }
 
