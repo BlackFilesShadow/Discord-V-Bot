@@ -495,6 +495,20 @@ factionsRouter.post(
     const ext = extFor(file.mimetype);
     const dir = path.join(UPLOADS_BASE, scope.guildId, '_drafts');
     await fs.mkdir(dir, { recursive: true });
+
+    // Cleanup verwaister Draft-Uploads (>24h alt) — verhindert Disk-Leak
+    // wenn User Datei hochlaedt aber Faction nie erstellt. Best-Effort.
+    try {
+      const entries = await fs.readdir(dir);
+      const cutoff = Date.now() - 24 * 60 * 60 * 1000;
+      for (const entry of entries) {
+        const stat = await fs.stat(path.join(dir, entry)).catch(() => null);
+        if (stat && stat.mtimeMs < cutoff) {
+          await fs.unlink(path.join(dir, entry)).catch(() => {});
+        }
+      }
+    } catch { /* best-effort cleanup */ }
+
     const filename = `${kind}-${randomUUID()}${ext}`;
     await fs.writeFile(path.join(dir, filename), file.buffer);
     const publicUrl = `/uploads/factions/${scope.guildId}/_drafts/${filename}`;

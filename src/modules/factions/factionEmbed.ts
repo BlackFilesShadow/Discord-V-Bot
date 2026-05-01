@@ -157,7 +157,13 @@ async function loadFaction(factionId: string): Promise<FactionEmbedData | null> 
     where: { id: factionId },
     include: {
       _count: { select: { members: true } },
-      members: { select: { userDiscordId: true, role: true }, orderBy: { joinedAt: 'asc' } },
+      // Embed-Field hat Discord-Limit 1024 Zeichen; max 40 Mentions werden angezeigt.
+      // Hard-Cap auf 100 verhindert Unbounded-Load bei sehr grossen Fraktionen.
+      members: {
+        select: { userDiscordId: true, role: true },
+        orderBy: { joinedAt: 'asc' },
+        take: 100,
+      },
     },
   });
   if (!f) return null;
