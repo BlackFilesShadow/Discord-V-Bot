@@ -1175,14 +1175,18 @@ function TicketEditModal({
               <span className="text-xs text-muted">Post-Channel <span className="text-[10px]">(Embed mit Open-Button)</span></span>
               <Select value={postChannelId} onChange={e => setPostChannelId(e.target.value)}>
                 <option value="">— wählen —</option>
-                {textChannels.map(c => <option key={c.id} value={c.id}>#{c.name}</option>)}
+                {textChannels
+                  .filter(c => c.id !== transcriptChannelId && c.id !== archiveChannelId && c.id !== categoryId)
+                  .map(c => <option key={c.id} value={c.id}>#{c.name}</option>)}
               </Select>
             </label>
             <label className="block">
               <span className="text-xs text-muted">Transcript-Channel <span className="text-[10px]">(Markdown-Datei beim Schließen)</span></span>
               <Select value={transcriptChannelId} onChange={e => setTranscriptChannelId(e.target.value)}>
                 <option value="">— wählen —</option>
-                {textChannels.map(c => <option key={c.id} value={c.id}>#{c.name}</option>)}
+                {textChannels
+                  .filter(c => c.id !== postChannelId && c.id !== archiveChannelId && c.id !== categoryId)
+                  .map(c => <option key={c.id} value={c.id}>#{c.name}</option>)}
               </Select>
             </label>
             <label className="block sm:col-span-2">

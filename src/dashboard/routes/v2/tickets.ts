@@ -16,7 +16,7 @@ import prisma from '../../../database/prisma';
 import { logAuditDb } from '../../../utils/logger';
 import { emitGuildEvent } from '../../socket/emitter';
 import { tryGetDashboardClient } from '../../clientRegistry';
-import { postTemplateEmbed } from '../../../modules/tickets/ticketSystem';
+import { postTemplateEmbed, unpostTemplateEmbed, purgeTemplateInstances } from '../../../modules/tickets/ticketSystem';
 
 export const ticketsRouter = Router({ mergeParams: true });
 
@@ -289,6 +289,18 @@ ticketsRouter.put('/:id', requireGuildOwner, async (req, res) => {
   });
   if (mixErr) { res.status(400).json({ error: mixErr }); return; }
 
+  // F2/F3: Vor dem Update pruefen, ob der alte Embed entfernt werden muss
+  // (Channel-Wechsel ODER Deaktivierung).
+  const willChangePostChannel = v.data.postChannelId !== undefined && v.data.postChannelId !== existing.postChannelId;
+  const willDeactivate = v.data.isActive === false && existing.isActive;
+  if ((willChangePostChannel || willDeactivate) && existing.postedMessageId) {
+    const client = tryGetDashboardClient();
+    if (client) {
+      await unpostTemplateEmbed(client, existing.id).catch(() => {});
+      // postedMessageId ist nun null in DB — nicht aus v.data überschreiben.
+    }
+  }
+
   const updated = await prisma.ticketTemplate.update({ where: { id }, data: v.data });
   logAuditDb('TICKET_TEMPLATE_UPDATED', 'TICKET', { actorUserId: req.auth!.userId, guildId: scope.guildId, details: { templateId: id, fields: Object.keys(v.data) } });
   emitGuildEvent(scope.guildId, { type: 'tickets.changed', payload: { guildId: scope.guildId, templateId: id } });
@@ -301,8 +313,18 @@ ticketsRouter.delete('/:id', requireGuildOwner, async (req, res) => {
   const existing = await prisma.ticketTemplate.findUnique({ where: { id } });
   if (!existing || existing.guildId !== scope.guildId) { res.status(404).json({ error: 'Template nicht gefunden.' }); return; }
 
+  // F4: Vor Cascade alle offenen Discord-Channels schliessen + Embed entfernen.
+  const client = tryGetDashboardClient();
+  let purged: { closed: number; failed: number } = { closed: 0, failed: 0 };
+  if (client) {
+    purged = await purgeTemplateInstances(client, id).catch(() => ({ closed: 0, failed: 0 }));
+    if (existing.postedMessageId) {
+      await unpostTemplateEmbed(client, id).catch(() => {});
+    }
+  }
+
   await prisma.ticketTemplate.delete({ where: { id } });
-  logAuditDb('TICKET_TEMPLATE_DELETED', 'TICKET', { actorUserId: req.auth!.userId, guildId: scope.guildId, details: { templateId: id, slot: existing.slot, label: existing.label } });
+  logAuditDb('TICKET_TEMPLATE_DELETED', 'TICKET', { actorUserId: req.auth!.userId, guildId: scope.guildId, details: { templateId: id, slot: existing.slot, label: existing.label, purged } });
   emitGuildEvent(scope.guildId, { type: 'tickets.changed', payload: { guildId: scope.guildId, templateId: id } });
   res.status(204).end();
 });
