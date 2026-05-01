@@ -1074,7 +1074,8 @@ model TicketTemplate {
   guildId             String
   slot                Int // 1..5 pro Guild
   label               String // Anzeige-Name (z.B. "Support", "Bug-Report")
-  welcomeText         String           @db.Text // Erste Nachricht im erstellten Ticket-Channel
+  welcomeText         String           @db.Text // Legacy/Backward-Compat (= welcomeMessages[0])
+  welcomeMessages     Json             @default("[]") // Array<string>, max 5, je 1..2000 Zeichen
   embedTitle          String // Titel des Public-Embeds mit Open-Button
   embedColor          String           @default("#dc2626") // Hex-Color
   postChannelId       String // Channel, in dem der Embed mit Open-Button lebt
@@ -1082,6 +1083,7 @@ model TicketTemplate {
   categoryId          String? // Discord-Category, unter der Ticket-Channels erstellt werden (optional)
   staffRoleId         String? // Rolle die mit-Zugriff auf jeden Ticket-Channel bekommt (optional)
   transcriptChannelId String // Channel fuer Transcript-Uploads beim Close
+  archiveChannelId    String? // Optionaler separater Archiv-Channel (zusaetzlich zu Transcript)
   isActive            Boolean          @default(true)
   createdAt           DateTime         @default(now())
   updatedAt           DateTime         @updatedAt

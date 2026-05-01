@@ -696,6 +696,7 @@ interface TicketTemplate {
   slot: number;
   label: string;
   welcomeText: string;
+  welcomeMessages: string[];
   embedTitle: string;
   embedColor: string;
   postChannelId: string;
@@ -703,6 +704,7 @@ interface TicketTemplate {
   categoryId: string | null;
   staffRoleId: string | null;
   transcriptChannelId: string;
+  archiveChannelId: string | null;
   isActive: boolean;
 }
 
@@ -858,7 +860,9 @@ function TicketSlotCard({
           <div className="text-xs text-muted mt-2 space-y-0.5">
             <div>Post-Channel: <span className="text-white">#{channelName(template.postChannelId)}</span></div>
             <div>Transcript: <span className="text-white">#{channelName(template.transcriptChannelId)}</span></div>
+            {template.archiveChannelId && <div>Archiv: <span className="text-white">#{channelName(template.archiveChannelId)}</span></div>}
             {template.categoryId && <div>Kategorie: <span className="text-white">{channelName(template.categoryId)}</span></div>}
+            <div>Welcome-Nachrichten: <span className="text-white">{template.welcomeMessages?.length ?? 1}</span></div>
           </div>
         </div>
         <div className="flex flex-col sm:flex-row gap-1.5 shrink-0">
@@ -872,6 +876,20 @@ function TicketSlotCard({
   );
 }
 
+// 7 Preset-Farben + freier Hex-Wert. Hex bleibt Source-of-Truth gegenueber Backend.
+const TICKET_COLOR_PRESETS: Array<{ name: string; hex: string }> = [
+  { name: 'Grau',   hex: '#6b7280' },
+  { name: 'Grün',   hex: '#22c55e' },
+  { name: 'Rot',    hex: '#dc2626' },
+  { name: 'Lila',   hex: '#8b5cf6' },
+  { name: 'Pink',   hex: '#ec4899' },
+  { name: 'Gold',   hex: '#eab308' },
+  { name: 'Türkis', hex: '#14b8a6' },
+];
+
+const TICKET_WELCOME_MAX = 5;
+const TICKET_WELCOME_CHARS = 2000;
+
 function TicketEditModal({
   guildId, slot, existing, channels, roles, onClose, onSaved,
 }: {
@@ -884,11 +902,17 @@ function TicketEditModal({
   onSaved: () => void;
 }) {
   const [label, setLabel] = useState(existing?.label ?? 'Support');
-  const [welcomeText, setWelcomeText] = useState(existing?.welcomeText ?? 'Hallo! Ein Team-Mitglied meldet sich gleich.');
+  const [messages, setMessages] = useState<string[]>(() => {
+    const src = existing?.welcomeMessages && existing.welcomeMessages.length > 0
+      ? existing.welcomeMessages
+      : [existing?.welcomeText ?? 'Hallo! Ein Team-Mitglied meldet sich gleich.'];
+    return src.slice(0, TICKET_WELCOME_MAX);
+  });
   const [embedTitle, setEmbedTitle] = useState(existing?.embedTitle ?? 'Support-Ticket öffnen');
   const [embedColor, setEmbedColor] = useState(existing?.embedColor ?? '#dc2626');
   const [postChannelId, setPostChannelId] = useState(existing?.postChannelId ?? '');
   const [transcriptChannelId, setTranscriptChannelId] = useState(existing?.transcriptChannelId ?? '');
+  const [archiveChannelId, setArchiveChannelId] = useState(existing?.archiveChannelId ?? '');
   const [categoryId, setCategoryId] = useState(existing?.categoryId ?? '');
   const [staffRoleId, setStaffRoleId] = useState(existing?.staffRoleId ?? '');
   const [err, setErr] = useState<string | null>(null);
@@ -897,18 +921,69 @@ function TicketEditModal({
   const textChannels = channels.filter(c => c.type === 0 || c.type === 5);
   const categories = channels.filter(c => c.type === 4);
 
+  // No-Mix-Vorvalidierung (UI-seitig).
+  const mixError = (() => {
+    const used = new Map<string, string>();
+    const checks: Array<[string, string]> = [
+      ['Post-Channel', postChannelId],
+      ['Transcript-Channel', transcriptChannelId],
+      ['Archiv-Channel', archiveChannelId],
+      ['Kategorie', categoryId],
+    ];
+    for (const [name, id] of checks) {
+      if (!id) continue;
+      const existingName = used.get(id);
+      if (existingName) return `${existingName} und ${name} dürfen nicht identisch sein.`;
+      used.set(id, name);
+    }
+    return null;
+  })();
+
+  const messagesValid = messages.length >= 1 && messages.length <= TICKET_WELCOME_MAX
+    && messages.every(m => m.trim().length >= 1 && m.length <= TICKET_WELCOME_CHARS);
+
+  const updateMessage = (i: number, v: string) => {
+    setMessages(prev => prev.map((m, idx) => idx === i ? v : m));
+  };
+  const addMessage = () => {
+    if (messages.length >= TICKET_WELCOME_MAX) return;
+    setMessages(prev => [...prev, '']);
+  };
+  const removeMessage = (i: number) => {
+    if (messages.length <= 1) return;
+    setMessages(prev => prev.filter((_, idx) => idx !== i));
+  };
+  const moveMessage = (i: number, dir: -1 | 1) => {
+    const j = i + dir;
+    if (j < 0 || j >= messages.length) return;
+    setMessages(prev => {
+      const next = [...prev];
+      [next[i], next[j]] = [next[j], next[i]];
+      return next;
+    });
+  };
+
   const save = async () => {
     setErr(null);
+    if (mixError) { setErr(mixError); return; }
     setBusy(true);
     try {
+      const cleanedMessages = messages.map(m => m.trim()).filter(m => m.length > 0).slice(0, TICKET_WELCOME_MAX);
+      if (cleanedMessages.length === 0) {
+        setErr('Mindestens eine Welcome-Nachricht erforderlich.');
+        setBusy(false);
+        return;
+      }
       const body = {
         slot,
         label,
-        welcomeText,
+        welcomeMessages: cleanedMessages,
+        welcomeText: cleanedMessages[0], // Backward-compat-Spiegel
         embedTitle,
         embedColor,
         postChannelId,
         transcriptChannelId,
+        archiveChannelId: archiveChannelId || null,
         categoryId: categoryId || null,
         staffRoleId: staffRoleId || null,
       };
@@ -925,73 +1000,240 @@ function TicketEditModal({
     }
   };
 
+  const colorIsPreset = TICKET_COLOR_PRESETS.some(p => p.hex.toLowerCase() === embedColor.toLowerCase());
+
   return (
-    <div className="fixed inset-0 z-50 grid place-items-center bg-black/60 p-4" onClick={onClose}>
-      <div className="bg-bg-card border border-border rounded-xl w-full max-w-2xl max-h-[90vh] overflow-y-auto" onClick={e => e.stopPropagation()}>
-        <div className="p-5 border-b border-border">
-          <h2 className="text-lg font-semibold text-white">{existing ? 'Template bearbeiten' : 'Neues Template'} (Slot {slot})</h2>
+    <div className="fixed inset-0 z-50 grid place-items-center bg-black/70 backdrop-blur-sm p-4" onClick={onClose}>
+      <div
+        className="relative w-full max-w-3xl max-h-[92vh] overflow-y-auto rounded-2xl border border-border bg-bg-card shadow-2xl"
+        onClick={e => e.stopPropagation()}
+        style={{
+          backgroundImage: `radial-gradient(1200px 400px at 0% 0%, ${embedColor}1a, transparent 60%), radial-gradient(900px 300px at 100% 100%, ${embedColor}14, transparent 55%)`,
+        }}
+      >
+        {/* Hairline glow border */}
+        <div
+          className="pointer-events-none absolute inset-0 rounded-2xl"
+          style={{ boxShadow: `inset 0 0 0 1px ${embedColor}33, 0 0 60px -10px ${embedColor}55` }}
+        />
+
+        <div className="relative p-6 border-b border-border flex items-start justify-between gap-4">
+          <div>
+            <div className="text-[10px] tracking-[0.2em] text-muted uppercase">Slot {slot}  •  Ticket-Template</div>
+            <h2 className="text-xl font-semibold text-white mt-1">
+              {existing ? 'Template bearbeiten' : 'Neues Template'}
+            </h2>
+            <p className="text-xs text-muted mt-1">High-End Ticket-Konfiguration. Channels werden niemals vermischt.</p>
+          </div>
+          <div
+            className="h-12 w-12 rounded-xl border grid place-items-center text-lg shrink-0"
+            style={{ backgroundColor: `${embedColor}22`, borderColor: `${embedColor}66`, color: embedColor }}
+          >
+            🎫
+          </div>
         </div>
-        <div className="p-5 space-y-4">
-          <label className="block">
-            <span className="text-xs text-muted">Label (Knopf-Beschriftung)</span>
-            <Input value={label} onChange={e => setLabel(e.target.value)} maxLength={80} />
-          </label>
-          <label className="block">
-            <span className="text-xs text-muted">Embed-Titel</span>
-            <Input value={embedTitle} onChange={e => setEmbedTitle(e.target.value)} maxLength={200} />
-          </label>
-          <label className="block">
-            <span className="text-xs text-muted">Embed-Farbe</span>
-            <div className="flex gap-2 items-center">
-              <input type="color" value={embedColor} onChange={e => setEmbedColor(e.target.value)} className="h-10 w-16 rounded bg-bg-elev border border-border" />
-              <Input value={embedColor} onChange={e => setEmbedColor(e.target.value)} className="flex-1" />
+
+        <div className="relative p-6 space-y-5">
+          {/* Label + Title */}
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+            <label className="block">
+              <span className="text-xs text-muted">Label (Knopf-Beschriftung)</span>
+              <Input value={label} onChange={e => setLabel(e.target.value)} maxLength={80} />
+            </label>
+            <label className="block">
+              <span className="text-xs text-muted">Embed-Titel</span>
+              <Input value={embedTitle} onChange={e => setEmbedTitle(e.target.value)} maxLength={200} />
+            </label>
+          </div>
+
+          {/* Color palette */}
+          <div>
+            <div className="flex items-center justify-between">
+              <span className="text-xs text-muted">Embed-Farbe</span>
+              <span className="text-[10px] text-muted uppercase tracking-wider">
+                {colorIsPreset ? 'Preset' : 'Custom'}
+              </span>
             </div>
-          </label>
-          <label className="block">
-            <span className="text-xs text-muted">Begrüßungstext (im erstellten Ticket-Channel)</span>
-            <textarea
-              value={welcomeText}
-              onChange={e => setWelcomeText(e.target.value)}
-              maxLength={4000}
-              rows={4}
-              className="mt-1 w-full rounded-md bg-bg-elev border border-border text-white px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-accent/50"
-            />
-          </label>
-          <label className="block">
-            <span className="text-xs text-muted">Post-Channel (wo der Embed mit Open-Button lebt)</span>
-            <Select value={postChannelId} onChange={e => setPostChannelId(e.target.value)}>
-              <option value="">— wählen —</option>
-              {textChannels.map(c => <option key={c.id} value={c.id}>#{c.name}</option>)}
-            </Select>
-          </label>
-          <label className="block">
-            <span className="text-xs text-muted">Transcript-Channel (Markdown-Datei beim Schließen)</span>
-            <Select value={transcriptChannelId} onChange={e => setTranscriptChannelId(e.target.value)}>
-              <option value="">— wählen —</option>
-              {textChannels.map(c => <option key={c.id} value={c.id}>#{c.name}</option>)}
-            </Select>
-          </label>
-          <label className="block">
-            <span className="text-xs text-muted">Kategorie für Ticket-Channels (optional)</span>
-            <Select value={categoryId} onChange={e => setCategoryId(e.target.value)}>
-              <option value="">— keine —</option>
-              {categories.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
-            </Select>
-          </label>
-          <label className="block">
-            <span className="text-xs text-muted">Staff-Rolle (Mit-Zugriff + Mention, optional)</span>
-            <Select value={staffRoleId} onChange={e => setStaffRoleId(e.target.value)}>
-              <option value="">— keine —</option>
-              {roles.filter(r => !r.managed).map(r => <option key={r.id} value={r.id}>@{r.name}</option>)}
-            </Select>
-          </label>
-          {err && <p className="text-danger text-xs">{err}</p>}
+            <div className="mt-2 flex flex-wrap items-center gap-2">
+              {TICKET_COLOR_PRESETS.map(p => {
+                const active = p.hex.toLowerCase() === embedColor.toLowerCase();
+                return (
+                  <button
+                    key={p.hex}
+                    type="button"
+                    onClick={() => setEmbedColor(p.hex)}
+                    className={`group relative h-9 w-9 rounded-lg border transition ${active ? 'scale-110' : 'hover:scale-105'}`}
+                    style={{
+                      backgroundColor: p.hex,
+                      borderColor: active ? '#ffffff' : `${p.hex}88`,
+                      boxShadow: active ? `0 0 0 2px ${p.hex}aa, 0 0 18px -2px ${p.hex}` : `0 0 10px -3px ${p.hex}aa`,
+                    }}
+                    title={p.name}
+                    aria-label={p.name}
+                  >
+                    {active && <span className="absolute inset-0 grid place-items-center text-white text-xs font-bold drop-shadow">✓</span>}
+                  </button>
+                );
+              })}
+              <div className="ml-1 flex items-center gap-2">
+                <input
+                  type="color"
+                  value={embedColor}
+                  onChange={e => setEmbedColor(e.target.value)}
+                  className="h-9 w-12 rounded-lg bg-bg-elev border border-border cursor-pointer"
+                  title="Eigene Farbe"
+                />
+                <Input
+                  value={embedColor}
+                  onChange={e => setEmbedColor(e.target.value)}
+                  className="w-28 font-mono text-xs"
+                  maxLength={7}
+                />
+              </div>
+            </div>
+          </div>
+
+          {/* Welcome-Messages */}
+          <div>
+            <div className="flex items-center justify-between">
+              <span className="text-xs text-muted">
+                Welcome-Nachrichten im Ticket-Channel
+                <span className="ml-2 text-[10px] uppercase tracking-wider">{messages.length}/{TICKET_WELCOME_MAX}</span>
+              </span>
+              <Button
+                size="sm"
+                variant="outline"
+                onClick={addMessage}
+                disabled={messages.length >= TICKET_WELCOME_MAX}
+              >
+                <Plus className="h-3.5 w-3.5 mr-1" /> Nachricht
+              </Button>
+            </div>
+            <div className="mt-2 space-y-2">
+              {messages.map((m, i) => (
+                <div
+                  key={i}
+                  className="rounded-xl border border-border bg-bg-elev/60 p-3"
+                  style={{ borderColor: `${embedColor}33` }}
+                >
+                  <div className="flex items-center justify-between mb-2">
+                    <div className="flex items-center gap-2">
+                      <span
+                        className="h-6 w-6 rounded-md grid place-items-center text-[10px] font-bold border"
+                        style={{ backgroundColor: `${embedColor}22`, color: embedColor, borderColor: `${embedColor}55` }}
+                      >
+                        {i + 1}
+                      </span>
+                      <span className="text-[11px] text-muted">
+                        {i === 0 ? 'Hauptnachricht (mit Embed)' : `Folgenachricht ${i}`}
+                      </span>
+                    </div>
+                    <div className="flex items-center gap-1">
+                      <button
+                        type="button"
+                        onClick={() => moveMessage(i, -1)}
+                        disabled={i === 0}
+                        className="text-muted hover:text-white disabled:opacity-30 px-1 text-xs"
+                        title="Nach oben"
+                      >▲</button>
+                      <button
+                        type="button"
+                        onClick={() => moveMessage(i, 1)}
+                        disabled={i === messages.length - 1}
+                        className="text-muted hover:text-white disabled:opacity-30 px-1 text-xs"
+                        title="Nach unten"
+                      >▼</button>
+                      <button
+                        type="button"
+                        onClick={() => removeMessage(i)}
+                        disabled={messages.length <= 1}
+                        className="text-danger hover:text-red-400 disabled:opacity-30 px-1"
+                        title="Entfernen"
+                      >
+                        <Trash2 className="h-3.5 w-3.5" />
+                      </button>
+                    </div>
+                  </div>
+                  <textarea
+                    value={m}
+                    onChange={e => updateMessage(i, e.target.value)}
+                    maxLength={TICKET_WELCOME_CHARS}
+                    rows={i === 0 ? 4 : 3}
+                    className="w-full rounded-md bg-bg-elev border border-border text-white px-3 py-2 text-sm focus:outline-none focus:ring-2"
+                    style={{ ['--tw-ring-color' as string]: `${embedColor}80` } as React.CSSProperties}
+                    placeholder={i === 0 ? 'Hauptnachricht …' : 'Folgenachricht …'}
+                  />
+                  <div className="mt-1 text-[10px] text-muted text-right">{m.length}/{TICKET_WELCOME_CHARS}</div>
+                </div>
+              ))}
+            </div>
+          </div>
+
+          {/* Channel-Setup */}
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+            <label className="block">
+              <span className="text-xs text-muted">Post-Channel <span className="text-[10px]">(Embed mit Open-Button)</span></span>
+              <Select value={postChannelId} onChange={e => setPostChannelId(e.target.value)}>
+                <option value="">— wählen —</option>
+                {textChannels.map(c => <option key={c.id} value={c.id}>#{c.name}</option>)}
+              </Select>
+            </label>
+            <label className="block">
+              <span className="text-xs text-muted">Transcript-Channel <span className="text-[10px]">(Markdown-Datei beim Schließen)</span></span>
+              <Select value={transcriptChannelId} onChange={e => setTranscriptChannelId(e.target.value)}>
+                <option value="">— wählen —</option>
+                {textChannels.map(c => <option key={c.id} value={c.id}>#{c.name}</option>)}
+              </Select>
+            </label>
+            <label className="block sm:col-span-2">
+              <span className="text-xs text-muted">
+                Ticket-Archiv-Channel
+                <span className="text-[10px] ml-1">(separat, niemals mit anderen Channels vermischt — optional)</span>
+              </span>
+              <Select value={archiveChannelId} onChange={e => setArchiveChannelId(e.target.value)}>
+                <option value="">— kein Archiv —</option>
+                {textChannels
+                  .filter(c => c.id !== postChannelId && c.id !== transcriptChannelId && c.id !== categoryId)
+                  .map(c => <option key={c.id} value={c.id}>#{c.name}</option>)}
+              </Select>
+            </label>
+            <label className="block">
+              <span className="text-xs text-muted">Kategorie für Ticket-Channels (optional)</span>
+              <Select value={categoryId} onChange={e => setCategoryId(e.target.value)}>
+                <option value="">— keine —</option>
+                {categories.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
+              </Select>
+            </label>
+            <label className="block">
+              <span className="text-xs text-muted">Staff-Rolle (Mit-Zugriff + Mention, optional)</span>
+              <Select value={staffRoleId} onChange={e => setStaffRoleId(e.target.value)}>
+                <option value="">— keine —</option>
+                {roles.filter(r => !r.managed).map(r => <option key={r.id} value={r.id}>@{r.name}</option>)}
+              </Select>
+            </label>
+          </div>
+
+          {(err || mixError) && (
+            <div className="rounded-lg border border-danger/40 bg-danger/10 px-3 py-2 text-xs text-danger">
+              {err ?? mixError}
+            </div>
+          )}
         </div>
-        <div className="p-5 border-t border-border flex gap-2 justify-end">
+
+        <div className="relative p-5 border-t border-border flex gap-2 justify-end bg-bg-card/60">
           <Button variant="ghost" onClick={onClose}>Abbrechen</Button>
           <Button
             onClick={save}
-            disabled={busy || !label || !welcomeText || !embedTitle || !postChannelId || !transcriptChannelId || !/^#[0-9a-fA-F]{6}$/.test(embedColor)}
+            disabled={
+              busy
+              || !label
+              || !messagesValid
+              || !embedTitle
+              || !postChannelId
+              || !transcriptChannelId
+              || !/^#[0-9a-fA-F]{6}$/.test(embedColor)
+              || mixError !== null
+            }
             loading={busy}
           >
             Speichern

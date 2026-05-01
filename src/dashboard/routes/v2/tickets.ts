@@ -22,17 +22,21 @@ export const ticketsRouter = Router({ mergeParams: true });
 
 const HEX_RE = /^#?[0-9a-fA-F]{6}$/;
 const SNOWFLAKE_RE = /^\d{17,20}$/;
+const MAX_WELCOME_MESSAGES = 5;
+const WELCOME_MSG_MAX = 2000;
 
 interface TemplateBody {
   slot?: number;
   label?: string;
   welcomeText?: string;
+  welcomeMessages?: unknown;
   embedTitle?: string;
   embedColor?: string;
   postChannelId?: string;
   categoryId?: string | null;
   staffRoleId?: string | null;
   transcriptChannelId?: string;
+  archiveChannelId?: string | null;
   isActive?: boolean;
 }
 
@@ -48,10 +52,28 @@ function validateBody(b: TemplateBody, partial: boolean): { ok: true; data: Reco
     data.label = b.label.trim();
   } else if (!partial) return { ok: false, error: 'label fehlt.' };
 
-  if (b.welcomeText !== undefined) {
+  // welcomeMessages (Array, 1..5, je 1..2000 Zeichen) — Single source of truth.
+  // welcomeText wird als Legacy-Feld immer aus messages[0] gespiegelt.
+  if (b.welcomeMessages !== undefined) {
+    if (!Array.isArray(b.welcomeMessages)) return { ok: false, error: 'welcomeMessages muss ein Array sein.' };
+    if (b.welcomeMessages.length < 1 || b.welcomeMessages.length > MAX_WELCOME_MESSAGES) {
+      return { ok: false, error: `welcomeMessages: 1..${MAX_WELCOME_MESSAGES} Eintraege.` };
+    }
+    const cleaned: string[] = [];
+    for (const m of b.welcomeMessages) {
+      if (typeof m !== 'string') return { ok: false, error: 'welcomeMessages-Eintraege muessen Strings sein.' };
+      const t = m.trim();
+      if (t.length < 1 || t.length > WELCOME_MSG_MAX) return { ok: false, error: `Jede Welcome-Message: 1..${WELCOME_MSG_MAX} Zeichen.` };
+      cleaned.push(t);
+    }
+    data.welcomeMessages = cleaned;
+    data.welcomeText = cleaned[0]; // Legacy-Spiegel
+  } else if (b.welcomeText !== undefined) {
+    // Backward-Compat: alter Client schickt nur welcomeText
     if (typeof b.welcomeText !== 'string' || b.welcomeText.length < 1 || b.welcomeText.length > 4000) return { ok: false, error: 'welcomeText 1..4000 Zeichen.' };
     data.welcomeText = b.welcomeText;
-  } else if (!partial) return { ok: false, error: 'welcomeText fehlt.' };
+    data.welcomeMessages = [b.welcomeText.trim().slice(0, WELCOME_MSG_MAX)];
+  } else if (!partial) return { ok: false, error: 'welcomeMessages fehlt.' };
 
   if (b.embedTitle !== undefined) {
     if (typeof b.embedTitle !== 'string' || b.embedTitle.trim().length < 1 || b.embedTitle.length > 200) return { ok: false, error: 'embedTitle 1..200 Zeichen.' };
@@ -85,6 +107,12 @@ function validateBody(b: TemplateBody, partial: boolean): { ok: true; data: Reco
     else return { ok: false, error: 'staffRoleId ungueltig.' };
   }
 
+  if (b.archiveChannelId !== undefined) {
+    if (b.archiveChannelId === null || b.archiveChannelId === '') data.archiveChannelId = null;
+    else if (typeof b.archiveChannelId === 'string' && SNOWFLAKE_RE.test(b.archiveChannelId)) data.archiveChannelId = b.archiveChannelId;
+    else return { ok: false, error: 'archiveChannelId ungueltig.' };
+  }
+
   if (b.isActive !== undefined) {
     if (typeof b.isActive !== 'boolean') return { ok: false, error: 'isActive muss bool sein.' };
     data.isActive = b.isActive;
@@ -94,10 +122,47 @@ function validateBody(b: TemplateBody, partial: boolean): { ok: true; data: Reco
   return { ok: true, data };
 }
 
+/**
+ * Stellt sicher, dass die channel-/category-Slots nicht vermischt werden:
+ * postChannelId, transcriptChannelId, archiveChannelId, categoryId muessen paarweise
+ * verschieden sein (sofern gesetzt). User-Vorgabe: "niemals vermischt werden darf".
+ */
+function enforceNoChannelMix(merged: {
+  postChannelId?: string | null;
+  transcriptChannelId?: string | null;
+  archiveChannelId?: string | null;
+  categoryId?: string | null;
+}): string | null {
+  const entries: Array<[string, string]> = [];
+  if (merged.postChannelId) entries.push(['Post-Channel', merged.postChannelId]);
+  if (merged.transcriptChannelId) entries.push(['Transcript-Channel', merged.transcriptChannelId]);
+  if (merged.archiveChannelId) entries.push(['Archiv-Channel', merged.archiveChannelId]);
+  if (merged.categoryId) entries.push(['Kategorie', merged.categoryId]);
+  for (let i = 0; i < entries.length; i++) {
+    for (let j = i + 1; j < entries.length; j++) {
+      if (entries[i][1] === entries[j][1]) {
+        return `${entries[i][0]} und ${entries[j][0]} duerfen nicht identisch sein.`;
+      }
+    }
+  }
+  return null;
+}
+
+function normalizeWelcomeMessages(raw: unknown, fallback: string): string[] {
+  if (Array.isArray(raw)) {
+    const out = raw.filter((m): m is string => typeof m === 'string' && m.trim().length > 0)
+      .map(m => m.slice(0, WELCOME_MSG_MAX));
+    if (out.length > 0) return out.slice(0, MAX_WELCOME_MESSAGES);
+  }
+  return fallback ? [fallback.slice(0, WELCOME_MSG_MAX)] : [''];
+}
+
 function serialize(t: {
   id: string; guildId: string; slot: number; label: string; welcomeText: string;
+  welcomeMessages: unknown;
   embedTitle: string; embedColor: string; postChannelId: string; postedMessageId: string | null;
   categoryId: string | null; staffRoleId: string | null; transcriptChannelId: string;
+  archiveChannelId: string | null;
   isActive: boolean; createdAt: Date; updatedAt: Date;
 }) {
   return {
@@ -105,6 +170,7 @@ function serialize(t: {
     slot: t.slot,
     label: t.label,
     welcomeText: t.welcomeText,
+    welcomeMessages: normalizeWelcomeMessages(t.welcomeMessages, t.welcomeText),
     embedTitle: t.embedTitle,
     embedColor: t.embedColor,
     postChannelId: t.postChannelId,
@@ -112,6 +178,7 @@ function serialize(t: {
     categoryId: t.categoryId,
     staffRoleId: t.staffRoleId,
     transcriptChannelId: t.transcriptChannelId,
+    archiveChannelId: t.archiveChannelId,
     isActive: t.isActive,
     createdAt: t.createdAt.toISOString(),
     updatedAt: t.updatedAt.toISOString(),
@@ -164,16 +231,26 @@ ticketsRouter.post('/', requireGuildOwner, async (req, res) => {
   });
   if (slotTaken) { res.status(409).json({ error: 'Slot bereits belegt.' }); return; }
 
+  const mixErr = enforceNoChannelMix({
+    postChannelId: v.data.postChannelId as string,
+    transcriptChannelId: v.data.transcriptChannelId as string,
+    archiveChannelId: (v.data.archiveChannelId as string | null | undefined) ?? null,
+    categoryId: (v.data.categoryId as string | null | undefined) ?? null,
+  });
+  if (mixErr) { res.status(400).json({ error: mixErr }); return; }
+
   const created = await prisma.ticketTemplate.create({
     data: {
       guildId: scope.guildId,
       slot: v.data.slot as number,
       label: v.data.label as string,
       welcomeText: v.data.welcomeText as string,
+      welcomeMessages: (v.data.welcomeMessages as string[] | undefined) ?? [v.data.welcomeText as string],
       embedTitle: v.data.embedTitle as string,
       embedColor: (v.data.embedColor as string | undefined) ?? '#dc2626',
       postChannelId: v.data.postChannelId as string,
       transcriptChannelId: v.data.transcriptChannelId as string,
+      archiveChannelId: (v.data.archiveChannelId as string | null | undefined) ?? null,
       categoryId: (v.data.categoryId as string | null | undefined) ?? null,
       staffRoleId: (v.data.staffRoleId as string | null | undefined) ?? null,
       isActive: (v.data.isActive as boolean | undefined) ?? true,
@@ -199,6 +276,18 @@ ticketsRouter.put('/:id', requireGuildOwner, async (req, res) => {
     });
     if (slotTaken) { res.status(409).json({ error: 'Slot bereits belegt.' }); return; }
   }
+
+  const mixErr = enforceNoChannelMix({
+    postChannelId: (v.data.postChannelId as string | undefined) ?? existing.postChannelId,
+    transcriptChannelId: (v.data.transcriptChannelId as string | undefined) ?? existing.transcriptChannelId,
+    archiveChannelId: v.data.archiveChannelId !== undefined
+      ? (v.data.archiveChannelId as string | null)
+      : existing.archiveChannelId,
+    categoryId: v.data.categoryId !== undefined
+      ? (v.data.categoryId as string | null)
+      : existing.categoryId,
+  });
+  if (mixErr) { res.status(400).json({ error: mixErr }); return; }
 
   const updated = await prisma.ticketTemplate.update({ where: { id }, data: v.data });
   logAuditDb('TICKET_TEMPLATE_UPDATED', 'TICKET', { actorUserId: req.auth!.userId, guildId: scope.guildId, details: { templateId: id, fields: Object.keys(v.data) } });

@@ -29,8 +29,23 @@ import {
 import prisma from '../../database/prisma';
 import { logger, logAudit } from '../../utils/logger';
 
-const MAX_OPEN_PER_USER = 1;
 const TRANSCRIPT_MAX_MSGS = 1000;
+const MAX_WELCOME_MESSAGES = 5;
+
+function normalizeWelcomeMessages(raw: unknown, fallback: string): string[] {
+  if (Array.isArray(raw)) {
+    const out: string[] = [];
+    for (const m of raw) {
+      if (typeof m === 'string') {
+        const t = m.trim();
+        if (t.length > 0) out.push(t.slice(0, 2000));
+      }
+      if (out.length >= MAX_WELCOME_MESSAGES) break;
+    }
+    if (out.length > 0) return out;
+  }
+  return [fallback.slice(0, 2000) || 'Hallo! Ein Team-Mitglied meldet sich gleich.'];
+}
 
 function parseColor(hex: string): number {
   const m = /^#?([0-9a-fA-F]{6})$/.exec(hex.trim());
@@ -39,11 +54,20 @@ function parseColor(hex: string): number {
 }
 
 function buildOpenEmbed(template: { embedTitle: string; embedColor: string; label: string; welcomeText: string }): EmbedBuilder {
+  const accent = parseColor(template.embedColor);
   return new EmbedBuilder()
-    .setTitle(template.embedTitle)
-    .setDescription(`Klicke unten auf **${template.label}**, um ein neues Ticket zu erstellen.`)
-    .setColor(parseColor(template.embedColor))
-    .setFooter({ text: 'V-Bot Ticket-System' });
+    .setAuthor({ name: 'V-BOT  •  TICKET-SYSTEM' })
+    .setTitle(`🎫  ${template.embedTitle}`)
+    .setDescription(
+      [
+        `Du brauchst Hilfe oder hast eine Frage?`,
+        `Klicke unten auf **${template.label}**, um ein privates Ticket zu eröffnen.`,
+        ``,
+        `Ein Team-Mitglied meldet sich darin sobald wie möglich.`,
+      ].join('\n'),
+    )
+    .setColor(accent)
+    .setFooter({ text: 'High-End Support  •  schnell · diskret · persönlich' });
 }
 
 function buildOpenButton(templateId: string, label: string): ActionRowBuilder<ButtonBuilder> {
@@ -131,14 +155,7 @@ export async function handleOpenButton(btn: ButtonInteraction): Promise<void> {
     return;
   }
 
-  // Limit: 1 offenes Ticket pro User pro Template
-  const openCount = await prisma.ticketInstance.count({
-    where: { templateId: t.id, openerDiscordId: btn.user.id, status: 'OPEN' },
-  });
-  if (openCount >= MAX_OPEN_PER_USER) {
-    await btn.reply({ content: `Du hast bereits ein offenes Ticket dieser Art (max. ${MAX_OPEN_PER_USER}).`, ephemeral: true });
-    return;
-  }
+  // Per-User-Limit aufgehoben — ein User darf beliebig viele Tickets oeffnen.
 
   await btn.deferReply({ ephemeral: true });
 
@@ -207,14 +224,18 @@ export async function handleOpenButton(btn: ButtonInteraction): Promise<void> {
       },
     });
 
+    const messages = normalizeWelcomeMessages((t as unknown as { welcomeMessages?: unknown }).welcomeMessages, t.welcomeText);
+    const color = parseColor(t.embedColor);
+
     const welcome = new EmbedBuilder()
       .setTitle(`🎫  ${t.label}`)
-      .setDescription(t.welcomeText.slice(0, 4000))
-      .setColor(parseColor(t.embedColor))
+      .setDescription(messages[0])
+      .setColor(color)
       .addFields(
         { name: 'Eroeffnet von', value: `<@${btn.user.id}>`, inline: true },
         { name: 'Eroeffnet am', value: `<t:${Math.floor(Date.now() / 1000)}:f>`, inline: true },
-      );
+      )
+      .setFooter({ text: `V-Bot Ticket-System  •  Slot ${t.slot}` });
 
     const mentionLine = t.staffRoleId ? `<@&${t.staffRoleId}> <@${btn.user.id}>` : `<@${btn.user.id}>`;
     await (channel as TextChannel).send({
@@ -223,6 +244,17 @@ export async function handleOpenButton(btn: ButtonInteraction): Promise<void> {
       components: [buildCloseButton(instance.id)],
       allowedMentions: { users: [btn.user.id], roles: t.staffRoleId ? [t.staffRoleId] : [] },
     });
+
+    // Folge-Welcome-Messages (2..5) als eigene Embeds in derselben Farbe.
+    for (let i = 1; i < messages.length; i++) {
+      const followUp = new EmbedBuilder()
+        .setDescription(messages[i])
+        .setColor(color);
+      await (channel as TextChannel).send({
+        embeds: [followUp],
+        allowedMentions: { parse: [] },
+      });
+    }
 
     logAudit('TICKET_OPENED', 'TICKET', {
       guildId: guild.id, templateId: t.id, instanceId: instance.id,
@@ -327,6 +359,22 @@ export async function handleCloseButton(btn: ButtonInteraction): Promise<void> {
         allowedMentions: { parse: [] },
       });
       transcriptMessageId = sent.id;
+    }
+
+    // Optional: separater Archiv-Channel (zusaetzlich zum Transcript-Channel).
+    const archiveChannelId = (instance.template as unknown as { archiveChannelId?: string | null }).archiveChannelId ?? null;
+    if (archiveChannelId && archiveChannelId !== instance.template.transcriptChannelId) {
+      const archiveChannel = await btn.client.channels.fetch(archiveChannelId).catch(() => null);
+      if (archiveChannel && archiveChannel.isTextBased() && !archiveChannel.isDMBased()) {
+        const archiveFile = new AttachmentBuilder(Buffer.from(transcript, 'utf8'), {
+          name: `archive-${instance.template.label}-${instance.id.slice(0, 8)}.md`,
+        });
+        await (archiveChannel as TextChannel).send({
+          content: `🗄️ Archiv: Ticket **${instance.template.label}** (Opener <@${instance.openerDiscordId}>, geschlossen von <@${btn.user.id}>, ${collected.length} Nachrichten)`,
+          files: [archiveFile],
+          allowedMentions: { parse: [] },
+        }).catch(() => {});
+      }
     }
 
     // DM an Opener
