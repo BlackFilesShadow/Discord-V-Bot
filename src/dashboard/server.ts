@@ -117,27 +117,29 @@ export function startDashboard(client?: Client): void {
     res.json({ status: 'ok', uptime: process.uptime() });
   });
 
-  // Prometheus-Metriken (text/plain). Optional Token-geschuetzt via METRICS_TOKEN.
+  // Prometheus-Metriken (text/plain). Token-pflichtig via METRICS_TOKEN.
   if (config.monitoring.metricsEnabled) {
-    app.get('/metrics', async (req, res) => {
-      const token = config.monitoring.metricsToken;
-      if (token) {
+    const token = config.monitoring.metricsToken;
+    if (!token) {
+      logger.warn('Metrics: METRICS_ENABLED=true aber METRICS_TOKEN nicht gesetzt -> /metrics deaktiviert (Sicherheitsfallback).');
+    } else {
+      app.get('/metrics', async (req, res) => {
         const auth = req.headers.authorization || '';
         const provided = auth.startsWith('Bearer ') ? auth.slice(7) : '';
         if (provided !== token) {
           res.status(401).type('text/plain').send('unauthorized');
           return;
         }
-      }
-      try {
-        res.set('Content-Type', metricsRegistry.contentType);
-        res.send(await metricsRegistry.metrics());
-      } catch (err) {
-        logger.error('Metrics-Export-Fehler:', err as Error);
-        res.status(500).type('text/plain').send('metrics error');
-      }
-    });
-    logger.info('Metrics: /metrics aktiv' + (config.monitoring.metricsToken ? ' (Bearer-geschuetzt)' : ' (offen)'));
+        try {
+          res.set('Content-Type', metricsRegistry.contentType);
+          res.send(await metricsRegistry.metrics());
+        } catch (err) {
+          logger.error('Metrics-Export-Fehler:', err as Error);
+          res.status(500).type('text/plain').send('metrics error');
+        }
+      });
+      logger.info('Metrics: /metrics aktiv (Bearer-geschuetzt)');
+    }
   }
 
   // Statische Auslieferung der hochgeladenen Faction-Assets.
