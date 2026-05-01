@@ -143,3 +143,46 @@ guildsRouter.post('/:guildId/activate', async (req, res) => {
   const link = await getOrCreate(guildId, asUserDiscordId(req.auth.discordId));
   res.json({ alias5: link.alias5, createdAt: link.createdAt });
 });
+
+/**
+ * Liefert Text-Channels und Categories einer Guild fuer Dashboard-Selects.
+ * Owner-only (Channel-IDs sind sensibel).
+ */
+guildsRouter.get('/:guildId/channels', async (req, res) => {
+  if (!req.auth) { res.status(401).end(); return; }
+  const client = tryGetDashboardClient();
+  if (!client) { res.status(503).json({ error: 'Bot nicht bereit.' }); return; }
+  let guildId;
+  try { guildId = asGuildId(String(req.params.guildId)); } catch {
+    res.status(400).json({ error: 'guildId ungueltig.' }); return;
+  }
+  const guild = client.guilds.cache.get(guildId);
+  if (!guild) { res.status(404).json({ error: 'Bot nicht in Guild.' }); return; }
+  if (guild.ownerId !== req.auth.discordId) { res.status(403).json({ error: 'Nicht Owner.' }); return; }
+
+  // 0 = Text, 4 = Category, 5 = Announcement, 15 = Forum
+  const channels = guild.channels.cache
+    .filter(c => c.type === 0 || c.type === 4 || c.type === 5 || c.type === 15)
+    .map(c => ({ id: c.id, name: c.name, type: c.type, parentId: c.parentId }))
+    .sort((a, b) => a.name.localeCompare(b.name, 'de'));
+  res.json({ channels });
+});
+
+guildsRouter.get('/:guildId/roles', async (req, res) => {
+  if (!req.auth) { res.status(401).end(); return; }
+  const client = tryGetDashboardClient();
+  if (!client) { res.status(503).json({ error: 'Bot nicht bereit.' }); return; }
+  let guildId;
+  try { guildId = asGuildId(String(req.params.guildId)); } catch {
+    res.status(400).json({ error: 'guildId ungueltig.' }); return;
+  }
+  const guild = client.guilds.cache.get(guildId);
+  if (!guild) { res.status(404).json({ error: 'Bot nicht in Guild.' }); return; }
+  if (guild.ownerId !== req.auth.discordId) { res.status(403).json({ error: 'Nicht Owner.' }); return; }
+
+  const roles = guild.roles.cache
+    .filter(r => r.id !== guild.id) // @everyone raus
+    .map(r => ({ id: r.id, name: r.name, color: r.hexColor, position: r.position, managed: r.managed }))
+    .sort((a, b) => b.position - a.position);
+  res.json({ roles });
+});

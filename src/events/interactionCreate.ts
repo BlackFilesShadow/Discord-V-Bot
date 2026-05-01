@@ -169,6 +169,24 @@ const interactionCreateEvent: BotEvent = {
         await handleTicketButton(btn);
         return;
       }
+      if (btn.customId.startsWith('ttkt:open:')) {
+        try {
+          const { handleOpenButton } = await import('../modules/tickets/ticketSystem.js');
+          await handleOpenButton(btn);
+        } catch (e) {
+          logger.error('Ticket-Open-Button-Handler-Fehler:', e as Error);
+        }
+        return;
+      }
+      if (btn.customId.startsWith('ttkt:close:')) {
+        try {
+          const { handleCloseButton } = await import('../modules/tickets/ticketSystem.js');
+          await handleCloseButton(btn);
+        } catch (e) {
+          logger.error('Ticket-Close-Button-Handler-Fehler:', e as Error);
+        }
+        return;
+      }
       if (btn.customId.startsWith('selfrole_')) {
         try {
           const { handleSelfRoleButton } = await import('../modules/selfrole/selfRoleMenu.js');

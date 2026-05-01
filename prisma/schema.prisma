@@ -1053,6 +1053,55 @@ model TicketMessage {
 }
 
 // ============================================================
+// GUILD-LEVEL SUPPORT-TICKET-SYSTEM (Dashboard Phase 6)
+// Eigenes System: Server-Owner konfigurieren bis zu 5 Templates,
+// User klickt im konfigurierten Channel auf den Embed-Button und
+// bekommt einen privaten Ticket-Channel. Beim Schliessen wird ein
+// Markdown-Transcript ins konfigurierte Transcript-Channel gepostet.
+// Trennt sich strikt vom Bot-Owner-DM-Bridge-Ticket-System oben.
+// ============================================================
+
+model TicketTemplate {
+  id                  String           @id @default(uuid())
+  guildId             String
+  slot                Int // 1..5 pro Guild
+  label               String // Anzeige-Name (z.B. "Support", "Bug-Report")
+  welcomeText         String           @db.Text // Erste Nachricht im erstellten Ticket-Channel
+  embedTitle          String // Titel des Public-Embeds mit Open-Button
+  embedColor          String           @default("#dc2626") // Hex-Color
+  postChannelId       String // Channel, in dem der Embed mit Open-Button lebt
+  postedMessageId     String? // ID der zuletzt geposteten Embed-Nachricht (zum Edit)
+  categoryId          String? // Discord-Category, unter der Ticket-Channels erstellt werden (optional)
+  staffRoleId         String? // Rolle die mit-Zugriff auf jeden Ticket-Channel bekommt (optional)
+  transcriptChannelId String // Channel fuer Transcript-Uploads beim Close
+  isActive            Boolean          @default(true)
+  createdAt           DateTime         @default(now())
+  updatedAt           DateTime         @updatedAt
+  instances           TicketInstance[]
+
+  @@unique([guildId, slot])
+  @@index([guildId])
+}
+
+model TicketInstance {
+  id                  String         @id @default(uuid())
+  templateId          String
+  template            TicketTemplate @relation(fields: [templateId], references: [id], onDelete: Cascade)
+  guildId             String
+  channelId           String         @unique // Discord-Channel des Tickets
+  openerDiscordId     String
+  openerName          String
+  status              String         @default("OPEN") // 'OPEN' | 'CLOSED'
+  openedAt            DateTime       @default(now())
+  closedAt            DateTime?
+  closedBy            String?
+  transcriptMessageId String?
+
+  @@index([guildId, status])
+  @@index([templateId])
+}
+
+// ============================================================
 // SEKTION 13: Guild-Awareness (Phase 6)
 // Stammdaten pro Discord-Guild, in der der Bot Mitglied ist.
 // Wird vom GuildAwareness-Modul aktuell gehalten und in AI-Prompts
