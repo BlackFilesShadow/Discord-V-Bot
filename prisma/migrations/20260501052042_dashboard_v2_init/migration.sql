@@ -14,7 +14,7 @@ CREATE TYPE "CasinoGameType" AS ENUM ('SLOT', 'COINFLIP', 'DICE', 'BLACKJACK');
 CREATE TYPE "NitradoJobStatus" AS ENUM ('PENDING', 'RUNNING', 'DONE', 'FAILED', 'DEAD');
 
 -- DropIndex
-DROP INDEX "LevelData_userId_key";
+DROP INDEX IF EXISTS "LevelData_userId_key";
 
 -- AlterTable
 ALTER TABLE "Feed" ADD COLUMN     "mentionRoles" TEXT[] DEFAULT ARRAY[]::TEXT[],
