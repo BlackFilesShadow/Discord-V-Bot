@@ -10,11 +10,11 @@ interface ButtonProps extends ButtonHTMLAttributes<HTMLButtonElement> {
 }
 
 const variants = {
-  primary: 'bg-accent-gradient text-white shadow-glow-sm hover:shadow-glow active:scale-[0.98]',
-  secondary: 'bg-bg-elev hover:bg-bg-hover text-white border border-border',
-  outline: 'bg-transparent hover:bg-bg-elev text-white border border-border hover:border-accent/50',
-  ghost: 'bg-transparent hover:bg-bg-elev text-white',
-  danger: 'bg-red-900/80 hover:bg-red-800 text-white border border-red-800/40',
+  primary: 'btn-premium-primary',
+  secondary: 'bg-bg-elev hover:bg-bg-hover text-white border border-border hover:border-white/15',
+  outline: 'bg-transparent hover:bg-bg-elev/60 text-white border border-border hover:border-accent/60',
+  ghost: 'bg-transparent hover:bg-white/[0.04] text-white',
+  danger: 'bg-gradient-to-b from-red-700 to-red-900 hover:from-red-600 hover:to-red-800 text-white border border-red-900/60 shadow-[inset_0_1px_0_rgba(255,255,255,0.18),0_4px_14px_-4px_rgba(220,38,38,0.5)]',
 };
 
 const sizes = {

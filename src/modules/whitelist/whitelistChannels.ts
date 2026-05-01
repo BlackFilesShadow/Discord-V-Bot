@@ -18,7 +18,26 @@ import prisma from '../../database/prisma';
 import { tryGetDashboardClient } from '../../dashboard/clientRegistry';
 import { logger } from '../../utils/logger';
 
-function client(): Client | null { return tryGetDashboardClient(); }
+/** Max-Laenge fuer Whitelist-Reason (Eingabe + Anzeige, einheitlich). */
+export const WHITELIST_REASON_MAX = 500;
+
+let warnedClientMissing = false;
+function client(): Client | null {
+  const c = tryGetDashboardClient();
+  if (!c) {
+    // Einmalige sichtbare Warnung statt stiller Degradation. Reset sobald Client wieder da ist.
+    if (!warnedClientMissing) {
+      warnedClientMissing = true;
+      logger.warn('Whitelist: Discord-Client nicht verfuegbar — Discord-seitige Effekte werden uebersprungen, bis Client bereit ist.');
+    }
+    return null;
+  }
+  if (warnedClientMissing) {
+    warnedClientMissing = false;
+    logger.info('Whitelist: Discord-Client wieder verfuegbar.');
+  }
+  return c;
+}
 
 async function fetchTextChannel(guildId: string, channelId: string | null | undefined): Promise<GuildTextBasedChannel | null> {
   if (!channelId) return null;
@@ -58,7 +77,15 @@ export async function finalizeApprovalEmbed(args: {
   const ch = await fetchTextChannel(args.guildId, args.channelId);
   if (!ch) return;
   const msg = await ch.messages.fetch(args.messageId).catch(() => null);
-  if (!msg) return;
+  if (!msg) {
+    // Embed wurde (manuell) geloescht — Stale-Referenz aufraeumen, damit der
+    // unique-Index nicht dauerhaft "verbrannt" bleibt.
+    await prisma.whitelistRequest.updateMany({
+      where: { messageId: args.messageId },
+      data: { messageId: null },
+    }).catch(() => null);
+    return;
+  }
   const c = client();
   if (c?.user && msg.author.id !== c.user.id) return;
   const finalEmbed = EmbedBuilder.from(msg.embeds[0] ?? new EmbedBuilder())
@@ -104,6 +131,11 @@ export async function ensureWhitelistInfoEmbed(guildId: string, nitradoConnId: s
       await msg.edit({ embeds: [embed] }).catch(() => null);
       return { posted: false, updated: true, messageId: msg.id };
     }
+    // Stale messageId (manuell geloescht) — zuruecksetzen, dann neu posten.
+    await prisma.serverSettings.update({
+      where: { guildId_nitradoConnId: { guildId, nitradoConnId } },
+      data: { whitelistInfoMessageId: null },
+    }).catch(() => null);
   }
 
   // Neu posten + ID speichern
@@ -192,7 +224,7 @@ export async function notifyRequesterDecision(args: {
       .setColor(args.approved ? 0x57F287 : 0xED4245)
       .addFields({ name: 'Beantragter Name', value: `\`${args.gameId}\`` })
       .setTimestamp(new Date());
-    if (args.reason) embed.addFields({ name: 'Begruendung', value: args.reason.slice(0, 1000) });
+    if (args.reason) embed.addFields({ name: 'Begruendung', value: args.reason.slice(0, WHITELIST_REASON_MAX) });
     if (args.approved) embed.setDescription('Du wurdest auf die Whitelist gesetzt. Viel Spass!');
     else embed.setDescription('Dein Antrag wurde abgelehnt.');
     await user.send({ embeds: [embed] });
@@ -226,7 +258,7 @@ export async function postDecisionLog(args: {
       { name: args.approved ? 'Angenommen von' : 'Abgelehnt von', value: `<@${args.decidedByDiscordId}>`, inline: false },
     )
     .setTimestamp(new Date());
-  if (args.reason) embed.addFields({ name: 'Begruendung', value: args.reason.slice(0, 1000) });
+  if (args.reason) embed.addFields({ name: 'Begruendung', value: args.reason.slice(0, WHITELIST_REASON_MAX) });
 
   await ch.send({ embeds: [embed] });
 }

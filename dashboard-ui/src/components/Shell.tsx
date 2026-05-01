@@ -37,7 +37,7 @@ export function Shell({ title, back, sidebar, children }: ShellProps) {
   return (
     <div className="min-h-full flex flex-col">
       {/* Sticky Glass-Header */}
-      <header className="sticky top-0 z-40 h-14 border-b border-border glass flex items-center justify-between px-4 sm:px-6">
+      <header className="sticky top-0 z-40 h-16 glass header-premium flex items-center justify-between px-4 sm:px-6">
         <div className="flex items-center gap-2 sm:gap-4 min-w-0">
           {sidebar && (
             <button
@@ -58,9 +58,9 @@ export function Shell({ title, back, sidebar, children }: ShellProps) {
               <span className="text-sm hidden sm:inline">Zurueck</span>
             </Link>
           )}
-          <Link to="/servers" className="font-bold text-accent text-lg tracking-wide focus-ring rounded-md px-1">V-Bot</Link>
-          <span className="text-muted hidden sm:inline">/</span>
-          <span className="text-white text-sm truncate hidden sm:inline">{title}</span>
+          <Link to="/servers" className="v-logo font-extrabold text-xl tracking-tight focus-ring rounded-md px-1">V-Bot</Link>
+          <span className="text-white/20 hidden sm:inline">•</span>
+          <span className="text-white/85 text-sm font-medium truncate hidden sm:inline">{title}</span>
         </div>
 
         <div className="flex items-center gap-3 text-sm">
@@ -88,11 +88,11 @@ export function Shell({ title, back, sidebar, children }: ShellProps) {
         </div>
       )}
 
-      <div className="flex-1 flex overflow-hidden">
+      <div className="flex-1 flex overflow-hidden relative z-10">
         {sidebar && (
           <>
             {/* Desktop Sidebar */}
-            <aside className="hidden md:block w-60 border-r border-border bg-bg-card/40 p-4 overflow-y-auto">
+            <aside className="hidden md:block w-60 border-r border-white/[0.06] bg-gradient-to-b from-bg-card/50 to-bg-card/20 backdrop-blur-md p-4 overflow-y-auto">
               {sidebar}
             </aside>
             {/* Mobile Drawer */}

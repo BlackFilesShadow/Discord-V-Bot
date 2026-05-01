@@ -14,10 +14,9 @@ export function Card({ className, children, glow = false, interactive = true, ..
     <div
       {...rest}
       className={twMerge(
-        'bg-bg-card border border-border rounded-xl p-5 shadow-card',
-        'animate-fade-in',
+        'card-premium p-5 anim-rise',
         glow && 'bg-card-gradient',
-        interactive && 'transition-colors hover:border-accent/30',
+        !interactive && 'hover:!border-white/[0.06] hover:!shadow-card',
         className,
       )}
     >
