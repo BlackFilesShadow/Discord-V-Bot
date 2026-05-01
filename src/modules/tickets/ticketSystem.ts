@@ -31,9 +31,12 @@ import { logger, logAudit } from '../../utils/logger';
 
 const TRANSCRIPT_MAX_MSGS = 1000;
 const MAX_WELCOME_MESSAGES = 5;
+const SYSTEM_CLOSER = 'SYSTEM';
 
 // Mutex pro Template-ID gegen parallele postTemplateEmbed-Aufrufe (F9).
 const postLocks = new Map<string, Promise<unknown>>();
+// Mutex pro <templateId>:<userId> gegen Mehrfach-Klick auf Open-Button (G3).
+const openLocks = new Map<string, Promise<unknown>>();
 
 function normalizeWelcomeMessages(raw: unknown, fallback: string): string[] {
   if (Array.isArray(raw)) {
@@ -178,25 +181,68 @@ export async function unpostTemplateEmbed(client: Client, templateId: string): P
 /**
  * Schliesst alle offenen Discord-Channels eines Templates (F4) — wird vor
  * dem Loeschen des Templates aufgerufen, damit keine verwaisten Channels uebrig bleiben.
+ * G10: Erzeugt fuer jede Instance ein Transcript und postet es im transcriptChannelId
+ * (und falls vorhanden archiveChannelId), bevor der Channel geloescht wird.
  * Best-effort, fehlertolerant.
  */
 export async function purgeTemplateInstances(client: Client, templateId: string): Promise<{ closed: number; failed: number }> {
+  const template = await prisma.ticketTemplate.findUnique({ where: { id: templateId } });
+  if (!template) return { closed: 0, failed: 0 };
+
   const instances = await prisma.ticketInstance.findMany({
     where: { templateId, status: 'OPEN' },
   });
   let closed = 0; let failed = 0;
+  const safeLabel = template.label.replace(/[^a-zA-Z0-9_-]/g, '_').slice(0, 40) || 'ticket';
+
   for (const inst of instances) {
     try {
       const ch = await client.channels.fetch(inst.channelId).catch(() => null);
-      if (ch && !ch.isDMBased()) {
-        await (ch as TextChannel).delete('Ticket-Template geloescht').catch(() => {});
+      if (ch && !ch.isDMBased() && ch.isTextBased()) {
+        const tch = ch as TextChannel;
+        // G10: Transcript bauen.
+        const fetched = await tch.messages.fetch({ limit: 100 }).catch(() => null);
+        const collected = fetched ? Array.from(fetched.values()).reverse() : [];
+        const lines: string[] = [
+          `# Ticket-Transcript ${template.label} (System-Close: Template geloescht)`,
+          ``,
+          `- **Channel:** #${tch.name} (\`${tch.id}\`)`,
+          `- **Eroeffnet:** ${inst.openedAt.toISOString()} von ${inst.openerName} (\`${inst.openerDiscordId}\`)`,
+          `- **Geschlossen:** ${new Date().toISOString()} (System: Template geloescht)`,
+          `- **Nachrichten:** ${collected.length}`,
+          ``, `---`, ``,
+        ];
+        for (const m of collected) {
+          const author = m.author?.bot ? `[BOT] ${m.author.username}` : (m.author?.username ?? 'unknown');
+          const content = m.content?.length > 0 ? m.content : (m.embeds.length > 0 ? '*[Embed]*' : '*[no text]*');
+          lines.push(`**${author}** · \`${m.createdAt.toISOString()}\``, '', content, '');
+        }
+        const transcript = lines.join('\n');
+        const fileName = `ticket-${safeLabel}-${inst.id.slice(0, 8)}.md`;
+
+        const targets = new Set<string>();
+        targets.add(template.transcriptChannelId);
+        if (template.archiveChannelId) targets.add(template.archiveChannelId);
+        for (const targetId of targets) {
+          const tgt = await client.channels.fetch(targetId).catch(() => null);
+          if (tgt && tgt.isTextBased() && !tgt.isDMBased()) {
+            await (tgt as TextChannel).send({
+              content: `🗄️ System-Close (Template geloescht): Ticket **${template.label}** von <@${inst.openerDiscordId}>`,
+              files: [new AttachmentBuilder(Buffer.from(transcript, 'utf8'), { name: fileName })],
+              allowedMentions: { parse: [] },
+            }).catch(() => {});
+          }
+        }
+
+        await tch.delete('Ticket-Template geloescht').catch(() => {});
       }
       await prisma.ticketInstance.update({
         where: { id: inst.id },
-        data: { status: 'CLOSED', closedAt: new Date(), closedBy: 'SYSTEM' },
+        data: { status: 'CLOSED', closedAt: new Date(), closedBy: SYSTEM_CLOSER },
       });
       closed++;
-    } catch {
+    } catch (e) {
+      logger.warn(`purgeTemplateInstances: Instance ${inst.id} fehlgeschlagen: ${(e as Error).message}`);
       failed++;
     }
   }
@@ -223,12 +269,29 @@ export async function handleOpenButton(btn: ButtonInteraction): Promise<void> {
     return;
   }
 
-  // Per-User-Limit aufgehoben — ein User darf beliebig viele Tickets oeffnen.
+  // G3: Per-User-Mutex — verhindert race bei Mehrfach-Klick.
+  const lockKey = `${t.id}:${btn.user.id}`;
+  if (openLocks.has(lockKey)) {
+    await btn.reply({ content: 'Ein Ticket-Open-Vorgang laeuft bereits. Bitte warten...', ephemeral: true }).catch(() => {});
+    return;
+  }
+  let resolveLock: () => void = () => {};
+  openLocks.set(lockKey, new Promise<void>(res => { resolveLock = res; }));
+  try {
+    await openTicketLocked(btn, t);
+  } finally {
+    openLocks.delete(lockKey);
+    resolveLock();
+  }
+}
+
+async function openTicketLocked(btn: ButtonInteraction, t: Awaited<ReturnType<typeof prisma.ticketTemplate.findUniqueOrThrow>>): Promise<void> {
 
   await btn.deferReply({ ephemeral: true });
 
   // F7: Vorab-Permission-Check fuer aussagekraeftige Fehlermeldung.
   const guild = btn.guild;
+  if (!guild) return;
   const me = guild.members.me;
   if (!me) {
     await btn.editReply({ content: 'Bot-Member nicht verfuegbar.' }).catch(() => {});
@@ -237,6 +300,16 @@ export async function handleOpenButton(btn: ButtonInteraction): Promise<void> {
   if (!me.permissions.has(PermissionFlagsBits.ManageChannels)) {
     await btn.editReply({ content: 'Bot fehlt die Berechtigung **Kanaele verwalten**. Bitte Admin informieren.' }).catch(() => {});
     return;
+  }
+
+  // G6: Staff-Rolle existiert noch?
+  let effectiveStaffRoleId: string | null = t.staffRoleId;
+  if (effectiveStaffRoleId) {
+    const staffRole = await guild.roles.fetch(effectiveStaffRoleId).catch(() => null);
+    if (!staffRole) {
+      logger.warn(`Ticket-Template ${t.id}: staffRoleId ${effectiveStaffRoleId} existiert nicht mehr — ignoriere.`);
+      effectiveStaffRoleId = null;
+    }
   }
 
   // F5: Eindeutiger Channel-Name. Counter aus Anzahl bisheriger Tickets dieses Users.
@@ -273,9 +346,9 @@ export async function handleOpenButton(btn: ButtonInteraction): Promise<void> {
         ],
       },
     ];
-    if (t.staffRoleId) {
+    if (effectiveStaffRoleId) {
       overwrites.push({
-        id: t.staffRoleId,
+        id: effectiveStaffRoleId,
         allow: [
           PermissionFlagsBits.ViewChannel,
           PermissionFlagsBits.SendMessages,
@@ -320,12 +393,12 @@ export async function handleOpenButton(btn: ButtonInteraction): Promise<void> {
       )
       .setFooter({ text: `V-Bot Ticket-System  •  Slot ${t.slot}` });
 
-    const mentionLine = t.staffRoleId ? `<@&${t.staffRoleId}> <@${btn.user.id}>` : `<@${btn.user.id}>`;
+    const mentionLine = effectiveStaffRoleId ? `<@&${effectiveStaffRoleId}> <@${btn.user.id}>` : `<@${btn.user.id}>`;
     await channel.send({
       content: mentionLine,
       embeds: [welcome],
       components: [buildCloseButton(instance.id)],
-      allowedMentions: { users: [btn.user.id], roles: t.staffRoleId ? [t.staffRoleId] : [] },
+      allowedMentions: { users: [btn.user.id], roles: effectiveStaffRoleId ? [effectiveStaffRoleId] : [] },
     });
 
     for (let i = 1; i < messages.length; i++) {
@@ -395,29 +468,53 @@ export async function handleCloseButton(btn: ButtonInteraction): Promise<void> {
 
   try {
     const channel = await btn.client.channels.fetch(instance.channelId).catch(() => null);
+
+    // G1: Wenn Channel bereits weg ist, Instance trotzdem als CLOSED markieren — kein DB-Leak.
     if (!channel || !channel.isTextBased() || channel.isDMBased()) {
-      throw new Error('Channel nicht mehr vorhanden.');
+      await prisma.ticketInstance.update({
+        where: { id: instance.id },
+        data: { status: 'CLOSED', closedAt: new Date(), closedBy: btn.user.id },
+      });
+      logAudit('TICKET_CLOSED_NO_CHANNEL', 'TICKET', {
+        guildId: instance.guildId, instanceId: instance.id, closedBy: btn.user.id,
+      });
+      await btn.editReply({ content: 'Channel war bereits geloescht. Ticket wurde in der DB als geschlossen markiert.' });
+      return;
+    }
+
+    // G7: Channel sofort sperren, damit waehrend Transcript-Bau keine Messages mehr reinkommen.
+    const ch = channel as TextChannel;
+    await ch.permissionOverwrites.edit(btn.guild!.roles.everyone.id, { SendMessages: false }).catch(() => {});
+    await ch.permissionOverwrites.edit(instance.openerDiscordId, { SendMessages: false }).catch(() => {});
+    if (instance.template.staffRoleId) {
+      await ch.permissionOverwrites.edit(instance.template.staffRoleId, { SendMessages: false }).catch(() => {});
     }
 
     // Transcript bauen
-    const fetched = await (channel as TextChannel).messages.fetch({ limit: 100 });
+    const fetched = await ch.messages.fetch({ limit: 100 });
     const collected = Array.from(fetched.values()).reverse();
     let lastId = collected[0]?.id;
+    let truncated = false;
     while (collected.length < TRANSCRIPT_MAX_MSGS && lastId) {
-      const more = await (channel as TextChannel).messages.fetch({ before: lastId, limit: 100 });
+      const more = await ch.messages.fetch({ before: lastId, limit: 100 });
       if (more.size === 0) break;
       const arr = Array.from(more.values()).reverse();
       collected.unshift(...arr);
       lastId = arr[0]?.id;
     }
+    // G9: pruefen ob es noch aeltere Messages gab.
+    if (collected.length >= TRANSCRIPT_MAX_MSGS && lastId) {
+      const probe = await ch.messages.fetch({ before: lastId, limit: 1 }).catch(() => null);
+      if (probe && probe.size > 0) truncated = true;
+    }
 
     const lines: string[] = [
       `# Ticket-Transcript ${instance.template.label}`,
       ``,
-      `- **Channel:** #${(channel as TextChannel).name} (\`${channel.id}\`)`,
+      `- **Channel:** #${ch.name} (\`${ch.id}\`)`,
       `- **Eroeffnet:** ${instance.openedAt.toISOString()} von ${instance.openerName} (\`${instance.openerDiscordId}\`)`,
       `- **Geschlossen:** ${new Date().toISOString()} von ${btn.user.username} (\`${btn.user.id}\`)`,
-      `- **Nachrichten:** ${collected.length}`,
+      `- **Nachrichten:** ${collected.length}${truncated ? ` (Limit ${TRANSCRIPT_MAX_MSGS} erreicht — aeltere Messages abgeschnitten)` : ''}`,
       ``,
       `---`,
       ``,
@@ -438,8 +535,9 @@ export async function handleCloseButton(btn: ButtonInteraction): Promise<void> {
     }
 
     const transcript = lines.join('\n');
+    const safeLabel = instance.template.label.replace(/[^a-zA-Z0-9_-]/g, '_').slice(0, 40) || 'ticket';
     const file = new AttachmentBuilder(Buffer.from(transcript, 'utf8'), {
-      name: `ticket-${instance.template.label}-${instance.id.slice(0, 8)}.md`,
+      name: `ticket-${safeLabel}-${instance.id.slice(0, 8)}.md`,
     });
 
     let transcriptMessageId: string | null = null;
@@ -459,7 +557,7 @@ export async function handleCloseButton(btn: ButtonInteraction): Promise<void> {
       const archiveChannel = await btn.client.channels.fetch(archiveChannelId).catch(() => null);
       if (archiveChannel && archiveChannel.isTextBased() && !archiveChannel.isDMBased()) {
         const archiveFile = new AttachmentBuilder(Buffer.from(transcript, 'utf8'), {
-          name: `archive-${instance.template.label}-${instance.id.slice(0, 8)}.md`,
+          name: `archive-${safeLabel}-${instance.id.slice(0, 8)}.md`,
         });
         await (archiveChannel as TextChannel).send({
           content: `🗄️ Archiv: Ticket **${instance.template.label}** (Opener <@${instance.openerDiscordId}>, geschlossen von <@${btn.user.id}>, ${collected.length} Nachrichten)`,
@@ -473,7 +571,7 @@ export async function handleCloseButton(btn: ButtonInteraction): Promise<void> {
     try {
       const opener = await btn.client.users.fetch(instance.openerDiscordId);
       const dmFile = new AttachmentBuilder(Buffer.from(transcript, 'utf8'), {
-        name: `ticket-${instance.template.label}-${instance.id.slice(0, 8)}.md`,
+        name: `ticket-${safeLabel}-${instance.id.slice(0, 8)}.md`,
       });
       await opener.send({
         content: `Dein Ticket **${instance.template.label}** wurde geschlossen. Transcript anbei.`,
@@ -493,9 +591,9 @@ export async function handleCloseButton(btn: ButtonInteraction): Promise<void> {
       closedBy: btn.user.id, messages: collected.length,
     });
 
-    await btn.editReply({ content: 'Ticket geschlossen. Channel wird in 5 Sekunden gelöscht.' });
+    await btn.editReply({ content: 'Ticket geschlossen. Channel wird in 5 Sekunden geloescht.' });
     setTimeout(() => {
-      (channel as TextChannel).delete('Ticket geschlossen').catch(() => {});
+      ch.delete('Ticket geschlossen').catch(() => {});
     }, 5000);
   } catch (e) {
     logger.error('Ticket-Close-Fehler', e as Error);

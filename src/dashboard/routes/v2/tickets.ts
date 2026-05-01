@@ -11,6 +11,7 @@
  * Mutations: requireGuildOwner (Tickets sind Owner-only-Konfiguration).
  */
 import { Router } from 'express';
+import type { TicketTemplate } from '@prisma/client';
 import { requireGuildOwner, requireGuildPermission } from '../../middleware/auth';
 import prisma from '../../../database/prisma';
 import { logAuditDb } from '../../../utils/logger';
@@ -157,14 +158,7 @@ function normalizeWelcomeMessages(raw: unknown, fallback: string): string[] {
   return fallback ? [fallback.slice(0, WELCOME_MSG_MAX)] : [''];
 }
 
-function serialize(t: {
-  id: string; guildId: string; slot: number; label: string; welcomeText: string;
-  welcomeMessages: unknown;
-  embedTitle: string; embedColor: string; postChannelId: string; postedMessageId: string | null;
-  categoryId: string | null; staffRoleId: string | null; transcriptChannelId: string;
-  archiveChannelId: string | null;
-  isActive: boolean; createdAt: Date; updatedAt: Date;
-}) {
+function serialize(t: TicketTemplate) {
   return {
     id: t.id,
     slot: t.slot,
@@ -293,15 +287,28 @@ ticketsRouter.put('/:id', requireGuildOwner, async (req, res) => {
   // (Channel-Wechsel ODER Deaktivierung).
   const willChangePostChannel = v.data.postChannelId !== undefined && v.data.postChannelId !== existing.postChannelId;
   const willDeactivate = v.data.isActive === false && existing.isActive;
+  const willReactivate = v.data.isActive === true && !existing.isActive;
   if ((willChangePostChannel || willDeactivate) && existing.postedMessageId) {
     const client = tryGetDashboardClient();
     if (client) {
       await unpostTemplateEmbed(client, existing.id).catch(() => {});
-      // postedMessageId ist nun null in DB — nicht aus v.data überschreiben.
     }
   }
 
   const updated = await prisma.ticketTemplate.update({ where: { id }, data: v.data });
+
+  // G11: Auto-Repost wenn Template aktiv ist und (Channel gewechselt oder reaktiviert).
+  if (updated.isActive && (willChangePostChannel || willReactivate)) {
+    const client = tryGetDashboardClient();
+    if (client) {
+      await postTemplateEmbed(client, updated.id).catch(err => {
+        logAuditDb('TICKET_AUTO_REPOST_FAILED', 'TICKET', {
+          actorUserId: req.auth!.userId, guildId: scope.guildId,
+          details: { templateId: id, error: (err as Error).message },
+        });
+      });
+    }
+  }
   logAuditDb('TICKET_TEMPLATE_UPDATED', 'TICKET', { actorUserId: req.auth!.userId, guildId: scope.guildId, details: { templateId: id, fields: Object.keys(v.data) } });
   emitGuildEvent(scope.guildId, { type: 'tickets.changed', payload: { guildId: scope.guildId, templateId: id } });
   res.json(serialize(updated));
