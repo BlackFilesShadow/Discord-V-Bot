@@ -26,7 +26,7 @@ import { asUserDiscordId } from '../../../types/scope';
 import { logAuditDb } from '../../../utils/logger';
 import { emitGuildEvent } from '../../socket/emitter';
 import { tryGetDashboardClient } from '../../clientRegistry';
-import { postFactionEmbed, unpostFactionEmbed, postFactionList, unpostFactionList } from '../../../modules/factions/factionEmbed';
+import { postFactionEmbed, unpostFactionEmbed, postFactionList, unpostFactionList, assignFactionRole, removeFactionRole, syncFactionRoleAll } from '../../../modules/factions/factionEmbed';
 import { asGuildId } from '../../../types/scope';
 
 export const factionsRouter = Router({ mergeParams: true });
@@ -86,6 +86,7 @@ interface FactionBody {
   deputyDiscordId?: string | null;
   treasurerDiscordId?: string | null;
   embedChannelId?: string | null;
+  roleId?: string | null;
   joinPolicy?: string;
   status?: string;
   isActive?: boolean;
@@ -131,7 +132,7 @@ function validateBody(b: FactionBody, partial: boolean): { ok: true; data: Recor
     } else return { ok: false, error: 'color muss Hex sein (z.B. #dc2626).' };
   }
 
-  for (const k of ['leaderDiscordId', 'deputyDiscordId', 'treasurerDiscordId', 'embedChannelId'] as const) {
+  for (const k of ['leaderDiscordId', 'deputyDiscordId', 'treasurerDiscordId', 'embedChannelId', 'roleId'] as const) {
     if (b[k] !== undefined) {
       if (b[k] === null || b[k] === '') data[k] = null;
       else if (typeof b[k] === 'string' && SNOWFLAKE_RE.test(b[k] as string)) data[k] = b[k];
@@ -261,6 +262,7 @@ factionsRouter.get('/', requireGuildPermission('factions.view'), async (req, res
       treasurerDiscordId: f.treasurerDiscordId,
       embedChannelId: f.embedChannelId,
       embedMessageId: f.embedMessageId,
+      roleId: f.roleId,
       joinPolicy: f.joinPolicy,
       status: f.status,
       isActive: f.isActive,
@@ -300,6 +302,7 @@ factionsRouter.post('/', requireGuildPermission('factions.manage'), async (req, 
         deputyDiscordId: (v.data.deputyDiscordId as string | null | undefined) ?? null,
         treasurerDiscordId: (v.data.treasurerDiscordId as string | null | undefined) ?? null,
         embedChannelId: (v.data.embedChannelId as string | null | undefined) ?? null,
+        roleId: (v.data.roleId as string | null | undefined) ?? null,
         joinPolicy: (v.data.joinPolicy as string | undefined) ?? 'REQUEST',
         status: (v.data.status as string | undefined) ?? 'ACTIVE',
         isActive: (v.data.isActive as boolean | undefined) ?? true,
@@ -312,6 +315,15 @@ factionsRouter.post('/', requireGuildPermission('factions.manage'), async (req, 
     // Embed posten — Faction-spezifischer Channel ODER System-Sammelkanal (Fallback im Modul).
     const effectiveCh = await effectiveEmbedChannel({ embedChannelId: f.embedChannelId, guildId: scope.guildId, nitradoConnId: connId });
     if (effectiveCh) await refreshEmbed(f.id, scope.guildId, req.auth!.userId, 'create');
+    // Faction-Rolle an Leitung/Stellv./Schatzmeister vergeben (falls gesetzt).
+    if (f.roleId) {
+      const cli = tryGetDashboardClient();
+      if (cli) {
+        for (const uid of [f.leaderDiscordId, f.deputyDiscordId, f.treasurerDiscordId]) {
+          if (uid) await assignFactionRole(cli, scope.guildId, uid, f.roleId);
+        }
+      }
+    }
     // Uebersichts-Liste auto-refresh.
     await refreshList(scope.guildId, connId, req.auth!.userId, 'faction-created');
     emitGuildEvent(scope.guildId, { type: 'faction.changed', payload: { guildId: scope.guildId, factionId: f.id } });
@@ -353,6 +365,29 @@ factionsRouter.patch('/:id', requireGuildPermission('factions.manage'), async (r
       actorUserId: req.auth!.userId, guildId: scope.guildId,
       details: { factionId: id, fields: Object.keys(v.data) },
     });
+    // Rolle-Wechsel: alte Rolle von allen entfernen, neue zuweisen.
+    if (v.data.roleId !== undefined && existing.roleId !== updated.roleId) {
+      const cli = tryGetDashboardClient();
+      if (cli) {
+        if (existing.roleId) {
+          // alte Rolle abnehmen
+          // eslint-disable-next-line local/no-unscoped-prisma-query -- updated.id intern verifiziert.
+          const mems = await prisma.factionMember.findMany({ where: { factionId: updated.id }, select: { userDiscordId: true } });
+          const all = new Set<string>(mems.map(m => m.userDiscordId));
+          for (const uid of [existing.leaderDiscordId, existing.deputyDiscordId, existing.treasurerDiscordId]) if (uid) all.add(uid);
+          for (const uid of all) await removeFactionRole(cli, scope.guildId, uid, existing.roleId);
+        }
+        if (updated.roleId) await syncFactionRoleAll(cli, updated.id);
+      }
+    } else if (updated.roleId) {
+      // Leadership-Wechsel: ggf. neue Leader-Rolle zuweisen.
+      const cli = tryGetDashboardClient();
+      if (cli) {
+        for (const uid of [updated.leaderDiscordId, updated.deputyDiscordId, updated.treasurerDiscordId]) {
+          if (uid) await assignFactionRole(cli, scope.guildId, uid, updated.roleId);
+        }
+      }
+    }
     const effectiveCh = await effectiveEmbedChannel({ embedChannelId: updated.embedChannelId, guildId: scope.guildId, nitradoConnId: updated.nitradoConnId });
     if (effectiveCh) {
       await refreshEmbed(updated.id, scope.guildId, req.auth!.userId, 'update');
@@ -398,6 +433,18 @@ factionsRouter.delete('/:id', requireGuildPermission('factions.manage'), async (
   if (existing.embedMessageId) {
     const client = tryGetDashboardClient();
     if (client) await unpostFactionEmbed(client, existing.id).catch(() => {});
+  }
+
+  // Faction-Rolle von allen Mitgliedern entfernen (best-effort).
+  if (existing.roleId) {
+    const cli = tryGetDashboardClient();
+    if (cli) {
+      // eslint-disable-next-line local/no-unscoped-prisma-query -- existing.id intern verifiziert.
+      const mems = await prisma.factionMember.findMany({ where: { factionId: existing.id }, select: { userDiscordId: true } });
+      const all = new Set<string>(mems.map(m => m.userDiscordId));
+      for (const uid of [existing.leaderDiscordId, existing.deputyDiscordId, existing.treasurerDiscordId]) if (uid) all.add(uid);
+      for (const uid of all) await removeFactionRole(cli, scope.guildId, uid, existing.roleId);
+    }
   }
 
   // Hochgeladene Dateien dieser Fraktion entfernen.
@@ -525,6 +572,10 @@ factionsRouter.post('/:id/members', requireGuildPermission('factions.manage'), a
     update: { role: r },
   });
   logAuditDb('FACTION_MEMBER_ADDED', 'FACTION', { actorUserId: req.auth!.userId, guildId: scope.guildId, details: { factionId: f.id, target, role: r } });
+  if (f.roleId) {
+    const cli = tryGetDashboardClient();
+    if (cli) await assignFactionRole(cli, scope.guildId, target, f.roleId);
+  }
   const effCh = await effectiveEmbedChannel({ embedChannelId: f.embedChannelId, guildId: scope.guildId, nitradoConnId: f.nitradoConnId });
   if (effCh) await refreshEmbed(f.id, scope.guildId, req.auth!.userId, 'member-added');
   await refreshList(scope.guildId, f.nitradoConnId, req.auth!.userId, 'member-added');
@@ -544,6 +595,10 @@ factionsRouter.delete('/:id/members/:userDiscordId', requireGuildPermission('fac
   });
   if (out.count === 0) { res.status(404).json({ error: 'Member nicht gefunden.' }); return; }
   logAuditDb('FACTION_MEMBER_REMOVED', 'FACTION', { actorUserId: req.auth!.userId, guildId: scope.guildId, details: { factionId: f.id, target } });
+  if (f.roleId) {
+    const cli = tryGetDashboardClient();
+    if (cli) await removeFactionRole(cli, scope.guildId, target, f.roleId);
+  }
   const effCh2 = await effectiveEmbedChannel({ embedChannelId: f.embedChannelId, guildId: scope.guildId, nitradoConnId: f.nitradoConnId });
   if (effCh2) await refreshEmbed(f.id, scope.guildId, req.auth!.userId, 'member-removed');
   await refreshList(scope.guildId, f.nitradoConnId, req.auth!.userId, 'member-removed');
@@ -709,4 +764,25 @@ factionsRouter.get('/lookups/members/:userId', requireGuildPermission('factions.
     avatarUrl: m.user.displayAvatarURL({ size: 64 }),
     bot: m.user.bot,
   });
+});
+
+factionsRouter.get('/lookups/roles', requireGuildPermission('factions.manage'), async (req, res) => {
+  const scope = req.guildScope!;
+  const client = tryGetDashboardClient();
+  if (!client) { res.json({ roles: [] }); return; }
+  const guild = await client.guilds.fetch(asGuildId(scope.guildId)).catch(() => null);
+  if (!guild) { res.status(404).json({ error: 'Guild nicht erreichbar.' }); return; }
+  const me = guild.members.me;
+  const myTop = me?.roles.highest.position ?? 0;
+  const roles = guild.roles.cache
+    .filter(r => !r.managed && r.id !== guild.id) // @everyone + integration-roles ausblenden
+    .map(r => ({
+      id: r.id,
+      name: r.name,
+      color: r.hexColor,
+      position: r.position,
+      assignable: r.position < myTop,
+    }))
+    .sort((a, b) => b.position - a.position);
+  res.json({ roles });
 });

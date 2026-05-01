@@ -178,6 +178,7 @@ interface FactionRow {
   treasurerDiscordId: string | null;
   embedChannelId: string | null;
   embedMessageId: string | null;
+  roleId: string | null;
   joinPolicy: string;
   status: string;
   isActive: boolean;
@@ -197,6 +198,7 @@ interface FactionDraft {
   deputyDiscordId: string;
   treasurerDiscordId: string;
   embedChannelId: string;
+  roleId: string;
   joinPolicy: string;
   status: string;
 }
@@ -204,7 +206,7 @@ interface FactionDraft {
 const EMPTY_DRAFT: FactionDraft = {
   name: '', description: '', color: '#dc2626',
   flagUrl: '', bannerUrl: '', mediaUrl: '',
-  leaderDiscordId: '', deputyDiscordId: '', treasurerDiscordId: '', embedChannelId: '',
+  leaderDiscordId: '', deputyDiscordId: '', treasurerDiscordId: '', embedChannelId: '', roleId: '',
   joinPolicy: 'REQUEST', status: 'ACTIVE',
 };
 
@@ -229,12 +231,14 @@ function draftFromRow(f: FactionRow): FactionDraft {
     deputyDiscordId: f.deputyDiscordId ?? '',
     treasurerDiscordId: f.treasurerDiscordId ?? '',
     embedChannelId: f.embedChannelId ?? '',
+    roleId: f.roleId ?? '',
     joinPolicy: f.joinPolicy,
     status: f.status,
   };
 }
 
 interface FactionChannelOption { id: string; name: string; type: number }
+interface FactionRoleOption { id: string; name: string; color: string; assignable: boolean }
 interface FactionMemberOption {
   id: string;
   username: string | null;
@@ -265,6 +269,33 @@ function FactionChannelSelect({ guildId, value, onChange, allowEmpty = true, pla
       {allowEmpty && <option value="">{placeholder ?? '— nicht gesetzt —'}</option>}
       {q.data?.channels.map(c => (
         <option key={c.id} value={c.id}>#{c.name}</option>
+      ))}
+    </select>
+  );
+}
+
+function FactionRoleSelect({ guildId, value, onChange, placeholder }: {
+  guildId: string;
+  value: string;
+  onChange: (id: string) => void;
+  placeholder?: string;
+}) {
+  const q = useQuery({
+    queryKey: ['factionRoles', guildId],
+    queryFn: () => api.get<{ roles: FactionRoleOption[] }>(`/api/v2/guilds/${guildId}/factions/lookups/roles`),
+    staleTime: 60_000,
+  });
+  return (
+    <select
+      className="w-full bg-bg-elev border border-border rounded-md px-2 py-1.5 text-sm text-white"
+      value={value}
+      onChange={e => onChange(e.target.value)}
+    >
+      <option value="">{placeholder ?? '— keine Rolle —'}</option>
+      {q.data?.roles.map(r => (
+        <option key={r.id} value={r.id} disabled={!r.assignable}>
+          {r.name}{r.assignable ? '' : ' (Bot kann nicht zuweisen)'}
+        </option>
       ))}
     </select>
   );
@@ -444,6 +475,7 @@ function FactionsPanel({ guildId, slot }: { guildId: string; slot: string }) {
     deputyDiscordId: b.deputyDiscordId.trim() || null,
     treasurerDiscordId: b.treasurerDiscordId.trim() || null,
     embedChannelId: b.embedChannelId.trim() || null,
+    roleId: b.roleId.trim() || null,
     joinPolicy: b.joinPolicy,
     status: b.status,
   });
@@ -653,6 +685,15 @@ function FactionsPanel({ guildId, slot }: { guildId: string; slot: string }) {
               value={draft.treasurerDiscordId}
               onChange={id => setDraft({ ...draft, treasurerDiscordId: id })}
               placeholder="User suchen…"
+            />
+          </div>
+          <div>
+            <span className="block text-xs text-muted mb-1">Fraktionsrolle (optional)</span>
+            <FactionRoleSelect
+              guildId={guildId}
+              value={draft.roleId}
+              onChange={id => setDraft({ ...draft, roleId: id })}
+              placeholder="— keine Rolle —"
             />
           </div>
           <div className="flex items-center gap-2">

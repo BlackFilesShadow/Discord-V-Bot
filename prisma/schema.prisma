@@ -1489,6 +1489,7 @@ model Faction {
   treasurerDiscordId String?
   embedChannelId     String?
   embedMessageId     String?
+  roleId             String? // Optionale Discord-Rolle: wird Mitgliedern automatisch zugewiesen / entfernt.
   joinPolicy         String            @default("REQUEST") // 'OPEN' | 'REQUEST' | 'CLOSED'
   status             String            @default("ACTIVE") @db.VarChar(16) // 'ACTIVE' | 'RECRUITING' | 'INACTIVE' | 'ARCHIVED'
   description        String?           @db.Text

@@ -62,14 +62,29 @@ interface FactionEmbedData {
   isActive: boolean;
   embedChannelId: string | null;
   embedMessageId: string | null;
+  roleId: string | null;
   createdAt: Date;
   memberCount: number;
+  members: Array<{ userDiscordId: string; role: string }>;
 }
 
 function buildEmbed(f: FactionEmbedData, attachmentNames: { flag?: string; banner?: string }): EmbedBuilder {
   const status = STATUS_LABELS[f.status] ?? STATUS_LABELS.ACTIVE;
   const policy = POLICY_LABELS[f.joinPolicy] ?? POLICY_LABELS.REQUEST;
   const created = `<t:${Math.floor(f.createdAt.getTime() / 1000)}:D>`;
+
+  // Mitgliederliste: Leitung/Stellv./Schatzmeister sind oben separat,
+  // hier nur die normalen Mitglieder + besondere Rollen-Member (max ~40 Mentions).
+  const leadership = new Set([f.leaderDiscordId, f.deputyDiscordId, f.treasurerDiscordId].filter(Boolean) as string[]);
+  const memberMentions: string[] = [];
+  for (const m of f.members) {
+    if (leadership.has(m.userDiscordId)) continue;
+    const prefix = m.role === 'PENDING' ? '⏳ ' : m.role === 'TREASURER' ? '💰 ' : m.role === 'LEADER' ? '👑 ' : '';
+    memberMentions.push(`${prefix}<@${m.userDiscordId}>`);
+  }
+  const memberDisplay = memberMentions.length === 0
+    ? '_Noch keine weiteren Mitglieder._'
+    : memberMentions.slice(0, 40).join(' · ') + (memberMentions.length > 40 ? `\n_+${memberMentions.length - 40} weitere_` : '');
 
   const e = new EmbedBuilder()
     .setAuthor({ name: 'V-BOT  •  FRAKTION' })
@@ -86,9 +101,16 @@ function buildEmbed(f: FactionEmbedData, attachmentNames: { flag?: string; banne
       { name: '👥  Mitglieder',      value: String(f.memberCount), inline: true },
       { name: `${status.emoji}  Status`, value: status.label,    inline: true },
       { name: '📨  Bewerbung',       value: policy,                inline: true },
-      { name: '📅  Gegruendet',      value: created,               inline: false },
-    )
-    .setFooter({ text: 'High-End Faction-System  •  V-Bot' });
+    );
+
+  if (f.roleId) {
+    e.addFields({ name: '🏷️  Fraktionsrolle', value: `<@&${f.roleId}>`, inline: false });
+  }
+
+  e.addFields(
+    { name: '📑  Mitgliederliste', value: memberDisplay.slice(0, 1024), inline: false },
+    { name: '📅  Gegruendet',      value: created,               inline: false },
+  ).setFooter({ text: 'High-End Faction-System  •  V-Bot' });
 
   if (attachmentNames.flag) e.setThumbnail(`attachment://${attachmentNames.flag}`);
   else if (f.flagUrl && /^https?:\/\//i.test(f.flagUrl)) e.setThumbnail(f.flagUrl);
@@ -132,7 +154,10 @@ async function loadFaction(factionId: string): Promise<FactionEmbedData | null> 
   // eslint-disable-next-line local/no-unscoped-prisma-query -- Modul wird nur intern aus geprueften Routen aufgerufen.
   const f = await prisma.faction.findUnique({
     where: { id: factionId },
-    include: { _count: { select: { members: true } } },
+    include: {
+      _count: { select: { members: true } },
+      members: { select: { userDiscordId: true, role: true }, orderBy: { joinedAt: 'asc' } },
+    },
   });
   if (!f) return null;
   return {
@@ -152,8 +177,10 @@ async function loadFaction(factionId: string): Promise<FactionEmbedData | null> 
     isActive: f.isActive,
     embedChannelId: f.embedChannelId,
     embedMessageId: f.embedMessageId,
+    roleId: f.roleId,
     createdAt: f.createdAt,
     memberCount: f._count.members,
+    members: f.members,
   };
 }
 
@@ -419,5 +446,67 @@ export async function unpostFactionList(client: Client, guildId: string, nitrado
     logAudit('FACTION_LIST_UNPOSTED', 'FACTION', {
       guildId, nitradoConnId, channelId: cfg.factionChannelId,
     });
+  }
+}
+
+// ============================================================================
+// Discord-Rollen-Sync (optionale Faction-Rolle)
+// ============================================================================
+
+/**
+ * Weist einem Discord-Member die Faction-Rolle zu (idempotent, fehlertolerant).
+ */
+export async function assignFactionRole(client: Client, guildId: string, userId: string, roleId: string | null): Promise<void> {
+  if (!roleId) return;
+  try {
+    const guild = await client.guilds.fetch(guildId).catch(() => null);
+    if (!guild) return;
+    const member = await guild.members.fetch(userId).catch(() => null);
+    if (!member) return;
+    if (member.roles.cache.has(roleId)) return;
+    await member.roles.add(roleId, 'Faction-Mitgliedschaft').catch(err => {
+      logger.warn(`assignFactionRole ${guildId}/${userId}/${roleId}: ${(err as Error).message}`);
+    });
+  } catch (e) {
+    logger.warn(`assignFactionRole error: ${(e as Error).message}`);
+  }
+}
+
+/**
+ * Entfernt eine Faction-Rolle von einem Discord-Member (idempotent, fehlertolerant).
+ */
+export async function removeFactionRole(client: Client, guildId: string, userId: string, roleId: string | null): Promise<void> {
+  if (!roleId) return;
+  try {
+    const guild = await client.guilds.fetch(guildId).catch(() => null);
+    if (!guild) return;
+    const member = await guild.members.fetch(userId).catch(() => null);
+    if (!member) return;
+    if (!member.roles.cache.has(roleId)) return;
+    await member.roles.remove(roleId, 'Faction-Mitgliedschaft beendet').catch(err => {
+      logger.warn(`removeFactionRole ${guildId}/${userId}/${roleId}: ${(err as Error).message}`);
+    });
+  } catch (e) {
+    logger.warn(`removeFactionRole error: ${(e as Error).message}`);
+  }
+}
+
+/**
+ * Synchronisiert die Faction-Rolle gegen ALLE aktuellen Mitglieder
+ * (z.B. nach Setzen einer neuen roleId oder Wechsel).
+ * Best-effort, Logging, kein Throw.
+ */
+export async function syncFactionRoleAll(client: Client, factionId: string): Promise<void> {
+  // eslint-disable-next-line local/no-unscoped-prisma-query -- factionId aus geprueftem Aufrufer-Scope.
+  const f = await prisma.faction.findUnique({
+    where: { id: factionId },
+    select: { id: true, guildId: true, roleId: true, leaderDiscordId: true, deputyDiscordId: true, treasurerDiscordId: true, members: { select: { userDiscordId: true } } },
+  });
+  if (!f || !f.roleId) return;
+  const userIds = new Set<string>();
+  for (const id of [f.leaderDiscordId, f.deputyDiscordId, f.treasurerDiscordId]) if (id) userIds.add(id);
+  for (const m of f.members) userIds.add(m.userDiscordId);
+  for (const uid of userIds) {
+    await assignFactionRole(client, f.guildId, uid, f.roleId);
   }
 }
