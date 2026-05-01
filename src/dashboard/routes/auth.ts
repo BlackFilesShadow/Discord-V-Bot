@@ -73,6 +73,9 @@ authRouter.get('/login', (req: Request, res: Response) => {
   res.redirect(`${DISCORD_AUTH_URL}?${params.toString()}`);
 });
 
+// Alias: das Frontend (Login.tsx) verlinkt auf /auth/discord.
+authRouter.get('/discord', (_req, res) => res.redirect('/auth/login'));
+
 /**
  * OAuth2 Callback: Token-Austausch.
  * Sektion 12: Redirect-URIs strikt whitelisten.
