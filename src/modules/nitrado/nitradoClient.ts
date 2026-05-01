@@ -11,10 +11,12 @@
  *
  * DayZ-Whitelist:
  *   Es gibt KEINEN dedizierten REST-Endpoint /games/dayz/whitelist (404).
- *   Die Whitelist wird ueber das `priority`-Setting in `settings.general`
- *   verwaltet (newline-separierte Spielernamen). `whitelist`=true muss
- *   zusaetzlich gesetzt sein, damit `priority` als harte Whitelist greift.
- *   Aenderungen erfolgen Read-Modify-Write via /gameservers/settings.
+ *   DayZ-Server haben in `data.gameserver.settings.general` ZWEI separate Felder:
+ *     - `whitelist`  -> Hard-Whitelist (wer ueberhaupt joinen darf), Newline-Liste
+ *     - `priority`   -> Priority-Queue (reservierte Slots wenn voll), Newline-Liste
+ *   Wir nutzen ausschliesslich `whitelist`. Aenderungen via Read-Modify-Write
+ *   ueber POST /services/{id}/gameservers/settings (category=general,
+ *   key=whitelist, value=<\r\n-Liste>).
  *
  * Designziele:
  *   - axios-basiert, Bearer-Token im Header
@@ -144,55 +146,58 @@ export class NitradoClient {
   }
 
   /**
-   * Liest das `priority`-Setting (Whitelist) aus den DayZ-Server-Settings.
+   * Liest das `whitelist`-Setting (Hard-Whitelist) aus den DayZ-Server-Settings.
    * Liefert eine entduplizierte, getrimmte Liste der Spielernamen.
    */
   async getWhitelist(serviceId: string): Promise<NitradoWhitelistEntry[]> {
-    const raw = await this.getPrioritySetting(serviceId);
+    const raw = await this.getWhitelistSetting(serviceId);
     return parseLines(raw).map(identifier => ({ identifier }));
   }
 
   /**
-   * Atomarer Read-Modify-Write der DayZ-Priority-Liste.
+   * Atomarer Read-Modify-Write der DayZ-Whitelist.
    * `mutator` erhaelt die aktuelle Liste und gibt die neue zurueck.
    * Liefert true, wenn ein Schreibzugriff stattgefunden hat.
    */
-  private async mutatePriority(
+  private async mutateWhitelist(
     serviceId: string,
     mutator: (current: string[]) => string[],
   ): Promise<boolean> {
-    const current = parseLines(await this.getPrioritySetting(serviceId));
+    const current = parseLines(await this.getWhitelistSetting(serviceId));
     const next = dedupe(mutator(current).map(s => s.trim()).filter(s => s.length > 0));
-    // Reihenfolge-stabile Diff-Pruefung
     if (current.length === next.length && current.every((v, i) => v === next[i])) return false;
-    await this.setSetting(serviceId, 'general', 'priority', next.join('\r\n'));
+    await this.setSetting(serviceId, 'general', 'whitelist', next.join('\r\n'));
     return true;
   }
 
   async addToWhitelist(serviceId: string, identifier: string): Promise<void> {
     const id = identifier.trim();
     if (!id) throw new NitradoApiError('Leerer Identifier', null, 'whitelist');
-    await this.mutatePriority(serviceId, list =>
+    await this.mutateWhitelist(serviceId, list =>
       list.includes(id) ? list : [...list, id],
     );
-    // Sicherstellen, dass die Whitelist-Funktion ueberhaupt aktiv ist.
-    // Idempotent: Nitrado akzeptiert mehrfaches Setzen desselben Wertes.
-    await this.setSetting(serviceId, 'general', 'whitelist', 'true').catch(() => undefined);
   }
 
   async removeFromWhitelist(serviceId: string, identifier: string): Promise<void> {
     const id = identifier.trim();
     if (!id) throw new NitradoApiError('Leerer Identifier', null, 'whitelist');
-    await this.mutatePriority(serviceId, list => list.filter(e => e !== id));
+    await this.mutateWhitelist(serviceId, list => list.filter(e => e !== id));
   }
 
-  /** Liefert den aktuellen `priority`-String (newline-separiert) oder ''. */
-  private async getPrioritySetting(serviceId: string): Promise<string> {
+  /**
+   * Liefert den aktuellen `whitelist`-String (newline-separiert) oder ''.
+   * Hinweis: Bei jungfraeulichen Servern kann das Feld den Default-Wert
+   * 'true'/'false' (Boolean-Toggle) statt einer Liste enthalten — den
+   * filtern wir hier raus, damit aus 'true' kein Whitelist-Eintrag wird.
+   */
+  private async getWhitelistSetting(serviceId: string): Promise<string> {
     const res = await this.request<{ data: { gameserver?: { settings?: { general?: Record<string, string> } } } }>(
       'GET',
       `/services/${serviceId}/gameservers`,
     );
-    return res.data?.gameserver?.settings?.general?.priority ?? '';
+    const v = res.data?.gameserver?.settings?.general?.whitelist ?? '';
+    if (v === 'true' || v === 'false') return '';
+    return v;
   }
 
   /**
