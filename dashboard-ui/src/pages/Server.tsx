@@ -1,7 +1,7 @@
 import { useState } from 'react';
 import { Link, useParams } from 'react-router-dom';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
-import { Plus, Trash2, KeyRound, Server as ServerIcon, Shield, AlertTriangle, ChevronRight, Ticket, Settings2, Send, Power } from 'lucide-react';
+import { Plus, Trash2, KeyRound, Server as ServerIcon, Shield, AlertTriangle, ChevronRight, Ticket, Settings2, Send, Power, Tag } from 'lucide-react';
 import { api, ApiError } from '@/lib/api';
 import { Shell } from '@/components/Shell';
 import { Card, CardHeader, CardTitle, CardDesc } from '@/components/ui/Card';
@@ -10,7 +10,7 @@ import { Input } from '@/components/ui/Input';
 import { Select } from '@/components/ui/Select';
 import { useGuildLiveUpdates } from '@/lib/useGuildLiveUpdates';
 
-type Tab = 'nitrado' | 'permissions' | 'tickets';
+type Tab = 'nitrado' | 'aliases' | 'permissions' | 'tickets';
 
 interface TabDef {
   key: Tab;
@@ -21,6 +21,7 @@ interface TabDef {
 
 const TABS: ReadonlyArray<TabDef> = [
   { key: 'nitrado', label: 'Nitrado-Slots', icon: Settings2 },
+  { key: 'aliases', label: 'Server-Aliase', icon: Tag, ownerOnly: true },
   { key: 'permissions', label: 'Berechtigungen', icon: Shield, ownerOnly: true },
   { key: 'tickets', label: 'Tickets', icon: Ticket },
 ];
@@ -111,6 +112,7 @@ export default function Server() {
             </header>
 
             {tab === 'nitrado' && guildId && <NitradoTab guildId={guildId} isOwner={isOwner} slots={dash.data.slots} />}
+            {tab === 'aliases' && guildId && isOwner && <AliasesTab guildId={guildId} slots={dash.data.slots} />}
             {tab === 'permissions' && guildId && isOwner && <PermissionsTab guildId={guildId} />}
             {tab === 'tickets' && guildId && <TicketsTab guildId={guildId} isOwner={isOwner} />}
           </>
@@ -740,5 +742,101 @@ function TicketEditModal({
         </div>
       </div>
     </div>
+  );
+}
+
+// ============================================================================
+// Server-Aliase — Owner kann Anzeige-Namen der Slots umbenennen (alias5 fix)
+// ============================================================================
+
+function AliasesTab({ guildId, slots }: { guildId: string; slots: Slot[] }) {
+  return (
+    <div className="space-y-4">
+      <Card>
+        <CardHeader>
+          <CardTitle>Server-Aliase</CardTitle>
+        </CardHeader>
+        <CardDesc>
+          Vergibt fuer jeden belegten Slot einen frei waehlbaren Anzeigenamen (1–40 Zeichen).
+          Die 5-stellige System-Kennung <span className="font-mono">alias5</span> bleibt davon unberuehrt.
+        </CardDesc>
+      </Card>
+
+      {slots.length === 0 && (
+        <Card>
+          <p className="text-muted text-sm">
+            Noch keine Slots eingerichtet. Lege zuerst im Tab <em>Nitrado-Slots</em> einen Slot an.
+          </p>
+        </Card>
+      )}
+
+      <div className="grid gap-3">
+        {slots
+          .slice()
+          .sort((a, b) => a.slot - b.slot)
+          .map(s => (
+            <AliasRow key={s.id} guildId={guildId} slot={s} />
+          ))}
+      </div>
+    </div>
+  );
+}
+
+function AliasRow({ guildId, slot }: { guildId: string; slot: Slot }) {
+  const qc = useQueryClient();
+  const [draft, setDraft] = useState(slot.alias);
+  const [msg, setMsg] = useState<{ ok: boolean; text: string } | null>(null);
+
+  const save = useMutation({
+    mutationFn: (alias: string) =>
+      api.patch(`/api/v2/guilds/${guildId}/nitrado/${slot.slot}/alias`, { alias }),
+    onSuccess: () => {
+      setMsg({ ok: true, text: 'Alias gespeichert.' });
+      void qc.invalidateQueries({ queryKey: ['dashboard', guildId] });
+    },
+    onError: (e: unknown) => {
+      const text = e instanceof ApiError ? e.message : (e instanceof Error ? e.message : 'Fehler.');
+      setMsg({ ok: false, text });
+    },
+  });
+
+  const trimmed = draft.trim();
+  const isValid = trimmed.length >= 1 && trimmed.length <= 40;
+  const dirty = trimmed !== slot.alias;
+
+  return (
+    <Card>
+      <div className="flex flex-wrap items-center gap-3">
+        <div className="shrink-0 px-2 py-1 rounded bg-bg-elev border border-border text-xs">
+          Slot #{slot.slot}
+        </div>
+        <div className="shrink-0 px-2 py-1 rounded bg-accent/15 text-accent text-xs font-mono">
+          {slot.alias5}
+        </div>
+        <div className="flex-1 min-w-[180px]">
+          <Input
+            value={draft}
+            onChange={e => { setDraft(e.target.value); setMsg(null); }}
+            maxLength={40}
+            placeholder="Anzeigename"
+          />
+        </div>
+        <Button
+          onClick={() => { setMsg(null); save.mutate(trimmed); }}
+          disabled={save.isPending || !isValid || !dirty}
+          loading={save.isPending}
+        >
+          Speichern
+        </Button>
+      </div>
+      {msg && (
+        <p className={`text-xs mt-2 ${msg.ok ? 'text-green-400' : 'text-danger'}`}>{msg.text}</p>
+      )}
+      {slot.status !== 'ACTIVE' && (
+        <p className="text-xs mt-2 text-amber-400 inline-flex items-center gap-1">
+          <AlertTriangle className="h-3 w-3" /> Slot-Status: {slot.status}
+        </p>
+      )}
+    </Card>
   );
 }

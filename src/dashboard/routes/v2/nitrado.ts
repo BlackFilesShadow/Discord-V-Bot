@@ -8,7 +8,7 @@
  */
 import { Router } from 'express';
 import { requireGuildOwner } from '../../middleware/auth';
-import { listSlots, createSlot, deleteSlot, getSlot, getDecryptedToken, updateToken } from '../../../modules/nitrado/repository';
+import { listSlots, createSlot, deleteSlot, getSlot, getDecryptedToken, updateToken, updateAlias } from '../../../modules/nitrado/repository';
 import { NitradoClient } from '../../../modules/nitrado/nitradoClient';
 import { asUserDiscordId, asNitradoConnId } from '../../../types/scope';
 import { logAudit, logger } from '../../../utils/logger';
@@ -93,6 +93,31 @@ nitradoRouter.patch('/:slot/token', requireGuildOwner, async (req, res) => {
     guildId: scope.guildId, slot, alias5: updated.alias5, actor: scope.actorDiscordId,
   });
   res.json({ ok: true, slot: updated.slot, status: updated.status });
+});
+
+/**
+ * PATCH /:slot/alias  body: { alias: string }
+ * Aktualisiert nur den Anzeige-Namen eines Slots. Owner-only.
+ */
+nitradoRouter.patch('/:slot/alias', requireGuildOwner, async (req, res) => {
+  const scope = req.guildScope!;
+  const slot = Number(String(req.params.slot));
+  if (!Number.isInteger(slot) || slot < 1 || slot > 5) { res.status(400).json({ error: 'slot 1..5' }); return; }
+  const { alias } = req.body ?? {};
+  if (typeof alias !== 'string' || alias.trim().length < 1 || alias.trim().length > 40) {
+    res.status(400).json({ error: 'alias 1..40' }); return;
+  }
+  let updated;
+  try {
+    updated = await updateAlias(scope.guildId, slot, alias);
+  } catch (e) {
+    res.status(400).json({ error: (e as Error).message }); return;
+  }
+  if (!updated) { res.status(404).json({ error: 'Slot nicht gefunden.' }); return; }
+  logAudit('NITRADO_SLOT_ALIAS_UPDATED', 'NITRADO', {
+    guildId: scope.guildId, slot, alias: updated.alias, alias5: updated.alias5, actor: scope.actorDiscordId,
+  });
+  res.json({ ok: true, slot: updated.slot, alias: updated.alias, alias5: updated.alias5 });
 });
 
 nitradoRouter.delete('/:slot', requireGuildOwner, async (req, res) => {

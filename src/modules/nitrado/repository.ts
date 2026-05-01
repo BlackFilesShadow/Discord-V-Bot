@@ -166,3 +166,25 @@ export async function updateToken(
   });
   return row ? rowToConn(row) : null;
 }
+
+/**
+ * Aktualisiert nur das frei waehlbare Anzeige-Alias eines Slots.
+ * `alias5` ist unveraenderlich (eindeutige System-Kennung).
+ */
+export async function updateAlias(
+  guildId: GuildId,
+  slot: number,
+  alias: string,
+): Promise<NitradoConnectionRow | null> {
+  const trimmed = alias.trim();
+  if (trimmed.length < 1 || trimmed.length > 40) throw new Error('Alias 1..40 Zeichen');
+  const updated = await prisma.nitradoConnection.updateMany({
+    where: { guildId, slot },
+    data: { alias: trimmed },
+  });
+  if (updated.count === 0) return null;
+  const row = await prisma.nitradoConnection.findUnique({
+    where: { guildId_slot: { guildId, slot } },
+  });
+  return row ? rowToConn(row) : null;
+}
