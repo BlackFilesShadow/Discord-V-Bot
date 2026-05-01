@@ -157,22 +157,42 @@ async function pollOnce(): Promise<void> {
     }
 
     // Atomar: PENDING -> RUNNING fuer max MAX_PARALLEL Jobs deren nextRunAt erreicht ist.
+    // WICHTIG: Pro nitradoConnId NUR ein Job parallel — Whitelist-Settings sind
+    // Read-Modify-Write auf einem geteilten String und MUESSEN serialisiert werden,
+    // sonst ueberschreiben sich konkurrente Updates gegenseitig (Datenverlust).
     // eslint-disable-next-line local/no-unscoped-prisma-query -- Worker scannt globale Outbox; Scope-Check erfolgt im executeJob.
     const candidates = await prisma.nitradoJob.findMany({
       where: { status: 'PENDING', nextRunAt: { lte: new Date() } },
       orderBy: { nextRunAt: 'asc' },
-      take: MAX_PARALLEL,
-      select: { id: true, guildId: true },
+      take: MAX_PARALLEL * 4, // genug Vorrat damit auch bei Conn-Konflikten MAX_PARALLEL erreicht wird
+      select: { id: true, guildId: true, nitradoConnId: true },
     });
     if (candidates.length === 0) return;
 
-    const claimed: Array<{ id: string; guildId: string }> = [];
+    // Per-Conn-Serialisierung: pro nitradoConnId hoechstens 1 Job in dieser Iteration.
+    // Aktuell laufende RUNNING-Jobs zaehlen ebenfalls als "Conn belegt".
+    // eslint-disable-next-line local/no-unscoped-prisma-query -- nur RUNNING-Connection-IDs ermitteln
+    const runningConns = await prisma.nitradoJob.findMany({
+      where: { status: 'RUNNING' },
+      select: { nitradoConnId: true },
+    });
+    const busyConns = new Set(runningConns.map(r => r.nitradoConnId));
+    const filtered: typeof candidates = [];
     for (const c of candidates) {
+      if (filtered.length >= MAX_PARALLEL) break;
+      if (busyConns.has(c.nitradoConnId)) continue;
+      busyConns.add(c.nitradoConnId);
+      filtered.push(c);
+    }
+    if (filtered.length === 0) return;
+
+    const claimed: Array<{ id: string; guildId: string }> = [];
+    for (const c of filtered) {
       const upd = await prisma.nitradoJob.updateMany({
         where: { id: c.id, guildId: c.guildId, status: 'PENDING' },
         data: { status: 'RUNNING', updatedAt: new Date() },
       });
-      if (upd.count === 1) claimed.push(c);
+      if (upd.count === 1) claimed.push({ id: c.id, guildId: c.guildId });
     }
     if (claimed.length === 0) return;
 
