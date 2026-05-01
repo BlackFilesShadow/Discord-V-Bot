@@ -48,6 +48,7 @@ function parseColor(hex: string | null | undefined, fallback = 0xdc2626): number
 interface FactionEmbedData {
   id: string;
   guildId: string;
+  nitradoConnId: string;
   name: string;
   description: string | null;
   color: string | null;
@@ -137,6 +138,7 @@ async function loadFaction(factionId: string): Promise<FactionEmbedData | null> 
   return {
     id: f.id,
     guildId: f.guildId,
+    nitradoConnId: f.nitradoConnId,
     name: f.name,
     description: f.description,
     color: f.color,
@@ -168,9 +170,20 @@ export async function postFactionEmbed(client: Client, factionId: string): Promi
   const run = (async (): Promise<{ messageId: string; updated: boolean }> => {
     const f = await loadFaction(factionId);
     if (!f) throw new Error('Fraktion nicht gefunden.');
-    if (!f.embedChannelId) throw new Error('Kein Embed-Channel konfiguriert.');
 
-    const channel = await client.channels.fetch(f.embedChannelId).catch(() => null);
+    // Effektiver Channel: Faction-spezifisch ODER System-Sammelkanal als Fallback.
+    let targetChannelId = f.embedChannelId;
+    if (!targetChannelId) {
+       
+      const cfg = await prisma.factionSystemConfig.findUnique({
+        where: { guildId_nitradoConnId: { guildId: f.guildId, nitradoConnId: f.nitradoConnId } },
+        select: { factionChannelId: true },
+      });
+      targetChannelId = cfg?.factionChannelId ?? null;
+    }
+    if (!targetChannelId) throw new Error('Kein Embed-Channel konfiguriert (weder Faction- noch System-Channel).');
+
+    const channel = await client.channels.fetch(targetChannelId).catch(() => null);
     if (!channel || !channel.isTextBased() || channel.isDMBased()) {
       throw new Error('Embed-Channel nicht verfuegbar oder kein Text-Channel.');
     }
@@ -205,7 +218,7 @@ export async function postFactionEmbed(client: Client, factionId: string): Promi
     });
 
     logAudit(updated ? 'FACTION_EMBED_UPDATED' : 'FACTION_EMBED_POSTED', 'FACTION', {
-      guildId: f.guildId, factionId: f.id, channelId: f.embedChannelId, messageId,
+      guildId: f.guildId, factionId: f.id, channelId: targetChannelId, messageId,
     });
 
     return { messageId, updated };
@@ -227,20 +240,32 @@ export async function unpostFactionEmbed(client: Client, factionId: string): Pro
   // eslint-disable-next-line local/no-unscoped-prisma-query -- Modul wird nur intern aus geprueften Routen aufgerufen.
   const f = await prisma.faction.findUnique({
     where: { id: factionId },
-    select: { id: true, guildId: true, embedChannelId: true, embedMessageId: true },
+    select: { id: true, guildId: true, nitradoConnId: true, embedChannelId: true, embedMessageId: true },
   });
-  if (!f || !f.embedChannelId || !f.embedMessageId) {
+  if (!f || !f.embedMessageId) {
     if (f && f.embedMessageId) {
       // eslint-disable-next-line local/no-unscoped-prisma-query -- f.id intern verifiziert.
       await prisma.faction.update({ where: { id: f.id }, data: { embedMessageId: null } }).catch(() => {});
     }
     return;
   }
+  // Effektiver Channel: Faction-spezifisch ODER System-Sammelkanal als Fallback.
+  let targetChannelId = f.embedChannelId;
+  if (!targetChannelId) {
+     
+    const cfg = await prisma.factionSystemConfig.findUnique({
+      where: { guildId_nitradoConnId: { guildId: f.guildId, nitradoConnId: f.nitradoConnId } },
+      select: { factionChannelId: true },
+    });
+    targetChannelId = cfg?.factionChannelId ?? null;
+  }
   try {
-    const channel = await client.channels.fetch(f.embedChannelId).catch(() => null);
-    if (channel && channel.isTextBased() && !channel.isDMBased()) {
-      const msg = await (channel as GuildTextBasedChannel).messages.fetch(f.embedMessageId).catch(() => null);
-      if (msg) await msg.delete().catch(() => {});
+    if (targetChannelId) {
+      const channel = await client.channels.fetch(targetChannelId).catch(() => null);
+      if (channel && channel.isTextBased() && !channel.isDMBased()) {
+        const msg = await (channel as GuildTextBasedChannel).messages.fetch(f.embedMessageId).catch(() => null);
+        if (msg) await msg.delete().catch(() => {});
+      }
     }
   } catch (e) {
     logger.warn(`unpostFactionEmbed ${f.id}: ${(e as Error).message}`);
@@ -248,7 +273,151 @@ export async function unpostFactionEmbed(client: Client, factionId: string): Pro
     // eslint-disable-next-line local/no-unscoped-prisma-query -- f.id intern verifiziert.
     await prisma.faction.update({ where: { id: f.id }, data: { embedMessageId: null } }).catch(() => {});
     logAudit('FACTION_EMBED_UNPOSTED', 'FACTION', {
-      guildId: f.guildId, factionId: f.id, channelId: f.embedChannelId,
+      guildId: f.guildId, factionId: f.id, channelId: targetChannelId,
+    });
+  }
+}
+
+// ============================================================================
+// Uebersichts-Liste aller Fraktionen pro Slot (FactionSystemConfig)
+// ============================================================================
+
+const listLocks = new Map<string, Promise<unknown>>();
+
+function listKey(guildId: string, nitradoConnId: string): string {
+  return `${guildId}:${nitradoConnId}`;
+}
+
+function buildListEmbed(factions: Array<{
+  name: string;
+  status: string;
+  joinPolicy: string;
+  memberCount: number;
+  color: string | null;
+  leaderDiscordId: string | null;
+}>): EmbedBuilder {
+  const e = new EmbedBuilder()
+    .setAuthor({ name: 'V-BOT  •  FRAKTIONS-UEBERSICHT' })
+    .setTitle(`🏛️  Aktive Fraktionen  (${factions.length})`)
+    .setColor(0xdc2626)
+    .setFooter({ text: 'Automatische Liste  •  V-Bot Faction-System' })
+    .setTimestamp(new Date());
+
+  if (factions.length === 0) {
+    e.setDescription('_Aktuell sind keine Fraktionen angelegt._');
+    return e;
+  }
+
+  const lines: string[] = [];
+  for (const f of factions) {
+    const st = STATUS_LABELS[f.status] ?? STATUS_LABELS.ACTIVE;
+    const policy = f.joinPolicy === 'OPEN' ? '🔓' : f.joinPolicy === 'CLOSED' ? '🔒' : '✋';
+    const leader = f.leaderDiscordId ? ` — Leitung <@${f.leaderDiscordId}>` : '';
+    lines.push(`${st.emoji}  **${f.name}**  ${policy}  · ${f.memberCount} Mitglieder${leader}`);
+  }
+  e.setDescription(lines.join('\n').slice(0, 4000));
+  return e;
+}
+
+/**
+ * Postet (oder aktualisiert) eine Uebersichts-Liste aller Fraktionen
+ * eines Slots im konfigurierten `factionChannelId`. Mutex pro Slot.
+ * Idempotent. No-op falls keine Config oder kein Channel.
+ */
+export async function postFactionList(client: Client, guildId: string, nitradoConnId: string): Promise<void> {
+  const key = listKey(guildId, nitradoConnId);
+  const prev = listLocks.get(key);
+  if (prev) { try { await prev; } catch { /* ignore */ } }
+
+  const run = (async (): Promise<void> => {
+     
+    const cfg = await prisma.factionSystemConfig.findUnique({
+      where: { guildId_nitradoConnId: { guildId, nitradoConnId } },
+    });
+    if (!cfg || !cfg.factionChannelId) return;
+
+    const channel = await client.channels.fetch(cfg.factionChannelId).catch(() => null);
+    if (!channel || !channel.isTextBased() || channel.isDMBased()) {
+      logger.warn(`postFactionList: Channel ${cfg.factionChannelId} nicht verfuegbar`);
+      return;
+    }
+    const tch = channel as GuildTextBasedChannel;
+    if (tch.guildId !== guildId) return;
+
+     
+    const factions = await prisma.faction.findMany({
+      where: { guildId, nitradoConnId },
+      include: { _count: { select: { members: true } } },
+      orderBy: [{ status: 'asc' }, { name: 'asc' }],
+    });
+
+    const embed = buildListEmbed(factions.map(f => ({
+      name: f.name,
+      status: f.status,
+      joinPolicy: f.joinPolicy,
+      memberCount: f._count.members,
+      color: f.color,
+      leaderDiscordId: f.leaderDiscordId,
+    })));
+
+    let messageId = cfg.listMessageId;
+    if (messageId) {
+      try {
+        const existing = await tch.messages.fetch(messageId);
+        await existing.edit({ embeds: [embed] });
+      } catch {
+        messageId = null;
+      }
+    }
+    if (!messageId) {
+      const sent = await tch.send({ embeds: [embed], allowedMentions: { parse: [] } });
+      messageId = sent.id;
+       
+      await prisma.factionSystemConfig.update({
+        where: { id: cfg.id },
+        data: { listMessageId: messageId },
+      });
+    }
+
+    logAudit('FACTION_LIST_REFRESHED', 'FACTION', {
+      guildId, nitradoConnId, channelId: cfg.factionChannelId, messageId, count: factions.length,
+    });
+  })();
+
+  listLocks.set(key, run);
+  try {
+    await run;
+  } finally {
+    if (listLocks.get(key) === run) listLocks.delete(key);
+  }
+}
+
+/**
+ * Loescht das Uebersichts-Embed (z.B. vor Channel-Wechsel). Idempotent.
+ */
+export async function unpostFactionList(client: Client, guildId: string, nitradoConnId: string): Promise<void> {
+   
+  const cfg = await prisma.factionSystemConfig.findUnique({
+    where: { guildId_nitradoConnId: { guildId, nitradoConnId } },
+  });
+  if (!cfg || !cfg.factionChannelId || !cfg.listMessageId) {
+    if (cfg && cfg.listMessageId) {
+       
+      await prisma.factionSystemConfig.update({ where: { id: cfg.id }, data: { listMessageId: null } }).catch(() => {});
+    }
+    return;
+  }
+  try {
+    const channel = await client.channels.fetch(cfg.factionChannelId).catch(() => null);
+    if (channel && channel.isTextBased() && !channel.isDMBased()) {
+      const msg = await (channel as GuildTextBasedChannel).messages.fetch(cfg.listMessageId).catch(() => null);
+      if (msg) await msg.delete().catch(() => {});
+    }
+  } finally {
+     
+    await prisma.factionSystemConfig.update({ where: { id: cfg.id }, data: { listMessageId: null } }).catch(() => {});
+    logAudit('FACTION_LIST_UNPOSTED', 'FACTION', {
+      guildId, nitradoConnId, channelId: cfg.factionChannelId,
     });
   }
 }

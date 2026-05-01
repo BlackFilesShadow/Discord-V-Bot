@@ -1415,6 +1415,7 @@ model NitradoConnection {
   whitelistEntries  WhitelistEntry[]
   whitelistRequests WhitelistRequest[]
   factions          Faction[]
+  factionConfigs    FactionSystemConfig[]
   economyLinks      EconomyLink[]
 
   @@unique([guildId, slot])
@@ -1498,6 +1499,23 @@ model Faction {
   members            FactionMember[]
 
   @@unique([guildId, nitradoConnId, name])
+  @@index([guildId])
+}
+
+// Globale Konfiguration des Fraktionssystems pro (Guild + Slot).
+// factionChannelId: Sammelkanal — alle Fraktionen-Embeds + Uebersichts-Liste landen hier automatisch.
+// listMessageId:    ID des Uebersichts-Embeds (Liste aller Fraktionen).
+model FactionSystemConfig {
+  id               String            @id @default(cuid())
+  guildId          String
+  nitradoConnId    String
+  nitradoConn      NitradoConnection @relation(fields: [nitradoConnId], references: [id], onDelete: Cascade)
+  factionChannelId String?
+  listMessageId    String?
+  createdAt        DateTime          @default(now())
+  updatedAt        DateTime          @updatedAt
+
+  @@unique([guildId, nitradoConnId])
   @@index([guildId])
 }
 

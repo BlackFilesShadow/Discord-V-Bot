@@ -26,7 +26,8 @@ import { asUserDiscordId } from '../../../types/scope';
 import { logAuditDb } from '../../../utils/logger';
 import { emitGuildEvent } from '../../socket/emitter';
 import { tryGetDashboardClient } from '../../clientRegistry';
-import { postFactionEmbed, unpostFactionEmbed } from '../../../modules/factions/factionEmbed';
+import { postFactionEmbed, unpostFactionEmbed, postFactionList, unpostFactionList } from '../../../modules/factions/factionEmbed';
+import { asGuildId } from '../../../types/scope';
 
 export const factionsRouter = Router({ mergeParams: true });
 
@@ -195,6 +196,48 @@ async function refreshEmbed(factionId: string, guildId: string, actorUserId: str
   });
 }
 
+async function refreshList(guildId: string, nitradoConnId: string, actorUserId: string, action: string): Promise<void> {
+  const client = tryGetDashboardClient();
+  if (!client) return;
+  await postFactionList(client, guildId, nitradoConnId).catch(err => {
+    logAuditDb('FACTION_LIST_FAILED', 'FACTION', {
+      actorUserId, guildId,
+      details: { nitradoConnId, action, error: (err as Error).message },
+    });
+  });
+}
+
+/**
+ * Holt die Faction-System-Konfiguration fuer einen Slot.
+ * Falls keine vorhanden, wird ein leerer Datensatz angelegt (lazy-init).
+ */
+async function getOrCreateConfig(guildId: string, nitradoConnId: string) {
+   
+  let cfg = await prisma.factionSystemConfig.findUnique({
+    where: { guildId_nitradoConnId: { guildId, nitradoConnId } },
+  });
+  if (!cfg) {
+     
+    cfg = await prisma.factionSystemConfig.create({
+      data: { guildId, nitradoConnId },
+    });
+  }
+  return cfg;
+}
+
+/**
+ * Effektiver Embed-Channel: faction.embedChannelId override SystemConfig.factionChannelId.
+ */
+async function effectiveEmbedChannel(faction: { embedChannelId: string | null; guildId: string; nitradoConnId: string }): Promise<string | null> {
+  if (faction.embedChannelId) return faction.embedChannelId;
+   
+  const cfg = await prisma.factionSystemConfig.findUnique({
+    where: { guildId_nitradoConnId: { guildId: faction.guildId, nitradoConnId: faction.nitradoConnId } },
+    select: { factionChannelId: true },
+  });
+  return cfg?.factionChannelId ?? null;
+}
+
 factionsRouter.get('/', requireGuildPermission('factions.view'), async (req, res) => {
   const scope = req.guildScope!;
   const connId = await activeSlotId(scope.guildId, req.query.slot);
@@ -266,7 +309,11 @@ factionsRouter.post('/', requireGuildPermission('factions.manage'), async (req, 
       actorUserId: req.auth!.userId, guildId: scope.guildId,
       details: { slotId: connId, factionId: f.id, name: f.name },
     });
-    if (f.embedChannelId) await refreshEmbed(f.id, scope.guildId, req.auth!.userId, 'create');
+    // Embed posten — Faction-spezifischer Channel ODER System-Sammelkanal (Fallback im Modul).
+    const effectiveCh = await effectiveEmbedChannel({ embedChannelId: f.embedChannelId, guildId: scope.guildId, nitradoConnId: connId });
+    if (effectiveCh) await refreshEmbed(f.id, scope.guildId, req.auth!.userId, 'create');
+    // Uebersichts-Liste auto-refresh.
+    await refreshList(scope.guildId, connId, req.auth!.userId, 'faction-created');
     emitGuildEvent(scope.guildId, { type: 'faction.changed', payload: { guildId: scope.guildId, factionId: f.id } });
     res.status(201).json({ id: f.id, name: f.name });
   } catch (e) {
@@ -306,9 +353,11 @@ factionsRouter.patch('/:id', requireGuildPermission('factions.manage'), async (r
       actorUserId: req.auth!.userId, guildId: scope.guildId,
       details: { factionId: id, fields: Object.keys(v.data) },
     });
-    if (updated.embedChannelId) {
+    const effectiveCh = await effectiveEmbedChannel({ embedChannelId: updated.embedChannelId, guildId: scope.guildId, nitradoConnId: updated.nitradoConnId });
+    if (effectiveCh) {
       await refreshEmbed(updated.id, scope.guildId, req.auth!.userId, 'update');
     }
+    await refreshList(scope.guildId, updated.nitradoConnId, req.auth!.userId, 'faction-updated');
     emitGuildEvent(scope.guildId, { type: 'faction.changed', payload: { guildId: scope.guildId, factionId: id } });
     res.json({ ok: true });
   } catch (e) {
@@ -324,11 +373,13 @@ factionsRouter.post('/:id/republish', requireGuildPermission('factions.manage'),
   const id = String(req.params.id);
   const existing = await prisma.faction.findFirst({ where: { id, guildId: scope.guildId } });
   if (!existing) { res.status(404).json({ error: 'Fraktion nicht gefunden.' }); return; }
-  if (!existing.embedChannelId) { res.status(400).json({ error: 'Kein Embed-Channel konfiguriert.' }); return; }
+  const effChR = await effectiveEmbedChannel({ embedChannelId: existing.embedChannelId, guildId: scope.guildId, nitradoConnId: existing.nitradoConnId });
+  if (!effChR) { res.status(400).json({ error: 'Kein Embed-Channel konfiguriert (weder Faction- noch System-Channel).' }); return; }
   const client = tryGetDashboardClient();
   if (!client) { res.status(503).json({ error: 'Bot nicht bereit.' }); return; }
   try {
     const r = await postFactionEmbed(client, id);
+    await refreshList(scope.guildId, existing.nitradoConnId, req.auth!.userId, 'republish');
     logAuditDb('FACTION_EMBED_REPUBLISHED', 'FACTION', {
       actorUserId: req.auth!.userId, guildId: scope.guildId, details: { factionId: id, messageId: r.messageId },
     });
@@ -358,6 +409,8 @@ factionsRouter.delete('/:id', requireGuildPermission('factions.manage'), async (
   logAuditDb('FACTION_DELETED', 'FACTION', {
     actorUserId: req.auth!.userId, guildId: scope.guildId, details: { factionId: id, name: existing.name },
   });
+  // Liste auto-refresh (zeigt Loeschung in Discord-Sammelkanal).
+  await refreshList(scope.guildId, existing.nitradoConnId, req.auth!.userId, 'faction-deleted');
   emitGuildEvent(scope.guildId, { type: 'faction.changed', payload: { guildId: scope.guildId, factionId: id } });
   res.json({ ok: true });
 });
@@ -418,7 +471,8 @@ factionsRouter.post(
       actorUserId: req.auth!.userId, guildId: scope.guildId,
       details: { factionId: existing.id, kind, mime: file.mimetype, size: file.size },
     });
-    if (existing.embedChannelId) await refreshEmbed(existing.id, scope.guildId, req.auth!.userId, `upload-${kind}`);
+    const effCh3 = await effectiveEmbedChannel({ embedChannelId: existing.embedChannelId, guildId: scope.guildId, nitradoConnId: existing.nitradoConnId });
+    if (effCh3) await refreshEmbed(existing.id, scope.guildId, req.auth!.userId, `upload-${kind}`);
     emitGuildEvent(scope.guildId, { type: 'faction.changed', payload: { guildId: scope.guildId, factionId: existing.id } });
     res.json({ url: publicUrl });
   },
@@ -448,7 +502,8 @@ factionsRouter.delete('/:id/asset', requireGuildPermission('factions.manage'), a
   logAuditDb('FACTION_ASSET_REMOVED', 'FACTION', {
     actorUserId: req.auth!.userId, guildId: scope.guildId, details: { factionId: existing.id, kind },
   });
-  if (existing.embedChannelId) await refreshEmbed(existing.id, scope.guildId, req.auth!.userId, `remove-${kind}`);
+  const effCh4 = await effectiveEmbedChannel({ embedChannelId: existing.embedChannelId, guildId: scope.guildId, nitradoConnId: existing.nitradoConnId });
+  if (effCh4) await refreshEmbed(existing.id, scope.guildId, req.auth!.userId, `remove-${kind}`);
   emitGuildEvent(scope.guildId, { type: 'faction.changed', payload: { guildId: scope.guildId, factionId: existing.id } });
   res.json({ ok: true });
 });
@@ -470,7 +525,9 @@ factionsRouter.post('/:id/members', requireGuildPermission('factions.manage'), a
     update: { role: r },
   });
   logAuditDb('FACTION_MEMBER_ADDED', 'FACTION', { actorUserId: req.auth!.userId, guildId: scope.guildId, details: { factionId: f.id, target, role: r } });
-  if (f.embedChannelId) await refreshEmbed(f.id, scope.guildId, req.auth!.userId, 'member-added');
+  const effCh = await effectiveEmbedChannel({ embedChannelId: f.embedChannelId, guildId: scope.guildId, nitradoConnId: f.nitradoConnId });
+  if (effCh) await refreshEmbed(f.id, scope.guildId, req.auth!.userId, 'member-added');
+  await refreshList(scope.guildId, f.nitradoConnId, req.auth!.userId, 'member-added');
   emitGuildEvent(scope.guildId, { type: 'faction.changed', payload: { guildId: scope.guildId, factionId: f.id } });
   res.status(201).json({ ok: true });
 });
@@ -487,7 +544,169 @@ factionsRouter.delete('/:id/members/:userDiscordId', requireGuildPermission('fac
   });
   if (out.count === 0) { res.status(404).json({ error: 'Member nicht gefunden.' }); return; }
   logAuditDb('FACTION_MEMBER_REMOVED', 'FACTION', { actorUserId: req.auth!.userId, guildId: scope.guildId, details: { factionId: f.id, target } });
-  if (f.embedChannelId) await refreshEmbed(f.id, scope.guildId, req.auth!.userId, 'member-removed');
+  const effCh2 = await effectiveEmbedChannel({ embedChannelId: f.embedChannelId, guildId: scope.guildId, nitradoConnId: f.nitradoConnId });
+  if (effCh2) await refreshEmbed(f.id, scope.guildId, req.auth!.userId, 'member-removed');
+  await refreshList(scope.guildId, f.nitradoConnId, req.auth!.userId, 'member-removed');
   emitGuildEvent(scope.guildId, { type: 'faction.changed', payload: { guildId: scope.guildId, factionId: f.id } });
   res.json({ ok: true });
+});
+
+// ============================================================================
+// System-Config (pro Slot): zentraler Sammel-Channel + Liste
+// ============================================================================
+
+factionsRouter.get('/system-config', requireGuildPermission('factions.view'), async (req, res) => {
+  const scope = req.guildScope!;
+  const connId = await activeSlotId(scope.guildId, req.query.slot);
+  if (!connId) { res.status(404).json({ error: 'Kein Nitrado-Slot.' }); return; }
+  const cfg = await getOrCreateConfig(scope.guildId, connId);
+  res.json({
+    slotId: connId,
+    factionChannelId: cfg.factionChannelId,
+    listMessageId: cfg.listMessageId,
+    updatedAt: cfg.updatedAt.toISOString(),
+  });
+});
+
+factionsRouter.put('/system-config', requireGuildPermission('factions.manage'), async (req, res) => {
+  const scope = req.guildScope!;
+  const connId = await activeSlotId(scope.guildId, req.query.slot);
+  if (!connId) { res.status(404).json({ error: 'Kein Nitrado-Slot.' }); return; }
+  const body = (req.body ?? {}) as { factionChannelId?: string | null };
+  let newChId: string | null;
+  if (body.factionChannelId === null || body.factionChannelId === '') newChId = null;
+  else if (typeof body.factionChannelId === 'string' && SNOWFLAKE_RE.test(body.factionChannelId)) newChId = body.factionChannelId;
+  else { res.status(400).json({ error: 'factionChannelId muss Snowflake oder null sein.' }); return; }
+
+  if (newChId) {
+    const err = await ensureChannelInGuild(newChId, scope.guildId);
+    if (err) { res.status(400).json({ error: err }); return; }
+  }
+
+  const cfg = await getOrCreateConfig(scope.guildId, connId);
+  const channelChanged = cfg.factionChannelId !== newChId;
+
+  // Bei Channel-Wechsel: alte Uebersicht + alle Faction-Embeds entfernen, die den
+  // System-Channel als Fallback nutzten (faction.embedChannelId IS NULL).
+  if (channelChanged && cfg.factionChannelId) {
+    const client = tryGetDashboardClient();
+    if (client) {
+      await unpostFactionList(client, scope.guildId, connId).catch(() => {});
+      const orphanFactions = await prisma.faction.findMany({
+        where: { guildId: scope.guildId, nitradoConnId: connId, embedChannelId: null, embedMessageId: { not: null } },
+        select: { id: true },
+      });
+      for (const of of orphanFactions) {
+        await unpostFactionEmbed(client, of.id).catch(() => {});
+      }
+    }
+  }
+
+   
+  const updated = await prisma.factionSystemConfig.update({
+    where: { id: cfg.id },
+    data: { factionChannelId: newChId, ...(channelChanged ? { listMessageId: null } : {}) },
+  });
+  logAuditDb('FACTION_SYSTEM_CONFIG_UPDATED', 'FACTION', {
+    actorUserId: req.auth!.userId, guildId: scope.guildId,
+    details: { slotId: connId, factionChannelId: newChId, channelChanged },
+  });
+
+  // Wenn neuer Channel gesetzt: Faction-Embeds (ohne eigenen Channel) + Liste neu posten.
+  if (newChId) {
+    const client = tryGetDashboardClient();
+    if (client) {
+      const fallbackFactions = await prisma.faction.findMany({
+        where: { guildId: scope.guildId, nitradoConnId: connId, embedChannelId: null },
+        select: { id: true },
+      });
+      for (const ff of fallbackFactions) {
+        await postFactionEmbed(client, ff.id).catch(err => {
+          logAuditDb('FACTION_EMBED_FAILED', 'FACTION', {
+            actorUserId: req.auth!.userId, guildId: scope.guildId,
+            details: { factionId: ff.id, action: 'system-config-rebroadcast', error: (err as Error).message },
+          });
+        });
+      }
+      await refreshList(scope.guildId, connId, req.auth!.userId, 'system-config-changed');
+    }
+  }
+
+  emitGuildEvent(scope.guildId, { type: 'faction.changed', payload: { guildId: scope.guildId, factionId: 'system-config' } });
+  res.json({
+    slotId: connId,
+    factionChannelId: updated.factionChannelId,
+    listMessageId: updated.listMessageId,
+    updatedAt: updated.updatedAt.toISOString(),
+  });
+});
+
+// ============================================================================
+// Lookups: Channels + Members (factions.manage scope, NICHT Owner-only)
+// ============================================================================
+
+factionsRouter.get('/lookups/channels', requireGuildPermission('factions.manage'), async (req, res) => {
+  const scope = req.guildScope!;
+  const client = tryGetDashboardClient();
+  if (!client) { res.json({ channels: [] }); return; }
+  const guild = await client.guilds.fetch(asGuildId(scope.guildId)).catch(() => null);
+  if (!guild) { res.status(404).json({ error: 'Guild nicht erreichbar.' }); return; }
+  // Nur Text-/Announcement-/Forum-Channel.
+  const TEXT_TYPES = new Set([0, 5, 15]);
+  const channels = guild.channels.cache
+    .filter(ch => TEXT_TYPES.has(ch.type as number))
+    .map(ch => ({ id: ch.id, name: ch.name ?? '', type: ch.type as number, parentId: (ch as { parentId?: string | null }).parentId ?? null }))
+    .sort((a, b) => a.name.localeCompare(b.name));
+  res.json({ channels });
+});
+
+factionsRouter.get('/lookups/members', requireGuildPermission('factions.manage'), async (req, res) => {
+  const scope = req.guildScope!;
+  const q = String(req.query.q ?? '').trim().toLowerCase();
+  const client = tryGetDashboardClient();
+  if (!client) { res.json({ members: [] }); return; }
+  const guild = await client.guilds.fetch(asGuildId(scope.guildId)).catch(() => null);
+  if (!guild) { res.status(404).json({ error: 'Guild nicht erreichbar.' }); return; }
+
+  // Wenn Suche < 2 Zeichen: Top-25 (cache) zurueck.
+  let members;
+  if (q.length >= 2) {
+    members = await guild.members.fetch({ query: q, limit: 25 }).catch(() => null);
+  } else {
+    members = guild.members.cache;
+  }
+  if (!members) { res.json({ members: [] }); return; }
+
+  const list = Array.from(members.values())
+    .slice(0, 25)
+    .map(m => ({
+      id: m.id,
+      username: m.user.username,
+      globalName: m.user.globalName ?? null,
+      displayName: m.displayName,
+      avatarUrl: m.user.displayAvatarURL({ size: 64 }),
+      bot: m.user.bot,
+    }));
+  res.json({ members: list });
+});
+
+// Lookup einzelner User (zum Auflösen einer gespeicherten Discord-ID -> Anzeige).
+factionsRouter.get('/lookups/members/:userId', requireGuildPermission('factions.view'), async (req, res) => {
+  const scope = req.guildScope!;
+  const userId = String(req.params.userId);
+  if (!SNOWFLAKE_RE.test(userId)) { res.status(400).json({ error: 'userId ungueltig.' }); return; }
+  const client = tryGetDashboardClient();
+  if (!client) { res.json({ id: userId, username: null, displayName: null, avatarUrl: null }); return; }
+  const guild = await client.guilds.fetch(asGuildId(scope.guildId)).catch(() => null);
+  if (!guild) { res.status(404).json({ error: 'Guild nicht erreichbar.' }); return; }
+  const m = await guild.members.fetch(userId).catch(() => null);
+  if (!m) { res.json({ id: userId, username: null, displayName: null, avatarUrl: null }); return; }
+  res.json({
+    id: m.id,
+    username: m.user.username,
+    globalName: m.user.globalName ?? null,
+    displayName: m.displayName,
+    avatarUrl: m.user.displayAvatarURL({ size: 64 }),
+    bot: m.user.bot,
+  });
 });

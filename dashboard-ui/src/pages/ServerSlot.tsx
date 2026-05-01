@@ -234,6 +234,192 @@ function draftFromRow(f: FactionRow): FactionDraft {
   };
 }
 
+interface FactionChannelOption { id: string; name: string; type: number }
+interface FactionMemberOption {
+  id: string;
+  username: string | null;
+  globalName: string | null;
+  displayName: string | null;
+  avatarUrl: string | null;
+  bot?: boolean;
+}
+
+function FactionChannelSelect({ guildId, value, onChange, allowEmpty = true, placeholder }: {
+  guildId: string;
+  value: string;
+  onChange: (id: string) => void;
+  allowEmpty?: boolean;
+  placeholder?: string;
+}) {
+  const q = useQuery({
+    queryKey: ['factionChannels', guildId],
+    queryFn: () => api.get<{ channels: FactionChannelOption[] }>(`/api/v2/guilds/${guildId}/factions/lookups/channels`),
+    staleTime: 60_000,
+  });
+  return (
+    <select
+      className="w-full bg-bg-elev border border-border rounded-md px-2 py-1.5 text-sm text-white"
+      value={value}
+      onChange={e => onChange(e.target.value)}
+    >
+      {allowEmpty && <option value="">{placeholder ?? '— nicht gesetzt —'}</option>}
+      {q.data?.channels.map(c => (
+        <option key={c.id} value={c.id}>#{c.name}</option>
+      ))}
+    </select>
+  );
+}
+
+/**
+ * Member-Combobox: Suche per /factions/lookups/members?q=, speichert Discord-Snowflake.
+ * Ohne Eingabe wird der gespeicherte User via /lookups/members/:id aufgeloest und angezeigt.
+ */
+function MemberCombobox({ guildId, value, onChange, placeholder, allowClear = true }: {
+  guildId: string;
+  value: string;            // Discord-ID oder leer
+  onChange: (id: string) => void;
+  placeholder?: string;
+  allowClear?: boolean;
+}) {
+  const [query, setQuery] = useState('');
+  const [open, setOpen] = useState(false);
+  const [debounced, setDebounced] = useState('');
+
+  useEffect(() => {
+    const t = setTimeout(() => setDebounced(query.trim()), 250);
+    return () => clearTimeout(t);
+  }, [query]);
+
+  const search = useQuery({
+    queryKey: ['factionMemberSearch', guildId, debounced],
+    queryFn: () => api.get<{ members: FactionMemberOption[] }>(`/api/v2/guilds/${guildId}/factions/lookups/members?q=${encodeURIComponent(debounced)}`),
+    enabled: open,
+    staleTime: 15_000,
+  });
+
+  const selected = useQuery({
+    queryKey: ['factionMember', guildId, value],
+    queryFn: () => api.get<FactionMemberOption>(`/api/v2/guilds/${guildId}/factions/lookups/members/${value}`),
+    enabled: !!value && SNOWFLAKE_RE.test(value),
+    staleTime: 5 * 60_000,
+  });
+
+  const label = value
+    ? (selected.data?.displayName || selected.data?.globalName || selected.data?.username || `ID ${value}`)
+    : '';
+
+  return (
+    <div className="relative">
+      <div className="flex items-center gap-2">
+        {value && selected.data?.avatarUrl && (
+          <img src={selected.data.avatarUrl} alt="" className="h-7 w-7 rounded-full flex-shrink-0" />
+        )}
+        <input
+          type="text"
+          className="flex-1 bg-bg-elev border border-border rounded-md px-2 py-1.5 text-sm text-white placeholder:text-muted focus:outline-none focus:border-accent"
+          placeholder={placeholder ?? 'User suchen…'}
+          value={open ? query : label}
+          onFocus={() => { setOpen(true); setQuery(''); }}
+          onBlur={() => setTimeout(() => setOpen(false), 150)}
+          onChange={e => setQuery(e.target.value)}
+        />
+        {value && allowClear && (
+          <button
+            type="button"
+            className="text-muted hover:text-white text-xs px-2"
+            onMouseDown={e => { e.preventDefault(); onChange(''); setQuery(''); }}
+            title="Leeren"
+          >×</button>
+        )}
+      </div>
+      {open && (
+        <div className="absolute z-20 left-0 right-0 mt-1 bg-bg-elev border border-border rounded-md shadow-lg max-h-64 overflow-auto">
+          {search.isLoading && <div className="px-3 py-2 text-xs text-muted">Suche…</div>}
+          {!search.isLoading && (search.data?.members?.length ?? 0) === 0 && (
+            <div className="px-3 py-2 text-xs text-muted">{debounced.length < 2 ? 'Tippe min. 2 Zeichen…' : 'Keine Treffer.'}</div>
+          )}
+          {search.data?.members.filter(m => !m.bot).map(m => (
+            <button
+              key={m.id}
+              type="button"
+              className="w-full flex items-center gap-2 px-2 py-1.5 hover:bg-black/20 text-left"
+              onMouseDown={e => { e.preventDefault(); onChange(m.id); setOpen(false); setQuery(''); }}
+            >
+              {m.avatarUrl && <img src={m.avatarUrl} alt="" className="h-6 w-6 rounded-full" />}
+              <div className="min-w-0">
+                <div className="text-sm text-white truncate">{m.displayName || m.globalName || m.username}</div>
+                <div className="text-xs text-muted truncate">@{m.username} · {m.id}</div>
+              </div>
+            </button>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+interface FactionSystemConfigDto {
+  slotId: string;
+  factionChannelId: string | null;
+  listMessageId: string | null;
+  updatedAt: string;
+}
+
+function FactionSystemConfigCard({ guildId, slot }: { guildId: string; slot: string }) {
+  const qc = useQueryClient();
+  const qs = `?slot=${slot}`;
+  const cfg = useQuery({
+    queryKey: ['factionSystemConfig', guildId, slot],
+    queryFn: () => api.get<FactionSystemConfigDto>(`/api/v2/guilds/${guildId}/factions/system-config${qs}`),
+  });
+  const [draftCh, setDraftCh] = useState<string>('');
+  useEffect(() => {
+    if (cfg.data) setDraftCh(cfg.data.factionChannelId ?? '');
+  }, [cfg.data]);
+
+  const save = useMutation({
+    mutationFn: (chId: string | null) =>
+      api.put(`/api/v2/guilds/${guildId}/factions/system-config${qs}`, { factionChannelId: chId }),
+    onSuccess: () => {
+      void qc.invalidateQueries({ queryKey: ['factionSystemConfig', guildId, slot] });
+      void qc.invalidateQueries({ queryKey: ['factions', guildId, slot] });
+    },
+  });
+
+  const dirty = (cfg.data?.factionChannelId ?? '') !== draftCh;
+
+  return (
+    <div className="rounded-md border border-border bg-bg-elev p-3 mb-4">
+      <p className="text-sm text-white font-medium mb-1">Sammel-Channel für Fraktionen</p>
+      <p className="text-xs text-muted mb-2">
+        Alle Fraktionen ohne eigenen Embed-Channel werden hier veröffentlicht.
+        Zusätzlich pflegt der Bot eine Übersichtsliste, die bei jeder Änderung aktualisiert wird.
+      </p>
+      <div className="flex gap-2 items-center">
+        <div className="flex-1">
+          <FactionChannelSelect
+            guildId={guildId}
+            value={draftCh}
+            onChange={setDraftCh}
+            placeholder="— kein Sammel-Channel —"
+          />
+        </div>
+        <Button
+          size="sm"
+          disabled={!dirty || save.isPending}
+          onClick={() => save.mutate(draftCh || null)}
+        >
+          {save.isPending ? 'Speichere…' : 'Speichern'}
+        </Button>
+      </div>
+      {save.error && <p className="text-red-400 text-xs mt-1">{(save.error as Error).message}</p>}
+      {cfg.data?.listMessageId && (
+        <p className="text-xs text-muted mt-1">📌 Übersicht aktiv (msg {cfg.data.listMessageId.slice(0, 8)}…)</p>
+      )}
+    </div>
+  );
+}
+
 function FactionsPanel({ guildId, slot }: { guildId: string; slot: string }) {
   const qc = useQueryClient();
   const qs = `?slot=${slot}`;
@@ -319,7 +505,6 @@ function FactionsPanel({ guildId, slot }: { guildId: string; slot: string }) {
     && validId(draft.deputyDiscordId)
     && validId(draft.treasurerDiscordId)
     && validId(draft.embedChannelId);
-
   function startEdit(f: FactionRow) {
     setEditingId(f.id);
     setDraft(draftFromRow(f));
@@ -335,6 +520,7 @@ function FactionsPanel({ guildId, slot }: { guildId: string; slot: string }) {
   return (
     <Card>
       <CardHeader><CardTitle>Fraktionssystem</CardTitle></CardHeader>
+      <FactionSystemConfigCard guildId={guildId} slot={slot} />
       {list.isLoading && <p className="text-muted">Lade…</p>}
       {list.error && <p className="text-red-400 text-sm">{(list.error as Error).message}</p>}
 
@@ -374,12 +560,15 @@ function FactionsPanel({ guildId, slot }: { guildId: string; slot: string }) {
                 </div>
               </div>
 
-              <div className="flex gap-2 pt-2 border-t border-border">
-                <Input
-                  placeholder="Discord-ID hinzufuegen"
-                  value={memberDraft[f.id]?.user ?? ''}
-                  onChange={e => setMemberDraft(s => ({ ...s, [f.id]: { user: e.target.value.trim(), role: s[f.id]?.role ?? 'MEMBER' } }))}
-                />
+              <div className="flex gap-2 pt-2 border-t border-border items-center">
+                <div className="flex-1">
+                  <MemberCombobox
+                    guildId={guildId}
+                    value={memberDraft[f.id]?.user ?? ''}
+                    onChange={uid => setMemberDraft(s => ({ ...s, [f.id]: { user: uid, role: s[f.id]?.role ?? 'MEMBER' } }))}
+                    placeholder="Mitglied suchen…"
+                  />
+                </div>
                 <Select
                   value={memberDraft[f.id]?.role ?? 'MEMBER'}
                   onChange={e => setMemberDraft(s => ({ ...s, [f.id]: { user: s[f.id]?.user ?? '', role: e.target.value } }))}
@@ -430,31 +619,42 @@ function FactionsPanel({ guildId, slot }: { guildId: string; slot: string }) {
             <option value="REQUEST">✋ REQUEST — Bewerbung erforderlich</option>
             <option value="CLOSED">🔒 CLOSED — nur Einladung</option>
           </Select>
-          <Input
-            placeholder="Embed-Channel-ID (optional)"
-            value={draft.embedChannelId}
-            onChange={e => setDraft({ ...draft, embedChannelId: e.target.value.trim() })}
-            maxLength={20}
-          />
+          <div>
+            <FactionChannelSelect
+              guildId={guildId}
+              value={draft.embedChannelId}
+              onChange={id => setDraft({ ...draft, embedChannelId: id })}
+              placeholder="— Sammel-Channel verwenden —"
+            />
+          </div>
 
-          <Input
-            placeholder="Leitung — Discord-ID (optional)"
-            value={draft.leaderDiscordId}
-            onChange={e => setDraft({ ...draft, leaderDiscordId: e.target.value.trim() })}
-            maxLength={20}
-          />
-          <Input
-            placeholder="Stellvertretung — Discord-ID (optional)"
-            value={draft.deputyDiscordId}
-            onChange={e => setDraft({ ...draft, deputyDiscordId: e.target.value.trim() })}
-            maxLength={20}
-          />
-          <Input
-            placeholder="Schatzmeister — Discord-ID (optional)"
-            value={draft.treasurerDiscordId}
-            onChange={e => setDraft({ ...draft, treasurerDiscordId: e.target.value.trim() })}
-            maxLength={20}
-          />
+          <div>
+            <span className="block text-xs text-muted mb-1">Leitung</span>
+            <MemberCombobox
+              guildId={guildId}
+              value={draft.leaderDiscordId}
+              onChange={id => setDraft({ ...draft, leaderDiscordId: id })}
+              placeholder="User suchen…"
+            />
+          </div>
+          <div>
+            <span className="block text-xs text-muted mb-1">Stellvertretung</span>
+            <MemberCombobox
+              guildId={guildId}
+              value={draft.deputyDiscordId}
+              onChange={id => setDraft({ ...draft, deputyDiscordId: id })}
+              placeholder="User suchen…"
+            />
+          </div>
+          <div>
+            <span className="block text-xs text-muted mb-1">Schatzmeister</span>
+            <MemberCombobox
+              guildId={guildId}
+              value={draft.treasurerDiscordId}
+              onChange={id => setDraft({ ...draft, treasurerDiscordId: id })}
+              placeholder="User suchen…"
+            />
+          </div>
           <div className="flex items-center gap-2">
             <input
               type="color"
