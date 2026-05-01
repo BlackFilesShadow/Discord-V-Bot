@@ -58,8 +58,14 @@ export function Shell({ title, back, sidebar, children }: ShellProps) {
               <span className="text-sm hidden sm:inline">Zurueck</span>
             </Link>
           )}
-          <Link to="/servers" className="v-logo font-extrabold text-xl tracking-tight focus-ring rounded-md px-1">V-Bot</Link>
-          <span className="text-white/20 hidden sm:inline">•</span>
+          <Link to="/servers" className="flex items-center gap-2 focus-ring rounded-md px-1 group">
+            <span className="relative inline-flex h-2.5 w-2.5">
+              <span className="absolute inline-flex h-full w-full rounded-full bg-accent opacity-60 group-hover:opacity-100" style={{ animation: 'pulse-ring 2s cubic-bezier(0,0,0.2,1) infinite' }} />
+              <span className="relative inline-flex h-2.5 w-2.5 rounded-full bg-gradient-to-br from-red-400 to-red-700 shadow-[0_0_8px_rgba(239,68,68,0.8)]" />
+            </span>
+            <span className="v-logo font-extrabold text-xl tracking-tight">V-Bot</span>
+          </Link>
+          <span className="text-white/15 hidden sm:inline">•</span>
           <span className="text-white/85 text-sm font-medium truncate hidden sm:inline">{title}</span>
         </div>
 
