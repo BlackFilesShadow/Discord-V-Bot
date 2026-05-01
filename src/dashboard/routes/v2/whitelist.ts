@@ -103,6 +103,12 @@ whitelistRouter.delete('/:gameId', requireGuildPermission('whitelist.manage'), a
         operation: 'WHITELIST_REMOVE', payload: { gameId },
       },
     });
+    // Cap-Reset (siehe /wl-remove): APPROVED-Requests des urspruenglichen
+    // Antragstellers auf CANCELLED setzen, sonst bleibt sein Cap belegt.
+    await tx.whitelistRequest.updateMany({
+      where: { guildId: scope.guildId, nitradoConnId: connId, gameId, status: 'APPROVED' },
+      data: { status: 'CANCELLED' },
+    });
   });
   logAuditDb('WHITELIST_REMOVE', 'WHITELIST', { actorUserId: req.auth!.userId, guildId: scope.guildId, details: { slotId: connId, gameId } });
   emitGuildEvent(scope.guildId, { type: 'whitelist.changed', payload: { guildId: scope.guildId, action: 'removed' } });
@@ -280,6 +286,11 @@ whitelistRouter.post('/sync', requireGuildPermission('whitelist.manage'), async 
         where: { guildId: scope.guildId, nitradoConnId: connId, gameId: { in: onlyLocal } },
       });
       dbDeleted = r.count;
+      // Cap-Reset fuer alle betroffenen User
+      await prisma.whitelistRequest.updateMany({
+        where: { guildId: scope.guildId, nitradoConnId: connId, gameId: { in: onlyLocal }, status: 'APPROVED' },
+        data: { status: 'CANCELLED' },
+      });
     }
   }
   if (direction === 'push' || direction === 'merge') {

@@ -66,13 +66,21 @@ export const whitelistCommand: Command = {
     });
     if (openSame) { await reply(i, 'Es gibt bereits eine offene Anfrage fuer diese ID.'); return; }
 
-    // Schon offene Anfrage von DIESEM User (egal welche gameId)?
-    // Verhindert Spam / Mehrfach-Identitaeten pro Discord-Account.
-    const openOwn = await prisma.whitelistRequest.findFirst({
-      where: { guildId: scope.guildId, nitradoConnId: scope.nitradoConnId!, requesterDiscordId: scope.actorDiscordId, status: 'PENDING' },
+    // Spam-Schutz: max 8 aktive Anfragen pro User (PENDING + APPROVED).
+    // APPROVED zaehlt mit, damit ein Discord-Account nicht beliebig viele
+    // Spielernamen sammeln kann. Wird ein Whitelist-Eintrag spaeter geloescht,
+    // setzt der Loesch-Pfad die zugehoerige APPROVED-Anfrage auf CANCELLED,
+    // sodass der Cap automatisch frei wird.
+    const MAX_REQUESTS_PER_USER = 8;
+    const activeCount = await prisma.whitelistRequest.count({
+      where: {
+        guildId: scope.guildId, nitradoConnId: scope.nitradoConnId!,
+        requesterDiscordId: scope.actorDiscordId,
+        status: { in: ['PENDING', 'APPROVED'] },
+      },
     });
-    if (openOwn) {
-      await reply(i, `Du hast bereits eine offene Anfrage (\`${openOwn.gameId}\`). Bitte warte auf die Entscheidung.`);
+    if (activeCount >= MAX_REQUESTS_PER_USER) {
+      await reply(i, `Du hast bereits ${activeCount} aktive Whitelist-Eintraege/Anfragen (Maximum: ${MAX_REQUESTS_PER_USER}). Bitte einen Admin um Entfernung eines bestehenden Eintrags.`);
       return;
     }
 
@@ -169,6 +177,12 @@ export const wlRemoveCommand: Command = {
       if (out.count > 0) {
         await tx.nitradoJob.create({
           data: { guildId: scope.guildId, nitradoConnId: scope.nitradoConnId!, operation: 'WHITELIST_REMOVE', payload: { gameId: id } },
+        });
+        // Cap-Reset: zugehoerige APPROVED-Requests auf CANCELLED setzen,
+        // damit der Spam-Cap des urspruenglichen Antragstellers wieder frei wird.
+        await tx.whitelistRequest.updateMany({
+          where: { guildId: scope.guildId, nitradoConnId: scope.nitradoConnId!, gameId: id, status: 'APPROVED' },
+          data: { status: 'CANCELLED' },
         });
       }
       return out.count;
