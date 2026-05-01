@@ -12,6 +12,7 @@ import { config } from '../config';
 import { logger } from '../utils/logger';
 import { authRouter, apiRouter, adminRouter, testRouter, webhookRouter, setWebhookClient } from './routes';
 import { v2Router } from './routes/v2';
+import { discordHealthRouter } from './routes/discordHealth';
 import { setDashboardClient } from './clientRegistry';
 import { initSocketIo } from './socket';
 import { metricsRegistry } from '../utils/metrics';
@@ -98,6 +99,9 @@ export function startDashboard(client?: Client): void {
   // Webhook-Endpunkt OHNE Session-Auth (eigene HMAC-Pruefung im Router).
   // MUSS vor dem JSON-Bodyparser bleiben? -> raw-Parser ist im Router lokal.
   app.use('/webhooks', apiLimiter, webhookRouter);
+  // Discord-Setup-Diagnose: MUSS vor /api stehen, sonst greift apiRouter
+  // mit requireAuth zuerst und blockt den Owner-Self-Service.
+  app.use('/api/health', apiLimiter, discordHealthRouter);
   app.use('/api', apiLimiter, apiRouter);
   app.use('/api/v2', apiLimiter, v2Router);
   app.use('/admin', apiLimiter, adminRouter);
