@@ -166,6 +166,27 @@ async function main(): Promise<void> {
     } catch (e) {
       logger.warn(`GuildAwareness-Sync für ${guild.id} fehlgeschlagen:`, e as Error);
     }
+    // Phase 3-Final: DashboardGuildLink upserten + Owner-DM mit Dashboard-URL
+    try {
+      const { getOrCreate: getOrCreateLink } = await import('./modules/dashboard/repository.js');
+      const { asGuildId, asUserDiscordId } = await import('./types/scope.js');
+      const link = await getOrCreateLink(asGuildId(guild.id), asUserDiscordId(guild.ownerId));
+      const dashboardBase = config.dashboard.url ?? `http://localhost:${config.dashboard.port}`;
+      const url = `${dashboardBase.replace(/\/$/, '')}/servers/${guild.id}`;
+      try {
+        const owner = await guild.fetchOwner();
+        await owner.send(
+          `Vielen Dank, dass du **V-Bot** zu **${guild.name}** hinzugefuegt hast!\n` +
+          `Dashboard-Identifier: \`${link.alias5}\`\n` +
+          `Direktlink: ${url}`,
+        ).catch(() => undefined);
+      } catch {
+        // Owner nicht erreichbar — silent
+      }
+      logger.info(`DashboardGuildLink fuer ${guild.id} angelegt (alias5=${link.alias5})`);
+    } catch (e) {
+      logger.warn(`DashboardGuildLink-Init fuer ${guild.id} fehlgeschlagen:`, e as Error);
+    }
   });
 
   // Bei Aenderungen an der Guild (Name, Owner, Beschreibung): Stammdaten aktualisieren
@@ -188,6 +209,18 @@ async function main(): Promise<void> {
     startDashboard(client);
   } catch (error) {
     logger.error('Dashboard konnte nicht gestartet werden:', error);
+  }
+
+  // Phase 3-Final: Hintergrund-Worker starten (NitradoJob-Outbox + Token/ADM-Crons).
+  try {
+    const { startNitradoJobWorker } = await import('./modules/nitrado/jobWorker.js');
+    const { startTokenValidationCron } = await import('./modules/nitrado/tokenValidationCron.js');
+    const { startAdmSyncCron } = await import('./modules/nitrado/admSyncCron.js');
+    startNitradoJobWorker();
+    startTokenValidationCron(client);
+    startAdmSyncCron();
+  } catch (e) {
+    logger.warn('Nitrado-Worker-Init fehlgeschlagen:', e as Error);
   }
 
   // Commands bei Discord registrieren – IMMER global (auf allen Servern verfügbar).

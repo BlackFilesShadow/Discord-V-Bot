@@ -8,6 +8,8 @@ import { answerQuestion } from '../modules/ai/aiHandler';
 import { sanitizeForPrompt, withTimeout, safeSend } from '../utils/safeSend';
 import { resolveCustomEmotes } from '../modules/ai/emoteResolver';
 import { syncMemberProfile } from '../modules/ai/memberAwareness';
+import { maybeGrantStartBalance } from '../modules/economy/repository';
+import { asGuildId, asUserDiscordId } from '../types/scope';
 
 // Anti-Raid: Speichert Join-Timestamps
 const recentJoins: Map<string, number[]> = new Map();
@@ -93,6 +95,18 @@ const guildMemberAddEvent: BotEvent = {
         } catch (roleError) {
           logger.error(`Auto-Rolle ${autoRole.roleId} konnte nicht vergeben werden:`, roleError);
         }
+      }
+
+      // Phase 3-Final: Startguthaben (idempotent, prueft EconomyConfig.startBalance)
+      try {
+        const grantResult = await maybeGrantStartBalance(asGuildId(m.guild.id), asUserDiscordId(m.user.id));
+        if (grantResult.granted) {
+          logAudit('ECON_STARTBALANCE_GRANTED', 'ECONOMY', {
+            guildId: m.guild.id, userDiscordId: m.user.id, amount: grantResult.amount.toString(),
+          });
+        }
+      } catch (econErr) {
+        logger.warn(`Startguthaben fuer ${m.user.id} in ${m.guild.id} fehlgeschlagen:`, econErr as Error);
       }
 
       // Audit-Log
