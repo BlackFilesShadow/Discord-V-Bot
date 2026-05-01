@@ -9,7 +9,7 @@ import { Input } from '@/components/ui/Input';
 import { Switch } from '@/components/ui/Switch';
 import { Select } from '@/components/ui/Select';
 import { useGuildLiveUpdates } from '@/lib/useGuildLiveUpdates';
-import { Settings, Users, Shield, Coins, Link as LinkIcon, Trash2, Plus, Check, X } from 'lucide-react';
+import { Settings, Users, Shield, Coins, Link as LinkIcon, Trash2, Plus, Check, X, Banknote, Dice5 } from 'lucide-react';
 
 type Tab = 'settings' | 'factions' | 'whitelist' | 'economy' | 'links';
 
@@ -25,6 +25,27 @@ interface EconomyConfigState {
   emoji: string;
   startBalance: number;
   playtimeRewardPercent: number;
+  bankInterestPercent: number;
+  bankChannelId: string | null;
+}
+
+interface ChannelOption { id: string; name: string; type: number; parentId: string | null; }
+
+interface CasinoGameRow {
+  type: 'SLOT' | 'COINFLIP' | 'DICE' | 'BLACKJACK';
+  enabled: boolean;
+  winChancePct: number;
+  payoutMult: number;
+  minBet: string;
+  maxBet: string;
+}
+
+interface CasinoStatRow {
+  type: 'SLOT' | 'COINFLIP' | 'DICE' | 'BLACKJACK';
+  wins: number;
+  losses: number;
+  bet: string;
+  payout: string;
 }
 
 const STEAM64_RE = /^7656\d{13}$/;
@@ -57,7 +78,7 @@ export default function ServerSlot() {
 
   const updateEconomy = useMutation({
     mutationFn: (patch: Partial<EconomyConfigState>) =>
-      api.patch(`/api/v2/guilds/${guildId}/economy/config`, patch),
+      api.put(`/api/v2/guilds/${guildId}/economy/config`, patch),
     onSuccess: () => qc.invalidateQueries({ queryKey: ['economy', guildId] }),
   });
 
@@ -122,18 +143,14 @@ export default function ServerSlot() {
           <WhitelistPanel guildId={guildId} slot={slot} />
         )}
 
-        {tab === 'economy' && (
-          <Card>
-            <CardHeader><CardTitle>Economy-Konfiguration</CardTitle></CardHeader>
-            {economy.isLoading && <p className="text-muted">Lade…</p>}
-            {economy.data && (
-              <EconomyForm
-                value={economy.data}
-                onSave={patch => updateEconomy.mutate(patch)}
-                pending={updateEconomy.isPending}
-              />
-            )}
-          </Card>
+        {tab === 'economy' && guildId && (
+          <EconomyTab
+            guildId={guildId}
+            data={economy.data}
+            loading={economy.isLoading}
+            onSave={patch => updateEconomy.mutate(patch)}
+            pending={updateEconomy.isPending}
+          />
         )}
 
         {tab === 'links' && guildId && slot && (
@@ -506,6 +523,59 @@ function EconomyLinksPanel({ guildId, slot }: { guildId: string; slot: string })
 }
 
 // ----------------------------------------------------------------------------
+// Economy Tab (Konfiguration + Bank + Casino + Admin-Pay)
+// ----------------------------------------------------------------------------
+
+function EconomyTab({
+  guildId, data, loading, onSave, pending,
+}: {
+  guildId: string;
+  data: EconomyConfigState | undefined;
+  loading: boolean;
+  onSave: (p: Partial<EconomyConfigState>) => void;
+  pending: boolean;
+}) {
+  const channels = useQuery({
+    queryKey: ['guild-channels', guildId],
+    queryFn: () => api.get<{ channels: ChannelOption[] }>(`/api/v2/guilds/${guildId}/channels`),
+    retry: false,
+  });
+  const channelOptions = channels.data?.channels ?? [];
+  const channelsForbidden = channels.isError;
+
+  return (
+    <div className="space-y-6">
+      <Card>
+        <CardHeader><CardTitle>Economy-Konfiguration</CardTitle></CardHeader>
+        {loading && <p className="text-muted">Lade…</p>}
+        {data && <EconomyForm value={data} onSave={onSave} pending={pending} />}
+      </Card>
+
+      {data && (
+        <Card>
+          <CardHeader><CardTitle><span className="inline-flex items-center gap-2"><Banknote className="h-4 w-4" />Bank</span></CardTitle></CardHeader>
+          <BankForm
+            value={data}
+            onSave={onSave}
+            pending={pending}
+            channels={channelOptions}
+            channelsForbidden={channelsForbidden}
+          />
+        </Card>
+      )}
+
+      <Card>
+        <CardHeader><CardTitle><span className="inline-flex items-center gap-2"><Dice5 className="h-4 w-4" />Casino-Games</span></CardTitle></CardHeader>
+        <CasinoTable guildId={guildId} />
+      </Card>
+
+      <Card>
+        <CardHeader><CardTitle>Admin-Auszahlung</CardTitle></CardHeader>
+        <AdminPayForm guildId={guildId} />
+      </Card>
+    </div>
+  );
+}
 
 function EconomyForm({
   value, onSave, pending,
@@ -542,9 +612,263 @@ function EconomyForm({
           />
         </label>
       </div>
-      <Button onClick={() => onSave(draft)} disabled={pending}>
+      <Button onClick={() => onSave({
+        enabled: draft.enabled,
+        currencyName: draft.currencyName,
+        emoji: draft.emoji,
+        startBalance: draft.startBalance,
+        playtimeRewardPercent: draft.playtimeRewardPercent,
+      })} disabled={pending}>
         {pending ? 'Speichere…' : 'Update'}
       </Button>
+    </div>
+  );
+}
+
+// ----------------------------------------------------------------------------
+// BankForm
+// ----------------------------------------------------------------------------
+
+function BankForm({
+  value, onSave, pending, channels, channelsForbidden,
+}: {
+  value: EconomyConfigState;
+  onSave: (p: Partial<EconomyConfigState>) => void;
+  pending: boolean;
+  channels: ChannelOption[];
+  channelsForbidden: boolean;
+}) {
+  const [bankChannelId, setBankChannelId] = useState<string>(value.bankChannelId ?? '');
+  const [interest, setInterest] = useState<number>(value.bankInterestPercent);
+  const textChannels = channels.filter(c => c.type === 0 || c.type === 5);
+
+  return (
+    <div className="space-y-4">
+      <p className="text-xs text-muted">
+        Der Bank-Channel zeigt Kontostaende und Bankaktionen an. Zinsen werden taeglich auf das Bankguthaben gutgeschrieben.
+      </p>
+      <div className="grid grid-cols-2 gap-3">
+        <label className="text-sm">
+          <span className="text-muted">Bank-Channel</span>
+          {channelsForbidden ? (
+            <Input value={bankChannelId} onChange={e => setBankChannelId(e.target.value.trim())} placeholder="Channel-ID (Snowflake)" />
+          ) : (
+            <Select value={bankChannelId} onChange={e => setBankChannelId(e.target.value)}>
+              <option value="">— kein Channel —</option>
+              {textChannels.map(c => (
+                <option key={c.id} value={c.id}>#{c.name}</option>
+              ))}
+            </Select>
+          )}
+        </label>
+        <label className="text-sm">
+          <span className="text-muted">Tageszins (%)</span>
+          <Input
+            type="number" min={0} max={100} step={1} value={interest}
+            onChange={e => setInterest(Math.max(0, Math.min(100, Math.floor(Number(e.target.value) || 0))))}
+          />
+        </label>
+      </div>
+      <Button
+        onClick={() => onSave({
+          bankChannelId: bankChannelId === '' ? null : bankChannelId,
+          bankInterestPercent: interest,
+        })}
+        disabled={pending || (bankChannelId !== '' && !SNOWFLAKE_RE.test(bankChannelId))}
+      >
+        {pending ? 'Speichere…' : 'Bank speichern'}
+      </Button>
+    </div>
+  );
+}
+
+// ----------------------------------------------------------------------------
+// Casino-Table + Stats
+// ----------------------------------------------------------------------------
+
+const CASINO_TYPES = ['SLOT', 'COINFLIP', 'DICE', 'BLACKJACK'] as const;
+
+function CasinoTable({ guildId }: { guildId: string }) {
+  const qc = useQueryClient();
+  const games = useQuery({
+    queryKey: ['casino-games', guildId],
+    queryFn: () => api.get<{ games: CasinoGameRow[] }>(`/api/v2/guilds/${guildId}/casino/games`),
+  });
+  const stats = useQuery({
+    queryKey: ['casino-stats', guildId],
+    queryFn: () => api.get<{ stats: CasinoStatRow[] }>(`/api/v2/guilds/${guildId}/casino/stats`),
+  });
+
+  const update = useMutation({
+    mutationFn: (vars: { type: string; patch: Partial<CasinoGameRow> }) =>
+      api.put(`/api/v2/guilds/${guildId}/casino/games/${vars.type}`, vars.patch),
+    onSuccess: () => {
+      void qc.invalidateQueries({ queryKey: ['casino-games', guildId] });
+      void qc.invalidateQueries({ queryKey: ['casino-stats', guildId] });
+    },
+  });
+
+  const byType = new Map<string, CasinoGameRow>();
+  for (const g of games.data?.games ?? []) byType.set(g.type, g);
+  const statsByType = new Map<string, CasinoStatRow>();
+  for (const s of stats.data?.stats ?? []) statsByType.set(s.type, s);
+
+  return (
+    <div className="space-y-3">
+      {games.isLoading && <p className="text-muted text-sm">Lade…</p>}
+      {games.isError && <p className="text-danger text-sm">Casino-Daten nicht verfuegbar.</p>}
+      <div className="overflow-x-auto">
+        <table className="w-full text-sm">
+          <thead className="text-xs text-muted">
+            <tr>
+              <th className="text-left py-2">Game</th>
+              <th className="text-left py-2">Aktiv</th>
+              <th className="text-left py-2">Win %</th>
+              <th className="text-left py-2">Payout x</th>
+              <th className="text-left py-2">Min</th>
+              <th className="text-left py-2">Max</th>
+              <th className="text-left py-2">W/L</th>
+              <th />
+            </tr>
+          </thead>
+          <tbody>
+            {CASINO_TYPES.map(type => (
+              <CasinoRow
+                key={type}
+                type={type}
+                game={byType.get(type) ?? null}
+                stat={statsByType.get(type) ?? null}
+                onSave={patch => update.mutate({ type, patch })}
+                pending={update.isPending}
+              />
+            ))}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  );
+}
+
+function CasinoRow({
+  type, game, stat, onSave, pending,
+}: {
+  type: string;
+  game: CasinoGameRow | null;
+  stat: CasinoStatRow | null;
+  onSave: (p: Partial<CasinoGameRow>) => void;
+  pending: boolean;
+}) {
+  const [draft, setDraft] = useState<CasinoGameRow>({
+    type: type as CasinoGameRow['type'],
+    enabled: game?.enabled ?? false,
+    winChancePct: game?.winChancePct ?? 50,
+    payoutMult: game?.payoutMult ?? 2,
+    minBet: game?.minBet ?? '1',
+    maxBet: game?.maxBet ?? '1000',
+  });
+  const wl = stat ? `${stat.wins} / ${stat.losses}` : '— / —';
+  const isValid =
+    draft.winChancePct >= 1 && draft.winChancePct <= 99 &&
+    draft.payoutMult >= 1 && draft.payoutMult <= 100 &&
+    /^\d+$/.test(draft.minBet) && /^\d+$/.test(draft.maxBet) &&
+    BigInt(draft.minBet) >= 1n && BigInt(draft.maxBet) >= BigInt(draft.minBet);
+
+  return (
+    <tr className="border-t border-border">
+      <td className="py-2 pr-2 font-medium">{type}</td>
+      <td className="py-2 pr-2">
+        <Switch checked={draft.enabled} onChange={v => setDraft({ ...draft, enabled: v })} />
+      </td>
+      <td className="py-2 pr-2">
+        <Input type="number" min={1} max={99} value={draft.winChancePct}
+          onChange={e => setDraft({ ...draft, winChancePct: Math.max(1, Math.min(99, Math.floor(Number(e.target.value) || 0))) })}
+          className="w-20"
+        />
+      </td>
+      <td className="py-2 pr-2">
+        <Input type="number" min={1} max={100} step="0.1" value={draft.payoutMult}
+          onChange={e => setDraft({ ...draft, payoutMult: Math.max(1, Math.min(100, Number(e.target.value) || 1)) })}
+          className="w-24"
+        />
+      </td>
+      <td className="py-2 pr-2">
+        <Input value={draft.minBet} onChange={e => setDraft({ ...draft, minBet: e.target.value.trim() })} className="w-24" />
+      </td>
+      <td className="py-2 pr-2">
+        <Input value={draft.maxBet} onChange={e => setDraft({ ...draft, maxBet: e.target.value.trim() })} className="w-28" />
+      </td>
+      <td className="py-2 pr-2 text-muted">{wl}</td>
+      <td className="py-2">
+        <Button size="sm" disabled={pending || !isValid} onClick={() => onSave({
+          enabled: draft.enabled,
+          winChancePct: draft.winChancePct,
+          payoutMult: draft.payoutMult,
+          minBet: draft.minBet,
+          maxBet: draft.maxBet,
+        })}>
+          {pending ? '…' : 'Speichern'}
+        </Button>
+      </td>
+    </tr>
+  );
+}
+
+// ----------------------------------------------------------------------------
+// Admin-Pay
+// ----------------------------------------------------------------------------
+
+function AdminPayForm({ guildId }: { guildId: string }) {
+  const [userId, setUserId] = useState('');
+  const [delta, setDelta] = useState('');
+  const [reason, setReason] = useState('');
+  const [msg, setMsg] = useState<{ ok: boolean; text: string } | null>(null);
+
+  const pay = useMutation({
+    mutationFn: () => api.post(`/api/v2/guilds/${guildId}/economy/accounts/${userId}/admin-pay`, {
+      delta, reason,
+    }),
+    onSuccess: () => {
+      setMsg({ ok: true, text: `Gebucht: ${delta} fuer ${userId}` });
+      setUserId(''); setDelta(''); setReason('');
+    },
+    onError: (e: unknown) => {
+      const text = e instanceof Error ? e.message : 'Fehler.';
+      setMsg({ ok: false, text });
+    },
+  });
+
+  const deltaValid = /^-?\d+$/.test(delta) && delta !== '0' && delta !== '-0';
+  const userValid = SNOWFLAKE_RE.test(userId);
+  const reasonValid = reason.trim().length >= 3 && reason.trim().length <= 200;
+
+  return (
+    <div className="space-y-3">
+      <p className="text-xs text-muted">
+        Direkt-Buchung auf das Wallet eines Members. Positive Werte = Gutschrift, negative = Abbuchung. Wird im Audit-Log erfasst.
+      </p>
+      <div className="grid grid-cols-2 gap-3">
+        <label className="text-sm">
+          <span className="text-muted">Discord-User-ID</span>
+          <Input value={userId} onChange={e => setUserId(e.target.value.trim())} placeholder="17–20 Ziffern" />
+        </label>
+        <label className="text-sm">
+          <span className="text-muted">Betrag (Delta)</span>
+          <Input value={delta} onChange={e => setDelta(e.target.value.trim())} placeholder="z. B. 5000 oder -200" />
+        </label>
+      </div>
+      <label className="text-sm block">
+        <span className="text-muted">Begruendung (3–200 Zeichen)</span>
+        <Input value={reason} onChange={e => setReason(e.target.value)} maxLength={200} />
+      </label>
+      <Button
+        disabled={pay.isPending || !userValid || !deltaValid || !reasonValid}
+        onClick={() => { setMsg(null); pay.mutate(); }}
+      >
+        {pay.isPending ? 'Buche…' : 'Buchung ausfuehren'}
+      </Button>
+      {msg && (
+        <p className={`text-xs ${msg.ok ? 'text-green-400' : 'text-danger'}`}>{msg.text}</p>
+      )}
     </div>
   );
 }
