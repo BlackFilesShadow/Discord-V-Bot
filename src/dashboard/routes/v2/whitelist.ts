@@ -132,14 +132,18 @@ whitelistRouter.post('/requests/:id/decision', requireGuildPermission('whitelist
   if (typeof approve !== 'boolean') { res.status(400).json({ error: 'approve muss boolean sein.' }); return; }
   if (reason !== undefined && (typeof reason !== 'string' || reason.length > 500)) { res.status(400).json({ error: 'reason max 500.' }); return; }
 
+  // Slot-Scope erzwingen: Decision nur fuer den aktuell ausgewaehlten Nitrado-Slot.
+  const connId = await activeSlotId(scope.guildId, req.query.slot);
+  if (!connId) { res.status(404).json({ error: 'Kein Nitrado-Slot.' }); return; }
+
   const reqRow = await prisma.whitelistRequest.findFirst({
-    where: { id: String(req.params.id), guildId: scope.guildId },
+    where: { id: String(req.params.id), guildId: scope.guildId, nitradoConnId: connId },
   });
   if (!reqRow) { res.status(404).json({ error: 'Request nicht gefunden.' }); return; }
 
   // Atomic CAS: nur entscheiden wenn noch PENDING (schliesst Race mit Discord-Button).
   const cas = await prisma.whitelistRequest.updateMany({
-    where: { id: reqRow.id, guildId: scope.guildId, status: 'PENDING' },
+    where: { id: reqRow.id, guildId: scope.guildId, nitradoConnId: connId, status: 'PENDING' },
     data: {
       status: approve ? 'APPROVED' : 'DENIED',
       decidedAt: new Date(),

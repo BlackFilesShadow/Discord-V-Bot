@@ -412,7 +412,12 @@ function WhitelistPanel({ guildId, slot }: { guildId: string; slot: string }) {
   });
 
   return (
-    <div className="space-y-6">
+    <div className="grid gap-6 lg:grid-cols-2 items-start">
+      <div className="space-y-6">
+        <WhitelistChannelsCard guildId={guildId} slot={slot} />
+      </div>
+
+      <div className="space-y-6">
       <Card>
         <CardHeader><CardTitle>Whitelist (Spielername)</CardTitle></CardHeader>
         <div className="flex gap-2 mb-4">
@@ -432,7 +437,7 @@ function WhitelistPanel({ guildId, slot }: { guildId: string; slot: string }) {
         {add.error && <p className="text-red-400 text-xs mb-2">{(add.error as Error).message}</p>}
 
         {entries.isLoading && <p className="text-muted">Lade…</p>}
-        <div className="space-y-1">
+        <div className="space-y-1 max-h-72 overflow-y-auto pr-1">
           {entries.data?.entries.length === 0 && <p className="text-muted text-sm">Keine Eintraege.</p>}
           {entries.data?.entries.map(e => (
             <div key={e.gameId} className="flex items-center justify-between bg-bg-elev rounded-md px-3 py-1.5 border border-border text-sm">
@@ -500,7 +505,7 @@ function WhitelistPanel({ guildId, slot }: { guildId: string; slot: string }) {
               {syncDiff.onlyLocal.length > 0 && (
                 <div>
                   <div className="text-muted mb-1">Nur in DB ({syncDiff.onlyLocal.length}):</div>
-                  <div className="flex flex-wrap gap-1">
+                  <div className="flex flex-wrap gap-1 max-h-32 overflow-y-auto">
                     {syncDiff.onlyLocal.slice(0, 50).map(n => (
                       <span key={`l-${n}`} className="px-1.5 py-0.5 rounded bg-bg border border-border font-mono">{n}</span>
                     ))}
@@ -511,7 +516,7 @@ function WhitelistPanel({ guildId, slot }: { guildId: string; slot: string }) {
               {syncDiff.onlyRemote.length > 0 && (
                 <div>
                   <div className="text-muted mb-1">Nur auf Nitrado ({syncDiff.onlyRemote.length}):</div>
-                  <div className="flex flex-wrap gap-1">
+                  <div className="flex flex-wrap gap-1 max-h-32 overflow-y-auto">
                     {syncDiff.onlyRemote.slice(0, 50).map(n => (
                       <span key={`r-${n}`} className="px-1.5 py-0.5 rounded bg-bg border border-border font-mono">{n}</span>
                     ))}
@@ -527,7 +532,7 @@ function WhitelistPanel({ guildId, slot }: { guildId: string; slot: string }) {
       <Card>
         <CardHeader><CardTitle>Pending-Requests</CardTitle></CardHeader>
         {requests.isLoading && <p className="text-muted">Lade…</p>}
-        <div className="space-y-2">
+        <div className="space-y-2 max-h-96 overflow-y-auto pr-1">
           {requests.data?.requests.length === 0 && <p className="text-muted text-sm">Keine offenen Requests.</p>}
           {requests.data?.requests.map(r => (
             <div key={r.id} className="bg-bg-elev rounded-md border border-border p-3 space-y-2">
@@ -564,8 +569,7 @@ function WhitelistPanel({ guildId, slot }: { guildId: string; slot: string }) {
           ))}
         </div>
       </Card>
-
-      <WhitelistChannelsCard guildId={guildId} slot={slot} />
+      </div>
     </div>
   );
 }
