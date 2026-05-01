@@ -1308,3 +1308,338 @@ model SelfRoleOption {
   @@unique([menuId, roleId])
   @@index([menuId, position])
 }
+
+// ============================================================
+// DASHBOARD V2 — MULTI-GUILD SELF-SERVICE
+// Strikte Guild + Nitrado-Server-Slot-Trennung. Siehe plan.md Phase 3.5.
+// ============================================================
+
+// Aktivierte Guilds im Dashboard. Wenn der Owner sich einloggt + den
+// Bot bereits in der Guild hat, wird hier ein Eintrag angelegt.
+model DashboardGuildLink {
+  id             String   @id @default(cuid())
+  guildId        String   @unique
+  ownerDiscordId String
+  alias5         String   @unique @db.VarChar(5) // 5-stelliger Identifier (auch im Dashboard sichtbar)
+  isActive       Boolean  @default(true)
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+
+  @@index([ownerDiscordId])
+}
+
+enum NitradoConnectionStatus {
+  ACTIVE
+  EXPIRED
+  REVOKED
+  PROBE_FAILED
+}
+
+// Pro Guild bis zu 5 Slots fuer Nitrado-Tokens. Token verschluesselt.
+model NitradoConnection {
+  id               String                  @id @default(cuid())
+  guildId          String
+  slot             Int // 1..5
+  alias            String                  @db.VarChar(40)
+  alias5           String                  @unique @db.VarChar(5) // pro-Slot eigener 5-stelliger Identifier
+  encryptedToken   String                  @db.Text
+  nitradoServerId  String?
+  serviceId        String? // Nitrado-Service-ID
+  status           NitradoConnectionStatus @default(ACTIVE)
+  lastValidatedAt  DateTime?
+  lastErrorMessage String?                 @db.Text
+  addedByDiscordId String
+  createdAt        DateTime                @default(now())
+  updatedAt        DateTime                @updatedAt
+
+  serverSettings    ServerSettings[]
+  whitelistEntries  WhitelistEntry[]
+  whitelistRequests WhitelistRequest[]
+  factions          Faction[]
+  economyLinks      EconomyLink[]
+
+  @@unique([guildId, slot])
+  @@index([guildId])
+}
+
+// Subuser-Permissions pro Guild. Owner darf delegieren, ausser
+// `nitrado.manage` (hardcoded blockiert auf Code-Ebene, hier nur Doku).
+model GuildPermissionGrant {
+  id                 String   @id @default(cuid())
+  guildId            String
+  userDiscordId      String
+  permissions        Json // { "economy.manage": true, "whitelist.view": true, ... }
+  grantedByDiscordId String
+  createdAt          DateTime @default(now())
+  updatedAt          DateTime @updatedAt
+
+  @@unique([guildId, userDiscordId])
+  @@index([guildId])
+}
+
+// Settings pro (Guild + Nitrado-Slot). Whitelist/Economy/PermaOnly-Toggles.
+model ServerSettings {
+  id                        String            @id @default(cuid())
+  guildId                   String
+  nitradoConnId             String
+  nitradoConn               NitradoConnection @relation(fields: [nitradoConnId], references: [id], onDelete: Cascade)
+  whitelistActive           Boolean           @default(false)
+  economyActive             Boolean           @default(false)
+  permaOnly                 Boolean           @default(false)
+  whitelistChannelId        String?
+  whitelistRequestChannelId String?
+  createdAt                 DateTime          @default(now())
+  updatedAt                 DateTime          @updatedAt
+
+  @@unique([guildId, nitradoConnId])
+  @@index([guildId])
+}
+
+// Fraktionen pro (Guild + Nitrado-Slot). Embed-Push beim Save.
+model Faction {
+  id                 String            @id @default(cuid())
+  guildId            String
+  nitradoConnId      String
+  nitradoConn        NitradoConnection @relation(fields: [nitradoConnId], references: [id], onDelete: Cascade)
+  name               String            @db.VarChar(60)
+  flagUrl            String            @db.Text
+  bannerUrl          String?           @db.Text
+  mediaUrl           String?           @db.Text // optionales JPG/MP4
+  leaderDiscordId    String?
+  treasurerDiscordId String?
+  embedChannelId     String?
+  embedMessageId     String?
+  joinPolicy         String            @default("REQUEST") // 'OPEN' | 'REQUEST' | 'CLOSED'
+  isActive           Boolean           @default(true)
+  createdAt          DateTime          @default(now())
+  updatedAt          DateTime          @updatedAt
+  members            FactionMember[]
+
+  @@unique([guildId, nitradoConnId, name])
+  @@index([guildId])
+}
+
+model FactionMember {
+  id            String   @id @default(cuid())
+  factionId     String
+  faction       Faction  @relation(fields: [factionId], references: [id], onDelete: Cascade)
+  userDiscordId String
+  role          String   @default("MEMBER") // 'LEADER' | 'TREASURER' | 'MEMBER' | 'PENDING'
+  joinedAt      DateTime @default(now())
+
+  @@unique([factionId, userDiscordId])
+  @@index([userDiscordId])
+}
+
+// Whitelist auf Nitrado. DB ist Spiegel der Nitrado-API + lokale History.
+model WhitelistEntry {
+  id                  String            @id @default(cuid())
+  guildId             String
+  nitradoConnId       String
+  nitradoConn         NitradoConnection @relation(fields: [nitradoConnId], references: [id], onDelete: Cascade)
+  gameId              String // Steam64
+  approvedByDiscordId String
+  source              String            @default("DIRECT") // 'DIRECT' | 'REQUEST' | 'IMPORT'
+  approvedAt          DateTime          @default(now())
+
+  @@unique([guildId, nitradoConnId, gameId])
+  @@index([guildId])
+}
+
+enum WhitelistRequestStatus {
+  PENDING
+  APPROVED
+  DENIED
+  CANCELLED
+}
+
+model WhitelistRequest {
+  id                 String                 @id @default(cuid())
+  guildId            String
+  nitradoConnId      String
+  nitradoConn        NitradoConnection      @relation(fields: [nitradoConnId], references: [id], onDelete: Cascade)
+  channelId          String
+  messageId          String?                @unique
+  requesterDiscordId String
+  gameId             String
+  status             WhitelistRequestStatus @default(PENDING)
+  decidedByDiscordId String?
+  decidedAt          DateTime?
+  reason             String?                @db.Text
+  createdAt          DateTime               @default(now())
+
+  @@index([guildId, status])
+}
+
+// Economy-Konfiguration pro Guild.
+model EconomyConfig {
+  id                    String   @id @default(cuid())
+  guildId               String   @unique
+  currencyName          String   @default("Coins") @db.VarChar(40)
+  emoji                 String   @default("💰") @db.VarChar(40)
+  enabled               Boolean  @default(false)
+  startBalance          Int      @default(0) // bei guildMemberAdd, optional
+  playtimeRewardPercent Int      @default(5) // 5..unbegrenzt — pro Spielminute Coins
+  bankChannelId         String?
+  bankInterestPercent   Int      @default(0) // pro Tag, optional
+  createdAt             DateTime @default(now())
+  updatedAt             DateTime @updatedAt
+
+  @@index([guildId])
+}
+
+model EconomyAccount {
+  id             String   @id @default(cuid())
+  guildId        String
+  userDiscordId  String
+  walletBalance  BigInt   @default(0) // direkt nutzbar (Casino, Pay)
+  bankBalance    BigInt   @default(0) // sicher (Zinsen, Transfer)
+  lifetimeEarned BigInt   @default(0)
+  lifetimeSpent  BigInt   @default(0)
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+
+  @@unique([guildId, userDiscordId])
+  @@index([guildId])
+}
+
+enum EconomyTxType {
+  PAY
+  ADMIN_PAY
+  DEPOSIT
+  WITHDRAW
+  TRANSFER
+  CASINO_BET
+  CASINO_PAYOUT
+  PLAYTIME_REWARD
+  STARTBALANCE_JOIN
+  GRANT
+  FINE
+  INTEREST
+}
+
+// Audit-Trail jeder Balance-Aenderung. Atomar mit Account-Update.
+model EconomyTransaction {
+  id                   String        @id @default(cuid())
+  guildId              String
+  userDiscordId        String // Empfaenger der Aenderung
+  delta                BigInt // positiv = Gutschrift, negativ = Abzug
+  type                 EconomyTxType
+  reason               String?       @db.VarChar(200)
+  actorDiscordId       String? // null bei System-Tx (Zinsen, Playtime)
+  counterpartDiscordId String? // bei Pay/Transfer der Andere
+  createdAt            DateTime      @default(now())
+
+  @@index([guildId, userDiscordId, createdAt])
+  @@index([guildId, createdAt])
+}
+
+// Discord <-> Nitrado-Spielername Bindung pro (Guild + Slot + User).
+model EconomyLink {
+  id            String            @id @default(cuid())
+  guildId       String
+  nitradoConnId String
+  nitradoConn   NitradoConnection @relation(fields: [nitradoConnId], references: [id], onDelete: Cascade)
+  userDiscordId String
+  gameId        String // Steam64 oder Charname
+  linkedAt      DateTime          @default(now())
+  lastSeenAt    DateTime?
+
+  @@unique([guildId, nitradoConnId, userDiscordId])
+  @@unique([guildId, nitradoConnId, gameId])
+  @@index([guildId])
+}
+
+enum CasinoGameType {
+  SLOT
+  COINFLIP
+  DICE
+  BLACKJACK
+}
+
+// Spiel-Konfiguration pro Guild und Spieltyp.
+model CasinoGame {
+  id           String         @id @default(cuid())
+  guildId      String
+  type         CasinoGameType
+  enabled      Boolean        @default(true)
+  winChancePct Int            @default(45) // 1..99
+  minBet       BigInt         @default(1)
+  maxBet       BigInt         @default(10000)
+  payoutMult   Float          @default(2.0) // Auszahlungsmultiplikator
+  createdAt    DateTime       @default(now())
+  updatedAt    DateTime       @updatedAt
+  rounds       CasinoRound[]
+
+  @@unique([guildId, type])
+}
+
+// Spielprotokoll. Provably-Fair: serverSeed + clientSeed + nonce.
+model CasinoRound {
+  id            String     @id @default(cuid())
+  gameId        String
+  game          CasinoGame @relation(fields: [gameId], references: [id], onDelete: Cascade)
+  guildId       String
+  userDiscordId String
+  bet           BigInt
+  payout        BigInt     @default(0)
+  result        Json // { won: bool, details: {...} }
+  serverSeed    String     @db.VarChar(128)
+  clientSeed    String?    @db.VarChar(128)
+  nonce         BigInt     @default(0)
+  createdAt     DateTime   @default(now())
+
+  @@index([guildId, userDiscordId, createdAt])
+  @@index([gameId, createdAt])
+}
+
+// DEV-Sessions (separater Login-Pfad fuer Live-Konsole).
+model DevSession {
+  id            String    @id @default(cuid())
+  userDiscordId String
+  scope         Json // { logs: true, restart: false, ... }
+  expiresAt     DateTime
+  createdAt     DateTime  @default(now())
+  revokedAt     DateTime?
+
+  @@index([userDiscordId])
+  @@index([expiresAt])
+}
+
+// Idempotenz-Keys fuer alle Mutation-Routen (Haertung A1).
+model IdempotencyKey {
+  hash           String   @id // sha256 von (userId + route + body)
+  responseBody   Json
+  responseStatus Int
+  createdAt      DateTime @default(now())
+  expiresAt      DateTime
+
+  @@index([expiresAt])
+}
+
+enum NitradoJobStatus {
+  PENDING
+  RUNNING
+  DONE
+  FAILED
+  DEAD
+}
+
+// Outbox fuer Nitrado-API-Calls (Haertung A2). Worker pickt PENDING + nextRunAt<=now.
+model NitradoJob {
+  id            String           @id @default(cuid())
+  guildId       String
+  nitradoConnId String
+  operation     String           @db.VarChar(40) // 'WHITELIST_ADD' | 'WHITELIST_REMOVE' | 'KEEPALIVE' | 'DOWNLOAD_ADM'
+  payload       Json
+  status        NitradoJobStatus @default(PENDING)
+  attempts      Int              @default(0)
+  maxAttempts   Int              @default(8)
+  nextRunAt     DateTime         @default(now())
+  lastError     String?          @db.Text
+  createdAt     DateTime         @default(now())
+  updatedAt     DateTime         @updatedAt
+
+  @@index([status, nextRunAt])
+  @@index([guildId])
+}
