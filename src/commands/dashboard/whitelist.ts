@@ -37,40 +37,76 @@ export const whitelistCommand: Command = {
     const id = i.options.getString('id', true).trim();
     if (!isValidName(id)) { await reply(i, 'Ungueltiger Name (1-64 Zeichen).'); return; }
 
+    // ----------------------------------------------------------------
+    // Strikte Vorbedingung: Beide Pflicht-Kanaele MUESSEN konfiguriert
+    // sein, sonst kann kein Antrag gestellt werden. Verhindert Geist-
+    // Anfragen, DM-Missbrauch und Anfragen in beliebigen Kanaelen.
+    // ----------------------------------------------------------------
+    const settings = await prisma.serverSettings.findUnique({
+      where: { guildId_nitradoConnId: { guildId: scope.guildId, nitradoConnId: scope.nitradoConnId! } },
+    });
+    if (!settings?.whitelistChannelId || !settings.whitelistRequestChannelId) {
+      await reply(i, 'Whitelist-System ist noch nicht vollstaendig eingerichtet. Bitte einen Admin um Konfiguration der Kanaele.');
+      return;
+    }
+    if (i.channelId !== settings.whitelistChannelId) {
+      await reply(i, `Whitelist-Anfragen sind ausschliesslich in <#${settings.whitelistChannelId}> erlaubt.`);
+      return;
+    }
+
     // Schon auf Whitelist?
     const existing = await prisma.whitelistEntry.findUnique({
       where: { guildId_nitradoConnId_gameId: { guildId: scope.guildId, nitradoConnId: scope.nitradoConnId!, gameId: id } },
     });
     if (existing) { await reply(i, 'Diese ID ist bereits auf der Whitelist.'); return; }
 
-    // Schon offene Anfrage?
-    const open = await prisma.whitelistRequest.findFirst({
+    // Schon offene Anfrage fuer diese gameId?
+    const openSame = await prisma.whitelistRequest.findFirst({
       where: { guildId: scope.guildId, nitradoConnId: scope.nitradoConnId!, gameId: id, status: 'PENDING' },
     });
-    if (open) { await reply(i, 'Es gibt bereits eine offene Anfrage fuer diese ID.'); return; }
+    if (openSame) { await reply(i, 'Es gibt bereits eine offene Anfrage fuer diese ID.'); return; }
 
+    // Schon offene Anfrage von DIESEM User (egal welche gameId)?
+    // Verhindert Spam / Mehrfach-Identitaeten pro Discord-Account.
+    const openOwn = await prisma.whitelistRequest.findFirst({
+      where: { guildId: scope.guildId, nitradoConnId: scope.nitradoConnId!, requesterDiscordId: scope.actorDiscordId, status: 'PENDING' },
+    });
+    if (openOwn) {
+      await reply(i, `Du hast bereits eine offene Anfrage (\`${openOwn.gameId}\`). Bitte warte auf die Entscheidung.`);
+      return;
+    }
+
+    // Embed-Post in den Request-Kanal IST Pflicht. Erst pruefen ob er
+    // erreichbar ist, DANN Request anlegen, DANN Embed senden. Wenn der
+    // Embed-Post am Ende doch failed, rollen wir den Request zurueck.
     const created = await prisma.whitelistRequest.create({
       data: {
         guildId: scope.guildId, nitradoConnId: scope.nitradoConnId!,
-        channelId: i.channelId, requesterDiscordId: scope.actorDiscordId, gameId: id,
+        channelId: settings.whitelistRequestChannelId, // bereits korrekt: Approval-Channel
+        requesterDiscordId: scope.actorDiscordId, gameId: id,
       },
     });
+
+    let messageId: string | null = null;
+    try {
+      const { postWhitelistApprovalEmbed } = await import('../../modules/whitelist/whitelistChannels.js');
+      messageId = await postWhitelistApprovalEmbed({
+        guildId: scope.guildId, nitradoConnId: scope.nitradoConnId!, requestId: created.id,
+        requesterDiscordId: scope.actorDiscordId, gameId: id,
+      });
+    } catch { /* unten behandelt */ }
+
+    if (!messageId) {
+      // Rollback: Request loeschen, sonst Geist-Anfrage in DB.
+      await prisma.whitelistRequest.delete({ where: { id: created.id } }).catch(() => null);
+      await reply(i, 'Annahme-Kanal nicht erreichbar. Bitte einen Admin um Pruefung der Kanal-Konfiguration.');
+      return;
+    }
+
     logAudit('WL_REQUEST_CREATED', 'WHITELIST', { guildId: scope.guildId, requestId: created.id, requester: scope.actorDiscordId, gameId: id });
     emitGuildEvent(scope.guildId, { type: 'whitelist.changed', payload: { guildId: scope.guildId, action: 'requested', entryId: created.id } });
 
-    // Approval-Embed in den konfigurierten Request-Kanal posten + User-DM
-    try {
-      const { postWhitelistApprovalEmbed, notifyRequesterPending } = await import('../../modules/whitelist/whitelistChannels.js');
-      await Promise.allSettled([
-        postWhitelistApprovalEmbed({
-          guildId: scope.guildId, nitradoConnId: scope.nitradoConnId!, requestId: created.id,
-          requesterDiscordId: scope.actorDiscordId, gameId: id,
-        }),
-        notifyRequesterPending(scope.guildId, scope.actorDiscordId, id),
-      ]);
-    } catch { /* nicht-fatal */ }
-
-    // Bestaetigung an User (ephemeral)
+    // Bestaetigung an User STRIKT in-channel ephemeral. Keine DM.
     const ack = new EmbedBuilder()
       .setTitle('Whitelist-Anfrage gestellt')
       .setColor(0x5865F2)

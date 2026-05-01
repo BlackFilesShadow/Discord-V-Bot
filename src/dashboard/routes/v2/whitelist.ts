@@ -130,41 +130,62 @@ whitelistRouter.post('/requests/:id/decision', requireGuildPermission('whitelist
     where: { id: String(req.params.id), guildId: scope.guildId },
   });
   if (!reqRow) { res.status(404).json({ error: 'Request nicht gefunden.' }); return; }
-  if (reqRow.status !== 'PENDING') { res.status(409).json({ error: 'Request bereits entschieden.' }); return; }
 
-  await prisma.$transaction(async tx => {
-    // eslint-disable-next-line local/no-unscoped-prisma-query -- reqRow.id wurde oben per findFirst({guildId}) verifiziert
-    await tx.whitelistRequest.update({
-      where: { id: reqRow.id },
+  // Atomic CAS: nur entscheiden wenn noch PENDING (schliesst Race mit Discord-Button).
+  const cas = await prisma.whitelistRequest.updateMany({
+    where: { id: reqRow.id, guildId: scope.guildId, status: 'PENDING' },
+    data: {
+      status: approve ? 'APPROVED' : 'DENIED',
+      decidedAt: new Date(),
+      decidedByDiscordId: scope.actorDiscordId,
+      reason: reason ?? null,
+    },
+  });
+  if (cas.count !== 1) { res.status(409).json({ error: 'Request bereits entschieden.' }); return; }
+
+  if (approve) {
+    await prisma.whitelistEntry.upsert({
+      where: { guildId_nitradoConnId_gameId: { guildId: scope.guildId, nitradoConnId: reqRow.nitradoConnId, gameId: reqRow.gameId } },
+      create: {
+        guildId: scope.guildId, nitradoConnId: reqRow.nitradoConnId, gameId: reqRow.gameId,
+        source: 'REQUEST', approvedByDiscordId: scope.actorDiscordId,
+      },
+      update: { approvedByDiscordId: scope.actorDiscordId, source: 'REQUEST', approvedAt: new Date() },
+    });
+    await prisma.nitradoJob.create({
       data: {
-        status: approve ? 'APPROVED' : 'DENIED',
-        decidedAt: new Date(),
-        decidedByDiscordId: scope.actorDiscordId,
-        reason: reason ?? null,
+        guildId: scope.guildId, nitradoConnId: reqRow.nitradoConnId,
+        operation: 'WHITELIST_ADD', payload: { gameId: reqRow.gameId },
       },
     });
-    if (approve) {
-      await tx.whitelistEntry.upsert({
-        where: { guildId_nitradoConnId_gameId: { guildId: scope.guildId, nitradoConnId: reqRow.nitradoConnId, gameId: reqRow.gameId } },
-        create: {
-          guildId: scope.guildId, nitradoConnId: reqRow.nitradoConnId, gameId: reqRow.gameId,
-          source: 'REQUEST', approvedByDiscordId: scope.actorDiscordId,
-        },
-        update: { approvedByDiscordId: scope.actorDiscordId, source: 'REQUEST', approvedAt: new Date() },
-      });
-      await tx.nitradoJob.create({
-        data: {
-          guildId: scope.guildId, nitradoConnId: reqRow.nitradoConnId,
-          operation: 'WHITELIST_ADD', payload: { gameId: reqRow.gameId },
-        },
-      });
-    }
-  });
+  }
   logAuditDb('WHITELIST_REQUEST_DECISION', 'WHITELIST', {
     actorUserId: req.auth!.userId, guildId: scope.guildId,
     details: { requestId: reqRow.id, approve },
   });
   emitGuildEvent(scope.guildId, { type: 'whitelist.changed', payload: { guildId: scope.guildId, entryId: reqRow.id, action: 'decided' } });
+
+  // Konsistenz mit Discord-Button-Pfad: User per DM benachrichtigen + Decision-Log
+  // posten + Approval-Embed im Request-Channel finalisieren (Buttons entfernen).
+  try {
+    const { notifyRequesterDecision, postDecisionLog, finalizeApprovalEmbed } = await import('../../../modules/whitelist/whitelistChannels.js');
+    void Promise.allSettled([
+      notifyRequesterDecision({
+        requesterDiscordId: reqRow.requesterDiscordId,
+        gameId: reqRow.gameId, approved: approve, reason: reason || undefined,
+      }),
+      postDecisionLog({
+        guildId: scope.guildId, nitradoConnId: reqRow.nitradoConnId, approved: approve,
+        requesterDiscordId: reqRow.requesterDiscordId, gameId: reqRow.gameId,
+        decidedByDiscordId: scope.actorDiscordId, reason: reason || undefined,
+      }),
+      reqRow.messageId ? finalizeApprovalEmbed({
+        guildId: scope.guildId, channelId: reqRow.channelId, messageId: reqRow.messageId,
+        approved: approve, decidedByDiscordId: scope.actorDiscordId,
+      }) : Promise.resolve(),
+    ]);
+  } catch { /* nicht-fatal */ }
+
   res.json({ ok: true });
 });
 
@@ -346,11 +367,20 @@ whitelistRouter.put('/channels', requireGuildPermission('whitelist.manage'), asy
     res.status(400).json({ error: (e as Error).message }); return;
   }
 
-  // Wenn Info-Channel veraendert wird, alte messageId zuruecksetzen
+  // Wenn Info-Channel veraendert wird, alte Nachricht im ALTEN Kanal loeschen
+  // und messageId zuruecksetzen, sonst bleiben verwaiste Embeds zurueck.
   const before = await prisma.serverSettings.findUnique({
     where: { guildId_nitradoConnId: { guildId: scope.guildId, nitradoConnId: connId } },
   });
   if ('whitelistChannelId' in upd && upd.whitelistChannelId !== before?.whitelistChannelId) {
+    if (before?.whitelistChannelId && before.whitelistInfoMessageId) {
+      try {
+        const { deleteOldInfoEmbed } = await import('../../../modules/whitelist/whitelistChannels.js');
+        await deleteOldInfoEmbed(scope.guildId, before.whitelistChannelId, before.whitelistInfoMessageId);
+      } catch (e) {
+        logger.warn(`Whitelist: Alte Info-Embed-Loeschung fehlgeschlagen: ${(e as Error).message}`);
+      }
+    }
     upd.whitelistInfoMessageId = null;
   }
 
@@ -394,7 +424,16 @@ whitelistRouter.post('/channels/info/repost', requireGuildPermission('whitelist.
   const scope = req.guildScope!;
   const connId = await activeSlotId(scope.guildId, req.query.slot);
   if (!connId) { res.status(404).json({ error: 'Kein Nitrado-Slot.' }); return; }
-  // Reset MessageId, damit wirklich neu gepostet wird
+  // Alte Nachricht im aktuellen Info-Kanal loeschen, dann MessageId reset
+  const cur = await prisma.serverSettings.findUnique({
+    where: { guildId_nitradoConnId: { guildId: scope.guildId, nitradoConnId: connId } },
+  });
+  if (cur?.whitelistChannelId && cur.whitelistInfoMessageId) {
+    try {
+      const { deleteOldInfoEmbed } = await import('../../../modules/whitelist/whitelistChannels.js');
+      await deleteOldInfoEmbed(scope.guildId, cur.whitelistChannelId, cur.whitelistInfoMessageId);
+    } catch { /* nicht-fatal */ }
+  }
   await prisma.serverSettings.updateMany({
     where: { guildId: scope.guildId, nitradoConnId: connId },
     data: { whitelistInfoMessageId: null },

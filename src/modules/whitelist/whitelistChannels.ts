@@ -32,6 +32,43 @@ async function fetchTextChannel(guildId: string, channelId: string | null | unde
 }
 
 /**
+ * Loescht (best-effort) das EINE Info-Embed aus einem (alten) Kanal.
+ * Wird bei Channel-Wechsel/Repost vom Dashboard aufgerufen, damit keine
+ * verwaisten Embeds zurueckbleiben.
+ */
+export async function deleteOldInfoEmbed(guildId: string, channelId: string, messageId: string): Promise<void> {
+  const ch = await fetchTextChannel(guildId, channelId);
+  if (!ch) return;
+  const c = client();
+  const msg = await ch.messages.fetch(messageId).catch(() => null);
+  if (!msg) return;
+  if (c?.user && msg.author.id !== c.user.id) return;
+  await msg.delete().catch(() => null);
+}
+
+/**
+ * Finalisiert das Approval-Embed (Buttons entfernen, Status faerben).
+ * Wird vom Dashboard-Decision-Endpoint aufgerufen, damit das Embed im
+ * Discord-Annahme-Kanal denselben Endzustand zeigt wie beim Discord-Button.
+ */
+export async function finalizeApprovalEmbed(args: {
+  guildId: string; channelId: string; messageId: string;
+  approved: boolean; decidedByDiscordId: string;
+}): Promise<void> {
+  const ch = await fetchTextChannel(args.guildId, args.channelId);
+  if (!ch) return;
+  const msg = await ch.messages.fetch(args.messageId).catch(() => null);
+  if (!msg) return;
+  const c = client();
+  if (c?.user && msg.author.id !== c.user.id) return;
+  const finalEmbed = EmbedBuilder.from(msg.embeds[0] ?? new EmbedBuilder())
+    .setColor(args.approved ? 0x57F287 : 0xED4245)
+    .setTitle(args.approved ? 'Whitelist-Antrag angenommen' : 'Whitelist-Antrag abgelehnt')
+    .addFields({ name: args.approved ? 'Angenommen von' : 'Abgelehnt von', value: `<@${args.decidedByDiscordId}>` });
+  await msg.edit({ embeds: [finalEmbed], components: [] }).catch(() => null);
+}
+
+/**
  * Postet/aktualisiert das EINE Command-Erklaerungs-Embed im Info-Kanal.
  * Garantie: pro (Guild+Slot) maximal 1 Embed dieses Bots in diesem Kanal.
  */
