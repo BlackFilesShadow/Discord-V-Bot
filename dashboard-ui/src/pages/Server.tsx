@@ -6,11 +6,13 @@ import { Shell } from '@/components/Shell';
 import { Card, CardHeader, CardTitle } from '@/components/ui/Card';
 import { Button } from '@/components/ui/Button';
 import { Input } from '@/components/ui/Input';
-import { Server, Ticket, Shield, Users, Plug } from 'lucide-react';
+import { useGuildLiveUpdates } from '@/lib/useGuildLiveUpdates';
+import { Server, Ticket, Shield, Users, Plug, X, Trash2 } from 'lucide-react';
 
 interface DashboardState {
   guildId: string;
   alias5: string;
+  isOwner: boolean;
   slots: Array<{
     id: string;
     slot: number;
@@ -19,6 +21,21 @@ interface DashboardState {
     nitradoServerId: string | null;
     status: string;
   }>;
+}
+
+interface PermissionsState {
+  grants: Array<{
+    userDiscordId: string;
+    permissions: string[];
+    grantedBy: string | null;
+    updatedAt: string;
+  }>;
+  availableScopes: string[];
+}
+
+interface TicketsState {
+  templates: Array<{ id: string; name: string }>;
+  note?: string;
 }
 
 type Tab = 'nitrado' | 'tickets' | 'aliases' | 'permissions';
@@ -30,6 +47,8 @@ export default function ServerPage() {
   const [tab, setTab] = useState<Tab>('nitrado');
   const [token, setToken] = useState('');
   const [alias, setAlias] = useState('');
+
+  useGuildLiveUpdates(guildId);
 
   const { data, isLoading } = useQuery({
     queryKey: ['dashboard', guildId],
@@ -131,14 +150,7 @@ export default function ServerPage() {
           </Card>
         )}
 
-        {tab === 'tickets' && (
-          <Card>
-            <CardHeader><CardTitle>Tickets</CardTitle></CardHeader>
-            <p className="text-muted text-sm">
-              Bis zu 5 Ticket-Vorlagen pro Guild. CRUD ueber <code className="text-accent">/api/v2/guilds/{guildId}/tickets</code>.
-            </p>
-          </Card>
-        )}
+        {tab === 'tickets' && guildId && <TicketsPanel guildId={guildId} />}
 
         {tab === 'aliases' && data && (
           <Card>
@@ -161,17 +173,161 @@ export default function ServerPage() {
           </Card>
         )}
 
-        {tab === 'permissions' && (
-          <Card>
-            <CardHeader><CardTitle>Permissions</CardTitle></CardHeader>
-            <p className="text-muted text-sm">
-              Subuser verwalten ueber <code className="text-accent">/api/v2/guilds/{guildId}/permissions</code>.
-              <br />
-              <span className="text-amber-400">Nitrado-Add/Delete kann nicht delegiert werden (Owner-only, hardcoded).</span>
-            </p>
-          </Card>
-        )}
+        {tab === 'permissions' && guildId && <PermissionsPanel guildId={guildId} isOwner={data?.isOwner ?? false} />}
       </div>
     </Shell>
+  );
+}
+
+// ----------------------------------------------------------------------------
+
+function TicketsPanel({ guildId }: { guildId: string }) {
+  const { data, isLoading, error } = useQuery({
+    queryKey: ['tickets', guildId],
+    queryFn: () => api.get<TicketsState>(`/api/v2/guilds/${guildId}/tickets`),
+  });
+  return (
+    <Card>
+      <CardHeader><CardTitle>Tickets</CardTitle></CardHeader>
+      {isLoading && <p className="text-muted">Lade…</p>}
+      {error && <p className="text-red-400 text-sm">{(error as Error).message}</p>}
+      {data && (
+        <>
+          {data.note && (
+            <div className="bg-amber-950/40 border border-amber-700/40 rounded-md p-3 mb-4 text-amber-300 text-sm">
+              {data.note}
+            </div>
+          )}
+          {data.templates.length === 0 && !data.note && (
+            <p className="text-muted text-sm">Keine Vorlagen vorhanden.</p>
+          )}
+          {data.templates.map(t => (
+            <div key={t.id} className="flex items-center justify-between bg-bg-elev rounded-md px-3 py-2 border border-border">
+              <span className="text-white">{t.name}</span>
+            </div>
+          ))}
+        </>
+      )}
+    </Card>
+  );
+}
+
+// ----------------------------------------------------------------------------
+
+function PermissionsPanel({ guildId, isOwner }: { guildId: string; isOwner: boolean }) {
+  const qc = useQueryClient();
+  const [newUser, setNewUser] = useState('');
+
+  const { data, isLoading, error } = useQuery({
+    queryKey: ['permissions', guildId],
+    queryFn: () => api.get<PermissionsState>(`/api/v2/guilds/${guildId}/permissions`),
+  });
+
+  const setScope = useMutation({
+    mutationFn: (vars: { user: string; scope: string; on: boolean }) =>
+      vars.on
+        ? api.put(`/api/v2/guilds/${guildId}/permissions/${vars.user}/${vars.scope}`)
+        : api.del(`/api/v2/guilds/${guildId}/permissions/${vars.user}/${vars.scope}`),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['permissions', guildId] }),
+  });
+
+  const purge = useMutation({
+    mutationFn: (user: string) => api.del(`/api/v2/guilds/${guildId}/permissions/${user}`),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['permissions', guildId] }),
+  });
+
+  if (!isOwner) {
+    return (
+      <Card>
+        <CardHeader><CardTitle>Permissions</CardTitle></CardHeader>
+        <p className="text-muted text-sm">Nur der Guild-Owner kann Permissions verwalten.</p>
+      </Card>
+    );
+  }
+
+  return (
+    <Card>
+      <CardHeader><CardTitle>Permissions</CardTitle></CardHeader>
+      <p className="text-amber-400 text-xs mb-4">
+        Nitrado-Add/Delete und permissions.manage / dev.console sind hardcoded Owner-only und nicht delegierbar.
+      </p>
+
+      {isLoading && <p className="text-muted">Lade…</p>}
+      {error && <p className="text-red-400 text-sm">{(error as Error).message}</p>}
+
+      {data && (
+        <>
+          <div className="overflow-x-auto">
+            <table className="w-full text-sm">
+              <thead>
+                <tr className="text-muted text-xs">
+                  <th className="text-left py-2 px-2">User-ID</th>
+                  {data.availableScopes.map(s => (
+                    <th key={s} className="text-center py-2 px-1 font-mono">{s.replace('.', '\n')}</th>
+                  ))}
+                  <th />
+                </tr>
+              </thead>
+              <tbody>
+                {data.grants.length === 0 && (
+                  <tr><td colSpan={data.availableScopes.length + 2} className="text-muted text-center py-4">Keine Grants.</td></tr>
+                )}
+                {data.grants.map(g => (
+                  <tr key={g.userDiscordId} className="border-t border-border">
+                    <td className="py-2 px-2 font-mono text-xs text-white">{g.userDiscordId}</td>
+                    {data.availableScopes.map(scope => {
+                      const on = g.permissions.includes(scope);
+                      return (
+                        <td key={scope} className="text-center px-1">
+                          <input
+                            type="checkbox"
+                            checked={on}
+                            disabled={setScope.isPending}
+                            onChange={e => setScope.mutate({ user: g.userDiscordId, scope, on: e.target.checked })}
+                            className="accent-accent"
+                          />
+                        </td>
+                      );
+                    })}
+                    <td className="px-2">
+                      <Button size="sm" variant="danger" onClick={() => purge.mutate(g.userDiscordId)}>
+                        <Trash2 className="h-3 w-3" />
+                      </Button>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+
+          <div className="border-t border-border pt-4 mt-4">
+            <p className="text-sm text-white/80 mb-2">Neuer Subuser (Discord-ID)</p>
+            <div className="flex gap-2">
+              <Input
+                placeholder="z.B. 123456789012345678"
+                value={newUser}
+                onChange={e => setNewUser(e.target.value.trim())}
+                maxLength={20}
+              />
+              <Button
+                disabled={!/^\d{17,20}$/.test(newUser) || setScope.isPending}
+                onClick={() => {
+                  if (data.availableScopes.length === 0) return;
+                  setScope.mutate(
+                    { user: newUser, scope: data.availableScopes[0], on: true },
+                    { onSuccess: () => setNewUser('') },
+                  );
+                }}
+              >
+                Hinzufuegen
+              </Button>
+            </div>
+            <p className="text-muted text-xs mt-2">
+              <X className="inline h-3 w-3" /> Erst-Scope wird gesetzt; weitere Permissions per Checkbox aktivieren.
+            </p>
+          </div>
+        </>
+      )}
+    </Card>
   );
 }

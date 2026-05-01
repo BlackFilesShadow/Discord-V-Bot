@@ -19,5 +19,5 @@ export function getDevSocket(): Socket {
 
 export function joinGuildRoom(guildId: string): void {
   const s = getGuildSocket();
-  s.emit('join', guildId);
+  s.emit('join', { guildId });
 }

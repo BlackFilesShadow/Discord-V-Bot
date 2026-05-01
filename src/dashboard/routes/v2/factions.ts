@@ -13,6 +13,7 @@ import { requireGuildPermission } from '../../middleware/auth';
 import prisma from '../../../database/prisma';
 import { asUserDiscordId } from '../../../types/scope';
 import { logAudit } from '../../../utils/logger';
+import { emitGuildEvent } from '../../socket/emitter';
 
 export const factionsRouter = Router({ mergeParams: true });
 
@@ -78,6 +79,7 @@ factionsRouter.post('/', requireGuildPermission('factions.manage'), async (req, 
       },
     });
     logAudit('FACTION_CREATED', 'FACTION', { guildId: scope.guildId, slotId: connId, factionId: f.id, name, actor: scope.actorDiscordId });
+    emitGuildEvent(scope.guildId, { type: 'faction.changed', payload: { guildId: scope.guildId, factionId: f.id } });
     res.status(201).json({ id: f.id, name: f.name });
   } catch (e) {
     if ((e as { code?: string }).code === 'P2002') {
@@ -94,6 +96,7 @@ factionsRouter.delete('/:id', requireGuildPermission('factions.manage'), async (
   });
   if (out.count === 0) { res.status(404).json({ error: 'Fraktion nicht gefunden.' }); return; }
   logAudit('FACTION_DELETED', 'FACTION', { guildId: scope.guildId, factionId: String(req.params.id), actor: scope.actorDiscordId });
+  emitGuildEvent(scope.guildId, { type: 'faction.changed', payload: { guildId: scope.guildId, factionId: String(req.params.id) } });
   res.json({ ok: true });
 });
 
@@ -115,6 +118,7 @@ factionsRouter.post('/:id/members', requireGuildPermission('factions.manage'), a
     update: { role: r },
   });
   logAudit('FACTION_MEMBER_ADDED', 'FACTION', { guildId: scope.guildId, factionId: f.id, target, role: r, actor: scope.actorDiscordId });
+  emitGuildEvent(scope.guildId, { type: 'faction.changed', payload: { guildId: scope.guildId, factionId: f.id } });
   res.status(201).json({ ok: true });
 });
 
@@ -130,5 +134,6 @@ factionsRouter.delete('/:id/members/:userDiscordId', requireGuildPermission('fac
   });
   if (out.count === 0) { res.status(404).json({ error: 'Member nicht gefunden.' }); return; }
   logAudit('FACTION_MEMBER_REMOVED', 'FACTION', { guildId: scope.guildId, factionId: f.id, target, actor: scope.actorDiscordId });
+  emitGuildEvent(scope.guildId, { type: 'faction.changed', payload: { guildId: scope.guildId, factionId: f.id } });
   res.json({ ok: true });
 });

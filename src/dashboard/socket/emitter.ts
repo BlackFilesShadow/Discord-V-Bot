@@ -20,7 +20,8 @@ export type GuildEvent =
   | { type: 'permissions.updated'; payload: { guildId: string; userDiscordId: string } }
   | { type: 'economy.tx'; payload: { guildId: string; userDiscordId: string; type: string } }
   | { type: 'casino.round'; payload: { guildId: string; gameType: string; payout: string } }
-  | { type: 'faction.changed'; payload: { guildId: string; factionId: string } };
+  | { type: 'faction.changed'; payload: { guildId: string; factionId: string } }
+  | { type: 'settings.changed'; payload: { guildId: string; slotId: string } };
 
 /**
  * Sendet Event an alle Clients im Room des betreffenden Guild-Namespace.
