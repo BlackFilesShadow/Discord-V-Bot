@@ -36,3 +36,11 @@ coverage/
 npm-debug.log*
 backup/
 .env.production*
+
+# Phase 4 (Dashboard-UI): Build-Output + nested node_modules
+src/dashboard/public/
+dashboard-ui/node_modules/
+dashboard-ui/dist/
+dashboard-ui/*.tsbuildinfo
+dashboard-ui/vite.config.js
+dashboard-ui/vite.config.d.ts

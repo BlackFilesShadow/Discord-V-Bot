@@ -1,5 +1,7 @@
 import express from 'express';
 import http from 'http';
+import path from 'node:path';
+import fs from 'node:fs';
 import session from 'express-session';
 import connectPgSimple from 'connect-pg-simple';
 import { Pool } from 'pg';
@@ -127,6 +129,21 @@ export function startDashboard(client?: Client): void {
       }
     });
     logger.info('Metrics: /metrics aktiv' + (config.monitoring.metricsToken ? ' (Bearer-geschuetzt)' : ' (offen)'));
+  }
+
+  // Phase 4: Statische Auslieferung des Vite-Frontends + SPA-Fallback.
+  // Build-Output liegt in src/dashboard/public (vom dashboard-ui via `npm run build:ui`).
+  const publicDir = path.resolve(__dirname, 'public');
+  if (fs.existsSync(publicDir)) {
+    app.use(express.static(publicDir, { index: false, maxAge: '1h' }));
+    app.get(/^\/(?!api|auth|admin|test|webhooks|metrics|health|socket\.io).*/, (_req, res, next) => {
+      const indexHtml = path.join(publicDir, 'index.html');
+      if (!fs.existsSync(indexHtml)) { next(); return; }
+      res.sendFile(indexHtml);
+    });
+    logger.info(`Dashboard-Frontend wird aus ${publicDir} ausgeliefert.`);
+  } else {
+    logger.info('Dashboard-Frontend nicht gebuildet (src/dashboard/public fehlt) - nur API verfuegbar.');
   }
 
   // Error Handler

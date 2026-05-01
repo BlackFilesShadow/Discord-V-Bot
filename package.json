@@ -5,7 +5,11 @@
   "main": "dist/index.js",
   "scripts": {
     "postinstall": "prisma generate",
-    "build": "tsc",
+    "build": "npm run build:ui && tsc",
+    "build:ui": "cd dashboard-ui && npm run build",
+    "build:server": "tsc",
+    "ui:install": "cd dashboard-ui && npm install",
+    "ui:dev": "cd dashboard-ui && npm run dev",
     "start": "node dist/index.js",
     "dev": "ts-node src/index.ts",
     "dev:watch": "nodemon --exec ts-node src/index.ts",
