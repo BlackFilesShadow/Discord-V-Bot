@@ -73,17 +73,18 @@ function buildEmbed(f: FactionEmbedData, attachmentNames: { flag?: string; banne
   const policy = POLICY_LABELS[f.joinPolicy] ?? POLICY_LABELS.REQUEST;
   const created = `<t:${Math.floor(f.createdAt.getTime() / 1000)}:D>`;
 
-  // Mitgliederliste: Leitung/Stellv./Schatzmeister sind oben separat,
-  // hier nur die normalen Mitglieder + besondere Rollen-Member (max ~40 Mentions).
-  const leadership = new Set([f.leaderDiscordId, f.deputyDiscordId, f.treasurerDiscordId].filter(Boolean) as string[]);
+  // Mitgliederliste: zeigt ALLE FactionMember mit Rollen-Prefix.
+  // (Leader/Stellv./Schatzmeister stehen oben separat als Felder, koennen aber zusaetzlich als FactionMember existieren.)
   const memberMentions: string[] = [];
   for (const m of f.members) {
-    if (leadership.has(m.userDiscordId)) continue;
-    const prefix = m.role === 'PENDING' ? '⏳ ' : m.role === 'TREASURER' ? '💰 ' : m.role === 'LEADER' ? '👑 ' : '';
+    const prefix = m.role === 'LEADER' ? '👑 '
+      : m.role === 'TREASURER' ? '💰 '
+      : m.role === 'PENDING' ? '⏳ '
+      : '👤 ';
     memberMentions.push(`${prefix}<@${m.userDiscordId}>`);
   }
   const memberDisplay = memberMentions.length === 0
-    ? '_Noch keine weiteren Mitglieder._'
+    ? '_Noch keine Mitglieder eingetragen._'
     : memberMentions.slice(0, 40).join(' · ') + (memberMentions.length > 40 ? `\n_+${memberMentions.length - 40} weitere_` : '');
 
   const e = new EmbedBuilder()
