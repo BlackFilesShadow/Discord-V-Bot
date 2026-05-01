@@ -29,6 +29,8 @@ import { emitGuildEvent } from '../../socket/emitter';
 import { tryGetDashboardClient } from '../../clientRegistry';
 import { postFactionEmbed, unpostFactionEmbed, postFactionList, unpostFactionList, assignFactionRole, removeFactionRole, syncFactionRoleAll } from '../../../modules/factions/factionEmbed';
 import { asGuildId } from '../../../types/scope';
+import { validateBotChannelAccess } from '../../../utils/discordChannel';
+import { PermissionFlagsBits } from 'discord.js';
 
 export const factionsRouter = Router({ mergeParams: true });
 
@@ -176,15 +178,13 @@ async function activeSlotId(guildId: string, slotParam: unknown): Promise<string
 async function ensureChannelInGuild(channelId: string, guildId: string): Promise<string | null> {
   const client = tryGetDashboardClient();
   if (!client) return null; // kein Bot-Client (z.B. Tests) -> ueberspringen
-  const ch = await client.channels.fetch(channelId).catch(() => null);
-  if (!ch || !ch.isTextBased() || ch.isDMBased()) {
-    return 'Embed-Channel existiert nicht oder ist kein Text-Channel.';
-  }
-  const guildCh = ch as { guildId?: string };
-  if (guildCh.guildId !== guildId) {
-    return 'Embed-Channel gehoert nicht zu dieser Guild.';
-  }
-  return null;
+  const v = await validateBotChannelAccess(client, guildId, channelId, [
+    PermissionFlagsBits.ViewChannel,
+    PermissionFlagsBits.SendMessages,
+    PermissionFlagsBits.EmbedLinks,
+    PermissionFlagsBits.AttachFiles,
+  ]);
+  return v.ok ? null : v.reason;
 }
 
 async function refreshEmbed(factionId: string, guildId: string, actorUserId: string, action: string): Promise<void> {

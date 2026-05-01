@@ -115,6 +115,10 @@ export async function postTemplateEmbed(client: Client, templateId: string): Pro
     if (!channel || !channel.isTextBased() || channel.isDMBased()) {
       throw new Error('Post-Channel nicht verfuegbar oder kein Text-Channel.');
     }
+    // Guild-Membership-Check: schuetzt vor stale Channel-IDs aus anderen Guilds.
+    if ((channel as GuildTextBasedChannel).guildId !== t.guildId) {
+      throw new Error('Post-Channel gehoert nicht zur richtigen Guild.');
+    }
 
     const embed = buildOpenEmbed(t);
     const row = buildOpenButton(t.id, t.label);

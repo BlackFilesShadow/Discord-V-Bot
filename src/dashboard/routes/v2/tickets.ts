@@ -18,6 +18,8 @@ import { logAuditDb } from '../../../utils/logger';
 import { emitGuildEvent } from '../../socket/emitter';
 import { tryGetDashboardClient } from '../../clientRegistry';
 import { postTemplateEmbed, unpostTemplateEmbed, purgeTemplateInstances } from '../../../modules/tickets/ticketSystem';
+import { validateBotChannelAccess } from '../../../utils/discordChannel';
+import { PermissionFlagsBits } from 'discord.js';
 
 export const ticketsRouter = Router({ mergeParams: true });
 
@@ -128,6 +130,28 @@ function validateBody(b: TemplateBody, partial: boolean): { ok: true; data: Reco
  * postChannelId, transcriptChannelId, archiveChannelId, categoryId muessen paarweise
  * verschieden sein (sofern gesetzt). User-Vorgabe: "niemals vermischt werden darf".
  */
+async function validateTicketChannels(
+  guildId: string,
+  channels: { postChannelId?: string; transcriptChannelId?: string; archiveChannelId?: string | null },
+): Promise<string | null> {
+  const client = tryGetDashboardClient();
+  if (!client) return null; // kein Bot-Client (Tests) -> Skip
+  const writePerms = [
+    PermissionFlagsBits.ViewChannel,
+    PermissionFlagsBits.SendMessages,
+    PermissionFlagsBits.EmbedLinks,
+  ];
+  const checks: Array<[string, string]> = [];
+  if (channels.postChannelId) checks.push(['Post-Channel', channels.postChannelId]);
+  if (channels.transcriptChannelId) checks.push(['Transcript-Channel', channels.transcriptChannelId]);
+  if (channels.archiveChannelId) checks.push(['Archiv-Channel', channels.archiveChannelId]);
+  for (const [label, id] of checks) {
+    const v = await validateBotChannelAccess(client, guildId, id, writePerms);
+    if (!v.ok) return `${label}: ${v.reason}`;
+  }
+  return null;
+}
+
 function enforceNoChannelMix(merged: {
   postChannelId?: string | null;
   transcriptChannelId?: string | null;
@@ -233,6 +257,14 @@ ticketsRouter.post('/', requireGuildOwner, async (req, res) => {
   });
   if (mixErr) { res.status(400).json({ error: mixErr }); return; }
 
+  // Channel-Validierung: existiert + in Guild + Bot-Permissions vorhanden.
+  const chErr = await validateTicketChannels(scope.guildId, {
+    postChannelId: v.data.postChannelId as string,
+    transcriptChannelId: v.data.transcriptChannelId as string,
+    archiveChannelId: (v.data.archiveChannelId as string | null | undefined) ?? null,
+  });
+  if (chErr) { res.status(400).json({ error: chErr }); return; }
+
   const created = await prisma.ticketTemplate.create({
     data: {
       guildId: scope.guildId,
@@ -282,6 +314,14 @@ ticketsRouter.put('/:id', requireGuildOwner, async (req, res) => {
       : existing.categoryId,
   });
   if (mixErr) { res.status(400).json({ error: mixErr }); return; }
+
+  // Channel-Validierung nur fuer geaenderte Channel-Felder.
+  const chErr = await validateTicketChannels(scope.guildId, {
+    postChannelId: v.data.postChannelId !== undefined ? (v.data.postChannelId as string) : undefined,
+    transcriptChannelId: v.data.transcriptChannelId !== undefined ? (v.data.transcriptChannelId as string) : undefined,
+    archiveChannelId: v.data.archiveChannelId !== undefined ? (v.data.archiveChannelId as string | null) : undefined,
+  });
+  if (chErr) { res.status(400).json({ error: chErr }); return; }
 
   // F2/F3: Vor dem Update pruefen, ob der alte Embed entfernt werden muss
   // (Channel-Wechsel ODER Deaktivierung).
