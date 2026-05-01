@@ -1,333 +1,416 @@
 import { useState } from 'react';
-import { useParams, useNavigate } from 'react-router-dom';
+import { Link, useParams } from 'react-router-dom';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
-import { api } from '@/lib/api';
+import { Plus, Trash2, KeyRound, Server as ServerIcon, Shield, AlertTriangle, ChevronRight } from 'lucide-react';
+import { api, ApiError } from '@/lib/api';
 import { Shell } from '@/components/Shell';
-import { Card, CardHeader, CardTitle } from '@/components/ui/Card';
+import { Card, CardHeader, CardTitle, CardDesc } from '@/components/ui/Card';
 import { Button } from '@/components/ui/Button';
 import { Input } from '@/components/ui/Input';
 import { useGuildLiveUpdates } from '@/lib/useGuildLiveUpdates';
-import { Server, Ticket, Shield, Users, Plug, X, Trash2 } from 'lucide-react';
 
-interface DashboardState {
+type Tab = 'nitrado' | 'permissions' | 'tickets';
+
+interface Slot {
+  id: string;
+  slot: number;
+  alias: string;
+  alias5: string;
+  status: 'ACTIVE' | 'EXPIRED' | 'REVOKED';
+  nitradoServerId: string | null;
+  addedBy?: string;
+  createdAt?: string;
+}
+
+interface Dashboard {
   guildId: string;
   alias5: string;
   isOwner: boolean;
-  slots: Array<{
-    id: string;
-    slot: number;
-    alias: string;
-    alias5: string;
-    nitradoServerId: string | null;
-    status: string;
-  }>;
+  permissions: string[];
+  slots: Slot[];
+  grantsCount: number;
 }
 
-interface PermissionsState {
-  grants: Array<{
-    userDiscordId: string;
-    permissions: string[];
-    grantedBy: string | null;
-    updatedAt: string;
-  }>;
-  availableScopes: string[];
-}
-
-interface TicketsState {
-  templates: Array<{ id: string; name: string }>;
-  note?: string;
-}
-
-type Tab = 'nitrado' | 'tickets' | 'aliases' | 'permissions';
-
-export default function ServerPage() {
+export default function Server() {
   const { guildId } = useParams<{ guildId: string }>();
-  const nav = useNavigate();
-  const qc = useQueryClient();
   const [tab, setTab] = useState<Tab>('nitrado');
-  const [token, setToken] = useState('');
-  const [alias, setAlias] = useState('');
-
   useGuildLiveUpdates(guildId);
 
-  const { data, isLoading } = useQuery({
+  const dash = useQuery({
     queryKey: ['dashboard', guildId],
-    queryFn: () => api.get<DashboardState>(`/api/v2/guilds/${guildId}/dashboard`),
+    queryFn: () => api.get<Dashboard>(`/api/v2/guilds/${guildId}/dashboard`),
     enabled: !!guildId,
   });
 
-  const connect = useMutation({
-    mutationFn: (body: { alias: string; token: string }) =>
-      api.post(`/api/v2/guilds/${guildId}/nitrado`, body),
-    onSuccess: () => {
-      setToken(''); setAlias('');
-      void qc.invalidateQueries({ queryKey: ['dashboard', guildId] });
-    },
-  });
+  const tabs: ReadonlyArray<{ key: Tab; label: string; ownerOnly?: boolean }> = [
+    { key: 'nitrado', label: 'Nitrado-Slots' },
+    { key: 'permissions', label: 'Berechtigungen', ownerOnly: true },
+    { key: 'tickets', label: 'Tickets' },
+  ];
 
-  const disconnect = useMutation({
-    mutationFn: (slot: number) => api.del(`/api/v2/guilds/${guildId}/nitrado/${slot}`),
-    onSuccess: () => qc.invalidateQueries({ queryKey: ['dashboard', guildId] }),
-  });
-
-  const sidebar = (
-    <nav className="space-y-1 text-sm">
-      {([
-        ['nitrado', 'Nitrado Connect', Plug],
-        ['tickets', 'Tickets', Ticket],
-        ['aliases', 'Server-Aliase', Server],
-        ['permissions', 'Permissions', Shield],
-      ] as const).map(([key, label, Icon]) => (
-        <button
-          key={key}
-          onClick={() => setTab(key)}
-          className={`w-full text-left px-3 py-2 rounded-md inline-flex items-center gap-2 transition-colors ${
-            tab === key ? 'bg-accent/20 text-accent' : 'text-muted hover:bg-bg-elev hover:text-white'
-          }`}
-          type="button"
-        >
-          <Icon className="h-4 w-4" />
-          {label}
-        </button>
-      ))}
-    </nav>
-  );
+  const isOwner = dash.data?.isOwner ?? false;
+  const visibleTabs = tabs.filter(t => !t.ownerOnly || isOwner);
 
   return (
-    <Shell title={`Server ${data?.alias5 ?? ''}`} back="/servers" sidebar={sidebar}>
-      <div className="max-w-4xl mx-auto">
-        <div className="text-center mb-8">
-          <h1 className="v-logo text-8xl font-extrabold leading-none">V</h1>
-          <p className="text-muted text-sm mt-2">Dashboard fuer {guildId}</p>
-        </div>
-
-        {isLoading && <p className="text-muted">Lade…</p>}
-
-        {tab === 'nitrado' && data && (
-          <Card>
-            <CardHeader><CardTitle>Nitrado-Slots</CardTitle></CardHeader>
-            <div className="space-y-3 mb-6">
-              {data.slots.length === 0 && (
-                <p className="text-muted text-sm">Noch kein Slot verbunden.</p>
-              )}
-              {data.slots.map(s => (
-                <div key={s.id} className="flex items-center justify-between bg-bg-elev rounded-md px-3 py-2 border border-border">
-                  <div className="flex items-center gap-3">
-                    <span className="text-accent font-mono text-xs px-2 py-0.5 bg-accent/10 rounded">{s.alias5}</span>
-                    <span className="text-white">{s.alias}</span>
-                    <span className={`text-xs ${s.status === 'ACTIVE' ? 'text-emerald-400' : 'text-amber-400'}`}>
-                      {s.status}
-                    </span>
-                  </div>
-                  <div className="flex items-center gap-2">
-                    <Button size="sm" variant="secondary" onClick={() => nav(`/servers/${guildId}/server/${s.slot}`)}>
-                      Oeffnen
-                    </Button>
-                    <Button size="sm" variant="danger" onClick={() => disconnect.mutate(s.slot)}>
-                      Trennen
-                    </Button>
-                  </div>
-                </div>
-              ))}
-            </div>
-
-            {data.slots.length < 5 && (
-              <div className="border-t border-border pt-4">
-                <p className="text-sm text-white/80 mb-3">Neuen Nitrado-Token verbinden (Slot {data.slots.length + 1} / 5)</p>
-                <div className="grid gap-3 md:grid-cols-[1fr,2fr,auto]">
-                  <Input placeholder="Alias (z.B. Main)" value={alias} onChange={e => setAlias(e.target.value)} maxLength={40} />
-                  <Input placeholder="Nitrado Long-Lived Token" type="password" value={token} onChange={e => setToken(e.target.value)} />
-                  <Button
-                    disabled={connect.isPending || !alias || token.length < 16}
-                    onClick={() => connect.mutate({ alias, token })}
-                  >
-                    {connect.isPending ? 'Verbinde…' : 'Verbinden'}
-                  </Button>
-                </div>
-                {connect.error && <p className="text-red-400 text-xs mt-2">{(connect.error as Error).message}</p>}
-              </div>
-            )}
+    <Shell title={dash.data?.alias5 ? `Server ${dash.data.alias5}` : 'Server'} back="/servers">
+      <div className="max-w-5xl mx-auto">
+        {dash.isLoading && <div className="h-24 rounded-xl skeleton" />}
+        {dash.isError && (
+          <Card glow>
+            <p className="text-danger font-medium">Fehler beim Laden des Servers.</p>
+            <p className="text-muted text-sm mt-1">{(dash.error as Error).message}</p>
           </Card>
         )}
+        {dash.data && (
+          <>
+            <header className="mb-6">
+              <div className="flex flex-wrap items-center gap-3 mb-2">
+                <h1 className="text-2xl sm:text-3xl font-bold text-white">{dash.data.alias5}</h1>
+                {isOwner && (
+                  <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded text-xs bg-accent/20 text-accent font-medium">
+                    Owner
+                  </span>
+                )}
+              </div>
+              <p className="text-muted text-sm">{dash.data.slots.length} Slots &middot; {dash.data.grantsCount} delegierte Berechtigungen</p>
+            </header>
 
-        {tab === 'tickets' && guildId && <TicketsPanel guildId={guildId} />}
-
-        {tab === 'aliases' && data && (
-          <Card>
-            <CardHeader><CardTitle>Server-Aliase</CardTitle></CardHeader>
-            <div className="space-y-2">
-              {data.slots.map(s => (
+            {/* Chip-Tabs (mobil-freundlich) */}
+            <div className="flex flex-wrap gap-2 mb-6 -mx-1 px-1 overflow-x-auto">
+              {visibleTabs.map(t => (
                 <button
-                  key={s.id}
-                  onClick={() => nav(`/servers/${guildId}/server/${s.slot}`)}
-                  className="w-full flex items-center gap-3 px-3 py-2 bg-bg-elev rounded-md hover:bg-border text-left"
+                  key={t.key}
                   type="button"
+                  onClick={() => setTab(t.key)}
+                  className={`px-4 py-2 rounded-full text-sm font-medium whitespace-nowrap transition-all focus-ring ${
+                    tab === t.key
+                      ? 'bg-accent text-white shadow-glow-sm'
+                      : 'bg-bg-card text-muted hover:bg-bg-elev hover:text-white border border-border'
+                  }`}
                 >
-                  <span className="text-accent font-mono text-xs px-2 py-0.5 bg-accent/10 rounded">{s.alias5}</span>
-                  <span className="text-white">{s.alias}</span>
-                  <Users className="h-4 w-4 text-muted ml-auto" />
+                  {t.label}
                 </button>
               ))}
-              {data.slots.length === 0 && <p className="text-muted text-sm">Keine Slots.</p>}
             </div>
-          </Card>
-        )}
 
-        {tab === 'permissions' && guildId && <PermissionsPanel guildId={guildId} isOwner={data?.isOwner ?? false} />}
+            {tab === 'nitrado' && guildId && <NitradoTab guildId={guildId} isOwner={isOwner} slots={dash.data.slots} />}
+            {tab === 'permissions' && guildId && isOwner && <PermissionsTab guildId={guildId} />}
+            {tab === 'tickets' && (
+              <Card>
+                <CardHeader><CardTitle>Tickets</CardTitle><CardDesc>Funktion folgt in Kuerze.</CardDesc></CardHeader>
+              </Card>
+            )}
+          </>
+        )}
       </div>
     </Shell>
   );
 }
 
-// ----------------------------------------------------------------------------
+// ============================================================================
+// Nitrado-Slots
+// ============================================================================
 
-function TicketsPanel({ guildId }: { guildId: string }) {
-  const { data, isLoading, error } = useQuery({
-    queryKey: ['tickets', guildId],
-    queryFn: () => api.get<TicketsState>(`/api/v2/guilds/${guildId}/tickets`),
-  });
-  return (
-    <Card>
-      <CardHeader><CardTitle>Tickets</CardTitle></CardHeader>
-      {isLoading && <p className="text-muted">Lade…</p>}
-      {error && <p className="text-red-400 text-sm">{(error as Error).message}</p>}
-      {data && (
-        <>
-          {data.note && (
-            <div className="bg-amber-950/40 border border-amber-700/40 rounded-md p-3 mb-4 text-amber-300 text-sm">
-              {data.note}
-            </div>
-          )}
-          {data.templates.length === 0 && !data.note && (
-            <p className="text-muted text-sm">Keine Vorlagen vorhanden.</p>
-          )}
-          {data.templates.map(t => (
-            <div key={t.id} className="flex items-center justify-between bg-bg-elev rounded-md px-3 py-2 border border-border">
-              <span className="text-white">{t.name}</span>
-            </div>
-          ))}
-        </>
-      )}
-    </Card>
-  );
+function statusColor(status: Slot['status']): string {
+  if (status === 'ACTIVE') return 'text-ok';
+  if (status === 'EXPIRED') return 'text-warn';
+  return 'text-danger';
 }
 
-// ----------------------------------------------------------------------------
-
-function PermissionsPanel({ guildId, isOwner }: { guildId: string; isOwner: boolean }) {
+function NitradoTab({ guildId, isOwner, slots }: { guildId: string; isOwner: boolean; slots: Slot[] }) {
   const qc = useQueryClient();
-  const [newUser, setNewUser] = useState('');
+  const [showAdd, setShowAdd] = useState(false);
 
-  const { data, isLoading, error } = useQuery({
-    queryKey: ['permissions', guildId],
-    queryFn: () => api.get<PermissionsState>(`/api/v2/guilds/${guildId}/permissions`),
-  });
-
-  const setScope = useMutation({
-    mutationFn: (vars: { user: string; scope: string; on: boolean }) =>
-      vars.on
-        ? api.put(`/api/v2/guilds/${guildId}/permissions/${vars.user}/${vars.scope}`)
-        : api.del(`/api/v2/guilds/${guildId}/permissions/${vars.user}/${vars.scope}`),
-    onSuccess: () => qc.invalidateQueries({ queryKey: ['permissions', guildId] }),
-  });
-
-  const purge = useMutation({
-    mutationFn: (user: string) => api.del(`/api/v2/guilds/${guildId}/permissions/${user}`),
-    onSuccess: () => qc.invalidateQueries({ queryKey: ['permissions', guildId] }),
+  const remove = useMutation({
+    mutationFn: (slot: number) => api.del(`/api/v2/guilds/${guildId}/nitrado/${slot}`),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['dashboard', guildId] }),
   });
 
   if (!isOwner) {
     return (
-      <Card>
-        <CardHeader><CardTitle>Permissions</CardTitle></CardHeader>
-        <p className="text-muted text-sm">Nur der Guild-Owner kann Permissions verwalten.</p>
+      <Card glow>
+        <CardHeader><CardTitle>Nicht erlaubt</CardTitle></CardHeader>
+        <p className="text-muted text-sm">Nur der Discord-Server-Owner kann Nitrado-Slots verwalten.</p>
       </Card>
     );
   }
 
   return (
-    <Card>
-      <CardHeader><CardTitle>Permissions</CardTitle></CardHeader>
-      <p className="text-amber-400 text-xs mb-4">
-        Nitrado-Add/Delete und permissions.manage / dev.console sind hardcoded Owner-only und nicht delegierbar.
-      </p>
+    <div className="space-y-4">
+      <div className="flex items-center justify-between">
+        <h2 className="text-lg font-semibold text-white">Nitrado-Slots ({slots.length}/5)</h2>
+        {slots.length < 5 && (
+          <Button onClick={() => setShowAdd(s => !s)} size="sm">
+            <Plus className="h-4 w-4 mr-1" /> {showAdd ? 'Abbrechen' : 'Slot hinzufuegen'}
+          </Button>
+        )}
+      </div>
 
-      {isLoading && <p className="text-muted">Lade…</p>}
-      {error && <p className="text-red-400 text-sm">{(error as Error).message}</p>}
+      {showAdd && <AddSlotForm guildId={guildId} usedSlots={slots.map(s => s.slot)} onDone={() => setShowAdd(false)} />}
 
-      {data && (
-        <>
-          <div className="overflow-x-auto">
-            <table className="w-full text-sm">
-              <thead>
-                <tr className="text-muted text-xs">
-                  <th className="text-left py-2 px-2">User-ID</th>
-                  {data.availableScopes.map(s => (
-                    <th key={s} className="text-center py-2 px-1 font-mono">{s.replace('.', '\n')}</th>
-                  ))}
-                  <th />
-                </tr>
-              </thead>
-              <tbody>
-                {data.grants.length === 0 && (
-                  <tr><td colSpan={data.availableScopes.length + 2} className="text-muted text-center py-4">Keine Grants.</td></tr>
-                )}
-                {data.grants.map(g => (
-                  <tr key={g.userDiscordId} className="border-t border-border">
-                    <td className="py-2 px-2 font-mono text-xs text-white">{g.userDiscordId}</td>
-                    {data.availableScopes.map(scope => {
-                      const on = g.permissions.includes(scope);
-                      return (
-                        <td key={scope} className="text-center px-1">
-                          <input
-                            type="checkbox"
-                            checked={on}
-                            disabled={setScope.isPending}
-                            onChange={e => setScope.mutate({ user: g.userDiscordId, scope, on: e.target.checked })}
-                            className="accent-accent"
-                          />
-                        </td>
-                      );
-                    })}
-                    <td className="px-2">
-                      <Button size="sm" variant="danger" onClick={() => purge.mutate(g.userDiscordId)}>
-                        <Trash2 className="h-3 w-3" />
-                      </Button>
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-
-          <div className="border-t border-border pt-4 mt-4">
-            <p className="text-sm text-white/80 mb-2">Neuer Subuser (Discord-ID)</p>
-            <div className="flex gap-2">
-              <Input
-                placeholder="z.B. 123456789012345678"
-                value={newUser}
-                onChange={e => setNewUser(e.target.value.trim())}
-                maxLength={20}
-              />
-              <Button
-                disabled={!/^\d{17,20}$/.test(newUser) || setScope.isPending}
-                onClick={() => {
-                  if (data.availableScopes.length === 0) return;
-                  setScope.mutate(
-                    { user: newUser, scope: data.availableScopes[0], on: true },
-                    { onSuccess: () => setNewUser('') },
-                  );
-                }}
-              >
-                Hinzufuegen
-              </Button>
-            </div>
-            <p className="text-muted text-xs mt-2">
-              <X className="inline h-3 w-3" /> Erst-Scope wird gesetzt; weitere Permissions per Checkbox aktivieren.
-            </p>
-          </div>
-        </>
+      {slots.length === 0 && !showAdd && (
+        <Card>
+          <CardHeader><CardTitle>Noch keine Slots</CardTitle><CardDesc>Lege deinen ersten Nitrado-Slot an.</CardDesc></CardHeader>
+        </Card>
       )}
+
+      <div className="grid gap-3">
+        {slots.map(s => (
+          <SlotRow key={s.id} guildId={guildId} slot={s} onDelete={() => {
+            if (confirm(`Slot ${s.slot} (${s.alias}) wirklich loeschen? Alle Daten werden geloescht.`)) {
+              remove.mutate(s.slot);
+            }
+          }} />
+        ))}
+      </div>
+    </div>
+  );
+}
+
+function SlotRow({ guildId, slot, onDelete }: { guildId: string; slot: Slot; onDelete: () => void }) {
+  const [showToken, setShowToken] = useState(false);
+  return (
+    <Card className="!p-4">
+      <div className="flex items-start gap-3">
+        <div className="h-10 w-10 rounded-md bg-accent/15 grid place-items-center text-accent font-bold text-sm shrink-0 border border-accent/30">
+          #{slot.slot}
+        </div>
+        <div className="min-w-0 flex-1">
+          <div className="flex items-center gap-2 flex-wrap">
+            <h3 className="font-semibold text-white truncate">{slot.alias}</h3>
+            <span className="font-mono text-[10px] text-muted bg-bg-elev px-1.5 py-0.5 rounded">{slot.alias5}</span>
+            <span className={`text-xs font-medium ${statusColor(slot.status)}`}>{slot.status}</span>
+          </div>
+          <p className="text-xs text-muted mt-0.5 inline-flex items-center gap-1">
+            <ServerIcon className="h-3 w-3" /> Nitrado-Service: {slot.nitradoServerId ?? '—'}
+          </p>
+        </div>
+        <div className="flex flex-col sm:flex-row gap-1.5 shrink-0">
+          <Link to={`/servers/${guildId}/server/${slot.slot}`}>
+            <Button size="sm" variant="outline">
+              Konfigurieren <ChevronRight className="h-3.5 w-3.5 ml-1" />
+            </Button>
+          </Link>
+          <Button size="sm" variant="ghost" onClick={() => setShowToken(t => !t)}>
+            <KeyRound className="h-3.5 w-3.5" />
+          </Button>
+          <Button size="sm" variant="danger" onClick={onDelete}>
+            <Trash2 className="h-3.5 w-3.5" />
+          </Button>
+        </div>
+      </div>
+      {showToken && <UpdateTokenForm guildId={guildId} slot={slot.slot} onDone={() => setShowToken(false)} />}
     </Card>
+  );
+}
+
+function UpdateTokenForm({ guildId, slot, onDone }: { guildId: string; slot: number; onDone: () => void }) {
+  const [token, setToken] = useState('');
+  const [err, setErr] = useState<string | null>(null);
+  const qc = useQueryClient();
+  const mut = useMutation({
+    mutationFn: (t: string) => api.patch(`/api/v2/guilds/${guildId}/nitrado/${slot}/token`, { token: t }),
+    onSuccess: () => {
+      setToken(''); setErr(null);
+      void qc.invalidateQueries({ queryKey: ['dashboard', guildId] });
+      onDone();
+    },
+    onError: (e) => setErr(e instanceof ApiError ? e.message : 'Unbekannter Fehler'),
+  });
+
+  return (
+    <div className="mt-4 pt-4 border-t border-border">
+      <label className="text-xs text-muted mb-2 block flex items-center gap-1">
+        <AlertTriangle className="h-3 w-3 text-warn" />
+        Neuen Nitrado-Token einfuegen (wird gegen Nitrado validiert, dann verschluesselt gespeichert)
+      </label>
+      <div className="flex flex-col sm:flex-row gap-2">
+        <Input
+          type="password"
+          autoComplete="off"
+          value={token}
+          onChange={e => setToken(e.target.value)}
+          placeholder="Nitrado API-Token"
+          className="flex-1"
+        />
+        <Button
+          onClick={() => mut.mutate(token)}
+          disabled={token.length < 16 || mut.isPending}
+          loading={mut.isPending}
+          size="sm"
+        >
+          Aktualisieren
+        </Button>
+      </div>
+      {err && <p className="text-danger text-xs mt-2">{err}</p>}
+    </div>
+  );
+}
+
+function AddSlotForm({ guildId, usedSlots, onDone }: { guildId: string; usedSlots: number[]; onDone: () => void }) {
+  const free = [1, 2, 3, 4, 5].filter(n => !usedSlots.includes(n));
+  const [slot, setSlot] = useState<number>(free[0] ?? 1);
+  const [alias, setAlias] = useState('');
+  const [token, setToken] = useState('');
+  const [nitradoServerId, setNitradoServerId] = useState('');
+  const [err, setErr] = useState<string | null>(null);
+  const qc = useQueryClient();
+
+  const create = useMutation({
+    mutationFn: () => api.post(`/api/v2/guilds/${guildId}/nitrado`, {
+      slot,
+      alias,
+      token,
+      nitradoServerId: nitradoServerId || undefined,
+    }),
+    onSuccess: () => {
+      void qc.invalidateQueries({ queryKey: ['dashboard', guildId] });
+      onDone();
+    },
+    onError: (e) => setErr(e instanceof ApiError ? e.message : 'Unbekannter Fehler'),
+  });
+
+  return (
+    <Card glow>
+      <CardHeader>
+        <CardTitle>Neuen Slot anlegen</CardTitle>
+        <CardDesc>Token wird vor dem Speichern gegen die Nitrado-API geprueft.</CardDesc>
+      </CardHeader>
+      <div className="grid gap-3 sm:grid-cols-2">
+        <label className="block">
+          <span className="text-xs text-muted">Slot-Nummer</span>
+          <select
+            value={slot}
+            onChange={e => setSlot(Number(e.target.value))}
+            className="mt-1 w-full h-10 rounded-md bg-bg-elev border border-border text-white px-3 focus-ring"
+          >
+            {free.map(n => <option key={n} value={n}>#{n}</option>)}
+          </select>
+        </label>
+        <label className="block">
+          <span className="text-xs text-muted">Alias (1-40 Zeichen)</span>
+          <Input value={alias} onChange={e => setAlias(e.target.value)} maxLength={40} />
+        </label>
+        <label className="block sm:col-span-2">
+          <span className="text-xs text-muted">Nitrado API-Token</span>
+          <Input type="password" autoComplete="off" value={token} onChange={e => setToken(e.target.value)} />
+        </label>
+        <label className="block sm:col-span-2">
+          <span className="text-xs text-muted">Nitrado Service-ID (optional)</span>
+          <Input value={nitradoServerId} onChange={e => setNitradoServerId(e.target.value)} placeholder="z.B. 1234567" />
+        </label>
+      </div>
+      {err && <p className="text-danger text-xs mt-3">{err}</p>}
+      <div className="flex gap-2 mt-4">
+        <Button
+          onClick={() => create.mutate()}
+          disabled={!alias || token.length < 16 || create.isPending}
+          loading={create.isPending}
+        >
+          Slot anlegen
+        </Button>
+        <Button variant="ghost" onClick={onDone}>Abbrechen</Button>
+      </div>
+    </Card>
+  );
+}
+
+// ============================================================================
+// Permissions
+// ============================================================================
+
+interface Grant {
+  userDiscordId: string;
+  permissions: string[];
+  grantedBy: string;
+  updatedAt: string;
+}
+
+function PermissionsTab({ guildId }: { guildId: string }) {
+  const qc = useQueryClient();
+  const q = useQuery({
+    queryKey: ['permissions', guildId],
+    queryFn: () => api.get<{ grants: Grant[]; availableScopes: string[] }>(`/api/v2/guilds/${guildId}/permissions`),
+  });
+  const [newUser, setNewUser] = useState('');
+  const [newScope, setNewScope] = useState('');
+
+  const grant = useMutation({
+    mutationFn: (vars: { user: string; scope: string }) =>
+      api.put(`/api/v2/guilds/${guildId}/permissions/${vars.user}/${vars.scope}`),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['permissions', guildId] }),
+  });
+  const revoke = useMutation({
+    mutationFn: (vars: { user: string; scope: string }) =>
+      api.del(`/api/v2/guilds/${guildId}/permissions/${vars.user}/${vars.scope}`),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['permissions', guildId] }),
+  });
+  const purge = useMutation({
+    mutationFn: (user: string) => api.del(`/api/v2/guilds/${guildId}/permissions/${user}`),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['permissions', guildId] }),
+  });
+
+  return (
+    <div className="space-y-4">
+      <Card>
+        <CardHeader>
+          <CardTitle><Shield className="h-4 w-4 inline mr-1" /> Berechtigung erteilen</CardTitle>
+          <CardDesc>Gib einem Mitglied gezielte Rechte fuer dieses Dashboard.</CardDesc>
+        </CardHeader>
+        <div className="grid gap-2 sm:grid-cols-[1fr_1fr_auto]">
+          <Input value={newUser} onChange={e => setNewUser(e.target.value)} placeholder="Discord-ID" />
+          <select
+            value={newScope}
+            onChange={e => setNewScope(e.target.value)}
+            className="h-10 rounded-md bg-bg-elev border border-border text-white px-3 focus-ring"
+          >
+            <option value="">Scope waehlen…</option>
+            {q.data?.availableScopes.map(s => <option key={s} value={s}>{s}</option>)}
+          </select>
+          <Button
+            disabled={!/^\d{17,20}$/.test(newUser) || !newScope || grant.isPending}
+            loading={grant.isPending}
+            onClick={() => grant.mutate({ user: newUser, scope: newScope })}
+          >
+            Erteilen
+          </Button>
+        </div>
+      </Card>
+
+      {q.isLoading && <div className="h-20 rounded-xl skeleton" />}
+
+      {q.data && q.data.grants.length === 0 && (
+        <p className="text-muted text-sm">Noch keine delegierten Rechte.</p>
+      )}
+
+      {q.data && q.data.grants.map(g => (
+        <Card key={g.userDiscordId} className="!p-4">
+          <div className="flex items-start gap-3 flex-wrap">
+            <div className="min-w-0 flex-1">
+              <code className="text-white text-sm">{g.userDiscordId}</code>
+              <div className="flex flex-wrap gap-1 mt-2">
+                {g.permissions.length === 0 && <span className="text-xs text-muted">— keine —</span>}
+                {g.permissions.map(p => (
+                  <button
+                    key={p}
+                    onClick={() => revoke.mutate({ user: g.userDiscordId, scope: p })}
+                    className="text-[10px] bg-accent/20 text-accent hover:bg-danger/30 hover:text-danger px-2 py-0.5 rounded inline-flex items-center gap-1 transition-colors"
+                    title="Entziehen"
+                    type="button"
+                  >
+                    {p} <Trash2 className="h-2.5 w-2.5" />
+                  </button>
+                ))}
+              </div>
+            </div>
+            <Button size="sm" variant="danger" onClick={() => {
+              if (confirm(`Alle Rechte von ${g.userDiscordId} entfernen?`)) purge.mutate(g.userDiscordId);
+            }}>
+              Alle entziehen
+            </Button>
+          </div>
+        </Card>
+      ))}
+    </div>
   );
 }

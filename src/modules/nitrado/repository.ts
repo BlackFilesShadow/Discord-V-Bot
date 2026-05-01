@@ -143,3 +143,26 @@ export async function setStatus(
     data: { status },
   });
 }
+
+/**
+ * Tauscht den verschluesselten Token eines existierenden Slots aus.
+ * Setzt Status zurueck auf ACTIVE (z.B. wenn vorher EXPIRED war).
+ * Caller MUSS den neuen Token vorher gegen die Nitrado-API validiert haben.
+ */
+export async function updateToken(
+  guildId: GuildId,
+  slot: number,
+  rawToken: string,
+): Promise<NitradoConnectionRow | null> {
+  if (!rawToken || rawToken.length < 8) throw new Error('Token leer/zu kurz');
+  const encryptedToken = encrypt(rawToken, config.security.encryptionKey);
+  const updated = await prisma.nitradoConnection.updateMany({
+    where: { guildId, slot },
+    data: { encryptedToken, status: 'ACTIVE' },
+  });
+  if (updated.count === 0) return null;
+  const row = await prisma.nitradoConnection.findUnique({
+    where: { guildId_slot: { guildId, slot } },
+  });
+  return row ? rowToConn(row) : null;
+}

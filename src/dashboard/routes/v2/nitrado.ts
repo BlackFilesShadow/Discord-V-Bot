@@ -8,7 +8,7 @@
  */
 import { Router } from 'express';
 import { requireGuildOwner } from '../../middleware/auth';
-import { listSlots, createSlot, deleteSlot, getSlot, getDecryptedToken } from '../../../modules/nitrado/repository';
+import { listSlots, createSlot, deleteSlot, getSlot, getDecryptedToken, updateToken } from '../../../modules/nitrado/repository';
 import { NitradoClient } from '../../../modules/nitrado/nitradoClient';
 import { asUserDiscordId, asNitradoConnId } from '../../../types/scope';
 import { logAudit, logger } from '../../../utils/logger';
@@ -65,6 +65,34 @@ nitradoRouter.post('/', requireGuildOwner, async (req, res) => {
     alias5: created.alias5,
     status: created.status,
   });
+});
+
+/**
+ * PATCH /:slot/token  body: { token: string }
+ * Tauscht den Token eines bestehenden Slots aus (z.B. nach Token-Rotation
+ * im Nitrado-Account). Validiert vorher gegen Nitrado-API.
+ * Owner-only — niemals delegierbar.
+ */
+nitradoRouter.patch('/:slot/token', requireGuildOwner, async (req, res) => {
+  const scope = req.guildScope!;
+  const slot = Number(String(req.params.slot));
+  if (!Number.isInteger(slot) || slot < 1 || slot > 5) { res.status(400).json({ error: 'slot 1..5' }); return; }
+  const { token } = req.body ?? {};
+  if (typeof token !== 'string' || token.length < 16) { res.status(400).json({ error: 'token zu kurz' }); return; }
+
+  const existing = await getSlot(scope.guildId, slot);
+  if (!existing) { res.status(404).json({ error: 'Slot nicht gefunden.' }); return; }
+
+  const valid = await new NitradoClient(token).validateToken();
+  if (!valid) { res.status(400).json({ error: 'Nitrado-Token ungueltig.' }); return; }
+
+  const updated = await updateToken(scope.guildId, slot, token);
+  if (!updated) { res.status(500).json({ error: 'Update fehlgeschlagen.' }); return; }
+
+  logAudit('NITRADO_SLOT_TOKEN_UPDATED', 'NITRADO', {
+    guildId: scope.guildId, slot, alias5: updated.alias5, actor: scope.actorDiscordId,
+  });
+  res.json({ ok: true, slot: updated.slot, status: updated.status });
 });
 
 nitradoRouter.delete('/:slot', requireGuildOwner, async (req, res) => {

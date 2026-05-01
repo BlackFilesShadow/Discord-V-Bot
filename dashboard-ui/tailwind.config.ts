@@ -5,24 +5,56 @@ export default {
     extend: {
       colors: {
         bg: {
-          DEFAULT: '#0a0a0a',
-          card: '#141414',
-          elev: '#1c1c1c',
+          DEFAULT: '#08080a',
+          card: '#111114',
+          elev: '#181820',
+          hover: '#22222c',
         },
         accent: {
-          DEFAULT: '#dc2626', // red-600
-          hover: '#b91c1c',   // red-700
-          glow: '#ef4444',    // red-500
+          DEFAULT: '#dc2626',
+          hover: '#b91c1c',
+          glow: '#ef4444',
+          dim: '#7f1d1d',
         },
         muted: '#6b7280',
-        border: '#262626',
+        border: '#262630',
+        ok: '#10b981',
+        warn: '#f59e0b',
+        danger: '#ef4444',
       },
       boxShadow: {
-        glow: '0 0 60px #dc2626aa',
-        'glow-sm': '0 0 20px #dc262680',
+        glow: '0 0 60px rgba(220, 38, 38, 0.55)',
+        'glow-sm': '0 0 22px rgba(220, 38, 38, 0.45)',
+        'glow-lg': '0 0 120px rgba(220, 38, 38, 0.4)',
+        card: '0 1px 0 rgba(255,255,255,0.04) inset, 0 8px 24px rgba(0,0,0,0.5)',
       },
       fontFamily: {
         sans: ['Inter', 'system-ui', 'sans-serif'],
+        mono: ['JetBrains Mono', 'ui-monospace', 'SFMono-Regular', 'monospace'],
+      },
+      backgroundImage: {
+        'accent-gradient': 'linear-gradient(135deg, #dc2626 0%, #7f1d1d 100%)',
+        'card-gradient': 'linear-gradient(180deg, rgba(220,38,38,0.04) 0%, rgba(0,0,0,0) 80%)',
+        'panel-grid': 'radial-gradient(circle at 50% 0%, rgba(220,38,38,0.08), transparent 60%)',
+      },
+      keyframes: {
+        'fade-in': {
+          '0%': { opacity: '0', transform: 'translateY(4px)' },
+          '100%': { opacity: '1', transform: 'translateY(0)' },
+        },
+        pulseGlow: {
+          '0%, 100%': { boxShadow: '0 0 18px rgba(220,38,38,0.45)' },
+          '50%':      { boxShadow: '0 0 32px rgba(220,38,38,0.65)' },
+        },
+        shimmer: {
+          '0%':   { backgroundPosition: '-200% 0' },
+          '100%': { backgroundPosition: '200% 0' },
+        },
+      },
+      animation: {
+        'fade-in': 'fade-in 200ms ease-out',
+        'pulse-glow': 'pulseGlow 2.5s ease-in-out infinite',
+        shimmer: 'shimmer 1.6s linear infinite',
       },
     },
   },

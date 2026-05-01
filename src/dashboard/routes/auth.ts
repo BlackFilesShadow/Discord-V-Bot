@@ -23,6 +23,24 @@ export const authRouter = Router();
 // In-Memory Token-Cache (Access-Tokens nie persistent!)
 const tokenCache = new Map<string, { accessToken: string; expiresAt: Date }>();
 
+/**
+ * Gibt den aktuellen Discord-Access-Token einer Session zurueck oder null.
+ * Verwendet von /api/v2/guilds um die Owner-Guild-Liste vollstaendig vom
+ * Discord-API zu laden (auch Guilds OHNE Bot, fuer Invite-Flow).
+ *
+ * Wirft NIE — Caller muss bei null auf Bot-Cache fallen.
+ */
+export function getDiscordAccessToken(sessionToken: string | undefined): string | null {
+  if (!sessionToken) return null;
+  const cached = tokenCache.get(sessionToken);
+  if (!cached) return null;
+  if (cached.expiresAt.getTime() < Date.now()) {
+    tokenCache.delete(sessionToken);
+    return null;
+  }
+  return cached.accessToken;
+}
+
 const DISCORD_AUTH_URL = 'https://discord.com/api/oauth2/authorize';
 const DISCORD_TOKEN_URL = 'https://discord.com/api/oauth2/token';
 const DISCORD_API_URL = 'https://discord.com/api/v10';
