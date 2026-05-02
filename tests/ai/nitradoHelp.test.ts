@@ -1,4 +1,4 @@
-import { isNitradoOrDayZHelpQuestion, lookupNitradoHelp } from '../../src/modules/ai/nitradoHelp';
+import { isNitradoOrDayZHelpQuestion, lookupNitradoHelp, looksLikeDayZFileQuestion, getDayZFileTruthBlock } from '../../src/modules/ai/nitradoHelp';
 
 describe('nitradoHelp — generische, NICHT server-spezifische Hilfe', () => {
   describe('isNitradoOrDayZHelpQuestion', () => {
@@ -86,6 +86,43 @@ describe('nitradoHelp — generische, NICHT server-spezifische Hilfe', () => {
       // Keine IPv4, kein 7656119… Steam64, keine Nitrado-Service-Zahl
       expect(a.text).not.toMatch(/\b\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}\b/);
       expect(a.text).not.toMatch(/7656119\d{10}/);
+    });
+
+    it('liefert für "Wo wird Loot in Häusern definiert?" das mapgroupproto-Topic (kein cfgSpawnableTypes-Fehler)', () => {
+      const a = lookupNitradoHelp('Wo wird Loot in Häusern definiert?');
+      expect(a.found).toBe(true);
+      expect(a.topicIds).toContain('mapgroupproto-pos-xml');
+      expect(a.text).toMatch(/mapgroupproto\.xml/);
+      expect(a.text).toMatch(/mapgrouppos\.xml/);
+    });
+
+    it('enthält den DayZ-Datei-Wahrheits-Block (Anti-Halluzination)', () => {
+      const a = lookupNitradoHelp('Wie ändere ich types.xml?');
+      expect(a.found).toBe(true);
+      expect(a.text).toMatch(/cfgSpawnableTypes\.json/);
+      expect(a.text).toMatch(/halluziniert/i);
+      expect(a.text).toMatch(/KEIN spawnChance/);
+    });
+  });
+
+  describe('looksLikeDayZFileQuestion + Truth-Block-Fallback', () => {
+    test.each([
+      ['Wo wird Loot in Häusern definiert?', true],
+      ['Was steckt in cfgSpawnableTypes.json?', true],
+      ['Welche Datei steuert Loot?', true],
+      ['Wo finde ich die types.xml?', true],
+      ['Wie spät ist es?', false],
+      ['Wer ist Bundeskanzler?', false],
+    ])('%s -> %s', (q, expected) => {
+      expect(looksLikeDayZFileQuestion(q)).toBe(expected);
+    });
+
+    it('Truth-Block listet die korrekten Datei-Typen', () => {
+      const t = getDayZFileTruthBlock();
+      expect(t).toMatch(/types\.xml/);
+      expect(t).toMatch(/mapgroupproto\.xml/);
+      expect(t).toMatch(/cfgspawnabletypes\.xml/);
+      expect(t).toMatch(/Arma3-\/ExileMod-Syntax/);
     });
   });
 });

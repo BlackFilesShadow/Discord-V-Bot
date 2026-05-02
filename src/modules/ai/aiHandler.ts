@@ -6,7 +6,7 @@ import { liveSearch, looksFactQuestion, formatSearchResultsForPrompt } from './w
 import { asksAboutCommands, formatCatalogForPromptFocused } from './commandCatalog';
 import { recordCall, getRankedProviders, ProviderName } from './providerStats';
 import { checkRateLimit } from '../../utils/rateLimiter';
-import { lookupNitradoHelp } from './nitradoHelp';
+import { lookupNitradoHelp, looksLikeDayZFileQuestion, getDayZFileTruthBlock } from './nitradoHelp';
 import { redactText } from '../nitrado/mirror/redactor';
 
 /**
@@ -385,6 +385,12 @@ export async function answerQuestion(
         if (ans.found) {
           nitradoHelpBlock = ans.text;
           nitradoHelpTopics = ans.topicIds;
+        } else if (looksLikeDayZFileQuestion(question)) {
+          // Frage klingt nach DayZ-Datei, aber kein konkretes Topic getroffen.
+          // Mindestens den Wahrheits-Block injizieren, damit die LLM keine
+          // Datei-/Feld-Namen halluziniert (z. B. "cfgSpawnableTypes.json").
+          nitradoHelpBlock = getDayZFileTruthBlock();
+          nitradoHelpTopics = ['file-truth-fallback'];
         }
       } catch (e) {
         logger.warn(`[Nitrado-Help] in answerQuestion fehlgeschlagen: ${String(e)}`);

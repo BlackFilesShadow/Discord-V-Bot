@@ -388,6 +388,14 @@ const TOPICS: HelpTopic[] = [
       'mapgroupproto', 'mapgroup proto', 'mapgrouppos', 'mapgroup pos',
       'mapgroupos', 'loot container', 'lootspawn', 'building loot',
       'static loot', 'dynamic_event_loot',
+      // Deutsche Varianten für "Wo wird Loot in Häusern definiert":
+      'loot in häusern', 'loot in haeusern', 'loot in gebäude', 'loot in gebaeude',
+      'loot in gebäuden', 'loot in gebaeuden', 'haus loot', 'haus-loot',
+      'gebäude loot', 'gebaeude loot', 'gebäudeloot', 'gebaeudeloot',
+      'loot punkte', 'loot-punkte', 'lootpunkte', 'spawn punkte',
+      'wo wird loot', 'wo spawnt loot', 'wo spawnt der loot',
+      'wo liegt loot', 'wo liegt der loot', 'loot positionen', 'loot-positionen',
+      'loot definiert', 'loot festgelegt',
     ],
     body: [
       '`mapgroupproto.xml` und `mapgrouppos.xml` arbeiten zusammen, um Loot in Gebäude zu legen.',
@@ -416,6 +424,10 @@ const TOPICS: HelpTopic[] = [
       'cfgspawnabletypes', 'spawnable types', 'spawnabletypes',
       'spawntabletypes', 'cargo loot', 'attachment loot', 'mag loot',
       'magazin spawn', 'kleidung loot',
+      // ACHTUNG: KEIN "loot"-Catchall — sonst frisst dieses Topic
+      // jede Loot-Frage und verdrängt mapgroupproto (das ist die richtige
+      // Datei für "Loot in Häusern").
+      'was steckt im item', 'item inhalt', 'cargo befüllung', 'cargo befuellung',
     ],
     body: [
       '`cfgspawnabletypes.xml` (`mpmissions/<mission>/db/cfgspawnabletypes.xml`) bestimmt, mit WAS ein gespawntes Item befüllt wird.',
@@ -548,10 +560,68 @@ export function lookupNitradoHelp(question: string): HelpAnswer {
   lines.push('- Nenne NIEMALS konkrete Werte, Hostnames, IPs, Mod-Listen oder Slot-Zahlen DIESES Servers — du kennst sie nicht und sollst sie auch nicht erraten.');
   lines.push('- Wenn der Nutzer nach "unserem Server" / "wie ist es bei uns eingestellt" fragt: ehrlich sagen, dass du keine Server-Internas ausgibst, und stattdessen die generische Anleitung liefern.');
   lines.push('- Halte die Antwort kompakt und an der Frage orientiert. Kein Komplett-Tutorial, wenn nur ein Detail gefragt wurde.');
+  lines.push('');
+  lines.push('DAYZ-DATEI-WAHRHEIT (HARTE REGELN — Halluzinationen werden als Fehler gewertet):');
+  lines.push('- Existierende Dateien (Vanilla DayZ, Stand 1.27): types.xml, events.xml, economy.xml, init.c, serverDZ.cfg, mapgroupproto.xml, mapgrouppos.xml, cfgspawnabletypes.xml, cfgrandompresets.xml, cfgeventgroups.xml, cfgenvironment.xml, cfgEffectArea.json, cfgUndergroundTriggers.json, cfgGameplay.json, cfgweather.xml, globals.xml, messages.xml, cfgeconomycore.xml.');
+  lines.push('- DayZ verwendet für Mission-Configs überwiegend XML. JSON nur für: cfgEffectArea.json, cfgUndergroundTriggers.json, cfgGameplay.json. ALLE anderen Mission-Configs sind XML.');
+  lines.push('- Es gibt KEINE Datei "cfgSpawnableTypes.json", kein Verzeichnis "cfgSpawnableTypes/building/", kein "cfgSpawnableTypes/itemsets/". Wer das sagt, halluziniert (das ist Arma3-/ExileMod-Syntax und gilt NICHT für DayZ Standalone).');
+  lines.push('- Loot in Gebäuden = `mapgroupproto.xml` (Loot-Punkte je Gebäudetyp) + `mapgrouppos.xml` (Welt-Positionen). Felder dort: `<container>`, `<point x y z range>`, `<usage>`, `<value>`, `<lootmax>`. KEIN spawnChance/minCount/maxCount/itemSet/offsetX/Y/Z.');
+  lines.push('- Cargo/Attachments für gespawnte Items = `cfgspawnabletypes.xml` (XML, NICHT JSON). Felder: `<type name>`, `<attachments chance>`, `<cargo chance>`, `<item name chance>`.');
+  lines.push('- Loot-Mengen pro Item = `types.xml`. Felder: `nominal`, `min`, `lifetime`, `restock`, `<flags>`, `<usage>`, `<value>`, `<tag>`. Es gibt KEIN `spawnChance` in types.xml.');
+  lines.push('- Wenn du dir bei einem Dateinamen oder Feld unsicher bist: sage "das müsste ich nachschlagen" statt zu raten. Lieber kurz und korrekt als ausführlich und falsch.');
 
   return {
     text: lines.join('\n'),
     topicIds: picked.map((s) => s.topic.id),
     found: true,
   };
+}
+
+/**
+ * Statischer Anti-Halluzinations-Block. Wird zus\u00e4tzlich injiziert, wenn die
+ * Frage erkennbar nach DayZ-Dateien klingt aber kein Topic eindeutig getroffen
+ * wurde \u2014 verhindert dass die LLM Arma3-/ExileMod-Felder oder erfundene
+ * Dateinamen wie "cfgSpawnableTypes.json" hervorbringt.
+ */
+const FILE_TRUTH_BLOCK: string = [
+  'DAYZ-DATEI-WAHRHEIT (HARTE REGELN \u2014 Halluzinationen werden als Fehler gewertet):',
+  '- Existierende Dateien (Vanilla DayZ, Stand 1.27): types.xml, events.xml, economy.xml, init.c, serverDZ.cfg, mapgroupproto.xml, mapgrouppos.xml, cfgspawnabletypes.xml, cfgrandompresets.xml, cfgeventgroups.xml, cfgenvironment.xml, cfgEffectArea.json, cfgUndergroundTriggers.json, cfgGameplay.json, cfgweather.xml, globals.xml, messages.xml, cfgeconomycore.xml.',
+  '- DayZ verwendet f\u00fcr Mission-Configs \u00fcberwiegend XML. JSON nur f\u00fcr: cfgEffectArea.json, cfgUndergroundTriggers.json, cfgGameplay.json. ALLE anderen Mission-Configs sind XML.',
+  '- Es gibt KEINE Datei "cfgSpawnableTypes.json", kein Verzeichnis "cfgSpawnableTypes/building/", kein "cfgSpawnableTypes/itemsets/". Wer das sagt, halluziniert (das ist Arma3-/ExileMod-Syntax und gilt NICHT f\u00fcr DayZ Standalone).',
+  '- Loot in Geb\u00e4uden = `mapgroupproto.xml` (Loot-Punkte je Geb\u00e4udetyp) + `mapgrouppos.xml` (Welt-Positionen). Felder dort: `<container>`, `<point x y z range>`, `<usage>`, `<value>`, `<lootmax>`. KEIN spawnChance/minCount/maxCount/itemSet/offsetX/Y/Z.',
+  '- Cargo/Attachments f\u00fcr gespawnte Items = `cfgspawnabletypes.xml` (XML, NICHT JSON). Felder: `<type name>`, `<attachments chance>`, `<cargo chance>`, `<item name chance>`.',
+  '- Loot-Mengen pro Item = `types.xml`. Felder: `nominal`, `min`, `lifetime`, `restock`, `<flags>`, `<usage>`, `<value>`, `<tag>`. Es gibt KEIN `spawnChance` in types.xml.',
+  '- Wenn du dir bei einem Dateinamen oder Feld unsicher bist: sage "das m\u00fcsste ich nachschlagen" statt zu raten. Lieber kurz und korrekt als ausf\u00fchrlich und falsch.',
+].join('\n');
+
+/**
+ * Liefert nur den Wahrheits-Block (ohne Topic), z.\u202fB. wenn die Frage nach
+ * einer DayZ-Datei klingt aber kein Topic-Trigger getroffen hat. Verhindert,
+ * dass die LLM frei halluziniert.
+ */
+export function getDayZFileTruthBlock(): string {
+  return FILE_TRUTH_BLOCK;
+}
+
+/**
+ * Heuristik: klingt die Frage nach DayZ-Datei/Konfig (auch wenn kein Topic matched)?
+ * Wenn ja, soll der Wahrheits-Block injiziert werden.
+ */
+export function looksLikeDayZFileQuestion(question: string): boolean {
+  if (!question) return false;
+  const q = question.toLowerCase();
+  // Dateiname-Stems, die nur in DayZ vorkommen \u2014 dann ist es eine DayZ-Frage,
+  // egal wie die Frage formuliert ist.
+  if (/\b(types\.xml|events\.xml|economy\.xml|init\.c|serverdz\.cfg|mapgroupproto|mapgrouppos|cfgspawnabletypes|cfggameplay|cfgeffectarea|cfgundergroundtriggers|cfgenvironment)\b/.test(q)) {
+    return true;
+  }
+  // Datei-Endungen im DayZ-/Nitrado-/Loot-Kontext
+  if (/\.(xml|cfg|json|c)\b/.test(q) && /(dayz|nitrado|loot|spawn|mod|server|item|geb\u00e4ude|gebaeude|haus|h\u00e4user|haeuser|mission)/.test(q)) {
+    return true;
+  }
+  // \"Loot in H\u00e4usern\", \"wo wird X definiert\", \"welche Datei\"
+  if (/\bloot\b.*\b(h\u00e4user|haeuser|geb\u00e4ude|gebaeude|haus)\b/.test(q)) return true;
+  if (/\bwelche\s+datei\b/.test(q) && /(loot|spawn|item|mod|dayz|server|geb\u00e4ude|gebaeude|wetter|tier)/.test(q)) return true;
+  if (/\bwo\s+(wird|werden|spawnt|spawnen|liegt|liegen|finde|find\s+ich)\b/.test(q) && /(loot|item|spawn|geb\u00e4ude|gebaeude|haus|h\u00e4user|haeuser|tier|wetter)/.test(q)) return true;
+  return false;
 }
