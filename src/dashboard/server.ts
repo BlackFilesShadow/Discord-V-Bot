@@ -63,15 +63,19 @@ export async function startDashboard(client?: Client): Promise<void> {
   });
 
   // /api/v2 deckt das gesamte DEV-Dashboard ab (Live-Polling, viele
-  // Tools mit eigenen Refresh-Intervallen). 100/min ist viel zu eng und
-  // hat im Browser einen 429-Storm erzeugt sobald mehrere Pages aktiv
-  // waren. 600/min = 10 req/s sustained ist fuer ein Single-User-Dashboard
-  // grosszuegig und schuetzt trotzdem vor offenkundigem Missbrauch.
+  // Tools mit eigenen Refresh-Intervallen). Authentifizierte Nutzer
+  // (req.session.userId vorhanden) durchlaufen ohnehin requireAuth/requireDev
+  // und sind kein Brute-Force-Vektor — fuer sie wird der Limiter geskippt.
+  // Anonyme Aufrufer bleiben auf 600/min/IP gedeckelt (DoS-Schutz auf
+  // /webhooks, /api/health, ungesicherte /api-Pfade).
   const apiLimiter = rateLimit({
     windowMs: 60 * 1000,
     max: 600,
     standardHeaders: true,
     legacyHeaders: false,
+    skip: (req) => Boolean((req.session as unknown as { userId?: string } | undefined)?.userId),
+    keyGenerator: (req) => req.ip ?? 'unknown',
+    message: { error: 'rate_limited', message: 'Zu viele Anfragen. Bitte kurz warten.' },
   });
 
   app.use(express.json({ limit: '10mb' }));
