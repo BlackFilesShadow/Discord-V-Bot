@@ -30,7 +30,10 @@ export function DevLoginPanel() {
 
   // Auf der /login-Route nicht rendern (kein Overlay ueber dem Login-Form).
   if (pathname.startsWith('/login')) return null;
-  if (!user || user.role !== 'DEVELOPER') return null;
+  // Nur wenn ein User eingeloggt ist (sonst gibt's nichts zum DEV-Login).
+  // Eigentliche Permission wird serverseitig in /api/v2/dev/login geprueft;
+  // hier zeigen wir das Panel auch fuer Nicht-DEVELOPER mit Hinweis-Text.
+  if (!user) return null;
 
   const onSubmit = async (e: FormEvent): Promise<void> => {
     e.preventDefault();
@@ -100,15 +103,7 @@ export function DevLoginPanel() {
             <StatusBadge active={active} loading={loading} eligible={eligible} />
           </header>
 
-          {!eligible && !loading && (
-            <p className="relative text-xs text-muted leading-relaxed
-                          border border-border/50 bg-bg-elev/40 rounded-lg px-3 py-2">
-              <ShieldAlert className="inline h-3.5 w-3.5 mr-1.5 text-warn" />
-              Dein Account hat keine DEVELOPER-Rolle.
-            </p>
-          )}
-
-          {eligible && !active && (
+          {!active && (
             <form onSubmit={onSubmit} className="relative space-y-2.5" autoComplete="off">
               <label htmlFor="dev-pw" className="sr-only">DEV Passwort</label>
               <Input
@@ -124,6 +119,14 @@ export function DevLoginPanel() {
                 className="h-10 text-sm bg-black/60 border-red-900/40 focus:border-red-500
                            focus:ring-1 focus:ring-red-500/40 placeholder:text-muted/70"
               />
+              {!eligible && !loading && (
+                <p className="text-[11px] text-muted leading-snug
+                              border border-border/50 bg-bg-elev/40 rounded-lg px-2.5 py-1.5">
+                  <ShieldAlert className="inline h-3 w-3 mr-1 text-warn" />
+                  Hinweis: Dein Account hat (laut Server) keine DEVELOPER-Rolle.
+                  Login wird beim Absenden serverseitig geprueft.
+                </p>
+              )}
               {err && (
                 <p
                   id="dev-pw-err"
@@ -151,7 +154,7 @@ export function DevLoginPanel() {
             </form>
           )}
 
-          {eligible && active && (
+          {active && (
             <div className="relative space-y-3">
               <p className="text-[11px] text-muted">
                 {expiresAt

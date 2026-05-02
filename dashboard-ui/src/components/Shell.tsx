@@ -98,7 +98,7 @@ export function Shell({ title, back, sidebar, children }: ShellProps) {
         {sidebar && (
           <>
             {/* Desktop Sidebar */}
-            <aside className="hidden md:block w-60 border-r border-white/[0.06] bg-gradient-to-b from-bg-card/50 to-bg-card/20 backdrop-blur-md p-4 overflow-y-auto">
+            <aside className="hidden md:block w-64 lg:w-72 border-r border-white/[0.06] bg-gradient-to-b from-bg-card/50 to-bg-card/20 backdrop-blur-md p-5 overflow-y-auto text-[15px]">
               {sidebar}
             </aside>
             {/* Mobile Drawer */}
