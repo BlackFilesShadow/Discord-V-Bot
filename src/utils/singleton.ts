@@ -17,7 +17,17 @@ const LOCK_KEY = 'bot:singleton:lock';
 const HEARTBEAT_INTERVAL_MS = 10_000;
 const STALE_THRESHOLD_MS = 30_000;
 
-const instanceId = `${os.hostname()}-${process.pid}-${crypto.randomBytes(4).toString('hex')}`;
+/**
+ * Stabiler Host-Identifier. In Docker vergibt jeder Container-Restart einen
+ * neuen Hostnamen (Container-ID), wodurch die "Same-Host"-Erkennung versagt.
+ * BOT_STABLE_HOST_ID (z. B. via docker-compose.yml gesetzt) erlaubt es, den
+ * Host als stabil zu markieren, sodass nach einem Crash der neue Container
+ * den Lock automatisch uebernimmt.
+ */
+const stableHostId = process.env.BOT_STABLE_HOST_ID || os.hostname();
+const FORCE_TAKEOVER = process.env.FORCE_SINGLETON_TAKEOVER === '1';
+
+const instanceId = `${stableHostId}-${process.pid}-${crypto.randomBytes(4).toString('hex')}`;
 
 interface LockValue {
   instanceId: string;
@@ -35,10 +45,15 @@ export async function acquireSingletonLock(): Promise<void> {
     const v = existing.value as unknown as LockValue;
     const age = now - (v?.ts ?? 0);
     if (v?.instanceId && v.instanceId !== instanceId && age < STALE_THRESHOLD_MS) {
-      // Gleicher Hostname = alte Container-Instanz auf demselben Host wurde
-      // gekillt ohne Release. Wir wissen, sie ist tot (wir laufen ja jetzt
-      // auf demselben Host). -> Force-Takeover, kein Konflikt.
-      if (v.hostname === os.hostname()) {
+      // Force-Takeover via ENV (Notfall-Override fuer Deployments).
+      if (FORCE_TAKEOVER) {
+        logger.warn(
+          `FORCE_SINGLETON_TAKEOVER aktiv. Uebernehme Lock von ${v.instanceId} (ageMs=${age}).`,
+        );
+      }
+      // Gleicher (stabiler) Host = alte Container-Instanz wurde gekillt
+      // ohne Release. Wir wissen, sie ist tot. -> Force-Takeover.
+      else if (v.hostname === stableHostId || v.hostname === os.hostname()) {
         logger.warn(
           `Singleton-Lock von alter Instanz auf demselben Host gefunden ` +
           `(${v.instanceId}, ageMs=${age}). Uebernehme Lock.`,
@@ -47,7 +62,8 @@ export async function acquireSingletonLock(): Promise<void> {
         logger.error(
           `SINGLETON-KONFLIKT: Andere Bot-Instanz aktiv ` +
           `(instance=${v.instanceId} host=${v.hostname} pid=${v.pid} ageMs=${age}). ` +
-          `Beende, um Doppelantworten zu vermeiden. Stoppe die andere Instanz, dann neu starten.`,
+          `Beende, um Doppelantworten zu vermeiden. Stoppe die andere Instanz, dann neu starten. ` +
+          `Notfall-Override: FORCE_SINGLETON_TAKEOVER=1 setzen.`,
         );
         process.exit(2);
       }
@@ -59,12 +75,12 @@ export async function acquireSingletonLock(): Promise<void> {
     where: { key: LOCK_KEY },
     create: {
       key: LOCK_KEY,
-      value: { instanceId, hostname: os.hostname(), pid: process.pid, ts: now } as object,
+      value: { instanceId, hostname: stableHostId, pid: process.pid, ts: now } as object,
       category: 'system',
       description: 'Singleton-Lock fuer aktive Bot-Instanz (Doppelantwort-Schutz)',
     },
     update: {
-      value: { instanceId, hostname: os.hostname(), pid: process.pid, ts: now } as object,
+      value: { instanceId, hostname: stableHostId, pid: process.pid, ts: now } as object,
     },
   });
 
@@ -98,7 +114,7 @@ export async function acquireSingletonLock(): Promise<void> {
       await prisma.botConfig.update({
         where: { key: LOCK_KEY },
         data: {
-          value: { instanceId, hostname: os.hostname(), pid: process.pid, ts: Date.now() } as object,
+          value: { instanceId, hostname: stableHostId, pid: process.pid, ts: Date.now() } as object,
         },
       });
     } catch (e) {

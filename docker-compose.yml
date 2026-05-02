@@ -31,6 +31,10 @@ services:
     environment:
       DATABASE_URL: postgresql://${POSTGRES_USER:-discordbot}:${POSTGRES_PASSWORD:-changeme}@postgres:5432/${POSTGRES_DB:-discord_v_bot}?schema=public
       NODE_ENV: production
+      # Stabiler Host-Identifier fuer Singleton-Lock (Docker vergibt sonst pro
+      # Container-Restart einen neuen Hostnamen, was die Same-Host-Erkennung
+      # bricht und nach Crashes Restart-Loops verursacht).
+      BOT_STABLE_HOST_ID: ${BOT_STABLE_HOST_ID:-discord-v-bot}
     ports:
       - "${DASHBOARD_PORT:-3000}:3000"
     volumes:
