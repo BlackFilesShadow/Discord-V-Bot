@@ -15,10 +15,9 @@
  *
  * Polling: alle 10s. Logs zusaetzlich live nachladbar via "Refresh".
  */
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useMemo, useState } from 'react';
 import { Activity, Brain, Database, HardDrive, RefreshCw, Search } from 'lucide-react';
-import { api } from '@/lib/api';
-import { useToast } from '@/lib/toast';
+import { useDevStatus } from '@/lib/useDevStatus';
 import { Card, CardHeader, CardTitle, CardDesc } from '@/components/ui/Card';
 import { Button } from '@/components/ui/Button';
 import { Badge } from '@/components/ui/Badge';
@@ -109,42 +108,30 @@ function ErrorRateBadge({ rate }: { rate: number }): JSX.Element {
 }
 
 export default function Observability(): JSX.Element {
-  const [prisma, setPrisma] = useState<PrismaBucket[] | null>(null);
-  const [ai, setAi] = useState<AiBucket[] | null>(null);
-  const [backup, setBackup] = useState<BackupStatus | null>(null);
-  const [logs, setLogs] = useState<LogEntry[] | null>(null);
   const [logLevel, setLogLevel] = useState('');
   const [logQ, setLogQ] = useState('');
-  const [loading, setLoading] = useState(false);
-  const toast = useToast();
 
-  const reload = useCallback(async () => {
-    setLoading(true);
-    try {
-      const [p, a, b, l] = await Promise.all([
-        api.get<{ buckets: PrismaBucket[] }>('/api/v2/dev/observability/metrics/prisma'),
-        api.get<{ buckets: AiBucket[] }>('/api/v2/dev/observability/metrics/ai'),
-        api.get<BackupStatus>('/api/v2/dev/observability/backup/status'),
-        api.get<{ entries: LogEntry[] }>(
-          `/api/v2/dev/observability/logs?n=200${logLevel ? `&level=${encodeURIComponent(logLevel)}` : ''}${logQ ? `&q=${encodeURIComponent(logQ)}` : ''}`,
-        ),
-      ]);
-      setPrisma(p.buckets);
-      setAi(a.buckets);
-      setBackup(b);
-      setLogs(l.entries);
-    } catch (e) {
-      toast.push({ variant: 'danger', title: 'Observability-Fehler', desc: (e as Error).message });
-    } finally {
-      setLoading(false);
-    }
-  }, [logLevel, logQ, toast]);
+  const logsPath = useMemo(
+    () => `/api/v2/dev/observability/logs?n=200${logLevel ? `&level=${encodeURIComponent(logLevel)}` : ''}${logQ ? `&q=${encodeURIComponent(logQ)}` : ''}`,
+    [logLevel, logQ],
+  );
 
-  useEffect(() => {
-    void reload();
-    const t = setInterval(() => { void reload(); }, 10_000);
-    return () => clearInterval(t);
-  }, [reload]);
+  const prismaQ = useDevStatus<{ buckets: PrismaBucket[] }>('/api/v2/dev/observability/metrics/prisma', 10_000);
+  const aiQ = useDevStatus<{ buckets: AiBucket[] }>('/api/v2/dev/observability/metrics/ai', 10_000);
+  const backupQ = useDevStatus<BackupStatus>('/api/v2/dev/observability/backup/status', 10_000);
+  const logsQ = useDevStatus<{ entries: LogEntry[] }>(logsPath, 10_000);
+
+  const prisma = prismaQ.data?.buckets ?? null;
+  const ai = aiQ.data?.buckets ?? null;
+  const backup = backupQ.data ?? null;
+  const logs = logsQ.data?.entries ?? null;
+  const loading = prismaQ.loading || aiQ.loading || backupQ.loading || logsQ.loading;
+  const reload = (): void => {
+    prismaQ.reload();
+    aiQ.reload();
+    backupQ.reload();
+    logsQ.reload();
+  };
 
   const prismaCols: Column<PrismaBucket>[] = useMemo(() => [
     { id: 'key', header: 'model:action', cell: (r: PrismaBucket) => <span className="font-mono">{r.key}</span> },

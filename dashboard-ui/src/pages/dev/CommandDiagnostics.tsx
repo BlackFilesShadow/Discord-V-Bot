@@ -3,10 +3,9 @@
  * Liest die Slash-Command-Registry des laufenden Discord-Clients.
  * Backend: GET /api/v2/dev/stubs/commands.
  */
-import { useEffect, useState, useCallback, useMemo } from 'react';
+import { useState, useMemo } from 'react';
 import { TerminalSquare, RefreshCw } from 'lucide-react';
-import { api } from '@/lib/api';
-import { useToast } from '@/lib/toast';
+import { useDevStatus } from '@/lib/useDevStatus';
 import { Card, CardHeader, CardTitle, CardDesc } from '@/components/ui/Card';
 import { Button } from '@/components/ui/Button';
 import { Badge } from '@/components/ui/Badge';
@@ -20,19 +19,9 @@ interface Cmd { name: string; description: string; cooldownMs: number | null }
 interface Resp { ready: boolean; count: number; commands: Cmd[] }
 
 export default function Page(): JSX.Element {
-  const [data, setData] = useState<Resp | null>(null);
   const [filter, setFilter] = useState('');
-  const [loading, setLoading] = useState(false);
-  const toast = useToast();
-
-  const reload = useCallback(async () => {
-    setLoading(true);
-    try { setData(await api.get<Resp>('/api/v2/dev/stubs/commands')); }
-    catch (e) { toast.push({ variant: 'danger', title: 'Fehler', desc: (e as Error).message }); }
-    finally { setLoading(false); }
-  }, [toast]);
-
-  useEffect(() => { void reload(); }, [reload]);
+  // Polling deaktiviert (intervalMs=0): Commands aendern sich erst bei Bot-Restart.
+  const { data, loading, error, reload } = useDevStatus<Resp>('/api/v2/dev/stubs/commands', 0);
 
   const filtered = useMemo(() => {
     if (!data) return [];
@@ -54,8 +43,10 @@ export default function Page(): JSX.Element {
         icon={<TerminalSquare className="h-5 w-5" />}
         actions={<Button variant="ghost" onClick={() => void reload()} disabled={loading}><RefreshCw className="h-4 w-4 mr-1" />Refresh</Button>}
       />
-      {!data ? <Skeleton className="h-32" />
-        : !data.ready ? <EmptyState title="Bot nicht verbunden" desc="Discord-Client noch nicht initialisiert." />
+      {error && !data && <EmptyState title="Fehler beim Laden" desc={error} />}
+      {!data && !error ? <Skeleton className="h-32" />
+        : !data ? null
+          : !data.ready ? <EmptyState title="Bot nicht verbunden" desc="Discord-Client noch nicht initialisiert." />
           : (
             <>
               <div className="grid grid-cols-2 sm:grid-cols-3 gap-3">

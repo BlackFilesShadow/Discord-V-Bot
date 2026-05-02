@@ -3,10 +3,8 @@
  * 24h-Snapshot: SecurityEvents, Brute-Force, Login-Failures, DevSessions.
  * Backend: GET /api/v2/dev/stubs/security.
  */
-import { useEffect, useState, useCallback } from 'react';
 import { ShieldCheck, RefreshCw } from 'lucide-react';
-import { api } from '@/lib/api';
-import { useToast } from '@/lib/toast';
+import { useDevStatus } from '@/lib/useDevStatus';
 import { Card, CardHeader, CardTitle, CardDesc } from '@/components/ui/Card';
 import { Button } from '@/components/ui/Button';
 import { Badge } from '@/components/ui/Badge';
@@ -37,18 +35,7 @@ const sevBadge = (s: string) => {
 };
 
 export default function Page(): JSX.Element {
-  const [data, setData] = useState<SecurityPayload | null>(null);
-  const [loading, setLoading] = useState(false);
-  const toast = useToast();
-
-  const reload = useCallback(async () => {
-    setLoading(true);
-    try { setData(await api.get<SecurityPayload>('/api/v2/dev/stubs/security')); }
-    catch (e) { toast.push({ variant: 'danger', title: 'Fehler', desc: (e as Error).message }); }
-    finally { setLoading(false); }
-  }, [toast]);
-
-  useEffect(() => { void reload(); const t = setInterval(() => { void reload(); }, 15_000); return () => clearInterval(t); }, [reload]);
+  const { data, loading, error, reload } = useDevStatus<SecurityPayload>('/api/v2/dev/stubs/security', 15_000);
 
   const groupCols: Column<EventGroup>[] = [
     { id: 't', header: 'Event-Typ', cell: r => <span className="font-mono">{r.eventType}</span> },
@@ -71,7 +58,8 @@ export default function Page(): JSX.Element {
         icon={<ShieldCheck className="h-5 w-5" />}
         actions={<Button variant="ghost" onClick={() => void reload()} disabled={loading}><RefreshCw className="h-4 w-4 mr-1" />Refresh</Button>}
       />
-      {!data ? <Skeleton className="h-32" /> : (
+      {error && !data && <EmptyState title="Fehler beim Laden" desc={error} />}
+      {!data && !error ? <Skeleton className="h-32" /> : !data ? null : (
         <>
           <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
             <StatCard label="Aktive DEV-Sessions" value={data.activeDevSessions} accent="warn" />

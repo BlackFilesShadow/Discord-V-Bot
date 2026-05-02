@@ -159,7 +159,10 @@ export async function startDashboard(client?: Client): Promise<void> {
   // mit requireAuth zuerst und blockt den Owner-Self-Service.
   app.use('/api/health', apiLimiter, discordHealthRouter);
   app.use('/api', apiLimiter, apiRouter);
-  app.use('/api/v2', apiLimiter, v2Router);
+  // Hinweis: /api/v2 wird bereits durch den /api-apiLimiter oben gezaehlt.
+  // Kein zweites Mount, sonst dekrementiert das Limit pro Request doppelt
+  // (-> verfruehte 429s fuer unauthentifizierte Polls).
+  app.use('/api/v2', v2Router);
   app.use('/admin', apiLimiter, adminRouter);
   app.use('/test', apiLimiter, testRouter);
 

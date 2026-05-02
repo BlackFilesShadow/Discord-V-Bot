@@ -3,10 +3,8 @@
  * Live-Snapshot des Express-Servers + Sockets + Top-Prisma-Buckets.
  * Backend: GET /api/v2/dev/stubs/server-stats (Polling 10s).
  */
-import { useEffect, useState, useCallback } from 'react';
 import { LayoutDashboard, RefreshCw } from 'lucide-react';
-import { api } from '@/lib/api';
-import { useToast } from '@/lib/toast';
+import { useDevStatus } from '@/lib/useDevStatus';
 import { Card, CardHeader, CardTitle, CardDesc } from '@/components/ui/Card';
 import { Button } from '@/components/ui/Button';
 import { Skeleton } from '@/components/ui/Skeleton';
@@ -35,18 +33,7 @@ const fmtUptime = (s: number) => {
 };
 
 export default function Page(): JSX.Element {
-  const [data, setData] = useState<ServerStats | null>(null);
-  const [loading, setLoading] = useState(false);
-  const toast = useToast();
-
-  const reload = useCallback(async () => {
-    setLoading(true);
-    try { setData(await api.get<ServerStats>('/api/v2/dev/stubs/server-stats')); }
-    catch (e) { toast.push({ variant: 'danger', title: 'Fehler', desc: (e as Error).message }); }
-    finally { setLoading(false); }
-  }, [toast]);
-
-  useEffect(() => { void reload(); const t = setInterval(() => { void reload(); }, 10_000); return () => clearInterval(t); }, [reload]);
+  const { data, loading, error, reload } = useDevStatus<ServerStats>('/api/v2/dev/stubs/server-stats', 10_000);
 
   const cols: Column<PrismaBucket>[] = [
     { id: 'key', header: 'model:action', cell: r => <span className="font-mono">{r.key}</span> },
@@ -63,7 +50,8 @@ export default function Page(): JSX.Element {
         icon={<LayoutDashboard className="h-5 w-5" />}
         actions={<Button variant="ghost" onClick={() => void reload()} disabled={loading}><RefreshCw className="h-4 w-4 mr-1" />Refresh</Button>}
       />
-      {!data ? <Skeleton className="h-32" /> : (
+      {error && !data && <Card><CardHeader><CardTitle>Daten nicht verfuegbar</CardTitle><CardDesc>{error}</CardDesc></CardHeader></Card>}
+      {!data && !error ? <Skeleton className="h-32" /> : !data ? null : (
         <>
           <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
             <StatCard label="Uptime" value={fmtUptime(data.uptimeSec)} />

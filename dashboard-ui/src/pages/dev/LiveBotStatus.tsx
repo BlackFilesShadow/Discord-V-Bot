@@ -8,7 +8,7 @@
  */
 import { useEffect, useRef, useState } from 'react';
 import { Activity, Pause, Play, Search, Trash2 } from 'lucide-react';
-import { api } from '@/lib/api';
+import { useDevStatus } from '@/lib/useDevStatus';
 import { Card, CardHeader, CardTitle, CardDesc } from '@/components/ui/Card';
 import { Button } from '@/components/ui/Button';
 import { Input } from '@/components/ui/Input';
@@ -44,7 +44,7 @@ function fmtUptime(s: number): string {
 }
 
 export default function LiveBotStatus() {
-  const [snap, setSnap] = useState<Snapshot | null>(null);
+  const { data: snap } = useDevStatus<Snapshot>('/api/v2/dev/snapshot', 5000);
   const [logs, setLogs] = useState<LogLine[]>([]);
   const [paused, setPaused] = useState(false);
   const [filter, setFilter] = useState<Set<LogLine['level']>>(new Set(LEVELS));
@@ -52,19 +52,6 @@ export default function LiveBotStatus() {
   const scrollRef = useRef<HTMLDivElement>(null);
   const pausedRef = useRef(paused);
   pausedRef.current = paused;
-
-  useEffect(() => {
-    let cancel = false;
-    const tick = async (): Promise<void> => {
-      try {
-        const s = await api.get<Snapshot>('/api/v2/dev/snapshot');
-        if (!cancel) setSnap(s);
-      } catch { /* ignore */ }
-    };
-    void tick();
-    const id = window.setInterval(tick, 5000);
-    return () => { cancel = true; window.clearInterval(id); };
-  }, []);
 
   useEffect(() => {
     const s = getDevSocket();

@@ -11,11 +11,12 @@
  *   POST /api/v2/dev/incident/deactivate
  *   POST /api/v2/dev/incident/oneshot
  */
-import { useEffect, useState, useCallback } from 'react';
+import { useState } from 'react';
 import {
   AlertOctagon, Power, RefreshCw, Wrench, Database, HardDriveDownload, Clock, Brain, ShieldOff, Languages,
 } from 'lucide-react';
 import { api } from '@/lib/api';
+import { useDevStatus } from '@/lib/useDevStatus';
 import { useToast } from '@/lib/toast';
 import { Card, CardHeader, CardTitle, CardDesc } from '@/components/ui/Card';
 import { Button } from '@/components/ui/Button';
@@ -90,29 +91,10 @@ interface PendingStepUp {
 }
 
 export default function IncidentResponse() {
-  const [state, setState] = useState<StateResponse | null>(null);
-  const [loading, setLoading] = useState(false);
+  const { data: state, loading, reload } = useDevStatus<StateResponse>('/api/v2/dev/incident/state', 15_000);
   const [pending, setPending] = useState<PendingStepUp | null>(null);
   const [busy, setBusy] = useState(false);
   const toast = useToast();
-
-  const reload = useCallback(async () => {
-    setLoading(true);
-    try {
-      const r = await api.get<StateResponse>('/api/v2/dev/incident/state');
-      setState(r);
-    } catch (e) {
-      toast.push({ variant: 'danger', title: 'Fehler', desc: (e as Error).message });
-    } finally {
-      setLoading(false);
-    }
-  }, [toast]);
-
-  useEffect(() => {
-    void reload();
-    const id = setInterval(() => { void reload(); }, 15_000);
-    return () => clearInterval(id);
-  }, [reload]);
 
   const isActive = (action: IncidentAction): ToggleState | undefined =>
     state?.toggles.find(t => t.action === action);

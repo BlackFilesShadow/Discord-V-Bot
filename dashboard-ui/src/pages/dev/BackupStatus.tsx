@@ -3,10 +3,8 @@
  * Live-Snapshot des Backup-Verzeichnisses.
  * Backend: GET /api/v2/dev/observability/backup/status.
  */
-import { useEffect, useState, useCallback } from 'react';
 import { HardDrive, RefreshCw } from 'lucide-react';
-import { api } from '@/lib/api';
-import { useToast } from '@/lib/toast';
+import { useDevStatus } from '@/lib/useDevStatus';
 import { Card, CardHeader, CardTitle, CardDesc } from '@/components/ui/Card';
 import { Button } from '@/components/ui/Button';
 import { Skeleton } from '@/components/ui/Skeleton';
@@ -33,18 +31,7 @@ const fmtAge = (ms: number) => {
 };
 
 export default function Page(): JSX.Element {
-  const [data, setData] = useState<BackupStatus | null>(null);
-  const [loading, setLoading] = useState(false);
-  const toast = useToast();
-
-  const reload = useCallback(async () => {
-    setLoading(true);
-    try { setData(await api.get<BackupStatus>('/api/v2/dev/observability/backup/status')); }
-    catch (e) { toast.push({ variant: 'danger', title: 'Fehler', desc: (e as Error).message }); }
-    finally { setLoading(false); }
-  }, [toast]);
-
-  useEffect(() => { void reload(); const t = setInterval(() => { void reload(); }, 30_000); return () => clearInterval(t); }, [reload]);
+  const { data, loading, error, reload } = useDevStatus<BackupStatus>('/api/v2/dev/observability/backup/status', 30_000);
 
   const cols: Column<BackupEntry>[] = [
     { id: 'name', header: 'Name', cell: r => <span className="font-mono text-xs">{r.name}</span> },
@@ -61,8 +48,10 @@ export default function Page(): JSX.Element {
         icon={<HardDrive className="h-5 w-5" />}
         actions={<Button variant="ghost" onClick={() => void reload()} disabled={loading}><RefreshCw className="h-4 w-4 mr-1" />Refresh</Button>}
       />
-      {!data ? <Skeleton className="h-32" />
-        : !data.exists ? <EmptyState title="Backup-Verzeichnis fehlt" desc={data.dir} />
+      {error && !data && <EmptyState title="Fehler beim Laden" desc={error} />}
+      {!data && !error ? <Skeleton className="h-32" />
+        : !data ? null
+          : !data.exists ? <EmptyState title="Backup-Verzeichnis fehlt" desc={data.dir} />
           : (
             <>
               <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">

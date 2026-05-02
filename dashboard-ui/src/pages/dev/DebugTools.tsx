@@ -3,10 +3,11 @@
  * V8-Heap-Stats, EventLoop-Lag, Resource-Usage + Heap-Snapshot-Trigger (StepUp).
  * Backend: GET /api/v2/dev/stubs/debug, POST /api/v2/dev/stubs/debug/heap-snapshot.
  */
-import { useEffect, useState, useCallback } from 'react';
+import { useState } from 'react';
 import { Bug, Camera, RefreshCw } from 'lucide-react';
 import { api } from '@/lib/api';
 import { useToast } from '@/lib/toast';
+import { useDevStatus } from '@/lib/useDevStatus';
 import { Card, CardHeader, CardTitle, CardDesc } from '@/components/ui/Card';
 import { Button } from '@/components/ui/Button';
 import { Skeleton } from '@/components/ui/Skeleton';
@@ -32,20 +33,10 @@ interface DebugPayload {
 const fmtBytes = (b: number) => b < 1024 ? `${b} B` : b < 1024 * 1024 ? `${(b / 1024).toFixed(1)} KB` : b < 1e9 ? `${(b / 1024 / 1024).toFixed(1)} MB` : `${(b / 1e9).toFixed(2)} GB`;
 
 export default function Page(): JSX.Element {
-  const [data, setData] = useState<DebugPayload | null>(null);
-  const [loading, setLoading] = useState(false);
   const [stepUp, setStepUp] = useState<StepUpRequest | null>(null);
   const [busy, setBusy] = useState(false);
   const toast = useToast();
-
-  const reload = useCallback(async () => {
-    setLoading(true);
-    try { setData(await api.get<DebugPayload>('/api/v2/dev/stubs/debug')); }
-    catch (e) { toast.push({ variant: 'danger', title: 'Fehler', desc: (e as Error).message }); }
-    finally { setLoading(false); }
-  }, [toast]);
-
-  useEffect(() => { void reload(); const t = setInterval(() => { void reload(); }, 10_000); return () => clearInterval(t); }, [reload]);
+  const { data, loading, error, reload } = useDevStatus<DebugPayload>('/api/v2/dev/stubs/debug', 10_000);
 
   const cols: Column<HeapSpace>[] = [
     { id: 'name', header: 'Space', cell: r => <span className="font-mono text-xs">{r.name}</span> },
@@ -87,7 +78,8 @@ export default function Page(): JSX.Element {
           </>
         }
       />
-      {!data ? <Skeleton className="h-32" /> : (
+      {error && !data && <Card><CardHeader><CardTitle>Daten nicht verfuegbar</CardTitle><CardDesc>{error}</CardDesc></CardHeader></Card>}
+      {!data && !error ? <Skeleton className="h-32" /> : !data ? null : (
         <>
           <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
             <StatCard label="Heap used" value={fmtBytes(data.heap.used_heap_size)} />
