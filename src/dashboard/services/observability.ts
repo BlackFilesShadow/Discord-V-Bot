@@ -250,10 +250,16 @@ interface LogInfo {
 
 // Eigener Transport, der Logs in den Ring-Buffer pushed. Kein Import von
 // 'winston-transport', um die Abhaengigkeit nicht zu verbreitern.
+//
+// HINWEIS: Winston wrapped Nicht-Transport-Objekte automatisch als
+// LegacyTransportStream. Dabei kann `.log(info, callback)` mit callback=undefined
+// aufgerufen werden (wenn der Stream-Adapter den Callback nicht weiterreicht).
+// Deshalb MUSS callback optional sein und defensive geprueft werden, sonst
+// crashed der Boot mit "callback is not a function".
 class RingTransport {
   level?: string;
   silent?: boolean;
-  log(info: LogInfo, callback: () => void): void {
+  log(info: LogInfo, callback?: () => void): void {
     try {
       const { level, message, ...rest } = info;
       const metaStr = Object.keys(rest).length > 0
@@ -266,8 +272,14 @@ class RingTransport {
         meta: metaStr,
       });
     } catch { /* swallow — logging muss verlustfrei weiterlaufen */ }
-    callback();
+    if (typeof callback === 'function') callback();
   }
+  // Stream-API-Stubs, falls Winston den Transport als Stream behandelt.
+  write(info: LogInfo, _enc?: unknown, cb?: () => void): boolean {
+    this.log(info, cb);
+    return true;
+  }
+  end(cb?: () => void): void { if (typeof cb === 'function') cb(); }
   on(): this { return this; }
   once(): this { return this; }
   emit(): boolean { return true; }
