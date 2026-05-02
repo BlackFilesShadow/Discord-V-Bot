@@ -31,6 +31,7 @@ import SuspiciousActivity from './pages/dev/SuspiciousActivity';
 import FactionActivity from './pages/dev/FactionActivity';
 import VehicleTracking from './pages/dev/VehicleTracking';
 import AiProviderStats from './pages/dev/AiProviderStats';
+import NitradoMirror from './pages/dev/NitradoMirror';
 import { DevLoginPanel } from './components/DevLoginPanel';
 
 function Protected({ children }: { children: JSX.Element }) {
@@ -68,6 +69,7 @@ const DEV_PAGES: Record<string, () => JSX.Element> = {
   'faction-activity': FactionActivity,
   'vehicle-tracking': VehicleTracking,
   'ai-providers': AiProviderStats,
+  'nitrado-mirror': NitradoMirror,
 };
 
 // Registry-Konsistenz-Check (Compile-Zeit-Hilfe; failt frueh wenn Tools/Pages

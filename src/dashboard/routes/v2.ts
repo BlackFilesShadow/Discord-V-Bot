@@ -24,6 +24,7 @@ import { devRouter } from './v2/dev';
 import { devUploadsRouter } from './v2/devUploads';
 import { devAnalyticsRouter } from './v2/devAnalytics';
 import { devStatusRouter } from './v2/devStatus';
+import { devNitradoMirrorRouter } from './v2/devNitradoMirror';
 import { auditRouter } from './v2/audit';
 
 export const v2Router = Router();
@@ -47,4 +48,5 @@ v2Router.use('/guilds/:guildId/audit', auditRouter);
 v2Router.use('/dev/uploads', devUploadsRouter);
 v2Router.use('/dev/analytics', devAnalyticsRouter);
 v2Router.use('/dev/status', devStatusRouter);
+v2Router.use('/dev/nitrado-mirror', devNitradoMirrorRouter);
 v2Router.use('/dev', devRouter);

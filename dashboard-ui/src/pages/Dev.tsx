@@ -14,7 +14,7 @@ import {
   Activity, LayoutDashboard, Database, Server as ServerIcon, Plug, HeartPulse,
   AlertTriangle, RefreshCw, HardDrive, ShieldCheck, FileSearch, FileWarning,
   FileCode, FileJson, Bug, ScrollText, TerminalSquare, Lock, Unlock, LogOut,
-  Skull, MapPin, Bomb, Home, Map as MapIcon, Eye, Users, Car, Brain,
+  Skull, MapPin, Bomb, Home, Map as MapIcon, Eye, Users, Car, Brain, FolderTree,
 } from 'lucide-react';
 import { Shell } from '@/components/Shell';
 import { Card, CardHeader, CardTitle, CardDesc } from '@/components/ui/Card';
@@ -64,6 +64,8 @@ export const DEV_TOOLS: ReadonlyArray<DevTool> = [
   { slug: 'vehicle-tracking',  label: 'Fahrzeug Tracking',   icon: Car,             status: 'ready', desc: 'Fahrzeug-Events pro Spieler/GUID.' },
   // Phase 3 — AI-Provider Health + Anomalie-Detection (Spec 9)
   { slug: 'ai-providers',      label: 'AI Provider Stats',   icon: Brain,           status: 'ready', desc: 'Provider-Erfolgsraten + Anomalie-Detection (Spec 9).' },
+  // Phase 4 — Nitrado Mirror (Read-Only): einmaliger Voll-Snapshot
+  { slug: 'nitrado-mirror',    label: 'Nitrado Mirror',      icon: FolderTree,      status: 'ready', desc: 'Read-Only Snapshot aller Server-Settings + Mission-/Profile-Dateien.' },
 ];
 
 export default function DevLayout() {

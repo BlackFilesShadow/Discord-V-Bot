@@ -1418,6 +1418,7 @@ model NitradoConnection {
   factions          Faction[]
   factionConfigs    FactionSystemConfig[]
   economyLinks      EconomyLink[]
+  mirrorSnapshots   NitradoSnapshot[]
 
   @@unique([guildId, slot])
   @@index([guildId])
@@ -1764,4 +1765,67 @@ model NitradoJob {
 
   @@index([status, nextRunAt])
   @@index([guildId])
+}
+
+// ============================================================
+// NITRADO MIRROR (READ-ONLY) — Einmaliger Voll-Snapshot pro
+// NitradoConnection. Strikt nur GET-Aufrufe. Datei-Inhalte
+// inhaltsadressiert auf Disk unter
+// uploads/nitrado-mirror/<connId>/<sha256>. Zweck: lückenlose
+// Quelle für Bot-/KI-Antworten zu DayZ-Server-Daten.
+// ============================================================
+
+enum NitradoSnapshotStatus {
+  RUNNING
+  OK
+  PARTIAL
+  FAILED
+}
+
+model NitradoSnapshot {
+  id              String                @id @default(cuid())
+  guildId         String
+  nitradoConnId   String
+  nitradoConn     NitradoConnection     @relation(fields: [nitradoConnId], references: [id], onDelete: Cascade)
+  serviceId       String? // Nitrado-Service-ID zum Snapshot-Zeitpunkt
+  startedAt       DateTime              @default(now())
+  finishedAt      DateTime?
+  status          NitradoSnapshotStatus @default(RUNNING)
+  totalFiles      Int                   @default(0)
+  totalDirs       Int                   @default(0)
+  totalBytes      BigInt                @default(0)
+  storedBytes     BigInt                @default(0) // tatsächlich auf Disk geschrieben (ohne übergroße)
+  oversizeFiles   Int                   @default(0) // > MAX_FILE_BYTES, nur Meta gespeichert
+  errorCount      Int                   @default(0)
+  lastError       String?               @db.Text
+  triggeredBy     String // Discord-User-Id
+  settingsJson    Json? // komplettes /services/{id}/gameservers Antwort-Objekt
+  serviceMetaJson Json? // Eintrag aus /services
+  files           NitradoSnapshotFile[]
+
+  @@index([guildId, nitradoConnId, startedAt])
+  @@index([nitradoConnId, status])
+}
+
+model NitradoSnapshotFile {
+  id          String          @id @default(cuid())
+  snapshotId  String
+  snapshot    NitradoSnapshot @relation(fields: [snapshotId], references: [id], onDelete: Cascade)
+  path        String          @db.VarChar(1024) // absoluter Pfad innerhalb des Gameservers
+  name        String          @db.VarChar(512)
+  parentDir   String          @db.VarChar(1024)
+  isDir       Boolean         @default(false)
+  sizeBytes   BigInt          @default(0)
+  modifiedAt  DateTime?
+  sha256      String?         @db.VarChar(64)
+  mimeGuess   String?         @db.VarChar(120)
+  isText      Boolean         @default(false)
+  contentText String?         @db.Text // nur für Text < INLINE_TEXT_BYTES
+  storedPath  String?         @db.VarChar(512) // relativ zu uploads/, falls auf Disk
+  oversize    Boolean         @default(false) // übergroß: nur Meta
+  errorMsg    String?         @db.Text
+
+  @@index([snapshotId, parentDir])
+  @@index([snapshotId, name])
+  @@index([snapshotId, sha256])
 }
