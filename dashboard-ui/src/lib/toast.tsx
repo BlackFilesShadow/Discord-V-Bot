@@ -40,14 +40,28 @@ export function ToastProvider({ children }: { children: ReactNode }) {
   }, []);
 
   const push = useCallback((t: Omit<Toast, 'id'>): number => {
-    idRef.current += 1;
-    const id = idRef.current;
-    const toast: Toast = { duration: 5000, ...t, id };
-    setToasts(prev => [...prev, toast]);
-    if (toast.duration && toast.duration > 0) {
-      window.setTimeout(() => dismiss(id), toast.duration);
-    }
-    return id;
+    // Dedup: identische Toasts (variant+title+desc), die binnen 3s mehrfach
+    // gepusht werden, koalieren auf den bestehenden Toast. Verhindert das
+    // Stapeln von 'Fehler HTTP 429' bei Polling-Storms.
+    let dedupedId = 0;
+    setToasts(prev => {
+      const existing = prev.find(p =>
+        p.variant === t.variant && p.title === t.title && (p.desc ?? '') === (t.desc ?? ''),
+      );
+      if (existing) {
+        dedupedId = existing.id;
+        return prev;
+      }
+      idRef.current += 1;
+      const id = idRef.current;
+      const toast: Toast = { duration: 5000, ...t, id };
+      if (toast.duration && toast.duration > 0) {
+        window.setTimeout(() => dismiss(id), toast.duration);
+      }
+      dedupedId = id;
+      return [...prev, toast];
+    });
+    return dedupedId;
   }, [dismiss]);
 
   const value = useMemo<Ctx>(() => ({ push, dismiss, toasts }), [push, dismiss, toasts]);

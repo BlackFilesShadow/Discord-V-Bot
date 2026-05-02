@@ -57,9 +57,14 @@ export function startDashboard(client?: Client): void {
     legacyHeaders: false,
   });
 
+  // /api/v2 deckt das gesamte DEV-Dashboard ab (Live-Polling, viele
+  // Tools mit eigenen Refresh-Intervallen). 100/min ist viel zu eng und
+  // hat im Browser einen 429-Storm erzeugt sobald mehrere Pages aktiv
+  // waren. 600/min = 10 req/s sustained ist fuer ein Single-User-Dashboard
+  // grosszuegig und schuetzt trotzdem vor offenkundigem Missbrauch.
   const apiLimiter = rateLimit({
     windowMs: 60 * 1000,
-    max: 100,
+    max: 600,
     standardHeaders: true,
     legacyHeaders: false,
   });

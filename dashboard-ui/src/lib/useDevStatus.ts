@@ -18,6 +18,9 @@ export function useDevStatus<T>(path: string, intervalMs = 10_000): PolledStatus
   const [error, setError] = useState<string | null>(null);
   const [lastFetchedAt, setLastFetchedAt] = useState<Date | null>(null);
   const [tick, setTick] = useState(0);
+  // Backoff bei 429 / 5xx, damit das Polling sich selbst heilt statt
+  // den Rate-Limit weiter zu fluten.
+  const [backoffMs, setBackoffMs] = useState(0);
 
   useEffect(() => {
     let cancelled = false;
@@ -25,13 +28,17 @@ export function useDevStatus<T>(path: string, intervalMs = 10_000): PolledStatus
     setError(null);
     api.get<T>(path)
       .then(r => {
-        if (!cancelled) {
-          setData(r);
-          setLastFetchedAt(new Date());
-        }
+        if (cancelled) return;
+        setData(r);
+        setLastFetchedAt(new Date());
+        setBackoffMs(0);
       })
       .catch(e => {
-        if (!cancelled) setError(e instanceof ApiError ? e.message : 'Fehler.');
+        if (cancelled) return;
+        setError(e instanceof ApiError ? e.message : 'Fehler.');
+        if (e instanceof ApiError && (e.status === 429 || e.status >= 500)) {
+          setBackoffMs(prev => Math.min(prev === 0 ? 5_000 : prev * 2, 60_000));
+        }
       })
       .finally(() => {
         if (!cancelled) setLoading(false);
@@ -41,9 +48,10 @@ export function useDevStatus<T>(path: string, intervalMs = 10_000): PolledStatus
 
   useEffect(() => {
     if (intervalMs <= 0) return;
-    const t = setInterval(() => setTick(x => x + 1), intervalMs);
+    const effective = Math.max(intervalMs, backoffMs);
+    const t = setInterval(() => setTick(x => x + 1), effective);
     return () => clearInterval(t);
-  }, [intervalMs]);
+  }, [intervalMs, backoffMs]);
 
-  return { data, loading, error, lastFetchedAt, reload: () => setTick(x => x + 1) };
+  return { data, loading, error, lastFetchedAt, reload: () => { setBackoffMs(0); setTick(x => x + 1); } };
 }
