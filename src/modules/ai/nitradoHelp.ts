@@ -132,6 +132,16 @@ const TOPICS: HelpTopic[] = [
       '- `<flags …/>` — wo gespawnt werden darf (z. B. `count_in_map`, `crafted`).',
       '- `<usage>`, `<value>`, `<tag>` — Spawn-Kategorien (Military, Town, Tier1…).',
       '',
+      'REALISTISCHE Vanilla-Größenordnungen für `nominal`/`min` (NIEMALS 100/200/500/1000 als Beispiel nennen — das sind unrealistische Extremwerte):',
+      '- Seltene High-End-Waffen (M4A1, AKM, SVD): `nominal="10"` `min="5"`.',
+      '- Normale Waffen (Mosin, SKS, Pistolen): `nominal="15"` `min="8"`.',
+      '- Munition / Magazine: `nominal="15"` `min="8"`.',
+      '- Standard-Kleidung, Werkzeug: `nominal="10"`–`"20"`, `min` ca. halb so groß.',
+      '- Alltags-Nahrung / Trinken (Konserven, Wasserflasche): `nominal="20"`–`"40"`, `min` halb so groß.',
+      '- Faustregel: `min` ≈ 50–60 % von `nominal`. Wenn du dir unsicher bist, beim Vanilla-Wert bleiben statt zu raten.',
+      '- `lifetime`: kurzlebige Verbrauchsgüter 3600–7200 (1–2 h), normale Items 14400 (4 h), wertvolle Items 28800 (8 h). KEINE Werte über 28800 ohne Grund — Items, die zu lange liegen, blockieren die Spawn-Queue.',
+      '- `restock`: 0 = sofort nachschiebbar; 1800 = 30 min Cooldown; höhere Werte machen Items spürbar selten.',
+      '',
       'Bearbeiten (Nitrado):',
       '1. **Tools → Dateibrowser** → Pfad endet auf `mpmissions/<deine_mission>/db/types.xml`.',
       '2. Datei herunterladen, mit Texteditor (oder Tools wie *DayZ Editor Loader*, *DayZ Types Editor*) anpassen.',
@@ -600,6 +610,7 @@ export function lookupNitradoHelp(question: string): HelpAnswer {
   lines.push('- Loot in Gebäuden = `mapgroupproto.xml` (Loot-Punkte je Gebäudetyp) + `mapgrouppos.xml` (Welt-Positionen). Felder dort: `<container>`, `<point x y z range>`, `<usage>`, `<value>`, `<lootmax>`. KEIN spawnChance/minCount/maxCount/itemSet/offsetX/Y/Z.');
   lines.push('- Cargo/Attachments für gespawnte Items = `cfgspawnabletypes.xml` (XML, NICHT JSON). Felder: `<type name>`, `<attachments chance>`, `<cargo chance>`, `<item name chance>`.');
   lines.push('- Loot-Mengen pro Item = `db/types.xml`. Felder: `nominal`, `min`, `lifetime`, `restock`, `<flags>`, `<usage>`, `<value>`, `<tag>`. Es gibt KEIN `spawnChance` in types.xml.');
+  lines.push('- REALISTISCHE `nominal`-Beispielwerte (NIEMALS 100/200/500/1000 als Beispiel nennen — das sind unrealistische Extremwerte): seltene Waffen 5–10, normale Waffen/Munition 10–20, Standard-Kleidung/Werkzeug 10–20, Alltags-Nahrung 20–40. `min` ≈ 50–60 % von `nominal`. Wenn unsicher: Vanilla-Wert nehmen statt raten.');
   lines.push('- Wenn du dir bei einem Dateinamen, Pfad oder Feld unsicher bist: sage "das müsste ich nachschlagen" statt zu raten. Lieber kurz und korrekt als ausführlich und falsch.');
 
   return {
@@ -625,6 +636,7 @@ const FILE_TRUTH_BLOCK: string = [
   '- Loot in Gebäuden = `mapgroupproto.xml` (Loot-Punkte je Gebäudetyp) + `mapgrouppos.xml` (Welt-Positionen). Felder dort: `<container>`, `<point x y z range>`, `<usage>`, `<value>`, `<lootmax>`. KEIN spawnChance/minCount/maxCount/itemSet/offsetX/Y/Z.',
   '- Cargo/Attachments für gespawnte Items = `cfgspawnabletypes.xml` (XML, NICHT JSON). Felder: `<type name>`, `<attachments chance>`, `<cargo chance>`, `<item name chance>`.',
   '- Loot-Mengen pro Item = `db/types.xml`. Felder: `nominal`, `min`, `lifetime`, `restock`, `<flags>`, `<usage>`, `<value>`, `<tag>`. Es gibt KEIN `spawnChance` in types.xml.',
+  '- REALISTISCHE `nominal`-Beispielwerte (NIEMALS 100/200/500/1000 als Beispiel nennen — das sind unrealistische Extremwerte): seltene Waffen 5–10, normale Waffen/Munition 10–20, Standard-Kleidung/Werkzeug 10–20, Alltags-Nahrung 20–40. `min` ≈ 50–60 % von `nominal`. Wenn unsicher: Vanilla-Wert nehmen statt raten.',
   '- Wenn du dir bei einem Dateinamen, Pfad oder Feld unsicher bist: sage "das müsste ich nachschlagen" statt zu raten. Lieber kurz und korrekt als ausführlich und falsch.',
 ].join('\n');
 
