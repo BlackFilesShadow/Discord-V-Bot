@@ -610,7 +610,15 @@ export function lookupNitradoHelp(question: string): HelpAnswer {
   lines.push('- Loot in Gebäuden = `mapgroupproto.xml` (Loot-Punkte je Gebäudetyp) + `mapgrouppos.xml` (Welt-Positionen). Felder dort: `<container>`, `<point x y z range>`, `<usage>`, `<value>`, `<lootmax>`. KEIN spawnChance/minCount/maxCount/itemSet/offsetX/Y/Z.');
   lines.push('- Cargo/Attachments für gespawnte Items = `cfgspawnabletypes.xml` (XML, NICHT JSON). Felder: `<type name>`, `<attachments chance>`, `<cargo chance>`, `<item name chance>`.');
   lines.push('- Loot-Mengen pro Item = `db/types.xml`. Felder: `nominal`, `min`, `lifetime`, `restock`, `<flags>`, `<usage>`, `<value>`, `<tag>`. Es gibt KEIN `spawnChance` in types.xml.');
-  lines.push('- REALISTISCHE `nominal`/`min`-Beispielwerte: `nominal` IMMER zwischen 10 und 20, `min` IMMER strikt KLEINER als `nominal` (≈ 50 %, also z. B. nominal=10/min=5, nominal=15/min=8, nominal=20/min=10). NIEMALS 100/200/500/1000 als Beispiel nennen, NIEMALS `min >= nominal`.');
+  lines.push('- REALISTISCHE `nominal`/`min`-Beispielwerte (HARTE GRENZE: `nominal` MUSS zwischen 1 und 25 liegen, `min` MUSS strikt KLEINER als `nominal` sein):');
+  lines.push('    | Item-Kategorie              | nominal | min | lifetime (s) | restock (s) |');
+  lines.push('    |-----------------------------|---------|-----|--------------|-------------|');
+  lines.push('    | Seltene Waffen (M4A1, SVD)  | 10      | 5   | 14400        | 1800        |');
+  lines.push('    | Normale Waffen (Mosin, AKM) | 15      | 8   | 14400        | 1800        |');
+  lines.push('    | Munition / Magazine         | 15      | 8   | 14400        | 600         |');
+  lines.push('    | Kleidung / Werkzeug         | 15      | 8   | 14400        | 1800        |');
+  lines.push('    | Nahrung / Trinken           | 20      | 10  | 7200         | 600         |');
+  lines.push('  DIESE TABELLE IST DIE EINZIG ERLAUBTE WERTE-REFERENZ. JEDER andere Wert (50, 70, 100, 120, 180, 200, 250, 350, 500, 1000…) ist FALSCH und gilt als Halluzination. Auch in Tabellenform NIEMALS solche Werte ausgeben.');
   lines.push('- Wenn du dir bei einem Dateinamen, Pfad oder Feld unsicher bist: sage "das müsste ich nachschlagen" statt zu raten. Lieber kurz und korrekt als ausführlich und falsch.');
 
   return {
@@ -636,7 +644,7 @@ const FILE_TRUTH_BLOCK: string = [
   '- Loot in Gebäuden = `mapgroupproto.xml` (Loot-Punkte je Gebäudetyp) + `mapgrouppos.xml` (Welt-Positionen). Felder dort: `<container>`, `<point x y z range>`, `<usage>`, `<value>`, `<lootmax>`. KEIN spawnChance/minCount/maxCount/itemSet/offsetX/Y/Z.',
   '- Cargo/Attachments für gespawnte Items = `cfgspawnabletypes.xml` (XML, NICHT JSON). Felder: `<type name>`, `<attachments chance>`, `<cargo chance>`, `<item name chance>`.',
   '- Loot-Mengen pro Item = `db/types.xml`. Felder: `nominal`, `min`, `lifetime`, `restock`, `<flags>`, `<usage>`, `<value>`, `<tag>`. Es gibt KEIN `spawnChance` in types.xml.',
-  '- REALISTISCHE `nominal`/`min`-Beispielwerte: `nominal` IMMER zwischen 10 und 20, `min` IMMER strikt KLEINER als `nominal` (≈ 50 %, also z. B. nominal=10/min=5, nominal=15/min=8, nominal=20/min=10). NIEMALS 100/200/500/1000 als Beispiel nennen, NIEMALS `min >= nominal`.',
+  '- REALISTISCHE `nominal`/`min`-Beispielwerte (HARTE GRENZE: `nominal` MUSS zwischen 1 und 25 liegen, `min` MUSS strikt KLEINER als `nominal` sein):\n    | Item-Kategorie                  | nominal | min | lifetime (s) | restock (s) |\n    |---------------------------------|---------|-----|--------------|-------------|\n    | Seltene Waffen (M4A1, SVD)      | 10      | 5   | 14400        | 1800        |\n    | Normale Waffen (Mosin, AKM)     | 15      | 8   | 14400        | 1800        |\n    | Munition / Magazine             | 15      | 8   | 14400        | 600         |\n    | Kleidung / Werkzeug             | 15      | 8   | 14400        | 1800        |\n    | Nahrung / Trinken               | 20      | 10  | 7200         | 600         |\n    DIESE TABELLE IST DIE EINZIG ERLAUBTE WERTE-REFERENZ. JEDER andere Wert (50, 70, 100, 120, 180, 200, 250, 350, 500, 1000…) ist FALSCH und gilt als Halluzination. Auch in Tabellenform NIEMALS solche Werte ausgeben.',
   '- Wenn du dir bei einem Dateinamen, Pfad oder Feld unsicher bist: sage "das müsste ich nachschlagen" statt zu raten. Lieber kurz und korrekt als ausführlich und falsch.',
 ].join('\n');
 
@@ -670,4 +678,57 @@ export function looksLikeDayZFileQuestion(question: string): boolean {
   if (/\bwelche\s+datei\b/.test(q) && /(loot|spawn|item|mod|dayz|server|geb\u00e4ude|gebaeude|wetter|tier)/.test(q)) return true;
   if (/\bwo\s+(wird|werden|spawnt|spawnen|liegt|liegen|finde|find\s+ich)\b/.test(q) && /(loot|item|spawn|geb\u00e4ude|gebaeude|haus|h\u00e4user|haeuser|tier|wetter)/.test(q)) return true;
   return false;
+}
+/**
+ * Erkennt unrealistische `nominal=`/`min=`/`max=` Werte in einer LLM-Antwort,
+ * die im DayZ-types.xml-/events.xml-Kontext halluziniert wurden.
+ *
+ * Erlaubt: 0–25 (Vanilla-Bandbreite mit Sicherheitsmarge nach oben).
+ * Werte 26+ in diesem Attribut-Stil sind in Vanilla quasi nie sinnvoll
+ * (außer bei sehr häufigen Trash-Items wie Lumpen, was für ein
+ * Allgemein-Beispiel keine Rolle spielt).
+ *
+ * Erkennt sowohl XML-Attribute (`nominal="200"`) als auch Tabellen-Werte
+ * in Markdown (`| Item | 350 | 180 |`) im näheren Umkreis um die Stichworte.
+ */
+export function detectTypesXmlValueViolations(text: string): string[] {
+  const violations: string[] = [];
+  if (!text) return violations;
+
+  // 1) XML-Attribut-Stil: nominal="123", min="123", max="123"
+  const attrRe = /(nominal|min|max)\s*=\s*"(\d+)"/gi;
+  let m: RegExpExecArray | null;
+  while ((m = attrRe.exec(text)) !== null) {
+    const key = m[1].toLowerCase();
+    const val = Number(m[2]);
+    if (Number.isFinite(val) && val > 25) {
+      violations.push(`${key}="${val}" (>25)`);
+    }
+  }
+
+  // 2) Markdown-Tabelle mit Header "nominal" / "min" / "max" — alle
+  //    nachfolgenden Zell-Zahlen prüfen, die in nominal/min/max-Spalten landen.
+  const lines = text.split('\n');
+  let nominalCols: number[] = [];
+  for (const line of lines) {
+    const cells = line.split('|').map((c) => c.trim());
+    const headerHits = cells
+      .map((c, i) => ({ c: c.toLowerCase(), i }))
+      .filter((x) => /\b(nominal|min|max)\b/.test(x.c));
+    if (headerHits.length >= 2) {
+      nominalCols = headerHits.map((h) => h.i);
+      continue;
+    }
+    if (nominalCols.length === 0) continue;
+    if (/^[\s\-|]+$/.test(line)) continue;
+    for (const idx of nominalCols) {
+      const cell = cells[idx];
+      if (!cell) continue;
+      const num = Number(cell.replace(/[^\d]/g, ''));
+      if (Number.isFinite(num) && num > 25) {
+        violations.push(`Tabellenzelle ${num} in nominal/min/max-Spalte`);
+      }
+    }
+  }
+  return violations;
 }

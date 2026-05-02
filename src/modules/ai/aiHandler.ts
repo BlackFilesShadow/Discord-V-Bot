@@ -6,7 +6,7 @@ import { liveSearch, looksFactQuestion, formatSearchResultsForPrompt } from './w
 import { asksAboutCommands, formatCatalogForPromptFocused } from './commandCatalog';
 import { recordCall, getRankedProviders, ProviderName } from './providerStats';
 import { checkRateLimit } from '../../utils/rateLimiter';
-import { lookupNitradoHelp, looksLikeDayZFileQuestion, getDayZFileTruthBlock } from './nitradoHelp';
+import { lookupNitradoHelp, looksLikeDayZFileQuestion, getDayZFileTruthBlock, detectTypesXmlValueViolations } from './nitradoHelp';
 import { redactText } from '../nitrado/mirror/redactor';
 
 /**
@@ -371,9 +371,7 @@ export async function answerQuestion(
       } catch (e) {
         logger.warn(`conversationMemory laden fehlgeschlagen: ${String(e)}`);
       }
-    }
-
-    // Generische Nitrado/DayZ-Hilfe: keine Server-Daten, nur Anleitungen.
+    }    // Generische Nitrado/DayZ-Hilfe: keine Server-Daten, nur Anleitungen.
     // Bei Fragen wie "wie stelle ich die Tag-Nacht-Zeit ein?" wird ein
     // Erklär-Block eingespeist; persönliche/serverspezifische Werte werden
     // bewusst NICHT geliefert.
@@ -397,6 +395,21 @@ export async function answerQuestion(
       }
     }
 
+    // Wenn der Wahrheits-Block injiziert wird, vorherige assistant-Turns mit
+    // unrealistischen nominal/min/max-Werten aus dem Memory entfernen \u2014 die LLM
+    // imitiert sonst ihre eigenen alten Halluzinationen.
+    if (nitradoHelpBlock && memoryTurns.length > 0) {
+      const before = memoryTurns.length;
+      memoryTurns = memoryTurns.filter((t) => {
+        if (t.role !== 'assistant') return true;
+        const violations = detectTypesXmlValueViolations(t.content);
+        return violations.length === 0;
+      });
+      if (memoryTurns.length < before) {
+        logger.info(`[Nitrado-Help] ${before - memoryTurns.length} halluzinierte Memory-Turn(s) gefiltert`);
+      }
+    }
+
     const response = await callAI([
       { role: 'system', content: BOT_PERSONA },
       { role: 'system', content: getLiveTimeContext() },
@@ -404,15 +417,30 @@ export async function answerQuestion(
       ...(catalogBlock ? [{ role: 'system' as const, content: catalogBlock }] : []),
       ...(introBlock ? [{ role: 'system' as const, content: introBlock }] : []),
       ...(liveBlock ? [{ role: 'system' as const, content: liveBlock }] : []),
-      ...(nitradoHelpBlock ? [{ role: 'system' as const, content: nitradoHelpBlock }] : []),
       ...(context ? [{ role: 'system' as const, content: context }] : []),
       ...memoryTurns.map((t) => ({ role: t.role, content: t.content })),
+      // WICHTIG: Nitrado-Help/Wahrheits-Block ZULETZT (direkt vor der User-Frage),
+      // damit er nicht durch \u00e4ltere (m\u00f6glicherweise halluzinierte) Memory-Turns
+      // \u00fcberschrieben wird. Letzte system-Message hat das st\u00e4rkste Priming.
+      ...(nitradoHelpBlock ? [{ role: 'system' as const, content: nitradoHelpBlock }] : []),
       { role: 'user', content: question },
     ]);
 
     // Defense-in-Depth: Antwort durch Redactor schicken, falls die LLM doch
     // sensible Substrings (IPs/Steam64/GUIDs) reingeschrieben hat.
-    const safeResponse = response ? redactText(response) : response;
+    let safeResponse = response ? redactText(response) : response;
+
+    // Anti-Halluzinations-Post-Processor: Wenn die Antwort types.xml-Werte
+    // au\u00dferhalb des erlaubten 10\u201320-Bandes enth\u00e4lt, h\u00e4ngen wir eine
+    // Korrektur-Notiz an. Das ist letzter Schutz, falls die LLM den
+    // Wahrheits-Block ignoriert hat.
+    if (safeResponse && nitradoHelpTopics.some((t) => t === 'types-xml' || t === 'events-xml' || t === 'file-truth-fallback')) {
+      const corrections = detectTypesXmlValueViolations(safeResponse);
+      if (corrections.length > 0) {
+        logger.warn(`[Nitrado-Help] LLM-Output enth\u00e4lt unrealistische types.xml-Werte: ${corrections.join('; ')}`);
+        safeResponse = `${safeResponse}\n\n\u26a0\ufe0f **Hinweis zu obigen Werten**: Einige genannte \`nominal\`/\`min\`-Zahlen liegen au\u00dferhalb des realistischen DayZ-Vanilla-Bereichs (10\u201320 f\u00fcr \`nominal\`, \`min\` strikt darunter). Bitte halte dich an: seltene Waffen \`nominal=10\`/\`min=5\`, normale Waffen/Munition \`nominal=15\`/\`min=8\`, Kleidung/Werkzeug \`nominal=15\`/\`min=8\`, Nahrung \`nominal=20\`/\`min=10\`. Werte wie 50/100/200/350 sind UNREALISTISCH und blasen die Spawn-Queue auf.`;
+      }
+    }
 
     // Phase 14: Turn persistieren (best-effort, blockiert die Antwort nicht).
     if (useMemory && safeResponse) {
