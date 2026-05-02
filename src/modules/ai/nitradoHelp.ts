@@ -155,7 +155,7 @@ const TOPICS: HelpTopic[] = [
       '',
       'Bearbeiten:',
       '1. **Dateibrowser** → `mpmissions/<mission>/db/events.xml`.',
-      '2. Spawn-Punkte für ortsfeste Events liegen in `cfgeventspawns.xml` (gleicher Ordner).',
+      '2. Spawn-Punkte für ortsfeste Events liegen in `cfgeventspawns.xml` im **Mission-Root** (NICHT in `db/`), Event-Gruppen in `cfgeventgroups.xml`.',
       '3. Server-Neustart.',
     ].join('\n'),
   },
@@ -257,24 +257,32 @@ const TOPICS: HelpTopic[] = [
     ].join('\n'),
   },
   {
-    id: 'economy-xml',
-    title: 'economy.xml — Wetter, Wind, Regen, Storm',
+    id: 'cfgweather-xml',
+    title: 'cfgweather.xml — Wetter, Wind, Regen, Storm',
     triggers: [
-      'economy.xml', 'economyxml', 'wetter system', 'weather', 'wind',
-      'regen', 'sturm', 'storm', 'fog', 'nebel', 'overcast', 'rainmag',
+      'cfgweather', 'cfgweather.xml', 'weather.xml', 'wetter system',
+      'weather', 'wind', 'regen', 'sturm', 'storm', 'fog', 'nebel',
+      'overcast', 'rainmag', 'wetter konfiguration', 'wetter einstellen',
+      'wetter ändern', 'wetter aendern',
+      // Häufige Verwechslung — wer "economy.xml für Wetter" sagt, meint cfgweather.xml:
+      'economy.xml', 'economyxml',
     ],
     body: [
-      '`economy.xml` (Pfad: `mpmissions/<mission>/db/economy.xml` oder im `cfgenvironment.xml`-Bereich) steuert globale Ökonomie- und Umwelt-Parameter, vor allem Wetter und Wind.',
-      'Wichtige Bereiche:',
-      '- `<initial …>` — Startwerte für `overcast` (Bewölkung 0–1), `fog` (0–1), `rain` (0–1), `windMagnitude`.',
-      '- `<weather>` mit `<overcast>`, `<fog>`, `<rain>`, `<wind>` — jeweils `actual`, `forecast`, `min`/`max`, `chance`, `time` Übergangs-Sekunden.',
-      '- `<storm>` — Donner/Blitz/Wind-Spitzen.',
-      '- `<animals>` und `<flags>` — globale Wirtschafts-Schalter (z. B. `dynamic_spawn=1`).',
+      '`cfgweather.xml` liegt im **Mission-Root** (`mpmissions/<mission>/cfgweather.xml`) und steuert das gesamte Wettersystem: Bewölkung, Nebel, Regen, Wind, Sturm.',
+      'Aufbau — jedes Wetter-Element folgt dem gleichen Schema:',
+      '- `<weather>` als Wurzelelement enthält `<overcast>`, `<fog>`, `<rain>`, `<wind>`, `<storm>`.',
+      '- Pro Element gibt es `<values>` mit `<value range="...">` Einträgen (Wertebereich 0–1 bei `overcast`/`fog`/`rain`).',
+      '- `<time>` mit `<min>` / `<max>` definiert wie lange ein Wert gehalten wird.',
+      '- `<chance>` (0–1) — Wahrscheinlichkeit dass dieses Wetter auftritt.',
+      '- `<wind>` zusätzlich `<windMagnitude>` (Geschwindigkeit) und `<windFunctionParams>` (Böen-Profil).',
+      '- `<storm>` mit `rain_threshold`, `wind_threshold`, `time_out` — wann Donner/Blitz aktiv wird.',
       '',
       'Bearbeiten:',
-      '1. **Dateibrowser** → `mpmissions/<mission>/db/economy.xml`.',
-      '2. Werte für `actual`/`forecast` mit Zeitfenstern (`time` in Sekunden) abstimmen — abrupte Sprünge wirken unnatürlich.',
+      '1. **Dateibrowser** → `mpmissions/<mission>/cfgweather.xml`.',
+      '2. Werte sanft übergeben — abrupte Wechsel (Sonne → Sturm in 10 s) wirken unnatürlich, größere `<time>`-Fenster nehmen.',
       '3. XML-Validität prüfen, Server-Neustart.',
+      '',
+      'Hinweis zur Verwechslung: Es gibt KEINE Vanilla-Datei `economy.xml` für Wetter. `cfgeconomycore.xml` (auch Mission-Root) listet nur AUF, welche XML-Dateien die Central Economy lädt. Eine interne Runtime-Datei `economy.xml` taucht im `storage_*`-Persistenz-Ordner auf — die ist auto-generiert und darf NICHT manuell editiert werden.',
     ].join('\n'),
   },
   {
@@ -287,21 +295,27 @@ const TOPICS: HelpTopic[] = [
       'env order', 'envzone',
     ],
     body: [
-      '`cfgenvironment.xml` (im `mpmissions/<mission>/db/` oder Mission-Root) definiert WELCHE Tier-Zonen aktiv sind und welche Pro-Tier-Konfig (`env/<tier>.xml`) sie laden.',
-      'Aufbau:',
-      '- `<env>`-Block je Zone mit `name="…"` und `<file>env/animal_zone_<region>.xml</file>` Verweisen.',
-      '- Geladen werden alle in der Datei aufgezählten env-XMLs.',
+      '`cfgenvironment.xml` liegt im **Mission-Root** (`mpmissions/<mission>/cfgenvironment.xml`) und ist nur ein Index: er listet auf, welche Dateien aus dem `env/`-Unterordner geladen werden.',
+      'Aufbau (vereinfacht):',
+      '```xml',
+      '<environment>',
+      '  <files folder="env">',
+      '    <file name="zmbterritories.xml" type="zombie"/>',
+      '    <file name="animaltracking.xml" type="animal"/>',
+      '  </files>',
+      '</environment>',
+      '```',
       '',
-      'Der **`env/`-Ordner** enthält pro Zone/Tier eine eigene XML:',
-      '- `env/cattle_territories.xml`, `env/wolf_territories.xml`, `env/bear_territories.xml`, `env/deer_territories.xml`, `env/hare_territories.xml`, …',
-      '- Jede Datei: `<territories>` → mehrere `<territory color="…">` mit `<zone x="…" z="…" r="…" min="…" max="…"/>` Punkten.',
-      '  - `r` = Radius in m, `min`/`max` = Tieranzahl pro Zone.',
-      '- Innerhalb der Zone definieren `<event name="DayZ_LightInfected_…"/>`-artige Einträge welche Klassen spawnen.',
+      'Der **`env/`-Ordner** (`mpmissions/<mission>/env/`) enthält die tatsächlichen Zonen-Dateien, z. B.:',
+      '- `cattle_territories.xml`, `wolf_territories.xml`, `pigs_territories.xml`, `deer_territories.xml`, `roe_territories.xml`, `goat_territories.xml`, `chicken_territories.xml`, `hare_territories.xml`, `red_fox_territories.xml`, `bear_territories.xml`.',
+      '- Pro Datei: `<territories>` → mehrere `<territory color="...">` Blöcke.',
+      '- Jede `<territory>` enthält `<zone smin="…" smax="…" dmin="…" dmax="…" areasize="…" x="…" z="…"/>` Einträge.',
+      '  - `smin/smax` = Density min/max (Tier-Anzahl-Bandbreite), `dmin/dmax` = Distanz-Range zum Spieler, `areasize` = Radius in Metern, `x/z` = Welt-Koordinaten.',
       '',
       'Bearbeiten:',
-      '1. **Dateibrowser** → `mpmissions/<mission>/env/`.',
-      '2. Eigene Zone hinzufügen: neue `<territory>` mit Koordinaten anlegen, in `cfgenvironment.xml` referenzieren.',
-      '3. Koordinaten kommen aus iZurvive oder DayZ Editor (X/Z, Y wird ignoriert).',
+      '1. **Dateibrowser** → `mpmissions/<mission>/env/<tier>_territories.xml`.',
+      '2. Eigene Zone hinzufügen: neuer `<territory>`-Block mit `<zone>`-Eintrag, Koordinaten aus iZurvive (X/Z).',
+      '3. Datei muss in `cfgenvironment.xml` referenziert sein, sonst wird sie ignoriert.',
       '4. Server-Neustart.',
     ].join('\n'),
   },
@@ -340,7 +354,7 @@ const TOPICS: HelpTopic[] = [
       'bunker trigger', 'bunker', 'subterranean', 'underground.json',
     ],
     body: [
-      '`cfgUndergroundTriggers.json` (DayZ 1.21+, Sakhal/Frostline-Bunker) definiert WO ein Bunker-/Höhlen-Eingang den unterirdischen Render-/Ambient-Modus aktiviert (gedämpfter Sound, Dunkelheit, eigene Partikel).',
+      '`cfgUndergroundTriggers.json` (DayZ 1.25+ mit dem Frostline-DLC eingeführt, Pfad `mpmissions/<mission>/cfgUndergroundTriggers.json`) definiert WO ein Bunker-/Höhlen-Eingang den unterirdischen Render-/Ambient-Modus aktiviert (gedämpfter Sound, Dunkelheit, eigene Partikel).',
       'Pro Eintrag:',
       '- `name` — Bezeichner.',
       '- `data` mit `Position` `[x, y, z]`, `OrientationYPR`, und Geometrie-Box (`SizeX`, `SizeY`, `SizeZ`).',
@@ -398,15 +412,15 @@ const TOPICS: HelpTopic[] = [
       'loot definiert', 'loot festgelegt',
     ],
     body: [
-      '`mapgroupproto.xml` und `mapgrouppos.xml` arbeiten zusammen, um Loot in Gebäude zu legen.',
+      '`mapgroupproto.xml` und `mapgrouppos.xml` arbeiten zusammen, um Loot in Gebäude zu legen. Beide liegen im **Mission-Root**, NICHT in `db/`.',
       '',
-      '`mapgroupproto.xml` (`mpmissions/<mission>/db/mapgroupproto.xml`) ist die TYP-Definition:',
+      '`mapgroupproto.xml` (`mpmissions/<mission>/mapgroupproto.xml`) ist die TYP-Definition:',
       '- `<group name="Land_City_Hospital">` — pro Gebäude-Klasse ein Block.',
       '- `<container name="default">` mit `<point x="…" y="…" z="…" range="…"/>` — Loot-Spawn-Punkte RELATIV zum Gebäude.',
       '- `<usage name="Medic"/>`, `<value name="Tier2"/>` — Filter, welche `types.xml`-Items hier spawnen dürfen.',
       '- `<lootmax max="…"/>` — Cap pro Gebäude.',
       '',
-      '`mapgrouppos.xml` (`mpmissions/<mission>/db/mapgrouppos.xml`) ist die WELT-Liste:',
+      '`mapgrouppos.xml` (`mpmissions/<mission>/mapgrouppos.xml`) ist die WELT-Liste:',
       '- `<group name="Land_City_Hospital" pos="X Z Y" rpy="r p y" a="a"/>` — jeder Eintrag = ein KONKRETES Gebäude an Welt-Koordinaten.',
       '- Wird automatisch aus dem Map-Build generiert; meist NICHT manuell editieren.',
       '',
@@ -430,7 +444,7 @@ const TOPICS: HelpTopic[] = [
       'was steckt im item', 'item inhalt', 'cargo befüllung', 'cargo befuellung',
     ],
     body: [
-      '`cfgspawnabletypes.xml` (`mpmissions/<mission>/db/cfgspawnabletypes.xml`) bestimmt, mit WAS ein gespawntes Item befüllt wird.',
+      '`cfgspawnabletypes.xml` liegt im **Mission-Root** (`mpmissions/<mission>/cfgspawnabletypes.xml`, NICHT in `db/`) und bestimmt, mit WAS ein gespawntes Item befüllt wird.',
       '- Ein Magazin spawnt voll/teilweise gefüllt? Eine Jacke mit Patches? Eine Waffe mit Optik?',
       '',
       'Aufbau pro Item:',
@@ -447,6 +461,7 @@ const TOPICS: HelpTopic[] = [
       '```',
       '- `chance` auf `<attachments>` / `<cargo>` = Wahrscheinlichkeit, dass DIESE Slot-Gruppe überhaupt befüllt wird.',
       '- `chance` auf `<item>` = relative Gewichtung innerhalb der Gruppe.',
+      '- Verknüpfte Datei: `cfgrandompresets.xml` (auch Mission-Root) gruppiert mehrere `<item>`-Listen unter einem Preset-Namen, der dann hier referenziert werden kann.',
       '',
       'Bearbeiten:',
       '1. **Dateibrowser** → genannter Pfad.',
@@ -517,9 +532,10 @@ export function isNitradoOrDayZHelpQuestion(question: string): boolean {
   const general = [
     'dayz', 'nitrado', 'serverdz', 'types.xml', 'events.xml', 'init.c',
     'mpmissions', 'workshop mod', 'rcon', 'battleye',
-    'economy.xml', 'cfgenvironment', 'cfgeffectarea', 'effectarea',
+    'cfgweather', 'cfgenvironment', 'cfgeffectarea', 'effectarea',
     'cfgundergroundtriggers', 'cfggameplay', 'mapgroupproto', 'mapgrouppos',
-    'cfgspawnabletypes', 'auto-task', 'auto task', 'cron job',
+    'cfgspawnabletypes', 'cfgrandompresets', 'cfgeconomycore', 'cfgeventspawns',
+    'cfgeventgroups', 'auto-task', 'auto task', 'cron job',
   ];
   if (general.some((g) => q.includes(g))) return true;
   // Topic-Trigger durchsuchen
@@ -562,13 +578,15 @@ export function lookupNitradoHelp(question: string): HelpAnswer {
   lines.push('- Halte die Antwort kompakt und an der Frage orientiert. Kein Komplett-Tutorial, wenn nur ein Detail gefragt wurde.');
   lines.push('');
   lines.push('DAYZ-DATEI-WAHRHEIT (HARTE REGELN — Halluzinationen werden als Fehler gewertet):');
-  lines.push('- Existierende Dateien (Vanilla DayZ, Stand 1.27): types.xml, events.xml, economy.xml, init.c, serverDZ.cfg, mapgroupproto.xml, mapgrouppos.xml, cfgspawnabletypes.xml, cfgrandompresets.xml, cfgeventgroups.xml, cfgenvironment.xml, cfgEffectArea.json, cfgUndergroundTriggers.json, cfgGameplay.json, cfgweather.xml, globals.xml, messages.xml, cfgeconomycore.xml.');
+  lines.push('- Im **Mission-Root** (`mpmissions/<mission>/`) liegen: init.c, mapgroupproto.xml, mapgrouppos.xml, cfgspawnabletypes.xml, cfgrandompresets.xml, cfgweather.xml, cfgenvironment.xml, cfgeventspawns.xml, cfgeventgroups.xml, cfgeconomycore.xml, cfglimitsdefinition.xml, cfglimitsdefinitionuser.xml, cfgEffectArea.json, cfgUndergroundTriggers.json, cfgGameplay.json. Außerdem der Unterordner `env/` (Tier-Zonen).');
+  lines.push('- Im **`db/`-Unterordner** (`mpmissions/<mission>/db/`) liegen NUR: types.xml, events.xml, messages.xml, globals.xml.');
+  lines.push('- Eine Vanilla-Datei `economy.xml` für WETTER existiert NICHT. Wetter steht in `cfgweather.xml`. Die Datei `economy.xml` taucht nur als auto-generierte Runtime-Datei im `storage_*`-Persistenz-Ordner auf und darf NICHT manuell editiert werden.');
   lines.push('- DayZ verwendet für Mission-Configs überwiegend XML. JSON nur für: cfgEffectArea.json, cfgUndergroundTriggers.json, cfgGameplay.json. ALLE anderen Mission-Configs sind XML.');
   lines.push('- Es gibt KEINE Datei "cfgSpawnableTypes.json", kein Verzeichnis "cfgSpawnableTypes/building/", kein "cfgSpawnableTypes/itemsets/". Wer das sagt, halluziniert (das ist Arma3-/ExileMod-Syntax und gilt NICHT für DayZ Standalone).');
   lines.push('- Loot in Gebäuden = `mapgroupproto.xml` (Loot-Punkte je Gebäudetyp) + `mapgrouppos.xml` (Welt-Positionen). Felder dort: `<container>`, `<point x y z range>`, `<usage>`, `<value>`, `<lootmax>`. KEIN spawnChance/minCount/maxCount/itemSet/offsetX/Y/Z.');
   lines.push('- Cargo/Attachments für gespawnte Items = `cfgspawnabletypes.xml` (XML, NICHT JSON). Felder: `<type name>`, `<attachments chance>`, `<cargo chance>`, `<item name chance>`.');
-  lines.push('- Loot-Mengen pro Item = `types.xml`. Felder: `nominal`, `min`, `lifetime`, `restock`, `<flags>`, `<usage>`, `<value>`, `<tag>`. Es gibt KEIN `spawnChance` in types.xml.');
-  lines.push('- Wenn du dir bei einem Dateinamen oder Feld unsicher bist: sage "das müsste ich nachschlagen" statt zu raten. Lieber kurz und korrekt als ausführlich und falsch.');
+  lines.push('- Loot-Mengen pro Item = `db/types.xml`. Felder: `nominal`, `min`, `lifetime`, `restock`, `<flags>`, `<usage>`, `<value>`, `<tag>`. Es gibt KEIN `spawnChance` in types.xml.');
+  lines.push('- Wenn du dir bei einem Dateinamen, Pfad oder Feld unsicher bist: sage "das müsste ich nachschlagen" statt zu raten. Lieber kurz und korrekt als ausführlich und falsch.');
 
   return {
     text: lines.join('\n'),
@@ -584,14 +602,16 @@ export function lookupNitradoHelp(question: string): HelpAnswer {
  * Dateinamen wie "cfgSpawnableTypes.json" hervorbringt.
  */
 const FILE_TRUTH_BLOCK: string = [
-  'DAYZ-DATEI-WAHRHEIT (HARTE REGELN \u2014 Halluzinationen werden als Fehler gewertet):',
-  '- Existierende Dateien (Vanilla DayZ, Stand 1.27): types.xml, events.xml, economy.xml, init.c, serverDZ.cfg, mapgroupproto.xml, mapgrouppos.xml, cfgspawnabletypes.xml, cfgrandompresets.xml, cfgeventgroups.xml, cfgenvironment.xml, cfgEffectArea.json, cfgUndergroundTriggers.json, cfgGameplay.json, cfgweather.xml, globals.xml, messages.xml, cfgeconomycore.xml.',
-  '- DayZ verwendet f\u00fcr Mission-Configs \u00fcberwiegend XML. JSON nur f\u00fcr: cfgEffectArea.json, cfgUndergroundTriggers.json, cfgGameplay.json. ALLE anderen Mission-Configs sind XML.',
-  '- Es gibt KEINE Datei "cfgSpawnableTypes.json", kein Verzeichnis "cfgSpawnableTypes/building/", kein "cfgSpawnableTypes/itemsets/". Wer das sagt, halluziniert (das ist Arma3-/ExileMod-Syntax und gilt NICHT f\u00fcr DayZ Standalone).',
-  '- Loot in Geb\u00e4uden = `mapgroupproto.xml` (Loot-Punkte je Geb\u00e4udetyp) + `mapgrouppos.xml` (Welt-Positionen). Felder dort: `<container>`, `<point x y z range>`, `<usage>`, `<value>`, `<lootmax>`. KEIN spawnChance/minCount/maxCount/itemSet/offsetX/Y/Z.',
-  '- Cargo/Attachments f\u00fcr gespawnte Items = `cfgspawnabletypes.xml` (XML, NICHT JSON). Felder: `<type name>`, `<attachments chance>`, `<cargo chance>`, `<item name chance>`.',
-  '- Loot-Mengen pro Item = `types.xml`. Felder: `nominal`, `min`, `lifetime`, `restock`, `<flags>`, `<usage>`, `<value>`, `<tag>`. Es gibt KEIN `spawnChance` in types.xml.',
-  '- Wenn du dir bei einem Dateinamen oder Feld unsicher bist: sage "das m\u00fcsste ich nachschlagen" statt zu raten. Lieber kurz und korrekt als ausf\u00fchrlich und falsch.',
+  'DAYZ-DATEI-WAHRHEIT (HARTE REGELN — Halluzinationen werden als Fehler gewertet):',
+  '- Im **Mission-Root** (`mpmissions/<mission>/`) liegen: init.c, mapgroupproto.xml, mapgrouppos.xml, cfgspawnabletypes.xml, cfgrandompresets.xml, cfgweather.xml, cfgenvironment.xml, cfgeventspawns.xml, cfgeventgroups.xml, cfgeconomycore.xml, cfglimitsdefinition.xml, cfglimitsdefinitionuser.xml, cfgEffectArea.json, cfgUndergroundTriggers.json, cfgGameplay.json. Außerdem der Unterordner `env/` (Tier-Zonen).',
+  '- Im **`db/`-Unterordner** (`mpmissions/<mission>/db/`) liegen NUR: types.xml, events.xml, messages.xml, globals.xml.',
+  '- Eine Vanilla-Datei `economy.xml` für WETTER existiert NICHT. Wetter steht in `cfgweather.xml`. Die Datei `economy.xml` taucht nur als auto-generierte Runtime-Datei im `storage_*`-Persistenz-Ordner auf und darf NICHT manuell editiert werden.',
+  '- DayZ verwendet für Mission-Configs überwiegend XML. JSON nur für: cfgEffectArea.json, cfgUndergroundTriggers.json, cfgGameplay.json. ALLE anderen Mission-Configs sind XML.',
+  '- Es gibt KEINE Datei "cfgSpawnableTypes.json", kein Verzeichnis "cfgSpawnableTypes/building/", kein "cfgSpawnableTypes/itemsets/". Wer das sagt, halluziniert (das ist Arma3-/ExileMod-Syntax und gilt NICHT für DayZ Standalone).',
+  '- Loot in Gebäuden = `mapgroupproto.xml` (Loot-Punkte je Gebäudetyp) + `mapgrouppos.xml` (Welt-Positionen). Felder dort: `<container>`, `<point x y z range>`, `<usage>`, `<value>`, `<lootmax>`. KEIN spawnChance/minCount/maxCount/itemSet/offsetX/Y/Z.',
+  '- Cargo/Attachments für gespawnte Items = `cfgspawnabletypes.xml` (XML, NICHT JSON). Felder: `<type name>`, `<attachments chance>`, `<cargo chance>`, `<item name chance>`.',
+  '- Loot-Mengen pro Item = `db/types.xml`. Felder: `nominal`, `min`, `lifetime`, `restock`, `<flags>`, `<usage>`, `<value>`, `<tag>`. Es gibt KEIN `spawnChance` in types.xml.',
+  '- Wenn du dir bei einem Dateinamen, Pfad oder Feld unsicher bist: sage "das müsste ich nachschlagen" statt zu raten. Lieber kurz und korrekt als ausführlich und falsch.',
 ].join('\n');
 
 /**
@@ -612,7 +632,7 @@ export function looksLikeDayZFileQuestion(question: string): boolean {
   const q = question.toLowerCase();
   // Dateiname-Stems, die nur in DayZ vorkommen \u2014 dann ist es eine DayZ-Frage,
   // egal wie die Frage formuliert ist.
-  if (/\b(types\.xml|events\.xml|economy\.xml|init\.c|serverdz\.cfg|mapgroupproto|mapgrouppos|cfgspawnabletypes|cfggameplay|cfgeffectarea|cfgundergroundtriggers|cfgenvironment)\b/.test(q)) {
+  if (/\b(types\.xml|events\.xml|economy\.xml|cfgweather|init\.c|serverdz\.cfg|mapgroupproto|mapgrouppos|cfgspawnabletypes|cfggameplay|cfgeffectarea|cfgundergroundtriggers|cfgenvironment|cfgrandompresets|cfgeconomycore|cfgeventspawns|cfgeventgroups)\b/.test(q)) {
     return true;
   }
   // Datei-Endungen im DayZ-/Nitrado-/Loot-Kontext
