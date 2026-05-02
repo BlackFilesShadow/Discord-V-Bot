@@ -29,7 +29,7 @@ import type { Client } from 'discord.js';
  * - Developer-Bereich: Erweiterte Logs, Analytics, Fehlerberichte, API-Keys, Feature-Toggles
  */
 
-export function startDashboard(client?: Client): void {
+export async function startDashboard(client?: Client): Promise<void> {
   const app = express();
   if (client) {
     setWebhookClient(client);
@@ -77,10 +77,38 @@ export function startDashboard(client?: Client): void {
   // ueberlebt Container-Restarts.
   const PgStore = connectPgSimple(session);
   const sessionPool = new Pool({ connectionString: process.env.DATABASE_URL });
+
+  // Tabelle proaktiv anlegen, BEVOR der erste Request reinkommt.
+  // createTableIfMissing:true von connect-pg-simple hat eine Race-Condition
+  // (erster Request kann fehlschlagen mit "relation \"session\" does not exist"),
+  // weil das CREATE async und unkoordiniert mit eingehenden Requests laeuft.
+  try {
+    await sessionPool.query(`
+      CREATE TABLE IF NOT EXISTS "session" (
+        "sid" varchar NOT NULL COLLATE "default",
+        "sess" json NOT NULL,
+        "expire" timestamp(6) NOT NULL
+      ) WITH (OIDS=FALSE);
+    `);
+    await sessionPool.query(`
+      DO $$
+      BEGIN
+        IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'session_pkey') THEN
+          ALTER TABLE "session"
+            ADD CONSTRAINT "session_pkey" PRIMARY KEY ("sid") NOT DEFERRABLE INITIALLY IMMEDIATE;
+        END IF;
+      END$$;
+    `);
+    await sessionPool.query(`CREATE INDEX IF NOT EXISTS "IDX_session_expire" ON "session" ("expire");`);
+    logger.info('Session-Tabelle bereit.');
+  } catch (e) {
+    logger.error(`Session-Tabelle konnte nicht initialisiert werden: ${(e as Error).message}`);
+  }
+
   const sessionStore = new PgStore({
     pool: sessionPool,
     tableName: 'session',
-    createTableIfMissing: true,
+    createTableIfMissing: false, // wir haben sie selbst angelegt
     pruneSessionInterval: 60 * 15, // alle 15 min aufraeumen
   });
   sessionPool.on('error', err => logger.error('Session-Pool-Fehler:', err));
