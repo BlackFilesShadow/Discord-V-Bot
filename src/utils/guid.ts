@@ -19,13 +19,16 @@ export function isValidGuid(guid: string): boolean {
 /**
  * Validiert ein BattlEye-GUID (DayZ-Spieler-Identifier aus ADM-Logs).
  *
- * Echtes Format: 32-stelliger lowercase-Hex (MD5 von 'BE' + Steam64).
- * Wir sind bewusst etwas toleranter (8-64 alphanum + `_-`), weil manche
- * Modded-Server abweichende Formate liefern. Wichtig ist nur, dass eindeutig
- * MUELL (Leer, 'Unknown', 'N/A', 'false', mit Whitespace, mit Sonderzeichen)
- * abgewiesen wird, damit GUID-strict-Auswertungen (Spec 13) sauber bleiben.
+ * Echtes Format (PC):     32-stelliger lowercase-Hex (MD5 von 'BE' + Steam64).
+ * Echtes Format (Console): URL-safe-base64 mit `=`-Padding,
+ *   Beispiel `K_8HNTXPqt_fEXivA1ULIyMFAAfqxt4uiXBVG_C3_pU=` (44 Zeichen).
+ * Wir sind bewusst etwas toleranter (8-64 alphanum + `_-`, optional `=`-Padding),
+ * weil DayZ Console UND modded Server unterschiedliche Formate liefern. Wichtig
+ * ist nur, dass eindeutig MUELL (Leer, 'Unknown', 'N/A', 'false', mit Whitespace,
+ * mit Sonderzeichen) abgewiesen wird, damit GUID-strict-Auswertungen (Spec 13)
+ * sauber bleiben.
  */
-const RE_BATTLEYE_GUID = /^[A-Za-z0-9_-]{8,64}$/;
+const RE_BATTLEYE_GUID = /^[A-Za-z0-9_-]{8,64}={0,2}$/;
 const BATTLEYE_GUID_BLOCKLIST = new Set([
   'unknown', 'n/a', 'na', 'null', 'none', 'false', 'true', '0',
 ]);
