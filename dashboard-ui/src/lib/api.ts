@@ -5,9 +5,24 @@
  */
 
 export class ApiError extends Error {
-  constructor(message: string, public readonly status: number) {
+  constructor(
+    message: string,
+    public readonly status: number,
+    public readonly code: string | null = null,
+    public readonly body: unknown = null,
+  ) {
     super(message);
   }
+}
+
+function extractError(data: unknown, status: number): { msg: string; code: string | null } {
+  if (data && typeof data === 'object') {
+    const obj = data as Record<string, unknown>;
+    const msg = typeof obj.error === 'string' ? obj.error : `HTTP ${status}`;
+    const code = typeof obj.code === 'string' ? obj.code : null;
+    return { msg, code };
+  }
+  return { msg: `HTTP ${status}`, code: null };
 }
 
 function uuid(): string {
@@ -31,10 +46,8 @@ async function request<T>(method: string, path: string, body?: unknown): Promise
     try { data = JSON.parse(text); } catch { data = text; }
   }
   if (!res.ok) {
-    const msg = (data && typeof data === 'object' && 'error' in data && typeof (data as { error: unknown }).error === 'string')
-      ? (data as { error: string }).error
-      : `HTTP ${res.status}`;
-    throw new ApiError(msg, res.status);
+    const { msg, code } = extractError(data, res.status);
+    throw new ApiError(msg, res.status, code, data);
   }
   return data as T;
 }
@@ -51,10 +64,8 @@ async function uploadRequest<T>(path: string, file: File, fieldName = 'file'): P
   let data: unknown = null;
   if (text) { try { data = JSON.parse(text); } catch { data = text; } }
   if (!res.ok) {
-    const msg = (data && typeof data === 'object' && 'error' in data && typeof (data as { error: unknown }).error === 'string')
-      ? (data as { error: string }).error
-      : `HTTP ${res.status}`;
-    throw new ApiError(msg, res.status);
+    const { msg, code } = extractError(data, res.status);
+    throw new ApiError(msg, res.status, code, data);
   }
   return data as T;
 }
@@ -69,10 +80,8 @@ async function uploadFormData<T>(path: string, fd: FormData): Promise<T> {
   let data: unknown = null;
   if (text) { try { data = JSON.parse(text); } catch { data = text; } }
   if (!res.ok) {
-    const msg = (data && typeof data === 'object' && 'error' in data && typeof (data as { error: unknown }).error === 'string')
-      ? (data as { error: string }).error
-      : `HTTP ${res.status}`;
-    throw new ApiError(msg, res.status);
+    const { msg, code } = extractError(data, res.status);
+    throw new ApiError(msg, res.status, code, data);
   }
   return data as T;
 }

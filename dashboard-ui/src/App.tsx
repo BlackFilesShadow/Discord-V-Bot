@@ -15,6 +15,9 @@ import ErrorMonitoring from './pages/dev/ErrorMonitoring';
 import LiveSyncStatus from './pages/dev/LiveSyncStatus';
 import BackupStatus from './pages/dev/BackupStatus';
 import SecurityStatus from './pages/dev/SecurityStatus';
+import ActiveSessions from './pages/dev/ActiveSessions';
+import IncidentResponse from './pages/dev/IncidentResponse';
+import Observability from './pages/dev/Observability';
 import AdmAnalysis from './pages/dev/AdmAnalysis';
 import RptAnalysis from './pages/dev/RptAnalysis';
 import XmlValidator from './pages/dev/XmlValidator';
@@ -53,6 +56,9 @@ const DEV_PAGES: Record<string, () => JSX.Element> = {
   'live-sync': LiveSyncStatus,
   'backup-status': BackupStatus,
   'security-status': SecurityStatus,
+  'active-sessions': ActiveSessions,
+  'incident-response': IncidentResponse,
+  'observability': Observability,
   'adm-analysis': AdmAnalysis,
   'rpt-analysis': RptAnalysis,
   'xml-validator': XmlValidator,

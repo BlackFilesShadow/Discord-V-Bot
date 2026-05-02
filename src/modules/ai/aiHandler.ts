@@ -6,7 +6,7 @@ import { liveSearch, looksFactQuestion, formatSearchResultsForPrompt } from './w
 import { asksAboutCommands, formatCatalogForPromptFocused } from './commandCatalog';
 import { recordCall, getRankedProviders, ProviderName } from './providerStats';
 import { checkRateLimit } from '../../utils/rateLimiter';
-import { lookupNitradoHelp, looksLikeDayZFileQuestion, getDayZFileTruthBlock, detectTypesXmlValueViolations } from './nitradoHelp';
+import { lookupNitradoHelp, looksLikeDayZFileQuestion, getDayZFileTruthBlock, detectTypesXmlValueViolations, sanitizeDayZLootValues, looksLikeDayZLootContent } from './nitradoHelp';
 import { redactText } from '../nitrado/mirror/redactor';
 
 /**
@@ -430,15 +430,25 @@ export async function answerQuestion(
     // sensible Substrings (IPs/Steam64/GUIDs) reingeschrieben hat.
     let safeResponse = response ? redactText(response) : response;
 
-    // Anti-Halluzinations-Post-Processor: Wenn die Antwort types.xml-Werte
-    // au\u00dferhalb des erlaubten 10\u201320-Bandes enth\u00e4lt, h\u00e4ngen wir eine
-    // Korrektur-Notiz an. Das ist letzter Schutz, falls die LLM den
-    // Wahrheits-Block ignoriert hat.
-    if (safeResponse && nitradoHelpTopics.some((t) => t === 'types-xml' || t === 'events-xml' || t === 'file-truth-fallback')) {
-      const corrections = detectTypesXmlValueViolations(safeResponse);
-      if (corrections.length > 0) {
-        logger.warn(`[Nitrado-Help] LLM-Output enth\u00e4lt unrealistische types.xml-Werte: ${corrections.join('; ')}`);
-        safeResponse = `${safeResponse}\n\n\u26a0\ufe0f **Hinweis zu obigen Werten**: Einige genannte \`nominal\`/\`min\`-Zahlen liegen au\u00dferhalb des realistischen DayZ-Vanilla-Bereichs (10\u201320 f\u00fcr \`nominal\`, \`min\` strikt darunter). Bitte halte dich an: seltene Waffen \`nominal=10\`/\`min=5\`, normale Waffen/Munition \`nominal=15\`/\`min=8\`, Kleidung/Werkzeug \`nominal=15\`/\`min=8\`, Nahrung \`nominal=20\`/\`min=10\`. Werte wie 50/100/200/350 sind UNREALISTISCH und blasen die Spawn-Queue auf.`;
+    // HARTE GRENZE — Anti-Halluzinations-Sanitizer: schreibt unrealistische
+    // DayZ-Loot-Werte (nominal/min/max > 25) deterministisch auf
+    // Vanilla-Defaults (nominal=15, min=8, max=20) um. Laeuft IMMER, sobald
+    // der Output ueberhaupt nach DayZ-Loot-Kontext aussieht — UNABHAENGIG vom
+    // Topic-Match. Verhindert, dass die LLM Werte wie 70/100/150 vorschlaegt
+    // (User-Vorgabe: solche Werte duerfen NICHT EINMAL ausgegeben werden).
+    if (safeResponse && looksLikeDayZLootContent(safeResponse)) {
+      const sanitized = sanitizeDayZLootValues(safeResponse);
+      if (sanitized.changes.length > 0) {
+        logger.warn(`[Nitrado-Help] Sanitizer hat ${sanitized.changes.length} unrealistische Loot-Werte ueberschrieben: ${sanitized.changes.join('; ')}`);
+        safeResponse = `${sanitized.text}\n\n\u26a0\ufe0f **Werte automatisch korrigiert**: ${sanitized.changes.length} unrealistische DayZ-Loot-Wert(e) wurden auf Vanilla-Defaults zurueckgesetzt (nominal=15, min=8, max=20). Werte > 25 werden NIE empfohlen — sie sprengen den Loot-Pool.`;
+      }
+      // Zweite Verteidigung: Tabellen mit nominal/min/max in unklarer
+      // Spalten-Anordnung kann der Sanitizer nicht immer treffen. Falls noch
+      // Verletzungen bleiben, mind. eine Warnung anhaengen statt durchlassen.
+      const remaining = detectTypesXmlValueViolations(safeResponse);
+      if (remaining.length > 0) {
+        logger.warn(`[Nitrado-Help] Sanitizer hat ${remaining.length} Werte NICHT erfasst (Format unbekannt): ${remaining.join('; ')}`);
+        safeResponse = `${safeResponse}\n\n\u26a0\ufe0f **Achtung**: Die obige Antwort enthaelt noch Werte ausserhalb des Vanilla-Bereichs (max. 25). Bitte ignoriere alle Zahlen > 25 fuer \`nominal\`/\`min\`/\`max\` und nutze stattdessen: seltene Waffen \`nominal=10\`/\`min=5\`, normale Waffen/Munition \`nominal=15\`/\`min=8\`, Nahrung \`nominal=20\`/\`min=10\`.`;
       }
     }
 

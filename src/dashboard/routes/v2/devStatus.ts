@@ -122,14 +122,20 @@ devStatusRouter.get('/discord', (_req, res) => {
 
 // --- Nitrado --------------------------------------------------------------
 
-devStatusRouter.get('/nitrado', async (_req, res) => {
+devStatusRouter.get('/nitrado', async (req, res) => {
+  // Multi-Guild-Schutz (P0): Wenn die DevSession einen guildIdRestrict
+  // gesetzt hat, NUR Daten dieser Guild aggregieren. Sonst global view.
+  const restrict = req.devSession?.scope.guildIdRestrict ?? null;
+  const baseWhere = restrict ? { guildId: restrict } : undefined;
+
   const counts = await timed(async () => {
     // DEV-only globaler Worker-View ueber alle Guilds. requireDev gateway haelt
-    // nicht-Developer raus, daher bewusst kein guildId-Filter.
+    // nicht-Developer raus, daher bewusst kein guildId-Filter (oder restrict).
     // eslint-disable-next-line local/no-unscoped-prisma-query
     const rows = await prisma.nitradoJob.groupBy({
       by: ['status'],
       _count: { _all: true },
+      where: baseWhere,
     });
     const out: Record<string, number> = { PENDING: 0, RUNNING: 0, DONE: 0, FAILED: 0, DEAD: 0 };
     for (const r of rows) out[r.status] = r._count._all;
@@ -139,7 +145,7 @@ devStatusRouter.get('/nitrado', async (_req, res) => {
   const recentFailures = await timed(async () => {
     // eslint-disable-next-line local/no-unscoped-prisma-query
     return prisma.nitradoJob.findMany({
-      where: { status: { in: ['FAILED', 'DEAD'] } },
+      where: { status: { in: ['FAILED', 'DEAD'] }, ...(restrict ? { guildId: restrict } : {}) },
       orderBy: { updatedAt: 'desc' },
       take: 10,
       select: { id: true, operation: true, guildId: true, status: true, attempts: true, lastError: true, updatedAt: true },
@@ -149,7 +155,7 @@ devStatusRouter.get('/nitrado', async (_req, res) => {
   const oldestPending = await timed(async () => {
     // eslint-disable-next-line local/no-unscoped-prisma-query
     return prisma.nitradoJob.findFirst({
-      where: { status: 'PENDING' },
+      where: { status: 'PENDING', ...(restrict ? { guildId: restrict } : {}) },
       orderBy: { createdAt: 'asc' },
       select: { createdAt: true },
     });
@@ -161,6 +167,7 @@ devStatusRouter.get('/nitrado', async (_req, res) => {
     recentFailures: recentFailures.value ?? [],
     oldestPendingAt: oldestPending.value?.createdAt ?? null,
     oldestPendingAgeSec: oldestPending.value ? Math.round((Date.now() - oldestPending.value.createdAt.getTime()) / 1000) : null,
+    scope: restrict ? { guildIdRestrict: restrict } : { global: true },
   });
 });
 

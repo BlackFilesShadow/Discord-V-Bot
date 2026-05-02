@@ -25,6 +25,8 @@ import { Router } from 'express';
 import crypto from 'crypto';
 import rateLimit from 'express-rate-limit';
 import { requireDev } from '../../middleware/auth';
+import { recordDevAuthFailure, recordDevAuthSuccess } from '../../middleware/devSecurity';
+import { listActiveDevSessions, forceRevokeDevSession } from '../../services/devSessionLifecycle';
 import prisma from '../../../database/prisma';
 import { tryGetDashboardClient } from '../../clientRegistry';
 import { logAudit, logger } from '../../../utils/logger';
@@ -101,6 +103,11 @@ devRouter.post('/login', loginLimiter, async (req, res) => {
   const lockedFor = isLocked(key);
   if (lockedFor > 0) {
     logAudit('DEV_LOGIN_LOCKED', 'SECURITY', { userId: req.auth.userId, ip: req.ip, lockedForMs: lockedFor });
+    recordDevAuthFailure({
+      userId: req.auth.userId, ip: req.ip, userAgent: String(req.headers['user-agent'] ?? ''),
+      reason: 'locked', failureCount: failures.get(key)?.count ?? MAX_FAILS,
+      lockedUntil: new Date(Date.now() + lockedFor),
+    });
     res.status(429).json({ error: 'Zu viele Fehlversuche. Account voruebergehend gesperrt.', retryAfterMs: lockedFor });
     return;
   }
@@ -116,7 +123,13 @@ devRouter.post('/login', loginLimiter, async (req, res) => {
   const b = crypto.createHash('sha256').update(expected).digest();
   if (!crypto.timingSafeEqual(a, b)) {
     registerFail(key);
-    logAudit('DEV_LOGIN_FAILED', 'SECURITY', { userId: req.auth.userId, ip: req.ip });
+    const rec = failures.get(key);
+    logAudit('DEV_LOGIN_FAILED', 'SECURITY', { userId: req.auth.userId, ip: req.ip, count: rec?.count ?? 1 });
+    recordDevAuthFailure({
+      userId: req.auth.userId, ip: req.ip, userAgent: String(req.headers['user-agent'] ?? ''),
+      reason: 'bad_password', failureCount: rec?.count ?? 1,
+      lockedUntil: rec?.lockedUntil ? new Date(rec.lockedUntil) : null,
+    });
     res.status(403).json({ error: 'Passwort falsch.' });
     return;
   }
@@ -137,6 +150,10 @@ devRouter.post('/login', loginLimiter, async (req, res) => {
     },
   });
   logAudit('DEV_LOGIN_OK', 'SECURITY', { userId: req.auth.userId, sessionId: session.id, ip: req.ip });
+  void recordDevAuthSuccess({
+    userId: req.auth.userId, ip: req.ip ?? null,
+    userAgent: String(req.headers['user-agent'] ?? '') || null, sessionId: session.id,
+  });
   res.json({ ok: true, expiresAt: session.expiresAt });
 });
 
@@ -198,4 +215,37 @@ devRouter.get('/logs/tail', requireDev, (req, res) => {
     note: `Live-Logs via Socket.IO Namespace /dev. Diese Route ist Platzhalter (n=${n}).`,
   });
   logger.debug('Dev-Logs-Tail angefragt');
+});
+
+// --- P1: Admin-Force-Revoke ----------------------------------------------
+//
+// Sichtbar fuer DEVELOPER (requireDev erzwingt Rolle + aktive Session + MFA + IP).
+// Force-Revoke kann jeder DEVELOPER ausloesen — sowohl fuer fremde Sessions
+// als auch fuer die eigene (z.B. wenn ein verlorener Browser-Tab gesperrt
+// werden soll). Eskalation auf eine separate Owner-Rolle ist Teil von P2.
+
+devRouter.get('/sessions', requireDev, async (_req, res) => {
+  const rows = await listActiveDevSessions();
+  res.json({ sessions: rows });
+});
+
+devRouter.post('/sessions/:id/revoke', requireDev, async (req, res) => {
+  if (!req.auth) { res.status(401).json({ error: 'Nicht angemeldet.' }); return; }
+  const sessionId = String(req.params.id ?? '');
+  const reason = String((req.body as { reason?: unknown } | undefined)?.reason ?? '');
+  const result = await forceRevokeDevSession({
+    sessionId,
+    byUserId: req.auth.userId,
+    byDiscordId: String(req.auth.discordId),
+    reason,
+    ip: req.ip ?? null,
+  });
+  if (!result.ok) {
+    const status = result.error === 'reason_too_short' ? 400
+      : result.error === 'not_found' ? 404
+      : 409;
+    res.status(status).json({ error: result.error ?? 'force_revoke_failed' });
+    return;
+  }
+  res.json({ ok: true, revoked: result.revoked });
 });

@@ -16,6 +16,9 @@ import { discordHealthRouter } from './routes/discordHealth';
 import { setDashboardClient } from './clientRegistry';
 import { initSocketIo } from './socket';
 import { startDevUploadCleanupTimer } from './services/devUpload';
+import { startDevSessionCleanupTimer } from './services/devSessionLifecycle';
+import { attachPrismaLatencyMiddleware, attachLogRingBuffer } from './services/observability';
+import prisma from '../database/prisma';
 import { metricsRegistry } from '../utils/metrics';
 import type { Client } from 'discord.js';
 
@@ -182,6 +185,9 @@ export function startDashboard(client?: Client): void {
   const httpServer = http.createServer(app);
   initSocketIo(httpServer, sessionMiddleware);
   startDevUploadCleanupTimer();
+  startDevSessionCleanupTimer();
+  attachPrismaLatencyMiddleware(prisma as unknown as Parameters<typeof attachPrismaLatencyMiddleware>[0]);
+  attachLogRingBuffer(logger);
 
   httpServer.listen(config.dashboard.port, () => {
     logger.info(`Dashboard gestartet auf Port ${config.dashboard.port}`);

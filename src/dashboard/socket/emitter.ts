@@ -14,6 +14,11 @@ export function setIo(instance: IOServer): void {
   io = instance;
 }
 
+/** Liefert die laufende Socket.IO-Instanz oder null (z. B. in Tests). */
+export function getIo(): IOServer | null {
+  return io;
+}
+
 export type GuildEvent =
   | { type: 'whitelist.changed'; payload: { guildId: string; entryId?: string; action: 'added' | 'removed' | 'requested' | 'decided' } }
   | { type: 'nitrado.job.updated'; payload: { guildId: string; jobId: string; status: string } }

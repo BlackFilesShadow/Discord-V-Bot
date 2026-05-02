@@ -155,6 +155,7 @@ const TOPICS: HelpTopic[] = [
     triggers: [
       'events.xml', 'eventsxml', 'event spawn', 'fahrzeug spawn',
       'vehicle spawn', 'helicrash', 'infected event', 'dynamische events',
+      'cfgrandompresets',
     ],
     body: [
       '`events.xml` steuert dynamische Vorkommnisse: Fahrzeug-Spawns, Heli-Crash-Sites, dynamische Infected-Events, Animal-Herden.',
@@ -543,6 +544,270 @@ const TOPICS: HelpTopic[] = [
       '- Spieler-Anzahl im Dashboard kann 30–60 s nachhängen (Polling).',
     ].join('\n'),
   },
+  // -------------------------------------------------------------------------
+  // P5 — Vollständige Vanilla-Dateien (Enterprise-Wissensbasis)
+  // -------------------------------------------------------------------------
+  {
+    id: 'cfglimitsdefinition-xml',
+    title: 'cfglimitsdefinition.xml — Vanilla-Definitionen für category/usage/value/tag',
+    triggers: [
+      'cfglimitsdefinition.xml', 'cfglimitsdefinition', 'limitsdefinition',
+      'category definitionen', 'usage definitionen', 'value definitionen',
+      'tag definitionen', 'welche kategorien', 'welche usages', 'welche values',
+      'welche tags', 'tier1', 'tier2', 'tier3', 'tier4',
+    ],
+    body: [
+      '`cfglimitsdefinition.xml` liegt im **Mission-Root** (`mpmissions/<mission>/cfglimitsdefinition.xml`) und definiert die VANILLA-Listen aller gültigen Werte für die Filter-Felder in `types.xml`.',
+      'Diese Datei ist Vanilla — sie wird vom Spiel ausgeliefert und sollte NICHT geändert werden. Eigene Tags/Usages gehören in `cfglimitsdefinitionuser.xml`.',
+      '',
+      'Aufbau (Auszug):',
+      '```xml',
+      '<lists>',
+      '  <categories>',
+      '    <category name="weapons"/>',
+      '    <category name="clothes"/>',
+      '    <category name="food"/>',
+      '    <category name="explosives"/>',
+      '    <category name="tools"/>',
+      '    <category name="containers"/>',
+      '  </categories>',
+      '  <tags>',
+      '    <tag name="shelves"/>',
+      '    <tag name="floor"/>',
+      '  </tags>',
+      '  <usageflags>',
+      '    <usage name="Military"/>',
+      '    <usage name="Police"/>',
+      '    <usage name="Medic"/>',
+      '    <usage name="Firefighter"/>',
+      '    <usage name="Industrial"/>',
+      '    <usage name="Farm"/>',
+      '    <usage name="Coast"/>',
+      '    <usage name="Town"/>',
+      '    <usage name="Village"/>',
+      '    <usage name="Hunting"/>',
+      '    <usage name="Office"/>',
+      '    <usage name="School"/>',
+      '    <usage name="Prison"/>',
+      '    <usage name="Lunapark"/>',
+      '  </usageflags>',
+      '  <valueflags>',
+      '    <value name="Tier1"/>',
+      '    <value name="Tier2"/>',
+      '    <value name="Tier3"/>',
+      '    <value name="Tier4"/>',
+      '  </valueflags>',
+      '</lists>',
+      '```',
+      '- `<category>` ist EINE pro `<type>` in types.xml (Pflichtfeld).',
+      '- `<usage>` und `<value>` können MEHRFACH pro `<type>` stehen — ein Item mit `Tier3 Tier4` spawnt nur an Hi-Tier-Loot-Punkten.',
+      '- `<tag>` adressiert Sub-Loot-Punkte innerhalb eines Containers (z. B. nur in Regalen).',
+      '',
+      'Bearbeiten:',
+      '1. **NICHT direkt editieren** — Updates des Spiels überschreiben sie sonst.',
+      '2. Für eigene Filter-Werte → `cfglimitsdefinitionuser.xml` (siehe dort).',
+      '3. Reine Lese-Referenz: "welche category/usage/value/tag darf ich in meiner types.xml schreiben?".',
+    ].join('\n'),
+  },
+  {
+    id: 'cfglimitsdefinitionuser-xml',
+    title: 'cfglimitsdefinitionuser.xml — Eigene Loot-Filter-Tags & Limits',
+    triggers: [
+      'cfglimitsdefinitionuser.xml', 'cfglimitsdefinitionuser', 'limitsdefinitionuser',
+      'eigene tags', 'eigene usages', 'eigene values', 'custom usage',
+      'custom value', 'custom tag', 'loot zone definieren', 'loot pool limit',
+      'lootcategories.xml', 'lootcategories', 'loot category', 'loot kategorie',
+      'globales loot limit', 'kategorie limit',
+    ],
+    body: [
+      '`cfglimitsdefinitionuser.xml` liegt im **Mission-Root** (`mpmissions/<mission>/cfglimitsdefinitionuser.xml`) und ergänzt die Vanilla-Liste um EIGENE Filter-Werte. Hier definierst du Untergruppen, die du dann in `types.xml` per `<usage>`/`<value>`/`<tag>` referenzieren kannst.',
+      'Aufbau (Vanilla-Beispiel — leer/minimal):',
+      '```xml',
+      '<user>',
+      '  <usage name="OnlyPVPZone">',
+      '    <usage name="Military"/>',
+      '    <usage name="Police"/>',
+      '  </usage>',
+      '  <value name="HighEndOnly">',
+      '    <value name="Tier4"/>',
+      '  </value>',
+      '</user>',
+      '```',
+      '- Jeder `<usage>`/`<value>` Top-Level-Eintrag ist eine ALIAS-Gruppe: "OnlyPVPZone" steht für `Military`+`Police` zusammen.',
+      '- Diese Aliase tauchen DANN in `types.xml` als `<usage name="OnlyPVPZone"/>` auf.',
+      '- KEINE Mengen-Felder hier — `nominal`/`min`/`max`/`lifetime`/`restock` gehören in `db/types.xml` bzw. `db/events.xml`.',
+      '',
+      'Wichtig — keine `lootcategories.xml`:',
+      '- In Vanilla DayZ gibt es KEINE Datei `lootcategories.xml`. Wer dir das sagt, halluziniert oder meint eine **Mod** (z. B. ExpansionMod hat eigene Files).',
+      '- Globale Loot-Pool-Limits werden NICHT über eine separate Datei gesteuert. Sie ergeben sich aus der Summe der `nominal`-Werte aller `<type>` in `types.xml`.',
+      '- Wenn du eine Item-Klasse seltener machen willst: `nominal` der jeweiligen `<type>` in `types.xml` REDUZIEREN — nicht eine fiktive `lootcategories.xml` anlegen.',
+      '',
+      'Bearbeiten:',
+      '1. **Dateibrowser** → `mpmissions/<mission>/cfglimitsdefinitionuser.xml`.',
+      '2. Eigene Aliase definieren, dann in `types.xml` referenzieren.',
+      '3. Server-Neustart, danach in `script.log` nach "unknown usage/value" prüfen.',
+    ].join('\n'),
+  },
+  {
+    id: 'cfgeconomycore-xml',
+    title: 'cfgeconomycore.xml — Index der Central-Economy-XMLs',
+    triggers: [
+      'cfgeconomycore', 'cfgeconomycore.xml', 'economycore', 'economy core',
+      'central economy index', 'ce loader', 'welche xml lädt server',
+    ],
+    body: [
+      '`cfgeconomycore.xml` liegt im **Mission-Root** und ist NUR ein Index. Er listet auf, welche XML-Dateien das Central-Economy-System (CE) beim Mission-Start lädt — analog zu `cfgenvironment.xml`.',
+      'Aufbau (vereinfacht):',
+      '```xml',
+      '<economy>',
+      '  <classes>',
+      '    <ce folder="db">',
+      '      <file name="types.xml" type="types"/>',
+      '      <file name="events.xml" type="events"/>',
+      '      <file name="messages.xml" type="messages"/>',
+      '    </ce>',
+      '  </classes>',
+      '  <defaults>',
+      '    <default name="animal_population" value="1.0"/>',
+      '    <default name="infected_population" value="1.0"/>',
+      '  </defaults>',
+      '</economy>',
+      '```',
+      '- KEINE Mengen-Werte (`nominal`/`min`/`max`) hier — nur Datei-Verweise und globale Multiplikatoren.',
+      '- Wenn du eine eigene zusätzliche `types_*.xml` per Mod oder Pack hast, muss sie hier eingetragen werden, sonst wird sie ignoriert.',
+      '',
+      'Bearbeiten:',
+      '1. **Dateibrowser** → `mpmissions/<mission>/cfgeconomycore.xml`.',
+      '2. Mod-XML eintragen: `<file name="types_pack.xml" type="types"/>` innerhalb des passenden `<ce folder="…">`.',
+      '3. Server-Neustart, im RPT auf "CE: missing file" achten.',
+    ].join('\n'),
+  },
+  {
+    id: 'globals-xml',
+    title: 'db/globals.xml — Server-weite Tunables (Tier-Counts, Idle-Timeouts)',
+    triggers: [
+      'globals.xml', 'db/globals.xml', 'global tunables', 'animal population',
+      'infected population', 'idle timeout', 'cleanup interval',
+      'tier counts', 'cattle count', 'wolf count',
+    ],
+    body: [
+      '`db/globals.xml` (`mpmissions/<mission>/db/globals.xml`) hält Server-WEITE Tuning-Variablen. NICHT pro Item — sondern Limits und Intervalle für die Engine.',
+      'Aufbau pro Eintrag:',
+      '```xml',
+      '<vars>',
+      '  <var name="AnimalMaxCount" type="0" value="100"/>',
+      '  <var name="ZombieMaxCount" type="0" value="1000"/>',
+      '  <var name="IdleModeCountdown" type="0" value="60"/>',
+      '  <var name="CleanupAvoidance" type="1" value="3.0"/>',
+      '</vars>',
+      '```',
+      '- `name` ist eine ENGINE-Konstante (NICHT frei wählbar). Bekannte Beispiele: `AnimalMaxCount`, `ZombieMaxCount`, `IdleModeCountdown`, `CleanupAvoidance`, `WorldWetTempUpdate`, `TimeLogin*`.',
+      '- `type` = `0` für Integer, `1` für Float.',
+      '- `value` = der eingetragene Wert. **Diese Zahlen dürfen GROSS sein** (Tausenden-Bereich für Zombies/Animals üblich) — die 1–25-Vanilla-Regel gilt nur für `nominal`/`min`/`max` in `types.xml`/`events.xml`.',
+      '',
+      'Bearbeiten:',
+      '1. **Dateibrowser** → `mpmissions/<mission>/db/globals.xml`.',
+      '2. Nur dokumentierte `<var name>` ändern — unbekannte Namen werden ignoriert oder verursachen Engine-Warnings.',
+      '3. Server-Neustart.',
+    ].join('\n'),
+  },
+  {
+    id: 'messages-xml',
+    title: 'db/messages.xml — System- und Death-Messages',
+    triggers: [
+      'messages.xml', 'db/messages.xml', 'system message', 'death message',
+      'kill message', 'globaler chat', 'serverbroadcast', 'broadcast nachricht',
+    ],
+    body: [
+      '`db/messages.xml` (`mpmissions/<mission>/db/messages.xml`) sammelt vordefinierte Server-Texte: System-Broadcasts, Death-Messages, Welcome-Texte.',
+      'Aufbau:',
+      '```xml',
+      '<messages>',
+      '  <message type="server" header="Server-Info" text="Wartung in 10 Minuten."/>',
+      '  <message type="death" header="Tot" text="Du bist gestorben."/>',
+      '</messages>',
+      '```',
+      '- `type` ist die Kategorie, die die Engine unterscheidet (`server`, `death`, `welcome`).',
+      '- KEINE Loot-/Spawn-Werte hier — rein textuell.',
+      '- Vanilla nutzt das nur sparsam; viele Server überschreiben Death-Messages aus eigenem Mod-Code.',
+      '',
+      'Bearbeiten:',
+      '1. **Dateibrowser** → `mpmissions/<mission>/db/messages.xml`.',
+      '2. Texte XML-escapen (`&amp;`, `&lt;`, `&quot;`).',
+      '3. Server-Neustart.',
+    ].join('\n'),
+  },
+  {
+    id: 'cfgeventspawns-cfgeventgroups',
+    title: 'cfgeventspawns.xml + cfgeventgroups.xml — Event-Welt-Positionen & Gruppen',
+    triggers: [
+      'cfgeventspawns', 'cfgeventspawns.xml', 'cfgeventgroups', 'cfgeventgroups.xml',
+      'event positionen', 'event spawnpunkte', 'spawn punkt event',
+      'wo spawnt fahrzeug', 'fahrzeug position',
+    ],
+    body: [
+      '`cfgeventspawns.xml` (Mission-Root) listet WELT-Positionen für jedes Event aus `db/events.xml`. `cfgeventgroups.xml` (Mission-Root) bündelt mehrere Spawnpunkte zu Gruppen, die als EIN Event-Stack behandelt werden (z. B. ein Heli-Crash-Site mit allen Wracks/Loot drumherum).',
+      'Aufbau `cfgeventspawns.xml`:',
+      '```xml',
+      '<eventposdef>',
+      '  <event name="VehicleSedan_02">',
+      '    <pos x="3845.0" z="6012.0" a="0.0"/>',
+      '    <pos x="7720.0" z="5612.0" a="180.0"/>',
+      '  </event>',
+      '</eventposdef>',
+      '```',
+      '- `x`/`z` = Welt-Koordinaten, `a` = Yaw-Rotation in Grad.',
+      '- Anzahl `<pos>` = max. mögliche gleichzeitige Welt-Spawns für dieses Event.',
+      '',
+      'Aufbau `cfgeventgroups.xml`:',
+      '```xml',
+      '<eventgroupdef>',
+      '  <group name="StaticHeliCrash">',
+      '    <child lootmax="0" lootmin="0" type="Wreck_UH1Y" deloot="1"/>',
+      '    <child lootmax="6" lootmin="3" type="Land_Wreck_UH1Y_Tail"/>',
+      '  </group>',
+      '</eventgroupdef>',
+      '```',
+      '- Ein `<group>` wird in `db/events.xml` als `<children type="group" name="StaticHeliCrash"/>` referenziert.',
+      '',
+      'Bearbeiten:',
+      '1. Position hinzufügen: `<pos>`-Eintrag in `cfgeventspawns.xml` ergänzen.',
+      '2. Neue Stack-Gruppe: in `cfgeventgroups.xml` definieren, dann in `events.xml` referenzieren.',
+      '3. XML valide halten — Engine bricht sonst beim Mission-Start ab.',
+      '4. Server-Neustart.',
+    ].join('\n'),
+  },
+  {
+    id: 'lootcategories-myth',
+    title: 'Mythos: lootcategories.xml existiert NICHT in Vanilla',
+    triggers: [
+      'lootcategories.xml', 'lootcategories',
+      'wo ist lootcategories', 'gibt es lootcategories',
+      'globales loot pool limit', 'pool limit datei',
+    ],
+    body: [
+      'WICHTIG — Halluzinationsschutz: Es gibt KEINE Datei `lootcategories.xml` in Vanilla DayZ Standalone.',
+      'Wer dir empfiehlt, darin `nominal`/`min`/`max` zu setzen, halluziniert — solche Werte gibt es DORT NICHT.',
+      '',
+      'Wo Loot-Limits in Vanilla wirklich konfiguriert sind:',
+      '- **Pro Item**: `nominal`/`min`/`lifetime`/`restock` in `db/types.xml` (Werte 1–25 für nominal/min, NIEMALS höher).',
+      '- **Pro Event**: `nominal`/`min`/`max` in `db/events.xml` (gleiche Bandbreite).',
+      '- **Pro Filter-Kategorie** (`Military`, `Town`, `Tier3` …): die Liste der gültigen Namen kommt aus `cfglimitsdefinition.xml` (Vanilla, NICHT editieren) und eigenen Aliasen aus `cfglimitsdefinitionuser.xml`.',
+      '- **Globaler Pool** = Summe aller `nominal`-Werte in `types.xml`. Es gibt KEIN globales `max`-Cap in einer separaten Datei.',
+      '- **Engine-weite Limits** (Animal/Zombie-Counts): `db/globals.xml` (dort sind grosse Werte erlaubt).',
+      '',
+      'Wenn dir jemand `lootcategories.xml` mit `max="150"` (oder ähnlich) zeigt:',
+      '- Entweder ist es eine **Mod-Datei** (z. B. ExpansionMod, COT) — dann gilt deren Mod-Doku, nicht Vanilla.',
+      '- Oder es ist schlicht erfunden — IGNORIEREN, in `types.xml` selbst arbeiten.',
+      '',
+      'Konkret: Wenn die M4A1 zu oft spawnt:',
+      '1. `db/types.xml` öffnen, `<type name="M4A1">` finden.',
+      '2. `<nominal>` reduzieren (Beispiel-Vanilla: `10`, kann auf `5` gesenkt werden).',
+      '3. `<min>` strikt unter `<nominal>` halten (z. B. `3`).',
+      '4. `<lifetime>` nicht hochsetzen — sonst stauen sich alte Drops.',
+      '5. Server-Neustart.',
+    ].join('\n'),
+  },
 ];
 
 /**
@@ -607,6 +872,7 @@ export function lookupNitradoHelp(question: string): HelpAnswer {
   lines.push('- Eine Vanilla-Datei `economy.xml` für WETTER existiert NICHT. Wetter steht in `cfgweather.xml`. Die Datei `economy.xml` taucht nur als auto-generierte Runtime-Datei im `storage_*`-Persistenz-Ordner auf und darf NICHT manuell editiert werden.');
   lines.push('- DayZ verwendet für Mission-Configs überwiegend XML. JSON nur für: cfgEffectArea.json, cfgUndergroundTriggers.json, cfgGameplay.json. ALLE anderen Mission-Configs sind XML.');
   lines.push('- Es gibt KEINE Datei "cfgSpawnableTypes.json", kein Verzeichnis "cfgSpawnableTypes/building/", kein "cfgSpawnableTypes/itemsets/". Wer das sagt, halluziniert (das ist Arma3-/ExileMod-Syntax und gilt NICHT für DayZ Standalone).');
+  lines.push('- Es gibt KEINE Vanilla-Datei `lootcategories.xml`. Loot-Filter-Kategorien stehen in `cfglimitsdefinition.xml` (Vanilla, read-only) und eigene Aliase in `cfglimitsdefinitionuser.xml`. Pro-Item-Limits stehen in `db/types.xml`. Wer dir `lootcategories.xml` mit `nominal`/`min`/`max` empfiehlt, halluziniert.');
   lines.push('- Loot in Gebäuden = `mapgroupproto.xml` (Loot-Punkte je Gebäudetyp) + `mapgrouppos.xml` (Welt-Positionen). Felder dort: `<container>`, `<point x y z range>`, `<usage>`, `<value>`, `<lootmax>`. KEIN spawnChance/minCount/maxCount/itemSet/offsetX/Y/Z.');
   lines.push('- Cargo/Attachments für gespawnte Items = `cfgspawnabletypes.xml` (XML, NICHT JSON). Felder: `<type name>`, `<attachments chance>`, `<cargo chance>`, `<item name chance>`.');
   lines.push('- Loot-Mengen pro Item = `db/types.xml`. Felder: `nominal`, `min`, `lifetime`, `restock`, `<flags>`, `<usage>`, `<value>`, `<tag>`. Es gibt KEIN `spawnChance` in types.xml.');
@@ -641,6 +907,7 @@ const FILE_TRUTH_BLOCK: string = [
   '- Eine Vanilla-Datei `economy.xml` für WETTER existiert NICHT. Wetter steht in `cfgweather.xml`. Die Datei `economy.xml` taucht nur als auto-generierte Runtime-Datei im `storage_*`-Persistenz-Ordner auf und darf NICHT manuell editiert werden.',
   '- DayZ verwendet für Mission-Configs überwiegend XML. JSON nur für: cfgEffectArea.json, cfgUndergroundTriggers.json, cfgGameplay.json. ALLE anderen Mission-Configs sind XML.',
   '- Es gibt KEINE Datei "cfgSpawnableTypes.json", kein Verzeichnis "cfgSpawnableTypes/building/", kein "cfgSpawnableTypes/itemsets/". Wer das sagt, halluziniert (das ist Arma3-/ExileMod-Syntax und gilt NICHT für DayZ Standalone).',
+  '- Es gibt KEINE Vanilla-Datei `lootcategories.xml`. Loot-Filter-Kategorien stehen in `cfglimitsdefinition.xml` (Vanilla, read-only) und eigene Aliase in `cfglimitsdefinitionuser.xml`. Pro-Item-Limits stehen in `db/types.xml`. Wer dir `lootcategories.xml` mit `nominal`/`min`/`max` empfiehlt, halluziniert.',
   '- Loot in Gebäuden = `mapgroupproto.xml` (Loot-Punkte je Gebäudetyp) + `mapgrouppos.xml` (Welt-Positionen). Felder dort: `<container>`, `<point x y z range>`, `<usage>`, `<value>`, `<lootmax>`. KEIN spawnChance/minCount/maxCount/itemSet/offsetX/Y/Z.',
   '- Cargo/Attachments für gespawnte Items = `cfgspawnabletypes.xml` (XML, NICHT JSON). Felder: `<type name>`, `<attachments chance>`, `<cargo chance>`, `<item name chance>`.',
   '- Loot-Mengen pro Item = `db/types.xml`. Felder: `nominal`, `min`, `lifetime`, `restock`, `<flags>`, `<usage>`, `<value>`, `<tag>`. Es gibt KEIN `spawnChance` in types.xml.',
@@ -731,4 +998,111 @@ export function detectTypesXmlValueViolations(text: string): string[] {
     }
   }
   return violations;
+}
+
+// ---------------------------------------------------------------------------
+// SANITIZER — schreibt unrealistische DayZ-Loot-Werte in der LLM-Antwort um,
+// statt sie nur zu erkennen. Die User-Anforderung lautet: solche Werte (z. B.
+// nominal=70, min=60, max=150) duerfen NICHT EINMAL VORGESCHLAGEN werden.
+// Daher ersetzen wir sie deterministisch durch die Vanilla-Defaults
+// (nominal=15, min=8, max=20) und stellen min < nominal <= max wieder her.
+// ---------------------------------------------------------------------------
+const VANILLA_DEFAULTS: Record<'nominal' | 'min' | 'max', number> = {
+  nominal: 15,
+  min: 8,
+  max: 20,
+};
+const VANILLA_HARD_MAX = 25;
+
+export interface SanitizeLootResult {
+  text: string;
+  changes: string[];
+}
+
+/**
+ * Heuristik, ob ein LLM-Output ueberhaupt im DayZ-Loot-Kontext steht. Wenn ja,
+ * MUSS der Sanitizer laufen, unabhaengig vom Topic-Match. Wir bleiben bewusst
+ * grosszuegig, damit wir niemals einen Halluzinations-Wert durchlassen.
+ */
+export function looksLikeDayZLootContent(text: string): boolean {
+  if (!text) return false;
+  if (/(nominal|min|max|restock|lifetime)\s*=\s*"\d+"/i.test(text)) return true;
+  if (/\b(types\.xml|events\.xml|lootcategories\.xml|cfgspawnabletypes|mapgroupproto|cfgeconomycore)\b/i.test(text)) return true;
+  if (/\bloot[-_ ]?(pool|menge|table|kategorie)/i.test(text)) return true;
+  return false;
+}
+
+/**
+ * Schreibt unrealistische `nominal`/`min`/`max`-Attribute auf Vanilla-Defaults
+ * um. Behaelt Anfuehrungszeichen und Whitespace bei. Liefert die geaenderten
+ * Werte als Audit-Liste zurueck.
+ *
+ * Auch Markdown-Tabellenzellen werden gekappt: ein Wert > VANILLA_HARD_MAX in
+ * einer nominal/min/max-Spalte wird durch den jeweiligen Vanilla-Default
+ * ersetzt.
+ */
+export function sanitizeDayZLootValues(text: string): SanitizeLootResult {
+  const changes: string[] = [];
+  if (!text) return { text, changes };
+
+  // 1) XML-/Attribut-Stil: nominal="200" -> nominal="15"
+  let out = text.replace(/(nominal|min|max)(\s*=\s*")(\d+)(")/gi, (_full, key: string, eq: string, num: string, q: string) => {
+    const k = key.toLowerCase() as 'nominal' | 'min' | 'max';
+    const v = Number(num);
+    if (!Number.isFinite(v) || v <= VANILLA_HARD_MAX) return `${key}${eq}${num}${q}`;
+    const fix = VANILLA_DEFAULTS[k];
+    changes.push(`${k}="${num}" -> ${k}="${fix}"`);
+    return `${key}${eq}${fix}${q}`;
+  });
+
+  // 1b) XML-Element-Stil: <nominal>200</nominal>
+  out = out.replace(/<(nominal|min|max)>(\d+)<\/(nominal|min|max)>/gi, (full, openKey: string, num: string, closeKey: string) => {
+    if (openKey.toLowerCase() !== closeKey.toLowerCase()) return full;
+    const k = openKey.toLowerCase() as 'nominal' | 'min' | 'max';
+    const v = Number(num);
+    if (!Number.isFinite(v) || v <= VANILLA_HARD_MAX) return full;
+    const fix = VANILLA_DEFAULTS[k];
+    changes.push(`<${k}>${num} -> <${k}>${fix}`);
+    return `<${openKey}>${fix}</${closeKey}>`;
+  });
+
+  // 2) Markdown-Tabellenspalten nominal/min/max: jede Zelle > 25 kappen.
+  const lines = out.split('\n');
+  let colMap: { idx: number; key: 'nominal' | 'min' | 'max' }[] = [];
+  for (let li = 0; li < lines.length; li += 1) {
+    const line = lines[li];
+    const cells = line.split('|');
+    if (cells.length < 3) { colMap = []; continue; }
+    const headers = cells.map((c, i) => {
+      const lc = c.trim().toLowerCase();
+      if (/^nominal$/.test(lc)) return { idx: i, key: 'nominal' as const };
+      if (/^min$/.test(lc)) return { idx: i, key: 'min' as const };
+      if (/^max$/.test(lc)) return { idx: i, key: 'max' as const };
+      return null;
+    }).filter((x): x is { idx: number; key: 'nominal' | 'min' | 'max' } => x !== null);
+    if (headers.length >= 1) { colMap = headers; continue; }
+    if (colMap.length === 0) continue;
+    if (/^[\s\-|:]+$/.test(line)) continue;
+    let mutated = false;
+    for (const c of colMap) {
+      const cell = cells[c.idx];
+      if (cell === undefined) continue;
+      const trimmed = cell.trim();
+      const m = trimmed.match(/^(\d+)$/);
+      if (!m) continue;
+      const v = Number(m[1]);
+      if (!Number.isFinite(v) || v <= VANILLA_HARD_MAX) continue;
+      const fix = VANILLA_DEFAULTS[c.key];
+      changes.push(`Tabelle ${c.key}: ${v} -> ${fix}`);
+      // Whitespace beibehalten (links/rechts).
+      const lead = cell.match(/^\s*/)?.[0] ?? '';
+      const tail = cell.match(/\s*$/)?.[0] ?? '';
+      cells[c.idx] = `${lead}${fix}${tail}`;
+      mutated = true;
+    }
+    if (mutated) lines[li] = cells.join('|');
+  }
+  out = lines.join('\n');
+
+  return { text: out, changes };
 }

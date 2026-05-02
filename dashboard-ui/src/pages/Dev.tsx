@@ -1,78 +1,41 @@
 /**
- * DEV-Konsole — Layout mit Sidebar und 16 Tool-Slots (Spec 4 + 5).
+ * DEV-Konsole — Layout mit Sidebar (Search + Categories + Pinned + Recent)
+ * und 3-Gate-Auth (Spec 4 + 5).
  *
  * Drei Gates (defense in depth):
- *   1. user.role === 'DEVELOPER' — Frontend-Pruefung
- *   2. useDevSession().active   — Frontend-Pruefung gegen /api/v2/dev/status
+ *   1. user.role === 'DEVELOPER' — Frontend
+ *   2. useDevSession().active   — Frontend gegen /api/v2/dev/status
  *   3. requireDev (Backend)     — alle /api/v2/dev/* Routen blocken sonst
  *
- * Kein Frontend-Bypass moeglich; der Server lehnt API-Calls ohne aktive
- * DevSession mit 403 ab.
+ * Re-Exportiert DEV_TOOLS aus dem zentralen Catalog (Backwards-Compat
+ * fuer App.tsx / Tests).
  */
+import { useMemo, useState } from 'react';
 import { Outlet, NavLink, useLocation } from 'react-router-dom';
 import {
-  Activity, LayoutDashboard, Database, Server as ServerIcon, Plug, HeartPulse,
-  AlertTriangle, RefreshCw, HardDrive, ShieldCheck, FileSearch, FileWarning,
-  FileCode, FileJson, Bug, ScrollText, TerminalSquare, Lock, Unlock, LogOut,
-  Skull, MapPin, Bomb, Home, Map as MapIcon, Eye, Users, Car, Brain, FolderTree,
+  AlertTriangle, Lock, Unlock, LogOut, Search, Star, X as XIcon,
 } from 'lucide-react';
 import { Shell } from '@/components/Shell';
 import { Card, CardHeader, CardTitle, CardDesc } from '@/components/ui/Card';
 import { Button } from '@/components/ui/Button';
+import { Badge } from '@/components/ui/Badge';
 import { useAuth } from '@/lib/auth';
 import { useDevSession } from '@/lib/devSession';
+import { usePinnedTools } from '@/lib/pinnedTools';
+import {
+  DEV_TOOLS as DEV_TOOLS_CATALOG, CATEGORY_LABEL, CATEGORY_ORDER,
+  type DevTool, type DevToolCategory,
+} from '@/lib/devToolsCatalog';
+import { PinnedToolsRow } from '@/components/dev/PinnedToolsRow';
 
-export interface DevTool {
-  /** URL-Slug unter /dev/ */
-  slug: string;
-  /** Anzeige-Label im Sidebar */
-  label: string;
-  /** lucide-react Icon */
-  icon: typeof Activity;
-  /** Status: 'ready' = implementiert, 'stub' = Phase 2 */
-  status: 'ready' | 'stub';
-  /** Kurzbeschreibung fuer Tool-Header */
-  desc: string;
-}
-
-export const DEV_TOOLS: ReadonlyArray<DevTool> = [
-  { slug: 'bot-status',        label: 'Live Bot Status',     icon: Activity,        status: 'ready', desc: 'Echtzeit Bot-Snapshot und Live-Logs.' },
-  { slug: 'dashboard-status',  label: 'Dashboard Status',    icon: LayoutDashboard, status: 'stub',  desc: 'Express-Server, Sessions, aktive Sockets.' },
-  { slug: 'database-status',   label: 'Datenbank Status',    icon: Database,        status: 'ready', desc: 'Postgres-Health, Pool, Migrations, Top-Tabellen.' },
-  { slug: 'nitrado-status',    label: 'Nitrado API Status',  icon: ServerIcon,      status: 'ready', desc: 'Nitrado Job-Outbox: Pending/Failed, letzte Fehler.' },
-  { slug: 'discord-status',    label: 'Discord API Status',  icon: Plug,            status: 'ready', desc: 'Gateway-Latenz, Shard-Health, Cache-Sizes.' },
-  { slug: 'system-health',     label: 'System Health Check', icon: HeartPulse,      status: 'ready', desc: 'CPU, RAM, Disk, Process-Memory, Load.' },
-  { slug: 'error-monitoring',  label: 'Fehler Monitoring',   icon: AlertTriangle,   status: 'stub',  desc: 'Live-Errors aus errorSink (Discord-Webhook).' },
-  { slug: 'live-sync',         label: 'Live Sync Status',    icon: RefreshCw,       status: 'stub',  desc: 'Cross-Service Sync-Jobs (Whitelist, Economy).' },
-  { slug: 'backup-status',     label: 'Backup Status',       icon: HardDrive,       status: 'stub',  desc: 'Letzte Backups, Verifikation, Restore-Test.' },
-  { slug: 'security-status',   label: 'Sicherheitsstatus',   icon: ShieldCheck,     status: 'stub',  desc: 'Rate-Limit-Hits, Brute-Force, Audit-Anomalien.' },
-  { slug: 'adm-analysis',      label: 'ADM Log Analyse',     icon: FileSearch,      status: 'ready', desc: 'DayZ-ADM-Parser: Spieler, GUID, Routen, Hits.' },
-  { slug: 'rpt-analysis',      label: 'RPT Log Analyse',     icon: FileWarning,     status: 'ready', desc: 'DayZ-RPT-Parser: Crashes, Mod- und Script-Errors.' },
-  { slug: 'xml-validator',     label: 'XML Validator',       icon: FileCode,        status: 'ready', desc: 'High-End XML-Validierung mit Auto-Fix.' },
-  { slug: 'json-validator',    label: 'JSON Validator',      icon: FileJson,        status: 'ready', desc: 'High-End JSON-Validierung mit Auto-Fix.' },
-  { slug: 'debug-tools',       label: 'Debug Tools',         icon: Bug,             status: 'stub',  desc: 'Inspector, Heap-Snapshot, EventLoop-Lag.' },
-  { slug: 'audit-logs',        label: 'Audit Logs',          icon: ScrollText,      status: 'stub',  desc: 'Globale Audit-Trail-Suche und Export.' },
-  { slug: 'command-diag',      label: 'Command Diagnose',    icon: TerminalSquare,  status: 'stub',  desc: 'Slash-Command-Registry, Cooldowns, Fehler.' },
-  // Phase 2 — AI / GUID-basierte ADM-Auswertungen (Spec Sektion 13)
-  { slug: 'killfeed',          label: 'Killfeed',            icon: Skull,           status: 'ready', desc: 'GUID-strict Killer/Opfer mit Distanz, Waffe, K/D.' },
-  { slug: 'player-tracking',   label: 'Player Tracking',     icon: MapPin,          status: 'ready', desc: 'Sessions pro GUID: connect/disconnect/Events.' },
-  { slug: 'raid-analysis',     label: 'Raid Analyse',        icon: Bomb,            status: 'ready', desc: 'Build/Dismantle-Cluster + Raid-Indikatoren.' },
-  { slug: 'base-proximity',    label: 'Base Proximity',      icon: Home,            status: 'ready', desc: 'Base-Cluster nach Build-Density.' },
-  { slug: 'movement-heatmap',  label: 'Movement Heatmap',    icon: MapIcon,         status: 'ready', desc: 'Aggregierte Positions-Hits als Heatmap.' },
-  { slug: 'suspicious',        label: 'Verdaechtige Aktivitaet', icon: Eye,         status: 'ready', desc: 'Long-Distance-Kills, hohe Headshot-Quote.' },
-  { slug: 'faction-activity',  label: 'Fraktions Aktivitaet',icon: Users,           status: 'ready', desc: 'Konflikt-Graph aus Killer/Opfer-Pairs.' },
-  { slug: 'vehicle-tracking',  label: 'Fahrzeug Tracking',   icon: Car,             status: 'ready', desc: 'Fahrzeug-Events pro Spieler/GUID.' },
-  // Phase 3 — AI-Provider Health + Anomalie-Detection (Spec 9)
-  { slug: 'ai-providers',      label: 'AI Provider Stats',   icon: Brain,           status: 'ready', desc: 'Provider-Erfolgsraten + Anomalie-Detection (Spec 9).' },
-  // Phase 4 — Nitrado Mirror (Read-Only): einmaliger Voll-Snapshot
-  { slug: 'nitrado-mirror',    label: 'Nitrado Mirror',      icon: FolderTree,      status: 'ready', desc: 'Read-Only Snapshot aller Server-Settings + Mission-/Profile-Dateien.' },
-];
+// Re-Export fuer App.tsx (Routing-Mapping arbeitet mit DEV_TOOLS).
+export type { DevTool } from '@/lib/devToolsCatalog';
+export const DEV_TOOLS = DEV_TOOLS_CATALOG;
 
 export default function DevLayout() {
   const { user } = useAuth();
   const dev = useDevSession();
 
-  // Gate 1: Rolle
   if (!user || user.role !== 'DEVELOPER') {
     return (
       <Shell title="Dev-Konsole" back="/servers">
@@ -86,7 +49,6 @@ export default function DevLayout() {
     );
   }
 
-  // Gate 2: aktive DevSession
   if (!dev.active) {
     return (
       <Shell title="Dev-Konsole" back="/servers">
@@ -108,7 +70,7 @@ export default function DevLayout() {
 
   return (
     <Shell title="Dev-Konsole" back="/servers" sidebar={<DevSidebar />}>
-      <div className="max-w-6xl mx-auto">
+      <div className="max-w-content mx-auto">
         <Outlet />
       </div>
     </Shell>
@@ -118,40 +80,115 @@ export default function DevLayout() {
 function DevSidebar() {
   const dev = useDevSession();
   const loc = useLocation();
+  const { isPinned, toggle, pinned } = usePinnedTools();
+  const [query, setQuery] = useState('');
+
+  const grouped = useMemo<Array<{ cat: DevToolCategory; items: DevTool[] }>>(() => {
+    const q = query.trim().toLowerCase();
+    const filter = (t: DevTool): boolean => {
+      if (!q) return true;
+      const hay = [t.label, t.slug, t.desc, ...(t.keywords ?? [])].join(' ').toLowerCase();
+      return hay.includes(q);
+    };
+    const map = new Map<DevToolCategory, DevTool[]>();
+    DEV_TOOLS_CATALOG.filter(filter).forEach(t => {
+      const arr = map.get(t.category) ?? [];
+      arr.push(t);
+      map.set(t.category, arr);
+    });
+    return CATEGORY_ORDER
+      .map(cat => ({ cat, items: map.get(cat) ?? [] }))
+      .filter(g => g.items.length > 0);
+  }, [query]);
+
   return (
     <nav aria-label="DEV Tools" className="space-y-4">
-      <div className="flex items-center justify-between px-2">
+      <div className="flex items-center justify-between px-1">
         <span className="text-[10px] uppercase tracking-widest text-muted">DEV Tools</span>
-        <span className="inline-flex items-center gap-1 text-[10px] px-1.5 py-0.5 rounded-full bg-ok/15 text-ok border border-ok/30">
+        <Badge variant="ok" pulse>
           <Unlock className="h-3 w-3" /> ON
-        </span>
+        </Badge>
       </div>
-      <ul className="space-y-1">
-        {DEV_TOOLS.map(t => {
-          const Icon = t.icon;
-          const to = `/dev/${t.slug}`;
-          const isActive = loc.pathname === to;
-          return (
-            <li key={t.slug}>
-              <NavLink
-                to={to}
-                className={[
-                  'group flex items-center gap-2.5 px-2.5 py-1.5 rounded-md text-xs transition-colors focus-ring',
-                  isActive
-                    ? 'bg-accent/15 text-white border border-accent/30'
-                    : 'text-muted hover:text-white hover:bg-bg-elev/60 border border-transparent',
-                ].join(' ')}
-              >
-                <Icon className="h-3.5 w-3.5 shrink-0" />
-                <span className="truncate flex-1">{t.label}</span>
-                {t.status === 'stub' && (
-                  <span className="text-[9px] uppercase tracking-wider text-muted/70 group-hover:text-muted">soon</span>
-                )}
-              </NavLink>
-            </li>
-          );
-        })}
-      </ul>
+
+      {/* Sidebar-Search */}
+      <div className="relative">
+        <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-muted" />
+        <input
+          value={query}
+          onChange={e => setQuery(e.target.value)}
+          placeholder="Tools suchen…"
+          className="input-premium w-full rounded-md text-xs text-white pl-8 pr-7 py-1.5 placeholder:text-muted/70 focus:outline-none"
+          aria-label="Tools suchen"
+        />
+        {query && (
+          <button
+            type="button"
+            onClick={() => setQuery('')}
+            className="absolute right-1.5 top-1/2 -translate-y-1/2 text-muted hover:text-white p-0.5 rounded focus-ring"
+            aria-label="Suche leeren"
+          >
+            <XIcon className="h-3 w-3" />
+          </button>
+        )}
+      </div>
+
+      {/* Pinned (oberhalb der Kategorien) */}
+      {pinned.length > 0 && !query && <PinnedToolsRow />}
+
+      {/* Kategorien */}
+      <div className="space-y-4">
+        {grouped.length === 0 && (
+          <div className="px-2 py-3 text-[11px] text-muted text-center">Keine Treffer.</div>
+        )}
+        {grouped.map(group => (
+          <div key={group.cat} className="space-y-1">
+            <div className="px-2 text-[10px] uppercase tracking-widest text-muted">
+              {CATEGORY_LABEL[group.cat]}
+            </div>
+            <ul className="space-y-0.5">
+              {group.items.map(t => {
+                const Icon = t.icon;
+                const to = `/dev/${t.slug}`;
+                const isActive = loc.pathname === to;
+                const isP = isPinned(t.slug);
+                return (
+                  <li key={t.slug} className="group">
+                    <NavLink
+                      to={to}
+                      className={[
+                        'relative flex items-center gap-2.5 px-2.5 py-1.5 rounded-md text-xs transition-colors focus-ring',
+                        isActive
+                          ? 'bg-accent/15 text-white border border-accent/30'
+                          : 'text-muted hover:text-white hover:bg-bg-elev/60 border border-transparent',
+                      ].join(' ')}
+                    >
+                      <Icon className="h-3.5 w-3.5 shrink-0" />
+                      <span className="truncate flex-1">{t.label}</span>
+                      {t.status === 'stub' && (
+                        <span className="text-[9px] uppercase tracking-wider text-muted/70">soon</span>
+                      )}
+                      <button
+                        type="button"
+                        onClick={e => { e.preventDefault(); e.stopPropagation(); toggle(t.slug); }}
+                        className={[
+                          'p-0.5 rounded focus-ring transition-colors',
+                          isP
+                            ? 'text-accent opacity-100'
+                            : 'text-muted opacity-0 group-hover:opacity-100 hover:text-accent',
+                        ].join(' ')}
+                        aria-label={isP ? `${t.label} entpinnen` : `${t.label} pinnen`}
+                      >
+                        <Star className={`h-3 w-3 ${isP ? 'fill-current' : ''}`} />
+                      </button>
+                    </NavLink>
+                  </li>
+                );
+              })}
+            </ul>
+          </div>
+        ))}
+      </div>
+
       <div className="pt-3 border-t border-border">
         <Button
           size="sm"

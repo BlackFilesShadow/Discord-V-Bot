@@ -9,6 +9,7 @@ export default {
           card: '#111114',
           elev: '#181820',
           hover: '#22222c',
+          subtle: '#0c0c10',
         },
         accent: {
           DEFAULT: '#dc2626',
@@ -21,6 +22,35 @@ export default {
         ok: '#10b981',
         warn: '#f59e0b',
         danger: '#ef4444',
+        info: '#38bdf8',
+        // Severity-Skala fuer enterprise-typische Status-Anzeigen
+        severity: {
+          neutral: '#6b7280',
+          info:    '#38bdf8',
+          ok:      '#10b981',
+          warn:    '#f59e0b',
+          danger:  '#ef4444',
+          crit:    '#b91c1c',
+        },
+      },
+      fontSize: {
+        // Enterprise-Typo-Skala (kompakter als Default)
+        '2xs': ['10px', { lineHeight: '14px', letterSpacing: '0.04em' }],
+        'micro': ['9px',  { lineHeight: '12px', letterSpacing: '0.06em' }],
+      },
+      spacing: {
+        // Density-aware Basis (mit CSS-Vars in index.css gepaart)
+        'gutter': 'var(--gutter, 1.5rem)',
+        'row':    'var(--row-h, 2.5rem)',
+      },
+      maxWidth: {
+        'content':       '76rem',  // 1216px — Standard-Content-Container
+        'content-wide':  '96rem',  // 1536px — fuer Tabellen/Heatmaps
+      },
+      zIndex: {
+        modal:   '60',
+        toast:   '70',
+        palette: '80',
       },
       boxShadow: {
         glow: '0 0 60px rgba(220, 38, 38, 0.55)',

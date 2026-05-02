@@ -1,7 +1,26 @@
+/**
+ * Enterprise-Shell: Sticky-Glass-Header + optionale Sidebar + Main.
+ *
+ * Erweitert ggue. der vorherigen Shell um:
+ *   - Density-Toggle (compact|cozy|comfortable)
+ *   - Command-Palette-Trigger (Cmd+K Hint sichtbar)
+ *   - Status-Pill (DEV-Session aktiv?) — nur fuer DEVELOPER sichtbar
+ *   - A11y-Landmark "main"
+ *
+ * Sidebar bleibt ein flexibler Slot (gleicher API-Vertrag wie zuvor).
+ */
 import { type ReactNode, useState, useEffect } from 'react';
 import { Link, useLocation } from 'react-router-dom';
-import { ArrowLeft, LogOut, Menu, X } from 'lucide-react';
+import {
+  ArrowLeft, LogOut, Menu, X, Command, Rows3, Rows2, Square,
+} from 'lucide-react';
 import { useAuth } from '@/lib/auth';
+import { useDevSession } from '@/lib/devSession';
+import { useDensity } from '@/lib/density';
+import { useHotkey, MOD_LABEL } from '@/lib/hotkeys';
+import { CommandPalette } from '@/components/CommandPalette';
+import { Tooltip } from '@/components/ui/Tooltip';
+import { Kbd } from '@/components/ui/Kbd';
 
 interface ShellProps {
   title: string;
@@ -12,18 +31,22 @@ interface ShellProps {
 
 export function Shell({ title, back, sidebar, children }: ShellProps) {
   const { user } = useAuth();
+  const dev = useDevSession();
+  const { density, cycle } = useDensity();
   const loc = useLocation();
   const [sidebarOpen, setSidebarOpen] = useState(false);
+  const [paletteOpen, setPaletteOpen] = useState(false);
 
-  // Sidebar bei Routen-Wechsel oder Resize zu Desktop schliessen
+  // Palette-Hotkey global (Inhalte respektieren ohnehin 3-Gate Auth).
+  useHotkey('mod+k', e => { e.preventDefault(); setPaletteOpen(o => !o); }, { allowInInputs: true });
+  useHotkey('escape', () => setPaletteOpen(false), { allowInInputs: true });
+
   useEffect(() => { setSidebarOpen(false); }, [loc.pathname]);
   useEffect(() => {
     const onResize = (): void => { if (window.innerWidth >= 768) setSidebarOpen(false); };
     window.addEventListener('resize', onResize);
     return () => window.removeEventListener('resize', onResize);
   }, []);
-
-  // Body-Scroll lock wenn Mobile-Sidebar offen
   useEffect(() => {
     document.body.style.overflow = sidebarOpen ? 'hidden' : '';
     return () => { document.body.style.overflow = ''; };
@@ -34,9 +57,11 @@ export function Shell({ title, back, sidebar, children }: ShellProps) {
     window.location.href = '/login';
   }
 
+  const isDev = user?.role === 'DEVELOPER';
+  const DensityIcon = density === 'compact' ? Rows3 : density === 'cozy' ? Rows2 : Square;
+
   return (
     <div className="min-h-full flex flex-col">
-      {/* Sticky Glass-Header */}
       <header className="sticky top-0 z-40 h-16 glass header-premium flex items-center justify-between px-4 sm:px-6">
         <div className="flex items-center gap-2 sm:gap-4 min-w-0">
           {sidebar && (
@@ -60,7 +85,10 @@ export function Shell({ title, back, sidebar, children }: ShellProps) {
           )}
           <Link to="/servers" className="flex items-center gap-2 focus-ring rounded-md px-1 group">
             <span className="relative inline-flex h-2.5 w-2.5">
-              <span className="absolute inline-flex h-full w-full rounded-full bg-accent opacity-60 group-hover:opacity-100" style={{ animation: 'pulse-ring 2s cubic-bezier(0,0,0.2,1) infinite' }} />
+              <span
+                className="absolute inline-flex h-full w-full rounded-full bg-accent opacity-60 group-hover:opacity-100"
+                style={{ animation: 'pulse-ring 2s cubic-bezier(0,0,0.2,1) infinite' }}
+              />
               <span className="relative inline-flex h-2.5 w-2.5 rounded-full bg-gradient-to-br from-red-400 to-red-700 shadow-[0_0_8px_rgba(239,68,68,0.8)]" />
             </span>
             <span className="v-logo font-extrabold text-xl tracking-tight">V-Bot</span>
@@ -69,25 +97,63 @@ export function Shell({ title, back, sidebar, children }: ShellProps) {
           <span className="text-white/85 text-sm font-medium truncate hidden sm:inline">{title}</span>
         </div>
 
-        <div className="flex items-center gap-3 text-sm">
+        <div className="flex items-center gap-1.5 sm:gap-2 text-sm">
+          {isDev && (
+            <Tooltip content={dev.active ? 'DEV-Session aktiv' : 'DEV-Session inaktiv'}>
+              <span className="status-pill" data-state={dev.active ? 'ok' : 'warn'}>
+                <span className="relative inline-flex h-1.5 w-1.5">
+                  {dev.active && <span className="absolute inline-flex h-full w-full rounded-full bg-current opacity-60 animate-ping" />}
+                  <span className="relative inline-flex h-1.5 w-1.5 rounded-full bg-current" />
+                </span>
+                DEV
+              </span>
+            </Tooltip>
+          )}
+
+          <Tooltip content={<span>Befehlspalette · <Kbd>{MOD_LABEL}</Kbd>+<Kbd>K</Kbd></span>}>
+            <button
+              type="button"
+              onClick={() => setPaletteOpen(true)}
+              className="inline-flex items-center gap-2 h-9 pl-2.5 pr-2 rounded-md border border-white/[0.06] bg-white/[0.02] hover:bg-bg-elev/60 text-muted hover:text-white focus-ring"
+              aria-label="Befehlspalette oeffnen"
+            >
+              <Command className="h-3.5 w-3.5" />
+              <span className="hidden md:inline text-xs">Suchen</span>
+              <span className="hidden md:inline-flex items-center gap-0.5">
+                <Kbd>{MOD_LABEL}</Kbd><Kbd>K</Kbd>
+              </span>
+            </button>
+          </Tooltip>
+
+          <Tooltip content={`Dichte: ${density}`}>
+            <button
+              type="button"
+              onClick={cycle}
+              className="inline-flex items-center justify-center h-9 w-9 rounded-md text-muted hover:text-white hover:bg-bg-elev focus-ring"
+              aria-label={`Dichte umschalten (aktuell: ${density})`}
+            >
+              <DensityIcon className="h-4 w-4" />
+            </button>
+          </Tooltip>
+
           {user && (
-            <span className="text-muted hidden sm:inline truncate max-w-[160px]" title={user.username}>
+            <span className="text-muted hidden lg:inline truncate max-w-[140px]" title={user.username}>
               {user.username}
             </span>
           )}
-          <button
-            onClick={logout}
-            className="text-muted hover:text-white inline-flex items-center justify-center h-9 w-9 rounded-md hover:bg-bg-elev focus-ring"
-            type="button"
-            aria-label="Logout"
-            title="Logout"
-          >
-            <LogOut className="h-4 w-4" />
-          </button>
+          <Tooltip content="Logout">
+            <button
+              onClick={logout}
+              className="text-muted hover:text-white inline-flex items-center justify-center h-9 w-9 rounded-md hover:bg-bg-elev focus-ring"
+              type="button"
+              aria-label="Logout"
+            >
+              <LogOut className="h-4 w-4" />
+            </button>
+          </Tooltip>
         </div>
       </header>
 
-      {/* Mobile-Title-Bar */}
       {(back || title) && (
         <div className="sm:hidden border-b border-border px-4 py-2 text-sm">
           <span className="text-white truncate">{title}</span>
@@ -97,11 +163,12 @@ export function Shell({ title, back, sidebar, children }: ShellProps) {
       <div className="flex-1 flex overflow-hidden relative z-10">
         {sidebar && (
           <>
-            {/* Desktop Sidebar */}
-            <aside className="hidden md:block w-64 lg:w-72 border-r border-white/[0.06] bg-gradient-to-b from-bg-card/50 to-bg-card/20 backdrop-blur-md p-5 overflow-y-auto text-[15px]">
+            <aside
+              className="hidden md:block w-64 lg:w-72 border-r border-white/[0.06] bg-gradient-to-b from-bg-card/50 to-bg-card/20 backdrop-blur-md p-5 overflow-y-auto text-[15px]"
+              aria-label="Navigation"
+            >
               {sidebar}
             </aside>
-            {/* Mobile Drawer */}
             {sidebarOpen && (
               <div
                 className="md:hidden fixed inset-0 z-30 bg-black/60 animate-fade-in"
@@ -120,8 +187,10 @@ export function Shell({ title, back, sidebar, children }: ShellProps) {
             )}
           </>
         )}
-        <main className="flex-1 overflow-y-auto p-4 sm:p-6">{children}</main>
+        <main className="flex-1 overflow-y-auto p-4 sm:p-6" role="main">{children}</main>
       </div>
+
+      <CommandPalette open={paletteOpen} onClose={() => setPaletteOpen(false)} />
     </div>
   );
 }

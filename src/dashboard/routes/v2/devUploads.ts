@@ -14,6 +14,7 @@ import { Router } from 'express';
 import multer from 'multer';
 import rateLimit from 'express-rate-limit';
 import { requireDev } from '../../middleware/auth';
+import { logAuditDb } from '../../../utils/logger';
 import {
   saveDevUpload,
   listDevUploads,
@@ -86,6 +87,17 @@ devUploadsRouter.post('/', uploadLimiter, upload.array('files', MAX_DEV_UPLOADS_
     }
   }
   const anyOk = results.some(r => r.ok);
+  if (anyOk) {
+    logAuditDb('DEV_UPLOAD_CREATED', 'UPLOAD', {
+      actorUserId: req.auth?.userId ?? null,
+      details: {
+        kind,
+        files: results.map(r => ({ name: r.name, ok: r.ok, id: r.id, error: r.error })),
+      },
+      ip: req.ip ?? null,
+      userAgent: String(req.headers['user-agent'] ?? '') || null,
+    });
+  }
   res.status(anyOk ? 201 : 400).json({ results });
 });
 
@@ -122,5 +134,11 @@ devUploadsRouter.delete('/:id', async (req, res) => {
   if (!userId) return res.status(401).json({ error: 'Nicht eingeloggt.' });
   const ok = await deleteDevUpload(userId, req.params.id);
   if (!ok) return res.status(404).json({ error: 'Upload nicht gefunden.' });
+  logAuditDb('DEV_UPLOAD_DELETED', 'UPLOAD', {
+    actorUserId: req.auth?.userId ?? null,
+    details: { uploadId: req.params.id },
+    ip: req.ip ?? null,
+    userAgent: String(req.headers['user-agent'] ?? '') || null,
+  });
   res.json({ ok: true });
 });

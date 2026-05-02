@@ -27,6 +27,7 @@ export function DevLoginPanel() {
   const [pw, setPw] = useState('');
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState<string | null>(null);
+  const [errCode, setErrCode] = useState<string | null>(null);
 
   // Auf der /login-Route nicht rendern (kein Overlay ueber dem Login-Form).
   if (pathname.startsWith('/login')) return null;
@@ -37,12 +38,17 @@ export function DevLoginPanel() {
 
   const onSubmit = async (e: FormEvent): Promise<void> => {
     e.preventDefault();
-    setBusy(true); setErr(null);
+    setBusy(true); setErr(null); setErrCode(null);
     try {
       await login(pw);
       setPw('');
     } catch (ex) {
-      setErr(ex instanceof ApiError ? ex.message : 'Unbekannter Fehler');
+      if (ex instanceof ApiError) {
+        setErr(ex.message);
+        setErrCode(ex.code);
+      } else {
+        setErr('Unbekannter Fehler');
+      }
     } finally {
       setBusy(false);
     }
@@ -135,6 +141,22 @@ export function DevLoginPanel() {
                              bg-danger/10 rounded-lg px-2.5 py-1.5"
                 >
                   {err}
+                  {errCode === 'DEV_MFA_REQUIRED' && (
+                    <>
+                      {' '}
+                      <Link
+                        to="/profile/security"
+                        className="underline text-danger-300 hover:text-danger-200 font-semibold"
+                      >
+                        2FA jetzt einrichten →
+                      </Link>
+                    </>
+                  )}
+                  {errCode === 'DEV_IP_DENIED' && (
+                    <span className="block mt-1 text-muted">
+                      Deine IP ist nicht in der DEV-Allowlist. Wende dich an einen SUPER_ADMIN.
+                    </span>
+                  )}
                 </p>
               )}
               <Button

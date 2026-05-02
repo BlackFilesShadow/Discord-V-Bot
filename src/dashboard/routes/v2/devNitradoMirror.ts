@@ -19,7 +19,7 @@ import { Router } from 'express';
 import rateLimit from 'express-rate-limit';
 import prisma from '../../../database/prisma';
 import { requireDev } from '../../middleware/auth';
-import { logger } from '../../../utils/logger';
+import { logger, logAuditDb } from '../../../utils/logger';
 import { startSnapshot, getSnapshotProgress } from '../../../modules/nitrado/mirror/snapshotService';
 import {
   listSnapshots, getSettings, listFiles, findFiles, getFile,
@@ -62,9 +62,22 @@ devNitradoMirrorRouter.post('/trigger', triggerLimiter, async (req, res) => {
   if (!guildId || !connId) return res.status(400).json({ error: 'guildId und connId erforderlich.' });
   try {
     const { snapshotId } = await startSnapshot({ guildId, nitradoConnId: connId, triggeredBy: userId });
+    logAuditDb('DEV_MIRROR_SNAPSHOT_TRIGGERED', 'NITRADO', {
+      actorUserId: req.auth?.userId ?? null,
+      guildId,
+      details: { snapshotId, connId },
+      ip: req.ip ?? null,
+      userAgent: String(req.headers['user-agent'] ?? '') || null,
+    });
     res.status(202).json({ snapshotId });
   } catch (e) {
     logger.error('[DEV-Mirror] trigger', e as Error);
+    logAuditDb('DEV_MIRROR_SNAPSHOT_FAILED', 'NITRADO', {
+      actorUserId: req.auth?.userId ?? null,
+      guildId,
+      details: { connId, error: (e as Error).message },
+      ip: req.ip ?? null,
+    });
     res.status(400).json({ error: (e as Error).message });
   }
 });

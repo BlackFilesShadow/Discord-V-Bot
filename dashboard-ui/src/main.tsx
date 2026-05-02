@@ -5,6 +5,10 @@ import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import App from './App';
 import { AuthProvider } from './lib/auth';
 import { DevSessionProvider } from './lib/devSession';
+import { DensityProvider } from './lib/density';
+import { ToastProvider } from './lib/toast';
+import { PinnedToolsProvider } from './lib/pinnedTools';
+import { RecentActionsProvider } from './lib/recentActions';
 import './index.css';
 
 const qc = new QueryClient({
@@ -17,7 +21,15 @@ ReactDOM.createRoot(document.getElementById('root')!).render(
       <BrowserRouter>
         <AuthProvider>
           <DevSessionProvider>
-            <App />
+            <DensityProvider>
+              <PinnedToolsProvider>
+                <RecentActionsProvider>
+                  <ToastProvider>
+                    <App />
+                  </ToastProvider>
+                </RecentActionsProvider>
+              </PinnedToolsProvider>
+            </DensityProvider>
           </DevSessionProvider>
         </AuthProvider>
       </BrowserRouter>
