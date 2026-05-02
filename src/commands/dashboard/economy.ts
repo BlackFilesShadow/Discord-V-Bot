@@ -109,7 +109,7 @@ export const statusCommand: Command = {
 };
 
 // ============================================================
-// /balance — eigener Kontostand + letzte 5 Tx
+// /balance — eigener Kontostand + letzte 5 Tx (Public Embed, V-Bot Style)
 // ============================================================
 export const balanceCommand: Command = {
   data: new SlashCommandBuilder().setName('balance').setDescription('Dein Kontostand und die letzten 5 Transaktionen.'),
@@ -117,17 +117,24 @@ export const balanceCommand: Command = {
     const acc = await getOrCreateAccount(scope.guildId, scope.actorDiscordId);
     const cfg = await getConfig(scope.guildId);
     const txs = await recentTransactions(scope.guildId, scope.actorDiscordId, 5);
+    const total = acc.walletBalance + acc.bankBalance;
     const lines = txs.length === 0
       ? '_keine Transaktionen_'
       : txs.map(t => `\`${t.delta >= 0n ? '+' : ''}${fmt(t.delta)}\` ${cfg.emoji} ${t.type}${t.reason ? ` — ${t.reason}` : ''}`).join('\n');
     const e = new EmbedBuilder()
-      .setTitle('Kontostand')
+      .setColor(0xF1C40F)
+      .setAuthor({ name: i.user.username, iconURL: i.user.displayAvatarURL() })
+      .setTitle(`${cfg.emoji} Kontostand`)
+      .setDescription(`Konto von **${i.user.username}**`)
       .addFields(
-        { name: 'Wallet', value: `${fmt(acc.walletBalance)} ${cfg.emoji}`, inline: true },
-        { name: 'Bank', value: `${fmt(acc.bankBalance)} ${cfg.emoji}`, inline: true },
-        { name: 'Letzte 5', value: lines, inline: false },
-      );
-    await embedReply(i, e);
+        { name: '\uD83D\uDC5B Wallet', value: `**${fmt(acc.walletBalance)}** ${cfg.emoji}`, inline: true },
+        { name: '\uD83C\uDFE6 Bank', value: `**${fmt(acc.bankBalance)}** ${cfg.emoji}`, inline: true },
+        { name: '\u03A3 Gesamt', value: `**${fmt(total)}** ${cfg.emoji}`, inline: true },
+        { name: '\uD83D\uDCDC Letzte 5 Transaktionen', value: lines.slice(0, 1024), inline: false },
+      )
+      .setFooter({ text: `Guild ${scope.guildId}` })
+      .setTimestamp();
+    await embedReply(i, e, false);
   }),
 };
 

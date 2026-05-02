@@ -83,7 +83,19 @@ const loginLimiter = rateLimit({
 
 devRouter.post('/login', loginLimiter, async (req, res) => {
   if (!req.auth) { res.status(401).json({ error: 'Nicht angemeldet.' }); return; }
-  if (req.auth.role !== 'DEVELOPER') { res.status(403).json({ error: 'Nur DEVELOPER.' }); return; }
+  // Frische DB-Rolle (Session-Rolle kann veraltet sein, wenn ein Admin eine
+  // Promotion gemacht hat ohne dass der User sich neu eingeloggt hat).
+  const dbUser = await prisma.user.findUnique({
+    where: { id: req.auth.userId },
+    select: { role: true },
+  });
+  const currentRole = dbUser?.role ?? req.auth.role;
+  if (currentRole !== 'DEVELOPER') { res.status(403).json({ error: 'Nur DEVELOPER.' }); return; }
+  // Session-Rolle nachziehen, damit Folge-Requests konsistent sind.
+  if (currentRole !== req.auth.role) {
+    (req.session as unknown as { role?: string }).role = currentRole;
+    req.auth.role = currentRole;
+  }
 
   const key = bruteKey(req.auth.discordId, req.ip);
   const lockedFor = isLocked(key);
@@ -142,7 +154,18 @@ devRouter.post('/logout', async (req, res) => {
 
 devRouter.get('/status', async (req, res) => {
   if (!req.auth) { res.status(401).json({ error: 'Nicht angemeldet.' }); return; }
-  if (req.auth.role !== 'DEVELOPER') {
+  // Frische DB-Rolle (s. /login). Sorgt dafuer, dass das Frontend nach einer
+  // Rollen-Promotion sofort eligible:true sieht, ohne Re-OAuth.
+  const dbUser = await prisma.user.findUnique({
+    where: { id: req.auth.userId },
+    select: { role: true },
+  });
+  const currentRole = dbUser?.role ?? req.auth.role;
+  if (currentRole !== req.auth.role) {
+    (req.session as unknown as { role?: string }).role = currentRole;
+    req.auth.role = currentRole;
+  }
+  if (currentRole !== 'DEVELOPER') {
     res.json({ active: false, eligible: false });
     return;
   }
