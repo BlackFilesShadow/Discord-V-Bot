@@ -132,13 +132,13 @@ const TOPICS: HelpTopic[] = [
       '- `<flags …/>` — wo gespawnt werden darf (z. B. `count_in_map`, `crafted`).',
       '- `<usage>`, `<value>`, `<tag>` — Spawn-Kategorien (Military, Town, Tier1…).',
       '',
-      'REALISTISCHE Vanilla-Größenordnungen für `nominal`/`min` (NIEMALS 100/200/500/1000 als Beispiel nennen — das sind unrealistische Extremwerte):',
+      'REALISTISCHE Vanilla-Größenordnungen für `nominal`/`min` — IMMER im Bereich 10–20 für `nominal`, und `min` IMMER strikt unter `nominal` (NIE darüber, NIE gleich). NIEMALS Werte wie 100/200/500/1000 als Beispiel nennen — das sind unrealistische Extremwerte:',
       '- Seltene High-End-Waffen (M4A1, AKM, SVD): `nominal="10"` `min="5"`.',
       '- Normale Waffen (Mosin, SKS, Pistolen): `nominal="15"` `min="8"`.',
       '- Munition / Magazine: `nominal="15"` `min="8"`.',
-      '- Standard-Kleidung, Werkzeug: `nominal="10"`–`"20"`, `min` ca. halb so groß.',
-      '- Alltags-Nahrung / Trinken (Konserven, Wasserflasche): `nominal="20"`–`"40"`, `min` halb so groß.',
-      '- Faustregel: `min` ≈ 50–60 % von `nominal`. Wenn du dir unsicher bist, beim Vanilla-Wert bleiben statt zu raten.',
+      '- Standard-Kleidung, Werkzeug: `nominal="15"` `min="8"` (Bereich 10–20 zulässig, `min` halb so groß).',
+      '- Alltags-Nahrung / Trinken (Konserven, Wasserflasche): `nominal="20"` `min="10"` (oberer Rand des Bereichs).',
+      '- Faustregel: `nominal` zwischen 10 und 20, `min` ≈ 50 % von `nominal` — `min` ist IMMER kleiner als `nominal`. Wenn du dir unsicher bist, beim Vanilla-Wert bleiben statt zu raten.',
       '- `lifetime`: kurzlebige Verbrauchsgüter 3600–7200 (1–2 h), normale Items 14400 (4 h), wertvolle Items 28800 (8 h). KEINE Werte über 28800 ohne Grund — Items, die zu lange liegen, blockieren die Spawn-Queue.',
       '- `restock`: 0 = sofort nachschiebbar; 1800 = 30 min Cooldown; höhere Werte machen Items spürbar selten.',
       '',
@@ -159,7 +159,7 @@ const TOPICS: HelpTopic[] = [
     body: [
       '`events.xml` steuert dynamische Vorkommnisse: Fahrzeug-Spawns, Heli-Crash-Sites, dynamische Infected-Events, Animal-Herden.',
       'Wichtige Felder pro `<event>`:',
-      '- `nominal` / `min` / `max` — wie viele gleichzeitig.',
+      '- `nominal` / `min` / `max` — wie viele gleichzeitig. Realistische Beispiele: `nominal="15"` `min="8"` `max="20"`. **Regel: `min` < `nominal` ≤ `max`, alle im Bereich 10–20.** NIEMALS 100/200/500 als Beispiel nennen.',
       '- `lifetime`, `restock` — Despawn- und Nachschub-Timing.',
       '- `<children>` — welche konkreten Items/Klassen das Event enthält (z. B. welche Fahrzeug-Typen).',
       '- `<position>` — Spawn-Logik: `fixed`/`player`.',
@@ -610,7 +610,7 @@ export function lookupNitradoHelp(question: string): HelpAnswer {
   lines.push('- Loot in Gebäuden = `mapgroupproto.xml` (Loot-Punkte je Gebäudetyp) + `mapgrouppos.xml` (Welt-Positionen). Felder dort: `<container>`, `<point x y z range>`, `<usage>`, `<value>`, `<lootmax>`. KEIN spawnChance/minCount/maxCount/itemSet/offsetX/Y/Z.');
   lines.push('- Cargo/Attachments für gespawnte Items = `cfgspawnabletypes.xml` (XML, NICHT JSON). Felder: `<type name>`, `<attachments chance>`, `<cargo chance>`, `<item name chance>`.');
   lines.push('- Loot-Mengen pro Item = `db/types.xml`. Felder: `nominal`, `min`, `lifetime`, `restock`, `<flags>`, `<usage>`, `<value>`, `<tag>`. Es gibt KEIN `spawnChance` in types.xml.');
-  lines.push('- REALISTISCHE `nominal`-Beispielwerte (NIEMALS 100/200/500/1000 als Beispiel nennen — das sind unrealistische Extremwerte): seltene Waffen 5–10, normale Waffen/Munition 10–20, Standard-Kleidung/Werkzeug 10–20, Alltags-Nahrung 20–40. `min` ≈ 50–60 % von `nominal`. Wenn unsicher: Vanilla-Wert nehmen statt raten.');
+  lines.push('- REALISTISCHE `nominal`/`min`-Beispielwerte: `nominal` IMMER zwischen 10 und 20, `min` IMMER strikt KLEINER als `nominal` (≈ 50 %, also z. B. nominal=10/min=5, nominal=15/min=8, nominal=20/min=10). NIEMALS 100/200/500/1000 als Beispiel nennen, NIEMALS `min >= nominal`.');
   lines.push('- Wenn du dir bei einem Dateinamen, Pfad oder Feld unsicher bist: sage "das müsste ich nachschlagen" statt zu raten. Lieber kurz und korrekt als ausführlich und falsch.');
 
   return {
@@ -636,7 +636,7 @@ const FILE_TRUTH_BLOCK: string = [
   '- Loot in Gebäuden = `mapgroupproto.xml` (Loot-Punkte je Gebäudetyp) + `mapgrouppos.xml` (Welt-Positionen). Felder dort: `<container>`, `<point x y z range>`, `<usage>`, `<value>`, `<lootmax>`. KEIN spawnChance/minCount/maxCount/itemSet/offsetX/Y/Z.',
   '- Cargo/Attachments für gespawnte Items = `cfgspawnabletypes.xml` (XML, NICHT JSON). Felder: `<type name>`, `<attachments chance>`, `<cargo chance>`, `<item name chance>`.',
   '- Loot-Mengen pro Item = `db/types.xml`. Felder: `nominal`, `min`, `lifetime`, `restock`, `<flags>`, `<usage>`, `<value>`, `<tag>`. Es gibt KEIN `spawnChance` in types.xml.',
-  '- REALISTISCHE `nominal`-Beispielwerte (NIEMALS 100/200/500/1000 als Beispiel nennen — das sind unrealistische Extremwerte): seltene Waffen 5–10, normale Waffen/Munition 10–20, Standard-Kleidung/Werkzeug 10–20, Alltags-Nahrung 20–40. `min` ≈ 50–60 % von `nominal`. Wenn unsicher: Vanilla-Wert nehmen statt raten.',
+  '- REALISTISCHE `nominal`/`min`-Beispielwerte: `nominal` IMMER zwischen 10 und 20, `min` IMMER strikt KLEINER als `nominal` (≈ 50 %, also z. B. nominal=10/min=5, nominal=15/min=8, nominal=20/min=10). NIEMALS 100/200/500/1000 als Beispiel nennen, NIEMALS `min >= nominal`.',
   '- Wenn du dir bei einem Dateinamen, Pfad oder Feld unsicher bist: sage "das müsste ich nachschlagen" statt zu raten. Lieber kurz und korrekt als ausführlich und falsch.',
 ].join('\n');
 
