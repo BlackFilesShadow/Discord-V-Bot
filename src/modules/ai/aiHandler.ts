@@ -6,7 +6,7 @@ import { liveSearch, looksFactQuestion, formatSearchResultsForPrompt } from './w
 import { asksAboutCommands, formatCatalogForPromptFocused } from './commandCatalog';
 import { recordCall, getRankedProviders, ProviderName } from './providerStats';
 import { checkRateLimit } from '../../utils/rateLimiter';
-import { lookupDayZServer } from '../nitrado/mirror/dayzLookup';
+import { lookupNitradoHelp } from './nitradoHelp';
 import { redactText } from '../nitrado/mirror/redactor';
 
 /**
@@ -373,20 +373,21 @@ export async function answerQuestion(
       }
     }
 
-    // Nitrado-Mirror-Lookup: bei DayZ-Server-Konfig-Fragen autoritative,
-    // anonymisierte Werte aus dem lokalen Snapshot einspeisen. Ohne Token
-    // nutzbar — Daten kommen aus DB + uploads/nitrado-mirror.
-    let dayzBlock: string | null = null;
-    let dayzSnapshotAt: Date | null = null;
+    // Generische Nitrado/DayZ-Hilfe: keine Server-Daten, nur Anleitungen.
+    // Bei Fragen wie "wie stelle ich die Tag-Nacht-Zeit ein?" wird ein
+    // Erklär-Block eingespeist; persönliche/serverspezifische Werte werden
+    // bewusst NICHT geliefert.
+    let nitradoHelpBlock: string | null = null;
+    let nitradoHelpTopics: string[] = [];
     if (mode === 'chat' || mode === 'oneshot' || mode === 'trigger') {
       try {
-        const ans = await lookupDayZServer(opts.guildId ?? null, question);
+        const ans = lookupNitradoHelp(question);
         if (ans.found) {
-          dayzBlock = ans.text;
-          dayzSnapshotAt = ans.snapshotAt;
+          nitradoHelpBlock = ans.text;
+          nitradoHelpTopics = ans.topicIds;
         }
       } catch (e) {
-        logger.warn(`[DayZ-Lookup] in answerQuestion fehlgeschlagen: ${String(e)}`);
+        logger.warn(`[Nitrado-Help] in answerQuestion fehlgeschlagen: ${String(e)}`);
       }
     }
 
@@ -397,7 +398,7 @@ export async function answerQuestion(
       ...(catalogBlock ? [{ role: 'system' as const, content: catalogBlock }] : []),
       ...(introBlock ? [{ role: 'system' as const, content: introBlock }] : []),
       ...(liveBlock ? [{ role: 'system' as const, content: liveBlock }] : []),
-      ...(dayzBlock ? [{ role: 'system' as const, content: dayzBlock }] : []),
+      ...(nitradoHelpBlock ? [{ role: 'system' as const, content: nitradoHelpBlock }] : []),
       ...(context ? [{ role: 'system' as const, content: context }] : []),
       ...memoryTurns.map((t) => ({ role: t.role, content: t.content })),
       { role: 'user', content: question },
@@ -420,8 +421,8 @@ export async function answerQuestion(
       })();
     }
 
-    if (dayzSnapshotAt) {
-      logger.info(`[DayZ-Lookup] Antwort mit Mirror-Kontext (snapshot=${dayzSnapshotAt.toISOString()})`);
+    if (nitradoHelpTopics.length > 0) {
+      logger.info(`[Nitrado-Help] generischer Erklärblock injiziert (topics=${nitradoHelpTopics.join(',')})`);
     }
 
     return { success: true, result: safeResponse };
