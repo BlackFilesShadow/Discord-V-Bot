@@ -126,7 +126,18 @@ authRouter.get('/login', (req: Request, res: Response) => {
   });
 
   logAudit('OAUTH2_LOGIN_INITIATED', 'AUTH', { ip: req.ip });
-  res.redirect(`${DISCORD_AUTH_URL}?${params.toString()}`);
+
+  // KRITISCH: explizit session.save() vor Redirect, sonst race-condition.
+  // Discord kann den Callback feuern bevor connect-pg-simple den Insert
+  // nach Postgres committed hat -> oauthState im Callback null -> CSRF-Mismatch.
+  req.session.save((err) => {
+    if (err) {
+      logAudit('OAUTH2_SESSION_SAVE_ERROR', 'SECURITY', { ip: req.ip, err: err.message });
+      res.status(500).send('Session-Speicherung fehlgeschlagen. Bitte erneut versuchen.');
+      return;
+    }
+    res.redirect(`${DISCORD_AUTH_URL}?${params.toString()}`);
+  });
 });
 
 // Alias: das Frontend (Login.tsx) verlinkt auf /auth/discord.
@@ -141,9 +152,26 @@ authRouter.get('/callback', async (req: Request, res: Response) => {
 
   // State-Validierung (CSRF-Schutz)
   const savedState = (req.session as any).oauthState;
+
+  // Recovery-Pfad 1: Session-Cookie fehlt komplett oder hat keinen oauthState
+  // (passiert nach Server-Neustart, Cookie-Loeschung oder doppeltem Tab).
+  // -> stiller Restart des Login-Flows. Frueher: harter 403 ohne Ausweg.
+  if (!savedState) {
+    logAudit('OAUTH2_STATE_MISSING', 'SECURITY', { ip: req.ip, hasCode: !!code });
+    res.redirect('/auth/login');
+    return;
+  }
+
+  // Recovery-Pfad 2: Session hat einen state, aber Discord schickt einen
+  // anderen zurueck. Echter CSRF-Verdacht ODER der User hat parallel zwei
+  // Login-Flows offen. Wir loeschen den Session-State und schicken in
+  // einen frischen Login-Flow zurueck (statt JSON-403-Sackgasse).
   if (!state || state !== savedState) {
     logAudit('OAUTH2_STATE_MISMATCH', 'SECURITY', { ip: req.ip });
-    res.status(403).json({ error: 'Ungültiger State-Parameter (CSRF-Schutz)' });
+    delete (req.session as any).oauthState;
+    delete (req.session as any).oauthNonce;
+    delete (req.session as any).pkceVerifier;
+    req.session.save(() => res.redirect('/auth/login'));
     return;
   }
 
