@@ -6,6 +6,8 @@ import { liveSearch, looksFactQuestion, formatSearchResultsForPrompt } from './w
 import { asksAboutCommands, formatCatalogForPromptFocused } from './commandCatalog';
 import { recordCall, getRankedProviders, ProviderName } from './providerStats';
 import { checkRateLimit } from '../../utils/rateLimiter';
+import { lookupDayZServer } from '../nitrado/mirror/dayzLookup';
+import { redactText } from '../nitrado/mirror/redactor';
 
 /**
  * AI-Integration (Sektion 4):
@@ -371,6 +373,23 @@ export async function answerQuestion(
       }
     }
 
+    // Nitrado-Mirror-Lookup: bei DayZ-Server-Konfig-Fragen autoritative,
+    // anonymisierte Werte aus dem lokalen Snapshot einspeisen. Ohne Token
+    // nutzbar — Daten kommen aus DB + uploads/nitrado-mirror.
+    let dayzBlock: string | null = null;
+    let dayzSnapshotAt: Date | null = null;
+    if (mode === 'chat' || mode === 'oneshot' || mode === 'trigger') {
+      try {
+        const ans = await lookupDayZServer(opts.guildId ?? null, question);
+        if (ans.found) {
+          dayzBlock = ans.text;
+          dayzSnapshotAt = ans.snapshotAt;
+        }
+      } catch (e) {
+        logger.warn(`[DayZ-Lookup] in answerQuestion fehlgeschlagen: ${String(e)}`);
+      }
+    }
+
     const response = await callAI([
       { role: 'system', content: BOT_PERSONA },
       { role: 'system', content: getLiveTimeContext() },
@@ -378,25 +397,34 @@ export async function answerQuestion(
       ...(catalogBlock ? [{ role: 'system' as const, content: catalogBlock }] : []),
       ...(introBlock ? [{ role: 'system' as const, content: introBlock }] : []),
       ...(liveBlock ? [{ role: 'system' as const, content: liveBlock }] : []),
+      ...(dayzBlock ? [{ role: 'system' as const, content: dayzBlock }] : []),
       ...(context ? [{ role: 'system' as const, content: context }] : []),
       ...memoryTurns.map((t) => ({ role: t.role, content: t.content })),
       { role: 'user', content: question },
     ]);
 
+    // Defense-in-Depth: Antwort durch Redactor schicken, falls die LLM doch
+    // sensible Substrings (IPs/Steam64/GUIDs) reingeschrieben hat.
+    const safeResponse = response ? redactText(response) : response;
+
     // Phase 14: Turn persistieren (best-effort, blockiert die Antwort nicht).
-    if (useMemory && response) {
+    if (useMemory && safeResponse) {
       void (async () => {
         try {
           const { recordTurn } = await import('./conversationMemory.js');
           await recordTurn(opts.userId!, opts.channelId!, 'user', question, opts.guildId ?? null);
-          await recordTurn(opts.userId!, opts.channelId!, 'assistant', response, opts.guildId ?? null);
+          await recordTurn(opts.userId!, opts.channelId!, 'assistant', safeResponse, opts.guildId ?? null);
         } catch (e) {
           logger.warn(`conversationMemory.recordTurn fehlgeschlagen: ${String(e)}`);
         }
       })();
     }
 
-    return { success: true, result: response };
+    if (dayzSnapshotAt) {
+      logger.info(`[DayZ-Lookup] Antwort mit Mirror-Kontext (snapshot=${dayzSnapshotAt.toISOString()})`);
+    }
+
+    return { success: true, result: safeResponse };
   } catch (error) {
     const err = error as Error & { code?: string };
     logger.error('AI Wissensfrage Fehler:', {
