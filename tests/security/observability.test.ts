@@ -129,6 +129,18 @@ describe('Log ring buffer', () => {
     expect(r[0].message).toBe('m199');
     expect(r[4].message).toBe('m195');
   });
+
+  it('does NOT crash on entries with undefined level (regression: queryLogRing TypeError)', () => {
+    // Drittquellen (legacy winston wrapper, eigenes write) koennen Eintraege
+    // ohne level/message in den Ring schreiben. queryLogRing muss tolerant sein.
+    __pushLogForTests({ ts: Date.now(), level: undefined as unknown as string, message: 'no-level' });
+    __pushLogForTests({ ts: Date.now(), level: 'error', message: undefined as unknown as string });
+    expect(() => queryLogRing({ level: 'error', limit: 50 })).not.toThrow();
+    expect(() => queryLogRing({ q: 'test', limit: 50 })).not.toThrow();
+    const all = queryLogRing({ limit: 50 });
+    // Sanitizer in pushLog setzt level='info' fuer den ersten Eintrag.
+    expect(all.find(e => e.message === 'no-level')?.level).toBe('info');
+  });
 });
 
 describe('Backup status', () => {

@@ -236,8 +236,17 @@ export interface LogEntry {
 const logRing: LogEntry[] = [];
 
 function pushLog(entry: LogEntry): void {
+  // Defensive: Winston/Drittquellen koennen Eintraege ohne `level` oder
+  // `message` durchreichen. Sanitize hier zentral, damit downstream
+  // (queryLogRing) niemals undefined.toLowerCase() crashed.
+  const safe: LogEntry = {
+    ts: typeof entry.ts === 'number' ? entry.ts : Date.now(),
+    level: typeof entry.level === 'string' && entry.level ? entry.level : 'info',
+    message: typeof entry.message === 'string' ? entry.message : safeString(entry.message),
+    meta: typeof entry.meta === 'string' ? entry.meta : undefined,
+  };
   if (logRing.length >= LOG_RING_CAP) logRing.shift();
-  logRing.push(entry);
+  logRing.push(safe);
 }
 
 let logTransportAttached = false;
@@ -319,10 +328,11 @@ export function queryLogRing(opts: LogQuery): LogEntry[] {
   const out: LogEntry[] = [];
   for (let i = logRing.length - 1; i >= 0 && out.length < limit; i -= 1) {
     const e = logRing[i];
-    if (lvl && e.level.toLowerCase() !== lvl) continue;
+    const eLevel = String(e.level ?? '').toLowerCase();
+    if (lvl && eLevel !== lvl) continue;
     if (since && e.ts < since) continue;
     if (needle) {
-      const haystack = `${e.message} ${e.meta ?? ''}`.toLowerCase();
+      const haystack = `${e.message ?? ''} ${e.meta ?? ''}`.toLowerCase();
       if (!haystack.includes(needle)) continue;
     }
     out.push(e);
