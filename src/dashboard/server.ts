@@ -48,13 +48,18 @@ export async function startDashboard(client?: Client): Promise<void> {
     credentials: true,
   }));
 
-  // Rate Limiting (Sektion 12: Rate-Limit für Login-Versuche)
+  // Login-Limiter: NUR auf Login-Initiierung + OAuth-Callback + 2FA-Verify.
+  // Frueher war der Limiter auf das komplette /auth gemountet, was auch
+  // den Status-Polling-Endpoint /auth/status traf -> nach 5 Polls war
+  // jeglicher Login fuer 15 Min blockiert. /auth/logout, /auth/status
+  // und /auth/discord (Redirect) brauchen kein Brute-Force-Limit.
   const loginLimiter = rateLimit({
     windowMs: 15 * 60 * 1000, // 15 Minuten
-    max: config.security.maxLoginAttempts,
+    max: Math.max(config.security.maxLoginAttempts, 20),
     message: { error: 'Zu viele Login-Versuche. Bitte warte 15 Minuten.' },
     standardHeaders: true,
     legacyHeaders: false,
+    skipSuccessfulRequests: true,
   });
 
   // /api/v2 deckt das gesamte DEV-Dashboard ab (Live-Polling, viele
@@ -137,7 +142,12 @@ export async function startDashboard(client?: Client): Promise<void> {
   });
 
   // Routes
-  app.use('/auth', loginLimiter, authRouter);
+  // Auth-Routes: Limiter NUR auf den Login-/Callback-/2FA-Pfaden.
+  // /auth/status (vom Frontend gepollt) und /auth/logout bleiben frei.
+  app.use('/auth/login', loginLimiter);
+  app.use('/auth/callback', loginLimiter);
+  app.use('/auth/2fa', loginLimiter);
+  app.use('/auth', authRouter);
   // Webhook-Endpunkt OHNE Session-Auth (eigene HMAC-Pruefung im Router).
   // MUSS vor dem JSON-Bodyparser bleiben? -> raw-Parser ist im Router lokal.
   app.use('/webhooks', apiLimiter, webhookRouter);
