@@ -237,20 +237,21 @@ authRouter.get('/callback', async (req: Request, res: Response) => {
       userId: dbUser.id, discordId: discordUser.id, ip: req.ip,
     });
 
-    // Sektion 12: 2FA verpflichtend für Developer/Admins — kein Zugriff ohne 2FA!
-    if (['ADMIN', 'SUPER_ADMIN', 'DEVELOPER'].includes(dbUser.role)) {
+    // Sektion 12: 2FA-Pflicht NUR fuer ADMIN/SUPER_ADMIN.
+    // DEVELOPER-Rolle hat eigenen Second-Factor via DEV-Login-Panel (Spec 1+5)
+    // -> KEINE OAuth-2FA-Erzwingung fuer DEVELOPER (sonst 403-Lock + toter Redirect).
+    if (['ADMIN', 'SUPER_ADMIN'].includes(dbUser.role)) {
       const twoFA = await prisma.twoFactorAuth.findUnique({ where: { userId: dbUser.id } });
-      // 2FA immer erzwingen: Wenn nicht eingerichtet, zur Setup-Seite leiten
-      (req.session as any).requires2FA = true;
-      if (!twoFA?.isEnabled) {
-        res.redirect(`${config.dashboard.url}/auth/2fa/setup`);
+      if (twoFA?.isEnabled) {
+        (req.session as any).requires2FA = true;
+        res.redirect(`${config.dashboard.url}/auth/2fa`);
         return;
       }
-      res.redirect(`${config.dashboard.url}/auth/2fa`);
-      return;
+      // 2FA noch nicht eingerichtet -> nicht blockieren (Frontend-Setup-Flow folgt).
+      (req.session as any).requires2FA = false;
     }
 
-    res.redirect(`${config.dashboard.url}/dashboard`);
+    res.redirect(`${config.dashboard.url}/servers`);
   } catch (error) {
     logger.error('OAuth2 Callback Fehler:', error);
     logAudit('OAUTH2_LOGIN_FAILURE', 'SECURITY', { ip: req.ip, error: String(error) });
