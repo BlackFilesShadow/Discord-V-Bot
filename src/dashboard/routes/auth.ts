@@ -268,18 +268,34 @@ authRouter.get('/callback', async (req: Request, res: Response) => {
     // Sektion 12: 2FA-Pflicht NUR fuer ADMIN/SUPER_ADMIN.
     // DEVELOPER-Rolle hat eigenen Second-Factor via DEV-Login-Panel (Spec 1+5)
     // -> KEINE OAuth-2FA-Erzwingung fuer DEVELOPER (sonst 403-Lock + toter Redirect).
+    let postLoginPath = '/servers';
     if (['ADMIN', 'SUPER_ADMIN'].includes(dbUser.role)) {
       const twoFA = await prisma.twoFactorAuth.findUnique({ where: { userId: dbUser.id } });
       if (twoFA?.isEnabled) {
         (req.session as any).requires2FA = true;
-        res.redirect(`${config.dashboard.url}/auth/2fa`);
-        return;
+        // Frontend hat (noch) keine /auth/2fa-Page. Bis dahin landen wir auf /login
+        // mit Hinweis (statt einer toten /auth/2fa-Route, die per SPA-Catch-All
+        // auf /servers redirected → Protected → 403 → /login → Discord → Loop).
+        postLoginPath = '/login?requires2FA=1';
+      } else {
+        // 2FA noch nicht eingerichtet -> nicht blockieren (Frontend-Setup-Flow folgt).
+        (req.session as any).requires2FA = false;
       }
-      // 2FA noch nicht eingerichtet -> nicht blockieren (Frontend-Setup-Flow folgt).
-      (req.session as any).requires2FA = false;
     }
 
-    res.redirect(`${config.dashboard.url}/servers`);
+    // KRITISCH: req.session.save() VOR redirect, sonst Race-Condition.
+    // Browser landet auf /servers -> /api/me -> findet noch keine
+    // sessionToken/userId in DB (connect-pg-simple hat noch nicht committed)
+    // -> 401 -> Frontend redirected zu /login -> Discord-Loop.
+    req.session.save((err) => {
+      if (err) {
+        logger.error('OAuth2 Callback: session.save fehlgeschlagen', err);
+        logAudit('OAUTH2_SESSION_SAVE_ERROR', 'SECURITY', { ip: req.ip, err: err.message });
+        res.redirect(`${config.dashboard.url}/login?err=session`);
+        return;
+      }
+      res.redirect(`${config.dashboard.url}${postLoginPath}`);
+    });
   } catch (error) {
     logger.error('OAuth2 Callback Fehler:', error);
     logAudit('OAUTH2_LOGIN_FAILURE', 'SECURITY', { ip: req.ip, error: String(error) });
@@ -422,8 +438,14 @@ authRouter.post('/2fa/verify', async (req: Request, res: Response) => {
   }
 
   (req.session as any).requires2FA = false;
+  (req.session as any).twoFactorVerified = true;
   logAudit('2FA_VERIFICATION_SUCCESS', 'AUTH', { userId, ip: req.ip });
-  res.json({ success: true });
+  // Persistieren bevor wir antworten — sonst kann das Frontend in einem
+  // Folge-Request noch requires2FA=true sehen (Race auf connect-pg-simple).
+  req.session.save((err) => {
+    if (err) { logger.error('2FA verify: session.save fehlgeschlagen', err); res.status(500).json({ error: 'Session-Speicherung fehlgeschlagen' }); return; }
+    res.json({ success: true });
+  });
 });
 
 /**
