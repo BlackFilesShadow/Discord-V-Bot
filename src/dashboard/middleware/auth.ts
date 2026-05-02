@@ -179,7 +179,7 @@ export async function requireDev(req: Request, res: Response, next: NextFunction
     return;
   }
   const session = await prisma.devSession.findFirst({
-    where: { userDiscordId: req.auth.discordId, expiresAt: { gt: new Date() } },
+    where: { userDiscordId: req.auth.discordId, revokedAt: null, expiresAt: { gt: new Date() } },
     orderBy: { createdAt: 'desc' },
   });
   if (!session) {

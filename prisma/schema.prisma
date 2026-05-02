@@ -1456,20 +1456,20 @@ model GuildPermissionRoleGrant {
 
 // Settings pro (Guild + Nitrado-Slot). Whitelist/Economy/PermaOnly-Toggles.
 model ServerSettings {
-  id                        String            @id @default(cuid())
-  guildId                   String
-  nitradoConnId             String
-  nitradoConn               NitradoConnection @relation(fields: [nitradoConnId], references: [id], onDelete: Cascade)
-  whitelistActive           Boolean           @default(false)
-  economyActive             Boolean           @default(false)
-  permaOnly                 Boolean           @default(false)
-  whitelistChannelId        String?
-  whitelistRequestChannelId String?
+  id                           String            @id @default(cuid())
+  guildId                      String
+  nitradoConnId                String
+  nitradoConn                  NitradoConnection @relation(fields: [nitradoConnId], references: [id], onDelete: Cascade)
+  whitelistActive              Boolean           @default(false)
+  economyActive                Boolean           @default(false)
+  permaOnly                    Boolean           @default(false)
+  whitelistChannelId           String?
+  whitelistRequestChannelId    String?
   whitelistInfoMessageId       String?
   whitelistApproveLogChannelId String?
   whitelistDenyLogChannelId    String?
-  createdAt                 DateTime          @default(now())
-  updatedAt                 DateTime          @updatedAt
+  createdAt                    DateTime          @default(now())
+  updatedAt                    DateTime          @updatedAt
 
   @@unique([guildId, nitradoConnId])
   @@index([guildId])
@@ -1705,6 +1705,26 @@ model DevSession {
   revokedAt     DateTime?
 
   @@index([userDiscordId])
+  @@index([expiresAt])
+}
+
+// DEV-Uploads (ADM/RPT/XML/JSON-Logs zur Analyse, Phase 2).
+// Per-User isoliert; TTL via expiresAt + Cleanup-Job.
+// Inhalt liegt unter uploads/dev-logs/<userDiscordId>/<id>/<safeName>.
+model DevUpload {
+  id            String    @id @default(cuid())
+  userDiscordId String
+  kind          String    @db.VarChar(8) // 'ADM' | 'RPT' | 'XML' | 'JSON'
+  originalName  String    @db.VarChar(255)
+  storedPath    String    @db.VarChar(512) // relativ zu uploads/, z.B. dev-logs/<uid>/<id>/log.adm
+  mimeType      String    @db.VarChar(120)
+  sizeBytes     Int
+  sha256        String    @db.VarChar(64)
+  createdAt     DateTime  @default(now())
+  expiresAt     DateTime
+  deletedAt     DateTime?
+
+  @@index([userDiscordId, createdAt])
   @@index([expiresAt])
 }
 

@@ -15,6 +15,7 @@ import { v2Router } from './routes/v2';
 import { discordHealthRouter } from './routes/discordHealth';
 import { setDashboardClient } from './clientRegistry';
 import { initSocketIo } from './socket';
+import { startDevUploadCleanupTimer } from './services/devUpload';
 import { metricsRegistry } from '../utils/metrics';
 import type { Client } from 'discord.js';
 
@@ -180,6 +181,7 @@ export function startDashboard(client?: Client): void {
 
   const httpServer = http.createServer(app);
   initSocketIo(httpServer, sessionMiddleware);
+  startDevUploadCleanupTimer();
 
   httpServer.listen(config.dashboard.port, () => {
     logger.info(`Dashboard gestartet auf Port ${config.dashboard.port}`);

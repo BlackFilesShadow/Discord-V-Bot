@@ -40,13 +40,17 @@ export async function handleWhitelistApprovalButton(btn: ButtonInteraction): Pro
     return;
   }
 
-  const reqRow = await prisma.whitelistRequest.findUnique({ where: { id: requestId } });
-  if (!reqRow) {
-    await btn.reply({ content: 'Anfrage nicht gefunden (vielleicht schon entfernt).', flags: MessageFlags.Ephemeral });
+  if (!btn.guildId) {
+    await btn.reply({ content: 'Diese Aktion ist nur in einem Server moeglich.', flags: MessageFlags.Ephemeral });
     return;
   }
-  if (btn.guildId !== reqRow.guildId) {
-    await btn.reply({ content: 'Anfrage gehoert nicht zu dieser Guild.', flags: MessageFlags.Ephemeral });
+
+  // guildId-Scoping STRIKT: Cross-Guild-Klick auf gleicher requestId muss fehlschlagen.
+  const reqRow = await prisma.whitelistRequest.findUnique({
+    where: { id: requestId, guildId: btn.guildId },
+  });
+  if (!reqRow) {
+    await btn.reply({ content: 'Anfrage nicht gefunden (vielleicht schon entfernt).', flags: MessageFlags.Ephemeral });
     return;
   }
 
@@ -56,7 +60,7 @@ export async function handleWhitelistApprovalButton(btn: ButtonInteraction): Pro
     // Atomic CAS-Update: Nur wenn noch PENDING → schliesst Race-Condition
     // wenn 2 Mods gleichzeitig klicken (oder Discord-Btn + Dashboard).
     const cas = await prisma.whitelistRequest.updateMany({
-      where: { id: requestId, status: 'PENDING' },
+      where: { id: requestId, guildId: reqRow.guildId, status: 'PENDING' },
       data: {
         status: isApprove ? 'APPROVED' : 'DENIED',
         decidedByDiscordId: btn.user.id, decidedAt: new Date(),

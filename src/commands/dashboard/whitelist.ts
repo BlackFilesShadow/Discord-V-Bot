@@ -106,7 +106,8 @@ export const whitelistCommand: Command = {
 
     if (!messageId) {
       // Rollback: Request loeschen, sonst Geist-Anfrage in DB.
-      await prisma.whitelistRequest.delete({ where: { id: created.id } }).catch(() => null);
+      // guildId-Scoping als Defense-in-depth (id ist UUID + global eindeutig, aber Doktrin: nie ohne guildId).
+      await prisma.whitelistRequest.delete({ where: { id: created.id, guildId: scope.guildId } }).catch(() => null);
       await reply(i, 'Annahme-Kanal nicht erreichbar. Bitte einen Admin um Pruefung der Kanal-Konfiguration.');
       return;
     }

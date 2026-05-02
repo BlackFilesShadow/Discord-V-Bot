@@ -30,7 +30,7 @@ async function reply(i: ChatInputCommandInteraction, content: string, ephemeral 
 
 async function embedReply(i: ChatInputCommandInteraction, embed: EmbedBuilder, ephemeral = true): Promise<void> {
   if (ephemeral) await i.reply({ embeds: [embed], flags: MessageFlags.Ephemeral });
-  else await i.reply({ embeds: [embed] });
+  else await i.reply({ embeds: [embed], allowedMentions: { parse: [] } });
 }
 
 // ============================================================
@@ -303,13 +303,20 @@ export const bankCommand: Command = {
   execute: withGuildScope({ requireSlotToggle: 'economyActive' }, async (i, scope) => {
     const acc = await getOrCreateAccount(scope.guildId, scope.actorDiscordId);
     const cfg = await getConfig(scope.guildId);
+    const total = acc.walletBalance + acc.bankBalance;
     const e = new EmbedBuilder()
-      .setTitle('Bankuebersicht')
+      .setColor(0xF1C40F)
+      .setAuthor({ name: i.user.username, iconURL: i.user.displayAvatarURL() })
+      .setTitle(`${cfg.emoji} Bankuebersicht`)
+      .setDescription(`Konto von **${i.user.username}**`)
       .addFields(
-        { name: 'Wallet', value: `${fmt(acc.walletBalance)} ${cfg.emoji}`, inline: true },
-        { name: 'Bank', value: `${fmt(acc.bankBalance)} ${cfg.emoji}`, inline: true },
-        { name: 'Zinsen / Tag', value: `${cfg.bankInterestPercent}%`, inline: true },
-      );
-    await embedReply(i, e);
+        { name: '\uD83D\uDC5B Wallet', value: `**${fmt(acc.walletBalance)}** ${cfg.emoji}`, inline: true },
+        { name: '\uD83C\uDFE6 Bank', value: `**${fmt(acc.bankBalance)}** ${cfg.emoji}`, inline: true },
+        { name: '\u03A3 Gesamt', value: `**${fmt(total)}** ${cfg.emoji}`, inline: true },
+        { name: '\uD83D\uDCC8 Zinsen / Tag', value: `${cfg.bankInterestPercent}%`, inline: true },
+      )
+      .setFooter({ text: `Guild ${scope.guildId}` })
+      .setTimestamp();
+    await embedReply(i, e, false);
   }),
 };

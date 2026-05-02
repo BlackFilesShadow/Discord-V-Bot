@@ -31,6 +31,45 @@ async function reply(i: ChatInputCommandInteraction, content: string, ephemeral 
 }
 
 /**
+ * Baut ein Casino-Round-Embed (public, im Channel sichtbar) auf.
+ */
+function buildRoundEmbed(args: {
+  i: ChatInputCommandInteraction;
+  title: string;
+  emoji: string;
+  won: boolean;
+  bet: bigint;
+  payout: bigint;
+  coin: string;
+  details: { name: string; value: string; inline?: boolean }[];
+  serverSeedHash: string;
+  nonce: bigint;
+}): EmbedBuilder {
+  const net = args.won ? args.payout - args.bet : -args.bet;
+  const netStr = (net >= 0n ? '+' : '') + fmt(net);
+  const e = new EmbedBuilder()
+    .setColor(args.won ? 0x2ECC71 : 0xE74C3C)
+    .setAuthor({ name: args.i.user.username, iconURL: args.i.user.displayAvatarURL() })
+    .setTitle(`${args.emoji} ${args.title} \u2014 ${args.won ? 'Gewonnen' : 'Verloren'}`)
+    .addFields(
+      { name: 'Einsatz', value: `${fmt(args.bet)} ${args.coin}`, inline: true },
+      { name: 'Auszahlung', value: `${fmt(args.payout)} ${args.coin}`, inline: true },
+      { name: 'Netto', value: `${netStr} ${args.coin}`, inline: true },
+      ...args.details,
+    )
+    .setFooter({ text: `Provably-Fair \u2022 Hash: ${args.serverSeedHash} \u2022 Nonce: ${args.nonce.toString()}` })
+    .setTimestamp();
+  return e;
+}
+
+/**
+ * Hash des serverSeed fuer die Audit-Anzeige (kuerzt 64 Hex auf 16).
+ */
+function shortHash(seed: string): string {
+  return createHmac('sha256', 'public-display').update(seed).digest('hex').slice(0, 16);
+}
+
+/**
  * Provably-Fair Roll: HMAC(serverSeed, clientSeed:nonce) → BigInt → 0..maxExclusive-1.
  */
 function roll(serverSeed: string, clientSeed: string, nonce: bigint, maxExclusive: number): number {
@@ -147,11 +186,13 @@ export const slotCommand: Command = {
     } catch (e) { await reply(i, `Fehlgeschlagen: ${(e as Error).message}`); return; }
     const cfg = await getConfig(scope.guildId);
     emitGuildEvent(scope.guildId, { type: 'casino.round', payload: { guildId: scope.guildId, gameType: 'SLOT', payout: out.result.payout.toString() } });
-    await reply(i,
-      out.result.won
-        ? `🎰 Gewonnen! +${fmt(out.result.payout)} ${cfg.emoji} (Einsatz: ${fmt(bet)})`
-        : `🎰 Verloren. -${fmt(bet)} ${cfg.emoji}`,
-      false);
+    const embed = buildRoundEmbed({
+      i, title: 'Slot-Maschine', emoji: '\uD83C\uDFB0',
+      won: out.result.won, bet, payout: out.result.payout, coin: cfg.emoji,
+      details: [],
+      serverSeedHash: shortHash(out.serverSeed), nonce: out.nonce,
+    });
+    await i.reply({ embeds: [embed], allowedMentions: { parse: [] } });
   }),
 };
 
@@ -186,11 +227,16 @@ export const coinflipCommand: Command = {
     const cfg = await getConfig(scope.guildId);
     const flip = (out.result.details as { flip: string }).flip;
     emitGuildEvent(scope.guildId, { type: 'casino.round', payload: { guildId: scope.guildId, gameType: 'COINFLIP', payout: out.result.payout.toString() } });
-    await reply(i,
-      out.result.won
-        ? `🪙 ${flip} — du gewinnst +${fmt(out.result.payout)} ${cfg.emoji}!`
-        : `🪙 ${flip} — du verlierst ${fmt(bet)} ${cfg.emoji}.`,
-      false);
+    const embed = buildRoundEmbed({
+      i, title: 'Coinflip', emoji: '\uD83E\uDE99',
+      won: out.result.won, bet, payout: out.result.payout, coin: cfg.emoji,
+      details: [
+        { name: 'Deine Wahl', value: choice, inline: true },
+        { name: 'Ergebnis', value: flip, inline: true },
+      ],
+      serverSeedHash: shortHash(out.serverSeed), nonce: out.nonce,
+    });
+    await i.reply({ embeds: [embed], allowedMentions: { parse: [] } });
   }),
 };
 
@@ -220,11 +266,16 @@ export const diceCommand: Command = {
     const cfg = await getConfig(scope.guildId);
     const rolled = (out.result.details as { rolled: number }).rolled;
     emitGuildEvent(scope.guildId, { type: 'casino.round', payload: { guildId: scope.guildId, gameType: 'DICE', payout: out.result.payout.toString() } });
-    await reply(i,
-      out.result.won
-        ? `🎲 ${rolled} — du gewinnst +${fmt(out.result.payout)} ${cfg.emoji}!`
-        : `🎲 ${rolled} (du tipptest ${tip}) — verloren.`,
-      false);
+    const embed = buildRoundEmbed({
+      i, title: 'Wuerfel', emoji: '\uD83C\uDFB2',
+      won: out.result.won, bet, payout: out.result.payout, coin: cfg.emoji,
+      details: [
+        { name: 'Dein Tipp', value: String(tip), inline: true },
+        { name: 'Gewuerfelt', value: String(rolled), inline: true },
+      ],
+      serverSeedHash: shortHash(out.serverSeed), nonce: out.nonce,
+    });
+    await i.reply({ embeds: [embed], allowedMentions: { parse: [] } });
   }),
 };
 
@@ -276,13 +327,19 @@ export const blackjackCommand: Command = {
       });
     } catch (e) { await reply(i, `Fehlgeschlagen: ${(e as Error).message}`); return; }
     const cfg = await getConfig(scope.guildId);
-    const d = out.result.details as { ps: number; ds: number };
+    const d = out.result.details as { player: number[]; dealer: number[]; ps: number; ds: number; tie: boolean };
     emitGuildEvent(scope.guildId, { type: 'casino.round', payload: { guildId: scope.guildId, gameType: 'BLACKJACK', payout: out.result.payout.toString() } });
-    await reply(i,
-      out.result.won
-        ? `🃏 Du ${d.ps} vs Dealer ${d.ds} → +${fmt(out.result.payout)} ${cfg.emoji}!`
-        : `🃏 Du ${d.ps} vs Dealer ${d.ds} → -${fmt(bet)} ${cfg.emoji}.`,
-      false);
+    const embed = buildRoundEmbed({
+      i, title: 'Blackjack', emoji: '\uD83C\uDCCF',
+      won: out.result.won, bet, payout: out.result.payout, coin: cfg.emoji,
+      details: [
+        { name: `Spieler (${d.ps})`, value: d.player.join(', '), inline: true },
+        { name: `Dealer (${d.ds})`, value: d.dealer.join(', '), inline: true },
+        ...(d.tie ? [{ name: 'Status', value: 'Unentschieden', inline: true }] : []),
+      ],
+      serverSeedHash: shortHash(out.serverSeed), nonce: out.nonce,
+    });
+    await i.reply({ embeds: [embed], allowedMentions: { parse: [] } });
   }),
 };
 

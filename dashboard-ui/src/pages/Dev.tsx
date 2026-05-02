@@ -1,50 +1,77 @@
-import { useEffect, useRef, useState } from 'react';
-import { Activity, AlertTriangle, Pause, Play, Search, Trash2, Lock } from 'lucide-react';
-import { api, ApiError } from '@/lib/api';
+/**
+ * DEV-Konsole — Layout mit Sidebar und 16 Tool-Slots (Spec 4 + 5).
+ *
+ * Drei Gates (defense in depth):
+ *   1. user.role === 'DEVELOPER' — Frontend-Pruefung
+ *   2. useDevSession().active   — Frontend-Pruefung gegen /api/v2/dev/status
+ *   3. requireDev (Backend)     — alle /api/v2/dev/* Routen blocken sonst
+ *
+ * Kein Frontend-Bypass moeglich; der Server lehnt API-Calls ohne aktive
+ * DevSession mit 403 ab.
+ */
+import { Outlet, NavLink, useLocation } from 'react-router-dom';
+import {
+  Activity, LayoutDashboard, Database, Server as ServerIcon, Plug, HeartPulse,
+  AlertTriangle, RefreshCw, HardDrive, ShieldCheck, FileSearch, FileWarning,
+  FileCode, FileJson, Bug, ScrollText, TerminalSquare, Lock, Unlock, LogOut,
+  Skull, MapPin, Bomb, Home, Map as MapIcon, Eye, Users, Car, Brain,
+} from 'lucide-react';
 import { Shell } from '@/components/Shell';
 import { Card, CardHeader, CardTitle, CardDesc } from '@/components/ui/Card';
 import { Button } from '@/components/ui/Button';
-import { Input } from '@/components/ui/Input';
 import { useAuth } from '@/lib/auth';
-import { getDevSocket } from '@/lib/socket';
+import { useDevSession } from '@/lib/devSession';
+import { DevLoginPanel } from '@/components/DevLoginPanel';
 
-interface Snapshot {
-  botReady: boolean;
-  uptimeSec: number;
-  guildCount: number;
-  memory: { rss: number; heapUsed: number; heapTotal: number };
-  nodeVersion: string;
+export interface DevTool {
+  /** URL-Slug unter /dev/ */
+  slug: string;
+  /** Anzeige-Label im Sidebar */
+  label: string;
+  /** lucide-react Icon */
+  icon: typeof Activity;
+  /** Status: 'ready' = implementiert, 'stub' = Phase 2 */
+  status: 'ready' | 'stub';
+  /** Kurzbeschreibung fuer Tool-Header */
+  desc: string;
 }
 
-interface LogLine {
-  level: 'error' | 'warn' | 'info' | 'http' | 'debug' | 'verbose' | 'silly';
-  message: string;
-  timestamp?: string;
-}
+export const DEV_TOOLS: ReadonlyArray<DevTool> = [
+  { slug: 'bot-status',        label: 'Live Bot Status',     icon: Activity,        status: 'ready', desc: 'Echtzeit Bot-Snapshot und Live-Logs.' },
+  { slug: 'dashboard-status',  label: 'Dashboard Status',    icon: LayoutDashboard, status: 'stub',  desc: 'Express-Server, Sessions, aktive Sockets.' },
+  { slug: 'database-status',   label: 'Datenbank Status',    icon: Database,        status: 'ready', desc: 'Postgres-Health, Pool, Migrations, Top-Tabellen.' },
+  { slug: 'nitrado-status',    label: 'Nitrado API Status',  icon: ServerIcon,      status: 'ready', desc: 'Nitrado Job-Outbox: Pending/Failed, letzte Fehler.' },
+  { slug: 'discord-status',    label: 'Discord API Status',  icon: Plug,            status: 'ready', desc: 'Gateway-Latenz, Shard-Health, Cache-Sizes.' },
+  { slug: 'system-health',     label: 'System Health Check', icon: HeartPulse,      status: 'ready', desc: 'CPU, RAM, Disk, Process-Memory, Load.' },
+  { slug: 'error-monitoring',  label: 'Fehler Monitoring',   icon: AlertTriangle,   status: 'stub',  desc: 'Live-Errors aus errorSink (Discord-Webhook).' },
+  { slug: 'live-sync',         label: 'Live Sync Status',    icon: RefreshCw,       status: 'stub',  desc: 'Cross-Service Sync-Jobs (Whitelist, Economy).' },
+  { slug: 'backup-status',     label: 'Backup Status',       icon: HardDrive,       status: 'stub',  desc: 'Letzte Backups, Verifikation, Restore-Test.' },
+  { slug: 'security-status',   label: 'Sicherheitsstatus',   icon: ShieldCheck,     status: 'stub',  desc: 'Rate-Limit-Hits, Brute-Force, Audit-Anomalien.' },
+  { slug: 'adm-analysis',      label: 'ADM Log Analyse',     icon: FileSearch,      status: 'ready', desc: 'DayZ-ADM-Parser: Spieler, GUID, Routen, Hits.' },
+  { slug: 'rpt-analysis',      label: 'RPT Log Analyse',     icon: FileWarning,     status: 'ready', desc: 'DayZ-RPT-Parser: Crashes, Mod- und Script-Errors.' },
+  { slug: 'xml-validator',     label: 'XML Validator',       icon: FileCode,        status: 'ready', desc: 'High-End XML-Validierung mit Auto-Fix.' },
+  { slug: 'json-validator',    label: 'JSON Validator',      icon: FileJson,        status: 'ready', desc: 'High-End JSON-Validierung mit Auto-Fix.' },
+  { slug: 'debug-tools',       label: 'Debug Tools',         icon: Bug,             status: 'stub',  desc: 'Inspector, Heap-Snapshot, EventLoop-Lag.' },
+  { slug: 'audit-logs',        label: 'Audit Logs',          icon: ScrollText,      status: 'stub',  desc: 'Globale Audit-Trail-Suche und Export.' },
+  { slug: 'command-diag',      label: 'Command Diagnose',    icon: TerminalSquare,  status: 'stub',  desc: 'Slash-Command-Registry, Cooldowns, Fehler.' },
+  // Phase 2 — AI / GUID-basierte ADM-Auswertungen (Spec Sektion 13)
+  { slug: 'killfeed',          label: 'Killfeed',            icon: Skull,           status: 'ready', desc: 'GUID-strict Killer/Opfer mit Distanz, Waffe, K/D.' },
+  { slug: 'player-tracking',   label: 'Player Tracking',     icon: MapPin,          status: 'ready', desc: 'Sessions pro GUID: connect/disconnect/Events.' },
+  { slug: 'raid-analysis',     label: 'Raid Analyse',        icon: Bomb,            status: 'ready', desc: 'Build/Dismantle-Cluster + Raid-Indikatoren.' },
+  { slug: 'base-proximity',    label: 'Base Proximity',      icon: Home,            status: 'ready', desc: 'Base-Cluster nach Build-Density.' },
+  { slug: 'movement-heatmap',  label: 'Movement Heatmap',    icon: MapIcon,         status: 'ready', desc: 'Aggregierte Positions-Hits als Heatmap.' },
+  { slug: 'suspicious',        label: 'Verdaechtige Aktivitaet', icon: Eye,         status: 'ready', desc: 'Long-Distance-Kills, hohe Headshot-Quote.' },
+  { slug: 'faction-activity',  label: 'Fraktions Aktivitaet',icon: Users,           status: 'ready', desc: 'Konflikt-Graph aus Killer/Opfer-Pairs.' },
+  { slug: 'vehicle-tracking',  label: 'Fahrzeug Tracking',   icon: Car,             status: 'ready', desc: 'Fahrzeug-Events pro Spieler/GUID.' },
+  // Phase 3 — AI-Provider Health + Anomalie-Detection (Spec 9)
+  { slug: 'ai-providers',      label: 'AI Provider Stats',   icon: Brain,           status: 'ready', desc: 'Provider-Erfolgsraten + Anomalie-Detection (Spec 9).' },
+];
 
-const LEVELS: ReadonlyArray<LogLine['level']> = ['error', 'warn', 'info', 'debug'];
-
-function levelColor(l: LogLine['level']): string {
-  if (l === 'error') return 'text-danger';
-  if (l === 'warn') return 'text-warn';
-  if (l === 'info') return 'text-ok';
-  return 'text-muted';
-}
-
-function fmtMB(bytes: number): string { return `${(bytes / 1024 / 1024).toFixed(1)} MB`; }
-function fmtUptime(sec: number): string {
-  const h = Math.floor(sec / 3600);
-  const m = Math.floor((sec % 3600) / 60);
-  return h > 0 ? `${h}h ${m}m` : `${m}m`;
-}
-
-export default function Dev() {
+export default function DevLayout() {
   const { user } = useAuth();
-  const [unlocked, setUnlocked] = useState(false);
-  const [pw, setPw] = useState('');
-  const [err, setErr] = useState<string | null>(null);
-  const [busy, setBusy] = useState(false);
+  const dev = useDevSession();
 
+  // Gate 1: Rolle
   if (!user || user.role !== 'DEVELOPER') {
     return (
       <Shell title="Dev-Konsole" back="/servers">
@@ -58,166 +85,83 @@ export default function Dev() {
     );
   }
 
-  if (!unlocked) {
+  // Gate 2: aktive DevSession
+  if (!dev.active) {
     return (
       <Shell title="Dev-Konsole" back="/servers">
         <Card glow className="max-w-md mx-auto">
           <CardHeader>
-            <CardTitle><Lock className="h-4 w-4 inline mr-1" /> Dev-Passwort</CardTitle>
-            <CardDesc>Zweite Authentifizierung erforderlich. Passwort steht in der Server-.env.</CardDesc>
+            <CardTitle><Lock className="h-4 w-4 inline mr-1" /> DEV-Session erforderlich</CardTitle>
+            <CardDesc>
+              Bitte melde dich ueber das DEV Login Panel auf der Server-Uebersicht an.
+              Direkter URL-Zugriff ohne aktive Session ist serverseitig blockiert.
+            </CardDesc>
           </CardHeader>
-          <form
-            onSubmit={async (e) => {
-              e.preventDefault();
-              setBusy(true); setErr(null);
-              try {
-                await api.post('/api/v2/dev/login', { password: pw });
-                setUnlocked(true);
-              } catch (ex) {
-                setErr(ex instanceof ApiError ? ex.message : 'Unbekannter Fehler');
-              } finally { setBusy(false); }
-            }}
-            className="space-y-3"
-          >
-            <Input type="password" autoComplete="off" value={pw} onChange={e => setPw(e.target.value)} placeholder="DEV_PASSWORD" />
-            {err && <p className="text-danger text-xs">{err}</p>}
-            <Button type="submit" loading={busy} disabled={!pw} className="w-full">Entsperren</Button>
-          </form>
+          <a href="/servers" className="inline-block">
+            <Button size="sm">Zur Server-Uebersicht</Button>
+          </a>
         </Card>
+        <DevLoginPanel />
       </Shell>
     );
   }
 
-  return <DevConsole />;
-}
-
-function DevConsole() {
-  const [snap, setSnap] = useState<Snapshot | null>(null);
-  const [logs, setLogs] = useState<LogLine[]>([]);
-  const [paused, setPaused] = useState(false);
-  const [filter, setFilter] = useState<Set<LogLine['level']>>(new Set(LEVELS));
-  const [search, setSearch] = useState('');
-  const scrollRef = useRef<HTMLDivElement>(null);
-  const pausedRef = useRef(paused);
-  pausedRef.current = paused;
-
-  useEffect(() => {
-    let cancel = false;
-    const tick = async (): Promise<void> => {
-      try {
-        const s = await api.get<Snapshot>('/api/v2/dev/snapshot');
-        if (!cancel) setSnap(s);
-      } catch { /* ignore */ }
-    };
-    void tick();
-    const id = window.setInterval(tick, 5000);
-    return () => { cancel = true; window.clearInterval(id); };
-  }, []);
-
-  useEffect(() => {
-    const s = getDevSocket();
-    const onLog = (line: LogLine): void => {
-      if (pausedRef.current) return;
-      setLogs(prev => {
-        const next = [...prev, line];
-        return next.length > 500 ? next.slice(-500) : next;
-      });
-    };
-    s.on('log', onLog);
-    return () => { s.off('log', onLog); };
-  }, []);
-
-  useEffect(() => {
-    if (paused) return;
-    const el = scrollRef.current;
-    if (el) el.scrollTop = el.scrollHeight;
-  }, [logs, paused]);
-
-  const toggleLevel = (l: LogLine['level']): void => {
-    setFilter(prev => {
-      const next = new Set(prev);
-      if (next.has(l)) next.delete(l); else next.add(l);
-      return next;
-    });
-  };
-
-  const filtered = logs.filter(l => filter.has(l.level) && (!search || l.message.toLowerCase().includes(search.toLowerCase())));
-
   return (
-    <Shell title="Dev-Konsole" back="/servers">
-      <div className="max-w-6xl mx-auto space-y-6">
-        <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
-          <StatCard label="Bot" value={snap?.botReady ? 'online' : 'offline'} accent={snap?.botReady ? 'ok' : 'danger'} />
-          <StatCard label="Guilds" value={snap ? String(snap.guildCount) : '–'} />
-          <StatCard label="Uptime" value={snap ? fmtUptime(snap.uptimeSec) : '–'} />
-          <StatCard label="Heap" value={snap ? fmtMB(snap.memory.heapUsed) : '–'} />
-        </div>
-
-        <Card>
-          <CardHeader>
-            <CardTitle><Activity className="h-4 w-4 inline mr-1" /> Live-Logs</CardTitle>
-            <CardDesc>Letzte 500 Zeilen, Echtzeit via Socket.IO.</CardDesc>
-          </CardHeader>
-
-          <div className="flex flex-wrap items-center gap-2 mb-3">
-            {LEVELS.map(l => (
-              <button
-                key={l}
-                onClick={() => toggleLevel(l)}
-                type="button"
-                className={`text-xs px-2.5 py-1 rounded-full font-mono transition-colors focus-ring ${
-                  filter.has(l)
-                    ? `bg-bg-elev ${levelColor(l)} border border-current/40`
-                    : 'bg-transparent text-muted/40 border border-border'
-                }`}
-              >
-                {l}
-              </button>
-            ))}
-            <div className="relative flex-1 min-w-[180px]">
-              <Search className="h-3.5 w-3.5 absolute left-2 top-1/2 -translate-y-1/2 text-muted" />
-              <Input value={search} onChange={e => setSearch(e.target.value)} placeholder="Suche…" className="pl-7 h-8 text-xs" />
-            </div>
-            <Button size="sm" variant="ghost" onClick={() => setPaused(p => !p)}>
-              {paused ? <Play className="h-3.5 w-3.5" /> : <Pause className="h-3.5 w-3.5" />}
-              <span className="ml-1">{paused ? 'Fortsetzen' : 'Pause'}</span>
-            </Button>
-            <Button size="sm" variant="ghost" onClick={() => setLogs([])}>
-              <Trash2 className="h-3.5 w-3.5" /> <span className="ml-1">Leeren</span>
-            </Button>
-          </div>
-
-          <div
-            ref={scrollRef}
-            className="h-[480px] overflow-y-auto bg-black/60 border border-border rounded-md font-mono text-xs"
-          >
-            {filtered.length === 0 ? (
-              <p className="text-muted p-4">Keine Logs.</p>
-            ) : (
-              <ul className="divide-y divide-border/40">
-                {filtered.map((l, i) => (
-                  <li key={i} className="px-3 py-1 hover:bg-bg-hover/30 flex gap-3">
-                    <span className={`shrink-0 w-12 ${levelColor(l.level)}`}>{l.level}</span>
-                    {l.timestamp && <span className="shrink-0 text-muted/60">{l.timestamp.slice(11, 19)}</span>}
-                    <span className="text-white break-all whitespace-pre-wrap">{l.message}</span>
-                  </li>
-                ))}
-              </ul>
-            )}
-          </div>
-        </Card>
+    <Shell title="Dev-Konsole" back="/servers" sidebar={<DevSidebar />}>
+      <div className="max-w-6xl mx-auto">
+        <Outlet />
       </div>
     </Shell>
   );
 }
 
-function StatCard({ label, value, accent }: { label: string; value: string; accent?: 'ok' | 'danger' }) {
+function DevSidebar() {
+  const dev = useDevSession();
+  const loc = useLocation();
   return (
-    <Card className="!p-4">
-      <p className="text-xs text-muted uppercase tracking-wide">{label}</p>
-      <p className={`text-2xl font-bold mt-1 ${accent === 'ok' ? 'text-ok' : accent === 'danger' ? 'text-danger' : 'text-white'}`}>
-        {value}
-      </p>
-    </Card>
+    <nav aria-label="DEV Tools" className="space-y-4">
+      <div className="flex items-center justify-between px-2">
+        <span className="text-[10px] uppercase tracking-widest text-muted">DEV Tools</span>
+        <span className="inline-flex items-center gap-1 text-[10px] px-1.5 py-0.5 rounded-full bg-ok/15 text-ok border border-ok/30">
+          <Unlock className="h-3 w-3" /> ON
+        </span>
+      </div>
+      <ul className="space-y-1">
+        {DEV_TOOLS.map(t => {
+          const Icon = t.icon;
+          const to = `/dev/${t.slug}`;
+          const isActive = loc.pathname === to;
+          return (
+            <li key={t.slug}>
+              <NavLink
+                to={to}
+                className={[
+                  'group flex items-center gap-2.5 px-2.5 py-1.5 rounded-md text-xs transition-colors focus-ring',
+                  isActive
+                    ? 'bg-accent/15 text-white border border-accent/30'
+                    : 'text-muted hover:text-white hover:bg-bg-elev/60 border border-transparent',
+                ].join(' ')}
+              >
+                <Icon className="h-3.5 w-3.5 shrink-0" />
+                <span className="truncate flex-1">{t.label}</span>
+                {t.status === 'stub' && (
+                  <span className="text-[9px] uppercase tracking-wider text-muted/70 group-hover:text-muted">soon</span>
+                )}
+              </NavLink>
+            </li>
+          );
+        })}
+      </ul>
+      <div className="pt-3 border-t border-border">
+        <Button
+          size="sm"
+          variant="ghost"
+          className="w-full justify-start text-muted hover:text-danger"
+          onClick={() => { void dev.logout(); }}
+        >
+          <LogOut className="h-3.5 w-3.5" /> DEV-Logout
+        </Button>
+      </div>
+    </nav>
   );
 }

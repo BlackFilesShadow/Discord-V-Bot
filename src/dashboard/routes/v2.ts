@@ -21,6 +21,9 @@ import { factionsRouter } from './v2/factions';
 import { ticketsRouter } from './v2/tickets';
 import { casinoRouter } from './v2/casino';
 import { devRouter } from './v2/dev';
+import { devUploadsRouter } from './v2/devUploads';
+import { devAnalyticsRouter } from './v2/devAnalytics';
+import { devStatusRouter } from './v2/devStatus';
 import { auditRouter } from './v2/audit';
 
 export const v2Router = Router();
@@ -41,4 +44,7 @@ v2Router.use('/guilds/:guildId/economy', economyRouter);
 v2Router.use('/guilds/:guildId/economy-links', economyLinkRouter);
 v2Router.use('/guilds/:guildId/casino', casinoRouter);
 v2Router.use('/guilds/:guildId/audit', auditRouter);
+v2Router.use('/dev/uploads', devUploadsRouter);
+v2Router.use('/dev/analytics', devAnalyticsRouter);
+v2Router.use('/dev/status', devStatusRouter);
 v2Router.use('/dev', devRouter);

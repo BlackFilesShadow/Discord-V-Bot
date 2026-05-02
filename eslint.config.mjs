@@ -24,6 +24,7 @@ export default [
       'prisma/migrations/**',
       'deploy/**',
       'src/dashboard/public/**',
+      'dashboard-ui/**',
       '*.js',
       'jest.config.js',
     ],

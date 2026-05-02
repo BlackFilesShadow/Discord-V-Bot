@@ -77,6 +77,9 @@ guildsRouter.get('/', async (req, res) => {
   }
 
   // Schritt 2: Grants des Users aus DB (botPresent impliziert)
+  // BEWUSST GLOBAL: User-View zeigt alle Guilds, in denen er Permissions hat.
+  // Es gibt keinen guildId-Filter, weil wir genau die Liste DER guildIds suchen.
+  // eslint-disable-next-line local/no-unscoped-prisma-query
   const grants = await prisma.guildPermissionGrant.findMany({
     where: { userDiscordId: req.auth.discordId },
     select: { guildId: true, permissions: true },

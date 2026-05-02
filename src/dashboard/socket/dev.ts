@@ -35,7 +35,7 @@ export function registerDevNamespace(io: IOServer): void {
     }
     try {
       const dev = await prisma.devSession.findFirst({
-        where: { userDiscordId: session.discordId, expiresAt: { gt: new Date() } },
+        where: { userDiscordId: session.discordId, revokedAt: null, expiresAt: { gt: new Date() } },
         orderBy: { createdAt: 'desc' },
       });
       if (!dev) {

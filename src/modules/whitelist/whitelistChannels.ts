@@ -79,9 +79,11 @@ export async function finalizeApprovalEmbed(args: {
   const msg = await ch.messages.fetch(args.messageId).catch(() => null);
   if (!msg) {
     // Embed wurde (manuell) geloescht — Stale-Referenz aufraeumen, damit der
-    // unique-Index nicht dauerhaft "verbrannt" bleibt.
+    // unique-Index nicht dauerhaft "verbrannt" bleibt. messageId ist global
+    // eindeutig (Discord-snowflake), guildId-Scoping daher nicht zwingend, aber
+    // wir scopen trotzdem fuer die Doktrin.
     await prisma.whitelistRequest.updateMany({
-      where: { messageId: args.messageId },
+      where: { messageId: args.messageId, guildId: args.guildId },
       data: { messageId: null },
     }).catch(() => null);
     return;
@@ -182,7 +184,7 @@ export async function postWhitelistApprovalEmbed(args: {
 
   const sent = await ch.send({ embeds: [embed], components: [row] });
   await prisma.whitelistRequest.update({
-    where: { id: args.requestId },
+    where: { id: args.requestId, guildId: args.guildId },
     data: { messageId: sent.id, channelId: ch.id },
   });
   return sent.id;

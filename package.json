@@ -23,7 +23,9 @@
     "db:seed": "ts-node prisma/seed.ts",
     "deploy-commands": "ts-node src/commands/deploy.ts",
     "clear-commands": "ts-node src/commands/clear.ts",
-    "dashboard": "ts-node src/dashboard/server.ts"
+    "dashboard": "ts-node src/dashboard/server.ts",
+    "loadtest": "ts-node scripts/loadtest.ts",
+    "smoke": "bash deploy/smoke.sh"
   },
   "dependencies": {
     "@prisma/client": "^5.20.0",

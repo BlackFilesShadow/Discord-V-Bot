@@ -1,4 +1,4 @@
-import { generateGuid, isValidGuid, generateSecureId } from '../../src/utils/guid';
+import { generateGuid, isValidGuid, generateSecureId, isValidBattleyeGuid } from '../../src/utils/guid';
 
 describe('GUID Utility (Sektion 1)', () => {
   describe('generateGuid', () => {
@@ -40,6 +40,35 @@ describe('GUID Utility (Sektion 1)', () => {
     it('sollte eindeutige IDs erzeugen', () => {
       const ids = new Set(Array.from({ length: 100 }, () => generateSecureId()));
       expect(ids.size).toBe(100);
+    });
+  });
+
+  describe('isValidBattleyeGuid (Spec 13 — GUID-strict)', () => {
+    it('sollte echte BattlEye-GUIDs akzeptieren (32 hex)', () => {
+      expect(isValidBattleyeGuid('a1b2c3d4e5f6789012345678abcdef00')).toBe(true);
+      expect(isValidBattleyeGuid('AbCd1234EfGh5678IjKl9012MnOp3456')).toBe(true);
+    });
+
+    it('sollte tolerante Modded-Formate (8-64 alphanum + _-) akzeptieren', () => {
+      expect(isValidBattleyeGuid('abc12345')).toBe(true);
+      expect(isValidBattleyeGuid('Player_GUID-001')).toBe(true);
+    });
+
+    it('sollte Muell ablehnen', () => {
+      expect(isValidBattleyeGuid('')).toBe(false);
+      expect(isValidBattleyeGuid('Unknown')).toBe(false);
+      expect(isValidBattleyeGuid('N/A')).toBe(false);
+      expect(isValidBattleyeGuid('null')).toBe(false);
+      expect(isValidBattleyeGuid('false')).toBe(false);
+      expect(isValidBattleyeGuid('0')).toBe(false);
+      expect(isValidBattleyeGuid('   ')).toBe(false);
+      expect(isValidBattleyeGuid('short')).toBe(false); // < 8 chars
+      expect(isValidBattleyeGuid('a'.repeat(65))).toBe(false); // > 64 chars
+      expect(isValidBattleyeGuid('hat spaces drin')).toBe(false);
+      expect(isValidBattleyeGuid('with;injection')).toBe(false);
+      expect(isValidBattleyeGuid(undefined)).toBe(false);
+      expect(isValidBattleyeGuid(123)).toBe(false);
+      expect(isValidBattleyeGuid(null)).toBe(false);
     });
   });
 });

@@ -10,10 +10,31 @@ export function generateGuid(): string {
 }
 
 /**
- * Validiert ob ein String eine gültige UUIDv4 ist.
+ * Validiert ob ein String eine gueltige UUIDv4 ist.
  */
 export function isValidGuid(guid: string): boolean {
   return uuidValidate(guid);
+}
+
+/**
+ * Validiert ein BattlEye-GUID (DayZ-Spieler-Identifier aus ADM-Logs).
+ *
+ * Echtes Format: 32-stelliger lowercase-Hex (MD5 von 'BE' + Steam64).
+ * Wir sind bewusst etwas toleranter (8-64 alphanum + `_-`), weil manche
+ * Modded-Server abweichende Formate liefern. Wichtig ist nur, dass eindeutig
+ * MUELL (Leer, 'Unknown', 'N/A', 'false', mit Whitespace, mit Sonderzeichen)
+ * abgewiesen wird, damit GUID-strict-Auswertungen (Spec 13) sauber bleiben.
+ */
+const RE_BATTLEYE_GUID = /^[A-Za-z0-9_-]{8,64}$/;
+const BATTLEYE_GUID_BLOCKLIST = new Set([
+  'unknown', 'n/a', 'na', 'null', 'none', 'false', 'true', '0',
+]);
+export function isValidBattleyeGuid(value: unknown): value is string {
+  if (typeof value !== 'string') return false;
+  const v = value.trim();
+  if (v.length === 0) return false;
+  if (BATTLEYE_GUID_BLOCKLIST.has(v.toLowerCase())) return false;
+  return RE_BATTLEYE_GUID.test(v);
 }
 
 /**
