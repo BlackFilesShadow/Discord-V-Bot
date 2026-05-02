@@ -21,7 +21,6 @@ import { Card, CardHeader, CardTitle, CardDesc } from '@/components/ui/Card';
 import { Button } from '@/components/ui/Button';
 import { useAuth } from '@/lib/auth';
 import { useDevSession } from '@/lib/devSession';
-import { DevLoginPanel } from '@/components/DevLoginPanel';
 
 export interface DevTool {
   /** URL-Slug unter /dev/ */
@@ -101,7 +100,6 @@ export default function DevLayout() {
             <Button size="sm">Zur Server-Uebersicht</Button>
           </a>
         </Card>
-        <DevLoginPanel />
       </Shell>
     );
   }

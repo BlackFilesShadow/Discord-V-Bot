@@ -6,7 +6,6 @@ import { Shell } from '@/components/Shell';
 import { Card } from '@/components/ui/Card';
 import { Button } from '@/components/ui/Button';
 import { useAuth } from '@/lib/auth';
-import { DevLoginPanel } from '@/components/DevLoginPanel';
 
 interface Guild {
   id: string;
@@ -84,7 +83,6 @@ export default function Servers() {
 
         <CreditsCard />
       </div>
-      <DevLoginPanel />
     </Shell>
   );
 }

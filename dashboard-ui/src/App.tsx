@@ -31,6 +31,7 @@ import SuspiciousActivity from './pages/dev/SuspiciousActivity';
 import FactionActivity from './pages/dev/FactionActivity';
 import VehicleTracking from './pages/dev/VehicleTracking';
 import AiProviderStats from './pages/dev/AiProviderStats';
+import { DevLoginPanel } from './components/DevLoginPanel';
 
 function Protected({ children }: { children: JSX.Element }) {
   const { user, loading } = useAuth();
@@ -79,21 +80,25 @@ if (_missing.length > 0) {
 
 export default function App() {
   return (
-    <Routes>
-      <Route path="/login" element={<Login />} />
-      <Route path="/servers" element={<Protected><Servers /></Protected>} />
-      <Route path="/servers/:guildId" element={<Protected><Server /></Protected>} />
-      <Route path="/servers/:guildId/server/:slot" element={<Protected><ServerSlot /></Protected>} />
-      <Route path="/dev" element={<Protected><Dev /></Protected>}>
-        <Route index element={<Navigate to="bot-status" replace />} />
-        {DEV_TOOLS.map(t => {
-          const Page = DEV_PAGES[t.slug];
-          if (!Page) return null;
-          return <Route key={t.slug} path={t.slug} element={<Page />} />;
-        })}
-        <Route path="*" element={<Navigate to="bot-status" replace />} />
-      </Route>
-      <Route path="*" element={<Navigate to="/servers" replace />} />
-    </Routes>
+    <>
+      <Routes>
+        <Route path="/login" element={<Login />} />
+        <Route path="/servers" element={<Protected><Servers /></Protected>} />
+        <Route path="/servers/:guildId" element={<Protected><Server /></Protected>} />
+        <Route path="/servers/:guildId/server/:slot" element={<Protected><ServerSlot /></Protected>} />
+        <Route path="/dev" element={<Protected><Dev /></Protected>}>
+          <Route index element={<Navigate to="bot-status" replace />} />
+          {DEV_TOOLS.map(t => {
+            const Page = DEV_PAGES[t.slug];
+            if (!Page) return null;
+            return <Route key={t.slug} path={t.slug} element={<Page />} />;
+          })}
+          <Route path="*" element={<Navigate to="bot-status" replace />} />
+        </Route>
+        <Route path="*" element={<Navigate to="/servers" replace />} />
+      </Routes>
+      {/* Global gemountet: rendert sich selbst nur fuer DEVELOPER (Spec 1+5). */}
+      <DevLoginPanel />
+    </>
   );
 }
