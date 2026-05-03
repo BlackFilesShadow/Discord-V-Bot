@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react';
-import { useParams } from 'react-router-dom';
+import { useParams, useSearchParams } from 'react-router-dom';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { api } from '@/lib/api';
 import { Shell } from '@/components/Shell';
@@ -53,8 +53,24 @@ const SNOWFLAKE_RE = /^\d{17,20}$/;
 
 export default function ServerSlot() {
   const { guildId, slot } = useParams<{ guildId: string; slot: string }>();
+  const [searchParams, setSearchParams] = useSearchParams();
   const qc = useQueryClient();
-  const [tab, setTab] = useState<Tab>('settings');
+  const initialTab = ((): Tab => {
+    const t = searchParams.get('tab');
+    if (t === 'settings' || t === 'factions' || t === 'whitelist' || t === 'economy' || t === 'links') return t;
+    return 'settings';
+  })();
+  const [tab, setTab] = useState<Tab>(initialTab);
+
+  // Tab-Wechsel in URL persistieren (Deep-Link, Back-Button).
+  useEffect(() => {
+    if (searchParams.get('tab') !== tab) {
+      const next = new URLSearchParams(searchParams);
+      next.set('tab', tab);
+      setSearchParams(next, { replace: true });
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [tab]);
 
   useGuildLiveUpdates(guildId);
 

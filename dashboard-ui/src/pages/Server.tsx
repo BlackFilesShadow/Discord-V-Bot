@@ -1,7 +1,7 @@
 import { useState } from 'react';
 import { Link, useParams } from 'react-router-dom';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
-import { Plus, Trash2, KeyRound, Server as ServerIcon, Shield, AlertTriangle, ChevronRight, Ticket, Settings2, Send, Power, Tag, Activity } from 'lucide-react';
+import { Plus, Trash2, KeyRound, Server as ServerIcon, Shield, AlertTriangle, ChevronRight, Ticket, Settings2, Send, Power, Tag, Activity, Users } from 'lucide-react';
 import { api, ApiError } from '@/lib/api';
 import { Shell } from '@/components/Shell';
 import { Card, CardHeader, CardTitle, CardDesc } from '@/components/ui/Card';
@@ -11,7 +11,7 @@ import { Select } from '@/components/ui/Select';
 import { Combobox, type ComboboxOption } from '@/components/ui/Combobox';
 import { useGuildLiveUpdates } from '@/lib/useGuildLiveUpdates';
 
-type Tab = 'nitrado' | 'aliases' | 'permissions' | 'tickets' | 'audit';
+type Tab = 'nitrado' | 'aliases' | 'permissions' | 'tickets' | 'factions' | 'audit';
 
 interface TabDef {
   key: Tab;
@@ -25,6 +25,7 @@ const TABS: ReadonlyArray<TabDef> = [
   { key: 'aliases', label: 'Server-Aliase', icon: Tag, ownerOnly: true },
   { key: 'permissions', label: 'Berechtigungen', icon: Shield, ownerOnly: true },
   { key: 'tickets', label: 'Tickets', icon: Ticket },
+  { key: 'factions', label: 'Fraktionssystem', icon: Users },
   { key: 'audit', label: 'Audit-Log', icon: Activity, ownerOnly: true },
 ];
 
@@ -117,6 +118,7 @@ export default function Server() {
             {tab === 'aliases' && guildId && isOwner && <AliasesTab guildId={guildId} slots={dash.data.slots} />}
             {tab === 'permissions' && guildId && isOwner && <PermissionsTab guildId={guildId} />}
             {tab === 'tickets' && guildId && <TicketsTab guildId={guildId} isOwner={isOwner} />}
+            {tab === 'factions' && guildId && <FactionsOverviewTab guildId={guildId} slots={dash.data.slots} />}
             {tab === 'audit' && guildId && isOwner && <AuditTab guildId={guildId} />}
           </>
         )}
@@ -1517,6 +1519,52 @@ function AuditTab({ guildId }: { guildId: string }) {
           )}
         </Card>
       )}
+    </div>
+  );
+}
+
+// ============================================================================
+// Fraktionssystem — Slot-Picker (deeplinkt zur Slot-Seite mit factions-Tab).
+// Backend ist slot-scoped (?slot=X), daher keine echte Verwaltung auf Page 1.
+// ============================================================================
+
+function FactionsOverviewTab({ guildId, slots }: { guildId: string; slots: Slot[] }) {
+  if (slots.length === 0) {
+    return (
+      <Card glow>
+        <CardHeader><CardTitle>Keine Slots vorhanden</CardTitle></CardHeader>
+        <p className="text-muted text-sm">Lege zuerst einen Nitrado-Slot an, bevor du Fraktionen verwalten kannst.</p>
+      </Card>
+    );
+  }
+  return (
+    <div className="space-y-4">
+      <div>
+        <h2 className="text-lg font-semibold text-white mb-1">Fraktionssystem</h2>
+        <p className="text-xs text-muted">Fraktionen werden pro Slot gepflegt. Wähle einen Slot, um zur Verwaltung zu wechseln.</p>
+      </div>
+      <div className="grid gap-2">
+        {slots.map(s => (
+          <Link
+            key={s.id}
+            to={`/servers/${guildId}/server/${s.slot}?tab=factions`}
+            className="block rounded-md border border-border bg-bg-elev hover:border-accent/50 hover:bg-accent/5 transition-colors p-3"
+          >
+            <div className="flex items-center justify-between gap-3">
+              <div className="flex items-center gap-3 min-w-0">
+                <div className="h-9 w-9 rounded-md bg-bg grid place-items-center text-accent font-bold text-sm shrink-0 border border-border">
+                  #{s.slot}
+                </div>
+                <div className="min-w-0">
+                  <div className="font-medium text-white truncate">{s.alias || `Slot ${s.slot}`}</div>
+                  <div className="text-xs text-muted truncate">{s.alias5} · {s.status}</div>
+                </div>
+              </div>
+              <ChevronRight className="h-4 w-4 text-muted shrink-0" />
+            </div>
+          </Link>
+        ))}
+      </div>
     </div>
   );
 }
