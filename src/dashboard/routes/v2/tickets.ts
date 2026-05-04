@@ -278,7 +278,7 @@ ticketsRouter.get('/instances', requireGuildPermission('tickets.manage'), async 
   });
 });
 
-ticketsRouter.post('/', requireGuildOwner, async (req, res) => {
+ticketsRouter.post('/', requireGuildPermission('tickets.manage'), async (req, res) => {
   const scope = req.guildScope!;
   const v = validateBody(req.body ?? {}, false);
   if (!v.ok) { res.status(400).json({ error: v.error }); return; }
@@ -331,7 +331,7 @@ ticketsRouter.post('/', requireGuildOwner, async (req, res) => {
   res.status(201).json(serialize(created));
 });
 
-ticketsRouter.put('/:id', requireGuildOwner, async (req, res) => {
+ticketsRouter.put('/:id', requireGuildPermission('tickets.manage'), async (req, res) => {
   const scope = req.guildScope!;
   const id = String(req.params.id);
   const existing = await prisma.ticketTemplate.findUnique({ where: { id } });
@@ -398,7 +398,7 @@ ticketsRouter.put('/:id', requireGuildOwner, async (req, res) => {
   res.json(serialize(updated));
 });
 
-ticketsRouter.delete('/:id', requireGuildOwner, async (req, res) => {
+ticketsRouter.delete('/:id', requireGuildPermission('tickets.manage'), async (req, res) => {
   const scope = req.guildScope!;
   const id = String(req.params.id);
   const existing = await prisma.ticketTemplate.findUnique({ where: { id } });
@@ -420,7 +420,7 @@ ticketsRouter.delete('/:id', requireGuildOwner, async (req, res) => {
   res.status(204).end();
 });
 
-ticketsRouter.post('/:id/post', requireGuildOwner, async (req, res) => {
+ticketsRouter.post('/:id/post', requireGuildPermission('tickets.manage'), async (req, res) => {
   const scope = req.guildScope!;
   const id = String(req.params.id);
   const existing = await prisma.ticketTemplate.findUnique({ where: { id } });
@@ -443,7 +443,7 @@ ticketsRouter.post('/:id/post', requireGuildOwner, async (req, res) => {
  * (templateNumber) kollidieren bzw. die Eindeutigkeit pro Template waere irrefuehrend.
  * Channels werden NICHT umbenannt.
  */
-ticketsRouter.post('/:id/reset-counter', requireGuildOwner, async (req, res) => {
+ticketsRouter.post('/:id/reset-counter', requireGuildPermission('tickets.manage'), async (req, res) => {
   const scope = req.guildScope!;
   const id = String(req.params.id);
   const existing = await prisma.ticketTemplate.findUnique({ where: { id } });

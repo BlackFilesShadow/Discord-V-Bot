@@ -26,6 +26,7 @@ import { tryGetDashboardClient, getDashboardClient } from '../../clientRegistry'
 import { getOrCreate, get as getDashLink } from '../../../modules/dashboard/repository';
 import { asGuildId, asUserDiscordId } from '../../../types/scope';
 import { ensureDiscordAccessToken } from '../auth';
+import { requireGuildAccess } from '../../middleware/auth';
 import { config } from '../../../config';
 import { logger } from '../../../utils/logger';
 import prisma from '../../../database/prisma';
@@ -214,17 +215,12 @@ guildsRouter.post('/:guildId/activate', async (req, res) => {
  * Liefert Text-Channels und Categories einer Guild fuer Dashboard-Selects.
  * Owner-only (Channel-IDs sind sensibel).
  */
-guildsRouter.get('/:guildId/channels', async (req, res) => {
-  if (!req.auth) { res.status(401).end(); return; }
+guildsRouter.get('/:guildId/channels', requireGuildAccess, async (req, res) => {
   const client = tryGetDashboardClient();
   if (!client) { res.status(503).json({ error: 'Bot nicht bereit.' }); return; }
-  let guildId;
-  try { guildId = asGuildId(String(req.params.guildId)); } catch {
-    res.status(400).json({ error: 'guildId ungueltig.' }); return;
-  }
+  const guildId = req.guildScope!.guildId;
   const guild = client.guilds.cache.get(guildId);
   if (!guild) { res.status(404).json({ error: 'Bot nicht in Guild.' }); return; }
-  if (guild.ownerId !== req.auth.discordId) { res.status(403).json({ error: 'Nicht Owner.' }); return; }
 
   // 0 = Text, 4 = Category, 5 = Announcement, 15 = Forum
   const channels = guild.channels.cache
@@ -234,17 +230,12 @@ guildsRouter.get('/:guildId/channels', async (req, res) => {
   res.json({ channels });
 });
 
-guildsRouter.get('/:guildId/roles', async (req, res) => {
-  if (!req.auth) { res.status(401).end(); return; }
+guildsRouter.get('/:guildId/roles', requireGuildAccess, async (req, res) => {
   const client = tryGetDashboardClient();
   if (!client) { res.status(503).json({ error: 'Bot nicht bereit.' }); return; }
-  let guildId;
-  try { guildId = asGuildId(String(req.params.guildId)); } catch {
-    res.status(400).json({ error: 'guildId ungueltig.' }); return;
-  }
+  const guildId = req.guildScope!.guildId;
   const guild = client.guilds.cache.get(guildId);
   if (!guild) { res.status(404).json({ error: 'Bot nicht in Guild.' }); return; }
-  if (guild.ownerId !== req.auth.discordId) { res.status(403).json({ error: 'Nicht Owner.' }); return; }
 
   const roles = guild.roles.cache
     .filter(r => r.id !== guild.id) // @everyone raus
@@ -270,17 +261,12 @@ const memberSearchLimiter = rateLimit({
   keyGenerator: (req) => req.auth?.discordId ?? req.ip ?? 'anon',
   message: { error: 'Zu viele Member-Suchen. Bitte kurz warten.' },
 });
-guildsRouter.get('/:guildId/members', memberSearchLimiter, async (req, res) => {
-  if (!req.auth) { res.status(401).end(); return; }
+guildsRouter.get('/:guildId/members', memberSearchLimiter, requireGuildAccess, async (req, res) => {
   const client = tryGetDashboardClient();
   if (!client) { res.status(503).json({ error: 'Bot nicht bereit.' }); return; }
-  let guildId;
-  try { guildId = asGuildId(String(req.params.guildId)); } catch {
-    res.status(400).json({ error: 'guildId ungueltig.' }); return;
-  }
+  const guildId = req.guildScope!.guildId;
   const guild = client.guilds.cache.get(guildId);
   if (!guild) { res.status(404).json({ error: 'Bot nicht in Guild.' }); return; }
-  if (guild.ownerId !== req.auth.discordId) { res.status(403).json({ error: 'Nicht Owner.' }); return; }
 
   const rawQ = typeof req.query.q === 'string' ? req.query.q.trim() : '';
   const rawLimit = Number.parseInt(String(req.query.limit ?? '25'), 10);

@@ -82,16 +82,38 @@ export function withGuildScope(opts: WithGuildScopeOptions, handler: ScopedHandl
     const guild = interaction.guild;
     const isOwner = !!guild && guild.ownerId === actorId;
 
-    let permsSet = new Set<PermissionScope>();
+    const permsSet = new Set<PermissionScope>();
     if (!isOwner) {
+      // 1) User-spezifische Grants
       try {
         const grant = await prisma.guildPermissionGrant.findUnique({
           where: { guildId_userDiscordId: { guildId, userDiscordId: actorId } },
         });
         const list = Array.isArray(grant?.permissions) ? (grant!.permissions as string[]) : [];
-        permsSet = new Set(list as PermissionScope[]);
+        for (const s of list) permsSet.add(s as PermissionScope);
       } catch (e) {
         logger.error('GuildPermissionGrant-Lookup fehlgeschlagen:', e as Error);
+      }
+      // 2) Role-Grants: Vereinigung aller Permissions aus Rollen, die der User
+      //    in dieser Guild aktuell traegt. KONSISTENT mit Dashboard-Middleware
+      //    (`requireGuildPermission`) — sonst greifen Role-Delegationen wie
+      //    `dashboard.access` zwar im Web-UI, aber nicht in Slash-Commands.
+      try {
+        const member = guild?.members.cache.get(actorId)
+          ?? (guild ? await guild.members.fetch(actorId).catch(() => null) : null);
+        const roleIds = member ? Array.from(member.roles.cache.keys()) : [];
+        if (roleIds.length > 0) {
+          const roleGrants = await prisma.guildPermissionRoleGrant.findMany({
+            where: { guildId, roleDiscordId: { in: roleIds } },
+            select: { permissions: true },
+          });
+          for (const r of roleGrants) {
+            const arr = Array.isArray(r.permissions) ? (r.permissions as string[]) : [];
+            for (const s of arr) permsSet.add(s as PermissionScope);
+          }
+        }
+      } catch (e) {
+        logger.warn('GuildPermissionRoleGrant-Lookup fehlgeschlagen:', e as Error);
       }
     }
 

@@ -184,6 +184,80 @@ export function requireGuildPermission(perm: PermissionScope) {
 }
 
 /**
+ * Owner ODER `dashboard.access`-Vollzugriff ODER irgendein anderer (delegierbarer)
+ * Scope in dieser Guild. Genutzt fuer guild-weite Read-Hilfsrouten (Channels,
+ * Rollen, Mitglieder-Suche fuer Konfig-Modals) sowie fuer gemeinsame
+ * Konfigurations-Endpunkte, die mehrere Module bedienen.
+ *
+ * Strikt pro Guild — Grants aus anderen Guilds zaehlen NIE. NON_DELEGABLE-Scopes
+ * werden hier ebenfalls nicht akzeptiert (sind Owner-only-hardcoded an Routen).
+ */
+export async function requireGuildAccess(req: Request, res: Response, next: NextFunction): Promise<void> {
+  if (!req.auth) { res.status(401).json({ error: 'Nicht angemeldet.' }); return; }
+  const guildId = readGuildIdParam(req);
+  if (!guildId) { res.status(400).json({ error: 'guildId fehlt/ungueltig.' }); return; }
+
+  const client = getDashboardClient();
+  const guild = client.guilds.cache.get(guildId);
+  if (!guild) {
+    res.status(404).json({ error: 'Bot ist nicht in dieser Guild.', code: 'BOT_NOT_PRESENT' });
+    return;
+  }
+
+  const isOwner = guild.ownerId === req.auth.discordId;
+  let permsSet: Set<PermissionScope> = new Set();
+  if (!isOwner) {
+    const grant = await prisma.guildPermissionGrant.findUnique({
+      where: { guildId_userDiscordId: { guildId, userDiscordId: req.auth.discordId } },
+    });
+    const list = Array.isArray(grant?.permissions) ? (grant!.permissions as string[]) : [];
+    for (const s of list) permsSet.add(s as PermissionScope);
+
+    try {
+      const member = guild.members.cache.get(req.auth.discordId)
+        ?? await guild.members.fetch(req.auth.discordId).catch(() => null);
+      const roleIds = member ? Array.from(member.roles.cache.keys()) : [];
+      if (roleIds.length > 0) {
+        const roleGrants = await prisma.guildPermissionRoleGrant.findMany({
+          where: { guildId, roleDiscordId: { in: roleIds } },
+        });
+        for (const r of roleGrants) {
+          const arr = Array.isArray(r.permissions) ? (r.permissions as string[]) : [];
+          for (const s of arr) permsSet.add(s as PermissionScope);
+        }
+      }
+    } catch (e) {
+      logAudit('GUILD_MEMBER_FETCH_FAILED', 'SECURITY', {
+        userId: req.auth.userId, discordId: req.auth.discordId, guildId,
+        err: (e as Error).message,
+      });
+    }
+  }
+
+  // Zugriff: Owner, dashboard.access, oder mind. EIN beliebiger delegierbarer Scope.
+  // (NON_DELEGABLE_SCOPES tauchen in DB-Grants nicht auf — durch Routen-Layer blockiert.)
+  const accessGranted = isOwner
+    || permsSet.has('dashboard.access')
+    || permsSet.size > 0;
+  if (!accessGranted) {
+    logAudit('GUILD_ACCESS_DENIED', 'SECURITY', {
+      userId: req.auth.userId, discordId: req.auth.discordId, guildId,
+    });
+    res.status(403).json({ error: 'Kein Zugriff auf diese Guild.' });
+    return;
+  }
+
+  req.guildScope = {
+    guildId,
+    nitradoConnId: null,
+    actorDiscordId: req.auth.discordId,
+    isOwner,
+    permissions: permsSet,
+  };
+  next();
+}
+
+/**
  * DEV-only: braucht User.role===DEVELOPER + aktive DevSession + MFA + IP-Allowlist.
  *
  * P0-Compliance:

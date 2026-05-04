@@ -5,14 +5,14 @@
  * GET /categories                            -> verfuegbare Kategorien (in DB vorhanden)
  */
 import { Router } from 'express';
-import { requireGuildOwner } from '../../middleware/auth';
+import { requireGuildAccess } from '../../middleware/auth';
 import prisma from '../../../database/prisma';
 
 export const auditRouter = Router({ mergeParams: true });
 
 const MAX_LIMIT = 100;
 
-auditRouter.get('/', requireGuildOwner, async (req, res) => {
+auditRouter.get('/', requireGuildAccess, async (req, res) => {
   const scope = req.guildScope!;
   const limit = Math.min(MAX_LIMIT, Math.max(1, Number(req.query.limit) || 50));
   const category = typeof req.query.category === 'string' ? req.query.category : undefined;
@@ -60,7 +60,7 @@ auditRouter.get('/', requireGuildOwner, async (req, res) => {
   });
 });
 
-auditRouter.get('/categories', requireGuildOwner, async (req, res) => {
+auditRouter.get('/categories', requireGuildAccess, async (req, res) => {
   const scope = req.guildScope!;
   const groups = await prisma.auditLog.groupBy({
     by: ['category'],
