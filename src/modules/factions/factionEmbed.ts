@@ -96,9 +96,15 @@ function buildEmbed(f: FactionEmbedData, attachmentNames: { flag?: string; banne
       || '_Keine Beschreibung hinterlegt._',
     )
     .addFields(
-      { name: '👑  Fraktionsführer',  value: f.leaderDiscordId    ? `<@${f.leaderDiscordId}>`    : '_offen_', inline: true },
-      { name: '🛡️  Stellvertreter',   value: f.deputyDiscordId    ? `<@${f.deputyDiscordId}>`    : '_offen_', inline: true },
-      { name: '💰  Schatzmeister',    value: f.treasurerDiscordId ? `<@${f.treasurerDiscordId}>` : '_offen_', inline: true },
+      {
+        name: '👥  Fraktionsleitung',
+        value: [
+          `👑  **Fraktionsführer:** ${f.leaderDiscordId    ? `<@${f.leaderDiscordId}>`    : '_offen_'}`,
+          `🛡️  **Stellvertreter:** ${f.deputyDiscordId    ? `<@${f.deputyDiscordId}>`    : '_offen_'}`,
+          `💰  **Schatzmeister:** ${f.treasurerDiscordId ? `<@${f.treasurerDiscordId}>` : '_offen_'}`,
+        ].join('\n'),
+        inline: false,
+      },
       { name: '👥  Mitglieder',      value: String(f.memberCount), inline: true },
       { name: `${status.emoji}  Status`, value: status.label,    inline: true },
       { name: '📨  Bewerbung',       value: policy,                inline: true },
