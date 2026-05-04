@@ -1081,7 +1081,8 @@ model TicketTemplate {
   postChannelId       String // Channel, in dem der Embed mit Open-Button lebt
   postedMessageId     String? // ID der zuletzt geposteten Embed-Nachricht (zum Edit)
   categoryId          String? // Discord-Category, unter der Ticket-Channels erstellt werden (optional)
-  staffRoleId         String? // Rolle die mit-Zugriff auf jeden Ticket-Channel bekommt (optional)
+  staffRoleId         String? // Rolle die mit-Zugriff auf jeden Ticket-Channel bekommt (optional, legacy single-role)
+  managerRoleIds      String[]         @default([]) // Multi-Manager-Rollen: View+Send+ReadHistory + dürfen Tickets schließen (server-side enforced)
   mentionRoleIds      String[]         @default([]) // Rollen die beim Ticket-Open im Channel erwaehnt werden (max 5)
   transcriptChannelId String // Channel fuer Transcript-Uploads beim Close
   archiveChannelId    String? // Optionaler separater Archiv-Channel (zusaetzlich zu Transcript)
@@ -1096,6 +1097,7 @@ model TicketTemplate {
 
 model TicketInstance {
   id                  String         @id @default(uuid())
+  ticketNumber        Int            @unique @default(autoincrement()) // Fortlaufende Ticket-Nummer fuer Channel-Name {number}-{user}-{name}
   templateId          String
   template            TicketTemplate @relation(fields: [templateId], references: [id], onDelete: Cascade)
   guildId             String

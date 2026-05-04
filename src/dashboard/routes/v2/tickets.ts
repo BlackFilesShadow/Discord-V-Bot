@@ -38,6 +38,7 @@ interface TemplateBody {
   postChannelId?: string;
   categoryId?: string | null;
   staffRoleId?: string | null;
+  managerRoleIds?: unknown;
   mentionRoleIds?: unknown;
   transcriptChannelId?: string;
   archiveChannelId?: string | null;
@@ -120,6 +121,17 @@ function validateBody(b: TemplateBody, partial: boolean): { ok: true; data: Reco
       if (!cleaned.includes(r)) cleaned.push(r);
     }
     data.mentionRoleIds = cleaned;
+  }
+
+  if (b.managerRoleIds !== undefined) {
+    if (!Array.isArray(b.managerRoleIds)) return { ok: false, error: 'managerRoleIds muss ein Array sein.' };
+    if (b.managerRoleIds.length > 10) return { ok: false, error: 'Maximal 10 Manager-Rollen.' };
+    const cleaned: string[] = [];
+    for (const r of b.managerRoleIds) {
+      if (typeof r !== 'string' || !SNOWFLAKE_RE.test(r)) return { ok: false, error: 'managerRoleIds: ungueltige Rollen-ID.' };
+      if (!cleaned.includes(r)) cleaned.push(r);
+    }
+    data.managerRoleIds = cleaned;
   }
 
   if (b.archiveChannelId !== undefined) {
@@ -207,6 +219,7 @@ function serialize(t: TicketTemplate) {
     postedMessageId: t.postedMessageId,
     categoryId: t.categoryId,
     staffRoleId: t.staffRoleId,
+    managerRoleIds: (t as unknown as { managerRoleIds?: string[] }).managerRoleIds ?? [],
     mentionRoleIds: t.mentionRoleIds ?? [],
     transcriptChannelId: t.transcriptChannelId,
     archiveChannelId: t.archiveChannelId,
@@ -236,6 +249,7 @@ ticketsRouter.get('/instances', requireGuildPermission('tickets.manage'), async 
   res.json({
     instances: instances.map(i => ({
       id: i.id,
+      ticketNumber: (i as unknown as { ticketNumber?: number }).ticketNumber ?? null,
       templateLabel: i.template.label,
       templateSlot: i.template.slot,
       channelId: i.channelId,
@@ -292,6 +306,7 @@ ticketsRouter.post('/', requireGuildOwner, async (req, res) => {
       archiveChannelId: (v.data.archiveChannelId as string | null | undefined) ?? null,
       categoryId: (v.data.categoryId as string | null | undefined) ?? null,
       staffRoleId: (v.data.staffRoleId as string | null | undefined) ?? null,
+      managerRoleIds: (v.data.managerRoleIds as string[] | undefined) ?? [],
       mentionRoleIds: (v.data.mentionRoleIds as string[] | undefined) ?? [],
       isActive: (v.data.isActive as boolean | undefined) ?? true,
     },

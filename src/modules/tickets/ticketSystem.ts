@@ -24,14 +24,19 @@ import {
   type ButtonInteraction,
   type Client,
   type GuildTextBasedChannel,
+  type Message,
   type TextChannel,
 } from 'discord.js';
+import archiver from 'archiver';
+import { PassThrough } from 'node:stream';
 import prisma from '../../database/prisma';
 import { logger, logAudit } from '../../utils/logger';
 
 const TRANSCRIPT_MAX_MSGS = 1000;
 const MAX_WELCOME_MESSAGES = 5;
 const SYSTEM_CLOSER = 'SYSTEM';
+const MAX_ATTACHMENT_BYTES = 8 * 1024 * 1024; // 8 MB pro Datei in ZIP
+const MAX_ZIP_TOTAL_BYTES = 24 * 1024 * 1024; // 24 MB ZIP-Limit (Discord upload ≤8 MB free / 25 MB Boost)
 
 // Mutex pro Template-ID gegen parallele postTemplateEmbed-Aufrufe (F9).
 const postLocks = new Map<string, Promise<unknown>>();
@@ -316,12 +321,22 @@ async function openTicketLocked(btn: ButtonInteraction, t: Awaited<ReturnType<ty
     }
   }
 
-  // F5: Eindeutiger Channel-Name. Counter aus Anzahl bisheriger Tickets dieses Users.
-  const userTicketCount = await prisma.ticketInstance.count({
-    where: { templateId: t.id, openerDiscordId: btn.user.id },
-  });
-  const baseName = btn.user.username.toLowerCase().replace(/[^a-z0-9-]/g, '').slice(0, 18) || 'user';
-  const safeName = `ticket-${baseName}-${(userTicketCount + 1).toString().padStart(3, '0')}`;
+  // Manager-Rollen pruefen (Multi-Role): existiert noch + nicht managed.
+  const rawManagerRoleIds = (t as unknown as { managerRoleIds?: unknown }).managerRoleIds;
+  const managerRoleIds: string[] = [];
+  if (Array.isArray(rawManagerRoleIds)) {
+    for (const rid of rawManagerRoleIds) {
+      if (typeof rid !== 'string') continue;
+      const r = await guild.roles.fetch(rid).catch(() => null);
+      if (r) managerRoleIds.push(rid);
+      else logger.warn(`Ticket-Template ${t.id}: managerRoleId ${rid} existiert nicht mehr — ignoriere.`);
+    }
+  }
+
+  // F5: Channel-Name `{number}-{user}-{name}` mit globaler fortlaufender Ticket-Nummer.
+  // Discord-Channel-Limit: 100 Zeichen, lowercase, nur a-z0-9 und -.
+  const userBase = btn.user.username.toLowerCase().replace(/[^a-z0-9-]/g, '').slice(0, 20) || 'user';
+  const labelBase = t.label.toLowerCase().replace(/[^a-z0-9-]/g, '').slice(0, 30) || 'ticket';
 
   let channel: TextChannel | null = null;
   let instance: { id: string } | null = null;
@@ -361,6 +376,32 @@ async function openTicketLocked(btn: ButtonInteraction, t: Awaited<ReturnType<ty
         ],
       });
     }
+    for (const mid of managerRoleIds) {
+      overwrites.push({
+        id: mid,
+        allow: [
+          PermissionFlagsBits.ViewChannel,
+          PermissionFlagsBits.SendMessages,
+          PermissionFlagsBits.ReadMessageHistory,
+          PermissionFlagsBits.AttachFiles,
+          PermissionFlagsBits.ManageMessages,
+        ],
+      });
+    }
+
+    // Instance ZUERST anlegen (Placeholder-channelId), um ticketNumber zu bekommen → Channel-Name Format `{number}-{user}-{name}`.
+    instance = await prisma.ticketInstance.create({
+      data: {
+        templateId: t.id,
+        guildId: guild.id,
+        channelId: `pending:${btn.id}`,
+        openerDiscordId: btn.user.id,
+        openerName: btn.user.username,
+      },
+    });
+    const ticketNumber = (instance as unknown as { ticketNumber: number }).ticketNumber;
+    const numStr = String(ticketNumber).padStart(4, '0');
+    const safeName = `${numStr}-${userBase}-${labelBase}`.slice(0, 95);
 
     channel = await guild.channels.create({
       name: safeName,
@@ -371,17 +412,12 @@ async function openTicketLocked(btn: ButtonInteraction, t: Awaited<ReturnType<ty
         ...(o.allow ? { allow: o.allow } : {}),
         ...(o.deny ? { deny: o.deny } : {}),
       })),
-      reason: `Ticket geoeffnet von ${btn.user.tag}`,
+      reason: `Ticket #${numStr} geoeffnet von ${btn.user.tag}`,
     }) as TextChannel;
 
-    instance = await prisma.ticketInstance.create({
-      data: {
-        templateId: t.id,
-        guildId: guild.id,
-        channelId: channel.id,
-        openerDiscordId: btn.user.id,
-        openerName: btn.user.username,
-      },
+    await prisma.ticketInstance.update({
+      where: { id: instance.id },
+      data: { channelId: channel.id },
     });
 
     const messages = normalizeWelcomeMessages((t as unknown as { welcomeMessages?: unknown }).welcomeMessages, t.welcomeText);
@@ -424,7 +460,9 @@ async function openTicketLocked(btn: ButtonInteraction, t: Awaited<ReturnType<ty
 
     logAudit('TICKET_OPENED', 'TICKET', {
       guildId: guild.id, templateId: t.id, instanceId: instance.id,
-      channelId: channel.id, userId: btn.user.id,
+      ticketNumber, channelId: channel.id, userId: btn.user.id,
+      mentionedRoleIds: mentionRoleIds, mentionedRoleCount: mentionRoleIds.length,
+      managerRoleIds,
     });
 
     await btn.editReply({ content: `Ticket erstellt: <#${channel.id}>` });
@@ -460,18 +498,35 @@ export async function handleCloseButton(btn: ButtonInteraction): Promise<void> {
     return;
   }
 
-  // F6: Permission-Check via frischen Member-Fetch (kein Cache-Reliance).
-  let canClose = btn.user.id === instance.openerDiscordId || btn.user.id === btn.guild?.ownerId;
-  if (!canClose && instance.template.staffRoleId && btn.guild) {
+  // Permission-Check: Opener darf NICHT mehr eigenes Ticket schliessen (User-Vorgabe).
+  // Nur Server-Owner, Staff-Rolle (Legacy) und Manager-Rollen (Multi) duerfen schliessen.
+  // Strikte Server-Side-Pruefung via frischen Member-Fetch (kein Cache-Reliance).
+  let canClose = btn.user.id === btn.guild?.ownerId;
+  if (!canClose && btn.guild) {
     try {
       const member = await btn.guild.members.fetch(btn.user.id);
-      canClose = member.roles.cache.has(instance.template.staffRoleId);
+      if (instance.template.staffRoleId && member.roles.cache.has(instance.template.staffRoleId)) {
+        canClose = true;
+      }
+      if (!canClose) {
+        const managerRoleIds = (instance.template as unknown as { managerRoleIds?: unknown }).managerRoleIds;
+        if (Array.isArray(managerRoleIds)) {
+          for (const rid of managerRoleIds) {
+            if (typeof rid === 'string' && member.roles.cache.has(rid)) { canClose = true; break; }
+          }
+        }
+      }
     } catch {
       // member fetch failed — leave canClose false
     }
   }
   if (!canClose) {
-    await btn.reply({ content: 'Du darfst dieses Ticket nicht schliessen.', ephemeral: true });
+    await btn.reply({
+      content: btn.user.id === instance.openerDiscordId
+        ? 'Du darfst dein eigenes Ticket nicht schliessen. Bitte warte auf einen Manager oder Server-Owner.'
+        : 'Du darfst dieses Ticket nicht schliessen.',
+      ephemeral: true,
+    });
     return;
   }
 
@@ -547,15 +602,23 @@ export async function handleCloseButton(btn: ButtonInteraction): Promise<void> {
 
     const transcript = lines.join('\n');
     const safeLabel = instance.template.label.replace(/[^a-zA-Z0-9_-]/g, '_').slice(0, 40) || 'ticket';
-    const file = new AttachmentBuilder(Buffer.from(transcript, 'utf8'), {
-      name: `ticket-${safeLabel}-${instance.id.slice(0, 8)}.md`,
+    const ticketNumber = (instance as unknown as { ticketNumber?: number }).ticketNumber ?? 0;
+    const numStr = String(ticketNumber).padStart(4, '0');
+
+    // ZIP-Archiv mit Transcript + heruntergeladenen Attachments (Screenshots/Bilder/Dateien).
+    const zipBuffer = await buildTicketArchive({
+      transcript,
+      messages: collected,
+      label: safeLabel,
     });
+    const zipName = `ticket-${numStr}-${safeLabel}.zip`;
+    const file = new AttachmentBuilder(zipBuffer, { name: zipName });
 
     let transcriptMessageId: string | null = null;
     const transcriptChannel = await btn.client.channels.fetch(instance.template.transcriptChannelId).catch(() => null);
     if (transcriptChannel && transcriptChannel.isTextBased() && !transcriptChannel.isDMBased()) {
       const sent = await (transcriptChannel as TextChannel).send({
-        content: `📁 Transcript für Ticket **${instance.template.label}** von <@${instance.openerDiscordId}> (geschlossen von <@${btn.user.id}>)`,
+        content: `📁 Transcript-Archiv für Ticket **#${numStr} ${instance.template.label}** von <@${instance.openerDiscordId}> (geschlossen von <@${btn.user.id}>, ${collected.length} Nachrichten)`,
         files: [file],
         allowedMentions: { parse: [] },
       });
@@ -567,11 +630,11 @@ export async function handleCloseButton(btn: ButtonInteraction): Promise<void> {
     if (archiveChannelId && archiveChannelId !== instance.template.transcriptChannelId) {
       const archiveChannel = await btn.client.channels.fetch(archiveChannelId).catch(() => null);
       if (archiveChannel && archiveChannel.isTextBased() && !archiveChannel.isDMBased()) {
-        const archiveFile = new AttachmentBuilder(Buffer.from(transcript, 'utf8'), {
-          name: `archive-${safeLabel}-${instance.id.slice(0, 8)}.md`,
+        const archiveFile = new AttachmentBuilder(zipBuffer, {
+          name: `archive-${numStr}-${safeLabel}.zip`,
         });
         await (archiveChannel as TextChannel).send({
-          content: `🗄️ Archiv: Ticket **${instance.template.label}** (Opener <@${instance.openerDiscordId}>, geschlossen von <@${btn.user.id}>, ${collected.length} Nachrichten)`,
+          content: `🗄️ Archiv: Ticket **#${numStr} ${instance.template.label}** (Opener <@${instance.openerDiscordId}>, geschlossen von <@${btn.user.id}>, ${collected.length} Nachrichten)`,
           files: [archiveFile],
           allowedMentions: { parse: [] },
         }).catch(() => {});
@@ -581,11 +644,9 @@ export async function handleCloseButton(btn: ButtonInteraction): Promise<void> {
     // DM an Opener
     try {
       const opener = await btn.client.users.fetch(instance.openerDiscordId);
-      const dmFile = new AttachmentBuilder(Buffer.from(transcript, 'utf8'), {
-        name: `ticket-${safeLabel}-${instance.id.slice(0, 8)}.md`,
-      });
+      const dmFile = new AttachmentBuilder(zipBuffer, { name: zipName });
       await opener.send({
-        content: `Dein Ticket **${instance.template.label}** wurde geschlossen. Transcript anbei.`,
+        content: `Dein Ticket **#${numStr} ${instance.template.label}** wurde geschlossen. Transcript-Archiv anbei.`,
         files: [dmFile],
       });
     } catch {
@@ -598,8 +659,9 @@ export async function handleCloseButton(btn: ButtonInteraction): Promise<void> {
     });
 
     logAudit('TICKET_CLOSED', 'TICKET', {
-      guildId: instance.guildId, instanceId: instance.id,
+      guildId: instance.guildId, instanceId: instance.id, ticketNumber,
       closedBy: btn.user.id, messages: collected.length,
+      archiveSize: zipBuffer.length,
     });
 
     await btn.editReply({ content: 'Ticket geschlossen. Channel wird in 5 Sekunden geloescht.' });
@@ -610,4 +672,75 @@ export async function handleCloseButton(btn: ButtonInteraction): Promise<void> {
     logger.error('Ticket-Close-Fehler', e as Error);
     await btn.editReply({ content: 'Konnte Ticket nicht schliessen. Bitte Admin informieren.' }).catch(() => {});
   }
+}
+
+/**
+ * ZIP-Archiv mit Markdown-Transcript + heruntergeladene Attachments (Bilder, Screenshots, Dateien).
+ * Limits: pro Datei MAX_ATTACHMENT_BYTES, gesamt MAX_ZIP_TOTAL_BYTES.
+ * Discord-Attachment-URLs sind authentifiziert/signiert -> Download via fetch.
+ */
+async function buildTicketArchive(opts: {
+  transcript: string;
+  messages: Message[];
+  label: string;
+}): Promise<Buffer> {
+  const { transcript, messages, label } = opts;
+
+  const archive = archiver('zip', { zlib: { level: 9 } });
+  const stream = new PassThrough();
+  const chunks: Buffer[] = [];
+  stream.on('data', (c: Buffer) => chunks.push(c));
+  const done = new Promise<void>((resolve, reject) => {
+    stream.on('end', () => resolve());
+    stream.on('error', reject);
+    archive.on('error', reject);
+  });
+  archive.pipe(stream);
+
+  // 1) Transcript.md im Root
+  archive.append(transcript, { name: 'transcript.md' });
+
+  // 2) Anhaenge in attachments/<msgId>-<filename>
+  let totalBytes = Buffer.byteLength(transcript, 'utf8');
+  const skipped: string[] = [];
+  for (const m of messages) {
+    if (m.attachments.size === 0) continue;
+    for (const a of m.attachments.values()) {
+      const size = a.size ?? 0;
+      if (size > MAX_ATTACHMENT_BYTES) {
+        skipped.push(`${a.name ?? a.id}: zu gross (${(size / 1024 / 1024).toFixed(1)} MB)`);
+        continue;
+      }
+      if (totalBytes + size > MAX_ZIP_TOTAL_BYTES) {
+        skipped.push(`${a.name ?? a.id}: ZIP-Limit erreicht`);
+        continue;
+      }
+      try {
+        const res = await fetch(a.url);
+        if (!res.ok) {
+          skipped.push(`${a.name ?? a.id}: HTTP ${res.status}`);
+          continue;
+        }
+        const buf = Buffer.from(await res.arrayBuffer());
+        if (totalBytes + buf.length > MAX_ZIP_TOTAL_BYTES) {
+          skipped.push(`${a.name ?? a.id}: ZIP-Limit erreicht`);
+          continue;
+        }
+        const safeFile = (a.name ?? `attachment-${a.id}`).replace(/[^A-Za-z0-9._-]/g, '_').slice(0, 80);
+        archive.append(buf, { name: `attachments/${m.id}-${safeFile}` });
+        totalBytes += buf.length;
+      } catch (e) {
+        skipped.push(`${a.name ?? a.id}: ${(e as Error).message}`);
+      }
+    }
+  }
+
+  // 3) skipped.txt falls relevant
+  if (skipped.length > 0) {
+    archive.append(`# Nicht aufgenommene Anhaenge fuer ${label}\n\n` + skipped.map(s => `- ${s}`).join('\n') + '\n', { name: 'skipped.txt' });
+  }
+
+  await archive.finalize();
+  await done;
+  return Buffer.concat(chunks);
 }
