@@ -156,6 +156,15 @@ const interactionCreateEvent: BotEvent = {
         } catch { /* ignore */ }
         return;
       }
+      if (modal.customId.startsWith('ttkt:reason:')) {
+        try {
+          const { handleCloseReasonModal } = await import('../modules/tickets/ticketSystem.js');
+          await handleCloseReasonModal(modal);
+        } catch (e) {
+          logger.error('Ticket-Reason-Modal-Handler-Fehler:', e as Error);
+        }
+        return;
+      }
     }
 
     // User-Select-Menu: Ticket-AddUser-Flow.
@@ -215,6 +224,15 @@ const interactionCreateEvent: BotEvent = {
           await handleAddUserButton(btn);
         } catch (e) {
           logger.error('Ticket-AddUser-Button-Handler-Fehler:', e as Error);
+        }
+        return;
+      }
+      if (btn.customId.startsWith('ttkt:reason:')) {
+        try {
+          const { handleCloseReasonButton } = await import('../modules/tickets/ticketSystem.js');
+          await handleCloseReasonButton(btn);
+        } catch (e) {
+          logger.error('Ticket-Reason-Button-Handler-Fehler:', e as Error);
         }
         return;
       }

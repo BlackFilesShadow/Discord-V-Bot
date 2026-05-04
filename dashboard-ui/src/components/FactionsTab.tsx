@@ -159,8 +159,12 @@ function FactionRoleSelect({ guildId, value, onChange, placeholder }: {
     >
       <option value="">{placeholder ?? '— keine Rolle —'}</option>
       {q.data?.roles.map(r => (
-        <option key={r.id} value={r.id} disabled={!r.assignable}>
-          {r.name}{r.assignable ? '' : ' (Bot kann nicht zuweisen)'}
+        // Bewusst NICHT disabled: Bot-Hierarchie kann sich aendern (Bot-Rolle hochziehen).
+        // Wir markieren nur visuell und ueberlassen das Setzen dem User; das Backend
+        // weist die Rolle erst beim Membership-Add zu — Hierarchie-Fehler werden dort
+        // separat gemeldet (verhindert "ausgegrautes Feld trotz Wunsch-Konfiguration").
+        <option key={r.id} value={r.id}>
+          {r.name}{r.assignable ? '' : ' ⚠ (Bot-Rolle ggf. zu niedrig)'}
         </option>
       ))}
     </select>

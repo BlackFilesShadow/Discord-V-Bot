@@ -1130,8 +1130,18 @@ model TicketInstance {
   status              String         @default("OPEN") // 'OPEN' | 'CLOSED'
   openedAt            DateTime       @default(now())
   closedAt            DateTime?
-  closedBy            String?
+  closedBy            String?        // Discord-Snowflake des Schliessenden (oder 'SYSTEM')
+  closedByName        String? // Display-Name beim Close-Zeitpunkt (Snapshot, kein Re-Lookup noetig)
+  closeReason         String? // Optionaler Schliess-Grund (per "Reason bearbeiten"-Modal editierbar)
+  claimedBy           String? // Discord-Snowflake des Staff der Ticket "claimed" hat
+  claimedByName       String? // Display-Name des Claimers (Snapshot)
+  claimedAt           DateTime?
   transcriptMessageId String?
+  // Persistierte Transcripts: Markdown (Quelle) + HTML (Render) fuer die public Web-Ansicht.
+  // Public URL: /transcripts/<id> — KEINE Auth, ID ist UUID v4 (unguessable).
+  transcriptText      String?        @db.Text
+  transcriptHtml      String?        @db.Text
+  transcriptCreatedAt DateTime?
   userIds          String[]        @default([])
 
   @@index([guildId, status])

@@ -235,19 +235,39 @@ export async function postFactionEmbed(client: Client, factionId: string): Promi
     const { files, names } = await buildAttachments(f);
     const embed = buildEmbed(f, names, tch.guild.name);
 
+    // Wenn eine Fraktionsrolle gesetzt ist, soll sie beim (Re-)Post auch gepingt
+    // werden — sonst sehen Mitglieder die Aenderung nicht. Sicherer Weg: Role-Mention
+    // im Message-Content + explizit erlauben via allowedMentions.roles.
+    const messageContent: string = f.roleId ? `<@&${f.roleId}>` : '';
+    const allowedMentions = f.roleId
+      ? { parse: [] as never[], roles: [f.roleId] }
+      : { parse: [] as never[] };
+
     let messageId = f.embedMessageId;
     let updated = false;
     if (messageId) {
       try {
         const existing = await tch.messages.fetch(messageId);
-        await existing.edit({ embeds: [embed], components: [], files, attachments: [] });
+        await existing.edit({
+          content: messageContent,
+          embeds: [embed],
+          components: [],
+          files,
+          attachments: [],
+          allowedMentions,
+        });
         updated = true;
       } catch {
         messageId = null;
       }
     }
     if (!messageId) {
-      const sent = await tch.send({ embeds: [embed], files, allowedMentions: { parse: [] } });
+      const sent = await tch.send({
+        content: messageContent,
+        embeds: [embed],
+        files,
+        allowedMentions,
+      });
       messageId = sent.id;
     }
 

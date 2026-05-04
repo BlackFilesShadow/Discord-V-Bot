@@ -13,6 +13,7 @@ import { logger } from '../utils/logger';
 import { authRouter, apiRouter, adminRouter, testRouter, webhookRouter, setWebhookClient } from './routes';
 import { v2Router } from './routes/v2';
 import { discordHealthRouter } from './routes/discordHealth';
+import { transcriptsRouter } from './routes/transcripts';
 import { setDashboardClient } from './clientRegistry';
 import { initSocketIo } from './socket';
 import { startDevUploadCleanupTimer } from './services/devUpload';
@@ -165,6 +166,9 @@ export async function startDashboard(client?: Client): Promise<void> {
   app.use('/api/v2', v2Router);
   app.use('/admin', apiLimiter, adminRouter);
   app.use('/test', apiLimiter, testRouter);
+  // Public Web-Transcripts (KEINE Auth — UUID-basierte unguessable URL).
+  // MUSS vor dem SPA-Fallback liegen, sonst frisst React den Pfad.
+  app.use('/transcripts', apiLimiter, transcriptsRouter);
 
   // Health Check
   app.get('/health', (_req, res) => {
@@ -213,7 +217,7 @@ export async function startDashboard(client?: Client): Promise<void> {
   const publicDir = path.resolve(__dirname, 'public');
   if (fs.existsSync(publicDir)) {
     app.use(express.static(publicDir, { index: false, maxAge: '1h' }));
-    app.get(/^\/(?!api|auth|admin|test|webhooks|metrics|health|uploads|socket\.io).*/, (_req, res, next) => {
+    app.get(/^\/(?!api|auth|admin|test|webhooks|metrics|health|uploads|transcripts|socket\.io).*/, (_req, res, next) => {
       const indexHtml = path.join(publicDir, 'index.html');
       if (!fs.existsSync(indexHtml)) { next(); return; }
       res.sendFile(indexHtml);
