@@ -68,7 +68,11 @@ interface FactionEmbedData {
   members: Array<{ userDiscordId: string; role: string }>;
 }
 
-function buildEmbed(f: FactionEmbedData, attachmentNames: { flag?: string; banner?: string }): EmbedBuilder {
+function buildEmbed(
+  f: FactionEmbedData,
+  attachmentNames: { flag?: string; banner?: string },
+  guildName: string,
+): EmbedBuilder {
   const status = STATUS_LABELS[f.status] ?? STATUS_LABELS.ACTIVE;
   const policy = POLICY_LABELS[f.joinPolicy] ?? POLICY_LABELS.REQUEST;
   const created = `<t:${Math.floor(f.createdAt.getTime() / 1000)}:D>`;
@@ -87,24 +91,20 @@ function buildEmbed(f: FactionEmbedData, attachmentNames: { flag?: string; banne
     ? '_Noch keine Mitglieder eingetragen._'
     : memberMentions.slice(0, 40).join(' · ') + (memberMentions.length > 40 ? `\n_+${memberMentions.length - 40} weitere_` : '');
 
+  const baseDescription = (f.description?.trim().slice(0, 1500))
+    || '_Keine Beschreibung hinterlegt._';
+  const leadershipBlock = [
+    `👑  **Fraktionsführer:** ${f.leaderDiscordId    ? `<@${f.leaderDiscordId}>`    : '_offen_'}`,
+    `🛡️  **Stellvertreter:** ${f.deputyDiscordId    ? `<@${f.deputyDiscordId}>`    : '_offen_'}`,
+    `💰  **Schatzmeister:** ${f.treasurerDiscordId ? `<@${f.treasurerDiscordId}>` : '_offen_'}`,
+  ].join('\n');
+
   const e = new EmbedBuilder()
-    .setAuthor({ name: 'V-BOT  •  FRAKTION' })
+    .setAuthor({ name: `${guildName}  •  Fraktion` })
     .setTitle(`🏴  ${f.name}`)
     .setColor(parseColor(f.color))
-    .setDescription(
-      (f.description?.trim().slice(0, 1900))
-      || '_Keine Beschreibung hinterlegt._',
-    )
+    .setDescription(`${baseDescription}\n\n${leadershipBlock}`)
     .addFields(
-      {
-        name: '👥  Fraktionsleitung',
-        value: [
-          `👑  **Fraktionsführer:** ${f.leaderDiscordId    ? `<@${f.leaderDiscordId}>`    : '_offen_'}`,
-          `🛡️  **Stellvertreter:** ${f.deputyDiscordId    ? `<@${f.deputyDiscordId}>`    : '_offen_'}`,
-          `💰  **Schatzmeister:** ${f.treasurerDiscordId ? `<@${f.treasurerDiscordId}>` : '_offen_'}`,
-        ].join('\n'),
-        inline: false,
-      },
       { name: '👥  Mitglieder',      value: String(f.memberCount), inline: true },
       { name: `${status.emoji}  Status`, value: status.label,    inline: true },
       { name: '📨  Bewerbung',       value: policy,                inline: true },
@@ -117,7 +117,7 @@ function buildEmbed(f: FactionEmbedData, attachmentNames: { flag?: string; banne
   e.addFields(
     { name: '📑  Mitgliederliste', value: memberDisplay.slice(0, 1024), inline: false },
     { name: '📅  Gegruendet',      value: created,               inline: false },
-  ).setFooter({ text: 'High-End Faction-System  •  V-Bot' });
+  );
 
   if (attachmentNames.flag) e.setThumbnail(`attachment://${attachmentNames.flag}`);
   else if (f.flagUrl && /^https?:\/\//i.test(f.flagUrl)) e.setThumbnail(f.flagUrl);
@@ -233,7 +233,7 @@ export async function postFactionEmbed(client: Client, factionId: string): Promi
     }
 
     const { files, names } = await buildAttachments(f);
-    const embed = buildEmbed(f, names);
+    const embed = buildEmbed(f, names, tch.guild.name);
 
     let messageId = f.embedMessageId;
     let updated = false;
