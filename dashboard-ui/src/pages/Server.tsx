@@ -939,15 +939,12 @@ function TicketSlotCard({
   );
 }
 
-// 7 Preset-Farben + freier Hex-Wert. Hex bleibt Source-of-Truth gegenueber Backend.
+// Discord-Buttons unterstuetzen technisch nur fixe Stile (Primary/Success/Danger).
+// Wir mappen drei Farben 1:1 dort drauf, damit Embed-Farbe UND Open-Button-Farbe synchron sind.
 const TICKET_COLOR_PRESETS: Array<{ name: string; hex: string }> = [
-  { name: 'Grau',   hex: '#6b7280' },
-  { name: 'Grün',   hex: '#22c55e' },
-  { name: 'Rot',    hex: '#dc2626' },
-  { name: 'Lila',   hex: '#8b5cf6' },
-  { name: 'Pink',   hex: '#ec4899' },
-  { name: 'Gold',   hex: '#eab308' },
-  { name: 'Türkis', hex: '#14b8a6' },
+  { name: 'Rot',   hex: '#dc2626' },
+  { name: 'Grün',  hex: '#22c55e' },
+  { name: 'Blau',  hex: '#3b82f6' },
 ];
 
 const TICKET_WELCOME_MAX = 5;
@@ -972,7 +969,11 @@ function TicketEditModal({
     return src.slice(0, TICKET_WELCOME_MAX);
   });
   const [embedTitle, setEmbedTitle] = useState(existing?.embedTitle ?? 'Support-Ticket öffnen');
-  const [embedColor, setEmbedColor] = useState(existing?.embedColor ?? '#dc2626');
+  const [embedColor, setEmbedColor] = useState(() => {
+    const initial = (existing?.embedColor ?? '#dc2626').toLowerCase();
+    // Snap auf erlaubte Presets (Rot/Gruen/Blau). Fallback Rot.
+    return TICKET_COLOR_PRESETS.find(p => p.hex.toLowerCase() === initial)?.hex ?? '#dc2626';
+  });
   const [postChannelId, setPostChannelId] = useState(existing?.postChannelId ?? '');
   const [transcriptChannelId, setTranscriptChannelId] = useState(existing?.transcriptChannelId ?? '');
   const [archiveChannelId, setArchiveChannelId] = useState(existing?.archiveChannelId ?? '');
@@ -1067,8 +1068,6 @@ function TicketEditModal({
     }
   };
 
-  const colorIsPreset = TICKET_COLOR_PRESETS.some(p => p.hex.toLowerCase() === embedColor.toLowerCase());
-
   const modalRef = useModalA11y<HTMLDivElement>(onClose);
 
   return (
@@ -1120,13 +1119,10 @@ function TicketEditModal({
             </label>
           </div>
 
-          {/* Color palette */}
+          {/* Color palette — nur Rot/Grün/Blau, mappt 1:1 auf Discord-Button-Stile */}
           <div>
             <div className="flex items-center justify-between">
-              <span className="text-xs text-muted">Embed-Farbe</span>
-              <span className="text-[10px] text-muted uppercase tracking-wider">
-                {colorIsPreset ? 'Preset' : 'Custom'}
-              </span>
+              <span className="text-xs text-muted">Farbe (Embed + Open-Button)</span>
             </div>
             <div className="mt-2 flex flex-wrap items-center gap-2">
               {TICKET_COLOR_PRESETS.map(p => {
@@ -1136,7 +1132,7 @@ function TicketEditModal({
                     key={p.hex}
                     type="button"
                     onClick={() => setEmbedColor(p.hex)}
-                    className={`group relative h-9 w-9 rounded-lg border transition ${active ? 'scale-110' : 'hover:scale-105'}`}
+                    className={`group relative h-9 px-3 rounded-lg border transition text-xs font-semibold text-white ${active ? 'scale-105' : 'hover:scale-105 opacity-80 hover:opacity-100'}`}
                     style={{
                       backgroundColor: p.hex,
                       borderColor: active ? '#ffffff' : `${p.hex}88`,
@@ -1144,26 +1140,12 @@ function TicketEditModal({
                     }}
                     title={p.name}
                     aria-label={p.name}
+                    aria-pressed={active}
                   >
-                    {active && <span className="absolute inset-0 grid place-items-center text-white text-xs font-bold drop-shadow">✓</span>}
+                    {p.name}
                   </button>
                 );
               })}
-              <div className="ml-1 flex items-center gap-2">
-                <input
-                  type="color"
-                  value={embedColor}
-                  onChange={e => setEmbedColor(e.target.value)}
-                  className="h-9 w-12 rounded-lg bg-bg-elev border border-border cursor-pointer"
-                  title="Eigene Farbe"
-                />
-                <Input
-                  value={embedColor}
-                  onChange={e => setEmbedColor(e.target.value)}
-                  className="w-28 font-mono text-xs"
-                  maxLength={7}
-                />
-              </div>
             </div>
           </div>
 

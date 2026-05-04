@@ -21,9 +21,13 @@ import {
   EmbedBuilder,
   PermissionFlagsBits,
   AttachmentBuilder,
+  ModalBuilder,
+  TextInputBuilder,
+  TextInputStyle,
   type ButtonInteraction,
   type Client,
   type GuildTextBasedChannel,
+  type ModalSubmitInteraction,
   type TextChannel,
 } from 'discord.js';
 import prisma from '../../database/prisma';
@@ -75,6 +79,18 @@ function parseColor(hex: string): number {
   return parseInt(m[1], 16);
 }
 
+/**
+ * Mappt Embed-Hex-Farbe auf den nativen Discord-ButtonStyle.
+ * Frontend erlaubt nur Rot/Gruen/Blau; alles andere faellt auf Primary (Blau) zurueck.
+ */
+function openButtonStyleFor(hex: string): ButtonStyle {
+  const v = (hex || '').toLowerCase();
+  if (v === '#dc2626') return ButtonStyle.Danger;   // Rot
+  if (v === '#22c55e') return ButtonStyle.Success;  // Gruen
+  if (v === '#3b82f6') return ButtonStyle.Primary;  // Blau
+  return ButtonStyle.Primary;
+}
+
 function buildOpenEmbed(template: { embedTitle: string; embedColor: string; label: string; welcomeText: string }): EmbedBuilder {
   const accent = parseColor(template.embedColor);
   return new EmbedBuilder()
@@ -92,13 +108,13 @@ function buildOpenEmbed(template: { embedTitle: string; embedColor: string; labe
     .setFooter({ text: 'High-End Support  •  schnell · diskret · persönlich' });
 }
 
-function buildOpenButton(templateId: string, label: string): ActionRowBuilder<ButtonBuilder> {
+function buildOpenButton(templateId: string, label: string, embedColor: string): ActionRowBuilder<ButtonBuilder> {
   return new ActionRowBuilder<ButtonBuilder>().addComponents(
     new ButtonBuilder()
       .setCustomId(`ttkt:open:${templateId}`)
       .setLabel(label.slice(0, 80) || 'Ticket öffnen')
       .setEmoji('🎫')
-      .setStyle(ButtonStyle.Primary),
+      .setStyle(openButtonStyleFor(embedColor)),
   );
 }
 
@@ -109,6 +125,11 @@ function buildCloseButton(instanceId: string): ActionRowBuilder<ButtonBuilder> {
       .setLabel('Ticket schließen')
       .setEmoji('🔒')
       .setStyle(ButtonStyle.Danger),
+    new ButtonBuilder()
+      .setCustomId(`ttkt:adduser:${instanceId}`)
+      .setLabel('Nutzer hinzufügen')
+      .setEmoji('➕')
+      .setStyle(ButtonStyle.Secondary),
   );
 }
 
@@ -137,7 +158,7 @@ export async function postTemplateEmbed(client: Client, templateId: string): Pro
     }
 
     const embed = buildOpenEmbed(t);
-    const row = buildOpenButton(t.id, t.label);
+    const row = buildOpenButton(t.id, t.label, t.embedColor);
 
     let messageId = t.postedMessageId;
     let updated = false;
@@ -685,4 +706,153 @@ export async function handleCloseButton(btn: ButtonInteraction): Promise<void> {
     logger.error('Ticket-Close-Fehler', e as Error);
     await btn.editReply({ content: 'Konnte Ticket nicht schliessen. Bitte Admin informieren.' }).catch(() => {});
   }
+}
+
+/**
+ * Add-User-Button: oeffnet ein Modal zur Eingabe einer Discord-User-ID.
+ * Berechtigt: Server-Owner, Staff-Rolle, Manager-Rollen (analog Close-Permission).
+ */
+export async function handleAddUserButton(btn: ButtonInteraction): Promise<void> {
+  const instanceId = btn.customId.split(':')[2];
+  if (!instanceId) {
+    await btn.reply({ content: 'Ungueltige Button-ID.', ephemeral: true });
+    return;
+  }
+  const instance = await prisma.ticketInstance.findUnique({
+    where: { id: instanceId },
+    include: { template: true },
+  });
+  if (!instance || instance.status !== 'OPEN') {
+    await btn.reply({ content: 'Ticket nicht (mehr) offen.', ephemeral: true });
+    return;
+  }
+  if (!btn.guild) {
+    await btn.reply({ content: 'Nur in Servern verfuegbar.', ephemeral: true });
+    return;
+  }
+
+  // Permission-Check: nur Owner / Staff / Manager
+  const allowed = await canManageTicket(btn, instance);
+  if (!allowed) {
+    await btn.reply({
+      content: 'Du hast keine Berechtigung, Nutzer zu diesem Ticket hinzuzufuegen.',
+      ephemeral: true,
+    });
+    return;
+  }
+
+  const modal = new ModalBuilder()
+    .setCustomId(`ttkt:adduser:${instanceId}`)
+    .setTitle('Nutzer zu Ticket hinzufuegen');
+
+  const input = new TextInputBuilder()
+    .setCustomId('userId')
+    .setLabel('Discord-User-ID (17-20 Stellen)')
+    .setPlaceholder('z. B. 123456789012345678')
+    .setStyle(TextInputStyle.Short)
+    .setMinLength(17)
+    .setMaxLength(20)
+    .setRequired(true);
+
+  modal.addComponents(new ActionRowBuilder<TextInputBuilder>().addComponents(input));
+  await btn.showModal(modal);
+}
+
+/**
+ * Add-User-Modal-Submit: validiert User, prueft Mitgliedschaft, gewaehrt Channel-Zugriff.
+ */
+export async function handleAddUserModal(modal: ModalSubmitInteraction): Promise<void> {
+  const instanceId = modal.customId.split(':')[2];
+  if (!instanceId || !modal.guild) {
+    await modal.reply({ content: 'Ungueltige Modal-ID.', ephemeral: true });
+    return;
+  }
+  const instance = await prisma.ticketInstance.findUnique({
+    where: { id: instanceId },
+    include: { template: true },
+  });
+  if (!instance || instance.status !== 'OPEN') {
+    await modal.reply({ content: 'Ticket nicht (mehr) offen.', ephemeral: true });
+    return;
+  }
+
+  // Re-Check Berechtigung (User koennte zwischenzeitlich Rolle verloren haben).
+  const member = await modal.guild.members.fetch(modal.user.id).catch(() => null);
+  const canAdd = canManageTicketForMember(member, instance);
+  if (!canAdd) {
+    await modal.reply({ content: 'Du hast keine Berechtigung mehr.', ephemeral: true });
+    return;
+  }
+
+  const userId = (modal.fields.getTextInputValue('userId') || '').trim();
+  if (!/^\d{17,20}$/.test(userId)) {
+    await modal.reply({ content: 'Ungueltige User-ID.', ephemeral: true });
+    return;
+  }
+
+  await modal.deferReply({ ephemeral: true });
+
+  // Target-User existiert?
+  const target = await modal.guild.members.fetch(userId).catch(() => null);
+  if (!target) {
+    await modal.editReply({ content: 'Nutzer ist kein Mitglied dieses Servers.' });
+    return;
+  }
+
+  const channel = await modal.client.channels.fetch(instance.channelId).catch(() => null);
+  if (!channel || !channel.isTextBased() || channel.isDMBased()) {
+    await modal.editReply({ content: 'Ticket-Channel nicht verfuegbar.' });
+    return;
+  }
+  const ch = channel as TextChannel;
+
+  try {
+    await ch.permissionOverwrites.edit(target.id, {
+      ViewChannel: true,
+      SendMessages: true,
+      ReadMessageHistory: true,
+      AttachFiles: true,
+    });
+    await ch.send({
+      content: `\u2795 <@${target.id}> wurde von <@${modal.user.id}> zum Ticket hinzugefuegt.`,
+      allowedMentions: { users: [target.id] },
+    });
+    logAudit('TICKET_USER_ADDED', 'TICKET', {
+      guildId: instance.guildId,
+      instanceId: instance.id,
+      addedBy: modal.user.id,
+      addedUser: target.id,
+    });
+    await modal.editReply({ content: `Nutzer <@${target.id}> hinzugefuegt.` });
+  } catch (e) {
+    logger.error('Ticket-AddUser-Fehler', e as Error);
+    await modal.editReply({ content: 'Konnte Nutzer nicht hinzufuegen.' });
+  }
+}
+
+/**
+ * Berechtigungs-Helper: prueft frisch gegen DB+Member-Cache.
+ * Owner / Staff-Rolle / Manager-Rolle duerfen das Ticket verwalten.
+ */
+type TicketWithTemplate = Awaited<ReturnType<typeof prisma.ticketInstance.findUnique>> & {
+  template: { staffRoleId: string | null; managerRoleIds?: unknown };
+};
+
+async function canManageTicket(btn: ButtonInteraction, instance: TicketWithTemplate | null): Promise<boolean> {
+  if (!instance || !btn.guild) return false;
+  if (btn.user.id === btn.guild.ownerId) return true;
+  const m = await btn.guild.members.fetch(btn.user.id).catch(() => null);
+  return canManageTicketForMember(m, instance);
+}
+
+function canManageTicketForMember(member: { roles: { cache: { has: (id: string) => boolean } } } | null, instance: TicketWithTemplate | null): boolean {
+  if (!instance || !member) return false;
+  if (instance.template.staffRoleId && member.roles.cache.has(instance.template.staffRoleId)) return true;
+  const managerRoleIds = (instance.template as unknown as { managerRoleIds?: unknown }).managerRoleIds;
+  if (Array.isArray(managerRoleIds)) {
+    for (const rid of managerRoleIds) {
+      if (typeof rid === 'string' && member.roles.cache.has(rid)) return true;
+    }
+  }
+  return false;
 }

@@ -148,6 +148,15 @@ const interactionCreateEvent: BotEvent = {
         }
         return;
       }
+      if (modal.customId.startsWith('ttkt:adduser:')) {
+        try {
+          const { handleAddUserModal } = await import('../modules/tickets/ticketSystem.js');
+          await handleAddUserModal(modal);
+        } catch (e) {
+          logger.error('Ticket-AddUser-Modal-Handler-Fehler:', e as Error);
+        }
+        return;
+      }
     }
 
     // Button-Interaktionen verarbeiten (Approve/Deny Hersteller)
@@ -184,6 +193,15 @@ const interactionCreateEvent: BotEvent = {
           await handleCloseButton(btn);
         } catch (e) {
           logger.error('Ticket-Close-Button-Handler-Fehler:', e as Error);
+        }
+        return;
+      }
+      if (btn.customId.startsWith('ttkt:adduser:')) {
+        try {
+          const { handleAddUserButton } = await import('../modules/tickets/ticketSystem.js');
+          await handleAddUserButton(btn);
+        } catch (e) {
+          logger.error('Ticket-AddUser-Button-Handler-Fehler:', e as Error);
         }
         return;
       }
