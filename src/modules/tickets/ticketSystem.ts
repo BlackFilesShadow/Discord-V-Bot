@@ -45,7 +45,9 @@ const MAX_TRANSCRIPT_BYTES = 8 * 1024 * 1024; // 8 MB Markdown-Transcript-Limit 
 /**
  * Formatiert ein Datum konsistent als `YYYY-MM-DD HH:mm:ss` in Europe/Berlin (CET/CEST)
  * mit zusätzlicher UTC-ISO-Angabe in Klammern. Verhindert Verwirrung bei TZ-Drift.
+ * (Aktuell ungenutzt — bleibt fuer Audit/Debug-Zwecke verfuegbar.)
  */
+// eslint-disable-next-line @typescript-eslint/no-unused-vars
 function formatBerlin(d: Date): string {
   const parts = new Intl.DateTimeFormat('de-DE', {
     timeZone: 'Europe/Berlin',
