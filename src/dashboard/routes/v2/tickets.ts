@@ -457,3 +457,58 @@ ticketsRouter.post('/:id/reset-counter', requireGuildOwner, async (req, res) => 
   emitGuildEvent(scope.guildId, { type: 'tickets.changed', payload: { guildId: scope.guildId, templateId: id } });
   res.json(serialize(updated));
 });
+
+// --- Ticket-User-Management ---
+ticketsRouter.post('/instances/:instanceId/users', requireGuildPermission('tickets.manage'), async (req, res) => {
+  const instanceIdRaw = req.params.instanceId;
+  if (!instanceIdRaw || Array.isArray(instanceIdRaw)) {
+    return res.status(400).json({ error: 'Ungültige instanceId' });
+  }
+  const instanceId = instanceIdRaw;
+  const userId = req.body?.userId;
+  if (!userId || typeof userId !== 'string') {
+    return res.status(400).json({ error: 'userId (string) erforderlich' });
+  }
+  try {
+    const ticket = await prisma.ticketInstance.findUnique({ where: { id: instanceId } });
+    if (!ticket) return res.status(404).json({ error: 'Ticket-Instanz nicht gefunden' });
+    if (ticket.userIds.includes(userId)) {
+      return res.status(409).json({ error: 'User bereits hinzugefügt' });
+    }
+    const updated = await prisma.ticketInstance.update({
+      where: { id: instanceId },
+      data: { userIds: { set: [...ticket.userIds, userId] } },
+    });
+    return res.json({ success: true, userIds: updated.userIds });
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    return res.status(500).json({ error: 'Interner Fehler', details: message });
+  }
+});
+
+ticketsRouter.delete('/instances/:instanceId/users', requireGuildPermission('tickets.manage'), async (req, res) => {
+  const instanceIdRaw = req.params.instanceId;
+  if (!instanceIdRaw || Array.isArray(instanceIdRaw)) {
+    return res.status(400).json({ error: 'Ungültige instanceId' });
+  }
+  const instanceId = instanceIdRaw;
+  const userId = req.body?.userId;
+  if (!userId || typeof userId !== 'string') {
+    return res.status(400).json({ error: 'userId (string) erforderlich' });
+  }
+  try {
+    const ticket = await prisma.ticketInstance.findUnique({ where: { id: instanceId } });
+    if (!ticket) return res.status(404).json({ error: 'Ticket-Instanz nicht gefunden' });
+    if (!ticket.userIds.includes(userId)) {
+      return res.status(404).json({ error: 'User nicht in Ticket' });
+    }
+    const updated = await prisma.ticketInstance.update({
+      where: { id: instanceId },
+      data: { userIds: { set: ticket.userIds.filter((id) => id !== userId) } },
+    });
+    return res.json({ success: true, userIds: updated.userIds });
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    return res.status(500).json({ error: 'Interner Fehler', details: message });
+  }
+});

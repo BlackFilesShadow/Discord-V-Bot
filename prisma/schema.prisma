@@ -1131,6 +1131,7 @@ model TicketInstance {
   closedAt            DateTime?
   closedBy            String?
   transcriptMessageId String?
+  userIds          String[]        @default([])
 
   @@index([guildId, status])
   @@index([templateId])
