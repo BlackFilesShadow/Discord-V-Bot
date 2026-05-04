@@ -21,14 +21,12 @@ import {
   EmbedBuilder,
   PermissionFlagsBits,
   AttachmentBuilder,
-  ModalBuilder,
-  TextInputBuilder,
-  TextInputStyle,
+  UserSelectMenuBuilder,
   type ButtonInteraction,
   type Client,
   type GuildTextBasedChannel,
-  type ModalSubmitInteraction,
   type TextChannel,
+  type UserSelectMenuInteraction,
 } from 'discord.js';
 import prisma from '../../database/prisma';
 import { logger, logAudit } from '../../utils/logger';
@@ -777,7 +775,8 @@ async function closeTicketLocked(btn: ButtonInteraction, instanceId: string): Pr
 }
 
 /**
- * Add-User-Button: oeffnet ein Modal zur Eingabe einer Discord-User-ID.
+ * Add-User-Button: zeigt einem berechtigten Staff-Mitglied ein ephemeres
+ * Discord-User-Select-Menu zur Auswahl des hinzuzufuegenden Nutzers.
  * Berechtigt: Server-Owner, Staff-Rolle, Manager-Rollen (analog Close-Permission).
  */
 export async function handleAddUserButton(btn: ButtonInteraction): Promise<void> {
@@ -799,7 +798,8 @@ export async function handleAddUserButton(btn: ButtonInteraction): Promise<void>
     return;
   }
 
-  // Permission-Check: nur Owner / Staff / Manager
+  // Permission-Check: nur Owner / Staff / Manager (verhindert dass normale
+  // User mit Channel-Zugriff via Button andere Mitglieder hinzufuegen koennen).
   const allowed = await canManageTicket(btn, instance);
   if (!allowed) {
     await btn.reply({
@@ -809,30 +809,27 @@ export async function handleAddUserButton(btn: ButtonInteraction): Promise<void>
     return;
   }
 
-  const modal = new ModalBuilder()
+  const select = new UserSelectMenuBuilder()
     .setCustomId(`ttkt:adduser:${instanceId}`)
-    .setTitle('Nutzer zu Ticket hinzufuegen');
+    .setPlaceholder('Nutzer auswaehlen...')
+    .setMinValues(1)
+    .setMaxValues(1);
 
-  const input = new TextInputBuilder()
-    .setCustomId('userId')
-    .setLabel('Discord-User-ID (17-20 Stellen)')
-    .setPlaceholder('z. B. 123456789012345678')
-    .setStyle(TextInputStyle.Short)
-    .setMinLength(17)
-    .setMaxLength(20)
-    .setRequired(true);
-
-  modal.addComponents(new ActionRowBuilder<TextInputBuilder>().addComponents(input));
-  await btn.showModal(modal);
+  await btn.reply({
+    content: 'Waehle den Nutzer aus, der zu diesem Ticket hinzugefuegt werden soll:',
+    components: [new ActionRowBuilder<UserSelectMenuBuilder>().addComponents(select)],
+    ephemeral: true,
+  });
 }
 
 /**
- * Add-User-Modal-Submit: validiert User, prueft Mitgliedschaft, gewaehrt Channel-Zugriff.
+ * Add-User-Select-Submit: validiert, prueft Mitgliedschaft, gewaehrt Channel-Zugriff
+ * und persistiert den Nutzer in `TicketInstance.userIds`.
  */
-export async function handleAddUserModal(modal: ModalSubmitInteraction): Promise<void> {
-  const instanceId = modal.customId.split(':')[2];
-  if (!instanceId || !modal.guild) {
-    await modal.reply({ content: 'Ungueltige Modal-ID.', ephemeral: true });
+export async function handleAddUserSelect(select: UserSelectMenuInteraction): Promise<void> {
+  const instanceId = select.customId.split(':')[2];
+  if (!instanceId || !select.guild) {
+    await select.reply({ content: 'Ungueltige Select-ID.', ephemeral: true });
     return;
   }
   const instance = await prisma.ticketInstance.findUnique({
@@ -840,43 +837,47 @@ export async function handleAddUserModal(modal: ModalSubmitInteraction): Promise
     include: { template: true },
   });
   if (!instance || instance.status !== 'OPEN') {
-    await modal.reply({ content: 'Ticket nicht (mehr) offen.', ephemeral: true });
+    await select.reply({ content: 'Ticket nicht (mehr) offen.', ephemeral: true });
     return;
   }
 
   // Re-Check Berechtigung (User koennte zwischenzeitlich Rolle verloren haben).
-  const member = await modal.guild.members.fetch(modal.user.id).catch(() => null);
+  const member = await select.guild.members.fetch(select.user.id).catch(() => null);
   const canAdd = canManageTicketForMember(member, instance);
   if (!canAdd) {
-    await modal.reply({ content: 'Du hast keine Berechtigung mehr.', ephemeral: true });
+    await select.reply({ content: 'Du hast keine Berechtigung mehr.', ephemeral: true });
     return;
   }
 
-  const userId = (modal.fields.getTextInputValue('userId') || '').trim();
-  if (!/^\d{17,20}$/.test(userId)) {
-    await modal.reply({ content: 'Ungueltige User-ID.', ephemeral: true });
+  const targetId = select.values[0];
+  if (!targetId || !/^\d{17,20}$/.test(targetId)) {
+    await select.reply({ content: 'Kein gueltiger Nutzer ausgewaehlt.', ephemeral: true });
     return;
   }
 
-  await modal.deferReply({ ephemeral: true });
+  await select.deferReply({ ephemeral: true });
 
-  // Target-User existiert?
-  const target = await modal.guild.members.fetch(userId).catch(() => null);
+  // Target-User existiert in dieser Guild?
+  const target = await select.guild.members.fetch(targetId).catch(() => null);
   if (!target) {
-    await modal.editReply({ content: 'Nutzer ist kein Mitglied dieses Servers.' });
+    await select.editReply({ content: 'Nutzer ist kein Mitglied dieses Servers.' });
+    return;
+  }
+  if (target.user.bot) {
+    await select.editReply({ content: 'Bots koennen nicht hinzugefuegt werden.' });
     return;
   }
 
-  // Duplicate-Check (DB ist die Source-of-Truth, nicht der Channel-Overwrite).
+  // Duplicate-Check (DB ist die Source-of-Truth).
   const existingUserIds = (instance as unknown as { userIds?: string[] }).userIds ?? [];
-  if (existingUserIds.includes(target.id)) {
-    await modal.editReply({ content: 'Nutzer ist bereits im Ticket hinzugefuegt.' });
+  if (existingUserIds.includes(target.id) || target.id === instance.openerDiscordId) {
+    await select.editReply({ content: 'Nutzer ist bereits im Ticket hinzugefuegt.' });
     return;
   }
 
-  const channel = await modal.client.channels.fetch(instance.channelId).catch(() => null);
+  const channel = await select.client.channels.fetch(instance.channelId).catch(() => null);
   if (!channel || !channel.isTextBased() || channel.isDMBased()) {
-    await modal.editReply({ content: 'Ticket-Channel nicht verfuegbar.' });
+    await select.editReply({ content: 'Ticket-Channel nicht verfuegbar.' });
     return;
   }
   const ch = channel as TextChannel;
@@ -894,19 +895,19 @@ export async function handleAddUserModal(modal: ModalSubmitInteraction): Promise
       data: { userIds: { set: [...existingUserIds, target.id] } },
     });
     await ch.send({
-      content: `\u2795 <@${target.id}> wurde von <@${modal.user.id}> zum Ticket hinzugefuegt.`,
+      content: `\u2795 <@${target.id}> wurde von <@${select.user.id}> zum Ticket hinzugefuegt.`,
       allowedMentions: { users: [target.id] },
     });
     logAudit('TICKET_USER_ADDED', 'TICKET', {
       guildId: instance.guildId,
       instanceId: instance.id,
-      addedBy: modal.user.id,
+      addedBy: select.user.id,
       addedUser: target.id,
     });
-    await modal.editReply({ content: `Nutzer <@${target.id}> hinzugefuegt.` });
+    await select.editReply({ content: `Nutzer <@${target.id}> hinzugefuegt.` });
   } catch (e) {
     logger.error('Ticket-AddUser-Fehler', e as Error);
-    await modal.editReply({ content: 'Konnte Nutzer nicht hinzufuegen.' });
+    await select.editReply({ content: 'Konnte Nutzer nicht hinzufuegen.' });
   }
 }
 

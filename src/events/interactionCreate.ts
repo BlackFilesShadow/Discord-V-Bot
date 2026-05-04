@@ -149,11 +149,24 @@ const interactionCreateEvent: BotEvent = {
         return;
       }
       if (modal.customId.startsWith('ttkt:adduser:')) {
+        // Backward-Compat-Stub: alter Modal-Flow wurde durch UserSelectMenu ersetzt.
+        // Falls eine Legacy-Submission eintrifft, freundlich aufloesen.
         try {
-          const { handleAddUserModal } = await import('../modules/tickets/ticketSystem.js');
-          await handleAddUserModal(modal);
+          await modal.reply({ content: 'Bitte den Button erneut klicken — das Add-User-Modal wurde durch ein Auswahlmenu ersetzt.', ephemeral: true });
+        } catch { /* ignore */ }
+        return;
+      }
+    }
+
+    // User-Select-Menu: Ticket-AddUser-Flow.
+    if ('isUserSelectMenu' in i && (i as { isUserSelectMenu: () => boolean }).isUserSelectMenu()) {
+      const sel = i as import('discord.js').UserSelectMenuInteraction;
+      if (sel.customId.startsWith('ttkt:adduser:')) {
+        try {
+          const { handleAddUserSelect } = await import('../modules/tickets/ticketSystem.js');
+          await handleAddUserSelect(sel);
         } catch (e) {
-          logger.error('Ticket-AddUser-Modal-Handler-Fehler:', e as Error);
+          logger.error('Ticket-AddUser-Select-Handler-Fehler:', e as Error);
         }
         return;
       }
