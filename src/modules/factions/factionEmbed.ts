@@ -235,11 +235,14 @@ export async function postFactionEmbed(client: Client, factionId: string): Promi
     const { files, names } = await buildAttachments(f);
     const embed = buildEmbed(f, names, tch.guild.name);
 
-    // Wenn eine Fraktionsrolle gesetzt ist, soll sie beim (Re-)Post auch gepingt
-    // werden — sonst sehen Mitglieder die Aenderung nicht. Sicherer Weg: Role-Mention
-    // im Message-Content + explizit erlauben via allowedMentions.roles.
-    const messageContent: string = f.roleId ? `<@&${f.roleId}>` : '';
-    const allowedMentions = f.roleId
+    // Initial-Ping nur EINMAL pro Faction: Beim allerersten Embed-Post (oder wenn
+    // die alte Message verloren ging und neu gesendet wird) wird die Fraktionsrolle
+    // gepingt — Mitglieder sollen die Eroeffnung mitbekommen. Bei normalen Edits
+    // (Status-Update, Member-Add, Banner-Wechsel etc.) wird der Mention bewusst
+    // NICHT erneut gesendet, sonst entsteht Push-Spam.
+    const isInitialSend = !f.embedMessageId;
+    const initialContent: string = (isInitialSend && f.roleId) ? `<@&${f.roleId}>` : '';
+    const initialAllowedMentions = (isInitialSend && f.roleId)
       ? { parse: [] as never[], roles: [f.roleId] }
       : { parse: [] as never[] };
 
@@ -248,13 +251,14 @@ export async function postFactionEmbed(client: Client, factionId: string): Promi
     if (messageId) {
       try {
         const existing = await tch.messages.fetch(messageId);
+        // Edit: KEIN Re-Ping. Content leeren, AllowedMentions strikt zu.
         await existing.edit({
-          content: messageContent,
+          content: '',
           embeds: [embed],
           components: [],
           files,
           attachments: [],
-          allowedMentions,
+          allowedMentions: { parse: [] },
         });
         updated = true;
       } catch {
@@ -263,10 +267,10 @@ export async function postFactionEmbed(client: Client, factionId: string): Promi
     }
     if (!messageId) {
       const sent = await tch.send({
-        content: messageContent,
+        content: initialContent,
         embeds: [embed],
         files,
-        allowedMentions,
+        allowedMentions: initialAllowedMentions,
       });
       messageId = sent.id;
     }

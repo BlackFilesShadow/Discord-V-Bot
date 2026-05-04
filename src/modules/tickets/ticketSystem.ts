@@ -288,8 +288,9 @@ function buildTranscriptHtml(meta: TranscriptMeta, msgs: CollectedMessage[]): st
       ${atts}
     </div>`;
   }).join('\n');
-  const reasonRow = meta.closeReason
+  const reasonInner = meta.closeReason
     ? `<div><span class="k">Grund</span><span class="v">${htmlEscape(meta.closeReason)}</span></div>` : '';
+  const reasonRow = `<!--reason-->${reasonInner}<!--/reason-->`;
   const claimRow = meta.claimedByName
     ? `<div><span class="k">Übernommen</span><span class="v">${htmlEscape(meta.claimedByName)}</span></div>` : '';
   return `<!doctype html>
@@ -357,18 +358,25 @@ function buildClosedEmbed(args: {
   embedColor: string;
 }): EmbedBuilder {
   const m = args.meta;
+  const isSnowflake = (id: string) => /^\d{17,20}$/.test(id);
+  const openerLine = isSnowflake(args.openerDiscordId)
+    ? `${m.openedByName}\n<@${args.openerDiscordId}>`
+    : m.openedByName;
+  const closerLine = isSnowflake(args.closedByDiscordId)
+    ? `${m.closedByName}\n<@${args.closedByDiscordId}>`
+    : m.closedByName;
   const e = new EmbedBuilder()
     .setColor(parseColor(args.embedColor || '#dc2626'))
     .setAuthor({ name: 'V-BOT  •  TICKET GESCHLOSSEN' })
     .setTitle(`🔒  Ticket #${args.ticketNumber} · ${args.ticketLabel}`)
     .addFields(
-      { name: '👤  Eröffnet von',  value: `${m.openedByName}\n<@${args.openerDiscordId}>`, inline: true },
-      { name: '🛠️  Geschlossen von', value: `${m.closedByName}\n<@${args.closedByDiscordId}>`, inline: true },
+      { name: '👤  Eröffnet von',  value: openerLine, inline: true },
+      { name: '🛠️  Geschlossen von', value: closerLine, inline: true },
       { name: '\u200B', value: '\u200B', inline: true },
       { name: '🕒  Eröffnet',      value: formatBerlinShort(m.openedAt),  inline: true },
       { name: '🕒  Geschlossen',   value: formatBerlinShort(m.closedAt), inline: true },
       { name: '💬  Nachrichten',   value: String(m.totalMessages),         inline: true },
-      { name: '🤝  Übernommen',    value: m.claimedByName ?? '_nicht übernommen_', inline: true },
+      { name: '🤝  Übernommen',    value: m.claimedByName ?? '_nicht übernommen_', inline: false },
       { name: '📝  Grund',         value: m.closeReason ?? '_kein Grund angegeben_', inline: false },
     )
     .setFooter({ text: 'High-End Support  •  Klicke unten für das vollständige Web-Transcript' });
@@ -499,47 +507,108 @@ export async function purgeTemplateInstances(client: Client, templateId: string)
   for (const inst of instances) {
     try {
       const ch = await client.channels.fetch(inst.channelId).catch(() => null);
+      const closedAt = new Date();
+      const numStr = String((inst as unknown as { templateNumber?: number | null }).templateNumber
+        ?? inst.ticketNumber ?? 0).padStart(2, '0');
+
+      let collectedMsgs: CollectedMessage[] = [];
+      let truncated = false;
+      let channelName = `ticket-${safeLabel}`;
+      let guildName = 'Server';
+
       if (ch && !ch.isDMBased() && ch.isTextBased()) {
         const tch = ch as TextChannel;
-        // G10: Transcript bauen.
+        channelName = tch.name;
+        guildName = tch.guild?.name ?? 'Server';
+        // Vollstaendige History bis TRANSCRIPT_MAX_MSGS sammeln (nicht nur 100).
         const fetched = await tch.messages.fetch({ limit: 100 }).catch(() => null);
         const collected = fetched ? Array.from(fetched.values()).reverse() : [];
-        const lines: string[] = [
-          `# Ticket-Transcript ${template.label} (System-Close: Template geloescht)`,
-          ``,
-          `- **Channel:** #${tch.name} (\`${tch.id}\`)`,
-          `- **Eroeffnet:** ${formatBerlin(inst.openedAt)} von ${inst.openerName} (\`${inst.openerDiscordId}\`)`,
-          `- **Geschlossen:** ${formatBerlin(new Date())} (System: Template geloescht)`,
-          `- **Nachrichten:** ${collected.length}`,
-          ``, `---`, ``,
-        ];
-        for (const m of collected) {
-          const author = m.author?.bot ? `[BOT] ${m.author.username}` : (m.author?.username ?? 'unknown');
-          const content = m.content?.length > 0 ? m.content : (m.embeds.length > 0 ? '*[Embed]*' : '*[no text]*');
-          lines.push(`**${author}** · \`${formatBerlin(m.createdAt)}\``, '', content, '');
+        let lastId = collected[0]?.id;
+        while (collected.length < TRANSCRIPT_MAX_MSGS && lastId) {
+          const more = await tch.messages.fetch({ before: lastId, limit: 100 }).catch(() => null);
+          if (!more || more.size === 0) break;
+          const arr = Array.from(more.values()).reverse();
+          collected.unshift(...arr);
+          lastId = arr[0]?.id;
         }
-        const transcript = lines.join('\n');
-        const fileName = `ticket-${safeLabel}-${inst.id.slice(0, 8)}.md`;
-
-        const targets = new Set<string>();
-        targets.add(template.transcriptChannelId);
-        if (template.archiveChannelId) targets.add(template.archiveChannelId);
-        for (const targetId of targets) {
-          const tgt = await client.channels.fetch(targetId).catch(() => null);
-          if (tgt && tgt.isTextBased() && !tgt.isDMBased()) {
-            await (tgt as TextChannel).send({
-              content: `🗄️ System-Close (Template geloescht): Ticket **${template.label}** von <@${inst.openerDiscordId}>`,
-              files: [new AttachmentBuilder(Buffer.from(transcript, 'utf8'), { name: fileName })],
-              allowedMentions: { parse: [] },
-            }).catch(() => {});
-          }
+        if (collected.length >= TRANSCRIPT_MAX_MSGS && lastId) {
+          const probe = await tch.messages.fetch({ before: lastId, limit: 1 }).catch(() => null);
+          if (probe && probe.size > 0) truncated = true;
         }
-
-        await tch.delete('Ticket-Template geloescht').catch(() => {});
+        collectedMsgs = collected.map(collectMessage);
       }
+
+      const meta: TranscriptMeta = {
+        ticketLabel: template.label,
+        ticketNumber: numStr,
+        channelName,
+        guildName,
+        openedAt: inst.openedAt,
+        openedByName: inst.openerName,
+        closedAt,
+        closedByName: 'System (Template gelöscht)',
+        claimedByName: null,
+        closeReason: 'System-Close: Ticket-Template wurde gelöscht.',
+        truncated,
+        totalMessages: collectedMsgs.length,
+      };
+      const transcriptMd = buildTranscriptMarkdown(meta, collectedMsgs);
+      const transcriptHtml = buildTranscriptHtml(meta, collectedMsgs);
+
+      let transcriptBuf = Buffer.from(transcriptMd, 'utf8');
+      if (transcriptBuf.length > MAX_TRANSCRIPT_BYTES) {
+        transcriptBuf = transcriptBuf.subarray(0, MAX_TRANSCRIPT_BYTES);
+      }
+      const fileName = `ticket-${numStr}-${safeLabel}.md`;
+
+      const closedEmbed = buildClosedEmbed({
+        meta,
+        ticketLabel: template.label,
+        ticketNumber: numStr,
+        openerDiscordId: inst.openerDiscordId,
+        closedByDiscordId: SYSTEM_CLOSER,
+        embedColor: template.embedColor,
+      });
+      const closedButtons = buildClosedButtons(inst.id);
+
+      let transcriptMessageId: string | null = null;
+      const targets = new Set<string>();
+      targets.add(template.transcriptChannelId);
+      if (template.archiveChannelId) targets.add(template.archiveChannelId);
+      for (const targetId of targets) {
+        const tgt = await client.channels.fetch(targetId).catch(() => null);
+        if (tgt && tgt.isTextBased() && !tgt.isDMBased()) {
+          const sent = await (tgt as TextChannel).send({
+            embeds: [closedEmbed],
+            components: [closedButtons],
+            files: [new AttachmentBuilder(transcriptBuf, { name: fileName })],
+            allowedMentions: { parse: [] },
+          }).catch(() => null);
+          if (sent && transcriptMessageId === null) transcriptMessageId = sent.id;
+        }
+      }
+
+      if (ch && !ch.isDMBased() && ch.isTextBased()) {
+        await (ch as TextChannel).delete('Ticket-Template geloescht').catch(() => {});
+      }
+
       await prisma.ticketInstance.update({
         where: { id: inst.id },
-        data: { status: 'CLOSED', closedAt: new Date(), closedBy: SYSTEM_CLOSER },
+        data: {
+          status: 'CLOSED',
+          closedAt,
+          closedBy: SYSTEM_CLOSER,
+          closedByName: meta.closedByName,
+          closeReason: meta.closeReason,
+          transcriptMessageId,
+          transcriptText: transcriptMd,
+          transcriptHtml,
+          transcriptCreatedAt: closedAt,
+        },
+      });
+      logAudit('TICKET_CLOSED_SYSTEM', 'TICKET', {
+        guildId: inst.guildId, instanceId: inst.id, templateId,
+        messages: collectedMsgs.length,
       });
       closed++;
     } catch (e) {
@@ -1271,25 +1340,82 @@ export async function handleCloseReasonModal(modal: ModalSubmitInteraction): Pro
   const raw = modal.fields.getTextInputValue('reason').trim();
   const next: string | null = raw.length === 0 ? null : raw.slice(0, 500);
 
+  // Persistiertes HTML in-place patchen, damit /transcripts/<id> sofort aktuell ist.
+  // Marker: <!--reason--> ... <!--/reason--> wird vom HTML-Builder eingebettet.
+  const instAny = inst as unknown as { transcriptHtml?: string | null };
+  let nextHtml: string | null | undefined = undefined;
+  if (typeof instAny.transcriptHtml === 'string') {
+    const block = next === null ? ''
+      : `<div><span class="k">Grund</span><span class="v">${htmlEscape(next)}</span></div>`;
+    if (instAny.transcriptHtml.includes('<!--reason-->')) {
+      nextHtml = instAny.transcriptHtml.replace(
+        /<!--reason-->[\s\S]*?<!--\/reason-->/,
+        `<!--reason-->${block}<!--/reason-->`,
+      );
+    }
+  }
+
   await prisma.ticketInstance.update({
     where: { id: inst.id },
-    data: { closeReason: next },
+    data: {
+      closeReason: next,
+      ...(nextHtml !== undefined ? { transcriptHtml: nextHtml } : {}),
+    },
   });
 
+  // Embed im Transcript-Channel komplett neu rendern (sicherer als Field-Index-Patch).
   const tmId = (inst as unknown as { transcriptMessageId?: string | null }).transcriptMessageId;
+  let embedPatched = false;
   if (tmId) {
     try {
       const ch = await modal.client.channels.fetch(inst.template.transcriptChannelId).catch(() => null);
       if (ch && ch.isTextBased() && !ch.isDMBased()) {
         const msg = await (ch as TextChannel).messages.fetch(tmId).catch(() => null);
         if (msg && msg.embeds[0]) {
-          const e = EmbedBuilder.from(msg.embeds[0]);
-          const fields = e.data.fields ? [...e.data.fields] : [];
-          const idx = fields.findIndex(f => f.name?.includes('Grund'));
-          const newField = { name: '📝  Grund', value: next ?? '_kein Grund angegeben_', inline: false };
-          if (idx >= 0) fields[idx] = newField; else fields.push(newField);
-          e.setFields(fields);
-          await msg.edit({ embeds: [e] }).catch(() => {});
+          // Frische Daten ziehen (closedByName, claimedByName, openedAt usw.)
+          const fresh = await prisma.ticketInstance.findUnique({
+            where: { id: inst.id },
+            include: { template: true },
+          });
+          if (fresh) {
+            const fAny = fresh as unknown as {
+              templateNumber?: number | null; ticketNumber?: number;
+              closedByName?: string | null; claimedByName?: string | null;
+              closeReason?: string | null;
+            };
+            const numStr = String(fAny.templateNumber ?? fAny.ticketNumber ?? 0).padStart(2, '0');
+            const meta: TranscriptMeta = {
+              ticketLabel: fresh.template.label,
+              ticketNumber: numStr,
+              channelName: msg.embeds[0].title?.replace(/^.*·\s*/, '') ?? fresh.template.label,
+              guildName: modal.guild.name,
+              openedAt: fresh.openedAt,
+              openedByName: fresh.openerName,
+              closedAt: fresh.closedAt ?? new Date(),
+              closedByName: fAny.closedByName ?? 'Unbekannt',
+              claimedByName: fAny.claimedByName ?? null,
+              closeReason: fAny.closeReason ?? null,
+              truncated: false,
+              totalMessages: 0,
+            };
+            // totalMessages aus altem Embed retten (Field "Nachrichten").
+            const oldFields = msg.embeds[0].fields ?? [];
+            const msgsField = oldFields.find(f => f.name?.includes('Nachrichten'));
+            if (msgsField) {
+              const n = parseInt(msgsField.value || '0', 10);
+              if (Number.isFinite(n)) meta.totalMessages = n;
+            }
+            const newEmbed = buildClosedEmbed({
+              meta,
+              ticketLabel: fresh.template.label,
+              ticketNumber: numStr,
+              openerDiscordId: fresh.openerDiscordId,
+              closedByDiscordId: fresh.closedBy ?? SYSTEM_CLOSER,
+              embedColor: fresh.template.embedColor,
+            });
+            await msg.edit({ embeds: [newEmbed] }).catch(() => {});
+            embedPatched = true;
+          }
         }
       }
     } catch (err) {
@@ -1299,8 +1425,13 @@ export async function handleCloseReasonModal(modal: ModalSubmitInteraction): Pro
 
   logAudit('TICKET_REASON_EDITED', 'TICKET', {
     guildId: inst.guildId, instanceId: inst.id, byUser: modal.user.id,
-    cleared: next === null,
+    cleared: next === null, embedPatched,
   });
 
-  await modal.reply({ content: next === null ? 'Grund entfernt.' : 'Grund aktualisiert.', ephemeral: true });
+  await modal.reply({
+    content: next === null
+      ? `Grund entfernt.${embedPatched ? '' : ' (Embed konnte nicht aktualisiert werden.)'}`
+      : `Grund aktualisiert.${embedPatched ? '' : ' (Embed konnte nicht aktualisiert werden.)'}`,
+    ephemeral: true,
+  });
 }
