@@ -139,7 +139,7 @@ export const leaveCommand: Command = {
     });
     if (!member) { await reply(i, 'Du bist in keiner Fraktion.'); return; }
     await prisma.factionMember.deleteMany({
-      where: { id: member.id, faction: { guildId: scope.guildId, nitradoConnId: scope.nitradoConnId! } },
+      where: { id: member.id, faction: { guildId: scope.guildId } },
     });
     // Discord-Rolle entfernen, falls die Fraktion eine zugewiesene Rolle hat.
     if (member.faction.roleId && i.client) {

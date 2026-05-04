@@ -182,19 +182,6 @@ function validateBody(b: FactionBody, partial: boolean): { ok: true; data: Recor
   return { ok: true, data };
 }
 
-async function activeSlotId(guildId: string, slotParam: unknown): Promise<string | null> {
-  if (typeof slotParam === 'string' && /^[1-5]$/.test(slotParam)) {
-    const c = await prisma.nitradoConnection.findUnique({
-      where: { guildId_slot: { guildId, slot: Number(slotParam) } }, select: { id: true },
-    });
-    return c?.id ?? null;
-  }
-  const c = await prisma.nitradoConnection.findFirst({
-    where: { guildId, status: 'ACTIVE' }, orderBy: { slot: 'asc' }, select: { id: true },
-  });
-  return c?.id ?? null;
-}
-
 async function ensureChannelInGuild(channelId: string, guildId: string): Promise<string | null> {
   const client = tryGetDashboardClient();
   if (!client) return null; // kein Bot-Client (z.B. Tests) -> ueberspringen
@@ -298,7 +285,6 @@ factionsRouter.get('/', requireGuildPermission('factions.view'), async (req, res
 
 factionsRouter.post('/', requireGuildPermission('factions.manage'), async (req, res) => {
   const scope = req.guildScope!;
-  const connId = await activeSlotId(scope.guildId, req.query.slot); // optional, nur Legacy/Tagging
 
   const v = validateBody(req.body ?? {}, false);
   if (!v.ok) { res.status(400).json({ error: v.error }); return; }
@@ -313,7 +299,6 @@ factionsRouter.post('/', requireGuildPermission('factions.manage'), async (req, 
     const f = await prisma.faction.create({
       data: {
         guildId: scope.guildId,
-        nitradoConnId: connId,
         name: v.data.name as string,
         flagUrl: (v.data.flagUrl as string | null | undefined) ?? null,
         bannerUrl: (v.data.bannerUrl as string | null | undefined) ?? null,
@@ -332,7 +317,7 @@ factionsRouter.post('/', requireGuildPermission('factions.manage'), async (req, 
     });
     logAuditDb('FACTION_CREATED', 'FACTION', {
       actorUserId: req.auth!.userId, guildId: scope.guildId,
-      details: { slotId: connId, factionId: f.id, name: f.name },
+      details: { factionId: f.id, name: f.name },
     });
     // Embed posten — Faction-spezifischer Channel ODER System-Sammelkanal (Fallback im Modul).
     const effectiveCh = await effectiveEmbedChannel({ embedChannelId: f.embedChannelId, guildId: scope.guildId });

@@ -13,38 +13,16 @@ const SNOWFLAKE_RE = /^\d{17,20}$/;
 interface SlotLite { id: string; slot: number; alias: string; alias5: string; status: string }
 
 // ----------------------------------------------------------------------------
-// Top-Level Wrapper — Discord-only (Nitrado-Slot ist optional/Legacy)
+// Top-Level Wrapper — Discord-only (Nitrado-Slot ist NICHT mehr noetig)
 // ----------------------------------------------------------------------------
-export function FactionsTab({ guildId, slots }: { guildId: string; slots: SlotLite[] }) {
-  const usable = slots.filter(s => s.status === 'ACTIVE');
-  const [slot, setSlot] = useState<string>(() => {
-    if (usable.length === 0) return '';
-    return String(usable[0].slot);
-  });
-
+export function FactionsTab({ guildId }: { guildId: string; slots?: SlotLite[] }) {
   return (
     <div className="space-y-4">
-      <div className="flex flex-wrap items-center gap-3">
-        <div>
-          <h2 className="text-lg font-semibold text-white">Fraktionssystem</h2>
-          <p className="text-xs text-muted">Fraktionen sind Discord-gebunden. Ein Nitrado-Slot ist optional und nur fuer Legacy-Tagging relevant.</p>
-        </div>
-        {usable.length > 0 && (
-          <div className="ml-auto flex items-center gap-2">
-            <span className="text-xs text-muted">Slot (optional):</span>
-            <Select value={slot} onChange={e => setSlot(e.target.value)} className="w-56">
-              <option value="">Kein Slot</option>
-              {slots.map(s => (
-                <option key={s.id} value={String(s.slot)}>
-                  #{s.slot} — {s.alias || `Slot ${s.slot}`} ({s.status})
-                </option>
-              ))}
-            </Select>
-          </div>
-        )}
+      <div>
+        <h2 className="text-lg font-semibold text-white">Fraktionssystem</h2>
+        <p className="text-xs text-muted">Fraktionen sind Discord-gebunden und unabhaengig vom Nitrado-Slot.</p>
       </div>
-
-      <FactionsPanel guildId={guildId} slot={slot} />
+      <FactionsPanel guildId={guildId} />
     </div>
   );
 }
@@ -278,18 +256,16 @@ function MemberCombobox({ guildId, value, onChange, placeholder, allowClear = tr
 }
 
 interface FactionSystemConfigDto {
-  slotId: string;
   factionChannelId: string | null;
   listMessageId: string | null;
   updatedAt: string;
 }
 
-function FactionSystemConfigCard({ guildId, slot }: { guildId: string; slot: string }) {
+function FactionSystemConfigCard({ guildId }: { guildId: string }) {
   const qc = useQueryClient();
-  const qs = `?slot=${slot}`;
   const cfg = useQuery({
-    queryKey: ['factionSystemConfig', guildId, slot],
-    queryFn: () => api.get<FactionSystemConfigDto>(`/api/v2/guilds/${guildId}/factions/system-config${qs}`),
+    queryKey: ['factionSystemConfig', guildId],
+    queryFn: () => api.get<FactionSystemConfigDto>(`/api/v2/guilds/${guildId}/factions/system-config`),
   });
   const [draftCh, setDraftCh] = useState<string>('');
   useEffect(() => {
@@ -298,10 +274,10 @@ function FactionSystemConfigCard({ guildId, slot }: { guildId: string; slot: str
 
   const save = useMutation({
     mutationFn: (chId: string | null) =>
-      api.put(`/api/v2/guilds/${guildId}/factions/system-config${qs}`, { factionChannelId: chId }),
+      api.put(`/api/v2/guilds/${guildId}/factions/system-config`, { factionChannelId: chId }),
     onSuccess: () => {
-      void qc.invalidateQueries({ queryKey: ['factionSystemConfig', guildId, slot] });
-      void qc.invalidateQueries({ queryKey: ['factions', guildId, slot] });
+      void qc.invalidateQueries({ queryKey: ['factionSystemConfig', guildId] });
+      void qc.invalidateQueries({ queryKey: ['factions', guildId] });
     },
   });
 
@@ -357,18 +333,17 @@ function FactionMemberInline({ guildId, userId }: { guildId: string; userId: str
   );
 }
 
-function FactionsPanel({ guildId, slot }: { guildId: string; slot: string }) {
+function FactionsPanel({ guildId }: { guildId: string }) {
   const qc = useQueryClient();
   const toast = useToast();
-  const qs = `?slot=${slot}`;
   const [draft, setDraft] = useState<FactionDraft>(EMPTY_DRAFT);
   const [editingId, setEditingId] = useState<string | null>(null);
   const [memberDraft, setMemberDraft] = useState<Record<string, { user: string; role: string }>>({});
   const [uploadErr, setUploadErr] = useState<string | null>(null);
 
   const list = useQuery({
-    queryKey: ['factions', guildId, slot],
-    queryFn: () => api.get<{ factions: FactionRow[] }>(`/api/v2/guilds/${guildId}/factions${qs}`),
+    queryKey: ['factions', guildId],
+    queryFn: () => api.get<{ factions: FactionRow[] }>(`/api/v2/guilds/${guildId}/factions`),
   });
 
   const buildPayload = (b: FactionDraft) => ({
@@ -388,10 +363,10 @@ function FactionsPanel({ guildId, slot }: { guildId: string; slot: string }) {
   });
 
   const create = useMutation({
-    mutationFn: (b: FactionDraft) => api.post(`/api/v2/guilds/${guildId}/factions${qs}`, buildPayload(b)),
+    mutationFn: (b: FactionDraft) => api.post(`/api/v2/guilds/${guildId}/factions`, buildPayload(b)),
     onSuccess: () => {
       setDraft(EMPTY_DRAFT);
-      void qc.invalidateQueries({ queryKey: ['factions', guildId, slot] });
+      void qc.invalidateQueries({ queryKey: ['factions', guildId] });
       toast.success('Fraktion erstellt.');
     },
     onError: (e) => toast.error(e instanceof ApiError ? e.message : 'Erstellen fehlgeschlagen.'),
@@ -399,29 +374,29 @@ function FactionsPanel({ guildId, slot }: { guildId: string; slot: string }) {
 
   const update = useMutation({
     mutationFn: (vars: { id: string; b: FactionDraft }) =>
-      api.patch(`/api/v2/guilds/${guildId}/factions/${vars.id}${qs}`, buildPayload(vars.b)),
+      api.patch(`/api/v2/guilds/${guildId}/factions/${vars.id}`, buildPayload(vars.b)),
     onSuccess: () => {
       setEditingId(null);
       setDraft(EMPTY_DRAFT);
-      void qc.invalidateQueries({ queryKey: ['factions', guildId, slot] });
+      void qc.invalidateQueries({ queryKey: ['factions', guildId] });
       toast.success('Fraktion gespeichert.');
     },
     onError: (e) => toast.error(e instanceof ApiError ? e.message : 'Speichern fehlgeschlagen.'),
   });
 
   const remove = useMutation({
-    mutationFn: (id: string) => api.del(`/api/v2/guilds/${guildId}/factions/${id}${qs}`),
+    mutationFn: (id: string) => api.del(`/api/v2/guilds/${guildId}/factions/${id}`),
     onSuccess: () => {
-      void qc.invalidateQueries({ queryKey: ['factions', guildId, slot] });
+      void qc.invalidateQueries({ queryKey: ['factions', guildId] });
       toast.success('Fraktion geloescht.');
     },
     onError: (e) => toast.error(e instanceof ApiError ? e.message : 'Loeschen fehlgeschlagen.'),
   });
 
   const republish = useMutation({
-    mutationFn: (id: string) => api.post(`/api/v2/guilds/${guildId}/factions/${id}/republish${qs}`),
+    mutationFn: (id: string) => api.post(`/api/v2/guilds/${guildId}/factions/${id}/republish`),
     onSuccess: () => {
-      void qc.invalidateQueries({ queryKey: ['factions', guildId, slot] });
+      void qc.invalidateQueries({ queryKey: ['factions', guildId] });
       toast.success('Embed neu gepostet.');
     },
     onError: (e) => toast.error(e instanceof ApiError ? e.message : 'Republish fehlgeschlagen.'),
@@ -429,12 +404,12 @@ function FactionsPanel({ guildId, slot }: { guildId: string; slot: string }) {
 
   const addMember = useMutation({
     mutationFn: (vars: { factionId: string; user: string; role: string }) =>
-      api.post(`/api/v2/guilds/${guildId}/factions/${vars.factionId}/members${qs}`, {
+      api.post(`/api/v2/guilds/${guildId}/factions/${vars.factionId}/members`, {
         userDiscordId: vars.user, role: vars.role,
       }),
     onSuccess: (_d, vars) => {
       setMemberDraft(s => ({ ...s, [vars.factionId]: { user: '', role: 'MEMBER' } }));
-      void qc.invalidateQueries({ queryKey: ['factions', guildId, slot] });
+      void qc.invalidateQueries({ queryKey: ['factions', guildId] });
       toast.success('Mitglied hinzugefuegt.');
     },
     onError: (e) => toast.error(e instanceof ApiError ? e.message : 'Hinzufuegen fehlgeschlagen.'),
@@ -442,9 +417,9 @@ function FactionsPanel({ guildId, slot }: { guildId: string; slot: string }) {
 
   const removeMember = useMutation({
     mutationFn: (vars: { factionId: string; userDiscordId: string }) =>
-      api.del(`/api/v2/guilds/${guildId}/factions/${vars.factionId}/members/${vars.userDiscordId}${qs}`),
+      api.del(`/api/v2/guilds/${guildId}/factions/${vars.factionId}/members/${vars.userDiscordId}`),
     onSuccess: () => {
-      void qc.invalidateQueries({ queryKey: ['factions', guildId, slot] });
+      void qc.invalidateQueries({ queryKey: ['factions', guildId] });
       toast.success('Mitglied entfernt.');
     },
     onError: (e) => toast.error(e instanceof ApiError ? e.message : 'Entfernen fehlgeschlagen.'),
@@ -455,7 +430,7 @@ function FactionsPanel({ guildId, slot }: { guildId: string; slot: string }) {
     setUploadErr(null);
     const kind = field === 'flagUrl' ? 'flag' : field === 'bannerUrl' ? 'banner' : 'media';
     try {
-      const r = await api.upload<{ url: string }>(`/api/v2/guilds/${guildId}/factions/upload${qs}&kind=${kind}`, file);
+      const r = await api.upload<{ url: string }>(`/api/v2/guilds/${guildId}/factions/upload?kind=${kind}`, file);
       setDraft(d => ({ ...d, [field]: r.url }));
     } catch (e) {
       setUploadErr((e as Error).message);
@@ -485,7 +460,7 @@ function FactionsPanel({ guildId, slot }: { guildId: string; slot: string }) {
   return (
     <Card>
       <CardHeader><CardTitle>Fraktionssystem</CardTitle></CardHeader>
-      <FactionSystemConfigCard guildId={guildId} slot={slot} />
+      <FactionSystemConfigCard guildId={guildId} />
       {list.isLoading && <p className="text-muted">Lade…</p>}
       {list.error && <p className="text-red-400 text-sm">{(list.error as Error).message}</p>}
 
