@@ -11,6 +11,7 @@ import { Select } from '@/components/ui/Select';
 import { Combobox, type ComboboxOption } from '@/components/ui/Combobox';
 import { useGuildLiveUpdates } from '@/lib/useGuildLiveUpdates';
 import { KillfeedTab } from '@/components/KillfeedTab';
+import { FactionsTab } from '@/components/FactionsTab';
 
 type Tab = 'nitrado' | 'aliases' | 'permissions' | 'tickets' | 'factions' | 'killfeed' | 'audit';
 
@@ -120,7 +121,7 @@ export default function Server() {
             {tab === 'aliases' && guildId && isOwner && <AliasesTab guildId={guildId} slots={dash.data.slots} />}
             {tab === 'permissions' && guildId && isOwner && <PermissionsTab guildId={guildId} />}
             {tab === 'tickets' && guildId && <TicketsTab guildId={guildId} isOwner={isOwner} />}
-            {tab === 'factions' && guildId && <FactionsOverviewTab guildId={guildId} slots={dash.data.slots} />}
+            {tab === 'factions' && guildId && <FactionsTab guildId={guildId} slots={dash.data.slots} />}
             {tab === 'killfeed' && guildId && <KillfeedTab guildId={guildId} isOwner={isOwner} slots={dash.data.slots} />}
             {tab === 'audit' && guildId && isOwner && <AuditTab guildId={guildId} />}
           </>
@@ -1559,47 +1560,6 @@ function AuditTab({ guildId }: { guildId: string }) {
 }
 
 // ============================================================================
-// Fraktionssystem — Slot-Picker (deeplinkt zur Slot-Seite mit factions-Tab).
-// Backend ist slot-scoped (?slot=X), daher keine echte Verwaltung auf Page 1.
+// (Fraktionssystem-Verwaltung wurde nach components/FactionsTab.tsx ausgelagert.)
 // ============================================================================
 
-function FactionsOverviewTab({ guildId, slots }: { guildId: string; slots: Slot[] }) {
-  if (slots.length === 0) {
-    return (
-      <Card glow>
-        <CardHeader><CardTitle>Keine Slots vorhanden</CardTitle></CardHeader>
-        <p className="text-muted text-sm">Lege zuerst einen Nitrado-Slot an, bevor du Fraktionen verwalten kannst.</p>
-      </Card>
-    );
-  }
-  return (
-    <div className="space-y-4">
-      <div>
-        <h2 className="text-lg font-semibold text-white mb-1">Fraktionssystem</h2>
-        <p className="text-xs text-muted">Fraktionen werden pro Slot gepflegt. Wähle einen Slot, um zur Verwaltung zu wechseln.</p>
-      </div>
-      <div className="grid gap-2">
-        {slots.map(s => (
-          <Link
-            key={s.id}
-            to={`/servers/${guildId}/server/${s.slot}?tab=factions`}
-            className="block rounded-md border border-border bg-bg-elev hover:border-accent/50 hover:bg-accent/5 transition-colors p-3"
-          >
-            <div className="flex items-center justify-between gap-3">
-              <div className="flex items-center gap-3 min-w-0">
-                <div className="h-9 w-9 rounded-md bg-bg grid place-items-center text-accent font-bold text-sm shrink-0 border border-border">
-                  #{s.slot}
-                </div>
-                <div className="min-w-0">
-                  <div className="font-medium text-white truncate">{s.alias || `Slot ${s.slot}`}</div>
-                  <div className="text-xs text-muted truncate">{s.alias5} · {s.status}</div>
-                </div>
-              </div>
-              <ChevronRight className="h-4 w-4 text-muted shrink-0" />
-            </div>
-          </Link>
-        ))}
-      </div>
-    </div>
-  );
-}
