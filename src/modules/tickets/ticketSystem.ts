@@ -24,19 +24,15 @@ import {
   type ButtonInteraction,
   type Client,
   type GuildTextBasedChannel,
-  type Message,
   type TextChannel,
 } from 'discord.js';
-import archiver from 'archiver';
-import { PassThrough } from 'node:stream';
 import prisma from '../../database/prisma';
 import { logger, logAudit } from '../../utils/logger';
 
 const TRANSCRIPT_MAX_MSGS = 1000;
 const MAX_WELCOME_MESSAGES = 5;
 const SYSTEM_CLOSER = 'SYSTEM';
-const MAX_ATTACHMENT_BYTES = 8 * 1024 * 1024; // 8 MB pro Datei in ZIP
-const MAX_ZIP_TOTAL_BYTES = 24 * 1024 * 1024; // 24 MB ZIP-Limit (Discord upload ≤8 MB free / 25 MB Boost)
+const MAX_TRANSCRIPT_BYTES = 8 * 1024 * 1024; // 8 MB Markdown-Transcript-Limit (Discord-Upload-Limit free)
 
 /**
  * Formatiert ein Datum konsistent als `YYYY-MM-DD HH:mm:ss` in Europe/Berlin (CET/CEST)
@@ -622,20 +618,31 @@ export async function handleCloseButton(btn: ButtonInteraction): Promise<void> {
     const ticketNumber = (instance as unknown as { ticketNumber?: number }).ticketNumber ?? 0;
     const numStr = String(ticketNumber).padStart(4, '0');
 
-    // ZIP-Archiv mit Transcript + heruntergeladenen Attachments (Screenshots/Bilder/Dateien).
-    const zipBuffer = await buildTicketArchive({
-      transcript,
-      messages: collected,
-      label: safeLabel,
-    });
-    const zipName = `ticket-${numStr}-${safeLabel}.zip`;
-    const file = new AttachmentBuilder(zipBuffer, { name: zipName });
+    // Plain Markdown-Transcript (kein ZIP, keine DM). Anhaenge stehen als URLs im Transcript drin.
+    let transcriptBuf = Buffer.from(transcript, 'utf8');
+    let transcriptTruncated = false;
+    if (transcriptBuf.length > MAX_TRANSCRIPT_BYTES) {
+      transcriptBuf = transcriptBuf.subarray(0, MAX_TRANSCRIPT_BYTES);
+      transcriptTruncated = true;
+    }
+    const fileName = `ticket-${numStr}-${safeLabel}.md`;
+    const file = new AttachmentBuilder(transcriptBuf, { name: fileName });
+
+    const truncNote = transcriptTruncated ? ' (Transcript bei 8 MB abgeschnitten)' : '';
+    const openedAtFmt = formatBerlin(instance.openedAt);
+    const closedAtFmt = formatBerlin(new Date());
+    const headerContent =
+      `📄 **Ticket-Transcript #${numStr} · ${instance.template.label}**\n`
+      + `• Eröffnet: ${openedAtFmt} von <@${instance.openerDiscordId}>\n`
+      + `• Geschlossen: ${closedAtFmt} von <@${btn.user.id}>\n`
+      + `• Channel: #${ch.name} (\`${ch.id}\`)\n`
+      + `• Nachrichten: ${collected.length}${truncated ? ` (Limit ${TRANSCRIPT_MAX_MSGS} erreicht)` : ''}${truncNote}`;
 
     let transcriptMessageId: string | null = null;
     const transcriptChannel = await btn.client.channels.fetch(instance.template.transcriptChannelId).catch(() => null);
     if (transcriptChannel && transcriptChannel.isTextBased() && !transcriptChannel.isDMBased()) {
       const sent = await (transcriptChannel as TextChannel).send({
-        content: `📁 Transcript-Archiv für Ticket **#${numStr} ${instance.template.label}** von <@${instance.openerDiscordId}> (geschlossen von <@${btn.user.id}>, ${collected.length} Nachrichten)`,
+        content: headerContent,
         files: [file],
         allowedMentions: { parse: [] },
       });
@@ -647,28 +654,16 @@ export async function handleCloseButton(btn: ButtonInteraction): Promise<void> {
     if (archiveChannelId && archiveChannelId !== instance.template.transcriptChannelId) {
       const archiveChannel = await btn.client.channels.fetch(archiveChannelId).catch(() => null);
       if (archiveChannel && archiveChannel.isTextBased() && !archiveChannel.isDMBased()) {
-        const archiveFile = new AttachmentBuilder(zipBuffer, {
-          name: `archive-${numStr}-${safeLabel}.zip`,
-        });
+        const archiveFile = new AttachmentBuilder(transcriptBuf, { name: `archive-${numStr}-${safeLabel}.md` });
         await (archiveChannel as TextChannel).send({
-          content: `🗄️ Archiv: Ticket **#${numStr} ${instance.template.label}** (Opener <@${instance.openerDiscordId}>, geschlossen von <@${btn.user.id}>, ${collected.length} Nachrichten)`,
+          content: headerContent,
           files: [archiveFile],
           allowedMentions: { parse: [] },
         }).catch(() => {});
       }
     }
 
-    // DM an Opener
-    try {
-      const opener = await btn.client.users.fetch(instance.openerDiscordId);
-      const dmFile = new AttachmentBuilder(zipBuffer, { name: zipName });
-      await opener.send({
-        content: `Dein Ticket **#${numStr} ${instance.template.label}** wurde geschlossen. Transcript-Archiv anbei.`,
-        files: [dmFile],
-      });
-    } catch {
-      // DM kann blockiert sein — kein harter Fehler
-    }
+    // Striktes Verbot: KEINE DM. Transcript geht ausschliesslich in den konfigurierten Channel.
 
     await prisma.ticketInstance.update({
       where: { id: instance.id },
@@ -678,7 +673,8 @@ export async function handleCloseButton(btn: ButtonInteraction): Promise<void> {
     logAudit('TICKET_CLOSED', 'TICKET', {
       guildId: instance.guildId, instanceId: instance.id, ticketNumber,
       closedBy: btn.user.id, messages: collected.length,
-      archiveSize: zipBuffer.length,
+      transcriptBytes: transcriptBuf.length,
+      transcriptTruncated,
     });
 
     await btn.editReply({ content: 'Ticket geschlossen. Channel wird in 5 Sekunden geloescht.' });
@@ -689,75 +685,4 @@ export async function handleCloseButton(btn: ButtonInteraction): Promise<void> {
     logger.error('Ticket-Close-Fehler', e as Error);
     await btn.editReply({ content: 'Konnte Ticket nicht schliessen. Bitte Admin informieren.' }).catch(() => {});
   }
-}
-
-/**
- * ZIP-Archiv mit Markdown-Transcript + heruntergeladene Attachments (Bilder, Screenshots, Dateien).
- * Limits: pro Datei MAX_ATTACHMENT_BYTES, gesamt MAX_ZIP_TOTAL_BYTES.
- * Discord-Attachment-URLs sind authentifiziert/signiert -> Download via fetch.
- */
-async function buildTicketArchive(opts: {
-  transcript: string;
-  messages: Message[];
-  label: string;
-}): Promise<Buffer> {
-  const { transcript, messages, label } = opts;
-
-  const archive = archiver('zip', { zlib: { level: 9 } });
-  const stream = new PassThrough();
-  const chunks: Buffer[] = [];
-  stream.on('data', (c: Buffer) => chunks.push(c));
-  const done = new Promise<void>((resolve, reject) => {
-    stream.on('end', () => resolve());
-    stream.on('error', reject);
-    archive.on('error', reject);
-  });
-  archive.pipe(stream);
-
-  // 1) Transcript.md im Root
-  archive.append(transcript, { name: 'transcript.md' });
-
-  // 2) Anhaenge in attachments/<msgId>-<filename>
-  let totalBytes = Buffer.byteLength(transcript, 'utf8');
-  const skipped: string[] = [];
-  for (const m of messages) {
-    if (m.attachments.size === 0) continue;
-    for (const a of m.attachments.values()) {
-      const size = a.size ?? 0;
-      if (size > MAX_ATTACHMENT_BYTES) {
-        skipped.push(`${a.name ?? a.id}: zu gross (${(size / 1024 / 1024).toFixed(1)} MB)`);
-        continue;
-      }
-      if (totalBytes + size > MAX_ZIP_TOTAL_BYTES) {
-        skipped.push(`${a.name ?? a.id}: ZIP-Limit erreicht`);
-        continue;
-      }
-      try {
-        const res = await fetch(a.url);
-        if (!res.ok) {
-          skipped.push(`${a.name ?? a.id}: HTTP ${res.status}`);
-          continue;
-        }
-        const buf = Buffer.from(await res.arrayBuffer());
-        if (totalBytes + buf.length > MAX_ZIP_TOTAL_BYTES) {
-          skipped.push(`${a.name ?? a.id}: ZIP-Limit erreicht`);
-          continue;
-        }
-        const safeFile = (a.name ?? `attachment-${a.id}`).replace(/[^A-Za-z0-9._-]/g, '_').slice(0, 80);
-        archive.append(buf, { name: `attachments/${m.id}-${safeFile}` });
-        totalBytes += buf.length;
-      } catch (e) {
-        skipped.push(`${a.name ?? a.id}: ${(e as Error).message}`);
-      }
-    }
-  }
-
-  // 3) skipped.txt falls relevant
-  if (skipped.length > 0) {
-    archive.append(`# Nicht aufgenommene Anhaenge fuer ${label}\n\n` + skipped.map(s => `- ${s}`).join('\n') + '\n', { name: 'skipped.txt' });
-  }
-
-  await archive.finalize();
-  await done;
-  return Buffer.concat(chunks);
 }
