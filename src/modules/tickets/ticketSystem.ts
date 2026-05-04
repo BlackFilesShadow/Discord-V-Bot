@@ -386,9 +386,8 @@ async function openTicketLocked(btn: ButtonInteraction, t: Awaited<ReturnType<ty
     }
   }
 
-  // F5: Channel-Name `{number}-{user}-{name}` mit globaler fortlaufender Ticket-Nummer.
+  // Channel-Name: `{NN}-{label}` mit pro-Template fortlaufender Nummer (siehe weiter unten).
   // Discord-Channel-Limit: 100 Zeichen, lowercase, nur a-z0-9 und -.
-  const userBase = btn.user.username.toLowerCase().replace(/[^a-z0-9-]/g, '').slice(0, 20) || 'user';
   const labelBase = t.label.toLowerCase().replace(/[^a-z0-9-]/g, '').slice(0, 30) || 'ticket';
 
   let channel: TextChannel | null = null;
@@ -465,8 +464,9 @@ async function openTicketLocked(btn: ButtonInteraction, t: Awaited<ReturnType<ty
     });
     instance = createdInstance;
     const openedAt = createdInstance.openedAt;
-    const numStr = String(templateNumber).padStart(4, '0');
-    const safeName = `${numStr}-${userBase}-${labelBase}`.slice(0, 95);
+    const numStr = String(templateNumber).padStart(2, '0');
+    // Channel-Name: NN-Label (Label kommt aus Template, ohne Username, fortlaufend pro Template).
+    const safeName = `${numStr}-${labelBase}`.slice(0, 95);
 
     channel = await guild.channels.create({
       name: safeName,
@@ -698,7 +698,7 @@ async function closeTicketLocked(btn: ButtonInteraction, instanceId: string): Pr
     // templateNumber bevorzugen (per-Template Zaehler); Fallback auf globale ticketNumber fuer Legacy-Rows.
     const inst = instance as unknown as { templateNumber?: number | null; ticketNumber?: number };
     const displayNumber = inst.templateNumber ?? inst.ticketNumber ?? 0;
-    const numStr = String(displayNumber).padStart(4, '0');
+    const numStr = String(displayNumber).padStart(2, '0');
 
     // Plain Markdown-Transcript (kein ZIP, keine DM). Anhaenge stehen als URLs im Transcript drin.
     let transcriptBuf = Buffer.from(transcript, 'utf8');

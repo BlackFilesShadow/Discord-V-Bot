@@ -950,7 +950,7 @@ function TicketSlotCard({
             {template.categoryId && <div>Kategorie: <span className="text-white">{channelName(template.categoryId)}</span></div>}
             <div>Welcome-Nachrichten: <span className="text-white">{template.welcomeMessages?.length ?? 1}</span></div>
             <div>
-              Naechste Ticket-Nr.: <span className="text-white font-mono">#{String((template.ticketCounter ?? 0) + 1).padStart(4, '0')}</span>
+              Naechste Ticket-Nr.: <span className="text-white font-mono">#{String((template.ticketCounter ?? 0) + 1).padStart(2, '0')}</span>
               <span className="ml-1 text-[10px] uppercase tracking-wider opacity-70">(Counter: {template.ticketCounter ?? 0})</span>
             </div>
           </div>
@@ -1002,7 +1002,7 @@ function TicketEditModal({
   const [resetBusy, setResetBusy] = useState(false);
   const [resetErr, setResetErr] = useState<string | null>(null);
   const counter = existing?.ticketCounter ?? 0;
-  const nextNumStr = String(counter + 1).padStart(4, '0');
+  const nextNumStr = String(counter + 1).padStart(2, '0');
   const [label, setLabel] = useState(existing?.label ?? 'Support');
   const [messages, setMessages] = useState<string[]>(() => {
     const src = existing?.welcomeMessages && existing.welcomeMessages.length > 0
