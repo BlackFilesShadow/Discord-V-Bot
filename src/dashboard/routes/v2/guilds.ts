@@ -93,23 +93,34 @@ guildsRouter.get('/', async (req, res) => {
 
   // Schritt 2b: Role-basierte Grants. Eine Guild ist auch dann sichtbar, wenn der
   // User dort eine Rolle traegt, der mindestens 1 Scope zugewiesen wurde
-  // (z. B. `dashboard.access` fuer eine Supporter-Rolle). Wir scannen nur Guilds,
-  // in denen der Bot present ist (dort koennen Member/Roles geprueft werden).
-  for (const cached of client.guilds.cache.values()) {
-    if (grantedGuildIds.has(cached.id)) continue;
+  // (z. B. `dashboard.access` fuer eine Supporter-Rolle).
+  //
+  // Performance: EINE DB-Query holt alle (guildId, roleDiscordId)-Tupel mit Grants;
+  // anschliessend nur die Guilds pruefen, in denen ueberhaupt Role-Grants existieren
+  // (typisch < 5). Member wird primaer aus dem Cache geholt — Discord-API-Fetch nur
+  // dann, wenn fuer diese Guild Grants existieren UND der User dort nicht gecached ist.
+  const allRoleGrants = await prisma.guildPermissionRoleGrant.findMany({
+    select: { guildId: true, roleDiscordId: true, permissions: true },
+  });
+  const grantsByGuild = new Map<string, Set<string>>();
+  for (const rg of allRoleGrants) {
+    if (!Array.isArray(rg.permissions) || (rg.permissions as string[]).length === 0) continue;
+    let s = grantsByGuild.get(rg.guildId);
+    if (!s) { s = new Set(); grantsByGuild.set(rg.guildId, s); }
+    s.add(rg.roleDiscordId);
+  }
+  for (const [gId, grantedRoleIds] of grantsByGuild.entries()) {
+    if (grantedGuildIds.has(gId)) continue;
+    const cached = client.guilds.cache.get(gId);
+    if (!cached) continue;
     const member = cached.members.cache.get(req.auth.discordId)
       ?? await cached.members.fetch(req.auth.discordId).catch(() => null);
     if (!member) continue;
-    const roleIds = Array.from(member.roles.cache.keys());
-    if (roleIds.length === 0) continue;
-    const roleGrants = await prisma.guildPermissionRoleGrant.findMany({
-      where: { guildId: cached.id, roleDiscordId: { in: roleIds } },
-      select: { permissions: true },
-    });
-    const hasAny = roleGrants.some(rg =>
-      Array.isArray(rg.permissions) && (rg.permissions as string[]).length > 0,
-    );
-    if (hasAny) grantedGuildIds.add(cached.id);
+    let hit = false;
+    for (const rid of member.roles.cache.keys()) {
+      if (grantedRoleIds.has(rid)) { hit = true; break; }
+    }
+    if (hit) grantedGuildIds.add(gId);
   }
 
   // Schritt 3: nur Owner ODER granted -> mergen
