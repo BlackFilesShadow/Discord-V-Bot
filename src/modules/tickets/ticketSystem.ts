@@ -354,7 +354,7 @@ async function openTicketLocked(btn: ButtonInteraction, t: Awaited<ReturnType<ty
   const labelBase = t.label.toLowerCase().replace(/[^a-z0-9-]/g, '').slice(0, 30) || 'ticket';
 
   let channel: TextChannel | null = null;
-  let instance: { id: string; openedAt: Date; ticketNumber: number } | null = null;
+  let instance: Awaited<ReturnType<typeof prisma.ticketInstance.create>> | null = null;
   try {
     const overwrites: { id: string; allow?: bigint[]; deny?: bigint[] }[] = [
       { id: guild.roles.everyone.id, deny: [PermissionFlagsBits.ViewChannel] },
@@ -405,7 +405,7 @@ async function openTicketLocked(btn: ButtonInteraction, t: Awaited<ReturnType<ty
     }
 
     // Instance ZUERST anlegen (Placeholder-channelId), um ticketNumber zu bekommen → Channel-Name Format `{number}-{user}-{name}`.
-    instance = await prisma.ticketInstance.create({
+    const createdInstance = await prisma.ticketInstance.create({
       data: {
         templateId: t.id,
         guildId: guild.id,
@@ -414,7 +414,9 @@ async function openTicketLocked(btn: ButtonInteraction, t: Awaited<ReturnType<ty
         openerName: btn.user.username,
       },
     });
-    const ticketNumber = (instance as unknown as { ticketNumber: number }).ticketNumber;
+    instance = createdInstance;
+    const ticketNumber = createdInstance.ticketNumber;
+    const openedAt = createdInstance.openedAt;
     const numStr = String(ticketNumber).padStart(4, '0');
     const safeName = `${numStr}-${userBase}-${labelBase}`.slice(0, 95);
 
@@ -431,7 +433,7 @@ async function openTicketLocked(btn: ButtonInteraction, t: Awaited<ReturnType<ty
     }) as TextChannel;
 
     await prisma.ticketInstance.update({
-      where: { id: instance.id },
+      where: { id: createdInstance.id },
       data: { channelId: channel.id },
     });
 
@@ -442,11 +444,10 @@ async function openTicketLocked(btn: ButtonInteraction, t: Awaited<ReturnType<ty
       .setTitle(`🎫  ${t.label}`)
       .setDescription(messages[0])
       .setColor(color)
-      .setTimestamp(instance.openedAt) // exakter DB-openedAt (statt Date.now() bei Embed-Send)
+      .setTimestamp(openedAt)
       .addFields(
         { name: 'Eroeffnet von', value: `<@${btn.user.id}>`, inline: true },
-        // Discord rendert <t:N:F> in jeder Viewer-TZ korrekt; Quelle = DB-openedAt fuer Konsistenz mit Transcript.
-        { name: 'Eroeffnet am', value: `<t:${Math.floor(instance.openedAt.getTime() / 1000)}:F> (<t:${Math.floor(instance.openedAt.getTime() / 1000)}:R>)`, inline: true },
+        { name: 'Eroeffnet am', value: `<t:${Math.floor(openedAt.getTime() / 1000)}:F> (<t:${Math.floor(openedAt.getTime() / 1000)}:R>)`, inline: true },
         { name: 'Ticket-Nr.', value: `#${numStr}`, inline: true },
       )
       .setFooter({ text: `V-Bot Ticket-System  •  Slot ${t.slot}  •  #${numStr}` });
@@ -454,15 +455,13 @@ async function openTicketLocked(btn: ButtonInteraction, t: Awaited<ReturnType<ty
     const mentionRoleIds = Array.isArray((t as unknown as { mentionRoleIds?: unknown }).mentionRoleIds)
       ? ((t as unknown as { mentionRoleIds: unknown[] }).mentionRoleIds.filter((r): r is string => typeof r === 'string'))
       : [];
-    // Keine User-Mention mehr (User wird im Embed-Field "Eroeffnet von" referenziert).
-    // Nur explizit konfigurierte Rollen werden gepingt.
     const mentionLine = mentionRoleIds.length > 0
       ? mentionRoleIds.map(r => `<@&${r}>`).join(' ')
       : '';
     await channel.send({
       content: mentionLine || undefined,
       embeds: [welcome],
-      components: [buildCloseButton(instance.id)],
+      components: [buildCloseButton(createdInstance.id)],
       allowedMentions: { parse: [], roles: mentionRoleIds, users: [] },
     });
 
@@ -477,7 +476,7 @@ async function openTicketLocked(btn: ButtonInteraction, t: Awaited<ReturnType<ty
     }
 
     logAudit('TICKET_OPENED', 'TICKET', {
-      guildId: guild.id, templateId: t.id, instanceId: instance.id,
+      guildId: guild.id, templateId: t.id, instanceId: createdInstance.id,
       ticketNumber, channelId: channel.id, userId: btn.user.id,
       mentionedRoleIds: mentionRoleIds, mentionedRoleCount: mentionRoleIds.length,
       managerRoleIds,

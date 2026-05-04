@@ -246,7 +246,23 @@ devStubsRouter.post('/debug/heap-snapshot', heapSnapshotLimiter, (req, res) => {
     return;
   }
   if (!req.auth) { res.status(401).json({ error: 'no_auth' }); return; }
-  const dir = process.env.HEAP_SNAPSHOT_DIR || os.tmpdir();
+  // Path-Hardening: HEAP_SNAPSHOT_DIR muss absoluter Pfad sein UND innerhalb von cwd ODER os.tmpdir() liegen.
+  // Verhindert Path-Traversal via env-Var (z.B. /etc/passwd).
+  const requestedDir = process.env.HEAP_SNAPSHOT_DIR;
+  let dir: string;
+  if (requestedDir) {
+    const resolved = path.resolve(requestedDir);
+    const cwd = path.resolve(process.cwd()) + path.sep;
+    const tmp = path.resolve(os.tmpdir()) + path.sep;
+    if (!resolved.startsWith(cwd) && !resolved.startsWith(tmp)) {
+      logger.warn(`[DEV] HEAP_SNAPSHOT_DIR ausserhalb cwd/tmpdir verworfen: ${requestedDir}`);
+      dir = os.tmpdir();
+    } else {
+      dir = resolved;
+    }
+  } else {
+    dir = os.tmpdir();
+  }
   const file = path.join(dir, `heap-${Date.now()}.heapsnapshot`);
   try {
     v8.writeHeapSnapshot(file);

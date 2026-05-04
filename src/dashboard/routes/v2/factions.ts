@@ -75,7 +75,27 @@ function extFor(mime: string): string {
 }
 
 function isAcceptableAssetRef(s: string): boolean {
-  return URL_RE.test(s) || LOCAL_PATH_RE.test(s);
+  if (LOCAL_PATH_RE.test(s)) return true;
+  if (!URL_RE.test(s)) return false;
+  // SSRF-Schutz: blockiere private IPs, localhost, link-local, javascript:/data:.
+  // URLs werden zwar nicht serverseitig gefetcht, aber Discord-Embeds könnten sie laden
+  // — zudem verhindert dies Stored-XSS via javascript:/data:-URIs.
+  let u: URL;
+  try { u = new URL(s); } catch { return false; }
+  if (u.protocol !== 'http:' && u.protocol !== 'https:') return false;
+  const host = u.hostname.toLowerCase();
+  if (host === 'localhost' || host === '0.0.0.0') return false;
+  // IPv4-private/loopback/link-local Ranges:
+  if (/^127\./.test(host)) return false;
+  if (/^10\./.test(host)) return false;
+  if (/^192\.168\./.test(host)) return false;
+  if (/^172\.(1[6-9]|2\d|3[01])\./.test(host)) return false;
+  if (/^169\.254\./.test(host)) return false; // AWS-Metadata
+  // IPv6-loopback/link-local:
+  if (host === '::1' || host === '[::1]') return false;
+  if (host.startsWith('fe80:') || host.startsWith('[fe80:')) return false;
+  if (host.startsWith('fc00:') || host.startsWith('fd00:')) return false;
+  return true;
 }
 
 interface FactionBody {

@@ -16,6 +16,9 @@ import { emitGuildEvent } from '../../socket/emitter';
 export const casinoRouter = Router({ mergeParams: true });
 
 const VALID_TYPES = new Set<CasinoGameType>(['SLOT', 'COINFLIP', 'DICE', 'BLACKJACK']);
+// Sicherheits-Bound: 10^15 (1 Billiarde) verhindert Absurd-Werte / Front-End-Overflow.
+// Konsistent mit ECONOMY_DELTA_MAX in economy.ts.
+const MAX_CASINO_BET = 1_000_000_000_000_000n;
 
 casinoRouter.get('/games', requireGuildPermission('casino.view'), async (req, res) => {
   const scope = req.guildScope!;
@@ -42,12 +45,14 @@ casinoRouter.put('/games/:type', requireGuildPermission('casino.manage'), async 
     let v: bigint;
     try { v = BigInt(b.minBet); } catch { res.status(400).json({ error: 'minBet nicht parsebar.' }); return; }
     if (v < 1n) { res.status(400).json({ error: 'minBet >= 1' }); return; }
+    if (v > MAX_CASINO_BET) { res.status(400).json({ error: `minBet <= ${MAX_CASINO_BET.toString()}` }); return; }
     data.minBet = v;
   }
   if (b.maxBet !== undefined) {
     let v: bigint;
     try { v = BigInt(b.maxBet); } catch { res.status(400).json({ error: 'maxBet nicht parsebar.' }); return; }
     if (v < 1n) { res.status(400).json({ error: 'maxBet >= 1' }); return; }
+    if (v > MAX_CASINO_BET) { res.status(400).json({ error: `maxBet <= ${MAX_CASINO_BET.toString()}` }); return; }
     data.maxBet = v;
   }
 

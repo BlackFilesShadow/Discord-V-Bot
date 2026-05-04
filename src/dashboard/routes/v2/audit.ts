@@ -17,12 +17,22 @@ auditRouter.get('/', requireGuildOwner, async (req, res) => {
   const limit = Math.min(MAX_LIMIT, Math.max(1, Number(req.query.limit) || 50));
   const category = typeof req.query.category === 'string' ? req.query.category : undefined;
   const action = typeof req.query.action === 'string' ? req.query.action : undefined;
-  const before = typeof req.query.before === 'string' ? new Date(req.query.before) : undefined;
+  const beforeRaw = typeof req.query.before === 'string' ? req.query.before : undefined;
+  // Strikte ISO-8601-Validierung (vermeidet, dass Garbage-Input still ignoriert wird und falsche Pagination liefert).
+  let before: Date | undefined;
+  if (beforeRaw) {
+    if (!/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(\.\d{1,3})?Z$/.test(beforeRaw)) {
+      res.status(400).json({ error: 'before muss ISO-8601 UTC sein (YYYY-MM-DDTHH:mm:ss.sssZ).' }); return;
+    }
+    const d = new Date(beforeRaw);
+    if (isNaN(d.getTime())) { res.status(400).json({ error: 'before ungueltig.' }); return; }
+    before = d;
+  }
 
   const where: Record<string, unknown> = { guildId: scope.guildId };
   if (category) where.category = category;
   if (action) where.action = { contains: action, mode: 'insensitive' };
-  if (before && !isNaN(before.getTime())) where.createdAt = { lt: before };
+  if (before) where.createdAt = { lt: before };
 
   const rows = await prisma.auditLog.findMany({
     where,

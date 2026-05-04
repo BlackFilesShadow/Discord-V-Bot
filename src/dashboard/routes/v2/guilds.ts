@@ -20,6 +20,7 @@
  * (Grants koennen ohne Bot-Praesenz nicht entstanden sein).
  */
 import { Router } from 'express';
+import rateLimit from 'express-rate-limit';
 import axios from 'axios';
 import { tryGetDashboardClient, getDashboardClient } from '../../clientRegistry';
 import { getOrCreate, get as getDashLink } from '../../../modules/dashboard/repository';
@@ -228,7 +229,16 @@ guildsRouter.get('/:guildId/roles', async (req, res) => {
  *   ?q=<prefix>     Discord-API-Member-Search (Prefix). Ohne `q`: Cache-Top.
  *   ?limit=<1..25>  optionales Limit (default 25, max 25 von Discord).
  */
-guildsRouter.get('/:guildId/members', async (req, res) => {
+// Schützt vor Discord-API-Quote-Verbrauch durch Rapid-Fire-Autocomplete.
+const memberSearchLimiter = rateLimit({
+  windowMs: 60 * 1000,
+  max: 30, // 30 Suchanfragen pro Minute pro User/IP
+  standardHeaders: true,
+  legacyHeaders: false,
+  keyGenerator: (req) => req.auth?.discordId ?? req.ip ?? 'anon',
+  message: { error: 'Zu viele Member-Suchen. Bitte kurz warten.' },
+});
+guildsRouter.get('/:guildId/members', memberSearchLimiter, async (req, res) => {
   if (!req.auth) { res.status(401).end(); return; }
   const client = tryGetDashboardClient();
   if (!client) { res.status(503).json({ error: 'Bot nicht bereit.' }); return; }

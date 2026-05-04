@@ -61,16 +61,19 @@ function registerFail(key: string): void {
 function clearFails(key: string): void { failures.delete(key); }
 
 // --- Passwort-Aufloesung --------------------------------------------------
-const DEFAULT_DEV_PASSWORD = 'HAS';
-let warnedAboutDefault = false;
-function resolveExpectedPassword(): string {
+// Sicherheits-Hardening: KEIN Default-Passwort mehr. Wenn DEV_PASSWORD nicht gesetzt ist,
+// fail-closed (alle Login-Versuche werden mit 503 abgelehnt). Verhindert versehentliche
+// Production-Deployments mit Default-Credentials.
+const MIN_DEV_PASSWORD_LEN = 12;
+let warnedAboutWeakPassword = false;
+function resolveExpectedPassword(): string | null {
   const env = process.env.DEV_PASSWORD;
-  if (env && env.length > 0) return env;
-  if (!warnedAboutDefault) {
-    warnedAboutDefault = true;
-    logger.warn('[DEV] DEV_PASSWORD env nicht gesetzt — verwende Default "HAS". Fuer Produktion DRINGEND ueberschreiben.');
+  if (!env || env.length === 0) return null;
+  if (env.length < MIN_DEV_PASSWORD_LEN && !warnedAboutWeakPassword) {
+    warnedAboutWeakPassword = true;
+    logger.warn(`[DEV] DEV_PASSWORD ist zu kurz (< ${MIN_DEV_PASSWORD_LEN} Zeichen). Bitte verstärken!`);
   }
-  return DEFAULT_DEV_PASSWORD;
+  return env;
 }
 
 // --- Routes ---------------------------------------------------------------
@@ -119,6 +122,12 @@ devRouter.post('/login', loginLimiter, async (req, res) => {
   }
 
   const expected = resolveExpectedPassword();
+  if (expected === null) {
+    // Fail-closed: Server ist nicht korrekt konfiguriert (DEV_PASSWORD fehlt).
+    logger.error('[DEV] Login-Versuch abgelehnt: DEV_PASSWORD env nicht gesetzt.');
+    res.status(503).json({ error: 'DEV-Login serverseitig nicht konfiguriert (DEV_PASSWORD fehlt).' });
+    return;
+  }
   const a = crypto.createHash('sha256').update(provided).digest();
   const b = crypto.createHash('sha256').update(expected).digest();
   if (!crypto.timingSafeEqual(a, b)) {
