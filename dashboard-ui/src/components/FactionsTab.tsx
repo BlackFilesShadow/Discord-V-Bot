@@ -558,10 +558,42 @@ function FactionsPanel({ guildId, slot }: { guildId: string; slot: string }) {
                     user: memberDraft[f.id]?.user ?? '',
                     role: memberDraft[f.id]?.role ?? 'MEMBER',
                   })}
+                  aria-label="Mitglied hinzufuegen"
                 >
                   <Plus className="h-3 w-3" />
                 </Button>
               </div>
+
+              {/* Mitglieder-Liste mit Remove direkt in der Karte (nicht nur im Edit-Modus). */}
+              {f.members.length > 0 && (
+                <div className="pt-2 border-t border-border">
+                  <p className="text-[11px] uppercase tracking-wider text-muted mb-1">Mitglieder ({f.members.length})</p>
+                  <div className="space-y-1 max-h-40 overflow-y-auto">
+                    {f.members.map(m => (
+                      <div key={m.userDiscordId} className="flex items-center justify-between gap-2 px-2 py-1 rounded bg-black/30">
+                        <div className="flex items-center gap-2 min-w-0">
+                          <span className="text-[10px] text-muted w-20 flex-shrink-0 font-mono">{m.role}</span>
+                          <FactionMemberInline guildId={guildId} userId={m.userDiscordId} />
+                        </div>
+                        <Button
+                          size="sm"
+                          variant="ghost"
+                          onClick={() => {
+                            if (confirm(`Mitglied wirklich aus "${f.name}" entfernen?`)) {
+                              removeMember.mutate({ factionId: f.id, userDiscordId: m.userDiscordId });
+                            }
+                          }}
+                          disabled={removeMember.isPending}
+                          title="Mitglied entfernen"
+                          aria-label={`Mitglied ${m.userDiscordId} entfernen`}
+                        >
+                          <Trash2 className="h-3 w-3" />
+                        </Button>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
             </div>
           );
         })}
@@ -749,13 +781,13 @@ function FactionsPanel({ guildId, slot }: { guildId: string; slot: string }) {
         {/* Upload-Bereich */}
         <div className="grid gap-3 md:grid-cols-2">
           <FileUploadField
-            label="Logo / Flagge (JPG, PNG, GIF, WEBP, MP4 — optional)"
+            label="Flagge (optional) — JPG, PNG, GIF, WEBP, MP4"
             currentUrl={draft.flagUrl}
             onUpload={f => handleUpload('flagUrl', f)}
             onClear={() => setDraft(d => ({ ...d, flagUrl: '' }))}
           />
           <FileUploadField
-            label="Banner / Armband (JPG, PNG, GIF, WEBP, MP4 — optional)"
+            label="Armbinde (optional) — JPG, PNG, GIF, WEBP, MP4"
             currentUrl={draft.bannerUrl}
             onUpload={f => handleUpload('bannerUrl', f)}
             onClear={() => setDraft(d => ({ ...d, bannerUrl: '' }))}
