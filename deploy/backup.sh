@@ -27,15 +27,17 @@ fi
 
 mkdir -p "$BACKUP_PATH"
 
-# Datenbank sichern
+# Datenbank sichern (portabel: ohne Owner/Privileges, mit IF-EXISTS-DROPs).
 info "Datenbank wird gesichert..."
-sudo -u postgres pg_dump "$DB_NAME" > "${BACKUP_PATH}/database.sql"
+sudo -u postgres pg_dump --no-owner --no-privileges --clean --if-exists "$DB_NAME" \
+  > "${BACKUP_PATH}/database.sql"
 log "Datenbank gesichert"
 
-# .env sichern
+# .env sichern (nur root lesbar im Backup; enthaelt Secrets).
 if [[ -f "$BOT_DIR/.env" ]]; then
   cp "$BOT_DIR/.env" "${BACKUP_PATH}/.env"
-  log ".env gesichert"
+  chmod 600 "${BACKUP_PATH}/.env"
+  log ".env gesichert (chmod 600)"
 fi
 
 # Uploads sichern
@@ -49,11 +51,22 @@ fi
 info "Backup wird komprimiert..."
 tar -czf "${BACKUP_DIR}/backup_${TIMESTAMP}.tar.gz" -C "$BACKUP_DIR" "backup_${TIMESTAMP}/"
 rm -rf "$BACKUP_PATH"
-log "Backup erstellt: backup_${TIMESTAMP}.tar.gz"
+chmod 600 "${BACKUP_DIR}/backup_${TIMESTAMP}.tar.gz"
 
-# Alte Backups löschen
+# SHA256-Pruefsumme zur Integritaetspruefung anlegen.
+sha256sum "${BACKUP_DIR}/backup_${TIMESTAMP}.tar.gz" \
+  | awk '{print $1"  backup_'"${TIMESTAMP}"'.tar.gz"}' \
+  > "${BACKUP_DIR}/backup_${TIMESTAMP}.tar.gz.sha256"
+chmod 644 "${BACKUP_DIR}/backup_${TIMESTAMP}.tar.gz.sha256"
+log "Backup erstellt: backup_${TIMESTAMP}.tar.gz (+ .sha256)"
+
+# Alte Backups loeschen — KEEP_DAYS-Guard, niemals 0/unset.
+if [[ -z "${KEEP_DAYS:-}" ]] || ! [[ "$KEEP_DAYS" =~ ^[0-9]+$ ]] || (( KEEP_DAYS < 1 )); then
+  err "KEEP_DAYS ist nicht gesetzt oder ungueltig (>=1 erforderlich) — keine Bereinigung."
+fi
 info "Alte Backups werden bereinigt (>${KEEP_DAYS} Tage)..."
-find "$BACKUP_DIR" -name "backup_*.tar.gz" -mtime +${KEEP_DAYS} -delete 2>/dev/null || true
+find "$BACKUP_DIR" -maxdepth 1 \( -name 'backup_*.tar.gz' -o -name 'backup_*.tar.gz.sha256' \) \
+  -mtime +"${KEEP_DAYS}" -print -delete 2>/dev/null || true
 log "Bereinigung abgeschlossen"
 
 # Größe anzeigen
