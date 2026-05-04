@@ -36,6 +36,7 @@ import VehicleTracking from './pages/dev/VehicleTracking';
 import AiProviderStats from './pages/dev/AiProviderStats';
 import NitradoMirror from './pages/dev/NitradoMirror';
 import { DevLoginPanel } from './components/DevLoginPanel';
+import { Toaster } from './components/ui/Toast';
 
 function Protected({ children }: { children: JSX.Element }) {
   const { user, loading } = useAuth();
@@ -88,7 +89,7 @@ if (_missing.length > 0) {
 
 export default function App() {
   return (
-    <>
+    <Toaster>
       <Routes>
         <Route path="/login" element={<Login />} />
         <Route path="/servers" element={<Protected><Servers /></Protected>} />
@@ -107,6 +108,6 @@ export default function App() {
       </Routes>
       {/* Global gemountet: rendert sich selbst nur fuer DEVELOPER (Spec 1+5). */}
       <DevLoginPanel />
-    </>
+    </Toaster>
   );
 }

@@ -1,10 +1,11 @@
 import { useState, useEffect } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
-import { api } from '@/lib/api';
+import { api, ApiError } from '@/lib/api';
 import { Card, CardHeader, CardTitle } from '@/components/ui/Card';
 import { Button } from '@/components/ui/Button';
 import { Input } from '@/components/ui/Input';
 import { Select } from '@/components/ui/Select';
+import { useToast } from '@/components/ui/Toast';
 import { Settings, Trash2, Plus, X, RefreshCw } from 'lucide-react';
 
 const SNOWFLAKE_RE = /^\d{17,20}$/;
@@ -364,6 +365,7 @@ function FactionMemberInline({ guildId, userId }: { guildId: string; userId: str
 
 function FactionsPanel({ guildId, slot }: { guildId: string; slot: string }) {
   const qc = useQueryClient();
+  const toast = useToast();
   const qs = `?slot=${slot}`;
   const [draft, setDraft] = useState<FactionDraft>(EMPTY_DRAFT);
   const [editingId, setEditingId] = useState<string | null>(null);
@@ -396,7 +398,9 @@ function FactionsPanel({ guildId, slot }: { guildId: string; slot: string }) {
     onSuccess: () => {
       setDraft(EMPTY_DRAFT);
       void qc.invalidateQueries({ queryKey: ['factions', guildId, slot] });
+      toast.success('Fraktion erstellt.');
     },
+    onError: (e) => toast.error(e instanceof ApiError ? e.message : 'Erstellen fehlgeschlagen.'),
   });
 
   const update = useMutation({
@@ -406,17 +410,27 @@ function FactionsPanel({ guildId, slot }: { guildId: string; slot: string }) {
       setEditingId(null);
       setDraft(EMPTY_DRAFT);
       void qc.invalidateQueries({ queryKey: ['factions', guildId, slot] });
+      toast.success('Fraktion gespeichert.');
     },
+    onError: (e) => toast.error(e instanceof ApiError ? e.message : 'Speichern fehlgeschlagen.'),
   });
 
   const remove = useMutation({
     mutationFn: (id: string) => api.del(`/api/v2/guilds/${guildId}/factions/${id}${qs}`),
-    onSuccess: () => qc.invalidateQueries({ queryKey: ['factions', guildId, slot] }),
+    onSuccess: () => {
+      void qc.invalidateQueries({ queryKey: ['factions', guildId, slot] });
+      toast.success('Fraktion geloescht.');
+    },
+    onError: (e) => toast.error(e instanceof ApiError ? e.message : 'Loeschen fehlgeschlagen.'),
   });
 
   const republish = useMutation({
     mutationFn: (id: string) => api.post(`/api/v2/guilds/${guildId}/factions/${id}/republish${qs}`),
-    onSuccess: () => qc.invalidateQueries({ queryKey: ['factions', guildId, slot] }),
+    onSuccess: () => {
+      void qc.invalidateQueries({ queryKey: ['factions', guildId, slot] });
+      toast.success('Embed neu gepostet.');
+    },
+    onError: (e) => toast.error(e instanceof ApiError ? e.message : 'Republish fehlgeschlagen.'),
   });
 
   const addMember = useMutation({
@@ -427,7 +441,9 @@ function FactionsPanel({ guildId, slot }: { guildId: string; slot: string }) {
     onSuccess: (_d, vars) => {
       setMemberDraft(s => ({ ...s, [vars.factionId]: { user: '', role: 'MEMBER' } }));
       void qc.invalidateQueries({ queryKey: ['factions', guildId, slot] });
+      toast.success('Mitglied hinzugefuegt.');
     },
+    onError: (e) => toast.error(e instanceof ApiError ? e.message : 'Hinzufuegen fehlgeschlagen.'),
   });
 
   const removeMember = useMutation({
@@ -435,7 +451,9 @@ function FactionsPanel({ guildId, slot }: { guildId: string; slot: string }) {
       api.del(`/api/v2/guilds/${guildId}/factions/${vars.factionId}/members/${vars.userDiscordId}${qs}`),
     onSuccess: () => {
       void qc.invalidateQueries({ queryKey: ['factions', guildId, slot] });
+      toast.success('Mitglied entfernt.');
     },
+    onError: (e) => toast.error(e instanceof ApiError ? e.message : 'Entfernen fehlgeschlagen.'),
   });
 
   async function handleUpload(field: 'flagUrl' | 'bannerUrl' | 'mediaUrl', file: File | null) {

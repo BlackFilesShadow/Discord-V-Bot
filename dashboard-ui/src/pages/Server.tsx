@@ -9,6 +9,7 @@ import { Button } from '@/components/ui/Button';
 import { Input } from '@/components/ui/Input';
 import { Select } from '@/components/ui/Select';
 import { Combobox, type ComboboxOption } from '@/components/ui/Combobox';
+import { useToast } from '@/components/ui/Toast';
 import { useGuildLiveUpdates } from '@/lib/useGuildLiveUpdates';
 import { KillfeedTab } from '@/components/KillfeedTab';
 import { FactionsTab } from '@/components/FactionsTab';
@@ -443,6 +444,7 @@ interface MemberOption { id: string; username: string; displayName: string; avat
 
 function PermissionsTab({ guildId }: { guildId: string }) {
   const qc = useQueryClient();
+  const toast = useToast();
   const q = useQuery({
     queryKey: ['permissions', guildId],
     queryFn: () => api.get<PermsResponse>(`/api/v2/guilds/${guildId}/permissions`),
@@ -491,29 +493,35 @@ function PermissionsTab({ guildId }: { guildId: string }) {
     mutationFn: (vars: { user: string; scope: string }) =>
       api.put(`/api/v2/guilds/${guildId}/permissions/${vars.user}/${vars.scope}`),
     onSuccess: () => qc.invalidateQueries({ queryKey: ['permissions', guildId] }),
+    onError: (e) => toast.error(e instanceof ApiError ? e.message : 'Berechtigung konnte nicht erteilt werden.'),
   });
   const revoke = useMutation({
     mutationFn: (vars: { user: string; scope: string }) =>
       api.del(`/api/v2/guilds/${guildId}/permissions/${vars.user}/${vars.scope}`),
     onSuccess: () => qc.invalidateQueries({ queryKey: ['permissions', guildId] }),
+    onError: (e) => toast.error(e instanceof ApiError ? e.message : 'Berechtigung konnte nicht entzogen werden.'),
   });
   const purge = useMutation({
     mutationFn: (user: string) => api.del(`/api/v2/guilds/${guildId}/permissions/${user}`),
     onSuccess: () => qc.invalidateQueries({ queryKey: ['permissions', guildId] }),
+    onError: (e) => toast.error(e instanceof ApiError ? e.message : 'Entzug fehlgeschlagen.'),
   });
   const grantRole = useMutation({
     mutationFn: (vars: { role: string; scope: string }) =>
       api.put(`/api/v2/guilds/${guildId}/permissions/roles/${vars.role}/${vars.scope}`),
     onSuccess: () => qc.invalidateQueries({ queryKey: ['permissions', guildId] }),
+    onError: (e) => toast.error(e instanceof ApiError ? e.message : 'Rolle konnte nicht berechtigt werden.'),
   });
   const revokeRole = useMutation({
     mutationFn: (vars: { role: string; scope: string }) =>
       api.del(`/api/v2/guilds/${guildId}/permissions/roles/${vars.role}/${vars.scope}`),
     onSuccess: () => qc.invalidateQueries({ queryKey: ['permissions', guildId] }),
+    onError: (e) => toast.error(e instanceof ApiError ? e.message : 'Entzug fehlgeschlagen.'),
   });
   const purgeRole = useMutation({
     mutationFn: (role: string) => api.del(`/api/v2/guilds/${guildId}/permissions/roles/${role}`),
     onSuccess: () => qc.invalidateQueries({ queryKey: ['permissions', guildId] }),
+    onError: (e) => toast.error(e instanceof ApiError ? e.message : 'Entzug fehlgeschlagen.'),
   });
 
   function submit(): void {
@@ -538,6 +546,20 @@ function PermissionsTab({ guildId }: { guildId: string }) {
     const r = rolesQ.data?.roles.find(x => x.id === id);
     if (!r) return { name: id, color: null };
     return { name: r.name, color: r.color && r.color !== '#000000' ? r.color : null };
+  };
+
+  // Cache aller bisher gesehenen Member fuer Username-Anzeige in Grant-Listen.
+  const memberMap = new Map<string, MemberOption>();
+  for (const m of (membersQ.data?.members ?? [])) memberMap.set(m.id, m);
+  const userLabel = (id: string): string => {
+    const m = memberMap.get(id);
+    if (m) return m.displayName || m.username;
+    return `User ${id}`;
+  };
+  const userAvatar = (id: string): string => {
+    const m = memberMap.get(id);
+    if (m?.avatar) return `https://cdn.discordapp.com/avatars/${id}/${m.avatar}.png?size=64`;
+    return `https://cdn.discordapp.com/embed/avatars/${(BigInt(id) >> 22n) % 6n}.png`;
   };
 
   return (
@@ -614,15 +636,23 @@ function PermissionsTab({ guildId }: { guildId: string }) {
           <Card key={g.userDiscordId} className="!p-4">
             <div className="flex items-start gap-3 flex-wrap">
               <div className="min-w-0 flex-1">
-                <code className="text-white text-sm font-mono">{g.userDiscordId}</code>
+                <div className="flex items-center gap-2 min-w-0">
+                  <img src={userAvatar(g.userDiscordId)} alt="" className="h-7 w-7 rounded-full shrink-0" loading="lazy" />
+                  <div className="min-w-0">
+                    <p className="text-white text-sm font-medium truncate">{userLabel(g.userDiscordId)}</p>
+                    <code className="text-[10px] text-muted font-mono">{g.userDiscordId}</code>
+                  </div>
+                </div>
                 <div className="flex flex-wrap gap-1 mt-2">
                   {g.permissions.length === 0 && <span className="text-xs text-muted">— keine —</span>}
                   {g.permissions.map(p => (
                     <button
                       key={p}
                       onClick={() => revoke.mutate({ user: g.userDiscordId, scope: p })}
-                      className="text-[10px] bg-accent/20 text-accent hover:bg-danger/30 hover:text-danger px-2 py-0.5 rounded inline-flex items-center gap-1 transition-colors"
-                      title="Entziehen"
+                      disabled={revoke.isPending}
+                      className="text-[10px] bg-accent/20 text-accent hover:bg-danger/30 hover:text-danger px-2 py-0.5 rounded inline-flex items-center gap-1 transition-colors disabled:opacity-50"
+                      title={`Berechtigung ${p} entziehen`}
+                      aria-label={`Berechtigung ${p} von ${userLabel(g.userDiscordId)} entziehen`}
                       type="button"
                     >
                       {p} <Trash2 className="h-2.5 w-2.5" />
@@ -630,8 +660,8 @@ function PermissionsTab({ guildId }: { guildId: string }) {
                   ))}
                 </div>
               </div>
-              <Button size="sm" variant="danger" onClick={() => {
-                if (confirm(`Alle Rechte von ${g.userDiscordId} entfernen?`)) purge.mutate(g.userDiscordId);
+              <Button size="sm" variant="danger" disabled={purge.isPending} onClick={() => {
+                if (confirm(`Alle Rechte von ${userLabel(g.userDiscordId)} (${g.userDiscordId}) entfernen?`)) purge.mutate(g.userDiscordId);
               }}>
                 Alle entziehen
               </Button>
@@ -670,8 +700,10 @@ function PermissionsTab({ guildId }: { guildId: string }) {
                       <button
                         key={p}
                         onClick={() => revokeRole.mutate({ role: g.roleDiscordId, scope: p })}
-                        className="text-[10px] bg-accent/20 text-accent hover:bg-danger/30 hover:text-danger px-2 py-0.5 rounded inline-flex items-center gap-1 transition-colors"
-                        title="Entziehen"
+                        disabled={revokeRole.isPending}
+                        className="text-[10px] bg-accent/20 text-accent hover:bg-danger/30 hover:text-danger px-2 py-0.5 rounded inline-flex items-center gap-1 transition-colors disabled:opacity-50"
+                        title={`Berechtigung ${p} entziehen`}
+                        aria-label={`Berechtigung ${p} von Rolle @${r.name} entziehen`}
                         type="button"
                       >
                         {p} <Trash2 className="h-2.5 w-2.5" />
@@ -679,7 +711,7 @@ function PermissionsTab({ guildId }: { guildId: string }) {
                     ))}
                   </div>
                 </div>
-                <Button size="sm" variant="danger" onClick={() => {
+                <Button size="sm" variant="danger" disabled={purgeRole.isPending} onClick={() => {
                   if (confirm(`Alle Rechte der Rolle @${r.name} entfernen?`)) purgeRole.mutate(g.roleDiscordId);
                 }}>
                   Alle entziehen
@@ -721,6 +753,7 @@ interface DiscordRole { id: string; name: string; color: string; position: numbe
 
 function TicketsTab({ guildId, isOwner }: { guildId: string; isOwner: boolean }) {
   const qc = useQueryClient();
+  const toast = useToast();
   const q = useQuery({
     queryKey: ['tickets', guildId],
     queryFn: () => api.get<{ templates: TicketTemplate[]; max: number }>(`/api/v2/guilds/${guildId}/tickets`),
@@ -737,6 +770,29 @@ function TicketsTab({ guildId, isOwner }: { guildId: string; isOwner: boolean })
   });
 
   const [editing, setEditing] = useState<{ slot: number; existing: TicketTemplate | null } | null>(null);
+
+  const removeTpl = useMutation({
+    mutationFn: (id: string) => api.del(`/api/v2/guilds/${guildId}/tickets/${id}`),
+    onSuccess: () => {
+      void qc.invalidateQueries({ queryKey: ['tickets', guildId] });
+      toast.success('Template geloescht.');
+    },
+    onError: (e) => toast.error(e instanceof ApiError ? e.message : 'Loeschen fehlgeschlagen.'),
+  });
+  const postTpl = useMutation({
+    mutationFn: (id: string) => api.post(`/api/v2/guilds/${guildId}/tickets/${id}/post`),
+    onSuccess: () => {
+      void qc.invalidateQueries({ queryKey: ['tickets', guildId] });
+      toast.success('Embed gepostet/aktualisiert.');
+    },
+    onError: (e) => toast.error(e instanceof ApiError ? e.message : 'Posten fehlgeschlagen.'),
+  });
+  const toggleTpl = useMutation({
+    mutationFn: (vars: { id: string; isActive: boolean }) =>
+      api.put(`/api/v2/guilds/${guildId}/tickets/${vars.id}`, { isActive: vars.isActive }),
+    onSuccess: () => void qc.invalidateQueries({ queryKey: ['tickets', guildId] }),
+    onError: (e) => toast.error(e instanceof ApiError ? e.message : 'Aenderung fehlgeschlagen.'),
+  });
 
   if (!isOwner) {
     return (
@@ -776,27 +832,24 @@ function TicketsTab({ guildId, isOwner }: { guildId: string; isOwner: boolean })
               template={t}
               channels={channelsQ.data?.channels ?? []}
               onEdit={() => setEditing({ slot, existing: t })}
-              onDelete={async () => {
+              onDelete={() => {
                 if (!t) return;
-                if (!confirm(`Template "${t.label}" wirklich löschen? Alle zugehörigen Tickets werden ebenfalls entfernt.`)) return;
-                await api.del(`/api/v2/guilds/${guildId}/tickets/${t.id}`);
-                qc.invalidateQueries({ queryKey: ['tickets', guildId] });
+                if (!confirm(`Template "${t.label}" wirklich loeschen? Alle zugehoerigen Tickets werden ebenfalls entfernt.`)) return;
+                removeTpl.mutate(t.id);
               }}
-              onPost={async () => {
+              onPost={() => {
                 if (!t) return;
-                try {
-                  await api.post(`/api/v2/guilds/${guildId}/tickets/${t.id}/post`);
-                  qc.invalidateQueries({ queryKey: ['tickets', guildId] });
-                  alert('Embed gepostet/aktualisiert.');
-                } catch (e) {
-                  alert(e instanceof ApiError ? e.message : 'Fehler');
-                }
+                postTpl.mutate(t.id);
               }}
-              onToggle={async () => {
+              onToggle={() => {
                 if (!t) return;
-                await api.put(`/api/v2/guilds/${guildId}/tickets/${t.id}`, { isActive: !t.isActive });
-                qc.invalidateQueries({ queryKey: ['tickets', guildId] });
+                toggleTpl.mutate({ id: t.id, isActive: !t.isActive });
               }}
+              busy={
+                (removeTpl.isPending && removeTpl.variables === t?.id) ||
+                (postTpl.isPending && postTpl.variables === t?.id) ||
+                (toggleTpl.isPending && toggleTpl.variables?.id === t?.id)
+              }
             />
           );
         })}
@@ -821,7 +874,7 @@ function TicketsTab({ guildId, isOwner }: { guildId: string; isOwner: boolean })
 }
 
 function TicketSlotCard({
-  slot, template, channels, onEdit, onDelete, onPost, onToggle,
+  slot, template, channels, onEdit, onDelete, onPost, onToggle, busy,
 }: {
   slot: number;
   template: TicketTemplate | null;
@@ -830,6 +883,7 @@ function TicketSlotCard({
   onDelete: () => void;
   onPost: () => void;
   onToggle: () => void;
+  busy?: boolean;
 }) {
   const channelName = (id: string | null) => id ? (channels.find(c => c.id === id)?.name ?? id) : '—';
 
@@ -874,10 +928,10 @@ function TicketSlotCard({
           </div>
         </div>
         <div className="flex flex-col sm:flex-row gap-1.5 shrink-0">
-          <Button size="sm" variant="outline" onClick={onPost}><Send className="h-3.5 w-3.5 mr-1" /> Posten</Button>
-          <Button size="sm" variant="ghost" onClick={onToggle} title={template.isActive ? 'Deaktivieren' : 'Aktivieren'}><Power className="h-3.5 w-3.5" /></Button>
-          <Button size="sm" variant="outline" onClick={onEdit}>Bearbeiten</Button>
-          <Button size="sm" variant="danger" onClick={onDelete}><Trash2 className="h-3.5 w-3.5" /></Button>
+          <Button size="sm" variant="outline" onClick={onPost} disabled={busy}><Send className="h-3.5 w-3.5 mr-1" /> Posten</Button>
+          <Button size="sm" variant="ghost" onClick={onToggle} disabled={busy} title={template.isActive ? 'Deaktivieren' : 'Aktivieren'} aria-label={template.isActive ? 'Template deaktivieren' : 'Template aktivieren'}><Power className="h-3.5 w-3.5" /></Button>
+          <Button size="sm" variant="outline" onClick={onEdit} disabled={busy}>Bearbeiten</Button>
+          <Button size="sm" variant="danger" onClick={onDelete} disabled={busy} aria-label="Template loeschen"><Trash2 className="h-3.5 w-3.5" /></Button>
         </div>
       </div>
     </Card>
