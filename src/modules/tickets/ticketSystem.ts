@@ -842,8 +842,9 @@ export async function handleAddUserSelect(select: UserSelectMenuInteraction): Pr
   }
 
   // Re-Check Berechtigung (User koennte zwischenzeitlich Rolle verloren haben).
+  // WICHTIG: gleicher Bypass wie im Button-Handler (Owner + Admin + Staff/Manager).
   const member = await select.guild.members.fetch(select.user.id).catch(() => null);
-  const canAdd = canManageTicketForMember(member, instance);
+  const canAdd = canManageTicketForMember(member, instance, select.guild.ownerId);
   if (!canAdd) {
     await select.reply({ content: 'Du hast keine Berechtigung mehr.', ephemeral: true });
     return;
@@ -912,8 +913,9 @@ export async function handleAddUserSelect(select: UserSelectMenuInteraction): Pr
 }
 
 /**
+/**
  * Berechtigungs-Helper: prueft frisch gegen DB+Member-Cache.
- * Owner / Staff-Rolle / Manager-Rolle duerfen das Ticket verwalten.
+ * Owner / Discord-Administrator / Staff-Rolle / Manager-Rolle duerfen das Ticket verwalten.
  */
 type TicketWithTemplate = Awaited<ReturnType<typeof prisma.ticketInstance.findUnique>> & {
   template: { staffRoleId: string | null; managerRoleIds?: unknown };
@@ -923,11 +925,25 @@ async function canManageTicket(btn: ButtonInteraction, instance: TicketWithTempl
   if (!instance || !btn.guild) return false;
   if (btn.user.id === btn.guild.ownerId) return true;
   const m = await btn.guild.members.fetch(btn.user.id).catch(() => null);
-  return canManageTicketForMember(m, instance);
+  return canManageTicketForMember(m, instance, btn.guild.ownerId);
 }
 
-function canManageTicketForMember(member: { roles: { cache: { has: (id: string) => boolean } } } | null, instance: TicketWithTemplate | null): boolean {
+interface CanManageMember {
+  id: string;
+  roles: { cache: { has: (id: string) => boolean } };
+  permissions?: { has: (perm: bigint) => boolean };
+}
+
+function canManageTicketForMember(
+  member: CanManageMember | null,
+  instance: TicketWithTemplate | null,
+  guildOwnerId?: string,
+): boolean {
   if (!instance || !member) return false;
+  // Owner-Bypass (defensiv, falls aufrufer es nicht vorgeprueft hat).
+  if (guildOwnerId && member.id === guildOwnerId) return true;
+  // Discord-Administrator-Bypass: Server-Admins duerfen Ticket-Verwaltung machen.
+  if (member.permissions && member.permissions.has(PermissionFlagsBits.Administrator)) return true;
   if (instance.template.staffRoleId && member.roles.cache.has(instance.template.staffRoleId)) return true;
   const managerRoleIds = (instance.template as unknown as { managerRoleIds?: unknown }).managerRoleIds;
   if (Array.isArray(managerRoleIds)) {
