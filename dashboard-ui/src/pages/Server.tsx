@@ -11,6 +11,7 @@ import { Select } from '@/components/ui/Select';
 import { Combobox, type ComboboxOption } from '@/components/ui/Combobox';
 import { useToast } from '@/components/ui/Toast';
 import { useGuildLiveUpdates } from '@/lib/useGuildLiveUpdates';
+import { useModalA11y } from '@/lib/useModalA11y';
 import { KillfeedTab } from '@/components/KillfeedTab';
 import { FactionsTab } from '@/components/FactionsTab';
 
@@ -1068,10 +1069,17 @@ function TicketEditModal({
 
   const colorIsPreset = TICKET_COLOR_PRESETS.some(p => p.hex.toLowerCase() === embedColor.toLowerCase());
 
+  const modalRef = useModalA11y<HTMLDivElement>(onClose);
+
   return (
     <div className="fixed inset-0 z-50 grid place-items-center bg-black/70 backdrop-blur-sm p-4" onClick={onClose}>
       <div
-        className="relative w-full max-w-3xl max-h-[92vh] overflow-y-auto rounded-2xl border border-border bg-bg-card shadow-2xl"
+        ref={modalRef}
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="ticket-modal-title"
+        tabIndex={-1}
+        className="relative w-full max-w-3xl max-h-[92vh] overflow-y-auto rounded-2xl border border-border bg-bg-card shadow-2xl outline-none"
         onClick={e => e.stopPropagation()}
         style={{
           backgroundImage: `radial-gradient(1200px 400px at 0% 0%, ${embedColor}1a, transparent 60%), radial-gradient(900px 300px at 100% 100%, ${embedColor}14, transparent 55%)`,
@@ -1086,7 +1094,7 @@ function TicketEditModal({
         <div className="relative p-6 border-b border-border flex items-start justify-between gap-4">
           <div>
             <div className="text-[10px] tracking-[0.2em] text-muted uppercase">Slot {slot}  •  Ticket-Template</div>
-            <h2 className="text-xl font-semibold text-white mt-1">
+            <h2 id="ticket-modal-title" className="text-xl font-semibold text-white mt-1">
               {existing ? 'Template bearbeiten' : 'Neues Template'}
             </h2>
             <p className="text-xs text-muted mt-1">High-End Ticket-Konfiguration. Channels werden niemals vermischt.</p>
@@ -1411,6 +1419,7 @@ function AliasesTab({ guildId, slots }: { guildId: string; slots: Slot[] }) {
 
 function AliasRow({ guildId, slot }: { guildId: string; slot: Slot }) {
   const qc = useQueryClient();
+  const toast = useToast();
   const [draft, setDraft] = useState(slot.alias);
   const [msg, setMsg] = useState<{ ok: boolean; text: string } | null>(null);
 
@@ -1419,11 +1428,13 @@ function AliasRow({ guildId, slot }: { guildId: string; slot: Slot }) {
       api.patch(`/api/v2/guilds/${guildId}/nitrado/${slot.slot}/alias`, { alias }),
     onSuccess: () => {
       setMsg({ ok: true, text: 'Alias gespeichert.' });
+      toast.success(`Alias für Slot #${slot.slot} gespeichert.`);
       void qc.invalidateQueries({ queryKey: ['dashboard', guildId] });
     },
     onError: (e: unknown) => {
       const text = e instanceof ApiError ? e.message : (e instanceof Error ? e.message : 'Fehler.');
       setMsg({ ok: false, text });
+      toast.error(text);
     },
   });
 

@@ -13,6 +13,8 @@ import { Card, CardHeader, CardTitle } from '@/components/ui/Card';
 import { Button } from '@/components/ui/Button';
 import { Select } from '@/components/ui/Select';
 import { Input } from '@/components/ui/Input';
+import { useToast } from '@/components/ui/Toast';
+import { useModalA11y } from '@/lib/useModalA11y';
 
 type Category = 'DEATH' | 'SUICIDE' | 'NPC' | 'VEHICLE';
 
@@ -62,6 +64,7 @@ const CATEGORY_LABELS: Record<Category, { label: string; icon: string; desc: str
 
 export function KillfeedTab({ guildId, isOwner, slots }: { guildId: string; isOwner: boolean; slots: Slot[] }) {
   const qc = useQueryClient();
+  const toast = useToast();
   const [activeSlot, setActiveSlot] = useState<number>(slots.find(s => s.status === 'ACTIVE')?.slot ?? slots[0]?.slot ?? 1);
 
   const q = useQuery({
@@ -147,13 +150,23 @@ export function KillfeedTab({ guildId, isOwner, slots }: { guildId: string; isOw
             channelName={channelName}
             onEdit={() => setEditing({ existing: cfg })}
             onToggle={async () => {
-              await api.patch(`/api/v2/guilds/${guildId}/killfeed/${cfg.id}?slot=${activeSlot}`, { isActive: !cfg.isActive });
-              qc.invalidateQueries({ queryKey: ['killfeed', guildId, activeSlot] });
+              try {
+                await api.patch(`/api/v2/guilds/${guildId}/killfeed/${cfg.id}?slot=${activeSlot}`, { isActive: !cfg.isActive });
+                toast.success(cfg.isActive ? 'Killfeed deaktiviert.' : 'Killfeed aktiviert.');
+                qc.invalidateQueries({ queryKey: ['killfeed', guildId, activeSlot] });
+              } catch (e) {
+                toast.error(e instanceof ApiError ? e.message : 'Fehler beim Umschalten.');
+              }
             }}
             onDelete={async () => {
               if (!confirm(`Killfeed in #${channelName(cfg.channelId)} wirklich löschen? Bereits gepostete Embeds bleiben erhalten.`)) return;
-              await api.del(`/api/v2/guilds/${guildId}/killfeed/${cfg.id}?slot=${activeSlot}`);
-              qc.invalidateQueries({ queryKey: ['killfeed', guildId, activeSlot] });
+              try {
+                await api.del(`/api/v2/guilds/${guildId}/killfeed/${cfg.id}?slot=${activeSlot}`);
+                toast.success('Killfeed gelöscht.');
+                qc.invalidateQueries({ queryKey: ['killfeed', guildId, activeSlot] });
+              } catch (e) {
+                toast.error(e instanceof ApiError ? e.message : 'Löschen fehlgeschlagen.');
+              }
             }}
           />
         ))}
@@ -167,6 +180,7 @@ export function KillfeedTab({ guildId, isOwner, slots }: { guildId: string; isOw
           channels={channels}
           onClose={() => setEditing(null)}
           onSaved={() => {
+            toast.success(editing.existing ? 'Killfeed gespeichert.' : 'Killfeed angelegt.');
             qc.invalidateQueries({ queryKey: ['killfeed', guildId, activeSlot] });
             setEditing(null);
           }}
@@ -265,6 +279,8 @@ function KillfeedEditModal({
 
   const valid = !!channelId && categories.length > 0 && /^#[0-9a-fA-F]{6}$/.test(embedColor);
 
+  const modalRef = useModalA11y<HTMLDivElement>(onClose);
+
   const save = async () => {
     setErr(null);
     if (!valid) { setErr('Channel und mindestens eine Kategorie erforderlich.'); return; }
@@ -296,7 +312,12 @@ function KillfeedEditModal({
   return (
     <div className="fixed inset-0 z-50 grid place-items-center bg-black/70 backdrop-blur-sm p-4" onClick={onClose}>
       <div
-        className="relative w-full max-w-2xl max-h-[92vh] overflow-y-auto rounded-2xl border border-border bg-bg-card shadow-2xl"
+        ref={modalRef}
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="killfeed-modal-title"
+        tabIndex={-1}
+        className="relative w-full max-w-2xl max-h-[92vh] overflow-y-auto rounded-2xl border border-border bg-bg-card shadow-2xl outline-none"
         onClick={e => e.stopPropagation()}
         style={{
           backgroundImage: `radial-gradient(1200px 400px at 0% 0%, ${embedColor}1a, transparent 60%)`,
@@ -310,7 +331,7 @@ function KillfeedEditModal({
         <div className="relative p-6 border-b border-border flex items-start justify-between gap-4">
           <div>
             <div className="text-[10px] tracking-[0.2em] text-muted uppercase">Slot {slot} • Killfeed</div>
-            <h2 className="text-xl font-semibold text-white mt-1">
+            <h2 id="killfeed-modal-title" className="text-xl font-semibold text-white mt-1">
               {existing ? 'Killfeed bearbeiten' : 'Neuer Killfeed'}
             </h2>
             <p className="text-xs text-muted mt-1">Live-Sync alle 60s. Channel-Bindung exakt 1:1.</p>
