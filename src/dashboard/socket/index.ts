@@ -36,9 +36,16 @@ export interface SocketSessionShape {
  * express-session-Middleware und registriert beide Namespaces.
  */
 export function initSocketIo(httpServer: HttpServer, sessionMiddleware: RequestHandler): IOServer {
+  // CORS-Origin: ausschliesslich explizit konfigurierte DASHBOARD_URL erlauben.
+  // KEIN Fallback auf `true` (any-origin) — das wuerde mit credentials:true
+  // CSRF/XSS-Vektoren von beliebigen Domains oeffnen.
+  const allowedOrigin = process.env.DASHBOARD_URL?.trim();
+  if (!allowedOrigin) {
+    logger.error('Socket.IO: DASHBOARD_URL nicht gesetzt — Socket.IO wird CORS-streng nur same-origin akzeptieren.');
+  }
   const io = new IOServer(httpServer, {
     cors: {
-      origin: process.env.DASHBOARD_URL || true,
+      origin: allowedOrigin ? [allowedOrigin] : false,
       credentials: true,
     },
     // Restriktive Defaults: nur WebSocket+Polling, kleine Timeouts

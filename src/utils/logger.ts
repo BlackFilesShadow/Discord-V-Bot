@@ -102,11 +102,32 @@ export const auditLogger = winston.createLogger({
 /**
  * Strukturiertes Audit-Log erstellen.
  * Alle Aktionen werden revisionssicher erfasst.
+ *
+ * PII/Secret-Schutz: Felder, deren Key (case-insensitive) ein typisches Secret-Wort enthaelt,
+ * werden zu '[REDACTED]'. Verteidigt gegen versehentliches Logging von Tokens/Passwoertern,
+ * wenn ein Aufrufer ein ganzes Request-Body als details uebergibt.
  */
+const SECRET_KEY_RE = /(token|secret|password|passwd|api[-_]?key|authorization|bearer|cookie|session|otp|2fa|nonce|client[-_]?secret|encryption[-_]?key|refresh[-_]?token|access[-_]?token)/i;
+
+function redactSecrets(input: Record<string, unknown>): Record<string, unknown> {
+  const out: Record<string, unknown> = {};
+  for (const [k, v] of Object.entries(input)) {
+    if (SECRET_KEY_RE.test(k)) {
+      out[k] = '[REDACTED]';
+    } else if (v && typeof v === 'object' && !Array.isArray(v) && !(v instanceof Date)) {
+      out[k] = redactSecrets(v as Record<string, unknown>);
+    } else {
+      out[k] = v;
+    }
+  }
+  return out;
+}
+
 export function logAudit(action: string, category: string, details: Record<string, unknown>): void {
+  const safe = redactSecrets(details);
   auditLogger.info(action, {
     category,
-    ...details,
+    ...safe,
     timestamp: new Date().toISOString(),
     immutable: true,
   });

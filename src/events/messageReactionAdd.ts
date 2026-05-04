@@ -125,9 +125,13 @@ const messageReactionAddEvent: BotEvent = {
 
       // ===== SEKTION 9: REACTION-ROLES =====
       // Multi-Guild: nur AutoRoles dieser Guild matchen.
+      // Hard-Guard: ohne guildId KEINE Query (sonst wuerde `guildId: undefined` von Prisma
+      // wie `kein Filter` interpretiert -> Cross-Guild-Leak von AutoRoles).
+      const reactGuildId = r.message.guildId;
+      if (!reactGuildId) return;
       const reactionRole = await prisma.autoRole.findFirst({
         where: {
-          guildId: r.message.guildId ?? undefined,
+          guildId: reactGuildId,
           triggerType: 'REACTION',
           messageId,
           triggerValue: emoji,
