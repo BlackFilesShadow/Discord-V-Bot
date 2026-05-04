@@ -260,6 +260,7 @@ ticketsRouter.get('/instances', requireGuildPermission('tickets.manage'), async 
       openedAt: i.openedAt.toISOString(),
       closedAt: i.closedAt?.toISOString() ?? null,
       closedBy: i.closedBy,
+      userIds: (i as unknown as { userIds?: string[] }).userIds ?? [],
     })),
   });
 });
@@ -459,19 +460,30 @@ ticketsRouter.post('/:id/reset-counter', requireGuildOwner, async (req, res) => 
 });
 
 // --- Ticket-User-Management ---
+// Validiert userId als Discord-Snowflake (17-20 stellige Zahl).
+const USER_SNOWFLAKE_RE = /^\d{17,20}$/;
+
 ticketsRouter.post('/instances/:instanceId/users', requireGuildPermission('tickets.manage'), async (req, res) => {
+  const scope = req.guildScope!;
   const instanceIdRaw = req.params.instanceId;
   if (!instanceIdRaw || Array.isArray(instanceIdRaw)) {
     return res.status(400).json({ error: 'Ungültige instanceId' });
   }
   const instanceId = instanceIdRaw;
   const userId = req.body?.userId;
-  if (!userId || typeof userId !== 'string') {
-    return res.status(400).json({ error: 'userId (string) erforderlich' });
+  if (!userId || typeof userId !== 'string' || !USER_SNOWFLAKE_RE.test(userId)) {
+    return res.status(400).json({ error: 'userId (Discord-ID) erforderlich' });
   }
   try {
     const ticket = await prisma.ticketInstance.findUnique({ where: { id: instanceId } });
     if (!ticket) return res.status(404).json({ error: 'Ticket-Instanz nicht gefunden' });
+    // Guild-Scope-Check: Cross-Guild-Manipulation verhindern (IDOR-Schutz).
+    if (ticket.guildId !== scope.guildId) {
+      return res.status(404).json({ error: 'Ticket-Instanz nicht gefunden' });
+    }
+    if (ticket.status !== 'OPEN') {
+      return res.status(409).json({ error: 'Ticket ist nicht (mehr) offen' });
+    }
     if (ticket.userIds.includes(userId)) {
       return res.status(409).json({ error: 'User bereits hinzugefügt' });
     }
@@ -479,6 +491,26 @@ ticketsRouter.post('/instances/:instanceId/users', requireGuildPermission('ticke
       where: { id: instanceId },
       data: { userIds: { set: [...ticket.userIds, userId] } },
     });
+    // Discord-Channel-Permissions synchron halten (best-effort).
+    const cli = tryGetDashboardClient();
+    if (cli) {
+      const ch = await cli.channels.fetch(ticket.channelId).catch(() => null);
+      if (ch && ch.isTextBased() && !ch.isDMBased() && 'permissionOverwrites' in ch) {
+        await (ch as unknown as { permissionOverwrites: { edit: (id: string, perms: object) => Promise<unknown> } })
+          .permissionOverwrites.edit(userId, {
+            ViewChannel: true,
+            SendMessages: true,
+            ReadMessageHistory: true,
+            AttachFiles: true,
+          }).catch(() => {});
+      }
+    }
+    logAuditDb('TICKET_USER_ADDED', 'TICKET', {
+      actorUserId: req.auth!.userId,
+      guildId: scope.guildId,
+      details: { instanceId, addedUser: userId },
+    });
+    emitGuildEvent(scope.guildId, { type: 'tickets.changed', payload: { guildId: scope.guildId } });
     return res.json({ success: true, userIds: updated.userIds });
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
@@ -487,18 +519,26 @@ ticketsRouter.post('/instances/:instanceId/users', requireGuildPermission('ticke
 });
 
 ticketsRouter.delete('/instances/:instanceId/users', requireGuildPermission('tickets.manage'), async (req, res) => {
+  const scope = req.guildScope!;
   const instanceIdRaw = req.params.instanceId;
   if (!instanceIdRaw || Array.isArray(instanceIdRaw)) {
     return res.status(400).json({ error: 'Ungültige instanceId' });
   }
   const instanceId = instanceIdRaw;
   const userId = req.body?.userId;
-  if (!userId || typeof userId !== 'string') {
-    return res.status(400).json({ error: 'userId (string) erforderlich' });
+  if (!userId || typeof userId !== 'string' || !USER_SNOWFLAKE_RE.test(userId)) {
+    return res.status(400).json({ error: 'userId (Discord-ID) erforderlich' });
   }
   try {
     const ticket = await prisma.ticketInstance.findUnique({ where: { id: instanceId } });
     if (!ticket) return res.status(404).json({ error: 'Ticket-Instanz nicht gefunden' });
+    if (ticket.guildId !== scope.guildId) {
+      return res.status(404).json({ error: 'Ticket-Instanz nicht gefunden' });
+    }
+    // Opener darf nicht entfernt werden (verhindert Inkonsistenz).
+    if (userId === ticket.openerDiscordId) {
+      return res.status(409).json({ error: 'Ticket-Eroeffner kann nicht entfernt werden' });
+    }
     if (!ticket.userIds.includes(userId)) {
       return res.status(404).json({ error: 'User nicht in Ticket' });
     }
@@ -506,6 +546,21 @@ ticketsRouter.delete('/instances/:instanceId/users', requireGuildPermission('tic
       where: { id: instanceId },
       data: { userIds: { set: ticket.userIds.filter((id) => id !== userId) } },
     });
+    // Discord-Channel-Permissions zurueckziehen (best-effort).
+    const cli = tryGetDashboardClient();
+    if (cli) {
+      const ch = await cli.channels.fetch(ticket.channelId).catch(() => null);
+      if (ch && ch.isTextBased() && !ch.isDMBased() && 'permissionOverwrites' in ch) {
+        await (ch as unknown as { permissionOverwrites: { delete: (id: string) => Promise<unknown> } })
+          .permissionOverwrites.delete(userId).catch(() => {});
+      }
+    }
+    logAuditDb('TICKET_USER_REMOVED', 'TICKET', {
+      actorUserId: req.auth!.userId,
+      guildId: scope.guildId,
+      details: { instanceId, removedUser: userId },
+    });
+    emitGuildEvent(scope.guildId, { type: 'tickets.changed', payload: { guildId: scope.guildId } });
     return res.json({ success: true, userIds: updated.userIds });
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);

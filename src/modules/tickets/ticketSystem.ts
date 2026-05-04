@@ -458,6 +458,8 @@ async function openTicketLocked(btn: ButtonInteraction, t: Awaited<ReturnType<ty
           openerDiscordId: btn.user.id,
           openerName: btn.user.username,
           templateNumber: updated.ticketCounter,
+          // Opener wird sofort als Teilnehmer erfasst (DB-Quelle der Wahrheit fuer Dashboard).
+          userIds: [btn.user.id],
         },
       });
       return { createdInstance: inst, templateNumber: updated.ticketCounter };
@@ -865,6 +867,13 @@ export async function handleAddUserModal(modal: ModalSubmitInteraction): Promise
     return;
   }
 
+  // Duplicate-Check (DB ist die Source-of-Truth, nicht der Channel-Overwrite).
+  const existingUserIds = (instance as unknown as { userIds?: string[] }).userIds ?? [];
+  if (existingUserIds.includes(target.id)) {
+    await modal.editReply({ content: 'Nutzer ist bereits im Ticket hinzugefuegt.' });
+    return;
+  }
+
   const channel = await modal.client.channels.fetch(instance.channelId).catch(() => null);
   if (!channel || !channel.isTextBased() || channel.isDMBased()) {
     await modal.editReply({ content: 'Ticket-Channel nicht verfuegbar.' });
@@ -878,6 +887,11 @@ export async function handleAddUserModal(modal: ModalSubmitInteraction): Promise
       SendMessages: true,
       ReadMessageHistory: true,
       AttachFiles: true,
+    });
+    // DB-State synchron halten: userIds Array um neuen Nutzer erweitern.
+    await prisma.ticketInstance.update({
+      where: { id: instance.id },
+      data: { userIds: { set: [...existingUserIds, target.id] } },
     });
     await ch.send({
       content: `\u2795 <@${target.id}> wurde von <@${modal.user.id}> zum Ticket hinzugefuegt.`,

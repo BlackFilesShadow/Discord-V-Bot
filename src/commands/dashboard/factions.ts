@@ -145,6 +145,11 @@ export const leaveCommand: Command = {
     await prisma.factionMember.deleteMany({
       where: { id: member.id, faction: { guildId: scope.guildId, nitradoConnId: scope.nitradoConnId! } },
     });
+    // Discord-Rolle entfernen, falls die Fraktion eine zugewiesene Rolle hat.
+    if (member.faction.roleId && i.client) {
+      const { removeFactionRole } = await import('../../modules/factions/factionEmbed.js');
+      await removeFactionRole(i.client, scope.guildId, scope.actorDiscordId, member.faction.roleId).catch(() => {});
+    }
     logAudit('FACTION_LEAVE', 'FACTION', { guildId: scope.guildId, factionId: member.factionId, user: scope.actorDiscordId });
     emitGuildEvent(scope.guildId, { type: 'faction.changed', payload: { guildId: scope.guildId, factionId: member.factionId } });
     await reply(i, `Du hast **${member.faction.name}** verlassen.`);
