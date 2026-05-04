@@ -1,5 +1,5 @@
 /**
- * Factions: pro Guild + Slot eigene Liste (composite-unique [guildId, nitradoConnId, name]).
+ * Factions: pro Guild eindeutige Liste (Discord-only, slot-unabhaengig).
  *
  * GET    /                     Liste mit Member-Counts
  * POST   /                     body: voll (siehe validateBody)
@@ -218,30 +218,30 @@ async function refreshEmbed(factionId: string, guildId: string, actorUserId: str
   });
 }
 
-async function refreshList(guildId: string, nitradoConnId: string, actorUserId: string, action: string): Promise<void> {
+async function refreshList(guildId: string, actorUserId: string, action: string): Promise<void> {
   const client = tryGetDashboardClient();
   if (!client) return;
-  await postFactionList(client, guildId, nitradoConnId).catch(err => {
+  await postFactionList(client, guildId).catch(err => {
     logAuditDb('FACTION_LIST_FAILED', 'FACTION', {
       actorUserId, guildId,
-      details: { nitradoConnId, action, error: (err as Error).message },
+      details: { action, error: (err as Error).message },
     });
   });
 }
 
 /**
- * Holt die Faction-System-Konfiguration fuer einen Slot.
+ * Holt die Faction-System-Konfiguration einer Guild.
  * Falls keine vorhanden, wird ein leerer Datensatz angelegt (lazy-init).
  */
-async function getOrCreateConfig(guildId: string, nitradoConnId: string) {
+async function getOrCreateConfig(guildId: string) {
    
   let cfg = await prisma.factionSystemConfig.findUnique({
-    where: { guildId_nitradoConnId: { guildId, nitradoConnId } },
+    where: { guildId },
   });
   if (!cfg) {
      
     cfg = await prisma.factionSystemConfig.create({
-      data: { guildId, nitradoConnId },
+      data: { guildId },
     });
   }
   return cfg;
@@ -250,11 +250,11 @@ async function getOrCreateConfig(guildId: string, nitradoConnId: string) {
 /**
  * Effektiver Embed-Channel: faction.embedChannelId override SystemConfig.factionChannelId.
  */
-async function effectiveEmbedChannel(faction: { embedChannelId: string | null; guildId: string; nitradoConnId: string }): Promise<string | null> {
+async function effectiveEmbedChannel(faction: { embedChannelId: string | null; guildId: string }): Promise<string | null> {
   if (faction.embedChannelId) return faction.embedChannelId;
    
   const cfg = await prisma.factionSystemConfig.findUnique({
-    where: { guildId_nitradoConnId: { guildId: faction.guildId, nitradoConnId: faction.nitradoConnId } },
+    where: { guildId: faction.guildId },
     select: { factionChannelId: true },
   });
   return cfg?.factionChannelId ?? null;
@@ -262,10 +262,8 @@ async function effectiveEmbedChannel(faction: { embedChannelId: string | null; g
 
 factionsRouter.get('/', requireGuildPermission('factions.view'), async (req, res) => {
   const scope = req.guildScope!;
-  const connId = await activeSlotId(scope.guildId, req.query.slot);
-  if (!connId) { res.status(404).json({ error: 'Kein Nitrado-Slot.' }); return; }
   const rows = await prisma.faction.findMany({
-    where: { guildId: scope.guildId, nitradoConnId: connId },
+    where: { guildId: scope.guildId },
     include: {
       _count: { select: { members: true } },
       members: { select: { userDiscordId: true, role: true, joinedAt: true }, orderBy: { joinedAt: 'asc' } },
@@ -300,8 +298,7 @@ factionsRouter.get('/', requireGuildPermission('factions.view'), async (req, res
 
 factionsRouter.post('/', requireGuildPermission('factions.manage'), async (req, res) => {
   const scope = req.guildScope!;
-  const connId = await activeSlotId(scope.guildId, req.query.slot);
-  if (!connId) { res.status(404).json({ error: 'Kein Nitrado-Slot.' }); return; }
+  const connId = await activeSlotId(scope.guildId, req.query.slot); // optional, nur Legacy/Tagging
 
   const v = validateBody(req.body ?? {}, false);
   if (!v.ok) { res.status(400).json({ error: v.error }); return; }
@@ -338,7 +335,7 @@ factionsRouter.post('/', requireGuildPermission('factions.manage'), async (req, 
       details: { slotId: connId, factionId: f.id, name: f.name },
     });
     // Embed posten — Faction-spezifischer Channel ODER System-Sammelkanal (Fallback im Modul).
-    const effectiveCh = await effectiveEmbedChannel({ embedChannelId: f.embedChannelId, guildId: scope.guildId, nitradoConnId: connId });
+    const effectiveCh = await effectiveEmbedChannel({ embedChannelId: f.embedChannelId, guildId: scope.guildId });
     if (effectiveCh) await refreshEmbed(f.id, scope.guildId, req.auth!.userId, 'create');
     // Faction-Rolle an Leitung/Stellv./Schatzmeister vergeben (falls gesetzt).
     if (f.roleId) {
@@ -350,12 +347,12 @@ factionsRouter.post('/', requireGuildPermission('factions.manage'), async (req, 
       }
     }
     // Uebersichts-Liste auto-refresh.
-    await refreshList(scope.guildId, connId, req.auth!.userId, 'faction-created');
+    await refreshList(scope.guildId, req.auth!.userId, 'faction-created');
     emitGuildEvent(scope.guildId, { type: 'faction.changed', payload: { guildId: scope.guildId, factionId: f.id } });
     res.status(201).json({ id: f.id, name: f.name });
   } catch (e) {
     if ((e as { code?: string }).code === 'P2002') {
-      res.status(409).json({ error: 'Fraktion mit diesem Namen existiert schon im Slot.' }); return;
+      res.status(409).json({ error: 'Fraktion mit diesem Namen existiert schon.' }); return;
     }
     throw e;
   }
@@ -413,16 +410,16 @@ factionsRouter.patch('/:id', requireGuildPermission('factions.manage'), async (r
         }
       }
     }
-    const effectiveCh = await effectiveEmbedChannel({ embedChannelId: updated.embedChannelId, guildId: scope.guildId, nitradoConnId: updated.nitradoConnId });
+    const effectiveCh = await effectiveEmbedChannel({ embedChannelId: updated.embedChannelId, guildId: scope.guildId });
     if (effectiveCh) {
       await refreshEmbed(updated.id, scope.guildId, req.auth!.userId, 'update');
     }
-    await refreshList(scope.guildId, updated.nitradoConnId, req.auth!.userId, 'faction-updated');
+    await refreshList(scope.guildId, req.auth!.userId, 'faction-updated');
     emitGuildEvent(scope.guildId, { type: 'faction.changed', payload: { guildId: scope.guildId, factionId: id } });
     res.json({ ok: true });
   } catch (e) {
     if ((e as { code?: string }).code === 'P2002') {
-      res.status(409).json({ error: 'Fraktion mit diesem Namen existiert schon im Slot.' }); return;
+      res.status(409).json({ error: 'Fraktion mit diesem Namen existiert schon.' }); return;
     }
     throw e;
   }
@@ -433,13 +430,13 @@ factionsRouter.post('/:id/republish', requireGuildPermission('factions.manage'),
   const id = String(req.params.id);
   const existing = await prisma.faction.findFirst({ where: { id, guildId: scope.guildId } });
   if (!existing) { res.status(404).json({ error: 'Fraktion nicht gefunden.' }); return; }
-  const effChR = await effectiveEmbedChannel({ embedChannelId: existing.embedChannelId, guildId: scope.guildId, nitradoConnId: existing.nitradoConnId });
+  const effChR = await effectiveEmbedChannel({ embedChannelId: existing.embedChannelId, guildId: scope.guildId });
   if (!effChR) { res.status(400).json({ error: 'Kein Embed-Channel konfiguriert (weder Faction- noch System-Channel).' }); return; }
   const client = tryGetDashboardClient();
   if (!client) { res.status(503).json({ error: 'Bot nicht bereit.' }); return; }
   try {
     const r = await postFactionEmbed(client, id);
-    await refreshList(scope.guildId, existing.nitradoConnId, req.auth!.userId, 'republish');
+    await refreshList(scope.guildId, req.auth!.userId, 'republish');
     logAuditDb('FACTION_EMBED_REPUBLISHED', 'FACTION', {
       actorUserId: req.auth!.userId, guildId: scope.guildId, details: { factionId: id, messageId: r.messageId },
     });
@@ -482,7 +479,7 @@ factionsRouter.delete('/:id', requireGuildPermission('factions.manage'), async (
     actorUserId: req.auth!.userId, guildId: scope.guildId, details: { factionId: id, name: existing.name },
   });
   // Liste auto-refresh (zeigt Loeschung in Discord-Sammelkanal).
-  await refreshList(scope.guildId, existing.nitradoConnId, req.auth!.userId, 'faction-deleted');
+  await refreshList(scope.guildId, req.auth!.userId, 'faction-deleted');
   emitGuildEvent(scope.guildId, { type: 'faction.changed', payload: { guildId: scope.guildId, factionId: id } });
   res.json({ ok: true });
 });
@@ -597,7 +594,7 @@ factionsRouter.post(
       actorUserId: req.auth!.userId, guildId: scope.guildId,
       details: { factionId: existing.id, kind, mime: file.mimetype, size: file.size },
     });
-    const effCh3 = await effectiveEmbedChannel({ embedChannelId: existing.embedChannelId, guildId: scope.guildId, nitradoConnId: existing.nitradoConnId });
+    const effCh3 = await effectiveEmbedChannel({ embedChannelId: existing.embedChannelId, guildId: scope.guildId });
     if (effCh3) await refreshEmbed(existing.id, scope.guildId, req.auth!.userId, `upload-${kind}`);
     emitGuildEvent(scope.guildId, { type: 'faction.changed', payload: { guildId: scope.guildId, factionId: existing.id } });
     res.json({ url: publicUrl });
@@ -628,7 +625,7 @@ factionsRouter.delete('/:id/asset', requireGuildPermission('factions.manage'), a
   logAuditDb('FACTION_ASSET_REMOVED', 'FACTION', {
     actorUserId: req.auth!.userId, guildId: scope.guildId, details: { factionId: existing.id, kind },
   });
-  const effCh4 = await effectiveEmbedChannel({ embedChannelId: existing.embedChannelId, guildId: scope.guildId, nitradoConnId: existing.nitradoConnId });
+  const effCh4 = await effectiveEmbedChannel({ embedChannelId: existing.embedChannelId, guildId: scope.guildId });
   if (effCh4) await refreshEmbed(existing.id, scope.guildId, req.auth!.userId, `remove-${kind}`);
   emitGuildEvent(scope.guildId, { type: 'faction.changed', payload: { guildId: scope.guildId, factionId: existing.id } });
   res.json({ ok: true });
@@ -655,9 +652,9 @@ factionsRouter.post('/:id/members', requireGuildPermission('factions.manage'), a
     const cli = tryGetDashboardClient();
     if (cli) await assignFactionRole(cli, scope.guildId, target, f.roleId);
   }
-  const effCh = await effectiveEmbedChannel({ embedChannelId: f.embedChannelId, guildId: scope.guildId, nitradoConnId: f.nitradoConnId });
+  const effCh = await effectiveEmbedChannel({ embedChannelId: f.embedChannelId, guildId: scope.guildId });
   if (effCh) await refreshEmbed(f.id, scope.guildId, req.auth!.userId, 'member-added');
-  await refreshList(scope.guildId, f.nitradoConnId, req.auth!.userId, 'member-added');
+  await refreshList(scope.guildId, req.auth!.userId, 'member-added');
   emitGuildEvent(scope.guildId, { type: 'faction.changed', payload: { guildId: scope.guildId, factionId: f.id } });
   res.status(201).json({ ok: true });
 });
@@ -678,9 +675,9 @@ factionsRouter.delete('/:id/members/:userDiscordId', requireGuildPermission('fac
     const cli = tryGetDashboardClient();
     if (cli) await removeFactionRole(cli, scope.guildId, target, f.roleId);
   }
-  const effCh2 = await effectiveEmbedChannel({ embedChannelId: f.embedChannelId, guildId: scope.guildId, nitradoConnId: f.nitradoConnId });
+  const effCh2 = await effectiveEmbedChannel({ embedChannelId: f.embedChannelId, guildId: scope.guildId });
   if (effCh2) await refreshEmbed(f.id, scope.guildId, req.auth!.userId, 'member-removed');
-  await refreshList(scope.guildId, f.nitradoConnId, req.auth!.userId, 'member-removed');
+  await refreshList(scope.guildId, req.auth!.userId, 'member-removed');
   emitGuildEvent(scope.guildId, { type: 'faction.changed', payload: { guildId: scope.guildId, factionId: f.id } });
   res.json({ ok: true });
 });
@@ -691,11 +688,8 @@ factionsRouter.delete('/:id/members/:userDiscordId', requireGuildPermission('fac
 
 factionsRouter.get('/system-config', requireGuildPermission('factions.view'), async (req, res) => {
   const scope = req.guildScope!;
-  const connId = await activeSlotId(scope.guildId, req.query.slot);
-  if (!connId) { res.status(404).json({ error: 'Kein Nitrado-Slot.' }); return; }
-  const cfg = await getOrCreateConfig(scope.guildId, connId);
+  const cfg = await getOrCreateConfig(scope.guildId);
   res.json({
-    slotId: connId,
     factionChannelId: cfg.factionChannelId,
     listMessageId: cfg.listMessageId,
     updatedAt: cfg.updatedAt.toISOString(),
@@ -704,8 +698,6 @@ factionsRouter.get('/system-config', requireGuildPermission('factions.view'), as
 
 factionsRouter.put('/system-config', requireGuildPermission('factions.manage'), async (req, res) => {
   const scope = req.guildScope!;
-  const connId = await activeSlotId(scope.guildId, req.query.slot);
-  if (!connId) { res.status(404).json({ error: 'Kein Nitrado-Slot.' }); return; }
   const body = (req.body ?? {}) as { factionChannelId?: string | null };
   let newChId: string | null;
   if (body.factionChannelId === null || body.factionChannelId === '') newChId = null;
@@ -717,7 +709,7 @@ factionsRouter.put('/system-config', requireGuildPermission('factions.manage'), 
     if (err) { res.status(400).json({ error: err }); return; }
   }
 
-  const cfg = await getOrCreateConfig(scope.guildId, connId);
+  const cfg = await getOrCreateConfig(scope.guildId);
   const channelChanged = cfg.factionChannelId !== newChId;
 
   // Bei Channel-Wechsel: alte Uebersicht + alle Faction-Embeds entfernen, die den
@@ -725,9 +717,9 @@ factionsRouter.put('/system-config', requireGuildPermission('factions.manage'), 
   if (channelChanged && cfg.factionChannelId) {
     const client = tryGetDashboardClient();
     if (client) {
-      await unpostFactionList(client, scope.guildId, connId).catch(() => {});
+      await unpostFactionList(client, scope.guildId).catch(() => {});
       const orphanFactions = await prisma.faction.findMany({
-        where: { guildId: scope.guildId, nitradoConnId: connId, embedChannelId: null, embedMessageId: { not: null } },
+        where: { guildId: scope.guildId, embedChannelId: null, embedMessageId: { not: null } },
         select: { id: true },
       });
       for (const of of orphanFactions) {
@@ -743,7 +735,7 @@ factionsRouter.put('/system-config', requireGuildPermission('factions.manage'), 
   });
   logAuditDb('FACTION_SYSTEM_CONFIG_UPDATED', 'FACTION', {
     actorUserId: req.auth!.userId, guildId: scope.guildId,
-    details: { slotId: connId, factionChannelId: newChId, channelChanged },
+    details: { factionChannelId: newChId, channelChanged },
   });
 
   // Wenn neuer Channel gesetzt: Faction-Embeds (ohne eigenen Channel) + Liste neu posten.
@@ -751,7 +743,7 @@ factionsRouter.put('/system-config', requireGuildPermission('factions.manage'), 
     const client = tryGetDashboardClient();
     if (client) {
       const fallbackFactions = await prisma.faction.findMany({
-        where: { guildId: scope.guildId, nitradoConnId: connId, embedChannelId: null },
+        where: { guildId: scope.guildId, embedChannelId: null },
         select: { id: true },
       });
       for (const ff of fallbackFactions) {
@@ -762,13 +754,12 @@ factionsRouter.put('/system-config', requireGuildPermission('factions.manage'), 
           });
         });
       }
-      await refreshList(scope.guildId, connId, req.auth!.userId, 'system-config-changed');
+      await refreshList(scope.guildId, req.auth!.userId, 'system-config-changed');
     }
   }
 
   emitGuildEvent(scope.guildId, { type: 'faction.changed', payload: { guildId: scope.guildId, factionId: 'system-config' } });
   res.json({
-    slotId: connId,
     factionChannelId: updated.factionChannelId,
     listMessageId: updated.listMessageId,
     updatedAt: updated.updatedAt.toISOString(),

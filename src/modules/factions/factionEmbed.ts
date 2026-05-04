@@ -48,7 +48,7 @@ function parseColor(hex: string | null | undefined, fallback = 0xdc2626): number
 interface FactionEmbedData {
   id: string;
   guildId: string;
-  nitradoConnId: string;
+  nitradoConnId: string | null;
   name: string;
   description: string | null;
   color: string | null;
@@ -216,7 +216,7 @@ export async function postFactionEmbed(client: Client, factionId: string): Promi
     if (!targetChannelId) {
        
       const cfg = await prisma.factionSystemConfig.findUnique({
-        where: { guildId_nitradoConnId: { guildId: f.guildId, nitradoConnId: f.nitradoConnId } },
+        where: { guildId: f.guildId },
         select: { factionChannelId: true },
       });
       targetChannelId = cfg?.factionChannelId ?? null;
@@ -294,7 +294,7 @@ export async function unpostFactionEmbed(client: Client, factionId: string): Pro
   if (!targetChannelId) {
      
     const cfg = await prisma.factionSystemConfig.findUnique({
-      where: { guildId_nitradoConnId: { guildId: f.guildId, nitradoConnId: f.nitradoConnId } },
+      where: { guildId: f.guildId },
       select: { factionChannelId: true },
     });
     targetChannelId = cfg?.factionChannelId ?? null;
@@ -324,8 +324,8 @@ export async function unpostFactionEmbed(client: Client, factionId: string): Pro
 
 const listLocks = new Map<string, Promise<unknown>>();
 
-function listKey(guildId: string, nitradoConnId: string): string {
-  return `${guildId}:${nitradoConnId}`;
+function listKey(guildId: string): string {
+  return `${guildId}`;
 }
 
 function buildListEmbed(factions: Array<{
@@ -360,19 +360,19 @@ function buildListEmbed(factions: Array<{
 }
 
 /**
- * Postet (oder aktualisiert) eine Uebersichts-Liste aller Fraktionen
- * eines Slots im konfigurierten `factionChannelId`. Mutex pro Slot.
+ * Postet (oder aktualisiert) eine Uebersichts-Liste aller Fraktionen einer Guild
+ * im konfigurierten `factionChannelId`. Mutex pro Guild.
  * Idempotent. No-op falls keine Config oder kein Channel.
  */
-export async function postFactionList(client: Client, guildId: string, nitradoConnId: string): Promise<void> {
-  const key = listKey(guildId, nitradoConnId);
+export async function postFactionList(client: Client, guildId: string): Promise<void> {
+  const key = listKey(guildId);
   const prev = listLocks.get(key);
   if (prev) { try { await prev; } catch { /* ignore */ } }
 
   const run = (async (): Promise<void> => {
      
     const cfg = await prisma.factionSystemConfig.findUnique({
-      where: { guildId_nitradoConnId: { guildId, nitradoConnId } },
+      where: { guildId },
     });
     if (!cfg || !cfg.factionChannelId) return;
 
@@ -386,7 +386,7 @@ export async function postFactionList(client: Client, guildId: string, nitradoCo
 
      
     const factions = await prisma.faction.findMany({
-      where: { guildId, nitradoConnId },
+      where: { guildId },
       include: { _count: { select: { members: true } } },
       orderBy: [{ status: 'asc' }, { name: 'asc' }],
     });
@@ -420,7 +420,7 @@ export async function postFactionList(client: Client, guildId: string, nitradoCo
     }
 
     logAudit('FACTION_LIST_REFRESHED', 'FACTION', {
-      guildId, nitradoConnId, channelId: cfg.factionChannelId, messageId, count: factions.length,
+      guildId, channelId: cfg.factionChannelId, messageId, count: factions.length,
     });
   })();
 
@@ -435,10 +435,10 @@ export async function postFactionList(client: Client, guildId: string, nitradoCo
 /**
  * Loescht das Uebersichts-Embed (z.B. vor Channel-Wechsel). Idempotent.
  */
-export async function unpostFactionList(client: Client, guildId: string, nitradoConnId: string): Promise<void> {
+export async function unpostFactionList(client: Client, guildId: string): Promise<void> {
    
   const cfg = await prisma.factionSystemConfig.findUnique({
-    where: { guildId_nitradoConnId: { guildId, nitradoConnId } },
+    where: { guildId },
   });
   if (!cfg || !cfg.factionChannelId || !cfg.listMessageId) {
     if (cfg && cfg.listMessageId) {
@@ -457,7 +457,7 @@ export async function unpostFactionList(client: Client, guildId: string, nitrado
      
     await prisma.factionSystemConfig.update({ where: { id: cfg.id }, data: { listMessageId: null } }).catch(() => {});
     logAudit('FACTION_LIST_UNPOSTED', 'FACTION', {
-      guildId, nitradoConnId, channelId: cfg.factionChannelId,
+      guildId, channelId: cfg.factionChannelId,
     });
   }
 }

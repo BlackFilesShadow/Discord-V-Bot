@@ -1505,49 +1505,50 @@ model ServerSettings {
   @@index([guildId])
 }
 
-// Fraktionen pro (Guild + Nitrado-Slot). Embed-Push beim Save.
+// Fraktionen pro Guild. Optional an einen Nitrado-Slot gekoppelt (Legacy/DayZ).
+// Discord-only Mode: nitradoConnId = NULL.
 model Faction {
-  id                 String            @id @default(cuid())
+  id                 String             @id @default(cuid())
   guildId            String
-  nitradoConnId      String
-  nitradoConn        NitradoConnection @relation(fields: [nitradoConnId], references: [id], onDelete: Cascade)
-  name               String            @db.VarChar(60)
-  flagUrl            String?           @db.Text // optional: URL ODER lokaler Pfad /uploads/factions/...
-  bannerUrl          String?           @db.Text
-  mediaUrl           String?           @db.Text // optionales JPG/MP4 (Armband/Logo)
+  nitradoConnId      String?
+  nitradoConn        NitradoConnection? @relation(fields: [nitradoConnId], references: [id], onDelete: Cascade)
+  name               String             @db.VarChar(60)
+  flagUrl            String?            @db.Text // optional: URL ODER lokaler Pfad /uploads/factions/...
+  bannerUrl          String?            @db.Text
+  mediaUrl           String?            @db.Text // optionales JPG/MP4 (Armband/Logo)
   leaderDiscordId    String?
   deputyDiscordId    String? // Stellvertretung (separat von Treasurer)
   treasurerDiscordId String?
   embedChannelId     String?
   embedMessageId     String?
   roleId             String? // Optionale Discord-Rolle: wird Mitgliedern automatisch zugewiesen / entfernt.
-  joinPolicy         String            @default("REQUEST") // 'OPEN' | 'REQUEST' | 'CLOSED'
-  status             String            @default("ACTIVE") @db.VarChar(16) // 'ACTIVE' | 'RECRUITING' | 'INACTIVE' | 'ARCHIVED'
-  description        String?           @db.Text
-  color              String?           @db.VarChar(7) // Hex z.B. '#dc2626'
-  isActive           Boolean           @default(true)
-  createdAt          DateTime          @default(now())
-  updatedAt          DateTime          @updatedAt
+  joinPolicy         String             @default("REQUEST") // 'OPEN' | 'REQUEST' | 'CLOSED'
+  status             String             @default("ACTIVE") @db.VarChar(16) // 'ACTIVE' | 'RECRUITING' | 'INACTIVE' | 'ARCHIVED'
+  description        String?            @db.Text
+  color              String?            @db.VarChar(7) // Hex z.B. '#dc2626'
+  isActive           Boolean            @default(true)
+  createdAt          DateTime           @default(now())
+  updatedAt          DateTime           @updatedAt
   members            FactionMember[]
 
-  @@unique([guildId, nitradoConnId, name])
+  // Discord-only Eindeutigkeit: ein Name pro Guild, unabhaengig vom Slot.
+  @@unique([guildId, name])
   @@index([guildId])
+  @@index([guildId, nitradoConnId])
 }
 
-// Globale Konfiguration des Fraktionssystems pro (Guild + Slot).
-// factionChannelId: Sammelkanal — alle Fraktionen-Embeds + Uebersichts-Liste landen hier automatisch.
-// listMessageId:    ID des Uebersichts-Embeds (Liste aller Fraktionen).
+// Globale Konfiguration des Fraktionssystems pro Guild (Discord-only).
+// nitradoConnId optional fuer Legacy-Setups, in der Praxis nur eine Config pro Guild.
 model FactionSystemConfig {
-  id               String            @id @default(cuid())
-  guildId          String
-  nitradoConnId    String
-  nitradoConn      NitradoConnection @relation(fields: [nitradoConnId], references: [id], onDelete: Cascade)
+  id               String             @id @default(cuid())
+  guildId          String             @unique
+  nitradoConnId    String?
+  nitradoConn      NitradoConnection? @relation(fields: [nitradoConnId], references: [id], onDelete: Cascade)
   factionChannelId String?
   listMessageId    String?
-  createdAt        DateTime          @default(now())
-  updatedAt        DateTime          @updatedAt
+  createdAt        DateTime           @default(now())
+  updatedAt        DateTime           @updatedAt
 
-  @@unique([guildId, nitradoConnId])
   @@index([guildId])
 }
 

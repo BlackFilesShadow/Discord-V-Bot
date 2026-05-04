@@ -13,7 +13,7 @@ const SNOWFLAKE_RE = /^\d{17,20}$/;
 interface SlotLite { id: string; slot: number; alias: string; alias5: string; status: string }
 
 // ----------------------------------------------------------------------------
-// Top-Level Wrapper mit Slot-Picker (Backend ist slot-scoped via ?slot=X)
+// Top-Level Wrapper — Discord-only (Nitrado-Slot ist optional/Legacy)
 // ----------------------------------------------------------------------------
 export function FactionsTab({ guildId, slots }: { guildId: string; slots: SlotLite[] }) {
   const usable = slots.filter(s => s.status === 'ACTIVE');
@@ -22,35 +22,29 @@ export function FactionsTab({ guildId, slots }: { guildId: string; slots: SlotLi
     return String(usable[0].slot);
   });
 
-  if (slots.length === 0) {
-    return (
-      <Card glow>
-        <CardHeader><CardTitle>Keine Slots vorhanden</CardTitle></CardHeader>
-        <p className="text-muted text-sm">Lege zuerst einen Nitrado-Slot an, bevor du Fraktionen verwalten kannst.</p>
-      </Card>
-    );
-  }
-
   return (
     <div className="space-y-4">
       <div className="flex flex-wrap items-center gap-3">
         <div>
           <h2 className="text-lg font-semibold text-white">Fraktionssystem</h2>
-          <p className="text-xs text-muted">Fraktionen werden pro Slot gepflegt. Wähle einen Slot zur Bearbeitung.</p>
+          <p className="text-xs text-muted">Fraktionen sind Discord-gebunden. Ein Nitrado-Slot ist optional und nur fuer Legacy-Tagging relevant.</p>
         </div>
-        <div className="ml-auto flex items-center gap-2">
-          <span className="text-xs text-muted">Slot:</span>
-          <Select value={slot} onChange={e => setSlot(e.target.value)} className="w-56">
-            {slots.map(s => (
-              <option key={s.id} value={String(s.slot)}>
-                #{s.slot} — {s.alias || `Slot ${s.slot}`} ({s.status})
-              </option>
-            ))}
-          </Select>
-        </div>
+        {usable.length > 0 && (
+          <div className="ml-auto flex items-center gap-2">
+            <span className="text-xs text-muted">Slot (optional):</span>
+            <Select value={slot} onChange={e => setSlot(e.target.value)} className="w-56">
+              <option value="">Kein Slot</option>
+              {slots.map(s => (
+                <option key={s.id} value={String(s.slot)}>
+                  #{s.slot} — {s.alias || `Slot ${s.slot}`} ({s.status})
+                </option>
+              ))}
+            </Select>
+          </div>
+        )}
       </div>
 
-      {slot && <FactionsPanel guildId={guildId} slot={slot} />}
+      <FactionsPanel guildId={guildId} slot={slot} />
     </div>
   );
 }

@@ -28,14 +28,10 @@ async function autocompleteFactionNames(i: AutocompleteInteraction): Promise<voi
   if (!i.guildId) { await i.respond([]); return; }
   let guildId;
   try { guildId = asGuildId(i.guildId); } catch { await i.respond([]); return; }
-  const slot = await prisma.nitradoConnection.findFirst({
-    where: { guildId, status: 'ACTIVE' }, orderBy: { slot: 'asc' }, select: { id: true },
-  });
-  if (!slot) { await i.respond([]); return; }
   const focused = i.options.getFocused().toString().slice(0, 60);
   const rows = await prisma.faction.findMany({
     where: {
-      guildId, nitradoConnId: slot.id, isActive: true,
+      guildId, isActive: true,
       ...(focused ? { name: { startsWith: focused, mode: 'insensitive' as const } } : {}),
     },
     orderBy: { name: 'asc' }, take: 25, select: { name: true },
@@ -55,7 +51,7 @@ export const factionCommand: Command = {
   execute: withGuildScope({}, async (i, scope) => {
     const name = i.options.getString('name', true).trim();
     const f = await prisma.faction.findUnique({
-      where: { guildId_nitradoConnId_name: { guildId: scope.guildId, nitradoConnId: scope.nitradoConnId!, name } },
+      where: { guildId_name: { guildId: scope.guildId, name } },
       include: { _count: { select: { members: true } } },
     });
     if (!f) { await reply(i, 'Fraktion nicht gefunden.'); return; }
@@ -80,7 +76,7 @@ export const factionsCommand: Command = {
   data: new SlashCommandBuilder().setName('factions').setDescription('Listet aktive Fraktionen.'),
   execute: withGuildScope({}, async (i, scope) => {
     const rows = await prisma.faction.findMany({
-      where: { guildId: scope.guildId, nitradoConnId: scope.nitradoConnId!, isActive: true },
+      where: { guildId: scope.guildId, isActive: true },
       orderBy: { name: 'asc' },
       include: { _count: { select: { members: true } } },
       take: 50,
@@ -104,7 +100,7 @@ export const joinCommand: Command = {
   execute: withGuildScope({}, async (i, scope) => {
     const name = i.options.getString('name', true).trim();
     const f = await prisma.faction.findUnique({
-      where: { guildId_nitradoConnId_name: { guildId: scope.guildId, nitradoConnId: scope.nitradoConnId!, name } },
+      where: { guildId_name: { guildId: scope.guildId, name } },
     });
     if (!f || !f.isActive) { await reply(i, 'Fraktion nicht gefunden oder inaktiv.'); return; }
     if (f.joinPolicy === 'CLOSED') { await reply(i, 'Diese Fraktion ist geschlossen.'); return; }
@@ -113,7 +109,7 @@ export const joinCommand: Command = {
     const existing = await prisma.factionMember.findFirst({
       where: {
         userDiscordId: scope.actorDiscordId,
-        faction: { guildId: scope.guildId, nitradoConnId: scope.nitradoConnId! },
+        faction: { guildId: scope.guildId },
       },
     });
     if (existing) { await reply(i, 'Du bist bereits in einer Fraktion. `/leave` zuerst.'); return; }
@@ -137,7 +133,7 @@ export const leaveCommand: Command = {
     const member = await prisma.factionMember.findFirst({
       where: {
         userDiscordId: scope.actorDiscordId,
-        faction: { guildId: scope.guildId, nitradoConnId: scope.nitradoConnId! },
+        faction: { guildId: scope.guildId },
       },
       include: { faction: true },
     });
