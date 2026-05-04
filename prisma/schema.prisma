@@ -703,6 +703,20 @@ model Session {
   @@index([isActive])
 }
 
+/// Express-Session-Store-Tabelle fuer connect-pg-simple.
+/// Wird durch deploy/sql/003_session_table.sql idempotent angelegt.
+/// Hier nur deklariert, damit `prisma db push` sie NICHT als orphan droppt.
+/// @@ignore haelt sie ausserhalb des Prisma-Clients (kein Code-Zugriff).
+model pg_simple_session {
+  sid    String   @id @db.VarChar
+  sess   Json     @db.Json
+  expire DateTime @db.Timestamp(6)
+
+  @@index([expire], map: "IDX_session_expire")
+  @@map("session")
+  @@ignore
+}
+
 model OAuthToken {
   id              String    @id @default(uuid())
   userId          String

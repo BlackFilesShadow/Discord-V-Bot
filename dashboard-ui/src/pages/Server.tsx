@@ -883,6 +883,13 @@ function TicketsTab({ guildId, isOwner }: { guildId: string; isOwner: boolean })
             qc.invalidateQueries({ queryKey: ['tickets', guildId] });
             setEditing(null);
           }}
+          onResetCounter={async () => {
+            if (!editing.existing) return;
+            await api.post(`/api/v2/guilds/${guildId}/tickets/${editing.existing.id}/reset-counter`);
+            const fresh = await qc.fetchQuery<{ templates: TicketTemplate[] }>({ queryKey: ['tickets', guildId] });
+            const updated = fresh.templates.find(x => x.id === editing.existing!.id) ?? null;
+            setEditing({ slot: editing.slot, existing: updated });
+          }}
         />
       )}
     </div>
@@ -981,7 +988,7 @@ const TICKET_WELCOME_MAX = 5;
 const TICKET_WELCOME_CHARS = 2000;
 
 function TicketEditModal({
-  guildId, slot, existing, channels, roles, onClose, onSaved,
+  guildId, slot, existing, channels, roles, onClose, onSaved, onResetCounter,
 }: {
   guildId: string;
   slot: number;
@@ -990,7 +997,12 @@ function TicketEditModal({
   roles: DiscordRole[];
   onClose: () => void;
   onSaved: () => void;
+  onResetCounter: () => Promise<void>;
 }) {
+  const [resetBusy, setResetBusy] = useState(false);
+  const [resetErr, setResetErr] = useState<string | null>(null);
+  const counter = existing?.ticketCounter ?? 0;
+  const nextNumStr = String(counter + 1).padStart(4, '0');
   const [label, setLabel] = useState(existing?.label ?? 'Support');
   const [messages, setMessages] = useState<string[]>(() => {
     const src = existing?.welcomeMessages && existing.welcomeMessages.length > 0
@@ -1254,6 +1266,44 @@ function TicketEditModal({
               ))}
             </div>
           </div>
+
+          {/* Ticket-Nummer / Counter (nur fuer existierende Templates) */}
+          {existing && (
+            <div className="rounded-xl border border-border bg-bg-elev/40 p-3 flex items-center justify-between gap-3"
+                 style={{ borderColor: `${embedColor}33` }}>
+              <div className="min-w-0">
+                <div className="text-[10px] uppercase tracking-[0.2em] text-muted">Ticket-Nummer</div>
+                <div className="mt-0.5 text-sm text-white">
+                  Naechste Ticket-Nr.: <span className="font-mono">#{nextNumStr}</span>
+                  <span className="ml-2 text-[10px] uppercase tracking-wider opacity-70">
+                    Counter: {counter}
+                  </span>
+                </div>
+                {resetErr && <div className="mt-1 text-[11px] text-danger">{resetErr}</div>}
+              </div>
+              <Button
+                size="sm"
+                variant="ghost"
+                disabled={resetBusy || counter === 0}
+                onClick={async () => {
+                  setResetErr(null);
+                  setResetBusy(true);
+                  try {
+                    await onResetCounter();
+                  } catch (e) {
+                    setResetErr(e instanceof ApiError ? e.message : 'Reset fehlgeschlagen.');
+                  } finally {
+                    setResetBusy(false);
+                  }
+                }}
+                title="Ticket-Nummer auf 0 zuruecksetzen (nur wenn keine offenen Tickets)"
+                aria-label="Ticket-Nummer zuruecksetzen"
+              >
+                <RotateCcw className="h-3.5 w-3.5 mr-1" />
+                {resetBusy ? 'Reset…' : 'Reset'}
+              </Button>
+            </div>
+          )}
 
           {/* Channel-Setup */}
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
