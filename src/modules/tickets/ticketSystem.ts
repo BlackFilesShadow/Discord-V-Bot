@@ -38,6 +38,21 @@ const SYSTEM_CLOSER = 'SYSTEM';
 const MAX_ATTACHMENT_BYTES = 8 * 1024 * 1024; // 8 MB pro Datei in ZIP
 const MAX_ZIP_TOTAL_BYTES = 24 * 1024 * 1024; // 24 MB ZIP-Limit (Discord upload ≤8 MB free / 25 MB Boost)
 
+/**
+ * Formatiert ein Datum konsistent als `YYYY-MM-DD HH:mm:ss` in Europe/Berlin (CET/CEST)
+ * mit zusätzlicher UTC-ISO-Angabe in Klammern. Verhindert Verwirrung bei TZ-Drift.
+ */
+function formatBerlin(d: Date): string {
+  const parts = new Intl.DateTimeFormat('de-DE', {
+    timeZone: 'Europe/Berlin',
+    year: 'numeric', month: '2-digit', day: '2-digit',
+    hour: '2-digit', minute: '2-digit', second: '2-digit',
+    hour12: false,
+  }).formatToParts(d);
+  const get = (t: string) => parts.find(p => p.type === t)?.value ?? '00';
+  return `${get('year')}-${get('month')}-${get('day')} ${get('hour')}:${get('minute')}:${get('second')} (CET/CEST) [UTC ${d.toISOString()}]`;
+}
+
 // Mutex pro Template-ID gegen parallele postTemplateEmbed-Aufrufe (F9).
 const postLocks = new Map<string, Promise<unknown>>();
 // Mutex pro <templateId>:<userId> gegen Mehrfach-Klick auf Open-Button (G3).
@@ -216,15 +231,15 @@ export async function purgeTemplateInstances(client: Client, templateId: string)
           `# Ticket-Transcript ${template.label} (System-Close: Template geloescht)`,
           ``,
           `- **Channel:** #${tch.name} (\`${tch.id}\`)`,
-          `- **Eroeffnet:** ${inst.openedAt.toISOString()} von ${inst.openerName} (\`${inst.openerDiscordId}\`)`,
-          `- **Geschlossen:** ${new Date().toISOString()} (System: Template geloescht)`,
+          `- **Eroeffnet:** ${formatBerlin(inst.openedAt)} von ${inst.openerName} (\`${inst.openerDiscordId}\`)`,
+          `- **Geschlossen:** ${formatBerlin(new Date())} (System: Template geloescht)`,
           `- **Nachrichten:** ${collected.length}`,
           ``, `---`, ``,
         ];
         for (const m of collected) {
           const author = m.author?.bot ? `[BOT] ${m.author.username}` : (m.author?.username ?? 'unknown');
           const content = m.content?.length > 0 ? m.content : (m.embeds.length > 0 ? '*[Embed]*' : '*[no text]*');
-          lines.push(`**${author}** · \`${m.createdAt.toISOString()}\``, '', content, '');
+          lines.push(`**${author}** · \`${formatBerlin(m.createdAt)}\``, '', content, '');
         }
         const transcript = lines.join('\n');
         const fileName = `ticket-${safeLabel}-${inst.id.slice(0, 8)}.md`;
@@ -339,7 +354,7 @@ async function openTicketLocked(btn: ButtonInteraction, t: Awaited<ReturnType<ty
   const labelBase = t.label.toLowerCase().replace(/[^a-z0-9-]/g, '').slice(0, 30) || 'ticket';
 
   let channel: TextChannel | null = null;
-  let instance: { id: string } | null = null;
+  let instance: { id: string; openedAt: Date; ticketNumber: number } | null = null;
   try {
     const overwrites: { id: string; allow?: bigint[]; deny?: bigint[] }[] = [
       { id: guild.roles.everyone.id, deny: [PermissionFlagsBits.ViewChannel] },
@@ -427,11 +442,14 @@ async function openTicketLocked(btn: ButtonInteraction, t: Awaited<ReturnType<ty
       .setTitle(`🎫  ${t.label}`)
       .setDescription(messages[0])
       .setColor(color)
+      .setTimestamp(instance.openedAt) // exakter DB-openedAt (statt Date.now() bei Embed-Send)
       .addFields(
         { name: 'Eroeffnet von', value: `<@${btn.user.id}>`, inline: true },
-        { name: 'Eroeffnet am', value: `<t:${Math.floor(Date.now() / 1000)}:f>`, inline: true },
+        // Discord rendert <t:N:F> in jeder Viewer-TZ korrekt; Quelle = DB-openedAt fuer Konsistenz mit Transcript.
+        { name: 'Eroeffnet am', value: `<t:${Math.floor(instance.openedAt.getTime() / 1000)}:F> (<t:${Math.floor(instance.openedAt.getTime() / 1000)}:R>)`, inline: true },
+        { name: 'Ticket-Nr.', value: `#${numStr}`, inline: true },
       )
-      .setFooter({ text: `V-Bot Ticket-System  •  Slot ${t.slot}` });
+      .setFooter({ text: `V-Bot Ticket-System  •  Slot ${t.slot}  •  #${numStr}` });
 
     const mentionRoleIds = Array.isArray((t as unknown as { mentionRoleIds?: unknown }).mentionRoleIds)
       ? ((t as unknown as { mentionRoleIds: unknown[] }).mentionRoleIds.filter((r): r is string => typeof r === 'string'))
@@ -578,15 +596,15 @@ export async function handleCloseButton(btn: ButtonInteraction): Promise<void> {
       `# Ticket-Transcript ${instance.template.label}`,
       ``,
       `- **Channel:** #${ch.name} (\`${ch.id}\`)`,
-      `- **Eroeffnet:** ${instance.openedAt.toISOString()} von ${instance.openerName} (\`${instance.openerDiscordId}\`)`,
-      `- **Geschlossen:** ${new Date().toISOString()} von ${btn.user.username} (\`${btn.user.id}\`)`,
+      `- **Eroeffnet:** ${formatBerlin(instance.openedAt)} von ${instance.openerName} (\`${instance.openerDiscordId}\`)`,
+      `- **Geschlossen:** ${formatBerlin(new Date())} von ${btn.user.username} (\`${btn.user.id}\`)`,
       `- **Nachrichten:** ${collected.length}${truncated ? ` (Limit ${TRANSCRIPT_MAX_MSGS} erreicht — aeltere Messages abgeschnitten)` : ''}`,
       ``,
       `---`,
       ``,
     ];
     for (const m of collected) {
-      const ts = m.createdAt.toISOString();
+      const ts = formatBerlin(m.createdAt);
       const author = m.author?.bot ? `[BOT] ${m.author.username}` : (m.author?.username ?? 'unknown');
       const content = m.content?.length > 0 ? m.content : (m.embeds.length > 0 ? '*[Embed]*' : '*[no text]*');
       lines.push(`**${author}** · \`${ts}\``);
