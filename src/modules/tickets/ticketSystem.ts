@@ -57,6 +57,27 @@ function formatBerlin(d: Date): string {
 const postLocks = new Map<string, Promise<unknown>>();
 // Mutex pro <templateId>:<userId> gegen Mehrfach-Klick auf Open-Button (G3).
 const openLocks = new Map<string, Promise<unknown>>();
+// Mutex pro instanceId gegen Mehrfach-Klick auf Close- oder AddUser-Button.
+// Verhindert doppeltes Transcript-Posten und doppeltes Channel-Delete.
+const instanceLocks = new Map<string, Promise<unknown>>();
+
+async function withInstanceLock<T>(instanceId: string, fn: () => Promise<T>): Promise<T> {
+  const prev = instanceLocks.get(instanceId);
+  if (prev) {
+    // Anderer Vorgang fuer dieselbe Instance laeuft — abbrechen statt warten,
+    // damit der User eine sofortige Rueckmeldung bekommt.
+    throw new Error('BUSY');
+  }
+  let release!: () => void;
+  const p = new Promise<void>(res => { release = res; });
+  instanceLocks.set(instanceId, p);
+  try {
+    return await fn();
+  } finally {
+    instanceLocks.delete(instanceId);
+    release();
+  }
+}
 
 function normalizeWelcomeMessages(raw: unknown, fallback: string): string[] {
   if (Array.isArray(raw)) {
@@ -421,20 +442,30 @@ async function openTicketLocked(btn: ButtonInteraction, t: Awaited<ReturnType<ty
       });
     }
 
-    // Instance ZUERST anlegen (Placeholder-channelId), um ticketNumber zu bekommen → Channel-Name Format `{number}-{user}-{name}`.
-    const createdInstance = await prisma.ticketInstance.create({
-      data: {
-        templateId: t.id,
-        guildId: guild.id,
-        channelId: `pending:${btn.id}`,
-        openerDiscordId: btn.user.id,
-        openerName: btn.user.username,
-      },
+    // Per-Template Counter atomar inkrementieren und als templateNumber persistieren.
+    // Globale ticketNumber bleibt als interne Eindeutigkeits-ID erhalten, fuer Channel-Name
+    // + Embeds wird die per-Template Nummer verwendet (parallele Nummernkreise pro Template).
+    const { createdInstance, templateNumber } = await prisma.$transaction(async (tx) => {
+      const updated = await tx.ticketTemplate.update({
+        where: { id: t.id },
+        data: { ticketCounter: { increment: 1 } },
+        select: { ticketCounter: true },
+      });
+      const inst = await tx.ticketInstance.create({
+        data: {
+          templateId: t.id,
+          guildId: guild.id,
+          channelId: `pending:${btn.id}`,
+          openerDiscordId: btn.user.id,
+          openerName: btn.user.username,
+          templateNumber: updated.ticketCounter,
+        },
+      });
+      return { createdInstance: inst, templateNumber: updated.ticketCounter };
     });
     instance = createdInstance;
-    const ticketNumber = createdInstance.ticketNumber;
     const openedAt = createdInstance.openedAt;
-    const numStr = String(ticketNumber).padStart(4, '0');
+    const numStr = String(templateNumber).padStart(4, '0');
     const safeName = `${numStr}-${userBase}-${labelBase}`.slice(0, 95);
 
     channel = await guild.channels.create({
@@ -446,7 +477,7 @@ async function openTicketLocked(btn: ButtonInteraction, t: Awaited<ReturnType<ty
         ...(o.allow ? { allow: o.allow } : {}),
         ...(o.deny ? { deny: o.deny } : {}),
       })),
-      reason: `Ticket #${numStr} geoeffnet von ${btn.user.tag}`,
+      reason: `Ticket #${numStr} (${t.label}) geoeffnet von ${btn.user.tag}`,
     }) as TextChannel;
 
     await prisma.ticketInstance.update({
@@ -494,7 +525,7 @@ async function openTicketLocked(btn: ButtonInteraction, t: Awaited<ReturnType<ty
 
     logAudit('TICKET_OPENED', 'TICKET', {
       guildId: guild.id, templateId: t.id, instanceId: createdInstance.id,
-      ticketNumber, channelId: channel.id, userId: btn.user.id,
+      ticketNumber: createdInstance.ticketNumber, templateNumber, channelId: channel.id, userId: btn.user.id,
       mentionedRoleIds: mentionRoleIds, mentionedRoleCount: mentionRoleIds.length,
       managerRoleIds,
     });
@@ -503,8 +534,19 @@ async function openTicketLocked(btn: ButtonInteraction, t: Awaited<ReturnType<ty
   } catch (e) {
     logger.error('Ticket-Open-Fehler', e as Error);
     // F1: Cleanup bei Teilfehler. Channel und Instance konsistent zuruecksetzen.
+    // Lueckenlose Per-Template-Nummerierung: Counter zurueckrollen, wenn die Instance
+    // ungenutzt geloescht wird. Nur dekrementieren, wenn die Instance wirklich diese Nummer
+    // bekommen hat und der Counter seitdem nicht weitergelaufen ist (Atomar via WHERE-Clause).
     if (instance) {
+      const inst = instance as unknown as { templateNumber?: number | null; templateId: string };
+      const tn = inst.templateNumber;
       await prisma.ticketInstance.delete({ where: { id: instance.id } }).catch(() => {});
+      if (typeof tn === 'number' && tn > 0) {
+        await prisma.ticketTemplate.updateMany({
+          where: { id: inst.templateId, ticketCounter: tn },
+          data: { ticketCounter: { decrement: 1 } },
+        }).catch(() => {});
+      }
     }
     if (channel) {
       await channel.delete('Ticket-Open-Fehler, Cleanup').catch(() => {});
@@ -522,7 +564,19 @@ export async function handleCloseButton(btn: ButtonInteraction): Promise<void> {
     await btn.reply({ content: 'Ungueltige Button-ID.', ephemeral: true });
     return;
   }
+  // Mehrfach-Klick / Race-Schutz: pro Instance nur EIN aktiver Close-Vorgang.
+  try {
+    await withInstanceLock(instanceId, () => closeTicketLocked(btn, instanceId));
+  } catch (e) {
+    if ((e as Error).message === 'BUSY') {
+      await btn.reply({ content: 'Schliess-Vorgang laeuft bereits.', ephemeral: true }).catch(() => {});
+      return;
+    }
+    throw e;
+  }
+}
 
+async function closeTicketLocked(btn: ButtonInteraction, instanceId: string): Promise<void> {
   const instance = await prisma.ticketInstance.findUnique({
     where: { id: instanceId },
     include: { template: true },
@@ -553,6 +607,11 @@ export async function handleCloseButton(btn: ButtonInteraction): Promise<void> {
     } catch {
       // member fetch failed — leave canClose false
     }
+  }
+  // Hartes Veto: auch wenn der Opener selbst Manager-/Staff-Rolle traegt, darf er sein
+  // EIGENES Ticket nicht schliessen (User-Anforderung: "Opener darf nicht close").
+  if (btn.user.id === instance.openerDiscordId && btn.user.id !== btn.guild?.ownerId) {
+    canClose = false;
   }
   if (!canClose) {
     await btn.reply({
@@ -636,8 +695,10 @@ export async function handleCloseButton(btn: ButtonInteraction): Promise<void> {
 
     const transcript = lines.join('\n');
     const safeLabel = instance.template.label.replace(/[^a-zA-Z0-9_-]/g, '_').slice(0, 40) || 'ticket';
-    const ticketNumber = (instance as unknown as { ticketNumber?: number }).ticketNumber ?? 0;
-    const numStr = String(ticketNumber).padStart(4, '0');
+    // templateNumber bevorzugen (per-Template Zaehler); Fallback auf globale ticketNumber fuer Legacy-Rows.
+    const inst = instance as unknown as { templateNumber?: number | null; ticketNumber?: number };
+    const displayNumber = inst.templateNumber ?? inst.ticketNumber ?? 0;
+    const numStr = String(displayNumber).padStart(4, '0');
 
     // Plain Markdown-Transcript (kein ZIP, keine DM). Anhaenge stehen als URLs im Transcript drin.
     let transcriptBuf = Buffer.from(transcript, 'utf8');
@@ -692,7 +753,8 @@ export async function handleCloseButton(btn: ButtonInteraction): Promise<void> {
     });
 
     logAudit('TICKET_CLOSED', 'TICKET', {
-      guildId: instance.guildId, instanceId: instance.id, ticketNumber,
+      guildId: instance.guildId, instanceId: instance.id,
+      ticketNumber: inst.ticketNumber, templateNumber: inst.templateNumber ?? null,
       closedBy: btn.user.id, messages: collected.length,
       transcriptBytes: transcriptBuf.length,
       transcriptTruncated,
@@ -704,6 +766,10 @@ export async function handleCloseButton(btn: ButtonInteraction): Promise<void> {
     }, 5000);
   } catch (e) {
     logger.error('Ticket-Close-Fehler', e as Error);
+    logAudit('TICKET_CLOSE_FAILED', 'TICKET', {
+      guildId: instance.guildId, instanceId: instance.id,
+      closedBy: btn.user.id, error: (e as Error).message,
+    });
     await btn.editReply({ content: 'Konnte Ticket nicht schliessen. Bitte Admin informieren.' }).catch(() => {});
   }
 }

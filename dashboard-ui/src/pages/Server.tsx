@@ -1,7 +1,7 @@
 import { useState } from 'react';
 import { Link, useParams } from 'react-router-dom';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
-import { Plus, Trash2, KeyRound, Server as ServerIcon, Shield, AlertTriangle, ChevronRight, Ticket, Settings2, Send, Power, Tag, Activity, Users, Crosshair } from 'lucide-react';
+import { Plus, Trash2, KeyRound, Server as ServerIcon, Shield, AlertTriangle, ChevronRight, Ticket, Settings2, Send, Power, Tag, Activity, Users, Crosshair, RotateCcw } from 'lucide-react';
 import { api, ApiError } from '@/lib/api';
 import { Shell } from '@/components/Shell';
 import { Card, CardHeader, CardTitle, CardDesc } from '@/components/ui/Card';
@@ -747,6 +747,7 @@ interface TicketTemplate {
   transcriptChannelId: string;
   archiveChannelId: string | null;
   isActive: boolean;
+  ticketCounter: number;
 }
 
 interface DiscordChannel { id: string; name: string; type: number; parentId: string | null }
@@ -793,6 +794,14 @@ function TicketsTab({ guildId, isOwner }: { guildId: string; isOwner: boolean })
       api.put(`/api/v2/guilds/${guildId}/tickets/${vars.id}`, { isActive: vars.isActive }),
     onSuccess: () => void qc.invalidateQueries({ queryKey: ['tickets', guildId] }),
     onError: (e) => toast.error(e instanceof ApiError ? e.message : 'Aenderung fehlgeschlagen.'),
+  });
+  const resetCounter = useMutation({
+    mutationFn: (id: string) => api.post(`/api/v2/guilds/${guildId}/tickets/${id}/reset-counter`),
+    onSuccess: () => {
+      void qc.invalidateQueries({ queryKey: ['tickets', guildId] });
+      toast.success('Ticket-Nummer zurueckgesetzt.');
+    },
+    onError: (e) => toast.error(e instanceof ApiError ? e.message : 'Zuruecksetzen fehlgeschlagen.'),
   });
 
   if (!isOwner) {
@@ -846,10 +855,16 @@ function TicketsTab({ guildId, isOwner }: { guildId: string; isOwner: boolean })
                 if (!t) return;
                 toggleTpl.mutate({ id: t.id, isActive: !t.isActive });
               }}
+              onResetCounter={() => {
+                if (!t) return;
+                if (!confirm(`Ticket-Nummer fuer Slot ${t.slot} ("${t.label}") wirklich auf 0 zuruecksetzen?\n\nNaechstes neues Ticket beginnt wieder bei #0001. Funktioniert nur, wenn keine offenen Tickets mehr existieren.`)) return;
+                resetCounter.mutate(t.id);
+              }}
               busy={
                 (removeTpl.isPending && removeTpl.variables === t?.id) ||
                 (postTpl.isPending && postTpl.variables === t?.id) ||
-                (toggleTpl.isPending && toggleTpl.variables?.id === t?.id)
+                (toggleTpl.isPending && toggleTpl.variables?.id === t?.id) ||
+                (resetCounter.isPending && resetCounter.variables === t?.id)
               }
             />
           );
@@ -875,7 +890,7 @@ function TicketsTab({ guildId, isOwner }: { guildId: string; isOwner: boolean })
 }
 
 function TicketSlotCard({
-  slot, template, channels, onEdit, onDelete, onPost, onToggle, busy,
+  slot, template, channels, onEdit, onDelete, onPost, onToggle, onResetCounter, busy,
 }: {
   slot: number;
   template: TicketTemplate | null;
@@ -884,6 +899,7 @@ function TicketSlotCard({
   onDelete: () => void;
   onPost: () => void;
   onToggle: () => void;
+  onResetCounter: () => void;
   busy?: boolean;
 }) {
   const channelName = (id: string | null) => id ? (channels.find(c => c.id === id)?.name ?? id) : '—';
@@ -926,12 +942,26 @@ function TicketSlotCard({
             {template.archiveChannelId && <div>Archiv: <span className="text-white">#{channelName(template.archiveChannelId)}</span></div>}
             {template.categoryId && <div>Kategorie: <span className="text-white">{channelName(template.categoryId)}</span></div>}
             <div>Welcome-Nachrichten: <span className="text-white">{template.welcomeMessages?.length ?? 1}</span></div>
+            <div>
+              Naechste Ticket-Nr.: <span className="text-white font-mono">#{String((template.ticketCounter ?? 0) + 1).padStart(4, '0')}</span>
+              <span className="ml-1 text-[10px] uppercase tracking-wider opacity-70">(Counter: {template.ticketCounter ?? 0})</span>
+            </div>
           </div>
         </div>
         <div className="flex flex-col sm:flex-row gap-1.5 shrink-0">
           <Button size="sm" variant="outline" onClick={onPost} disabled={busy}><Send className="h-3.5 w-3.5 mr-1" /> Posten</Button>
           <Button size="sm" variant="ghost" onClick={onToggle} disabled={busy} title={template.isActive ? 'Deaktivieren' : 'Aktivieren'} aria-label={template.isActive ? 'Template deaktivieren' : 'Template aktivieren'}><Power className="h-3.5 w-3.5" /></Button>
           <Button size="sm" variant="outline" onClick={onEdit} disabled={busy}>Bearbeiten</Button>
+          <Button
+            size="sm"
+            variant="ghost"
+            onClick={onResetCounter}
+            disabled={busy || (template.ticketCounter ?? 0) === 0}
+            title="Ticket-Nummer zuruecksetzen (nur wenn keine offenen Tickets)"
+            aria-label="Ticket-Nummer zuruecksetzen"
+          >
+            <RotateCcw className="h-3.5 w-3.5" />
+          </Button>
           <Button size="sm" variant="danger" onClick={onDelete} disabled={busy} aria-label="Template loeschen"><Trash2 className="h-3.5 w-3.5" /></Button>
         </div>
       </div>

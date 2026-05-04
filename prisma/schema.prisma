@@ -1087,6 +1087,10 @@ model TicketTemplate {
   transcriptChannelId String // Channel fuer Transcript-Uploads beim Close
   archiveChannelId    String? // Optionaler separater Archiv-Channel (zusaetzlich zu Transcript)
   isActive            Boolean          @default(true)
+  // Per-Template fortlaufender Ticket-Counter. Wird im Open-Flow atomar inkrementiert
+  // und als TicketInstance.templateNumber persistiert. Erlaubt parallele Nummernkreise
+  // pro Template (z.B. Support-0007 und Bewerbung-0007 nebeneinander).
+  ticketCounter       Int              @default(0)
   createdAt           DateTime         @default(now())
   updatedAt           DateTime         @updatedAt
   instances           TicketInstance[]
@@ -1097,7 +1101,11 @@ model TicketTemplate {
 
 model TicketInstance {
   id                  String         @id @default(uuid())
-  ticketNumber        Int            @unique @default(autoincrement()) // Fortlaufende Ticket-Nummer fuer Channel-Name {number}-{user}-{name}
+  ticketNumber        Int            @unique @default(autoincrement()) // Globale interne Sequenz (Legacy/Eindeutigkeit)
+  // Pro-Template fortlaufende Nummer. Wird beim Open atomar aus TicketTemplate.ticketCounter
+  // gezogen und fuer Channel-Name + Embed + Transcript verwendet. Nullable fuer Legacy-Rows
+  // vor der Migration 20260504_ticket_per_template_counter.
+  templateNumber      Int?
   templateId          String
   template            TicketTemplate @relation(fields: [templateId], references: [id], onDelete: Cascade)
   guildId             String
@@ -1112,6 +1120,7 @@ model TicketInstance {
 
   @@index([guildId, status])
   @@index([templateId])
+  @@index([templateId, templateNumber])
 }
 
 // ============================================================

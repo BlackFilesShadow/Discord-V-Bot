@@ -224,6 +224,7 @@ function serialize(t: TicketTemplate) {
     transcriptChannelId: t.transcriptChannelId,
     archiveChannelId: t.archiveChannelId,
     isActive: t.isActive,
+    ticketCounter: (t as unknown as { ticketCounter?: number }).ticketCounter ?? 0,
     createdAt: t.createdAt.toISOString(),
     updatedAt: t.updatedAt.toISOString(),
   };
@@ -420,4 +421,39 @@ ticketsRouter.post('/:id/post', requireGuildOwner, async (req, res) => {
   } catch (e) {
     res.status(400).json({ error: (e as Error).message });
   }
+});
+
+/**
+ * Setzt den Per-Template Ticket-Counter zurueck. Nur erlaubt, wenn keine OPEN-Instances
+ * mehr existieren — sonst wuerde die naechste neue Nummer mit einer aktiven Instance
+ * (templateNumber) kollidieren bzw. die Eindeutigkeit pro Template waere irrefuehrend.
+ * Channels werden NICHT umbenannt.
+ */
+ticketsRouter.post('/:id/reset-counter', requireGuildOwner, async (req, res) => {
+  const scope = req.guildScope!;
+  const id = String(req.params.id);
+  const existing = await prisma.ticketTemplate.findUnique({ where: { id } });
+  if (!existing || existing.guildId !== scope.guildId) {
+    res.status(404).json({ error: 'Template nicht gefunden.' });
+    return;
+  }
+  const openCount = await prisma.ticketInstance.count({
+    where: { templateId: id, status: 'OPEN' },
+  });
+  if (openCount > 0) {
+    res.status(409).json({ error: `Es existieren noch ${openCount} offene Tickets in diesem Slot. Bitte zuerst schliessen.` });
+    return;
+  }
+  const before = (existing as unknown as { ticketCounter?: number }).ticketCounter ?? 0;
+  const updated = await prisma.ticketTemplate.update({
+    where: { id },
+    data: { ticketCounter: 0 },
+  });
+  logAuditDb('TICKET_TEMPLATE_COUNTER_RESET', 'TICKET', {
+    actorUserId: req.auth!.userId,
+    guildId: scope.guildId,
+    details: { templateId: id, slot: existing.slot, before, after: 0 },
+  });
+  emitGuildEvent(scope.guildId, { type: 'tickets.changed', payload: { guildId: scope.guildId, templateId: id } });
+  res.json(serialize(updated));
 });
