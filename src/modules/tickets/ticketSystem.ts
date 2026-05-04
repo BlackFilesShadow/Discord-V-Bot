@@ -496,7 +496,7 @@ export async function unpostTemplateEmbed(client: Client, templateId: string): P
  * (und falls vorhanden archiveChannelId), bevor der Channel geloescht wird.
  * Best-effort, fehlertolerant.
  */
-export async function purgeTemplateInstances(client: Client, templateId: string): Promise<{ closed: number; failed: number }> {
+export async function  purgeTemplateInstances(client: Client, templateId: string): Promise<{ closed: number; failed: number }> {
   const template = await prisma.ticketTemplate.findUnique({ where: { id: templateId } });
   if (!template) return { closed: 0, failed: 0 };
 
@@ -898,9 +898,10 @@ async function closeTicketLocked(btn: ButtonInteraction, instanceId: string): Pr
     return;
   }
 
-  // Permission-Check: Opener darf NICHT mehr eigenes Ticket schliessen (User-Vorgabe).
-  // Nur Server-Owner, Discord-Administrator, Staff-Rolle und Manager-Rollen duerfen schliessen.
-  // Konsistent mit canManageTicketForMember (gleicher Pfad wie AddUser).
+  // Permission-Check: Server-Owner, Discord-Administrator, Staff-Rolle und Manager-Rollen
+  // duerfen schliessen — UNABHAENGIG davon, ob sie der Opener sind. (Frueheres hartes
+  // Self-Veto wurde entfernt: privilegierte Opener sollen ihr Ticket eigenstaendig
+  // abschliessen koennen, sobald ihr Anliegen geklaert ist.)
   let canClose = false;
   if (btn.guild) {
     try {
@@ -909,11 +910,6 @@ async function closeTicketLocked(btn: ButtonInteraction, instanceId: string): Pr
     } catch {
       // member fetch failed — leave canClose false
     }
-  }
-  // Hartes Veto: auch wenn der Opener selbst Manager-/Staff-Rolle traegt, darf er sein
-  // EIGENES Ticket nicht schliessen (User-Anforderung: "Opener darf nicht close").
-  if (btn.user.id === instance.openerDiscordId && btn.user.id !== btn.guild?.ownerId) {
-    canClose = false;
   }
   if (!canClose) {
     await btn.reply({

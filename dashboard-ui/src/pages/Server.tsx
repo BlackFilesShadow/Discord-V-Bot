@@ -613,7 +613,11 @@ function PermissionsTab({ guildId }: { guildId: string }) {
             className="h-10 rounded-md bg-bg-elev border border-border text-white px-3 focus-ring"
           >
             <option value="">Scope waehlen…</option>
-            {q.data?.availableScopes.map(s => <option key={s} value={s}>{s}</option>)}
+            {q.data?.availableScopes.map(s => (
+              <option key={s} value={s}>
+                {s === 'dashboard.access' ? 'dashboard.access  (Vollzugriff)' : s}
+              </option>
+            ))}
           </select>
           <Button
             disabled={!canSubmit}

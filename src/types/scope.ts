@@ -55,8 +55,15 @@ export interface GuildScope {
 /**
  * Hardcoded Permission-Scopes. Owner hat implizit alle.
  * KEIN Free-Text — Scope-Strings sind Compile-Zeit-Konstanten.
+ *
+ * Sonderscope:
+ *   `dashboard.access` — Allgemeiner Vollzugriff fuers Dashboard. Macht die Guild
+ *   in der Dashboard-Liste sichtbar UND wirkt als Bypass fuer alle anderen
+ *   delegierbaren Scopes (siehe `hasPermission`). NICHT-delegierbare Scopes
+ *   (nitrado.manage, permissions.manage, dev.console) bleiben Owner-only.
  */
 export const PERMISSION_SCOPES = [
+  'dashboard.access',   // ALL-ACCESS Bypass fuer alle delegierbaren Scopes
   'nitrado.manage',     // Token connect/disconnect — NIE delegierbar (Owner-only-hardcoded an Routen-Layer)
   'tickets.manage',
   'whitelist.view',
@@ -87,5 +94,12 @@ export const NON_DELEGABLE_SCOPES: ReadonlySet<PermissionScope> = new Set([
 
 export function hasPermission(scope: GuildScope, perm: PermissionScope): boolean {
   if (scope.isOwner) return true;
-  return scope.permissions.has(perm);
+  // Direkter Treffer (z. B. expliziter `tickets.manage`-Grant).
+  if (scope.permissions.has(perm)) return true;
+  // ALL-ACCESS Bypass: `dashboard.access` deckt alle Scopes ab — ausser den
+  // nicht-delegierbaren (Nitrado-Token, Permissions-Verwaltung, Dev-Console).
+  if (scope.permissions.has('dashboard.access') && !NON_DELEGABLE_SCOPES.has(perm)) {
+    return true;
+  }
+  return false;
 }

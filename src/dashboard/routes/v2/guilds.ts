@@ -91,6 +91,27 @@ guildsRouter.get('/', async (req, res) => {
       .map(g => g.guildId),
   );
 
+  // Schritt 2b: Role-basierte Grants. Eine Guild ist auch dann sichtbar, wenn der
+  // User dort eine Rolle traegt, der mindestens 1 Scope zugewiesen wurde
+  // (z. B. `dashboard.access` fuer eine Supporter-Rolle). Wir scannen nur Guilds,
+  // in denen der Bot present ist (dort koennen Member/Roles geprueft werden).
+  for (const cached of client.guilds.cache.values()) {
+    if (grantedGuildIds.has(cached.id)) continue;
+    const member = cached.members.cache.get(req.auth.discordId)
+      ?? await cached.members.fetch(req.auth.discordId).catch(() => null);
+    if (!member) continue;
+    const roleIds = Array.from(member.roles.cache.keys());
+    if (roleIds.length === 0) continue;
+    const roleGrants = await prisma.guildPermissionRoleGrant.findMany({
+      where: { guildId: cached.id, roleDiscordId: { in: roleIds } },
+      select: { permissions: true },
+    });
+    const hasAny = roleGrants.some(rg =>
+      Array.isArray(rg.permissions) && (rg.permissions as string[]).length > 0,
+    );
+    if (hasAny) grantedGuildIds.add(cached.id);
+  }
+
   // Schritt 3: nur Owner ODER granted -> mergen
   const botGuildIds = new Set(client.guilds.cache.keys());
   const merged = new Map<string, {
