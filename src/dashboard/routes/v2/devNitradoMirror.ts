@@ -40,6 +40,9 @@ devNitradoMirrorRouter.use(requireDev);
 
 devNitradoMirrorRouter.get('/connections', async (_req, res) => {
   try {
+    // DEV-only: requireDev (Bot-Owner) ist auf Router-Ebene aktiv. Cross-Guild-Listing ist hier explizit gewollt,
+    // damit die DEV-UI alle Connections fuer Snapshot-Trigger anzeigen kann.
+    // eslint-disable-next-line local/no-unscoped-prisma-query
     const rows = await prisma.nitradoConnection.findMany({
       orderBy: [{ guildId: 'asc' }, { slot: 'asc' }],
       select: {
@@ -168,9 +171,13 @@ devNitradoMirrorRouter.get('/:snapshotId/file', async (req, res) => {
       });
     }
     if (f.content) {
-      // Binär: als download liefern
+      // Binär: als download liefern. Filename ASCII-only sanitiert; UTF-8-Original via filename* (RFC 5987).
+      const safeAscii = f.meta.name.replace(/[^A-Za-z0-9._-]/g, '_').slice(0, 100) || 'file';
       res.setHeader('Content-Type', f.meta.mimeGuess ?? 'application/octet-stream');
-      res.setHeader('Content-Disposition', `attachment; filename="${encodeURIComponent(f.meta.name)}"`);
+      res.setHeader(
+        'Content-Disposition',
+        `attachment; filename="${safeAscii}"; filename*=UTF-8''${encodeURIComponent(f.meta.name)}`,
+      );
       return res.send(f.content);
     }
     return res.json({ meta: { ...f.meta, sizeBytes: f.meta.sizeBytes.toString() }, text: null, oversize: false });

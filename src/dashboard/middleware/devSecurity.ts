@@ -80,7 +80,6 @@ export interface IpCheckResult {
  */
 export async function enforceDevIpAllowlist(req: Request): Promise<IpCheckResult> {
   const ip = req.ip ?? null;
-  // eslint-disable-next-line local/no-unscoped-prisma-query
   const count = await prisma.ipList.count({
     where: {
       listType: 'WHITELIST',
@@ -90,7 +89,6 @@ export async function enforceDevIpAllowlist(req: Request): Promise<IpCheckResult
   if (count === 0) return { ok: true, reason: 'no_list', listSize: 0 };
   if (!ip) return { ok: false, reason: 'no_ip', listSize: count };
 
-  // eslint-disable-next-line local/no-unscoped-prisma-query
   const hit = await prisma.ipList.findFirst({
     where: {
       listType: 'WHITELIST',
@@ -132,7 +130,6 @@ const BRUTE_THRESHOLD = 5;
 
 async function persistDevAuthFailure(ctx: AuthFailureContext): Promise<void> {
   const isBrute = (ctx.failureCount ?? 0) >= BRUTE_THRESHOLD || !!ctx.lockedUntil;
-  // eslint-disable-next-line local/no-unscoped-prisma-query
   await prisma.securityEvent.create({
     data: {
       userId: ctx.userId ?? null,
@@ -159,7 +156,6 @@ async function persistDevAuthFailure(ctx: AuthFailureContext): Promise<void> {
  */
 export async function recordDevAuthSuccess(ctx: { userId: string; ip?: string | null; userAgent?: string | null; sessionId: string }): Promise<void> {
   try {
-    // eslint-disable-next-line local/no-unscoped-prisma-query
     await prisma.securityEvent.create({
       data: {
         userId: ctx.userId,
@@ -225,7 +221,6 @@ export interface ActiveDevSession {
  */
 export async function getActiveDevSession(req: Request): Promise<ActiveDevSession | null> {
   if (!req.auth) return null;
-  // eslint-disable-next-line local/no-unscoped-prisma-query
   const s = await prisma.devSession.findFirst({
     where: { userDiscordId: req.auth.discordId, revokedAt: null, expiresAt: { gt: new Date() } },
     orderBy: { createdAt: 'desc' },

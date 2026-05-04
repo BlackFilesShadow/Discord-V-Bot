@@ -17,6 +17,11 @@ import { emitGuildEvent } from '../../socket/emitter';
 
 export const economyRouter = Router({ mergeParams: true });
 
+// Sicherheits-Bound: ±10^15 (1 Billiarde) verhindert Absurd-Werte / Front-End-Overflow.
+// Account-Spalten sind BigInt in der DB — kein DB-Overflow, aber UI/JS-Number-Range wären irgendwann ein Problem.
+const ECONOMY_DELTA_MAX = 1_000_000_000_000_000n;
+const ECONOMY_DELTA_MIN = -ECONOMY_DELTA_MAX;
+
 economyRouter.get('/config', requireGuildPermission('economy.view'), async (req, res) => {
   const cfg = await getConfig(req.guildScope!.guildId);
   // BigInt is OK in JSON (we don't have any here, startBalance is Int)
@@ -84,6 +89,10 @@ economyRouter.post('/accounts/:userDiscordId/admin-pay', requireGuildPermission(
   let bigDelta: bigint;
   try { bigDelta = BigInt(delta as string | number); } catch { res.status(400).json({ error: 'delta nicht parsebar.' }); return; }
   if (bigDelta === 0n) { res.status(400).json({ error: 'delta darf nicht 0 sein.' }); return; }
+  if (bigDelta > ECONOMY_DELTA_MAX || bigDelta < ECONOMY_DELTA_MIN) {
+    res.status(400).json({ error: `delta ausserhalb des erlaubten Bereichs (±${ECONOMY_DELTA_MAX.toString()}).` });
+    return;
+  }
   if (typeof reason !== 'string' || reason.length < 3 || reason.length > 200) { res.status(400).json({ error: 'reason 3..200 Zeichen.' }); return; }
 
   try {
