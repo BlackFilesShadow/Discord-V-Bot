@@ -31,7 +31,7 @@ const TABS: ReadonlyArray<TabDef> = [
   { key: 'tickets', label: 'Tickets', icon: Ticket },
   { key: 'factions', label: 'Fraktionssystem', icon: Users },
   { key: 'killfeed', label: 'Killfeed', icon: Crosshair },
-  { key: 'audit', label: 'Audit-Log', icon: Activity, ownerOnly: true },
+  { key: 'audit', label: 'Audit-Log', icon: Activity },
 ];
 
 interface Slot {
@@ -68,6 +68,9 @@ export default function Server() {
   const tabs = TABS;
 
   const isOwner = dash.data?.isOwner ?? false;
+  const perms = dash.data?.permissions ?? [];
+  // `dashboard.access` = Vollzugriff fuer alle delegierbaren Scopes (siehe Backend `hasPermission`).
+  const hasFullAccess = isOwner || perms.includes('dashboard.access');
   const visibleTabs = tabs.filter(t => !t.ownerOnly || isOwner);
 
   const sidebar = (
@@ -122,10 +125,10 @@ export default function Server() {
             {tab === 'nitrado' && guildId && <NitradoTab guildId={guildId} isOwner={isOwner} slots={dash.data.slots} />}
             {tab === 'aliases' && guildId && isOwner && <AliasesTab guildId={guildId} slots={dash.data.slots} />}
             {tab === 'permissions' && guildId && isOwner && <PermissionsTab guildId={guildId} />}
-            {tab === 'tickets' && guildId && <TicketsTab guildId={guildId} isOwner={isOwner} />}
+            {tab === 'tickets' && guildId && <TicketsTab guildId={guildId} canManage={hasFullAccess || perms.includes('tickets.manage')} />}
             {tab === 'factions' && guildId && <FactionsTab guildId={guildId} slots={dash.data.slots} />}
-            {tab === 'killfeed' && guildId && <KillfeedTab guildId={guildId} isOwner={isOwner} slots={dash.data.slots} />}
-            {tab === 'audit' && guildId && isOwner && <AuditTab guildId={guildId} />}
+            {tab === 'killfeed' && guildId && <KillfeedTab guildId={guildId} isOwner={isOwner || hasFullAccess || perms.includes('killfeed.manage')} slots={dash.data.slots} />}
+            {tab === 'audit' && guildId && (isOwner || hasFullAccess) && <AuditTab guildId={guildId} />}
           </>
         )}
       </div>
@@ -758,7 +761,7 @@ interface TicketTemplate {
 interface DiscordChannel { id: string; name: string; type: number; parentId: string | null }
 interface DiscordRole { id: string; name: string; color: string; position: number; managed: boolean }
 
-function TicketsTab({ guildId, isOwner }: { guildId: string; isOwner: boolean }) {
+function TicketsTab({ guildId, canManage }: { guildId: string; canManage: boolean }) {
   const qc = useQueryClient();
   const toast = useToast();
   const q = useQuery({
@@ -768,12 +771,12 @@ function TicketsTab({ guildId, isOwner }: { guildId: string; isOwner: boolean })
   const channelsQ = useQuery({
     queryKey: ['guild-channels', guildId],
     queryFn: () => api.get<{ channels: DiscordChannel[] }>(`/api/v2/guilds/${guildId}/channels`),
-    enabled: isOwner,
+    enabled: canManage,
   });
   const rolesQ = useQuery({
     queryKey: ['guild-roles', guildId],
     queryFn: () => api.get<{ roles: DiscordRole[] }>(`/api/v2/guilds/${guildId}/roles`),
-    enabled: isOwner,
+    enabled: canManage,
   });
 
   const [editing, setEditing] = useState<{ slot: number; existing: TicketTemplate | null } | null>(null);
@@ -809,11 +812,11 @@ function TicketsTab({ guildId, isOwner }: { guildId: string; isOwner: boolean })
     onError: (e) => toast.error(e instanceof ApiError ? e.message : 'Zuruecksetzen fehlgeschlagen.'),
   });
 
-  if (!isOwner) {
+  if (!canManage) {
     return (
       <Card glow>
         <CardHeader><CardTitle>Nicht erlaubt</CardTitle></CardHeader>
-        <p className="text-muted text-sm">Nur der Discord-Server-Owner kann Ticket-Templates verwalten.</p>
+        <p className="text-muted text-sm">Dir fehlt die Berechtigung <code>tickets.manage</code> oder <code>dashboard.access</code>.</p>
       </Card>
     );
   }
