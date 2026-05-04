@@ -177,7 +177,8 @@ export async function postTemplateEmbed(client: Client, templateId: string): Pro
     }
 
     const embed = buildOpenEmbed(t);
-    const row = buildOpenButton(t.id, t.label, t.embedColor);
+    const buttonText = ((t as unknown as { buttonLabel?: string | null }).buttonLabel || t.label).slice(0, 80) || 'Ticket oeffnen';
+    const row = buildOpenButton(t.id, buttonText, t.embedColor);
 
     let messageId = t.postedMessageId;
     let updated = false;
@@ -587,23 +588,13 @@ async function closeTicketLocked(btn: ButtonInteraction, instanceId: string): Pr
   }
 
   // Permission-Check: Opener darf NICHT mehr eigenes Ticket schliessen (User-Vorgabe).
-  // Nur Server-Owner, Staff-Rolle (Legacy) und Manager-Rollen (Multi) duerfen schliessen.
-  // Strikte Server-Side-Pruefung via frischen Member-Fetch (kein Cache-Reliance).
-  let canClose = btn.user.id === btn.guild?.ownerId;
-  if (!canClose && btn.guild) {
+  // Nur Server-Owner, Discord-Administrator, Staff-Rolle und Manager-Rollen duerfen schliessen.
+  // Konsistent mit canManageTicketForMember (gleicher Pfad wie AddUser).
+  let canClose = false;
+  if (btn.guild) {
     try {
       const member = await btn.guild.members.fetch(btn.user.id);
-      if (instance.template.staffRoleId && member.roles.cache.has(instance.template.staffRoleId)) {
-        canClose = true;
-      }
-      if (!canClose) {
-        const managerRoleIds = (instance.template as unknown as { managerRoleIds?: unknown }).managerRoleIds;
-        if (Array.isArray(managerRoleIds)) {
-          for (const rid of managerRoleIds) {
-            if (typeof rid === 'string' && member.roles.cache.has(rid)) { canClose = true; break; }
-          }
-        }
-      }
+      canClose = canManageTicketForMember(member, instance, btn.guild.ownerId);
     } catch {
       // member fetch failed — leave canClose false
     }

@@ -734,6 +734,7 @@ interface TicketTemplate {
   id: string;
   slot: number;
   label: string;
+  buttonLabel: string | null;
   welcomeText: string;
   welcomeMessages: string[];
   embedTitle: string;
@@ -1004,6 +1005,7 @@ function TicketEditModal({
   const counter = existing?.ticketCounter ?? 0;
   const nextNumStr = String(counter + 1).padStart(2, '0');
   const [label, setLabel] = useState(existing?.label ?? 'Support');
+  const [buttonLabel, setButtonLabel] = useState(existing?.buttonLabel ?? '');
   const [messages, setMessages] = useState<string[]>(() => {
     const src = existing?.welcomeMessages && existing.welcomeMessages.length > 0
       ? existing.welcomeMessages
@@ -1085,6 +1087,7 @@ function TicketEditModal({
       const body = {
         slot,
         label,
+        buttonLabel: buttonLabel.trim() ? buttonLabel.trim() : null,
         welcomeMessages: cleanedMessages,
         welcomeText: cleanedMessages[0], // Backward-compat-Spiegel
         embedTitle,
@@ -1149,15 +1152,21 @@ function TicketEditModal({
         </div>
 
         <div className="relative p-6 space-y-5">
-          {/* Label + Title */}
+          {/* Label + Title + Button-Label */}
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
             <label className="block">
-              <span className="text-xs text-muted">Label (Knopf-Beschriftung)</span>
+              <span className="text-xs text-muted">Label (Channel-Name & Transcript)</span>
               <Input value={label} onChange={e => setLabel(e.target.value)} maxLength={80} />
+              <span className="text-[10px] text-muted mt-1 block">Wird fuer den Ticket-Channel-Namen und Transcript-Header verwendet.</span>
             </label>
             <label className="block">
               <span className="text-xs text-muted">Embed-Titel</span>
               <Input value={embedTitle} onChange={e => setEmbedTitle(e.target.value)} maxLength={200} />
+            </label>
+            <label className="block sm:col-span-2">
+              <span className="text-xs text-muted">Button-Beschriftung (optional)</span>
+              <Input value={buttonLabel} onChange={e => setButtonLabel(e.target.value)} maxLength={80} placeholder={label || 'Ticket oeffnen'} />
+              <span className="text-[10px] text-muted mt-1 block">Falls leer, wird das Label oben verwendet. Aendert nichts an Channel-Name / Transcript.</span>
             </label>
           </div>
 

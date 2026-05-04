@@ -31,6 +31,7 @@ const WELCOME_MSG_MAX = 2000;
 interface TemplateBody {
   slot?: number;
   label?: string;
+  buttonLabel?: string | null;
   welcomeText?: string;
   welcomeMessages?: unknown;
   embedTitle?: string;
@@ -56,6 +57,17 @@ function validateBody(b: TemplateBody, partial: boolean): { ok: true; data: Reco
     if (typeof b.label !== 'string' || b.label.trim().length < 1 || b.label.length > 80) return { ok: false, error: 'label 1..80 Zeichen.' };
     data.label = b.label.trim();
   } else if (!partial) return { ok: false, error: 'label fehlt.' };
+
+  // Optionaler separater Button-Text. null = explizit ruecksetzen, leer-string = ruecksetzen.
+  if (b.buttonLabel !== undefined) {
+    if (b.buttonLabel === null || (typeof b.buttonLabel === 'string' && b.buttonLabel.trim().length === 0)) {
+      data.buttonLabel = null;
+    } else if (typeof b.buttonLabel !== 'string' || b.buttonLabel.length > 80) {
+      return { ok: false, error: 'buttonLabel max 80 Zeichen.' };
+    } else {
+      data.buttonLabel = b.buttonLabel.trim();
+    }
+  }
 
   // welcomeMessages (Array, 1..5, je 1..2000 Zeichen) — Single source of truth.
   // welcomeText wird als Legacy-Feld immer aus messages[0] gespiegelt.
@@ -211,6 +223,7 @@ function serialize(t: TicketTemplate) {
     id: t.id,
     slot: t.slot,
     label: t.label,
+    buttonLabel: (t as unknown as { buttonLabel?: string | null }).buttonLabel ?? null,
     welcomeText: t.welcomeText,
     welcomeMessages: normalizeWelcomeMessages(t.welcomeMessages, t.welcomeText),
     embedTitle: t.embedTitle,

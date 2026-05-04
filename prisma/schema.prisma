@@ -1087,7 +1087,8 @@ model TicketTemplate {
   id                  String           @id @default(uuid())
   guildId             String
   slot                Int // 1..5 pro Guild
-  label               String // Anzeige-Name (z.B. "Support", "Bug-Report")
+  label               String // Anzeige-Name / Channel-Base (z.B. "Support") — Ticket-Ausgabe (Channel-Name + Transcript-Header)
+  buttonLabel         String? // Optionaler separater Button-Text (Knopf-Beschriftung). Falls leer, wird `label` als Fallback verwendet.
   welcomeText         String           @db.Text // Legacy/Backward-Compat (= welcomeMessages[0])
   welcomeMessages     Json             @default("[]") // Array<string>, max 5, je 1..2000 Zeichen
   embedTitle          String // Titel des Public-Embeds mit Open-Button
