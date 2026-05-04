@@ -27,7 +27,9 @@ export type GuildEvent =
   | { type: 'casino.round'; payload: { guildId: string; gameType: string; payout: string } }
   | { type: 'faction.changed'; payload: { guildId: string; factionId: string } }
   | { type: 'settings.changed'; payload: { guildId: string; slotId: string } }
-  | { type: 'tickets.changed'; payload: { guildId: string; templateId?: string } };
+  | { type: 'tickets.changed'; payload: { guildId: string; templateId?: string } }
+  | { type: 'killfeed.changed'; payload: { guildId: string; configId?: string } }
+  | { type: 'killfeed.event'; payload: { guildId: string; configId: string; category: string; victimName: string; shooterName?: string; weapon?: string; distance?: number; occurredAt: string } };
 
 /**
  * Sendet Event an alle Clients im Room des betreffenden Guild-Namespace.

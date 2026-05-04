@@ -1,7 +1,7 @@
 import { useState } from 'react';
 import { Link, useParams } from 'react-router-dom';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
-import { Plus, Trash2, KeyRound, Server as ServerIcon, Shield, AlertTriangle, ChevronRight, Ticket, Settings2, Send, Power, Tag, Activity, Users } from 'lucide-react';
+import { Plus, Trash2, KeyRound, Server as ServerIcon, Shield, AlertTriangle, ChevronRight, Ticket, Settings2, Send, Power, Tag, Activity, Users, Crosshair } from 'lucide-react';
 import { api, ApiError } from '@/lib/api';
 import { Shell } from '@/components/Shell';
 import { Card, CardHeader, CardTitle, CardDesc } from '@/components/ui/Card';
@@ -10,8 +10,9 @@ import { Input } from '@/components/ui/Input';
 import { Select } from '@/components/ui/Select';
 import { Combobox, type ComboboxOption } from '@/components/ui/Combobox';
 import { useGuildLiveUpdates } from '@/lib/useGuildLiveUpdates';
+import { KillfeedTab } from '@/components/KillfeedTab';
 
-type Tab = 'nitrado' | 'aliases' | 'permissions' | 'tickets' | 'factions' | 'audit';
+type Tab = 'nitrado' | 'aliases' | 'permissions' | 'tickets' | 'factions' | 'killfeed' | 'audit';
 
 interface TabDef {
   key: Tab;
@@ -26,6 +27,7 @@ const TABS: ReadonlyArray<TabDef> = [
   { key: 'permissions', label: 'Berechtigungen', icon: Shield, ownerOnly: true },
   { key: 'tickets', label: 'Tickets', icon: Ticket },
   { key: 'factions', label: 'Fraktionssystem', icon: Users },
+  { key: 'killfeed', label: 'Killfeed', icon: Crosshair },
   { key: 'audit', label: 'Audit-Log', icon: Activity, ownerOnly: true },
 ];
 
@@ -119,6 +121,7 @@ export default function Server() {
             {tab === 'permissions' && guildId && isOwner && <PermissionsTab guildId={guildId} />}
             {tab === 'tickets' && guildId && <TicketsTab guildId={guildId} isOwner={isOwner} />}
             {tab === 'factions' && guildId && <FactionsOverviewTab guildId={guildId} slots={dash.data.slots} />}
+            {tab === 'killfeed' && guildId && <KillfeedTab guildId={guildId} isOwner={isOwner} slots={dash.data.slots} />}
             {tab === 'audit' && guildId && isOwner && <AuditTab guildId={guildId} />}
           </>
         )}

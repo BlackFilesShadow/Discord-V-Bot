@@ -30,6 +30,8 @@ const SCOPED_MODELS = new Set([
   'casinoRound',
   'idempotencyKey',
   'nitradoJob',
+  'killfeedConfig',
+  'killfeedEvent',
 ]);
 
 const QUERY_METHODS = new Set([

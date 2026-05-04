@@ -1419,6 +1419,8 @@ model NitradoConnection {
   factionConfigs    FactionSystemConfig[]
   economyLinks      EconomyLink[]
   mirrorSnapshots   NitradoSnapshot[]
+  killfeedConfigs   KillfeedConfig[]
+  killfeedEvents    KillfeedEvent[]
 
   @@unique([guildId, slot])
   @@index([guildId])
@@ -1828,4 +1830,68 @@ model NitradoSnapshotFile {
   @@index([snapshotId, parentDir])
   @@index([snapshotId, name])
   @@index([snapshotId, sha256])
+}
+
+// ============================================================
+// KILLFEED — Live-PvP-Tracking aus DayZ ADM-Logs
+// Polling im 60s-Takt mit ETag/If-Modified-Since.
+// ============================================================
+enum KillCategory {
+  DEATH
+  SUICIDE
+  NPC
+  VEHICLE
+}
+
+model KillfeedConfig {
+  id            String            @id @default(cuid())
+  guildId       String
+  nitradoConnId String
+  nitradoConn   NitradoConnection @relation(fields: [nitradoConnId], references: [id], onDelete: Cascade)
+  channelId     String            @db.VarChar(32)
+  isActive      Boolean           @default(true)
+  categories    KillCategory[]
+
+  // Anzeige-Toggles
+  showShooterCoords Boolean @default(false)
+  showVictimCoords  Boolean @default(true)
+  showWeapon        Boolean @default(true)
+  showDistance      Boolean @default(true)
+  embedColor        String  @default("#dc2626") @db.VarChar(9)
+
+  // Polling-State
+  lastEventAt    DateTime?
+  lastEtag       String?   @db.VarChar(128)
+  lastFileName   String?   @db.VarChar(256)
+  lastByteOffset BigInt    @default(0)
+  lastPolledAt   DateTime?
+  lastErrorMsg   String?   @db.Text
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@unique([guildId, nitradoConnId, channelId])
+  @@index([guildId, nitradoConnId])
+  @@index([guildId, isActive])
+}
+
+model KillfeedEvent {
+  id            String            @id @default(cuid())
+  guildId       String
+  nitradoConnId String
+  nitradoConn   NitradoConnection @relation(fields: [nitradoConnId], references: [id], onDelete: Cascade)
+  category      KillCategory
+  occurredAt    DateTime
+  shooterName   String?           @db.VarChar(120)
+  shooterPos    String?           @db.VarChar(120)
+  victimName    String            @db.VarChar(120)
+  victimPos     String?           @db.VarChar(120)
+  weapon        String?           @db.VarChar(120)
+  distance      Float?
+  rawLine       String            @db.Text
+  postedAt      DateTime?
+  createdAt     DateTime          @default(now())
+
+  @@index([guildId, nitradoConnId, occurredAt])
+  @@index([guildId, nitradoConnId, category])
 }

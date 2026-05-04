@@ -217,10 +217,12 @@ async function main(): Promise<void> {
     const { startTokenValidationCron } = await import('./modules/nitrado/tokenValidationCron.js');
     const { startAdmSyncCron } = await import('./modules/nitrado/admSyncCron.js');
     const { startPermaOnlyCron } = await import('./modules/nitrado/permaOnlyCron.js');
+    const { startKillfeedWatcher } = await import('./modules/killfeed/admWatcher.js');
     startNitradoJobWorker();
     startTokenValidationCron(client);
     startAdmSyncCron();
     startPermaOnlyCron();
+    startKillfeedWatcher();
   } catch (e) {
     logger.warn('Nitrado-Worker-Init fehlgeschlagen:', e as Error);
   }
