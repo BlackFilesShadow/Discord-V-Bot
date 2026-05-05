@@ -1161,7 +1161,7 @@ function TicketEditModal({
             <h2 id="ticket-modal-title" className="text-xl font-semibold text-white mt-1">
               {existing ? 'Template bearbeiten' : 'Neues Template'}
             </h2>
-            <p className="text-xs text-muted mt-1">High-End Ticket-Konfiguration. Channels werden niemals vermischt.</p>
+            <p className="text-xs text-muted mt-1">Channels werden niemals vermischt.</p>
           </div>
           <div
             className="h-12 w-12 rounded-xl border grid place-items-center text-lg shrink-0"
