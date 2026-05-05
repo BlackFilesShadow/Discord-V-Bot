@@ -514,27 +514,60 @@ ticketsRouter.post('/instances/:instanceId/users', requireGuildPermission('ticke
     if (ticket.status !== 'OPEN') {
       return res.status(409).json({ error: 'Ticket ist nicht (mehr) offen' });
     }
-    if (ticket.userIds.includes(userId)) {
+    if (ticket.userIds.includes(userId) || userId === ticket.openerDiscordId) {
       return res.status(409).json({ error: 'User bereits hinzugefügt' });
     }
+
+    // KRITISCH: Discord-Permissions ZUERST (verhindert Inkonsistenz DB <-> Discord).
+    // Ohne Bot-Client koennen wir keinen Sichtzugriff garantieren -> hart abbrechen.
+    const cli = tryGetDashboardClient();
+    if (!cli) {
+      return res.status(503).json({ error: 'Bot-Client nicht verfügbar.' });
+    }
+    const guild = await cli.guilds.fetch(scope.guildId).catch(() => null);
+    if (!guild) {
+      return res.status(404).json({ error: 'Guild nicht erreichbar.' });
+    }
+    // Validiere: Target ist Mitglied dieses Servers.
+    const targetMember = await guild.members.fetch(userId).catch(() => null);
+    if (!targetMember) {
+      return res.status(400).json({ error: 'Nutzer ist kein Mitglied dieses Servers.' });
+    }
+    if (targetMember.user.bot) {
+      return res.status(400).json({ error: 'Bots können nicht hinzugefügt werden.' });
+    }
+    const ch = await cli.channels.fetch(ticket.channelId).catch(() => null);
+    if (!ch || !ch.isTextBased() || ch.isDMBased() || !('permissionOverwrites' in ch)) {
+      return res.status(409).json({ error: 'Ticket-Channel nicht verfügbar.' });
+    }
+    try {
+      await (ch as unknown as { permissionOverwrites: { edit: (id: string, perms: object) => Promise<unknown> } })
+        .permissionOverwrites.edit(userId, {
+          ViewChannel: true,
+          SendMessages: true,
+          ReadMessageHistory: true,
+          AttachFiles: true,
+          EmbedLinks: true,
+        });
+    } catch (permErr) {
+      const msg = permErr instanceof Error ? permErr.message : String(permErr);
+      return res.status(500).json({ error: `Discord-Permissions konnten nicht gesetzt werden: ${msg}` });
+    }
+
+    // DB erst NACH erfolgreicher Discord-Permission setzen.
     const updated = await prisma.ticketInstance.update({
       where: { id: instanceId },
       data: { userIds: { set: [...ticket.userIds, userId] } },
     });
-    // Discord-Channel-Permissions synchron halten (best-effort).
-    const cli = tryGetDashboardClient();
-    if (cli) {
-      const ch = await cli.channels.fetch(ticket.channelId).catch(() => null);
-      if (ch && ch.isTextBased() && !ch.isDMBased() && 'permissionOverwrites' in ch) {
-        await (ch as unknown as { permissionOverwrites: { edit: (id: string, perms: object) => Promise<unknown> } })
-          .permissionOverwrites.edit(userId, {
-            ViewChannel: true,
-            SendMessages: true,
-            ReadMessageHistory: true,
-            AttachFiles: true,
-          }).catch(() => {});
-      }
-    }
+
+    // Notification im Channel: pingt den User -> hebt den Channel im Client hervor.
+    try {
+      await (ch as unknown as { send: (opts: object) => Promise<unknown> }).send({
+        content: `➕ <@${userId}> wurde über das Dashboard zum Ticket hinzugefügt.`,
+        allowedMentions: { users: [userId] },
+      });
+    } catch { /* best-effort */ }
+
     logAuditDb('TICKET_USER_ADDED', 'TICKET', {
       actorUserId: req.auth!.userId,
       guildId: scope.guildId,

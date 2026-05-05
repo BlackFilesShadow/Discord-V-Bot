@@ -1202,6 +1202,7 @@ export async function handleAddUserSelect(select: UserSelectMenuInteraction): Pr
       SendMessages: true,
       ReadMessageHistory: true,
       AttachFiles: true,
+      EmbedLinks: true,
     });
     // DB-State synchron halten: userIds Array um neuen Nutzer erweitern.
     await prisma.ticketInstance.update({
