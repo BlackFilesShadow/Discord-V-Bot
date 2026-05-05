@@ -35,7 +35,6 @@ import FactionActivity from './pages/dev/FactionActivity';
 import VehicleTracking from './pages/dev/VehicleTracking';
 import AiProviderStats from './pages/dev/AiProviderStats';
 import NitradoMirror from './pages/dev/NitradoMirror';
-import { DevLoginPanel } from './components/DevLoginPanel';
 import { Toaster } from './components/ui/Toast';
 
 function Protected({ children }: { children: JSX.Element }) {
@@ -106,8 +105,7 @@ export default function App() {
         </Route>
         <Route path="*" element={<Navigate to="/servers" replace />} />
       </Routes>
-      {/* Global gemountet: rendert sich selbst nur fuer DEVELOPER (Spec 1+5). */}
-      <DevLoginPanel />
+      {/* DevLoginPanel ist in Shell.tsx in der Topbar eingebettet. */}
     </Toaster>
   );
 }

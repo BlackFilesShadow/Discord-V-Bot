@@ -50,6 +50,14 @@ v2Router.use('/guilds/:guildId/economy-links', economyLinkRouter);
 v2Router.use('/guilds/:guildId/casino', casinoRouter);
 v2Router.use('/guilds/:guildId/killfeed', killfeedRouter);
 v2Router.use('/guilds/:guildId/audit', auditRouter);
+// WICHTIG: devRouter MUSS vor allen spezifischeren /dev/* Sub-Routern stehen.
+// Grund: devStatusRouter (mounted /dev/status) installiert requireDev als
+// Router-Middleware. Ohne diese Reihenfolge wuerde GET /api/v2/dev/status
+// (das im devRouter ohne requireDev liegt, damit das Frontend Eligibility
+// pollen kann) durch requireDev mit 403 abgebrochen — Login + UI brechen.
+// devRouter ruft fuer nicht registrierte Pfade next() auf und faellt sauber
+// auf die spezifischeren Sub-Router durch.
+v2Router.use('/dev', devRouter);
 v2Router.use('/dev/uploads', devUploadsRouter);
 v2Router.use('/dev/analytics', devAnalyticsRouter);
 v2Router.use('/dev/status', devStatusRouter);
@@ -57,4 +65,3 @@ v2Router.use('/dev/nitrado-mirror', devNitradoMirrorRouter);
 v2Router.use('/dev/incident', devIncidentRouter);
 v2Router.use('/dev/observability', devObservabilityRouter);
 v2Router.use('/dev/stubs', devStubsRouter);
-v2Router.use('/dev', devRouter);

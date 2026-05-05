@@ -15,10 +15,10 @@ import {
   ArrowLeft, LogOut, Menu, X, Command, Rows3, Rows2, Square,
 } from 'lucide-react';
 import { useAuth } from '@/lib/auth';
-import { useDevSession } from '@/lib/devSession';
 import { useDensity } from '@/lib/density';
 import { useHotkey, MOD_LABEL } from '@/lib/hotkeys';
 import { CommandPalette } from '@/components/CommandPalette';
+import { DevLoginPanel } from '@/components/DevLoginPanel';
 import { Tooltip } from '@/components/ui/Tooltip';
 import { Kbd } from '@/components/ui/Kbd';
 
@@ -31,7 +31,6 @@ interface ShellProps {
 
 export function Shell({ title, back, sidebar, children }: ShellProps) {
   const { user } = useAuth();
-  const dev = useDevSession();
   const { density, cycle } = useDensity();
   const loc = useLocation();
   const [sidebarOpen, setSidebarOpen] = useState(false);
@@ -57,7 +56,6 @@ export function Shell({ title, back, sidebar, children }: ShellProps) {
     window.location.href = '/login';
   }
 
-  const isDev = user?.role === 'DEVELOPER';
   const DensityIcon = density === 'compact' ? Rows3 : density === 'cozy' ? Rows2 : Square;
 
   return (
@@ -98,17 +96,8 @@ export function Shell({ title, back, sidebar, children }: ShellProps) {
         </div>
 
         <div className="flex items-center gap-1.5 sm:gap-2 text-sm">
-          {isDev && (
-            <Tooltip content={dev.active ? 'DEV-Session aktiv' : 'DEV-Session inaktiv'}>
-              <span className="status-pill" data-state={dev.active ? 'ok' : 'warn'}>
-                <span className="relative inline-flex h-1.5 w-1.5">
-                  {dev.active && <span className="absolute inline-flex h-full w-full rounded-full bg-current opacity-60 animate-ping" />}
-                  <span className="relative inline-flex h-1.5 w-1.5 rounded-full bg-current" />
-                </span>
-                DEV
-              </span>
-            </Tooltip>
-          )}
+          {/* DEV-Console Inline-Login (Passwort-Feld + Submit) bzw. Status-Pille. */}
+          <DevLoginPanel />
 
           <Tooltip content={<span>Befehlspalette · <Kbd>{MOD_LABEL}</Kbd>+<Kbd>K</Kbd></span>}>
             <button
