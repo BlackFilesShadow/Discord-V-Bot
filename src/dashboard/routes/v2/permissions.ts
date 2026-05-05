@@ -16,8 +16,64 @@ import { asUserDiscordId, NON_DELEGABLE_SCOPES, PERMISSION_SCOPES } from '../../
 import type { PermissionScope } from '../../../types/scope';
 import { logAuditDb } from '../../../utils/logger';
 import { emitGuildEvent } from '../../socket/emitter';
+import { tryGetDashboardClient } from '../../clientRegistry';
 
 export const permissionsRouter = Router({ mergeParams: true });
+
+/**
+ * Reichert User-Grants mit Username/DisplayName/Avatar aus dem Discord-Cache
+ * an. Faellt auf den nackten Snowflake zurueck, wenn der Bot den User nicht
+ * sieht (z.B. Member nicht mehr im Server). Avatar = Hash oder null;
+ * Frontend baut die CDN-URL daraus.
+ */
+async function enrichGrants(
+  guildId: string,
+  grants: Array<{ userDiscordId: string; permissions: string[]; grantedBy: string; updatedAt: Date }>,
+): Promise<Array<{
+  userDiscordId: string;
+  username: string | null;
+  displayName: string | null;
+  avatar: string | null;
+  permissions: string[];
+  grantedBy: string;
+  updatedAt: Date;
+}>> {
+  const client = tryGetDashboardClient();
+  const guild = client?.guilds.cache.get(guildId) ?? null;
+  return Promise.all(grants.map(async g => {
+    let username: string | null = null;
+    let displayName: string | null = null;
+    let avatar: string | null = null;
+    if (guild) {
+      try {
+        // Cache zuerst, dann Fetch (best-effort, swallow errors).
+        const member = guild.members.cache.get(g.userDiscordId)
+          ?? await guild.members.fetch(g.userDiscordId).catch(() => null);
+        if (member) {
+          username = member.user.username;
+          displayName = member.displayName ?? member.user.globalName ?? member.user.username;
+          avatar = member.user.avatar ?? null;
+        } else {
+          // Member nicht mehr in Guild: zumindest User-Objekt versuchen.
+          const user = client?.users.cache.get(g.userDiscordId)
+            ?? await client?.users.fetch(g.userDiscordId).catch(() => null);
+          if (user) {
+            username = user.username;
+            displayName = user.globalName ?? user.username;
+            avatar = user.avatar ?? null;
+          }
+        }
+      } catch { /* swallow — Frontend zeigt fallback */ }
+    }
+    return {
+      userDiscordId: g.userDiscordId,
+      username, displayName, avatar,
+      permissions: g.permissions,
+      grantedBy: g.grantedBy,
+      updatedAt: g.updatedAt,
+    };
+  }));
+}
 
 permissionsRouter.get('/', requireGuildOwner, async (req, res) => {
   const scope = req.guildScope!;
@@ -25,13 +81,9 @@ permissionsRouter.get('/', requireGuildOwner, async (req, res) => {
     listGrants(scope.guildId),
     listRoleGrants(scope.guildId),
   ]);
+  const enriched = await enrichGrants(scope.guildId, grants);
   res.json({
-    grants: grants.map(g => ({
-      userDiscordId: g.userDiscordId,
-      permissions: g.permissions,
-      grantedBy: g.grantedBy,
-      updatedAt: g.updatedAt,
-    })),
+    grants: enriched,
     roleGrants: roleGrants.map(g => ({
       roleDiscordId: g.roleDiscordId,
       permissions: g.permissions,

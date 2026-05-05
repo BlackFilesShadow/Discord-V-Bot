@@ -288,7 +288,10 @@ guildsRouter.get('/:guildId/members', memberSearchLimiter, requireGuildAccess, a
       id: m.id,
       username: m.user.username,
       displayName: m.displayName ?? m.user.globalName ?? m.user.username,
-      avatar: m.user.displayAvatarURL({ size: 64 }),
+      // Avatar-Hash (oder null bei Default-Avatar). Frontend baut die
+      // CDN-URL selbst — so bleibt das API-Format konsistent mit dem,
+      // was die Permission-Endpoints liefern.
+      avatar: m.user.avatar ?? null,
       bot: m.user.bot,
     }));
     res.json({ members: result });

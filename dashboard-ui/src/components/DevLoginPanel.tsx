@@ -4,22 +4,21 @@
  * Position: oben links neben der DEV-Status-Pille (eingebettet in Shell).
  * Verhalten:
  *   - Loading            → kleines "DEV …"-Pill
- *   - Nicht eligible     → kleines "DEV N/A"-Pill (kein Eingabefeld)
- *   - Eligible & inaktiv → schmales Passwort-Input + Submit-Button
+ *   - Inaktiv            → schmales Passwort-Input + Submit-Button (immer)
  *   - Aktiv              → "DEV ON"-Pill mit Restzeit + Logout-Icon
  *
  * Errors werden als Tooltip-Text unter dem Feld dargestellt (role=alert).
  * Kein localStorage; Session wird serverseitig validiert.
  */
 import { useState, type FormEvent } from 'react';
-import { Lock, ShieldAlert, LogOut, KeyRound, Check, Loader2 } from 'lucide-react';
+import { ShieldAlert, LogOut, KeyRound, Check, Loader2 } from 'lucide-react';
 import { useAuth } from '@/lib/auth';
 import { useDevSession } from '@/lib/devSession';
 import { ApiError } from '@/lib/api';
 
 export function DevLoginPanel() {
   const { user } = useAuth();
-  const { active, eligible, loading, login, logout, expiresAt } = useDevSession();
+  const { active, loading, login, logout, expiresAt } = useDevSession();
   const [pw, setPw] = useState('');
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState<string | null>(null);
@@ -101,22 +100,10 @@ export function DevLoginPanel() {
     );
   }
 
-  // ── Nicht eligible (kein DEVELOPER): nur Hinweis-Pill ─────────────────
-  if (!eligible) {
-    return (
-      <span
-        data-testid="dev-login-panel"
-        className="status-pill"
-        data-state="warn"
-        title="Dein Account hat keine DEVELOPER-Rolle."
-      >
-        <Lock className="h-3 w-3" />
-        DEV N/A
-      </span>
-    );
-  }
-
-  // ── Eligible + inaktiv: kompaktes Passwort-Feld + Submit ──────────────
+  // ── Inaktiv: kompaktes Passwort-Feld + Submit ─────────────────────────
+  // Form wird IMMER gezeigt (auch fuer Nicht-DEVELOPER): die eigentliche
+  // Rollenpruefung passiert serverseitig in POST /api/v2/dev/login. So
+  // sieht der User nicht "DEV N/A" bevor er es ueberhaupt versucht hat.
   return (
     <form
       data-testid="dev-login-panel"

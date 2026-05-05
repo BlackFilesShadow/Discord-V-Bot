@@ -426,6 +426,9 @@ function AddSlotForm({ guildId, usedSlots, onDone }: { guildId: string; usedSlot
 
 interface Grant {
   userDiscordId: string;
+  username: string | null;
+  displayName: string | null;
+  avatar: string | null;
   permissions: string[];
   grantedBy: string;
   updatedAt: string;
@@ -553,14 +556,21 @@ function PermissionsTab({ guildId }: { guildId: string }) {
   };
 
   // Cache aller bisher gesehenen Member fuer Username-Anzeige in Grant-Listen.
+  // Prio: Server-enriched grant data > Member-Suche > Fallback 'User <id>'.
   const memberMap = new Map<string, MemberOption>();
   for (const m of (membersQ.data?.members ?? [])) memberMap.set(m.id, m);
+  const grantMap = new Map<string, Grant>();
+  for (const g of (q.data?.grants ?? [])) grantMap.set(g.userDiscordId, g);
   const userLabel = (id: string): string => {
+    const g = grantMap.get(id);
+    if (g && (g.displayName || g.username)) return g.displayName || g.username || `User ${id}`;
     const m = memberMap.get(id);
     if (m) return m.displayName || m.username;
     return `User ${id}`;
   };
   const userAvatar = (id: string): string => {
+    const g = grantMap.get(id);
+    if (g?.avatar) return `https://cdn.discordapp.com/avatars/${id}/${g.avatar}.png?size=64`;
     const m = memberMap.get(id);
     if (m?.avatar) return `https://cdn.discordapp.com/avatars/${id}/${m.avatar}.png?size=64`;
     return `https://cdn.discordapp.com/embed/avatars/${(BigInt(id) >> 22n) % 6n}.png`;
