@@ -755,6 +755,7 @@ interface TicketTemplate {
   welcomeText: string;
   welcomeMessages: string[];
   embedTitle: string;
+  embedDescription: string | null;
   embedColor: string;
   postChannelId: string;
   postedMessageId: string | null;
@@ -1030,6 +1031,7 @@ function TicketEditModal({
     return src.slice(0, TICKET_WELCOME_MAX);
   });
   const [embedTitle, setEmbedTitle] = useState(existing?.embedTitle ?? 'Support-Ticket öffnen');
+  const [embedDescription, setEmbedDescription] = useState(existing?.embedDescription ?? '');
   const [embedColor, setEmbedColor] = useState(() => {
     const initial = (existing?.embedColor ?? '#dc2626').toLowerCase();
     // Snap auf erlaubte Presets (Rot/Gruen/Blau). Fallback Rot.
@@ -1108,6 +1110,7 @@ function TicketEditModal({
         welcomeMessages: cleanedMessages,
         welcomeText: cleanedMessages[0], // Backward-compat-Spiegel
         embedTitle,
+        embedDescription: embedDescription.trim() ? embedDescription.trim() : null,
         embedColor,
         postChannelId,
         transcriptChannelId,
@@ -1184,6 +1187,22 @@ function TicketEditModal({
               <span className="text-xs text-muted">Button-Beschriftung (optional)</span>
               <Input value={buttonLabel} onChange={e => setButtonLabel(e.target.value)} maxLength={80} placeholder={label || 'Ticket oeffnen'} />
               <span className="text-[10px] text-muted mt-1 block">Falls leer, wird das Label oben verwendet. Aendert nichts an Channel-Name / Transcript.</span>
+            </label>
+            <label className="block sm:col-span-2">
+              <span className="text-xs text-muted">
+                Embed-Beschreibung (optional)
+                <span className="ml-2 text-[10px] uppercase tracking-wider opacity-70">{embedDescription.length}/4000</span>
+              </span>
+              <textarea
+                value={embedDescription}
+                onChange={e => setEmbedDescription(e.target.value.slice(0, 4000))}
+                rows={4}
+                maxLength={4000}
+                className="mt-1 w-full rounded-md bg-bg-elev border border-border text-white px-3 py-2 text-sm focus:outline-none focus:ring-2"
+                style={{ ['--tw-ring-color' as string]: `${embedColor}80` } as React.CSSProperties}
+                placeholder={'Du brauchst Hilfe oder hast eine Frage?\nKlicke unten auf ' + (buttonLabel.trim() || label || 'Support') + ', um ein privates Ticket zu eröffnen.\n\nEin Team-Mitglied meldet sich darin sobald wie möglich.'}
+              />
+              <span className="text-[10px] text-muted mt-1 block">Beschreibungstext im oeffentlichen Embed (mit dem Open-Button). Leer = Standard-Text.</span>
             </label>
           </div>
 

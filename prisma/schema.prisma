@@ -1092,6 +1092,7 @@ model TicketTemplate {
   welcomeText         String           @db.Text // Legacy/Backward-Compat (= welcomeMessages[0])
   welcomeMessages     Json             @default("[]") // Array<string>, max 5, je 1..2000 Zeichen
   embedTitle          String // Titel des Public-Embeds mit Open-Button
+  embedDescription    String?          @db.Text // Optionaler Beschreibungs-Text im Public-Embed (0..4000 Zeichen). Falls null/leer -> Default-Text.
   embedColor          String           @default("#dc2626") // Hex-Color
   postChannelId       String // Channel, in dem der Embed mit Open-Button lebt
   postedMessageId     String? // ID der zuletzt geposteten Embed-Nachricht (zum Edit)

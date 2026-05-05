@@ -140,21 +140,21 @@ function openButtonStyleFor(hex: string): ButtonStyle {
   return ButtonStyle.Primary;
 }
 
-function buildOpenEmbed(template: { embedTitle: string; embedColor: string; label: string; welcomeText: string }): EmbedBuilder {
+function buildOpenEmbed(template: { embedTitle: string; embedDescription?: string | null; embedColor: string; label: string; welcomeText: string }): EmbedBuilder {
   const accent = parseColor(template.embedColor);
-  return new EmbedBuilder()
-    .setAuthor({ name: 'V-BOT  •  TICKET-SYSTEM' })
-    .setTitle(`🎫  ${template.embedTitle}`)
-    .setDescription(
-      [
+  const customDesc = (template.embedDescription ?? '').trim();
+  const description = customDesc.length > 0
+    ? customDesc
+    : [
         `Du brauchst Hilfe oder hast eine Frage?`,
         `Klicke unten auf **${template.label}**, um ein privates Ticket zu eröffnen.`,
         ``,
         `Ein Team-Mitglied meldet sich darin sobald wie möglich.`,
-      ].join('\n'),
-    )
-    .setColor(accent)
-    .setFooter({ text: 'High-End Support  •  schnell · diskret · persönlich' });
+      ].join('\n');
+  return new EmbedBuilder()
+    .setTitle(`🎫  ${template.embedTitle}`)
+    .setDescription(description)
+    .setColor(accent);
 }
 
 function buildOpenButton(templateId: string, label: string, embedColor: string): ActionRowBuilder<ButtonBuilder> {
@@ -369,7 +369,6 @@ function buildClosedEmbed(args: {
     : m.closedByName;
   const e = new EmbedBuilder()
     .setColor(parseColor(args.embedColor || '#dc2626'))
-    .setAuthor({ name: 'V-BOT  •  TICKET GESCHLOSSEN' })
     .setTitle(`🔒  Ticket #${args.ticketNumber} · ${args.ticketLabel}`)
     .addFields(
       { name: '👤  Eröffnet von',  value: openerLine, inline: true },
@@ -381,7 +380,7 @@ function buildClosedEmbed(args: {
       { name: '🤝  Übernommen',    value: m.claimedByName ?? '_nicht übernommen_', inline: false },
       { name: '📝  Grund',         value: m.closeReason ?? '_kein Grund angegeben_', inline: false },
     )
-    .setFooter({ text: 'High-End Support  •  Klicke unten für das vollständige Web-Transcript' });
+    .setFooter({ text: 'Klicke unten für das vollständige Web-Transcript' });
   return e;
 }
 
@@ -810,7 +809,7 @@ async function openTicketLocked(btn: ButtonInteraction, t: Awaited<ReturnType<ty
         { name: 'Eroeffnet am', value: `<t:${Math.floor(openedAt.getTime() / 1000)}:F> (<t:${Math.floor(openedAt.getTime() / 1000)}:R>)`, inline: true },
         { name: 'Ticket-Nr.', value: `#${numStr}`, inline: true },
       )
-      .setFooter({ text: `V-Bot Ticket-System  •  Slot ${t.slot}  •  #${numStr}` });
+      .setFooter({ text: `Slot ${t.slot}  •  #${numStr}` });
 
     const mentionRoleIds = Array.isArray((t as unknown as { mentionRoleIds?: unknown }).mentionRoleIds)
       ? ((t as unknown as { mentionRoleIds: unknown[] }).mentionRoleIds.filter((r): r is string => typeof r === 'string'))

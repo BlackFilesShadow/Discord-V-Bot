@@ -35,6 +35,7 @@ interface TemplateBody {
   welcomeText?: string;
   welcomeMessages?: unknown;
   embedTitle?: string;
+  embedDescription?: string | null;
   embedColor?: string;
   postChannelId?: string;
   categoryId?: string | null;
@@ -96,6 +97,20 @@ function validateBody(b: TemplateBody, partial: boolean): { ok: true; data: Reco
     if (typeof b.embedTitle !== 'string' || b.embedTitle.trim().length < 1 || b.embedTitle.length > 200) return { ok: false, error: 'embedTitle 1..200 Zeichen.' };
     data.embedTitle = b.embedTitle.trim();
   } else if (!partial) return { ok: false, error: 'embedTitle fehlt.' };
+
+  // Optionaler Beschreibungs-Text. null oder leerer String setzt zurueck (Default-Text rendert).
+  if (b.embedDescription !== undefined) {
+    if (b.embedDescription === null) {
+      data.embedDescription = null;
+    } else if (typeof b.embedDescription !== 'string') {
+      return { ok: false, error: 'embedDescription muss String oder null sein.' };
+    } else if (b.embedDescription.length > 4000) {
+      return { ok: false, error: 'embedDescription max 4000 Zeichen.' };
+    } else {
+      const trimmed = b.embedDescription.trim();
+      data.embedDescription = trimmed.length === 0 ? null : trimmed;
+    }
+  }
 
   if (b.embedColor !== undefined) {
     if (typeof b.embedColor !== 'string' || !HEX_RE.test(b.embedColor)) return { ok: false, error: 'embedColor muss Hex sein (z.B. #dc2626).' };
@@ -227,6 +242,7 @@ function serialize(t: TicketTemplate) {
     welcomeText: t.welcomeText,
     welcomeMessages: normalizeWelcomeMessages(t.welcomeMessages, t.welcomeText),
     embedTitle: t.embedTitle,
+    embedDescription: (t as unknown as { embedDescription?: string | null }).embedDescription ?? null,
     embedColor: t.embedColor,
     postChannelId: t.postChannelId,
     postedMessageId: t.postedMessageId,
@@ -315,6 +331,7 @@ ticketsRouter.post('/', requireGuildPermission('tickets.manage'), async (req, re
       welcomeText: v.data.welcomeText as string,
       welcomeMessages: (v.data.welcomeMessages as string[] | undefined) ?? [v.data.welcomeText as string],
       embedTitle: v.data.embedTitle as string,
+      embedDescription: (v.data.embedDescription as string | null | undefined) ?? null,
       embedColor: (v.data.embedColor as string | undefined) ?? '#dc2626',
       postChannelId: v.data.postChannelId as string,
       transcriptChannelId: v.data.transcriptChannelId as string,
