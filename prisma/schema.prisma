@@ -1264,6 +1264,24 @@ model GuildKnowledge {
   @@index([guildId, isActive])
 }
 
+// Phase 9b (RAG): Persistenter Embedding-Cache.
+// Verhindert doppelte Embedding-API-Calls fuer identische Texte (Snippets,
+// User-Fragen, Threads). Key = sha256(text) + Provider-Model-String. Survivt
+// Bot-Restarts und teilt Embeddings ueber Guilds hinweg.
+model EmbeddingCache {
+  id         String   @id @default(uuid())
+  textHash   String   // SHA-256 hex des trimmed lowercase Text
+  model      String   // z.B. 'gemini:text-embedding-004'
+  vector     String   @db.Text // JSON-Array von Floats
+  dim        Int      // Vektor-Dimension (Sanity-Check)
+  useCount   Int      @default(1)
+  createdAt  DateTime @default(now())
+  lastUsedAt DateTime @default(now())
+
+  @@unique([textHash, model])
+  @@index([lastUsedAt])
+}
+
 // Phase 10 (B3 Modell-Check): Persistente Statistik je AI-Provider.
 // Wird nach jedem callAI-Aufruf in providerStats.recordCall() aktualisiert.
 // Dient als Grundlage fuer adaptive Provider-Reihenfolge (success rate gewichtet).
