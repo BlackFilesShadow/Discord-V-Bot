@@ -8,6 +8,7 @@ import { recordCall, getRankedProviders, ProviderName } from './providerStats';
 import { checkRateLimit } from '../../utils/rateLimiter';
 import { lookupNitradoHelp, looksLikeDayZFileQuestion, getDayZFileTruthBlock, detectTypesXmlValueViolations, sanitizeDayZLootValues, looksLikeDayZLootContent } from './nitradoHelp';
 import { redactText } from '../nitrado/mirror/redactor';
+import { cached } from '../../utils/responseCache';
 
 /**
  * AI-Integration (Sektion 4):
@@ -597,16 +598,26 @@ export async function detectToxicity(
 /**
  * Übersetzung.
  * Sektion 4: Übersetzung.
+ *
+ * Cached: identische (text, targetLang)-Paare liefern 30 min lang dieselbe
+ * Übersetzung ohne API-Call. Sicher, da Output rein deterministisch ist und
+ * keinen User-/Guild-Kontext enthält.
  */
 export async function translateText(text: string, targetLang: string = 'de'): Promise<AiResponse> {
   try {
-    const response = await callAI([
-      {
-        role: 'system',
-        content: `Übersetze den folgenden Text nach ${targetLang}. Gib nur die Übersetzung zurück.`,
-      },
-      { role: 'user', content: text },
-    ]);
+    const response = await cached(
+      'translate',
+      [targetLang, text],
+      30 * 60, // 30 Minuten
+      async () =>
+        await callAI([
+          {
+            role: 'system',
+            content: `Übersetze den folgenden Text nach ${targetLang}. Gib nur die Übersetzung zurück.`,
+          },
+          { role: 'user', content: text },
+        ]),
+    );
 
     return { success: true, result: response };
   } catch (_error) {

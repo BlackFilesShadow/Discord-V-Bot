@@ -19,6 +19,22 @@ services:
       timeout: 5s
       retries: 5
 
+  # Redis als optionaler Response-Cache (Phase 3.2). Genutzt von
+  # src/utils/responseCache.ts wenn REDIS_URL gesetzt ist. Cached deterministische
+  # AI-Calls (translateText) — ~50MB RAM, persistiert via AOF.
+  redis:
+    image: redis:7-alpine
+    container_name: discord-v-bot-redis
+    restart: unless-stopped
+    command: ["redis-server", "--appendonly", "yes", "--maxmemory", "256mb", "--maxmemory-policy", "allkeys-lru"]
+    volumes:
+      - redisdata:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+
   bot:
     build: .
     container_name: discord-v-bot
@@ -26,10 +42,13 @@ services:
     depends_on:
       postgres:
         condition: service_healthy
+      redis:
+        condition: service_healthy
     env_file:
       - .env
     environment:
       DATABASE_URL: postgresql://${POSTGRES_USER:-discordbot}:${POSTGRES_PASSWORD:-changeme}@postgres:5432/${POSTGRES_DB:-discord_v_bot}?schema=public
+      REDIS_URL: ${REDIS_URL:-redis://redis:6379}
       NODE_ENV: production
       # Stabiler Host-Identifier fuer Singleton-Lock (Docker vergibt sonst pro
       # Container-Restart einen neuen Hostnamen, was die Same-Host-Erkennung
@@ -43,5 +62,6 @@ services:
 
 volumes:
   pgdata:
+  redisdata:
   uploads:
   logs:
