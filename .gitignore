@@ -44,3 +44,6 @@ dashboard-ui/dist/
 dashboard-ui/*.tsbuildinfo
 dashboard-ui/vite.config.js
 dashboard-ui/vite.config.d.ts
+
+# SBOM artifact (generated in CI)
+sbom.cyclonedx.json

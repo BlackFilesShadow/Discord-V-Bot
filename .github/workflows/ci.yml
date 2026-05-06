@@ -43,9 +43,8 @@ jobs:
       - name: Validate Prisma schema
         run: npx prisma validate
 
-      - name: ESLint (warnings only - non-blocking)
+      - name: ESLint (errors blocking, warnings allowed)
         run: npx eslint "src/**/*.ts" --max-warnings=9999
-        continue-on-error: true
 
       - name: TypeScript Build
         run: npm run build
@@ -125,9 +124,27 @@ jobs:
       - name: Install dependencies
         run: npm ci
 
-      - name: npm audit
+      - name: npm audit (critical blocking)
+        run: npm audit --audit-level=critical
+
+      - name: npm audit (high - report only)
         run: npm audit --audit-level=high
         continue-on-error: true
+
+      - name: Generate SBOM (CycloneDX)
+        run: |
+          npx --yes @cyclonedx/cyclonedx-npm@latest \
+            --output-format JSON \
+            --output-file sbom.cyclonedx.json \
+            --omit dev || echo "SBOM-Generation fehlgeschlagen (non-blocking)"
+
+      - name: Upload SBOM artifact
+        if: always()
+        uses: actions/upload-artifact@v5
+        with:
+          name: sbom-cyclonedx
+          path: sbom.cyclonedx.json
+          if-no-files-found: warn
 
   docker:
     name: Docker Build
