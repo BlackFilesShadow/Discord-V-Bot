@@ -68,9 +68,31 @@ Er kennt deinen Server, deine Mitglieder, deine Kanäle, deine Rollen — und an
 - **Reaction-Roles**
 
 ### 🌐 Web-Dashboard
-- Express-basiertes Backend
+- Express-basiertes Backend mit React-SPA-Frontend (Vite + Tailwind)
 - API für Stats, Konfig, Audit-Log
-- Auth-Layer mit Session-Management
+- Discord-OAuth + DB-Session (Postgres-backed, Cookie-Secure)
+- Strict Content-Security-Policy + Helmet-Header
+- Per-Endpoint-Rate-Limiting (Login/Webhooks/Uploads getrennt)
+- E2E-Smoke-Tests via Playwright (Chromium, dedizierter CI-Job)
+
+---
+
+## Production-Hardening (Ops & Performance)
+
+| Bereich | Mechanik |
+|---|---|
+| **Response-Cache** | Redis (7-alpine, AOF, 256 MB LRU) für deterministische AI-Calls (Translate u. ä.); Memory-Fallback wenn `REDIS_URL` fehlt |
+| **Embedding-Cache** | L1 In-Memory + L2 Postgres (`EmbeddingCache`-Tabelle) — pgvector-Wiederverwendung über Restarts hinweg |
+| **Prisma-Pool** | Tuned `connection_limit`, `pool_timeout`, `statement_cache_size` über `DATABASE_URL`-Query-Params |
+| **Embed-Sanitization** | Discord-Embed-Felder werden zentral gekürzt/escaped (Title 256, Desc 4096, Field 1024) — kein 50035 mehr |
+| **Per-Command-Rate-Limit** | `cooldownMs` pro Slash-Command + globaler User-RL — Owner-Bypass bewusst entfernt für Spammable-Cmds |
+| **Audit-Trigger-Index** | pg_trgm-Index auf Audit-Volltextsuche (Migration `001_audit_trigram_index.sql`) |
+| **SBOM + Renovate** | CycloneDX-SBOM-Build im CI, Renovate-Bot für Dependencies, Critical-Audit blockiert Merge |
+| **Monitoring** | `/metrics` (Prometheus) — Request-Histogramme, AI-Provider-Stats, DB-Pool, Cache-Hit-Rate; Grafana-Skeleton + Alert-Rules in [docs/monitoring/](docs/monitoring/) |
+| **Backups** | Tägliches `pg_dump` + Verify-Restore via `deploy/backup-verify.sh` |
+| **Smoke-Tests** | `deploy/smoke.sh` nach jedem Deploy: Health, Discord-Login, DB-Reach |
+
+Details: [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) · [docs/PERFORMANCE.md](docs/PERFORMANCE.md) · [docs/monitoring/README.md](docs/monitoring/README.md)
 
 ---
 
@@ -126,10 +148,13 @@ Wenn jemand fragt „Welche Admin-Channels gibt es?" → höfliche Verweigerung 
 | Datenbank | PostgreSQL + Prisma ORM |
 | Vektor-Suche | pgvector |
 | AI-Provider | Cerebras, OpenRouter, Groq, Gemini, OpenAI |
-| Web-Backend | Express |
-| Tests | Jest (Unit + Integration + Pen-Test) |
-| Hosting | Docker auf dedicated Hetzner-Server |
-| CI/CD | Git → SSH-Deploy mit Health-Check |
+| Web-Backend | Express + Helmet + strict CSP |
+| Frontend | React + Vite + TailwindCSS |
+| Cache | Redis 7 (Response) + Postgres-L2 (Embeddings) |
+| Tests | Jest (Unit + Integration + Pen-Test) + Playwright (E2E) |
+| Monitoring | Prometheus `/metrics` + Grafana |
+| Hosting | Docker Compose auf dedicated Hetzner-Server |
+| CI/CD | GitHub Actions → SSH-Deploy mit Smoke-Tests, SBOM, Renovate |
 
 ---
 

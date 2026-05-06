@@ -137,4 +137,54 @@ describe('Dashboard API Routes (Sektion 7)', () => {
       expect(res.status).toBe(400);
     });
   });
+
+  describe('GET /api/config', () => {
+    it('liefert botConfig-Liste', async () => {
+      const app = createTestApp({ userId: 'test' });
+      const res = await request(app).get('/api/config');
+      expect(res.status).toBe(200);
+      expect(res.body).toHaveProperty('configs');
+    });
+  });
+
+  describe('GET /api/giveaways', () => {
+    it('liefert Giveaway-Liste', async () => {
+      const app = createTestApp({ userId: 'test' });
+      const res = await request(app).get('/api/giveaways');
+      expect(res.status).toBe(200);
+      expect(res.body).toHaveProperty('giveaways');
+    });
+  });
+
+  describe('GET /api/moderation', () => {
+    it('liefert Moderations-Faelle', async () => {
+      const app = createTestApp({ userId: 'test' });
+      const res = await request(app).get('/api/moderation?active=true');
+      expect(res.status).toBe(200);
+      expect(res.body).toHaveProperty('cases');
+    });
+  });
+
+  describe('GET /api/security-events Filter', () => {
+    it('akzeptiert severity+unresolved Query-Params', async () => {
+      const app = createTestApp({ userId: 'test' });
+      const res = await request(app).get('/api/security-events?unresolved=true&severity=HIGH');
+      expect(res.status).toBe(200);
+      expect(res.body).toHaveProperty('events');
+    });
+  });
+
+  describe('GET /api/users Filter', () => {
+    it('akzeptiert filter=manufacturers', async () => {
+      const app = createTestApp({ userId: 'test' });
+      const res = await request(app).get('/api/users?filter=manufacturers');
+      expect(res.status).toBe(200);
+    });
+
+    it('akzeptiert filter=banned', async () => {
+      const app = createTestApp({ userId: 'test' });
+      const res = await request(app).get('/api/users?filter=banned');
+      expect(res.status).toBe(200);
+    });
+  });
 });
