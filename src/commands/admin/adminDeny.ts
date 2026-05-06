@@ -8,6 +8,7 @@ import {
 import { Command } from '../../types';
 import { denyManufacturer } from '../../modules/registration/register';
 import { logger } from '../../utils/logger';
+import { safeEmbedDescription } from '../../utils/embedSanitize';
 
 /**
  * /admin-deny [user | user_id] — Hersteller-Anfrage ablehnen.
@@ -69,7 +70,7 @@ const adminDenyCommand: Command = {
         embeds: [
           new EmbedBuilder()
             .setTitle('❌ Hersteller-Anfrage abgelehnt')
-            .setDescription(`Deine Anfrage wurde leider abgelehnt.\n\n**Grund:** ${reason}`)
+            .setDescription(safeEmbedDescription(`Deine Anfrage wurde leider abgelehnt.\n\n**Grund:** ${reason}`))
             .setColor(0xff0000)
             .setTimestamp(),
         ],

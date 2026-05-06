@@ -7,6 +7,7 @@
 
 import { EmbedBuilder } from 'discord.js';
 import type { KillEvent } from './admKillParser';
+import { safeEmbedField } from '../../utils/embedSanitize';
 
 export interface KillfeedEmbedToggles {
   showShooterCoords: boolean;
@@ -50,7 +51,7 @@ export function buildKillfeedEmbed(ev: KillEvent, t: KillfeedEmbedToggles): Embe
   }
 
   if (t.showWeapon && ev.weapon) {
-    e.addFields({ name: 'Waffe', value: ev.weapon, inline: true });
+    e.addFields({ name: 'Waffe', value: safeEmbedField(ev.weapon, 256), inline: true });
   }
   if (t.showDistance && typeof ev.distance === 'number') {
     e.addFields({ name: 'Distanz', value: `${ev.distance.toFixed(1)} m`, inline: true });

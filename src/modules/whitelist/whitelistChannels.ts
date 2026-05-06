@@ -17,6 +17,7 @@ import {
 import prisma from '../../database/prisma';
 import { tryGetDashboardClient } from '../../dashboard/clientRegistry';
 import { logger } from '../../utils/logger';
+import { safeEmbedField } from '../../utils/embedSanitize';
 
 /** Max-Laenge fuer Whitelist-Reason (Eingabe + Anzeige, einheitlich). */
 export const WHITELIST_REASON_MAX = 500;
@@ -226,7 +227,7 @@ export async function notifyRequesterDecision(args: {
       .setColor(args.approved ? 0x57F287 : 0xED4245)
       .addFields({ name: 'Beantragter Name', value: `\`${args.gameId}\`` })
       .setTimestamp(new Date());
-    if (args.reason) embed.addFields({ name: 'Begruendung', value: args.reason.slice(0, WHITELIST_REASON_MAX) });
+    if (args.reason) embed.addFields({ name: 'Begruendung', value: safeEmbedField(args.reason, WHITELIST_REASON_MAX) });
     if (args.approved) embed.setDescription('Du wurdest auf die Whitelist gesetzt. Viel Spass!');
     else embed.setDescription('Dein Antrag wurde abgelehnt.');
     await user.send({ embeds: [embed] });
@@ -260,7 +261,7 @@ export async function postDecisionLog(args: {
       { name: args.approved ? 'Angenommen von' : 'Abgelehnt von', value: `<@${args.decidedByDiscordId}>`, inline: false },
     )
     .setTimestamp(new Date());
-  if (args.reason) embed.addFields({ name: 'Begruendung', value: args.reason.slice(0, WHITELIST_REASON_MAX) });
+  if (args.reason) embed.addFields({ name: 'Begruendung', value: safeEmbedField(args.reason, WHITELIST_REASON_MAX) });
 
   await ch.send({ embeds: [embed] });
 }

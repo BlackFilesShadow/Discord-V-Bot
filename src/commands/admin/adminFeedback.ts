@@ -10,6 +10,7 @@ import { Command } from '../../types';
 import prisma from '../../database/prisma';
 import { Prisma } from '@prisma/client';
 import { Colors, vEmbed } from '../../utils/embedDesign';
+import { safeEmbedField } from '../../utils/embedSanitize';
 import { config } from '../../config';
 import { logger, logAudit } from '../../utils/logger';
 
@@ -189,7 +190,7 @@ async function refreshNotifyEmbed(
         { name: 'Status', value: `\`${fb.status}\``, inline: true },
         { name: 'ID', value: `\`${fb.id}\``, inline: false },
       );
-    if (fb.adminNote) embed.addFields({ name: 'Admin-Notiz', value: fb.adminNote.slice(0, 1024) });
+    if (fb.adminNote) embed.addFields({ name: 'Admin-Notiz', value: safeEmbedField(fb.adminNote) });
     if (fb.reviewedBy) embed.addFields({ name: 'Bearbeitet von', value: `<@${fb.reviewedBy}> · ${fmtDate(fb.reviewedAt)}`, inline: true });
     await msg.edit({ embeds: [embed], allowedMentions: { parse: [] } }).catch(() => null);
   } catch (e) {
@@ -275,7 +276,7 @@ async function handleZeigen(interaction: ChatInputCommandInteraction): Promise<v
       { name: 'Erstellt', value: fmtDate(fb.createdAt), inline: true },
       { name: 'ID', value: `\`${fb.id}\``, inline: false },
     );
-  if (fb.adminNote) embed.addFields({ name: 'Admin-Notiz', value: fb.adminNote.slice(0, 1024) });
+  if (fb.adminNote) embed.addFields({ name: 'Admin-Notiz', value: safeEmbedField(fb.adminNote) });
   if (fb.reviewedBy) embed.addFields({ name: 'Bearbeitet von', value: `<@${fb.reviewedBy}> · ${fmtDate(fb.reviewedAt)}` });
   await interaction.editReply({ embeds: [embed] });
 }
