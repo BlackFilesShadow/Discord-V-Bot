@@ -43,7 +43,47 @@ export async function startDashboard(client?: Client): Promise<void> {
   app.set('trust proxy', 1);
 
   // Security Middleware (Sektion 4: Sicherheit)
-  app.use(helmet());
+  // Helmet-Defaults sind bereits aktiv (CSP, X-Content-Type-Options, X-Frame-Options,
+  // HSTS via reverse proxy etc.). Zusaetzlich:
+  // - Permissions-Policy: deaktiviert Browser-APIs, die das Dashboard nicht braucht
+  //   (Geolocation, Mikrofon, Kamera, Payment, USB) -> reduziert Angriffsoberflaeche
+  //   bei kompromittierten Drittanbieter-Skripten.
+  // - Referrer-Policy: 'no-referrer' verhindert Leak von Session-IDs/Pfaden in
+  //   Outbound-Requests (z.B. zu cdn.discordapp.com fuer Avatare).
+  // - CSP-Report-Endpoint: nimmt Browser-Verstoesse entgegen -> sichtbar in Logs,
+  //   bevor sie zu echten Funktionsproblemen werden.
+  app.use(helmet({
+    referrerPolicy: { policy: 'no-referrer' },
+    contentSecurityPolicy: {
+      useDefaults: true,
+      directives: {
+        // Helmet-default plus eigener Report-Endpoint. Discord-CDN fuer
+        // OAuth-Avatare; data: fuer Vite-inline Assets.
+        'img-src': ["'self'", 'data:', 'https://cdn.discordapp.com'],
+        'connect-src': ["'self'", 'ws:', 'wss:'],
+        'frame-ancestors': ["'none'"],
+        'report-uri': ['/api/csp-report'],
+      },
+    },
+  }));
+  app.use((_req, res, next) => {
+    // Permissions-Policy (frueher Feature-Policy) — Browser-APIs whitelisten
+    res.setHeader('Permissions-Policy',
+      'geolocation=(), microphone=(), camera=(), payment=(), usb=(), magnetometer=(), gyroscope=()');
+    next();
+  });
+  // CSP-Violation-Reports: niedrige Frequenz erwartet, aber als Defense-in-depth
+  // wichtig. KEIN Auth, da Browser-initiiert; Body-Limit klein, um Spam zu vermeiden.
+  app.post('/api/csp-report',
+    express.json({ type: ['application/csp-report', 'application/json'], limit: '10kb' }),
+    (req, res) => {
+      try {
+        // Truncate, damit Logs nicht explodieren
+        const raw = JSON.stringify(req.body ?? {}).slice(0, 2000);
+        logger.warn(`CSP-Report von ${req.ip}: ${raw}`);
+      } catch { /* ignore */ }
+      res.status(204).end();
+    });
   app.use(cors({
     origin: config.dashboard.url,
     credentials: true,
