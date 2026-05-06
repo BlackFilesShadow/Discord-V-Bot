@@ -1,0 +1,81 @@
+groups:
+  - name: vbot.critical
+    interval: 30s
+    rules:
+      - alert: VBotDown
+        expr: up{job="vbot"} == 0
+        for: 2m
+        labels:
+          severity: critical
+        annotations:
+          summary: "V-Bot Prozess nicht erreichbar"
+          description: "Prometheus scrape failt fuer >2 min. Siehe deploy/bot.sh + docker-compose logs."
+
+      - alert: VBotErrorSpike
+        expr: |
+          sum(rate(vbot_errors_total[5m])) by (source)
+          > 0.5
+        for: 10m
+        labels:
+          severity: critical
+        annotations:
+          summary: "Error-Rate-Spike in {{ $labels.source }}"
+          description: "{{ $value | printf \"%.2f\" }} errors/sec in '{{ $labels.source }}' ueber 10 min."
+
+      - alert: VBotDiscordLatencyHigh
+        expr: vbot_discord_ws_latency_ms > 800
+        for: 10m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Discord-WS-Latenz hoch ({{ $value }}ms)"
+          description: "Discord-Gateway antwortet > 800ms ueber 10 min — Netz-/API-Stoerung."
+
+  - name: vbot.performance
+    interval: 30s
+    rules:
+      - alert: VBotDbLatencyP99High
+        expr: |
+          histogram_quantile(0.99,
+            sum(rate(vbot_db_query_duration_seconds_bucket[5m])) by (le, op)
+          ) > 1
+        for: 10m
+        labels:
+          severity: warning
+        annotations:
+          summary: "DB-p99 > 1s fuer op={{ $labels.op }}"
+          description: "Prisma-Query-Latenz p99 = {{ $value }}s. Index-Check oder Query-Refactor noetig."
+
+      - alert: VBotCommandSlow
+        expr: |
+          histogram_quantile(0.95,
+            sum(rate(vbot_command_duration_seconds_bucket[10m])) by (le, command)
+          ) > 5
+        for: 15m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Command '{{ $labels.command }}' p95 > 5s"
+          description: "User-Wartezeit > 5s fuer '/{{ $labels.command }}'. Logging und AI-Provider-Fallback pruefen."
+
+      - alert: VBotRateLimitFlood
+        expr: |
+          sum(rate(vbot_rate_limited_total[5m])) by (kind) > 5
+        for: 5m
+        labels:
+          severity: info
+        annotations:
+          summary: "Rate-Limit-Treffer hoch ({{ $labels.kind }})"
+          description: "{{ $value | printf \"%.1f\" }} Treffer/sec — Bot-Spam oder zu enge Limits?"
+
+  - name: vbot.fleet
+    interval: 1m
+    rules:
+      - alert: VBotGuildsDropped
+        expr: delta(vbot_guilds[1h]) <= -2
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Bot wurde aus mehreren Guilds entfernt"
+          description: "Guild-Zaehler ist in der letzten Stunde um {{ $value }} gefallen."
