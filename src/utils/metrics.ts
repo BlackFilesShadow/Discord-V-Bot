@@ -65,7 +65,7 @@ export const dbQueryHistogram = new Histogram({
 export const rateLimitedCounter = new Counter({
   name: 'vbot_rate_limited_total',
   help: 'Anzahl Rate-Limit-Treffer',
-  labelNames: ['kind'] as const, // kind: in_memory | cooldown
+  labelNames: ['kind'] as const, // kind: in_memory | per_command | cooldown
   registers: [metricsRegistry],
 });
 

@@ -12,6 +12,7 @@ import {
 import { BotEvent, ExtendedClient } from '../types';
 import { logger, logAudit } from '../utils/logger';
 import { checkCooldown } from '../utils/cooldown';
+import { checkGlobalRateLimit, checkPerCommandRateLimit } from '../utils/rateLimit';
 import { commandCounter, commandDurationHistogram, rateLimitedCounter } from '../utils/metrics';
 import { reportError } from '../utils/errorSink';
 import prisma from '../database/prisma';
@@ -72,22 +73,8 @@ function safeEqual(a: string, b: string): boolean {
   return timingSafeEqual(bufA, bufB);
 }
 
-// In-Memory Rate-Limit: 30 Commands / 60s pro User (synchron, 0ms)
-const inMemRateLimit = new Map<string, { count: number; windowStart: number }>();
-const RL_WINDOW = 60_000;
-const RL_MAX = 30;
-
-function checkInMemoryRateLimit(userId: string): boolean {
-  const now = Date.now();
-  const entry = inMemRateLimit.get(userId);
-  if (!entry || now - entry.windowStart > RL_WINDOW) {
-    inMemRateLimit.set(userId, { count: 1, windowStart: now });
-    return true;
-  }
-  if (entry.count >= RL_MAX) return false;
-  entry.count++;
-  return true;
-}
+// In-Memory Rate-Limits leben jetzt in src/utils/rateLimit.ts (synchron, testbar).
+// Hier nur noch das Wiring an Discord-spezifische Counters/Replies.
 
 /**
  * Prüft ob ein User Owner oder Guild-Owner ist.
@@ -269,7 +256,11 @@ const interactionCreateEvent: BotEvent = {
 
     // In-memory Rate-Limit (synchron, 0 DB-Calls) um Discord's 3s-Timeout einzuhalten.
     // DB-basiertes Rate-Limit läuft zusätzlich in Hintergrund-Jobs.
-    if (!checkInMemoryRateLimit(i.user.id)) {
+    // Zwei Buckets:
+    //  1) global per User  -> Spam-Bot-Schutz (30/60s)
+    //  2) per (User × Command) -> verhindert dass ein einzelner teurer
+    //     Command (AI, Help-Pagination) das globale Budget verbrennt (10/60s)
+    if (!checkGlobalRateLimit(i.user.id)) {
       rateLimitedCounter.inc({ kind: 'in_memory' });
       commandCounter.inc({ command: i.commandName, status: 'ratelimit' });
       try {
@@ -278,6 +269,17 @@ const interactionCreateEvent: BotEvent = {
           ephemeral: true,
         });
       } catch { /* interaction evtl. abgelaufen */ }
+      return;
+    }
+    if (!checkPerCommandRateLimit(i.user.id, i.commandName)) {
+      rateLimitedCounter.inc({ kind: 'per_command' });
+      commandCounter.inc({ command: i.commandName, status: 'ratelimit' });
+      try {
+        await i.reply({
+          content: `⚠️ \`/${i.commandName}\` zu oft aufgerufen. Bitte einen Moment warten.`,
+          ephemeral: true,
+        });
+      } catch { /* */ }
       return;
     }
 

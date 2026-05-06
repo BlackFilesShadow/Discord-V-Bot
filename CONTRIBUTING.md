@@ -40,10 +40,15 @@ npm run dev:dashboard  # Dashboard separat (optional)
 ```bash
 npm run lint          # ESLint inkl. custom rule no-unscoped-prisma-query
 npx tsc --noEmit      # TypeScript strict, Zero Errors
-npx jest --no-coverage --forceExit   # Alle 343+ Tests grün
+npx jest --coverage --forceExit   # Alle 350+ Tests grün, Coverage-Floor erfüllt
 ```
 
 CI rejectet jeden PR, der einen dieser Checks nicht besteht.
+
+**Coverage-Ratchet**: `jest.config.js` setzt einen unteren Schwellwert
+(statements 14%, branches 4%, functions 24%, lines 14%) — knapp unter Ist.
+Neue Tests dürfen die Werte erhöhen, aber nicht senken. Beim Anheben:
+auch die Schwelle in `coverageThreshold` mit nachziehen.
 
 ---
 
