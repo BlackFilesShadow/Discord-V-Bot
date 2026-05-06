@@ -181,3 +181,82 @@ ORDER BY "hitCount" DESC LIMIT 20;
 | `embeddingService.embed` | 200 ms LLM-Call | L1-Memory + L2-Postgres → ~70 % Hits insgesamt |
 | `Audit.search` mit Volltext | seq scan über >1 M Zeilen | pg_trgm-Index `001_audit_trigram_index.sql` |
 | Prisma kalter Pool | 1. Request 600 ms | `connection_limit=10` + Warmup-Query in `index.ts` |
+
+---
+
+## 9. Live-Profiling-Snapshot (Server-Daten)
+
+Aufgenommen mit `docker stats`, `redis-cli INFO`, `pg_stat_user_tables`
+direkt vom Produktions-Container.
+
+### Container-Footprint
+
+| Container | CPU | RAM | Net I/O | Block I/O |
+|---|---|---|---|---|
+| `discord-v-bot` | 0.50 % | 81 MB / 3.7 GB | 12.6 MB / 26.3 MB | 15.6 MB / 1.14 MB |
+| `discord-v-bot-postgres` | 0.10 % | 56 MB / 3.7 GB | 508 MB / 477 MB | 211 MB / 4.52 GB |
+| `discord-v-bot-redis` | 0.38 % | 13 MB / 3.7 GB | 1.5 kB / 126 B | 10.5 MB / 8 kB |
+
+Bot-Prozess sitzt bei ~80 MB Resident-Set — komfortabel unter dem 256-MB-Soft-Limit.
+
+### Redis-Cache (Response-Cache)
+
+```
+used_memory_human:        1012 K
+used_memory_peak_human:   1012 K
+maxmemory_human:          256 M
+mem_fragmentation_ratio:  8.53   ← hoher Wert wegen wenig Traffic, normal bei <2 MB
+total_commands_processed: 778
+keyspace_hits:            0
+keyspace_misses:          0
+DBSIZE:                   0
+```
+
+**Befund:** Cache ist eingerichtet, aber `translateText` wurde seit dem
+Redis-Deploy (Commit `892a6cf`) noch nicht aufgerufen — keine Hits/Misses.
+Das ist kein Bug: deterministische Translate-Calls treten erst bei
+`/translate-post`-Workflows auf. Sobald die Funktion warm wird, fuellt
+sich der Cache.
+
+### Postgres-Pool
+
+| State | Connections |
+|---|---|
+| idle | 5 |
+| active | 1 |
+
+6 von 10 erlaubten Connections in Nutzung — kein Pool-Druck. `pool_timeout`
+wird nicht erreicht.
+
+### Top-Tabellen nach Live-Rows
+
+| Tabelle | Rows | seq_scan | idx_scan | Size |
+|---|---|---|---|---|
+| `XpRecord` | 4135 | 13 | 43 | 1.4 MB |
+| `IdempotencyKey` | 331 | 106 | 263 | 248 kB |
+| `AuditLog` | 246 | 135 | 10 | 608 kB |
+| `Download` | 151 | 58 | 56 | 200 kB |
+| `AiConversationTurn` | 118 | 451 | 809 | 288 kB |
+| `GuildMemberProfile` | 117 | 515 | 5612 | 168 kB |
+| `User` | 105 | **9995** | 7764 | 136 kB |
+| `WhitelistEntry` | 75 | 79 | 8 | 96 kB |
+
+**Auffaelligkeit:** `User` hat 9995 sequentielle Scans gegenueber 7764
+Index-Scans bei nur 105 Zeilen. Bei dieser Tabellengroesse ist seq_scan
+zwar nicht teuer (Postgres bevorzugt full-scan unter ~1000 Rows), aber
+**sobald `User` waechst (>5 k Rows), wird das spuerbar**. Empfehlung:
+Code-Audit auf `prisma.user.findMany({ where: { discordId: ... } })`
+ohne expliziten `findUnique` (Index-Hit garantiert).
+
+`EmbeddingCache` ist mit 0 Rows / 32 kB noch leer — wird gefuellt sobald
+RAG-Suchen oder semantische Vergleiche getriggert werden.
+
+### Empfohlene Folgemassnahmen (priorisiert)
+
+1. **User-Lookups auditieren** — alle `findMany`/`findFirst` auf `User`
+   pruefen, ggf. zu `findUnique` umschreiben (nutzt Primary-Key-Index).
+2. **Cache-Warming** — initial einmal `translateText` fuer die 5
+   wichtigsten Sprach-Paare im Bot-Boot triggern, damit erster
+   Live-Request bereits Cache-Hit ist.
+3. **Memory-Headroom monitoren** — bei steigender Last `vbot_process_resident_memory_bytes`
+   beobachten; aktuell ~80 MB, Hard-Cap setzen wenn >300 MB anhaltend.
