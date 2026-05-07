@@ -22,16 +22,19 @@ module.exports = {
   },
   coverageDirectory: 'coverage',
   collectCoverageFrom: ['src/**/*.ts', '!src/**/*.d.ts'],
-  // Ratchet-Floor: knapp unter Ist-Coverage (Stand 2026-05). Verhindert
-  // Regression bei jedem PR mit `--coverage`. Schwelle wird angehoben
-  // wenn neue Tests grosse Module abdecken (siehe CONTRIBUTING.md).
-  // Stand jest: statements 15.7%, branches ~5%, functions ~26%, lines ~15.7%.
+  // Ratchet-Floor: knapp unter Ist-Coverage (Stand 2026-05, nach
+  // aiHandler.pure + cooldown + metrics + dashboard/api Suiten).
+  // Ist-Werte aus letztem `--coverage`-Run: statements 17.18%,
+  // branches 6.35%, functions 28.91%, lines 17.18%.
+  // Floor liegt knapp darunter: jeder PR darf Coverage NICHT mehr
+  // unter diese Werte druecken. Schwelle wird mit jeder neuen Test-Welle
+  // angehoben (siehe CONTRIBUTING.md "Coverage-Ratchet").
   coverageThreshold: {
     global: {
-      statements: 14,
-      branches: 4,
-      functions: 24,
-      lines: 14,
+      statements: 16,
+      branches: 5,
+      functions: 27,
+      lines: 16,
     },
   },
 };

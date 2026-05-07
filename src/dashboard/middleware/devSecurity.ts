@@ -33,12 +33,18 @@ export interface MfaCheckResult {
 /**
  * Prueft ob TwoFactorAuth fuer den User aktiv ist.
  *
- * Grace-Period:
- *   - Falls ENV DEV_MFA_GRACE_PERIOD_END (ISO-Date) gesetzt ist UND noch
- *     nicht abgelaufen, wird ein fehlendes 2FA NUR gewarnt (ok=true,
- *     reason='grace_active').
- *   - Sobald die Grace abgelaufen oder nicht gesetzt ist, ist 2FA hart
- *     erforderlich (ok=false, reason='no_2fa').
+ * Grace-Period (P0-gehaertet, secure-by-default):
+ *   - 2FA ist STANDARDMAESSIG hart erforderlich. Ohne 2FA -> ok=false.
+ *   - Loophole nur wenn ALLE drei Bedingungen erfuellt sind:
+ *       1. ENV `DEV_MFA_GRACE_ALLOW=true` (explizites Opt-in)
+ *       2. ENV `DEV_MFA_GRACE_PERIOD_END` ist ein gueltiges ISO-Date in
+ *          der Zukunft
+ *       3. Grace-Ende liegt max. `DEV_MFA_GRACE_MAX_DAYS` (Default 14) in
+ *          der Zukunft, gemessen ab JETZT
+ *   - Jede Nutzung wird in `auth.ts` als `DEV_MFA_GRACE_USED` auditiert.
+ *
+ * Damit kann ein vergessenes/falsch gesetztes `DEV_MFA_GRACE_PERIOD_END`
+ * (z.B. Jahr 2099) nicht mehr 2FA dauerhaft umgehen.
  */
 export async function enforceDevMfa(userId: string): Promise<MfaCheckResult> {
   const tfa = await prisma.twoFactorAuth.findUnique({
@@ -47,14 +53,30 @@ export async function enforceDevMfa(userId: string): Promise<MfaCheckResult> {
   });
   if (tfa?.isEnabled) return { ok: true };
 
-  const graceEnv = process.env.DEV_MFA_GRACE_PERIOD_END;
-  if (graceEnv) {
-    const end = new Date(graceEnv);
-    if (!Number.isNaN(end.getTime()) && end.getTime() > Date.now()) {
-      return { ok: true, reason: 'grace_active', graceUntil: end };
-    }
+  // Secure-by-default: Loophole muss EXPLIZIT geoeffnet werden.
+  if (process.env.DEV_MFA_GRACE_ALLOW !== 'true') {
+    return { ok: false, reason: 'no_2fa', graceUntil: null };
   }
-  return { ok: false, reason: 'no_2fa', graceUntil: null };
+
+  const graceEnv = process.env.DEV_MFA_GRACE_PERIOD_END;
+  if (!graceEnv) return { ok: false, reason: 'no_2fa', graceUntil: null };
+
+  const end = new Date(graceEnv);
+  if (Number.isNaN(end.getTime()) || end.getTime() <= Date.now()) {
+    return { ok: false, reason: 'no_2fa', graceUntil: null };
+  }
+
+  // Hard cap: keine Grace > N Tage in die Zukunft.
+  const maxDays = Number(process.env.DEV_MFA_GRACE_MAX_DAYS ?? 14);
+  const ceiling = Date.now() + maxDays * 86_400_000;
+  if (end.getTime() > ceiling) {
+    logger.warn(
+      `enforceDevMfa: DEV_MFA_GRACE_PERIOD_END (${graceEnv}) liegt > ${maxDays} Tage in der Zukunft — ignoriert.`,
+    );
+    return { ok: false, reason: 'no_2fa', graceUntil: null };
+  }
+
+  return { ok: true, reason: 'grace_active', graceUntil: end };
 }
 
 // ---------------------------------------------------------------------------

@@ -89,6 +89,10 @@ function buildRolePings(interaction: ChatInputCommandInteraction): string | null
 }
 
 const translatePostCommand: Command = {
+  // P0: Per-User Cooldown 60s. /translate-post triggert bis zu 10
+  // sequentielle Uebersetzungen (1 LLM-Call pro Sprache). Ohne
+  // Cooldown koennen Admins versehentlich 100+ Calls / min ausloesen.
+  cooldown: 60,
   data: new SlashCommandBuilder()
     .setName('translate-post')
     .setDescription('Auto-Uebersetzen + Posten in einem Channel (10 Sprachen)')

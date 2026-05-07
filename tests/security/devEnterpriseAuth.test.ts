@@ -43,6 +43,8 @@ beforeEach(() => {
   ipListFindFirst.mockReset();
   securityEventCreate.mockReset();
   delete process.env.DEV_MFA_GRACE_PERIOD_END;
+  delete process.env.DEV_MFA_GRACE_ALLOW;
+  delete process.env.DEV_MFA_GRACE_MAX_DAYS;
 });
 
 describe('enforceDevMfa', () => {
@@ -60,8 +62,9 @@ describe('enforceDevMfa', () => {
     expect(r.reason).toBe('no_2fa');
   });
 
-  it('soft-allow waehrend Grace-Period', async () => {
+  it('soft-allow waehrend Grace-Period (Opt-in via DEV_MFA_GRACE_ALLOW)', async () => {
     twoFAFindUnique.mockResolvedValue(null);
+    process.env.DEV_MFA_GRACE_ALLOW = 'true';
     process.env.DEV_MFA_GRACE_PERIOD_END = new Date(Date.now() + 60_000).toISOString();
     const r = await enforceDevMfa('u1');
     expect(r.ok).toBe(true);
@@ -71,7 +74,27 @@ describe('enforceDevMfa', () => {
 
   it('hart abgelehnt wenn Grace abgelaufen', async () => {
     twoFAFindUnique.mockResolvedValue({ isEnabled: false });
+    process.env.DEV_MFA_GRACE_ALLOW = 'true';
     process.env.DEV_MFA_GRACE_PERIOD_END = new Date(Date.now() - 60_000).toISOString();
+    const r = await enforceDevMfa('u1');
+    expect(r.ok).toBe(false);
+    expect(r.reason).toBe('no_2fa');
+  });
+
+  it('Grace ignoriert wenn DEV_MFA_GRACE_ALLOW fehlt (secure-by-default)', async () => {
+    twoFAFindUnique.mockResolvedValue(null);
+    process.env.DEV_MFA_GRACE_PERIOD_END = new Date(Date.now() + 60_000).toISOString();
+    const r = await enforceDevMfa('u1');
+    expect(r.ok).toBe(false);
+    expect(r.reason).toBe('no_2fa');
+  });
+
+  it('Grace per Hard-Cap (DEV_MFA_GRACE_MAX_DAYS) begrenzt', async () => {
+    twoFAFindUnique.mockResolvedValue(null);
+    process.env.DEV_MFA_GRACE_ALLOW = 'true';
+    process.env.DEV_MFA_GRACE_MAX_DAYS = '14';
+    // 2099 — weit jenseits 14 Tage Cap
+    process.env.DEV_MFA_GRACE_PERIOD_END = '2099-01-01T00:00:00.000Z';
     const r = await enforceDevMfa('u1');
     expect(r.ok).toBe(false);
     expect(r.reason).toBe('no_2fa');

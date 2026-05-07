@@ -205,7 +205,7 @@ export async function requireGuildAccess(req: Request, res: Response, next: Next
   }
 
   const isOwner = guild.ownerId === req.auth.discordId;
-  let permsSet: Set<PermissionScope> = new Set();
+  const permsSet: Set<PermissionScope> = new Set();
   if (!isOwner) {
     const grant = await prisma.guildPermissionGrant.findUnique({
       where: { guildId_userDiscordId: { guildId, userDiscordId: req.auth.discordId } },

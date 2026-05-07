@@ -8,11 +8,11 @@
  * POST   /:id/post         -> Embed im konfigurierten Channel posten/aktualisieren
  * GET    /instances        -> offene Tickets der Guild
  *
- * Mutations: requireGuildOwner (Tickets sind Owner-only-Konfiguration).
+ * Mutations: requireGuildPermission('tickets.manage') (Owner via OWNER_ROLE-Grant abgedeckt).
  */
 import { Router } from 'express';
 import type { TicketTemplate } from '@prisma/client';
-import { requireGuildOwner, requireGuildPermission } from '../../middleware/auth';
+import { requireGuildPermission } from '../../middleware/auth';
 import prisma from '../../../database/prisma';
 import { logAuditDb } from '../../../utils/logger';
 import { emitGuildEvent } from '../../socket/emitter';

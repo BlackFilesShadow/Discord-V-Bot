@@ -16,6 +16,10 @@ import {
  * Subcommands: ask, sentiment, toxicity, translate
  */
 export const aiCommand: Command = {
+  // P0: Per-User Cooldown 30s. Schuetzt Provider-Quoten + Cost vor
+  // Spam (jeder Aufruf trifft Groq/Gemini/OpenAI). Wird vom zentralen
+  // Cooldown-Handler in src/utils/cooldown.ts erzwungen (key=userId+cmd).
+  cooldown: 30,
   data: new SlashCommandBuilder()
     .setName('ai')
     .setDescription('AI-Features (Groq → Gemini Fallback)')

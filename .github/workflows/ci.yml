@@ -37,6 +37,12 @@ jobs:
       - name: Install dependencies
         run: npm ci
 
+      - name: Install dashboard-ui dependencies
+        # build:ui ruft `vite build` im dashboard-ui auf — Deps muessen
+        # separat installiert werden, sonst fehlt z.B. `vite/client`.
+        working-directory: dashboard-ui
+        run: npm ci
+
       - name: Generate Prisma Client
         run: npx prisma generate
 
