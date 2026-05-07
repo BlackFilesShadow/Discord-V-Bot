@@ -4,7 +4,7 @@
 # =====================================================
 
 # ----- UI-Build-Stage (Vite -> statisches Frontend) -----
-FROM node:20-alpine AS ui-builder
+FROM node:22-alpine AS ui-builder
 
 WORKDIR /ui
 
@@ -18,7 +18,7 @@ RUN mkdir -p /src/dashboard/public
 RUN npm run build
 
 # ----- Server-Build-Stage (TypeScript -> dist) -----
-FROM node:20-alpine AS server-builder
+FROM node:22-alpine AS server-builder
 
 WORKDIR /app
 
@@ -27,6 +27,7 @@ RUN apk add --no-cache openssl
 
 COPY package*.json ./
 COPY prisma/ ./prisma/
+COPY prisma.config.ts ./
 
 RUN npm ci --no-audit --no-fund --ignore-scripts \
  && npx prisma generate
@@ -42,7 +43,7 @@ COPY --from=ui-builder /src/dashboard/public/ ./src/dashboard/public/
 RUN npm run build:server
 
 # ----- Runtime-Stage -----
-FROM node:20-alpine
+FROM node:22-alpine
 
 WORKDIR /app
 
@@ -54,6 +55,7 @@ RUN addgroup -S bot && adduser -S bot -G bot
 
 COPY package*.json ./
 COPY prisma/ ./prisma/
+COPY prisma.config.ts ./
 
 RUN npm ci --omit=dev --no-audit --no-fund --ignore-scripts \
  && npx prisma generate
