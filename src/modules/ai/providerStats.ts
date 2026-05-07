@@ -40,15 +40,59 @@ function isConfigured(p: ProviderName): boolean {
 }
 
 // =====================================================================
-// Phase 12: In-Memory Cooldowns. Bei 429 wird der Provider fuer N Sekunden
-// komplett aus der Ranking-Liste entfernt (statt nur Score-Penalty). Backoff
-// waechst exponentiell bei wiederholten 429: 30s -> 60s -> 120s -> max 300s.
-// State ist pro Bot-Prozess; nach Restart leer (gewollt: frischer Versuch).
+// Phase 12 + P0-Hardening: Persistente Cooldowns. Bei 429 wird der Provider
+// fuer N Sekunden komplett aus der Ranking-Liste entfernt. Backoff waechst
+// exponentiell: 30s -> 60s -> 120s -> max 300s.
+//
+// Persistierung: AiProviderStat.cooldownUntil/cooldownStreak. In-Memory
+// Cache ist nur noch Beschleunigung; DB ist Source-of-Truth (Multi-Replica
+// + Restart-sicher).
 // =====================================================================
 interface CooldownState { until: number; consecutive: number; }
 const cooldowns = new Map<ProviderName, CooldownState>();
 const COOLDOWN_BASE_MS = 30_000;
 const COOLDOWN_MAX_MS = 300_000;
+
+/**
+ * Hydratisiert den In-Memory-Cache aus DB. Wird bei Boot einmalig + danach
+ * alle 60s aufgerufen (siehe scheduleProviderCooldownSync), damit ein zweiter
+ * Bot-Replica seine Cooldowns sieht.
+ */
+export async function hydrateCooldownsFromDb(): Promise<void> {
+  try {
+    const rows = await prisma.aiProviderStat.findMany({
+      where: { cooldownUntil: { not: null } },
+      select: { provider: true, cooldownUntil: true, cooldownStreak: true },
+    });
+    const seen = new Set<ProviderName>();
+    for (const r of rows) {
+      if (!ALL_PROVIDERS.includes(r.provider as ProviderName)) continue;
+      if (!r.cooldownUntil) continue;
+      const until = r.cooldownUntil.getTime();
+      if (Date.now() >= until) continue; // expired
+      cooldowns.set(r.provider as ProviderName, {
+        until,
+        consecutive: r.cooldownStreak ?? 1,
+      });
+      seen.add(r.provider as ProviderName);
+    }
+    // In-Memory-Eintraege, die nicht mehr in der DB sind, evtl. lokal expired:
+    // bei naechstem isOnCooldown()-Call werden sie ohnehin bereinigt.
+    for (const [p] of cooldowns) {
+      if (!seen.has(p) && cooldowns.get(p)!.until <= Date.now()) cooldowns.delete(p);
+    }
+  } catch (e) {
+    logger.warn(`providerStats.hydrateCooldownsFromDb: ${(e as Error).message}`);
+  }
+}
+
+let syncTimer: NodeJS.Timeout | null = null;
+export function scheduleProviderCooldownSync(intervalMs = 60_000): void {
+  if (syncTimer) return;
+  void hydrateCooldownsFromDb();
+  syncTimer = setInterval(() => { void hydrateCooldownsFromDb(); }, intervalMs);
+  syncTimer.unref?.();
+}
 
 export function markRateLimited(provider: ProviderName): number {
   const prev = cooldowns.get(provider);
@@ -57,11 +101,38 @@ export function markRateLimited(provider: ProviderName): number {
   const until = Date.now() + ms;
   cooldowns.set(provider, { until, consecutive });
   logger.info(`providerStats: ${provider} cooldown ${Math.round(ms / 1000)}s (${consecutive}x 429 in Folge)`);
+  // Persistierung (best-effort, nicht awaiten — recordCall wird sowieso gleich danach aufgerufen).
+  void prisma.aiProviderStat.update({
+    where: { provider },
+    data: {
+      cooldownUntil: new Date(until),
+      cooldownReason: '429_rate_limit',
+      cooldownStreak: consecutive,
+    },
+  }).catch((e: unknown) => {
+    // create-on-missing — falls noch kein Stat-Row existiert.
+    if ((e as { code?: string }).code === 'P2025') {
+      void prisma.aiProviderStat.create({
+        data: {
+          provider,
+          cooldownUntil: new Date(until),
+          cooldownReason: '429_rate_limit',
+          cooldownStreak: consecutive,
+        },
+      }).catch(() => { /* ignore secondary error */ });
+    }
+  });
   return ms;
 }
 
 export function clearCooldown(provider: ProviderName): void {
+  if (!cooldowns.has(provider)) return;
   cooldowns.delete(provider);
+  // Persistente Cooldown-Spur ebenfalls loeschen (best-effort).
+  void prisma.aiProviderStat.updateMany({
+    where: { provider, cooldownUntil: { not: null } },
+    data: { cooldownUntil: null, cooldownReason: null, cooldownStreak: 0 },
+  }).catch(() => { /* ignore */ });
 }
 
 export function isOnCooldown(provider: ProviderName): boolean {

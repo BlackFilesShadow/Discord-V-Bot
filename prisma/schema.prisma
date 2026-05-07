@@ -1286,16 +1286,21 @@ model EmbeddingCache {
 // Wird nach jedem callAI-Aufruf in providerStats.recordCall() aktualisiert.
 // Dient als Grundlage fuer adaptive Provider-Reihenfolge (success rate gewichtet).
 model AiProviderStat {
-  id             String    @id @default(uuid())
-  provider       String    @unique // 'groq' | 'cerebras' | 'openrouter' | 'gemini' | 'openai'
-  successCount   Int       @default(0)
-  failureCount   Int       @default(0)
-  rateLimitCount Int       @default(0)
-  totalLatencyMs BigInt    @default(0) // Summe ueber alle Erfolge -> Avg = totalLatencyMs / successCount
-  lastSuccessAt  DateTime?
-  lastFailureAt  DateTime?
-  lastError      String?
-  updatedAt      DateTime  @updatedAt
+  id               String    @id @default(uuid())
+  provider         String    @unique // 'groq' | 'cerebras' | 'openrouter' | 'gemini' | 'openai'
+  successCount     Int       @default(0)
+  failureCount     Int       @default(0)
+  rateLimitCount   Int       @default(0)
+  totalLatencyMs   BigInt    @default(0) // Summe ueber alle Erfolge -> Avg = totalLatencyMs / successCount
+  lastSuccessAt    DateTime?
+  lastFailureAt    DateTime?
+  lastError        String?
+  // P0-Hardening: Persistente 429-Cooldowns ueber Restart hinweg + ueber
+  // Multi-Process-Replicas konsistent (Datenbank ist Single-Source-of-Truth).
+  cooldownUntil    DateTime?
+  cooldownReason   String?
+  cooldownStreak   Int       @default(0) // aufeinander folgende 429 fuer exp. Backoff
+  updatedAt        DateTime  @updatedAt
 }
 
 // Phase 14: Conversation Memory. Speichert pro (userId, channelId) die letzten

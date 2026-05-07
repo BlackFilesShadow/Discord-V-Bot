@@ -4,6 +4,7 @@ import { logger, logAudit } from '../utils/logger';
 import prisma from '../database/prisma';
 import { getPollVotes, createPollEmbed, PollOption } from '../modules/polls/pollSystem';
 import { createGiveawayEmbed } from '../modules/giveaway/giveawayManager';
+import { validateReaction } from '../utils/reactionGuard';
 
 /**
  * MessageReactionRemove-Event:
@@ -16,15 +17,9 @@ const messageReactionRemoveEvent: BotEvent = {
     const r = reaction as MessageReaction | PartialMessageReaction;
     const u = user as User | PartialUser;
 
-    if (u.bot) return;
-
-    if (r.partial) {
-      try {
-        await r.fetch();
-      } catch {
-        return;
-      }
-    }
+    // P0-Hardening: gleiche Guard-Logik wie bei Add.
+    const guard = await validateReaction(r, u, { requireGuild: true });
+    if (!guard.ok) return;
 
     const messageId = r.message.id;
     const emoji = r.emoji.name || r.emoji.id || '';

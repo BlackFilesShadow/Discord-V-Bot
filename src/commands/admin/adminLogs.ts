@@ -8,6 +8,7 @@ import {
 import { Prisma } from '@prisma/client';
 import { Command } from '../../types';
 import prisma from '../../database/prisma';
+import { safeEmbedDescription } from '../../utils/embedSanitize';
 
 /**
  * /admin-logs [filter] — Live-Log-Stream mit Filteroptionen.
@@ -85,7 +86,8 @@ const adminLogsCommand: Command = {
 
     const embed = new EmbedBuilder()
       .setTitle(`📋 Audit-Logs (${filter})`)
-      .setDescription(lines.join('\n\n'))
+      // P0: Action/Category aus DB koennten in Zukunft User-getrieben sein → sanitisieren.
+      .setDescription(safeEmbedDescription(lines.join('\n\n')))
       .setColor(0x9b59b6)
       .setFooter({ text: `${logs.length} Einträge angezeigt` })
       .setTimestamp();

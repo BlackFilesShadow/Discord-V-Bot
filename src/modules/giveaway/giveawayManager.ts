@@ -2,6 +2,7 @@ import prisma from '../../database/prisma';
 import { logger, logAudit } from '../../utils/logger';
 import { Client, EmbedBuilder, TextChannel } from 'discord.js';
 import { Colors, Brand, vEmbed } from '../../utils/embedDesign';
+import { safeEmbedDescription, safeEmbedField } from '../../utils/embedSanitize';
 import crypto from 'crypto';
 
 /**
@@ -91,9 +92,10 @@ export function createGiveawayEmbed(giveaway: {
     .setTitle(`🎉  GIVEAWAY`);
 
   const descParts: string[] = [];
-  if (giveaway.description) descParts.push(`> ${giveaway.description}`);
+  // P0: User-Input MUSS sanitisiert (Mention-Bypass, Markdown-Injection).
+  if (giveaway.description) descParts.push(`> ${safeEmbedField(giveaway.description, 1024)}`);
   descParts.push(Brand.divider);
-  descParts.push(`\n🏆 **Preis:** ${giveaway.prize}`);
+  descParts.push(`\n🏆 **Preis:** ${safeEmbedField(giveaway.prize, 256)}`);
 
   if (isActive) {
     descParts.push(`⏰ **Endet:** <t:${Math.floor(giveaway.endsAt.getTime() / 1000)}:R>`);
@@ -108,7 +110,7 @@ export function createGiveawayEmbed(giveaway: {
     descParts.push(`\n*Giveaway beendet*`);
   }
 
-  embed.setDescription(descParts.join('\n'));
+  embed.setDescription(safeEmbedDescription(descParts.join('\n')));
   embed.setFooter({ text: `${Brand.footerText} ${Brand.dot} Giveaway` });
 
   return embed;
@@ -262,34 +264,40 @@ export function startGiveawayScheduler(client: Client): void {
             .setFooter({ text: `${Brand.footerText} ${Brand.dot} Giveaway` });
 
           if (giveaway.description) {
-            winnerEmbed.setDescription(giveaway.description);
+            winnerEmbed.setDescription(safeEmbedDescription(giveaway.description));
           }
 
           if (result.success && result.winners.length > 0) {
             const winnerMentions = result.winners.map(w => `<@${w.discordId}>`).join(', ');
-            winnerEmbed.setDescription(
+            const safePrize = safeEmbedField(giveaway.prize, 256);
+            const safeDesc = giveaway.description ? safeEmbedField(giveaway.description, 1024) : '';
+            winnerEmbed.setDescription(safeEmbedDescription(
               `${Brand.divider}\n\n` +
-              `🏆 **Preis:** ${giveaway.prize}\n` +
+              `🏆 **Preis:** ${safePrize}\n` +
               `🎊 **Gewinner:** ${winnerMentions}\n` +
               `👥 **Teilnehmer:** ${participantCount}\n\n` +
-              (giveaway.description ? `> ${giveaway.description}\n\n` : '') +
-              Brand.divider
-            );
+              (safeDesc ? `> ${safeDesc}\n\n` : '') +
+              Brand.divider,
+            ));
 
-            // Rollen-Ping + Gewinner-Erwähnung
+            // Rollen-Ping + Gewinner-Erwähnung. allowedMentions verhindert
+            // @everyone/@here Bypass durch User-Input im prize.
             const rolePing = giveaway.notifyRoleId ? `<@&${giveaway.notifyRoleId}> ` : '';
             await channel.send({
-              content: `${rolePing}🎉 Glückwunsch ${winnerMentions}! Du hast **${giveaway.prize}** gewonnen!`,
+              content: `${rolePing}🎉 Glückwunsch ${winnerMentions}! Du hast **${safePrize}** gewonnen!`,
               embeds: [winnerEmbed],
+              allowedMentions: { parse: ['users', 'roles'] },
             });
           } else {
-            winnerEmbed.setDescription(
+            const safePrize = safeEmbedField(giveaway.prize, 256);
+            const safeDesc = giveaway.description ? safeEmbedField(giveaway.description, 1024) : '';
+            winnerEmbed.setDescription(safeEmbedDescription(
               `${Brand.divider}\n\n` +
-              `🏆 **Preis:** ${giveaway.prize}\n` +
+              `🏆 **Preis:** ${safePrize}\n` +
               `😢 **Ergebnis:** Keine Teilnehmer\n\n` +
-              (giveaway.description ? `> ${giveaway.description}\n\n` : '') +
-              Brand.divider
-            );
+              (safeDesc ? `> ${safeDesc}\n\n` : '') +
+              Brand.divider,
+            ));
 
             const rolePing = giveaway.notifyRoleId ? `<@&${giveaway.notifyRoleId}> ` : '';
             await channel.send({ content: rolePing || undefined, embeds: [winnerEmbed] });

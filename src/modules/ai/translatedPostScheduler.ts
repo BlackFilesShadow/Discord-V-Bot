@@ -3,6 +3,7 @@ import { ChannelType, EmbedBuilder } from 'discord.js';
 import prisma from '../../database/prisma';
 import { logger } from '../../utils/logger';
 import { Colors, Brand } from '../../utils/embedDesign';
+import { safeEmbedDescription, safeEmbedTitle, safeEmbedAuthor } from '../../utils/embedSanitize';
 import { translate, getLanguageName, SUPPORTED_LANGUAGES } from './translator';
 
 /**
@@ -37,9 +38,10 @@ export function buildTranslatePostEmbed(opts: {
 
   const embed = new EmbedBuilder()
     .setColor(Colors.Info) // Blau – wie gewuenscht
-    .setAuthor({ name: `${flag}  ${guildName}`, iconURL: guildIcon })
-    .setTitle(title)
-    .setDescription(`${Brand.divider}\n${body}\n${Brand.divider}`)
+    .setAuthor({ name: safeEmbedAuthor(`${flag}  ${guildName}`), iconURL: guildIcon })
+    .setTitle(safeEmbedTitle(title))
+    // P0: User/AI-Inhalt MUSS sanitisiert werden (Mention-Bypass + Markdown-Injection-Schutz).
+    .setDescription(safeEmbedDescription(`${Brand.divider}\n${body}\n${Brand.divider}`))
     .setFooter({ text: Brand.name, iconURL: guildIcon })
     .setTimestamp();
 

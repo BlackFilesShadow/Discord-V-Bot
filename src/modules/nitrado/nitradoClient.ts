@@ -28,6 +28,7 @@
 
 import axios, { AxiosError, type AxiosInstance, type AxiosRequestConfig } from 'axios';
 import { logger } from '../../utils/logger';
+import { nitradoBreaker, NitradoCircuitOpenError } from './circuitBreaker';
 
 const NITRADO_BASE = 'https://api.nitrado.net';
 
@@ -96,22 +97,30 @@ export class NitradoClient {
   }
 
   private async request<T>(method: 'GET' | 'POST' | 'DELETE', path: string, opts: AxiosRequestConfig = {}): Promise<T> {
+    // P0-Hardening: Circuit-Breaker-Preflight. Wirft NitradoCircuitOpenError
+    // wenn API als down markiert ist — verhindert Thundering-Herd.
+    nitradoBreaker.preflight();
+
     let lastErr: Error | null = null;
     for (let attempt = 1; attempt <= 3; attempt++) {
       try {
         const res = await this.http.request({ method, url: path, ...opts });
         if (res.status >= 200 && res.status < 300) {
+          nitradoBreaker.recordSuccess();
           return res.data as T;
         }
         if (res.status === 429) {
+          nitradoBreaker.recordFailure();
           const retryAfter = Number(res.headers['retry-after']) || 2;
           await sleep(retryAfter * 1000);
           continue;
         }
         if (res.status >= 500 && attempt < 3) {
+          nitradoBreaker.recordFailure();
           await sleep(500 * Math.pow(2, attempt - 1));
           continue;
         }
+        // 4xx (ausser 429) sind Client-Fehler — Circuit NICHT kippen.
         throw new NitradoApiError(
           typeof res.data === 'object' && res.data?.message ? res.data.message : `HTTP ${res.status}`,
           res.status,
@@ -119,7 +128,10 @@ export class NitradoClient {
         );
       } catch (e) {
         if (e instanceof NitradoApiError) throw e;
+        if (e instanceof NitradoCircuitOpenError) throw e;
         lastErr = e instanceof Error ? e : new Error(String(e));
+        // Netzwerk-/Timeout-Fehler: zaehlt als Server-seitig.
+        nitradoBreaker.recordFailure();
         if (attempt < 3 && (e as AxiosError).code !== 'ECONNABORTED') {
           await sleep(500 * Math.pow(2, attempt - 1));
           continue;

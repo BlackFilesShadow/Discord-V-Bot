@@ -13,6 +13,12 @@ import { Colors, Brand, vEmbed } from '../../utils/embedDesign';
 /**
  * Ticket-System: User -> Owner DM-Bridge.
  *
+ * @deprecated DM-Owner-Bridge — fuer Self-Hosted-Setups mit einzelnem
+ * Bot-Owner gedacht. Der MODERNE Ticket-Flow lebt unter
+ * src/modules/tickets/ticketSystem.ts (Guild-Templates + Channel-Tickets,
+ * vom Dashboard verwaltbar). Dieses Modul bleibt aktiv, bis der DM-Flow
+ * vollstaendig in das Guild-System migriert ist (geplant: Phase 16).
+ *
  * Flow:
  *  1. /ticket open subject:".." nachricht:".." -> Owner bekommt DM mit Embed + Buttons
  *  2. Owner klickt "Akzeptieren" -> Ticket OPEN, beide Seiten bekommen Bestaetigung

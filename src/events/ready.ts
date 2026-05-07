@@ -3,6 +3,8 @@ import { BotEvent, ExtendedClient } from '../types';
 import { logger } from '../utils/logger';
 import { guildGauge, wsLatencyGauge } from '../utils/metrics';
 import { restoreAllFeeds } from '../modules/leaderboard/leaderboardFeed';
+import { startAuditLogRetentionScheduler } from '../modules/logging/auditRetentionScheduler';
+import { scheduleProviderCooldownSync } from '../modules/ai/providerStats';
 
 /**
  * Ready-Event: Bot ist verbunden und bereit.
@@ -36,6 +38,13 @@ const readyEvent: BotEvent = {
     } catch (e) {
       logger.warn('Leaderboard-Feed-Restore fehlgeschlagen', e as Error);
     }
+
+    // P0-Hardening: Audit-Log-Retention (Daily-Job, Default 90 Tage).
+    startAuditLogRetentionScheduler();
+
+    // P0-Hardening: Provider-Cooldown-Sync (DB <-> in-memory, alle 60s).
+    // Sorgt dafuer dass Replicas den 429-Cooldown teilen + Restart-sicher.
+    scheduleProviderCooldownSync();
   },
 };
 

@@ -5,6 +5,7 @@ import prisma from '../database/prisma';
 import { votePoll, getPollVotes, createPollEmbed, PollOption } from '../modules/polls/pollSystem';
 import { createGiveawayEmbed } from '../modules/giveaway/giveawayManager';
 import { grantEventXp } from '../modules/xp/xpManager';
+import { validateReaction } from '../utils/reactionGuard';
 
 /**
  * MessageReactionAdd-Event: Reaktion auf eine Nachricht.
@@ -18,17 +19,10 @@ const messageReactionAddEvent: BotEvent = {
     const r = reaction as MessageReaction | PartialMessageReaction;
     const u = user as User | PartialUser;
 
-    // Bots ignorieren
-    if (u.bot) return;
-
-    // Partielle Daten nachladen
-    if (r.partial) {
-      try {
-        await r.fetch();
-      } catch {
-        return;
-      }
-    }
+    // P0-Hardening: Zentrale Validierung (Bot-Filter, Partial-Fetch, Guild-Pflicht,
+    // Membership-Check, Per-User-Per-Message Spam-Bucket).
+    const guard = await validateReaction(r, u, { requireGuild: true });
+    if (!guard.ok) return;
 
     const messageId = r.message.id;
     const emoji = r.emoji.name || r.emoji.id || '';
