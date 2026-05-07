@@ -1,5 +1,6 @@
 import { PrismaClient } from '@prisma/client';
 import { PrismaPg } from '@prisma/adapter-pg';
+import { recordPrismaLatency } from '../dashboard/services/observability';
 
 /**
  * Prisma-Client mit getunten Connection-Pool-Defaults.
@@ -48,6 +49,24 @@ const adapter = new PrismaPg({
 const prisma = new PrismaClient({
   adapter,
   log: process.env.NODE_ENV === 'development' ? ['query', 'info', 'warn', 'error'] : ['error'],
-});
+}).$extends({
+  // Prisma 7: $use Middleware-API wurde entfernt. Wir nutzen $extends mit
+  // query.$allOperations fuer Latenz-Tracking (siehe observability.ts).
+  query: {
+    $allOperations: async ({ model, operation, args, query }) => {
+      const start = process.hrtime.bigint();
+      try {
+        const res = await query(args);
+        const ms = Number((process.hrtime.bigint() - start) / 1_000_000n);
+        recordPrismaLatency(model, operation, ms, true);
+        return res;
+      } catch (err) {
+        const ms = Number((process.hrtime.bigint() - start) / 1_000_000n);
+        recordPrismaLatency(model, operation, ms, false);
+        throw err;
+      }
+    },
+  },
+}) as unknown as PrismaClient;
 
 export default prisma;

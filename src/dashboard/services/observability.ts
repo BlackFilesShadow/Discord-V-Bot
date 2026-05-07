@@ -116,30 +116,16 @@ export function getPrismaSnapshot(): PrismaBucketSnapshot[] {
   return out;
 }
 
-// Minimal-Interface, damit wir nicht den vollen PrismaClient importieren muessen.
-interface PrismaWithUse {
-  $use: (mw: (params: { model?: string; action: string }, next: (p: unknown) => Promise<unknown>) => Promise<unknown>) => void;
+// Prisma 7: $use (Middleware-API) wurde entfernt. Latenz-Tracking erfolgt jetzt
+// via $extends direkt bei der PrismaClient-Konstruktion in src/database/prisma.ts.
+// Diese Funktion bleibt als No-Op fuer API-Kompatibilitaet erhalten.
+export function attachPrismaLatencyMiddleware(_prisma: unknown): void {
+  // no-op: Latency-Hook wird via $extends in prisma.ts attached
 }
 
-let prismaMiddlewareAttached = false;
-
-export function attachPrismaLatencyMiddleware(prisma: PrismaWithUse): void {
-  if (prismaMiddlewareAttached) return;
-  prismaMiddlewareAttached = true;
-  prisma.$use(async (params, next) => {
-    const start = process.hrtime.bigint();
-    const key = `${params.model ?? 'raw'}:${params.action}`;
-    try {
-      const res = await next(params);
-      const ms = Number((process.hrtime.bigint() - start) / 1_000_000n);
-      pushLatency(key, ms, true);
-      return res;
-    } catch (err) {
-      const ms = Number((process.hrtime.bigint() - start) / 1_000_000n);
-      pushLatency(key, ms, false);
-      throw err;
-    }
-  });
+/** Public Hook fuer den $extends-Handler in src/database/prisma.ts */
+export function recordPrismaLatency(model: string | undefined, action: string, ms: number, ok: boolean): void {
+  pushLatency(`${model ?? 'raw'}:${action}`, ms, ok);
 }
 
 // Test-Helper: erlaubt direktes Einspeisen von Samples ohne Prisma.
@@ -431,6 +417,5 @@ export function __resetObservabilityForTests(): void {
   prismaBuckets.clear();
   aiBuckets.clear();
   logRing.length = 0;
-  prismaMiddlewareAttached = false;
   logTransportAttached = false;
 }
