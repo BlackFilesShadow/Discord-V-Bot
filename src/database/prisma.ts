@@ -1,4 +1,5 @@
 import { PrismaClient } from '@prisma/client';
+import { PrismaPg } from '@prisma/adapter-pg';
 
 /**
  * Prisma-Client mit getunten Connection-Pool-Defaults.
@@ -33,9 +34,20 @@ export function ensureConnectionPoolParams(rawUrl: string | undefined): string |
 
 const tunedUrl = ensureConnectionPoolParams(process.env.DATABASE_URL);
 
+// Prisma 7: Direkter Connection-Mode entfernt — PrismaClient benoetigt jetzt
+// einen Driver Adapter (oder accelerateUrl). Wir nutzen `@prisma/adapter-pg`
+// mit der getunten URL (Pool-Limit/Timeout via Query-Params von node-postgres
+// werden ignoriert, daher steuert der Adapter selbst den Pool).
+const adapter = new PrismaPg({
+  connectionString: tunedUrl ?? process.env.DATABASE_URL ?? '',
+  max: 10,
+  // node-postgres pool: idle clients werden nach 20s geschlossen
+  idleTimeoutMillis: 20_000,
+});
+
 const prisma = new PrismaClient({
+  adapter,
   log: process.env.NODE_ENV === 'development' ? ['query', 'info', 'warn', 'error'] : ['error'],
-  ...(tunedUrl ? { datasources: { db: { url: tunedUrl } } } : {}),
 });
 
 export default prisma;

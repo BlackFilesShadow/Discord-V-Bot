@@ -17,9 +17,10 @@ generator client {
   binaryTargets = ["native", "linux-musl", "debian-openssl-3.0.x"]
 }
 
+// Prisma 7: Connection-URL liegt in /prisma.config.ts (datasource.url).
+// Schema-Block deklariert nur noch Provider.
 datasource db {
   provider = "postgresql"
-  url      = env("DATABASE_URL")
 }
 
 // ============================================================

@@ -101,7 +101,7 @@ jobs:
         run: npx prisma generate
 
       - name: Run database migrations
-        run: npx prisma db push --skip-generate
+        run: npx prisma db push
 
       - name: Run tests
         run: npm test -- --coverage --forceExit
