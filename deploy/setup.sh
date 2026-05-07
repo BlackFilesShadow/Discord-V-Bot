@@ -189,7 +189,7 @@ fi
 # ----- Datenbank-Migration -----
 info "Datenbank-Schema wird angewendet..."
 cd "$BOT_DIR"
-sudo -u "$BOT_USER" bash -c "cd $BOT_DIR && npx prisma db push --skip-generate"
+sudo -u "$BOT_USER" bash -c "cd $BOT_DIR && npx prisma db push"
 log "Datenbank-Schema angewendet"
 
 # ----- systemd Service -----

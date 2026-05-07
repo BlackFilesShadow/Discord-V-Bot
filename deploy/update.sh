@@ -69,7 +69,7 @@ done
 
 # 4) DB-Schema synchronisieren
 info "Prisma-Schema wird gegen DB gepusht..."
-if docker compose exec -T "$COMPOSE_SERVICE" npx prisma db push --skip-generate --accept-data-loss; then
+if docker compose exec -T "$COMPOSE_SERVICE" npx prisma db push --accept-data-loss; then
   log "DB-Schema synchronisiert."
 else
   warn "Prisma db push lieferte Fehler - bitte Logs pruefen."
