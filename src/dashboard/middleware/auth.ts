@@ -274,6 +274,7 @@ export async function requireGuildAccess(req: Request, res: Response, next: Next
  *     (incl. optionalem `guildIdRestrict` fuer Multi-Guild-Schutz).
  */
 let warnedAboutDisabledDevMfa = false;
+let warnedAboutDisabledDevIp = false;
 export async function requireDev(req: Request, res: Response, next: NextFunction): Promise<void> {
   if (!req.auth) { res.status(401).json({ error: 'Nicht angemeldet.' }); return; }
   if (req.auth.role !== 'DEVELOPER') {
@@ -337,14 +338,28 @@ export async function requireDev(req: Request, res: Response, next: NextFunction
     });
   }
 
-  // IP-Allowlist
-  const ipCheck = await enforceDevIpAllowlist(req);
-  if (!ipCheck.ok) {
-    logAudit('DEV_IP_DENIED', 'SECURITY', {
-      userId: req.auth.userId, ip: req.ip, reason: ipCheck.reason, listSize: ipCheck.listSize,
-    });
-    res.status(403).json({ error: 'IP nicht in DEV-Allowlist.', code: 'DEV_IP_DENIED' });
-    return;
+  // IP-Allowlist — OPTIONALE Extra-Sicherung (standardmaessig AUS).
+  //
+  // Analog zu MFA: Die IP-Allowlist blockiert NUR, wenn
+  // `DEV_REQUIRE_IP_ALLOWLIST=true` explizit gesetzt ist. Ohne diese Variable
+  // erscheint keine "IP nicht in DEV-Allowlist"-Meldung.
+  const ipRequired = process.env.DEV_REQUIRE_IP_ALLOWLIST === 'true';
+  if (!ipRequired && !warnedAboutDisabledDevIp) {
+    warnedAboutDisabledDevIp = true;
+    logger.warn('[DEV] DEV_REQUIRE_IP_ALLOWLIST ist nicht aktiv — DEV-Konsole prueft keine IP-Allowlist. Fuer Produktion DEV_REQUIRE_IP_ALLOWLIST=true setzen.');
+  }
+  if (ipRequired) {
+    const ipCheck = await enforceDevIpAllowlist(req);
+    if (!ipCheck.ok) {
+      logAudit('DEV_IP_DENIED', 'SECURITY', {
+        userId: req.auth.userId, ip: req.ip, reason: ipCheck.reason, listSize: ipCheck.listSize,
+      });
+      res.status(403).json({
+        error: 'DEV_REQUIRE_IP_ALLOWLIST ist aktiv. Deine IP ist nicht in der DEV-Allowlist.',
+        code: 'DEV_IP_DENIED',
+      });
+      return;
+    }
   }
 
   req.devSession = {

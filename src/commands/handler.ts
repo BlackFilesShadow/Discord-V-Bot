@@ -11,6 +11,28 @@ import fs from 'fs';
 export async function loadCommands(client: ExtendedClient): Promise<void> {
   client.commands = new Collection<string, Command>();
 
+  // Collision-Guard: Merkt sich, aus welcher Datei ein Command-Name geladen
+  // wurde. Wird derselbe Name aus einer zweiten Datei geladen, loggen wir eine
+  // klare Warnung mit beiden Dateipfaden (statt still zu ueberschreiben).
+  const commandSources = new Map<string, string>();
+  let collisionCount = 0;
+  const registerCommand = (cmd: Command, sourceFile: string): void => {
+    const existing = commandSources.get(cmd.data.name);
+    if (existing && existing !== sourceFile) {
+      collisionCount++;
+      logger.warn(
+        `[Command-Collision] /${cmd.data.name} ist doppelt definiert: ` +
+        `"${existing}" und "${sourceFile}". Letztere ueberschreibt erstere. ` +
+        `Bitte doppelten Command-Namen aufloesen.`,
+      );
+      if (process.env.COMMAND_LOADER_STRICT === 'true') {
+        throw new Error(`Command-Collision: /${cmd.data.name} in "${existing}" und "${sourceFile}"`);
+      }
+    }
+    commandSources.set(cmd.data.name, sourceFile);
+    client.commands.set(cmd.data.name, cmd);
+  };
+
   const commandDirs = [
     path.join(__dirname, 'user'),
     path.join(__dirname, 'admin'),
@@ -24,6 +46,7 @@ export async function loadCommands(client: ExtendedClient): Promise<void> {
     const files = fs.readdirSync(dir).filter(f => f.endsWith('.ts') || f.endsWith('.js'));
 
     for (const file of files) {
+      const relSource = path.join(path.basename(dir), file);
       try {
         // WICHTIG: require() statt dynamic import().
         // Mit tsconfig "module": "Node16" triggert dynamic import() den nativen
@@ -40,7 +63,7 @@ export async function loadCommands(client: ExtendedClient): Promise<void> {
         // Default export
         if (maybeDefault?.data?.name && typeof maybeDefault.execute === 'function') {
           const command: Command = maybeDefault;
-          client.commands.set(command.data.name, command);
+          registerCommand(command, relSource);
           logger.info(`Command geladen: /${command.data.name}`);
         } else {
           // Named exports (z.B. moderation.ts mit kickCommand, banCommand, etc.)
@@ -51,7 +74,7 @@ export async function loadCommands(client: ExtendedClient): Promise<void> {
             if (key === 'default' || key === '__esModule') continue;
             const exported = source[key];
             if (exported?.data?.name && typeof exported.execute === 'function') {
-              client.commands.set(exported.data.name, exported as Command);
+              registerCommand(exported as Command, relSource);
               logger.info(`Command geladen: /${exported.data.name}`);
             }
           }
@@ -62,6 +85,9 @@ export async function loadCommands(client: ExtendedClient): Promise<void> {
     }
   }
 
+  if (collisionCount > 0) {
+    logger.warn(`[Command-Collision] ${collisionCount} doppelte Command-Name(n) erkannt.`);
+  }
   logger.info(`${client.commands.size} Commands geladen.`);
 }
 
