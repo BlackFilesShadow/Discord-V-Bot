@@ -23,6 +23,7 @@ export default {
         warn: '#f59e0b',
         danger: '#ef4444',
         info: '#38bdf8',
+        planned: '#7c3aed',
         // Severity-Skala fuer enterprise-typische Status-Anzeigen
         severity: {
           neutral: '#6b7280',

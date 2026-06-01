@@ -1,7 +1,7 @@
 import { type ReactNode } from 'react';
 import { twMerge } from 'tailwind-merge';
 
-export type BadgeVariant = 'ok' | 'warn' | 'danger' | 'info' | 'neutral';
+export type BadgeVariant = 'ok' | 'warn' | 'danger' | 'info' | 'neutral' | 'planned';
 
 interface BadgeProps {
   variant?: BadgeVariant;
@@ -17,6 +17,7 @@ const cls: Record<BadgeVariant, string> = {
   danger: 'pill-glow-danger',
   info: 'pill-glow-info',
   neutral: 'pill-glow-neutral',
+  planned: 'pill-glow-planned',
 };
 
 export function Badge({ variant = 'neutral', children, className, pulse }: BadgeProps) {
