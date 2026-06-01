@@ -1,12 +1,15 @@
 /**
- * Bot-Admin-Bereich (Dashboard-Tab) — separater, geschuetzter Support-Bereich.
+ * Bot-Admin-Bereich — globaler, passwortgeschuetzter Support-Bereich.
  *
  * NICHT der DEV-Bereich. Buendelt die frueheren `/admin-*`-Discord-Commands als
  * Dashboard-Funktionen mit eigener Subnavigation (wie der DEV-Bereich).
  *
- * Backend: /api/v2/guilds/:guildId/bot-admin/*
- * Berechtigungen: bot.view (ansehen), bot.manage (normale Aktionen),
- *                 bot.danger (gefaehrliche Aktionen, zusaetzlich Confirm-Dialog).
+ * Backend: /api/v2/bot-admin/* (global). Zugriff wird ueber die
+ * BotAdminSession (Passwort-Login, requireBotAdmin) freigeschaltet — eine
+ * einzige Bot-Admin-Berechtigung schaltet alle Aktionen frei.
+ *
+ * Einige Sektionen sind serverbezogen (Selfroles, Feeds, Uebersetzungen, XP)
+ * und erwarten eine guildId, die ueber den Server-Selektor gewaehlt wird.
  */
 import { useState, type ReactNode, type ComponentType } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
@@ -55,9 +58,24 @@ const SECTIONS: ReadonlyArray<SectionDef> = [
   { key: 'danger', label: 'Gefahrenzone', icon: AlertOctagon, desc: 'Gefährliche Aktionen', danger: true },
 ];
 
-export function BotAdminTab({ guildId, canManage, canDanger }: { guildId: string; canManage: boolean; canDanger: boolean }) {
+// Sektionen, die einen ausgewaehlten Server (guildId) benoetigen.
+const GUILD_SCOPED = new Set<SectionKey>(['selfroles', 'feeds', 'translate', 'xp']);
+
+interface GuildOption { id: string; name: string; memberCount: number }
+
+export function BotAdminTab() {
   const [section, setSection] = useState<SectionKey>('overview');
-  const base = `/api/v2/guilds/${guildId}/bot-admin`;
+  const [guildId, setGuildId] = useState<string>('');
+  const base = '/api/v2/bot-admin';
+  const canManage = true;
+  const canDanger = true;
+
+  const guildsQ = useQuery({
+    queryKey: [base, 'guilds'],
+    queryFn: () => api.get<{ items: GuildOption[] }>(`${base}/guilds`),
+  });
+  const guilds = guildsQ.data?.items ?? [];
+  const needsGuild = GUILD_SCOPED.has(section);
 
   return (
     <div className="grid gap-5 lg:grid-cols-[200px_1fr]">
@@ -87,21 +105,37 @@ export function BotAdminTab({ guildId, canManage, canDanger }: { guildId: string
 
       {/* Inhalt */}
       <div className="min-w-0">
-        {section === 'overview' && <OverviewSection base={base} onJump={setSection} />}
-        {section === 'appeals' && <AppealsSection base={base} canManage={canManage} />}
-        {section === 'feedback' && <FeedbackSection base={base} canManage={canManage} />}
-        {section === 'broadcast' && <BroadcastSection base={base} canManage={canManage} canDanger={canDanger} />}
-        {section === 'upload' && <UploadSection base={base} canManage={canManage} />}
-        {section === 'export' && <ExportSection base={base} canManage={canManage} canDanger={canDanger} />}
-        {section === 'validate' && <ValidateSection base={base} canManage={canManage} />}
-        {section === 'packages' && <PackagesSection base={base} canManage={canManage} canDanger={canDanger} />}
-        {section === 'users' && <UsersSection base={base} canManage={canManage} canDanger={canDanger} />}
-        {section === 'tickets' && <TicketsSection base={base} canManage={canManage} />}
-        {section === 'selfroles' && <SelfrolesSection base={base} canManage={canManage} />}
-        {section === 'feeds' && <FeedsSection base={base} canManage={canManage} />}
-        {section === 'translate' && <TranslateSection base={base} canManage={canManage} />}
-        {section === 'xp' && <XpSection base={base} canManage={canManage} />}
-        {section === 'danger' && <DangerSection base={base} canDanger={canDanger} />}
+        {needsGuild && (
+          <div className="mb-4 flex items-center gap-2 flex-wrap">
+            <span className="text-xs text-muted">Server:</span>
+            <Select value={guildId} onChange={e => setGuildId(e.target.value)} className="!w-auto text-sm">
+              <option value="">— Server wählen —</option>
+              {guilds.map(g => <option key={g.id} value={g.id}>{g.name} ({g.memberCount})</option>)}
+            </Select>
+            {guildsQ.isFetching && <Loader2 className="h-3.5 w-3.5 animate-spin text-muted" />}
+          </div>
+        )}
+        {needsGuild && !guildId ? (
+          <Card glow><EmptyState icon={Inbox} title="Server wählen" desc="Bitte oben einen Server auswählen, um diesen Bereich zu verwalten." /></Card>
+        ) : (
+          <>
+            {section === 'overview' && <OverviewSection base={base} onJump={setSection} />}
+            {section === 'appeals' && <AppealsSection base={base} canManage={canManage} />}
+            {section === 'feedback' && <FeedbackSection base={base} canManage={canManage} />}
+            {section === 'broadcast' && <BroadcastSection base={base} canManage={canManage} canDanger={canDanger} />}
+            {section === 'upload' && <UploadSection base={base} canManage={canManage} />}
+            {section === 'export' && <ExportSection base={base} canManage={canManage} canDanger={canDanger} />}
+            {section === 'validate' && <ValidateSection base={base} canManage={canManage} />}
+            {section === 'packages' && <PackagesSection base={base} canManage={canManage} canDanger={canDanger} />}
+            {section === 'users' && <UsersSection base={base} canManage={canManage} canDanger={canDanger} />}
+            {section === 'tickets' && <TicketsSection base={base} canManage={canManage} />}
+            {section === 'selfroles' && <SelfrolesSection base={base} guildId={guildId} canManage={canManage} />}
+            {section === 'feeds' && <FeedsSection base={base} guildId={guildId} canManage={canManage} />}
+            {section === 'translate' && <TranslateSection base={base} guildId={guildId} canManage={canManage} />}
+            {section === 'xp' && <XpSection base={base} guildId={guildId} canManage={canManage} />}
+            {section === 'danger' && <DangerSection base={base} canDanger={canDanger} />}
+          </>
+        )}
       </div>
     </div>
   );
@@ -135,7 +169,7 @@ function ReadOnlyHint({ canManage }: { canManage: boolean }) {
   if (canManage) return null;
   return (
     <p className="text-xs text-muted mb-3 inline-flex items-center gap-1">
-      <ShieldCheck className="h-3 w-3" /> Nur-Lesen-Modus — für Aktionen wird die Berechtigung <code className="text-accent">bot.manage</code> benötigt.
+      <ShieldCheck className="h-3 w-3" /> Nur-Lesen-Modus — für Aktionen ist eine aktive Bot-Admin-Session erforderlich.
     </p>
   );
 }
@@ -375,7 +409,7 @@ function BroadcastSection({ base, canManage, canDanger }: { base: string; canMan
           <option value="ALL">ALLE (gefährlich)</option>
         </Select>
         {isAll && (
-          <p className="text-xs text-warn inline-flex items-center gap-1"><AlertTriangle className="h-3 w-3" /> Broadcast an ALLE erfordert <code>bot.danger</code>.</p>
+          <p className="text-xs text-warn inline-flex items-center gap-1"><AlertTriangle className="h-3 w-3" /> Broadcast an ALLE Nutzer — bitte mit Bedacht einsetzen.</p>
         )}
         <textarea value={message} onChange={e => setMessage(e.target.value)} maxLength={1900} placeholder="Nachricht (max. 1900 Zeichen)" disabled={!canManage} className="w-full rounded-md bg-bg-elev border border-border px-3 py-2 text-sm text-white" rows={5} />
         <div className="flex gap-2">
@@ -448,7 +482,7 @@ function ExportSection({ base, canManage, canDanger }: { base: string; canManage
       <div className="grid gap-3 sm:grid-cols-3 max-w-2xl">
         <ExportBtn label="Pakete" disabled={!canManage} onClick={() => run.mutate('packages')} loading={run.isPending} />
         <ExportBtn label="Audit-Logs" disabled={!canManage} onClick={() => run.mutate('logs')} loading={run.isPending} />
-        <ExportBtn label="Nutzer (GDPR)" danger disabled={!canDanger} hint={!canDanger ? 'bot.danger nötig' : undefined} onClick={() => run.mutate('users')} loading={run.isPending} />
+        <ExportBtn label="Nutzer (GDPR)" danger disabled={!canDanger} hint={!canDanger ? 'Bot-Admin-Session nötig' : undefined} onClick={() => run.mutate('users')} loading={run.isPending} />
       </div>
     </Card>
   );
@@ -685,18 +719,19 @@ function TicketsSection({ base, canManage }: { base: string; canManage: boolean 
 interface SelfRoleOpt { id: string; roleId: string; label: string }
 interface SelfRoleMenuRow { id: string; title: string; channelId: string; mode: string; isActive: boolean; options: SelfRoleOpt[] }
 
-function SelfrolesSection({ base, canManage }: { base: string; canManage: boolean }) {
+function SelfrolesSection({ base, guildId, canManage }: { base: string; guildId: string; canManage: boolean }) {
   const qc = useQueryClient();
   const toast = useToast();
   const [showCreate, setShowCreate] = useState(false);
-  const q = useQuery({ queryKey: [base, 'selfroles'], queryFn: () => api.get<{ items: SelfRoleMenuRow[] }>(`${base}/selfroles`) });
-  const inv = () => qc.invalidateQueries({ queryKey: [base, 'selfroles'] });
-  const create = useMutation({ mutationFn: (b: unknown) => api.post(`${base}/selfroles`, b), onSuccess: () => { toast.success('Menü erstellt.'); inv(); setShowCreate(false); }, onError: e => toast.error(errMsg(e)) });
-  const addOpt = useMutation({ mutationFn: (vars: { id: string; b: unknown }) => api.post(`${base}/selfroles/${vars.id}/options`, vars.b), onSuccess: () => { toast.success('Option hinzugefügt.'); inv(); }, onError: e => toast.error(errMsg(e)) });
-  const delOpt = useMutation({ mutationFn: (vars: { id: string; optId: string }) => api.del(`${base}/selfroles/${vars.id}/options/${vars.optId}`), onSuccess: () => { inv(); }, onError: e => toast.error(errMsg(e)) });
-  const post = useMutation({ mutationFn: (id: string) => api.post(`${base}/selfroles/${id}/post`), onSuccess: () => toast.success('Im Channel gepostet.'), onError: e => toast.error(errMsg(e)) });
-  const toggle = useMutation({ mutationFn: (id: string) => api.post(`${base}/selfroles/${id}/toggle`), onSuccess: () => { inv(); }, onError: e => toast.error(errMsg(e)) });
-  const del = useMutation({ mutationFn: (id: string) => api.del(`${base}/selfroles/${id}`), onSuccess: () => { toast.success('Gelöscht.'); inv(); }, onError: e => toast.error(errMsg(e)) });
+  const g = (p: string) => `${base}${p}${p.includes('?') ? '&' : '?'}guildId=${guildId}`;
+  const q = useQuery({ queryKey: [base, 'selfroles', guildId], queryFn: () => api.get<{ items: SelfRoleMenuRow[] }>(g('/selfroles')), enabled: !!guildId });
+  const inv = () => qc.invalidateQueries({ queryKey: [base, 'selfroles', guildId] });
+  const create = useMutation({ mutationFn: (b: unknown) => api.post(g('/selfroles'), b), onSuccess: () => { toast.success('Menü erstellt.'); inv(); setShowCreate(false); }, onError: e => toast.error(errMsg(e)) });
+  const addOpt = useMutation({ mutationFn: (vars: { id: string; b: unknown }) => api.post(g(`/selfroles/${vars.id}/options`), vars.b), onSuccess: () => { toast.success('Option hinzugefügt.'); inv(); }, onError: e => toast.error(errMsg(e)) });
+  const delOpt = useMutation({ mutationFn: (vars: { id: string; optId: string }) => api.del(g(`/selfroles/${vars.id}/options/${vars.optId}`)), onSuccess: () => { inv(); }, onError: e => toast.error(errMsg(e)) });
+  const post = useMutation({ mutationFn: (id: string) => api.post(g(`/selfroles/${id}/post`)), onSuccess: () => toast.success('Im Channel gepostet.'), onError: e => toast.error(errMsg(e)) });
+  const toggle = useMutation({ mutationFn: (id: string) => api.post(g(`/selfroles/${id}/toggle`)), onSuccess: () => { inv(); }, onError: e => toast.error(errMsg(e)) });
+  const del = useMutation({ mutationFn: (id: string) => api.del(g(`/selfroles/${id}`)), onSuccess: () => { toast.success('Gelöscht.'); inv(); }, onError: e => toast.error(errMsg(e)) });
   return (
     <Card glow>
       <SectionHeader title="Selfroles" desc="Self-Role-Menüs (früher /selfrole)" onRefresh={() => q.refetch()} loading={q.isFetching}
@@ -771,15 +806,16 @@ function SelfroleOptionForm({ onSubmit, loading }: { onSubmit: (b: unknown) => v
 // ════════════════════════════════════════════════════════════════════════
 interface FeedRow { id: string; name: string; feedType: string; url: string; channelId: string; isActive: boolean; interval: number }
 
-function FeedsSection({ base, canManage }: { base: string; canManage: boolean }) {
+function FeedsSection({ base, guildId, canManage }: { base: string; guildId: string; canManage: boolean }) {
   const qc = useQueryClient();
   const toast = useToast();
   const [showCreate, setShowCreate] = useState(false);
-  const q = useQuery({ queryKey: [base, 'feeds'], queryFn: () => api.get<{ items: FeedRow[] }>(`${base}/feeds`) });
-  const inv = () => qc.invalidateQueries({ queryKey: [base, 'feeds'] });
-  const create = useMutation({ mutationFn: (b: unknown) => api.post(`${base}/feeds`, b), onSuccess: () => { toast.success('Feed erstellt.'); inv(); setShowCreate(false); }, onError: e => toast.error(errMsg(e)) });
-  const toggle = useMutation({ mutationFn: (id: string) => api.post(`${base}/feeds/${id}/toggle`), onSuccess: () => inv(), onError: e => toast.error(errMsg(e)) });
-  const del = useMutation({ mutationFn: (id: string) => api.del(`${base}/feeds/${id}`), onSuccess: () => { toast.success('Gelöscht.'); inv(); }, onError: e => toast.error(errMsg(e)) });
+  const g = (p: string) => `${base}${p}${p.includes('?') ? '&' : '?'}guildId=${guildId}`;
+  const q = useQuery({ queryKey: [base, 'feeds', guildId], queryFn: () => api.get<{ items: FeedRow[] }>(g('/feeds')), enabled: !!guildId });
+  const inv = () => qc.invalidateQueries({ queryKey: [base, 'feeds', guildId] });
+  const create = useMutation({ mutationFn: (b: unknown) => api.post(g('/feeds'), b), onSuccess: () => { toast.success('Feed erstellt.'); inv(); setShowCreate(false); }, onError: e => toast.error(errMsg(e)) });
+  const toggle = useMutation({ mutationFn: (id: string) => api.post(g(`/feeds/${id}/toggle`)), onSuccess: () => inv(), onError: e => toast.error(errMsg(e)) });
+  const del = useMutation({ mutationFn: (id: string) => api.del(g(`/feeds/${id}`)), onSuccess: () => { toast.success('Gelöscht.'); inv(); }, onError: e => toast.error(errMsg(e)) });
   return (
     <Card glow>
       <SectionHeader title="Feeds" desc="Feed-Quellen (früher /feed)" onRefresh={() => q.refetch()} loading={q.isFetching}
@@ -837,14 +873,15 @@ function FeedCreateForm({ onSubmit, loading }: { onSubmit: (b: unknown) => void;
 // ════════════════════════════════════════════════════════════════════════
 interface TranslateRow { id: string; targetLang: string; channelId: string; customTitle: string | null; translatedText: string | null; createdAt: string }
 
-function TranslateSection({ base, canManage }: { base: string; canManage: boolean }) {
+function TranslateSection({ base, guildId, canManage }: { base: string; guildId: string; canManage: boolean }) {
   const qc = useQueryClient();
   const toast = useToast();
   const [showCreate, setShowCreate] = useState(false);
-  const q = useQuery({ queryKey: [base, 'translate'], queryFn: () => api.get<{ items: TranslateRow[]; languages: string[] }>(`${base}/translate`) });
-  const inv = () => qc.invalidateQueries({ queryKey: [base, 'translate'] });
-  const create = useMutation({ mutationFn: (b: unknown) => api.post(`${base}/translate`, b), onSuccess: () => { toast.success('Übersetzt & gespeichert.'); inv(); setShowCreate(false); }, onError: e => toast.error(errMsg(e)) });
-  const del = useMutation({ mutationFn: (id: string) => api.del(`${base}/translate/${id}`), onSuccess: () => { toast.success('Gelöscht.'); inv(); }, onError: e => toast.error(errMsg(e)) });
+  const g = (p: string) => `${base}${p}${p.includes('?') ? '&' : '?'}guildId=${guildId}`;
+  const q = useQuery({ queryKey: [base, 'translate', guildId], queryFn: () => api.get<{ items: TranslateRow[]; languages: string[] }>(g('/translate')), enabled: !!guildId });
+  const inv = () => qc.invalidateQueries({ queryKey: [base, 'translate', guildId] });
+  const create = useMutation({ mutationFn: (b: unknown) => api.post(g('/translate'), b), onSuccess: () => { toast.success('Übersetzt & gespeichert.'); inv(); setShowCreate(false); }, onError: e => toast.error(errMsg(e)) });
+  const del = useMutation({ mutationFn: (id: string) => api.del(g(`/translate/${id}`)), onSuccess: () => { toast.success('Gelöscht.'); inv(); }, onError: e => toast.error(errMsg(e)) });
   return (
     <Card glow>
       <SectionHeader title="Übersetzungen" desc="Posts übersetzen (früher /translate-post)" onRefresh={() => q.refetch()} loading={q.isFetching}
@@ -893,14 +930,15 @@ function TranslateCreateForm({ languages, onSubmit, loading }: { languages: stri
 interface XpConfig { id: string; messageXpMin: number; messageXpMax: number; voiceXpPerMinute: number; eventXpBonus: number; xpCooldownSeconds: number; levelMultiplier: number; maxLevel: number; isActive: boolean }
 interface LevelRoleRow { id: string; level: number; roleId: string }
 
-function XpSection({ base, canManage }: { base: string; canManage: boolean }) {
+function XpSection({ base, guildId, canManage }: { base: string; guildId: string; canManage: boolean }) {
   const qc = useQueryClient();
   const toast = useToast();
-  const q = useQuery({ queryKey: [base, 'xp'], queryFn: () => api.get<{ config: XpConfig; levelRoles: LevelRoleRow[] }>(`${base}/xp`) });
-  const inv = () => qc.invalidateQueries({ queryKey: [base, 'xp'] });
+  const g = (p: string) => `${base}${p}${p.includes('?') ? '&' : '?'}guildId=${guildId}`;
+  const q = useQuery({ queryKey: [base, 'xp', guildId], queryFn: () => api.get<{ config: XpConfig; levelRoles: LevelRoleRow[] }>(g('/xp')), enabled: !!guildId });
+  const inv = () => qc.invalidateQueries({ queryKey: [base, 'xp', guildId] });
   const patch = useMutation({ mutationFn: (b: Partial<XpConfig>) => api.patch(`${base}/xp`, b), onSuccess: () => { toast.success('XP-Konfiguration gespeichert.'); inv(); }, onError: e => toast.error(errMsg(e)) });
-  const addRole = useMutation({ mutationFn: (b: unknown) => api.post(`${base}/xp/level-roles`, b), onSuccess: () => { toast.success('Level-Rolle hinzugefügt.'); inv(); }, onError: e => toast.error(errMsg(e)) });
-  const delRole = useMutation({ mutationFn: (id: string) => api.del(`${base}/xp/level-roles/${id}`), onSuccess: () => inv(), onError: e => toast.error(errMsg(e)) });
+  const addRole = useMutation({ mutationFn: (b: unknown) => api.post(g('/xp/level-roles'), b), onSuccess: () => { toast.success('Level-Rolle hinzugefügt.'); inv(); }, onError: e => toast.error(errMsg(e)) });
+  const delRole = useMutation({ mutationFn: (id: string) => api.del(g(`/xp/level-roles/${id}`)), onSuccess: () => inv(), onError: e => toast.error(errMsg(e)) });
   const [draft, setDraft] = useState<Partial<XpConfig> | null>(null);
   const cfg = { ...(q.data?.config as XpConfig | undefined), ...draft } as XpConfig | undefined;
   const num = (k: keyof XpConfig, label: string) => (
@@ -970,7 +1008,7 @@ function DangerSection({ base, canDanger }: { base: string; canDanger: boolean }
     <Card glow className="border-danger/30">
       <SectionHeader title="Gefahrenzone" desc="Gefährliche, nicht umkehrbare Aktionen" onRefresh={() => q.refetch()} loading={q.isFetching} />
       {!canDanger && (
-        <p className="text-sm text-warn inline-flex items-center gap-1 mb-3"><AlertTriangle className="h-4 w-4" /> Diese Aktionen erfordern die Berechtigung <code>bot.danger</code>.</p>
+        <p className="text-sm text-warn inline-flex items-center gap-1 mb-3"><AlertTriangle className="h-4 w-4" /> Diese Aktionen erfordern eine aktive Bot-Admin-Session.</p>
       )}
       {q.data && (
         <div className="grid gap-3 sm:grid-cols-2 mb-5">

@@ -19,6 +19,7 @@ import { useDensity } from '@/lib/density';
 import { useHotkey, MOD_LABEL } from '@/lib/hotkeys';
 import { CommandPalette } from '@/components/CommandPalette';
 import { DevLoginPanel } from '@/components/DevLoginPanel';
+import { BotAdminLoginPanel } from '@/components/BotAdminLoginPanel';
 import { Tooltip } from '@/components/ui/Tooltip';
 import { Kbd } from '@/components/ui/Kbd';
 
@@ -98,6 +99,8 @@ export function Shell({ title, back, sidebar, children }: ShellProps) {
         <div className="flex items-center gap-1.5 sm:gap-2 text-sm">
           {/* DEV-Console Inline-Login (Passwort-Feld + Submit) bzw. Status-Pille. */}
           <DevLoginPanel />
+          {/* Bot-Admin Inline-Login — globaler, passwortgeschuetzter Bereich. */}
+          <BotAdminLoginPanel />
 
           <Tooltip content={<span>Befehlspalette · <Kbd>{MOD_LABEL}</Kbd>+<Kbd>K</Kbd></span>}>
             <button

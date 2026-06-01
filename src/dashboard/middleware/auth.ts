@@ -29,6 +29,11 @@ declare module 'express-serve-static-core' {
       expiresAt: Date;
       mfa: { ok: boolean; reason?: string; graceUntil?: Date | null };
     };
+    botAdminSession?: {
+      id: string;
+      userDiscordId: string;
+      expiresAt: Date;
+    };
   }
 }
 
@@ -350,5 +355,32 @@ export async function requireDev(req: Request, res: Response, next: NextFunction
     mfa: { ok: mfa.ok, reason: mfa.reason, graceUntil: mfa.graceUntil ?? null },
   };
 
+  next();
+}
+
+/**
+ * Bot-Admin-only: braucht eine aktive, nicht-widerrufene, nicht-abgelaufene
+ * BotAdminSession (erzeugt per Passwort-Login, siehe routes/v2/botAdmin.ts).
+ *
+ * Bewusst KEIN Rollen-Gate: das korrekte BOT_ADMIN_PASSWORD ist die
+ * Berechtigung (analog DEV-Doktrin "Passwort = Zugang"). Anders als DEV ohne
+ * MFA-/IP-Zwang — der Bereich ist Support-orientiert, nicht technisch.
+ */
+export async function requireBotAdmin(req: Request, res: Response, next: NextFunction): Promise<void> {
+  if (!req.auth) { res.status(401).json({ error: 'Nicht angemeldet.' }); return; }
+  const session = await prisma.botAdminSession.findFirst({
+    where: { userDiscordId: req.auth.discordId, revokedAt: null, expiresAt: { gt: new Date() } },
+    orderBy: { createdAt: 'desc' },
+    select: { id: true, userDiscordId: true, expiresAt: true },
+  });
+  if (!session) {
+    res.status(403).json({ error: 'Bot-Admin-Session erforderlich.', code: 'BOTADMIN_LOGIN_REQUIRED' });
+    return;
+  }
+  req.botAdminSession = {
+    id: session.id,
+    userDiscordId: session.userDiscordId,
+    expiresAt: session.expiresAt,
+  };
   next();
 }

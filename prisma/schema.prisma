@@ -1782,6 +1782,21 @@ model DevSession {
   @@index([expiresAt])
 }
 
+// Bot-Admin-Session — globaler, passwortgeschuetzter Support-Bereich (analog
+// DevSession, aber eigene "Bot Admin"-Berechtigung). Wird per Passwort-Login
+// (BOT_ADMIN_PASSWORD) erzeugt und ist zeit-/revoke-gesteuert.
+model BotAdminSession {
+  id            String    @id @default(cuid())
+  userDiscordId String
+  scope         Json
+  expiresAt     DateTime
+  createdAt     DateTime  @default(now())
+  revokedAt     DateTime?
+
+  @@index([userDiscordId])
+  @@index([expiresAt])
+}
+
 // DEV-Uploads (ADM/RPT/XML/JSON-Logs zur Analyse, Phase 2).
 // Per-User isoliert; TTL via expiresAt + Cleanup-Job.
 // Inhalt liegt unter uploads/dev-logs/<userDiscordId>/<id>/<safeName>.

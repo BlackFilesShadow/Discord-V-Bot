@@ -52,7 +52,6 @@ v2Router.use('/guilds/:guildId/economy-links', economyLinkRouter);
 v2Router.use('/guilds/:guildId/casino', casinoRouter);
 v2Router.use('/guilds/:guildId/killfeed', killfeedRouter);
 v2Router.use('/guilds/:guildId/welcome', welcomeRouter);
-v2Router.use('/guilds/:guildId/bot-admin', botAdminRouter);
 v2Router.use('/guilds/:guildId/audit', auditRouter);
 // WICHTIG: devRouter MUSS vor allen spezifischeren /dev/* Sub-Routern stehen.
 // Grund: devStatusRouter (mounted /dev/status) installiert requireDev als
@@ -69,3 +68,8 @@ v2Router.use('/dev/nitrado-mirror', devNitradoMirrorRouter);
 v2Router.use('/dev/incident', devIncidentRouter);
 v2Router.use('/dev/observability', devObservabilityRouter);
 v2Router.use('/dev/stubs', devStubsRouter);
+
+// Bot-Admin: GLOBALER, passwortgeschuetzter Support-Bereich (wie /dev, eigener
+// Login). /login und /status liegen im Router OHNE requireBotAdmin, damit das
+// Frontend pollen/anmelden kann; alle Datenrouten nutzen requireBotAdmin.
+v2Router.use('/bot-admin', botAdminRouter);

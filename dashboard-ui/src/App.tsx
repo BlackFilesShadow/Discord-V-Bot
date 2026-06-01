@@ -5,6 +5,7 @@ import Servers from './pages/Servers';
 import Server from './pages/Server';
 import ServerSlot from './pages/ServerSlot';
 import Dev, { DEV_TOOLS } from './pages/Dev';
+import BotAdmin from './pages/BotAdmin';
 import LiveBotStatus from './pages/dev/LiveBotStatus';
 import DashboardStatus from './pages/dev/DashboardStatus';
 import DatabaseStatus from './pages/dev/DatabaseStatus';
@@ -94,6 +95,7 @@ export default function App() {
         <Route path="/servers" element={<Protected><Servers /></Protected>} />
         <Route path="/servers/:guildId" element={<Protected><Server /></Protected>} />
         <Route path="/servers/:guildId/server/:slot" element={<Protected><ServerSlot /></Protected>} />
+        <Route path="/bot-admin" element={<Protected><BotAdmin /></Protected>} />
         <Route path="/dev" element={<Protected><Dev /></Protected>}>
           <Route index element={<Navigate to="bot-status" replace />} />
           {DEV_TOOLS.map(t => {

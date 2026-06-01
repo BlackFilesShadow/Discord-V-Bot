@@ -65,12 +65,6 @@ export interface GuildScope {
  *   `dashboard.view` — Reiner generischer Lesezugriff aufs Dashboard
  *   (GET /dashboard). Oeffnet KEINE Modul-Scopes automatisch — wer einzelne
  *   Module sehen will, braucht den jeweiligen `*.view`-Scope oder `dashboard.access`.
- *
- *   `bot.view` / `bot.manage` / `bot.danger` — Bot-Admin-Bereich (separater
- *   Dashboard-Bereich, getrennt vom DEV-Bereich). view=ansehen, manage=normale
- *   Aktionen, danger=gefaehrliche Aktionen (Loeschen, Passwort-Reset, globale
- *   Broadcasts). Alle drei sind delegierbar; `bot.danger` ist im UI als
- *   "Gefaehrliche Berechtigung" markiert.
  */
 export const PERMISSION_SCOPES = [
   'dashboard.access',   // ALL-ACCESS Bypass fuer alle delegierbaren Scopes
@@ -89,9 +83,6 @@ export const PERMISSION_SCOPES = [
   'killfeed.manage',
   'welcome.view',
   'welcome.manage',
-  'bot.view',           // Bot-Admin-Bereich ansehen
-  'bot.manage',         // Bot-Admin normale Aktionen
-  'bot.danger',         // Bot-Admin GEFAEHRLICHE Aktionen (delegierbar, im UI markiert)
   'permissions.manage', // NIE delegierbar
   'dev.console',        // NIE delegierbar
 ] as const;
