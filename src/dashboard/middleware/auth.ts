@@ -261,11 +261,9 @@ export async function requireGuildAccess(req: Request, res: Response, next: Next
  * DEV-only: braucht User.role===DEVELOPER + aktive DevSession + MFA + IP-Allowlist.
  *
  * P0-Compliance:
- *   - MFA: TwoFactorAuth.isEnabled erforderlich. Grace-Period via
- *     ENV `DEV_MFA_GRACE_PERIOD_END` (ISO-Date) — solange aktiv ist
- *     fehlendes 2FA nur eine Warnung im Audit-Log.
- *   - Opt-out fuer lokale Entwicklung: `DEV_REQUIRE_MFA=false` deaktiviert die
- *     2FA-Pflicht (Standard: aktiv). DevSession + Rolle bleiben Pflicht.
+ *   - MFA: OPTIONAL. Standardmaessig AUS. 2FA wird nur erzwungen, wenn
+ *     `DEV_REQUIRE_MFA=true` explizit gesetzt ist. Ohne diese Variable reicht
+ *     ein korrektes DEV_PASSWORD + aktive DevSession.
  *   - IP-Allowlist: `IpList(WHITELIST)`. Leere Liste = fail-open.
  *   - DevSession-Scope wird typisiert in `req.devSession` abgelegt
  *     (incl. optionalem `guildIdRestrict` fuer Multi-Guild-Schutz).
@@ -302,17 +300,16 @@ export async function requireDev(req: Request, res: Response, next: NextFunction
     });
   }
 
-  // MFA (mit Grace-Period)
+  // MFA — OPTIONALE Extra-Sicherung (standardmaessig AUS).
   //
-  // Opt-out fuer lokale Entwicklung: Wenn DEV_REQUIRE_MFA=false gesetzt ist,
-  // wird die 2FA-Pflicht fuer den DEV-Bereich uebersprungen (DevSession + Rolle
-  // werden weiterhin geprueft). Standard ist sicher (2FA-Pflicht aktiv).
-  const mfaRequired = process.env.DEV_REQUIRE_MFA !== 'false';
-  if (!mfaRequired) {
-    if (!warnedAboutDisabledDevMfa) {
-      warnedAboutDisabledDevMfa = true;
-      logger.warn('[DEV] DEV_REQUIRE_MFA=false — DEV-Konsole laeuft ohne 2FA-Schutz. Nur fuer lokale Entwicklung verwenden.');
-    }
+  // Neue Doktrin: Ein korrektes DEV_PASSWORD + aktive, nicht-revokte,
+  // nicht-abgelaufene DevSession ist ausreichend fuer DEV-Zugriff. 2FA wird
+  // NUR erzwungen, wenn `DEV_REQUIRE_MFA=true` explizit gesetzt ist.
+  // Ohne diese Variable (oder mit jedem anderen Wert) blockiert 2FA nicht.
+  const mfaRequired = process.env.DEV_REQUIRE_MFA === 'true';
+  if (!mfaRequired && !warnedAboutDisabledDevMfa) {
+    warnedAboutDisabledDevMfa = true;
+    logger.warn('[DEV] DEV_REQUIRE_MFA ist nicht aktiv — DEV-Konsole laeuft mit Passwort-only-Schutz (kein 2FA-Zwang). Fuer Produktion DEV_REQUIRE_MFA=true setzen.');
   }
   const mfa = mfaRequired
     ? await enforceDevMfa(req.auth.userId)
@@ -322,8 +319,7 @@ export async function requireDev(req: Request, res: Response, next: NextFunction
       userId: req.auth.userId, ip: req.ip, reason: mfa.reason ?? 'no_2fa',
     });
     res.status(403).json({
-      error: 'DEV-Passwort wurde akzeptiert, aber der DEV-Bereich ist zusaetzlich durch 2FA geschuetzt. '
-        + 'Bitte 2FA im Profil aktivieren oder DEV_REQUIRE_MFA=false fuer lokale Entwicklung setzen.',
+      error: 'DEV_REQUIRE_MFA ist aktiv. Bitte 2FA im Profil aktivieren, um den DEV-Bereich zu nutzen.',
       code: 'DEV_MFA_REQUIRED',
       setupUrl: '/auth/2fa/setup',
     });
