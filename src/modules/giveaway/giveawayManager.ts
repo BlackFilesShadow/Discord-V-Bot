@@ -124,12 +124,12 @@ export function createGiveawayEmbed(giveaway: {
 export async function enterGiveaway(
   giveawayId: string,
   userDiscordId: string,
-  guildId?: string
+  guildId: string
 ): Promise<{ success: boolean; message: string }> {
-  // Guild-Scoping: ein Giveaway aus einer fremden Guild darf nicht betreten
-  // werden koennen. guildId wird vom Command durchgereicht.
+  // Guild-Scoping (strikt): ein Giveaway aus einer fremden Guild darf nicht
+  // betreten werden. Kein Fallback auf globale Suche.
   const giveaway = await prisma.giveaway.findFirst({
-    where: { id: giveawayId, ...(guildId ? { guildId } : {}) },
+    where: { id: giveawayId, guildId },
   });
 
   if (!giveaway) {
@@ -171,13 +171,13 @@ export async function enterGiveaway(
 /**
  * Gewinner ziehen (kryptografisch sicher).
  */
-export async function drawWinners(giveawayId: string, guildId?: string): Promise<{
+export async function drawWinners(giveawayId: string, guildId: string): Promise<{
   success: boolean;
   winners: { id: string; discordId: string; username: string }[];
   message: string;
 }> {
   const giveaway = await prisma.giveaway.findFirst({
-    where: { id: giveawayId, ...(guildId ? { guildId } : {}) },
+    where: { id: giveawayId, guildId },
     include: {
       entries: {
         include: { user: { select: { id: true, discordId: true, username: true } } },
@@ -253,11 +253,16 @@ export function startGiveawayScheduler(client: Client): void {
         where: {
           status: 'ACTIVE',
           endsAt: { lte: new Date() },
-          OR: [{ guildId: { in: shardGuildIds } }, { guildId: null }],
+          guildId: { in: shardGuildIds },
         },
       });
 
       for (const giveaway of expiredGiveaways) {
+        // Strikte Guild-Bindung: Giveaways ohne guildId werden nicht mehr global beendet.
+        if (!giveaway.guildId) {
+          logger.warn('Giveaway-Scheduler: Giveaway ohne guildId wird aus Sicherheitsgruenden uebersprungen', { giveawayId: giveaway.id });
+          continue;
+        }
         // Atomarer Claim: nur EINE Instanz/Shard beendet das Giveaway (Multi-Instance-Schutz
         // gegen doppelte Gewinnerziehung).
         const claim = await prisma.giveaway.updateMany({
@@ -265,7 +270,7 @@ export function startGiveawayScheduler(client: Client): void {
           data: { status: 'ENDED' },
         });
         if (claim.count === 0) continue; // bereits von anderer Instanz verarbeitet
-        const result = await drawWinners(giveaway.id, giveaway.guildId ?? undefined);
+        const result = await drawWinners(giveaway.id, giveaway.guildId);
         const participantCount = await prisma.giveawayEntry.count({
           where: { giveawayId: giveaway.id },
         });

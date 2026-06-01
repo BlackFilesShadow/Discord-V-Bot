@@ -24,6 +24,10 @@ const messageReactionAddEvent: BotEvent = {
     const guard = await validateReaction(r, u, { requireGuild: true });
     if (!guard.ok) return;
 
+    // Strikte Guild-Bindung: ohne guildId keine Giveaway-/Poll-Verarbeitung.
+    const guildId = r.message.guildId;
+    if (!guildId) return;
+
     const messageId = r.message.id;
     const emoji = r.emoji.name || r.emoji.id || '';
 
@@ -34,7 +38,7 @@ const messageReactionAddEvent: BotEvent = {
           messageId,
           status: 'ACTIVE',
           endsAt: { gt: new Date() },
-          ...(r.message.guildId ? { guildId: r.message.guildId } : {}),
+          guildId,
         },
       });
 
@@ -180,7 +184,7 @@ const messageReactionAddEvent: BotEvent = {
         where: {
           messageId,
           status: 'ACTIVE',
-          ...(r.message.guildId ? { guildId: r.message.guildId } : {}),
+          guildId,
         },
       });
 
@@ -223,13 +227,10 @@ const messageReactionAddEvent: BotEvent = {
         }
 
         // Stimme abgeben
-        const result = await votePoll(poll.id, dbUser.id, matchedOption.id, r.message.guildId ?? undefined);
+        const result = await votePoll(poll.id, dbUser.id, matchedOption.id, guildId);
 
         if (result.success) {
-          const pollGuildId = r.message.guildId;
-          if (pollGuildId) {
-            try { await grantEventXp(dbUser.id, pollGuildId, 5, 'POLL_VOTE', poll.id); } catch { /* */ }
-          }
+          try { await grantEventXp(dbUser.id, guildId, 5, 'POLL_VOTE', poll.id); } catch { /* */ }
         } else if (result.message.includes('bereits')) {
           // Bereits für diese Option gestimmt → Reaktion entfernen
           try { await r.users.remove(u.id); } catch {}

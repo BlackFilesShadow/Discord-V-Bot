@@ -115,11 +115,12 @@ export async function votePoll(
   pollId: string,
   userId: string,
   optionId: string,
-  guildId?: string,
+  guildId: string,
 ): Promise<{ success: boolean; message: string }> {
-  // Guild-Scoping: Stimmen koennen nicht fuer Polls fremder Guilds abgegeben werden.
+  // Guild-Scoping (strikt): Stimmen koennen ausschliesslich fuer Polls der
+  // eigenen Guild abgegeben werden. Kein Fallback auf globale Suche.
   const poll = await prisma.poll.findFirst({
-    where: { id: pollId, ...(guildId ? { guildId } : {}) },
+    where: { id: pollId, guildId },
   });
 
   if (!poll) {
@@ -176,14 +177,14 @@ export async function votePoll(
 /**
  * Beendet eine Umfrage und berechnet Ergebnisse.
  */
-export async function endPoll(pollId: string, guildId?: string): Promise<{
+export async function endPoll(pollId: string, guildId: string): Promise<{
   title: string;
   results: { option: string; votes: number; percentage: number }[];
   totalVotes: number;
   winner: string;
 }> {
   const poll = await prisma.poll.findFirst({
-    where: { id: pollId, ...(guildId ? { guildId } : {}) },
+    where: { id: pollId, guildId },
     include: { votes: true },
   });
 
@@ -253,11 +254,16 @@ export function startPollScheduler(client: Client): void {
         where: {
           status: 'ACTIVE',
           endsAt: { lte: new Date() },
-          OR: [{ guildId: { in: shardGuildIds } }, { guildId: null }],
+          guildId: { in: shardGuildIds },
         },
       });
 
       for (const poll of expiredPolls) {
+        // Strikte Guild-Bindung: Polls ohne guildId werden nicht mehr global beendet.
+        if (!poll.guildId) {
+          logger.warn('Poll-Scheduler: Poll ohne guildId wird aus Sicherheitsgruenden uebersprungen', { pollId: poll.id });
+          continue;
+        }
         // Atomarer Claim: nur EINE Instanz/Shard beendet die Umfrage (Multi-Instance-Schutz).
         const claim = await prisma.poll.updateMany({
           where: { id: poll.id, status: 'ACTIVE' },
@@ -265,7 +271,7 @@ export function startPollScheduler(client: Client): void {
         });
         if (claim.count === 0) continue; // bereits von anderer Instanz verarbeitet
         try {
-          const result = await endPoll(poll.id, poll.guildId ?? undefined);
+          const result = await endPoll(poll.id, poll.guildId);
 
           // Ergebnis-Embed im Channel posten
           const channel = await client.channels.fetch(poll.channelId) as TextChannel;

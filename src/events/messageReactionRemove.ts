@@ -21,13 +21,17 @@ const messageReactionRemoveEvent: BotEvent = {
     const guard = await validateReaction(r, u, { requireGuild: true });
     if (!guard.ok) return;
 
+    // Strikte Guild-Bindung: ohne guildId keine Giveaway-/Poll-Verarbeitung.
+    const guildId = r.message.guildId;
+    if (!guildId) return;
+
     const messageId = r.message.id;
     const emoji = r.emoji.name || r.emoji.id || '';
 
     try {
       // ===== GIVEAWAY: Teilnahme entfernen =====
       const giveaway = await prisma.giveaway.findFirst({
-        where: { messageId, status: 'ACTIVE', ...(r.message.guildId ? { guildId: r.message.guildId } : {}) },
+        where: { messageId, status: 'ACTIVE', guildId },
       });
 
       if (giveaway) {
@@ -69,7 +73,7 @@ const messageReactionRemoveEvent: BotEvent = {
 
       // ===== POLL: Stimme zurückziehen =====
       const poll = await prisma.poll.findFirst({
-        where: { messageId, status: 'ACTIVE', ...(r.message.guildId ? { guildId: r.message.guildId } : {}) },
+        where: { messageId, status: 'ACTIVE', guildId },
       });
 
       if (poll) {

@@ -734,6 +734,12 @@ async function handlePollVoteButton(btn: ButtonInteraction): Promise<void> {
   try {
     await btn.deferReply({ ephemeral: true });
 
+    // Strikte Guild-Bindung: Poll-Votes nur im Server-Kontext.
+    if (!btn.guildId) {
+      await btn.editReply({ content: '❌ Diese Aktion ist nur auf einem Server verfügbar.' });
+      return;
+    }
+
     // customId parsen: poll_vote_<pollId>_<opt_N>
     const rest = btn.customId.substring('poll_vote_'.length);
     const lastUnderscore = rest.lastIndexOf('_opt_');
@@ -750,14 +756,9 @@ async function handlePollVoteButton(btn: ButtonInteraction): Promise<void> {
       update: {},
     });
 
-    const poll = await prisma.poll.findUnique({ where: { id: pollId } });
+    // Mandantentrennung (strikt): Poll nur in eigener Guild abrufbar.
+    const poll = await prisma.poll.findFirst({ where: { id: pollId, guildId: btn.guildId } });
     if (!poll) {
-      await btn.editReply({ content: '❌ Umfrage nicht gefunden.' });
-      return;
-    }
-    // Mandantentrennung: Poll darf nur in seiner eigenen Guild bedient werden
-    // (Bestandsdaten ohne guildId bleiben aus Kompatibilitaet zugaenglich).
-    if (poll.guildId && poll.guildId !== btn.guildId) {
       await btn.editReply({ content: '❌ Umfrage nicht gefunden.' });
       return;
     }
@@ -803,7 +804,7 @@ async function handlePollVoteButton(btn: ButtonInteraction): Promise<void> {
         }
       }
 
-      const result = await votePoll(pollId, dbUser.id, optionId, btn.guildId ?? undefined);
+      const result = await votePoll(pollId, dbUser.id, optionId, btn.guildId);
       if (!result.success) {
         await btn.editReply({ content: `❌ ${result.message}` });
         return;
@@ -844,16 +845,17 @@ async function handleGiveawayEnterButton(btn: ButtonInteraction): Promise<void> 
   try {
     await btn.deferReply({ ephemeral: true });
 
-    const giveawayId = btn.customId.substring('giveaway_enter_'.length);
-
-    const giveaway = await prisma.giveaway.findUnique({ where: { id: giveawayId } });
-    if (!giveaway) {
-      await btn.editReply({ content: '❌ Giveaway nicht gefunden.' });
+    // Strikte Guild-Bindung: Giveaway-Teilnahme nur im Server-Kontext.
+    if (!btn.guildId) {
+      await btn.editReply({ content: '❌ Diese Aktion ist nur auf einem Server verfügbar.' });
       return;
     }
-    // Mandantentrennung: Giveaway darf nur in seiner eigenen Guild bedient
-    // werden (Bestandsdaten ohne guildId bleiben kompatibel zugaenglich).
-    if (giveaway.guildId && giveaway.guildId !== btn.guildId) {
+
+    const giveawayId = btn.customId.substring('giveaway_enter_'.length);
+
+    // Mandantentrennung (strikt): Giveaway nur in eigener Guild abrufbar.
+    const giveaway = await prisma.giveaway.findFirst({ where: { id: giveawayId, guildId: btn.guildId } });
+    if (!giveaway) {
       await btn.editReply({ content: '❌ Giveaway nicht gefunden.' });
       return;
     }
