@@ -1,7 +1,7 @@
 import { useState } from 'react';
 import { Link, useParams } from 'react-router-dom';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
-import { Plus, Trash2, KeyRound, Server as ServerIcon, Shield, AlertTriangle, ChevronRight, Ticket, Settings2, Send, Power, Tag, Activity, Users, Crosshair, RotateCcw, Sparkles } from 'lucide-react';
+import { Plus, Trash2, KeyRound, Server as ServerIcon, Shield, AlertTriangle, ChevronRight, Ticket, Settings2, Send, Power, Tag, Activity, Users, Crosshair, RotateCcw, Sparkles, Bot } from 'lucide-react';
 import { api, ApiError } from '@/lib/api';
 import { Shell } from '@/components/Shell';
 import { Card, CardHeader, CardTitle, CardDesc } from '@/components/ui/Card';
@@ -15,8 +15,9 @@ import { useModalA11y } from '@/lib/useModalA11y';
 import { KillfeedTab } from '@/components/KillfeedTab';
 import { FactionsTab } from '@/components/FactionsTab';
 import { WelcomeTab } from '@/components/WelcomeTab';
+import { BotAdminTab } from '@/components/BotAdminTab';
 
-type Tab = 'nitrado' | 'aliases' | 'permissions' | 'tickets' | 'factions' | 'killfeed' | 'welcome' | 'audit';
+type Tab = 'nitrado' | 'aliases' | 'permissions' | 'tickets' | 'factions' | 'killfeed' | 'welcome' | 'bot-admin' | 'audit';
 
 interface TabDef {
   key: Tab;
@@ -33,6 +34,7 @@ const TABS: ReadonlyArray<TabDef> = [
   { key: 'factions', label: 'Fraktionssystem', icon: Users },
   { key: 'killfeed', label: 'Killfeed', icon: Crosshair },
   { key: 'welcome', label: 'Willkommen', icon: Sparkles },
+  { key: 'bot-admin', label: 'Bot Admin', icon: Bot },
   { key: 'audit', label: 'Audit-Log', icon: Activity },
 ];
 
@@ -73,7 +75,13 @@ export default function Server() {
   const perms = dash.data?.permissions ?? [];
   // `dashboard.access` = Vollzugriff fuer alle delegierbaren Scopes (siehe Backend `hasPermission`).
   const hasFullAccess = isOwner || perms.includes('dashboard.access');
-  const visibleTabs = tabs.filter(t => !t.ownerOnly || isOwner);
+  // Bot-Admin-Tab nur bei bot.view/manage/danger (oder Vollzugriff) anzeigen.
+  const canSeeBotAdmin = hasFullAccess || perms.some(p => p === 'bot.view' || p === 'bot.manage' || p === 'bot.danger');
+  const visibleTabs = tabs.filter(t => {
+    if (t.ownerOnly && !isOwner) return false;
+    if (t.key === 'bot-admin' && !canSeeBotAdmin) return false;
+    return true;
+  });
 
   const sidebar = (
     <nav className="space-y-1" aria-label="Server-Bereiche">
@@ -131,6 +139,7 @@ export default function Server() {
             {tab === 'factions' && guildId && <FactionsTab guildId={guildId} slots={dash.data.slots} />}
             {tab === 'killfeed' && guildId && <KillfeedTab guildId={guildId} isOwner={isOwner || hasFullAccess || perms.includes('killfeed.manage')} slots={dash.data.slots} />}
             {tab === 'welcome' && guildId && <WelcomeTab guildId={guildId} canManage={hasFullAccess || perms.includes('welcome.manage')} />}
+            {tab === 'bot-admin' && guildId && <BotAdminTab guildId={guildId} canManage={hasFullAccess || perms.includes('bot.manage')} canDanger={hasFullAccess || perms.includes('bot.danger')} />}
             {tab === 'audit' && guildId && (isOwner || hasFullAccess) && <AuditTab guildId={guildId} />}
           </>
         )}
@@ -631,7 +640,11 @@ function PermissionsTab({ guildId }: { guildId: string }) {
             <option value="">Scope waehlen…</option>
             {q.data?.availableScopes.map(s => (
               <option key={s} value={s}>
-                {s === 'dashboard.access' ? 'dashboard.access  (Vollzugriff)' : s}
+                {s === 'dashboard.access'
+                  ? 'dashboard.access  (Vollzugriff)'
+                  : s === 'bot.danger'
+                    ? 'bot.danger  (⚠ Gefährliche Berechtigung)'
+                    : s}
               </option>
             ))}
           </select>
