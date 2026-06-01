@@ -17,6 +17,38 @@ import { logAudit } from '../../utils/logger';
 const PROTECTED_KEY_PREFIXES = ['bot:', 'system.', 'singleton'];
 const PROTECTED_CATEGORIES = new Set(['system']);
 
+/**
+ * Allowlist der einzigen Schluessel, die ueber /admin-config gesetzt/geloescht
+ * werden duerfen. Verhindert, dass ein Dev beliebige (auch interne) Keys in den
+ * generischen BotConfig-KV-Store schreibt (z.B. um Session-/Lock-Eintraege zu
+ * faelschen oder undefiniertes Verhalten auszuloesen). NEUE tunables muessen
+ * hier bewusst ergaenzt werden.
+ */
+const ALLOWED_CONFIG_KEYS = new Set<string>([
+  'upload.maxSize',
+  'upload.allowedExtensions',
+  'rateLimit.windowMs',
+  'rateLimit.maxRequests',
+  'moderation.autoModEnabled',
+  'moderation.spamThreshold',
+  'moderation.raidThreshold',
+  'welcome.enabled',
+  'welcome.message',
+  'leveling.enabled',
+  'leveling.xpPerMessage',
+  'leveling.cooldownSeconds',
+  'ai.enabled',
+  'ai.maxTokens',
+  'feeds.pollIntervalMinutes',
+]);
+
+/** Maximale Groesse eines Konfigurationswertes (DoS-/Missbrauchsschutz). */
+const MAX_CONFIG_VALUE_LEN = 4096;
+
+function isAllowedKey(key: string): boolean {
+  return ALLOWED_CONFIG_KEYS.has(key);
+}
+
 function isProtectedKey(key: string): boolean {
   const lower = key.toLowerCase();
   return PROTECTED_KEY_PREFIXES.some(p => lower.startsWith(p));
@@ -126,6 +158,20 @@ const adminConfigCommand: Command = {
           return;
         }
 
+        // Allowlist: nur explizit freigegebene Keys duerfen gesetzt werden.
+        if (!isAllowedKey(key)) {
+          const allowed = [...ALLOWED_CONFIG_KEYS].map(k => `\`${k}\``).join(', ');
+          await interaction.editReply({
+            content: `⛔ Schlüssel \`${key}\` ist nicht erlaubt.\nErlaubte Schlüssel: ${allowed}`,
+          });
+          return;
+        }
+
+        if (valueStr.length > MAX_CONFIG_VALUE_LEN) {
+          await interaction.editReply({ content: `⛔ Wert zu lang (max. ${MAX_CONFIG_VALUE_LEN} Zeichen).` });
+          return;
+        }
+
         let value: Prisma.InputJsonValue;
         try {
           value = JSON.parse(valueStr) as Prisma.InputJsonValue;
@@ -158,6 +204,10 @@ const adminConfigCommand: Command = {
         const key = interaction.options.getString('schluessel', true);
         if (isProtectedKey(key)) {
           await interaction.editReply({ content: '⛔ Dieser Schlüssel ist geschützt und kann nicht gelöscht werden.' });
+          return;
+        }
+        if (!isAllowedKey(key)) {
+          await interaction.editReply({ content: `⛔ Schlüssel \`${key}\` ist nicht erlaubt.` });
           return;
         }
         const existing = await prisma.botConfig.findUnique({ where: { key } });

@@ -82,7 +82,11 @@ const adminSecurityCommand: Command = {
         )
     )
     .setDefaultMemberPermissions(PermissionFlagsBits.Administrator) as SlashCommandBuilder,
-  adminOnly: true,
+  // Security-Events, IP-Blacklist/Whitelist sind global (kein guildId in den
+  // Modellen SecurityEvent/IpList) und sicherheitskritisch. Daher Owner/Dev-only
+  // (Passwort-Gate) statt jeder Admin-Rolle, um guild-uebergreifende Manipulation
+  // (z.B. globales IP-Blacklisting durch einen einzelnen Guild-Admin) zu verhindern.
+  devOnly: true,
 
   execute: async (interaction: ChatInputCommandInteraction) => {
     await interaction.deferReply({ flags: MessageFlags.Ephemeral });

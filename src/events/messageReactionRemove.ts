@@ -27,7 +27,7 @@ const messageReactionRemoveEvent: BotEvent = {
     try {
       // ===== GIVEAWAY: Teilnahme entfernen =====
       const giveaway = await prisma.giveaway.findFirst({
-        where: { messageId, status: 'ACTIVE' },
+        where: { messageId, status: 'ACTIVE', ...(r.message.guildId ? { guildId: r.message.guildId } : {}) },
       });
 
       if (giveaway) {
@@ -69,7 +69,7 @@ const messageReactionRemoveEvent: BotEvent = {
 
       // ===== POLL: Stimme zurückziehen =====
       const poll = await prisma.poll.findFirst({
-        where: { messageId, status: 'ACTIVE' },
+        where: { messageId, status: 'ACTIVE', ...(r.message.guildId ? { guildId: r.message.guildId } : {}) },
       });
 
       if (poll) {

@@ -244,7 +244,11 @@ async function runPollSubcommand(sub: string, interaction: ChatInputCommandInter
         }
 
         const optionId = `opt_${optionNum - 1}`;
-        const result = await votePoll(pollId, dbUser.id, optionId);
+        if (!interaction.guildId) {
+          await interaction.editReply({ content: '❌ Dieser Befehl ist nur auf einem Server verfügbar.' });
+          return;
+        }
+        const result = await votePoll(pollId, dbUser.id, optionId, interaction.guildId);
 
         await interaction.editReply({ content: result.success ? `✅ ${result.message}` : `❌ ${result.message}` });
 
@@ -257,7 +261,7 @@ async function runPollSubcommand(sub: string, interaction: ChatInputCommandInter
 
         // Live-Embed updaten
         if (result.success) {
-          const poll = await prisma.poll.findUnique({ where: { id: pollId } });
+          const poll = await prisma.poll.findFirst({ where: { id: pollId, guildId: interaction.guildId } });
           if (poll?.messageId) {
             try {
               const channel = await interaction.client.channels.fetch(poll.channelId);
@@ -282,8 +286,13 @@ async function runPollSubcommand(sub: string, interaction: ChatInputCommandInter
       case 'ergebnis': {
         await interaction.deferReply();
 
+        if (!interaction.guildId) {
+          await interaction.editReply({ content: '❌ Dieser Befehl ist nur auf einem Server verfügbar.' });
+          return;
+        }
+
         const pollId = interaction.options.getString('poll-id', true);
-        const poll = await prisma.poll.findUnique({ where: { id: pollId } });
+        const poll = await prisma.poll.findFirst({ where: { id: pollId, guildId: interaction.guildId } });
 
         if (!poll) {
           await interaction.editReply({ content: '❌ Umfrage nicht gefunden.' });
@@ -321,8 +330,13 @@ async function runPollSubcommand(sub: string, interaction: ChatInputCommandInter
       case 'beenden': {
         await interaction.deferReply();
 
+        if (!interaction.guildId) {
+          await interaction.editReply({ content: '❌ Dieser Befehl ist nur auf einem Server verfügbar.' });
+          return;
+        }
+
         const pollId = interaction.options.getString('poll-id', true);
-        const poll = await prisma.poll.findUnique({ where: { id: pollId } });
+        const poll = await prisma.poll.findFirst({ where: { id: pollId, guildId: interaction.guildId } });
 
         if (!poll) {
           await interaction.editReply({ content: '❌ Umfrage nicht gefunden.' });
@@ -336,7 +350,7 @@ async function runPollSubcommand(sub: string, interaction: ChatInputCommandInter
           return;
         }
 
-        const result = await endPoll(pollId);
+        const result = await endPoll(pollId, interaction.guildId);
         const resultLines = result.results.map((r, i) => {
           const medal = i === 0 ? '🥇' : i === 1 ? '🥈' : i === 2 ? '🥉' : `**${i + 1}.**`;
           const bar = percentBar(r.percentage, 10);
@@ -379,8 +393,13 @@ async function runPollSubcommand(sub: string, interaction: ChatInputCommandInter
       case 'liste': {
         await interaction.deferReply();
 
+        if (!interaction.guildId) {
+          await interaction.editReply({ content: '❌ Dieser Befehl ist nur auf einem Server verfügbar.' });
+          return;
+        }
+
         const polls = await prisma.poll.findMany({
-          where: { status: 'ACTIVE' },
+          where: { status: 'ACTIVE', guildId: interaction.guildId },
           orderBy: { createdAt: 'desc' },
           take: 10,
         });

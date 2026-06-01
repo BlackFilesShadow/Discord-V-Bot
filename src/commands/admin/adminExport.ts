@@ -60,7 +60,10 @@ const adminExportCommand: Command = {
         )
     )
     .setDefaultMemberPermissions(PermissionFlagsBits.Administrator) as SlashCommandBuilder,
-  adminOnly: true,
+  // Datenexporte (Pakete, Audit-Logs, GDPR-Nutzerdaten) sind hochsensibel und
+  // bleiben deshalb dem Owner/Developer vorbehalten (Passwort-Gate), nicht jeder
+  // Admin-Rolle.
+  devOnly: true,
 
   execute: async (interaction: ChatInputCommandInteraction) => {
     await interaction.deferReply({ flags: MessageFlags.Ephemeral });
@@ -107,14 +110,17 @@ const adminExportCommand: Command = {
         // ohne OOM verarbeitet werden. Wir schreiben direkt in eine temporaere
         // Datei und haengen sie an, bzw. bieten Download-URL an wenn die
         // Discord-Attachment-Grenze (Default 25 MB) ueberschritten wird.
-        const tmpDir = path.join(config.upload.dir, '_exports');
-        try { await fsp.mkdir(tmpDir, { recursive: true }); } catch { /* ok */ }
+        // Private Export-Ablage: NICHT unter config.upload.dir (das wird per
+        // express.static oeffentlich unter /uploads ausgeliefert). Audit-Logs
+        // duerfen nie oeffentlich abrufbar sein.
+        const tmpDir = config.upload.exportDir;
+        try { await fsp.mkdir(tmpDir, { recursive: true, mode: 0o700 }); } catch { /* ok */ }
         // Filename-Kollisions-Schutz: Date.now() (ms) reicht bei simultanen
         // Admin-Exports nicht; deshalb 6 Hex-Zeichen Random anhaengen.
         const fileName =
           `audit_logs_${category}_${days}d_${Date.now()}_${crypto.randomBytes(3).toString('hex')}.json`;
         const tmpPath = path.join(tmpDir, fileName);
-        const out = fs.createWriteStream(tmpPath, { encoding: 'utf-8' });
+        const out = fs.createWriteStream(tmpPath, { encoding: 'utf-8', mode: 0o600 });
         // Persistenter Error-Listener: muss VOR jedem write() registriert sein,
         // sonst kann ein synchron geworfener Stream-Error den Promise-Pfad
         // ueberholen und das Promise haengt unaufloesbar.

@@ -123,10 +123,13 @@ export function createGiveawayEmbed(giveaway: {
  */
 export async function enterGiveaway(
   giveawayId: string,
-  userDiscordId: string
+  userDiscordId: string,
+  guildId?: string
 ): Promise<{ success: boolean; message: string }> {
-  const giveaway = await prisma.giveaway.findUnique({
-    where: { id: giveawayId },
+  // Guild-Scoping: ein Giveaway aus einer fremden Guild darf nicht betreten
+  // werden koennen. guildId wird vom Command durchgereicht.
+  const giveaway = await prisma.giveaway.findFirst({
+    where: { id: giveawayId, ...(guildId ? { guildId } : {}) },
   });
 
   if (!giveaway) {
@@ -168,13 +171,13 @@ export async function enterGiveaway(
 /**
  * Gewinner ziehen (kryptografisch sicher).
  */
-export async function drawWinners(giveawayId: string): Promise<{
+export async function drawWinners(giveawayId: string, guildId?: string): Promise<{
   success: boolean;
   winners: { id: string; discordId: string; username: string }[];
   message: string;
 }> {
-  const giveaway = await prisma.giveaway.findUnique({
-    where: { id: giveawayId },
+  const giveaway = await prisma.giveaway.findFirst({
+    where: { id: giveawayId, ...(guildId ? { guildId } : {}) },
     include: {
       entries: {
         include: { user: { select: { id: true, discordId: true, username: true } } },
@@ -262,7 +265,7 @@ export function startGiveawayScheduler(client: Client): void {
           data: { status: 'ENDED' },
         });
         if (claim.count === 0) continue; // bereits von anderer Instanz verarbeitet
-        const result = await drawWinners(giveaway.id);
+        const result = await drawWinners(giveaway.id, giveaway.guildId ?? undefined);
         const participantCount = await prisma.giveawayEntry.count({
           where: { giveawayId: giveaway.id },
         });

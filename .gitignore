@@ -10,6 +10,7 @@ dist/
 # Uploads & Storage
 uploads/
 storage/
+private/
 
 # Logs
 logs/

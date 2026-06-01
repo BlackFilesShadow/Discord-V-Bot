@@ -34,6 +34,7 @@ const messageReactionAddEvent: BotEvent = {
           messageId,
           status: 'ACTIVE',
           endsAt: { gt: new Date() },
+          ...(r.message.guildId ? { guildId: r.message.guildId } : {}),
         },
       });
 
@@ -179,6 +180,7 @@ const messageReactionAddEvent: BotEvent = {
         where: {
           messageId,
           status: 'ACTIVE',
+          ...(r.message.guildId ? { guildId: r.message.guildId } : {}),
         },
       });
 
@@ -221,7 +223,7 @@ const messageReactionAddEvent: BotEvent = {
         }
 
         // Stimme abgeben
-        const result = await votePoll(poll.id, dbUser.id, matchedOption.id);
+        const result = await votePoll(poll.id, dbUser.id, matchedOption.id, r.message.guildId ?? undefined);
 
         if (result.success) {
           const pollGuildId = r.message.guildId;

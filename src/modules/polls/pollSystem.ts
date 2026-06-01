@@ -115,9 +115,11 @@ export async function votePoll(
   pollId: string,
   userId: string,
   optionId: string,
+  guildId?: string,
 ): Promise<{ success: boolean; message: string }> {
-  const poll = await prisma.poll.findUnique({
-    where: { id: pollId },
+  // Guild-Scoping: Stimmen koennen nicht fuer Polls fremder Guilds abgegeben werden.
+  const poll = await prisma.poll.findFirst({
+    where: { id: pollId, ...(guildId ? { guildId } : {}) },
   });
 
   if (!poll) {
@@ -174,14 +176,14 @@ export async function votePoll(
 /**
  * Beendet eine Umfrage und berechnet Ergebnisse.
  */
-export async function endPoll(pollId: string): Promise<{
+export async function endPoll(pollId: string, guildId?: string): Promise<{
   title: string;
   results: { option: string; votes: number; percentage: number }[];
   totalVotes: number;
   winner: string;
 }> {
-  const poll = await prisma.poll.findUnique({
-    where: { id: pollId },
+  const poll = await prisma.poll.findFirst({
+    where: { id: pollId, ...(guildId ? { guildId } : {}) },
     include: { votes: true },
   });
 
@@ -263,7 +265,7 @@ export function startPollScheduler(client: Client): void {
         });
         if (claim.count === 0) continue; // bereits von anderer Instanz verarbeitet
         try {
-          const result = await endPoll(poll.id);
+          const result = await endPoll(poll.id, poll.guildId ?? undefined);
 
           // Ergebnis-Embed im Channel posten
           const channel = await client.channels.fetch(poll.channelId) as TextChannel;

@@ -803,7 +803,7 @@ async function handlePollVoteButton(btn: ButtonInteraction): Promise<void> {
         }
       }
 
-      const result = await votePoll(pollId, dbUser.id, optionId);
+      const result = await votePoll(pollId, dbUser.id, optionId, btn.guildId ?? undefined);
       if (!result.success) {
         await btn.editReply({ content: `❌ ${result.message}` });
         return;

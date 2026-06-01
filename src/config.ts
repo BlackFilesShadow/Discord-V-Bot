@@ -51,6 +51,10 @@ export const config = {
   // Upload-System
   upload: {
     dir: path.resolve(optionalEnv('UPLOAD_DIR', './uploads')),
+    // Private Export-Ablage. MUSS ausserhalb von `dir` liegen, da `dir`
+    // (uploads) per express.static oeffentlich unter /uploads ausgeliefert wird.
+    // Audit-/GDPR-Exporte duerfen niemals oeffentlich abrufbar sein.
+    exportDir: path.resolve(optionalEnv('EXPORT_DIR', './private/exports')),
     maxFileSizeBytes: parseInt(optionalEnv('MAX_FILE_SIZE_BYTES', '2147483648'), 10), // 2 GB
     allowedExtensions: optionalEnv('ALLOWED_EXTENSIONS', '.xml,.json').split(','),
     chunkSize: 10 * 1024 * 1024, // 10 MB chunks

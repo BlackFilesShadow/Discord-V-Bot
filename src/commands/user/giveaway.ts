@@ -189,8 +189,13 @@ async function handleStart(interaction: ChatInputCommandInteraction) {
 async function handleEnter(interaction: ChatInputCommandInteraction) {
   await interaction.deferReply({ ephemeral: true });
 
+  if (!interaction.guildId) {
+    await interaction.editReply({ content: '❌ Dieser Befehl ist nur auf einem Server verfügbar.' });
+    return;
+  }
+
   const giveawayId = interaction.options.getString('id', true);
-  const result = await enterGiveaway(giveawayId, interaction.user.id);
+  const result = await enterGiveaway(giveawayId, interaction.user.id, interaction.guildId);
 
   // Event-XP für Giveaway-Teilnahme (Sektion 8: Event-XP, guild-getrennt)
   if (result.success && interaction.guildId) {
@@ -210,9 +215,14 @@ async function handleEnter(interaction: ChatInputCommandInteraction) {
 async function handleInfo(interaction: ChatInputCommandInteraction) {
   await interaction.deferReply();
 
+  if (!interaction.guildId) {
+    await interaction.editReply({ content: '❌ Dieser Befehl ist nur auf einem Server verfügbar.' });
+    return;
+  }
+
   const giveawayId = interaction.options.getString('id', true);
-  const giveaway = await prisma.giveaway.findUnique({
-    where: { id: giveawayId },
+  const giveaway = await prisma.giveaway.findFirst({
+    where: { id: giveawayId, guildId: interaction.guildId },
     include: {
       creator: { select: { username: true } },
       _count: { select: { entries: true } },
@@ -250,10 +260,15 @@ async function handleInfo(interaction: ChatInputCommandInteraction) {
 async function handleEnd(interaction: ChatInputCommandInteraction) {
   await interaction.deferReply();
 
+  if (!interaction.guildId) {
+    await interaction.editReply({ content: '❌ Dieser Befehl ist nur auf einem Server verfügbar.' });
+    return;
+  }
+
   const giveawayId = interaction.options.getString('id', true);
 
-  const giveaway = await prisma.giveaway.findUnique({
-    where: { id: giveawayId },
+  const giveaway = await prisma.giveaway.findFirst({
+    where: { id: giveawayId, guildId: interaction.guildId },
     include: { creator: true },
   });
 
@@ -273,7 +288,7 @@ async function handleEnd(interaction: ChatInputCommandInteraction) {
     return;
   }
 
-  const result = await drawWinners(giveawayId);
+  const result = await drawWinners(giveawayId, interaction.guildId);
 
   if (result.success && result.winners.length > 0) {
     const winnerMentions = result.winners.map(w => `<@${w.discordId}>`).join(', ');
@@ -301,8 +316,13 @@ async function handleEnd(interaction: ChatInputCommandInteraction) {
 async function handleList(interaction: ChatInputCommandInteraction) {
   await interaction.deferReply();
 
+  if (!interaction.guildId) {
+    await interaction.editReply({ content: '❌ Dieser Befehl ist nur auf einem Server verfügbar.' });
+    return;
+  }
+
   const activeGiveaways = await prisma.giveaway.findMany({
-    where: { status: 'ACTIVE', endsAt: { gt: new Date() } },
+    where: { status: 'ACTIVE', endsAt: { gt: new Date() }, guildId: interaction.guildId },
     include: {
       creator: { select: { username: true } },
       _count: { select: { entries: true } },
