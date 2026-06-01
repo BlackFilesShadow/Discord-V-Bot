@@ -23,7 +23,7 @@ import multer from 'multer';
 import * as path from 'node:path';
 import * as fs from 'node:fs/promises';
 import { randomUUID } from 'node:crypto';
-import { AttachmentBuilder, PermissionFlagsBits } from 'discord.js';
+import { PermissionFlagsBits } from 'discord.js';
 import { requireGuildPermission } from '../../middleware/auth';
 import prisma from '../../../database/prisma';
 import {
@@ -31,11 +31,11 @@ import {
   setWelcomeConfig,
   disableWelcome,
   renderWelcomeMessage,
-  resolveWelcomeMediaSource,
+  sendWelcomeMessages,
   type WelcomeConfig,
 } from '../../../modules/welcome/welcomeManager';
 import { answerQuestion } from '../../../modules/ai/aiHandler';
-import { sanitizeForPrompt, withTimeout, safeSend } from '../../../utils/safeSend';
+import { sanitizeForPrompt, withTimeout } from '../../../utils/safeSend';
 import { resolveCustomEmotes } from '../../../modules/ai/emoteResolver';
 import { tryGetDashboardClient } from '../../clientRegistry';
 import { validateBotChannelAccess } from '../../../utils/discordChannel';
@@ -84,6 +84,7 @@ interface WelcomeBody {
   message?: string;
   mode?: string;
   mediaUrl?: string | null;
+  mediaLayout?: string;
 }
 
 function validateBody(b: WelcomeBody, guildId: string):
@@ -113,6 +114,8 @@ function validateBody(b: WelcomeBody, guildId: string):
     }
     mediaUrl = b.mediaUrl;
   }
+  // Reihenfolge bei gesetztem Bild — Default image_first (Bild zuerst, Text darunter).
+  const mediaLayout: 'image_first' | 'text_first' = b.mediaLayout === 'text_first' ? 'text_first' : 'image_first';
   return {
     ok: true,
     data: {
@@ -121,6 +124,7 @@ function validateBody(b: WelcomeBody, guildId: string):
       message: b.message,
       mode: b.mode,
       mediaUrl,
+      mediaLayout,
     },
   };
 }
@@ -138,7 +142,7 @@ async function ensureChannel(channelId: string, guildId: string): Promise<string
 
 function serialize(cfg: WelcomeConfig | null) {
   if (!cfg) {
-    return { configured: false, enabled: false, channelId: '', message: '', mode: 'text' as const, mediaUrl: null };
+    return { configured: false, enabled: false, channelId: '', message: '', mode: 'text' as const, mediaUrl: null, mediaLayout: 'image_first' as const };
   }
   return {
     configured: true,
@@ -147,6 +151,7 @@ function serialize(cfg: WelcomeConfig | null) {
     message: cfg.message,
     mode: cfg.mode,
     mediaUrl: cfg.mediaUrl ?? null,
+    mediaLayout: cfg.mediaLayout ?? 'image_first',
   };
 }
 
@@ -258,15 +263,14 @@ welcomeRouter.post('/test', requireGuildPermission('welcome.manage'), async (req
     messageText = renderWelcomeMessage(cfg.message, { user: userMention, guild: guild.name, memberCount });
   }
 
-  const files = cfg.mediaUrl ? [new AttachmentBuilder(resolveWelcomeMediaSource(cfg.mediaUrl))] : undefined;
   const finalText = resolveCustomEmotes(messageText, guild);
-  const sent = await safeSend(channel, {
-    content: `🧪 **Testnachricht** — ${finalText}`.slice(0, 2000),
-    files,
-    allowedMentions: { users: [scope.actorDiscordId], parse: [] },
+  // Gleiche Reihenfolge-Logik wie der echte Join (Default: Bild zuerst, Text darunter).
+  await sendWelcomeMessages(channel, {
+    text: `🧪 **Testnachricht** — ${finalText}`,
+    mediaUrl: cfg.mediaUrl,
+    mediaLayout: cfg.mediaLayout,
+    mentionUserId: scope.actorDiscordId,
   });
-
-  if (!sent) { res.status(502).json({ error: 'Nachricht konnte nicht gesendet werden.' }); return; }
   logAuditDb('WELCOME_TEST_SENT', 'WELCOME', {
     actorUserId: scope.actorDiscordId, guildId: scope.guildId,
     details: { channelId: cfg.channelId, mode: cfg.mode },

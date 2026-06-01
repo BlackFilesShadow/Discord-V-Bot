@@ -27,6 +27,7 @@ interface WelcomeConfig {
   message: string;
   mode: 'text' | 'ai';
   mediaUrl: string | null;
+  mediaLayout: 'image_first' | 'text_first';
 }
 
 interface DiscordChannel { id: string; name: string; type: number; parentId: string | null }
@@ -103,6 +104,7 @@ export function WelcomeTab({ guildId, canManage }: { guildId: string; canManage:
   const [mode, setMode] = useState<'text' | 'ai'>('text');
   const [message, setMessage] = useState(DEFAULT_MESSAGE);
   const [mediaUrl, setMediaUrl] = useState('');
+  const [mediaLayout, setMediaLayout] = useState<'image_first' | 'text_first'>('image_first');
   const [busy, setBusy] = useState<null | 'save' | 'test' | 'disable'>(null);
   const [uploading, setUploading] = useState(false);
   const [selectedRoleId, setSelectedRoleId] = useState('');
@@ -118,6 +120,7 @@ export function WelcomeTab({ guildId, canManage }: { guildId: string; canManage:
     setMode(d.mode);
     setMessage(d.message || DEFAULT_MESSAGE);
     setMediaUrl(d.mediaUrl ?? '');
+    setMediaLayout(d.mediaLayout ?? 'image_first');
   }, [cfgQ.data]);
 
   if (!canManage) {
@@ -153,7 +156,7 @@ export function WelcomeTab({ guildId, canManage }: { guildId: string; canManage:
         ? { label: 'Konfiguriert (inaktiv)', variant: 'warn' }
         : { label: 'Keine', variant: 'neutral' };
 
-  const buildBody = () => ({ enabled, channelId, message, mode, mediaUrl: mediaUrl.trim() || null });
+  const buildBody = () => ({ enabled, channelId, message, mode, mediaUrl: mediaUrl.trim() || null, mediaLayout });
 
   async function save() {
     if (!channelId) { toast.error('Bitte einen Channel auswählen.'); return; }
@@ -197,6 +200,7 @@ export function WelcomeTab({ guildId, canManage }: { guildId: string; canManage:
     setMode(d?.mode ?? 'text');
     setMessage(d?.message || DEFAULT_MESSAGE);
     setMediaUrl(d?.mediaUrl ?? '');
+    setMediaLayout(d?.mediaLayout ?? 'image_first');
   }
 
   async function onPickFile(e: React.ChangeEvent<HTMLInputElement>) {
@@ -416,6 +420,22 @@ export function WelcomeTab({ guildId, canManage }: { guildId: string; canManage:
             )}
           </label>
 
+          {hasMedia && (
+            <label className="block">
+              <span className="text-xs text-muted block mb-1">Darstellung mit Bild</span>
+              <Select
+                value={mediaLayout}
+                onChange={e => setMediaLayout(e.target.value as 'image_first' | 'text_first')}
+              >
+                <option value="image_first">Bild zuerst (Bild oben, Text darunter)</option>
+                <option value="text_first">Text zuerst (Text oben, Bild darunter)</option>
+              </Select>
+              <span className="text-[11px] text-muted mt-1 block">
+                „Bild zuerst" sendet das Bild als eigene Nachricht und den Text direkt darunter.
+              </span>
+            </label>
+          )}
+
           {/* Variablen-Hilfe */}
           <div className="rounded-lg border border-border/60 bg-bg-elev/40 p-3">
             <p className="text-xs font-medium text-white/90 mb-2">Verfügbare Platzhalter</p>
@@ -441,6 +461,14 @@ export function WelcomeTab({ guildId, canManage }: { guildId: string; canManage:
       <Card>
         <CardHeader><CardTitle>Vorschau & Test</CardTitle><CardDesc>Beispielhafte Ersetzung mit Beispieldaten.</CardDesc></CardHeader>
         <div className="mt-2 rounded-lg border border-border/60 bg-bg/60 p-3">
+          {hasMedia && mediaLayout === 'image_first' && (
+            <img
+              src={mediaUrl}
+              alt="Vorschau Willkommensbild"
+              className="mb-2 max-h-48 max-w-full rounded object-contain"
+              onError={e => { (e.currentTarget as HTMLImageElement).style.display = 'none'; }}
+            />
+          )}
           {mode === 'ai' ? (
             <p className="text-xs text-muted italic">
               Im KI-Modus dient der Text als Anweisung. Die tatsächliche Begrüßung wird beim Beitritt generiert.
@@ -448,6 +476,14 @@ export function WelcomeTab({ guildId, canManage }: { guildId: string; canManage:
             </p>
           ) : (
             <p className="text-sm text-white/90 whitespace-pre-wrap break-words">{renderPreview(message) || '—'}</p>
+          )}
+          {hasMedia && mediaLayout === 'text_first' && (
+            <img
+              src={mediaUrl}
+              alt="Vorschau Willkommensbild"
+              className="mt-2 max-h-48 max-w-full rounded object-contain"
+              onError={e => { (e.currentTarget as HTMLImageElement).style.display = 'none'; }}
+            />
           )}
         </div>
         <p className="text-[11px] text-muted mt-2">

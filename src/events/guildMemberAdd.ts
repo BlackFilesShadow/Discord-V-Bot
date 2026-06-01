@@ -1,11 +1,11 @@
-import { Events, GuildMember, TextChannel, AttachmentBuilder } from 'discord.js';
+import { Events, GuildMember, TextChannel } from 'discord.js';
 import { BotEvent } from '../types';
 import { logger, logAudit } from '../utils/logger';
 import prisma from '../database/prisma';
 import { detectRaid } from '../utils/rateLimiter';
-import { getWelcomeConfig, renderWelcomeMessage, resolveWelcomeMediaSource } from '../modules/welcome/welcomeManager';
+import { getWelcomeConfig, renderWelcomeMessage, sendWelcomeMessages } from '../modules/welcome/welcomeManager';
 import { answerQuestion } from '../modules/ai/aiHandler';
-import { sanitizeForPrompt, withTimeout, safeSend } from '../utils/safeSend';
+import { sanitizeForPrompt, withTimeout } from '../utils/safeSend';
 import { resolveCustomEmotes } from '../modules/ai/emoteResolver';
 import { syncMemberProfile } from '../modules/ai/memberAwareness';
 import { maybeGrantStartBalance } from '../modules/economy/repository';
@@ -156,13 +156,14 @@ const guildMemberAddEvent: BotEvent = {
               });
             }
 
-            const files = wcfg.mediaUrl ? [new AttachmentBuilder(resolveWelcomeMediaSource(wcfg.mediaUrl))] : undefined;
             const finalText = resolveCustomEmotes(messageText, m.guild);
-            // safeSend setzt allowedMentions parse:[] – Ping nur fuer den neuen User selbst.
-            await safeSend(channel, {
-              content: finalText.slice(0, 2000),
-              files,
-              allowedMentions: { users: [m.user.id], parse: [] },
+            // Reihenfolge gemaess mediaLayout (Default: Bild zuerst, Text darunter).
+            // Ping nur fuer den neuen User selbst (auf der Textnachricht).
+            await sendWelcomeMessages(channel, {
+              text: finalText,
+              mediaUrl: wcfg.mediaUrl,
+              mediaLayout: wcfg.mediaLayout,
+              mentionUserId: m.user.id,
             });
           }
         }
