@@ -14,7 +14,7 @@ import prisma from '../../database/prisma';
 import { config } from '../../config';
 import { Colors, Brand } from '../../utils/embedDesign';
 import { createBotEmbed } from '../../utils/embedUtil';
-import { devAuthenticatedUsers } from '../../events/interactionCreate';
+import { getDevSessionExpires } from '../../utils/devAuthStore';
 
 /**
  * /help — Pagination-Tafel mit allen Commands.
@@ -144,8 +144,8 @@ async function checkUserRoles(userId: string): Promise<{ isAdmin: boolean; isDev
   const adminRoles: UserRole[] = [UserRole.ADMIN, UserRole.SUPER_ADMIN, UserRole.DEVELOPER];
   const isAdmin = adminRoles.includes(dbUser.role);
 
-  // Dev-Session: Map kann durch Hot-Reload kurzzeitig undefined sein — explizit prüfen.
-  const expires = devAuthenticatedUsers?.get(userId);
+  // Dev-Session: global in DB (Multi-Shard). 
+  const expires = await getDevSessionExpires(userId);
   const sessionValid = typeof expires === 'number' && expires > Date.now();
   const isDev = dbUser.role === UserRole.DEVELOPER && sessionValid;
 

@@ -5,14 +5,15 @@
  * GET /categories                            -> verfuegbare Kategorien (in DB vorhanden)
  */
 import { Router } from 'express';
-import { requireGuildAccess } from '../../middleware/auth';
+import { requireGuildOwner } from '../../middleware/auth';
 import prisma from '../../../database/prisma';
+import { redactObject } from '../../../modules/nitrado/mirror/redactor';
 
 export const auditRouter = Router({ mergeParams: true });
 
 const MAX_LIMIT = 100;
 
-auditRouter.get('/', requireGuildAccess, async (req, res) => {
+auditRouter.get('/', requireGuildOwner, async (req, res) => {
   const scope = req.guildScope!;
   const limit = Math.min(MAX_LIMIT, Math.max(1, Number(req.query.limit) || 50));
   const category = typeof req.query.category === 'string' ? req.query.category : undefined;
@@ -53,14 +54,17 @@ auditRouter.get('/', requireGuildAccess, async (req, res) => {
       actor: r.actor ? { discordId: r.actor.discordId, username: r.actor.username } : null,
       target: r.target ? { discordId: r.target.discordId, username: r.target.username } : null,
       channelId: r.channelId,
-      details: r.details,
+      details:
+        r.details && typeof r.details === 'object' && !Array.isArray(r.details)
+          ? redactObject(r.details as Record<string, unknown>)
+          : r.details,
     })),
     limit,
     hasMore: rows.length === limit,
   });
 });
 
-auditRouter.get('/categories', requireGuildAccess, async (req, res) => {
+auditRouter.get('/categories', requireGuildOwner, async (req, res) => {
   const scope = req.guildScope!;
   const groups = await prisma.auditLog.groupBy({
     by: ['category'],

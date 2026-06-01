@@ -10,6 +10,7 @@ import { listTriggers, findMatchingTrigger, isOnCooldown, renderTemplate } from 
 import { resolveCustomEmotes } from '../modules/ai/emoteResolver';
 import { getLevelUpMessage, getMaxLevelRewardMessage } from '../modules/xp/levelMessages.js';
 import { handleTicketDm } from '../modules/ticket/ticketManager';
+import { safeRegexTest } from '../utils/safeRegex';
 
 // Anti-Spam: Nachrichtenhistorie pro User
 const messageHistory: Map<string, { content: string; timestamp: number }[]> = new Map();
@@ -155,8 +156,10 @@ const messageCreateEvent: BotEvent = {
       }
 
       // Auto-Mod Filter prüfen
+      // Mandantentrennung: nur Filter dieser Guild laden. Bestandsfilter ohne
+      // guildId (Legacy) gelten weiterhin global, bis sie migriert sind.
       const filters = await prisma.autoModFilter.findMany({
-        where: { isActive: true },
+        where: { isActive: true, OR: [{ guildId: msg.guildId }, { guildId: null }] },
       });
 
       // Channel-Filter: leeres Array gilt als "alle Channels"
@@ -174,11 +177,8 @@ const messageCreateEvent: BotEvent = {
             matches = msg.content.toLowerCase().includes(filter.pattern.toLowerCase());
             break;
           case 'REGEX':
-            try {
-              matches = new RegExp(filter.pattern, 'i').test(msg.content);
-            } catch {
-              // Ungültiger Regex
-            }
+            // ReDoS-Schutz: nur sichere Patterns gegen laengenbegrenzten Input.
+            matches = safeRegexTest(filter.pattern, msg.content, 'i');
             break;
           case 'LINK':
             matches = /https?:\/\/\S+/i.test(msg.content);

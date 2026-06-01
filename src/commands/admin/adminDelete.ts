@@ -8,6 +8,7 @@ import fs from 'fs/promises';
 import { Command } from '../../types';
 import prisma from '../../database/prisma';
 import { logAudit, logger } from '../../utils/logger';
+import { isInsideUploadRoot } from '../../utils/pathSafety';
 
 /**
  * Löscht Files vom Filesystem. Best-effort – ein fehlender File ist kein Fehler.
@@ -22,6 +23,11 @@ async function unlinkPackageFiles(packageIds: string[]): Promise<number> {
   });
   let removed = 0;
   for (const u of uploads) {
+    // P0: Niemals Dateien ausserhalb des Upload-Root loeschen (manipulierter DB-Pfad).
+    if (!isInsideUploadRoot(u.filePath)) {
+      logger.error(`adminDelete: unlink ${u.filePath} ausserhalb Upload-Root blockiert.`);
+      continue;
+    }
     try {
       await fs.unlink(u.filePath);
       removed++;
@@ -146,8 +152,12 @@ const adminDeleteCommand: Command = {
         ]);
 
         // FS-Cleanup best-effort, blockiert die Antwort nicht.
-        try { await fs.unlink(upload.filePath); }
-        catch (e) { logger.warn(`adminDelete datei: unlink ${upload.filePath} fehlgeschlagen: ${(e as Error).message}`); }
+        if (isInsideUploadRoot(upload.filePath)) {
+          try { await fs.unlink(upload.filePath); }
+          catch (e) { logger.warn(`adminDelete datei: unlink ${upload.filePath} fehlgeschlagen: ${(e as Error).message}`); }
+        } else {
+          logger.error(`adminDelete datei: unlink ${upload.filePath} ausserhalb Upload-Root blockiert.`);
+        }
 
         logAudit('FILE_DELETED', 'ADMIN', {
           uploadId: dateiId, fileName: upload.originalName, packageId: upload.packageId, adminId: interaction.user.id,

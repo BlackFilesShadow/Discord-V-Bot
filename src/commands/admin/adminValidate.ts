@@ -10,6 +10,7 @@ import prisma from '../../database/prisma';
 import { validateFile } from '../../utils/validator';
 import { logAudit, logger } from '../../utils/logger';
 import { withTimeout } from '../../utils/safeSend';
+import { isInsideUploadRoot } from '../../utils/pathSafety';
 import fs from 'fs/promises';
 import type { Stats } from 'fs';
 
@@ -77,6 +78,12 @@ const adminValidateCommand: Command = {
         let invalidCount = 0;
 
         for (const file of pkg.files) {
+          // P0: Pfad muss innerhalb des Upload-Root liegen (manipulierter DB-Pfad).
+          if (!isInsideUploadRoot(file.filePath)) {
+            results.push(`⛔ **${file.originalName}**: Pfad ausserhalb Upload-Verzeichnis`);
+            invalidCount++;
+            continue;
+          }
           // K1: async stat statt fs.existsSync + fs.statSync (blockiert Event-Loop nicht).
           let stat: Stats;
           try {
@@ -157,6 +164,12 @@ const adminValidateCommand: Command = {
 
         if (!upload) {
           await interaction.editReply({ content: '❌ Datei nicht gefunden.' });
+          return;
+        }
+
+        // P0: Pfad muss innerhalb des Upload-Root liegen (manipulierter DB-Pfad).
+        if (!isInsideUploadRoot(upload.filePath)) {
+          await interaction.editReply({ content: '⛔ Dateipfad ausserhalb des Upload-Verzeichnisses.' });
           return;
         }
 

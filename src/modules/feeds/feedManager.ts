@@ -21,6 +21,7 @@ export async function createFeed(
   channelId: string,
   interval: number,
   createdBy: string,
+  guildId: string,
   filters?: Record<string, unknown>,
 ): Promise<string> {
   const feed = await prisma.feed.create({
@@ -29,6 +30,7 @@ export async function createFeed(
       feedType: feedType as any,
       url,
       channelId,
+      guildId,
       interval,
       createdBy,
       filters: filters as any,

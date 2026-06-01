@@ -759,7 +759,9 @@ async function callGemini(
   const contents = merged.map(m => ({ role: m.role, parts: [{ text: m.text }] }));
 
   const response = await axios.post(
-    `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${apiKey}`,
+    // API-Key NICHT als Query-Parameter (`?key=`) — sonst landet er in Proxy-/
+    // Nginx-/Browser-Logs und HTTP-Referrer. Stattdessen im Header.
+    `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent`,
     {
       contents,
       generationConfig: {
@@ -770,7 +772,7 @@ async function callGemini(
         topK: 40,
       },
     },
-    { headers: { 'Content-Type': 'application/json' }, timeout: 30000 },
+    { headers: { 'Content-Type': 'application/json', 'x-goog-api-key': apiKey }, timeout: 30000 },
   );
 
   return response.data.candidates?.[0]?.content?.parts?.[0]?.text || '';
@@ -782,6 +784,19 @@ async function callGemini(
  */
 export async function callAI(messages: { role: string; content: string }[]): Promise<string> {
   const providers = await getProviderOrder();
+
+  // Fail-closed Outbound-Redaction (#60/#62): Bevor IRGENDEIN externer Provider
+  // den Prompt sieht, werden sensible Substrings (IPs, Steam64, GUIDs, Ports,
+  // Server-Identitaeten) maskiert. Schlaegt die Redaction fehl, wird der Call
+  // abgebrochen statt ungeschuetzt zu senden.
+  let redactedMessages: { role: string; content: string }[];
+  try {
+    redactedMessages = messages.map(m => ({ role: m.role, content: redactText(m.content) }));
+  } catch (e) {
+    logger.error('callAI: Outbound-Redaction fehlgeschlagen – Provider-Call abgebrochen (fail-closed).', e as Error);
+    throw new Error('AI_REDACTION_FAILED');
+  }
+  messages = redactedMessages;
 
   // Erkennt transiente Fehler (Netzwerk-Glitches, Rate-Limits, 5xx) – diese rechtfertigen einen Retry.
   const isTransient = (e: unknown): boolean => {

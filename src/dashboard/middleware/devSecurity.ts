@@ -4,7 +4,8 @@
  * Liefert vier Bausteine, die als Stack hinter `requireDev` greifen:
  *   1. enforceDevMfa(userId)            — TwoFactorAuth.isEnabled erforderlich
  *                                         (mit Grace-Period via DEV_MFA_GRACE_PERIOD_END)
- *   2. enforceDevIpAllowlist(req)       — IpList(WHITELIST). Leer = fail-open.
+ *   2. enforceDevIpAllowlist(req)       — IpList(WHITELIST). Leer = fail-closed
+ *                                         (Opt-out via DEV_IP_ALLOWLIST_REQUIRED=false).
  *   3. recordDevAuthFailure(...)        — Persistiert LOGIN_FAILURE/BRUTE_FORCE
  *                                         in SecurityEvent (zusaetzlich zur In-Memory-Map).
  *   4. parseDevScope(scope)/getActiveDevSession(req)
@@ -92,8 +93,10 @@ export interface IpCheckResult {
 /**
  * Prueft ob die Request-IP in der DEV-IP-Allowlist (IpList.listType=WHITELIST) ist.
  *
- * Verhalten:
- *   - Liste leer  -> fail-open (ok=true, reason='no_list', listSize=0)
+ * Verhalten (secure-by-default, P0-gehaertet):
+ *   - Liste leer  -> fail-CLOSED (ok=false, reason='no_list'), AUSSER es ist
+ *                    explizit `DEV_IP_ALLOWLIST_REQUIRED=false` gesetzt; dann
+ *                    fail-open (Notfall-/Bootstrap-Override).
  *   - IP fehlt    -> fail-closed (ok=false, reason='no_ip')
  *   - IP gelistet -> ok=true
  *   - IP fehlt in Liste -> ok=false, reason='not_listed'
@@ -108,7 +111,14 @@ export async function enforceDevIpAllowlist(req: Request): Promise<IpCheckResult
       OR: [{ expiresAt: null }, { expiresAt: { gt: new Date() } }],
     },
   });
-  if (count === 0) return { ok: true, reason: 'no_list', listSize: 0 };
+  if (count === 0) {
+    // Secure-by-default: leere Allowlist sperrt DEV-Zugriff. Nur ein
+    // explizites Opt-out erlaubt Bootstrap ohne Allowlist.
+    if (process.env.DEV_IP_ALLOWLIST_REQUIRED === 'false') {
+      return { ok: true, reason: 'no_list', listSize: 0 };
+    }
+    return { ok: false, reason: 'no_list', listSize: 0 };
+  }
   if (!ip) return { ok: false, reason: 'no_ip', listSize: count };
 
   const hit = await prisma.ipList.findFirst({

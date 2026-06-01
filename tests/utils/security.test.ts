@@ -39,7 +39,7 @@ describe('Security Utility (Sektion 4, 5, 12)', () => {
       const encrypted = encrypt('test', TEST_KEY);
       const parts = encrypted.split(':');
       expect(parts).toHaveLength(3);
-      expect(parts[0]).toMatch(/^[0-9a-f]{32}$/); // 16 bytes IV
+      expect(parts[0]).toMatch(/^[0-9a-f]{24}$/); // 12 bytes IV (GCM-Standard)
       expect(parts[1]).toMatch(/^[0-9a-f]{32}$/); // 16 bytes auth tag
     });
 
@@ -93,7 +93,7 @@ describe('Security Utility (Sektion 4, 5, 12)', () => {
     it('sollte Hex-Strings im Uppercase erzeugen', () => {
       const codes = generateBackupCodes(5);
       for (const code of codes) {
-        expect(code).toMatch(/^[0-9A-F]{8}$/);
+        expect(code).toMatch(/^[0-9A-F]{16}$/);
       }
     });
 

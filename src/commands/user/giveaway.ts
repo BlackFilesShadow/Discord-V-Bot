@@ -111,9 +111,15 @@ async function handleStart(interaction: ChatInputCommandInteraction) {
     return;
   }
 
+  if (!interaction.guildId) {
+    await interaction.editReply({ content: '❌ Dieser Befehl ist nur auf einem Server verfügbar.' });
+    return;
+  }
+
   const result = await createGiveaway({
     creatorDiscordId: interaction.user.id,
     channelId: interaction.channelId,
+    guildId: interaction.guildId,
     prize,
     description,
     durationSeconds,

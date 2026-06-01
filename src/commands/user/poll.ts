@@ -178,9 +178,15 @@ async function runPollSubcommand(sub: string, interaction: ChatInputCommandInter
           return;
         }
 
+        if (!interaction.guildId) {
+          await interaction.editReply({ content: '❌ Dieser Befehl ist nur auf einem Server verfügbar.' });
+          return;
+        }
+
         const { pollId, options } = await createPoll(
           dbUser.id,
           interaction.channelId,
+          interaction.guildId,
           titel,
           beschreibung,
           optionen,

@@ -26,6 +26,7 @@ export const DEFAULT_EMOJIS = ['1️⃣', '2️⃣', '3️⃣', '4️⃣', '5️
 export async function createPoll(
   creatorId: string,
   channelId: string,
+  guildId: string,
   title: string,
   description: string | null,
   options: string[],
@@ -47,6 +48,7 @@ export async function createPoll(
     data: {
       creatorId,
       channelId,
+      guildId,
       title,
       description,
       options: pollOptions as unknown as any,
@@ -242,14 +244,24 @@ export async function getPollVotes(pollId: string): Promise<Record<string, numbe
 export function startPollScheduler(client: Client): void {
   setInterval(async () => {
     try {
+      // Shard-Filter: nur Polls eigener Guilds (oder Legacy ohne guildId).
+      // Bei Single-Instance enthaelt der Cache alle Guilds -> No-Op.
+      const shardGuildIds = [...client.guilds.cache.keys()];
       const expiredPolls = await prisma.poll.findMany({
         where: {
           status: 'ACTIVE',
           endsAt: { lte: new Date() },
+          OR: [{ guildId: { in: shardGuildIds } }, { guildId: null }],
         },
       });
 
       for (const poll of expiredPolls) {
+        // Atomarer Claim: nur EINE Instanz/Shard beendet die Umfrage (Multi-Instance-Schutz).
+        const claim = await prisma.poll.updateMany({
+          where: { id: poll.id, status: 'ACTIVE' },
+          data: { status: 'ENDED' },
+        });
+        if (claim.count === 0) continue; // bereits von anderer Instanz verarbeitet
         try {
           const result = await endPoll(poll.id);
 

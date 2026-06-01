@@ -14,7 +14,7 @@ import { Router } from 'express';
 import type { TicketTemplate } from '@prisma/client';
 import { requireGuildPermission } from '../../middleware/auth';
 import prisma from '../../../database/prisma';
-import { logAuditDb } from '../../../utils/logger';
+import { logAuditDb, logger } from '../../../utils/logger';
 import { emitGuildEvent } from '../../socket/emitter';
 import { tryGetDashboardClient } from '../../clientRegistry';
 import { postTemplateEmbed, unpostTemplateEmbed, purgeTemplateInstances } from '../../../modules/tickets/ticketSystem';
@@ -323,26 +323,37 @@ ticketsRouter.post('/', requireGuildPermission('tickets.manage'), async (req, re
   });
   if (chErr) { res.status(400).json({ error: chErr }); return; }
 
-  const created = await prisma.ticketTemplate.create({
-    data: {
-      guildId: scope.guildId,
-      slot: v.data.slot as number,
-      label: v.data.label as string,
-      welcomeText: v.data.welcomeText as string,
-      welcomeMessages: (v.data.welcomeMessages as string[] | undefined) ?? [v.data.welcomeText as string],
-      embedTitle: v.data.embedTitle as string,
-      embedDescription: (v.data.embedDescription as string | null | undefined) ?? null,
-      embedColor: (v.data.embedColor as string | undefined) ?? '#dc2626',
-      postChannelId: v.data.postChannelId as string,
-      transcriptChannelId: v.data.transcriptChannelId as string,
-      archiveChannelId: (v.data.archiveChannelId as string | null | undefined) ?? null,
-      categoryId: (v.data.categoryId as string | null | undefined) ?? null,
-      staffRoleId: (v.data.staffRoleId as string | null | undefined) ?? null,
-      managerRoleIds: (v.data.managerRoleIds as string[] | undefined) ?? [],
-      mentionRoleIds: (v.data.mentionRoleIds as string[] | undefined) ?? [],
-      isActive: (v.data.isActive as boolean | undefined) ?? true,
-    },
-  });
+  let created: TicketTemplate;
+  try {
+    created = await prisma.ticketTemplate.create({
+      data: {
+        guildId: scope.guildId,
+        slot: v.data.slot as number,
+        label: v.data.label as string,
+        welcomeText: v.data.welcomeText as string,
+        welcomeMessages: (v.data.welcomeMessages as string[] | undefined) ?? [v.data.welcomeText as string],
+        embedTitle: v.data.embedTitle as string,
+        embedDescription: (v.data.embedDescription as string | null | undefined) ?? null,
+        embedColor: (v.data.embedColor as string | undefined) ?? '#dc2626',
+        postChannelId: v.data.postChannelId as string,
+        transcriptChannelId: v.data.transcriptChannelId as string,
+        archiveChannelId: (v.data.archiveChannelId as string | null | undefined) ?? null,
+        categoryId: (v.data.categoryId as string | null | undefined) ?? null,
+        staffRoleId: (v.data.staffRoleId as string | null | undefined) ?? null,
+        managerRoleIds: (v.data.managerRoleIds as string[] | undefined) ?? [],
+        mentionRoleIds: (v.data.mentionRoleIds as string[] | undefined) ?? [],
+        isActive: (v.data.isActive as boolean | undefined) ?? true,
+      },
+    });
+  } catch (e) {
+    // Race-Schutz: Parallel-Request kann denselben Slot zwischen Pruefung und
+    // Create belegt haben. Der DB-Unique-Constraint (guildId_slot) faengt das ab.
+    if ((e as { code?: string })?.code === 'P2002') {
+      res.status(409).json({ error: 'Slot bereits belegt.' }); return;
+    }
+    logger.error('TicketTemplate create fehlgeschlagen:', e as Error);
+    res.status(500).json({ error: 'Interner Fehler' }); return;
+  }
   logAuditDb('TICKET_TEMPLATE_CREATED', 'TICKET', { actorUserId: req.auth!.userId, guildId: scope.guildId, details: { templateId: created.id, slot: created.slot, label: created.label } });
   emitGuildEvent(scope.guildId, { type: 'tickets.changed', payload: { guildId: scope.guildId, templateId: created.id } });
   res.status(201).json(serialize(created));
@@ -550,8 +561,8 @@ ticketsRouter.post('/instances/:instanceId/users', requireGuildPermission('ticke
           EmbedLinks: true,
         });
     } catch (permErr) {
-      const msg = permErr instanceof Error ? permErr.message : String(permErr);
-      return res.status(500).json({ error: `Discord-Permissions konnten nicht gesetzt werden: ${msg}` });
+      logger.error('Ticket permissionOverwrites.edit fehlgeschlagen:', permErr as Error);
+      return res.status(500).json({ error: 'Discord-Permissions konnten nicht gesetzt werden.' });
     }
 
     // DB erst NACH erfolgreicher Discord-Permission setzen.
@@ -576,8 +587,8 @@ ticketsRouter.post('/instances/:instanceId/users', requireGuildPermission('ticke
     emitGuildEvent(scope.guildId, { type: 'tickets.changed', payload: { guildId: scope.guildId } });
     return res.json({ success: true, userIds: updated.userIds });
   } catch (err) {
-    const message = err instanceof Error ? err.message : String(err);
-    return res.status(500).json({ error: 'Interner Fehler', details: message });
+    logger.error('Ticket /instances/:instanceId/users (POST) Fehler:', err as Error);
+    return res.status(500).json({ error: 'Interner Fehler' });
   }
 });
 
@@ -626,7 +637,7 @@ ticketsRouter.delete('/instances/:instanceId/users', requireGuildPermission('tic
     emitGuildEvent(scope.guildId, { type: 'tickets.changed', payload: { guildId: scope.guildId } });
     return res.json({ success: true, userIds: updated.userIds });
   } catch (err) {
-    const message = err instanceof Error ? err.message : String(err);
-    return res.status(500).json({ error: 'Interner Fehler', details: message });
+    logger.error('Ticket /instances/:instanceId/users (DELETE) Fehler:', err as Error);
+    return res.status(500).json({ error: 'Interner Fehler' });
   }
 });

@@ -71,13 +71,19 @@ const adminAppealsCommand: Command = {
   execute: async (interaction: ChatInputCommandInteraction) => {
     await interaction.deferReply({ flags: MessageFlags.Ephemeral });
 
+    const guildId = interaction.guildId;
+    if (!guildId) {
+      await interaction.editReply({ content: '❌ Dieser Befehl ist nur in einem Server verfügbar.' });
+      return;
+    }
+
     const sub = interaction.options.getSubcommand();
 
     switch (sub) {
       case 'liste': {
         const status = (interaction.options.getString('status') || 'PENDING') as AppealStatus;
         const appeals = await prisma.appeal.findMany({
-          where: { status },
+          where: { status, case: { guildId } },
           take: 15,
           orderBy: { createdAt: 'desc' },
           include: {
@@ -117,8 +123,8 @@ const adminAppealsCommand: Command = {
         const appealId = interaction.options.getString('appeal-id', true);
         const note = interaction.options.getString('notiz') || '';
 
-        const appeal = await prisma.appeal.findUnique({
-          where: { id: appealId },
+        const appeal = await prisma.appeal.findFirst({
+          where: { id: appealId, case: { guildId } },
           include: { case: true, user: true },
         });
 
@@ -164,8 +170,8 @@ const adminAppealsCommand: Command = {
         const appealId = interaction.options.getString('appeal-id', true);
         const note = interaction.options.getString('notiz') || '';
 
-        const appeal = await prisma.appeal.findUnique({
-          where: { id: appealId },
+        const appeal = await prisma.appeal.findFirst({
+          where: { id: appealId, case: { guildId } },
           include: { case: true, user: true },
         });
 
@@ -202,8 +208,8 @@ const adminAppealsCommand: Command = {
       case 'eskalieren': {
         const appealId = interaction.options.getString('appeal-id', true);
 
-        const appeal = await prisma.appeal.findUnique({
-          where: { id: appealId },
+        const appeal = await prisma.appeal.findFirst({
+          where: { id: appealId, case: { guildId } },
           include: { case: true, user: true },
         });
 

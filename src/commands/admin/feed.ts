@@ -186,10 +186,15 @@ const feedCommand: Command = {
           return;
         }
 
+        if (!interaction.guildId) {
+          await interaction.editReply({ content: '❌ Dieser Befehl ist nur auf einem Server verfügbar.' });
+          return;
+        }
+
         let feedId: string;
         try {
           feedId = await createFeed(
-            name, typ, url.trim(), channel.id, intervall, interaction.user.id,
+            name, typ, url.trim(), channel.id, intervall, interaction.user.id, interaction.guildId,
           );
         } catch (e) {
           logger.warn(`feed.erstellen fehlgeschlagen: ${String(e)}`);
@@ -230,7 +235,9 @@ const feedCommand: Command = {
       }
 
       case 'liste': {
+        // Mandantentrennung: nur Feeds dieser Guild (+ Legacy ohne guildId).
         const feeds = await prisma.feed.findMany({
+          where: { OR: [{ guildId: interaction.guildId }, { guildId: null }] },
           orderBy: { createdAt: 'desc' },
         });
 
@@ -267,7 +274,7 @@ const feedCommand: Command = {
       case 'loeschen': {
         const feedId = interaction.options.getString('feed-id', true);
         const feed = await prisma.feed.findUnique({ where: { id: feedId } });
-        if (!feed) {
+        if (!feed || (feed.guildId && feed.guildId !== interaction.guildId)) {
           await interaction.editReply({ content: '❌ Feed nicht gefunden.' });
           return;
         }
@@ -280,7 +287,7 @@ const feedCommand: Command = {
       case 'toggle': {
         const feedId = interaction.options.getString('feed-id', true);
         const feed = await prisma.feed.findUnique({ where: { id: feedId } });
-        if (!feed) {
+        if (!feed || (feed.guildId && feed.guildId !== interaction.guildId)) {
           await interaction.editReply({ content: '❌ Feed nicht gefunden.' });
           return;
         }
@@ -293,7 +300,7 @@ const feedCommand: Command = {
       case 'abonnieren': {
         const feedId = interaction.options.getString('feed-id', true);
         const feed = await prisma.feed.findUnique({ where: { id: feedId } });
-        if (!feed) {
+        if (!feed || (feed.guildId && feed.guildId !== interaction.guildId)) {
           await interaction.editReply({ content: '❌ Feed nicht gefunden.' });
           return;
         }
@@ -318,7 +325,7 @@ const feedCommand: Command = {
         const feedId = interaction.options.getString('feed-id', true);
         const role = interaction.options.getRole('rolle', true);
         const feed = await prisma.feed.findUnique({ where: { id: feedId } });
-        if (!feed) { await interaction.editReply({ content: '❌ Feed nicht gefunden.' }); return; }
+        if (!feed || (feed.guildId && feed.guildId !== interaction.guildId)) { await interaction.editReply({ content: '❌ Feed nicht gefunden.' }); return; }
         const current = new Set(feed.mentionRoles ?? []);
         current.add(role.id);
         await prisma.feed.update({ where: { id: feedId }, data: { mentionRoles: Array.from(current) } });
@@ -331,7 +338,7 @@ const feedCommand: Command = {
         const feedId = interaction.options.getString('feed-id', true);
         const role = interaction.options.getRole('rolle', true);
         const feed = await prisma.feed.findUnique({ where: { id: feedId } });
-        if (!feed) { await interaction.editReply({ content: '❌ Feed nicht gefunden.' }); return; }
+        if (!feed || (feed.guildId && feed.guildId !== interaction.guildId)) { await interaction.editReply({ content: '❌ Feed nicht gefunden.' }); return; }
         const next = (feed.mentionRoles ?? []).filter((id) => id !== role.id);
         await prisma.feed.update({ where: { id: feedId }, data: { mentionRoles: next } });
         logAudit('FEED_ROLE_REMOVED', 'FEED', { feedId, roleId: role.id, by: interaction.user.id });
@@ -342,7 +349,7 @@ const feedCommand: Command = {
       case 'rolle-list': {
         const feedId = interaction.options.getString('feed-id', true);
         const feed = await prisma.feed.findUnique({ where: { id: feedId } });
-        if (!feed) { await interaction.editReply({ content: '❌ Feed nicht gefunden.' }); return; }
+        if (!feed || (feed.guildId && feed.guildId !== interaction.guildId)) { await interaction.editReply({ content: '❌ Feed nicht gefunden.' }); return; }
         const ids = feed.mentionRoles ?? [];
         await interaction.editReply({
           content: ids.length

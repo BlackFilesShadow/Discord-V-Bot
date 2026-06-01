@@ -16,6 +16,7 @@ import { Colors, Brand, vEmbed, formatBytes } from '../../utils/embedDesign';
 import { createBotEmbed } from '../../utils/embedUtil';
 import { deletePackage, restorePackage } from '../../modules/upload/uploadHandler';
 import { logAudit } from '../../utils/logger';
+import { isInsideUploadRoot } from '../../utils/pathSafety';
 
 /**
  * /mypackages Command (Sektion 2):
@@ -352,8 +353,10 @@ async function handleDeleteFile(interaction: ChatInputCommandInteraction, userId
           data: { isDeleted: true, deletedAt: new Date() },
         });
 
-        // Datei vom Filesystem löschen
-        try { await fs.unlink(upload.filePath); } catch { /* Datei existiert evtl. nicht mehr */ }
+        // Datei vom Filesystem löschen (nur innerhalb des Upload-Root)
+        if (isInsideUploadRoot(upload.filePath)) {
+          try { await fs.unlink(upload.filePath); } catch { /* Datei existiert evtl. nicht mehr */ }
+        }
 
         // Paket-Statistiken aktualisieren
         await prisma.package.update({

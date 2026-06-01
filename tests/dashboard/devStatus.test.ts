@@ -17,7 +17,7 @@ jest.mock('../../src/database/prisma', () => ({
   default: {
     devSession: { findFirst: (...a: unknown[]) => mockDevSessionFindFirst(...a) },
     twoFactorAuth: { findUnique: jest.fn().mockResolvedValue({ isEnabled: true }) },
-    ipList: { count: jest.fn().mockResolvedValue(0), findFirst: jest.fn().mockResolvedValue(null) },
+    ipList: { count: jest.fn().mockResolvedValue(1), findFirst: jest.fn().mockResolvedValue({ id: 'allow1' }) },
     securityEvent: { create: jest.fn().mockResolvedValue({}) },
     nitradoJob: {
       groupBy: jest.fn().mockResolvedValue([

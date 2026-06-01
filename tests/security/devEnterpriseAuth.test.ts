@@ -104,13 +104,23 @@ describe('enforceDevMfa', () => {
 describe('enforceDevIpAllowlist', () => {
   const fakeReq = (ip: string | undefined) => ({ ip } as unknown as Parameters<typeof enforceDevIpAllowlist>[0]);
 
-  it('fail-open bei leerer Liste', async () => {
+  it('fail-closed bei leerer Liste (secure-by-default)', async () => {
+    delete process.env.DEV_IP_ALLOWLIST_REQUIRED;
+    ipListCount.mockResolvedValue(0);
+    const r = await enforceDevIpAllowlist(fakeReq('1.2.3.4'));
+    expect(r.ok).toBe(false);
+    expect(r.reason).toBe('no_list');
+    expect(r.listSize).toBe(0);
+    expect(ipListFindFirst).not.toHaveBeenCalled();
+  });
+
+  it('fail-open bei leerer Liste nur mit explizitem Opt-out', async () => {
+    process.env.DEV_IP_ALLOWLIST_REQUIRED = 'false';
     ipListCount.mockResolvedValue(0);
     const r = await enforceDevIpAllowlist(fakeReq('1.2.3.4'));
     expect(r.ok).toBe(true);
     expect(r.reason).toBe('no_list');
-    expect(r.listSize).toBe(0);
-    expect(ipListFindFirst).not.toHaveBeenCalled();
+    delete process.env.DEV_IP_ALLOWLIST_REQUIRED;
   });
 
   it('fail-closed wenn Liste vorhanden aber IP fehlt', async () => {

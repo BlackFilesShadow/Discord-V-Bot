@@ -61,7 +61,11 @@ const ticketCommand: Command = {
 
     if (sub === 'close') {
       const ticket = await prisma.ticket.findFirst({
-        where: { userDiscordId: interaction.user.id, status: { in: ['PENDING', 'OPEN'] } },
+        where: {
+          userDiscordId: interaction.user.id,
+          status: { in: ['PENDING', 'OPEN'] },
+          ...(interaction.guildId ? { guildId: interaction.guildId } : {}),
+        },
         orderBy: { createdAt: 'desc' },
       });
       if (!ticket) {
@@ -81,7 +85,10 @@ const ticketCommand: Command = {
 
     if (sub === 'status') {
       const tickets = await prisma.ticket.findMany({
-        where: { userDiscordId: interaction.user.id },
+        where: {
+          userDiscordId: interaction.user.id,
+          ...(interaction.guildId ? { guildId: interaction.guildId } : {}),
+        },
         orderBy: { createdAt: 'desc' },
         take: 10,
       });

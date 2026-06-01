@@ -1,11 +1,65 @@
 import prisma from '../../database/prisma';
-import { config } from '../../config';
 import { logger, logAudit } from '../../utils/logger';
 import { checkRateLimit } from '../../utils/rateLimiter';
+import { isInsideUploadRoot } from '../../utils/pathSafety';
 import archiver from 'archiver';
+import os from 'os';
 import path from 'path';
 import fs from 'fs';
-import { Writable } from 'stream';
+import crypto from 'crypto';
+
+/**
+ * Baut ein Archiv (zip|tar) aus den uebergebenen Dateien und streamt es
+ * direkt auf die Platte (kein vollstaendiges Puffern im RAM -> kein
+ * Memory-Exhaustion-DoS). Es werden ausschliesslich Dateien innerhalb des
+ * Upload-Root aufgenommen (Path-Traversal-Schutz). Gibt den Pfad der
+ * temporaeren Archivdatei zurueck.
+ */
+async function buildPackageArchive(
+  files: { filePath: string; originalName: string }[],
+  format: 'zip' | 'tar',
+): Promise<{ archivePath: string; includedCount: number }> {
+  const ext = format === 'zip' ? 'zip' : 'tar.gz';
+  const archivePath = path.join(
+    os.tmpdir(),
+    `pkg-${crypto.randomBytes(8).toString('hex')}.${ext}`,
+  );
+  const output = fs.createWriteStream(archivePath);
+  const archive =
+    format === 'zip'
+      ? archiver('zip', { zlib: { level: 9 } })
+      : archiver('tar', { gzip: true });
+
+  let includedCount = 0;
+  archive.pipe(output);
+
+  for (const file of files) {
+    // P0: Nur Dateien innerhalb des Upload-Root archivieren. Ein
+    // manipulierter DB-Pfad darf keine fremden Dateien einschleusen.
+    if (!isInsideUploadRoot(file.filePath)) {
+      logger.error(
+        `Path traversal blocked beim Archivieren: ${file.filePath} ausserhalb Upload-Root.`,
+      );
+      continue;
+    }
+    if (fs.existsSync(file.filePath)) {
+      archive.file(file.filePath, { name: file.originalName });
+      includedCount++;
+    }
+  }
+
+  // finalize() startet das Schreiben; wir warten auf das vollstaendige
+  // Flushen der WriteStream-Datei.
+  const done = new Promise<void>((resolve, reject) => {
+    output.on('close', resolve);
+    output.on('error', reject);
+    archive.on('error', reject);
+  });
+  await archive.finalize();
+  await done;
+
+  return { archivePath, includedCount };
+}
 
 /**
  * Download-Handler (Sektion 3):
@@ -44,10 +98,8 @@ export async function downloadSingleFile(
   }
 
   // Sicherheitscheck: Pfad darf nicht außerhalb des Upload-Verzeichnisses liegen
-  const resolvedPath = path.resolve(upload.filePath);
-  const uploadRoot = path.resolve(config.upload.dir);
-  if (!resolvedPath.startsWith(uploadRoot)) {
-    logger.error(`Path traversal blocked: ${resolvedPath} outside ${uploadRoot}`);
+  if (!isInsideUploadRoot(upload.filePath)) {
+    logger.error(`Path traversal blocked: ${path.resolve(upload.filePath)} outside Upload-Root`);
     return { success: false, message: 'Dateizugriff verweigert.' };
   }
 
@@ -66,20 +118,21 @@ export async function downloadSingleFile(
     downloaderUserId = user?.id || null;
   }
 
-  await prisma.download.create({
-    data: {
-      userId: downloaderUserId,
-      packageId: upload.packageId,
-      uploadId: upload.id,
-      downloadType: 'SINGLE_FILE',
-    },
-  });
-
-  // Paket Download-Counter erhöhen
-  await prisma.package.update({
-    where: { id: upload.packageId },
-    data: { downloadCount: { increment: 1 } },
-  });
+  // Atomar: Download-Log + Counter (sonst Drift bei Teilfehler).
+  await prisma.$transaction([
+    prisma.download.create({
+      data: {
+        userId: downloaderUserId,
+        packageId: upload.packageId,
+        uploadId: upload.id,
+        downloadType: 'SINGLE_FILE',
+      },
+    }),
+    prisma.package.update({
+      where: { id: upload.packageId },
+      data: { downloadCount: { increment: 1 } },
+    }),
+  ]);
 
   logAudit('FILE_DOWNLOADED', 'DOWNLOAD', {
     uploadId: upload.id,
@@ -102,7 +155,7 @@ export async function downloadSingleFile(
 export async function downloadPackageAsZip(
   packageId: string,
   downloaderDiscordId?: string
-): Promise<{ success: boolean; zipBuffer?: Buffer; fileName?: string; message: string }> {
+): Promise<{ success: boolean; filePath?: string; fileName?: string; message: string }> {
   const pkg = await prisma.package.findUnique({
     where: { id: packageId },
     include: {
@@ -129,33 +182,12 @@ export async function downloadPackageAsZip(
     }
   }
 
-  // ZIP erstellen
-  const chunks: Buffer[] = [];
-  const writable = new Writable({
-    write(chunk, _, callback) {
-      chunks.push(chunk);
-      callback();
-    },
-  });
-
-  const archive = archiver('zip', { zlib: { level: 9 } });
-  archive.pipe(writable);
-
-  for (const file of pkg.files) {
-    if (fs.existsSync(file.filePath)) {
-      archive.file(file.filePath, { name: file.originalName });
-    }
+  // ZIP streamend auf Platte erstellen (Path-Traversal-Schutz + kein RAM-Buffer)
+  const { archivePath, includedCount } = await buildPackageArchive(pkg.files, 'zip');
+  if (includedCount === 0) {
+    fs.promises.unlink(archivePath).catch(() => undefined);
+    return { success: false, message: 'Paket enthält keine verfügbaren Dateien.' };
   }
-
-  await archive.finalize();
-
-  // Warten bis der Stream fertig ist
-  await new Promise<void>((resolve, reject) => {
-    writable.on('finish', resolve);
-    writable.on('error', reject);
-  });
-
-  const zipBuffer = Buffer.concat(chunks);
 
   // Download-Tracking
   let downloaderUserId: string | null = null;
@@ -164,30 +196,32 @@ export async function downloadPackageAsZip(
     downloaderUserId = user?.id || null;
   }
 
-  await prisma.download.create({
-    data: {
-      userId: downloaderUserId,
-      packageId: pkg.id,
-      downloadType: 'PACKAGE_ZIP',
-    },
-  });
-
-  await prisma.package.update({
-    where: { id: pkg.id },
-    data: { downloadCount: { increment: 1 } },
-  });
+  // Atomar: Download-Log + Counter (sonst Drift bei Teilfehler).
+  await prisma.$transaction([
+    prisma.download.create({
+      data: {
+        userId: downloaderUserId,
+        packageId: pkg.id,
+        downloadType: 'PACKAGE_ZIP',
+      },
+    }),
+    prisma.package.update({
+      where: { id: pkg.id },
+      data: { downloadCount: { increment: 1 } },
+    }),
+  ]);
 
   logAudit('PACKAGE_DOWNLOADED', 'DOWNLOAD', {
     packageId: pkg.id,
     downloaderId: downloaderDiscordId,
     packageName: pkg.name,
-    fileCount: pkg.files.length,
+    fileCount: includedCount,
     format: 'ZIP',
   });
 
   return {
     success: true,
-    zipBuffer,
+    filePath: archivePath,
     fileName: `${pkg.name}.zip`,
     message: 'Download bereit.',
   };
@@ -200,7 +234,7 @@ export async function downloadPackageAsZip(
 export async function downloadPackageAsTar(
   packageId: string,
   downloaderDiscordId?: string
-): Promise<{ success: boolean; tarBuffer?: Buffer; fileName?: string; message: string }> {
+): Promise<{ success: boolean; filePath?: string; fileName?: string; message: string }> {
   const pkg = await prisma.package.findUnique({
     where: { id: packageId },
     include: {
@@ -226,32 +260,12 @@ export async function downloadPackageAsTar(
     }
   }
 
-  // TAR erstellen (archiver unterstützt 'tar' format)
-  const chunks: Buffer[] = [];
-  const writable = new Writable({
-    write(chunk, _, callback) {
-      chunks.push(chunk);
-      callback();
-    },
-  });
-
-  const archive = archiver('tar', { gzip: true });
-  archive.pipe(writable);
-
-  for (const file of pkg.files) {
-    if (fs.existsSync(file.filePath)) {
-      archive.file(file.filePath, { name: file.originalName });
-    }
+  // TAR streamend auf Platte erstellen (Path-Traversal-Schutz + kein RAM-Buffer)
+  const { archivePath, includedCount } = await buildPackageArchive(pkg.files, 'tar');
+  if (includedCount === 0) {
+    fs.promises.unlink(archivePath).catch(() => undefined);
+    return { success: false, message: 'Paket enthält keine verfügbaren Dateien.' };
   }
-
-  await archive.finalize();
-
-  await new Promise<void>((resolve, reject) => {
-    writable.on('finish', resolve);
-    writable.on('error', reject);
-  });
-
-  const tarBuffer = Buffer.concat(chunks);
 
   let downloaderUserId: string | null = null;
   if (downloaderDiscordId) {
@@ -259,30 +273,32 @@ export async function downloadPackageAsTar(
     downloaderUserId = user?.id || null;
   }
 
-  await prisma.download.create({
-    data: {
-      userId: downloaderUserId,
-      packageId: pkg.id,
-      downloadType: 'PACKAGE_TAR',
-    },
-  });
-
-  await prisma.package.update({
-    where: { id: pkg.id },
-    data: { downloadCount: { increment: 1 } },
-  });
+  // Atomar: Download-Log + Counter (sonst Drift bei Teilfehler).
+  await prisma.$transaction([
+    prisma.download.create({
+      data: {
+        userId: downloaderUserId,
+        packageId: pkg.id,
+        downloadType: 'PACKAGE_TAR',
+      },
+    }),
+    prisma.package.update({
+      where: { id: pkg.id },
+      data: { downloadCount: { increment: 1 } },
+    }),
+  ]);
 
   logAudit('PACKAGE_DOWNLOADED', 'DOWNLOAD', {
     packageId: pkg.id,
     downloaderId: downloaderDiscordId,
     packageName: pkg.name,
-    fileCount: pkg.files.length,
+    fileCount: includedCount,
     format: 'TAR',
   });
 
   return {
     success: true,
-    tarBuffer,
+    filePath: archivePath,
     fileName: `${pkg.name}.tar.gz`,
     message: 'Download bereit.',
   };

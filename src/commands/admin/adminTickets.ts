@@ -60,11 +60,19 @@ const adminTicketsCommand: Command = {
       return;
     }
 
+    const guildId = interaction.guildId;
+    if (!guildId) {
+      await interaction.editReply({
+        embeds: [vEmbed(Colors.Error).setTitle('❌  Nur in Servern').setDescription('Dieser Befehl ist nur in einem Server verfügbar.')],
+      });
+      return;
+    }
+
     const sub = interaction.options.getSubcommand();
 
     if (sub === 'list') {
       const open = await prisma.ticket.findMany({
-        where: { status: { in: ['PENDING', 'OPEN'] } },
+        where: { status: { in: ['PENDING', 'OPEN'] }, guildId },
         orderBy: { createdAt: 'asc' },
         take: 25,
       });
@@ -91,7 +99,7 @@ const adminTicketsCommand: Command = {
       const number = interaction.options.getInteger('nummer', true);
       const reason = interaction.options.getString('grund') ?? null;
 
-      const ticket = await prisma.ticket.findUnique({ where: { ticketNumber: number } });
+      const ticket = await prisma.ticket.findFirst({ where: { ticketNumber: number, guildId } });
       if (!ticket) {
         await interaction.editReply({
           embeds: [vEmbed(Colors.Error).setTitle('❌  Nicht gefunden').setDescription(`Ticket #${number} existiert nicht.`)],

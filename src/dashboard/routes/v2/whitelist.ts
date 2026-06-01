@@ -458,6 +458,7 @@ whitelistRouter.post('/channels/info/repost', requireGuildPermission('whitelist.
     const r = await ensureWhitelistInfoEmbed(scope.guildId, connId);
     res.json({ ok: true, ...r });
   } catch (e) {
-    res.status(500).json({ error: (e as Error).message });
+    logger.error('ensureWhitelistInfoEmbed Fehler:', e as Error);
+    res.status(500).json({ error: 'Interner Fehler' });
   }
 });

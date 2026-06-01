@@ -22,35 +22,34 @@ import { createGiveawayEmbed } from '../modules/giveaway/giveawayManager';
 import { acceptTicket, denyTicket } from '../modules/ticket/ticketManager';
 import { config } from '../config';
 import { timingSafeEqual } from 'crypto';
+import {
+  getDevSessionExpires,
+  setDevSession,
+  clearDevSession,
+  getDevFails,
+  setDevFails,
+  clearDevFails,
+  cleanupDevAuth,
+} from '../utils/devAuthStore';
 
-// Pending Dev-Passwort-Verifizierungen
+// Pending Dev-Passwort-Verifizierungen.
+// Bewusst In-Memory: kurzlebiger Modal-Handshake (120s), dessen Submit auf
+// demselben Shard/Prozess zurueckkommt, der das Modal angezeigt hat.
 const pendingDevAuth = new Map<string, { commandName: string; userId: string; expires: number }>();
 
-// Temporär authentifizierte Developer-Users (userId → expiresTimestamp)
-// DEV-Session: 2 Stunden gültig
-// Exportiert, damit /help (und andere) den Session-Status sauber per Import prüfen können.
-export const devAuthenticatedUsers = new Map<string, number>();
-
+// Dev-Session (2h) und Brute-Force-Lockout liegen in der DB (devAuthStore),
+// damit sie ueber alle Shards hinweg gelten und Restarts ueberleben.
 const DEV_SESSION_MS = 2 * 60 * 60 * 1000; // 2 Stunden
-
-// Brute-Force-Schutz: pro User max. 5 Fehlversuche, dann 15 Min Lockout
-const devAuthFails = new Map<string, { count: number; lockedUntil: number }>();
 const DEV_AUTH_MAX_FAILS = 5;
 const DEV_AUTH_LOCKOUT_MS = 15 * 60 * 1000;
 
-// Periodisches Cleanup für pendingDevAuth & devAuthFails (alle 5 Min)
+// Periodisches Cleanup für pendingDevAuth (lokal) & Dev-Auth-DB-State (alle 5 Min)
 setInterval(() => {
   const now = Date.now();
   for (const [k, v] of pendingDevAuth.entries()) {
     if (v.expires < now) pendingDevAuth.delete(k);
   }
-  for (const [k, v] of devAuthFails.entries()) {
-    if (v.lockedUntil < now && v.count < DEV_AUTH_MAX_FAILS) devAuthFails.delete(k);
-    else if (v.lockedUntil > 0 && v.lockedUntil < now) devAuthFails.delete(k);
-  }
-  for (const [k, v] of devAuthenticatedUsers.entries()) {
-    if (v < now) devAuthenticatedUsers.delete(k);
-  }
+  void cleanupDevAuth().catch((e) => logger.warn(`Dev-Auth-Cleanup fehlgeschlagen: ${(e as Error).message}`));
 }, 5 * 60 * 1000).unref?.();
 
 /**
@@ -320,7 +319,7 @@ const interactionCreateEvent: BotEvent = {
         }
 
         // Lockout-Check vor Modal
-        const fails = devAuthFails.get(userId);
+        const fails = await getDevFails(userId);
         if (fails && fails.lockedUntil > Date.now()) {
           const remainMin = Math.ceil((fails.lockedUntil - Date.now()) / 60_000);
           await i.reply({
@@ -335,9 +334,9 @@ const interactionCreateEvent: BotEvent = {
           return;
         }
 
-        const devExpires = devAuthenticatedUsers.get(userId);
+        const devExpires = await getDevSessionExpires(userId);
         if (!devExpires || devExpires <= Date.now()) {
-          devAuthenticatedUsers.delete(userId);
+          await clearDevSession(userId);
 
           const modalId = `dev_auth_${userId}_${Date.now()}`;
           pendingDevAuth.set(modalId, {
@@ -466,14 +465,11 @@ const interactionCreateEvent: BotEvent = {
   },
 };
 
-// Periodisch abgelaufene Einträge bereinigen
+// Periodisch abgelaufene Einträge bereinigen (pendingDevAuth ist lokal/kurzlebig)
 setInterval(() => {
   const now = Date.now();
   for (const [key, value] of pendingDevAuth) {
     if (value.expires < now) pendingDevAuth.delete(key);
-  }
-  for (const [key, value] of devAuthenticatedUsers) {
-    if (value < now) devAuthenticatedUsers.delete(key);
   }
 }, 60_000);
 
@@ -496,7 +492,7 @@ async function handleDevPasswordModal(modal: ModalSubmitInteraction): Promise<vo
   }
 
   // Lockout-Check vor dem Vergleich
-  const fails = devAuthFails.get(modal.user.id);
+  const fails = await getDevFails(modal.user.id);
   if (fails && fails.lockedUntil > Date.now()) {
     const remainMin = Math.ceil((fails.lockedUntil - Date.now()) / 60_000);
     await modal.reply({
@@ -508,11 +504,31 @@ async function handleDevPasswordModal(modal: ModalSubmitInteraction): Promise<vo
 
   const enteredPassword = modal.fields.getTextInputValue('dev_password');
 
+  // Fail-closed: Wenn serverseitig kein DEV_PASSWORD konfiguriert ist, darf
+  // niemand authentifiziert werden (verhindert Login mit leerem Passwort).
+  if (!config.developer.password) {
+    pendingDevAuth.delete(modal.customId);
+    logAudit('DEV_AUTH_FAILED', 'SECURITY', {
+      userId: modal.user.id,
+      command: pendingData.commandName,
+      reason: 'DEV_PASSWORD nicht konfiguriert',
+    });
+    await modal.reply({
+      content: '🔒 Developer-Login serverseitig nicht konfiguriert.',
+      ephemeral: true,
+    });
+    return;
+  }
+
   if (!safeEqual(enteredPassword, config.developer.password)) {
     pendingDevAuth.delete(modal.customId);
 
-    // Fehlversuch zählen
-    const cur = devAuthFails.get(modal.user.id) ?? { count: 0, lockedUntil: 0 };
+    // Fehlversuch zählen. Nach abgelaufenem Lockout Zähler zurücksetzen,
+    // damit eine bereits abgelaufene Sperre nicht sofort erneut greift.
+    const prev = await getDevFails(modal.user.id);
+    const cur = (prev && prev.lockedUntil <= Date.now() && prev.lockedUntil > 0)
+      ? { count: 0, lockedUntil: 0 }
+      : (prev ?? { count: 0, lockedUntil: 0 });
     cur.count++;
     if (cur.count >= DEV_AUTH_MAX_FAILS) {
       cur.lockedUntil = Date.now() + DEV_AUTH_LOCKOUT_MS;
@@ -523,7 +539,7 @@ async function handleDevPasswordModal(modal: ModalSubmitInteraction): Promise<vo
         lockoutMin: DEV_AUTH_LOCKOUT_MS / 60_000,
       });
     }
-    devAuthFails.set(modal.user.id, cur);
+    await setDevFails(modal.user.id, cur);
 
     logAudit('DEV_AUTH_FAILED', 'SECURITY', {
       userId: modal.user.id,
@@ -540,7 +556,7 @@ async function handleDevPasswordModal(modal: ModalSubmitInteraction): Promise<vo
   }
 
   pendingDevAuth.delete(modal.customId);
-  devAuthFails.delete(modal.user.id); // Reset bei Erfolg
+  await clearDevFails(modal.user.id); // Reset bei Erfolg
 
   logAudit('DEV_AUTH_SUCCESS', 'AUTH', {
     userId: modal.user.id,
@@ -548,7 +564,7 @@ async function handleDevPasswordModal(modal: ModalSubmitInteraction): Promise<vo
   });
 
   // 2-Stunden-Session freischalten
-  devAuthenticatedUsers.set(modal.user.id, Date.now() + DEV_SESSION_MS);
+  await setDevSession(modal.user.id, Date.now() + DEV_SESSION_MS);
 
   await modal.reply({
     content: `✅ Developer-Zugang für **2 Stunden** freigeschaltet. Verwende \`/${pendingData.commandName}\` erneut.`,
@@ -739,6 +755,12 @@ async function handlePollVoteButton(btn: ButtonInteraction): Promise<void> {
       await btn.editReply({ content: '❌ Umfrage nicht gefunden.' });
       return;
     }
+    // Mandantentrennung: Poll darf nur in seiner eigenen Guild bedient werden
+    // (Bestandsdaten ohne guildId bleiben aus Kompatibilitaet zugaenglich).
+    if (poll.guildId && poll.guildId !== btn.guildId) {
+      await btn.editReply({ content: '❌ Umfrage nicht gefunden.' });
+      return;
+    }
     if (poll.status !== 'ACTIVE' || (poll.endsAt && poll.endsAt <= new Date())) {
       await btn.editReply({ content: '❌ Umfrage ist nicht mehr aktiv.' });
       return;
@@ -751,11 +773,14 @@ async function handlePollVoteButton(btn: ButtonInteraction): Promise<void> {
 
     let userMessage: string;
     if (existing) {
-      await prisma.pollVote.delete({ where: { id: existing.id } });
-      await prisma.poll.update({
-        where: { id: pollId },
-        data: { totalVotes: { decrement: 1 } },
-      });
+      // Atomar: Stimme loeschen + Counter dekrementieren (sonst Counter-Drift bei Crash).
+      await prisma.$transaction([
+        prisma.pollVote.delete({ where: { id: existing.id } }),
+        prisma.poll.update({
+          where: { id: pollId },
+          data: { totalVotes: { decrement: 1 } },
+        }),
+      ]);
       userMessage = '↩️ Deine Stimme wurde zurückgezogen.';
       logAudit('POLL_VOTE_REMOVED', 'POLL', { pollId, userId: dbUser.id, optionId });
     } else {
@@ -765,13 +790,16 @@ async function handlePollVoteButton(btn: ButtonInteraction): Promise<void> {
           where: { pollId, userId: dbUser.id },
         });
         if (prev.length > 0) {
-          await prisma.pollVote.deleteMany({
-            where: { pollId, userId: dbUser.id },
-          });
-          await prisma.poll.update({
-            where: { id: pollId },
-            data: { totalVotes: { decrement: prev.length } },
-          });
+          // Atomar: alte Stimmen weg + Counter um die exakte Anzahl korrigieren.
+          await prisma.$transaction([
+            prisma.pollVote.deleteMany({
+              where: { pollId, userId: dbUser.id },
+            }),
+            prisma.poll.update({
+              where: { id: pollId },
+              data: { totalVotes: { decrement: prev.length } },
+            }),
+          ]);
         }
       }
 
@@ -823,6 +851,12 @@ async function handleGiveawayEnterButton(btn: ButtonInteraction): Promise<void> 
       await btn.editReply({ content: '❌ Giveaway nicht gefunden.' });
       return;
     }
+    // Mandantentrennung: Giveaway darf nur in seiner eigenen Guild bedient
+    // werden (Bestandsdaten ohne guildId bleiben kompatibel zugaenglich).
+    if (giveaway.guildId && giveaway.guildId !== btn.guildId) {
+      await btn.editReply({ content: '❌ Giveaway nicht gefunden.' });
+      return;
+    }
     if (giveaway.status !== 'ACTIVE' || giveaway.endsAt <= new Date()) {
       await btn.editReply({ content: '❌ Giveaway ist nicht mehr aktiv.' });
       return;
@@ -862,9 +896,15 @@ async function handleGiveawayEnterButton(btn: ButtonInteraction): Promise<void> 
       userMessage = '↩️ Teilnahme zurückgezogen.';
       logAudit('GIVEAWAY_LEAVE', 'GIVEAWAY', { giveawayId, userId: dbUser.id });
     } else {
-      await prisma.giveawayEntry.create({
-        data: { giveawayId, userId: dbUser.id },
-      });
+      try {
+        await prisma.giveawayEntry.create({
+          data: { giveawayId, userId: dbUser.id },
+        });
+      } catch (e) {
+        // Race-Schutz: Parallel-Klick kann den Eintrag bereits angelegt haben.
+        // Der Unique-Constraint (giveawayId, userId) macht das idempotent.
+        if ((e as { code?: string })?.code !== 'P2002') throw e;
+      }
       userMessage = '🎉 Du nimmst jetzt teil!';
       logAudit('GIVEAWAY_ENTER', 'GIVEAWAY', { giveawayId, userId: dbUser.id });
     }

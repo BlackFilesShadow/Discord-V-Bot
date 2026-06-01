@@ -22,6 +22,7 @@ import crypto from 'crypto';
 export async function createGiveaway(params: {
   creatorDiscordId: string;
   channelId: string;
+  guildId: string;
   prize: string;
   description?: string;
   durationSeconds: number;
@@ -45,6 +46,7 @@ export async function createGiveaway(params: {
     data: {
       creatorId: creator.id,
       channelId: params.channelId,
+      guildId: params.guildId,
       prize: params.prize,
       description: params.description,
       duration: params.durationSeconds,
@@ -241,14 +243,25 @@ export function startGiveawayScheduler(client: Client): void {
 
   setInterval(async () => {
     try {
+      // Shard-Filter: nur Giveaways eigener Guilds (oder Legacy ohne guildId).
+      // Bei Single-Instance enthaelt der Cache alle Guilds -> No-Op.
+      const shardGuildIds = [...client.guilds.cache.keys()];
       const expiredGiveaways = await prisma.giveaway.findMany({
         where: {
           status: 'ACTIVE',
           endsAt: { lte: new Date() },
+          OR: [{ guildId: { in: shardGuildIds } }, { guildId: null }],
         },
       });
 
       for (const giveaway of expiredGiveaways) {
+        // Atomarer Claim: nur EINE Instanz/Shard beendet das Giveaway (Multi-Instance-Schutz
+        // gegen doppelte Gewinnerziehung).
+        const claim = await prisma.giveaway.updateMany({
+          where: { id: giveaway.id, status: 'ACTIVE' },
+          data: { status: 'ENDED' },
+        });
+        if (claim.count === 0) continue; // bereits von anderer Instanz verarbeitet
         const result = await drawWinners(giveaway.id);
         const participantCount = await prisma.giveawayEntry.count({
           where: { giveawayId: giveaway.id },

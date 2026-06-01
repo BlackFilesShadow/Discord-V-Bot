@@ -9,6 +9,7 @@
 
 import axios from 'axios';
 import { errorCounter } from './metrics';
+import { redactObject, redactText } from '../modules/nitrado/mirror/redactor';
 
 const WEBHOOK_URL = process.env.ERROR_WEBHOOK_URL || '';
 const ENABLED = WEBHOOK_URL.startsWith('https://discord.com/api/webhooks/');
@@ -77,10 +78,12 @@ export function reportError(err: unknown, ctx: ErrorContext): void {
   if (ctx.userId) fields.push({ name: 'User', value: ctx.userId, inline: true });
   if (ctx.guildId) fields.push({ name: 'Guild', value: ctx.guildId, inline: true });
   if (ctx.extra) {
-    const extraStr = JSON.stringify(ctx.extra).slice(0, 500);
+    // ctx.extra kann beliebige Metadaten enthalten (Tokens, IPs, PII) und geht an
+    // einen EXTERNEN Discord-Webhook — daher vor dem Versand redigieren.
+    const extraStr = JSON.stringify(redactObject(ctx.extra)).slice(0, 500);
     fields.push({ name: 'Extra', value: '```json\n' + extraStr + '\n```' });
   }
-  if (stack) fields.push({ name: 'Stack', value: '```\n' + stack.slice(0, 900) + '\n```' });
+  if (stack) fields.push({ name: 'Stack', value: '```\n' + redactText(stack).slice(0, 900) + '\n```' });
 
   // Fire-and-forget mit kurzem Timeout — Webhook-Fehler duerfen App nicht stoeren.
   axios
@@ -91,7 +94,7 @@ export function reportError(err: unknown, ctx: ErrorContext): void {
         embeds: [
           {
             title: `\u26a0\ufe0f ${ctx.source.toUpperCase()} Error`,
-            description: '```\n' + message.slice(0, 1500) + '\n```',
+            description: '```\n' + redactText(message).slice(0, 1500) + '\n```',
             color: 0xe74c3c,
             timestamp: new Date().toISOString(),
             fields,

@@ -341,6 +341,7 @@ enum AppealStatus {
 // Auto-Mod Filter
 model AutoModFilter {
   id         String           @id @default(uuid())
+  guildId    String? // Mandantentrennung (nullable fuer Bestandsdaten)
   pattern    String // Regex oder Keyword
   filterType FilterType
   action     ModerationAction @default(FILTER)
@@ -353,6 +354,7 @@ model AutoModFilter {
 
   @@index([filterType])
   @@index([isActive])
+  @@index([guildId])
 }
 
 enum FilterType {
@@ -415,6 +417,7 @@ enum AiAnalysisType {
 
 model Giveaway {
   id             String         @id @default(uuid())
+  guildId        String? // Mandantentrennung (nullable fuer Bestandsdaten)
   creatorId      String
   creator        User           @relation(fields: [creatorId], references: [id], onDelete: Cascade)
   channelId      String
@@ -439,6 +442,7 @@ model Giveaway {
   @@index([status])
   @@index([endsAt])
   @@index([channelId])
+  @@index([guildId])
 }
 
 enum GiveawayStatus {
@@ -632,6 +636,7 @@ model UserRoleAssignment {
 
 model Poll {
   id            String     @id @default(uuid())
+  guildId       String? // Mandantentrennung (nullable fuer Bestandsdaten)
   creatorId     String
   channelId     String
   messageId     String?
@@ -655,6 +660,7 @@ model Poll {
   @@index([status])
   @@index([channelId])
   @@index([endsAt])
+  @@index([guildId])
 }
 
 enum PollType {
@@ -926,6 +932,7 @@ enum DeletionStatus {
 
 model Feed {
   id            String    @id @default(uuid())
+  guildId       String? // Mandantentrennung (nullable fuer Bestandsdaten)
   name          String
   feedType      FeedType
   url           String
@@ -946,6 +953,7 @@ model Feed {
 
   @@index([feedType])
   @@index([isActive])
+  @@index([guildId])
 }
 
 enum FeedType {

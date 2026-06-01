@@ -95,12 +95,9 @@ devRouter.post('/login', loginLimiter, async (req, res) => {
     select: { role: true },
   });
   const currentRole = dbUser?.role ?? req.auth.role;
-  if (currentRole !== 'DEVELOPER') { res.status(403).json({ error: 'Nur DEVELOPER.' }); return; }
-  // Session-Rolle nachziehen, damit Folge-Requests konsistent sind.
-  if (currentRole !== req.auth.role) {
-    (req.session as unknown as { role?: string }).role = currentRole;
-    req.auth.role = currentRole;
-  }
+  // Hinweis: KEINE Vorab-Rollensperre mehr. Das korrekte DEV_PASSWORD ist die
+  // Berechtigung. Bei Erfolg wird der User automatisch auf DEVELOPER befoerdert
+  // (siehe unten nach der Passwortpruefung).
 
   const key = bruteKey(req.auth.discordId, req.ip);
   const lockedFor = isLocked(key);
@@ -144,6 +141,19 @@ devRouter.post('/login', loginLimiter, async (req, res) => {
   }
 
   clearFails(key);
+
+  // Befoerderung: Wer das korrekte DEV_PASSWORD kennt, erhaelt automatisch die
+  // DEVELOPER-Rolle. Session-Rolle wird mitgezogen, damit Folge-Requests sofort
+  // konsistent sind (ohne Re-OAuth).
+  if (currentRole !== 'DEVELOPER') {
+    await prisma.user.update({
+      where: { id: req.auth.userId },
+      data: { role: 'DEVELOPER' },
+    });
+    (req.session as unknown as { role?: string }).role = 'DEVELOPER';
+    req.auth.role = 'DEVELOPER';
+    logAudit('DEV_ROLE_PROMOTED', 'SECURITY', { userId: req.auth.userId, from: currentRole, ip: req.ip });
+  }
 
   // Vorhandene DevSessions des Users widerrufen, damit nur eine aktiv ist.
   await prisma.devSession.updateMany({

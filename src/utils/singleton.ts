@@ -13,7 +13,15 @@ import crypto from 'crypto';
  * - Heartbeat alle 10s aktualisieren.
  */
 
-const LOCK_KEY = 'bot:singleton:lock';
+/**
+ * Shard-spezifischer Lock-Key. Unter dem discord.js-ShardingManager laeuft jeder
+ * Shard als eigener Prozess (eigene index.ts) und setzt process.env.SHARDS auf seine
+ * Shard-ID. Ein globaler Lock wuerde alle Shards bis auf einen per process.exit(2)
+ * beenden. Per-Shard-Lock erlaubt Multi-Shard-Betrieb, verhindert aber weiterhin
+ * zwei Prozesse fuer dieselbe Shard-ID (Doppelantworten).
+ */
+const shardId = process.env.SHARDS ?? 'solo';
+const LOCK_KEY = `bot:singleton:lock:${shardId}`;
 const HEARTBEAT_INTERVAL_MS = 10_000;
 const STALE_THRESHOLD_MS = 30_000;
 

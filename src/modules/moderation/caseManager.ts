@@ -277,9 +277,9 @@ export async function createAppeal(
 /**
  * Case-Lookup: Details zu einem Case abrufen.
  */
-export async function getCaseDetails(caseNumber: number) {
-  return prisma.moderationCase.findUnique({
-    where: { caseNumber },
+export async function getCaseDetails(caseNumber: number, guildId?: string) {
+  return prisma.moderationCase.findFirst({
+    where: { caseNumber, ...(guildId ? { guildId } : {}) },
     include: {
       targetUser: { select: { discordId: true, username: true } },
       moderator: { select: { discordId: true, username: true } },
@@ -289,14 +289,15 @@ export async function getCaseDetails(caseNumber: number) {
 }
 
 /**
- * Cases für einen User abrufen.
+ * Cases für einen User abrufen. Wird `guildId` gesetzt, werden nur Cases
+ * dieser Guild zurueckgegeben (Mandantentrennung).
  */
-export async function getUserCases(discordId: string) {
+export async function getUserCases(discordId: string, guildId?: string) {
   const user = await prisma.user.findUnique({ where: { discordId } });
   if (!user) return [];
 
   return prisma.moderationCase.findMany({
-    where: { targetUserId: user.id },
+    where: { targetUserId: user.id, ...(guildId ? { guildId } : {}) },
     include: {
       moderator: { select: { username: true } },
       appeals: true,
@@ -312,6 +313,9 @@ export async function processExpiredCases(guild: Guild): Promise<number> {
   const expiredCases = await prisma.moderationCase.findMany({
     where: {
       isActive: true,
+      // Guild-Trennung: nur Cases dieser Guild aufheben. Verhindert, dass ein
+      // Temp-Ban/Mute aus Guild B faelschlich in Guild A revoked wird.
+      guildId: guild.id,
       expiresAt: { lte: new Date() },
       action: { in: ['TEMP_BAN', 'TEMP_MUTE'] },
     },

@@ -1,10 +1,11 @@
-import { exec } from 'child_process';
+import { exec, execFile } from 'child_process';
 import { promisify } from 'util';
 import fs from 'fs/promises';
 import path from 'path';
 import { logger, logAudit } from '../../utils/logger';
 
 const execAsync = promisify(exec);
+const execFileAsync = promisify(execFile);
 
 /**
  * Virenscan-Integration (Sektion 2):
@@ -44,7 +45,9 @@ async function isClamAvAvailable(): Promise<boolean> {
  */
 async function scanWithClamAv(filePath: string): Promise<ScanResult> {
   try {
-    const { stdout, stderr } = await execAsync(`clamscan --no-summary "${filePath}"`, {
+    // execFile statt exec: keine Shell-Interpolation -> kein Shell-Injection-Risiko
+    // ueber manipulierte Dateipfade.
+    const { stdout, stderr } = await execFileAsync('clamscan', ['--no-summary', filePath], {
       timeout: 60000,
     });
 

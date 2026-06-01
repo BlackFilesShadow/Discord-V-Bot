@@ -112,6 +112,7 @@ export const GLOBAL_AI_TRIGGERS: AiTrigger[] = [
   },
 ];
 import prisma from '../../database/prisma';
+import { isSafeRegexPattern, safeRegexTest } from '../../utils/safeRegex';
 
 /**
  * AI-Trigger pro Guild (max 25, siehe MAX_TRIGGERS_PER_GUILD).
@@ -188,10 +189,11 @@ export async function addTrigger(guildId: string, trigger: AiTrigger): Promise<{
   if (combined.some(t => t.id === trigger.id)) {
     return { ok: false, message: `Trigger-ID "${trigger.id}" existiert bereits.` };
   }
-  // Regex validieren
+  // Regex validieren (inkl. ReDoS-Schutz: keine verschachtelten Quantoren).
   if (trigger.triggerType === 'regex') {
-    try { new RegExp(trigger.trigger); }
-    catch { return { ok: false, message: 'Ung\u00fcltiges Regex-Pattern.' }; }
+    if (!isSafeRegexPattern(trigger.trigger)) {
+      return { ok: false, message: 'Ungültiges oder potenziell unsicheres Regex-Pattern (ReDoS-Schutz).' };
+    }
   }
   guildOnly.push(trigger);
   await saveTriggers(guildId, guildOnly, trigger.createdBy);
@@ -231,8 +233,7 @@ export function findMatchingTrigger(
     if (t.triggerType === 'keyword' || t.triggerType === 'mention') {
       match = lower.includes(t.trigger.toLowerCase());
     } else if (t.triggerType === 'regex') {
-      try { match = new RegExp(t.trigger, 'i').test(content); }
-      catch { match = false; }
+      match = safeRegexTest(t.trigger, content, 'i');
     }
     if (match) return t;
   }

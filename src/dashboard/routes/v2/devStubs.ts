@@ -32,6 +32,24 @@ import { logger, logAudit, logAuditDb } from '../../../utils/logger';
 export const devStubsRouter = Router();
 devStubsRouter.use(requireDev);
 
+/**
+ * Pseudonymisiert eine IP-Adresse fuer die Anzeige (DSGVO/Datensparsamkeit):
+ * letztes IPv4-Oktett bzw. die letzten IPv6-Segmente werden maskiert, sodass
+ * das Subnetz/der Angreifer-Cluster erkennbar bleibt, die exakte IP aber nicht.
+ */
+function maskIp(ip: string | null): string | null {
+  if (!ip) return ip;
+  if (ip.includes('.')) {
+    const parts = ip.split('.');
+    if (parts.length === 4) return `${parts[0]}.${parts[1]}.${parts[2]}.x`;
+  }
+  if (ip.includes(':')) {
+    const seg = ip.split(':');
+    if (seg.length > 2) return `${seg[0]}:${seg[1]}:::x`;
+  }
+  return 'x';
+}
+
 // EventLoop-Histogramm laeuft permanent, damit Mittelwert+Max sinnvoll sind.
 const eldHist = monitorEventLoopDelay({ resolution: 20 });
 eldHist.enable();
@@ -193,7 +211,7 @@ devStubsRouter.get('/security', async (_req, res) => {
     eventsByType: eventsByType.map(r => ({
       eventType: r.eventType, severity: r.severity, count: r._count._all,
     })),
-    recentEvents: recentEvents.map(r => ({ ...r, createdAt: r.createdAt.toISOString() })),
+    recentEvents: recentEvents.map(r => ({ ...r, ipAddress: maskIp(r.ipAddress), createdAt: r.createdAt.toISOString() })),
     generatedAt: new Date().toISOString(),
   });
 });
@@ -268,7 +286,7 @@ devStubsRouter.post('/debug/heap-snapshot', heapSnapshotLimiter, (req, res) => {
     v8.writeHeapSnapshot(file);
   } catch (e) {
     logger.error('heap-snapshot fehlgeschlagen', { err: (e as Error).message });
-    res.status(500).json({ error: 'snapshot_failed', message: (e as Error).message });
+    res.status(500).json({ error: 'snapshot_failed' });
     return;
   }
   logAudit('DEV_HEAP_SNAPSHOT', 'SECURITY', { userId: req.auth.userId, file, reason });

@@ -2,18 +2,34 @@ import crypto from 'crypto';
 import speakeasy from 'speakeasy';
 
 const ALGORITHM = 'aes-256-gcm';
+const KEY_BYTES = 32; // AES-256 -> 32-Byte-Schluessel (64 Hex-Zeichen)
+const IV_BYTES = 12; // GCM-Standard-IV (96 Bit). IV wird pro Ciphertext gespeichert,
+//                      daher sind aeltere 16-Byte-IV-Blobs weiterhin entschluesselbar.
+const AUTH_TAG_BYTES = 16;
 
 /**
  * Verschlüsselung/Entschlüsselung für Token und sensible Daten.
  * Sektion 12: Refresh-Token verschlüsselt, nur Server-seitig.
  */
 
+/** Validiert und liest den Hex-Schluessel; wirft kontrolliert bei falscher Laenge. */
+function loadKey(encryptionKey: string): Buffer {
+  if (typeof encryptionKey !== 'string' || !/^[0-9a-fA-F]+$/.test(encryptionKey)) {
+    throw new Error('Ungueltiger Encryption-Key (kein Hex).');
+  }
+  const key = Buffer.from(encryptionKey, 'hex');
+  if (key.length !== KEY_BYTES) {
+    throw new Error(`Encryption-Key muss ${KEY_BYTES} Bytes (${KEY_BYTES * 2} Hex-Zeichen) sein.`);
+  }
+  return key;
+}
+
 /**
  * Verschlüsselt einen String mit AES-256-GCM.
  */
 export function encrypt(text: string, encryptionKey: string): string {
-  const key = Buffer.from(encryptionKey, 'hex');
-  const iv = crypto.randomBytes(16);
+  const key = loadKey(encryptionKey);
+  const iv = crypto.randomBytes(IV_BYTES);
   const cipher = crypto.createCipheriv(ALGORITHM, key, iv);
 
   let encrypted = cipher.update(text, 'utf8', 'hex');
@@ -25,13 +41,24 @@ export function encrypt(text: string, encryptionKey: string): string {
 
 /**
  * Entschlüsselt einen mit encrypt() verschlüsselten String.
+ * Validiert Format und Bestandteile, bevor die Krypto-Engine aufgerufen wird,
+ * damit kein roher TypeError mit internen Details nach aussen dringt.
  */
 export function decrypt(encryptedText: string, encryptionKey: string): string {
-  const key = Buffer.from(encryptionKey, 'hex');
-  const [ivHex, authTagHex, encrypted] = encryptedText.split(':');
-
+  const key = loadKey(encryptionKey);
+  if (typeof encryptedText !== 'string') {
+    throw new Error('Ungueltiger Ciphertext.');
+  }
+  const parts = encryptedText.split(':');
+  if (parts.length !== 3 || !parts.every((p) => /^[0-9a-fA-F]*$/.test(p) && p.length > 0)) {
+    throw new Error('Ungueltiges Ciphertext-Format.');
+  }
+  const [ivHex, authTagHex, encrypted] = parts;
   const iv = Buffer.from(ivHex, 'hex');
   const authTag = Buffer.from(authTagHex, 'hex');
+  if (authTag.length !== AUTH_TAG_BYTES || iv.length < 12 || iv.length > 16) {
+    throw new Error('Ungueltige IV-/AuthTag-Laenge.');
+  }
   const decipher = crypto.createDecipheriv(ALGORITHM, key, iv);
   decipher.setAuthTag(authTag);
 
@@ -84,11 +111,12 @@ export function verify2FAToken(secret: string, token: string): boolean {
 
 /**
  * Generiert Backup-Codes für 2FA.
+ * 8 Zufallsbytes pro Code (64 Bit Entropie) als Uppercase-Hex.
  */
 export function generateBackupCodes(count: number = 10): string[] {
   const codes: string[] = [];
   for (let i = 0; i < count; i++) {
-    codes.push(crypto.randomBytes(4).toString('hex').toUpperCase());
+    codes.push(crypto.randomBytes(8).toString('hex').toUpperCase());
   }
   return codes;
 }
