@@ -13,6 +13,7 @@
 import { Router } from 'express';
 import { AttachmentBuilder, PermissionFlagsBits } from 'discord.js';
 import { requireGuildPermission } from '../../middleware/auth';
+import prisma from '../../../database/prisma';
 import {
   getWelcomeConfig,
   setWelcomeConfig,
@@ -105,6 +106,30 @@ welcomeRouter.get('/config', requireGuildPermission('welcome.view'), async (req,
   const scope = req.guildScope!;
   const cfg = await getWelcomeConfig(scope.guildId);
   res.json(serialize(cfg));
+});
+
+/**
+ * Read-only Auto-Rollen-Liste (Onboarding-Kontext). Verwaltung bleibt im
+ * Discord-Command `/autorole`. Strikte guildId-Scope-Pruefung.
+ */
+welcomeRouter.get('/autoroles', requireGuildPermission('welcome.view'), async (req, res) => {
+  const scope = req.guildScope!;
+  const rows = await prisma.autoRole.findMany({
+    where: { guildId: scope.guildId },
+    orderBy: { createdAt: 'desc' },
+  });
+  res.json({
+    autoroles: rows.map(r => ({
+      id: r.id,
+      roleId: r.roleId,
+      roleName: r.roleName,
+      triggerType: r.triggerType,
+      triggerValue: r.triggerValue,
+      isActive: r.isActive,
+      expiresAt: r.expiresAt?.toISOString() ?? null,
+      createdAt: r.createdAt.toISOString(),
+    })),
+  });
 });
 
 welcomeRouter.post('/config', requireGuildPermission('welcome.manage'), async (req, res) => {

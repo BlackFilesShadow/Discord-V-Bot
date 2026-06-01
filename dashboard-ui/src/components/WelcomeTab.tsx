@@ -1,20 +1,23 @@
 /**
- * Willkommen-System (Guild-Level). Begruessung neuer Mitglieder.
+ * Willkommen-System (Guild-Level). Sammel-Page fuer Onboarding neuer Mitglieder:
+ * Willkommensnachricht (/welcome), Auto-Rollen (Read-only /autorole) + Selfrole-Hinweis.
  *
  * Backend: GET/POST /api/v2/guilds/:guildId/welcome/config,
  *          POST /api/v2/guilds/:guildId/welcome/test,
- *          POST /api/v2/guilds/:guildId/welcome/disable
- * Datenhaltung: BotConfig key=`welcome:<guildId>` (welcomeManager).
+ *          POST /api/v2/guilds/:guildId/welcome/disable,
+ *          GET  /api/v2/guilds/:guildId/welcome/autoroles
+ * Datenhaltung: BotConfig key=`welcome:<guildId>` (welcomeManager) + AutoRole-Model.
  */
 import { useEffect, useState } from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
-import { Sparkles, Send, Power, Save, RotateCcw } from 'lucide-react';
+import { Sparkles, Send, Power, Save, RotateCcw, UserPlus, Shield, AlertTriangle, CheckCircle2, Circle } from 'lucide-react';
 import { api, ApiError } from '@/lib/api';
 import { Card, CardHeader, CardTitle, CardDesc } from '@/components/ui/Card';
 import { Button } from '@/components/ui/Button';
 import { Select } from '@/components/ui/Select';
 import { Switch } from '@/components/ui/Switch';
 import { StatCard } from '@/components/ui/StatCard';
+import { Badge } from '@/components/ui/Badge';
 import { useToast } from '@/components/ui/Toast';
 
 interface WelcomeConfig {
@@ -27,6 +30,22 @@ interface WelcomeConfig {
 }
 
 interface DiscordChannel { id: string; name: string; type: number; parentId: string | null }
+
+interface AutoRole {
+  id: string;
+  roleId: string;
+  roleName: string;
+  triggerType: 'JOIN' | 'REACTION' | 'LEVEL' | 'ACTIVITY' | 'EVENT' | 'GIVEAWAY' | 'CUSTOM';
+  triggerValue: string | null;
+  isActive: boolean;
+  expiresAt: string | null;
+  createdAt: string;
+}
+
+const TRIGGER_LABELS: Record<AutoRole['triggerType'], string> = {
+  JOIN: 'Beitritt', REACTION: 'Reaktion', LEVEL: 'Level',
+  ACTIVITY: 'Aktivität', EVENT: 'Event', GIVEAWAY: 'Giveaway', CUSTOM: 'Custom',
+};
 
 const VARIABLES: Array<{ key: string; desc: string; example: string }> = [
   { key: '{user}', desc: 'Erwähnung des neuen Mitglieds', example: '@MaxMustermann' },
@@ -67,7 +86,11 @@ export function WelcomeTab({ guildId, canManage }: { guildId: string; canManage:
     queryFn: () => api.get<{ channels: DiscordChannel[] }>(`/api/v2/guilds/${guildId}/channels`),
     enabled: !!guildId && canManage,
   });
-
+  const autorolesQ = useQuery({
+    queryKey: ['welcome-autoroles', guildId],
+    queryFn: () => api.get<{ autoroles: AutoRole[] }>(`/api/v2/guilds/${guildId}/welcome/autoroles`),
+    enabled: !!guildId && canManage,
+  });
   const [enabled, setEnabled] = useState(true);
   const [channelId, setChannelId] = useState('');
   const [mode, setMode] = useState<'text' | 'ai'>('text');
@@ -97,6 +120,21 @@ export function WelcomeTab({ guildId, canManage }: { guildId: string; canManage:
 
   const channels = channelsQ.data?.channels.filter(c => c.type === 0 || c.type === 5) ?? [];
   const data = cfgQ.data;
+  const autoroles = autorolesQ.data?.autoroles ?? [];
+  const activeAutoroles = autoroles.filter(a => a.isActive);
+  const joinAutoroles = autoroles.filter(a => a.triggerType === 'JOIN');
+  const channelName = (id: string) => channels.find(c => c.id === id)?.name ?? '#' + id.slice(-4);
+
+  // Vollstaendigkeit (Sektion E): System gilt nur als einsatzbereit mit Channel + Nachricht.
+  const channelSet = !!(data?.configured && data.channelId);
+  const messageSet = !!(data?.configured && data.message?.trim());
+  const incomplete = !channelSet || !messageSet;
+  const autoroleStatus: { label: string; variant: 'ok' | 'warn' | 'neutral' } =
+    activeAutoroles.length > 0
+      ? { label: 'Aktiv', variant: 'ok' }
+      : autoroles.length > 0
+        ? { label: 'Konfiguriert (inaktiv)', variant: 'warn' }
+        : { label: 'Integration geplant', variant: 'neutral' };
 
   const buildBody = () => ({ enabled, channelId, message, mode, mediaUrl: mediaUrl.trim() || null });
 
@@ -153,21 +191,70 @@ export function WelcomeTab({ guildId, canManage }: { guildId: string; canManage:
           <Sparkles className="h-5 w-5 text-accent" /> Willkommen
         </h2>
         <p className="text-xs text-muted mt-0.5">
-          Begrüßt neue Mitglieder automatisch in einem Channel. Modus „Text“ verwendet deine Nachricht direkt,
-          Modus „KI“ generiert eine personalisierte Begrüßung anhand deiner Vorgabe.
+          Hier verwaltest du alle Funktionen für neue Mitglieder: Willkommensnachricht, Testnachricht,
+          Vorschau und automatische Rollen.
         </p>
       </div>
 
-      {/* Status */}
-      <div className="grid grid-cols-2 sm:grid-cols-3 gap-3">
-        <StatCard label="Status" value={data?.enabled ? 'Aktiv' : 'Inaktiv'} accent={data?.enabled ? 'ok' : 'neutral'} />
+      {/* A. Übersicht */}
+      <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+        <StatCard label="Willkommen-System" value={data?.enabled ? 'Aktiv' : 'Inaktiv'} accent={data?.enabled ? 'ok' : 'neutral'} />
+        <StatCard label="Channel" value={channelSet ? channelName(data!.channelId) : '—'} accent={channelSet ? 'neutral' : 'warn'} />
+        <StatCard label="Auto-Rollen" value={autoroleStatus.label} accent={autoroleStatus.variant === 'ok' ? 'ok' : autoroleStatus.variant === 'warn' ? 'warn' : 'neutral'} />
         <StatCard label="Modus" value={data?.configured ? (data.mode === 'ai' ? 'KI' : 'Text') : '—'} />
-        <StatCard label="Channel" value={data?.configured && data.channelId ? (channels.find(c => c.id === data.channelId)?.name ?? '#' + data.channelId.slice(-4)) : '—'} />
       </div>
 
-      {/* Einstellungen */}
+      {/* E. Konfig-Warnung */}
+      {incomplete && (
+        <Card className="border-warn/40">
+          <div className="flex items-start gap-2.5">
+            <AlertTriangle className="h-5 w-5 text-warn shrink-0 mt-0.5" />
+            <div>
+              <p className="text-sm font-medium text-white">Willkommen-System ist noch nicht vollständig konfiguriert.</p>
+              <p className="text-xs text-muted mt-0.5">
+                {!channelSet && 'Es ist noch kein Channel gesetzt. '}
+                {!messageSet && 'Es ist noch keine Nachricht gespeichert. '}
+                Setze Channel und Nachricht und speichere, um das System zu aktivieren.
+              </p>
+            </div>
+          </div>
+        </Card>
+      )}
+
+      {/* A. Modul-Liste */}
       <Card>
-        <CardHeader><CardTitle>Einstellungen</CardTitle><CardDesc>Aktivierung, Channel, Modus und Nachricht.</CardDesc></CardHeader>
+        <CardHeader><CardTitle>Onboarding-Module</CardTitle><CardDesc>Alle Funktionen rund um neue Mitglieder.</CardDesc></CardHeader>
+        <div className="mt-2 divide-y divide-border/50">
+          <div className="flex items-center gap-3 py-2.5">
+            <Sparkles className="h-4 w-4 text-accent shrink-0" />
+            <div className="min-w-0 flex-1">
+              <p className="text-sm text-white font-medium">Willkommensnachricht</p>
+              <p className="text-[11px] text-muted">Ersetzt <code className="font-mono">/welcome</code> · wird über das Dashboard verwaltet</p>
+            </div>
+            <Badge variant={data?.enabled ? 'ok' : 'neutral'}>{data?.enabled ? 'Aktiv' : 'Inaktiv'}</Badge>
+          </div>
+          <div className="flex items-center gap-3 py-2.5">
+            <UserPlus className="h-4 w-4 text-accent shrink-0" />
+            <div className="min-w-0 flex-1">
+              <p className="text-sm text-white font-medium">Auto-Rollen</p>
+              <p className="text-[11px] text-muted">Bezogen auf <code className="font-mono">/autorole</code> · unter Willkommen gelistet</p>
+            </div>
+            <Badge variant={autoroleStatus.variant}>{autoroleStatus.label}</Badge>
+          </div>
+          <div className="flex items-center gap-3 py-2.5">
+            <Shield className="h-4 w-4 text-muted shrink-0" />
+            <div className="min-w-0 flex-1">
+              <p className="text-sm text-white font-medium">Selfrole</p>
+              <p className="text-[11px] text-muted">Bezogen auf <code className="font-mono">/selfrole</code> · Admin-Command bleibt in Discord</p>
+            </div>
+            <Badge variant="info">Bleibt Discord</Badge>
+          </div>
+        </div>
+      </Card>
+
+      {/* B. Willkommensnachricht */}
+      <Card>
+        <CardHeader><CardTitle>Willkommensnachricht</CardTitle><CardDesc>Aktivierung, Channel, Modus und Nachricht.</CardDesc></CardHeader>
         <div className="space-y-4 mt-2">
           <Switch checked={enabled} onChange={setEnabled} label="Willkommen-System aktiviert" />
 
@@ -234,9 +321,9 @@ export function WelcomeTab({ guildId, canManage }: { guildId: string; canManage:
         </div>
       </Card>
 
-      {/* Vorschau */}
+      {/* D. Vorschau */}
       <Card>
-        <CardHeader><CardTitle>Vorschau</CardTitle><CardDesc>Beispielhafte Ersetzung mit Beispieldaten.</CardDesc></CardHeader>
+        <CardHeader><CardTitle>Vorschau & Test</CardTitle><CardDesc>Beispielhafte Ersetzung mit Beispieldaten.</CardDesc></CardHeader>
         <div className="mt-2 rounded-lg border border-border/60 bg-bg/60 p-3">
           {mode === 'ai' ? (
             <p className="text-xs text-muted italic">
@@ -246,6 +333,61 @@ export function WelcomeTab({ guildId, canManage }: { guildId: string; canManage:
           ) : (
             <p className="text-sm text-white/90 whitespace-pre-wrap break-words">{renderPreview(message) || '—'}</p>
           )}
+        </div>
+        <p className="text-[11px] text-muted mt-2">
+          Beispielwerte: <code className="font-mono">{'{user}'}</code> → @MaxMustermann ·{' '}
+          <code className="font-mono">{'{guild}'}</code> → Mein Server ·{' '}
+          <code className="font-mono">{'{count}'}</code> → 128
+        </p>
+      </Card>
+
+      {/* C. Auto-Rollen */}
+      <Card>
+        <CardHeader>
+          <div className="flex items-center justify-between gap-2">
+            <CardTitle>Auto-Rollen</CardTitle>
+            <Badge variant={autoroleStatus.variant}>{autoroleStatus.label}</Badge>
+          </div>
+          <CardDesc>Automatisch vergebene Rollen für neue Mitglieder (Trigger „Beitritt" u. a.).</CardDesc>
+        </CardHeader>
+        <div className="mt-2 space-y-2">
+          {autorolesQ.isLoading && <div className="h-16 rounded-lg skeleton" />}
+          {!autorolesQ.isLoading && autoroles.length === 0 && (
+            <p className="text-xs text-muted">
+              Auto-Rollen werden hier zukünftig verwaltet. Der Discord-Command{' '}
+              <code className="font-mono">/autorole</code> bleibt vorerst aktiv. Aktuell sind keine Auto-Rollen konfiguriert.
+            </p>
+          )}
+          {!autorolesQ.isLoading && autoroles.length > 0 && (
+            <>
+              {joinAutoroles.length > 0 && (
+                <p className="text-[11px] text-muted">
+                  {joinAutoroles.length} Rolle(n) werden beim Beitritt automatisch vergeben.
+                </p>
+              )}
+              <div className="divide-y divide-border/50">
+                {autoroles.map(a => (
+                  <div key={a.id} className="flex items-center gap-2.5 py-2">
+                    {a.isActive
+                      ? <CheckCircle2 className="h-4 w-4 text-ok shrink-0" />
+                      : <Circle className="h-4 w-4 text-muted shrink-0" />}
+                    <div className="min-w-0 flex-1">
+                      <p className="text-sm text-white truncate">@{a.roleName}</p>
+                      <p className="text-[11px] text-muted">
+                        Trigger: {TRIGGER_LABELS[a.triggerType]}{a.triggerValue ? ` (${a.triggerValue})` : ''}
+                        {a.expiresAt ? ` · befristet bis ${new Date(a.expiresAt).toLocaleDateString('de-DE')}` : ''}
+                      </p>
+                    </div>
+                    <Badge variant={a.isActive ? 'ok' : 'neutral'}>{a.isActive ? 'Aktiv' : 'Inaktiv'}</Badge>
+                  </div>
+                ))}
+              </div>
+            </>
+          )}
+          <p className="text-[11px] text-muted border-t border-border/50 pt-2 mt-1">
+            Verwaltung (Erstellen, Löschen, Trigger ändern) erfolgt aktuell über den Discord-Command{' '}
+            <code className="font-mono">/autorole</code>. Die vollständige Dashboard-Integration ist geplant.
+          </p>
         </div>
       </Card>
 
