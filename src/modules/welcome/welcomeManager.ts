@@ -1,3 +1,4 @@
+import * as path from 'node:path';
 import prisma from '../../database/prisma';
 import { renderTemplate } from '../ai/triggers';
 
@@ -50,4 +51,19 @@ export function renderWelcomeMessage(message: string, vars: { user: string; guil
     .replace(/\{guild\}/g, vars.guild)
     .replace(/\{count\}/g, String(vars.memberCount))
     .replace(/\{member_count\}/g, String(vars.memberCount));
+}
+
+/**
+ * Loest die in der Config gespeicherte mediaUrl in eine fuer AttachmentBuilder
+ * nutzbare Quelle auf. Lokal hochgeladene Bilder werden als `/uploads/...`-Pfad
+ * gespeichert (siehe POST /welcome/media) und muessen zu einem absoluten
+ * Dateisystempfad relativ zu process.cwd() aufgeloest werden, damit discord.js
+ * die Datei von der Platte anhaengen kann. Externe http(s)-URLs bleiben
+ * unveraendert (discord.js laedt sie selbst).
+ */
+export function resolveWelcomeMediaSource(mediaUrl: string): string {
+  if (mediaUrl.startsWith('/uploads/')) {
+    return path.join(process.cwd(), mediaUrl.replace(/^\/+/, ''));
+  }
+  return mediaUrl;
 }

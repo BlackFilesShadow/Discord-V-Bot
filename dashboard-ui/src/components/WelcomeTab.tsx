@@ -8,9 +8,9 @@
  *          GET  /api/v2/guilds/:guildId/welcome/autoroles
  * Datenhaltung: BotConfig key=`welcome:<guildId>` (welcomeManager) + AutoRole-Model.
  */
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
-import { Sparkles, Send, Power, Save, RotateCcw, UserPlus, Shield, AlertTriangle, CheckCircle2, Circle } from 'lucide-react';
+import { Sparkles, Send, Power, Save, RotateCcw, UserPlus, Shield, AlertTriangle, CheckCircle2, Circle, Upload, Trash2, Plus, X } from 'lucide-react';
 import { api, ApiError } from '@/lib/api';
 import { Card, CardHeader, CardTitle, CardDesc } from '@/components/ui/Card';
 import { Button } from '@/components/ui/Button';
@@ -30,6 +30,8 @@ interface WelcomeConfig {
 }
 
 interface DiscordChannel { id: string; name: string; type: number; parentId: string | null }
+
+interface DiscordRole { id: string; name: string; color: string; position: number; managed: boolean }
 
 interface AutoRole {
   id: string;
@@ -91,12 +93,21 @@ export function WelcomeTab({ guildId, canManage }: { guildId: string; canManage:
     queryFn: () => api.get<{ autoroles: AutoRole[] }>(`/api/v2/guilds/${guildId}/welcome/autoroles`),
     enabled: !!guildId && canManage,
   });
+  const rolesQ = useQuery({
+    queryKey: ['guild-roles', guildId],
+    queryFn: () => api.get<{ roles: DiscordRole[] }>(`/api/v2/guilds/${guildId}/roles`),
+    enabled: !!guildId && canManage,
+  });
   const [enabled, setEnabled] = useState(true);
   const [channelId, setChannelId] = useState('');
   const [mode, setMode] = useState<'text' | 'ai'>('text');
   const [message, setMessage] = useState(DEFAULT_MESSAGE);
   const [mediaUrl, setMediaUrl] = useState('');
   const [busy, setBusy] = useState<null | 'save' | 'test' | 'disable'>(null);
+  const [uploading, setUploading] = useState(false);
+  const [selectedRoleId, setSelectedRoleId] = useState('');
+  const [roleBusy, setRoleBusy] = useState<string | null>(null);
+  const fileInputRef = useRef<HTMLInputElement>(null);
 
   // Server-State in lokale Form-States spiegeln (nur beim Laden / Reload).
   useEffect(() => {
@@ -125,6 +136,12 @@ export function WelcomeTab({ guildId, canManage }: { guildId: string; canManage:
   const joinAutoroles = autoroles.filter(a => a.triggerType === 'JOIN');
   const channelName = (id: string) => channels.find(c => c.id === id)?.name ?? '#' + id.slice(-4);
 
+  // Auswaehlbare Rollen: keine @everyone (bereits serverseitig gefiltert), keine
+  // managed/integration-Rollen und keine bereits gesetzten Auto-Rollen.
+  const usedRoleIds = new Set(autoroles.map(a => a.roleId));
+  const assignableRoles = (rolesQ.data?.roles ?? []).filter(r => !r.managed && !usedRoleIds.has(r.id));
+  const hasMedia = mediaUrl.trim().length > 0;
+
   // Vollstaendigkeit (Sektion E): System gilt nur als einsatzbereit mit Channel + Nachricht.
   const channelSet = !!(data?.configured && data.channelId);
   const messageSet = !!(data?.configured && data.message?.trim());
@@ -134,7 +151,7 @@ export function WelcomeTab({ guildId, canManage }: { guildId: string; canManage:
       ? { label: 'Aktiv', variant: 'ok' }
       : autoroles.length > 0
         ? { label: 'Konfiguriert (inaktiv)', variant: 'warn' }
-        : { label: 'Integration geplant', variant: 'neutral' };
+        : { label: 'Keine', variant: 'neutral' };
 
   const buildBody = () => ({ enabled, channelId, message, mode, mediaUrl: mediaUrl.trim() || null });
 
@@ -180,6 +197,70 @@ export function WelcomeTab({ guildId, canManage }: { guildId: string; canManage:
     setMode(d?.mode ?? 'text');
     setMessage(d?.message || DEFAULT_MESSAGE);
     setMediaUrl(d?.mediaUrl ?? '');
+  }
+
+  async function onPickFile(e: React.ChangeEvent<HTMLInputElement>) {
+    const file = e.target.files?.[0];
+    e.target.value = ''; // erlaubt erneutes Hochladen derselben Datei
+    if (!file) return;
+    if (!/\.(png|jpe?g|webp|gif)$/i.test(file.name)) {
+      toast.error('Nur PNG, JPG, JPEG, WEBP oder GIF erlaubt.'); return;
+    }
+    setUploading(true);
+    try {
+      const r = await api.upload<{ url: string }>(`/api/v2/guilds/${guildId}/welcome/media`, file);
+      setMediaUrl(r.url);
+      toast.success('Bild hochgeladen. Zum Übernehmen speichern.');
+    } catch (err) {
+      toast.error(err instanceof ApiError ? err.message : 'Upload fehlgeschlagen.');
+    } finally { setUploading(false); }
+  }
+
+  async function removeMedia() {
+    setUploading(true);
+    try {
+      await api.del(`/api/v2/guilds/${guildId}/welcome/media`);
+      setMediaUrl('');
+      await qc.invalidateQueries({ queryKey: ['welcome', guildId] });
+      toast.success('Bild entfernt.');
+    } catch (err) {
+      toast.error(err instanceof ApiError ? err.message : 'Entfernen fehlgeschlagen.');
+    } finally { setUploading(false); }
+  }
+
+  async function addAutorole() {
+    if (!selectedRoleId) { toast.error('Bitte eine Rolle auswählen.'); return; }
+    setRoleBusy('add');
+    try {
+      await api.post(`/api/v2/guilds/${guildId}/welcome/autoroles`, { roleId: selectedRoleId });
+      setSelectedRoleId('');
+      await qc.invalidateQueries({ queryKey: ['welcome-autoroles', guildId] });
+      toast.success('Auto-Rolle hinzugefügt.');
+    } catch (err) {
+      toast.error(err instanceof ApiError ? err.message : 'Hinzufügen fehlgeschlagen.');
+    } finally { setRoleBusy(null); }
+  }
+
+  async function toggleAutorole(a: AutoRole) {
+    setRoleBusy(a.id);
+    try {
+      await api.patch(`/api/v2/guilds/${guildId}/welcome/autoroles/${a.id}`, { isActive: !a.isActive });
+      await qc.invalidateQueries({ queryKey: ['welcome-autoroles', guildId] });
+    } catch (err) {
+      toast.error(err instanceof ApiError ? err.message : 'Aktualisieren fehlgeschlagen.');
+    } finally { setRoleBusy(null); }
+  }
+
+  async function removeAutorole(a: AutoRole) {
+    if (!confirm(`Auto-Rolle @${a.roleName} wirklich entfernen?`)) return;
+    setRoleBusy(a.id);
+    try {
+      await api.del(`/api/v2/guilds/${guildId}/welcome/autoroles/${a.id}`);
+      await qc.invalidateQueries({ queryKey: ['welcome-autoroles', guildId] });
+      toast.success('Auto-Rolle entfernt.');
+    } catch (err) {
+      toast.error(err instanceof ApiError ? err.message : 'Entfernen fehlgeschlagen.');
+    } finally { setRoleBusy(null); }
   }
 
   if (cfgQ.isLoading) return <div className="h-40 rounded-xl skeleton" />;
@@ -237,7 +318,7 @@ export function WelcomeTab({ guildId, canManage }: { guildId: string; canManage:
             <UserPlus className="h-4 w-4 text-accent shrink-0" />
             <div className="min-w-0 flex-1">
               <p className="text-sm text-white font-medium">Auto-Rollen</p>
-              <p className="text-[11px] text-muted">Bezogen auf <code className="font-mono">/autorole</code> · unter Willkommen gelistet</p>
+              <p className="text-[11px] text-muted">Beim Beitritt vergeben · im Dashboard und über <code className="font-mono">/autorole</code> verwaltbar</p>
             </div>
             <Badge variant={autoroleStatus.variant}>{autoroleStatus.label}</Badge>
           </div>
@@ -291,13 +372,48 @@ export function WelcomeTab({ guildId, canManage }: { guildId: string; canManage:
           </label>
 
           <label className="block">
-            <span className="text-xs text-muted block mb-1">Medien-URL (optional)</span>
+            <span className="text-xs text-muted block mb-1">Willkommensbild (optional)</span>
             <input
               value={mediaUrl}
               onChange={e => setMediaUrl(e.target.value)}
               className="input-premium w-full rounded-lg text-white px-3.5 py-2.5 text-sm placeholder:text-muted/80 focus:outline-none"
-              placeholder="https://… (jpg, png, gif, webp, mp4, webm, mov)"
+              placeholder="Bild hochladen oder https://… (jpg, png, gif, webp)"
             />
+            <input
+              ref={fileInputRef}
+              type="file"
+              accept="image/png,image/jpeg,image/webp,image/gif"
+              className="hidden"
+              onChange={onPickFile}
+            />
+            <div className="flex flex-wrap gap-2 mt-2">
+              <Button
+                type="button"
+                variant="secondary"
+                onClick={() => fileInputRef.current?.click()}
+                disabled={uploading}
+              >
+                <Upload className="h-4 w-4 mr-1" /> {uploading ? 'Lädt…' : 'Bild hochladen'}
+              </Button>
+              {hasMedia && (
+                <Button type="button" variant="ghost" onClick={removeMedia} disabled={uploading}>
+                  <Trash2 className="h-4 w-4 mr-1" /> Bild entfernen
+                </Button>
+              )}
+            </div>
+            <span className="text-[11px] text-muted mt-1 block">
+              Erlaubt: PNG, JPG, JPEG, WEBP, GIF (max. 8 MB). Datei wird serverbezogen gespeichert.
+            </span>
+            {hasMedia && (
+              <div className="mt-2 rounded-lg border border-border/60 bg-bg/60 p-2 inline-block max-w-full">
+                <img
+                  src={mediaUrl}
+                  alt="Vorschau Willkommensbild"
+                  className="max-h-48 max-w-full rounded object-contain"
+                  onError={e => { (e.currentTarget as HTMLImageElement).style.display = 'none'; }}
+                />
+              </div>
+            )}
           </label>
 
           {/* Variablen-Hilfe */}
@@ -348,15 +464,32 @@ export function WelcomeTab({ guildId, canManage }: { guildId: string; canManage:
             <CardTitle>Auto-Rollen</CardTitle>
             <Badge variant={autoroleStatus.variant}>{autoroleStatus.label}</Badge>
           </div>
-          <CardDesc>Automatisch vergebene Rollen für neue Mitglieder (Trigger „Beitritt" u. a.).</CardDesc>
+          <CardDesc>Rollen werden neuen Mitgliedern automatisch beim Beitritt vergeben.</CardDesc>
         </CardHeader>
-        <div className="mt-2 space-y-2">
+        <div className="mt-2 space-y-3">
+          {/* Rolle auswählen + hinzufügen */}
+          <div className="flex flex-wrap items-end gap-2">
+            <label className="block flex-1 min-w-[200px]">
+              <span className="text-xs text-muted block mb-1">Rolle auswählen</span>
+              <Select value={selectedRoleId} onChange={e => setSelectedRoleId(e.target.value)} disabled={rolesQ.isLoading}>
+                <option value="">— Rolle wählen —</option>
+                {assignableRoles.map(r => <option key={r.id} value={r.id}>@{r.name}</option>)}
+              </Select>
+            </label>
+            <Button type="button" onClick={addAutorole} disabled={roleBusy !== null || !selectedRoleId}>
+              <Plus className="h-4 w-4 mr-1" /> {roleBusy === 'add' ? 'Fügt hinzu…' : 'Rolle hinzufügen'}
+            </Button>
+          </div>
+          {!rolesQ.isLoading && assignableRoles.length === 0 && (
+            <p className="text-[11px] text-muted">
+              Keine weiteren zuweisbaren Rollen verfügbar (Integrations-Rollen und bereits gesetzte Rollen werden ausgeblendet).
+            </p>
+          )}
+
+          {/* Liste der gesetzten Auto-Rollen */}
           {autorolesQ.isLoading && <div className="h-16 rounded-lg skeleton" />}
           {!autorolesQ.isLoading && autoroles.length === 0 && (
-            <p className="text-xs text-muted">
-              Auto-Rollen werden hier zukünftig verwaltet. Der Discord-Command{' '}
-              <code className="font-mono">/autorole</code> bleibt vorerst aktiv. Aktuell sind keine Auto-Rollen konfiguriert.
-            </p>
+            <p className="text-xs text-muted">Aktuell sind keine Auto-Rollen konfiguriert.</p>
           )}
           {!autorolesQ.isLoading && autoroles.length > 0 && (
             <>
@@ -378,15 +511,26 @@ export function WelcomeTab({ guildId, canManage }: { guildId: string; canManage:
                         {a.expiresAt ? ` · befristet bis ${new Date(a.expiresAt).toLocaleDateString('de-DE')}` : ''}
                       </p>
                     </div>
-                    <Badge variant={a.isActive ? 'ok' : 'neutral'}>{a.isActive ? 'Aktiv' : 'Inaktiv'}</Badge>
+                    <Switch checked={a.isActive} onChange={() => toggleAutorole(a)} disabled={roleBusy !== null} />
+                    <Button
+                      type="button"
+                      variant="ghost"
+                      onClick={() => removeAutorole(a)}
+                      disabled={roleBusy !== null}
+                      className="px-2"
+                      title="Entfernen"
+                    >
+                      <X className="h-4 w-4" />
+                    </Button>
                   </div>
                 ))}
               </div>
             </>
           )}
           <p className="text-[11px] text-muted border-t border-border/50 pt-2 mt-1">
-            Verwaltung (Erstellen, Löschen, Trigger ändern) erfolgt aktuell über den Discord-Command{' '}
-            <code className="font-mono">/autorole</code>. Die vollständige Dashboard-Integration ist geplant.
+            Auto-Rollen werden pro Server getrennt gespeichert. Der Discord-Command{' '}
+            <code className="font-mono">/autorole</code> bleibt aktiv und nutzt dieselbe Datenhaltung —
+            Änderungen sind in Discord und Dashboard synchron sichtbar.
           </p>
         </div>
       </Card>

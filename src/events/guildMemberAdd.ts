@@ -3,7 +3,7 @@ import { BotEvent } from '../types';
 import { logger, logAudit } from '../utils/logger';
 import prisma from '../database/prisma';
 import { detectRaid } from '../utils/rateLimiter';
-import { getWelcomeConfig, renderWelcomeMessage } from '../modules/welcome/welcomeManager';
+import { getWelcomeConfig, renderWelcomeMessage, resolveWelcomeMediaSource } from '../modules/welcome/welcomeManager';
 import { answerQuestion } from '../modules/ai/aiHandler';
 import { sanitizeForPrompt, withTimeout, safeSend } from '../utils/safeSend';
 import { resolveCustomEmotes } from '../modules/ai/emoteResolver';
@@ -156,7 +156,7 @@ const guildMemberAddEvent: BotEvent = {
               });
             }
 
-            const files = wcfg.mediaUrl ? [new AttachmentBuilder(wcfg.mediaUrl)] : undefined;
+            const files = wcfg.mediaUrl ? [new AttachmentBuilder(resolveWelcomeMediaSource(wcfg.mediaUrl))] : undefined;
             const finalText = resolveCustomEmotes(messageText, m.guild);
             // safeSend setzt allowedMentions parse:[] – Ping nur fuer den neuen User selbst.
             await safeSend(channel, {
