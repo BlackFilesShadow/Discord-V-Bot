@@ -76,6 +76,8 @@ export const PERMISSION_SCOPES = [
   'casino.manage',
   'killfeed.view',
   'killfeed.manage',
+  'welcome.view',
+  'welcome.manage',
   'permissions.manage', // NIE delegierbar
   'dev.console',        // NIE delegierbar
 ] as const;

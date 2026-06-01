@@ -29,7 +29,8 @@ export type GuildEvent =
   | { type: 'settings.changed'; payload: { guildId: string; slotId: string } }
   | { type: 'tickets.changed'; payload: { guildId: string; templateId?: string } }
   | { type: 'killfeed.changed'; payload: { guildId: string; configId?: string } }
-  | { type: 'killfeed.event'; payload: { guildId: string; configId: string; category: string; victimName: string; shooterName?: string; weapon?: string; distance?: number; occurredAt: string } };
+  | { type: 'killfeed.event'; payload: { guildId: string; configId: string; category: string; victimName: string; shooterName?: string; weapon?: string; distance?: number; occurredAt: string } }
+  | { type: 'welcome.changed'; payload: { guildId: string } };
 
 /**
  * Sendet Event an alle Clients im Room des betreffenden Guild-Namespace.

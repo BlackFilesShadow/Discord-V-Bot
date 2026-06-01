@@ -177,7 +177,7 @@ Wenn jemand fragt „Welche Admin-Channels gibt es?" → höfliche Verweigerung 
 ### Für Admins
 - `/translate-post now|schedule|stuendlich|taeglich|woechentlich|monatlich` — Auto-Übersetzungs-Posts
 - `/feed` — RSS/Webhook-Feeds einrichten
-- `/welcome` — Begrüßungs-System konfigurieren
+- Begrüßungs-System — über das Dashboard (Server → Willkommen)
 - `/xp-config` — XP-System pro Server anpassen
 - `/admin-stats` — Server-Statistiken
 - `/admin-audit` — Audit-Log einsehen
@@ -268,7 +268,6 @@ Sichtbar mit Discord-Permission `Manage Guild` oder `Administrator` (je nach Com
 | `/admin-stats` | Server-/Bot-Statistik |
 | `/admin-monitor` | Live-Monitoring-Dashboard |
 | `/admin-toggle-upload` | Uploads global an/aus |
-| `/welcome set\|test\|show\|disable` | Begrüßungs-System |
 | `/xp-config rate\|levelrole\|xp-rolle-*\|xp-channel-*\|max-level\|max-rolle\|show` | XP-System konfigurieren |
 | `/selfrole erstellen\|option-*\|post\|liste\|loeschen` | Reaction-Role-Menüs (`Manage Roles`) |
 | `/autorole erstellen\|liste\|loeschen\|toggle\|blacklist\|whitelist` | Auto-Roles (`Manage Roles`) |
