@@ -112,6 +112,8 @@ export function DevLoginPanel() {
       className="relative inline-flex items-center"
       aria-label="DEV-Console-Login"
     >
+      {/* Dummy-Feld gegen Browser-Autofill. */}
+      <input type="text" name="username" autoComplete="username" className="hidden" tabIndex={-1} aria-hidden />
       <div
         className={
           'inline-flex items-center h-8 rounded-md border bg-black/40 ' +
@@ -130,7 +132,7 @@ export function DevLoginPanel() {
           onChange={e => { setPw(e.target.value); if (err) setErr(null); }}
           disabled={busy}
           placeholder="DEV Passwort"
-          autoComplete="off"
+          autoComplete="new-password"
           aria-invalid={err ? true : false}
           aria-describedby={err ? 'dev-pw-err' : undefined}
           className="bg-transparent outline-none text-xs text-white placeholder:text-muted/70

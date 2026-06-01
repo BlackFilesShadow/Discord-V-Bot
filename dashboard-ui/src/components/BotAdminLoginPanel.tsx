@@ -11,6 +11,7 @@
  * (POST /api/v2/bot-admin/login, Passwort = BOT_ADMIN_PASSWORD, Default "ASH").
  */
 import { useState, type FormEvent } from 'react';
+import { useNavigate } from 'react-router-dom';
 import { ShieldAlert, LogOut, KeyRound, Check, Loader2 } from 'lucide-react';
 import { useAuth } from '@/lib/auth';
 import { useBotAdminSession } from '@/lib/botAdminSession';
@@ -19,6 +20,7 @@ import { ApiError } from '@/lib/api';
 export function BotAdminLoginPanel() {
   const { user } = useAuth();
   const { active, loading, login, logout, expiresAt } = useBotAdminSession();
+  const navigate = useNavigate();
   const [pw, setPw] = useState('');
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState<string | null>(null);
@@ -32,6 +34,7 @@ export function BotAdminLoginPanel() {
     try {
       await login(pw);
       setPw('');
+      navigate('/bot-admin');
     } catch (ex) {
       setErr(ex instanceof ApiError ? ex.message : 'Unbekannter Fehler');
     } finally {
@@ -103,6 +106,8 @@ export function BotAdminLoginPanel() {
       className="relative inline-flex items-center"
       aria-label="Bot-Admin-Login"
     >
+      {/* Dummy-Felder gegen Browser-Autofill. */}
+      <input type="text" name="username" autoComplete="username" className="hidden" tabIndex={-1} aria-hidden />
       <div
         className={
           'inline-flex items-center h-8 rounded-md border bg-black/40 ' +
@@ -121,7 +126,7 @@ export function BotAdminLoginPanel() {
           onChange={e => { setPw(e.target.value); if (err) setErr(null); }}
           disabled={busy}
           placeholder="Bot Admin Passwort"
-          autoComplete="off"
+          autoComplete="new-password"
           aria-invalid={err ? true : false}
           aria-describedby={err ? 'botadmin-pw-err' : undefined}
           className="bg-transparent outline-none text-xs text-white placeholder:text-muted/70
