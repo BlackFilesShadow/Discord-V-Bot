@@ -15,6 +15,39 @@ import { logAuditDb, logger } from '../../../utils/logger';
 
 export const nitradoRouter = Router({ mergeParams: true });
 
+/** Trennt 400 (Validierung) von 502 (Nitrado-API) bei der Service-ID-Pruefung. */
+class ServiceValidationError extends Error {
+  constructor(message: string, readonly status: 400 | 502) { super(message); }
+}
+
+/**
+ * Validiert eine optionale Nitrado-Service-ID gegen den Token-Besitzer.
+ * - leer/undefined/null  -> null (keine Verknuepfung)
+ * - kein String          -> 400
+ * - nicht numerisch      -> 400
+ * - nicht im Account      -> 400 (verhindert Speichern fremder Service-IDs)
+ * - Nitrado-API-Fehler    -> 502
+ * Liefert den normalisierten (getrimmten) Wert zurueck. Der Token wird nie geloggt.
+ */
+async function validateServiceIdForToken(token: string, nitradoServerId: unknown): Promise<string | null> {
+  if (nitradoServerId === undefined || nitradoServerId === null) return null;
+  if (typeof nitradoServerId !== 'string') throw new ServiceValidationError('nitradoServerId muss String sein.', 400);
+  const trimmed = nitradoServerId.trim();
+  if (trimmed === '') return null;
+  if (!/^\d{1,20}$/.test(trimmed)) throw new ServiceValidationError('Service-ID muss numerisch sein.', 400);
+  let services;
+  try {
+    services = await new NitradoClient(token).listServices();
+  } catch (e) {
+    logger.error('Nitrado-Service-Check:', e as Error);
+    throw new ServiceValidationError('Nitrado-API-Fehler bei Service-Pruefung.', 502);
+  }
+  if (!services.some(s => String(s.id) === trimmed)) {
+    throw new ServiceValidationError('Service-ID gehoert nicht zu diesem Token.', 400);
+  }
+  return trimmed;
+}
+
 nitradoRouter.get('/', requireGuildOwner, async (req, res) => {
   const scope = req.guildScope!;
   const slots = await listSlots(scope.guildId);
@@ -47,12 +80,22 @@ nitradoRouter.post('/', requireGuildOwner, async (req, res) => {
   const valid = await new NitradoClient(token).validateToken();
   if (!valid) { res.status(400).json({ error: 'Nitrado-Token ungueltig.' }); return; }
 
+  // Falls eine Service-ID mitgegeben wurde: gegen den Token-Account pruefen,
+  // damit keine fremde/falsche Service-ID gespeichert werden kann.
+  let normalizedServiceId: string | null;
+  try {
+    normalizedServiceId = await validateServiceIdForToken(token, nitradoServerId);
+  } catch (e) {
+    if (e instanceof ServiceValidationError) { res.status(e.status).json({ error: e.message }); return; }
+    throw e;
+  }
+
   const created = await createSlot({
     guildId: scope.guildId,
     slot,
     alias,
     rawToken: token,
-    nitradoServerId: nitradoServerId ?? null,
+    nitradoServerId: normalizedServiceId,
     addedBy: asUserDiscordId(scope.actorDiscordId),
   });
   logAuditDb('NITRADO_SLOT_CREATED', 'NITRADO', {
@@ -144,20 +187,18 @@ nitradoRouter.patch('/:slot/service', requireGuildOwner, async (req, res) => {
   if (!existing) { res.status(404).json({ error: 'Slot nicht gefunden.' }); return; }
 
   // Wenn gesetzt: gegen Nitrado-API pruefen, dass die Service-ID dem Token-Owner gehoert
-  let normalized: string | null = nitradoServerId;
-  if (typeof nitradoServerId === 'string') {
-    const trimmed = nitradoServerId.trim();
-    if (!/^\d{1,20}$/.test(trimmed)) { res.status(400).json({ error: 'Service-ID muss numerisch sein.' }); return; }
+  let normalized: string | null;
+  if (nitradoServerId === null) {
+    normalized = null;
+  } else {
     try {
       const token = await getDecryptedToken(scope.guildId, asNitradoConnId(existing.id));
-      const services = await new NitradoClient(token).listServices();
-      const found = services.find(s => String(s.id) === trimmed);
-      if (!found) { res.status(400).json({ error: 'Service-ID gehoert nicht zu diesem Token.' }); return; }
+      normalized = await validateServiceIdForToken(token, nitradoServerId);
     } catch (e) {
+      if (e instanceof ServiceValidationError) { res.status(e.status).json({ error: e.message }); return; }
       logger.error('Nitrado-Service-Check:', e as Error);
       res.status(502).json({ error: 'Nitrado-API-Fehler bei Service-Pruefung.' }); return;
     }
-    normalized = trimmed;
   }
 
   let updated;

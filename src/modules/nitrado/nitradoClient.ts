@@ -144,8 +144,8 @@ export class NitradoClient {
   /** Pruefung ob Token gueltig ist (lightweight). */
   async validateToken(): Promise<boolean> {
     try {
-      await this.request<{ data: { token: { valid: boolean } } }>('GET', '/token');
-      return true;
+      const res = await this.request<{ data: { token?: { valid?: boolean } } }>('GET', '/token');
+      return res.data?.token?.valid === true;
     } catch (e) {
       logger.warn('Nitrado-Token-Validierung fehlgeschlagen:', (e as Error).message);
       return false;

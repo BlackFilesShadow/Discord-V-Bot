@@ -16,6 +16,13 @@
  * Permanente Dedupe ueber Restart hinweg ist nicht im Schema vorgesehen
  * (waere ein eigenes Cursor-Model). Akzeptables Risiko: nach Restart wird
  * fuer eine Iteration ggf. nichts gerewardet, weil Cursor=now.
+ *
+ * TODO(persistenz): Optionales Modell `NitradoAdmCursor`
+ *   (guildId, nitradoConnId, lastModifiedAt, lastFileName?, updatedAt) einfuehren
+ *   und pro Connection lesen/schreiben, damit der Zeitraum zwischen letztem Sync
+ *   und Restart NICHT verloren geht. Bis dahin: in-memory Cursor + Warnlog beim
+ *   Start (siehe `startAdmSyncCron`). Datenverlust-Risiko: Spielzeit-Rewards
+ *   zwischen letztem erfolgreichen Sync und einem Restart werden nicht vergeben.
  */
 
 import prisma from '../../database/prisma';
@@ -181,6 +188,7 @@ export function startAdmSyncCron(): void {
     logger.info('ADM-Sync-Cron: NITRADO_ADM_DIR nicht gesetzt — Cron laeuft passiv (no-op).');
   } else {
     logger.info(`ADM-Sync-Cron gestartet (Intervall ${SYNC_INTERVAL_MS / 60_000}min, Dir=${process.env.NITRADO_ADM_DIR})`);
+    logger.warn('ADM-Sync nutzt aktuell einen in-memory Cursor; nach Restart kann ein kurzer Zeitraum (letzter Sync bis Restart) nicht verarbeitet werden — Spielzeit-Rewards dieses Zeitraums gehen verloren. Persistentes Cursor-Model siehe TODO im Modulkopf.');
   }
   timer = setInterval(() => { void pollOnce(); }, SYNC_INTERVAL_MS);
 }

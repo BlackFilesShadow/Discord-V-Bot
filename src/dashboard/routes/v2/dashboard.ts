@@ -21,6 +21,13 @@ export const dashboardRouter = Router({ mergeParams: true });
 // Lese-Recht: irgendeine view-Permission reicht; aber Owner-Bypass ist
 // eingebaut. Wir nutzen 'whitelist.view' als billigste Standard-Permission;
 // wer das nicht hat, hat sowieso nichts auf dem Dashboard zu suchen.
+//
+// TODO(scope): Eigenen Scope 'dashboard.view' einfuehren und hier verwenden.
+// 'whitelist.view' ist nur ein temporaerer Minimalzugriff und fachlich unsauber
+// (koppelt den generischen Dashboard-Lesezugriff an die Whitelist-Domain).
+// Migration muss rueckwaertskompatibel erfolgen, damit bestehende Grants mit
+// 'whitelist.view'/'dashboard.access' weiterhin Zugriff behalten — daher
+// bewusst noch NICHT umgestellt, um keine Berechtigungen zu brechen.
 dashboardRouter.get('/', requireGuildPermission('whitelist.view'), async (req, res) => {
   const scope = req.guildScope!;
   const link = await getOrCreateLink(scope.guildId, asUserDiscordId(scope.actorDiscordId));

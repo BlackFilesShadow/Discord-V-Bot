@@ -105,7 +105,7 @@ export async function createSlot(args: {
   addedBy: UserDiscordId;
 }): Promise<NitradoConnectionRow> {
   if (args.slot < 1 || args.slot > 5) throw new Error('Slot muss 1..5 sein');
-  if (!args.alias || args.alias.length > 64) throw new Error('Alias 1..64 Zeichen');
+  if (!args.alias || args.alias.length < 1 || args.alias.length > 40) throw new Error('Alias 1..40 Zeichen');
   const encryptedToken = encrypt(args.rawToken, config.security.encryptionKey);
   const alias5 = await uniqueAlias5();
   const row = await prisma.nitradoConnection.create({
