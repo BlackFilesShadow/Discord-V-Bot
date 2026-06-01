@@ -42,6 +42,29 @@ html[data-density='comfortable'] {
   html, body, #root { height: 100%; }
   html { background: #050507; }
 
+  /* Native-Controls (Select-Dropdowns, Date-Picker, Scrollbars) im Dark-Theme
+     rendern. `color-scheme: dark` zwingt den Browser, die native Option-Liste
+     dunkel zu zeichnen statt mit hellem System-Default. */
+  :root { color-scheme: dark; }
+
+  /* Fallback fuer Browser, die color-scheme bei Optionen nicht voll umsetzen:
+     explizit dunkler Hintergrund + heller Text fuer alle Select-Optionen. */
+  select, option, optgroup {
+    color-scheme: dark;
+  }
+  option, optgroup {
+    background-color: #11131a;
+    color: #f3f4f6;
+  }
+  option:checked,
+  option:hover {
+    background-color: #7f1d1d;
+    color: #ffffff;
+  }
+  option:disabled {
+    color: #6b7280;
+  }
+
   body {
     font-family: 'Inter', system-ui, sans-serif;
     color: #f5f5f7;
