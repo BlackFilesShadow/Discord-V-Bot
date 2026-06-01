@@ -61,9 +61,14 @@ export interface GuildScope {
  *   in der Dashboard-Liste sichtbar UND wirkt als Bypass fuer alle anderen
  *   delegierbaren Scopes (siehe `hasPermission`). NICHT-delegierbare Scopes
  *   (nitrado.manage, permissions.manage, dev.console) bleiben Owner-only.
+ *
+ *   `dashboard.view` — Reiner generischer Lesezugriff aufs Dashboard
+ *   (GET /dashboard). Oeffnet KEINE Modul-Scopes automatisch — wer einzelne
+ *   Module sehen will, braucht den jeweiligen `*.view`-Scope oder `dashboard.access`.
  */
 export const PERMISSION_SCOPES = [
   'dashboard.access',   // ALL-ACCESS Bypass fuer alle delegierbaren Scopes
+  'dashboard.view',     // Generischer Dashboard-Lesezugriff (oeffnet keine Module automatisch)
   'nitrado.manage',     // Token connect/disconnect — NIE delegierbar (Owner-only-hardcoded an Routen-Layer)
   'tickets.manage',
   'whitelist.view',

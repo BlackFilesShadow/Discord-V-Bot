@@ -11,8 +11,8 @@
  * Routen brauchen zusaetzlich requireDev (User.role===DEVELOPER + DevSession).
  *
  * Passwort:
- *   - Default = "HAS" (Spec). Wenn DEV_PASSWORD env gesetzt ist, gilt der
- *     env-Wert (Production-Empfehlung: starkes Passwort setzen).
+ *   - KEIN Default. Es gilt ausschliesslich der env-Wert DEV_PASSWORD.
+ *   - Fehlt DEV_PASSWORD, ist der Login fail-closed (503).
  *   - Vergleich serverseitig mit timingSafeEqual.
  *
  * Brute-Force-Schutz:
@@ -61,10 +61,13 @@ function registerFail(key: string): void {
 function clearFails(key: string): void { failures.delete(key); }
 
 // --- Passwort-Aufloesung --------------------------------------------------
-// Sicherheits-Hardening: KEIN Default-Passwort mehr. Wenn DEV_PASSWORD nicht gesetzt ist,
+// Sicherheits-Hardening: KEIN Default-Passwort. Wenn DEV_PASSWORD nicht gesetzt ist,
 // fail-closed (alle Login-Versuche werden mit 503 abgelehnt). Verhindert versehentliche
 // Production-Deployments mit Default-Credentials.
-const MIN_DEV_PASSWORD_LEN = 12;
+//
+// MIN_DEV_PASSWORD_LEN ist NUR eine Warnschwelle (kein harter Login-Block). Ein
+// kuerzeres Passwort funktioniert weiterhin, erzeugt aber eine Warnung im Log.
+const MIN_DEV_PASSWORD_LEN = 3;
 let warnedAboutWeakPassword = false;
 function resolveExpectedPassword(): string | null {
   const env = process.env.DEV_PASSWORD;

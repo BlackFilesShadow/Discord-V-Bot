@@ -11,12 +11,29 @@ interface NitradoStatus {
   oldestPendingAgeSec: number | null;
 }
 
+interface AdmStatus {
+  admDirConfigured: boolean;
+  intervalMin: number;
+  queryMs: number;
+  connections: Array<{
+    nitradoConnId: string;
+    guildId: string;
+    slot: number;
+    alias: string;
+    alias5: string;
+    serviceId: string | null;
+    admLinked: boolean;
+    cursor: { lastModifiedAt: number; lastModifiedIso: string; lastFileName: string | null; updatedAt: string } | null;
+  }>;
+}
+
 const STATUS_COLORS: Record<string, string> = {
   PENDING: 'text-warn', RUNNING: 'text-accent', DONE: 'text-ok', FAILED: 'text-danger', DEAD: 'text-danger',
 };
 
 export default function NitradoStatus() {
   const { data, loading, error, reload, lastFetchedAt } = useDevStatus<NitradoStatus>('/api/v2/dev/status/nitrado', 15000);
+  const adm = useDevStatus<AdmStatus>('/api/v2/dev/status/adm', 15000);
 
   return (
     <div className="space-y-4">
@@ -72,6 +89,58 @@ export default function NitradoStatus() {
           </Card>
         </>
       )}
+
+      {/* ADM-Sync-Status: persistenter Cursor pro Connection (keine Secrets). */}
+      <Card>
+        <CardHeader>
+          <CardTitle>ADM-Sync Status</CardTitle>
+          <CardDesc>Persistenter Cursor pro Verbindung — Spielzeit-Rewards gehen ueber Restarts nicht verloren.</CardDesc>
+        </CardHeader>
+        {adm.error && (
+          <div role="alert" className="text-xs text-danger flex gap-2 mb-2"><AlertTriangle className="h-3.5 w-3.5 mt-0.5" /> {adm.error}</div>
+        )}
+        {adm.data && (
+          <>
+            <div className="text-xs mb-3 flex flex-wrap gap-x-4 gap-y-1">
+              <span>
+                NITRADO_ADM_DIR:{' '}
+                {adm.data.admDirConfigured
+                  ? <strong className="text-ok">gesetzt</strong>
+                  : <strong className="text-warn">nicht gesetzt (Sync passiv)</strong>}
+              </span>
+              <span className="text-muted">Intervall: {adm.data.intervalMin} min</span>
+            </div>
+            <table className="w-full text-xs">
+              <thead className="text-muted">
+                <tr>
+                  <th className="text-left">Alias</th>
+                  <th className="text-left">Slot</th>
+                  <th className="text-left">Service-ID</th>
+                  <th className="text-left">Letzte ADM-Datei</th>
+                  <th className="text-left">Cursor (Datei-Zeit)</th>
+                  <th className="text-left">Aktualisiert</th>
+                </tr>
+              </thead>
+              <tbody>
+                {adm.data.connections.length === 0 && (
+                  <tr><td colSpan={6} className="text-muted py-2">Keine aktiven Verbindungen.</td></tr>
+                )}
+                {adm.data.connections.map(c => (
+                  <tr key={c.nitradoConnId} className="border-t border-border/20">
+                    <td className="py-1">{c.alias} <span className="text-muted font-mono">({c.alias5})</span></td>
+                    <td>{c.slot}</td>
+                    <td className="font-mono text-muted">{c.serviceId ?? <span className="text-warn">—</span>}</td>
+                    <td className="font-mono break-all">{c.cursor?.lastFileName ?? <span className="text-muted">—</span>}</td>
+                    <td className="text-muted">{c.cursor ? new Date(c.cursor.lastModifiedIso).toLocaleString() : <span className="text-warn">kein Cursor</span>}</td>
+                    <td className="text-muted">{c.cursor ? new Date(c.cursor.updatedAt).toLocaleString() : '—'}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </>
+        )}
+        {!adm.data && !adm.error && <div className="text-xs text-muted">Lade ADM-Status…</div>}
+      </Card>
     </div>
   );
 }

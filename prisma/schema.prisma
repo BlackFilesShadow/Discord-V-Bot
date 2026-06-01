@@ -1841,6 +1841,26 @@ model NitradoJob {
 }
 
 // ============================================================
+// ADM-SYNC-CURSOR — persistenter Cursor pro NitradoConnection,
+// damit Spielzeit-Rewards nach Bot-Restarts nicht verloren gehen.
+// Bewusst OHNE deklarierte Relation (wie NitradoJob) — nur
+// String-Felder, Scoping erfolgt im Code ueber guildId+nitradoConnId.
+// ============================================================
+model NitradoAdmCursor {
+  id             String   @id @default(cuid())
+  guildId        String
+  nitradoConnId  String
+  lastModifiedAt Int // Unix-Sekunden der zuletzt erfolgreich verarbeiteten ADM-Datei
+  lastFileName   String?
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+
+  @@unique([guildId, nitradoConnId])
+  @@index([guildId])
+  @@index([nitradoConnId])
+}
+
+// ============================================================
 // NITRADO MIRROR (READ-ONLY) — Einmaliger Voll-Snapshot pro
 // NitradoConnection. Strikt nur GET-Aufrufe. Datei-Inhalte
 // inhaltsadressiert auf Disk unter

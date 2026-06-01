@@ -5,6 +5,7 @@
  *  - GET /database     Postgres-Pool, Latenz, Migrations, top tables
  *  - GET /discord      Gateway-Status, Shard-Latenzen, Cache-Sizes
  *  - GET /nitrado      NitradoJob-Outbox-Statistik
+ *  - GET /adm          ADM-Sync-Status + persistenter Cursor pro Connection
  *  - GET /system       CPU, RAM, Disk, Load, Process-Memory
  *  - GET /ai-providers Provider-Stats + Anomalie-Befunde (Spec 9)
  *
@@ -167,6 +168,60 @@ devStatusRouter.get('/nitrado', async (req, res) => {
     recentFailures: recentFailures.value ?? [],
     oldestPendingAt: oldestPending.value?.createdAt ?? null,
     oldestPendingAgeSec: oldestPending.value ? Math.round((Date.now() - oldestPending.value.createdAt.getTime()) / 1000) : null,
+    scope: restrict ? { guildIdRestrict: restrict } : { global: true },
+  });
+});
+
+// --- ADM-Sync-Status ------------------------------------------------------
+// Zeigt den persistenten ADM-Cursor (NitradoAdmCursor) pro aktiver Connection.
+// KEINE Secrets: Token wird niemals geladen/zurueckgegeben — nur Alias, Slot,
+// Service-ID und der Cursor-Stand. Respektiert guildIdRestrict wie /nitrado.
+devStatusRouter.get('/adm', async (req, res) => {
+  const restrict = req.devSession?.scope.guildIdRestrict ?? null;
+  const admDir = process.env.NITRADO_ADM_DIR ?? null;
+
+  const data = await timed(async () => {
+    // eslint-disable-next-line local/no-unscoped-prisma-query -- DEV-globaler Worker-View; requireDev-Gate; optional auf restrict beschraenkt.
+    const conns = await prisma.nitradoConnection.findMany({
+      where: { status: 'ACTIVE', ...(restrict ? { guildId: restrict } : {}) },
+      select: { id: true, guildId: true, slot: true, alias: true, alias5: true, nitradoServerId: true, serviceId: true },
+      orderBy: [{ guildId: 'asc' }, { slot: 'asc' }],
+    });
+    if (conns.length === 0) return [];
+
+    const cursors = await prisma.nitradoAdmCursor.findMany({
+      where: { nitradoConnId: { in: conns.map(c => c.id) } },
+      select: { nitradoConnId: true, lastModifiedAt: true, lastFileName: true, updatedAt: true },
+    });
+    const byConn = new Map(cursors.map(c => [c.nitradoConnId, c]));
+
+    return conns.map(c => {
+      const cur = byConn.get(c.id);
+      return {
+        nitradoConnId: c.id,
+        guildId: c.guildId,
+        slot: c.slot,
+        alias: c.alias,
+        alias5: c.alias5,
+        serviceId: c.serviceId ?? c.nitradoServerId ?? null,
+        admLinked: !!c.nitradoServerId,
+        cursor: cur
+          ? {
+              lastModifiedAt: cur.lastModifiedAt,
+              lastModifiedIso: new Date(cur.lastModifiedAt * 1000).toISOString(),
+              lastFileName: cur.lastFileName,
+              updatedAt: cur.updatedAt,
+            }
+          : null,
+      };
+    });
+  });
+
+  res.json({
+    admDirConfigured: !!admDir,
+    intervalMin: 15,
+    queryMs: data.ms,
+    connections: data.value ?? [],
     scope: restrict ? { guildIdRestrict: restrict } : { global: true },
   });
 });

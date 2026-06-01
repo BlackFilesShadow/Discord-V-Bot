@@ -4,25 +4,22 @@
  * Pro `NitradoConnection(status=ACTIVE, nitradoServerId!=null)`:
  *   1. Liste ADM-Files im konfigurierten Profile-Verzeichnis
  *      (`process.env.NITRADO_ADM_DIR`, sonst Skip).
- *   2. Verarbeite nur Dateien mit `modified_at > cursor[connId]`.
- *      Cursor liegt in-Memory (wird beim Bot-Restart auf "jetzt" gesetzt,
- *      damit kein historischer Backlog re-processed wird).
+ *   2. Verarbeite nur Dateien mit `modified_at > cursor`. Der Cursor wird
+ *      persistent in `NitradoAdmCursor` (pro guildId+nitradoConnId) gehalten,
+ *      sodass nach einem Bot-Restart KEINE Spielzeit-Rewards verloren gehen.
  *   3. Download → `parseAdm` → `aggregateMinutesByPlayer`.
  *   4. Pro (steam64, minutes): wenn `EconomyLink(guildId, nitradoConnId, gameId)`
  *      existiert und Economy `enabled` ist → Reward
  *      `floor(minutes * playtimeRewardPercent / 100)` Coins atomar in Wallet
  *      gutschreiben + `EconomyTransaction(type=PLAYTIME_REWARD)` + Link.lastSeenAt.
  *
- * Permanente Dedupe ueber Restart hinweg ist nicht im Schema vorgesehen
- * (waere ein eigenes Cursor-Model). Akzeptables Risiko: nach Restart wird
- * fuer eine Iteration ggf. nichts gerewardet, weil Cursor=now.
+ * Erststart (kein Cursor vorhanden): Cursor wird auf "jetzt" verankert und KEIN
+ * historischer Backlog verarbeitet. Folgelaeufe lesen/schreiben den DB-Cursor.
  *
- * TODO(persistenz): Optionales Modell `NitradoAdmCursor`
- *   (guildId, nitradoConnId, lastModifiedAt, lastFileName?, updatedAt) einfuehren
- *   und pro Connection lesen/schreiben, damit der Zeitraum zwischen letztem Sync
- *   und Restart NICHT verloren geht. Bis dahin: in-memory Cursor + Warnlog beim
- *   Start (siehe `startAdmSyncCron`). Datenverlust-Risiko: Spielzeit-Rewards
- *   zwischen letztem erfolgreichen Sync und einem Restart werden nicht vergeben.
+ * Fehlerverhalten: Der Cursor wird nur bis zur letzten VOLLSTAENDIG erfolgreich
+ * verarbeiteten Datei gesetzt. Schlaegt der Download einer Datei fehl, wird die
+ * Verarbeitung dort abgebrochen — es wird nicht ueber die fehlerhafte Datei
+ * hinausgesprungen (sie wird im naechsten Lauf erneut versucht).
  */
 
 import prisma from '../../database/prisma';
@@ -38,15 +35,21 @@ const SYNC_INTERVAL_MS = 15 * 60 * 1000;
 let timer: NodeJS.Timeout | null = null;
 let running = false;
 
-// connId → letzter verarbeiteter `modified_at` (Unix-Sekunden)
-const cursor = new Map<string, number>();
-
 interface ConnRow {
   id: string;
   guildId: string;
   alias: string;
   encryptedToken: string;
   nitradoServerId: string | null;
+}
+
+/** Persistenten Cursor pro Connection schreiben (upsert). */
+async function saveCursor(guildId: string, nitradoConnId: string, lastModifiedAt: number, lastFileName: string | null): Promise<void> {
+  await prisma.nitradoAdmCursor.upsert({
+    where: { guildId_nitradoConnId: { guildId, nitradoConnId } },
+    create: { guildId, nitradoConnId, lastModifiedAt, lastFileName },
+    update: { lastModifiedAt, lastFileName },
+  });
 }
 
 async function processConnection(profileDir: string, conn: ConnRow): Promise<void> {
@@ -60,6 +63,18 @@ async function processConnection(profileDir: string, conn: ConnRow): Promise<voi
   }
   const client = new NitradoClient(token);
 
+  // Persistenten Cursor laden. Bei DB-Fehler abbrechen — niemals unkontrolliert
+  // einen Backlog verarbeiten.
+  let cursorRow;
+  try {
+    cursorRow = await prisma.nitradoAdmCursor.findUnique({
+      where: { guildId_nitradoConnId: { guildId: conn.guildId, nitradoConnId: conn.id } },
+    });
+  } catch (e) {
+    logger.warn(`ADM-Sync: Cursor-Load fehlgeschlagen fuer ${conn.id}: ${(e as Error).message} — Connection uebersprungen.`);
+    return;
+  }
+
   let files: Array<{ name: string; modified_at: number; size: number }>;
   try {
     files = await client.listAdmFiles(conn.nitradoServerId, profileDir);
@@ -68,29 +83,46 @@ async function processConnection(profileDir: string, conn: ConnRow): Promise<voi
     return;
   }
 
-  const lastCursor = cursor.get(conn.id) ?? Math.floor(Date.now() / 1000);
-  const fresh = files.filter(f => f.modified_at > lastCursor).sort((a, b) => a.modified_at - b.modified_at);
-  if (fresh.length === 0) {
-    if (!cursor.has(conn.id)) cursor.set(conn.id, lastCursor);
+  // Erststart ohne Cursor: auf "jetzt" verankern, kein historischer Backlog.
+  if (!cursorRow) {
+    const nowSec = Math.floor(Date.now() / 1000);
+    try {
+      await saveCursor(conn.guildId, conn.id, nowSec, null);
+    } catch (e) {
+      logger.warn(`ADM-Sync: Initial-Cursor-Anlage fehlgeschlagen fuer ${conn.id}: ${(e as Error).message}`);
+    }
     return;
   }
+
+  const lastCursor = cursorRow.lastModifiedAt;
+  const fresh = files.filter(f => f.modified_at > lastCursor).sort((a, b) => a.modified_at - b.modified_at);
+  if (fresh.length === 0) return;
 
   // EconomyConfig laden (1x pro Guild)
   const cfg = await prisma.economyConfig.findUnique({ where: { guildId: conn.guildId } });
   if (!cfg || !cfg.enabled || cfg.playtimeRewardPercent <= 0) {
-    cursor.set(conn.id, fresh[fresh.length - 1].modified_at);
+    // Economy aus: Dateien gelten als "gesehen", Cursor vorruecken (wie bisher).
+    const last = fresh[fresh.length - 1];
+    try {
+      await saveCursor(conn.guildId, conn.id, last.modified_at, last.name);
+    } catch (e) {
+      logger.warn(`ADM-Sync: Cursor-Save (Economy aus) fehlgeschlagen fuer ${conn.id}: ${(e as Error).message}`);
+    }
     return;
   }
   const pct = cfg.playtimeRewardPercent;
 
+  // Cursor nur bis zur letzten vollstaendig verarbeiteten Datei vorruecken.
+  let lastSuccessfulModifiedAt = lastCursor;
+  let lastSuccessfulFileName: string | null = cursorRow.lastFileName ?? null;
   let totalRewardedPlayers = 0;
   for (const file of fresh) {
     let content: string;
     try {
       content = await client.downloadFile(conn.nitradoServerId, profileDir.replace(/\/$/, '') + '/' + file.name);
     } catch (e) {
-      logger.warn(`ADM-Sync: download fehlgeschlagen fuer ${conn.id}/${file.name}: ${(e as Error).message}`);
-      continue;
+      logger.warn(`ADM-Sync: download fehlgeschlagen fuer ${conn.id}/${file.name}: ${(e as Error).message} — Abbruch, Cursor bleibt vor dieser Datei.`);
+      break;
     }
     const sessions = parseAdm(content, file.name);
     const perPlayer = aggregateMinutesByPlayer(sessions);
@@ -146,9 +178,19 @@ async function processConnection(profileDir: string, conn: ConnRow): Promise<voi
         logger.warn(`ADM-Sync: Reward fehlgeschlagen fuer ${conn.id}/${steam64}: ${(e as Error).message}`);
       }
     }
+    // Datei vollstaendig verarbeitet → als erfolgreichen Cursor-Stand merken.
+    lastSuccessfulModifiedAt = file.modified_at;
+    lastSuccessfulFileName = file.name;
   }
 
-  cursor.set(conn.id, fresh[fresh.length - 1].modified_at);
+  // Cursor nur bis zur letzten vollstaendig verarbeiteten Datei persistieren.
+  if (lastSuccessfulModifiedAt > lastCursor) {
+    try {
+      await saveCursor(conn.guildId, conn.id, lastSuccessfulModifiedAt, lastSuccessfulFileName);
+    } catch (e) {
+      logger.warn(`ADM-Sync: Cursor-Save fehlgeschlagen fuer ${conn.id}: ${(e as Error).message}`);
+    }
+  }
   if (totalRewardedPlayers > 0) {
     logAudit('NITRADO_ADM_SYNC', 'NITRADO', {
       guildId: conn.guildId, nitradoConnId: conn.id, files: fresh.length, rewarded: totalRewardedPlayers,
@@ -188,7 +230,7 @@ export function startAdmSyncCron(): void {
     logger.info('ADM-Sync-Cron: NITRADO_ADM_DIR nicht gesetzt — Cron laeuft passiv (no-op).');
   } else {
     logger.info(`ADM-Sync-Cron gestartet (Intervall ${SYNC_INTERVAL_MS / 60_000}min, Dir=${process.env.NITRADO_ADM_DIR})`);
-    logger.warn('ADM-Sync nutzt aktuell einen in-memory Cursor; nach Restart kann ein kurzer Zeitraum (letzter Sync bis Restart) nicht verarbeitet werden — Spielzeit-Rewards dieses Zeitraums gehen verloren. Persistentes Cursor-Model siehe TODO im Modulkopf.');
+    logger.info('ADM-Sync nutzt persistenten DB-Cursor (NitradoAdmCursor) — Spielzeit-Rewards gehen ueber Restarts nicht verloren.');
   }
   timer = setInterval(() => { void pollOnce(); }, SYNC_INTERVAL_MS);
 }
