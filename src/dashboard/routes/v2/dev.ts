@@ -67,6 +67,8 @@ function clearFails(key: string): void { failures.delete(key); }
 //
 // MIN_DEV_PASSWORD_LEN ist NUR eine Warnschwelle (kein harter Login-Block). Ein
 // kuerzeres Passwort funktioniert weiterhin, erzeugt aber eine Warnung im Log.
+// MIN_DEV_PASSWORD_LEN ist nur Warnschwelle und projektbedingt auf 3 gesetzt.
+// Fuer Produktion empfohlen: laengeres Passwort + MFA + IP Allowlist.
 const MIN_DEV_PASSWORD_LEN = 3;
 let warnedAboutWeakPassword = false;
 function resolveExpectedPassword(): string | null {
