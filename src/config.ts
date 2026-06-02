@@ -36,6 +36,10 @@ export const config = {
     url: optionalEnv('DASHBOARD_URL', 'http://localhost:3000'),
     sessionSecret: requireEnv('SESSION_SECRET'),
     oauth2RedirectUri: optionalEnv('OAUTH2_REDIRECT_URI', 'http://localhost:3000/auth/callback'),
+    // Express `trust proxy`-Wert. Standard `1` (genau ein Reverse-Proxy, z.B.
+    // Nginx/Traefik vor dem Container). Per TRUST_PROXY ueberschreibbar:
+    // Zahl (Hop-Anzahl), `true`/`false`, oder CIDR/IP-Liste. Siehe README.
+    trustProxy: optionalEnv('TRUST_PROXY', '1'),
   },
 
   // Sicherheit
@@ -51,6 +55,14 @@ export const config = {
   // Upload-System
   upload: {
     dir: path.resolve(optionalEnv('UPLOAD_DIR', './uploads')),
+    // Nur dieser Unterpfad von `dir` wird oeffentlich unter /uploads/factions
+    // per express.static ausgeliefert (siehe server.ts). Alles andere bleibt privat.
+    factionsDir: path.resolve(optionalEnv('UPLOAD_DIR', './uploads'), 'factions'),
+    // Private Ablage ausserhalb des oeffentlichen uploads-Verzeichnisses.
+    privateDir: path.resolve(optionalEnv('PRIVATE_UPLOAD_DIR', './private')),
+    // DEV-Log-Uploads. MUSS privat sein (nur ueber authentifizierten DEV-Endpoint
+    // lesbar) — daher unter ./private/dev-logs, NICHT unter ./uploads.
+    devUploadDir: path.resolve(optionalEnv('DEV_UPLOAD_DIR', './private/dev-logs')),
     // Private Export-Ablage. MUSS ausserhalb von `dir` liegen, da `dir`
     // (uploads) per express.static oeffentlich unter /uploads ausgeliefert wird.
     // Audit-/GDPR-Exporte duerfen niemals oeffentlich abrufbar sein.

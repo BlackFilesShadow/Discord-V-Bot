@@ -94,6 +94,42 @@ Er kennt deinen Server, deine Mitglieder, deine Kanäle, deine Rollen — und an
 
 Details: [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) · [docs/PERFORMANCE.md](docs/PERFORMANCE.md) · [docs/monitoring/README.md](docs/monitoring/README.md)
 
+### Reverse-Proxy & `trust proxy`
+
+Das Dashboard läuft typischerweise hinter einem Reverse-Proxy (Nginx/Caddy/Traefik),
+der TLS terminiert und `X-Forwarded-*`-Header setzt. Express muss diesen Hops
+vertrauen, sonst werden `secure`-Session-Cookies nicht gesetzt und der OAuth-Flow
+bricht ab.
+
+- Standard: `app.set('trust proxy', 1)` — genau **ein** Proxy vor dem Container.
+- Anpassbar über `TRUST_PROXY`:
+  - Zahl (z. B. `2`) → Anzahl vertrauenswürdiger Proxy-Hops
+  - `true`/`false` → allen/keinem Proxy vertrauen
+  - CIDR/IP-Liste (kommagetrennt, z. B. `10.0.0.0/8,172.18.0.1`) → nur diese Proxys
+
+> Setze `TRUST_PROXY` nur so weit wie nötig — ein zu weit gefasster Wert erlaubt
+> IP-Spoofing über gefälschte `X-Forwarded-For`-Header.
+
+### DEV-Bereich & Production-Guards
+
+- In Production (`NODE_ENV=production`) bricht der Start ab, wenn ein Pflicht-Secret
+  noch einen `.env.example`-Platzhalter trägt (z. B. `changeme`,
+  `your_discord_bot_token_here`).
+- `DEV_REQUIRE_MFA=true` **und** `DEV_REQUIRE_IP_ALLOWLIST=true` sind in Production
+  Pflicht; `DEV_IP_ALLOWLIST` darf dann nicht leer sein.
+- DEV-Log-Uploads liegen privat unter `DEV_UPLOAD_DIR` (Standard `./private/dev-logs`)
+  und sind ausschließlich über den authentifizierten DEV-Endpoint lesbar — niemals
+  per `express.static`. Öffentlich ausgeliefert werden nur `uploads/factions` und
+  `uploads/media`.
+
+### Öffentliche Web-Transcripts
+
+Ticket-Transcripts sind unter `/transcripts/<uuid>` ohne Login erreichbar. Die URL
+basiert auf einer nicht erratbaren UUID (kein Enumerieren möglich) und enthält nur
+den Ticket-Verlauf. Wer die URL kennt, kann das Transcript lesen — entsprechend
+sollten Links nur an Berechtigte weitergegeben werden. Für strengere Anforderungen
+kann ein Reverse-Proxy zusätzlichen Auth-Schutz vor `/transcripts` legen.
+
 ---
 
 ## Was V-Bot Prime besonders macht

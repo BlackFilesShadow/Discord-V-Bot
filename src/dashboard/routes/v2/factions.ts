@@ -31,6 +31,7 @@ import { postFactionEmbed, unpostFactionEmbed, postFactionList, unpostFactionLis
 import { asGuildId } from '../../../types/scope';
 import { validateBotChannelAccess } from '../../../utils/discordChannel';
 import { PermissionFlagsBits } from 'discord.js';
+import { config } from '../../../config';
 
 export const factionsRouter = Router({ mergeParams: true });
 
@@ -44,7 +45,7 @@ const VALID_ROLES = new Set(['LEADER', 'TREASURER', 'MEMBER', 'PENDING']);
 
 const DESCRIPTION_MAX = 1000;
 
-const UPLOADS_BASE = path.resolve(process.cwd(), 'uploads', 'factions');
+const UPLOADS_BASE = config.upload.factionsDir;
 const MAX_UPLOAD_BYTES = 25 * 1024 * 1024; // 25 MB
 const ALLOWED_MIME = new Set([
   'image/jpeg', 'image/png', 'image/webp', 'image/gif',
@@ -71,6 +72,43 @@ function extFor(mime: string): string {
     case 'video/webm': return '.webm';
     case 'video/quicktime': return '.mov';
     default: return '.bin';
+  }
+}
+
+/**
+ * Magic-Number-Pruefung (Task 7): verhindert Mime-Spoofing. Der Client-MIME
+ * wird NICHT vertraut — der tatsaechliche Datei-Inhalt muss zum MIME passen.
+ * Gibt true zurueck, wenn der Header zum angegebenen MIME-Type passt.
+ */
+export function verifyMagicNumber(mime: string, buf: Buffer): boolean {
+  if (buf.length < 12) return false;
+  const hex = (start: number, len: number) => buf.subarray(start, start + len).toString('hex').toLowerCase();
+  const ascii = (start: number, len: number) => buf.subarray(start, start + len).toString('ascii');
+
+  switch (mime) {
+    case 'image/jpeg':
+      return hex(0, 3) === 'ffd8ff';
+    case 'image/png':
+      return hex(0, 8) === '89504e470d0a1a0a';
+    case 'image/gif':
+      return ascii(0, 6) === 'GIF87a' || ascii(0, 6) === 'GIF89a';
+    case 'image/webp':
+      return ascii(0, 4) === 'RIFF' && ascii(8, 4) === 'WEBP';
+    case 'video/webm':
+      return hex(0, 4) === '1a45dfa3';
+    case 'video/mp4':
+    case 'video/quicktime': {
+      // ISO-BMFF: box-typ an Offset 4. mp4/mov teilen sich das ftyp-Format;
+      // mov erlaubt zusaetzlich moov/mdat/wide/free/skip als ersten Box-Typ.
+      const box = ascii(4, 4);
+      if (box === 'ftyp') return true;
+      if (mime === 'video/quicktime') {
+        return ['moov', 'mdat', 'wide', 'free', 'skip', 'pnot'].includes(box);
+      }
+      return false;
+    }
+    default:
+      return false;
   }
 }
 
@@ -494,6 +532,10 @@ factionsRouter.post(
       res.status(400).json({ error: `Datei zu gross (max ${MAX_UPLOAD_BYTES / 1024 / 1024} MB).` });
       return;
     }
+    if (!verifyMagicNumber(file.mimetype, file.buffer)) {
+      res.status(400).json({ error: 'Dateiinhalt passt nicht zum MIME-Type (Magic-Number-Pruefung fehlgeschlagen).' });
+      return;
+    }
     const ext = extFor(file.mimetype);
     const dir = path.join(UPLOADS_BASE, scope.guildId, '_drafts');
     await fs.mkdir(dir, { recursive: true });
@@ -548,6 +590,11 @@ factionsRouter.post(
 
     const existing = await prisma.faction.findFirst({ where: { id, guildId: scope.guildId } });
     if (!existing) { res.status(404).json({ error: 'Fraktion nicht gefunden.' }); return; }
+
+    if (!verifyMagicNumber(file.mimetype, file.buffer)) {
+      res.status(400).json({ error: 'Dateiinhalt passt nicht zum MIME-Type (Magic-Number-Pruefung fehlgeschlagen).' });
+      return;
+    }
 
     const ext = extFor(file.mimetype);
     const dir = path.join(UPLOADS_BASE, scope.guildId, existing.id);

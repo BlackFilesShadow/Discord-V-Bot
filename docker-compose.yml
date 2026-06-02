@@ -10,7 +10,9 @@ services:
     environment:
       POSTGRES_DB: ${POSTGRES_DB:-discord_v_bot}
       POSTGRES_USER: ${POSTGRES_USER:-discordbot}
-      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-changeme}
+      # KEIN Default: in Production MUSS POSTGRES_PASSWORD in .env gesetzt sein.
+      # Fehlt es, schlaegt `docker compose up` mit klarer Meldung fehl (siehe ?err).
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?POSTGRES_PASSWORD muss in .env gesetzt sein (kein Default in Production)}
     volumes:
       - pgdata:/var/lib/postgresql/data
     healthcheck:
@@ -47,7 +49,7 @@ services:
     env_file:
       - .env
     environment:
-      DATABASE_URL: postgresql://${POSTGRES_USER:-discordbot}:${POSTGRES_PASSWORD:-changeme}@postgres:5432/${POSTGRES_DB:-discord_v_bot}?schema=public
+      DATABASE_URL: postgresql://${POSTGRES_USER:-discordbot}:${POSTGRES_PASSWORD:?POSTGRES_PASSWORD muss in .env gesetzt sein}@postgres:5432/${POSTGRES_DB:-discord_v_bot}?schema=public
       REDIS_URL: ${REDIS_URL:-redis://redis:6379}
       NODE_ENV: production
       # Stabiler Host-Identifier fuer Singleton-Lock (Docker vergibt sonst pro
@@ -58,10 +60,12 @@ services:
       - "${DASHBOARD_PORT:-3000}:3000"
     volumes:
       - uploads:/app/uploads
+      - private:/app/private
       - logs:/app/logs
 
 volumes:
   pgdata:
   redisdata:
   uploads:
+  private:
   logs:

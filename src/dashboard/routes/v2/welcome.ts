@@ -41,6 +41,7 @@ import { tryGetDashboardClient } from '../../clientRegistry';
 import { validateBotChannelAccess } from '../../../utils/discordChannel';
 import { logAuditDb } from '../../../utils/logger';
 import { emitGuildEvent } from '../../socket/emitter';
+import { config } from '../../../config';
 
 export const welcomeRouter = Router({ mergeParams: true });
 
@@ -50,7 +51,7 @@ const MAX_MESSAGE = 1000;
 
 // --- Medien-Upload (Willkommensbild) ----------------------------------------
 // Wiederverwendung des bestehenden /uploads-Systems (kein zweites Upload-System).
-const WELCOME_UPLOADS_BASE = path.resolve(process.cwd(), 'uploads', 'media', 'welcome');
+const WELCOME_UPLOADS_BASE = path.join(config.upload.dir, 'media', 'welcome');
 const MAX_IMAGE_BYTES = 8 * 1024 * 1024; // 8 MB — Willkommensbilder sind Bilder, kein Video
 const ALLOWED_IMAGE_MIME = new Set(['image/jpeg', 'image/png', 'image/webp', 'image/gif']);
 

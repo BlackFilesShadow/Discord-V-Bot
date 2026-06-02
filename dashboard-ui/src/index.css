@@ -703,4 +703,60 @@ html[data-density='comfortable'] {
   }
 }
 
+/* ────────────────────────────────────────────────────────────────────────────
+   MOBILE / TOUCH HARDENING (Task 19)
+   - Touch-Targets >= 44x44px auf Touch-Geraeten (coarse pointer), ohne das
+     Desktop-Layout (fine pointer) zu veraendern.
+   - iOS-Safari: Safe-Area-Insets (Notch/Home-Indicator) respektieren.
+   - 16px-Mindestschrift bei Inputs verhindert iOS-Auto-Zoom beim Fokus.
+   - Bis 320px nutzbar: kein erzwungenes horizontales Scrollen der Seite,
+     Tabellen scrollen innerhalb ihres Containers (siehe DataTable overflow-auto).
+   ──────────────────────────────────────────────────────────────────────────── */
+
+/* Safe-Area: Header/Hauptbereich nicht unter Notch/Statusbar schieben. */
+@supports (padding: env(safe-area-inset-left)) {
+  body {
+    padding-left: env(safe-area-inset-left);
+    padding-right: env(safe-area-inset-right);
+  }
+}
+
+@media (pointer: coarse) {
+  /* Mindest-Tap-Flaeche fuer interaktive Elemente. min-height/width statt
+     fixer Groesse, damit bestehende Paddings/Icons erhalten bleiben. */
+  button,
+  a[role='button'],
+  [role='tab'],
+  a.focus-ring,
+  input[type='checkbox'],
+  input[type='radio'],
+  summary {
+    min-height: 44px;
+  }
+  button:not(.v-no-touch-min),
+  a[role='button'] {
+    min-width: 44px;
+  }
+  /* Icon-only-Buttons (h-9 w-9 = 36px) auf Touch vergroessern. */
+  .h-9.w-9 {
+    height: 44px;
+    width: 44px;
+  }
+}
+
+/* iOS-Auto-Zoom beim Fokus von Eingabefeldern unterdruecken: >=16px Schrift. */
+@media (max-width: 640px) {
+  input:not([type='checkbox']):not([type='radio']),
+  select,
+  textarea {
+    font-size: 16px;
+  }
+  /* Tabelleninhalte nicht umbrechen -> horizontal scrollen statt zerquetschen. */
+  .table-enterprise td,
+  .table-enterprise th {
+    white-space: nowrap;
+  }
+}
+
+
 

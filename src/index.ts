@@ -24,6 +24,7 @@ import { startRateLimitCleanup } from './utils/rateLimiter';
 import { startDashboard } from './dashboard/server';
 import { processExpiredCases } from './modules/moderation/caseManager';
 import { acquireSingletonLock } from './utils/singleton';
+import { assertProductionEnv } from './utils/envValidation';
 
 /**
  * Discord-V-Bot Haupteinstiegspunkt.
@@ -31,6 +32,10 @@ import { acquireSingletonLock } from './utils/singleton';
  */
 async function main(): Promise<void> {
   logger.info('Discord-V-Bot startet...');
+
+  // Production-Härtung: Default-/Platzhalter-Secrets und ungesicherten DEV-Bereich
+  // VOR jedem weiteren Schritt abfangen (bricht den Start in Production ab).
+  assertProductionEnv();
 
   // Upload-Verzeichnis erstellen
   if (!fs.existsSync(config.upload.dir)) {

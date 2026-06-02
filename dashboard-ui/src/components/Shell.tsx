@@ -168,7 +168,7 @@ export function Shell({ title, back, sidebar, children }: ShellProps) {
                 role="presentation"
               >
                 <aside
-                  className="absolute left-0 top-14 bottom-0 w-72 max-w-[85vw] glass border-r border-border p-4 overflow-y-auto"
+                  className="absolute left-0 top-16 bottom-0 w-72 max-w-[85vw] glass border-r border-border p-4 overflow-y-auto"
                   onClick={e => e.stopPropagation()}
                   role="dialog"
                   aria-label="Navigation"

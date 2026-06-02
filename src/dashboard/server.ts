@@ -24,6 +24,35 @@ import { metricsRegistry } from '../utils/metrics';
 import type { Client } from 'discord.js';
 
 /**
+ * Express `trust proxy`-Wert aus der Konfiguration parsen.
+ * Akzeptiert `true`/`false`, eine Hop-Anzahl (z.B. `1`) oder eine
+ * Komma-/Whitespace-getrennte IP-/CIDR-Liste.
+ */
+function parseTrustProxy(value: string): boolean | number | string | string[] {
+  const v = (value ?? '').trim();
+  if (v === '' ) return 1;
+  if (v.toLowerCase() === 'true') return true;
+  if (v.toLowerCase() === 'false') return false;
+  if (/^\d+$/.test(v)) return parseInt(v, 10);
+  if (v.includes(',')) return v.split(',').map((s) => s.trim()).filter(Boolean);
+  return v;
+}
+
+/**
+ * Leitet die ws/wss-Origin(s) aus der Dashboard-URL ab, damit Socket.IO unter
+ * einer engen CSP funktioniert (statt generischer ws:/wss:-Wildcards).
+ */
+function dashboardWebsocketOrigins(): string[] {
+  try {
+    const u = new URL(config.dashboard.url);
+    const wsScheme = u.protocol === 'https:' ? 'wss:' : 'ws:';
+    return [`${wsScheme}//${u.host}`];
+  } catch {
+    return [];
+  }
+}
+
+/**
  * Web-Dashboard Server (Sektion 7 & 12):
  * - Web-Dashboard für Admins/Entwickler
  * - Authentifizierung über Discord OAuth2, 2FA für Developer-Bereich
@@ -40,7 +69,8 @@ export async function startDashboard(client?: Client): Promise<void> {
   // Hinter Reverse-Proxy (Caddy/nginx) -> X-Forwarded-* honorieren,
   // sonst sieht Express die Verbindung als HTTP und setzt secure-Cookies
   // nicht -> OAuth-State geht verloren -> CSRF-Mismatch.
-  app.set('trust proxy', 1);
+  // Konfigurierbar via TRUST_PROXY (siehe README). Standard: 1 Hop.
+  app.set('trust proxy', parseTrustProxy(config.dashboard.trustProxy));
 
   // Security Middleware (Sektion 4: Sicherheit)
   // Helmet-Defaults sind bereits aktiv (CSP, X-Content-Type-Options, X-Frame-Options,
@@ -60,7 +90,9 @@ export async function startDashboard(client?: Client): Promise<void> {
         // Helmet-default plus eigener Report-Endpoint. Discord-CDN fuer
         // OAuth-Avatare; data: fuer Vite-inline Assets.
         'img-src': ["'self'", 'data:', 'https://cdn.discordapp.com'],
-        'connect-src': ["'self'", 'ws:', 'wss:'],
+        // Eng gefasst: nur same-origin + die explizite Dashboard-Origin als
+        // ws/wss (fuer Socket.IO). KEINE generischen ws:/wss:-Wildcards mehr.
+        'connect-src': ["'self'", ...dashboardWebsocketOrigins()],
         'frame-ancestors': ["'none'"],
         'report-uri': ['/api/csp-report'],
       },
@@ -242,14 +274,21 @@ export async function startDashboard(client?: Client): Promise<void> {
 
   // Statische Auslieferung der hochgeladenen Faction-Assets.
   // Pfad-Schema: /uploads/factions/<guildId>/<factionId>/<kind>.<ext>
-  const uploadsDir = path.resolve(process.cwd(), 'uploads');
-  if (fs.existsSync(uploadsDir)) {
-    app.use('/uploads', express.static(uploadsDir, {
-      index: false,
-      maxAge: '1h',
-      // Verhindert Path-Traversal-Tricks (express.static normalisiert bereits).
-      dotfiles: 'deny',
-    }));
+  //
+  // WICHTIG: Es werden AUSSCHLIESSLICH die bekannten oeffentlichen Unterordner
+  // ausgeliefert (factions, media) — niemals das gesamte uploads-Verzeichnis.
+  // DEV-Log-Uploads liegen in config.upload.devUploadDir (./private/dev-logs)
+  // und sind nur ueber den authentifizierten DEV-Endpoint erreichbar, nie als
+  // Static-Asset. Exporte liegen ebenfalls privat (config.upload.exportDir).
+  const staticOpts = { index: false, maxAge: '1h', dotfiles: 'deny' as const };
+  const factionsDir = config.upload.factionsDir;
+  if (fs.existsSync(factionsDir)) {
+    app.use('/uploads/factions', express.static(factionsDir, staticOpts));
+  }
+  // Willkommens-/Medien-Assets (Discord-Embeds laden diese URLs serverseitig).
+  const mediaDir = path.join(config.upload.dir, 'media');
+  if (fs.existsSync(mediaDir)) {
+    app.use('/uploads/media', express.static(mediaDir, staticOpts));
   }
 
   // Phase 4: Statische Auslieferung des Vite-Frontends + SPA-Fallback.

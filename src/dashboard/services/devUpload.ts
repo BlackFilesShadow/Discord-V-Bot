@@ -1,7 +1,8 @@
 /**
  * DEV-Upload-Service (Phase 2).
  *
- * - Storage on disk under uploads/dev-logs/<userDiscordId>/<id>/<safeName>
+ * - Storage on disk under <DEV_UPLOAD_DIR>/<userDiscordId>/<id>/<safeName>
+ *   (Standard: ./private/dev-logs — NIEMALS oeffentlich per express.static).
  * - Magic-Number-Pruefung verhindert Mime-Spoofing fuer XML/JSON.
  *   ADM/RPT haben kein magisches Praefix -> wir pruefen UTF-8/ASCII-only
  *   und max-Zeilenlaenge als Heuristik gegen Binaerdaten-Smuggling.
@@ -20,6 +21,7 @@ import { promises as fs } from 'node:fs';
 import * as path from 'node:path';
 import { createHash } from 'node:crypto';
 import prisma from '../../database/prisma';
+import { config } from '../../config';
 import { logger, logAudit } from '../../utils/logger';
 
 export type DevUploadKind = 'ADM' | 'RPT' | 'XML' | 'JSON';
@@ -46,10 +48,13 @@ export interface DevUploadRecord {
   expiresAt: Date;
 }
 
-const UPLOADS_BASE = path.resolve(process.cwd(), 'uploads', 'dev-logs');
+// Private Ablage AUSSERHALB des oeffentlichen uploads-Verzeichnisses. DEV-Logs
+// duerfen niemals per express.static erreichbar sein — nur ueber den
+// authentifizierten DEV-Endpoint (siehe routes/v2/devUploads.ts).
+const UPLOADS_BASE = config.upload.devUploadDir;
 const TTL_MS = 24 * 60 * 60 * 1000;            // 24h
-export const MAX_DEV_UPLOAD_BYTES = 50 * 1024 * 1024; // 50 MB pro Datei
-export const MAX_DEV_UPLOADS_PER_REQUEST = 10;
+export const MAX_DEV_UPLOAD_BYTES = 15 * 1024 * 1024; // 15 MB pro Datei
+export const MAX_DEV_UPLOADS_PER_REQUEST = 5;
 
 const EXTENSIONS: Record<DevUploadKind, string> = {
   ADM: '.adm',
@@ -180,7 +185,7 @@ export async function saveDevUpload(input: DevUploadInput): Promise<DevUploadRec
   const fullPath = path.join(userDir, safeName);
   await fs.writeFile(fullPath, input.buffer, { mode: 0o600 });
 
-  const rel = path.relative(path.resolve(process.cwd(), 'uploads'), fullPath);
+  const rel = path.relative(UPLOADS_BASE, fullPath);
   const updated = await prisma.devUpload.update({
     where: { id: record.id },
     data: { storedPath: rel },
@@ -236,7 +241,7 @@ export async function getDevUpload(userDiscordId: string, id: string): Promise<D
 export async function readDevUploadContent(userDiscordId: string, id: string): Promise<{ record: DevUploadRecord; buffer: Buffer } | null> {
   const rec = await getDevUpload(userDiscordId, id);
   if (!rec) return null;
-  const fullPath = path.resolve(process.cwd(), 'uploads', rec.storedPath);
+  const fullPath = path.resolve(UPLOADS_BASE, rec.storedPath);
   // Defense in depth: verhindert Path-Traversal falls storedPath manipuliert wuerde.
   const expectedPrefix = path.join(UPLOADS_BASE, rec.userDiscordId) + path.sep;
   if (!fullPath.startsWith(expectedPrefix)) {
@@ -254,7 +259,7 @@ export async function deleteDevUpload(userDiscordId: string, id: string): Promis
     where: { id: rec.id },
     data: { deletedAt: new Date() },
   });
-  const fullPath = path.resolve(process.cwd(), 'uploads', rec.storedPath);
+  const fullPath = path.resolve(UPLOADS_BASE, rec.storedPath);
   const expectedPrefix = path.join(UPLOADS_BASE, rec.userDiscordId) + path.sep;
   if (fullPath.startsWith(expectedPrefix)) {
     await fs.unlink(fullPath).catch(() => { /* already gone */ });
@@ -282,7 +287,7 @@ export async function cleanupExpiredUploads(): Promise<{ removed: number }> {
   });
   let removed = 0;
   for (const row of expired) {
-    const fullPath = path.resolve(process.cwd(), 'uploads', row.storedPath);
+    const fullPath = path.resolve(UPLOADS_BASE, row.storedPath);
     const expectedPrefix = path.join(UPLOADS_BASE, row.userDiscordId) + path.sep;
     if (fullPath.startsWith(expectedPrefix)) {
       await fs.unlink(fullPath).catch(() => { /* */ });
