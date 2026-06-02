@@ -618,7 +618,7 @@ function UsersSection({ base, canManage, canDanger }: { base: string; canManage:
     onSuccess: (r) => { toast.success('Aktualisiert.'); if (r.otp) setOtp(r.otp); qc.invalidateQueries({ queryKey: [base, 'users'] }); }, onError: e => toast.error(errMsg(e)),
   });
   const resetPw = useMutation({
-    mutationFn: (id: string) => api.post<{ otp: string }>(`${base}/users/${id}/reset-password`, {}),
+    mutationFn: (vars: { id: string; expiryMinutes: number }) => api.post<{ otp: string }>(`${base}/users/${vars.id}/reset-password`, { expiryMinutes: vars.expiryMinutes }),
     onSuccess: (r) => { setOtp(r.otp); setReset(null); toast.success('Passwort zurückgesetzt.'); }, onError: e => { toast.error(errMsg(e)); setReset(null); },
   });
   return (
@@ -645,6 +645,7 @@ function UsersSection({ base, canManage, canDanger }: { base: string; canManage:
                 <div className="flex gap-1 shrink-0 flex-wrap justify-end">
                   <Button size="sm" variant={u.status === 'SUSPENDED' ? 'secondary' : 'ghost'} onClick={() => toggleUpload.mutate({ id: u.id, enable: u.status === 'SUSPENDED' })}>{u.status === 'SUSPENDED' ? 'Entsperren' : 'Sperren'}</Button>
                   {!u.isManufacturer && <Button size="sm" variant="ghost" onClick={() => manufacturer.mutate({ id: u.id, decision: 'APPROVE' })}>Hersteller +</Button>}
+                  {!u.isManufacturer && <Button size="sm" variant="ghost" onClick={() => manufacturer.mutate({ id: u.id, decision: 'DENY' })}>Ablehnen</Button>}
                   {canDanger && <Button size="sm" variant="danger" onClick={() => setReset(u)} aria-label="Passwort zurücksetzen"><KeyRound className="h-4 w-4" /></Button>}
                 </div>
               )}
@@ -652,10 +653,21 @@ function UsersSection({ base, canManage, canDanger }: { base: string; canManage:
           </Card>
         ))}
       </div>
-      {reset && <ConfirmDialog open title={`Passwort zurücksetzen: ${reset.username}`} desc="Erzeugt ein neues Einmal-Passwort und widerruft alte." confirmLabel="Zurücksetzen" danger
-        onConfirm={() => resetPw.mutate(reset.id)} onClose={() => setReset(null)} loading={resetPw.isPending} />}
+      {reset && <ResetPasswordModal user={reset} onClose={() => setReset(null)} onSubmit={(min) => resetPw.mutate({ id: reset.id, expiryMinutes: min })} loading={resetPw.isPending} />}
       {otp && <OtpModal otp={otp} onClose={() => setOtp(null)} />}
     </Card>
+  );
+}
+
+function ResetPasswordModal({ user, onClose, onSubmit, loading }: { user: UserRow; onClose: () => void; onSubmit: (expiryMinutes: number) => void; loading: boolean }) {
+  const [minutes, setMinutes] = useState(30);
+  const clamped = Math.min(1440, Math.max(5, minutes || 30));
+  return (
+    <Modal open onClose={onClose} title={`Passwort zurücksetzen: ${user.username}`} desc="Erzeugt ein neues Einmal-Passwort und widerruft alte."
+      footer={<><Button variant="ghost" size="sm" onClick={onClose}>Abbrechen</Button><Button size="sm" variant="danger" loading={loading} onClick={() => onSubmit(clamped)}>Zurücksetzen</Button></>}>
+      <label className="text-xs text-muted">Ablaufzeit (Minuten, 5–1440)</label>
+      <Input type="number" min={5} max={1440} value={minutes} onChange={e => setMinutes(parseInt(e.target.value, 10) || 30)} className="mt-1" />
+    </Modal>
   );
 }
 

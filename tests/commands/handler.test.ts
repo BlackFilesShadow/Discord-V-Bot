@@ -51,8 +51,8 @@ describe('Command Handler (Sektion 5)', () => {
     const client = createMockClient();
     await loadCommands(client);
 
-    expect(client.commands.has('admin-approve')).toBe(true);
-    expect(client.commands.has('admin-deny')).toBe(true);
+    expect(client.commands.has('admin-list-pakete')).toBe(true);
+    expect(client.commands.has('admin-config')).toBe(true);
     expect(client.commands.has('admin-stats')).toBe(true);
     expect(client.commands.has('admin-monitor')).toBe(true);
   });

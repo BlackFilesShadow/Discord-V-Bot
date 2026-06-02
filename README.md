@@ -267,9 +267,7 @@ Sichtbar mit Discord-Permission `Manage Guild` oder `Administrator` (je nach Com
 | `/admin-config anzeigen\|setzen\|loeschen` | Bot-Settings pro Server |
 | `/admin-stats` | Server-/Bot-Statistik |
 | `/admin-monitor` | Live-Monitoring-Dashboard |
-| `/admin-toggle-upload` | Uploads global an/aus |
 | `/xp-config rate\|levelrole\|xp-rolle-*\|xp-channel-*\|max-level\|max-rolle\|show` | XP-System konfigurieren |
-| `/selfrole erstellen\|option-*\|post\|liste\|loeschen` | Reaction-Role-Menüs (`Manage Roles`) |
 | `/autorole erstellen\|liste\|loeschen\|toggle\|blacklist\|whitelist` | Auto-Roles (`Manage Roles`) |
 
 #### Content & Moderation
@@ -280,22 +278,21 @@ Sichtbar mit Discord-Permission `Manage Guild` oder `Administrator` (je nach Com
 | `/ai-trigger add\|list\|remove\|clear` | KI-Trigger-Wörter |
 | `/admin-knowledge add\|remove\|persona` | Server-Wissensbasis (RAG) + Persona-Override |
 | `/admin-aimodels probe\|reset` | AI-Provider-Status testen/zurücksetzen |
-| `/admin-tickets list\|close` | Support-Tickets verwalten |
 | `/admin-feedback liste\|zeigen\|status\|notiz\|channel` | Feedback-Inbox |
-| `/admin-appeals liste\|genehmigen\|ablehnen\|eskalieren` | Appeals bearbeiten |
 | `/admin-security events\|blacklist\|whitelist\|ip-entfernen\|resolve` | Security-Events + IP-Listen |
 
 #### Hersteller- & Daten-Verwaltung
 | Command | Beschreibung |
 |---|---|
-| `/admin-approve` | Hersteller-Antrag annehmen → OTP wird DM-versendet |
-| `/admin-deny` | Hersteller-Antrag ablehnen |
-| `/admin-reset-password` | Hersteller-OTP neu generieren |
-| `/admin-list-users` | Alle User mit Filter |
 | `/admin-list-pakete` | Alle Pakete (auch Soft-Deleted) |
 | `/admin-validate paket\|datei\|quarantaene` | Validierung erneut ausführen |
 | `/admin-delete paket\|datei\|restore\|bulk` | Paket/Datei löschen oder wiederherstellen |
 | `/admin-export pakete\|logs\|nutzer` | DSGVO-Export als JSON/ZIP |
+
+> **Ins Dashboard migriert (Spec §15):** `/admin-broadcast`, `/admin-appeals`,
+> `/admin-list-users`, `/admin-approve`, `/admin-deny`, `/admin-toggle-upload`,
+> `/admin-reset-password`, `/admin-tickets` und `/selfrole` wurden aus Discord
+> entfernt und sind jetzt im **Bot-Admin-Bereich** des Web-Dashboards verfügbar.
 
 #### Logging & Audit
 | Command | Beschreibung |

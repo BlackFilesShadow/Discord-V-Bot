@@ -75,10 +75,29 @@ const REMOVE_NAMES = new Set<string>(['autorole']);
  * Discord ENTFERNT, weil ein funktionsgleicher Dashboard-Ersatz existiert und
  * geprueft wurde. Eintraege bleiben hier als Audit-/Inventory-Spur erhalten.
  *
- *  - admin-broadcast -> Bot-Admin "Broadcast" (POST /api/v2/bot-admin/broadcast,
- *    BotAdminTab BroadcastSection; Dashboard kann zusaetzlich Dry-Run).
+ * Ersatz jeweils im Bot-Admin-Bereich (src/dashboard/routes/v2/botAdmin.ts +
+ * dashboard-ui BotAdminTab):
+ *  - admin-broadcast      -> Broadcast (POST /broadcast, Dry-Run zusaetzlich)
+ *  - admin-appeals        -> Appeals (GET /appeals, POST /appeals/:id/decision)
+ *  - admin-list-users     -> Nutzer (GET /users, Filter+Suche)
+ *  - admin-approve        -> Nutzer "Hersteller +" (POST /users/:id/manufacturer APPROVE)
+ *  - admin-deny           -> Nutzer "Ablehnen" (POST /users/:id/manufacturer DENY)
+ *  - admin-toggle-upload  -> Nutzer Sperren/Entsperren (POST /users/:id/toggle-upload)
+ *  - admin-reset-password -> Nutzer Passwort-Reset (POST /users/:id/reset-password)
+ *  - admin-tickets        -> Tickets (GET /tickets, POST /tickets/:id/close)
+ *  - selfrole             -> Selfroles (GET/POST /selfroles ...; Button-Handler bleibt im Bot)
  */
-export const MOVED_TO_DASHBOARD = new Set<string>(['admin-broadcast']);
+export const MOVED_TO_DASHBOARD = new Set<string>([
+  'admin-broadcast',
+  'admin-appeals',
+  'admin-list-users',
+  'admin-approve',
+  'admin-deny',
+  'admin-toggle-upload',
+  'admin-reset-password',
+  'admin-tickets',
+  'selfrole',
+]);
 
 /**
  * Spec-Referenzliste: Commands, die dauerhaft in Discord bleiben.
