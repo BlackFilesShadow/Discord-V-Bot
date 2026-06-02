@@ -56,8 +56,10 @@ const MAX_IMAGE_BYTES = 8 * 1024 * 1024; // 8 MB — Willkommensbilder sind Bild
 const ALLOWED_IMAGE_MIME = new Set(['image/jpeg', 'image/png', 'image/webp', 'image/gif']);
 
 const imageUpload = multer({
+  // memoryStorage ist bewusst gewählt: das Bild wird nach Magic-/MIME-Prüfung
+  // direkt auf Platte geschrieben. RAM-Obergrenze pro Request = fileSize (8 MB).
   storage: multer.memoryStorage(),
-  limits: { fileSize: MAX_IMAGE_BYTES, files: 1 },
+  limits: { fileSize: MAX_IMAGE_BYTES, files: 1, fields: 10, parts: 12 },
   fileFilter: (_req, file, cb) => {
     if (ALLOWED_IMAGE_MIME.has(file.mimetype)) cb(null, true);
     else cb(new Error('Nur PNG, JPG, JPEG, WEBP oder GIF erlaubt.'));

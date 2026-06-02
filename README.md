@@ -123,6 +123,39 @@ bricht ab.
   per `express.static`. Öffentlich ausgeliefert werden nur `uploads/factions` und
   `uploads/media`.
 
+### Öffentliche Upload-Pfade & Upload-RAM
+
+- `/uploads/factions` und `/uploads/media` werden **bewusst öffentlich** per
+  `express.static` ausgeliefert (`index:false`, `dotfiles:'deny'`, `maxAge:1h`).
+  Grund: Discord lädt eingebettete Bilder (Faction-Flaggen/-Banner, Willkommens-
+  bilder) **serverseitig** über die öffentliche URL — ein Auth-Gate würde die
+  Embeds brechen. Es werden ausschließlich diese beiden bekannten Unterordner
+  freigegeben, niemals das gesamte `uploads/`-Verzeichnis. Alle anderen Bereiche
+  (`dev-logs`, Exporte) bleiben privat.
+- Uploads nutzen `multer.memoryStorage()` mit harten Limits: pro Request gilt eine
+  RAM-Obergrenze von `fileSize × files` (Factions/Welcome 1 Datei, DEV max. 5).
+  Zusätzlich begrenzen `fields`/`parts` die Multipart-Felder, und ein
+  Rate-Limiter (DEV: 30 Uploads / 10 min) deckelt die Frequenz. memoryStorage ist
+  nötig, weil Inhalte vor dem Schreiben auf Platte per Magic-Number-/MIME-Prüfung
+  validiert werden.
+
+### Command-Runtime-Sicherheit
+
+Jede Interaktion durchläuft in `interactionCreate` eine feste Schutzkette:
+
+- **Rate-Limiting** (eigene Buckets, je User):
+  - global 30 Slash-Commands / 60s, zusätzlich 10 / 60s pro einzelnem Command
+  - Komponenten (Buttons/Modals/Select-Menus) 25 Aktionen / 30s — eigener Bucket,
+    greift **vor** jeder Komponenten-Dispatch-Logik gegen Klick-Spam
+  - pro Command optionaler Cooldown (Owner-Bypass)
+- **Permission-Gating** vor der Ausführung:
+  - `adminOnly` → DB-Rollencheck, `devOnly` → DEV-Passwort-Modal mit Lockout nach
+    Fehlversuchen, `manufacturerOnly` → aktiver Manufacturer-Status
+  - Owner/Guild-Owner-Bypass (außer Manufacturer-Gate)
+- **Timing-sichere Vergleiche** für das DEV-Passwort (`safeEqual`, kein Early-Exit).
+- **Audit-Logging + Prometheus-Metriken** für jede Ausführung; abgelaufene/duplizierte
+  Interaktionen (`10062`/`40060`) werden still verworfen.
+
 ### Öffentliche Web-Transcripts
 
 Ticket-Transcripts sind unter `/transcripts/<uuid>` ohne Login erreichbar. Die URL

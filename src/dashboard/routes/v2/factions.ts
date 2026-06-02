@@ -54,8 +54,11 @@ const ALLOWED_MIME = new Set([
 const ALLOWED_KIND = new Set(['flag', 'banner', 'media']);
 
 const upload = multer({
+  // memoryStorage wird für die Magic-Number-Prüfung (verifyMagicNumber) und das
+  // anschließende Schreiben auf Platte benötigt. RAM-Obergrenze pro Request =
+  // fileSize (siehe MAX_UPLOAD_BYTES), nur 1 Datei gleichzeitig.
   storage: multer.memoryStorage(),
-  limits: { fileSize: MAX_UPLOAD_BYTES, files: 1 },
+  limits: { fileSize: MAX_UPLOAD_BYTES, files: 1, fields: 10, parts: 12 },
   fileFilter: (_req, file, cb) => {
     if (ALLOWED_MIME.has(file.mimetype)) cb(null, true);
     else cb(new Error('Nur JPG/PNG/WEBP/GIF/MP4/WEBM/MOV erlaubt.'));

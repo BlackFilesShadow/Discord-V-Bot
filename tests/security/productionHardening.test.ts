@@ -98,6 +98,47 @@ describe('collectProductionEnvErrors', () => {
   });
 });
 
+describe('assertProductionEnv (Start-Gate)', () => {
+  it('bricht in Production bei unsicherer Konfiguration ab (process.exit + Meldung)', () => {
+    const { assertProductionEnv } = require('../../src/utils/envValidation');
+    const env = validProdEnv();
+    env.DISCORD_TOKEN = 'your_discord_bot_token_here';
+
+    const logs: string[] = [];
+    const exit = jest.spyOn(process, 'exit').mockImplementation((() => undefined) as never);
+
+    assertProductionEnv(env, (m: string) => logs.push(m));
+
+    expect(exit).toHaveBeenCalledWith(1);
+    expect(logs.join('\n')).toContain('START ABGEBROCHEN');
+    expect(logs.join('\n')).toContain('DISCORD_TOKEN');
+    exit.mockRestore();
+  });
+
+  it('laesst gueltige Production-Konfiguration durch (kein exit)', () => {
+    const { assertProductionEnv } = require('../../src/utils/envValidation');
+    const exit = jest.spyOn(process, 'exit').mockImplementation((() => undefined) as never);
+
+    assertProductionEnv(validProdEnv(), () => { /* noop */ });
+
+    expect(exit).not.toHaveBeenCalled();
+    exit.mockRestore();
+  });
+
+  it('macht in Nicht-Production gar nichts (kein exit, auch bei Platzhaltern)', () => {
+    const { assertProductionEnv } = require('../../src/utils/envValidation');
+    const env = validProdEnv();
+    env.NODE_ENV = 'development';
+    env.DISCORD_TOKEN = 'your_discord_bot_token_here';
+    const exit = jest.spyOn(process, 'exit').mockImplementation((() => undefined) as never);
+
+    assertProductionEnv(env, () => { /* noop */ });
+
+    expect(exit).not.toHaveBeenCalled();
+    exit.mockRestore();
+  });
+});
+
 describe('package.json Startpfade', () => {
   const pkg = require('../../package.json');
   it('main zeigt auf dist/src/index.js', () => {

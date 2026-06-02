@@ -12,7 +12,7 @@ import {
 import { BotEvent, ExtendedClient } from '../types';
 import { logger, logAudit } from '../utils/logger';
 import { checkCooldown } from '../utils/cooldown';
-import { checkGlobalRateLimit, checkPerCommandRateLimit } from '../utils/rateLimit';
+import { checkGlobalRateLimit, checkPerCommandRateLimit, checkComponentRateLimit } from '../utils/rateLimit';
 import { commandCounter, commandDurationHistogram, rateLimitedCounter } from '../utils/metrics';
 import { reportError } from '../utils/errorSink';
 import prisma from '../database/prisma';
@@ -116,6 +116,25 @@ const interactionCreateEvent: BotEvent = {
         }
       }
       return;
+    }
+
+    // Komponenten-Interaktionen (Buttons/Modals/Select-Menus) gegen Klick-Spam
+    // absichern — eigener Bucket (koppelt nicht an das Command-Budget). Greift
+    // VOR jeder Komponenten-Dispatch-Logik, damit auch Modul-Handler geschützt
+    // sind, die ihre eigenen Permission-Checks erst danach ausführen.
+    const isComponentInteraction =
+      ('isButton' in i && (i as ButtonInteraction).isButton()) ||
+      ('isModalSubmit' in i && (i as ModalSubmitInteraction).isModalSubmit()) ||
+      ('isAnySelectMenu' in i && (i as { isAnySelectMenu: () => boolean }).isAnySelectMenu());
+    if (isComponentInteraction) {
+      const c = i as ButtonInteraction;
+      if (!checkComponentRateLimit(c.user.id)) {
+        rateLimitedCounter.inc({ kind: 'component' });
+        try {
+          await c.reply({ content: '⚠️ Zu viele Aktionen. Bitte einen Moment warten.', ephemeral: true });
+        } catch { /* Interaktion evtl. abgelaufen */ }
+        return;
+      }
     }
 
     // Modal-Submit verarbeiten (Dev-Passwort)

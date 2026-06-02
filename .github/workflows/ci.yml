@@ -58,8 +58,12 @@ jobs:
       - name: Validate Prisma schema
         run: npx prisma validate
 
-      - name: ESLint (errors blocking, warnings allowed)
-        run: npx eslint "src/**/*.ts" --max-warnings=9999
+      - name: ESLint Backend (errors blocking, warnings allowed)
+        run: npx eslint "src/**/*.ts" "tests/**/*.ts" --max-warnings=9999
+
+      - name: ESLint Dashboard-UI (errors blocking, warnings allowed)
+        working-directory: dashboard-ui
+        run: npx eslint . --max-warnings=9999
 
       - name: TypeScript Build
         run: npm run build

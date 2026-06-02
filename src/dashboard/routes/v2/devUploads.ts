@@ -32,8 +32,10 @@ import { logger } from '../../../utils/logger';
 export const devUploadsRouter = Router();
 
 const upload = multer({
+  // memoryStorage: Validierung im Service, danach Disk-Persistenz. RAM-Obergrenze
+  // pro Request = fileSize × files (15 MB × 5 = 75 MB worst-case, vor Limiter).
   storage: multer.memoryStorage(),
-  limits: { fileSize: MAX_DEV_UPLOAD_BYTES, files: MAX_DEV_UPLOADS_PER_REQUEST },
+  limits: { fileSize: MAX_DEV_UPLOAD_BYTES, files: MAX_DEV_UPLOADS_PER_REQUEST, fields: 10, parts: MAX_DEV_UPLOADS_PER_REQUEST + 6 },
 });
 
 // Rate-Limit fuer Uploads: 30 Anfragen / 10 min / DEV-User.

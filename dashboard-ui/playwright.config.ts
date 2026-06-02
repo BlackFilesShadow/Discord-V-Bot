@@ -34,6 +34,12 @@ export default defineConfig({
       name: 'chromium',
       use: { ...devices['Desktop Chrome'] },
     },
+    {
+      // Mobile-Smoke: garantiert, dass die Login-Seite auf einem echten
+      // Mobil-Viewport (Pixel 5, 393px) korrekt rendert und bedienbar bleibt.
+      name: 'mobile-chrome',
+      use: { ...devices['Pixel 5'] },
+    },
   ],
   webServer: {
     // Build wird VOR `playwright test` ueber den npm-script `e2e` ausgefuehrt

@@ -1,9 +1,12 @@
 import {
   checkGlobalRateLimit,
   checkPerCommandRateLimit,
+  checkComponentRateLimit,
   __resetRateLimits,
   RATE_LIMIT_GLOBAL_MAX,
   RATE_LIMIT_PER_COMMAND_MAX,
+  RATE_LIMIT_COMPONENT_MAX,
+  RATE_LIMIT_COMPONENT_WINDOW_MS,
 } from '../../src/utils/rateLimit';
 
 describe('rateLimit', () => {
@@ -72,5 +75,45 @@ describe('rateLimit', () => {
     }
     expect(checkPerCommandRateLimit('u1', 'ai', t)).toBe(false);
     expect(checkGlobalRateLimit('u1', t)).toBe(true);
+  });
+
+  describe('checkComponentRateLimit', () => {
+    it('erlaubt 25 Aktionen pro 30s und blockt die 26.', () => {
+      const t = 4_000_000;
+      for (let i = 0; i < RATE_LIMIT_COMPONENT_MAX; i++) {
+        expect(checkComponentRateLimit('u1', t)).toBe(true);
+      }
+      expect(checkComponentRateLimit('u1', t)).toBe(false);
+    });
+
+    it('separiert Buckets pro User', () => {
+      const t = 4_000_000;
+      for (let i = 0; i < RATE_LIMIT_COMPONENT_MAX; i++) {
+        checkComponentRateLimit('u1', t);
+      }
+      expect(checkComponentRateLimit('u1', t)).toBe(false);
+      expect(checkComponentRateLimit('u2', t)).toBe(true);
+    });
+
+    it('öffnet Window nach 30s wieder', () => {
+      const t = 4_000_000;
+      for (let i = 0; i < RATE_LIMIT_COMPONENT_MAX; i++) {
+        checkComponentRateLimit('u1', t);
+      }
+      expect(checkComponentRateLimit('u1', t)).toBe(false);
+      expect(checkComponentRateLimit('u1', t + RATE_LIMIT_COMPONENT_WINDOW_MS + 1)).toBe(true);
+    });
+
+    it('ist unabhängig vom Command-Budget (eigener Bucket)', () => {
+      const t = 5_000_000;
+      // Komponenten-Budget erschöpfen
+      for (let i = 0; i < RATE_LIMIT_COMPONENT_MAX; i++) {
+        checkComponentRateLimit('u1', t);
+      }
+      expect(checkComponentRateLimit('u1', t)).toBe(false);
+      // Command-Budgets bleiben unberührt
+      expect(checkGlobalRateLimit('u1', t)).toBe(true);
+      expect(checkPerCommandRateLimit('u1', 'ai', t)).toBe(true);
+    });
   });
 });
