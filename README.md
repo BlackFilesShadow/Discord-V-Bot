@@ -115,8 +115,9 @@ bricht ab.
 - In Production (`NODE_ENV=production`) bricht der Start ab, wenn ein Pflicht-Secret
   noch einen `.env.example`-Platzhalter trägt (z. B. `changeme`,
   `your_discord_bot_token_here`).
-- `DEV_REQUIRE_MFA=true` **und** `DEV_REQUIRE_IP_ALLOWLIST=true` sind in Production
-  Pflicht; `DEV_IP_ALLOWLIST` darf dann nicht leer sein.
+- Der DEV-Bereich ist bewusst **nur passwortgeschützt** (`DEV_PASSWORD`). 2FA
+  (`DEV_REQUIRE_MFA`) und IP-Allowlist (`DEV_REQUIRE_IP_ALLOWLIST`) sind optionale
+  Opt-in-Features (Default AUS) und werden in Production **nicht** erzwungen.
 - DEV-Log-Uploads liegen privat unter `DEV_UPLOAD_DIR` (Standard `./private/dev-logs`)
   und sind ausschließlich über den authentifizierten DEV-Endpoint lesbar — niemals
   per `express.static`. Öffentlich ausgeliefert werden nur `uploads/factions` und

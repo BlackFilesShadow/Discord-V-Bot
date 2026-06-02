@@ -1,17 +1,15 @@
 /**
  * Production-Startup-Guards (P0/P1-Härtung).
  *
- * Zwei Schutzschichten, die NUR in Production (`NODE_ENV=production`) greifen:
+ * Schutzschicht, die NUR in Production (`NODE_ENV=production`) greift:
  *
- *   1. Default-/Platzhalter-Secrets verhindern (Task 2):
+ *   Default-/Platzhalter-Secrets verhindern (Task 2):
  *      Wenn ein Pflicht-Secret noch den .env.example-Platzhalter trägt
  *      (z.B. `your_discord_bot_token_here` oder `changeme`), bricht der
  *      Start ab. Leere OPTIONALE API-Keys bleiben erlaubt.
  *
- *   2. DEV-Bereich nur abgesichert (Task 1):
- *      In Production müssen `DEV_REQUIRE_MFA=true` UND
- *      `DEV_REQUIRE_IP_ALLOWLIST=true` gesetzt sein, und bei aktivierter
- *      IP-Allowlist darf `DEV_IP_ALLOWLIST` nicht leer sein.
+ * Hinweis: Der DEV-Bereich ist bewusst NUR passwortgeschützt
+ * (`DEV_PASSWORD`). Es gibt KEINEN Startzwang für 2FA oder IP-Allowlist.
  *
  * Die Funktion `collectProductionEnvErrors()` ist seiteneffektfrei und
  * vollständig testbar; `assertProductionEnv()` ruft sie auf und beendet
@@ -63,16 +61,9 @@ export function collectProductionEnvErrors(env: EnvLike = process.env): string[]
     errors.push('DATABASE_URL enthält "changeme" — Default-Passwort in Production nicht erlaubt.');
   }
 
-  // --- Task 1: DEV-Bereich-Pflichtschutz ---
-  if (env.DEV_REQUIRE_MFA !== 'true') {
-    errors.push('DEV_REQUIRE_MFA muss in Production "true" sein (2FA-Zwang für den DEV-Bereich).');
-  }
-  if (env.DEV_REQUIRE_IP_ALLOWLIST !== 'true') {
-    errors.push('DEV_REQUIRE_IP_ALLOWLIST muss in Production "true" sein (IP-Allowlist für den DEV-Bereich).');
-  } else if ((env.DEV_IP_ALLOWLIST ?? '').trim() === '') {
-    // Allowlist erzwungen, aber leer -> niemand käme rein bzw. fail-closed-Lücke.
-    errors.push('DEV_REQUIRE_IP_ALLOWLIST=true, aber DEV_IP_ALLOWLIST ist leer. Mindestens eine IP/CIDR eintragen.');
-  }
+  // Hinweis: Der DEV-Bereich ist bewusst NUR passwortgeschützt. Es gibt
+  // KEINEN Production-Startzwang für 2FA (DEV_REQUIRE_MFA) oder IP-Allowlist
+  // (DEV_REQUIRE_IP_ALLOWLIST) — diese bleiben optionale Opt-in-Features.
 
   return errors;
 }

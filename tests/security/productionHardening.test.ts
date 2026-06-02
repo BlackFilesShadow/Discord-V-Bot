@@ -3,8 +3,7 @@
  *
  * Deckt ab:
  *  - Start-Abbruch in Production bei Default-/Platzhalter-Secrets
- *  - Start-Abbruch ohne DEV_REQUIRE_MFA=true
- *  - Start-Abbruch ohne DEV_REQUIRE_IP_ALLOWLIST=true bzw. leerer Allowlist
+ *  - DEV-Bereich ist NUR passwortgeschuetzt: kein Startzwang fuer 2FA/IP-Allowlist
  *  - In Nicht-Production wird NICHT abgebrochen
  *  - package.json start/main zeigen auf dist/src/index.js
  *  - Faction-Upload akzeptiert nur passende Magic-Number (Mime != Inhalt -> reject)
@@ -28,9 +27,6 @@ function validProdEnv(): Record<string, string> {
     GROQ_API_KEY: 'gsk_realkey',
     GEMINI_API_KEY: '',
     OPENAI_API_KEY: '',
-    DEV_REQUIRE_MFA: 'true',
-    DEV_REQUIRE_IP_ALLOWLIST: 'true',
-    DEV_IP_ALLOWLIST: '203.0.113.5',
   };
 }
 
@@ -78,25 +74,18 @@ describe('collectProductionEnvErrors', () => {
     expect(errors.some((e) => e.includes('POSTGRES_PASSWORD'))).toBe(true);
   });
 
-  it('bricht ab, wenn DEV_REQUIRE_MFA nicht true ist', () => {
+  it('erzwingt KEINE 2FA fuer den DEV-Bereich (nur Passwortschutz)', () => {
     const env = validProdEnv();
+    delete env.DEV_REQUIRE_MFA;
     env.DEV_REQUIRE_MFA = 'false';
-    const errors = collectProductionEnvErrors(env);
-    expect(errors.some((e) => e.includes('DEV_REQUIRE_MFA'))).toBe(true);
+    expect(collectProductionEnvErrors(env)).toEqual([]);
   });
 
-  it('bricht ab, wenn DEV_REQUIRE_IP_ALLOWLIST nicht true ist', () => {
+  it('erzwingt KEINE IP-Allowlist fuer den DEV-Bereich', () => {
     const env = validProdEnv();
     env.DEV_REQUIRE_IP_ALLOWLIST = 'false';
-    const errors = collectProductionEnvErrors(env);
-    expect(errors.some((e) => e.includes('DEV_REQUIRE_IP_ALLOWLIST'))).toBe(true);
-  });
-
-  it('bricht ab, wenn DEV_REQUIRE_IP_ALLOWLIST=true aber DEV_IP_ALLOWLIST leer', () => {
-    const env = validProdEnv();
     env.DEV_IP_ALLOWLIST = '';
-    const errors = collectProductionEnvErrors(env);
-    expect(errors.some((e) => e.includes('DEV_IP_ALLOWLIST ist leer'))).toBe(true);
+    expect(collectProductionEnvErrors(env)).toEqual([]);
   });
 
   it('macht in Nicht-Production keine Vorgaben (collect liefert dennoch Liste, assert greift nicht)', () => {
