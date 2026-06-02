@@ -99,14 +99,16 @@ export default function ServerSlot() {
     onSuccess: () => qc.invalidateQueries({ queryKey: ['economy', guildId] }),
   });
 
+  const tabs = [
+    ['settings', 'Settings', Settings],
+    ['whitelist', 'Whitelist', Shield],
+    ['economy', 'Economy', Coins],
+    ['links', 'Economy-Links', LinkIcon],
+  ] as const;
+
   const sidebar = (
     <nav className="space-y-1 text-sm">
-      {([
-        ['settings', 'Settings', Settings],
-        ['whitelist', 'Whitelist', Shield],
-        ['economy', 'Economy', Coins],
-        ['links', 'Economy-Links', LinkIcon],
-      ] as const).map(([key, label, Icon]) => (
+      {tabs.map(([key, label, Icon]) => (
         <button
           key={key}
           onClick={() => setTab(key)}
@@ -125,6 +127,25 @@ export default function ServerSlot() {
   return (
     <Shell title={`Slot #${slot}`} back={`/servers/${guildId}`} sidebar={sidebar}>
       <div className="max-w-3xl mx-auto space-y-6">
+        {/* Mobile: horizontale Tab-Leiste, da die Sidebar nur hinterm Menue liegt. */}
+        <nav
+          className="md:hidden -mx-4 px-4 flex gap-2 overflow-x-auto pb-1"
+          aria-label="Slot-Funktionen"
+        >
+          {tabs.map(([key, label, Icon]) => (
+            <button
+              key={key}
+              onClick={() => setTab(key)}
+              className={`shrink-0 inline-flex items-center gap-2 px-3 py-2 rounded-md text-sm whitespace-nowrap transition-colors ${
+                tab === key ? 'bg-accent/20 text-accent' : 'text-muted bg-bg-elev/40 hover:bg-bg-elev hover:text-white'
+              }`}
+              type="button"
+            >
+              <Icon className="h-4 w-4" />
+              {label}
+            </button>
+          ))}
+        </nav>
         {tab === 'settings' && (
           <Card>
             <CardHeader><CardTitle>Server-Toggles</CardTitle></CardHeader>

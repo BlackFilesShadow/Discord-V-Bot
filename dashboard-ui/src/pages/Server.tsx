@@ -106,6 +106,30 @@ export default function Server() {
   return (
     <Shell title={dash.data?.alias5 ? `Server ${dash.data.alias5}` : 'Server'} back="/servers" sidebar={sidebar}>
       <div className="max-w-5xl mx-auto">
+        {/* Mobile: horizontale Bereichs-Navigation (Sidebar liegt sonst nur hinterm Menue). */}
+        <nav
+          className="md:hidden -mx-4 px-4 mb-4 flex gap-2 overflow-x-auto pb-1"
+          aria-label="Server-Bereiche"
+        >
+          {visibleTabs.map(t => {
+            const Icon = t.icon;
+            const active = tab === t.key;
+            return (
+              <button
+                key={t.key}
+                type="button"
+                onClick={() => setTab(t.key)}
+                className={`shrink-0 inline-flex items-center gap-2 px-3 py-2 rounded-md text-sm font-medium whitespace-nowrap transition-colors focus-ring ${
+                  active ? 'bg-accent/15 text-accent border border-accent/30' : 'text-muted bg-bg-elev/40 hover:text-white hover:bg-bg-elev border border-transparent'
+                }`}
+                aria-current={active ? 'page' : undefined}
+              >
+                <Icon className="h-4 w-4 shrink-0" />
+                {t.label}
+              </button>
+            );
+          })}
+        </nav>
         {dash.isLoading && <div className="h-24 rounded-xl skeleton" />}
         {dash.isError && (
           <Card glow>
