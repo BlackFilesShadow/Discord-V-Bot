@@ -9,6 +9,7 @@ import { checkRateLimit } from '../../utils/rateLimiter';
 import { lookupNitradoHelp, looksLikeDayZFileQuestion, getDayZFileTruthBlock, detectTypesXmlValueViolations, sanitizeDayZLootValues, looksLikeDayZLootContent } from './nitradoHelp';
 import { redactText } from '../nitrado/mirror/redactor';
 import { cached } from '../../utils/responseCache';
+import { clampBlock, clampHistory } from './promptBudget';
 
 /**
  * AI-Integration (Sektion 4):
@@ -415,15 +416,15 @@ export async function answerQuestion(
       { role: 'system', content: BOT_PERSONA },
       { role: 'system', content: getLiveTimeContext() },
       ...(wantKnowledgeBoundary ? [{ role: 'system' as const, content: getKnowledgeBoundary() }] : []),
-      ...(catalogBlock ? [{ role: 'system' as const, content: catalogBlock }] : []),
+      ...(catalogBlock ? [{ role: 'system' as const, content: clampBlock('commandContext', catalogBlock)! }] : []),
       ...(introBlock ? [{ role: 'system' as const, content: introBlock }] : []),
-      ...(liveBlock ? [{ role: 'system' as const, content: liveBlock }] : []),
-      ...(context ? [{ role: 'system' as const, content: context }] : []),
-      ...memoryTurns.map((t) => ({ role: t.role, content: t.content })),
+      ...(liveBlock ? [{ role: 'system' as const, content: clampBlock('knowledge', liveBlock)! }] : []),
+      ...(context ? [{ role: 'system' as const, content: clampBlock('serverContext', context)! }] : []),
+      ...clampHistory(memoryTurns).map((t) => ({ role: t.role, content: t.content })),
       // WICHTIG: Nitrado-Help/Wahrheits-Block ZULETZT (direkt vor der User-Frage),
       // damit er nicht durch \u00e4ltere (m\u00f6glicherweise halluzinierte) Memory-Turns
       // \u00fcberschrieben wird. Letzte system-Message hat das st\u00e4rkste Priming.
-      ...(nitradoHelpBlock ? [{ role: 'system' as const, content: nitradoHelpBlock }] : []),
+      ...(nitradoHelpBlock ? [{ role: 'system' as const, content: clampBlock('nitradoContext', nitradoHelpBlock)! }] : []),
       { role: 'user', content: question },
     ]);
 

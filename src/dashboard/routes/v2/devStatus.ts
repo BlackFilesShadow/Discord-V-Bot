@@ -461,3 +461,26 @@ devStatusRouter.get('/ai-providers', async (_req, res) => {
     res.status(500).json({ error: 'Provider-Stats konnten nicht geladen werden.' });
   }
 });
+
+// --- AI-Kontext-Debugger / Retrieval-Debugger (Spec §6.B) -----------------
+// POST /ai-retrieval-debug  { guildId, question, limit? }
+//   -> Hybrid-Score-Aufschluesselung pro Snippet (Cosine/Keyword/Label/Recency),
+//      Auswahl-Begruendung, verwendetes Embedding-Modell und Budgets.
+devStatusRouter.post('/ai-retrieval-debug', async (req, res) => {
+  try {
+    const guildId = String(req.body?.guildId ?? '').trim();
+    const question = String(req.body?.question ?? '').trim();
+    const rawLimit = Number(req.body?.limit);
+    const limit = Number.isFinite(rawLimit) && rawLimit > 0 && rawLimit <= 10 ? Math.floor(rawLimit) : 3;
+    if (!/^\d{17,20}$/.test(guildId)) { res.status(400).json({ error: 'Ungueltige guildId.' }); return; }
+    if (question.length < 2) { res.status(400).json({ error: 'Frage zu kurz.' }); return; }
+
+    const { debugRetrieval } = await import('../../../modules/ai/guildKnowledge.js');
+    const { getPromptBudgets } = await import('../../../modules/ai/promptBudget.js');
+    const result = await debugRetrieval(guildId, question, limit);
+    res.json({ ...result, promptBudgets: getPromptBudgets() });
+  } catch (err) {
+    logger.error('[DEV-Status] ai-retrieval-debug failed', err as Error);
+    res.status(500).json({ error: 'Retrieval-Debug fehlgeschlagen.' });
+  }
+});

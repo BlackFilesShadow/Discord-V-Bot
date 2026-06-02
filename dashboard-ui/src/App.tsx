@@ -37,6 +37,7 @@ import SuspiciousActivity from './pages/dev/SuspiciousActivity';
 import FactionActivity from './pages/dev/FactionActivity';
 import VehicleTracking from './pages/dev/VehicleTracking';
 import AiProviderStats from './pages/dev/AiProviderStats';
+import AiContextDebugger from './pages/dev/AiContextDebugger';
 import NitradoMirror from './pages/dev/NitradoMirror';
 import { Toaster } from './components/ui/Toast';
 
@@ -80,6 +81,7 @@ const DEV_PAGES: Record<string, () => JSX.Element> = {
   'faction-activity': FactionActivity,
   'vehicle-tracking': VehicleTracking,
   'ai-providers': AiProviderStats,
+  'ai-context-debugger': AiContextDebugger,
   'nitrado-mirror': NitradoMirror,
 };
 

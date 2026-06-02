@@ -38,34 +38,123 @@ function tokenize(s: string): Set<string> {
 // Gemini text-embedding-004 liefert fuer wirklich verwandte Themen >0.55.
 const SEMANTIC_MIN_SCORE = 0.55;
 
-function keywordFallback(
-  rows: Array<{ id: string; label: string; content: string }>,
+// Hybrid-Retrieval-Gewichte (Spec §6.C). Summe = 1.0.
+//   semantic    : Cosine-Aehnlichkeit Frage<->Snippet-Embedding (0..1)
+//   keyword     : normalisierter Token-Overlap-Score (0..1)
+//   label       : Bonus, wenn ein Frage-Token exakt im Label vorkommt (0/1)
+//   recency     : juengere Snippets leicht bevorzugt (0..1, exp. Abfall ueber 90d)
+const HYBRID_WEIGHTS = { semantic: 0.65, keyword: 0.2, label: 0.1, recency: 0.05 } as const;
+// Mindest-Hybrid-Score, ab dem ein Snippet ueberhaupt in Betracht kommt.
+const HYBRID_MIN_SCORE = 0.12;
+const RECENCY_HALF_LIFE_DAYS = 90;
+
+interface ScoredRow {
+  id: string;
+  label: string;
+  content: string;
+  semantic: number;   // 0..1 (0 wenn kein Embedding)
+  keyword: number;    // 0..1 normalisiert
+  labelBoost: number; // 0 oder 1
+  recency: number;    // 0..1
+  hybrid: number;     // gewichtete Summe
+  hadEmbedding: boolean;
+}
+
+function keywordScore(label: string, content: string, qTokens: Set<string>): { raw: number; labelBoost: number } {
+  const lTokens = tokenize(label);
+  const cTokens = tokenize(content);
+  let raw = 0;
+  let labelBoost = 0;
+  for (const t of lTokens) if (qTokens.has(t)) { raw += 2; labelBoost = 1; }
+  for (const t of cTokens) if (qTokens.has(t)) raw += 1;
+  return { raw, labelBoost };
+}
+
+function recencyScore(createdAt: Date): number {
+  const ageDays = (Date.now() - createdAt.getTime()) / 86_400_000;
+  if (ageDays <= 0) return 1;
+  // Exponentieller Abfall: nach RECENCY_HALF_LIFE_DAYS noch 0.5.
+  return Math.pow(0.5, ageDays / RECENCY_HALF_LIFE_DAYS);
+}
+
+type KnowledgeRow = {
+  id: string;
+  label: string;
+  content: string;
+  embedding: string | null;
+  embeddingModel: string | null;
+  createdAt: Date;
+};
+
+/**
+ * Kern-Scorer: berechnet fuer alle aktiven Snippets den Hybrid-Score.
+ * Wird sowohl von findRelevantKnowledge (Produktion) als auch vom
+ * Retrieval-Debugger (DEV) genutzt, damit beide identisch ranken.
+ */
+async function scoreKnowledge(
+  rows: KnowledgeRow[],
   question: string,
-  limit: number,
-): KnowledgeSnippet[] {
+): Promise<{ scored: ScoredRow[]; usedSemantic: boolean; queryModel: string | null }> {
   const qTokens = tokenize(question);
-  if (qTokens.size === 0) return [];
-  return rows
-    .map((s) => {
-      // L2: Label-Treffer doppelt gewichten, Content-Treffer einfach. So gewinnt
-      // ein passendes Label gegenueber einem zufaelligen Content-Token-Match,
-      // wir verlieren aber keine Snippets, die das Stichwort nur im Inhalt haben.
-      const lTokens = tokenize(s.label);
-      const cTokens = tokenize(s.content);
-      let score = 0;
-      for (const t of lTokens) if (qTokens.has(t)) score += 2;
-      for (const t of cTokens) if (qTokens.has(t)) score += 1;
-      return { snip: s, score };
-    })
-    .filter((s) => s.score > 0)
-    .sort((a, b) => b.score - a.score)
-    .slice(0, limit)
-    .map((s) => ({ id: s.snip.id, label: s.snip.label, content: s.snip.content }));
+  // Hoechster Roh-Keyword-Score zur Normalisierung (0..1).
+  let maxKeywordRaw = 0;
+  const keywordCache = new Map<string, { raw: number; labelBoost: number }>();
+  for (const r of rows) {
+    const ks = keywordScore(r.label, r.content, qTokens);
+    keywordCache.set(r.id, ks);
+    if (ks.raw > maxKeywordRaw) maxKeywordRaw = ks.raw;
+  }
+
+  const qEmb = await getQueryEmbedding(question);
+  const usedSemantic = !!qEmb;
+
+  const scored: ScoredRow[] = rows.map((row) => {
+    const ks = keywordCache.get(row.id)!;
+    const keyword = maxKeywordRaw > 0 ? ks.raw / maxKeywordRaw : 0;
+
+    let semantic = 0;
+    let hadEmbedding = false;
+    if (qEmb && row.embedding && row.embeddingModel === qEmb.model) {
+      let vec: number[] | null = null;
+      try { vec = JSON.parse(row.embedding) as number[]; } catch { vec = null; }
+      if (vec && vec.length === qEmb.vector.length) {
+        hadEmbedding = true;
+        const cos = cosineSimilarity(qEmb.vector, vec);
+        // Nur Cosine-Werte ueber der semantischen Mindestschwelle als Signal
+        // werten — sonst schiebt Hintergrundrauschen irrelevante Snippets hoch.
+        semantic = cos >= SEMANTIC_MIN_SCORE ? cos : 0;
+      }
+    }
+
+    const recency = recencyScore(row.createdAt);
+    const hybrid =
+      HYBRID_WEIGHTS.semantic * semantic +
+      HYBRID_WEIGHTS.keyword * keyword +
+      HYBRID_WEIGHTS.label * ks.labelBoost +
+      HYBRID_WEIGHTS.recency * recency;
+
+    return {
+      id: row.id,
+      label: row.label,
+      content: row.content,
+      semantic,
+      keyword,
+      labelBoost: ks.labelBoost,
+      recency,
+      hybrid,
+      hadEmbedding,
+    };
+  });
+
+  scored.sort((a, b) => b.hybrid - a.hybrid);
+  return { scored, usedSemantic, queryModel: qEmb?.model ?? null };
 }
 
 /**
- * Liefert bis zu N relevante Snippets per semantischer Aehnlichkeit (Cosine).
- * Fallback: Keyword-Match auf Label-Tokens, falls keine Embeddings verfuegbar.
+ * Liefert bis zu N relevante Snippets per Hybrid-Score
+ * (semantisch + Keyword + Label-Boost + Recency, Spec §6.C).
+ * Faellt automatisch auf reines Keyword-Ranking zurueck, wenn keine
+ * Embeddings verfuegbar sind (qEmb null oder Snippets ohne Vektor).
  */
 export async function findRelevantKnowledge(
   guildId: string,
@@ -75,47 +164,97 @@ export async function findRelevantKnowledge(
   try {
     const all = await prisma.guildKnowledge.findMany({
       where: { guildId, isActive: true },
-      select: { id: true, label: true, content: true, embedding: true, embeddingModel: true },
+      select: { id: true, label: true, content: true, embedding: true, embeddingModel: true, createdAt: true },
       take: 200,
     });
     if (all.length === 0) return [];
 
-    // Semantischer Pfad: Frage embedden, mit allen Snippet-Embeddings vergleichen.
-    const qEmb = await getQueryEmbedding(question);
-    if (qEmb) {
-      const scored: Array<{ snip: KnowledgeSnippet; score: number }> = [];
-      for (const row of all) {
-        if (!row.embedding || !row.embeddingModel) continue;
-        // Nur gleiche Modelle/Dimensionen vergleichen.
-        if (row.embeddingModel !== qEmb.model) continue;
-        let vec: number[] | null = null;
-        try {
-          vec = JSON.parse(row.embedding) as number[];
-        } catch {
-          vec = null;
-        }
-        if (!vec || vec.length !== qEmb.vector.length) continue;
-        const score = cosineSimilarity(qEmb.vector, vec);
-        if (score >= SEMANTIC_MIN_SCORE) {
-          scored.push({ snip: { id: row.id, label: row.label, content: row.content }, score });
-        }
-      }
-      if (scored.length > 0) {
-        scored.sort((a, b) => b.score - a.score);
-        return scored.slice(0, limit).map((s) => s.snip);
-      }
-    }
-
-    // Fallback: Keyword-Match (Phase 8 Verhalten).
-    return keywordFallback(
-      all.map((r) => ({ id: r.id, label: r.label, content: r.content })),
-      question,
-      limit,
-    );
+    const { scored } = await scoreKnowledge(all, question);
+    return scored
+      .filter((s) => s.hybrid >= HYBRID_MIN_SCORE)
+      .slice(0, limit)
+      .map((s) => ({ id: s.id, label: s.label, content: s.content }));
   } catch (e) {
     logger.warn('findRelevantKnowledge fehlgeschlagen:', { guildId, e: String(e) });
     return [];
   }
+}
+
+export interface RetrievalDebugSnippet {
+  id: string;
+  label: string;
+  contentPreview: string;
+  semantic: number;
+  keyword: number;
+  labelBoost: number;
+  recency: number;
+  hybrid: number;
+  hadEmbedding: boolean;
+  selected: boolean;
+  reason: string;
+}
+
+export interface RetrievalDebugResult {
+  question: string;
+  totalSnippets: number;
+  usedSemantic: boolean;
+  queryModel: string | null;
+  weights: typeof HYBRID_WEIGHTS;
+  minScore: number;
+  limit: number;
+  results: RetrievalDebugSnippet[];
+}
+
+/**
+ * Retrieval-Debugger (Spec §6.B): liefert fuer eine Testfrage alle Snippets
+ * mit Einzel-Scores (Cosine, Keyword, Label, Recency, Hybrid) und der
+ * Auswahl-Begruendung. Nur fuer den DEV-Bereich gedacht.
+ */
+export async function debugRetrieval(
+  guildId: string,
+  question: string,
+  limit = MAX_SNIPPETS_PER_PROMPT,
+): Promise<RetrievalDebugResult> {
+  const all = await prisma.guildKnowledge.findMany({
+    where: { guildId, isActive: true },
+    select: { id: true, label: true, content: true, embedding: true, embeddingModel: true, createdAt: true },
+    take: 200,
+  });
+  const { scored, usedSemantic, queryModel } = await scoreKnowledge(all, question);
+  const results: RetrievalDebugSnippet[] = scored.map((s, idx) => {
+    const passesScore = s.hybrid >= HYBRID_MIN_SCORE;
+    const selected = passesScore && idx < limit;
+    let reason: string;
+    if (!passesScore) reason = `Hybrid ${s.hybrid.toFixed(3)} < min ${HYBRID_MIN_SCORE}`;
+    else if (idx >= limit) reason = `Rang ${idx + 1} ueber Limit ${limit}`;
+    else if (s.semantic > 0 && s.labelBoost) reason = 'Semantik + Label-Treffer';
+    else if (s.semantic > 0) reason = 'Semantische Aehnlichkeit';
+    else if (s.labelBoost) reason = 'Label-Treffer (Keyword)';
+    else reason = 'Keyword-Overlap';
+    return {
+      id: s.id,
+      label: s.label,
+      contentPreview: s.content.slice(0, 160),
+      semantic: Number(s.semantic.toFixed(4)),
+      keyword: Number(s.keyword.toFixed(4)),
+      labelBoost: s.labelBoost,
+      recency: Number(s.recency.toFixed(4)),
+      hybrid: Number(s.hybrid.toFixed(4)),
+      hadEmbedding: s.hadEmbedding,
+      selected,
+      reason,
+    };
+  });
+  return {
+    question,
+    totalSnippets: all.length,
+    usedSemantic,
+    queryModel,
+    weights: HYBRID_WEIGHTS,
+    minScore: HYBRID_MIN_SCORE,
+    limit,
+    results,
+  };
 }
 
 export async function listKnowledge(guildId: string): Promise<KnowledgeSnippet[]> {
