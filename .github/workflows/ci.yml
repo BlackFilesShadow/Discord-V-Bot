@@ -58,12 +58,12 @@ jobs:
       - name: Validate Prisma schema
         run: npx prisma validate
 
-      - name: ESLint Backend (errors blocking, warnings allowed)
-        run: npx eslint "src/**/*.ts" "tests/**/*.ts" --max-warnings=9999
-
-      - name: ESLint Dashboard-UI (errors blocking, warnings allowed)
-        working-directory: dashboard-ui
-        run: npx eslint . --max-warnings=9999
+      - name: Lint (lint:all = Backend src+tests + Dashboard-UI)
+        # Bewusst der EINE Aggregat-Befehl `npm run lint:all`, damit die CI
+        # NIE vom lokal genutzten Lint-Scope abdriftet. lint:all == `lint`
+        # (eslint src/**+tests/**) && `lint:ui` (eslint . im dashboard-ui).
+        # Fehler blockieren; Warnungen sind erlaubt (ESLint-Default).
+        run: npm run lint:all
 
       - name: TypeScript Build
         run: npm run build
