@@ -6,6 +6,7 @@ import { Shell } from '@/components/Shell';
 import { Card } from '@/components/ui/Card';
 import { Button } from '@/components/ui/Button';
 import { useAuth } from '@/lib/auth';
+import { useDevSession } from '@/lib/devSession';
 
 interface Guild {
   id: string;
@@ -29,6 +30,8 @@ interface DevSnapshot {
 export default function Servers() {
   const { user } = useAuth();
   const isDev = user?.role === 'DEVELOPER';
+  // DEV-Konsole erst nach korrekter DEV-Passwort-Eingabe sichtbar (active).
+  const devActive = useDevSession().active;
 
   const { data, isLoading, isError, error, refetch } = useQuery({
     queryKey: ['guilds'],
@@ -79,7 +82,7 @@ export default function Servers() {
           </div>
         )}
 
-        {isDev && <DevFooter />}
+        {isDev && devActive && <DevFooter />}
 
         <CreditsCard />
       </div>

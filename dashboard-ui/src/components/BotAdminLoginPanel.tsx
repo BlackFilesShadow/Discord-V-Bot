@@ -103,14 +103,15 @@ export function BotAdminLoginPanel() {
       data-testid="botadmin-login-panel"
       onSubmit={onSubmit}
       autoComplete="off"
-      className="relative inline-flex items-center"
+      className="relative flex w-full items-center md:inline-flex md:w-auto"
       aria-label="Bot-Admin-Login"
     >
       {/* Dummy-Felder gegen Browser-Autofill. */}
       <input type="text" name="username" autoComplete="username" className="hidden" tabIndex={-1} aria-hidden />
       <div
         className={
-          'inline-flex items-center h-8 rounded-md border bg-black/40 ' +
+          'flex w-full items-center h-11 rounded-md border bg-black/40 ' +
+          'md:inline-flex md:w-auto md:h-8 ' +
           'pl-2 pr-1 gap-1 transition-colors ' +
           (err
             ? 'border-danger/60 focus-within:border-danger'
@@ -129,15 +130,15 @@ export function BotAdminLoginPanel() {
           autoComplete="new-password"
           aria-invalid={err ? true : false}
           aria-describedby={err ? 'botadmin-pw-err' : undefined}
-          className="bg-transparent outline-none text-xs text-white placeholder:text-muted/70
-                     w-[150px] sm:w-[170px] h-7"
+          className="bg-transparent outline-none text-sm md:text-xs text-white placeholder:text-muted/70
+                     flex-1 w-full h-10 md:flex-none md:w-[170px] md:h-7"
         />
         <button
           type="submit"
           disabled={!pw || busy}
           title="Entsperren"
           aria-label="Bot-Admin entsperren"
-          className="inline-flex items-center justify-center h-6 w-6 rounded
+          className="inline-flex items-center justify-center h-9 w-9 md:h-6 md:w-6 rounded
                      bg-gradient-to-br from-indigo-600 to-indigo-800
                      hover:from-indigo-500 hover:to-indigo-700
                      shadow-[0_0_10px_rgba(99,102,241,0.45)]

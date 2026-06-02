@@ -11,7 +11,7 @@
  * Kein localStorage; Session wird serverseitig validiert.
  */
 import { useState, type FormEvent } from 'react';
-import { ShieldAlert, LogOut, KeyRound, Check, Loader2 } from 'lucide-react';
+import { ShieldAlert, LogOut, KeyRound, Check, Loader2, Lock } from 'lucide-react';
 import { useAuth } from '@/lib/auth';
 import { useDevSession } from '@/lib/devSession';
 import { ApiError } from '@/lib/api';
@@ -109,14 +109,24 @@ export function DevLoginPanel() {
       data-testid="dev-login-panel"
       onSubmit={onSubmit}
       autoComplete="off"
-      className="relative inline-flex items-center"
+      className="relative flex w-full items-center md:inline-flex md:w-auto"
       aria-label="DEV-Console-Login"
     >
       {/* Dummy-Feld gegen Browser-Autofill. */}
       <input type="text" name="username" autoComplete="username" className="hidden" tabIndex={-1} aria-hidden />
+      {/* Gesperrt-Indikator: rot, bis das korrekte Passwort eine DEV-Session
+          freischaltet (dann gruene "DEV ON"-Pille im active-Zweig oben). */}
+      <span
+        className="status-pill mr-1.5 shrink-0"
+        data-state="danger"
+        title="DEV gesperrt — Passwort eingeben"
+      >
+        <Lock className="h-3 w-3" aria-hidden /> DEV
+      </span>
       <div
         className={
-          'inline-flex items-center h-8 rounded-md border bg-black/40 ' +
+          'flex w-full items-center h-11 rounded-md border bg-black/40 ' +
+          'md:inline-flex md:w-auto md:h-8 ' +
           'pl-2 pr-1 gap-1 transition-colors ' +
           (err
             ? 'border-danger/60 focus-within:border-danger'
@@ -135,15 +145,15 @@ export function DevLoginPanel() {
           autoComplete="new-password"
           aria-invalid={err ? true : false}
           aria-describedby={err ? 'dev-pw-err' : undefined}
-          className="bg-transparent outline-none text-xs text-white placeholder:text-muted/70
-                     w-[140px] sm:w-[160px] h-7"
+          className="bg-transparent outline-none text-sm md:text-xs text-white placeholder:text-muted/70
+                     flex-1 w-full h-10 md:flex-none md:w-[160px] md:h-7"
         />
         <button
           type="submit"
           disabled={!pw || busy}
           title="Entsperren"
           aria-label="DEV-Console entsperren"
-          className="inline-flex items-center justify-center h-6 w-6 rounded
+          className="inline-flex items-center justify-center h-9 w-9 md:h-6 md:w-6 rounded
                      bg-gradient-to-br from-red-600 to-red-800
                      hover:from-red-500 hover:to-red-700
                      shadow-[0_0_10px_rgba(239,68,68,0.45)]

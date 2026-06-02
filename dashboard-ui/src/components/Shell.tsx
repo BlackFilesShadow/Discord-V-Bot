@@ -16,6 +16,8 @@ import {
 } from 'lucide-react';
 import { useAuth } from '@/lib/auth';
 import { useDensity } from '@/lib/density';
+import { useDevSession } from '@/lib/devSession';
+import { useBotAdminSession } from '@/lib/botAdminSession';
 import { useHotkey, MOD_LABEL } from '@/lib/hotkeys';
 import { CommandPalette } from '@/components/CommandPalette';
 import { DevLoginPanel } from '@/components/DevLoginPanel';
@@ -33,12 +35,30 @@ interface ShellProps {
 export function Shell({ title, back, sidebar, children }: ShellProps) {
   const { user } = useAuth();
   const { density, cycle } = useDensity();
+  // Erhoehte Bereiche (DEV / Bot-Admin) steuern Sichtbarkeit von DEV-Tools wie
+  // der Befehlspalette. Erst nach korrekter Passwort-Eingabe (active) sichtbar.
+  const devActive = useDevSession().active;
+  const botAdminActive = useBotAdminSession().active;
+  const elevated = devActive || botAdminActive;
   const loc = useLocation();
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const [paletteOpen, setPaletteOpen] = useState(false);
+  // Login-Panels (DEV + Bot-Admin) sitzen auf Desktop inline im Header, auf
+  // Mobile in einer eigenen gestapelten Leiste darunter. Per matchMedia
+  // entscheiden wir, WO sie gerendert werden — so existiert immer nur EINE
+  // Instanz (keine doppelten input-IDs, kein Overlap im engen Header).
+  const [isDesktop, setIsDesktop] = useState(
+    () => typeof window !== 'undefined' && window.matchMedia('(min-width: 768px)').matches,
+  );
+  useEffect(() => {
+    const mql = window.matchMedia('(min-width: 768px)');
+    const onChange = (): void => setIsDesktop(mql.matches);
+    mql.addEventListener('change', onChange);
+    return () => mql.removeEventListener('change', onChange);
+  }, []);
 
   // Palette-Hotkey global (Inhalte respektieren ohnehin 3-Gate Auth).
-  useHotkey('mod+k', e => { e.preventDefault(); setPaletteOpen(o => !o); }, { allowInInputs: true });
+  useHotkey('mod+k', e => { e.preventDefault(); if (elevated) setPaletteOpen(o => !o); }, { allowInInputs: true });
   useHotkey('escape', () => setPaletteOpen(false), { allowInInputs: true });
 
   useEffect(() => { setSidebarOpen(false); }, [loc.pathname]);
@@ -97,25 +117,32 @@ export function Shell({ title, back, sidebar, children }: ShellProps) {
         </div>
 
         <div className="flex items-center gap-1.5 sm:gap-2 text-sm">
-          {/* DEV-Console Inline-Login (Passwort-Feld + Submit) bzw. Status-Pille. */}
-          <DevLoginPanel />
-          {/* Bot-Admin Inline-Login — globaler, passwortgeschuetzter Bereich. */}
-          <BotAdminLoginPanel />
-
+          {/* DEV/Bot-Admin-Login: nur auf Desktop inline im Header (Mobile-Bar
+              unten rendert sie stattdessen gestapelt). */}
+          {isDesktop && (
+            <>
+              <DevLoginPanel />
+              <BotAdminLoginPanel />
+            </>
+          )}
           <Tooltip content={<span>Befehlspalette · <Kbd>{MOD_LABEL}</Kbd>+<Kbd>K</Kbd></span>}>
-            <button
-              type="button"
-              onClick={() => setPaletteOpen(true)}
-              className="inline-flex items-center gap-2 h-9 pl-2.5 pr-2 rounded-md border border-white/[0.06] bg-white/[0.02] hover:bg-bg-elev/60 text-muted hover:text-white focus-ring"
-              aria-label="Befehlspalette oeffnen"
-            >
-              <Command className="h-3.5 w-3.5" />
-              <span className="hidden md:inline text-xs">Suchen</span>
-              <span className="hidden md:inline-flex items-center gap-0.5">
-                <Kbd>{MOD_LABEL}</Kbd><Kbd>K</Kbd>
-              </span>
-            </button>
+            {/* DEV-Tool-Suche nur sichtbar, wenn DEV oder Bot-Admin freigeschaltet ist. */}
+            {elevated ? (
+              <button
+                type="button"
+                onClick={() => setPaletteOpen(true)}
+                className="inline-flex items-center gap-2 h-9 pl-2.5 pr-2 rounded-md border border-white/[0.06] bg-white/[0.02] hover:bg-bg-elev/60 text-muted hover:text-white focus-ring"
+                aria-label="Befehlspalette oeffnen"
+              >
+                <Command className="h-3.5 w-3.5" />
+                <span className="hidden md:inline text-xs">Suchen</span>
+                <span className="hidden md:inline-flex items-center gap-0.5">
+                  <Kbd>{MOD_LABEL}</Kbd><Kbd>K</Kbd>
+                </span>
+              </button>
+            ) : <span className="hidden" />}
           </Tooltip>
+
 
           <Tooltip content={`Dichte: ${density}`}>
             <button
@@ -149,6 +176,15 @@ export function Shell({ title, back, sidebar, children }: ShellProps) {
       {(back || title) && (
         <div className="sm:hidden border-b border-border px-4 py-2 text-sm">
           <span className="text-white truncate">{title}</span>
+        </div>
+      )}
+
+      {/* Mobile-Login-Leiste: DEV- und Bot-Admin-Login gestapelt, volle Breite,
+          eigener Block unterhalb des Headers — kein Overlap mit Branding/Inhalt. */}
+      {!isDesktop && user && (
+        <div className="md:hidden border-b border-border bg-bg-card/40 px-4 py-3 flex flex-col gap-3">
+          <DevLoginPanel />
+          <BotAdminLoginPanel />
         </div>
       )}
 
