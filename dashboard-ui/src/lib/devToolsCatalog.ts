@@ -47,6 +47,7 @@ export const DEV_TOOLS: ReadonlyArray<DevTool> = [
 
   // ── Integrations ───────────────────────────────────────────────────────
   { slug: 'nitrado-status',    label: 'Nitrado API Status',      icon: ServerIcon,      status: 'ready', category: 'integrations',  desc: 'Nitrado Job-Outbox: Pending/Failed, letzte Fehler.',    keywords: ['nitrado', 'outbox', 'jobs'] },
+  { slug: 'nitrado-protection', label: 'Nitrado Schreibschutz',  icon: ShieldCheck,     status: 'ready', category: 'integrations',  desc: 'Schreibschutz-Status, Scopes, Read-Only Token-Erfassung (keine Secrets).', keywords: ['nitrado', 'write protection', 'schreibschutz', 'readonly', 'token'] },
   { slug: 'nitrado-mirror',    label: 'Nitrado Mirror',          icon: FolderTree,      status: 'ready', category: 'integrations',  desc: 'Read-Only Snapshot aller Server-Settings.',             keywords: ['nitrado', 'mirror', 'snapshot', 'mission'] },
   { slug: 'discord-status',    label: 'Discord API Status',      icon: Plug,            status: 'ready', category: 'integrations',  desc: 'Gateway-Latenz, Shard-Health, Cache-Sizes.',            keywords: ['discord', 'shard', 'gateway'] },
   { slug: 'backup-status',     label: 'Backup Status',           icon: HardDrive,       status: 'ready',  category: 'integrations',  desc: 'Letzte Backups, Verifikation, Restore-Test.',           keywords: ['backup', 'restore', 'verify'] },

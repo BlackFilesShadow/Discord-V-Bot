@@ -10,6 +10,7 @@ import LiveBotStatus from './pages/dev/LiveBotStatus';
 import DashboardStatus from './pages/dev/DashboardStatus';
 import DatabaseStatus from './pages/dev/DatabaseStatus';
 import NitradoStatus from './pages/dev/NitradoStatus';
+import NitradoProtection from './pages/dev/NitradoProtection';
 import DiscordStatus from './pages/dev/DiscordStatus';
 import SystemHealth from './pages/dev/SystemHealth';
 import ErrorMonitoring from './pages/dev/ErrorMonitoring';
@@ -51,6 +52,7 @@ const DEV_PAGES: Record<string, () => JSX.Element> = {
   'dashboard-status': DashboardStatus,
   'database-status': DatabaseStatus,
   'nitrado-status': NitradoStatus,
+  'nitrado-protection': NitradoProtection,
   'discord-status': DiscordStatus,
   'system-health': SystemHealth,
   'error-monitoring': ErrorMonitoring,
