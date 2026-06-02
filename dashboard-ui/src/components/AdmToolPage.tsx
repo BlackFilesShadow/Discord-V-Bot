@@ -8,7 +8,7 @@
  * mangels GUID ignoriert wurden.
  */
 import { useEffect, useState } from 'react';
-import { Activity, AlertTriangle } from 'lucide-react';
+import { Activity, AlertTriangle, Inbox } from 'lucide-react';
 import { api, ApiError } from '@/lib/api';
 import { Card, CardHeader, CardTitle, CardDesc } from '@/components/ui/Card';
 import { DevFileUpload } from '@/components/DevFileUpload';
@@ -20,6 +20,10 @@ export interface AdmToolPageProps<T> {
   tool: string;
   /** Renderer fuer die Tool-Daten. */
   render: (data: T, meta: { guidEvents: number; ignoredNoGuid: number }) => React.ReactNode;
+  /** Optionales Praedikat: liefert true, wenn die Daten leer sind (Empty-State). */
+  isEmpty?: (data: T) => boolean;
+  /** Optionaler Empty-State-Text. */
+  emptyText?: string;
 }
 
 interface ToolResponse<T> {
@@ -28,7 +32,18 @@ interface ToolResponse<T> {
   meta: { guidEvents: number; ignoredNoGuid: number };
 }
 
-export function AdmToolPage<T>({ title, desc, tool, render }: AdmToolPageProps<T>) {
+/** Standard-Heuristik fuer leere Tool-Daten (Arrays, Objekte mit leeren Listen). */
+function isDataEmpty<T>(data: T, predicate?: (d: T) => boolean): boolean {
+  if (predicate) return predicate(data);
+  if (Array.isArray(data)) return data.length === 0;
+  if (data && typeof data === 'object') {
+    const arrays = Object.values(data as Record<string, unknown>).filter(Array.isArray) as unknown[][];
+    if (arrays.length > 0) return arrays.every(a => a.length === 0);
+  }
+  return false;
+}
+
+export function AdmToolPage<T>({ title, desc, tool, render, isEmpty, emptyText }: AdmToolPageProps<T>) {
   const [uploadId, setUploadId] = useState<string | null>(null);
   const [data, setData] = useState<T | null>(null);
   const [meta, setMeta] = useState<{ guidEvents: number; ignoredNoGuid: number } | null>(null);
@@ -75,7 +90,14 @@ export function AdmToolPage<T>({ title, desc, tool, render }: AdmToolPageProps<T
               <div className="text-[11px] text-muted mb-3">
                 GUID-Events: <strong>{meta.guidEvents}</strong> · ignoriert (kein GUID): <strong>{meta.ignoredNoGuid}</strong>
               </div>
-              {render(data, meta)}
+              {isDataEmpty(data, isEmpty) ? (
+                <div className="flex flex-col items-center justify-center gap-2 py-8 text-center">
+                  <Inbox className="h-6 w-6 text-muted" />
+                  <p className="text-xs text-muted">{emptyText ?? 'Keine Eintraege in dieser Auswertung gefunden.'}</p>
+                </div>
+              ) : (
+                render(data, meta)
+              )}
             </>
           )}
         </Card>

@@ -64,6 +64,7 @@ function fmtBytes(s: string | number): string {
 
 export default function NitradoMirror() {
   const [conns, setConns] = useState<Conn[]>([]);
+  const [connsLoaded, setConnsLoaded] = useState(false);
   const [connId, setConnId] = useState<string>('');
   const [guildId, setGuildId] = useState<string>('');
   const [snaps, setSnaps] = useState<Snap[]>([]);
@@ -81,8 +82,8 @@ export default function NitradoMirror() {
   // Connections laden
   useEffect(() => {
     api.get<{ connections: Conn[] }>('/api/v2/dev/nitrado-mirror/connections')
-      .then(r => setConns(r.connections))
-      .catch(e => setError(e instanceof ApiError ? e.message : 'Connections-Laden fehlgeschlagen.'));
+      .then(r => { setConns(r.connections); setConnsLoaded(true); })
+      .catch(e => { setConnsLoaded(true); setError(e instanceof ApiError ? e.message : 'Connections-Laden fehlgeschlagen.'); });
   }, []);
 
   const selectedConn = useMemo(() => conns.find(c => c.id === connId), [conns, connId]);
@@ -171,6 +172,9 @@ export default function NitradoMirror() {
             <Play className="h-3.5 w-3.5 mr-1" /> Snapshot starten
           </Button>
         </div>
+        {connsLoaded && conns.length === 0 && !error && (
+          <p className="text-xs text-muted mt-2">Keine Nitrado-Connections vorhanden. Verbinde zuerst einen Server in den Nitrado-Einstellungen.</p>
+        )}
         {error && (
           <div role="alert" className="text-xs text-danger flex gap-2 mt-2">
             <AlertTriangle className="h-3.5 w-3.5 mt-0.5" /> {error}
