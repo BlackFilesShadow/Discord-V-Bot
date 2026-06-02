@@ -22,6 +22,7 @@ import { logger } from '../../../utils/logger';
 import { getStats } from '../../../modules/ai/providerStats';
 import { nitradoWriteProtectionStatus } from '../../middleware/nitradoWriteGuard';
 import { config } from '../../../config';
+import { getMemberSyncStatus } from '../../../modules/members/memberSyncScheduler';
 
 export const devStatusRouter = Router();
 devStatusRouter.use(requireDev);
@@ -292,13 +293,9 @@ devStatusRouter.get('/member-detection', async (req, res) => {
 
   const dbStats = await timed(async () => {
     const where = restrict ? { guildId: restrict } : {};
-    // eslint-disable-next-line local/no-unscoped-prisma-query -- DEV-globaler Worker-View; requireDev-Gate; optional auf restrict beschraenkt.
     const total = await prisma.guildMemberProfile.count({ where });
-    // eslint-disable-next-line local/no-unscoped-prisma-query -- DEV-globaler Worker-View; requireDev-Gate.
     const left = await prisma.guildMemberProfile.count({ where: { ...where, isLeft: true } });
-    // eslint-disable-next-line local/no-unscoped-prisma-query -- DEV-globaler Worker-View; requireDev-Gate.
     const boosting = await prisma.guildMemberProfile.count({ where: { ...where, isBoosting: true } });
-    // eslint-disable-next-line local/no-unscoped-prisma-query -- DEV-globaler Worker-View; requireDev-Gate.
     const recent = await prisma.guildMemberProfile.findMany({
       where,
       select: { guildId: true, discordId: true, username: true, nickname: true, isLeft: true, joinedAt: true, lastSeenAt: true, updatedAt: true },
@@ -313,6 +310,7 @@ devStatusRouter.get('/member-detection', async (req, res) => {
     sync: {
       enabled: config.member.syncEnabled,
       intervalHours: config.member.syncIntervalHours,
+      job: getMemberSyncStatus(),
     },
     guildsTotal: guildsView.length,
     guilds: guildsView,

@@ -5,6 +5,7 @@ import { guildGauge, wsLatencyGauge } from '../utils/metrics';
 import { restoreAllFeeds } from '../modules/leaderboard/leaderboardFeed';
 import { startAuditLogRetentionScheduler } from '../modules/logging/auditRetentionScheduler';
 import { scheduleProviderCooldownSync } from '../modules/ai/providerStats';
+import { startMemberSyncScheduler } from '../modules/members/memberSyncScheduler';
 
 /**
  * Ready-Event: Bot ist verbunden und bereit.
@@ -45,6 +46,9 @@ const readyEvent: BotEvent = {
     // P0-Hardening: Provider-Cooldown-Sync (DB <-> in-memory, alle 60s).
     // Sorgt dafuer dass Replicas den 429-Cooldown teilen + Restart-sicher.
     scheduleProviderCooldownSync();
+
+    // Spec §11: Periodischer Member-Sync (default AUS, opt-in via MEMBER_SYNC_ENABLED).
+    startMemberSyncScheduler(c);
   },
 };
 

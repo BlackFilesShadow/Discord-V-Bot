@@ -23,9 +23,20 @@ interface RecentMember {
   updatedAt: string | null;
 }
 
+interface MemberSyncJob {
+  running: boolean;
+  lastRunAt: string | null;
+  lastDurationMs: number | null;
+  lastGuilds: number | null;
+  lastFetched: number | null;
+  lastUpserted: number | null;
+  lastMarkedLeft: number | null;
+  lastError: string | null;
+}
+
 interface MemberDetectionData {
   intents: { guildMembers: boolean };
-  sync: { enabled: boolean; intervalHours: number };
+  sync: { enabled: boolean; intervalHours: number; job: MemberSyncJob };
   guildsTotal: number;
   guilds: GuildView[];
   indexed: { total: number; active: number; left: number; boosting: number };
@@ -106,6 +117,62 @@ export default function MemberDetection() {
                 <div className="mt-1 text-base font-semibold">{data.queryMs} ms</div>
               </div>
             </div>
+          </Card>
+
+          {/* Member-Sync-Job-Status */}
+          <Card>
+            <CardHeader>
+              <CardTitle>Member-Sync-Job</CardTitle>
+              <CardDesc>
+                Periodischer Hintergrund-Sync (default AUS). Fetcht pro Guild alle Mitglieder,
+                aktualisiert den Index und markiert Karteileichen als verlassen.
+              </CardDesc>
+            </CardHeader>
+            {!data.sync.enabled ? (
+              <div className="text-xs text-muted py-2">
+                Deaktiviert. Aktivieren via <span className="font-mono">MEMBER_SYNC_ENABLED=true</span>
+                {' '}(Intervall via <span className="font-mono">MEMBER_SYNC_INTERVAL_HOURS</span>, 1–24h).
+              </div>
+            ) : (
+              <div className="grid grid-cols-2 md:grid-cols-4 gap-3 text-xs">
+                <div className="rounded-md border border-border/30 px-3 py-2">
+                  <div className="text-[10px] uppercase text-muted">Status</div>
+                  <div className="mt-1">
+                    {data.sync.job.running
+                      ? <Badge variant="info">Läuft…</Badge>
+                      : data.sync.job.lastError
+                        ? <Badge variant="danger">Fehler</Badge>
+                        : <Badge variant="ok">Bereit</Badge>}
+                  </div>
+                </div>
+                <div className="rounded-md border border-border/30 px-3 py-2">
+                  <div className="text-[10px] uppercase text-muted">Letzter Lauf</div>
+                  <div className="mt-1 text-[11px]">
+                    {data.sync.job.lastRunAt
+                      ? new Date(data.sync.job.lastRunAt).toLocaleString()
+                      : 'Noch nicht gelaufen'}
+                  </div>
+                  {data.sync.job.lastDurationMs != null && (
+                    <div className="mt-1 text-[11px] text-muted">{data.sync.job.lastDurationMs} ms</div>
+                  )}
+                </div>
+                <div className="rounded-md border border-border/30 px-3 py-2">
+                  <div className="text-[10px] uppercase text-muted">Aktualisiert / Gefetcht</div>
+                  <div className="mt-1 text-base font-semibold">
+                    {data.sync.job.lastUpserted ?? '–'}<span className="text-muted text-xs"> / {data.sync.job.lastFetched ?? '–'}</span>
+                  </div>
+                </div>
+                <div className="rounded-md border border-border/30 px-3 py-2">
+                  <div className="text-[10px] uppercase text-muted">Als verlassen markiert</div>
+                  <div className="mt-1 text-base font-semibold text-warn">{data.sync.job.lastMarkedLeft ?? '–'}</div>
+                </div>
+                {data.sync.job.lastError && (
+                  <div className="col-span-2 md:col-span-4 text-[11px] text-danger break-all">
+                    Letzter Fehler: {data.sync.job.lastError}
+                  </div>
+                )}
+              </div>
+            )}
           </Card>
 
           {/* Indexierte Member */}
