@@ -70,6 +70,9 @@ export const PERMISSION_SCOPES = [
   'dashboard.access',   // ALL-ACCESS Bypass fuer alle delegierbaren Scopes
   'dashboard.view',     // Generischer Dashboard-Lesezugriff (oeffnet keine Module automatisch)
   'nitrado.manage',     // Token connect/disconnect — NIE delegierbar (Owner-only-hardcoded an Routen-Layer)
+  'nitrado.view',       // Read-Only Nitrado-Daten ansehen (Snapshots, Settings, Files) — delegierbar
+  'nitrado.write',      // Normale schreibende Nitrado-Aktionen (Whitelist-Sync etc.) — delegierbar, Write-Protection-gegated
+  'nitrado.danger',     // Gefaehrliche Aktionen (Restart/Stop/Delete/File-Write/Config-Write) — NIE delegierbar
   'tickets.manage',
   'whitelist.view',
   'whitelist.manage',
@@ -95,6 +98,7 @@ export type PermissionScope = typeof PERMISSION_SCOPES[number];
  */
 export const NON_DELEGABLE_SCOPES: ReadonlySet<PermissionScope> = new Set([
   'nitrado.manage',
+  'nitrado.danger',
   'permissions.manage',
   'dev.console',
 ]);

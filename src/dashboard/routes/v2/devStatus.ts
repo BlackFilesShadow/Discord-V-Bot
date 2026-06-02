@@ -20,6 +20,7 @@ import prisma from '../../../database/prisma';
 import { tryGetDashboardClient } from '../../clientRegistry';
 import { logger } from '../../../utils/logger';
 import { getStats } from '../../../modules/ai/providerStats';
+import { nitradoWriteProtectionStatus } from '../../middleware/nitradoWriteGuard';
 
 export const devStatusRouter = Router();
 devStatusRouter.use(requireDev);
@@ -222,6 +223,48 @@ devStatusRouter.get('/adm', async (req, res) => {
     intervalMin: 15,
     queryMs: data.ms,
     connections: data.value ?? [],
+    scope: restrict ? { guildIdRestrict: restrict } : { global: true },
+  });
+});
+
+// --- Nitrado Write-Protection (Spec §12) ----------------------------------
+// Read-only Status: ist der Schreibschutz aktiv, welche Scopes existieren,
+// und wie viele Long-Life-Token-Connections sind verknuepft (OHNE Token-Werte).
+devStatusRouter.get('/nitrado-protection', async (req, res) => {
+  const restrict = req.devSession?.scope.guildIdRestrict ?? null;
+  const status = nitradoWriteProtectionStatus();
+
+  const data = await timed(async () => {
+    // eslint-disable-next-line local/no-unscoped-prisma-query -- DEV-globaler Worker-View; requireDev-Gate; optional auf restrict beschraenkt.
+    const conns = await prisma.nitradoConnection.findMany({
+      where: { ...(restrict ? { guildId: restrict } : {}) },
+      select: { id: true, guildId: true, slot: true, status: true, nitradoServerId: true, serviceId: true, lastValidatedAt: true },
+      orderBy: [{ guildId: 'asc' }, { slot: 'asc' }],
+    });
+    const linked = conns.filter(c => !!c.nitradoServerId).length;
+    const active = conns.filter(c => c.status === 'ACTIVE').length;
+    return {
+      connectionsTotal: conns.length,
+      connectionsActive: active,
+      connectionsWithService: linked,
+      // KEINE Token-Werte — nur ob eine Service-ID hinterlegt ist.
+      services: conns.map(c => ({
+        guildId: c.guildId,
+        slot: c.slot,
+        status: c.status,
+        serviceId: c.serviceId ?? c.nitradoServerId ?? null,
+        serviceLinked: !!c.nitradoServerId,
+        lastValidatedAt: c.lastValidatedAt,
+      })),
+    };
+  });
+
+  res.json({
+    writeProtection: status.writeProtection,
+    scopes: status.scopes,
+    readOnlyCaptureActive: true,
+    queryMs: data.ms,
+    nitrado: data.value ?? null,
     scope: restrict ? { guildIdRestrict: restrict } : { global: true },
   });
 });

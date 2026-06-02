@@ -17,6 +17,7 @@ import { emitGuildEvent } from '../../socket/emitter';
 import { getDecryptedToken } from '../../../modules/nitrado/repository';
 import { NitradoClient } from '../../../modules/nitrado/nitradoClient';
 import { asNitradoConnId } from '../../../types/scope';
+import { ensureNitradoWriteAllowed } from '../../middleware/nitradoWriteGuard';
 
 export const whitelistRouter = Router({ mergeParams: true });
 
@@ -265,6 +266,13 @@ whitelistRouter.post('/sync', requireGuildPermission('whitelist.manage'), async 
   if (mode === 'preview') { res.json({ ok: true, preview: true, diff }); return; }
 
   // 2) APPLY
+  // Spec §12: Schreibende Nitrado-Aktionen (Remote-Whitelist aendern) sind bei
+  // aktivem NITRADO_WRITE_PROTECTION durch Confirm + Reason + Audit geschuetzt.
+  // 'pull' schreibt nur in die lokale DB (kein Nitrado-Write) und bleibt ungated.
+  if ((direction === 'push' || direction === 'merge') && onlyLocal.length + (direction === 'push' ? onlyRemote.length : 0) > 0) {
+    if (!ensureNitradoWriteAllowed(req, res, { action: 'NITRADO_WHITELIST_SYNC_PUSH', danger: false })) return;
+  }
+
   let dbInserted = 0, dbDeleted = 0, jobsCreated = 0;
 
   if (direction === 'pull' || direction === 'merge') {

@@ -116,4 +116,11 @@ export const config = {
   features: {
     feedbackChannelId: optionalEnv('FEEDBACK_CHANNEL_ID', ''), // Optional: alle /feedback gehen zusaetzlich hierher
   },
+
+  // Nitrado (Spec §12): Read-Only-Datenerfassung maximieren, Schreibaktionen extra schuetzen.
+  nitrado: {
+    // Standard: AN. Schreibende Nitrado-Aktionen brauchen dann Permission + Confirm + Reason + Audit.
+    // Nur via NITRADO_WRITE_PROTECTION=false explizit deaktivierbar.
+    writeProtection: optionalEnv('NITRADO_WRITE_PROTECTION', 'true') !== 'false',
+  },
 } as const;
