@@ -7,6 +7,7 @@
  * POST  /accounts/:userDiscordId/admin-pay  body: { delta, reason } -> ADMIN_PAY (Owner / economy.manage)
  */
 import { Router } from 'express';
+import prisma from '../../../database/prisma';
 import { requireGuildPermission } from '../../middleware/auth';
 import {
   getConfig, upsertConfig, getOrCreateAccount, recentTransactions, adminPay,
@@ -111,4 +112,88 @@ economyRouter.post('/accounts/:userDiscordId/admin-pay', requireGuildPermission(
   } catch (e) {
     res.status(400).json({ error: (e as Error).message });
   }
+});
+
+/**
+ * GET /overview — Wirtschaft-Sammelansicht fuer das Dashboard.
+ * Ersetzt den frueheren Economy-`/status` Discord-Command (Kollision mit
+ * user/status.ts) durch eine guild-weite, read-only Uebersicht:
+ * Economy-Status, Bank-Status, Casino-Status, Transaktionen, Links, Casino-Stats
+ * und eine statische Casino/Bank-Kopplungsanalyse.
+ */
+economyRouter.get('/overview', requireGuildPermission('economy.view'), async (req, res) => {
+  const guildId = req.guildScope!.guildId;
+
+  const [cfg, accAgg, accountCount, linkCount, txCount, recentTx, casinoRounds, casinoGames] = await Promise.all([
+    getConfig(guildId),
+    prisma.economyAccount.aggregate({ where: { guildId }, _sum: { walletBalance: true, bankBalance: true } }),
+    prisma.economyAccount.count({ where: { guildId } }),
+    prisma.economyLink.count({ where: { guildId } }),
+    prisma.economyTransaction.count({ where: { guildId } }),
+    prisma.economyTransaction.findMany({
+      where: { guildId }, orderBy: { createdAt: 'desc' }, take: 10,
+      select: { id: true, userDiscordId: true, delta: true, type: true, reason: true, createdAt: true },
+    }),
+    prisma.casinoRound.findMany({
+      where: { guildId }, select: { bet: true, payout: true, game: { select: { type: true } } }, take: 100_000,
+    }),
+    prisma.casinoGame.findMany({ where: { guildId }, select: { type: true, enabled: true } }),
+  ]);
+
+  // Casino-Stats pro Spieltyp aggregieren.
+  const buckets = new Map<string, { type: string; rounds: number; wins: number; bet: bigint; payout: bigint }>();
+  for (const r of casinoRounds) {
+    const k = r.game.type;
+    const cur = buckets.get(k) ?? { type: k, rounds: 0, wins: 0, bet: 0n, payout: 0n };
+    cur.rounds++;
+    if (r.payout > 0n) cur.wins++;
+    cur.bet += r.bet;
+    cur.payout += r.payout;
+    buckets.set(k, cur);
+  }
+  const casinoTotalBet = casinoRounds.reduce((a, r) => a + r.bet, 0n);
+  const casinoTotalPayout = casinoRounds.reduce((a, r) => a + r.payout, 0n);
+
+  res.json({
+    economy: {
+      enabled: cfg.enabled,
+      currencyName: cfg.currencyName,
+      emoji: cfg.emoji,
+      accounts: accountCount,
+      links: linkCount,
+      transactions: txCount,
+    },
+    bank: {
+      totalWallet: (accAgg._sum.walletBalance ?? 0n).toString(),
+      totalBank: (accAgg._sum.bankBalance ?? 0n).toString(),
+      interestPercent: cfg.bankInterestPercent,
+      bankChannelId: cfg.bankChannelId,
+    },
+    casino: {
+      gamesConfigured: casinoGames.length,
+      gamesEnabled: casinoGames.filter(g => g.enabled).length,
+      rounds: casinoRounds.length,
+      totalBet: casinoTotalBet.toString(),
+      totalPayout: casinoTotalPayout.toString(),
+      houseEdge: (casinoTotalBet - casinoTotalPayout).toString(),
+      stats: Array.from(buckets.values()).map(b => ({
+        type: b.type, rounds: b.rounds, wins: b.wins, losses: b.rounds - b.wins,
+        bet: b.bet.toString(), payout: b.payout.toString(),
+      })),
+    },
+    recentTransactions: recentTx.map(t => ({
+      id: t.id, userDiscordId: t.userDiscordId, delta: t.delta.toString(),
+      type: t.type, reason: t.reason, createdAt: t.createdAt,
+    })),
+    // Statische Kopplungsanalyse (Spec §10, Fragen 1–7). Quelle: Datenmodell + repository.ts.
+    coupling: {
+      sharedCurrency: true, // Casino bucht auf EconomyAccount.walletBalance (gleiche Waehrung wie Bank/Economy)
+      sharedBalance: true, // CasinoRound nutzt walletBalance des Users
+      directlyBooked: true, // Gewinne/Verluste als EconomyTransaction CASINO_BET / CASINO_PAYOUT
+      sharedModels: ['EconomyAccount', 'EconomyTransaction'],
+      casinoStatsMovable: true, // /casino-stats ist read-only ueber CasinoRound — verschiebbar ohne Spiele zu brechen
+      raceConditionsGuarded: true, // economy/repository.ts kapselt Balance-Aenderungen in DB-Transaktionen
+      centralTransactionService: 'src/modules/economy/repository.ts',
+    },
+  });
 });

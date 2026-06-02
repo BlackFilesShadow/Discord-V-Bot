@@ -82,31 +82,12 @@ export const unlinkCommand: Command = {
 };
 
 // ============================================================
-// /status — zeigt Link + Account-Stand
+// HINWEIS: Der fruehere Economy-`/status` Command wurde entfernt.
+// Grund: Namens-Kollision mit user/status.ts (Bot-Health `/status`).
+// Ersatz im Dashboard: Bereich "Wirtschaft" — GET /api/v2/guilds/:guildId/economy/overview
+// (guild-weite Uebersicht) + GET /accounts/:userDiscordId (Einzel-Lookup).
+// Spec §10: "Nur user/status.ts bleibt als Discord Command /status."
 // ============================================================
-export const statusCommand: Command = {
-  data: new SlashCommandBuilder()
-    .setName('status')
-    .setDescription('Zeigt deinen Verknuepfungs- und Konto-Status.')
-    .addUserOption(o => o.setName('user').setDescription('Optional anderer User').setRequired(false)) as SlashCommandBuilder,
-  execute: withGuildScope({ requireSlotToggle: 'economyActive' }, async (i, scope) => {
-    const target = i.options.getUser('user') ?? i.user;
-    const targetId = asUserDiscordId(target.id);
-    const link = await prisma.economyLink.findUnique({
-      where: { guildId_nitradoConnId_userDiscordId: { guildId: scope.guildId, nitradoConnId: scope.nitradoConnId!, userDiscordId: targetId } },
-    });
-    const acc = await getOrCreateAccount(scope.guildId, targetId);
-    const cfg = await getConfig(scope.guildId);
-    const e = new EmbedBuilder()
-      .setTitle(`Status: ${target.username}`)
-      .addFields(
-        { name: 'Verknuepfung', value: link ? `\`${link.gameId}\`` : '_keine_', inline: false },
-        { name: 'Wallet', value: `${fmt(acc.walletBalance)} ${cfg.emoji}`, inline: true },
-        { name: 'Bank', value: `${fmt(acc.bankBalance)} ${cfg.emoji}`, inline: true },
-      );
-    await embedReply(i, e, target.id === i.user.id);
-  }),
-};
 
 // ============================================================
 // /balance — eigener Kontostand + letzte 5 Tx (Public Embed, V-Bot Style)

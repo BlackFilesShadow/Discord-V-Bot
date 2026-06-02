@@ -4,6 +4,7 @@ import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { api } from '@/lib/api';
 import { Shell } from '@/components/Shell';
 import { Card, CardHeader, CardTitle } from '@/components/ui/Card';
+import { Badge } from '@/components/ui/Badge';
 import { Button } from '@/components/ui/Button';
 import { Input } from '@/components/ui/Input';
 import { Switch } from '@/components/ui/Switch';
@@ -671,6 +672,139 @@ function EconomyLinksPanel({ guildId, slot }: { guildId: string; slot: string })
 // Economy Tab (Konfiguration + Bank + Casino + Admin-Pay)
 // ----------------------------------------------------------------------------
 
+interface EconomyOverviewData {
+  economy: { enabled: boolean; currencyName: string; emoji: string; accounts: number; links: number; transactions: number };
+  bank: { totalWallet: string; totalBank: string; interestPercent: number; bankChannelId: string | null };
+  casino: {
+    gamesConfigured: number; gamesEnabled: number; rounds: number;
+    totalBet: string; totalPayout: string; houseEdge: string;
+    stats: Array<{ type: string; rounds: number; wins: number; losses: number; bet: string; payout: string }>;
+  };
+  recentTransactions: Array<{ id: string; userDiscordId: string; delta: string; type: string; reason: string | null; createdAt: string }>;
+  coupling: {
+    sharedCurrency: boolean; sharedBalance: boolean; directlyBooked: boolean;
+    sharedModels: string[]; casinoStatsMovable: boolean; raceConditionsGuarded: boolean;
+    centralTransactionService: string;
+  };
+}
+
+function fmtBig(s: string): string {
+  try { return BigInt(s).toLocaleString('de-DE'); } catch { return s; }
+}
+
+// Wirtschaft-Status: ersetzt den frueheren Economy-`/status` Discord-Command.
+function EconomyOverview({ guildId }: { guildId: string }) {
+  const q = useQuery({
+    queryKey: ['economy-overview', guildId],
+    queryFn: () => api.get<EconomyOverviewData>(`/api/v2/guilds/${guildId}/economy/overview`),
+    retry: false,
+  });
+
+  if (q.isLoading) return <Card><div className="h-24 rounded-lg skeleton" /></Card>;
+  if (q.isError || !q.data) return null;
+  const d = q.data;
+
+  return (
+    <Card>
+      <CardHeader>
+        <div className="flex items-center justify-between gap-2">
+          <CardTitle><span className="inline-flex items-center gap-2"><Coins className="h-4 w-4" />Wirtschaft-Status</span></CardTitle>
+          <div className="flex items-center gap-2">
+            <Badge variant={d.economy.enabled ? 'ok' : 'neutral'}>{d.economy.enabled ? 'Aktiv' : 'Inaktiv'}</Badge>
+            <Button variant="ghost" size="sm" onClick={() => q.refetch()} disabled={q.isFetching}>
+              <RefreshCw className={`h-3.5 w-3.5 ${q.isFetching ? 'animate-spin' : ''}`} />
+            </Button>
+          </div>
+        </div>
+      </CardHeader>
+
+      <div className="grid grid-cols-2 md:grid-cols-4 gap-3 mt-2">
+        <div className="rounded-lg border border-border/60 bg-bg/40 p-3">
+          <p className="text-[11px] text-muted">Konten</p>
+          <p className="text-lg font-semibold text-white">{d.economy.accounts.toLocaleString('de-DE')}</p>
+        </div>
+        <div className="rounded-lg border border-border/60 bg-bg/40 p-3">
+          <p className="text-[11px] text-muted">Verknüpfungen</p>
+          <p className="text-lg font-semibold text-white">{d.economy.links.toLocaleString('de-DE')}</p>
+        </div>
+        <div className="rounded-lg border border-border/60 bg-bg/40 p-3">
+          <p className="text-[11px] text-muted">Wallet gesamt</p>
+          <p className="text-lg font-semibold text-white">{fmtBig(d.bank.totalWallet)} {d.economy.emoji}</p>
+        </div>
+        <div className="rounded-lg border border-border/60 bg-bg/40 p-3">
+          <p className="text-[11px] text-muted">Bank gesamt</p>
+          <p className="text-lg font-semibold text-white">{fmtBig(d.bank.totalBank)} {d.economy.emoji}</p>
+        </div>
+      </div>
+
+      {/* Casino-Status */}
+      <div className="mt-4">
+        <p className="text-xs font-medium text-white/90 mb-2 inline-flex items-center gap-1.5"><Dice5 className="h-3.5 w-3.5" />Casino</p>
+        <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+          <div className="rounded-lg border border-border/60 bg-bg/40 p-3">
+            <p className="text-[11px] text-muted">Spiele aktiv</p>
+            <p className="text-lg font-semibold text-white">{d.casino.gamesEnabled}/{d.casino.gamesConfigured}</p>
+          </div>
+          <div className="rounded-lg border border-border/60 bg-bg/40 p-3">
+            <p className="text-[11px] text-muted">Runden</p>
+            <p className="text-lg font-semibold text-white">{d.casino.rounds.toLocaleString('de-DE')}</p>
+          </div>
+          <div className="rounded-lg border border-border/60 bg-bg/40 p-3">
+            <p className="text-[11px] text-muted">Einsätze gesamt</p>
+            <p className="text-lg font-semibold text-white">{fmtBig(d.casino.totalBet)} {d.economy.emoji}</p>
+          </div>
+          <div className="rounded-lg border border-border/60 bg-bg/40 p-3">
+            <p className="text-[11px] text-muted">House Edge</p>
+            <p className="text-lg font-semibold text-white">{fmtBig(d.casino.houseEdge)} {d.economy.emoji}</p>
+          </div>
+        </div>
+        {d.casino.stats.length > 0 && (
+          <div className="mt-2 flex flex-wrap gap-2">
+            {d.casino.stats.map(s => (
+              <Badge key={s.type} variant="neutral">
+                {s.type}: {s.rounds} Runden · {s.wins}W/{s.losses}L
+              </Badge>
+            ))}
+          </div>
+        )}
+      </div>
+
+      {/* Letzte Transaktionen */}
+      {d.recentTransactions.length > 0 && (
+        <div className="mt-4">
+          <p className="text-xs font-medium text-white/90 mb-2">Letzte Transaktionen</p>
+          <div className="divide-y divide-border/50">
+            {d.recentTransactions.map(t => (
+              <div key={t.id} className="flex items-center gap-2.5 py-1.5 text-xs">
+                <span className={`font-mono shrink-0 ${BigInt(t.delta) >= 0n ? 'text-ok' : 'text-danger'}`}>
+                  {BigInt(t.delta) >= 0n ? '+' : ''}{fmtBig(t.delta)}
+                </span>
+                <span className="text-muted shrink-0">{t.type}</span>
+                <span className="text-muted/70 truncate">{t.reason ?? ''}</span>
+                <span className="text-muted/50 ml-auto shrink-0">{new Date(t.createdAt).toLocaleString('de-DE')}</span>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {/* Casino/Bank-Kopplung */}
+      <div className="mt-4 rounded-lg border border-border/60 bg-bg-elev/40 p-3">
+        <p className="text-xs font-medium text-white/90 mb-2">Casino/Bank-Kopplung</p>
+        <div className="grid sm:grid-cols-2 gap-x-4 gap-y-1 text-[11px] text-muted">
+          <span>• Gemeinsame Währung: {d.coupling.sharedCurrency ? 'ja (Wallet)' : 'nein'}</span>
+          <span>• Gleicher Kontostand: {d.coupling.sharedBalance ? 'ja' : 'nein'}</span>
+          <span>• Direkt verbucht: {d.coupling.directlyBooked ? 'ja (CASINO_BET/PAYOUT)' : 'nein'}</span>
+          <span>• Race-Conditions abgesichert: {d.coupling.raceConditionsGuarded ? 'ja (DB-Transaktionen)' : 'nein'}</span>
+          <span>• Geteilte Models: {d.coupling.sharedModels.join(', ')}</span>
+          <span>• Casino-Stats verschiebbar: {d.coupling.casinoStatsMovable ? 'ja' : 'nein'}</span>
+          <span className="sm:col-span-2">• Zentraler Transaction-Service: <code className="font-mono">{d.coupling.centralTransactionService}</code></span>
+        </div>
+      </div>
+    </Card>
+  );
+}
+
 function EconomyTab({
   guildId, data, loading, onSave, pending,
 }: {
@@ -690,6 +824,7 @@ function EconomyTab({
 
   return (
     <div className="space-y-6">
+      <EconomyOverview guildId={guildId} />
       <Card>
         <CardHeader><CardTitle>Economy-Konfiguration</CardTitle></CardHeader>
         {loading && <p className="text-muted">Lade…</p>}
