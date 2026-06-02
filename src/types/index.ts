@@ -40,6 +40,14 @@ export interface BotEvent {
  */
 export interface ExtendedClient extends Client {
   commands: Collection<string, Command>;
+  /**
+   * Command-Name -> relativer Quellpfad (z.B. "admin/adminStats.ts").
+   * Wird vom Command-Loader befuellt und fuer die Command-Inventory/Migration
+   * (Spec §15) genutzt, um Commands ihrer Herkunfts-Kategorie zuzuordnen.
+   */
+  commandSources?: Map<string, string>;
+  /** Anzahl beim Laden erkannter Command-Namens-Kollisionen (Spec §15). */
+  commandCollisions?: number;
 }
 
 /**

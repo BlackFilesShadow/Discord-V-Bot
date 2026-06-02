@@ -88,6 +88,9 @@ export async function loadCommands(client: ExtendedClient): Promise<void> {
   if (collisionCount > 0) {
     logger.warn(`[Command-Collision] ${collisionCount} doppelte Command-Name(n) erkannt.`);
   }
+  // Source-Map fuer Command-Inventory/Migration (Spec §15) am Client ablegen.
+  client.commandSources = commandSources;
+  client.commandCollisions = collisionCount;
   logger.info(`${client.commands.size} Commands geladen.`);
 }
 

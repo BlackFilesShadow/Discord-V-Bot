@@ -28,6 +28,7 @@ import { getIo } from '../../socket/emitter';
 import { getPrismaSnapshot, queryLogRing } from '../../services/observability';
 import { errorCounter } from '../../../utils/metrics';
 import { logger, logAudit, logAuditDb } from '../../../utils/logger';
+import { buildInventory, SPEC_KEEP_COMMANDS } from '../../../commands/inventory';
 
 export const devStubsRouter = Router();
 devStubsRouter.use(requireDev);
@@ -299,24 +300,88 @@ devStubsRouter.post('/debug/heap-snapshot', heapSnapshotLimiter, (req, res) => {
 });
 
 // ----------------------------------------------------------------------------
-// 6. command-diag
+// 6. command-diag — Command-Inventory & Migrationsstatus (Spec §15)
 // ----------------------------------------------------------------------------
 devStubsRouter.get('/commands', (_req, res) => {
   const client = tryGetDashboardClient();
-  if (!client) { res.json({ ready: false, count: 0, commands: [] }); return; }
-  // client.commands: Collection<string, { data: SlashCommandBuilder; ... }>
-  const collRaw = (client as unknown as { commands?: { entries: () => IterableIterator<[string, unknown]> } }).commands;
-  const out: { name: string; description: string; cooldownMs: number | null }[] = [];
+  if (!client) {
+    res.json({ ready: false, count: 0, commands: [], summary: null, collisions: { count: 0, statusResolved: true } });
+    return;
+  }
+
+  const ext = client as unknown as {
+    commands?: { entries: () => IterableIterator<[string, unknown]> };
+    commandSources?: Map<string, string>;
+    commandCollisions?: number;
+  };
+  const sources = ext.commandSources;
+  const collisionCount = typeof ext.commandCollisions === 'number' ? ext.commandCollisions : 0;
+
+  const raw: Array<{
+    name: string;
+    source?: string;
+    description?: string;
+    cooldownMs?: number | null;
+    adminOnly?: boolean;
+    devOnly?: boolean;
+    manufacturerOnly?: boolean;
+    hasExecute: boolean;
+    hasData: boolean;
+  }> = [];
+
+  const collRaw = ext.commands;
   if (collRaw && typeof collRaw.entries === 'function') {
     for (const [name, cmd] of collRaw.entries()) {
-      const c = cmd as { data?: { description?: string }; cooldown?: number };
-      out.push({
+      const c = cmd as {
+        data?: { description?: string };
+        cooldown?: number;
+        adminOnly?: boolean;
+        devOnly?: boolean;
+        manufacturerOnly?: boolean;
+        execute?: unknown;
+      };
+      raw.push({
         name,
+        source: sources?.get(name),
         description: c.data?.description ?? '',
-        cooldownMs: typeof c.cooldown === 'number' ? c.cooldown : null,
+        cooldownMs: typeof c.cooldown === 'number' ? c.cooldown * 1000 : null,
+        adminOnly: c.adminOnly,
+        devOnly: c.devOnly,
+        manufacturerOnly: c.manufacturerOnly,
+        hasExecute: typeof c.execute === 'function',
+        hasData: c.data != null,
       });
     }
   }
-  out.sort((a, b) => a.name.localeCompare(b.name));
-  res.json({ ready: true, count: out.length, commands: out });
+
+  const { entries, summary } = buildInventory(raw);
+  // Mit Lint-/Integritaets-Flags anreichern (Commands ohne execute/data,
+  // ueberlange Namen — Discord-Limit 32 Zeichen).
+  const enriched = entries.map((e, i) => ({
+    ...e,
+    hasExecute: raw[i]?.hasExecute ?? true,
+    hasData: raw[i]?.hasData ?? true,
+    nameTooLong: e.name.length > 32,
+  }));
+  enriched.sort((a, b) => a.name.localeCompare(b.name));
+
+  // Spec-Soll-Abgleich: Keep-Commands laut Spec, die (noch) nicht registriert
+  // sind, bzw. registrierte Keep-Commands, die nicht in der Spec-Liste stehen.
+  const registeredNames = new Set(enriched.map((e) => e.name));
+  const missingSpecKeep = [...SPEC_KEEP_COMMANDS].filter((n) => !registeredNames.has(n)).sort();
+
+  res.json({
+    ready: true,
+    count: enriched.length,
+    commands: enriched,
+    summary,
+    collisions: { count: collisionCount, statusResolved: collisionCount === 0 },
+    integrity: {
+      missingExecute: enriched.filter((e) => !e.hasExecute).map((e) => e.name),
+      missingData: enriched.filter((e) => !e.hasData).map((e) => e.name),
+      nameTooLong: enriched.filter((e) => e.nameTooLong).map((e) => e.name),
+      missingSpecKeep,
+    },
+  });
 });
+
