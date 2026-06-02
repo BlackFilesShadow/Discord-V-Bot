@@ -122,3 +122,17 @@ export async function deployCommands(client: ExtendedClient, token: string, clie
     throw error;
   }
 }
+
+/**
+ * Entfernt ALLE guild-spezifisch registrierten Commands einer Guild.
+ *
+ * Hintergrund: Werden Commands gleichzeitig global UND guild-scoped registriert,
+ * merged Discord beide Scopes und zeigt jeden Command doppelt an. Der Bot nutzt
+ * ausschliesslich den globalen Scope; diese Funktion raeumt evtl. zurueck-
+ * gebliebene guild-scoped Eintraege auf (instant wirksam, im Gegensatz zu
+ * globalen Aenderungen die bis zu 1h propagieren).
+ */
+export async function clearGuildCommands(token: string, clientId: string, guildId: string): Promise<void> {
+  const rest = new REST({ version: '10' }).setToken(token);
+  await rest.put(Routes.applicationGuildCommands(clientId, guildId), { body: [] });
+}

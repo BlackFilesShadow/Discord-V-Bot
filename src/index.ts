@@ -1,7 +1,7 @@
 import { Client, Collection, GatewayIntentBits, Partials } from 'discord.js';
 import { ExtendedClient, BotEvent } from './types';
 import { config } from './config';
-import { loadCommands, deployCommands } from './commands/handler';
+import { loadCommands, deployCommands, clearGuildCommands } from './commands/handler';
 import { logger } from './utils/logger';
 import prisma from './database/prisma';
 import fs from 'fs';
@@ -98,18 +98,19 @@ async function main(): Promise<void> {
     logger.info(`Event registriert: ${event.name}${event.once ? ' (once)' : ''}`);
   }
 
-  // ZUSÄTZLICH: Per-Guild-Sync für SOFORTIGE Sichtbarkeit auf bestehenden Servern.
-  // Globale Commands brauchen bei Discord bis zu 1h Propagation, guild-scoped sind instant.
-  // Listener MUSS vor client.login registriert werden, sonst verpassen wir das Ready-Event.
+  // Commands werden AUSSCHLIESSLICH global registriert (siehe unten). Frueher
+  // wurden sie zusaetzlich guild-scoped deployt – Discord merged dann beide
+  // Scopes und zeigt jeden Command DOPPELT an. Wir raeumen daher beim Start
+  // evtl. zurueckgebliebene guild-scoped Commands auf (instant wirksam).
   client.once('clientReady', async () => {
     try {
-      logger.info(`Per-Guild-Sync startet für ${client.guilds.cache.size} Guild(s)...`);
+      logger.info(`Guild-Scope-Cleanup startet für ${client.guilds.cache.size} Guild(s)...`);
       for (const guild of client.guilds.cache.values()) {
         try {
-          await deployCommands(client, config.discord.token, config.discord.clientId, guild.id);
-          logger.info(`Commands per-Guild gesynct für ${guild.name} (${guild.id}) – sofort sichtbar`);
+          await clearGuildCommands(config.discord.token, config.discord.clientId, guild.id);
+          logger.info(`Guild-scoped Commands geleert für ${guild.name} (${guild.id}) – nur noch global`);
         } catch (e) {
-          logger.warn(`Per-Guild-Sync für ${guild.id} fehlgeschlagen:`, e as Error);
+          logger.warn(`Guild-Scope-Cleanup für ${guild.id} fehlgeschlagen:`, e as Error);
         }
       }
       // Phase 6: Guild-Stammdaten cachen / persistieren
@@ -151,13 +152,15 @@ async function main(): Promise<void> {
     }
   });
 
-  // Wenn der Bot einem NEUEN Server beitritt: sofort Guild-Commands deployen.
+  // Wenn der Bot einem NEUEN Server beitritt: evtl. guild-scoped Reste leeren.
+  // Die Commands sind global bereits verfuegbar; guild-scoped Eintraege wuerden
+  // nur Duplikate erzeugen.
   client.on('guildCreate', async (guild) => {
     try {
-      await deployCommands(client, config.discord.token, config.discord.clientId, guild.id);
-      logger.info(`Bot beigetreten zu ${guild.name} (${guild.id}) – Commands sofort registriert`);
+      await clearGuildCommands(config.discord.token, config.discord.clientId, guild.id);
+      logger.info(`Bot beigetreten zu ${guild.name} (${guild.id}) – Guild-Scope geleert (Commands global verfügbar)`);
     } catch (e) {
-      logger.warn(`guildCreate-Sync für ${guild.id} fehlgeschlagen:`, e as Error);
+      logger.warn(`guildCreate Guild-Scope-Cleanup für ${guild.id} fehlgeschlagen:`, e as Error);
     }
     // Phase 6: Stammdaten der neuen Guild persistieren
     try {
