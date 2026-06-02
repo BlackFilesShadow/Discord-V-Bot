@@ -31,7 +31,7 @@ import {
   buildFactionActivity,
   buildVehicleTracking,
 } from '../../services/admAnalytics';
-import { validateJson, validateXml } from '../../services/devValidators';
+import { validateJson, validateXml, validateDayzXml } from '../../services/devValidators';
 import { logger } from '../../../utils/logger';
 
 export const devAnalyticsRouter = Router();
@@ -109,7 +109,14 @@ devAnalyticsRouter.post('/validate/xml', async (req, res) => {
   const r = await loadValidatorInput(req, 'XML');
   if (!r.ok) return res.status(r.status).json({ error: r.error });
   try {
-    res.json(validateXml(r.content));
+    // DayZ-Dateien (types/events/globals.xml) erhalten zusaetzliche Strukturpruefung.
+    const fileName = typeof req.body?.fileName === 'string' ? req.body.fileName : undefined;
+    const dayz = validateDayzXml(r.content, fileName);
+    if (dayz.kind !== 'generic') {
+      res.json(dayz);
+    } else {
+      res.json(validateXml(r.content));
+    }
   } catch (err) {
     logger.error('[DEV-Validate] xml failed', err as Error);
     res.status(500).json({ error: 'Validator-Fehler.' });
