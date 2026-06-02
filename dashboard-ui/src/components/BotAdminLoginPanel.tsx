@@ -36,6 +36,8 @@ export function BotAdminLoginPanel() {
       setPw('');
       navigate('/bot-admin');
     } catch (ex) {
+      // Passwortfeld bei fehlgeschlagenem Login leeren (kein Geheimnis im DOM).
+      setPw('');
       setErr(ex instanceof ApiError ? ex.message : 'Unbekannter Fehler');
     } finally {
       setBusy(false);
@@ -103,14 +105,14 @@ export function BotAdminLoginPanel() {
       data-testid="botadmin-login-panel"
       onSubmit={onSubmit}
       autoComplete="off"
-      className="relative flex w-full items-center md:inline-flex md:w-auto"
+      className="relative flex w-full flex-wrap items-center gap-y-1 md:inline-flex md:flex-nowrap md:w-auto"
       aria-label="Bot-Admin-Login"
     >
       {/* Dummy-Felder gegen Browser-Autofill. */}
       <input type="text" name="username" autoComplete="username" className="hidden" tabIndex={-1} aria-hidden />
       <div
         className={
-          'flex w-full items-center h-11 rounded-md border bg-black/40 ' +
+          'flex flex-1 min-w-0 items-center h-11 rounded-md border bg-black/40 ' +
           'md:inline-flex md:w-auto md:h-8 ' +
           'pl-2 pr-1 gap-1 transition-colors ' +
           (err
@@ -154,7 +156,8 @@ export function BotAdminLoginPanel() {
         <div
           id="botadmin-pw-err"
           role="alert"
-          className="absolute top-full left-0 mt-1 z-50 max-w-[260px]
+          className="relative mt-1 w-full z-50 max-w-full
+                     md:absolute md:top-full md:left-0 md:mt-1 md:w-auto md:max-w-[260px]
                      rounded-md border border-danger/60 bg-[#08081a]/95
                      backdrop-blur px-2 py-1.5 text-[11px] text-danger
                      shadow-[0_8px_24px_-6px_rgba(0,0,0,0.7)]"

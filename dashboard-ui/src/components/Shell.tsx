@@ -48,13 +48,26 @@ export function Shell({ title, back, sidebar, children }: ShellProps) {
   // entscheiden wir, WO sie gerendert werden — so existiert immer nur EINE
   // Instanz (keine doppelten input-IDs, kein Overlap im engen Header).
   const [isDesktop, setIsDesktop] = useState(
-    () => typeof window !== 'undefined' && window.matchMedia('(min-width: 768px)').matches,
+    () =>
+      typeof window !== 'undefined' &&
+      typeof window.matchMedia === 'function' &&
+      window.matchMedia('(min-width: 768px)').matches,
   );
   useEffect(() => {
+    if (typeof window === 'undefined' || typeof window.matchMedia !== 'function') return;
     const mql = window.matchMedia('(min-width: 768px)');
     const onChange = (): void => setIsDesktop(mql.matches);
-    mql.addEventListener('change', onChange);
-    return () => mql.removeEventListener('change', onChange);
+    // Direkt beim Mount einmal synchronisieren (z. B. nach Hydration/Resize
+    // bevor das erste 'change'-Event feuert).
+    onChange();
+    // Moderne API bevorzugen, aber Fallback auf das veraltete
+    // addListener/removeListener fuer aeltere Safari/WebView-Versionen.
+    if (typeof mql.addEventListener === 'function') {
+      mql.addEventListener('change', onChange);
+      return () => mql.removeEventListener('change', onChange);
+    }
+    mql.addListener(onChange);
+    return () => mql.removeListener(onChange);
   }, []);
 
   // Palette-Hotkey global (Inhalte respektieren ohnehin 3-Gate Auth).

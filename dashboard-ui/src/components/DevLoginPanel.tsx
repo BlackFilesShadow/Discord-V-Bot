@@ -34,6 +34,9 @@ export function DevLoginPanel() {
       await login(pw);
       setPw('');
     } catch (ex) {
+      // Passwortfeld bei fehlgeschlagenem Login leeren, damit kein
+      // (falsches) Geheimnis im DOM-Wert verbleibt.
+      setPw('');
       if (ex instanceof ApiError) {
         setErr(ex.message);
         setErrCode(ex.code ?? null);
@@ -109,7 +112,7 @@ export function DevLoginPanel() {
       data-testid="dev-login-panel"
       onSubmit={onSubmit}
       autoComplete="off"
-      className="relative flex w-full items-center md:inline-flex md:w-auto"
+      className="relative flex w-full flex-wrap items-center gap-y-1 md:inline-flex md:flex-nowrap md:w-auto"
       aria-label="DEV-Console-Login"
     >
       {/* Dummy-Feld gegen Browser-Autofill. */}
@@ -125,7 +128,7 @@ export function DevLoginPanel() {
       </span>
       <div
         className={
-          'flex w-full items-center h-11 rounded-md border bg-black/40 ' +
+          'flex flex-1 min-w-0 items-center h-11 rounded-md border bg-black/40 ' +
           'md:inline-flex md:w-auto md:h-8 ' +
           'pl-2 pr-1 gap-1 transition-colors ' +
           (err
@@ -169,7 +172,8 @@ export function DevLoginPanel() {
         <div
           id="dev-pw-err"
           role="alert"
-          className="absolute top-full left-0 mt-1 z-50 max-w-[260px]
+          className="relative mt-1 w-full z-50 max-w-full
+                     md:absolute md:top-full md:left-0 md:mt-1 md:w-auto md:max-w-[260px]
                      rounded-md border border-danger/60 bg-[#1a0608]/95
                      backdrop-blur px-2 py-1.5 text-[11px] text-danger
                      shadow-[0_8px_24px_-6px_rgba(0,0,0,0.7)]"
