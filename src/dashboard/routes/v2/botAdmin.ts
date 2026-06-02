@@ -74,15 +74,25 @@ function registerFail(key: string): void {
 }
 function clearFails(key: string): void { failures.delete(key); }
 
-// Passwort-Aufloesung: env BOT_ADMIN_PASSWORD, Default "ASH" (vom Nutzer
-// gewuenscht). Eine Warnung wird geloggt, solange der Default aktiv ist.
+// Passwort-Aufloesung: env BOT_ADMIN_PASSWORD. In der Entwicklung faellt der
+// Wert auf den Default "ASH" zurueck (mit Warnung). In Produktion gilt
+// FAIL-CLOSED: fehlt BOT_ADMIN_PASSWORD, wird KEIN Default genutzt und der
+// Login dauerhaft verweigert (resolveBotAdminPassword liefert null).
 let warnedAboutDefaultPassword = false;
-function resolveBotAdminPassword(): string {
+let warnedAboutMissingProdPassword = false;
+function resolveBotAdminPassword(): string | null {
   const env = process.env.BOT_ADMIN_PASSWORD;
   if (env && env.length > 0) return env;
+  if (process.env.NODE_ENV === 'production') {
+    if (!warnedAboutMissingProdPassword) {
+      warnedAboutMissingProdPassword = true;
+      logger.error('[BOTADMIN] BOT_ADMIN_PASSWORD nicht gesetzt in Produktion — Login fail-closed deaktiviert. Bitte BOT_ADMIN_PASSWORD setzen.');
+    }
+    return null;
+  }
   if (!warnedAboutDefaultPassword) {
     warnedAboutDefaultPassword = true;
-    logger.warn('[BOTADMIN] BOT_ADMIN_PASSWORD nicht gesetzt — Default-Passwort "ASH" aktiv. Fuer Produktion BOT_ADMIN_PASSWORD setzen.');
+    logger.warn('[BOTADMIN] BOT_ADMIN_PASSWORD nicht gesetzt — Default-Passwort "ASH" aktiv (nur Entwicklung). Fuer Produktion BOT_ADMIN_PASSWORD setzen.');
   }
   return 'ASH';
 }
@@ -108,6 +118,12 @@ botAdminRouter.post('/login', loginLimiter, async (req, res) => {
   if (typeof provided !== 'string' || provided.length === 0) { res.status(400).json({ error: 'password fehlt.' }); return; }
 
   const expected = resolveBotAdminPassword();
+  if (expected === null) {
+    // Fail-closed: in Produktion ohne gesetztes BOT_ADMIN_PASSWORD kein Login.
+    logAudit('BOTADMIN_LOGIN_NO_PASSWORD', 'SECURITY', { userId: req.auth.userId, ip: req.ip });
+    res.status(503).json({ error: 'Bot-Admin ist nicht konfiguriert (BOT_ADMIN_PASSWORD fehlt).' });
+    return;
+  }
   const a = crypto.createHash('sha256').update(provided).digest();
   const b = crypto.createHash('sha256').update(expected).digest();
   if (!crypto.timingSafeEqual(a, b)) {

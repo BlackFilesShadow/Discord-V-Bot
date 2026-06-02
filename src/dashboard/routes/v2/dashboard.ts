@@ -12,6 +12,7 @@ import { getOrCreate as getOrCreateLink } from '../../../modules/dashboard/repos
 import { listSlots } from '../../../modules/nitrado/repository';
 import { listGrants } from '../../../modules/permissions/repository';
 import { asUserDiscordId } from '../../../types/scope';
+import { hasPermission as scopeHas } from '../../../types/scope';
 import prisma from '../../../database/prisma';
 import { logAuditDb } from '../../../utils/logger';
 import { emitGuildEvent } from '../../socket/emitter';
@@ -84,7 +85,16 @@ dashboardRouter.patch('/server/:slot/settings', requireGuildPermission('whitelis
   const b = req.body ?? {};
   const data: Record<string, unknown> = {};
   if (typeof b.whitelistActive === 'boolean') data.whitelistActive = b.whitelistActive;
-  if (typeof b.economyActive === 'boolean') data.economyActive = b.economyActive;
+  if (typeof b.economyActive === 'boolean') {
+    // economyActive ist ein Wirtschafts-Schalter und erfordert economy.manage —
+    // der Routen-Scope (whitelist.manage) deckt ihn NICHT ab. Owner sowie
+    // dashboard.access (All-Access) erfuellen scopeHas weiterhin.
+    if (!scopeHas(scope, 'economy.manage')) {
+      res.status(403).json({ error: 'economyActive erfordert economy.manage.' });
+      return;
+    }
+    data.economyActive = b.economyActive;
+  }
   if (typeof b.permaOnly === 'boolean') data.permaOnly = b.permaOnly;
   if (b.whitelistChannelId === null || (typeof b.whitelistChannelId === 'string' && /^\d{17,20}$/.test(b.whitelistChannelId))) {
     data.whitelistChannelId = b.whitelistChannelId;
