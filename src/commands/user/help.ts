@@ -334,7 +334,6 @@ function buildPages(isAdmin: boolean, isDev: boolean): HelpPage[] {
         color: Colors.Admin,
         fields: [
           row('/admin-config anzeigen|setzen|loeschen',     'Bot-Konfiguration live anpassen.', ['admin']),
-          row('/admin-broadcast <nachricht> [zielgruppe]',  'Broadcast-Nachricht an Nutzer oder Hersteller.', ['admin']),
           row('/admin-tickets list|close',                  'Tickets verwalten und schließen.', ['admin']),
           row('/admin-feedback liste|zeigen|status|notiz|channel', 'Feedback verwalten + Notification-Channel.', ['admin']),
           row('/admin-appeals liste|genehmigen|ablehnen|eskalieren', 'Moderations-Appeals bearbeiten.', ['admin']),

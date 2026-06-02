@@ -70,6 +70,17 @@ const ADMIN_EXTRA_NAMES = new Set<string>([
 const REMOVE_NAMES = new Set<string>(['autorole']);
 
 /**
+ * Bereits ins Dashboard migrierte Commands (Spec §15, Migrationsregel Schritt
+ * 5: "Command als moved_to_dashboard markieren"). Diese Commands wurden aus
+ * Discord ENTFERNT, weil ein funktionsgleicher Dashboard-Ersatz existiert und
+ * geprueft wurde. Eintraege bleiben hier als Audit-/Inventory-Spur erhalten.
+ *
+ *  - admin-broadcast -> Bot-Admin "Broadcast" (POST /api/v2/bot-admin/broadcast,
+ *    BotAdminTab BroadcastSection; Dashboard kann zusaetzlich Dry-Run).
+ */
+export const MOVED_TO_DASHBOARD = new Set<string>(['admin-broadcast']);
+
+/**
  * Spec-Referenzliste: Commands, die dauerhaft in Discord bleiben.
  * Dient als Soll-Abgleich fuer das Inventory (Akzeptanz: "Command Inventory
  * korrekt").
@@ -133,10 +144,11 @@ export function classifyCommand(input: ClassifyInput): CommandClassification {
         : category === 'dev' ? 'dev-area'
           : 'removed';
 
-  const dashboardReplacement = DASHBOARD_EXTRA.has(name) || input.movedToDashboard === true;
+  const dashboardReplacement =
+    DASHBOARD_EXTRA.has(name) || MOVED_TO_DASHBOARD.has(name) || input.movedToDashboard === true;
 
   let migrationStatus: MigrationStatus;
-  if (input.movedToDashboard) {
+  if (input.movedToDashboard || MOVED_TO_DASHBOARD.has(name)) {
     migrationStatus = 'moved_to_dashboard';
   } else if (category === 'keep') {
     migrationStatus = 'active';

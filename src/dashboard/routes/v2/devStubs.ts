@@ -28,7 +28,7 @@ import { getIo } from '../../socket/emitter';
 import { getPrismaSnapshot, queryLogRing } from '../../services/observability';
 import { errorCounter } from '../../../utils/metrics';
 import { logger, logAudit, logAuditDb } from '../../../utils/logger';
-import { buildInventory, SPEC_KEEP_COMMANDS } from '../../../commands/inventory';
+import { buildInventory, SPEC_KEEP_COMMANDS, MOVED_TO_DASHBOARD } from '../../../commands/inventory';
 
 export const devStubsRouter = Router();
 devStubsRouter.use(requireDev);
@@ -355,15 +355,33 @@ devStubsRouter.get('/commands', (_req, res) => {
   }
 
   const { entries, summary } = buildInventory(raw);
+  // Bereits ins Dashboard migrierte Commands sind nicht mehr in der Live-Registry
+  // (aus Discord entfernt). Als Audit-/Inventory-Spur synthetisch ergaenzen, damit
+  // das Inventory vollstaendig bleibt (Spec §15: "Command Inventory korrekt").
+  const registeredForMoved = new Set(raw.map((r) => r.name));
+  const movedEntries = [...MOVED_TO_DASHBOARD]
+    .filter((name) => !registeredForMoved.has(name))
+    .map((name) => buildInventory([{ name, movedToDashboard: true }]).entries[0]);
+
   // Mit Lint-/Integritaets-Flags anreichern (Commands ohne execute/data,
   // ueberlange Namen — Discord-Limit 32 Zeichen).
-  const enriched = entries.map((e, i) => ({
+  const enriched = [...entries, ...movedEntries].map((e) => ({
     ...e,
-    hasExecute: raw[i]?.hasExecute ?? true,
-    hasData: raw[i]?.hasData ?? true,
+    hasExecute: registeredForMoved.has(e.name) ? raw.find((r) => r.name === e.name)?.hasExecute ?? true : true,
+    hasData: registeredForMoved.has(e.name) ? raw.find((r) => r.name === e.name)?.hasData ?? true : true,
     nameTooLong: e.name.length > 32,
   }));
   enriched.sort((a, b) => a.name.localeCompare(b.name));
+
+  // Summary um die migrierten (nicht mehr registrierten) Commands ergaenzen.
+  const mergedSummary = {
+    ...summary,
+    total: enriched.length,
+    movedToDashboard: enriched.filter((e) => e.migrationStatus === 'moved_to_dashboard').length,
+    dashboardExtra: enriched.filter((e) => e.dashboardReplacement).length,
+    // currentDiscord = tatsaechlich registrierte Commands (ohne synthetische).
+    currentDiscord: entries.length,
+  };
 
   // Spec-Soll-Abgleich: Keep-Commands laut Spec, die (noch) nicht registriert
   // sind, bzw. registrierte Keep-Commands, die nicht in der Spec-Liste stehen.
@@ -374,7 +392,7 @@ devStubsRouter.get('/commands', (_req, res) => {
     ready: true,
     count: enriched.length,
     commands: enriched,
-    summary,
+    summary: mergedSummary,
     collisions: { count: collisionCount, statusResolved: collisionCount === 0 },
     integrity: {
       missingExecute: enriched.filter((e) => !e.hasExecute).map((e) => e.name),

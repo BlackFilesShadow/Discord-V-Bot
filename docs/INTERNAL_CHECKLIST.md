@@ -89,7 +89,7 @@ Ein maximal sicheres, transparentes und automatisiertes Giveaway-System, das Com
 - /admin-list-pakete: Alle Pakete und Inhalte (GUID, Metadaten, Validierungsstatus)
 - /admin-logs [filter]: Live-Log-Stream mit Filteroptionen (z. B. Security, Upload, Moderation)
 - /admin-delete [user|paket|datei]: Löschen (Soft/Hard), Restore, Bulk-Operationen
-- /admin-broadcast [msg]: Nachricht an alle Nutzer/Hersteller
+- (Broadcast ins Dashboard migriert: Bot-Admin → Broadcast, früher /admin-broadcast)
 - /admin-stats: System-, Nutzungs-, Sicherheitsstatistiken
 - /admin-validate [paket|datei]: Manuelle (Re-)Validierung, Fehleranalyse, Quarantäne
 - /admin-reset-password [user]: Passwort/Token zurücksetzen, Ablaufzeit setzen

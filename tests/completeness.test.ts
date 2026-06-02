@@ -105,10 +105,10 @@ describe('README-Vollständigkeit: Alle Sektionen implementiert', () => {
     });
   });
 
-  describe('Developer-Commands (alle 18)', () => {
+  describe('Developer-Commands (alle 17)', () => {
     const adminCommands = [
       'adminApprove', 'adminDeny', 'adminListUsers', 'adminListPakete',
-      'adminLogs', 'adminDelete', 'adminBroadcast', 'adminStats',
+      'adminLogs', 'adminDelete', 'adminStats',
       'adminValidate', 'adminResetPassword', 'adminToggleUpload', 'adminExport',
       'adminErrorReport', 'adminConfig', 'adminAudit', 'adminAppeals',
       'adminSecurity', 'adminMonitor',

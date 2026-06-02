@@ -280,7 +280,6 @@ Sichtbar mit Discord-Permission `Manage Guild` oder `Administrator` (je nach Com
 | `/ai-trigger add\|list\|remove\|clear` | KI-Trigger-Wörter |
 | `/admin-knowledge add\|remove\|persona` | Server-Wissensbasis (RAG) + Persona-Override |
 | `/admin-aimodels probe\|reset` | AI-Provider-Status testen/zurücksetzen |
-| `/admin-broadcast` | Nachricht an Zielgruppe senden |
 | `/admin-tickets list\|close` | Support-Tickets verwalten |
 | `/admin-feedback liste\|zeigen\|status\|notiz\|channel` | Feedback-Inbox |
 | `/admin-appeals liste\|genehmigen\|ablehnen\|eskalieren` | Appeals bearbeiten |
