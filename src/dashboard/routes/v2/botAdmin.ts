@@ -36,6 +36,18 @@ import { createFeed } from '../../../modules/feeds/feedManager';
 import { getMenuFull, publishMenu } from '../../../modules/selfrole/selfRoleMenu';
 import { closeTicket } from '../../../modules/ticket/ticketManager';
 import { translate } from '../../../modules/ai/translator';
+import {
+  listKnowledgeAdmin,
+  addKnowledge,
+  updateKnowledge,
+  setKnowledgeActive,
+  removeKnowledge,
+  reembedKnowledge,
+  exportKnowledge,
+  importKnowledge,
+  setPersonaOverride,
+  regenerateAiBrief,
+} from '../../../modules/ai/guildKnowledge';
 import type { TextChannel } from 'discord.js';
 
 export const botAdminRouter = Router();
@@ -719,6 +731,114 @@ botAdminRouter.delete('/selfroles/:id', ba, async (req, res) => {
   await prisma.selfRoleMenu.delete({ where: { id: menu.id } });
   audit(req, 'BOTADMIN_SELFROLE_DELETE', { menuId: menu.id }, { category: 'ROLE', guildId });
   res.json({ deleted: true });
+});
+
+// ════════════════════════════════════════════════════════════════════════
+// WISSENSBANK  (guild-gebunden — AI-Knowledge-Snippets + Persona/Brief)
+// ════════════════════════════════════════════════════════════════════════
+botAdminRouter.get('/knowledge', ba, async (req, res) => {
+  const guildId = reqGuildId(req, res); if (!guildId) return;
+  try {
+    const [items, profile] = await Promise.all([
+      listKnowledgeAdmin(guildId),
+      prisma.guildProfile.findUnique({
+        where: { guildId },
+        select: { aiPersonaOverride: true, aiBrief: true, aiBriefAt: true },
+      }),
+    ]);
+    res.json({
+      items,
+      persona: profile?.aiPersonaOverride ?? null,
+      brief: profile?.aiBrief ?? null,
+      briefAt: profile?.aiBriefAt ?? null,
+      activeCount: items.filter((i) => i.isActive).length,
+      maxSnippets: 50,
+    });
+  } catch (e) {
+    logger.error('botAdmin knowledge list', { err: (e as Error).message });
+    res.status(500).json({ error: 'Wissensbank konnte nicht geladen werden.' });
+  }
+});
+
+botAdminRouter.post('/knowledge', ba, async (req, res) => {
+  const guildId = reqGuildId(req, res); if (!guildId) return;
+  const label = typeof req.body?.label === 'string' ? req.body.label : '';
+  const content = typeof req.body?.content === 'string' ? req.body.content : '';
+  const r = await addKnowledge(guildId, label, content, actor(req));
+  if (!r.ok) { res.status(400).json({ error: r.message }); return; }
+  audit(req, 'BOTADMIN_KNOWLEDGE_ADD', { id: r.id, label: label.trim().slice(0, 60) }, { category: 'ADMIN', guildId });
+  res.status(201).json({ id: r.id, message: r.message });
+});
+
+botAdminRouter.patch('/knowledge/:id', ba, async (req, res) => {
+  const guildId = reqGuildId(req, res); if (!guildId) return;
+  const patch: { label?: string; content?: string } = {};
+  if (typeof req.body?.label === 'string') patch.label = req.body.label;
+  if (typeof req.body?.content === 'string') patch.content = req.body.content;
+  const r = await updateKnowledge(guildId, String(req.params.id), patch);
+  if (!r.ok) { res.status(400).json({ error: r.message }); return; }
+  audit(req, 'BOTADMIN_KNOWLEDGE_UPDATE', { id: String(req.params.id), fields: Object.keys(patch) }, { category: 'ADMIN', guildId });
+  res.json({ message: r.message });
+});
+
+botAdminRouter.post('/knowledge/:id/toggle', ba, async (req, res) => {
+  const guildId = reqGuildId(req, res); if (!guildId) return;
+  const active = req.body?.active === true;
+  const r = await setKnowledgeActive(guildId, String(req.params.id), active);
+  if (!r.ok) { res.status(400).json({ error: r.message }); return; }
+  audit(req, 'BOTADMIN_KNOWLEDGE_TOGGLE', { id: String(req.params.id), active }, { category: 'ADMIN', guildId });
+  res.json({ message: r.message });
+});
+
+botAdminRouter.post('/knowledge/:id/reembed', ba, async (req, res) => {
+  const guildId = reqGuildId(req, res); if (!guildId) return;
+  const r = await reembedKnowledge(guildId, String(req.params.id));
+  if (!r.ok) { res.status(r.message.includes('nicht gefunden') ? 404 : 409).json({ error: r.message }); return; }
+  audit(req, 'BOTADMIN_KNOWLEDGE_REEMBED', { id: String(req.params.id) }, { category: 'ADMIN', guildId });
+  res.json({ message: r.message });
+});
+
+botAdminRouter.delete('/knowledge/:id', ba, async (req, res) => {
+  const guildId = reqGuildId(req, res); if (!guildId) return;
+  const r = await removeKnowledge(guildId, String(req.params.id));
+  if (!r.ok) { res.status(404).json({ error: r.message }); return; }
+  audit(req, 'BOTADMIN_KNOWLEDGE_DELETE', { id: String(req.params.id) }, { category: 'ADMIN', guildId });
+  res.json({ message: r.message });
+});
+
+botAdminRouter.get('/knowledge/export', ba, async (req, res) => {
+  const guildId = reqGuildId(req, res); if (!guildId) return;
+  const items = await exportKnowledge(guildId);
+  audit(req, 'BOTADMIN_KNOWLEDGE_EXPORT', { count: items.length }, { category: 'ADMIN', guildId });
+  res.json({ guildId, exportedAt: new Date().toISOString(), items });
+});
+
+botAdminRouter.post('/knowledge/import', ba, async (req, res) => {
+  const guildId = reqGuildId(req, res); if (!guildId) return;
+  const raw = (req.body as { items?: unknown })?.items;
+  if (!Array.isArray(raw)) { res.status(400).json({ error: 'items muss ein Array sein.' }); return; }
+  if (raw.length > 200) { res.status(400).json({ error: 'Maximal 200 Eintraege pro Import.' }); return; }
+  const r = await importKnowledge(guildId, raw as Array<{ label?: unknown; content?: unknown }>, actor(req));
+  audit(req, 'BOTADMIN_KNOWLEDGE_IMPORT', { added: r.added, skipped: r.skipped }, { category: 'ADMIN', guildId });
+  res.json(r);
+});
+
+botAdminRouter.put('/knowledge/persona', ba, async (req, res) => {
+  const guildId = reqGuildId(req, res); if (!guildId) return;
+  const raw = req.body?.persona;
+  const text = typeof raw === 'string' && raw.trim() ? raw.trim() : null;
+  const r = await setPersonaOverride(guildId, text);
+  if (!r.ok) { res.status(400).json({ error: r.message }); return; }
+  audit(req, 'BOTADMIN_KNOWLEDGE_PERSONA', { set: text !== null }, { category: 'ADMIN', guildId });
+  res.json({ message: r.message });
+});
+
+botAdminRouter.post('/knowledge/brief/regenerate', ba, async (req, res) => {
+  const guildId = reqGuildId(req, res); if (!guildId) return;
+  const brief = await regenerateAiBrief(guildId);
+  if (brief === null) { res.status(400).json({ error: 'Server-Profil noch nicht initialisiert.' }); return; }
+  audit(req, 'BOTADMIN_KNOWLEDGE_BRIEF_REGEN', { length: brief.length }, { category: 'ADMIN', guildId });
+  res.json({ brief });
 });
 
 // ════════════════════════════════════════════════════════════════════════

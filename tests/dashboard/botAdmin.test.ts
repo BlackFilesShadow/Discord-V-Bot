@@ -36,6 +36,9 @@ const prismaMock = {
   },
   xpConfig: { findFirst: jest.fn().mockResolvedValue({ id: 'xp1', maxLevel: 100, isActive: true }) },
   levelRole: { findMany: jest.fn().mockResolvedValue([]) },
+  guildProfile: {
+    findUnique: jest.fn().mockResolvedValue({ aiPersonaOverride: 'Sei freundlich.', aiBrief: 'Brief.', aiBriefAt: new Date() }),
+  },
   botAdminSession: {
     findFirst: jest.fn().mockResolvedValue({ expiresAt: new Date(Date.now() + 3_600_000) }),
     updateMany: jest.fn().mockResolvedValue({ count: 0 }),
@@ -68,6 +71,23 @@ jest.mock('../../src/modules/feeds/feedManager', () => ({ createFeed: jest.fn() 
 jest.mock('../../src/modules/selfrole/selfRoleMenu', () => ({ getMenuFull: jest.fn(), publishMenu: jest.fn() }));
 jest.mock('../../src/modules/ticket/ticketManager', () => ({ closeTicket: jest.fn() }));
 jest.mock('../../src/modules/ai/translator', () => ({ translate: jest.fn() }));
+
+// Wissensbank-Modul mocken — Routen delegieren an diese Funktionen.
+const knowledgeMock = {
+  listKnowledgeAdmin: jest.fn().mockResolvedValue([
+    { id: 'k1', label: 'Regeln', content: 'Sei nett.', createdBy: '1', isActive: true, createdAt: new Date(), updatedAt: new Date(), hasEmbedding: true, embeddingModel: 'gemini', embeddedAt: new Date() },
+  ]),
+  addKnowledge: jest.fn().mockResolvedValue({ ok: true, message: 'ok', id: 'k2' }),
+  updateKnowledge: jest.fn().mockResolvedValue({ ok: true, message: 'ok' }),
+  setKnowledgeActive: jest.fn().mockResolvedValue({ ok: true, message: 'ok' }),
+  removeKnowledge: jest.fn().mockResolvedValue({ ok: true, message: 'ok' }),
+  reembedKnowledge: jest.fn().mockResolvedValue({ ok: true, message: 'ok' }),
+  exportKnowledge: jest.fn().mockResolvedValue([{ label: 'Regeln', content: 'Sei nett.' }]),
+  importKnowledge: jest.fn().mockResolvedValue({ ok: true, message: 'ok', added: 2, skipped: 1 }),
+  setPersonaOverride: jest.fn().mockResolvedValue({ ok: true, message: 'ok' }),
+  regenerateAiBrief: jest.fn().mockResolvedValue('Kurz-Brief des Servers.'),
+};
+jest.mock('../../src/modules/ai/guildKnowledge', () => knowledgeMock);
 
 // requireBotAdmin gegen einen mutierbaren "Session aktiv"-Schalter mocken.
 const sessionRef = { active: true };
@@ -221,6 +241,96 @@ describe('Bot-Admin — guild-gebundene Routen', () => {
     expect(dump).not.toMatch(/webhookSecret/);
     expect(dump).not.toMatch(/TOP-SECRET-VALUE/);
     expect(r.body.items[0]).toMatchObject({ id: 'f1', name: 'RSS' });
+  });
+});
+
+describe('Bot-Admin — Wissensbank', () => {
+  it('GET /knowledge ohne guildId -> 400', async () => {
+    const r = await request(makeApp()).get(`${BASE}/knowledge`);
+    expect(r.status).toBe(400);
+    expect(r.body.error).toMatch(/guildId/);
+  });
+
+  it('GET /knowledge mit guildId liefert items + persona/brief', async () => {
+    const r = await request(makeApp()).get(`${BASE}/knowledge?guildId=${GID}`);
+    expect(r.status).toBe(200);
+    expect(r.body.items[0]).toMatchObject({ id: 'k1', label: 'Regeln' });
+    expect(r.body.persona).toBe('Sei freundlich.');
+    expect(r.body.activeCount).toBe(1);
+    expect(knowledgeMock.listKnowledgeAdmin).toHaveBeenCalledWith(GID);
+  });
+
+  it('POST /knowledge legt Snippet an -> 201', async () => {
+    const r = await request(makeApp()).post(`${BASE}/knowledge?guildId=${GID}`).send({ label: 'Neu', content: 'Inhalt' });
+    expect(r.status).toBe(201);
+    expect(r.body.id).toBe('k2');
+    expect(knowledgeMock.addKnowledge).toHaveBeenCalledWith(GID, 'Neu', 'Inhalt', expect.any(String));
+  });
+
+  it('POST /knowledge mit leerem Label -> 400', async () => {
+    knowledgeMock.addKnowledge.mockResolvedValueOnce({ ok: false, message: 'Label und Inhalt sind Pflicht.' });
+    const r = await request(makeApp()).post(`${BASE}/knowledge?guildId=${GID}`).send({ label: '', content: 'x' });
+    expect(r.status).toBe(400);
+  });
+
+  it('PATCH /knowledge/:id aktualisiert -> 200', async () => {
+    const r = await request(makeApp()).patch(`${BASE}/knowledge/k1?guildId=${GID}`).send({ content: 'neuer Inhalt' });
+    expect(r.status).toBe(200);
+    expect(knowledgeMock.updateKnowledge).toHaveBeenCalledWith(GID, 'k1', { content: 'neuer Inhalt' });
+  });
+
+  it('POST /knowledge/:id/toggle deaktiviert -> 200', async () => {
+    const r = await request(makeApp()).post(`${BASE}/knowledge/k1/toggle?guildId=${GID}`).send({ active: false });
+    expect(r.status).toBe(200);
+    expect(knowledgeMock.setKnowledgeActive).toHaveBeenCalledWith(GID, 'k1', false);
+  });
+
+  it('POST /knowledge/:id/reembed -> 200', async () => {
+    const r = await request(makeApp()).post(`${BASE}/knowledge/k1/reembed?guildId=${GID}`).send({});
+    expect(r.status).toBe(200);
+    expect(knowledgeMock.reembedKnowledge).toHaveBeenCalledWith(GID, 'k1');
+  });
+
+  it('DELETE /knowledge/:id (soft) -> 200', async () => {
+    const r = await request(makeApp()).delete(`${BASE}/knowledge/k1?guildId=${GID}`);
+    expect(r.status).toBe(200);
+    expect(knowledgeMock.removeKnowledge).toHaveBeenCalledWith(GID, 'k1');
+  });
+
+  it('GET /knowledge/export liefert items', async () => {
+    const r = await request(makeApp()).get(`${BASE}/knowledge/export?guildId=${GID}`);
+    expect(r.status).toBe(200);
+    expect(r.body.items[0]).toMatchObject({ label: 'Regeln' });
+  });
+
+  it('POST /knowledge/import mit Nicht-Array -> 400', async () => {
+    const r = await request(makeApp()).post(`${BASE}/knowledge/import?guildId=${GID}`).send({ items: 'nope' });
+    expect(r.status).toBe(400);
+  });
+
+  it('POST /knowledge/import importiert -> 200', async () => {
+    const r = await request(makeApp()).post(`${BASE}/knowledge/import?guildId=${GID}`).send({ items: [{ label: 'A', content: 'B' }] });
+    expect(r.status).toBe(200);
+    expect(r.body.added).toBe(2);
+    expect(knowledgeMock.importKnowledge).toHaveBeenCalled();
+  });
+
+  it('PUT /knowledge/persona setzt Override -> 200', async () => {
+    const r = await request(makeApp()).put(`${BASE}/knowledge/persona?guildId=${GID}`).send({ persona: 'Sei knapp.' });
+    expect(r.status).toBe(200);
+    expect(knowledgeMock.setPersonaOverride).toHaveBeenCalledWith(GID, 'Sei knapp.');
+  });
+
+  it('POST /knowledge/brief/regenerate -> 200 mit brief', async () => {
+    const r = await request(makeApp()).post(`${BASE}/knowledge/brief/regenerate?guildId=${GID}`).send({});
+    expect(r.status).toBe(200);
+    expect(r.body.brief).toMatch(/Brief/);
+  });
+
+  it('Wissensbank-Routen ohne aktive Session -> 403', async () => {
+    sessionRef.active = false;
+    const r = await request(makeApp()).get(`${BASE}/knowledge?guildId=${GID}`);
+    expect(r.status).toBe(403);
   });
 });
 

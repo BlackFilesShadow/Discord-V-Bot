@@ -16,7 +16,7 @@ import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import {
   LayoutDashboard, Gavel, MessageSquare, Megaphone, UploadCloud, Download, ShieldCheck,
   Package, Users, Ticket, Tags, Rss, Languages, TrendingUp, AlertOctagon,
-  RefreshCw, Loader2, Inbox, Trash2, Power, KeyRound, X, AlertTriangle,
+  RefreshCw, Loader2, Inbox, Trash2, Power, KeyRound, X, AlertTriangle, BookOpen,
 } from 'lucide-react';
 import { api, ApiError } from '@/lib/api';
 import { Card } from '@/components/ui/Card';
@@ -30,7 +30,7 @@ import { useToast } from '@/components/ui/Toast';
 
 type SectionKey =
   | 'overview' | 'appeals' | 'feedback' | 'broadcast' | 'upload' | 'export' | 'validate'
-  | 'packages' | 'users' | 'tickets' | 'selfroles' | 'feeds' | 'translate' | 'xp' | 'danger';
+  | 'packages' | 'users' | 'tickets' | 'selfroles' | 'feeds' | 'translate' | 'xp' | 'knowledge' | 'danger';
 
 interface SectionDef {
   key: SectionKey;
@@ -55,11 +55,12 @@ const SECTIONS: ReadonlyArray<SectionDef> = [
   { key: 'feeds', label: 'Feeds', icon: Rss, desc: 'Feed-Quellen' },
   { key: 'translate', label: 'Übersetzungen', icon: Languages, desc: 'Posts übersetzen' },
   { key: 'xp', label: 'XP-System', icon: TrendingUp, desc: 'Level & Raten' },
+  { key: 'knowledge', label: 'Wissensbank', icon: BookOpen, desc: 'AI-Wissen & Persona' },
   { key: 'danger', label: 'Gefahrenzone', icon: AlertOctagon, desc: 'Gefährliche Aktionen', danger: true },
 ];
 
 // Sektionen, die einen ausgewaehlten Server (guildId) benoetigen.
-const GUILD_SCOPED = new Set<SectionKey>(['selfroles', 'feeds', 'translate', 'xp']);
+const GUILD_SCOPED = new Set<SectionKey>(['selfroles', 'feeds', 'translate', 'xp', 'knowledge']);
 
 interface GuildOption { id: string; name: string; memberCount: number }
 
@@ -133,6 +134,7 @@ export function BotAdminTab() {
             {section === 'feeds' && <FeedsSection base={base} guildId={guildId} canManage={canManage} />}
             {section === 'translate' && <TranslateSection base={base} guildId={guildId} canManage={canManage} />}
             {section === 'xp' && <XpSection base={base} guildId={guildId} canManage={canManage} />}
+            {section === 'knowledge' && <KnowledgeSection base={base} guildId={guildId} canManage={canManage} />}
             {section === 'danger' && <DangerSection base={base} canDanger={canDanger} />}
           </>
         )}
@@ -876,6 +878,207 @@ function FeedCreateForm({ onSubmit, loading }: { onSubmit: (b: unknown) => void;
       <Input value={channelId} onChange={e => setChannelId(e.target.value)} placeholder="Channel-ID" />
       <Input value={interval} onChange={e => setInterval(e.target.value)} placeholder="Intervall (Sek.)" type="number" />
       <Button size="sm" disabled={!name.trim() || !url.trim() || !channelId.trim()} loading={loading} onClick={() => onSubmit({ name, feedType, url, channelId, interval: Number(interval) })}>Erstellen</Button>
+    </div>
+  );
+}
+
+// ════════════════════════════════════════════════════════════════════════
+// WISSENSBANK  (AI-Knowledge-Snippets + Persona/Brief)
+// ════════════════════════════════════════════════════════════════════════
+interface KnowledgeRow {
+  id: string;
+  label: string;
+  content: string;
+  createdBy: string;
+  isActive: boolean;
+  createdAt: string;
+  updatedAt: string;
+  hasEmbedding: boolean;
+  embeddingModel: string | null;
+  embeddedAt: string | null;
+}
+interface KnowledgeData {
+  items: KnowledgeRow[];
+  persona: string | null;
+  brief: string | null;
+  briefAt: string | null;
+  activeCount: number;
+  maxSnippets: number;
+}
+
+function KnowledgeSection({ base, guildId, canManage }: { base: string; guildId: string; canManage: boolean }) {
+  const qc = useQueryClient();
+  const toast = useToast();
+  const [showCreate, setShowCreate] = useState(false);
+  const [showImport, setShowImport] = useState(false);
+  const [editId, setEditId] = useState<string | null>(null);
+  const g = (p: string) => `${base}${p}${p.includes('?') ? '&' : '?'}guildId=${guildId}`;
+  const q = useQuery({ queryKey: [base, 'knowledge', guildId], queryFn: () => api.get<KnowledgeData>(g('/knowledge')), enabled: !!guildId });
+  const inv = () => qc.invalidateQueries({ queryKey: [base, 'knowledge', guildId] });
+
+  const create = useMutation({ mutationFn: (b: unknown) => api.post(g('/knowledge'), b), onSuccess: () => { toast.success('Snippet hinzugefügt.'); inv(); setShowCreate(false); }, onError: e => toast.error(errMsg(e)) });
+  const update = useMutation({ mutationFn: (vars: { id: string; b: unknown }) => api.patch(g(`/knowledge/${vars.id}`), vars.b), onSuccess: () => { toast.success('Aktualisiert.'); inv(); setEditId(null); }, onError: e => toast.error(errMsg(e)) });
+  const toggle = useMutation({ mutationFn: (vars: { id: string; active: boolean }) => api.post(g(`/knowledge/${vars.id}/toggle`), { active: vars.active }), onSuccess: () => inv(), onError: e => toast.error(errMsg(e)) });
+  const reembed = useMutation({ mutationFn: (id: string) => api.post(g(`/knowledge/${id}/reembed`)), onSuccess: (r) => { toast.success((r as { message?: string }).message ?? 'Embedding neu berechnet.'); inv(); }, onError: e => toast.error(errMsg(e)) });
+  const del = useMutation({ mutationFn: (id: string) => api.del(g(`/knowledge/${id}`)), onSuccess: () => { toast.success('Deaktiviert.'); inv(); }, onError: e => toast.error(errMsg(e)) });
+  const doImport = useMutation({ mutationFn: (items: unknown) => api.post<{ added: number; skipped: number }>(g('/knowledge/import'), { items }), onSuccess: (r) => { toast.success(`${r.added} importiert, ${r.skipped} übersprungen.`); inv(); setShowImport(false); }, onError: e => toast.error(errMsg(e)) });
+  const persona = useMutation({ mutationFn: (text: string | null) => api.put(g('/knowledge/persona'), { persona: text }), onSuccess: () => { toast.success('Persona gespeichert.'); inv(); }, onError: e => toast.error(errMsg(e)) });
+  const brief = useMutation({ mutationFn: () => api.post<{ brief: string }>(g('/knowledge/brief/regenerate')), onSuccess: () => { toast.success('Brief neu generiert.'); inv(); }, onError: e => toast.error(errMsg(e)) });
+
+  function exportJson() {
+    const items = (q.data?.items ?? []).filter(i => i.isActive).map(i => ({ label: i.label, content: i.content }));
+    const blob = new Blob([JSON.stringify({ guildId, items }, null, 2)], { type: 'application/json' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url; a.download = `wissensbank-${guildId}.json`; a.click();
+    URL.revokeObjectURL(url);
+  }
+
+  const data = q.data;
+  return (
+    <div className="space-y-4">
+      <Card glow>
+        <SectionHeader title="Wissensbank" desc="AI-Wissen pro Server (früher /admin-config knowledge)" onRefresh={() => q.refetch()} loading={q.isFetching}
+          action={canManage ? (
+            <div className="flex gap-2">
+              <Button size="sm" variant="ghost" onClick={exportJson} disabled={!data || data.items.length === 0}><Download className="h-4 w-4" /></Button>
+              <Button size="sm" variant="secondary" onClick={() => { setShowImport(s => !s); setShowCreate(false); }}>{showImport ? 'Abbrechen' : 'Import'}</Button>
+              <Button size="sm" onClick={() => { setShowCreate(s => !s); setShowImport(false); }}>{showCreate ? 'Abbrechen' : 'Neu'}</Button>
+            </div>
+          ) : undefined} />
+        <ReadOnlyHint canManage={canManage} />
+        {data && (
+          <p className="text-xs text-muted mb-3">{data.activeCount}/{data.maxSnippets} aktive Snippets</p>
+        )}
+        {showCreate && <KnowledgeForm onSubmit={b => create.mutate(b)} loading={create.isPending} />}
+        {showImport && <KnowledgeImportForm onSubmit={items => doImport.mutate(items)} loading={doImport.isPending} />}
+        {data && data.items.length === 0 && !showCreate && <EmptyState icon={Inbox} title="Kein Wissen hinterlegt" desc="Lege Faktenblöcke an, die die AI bei passenden Fragen nutzt." />}
+        <div className="space-y-2">
+          {data?.items.map(k => editId === k.id ? (
+            <KnowledgeForm key={k.id} initial={k} onSubmit={b => update.mutate({ id: k.id, b })} onCancel={() => setEditId(null)} loading={update.isPending} />
+          ) : (
+            <Card key={k.id} className="!p-3">
+              <div className="flex items-start justify-between gap-3">
+                <div className="min-w-0">
+                  <div className="flex items-center gap-2 flex-wrap">
+                    <span className="font-semibold text-white truncate">{k.label}</span>
+                    <Badge variant={k.isActive ? 'ok' : 'neutral'}>{k.isActive ? 'aktiv' : 'inaktiv'}</Badge>
+                    <Badge variant={k.hasEmbedding ? 'info' : 'warn'}>{k.hasEmbedding ? 'Embedding' : 'nur Keyword'}</Badge>
+                  </div>
+                  <p className="text-xs text-muted mt-1 whitespace-pre-wrap break-words line-clamp-3">{k.content}</p>
+                  <p className="text-[11px] text-muted mt-1">Aktualisiert: {new Date(k.updatedAt).toLocaleString()}{k.embeddingModel ? ` · ${k.embeddingModel}` : ''}</p>
+                </div>
+                {canManage && (
+                  <div className="flex flex-col gap-1 shrink-0">
+                    <Button size="sm" variant="secondary" onClick={() => { setEditId(k.id); setShowCreate(false); }}>Bearbeiten</Button>
+                    <Button size="sm" variant="ghost" onClick={() => toggle.mutate({ id: k.id, active: !k.isActive })}>{k.isActive ? 'Deaktivieren' : 'Aktivieren'}</Button>
+                    <Button size="sm" variant="ghost" onClick={() => reembed.mutate(k.id)} loading={reembed.isPending}>Re-Embed</Button>
+                    <Button size="sm" variant="danger" onClick={() => del.mutate(k.id)}><Trash2 className="h-4 w-4" /></Button>
+                  </div>
+                )}
+              </div>
+            </Card>
+          ))}
+        </div>
+      </Card>
+
+      <Card>
+        <SectionHeader title="Persona & Brief" desc="Tonalität-Override und automatischer Server-Brief der AI." />
+        <KnowledgePersonaForm
+          persona={data?.persona ?? ''}
+          canManage={canManage}
+          onSave={text => persona.mutate(text)}
+          saving={persona.isPending}
+        />
+        <div className="mt-4 pt-4 border-t border-border">
+          <div className="flex items-center justify-between gap-3">
+            <div className="min-w-0">
+              <p className="text-sm text-white">AI-Brief</p>
+              <p className="text-xs text-muted">{data?.briefAt ? `Zuletzt: ${new Date(data.briefAt).toLocaleString()}` : 'Noch nicht generiert.'}</p>
+            </div>
+            {canManage && <Button size="sm" variant="secondary" onClick={() => brief.mutate()} loading={brief.isPending}>Neu generieren</Button>}
+          </div>
+          {data?.brief && <p className="text-xs text-muted mt-2 whitespace-pre-wrap break-words bg-bg-elev border border-border rounded-md p-2">{data.brief}</p>}
+        </div>
+      </Card>
+    </div>
+  );
+}
+
+function KnowledgeForm({ initial, onSubmit, onCancel, loading }: { initial?: { label: string; content: string }; onSubmit: (b: unknown) => void; onCancel?: () => void; loading: boolean }) {
+  const [label, setLabel] = useState(initial?.label ?? '');
+  const [content, setContent] = useState(initial?.content ?? '');
+  return (
+    <div className="p-3 mb-3 rounded-md bg-bg-elev border border-border space-y-2">
+      <Input value={label} onChange={e => setLabel(e.target.value)} placeholder="Label / Schlüsselwort (max. 60)" maxLength={60} />
+      <textarea
+        value={content}
+        onChange={e => setContent(e.target.value)}
+        placeholder="Faktenblock (max. 2000 Zeichen)"
+        maxLength={2000}
+        rows={4}
+        className="input-premium w-full rounded-lg text-white px-3.5 py-2.5 text-sm placeholder:text-muted/80 focus:outline-none resize-y"
+      />
+      <div className="flex gap-2">
+        <Button size="sm" disabled={!label.trim() || !content.trim()} loading={loading} onClick={() => onSubmit({ label, content })}>{initial ? 'Speichern' : 'Hinzufügen'}</Button>
+        {onCancel && <Button size="sm" variant="ghost" onClick={onCancel}>Abbrechen</Button>}
+      </div>
+    </div>
+  );
+}
+
+function KnowledgeImportForm({ onSubmit, loading }: { onSubmit: (items: unknown) => void; loading: boolean }) {
+  const [text, setText] = useState('');
+  const [error, setError] = useState<string | null>(null);
+  function submit() {
+    setError(null);
+    try {
+      const parsed = JSON.parse(text);
+      const items = Array.isArray(parsed) ? parsed : parsed?.items;
+      if (!Array.isArray(items)) { setError('JSON muss ein Array oder { items: [...] } sein.'); return; }
+      onSubmit(items);
+    } catch {
+      setError('Ungültiges JSON.');
+    }
+  }
+  return (
+    <div className="p-3 mb-3 rounded-md bg-bg-elev border border-border space-y-2">
+      <p className="text-xs text-muted">JSON einfügen: <code>{'[{ "label": "...", "content": "..." }]'}</code> oder <code>{'{ "items": [...] }'}</code>.</p>
+      <textarea
+        value={text}
+        onChange={e => setText(e.target.value)}
+        placeholder='[{ "label": "Regeln", "content": "..." }]'
+        rows={5}
+        className="input-premium w-full rounded-lg text-white px-3.5 py-2.5 text-sm font-mono placeholder:text-muted/80 focus:outline-none resize-y"
+      />
+      {error && <p className="text-xs text-danger">{error}</p>}
+      <Button size="sm" disabled={!text.trim()} loading={loading} onClick={submit}>Importieren</Button>
+    </div>
+  );
+}
+
+function KnowledgePersonaForm({ persona, canManage, onSave, saving }: { persona: string; canManage: boolean; onSave: (text: string | null) => void; saving: boolean }) {
+  const [text, setText] = useState(persona);
+  // Synchronisiere, wenn sich der geladene Wert ändert (Server-Wechsel/Refetch).
+  const [lastLoaded, setLastLoaded] = useState(persona);
+  if (persona !== lastLoaded) { setLastLoaded(persona); setText(persona); }
+  return (
+    <div className="space-y-2">
+      <textarea
+        value={text}
+        onChange={e => setText(e.target.value)}
+        placeholder="Optionaler Persona-Hinweis (max. 1500 Zeichen), z.B. Tonalität, Verbote, Stil."
+        maxLength={1500}
+        rows={3}
+        disabled={!canManage}
+        className="input-premium w-full rounded-lg text-white px-3.5 py-2.5 text-sm placeholder:text-muted/80 focus:outline-none resize-y disabled:opacity-60"
+      />
+      {canManage && (
+        <div className="flex gap-2">
+          <Button size="sm" loading={saving} onClick={() => onSave(text.trim() ? text : null)}>Speichern</Button>
+          {persona && <Button size="sm" variant="ghost" onClick={() => { setText(''); onSave(null); }}>Entfernen</Button>}
+        </div>
+      )}
     </div>
   );
 }

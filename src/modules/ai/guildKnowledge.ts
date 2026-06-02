@@ -306,6 +306,142 @@ export async function removeKnowledge(guildId: string, id: string): Promise<{ ok
   return { ok: true, message: `Snippet ${id.slice(0, 8)} deaktiviert.` };
 }
 
+// ── Admin/Dashboard-CRUD (volle Metadaten, inkl. inaktive Snippets) ─────────
+
+export interface KnowledgeAdminRow {
+  id: string;
+  label: string;
+  content: string;
+  createdBy: string;
+  isActive: boolean;
+  createdAt: Date;
+  updatedAt: Date;
+  hasEmbedding: boolean;
+  embeddingModel: string | null;
+  embeddedAt: Date | null;
+}
+
+/** Vollstaendige Liste fuer das Dashboard – inklusive deaktivierter Snippets. */
+export async function listKnowledgeAdmin(guildId: string): Promise<KnowledgeAdminRow[]> {
+  const rows = await prisma.guildKnowledge.findMany({
+    where: { guildId },
+    orderBy: [{ isActive: 'desc' }, { updatedAt: 'desc' }],
+    select: {
+      id: true, label: true, content: true, createdBy: true, isActive: true,
+      createdAt: true, updatedAt: true, embedding: true, embeddingModel: true, embeddedAt: true,
+    },
+  });
+  return rows.map((r) => ({
+    id: r.id,
+    label: r.label,
+    content: r.content,
+    createdBy: r.createdBy,
+    isActive: r.isActive,
+    createdAt: r.createdAt,
+    updatedAt: r.updatedAt,
+    hasEmbedding: !!r.embedding,
+    embeddingModel: r.embeddingModel,
+    embeddedAt: r.embeddedAt,
+  }));
+}
+
+/** Snippet bearbeiten (Label und/oder Inhalt). Loest bei Aenderung Re-Embedding aus. */
+export async function updateKnowledge(
+  guildId: string,
+  id: string,
+  patch: { label?: string; content?: string },
+): Promise<{ ok: boolean; message: string }> {
+  const row = await prisma.guildKnowledge.findUnique({ where: { id } });
+  if (!row || row.guildId !== guildId) return { ok: false, message: 'Snippet nicht gefunden.' };
+
+  const data: { label?: string; content?: string } = {};
+  if (patch.label !== undefined) {
+    const cleanLabel = patch.label.trim().slice(0, MAX_LABEL_LEN);
+    if (!cleanLabel) return { ok: false, message: 'Label darf nicht leer sein.' };
+    data.label = cleanLabel;
+  }
+  if (patch.content !== undefined) {
+    const cleanContent = patch.content.trim().slice(0, MAX_CONTENT_LEN);
+    if (!cleanContent) return { ok: false, message: 'Inhalt darf nicht leer sein.' };
+    data.content = cleanContent;
+  }
+  if (Object.keys(data).length === 0) return { ok: false, message: 'Keine Aenderungen uebergeben.' };
+
+  await prisma.guildKnowledge.update({ where: { id }, data });
+  // Inhalt/Label haben sich geaendert -> Embedding neu berechnen (asynchron).
+  void embedKnowledgeSnippet(id).catch((e) => {
+    logger.warn(`updateKnowledge: Re-Embedding fehlgeschlagen fuer ${id}: ${String(e)}`);
+  });
+  return { ok: true, message: `Snippet ${id.slice(0, 8)} aktualisiert.` };
+}
+
+/** Snippet aktivieren/deaktivieren. */
+export async function setKnowledgeActive(
+  guildId: string,
+  id: string,
+  active: boolean,
+): Promise<{ ok: boolean; message: string }> {
+  const row = await prisma.guildKnowledge.findUnique({ where: { id } });
+  if (!row || row.guildId !== guildId) return { ok: false, message: 'Snippet nicht gefunden.' };
+  if (active) {
+    const count = await prisma.guildKnowledge.count({ where: { guildId, isActive: true } });
+    if (!row.isActive && count >= MAX_SNIPPETS_PER_GUILD) {
+      return { ok: false, message: `Limit erreicht (${MAX_SNIPPETS_PER_GUILD} aktive Snippets pro Server).` };
+    }
+  }
+  await prisma.guildKnowledge.update({ where: { id }, data: { isActive: active } });
+  return { ok: true, message: active ? 'Snippet aktiviert.' : 'Snippet deaktiviert.' };
+}
+
+/** Embedding eines Snippets manuell neu berechnen (synchron, Status zurueckmelden). */
+export async function reembedKnowledge(guildId: string, id: string): Promise<{ ok: boolean; message: string }> {
+  const row = await prisma.guildKnowledge.findUnique({ where: { id }, select: { guildId: true } });
+  if (!row || row.guildId !== guildId) return { ok: false, message: 'Snippet nicht gefunden.' };
+  const ok = await embedKnowledgeSnippet(id);
+  return ok
+    ? { ok: true, message: 'Embedding neu berechnet.' }
+    : { ok: false, message: 'Kein Embedding-Provider verfuegbar – Snippet nutzt Keyword-Retrieval.' };
+}
+
+export interface KnowledgeExportItem { label: string; content: string }
+
+/** Alle aktiven Snippets einer Guild als portables JSON exportieren. */
+export async function exportKnowledge(guildId: string): Promise<KnowledgeExportItem[]> {
+  const rows = await prisma.guildKnowledge.findMany({
+    where: { guildId, isActive: true },
+    orderBy: { createdAt: 'asc' },
+    select: { label: true, content: true },
+  });
+  return rows.map((r) => ({ label: r.label, content: r.content }));
+}
+
+/** Mehrere Snippets gebuendelt importieren. Ueberspringt Ungueltige, respektiert das Limit. */
+export async function importKnowledge(
+  guildId: string,
+  items: Array<{ label?: unknown; content?: unknown }>,
+  createdBy: string,
+): Promise<{ ok: boolean; message: string; added: number; skipped: number }> {
+  const exists = await prisma.guildProfile.findUnique({ where: { guildId }, select: { guildId: true } });
+  if (!exists) return { ok: false, message: 'Server-Profil noch nicht initialisiert.', added: 0, skipped: 0 };
+
+  let active = await prisma.guildKnowledge.count({ where: { guildId, isActive: true } });
+  let added = 0;
+  let skipped = 0;
+  for (const item of items) {
+    if (active >= MAX_SNIPPETS_PER_GUILD) { skipped++; continue; }
+    const label = typeof item.label === 'string' ? item.label.trim().slice(0, MAX_LABEL_LEN) : '';
+    const content = typeof item.content === 'string' ? item.content.trim().slice(0, MAX_CONTENT_LEN) : '';
+    if (!label || !content) { skipped++; continue; }
+    const row = await prisma.guildKnowledge.create({ data: { guildId, label, content, createdBy } });
+    active++;
+    added++;
+    void embedKnowledgeSnippet(row.id).catch((e) => {
+      logger.warn(`importKnowledge: Embedding fehlgeschlagen fuer ${row.id}: ${String(e)}`);
+    });
+  }
+  return { ok: added > 0, message: `${added} importiert, ${skipped} uebersprungen.`, added, skipped };
+}
+
 export async function setPersonaOverride(
   guildId: string,
   text: string | null,
