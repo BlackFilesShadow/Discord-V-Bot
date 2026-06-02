@@ -14,7 +14,7 @@ import {
   AlertTriangle, RefreshCw, HardDrive, ShieldCheck, FileSearch, FileWarning,
   FileCode, FileJson, Bug, ScrollText, TerminalSquare,
   Skull, MapPin, Bomb, Home, Map as MapIcon, Eye, Users, Car, Brain, FolderTree,
-  AlertOctagon,
+  AlertOctagon, UserCheck,
 } from 'lucide-react';
 
 export type DevToolStatus = 'ready' | 'stub';
@@ -41,6 +41,7 @@ export const DEV_TOOLS: ReadonlyArray<DevTool> = [
   { slug: 'live-sync',         label: 'Live Sync Status',        icon: RefreshCw,       status: 'ready',  category: 'observability', desc: 'Cross-Service Sync-Jobs (Whitelist, Economy).',         keywords: ['sync', 'whitelist', 'queue'] },
   { slug: 'ai-providers',      label: 'AI Provider Stats',       icon: Brain,           status: 'ready', category: 'observability', desc: 'Provider-Erfolgsraten + Anomalie-Detection.',           keywords: ['ai', 'openai', 'gemini', 'anomaly'] },
   { slug: 'observability',     label: 'Observability Console',   icon: Activity,        status: 'ready', category: 'observability', desc: 'Prisma p50/p95/p99, AI-Tracing, Live-Logs, Backup (P3).', keywords: ['metrics', 'latency', 'p95', 'p99', 'tracing', 'logs', 'backup'] },
+  { slug: 'member-detection',  label: 'Member-Erfassung',        icon: UserCheck,       status: 'ready', category: 'observability', desc: 'Member-Erkennung/Indexierung pro Guild, Sync-Status, letzte Events.', keywords: ['member', 'mitglieder', 'index', 'guild members', 'sync', 'rollen'] },
 
   // ── Security ───────────────────────────────────────────────────────────
   { slug: 'security-status',   label: 'Sicherheitsstatus',       icon: ShieldCheck,     status: 'ready',  category: 'security',      desc: 'Rate-Limit-Hits, Brute-Force, Audit-Anomalien.',        keywords: ['rate-limit', 'brute', '2fa', 'sessions'] },  { slug: 'active-sessions',   label: 'Aktive DEV-Sessions',     icon: ShieldCheck,     status: 'ready', category: 'security',      desc: 'Live-Liste aktiver DevSessions + Force-Revoke (P1).',   keywords: ['session', 'revoke', 'lifecycle', 'devsession'] },  { slug: 'incident-response', label: 'Incident Response',       icon: AlertOctagon,    status: 'ready', category: 'security',      desc: 'Kill-Switches, Wartungsmodus, Cache- und Backup-Trigger (P2).', keywords: ['kill', 'switch', 'maintenance', 'backup', 'cache', 'incident'] },  { slug: 'audit-logs',        label: 'Audit Logs',              icon: ScrollText,      status: 'ready',  category: 'security',      desc: 'Globale Audit-Trail-Suche und Export.',                 keywords: ['audit', 'trail', 'export', 'csv', 'json'] },

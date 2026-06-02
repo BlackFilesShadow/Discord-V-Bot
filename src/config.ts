@@ -123,4 +123,12 @@ export const config = {
     // Nur via NITRADO_WRITE_PROTECTION=false explizit deaktivierbar.
     writeProtection: optionalEnv('NITRADO_WRITE_PROTECTION', 'true') !== 'false',
   },
+
+  // Member-Erfassung (Spec §11): optionaler Hintergrund-Sync.
+  member: {
+    // Standard: AUS. Wenn AN, laeuft ein rate-limit-freundlicher Member-Sync-Job.
+    syncEnabled: optionalEnv('MEMBER_SYNC_ENABLED', 'false') === 'true',
+    // Intervall in Stunden (default 12), nur relevant wenn syncEnabled.
+    syncIntervalHours: Math.min(Math.max(parseInt(optionalEnv('MEMBER_SYNC_INTERVAL_HOURS', '12'), 10) || 12, 1), 24),
+  },
 } as const;

@@ -21,6 +21,7 @@ import { tryGetDashboardClient } from '../../clientRegistry';
 import { logger } from '../../../utils/logger';
 import { getStats } from '../../../modules/ai/providerStats';
 import { nitradoWriteProtectionStatus } from '../../middleware/nitradoWriteGuard';
+import { config } from '../../../config';
 
 export const devStatusRouter = Router();
 devStatusRouter.use(requireDev);
@@ -265,6 +266,71 @@ devStatusRouter.get('/nitrado-protection', async (req, res) => {
     readOnlyCaptureActive: true,
     queryMs: data.ms,
     nitrado: data.value ?? null,
+    scope: restrict ? { guildIdRestrict: restrict } : { global: true },
+  });
+});
+
+// --- Member-Erfassung (Spec §11) ------------------------------------------
+
+devStatusRouter.get('/member-detection', async (req, res) => {
+  const restrict = req.devSession?.scope.guildIdRestrict ?? null;
+  const client = tryGetDashboardClient();
+
+  // Discord-Cache-Sicht (keine Full-Fetches im Request-Pfad — nur Cache).
+  const guildsView = client
+    ? Array.from(client.guilds.cache.values())
+        .filter(g => !restrict || g.id === restrict)
+        .map(g => ({
+          guildId: g.id,
+          name: g.name,
+          memberCount: g.memberCount,
+          cachedMembers: g.members.cache.size,
+          roleCount: g.roles.cache.size - 1, // @everyone abziehen
+        }))
+        .sort((a, b) => b.memberCount - a.memberCount)
+    : [];
+
+  const dbStats = await timed(async () => {
+    const where = restrict ? { guildId: restrict } : {};
+    // eslint-disable-next-line local/no-unscoped-prisma-query -- DEV-globaler Worker-View; requireDev-Gate; optional auf restrict beschraenkt.
+    const total = await prisma.guildMemberProfile.count({ where });
+    // eslint-disable-next-line local/no-unscoped-prisma-query -- DEV-globaler Worker-View; requireDev-Gate.
+    const left = await prisma.guildMemberProfile.count({ where: { ...where, isLeft: true } });
+    // eslint-disable-next-line local/no-unscoped-prisma-query -- DEV-globaler Worker-View; requireDev-Gate.
+    const boosting = await prisma.guildMemberProfile.count({ where: { ...where, isBoosting: true } });
+    // eslint-disable-next-line local/no-unscoped-prisma-query -- DEV-globaler Worker-View; requireDev-Gate.
+    const recent = await prisma.guildMemberProfile.findMany({
+      where,
+      select: { guildId: true, discordId: true, username: true, nickname: true, isLeft: true, joinedAt: true, lastSeenAt: true, updatedAt: true },
+      orderBy: { updatedAt: 'desc' },
+      take: 25,
+    });
+    return { total, left, boosting, active: total - left, recent };
+  });
+
+  res.json({
+    intents: { guildMembers: true },
+    sync: {
+      enabled: config.member.syncEnabled,
+      intervalHours: config.member.syncIntervalHours,
+    },
+    guildsTotal: guildsView.length,
+    guilds: guildsView,
+    indexed: dbStats.value
+      ? { total: dbStats.value.total, active: dbStats.value.active, left: dbStats.value.left, boosting: dbStats.value.boosting }
+      : { total: 0, active: 0, left: 0, boosting: 0 },
+    recentMembers: (dbStats.value?.recent ?? []).map(m => ({
+      guildId: m.guildId,
+      discordId: m.discordId,
+      username: m.username ?? null,
+      nickname: m.nickname ?? null,
+      isLeft: m.isLeft,
+      joinedAt: m.joinedAt,
+      lastSeenAt: m.lastSeenAt,
+      updatedAt: m.updatedAt,
+    })),
+    queryMs: dbStats.ms,
+    clientReady: !!client,
     scope: restrict ? { guildIdRestrict: restrict } : { global: true },
   });
 });

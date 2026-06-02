@@ -237,10 +237,16 @@ guildsRouter.get('/:guildId/roles', requireGuildAccess, async (req, res) => {
   const guild = client.guilds.cache.get(guildId);
   if (!guild) { res.status(404).json({ error: 'Bot nicht in Guild.' }); return; }
 
-  const roles = guild.roles.cache
+  // Optionale Rollen-Suche (?q=). Filtert nach Name (case-insensitive) oder ID.
+  const rawQ = typeof req.query.q === 'string' ? req.query.q.trim().slice(0, 64).toLowerCase() : '';
+
+  let roles = guild.roles.cache
     .filter(r => r.id !== guild.id) // @everyone raus
     .map(r => ({ id: r.id, name: r.name, color: r.hexColor, position: r.position, managed: r.managed }))
     .sort((a, b) => b.position - a.position);
+  if (rawQ.length > 0) {
+    roles = roles.filter(r => r.name.toLowerCase().includes(rawQ) || r.id.includes(rawQ));
+  }
   res.json({ roles });
 });
 

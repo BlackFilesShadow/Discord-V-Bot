@@ -11,6 +11,7 @@ import DashboardStatus from './pages/dev/DashboardStatus';
 import DatabaseStatus from './pages/dev/DatabaseStatus';
 import NitradoStatus from './pages/dev/NitradoStatus';
 import NitradoProtection from './pages/dev/NitradoProtection';
+import MemberDetection from './pages/dev/MemberDetection';
 import DiscordStatus from './pages/dev/DiscordStatus';
 import SystemHealth from './pages/dev/SystemHealth';
 import ErrorMonitoring from './pages/dev/ErrorMonitoring';
@@ -53,6 +54,7 @@ const DEV_PAGES: Record<string, () => JSX.Element> = {
   'database-status': DatabaseStatus,
   'nitrado-status': NitradoStatus,
   'nitrado-protection': NitradoProtection,
+  'member-detection': MemberDetection,
   'discord-status': DiscordStatus,
   'system-health': SystemHealth,
   'error-monitoring': ErrorMonitoring,

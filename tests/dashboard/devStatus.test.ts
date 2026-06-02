@@ -10,6 +10,13 @@
  * out-of-process ohne Discord-Client.
  */
 
+process.env.DISCORD_TOKEN ||= 'test-token';
+process.env.DISCORD_CLIENT_ID ||= 'test-client-id';
+process.env.DISCORD_CLIENT_SECRET ||= 'test-secret';
+process.env.DATABASE_URL ||= 'postgresql://test:test@localhost:5432/test';
+process.env.SESSION_SECRET ||= 'test-session-secret';
+process.env.ENCRYPTION_KEY ||= 'test-encryption-key-0123456789abcdef';
+
 const mockDevSessionFindFirst = jest.fn();
 
 jest.mock('../../src/database/prisma', () => ({
