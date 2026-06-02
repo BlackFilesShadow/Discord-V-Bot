@@ -1,6 +1,6 @@
 import { SlashCommandBuilder, ChatInputCommandInteraction, EmbedBuilder, PermissionFlagsBits, MessageFlags } from 'discord.js';
 import { Command, ExtendedClient } from '../../types';
-import { loadCommands, deployCommands } from '../handler';
+import { loadCommands, deployCommandsScoped } from '../handler';
 import { config } from '../../config';
 import { logger } from '../../utils/logger';
 
@@ -38,9 +38,9 @@ const devReloadCommand: Command = {
         await loadCommands(client);
         const newCount = client.commands.size;
 
-        // Bei Discord registrieren (Guild-spezifisch wenn konfiguriert, sonst global)
-        // Commands immer global deployen (guildId nicht übergeben)
-        await deployCommands(client, config.discord.token, config.discord.clientId);
+        // Scope-getrennt registrieren: global (Admin/Dev/Manufacturer) + guild (Rest).
+        const guildIds = [...client.guilds.cache.keys()];
+        const res = await deployCommandsScoped(client, config.discord.token, config.discord.clientId, guildIds);
 
         const embed = new EmbedBuilder()
           .setTitle('🔄 Commands neugeladen')
@@ -48,21 +48,21 @@ const devReloadCommand: Command = {
           .addFields(
             { name: 'Vorher', value: `${oldCount} Commands`, inline: true },
             { name: 'Nachher', value: `${newCount} Commands`, inline: true },
-            { name: 'Scope', value: config.discord.guildId ? `Guild ${config.discord.guildId}` : 'Global', inline: true },
+            { name: 'Scope', value: `${res.globalCount} global · ${res.guildCount} guild (${res.guildsOk} Guilds)`, inline: true },
           )
           .setTimestamp();
 
         await interaction.editReply({ embeds: [embed] });
         logger.info(`Dev-Reload: ${newCount} Commands neugeladen von ${interaction.user.tag}`);
       } else {
-        // Nur bei Discord neu registrieren
-        // Commands immer global deployen (guildId nicht übergeben)
-        await deployCommands(client, config.discord.token, config.discord.clientId);
+        // Nur bei Discord neu registrieren (scope-getrennt)
+        const guildIds = [...client.guilds.cache.keys()];
+        const res = await deployCommandsScoped(client, config.discord.token, config.discord.clientId, guildIds);
 
         const embed = new EmbedBuilder()
           .setTitle('📡 Commands deployed')
           .setColor(0x00ff00)
-          .setDescription(`${client.commands.size} Commands ${config.discord.guildId ? `auf Guild ${config.discord.guildId}` : 'global'} registriert.`)
+          .setDescription(`${res.globalCount} global · ${res.guildCount} guild-scoped auf ${res.guildsOk} Guild(s) registriert.`)
           .setTimestamp();
 
         await interaction.editReply({ embeds: [embed] });

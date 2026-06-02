@@ -216,7 +216,6 @@ function buildPages(isAdmin: boolean, isDev: boolean): HelpPage[] {
       fields: [
         row('/level [user]',                       'Eigenes Level oder das eines anderen Users.'),
         row('/leaderboard [sortierung] [seite]',   'Top-User nach XP (auch als Live-Feed möglich).'),
-        row('/autorole erstellen|liste|loeschen|toggle', 'Auto-Rollen (Beitritt, Reaktion, Level, Event …).', ['srv']),
         row('/xp-config show|rate|levelrole|max-level|max-rolle|xp-rolle-…|xp-channel-…', 'XP-System konfigurieren (Raten, Level-Rollen, Filter).', ['srv']),
       ],
       timestamp: true,

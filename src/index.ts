@@ -1,7 +1,7 @@
 import { Client, Collection, GatewayIntentBits, Partials } from 'discord.js';
 import { ExtendedClient, BotEvent } from './types';
 import { config } from './config';
-import { loadCommands, deployCommands, clearGuildCommands } from './commands/handler';
+import { loadCommands, deployCommandsScoped, deployGuildCommands } from './commands/handler';
 import { logger } from './utils/logger';
 import prisma from './database/prisma';
 import fs from 'fs';
@@ -98,21 +98,17 @@ async function main(): Promise<void> {
     logger.info(`Event registriert: ${event.name}${event.once ? ' (once)' : ''}`);
   }
 
-  // Commands werden AUSSCHLIESSLICH global registriert (siehe unten). Frueher
-  // wurden sie zusaetzlich guild-scoped deployt – Discord merged dann beide
-  // Scopes und zeigt jeden Command DOPPELT an. Wir raeumen daher beim Start
-  // evtl. zurueckgebliebene guild-scoped Commands auf (instant wirksam).
+  // Command-Registrierung scope-getrennt:
+  //  - GLOBAL:  Admin-, Dev- und Manufacturer-Commands (ueberall identisch).
+  //  - GUILD:   alle uebrigen "normalen" Commands pro Server (instant sichtbar).
+  // So ist jeder Command in GENAU einem Scope → keine Duplikate.
+  // Listener MUSS vor client.login registriert werden, sonst verpassen wir das Ready-Event.
   client.once('clientReady', async () => {
     try {
-      logger.info(`Guild-Scope-Cleanup startet für ${client.guilds.cache.size} Guild(s)...`);
-      for (const guild of client.guilds.cache.values()) {
-        try {
-          await clearGuildCommands(config.discord.token, config.discord.clientId, guild.id);
-          logger.info(`Guild-scoped Commands geleert für ${guild.name} (${guild.id}) – nur noch global`);
-        } catch (e) {
-          logger.warn(`Guild-Scope-Cleanup für ${guild.id} fehlgeschlagen:`, e as Error);
-        }
-      }
+      const guildIds = [...client.guilds.cache.keys()];
+      logger.info(`Command-Sync (scoped) startet für ${guildIds.length} Guild(s)...`);
+      const res = await deployCommandsScoped(client, config.discord.token, config.discord.clientId, guildIds);
+      logger.info(`Command-Sync fertig: ${res.globalCount} global, ${res.guildCount} guild-scoped auf ${res.guildsOk} Guild(s).`);
       // Phase 6: Guild-Stammdaten cachen / persistieren
       try {
         const { bootstrapGuildAwareness, startContentSyncLoop } = await import('./modules/ai/guildAwareness.js');
@@ -152,15 +148,14 @@ async function main(): Promise<void> {
     }
   });
 
-  // Wenn der Bot einem NEUEN Server beitritt: evtl. guild-scoped Reste leeren.
-  // Die Commands sind global bereits verfuegbar; guild-scoped Eintraege wuerden
-  // nur Duplikate erzeugen.
+  // Wenn der Bot einem NEUEN Server beitritt: die "normalen" Commands guild-scoped
+  // registrieren. Admin/Dev/Manufacturer sind global bereits verfuegbar.
   client.on('guildCreate', async (guild) => {
     try {
-      await clearGuildCommands(config.discord.token, config.discord.clientId, guild.id);
-      logger.info(`Bot beigetreten zu ${guild.name} (${guild.id}) – Guild-Scope geleert (Commands global verfügbar)`);
+      const n = await deployGuildCommands(client, config.discord.token, config.discord.clientId, guild.id);
+      logger.info(`Bot beigetreten zu ${guild.name} (${guild.id}) – ${n} Guild-Commands registriert`);
     } catch (e) {
-      logger.warn(`guildCreate Guild-Scope-Cleanup für ${guild.id} fehlgeschlagen:`, e as Error);
+      logger.warn(`guildCreate Command-Deploy für ${guild.id} fehlgeschlagen:`, e as Error);
     }
     // Phase 6: Stammdaten der neuen Guild persistieren
     try {
@@ -206,8 +201,8 @@ async function main(): Promise<void> {
   await client.login(config.discord.token);
 
   // Web-Dashboard SOFORT nach Login starten, damit Healthcheck (/health) und
-  // /metrics frueh verfuegbar sind. deployCommands() unten kann minutenlang dauern
-  // (globaler Sync/Rate-Limits) und darf den HTTP-Server nicht blockieren.
+  // /metrics frueh verfuegbar sind. Der Command-Sync (scoped, im clientReady)
+  // kann minutenlang dauern und darf den HTTP-Server nicht blockieren.
   try {
     await startDashboard(client);
   } catch (error) {
@@ -230,11 +225,8 @@ async function main(): Promise<void> {
     logger.warn('Nitrado-Worker-Init fehlgeschlagen:', e as Error);
   }
 
-  // Commands bei Discord registrieren – IMMER global (auf allen Servern verfügbar).
-  // Bewusst NICHT awaiten: globaler Sync kann sehr lange dauern; per-Guild-Sync
-  // im ready-Event hat die Commands bereits sofort sichtbar gemacht.
-  void deployCommands(client, config.discord.token, config.discord.clientId)
-    .catch((e) => logger.error('Globaler deployCommands fehlgeschlagen:', e as Error));
+  // Hinweis: Die Command-Registrierung (scoped: global + guild) erfolgt im
+  // clientReady-Listener oben, sobald der Guild-Cache verfuegbar ist.
 
   // Scheduler starten
   startGiveawayScheduler(client);

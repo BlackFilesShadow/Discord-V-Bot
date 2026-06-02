@@ -166,7 +166,6 @@ Wenn jemand fragt „Welche Admin-Channels gibt es?" → höfliche Verweigerung 
 - `/level` — Eigenes Level abrufen
 - `/poll create` — Umfragen mit Multi-Choice
 - `/giveaway create` — Gewinnspiele aufsetzen
-- `/autorole add` — Self-Assignment-Rollen
 - `/register manufacturer` — Hersteller-Antrag stellen
 
 ### Für Hersteller
@@ -268,7 +267,6 @@ Sichtbar mit Discord-Permission `Manage Guild` oder `Administrator` (je nach Com
 | `/admin-stats` | Server-/Bot-Statistik |
 | `/admin-monitor` | Live-Monitoring-Dashboard |
 | `/xp-config rate\|levelrole\|xp-rolle-*\|xp-channel-*\|max-level\|max-rolle\|show` | XP-System konfigurieren |
-| `/autorole erstellen\|liste\|loeschen\|toggle\|blacklist\|whitelist` | Auto-Roles (`Manage Roles`) |
 
 #### Content & Moderation
 | Command | Beschreibung |

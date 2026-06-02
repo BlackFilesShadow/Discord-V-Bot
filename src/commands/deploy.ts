@@ -1,11 +1,14 @@
 import { Client, Collection, GatewayIntentBits } from 'discord.js';
 import { ExtendedClient } from '../types';
 import { config } from '../config';
-import { loadCommands, deployCommands } from './handler';
+import { loadCommands, deployCommandsScoped } from './handler';
 import { logger } from '../utils/logger';
 
 /**
- * Deploy-Script: Registriert alle Slash-Commands bei Discord.
+ * Deploy-Script: Registriert alle Slash-Commands bei Discord – scope-getrennt.
+ *  - GLOBAL: Admin-, Dev- und Manufacturer-Commands.
+ *  - GUILD:  alle uebrigen Commands pro verbundener Guild.
+ * Loggt sich kurz ein, um die aktuelle Guild-Liste zu erhalten.
  */
 async function deploy(): Promise<void> {
   const client = new Client({
@@ -15,11 +18,20 @@ async function deploy(): Promise<void> {
   client.commands = new Collection();
 
   await loadCommands(client);
-  // Commands immer global deployen (guildId nicht übergeben)
-  await deployCommands(client, config.discord.token, config.discord.clientId);
 
-  logger.info('Commands erfolgreich deployed.');
-  process.exit(0);
+  client.once('clientReady', async () => {
+    try {
+      const guildIds = [...client.guilds.cache.keys()];
+      const res = await deployCommandsScoped(client, config.discord.token, config.discord.clientId, guildIds);
+      logger.info(`Commands deployed: ${res.globalCount} global, ${res.guildCount} guild-scoped auf ${res.guildsOk} Guild(s).`);
+    } catch (err) {
+      logger.error('Deploy-Fehler:', err);
+      process.exit(1);
+    }
+    process.exit(0);
+  });
+
+  await client.login(config.discord.token);
 }
 
 deploy().catch(err => {

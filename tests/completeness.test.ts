@@ -143,12 +143,6 @@ describe('README-Vollständigkeit: Alle Sektionen implementiert', () => {
     });
   });
 
-  describe('Sektion 9: Automatische Rollenvergabe', () => {
-    it('/autorole Command existiert', () => {
-      expect(fileExists('src/commands/user/autorole.ts')).toBe(true);
-    });
-  });
-
   describe('Sektion 10: Umfrage- & Abstimmungssystem', () => {
     it('Poll-System existiert', () => {
       expect(fileExists('src/modules/polls/pollSystem.ts')).toBe(true);

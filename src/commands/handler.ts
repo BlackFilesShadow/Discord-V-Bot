@@ -1,6 +1,7 @@
 import { Collection, REST, Routes } from 'discord.js';
 import { Command, ExtendedClient } from '../types';
 import { logger } from '../utils/logger';
+import { classifyCommand } from './inventory';
 import path from 'path';
 import fs from 'fs';
 
@@ -124,15 +125,83 @@ export async function deployCommands(client: ExtendedClient, token: string, clie
 }
 
 /**
- * Entfernt ALLE guild-spezifisch registrierten Commands einer Guild.
+ * Teilt die geladenen Commands nach Berechtigungs-/Verzeichnis-Scope auf:
+ *  - GLOBAL: Admin-, Dev- und Manufacturer-Commands (classifyCommand →
+ *    category 'admin' | 'dev'). Diese sollen ueberall identisch verfuegbar sein.
+ *  - GUILD:  alle uebrigen "normalen" Commands (category 'keep') – werden pro
+ *    Guild registriert (instant sichtbar, koennen serverspezifisch abweichen).
+ *  - 'remove'-Commands landen in KEINEM Scope.
  *
- * Hintergrund: Werden Commands gleichzeitig global UND guild-scoped registriert,
- * merged Discord beide Scopes und zeigt jeden Command doppelt an. Der Bot nutzt
- * ausschliesslich den globalen Scope; diese Funktion raeumt evtl. zurueck-
- * gebliebene guild-scoped Eintraege auf (instant wirksam, im Gegensatz zu
- * globalen Aenderungen die bis zu 1h propagieren).
+ * WICHTIG: Jeder Command landet in GENAU EINEM Scope → keine Duplikate.
  */
-export async function clearGuildCommands(token: string, clientId: string, guildId: string): Promise<void> {
+export function splitCommandsByScope(client: ExtendedClient): {
+  global: ReturnType<Command['data']['toJSON']>[];
+  guild: ReturnType<Command['data']['toJSON']>[];
+} {
+  const globalCmds: ReturnType<Command['data']['toJSON']>[] = [];
+  const guildCmds: ReturnType<Command['data']['toJSON']>[] = [];
+  for (const cmd of client.commands.values()) {
+    const source = client.commandSources?.get(cmd.data.name) ?? undefined;
+    const cls = classifyCommand({
+      name: cmd.data.name,
+      source,
+      adminOnly: cmd.adminOnly,
+      devOnly: cmd.devOnly,
+      manufacturerOnly: cmd.manufacturerOnly,
+    });
+    if (cls.category === 'remove') continue;
+    const json = cmd.data.toJSON();
+    if (cls.category === 'admin' || cls.category === 'dev') globalCmds.push(json);
+    else guildCmds.push(json);
+  }
+  return { global: globalCmds, guild: guildCmds };
+}
+
+/**
+ * Registriert die Commands scope-getrennt bei Discord:
+ *  - globaler Scope erhaelt die Admin/Dev/Manufacturer-Commands,
+ *  - jede uebergebene Guild erhaelt die "normalen" Commands guild-scoped.
+ *
+ * Beide put()-Aufrufe ERSETZEN den jeweiligen Scope vollstaendig, sodass keine
+ * Altlasten/Duplikate zurueckbleiben.
+ */
+export async function deployCommandsScoped(
+  client: ExtendedClient,
+  token: string,
+  clientId: string,
+  guildIds: string[],
+): Promise<{ globalCount: number; guildCount: number; guildsOk: number }> {
   const rest = new REST({ version: '10' }).setToken(token);
-  await rest.put(Routes.applicationGuildCommands(clientId, guildId), { body: [] });
+  const { global: globalCmds, guild: guildCmds } = splitCommandsByScope(client);
+
+  await rest.put(Routes.applicationCommands(clientId), { body: globalCmds });
+  logger.info(`${globalCmds.length} globale Commands (Admin/Dev/Manufacturer) registriert.`);
+
+  let guildsOk = 0;
+  for (const gid of guildIds) {
+    try {
+      await rest.put(Routes.applicationGuildCommands(clientId, gid), { body: guildCmds });
+      guildsOk++;
+    } catch (e) {
+      logger.warn(`Guild-Deploy fuer ${gid} fehlgeschlagen:`, e as Error);
+    }
+  }
+  logger.info(`${guildCmds.length} guild-Commands auf ${guildsOk}/${guildIds.length} Guild(s) registriert.`);
+  return { globalCount: globalCmds.length, guildCount: guildCmds.length, guildsOk };
+}
+
+/**
+ * Registriert die guild-scoped "normalen" Commands fuer EINE Guild (z.B. nach
+ * guildCreate). Der globale Scope bleibt unberuehrt.
+ */
+export async function deployGuildCommands(
+  client: ExtendedClient,
+  token: string,
+  clientId: string,
+  guildId: string,
+): Promise<number> {
+  const rest = new REST({ version: '10' }).setToken(token);
+  const { guild: guildCmds } = splitCommandsByScope(client);
+  await rest.put(Routes.applicationGuildCommands(clientId, guildId), { body: guildCmds });
+  return guildCmds.length;
 }
