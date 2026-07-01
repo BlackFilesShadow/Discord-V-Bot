@@ -144,8 +144,11 @@ const roleCache = new Map<string, unknown>([
 const textChannel = { isTextBased: () => true, isDMBased: () => false, messages: { delete: jest.fn().mockResolvedValue({}) } };
 const guild = {
   id: GID,
-  roles: { cache: roleCache, fetch: async (id: string) => roleCache.get(id) ?? null },
-  members: { me: { roles: { highest: { position: 50 } }, permissions: { has: () => true } } },
+  roles: { cache: roleCache, fetch: async (id?: string) => (id ? roleCache.get(id) ?? null : roleCache) },
+  members: {
+    me: { roles: { highest: { position: 50 } }, permissions: { has: () => true } },
+    fetchMe: async () => guild.members.me,
+  },
   channels: { cache: new Map([[CH, textChannel]]) },
 };
 const fakeClient = {

@@ -163,7 +163,10 @@ async function validateRole(guildId: string, roleId: string): Promise<string | n
   const role = guild.roles.cache.get(roleId) ?? await guild.roles.fetch(roleId).catch(() => null);
   if (!role) return 'Rolle nicht gefunden.';
   if (role.managed) return 'Von Integrationen verwaltete Rollen sind nicht erlaubt.';
-  const me = guild.members.me;
+  // Bot-Member kann als Partial oder mit veralteten Rollen im Cache liegen ->
+  // frisch nachladen, sonst kollabiert roles.highest auf @everyone und JEDE
+  // Rolle wirkt faelschlich "zu hoch".
+  const me = guild.members.me ?? await guild.members.fetchMe().catch(() => null);
   if (me && me.roles.highest.position <= role.position) {
     return 'Bot-Rolle ist nicht hoch genug, um diese Rolle zu vergeben.';
   }
@@ -194,6 +197,16 @@ async function parseOptionRoles(
   const ids = [...new Set(raw.filter((x): x is string => typeof x === 'string' && x.trim().length > 0).map(x => x.trim()))];
   if (ids.length < 1) return { ok: false, error: 'Mindestens eine Rolle ist erforderlich.' };
   if (ids.length > 5) return { ok: false, error: 'Maximal 5 Rollen pro Button.' };
+  // Rollen-Positionen + Bot-Member einmalig frisch laden: nach dem Umsortieren
+  // von Rollen kann der Cache veraltete Positionen enthalten, wodurch die
+  // Hierarchie-Pruefung faelschlich fehlschlaegt.
+  const guild = tryGetDashboardClient()?.guilds.cache.get(guildId);
+  if (guild) {
+    await Promise.all([
+      guild.roles.fetch(undefined, { force: true }).catch(() => null),
+      guild.members.fetchMe().catch(() => null),
+    ]);
+  }
   for (const id of ids) {
     const err = await validateRole(guildId, id);
     if (err) return { ok: false, error: err };
