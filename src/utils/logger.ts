@@ -11,8 +11,16 @@ if (!fs.existsSync(LOG_DIR)) {
 }
 
 /**
- * Revisionssicheres, unveränderliches Logging-System.
- * Sektion 4 & 11: Logging aller Aktionen, revisionssicher, unveränderbar, Export/Analyse.
+ * Audit-/Logging-System (Sektion 4 & 11): Logging aller Aktionen, Export/Analyse.
+ *
+ * WICHTIG zur "Revisionssicherheit": Die Datei-Logs (winston-daily-rotate) sind
+ * APPEND-ONLY im normalen Betrieb, aber NICHT kryptografisch manipulationssicher
+ * auf App-Ebene — wer Schreibzugriff auf ./logs hat, kann sie theoretisch
+ * aendern. Echte WORM-Garantien muessen extern erfolgen (OS-Dateirechte,
+ * append-only chattr +a, externes Log-Shipping/SIEM).
+ * Die DB-Audit-Eintraege (AuditLog.isImmutable=true) sind gegen automatisches
+ * Loeschen durch den Retention-Scheduler geschuetzt (siehe auditRetentionScheduler),
+ * ebenfalls ohne Krypto-Signatur.
  */
 
 const logFormat = winston.format.combine(
@@ -30,7 +38,7 @@ const consoleFormat = winston.format.combine(
   })
 );
 
-// Tägliche Rotation für revisionssichere Aufbewahrung
+// Tägliche Rotation fuer langfristige, append-only Aufbewahrung
 const dailyRotateTransport = new DailyRotateFile({
   filename: path.join(LOG_DIR, 'app-%DATE%.log'),
   datePattern: 'YYYY-MM-DD',
@@ -51,7 +59,7 @@ const securityTransport = new DailyRotateFile({
   level: 'warn',
 });
 
-// Audit-Log (unveränderbar)
+// Audit-Log (append-only Datei; DB-Persistenz uebernimmt logAuditDb)
 const auditTransport = new DailyRotateFile({
   filename: path.join(LOG_DIR, 'audit-%DATE%.log'),
   datePattern: 'YYYY-MM-DD',
@@ -91,7 +99,8 @@ export const securityLogger = winston.createLogger({
   transports: [securityTransport],
 });
 
-// Audit Logger (revisionssicher, unveränderbar)
+// Audit Logger (append-only Datei-Log; siehe Header zur Manipulationssicherheit).
+// Das `immutable`-Meta ist nur ein Label im Log-Record, keine technische Garantie.
 export const auditLogger = winston.createLogger({
   level: 'info',
   format: logFormat,
@@ -101,7 +110,8 @@ export const auditLogger = winston.createLogger({
 
 /**
  * Strukturiertes Audit-Log erstellen.
- * Alle Aktionen werden revisionssicher erfasst.
+ * Alle Aktionen werden append-only erfasst (siehe Header-Hinweis zur
+ * Manipulationssicherheit).
  *
  * PII/Secret-Schutz: Felder, deren Key (case-insensitive) ein typisches Secret-Wort enthaelt,
  * werden zu '[REDACTED]'. Verteidigt gegen versehentliches Logging von Tokens/Passwoertern,
