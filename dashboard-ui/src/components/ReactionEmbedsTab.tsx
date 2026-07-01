@@ -21,6 +21,7 @@ import { Select } from '@/components/ui/Select';
 import { Switch } from '@/components/ui/Switch';
 import { Badge } from '@/components/ui/Badge';
 import { useToast } from '@/components/ui/Toast';
+import { EmojiPicker } from '@/components/ui/EmojiPicker';
 import { DiscordEmbedPreview, type EmbedPreviewData } from '@/components/embed/DiscordEmbedPreview';
 
 // ── Typen ─────────────────────────────────────────────────────────────────
@@ -529,7 +530,7 @@ export function ReactionEmbedsTab({ guildId, canManage }: { guildId: string; can
                             <option value="DANGER">Rot (Danger)</option>
                           </Select>
                         ) : <div />}
-                        <Input value={o.emoji} maxLength={64} onChange={e => patchOption(idx, { emoji: e.target.value })} placeholder="Emoji (optional, z. B. 🎮)" />
+                        <EmojiPicker value={o.emoji} onChange={v => patchOption(idx, { emoji: v })} placeholder="Emoji (optional)" />
                       </div>
 
                       {/* Rollen: bis zu 5 pro Button */}

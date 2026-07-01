@@ -164,6 +164,7 @@ export function EmbedBuilderTab({ guildId, canManage }: { guildId: string; canMa
     thumb: useRef<HTMLInputElement>(null),
     image: useRef<HTMLInputElement>(null),
   };
+  const descRef = useRef<HTMLTextAreaElement>(null);
 
   const current = editingId && editingId !== 'new'
     ? listQ.data?.embeds.find(e => e.id === editingId) ?? null
@@ -176,6 +177,37 @@ export function EmbedBuilderTab({ guildId, canManage }: { guildId: string; canMa
 
   function set<K extends keyof EmbedForm>(key: K, value: EmbedForm[K]) {
     setForm(prev => ({ ...prev, [key]: value }));
+  }
+
+  /**
+   * Fuegt eine Discord-Kanalerwaehnung (<#ID>) an der Cursor-Position in die
+   * Beschreibung ein. Gespeichert wird ausschliesslich die Channel-ID im Token
+   * -> Discord rendert automatisch den aktuellen Kanalnamen (auch nach Umbenennung).
+   * Max. 10 Kanalverlinkungen pro Embed.
+   */
+  function insertChannelMention(channelId: string) {
+    if (!/^\d{17,20}$/.test(channelId)) return;
+    const token = `<#${channelId}>`;
+    const cur = form.description;
+    const count = (cur.match(/<#\d{17,20}>/g) ?? []).length;
+    if (count >= 10 && !cur.includes(token)) {
+      toast.error('Maximal 10 Kanalverlinkungen pro Embed.');
+      return;
+    }
+    const el = descRef.current;
+    if (el && typeof el.selectionStart === 'number') {
+      const start = el.selectionStart;
+      const end = el.selectionEnd;
+      const next = (cur.slice(0, start) + token + cur.slice(end)).slice(0, LIMITS.description);
+      set('description', next);
+      requestAnimationFrame(() => {
+        el.focus();
+        const pos = Math.min(start + token.length, next.length);
+        el.setSelectionRange(pos, pos);
+      });
+    } else {
+      set('description', (cur + (cur ? '\n' : '') + token).slice(0, LIMITS.description));
+    }
   }
 
   function startNew() {
@@ -411,6 +443,7 @@ export function EmbedBuilderTab({ guildId, canManage }: { guildId: string; canMa
 
             <Field label="Beschreibung" hint={`${form.description.length}/${LIMITS.description}`}>
               <textarea
+                ref={descRef}
                 value={form.description}
                 maxLength={LIMITS.description}
                 onChange={e => set('description', e.target.value)}
@@ -418,6 +451,17 @@ export function EmbedBuilderTab({ guildId, canManage }: { guildId: string; canMa
                 className="input-premium w-full rounded-lg px-3.5 py-2.5 text-sm text-white"
                 placeholder="Haupttext des Embeds. Zeilenumbrüche & <#Kanal-ID> werden unterstützt."
               />
+            </Field>
+
+            {/* Kanalverlinkungen: fuegt <#ID> in die Beschreibung ein (max. 10) */}
+            <Field label="Kanalverlinkungen (bis zu 10 — fügt <#Kanal> an der Cursor-Position ein)">
+              <Select
+                value=""
+                onChange={e => { insertChannelMention(e.target.value); e.currentTarget.value = ''; }}
+              >
+                <option value="">— Kanal einfügen —</option>
+                {textChannels.map(c => <option key={c.id} value={c.id}>#{c.name}</option>)}
+              </Select>
             </Field>
 
             {/* Farbe */}

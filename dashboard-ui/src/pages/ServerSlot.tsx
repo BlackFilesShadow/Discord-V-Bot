@@ -9,6 +9,7 @@ import { Button } from '@/components/ui/Button';
 import { Input } from '@/components/ui/Input';
 import { Switch } from '@/components/ui/Switch';
 import { Select } from '@/components/ui/Select';
+import { EmojiPicker } from '@/components/ui/EmojiPicker';
 import { useGuildLiveUpdates } from '@/lib/useGuildLiveUpdates';
 import { Settings, Shield, Coins, Link as LinkIcon, Trash2, Plus, Check, X, Banknote, Dice5, RefreshCw } from 'lucide-react';
 
@@ -910,7 +911,7 @@ function EconomyForm({
         </label>
         <label className="text-sm">
           <span className="text-muted">Emoji</span>
-          <Input value={draft.emoji} onChange={e => setDraft({ ...draft, emoji: e.target.value })} maxLength={8} />
+          <EmojiPicker value={draft.emoji} onChange={v => setDraft({ ...draft, emoji: v })} />
         </label>
         <label className="text-sm">
           <span className="text-muted">Startguthaben (neue Members)</span>
