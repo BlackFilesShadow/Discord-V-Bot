@@ -29,6 +29,29 @@ const messageReactionRemoveEvent: BotEvent = {
     const emoji = r.emoji.name || r.emoji.id || '';
 
     try {
+      // ===== SELFROLE-MENU REAKTIONEN (Reaktions-Embeds) =====
+      // Reaktion entfernt -> bei TOGGLE Rolle entfernen. handleSelfRoleReaction
+      // prueft componentType/aktiv/Hierarchie und assignMode selbst.
+      if (r.message.guild) {
+        try {
+          const { handleSelfRoleReaction } = await import('../modules/selfrole/selfRoleMenu.js');
+          const member = await r.message.guild.members.fetch(u.id).catch(() => null);
+          if (member) {
+            const handled = await handleSelfRoleReaction(
+              r.message.guild,
+              messageId,
+              r.emoji.name,
+              r.emoji.id,
+              member,
+              false,
+            );
+            if (handled) return;
+          }
+        } catch (e) {
+          logger.error('SelfRole-Reaktion (remove) Fehler:', e);
+        }
+      }
+
       // ===== GIVEAWAY: Teilnahme entfernen =====
       const giveaway = await prisma.giveaway.findFirst({
         where: { messageId, status: 'ACTIVE', guildId },

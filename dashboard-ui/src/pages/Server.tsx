@@ -1,7 +1,7 @@
 import { useState } from 'react';
 import { Link, useParams } from 'react-router-dom';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
-import { Plus, Trash2, KeyRound, Server as ServerIcon, Shield, AlertTriangle, ChevronRight, Ticket, Settings2, Send, Power, Tag, Activity, Users, Crosshair, RotateCcw, Sparkles, Layers } from 'lucide-react';
+import { Plus, Trash2, KeyRound, Server as ServerIcon, Shield, AlertTriangle, ChevronRight, Ticket, Settings2, Send, Power, Tag, Activity, Users, Crosshair, RotateCcw, Sparkles, Layers, ToggleLeft } from 'lucide-react';
 import { api, ApiError } from '@/lib/api';
 import { Shell } from '@/components/Shell';
 import { Card, CardHeader, CardTitle, CardDesc } from '@/components/ui/Card';
@@ -16,8 +16,9 @@ import { KillfeedTab } from '@/components/KillfeedTab';
 import { FactionsTab } from '@/components/FactionsTab';
 import { WelcomeTab } from '@/components/WelcomeTab';
 import { EmbedBuilderTab } from '@/components/EmbedBuilderTab';
+import { ReactionEmbedsTab } from '@/components/ReactionEmbedsTab';
 
-type Tab = 'nitrado' | 'aliases' | 'permissions' | 'tickets' | 'factions' | 'killfeed' | 'welcome' | 'embeds' | 'audit';
+type Tab = 'nitrado' | 'aliases' | 'permissions' | 'tickets' | 'factions' | 'killfeed' | 'welcome' | 'embeds' | 'reaction-embeds' | 'audit';
 
 interface TabDef {
   key: Tab;
@@ -35,6 +36,7 @@ const TABS: ReadonlyArray<TabDef> = [
   { key: 'killfeed', label: 'Killfeed', icon: Crosshair },
   { key: 'welcome', label: 'Willkommen', icon: Sparkles },
   { key: 'embeds', label: 'Eingebettete Nachrichten', icon: Layers },
+  { key: 'reaction-embeds', label: 'Reaktions Embeds', icon: ToggleLeft },
   { key: 'audit', label: 'Audit-Log', icon: Activity },
 ];
 
@@ -161,6 +163,7 @@ export default function Server() {
             {tab === 'killfeed' && guildId && <KillfeedTab guildId={guildId} isOwner={isOwner || hasFullAccess || perms.includes('killfeed.manage')} slots={dash.data.slots} />}
             {tab === 'welcome' && guildId && <WelcomeTab guildId={guildId} canManage={hasFullAccess || perms.includes('welcome.manage')} />}
             {tab === 'embeds' && guildId && <EmbedBuilderTab guildId={guildId} canManage={hasFullAccess || perms.includes('embeds.manage')} />}
+            {tab === 'reaction-embeds' && guildId && <ReactionEmbedsTab guildId={guildId} canManage={hasFullAccess || perms.includes('reactionroles.manage')} />}
             {tab === 'audit' && guildId && (isOwner || hasFullAccess) && <AuditTab guildId={guildId} />}
           </>
         )}

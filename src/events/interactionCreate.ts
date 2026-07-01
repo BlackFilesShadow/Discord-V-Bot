@@ -214,6 +214,20 @@ const interactionCreateEvent: BotEvent = {
       }
     }
 
+    // String-Select-Menu: SelfRole-Auswahl (Reaktions-Embeds, componentType SELECT).
+    if ('isStringSelectMenu' in i && (i as { isStringSelectMenu: () => boolean }).isStringSelectMenu()) {
+      const sel = i as import('discord.js').StringSelectMenuInteraction;
+      if (sel.customId.startsWith('selfrole_sel_')) {
+        try {
+          const { handleSelfRoleSelect } = await import('../modules/selfrole/selfRoleMenu.js');
+          await handleSelfRoleSelect(sel);
+        } catch (e) {
+          logger.error('SelfRole-Select-Handler-Fehler:', e as Error);
+        }
+        return;
+      }
+    }
+
     // Button-Interaktionen verarbeiten (Approve/Deny Hersteller)
     if ('isButton' in i && (i as ButtonInteraction).isButton()) {
       const btn = i as ButtonInteraction;

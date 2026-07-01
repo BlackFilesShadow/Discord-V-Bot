@@ -1424,7 +1424,22 @@ model SelfRoleMenu {
   updatedAt   DateTime         @updatedAt
   options     SelfRoleOption[]
 
+  // ── Reaktions-Embeds (Phase 2, additiv/non-breaking) ──────────────────
+  // Optionales Nachrichtendesign aus dem Embed-Builder statt Standard-Layout.
+  embedId         String?
+  embed           DashboardEmbed? @relation(fields: [embedId], references: [id], onDelete: SetNull)
+  // Interaktionsart: BUTTON (Buttons) | SELECT (Dropdown) | REACTION (Emoji-Reaktionen).
+  componentType   String          @default("BUTTON")
+  // Rollen-Verhalten: GIVE (nur geben) | REMOVE (nur entfernen) | TOGGLE (umschalten).
+  assignMode      String          @default("TOGGLE")
+  // Max. gleichzeitige Rollen aus diesem Menu pro User (nur MULTI; null = unbegrenzt).
+  maxRolesPerUser Int?
+  // Archiviert: nicht mehr aktiv, aber historisch erhalten (keine Interaktion mehr).
+  archived        Boolean         @default(false)
+
   @@index([guildId, isActive])
+  @@index([guildId, archived])
+  @@index([embedId])
 }
 
 model SelfRoleOption {
@@ -1437,6 +1452,12 @@ model SelfRoleOption {
   description String?      @db.VarChar(100)
   position    Int          @default(0)
   createdAt   DateTime     @default(now())
+
+  // ── Reaktions-Embeds (Phase 2, additiv/non-breaking) ──────────────────
+  // Button-Farbe (nur componentType BUTTON): PRIMARY | SECONDARY | SUCCESS | DANGER.
+  buttonStyle String  @default("SECONDARY")
+  // Deaktivierte Optionen werden nicht mehr als Button/Select/Reaktion angeboten.
+  isActive    Boolean @default(true)
 
   @@unique([menuId, roleId])
   @@index([menuId, position])
@@ -1473,6 +1494,10 @@ model DashboardEmbed {
   createdBy     String
   createdAt     DateTime @default(now())
   updatedAt     DateTime @updatedAt
+
+  // Reaktions-Embeds (Phase 2): dieses Embed kann als Nachrichtendesign eines
+  // SelfRoleMenu wiederverwendet werden (onDelete SetNull -> Menu bleibt erhalten).
+  selfRoleMenus SelfRoleMenu[]
 
   @@index([guildId, isTemplate])
   @@index([guildId, isDraft])

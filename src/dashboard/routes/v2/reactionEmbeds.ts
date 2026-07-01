@@ -1,0 +1,447 @@
+/**
+ * Reaktions-Embeds Routen — Self-Role-Menus mit Buttons/Select/Reaktionen pro Guild.
+ * Dashboard-only: es existieren KEINE Slash-/Prefix-Commands fuer dieses Feature.
+ *
+ * Baut additiv auf dem bestehenden SelfRoleMenu/SelfRoleOption-Modell auf
+ * (Phase 2). Optional kann ein DashboardEmbed (Embed-Builder) als Nachrichten-
+ * design verknuepft werden.
+ *
+ *   GET    /                    Menus der Guild auflisten
+ *   GET    /:id                 Einzelnes Menu (inkl. Optionen)
+ *   POST   /                    Menu anlegen
+ *   PUT    /:id                 Menu aktualisieren
+ *   DELETE /:id                 Menu loeschen (+ ggf. gepostete Nachricht best-effort)
+ *   POST   /:id/options         Option hinzufuegen
+ *   PUT    /:id/options/:optId  Option aktualisieren
+ *   DELETE /:id/options/:optId  Option entfernen
+ *   POST   /:id/reorder         Optionen neu sortieren
+ *   POST   /:id/send            In Ziel-Channel posten (oder editieren)
+ *   POST   /:id/sync            Bereits gepostete Nachricht aktualisieren
+ *   POST   /:id/archive         Menu archivieren/reaktivieren
+ *
+ * Strikte guildId-Scope-Pruefung in jeder Operation (jede Prisma-Query traegt guildId).
+ * Rollen-Schutz: nie @everyone, keine managed-Rollen, Bot-Hierarchie + ManageRoles.
+ */
+
+import { Router } from 'express';
+import { PermissionFlagsBits, TextChannel } from 'discord.js';
+import { requireGuildPermission } from '../../middleware/auth';
+import prisma from '../../../database/prisma';
+import { tryGetDashboardClient } from '../../clientRegistry';
+import { validateBotChannelAccess } from '../../../utils/discordChannel';
+import { logAuditDb } from '../../../utils/logger';
+import { emitGuildEvent } from '../../socket/emitter';
+import { getMenuFull, publishMenu } from '../../../modules/selfrole/selfRoleMenu';
+
+export const reactionEmbedsRouter = Router({ mergeParams: true });
+
+const SNOWFLAKE_RE = /^\d{17,20}$/;
+const COMPONENT_TYPES = new Set(['BUTTON', 'SELECT', 'REACTION']);
+const ASSIGN_MODES = new Set(['GIVE', 'REMOVE', 'TOGGLE']);
+const MODES = new Set(['MULTI', 'SINGLE']);
+const BUTTON_STYLES = new Set(['PRIMARY', 'SECONDARY', 'SUCCESS', 'DANGER']);
+
+// ── Serialisierung ──────────────────────────────────────────────────────────
+interface MenuRow {
+  id: string;
+  guildId: string;
+  channelId: string;
+  messageId: string | null;
+  title: string;
+  description: string | null;
+  mode: string;
+  isActive: boolean;
+  componentType: string;
+  assignMode: string;
+  maxRolesPerUser: number | null;
+  archived: boolean;
+  embedId: string | null;
+  createdBy: string;
+  createdAt: Date;
+  updatedAt: Date;
+  options?: OptionRow[];
+}
+interface OptionRow {
+  id: string;
+  roleId: string;
+  label: string;
+  emoji: string | null;
+  description: string | null;
+  position: number;
+  buttonStyle: string;
+  isActive: boolean;
+}
+
+function optionToApi(o: OptionRow) {
+  return {
+    id: o.id,
+    roleId: o.roleId,
+    label: o.label,
+    emoji: o.emoji,
+    description: o.description,
+    position: o.position,
+    buttonStyle: o.buttonStyle,
+    isActive: o.isActive,
+  };
+}
+
+function menuToApi(m: MenuRow) {
+  return {
+    id: m.id,
+    channelId: m.channelId,
+    messageId: m.messageId,
+    isPosted: m.messageId != null,
+    title: m.title,
+    description: m.description,
+    mode: m.mode,
+    isActive: m.isActive,
+    componentType: m.componentType,
+    assignMode: m.assignMode,
+    maxRolesPerUser: m.maxRolesPerUser,
+    archived: m.archived,
+    embedId: m.embedId,
+    createdBy: m.createdBy,
+    createdAt: m.createdAt,
+    updatedAt: m.updatedAt,
+    options: (m.options ?? []).map(optionToApi),
+  };
+}
+
+// ── Body-Parsing ─────────────────────────────────────────────────────────────
+function str(v: unknown, max: number): string {
+  return typeof v === 'string' ? v.trim().slice(0, max) : '';
+}
+function optStr(v: unknown, max: number): string | null {
+  if (typeof v !== 'string') return null;
+  const t = v.trim();
+  return t.length ? t.slice(0, max) : null;
+}
+
+interface MenuInput {
+  channelId: string;
+  title: string;
+  description: string | null;
+  mode: string;
+  componentType: string;
+  assignMode: string;
+  maxRolesPerUser: number | null;
+  embedId: string | null;
+}
+
+function validateMenuBody(body: unknown): { ok: true; data: MenuInput } | { ok: false; error: string } {
+  const b = (body ?? {}) as Record<string, unknown>;
+  const channelId = str(b.channelId, 32);
+  if (!SNOWFLAKE_RE.test(channelId)) return { ok: false, error: 'Ungültige channelId.' };
+  const title = str(b.title, 120);
+  if (title.length < 1) return { ok: false, error: 'title 1..120 Zeichen.' };
+  const description = optStr(b.description, 2000);
+  const mode = MODES.has(String(b.mode)) ? String(b.mode) : 'MULTI';
+  const componentType = COMPONENT_TYPES.has(String(b.componentType)) ? String(b.componentType) : 'BUTTON';
+  const assignMode = ASSIGN_MODES.has(String(b.assignMode)) ? String(b.assignMode) : 'TOGGLE';
+  let maxRolesPerUser: number | null = null;
+  if (b.maxRolesPerUser != null && b.maxRolesPerUser !== '') {
+    const n = Number(b.maxRolesPerUser);
+    if (!Number.isInteger(n) || n < 1 || n > 25) return { ok: false, error: 'maxRolesPerUser muss 1..25 sein.' };
+    maxRolesPerUser = n;
+  }
+  const embedId = optStr(b.embedId, 64);
+  return { ok: true, data: { channelId, title, description, mode, componentType, assignMode, maxRolesPerUser, embedId } };
+}
+
+/** Prueft, ob eine Rolle sicher als Self-Role verwendet werden kann. */
+async function validateRole(guildId: string, roleId: string): Promise<string | null> {
+  if (!SNOWFLAKE_RE.test(roleId)) return 'Ungültige roleId.';
+  if (roleId === guildId) return '@everyone kann nicht als Reaktionsrolle verwendet werden.';
+  const client = tryGetDashboardClient();
+  const guild = client?.guilds.cache.get(guildId);
+  if (!guild) return null; // Ohne Client keine Live-Pruefung (Persistenz erlaubt).
+  const role = guild.roles.cache.get(roleId) ?? await guild.roles.fetch(roleId).catch(() => null);
+  if (!role) return 'Rolle nicht gefunden.';
+  if (role.managed) return 'Von Integrationen verwaltete Rollen sind nicht erlaubt.';
+  const me = guild.members.me;
+  if (me && me.roles.highest.position <= role.position) {
+    return 'Bot-Rolle ist nicht hoch genug, um diese Rolle zu vergeben.';
+  }
+  if (me && !me.permissions.has(PermissionFlagsBits.ManageRoles)) {
+    return 'Dem Bot fehlt die Berechtigung „Rollen verwalten".';
+  }
+  return null;
+}
+
+/** Stellt sicher, dass ein verknuepfter Embed derselben Guild gehoert. */
+async function embedBelongsToGuild(embedId: string, guildId: string): Promise<boolean> {
+  const row = await prisma.dashboardEmbed.findFirst({ where: { id: embedId, guildId }, select: { id: true } });
+  return row != null;
+}
+
+// ===========================================================================
+//  MENU-CRUD
+// ===========================================================================
+
+reactionEmbedsRouter.get('/', requireGuildPermission('reactionroles.view'), async (req, res) => {
+  const scope = req.guildScope!;
+  const menus = await prisma.selfRoleMenu.findMany({
+    where: { guildId: scope.guildId },
+    orderBy: { createdAt: 'desc' },
+    include: { options: { orderBy: { position: 'asc' } } },
+  });
+  res.json({ menus: (menus as unknown as MenuRow[]).map(menuToApi) });
+});
+
+reactionEmbedsRouter.get('/:id', requireGuildPermission('reactionroles.view'), async (req, res) => {
+  const scope = req.guildScope!;
+  const menu = await prisma.selfRoleMenu.findFirst({
+    where: { id: req.params.id, guildId: scope.guildId },
+    include: { options: { orderBy: { position: 'asc' } } },
+  });
+  if (!menu) { res.status(404).json({ error: 'Menü nicht gefunden.' }); return; }
+  res.json(menuToApi(menu as unknown as MenuRow));
+});
+
+reactionEmbedsRouter.post('/', requireGuildPermission('reactionroles.manage'), async (req, res) => {
+  const scope = req.guildScope!;
+  const v = validateMenuBody(req.body);
+  if (!v.ok) { res.status(400).json({ error: v.error }); return; }
+  const d = v.data;
+  if (d.embedId && !(await embedBelongsToGuild(d.embedId, scope.guildId))) {
+    res.status(400).json({ error: 'Verknüpfter Embed gehört nicht zu dieser Guild.' }); return;
+  }
+  const menu = await prisma.selfRoleMenu.create({
+    data: {
+      guildId: scope.guildId,
+      channelId: d.channelId,
+      title: d.title,
+      description: d.description,
+      mode: d.mode,
+      componentType: d.componentType,
+      assignMode: d.assignMode,
+      maxRolesPerUser: d.maxRolesPerUser,
+      embedId: d.embedId,
+      createdBy: scope.actorDiscordId,
+    },
+  });
+  logAuditDb('REACTION_EMBED_CREATED', 'ROLE', {
+    actorUserId: req.auth!.userId, guildId: scope.guildId,
+    details: { menuId: menu.id, componentType: d.componentType },
+  });
+  emitGuildEvent(scope.guildId, { type: 'reactionEmbed.changed', payload: { guildId: scope.guildId, menuId: menu.id } });
+  res.status(201).json(menuToApi(menu as unknown as MenuRow));
+});
+
+reactionEmbedsRouter.put('/:id', requireGuildPermission('reactionroles.manage'), async (req, res) => {
+  const scope = req.guildScope!;
+  const existing = await prisma.selfRoleMenu.findFirst({ where: { id: req.params.id, guildId: scope.guildId } });
+  if (!existing) { res.status(404).json({ error: 'Menü nicht gefunden.' }); return; }
+  const v = validateMenuBody(req.body);
+  if (!v.ok) { res.status(400).json({ error: v.error }); return; }
+  const d = v.data;
+  if (d.embedId && !(await embedBelongsToGuild(d.embedId, scope.guildId))) {
+    res.status(400).json({ error: 'Verknüpfter Embed gehört nicht zu dieser Guild.' }); return;
+  }
+  await prisma.selfRoleMenu.updateMany({
+    where: { id: existing.id, guildId: scope.guildId },
+    data: {
+      channelId: d.channelId,
+      title: d.title,
+      description: d.description,
+      mode: d.mode,
+      componentType: d.componentType,
+      assignMode: d.assignMode,
+      maxRolesPerUser: d.maxRolesPerUser,
+      embedId: d.embedId,
+    },
+  });
+  const updated = await prisma.selfRoleMenu.findFirst({
+    where: { id: existing.id, guildId: scope.guildId },
+    include: { options: { orderBy: { position: 'asc' } } },
+  });
+  logAuditDb('REACTION_EMBED_UPDATED', 'ROLE', {
+    actorUserId: req.auth!.userId, guildId: scope.guildId, details: { menuId: existing.id },
+  });
+  emitGuildEvent(scope.guildId, { type: 'reactionEmbed.changed', payload: { guildId: scope.guildId, menuId: existing.id } });
+  res.json(menuToApi(updated as unknown as MenuRow));
+});
+
+reactionEmbedsRouter.delete('/:id', requireGuildPermission('reactionroles.manage'), async (req, res) => {
+  const scope = req.guildScope!;
+  const existing = await prisma.selfRoleMenu.findFirst({ where: { id: req.params.id, guildId: scope.guildId } });
+  if (!existing) { res.status(404).json({ error: 'Menü nicht gefunden.' }); return; }
+
+  let messageDeleted = false;
+  if (existing.messageId) {
+    const client = tryGetDashboardClient();
+    const channel = client?.channels.cache.get(existing.channelId)
+      ?? await client?.channels.fetch(existing.channelId).catch(() => null);
+    if (channel && channel.isTextBased() && !channel.isDMBased()) {
+      await channel.messages.delete(existing.messageId).then(() => { messageDeleted = true; }).catch(() => {});
+    }
+  }
+  await prisma.selfRoleMenu.delete({ where: { id: existing.id } });
+  logAuditDb('REACTION_EMBED_DELETED', 'ROLE', {
+    actorUserId: req.auth!.userId, guildId: scope.guildId, details: { menuId: existing.id, messageDeleted },
+  });
+  emitGuildEvent(scope.guildId, { type: 'reactionEmbed.changed', payload: { guildId: scope.guildId, menuId: existing.id } });
+  res.json({ ok: true, messageDeleted });
+});
+
+// ===========================================================================
+//  OPTIONEN
+// ===========================================================================
+
+reactionEmbedsRouter.post('/:id/options', requireGuildPermission('reactionroles.manage'), async (req, res) => {
+  const scope = req.guildScope!;
+  const menu = await prisma.selfRoleMenu.findFirst({ where: { id: req.params.id, guildId: scope.guildId } });
+  if (!menu) { res.status(404).json({ error: 'Menü nicht gefunden.' }); return; }
+
+  const b = (req.body ?? {}) as Record<string, unknown>;
+  const roleId = str(b.roleId, 32);
+  const label = str(b.label, 80);
+  const emoji = optStr(b.emoji, 64);
+  const description = optStr(b.description, 100);
+  const buttonStyle = BUTTON_STYLES.has(String(b.buttonStyle)) ? String(b.buttonStyle) : 'SECONDARY';
+  if (label.length < 1) { res.status(400).json({ error: 'label 1..80 Zeichen.' }); return; }
+  const roleErr = await validateRole(scope.guildId, roleId);
+  if (roleErr) { res.status(400).json({ error: roleErr }); return; }
+
+  const count = await prisma.selfRoleOption.count({ where: { menuId: menu.id } });
+  if (count >= 25) { res.status(400).json({ error: 'Ein Menü unterstützt maximal 25 Optionen.' }); return; }
+  try {
+    const opt = await prisma.selfRoleOption.create({
+      data: { menuId: menu.id, roleId, label, emoji, description, buttonStyle, position: count },
+    });
+    logAuditDb('REACTION_EMBED_OPTION_ADDED', 'ROLE', {
+      actorUserId: req.auth!.userId, guildId: scope.guildId, details: { menuId: menu.id, roleId },
+    });
+    emitGuildEvent(scope.guildId, { type: 'reactionEmbed.changed', payload: { guildId: scope.guildId, menuId: menu.id } });
+    res.status(201).json(optionToApi(opt as unknown as OptionRow));
+  } catch (e) {
+    if ((e as { code?: string }).code === 'P2002') { res.status(409).json({ error: 'Diese Rolle ist bereits im Menü.' }); return; }
+    throw e;
+  }
+});
+
+reactionEmbedsRouter.put('/:id/options/:optId', requireGuildPermission('reactionroles.manage'), async (req, res) => {
+  const scope = req.guildScope!;
+  const menu = await prisma.selfRoleMenu.findFirst({ where: { id: req.params.id, guildId: scope.guildId } });
+  if (!menu) { res.status(404).json({ error: 'Menü nicht gefunden.' }); return; }
+  const opt = await prisma.selfRoleOption.findFirst({ where: { id: req.params.optId, menuId: menu.id } });
+  if (!opt) { res.status(404).json({ error: 'Option nicht gefunden.' }); return; }
+
+  const b = (req.body ?? {}) as Record<string, unknown>;
+  const label = str(b.label, 80);
+  if (label.length < 1) { res.status(400).json({ error: 'label 1..80 Zeichen.' }); return; }
+  const emoji = optStr(b.emoji, 64);
+  const description = optStr(b.description, 100);
+  const buttonStyle = BUTTON_STYLES.has(String(b.buttonStyle)) ? String(b.buttonStyle) : opt.buttonStyle;
+  const isActive = typeof b.isActive === 'boolean' ? b.isActive : opt.isActive;
+
+  const updated = await prisma.selfRoleOption.update({
+    where: { id: opt.id },
+    data: { label, emoji, description, buttonStyle, isActive },
+  });
+  logAuditDb('REACTION_EMBED_OPTION_UPDATED', 'ROLE', {
+    actorUserId: req.auth!.userId, guildId: scope.guildId, details: { menuId: menu.id, optionId: opt.id },
+  });
+  emitGuildEvent(scope.guildId, { type: 'reactionEmbed.changed', payload: { guildId: scope.guildId, menuId: menu.id } });
+  res.json(optionToApi(updated as unknown as OptionRow));
+});
+
+reactionEmbedsRouter.delete('/:id/options/:optId', requireGuildPermission('reactionroles.manage'), async (req, res) => {
+  const scope = req.guildScope!;
+  const menu = await prisma.selfRoleMenu.findFirst({ where: { id: req.params.id, guildId: scope.guildId } });
+  if (!menu) { res.status(404).json({ error: 'Menü nicht gefunden.' }); return; }
+  await prisma.selfRoleOption.deleteMany({ where: { id: req.params.optId, menuId: menu.id } });
+  logAuditDb('REACTION_EMBED_OPTION_REMOVED', 'ROLE', {
+    actorUserId: req.auth!.userId, guildId: scope.guildId, details: { menuId: menu.id, optionId: req.params.optId },
+  });
+  emitGuildEvent(scope.guildId, { type: 'reactionEmbed.changed', payload: { guildId: scope.guildId, menuId: menu.id } });
+  res.json({ ok: true });
+});
+
+reactionEmbedsRouter.post('/:id/reorder', requireGuildPermission('reactionroles.manage'), async (req, res) => {
+  const scope = req.guildScope!;
+  const menu = await prisma.selfRoleMenu.findFirst({ where: { id: req.params.id, guildId: scope.guildId } });
+  if (!menu) { res.status(404).json({ error: 'Menü nicht gefunden.' }); return; }
+  const order = Array.isArray((req.body as { order?: unknown })?.order) ? (req.body as { order: unknown[] }).order : null;
+  if (!order) { res.status(400).json({ error: 'order[] erforderlich.' }); return; }
+  const ids = order.map(String);
+  const existing = await prisma.selfRoleOption.findMany({ where: { menuId: menu.id }, select: { id: true } });
+  const existingIds = new Set(existing.map(o => o.id));
+  if (ids.length !== existing.length || !ids.every(id => existingIds.has(id))) {
+    res.status(400).json({ error: 'order[] muss exakt alle Options-IDs enthalten.' }); return;
+  }
+  await prisma.$transaction(ids.map((id, idx) =>
+    prisma.selfRoleOption.update({ where: { id }, data: { position: idx } }),
+  ));
+  emitGuildEvent(scope.guildId, { type: 'reactionEmbed.changed', payload: { guildId: scope.guildId, menuId: menu.id } });
+  res.json({ ok: true });
+});
+
+// ===========================================================================
+//  POST / SYNC / ARCHIVE
+// ===========================================================================
+
+async function publishToChannel(guildId: string, menuId: string): Promise<{ error?: string; status?: number; messageId?: string }> {
+  const full = await getMenuFull(menuId);
+  if (!full) return { error: 'Menü nicht gefunden.', status: 404 };
+  const activeOpts = full.options.filter(o => o.isActive);
+  if (activeOpts.length === 0) return { error: 'Menü hat keine aktiven Optionen.', status: 400 };
+  if (full.componentType === 'REACTION' && activeOpts.some(o => !o.emoji)) {
+    return { error: 'Bei Reaktions-Menüs benötigt jede aktive Option ein Emoji.', status: 400 };
+  }
+  const client = tryGetDashboardClient();
+  if (!client) return { error: 'Bot ist derzeit nicht verbunden.', status: 503 };
+  const access = await validateBotChannelAccess(client, guildId, full.channelId, [
+    PermissionFlagsBits.ViewChannel, PermissionFlagsBits.SendMessages, PermissionFlagsBits.EmbedLinks,
+  ]);
+  if (!access.ok) return { error: access.reason, status: 400 };
+  const guild = client.guilds.cache.get(guildId);
+  const channel = guild?.channels.cache.get(full.channelId);
+  if (!channel || !channel.isTextBased()) return { error: 'Ziel-Channel nicht gefunden oder kein Text-Channel.', status: 400 };
+  const messageId = await publishMenu(full, channel as TextChannel);
+  return { messageId };
+}
+
+reactionEmbedsRouter.post('/:id/send', requireGuildPermission('reactionroles.manage'), async (req, res) => {
+  const scope = req.guildScope!;
+  const menu = await prisma.selfRoleMenu.findFirst({ where: { id: req.params.id, guildId: scope.guildId } });
+  if (!menu) { res.status(404).json({ error: 'Menü nicht gefunden.' }); return; }
+  const r = await publishToChannel(scope.guildId, menu.id);
+  if (r.error) { res.status(r.status ?? 400).json({ error: r.error }); return; }
+  logAuditDb('REACTION_EMBED_SENT', 'ROLE', {
+    actorUserId: req.auth!.userId, guildId: scope.guildId, details: { menuId: menu.id, messageId: r.messageId },
+  });
+  emitGuildEvent(scope.guildId, { type: 'reactionEmbed.changed', payload: { guildId: scope.guildId, menuId: menu.id } });
+  res.json({ ok: true, messageId: r.messageId });
+});
+
+reactionEmbedsRouter.post('/:id/sync', requireGuildPermission('reactionroles.manage'), async (req, res) => {
+  const scope = req.guildScope!;
+  const menu = await prisma.selfRoleMenu.findFirst({ where: { id: req.params.id, guildId: scope.guildId } });
+  if (!menu) { res.status(404).json({ error: 'Menü nicht gefunden.' }); return; }
+  if (!menu.messageId) { res.status(400).json({ error: 'Menü wurde noch nicht gesendet.' }); return; }
+  const r = await publishToChannel(scope.guildId, menu.id);
+  if (r.error) { res.status(r.status ?? 400).json({ error: r.error }); return; }
+  logAuditDb('REACTION_EMBED_SYNCED', 'ROLE', {
+    actorUserId: req.auth!.userId, guildId: scope.guildId, details: { menuId: menu.id, messageId: r.messageId },
+  });
+  res.json({ ok: true, messageId: r.messageId });
+});
+
+reactionEmbedsRouter.post('/:id/archive', requireGuildPermission('reactionroles.manage'), async (req, res) => {
+  const scope = req.guildScope!;
+  const menu = await prisma.selfRoleMenu.findFirst({ where: { id: req.params.id, guildId: scope.guildId } });
+  if (!menu) { res.status(404).json({ error: 'Menü nicht gefunden.' }); return; }
+  const archived = typeof (req.body as { archived?: unknown })?.archived === 'boolean'
+    ? (req.body as { archived: boolean }).archived
+    : !menu.archived;
+  const updated = await prisma.selfRoleMenu.update({
+    where: { id: menu.id },
+    data: { archived, isActive: archived ? false : menu.isActive },
+  });
+  logAuditDb('REACTION_EMBED_ARCHIVED', 'ROLE', {
+    actorUserId: req.auth!.userId, guildId: scope.guildId, details: { menuId: menu.id, archived },
+  });
+  emitGuildEvent(scope.guildId, { type: 'reactionEmbed.changed', payload: { guildId: scope.guildId, menuId: menu.id } });
+  res.json({ id: updated.id, archived: updated.archived, isActive: updated.isActive });
+});

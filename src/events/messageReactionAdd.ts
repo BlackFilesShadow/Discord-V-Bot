@@ -180,6 +180,28 @@ const messageReactionAddEvent: BotEvent = {
         return;
       }
 
+      // ===== SEKTION 9b: SELFROLE-MENU REAKTIONEN (Reaktions-Embeds) =====
+      // Guild-gebunden; handleSelfRoleReaction prueft componentType/aktiv/Hierarchie selbst.
+      if (r.message.guild) {
+        try {
+          const { handleSelfRoleReaction } = await import('../modules/selfrole/selfRoleMenu.js');
+          const member = await r.message.guild.members.fetch(u.id).catch(() => null);
+          if (member) {
+            const handled = await handleSelfRoleReaction(
+              r.message.guild,
+              messageId,
+              r.emoji.name,
+              r.emoji.id,
+              member,
+              true,
+            );
+            if (handled) return;
+          }
+        } catch (e) {
+          logger.error('SelfRole-Reaktion (add) Fehler:', e);
+        }
+      }
+
       // ===== SEKTION 10: POLL-VOTES PER REAKTION =====
       const poll = await prisma.poll.findFirst({
         where: {
