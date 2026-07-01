@@ -285,7 +285,7 @@ const messageCreateEvent: BotEvent = {
           '• ChatGPT-Style Antworten bei Erwähnung (mit Verlaufs-Kontext)\n' +
           '• Auto-Responder & Owner-definierte Trigger pro Guild\n' +
           '• Member-Awareness, RAG mit pgvector\n' +
-          '• Auto-Übersetzung (`/translate-post`) in 10 Sprachen, mit Rollen-Ping & Scheduler\n\n' +
+          '• Auto-Übersetzung (Dashboard → Übersetzungen) in 10 Sprachen, mit Rollen-Ping & Scheduler\n\n' +
           '**📊 Audit & Transparenz**\n' +
           '• Lückenlose Aktions-Protokollierung (Volltext-Suche)\n' +
           '• Audit-Export für jeden Zeitraum\n\n' +

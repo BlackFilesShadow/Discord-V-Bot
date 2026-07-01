@@ -90,6 +90,10 @@ export const PERMISSION_SCOPES = [
   'embeds.manage',
   'reactionroles.view',
   'reactionroles.manage',
+  'feeds.view',
+  'feeds.manage',
+  'translate.view',
+  'translate.manage',
   'permissions.manage', // NIE delegierbar
   'dev.console',        // NIE delegierbar
 ] as const;

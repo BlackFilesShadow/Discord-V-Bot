@@ -191,11 +191,14 @@ describe('README-Vollständigkeit: Alle Sektionen implementiert', () => {
   });
 
   describe('Live-Feeds & externe APIs', () => {
-    it('Feed-Manager existiert (RSS, Twitch, Steam)', () => {
+    it('Feed-Manager existiert (RSS, Twitch, Steam, YouTube)', () => {
       expect(fileExists('src/modules/feeds/feedManager.ts')).toBe(true);
     });
-    it('/feed Command existiert', () => {
-      expect(fileExists('src/commands/admin/feed.ts')).toBe(true);
+    it('Feeds-Dashboard-Router existiert (ersetzt /feed)', () => {
+      expect(fileExists('src/dashboard/routes/v2/feeds.ts')).toBe(true);
+    });
+    it('Uebersetzungen-Dashboard-Router existiert (ersetzt /translate-post)', () => {
+      expect(fileExists('src/dashboard/routes/v2/translatedPosts.ts')).toBe(true);
     });
   });
 

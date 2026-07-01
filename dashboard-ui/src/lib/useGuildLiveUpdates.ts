@@ -37,6 +37,8 @@ export function useGuildLiveUpdates(guildId: string | undefined): void {
       'economy.tx':           () => invalidate([['economy', guildId], ['dashboard', guildId]]),
       'embed.changed':        () => invalidate([['embeds', guildId]]),
       'reactionEmbed.changed': () => invalidate([['reaction-embeds', guildId]]),
+      'feed.changed':         () => invalidate([['feeds', guildId]]),
+      'translatedPost.changed': () => invalidate([['translated-posts', guildId]]),
     };
 
     // Beim Reconnect: Room re-joinen UND alle Caches invalidieren

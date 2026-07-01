@@ -799,6 +799,7 @@ enum AuditCategory {
   GDPR
   AI
   FEED
+  TRANSLATE
   APPEAL
   TICKET
   NITRADO
@@ -965,6 +966,7 @@ enum FeedType {
   TWITTER
   STEAM
   NEWS
+  YOUTUBE
   WEBHOOK
   CUSTOM
 }

@@ -32,7 +32,9 @@ export type GuildEvent =
   | { type: 'killfeed.event'; payload: { guildId: string; configId: string; category: string; victimName: string; shooterName?: string; weapon?: string; distance?: number; occurredAt: string } }
   | { type: 'welcome.changed'; payload: { guildId: string } }
   | { type: 'embed.changed'; payload: { guildId: string; embedId?: string } }
-  | { type: 'reactionEmbed.changed'; payload: { guildId: string; menuId?: string } };
+  | { type: 'reactionEmbed.changed'; payload: { guildId: string; menuId?: string } }
+  | { type: 'feed.changed'; payload: { guildId: string; feedId?: string } }
+  | { type: 'translatedPost.changed'; payload: { guildId: string; postId?: string } };
 
 /**
  * Sendet Event an alle Clients im Room des betreffenden Guild-Namespace.

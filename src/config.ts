@@ -102,6 +102,7 @@ export const config = {
     twitchClientSecret: optionalEnv('TWITCH_CLIENT_SECRET'),
     twitterBearerToken: optionalEnv('TWITTER_BEARER_TOKEN'),
     steamApiKey: optionalEnv('STEAM_API_KEY'),
+    youtubeApiKey: optionalEnv('YOUTUBE_API_KEY'),
   },
 
   // Developer

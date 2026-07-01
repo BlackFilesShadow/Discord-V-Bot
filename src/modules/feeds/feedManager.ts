@@ -2,6 +2,7 @@ import { Client, EmbedBuilder, TextChannel } from 'discord.js';
 import prisma from '../../database/prisma';
 import { logger, logAudit } from '../../utils/logger';
 import { config } from '../../config';
+import { translate } from '../ai/translator';
 import axios from 'axios';
 
 /**
@@ -172,6 +173,94 @@ async function fetchSteamNews(appId: string): Promise<{
 }
 
 /**
+ * Loest eine YouTube-Kanal-ID auf. Akzeptiert:
+ *  - rohe Kanal-ID (UC...)
+ *  - Handle (@name oder name)
+ *  - vollstaendige Kanal-URL (youtube.com/channel/UC..., /@handle, /c/name, /user/name)
+ */
+async function resolveYouTubeChannelId(input: string, apiKey: string): Promise<string | null> {
+  const raw = input.trim();
+
+  // Direkte Kanal-ID.
+  if (/^UC[\w-]{20,}$/.test(raw)) return raw;
+
+  // /channel/UC... aus URL extrahieren.
+  const channelMatch = raw.match(/channel\/(UC[\w-]{20,})/);
+  if (channelMatch) return channelMatch[1];
+
+  // Handle bestimmen (@name, /@name, /c/name, /user/name oder blosser Name).
+  let handle: string | null = null;
+  const atMatch = raw.match(/(?:^|\/)@([\w.-]+)/);
+  if (atMatch) handle = atMatch[1];
+  else {
+    const cMatch = raw.match(/\/(?:c|user)\/([\w.-]+)/);
+    if (cMatch) handle = cMatch[1];
+    else if (/^[\w.-]+$/.test(raw)) handle = raw;
+  }
+  if (!handle) return null;
+
+  try {
+    const res = await axios.get('https://www.googleapis.com/youtube/v3/channels', {
+      params: { part: 'id', forHandle: `@${handle}`, key: apiKey },
+      timeout: 10000,
+    });
+    return res.data?.items?.[0]?.id ?? null;
+  } catch (error) {
+    logger.error(`YouTube-Kanalaufloesung fehlgeschlagen für ${raw}:`, error);
+    return null;
+  }
+}
+
+/**
+ * Neuestes YouTube-Video (inkl. Live-Erkennung) eines Kanals abrufen.
+ * Nutzt die YouTube Data API v3 (YOUTUBE_API_KEY).
+ */
+async function checkYouTube(input: string): Promise<{
+  channelTitle: string;
+  videoId: string;
+  title: string;
+  isLive: boolean;
+  publishedAt: string;
+  url: string;
+} | null> {
+  const apiKey = config.external.youtubeApiKey;
+  if (!apiKey) return null;
+
+  const channelId = await resolveYouTubeChannelId(input, apiKey);
+  if (!channelId) return null;
+
+  try {
+    const res = await axios.get('https://www.googleapis.com/youtube/v3/search', {
+      params: {
+        part: 'snippet',
+        channelId,
+        order: 'date',
+        maxResults: 1,
+        type: 'video',
+        key: apiKey,
+      },
+      timeout: 10000,
+    });
+
+    const item = res.data?.items?.[0];
+    const videoId = item?.id?.videoId;
+    if (!item || !videoId) return null;
+
+    return {
+      channelTitle: item.snippet?.channelTitle ?? 'YouTube',
+      videoId,
+      title: item.snippet?.title ?? 'Neues Video',
+      isLive: item.snippet?.liveBroadcastContent === 'live',
+      publishedAt: item.snippet?.publishedAt ?? new Date().toISOString(),
+      url: `https://www.youtube.com/watch?v=${videoId}`,
+    };
+  } catch (error) {
+    logger.error(`YouTube-API Fehler für ${input}:`, error);
+    return null;
+  }
+}
+
+/**
  * Feed aktualisieren und neue Einträge posten.
  */
 // Phase 2.3: Backoff-Map. Ein Feed mit n Fehlern in Folge wird fuer
@@ -204,11 +293,23 @@ async function processFeed(client: Client, feedId: string): Promise<void> {
       case 'RSS':
       case 'NEWS': {
         const { items, latestId } = await fetchRssFeed(feed.url, feed.lastItemId);
+        // NEWS-Feeds werden immer ins Deutsche uebersetzt (Fallback: Original).
+        const isNews = feed.feedType === 'NEWS';
         for (const item of items.reverse()) {
+          let title = item.title;
+          let description = item.description || 'Keine Beschreibung';
+          if (isNews) {
+            const tTitle = await translate(item.title, 'de').catch(() => null);
+            if (tTitle) title = tTitle;
+            if (item.description) {
+              const tDesc = await translate(item.description, 'de').catch(() => null);
+              if (tDesc) description = tDesc;
+            }
+          }
           const embed = new EmbedBuilder()
-            .setTitle(item.title)
+            .setTitle(title.slice(0, 256))
             .setURL(item.link)
-            .setDescription(item.description || 'Keine Beschreibung')
+            .setDescription(description.slice(0, 4096))
             .setColor(0xe67e22)
             .setFooter({ text: `📡 ${feed.name}` })
             .setTimestamp(item.pubDate ? new Date(item.pubDate) : new Date());
@@ -287,6 +388,43 @@ async function processFeed(client: Client, feedId: string): Promise<void> {
         break;
       }
 
+      case 'YOUTUBE': {
+        const yt = await checkYouTube(feed.url);
+        if (!yt) break;
+
+        // Erstlauf: nur Marker setzen, keine alten Videos posten.
+        if (!feed.lastItemId) {
+          await prisma.feed.update({
+            where: { id: feedId },
+            data: { lastItemId: yt.videoId, lastChecked: new Date() },
+          });
+          break;
+        }
+
+        if (yt.videoId !== feed.lastItemId) {
+          const embed = new EmbedBuilder()
+            .setTitle(`${yt.isLive ? '🔴 LIVE: ' : '▶️ Neues Video: '}${yt.title}`.slice(0, 256))
+            .setURL(yt.url)
+            .setColor(0xff0000)
+            .setAuthor({ name: yt.channelTitle })
+            .setFooter({ text: `📡 ${feed.name}` })
+            .setTimestamp(yt.publishedAt ? new Date(yt.publishedAt) : new Date());
+
+          await channel.send(sendOpts(embed));
+
+          await prisma.feed.update({
+            where: { id: feedId },
+            data: { lastItemId: yt.videoId, lastChecked: new Date() },
+          });
+        } else {
+          await prisma.feed.update({
+            where: { id: feedId },
+            data: { lastChecked: new Date() },
+          });
+        }
+        break;
+      }
+
       case 'WEBHOOK':
       case 'CUSTOM': {
         // Custom Webhooks werden separat verarbeitet
@@ -309,6 +447,14 @@ async function processFeed(client: Client, feedId: string): Promise<void> {
   }
   // Erfolgreiche Verarbeitung -> Backoff loeschen.
   if (feedBackoff.has(feedId)) feedBackoff.delete(feedId);
+}
+
+/**
+ * Manuell einen einzelnen Feed sofort verarbeiten (Dashboard "Jetzt pruefen").
+ * Ignoriert den Backoff-Timer bewusst nicht — Fehler werden dort registriert.
+ */
+export async function runFeedNow(client: Client, feedId: string): Promise<void> {
+  await processFeed(client, feedId);
 }
 
 /**

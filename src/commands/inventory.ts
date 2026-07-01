@@ -86,6 +86,8 @@ const REMOVE_NAMES = new Set<string>(['autorole']);
  *  - admin-reset-password -> Nutzer Passwort-Reset (POST /users/:id/reset-password)
  *  - admin-tickets        -> Tickets (GET /tickets, POST /tickets/:id/close)
  *  - selfrole             -> Selfroles (GET/POST /selfroles ...; Button-Handler bleibt im Bot)
+ *  - feed                 -> Feeds (guild-scoped /guilds/:id/feeds; Poller bleibt im Bot)
+ *  - translate-post       -> Uebersetzungen (/guilds/:id/translated-posts; Scheduler bleibt im Bot)
  */
 export const MOVED_TO_DASHBOARD = new Set<string>([
   'admin-broadcast',
@@ -97,6 +99,8 @@ export const MOVED_TO_DASHBOARD = new Set<string>([
   'admin-reset-password',
   'admin-tickets',
   'selfrole',
+  'feed',
+  'translate-post',
 ]);
 
 /**

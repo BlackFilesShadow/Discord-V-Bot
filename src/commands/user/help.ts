@@ -228,14 +228,12 @@ function buildPages(isAdmin: boolean, isDev: boolean): HelpPage[] {
     label: 'Engagement & Community',
     embed: createBotEmbed({
       title: '📅  Engagement & Community',
-      description: '> Umfragen, Giveaways, Erinnerungen, Begrüßung, Feeds und mehrsprachige Posts.\n\n' + Brand.divider,
+      description: '> Umfragen, Giveaways, Erinnerungen und Begrüßung.\n\n' + Brand.divider,
       color: Colors.Info,
       fields: [
         row('/poll erstellen|abstimmen|ergebnis|beenden|liste',  'Umfragen mit Mehrfachauswahl & Laufzeit (Min–Wochen).'),
         row('/giveaway start|enter|info|end|list',               'Giveaways mit Preis, Dauer, Mindestrolle, Emoji.'),
         row('/erinnerung setzen|liste|loeschen',                 'Persönlicher Reminder per DM oder Channel (auch wiederkehrend).'),
-        row('/feed erstellen|liste|toggle|abonnieren|webhook-*', 'RSS / News / Webhook-Feeds in einen Channel.', ['srv']),
-        row('/translate-post now|schedule|stuendlich|taeglich|woechentlich|monatlich|list|delete', 'Auto-Übersetzen + Posten in mehreren Sprachen, auch geplant.', ['admin']),
       ],
       timestamp: true,
     }),
