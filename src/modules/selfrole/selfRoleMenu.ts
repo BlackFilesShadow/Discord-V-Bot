@@ -14,7 +14,7 @@ import {
   TextChannel,
   type MessageActionRowComponentBuilder,
 } from 'discord.js';
-import type { AttachmentBuilder } from 'discord.js';
+import type { AttachmentBuilder, Client } from 'discord.js';
 import prisma from '../../database/prisma';
 import { Colors, Brand, vEmbed } from '../../utils/embedDesign';
 import { logger, logAudit } from '../../utils/logger';
@@ -624,6 +624,28 @@ export async function publishMenu(menu: MenuFull, channel: TextChannel): Promise
     }
   }
   return message.id;
+}
+
+/**
+ * Entfernt die Button-/Select-Components von einer (verknuepften) Embed-Nachricht
+ * per Message-Edit (`components: []`) — der Embed-Inhalt bleibt vollstaendig
+ * erhalten. Bei REACTION-Menus werden zusaetzlich die Reaktionen best-effort
+ * entfernt. Wird beim Loeschen/Archivieren eines Menus genutzt, damit NIE die
+ * Embed-Nachricht selbst geloescht wird.
+ */
+export async function detachMenuComponents(
+  client: Client,
+  channelId: string,
+  messageId: string,
+  isReaction: boolean,
+): Promise<void> {
+  const channel = client.channels.cache.get(channelId)
+    ?? await client.channels.fetch(channelId).catch(() => null);
+  if (!channel || !channel.isTextBased() || channel.isDMBased()) return;
+  const msg = await (channel as TextChannel).messages.fetch(messageId).catch(() => null);
+  if (!msg) return;
+  await msg.edit({ components: [] }).catch(() => { /* best effort */ });
+  if (isReaction) await msg.reactions.removeAll().catch(() => { /* fehlende Rechte ignorieren */ });
 }
 
 /**

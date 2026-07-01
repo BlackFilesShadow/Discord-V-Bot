@@ -31,7 +31,7 @@ import { tryGetDashboardClient } from '../../clientRegistry';
 import { validateBotChannelAccess } from '../../../utils/discordChannel';
 import { logAuditDb, logger } from '../../../utils/logger';
 import { emitGuildEvent } from '../../socket/emitter';
-import { getMenuFull, publishMenu } from '../../../modules/selfrole/selfRoleMenu';
+import { getMenuFull, publishMenu, detachMenuComponents } from '../../../modules/selfrole/selfRoleMenu';
 
 export const reactionEmbedsRouter = Router({ mergeParams: true });
 
@@ -332,20 +332,31 @@ reactionEmbedsRouter.delete('/:id', requireGuildPermission('reactionroles.manage
   if (!existing) { res.status(404).json({ error: 'Menü nicht gefunden.' }); return; }
 
   let messageDeleted = false;
+  let componentsRemoved = false;
   if (existing.messageId) {
     const client = tryGetDashboardClient();
-    const channel = client?.channels.cache.get(existing.channelId)
-      ?? await client?.channels.fetch(existing.channelId).catch(() => null);
-    if (channel && channel.isTextBased() && !channel.isDMBased()) {
-      await channel.messages.delete(existing.messageId).then(() => { messageDeleted = true; }).catch(() => {});
+    if (client) {
+      if (existing.embedId) {
+        // Verknuepfte Einbettung: NUR die Buttons/Reaktionen entfernen — die
+        // Embed-Nachricht gehoert dem Embed-Builder und bleibt erhalten.
+        await detachMenuComponents(client, existing.channelId, existing.messageId, existing.componentType === 'REACTION');
+        componentsRemoved = true;
+      } else {
+        // Legacy: eigenstaendige Menu-Nachricht loeschen.
+        const channel = client.channels.cache.get(existing.channelId)
+          ?? await client.channels.fetch(existing.channelId).catch(() => null);
+        if (channel && channel.isTextBased() && !channel.isDMBased()) {
+          await channel.messages.delete(existing.messageId).then(() => { messageDeleted = true; }).catch(() => {});
+        }
+      }
     }
   }
   await prisma.selfRoleMenu.delete({ where: { id: existing.id } });
   logAuditDb('REACTION_EMBED_DELETED', 'ROLE', {
-    actorUserId: req.auth!.userId, guildId: scope.guildId, details: { menuId: existing.id, messageDeleted },
+    actorUserId: req.auth!.userId, guildId: scope.guildId, details: { menuId: existing.id, messageDeleted, componentsRemoved },
   });
   emitGuildEvent(scope.guildId, { type: 'reactionEmbed.changed', payload: { guildId: scope.guildId, menuId: existing.id } });
-  res.json({ ok: true, messageDeleted });
+  res.json({ ok: true, messageDeleted, componentsRemoved });
 });
 
 // ===========================================================================
@@ -520,6 +531,18 @@ reactionEmbedsRouter.post('/:id/archive', requireGuildPermission('reactionroles.
     where: { id: menu.id },
     data: { archived, isActive: archived ? false : menu.isActive },
   });
+  // Archivieren: Buttons von der Embed-Nachricht entfernen (Embed bleibt).
+  // Reaktivieren: Buttons wieder anhaengen.
+  if (menu.embedId && menu.messageId) {
+    const client = tryGetDashboardClient();
+    if (client) {
+      if (archived) {
+        await detachMenuComponents(client, menu.channelId, menu.messageId, menu.componentType === 'REACTION');
+      } else {
+        await publishToChannel(scope.guildId, menu.id).catch(() => null);
+      }
+    }
+  }
   logAuditDb('REACTION_EMBED_ARCHIVED', 'ROLE', {
     actorUserId: req.auth!.userId, guildId: scope.guildId, details: { menuId: menu.id, archived },
   });

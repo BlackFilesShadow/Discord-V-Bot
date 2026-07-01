@@ -127,10 +127,12 @@ jest.mock('../../src/utils/discordChannel', () => ({
 // selfRoleMenu-Modul (getMenuFull/publishMenu) fuer den Send-Pfad mocken.
 const publishMenuMock = jest.fn().mockResolvedValue('msg-777');
 const getMenuFullMock = jest.fn();
+const detachMenuComponentsMock = jest.fn().mockResolvedValue(undefined);
 jest.mock('../../src/modules/selfrole/selfRoleMenu', () => ({
   __esModule: true,
   getMenuFull: (id: string) => getMenuFullMock(id),
   publishMenu: (...a: unknown[]) => publishMenuMock(...a),
+  detachMenuComponents: (...a: unknown[]) => detachMenuComponentsMock(...a),
 }));
 
 // Fake Discord-Client mit Guild + Rollen-Hierarchie.
@@ -269,6 +271,33 @@ describe('Reaktions-Embeds Router — Menu-CRUD', () => {
     embeds.set('e-foreign', { id: 'e-foreign', guildId: OTHER_GID });
     const res = await createMenu(app, { embedId: 'e-foreign' });
     expect(res.status).toBe(400);
+  });
+
+  it('löscht das Menu OHNE die Embed-Nachricht zu entfernen (nur Components)', async () => {
+    const app = makeApp();
+    const created = await createMenu(app);
+    const del = await request(app).delete(`${BASE}/${created.body.id}`);
+    expect(del.status).toBe(200);
+    // Nur Components entfernt — die Embed-Nachricht bleibt bestehen.
+    expect(detachMenuComponentsMock).toHaveBeenCalledTimes(1);
+    expect(textChannel.messages.delete).not.toHaveBeenCalled();
+    expect(del.body.messageDeleted).toBe(false);
+    expect(del.body.componentsRemoved).toBe(true);
+  });
+
+  it('entfernt Buttons beim Archivieren und hängt sie beim Reaktivieren wieder an', async () => {
+    const app = makeApp();
+    const created = await createMenu(app);
+    getMenuFullMock.mockResolvedValue({
+      id: created.body.id, guildId: GID, channelId: CH, embedId: EMB_ID, componentType: 'BUTTON',
+      options: [{ id: 'o1', roleId: ROLE_LOW, roleIds: [ROLE_LOW], label: 'A', emoji: null, isActive: true }],
+    });
+    const arch = await request(app).post(`${BASE}/${created.body.id}/archive`).send({ archived: true });
+    expect(arch.status).toBe(200);
+    expect(detachMenuComponentsMock).toHaveBeenCalledTimes(1);
+    const react = await request(app).post(`${BASE}/${created.body.id}/archive`).send({ archived: false });
+    expect(react.status).toBe(200);
+    expect(publishMenuMock).toHaveBeenCalled();
   });
 });
 
