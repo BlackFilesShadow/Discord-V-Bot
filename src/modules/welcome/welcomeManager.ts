@@ -1,24 +1,27 @@
 import * as path from 'node:path';
-import { AttachmentBuilder } from 'discord.js';
+import { AttachmentBuilder, EmbedBuilder } from 'discord.js';
 import prisma from '../../database/prisma';
 import { renderTemplate } from '../ai/triggers';
 import { safeSend } from '../../utils/safeSend';
+import { Colors, vEmbed } from '../../utils/embedDesign';
 
 /**
  * Welcome-System pro Guild (BotConfig key=`welcome:<guildId>`).
  *
- * Modi:
- *  - text:  statische Begr\u00fc\u00dfung mit {user}-Platzhalter etc.
- *  - ai:    AI generiert pers\u00f6nliche Begr\u00fc\u00dfung basierend auf aiPrompt
+ * Die Begruessung wird als Embed-Nachricht versendet (Text als Beschreibung,
+ * optionales Bild im Embed). Der User-Ping liegt im `content`, damit der neue
+ * Member zuverlaessig erwaehnt wird. Es gibt ausschliesslich statische,
+ * selbst erstellte Texte mit Platzhaltern ({user}, {guild}, {count}) —
+ * KEINE KI-generierten Begruessungen mehr.
  */
 
 export interface WelcomeConfig {
   enabled: boolean;
   channelId: string;
-  message: string;        // Text bei mode=text ODER AI-Prompt-Vorgabe bei mode=ai
-  mediaUrl?: string;      // optional JPG/PNG/GIF/MP4
-  mode: 'text' | 'ai';
-  mediaLayout?: 'image_first' | 'text_first'; // Reihenfolge bei gesetztem Bild (Default: image_first)
+  message: string;        // statischer Begruessungstext mit Platzhaltern
+  mediaUrl?: string;      // optional JPG/PNG/GIF/WEBP (Bild) oder MP4/WEBM (Video)
+  mode?: 'text';          // nur noch statischer Text (KI-Modus entfernt)
+  mediaLayout?: 'image_first' | 'text_first'; // (Legacy; bei Embed steuert das Embed die Anordnung)
 }
 
 const KEY = (guildId: string) => `welcome:${guildId}`;
@@ -74,46 +77,44 @@ export function resolveWelcomeMediaSource(mediaUrl: string): string {
 type SendableChannel = { send: (options: never) => Promise<unknown> };
 
 /**
- * Versendet die Begruessung mit korrekter optischer Reihenfolge.
+ * Versendet die Begruessung als Embed-Nachricht.
  *
- * Discord rendert `content` (Text) IMMER oberhalb eines Attachments in derselben
- * Nachricht; ein Embed-`image` liegt umgekehrt immer UNTERHALB der Description.
- * Beides liefert kein zuverlaessiges „Bild oben, Text darunter". Daher wird bei
- * `mediaLayout='image_first'` (Default) das Bild als eigene Nachricht ZUERST
- * gesendet, danach der Text — so steht das Bild optisch oben, der Text darunter.
- *
- * - kein Bild        -> eine reine Textnachricht
- * - text_first       -> eine Nachricht mit Text + Bild (Text oben, Discord-Default)
- * - image_first      -> Nachricht 1: Bild, Nachricht 2: Text
- *
- * Der User-Ping liegt ausschliesslich auf der Textnachricht (Bildnachricht ohne
- * Mentions), es gibt also weiterhin nur eine Erwaehnung.
+ * - Text -> Embed-Beschreibung.
+ * - Bild (JPG/PNG/GIF/WEBP) -> direkt im Embed (`setImage`), lokale Uploads als
+ *   `attachment://`.
+ * - Video (MP4/WEBM/MOV) -> als Datei-Anhang der Nachricht (Embeds koennen kein
+ *   Video darstellen); externe Video-URLs werden als Link im Embed ergaenzt.
+ * - Der User-Ping liegt im `content` (Embeds loesen keine Erwaehnung aus).
  */
 export async function sendWelcomeMessages(
   channel: SendableChannel,
   opts: { text: string; mediaUrl?: string; mediaLayout?: 'image_first' | 'text_first'; mentionUserId?: string },
 ): Promise<void> {
   const ch = channel as Parameters<typeof safeSend>[0];
-  const content = opts.text.slice(0, 2000);
   const allowedMentions = opts.mentionUserId
     ? { users: [opts.mentionUserId], parse: [] as never[] }
     : { parse: [] as never[] };
+  const content = opts.mentionUserId ? `<@${opts.mentionUserId}>` : undefined;
 
-  if (!opts.mediaUrl) {
-    await safeSend(ch, { content, allowedMentions });
-    return;
+  const embed: EmbedBuilder = vEmbed(Colors.Success).setDescription(opts.text.slice(0, 4096));
+  const files: AttachmentBuilder[] = [];
+
+  if (opts.mediaUrl) {
+    const url = opts.mediaUrl;
+    const isLocal = url.startsWith('/uploads/');
+    const isVideo = /\.(mp4|webm|mov)$/i.test(url);
+    if (isVideo) {
+      if (isLocal) files.push(new AttachmentBuilder(resolveWelcomeMediaSource(url)));
+      else embed.addFields({ name: '🎬 Video', value: url });
+    } else if (isLocal) {
+      const src = resolveWelcomeMediaSource(url);
+      const name = path.basename(src);
+      files.push(new AttachmentBuilder(src, { name }));
+      embed.setImage(`attachment://${name}`);
+    } else {
+      embed.setImage(url);
+    }
   }
 
-  const attachment = new AttachmentBuilder(resolveWelcomeMediaSource(opts.mediaUrl));
-  const layout = opts.mediaLayout ?? 'image_first';
-
-  if (layout === 'image_first') {
-    // Bild zuerst (ohne Ping), danach Text darunter.
-    await safeSend(ch, { files: [attachment], allowedMentions: { parse: [] as never[] } });
-    await safeSend(ch, { content, allowedMentions });
-    return;
-  }
-
-  // text_first: Discord-Default — Text oben, Bild darunter in einer Nachricht.
-  await safeSend(ch, { content, files: [attachment], allowedMentions });
+  await safeSend(ch, { content, embeds: [embed], files, allowedMentions });
 }

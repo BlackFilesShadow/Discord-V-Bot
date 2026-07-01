@@ -101,7 +101,6 @@ export function WelcomeTab({ guildId, canManage }: { guildId: string; canManage:
   });
   const [enabled, setEnabled] = useState(true);
   const [channelId, setChannelId] = useState('');
-  const [mode, setMode] = useState<'text' | 'ai'>('text');
   const [message, setMessage] = useState(DEFAULT_MESSAGE);
   const [mediaUrl, setMediaUrl] = useState('');
   const [mediaLayout, setMediaLayout] = useState<'image_first' | 'text_first'>('image_first');
@@ -117,7 +116,6 @@ export function WelcomeTab({ guildId, canManage }: { guildId: string; canManage:
     if (!d) return;
     setEnabled(d.enabled);
     setChannelId(d.channelId);
-    setMode(d.mode);
     setMessage(d.message || DEFAULT_MESSAGE);
     setMediaUrl(d.mediaUrl ?? '');
     setMediaLayout(d.mediaLayout ?? 'image_first');
@@ -156,7 +154,7 @@ export function WelcomeTab({ guildId, canManage }: { guildId: string; canManage:
         ? { label: 'Konfiguriert (inaktiv)', variant: 'warn' }
         : { label: 'Keine', variant: 'neutral' };
 
-  const buildBody = () => ({ enabled, channelId, message, mode, mediaUrl: mediaUrl.trim() || null, mediaLayout });
+  const buildBody = () => ({ enabled, channelId, message, mode: 'text', mediaUrl: mediaUrl.trim() || null, mediaLayout });
 
   async function save() {
     if (!channelId) { toast.error('Bitte einen Channel auswählen.'); return; }
@@ -197,7 +195,6 @@ export function WelcomeTab({ guildId, canManage }: { guildId: string; canManage:
     const d = cfgQ.data;
     setEnabled(d?.enabled ?? true);
     setChannelId(d?.channelId ?? '');
-    setMode(d?.mode ?? 'text');
     setMessage(d?.message || DEFAULT_MESSAGE);
     setMediaUrl(d?.mediaUrl ?? '');
     setMediaLayout(d?.mediaLayout ?? 'image_first');
@@ -286,7 +283,7 @@ export function WelcomeTab({ guildId, canManage }: { guildId: string; canManage:
         <StatCard label="Willkommen-System" value={data?.enabled ? 'Aktiv' : 'Inaktiv'} accent={data?.enabled ? 'ok' : 'neutral'} />
         <StatCard label="Channel" value={channelSet ? channelName(data!.channelId) : '—'} accent={channelSet ? 'neutral' : 'warn'} />
         <StatCard label="Auto-Rollen" value={autoroleStatus.label} accent={autoroleStatus.variant === 'ok' ? 'ok' : autoroleStatus.variant === 'warn' ? 'warn' : 'neutral'} />
-        <StatCard label="Modus" value={data?.configured ? (data.mode === 'ai' ? 'KI' : 'Text') : '—'} />
+        <StatCard label="Format" value="Embed" />
       </div>
 
       {/* E. Konfig-Warnung */}
@@ -339,31 +336,20 @@ export function WelcomeTab({ guildId, canManage }: { guildId: string; canManage:
 
       {/* B. Willkommensnachricht */}
       <Card>
-        <CardHeader><CardTitle>Willkommensnachricht</CardTitle><CardDesc>Aktivierung, Channel, Modus und Nachricht.</CardDesc></CardHeader>
+        <CardHeader><CardTitle>Willkommensnachricht</CardTitle><CardDesc>Aktivierung, Channel und Nachricht (wird als Embed gesendet).</CardDesc></CardHeader>
         <div className="space-y-4 mt-2">
           <Switch checked={enabled} onChange={setEnabled} label="Willkommen-System aktiviert" />
 
-          <div className="grid sm:grid-cols-2 gap-3">
-            <label className="block">
-              <span className="text-xs text-muted block mb-1">Channel</span>
-              <Select value={channelId} onChange={e => setChannelId(e.target.value)}>
-                <option value="">— Channel wählen —</option>
-                {channels.map(c => <option key={c.id} value={c.id}># {c.name}</option>)}
-              </Select>
-            </label>
-            <label className="block">
-              <span className="text-xs text-muted block mb-1">Modus</span>
-              <Select value={mode} onChange={e => setMode(e.target.value as 'text' | 'ai')}>
-                <option value="text">Text (statisch)</option>
-                <option value="ai">KI (generiert)</option>
-              </Select>
-            </label>
-          </div>
+          <label className="block">
+            <span className="text-xs text-muted block mb-1">Channel</span>
+            <Select value={channelId} onChange={e => setChannelId(e.target.value)}>
+              <option value="">— Channel wählen —</option>
+              {channels.map(c => <option key={c.id} value={c.id}># {c.name}</option>)}
+            </Select>
+          </label>
 
           <label className="block">
-            <span className="text-xs text-muted block mb-1">
-              {mode === 'ai' ? 'KI-Anweisung / Vorgabe' : 'Nachricht'}
-            </span>
+            <span className="text-xs text-muted block mb-1">Nachricht</span>
             <textarea
               value={message}
               onChange={e => setMessage(e.target.value)}
@@ -469,14 +455,7 @@ export function WelcomeTab({ guildId, canManage }: { guildId: string; canManage:
               onError={e => { (e.currentTarget as HTMLImageElement).style.display = 'none'; }}
             />
           )}
-          {mode === 'ai' ? (
-            <p className="text-xs text-muted italic">
-              Im KI-Modus dient der Text als Anweisung. Die tatsächliche Begrüßung wird beim Beitritt generiert.
-              Anweisung-Vorschau: <span className="text-white/90 not-italic">{renderPreview(message)}</span>
-            </p>
-          ) : (
-            <p className="text-sm text-white/90 whitespace-pre-wrap break-words">{renderPreview(message) || '—'}</p>
-          )}
+          <p className="text-sm text-white/90 whitespace-pre-wrap break-words">{renderPreview(message) || '—'}</p>
           {hasMedia && mediaLayout === 'text_first' && (
             <img
               src={mediaUrl}

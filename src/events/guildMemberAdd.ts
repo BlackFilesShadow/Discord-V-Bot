@@ -4,8 +4,6 @@ import { logger, logAudit } from '../utils/logger';
 import prisma from '../database/prisma';
 import { detectRaid } from '../utils/rateLimiter';
 import { getWelcomeConfig, renderWelcomeMessage, sendWelcomeMessages } from '../modules/welcome/welcomeManager';
-import { answerQuestion } from '../modules/ai/aiHandler';
-import { sanitizeForPrompt, withTimeout } from '../utils/safeSend';
 import { resolveCustomEmotes } from '../modules/ai/emoteResolver';
 import { syncMemberProfile } from '../modules/ai/memberAwareness';
 import { maybeGrantStartBalance } from '../modules/economy/repository';
@@ -120,7 +118,7 @@ const guildMemberAddEvent: BotEvent = {
 
       logger.info(`Neuer Nutzer: ${m.user.username} (GUID: ${user.id})`);
 
-      // ===== WELCOME-NACHRICHT (mit optionalen Medien & AI) =====
+      // ===== WELCOME-NACHRICHT (Embed mit optionalen Medien) =====
       try {
         const wcfg = await getWelcomeConfig(m.guild.id);
         if (wcfg && wcfg.enabled && wcfg.channelId) {
@@ -129,36 +127,14 @@ const guildMemberAddEvent: BotEvent = {
             const userMention = `<@${m.user.id}>`;
             const memberCount = m.guild.memberCount;
 
-            let messageText: string;
-            if (wcfg.mode === 'ai') {
-              const safeUser = sanitizeForPrompt(m.user.username, 100);
-              const safeGuild = sanitizeForPrompt(m.guild.name, 100);
-              const safeTemplate = sanitizeForPrompt(wcfg.message, 1000);
-              const prompt = renderWelcomeMessage(safeTemplate, {
-                user: safeUser,
-                guild: safeGuild,
-                memberCount,
-              });
-              const r = await withTimeout(
-                answerQuestion(
-                  `Erzeuge eine kurze, freundliche, einladende Begrüßung. Anweisung: ${prompt}\n\nNeuer Nutzer: ${safeUser}\nServer: ${safeGuild}\nMitgliederzahl: ${memberCount}\n\nGib NUR den Begrüßungstext zurück (max. 600 Zeichen).`,
-                  { mode: 'welcome' },
-                ),
-                8000,
-                'guildMemberAdd.welcome.ai',
-              );
-              messageText = r && r.success && r.result ? `${userMention} ${r.result.trim()}` : `${userMention} Willkommen auf ${m.guild.name}!`;
-            } else {
-              messageText = renderWelcomeMessage(wcfg.message, {
-                user: userMention,
-                guild: m.guild.name,
-                memberCount,
-              });
-            }
+            const messageText = renderWelcomeMessage(wcfg.message, {
+              user: userMention,
+              guild: m.guild.name,
+              memberCount,
+            });
 
             const finalText = resolveCustomEmotes(messageText, m.guild);
-            // Reihenfolge gemaess mediaLayout (Default: Bild zuerst, Text darunter).
-            // Ping nur fuer den neuen User selbst (auf der Textnachricht).
+            // Begruessung als Embed; Ping nur fuer den neuen User (im content).
             await sendWelcomeMessages(channel, {
               text: finalText,
               mediaUrl: wcfg.mediaUrl,

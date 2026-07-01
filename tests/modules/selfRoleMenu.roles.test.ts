@@ -109,3 +109,23 @@ describe('handleSelfRoleButton — REMOVE', () => {
     expect(replyDescription(reply)).toContain(`Du besitzt die Rolle „${ROLE_NAME}“ nicht.`);
   });
 });
+
+describe('handleSelfRoleButton — TOGGLE (Rolle Geben/Nehmen)', () => {
+  it('gibt die Rolle, wenn sie fehlt', async () => {
+    findUnique.mockResolvedValue(menuRow('TOGGLE'));
+    const { btn, add, reply } = makeInteraction(false);
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    await handleSelfRoleButton(btn as any);
+    expect(add).toHaveBeenCalledWith(ROLE, expect.any(String));
+    expect(replyDescription(reply)).toContain(`Du hast die Rolle „${ROLE_NAME}“ erhalten.`);
+  });
+
+  it('entfernt die Rolle, wenn sie vorhanden ist', async () => {
+    findUnique.mockResolvedValue(menuRow('TOGGLE'));
+    const { btn, remove, reply } = makeInteraction(true);
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    await handleSelfRoleButton(btn as any);
+    expect(remove).toHaveBeenCalledWith(ROLE, expect.any(String));
+    expect(replyDescription(reply)).toContain(`Die Rolle „${ROLE_NAME}“ wurde dir entfernt.`);
+  });
+});

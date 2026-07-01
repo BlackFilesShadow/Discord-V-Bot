@@ -34,8 +34,6 @@ import {
   sendWelcomeMessages,
   type WelcomeConfig,
 } from '../../../modules/welcome/welcomeManager';
-import { answerQuestion } from '../../../modules/ai/aiHandler';
-import { sanitizeForPrompt, withTimeout } from '../../../utils/safeSend';
 import { resolveCustomEmotes } from '../../../modules/ai/emoteResolver';
 import { tryGetDashboardClient } from '../../clientRegistry';
 import { validateBotChannelAccess } from '../../../utils/discordChannel';
@@ -102,9 +100,7 @@ function validateBody(b: WelcomeBody, guildId: string):
   if (b.message.length > MAX_MESSAGE) {
     return { ok: false, error: `message darf maximal ${MAX_MESSAGE} Zeichen lang sein.` };
   }
-  if (b.mode !== 'text' && b.mode !== 'ai') {
-    return { ok: false, error: 'mode muss "text" oder "ai" sein.' };
-  }
+  // KI-Modus entfernt: Willkommen nutzt ausschliesslich statischen Text.
   let mediaUrl: string | undefined;
   if (b.mediaUrl != null && b.mediaUrl !== '') {
     if (typeof b.mediaUrl !== 'string') {
@@ -125,7 +121,7 @@ function validateBody(b: WelcomeBody, guildId: string):
       enabled: b.enabled !== false,
       channelId: b.channelId,
       message: b.message,
-      mode: b.mode,
+      mode: 'text',
       mediaUrl,
       mediaLayout,
     },
@@ -152,7 +148,7 @@ function serialize(cfg: WelcomeConfig | null) {
     enabled: cfg.enabled,
     channelId: cfg.channelId,
     message: cfg.message,
-    mode: cfg.mode,
+    mode: 'text' as const,
     mediaUrl: cfg.mediaUrl ?? null,
     mediaLayout: cfg.mediaLayout ?? 'image_first',
   };
@@ -247,27 +243,10 @@ welcomeRouter.post('/test', requireGuildPermission('welcome.manage'), async (req
   const userMention = `<@${scope.actorDiscordId}>`;
   const memberCount = guild.memberCount;
 
-  let messageText: string;
-  if (cfg.mode === 'ai') {
-    const safeUser = sanitizeForPrompt(`Tester ${scope.actorDiscordId}`, 100);
-    const safeGuild = sanitizeForPrompt(guild.name, 100);
-    const safeTemplate = sanitizeForPrompt(cfg.message, MAX_MESSAGE);
-    const prompt = renderWelcomeMessage(safeTemplate, { user: safeUser, guild: safeGuild, memberCount });
-    const r = await withTimeout(
-      answerQuestion(
-        `Erzeuge eine kurze, freundliche, einladende Begrüßung. Anweisung: ${prompt}\n\nNeuer Nutzer: ${safeUser}\nServer: ${safeGuild}\nMitgliederzahl: ${memberCount}\n\nGib NUR den Begrüßungstext zurück (max. 600 Zeichen).`,
-        { mode: 'welcome' },
-      ),
-      8000,
-      'welcome.test.ai',
-    );
-    messageText = r && r.success && r.result ? `${userMention} ${r.result.trim()}` : `${userMention} Willkommen auf ${guild.name}!`;
-  } else {
-    messageText = renderWelcomeMessage(cfg.message, { user: userMention, guild: guild.name, memberCount });
-  }
+  const messageText = renderWelcomeMessage(cfg.message, { user: userMention, guild: guild.name, memberCount });
 
   const finalText = resolveCustomEmotes(messageText, guild);
-  // Gleiche Reihenfolge-Logik wie der echte Join (Default: Bild zuerst, Text darunter).
+  // Begruessung als Embed (Text als Beschreibung, optionales Bild im Embed).
   await sendWelcomeMessages(channel, {
     text: `🧪 **Testnachricht** — ${finalText}`,
     mediaUrl: cfg.mediaUrl,
@@ -276,7 +255,7 @@ welcomeRouter.post('/test', requireGuildPermission('welcome.manage'), async (req
   });
   logAuditDb('WELCOME_TEST_SENT', 'WELCOME', {
     actorUserId: req.auth!.userId, guildId: scope.guildId,
-    details: { channelId: cfg.channelId, mode: cfg.mode },
+    details: { channelId: cfg.channelId, mode: 'text' },
   });
   res.json({ ok: true, channelId: cfg.channelId });
 });

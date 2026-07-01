@@ -65,6 +65,10 @@ const POLL_INTERVAL_MS = 30 * 1000;
 const WEEKDAY_MAP: Record<string, number> = { SUN: 0, MON: 1, TUE: 2, WED: 3, THU: 4, FRI: 5, SAT: 6 };
 
 let scheduler: NodeJS.Timeout | null = null;
+// Ueberlappungsschutz: verhindert, dass ein neuer Poll startet, waehrend der
+// vorherige (z. B. bei langsamer Uebersetzung) noch faellige Posts sendet ->
+// sonst wuerden dieselben Posts (nextRunAt noch <= now) doppelt versendet.
+let running = false;
 
 export function parseRecurrence(spec: string): { kind: 'hourly' | 'daily' | 'weekly' | 'monthly'; weekday?: number; day?: number; hour: number; minute: number } | null {
   const parts = spec.toUpperCase().split(':');
@@ -151,22 +155,28 @@ export function nextRunFromRecurrence(spec: string, after: Date = new Date()): D
 }
 
 async function runDuePosts(client: Client): Promise<void> {
-  let due;
+  if (running) return; // vorheriger Poll laeuft noch -> ueberspringen (kein Doppelversand)
+  running = true;
   try {
-    due = await prisma.translatedPost.findMany({
-      where: { isActive: true, nextRunAt: { lte: new Date() } },
-      take: 20,
-    });
-  } catch (e) {
-    logger.warn(`translatedPostScheduler: DB-Read fehlgeschlagen: ${String(e)}`);
-    return;
-  }
-  for (const p of due) {
+    let due;
     try {
-      await sendPost(client, p);
+      due = await prisma.translatedPost.findMany({
+        where: { isActive: true, nextRunAt: { lte: new Date() } },
+        take: 20,
+      });
     } catch (e) {
-      logger.warn(`translatedPostScheduler: Versand fehlgeschlagen ${p.id}: ${String(e)}`);
+      logger.warn(`translatedPostScheduler: DB-Read fehlgeschlagen: ${String(e)}`);
+      return;
     }
+    for (const p of due) {
+      try {
+        await sendPost(client, p);
+      } catch (e) {
+        logger.warn(`translatedPostScheduler: Versand fehlgeschlagen ${p.id}: ${String(e)}`);
+      }
+    }
+  } finally {
+    running = false;
   }
 }
 

@@ -268,10 +268,27 @@ async function checkYouTube(input: string): Promise<{
 // erfolgreich ist, wird der Eintrag entfernt.
 const feedBackoff = new Map<string, { count: number; until: number }>();
 
+// Ueberlappungsschutz: ein Feed, dessen Poll noch laeuft (z. B. langsame
+// Uebersetzung bei NEWS), wird nicht parallel erneut verarbeitet. Das
+// verhindert Doppel-Posts, wenn ein Poll laenger als das Intervall dauert.
+const processingFeeds = new Set<string>();
+
 async function processFeed(client: Client, feedId: string): Promise<void> {
   // Phase 2.3: Backoff-Check. Wenn der Feed in der Sperrzone ist, ueberspringen.
   const bo = feedBackoff.get(feedId);
   if (bo && bo.until > Date.now()) return;
+
+  // Bereits laufende Verarbeitung dieses Feeds nicht erneut starten.
+  if (processingFeeds.has(feedId)) return;
+  processingFeeds.add(feedId);
+  try {
+    await processFeedInner(client, feedId);
+  } finally {
+    processingFeeds.delete(feedId);
+  }
+}
+
+async function processFeedInner(client: Client, feedId: string): Promise<void> {
 
   const feed = await prisma.feed.findUnique({ where: { id: feedId } });
   if (!feed || !feed.isActive) return;
@@ -462,6 +479,8 @@ export async function runFeedNow(client: Client, feedId: string): Promise<void> 
  */
 export function startFeedScheduler(client: Client): void {
   const feedTimers = new Map<string, NodeJS.Timeout>();
+  // Gemerktes Intervall je Feed -> erkennt Aenderungen und erneuert den Timer.
+  const feedIntervals = new Map<string, number>();
 
   // Initial alle Feeds laden und Timer setzen
   async function initFeeds(): Promise<void> {
@@ -475,11 +494,12 @@ export function startFeedScheduler(client: Client): void {
         feed.interval * 1000,
       );
       feedTimers.set(feed.id, timer);
+      feedIntervals.set(feed.id, feed.interval);
       logger.info(`Feed-Timer gestartet: ${feed.name} (alle ${feed.interval}s)`);
     }
   }
 
-  // Feeds neu laden alle 5 Minuten (für neue/geänderte Feeds)
+  // Feeds neu laden alle 5 Minuten (für neue/geänderte/deaktivierte Feeds)
   setInterval(async () => {
     try {
       // Deaktivierte Feeds stoppen
@@ -488,6 +508,16 @@ export function startFeedScheduler(client: Client): void {
         if (!feed || !feed.isActive) {
           clearInterval(timer);
           feedTimers.delete(feedId);
+          feedIntervals.delete(feedId);
+          continue;
+        }
+        // Intervall im Dashboard geaendert -> Timer mit neuem Takt neu setzen.
+        if (feedIntervals.get(feedId) !== feed.interval) {
+          clearInterval(timer);
+          const next = setInterval(() => processFeed(client, feed.id), feed.interval * 1000);
+          feedTimers.set(feedId, next);
+          feedIntervals.set(feedId, feed.interval);
+          logger.info(`Feed-Timer aktualisiert: ${feed.name} (alle ${feed.interval}s)`);
         }
       }
 

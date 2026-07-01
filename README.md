@@ -62,7 +62,7 @@ Er kennt deinen Server, deine Mitglieder, deine Kanäle, deine Rollen — und an
 ### 🎉 Community-Features
 - **Giveaways** mit Auto-Reroll, Anti-Cheat
 - **Polls** mit Multi-Choice, Live-Updates
-- **Welcome-System** mit AI-generierten Begrüßungen
+- **Welcome-System** mit Embed-Begrüßungen (Text + Bild)
 - **Ticket-System** (kommend)
 - **Auto-Roles** für Self-Assignment
 - **Reaction-Roles**
