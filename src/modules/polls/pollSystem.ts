@@ -2,6 +2,7 @@ import prisma from '../../database/prisma';
 import { logAudit, logger } from '../../utils/logger';
 import { Client, EmbedBuilder, TextChannel } from 'discord.js';
 import { Colors, Brand, vEmbed, percentBar } from '../../utils/embedDesign';
+import { safeSend } from '../../utils/safeSend';
 
 /**
  * Poll-System Modul (Sektion 10):
@@ -293,7 +294,14 @@ export function startPollScheduler(client: Client): void {
             // Rollen-Ping bei Beendigung (optional)
             const mentionContent = poll.notifyRoleId ? `<@&${poll.notifyRoleId}> 📊 Umfrage **${result.title}** wurde beendet!` : undefined;
 
-            await channel.send({ content: mentionContent, embeds: [embed] });
+            // allowedMentions strikt: NUR die konfigurierte Rolle darf gepingt
+            // werden. result.title ist Nutzereingabe und koennte sonst
+            // @everyone/@here/Fremd-Rollen im content ausloesen.
+            await safeSend(channel, {
+              content: mentionContent,
+              embeds: [embed],
+              allowedMentions: { roles: poll.notifyRoleId ? [poll.notifyRoleId] : [] },
+            });
 
             // Originalnachricht updaten falls vorhanden (Buttons entfernen)
             if (poll.messageId) {

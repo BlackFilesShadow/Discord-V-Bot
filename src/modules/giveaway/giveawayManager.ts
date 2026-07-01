@@ -301,13 +301,17 @@ export function startGiveawayScheduler(client: Client): void {
               Brand.divider,
             ));
 
-            // Rollen-Ping + Gewinner-Erwähnung. allowedMentions verhindert
-            // @everyone/@here Bypass durch User-Input im prize.
+            // Rollen-Ping + Gewinner-Erwähnung. allowedMentions strikt auf
+            // echte Gewinner + konfigurierte notifyRole begrenzt, damit
+            // User-Input im prize (safePrize) keine fremden Rollen/@everyone pingt.
             const rolePing = giveaway.notifyRoleId ? `<@&${giveaway.notifyRoleId}> ` : '';
             await channel.send({
               content: `${rolePing}🎉 Glückwunsch ${winnerMentions}! Du hast **${safePrize}** gewonnen!`,
               embeds: [winnerEmbed],
-              allowedMentions: { parse: ['users', 'roles'] },
+              allowedMentions: {
+                users: result.winners.map(w => w.discordId),
+                roles: giveaway.notifyRoleId ? [giveaway.notifyRoleId] : [],
+              },
             });
           } else {
             const safePrize = safeEmbedField(giveaway.prize, 256);
@@ -321,7 +325,11 @@ export function startGiveawayScheduler(client: Client): void {
             ));
 
             const rolePing = giveaway.notifyRoleId ? `<@&${giveaway.notifyRoleId}> ` : '';
-            await channel.send({ content: rolePing || undefined, embeds: [winnerEmbed] });
+            await channel.send({
+              content: rolePing || undefined,
+              embeds: [winnerEmbed],
+              allowedMentions: { roles: giveaway.notifyRoleId ? [giveaway.notifyRoleId] : [] },
+            });
           }
 
           // Original-Embed aktualisieren (Buttons entfernen)

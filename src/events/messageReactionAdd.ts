@@ -63,6 +63,7 @@ const messageReactionAddEvent: BotEvent = {
             try {
               const notice = await (r.message.channel as TextChannel).send({
                 content: `<@${u.id}> ❌ ${reason}`,
+                allowedMentions: { users: [u.id] },
               });
               setTimeout(() => { notice.delete().catch(() => {}); }, 8000);
             } catch { /* ignore */ }
