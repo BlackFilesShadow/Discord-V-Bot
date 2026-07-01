@@ -808,6 +808,9 @@ enum AuditCategory {
   WHITELIST
   FACTION
   SERVER_SETTINGS
+  EMBED
+  KILLFEED
+  WELCOME
 }
 
 // Security-Events
@@ -1437,6 +1440,43 @@ model SelfRoleOption {
 
   @@unique([menuId, roleId])
   @@index([menuId, position])
+}
+
+// ============================================================
+// EMBED-BUILDER (Dashboard-only) — eigenständige eingebettete
+// Nachrichten. Wird ausschliesslich ueber das Dashboard verwaltet
+// (keine Slash-/Prefix-Commands). messageId wird nach erstem Senden
+// gefuellt, damit spaeter editiert/synchronisiert werden kann.
+// ============================================================
+model DashboardEmbed {
+  id            String   @id @default(uuid())
+  guildId       String
+  name          String   @db.VarChar(120)
+  channelId     String?  @db.VarChar(32) // Ziel-Channel (optional bis zum Senden)
+  messageId     String?  @unique // gefuellt nach erstem Post; ermoeglicht Edit/Sync
+  content       String?  @db.VarChar(2000) // Nachrichtentext ausserhalb des Embeds
+  title         String?  @db.VarChar(256)
+  description   String?  @db.Text
+  url           String?  @db.VarChar(512)
+  color         String?  @db.VarChar(9) // #RRGGBB oder #AARRGGBB
+  authorName    String?  @db.VarChar(256)
+  authorIconUrl String?  @db.VarChar(512)
+  authorUrl     String?  @db.VarChar(512)
+  footerText    String?  @db.VarChar(2048)
+  footerIconUrl String?  @db.VarChar(512)
+  thumbnailUrl  String?  @db.VarChar(512)
+  imageUrl      String?  @db.VarChar(512)
+  showTimestamp Boolean  @default(false)
+  fields        Json? // Array<{ name: string; value: string; inline: boolean }>, max 25
+  isTemplate    Boolean  @default(false) // wiederverwendbare Vorlage
+  isDraft       Boolean  @default(false) // noch nicht gesendeter Entwurf
+  createdBy     String
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  @@index([guildId, isTemplate])
+  @@index([guildId, isDraft])
+  @@index([guildId, name])
 }
 
 // ============================================================

@@ -86,6 +86,8 @@ export const PERMISSION_SCOPES = [
   'killfeed.manage',
   'welcome.view',
   'welcome.manage',
+  'embeds.view',
+  'embeds.manage',
   'permissions.manage', // NIE delegierbar
   'dev.console',        // NIE delegierbar
 ] as const;

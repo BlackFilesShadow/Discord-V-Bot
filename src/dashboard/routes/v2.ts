@@ -22,6 +22,7 @@ import { ticketsRouter } from './v2/tickets';
 import { casinoRouter } from './v2/casino';
 import { killfeedRouter } from './v2/killfeed';
 import { welcomeRouter } from './v2/welcome';
+import { embedsRouter } from './v2/embeds';
 import { devRouter } from './v2/dev';
 import { devUploadsRouter } from './v2/devUploads';
 import { devAnalyticsRouter } from './v2/devAnalytics';
@@ -52,6 +53,7 @@ v2Router.use('/guilds/:guildId/economy-links', economyLinkRouter);
 v2Router.use('/guilds/:guildId/casino', casinoRouter);
 v2Router.use('/guilds/:guildId/killfeed', killfeedRouter);
 v2Router.use('/guilds/:guildId/welcome', welcomeRouter);
+v2Router.use('/guilds/:guildId/embeds', embedsRouter);
 v2Router.use('/guilds/:guildId/audit', auditRouter);
 // WICHTIG: devRouter MUSS vor allen spezifischeren /dev/* Sub-Routern stehen.
 // Grund: devStatusRouter (mounted /dev/status) installiert requireDev als

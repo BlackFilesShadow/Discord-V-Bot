@@ -35,6 +35,7 @@ export function useGuildLiveUpdates(guildId: string | undefined): void {
       'nitrado.job.updated':  () => invalidate([['dashboard', guildId], ['nitrado', guildId]]),
       'tickets.changed':      () => invalidate([['tickets', guildId]]),
       'economy.tx':           () => invalidate([['economy', guildId], ['dashboard', guildId]]),
+      'embed.changed':        () => invalidate([['embeds', guildId]]),
     };
 
     // Beim Reconnect: Room re-joinen UND alle Caches invalidieren
