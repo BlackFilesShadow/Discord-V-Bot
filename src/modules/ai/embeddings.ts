@@ -66,11 +66,13 @@ export function cosineSimilarity(a: number[], b: number[]): number {
 
 async function embedGemini(text: string): Promise<Embedding | null> {
   if (!config.ai.geminiApiKey) return null;
-  const url = `https://generativelanguage.googleapis.com/v1beta/models/${GEMINI_MODEL}:embedContent?key=${config.ai.geminiApiKey}`;
+  // API-Key im Header (x-goog-api-key), NICHT als URL-Query — sonst landet das
+  // Secret in Proxy-/Access-Logs. Konsistent zu aiHandler.callGemini.
+  const url = `https://generativelanguage.googleapis.com/v1beta/models/${GEMINI_MODEL}:embedContent`;
   const res = await axios.post(
     url,
     { content: { parts: [{ text }] } },
-    { headers: { 'Content-Type': 'application/json' }, timeout: 15000 },
+    { headers: { 'Content-Type': 'application/json', 'x-goog-api-key': config.ai.geminiApiKey }, timeout: 15000 },
   );
   const values = res.data?.embedding?.values;
   if (!Array.isArray(values) || values.length === 0) return null;

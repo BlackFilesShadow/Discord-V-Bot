@@ -289,11 +289,13 @@ export async function probeProvider(provider: ProviderName): Promise<{
   try {
     let reply = '';
     if (provider === 'gemini') {
-      const url = `https://generativelanguage.googleapis.com/v1beta/models/${config.ai.geminiModel}:generateContent?key=${config.ai.geminiApiKey}`;
+      // API-Key im Header (x-goog-api-key), NICHT als URL-Query — sonst landet
+      // das Secret in Proxy-/Access-Logs. Konsistent zu aiHandler.callGemini.
+      const url = `https://generativelanguage.googleapis.com/v1beta/models/${config.ai.geminiModel}:generateContent`;
       const res = await axios.post(
         url,
         { contents: [{ role: 'user', parts: [{ text: 'ping' }] }], generationConfig: { maxOutputTokens: 5 } },
-        { headers: { 'Content-Type': 'application/json' }, timeout: 10000 },
+        { headers: { 'Content-Type': 'application/json', 'x-goog-api-key': config.ai.geminiApiKey }, timeout: 10000 },
       );
       reply = res.data?.candidates?.[0]?.content?.parts?.[0]?.text || '';
     } else {
