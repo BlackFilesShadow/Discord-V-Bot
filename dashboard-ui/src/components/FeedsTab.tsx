@@ -18,6 +18,7 @@ import { Card, CardHeader, CardTitle, CardDesc } from '@/components/ui/Card';
 import { Button } from '@/components/ui/Button';
 import { Input } from '@/components/ui/Input';
 import { Select } from '@/components/ui/Select';
+import { Switch } from '@/components/ui/Switch';
 import { Badge } from '@/components/ui/Badge';
 import { useToast } from '@/components/ui/Toast';
 
@@ -48,25 +49,26 @@ interface FeedForm {
   channelId: string;
   interval: string;
   mentionRoles: string[];
+  pingEnabled: boolean;
 }
 
 const FEED_META: Record<FeedType, { label: string; icon: typeof Rss; hint: string; placeholder: string }> = {
-  RSS: { label: 'RSS-Feed', icon: Rss, hint: 'Vollständige RSS-/Atom-Feed-URL.', placeholder: 'https://example.com/feed.xml' },
-  NEWS: { label: 'News (→ Deutsch)', icon: Newspaper, hint: 'News-Feed — Titel/Text werden automatisch ins Deutsche übersetzt.', placeholder: 'https://example.com/news/rss' },
-  TWITCH: { label: 'Twitch-Stream', icon: Radio, hint: 'Twitch-Channelname (nicht die URL).', placeholder: 'z. B. shroud' },
-  STEAM: { label: 'Steam-News', icon: Gamepad2, hint: 'Steam App-ID.', placeholder: 'z. B. 730' },
-  YOUTUBE: { label: 'YouTube', icon: Youtube, hint: 'Kanal-ID (UC…), @Handle oder Kanal-URL.', placeholder: 'z. B. @MrBeast oder UC…' },
+  RSS: { label: 'RSS-Feed', icon: Rss, hint: 'RSS-, Atom-, XML- oder JSON-Feed-URL.', placeholder: 'https://example.com/feed.xml' },
+  NEWS: { label: 'News (→ Deutsch)', icon: Newspaper, hint: 'Beliebige oeffentliche News-/Webseiten-URL — Titel/Text werden ins Deutsche uebersetzt.', placeholder: 'https://example.com/news' },
+  TWITCH: { label: 'Twitch-Stream', icon: Radio, hint: 'Twitch-Kanal-URL (technische Grundlage ist die URL).', placeholder: 'https://twitch.tv/name' },
+  STEAM: { label: 'Steam-News', icon: Gamepad2, hint: 'Steam Store-, Community- oder News-URL.', placeholder: 'https://store.steampowered.com/app/730' },
+  YOUTUBE: { label: 'YouTube', icon: Youtube, hint: 'YouTube Kanal-, Handle- oder Playlist-URL.', placeholder: 'https://youtube.com/@name' },
   WEBHOOK: { label: 'Webhook (eingehend)', icon: Webhook, hint: 'Frei wählbares Label — liefert eine signierte Webhook-URL.', placeholder: 'z. B. Externes System' },
 };
 
 function emptyForm(): FeedForm {
-  return { name: '', feedType: 'RSS', url: '', channelId: '', interval: '300', mentionRoles: [] };
+  return { name: '', feedType: 'RSS', url: '', channelId: '', interval: '300', mentionRoles: [], pingEnabled: false };
 }
 
 function feedToForm(f: ApiFeed): FeedForm {
   return {
     name: f.name, feedType: f.feedType, url: f.url, channelId: f.channelId,
-    interval: String(f.interval), mentionRoles: f.mentionRoles ?? [],
+    interval: String(f.interval), mentionRoles: f.mentionRoles ?? [], pingEnabled: (f.mentionRoles?.length ?? 0) > 0,
   };
 }
 
@@ -95,8 +97,9 @@ export function FeedsTab({ guildId, canManage }: { guildId: string; canManage: b
 
   const feeds = listQ.data?.feeds ?? [];
   const textChannels = (channelsQ.data?.channels ?? []).filter(c => c.type === 0 || c.type === 5);
+  // Alle pingbaren Rollen ausnahmslos anzeigen (nur @everyone ausgenommen).
   const selectableRoles = (rolesQ.data?.roles ?? [])
-    .filter(r => r.id !== guildId && !r.managed)
+    .filter(r => r.id !== guildId)
     .sort((a, b) => b.position - a.position);
   const channelNames = useMemo(() => {
     const m: Record<string, string> = {};
@@ -118,9 +121,9 @@ export function FeedsTab({ guildId, canManage }: { guildId: string; canManage: b
   }
 
   function validate(): string | null {
-    if (form.name.trim().length < 1) return 'Name ist erforderlich.';
+    if (form.feedType !== 'NEWS' && form.name.trim().length < 1) return 'Name ist erforderlich.';
     if (!/^\d{17,20}$/.test(form.channelId)) return 'Bitte einen Ziel-Channel wählen.';
-    if (form.feedType !== 'WEBHOOK' && form.url.trim().length < 1) return 'URL/Quelle ist erforderlich.';
+    if (form.feedType !== 'WEBHOOK' && form.url.trim().length < 1) return 'Feed URL ist erforderlich.';
     const iv = Number(form.interval);
     if (!Number.isInteger(iv) || iv < 60 || iv > 86400) return 'Intervall muss 60..86400 Sekunden sein.';
     return null;
@@ -133,7 +136,8 @@ export function FeedsTab({ guildId, canManage }: { guildId: string; canManage: b
       url: form.feedType === 'WEBHOOK' ? (form.url.trim() || form.name.trim()) : form.url.trim(),
       channelId: form.channelId,
       interval: Number(form.interval),
-      mentionRoles: form.mentionRoles,
+      // Rollen-Ping optional: nur senden, wenn aktiviert.
+      mentionRoles: form.pingEnabled ? form.mentionRoles : [],
     };
   }
 
@@ -284,8 +288,8 @@ export function FeedsTab({ guildId, canManage }: { guildId: string; canManage: b
           </CardHeader>
           <div className="px-4 pb-4 space-y-3">
             <div className="grid grid-cols-2 gap-3">
-              <Field label="Name">
-                <Input value={form.name} maxLength={100} onChange={e => patch({ name: e.target.value })} placeholder="Anzeigename" />
+              <Field label="Name (optional bei News)">
+                <Input value={form.name} maxLength={100} onChange={e => patch({ name: e.target.value })} placeholder="Anzeigename (nur Darstellung)" />
               </Field>
               <Field label="Typ">
                 <Select value={form.feedType} onChange={e => patch({ feedType: e.target.value as FeedType, url: '' })}>
@@ -294,7 +298,7 @@ export function FeedsTab({ guildId, canManage }: { guildId: string; canManage: b
               </Field>
             </div>
             {form.feedType !== 'WEBHOOK' && (
-              <Field label="Quelle / URL">
+              <Field label="Feed URL">
                 <Input value={form.url} onChange={e => patch({ url: e.target.value })} placeholder={meta.placeholder} />
                 <p className="text-muted text-xs mt-1">{meta.hint}</p>
               </Field>
@@ -317,21 +321,28 @@ export function FeedsTab({ guildId, canManage }: { guildId: string; canManage: b
               </Field>
             </div>
 
-            <Field label="Ping-Rollen (optional)">
-              <div className="flex flex-wrap gap-1.5 max-h-32 overflow-auto rounded-md border border-border p-2">
-                {selectableRoles.length === 0 && <span className="text-muted text-xs">Keine Rollen verfügbar.</span>}
-                {selectableRoles.map(r => (
-                  <button
-                    key={r.id}
-                    onClick={() => toggleRole(r.id)}
-                    className={`text-xs rounded px-2 py-1 border transition-colors ${form.mentionRoles.includes(r.id) ? 'border-brand bg-brand/20 text-white' : 'border-border text-muted hover:text-white'}`}
-                  >
-                    @{r.name}
-                  </button>
-                ))}
+            <Field label="Rollen-Ping">
+              <div className="mb-2">
+                <Switch checked={form.pingEnabled} onChange={v => patch({ pingEnabled: v })} label="Rollen-Ping aktivieren" />
               </div>
-              {form.mentionRoles.length > 0 && (
-                <p className="text-muted text-xs mt-1">Ping: {form.mentionRoles.map(roleName).map(n => `@${n}`).join(', ')}</p>
+              {form.pingEnabled && (
+                <>
+                  <div className="flex flex-wrap gap-1.5 max-h-32 overflow-auto rounded-md border border-border p-2">
+                    {selectableRoles.length === 0 && <span className="text-muted text-xs">Keine Rollen verfügbar.</span>}
+                    {selectableRoles.map(r => (
+                      <button
+                        key={r.id}
+                        onClick={() => toggleRole(r.id)}
+                        className={`text-xs rounded px-2 py-1 border transition-colors ${form.mentionRoles.includes(r.id) ? 'border-brand bg-brand/20 text-white' : 'border-border text-muted hover:text-white'}`}
+                      >
+                        @{r.name}
+                      </button>
+                    ))}
+                  </div>
+                  {form.mentionRoles.length > 0 && (
+                    <p className="text-muted text-xs mt-1">Ping: {form.mentionRoles.map(roleName).map(n => `@${n}`).join(', ')}</p>
+                  )}
+                </>
               )}
             </Field>
 

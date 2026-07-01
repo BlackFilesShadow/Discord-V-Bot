@@ -23,7 +23,7 @@ import { PermissionFlagsBits } from 'discord.js';
 import { requireGuildPermission } from '../../middleware/auth';
 import prisma from '../../../database/prisma';
 import { config } from '../../../config';
-import { isBlockedHost } from '../../../utils/ssrf';
+import { resolveFeedSource } from '../../../modules/feeds/urlResolver';
 import { validateBotChannelAccess } from '../../../utils/discordChannel';
 import { tryGetDashboardClient } from '../../clientRegistry';
 import { createFeed, runFeedNow } from '../../../modules/feeds/feedManager';
@@ -73,66 +73,8 @@ function feedToApi(f: FeedRow) {
 }
 
 // ── Validierung ───────────────────────────────────────────────────────────────
-function validateFeedSource(typ: string, source: string): { ok: true } | { ok: false; reason: string } {
-  const trimmed = source.trim();
-  if (!trimmed) return { ok: false, reason: 'URL/Quelle darf nicht leer sein.' };
-  if (trimmed.length > 2048) return { ok: false, reason: 'URL/Quelle überschreitet 2048 Zeichen.' };
-
-  switch (typ) {
-    case 'RSS':
-    case 'NEWS': {
-      try {
-        const u = new URL(trimmed);
-        if (!['http:', 'https:'].includes(u.protocol)) {
-          return { ok: false, reason: 'Nur http:// oder https:// URLs erlaubt.' };
-        }
-        if (isBlockedHost(u.hostname)) {
-          return { ok: false, reason: 'Lokale/private Hosts sind nicht erlaubt (SSRF-Schutz).' };
-        }
-        return { ok: true };
-      } catch {
-        return { ok: false, reason: 'Ungültige URL.' };
-      }
-    }
-    case 'YOUTUBE': {
-      // Kanal-ID (UC…), Handle (@name) oder vollständige URL.
-      if (/youtube\.com|youtu\.be/i.test(trimmed)) {
-        try {
-          const u = new URL(trimmed);
-          if (!['http:', 'https:'].includes(u.protocol)) {
-            return { ok: false, reason: 'Nur http:// oder https:// URLs erlaubt.' };
-          }
-          if (isBlockedHost(u.hostname)) {
-            return { ok: false, reason: 'Lokale/private Hosts sind nicht erlaubt (SSRF-Schutz).' };
-          }
-          return { ok: true };
-        } catch {
-          return { ok: false, reason: 'Ungültige YouTube-URL.' };
-        }
-      }
-      if (/^UC[\w-]{20,}$/.test(trimmed) || /^@?[\w.-]{1,100}$/.test(trimmed)) return { ok: true };
-      return { ok: false, reason: 'YouTube: Kanal-ID (UC…), @Handle oder Kanal-URL angeben.' };
-    }
-    case 'WEBHOOK': {
-      if (trimmed.length > 200) return { ok: false, reason: 'Label/Quelle max. 200 Zeichen.' };
-      return { ok: true };
-    }
-    case 'TWITCH': {
-      if (!/^[A-Za-z0-9_]{4,25}$/.test(trimmed)) {
-        return { ok: false, reason: 'Twitch-Channelname muss 4-25 Zeichen aus [A-Za-z0-9_] sein.' };
-      }
-      return { ok: true };
-    }
-    case 'STEAM': {
-      if (!/^\d{1,10}$/.test(trimmed)) {
-        return { ok: false, reason: 'Steam-App-ID muss numerisch sein (z.B. 730).' };
-      }
-      return { ok: true };
-    }
-    default:
-      return { ok: false, reason: 'Unbekannter Feed-Typ.' };
-  }
-}
+// Technische Validierung/Erkennung erfolgt zentral in der URL-Resolver-Engine
+// (src/modules/feeds/urlResolver.ts). Hier wird nur delegiert.
 
 function parseInterval(v: unknown): number {
   const n = typeof v === 'number' ? v : parseInt(String(v ?? ''), 10);
@@ -182,21 +124,24 @@ feedsRouter.get('/:id', requireGuildPermission('feeds.view'), async (req, res) =
 feedsRouter.post('/', requireGuildPermission('feeds.manage'), async (req, res) => {
   const { guildId, actorDiscordId } = req.guildScope!;
   const body = req.body ?? {};
-  const name = typeof body.name === 'string' ? body.name.trim().slice(0, 100) : '';
+  let name = typeof body.name === 'string' ? body.name.trim().slice(0, 100) : '';
   const feedType = typeof body.feedType === 'string' ? body.feedType.trim().toUpperCase() : '';
   const url = typeof body.url === 'string' ? body.url.trim() : '';
   const channelId = typeof body.channelId === 'string' ? body.channelId.trim() : '';
   const interval = parseInterval(body.interval);
 
-  if (!name) { res.status(400).json({ error: 'Name ist erforderlich.' }); return; }
   if (!FEED_TYPES.has(feedType)) { res.status(400).json({ error: 'Ungültiger Feed-Typ.' }); return; }
   if (!SNOWFLAKE_RE.test(channelId)) { res.status(400).json({ error: 'Ungültige channelId.' }); return; }
-  const v = validateFeedSource(feedType, url);
-  if (!v.ok) { res.status(400).json({ error: v.reason }); return; }
+  const resolved = resolveFeedSource(feedType, url);
+  if (!resolved.ok) { res.status(400).json({ error: resolved.reason }); return; }
+  // Anzeigename optional (v. a. News) -> aus der Quelle ableiten. Nur Anzeige.
+  if (!name) name = resolved.resolved.display.slice(0, 100);
+  if (!name) { res.status(400).json({ error: 'Name ist erforderlich.' }); return; }
   const chk = await ensureChannel(guildId, channelId);
   if (!chk.ok) { res.status(400).json({ error: chk.reason ?? 'Ziel-Channel ungültig.' }); return; }
 
-  const feedId = await createFeed(name, feedType, url, channelId, interval, actorDiscordId, guildId);
+  // Technische Grundlage ist ausschliesslich die normalisierte URL/Quelle.
+  const feedId = await createFeed(name, feedType, resolved.resolved.url, channelId, interval, actorDiscordId, guildId);
 
   const mentionRoles = normalizeRoleIds(body.mentionRoles);
   let webhookSecret: string | null = null;
@@ -230,10 +175,10 @@ feedsRouter.put('/:id', requireGuildPermission('feeds.manage'), async (req, res)
   }
   if (body.url !== undefined || body.feedType !== undefined) {
     const url = typeof body.url === 'string' ? body.url.trim() : existing.url;
-    const v = validateFeedSource(newType, url);
-    if (!v.ok) { res.status(400).json({ error: v.reason }); return; }
+    const resolved = resolveFeedSource(newType, url);
+    if (!resolved.ok) { res.status(400).json({ error: resolved.reason }); return; }
     data.feedType = newType;
-    data.url = url;
+    data.url = resolved.resolved.url;
     // Bei Typ-/Quellwechsel Duplikat-Marker zurücksetzen.
     data.lastItemId = null;
   }

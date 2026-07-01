@@ -1,8 +1,9 @@
-import { Client, EmbedBuilder, TextChannel } from 'discord.js';
+import { Client, EmbedBuilder, Guild, PermissionFlagsBits, TextChannel } from 'discord.js';
 import prisma from '../../database/prisma';
 import { logger, logAudit } from '../../utils/logger';
 import { config } from '../../config';
 import { translate } from '../ai/translator';
+import { extractTwitchLogin, extractSteamAppId } from './urlResolver';
 import axios from 'axios';
 
 /**
@@ -49,11 +50,11 @@ export async function createFeed(
  * RSS Feed abrufen und parsen.
  */
 async function fetchRssFeed(url: string, lastItemId: string | null): Promise<{
-  items: { title: string; link: string; description: string; pubDate: string; id: string }[];
+  items: { title: string; link: string; description: string; pubDate: string; id: string; image: string | null }[];
   latestId: string | null;
 }> {
   try {
-    const response = await axios.get(url, { timeout: 10000, responseType: 'text' });
+    const response = await axios.get(url, { timeout: 10000, responseType: 'text', maxRedirects: 5 });
     const { XMLParser } = await import('fast-xml-parser');
     const parser = new XMLParser({ ignoreAttributes: false });
     const parsed = parser.parse(response.data);
@@ -70,6 +71,7 @@ async function fetchRssFeed(url: string, lastItemId: string | null): Promise<{
       description: (item.description || item.summary || '').substring(0, 200),
       pubDate: item.pubDate || item.published || item.updated || '',
       id: item.guid || item.id || item.link || item.title,
+      image: extractItemImage(item),
     }));
 
     // Nur neue Items nach lastItemId
@@ -87,6 +89,51 @@ async function fetchRssFeed(url: string, lastItemId: string | null): Promise<{
     logger.error(`RSS-Feed Fehler für ${url}:`, error);
     return { items: [], latestId: null };
   }
+}
+
+/**
+ * Extrahiert automatisch das beste verfuegbare Bild aus einem RSS-/Atom-Item.
+ * Geprueft werden (in dieser Reihenfolge): media:content, media:thumbnail,
+ * enclosure (image/*), itunes:image, sowie ein <img src> in Content/Description.
+ * Gibt eine http(s)-Bild-URL zurueck oder null (kein Bild -> Versand ohne Bild).
+ */
+function extractItemImage(item: any): string | null {
+  const firstUrl = (v: any): string | null => {
+    if (!v) return null;
+    const node = Array.isArray(v) ? v[0] : v;
+    const u = node?.['@_url'] || node?.['@_href'] || (typeof node === 'string' ? node : null);
+    return typeof u === 'string' && /^https?:\/\//i.test(u) ? u : null;
+  };
+
+  // media:content — bevorzugt das mit groesster Breite (beste Qualitaet).
+  const mc = item['media:content'];
+  if (mc) {
+    const arr = Array.isArray(mc) ? mc : [mc];
+    const images = arr.filter((m: any) => !m?.['@_medium'] || m['@_medium'] === 'image');
+    images.sort((a: any, b: any) => Number(b?.['@_width'] || 0) - Number(a?.['@_width'] || 0));
+    const best = firstUrl(images[0]);
+    if (best) return best;
+  }
+  const mediaThumb = firstUrl(item['media:thumbnail']);
+  if (mediaThumb) return mediaThumb;
+
+  const enc = item.enclosure;
+  if (enc) {
+    const arr = Array.isArray(enc) ? enc : [enc];
+    const img = arr.find((e: any) => String(e?.['@_type'] || '').startsWith('image') || /\.(jpe?g|png|gif|webp)(\?|$)/i.test(String(e?.['@_url'] || '')));
+    const u = firstUrl(img);
+    if (u) return u;
+  }
+
+  const itunes = firstUrl(item['itunes:image']);
+  if (itunes) return itunes;
+
+  // Fallback: erstes <img src> aus content:encoded / description.
+  const html = String(item['content:encoded'] || item.description || item.summary || '');
+  const imgMatch = html.match(/<img[^>]+src=["']([^"']+)["']/i);
+  if (imgMatch && /^https?:\/\//i.test(imgMatch[1])) return imgMatch[1];
+
+  return null;
 }
 
 /**
@@ -273,6 +320,34 @@ const feedBackoff = new Map<string, { count: number; until: number }>();
 // verhindert Doppel-Posts, wenn ein Poll laenger als das Intervall dauert.
 const processingFeeds = new Set<string>();
 
+/**
+ * Prueft die konfigurierten Ping-Rollen unmittelbar vor dem Versand und gibt
+ * nur die tatsaechlich erwaehnbaren Rollen-IDs zurueck. Kriterien:
+ *  - Rolle existiert noch auf dem Server,
+ *  - ist nicht @everyone,
+ *  - ist erwaehnbar ODER der Bot besitzt „Alle erwaehnen".
+ * Ungueltige Rollen werden uebersprungen und protokolliert (der Feed wird
+ * trotzdem gesendet). Gespeichert werden ausschliesslich Rollen-IDs.
+ */
+async function resolveMentionableRoles(guild: Guild, roleIds: string[], feedId: string): Promise<string[]> {
+  const ids = (roleIds ?? []).filter((id) => /^\d{17,20}$/.test(id));
+  if (ids.length === 0) return [];
+  const me = guild.members.me;
+  const canMentionAny = me?.permissions.has(PermissionFlagsBits.MentionEveryone) ?? false;
+  const out: string[] = [];
+  for (const id of ids) {
+    if (id === guild.id) continue; // @everyone ist kein Rollen-Ping
+    const role = guild.roles.cache.get(id) ?? await guild.roles.fetch(id).catch(() => null);
+    if (!role) {
+      logger.warn(`Feed ${feedId}: Ping-Rolle ${id} existiert nicht mehr — uebersprungen.`);
+      continue;
+    }
+    if (role.mentionable || canMentionAny) out.push(id);
+    else logger.warn(`Feed ${feedId}: Rolle „${role.name}" ist nicht erwaehnbar und dem Bot fehlt „Alle erwaehnen" — Ping uebersprungen.`);
+  }
+  return out;
+}
+
 async function processFeed(client: Client, feedId: string): Promise<void> {
   // Phase 2.3: Backoff-Check. Wenn der Feed in der Sperrzone ist, ueberspringen.
   const bo = feedBackoff.get(feedId);
@@ -296,8 +371,10 @@ async function processFeedInner(client: Client, feedId: string): Promise<void> {
   const channel = await client.channels.fetch(feed.channelId).catch(() => null) as TextChannel | null;
   if (!channel) return;
 
-  // Role-Pings vorbereiten (gemeinsam fuer alle Feed-Typen).
-  const roleIds = (feed.mentionRoles ?? []).filter((id) => /^\d+$/.test(id));
+  // Role-Pings vorbereiten (optional). Jede Rolle wird vor dem Versand geprueft:
+  // existiert sie noch + darf der Bot sie erwaehnen? Ungueltige Rollen entfallen
+  // (Feed wird trotzdem gesendet), der Vorfall wird protokolliert.
+  const roleIds = await resolveMentionableRoles(channel.guild, feed.mentionRoles ?? [], feed.id);
   const pingPrefix = roleIds.length ? roleIds.map((id) => `<@&${id}>`).join(' ') : '';
   const sendOpts = (embed: EmbedBuilder) => ({
     ...(pingPrefix ? { content: pingPrefix } : {}),
@@ -331,6 +408,9 @@ async function processFeedInner(client: Client, feedId: string): Promise<void> {
             .setFooter({ text: `📡 ${feed.name}` })
             .setTimestamp(item.pubDate ? new Date(item.pubDate) : new Date());
 
+          // Automatische Bilduebernahme (falls die Quelle ein Bild liefert).
+          if (item.image) embed.setImage(item.image);
+
           await channel.send(sendOpts(embed));
         }
 
@@ -344,15 +424,18 @@ async function processFeedInner(client: Client, feedId: string): Promise<void> {
       }
 
       case 'TWITCH': {
-        const streamInfo = await checkTwitchStream(feed.url);
+        // Technische Quelle ist die URL -> Login daraus extrahieren.
+        const login = extractTwitchLogin(feed.url);
+        if (!login) { logger.warn(`TWITCH-Feed ${feed.id}: keine gueltige Twitch-URL (${feed.url}).`); break; }
+        const streamInfo = await checkTwitchStream(login);
         if (!streamInfo) break;
 
         const lastState = feed.lastItemId === 'LIVE';
         if (streamInfo.isLive && !lastState) {
           const embed = new EmbedBuilder()
-            .setTitle(`🔴 ${feed.url} ist LIVE!`)
+            .setTitle(`🔴 ${feed.name} ist LIVE!`)
             .setDescription(streamInfo.title || 'Keine Beschreibung')
-            .setURL(`https://twitch.tv/${feed.url}`)
+            .setURL(`https://twitch.tv/${login}`)
             .setColor(0x9146ff)
             .addFields(
               { name: '🎮 Spiel', value: streamInfo.gameName || 'Unbekannt', inline: true },
@@ -379,7 +462,11 @@ async function processFeedInner(client: Client, feedId: string): Promise<void> {
       }
 
       case 'STEAM': {
-        const { items } = await fetchSteamNews(feed.url);
+        // Technische Quelle ist die URL -> AppID daraus extrahieren.
+        const appId = extractSteamAppId(feed.url);
+        if (!appId) { logger.warn(`STEAM-Feed ${feed.id}: keine gueltige Steam-URL (${feed.url}).`); break; }
+        const headerImage = `https://cdn.cloudflare.steamstatic.com/steam/apps/${appId}/header.jpg`;
+        const { items } = await fetchSteamNews(appId);
         const newItems = feed.lastItemId
           ? items.filter(i => new Date(i.date) > (feed.lastChecked || new Date(0)))
           : items.slice(0, 3);
@@ -390,6 +477,7 @@ async function processFeedInner(client: Client, feedId: string): Promise<void> {
             .setURL(item.url)
             .setDescription(item.contents)
             .setColor(0x1b2838)
+            .setImage(headerImage)
             .setFooter({ text: `📡 ${feed.name}` })
             .setTimestamp(new Date(item.date));
 
@@ -424,6 +512,7 @@ async function processFeedInner(client: Client, feedId: string): Promise<void> {
             .setURL(yt.url)
             .setColor(0xff0000)
             .setAuthor({ name: yt.channelTitle })
+            .setImage(`https://i.ytimg.com/vi/${yt.videoId}/hqdefault.jpg`)
             .setFooter({ text: `📡 ${feed.name}` })
             .setTimestamp(yt.publishedAt ? new Date(yt.publishedAt) : new Date());
 
