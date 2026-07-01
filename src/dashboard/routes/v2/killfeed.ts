@@ -169,7 +169,7 @@ killfeedRouter.post('/', requireGuildPermission('killfeed.manage'), async (req, 
       },
     });
     logAuditDb('KILLFEED_CONFIG_CREATED', 'KILLFEED', {
-      actorUserId: scope.actorDiscordId, guildId: scope.guildId,
+      actorUserId: req.auth!.userId, guildId: scope.guildId,
       details: { configId: created.id, channelId: created.channelId },
     });
     emitGuildEvent(scope.guildId, { type: 'killfeed.changed', payload: { guildId: scope.guildId, configId: created.id } });
@@ -207,7 +207,7 @@ killfeedRouter.patch('/:id', requireGuildPermission('killfeed.manage'), async (r
       data,
     });
     logAuditDb('KILLFEED_CONFIG_UPDATED', 'KILLFEED', {
-      actorUserId: scope.actorDiscordId, guildId: scope.guildId,
+      actorUserId: req.auth!.userId, guildId: scope.guildId,
       details: { configId: id, fields: Object.keys(data) },
     });
     emitGuildEvent(scope.guildId, { type: 'killfeed.changed', payload: { guildId: scope.guildId, configId: id } });
@@ -223,7 +223,7 @@ killfeedRouter.delete('/:id', requireGuildPermission('killfeed.manage'), async (
   const r = await prisma.killfeedConfig.deleteMany({ where: { id, guildId: scope.guildId } });
   if (r.count === 0) { res.status(404).json({ error: 'Nicht gefunden.' }); return; }
   logAuditDb('KILLFEED_CONFIG_DELETED', 'KILLFEED', {
-    actorUserId: scope.actorDiscordId, guildId: scope.guildId,
+    actorUserId: req.auth!.userId, guildId: scope.guildId,
     details: { configId: id },
   });
   emitGuildEvent(scope.guildId, { type: 'killfeed.changed', payload: { guildId: scope.guildId, configId: id } });

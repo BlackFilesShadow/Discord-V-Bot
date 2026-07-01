@@ -198,7 +198,7 @@ welcomeRouter.post('/config', requireGuildPermission('welcome.manage'), async (r
 
   await setWelcomeConfig(scope.guildId, v.data, scope.actorDiscordId);
   logAuditDb('WELCOME_CONFIG_SAVED', 'WELCOME', {
-    actorUserId: scope.actorDiscordId, guildId: scope.guildId,
+    actorUserId: req.auth!.userId, guildId: scope.guildId,
     details: { channelId: v.data.channelId, mode: v.data.mode, enabled: v.data.enabled },
   });
   emitGuildEvent(scope.guildId, { type: 'welcome.changed', payload: { guildId: scope.guildId } });
@@ -211,7 +211,7 @@ welcomeRouter.post('/disable', requireGuildPermission('welcome.manage'), async (
   if (!existing) { res.status(404).json({ error: 'Keine Welcome-Konfiguration vorhanden.' }); return; }
   await disableWelcome(scope.guildId, scope.actorDiscordId);
   logAuditDb('WELCOME_DISABLED', 'WELCOME', {
-    actorUserId: scope.actorDiscordId, guildId: scope.guildId,
+    actorUserId: req.auth!.userId, guildId: scope.guildId,
   });
   emitGuildEvent(scope.guildId, { type: 'welcome.changed', payload: { guildId: scope.guildId } });
   res.json(serialize({ ...existing, enabled: false }));
@@ -275,7 +275,7 @@ welcomeRouter.post('/test', requireGuildPermission('welcome.manage'), async (req
     mentionUserId: scope.actorDiscordId,
   });
   logAuditDb('WELCOME_TEST_SENT', 'WELCOME', {
-    actorUserId: scope.actorDiscordId, guildId: scope.guildId,
+    actorUserId: req.auth!.userId, guildId: scope.guildId,
     details: { channelId: cfg.channelId, mode: cfg.mode },
   });
   res.json({ ok: true, channelId: cfg.channelId });
@@ -324,7 +324,7 @@ welcomeRouter.post(
     const publicUrl = `/uploads/media/welcome/${scope.guildId}/${filename}`;
 
     logAuditDb('WELCOME_MEDIA_UPLOADED', 'WELCOME', {
-      actorUserId: scope.actorDiscordId, guildId: scope.guildId,
+      actorUserId: req.auth!.userId, guildId: scope.guildId,
       details: { mime: file.mimetype, size: file.size },
     });
     res.json({ url: publicUrl });
@@ -362,7 +362,7 @@ welcomeRouter.delete('/media', requireGuildPermission('welcome.manage'), async (
   }
 
   logAuditDb('WELCOME_MEDIA_REMOVED', 'WELCOME', {
-    actorUserId: scope.actorDiscordId, guildId: scope.guildId,
+    actorUserId: req.auth!.userId, guildId: scope.guildId,
     details: { fileDeleted, hadConfig: !!existing },
   });
   res.json({ ok: true, fileDeleted });
@@ -415,7 +415,7 @@ welcomeRouter.post('/autoroles', requireGuildPermission('welcome.manage'), async
     },
   });
   logAuditDb('AUTOROLE_CREATED', 'AUTOROLE', {
-    actorUserId: scope.actorDiscordId, guildId: scope.guildId,
+    actorUserId: req.auth!.userId, guildId: scope.guildId,
     details: { roleId: role.id, roleName: role.name, source: 'dashboard' },
   });
   emitGuildEvent(scope.guildId, { type: 'welcome.changed', payload: { guildId: scope.guildId } });
@@ -442,7 +442,7 @@ welcomeRouter.patch('/autoroles/:id', requireGuildPermission('welcome.manage'), 
 
   const updated = await prisma.autoRole.update({ where: { id: row.id }, data: { isActive: body.isActive } });
   logAuditDb('AUTOROLE_TOGGLED', 'AUTOROLE', {
-    actorUserId: scope.actorDiscordId, guildId: scope.guildId,
+    actorUserId: req.auth!.userId, guildId: scope.guildId,
     details: { roleId: row.roleId, isActive: body.isActive, source: 'dashboard' },
   });
   emitGuildEvent(scope.guildId, { type: 'welcome.changed', payload: { guildId: scope.guildId } });
@@ -458,7 +458,7 @@ welcomeRouter.delete('/autoroles/:id', requireGuildPermission('welcome.manage'),
 
   await prisma.autoRole.delete({ where: { id: row.id } });
   logAuditDb('AUTOROLE_DELETED', 'AUTOROLE', {
-    actorUserId: scope.actorDiscordId, guildId: scope.guildId,
+    actorUserId: req.auth!.userId, guildId: scope.guildId,
     details: { roleId: row.roleId, roleName: row.roleName, source: 'dashboard' },
   });
   emitGuildEvent(scope.guildId, { type: 'welcome.changed', payload: { guildId: scope.guildId } });

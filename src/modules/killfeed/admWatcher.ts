@@ -178,7 +178,10 @@ async function postEventsForConfig(
       data: { lastErrorMsg: 'Channel gehoert nicht zur Guild.' },
     });
     logAuditDb('KILLFEED_CHANNEL_MISMATCH', 'KILLFEED', {
-      actorUserId: 'system', guildId: cfg.guildId,
+      // System-generiertes Event ohne User-Akteur. actorUserId ist FK auf
+      // User.id (nullable) — 'system' ist keine gueltige ID und wuerde den
+      // Insert brechen; daher null.
+      actorUserId: null, guildId: cfg.guildId,
       details: { configId: cfg.id, channelId: cfg.channelId, foundGuild: tch.guildId },
     });
     return;
