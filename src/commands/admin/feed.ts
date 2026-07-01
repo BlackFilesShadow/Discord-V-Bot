@@ -10,6 +10,7 @@ import { createFeed } from '../../modules/feeds/feedManager';
 import { generateWebhookSecret } from '../../modules/feeds/webhookReceiver';
 import { config } from '../../config';
 import { logAudit, logger } from '../../utils/logger';
+import { isBlockedHost } from '../../utils/ssrf';
 
 /**
  * Validiert einen Feed-Source-Wert je nach Typ. Verhindert das stumme
@@ -28,7 +29,7 @@ function validateFeedSource(typ: string, source: string): { ok: true } | { ok: f
         if (!['http:', 'https:'].includes(u.protocol)) {
           return { ok: false, reason: 'Nur http:// oder https:// URLs erlaubt.' };
         }
-        if (u.hostname === 'localhost' || u.hostname.startsWith('127.') || u.hostname === '0.0.0.0') {
+        if (isBlockedHost(u.hostname)) {
           return { ok: false, reason: 'Lokale/private Hosts sind nicht erlaubt (SSRF-Schutz).' };
         }
         return { ok: true };
@@ -362,7 +363,7 @@ const feedCommand: Command = {
       case 'webhook-info': {
         const feedId = interaction.options.getString('feed-id', true);
         const feed = await prisma.feed.findUnique({ where: { id: feedId } });
-        if (!feed) { await interaction.editReply({ content: '❌ Feed nicht gefunden.' }); return; }
+        if (!feed || (feed.guildId && feed.guildId !== interaction.guildId)) { await interaction.editReply({ content: '❌ Feed nicht gefunden.' }); return; }
         if (feed.feedType !== 'WEBHOOK') {
           await interaction.editReply({ content: 'Dieser Feed ist kein WEBHOOK-Typ.' });
           return;
@@ -391,7 +392,7 @@ const feedCommand: Command = {
       case 'webhook-rotate': {
         const feedId = interaction.options.getString('feed-id', true);
         const feed = await prisma.feed.findUnique({ where: { id: feedId } });
-        if (!feed) { await interaction.editReply({ content: '❌ Feed nicht gefunden.' }); return; }
+        if (!feed || (feed.guildId && feed.guildId !== interaction.guildId)) { await interaction.editReply({ content: '❌ Feed nicht gefunden.' }); return; }
         if (feed.feedType !== 'WEBHOOK') {
           await interaction.editReply({ content: 'Dieser Feed ist kein WEBHOOK-Typ.' });
           return;

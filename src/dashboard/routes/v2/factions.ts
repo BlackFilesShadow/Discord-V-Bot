@@ -32,6 +32,7 @@ import { asGuildId } from '../../../types/scope';
 import { validateBotChannelAccess } from '../../../utils/discordChannel';
 import { PermissionFlagsBits } from 'discord.js';
 import { config } from '../../../config';
+import { isBlockedHost } from '../../../utils/ssrf';
 
 export const factionsRouter = Router({ mergeParams: true });
 
@@ -124,18 +125,7 @@ function isAcceptableAssetRef(s: string): boolean {
   let u: URL;
   try { u = new URL(s); } catch { return false; }
   if (u.protocol !== 'http:' && u.protocol !== 'https:') return false;
-  const host = u.hostname.toLowerCase();
-  if (host === 'localhost' || host === '0.0.0.0') return false;
-  // IPv4-private/loopback/link-local Ranges:
-  if (/^127\./.test(host)) return false;
-  if (/^10\./.test(host)) return false;
-  if (/^192\.168\./.test(host)) return false;
-  if (/^172\.(1[6-9]|2\d|3[01])\./.test(host)) return false;
-  if (/^169\.254\./.test(host)) return false; // AWS-Metadata
-  // IPv6-loopback/link-local:
-  if (host === '::1' || host === '[::1]') return false;
-  if (host.startsWith('fe80:') || host.startsWith('[fe80:')) return false;
-  if (host.startsWith('fc00:') || host.startsWith('fd00:')) return false;
+  if (isBlockedHost(u.hostname)) return false;
   return true;
 }
 
