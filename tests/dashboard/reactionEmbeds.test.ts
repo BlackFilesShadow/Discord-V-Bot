@@ -24,6 +24,7 @@ const CH = '222222222222222222';
 const ROLE_LOW = '333333333333333301';
 const ROLE_HIGH = '333333333333333302';
 const ROLE_MANAGED = '333333333333333303';
+const ROLE_LOW2 = '333333333333333304';
 
 // ── In-Memory Prisma-Store ──────────────────────────────────────────────────
 interface Row { id: string; [k: string]: unknown }
@@ -138,6 +139,7 @@ const roleCache = new Map<string, unknown>([
   [ROLE_LOW, makeRole(ROLE_LOW, 1, false)],
   [ROLE_HIGH, makeRole(ROLE_HIGH, 100, false)],
   [ROLE_MANAGED, makeRole(ROLE_MANAGED, 2, true)],
+  [ROLE_LOW2, makeRole(ROLE_LOW2, 3, false)],
 ]);
 const textChannel = { isTextBased: () => true, isDMBased: () => false, messages: { delete: jest.fn().mockResolvedValue({}) } };
 const guild = {
@@ -308,6 +310,47 @@ describe('Reaktions-Embeds Router — Optionen & Rollen-Schutz', () => {
     const del = await request(app).delete(`${BASE}/${m.body.id}/options/${opt.body.id}`);
     expect(del.status).toBe(200);
     expect(options.size).toBe(0);
+  });
+
+  it('erlaubt bis zu 5 Rollen pro Button (frei wählbarer Name)', async () => {
+    const app = makeApp();
+    const m = await createMenu(app);
+    const res = await request(app).post(`${BASE}/${m.body.id}/options`)
+      .send({ roleIds: [ROLE_LOW, ROLE_LOW2], label: 'Mein Button', confirmMessage: 'Willkommen {user}!' });
+    expect(res.status).toBe(201);
+    expect(res.body.roleIds).toEqual([ROLE_LOW, ROLE_LOW2]);
+    expect(res.body.label).toBe('Mein Button');
+    expect(res.body.confirmMessage).toBe('Willkommen {user}!');
+    expect(res.body.roleId).toBe(ROLE_LOW); // Primaerrolle = roleIds[0]
+  });
+
+  it('lehnt mehr als 5 Rollen pro Button ab', async () => {
+    const app = makeApp();
+    const m = await createMenu(app);
+    const many = [ROLE_LOW, ROLE_LOW2, ROLE_LOW, ROLE_LOW2, ROLE_LOW, ROLE_LOW2].concat([
+      '333333333333333311', '333333333333333312', '333333333333333313', '333333333333333314',
+    ]);
+    const res = await request(app).post(`${BASE}/${m.body.id}/options`).send({ roleIds: many, label: 'Zu viele' });
+    expect(res.status).toBe(400);
+    expect(res.body.error).toMatch(/5 Rollen/i);
+  });
+
+  it('lehnt Button ohne Rolle ab', async () => {
+    const app = makeApp();
+    const m = await createMenu(app);
+    const res = await request(app).post(`${BASE}/${m.body.id}/options`).send({ roleIds: [], label: 'Leer' });
+    expect(res.status).toBe(400);
+    expect(res.body.error).toMatch(/mindestens eine Rolle/i);
+  });
+
+  it('ändert die Rollen eines Buttons per PUT', async () => {
+    const app = makeApp();
+    const m = await createMenu(app);
+    const opt = await request(app).post(`${BASE}/${m.body.id}/options`).send({ roleIds: [ROLE_LOW], label: 'A' });
+    const upd = await request(app).put(`${BASE}/${m.body.id}/options/${opt.body.id}`)
+      .send({ label: 'A', roleIds: [ROLE_LOW, ROLE_LOW2] });
+    expect(upd.status).toBe(200);
+    expect(upd.body.roleIds).toEqual([ROLE_LOW, ROLE_LOW2]);
   });
 });
 

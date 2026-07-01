@@ -64,21 +64,26 @@ interface MenuRow {
 interface OptionRow {
   id: string;
   roleId: string;
+  roleIds: string[];
   label: string;
   emoji: string | null;
   description: string | null;
+  confirmMessage: string | null;
   position: number;
   buttonStyle: string;
   isActive: boolean;
 }
 
 function optionToApi(o: OptionRow) {
+  const roleIds = Array.isArray(o.roleIds) && o.roleIds.length > 0 ? o.roleIds : (o.roleId ? [o.roleId] : []);
   return {
     id: o.id,
     roleId: o.roleId,
+    roleIds,
     label: o.label,
     emoji: o.emoji,
     description: o.description,
+    confirmMessage: o.confirmMessage ?? null,
     position: o.position,
     buttonStyle: o.buttonStyle,
     isActive: o.isActive,
@@ -172,6 +177,28 @@ async function validateRole(guildId: string, roleId: string): Promise<string | n
 async function embedBelongsToGuild(embedId: string, guildId: string): Promise<boolean> {
   const row = await prisma.dashboardEmbed.findFirst({ where: { id: embedId, guildId }, select: { id: true } });
   return row != null;
+}
+
+/**
+ * Liest & validiert bis zu 5 Rollen fuer eine Option (ProBot-Stil).
+ * Akzeptiert `roleIds: string[]` (bevorzugt) oder Fallback `roleId: string`.
+ * Prueft jede Rolle einzeln (Snowflake, @everyone, managed, Hierarchie, ManageRoles).
+ */
+async function parseOptionRoles(
+  guildId: string,
+  b: Record<string, unknown>,
+): Promise<{ ok: true; roleIds: string[] } | { ok: false; error: string }> {
+  const raw = Array.isArray(b.roleIds)
+    ? b.roleIds
+    : (typeof b.roleId === 'string' && b.roleId ? [b.roleId] : []);
+  const ids = [...new Set(raw.filter((x): x is string => typeof x === 'string' && x.trim().length > 0).map(x => x.trim()))];
+  if (ids.length < 1) return { ok: false, error: 'Mindestens eine Rolle ist erforderlich.' };
+  if (ids.length > 5) return { ok: false, error: 'Maximal 5 Rollen pro Button.' };
+  for (const id of ids) {
+    const err = await validateRole(guildId, id);
+    if (err) return { ok: false, error: err };
+  }
+  return { ok: true, roleIds: ids };
 }
 
 // ===========================================================================
@@ -294,23 +321,28 @@ reactionEmbedsRouter.post('/:id/options', requireGuildPermission('reactionroles.
   if (!menu) { res.status(404).json({ error: 'Menü nicht gefunden.' }); return; }
 
   const b = (req.body ?? {}) as Record<string, unknown>;
-  const roleId = str(b.roleId, 32);
   const label = str(b.label, 80);
   const emoji = optStr(b.emoji, 64);
   const description = optStr(b.description, 100);
+  const confirmMessage = optStr(b.confirmMessage, 500);
   const buttonStyle = BUTTON_STYLES.has(String(b.buttonStyle)) ? String(b.buttonStyle) : 'SECONDARY';
   if (label.length < 1) { res.status(400).json({ error: 'label 1..80 Zeichen.' }); return; }
-  const roleErr = await validateRole(scope.guildId, roleId);
-  if (roleErr) { res.status(400).json({ error: roleErr }); return; }
+  const roles = await parseOptionRoles(scope.guildId, b);
+  if (!roles.ok) { res.status(400).json({ error: roles.error }); return; }
 
   const count = await prisma.selfRoleOption.count({ where: { menuId: menu.id } });
   if (count >= 25) { res.status(400).json({ error: 'Ein Menü unterstützt maximal 25 Optionen.' }); return; }
   try {
     const opt = await prisma.selfRoleOption.create({
-      data: { menuId: menu.id, roleId, label, emoji, description, buttonStyle, position: count },
+      data: {
+        menuId: menu.id,
+        roleId: roles.roleIds[0],
+        roleIds: roles.roleIds,
+        label, emoji, description, confirmMessage, buttonStyle, position: count,
+      },
     });
     logAuditDb('REACTION_EMBED_OPTION_ADDED', 'ROLE', {
-      actorUserId: req.auth!.userId, guildId: scope.guildId, details: { menuId: menu.id, roleId },
+      actorUserId: req.auth!.userId, guildId: scope.guildId, details: { menuId: menu.id, roleIds: roles.roleIds },
     });
     emitGuildEvent(scope.guildId, { type: 'reactionEmbed.changed', payload: { guildId: scope.guildId, menuId: menu.id } });
     res.status(201).json(optionToApi(opt as unknown as OptionRow));
@@ -332,18 +364,30 @@ reactionEmbedsRouter.put('/:id/options/:optId', requireGuildPermission('reaction
   if (label.length < 1) { res.status(400).json({ error: 'label 1..80 Zeichen.' }); return; }
   const emoji = optStr(b.emoji, 64);
   const description = optStr(b.description, 100);
+  const confirmMessage = optStr(b.confirmMessage, 500);
   const buttonStyle = BUTTON_STYLES.has(String(b.buttonStyle)) ? String(b.buttonStyle) : opt.buttonStyle;
   const isActive = typeof b.isActive === 'boolean' ? b.isActive : opt.isActive;
 
-  const updated = await prisma.selfRoleOption.update({
-    where: { id: opt.id },
-    data: { label, emoji, description, buttonStyle, isActive },
-  });
-  logAuditDb('REACTION_EMBED_OPTION_UPDATED', 'ROLE', {
-    actorUserId: req.auth!.userId, guildId: scope.guildId, details: { menuId: menu.id, optionId: opt.id },
-  });
-  emitGuildEvent(scope.guildId, { type: 'reactionEmbed.changed', payload: { guildId: scope.guildId, menuId: menu.id } });
-  res.json(optionToApi(updated as unknown as OptionRow));
+  // Rollen duerfen geaendert werden (1..5). Wenn nicht mitgeschickt, bestehende beibehalten.
+  const data: Record<string, unknown> = { label, emoji, description, confirmMessage, buttonStyle, isActive };
+  if (b.roleIds !== undefined || b.roleId !== undefined) {
+    const roles = await parseOptionRoles(menu.guildId, b);
+    if (!roles.ok) { res.status(400).json({ error: roles.error }); return; }
+    data.roleIds = roles.roleIds;
+    data.roleId = roles.roleIds[0];
+  }
+
+  try {
+    const updated = await prisma.selfRoleOption.update({ where: { id: opt.id }, data });
+    logAuditDb('REACTION_EMBED_OPTION_UPDATED', 'ROLE', {
+      actorUserId: req.auth!.userId, guildId: scope.guildId, details: { menuId: menu.id, optionId: opt.id },
+    });
+    emitGuildEvent(scope.guildId, { type: 'reactionEmbed.changed', payload: { guildId: scope.guildId, menuId: menu.id } });
+    res.json(optionToApi(updated as unknown as OptionRow));
+  } catch (e) {
+    if ((e as { code?: string }).code === 'P2002') { res.status(409).json({ error: 'Diese Rolle ist bereits im Menü.' }); return; }
+    throw e;
+  }
 });
 
 reactionEmbedsRouter.delete('/:id/options/:optId', requireGuildPermission('reactionroles.manage'), async (req, res) => {

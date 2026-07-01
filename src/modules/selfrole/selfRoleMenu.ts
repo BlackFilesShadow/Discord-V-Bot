@@ -21,7 +21,7 @@ import { buildDiscordEmbed, type EmbedData } from '../embeds/embedBuilder';
 
 /**
  * SelfRole-Modul: Admin baut Menus, User toggelt Rollen via Button/Select/Reaktion.
- * customId-Schema Button: selfrole_<menuId>_<roleId>
+ * customId-Schema Button: selfrole_<menuId>_<optionId>
  * customId-Schema Select: selfrole_sel_<menuId>
  *
  * Phase 2 (Reaktions-Embeds, additiv/non-breaking):
@@ -31,14 +31,21 @@ import { buildDiscordEmbed, type EmbedData } from '../embeds/embedBuilder';
  *  - Option.buttonStyle: PRIMARY | SECONDARY | SUCCESS | DANGER
  *  - Option.isActive: deaktivierte Optionen werden nicht angeboten
  *  - embedId: optionales Nachrichtendesign aus dem Embed-Builder
+ *
+ * ProBot-Stil (additiv/non-breaking):
+ *  - Option.roleIds: bis zu 5 Rollen pro Button (Fallback [roleId])
+ *  - Option.label: frei waehlbarer Button-Name
+ *  - Option.confirmMessage: personalisiertes Bestaetigungs-Embed beim Klick
  */
 
 interface MenuOption {
   id: string;
   roleId: string;
+  roleIds: string[];
   label: string;
   emoji: string | null;
   description: string | null;
+  confirmMessage: string | null;
   position: number;
   buttonStyle: string;
   isActive: boolean;
@@ -80,6 +87,17 @@ function activeOptions(menu: MenuFull): MenuOption[] {
   return menu.options.filter(o => o.isActive);
 }
 
+/** Rollen einer Option (1..5). Faellt auf [roleId] zurueck (Alt-Datensaetze). */
+function optionRoleIds(opt: MenuOption): string[] {
+  const ids = Array.isArray(opt.roleIds) && opt.roleIds.length > 0 ? opt.roleIds : (opt.roleId ? [opt.roleId] : []);
+  return [...new Set(ids)];
+}
+
+/** Alle Rollen, die von irgendeiner Option dieses Menus vergeben werden. */
+function allMenuRoleIds(menu: MenuFull): string[] {
+  return [...new Set(menu.options.flatMap(o => optionRoleIds(o)))];
+}
+
 function buttonStyleOf(style: string): ButtonStyle {
   switch (style) {
     case 'PRIMARY': return ButtonStyle.Primary;
@@ -96,7 +114,11 @@ export function buildMenuEmbed(menu: MenuFull): EmbedBuilder {
   }
   const lines = activeOptions(menu).map(o => {
     const e = o.emoji ? `${o.emoji} ` : '';
-    return `${e}<@&${o.roleId}>${o.description ? ` — ${o.description}` : ''}`;
+    const roles = optionRoleIds(o).map(id => `<@&${id}>`).join(' ');
+    // Frei waehlbarer Button-Name (label) steht im Vordergrund; Rollen dahinter.
+    const head = o.label ? `**${o.label}**` : roles;
+    const tail = o.label ? ` → ${roles}` : '';
+    return `${e}${head}${tail}${o.description ? `\n_${o.description}_` : ''}`;
   });
   const ct = componentType(menu);
   const hint = ct === 'REACTION'
@@ -139,7 +161,7 @@ export function buildMenuRows(menu: MenuFull): ActionRowBuilder<MessageActionRow
     for (const opt of opts.slice(0, 25)) {
       const so = new StringSelectMenuOptionBuilder()
         .setLabel(opt.label.slice(0, 100))
-        .setValue(opt.roleId);
+        .setValue(opt.id);
       if (opt.description) so.setDescription(opt.description.slice(0, 100));
       if (opt.emoji) { try { so.setEmoji(opt.emoji); } catch { /* ungueltig */ } }
       select.addOptions(so);
@@ -159,7 +181,7 @@ export function buildMenuRows(menu: MenuFull): ActionRowBuilder<MessageActionRow
     }
     if (rows.length >= 5) break; // max 5 Rows = 25 Buttons
     const btn = new ButtonBuilder()
-      .setCustomId(`selfrole_${menu.id}_${opt.roleId}`)
+      .setCustomId(`selfrole_${menu.id}_${opt.id}`)
       .setLabel(opt.label.slice(0, 80))
       .setStyle(buttonStyleOf(opt.buttonStyle));
     if (opt.emoji) {
@@ -205,12 +227,17 @@ function normalizeMenu(m: unknown): MenuFull {
     embed: (row.embed as EmbedData | null) ?? null,
     options: opts.map((o) => {
       const opt = o as Record<string, unknown>;
+      const roleId = String(opt.roleId);
+      const rawRoleIds = Array.isArray(opt.roleIds) ? (opt.roleIds as unknown[]).map(String).filter(Boolean) : [];
+      const roleIds = rawRoleIds.length > 0 ? [...new Set(rawRoleIds)] : (roleId ? [roleId] : []);
       return {
         id: String(opt.id),
-        roleId: String(opt.roleId),
+        roleId,
+        roleIds,
         label: String(opt.label ?? ''),
         emoji: (opt.emoji as string | null) ?? null,
         description: (opt.description as string | null) ?? null,
+        confirmMessage: (opt.confirmMessage as string | null) ?? null,
         position: typeof opt.position === 'number' ? opt.position : 0,
         buttonStyle: String(opt.buttonStyle ?? 'SECONDARY'),
         isActive: opt.isActive !== false,
@@ -254,39 +281,93 @@ async function safeSetRole(
 }
 
 /**
- * Ermittelt fuer ein einzelnes Menu-Item (Button/Reaktion) das gewuenschte
- * Zielverhalten anhand assignMode + Modus + Obergrenze und wendet es an.
- * Rueckgabe: nutzerlesbare Statusmeldung.
+ * Wendet eine komplette Option (1..5 Rollen) auf ein Mitglied an und baut ein
+ * personalisiertes Bestaetigungs-Embed (ProBot-Stil).
+ *
+ * Verhalten je assignMode:
+ *  - GIVE   -> alle Rollen der Option hinzufuegen
+ *  - REMOVE -> alle Rollen der Option entfernen
+ *  - TOGGLE -> hat das Mitglied ALLE Rollen bereits, werden sie entfernt, sonst hinzugefuegt
+ *
+ * SINGLE-Menu: beim Hinzufuegen werden zuerst alle anderen Menu-Rollen entfernt.
+ * maxRolesPerUser: begrenzt die Anzahl gleichzeitig gehaltener Menu-Rollen.
  */
-async function applyRoleChange(
+async function applyOption(
   guild: Guild,
   member: GuildMember,
   menu: MenuFull,
-  roleId: string,
-): Promise<string> {
-  const has = member.roles.cache.has(roleId);
+  opt: MenuOption,
+): Promise<EmbedBuilder> {
+  const roleIds = optionRoleIds(opt).filter(id => id !== guild.id);
   const mode = assignMode(menu);
-  const wantAdd = mode === 'GIVE' ? true : mode === 'REMOVE' ? false : !has;
+  const hasAll = roleIds.length > 0 && roleIds.every(id => member.roles.cache.has(id));
+  const wantAdd = mode === 'GIVE' ? true : mode === 'REMOVE' ? false : !hasAll;
 
-  if (wantAdd && has) return `ℹ️ Du hast <@&${roleId}> bereits.`;
-  if (!wantAdd && !has) return `ℹ️ Du hast <@&${roleId}> nicht.`;
+  const added: string[] = [];
+  const removed: string[] = [];
+  const errors: string[] = [];
 
+  // SINGLE: andere Menu-Rollen zuerst entfernen (nur beim Hinzufuegen).
   if (wantAdd && menu.mode === 'SINGLE') {
-    // SINGLE: andere Menu-Rollen zuerst entfernen.
-    for (const id of menu.options.map(o => o.roleId).filter(id => id !== roleId && member.roles.cache.has(id))) {
-      await safeSetRole(guild, member, menu, id, false).catch(() => { /* best effort */ });
-    }
-  } else if (wantAdd && menu.maxRolesPerUser && menu.maxRolesPerUser > 0) {
-    const menuRoleIds = new Set(menu.options.map(o => o.roleId));
-    const held = [...member.roles.cache.keys()].filter(id => menuRoleIds.has(id));
-    if (held.length >= menu.maxRolesPerUser) {
-      return `❌ Du kannst aus diesem Menü höchstens ${menu.maxRolesPerUser} Rolle(n) gleichzeitig haben.`;
+    const others = allMenuRoleIds(menu).filter(id => !roleIds.includes(id) && member.roles.cache.has(id));
+    for (const id of others) {
+      const err = await safeSetRole(guild, member, menu, id, false).catch(() => 'err');
+      if (!err && !removed.includes(id)) removed.push(id);
     }
   }
 
-  const err = await safeSetRole(guild, member, menu, roleId, wantAdd);
-  if (err) return err;
-  return wantAdd ? `✅ Rolle <@&${roleId}> hinzugefügt.` : `✅ Rolle <@&${roleId}> entfernt.`;
+  // maxRolesPerUser: Obergrenze pruefen (nur beim Hinzufuegen, nur MULTI).
+  if (wantAdd && menu.mode !== 'SINGLE' && menu.maxRolesPerUser && menu.maxRolesPerUser > 0) {
+    const menuRoles = new Set(allMenuRoleIds(menu));
+    const heldNow = [...member.roles.cache.keys()].filter(id => menuRoles.has(id));
+    const toAdd = roleIds.filter(id => !member.roles.cache.has(id));
+    if (heldNow.length + toAdd.length > menu.maxRolesPerUser) {
+      return personalEmbed(menu, opt, member, [], [], [
+        `Du kannst aus diesem Menü höchstens **${menu.maxRolesPerUser}** Rolle(n) gleichzeitig haben.`,
+      ]);
+    }
+  }
+
+  for (const id of roleIds) {
+    const has = member.roles.cache.has(id);
+    if (wantAdd && has) continue;
+    if (!wantAdd && !has) continue;
+    const err = await safeSetRole(guild, member, menu, id, wantAdd);
+    if (err) errors.push(err);
+    else if (wantAdd) added.push(id);
+    else removed.push(id);
+  }
+
+  return personalEmbed(menu, opt, member, added, removed, errors);
+}
+
+/** Baut das personalisierte Bestaetigungs-Embed fuer eine Interaktion. */
+function personalEmbed(
+  menu: MenuFull,
+  opt: MenuOption,
+  member: GuildMember,
+  added: string[],
+  removed: string[],
+  errors: string[],
+): EmbedBuilder {
+  const title = opt.label ? opt.label : menu.title;
+  const parts: string[] = [];
+  if (added.length) parts.push(`✅ Hinzugefügt: ${added.map(id => `<@&${id}>`).join(' ')}`);
+  if (removed.length) parts.push(`➖ Entfernt: ${removed.map(id => `<@&${id}>`).join(' ')}`);
+  if (!added.length && !removed.length && !errors.length) parts.push('ℹ️ Keine Änderungen.');
+  if (errors.length) parts.push('', ...errors.map(e => (e.startsWith('❌') ? e : `❌ ${e}`)));
+
+  // Personalisierte, pro-Button hinterlegte Nachricht (optional).
+  const custom = opt.confirmMessage
+    ? opt.confirmMessage.replace(/\{user\}/gi, `<@${member.id}>`).replace(/\{username\}/gi, member.displayName)
+    : '';
+
+  const desc = [custom, parts.join('\n')].filter(s => s && s.trim() !== '').join('\n\n');
+  const color = errors.length ? Colors.Error : Colors.Success;
+  return vEmbed(color)
+    .setTitle(title.slice(0, 256))
+    .setDescription(desc.slice(0, 4096) || 'ℹ️ Keine Änderungen.')
+    .setFooter({ text: `${Brand.footerText} • Self-Role` });
 }
 
 /**
@@ -294,10 +375,10 @@ async function applyRoleChange(
  */
 export async function handleSelfRoleButton(btn: ButtonInteraction): Promise<void> {
   const parts = btn.customId.split('_');
-  // selfrole_<menuId>_<roleId> (Select-IDs "selfrole_sel_..." ignorieren)
+  // selfrole_<menuId>_<optionId> (Select-IDs "selfrole_sel_..." ignorieren)
   if (parts.length < 3 || parts[1] === 'sel') return;
   const menuId = parts[1];
-  const roleId = parts.slice(2).join('_');
+  const token = parts.slice(2).join('_');
 
   if (!btn.guild || !btn.member) {
     await btn.reply({ content: '❌ Nur in Servern verfügbar.', ephemeral: true });
@@ -316,15 +397,17 @@ export async function handleSelfRoleButton(btn: ButtonInteraction): Promise<void
     await btn.reply({ content: '❌ Menu ist inaktiv oder nicht gefunden.', ephemeral: true });
     return;
   }
-  const opt = menu.options.find(o => o.roleId === roleId && o.isActive);
+  // Option per id finden (neu). Fallback: alte Buttons trugen die roleId.
+  const opt = menu.options.find(o => o.id === token && o.isActive)
+    ?? menu.options.find(o => o.roleId === token && o.isActive);
   if (!opt) {
     await btn.reply({ content: '❌ Diese Rollen-Option existiert nicht mehr.', ephemeral: true });
     return;
   }
 
   try {
-    const msg = await applyRoleChange(btn.guild as Guild, btn.member as GuildMember, menu, roleId);
-    await btn.reply({ content: msg, ephemeral: true });
+    const embed = await applyOption(btn.guild as Guild, btn.member as GuildMember, menu, opt);
+    await btn.reply({ embeds: [embed], ephemeral: true });
   } catch (e) {
     logger.error('SelfRole-Toggle fehlgeschlagen', e as Error);
     try {
@@ -364,30 +447,55 @@ export async function handleSelfRoleSelect(sel: StringSelectMenuInteraction): Pr
 
   const guild = sel.guild as Guild;
   const member = sel.member as GuildMember;
-  const activeRoleIds = menu.options.filter(o => o.isActive).map(o => o.roleId);
-  const selected = new Set(sel.values.filter(v => activeRoleIds.includes(v)));
+  const active = menu.options.filter(o => o.isActive);
+  const selectedOptIds = new Set(sel.values.filter(v => active.some(o => o.id === v)));
   const mode = assignMode(menu);
 
-  if (mode !== 'REMOVE' && menu.mode !== 'SINGLE' && menu.maxRolesPerUser && selected.size > menu.maxRolesPerUser) {
-    await sel.reply({ content: `❌ Du darfst höchstens ${menu.maxRolesPerUser} Rolle(n) auswählen.`, ephemeral: true });
-    return;
+  // Zielzustand je Rolle bestimmen (TOGGLE: auf Auswahl synchronisieren).
+  const desiredAdd = new Set<string>();
+  const desiredRemove = new Set<string>();
+  for (const opt of active) {
+    const wantSelected = selectedOptIds.has(opt.id);
+    for (const roleId of optionRoleIds(opt)) {
+      if (roleId === guild.id) continue;
+      if (mode === 'GIVE') { if (wantSelected) desiredAdd.add(roleId); }
+      else if (mode === 'REMOVE') { if (wantSelected) desiredRemove.add(roleId); }
+      else { (wantSelected ? desiredAdd : desiredRemove).add(roleId); }
+    }
   }
 
-  const changes: string[] = [];
-  try {
-    for (const roleId of activeRoleIds) {
-      const wantSelected = selected.has(roleId);
-      const has = member.roles.cache.has(roleId);
-      let add: boolean;
-      if (mode === 'GIVE') { if (!wantSelected) continue; add = true; }
-      else if (mode === 'REMOVE') { if (!wantSelected) continue; add = false; }
-      else { add = wantSelected; } // TOGGLE: auf Auswahl synchronisieren
-      if (add === has) continue;
-      const err = await safeSetRole(guild, member, menu, roleId, add);
-      changes.push(err ?? `${add ? '➕' : '➖'} <@&${roleId}>`);
+  // maxRolesPerUser: Obergrenze auf resultierende Menu-Rollen pruefen (nur MULTI).
+  if (mode !== 'REMOVE' && menu.mode !== 'SINGLE' && menu.maxRolesPerUser) {
+    const menuRoles = new Set(allMenuRoleIds(menu));
+    const resulting = new Set([...member.roles.cache.keys()].filter(id => menuRoles.has(id)));
+    for (const id of desiredRemove) resulting.delete(id);
+    for (const id of desiredAdd) resulting.add(id);
+    if (resulting.size > menu.maxRolesPerUser) {
+      await sel.reply({ content: `❌ Du darfst höchstens ${menu.maxRolesPerUser} Rolle(n) gleichzeitig haben.`, ephemeral: true });
+      return;
     }
+  }
+
+  const added: string[] = [];
+  const removed: string[] = [];
+  const errors: string[] = [];
+  try {
+    for (const roleId of desiredAdd) {
+      if (member.roles.cache.has(roleId)) continue;
+      const err = await safeSetRole(guild, member, menu, roleId, true);
+      if (err) errors.push(err); else added.push(roleId);
+    }
+    for (const roleId of desiredRemove) {
+      if (!member.roles.cache.has(roleId)) continue;
+      const err = await safeSetRole(guild, member, menu, roleId, false);
+      if (err) errors.push(err); else removed.push(roleId);
+    }
+    const parts: string[] = [];
+    if (added.length) parts.push(`✅ Hinzugefügt: ${added.map(id => `<@&${id}>`).join(' ')}`);
+    if (removed.length) parts.push(`➖ Entfernt: ${removed.map(id => `<@&${id}>`).join(' ')}`);
+    if (errors.length) parts.push(...errors.map(e => (e.startsWith('❌') ? e : `❌ ${e}`)));
     await sel.reply({
-      content: changes.length ? changes.join('\n') : 'ℹ️ Keine Änderungen.',
+      content: parts.length ? parts.join('\n') : 'ℹ️ Keine Änderungen.',
       ephemeral: true,
     });
   } catch (e) {
@@ -436,19 +544,24 @@ export async function handleSelfRoleReaction(
   else if (mode === 'GIVE') { if (!added) return true; doAdd = true; }
   else { if (!added) return true; doAdd = false; } // REMOVE
 
+  const roleIds = optionRoleIds(opt).filter(id => id !== guild.id);
   try {
     if (doAdd && menu.mode === 'SINGLE') {
-      for (const id of menu.options.map(o => o.roleId).filter(id => id !== opt.roleId && member.roles.cache.has(id))) {
+      const others = allMenuRoleIds(menu).filter(id => !roleIds.includes(id) && member.roles.cache.has(id));
+      for (const id of others) {
         await safeSetRole(guild, member, menu, id, false).catch(() => { /* best effort */ });
       }
     } else if (doAdd && menu.maxRolesPerUser && menu.maxRolesPerUser > 0) {
-      const menuRoleIds = new Set(menu.options.map(o => o.roleId));
-      const held = [...member.roles.cache.keys()].filter(id => menuRoleIds.has(id));
-      if (held.length >= menu.maxRolesPerUser && !member.roles.cache.has(opt.roleId)) {
+      const menuRoles = new Set(allMenuRoleIds(menu));
+      const held = [...member.roles.cache.keys()].filter(id => menuRoles.has(id));
+      const toAdd = roleIds.filter(id => !member.roles.cache.has(id));
+      if (held.length + toAdd.length > menu.maxRolesPerUser) {
         return true; // Obergrenze erreicht -> Reaktion ignorieren (stumm)
       }
     }
-    await safeSetRole(guild, member, menu, opt.roleId, doAdd);
+    for (const id of roleIds) {
+      await safeSetRole(guild, member, menu, id, doAdd).catch(() => { /* best effort */ });
+    }
   } catch (e) {
     logger.error('SelfRole-Reaktion fehlgeschlagen', e as Error);
   }

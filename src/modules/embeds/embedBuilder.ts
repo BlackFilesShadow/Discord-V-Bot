@@ -10,11 +10,15 @@
  */
 
 import {
+  AttachmentBuilder,
   EmbedBuilder,
   PermissionFlagsBits,
   type Client,
   type GuildTextBasedChannel,
 } from 'discord.js';
+import * as path from 'node:path';
+import * as fs from 'node:fs/promises';
+import { logger } from '../../utils/logger';
 
 // ── Discord-Limits (Stand API v10) ────────────────────────────────────────
 export const EMBED_LIMITS = {
@@ -58,6 +62,79 @@ const CHANNEL_ANCHOR_RE = /<#(\d{17,20})>/g;
 
 function s(v: string | null | undefined): string {
   return (v ?? '').trim();
+}
+
+// ── Lokale Bild-Uploads (Discord-Attachment) ───────────────────────────────
+// Vom Dashboard hochgeladene Embed-Bilder liegen unter
+// uploads/media/embeds/<guildId>/embed-<uuid>.<ext>. Sie werden als
+// `attachment://<datei>` eingebunden — so sind sie in Discord sichtbar, auch
+// wenn die Dashboard-URL nicht oeffentlich erreichbar ist (analog Factions/Welcome).
+const EMBED_MEDIA_BASE = path.resolve(process.cwd(), 'uploads', 'media', 'embeds');
+const LOCAL_EMBED_MEDIA_RE =
+  /\/uploads\/media\/embeds\/(\d{17,20})\/(embed-[A-Za-z0-9-]+\.(?:jpe?g|png|webp|gif))$/i;
+
+/** Aufgeloester lokaler Dateipfad, wenn `ref` auf ein hochgeladenes Embed-Bild zeigt (sonst null). */
+function localEmbedMediaPath(ref: string | null | undefined): string | null {
+  const v = s(ref);
+  if (!v) return null;
+  const m = v.match(LOCAL_EMBED_MEDIA_RE);
+  if (!m) return null;
+  const full = path.join(EMBED_MEDIA_BASE, m[1], m[2]);
+  if (full !== EMBED_MEDIA_BASE && !full.startsWith(EMBED_MEDIA_BASE + path.sep)) return null; // Traversal-Schutz
+  return full;
+}
+
+/** Bild-Referenzen duerfen http(s)-URL ODER ein lokaler Upload-Pfad sein. */
+export function isValidImageRef(ref: string | null | undefined): boolean {
+  if (localEmbedMediaPath(ref)) return true;
+  return isValidHttpUrl(ref);
+}
+
+interface ResolvedMedia {
+  imageUrl?: string;
+  thumbnailUrl?: string;
+  authorIconUrl?: string;
+  footerIconUrl?: string;
+}
+
+/**
+ * Liest lokal hochgeladene Embed-Bilder von der Platte und stellt sie als
+ * Discord-Attachments bereit. Gibt die anzuhaengenden Dateien + die je Feld
+ * aufgeloesten `attachment://`-URLs zurueck. http(s)-URLs bleiben unangetastet.
+ */
+export async function buildEmbedMedia(
+  data: EmbedData,
+): Promise<{ files: AttachmentBuilder[]; resolved: ResolvedMedia }> {
+  const files: AttachmentBuilder[] = [];
+  const resolved: ResolvedMedia = {};
+  const seen = new Map<string, string>(); // Dateipfad -> Attachment-Name (Dedupe)
+
+  const refs: Array<[keyof ResolvedMedia, string | null | undefined]> = [
+    ['imageUrl', data.imageUrl],
+    ['thumbnailUrl', data.thumbnailUrl],
+    ['authorIconUrl', data.authorIconUrl],
+    ['footerIconUrl', data.footerIconUrl],
+  ];
+
+  for (const [key, ref] of refs) {
+    const full = localEmbedMediaPath(ref);
+    if (!full) continue;
+    let name = seen.get(full);
+    if (!name) {
+      try {
+        const buf = await fs.readFile(full);
+        name = path.basename(full);
+        files.push(new AttachmentBuilder(buf, { name }));
+        seen.set(full, name);
+      } catch (e) {
+        logger.warn(`Embed-Bild nicht ladbar (${key}): ${(e as Error).message}`);
+        continue;
+      }
+    }
+    resolved[key] = `attachment://${name}`;
+  }
+
+  return { files, resolved };
 }
 
 /** Parst das JSON-`fields`-Feld defensiv in ein sauberes EmbedField[]. */
@@ -144,17 +221,25 @@ export function validateEmbedContent(data: EmbedData): string | null {
     }
   }
 
-  // URL-Validierung
-  const urlChecks: Array<[string, string | null | undefined]> = [
+  // URL-Validierung: Link-URLs muessen http(s) sein; Bild-Felder duerfen
+  // zusaetzlich lokale Upload-Pfade sein (werden als Attachment eingebunden).
+  const linkChecks: Array<[string, string | null | undefined]> = [
     ['Embed-URL', data.url],
     ['Autor-URL', data.authorUrl],
+  ];
+  for (const [label, url] of linkChecks) {
+    if (!isValidHttpUrl(url)) {
+      return `${label} ist keine gueltige http(s)-URL.`;
+    }
+  }
+  const imageChecks: Array<[string, string | null | undefined]> = [
     ['Autor-Icon-URL', data.authorIconUrl],
     ['Footer-Icon-URL', data.footerIconUrl],
     ['Thumbnail-URL', data.thumbnailUrl],
     ['Bild-URL', data.imageUrl],
   ];
-  for (const [label, url] of urlChecks) {
-    if (!isValidHttpUrl(url)) {
+  for (const [label, url] of imageChecks) {
+    if (!isValidImageRef(url)) {
       return `${label} ist keine gueltige http(s)-URL.`;
     }
   }
@@ -220,8 +305,9 @@ export async function validateChannelAnchors(
   return { ok: true };
 }
 
-/** Baut den discord.js-EmbedBuilder aus dem Datensatz. */
-export function buildDiscordEmbed(data: EmbedData): EmbedBuilder {
+/** Baut den discord.js-EmbedBuilder aus dem Datensatz. `resolved` ersetzt lokale
+ *  Bild-Pfade durch `attachment://`-URLs (siehe buildEmbedMedia). */
+export function buildDiscordEmbed(data: EmbedData, resolved?: ResolvedMedia): EmbedBuilder {
   const embed = new EmbedBuilder();
 
   const title = s(data.title);
@@ -238,29 +324,33 @@ export function buildDiscordEmbed(data: EmbedData): EmbedBuilder {
 
   const authorName = s(data.authorName);
   if (authorName) {
-    const iconURL = s(data.authorIconUrl);
+    const rawIcon = s(data.authorIconUrl);
+    const iconURL = resolved?.authorIconUrl ?? (isValidHttpUrl(rawIcon) ? rawIcon : '');
     const authorUrl = s(data.authorUrl);
     embed.setAuthor({
       name: authorName.slice(0, EMBED_LIMITS.authorName),
-      ...(iconURL && isValidHttpUrl(iconURL) ? { iconURL } : {}),
+      ...(iconURL ? { iconURL } : {}),
       ...(authorUrl && isValidHttpUrl(authorUrl) ? { url: authorUrl } : {}),
     });
   }
 
   const footerText = s(data.footerText);
   if (footerText) {
-    const iconURL = s(data.footerIconUrl);
+    const rawIcon = s(data.footerIconUrl);
+    const iconURL = resolved?.footerIconUrl ?? (isValidHttpUrl(rawIcon) ? rawIcon : '');
     embed.setFooter({
       text: footerText.slice(0, EMBED_LIMITS.footerText),
-      ...(iconURL && isValidHttpUrl(iconURL) ? { iconURL } : {}),
+      ...(iconURL ? { iconURL } : {}),
     });
   }
 
-  const thumbnailUrl = s(data.thumbnailUrl);
-  if (thumbnailUrl && isValidHttpUrl(thumbnailUrl)) embed.setThumbnail(thumbnailUrl);
+  const rawThumb = s(data.thumbnailUrl);
+  const thumbnailUrl = resolved?.thumbnailUrl ?? (isValidHttpUrl(rawThumb) ? rawThumb : '');
+  if (thumbnailUrl) embed.setThumbnail(thumbnailUrl);
 
-  const imageUrl = s(data.imageUrl);
-  if (imageUrl && isValidHttpUrl(imageUrl)) embed.setImage(imageUrl);
+  const rawImage = s(data.imageUrl);
+  const imageUrl = resolved?.imageUrl ?? (isValidHttpUrl(rawImage) ? rawImage : '');
+  if (imageUrl) embed.setImage(imageUrl);
 
   if (data.showTimestamp) embed.setTimestamp(new Date());
 
@@ -318,21 +408,28 @@ export async function sendOrEditEmbed(
       throw new Error('Embed hat keinen sichtbaren Inhalt.');
     }
 
-    const embed = buildDiscordEmbed(row);
+    const { files, resolved } = await buildEmbedMedia(row);
+    const embed = buildDiscordEmbed(row, resolved);
     const content = s(row.content) || undefined;
-    const payload = { content, embeds: [embed], allowedMentions: { parse: [] as never[] } };
 
     let messageId = row.messageId;
     if (messageId) {
       try {
         const existing = await gch.messages.fetch(messageId);
-        await existing.edit(payload);
+        // attachments: [] entfernt alte Anhaenge; `files` laedt die aktuellen neu hoch.
+        await existing.edit({
+          content: content ?? '',
+          embeds: [embed],
+          files,
+          attachments: [],
+          allowedMentions: { parse: [] as never[] },
+        });
         return { messageId };
       } catch {
         messageId = null; // Nachricht wurde geloescht -> neu posten
       }
     }
-    const sent = await gch.send(payload);
+    const sent = await gch.send({ content, embeds: [embed], files, allowedMentions: { parse: [] as never[] } });
     return { messageId: sent.id };
   })();
 

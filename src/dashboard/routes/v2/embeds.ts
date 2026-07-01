@@ -517,15 +517,16 @@ embedsRouter.post(
     const filename = `embed-${randomUUID()}${imageExtFor(file.mimetype)}`;
     await fs.writeFile(path.join(dir, filename), file.buffer);
 
-    // Absolute URL: Discord laedt Embed-Bilder serverseitig (relative Pfade
-    // funktionieren dort nicht). Basis = konfigurierte Dashboard-URL.
+    // Lokaler Pfad: wird beim Senden als Discord-Attachment (`attachment://`)
+    // eingebunden — dadurch in Discord sichtbar, auch ohne oeffentlich
+    // erreichbare Dashboard-URL. Fuer die Dashboard-Vorschau reicht der
+    // relative Pfad (gleiche Origin via express.static).
     const relPath = `/uploads/media/embeds/${scope.guildId}/${filename}`;
-    const absoluteUrl = `${config.dashboard.url.replace(/\/+$/, '')}${relPath}`;
 
     logAuditDb('EMBED_MEDIA_UPLOADED', 'EMBED', {
       actorUserId: req.auth!.userId, guildId: scope.guildId,
       details: { mime: file.mimetype, size: file.size },
     });
-    res.json({ url: absoluteUrl });
+    res.json({ url: relPath });
   },
 );

@@ -1448,6 +1448,7 @@ model SelfRoleOption {
   id          String       @id @default(cuid())
   menuId      String
   menu        SelfRoleMenu @relation(fields: [menuId], references: [id], onDelete: Cascade)
+  // Primaerrolle (= roleIds[0]) — bleibt fuer Kompatibilitaet + Unique-Index.
   roleId      String
   label       String       @db.VarChar(80)
   emoji       String?
@@ -1460,6 +1461,12 @@ model SelfRoleOption {
   buttonStyle String  @default("SECONDARY")
   // Deaktivierte Optionen werden nicht mehr als Button/Select/Reaktion angeboten.
   isActive    Boolean @default(true)
+
+  // ── ProBot-Stil (additiv/non-breaking) ────────────────────────────────
+  // Bis zu 5 Rollen pro Button/Option. Leerer Array => Fallback auf [roleId].
+  roleIds        String[] @default([])
+  // Personalisierte Bestaetigung, die der User beim Klick als Embed erhaelt.
+  confirmMessage String?  @db.VarChar(500)
 
   @@unique([menuId, roleId])
   @@index([menuId, position])

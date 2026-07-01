@@ -32,9 +32,11 @@ type ButtonStyle = 'PRIMARY' | 'SECONDARY' | 'SUCCESS' | 'DANGER';
 interface ApiOption {
   id: string;
   roleId: string;
+  roleIds: string[];
   label: string;
   emoji: string | null;
   description: string | null;
+  confirmMessage: string | null;
   position: number;
   buttonStyle: ButtonStyle;
   isActive: boolean;
@@ -82,10 +84,11 @@ interface MenuForm {
 
 interface OptionForm {
   id?: string; // vorhandene DB-Option
-  roleId: string;
+  roleIds: string[];
   label: string;
   emoji: string;
   description: string;
+  confirmMessage: string;
   buttonStyle: ButtonStyle;
   isActive: boolean;
 }
@@ -118,9 +121,11 @@ function menuToForm(m: ApiMenu): MenuForm {
 }
 
 function optionToForm(o: ApiOption): OptionForm {
+  const roleIds = Array.isArray(o.roleIds) && o.roleIds.length > 0 ? o.roleIds : (o.roleId ? [o.roleId] : []);
   return {
-    id: o.id, roleId: o.roleId, label: o.label, emoji: o.emoji ?? '',
-    description: o.description ?? '', buttonStyle: o.buttonStyle, isActive: o.isActive,
+    id: o.id, roleIds, label: o.label, emoji: o.emoji ?? '',
+    description: o.description ?? '', confirmMessage: o.confirmMessage ?? '',
+    buttonStyle: o.buttonStyle, isActive: o.isActive,
   };
 }
 
@@ -192,12 +197,24 @@ export function ReactionEmbedsTab({ guildId, canManage }: { guildId: string; can
   function addOption() {
     if (options.length >= 25) { toast.error('Maximal 25 Optionen pro Menü.'); return; }
     setOptions(o => [...o, {
-      roleId: selectableRoles[0]?.id ?? '', label: '', emoji: '',
-      description: '', buttonStyle: 'SECONDARY', isActive: true,
+      roleIds: selectableRoles[0]?.id ? [selectableRoles[0].id] : [], label: '', emoji: '',
+      description: '', confirmMessage: '', buttonStyle: 'SECONDARY', isActive: true,
     }]);
   }
   function patchOption(idx: number, p: Partial<OptionForm>) {
     setOptions(o => o.map((it, i) => (i === idx ? { ...it, ...p } : it)));
+  }
+  function addRoleToOption(idx: number, roleId: string) {
+    if (!roleId) return;
+    setOptions(o => o.map((it, i) => {
+      if (i !== idx) return it;
+      if (it.roleIds.includes(roleId)) return it;
+      if (it.roleIds.length >= 5) { toast.error('Maximal 5 Rollen pro Button.'); return it; }
+      return { ...it, roleIds: [...it.roleIds, roleId] };
+    }));
+  }
+  function removeRoleFromOption(idx: number, roleId: string) {
+    setOptions(o => o.map((it, i) => (i === idx ? { ...it, roleIds: it.roleIds.filter(r => r !== roleId) } : it)));
   }
   function removeOption(idx: number) { setOptions(o => o.filter((_, i) => i !== idx)); }
   function moveOption(idx: number, dir: -1 | 1) {
@@ -232,8 +249,10 @@ export function ReactionEmbedsTab({ guildId, canManage }: { guildId: string; can
       if (!Number.isInteger(n) || n < 1 || n > 25) return 'Max. Rollen pro User muss 1..25 sein.';
     }
     for (const o of options) {
-      if (!/^\d{17,20}$/.test(o.roleId)) return 'Jede Option benötigt eine gültige Rolle.';
-      if (o.label.trim().length < 1) return 'Jede Option benötigt eine Bezeichnung.';
+      if (o.roleIds.length < 1) return 'Jeder Button benötigt mindestens eine Rolle.';
+      if (o.roleIds.length > 5) return 'Maximal 5 Rollen pro Button.';
+      if (o.roleIds.some(r => !/^\d{17,20}$/.test(r))) return 'Ungültige Rolle in einem Button.';
+      if (o.label.trim().length < 1) return 'Jeder Button benötigt einen Namen.';
       if (form.componentType === 'REACTION' && o.isActive && !o.emoji.trim()) {
         return 'Bei Reaktions-Menüs benötigt jede aktive Option ein Emoji.';
       }
@@ -255,8 +274,9 @@ export function ReactionEmbedsTab({ guildId, canManage }: { guildId: string; can
     const finalIds: string[] = [];
     for (const o of options) {
       const body = {
-        roleId: o.roleId, label: o.label.trim(), emoji: o.emoji.trim() || null,
-        description: o.description.trim() || null, buttonStyle: o.buttonStyle, isActive: o.isActive,
+        roleIds: o.roleIds, label: o.label.trim(), emoji: o.emoji.trim() || null,
+        description: o.description.trim() || null, confirmMessage: o.confirmMessage.trim() || null,
+        buttonStyle: o.buttonStyle, isActive: o.isActive,
       };
       if (o.id && originalById.has(o.id)) {
         await api.put(`/api/v2/guilds/${guildId}/reaction-embeds/${menuId}/options/${o.id}`, body);
@@ -372,7 +392,12 @@ export function ReactionEmbedsTab({ guildId, canManage }: { guildId: string; can
         title: form.title || '🎭 Rollen-Menü',
         description: [
           form.description,
-          options.filter(o => o.isActive).map(o => `${o.emoji ? o.emoji + ' ' : ''}@${roleName(o.roleId)}${o.description ? ` — ${o.description}` : ''}`).join('\n') || '_Keine Optionen._',
+          options.filter(o => o.isActive).map(o => {
+            const roles = o.roleIds.map(id => `@${roleName(id)}`).join(' ');
+            const head = o.label ? `**${o.label}**` : roles;
+            const tail = o.label ? ` → ${roles}` : '';
+            return `${o.emoji ? o.emoji + ' ' : ''}${head}${tail}`;
+          }).join('\n') || '_Keine Optionen._',
         ].filter(Boolean).join('\n\n'),
         color: '#5865f2',
       };
@@ -492,27 +517,22 @@ export function ReactionEmbedsTab({ guildId, canManage }: { guildId: string; can
                   <Button size="sm" variant="secondary" onClick={addOption} disabled={busy || options.length >= 25}><Plus size={14} /> Option</Button>
                 </div>
                 <div className="space-y-2">
-                  {options.length === 0 && <p className="text-muted text-xs">Noch keine Optionen. Füge mindestens eine Rolle hinzu.</p>}
+                  {options.length === 0 && <p className="text-muted text-xs">Noch keine Buttons. Füge mindestens einen Button hinzu.</p>}
                   {options.map((o, idx) => (
                     <div key={o.id ?? `new-${idx}`} className="rounded-md border border-border p-2 space-y-2">
+                      {/* Kopf: Reihenfolge · Button-Name (frei) · aktiv · löschen */}
                       <div className="flex items-center gap-2">
                         <div className="flex flex-col gap-0.5">
                           <button className="text-muted hover:text-white disabled:opacity-30" onClick={() => moveOption(idx, -1)} disabled={idx === 0}><ArrowUp size={13} /></button>
                           <button className="text-muted hover:text-white disabled:opacity-30" onClick={() => moveOption(idx, 1)} disabled={idx === options.length - 1}><ArrowDown size={13} /></button>
                         </div>
-                        <Select value={o.roleId} onChange={e => patchOption(idx, { roleId: e.target.value })} className="flex-1">
-                          <option value="">— Rolle —</option>
-                          {selectableRoles.map(r => <option key={r.id} value={r.id}>{r.name}</option>)}
-                        </Select>
+                        <Input value={o.label} maxLength={80} onChange={e => patchOption(idx, { label: e.target.value })} placeholder="Button-Name (frei wählbar)" className="flex-1" />
                         <Switch checked={o.isActive} onChange={v => patchOption(idx, { isActive: v })} />
                         <button className="text-muted hover:text-red-400" onClick={() => removeOption(idx)}><Trash2 size={15} /></button>
                       </div>
+
+                      {/* Farbe (nur Button) + Emoji */}
                       <div className="grid grid-cols-2 gap-2">
-                        <Input value={o.label} maxLength={80} onChange={e => patchOption(idx, { label: e.target.value })} placeholder="Bezeichnung" />
-                        <Input value={o.emoji} maxLength={64} onChange={e => patchOption(idx, { emoji: e.target.value })} placeholder="Emoji (z. B. 🎮 oder <:name:id>)" />
-                      </div>
-                      <div className="grid grid-cols-2 gap-2">
-                        <Input value={o.description} maxLength={100} onChange={e => patchOption(idx, { description: e.target.value })} placeholder="Beschreibung (optional)" />
                         {form.componentType === 'BUTTON' ? (
                           <Select value={o.buttonStyle} onChange={e => patchOption(idx, { buttonStyle: e.target.value as ButtonStyle })}>
                             <option value="PRIMARY">Blau (Primary)</option>
@@ -521,7 +541,37 @@ export function ReactionEmbedsTab({ guildId, canManage }: { guildId: string; can
                             <option value="DANGER">Rot (Danger)</option>
                           </Select>
                         ) : <div />}
+                        <Input value={o.emoji} maxLength={64} onChange={e => patchOption(idx, { emoji: e.target.value })} placeholder="Emoji (optional, z. B. 🎮)" />
                       </div>
+
+                      {/* Rollen: bis zu 5 pro Button */}
+                      <div>
+                        <span className="text-muted text-xs mb-1 block">Rollen für diesen Button ({o.roleIds.length}/5)</span>
+                        {o.roleIds.length > 0 && (
+                          <div className="flex flex-wrap gap-1.5 mb-1.5">
+                            {o.roleIds.map(rid => (
+                              <span key={rid} className="inline-flex items-center gap-1 rounded bg-bg-elev border border-border px-2 py-0.5 text-xs text-white">
+                                {roleName(rid)}
+                                <button className="text-muted hover:text-red-400" onClick={() => removeRoleFromOption(idx, rid)}><X size={12} /></button>
+                              </span>
+                            ))}
+                          </div>
+                        )}
+                        {o.roleIds.length < 5 && (
+                          <Select value="" onChange={e => { addRoleToOption(idx, e.target.value); e.target.value = ''; }}>
+                            <option value="">+ Rolle hinzufügen…</option>
+                            {selectableRoles.filter(r => !o.roleIds.includes(r.id)).map(r => <option key={r.id} value={r.id}>{r.name}</option>)}
+                          </Select>
+                        )}
+                      </div>
+
+                      {/* Personalisierte Bestätigung (optional) */}
+                      <textarea
+                        className="w-full min-h-[48px] rounded-md bg-bg-elev border border-border text-white px-3 py-2 text-sm focus-ring"
+                        value={o.confirmMessage} maxLength={500}
+                        onChange={e => patchOption(idx, { confirmMessage: e.target.value })}
+                        placeholder="Personalisierte Bestätigung beim Klick (optional). Platzhalter: {user}, {username}"
+                      />
                     </div>
                   ))}
                 </div>
@@ -558,7 +608,7 @@ function ComponentPreview({ form, options, roleName }: { form: MenuForm; options
     <div className="mt-2 flex flex-wrap gap-2">
       {form.componentType === 'BUTTON' && active.map((o, i) => (
         <span key={i} className="inline-flex items-center gap-1.5 rounded px-3 py-1.5 text-sm text-white" style={{ backgroundColor: BUTTON_STYLE_COLORS[o.buttonStyle] }}>
-          {o.emoji && <span>{o.emoji}</span>}{o.label || roleName(o.roleId)}
+          {o.emoji && <span>{o.emoji}</span>}{o.label || o.roleIds.map(roleName).join(', ')}
         </span>
       ))}
       {form.componentType === 'SELECT' && (
@@ -570,7 +620,7 @@ function ComponentPreview({ form, options, roleName }: { form: MenuForm; options
         <div className="flex flex-wrap gap-2">
           {active.map((o, i) => (
             <span key={i} className="inline-flex items-center gap-1 rounded bg-[#2b2d31] px-2 py-1 text-sm text-white">
-              {o.emoji || '❓'} <span className="text-[#b5bac1] text-xs">{roleName(o.roleId)}</span>
+              {o.emoji || '❓'} <span className="text-[#b5bac1] text-xs">{o.label || o.roleIds.map(roleName).join(', ')}</span>
             </span>
           ))}
         </div>
