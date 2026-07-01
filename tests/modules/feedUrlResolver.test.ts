@@ -40,6 +40,10 @@ describe('Twitch — nur URL-basiert', () => {
   it('lehnt ungueltige Twitch-Eingaben ab', () => {
     expect(resolveFeedSource('TWITCH', 'ab').ok).toBe(false);
   });
+  it('lehnt Host-Spoofing ab (nur echtes twitch.tv)', () => {
+    expect(extractTwitchLogin('https://nottwitch.tv/shroud')).toBeNull();
+    expect(extractTwitchLogin('https://twitch.tv.evil.com/shroud')).toBeNull();
+  });
 });
 
 describe('Steam — nur URL-basiert', () => {
@@ -67,6 +71,17 @@ describe('YouTube — URL / Handle / Playlist', () => {
     expect(extractYouTubeRef('@MrBeast')).toBe('@MrBeast');
     expect(extractYouTubeRef('MrBeast')).toBe('@MrBeast');
     expect(extractYouTubeRef('https://www.youtube.com/playlist?list=PL123abc')).toBe('playlist:PL123abc');
+  });
+  it('lehnt Fremd-Hosts ab (nur echtes youtube.com/youtu.be)', () => {
+    expect(extractYouTubeRef('https://notyoutube.com/@x')).toBeNull();
+    expect(extractYouTubeRef('https://youtube.com.evil.com/@x')).toBeNull();
+  });
+});
+
+describe('Steam — Host-Spoofing', () => {
+  it('lehnt gefaelschte Steam-Hosts ab', () => {
+    expect(extractSteamAppId('https://store.steampowered.com.evil.com/app/730')).toBeNull();
+    expect(extractSteamAppId('https://evil.com/app/730')).toBeNull();
   });
 });
 

@@ -60,8 +60,17 @@ export function normalizeUrl(raw: string): string {
 /** Twitch-Login aus URL extrahieren; akzeptiert auch einen blossen Login (Legacy). */
 export function extractTwitchLogin(input: string): string | null {
   const s = input.trim();
-  const m = s.match(/(?:^|https?:\/\/)?(?:www\.|m\.)?twitch\.tv\/([A-Za-z0-9_]{3,25})/i);
-  if (m) return m[1].toLowerCase();
+  if (/^https?:\/\//i.test(s)) {
+    try {
+      const u = new URL(s);
+      const host = u.hostname.toLowerCase().replace(/^(www\.|m\.)/, '');
+      if (host !== 'twitch.tv') return null; // strikte Host-Pruefung (kein Substring-Spoofing)
+      const seg = u.pathname.split('/').filter(Boolean)[0] ?? '';
+      return /^[A-Za-z0-9_]{3,25}$/.test(seg) ? seg.toLowerCase() : null;
+    } catch { return null; }
+  }
+  const noProto = s.match(/^(?:www\.|m\.)?twitch\.tv\/([A-Za-z0-9_]{3,25})/i);
+  if (noProto) return noProto[1].toLowerCase();
   if (/^[A-Za-z0-9_]{3,25}$/.test(s)) return s.toLowerCase(); // Legacy: nur Login gespeichert
   return null;
 }
@@ -69,10 +78,17 @@ export function extractTwitchLogin(input: string): string | null {
 /** Steam-AppID aus Store-/Community-/News-URL extrahieren; akzeptiert Legacy-AppID. */
 export function extractSteamAppId(input: string): string | null {
   const s = input.trim();
-  const m =
-    s.match(/(?:store\.steampowered\.com|steamcommunity\.com)\/(?:news\/)?app\/(\d{1,10})/i) ??
-    s.match(/\/app\/(\d{1,10})/i);
-  if (m) return m[1];
+  if (/^https?:\/\//i.test(s)) {
+    try {
+      const u = new URL(s);
+      const host = u.hostname.toLowerCase();
+      if (host !== 'store.steampowered.com' && host !== 'steamcommunity.com') return null;
+      const m = u.pathname.match(/\/app\/(\d{1,10})/i);
+      return m ? m[1] : null;
+    } catch { return null; }
+  }
+  const noProto = s.match(/^(?:store\.steampowered\.com|steamcommunity\.com)\/(?:news\/)?app\/(\d{1,10})/i);
+  if (noProto) return noProto[1];
   if (/^\d{1,10}$/.test(s)) return s; // Legacy: nur AppID gespeichert
   return null;
 }
@@ -83,9 +99,18 @@ export function extractSteamAppId(input: string): string | null {
  */
 export function extractYouTubeRef(input: string): string | null {
   const s = input.trim();
-  const playlist = s.match(/[?&]list=([\w-]+)/);
+  if (/^https?:\/\//i.test(s)) {
+    try {
+      const u = new URL(s);
+      const host = u.hostname.toLowerCase().replace(/^(www\.|m\.|music\.)/, '');
+      if (host !== 'youtube.com' && host !== 'youtu.be') return null;
+      const list = u.searchParams.get('list');
+      if (list && /^[\w-]+$/.test(list)) return `playlist:${list}`;
+      return s; // vollstaendige URL (Kanal/Handle/User)
+    } catch { return null; }
+  }
+  const playlist = s.match(/^playlist:([\w-]+)$/i) ?? s.match(/[?&]list=([\w-]+)/);
   if (playlist) return `playlist:${playlist[1]}`;
-  if (/youtube\.com|youtu\.be/i.test(s)) return s; // vollstaendige URL (Kanal/Handle/User)
   if (/^UC[\w-]{20,}$/.test(s)) return s;
   if (/^@?[\w.-]{1,100}$/.test(s)) return s.startsWith('@') ? s : `@${s}`;
   return null;

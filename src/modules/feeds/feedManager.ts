@@ -273,6 +273,10 @@ async function checkYouTube(input: string): Promise<{
   const apiKey = config.external.youtubeApiKey;
   if (!apiKey) return null;
 
+  // Playlist-Feed: neuestes hinzugefuegtes Video ueber playlistItems ermitteln.
+  const playlistId = input.match(/^playlist:([\w-]+)$/i)?.[1] ?? input.match(/[?&]list=([\w-]+)/)?.[1] ?? null;
+  if (playlistId) return checkYouTubePlaylist(playlistId, apiKey);
+
   const channelId = await resolveYouTubeChannelId(input, apiKey);
   if (!channelId) return null;
 
@@ -303,6 +307,56 @@ async function checkYouTube(input: string): Promise<{
     };
   } catch (error) {
     logger.error(`YouTube-API Fehler für ${input}:`, error);
+    return null;
+  }
+}
+
+/**
+ * Neuestes (zuletzt hinzugefuegtes) Video einer YouTube-Playlist ueber
+ * playlistItems ermitteln. Live-Status ist bei Playlists nicht verfuegbar.
+ */
+async function checkYouTubePlaylist(playlistId: string, apiKey: string): Promise<{
+  channelTitle: string;
+  videoId: string;
+  title: string;
+  isLive: boolean;
+  publishedAt: string;
+  url: string;
+} | null> {
+  interface PlItem {
+    snippet?: {
+      publishedAt?: string;
+      title?: string;
+      channelTitle?: string;
+      videoOwnerChannelTitle?: string;
+      resourceId?: { videoId?: string };
+    };
+  }
+  try {
+    const res = await axios.get('https://www.googleapis.com/youtube/v3/playlistItems', {
+      params: { part: 'snippet', playlistId, maxResults: 50, key: apiKey },
+      timeout: 10000,
+    });
+    const items = (res.data?.items ?? []) as PlItem[];
+    if (items.length === 0) return null;
+    // Zuletzt zur Playlist hinzugefuegtes Video (max publishedAt).
+    let newest = items[0];
+    for (const it of items) {
+      if (new Date(it.snippet?.publishedAt ?? 0) > new Date(newest.snippet?.publishedAt ?? 0)) newest = it;
+    }
+    const sn = newest.snippet ?? {};
+    const videoId = sn.resourceId?.videoId;
+    if (!videoId) return null;
+    return {
+      channelTitle: sn.channelTitle ?? sn.videoOwnerChannelTitle ?? 'YouTube',
+      videoId,
+      title: sn.title ?? 'Neues Video',
+      isLive: false,
+      publishedAt: sn.publishedAt ?? new Date().toISOString(),
+      url: `https://www.youtube.com/watch?v=${videoId}`,
+    };
+  } catch (error) {
+    logger.error(`YouTube-Playlist-API Fehler für ${playlistId}:`, error);
     return null;
   }
 }
@@ -387,6 +441,15 @@ async function processFeedInner(client: Client, feedId: string): Promise<void> {
       case 'RSS':
       case 'NEWS': {
         const { items, latestId } = await fetchRssFeed(feed.url, feed.lastItemId);
+        // Erstlauf: nur Marker setzen, keine Altbeitraege posten (kein Spam) —
+        // konsistent zu Twitch/YouTube. Nur echte neue Beitraege loesen Pings aus.
+        if (!feed.lastItemId) {
+          await prisma.feed.update({
+            where: { id: feedId },
+            data: { lastItemId: latestId ?? undefined, lastChecked: new Date() },
+          });
+          break;
+        }
         // NEWS-Feeds werden immer ins Deutsche uebersetzt (Fallback: Original).
         const isNews = feed.feedType === 'NEWS';
         for (const item of items.reverse()) {
@@ -467,9 +530,15 @@ async function processFeedInner(client: Client, feedId: string): Promise<void> {
         if (!appId) { logger.warn(`STEAM-Feed ${feed.id}: keine gueltige Steam-URL (${feed.url}).`); break; }
         const headerImage = `https://cdn.cloudflare.steamstatic.com/steam/apps/${appId}/header.jpg`;
         const { items } = await fetchSteamNews(appId);
-        const newItems = feed.lastItemId
-          ? items.filter(i => new Date(i.date) > (feed.lastChecked || new Date(0)))
-          : items.slice(0, 3);
+        // Erstlauf: nur Marker setzen, keine Altbeitraege posten (kein Spam).
+        if (!feed.lastItemId) {
+          await prisma.feed.update({
+            where: { id: feedId },
+            data: { lastItemId: items[0]?.url ?? undefined, lastChecked: new Date() },
+          });
+          break;
+        }
+        const newItems = items.filter(i => new Date(i.date) > (feed.lastChecked || new Date(0)));
 
         for (const item of newItems) {
           const embed = new EmbedBuilder()
