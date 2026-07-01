@@ -129,8 +129,10 @@ describe('README-Vollständigkeit: Alle Sektionen implementiert', () => {
     it('API-Route existiert', () => {
       expect(fileExists('src/dashboard/routes/api.ts')).toBe(true);
     });
-    it('Admin-Route existiert', () => {
-      expect(fileExists('src/dashboard/routes/admin.ts')).toBe(true);
+    it('Admin-Funktionalitaet existiert (v2 Bot-Admin-Router)', () => {
+      // Der ungeschuetzte Legacy-/admin-Router wurde als P0-Sicherheitsfix
+      // entfernt; Admin-Funktionen laufen ueber den v2-Bot-Admin-Router.
+      expect(fileExists('src/dashboard/routes/v2/botAdmin.ts')).toBe(true);
     });
   });
 
