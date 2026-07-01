@@ -35,6 +35,7 @@ interface ApiFeed {
   isActive: boolean;
   mentionRoles: string[];
   hasWebhookSecret: boolean;
+  hasCredentials: boolean;
   createdAt: string;
   updatedAt: string;
 }
@@ -50,6 +51,10 @@ interface FeedForm {
   interval: string;
   mentionRoles: string[];
   pingEnabled: boolean;
+  // Write-only: nur beim Speichern gesendet, wenn ausgefuellt. Nie vom Server geladen.
+  youtubeApiKey: string;
+  twitchClientId: string;
+  twitchClientSecret: string;
 }
 
 const FEED_META: Record<FeedType, { label: string; icon: typeof Rss; hint: string; placeholder: string }> = {
@@ -62,13 +67,14 @@ const FEED_META: Record<FeedType, { label: string; icon: typeof Rss; hint: strin
 };
 
 function emptyForm(): FeedForm {
-  return { name: '', feedType: 'RSS', url: '', channelId: '', interval: '300', mentionRoles: [], pingEnabled: false };
+  return { name: '', feedType: 'RSS', url: '', channelId: '', interval: '300', mentionRoles: [], pingEnabled: false, youtubeApiKey: '', twitchClientId: '', twitchClientSecret: '' };
 }
 
 function feedToForm(f: ApiFeed): FeedForm {
   return {
     name: f.name, feedType: f.feedType, url: f.url, channelId: f.channelId,
     interval: String(f.interval), mentionRoles: f.mentionRoles ?? [], pingEnabled: (f.mentionRoles?.length ?? 0) > 0,
+    youtubeApiKey: '', twitchClientId: '', twitchClientSecret: '',
   };
 }
 
@@ -130,7 +136,7 @@ export function FeedsTab({ guildId, canManage }: { guildId: string; canManage: b
   }
 
   function payload(): Record<string, unknown> {
-    return {
+    const p: Record<string, unknown> = {
       name: form.name.trim(),
       feedType: form.feedType,
       url: form.feedType === 'WEBHOOK' ? (form.url.trim() || form.name.trim()) : form.url.trim(),
@@ -139,6 +145,16 @@ export function FeedsTab({ guildId, canManage }: { guildId: string; canManage: b
       // Rollen-Ping optional: nur senden, wenn aktiviert.
       mentionRoles: form.pingEnabled ? form.mentionRoles : [],
     };
+    // Pro-Feed API-Keys nur senden, wenn ausgefuellt (write-only; leere Felder
+    // wuerden sonst vorhandene Keys ueberschreiben). Entfernen laeuft separat.
+    if (form.feedType === 'YOUTUBE' && form.youtubeApiKey.trim()) {
+      p.youtubeApiKey = form.youtubeApiKey.trim();
+    }
+    if (form.feedType === 'TWITCH' && form.twitchClientId.trim() && form.twitchClientSecret.trim()) {
+      p.twitchClientId = form.twitchClientId.trim();
+      p.twitchClientSecret = form.twitchClientSecret.trim();
+    }
+    return p;
   }
 
   async function save() {
@@ -158,6 +174,25 @@ export function FeedsTab({ guildId, canManage }: { guildId: string; canManage: b
       toast.success('Feed gespeichert.');
     } catch (e) {
       toast.error(e instanceof ApiError ? e.message : 'Speichern fehlgeschlagen.');
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  /** Entfernt den pro-Feed API-Key (danach greift wieder der globale ENV-Key). */
+  async function removeCredentials() {
+    if (!editingId) return;
+    setBusy(true);
+    try {
+      const body = form.feedType === 'YOUTUBE'
+        ? { youtubeApiKey: '' }
+        : { twitchClientId: '', twitchClientSecret: '' };
+      await api.put(`/api/v2/guilds/${guildId}/feeds/${editingId}`, body);
+      await qc.invalidateQueries({ queryKey: ['feeds', guildId] });
+      patch({ youtubeApiKey: '', twitchClientId: '', twitchClientSecret: '' });
+      toast.success('Eigener Key entfernt — globaler Key wird genutzt.');
+    } catch (e) {
+      toast.error(e instanceof ApiError ? e.message : 'Entfernen fehlgeschlagen.');
     } finally {
       setBusy(false);
     }
@@ -307,6 +342,50 @@ export function FeedsTab({ guildId, canManage }: { guildId: string; canManage: b
               <Field label="Label (optional)">
                 <Input value={form.url} onChange={e => patch({ url: e.target.value })} placeholder={meta.placeholder} />
                 <p className="text-muted text-xs mt-1">{meta.hint}</p>
+              </Field>
+            )}
+
+            {/* Optionaler pro-Feed YouTube-Key (write-only). Leer = globaler Key. */}
+            {form.feedType === 'YOUTUBE' && (
+              <Field label="YouTube-API-Key (optional, eigenes Kontingent)">
+                <Input
+                  type="password" autoComplete="off"
+                  value={form.youtubeApiKey}
+                  onChange={e => patch({ youtubeApiKey: e.target.value })}
+                  placeholder={feeds.find(f => f.id === editingId)?.hasCredentials ? '•••••••• (gesetzt — leer lassen = unverändert)' : 'AIza… (leer = globaler Key)'}
+                />
+                <div className="flex items-center gap-2 mt-1">
+                  <p className="text-muted text-xs flex-1">Eigener Key isoliert das Tageskontingent. Leer lassen nutzt den globalen Key.</p>
+                  {feeds.find(f => f.id === editingId)?.hasCredentials && (
+                    <Button type="button" size="sm" variant="ghost" onClick={removeCredentials} disabled={busy}>Key entfernen</Button>
+                  )}
+                </div>
+              </Field>
+            )}
+
+            {/* Optionale pro-Feed Twitch-Credentials (write-only). Leer = globale App. */}
+            {form.feedType === 'TWITCH' && (
+              <Field label="Twitch-App (optional, eigene Client-ID/Secret)">
+                <div className="grid grid-cols-2 gap-2">
+                  <Input
+                    autoComplete="off"
+                    value={form.twitchClientId}
+                    onChange={e => patch({ twitchClientId: e.target.value })}
+                    placeholder="Client-ID (30 Zeichen)"
+                  />
+                  <Input
+                    type="password" autoComplete="off"
+                    value={form.twitchClientSecret}
+                    onChange={e => patch({ twitchClientSecret: e.target.value })}
+                    placeholder={feeds.find(f => f.id === editingId)?.hasCredentials ? '•••••••• (gesetzt)' : 'Client-Secret (30 Zeichen)'}
+                  />
+                </div>
+                <div className="flex items-center gap-2 mt-1">
+                  <p className="text-muted text-xs flex-1">Beide Felder ausfüllen. Leer lassen nutzt die globale Bot-App.</p>
+                  {feeds.find(f => f.id === editingId)?.hasCredentials && (
+                    <Button type="button" size="sm" variant="ghost" onClick={removeCredentials} disabled={busy}>App entfernen</Button>
+                  )}
+                </div>
               </Field>
             )}
             <div className="grid grid-cols-2 gap-3">

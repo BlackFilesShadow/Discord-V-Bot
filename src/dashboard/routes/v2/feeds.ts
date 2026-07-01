@@ -30,6 +30,7 @@ import { createFeed, runFeedNow } from '../../../modules/feeds/feedManager';
 import { generateWebhookSecret } from '../../../modules/feeds/webhookReceiver';
 import { logAuditDb } from '../../../utils/logger';
 import { emitGuildEvent } from '../../socket/emitter';
+import { resolveCredentialUpdate } from '../../../modules/feeds/feedCredentials';
 
 export const feedsRouter = Router({ mergeParams: true });
 
@@ -49,6 +50,7 @@ interface FeedRow {
   isActive: boolean;
   mentionRoles: string[];
   webhookSecret: string | null;
+  credentialsEnc: string | null;
   createdBy: string;
   createdAt: Date;
   updatedAt: Date;
@@ -66,6 +68,7 @@ function feedToApi(f: FeedRow) {
     isActive: f.isActive,
     mentionRoles: f.mentionRoles ?? [],
     hasWebhookSecret: f.webhookSecret != null,
+    hasCredentials: f.credentialsEnc != null,
     createdBy: f.createdBy,
     createdAt: f.createdAt,
     updatedAt: f.updatedAt,
@@ -140,18 +143,27 @@ feedsRouter.post('/', requireGuildPermission('feeds.manage'), async (req, res) =
   const chk = await ensureChannel(guildId, channelId);
   if (!chk.ok) { res.status(400).json({ error: chk.reason ?? 'Ziel-Channel ungültig.' }); return; }
 
+  // Optionale pro-Feed API-Keys (verschluesselt) VOR dem Anlegen validieren,
+  // damit kein halbfertiger Datensatz entsteht.
+  const cred = resolveCredentialUpdate(feedType, body as Record<string, unknown>);
+  if (!cred.ok) { res.status(400).json({ error: cred.error }); return; }
+  const credEnc = cred.change ? cred.value : null;
+
   // Technische Grundlage ist ausschliesslich die normalisierte URL/Quelle.
   const feedId = await createFeed(name, feedType, resolved.resolved.url, channelId, interval, actorDiscordId, guildId);
 
   const mentionRoles = normalizeRoleIds(body.mentionRoles);
   let webhookSecret: string | null = null;
   if (feedType === 'WEBHOOK') webhookSecret = generateWebhookSecret();
-  if (mentionRoles.length || webhookSecret) {
-    await prisma.feed.update({ where: { id: feedId }, data: { mentionRoles, webhookSecret: webhookSecret ?? undefined } });
+  if (mentionRoles.length || webhookSecret || credEnc) {
+    await prisma.feed.update({
+      where: { id: feedId },
+      data: { mentionRoles, webhookSecret: webhookSecret ?? undefined, credentialsEnc: credEnc ?? undefined },
+    });
   }
 
   const feed = await findGuildFeed(guildId, feedId);
-  await logAuditDb('FEED_CREATED', 'FEED', { actorUserId: req.auth!.userId, guildId, details: { feedId, name, feedType } });
+  await logAuditDb('FEED_CREATED', 'FEED', { actorUserId: req.auth!.userId, guildId, details: { feedId, name, feedType, credentialsSet: credEnc != null } });
   emitGuildEvent(guildId, { type: 'feed.changed', payload: { guildId, feedId } });
   res.status(201).json(feedToApi(feed!));
 });
@@ -181,7 +193,14 @@ feedsRouter.put('/:id', requireGuildPermission('feeds.manage'), async (req, res)
     data.url = resolved.resolved.url;
     // Bei Typ-/Quellwechsel Duplikat-Marker zurücksetzen.
     data.lastItemId = null;
+    // Typwechsel -> alte, typ-fremde Credentials verwerfen (neue koennen unten folgen).
+    if (newType !== existing.feedType) data.credentialsEnc = null;
   }
+
+  // Optionale pro-Feed API-Keys (verschluesselt) setzen/entfernen.
+  const cred = resolveCredentialUpdate(newType, body as Record<string, unknown>);
+  if (!cred.ok) { res.status(400).json({ error: cred.error }); return; }
+  if (cred.change) data.credentialsEnc = cred.value;
 
   if (typeof body.channelId === 'string') {
     if (!SNOWFLAKE_RE.test(body.channelId)) { res.status(400).json({ error: 'Ungültige channelId.' }); return; }
@@ -192,7 +211,7 @@ feedsRouter.put('/:id', requireGuildPermission('feeds.manage'), async (req, res)
 
   await prisma.feed.update({ where: { id: existing.id }, data });
   const feed = await findGuildFeed(guildId, existing.id);
-  await logAuditDb('FEED_UPDATED', 'FEED', { actorUserId: req.auth!.userId, guildId, details: { feedId: existing.id } });
+  await logAuditDb('FEED_UPDATED', 'FEED', { actorUserId: req.auth!.userId, guildId, details: { feedId: existing.id, credentialsChanged: cred.change } });
   emitGuildEvent(guildId, { type: 'feed.changed', payload: { guildId, feedId: existing.id } });
   res.json(feedToApi(feed!));
 });

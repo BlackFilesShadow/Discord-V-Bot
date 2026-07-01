@@ -4,6 +4,7 @@ import { logger, logAudit } from '../../utils/logger';
 import { config } from '../../config';
 import { translate } from '../ai/translator';
 import { extractTwitchLogin, extractSteamAppId } from './urlResolver';
+import { getTwitchCreds, getYouTubeKey } from './feedCredentials';
 import axios from 'axios';
 
 /**
@@ -139,14 +140,20 @@ function extractItemImage(item: any): string | null {
 /**
  * Twitch Stream-Status prüfen.
  */
-async function checkTwitchStream(channelName: string): Promise<{
+async function checkTwitchStream(
+  channelName: string,
+  creds?: { twitchClientId: string; twitchClientSecret: string },
+): Promise<{
   isLive: boolean;
   title?: string;
   gameName?: string;
   viewerCount?: number;
   thumbnailUrl?: string;
 } | null> {
-  if (!config.external.twitchClientId || !config.external.twitchClientSecret) {
+  // Pro-Feed-Credentials haben Vorrang, sonst globale ENV-Keys (Fallback).
+  const clientId = creds?.twitchClientId || config.external.twitchClientId;
+  const clientSecret = creds?.twitchClientSecret || config.external.twitchClientSecret;
+  if (!clientId || !clientSecret) {
     warnMissingFeedCredentials('TWITCH', 'TWITCH_CLIENT_ID/TWITCH_CLIENT_SECRET');
     return null;
   }
@@ -155,8 +162,8 @@ async function checkTwitchStream(channelName: string): Promise<{
     // Token holen
     const tokenRes = await axios.post('https://id.twitch.tv/oauth2/token', null, {
       params: {
-        client_id: config.external.twitchClientId,
-        client_secret: config.external.twitchClientSecret,
+        client_id: clientId,
+        client_secret: clientSecret,
         grant_type: 'client_credentials',
       },
     });
@@ -167,7 +174,7 @@ async function checkTwitchStream(channelName: string): Promise<{
     const streamRes = await axios.get(`https://api.twitch.tv/helix/streams`, {
       params: { user_login: channelName },
       headers: {
-        'Client-ID': config.external.twitchClientId,
+        'Client-ID': clientId,
         Authorization: `Bearer ${accessToken}`,
       },
     });
@@ -263,7 +270,7 @@ async function resolveYouTubeChannelId(input: string, apiKey: string): Promise<s
  * Neuestes YouTube-Video (inkl. Live-Erkennung) eines Kanals abrufen.
  * Nutzt die YouTube Data API v3 (YOUTUBE_API_KEY).
  */
-async function checkYouTube(input: string): Promise<{
+async function checkYouTube(input: string, apiKeyOverride?: string): Promise<{
   channelTitle: string;
   videoId: string;
   title: string;
@@ -271,7 +278,8 @@ async function checkYouTube(input: string): Promise<{
   publishedAt: string;
   url: string;
 } | null> {
-  const apiKey = config.external.youtubeApiKey;
+  // Pro-Feed-Key hat Vorrang, sonst globaler ENV-Key (Fallback).
+  const apiKey = apiKeyOverride || config.external.youtubeApiKey;
   if (!apiKey) { warnMissingFeedCredentials('YOUTUBE', 'YOUTUBE_API_KEY'); return null; }
 
   // Playlist-Feed: neuestes hinzugefuegtes Video ueber playlistItems ermitteln.
@@ -497,7 +505,7 @@ async function processFeedInner(client: Client, feedId: string): Promise<void> {
         // Technische Quelle ist die URL -> Login daraus extrahieren.
         const login = extractTwitchLogin(feed.url);
         if (!login) { logger.warn(`TWITCH-Feed ${feed.id}: keine gueltige Twitch-URL (${feed.url}).`); break; }
-        const streamInfo = await checkTwitchStream(login);
+        const streamInfo = await checkTwitchStream(login, getTwitchCreds(feed.credentialsEnc) ?? undefined);
         if (!streamInfo) break;
 
         const lastState = feed.lastItemId === 'LIVE';
@@ -566,7 +574,7 @@ async function processFeedInner(client: Client, feedId: string): Promise<void> {
       }
 
       case 'YOUTUBE': {
-        const yt = await checkYouTube(feed.url);
+        const yt = await checkYouTube(feed.url, getYouTubeKey(feed.credentialsEnc) ?? undefined);
         if (!yt) break;
 
         // Erstlauf: nur Marker setzen, keine alten Videos posten.
