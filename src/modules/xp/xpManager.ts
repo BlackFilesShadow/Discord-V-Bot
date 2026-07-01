@@ -47,7 +47,11 @@ export async function grantEventXp(
 
   // Level-Up prüfen
   const currentXp = Number(updated.xp);
-  const xpConfigCap = await prisma.xpConfig.findFirst({ where: { isActive: true } });
+  // Guild-spezifische XP-Konfiguration (id == guildId, Konvention wie
+  // messageCreate/voiceStateUpdate). NICHT findFirst({isActive:true}) — das
+  // liefert die erste aktive Config einer beliebigen (fremden) Guild und
+  // wendet deren maxLevel falsch an.
+  const xpConfigCap = await prisma.xpConfig.findUnique({ where: { id: guildId } });
   const maxLevel = xpConfigCap?.maxLevel ?? 20;
   let newLevel = calculateLevel(currentXp);
   if (newLevel > maxLevel) newLevel = maxLevel;
