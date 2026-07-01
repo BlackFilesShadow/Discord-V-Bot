@@ -124,10 +124,11 @@ async function hasAdminRole(discordId: string): Promise<boolean> {
 /**
  * Interaction-Create-Event
  *
- * Permission-Modell:
- * - Owner (BOT_OWNER_ID) + Guild-Owner → ALLES erlaubt, keine Einschränkungen
- * - Admin-Commands (adminOnly) → nur für User mit Admin-Rolle in DB (kein Passwort nötig)
- * - Dev-Commands (devOnly) → Passwort-Modal, 2-Stunden-Session
+ * Permission-Modell (siehe ownerBypassApplies/isBotOwner):
+ * - Bot-Owner (BOT_OWNER_ID) → umgeht adminOnly UND (separat) devOnly
+ * - Guild-Owner → umgeht adminOnly, aber NICHT devOnly
+ * - Admin-Commands (adminOnly) → zusätzlich für User mit Admin-Rolle in DB (kein Passwort nötig)
+ * - Dev-Commands (devOnly) → Passwort-Modal, 2-Stunden-Session (außer Bot-Owner)
  */
 const interactionCreateEvent: BotEvent = {
   name: Events.InteractionCreate,

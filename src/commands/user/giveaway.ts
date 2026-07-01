@@ -257,7 +257,7 @@ async function handleInfo(interaction: ChatInputCommandInteraction) {
   await interaction.editReply({ embeds: [embed] });
 }
 
-async function handleEnd(interaction: ChatInputCommandInteraction) {
+export async function handleEnd(interaction: ChatInputCommandInteraction) {
   await interaction.deferReply();
 
   if (!interaction.guildId) {
@@ -291,23 +291,29 @@ async function handleEnd(interaction: ChatInputCommandInteraction) {
   const result = await drawWinners(giveawayId, interaction.guildId);
 
   if (result.success && result.winners.length > 0) {
-    const winnerMentions = result.winners.map(w => `<@${w.discordId}>`).join(', ');
+    const winnerIds = result.winners.map(w => w.discordId);
+    const winnerMentions = winnerIds.map(id => `<@${id}>`).join(', ');
+    // allowedMentions strikt auf echte Gewinner + notifyRole begrenzt, damit
+    // nutzerkontrollierter prize-Text kein @everyone/fremde Rollen pingt.
     await interaction.editReply({
       content: `🎉 Giveaway beendet! Gewinner: ${winnerMentions} – **${giveaway.prize}**`,
+      allowedMentions: { users: winnerIds, parse: [] },
     });
 
     // Rollen-Ping als separate Nachricht im Channel
     if (giveaway.notifyRoleId && interaction.channel && 'send' in interaction.channel) {
       await interaction.channel.send({
         content: `<@&${giveaway.notifyRoleId}> 🎉 Giveaway **${giveaway.prize}** beendet! Gewinner: ${winnerMentions}`,
+        allowedMentions: { users: winnerIds, roles: [giveaway.notifyRoleId] },
       });
     }
   } else {
-    await interaction.editReply({ content: `Giveaway beendet. ${result.message}` });
+    await interaction.editReply({ content: `Giveaway beendet. ${result.message}`, allowedMentions: { parse: [] } });
 
     if (giveaway.notifyRoleId && interaction.channel && 'send' in interaction.channel) {
       await interaction.channel.send({
         content: `<@&${giveaway.notifyRoleId}> 🎉 Giveaway **${giveaway.prize}** wurde beendet. ${result.message}`,
+        allowedMentions: { roles: [giveaway.notifyRoleId], parse: [] },
       });
     }
   }

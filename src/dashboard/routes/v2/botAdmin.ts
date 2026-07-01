@@ -33,6 +33,7 @@ import { generateOneTimePassword, hashPassword } from '../../../utils/password';
 import { validateFile } from '../../../utils/validator';
 import { safeDm } from '../../../utils/safeSend';
 import { createFeed } from '../../../modules/feeds/feedManager';
+import { isBlockedHost } from '../../../utils/ssrf';
 import { getMenuFull, publishMenu } from '../../../modules/selfrole/selfRoleMenu';
 import { closeTicket } from '../../../modules/ticket/ticketManager';
 import { translate } from '../../../modules/ai/translator';
@@ -862,6 +863,19 @@ botAdminRouter.post('/feeds', ba, async (req, res) => {
   if (!['RSS', 'TWITCH', 'TWITTER', 'STEAM', 'NEWS', 'WEBHOOK', 'CUSTOM'].includes(feedType)) { res.status(400).json({ error: 'Ungültiger feedType.' }); return; }
   if (!SNOWFLAKE_RE.test(channelId)) { res.status(400).json({ error: 'Ungültige channelId.' }); return; }
   if (!url || url.length > 2000) { res.status(400).json({ error: 'Ungültige url.' }); return; }
+  // SSRF-Schutz (analog feeds.ts): URL-basierte Quellen duerfen nur http(s) und
+  // keine lokalen/privaten Hosts sein. Name-/ID-basierte Typen (TWITCH/STEAM)
+  // enthalten kein Schema und bleiben unberuehrt.
+  if (url.includes('://')) {
+    let parsed: URL;
+    try { parsed = new URL(url); } catch { res.status(400).json({ error: 'Ungültige url.' }); return; }
+    if (!['http:', 'https:'].includes(parsed.protocol)) {
+      res.status(400).json({ error: 'Nur http:// oder https:// URLs erlaubt.' }); return;
+    }
+    if (isBlockedHost(parsed.hostname)) {
+      res.status(400).json({ error: 'Lokale/private Hosts sind nicht erlaubt (SSRF-Schutz).' }); return;
+    }
+  }
   const id = await createFeed(name, feedType, url, channelId, interval, actor(req), guildId);
   audit(req, 'BOTADMIN_FEED_CREATE', { feedId: id, feedType, channelId }, { category: 'FEED', channelId, guildId });
   res.status(201).json({ id });

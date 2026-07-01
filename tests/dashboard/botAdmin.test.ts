@@ -179,6 +179,33 @@ describe('Bot-Admin — Passwort-Login & Session', () => {
   });
 });
 
+describe('Bot-Admin — Production Fail-Closed (BOT_ADMIN_PASSWORD)', () => {
+  const OLD_ENV = process.env.NODE_ENV;
+  const OLD_PW = process.env.BOT_ADMIN_PASSWORD;
+  afterEach(() => {
+    if (OLD_ENV === undefined) delete process.env.NODE_ENV; else process.env.NODE_ENV = OLD_ENV;
+    if (OLD_PW === undefined) delete process.env.BOT_ADMIN_PASSWORD; else process.env.BOT_ADMIN_PASSWORD = OLD_PW;
+  });
+
+  it('POST /login in Produktion OHNE BOT_ADMIN_PASSWORD -> 503, keine Session', async () => {
+    process.env.NODE_ENV = 'production';
+    delete process.env.BOT_ADMIN_PASSWORD;
+    const r = await request(makeApp()).post(`${BASE}/login`).send({ password: 'ASH' });
+    expect(r.status).toBe(503);
+    expect(prismaMock.botAdminSession.create).not.toHaveBeenCalled();
+  });
+
+  it('POST /login in Produktion MIT BOT_ADMIN_PASSWORD -> 200, Default "ASH" wirkungslos', async () => {
+    process.env.NODE_ENV = 'production';
+    process.env.BOT_ADMIN_PASSWORD = 'ein-langes-produktions-secret';
+    const bad = await request(makeApp()).post(`${BASE}/login`).send({ password: 'ASH' });
+    expect(bad.status).toBe(403);
+    const ok = await request(makeApp()).post(`${BASE}/login`).send({ password: 'ein-langes-produktions-secret' });
+    expect(ok.status).toBe(200);
+    expect(prismaMock.botAdminSession.create).toHaveBeenCalled();
+  });
+});
+
 describe('Bot-Admin — Session-Gate (requireBotAdmin)', () => {
   it('GET /overview ohne aktive Session -> 403', async () => {
     sessionRef.active = false;
@@ -241,6 +268,34 @@ describe('Bot-Admin — guild-gebundene Routen', () => {
     expect(dump).not.toMatch(/webhookSecret/);
     expect(dump).not.toMatch(/TOP-SECRET-VALUE/);
     expect(r.body.items[0]).toMatchObject({ id: 'f1', name: 'RSS' });
+  });
+
+  it('POST /feeds blockt private/lokale Hosts (SSRF)', async () => {
+    const { createFeed } = jest.requireMock('../../src/modules/feeds/feedManager') as { createFeed: jest.Mock };
+    for (const url of ['http://127.0.0.1/rss', 'http://localhost:8080/x', 'http://169.254.169.254/latest', 'http://[::1]/rss']) {
+      const r = await request(makeApp()).post(`${BASE}/feeds?guildId=${GID}`)
+        .send({ name: 'Feed', feedType: 'RSS', url, channelId: '222222222222222222' });
+      expect(r.status).toBe(400);
+      expect(r.body.error).toMatch(/SSRF|privat/i);
+    }
+    expect(createFeed).not.toHaveBeenCalled();
+  });
+
+  it('POST /feeds lehnt nicht-http(s)-Schemata ab', async () => {
+    const r = await request(makeApp()).post(`${BASE}/feeds?guildId=${GID}`)
+      .send({ name: 'Feed', feedType: 'RSS', url: 'ftp://example.com/rss', channelId: '222222222222222222' });
+    expect(r.status).toBe(400);
+    expect(r.body.error).toMatch(/http/i);
+  });
+
+  it('POST /feeds erlaubt oeffentliche http(s)-URL', async () => {
+    const { createFeed } = jest.requireMock('../../src/modules/feeds/feedManager') as { createFeed: jest.Mock };
+    createFeed.mockResolvedValueOnce('feed-new');
+    const r = await request(makeApp()).post(`${BASE}/feeds?guildId=${GID}`)
+      .send({ name: 'Feed', feedType: 'RSS', url: 'https://example.com/rss.xml', channelId: '222222222222222222' });
+    expect(r.status).toBe(201);
+    expect(r.body.id).toBe('feed-new');
+    expect(createFeed).toHaveBeenCalled();
   });
 });
 
