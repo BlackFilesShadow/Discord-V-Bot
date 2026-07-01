@@ -25,6 +25,8 @@ const ROLE_LOW = '333333333333333301';
 const ROLE_HIGH = '333333333333333302';
 const ROLE_MANAGED = '333333333333333303';
 const ROLE_LOW2 = '333333333333333304';
+const EMB_ID = 'emb-posted-1';
+const EMB_MSG = 'embmsg-1';
 
 // ── In-Memory Prisma-Store ──────────────────────────────────────────────────
 interface Row { id: string; [k: string]: unknown }
@@ -204,10 +206,12 @@ beforeEach(() => {
   embeds.clear();
   seq = 0;
   publishMenuMock.mockResolvedValue('msg-777');
+  // Bereits gesendete Einbettung, an die Reaktions-Buttons angehaengt werden.
+  embeds.set(EMB_ID, { id: EMB_ID, guildId: GID, channelId: CH, messageId: EMB_MSG });
 });
 
 async function createMenu(app: express.Express, body: Record<string, unknown> = {}) {
-  return request(app).post(BASE).send({ title: 'Rollen', channelId: CH, componentType: 'BUTTON', ...body });
+  return request(app).post(BASE).send({ title: 'Rollen', embedId: EMB_ID, componentType: 'BUTTON', ...body });
 }
 
 // ============================================================================
@@ -227,9 +231,9 @@ describe('Reaktions-Embeds Router — Menu-CRUD', () => {
     expect(res.status).toBe(400);
   });
 
-  it('lehnt ungültige channelId ab', async () => {
+  it('lehnt fehlende Einbettung ab', async () => {
     const app = makeApp();
-    const res = await request(app).post(BASE).send({ title: 'X', channelId: 'nope' });
+    const res = await request(app).post(BASE).send({ title: 'X' });
     expect(res.status).toBe(400);
   });
 
@@ -252,7 +256,7 @@ describe('Reaktions-Embeds Router — Menu-CRUD', () => {
     const app = makeApp();
     const created = await createMenu(app);
     const id = created.body.id;
-    const upd = await request(app).put(`${BASE}/${id}`).send({ title: 'Neu', channelId: CH, assignMode: 'GIVE' });
+    const upd = await request(app).put(`${BASE}/${id}`).send({ title: 'Neu', embedId: EMB_ID, assignMode: 'GIVE' });
     expect(upd.status).toBe(200);
     expect(upd.body.assignMode).toBe('GIVE');
     const del = await request(app).delete(`${BASE}/${id}`);

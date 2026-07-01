@@ -123,20 +123,17 @@ function optStr(v: unknown, max: number): string | null {
 }
 
 interface MenuInput {
-  channelId: string;
   title: string;
   description: string | null;
   mode: string;
   componentType: string;
   assignMode: string;
   maxRolesPerUser: number | null;
-  embedId: string | null;
+  embedId: string;
 }
 
 function validateMenuBody(body: unknown): { ok: true; data: MenuInput } | { ok: false; error: string } {
   const b = (body ?? {}) as Record<string, unknown>;
-  const channelId = str(b.channelId, 32);
-  if (!SNOWFLAKE_RE.test(channelId)) return { ok: false, error: 'Ungültige channelId.' };
   const title = str(b.title, 120);
   if (title.length < 1) return { ok: false, error: 'title 1..120 Zeichen.' };
   const description = optStr(b.description, 2000);
@@ -149,8 +146,10 @@ function validateMenuBody(body: unknown): { ok: true; data: MenuInput } | { ok: 
     if (!Number.isInteger(n) || n < 1 || n > 25) return { ok: false, error: 'maxRolesPerUser muss 1..25 sein.' };
     maxRolesPerUser = n;
   }
+  // Reaktions-Embeds haengen an einer bestehenden Einbettung -> embedId ist Pflicht.
   const embedId = optStr(b.embedId, 64);
-  return { ok: true, data: { channelId, title, description, mode, componentType, assignMode, maxRolesPerUser, embedId } };
+  if (!embedId) return { ok: false, error: 'Bitte eine Einbettung auswählen.' };
+  return { ok: true, data: { title, description, mode, componentType, assignMode, maxRolesPerUser, embedId } };
 }
 
 /** Prueft, ob eine Rolle sicher als Self-Role verwendet werden kann.
@@ -193,10 +192,24 @@ async function refreshGuildRoleState(guildId: string): Promise<void> {
   ]);
 }
 
-/** Stellt sicher, dass ein verknuepfter Embed derselben Guild gehoert. */
-async function embedBelongsToGuild(embedId: string, guildId: string): Promise<boolean> {
-  const row = await prisma.dashboardEmbed.findFirst({ where: { id: embedId, guildId }, select: { id: true } });
-  return row != null;
+/**
+ * Loest die verknuepfte, bereits GESENDETE Einbettung auf. Reaktions-Buttons
+ * haengen ausschliesslich an einer existierenden Embed-Nachricht -> die
+ * Einbettung muss channelId + messageId besitzen (also gepostet sein).
+ */
+async function resolveLinkedEmbed(
+  embedId: string,
+  guildId: string,
+): Promise<{ ok: true; channelId: string; messageId: string } | { ok: false; error: string }> {
+  const emb = await prisma.dashboardEmbed.findFirst({
+    where: { id: embedId, guildId },
+    select: { channelId: true, messageId: true },
+  });
+  if (!emb) return { ok: false, error: 'Verknüpfte Einbettung gehört nicht zu dieser Guild.' };
+  if (!emb.channelId || !emb.messageId) {
+    return { ok: false, error: 'Die gewählte Einbettung wurde noch nicht gesendet. Bitte sende sie zuerst im Embed-Builder.' };
+  }
+  return { ok: true, channelId: emb.channelId, messageId: emb.messageId };
 }
 
 /**
@@ -254,13 +267,13 @@ reactionEmbedsRouter.post('/', requireGuildPermission('reactionroles.manage'), a
   const v = validateMenuBody(req.body);
   if (!v.ok) { res.status(400).json({ error: v.error }); return; }
   const d = v.data;
-  if (d.embedId && !(await embedBelongsToGuild(d.embedId, scope.guildId))) {
-    res.status(400).json({ error: 'Verknüpfter Embed gehört nicht zu dieser Guild.' }); return;
-  }
+  const linked = await resolveLinkedEmbed(d.embedId, scope.guildId);
+  if (!linked.ok) { res.status(400).json({ error: linked.error }); return; }
   const menu = await prisma.selfRoleMenu.create({
     data: {
       guildId: scope.guildId,
-      channelId: d.channelId,
+      channelId: linked.channelId,
+      messageId: linked.messageId,
       title: d.title,
       description: d.description,
       mode: d.mode,
@@ -286,13 +299,13 @@ reactionEmbedsRouter.put('/:id', requireGuildPermission('reactionroles.manage'),
   const v = validateMenuBody(req.body);
   if (!v.ok) { res.status(400).json({ error: v.error }); return; }
   const d = v.data;
-  if (d.embedId && !(await embedBelongsToGuild(d.embedId, scope.guildId))) {
-    res.status(400).json({ error: 'Verknüpfter Embed gehört nicht zu dieser Guild.' }); return;
-  }
+  const linked = await resolveLinkedEmbed(d.embedId, scope.guildId);
+  if (!linked.ok) { res.status(400).json({ error: linked.error }); return; }
   await prisma.selfRoleMenu.updateMany({
     where: { id: existing.id, guildId: scope.guildId },
     data: {
-      channelId: d.channelId,
+      channelId: linked.channelId,
+      messageId: linked.messageId,
       title: d.title,
       description: d.description,
       mode: d.mode,

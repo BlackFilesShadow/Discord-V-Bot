@@ -590,6 +590,13 @@ export async function handleSelfRoleReaction(
  * Bei REACTION-Menus werden die Emojis anschliessend als Reaktion gesetzt.
  */
 export async function publishMenu(menu: MenuFull, channel: TextChannel): Promise<string> {
+  // Entkoppelt: Ist eine Einbettung verknuepft, werden die Components an die
+  // BESTEHENDE Embed-Nachricht angehaengt (Message-Edit, nur `components`).
+  // Es wird niemals eine neue Nachricht erzeugt; der Embed-Inhalt bleibt intakt.
+  if (menu.embedId) {
+    return attachMenuToEmbed(menu, channel);
+  }
+
   const { embed, files } = await buildMenuMessage(menu);
   const rows = buildMenuRows(menu);
   const content = menu.embed?.content ? String(menu.embed.content).slice(0, 2000) : undefined;
@@ -608,6 +615,53 @@ export async function publishMenu(menu: MenuFull, channel: TextChannel): Promise
   } else {
     message = await channel.send({ content, embeds: [embed], components: rows, files, allowedMentions: { parse: [] } });
     await prisma.selfRoleMenu.update({ where: { id: menu.id }, data: { messageId: message.id } });
+  }
+
+  if (componentType(menu) === 'REACTION') {
+    for (const opt of activeOptions(menu)) {
+      if (!opt.emoji) continue;
+      try { await message.react(opt.emoji); } catch { /* ungueltiges Emoji ignorieren */ }
+    }
+  }
+  return message.id;
+}
+
+/**
+ * Haengt die Button-/Select-Components an die BESTEHENDE Nachricht der
+ * verknuepften Einbettung an — per Message-Edit mit ausschliesslich `components`.
+ * Der Embed-Inhalt (Titel, Beschreibung, Felder, Bilder, Footer, Content) bleibt
+ * vollstaendig unveraendert und wird vom Live-Sync des Embed-Builders verwaltet.
+ * Es wird NIEMALS eine neue Nachricht erzeugt.
+ */
+async function attachMenuToEmbed(menu: MenuFull, channel: TextChannel): Promise<string> {
+  const emb = menu.embedId
+    ? await prisma.dashboardEmbed.findUnique({
+        where: { id: menu.embedId },
+        select: { channelId: true, messageId: true },
+      })
+    : null;
+  if (!emb?.channelId || !emb.messageId) {
+    throw new Error('Die verknüpfte Einbettung wurde noch nicht in einen Channel gesendet.');
+  }
+
+  const target = channel.id === emb.channelId
+    ? channel
+    : await channel.guild.channels.fetch(emb.channelId).catch(() => null);
+  if (!target || !target.isTextBased() || target.isDMBased()) {
+    throw new Error('Der Channel der verknüpften Einbettung ist nicht verfügbar.');
+  }
+  const message = await (target as TextChannel).messages.fetch(emb.messageId);
+
+  const rows = buildMenuRows(menu);
+  // NUR components ersetzen -> Embed + Content bleiben erhalten (Live-Sync-sicher).
+  await message.edit({ components: rows });
+
+  // messageId/channelId am Menu mit der Einbettung synchron halten.
+  if (menu.messageId !== emb.messageId || menu.channelId !== emb.channelId) {
+    await prisma.selfRoleMenu.update({
+      where: { id: menu.id },
+      data: { channelId: emb.channelId, messageId: emb.messageId },
+    });
   }
 
   if (componentType(menu) === 'REACTION') {

@@ -74,7 +74,6 @@ interface ApiEmbedLite {
 interface MenuForm {
   title: string;
   description: string;
-  channelId: string;
   componentType: ComponentType;
   assignMode: AssignMode;
   mode: Mode;
@@ -102,7 +101,7 @@ const BUTTON_STYLE_COLORS: Record<ButtonStyle, string> = {
 
 function emptyMenuForm(): MenuForm {
   return {
-    title: '', description: '', channelId: '', componentType: 'BUTTON',
+    title: '', description: '', componentType: 'BUTTON',
     assignMode: 'TOGGLE', mode: 'MULTI', maxRolesPerUser: '', embedId: '',
   };
 }
@@ -111,7 +110,6 @@ function menuToForm(m: ApiMenu): MenuForm {
   return {
     title: m.title,
     description: m.description ?? '',
-    channelId: m.channelId,
     componentType: m.componentType,
     assignMode: m.assignMode,
     mode: m.mode,
@@ -157,7 +155,6 @@ export function ReactionEmbedsTab({ guildId, canManage }: { guildId: string; can
   const [busy, setBusy] = useState(false);
 
   const menus = listQ.data?.menus ?? [];
-  const textChannels = (channelsQ.data?.channels ?? []).filter(c => c.type === 0 || c.type === 5);
   const selectableRoles = (rolesQ.data?.roles ?? [])
     .filter(r => r.id !== guildId && !r.managed)
     .sort((a, b) => b.position - a.position);
@@ -197,7 +194,7 @@ export function ReactionEmbedsTab({ guildId, canManage }: { guildId: string; can
   function addOption() {
     if (options.length >= 25) { toast.error('Maximal 25 Optionen pro Menü.'); return; }
     setOptions(o => [...o, {
-      roleIds: selectableRoles[0]?.id ? [selectableRoles[0].id] : [], label: '', emoji: '',
+      roleIds: [], label: '', emoji: '',
       description: '', confirmMessage: '', buttonStyle: 'SECONDARY', isActive: true,
     }]);
   }
@@ -232,7 +229,6 @@ export function ReactionEmbedsTab({ guildId, canManage }: { guildId: string; can
     return {
       title: form.title.trim(),
       description: form.description.trim() || null,
-      channelId: form.channelId,
       componentType: form.componentType,
       assignMode: form.assignMode,
       mode: form.mode,
@@ -243,7 +239,7 @@ export function ReactionEmbedsTab({ guildId, canManage }: { guildId: string; can
 
   function validate(): string | null {
     if (form.title.trim().length < 1) return 'Titel ist erforderlich.';
-    if (!/^\d{17,20}$/.test(form.channelId)) return 'Bitte einen Ziel-Channel wählen.';
+    if (!form.embedId) return 'Bitte eine Einbettung auswählen, an welche die Buttons angehängt werden.';
     if (form.maxRolesPerUser !== '') {
       const n = Number(form.maxRolesPerUser);
       if (!Number.isInteger(n) || n < 1 || n > 25) return 'Max. Rollen pro User muss 1..25 sein.';
@@ -462,20 +458,12 @@ export function ReactionEmbedsTab({ guildId, canManage }: { guildId: string; can
                   placeholder="Kurzer Hinweistext…"
                 />
               </Field>
-              <div className="grid grid-cols-2 gap-3">
-                <Field label="Ziel-Channel">
-                  <Select value={form.channelId} onChange={e => patch({ channelId: e.target.value })}>
-                    <option value="">— wählen —</option>
-                    {textChannels.map(c => <option key={c.id} value={c.id}>#{c.name}</option>)}
-                  </Select>
-                </Field>
-                <Field label="Verknüpftes Embed (optional)">
-                  <Select value={form.embedId} onChange={e => patch({ embedId: e.target.value })}>
-                    <option value="">— Standard-Layout —</option>
-                    {(embedsQ.data?.embeds ?? []).map(e => <option key={e.id} value={e.id}>{e.name}</option>)}
-                  </Select>
-                </Field>
-              </div>
+              <Field label="Einbettung (die Buttons werden an diese bestehende Nachricht angehängt)">
+                <Select value={form.embedId} onChange={e => patch({ embedId: e.target.value })}>
+                  <option value="">— Einbettung wählen —</option>
+                  {(embedsQ.data?.embeds ?? []).map(e => <option key={e.id} value={e.id}>{e.name}</option>)}
+                </Select>
+              </Field>
               <div className="grid grid-cols-2 gap-3">
                 <Field label="Interaktion">
                   <Select value={form.componentType} onChange={e => patch({ componentType: e.target.value as ComponentType })}>
@@ -579,7 +567,7 @@ export function ReactionEmbedsTab({ guildId, canManage }: { guildId: string; can
 
               <div className="flex flex-wrap gap-2 pt-2 border-t border-border">
                 <Button onClick={save} disabled={busy}><Save size={16} /> Speichern</Button>
-                <Button variant="secondary" onClick={saveAndSend} disabled={busy}><Send size={16} /> Speichern &amp; Senden</Button>
+                <Button variant="secondary" onClick={saveAndSend} disabled={busy}><Send size={16} /> Hinzufügen</Button>
               </div>
             </div>
           </Card>
