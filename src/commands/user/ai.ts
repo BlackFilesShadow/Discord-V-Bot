@@ -1,9 +1,11 @@
 import {
   SlashCommandBuilder,
   ChatInputCommandInteraction,
+  MessageFlags,
 } from 'discord.js';
 import { Command } from '../../types';
 import { Colors, vEmbed } from '../../utils/embedDesign';
+import { logger } from '../../utils/logger';
 import {
   answerQuestion,
   analyzeSentiment,
@@ -42,9 +44,18 @@ export const aiCommand: Command = {
         .addStringOption(o => o.setName('sprache').setDescription('Zielsprache (z.B. en, de, fr)').setRequired(false).setMaxLength(20))),
 
   execute: async (interaction: ChatInputCommandInteraction) => {
-    await interaction.deferReply();
+    // Ephemeral: AI-Antworten + Fehler nur fuer den Aufrufer sichtbar
+    // (kein Public-Spam, keine ungewollte Info-Weitergabe).
+    await interaction.deferReply({ flags: MessageFlags.Ephemeral });
     const sub = interaction.options.getSubcommand();
     const start = Date.now();
+
+    // Provider-Fehlertexte NIE roh an den Nutzer geben (koennen interne
+    // Details/Endpoints enthalten). Intern loggen, generisch antworten.
+    const aiErr = (detail: string | undefined): string => {
+      logger.warn(`/ai ${sub} fehlgeschlagen: ${detail ?? 'unbekannt'}`);
+      return '❌ Die KI-Anfrage ist fehlgeschlagen. Bitte versuche es später erneut.';
+    };
 
     try {
       let title = '';
@@ -54,27 +65,27 @@ export const aiCommand: Command = {
         const q = interaction.options.getString('frage', true);
         const r = await answerQuestion(q, { mode: 'oneshot' });
         title = '🤖  AI-Antwort';
-        body = r.success ? r.result || '_(leer)_' : `❌ ${r.error}`;
+        body = r.success ? r.result || '_(leer)_' : aiErr(r.error);
       } else if (sub === 'sentiment') {
         const t = interaction.options.getString('text', true);
         const r = await analyzeSentiment(t);
         title = '📊  Sentiment-Analyse';
         body = r.success
           ? `**Label:** ${r.label}\n**Score:** ${r.score}\n\`\`\`json\n${JSON.stringify(r.details, null, 2).slice(0, 1500)}\n\`\`\``
-          : `❌ ${r.error}`;
+          : aiErr(r.error);
       } else if (sub === 'toxicity') {
         const t = interaction.options.getString('text', true);
         const r = await detectToxicity(t);
         title = '🚨  Toxicity-Check';
         body = r.success
           ? `**Status:** ${r.label}\n**Score:** ${r.score}\n\`\`\`json\n${JSON.stringify(r.details, null, 2).slice(0, 1500)}\n\`\`\``
-          : `❌ ${r.error}`;
+          : aiErr(r.error);
       } else if (sub === 'translate') {
         const t = interaction.options.getString('text', true);
         const lang = interaction.options.getString('sprache') || 'de';
         const r = await translateText(t, lang);
         title = `🌐  Übersetzung → ${lang}`;
-        body = r.success ? r.result || '_(leer)_' : `❌ ${r.error}`;
+        body = r.success ? r.result || '_(leer)_' : aiErr(r.error);
       }
 
       const embed = vEmbed(Colors.Info)
@@ -84,9 +95,10 @@ export const aiCommand: Command = {
 
       await interaction.editReply({ embeds: [embed] });
     } catch (err) {
+      logger.error(`/ai ${sub} Ausnahme`, err as Error);
       const embed = vEmbed(Colors.Error)
         .setTitle('❌  AI-Fehler')
-        .setDescription((err as Error)?.message?.slice(0, 2000) || 'Unbekannter Fehler');
+        .setDescription('Die KI-Anfrage ist fehlgeschlagen. Bitte versuche es später erneut.');
       await interaction.editReply({ embeds: [embed] });
     }
   },
