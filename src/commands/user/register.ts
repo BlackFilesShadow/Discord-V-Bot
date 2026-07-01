@@ -22,7 +22,7 @@ const registerCommand: Command = {
         .setName('manufacturer')
         .setDescription('Als Hersteller registrieren')
         .addStringOption(opt =>
-          opt.setName('reason').setDescription('Grund für die Registrierung').setRequired(false)
+          opt.setName('reason').setDescription('Grund für die Registrierung').setRequired(false).setMaxLength(500)
         )
     )
     .addSubcommand(sub =>
@@ -73,7 +73,7 @@ async function handleManufacturerRegistration(interaction: ChatInputCommandInter
           Brand.divider
         )
         .addFields(
-          { name: '📝 Grund', value: reason || 'Kein Grund angegeben', inline: false },
+          { name: '📝 Grund', value: (reason || 'Kein Grund angegeben').slice(0, 1024), inline: false },
           { name: '🆔 User-ID', value: `\`${interaction.user.id}\``, inline: true },
           { name: '🔑 GUID', value: `\`${result.userId || 'N/A'}\``, inline: true },
         );
