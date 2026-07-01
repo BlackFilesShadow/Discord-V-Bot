@@ -133,7 +133,11 @@ jest.mock('../../src/modules/selfrole/selfRoleMenu', () => ({
 
 // Fake Discord-Client mit Guild + Rollen-Hierarchie.
 function makeRole(id: string, position: number, managed: boolean) {
-  return { id, position, managed };
+  const role = {
+    id, position, managed, name: `role-${id}`,
+    comparePositionTo(other: { position: number }) { return position - other.position; },
+  };
+  return role;
 }
 const roleCache = new Map<string, unknown>([
   [ROLE_LOW, makeRole(ROLE_LOW, 1, false)],
@@ -146,7 +150,10 @@ const guild = {
   id: GID,
   roles: { cache: roleCache, fetch: async (id?: string) => (id ? roleCache.get(id) ?? null : roleCache) },
   members: {
-    me: { roles: { highest: { position: 50 } }, permissions: { has: () => true } },
+    me: {
+      roles: { highest: { position: 50, name: 'Bot', comparePositionTo: (r: { position: number }) => 50 - r.position } },
+      permissions: { has: () => true },
+    },
     fetchMe: async () => guild.members.me,
   },
   channels: { cache: new Map([[CH, textChannel]]) },
@@ -292,7 +299,7 @@ describe('Reaktions-Embeds Router — Optionen & Rollen-Schutz', () => {
     const m = await createMenu(app);
     const res = await request(app).post(`${BASE}/${m.body.id}/options`).send({ roleId: ROLE_HIGH, label: 'Zu hoch' });
     expect(res.status).toBe(400);
-    expect(res.body.error).toMatch(/hoch/i);
+    expect(res.body.error).toMatch(/steht nicht über|Bot-Rolle/i);
   });
 
   it('verhindert doppelte Rolle im selben Menu (409)', async () => {

@@ -29,7 +29,7 @@ import { requireGuildPermission } from '../../middleware/auth';
 import prisma from '../../../database/prisma';
 import { tryGetDashboardClient } from '../../clientRegistry';
 import { validateBotChannelAccess } from '../../../utils/discordChannel';
-import { logAuditDb } from '../../../utils/logger';
+import { logAuditDb, logger } from '../../../utils/logger';
 import { emitGuildEvent } from '../../socket/emitter';
 import { getMenuFull, publishMenu } from '../../../modules/selfrole/selfRoleMenu';
 
@@ -153,7 +153,9 @@ function validateMenuBody(body: unknown): { ok: true; data: MenuInput } | { ok: 
   return { ok: true, data: { channelId, title, description, mode, componentType, assignMode, maxRolesPerUser, embedId } };
 }
 
-/** Prueft, ob eine Rolle sicher als Self-Role verwendet werden kann. */
+/** Prueft, ob eine Rolle sicher als Self-Role verwendet werden kann.
+ *  Erwartet, dass Rollen-Cache + Bot-Member zuvor frisch geladen wurden
+ *  (siehe refreshGuildRoleState / parseOptionRoles). */
 async function validateRole(guildId: string, roleId: string): Promise<string | null> {
   if (!SNOWFLAKE_RE.test(roleId)) return 'Ungültige roleId.';
   if (roleId === guildId) return '@everyone kann nicht als Reaktionsrolle verwendet werden.';
@@ -163,17 +165,32 @@ async function validateRole(guildId: string, roleId: string): Promise<string | n
   const role = guild.roles.cache.get(roleId) ?? await guild.roles.fetch(roleId).catch(() => null);
   if (!role) return 'Rolle nicht gefunden.';
   if (role.managed) return 'Von Integrationen verwaltete Rollen sind nicht erlaubt.';
-  // Bot-Member kann als Partial oder mit veralteten Rollen im Cache liegen ->
-  // frisch nachladen, sonst kollabiert roles.highest auf @everyone und JEDE
-  // Rolle wirkt faelschlich "zu hoch".
-  const me = guild.members.me ?? await guild.members.fetchMe().catch(() => null);
-  if (me && me.roles.highest.position <= role.position) {
-    return 'Bot-Rolle ist nicht hoch genug, um diese Rolle zu vergeben.';
-  }
-  if (me && !me.permissions.has(PermissionFlagsBits.ManageRoles)) {
+  const me = guild.members.me;
+  if (!me) return null; // Bot-Member nicht ermittelbar -> Persistenz erlauben, Laufzeit prueft erneut.
+  if (!me.permissions.has(PermissionFlagsBits.ManageRoles)) {
     return 'Dem Bot fehlt die Berechtigung „Rollen verwalten".';
   }
+  // comparePositionTo nutzt die (frisch geladenen) Positionen aus guild.roles.cache.
+  if (me.roles.highest.comparePositionTo(role) <= 0) {
+    logger.warn(
+      `[ReactionRole] Hierarchie-Block: Bot-Top-Rolle "${me.roles.highest.name}" (pos ${me.roles.highest.position}) ` +
+      `steht nicht über Ziel-Rolle "${role.name}" (pos ${role.position}) in Guild ${guildId}.`,
+    );
+    return `Die Bot-Rolle „${me.roles.highest.name}" steht nicht über der Rolle „${role.name}". ` +
+      'Ziehe die Bot-Rolle in den Server-Rolleneinstellungen über die zu vergebende Rolle.';
+  }
   return null;
+}
+
+/** Laedt Rollen-Positionen + Bot-Member erzwungen neu, damit me.roles.highest
+ *  korrekt ist (Cache kann nach dem Umsortieren von Rollen veraltet sein). */
+async function refreshGuildRoleState(guildId: string): Promise<void> {
+  const guild = tryGetDashboardClient()?.guilds.cache.get(guildId);
+  if (!guild) return;
+  await Promise.all([
+    guild.roles.fetch(undefined, { force: true }).catch(() => null),
+    guild.members.fetchMe({ force: true }).catch(() => null),
+  ]);
 }
 
 /** Stellt sicher, dass ein verknuepfter Embed derselben Guild gehoert. */
@@ -200,13 +217,7 @@ async function parseOptionRoles(
   // Rollen-Positionen + Bot-Member einmalig frisch laden: nach dem Umsortieren
   // von Rollen kann der Cache veraltete Positionen enthalten, wodurch die
   // Hierarchie-Pruefung faelschlich fehlschlaegt.
-  const guild = tryGetDashboardClient()?.guilds.cache.get(guildId);
-  if (guild) {
-    await Promise.all([
-      guild.roles.fetch(undefined, { force: true }).catch(() => null),
-      guild.members.fetchMe().catch(() => null),
-    ]);
-  }
+  await refreshGuildRoleState(guildId);
   for (const id of ids) {
     const err = await validateRole(guildId, id);
     if (err) return { ok: false, error: err };
