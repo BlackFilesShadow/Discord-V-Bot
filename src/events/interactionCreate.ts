@@ -469,6 +469,29 @@ const interactionCreateEvent: BotEvent = {
       }
     }
 
+    // Zentrale Discord-Permission-Pruefung: command.permissions (falls gesetzt)
+    // verlangt, dass das aufrufende Mitglied ALLE angegebenen Discord-Rechte im
+    // Server besitzt. Das Feld war bisher deklariert, aber nirgends erzwungen.
+    if (command.permissions && command.permissions.length > 0) {
+      if (!i.inGuild()) {
+        await i.reply({ content: '🔒 Dieser Command ist nur in Servern verfügbar.', ephemeral: true });
+        return;
+      }
+      const missing = command.permissions.filter(p => !i.memberPermissions?.has(p));
+      if (missing.length > 0) {
+        await i.reply({
+          content: '🔒 Dir fehlen die nötigen Server-Berechtigungen für diesen Command.',
+          ephemeral: true,
+        });
+        logAudit('COMMAND_PERMISSION_DENIED', 'SECURITY', {
+          userId: i.user.id,
+          command: i.commandName,
+          missing: missing.map(String),
+        });
+        return;
+      }
+    }
+
     // Command ausführen
     const stopTimer = commandDurationHistogram.startTimer({ command: i.commandName });
     try {
