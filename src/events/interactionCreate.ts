@@ -85,6 +85,34 @@ function isOwnerOrGuildOwner(userId: string, interaction: Interaction): boolean 
 }
 
 /**
+ * Prüft ob ein User der Bot-Owner (BOT_OWNER_ID) ist.
+ * NUR der Bot-Owner darf devOnly-Commands ohne Passwort/Session umgehen.
+ */
+export function isBotOwner(userId: string): boolean {
+  return userId === config.discord.ownerId;
+}
+
+/**
+ * Entscheidet, ob der Owner/Guild-Owner-Bypass für einen Command greift.
+ *
+ * Sicherheits-Invariante:
+ * - devOnly wird NIE per Owner/Guild-Owner-Bypass umgangen (nur der Bot-Owner
+ *   umgeht devOnly separat, siehe isBotOwner).
+ * - manufacturerOnly wird NIE umgangen (an verifizierten GUID-Bereich gebunden).
+ * - adminOnly darf sowohl Bot-Owner als auch Discord-Guild-Owner umgehen.
+ */
+export function ownerBypassApplies(
+  command: { devOnly?: boolean; manufacturerOnly?: boolean },
+  userId: string,
+  guildOwnerId: string | null,
+): boolean {
+  if (command.devOnly || command.manufacturerOnly) return false;
+  if (isBotOwner(userId)) return true;
+  if (guildOwnerId && guildOwnerId === userId) return true;
+  return false;
+}
+
+/**
  * Prüft ob ein User eine Admin-Rolle in der DB hat.
  */
 async function hasAdminRole(discordId: string): Promise<boolean> {
@@ -323,65 +351,71 @@ const interactionCreateEvent: BotEvent = {
     if (command.adminOnly || command.devOnly || command.manufacturerOnly) {
       const userId = i.user.id;
 
-      // 1) Owner/Guild-Owner → IMMER durchlassen (NUR für Admin/Dev,
-      //    NICHT für Manufacturer-Commands! Uploads sind an einen GUID-Bereich
-      //    gebunden, der nur durch echte /register manufacturer Verifizierung
-      //    entsteht. Owner muss sich genauso registrieren.)
-      if (isOwnerOrGuildOwner(userId, i) && !command.manufacturerOnly) {
+      // 1) Owner/Guild-Owner → Bypass NUR für adminOnly (NICHT devOnly,
+      //    NICHT manufacturerOnly). devOnly wird unten strikt geprüft; dort
+      //    umgeht ausschließlich der Bot-Owner (BOT_OWNER_ID). Manufacturer-
+      //    Commands sind an einen per /register manufacturer verifizierten
+      //    GUID-Bereich gebunden — auch der Owner muss sich registrieren.
+      if (ownerBypassApplies(command, userId, i.guild?.ownerId ?? null)) {
         // Keine Prüfung nötig — direkt ausführen
       }
-      // 2) Dev-Commands → Passwort-Authentifizierung (2h Session)
+      // 2) Dev-Commands → NUR der Bot-Owner (BOT_OWNER_ID) umgeht devOnly.
+      //    Discord-Guild-Owner haben hier KEINEN Bypass und müssen — wie alle
+      //    anderen — das Dev-Passwort / eine gültige Dev-Session (2h) nachweisen.
       else if (command.devOnly) {
-        if (!config.developer.password) {
-          await i.reply({ content: '🔒 Developer-Passwort nicht konfiguriert.', ephemeral: true });
-          return;
+        if (!isBotOwner(userId)) {
+          if (!config.developer.password) {
+            await i.reply({ content: '🔒 Developer-Passwort nicht konfiguriert.', ephemeral: true });
+            return;
+          }
+
+          // Lockout-Check vor Modal
+          const fails = await getDevFails(userId);
+          if (fails && fails.lockedUntil > Date.now()) {
+            const remainMin = Math.ceil((fails.lockedUntil - Date.now()) / 60_000);
+            await i.reply({
+              content: `🔒 Zu viele Fehlversuche. Dev-Login gesperrt für **${remainMin} Min.**`,
+              ephemeral: true,
+            });
+            logAudit('DEV_AUTH_BLOCKED_LOCKED', 'SECURITY', {
+              userId,
+              command: i.commandName,
+              remainMin,
+            });
+            return;
+          }
+
+          const devExpires = await getDevSessionExpires(userId);
+          if (!devExpires || devExpires <= Date.now()) {
+            await clearDevSession(userId);
+
+            const modalId = `dev_auth_${userId}_${Date.now()}`;
+            pendingDevAuth.set(modalId, {
+              commandName: i.commandName,
+              userId,
+              expires: Date.now() + 120_000,
+            });
+
+            const modal = new ModalBuilder()
+              .setCustomId(modalId)
+              .setTitle('🔐 Developer-Authentifizierung');
+
+            const passwordInput = new TextInputBuilder()
+              .setCustomId('dev_password')
+              .setLabel('Developer-Passwort eingeben')
+              .setPlaceholder('Passwort für den Developer-Bereich')
+              .setStyle(TextInputStyle.Short)
+              .setRequired(true);
+
+            const row = new ActionRowBuilder<TextInputBuilder>().addComponents(passwordInput);
+            modal.addComponents(row);
+
+            await i.showModal(modal);
+            return;
+          }
+          // Sonst: Dev bereits authentifiziert → durchlassen
         }
-
-        // Lockout-Check vor Modal
-        const fails = await getDevFails(userId);
-        if (fails && fails.lockedUntil > Date.now()) {
-          const remainMin = Math.ceil((fails.lockedUntil - Date.now()) / 60_000);
-          await i.reply({
-            content: `🔒 Zu viele Fehlversuche. Dev-Login gesperrt für **${remainMin} Min.**`,
-            ephemeral: true,
-          });
-          logAudit('DEV_AUTH_BLOCKED_LOCKED', 'SECURITY', {
-            userId,
-            command: i.commandName,
-            remainMin,
-          });
-          return;
-        }
-
-        const devExpires = await getDevSessionExpires(userId);
-        if (!devExpires || devExpires <= Date.now()) {
-          await clearDevSession(userId);
-
-          const modalId = `dev_auth_${userId}_${Date.now()}`;
-          pendingDevAuth.set(modalId, {
-            commandName: i.commandName,
-            userId,
-            expires: Date.now() + 120_000,
-          });
-
-          const modal = new ModalBuilder()
-            .setCustomId(modalId)
-            .setTitle('🔐 Developer-Authentifizierung');
-
-          const passwordInput = new TextInputBuilder()
-            .setCustomId('dev_password')
-            .setLabel('Developer-Passwort eingeben')
-            .setPlaceholder('Passwort für den Developer-Bereich')
-            .setStyle(TextInputStyle.Short)
-            .setRequired(true);
-
-          const row = new ActionRowBuilder<TextInputBuilder>().addComponents(passwordInput);
-          modal.addComponents(row);
-
-          await i.showModal(modal);
-          return;
-        }
-        // Sonst: Dev bereits authentifiziert → durchlassen
+        // Bot-Owner ODER gültige Dev-Session → ausführen
       }
       // 3) Admin-Commands → DB-Rolle prüfen (kein Passwort nötig)
       else if (command.adminOnly) {
