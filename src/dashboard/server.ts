@@ -285,10 +285,11 @@ export async function startDashboard(client?: Client): Promise<void> {
     app.use('/uploads/factions', express.static(factionsDir, staticOpts));
   }
   // Willkommens-/Medien-Assets (Discord-Embeds laden diese URLs serverseitig).
+  // Ordner beim Start sicherstellen, damit die Static-Route auch vor dem ersten
+  // Upload registriert ist (sonst 404 in der Dashboard-Vorschau bis Neustart).
   const mediaDir = path.join(config.upload.dir, 'media');
-  if (fs.existsSync(mediaDir)) {
-    app.use('/uploads/media', express.static(mediaDir, staticOpts));
-  }
+  fs.mkdirSync(mediaDir, { recursive: true });
+  app.use('/uploads/media', express.static(mediaDir, staticOpts));
 
   // Phase 4: Statische Auslieferung des Vite-Frontends + SPA-Fallback.
   // Build-Output liegt in src/dashboard/public (vom dashboard-ui via `npm run build:ui`).

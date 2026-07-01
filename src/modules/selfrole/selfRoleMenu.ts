@@ -14,10 +14,11 @@ import {
   TextChannel,
   type MessageActionRowComponentBuilder,
 } from 'discord.js';
+import type { AttachmentBuilder } from 'discord.js';
 import prisma from '../../database/prisma';
 import { Colors, Brand, vEmbed } from '../../utils/embedDesign';
 import { logger, logAudit } from '../../utils/logger';
-import { buildDiscordEmbed, type EmbedData } from '../embeds/embedBuilder';
+import { buildDiscordEmbed, buildEmbedMedia, type EmbedData } from '../embeds/embedBuilder';
 
 /**
  * SelfRole-Modul: Admin baut Menus, User toggelt Rollen via Button/Select/Reaktion.
@@ -138,6 +139,22 @@ export function buildMenuEmbed(menu: MenuFull): EmbedBuilder {
     .setTitle(`🎭 ${menu.title}`)
     .setDescription(desc)
     .setFooter({ text: `${Brand.footerText} • Self-Role-Menu` });
+}
+
+/**
+ * Baut Embed + anzuhaengende Dateien fuer die Menu-Nachricht.
+ * Ist ein Embed-Design (Embed-Builder) verknuepft, werden dessen lokal
+ * hochgeladene Bilder als Discord-Attachments (`attachment://`) aufgeloest —
+ * analog zum Embed-Builder-Send-Pfad, damit Bilder in Discord sichtbar sind.
+ */
+async function buildMenuMessage(
+  menu: MenuFull,
+): Promise<{ embed: EmbedBuilder; files: AttachmentBuilder[] }> {
+  if (menu.embed) {
+    const { files, resolved } = await buildEmbedMedia(menu.embed);
+    return { embed: buildDiscordEmbed(menu.embed, resolved), files };
+  }
+  return { embed: buildMenuEmbed(menu), files: [] };
 }
 
 /**
@@ -573,7 +590,7 @@ export async function handleSelfRoleReaction(
  * Bei REACTION-Menus werden die Emojis anschliessend als Reaktion gesetzt.
  */
 export async function publishMenu(menu: MenuFull, channel: TextChannel): Promise<string> {
-  const embed = buildMenuEmbed(menu);
+  const { embed, files } = await buildMenuMessage(menu);
   const rows = buildMenuRows(menu);
   const content = menu.embed?.content ? String(menu.embed.content).slice(0, 2000) : undefined;
 
@@ -581,14 +598,15 @@ export async function publishMenu(menu: MenuFull, channel: TextChannel): Promise
   if (menu.messageId) {
     try {
       const existing = await channel.messages.fetch(menu.messageId);
-      await existing.edit({ content: content ?? null, embeds: [embed], components: rows });
+      // attachments: [] entfernt alte Anhaenge; `files` laedt aktuelle Uploads neu hoch.
+      await existing.edit({ content: content ?? null, embeds: [embed], components: rows, files, attachments: [] });
       message = existing;
     } catch {
-      message = await channel.send({ content, embeds: [embed], components: rows, allowedMentions: { parse: [] } });
+      message = await channel.send({ content, embeds: [embed], components: rows, files, allowedMentions: { parse: [] } });
       await prisma.selfRoleMenu.update({ where: { id: menu.id }, data: { messageId: message.id } });
     }
   } else {
-    message = await channel.send({ content, embeds: [embed], components: rows, allowedMentions: { parse: [] } });
+    message = await channel.send({ content, embeds: [embed], components: rows, files, allowedMentions: { parse: [] } });
     await prisma.selfRoleMenu.update({ where: { id: menu.id }, data: { messageId: message.id } });
   }
 
