@@ -1,27 +1,23 @@
 /**
- * Tests für die Dashboard-API-Routes (Sektion 7, 12).
- * Prüft Auth-Middleware, Rate-Limiting, API-Endpunkte.
+ * Tests für den Legacy-API-Router (Sektion 7, 12).
+ *
+ * SICHERHEIT (P0): Der Router stellt nur noch /api/me bereit. Die frueheren
+ * ungeschuetzten Admin-Endpoints wurden entfernt und muessen 404 liefern —
+ * insbesondere auch fuer authentifizierte Sessions (kein Datenabfluss).
  */
 
 // Mock Prisma
 jest.mock('../../src/database/prisma', () => ({
   __esModule: true,
   default: {
-    user: { findMany: jest.fn().mockResolvedValue([]), count: jest.fn().mockResolvedValue(0) },
-    package: { findMany: jest.fn().mockResolvedValue([]), count: jest.fn().mockResolvedValue(0) },
-    auditLog: { findMany: jest.fn().mockResolvedValue([]), count: jest.fn().mockResolvedValue(0) },
-    securityEvent: { findMany: jest.fn().mockResolvedValue([]), count: jest.fn().mockResolvedValue(0) },
-    giveaway: { findMany: jest.fn().mockResolvedValue([]) },
-    moderationCase: { findMany: jest.fn().mockResolvedValue([]) },
-    levelData: { findMany: jest.fn().mockResolvedValue([]) },
-    botConfig: { findMany: jest.fn().mockResolvedValue([]) },
-    session: { findMany: jest.fn().mockResolvedValue([]) },
+    user: {
+      findUnique: jest.fn().mockResolvedValue({
+        discordId: '123',
+        username: 'tester',
+        role: 'USER',
+      }),
+    },
   },
-}));
-
-jest.mock('../../src/modules/logging/analyticsManager', () => ({
-  getAnalytics: jest.fn().mockResolvedValue({ users: 0, packages: 0, downloads: 0 }),
-  checkAlerts: jest.fn().mockResolvedValue([]),
 }));
 
 import express from 'express';
@@ -52,139 +48,68 @@ function createTestApp(sessionData?: Record<string, unknown>) {
   return app;
 }
 
+// Endpoints, die frueher existierten und jetzt ENTFERNT sind.
+const REMOVED_ENDPOINTS = [
+  '/api/stats',
+  '/api/alerts',
+  '/api/users',
+  '/api/packages',
+  '/api/audit-logs',
+  '/api/security-events',
+  '/api/giveaways',
+  '/api/moderation',
+  '/api/leaderboard',
+  '/api/config',
+];
+
 describe('Dashboard API Routes (Sektion 7)', () => {
   describe('Auth-Middleware', () => {
     it('sollte unauthentifizierte Anfragen ablehnen (401)', async () => {
       const app = createTestApp();
-      const res = await request(app).get('/api/stats');
+      const res = await request(app).get('/api/me');
       expect(res.status).toBe(401);
       expect(res.body.error).toContain('Nicht authentifiziert');
     });
 
     it('sollte 2FA-pending Anfragen ablehnen (403)', async () => {
       const app = createTestApp({ userId: 'test', requires2FA: true });
-      const res = await request(app).get('/api/stats');
+      const res = await request(app).get('/api/me');
       expect(res.status).toBe(403);
       expect(res.body.error).toContain('2FA');
     });
+  });
 
-    it('sollte authentifizierte Anfragen durchlassen', async () => {
+  describe('GET /api/me', () => {
+    it('liefert die eigenen minimalen Session-Daten', async () => {
       const app = createTestApp({ userId: 'test-user-id' });
-      const res = await request(app).get('/api/stats');
+      const res = await request(app).get('/api/me');
       expect(res.status).toBe(200);
+      expect(res.body).toHaveProperty('user');
+      expect(res.body.user).toHaveProperty('username', 'tester');
+      expect(res.body.user).toHaveProperty('role', 'USER');
+      // Keine Tokens/sensitiven Felder im Response.
+      expect(res.body.user).not.toHaveProperty('accessToken');
+      expect(res.body.user).not.toHaveProperty('refreshToken');
     });
   });
 
-  describe('GET /api/stats', () => {
-    it('sollte Statistiken zurückgeben', async () => {
-      const app = createTestApp({ userId: 'test' });
-      const res = await request(app).get('/api/stats');
-      expect(res.status).toBe(200);
-      expect(res.body).toHaveProperty('users');
-    });
-  });
+  describe('Entfernte Legacy-Endpoints (P0 security regression)', () => {
+    it.each(REMOVED_ENDPOINTS)(
+      '%s liefert 404 fuer authentifizierte Sessions (kein Datenabfluss)',
+      async (path) => {
+        const app = createTestApp({ userId: 'test-user-id' });
+        const res = await request(app).get(path);
+        expect(res.status).toBe(404);
+      }
+    );
 
-  describe('GET /api/users', () => {
-    it('sollte paginierte User zurückgeben', async () => {
-      const app = createTestApp({ userId: 'test' });
-      const res = await request(app).get('/api/users?page=1&perPage=10');
-      expect(res.status).toBe(200);
-      expect(res.body).toHaveProperty('users');
-      expect(res.body).toHaveProperty('total');
-      expect(res.body).toHaveProperty('page');
-    });
-  });
-
-  describe('GET /api/packages', () => {
-    it('sollte paginierte Pakete zurückgeben', async () => {
-      const app = createTestApp({ userId: 'test' });
-      const res = await request(app).get('/api/packages?page=1');
-      expect(res.status).toBe(200);
-      expect(res.body).toHaveProperty('packages');
-      expect(res.body).toHaveProperty('totalPages');
-    });
-  });
-
-  describe('GET /api/audit-logs', () => {
-    it('sollte Audit-Logs zurückgeben', async () => {
-      const app = createTestApp({ userId: 'test' });
-      const res = await request(app).get('/api/audit-logs?days=7');
-      expect(res.status).toBe(200);
-      expect(res.body).toHaveProperty('logs');
-    });
-  });
-
-  describe('GET /api/security-events', () => {
-    it('sollte Security-Events zurückgeben', async () => {
-      const app = createTestApp({ userId: 'test' });
-      const res = await request(app).get('/api/security-events');
-      expect(res.status).toBe(200);
-      expect(res.body).toHaveProperty('events');
-    });
-  });
-
-  describe('GET /api/leaderboard', () => {
-    it('sollte Leaderboard-Daten zurückgeben (mit guildId)', async () => {
-      const app = createTestApp({ userId: 'test' });
-      const res = await request(app).get('/api/leaderboard?guildId=g1&limit=10');
-      expect(res.status).toBe(200);
-      expect(res.body).toHaveProperty('entries');
-    });
-
-    it('sollte 400 ohne guildId zurückgeben', async () => {
-      const app = createTestApp({ userId: 'test' });
-      const res = await request(app).get('/api/leaderboard?limit=10');
-      expect(res.status).toBe(400);
-    });
-  });
-
-  describe('GET /api/config', () => {
-    it('liefert botConfig-Liste', async () => {
-      const app = createTestApp({ userId: 'test' });
-      const res = await request(app).get('/api/config');
-      expect(res.status).toBe(200);
-      expect(res.body).toHaveProperty('configs');
-    });
-  });
-
-  describe('GET /api/giveaways', () => {
-    it('liefert Giveaway-Liste', async () => {
-      const app = createTestApp({ userId: 'test' });
-      const res = await request(app).get('/api/giveaways');
-      expect(res.status).toBe(200);
-      expect(res.body).toHaveProperty('giveaways');
-    });
-  });
-
-  describe('GET /api/moderation', () => {
-    it('liefert Moderations-Faelle', async () => {
-      const app = createTestApp({ userId: 'test' });
-      const res = await request(app).get('/api/moderation?active=true');
-      expect(res.status).toBe(200);
-      expect(res.body).toHaveProperty('cases');
-    });
-  });
-
-  describe('GET /api/security-events Filter', () => {
-    it('akzeptiert severity+unresolved Query-Params', async () => {
-      const app = createTestApp({ userId: 'test' });
-      const res = await request(app).get('/api/security-events?unresolved=true&severity=HIGH');
-      expect(res.status).toBe(200);
-      expect(res.body).toHaveProperty('events');
-    });
-  });
-
-  describe('GET /api/users Filter', () => {
-    it('akzeptiert filter=manufacturers', async () => {
-      const app = createTestApp({ userId: 'test' });
-      const res = await request(app).get('/api/users?filter=manufacturers');
-      expect(res.status).toBe(200);
-    });
-
-    it('akzeptiert filter=banned', async () => {
-      const app = createTestApp({ userId: 'test' });
-      const res = await request(app).get('/api/users?filter=banned');
-      expect(res.status).toBe(200);
-    });
+    it.each(REMOVED_ENDPOINTS)(
+      '%s liefert 401 fuer unauthentifizierte Anfragen',
+      async (path) => {
+        const app = createTestApp();
+        const res = await request(app).get(path);
+        expect(res.status).toBe(401);
+      }
+    );
   });
 });
