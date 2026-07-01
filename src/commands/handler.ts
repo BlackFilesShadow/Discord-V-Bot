@@ -21,14 +21,17 @@ export async function loadCommands(client: ExtendedClient): Promise<void> {
     const existing = commandSources.get(cmd.data.name);
     if (existing && existing !== sourceFile) {
       collisionCount++;
-      logger.warn(
-        `[Command-Collision] /${cmd.data.name} ist doppelt definiert: ` +
-        `"${existing}" und "${sourceFile}". Letztere ueberschreibt erstere. ` +
-        `Bitte doppelten Command-Namen aufloesen.`,
-      );
-      if (process.env.COMMAND_LOADER_STRICT === 'true') {
+      const base = `[Command-Collision] /${cmd.data.name} ist doppelt definiert: ` +
+        `"${existing}" und "${sourceFile}".`;
+      // Strikt per Default: eine Namenskollision ist ein Konfigurationsfehler und
+      // darf nicht still zu einem ueberschriebenen Command fuehren (unklares
+      // Verhalten, Sicherheits-/Permission-Risiko). Nur mit explizitem
+      // COMMAND_LOADER_STRICT=false wird toleriert (warnen + ueberschreiben).
+      if (process.env.COMMAND_LOADER_STRICT !== 'false') {
+        logger.error(`${base} Abbruch (setze COMMAND_LOADER_STRICT=false zum Tolerieren).`);
         throw new Error(`Command-Collision: /${cmd.data.name} in "${existing}" und "${sourceFile}"`);
       }
+      logger.warn(`${base} Letztere ueberschreibt erstere (COMMAND_LOADER_STRICT=false).`);
     }
     commandSources.set(cmd.data.name, sourceFile);
     client.commands.set(cmd.data.name, cmd);
