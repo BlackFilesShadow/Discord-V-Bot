@@ -248,7 +248,9 @@ function WhitelistPanel({ guildId, slot }: { guildId: string; slot: string }) {
   });
 
   const add = useMutation({
-    mutationFn: (gameId: string) => api.post(`/api/v2/guilds/${guildId}/whitelist${qs}`, { gameId }),
+    mutationFn: (gameId: string) => api.post(`/api/v2/guilds/${guildId}/whitelist${qs}`, {
+      gameId, confirm: true, reason: `Whitelist-Eintrag hinzugefuegt: ${gameId}`,
+    }),
     onSuccess: () => {
       setNewId('');
       void qc.invalidateQueries({ queryKey: ['whitelist', guildId, slot] });
@@ -256,14 +258,18 @@ function WhitelistPanel({ guildId, slot }: { guildId: string; slot: string }) {
   });
 
   const remove = useMutation({
-    mutationFn: (gameId: string) => api.del(`/api/v2/guilds/${guildId}/whitelist/${gameId}${qs}`),
+    mutationFn: (gameId: string) => api.del(`/api/v2/guilds/${guildId}/whitelist/${gameId}${qs}`, {
+      confirm: true, reason: `Whitelist-Eintrag entfernt: ${gameId}`,
+    }),
     onSuccess: () => qc.invalidateQueries({ queryKey: ['whitelist', guildId, slot] }),
   });
 
   const decide = useMutation({
     mutationFn: (vars: { id: string; approve: boolean; reason?: string }) =>
       api.post(`/api/v2/guilds/${guildId}/whitelist/requests/${vars.id}/decision${qs}`, {
-        approve: vars.approve, reason: vars.reason,
+        approve: vars.approve,
+        reason: vars.reason?.trim() || (vars.approve ? 'Whitelist-Request genehmigt' : undefined),
+        confirm: true,
       }),
     onSuccess: () => {
       void qc.invalidateQueries({ queryKey: ['whitelist-requests', guildId, slot] });
@@ -272,10 +278,10 @@ function WhitelistPanel({ guildId, slot }: { guildId: string; slot: string }) {
   });
 
   const sync = useMutation({
-    mutationFn: (vars: { mode: 'preview' | 'apply'; direction: 'pull' | 'push' | 'merge' }) =>
+    mutationFn: (vars: { mode: 'preview' | 'apply'; direction: 'pull' | 'push' | 'merge'; reason?: string }) =>
       api.post<{ ok: boolean; preview?: boolean; applied?: boolean; diff: SyncDiff; dbInserted?: number; dbDeleted?: number; jobsCreated?: number }>(
         `/api/v2/guilds/${guildId}/whitelist/sync${qs}`,
-        vars,
+        { ...vars, confirm: true },
       ),
     onSuccess: (res, vars) => {
       setSyncDiff(res.diff);
@@ -367,9 +373,17 @@ function WhitelistPanel({ guildId, slot }: { guildId: string; slot: string }) {
               size="sm"
               disabled={sync.isPending}
               onClick={() => {
-                if (!confirm(`Synchronisation (${syncDirection}) jetzt ausfuehren?`)) return;
+                let reason: string | undefined;
+                if (syncDirection === 'push' || syncDirection === 'merge') {
+                  const r = window.prompt(`Begruendung fuer Nitrado-Sync (${syncDirection}):`, '');
+                  if (r === null) return;
+                  if (r.trim().length < 3) { setSyncResult('Begruendung erforderlich (min. 3 Zeichen).'); return; }
+                  reason = r.trim();
+                } else if (!confirm(`Synchronisation (${syncDirection}) jetzt ausfuehren?`)) {
+                  return;
+                }
                 setSyncResult(null);
-                sync.mutate({ mode: 'apply', direction: syncDirection });
+                sync.mutate({ mode: 'apply', direction: syncDirection, reason });
               }}
             >
               Anwenden

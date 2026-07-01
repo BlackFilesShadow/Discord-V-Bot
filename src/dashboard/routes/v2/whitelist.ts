@@ -62,6 +62,10 @@ whitelistRouter.post('/', requireGuildPermission('whitelist.manage'), async (req
   const gameId = (rawId as string).trim();
   const src = (source === 'REQUEST' || source === 'IMPORT') ? source : 'DIRECT';
 
+  // Spec §12: erstellt einen NitradoJob('WHITELIST_ADD') -> schreibende
+  // Nitrado-Aktion. Bei aktivem Schreibschutz Confirm + Reason + Audit noetig.
+  if (!ensureNitradoWriteAllowed(req, res, { action: 'NITRADO_WHITELIST_ADD', danger: false })) return;
+
   try {
     await prisma.$transaction(async tx => {
       await tx.whitelistEntry.create({
@@ -94,6 +98,9 @@ whitelistRouter.delete('/:gameId', requireGuildPermission('whitelist.manage'), a
   if (!connId) { res.status(404).json({ error: 'Kein Nitrado-Slot.' }); return; }
   const gameId = String(req.params.gameId).trim();
   if (!isValidName(gameId)) { res.status(400).json({ error: 'Ungueltiger Name.' }); return; }
+  // Spec §12: erstellt einen NitradoJob('WHITELIST_REMOVE') -> schreibende
+  // Nitrado-Aktion. Bei aktivem Schreibschutz Confirm + Reason + Audit noetig.
+  if (!ensureNitradoWriteAllowed(req, res, { action: 'NITRADO_WHITELIST_REMOVE', danger: false })) return;
   await prisma.$transaction(async tx => {
     await tx.whitelistEntry.deleteMany({
       where: { guildId: scope.guildId, nitradoConnId: connId, gameId },
@@ -141,6 +148,11 @@ whitelistRouter.post('/requests/:id/decision', requireGuildPermission('whitelist
     where: { id: String(req.params.id), guildId: scope.guildId, nitradoConnId: connId },
   });
   if (!reqRow) { res.status(404).json({ error: 'Request nicht gefunden.' }); return; }
+
+  // Spec §12: nur die Genehmigung erzeugt einen NitradoJob('WHITELIST_ADD')
+  // (schreibende Nitrado-Aktion). Ablehnung schreibt nichts nach Nitrado und
+  // bleibt ungated. Guard VOR dem CAS, damit bei 412 kein Statuswechsel erfolgt.
+  if (approve && !ensureNitradoWriteAllowed(req, res, { action: 'NITRADO_WHITELIST_REQUEST_APPROVE', danger: false })) return;
 
   // Atomic CAS: nur entscheiden wenn noch PENDING (schliesst Race mit Discord-Button).
   const cas = await prisma.whitelistRequest.updateMany({
