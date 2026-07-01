@@ -1,7 +1,7 @@
 # V-Bot Prime
 
 > **Der adaptive All-in-One Discord-Bot für Communities, die mehr wollen als „nur einen Bot“.**
-> Server-Awareness, KI-Konversation in Deutsch, Multi-Sprach-Posts, Auto-Moderation, XP-System, Hersteller-Uploads bis 2 GB — auf einem dedizierten Server, DSGVO-konform, mit eigener Persona.
+> Server-Awareness, KI-Konversation in Deutsch, Multi-Sprach-Posts, Auto-Moderation, XP-System, Hersteller-Uploads bis 25 MB — auf einem dedizierten Server, DSGVO-konform, mit eigener Persona.
 
 ---
 
@@ -37,7 +37,7 @@ Er kennt deinen Server, deine Mitglieder, deine Kanäle, deine Rollen — und an
 - Bis zu 4000 Zeichen Originaltext
 
 ### 📦 Hersteller-Upload-System
-- **Bis zu 2 GB pro Datei**, beliebig viele Dateien pro Paket
+- **Bis zu 25 MB pro Datei** (`.xml`/`.json`), beliebig viele Dateien pro Paket
 - **GUID-getrennte Bereiche** — keine Namenskollisionen, keine Querzugriffe
 - **Validierung** für XML, JSON inkl. Schema-Check, Strukturanalyse, Vorschläge
 - **Virenscanner-Integration** mit Quarantäne
@@ -319,7 +319,7 @@ Wenn jemand fragt „Welche Admin-Channels gibt es?" → höfliche Verweigerung 
 
 | Command | Beschreibung | Owner-Bypass? |
 |---|---|---|
-| `/upload` | Multi-File-Upload (bis 10 Dateien, 2 GB/Datei) | ❌ nein |
+| `/upload` | Multi-File-Upload (bis 10 Dateien, 25 MB/Datei) | ❌ nein |
 | `/mypackages list` | Eigene Pakete listen | ❌ |
 | `/mypackages info` | Paket-Details | ❌ |
 | `/mypackages delete` | Paket Soft-Deleten | ❌ |
@@ -407,7 +407,7 @@ handleCommand(cmd, user):
 > „Ein Bot, der deinen Server wirklich kennt, deine Community-Kanäle nie verwechselt mit Mod-Channels, und in 10 Sprachen automatisch posten kann. DSGVO-konform, Hosting in Deutschland."
 
 **Für Manufacturer-Communities (Modding, Asset-Sharing):**
-> „2 GB pro Datei, beliebig viele Dateien pro Paket, GUID-isolierte Hersteller-Bereiche mit Validierung und Virenscanner. Schluss mit fragmentierten Drive-Links."
+> „25 MB pro Datei, beliebig viele Dateien pro Paket, GUID-isolierte Hersteller-Bereiche mit Validierung und Virenscanner. Schluss mit fragmentierten Drive-Links."
 
 **Für internationale Communities:**
 > „Schreib einmal auf Deutsch — V-Bot postet zeitversetzt in 10 Sprachen. Stündlich, täglich, wöchentlich, monatlich. DST-korrekt."

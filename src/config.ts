@@ -67,7 +67,11 @@ export const config = {
     // (uploads) per express.static oeffentlich unter /uploads ausgeliefert wird.
     // Audit-/GDPR-Exporte duerfen niemals oeffentlich abrufbar sein.
     exportDir: path.resolve(optionalEnv('EXPORT_DIR', './private/exports')),
-    maxFileSizeBytes: parseInt(optionalEnv('MAX_FILE_SIZE_BYTES', '2147483648'), 10), // 2 GB
+    // Sicherheits-Default 25 MB: Uploads werden zur Validierung vollstaendig in
+    // den Speicher geladen (Buffer). Ein zu hoher Default (frueher 2 GB) erlaubt
+    // Memory-DoS. Erlaubt sind ohnehin nur .xml/.json — 25 MB ist dafuer
+    // grosszuegig. Bei Bedarf per MAX_FILE_SIZE_BYTES anheben.
+    maxFileSizeBytes: parseInt(optionalEnv('MAX_FILE_SIZE_BYTES', '26214400'), 10), // 25 MB
     allowedExtensions: optionalEnv('ALLOWED_EXTENSIONS', '.xml,.json').split(','),
     chunkSize: 10 * 1024 * 1024, // 10 MB chunks
   },

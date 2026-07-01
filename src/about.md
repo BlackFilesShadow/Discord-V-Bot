@@ -12,7 +12,7 @@ Ob Community, Entwicklerteam oder Organisation: Ich unterstütze dich bei allem,
 - Compliance-Check auf Knopfdruck: Sieh sofort, ob alles passt – inkl. Exportfunktionen.
 
 ### **📦 Datei- & Paketverwaltung**
-- Lade beliebig viele Dateien (bis 2GB) sicher hoch – mit Virenscan, Validierung und cleverem Chunking.
+- Lade beliebig viele Dateien (bis 25 MB) sicher hoch – mit Virenscan, Validierung und cleverem Chunking.
 - Verwalte Pakete, beschreibe sie, teile sie mit anderen – alles übersichtlich und nachvollziehbar.
 - Paketnamen sind pro Hersteller einzigartig, doppelte Namen? Nicht mit mir!
 
