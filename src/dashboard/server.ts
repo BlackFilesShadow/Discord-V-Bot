@@ -10,7 +10,7 @@ import cors from 'cors';
 import rateLimit from 'express-rate-limit';
 import { config } from '../config';
 import { logger } from '../utils/logger';
-import { authRouter, apiRouter, adminRouter, testRouter, webhookRouter, setWebhookClient } from './routes';
+import { authRouter, apiRouter, testRouter, webhookRouter, setWebhookClient } from './routes';
 import { v2Router } from './routes/v2';
 import { discordHealthRouter } from './routes/discordHealth';
 import { transcriptsRouter } from './routes/transcripts';
@@ -236,7 +236,6 @@ export async function startDashboard(client?: Client): Promise<void> {
   // Kein zweites Mount, sonst dekrementiert das Limit pro Request doppelt
   // (-> verfruehte 429s fuer unauthentifizierte Polls).
   app.use('/api/v2', v2Router);
-  app.use('/admin', apiLimiter, adminRouter);
   app.use('/test', apiLimiter, testRouter);
   // Public Web-Transcripts (KEINE Auth — UUID-basierte unguessable URL).
   // MUSS vor dem SPA-Fallback liegen, sonst frisst React den Pfad.

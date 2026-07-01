@@ -64,7 +64,6 @@ import session from 'express-session';
 import helmet from 'helmet';
 import request from 'supertest';
 import { apiRouter } from '../../src/dashboard/routes/api';
-import { adminRouter } from '../../src/dashboard/routes/admin';
 
 /**
  * Test-App mit konfigurierbarer Session und Security-Middleware.
@@ -91,7 +90,8 @@ function createSecureApp(sessionData?: Record<string, unknown>) {
   }
 
   app.use('/api', apiRouter);
-  app.use('/admin', adminRouter);
+  // Der Legacy-/admin-Router wurde als P0-Sicherheitsfix ENTFERNT.
+  // /admin-Pfade existieren nicht mehr und liefern daher 404.
   return app;
 }
 
@@ -107,36 +107,36 @@ describe('Automatisierte Penetration-Tests (OWASP Top 10)', () => {
       }
     });
 
-    it('sollte unauthentifizierte Admin-Zugriffe blockieren (401)', async () => {
+    it('sollte Legacy-Admin-Routen als entfernt behandeln (404)', async () => {
       const app = createSecureApp();
       const res = await request(app).patch('/admin/users/123/role').send({ role: 'ADMIN' });
-      expect(res.status).toBe(401);
+      expect(res.status).toBe(404);
     });
 
     it('sollte 2FA-pending Zugriffe auf API blockieren (403)', async () => {
       const app = createSecureApp({ userId: 'test', requires2FA: true });
-      const res = await request(app).get('/api/stats');
+      const res = await request(app).get('/api/me');
       expect(res.status).toBe(403);
     });
 
-    it('sollte 2FA-pending Zugriffe auf Admin blockieren (403)', async () => {
+    it('sollte entfernte Admin-Routen unabhaengig von 2FA als 404 behandeln', async () => {
       const app = createSecureApp({ userId: 'test', requires2FA: true, role: 'ADMIN' });
       const res = await request(app).patch('/admin/users/123/role').send({ role: 'USER' });
-      expect(res.status).toBe(403);
+      expect(res.status).toBe(404);
     });
 
-    it('sollte Nicht-Admin Zugriffe auf Admin-Routen blockieren (403)', async () => {
+    it('sollte entfernte Admin-Routen fuer Nicht-Admins als 404 behandeln', async () => {
       const app = createSecureApp({ userId: 'test', requires2FA: false, role: 'USER' });
       const res = await request(app).patch('/admin/users/123/role').send({ role: 'ADMIN' });
-      expect(res.status).toBe(403);
+      expect(res.status).toBe(404);
     });
 
-    it('sollte Rollen-Eskalation durch manipulierte Payload verhindern', async () => {
+    it('sollte Rollen-Eskalation ueber entfernte Admin-Route verhindern (404)', async () => {
       const app = createSecureApp({ userId: 'test', requires2FA: false, role: 'USER' });
       const res = await request(app)
         .patch('/admin/users/123/role')
         .send({ role: 'SUPER_ADMIN' });
-      expect(res.status).toBe(403);
+      expect(res.status).toBe(404);
     });
   });
 
@@ -285,19 +285,19 @@ describe('Automatisierte Penetration-Tests (OWASP Top 10)', () => {
 
   // ===== IDOR (Insecure Direct Object Reference) =====
   describe('IDOR-Prävention', () => {
-    it('sollte Admin-API mit Nicht-Admin-Rolle blockieren', async () => {
+    it('sollte entfernte Admin-User-Route als 404 behandeln (Nicht-Admin)', async () => {
       const app = createSecureApp({ userId: 'user1', requires2FA: false, role: 'USER' });
-      // Versuche andere User zu modifizieren
+      // Legacy-Admin-Route entfernt -> existiert nicht mehr.
       const res = await request(app)
         .patch('/admin/users/other-user-id/status')
         .send({ status: 'BANNED' });
-      expect(res.status).toBe(403);
+      expect(res.status).toBe(404);
     });
 
-    it('sollte Session-Löschung ohne Admin-Rolle verhindern', async () => {
+    it('sollte entfernte Admin-Session-Route als 404 behandeln (Nicht-Admin)', async () => {
       const app = createSecureApp({ userId: 'user1', requires2FA: false, role: 'USER' });
       const res = await request(app).delete('/admin/sessions/session123');
-      expect(res.status).toBe(403);
+      expect(res.status).toBe(404);
     });
   });
 
