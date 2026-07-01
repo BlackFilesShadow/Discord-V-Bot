@@ -147,6 +147,7 @@ async function checkTwitchStream(channelName: string): Promise<{
   thumbnailUrl?: string;
 } | null> {
   if (!config.external.twitchClientId || !config.external.twitchClientSecret) {
+    warnMissingFeedCredentials('TWITCH', 'TWITCH_CLIENT_ID/TWITCH_CLIENT_SECRET');
     return null;
   }
 
@@ -271,7 +272,7 @@ async function checkYouTube(input: string): Promise<{
   url: string;
 } | null> {
   const apiKey = config.external.youtubeApiKey;
-  if (!apiKey) return null;
+  if (!apiKey) { warnMissingFeedCredentials('YOUTUBE', 'YOUTUBE_API_KEY'); return null; }
 
   // Playlist-Feed: neuestes hinzugefuegtes Video ueber playlistItems ermitteln.
   const playlistId = input.match(/^playlist:([\w-]+)$/i)?.[1] ?? input.match(/[?&]list=([\w-]+)/)?.[1] ?? null;
@@ -369,6 +370,15 @@ async function checkYouTubePlaylist(playlistId: string, apiKey: string): Promise
 // erfolgreich ist, wird der Eintrag entfernt.
 const feedBackoff = new Map<string, { count: number; until: number }>();
 
+// Einmalige Warnung je Plattform, wenn API-Zugangsdaten fehlen -> Live-Ping
+// (Twitch/YouTube) kann ohne Keys nicht laufen. Verhindert Log-Spam im 60s-Takt.
+const missingCredWarned = new Set<string>();
+function warnMissingFeedCredentials(platform: string, envVars: string): void {
+  if (missingCredWarned.has(platform)) return;
+  missingCredWarned.add(platform);
+  logger.warn(`Feed-Live-Ping ${platform} inaktiv: API-Zugangsdaten fehlen (${envVars}). Bitte in der .env setzen und Bot neu starten.`);
+}
+
 // Ueberlappungsschutz: ein Feed, dessen Poll noch laeuft (z. B. langsame
 // Uebersetzung bei NEWS), wird nicht parallel erneut verarbeitet. Das
 // verhindert Doppel-Posts, wenn ein Poll laenger als das Intervall dauert.
@@ -441,18 +451,15 @@ async function processFeedInner(client: Client, feedId: string): Promise<void> {
       case 'RSS':
       case 'NEWS': {
         const { items, latestId } = await fetchRssFeed(feed.url, feed.lastItemId);
-        // Erstlauf: nur Marker setzen, keine Altbeitraege posten (kein Spam) —
-        // konsistent zu Twitch/YouTube. Nur echte neue Beitraege loesen Pings aus.
-        if (!feed.lastItemId) {
-          await prisma.feed.update({
-            where: { id: feedId },
-            data: { lastItemId: latestId ?? undefined, lastChecked: new Date() },
-          });
-          break;
-        }
+        // Erstlauf: nur den AKTUELLSTEN Beitrag posten (kein Backlog-Spam),
+        // danach werden ausschliesslich echte neue Beitraege ausgegeben.
+        // `items` ist neueste-zuerst -> fuer die Ausgabe aeltester-zuerst umdrehen.
+        const toPost = feed.lastItemId
+          ? items.slice().reverse()
+          : (items[0] ? [items[0]] : []);
         // NEWS-Feeds werden immer ins Deutsche uebersetzt (Fallback: Original).
         const isNews = feed.feedType === 'NEWS';
-        for (const item of items.reverse()) {
+        for (const item of toPost) {
           let title = item.title;
           let description = item.description || 'Keine Beschreibung';
           if (isNews) {
@@ -530,17 +537,13 @@ async function processFeedInner(client: Client, feedId: string): Promise<void> {
         if (!appId) { logger.warn(`STEAM-Feed ${feed.id}: keine gueltige Steam-URL (${feed.url}).`); break; }
         const headerImage = `https://cdn.cloudflare.steamstatic.com/steam/apps/${appId}/header.jpg`;
         const { items } = await fetchSteamNews(appId);
-        // Erstlauf: nur Marker setzen, keine Altbeitraege posten (kein Spam).
-        if (!feed.lastItemId) {
-          await prisma.feed.update({
-            where: { id: feedId },
-            data: { lastItemId: items[0]?.url ?? undefined, lastChecked: new Date() },
-          });
-          break;
-        }
-        const newItems = items.filter(i => new Date(i.date) > (feed.lastChecked || new Date(0)));
+        // Erstlauf: nur den AKTUELLSTEN Beitrag posten (kein Backlog-Spam),
+        // danach nur echte neue Beitraege (nach lastChecked).
+        const steamToPost = feed.lastItemId
+          ? items.filter(i => new Date(i.date) > (feed.lastChecked || new Date(0)))
+          : (items[0] ? [items[0]] : []);
 
-        for (const item of newItems) {
+        for (const item of steamToPost) {
           const embed = new EmbedBuilder()
             .setTitle(`🎮 ${item.title}`)
             .setURL(item.url)

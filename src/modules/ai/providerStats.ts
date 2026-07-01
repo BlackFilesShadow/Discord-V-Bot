@@ -52,6 +52,10 @@ interface CooldownState { until: number; consecutive: number; }
 const cooldowns = new Map<ProviderName, CooldownState>();
 const COOLDOWN_BASE_MS = 30_000;
 const COOLDOWN_MAX_MS = 300_000;
+// Auth-/Modell-Fehler (401/403/404) = kaputter Key/Model -> Provider fuer diese
+// Zeit KOMPLETT aus der Rotation nehmen, damit er nicht als „letzter Ueberlebender"
+// die Rotation vergiftet, waehrend gesunde Provider kurz rate-limited sind.
+const UNAVAILABLE_COOLDOWN_MS = 15 * 60_000;
 
 /**
  * Hydratisiert den In-Memory-Cache aus DB. Wird bei Boot einmalig + danach
@@ -94,35 +98,48 @@ export function scheduleProviderCooldownSync(intervalMs = 60_000): void {
   syncTimer.unref?.();
 }
 
-export function markRateLimited(provider: ProviderName): number {
+export function markRateLimited(provider: ProviderName, retryAfterMs?: number): number {
   const prev = cooldowns.get(provider);
   const consecutive = (prev?.consecutive ?? 0) + 1;
-  const ms = Math.min(COOLDOWN_BASE_MS * Math.pow(2, consecutive - 1), COOLDOWN_MAX_MS);
+  const backoff = Math.min(COOLDOWN_BASE_MS * Math.pow(2, consecutive - 1), COOLDOWN_MAX_MS);
+  // Wenn der Provider ein Retry-After/Reset liefert, dieses (gedeckelt) nutzen —
+  // Free-Tier-Limits setzen sich oft in 1-2s zurueck, ein fixer 30s-Cooldown
+  // wuerde gesunde Provider unnoetig lange aus der Rotation nehmen.
+  const ms = retryAfterMs && retryAfterMs > 0
+    ? Math.min(Math.max(retryAfterMs, 1_000), COOLDOWN_MAX_MS)
+    : backoff;
   const until = Date.now() + ms;
   cooldowns.set(provider, { until, consecutive });
   logger.info(`providerStats: ${provider} cooldown ${Math.round(ms / 1000)}s (${consecutive}x 429 in Folge)`);
-  // Persistierung (best-effort, nicht awaiten — recordCall wird sowieso gleich danach aufgerufen).
+  persistCooldown(provider, until, '429_rate_limit', consecutive);
+  return ms;
+}
+
+/**
+ * Provider wegen Auth-/Modell-Fehler (401/403/404) fuer laengere Zeit aus der
+ * Rotation nehmen. Ein kaputter API-Key darf nicht als einziger „verfuegbarer"
+ * Provider uebrig bleiben und alle Anfragen scheitern lassen.
+ */
+export function markProviderUnavailable(provider: ProviderName, reason: string): void {
+  const until = Date.now() + UNAVAILABLE_COOLDOWN_MS;
+  const consecutive = (cooldowns.get(provider)?.consecutive ?? 0) + 1;
+  cooldowns.set(provider, { until, consecutive });
+  logger.warn(`providerStats: ${provider} ${Math.round(UNAVAILABLE_COOLDOWN_MS / 60000)}min aus Rotation (${reason} — Key/Model pruefen)`);
+  persistCooldown(provider, until, reason, consecutive);
+}
+
+/** Persistiert einen Cooldown (best-effort, create-on-missing). */
+function persistCooldown(provider: ProviderName, until: number, reason: string, streak: number): void {
   void prisma.aiProviderStat.update({
     where: { provider },
-    data: {
-      cooldownUntil: new Date(until),
-      cooldownReason: '429_rate_limit',
-      cooldownStreak: consecutive,
-    },
+    data: { cooldownUntil: new Date(until), cooldownReason: reason, cooldownStreak: streak },
   }).catch((e: unknown) => {
-    // create-on-missing — falls noch kein Stat-Row existiert.
     if ((e as { code?: string }).code === 'P2025') {
       void prisma.aiProviderStat.create({
-        data: {
-          provider,
-          cooldownUntil: new Date(until),
-          cooldownReason: '429_rate_limit',
-          cooldownStreak: consecutive,
-        },
+        data: { provider, cooldownUntil: new Date(until), cooldownReason: reason, cooldownStreak: streak },
       }).catch(() => { /* ignore secondary error */ });
     }
   });
-  return ms;
 }
 
 export function clearCooldown(provider: ProviderName): void {
@@ -167,11 +184,12 @@ export async function recordCall(
   outcome: 'success' | 'failure' | 'rateLimit',
   latencyMs: number,
   error?: string,
+  opts?: { retryAfterMs?: number },
 ): Promise<void> {
   // Phase 12: Bei Erfolg den eventuellen Cooldown clearen.
   if (outcome === 'success') clearCooldown(provider);
-  // Bei 429: Cooldown-Backoff aktivieren (in-memory).
-  if (outcome === 'rateLimit') markRateLimited(provider);
+  // Bei 429: Cooldown-Backoff aktivieren (in-memory), ggf. mit Retry-After.
+  if (outcome === 'rateLimit') markRateLimited(provider, opts?.retryAfterMs);
   try {
     const now = new Date();
     const data: Record<string, unknown> = {};

@@ -4,7 +4,7 @@ import { logger } from '../../utils/logger';
 import prisma from '../../database/prisma';
 import { liveSearch, looksFactQuestion, formatSearchResultsForPrompt } from './webSearch';
 import { asksAboutCommands, formatCatalogForPromptFocused } from './commandCatalog';
-import { recordCall, getRankedProviders, ProviderName } from './providerStats';
+import { recordCall, getRankedProviders, markProviderUnavailable, ProviderName } from './providerStats';
 import { checkRateLimit } from '../../utils/rateLimiter';
 import { lookupNitradoHelp, looksLikeDayZFileQuestion, getDayZFileTruthBlock, detectTypesXmlValueViolations, sanitizeDayZLootValues, looksLikeDayZLootContent } from './nitradoHelp';
 import { redactText } from '../nitrado/mirror/redactor';
@@ -780,6 +780,29 @@ async function callGemini(
 }
 
 /**
+ * Liest ein Retry-After / Rate-Limit-Reset aus einer 429-Antwort und gibt die
+ * Wartezeit in Millisekunden zurueck (0, wenn nicht vorhanden). Unterstuetzt
+ * `retry-after` (Sekunden oder HTTP-Datum), `retry-after-ms` und
+ * `x-ratelimit-reset` (Sekunden bis Reset).
+ */
+function parseRetryAfter(error: unknown): number {
+  const headers = (error as { response?: { headers?: Record<string, string> } })?.response?.headers;
+  if (!headers) return 0;
+  const ms = headers['retry-after-ms'];
+  if (ms && /^\d+$/.test(ms.trim())) return Number(ms.trim());
+  const ra = headers['retry-after'];
+  if (ra) {
+    const s = ra.trim();
+    if (/^\d+$/.test(s)) return Number(s) * 1000;
+    const date = Date.parse(s);
+    if (!Number.isNaN(date)) return Math.max(0, date - Date.now());
+  }
+  const reset = headers['x-ratelimit-reset'] ?? headers['x-ratelimit-reset-requests'];
+  if (reset && /^\d+(\.\d+)?$/.test(reset.trim())) return Math.round(Number(reset.trim()) * 1000);
+  return 0;
+}
+
+/**
  * AI-API aufrufen mit Multi-Provider-Fallback.
  * Reihenfolge: Konfigurierter Provider → Fallback auf nächsten verfügbaren.
  */
@@ -881,15 +904,25 @@ export async function callAI(messages: { role: string; content: string }[]): Pro
         const latency = Date.now() - t0;
         const status = (error as { response?: { status?: number } })?.response?.status;
         const is429 = status === 429;
-        if (!is429) allRateLimited = false;
+        // 401/403/404 = kaputter Key oder ungueltiges Modell -> Provider ist bis
+        // zur Neukonfiguration tot. NICHT als Rate-Limit werten und aus der
+        // Rotation nehmen, sonst bleibt er als „letzter Ueberlebender" haengen.
+        const isAuthOrModel = status === 401 || status === 403 || status === 404;
+        if (!is429 && !isAuthOrModel) allRateLimited = false;
         const transient = isTransient(error);
         const errMsg = (error as Error)?.message || String(error);
         logger.warn(
           `AI-Provider ${provider} Versuch ${attempt}/2 fehlgeschlagen${transient ? ' (transient)' : ''}: ${errMsg}`,
         );
+        if (isAuthOrModel) {
+          markProviderUnavailable(provider as ProviderName, `http_${status}`);
+          void recordCall(provider as ProviderName, 'failure', latency, errMsg);
+          break; // kein Retry — Provider erst nach Reconfig wieder brauchbar
+        }
         // Stats nur beim letzten Versuch (oder 429) aufzeichnen, damit Retries nicht doppelt zaehlen.
         if (is429) {
-          void recordCall(provider as ProviderName, 'rateLimit', latency, errMsg);
+          const retryAfterMs = parseRetryAfter(error);
+          void recordCall(provider as ProviderName, 'rateLimit', latency, errMsg, { retryAfterMs });
           // 429 retry am gleichen Provider ist sinnlos – sofort weiter.
           break;
         }
