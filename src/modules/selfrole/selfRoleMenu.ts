@@ -317,11 +317,17 @@ async function applyOption(
 ): Promise<EmbedBuilder> {
   const roleIds = optionRoleIds(opt).filter(id => id !== guild.id);
   const mode = assignMode(menu);
+  // Rollennamen fuer die Rueckmeldung sicherstellen (auch im "nicht besessen"-Fall).
+  for (const id of roleIds) {
+    if (!guild.roles.cache.has(id)) await guild.roles.fetch(id).catch(() => null);
+  }
   const hasAll = roleIds.length > 0 && roleIds.every(id => member.roles.cache.has(id));
   const wantAdd = mode === 'GIVE' ? true : mode === 'REMOVE' ? false : !hasAll;
 
   const added: string[] = [];
   const removed: string[] = [];
+  const alreadyHad: string[] = [];   // GIVE: Rolle war schon vorhanden -> keine Aktion
+  const notHad: string[] = [];       // REMOVE: Rolle war nicht vorhanden -> keine Aktion
   const errors: string[] = [];
 
   // SINGLE: andere Menu-Rollen zuerst entfernen (nur beim Hinzufuegen).
@@ -339,40 +345,72 @@ async function applyOption(
     const heldNow = [...member.roles.cache.keys()].filter(id => menuRoles.has(id));
     const toAdd = roleIds.filter(id => !member.roles.cache.has(id));
     if (heldNow.length + toAdd.length > menu.maxRolesPerUser) {
-      return personalEmbed(menu, opt, member, [], [], [
-        `Du kannst aus diesem Menü höchstens **${menu.maxRolesPerUser}** Rolle(n) gleichzeitig haben.`,
-      ]);
+      return personalEmbed(guild, menu, opt, member, {
+        added: [], removed: [], alreadyHad: [], notHad: [],
+        errors: [`Du kannst aus diesem Menü höchstens **${menu.maxRolesPerUser}** Rolle(n) gleichzeitig haben.`],
+      });
     }
   }
 
   for (const id of roleIds) {
     const has = member.roles.cache.has(id);
-    if (wantAdd && has) continue;
-    if (!wantAdd && !has) continue;
+    if (wantAdd && has) { alreadyHad.push(id); continue; }
+    if (!wantAdd && !has) { notHad.push(id); continue; }
     const err = await safeSetRole(guild, member, menu, id, wantAdd);
     if (err) errors.push(err);
     else if (wantAdd) added.push(id);
     else removed.push(id);
   }
 
-  return personalEmbed(menu, opt, member, added, removed, errors);
+  return personalEmbed(guild, menu, opt, member, { added, removed, alreadyHad, notHad, errors });
 }
 
-/** Baut das personalisierte Bestaetigungs-Embed fuer eine Interaktion. */
+/** Rollenname (aus Cache) in deutschen Anfuehrungszeichen, sonst die ID. */
+function roleLabelList(guild: Guild, ids: string[]): string {
+  return ids.map(id => `„${guild.roles.cache.get(id)?.name ?? id}“`).join(', ');
+}
+
+interface RoleOutcome {
+  added: string[];
+  removed: string[];
+  alreadyHad: string[];
+  notHad: string[];
+  errors: string[];
+}
+
+/**
+ * Baut das ephemere Bestaetigungs-Embed fuer eine Rollen-Interaktion.
+ * Meldungen exakt gemaess Spezifikation (GIVE/REMOVE), mit Rollennamen.
+ * Aendert NIEMALS die urspruengliche Nachricht — nur ephemere Rueckmeldung.
+ */
 function personalEmbed(
+  guild: Guild,
   menu: MenuFull,
   opt: MenuOption,
   member: GuildMember,
-  added: string[],
-  removed: string[],
-  errors: string[],
+  out: RoleOutcome,
 ): EmbedBuilder {
   const title = opt.label ? opt.label : menu.title;
   const parts: string[] = [];
-  if (added.length) parts.push(`✅ Hinzugefügt: ${added.map(id => `<@&${id}>`).join(' ')}`);
-  if (removed.length) parts.push(`➖ Entfernt: ${removed.map(id => `<@&${id}>`).join(' ')}`);
-  if (!added.length && !removed.length && !errors.length) parts.push('ℹ️ Keine Änderungen.');
-  if (errors.length) parts.push('', ...errors.map(e => (e.startsWith('❌') ? e : `❌ ${e}`)));
+
+  if (out.added.length) {
+    const word = out.added.length > 1 ? 'Rollen' : 'Rolle';
+    parts.push(`✅ Du hast die ${word} ${roleLabelList(guild, out.added)} erhalten.`);
+  }
+  if (out.removed.length) {
+    const word = out.removed.length > 1 ? 'Die Rollen' : 'Die Rolle';
+    parts.push(`✅ ${word} ${roleLabelList(guild, out.removed)} wurde dir entfernt.`);
+  }
+  if (out.alreadyHad.length) {
+    const word = out.alreadyHad.length > 1 ? 'Rollen' : 'Rolle';
+    parts.push(`ℹ️ Du besitzt die ${word} ${roleLabelList(guild, out.alreadyHad)} bereits.`);
+  }
+  if (out.notHad.length) {
+    const word = out.notHad.length > 1 ? 'Rollen' : 'Rolle';
+    parts.push(`ℹ️ Du besitzt die ${word} ${roleLabelList(guild, out.notHad)} nicht.`);
+  }
+  if (out.errors.length) parts.push(...out.errors.map(e => (e.startsWith('❌') ? e : `❌ ${e}`)));
+  if (parts.length === 0) parts.push('ℹ️ Keine Änderungen.');
 
   // Personalisierte, pro-Button hinterlegte Nachricht (optional).
   const custom = opt.confirmMessage
@@ -380,7 +418,7 @@ function personalEmbed(
     : '';
 
   const desc = [custom, parts.join('\n')].filter(s => s && s.trim() !== '').join('\n\n');
-  const color = errors.length ? Colors.Error : Colors.Success;
+  const color = out.errors.length ? Colors.Error : Colors.Success;
   return vEmbed(color)
     .setTitle(title.slice(0, 256))
     .setDescription(desc.slice(0, 4096) || 'ℹ️ Keine Änderungen.')
