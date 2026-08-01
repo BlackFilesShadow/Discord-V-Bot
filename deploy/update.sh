@@ -48,11 +48,38 @@ fi
 
 git --no-pager log --oneline "$OLD_COMMIT..$NEW_COMMIT" 2>/dev/null | head -10 || true
 
-# 2) Container neu bauen + starten
-info "Docker-Image wird gebaut und Container neu gestartet..."
-docker compose up -d --build "$COMPOSE_SERVICE"
+# 2) Image bauen (noch NICHT starten — erst Baseline adoptieren, denn der
+#    Container migriert beim Start automatisch via CMD `prisma migrate deploy`).
+info "Docker-Image wird gebaut..."
+docker compose build "$COMPOSE_SERVICE"
 
-# 3) Auf Health warten
+# 3) Baseline-Adoption VOR dem Containerstart. Ein Bestandsschema ohne
+#    Baseline-Eintrag (egal ob aus `db push` ohne History oder aus der alten
+#    Migrationskette mit Legacy-History) wuerde beim automatischen migrate deploy
+#    scheitern, weil die Baseline CREATE TABLE auf bestehende Tabellen wirft.
+info "Pruefe Baseline-Adoption..."
+BASELINE_MIGRATION="00000000000000_baseline"
+PGU="${POSTGRES_USER:-discordbot}"
+PGD="${POSTGRES_DB:-discord_v_bot}"
+SCHEMA_PRESENT=$(docker compose exec -T postgres psql -U "$PGU" -d "$PGD" -tAc \
+  "SELECT to_regclass('public.\"User\"') IS NOT NULL;" 2>/dev/null | tr -d '[:space:]')
+HISTORY_TABLE=$(docker compose exec -T postgres psql -U "$PGU" -d "$PGD" -tAc \
+  "SELECT to_regclass('public._prisma_migrations') IS NOT NULL;" 2>/dev/null | tr -d '[:space:]')
+BASELINE_APPLIED="f"
+if [[ "$HISTORY_TABLE" == "t" ]]; then
+  BASELINE_APPLIED=$(docker compose exec -T postgres psql -U "$PGU" -d "$PGD" -tAc \
+    "SELECT EXISTS(SELECT 1 FROM public._prisma_migrations WHERE migration_name='$BASELINE_MIGRATION');" 2>/dev/null | tr -d '[:space:]')
+fi
+if [[ "$SCHEMA_PRESENT" == "t" && "$BASELINE_APPLIED" != "t" ]]; then
+  warn "Bestehendes Schema ohne Baseline-Eintrag erkannt -> adoptiere Baseline ($BASELINE_MIGRATION)."
+  docker compose run --rm "$COMPOSE_SERVICE" npx prisma migrate resolve --applied "$BASELINE_MIGRATION" \
+    || warn "Baseline-Adoption fehlgeschlagen - bitte manuell pruefen."
+fi
+
+# 4) Container starten (CMD wendet die ausstehenden Migrationen an) + Health.
+info "Container wird gestartet..."
+docker compose up -d "$COMPOSE_SERVICE"
+
 info "Warte auf Container-Health..."
 for i in {1..30}; do
   STATUS=$(docker inspect --format='{{.State.Health.Status}}' "$CONTAINER_NAME" 2>/dev/null || echo "starting")
@@ -67,27 +94,9 @@ for i in {1..30}; do
   sleep 2
 done
 
-# 4) DB-Schema via Prisma-Migrationen anwenden (F-009: migrate deploy statt db push).
-info "Prisma-Migrationen werden angewendet..."
-BASELINE_MIGRATION="00000000000000_baseline"
-PGU="${POSTGRES_USER:-discordbot}"
-PGD="${POSTGRES_DB:-discord_v_bot}"
-
-# Erstadoption: Bestand wurde frueher via `db push` erzeugt -> Schema existiert,
-# aber es gibt keine Migrationshistorie. Dann die Baseline als angewendet
-# markieren (schreibt nur nach _prisma_migrations, aendert KEIN Schema/Daten),
-# bevor migrate deploy laeuft. migrate deploy wuerde sonst CREATE TABLE auf
-# bestehenden Tabellen versuchen und scheitern.
-HISTORY_TABLE=$(docker compose exec -T postgres psql -U "$PGU" -d "$PGD" -tAc \
-  "SELECT to_regclass('public._prisma_migrations') IS NOT NULL;" 2>/dev/null | tr -d '[:space:]')
-SCHEMA_PRESENT=$(docker compose exec -T postgres psql -U "$PGU" -d "$PGD" -tAc \
-  "SELECT to_regclass('public.\"User\"') IS NOT NULL;" 2>/dev/null | tr -d '[:space:]')
-if [[ "$HISTORY_TABLE" != "t" && "$SCHEMA_PRESENT" == "t" ]]; then
-  warn "db-push-Bestand ohne Migrationshistorie erkannt -> adoptiere Baseline ($BASELINE_MIGRATION)."
-  docker compose exec -T "$COMPOSE_SERVICE" npx prisma migrate resolve --applied "$BASELINE_MIGRATION" \
-    || warn "Baseline-Adoption fehlgeschlagen - bitte manuell pruefen."
-fi
-
+# 4a) Sicherheitsnetz: explizites migrate deploy (idempotent — der Container-CMD
+#     hat es beim Start bereits ausgefuehrt; hier nur als Gate/Logausgabe).
+info "Prisma-Migrationen werden verifiziert..."
 if docker compose exec -T "$COMPOSE_SERVICE" npx prisma migrate deploy; then
   log "DB-Migrationen angewendet."
 else
