@@ -296,6 +296,30 @@ export class NitradoClient {
       .map(({ name, modified_at, size }) => ({ name, modified_at, size }));
   }
 
+  /** Diagnose: rohe Verzeichnisauflistung (Dateien + Ordner) eines Pfads. */
+  async listDir(serviceId: string, dir: string): Promise<Array<{ name: string; type: string; modified_at: number; size: number }>> {
+    const res = await this.request<{ data: { entries: Array<{ name: string; type: string; modified_at: number; size: number }> } }>(
+      'GET',
+      `/services/${serviceId}/gameservers/file_server/list`,
+      { params: { dir } },
+    );
+    return res.data?.entries ?? [];
+  }
+
+  /** Diagnose: ausgewaehlte Gameserver-Stammdaten (game, username, Pfad, Status). */
+  async getGameserverInfo(serviceId: string): Promise<{ game: string; username: string; path: string; status: string }> {
+    const res = await this.request<{
+      data: { gameserver?: { game?: string; username?: string; status?: string; game_specific?: { path?: string } } };
+    }>('GET', `/services/${serviceId}/gameservers`);
+    const gs = res.data?.gameserver ?? {};
+    return {
+      game: gs.game ?? '',
+      username: gs.username ?? '',
+      path: gs.game_specific?.path ?? '',
+      status: gs.status ?? 'unknown',
+    };
+  }
+
   async downloadFile(serviceId: string, fullPath: string): Promise<string> {
     // Nitrado liefert eine signed URL fuer den Download
     const meta = await this.request<{ data: { token: { url: string } } }>(
