@@ -1811,6 +1811,33 @@ model EconomyLedgerEntry {
   @@index([guildId, nitradoConnId, type])
 }
 
+enum EconomyRewardTarget {
+  WALLET
+  BANK
+}
+
+// Konfigurierbare Reward-Regel pro Slot (Phase 5). Haelt Basisbetrag, Ziel-Konto
+// und Anti-Farm-Limits. Standard `enabled=false` -> effektiver Betrag 0
+// (Shadow-sicher: erst bei bewusster Aktivierung fliesst Geld). ruleKey z.B.
+// 'pvp:default' oder 'playtime:default'.
+model EconomyRewardRule {
+  id              String              @id @default(cuid())
+  guildId         String
+  nitradoConnId   String?
+  ruleKey         String
+  eventType       AdmEventType?
+  enabled         Boolean             @default(false)
+  baseAmount      BigInt              @default(0)
+  rewardTarget    EconomyRewardTarget @default(WALLET)
+  dailyCap        BigInt?
+  cooldownSeconds Int                 @default(0)
+  createdAt       DateTime            @default(now())
+  updatedAt       DateTime            @updatedAt
+
+  @@unique([guildId, nitradoConnId, ruleKey])
+  @@index([guildId, nitradoConnId, enabled])
+}
+
 // Discord <-> Nitrado-Spielername Bindung pro (Guild + Slot + User).
 model EconomyLink {
   id            String            @id @default(cuid())

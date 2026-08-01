@@ -31,6 +31,7 @@ import { parseAdm, aggregateMinutesByPlayer } from './admParser';
 import { ingestAdmFile } from './adm/admIngestService';
 import { runPvpRewardShadow, type RewardEngineClient } from './adm/rewardEngine';
 import { aggregatePlayerSessions, type PlayerSessionClient } from './adm/playerSessionService';
+import { getRewardRule, effectiveBaseAmount, type RewardRuleClient } from '../economy/rewardRules';
 import { emitGuildEvent } from '../../dashboard/socket/emitter';
 
 const SYNC_INTERVAL_MS = 15 * 60 * 1000;
@@ -255,12 +256,18 @@ async function processConnectionV2(
   }
 
   // Shadow-RewardEngine (kein Geld): PvP-Kills -> idempotente RewardDecisions.
-  // Echte Betraege/Regeln folgen in Phase 5 (EconomyRewardRule).
+  // Betrag kommt aus EconomyRewardRule; fehlt/deaktiviert -> 0 (shadow-sicher).
+  // Produktive Buchung (PENDING->PAID) folgt hinter separater Freigabe.
   try {
+    const pvpRule = await getRewardRule(
+      prisma as unknown as RewardRuleClient,
+      { guildId: conn.guildId, nitradoConnId: conn.id },
+      'pvp:default',
+    );
     await runPvpRewardShadow(
       prisma as unknown as RewardEngineClient,
       { guildId: conn.guildId, nitradoConnId: conn.id },
-      { rewardRuleId: 'pvp:default', baseAmount: 0n },
+      { rewardRuleId: 'pvp:default', baseAmount: effectiveBaseAmount(pvpRule) },
     );
   } catch (e) {
     logger.warn(`ADM-Sync V2: RewardEngine-Shadow fehlgeschlagen fuer ${conn.id}: ${(e as Error).message}`);
