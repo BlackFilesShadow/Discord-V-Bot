@@ -128,19 +128,21 @@ const guildMemberAddEvent: BotEvent = {
             const memberCount = m.guild.memberCount;
 
             const messageText = renderWelcomeMessage(wcfg.message, {
-              user: m.displayName,
+              user: userMention,
               mention: userMention,
               guild: m.guild.name,
               memberCount,
             });
 
             const finalText = resolveCustomEmotes(messageText, m.guild);
-            // Begruessung als Embed; Ping nur fuer den neuen User (im content).
+            // Begruessung als Embed; die User-Markierung steht IM Text, es gibt
+            // keinen separaten Ping im content (kein bares Tag ueber dem Embed).
             await sendWelcomeMessages(channel, {
               text: finalText,
               mediaUrl: wcfg.mediaUrl,
               mediaLayout: wcfg.mediaLayout,
               mentionUserId: m.user.id,
+              mentionInContent: false,
             });
           }
         }

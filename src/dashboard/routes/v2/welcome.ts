@@ -242,10 +242,8 @@ welcomeRouter.post('/test', requireGuildPermission('welcome.manage'), async (req
 
   const userMention = `<@${scope.actorDiscordId}>`;
   const memberCount = guild.memberCount;
-  const testMember = await guild.members.fetch(scope.actorDiscordId).catch(() => null);
-  const displayName = testMember?.displayName ?? 'Mitglied';
 
-  const messageText = renderWelcomeMessage(cfg.message, { user: displayName, mention: userMention, guild: guild.name, memberCount });
+  const messageText = renderWelcomeMessage(cfg.message, { user: userMention, mention: userMention, guild: guild.name, memberCount });
 
   const finalText = resolveCustomEmotes(messageText, guild);
   // Begruessung als Embed (Text als Beschreibung, optionales Bild im Embed).
@@ -254,6 +252,7 @@ welcomeRouter.post('/test', requireGuildPermission('welcome.manage'), async (req
     mediaUrl: cfg.mediaUrl,
     mediaLayout: cfg.mediaLayout,
     mentionUserId: scope.actorDiscordId,
+    mentionInContent: false,
   });
   logAuditDb('WELCOME_TEST_SENT', 'WELCOME', {
     actorUserId: req.auth!.userId, guildId: scope.guildId,

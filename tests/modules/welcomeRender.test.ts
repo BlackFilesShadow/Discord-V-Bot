@@ -1,27 +1,23 @@
 /**
- * Welcome-Renderer: Doppel-Tag-Fix.
- * {user} = Anzeigename (Klartext, KEIN Ping), {mention} = optionale Erwaehnung.
- * Der eigentliche Ping liegt separat im content -> kein doppeltes Tag.
+ * Welcome-Renderer: die User-Markierung steht IM Text ({user}/{mention}),
+ * es gibt keinen separaten Ping/kein bares Tag ueber dem Embed.
  */
 import { renderWelcomeMessage } from '../../src/modules/welcome/welcomeManager';
 
-const VARS = { user: 'MaxMustermann', mention: '<@123>', guild: 'Mein Server', memberCount: 128 };
+const VARS = { user: '<@123>', mention: '<@123>', guild: 'Mein Server', memberCount: 128 };
 
 describe('renderWelcomeMessage', () => {
-  it('{user} rendert als Klartext-Name ohne Mention', () => {
-    const out = renderWelcomeMessage('Willkommen {user}!', VARS);
-    expect(out).toBe('Willkommen MaxMustermann!');
-    expect(out).not.toContain('<@');
+  it('{user} rendert die Erwaehnung im Text', () => {
+    expect(renderWelcomeMessage('Willkommen {user}!', VARS)).toBe('Willkommen <@123>!');
   });
 
-  it('{mention} rendert die Erwaehnung nur wenn explizit verwendet', () => {
+  it('{mention} ist Alias fuer die Erwaehnung', () => {
     expect(renderWelcomeMessage('Hi {mention}', VARS)).toBe('Hi <@123>');
   });
 
-  it('Standardtext mit {user}/{guild}/{count} erzeugt keinen Ping', () => {
-    const out = renderWelcomeMessage('Willkommen {user} auf {guild}! Nr. {count}.', VARS);
-    expect(out).toBe('Willkommen MaxMustermann auf Mein Server! Nr. 128.');
-    expect(out).not.toMatch(/<@!?\d+>/);
+  it('Standardtext ersetzt {user}/{guild}/{count}', () => {
+    expect(renderWelcomeMessage('Willkommen {user} auf {guild}! Nr. {count}.', VARS))
+      .toBe('Willkommen <@123> auf Mein Server! Nr. 128.');
   });
 
   it('{member_count} wird ebenfalls ersetzt', () => {

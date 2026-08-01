@@ -53,9 +53,9 @@ export async function disableWelcome(guildId: string, updatedBy: string): Promis
 }
 
 export function renderWelcomeMessage(message: string, vars: { user: string; mention: string; guild: string; memberCount: number }): string {
-  // {user} = Anzeigename (Klartext), {mention} = optionaler Inline-Ping.
-  // Der eigentliche Ping liegt separat im content (sendWelcomeMessages), damit
-  // nicht doppelt getaggt wird.
+  // {user} und {mention} = Erwaehnung des neuen Mitglieds direkt im Text.
+  // Es gibt KEINEN separaten Ping im content mehr (kein bares Tag ueber dem
+  // Embed); die Markierung steht ausschliesslich in der Nachricht.
   return renderTemplate(message, { user: vars.user })
     .replace(/\{mention\}/g, vars.mention)
     .replace(/\{guild\}/g, vars.guild)
@@ -88,17 +88,20 @@ type SendableChannel = { send: (options: never) => Promise<unknown> };
  *   `attachment://`.
  * - Video (MP4/WEBM/MOV) -> als Datei-Anhang der Nachricht (Embeds koennen kein
  *   Video darstellen); externe Video-URLs werden als Link im Embed ergaenzt.
- * - Der User-Ping liegt im `content` (Embeds loesen keine Erwaehnung aus).
+ * - Die User-Markierung steht im Embed-Text ({user}). Ein zusaetzlicher Ping im
+ *   `content` (bares Tag ueber dem Embed) wird nur bei `mentionInContent: true`
+ *   erzeugt; Standard fuer Willkommen ist ohne (keine Doppelmarkierung).
  */
 export async function sendWelcomeMessages(
   channel: SendableChannel,
-  opts: { text: string; mediaUrl?: string; mediaLayout?: 'image_first' | 'text_first'; mentionUserId?: string },
+  opts: { text: string; mediaUrl?: string; mediaLayout?: 'image_first' | 'text_first'; mentionUserId?: string; mentionInContent?: boolean },
 ): Promise<void> {
   const ch = channel as Parameters<typeof safeSend>[0];
   const allowedMentions = opts.mentionUserId
     ? { users: [opts.mentionUserId], parse: [] as never[] }
     : { parse: [] as never[] };
-  const content = opts.mentionUserId ? `<@${opts.mentionUserId}>` : undefined;
+  // Ping im content nur, wenn explizit gewuenscht; sonst kein bares Tag oben.
+  const content = opts.mentionUserId && opts.mentionInContent === true ? `<@${opts.mentionUserId}>` : undefined;
 
   const embed: EmbedBuilder = vEmbed(Colors.Success).setDescription(opts.text.slice(0, 4096));
   const files: AttachmentBuilder[] = [];
