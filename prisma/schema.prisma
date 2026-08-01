@@ -2309,3 +2309,20 @@ model KillfeedEvent {
   @@index([guildId, nitradoConnId, occurredAt])
   @@index([guildId, nitradoConnId, category])
 }
+
+// Killfeed V2: Zustellungs-Journal, getrennt von der Anzeige. @@unique[configId,
+// admEventId] garantiert, dass ein normalisiertes AdmEvent pro Killfeed-Config
+// GENAU EINMAL zugestellt wird (KILL-001, keine Duplikate). Aus AdmEvent
+// abgeleitet; unverlinkter Killer wird trotzdem angezeigt (KILL-ECO-001).
+model KillfeedDelivery {
+  id          String   @id @default(cuid())
+  configId    String
+  admEventId  String
+  guildId     String
+  channelId   String   @db.VarChar(32)
+  messageId   String?  @db.VarChar(32)
+  deliveredAt DateTime @default(now())
+
+  @@unique([configId, admEventId])
+  @@index([guildId, admEventId])
+}
