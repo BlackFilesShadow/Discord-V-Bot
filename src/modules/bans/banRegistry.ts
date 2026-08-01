@@ -1,0 +1,98 @@
+/**
+ * Ban-Registry (Phase 7, BAN-001..005). Fuehrt Server-Banns als DB-Wahrheit.
+ * Gebannt wird die HMAC-Identitaet (kein Klartext-GUID).
+ *
+ * Durchsetzung am Gameserver ist CAPABILITY-basiert: ein BanEnforcementProvider
+ * meldet, was real moeglich ist (z.B. Banlist-Datei). Es wird KEINE nicht
+ * existierende Nitrado-Ban-API vorausgesetzt; ohne Capability bleibt der Bann
+ * lokal (active) mit appliedRemotely=false.
+ */
+
+export interface BanEntry {
+  active: boolean;
+  expiresAt: Date | null;
+}
+
+/** Aktiver Bann = nicht aufgehoben UND nicht abgelaufen. */
+export function isBanActive(entry: BanEntry | null, now: Date): boolean {
+  if (!entry || !entry.active) return false;
+  return entry.expiresAt === null || entry.expiresAt.getTime() > now.getTime();
+}
+
+export interface BanScope {
+  guildId: string;
+  nitradoConnId: string;
+}
+
+export interface BanClient {
+  serverBanEntry: {
+    findUnique: (args: unknown) => Promise<BanEntry | null>;
+    upsert: (args: { where: Record<string, unknown>; create: Record<string, unknown>; update: Record<string, unknown> }) => Promise<unknown>;
+    updateMany: (args: { where: Record<string, unknown>; data: Record<string, unknown> }) => Promise<{ count: number }>;
+  };
+}
+
+export async function addBan(
+  client: BanClient,
+  scope: BanScope,
+  args: { identityHash: string; gameLabel?: string | null; reason?: string | null; bannedByDiscordId: string; expiresAt?: Date | null },
+): Promise<void> {
+  const where = { guildId_nitradoConnId_identityHash: { guildId: scope.guildId, nitradoConnId: scope.nitradoConnId, identityHash: args.identityHash } };
+  await client.serverBanEntry.upsert({
+    where,
+    create: {
+      guildId: scope.guildId, nitradoConnId: scope.nitradoConnId, identityHash: args.identityHash,
+      gameLabel: args.gameLabel ?? null, reason: args.reason ?? null,
+      bannedByDiscordId: args.bannedByDiscordId, expiresAt: args.expiresAt ?? null,
+      active: true, appliedRemotely: false, liftedAt: null,
+    },
+    // Re-Ban: reaktivieren, neue Metadaten.
+    update: {
+      gameLabel: args.gameLabel ?? null, reason: args.reason ?? null,
+      bannedByDiscordId: args.bannedByDiscordId, expiresAt: args.expiresAt ?? null,
+      active: true, liftedAt: null,
+    },
+  });
+}
+
+export async function liftBan(
+  client: BanClient,
+  scope: BanScope,
+  identityHash: string,
+  now: Date = new Date(),
+): Promise<boolean> {
+  const r = await client.serverBanEntry.updateMany({
+    where: { guildId: scope.guildId, nitradoConnId: scope.nitradoConnId, identityHash, active: true },
+    data: { active: false, liftedAt: now },
+  });
+  return r.count > 0;
+}
+
+export async function isBanned(
+  client: BanClient,
+  scope: BanScope,
+  identityHash: string,
+  now: Date = new Date(),
+): Promise<boolean> {
+  const entry = await client.serverBanEntry.findUnique({
+    where: { guildId_nitradoConnId_identityHash: { guildId: scope.guildId, nitradoConnId: scope.nitradoConnId, identityHash } },
+  });
+  return isBanActive(entry, now);
+}
+
+// ---- Capability-basierte Durchsetzung ----
+
+export interface BanEnforcementCapabilities {
+  canApplyRemote: boolean;
+}
+
+export interface BanEnforcementProvider {
+  capabilities(): BanEnforcementCapabilities;
+  applyBan?(identityHash: string): Promise<boolean>;
+  removeBan?(identityHash: string): Promise<boolean>;
+}
+
+/** Standard: keine Remote-Durchsetzung (nur lokale DB-Wahrheit). */
+export const localOnlyBanProvider: BanEnforcementProvider = {
+  capabilities: () => ({ canApplyRemote: false }),
+};

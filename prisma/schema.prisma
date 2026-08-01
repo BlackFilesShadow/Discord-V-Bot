@@ -1919,6 +1919,29 @@ model GameIdentityLink {
   @@index([guildId, nitradoConnId, challengeCode])
 }
 
+// Server-Bann (Phase 7, BAN-001..005). Gebannt wird die HMAC-Identitaet (kein
+// Klartext-GUID). `appliedRemotely` haelt fest, ob der Bann am Gameserver
+// tatsaechlich durchgesetzt wurde — es wird KEINE erfundene Nitrado-Ban-API
+// vorausgesetzt; Durchsetzung nur ueber real vorhandene Capabilities.
+model ServerBanEntry {
+  id                String    @id @default(cuid())
+  guildId           String
+  nitradoConnId     String
+  identityHash      String    @db.VarChar(64)
+  gameLabel         String?   @db.VarChar(120)
+  reason            String?   @db.VarChar(300)
+  bannedByDiscordId String
+  bannedAt          DateTime  @default(now())
+  expiresAt         DateTime?
+  liftedAt          DateTime?
+  active            Boolean   @default(true)
+  appliedRemotely   Boolean   @default(false)
+  updatedAt         DateTime  @updatedAt
+
+  @@unique([guildId, nitradoConnId, identityHash])
+  @@index([guildId, nitradoConnId, active])
+}
+
 enum CasinoGameType {
   SLOT
   COINFLIP
