@@ -33,6 +33,7 @@ import { runPvpRewardShadow, type RewardEngineClient } from './adm/rewardEngine'
 import { aggregatePlayerSessions, type PlayerSessionClient } from './adm/playerSessionService';
 import { getRewardRule, effectiveBaseAmount, type RewardRuleClient } from '../economy/rewardRules';
 import { getSlotEconomyConfig, admRewardsActive, type SlotConfigClient } from '../economy/slotConfig';
+import { bookPendingRewards, type RewardBookingClient } from '../economy/rewardBooking';
 import { emitGuildEvent } from '../../dashboard/socket/emitter';
 
 const SYNC_INTERVAL_MS = 15 * 60 * 1000;
@@ -256,19 +257,28 @@ async function processConnectionV2(
     }
   }
 
-  // Shadow-RewardEngine (kein Geld): PvP-Kills -> idempotente RewardDecisions.
-  // Betrag nur wenn Slot-Master (admRewardsEnabled) UND Regel aktiv sind; sonst
-  // 0. Produktive Buchung (PENDING->PAID) folgt hinter separater Freigabe.
+  // Shadow-RewardEngine: PvP-Kills -> idempotente RewardDecisions.
+  // Betrag nur wenn Slot-Master (admRewardsEnabled) UND Regel aktiv sind; sonst 0.
+  // Bei aktivem Gate werden offene Decisions produktiv ueber den Ledger gebucht
+  // (echtes Geld, idempotent ueber Key reward:<decisionId>).
   try {
     const scopeRef = { guildId: conn.guildId, nitradoConnId: conn.id };
     const slotCfg = await getSlotEconomyConfig(prisma as unknown as SlotConfigClient, scopeRef);
     const pvpRule = await getRewardRule(prisma as unknown as RewardRuleClient, scopeRef, 'pvp:default');
-    const baseAmount = admRewardsActive(slotCfg) ? effectiveBaseAmount(pvpRule) : 0n;
+    const active = admRewardsActive(slotCfg);
+    const baseAmount = active ? effectiveBaseAmount(pvpRule) : 0n;
     await runPvpRewardShadow(
       prisma as unknown as RewardEngineClient,
       scopeRef,
       { rewardRuleId: 'pvp:default', baseAmount },
     );
+    if (active) {
+      await bookPendingRewards(
+        prisma as unknown as RewardBookingClient,
+        scopeRef,
+        { rewardTarget: slotCfg!.rewardTarget },
+      );
+    }
   } catch (e) {
     logger.warn(`ADM-Sync V2: RewardEngine-Shadow fehlgeschlagen fuer ${conn.id}: ${(e as Error).message}`);
   }
