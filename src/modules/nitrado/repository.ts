@@ -144,6 +144,18 @@ export async function setStatus(
   });
 }
 
+/** Markiert eine Verbindung nach erfolgreicher Token-Pruefung als ACTIVE und
+ *  vermerkt den Validierungszeitpunkt (Auto-Recovery aus EXPIRED). */
+export async function markValidated(
+  guildId: GuildId,
+  id: NitradoConnId,
+): Promise<void> {
+  await prisma.nitradoConnection.updateMany({
+    where: { id, guildId },
+    data: { status: 'ACTIVE', lastValidatedAt: new Date(), lastErrorMessage: null },
+  });
+}
+
 /**
  * Tauscht den verschluesselten Token eines existierenden Slots aus.
  * Setzt Status zurueck auf ACTIVE (z.B. wenn vorher EXPIRED war).

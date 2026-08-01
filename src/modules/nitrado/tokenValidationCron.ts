@@ -14,7 +14,7 @@ import { logger, logAudit } from '../../utils/logger';
 import { config } from '../../config';
 import { decrypt } from '../../utils/security';
 import { NitradoClient } from './nitradoClient';
-import { setStatus } from './repository';
+import { setStatus, markValidated } from './repository';
 import { asGuildId, asNitradoConnId } from '../../types/scope';
 
 const VALIDATION_INTERVAL_MS = 24 * 60 * 60 * 1000; // taeglich
@@ -24,7 +24,7 @@ let running = false;
 
 async function checkOne(
   discord: Client,
-  conn: { id: string; guildId: string; alias: string; alias5: string; encryptedToken: string },
+  conn: { id: string; guildId: string; alias: string; alias5: string; status: string; encryptedToken: string },
 ): Promise<void> {
   let token: string;
   try {
@@ -36,7 +36,15 @@ async function checkOne(
 
   const client = new NitradoClient(token);
   const result = await client.validateTokenDetailed();
-  if (result.kind === 'VALID') return;
+  if (result.kind === 'VALID') {
+    // Auto-Recovery: bei gueltigem Token als ACTIVE markieren + Zeitpunkt
+    // vermerken. War die Verbindung vorher EXPIRED, wird sie so reaktiviert.
+    await markValidated(asGuildId(conn.guildId), asNitradoConnId(conn.id));
+    if (conn.status !== 'ACTIVE') {
+      logAudit('NITRADO_TOKEN_REACTIVATED', 'NITRADO', { guildId: conn.guildId, nitradoConnId: conn.id, alias: conn.alias });
+    }
+    return;
+  }
   if (result.kind !== 'INVALID') {
     // NIT-001: transienter Fehler (Netzwerk/429/5xx/Circuit-Open) darf einen
     // gueltigen Token NICHT als EXPIRED markieren.
@@ -44,6 +52,9 @@ async function checkOne(
     logger.warn(`Token-Validation fuer ${conn.id} transient (${result.kind})${detail} — Status bleibt unveraendert.`);
     return;
   }
+
+  // Bereits EXPIRED -> nichts weiter tun (keine erneute DM-Flut).
+  if (conn.status !== 'ACTIVE') return;
 
   await setStatus(asGuildId(conn.guildId), asNitradoConnId(conn.id), 'EXPIRED');
   logAudit('NITRADO_TOKEN_EXPIRED', 'NITRADO', { guildId: conn.guildId, nitradoConnId: conn.id, alias: conn.alias });
@@ -70,8 +81,8 @@ async function pollOnce(discord: Client): Promise<void> {
   try {
     // eslint-disable-next-line local/no-unscoped-prisma-query -- Cron iteriert alle Guilds; Scope-Operationen sind in checkOne pro Guild gebunden.
     const conns = await prisma.nitradoConnection.findMany({
-      where: { status: 'ACTIVE' },
-      select: { id: true, guildId: true, alias: true, alias5: true, encryptedToken: true },
+      where: { status: { in: ['ACTIVE', 'EXPIRED'] } },
+      select: { id: true, guildId: true, alias: true, alias5: true, status: true, encryptedToken: true },
     });
     for (const c of conns) {
       try {
