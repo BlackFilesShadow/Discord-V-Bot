@@ -1838,6 +1838,25 @@ model EconomyRewardRule {
   @@index([guildId, nitradoConnId, enabled])
 }
 
+// Wirtschafts-Konfiguration pro Slot (Phase 5). `admRewardsEnabled` ist der
+// Master-Schalter fuer produktive ADM-Rewards: nur wenn er UND die jeweilige
+// EconomyRewardRule aktiv sind, wird spaeter echtes Geld gebucht (bis dahin
+// Shadow). `timezone` steuert Tagesgrenzen (dailyCap, Zinslauf).
+model EconomySlotConfig {
+  id                String              @id @default(cuid())
+  guildId           String
+  nitradoConnId     String
+  enabled           Boolean             @default(false)
+  admRewardsEnabled Boolean             @default(false)
+  rewardTarget      EconomyRewardTarget @default(WALLET)
+  timezone          String              @default("Europe/Berlin") @db.VarChar(64)
+  createdAt         DateTime            @default(now())
+  updatedAt         DateTime            @updatedAt
+
+  @@unique([guildId, nitradoConnId])
+  @@index([guildId])
+}
+
 // Discord <-> Nitrado-Spielername Bindung pro (Guild + Slot + User).
 model EconomyLink {
   id            String            @id @default(cuid())
