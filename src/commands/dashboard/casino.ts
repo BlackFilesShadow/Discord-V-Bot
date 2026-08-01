@@ -22,12 +22,21 @@ import { asUserDiscordId } from '../../types/scope';
 import type { GuildScope, UserDiscordId } from '../../types/scope';
 import { logAudit } from '../../utils/logger';
 import { emitGuildEvent } from '../../dashboard/socket/emitter';
+import { Colors } from '../../utils/embedDesign';
+import { buildStatusEmbed } from '../../utils/statusEmbed';
 
 function fmt(n: bigint): string { return n.toLocaleString('de-DE'); }
 
-async function reply(i: ChatInputCommandInteraction, content: string, ephemeral = true): Promise<void> {
-  if (ephemeral) await i.reply({ content, flags: MessageFlags.Ephemeral });
-  else await i.reply({ content });
+// §4.12: Casino-Fehler immer als ERROR-Status-Embed, nicht als Klartext.
+async function statusFail(i: ChatInputCommandInteraction, e: unknown): Promise<void> {
+  const embed = buildStatusEmbed({
+    status: 'ERROR',
+    title: 'Spiel nicht gestartet',
+    description: 'Die Runde konnte nicht gestartet werden.',
+    fields: [{ name: '📝 Grund', value: (e as Error).message }],
+    footerText: 'V-Bot Casino',
+  });
+  await i.reply({ embeds: [embed], flags: MessageFlags.Ephemeral, allowedMentions: { parse: [] } });
 }
 
 /**
@@ -45,19 +54,32 @@ function buildRoundEmbed(args: {
   serverSeedHash: string;
   nonce: bigint;
 }): EmbedBuilder {
-  const net = args.won ? args.payout - args.bet : -args.bet;
+  const net = args.payout - args.bet;
   const netStr = (net >= 0n ? '+' : '') + fmt(net);
+  // §4: Ausgang mit Statussymbol; Unentschieden (net 0) = gelb.
+  const outcome: 'WON' | 'LOST' | 'DRAW' = args.payout === args.bet ? 'DRAW' : args.won ? 'WON' : 'LOST';
+  const meta = outcome === 'WON'
+    ? { sym: '✅', word: 'Gewonnen', color: Colors.Success }
+    : outcome === 'DRAW'
+      ? { sym: '⚠️', word: 'Unentschieden', color: Colors.Warning }
+      : { sym: '❌', word: 'Verloren', color: Colors.Error };
+  const netField = outcome === 'WON'
+    ? { name: '📈 Gewinn', value: `${netStr} ${args.coin}`, inline: false }
+    : outcome === 'DRAW'
+      ? { name: '📊 Netto', value: `${netStr} ${args.coin}`, inline: false }
+      : { name: '📉 Verlust', value: `${netStr} ${args.coin}`, inline: false };
   const e = new EmbedBuilder()
-    .setColor(args.won ? 0x2ECC71 : 0xE74C3C)
+    .setColor(meta.color)
     .setAuthor({ name: args.i.user.username, iconURL: args.i.user.displayAvatarURL() })
-    .setTitle(`${args.emoji} ${args.title} \u2014 ${args.won ? 'Gewonnen' : 'Verloren'}`)
+    .setTitle(`${args.emoji} ${args.title}`)
+    .setDescription(`${meta.sym} **${meta.word}**`)
     .addFields(
-      { name: 'Einsatz', value: `${fmt(args.bet)} ${args.coin}`, inline: true },
-      { name: 'Auszahlung', value: `${fmt(args.payout)} ${args.coin}`, inline: true },
-      { name: 'Netto', value: `${netStr} ${args.coin}`, inline: true },
+      { name: '💰 Einsatz', value: `${fmt(args.bet)} ${args.coin}`, inline: false },
+      { name: '🏆 Auszahlung', value: `${fmt(args.payout)} ${args.coin}`, inline: false },
+      netField,
       ...args.details,
     )
-    .setFooter({ text: `Provably-Fair \u2022 Hash: ${args.serverSeedHash} \u2022 Nonce: ${args.nonce.toString()}` })
+    .setFooter({ text: `V-Bot Casino • Provably Fair • Hash: ${args.serverSeedHash} • Nonce: ${args.nonce.toString()}` })
     .setTimestamp();
   return e;
 }
@@ -183,7 +205,7 @@ export const slotCommand: Command = {
           return { won, payout: won ? BigInt(Math.floor(Number(bet) * g.payoutMult)) : 0n, details: { game: 'SLOT' } };
         },
       });
-    } catch (e) { await reply(i, `Fehlgeschlagen: ${(e as Error).message}`); return; }
+    } catch (e) { await statusFail(i, e); return; }
     const cfg = await getConfig(scope.guildId);
     emitGuildEvent(scope.guildId, { type: 'casino.round', payload: { guildId: scope.guildId, gameType: 'SLOT', payout: out.result.payout.toString() } });
     const embed = buildRoundEmbed({
@@ -223,7 +245,7 @@ export const coinflipCommand: Command = {
           return { won, payout: won ? BigInt(Math.floor(Number(bet) * g.payoutMult)) : 0n, details: { flip, choice } };
         },
       });
-    } catch (e) { await reply(i, `Fehlgeschlagen: ${(e as Error).message}`); return; }
+    } catch (e) { await statusFail(i, e); return; }
     const cfg = await getConfig(scope.guildId);
     const flip = (out.result.details as { flip: string }).flip;
     emitGuildEvent(scope.guildId, { type: 'casino.round', payload: { guildId: scope.guildId, gameType: 'COINFLIP', payout: out.result.payout.toString() } });
@@ -231,8 +253,8 @@ export const coinflipCommand: Command = {
       i, title: 'Coinflip', emoji: '\uD83E\uDE99',
       won: out.result.won, bet, payout: out.result.payout, coin: cfg.emoji,
       details: [
-        { name: 'Deine Wahl', value: choice, inline: true },
-        { name: 'Ergebnis', value: flip, inline: true },
+        { name: '🎯 Deine Wahl', value: choice === 'KOPF' ? 'Kopf' : 'Zahl', inline: false },
+        { name: '🪙 Ergebnis', value: flip === 'KOPF' ? 'Kopf' : 'Zahl', inline: false },
       ],
       serverSeedHash: shortHash(out.serverSeed), nonce: out.nonce,
     });
@@ -246,7 +268,7 @@ export const coinflipCommand: Command = {
 export const diceCommand: Command = {
   data: new SlashCommandBuilder()
     .setName('dice')
-    .setDescription('Wuerfelt 1..6. Wenn deine Zahl faellt, gewinnst du payoutMult * Einsatz.')
+    .setDescription('Würfelt 1..6. Wenn deine Zahl fällt, gewinnst du payoutMult * Einsatz.')
     .addIntegerOption(o => o.setName('zahl').setDescription('Tippe 1..6').setRequired(true).setMinValue(1).setMaxValue(6))
     .addIntegerOption(o => o.setName('einsatz').setDescription('Einsatz').setRequired(true).setMinValue(1).setMaxValue(1_000_000)) as SlashCommandBuilder,
   execute: withGuildScope({ requireSlotToggle: 'economyActive' }, async (i, scope) => {
@@ -262,16 +284,16 @@ export const diceCommand: Command = {
           return { won, payout: won ? BigInt(Math.floor(Number(bet) * g.payoutMult)) : 0n, details: { rolled, tip } };
         },
       });
-    } catch (e) { await reply(i, `Fehlgeschlagen: ${(e as Error).message}`); return; }
+    } catch (e) { await statusFail(i, e); return; }
     const cfg = await getConfig(scope.guildId);
     const rolled = (out.result.details as { rolled: number }).rolled;
     emitGuildEvent(scope.guildId, { type: 'casino.round', payload: { guildId: scope.guildId, gameType: 'DICE', payout: out.result.payout.toString() } });
     const embed = buildRoundEmbed({
-      i, title: 'Wuerfel', emoji: '\uD83C\uDFB2',
+      i, title: 'Würfel', emoji: '\uD83C\uDFB2',
       won: out.result.won, bet, payout: out.result.payout, coin: cfg.emoji,
       details: [
-        { name: 'Dein Tipp', value: String(tip), inline: true },
-        { name: 'Gewuerfelt', value: String(rolled), inline: true },
+        { name: '🎯 Dein Tipp', value: String(tip), inline: false },
+        { name: '🎲 Gewürfelt', value: String(rolled), inline: false },
       ],
       serverSeedHash: shortHash(out.serverSeed), nonce: out.nonce,
     });
@@ -325,7 +347,7 @@ export const blackjackCommand: Command = {
           };
         },
       });
-    } catch (e) { await reply(i, `Fehlgeschlagen: ${(e as Error).message}`); return; }
+    } catch (e) { await statusFail(i, e); return; }
     const cfg = await getConfig(scope.guildId);
     const d = out.result.details as { player: number[]; dealer: number[]; ps: number; ds: number; tie: boolean };
     emitGuildEvent(scope.guildId, { type: 'casino.round', payload: { guildId: scope.guildId, gameType: 'BLACKJACK', payout: out.result.payout.toString() } });
@@ -333,9 +355,10 @@ export const blackjackCommand: Command = {
       i, title: 'Blackjack', emoji: '\uD83C\uDCCF',
       won: out.result.won, bet, payout: out.result.payout, coin: cfg.emoji,
       details: [
-        { name: `Spieler (${d.ps})`, value: d.player.join(', '), inline: true },
-        { name: `Dealer (${d.ds})`, value: d.dealer.join(', '), inline: true },
-        ...(d.tie ? [{ name: 'Status', value: 'Unentschieden', inline: true }] : []),
+        { name: '🧍 Deine Karten', value: d.player.join(', '), inline: false },
+        { name: '📊 Dein Wert', value: String(d.ps), inline: false },
+        { name: '🎩 Dealer-Karten', value: d.dealer.join(', '), inline: false },
+        { name: '📊 Dealer-Wert', value: String(d.ds), inline: false },
       ],
       serverSeedHash: shortHash(out.serverSeed), nonce: out.nonce,
     });
@@ -349,7 +372,7 @@ export const blackjackCommand: Command = {
 export const casinoStatsCommand: Command = {
   data: new SlashCommandBuilder()
     .setName('casino-stats')
-    .setDescription('Zeigt Casino-Statistik fuer dich oder einen anderen User.')
+    .setDescription('Zeigt Casino-Statistik für dich oder einen anderen User.')
     .addUserOption(o => o.setName('user').setDescription('Optional anderer User').setRequired(false)) as SlashCommandBuilder,
   execute: withGuildScope({ requireSlotToggle: 'economyActive' }, async (i, scope) => {
     const target = i.options.getUser('user') ?? i.user;
@@ -358,7 +381,16 @@ export const casinoStatsCommand: Command = {
       where: { guildId: scope.guildId, userDiscordId: targetId },
       select: { bet: true, payout: true, gameId: true },
     });
-    if (rows.length === 0) { await reply(i, '_keine Casino-Aktivitaet_'); return; }
+    if (rows.length === 0) {
+      const empty = buildStatusEmbed({
+        status: 'INFO',
+        title: 'Casino-Statistik',
+        description: `Für ${target.username} liegt noch keine Casino-Aktivität vor.`,
+        footerText: 'V-Bot Casino',
+      });
+      await i.reply({ embeds: [empty], flags: MessageFlags.Ephemeral, allowedMentions: { parse: [] } });
+      return;
+    }
     let bet = 0n, payout = 0n, wins = 0;
     for (const r of rows) {
       bet += r.bet;
@@ -366,16 +398,22 @@ export const casinoStatsCommand: Command = {
       if (r.payout > 0n) wins++;
     }
     const cfg = await getConfig(scope.guildId);
+    const net = payout - bet;
+    const netStr = (net >= 0n ? '+' : '') + fmt(net);
     const e = new EmbedBuilder()
-      .setTitle(`Casino-Stats: ${target.username}`)
+      .setColor(net >= 0n ? Colors.Success : Colors.Error)
+      .setAuthor({ name: target.username, iconURL: target.displayAvatarURL() })
+      .setTitle('📊 Casino-Statistik')
       .addFields(
-        { name: 'Runden', value: String(rows.length), inline: true },
-        { name: 'Win-Rate', value: `${((wins / rows.length) * 100).toFixed(1)}%`, inline: true },
-        { name: 'Einsatz gesamt', value: `${fmt(bet)} ${cfg.emoji}`, inline: true },
-        { name: 'Payout gesamt', value: `${fmt(payout)} ${cfg.emoji}`, inline: true },
-        { name: 'Netto', value: `${fmt(payout - bet)} ${cfg.emoji}`, inline: true },
-      );
-    await i.reply({ embeds: [e], flags: target.id === i.user.id ? MessageFlags.Ephemeral : undefined });
+        { name: '🎲 Runden', value: String(rows.length), inline: false },
+        { name: '🏆 Win-Rate', value: `${((wins / rows.length) * 100).toFixed(1)}%`, inline: false },
+        { name: '💰 Einsatz gesamt', value: `${fmt(bet)} ${cfg.emoji}`, inline: false },
+        { name: '🏆 Auszahlung gesamt', value: `${fmt(payout)} ${cfg.emoji}`, inline: false },
+        { name: '📊 Netto', value: `${netStr} ${cfg.emoji}`, inline: false },
+      )
+      .setFooter({ text: 'V-Bot Casino' })
+      .setTimestamp();
+    await i.reply({ embeds: [e], flags: target.id === i.user.id ? MessageFlags.Ephemeral : undefined, allowedMentions: { parse: [] } });
     logAudit('CASINO_STATS', 'CASINO', { guildId: scope.guildId, target: target.id, rounds: rows.length });
   }),
 };

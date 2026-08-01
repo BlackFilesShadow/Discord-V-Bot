@@ -142,6 +142,33 @@ class NitradoCircuitBreaker {
   }
 }
 
-// Singleton — alle NitradoClient-Instanzen teilen sich denselben Breaker.
-// (Mehrere Tokens machen API-seitig keinen Unterschied: derselbe Endpoint.)
-export const nitradoBreaker = new NitradoCircuitBreaker();
+// NIT-002: Statt eines einzigen globalen Breakers je Operationsklasse (READ/
+// WRITE) ein eigener Breaker. So blockiert ein Ausfall/Rate-Limit der
+// Schreibpfade (Settings/Restart) nicht die Lesepfade (Status/Token/Whitelist-
+// Read) und umgekehrt. Bewusst NUR zwei Breaker (bounded), nicht pro Connection.
+export type NitradoOpClass = 'READ' | 'WRITE';
+
+const breakers: Record<NitradoOpClass, NitradoCircuitBreaker> = {
+  READ: new NitradoCircuitBreaker(),
+  WRITE: new NitradoCircuitBreaker(),
+};
+
+export function opClassForMethod(method: string): NitradoOpClass {
+  return method.toUpperCase() === 'GET' ? 'READ' : 'WRITE';
+}
+
+export function getNitradoBreaker(op: NitradoOpClass): NitradoCircuitBreaker {
+  return breakers[op];
+}
+
+export function getNitradoBreakerStatus(): Record<NitradoOpClass, ReturnType<NitradoCircuitBreaker['getStatus']>> {
+  return { READ: breakers.READ.getStatus(), WRITE: breakers.WRITE.getStatus() };
+}
+
+export function resetAllNitradoBreakers(): void {
+  breakers.READ.reset();
+  breakers.WRITE.reset();
+}
+
+// Legacy-Alias (Diagnose/Bestandstests) — zeigt auf den READ-Breaker.
+export const nitradoBreaker = breakers.READ;

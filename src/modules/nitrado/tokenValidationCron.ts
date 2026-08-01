@@ -35,8 +35,15 @@ async function checkOne(
   }
 
   const client = new NitradoClient(token);
-  const ok = await client.validateToken();
-  if (ok) return;
+  const result = await client.validateTokenDetailed();
+  if (result.kind === 'VALID') return;
+  if (result.kind !== 'INVALID') {
+    // NIT-001: transienter Fehler (Netzwerk/429/5xx/Circuit-Open) darf einen
+    // gueltigen Token NICHT als EXPIRED markieren.
+    const detail = 'message' in result ? `: ${result.message}` : '';
+    logger.warn(`Token-Validation fuer ${conn.id} transient (${result.kind})${detail} — Status bleibt unveraendert.`);
+    return;
+  }
 
   await setStatus(asGuildId(conn.guildId), asNitradoConnId(conn.id), 'EXPIRED');
   logAudit('NITRADO_TOKEN_EXPIRED', 'NITRADO', { guildId: conn.guildId, nitradoConnId: conn.id, alias: conn.alias });

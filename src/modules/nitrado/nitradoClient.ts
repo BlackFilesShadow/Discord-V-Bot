@@ -28,7 +28,7 @@
 
 import axios, { AxiosError, type AxiosInstance, type AxiosRequestConfig } from 'axios';
 import { logger } from '../../utils/logger';
-import { nitradoBreaker, NitradoCircuitOpenError } from './circuitBreaker';
+import { getNitradoBreaker, opClassForMethod, NitradoCircuitOpenError } from './circuitBreaker';
 
 const NITRADO_BASE = 'https://api.nitrado.net';
 
@@ -59,8 +59,42 @@ export interface NitradoWhitelistEntry {
   added_at?: string;
 }
 
+/**
+ * NIT-001: Ergebnis der Token-Pruefung. Ausschliesslich `INVALID` darf zu
+ * EXPIRED fuehren; alle anderen Faelle sind transient/diagnostisch.
+ */
+export type TokenValidationResult =
+  | { kind: 'VALID' }
+  | { kind: 'INVALID'; status: 401 | 403 | null }
+  | { kind: 'RATE_LIMITED' }
+  | { kind: 'TRANSIENT_FAILURE'; status?: number; message: string }
+  | { kind: 'CIRCUIT_OPEN' };
+
 function sleep(ms: number): Promise<void> {
   return new Promise(r => setTimeout(r, ms));
+}
+
+// NIT-011: Obergrenze fuer signed-URL-Downloads (ADM-/Log-Dateien).
+const MAX_DOWNLOAD_BYTES = 50 * 1024 * 1024;
+
+/**
+ * F-011: Retry-After als Sekunden ODER HTTP-Datum interpretieren, negativ auf 0
+ * klemmen und auf capMs deckeln (kein unbegrenztes Warten bei boesartigem Header).
+ */
+export function parseRetryAfterMs(header: unknown, capMs = 30_000): number {
+  if (header == null) return 2000;
+  const raw = String(Array.isArray(header) ? header[0] : header).trim();
+  if (raw === '') return 2000;
+  const asSeconds = Number(raw);
+  let ms: number;
+  if (Number.isFinite(asSeconds)) {
+    ms = asSeconds * 1000;
+  } else {
+    const at = Date.parse(raw);
+    ms = Number.isNaN(at) ? 2000 : at - Date.now();
+  }
+  if (ms < 0) ms = 0;
+  return Math.min(ms, capMs);
 }
 
 function parseLines(raw: string): string[] {
@@ -99,24 +133,30 @@ export class NitradoClient {
   private async request<T>(method: 'GET' | 'POST' | 'DELETE', path: string, opts: AxiosRequestConfig = {}): Promise<T> {
     // P0-Hardening: Circuit-Breaker-Preflight. Wirft NitradoCircuitOpenError
     // wenn API als down markiert ist — verhindert Thundering-Herd.
-    nitradoBreaker.preflight();
+    // NIT-002: Breaker je Operationsklasse (READ/WRITE).
+    const breaker = getNitradoBreaker(opClassForMethod(method));
+    breaker.preflight();
 
     let lastErr: Error | null = null;
     for (let attempt = 1; attempt <= 3; attempt++) {
       try {
         const res = await this.http.request({ method, url: path, ...opts });
         if (res.status >= 200 && res.status < 300) {
-          nitradoBreaker.recordSuccess();
+          breaker.recordSuccess();
           return res.data as T;
         }
         if (res.status === 429) {
-          nitradoBreaker.recordFailure();
-          const retryAfter = Number(res.headers['retry-after']) || 2;
-          await sleep(retryAfter * 1000);
+          breaker.recordFailure();
+          // F-011: Auf dem letzten Versuch den 429-Status erhalten, statt ihn
+          // als Unbekannt/null zu verlieren.
+          if (attempt >= 3) {
+            throw new NitradoApiError('Rate-Limit (429) nach mehreren Versuchen', 429, path);
+          }
+          await sleep(parseRetryAfterMs(res.headers['retry-after']));
           continue;
         }
         if (res.status >= 500 && attempt < 3) {
-          nitradoBreaker.recordFailure();
+          breaker.recordFailure();
           await sleep(500 * Math.pow(2, attempt - 1));
           continue;
         }
@@ -131,7 +171,7 @@ export class NitradoClient {
         if (e instanceof NitradoCircuitOpenError) throw e;
         lastErr = e instanceof Error ? e : new Error(String(e));
         // Netzwerk-/Timeout-Fehler: zaehlt als Server-seitig.
-        nitradoBreaker.recordFailure();
+        breaker.recordFailure();
         if (attempt < 3 && (e as AxiosError).code !== 'ECONNABORTED') {
           await sleep(500 * Math.pow(2, attempt - 1));
           continue;
@@ -143,12 +183,28 @@ export class NitradoClient {
 
   /** Pruefung ob Token gueltig ist (lightweight). */
   async validateToken(): Promise<boolean> {
+    return (await this.validateTokenDetailed()).kind === 'VALID';
+  }
+
+  /**
+   * NIT-001: Differenziertes Token-Ergebnis. Nur `INVALID` (401/403 bzw. vom
+   * Server als ungueltig gemeldet) rechtfertigt EXPIRED. Transiente Fehler
+   * (Netzwerk/429/5xx/Circuit-Open) duerfen einen gueltigen Token NICHT als
+   * abgelaufen markieren.
+   */
+  async validateTokenDetailed(): Promise<TokenValidationResult> {
     try {
       const res = await this.request<{ data: { token?: { valid?: boolean } } }>('GET', '/token');
-      return res.data?.token?.valid === true;
+      return res.data?.token?.valid === true ? { kind: 'VALID' } : { kind: 'INVALID', status: null };
     } catch (e) {
+      if (e instanceof NitradoCircuitOpenError) return { kind: 'CIRCUIT_OPEN' };
+      if (e instanceof NitradoApiError) {
+        if (e.status === 401 || e.status === 403) return { kind: 'INVALID', status: e.status };
+        if (e.status === 429) return { kind: 'RATE_LIMITED' };
+        return { kind: 'TRANSIENT_FAILURE', status: e.status ?? undefined, message: e.message };
+      }
       logger.warn('Nitrado-Token-Validierung fehlgeschlagen:', (e as Error).message);
-      return false;
+      return { kind: 'TRANSIENT_FAILURE', message: (e as Error).message };
     }
   }
 
@@ -245,7 +301,14 @@ export class NitradoClient {
     );
     const url = meta.data?.token?.url;
     if (!url) throw new NitradoApiError('Keine Download-URL', null, fullPath);
-    const res = await axios.get<string>(url, { responseType: 'text', timeout: 30_000 });
+    // NIT-011: harte Groessenobergrenze gegen Speicher-Erschoepfung durch
+    // ueberraschend grosse ADM-/Log-Dateien.
+    const res = await axios.get<string>(url, {
+      responseType: 'text',
+      timeout: 30_000,
+      maxContentLength: MAX_DOWNLOAD_BYTES,
+      maxBodyLength: MAX_DOWNLOAD_BYTES,
+    });
     return res.data;
   }
 

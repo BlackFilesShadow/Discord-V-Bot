@@ -139,6 +139,11 @@ export const config = {
     // Standard: AN. Schreibende Nitrado-Aktionen brauchen dann Permission + Confirm + Reason + Audit.
     // Nur via NITRADO_WRITE_PROTECTION=false explizit deaktivierbar.
     writeProtection: optionalEnv('NITRADO_WRITE_PROTECTION', 'true') !== 'false',
+    // Phase 3: Kanonische ADM-Eventpipeline. Ist sie AN, speichert der ADM-Sync
+    // normalisierte AdmEvents (idempotent) und bucht NICHT mehr direkt Geld;
+    // Rewards laufen ueber die RewardEngine (WOULD_PAY/Shadow). Default AUS ->
+    // bestehendes Produktionsverhalten unveraendert.
+    admEventPipelineV2: optionalEnv('ADM_EVENT_PIPELINE_V2', 'false') === 'true',
   },
 
   // Member-Erfassung (Spec §11): optionaler Hintergrund-Sync.

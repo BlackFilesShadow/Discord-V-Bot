@@ -32,12 +32,6 @@ const STATUS_LABELS: Record<string, { label: string; emoji: string }> = {
   ARCHIVED: { label: 'Archiviert', emoji: '⚫' },
 };
 
-const POLICY_LABELS: Record<string, string> = {
-  OPEN: '🔓 Offen — direkter Beitritt',
-  REQUEST: '✋ Bewerbung erforderlich',
-  CLOSED: '🔒 Geschlossen — nur Einladung',
-};
-
 function parseColor(hex: string | null | undefined, fallback = 0xdc2626): number {
   if (!hex) return fallback;
   const m = /^#?([0-9a-fA-F]{6})$/.exec(hex.trim());
@@ -74,49 +68,46 @@ function buildEmbed(
   guildName: string,
 ): EmbedBuilder {
   const status = STATUS_LABELS[f.status] ?? STATUS_LABELS.ACTIVE;
-  const policy = POLICY_LABELS[f.joinPolicy] ?? POLICY_LABELS.REQUEST;
   const created = `<t:${Math.floor(f.createdAt.getTime() / 1000)}:D>`;
 
-  // Mitgliederliste: zeigt ALLE FactionMember mit Rollen-Prefix.
-  // (Leader/Stellv./Schatzmeister stehen oben separat als Felder, koennen aber zusaetzlich als FactionMember existieren.)
-  const memberMentions: string[] = [];
-  for (const m of f.members) {
-    const prefix = m.role === 'LEADER' ? '👑 '
-      : m.role === 'TREASURER' ? '💰 '
-      : m.role === 'PENDING' ? '⏳ '
-      : '👤 ';
-    memberMentions.push(`${prefix}<@${m.userDiscordId}>`);
-  }
-  const memberDisplay = memberMentions.length === 0
+  // Mitgliederliste einspaltig, max 25 sichtbar, Rest als "+X weitere".
+  // KEINE punktgetrennte Endloszeile, KEINE Join-Policy (§3.1/§3.3).
+  const MAX_VISIBLE = 25;
+  const memberLines = f.members.map((m) => {
+    const prefix = m.role === 'LEADER' ? '👑' : m.role === 'TREASURER' ? '💰' : m.role === 'PENDING' ? '⏳' : '👤';
+    return `${prefix} <@${m.userDiscordId}>`;
+  });
+  const restCount = memberLines.length - MAX_VISIBLE;
+  const memberDisplay = memberLines.length === 0
     ? '_Noch keine Mitglieder eingetragen._'
-    : memberMentions.slice(0, 40).join(' · ') + (memberMentions.length > 40 ? `\n_+${memberMentions.length - 40} weitere_` : '');
+    : memberLines.slice(0, MAX_VISIBLE).join('\n') + (restCount > 0 ? `\n_+${restCount} weitere_` : '');
 
-  const baseDescription = (f.description?.trim().slice(0, 1500))
-    || '_Keine Beschreibung hinterlegt._';
-  const leadershipBlock = [
-    `👑  **Fraktionsführer:** ${f.leaderDiscordId    ? `<@${f.leaderDiscordId}>`    : '_offen_'}`,
-    `🛡️  **Stellvertreter:** ${f.deputyDiscordId    ? `<@${f.deputyDiscordId}>`    : '_offen_'}`,
-    `💰  **Schatzmeister:** ${f.treasurerDiscordId ? `<@${f.treasurerDiscordId}>` : '_offen_'}`,
-  ].join('\n');
+  const description = f.description?.trim().slice(0, 1500) || '_Keine Beschreibung hinterlegt._';
 
   const e = new EmbedBuilder()
     .setAuthor({ name: `${guildName}  •  Fraktion` })
     .setTitle(`🏴  ${f.name}`)
     .setColor(parseColor(f.color))
-    .setDescription(`${baseDescription}\n\n${leadershipBlock}`)
-    .addFields(
-      { name: '👥  Mitglieder',      value: String(f.memberCount), inline: true },
-      { name: `${status.emoji}  Status`, value: status.label,    inline: true },
-      { name: '📨  Bewerbung',       value: policy,                inline: true },
-    );
+    .setDescription(description)
+    .setFooter({ text: 'V-Bot • Fraktionssystem' });
+
+  // Fuehrungsrollen einspaltig; optionale Rollen NUR wenn gesetzt (kein Platzhalter).
+  if (f.leaderDiscordId) e.addFields({ name: '👑  Fraktionsführer', value: `<@${f.leaderDiscordId}>`, inline: false });
+  if (f.deputyDiscordId) e.addFields({ name: '🛡️  Stellvertretung', value: `<@${f.deputyDiscordId}>`, inline: false });
+  if (f.treasurerDiscordId) e.addFields({ name: '💰  Schatzmeister', value: `<@${f.treasurerDiscordId}>`, inline: false });
+
+  e.addFields(
+    { name: '👥  Mitglieder', value: String(f.memberCount), inline: false },
+    { name: `${status.emoji}  Status`, value: status.label, inline: false },
+  );
 
   if (f.roleId) {
     e.addFields({ name: '🏷️  Fraktionsrolle', value: `<@&${f.roleId}>`, inline: false });
   }
 
   e.addFields(
-    { name: '📑  Mitgliederliste', value: memberDisplay.slice(0, 1024), inline: false },
-    { name: '📅  Gegruendet',      value: created,               inline: false },
+    { name: '📑  Mitglieder', value: memberDisplay.slice(0, 1024), inline: false },
+    { name: '📅  Gegründet', value: created, inline: false },
   );
 
   if (attachmentNames.flag) e.setThumbnail(`attachment://${attachmentNames.flag}`);
@@ -355,16 +346,14 @@ function listKey(guildId: string): string {
 function buildListEmbed(factions: Array<{
   name: string;
   status: string;
-  joinPolicy: string;
   memberCount: number;
   color: string | null;
   leaderDiscordId: string | null;
 }>): EmbedBuilder {
   const e = new EmbedBuilder()
-    .setAuthor({ name: 'V-BOT  •  FRAKTIONS-UEBERSICHT' })
-    .setTitle(`🏛️  Aktive Fraktionen  (${factions.length})`)
+    .setTitle(`🏴  Fraktionen`)
     .setColor(0xdc2626)
-    .setFooter({ text: 'Automatische Liste  •  V-Bot Faction-System' })
+    .setFooter({ text: `V-Bot • ${factions.length} aktive Fraktionen` })
     .setTimestamp(new Date());
 
   if (factions.length === 0) {
@@ -372,14 +361,13 @@ function buildListEmbed(factions: Array<{
     return e;
   }
 
-  const lines: string[] = [];
-  for (const f of factions) {
+  // Jede Fraktion als eigener kurzer Block; KEINE rohen Statuswerte, KEINE
+  // Join-Policy (§3.5).
+  const blocks = factions.map((f) => {
     const st = STATUS_LABELS[f.status] ?? STATUS_LABELS.ACTIVE;
-    const policy = f.joinPolicy === 'OPEN' ? '🔓' : f.joinPolicy === 'CLOSED' ? '🔒' : '✋';
-    const leader = f.leaderDiscordId ? ` — Leitung <@${f.leaderDiscordId}>` : '';
-    lines.push(`${st.emoji}  **${f.name}**  ${policy}  · ${f.memberCount} Mitglieder${leader}`);
-  }
-  e.setDescription(lines.join('\n').slice(0, 4000));
+    return `${st.emoji}  **${f.name}**\n👥 ${f.memberCount} Mitglieder`;
+  });
+  e.setDescription(blocks.join('\n\n').slice(0, 4000));
   return e;
 }
 
@@ -418,7 +406,6 @@ export async function postFactionList(client: Client, guildId: string): Promise<
     const embed = buildListEmbed(factions.map(f => ({
       name: f.name,
       status: f.status,
-      joinPolicy: f.joinPolicy,
       memberCount: f._count.members,
       color: f.color,
       leaderDiscordId: f.leaderDiscordId,

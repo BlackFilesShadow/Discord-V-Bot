@@ -6,7 +6,7 @@
  */
 
 import {
-  SlashCommandBuilder, ChatInputCommandInteraction, AutocompleteInteraction, EmbedBuilder, MessageFlags,
+  SlashCommandBuilder, ChatInputCommandInteraction, AutocompleteInteraction, EmbedBuilder, MessageFlags, escapeMarkdown,
 } from 'discord.js';
 import type { Command } from '../../types';
 import prisma from '../../database/prisma';
@@ -14,10 +14,31 @@ import { withGuildScope } from '../middleware/withGuildScope';
 import { asGuildId } from '../../types/scope';
 import { logAudit } from '../../utils/logger';
 import { emitGuildEvent } from '../../dashboard/socket/emitter';
+import { buildStatusEmbed, type EmbedStatus } from '../../utils/statusEmbed';
 
-async function reply(i: ChatInputCommandInteraction, content: string, ephemeral = true): Promise<void> {
-  if (ephemeral) await i.reply({ content, flags: MessageFlags.Ephemeral });
-  else await i.reply({ content });
+// Deutsche Statusbezeichnungen (§3.2) — nie rohe Enum-Werte anzeigen.
+const FACTION_STATUS: Record<string, { label: string; emoji: string }> = {
+  ACTIVE: { label: 'Aktiv', emoji: '🟢' },
+  RECRUITING: { label: 'Rekrutiert', emoji: '🟡' },
+  INACTIVE: { label: 'Inaktiv', emoji: '⚪' },
+  ARCHIVED: { label: 'Archiviert', emoji: '⚫' },
+};
+
+function factionColor(hex: string | null | undefined): number {
+  const m = hex ? /^#?([0-9a-fA-F]{6})$/.exec(hex.trim()) : null;
+  return m ? parseInt(m[1], 16) : 0xdc2626; // Fallback dunkles Rot (§3.1)
+}
+
+async function statusReply(
+  i: ChatInputCommandInteraction,
+  status: EmbedStatus,
+  title: string,
+  opts: { description?: string; fields?: { name: string; value: string }[]; ephemeral?: boolean } = {},
+): Promise<void> {
+  const embed = buildStatusEmbed({ status, title, description: opts.description, fields: opts.fields, footerText: 'V-Bot • Fraktionssystem' });
+  const ephemeral = opts.ephemeral ?? true;
+  if (ephemeral) await i.reply({ embeds: [embed], flags: MessageFlags.Ephemeral, allowedMentions: { parse: [] } });
+  else await i.reply({ embeds: [embed], allowedMentions: { parse: [] } });
 }
 
 /**
@@ -54,18 +75,24 @@ export const factionCommand: Command = {
       where: { guildId_name: { guildId: scope.guildId, name } },
       include: { _count: { select: { members: true } } },
     });
-    if (!f) { await reply(i, 'Fraktion nicht gefunden.'); return; }
+    if (!f) { await statusReply(i, 'ERROR', 'Fraktion nicht gefunden', { description: 'Die gewünschte Fraktion konnte nicht gefunden werden.' }); return; }
+    const st = FACTION_STATUS[f.status] ?? FACTION_STATUS.ACTIVE;
     const e = new EmbedBuilder()
-      .setTitle(f.name)
-      .addFields(
-        { name: 'Leader', value: f.leaderDiscordId ? `<@${f.leaderDiscordId}>` : '_offen_', inline: true },
-        { name: 'Treasurer', value: f.treasurerDiscordId ? `<@${f.treasurerDiscordId}>` : '_offen_', inline: true },
-        { name: 'Mitglieder', value: String(f._count.members), inline: true },
-        { name: 'Beitritt', value: f.joinPolicy, inline: true },
-      );
+      .setAuthor({ name: `${i.guild?.name ?? 'Server'} • Fraktionsübersicht` })
+      .setTitle(`🏴  ${f.name}`)
+      .setColor(factionColor(f.color))
+      .setFooter({ text: 'V-Bot • Fraktion' })
+      .setTimestamp();
+    if (f.leaderDiscordId) e.addFields({ name: '👑  Fraktionsführer', value: `<@${f.leaderDiscordId}>`, inline: false });
+    if (f.deputyDiscordId) e.addFields({ name: '🛡️  Stellvertretung', value: `<@${f.deputyDiscordId}>`, inline: false });
+    if (f.treasurerDiscordId) e.addFields({ name: '💰  Schatzmeister', value: `<@${f.treasurerDiscordId}>`, inline: false });
+    e.addFields(
+      { name: '👥  Mitglieder', value: String(f._count.members), inline: false },
+      { name: `${st.emoji}  Status`, value: st.label, inline: false },
+    );
     if (f.flagUrl && /^https?:\/\//i.test(f.flagUrl)) e.setThumbnail(f.flagUrl);
     if (f.bannerUrl && /^https?:\/\//i.test(f.bannerUrl)) e.setImage(f.bannerUrl);
-    await i.reply({ embeds: [e] });
+    await i.reply({ embeds: [e], allowedMentions: { parse: [] } });
   }),
 };
 
@@ -81,10 +108,18 @@ export const factionsCommand: Command = {
       include: { _count: { select: { members: true } } },
       take: 50,
     });
-    if (rows.length === 0) { await reply(i, '_keine Fraktionen_'); return; }
-    const lines = rows.map(r => `**${r.name}** — ${r._count.members} Mitglieder (${r.joinPolicy})`).join('\n');
-    const e = new EmbedBuilder().setTitle(`Fraktionen (${rows.length})`).setDescription(lines.slice(0, 4000));
-    await i.reply({ embeds: [e] });
+    if (rows.length === 0) { await statusReply(i, 'INFO', 'Keine Fraktionen vorhanden'); return; }
+    const blocks = rows.map(r => {
+      const st = FACTION_STATUS[r.status] ?? FACTION_STATUS.ACTIVE;
+      return `${st.emoji}  **${escapeMarkdown(r.name)}**\n👥 ${r._count.members} Mitglieder`;
+    }).join('\n\n');
+    const e = new EmbedBuilder()
+      .setTitle('🏴  Fraktionen')
+      .setColor(0xdc2626)
+      .setDescription(blocks.slice(0, 4000))
+      .setFooter({ text: `V-Bot • ${rows.length} aktive Fraktionen` })
+      .setTimestamp();
+    await i.reply({ embeds: [e], allowedMentions: { parse: [] } });
   }),
 };
 
@@ -102,8 +137,8 @@ export const joinCommand: Command = {
     const f = await prisma.faction.findUnique({
       where: { guildId_name: { guildId: scope.guildId, name } },
     });
-    if (!f || !f.isActive) { await reply(i, 'Fraktion nicht gefunden oder inaktiv.'); return; }
-    if (f.joinPolicy === 'CLOSED') { await reply(i, 'Diese Fraktion ist geschlossen.'); return; }
+    if (!f || !f.isActive) { await statusReply(i, 'ERROR', 'Fraktion nicht gefunden', { description: 'Die gewünschte Fraktion konnte nicht gefunden werden oder ist inaktiv.' }); return; }
+    if (f.joinPolicy === 'CLOSED') { await statusReply(i, 'ERROR', 'Fraktion geschlossen', { description: 'Diese Fraktion nimmt aktuell keine Beitritte an.' }); return; }
 
     // Existing membership in this guild?
     const existing = await prisma.factionMember.findFirst({
@@ -112,7 +147,7 @@ export const joinCommand: Command = {
         faction: { guildId: scope.guildId },
       },
     });
-    if (existing) { await reply(i, 'Du bist bereits in einer Fraktion. `/leave` zuerst.'); return; }
+    if (existing) { await statusReply(i, 'ERROR', 'Bereits Mitglied', { description: 'Du bist bereits in einer Fraktion. Verlasse sie zuerst mit `/leave`.' }); return; }
 
     const role = f.joinPolicy === 'OPEN' ? 'MEMBER' : 'PENDING';
     await prisma.factionMember.create({
@@ -120,7 +155,20 @@ export const joinCommand: Command = {
     });
     logAudit('FACTION_JOIN', 'FACTION', { guildId: scope.guildId, factionId: f.id, user: scope.actorDiscordId, role });
     emitGuildEvent(scope.guildId, { type: 'faction.changed', payload: { guildId: scope.guildId, factionId: f.id } });
-    await reply(i, role === 'MEMBER' ? `Du bist **${f.name}** beigetreten.` : `Anfrage gestellt fuer **${f.name}**.`);
+    if (role === 'MEMBER') {
+      await statusReply(i, 'SUCCESS', 'Fraktion beigetreten', {
+        description: `Du bist der Fraktion **${escapeMarkdown(f.name)}** beigetreten.`,
+        fields: [{ name: '🏴 Fraktion', value: escapeMarkdown(f.name) }],
+      });
+    } else {
+      await statusReply(i, 'INFO', 'Beitrittsanfrage gestellt', {
+        description: `Deine Anfrage wurde an die Fraktion **${escapeMarkdown(f.name)}** übermittelt.`,
+        fields: [
+          { name: '🏴 Fraktion', value: escapeMarkdown(f.name) },
+          { name: '📨 Status', value: 'Wartet auf Entscheidung' },
+        ],
+      });
+    }
   }),
 };
 
@@ -137,7 +185,7 @@ export const leaveCommand: Command = {
       },
       include: { faction: true },
     });
-    if (!member) { await reply(i, 'Du bist in keiner Fraktion.'); return; }
+    if (!member) { await statusReply(i, 'ERROR', 'Keine Fraktion', { description: 'Du bist in keiner Fraktion.' }); return; }
     await prisma.factionMember.deleteMany({
       where: { id: member.id, faction: { guildId: scope.guildId } },
     });
@@ -148,6 +196,6 @@ export const leaveCommand: Command = {
     }
     logAudit('FACTION_LEAVE', 'FACTION', { guildId: scope.guildId, factionId: member.factionId, user: scope.actorDiscordId });
     emitGuildEvent(scope.guildId, { type: 'faction.changed', payload: { guildId: scope.guildId, factionId: member.factionId } });
-    await reply(i, `Du hast **${member.faction.name}** verlassen.`);
+    await statusReply(i, 'SUCCESS', 'Fraktion verlassen', { description: `Du hast die Fraktion **${escapeMarkdown(member.faction.name)}** verlassen.` });
   }),
 };

@@ -38,13 +38,22 @@ webhookRouter.post(
       res.status(400).json({ error: 'feedId Format ungueltig.' });
       return;
     }
-    const rawBody = (req.body as Buffer | undefined)?.toString('utf8') ?? '';
+    // rawBody: bevorzugt der vom globalen JSON-Parser (verify-Hook) gesicherte
+    // Originalpuffer; Fallback ist der lokale raw()-Buffer, falls kein
+    // JSON-Parser lief (F-001).
+    const reqWithRaw = req as Request & { rawBody?: Buffer };
+    const rawBuf = reqWithRaw.rawBody ?? (Buffer.isBuffer(req.body) ? (req.body as Buffer) : undefined);
+    const rawBody = rawBuf ? rawBuf.toString('utf8') : '';
     let parsed: unknown;
-    try {
-      parsed = rawBody ? JSON.parse(rawBody) : null;
-    } catch {
-      res.status(400).json({ error: 'JSON-Parse-Fehler.' });
-      return;
+    if (Buffer.isBuffer(req.body)) {
+      try {
+        parsed = rawBody ? JSON.parse(rawBody) : null;
+      } catch {
+        res.status(400).json({ error: 'JSON-Parse-Fehler.' });
+        return;
+      }
+    } else {
+      parsed = req.body ?? null;
     }
     try {
       const result = await deliverWebhookPayload(injectedClient, feedId, rawBody, parsed, req.headers as Record<string, string | string[] | undefined>);

@@ -135,11 +135,13 @@ describe('Casino + Bank Embeds (Public, kein Self-Ping)', () => {
     expect(arg.embeds).toHaveLength(1);
     const embed = arg.embeds![0];
     const json = embed.toJSON();
-    expect(json.title).toContain('Bankuebersicht');
+    expect(json.title).toContain('Bankübersicht');
     expect(JSON.stringify(json.fields)).toContain('Wallet');
     expect(JSON.stringify(json.fields)).toContain('Bank');
     expect(JSON.stringify(json.fields)).toContain('Gesamt');
-    expect(JSON.stringify(json.fields)).toContain('Zinsen');
+    // Rev IV §5.1: kein Zinssatz mehr, Footer zeigt Nitrado-Alias statt Guild-ID.
+    expect(JSON.stringify(json.fields)).not.toContain('Zinsen');
+    expect(json.footer?.text ?? '').not.toMatch(/Guild\s+GUILD_X/);
 
     // Description darf KEINE pingende Mention enthalten
     expect(json.description ?? '').not.toMatch(/<@!?\d+>/);
@@ -162,15 +164,16 @@ describe('Casino + Bank Embeds (Public, kein Self-Ping)', () => {
     expect(arg.embeds).toHaveLength(1);
 
     const json = arg.embeds![0].toJSON();
-    expect(json.title).toMatch(/Gewonnen|Verloren/);
-    expect(json.footer?.text ?? '').toContain('Provably-Fair');
+    // Rev IV: Ausgangswort steht mit Statussymbol in der Description, nicht im Titel.
+    expect(json.description ?? '').toMatch(/Gewonnen|Verloren|Unentschieden/);
+    expect(json.footer?.text ?? '').toContain('Provably Fair');
     expect(json.footer?.text ?? '').toMatch(/Hash:\s+[a-f0-9]{16}/);
     expect(json.footer?.text ?? '').toMatch(/Nonce:\s+\d+/);
 
-    // Einsatz/Auszahlung/Netto IMMER vorhanden
+    // Einsatz/Auszahlung + Netto|Gewinn|Verlust IMMER vorhanden
     const fieldsStr = JSON.stringify(json.fields);
     expect(fieldsStr).toContain('Einsatz');
     expect(fieldsStr).toContain('Auszahlung');
-    expect(fieldsStr).toContain('Netto');
+    expect(fieldsStr).toMatch(/Netto|Gewinn|Verlust/);
   });
 });

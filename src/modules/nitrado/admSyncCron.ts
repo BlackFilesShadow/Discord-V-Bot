@@ -28,6 +28,9 @@ import { config } from '../../config';
 import { decrypt } from '../../utils/security';
 import { NitradoClient } from './nitradoClient';
 import { parseAdm, aggregateMinutesByPlayer } from './admParser';
+import { ingestAdmFile } from './adm/admIngestService';
+import { runPvpRewardShadow, type RewardEngineClient } from './adm/rewardEngine';
+import { aggregatePlayerSessions, type PlayerSessionClient } from './adm/playerSessionService';
 import { emitGuildEvent } from '../../dashboard/socket/emitter';
 
 const SYNC_INTERVAL_MS = 15 * 60 * 1000;
@@ -97,6 +100,13 @@ async function processConnection(profileDir: string, conn: ConnRow): Promise<voi
   const lastCursor = cursorRow.lastModifiedAt;
   const fresh = files.filter(f => f.modified_at > lastCursor).sort((a, b) => a.modified_at - b.modified_at);
   if (fresh.length === 0) return;
+
+  // Phase 3: Kanonische Pipeline. Speichert AdmEvents (idempotent) und bucht
+  // KEIN Geld direkt; Rewards laufen ueber die Shadow-RewardEngine.
+  if (config.nitrado.admEventPipelineV2) {
+    await processConnectionV2(profileDir, conn, fresh, client, lastCursor, cursorRow.lastFileName ?? null);
+    return;
+  }
 
   // EconomyConfig laden (1x pro Guild)
   const cfg = await prisma.economyConfig.findUnique({ where: { guildId: conn.guildId } });
@@ -194,6 +204,82 @@ async function processConnection(profileDir: string, conn: ConnRow): Promise<voi
   if (totalRewardedPlayers > 0) {
     logAudit('NITRADO_ADM_SYNC', 'NITRADO', {
       guildId: conn.guildId, nitradoConnId: conn.id, files: fresh.length, rewarded: totalRewardedPlayers,
+    });
+  }
+}
+
+/**
+ * V2-Pfad (Phase 3): laedt frische ADM-Dateien, ueberfuehrt sie in kanonische
+ * AdmEvents (byte-genauer Cursor, idempotent) und laesst die Shadow-RewardEngine
+ * PvP-Kills zu RewardDecisions verarbeiten. KEINE direkte Geldbuchung.
+ */
+async function processConnectionV2(
+  profileDir: string,
+  conn: ConnRow,
+  fresh: Array<{ name: string; modified_at: number; size: number }>,
+  client: NitradoClient,
+  lastCursor: number,
+  lastFileName: string | null,
+): Promise<void> {
+  let lastSuccessfulModifiedAt = lastCursor;
+  let lastSuccessfulFileName = lastFileName;
+  let totalInserted = 0;
+  for (const file of fresh) {
+    let content: string;
+    try {
+      content = await client.downloadFile(conn.nitradoServerId!, profileDir.replace(/\/$/, '') + '/' + file.name);
+    } catch (e) {
+      logger.warn(`ADM-Sync V2: download fehlgeschlagen fuer ${conn.id}/${file.name}: ${(e as Error).message} — Abbruch.`);
+      break;
+    }
+    try {
+      const r = await ingestAdmFile(
+        { guildId: conn.guildId, nitradoConnId: conn.id },
+        { fileName: file.name, modifiedAt: file.modified_at, size: file.size, content },
+      );
+      totalInserted += r.inserted;
+    } catch (e) {
+      logger.warn(`ADM-Sync V2: Ingest fehlgeschlagen fuer ${conn.id}/${file.name}: ${(e as Error).message} — Abbruch.`);
+      break;
+    }
+    lastSuccessfulModifiedAt = file.modified_at;
+    lastSuccessfulFileName = file.name;
+  }
+
+  if (lastSuccessfulModifiedAt > lastCursor) {
+    try {
+      await saveCursor(conn.guildId, conn.id, lastSuccessfulModifiedAt, lastSuccessfulFileName);
+    } catch (e) {
+      logger.warn(`ADM-Sync V2: Cursor-Save fehlgeschlagen fuer ${conn.id}: ${(e as Error).message}`);
+    }
+  }
+
+  // Shadow-RewardEngine (kein Geld): PvP-Kills -> idempotente RewardDecisions.
+  // Echte Betraege/Regeln folgen in Phase 5 (EconomyRewardRule).
+  try {
+    await runPvpRewardShadow(
+      prisma as unknown as RewardEngineClient,
+      { guildId: conn.guildId, nitradoConnId: conn.id },
+      { rewardRuleId: 'pvp:default', baseAmount: 0n },
+    );
+  } catch (e) {
+    logger.warn(`ADM-Sync V2: RewardEngine-Shadow fehlgeschlagen fuer ${conn.id}: ${(e as Error).message}`);
+  }
+
+  // Sitzungs-Aggregation (kein Geld): Connect/Disconnect -> PlayerSessions +
+  // 10-Min-Buckets. Idempotent ueber connectEventId. Buchung erst Phase 5.
+  try {
+    await aggregatePlayerSessions(
+      prisma as unknown as PlayerSessionClient,
+      { guildId: conn.guildId, nitradoConnId: conn.id },
+    );
+  } catch (e) {
+    logger.warn(`ADM-Sync V2: PlayerSession-Aggregation fehlgeschlagen fuer ${conn.id}: ${(e as Error).message}`);
+  }
+
+  if (totalInserted > 0) {
+    logAudit('NITRADO_ADM_INGEST_V2', 'NITRADO', {
+      guildId: conn.guildId, nitradoConnId: conn.id, files: fresh.length, events: totalInserted,
     });
   }
 }

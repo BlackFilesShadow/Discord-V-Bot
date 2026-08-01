@@ -19,6 +19,7 @@ import { initSocketIo } from './socket';
 import { startDevUploadCleanupTimer } from './services/devUpload';
 import { startDevSessionCleanupTimer } from './services/devSessionLifecycle';
 import { attachPrismaLatencyMiddleware, attachLogRingBuffer } from './services/observability';
+import { readinessHandler } from './health';
 import prisma from '../database/prisma';
 import { metricsRegistry } from '../utils/metrics';
 import type { Client } from 'discord.js';
@@ -151,7 +152,14 @@ export async function startDashboard(client?: Client): Promise<void> {
     message: { error: 'rate_limited', message: 'Zu viele Anfragen. Bitte kurz warten.' },
   });
 
-  app.use(express.json({ limit: '10mb' }));
+  // verify-Hook sichert die Original-Rohbytes (req.rawBody), damit der
+  // Webhook-Endpunkt die HMAC-Signatur ueber den ungeparsten Body pruefen
+  // kann (F-001). Ohne das wuerde express.json() den Stream konsumieren und
+  // die Signaturpruefung liefe gegen re-serialisiertes JSON -> stets 401/400.
+  app.use(express.json({
+    limit: '10mb',
+    verify: (req, _res, buf) => { (req as unknown as { rawBody?: Buffer }).rawBody = buf; },
+  }));
   app.use(express.urlencoded({ extended: true }));
 
   // Session (Sektion 12: Session-Management)
@@ -184,7 +192,10 @@ export async function startDashboard(client?: Client): Promise<void> {
     await sessionPool.query(`CREATE INDEX IF NOT EXISTS "IDX_session_expire" ON "session" ("expire");`);
     logger.info('Session-Tabelle bereit.');
   } catch (e) {
+    // F-007: Ein defekter Session-Store bedeutet kaputte Auth -> fail-fast,
+    // statt scheinbar gesund weiterzulaufen.
     logger.error(`Session-Tabelle konnte nicht initialisiert werden: ${(e as Error).message}`);
+    throw new Error(`Dashboard-Start abgebrochen: Session-Store nicht initialisierbar (${(e as Error).message}).`);
   }
 
   const sessionStore = new PgStore({
@@ -226,7 +237,8 @@ export async function startDashboard(client?: Client): Promise<void> {
   app.use('/auth/2fa', loginLimiter);
   app.use('/auth', authRouter);
   // Webhook-Endpunkt OHNE Session-Auth (eigene HMAC-Pruefung im Router).
-  // MUSS vor dem JSON-Bodyparser bleiben? -> raw-Parser ist im Router lokal.
+  // Die HMAC-Pruefung nutzt req.rawBody (vom verify-Hook des globalen
+  // JSON-Parsers gesichert), daher ist die Mount-Reihenfolge unkritisch.
   app.use('/webhooks', apiLimiter, webhookRouter);
   // Discord-Setup-Diagnose: MUSS vor /api stehen, sonst greift apiRouter
   // mit requireAuth zuerst und blockt den Owner-Self-Service.
@@ -242,9 +254,16 @@ export async function startDashboard(client?: Client): Promise<void> {
   app.use('/transcripts', apiLimiter, transcriptsRouter);
 
   // Health Check
+  // Liveness: Prozess laeuft (kein DB-/Store-Zugriff, immer schnell).
   app.get('/health', (_req, res) => {
     res.json({ status: 'ok', uptime: process.uptime() });
   });
+
+  // Readiness (F-007): DB + Session-Store erreichbar. 503 wenn nicht bereit.
+  app.get('/health/ready', readinessHandler({
+    pingDb: () => prisma.$queryRaw`SELECT 1`,
+    pingSessionStore: () => sessionPool.query('SELECT 1 FROM "session" LIMIT 1'),
+  }));
 
   // Prometheus-Metriken (text/plain). Token-pflichtig via METRICS_TOKEN.
   if (config.monitoring.metricsEnabled) {

@@ -183,7 +183,9 @@ export async function updateServiceId(
   }
   const updated = await prisma.nitradoConnection.updateMany({
     where: { guildId, slot },
-    data: { nitradoServerId },
+    // NIT-012: nitradoServerId ist kanonisch; serviceId wird gespiegelt, damit
+    // die beiden Felder nicht divergieren (Mirror/Dev lesen serviceId).
+    data: { nitradoServerId, serviceId: nitradoServerId },
   });
   if (updated.count === 0) return null;
   const row = await prisma.nitradoConnection.findUnique({

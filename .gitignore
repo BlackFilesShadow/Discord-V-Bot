@@ -6,6 +6,9 @@ dist/
 
 # Environment
 .env
+.env.bak
+.env.bak.*
+*.env.bak*
 
 # Uploads & Storage
 uploads/

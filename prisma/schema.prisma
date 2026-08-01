@@ -1566,6 +1566,8 @@ model NitradoConnection {
   mirrorSnapshots   NitradoSnapshot[]
   killfeedConfigs   KillfeedConfig[]
   killfeedEvents    KillfeedEvent[]
+  jobs              NitradoJob[]
+  admCursors        NitradoAdmCursor[]
 
   @@unique([guildId, slot])
   @@index([guildId])
@@ -1893,11 +1895,17 @@ model DevUpload {
 }
 
 // Idempotenz-Keys fuer alle Mutation-Routen (Haertung A1).
+enum IdempotencyStatus {
+  PROCESSING
+  DONE
+}
+
 model IdempotencyKey {
-  hash           String   @id // sha256 von (userId + route + body)
-  responseBody   Json
-  responseStatus Int
-  createdAt      DateTime @default(now())
+  hash           String            @id // sha256 von (userId + route + body)
+  status         IdempotencyStatus @default(DONE)
+  responseBody   Json?
+  responseStatus Int?
+  createdAt      DateTime          @default(now())
   expiresAt      DateTime
 
   @@index([expiresAt])
@@ -1926,8 +1934,11 @@ model NitradoJob {
   createdAt     DateTime         @default(now())
   updatedAt     DateTime         @updatedAt
 
+  nitradoConn NitradoConnection @relation(fields: [nitradoConnId], references: [id], onDelete: Cascade)
+
   @@index([status, nextRunAt])
   @@index([guildId])
+  @@index([nitradoConnId])
 }
 
 // ============================================================
@@ -1945,9 +1956,145 @@ model NitradoAdmCursor {
   createdAt      DateTime @default(now())
   updatedAt      DateTime @updatedAt
 
+  nitradoConn NitradoConnection @relation(fields: [nitradoConnId], references: [id], onDelete: Cascade)
+
   @@unique([guildId, nitradoConnId])
   @@index([guildId])
   @@index([nitradoConnId])
+}
+
+// ============================================================
+// PHASE 3: Kanonische ADM-Eventpipeline (Release-Blocker gegen
+// Mehrfach-Auszahlung). Genau EIN Ingestor schreibt AdmEvent;
+// Rewards sind ueber (admEventId + rewardRuleId) idempotent.
+// ============================================================
+
+// Byte-genauer Quellcursor pro ADM-Datei (append-only Ingestion).
+model AdmSourceCursor {
+  id                  String    @id @default(cuid())
+  guildId             String
+  nitradoConnId       String
+  fileIdentity        String
+  fileName            String
+  lastModifiedAt      Int
+  lastKnownSize       BigInt    @default(0)
+  processedByteOffset BigInt    @default(0)
+  trailingPartialLine String?   @db.Text
+  contentFingerprint  String?   @db.VarChar(64)
+  lastSuccessAt       DateTime?
+  lastError           String?   @db.Text
+  createdAt           DateTime  @default(now())
+  updatedAt           DateTime  @updatedAt
+
+  @@unique([guildId, nitradoConnId, fileIdentity])
+  @@index([guildId, nitradoConnId])
+}
+
+enum AdmEventType {
+  PLAYER_CONNECTED
+  PLAYER_DISCONNECTED
+  PLAYER_HIT
+  PLAYER_KILLED
+  PLAYER_DIED
+  PLAYER_SUICIDE
+  NPC_KILL
+  VEHICLE_DEATH
+  BUILD
+  DISMANTLE
+  DESTROY
+  PLACEMENT
+  PLAYER_POSITION
+  UNKNOWN
+}
+
+// Normalisiertes, eindeutiges Logereignis. eventKey (Hash aus Datei +
+// Byteposition + Inhalt) garantiert Idempotenz gegen Neuverarbeitung.
+model AdmEvent {
+  id              String       @id @default(cuid())
+  eventKey        String       @unique @db.VarChar(64)
+  guildId         String
+  nitradoConnId   String
+  sourceFile      String
+  sourceByteStart BigInt
+  sourceByteEnd   BigInt
+  occurredAt      DateTime?
+  eventType       AdmEventType
+  actorGameId     String?
+  actorName       String?
+  targetGameId    String?
+  targetName      String?
+  objectType      String?
+  toolOrWeapon    String?
+  distanceMeters  Float?
+  actorPosition   String?
+  targetPosition  String?
+  rawLine         String       @db.Text
+  parserVersion   Int          @default(1)
+  parseStatus     String
+  createdAt       DateTime     @default(now())
+
+  @@index([guildId, nitradoConnId, occurredAt])
+  @@index([eventType, occurredAt])
+}
+
+enum RewardDecisionStatus {
+  PENDING
+  PAID
+  SKIPPED
+  REVIEW
+  FAILED_RETRYABLE
+  ERROR
+}
+
+// Idempotente Reward-Entscheidung: genau eine je (AdmEvent + RewardRule).
+model RewardDecision {
+  id            String               @id @default(cuid())
+  admEventId    String
+  rewardRuleId  String
+  guildId       String
+  nitradoConnId String
+  userDiscordId String?
+  status        RewardDecisionStatus @default(PENDING)
+  calculated    BigInt               @default(0)
+  paid          BigInt               @default(0)
+  reasonCode    String?
+  ledgerEntryId String?
+  createdAt     DateTime             @default(now())
+  updatedAt     DateTime             @updatedAt
+
+  @@unique([admEventId, rewardRuleId])
+  @@index([guildId, nitradoConnId, status])
+}
+
+enum PlayerSessionStatus {
+  OPEN
+  CLOSED
+}
+
+// Aus PLAYER_CONNECTED/PLAYER_DISCONNECTED AdmEvents abgeleitete Spielsitzung.
+// connectEventId ist eindeutig -> dieselbe Connect-Zeile erzeugt nie zwei
+// Sessions (idempotent). bucketsEarned = abgeschlossene 10-Min-Intervalle fuer
+// spaetere Spielzeitbelohnungen (Phase 5); bucketsCredited verhindert
+// Doppel-Gutschrift beim spaeteren Buchen.
+model PlayerSession {
+  id                String              @id @default(cuid())
+  guildId           String
+  nitradoConnId     String
+  gameId            String
+  playerName        String?
+  connectEventId    String              @unique
+  disconnectEventId String?
+  connectedAt       DateTime?
+  disconnectedAt    DateTime?
+  durationSeconds   Int                 @default(0)
+  bucketsEarned     Int                 @default(0)
+  bucketsCredited   Int                 @default(0)
+  status            PlayerSessionStatus @default(OPEN)
+  createdAt         DateTime            @default(now())
+  updatedAt         DateTime            @updatedAt
+
+  @@index([guildId, nitradoConnId, gameId])
+  @@index([guildId, nitradoConnId, status])
 }
 
 // ============================================================

@@ -163,7 +163,7 @@ feedsRouter.post('/', requireGuildPermission('feeds.manage'), async (req, res) =
   }
 
   const feed = await findGuildFeed(guildId, feedId);
-  await logAuditDb('FEED_CREATED', 'FEED', { actorUserId: req.auth!.userId, guildId, details: { feedId, name, feedType, credentialsSet: credEnc != null } });
+  logAuditDb('FEED_CREATED', 'FEED', { actorUserId: req.auth!.userId, guildId, details: { feedId, name, feedType, credentialsSet: credEnc != null } });
   emitGuildEvent(guildId, { type: 'feed.changed', payload: { guildId, feedId } });
   res.status(201).json(feedToApi(feed!));
 });
@@ -211,7 +211,7 @@ feedsRouter.put('/:id', requireGuildPermission('feeds.manage'), async (req, res)
 
   await prisma.feed.update({ where: { id: existing.id }, data });
   const feed = await findGuildFeed(guildId, existing.id);
-  await logAuditDb('FEED_UPDATED', 'FEED', { actorUserId: req.auth!.userId, guildId, details: { feedId: existing.id, credentialsChanged: cred.change } });
+  logAuditDb('FEED_UPDATED', 'FEED', { actorUserId: req.auth!.userId, guildId, details: { feedId: existing.id, credentialsChanged: cred.change } });
   emitGuildEvent(guildId, { type: 'feed.changed', payload: { guildId, feedId: existing.id } });
   res.json(feedToApi(feed!));
 });
@@ -222,7 +222,7 @@ feedsRouter.delete('/:id', requireGuildPermission('feeds.manage'), async (req, r
   if (!existing) { res.status(404).json({ error: 'Feed nicht gefunden.' }); return; }
 
   await prisma.feed.delete({ where: { id: existing.id } });
-  await logAuditDb('FEED_DELETED', 'FEED', { actorUserId: req.auth!.userId, guildId, details: { feedId: existing.id, name: existing.name } });
+  logAuditDb('FEED_DELETED', 'FEED', { actorUserId: req.auth!.userId, guildId, details: { feedId: existing.id, name: existing.name } });
   emitGuildEvent(guildId, { type: 'feed.changed', payload: { guildId, feedId: existing.id } });
   res.json({ ok: true });
 });
@@ -234,7 +234,7 @@ feedsRouter.post('/:id/toggle', requireGuildPermission('feeds.manage'), async (r
 
   const next = typeof req.body?.isActive === 'boolean' ? req.body.isActive : !existing.isActive;
   await prisma.feed.update({ where: { id: existing.id }, data: { isActive: next } });
-  await logAuditDb('FEED_TOGGLED', 'FEED', { actorUserId: req.auth!.userId, guildId, details: { feedId: existing.id, isActive: next } });
+  logAuditDb('FEED_TOGGLED', 'FEED', { actorUserId: req.auth!.userId, guildId, details: { feedId: existing.id, isActive: next } });
   emitGuildEvent(guildId, { type: 'feed.changed', payload: { guildId, feedId: existing.id } });
   res.json({ ok: true, isActive: next });
 });
@@ -253,7 +253,7 @@ feedsRouter.post('/:id/test', requireGuildPermission('feeds.manage'), async (req
     res.status(502).json({ error: `Feed-Prüfung fehlgeschlagen: ${String((e as Error)?.message ?? e).slice(0, 300)}` });
     return;
   }
-  await logAuditDb('FEED_TESTED', 'FEED', { actorUserId: req.auth!.userId, guildId, details: { feedId: existing.id } });
+  logAuditDb('FEED_TESTED', 'FEED', { actorUserId: req.auth!.userId, guildId, details: { feedId: existing.id } });
   res.json({ ok: true });
 });
 
@@ -267,7 +267,7 @@ feedsRouter.post('/:id/roles', requireGuildPermission('feeds.manage'), async (re
 
   const roles = [...new Set([...(existing.mentionRoles ?? []), roleId])].slice(0, 20);
   await prisma.feed.update({ where: { id: existing.id }, data: { mentionRoles: roles } });
-  await logAuditDb('FEED_ROLE_ADDED', 'FEED', { actorUserId: req.auth!.userId, guildId, details: { feedId: existing.id, roleId } });
+  logAuditDb('FEED_ROLE_ADDED', 'FEED', { actorUserId: req.auth!.userId, guildId, details: { feedId: existing.id, roleId } });
   emitGuildEvent(guildId, { type: 'feed.changed', payload: { guildId, feedId: existing.id } });
   res.json({ ok: true, mentionRoles: roles });
 });
@@ -279,7 +279,7 @@ feedsRouter.delete('/:id/roles/:roleId', requireGuildPermission('feeds.manage'),
 
   const roles = (existing.mentionRoles ?? []).filter((r) => r !== req.params.roleId);
   await prisma.feed.update({ where: { id: existing.id }, data: { mentionRoles: roles } });
-  await logAuditDb('FEED_ROLE_REMOVED', 'FEED', { actorUserId: req.auth!.userId, guildId, details: { feedId: existing.id, roleId: req.params.roleId } });
+  logAuditDb('FEED_ROLE_REMOVED', 'FEED', { actorUserId: req.auth!.userId, guildId, details: { feedId: existing.id, roleId: req.params.roleId } });
   emitGuildEvent(guildId, { type: 'feed.changed', payload: { guildId, feedId: existing.id } });
   res.json({ ok: true, mentionRoles: roles });
 });
@@ -303,6 +303,6 @@ feedsRouter.post('/:id/webhook/rotate', requireGuildPermission('feeds.manage'), 
 
   const secret = generateWebhookSecret();
   await prisma.feed.update({ where: { id: existing.id }, data: { webhookSecret: secret } });
-  await logAuditDb('FEED_WEBHOOK_SECRET_ROTATED', 'FEED', { actorUserId: req.auth!.userId, guildId, details: { feedId: existing.id } });
+  logAuditDb('FEED_WEBHOOK_SECRET_ROTATED', 'FEED', { actorUserId: req.auth!.userId, guildId, details: { feedId: existing.id } });
   res.json({ ok: true, secret });
 });

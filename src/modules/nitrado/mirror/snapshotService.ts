@@ -54,16 +54,19 @@ const ROOTS = ['/']; // Nitrado liefert ab Server-Root rekursiv durchgehbar
 export async function startSnapshot(opts: SnapshotOptions): Promise<{ snapshotId: string }> {
   const conn = await prisma.nitradoConnection.findFirst({
     where: { id: opts.nitradoConnId, guildId: opts.guildId },
-    select: { id: true, encryptedToken: true, serviceId: true, status: true, guildId: true },
+    select: { id: true, encryptedToken: true, serviceId: true, nitradoServerId: true, status: true, guildId: true },
   });
   if (!conn) throw new Error('NitradoConnection nicht gefunden.');
-  if (!conn.serviceId) throw new Error('NitradoConnection hat keine serviceId hinterlegt.');
+  // NIT-012: serviceId ist das Mirror-Feld, nitradoServerId das kanonische —
+  // Fallback, solange Altbestand noch nicht gespiegelt ist.
+  const serviceId = conn.serviceId ?? conn.nitradoServerId;
+  if (!serviceId) throw new Error('NitradoConnection hat keine Service-ID hinterlegt.');
 
   const snap = await prisma.nitradoSnapshot.create({
     data: {
       guildId: opts.guildId,
       nitradoConnId: opts.nitradoConnId,
-      serviceId: conn.serviceId,
+      serviceId,
       status: 'RUNNING',
       triggeredBy: opts.triggeredBy,
     },
@@ -71,7 +74,7 @@ export async function startSnapshot(opts: SnapshotOptions): Promise<{ snapshotId
   });
 
   // Hintergrund-Lauf — wir warten nicht.
-  void runSnapshot(snap.id, conn.guildId, opts.nitradoConnId, conn.serviceId, conn.encryptedToken)
+  void runSnapshot(snap.id, conn.guildId, opts.nitradoConnId, serviceId, conn.encryptedToken)
     .catch(err => {
       logger.error('[NitradoMirror] Snapshot abgebrochen', err as Error);
     });

@@ -10,7 +10,10 @@ import tsparser from '@typescript-eslint/parser';
 import noUnscopedPrismaQuery from './eslint-rules/no-unscoped-prisma-query.js';
 
 const localRules = {
-  rules: { 'no-unscoped-prisma-query': noUnscopedPrismaQuery },
+  rules: {
+    'no-unscoped-prisma-query': noUnscopedPrismaQuery,
+    'no-unscoped-prisma-query-extra': noUnscopedPrismaQuery,
+  },
 };
 
 export default [
@@ -54,7 +57,11 @@ export default [
         caughtErrorsIgnorePattern: '^_',
       }],
       // Phase 3.5 Isolation-Doktrin: Cross-Guild-Leak-Schutz auf AST-Ebene.
-      'local/no-unscoped-prisma-query': 'error',
+      // Tenant-kritische Models -> harter Fehler.
+      'local/no-unscoped-prisma-query': ['error', { set: 'strict' }],
+      // Weitere aus dem Schema abgeleitete guildId-Models -> Advisory-Warnung
+      // (F-005: drift-sicher, inkrementell zu auditieren).
+      'local/no-unscoped-prisma-query-extra': ['warn', { set: 'extras' }],
       // Codequalitaet \u2013 erlaubt aber hinterlaesst gelben Hint
       '@typescript-eslint/no-explicit-any': 'off',
       '@typescript-eslint/no-non-null-assertion': 'off',

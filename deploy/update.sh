@@ -67,12 +67,31 @@ for i in {1..30}; do
   sleep 2
 done
 
-# 4) DB-Schema synchronisieren
-info "Prisma-Schema wird gegen DB gepusht..."
-if docker compose exec -T "$COMPOSE_SERVICE" npx prisma db push --accept-data-loss; then
-  log "DB-Schema synchronisiert."
+# 4) DB-Schema via Prisma-Migrationen anwenden (F-009: migrate deploy statt db push).
+info "Prisma-Migrationen werden angewendet..."
+BASELINE_MIGRATION="00000000000000_baseline"
+PGU="${POSTGRES_USER:-discordbot}"
+PGD="${POSTGRES_DB:-discord_v_bot}"
+
+# Erstadoption: Bestand wurde frueher via `db push` erzeugt -> Schema existiert,
+# aber es gibt keine Migrationshistorie. Dann die Baseline als angewendet
+# markieren (schreibt nur nach _prisma_migrations, aendert KEIN Schema/Daten),
+# bevor migrate deploy laeuft. migrate deploy wuerde sonst CREATE TABLE auf
+# bestehenden Tabellen versuchen und scheitern.
+HISTORY_TABLE=$(docker compose exec -T postgres psql -U "$PGU" -d "$PGD" -tAc \
+  "SELECT to_regclass('public._prisma_migrations') IS NOT NULL;" 2>/dev/null | tr -d '[:space:]')
+SCHEMA_PRESENT=$(docker compose exec -T postgres psql -U "$PGU" -d "$PGD" -tAc \
+  "SELECT to_regclass('public.\"User\"') IS NOT NULL;" 2>/dev/null | tr -d '[:space:]')
+if [[ "$HISTORY_TABLE" != "t" && "$SCHEMA_PRESENT" == "t" ]]; then
+  warn "db-push-Bestand ohne Migrationshistorie erkannt -> adoptiere Baseline ($BASELINE_MIGRATION)."
+  docker compose exec -T "$COMPOSE_SERVICE" npx prisma migrate resolve --applied "$BASELINE_MIGRATION" \
+    || warn "Baseline-Adoption fehlgeschlagen - bitte manuell pruefen."
+fi
+
+if docker compose exec -T "$COMPOSE_SERVICE" npx prisma migrate deploy; then
+  log "DB-Migrationen angewendet."
 else
-  warn "Prisma db push lieferte Fehler - bitte Logs pruefen."
+  err "Prisma migrate deploy fehlgeschlagen - Deployment gestoppt (Schema inkonsistent)."
 fi
 
 # 4b) Zusaetzliche idempotente SQL-Skripte (deploy/sql/*.sql) anwenden.

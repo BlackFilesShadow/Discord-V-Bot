@@ -5,6 +5,7 @@ import { config } from '../../config';
 import { translate } from '../ai/translator';
 import { extractTwitchLogin, extractSteamAppId } from './urlResolver';
 import { getTwitchCreds, getYouTubeKey } from './feedCredentials';
+import { safeAxiosGet } from '../../utils/ssrf';
 import axios from 'axios';
 
 /**
@@ -55,7 +56,7 @@ async function fetchRssFeed(url: string, lastItemId: string | null): Promise<{
   latestId: string | null;
 }> {
   try {
-    const response = await axios.get(url, { timeout: 10000, responseType: 'text', maxRedirects: 5 });
+    const response = await safeAxiosGet<string>(url, { timeout: 10000, responseType: 'text' });
     const { XMLParser } = await import('fast-xml-parser');
     const parser = new XMLParser({ ignoreAttributes: false });
     const parsed = parser.parse(response.data);

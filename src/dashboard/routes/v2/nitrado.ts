@@ -127,17 +127,36 @@ nitradoRouter.patch('/:slot/token', requireGuildOwner, async (req, res) => {
   const existing = await getSlot(scope.guildId, slot);
   if (!existing) { res.status(404).json({ error: 'Slot nicht gefunden.' }); return; }
 
-  const valid = await new NitradoClient(token).validateToken();
+  const client = new NitradoClient(token);
+  const valid = await client.validateToken();
   if (!valid) { res.status(400).json({ error: 'Nitrado-Token ungueltig.' }); return; }
+
+  // NIT-003: Nach Tokenrotation pruefen, ob die gespeicherte Service-ID noch zum
+  // NEUEN Token gehoert. Wenn nicht, wird sie entfernt (Owner muss neu
+  // auswaehlen) — kein stilles Weiterverwenden einer fremden/ungueltigen ID.
+  // Ein reiner Netzwerkfehler beim Service-Listing gilt NICHT als Mismatch.
+  let serviceMismatch = false;
+  if (existing.nitradoServerId) {
+    try {
+      const services = await client.listServices();
+      serviceMismatch = !services.some((s) => String(s.id) === existing.nitradoServerId);
+    } catch (e) {
+      logger.warn(`NIT-003: Service-Recheck bei Tokenrotation fehlgeschlagen (Slot ${slot}): ${(e as Error).message}`);
+    }
+  }
 
   const updated = await updateToken(scope.guildId, slot, token);
   if (!updated) { res.status(500).json({ error: 'Update fehlgeschlagen.' }); return; }
 
+  if (serviceMismatch) {
+    await updateServiceId(scope.guildId, slot, null);
+  }
+
   logAuditDb('NITRADO_SLOT_TOKEN_UPDATED', 'NITRADO', {
     actorUserId: req.auth!.userId, guildId: scope.guildId,
-    details: { slot, alias5: updated.alias5 },
+    details: { slot, alias5: updated.alias5, serviceReset: serviceMismatch },
   });
-  res.json({ ok: true, slot: updated.slot, status: updated.status });
+  res.json({ ok: true, slot: updated.slot, status: updated.status, serviceReset: serviceMismatch });
 });
 
 /**

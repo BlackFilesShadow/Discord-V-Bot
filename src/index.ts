@@ -215,13 +215,15 @@ async function main(): Promise<void> {
   }
 
   // Phase 3-Final: Hintergrund-Worker starten (NitradoJob-Outbox + Token/ADM-Crons).
+  let drainJobWorker: (() => Promise<void>) | null = null;
   try {
-    const { startNitradoJobWorker } = await import('./modules/nitrado/jobWorker.js');
+    const { startNitradoJobWorker, drainAndStopJobWorker } = await import('./modules/nitrado/jobWorker.js');
     const { startTokenValidationCron } = await import('./modules/nitrado/tokenValidationCron.js');
     const { startAdmSyncCron } = await import('./modules/nitrado/admSyncCron.js');
     const { startPermaOnlyCron } = await import('./modules/nitrado/permaOnlyCron.js');
     const { startKillfeedWatcher } = await import('./modules/killfeed/admWatcher.js');
     startNitradoJobWorker();
+    drainJobWorker = () => drainAndStopJobWorker();
     startTokenValidationCron(client);
     startAdmSyncCron();
     startPermaOnlyCron();
@@ -261,11 +263,26 @@ async function main(): Promise<void> {
 
   logger.info('Discord-V-Bot vollständig gestartet.');
 
-  // Graceful Shutdown
+  // Graceful Shutdown (NIT-010: geordnet — erst Worker drainen, dann Discord,
+  // dann Prisma; Guard gegen Doppelaufruf; Watchdog gegen Haenger).
+  let shuttingDown = false;
   const shutdown = async (signal: string) => {
+    if (shuttingDown) return;
+    shuttingDown = true;
     logger.info(`${signal} empfangen. Fahre herunter...`);
+    const watchdog = setTimeout(() => {
+      logger.error('Shutdown-Watchdog: erzwinge Beenden nach Timeout.');
+      process.exit(1);
+    }, 20_000);
+    watchdog.unref?.();
+    try {
+      if (drainJobWorker) await drainJobWorker();
+    } catch (e) {
+      logger.warn('Worker-Drain-Fehler beim Shutdown:', e as Error);
+    }
     await client.destroy();
     await prisma.$disconnect();
+    clearTimeout(watchdog);
     logger.info('Bot heruntergefahren.');
     process.exit(0);
   };

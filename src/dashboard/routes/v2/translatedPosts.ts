@@ -204,7 +204,7 @@ translatedPostsRouter.post('/', requireGuildPermission('translate.manage'), asyn
     },
   });
 
-  await logAuditDb('TRANSLATED_POST_CREATED', 'TRANSLATE', { actorUserId: req.auth!.userId, guildId, details: { postId: post.id, mode, targetLang } });
+  logAuditDb('TRANSLATED_POST_CREATED', 'TRANSLATE', { actorUserId: req.auth!.userId, guildId, details: { postId: post.id, mode, targetLang } });
   emitGuildEvent(guildId, { type: 'translatedPost.changed', payload: { guildId, postId: post.id } });
   res.status(201).json(postToApi(post as PostRow));
 });
@@ -266,7 +266,7 @@ translatedPostsRouter.put('/:id', requireGuildPermission('translate.manage'), as
 
   await prisma.translatedPost.update({ where: { id: existing.id }, data });
   const post = await findGuildPost(guildId, existing.id);
-  await logAuditDb('TRANSLATED_POST_UPDATED', 'TRANSLATE', { actorUserId: req.auth!.userId, guildId, details: { postId: existing.id } });
+  logAuditDb('TRANSLATED_POST_UPDATED', 'TRANSLATE', { actorUserId: req.auth!.userId, guildId, details: { postId: existing.id } });
   emitGuildEvent(guildId, { type: 'translatedPost.changed', payload: { guildId, postId: existing.id } });
   res.json(postToApi(post!));
 });
@@ -277,7 +277,7 @@ translatedPostsRouter.delete('/:id', requireGuildPermission('translate.manage'),
   if (!existing) { res.status(404).json({ error: 'Post nicht gefunden.' }); return; }
 
   await prisma.translatedPost.delete({ where: { id: existing.id } });
-  await logAuditDb('TRANSLATED_POST_DELETED', 'TRANSLATE', { actorUserId: req.auth!.userId, guildId, details: { postId: existing.id } });
+  logAuditDb('TRANSLATED_POST_DELETED', 'TRANSLATE', { actorUserId: req.auth!.userId, guildId, details: { postId: existing.id } });
   emitGuildEvent(guildId, { type: 'translatedPost.changed', payload: { guildId, postId: existing.id } });
   res.json({ ok: true });
 });
@@ -294,7 +294,7 @@ translatedPostsRouter.post('/:id/toggle', requireGuildPermission('translate.mana
     data.nextRunAt = nextRunFromRecurrence(existing.recurrenceCron) ?? new Date();
   }
   await prisma.translatedPost.update({ where: { id: existing.id }, data });
-  await logAuditDb('TRANSLATED_POST_TOGGLED', 'TRANSLATE', { actorUserId: req.auth!.userId, guildId, details: { postId: existing.id, isActive: next } });
+  logAuditDb('TRANSLATED_POST_TOGGLED', 'TRANSLATE', { actorUserId: req.auth!.userId, guildId, details: { postId: existing.id, isActive: next } });
   emitGuildEvent(guildId, { type: 'translatedPost.changed', payload: { guildId, postId: existing.id } });
   res.json({ ok: true, isActive: next });
 });

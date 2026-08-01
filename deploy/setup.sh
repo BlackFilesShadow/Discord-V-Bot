@@ -187,9 +187,11 @@ else
 fi
 
 # ----- Datenbank-Migration -----
-info "Datenbank-Schema wird angewendet..."
+info "Datenbank-Schema wird via Migrationen angewendet..."
 cd "$BOT_DIR"
-sudo -u "$BOT_USER" bash -c "cd $BOT_DIR && npx prisma db push"
+# F-009: kanonischer Migrationsweg (migrate deploy) statt db push. Frische
+# Installation -> leere DB -> Baseline wird angewendet.
+sudo -u "$BOT_USER" bash -c "cd $BOT_DIR && npx prisma migrate deploy"
 log "Datenbank-Schema angewendet"
 
 # ----- systemd Service -----

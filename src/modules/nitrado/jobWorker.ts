@@ -34,6 +34,15 @@ const MAX_PARALLEL = 4;
 const BACKOFF_BASE_SECONDS = 30;
 const STALE_RUNNING_MS = 5 * 60 * 1000; // RUNNING-Jobs ohne Update >5min werden recovered
 
+// NIT-008: Retention. DONE kurz, DEAD laenger (Diagnose). Sweep max 1x/Stunde.
+const DONE_RETENTION_MS = 7 * 24 * 60 * 60 * 1000;
+const DEAD_RETENTION_MS = 30 * 24 * 60 * 60 * 1000;
+const RETENTION_INTERVAL_MS = 60 * 60 * 1000;
+let lastRetentionAt = 0;
+
+// NIT-007: bekannte Operationen. Alles andere -> sofort permanent DEAD.
+const KNOWN_OPERATIONS = new Set(['WHITELIST_ADD', 'WHITELIST_REMOVE', 'KEEPALIVE', 'DOWNLOAD_ADM', 'RESTART_IF_DOWN']);
+
 let timer: NodeJS.Timeout | null = null;
 let running = false;
 
@@ -43,7 +52,7 @@ interface JobPayload {
   [key: string]: unknown;
 }
 
-async function executeJob(jobId: string): Promise<void> {
+export async function executeJob(jobId: string): Promise<void> {
   // Hole Job + zugehoerige Connection getrennt — `NitradoJob` hat im Schema
   // keine deklarierte Prisma-Relation zu `NitradoConnection` (nur die FK-Spalte
   // `nitradoConnId`), daher ist `include: { nitradoConn }` zur Laufzeit ungueltig.
@@ -68,8 +77,26 @@ async function executeJob(jobId: string): Promise<void> {
   }
 
   const payload = (job.payload as JobPayload | null) ?? {};
-  const token = decrypt(conn.encryptedToken, config.security.encryptionKey);
-  const client = new NitradoClient(token);
+
+  // NIT-007: Unbekannte Operationen sind permanent ungueltig -> sofort DEAD,
+  // statt sie sinnlos maxAttempts-mal zu wiederholen.
+  if (!KNOWN_OPERATIONS.has(job.operation)) {
+    await failJob(job.id, job.guildId, job.attempts, job.maxAttempts, `Unbekannte Operation: ${job.operation}`, true);
+    return;
+  }
+
+  // NIT-005: Token-Entschluesselung + Client-Konstruktion lagen frueher
+  // AUSSERHALB des Fehlerblocks -> ein korrupter Token liess den Job dauerhaft
+  // auf RUNNING haengen (nur alle 5min via Stale-Recovery, endlos). Jetzt
+  // deterministisch permanent DEAD.
+  let client: NitradoClient;
+  try {
+    const token = decrypt(conn.encryptedToken, config.security.encryptionKey);
+    client = new NitradoClient(token);
+  } catch (e) {
+    await failJob(job.id, job.guildId, job.attempts, job.maxAttempts, `Token-Entschluesselung fehlgeschlagen: ${(e as Error).message}`, true);
+    return;
+  }
 
   try {
     switch (job.operation) {
@@ -168,6 +195,21 @@ async function pollOnce(): Promise<void> {
       logger.warn(`NitradoJob-Worker: ${stale.count} verwaiste RUNNING-Jobs auf PENDING zurueckgesetzt`);
     }
 
+    // NIT-008: Retention-Sweep (hoechstens 1x/Stunde). Alte abgeschlossene Jobs
+    // entfernen; DEAD laenger halten fuer Diagnose.
+    if (Date.now() - lastRetentionAt > RETENTION_INTERVAL_MS) {
+      lastRetentionAt = Date.now();
+      const [doneDel, deadDel] = await Promise.all([
+        // eslint-disable-next-line local/no-unscoped-prisma-query -- Retention-Sweep ueber alle Guilds; loescht nur eigene, abgeschlossene Outbox-Jobs.
+        prisma.nitradoJob.deleteMany({ where: { status: 'DONE', updatedAt: { lt: new Date(Date.now() - DONE_RETENTION_MS) } } }),
+        // eslint-disable-next-line local/no-unscoped-prisma-query -- Retention-Sweep ueber alle Guilds; loescht nur eigene, DEAD-Outbox-Jobs.
+        prisma.nitradoJob.deleteMany({ where: { status: 'DEAD', updatedAt: { lt: new Date(Date.now() - DEAD_RETENTION_MS) } } }),
+      ]);
+      if (doneDel.count + deadDel.count > 0) {
+        logger.info(`NitradoJob-Retention: ${doneDel.count} DONE + ${deadDel.count} DEAD entfernt.`);
+      }
+    }
+
     // Atomar: PENDING -> RUNNING fuer max MAX_PARALLEL Jobs deren nextRunAt erreicht ist.
     // WICHTIG: Pro nitradoConnId NUR ein Job parallel — Whitelist-Settings sind
     // Read-Modify-Write auf einem geteilten String und MUESSEN serialisiert werden,
@@ -224,4 +266,19 @@ export function startNitradoJobWorker(): void {
 
 export function stopNitradoJobWorker(): void {
   if (timer) { clearInterval(timer); timer = null; }
+}
+
+/**
+ * NIT-010: Geordneter Shutdown — stoppt neue Polls und wartet, bis ein evtl.
+ * laufender Poll (in-flight Jobs) fertig ist, bevor Prisma getrennt wird.
+ */
+export async function drainAndStopJobWorker(timeoutMs = 10_000): Promise<void> {
+  stopNitradoJobWorker();
+  const start = Date.now();
+  while (running && Date.now() - start < timeoutMs) {
+    await new Promise((r) => setTimeout(r, 100));
+  }
+  if (running) {
+    logger.warn('NitradoJob-Worker: Drain-Timeout — laufender Poll wurde nicht rechtzeitig fertig.');
+  }
 }

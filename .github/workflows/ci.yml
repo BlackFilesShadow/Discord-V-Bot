@@ -115,8 +115,13 @@ jobs:
       - name: Generate Prisma Client
         run: npx prisma generate
 
-      - name: Run database migrations
-        run: npx prisma db push
+      - name: Run database migrations (production path)
+        # F-009: kanonischer Produktions-Migrationsweg. `db push` wurde ersetzt,
+        # damit CI exakt denselben Weg wie die Produktion testet.
+        run: npx prisma migrate deploy
+
+      - name: Verify migration status (no pending/drift)
+        run: npx prisma migrate status
 
       - name: Run tests
         run: npm test -- --coverage --forceExit

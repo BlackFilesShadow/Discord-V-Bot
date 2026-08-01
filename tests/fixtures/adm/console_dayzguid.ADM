@@ -1,0 +1,6 @@
+AdminLog started on 2026-07-02 at 09:00:00
+09:00:10 | Player "Foxtrot"(id=ABCDEF0123456789ABCDEF0123456789) is connected
+09:03:44 | Player "Golf"(id=FEDCBA9876543210FEDCBA9876543210) is connected
+09:10:15 | Player "Golf"(DEAD)(id=FEDCBA9876543210FEDCBA9876543210, pos=<3000.0, 4000.0, 120.0>) killed by "Foxtrot"(id=ABCDEF0123456789ABCDEF0123456789, pos=<3050.0, 4010.0, 120.0>) with Longhorn from 12.0 meters
+09:15:20 | Player "Foxtrot"(id=ABCDEF0123456789ABCDEF0123456789) has been disconnected
+09:16:00 | Player "Golf"(id=FEDCBA9876543210FEDCBA9876543210) has been disconnected

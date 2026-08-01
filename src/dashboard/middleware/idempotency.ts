@@ -1,10 +1,13 @@
 /**
- * Idempotency-Middleware (Haertung A1).
+ * Idempotency-Middleware (Haertung A1, F-004: atomarer Claim).
  *
  * Nimmt einen Header `X-Idempotency-Key` entgegen. Wenn vorhanden:
- *  - Erster Aufruf: Handler laeuft, Antwort wird gespeichert (60 min TTL).
- *  - Wiederholungen mit gleichem Key + gleicher Route + gleichem User
- *    liefern die gespeicherte Antwort zurueck, ohne Handler erneut zu rufen.
+ *  - Erster Aufruf: atomarer Claim (create) -> Handler laeuft -> Antwort wird
+ *    gespeichert (60 min TTL). Der Claim per Primary-Key `hash` ist atomar,
+ *    zwei parallele Requests koennen ihn nicht beide gewinnen.
+ *  - Paralleler Zweitaufruf waehrend der Verarbeitung -> 409 (in Bearbeitung).
+ *  - Wiederholung nach Abschluss -> gecachte Antwort ohne Handler-Rerun.
+ *  - Nicht-2xx-Antwort -> Claim wird freigegeben (Retry moeglich).
  *
  * Schluessel = sha256(userId + ':' + method + ':' + path + ':' + key + ':' + bodyHash)
  *  -> verhindert dass derselbe Key fuer verschiedene Routen / Bodies kollidiert.
@@ -15,6 +18,9 @@ import prisma from '../../database/prisma';
 import { logger } from '../../utils/logger';
 
 const TTL_MS = 60 * 60 * 1000;
+// Ein PROCESSING-Claim aelter als dies gilt als verwaist (Crash) und darf
+// von einem neuen Request uebernommen werden.
+const STALE_PROCESSING_MS = 2 * 60 * 1000;
 
 function hashBody(body: unknown): string {
   return crypto.createHash('sha256').update(JSON.stringify(body ?? '')).digest('hex');
@@ -32,32 +38,75 @@ export async function idempotency(req: Request, res: Response, next: NextFunctio
     .update([req.auth.userId, req.method, req.originalUrl, trimmed, hashBody(req.body)].join(':'))
     .digest('hex');
 
+  const now = Date.now();
+  let owns = false;
   try {
-    // eslint-disable-next-line local/no-unscoped-prisma-query -- IdempotencyKey ist global; Hash enthaelt userId+method+path+body, kein Cross-Guild-Risiko
-    const existing = await prisma.idempotencyKey.findUnique({ where: { hash } });
-    if (existing && existing.expiresAt > new Date()) {
+    // Atomarer Claim: create schlaegt bei existierendem hash (PK) fehl.
+    await prisma.idempotencyKey.create({
+      data: { hash, status: 'PROCESSING', expiresAt: new Date(now + TTL_MS) },
+    });
+    owns = true;
+  } catch {
+    // Claim existiert bereits -> gecachtes Ergebnis, laufende Verarbeitung
+    // oder verwaister Claim.
+    let existing: { status: string; responseStatus: number | null; responseBody: unknown; createdAt: Date; expiresAt: Date } | null = null;
+    try {
+      // eslint-disable-next-line local/no-unscoped-prisma-query -- global, siehe oben
+      existing = await prisma.idempotencyKey.findUnique({ where: { hash } });
+    } catch (e) {
+      // DB-Lookup gescheitert -> fail-open, damit legitime Requests nicht haengen.
+      logger.warn('Idempotency-Lookup-Fehler:', (e as Error).message);
+      next();
+      return;
+    }
+    if (!existing) { next(); return; }
+    if (existing.status === 'DONE' && existing.responseStatus != null && existing.expiresAt > new Date()) {
       res.status(existing.responseStatus).json(existing.responseBody);
       return;
     }
-  } catch (e) {
-    logger.warn('Idempotency-Lookup-Fehler:', (e as Error).message);
+    const stale = existing.status === 'PROCESSING' && existing.createdAt.getTime() < now - STALE_PROCESSING_MS;
+    if (existing.status === 'PROCESSING' && !stale) {
+      res.status(409).json({ error: 'Anfrage wird bereits verarbeitet.' });
+      return;
+    }
+    // Verwaister PROCESSING-Claim oder abgelaufener DONE-Eintrag -> uebernehmen.
+    try {
+      // eslint-disable-next-line local/no-unscoped-prisma-query -- global, siehe oben
+      await prisma.idempotencyKey.update({
+        where: { hash },
+        data: { status: 'PROCESSING', responseBody: undefined, responseStatus: null, createdAt: new Date(now), expiresAt: new Date(now + TTL_MS) },
+      });
+      owns = true;
+    } catch {
+      res.status(409).json({ error: 'Anfrage wird bereits verarbeitet.' });
+      return;
+    }
   }
 
-  // Response-Capture
+  if (!owns) { next(); return; }
+
+  // Antwort erfassen und den Claim beim Response-Ende finalisieren.
+  let capturedBody: unknown;
+  let captured = false;
   const originalJson = res.json.bind(res);
   res.json = (body: unknown): Response => {
-    const status = res.statusCode;
-    if (status >= 200 && status < 300) {
-      prisma.idempotencyKey.create({
-        data: {
-          hash,
-          responseBody: (body ?? null) as object,
-          responseStatus: status,
-          expiresAt: new Date(Date.now() + TTL_MS),
-        },
-      }).catch((err: unknown) => logger.warn('Idempotency-Persist-Fehler:', err instanceof Error ? err.message : String(err)));
-    }
+    capturedBody = body;
+    captured = true;
     return originalJson(body);
   };
+  res.on('finish', () => {
+    const status = res.statusCode;
+    if (captured && status >= 200 && status < 300) {
+      // eslint-disable-next-line local/no-unscoped-prisma-query -- global, siehe oben
+      prisma.idempotencyKey.update({
+        where: { hash },
+        data: { status: 'DONE', responseBody: (capturedBody ?? null) as object, responseStatus: status, expiresAt: new Date(Date.now() + TTL_MS) },
+      }).catch((err: unknown) => logger.warn('Idempotency-Persist-Fehler:', err instanceof Error ? err.message : String(err)));
+    } else {
+      // Nicht-2xx oder keine JSON-Antwort -> Claim freigeben (Retry moeglich).
+      // eslint-disable-next-line local/no-unscoped-prisma-query -- global, siehe oben
+      prisma.idempotencyKey.delete({ where: { hash } }).catch(() => { /* bereits weg */ });
+    }
+  });
   next();
 }
