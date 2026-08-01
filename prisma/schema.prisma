@@ -1741,6 +1741,22 @@ model EconomyConfig {
   @@index([guildId])
 }
 
+// Tages-Zinslauf (Phase 5). @@unique[guildId, runDate] verhindert doppelte
+// Zinsgutschrift am selben Tag. Die eigentliche Geld-Idempotenz kommt zusaetzlich
+// aus dem Ledger-Key `interest:<guild>:<date>:<user>`.
+model BankInterestRun {
+  id               String   @id @default(cuid())
+  guildId          String
+  runDate          String   @db.VarChar(10) // YYYY-MM-DD (Guild-Zeitzone)
+  interestPercent  Int
+  accountsCredited Int      @default(0)
+  totalCredited    BigInt   @default(0)
+  createdAt        DateTime @default(now())
+
+  @@unique([guildId, runDate])
+  @@index([guildId])
+}
+
 model EconomyAccount {
   id             String   @id @default(cuid())
   guildId        String

@@ -222,12 +222,14 @@ async function main(): Promise<void> {
     const { startAdmSyncCron } = await import('./modules/nitrado/admSyncCron.js');
     const { startPermaOnlyCron } = await import('./modules/nitrado/permaOnlyCron.js');
     const { startKillfeedWatcher } = await import('./modules/killfeed/admWatcher.js');
+    const { startBankInterestCron } = await import('./modules/economy/interestCron.js');
     startNitradoJobWorker();
     drainJobWorker = () => drainAndStopJobWorker();
     startTokenValidationCron(client);
     startAdmSyncCron();
     startPermaOnlyCron();
     startKillfeedWatcher();
+    startBankInterestCron();
   } catch (e) {
     logger.warn('Nitrado-Worker-Init fehlgeschlagen:', e as Error);
   }
