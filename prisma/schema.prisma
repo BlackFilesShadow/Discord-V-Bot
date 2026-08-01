@@ -1787,6 +1787,30 @@ model EconomyTransaction {
   @@index([guildId, createdAt])
 }
 
+// Idempotenter, strukturierter Buchungssatz (Phase 5). idempotencyKey (unique)
+// verhindert die Doppelbuchung derselben Quelle — z.B. ein AdmEvent-Reward, ein
+// Zins-Lauf oder eine Spielzeit-Gutschrift kann NIE zweimal Geld erzeugen
+// (Release-Blocker gegen Mehrfach-Auszahlung). Additiv neben EconomyTransaction:
+// der Audit-Trail bleibt unveraendert; walletDelta/bankDelta sind getrennt,
+// buckets = zugrunde liegende 10-Min-Einheiten (Playtime).
+model EconomyLedgerEntry {
+  id             String        @id @default(cuid())
+  idempotencyKey String        @unique @db.VarChar(200)
+  guildId        String
+  nitradoConnId  String?
+  userDiscordId  String
+  walletDelta    BigInt        @default(0)
+  bankDelta      BigInt        @default(0)
+  type           EconomyTxType
+  reason         String?       @db.VarChar(200)
+  buckets        Int           @default(0)
+  sourceRef      String?       @db.VarChar(200)
+  createdAt      DateTime      @default(now())
+
+  @@index([guildId, userDiscordId, createdAt])
+  @@index([guildId, nitradoConnId, type])
+}
+
 // Discord <-> Nitrado-Spielername Bindung pro (Guild + Slot + User).
 model EconomyLink {
   id            String            @id @default(cuid())
