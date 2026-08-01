@@ -230,7 +230,7 @@ function KillfeedConfigCard({
             <div>Letztes Event: <span className="text-white">{lastEvent}</span></div>
             <div>
               Anzeigen:{' '}
-              {config.showShooterCoords && <span className="text-white">Schütze-Pos </span>}
+              {config.showShooterCoords && <span className="text-white">Töter-Pos </span>}
               {config.showVictimCoords && <span className="text-white">Opfer-Pos </span>}
               {config.showWeapon && <span className="text-white">Waffe </span>}
               {config.showDistance && <span className="text-white">Distanz</span>}
@@ -387,7 +387,7 @@ function KillfeedEditModal({
             <span className="text-xs text-muted">Embed-Inhalt</span>
             <div className="mt-2 grid grid-cols-2 gap-2 text-sm">
               {[
-                ['Schützen-Koordinaten', showShooterCoords, setShowShooterCoords],
+                ['Töter-Koordinaten', showShooterCoords, setShowShooterCoords],
                 ['Opfer-Koordinaten', showVictimCoords, setShowVictimCoords],
                 ['Waffe', showWeapon, setShowWeapon],
                 ['Distanz', showDistance, setShowDistance],
@@ -403,6 +403,9 @@ function KillfeedEditModal({
                 </label>
               ))}
             </div>
+            <p className="mt-2 text-[10px] text-muted">
+              Koordinaten werden exakt (X/Y/Z, ungerundet) angezeigt. Töter-Koordinaten sind standardmäßig deaktiviert.
+            </p>
           </div>
 
           {/* Aktiv-Schalter */}
