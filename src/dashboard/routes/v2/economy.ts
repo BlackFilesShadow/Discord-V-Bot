@@ -10,7 +10,7 @@ import { Router } from 'express';
 import prisma from '../../../database/prisma';
 import { requireGuildPermission } from '../../middleware/auth';
 import {
-  getConfig, upsertConfig, getOrCreateAccount, recentTransactions, adminPay,
+  getConfig, upsertConfig, getAccountOrZero, recentTransactions, adminPay,
 } from '../../../modules/economy/repository';
 import { asUserDiscordId } from '../../../types/scope';
 import { logAuditDb } from '../../../utils/logger';
@@ -67,7 +67,7 @@ economyRouter.get('/accounts/:userDiscordId', requireGuildPermission('economy.vi
   const scope = req.guildScope!;
   let userId;
   try { userId = asUserDiscordId(String(req.params.userDiscordId)); } catch { res.status(400).json({ error: 'userDiscordId ungueltig.' }); return; }
-  const acc = await getOrCreateAccount(scope.guildId, userId);
+  const acc = await getAccountOrZero(scope.guildId, userId);
   const tx = await recentTransactions(scope.guildId, userId, 20);
   res.json({
     userDiscordId: acc.userDiscordId,

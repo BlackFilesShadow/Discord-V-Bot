@@ -51,6 +51,12 @@ jest.mock('../../src/modules/economy/repository', () => ({
     walletBalance: 1234n,
     bankBalance: 5678n,
   }),
+  getAccountOrZero: jest.fn().mockResolvedValue({
+    walletBalance: 1234n,
+    bankBalance: 5678n,
+    lifetimeEarned: 0n,
+    lifetimeSpent: 0n,
+  }),
   getConfig: jest.fn().mockResolvedValue({
     emoji: ':coin:',
     bankInterestPercent: 1.5,

@@ -12,7 +12,7 @@ import type { Command } from '../../types';
 import prisma from '../../database/prisma';
 import { withGuildScope } from '../middleware/withGuildScope';
 import {
-  getOrCreateAccount, recentTransactions, pay, adminPay, deposit, withdraw, transferBank, getConfig,
+  getAccountOrZero, recentTransactions, pay, adminPay, deposit, withdraw, transferBank, getConfig,
 } from '../../modules/economy/repository';
 import { asUserDiscordId } from '../../types/scope';
 import type { GuildId } from '../../types/scope';
@@ -135,7 +135,7 @@ export const unlinkCommand: Command = {
 export const balanceCommand: Command = {
   data: new SlashCommandBuilder().setName('balance').setDescription('Dein Kontostand und die letzten 5 Transaktionen.'),
   execute: withGuildScope({ requireSlotToggle: 'economyActive' }, async (i, scope) => {
-    const acc = await getOrCreateAccount(scope.guildId, scope.actorDiscordId);
+    const acc = await getAccountOrZero(scope.guildId, scope.actorDiscordId);
     const cfg = await getConfig(scope.guildId);
     const txs = await recentTransactions(scope.guildId, scope.actorDiscordId, 5);
     const total = acc.walletBalance + acc.bankBalance;
@@ -298,7 +298,7 @@ export const depositCommand: Command = {
     try { await deposit(scope.guildId, scope.actorDiscordId, amount); }
     catch (e) { await statusReply(i, 'ERROR', 'Einzahlung fehlgeschlagen', { footerText: 'V-Bot Bank', description: 'Die Einzahlung konnte nicht durchgeführt werden.', fields: [{ name: '📝 Grund', value: (e as Error).message }] }); return; }
     const cfg = await getConfig(scope.guildId);
-    const acc = await getOrCreateAccount(scope.guildId, scope.actorDiscordId);
+    const acc = await getAccountOrZero(scope.guildId, scope.actorDiscordId);
     await statusReply(i, 'SUCCESS', 'Einzahlung erfolgreich', {
       footerText: 'V-Bot Bank',
       description: 'Der Betrag wurde von deiner Wallet auf dein Bankkonto übertragen.',
@@ -323,7 +323,7 @@ export const withdrawCommand: Command = {
     try { await withdraw(scope.guildId, scope.actorDiscordId, amount); }
     catch (e) { await statusReply(i, 'ERROR', 'Auszahlung fehlgeschlagen', { footerText: 'V-Bot Bank', description: 'Die Auszahlung konnte nicht durchgeführt werden.', fields: [{ name: '📝 Grund', value: (e as Error).message }] }); return; }
     const cfg = await getConfig(scope.guildId);
-    const acc = await getOrCreateAccount(scope.guildId, scope.actorDiscordId);
+    const acc = await getAccountOrZero(scope.guildId, scope.actorDiscordId);
     await statusReply(i, 'SUCCESS', 'Auszahlung erfolgreich', {
       footerText: 'V-Bot Bank',
       description: 'Der Betrag wurde von deinem Bankkonto auf deine Wallet übertragen.',
@@ -375,7 +375,7 @@ export const transferCommand: Command = {
 export const bankCommand: Command = {
   data: new SlashCommandBuilder().setName('bank').setDescription('Zeigt Wallet, Bank und Gesamtguthaben.'),
   execute: withGuildScope({ requireSlotToggle: 'economyActive' }, async (i, scope) => {
-    const acc = await getOrCreateAccount(scope.guildId, scope.actorDiscordId);
+    const acc = await getAccountOrZero(scope.guildId, scope.actorDiscordId);
     const cfg = await getConfig(scope.guildId);
     const total = acc.walletBalance + acc.bankBalance;
     const e = new EmbedBuilder()

@@ -128,6 +128,23 @@ export async function getAccount(
   };
 }
 
+/** Nur-Lese-Sicht ohne DB-Write: fehlt der Account, wird ein Null-Konto
+ * zurueckgegeben. Fuer GET-Pfade (Balance/Bank/Uebersicht), damit blosses
+ * Anschauen keine Account-Zeile anlegt. */
+export async function getAccountOrZero(
+  guildId: GuildId,
+  userDiscordId: UserDiscordId,
+): Promise<AccountRow> {
+  return (await getAccount(guildId, userDiscordId)) ?? {
+    guildId,
+    userDiscordId,
+    walletBalance: 0n,
+    bankBalance: 0n,
+    lifetimeEarned: 0n,
+    lifetimeSpent: 0n,
+  };
+}
+
 /**
  * Erstellt initial-Account beim Server-Join, wenn `EconomyConfig.startBalance > 0`.
  * Idempotent: wenn Account schon existiert, wird NICHTS verändert.
