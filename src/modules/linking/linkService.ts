@@ -38,6 +38,27 @@ function isUniqueViolation(e: unknown): boolean {
   return typeof e === 'object' && e !== null && (e as { code?: string }).code === 'P2002';
 }
 
+export interface ResolveClient {
+  gameIdentityLink: {
+    findFirst: (args: unknown) => Promise<{ userDiscordId: string } | null>;
+  };
+}
+
+/** Loest eine Spiel-Identitaet (Klartext-gameId) zum verifizierten Discord-User
+ *  auf — ueber den HMAC-Hash, ohne den Klartext zu speichern. Nur VERIFIED. */
+export async function resolveVerifiedUser(
+  client: ResolveClient,
+  scope: LinkScope,
+  gameId: string,
+  secret: string,
+): Promise<string | null> {
+  const hash = identityHash(gameId, secret);
+  const link = await client.gameIdentityLink.findFirst({
+    where: { guildId: scope.guildId, nitradoConnId: scope.nitradoConnId, identityHash: hash, status: 'VERIFIED' },
+  });
+  return link?.userDiscordId ?? null;
+}
+
 /** Erstellt/erneuert eine PENDING-Bindung mit frischem Challenge-Code. */
 export async function createLinkChallenge(
   client: LinkClient,

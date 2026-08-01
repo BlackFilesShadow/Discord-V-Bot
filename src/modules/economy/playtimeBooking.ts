@@ -24,10 +24,10 @@ export interface PlaytimeBookingClient extends LedgerClient {
     findMany: (args: unknown) => Promise<UncreditedSession[]>;
     update: (args: { where: Record<string, unknown>; data: Record<string, unknown> }) => Promise<unknown>;
   };
-  economyLink: {
-    findUnique: (args: unknown) => Promise<{ userDiscordId: string } | null>;
-  };
 }
+
+/** Aufloesung Spiel-Identitaet -> Discord-User (verifizierte GameIdentityLink). */
+export type ResolveUserFn = (gameId: string) => Promise<string | null>;
 
 export interface PlaytimeBookingScope {
   guildId: string;
@@ -38,6 +38,7 @@ export async function bookPlaytimeRewards(
   client: PlaytimeBookingClient,
   scope: PlaytimeBookingScope,
   opts: { perBucketAmount: bigint; rewardTarget: 'WALLET' | 'BANK'; limit?: number },
+  resolveUser: ResolveUserFn,
 ): Promise<{ credited: number; total: bigint }> {
   if (opts.perBucketAmount <= 0n) return { credited: 0, total: 0n };
 
@@ -53,10 +54,8 @@ export async function bookPlaytimeRewards(
     const newBuckets = s.bucketsEarned - s.bucketsCredited;
     if (newBuckets <= 0) continue;
 
-    const link = await client.economyLink.findUnique({
-      where: { guildId_nitradoConnId_gameId: { guildId: scope.guildId, nitradoConnId: scope.nitradoConnId, gameId: s.gameId } },
-    });
-    if (!link) continue; // unverlinkt -> Buckets bleiben offen fuer spaeter
+    const userDiscordId = await resolveUser(s.gameId);
+    if (!userDiscordId) continue; // unverlinkt -> Buckets bleiben offen fuer spaeter
 
     const amount = opts.perBucketAmount * BigInt(newBuckets);
     const walletDelta = opts.rewardTarget === 'BANK' ? 0n : amount;
@@ -65,7 +64,7 @@ export async function bookPlaytimeRewards(
       idempotencyKey: `playtime:${s.id}:${s.bucketsEarned}`,
       guildId: scope.guildId,
       nitradoConnId: scope.nitradoConnId,
-      userDiscordId: link.userDiscordId,
+      userDiscordId: userDiscordId,
       walletDelta,
       bankDelta,
       buckets: newBuckets,

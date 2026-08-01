@@ -10,6 +10,10 @@
 
 import { EmbedBuilder, MessageFlags } from 'discord.js';
 
+jest.mock('../../src/config', () => ({
+  config: { security: { encryptionKey: 'test-key' } },
+}));
+
 jest.mock('../../src/database/prisma', () => ({
   __esModule: true,
   default: {

@@ -70,13 +70,13 @@ export interface RewardEngineClient {
   admEvent: {
     findMany: (args: unknown) => Promise<Array<{ id: string; actorGameId: string | null; targetGameId: string | null }>>;
   };
-  economyLink: {
-    findUnique: (args: unknown) => Promise<{ userDiscordId: string } | null>;
-  };
   rewardDecision: {
     create: (args: { data: Record<string, unknown> }) => Promise<unknown>;
   };
 }
+
+/** Aufloesung Spiel-Identitaet -> Discord-User (verifizierte GameIdentityLink). */
+export type ResolveUserFn = (gameId: string) => Promise<string | null>;
 
 function isUniqueViolation(e: unknown): boolean {
   return typeof e === 'object' && e !== null && (e as { code?: string }).code === 'P2002';
@@ -91,6 +91,7 @@ export async function runPvpRewardShadow(
   client: RewardEngineClient,
   scope: RewardEngineScope,
   rule: ShadowRewardRule,
+  resolveUser: ResolveUserFn,
   limit = 500,
 ): Promise<{ decided: number; wouldPay: number; skipped: number }> {
   const events = await client.admEvent.findMany({
@@ -103,10 +104,7 @@ export async function runPvpRewardShadow(
   for (const ev of events) {
     let userDiscordId: string | null = null;
     if (ev.targetGameId) {
-      const link = await client.economyLink.findUnique({
-        where: { guildId_nitradoConnId_gameId: { guildId: scope.guildId, nitradoConnId: scope.nitradoConnId, gameId: ev.targetGameId } },
-      });
-      userDiscordId = link?.userDiscordId ?? null;
+      userDiscordId = await resolveUser(ev.targetGameId);
     }
     const decision = decidePvpReward(ev, userDiscordId, rule);
     try {

@@ -154,10 +154,11 @@ devStubsRouter.get('/sync', async (_req, res) => {
     take: 10,
     select: { id: true, guildId: true, operation: true, attempts: true, lastError: true, updatedAt: true },
   });
-  // EconomyLink-Aggregate je Guild (DEV-only)
+  // Verifizierte Spielidentitaets-Bindungen je Guild (DEV-only)
   // eslint-disable-next-line local/no-unscoped-prisma-query -- DEV-Portal: Cross-Guild-Counts gewuenscht.
-  const linksByGuild = await prisma.economyLink.groupBy({
+  const linksByGuild = await prisma.gameIdentityLink.groupBy({
     by: ['guildId'],
+    where: { status: 'VERIFIED' },
     _count: { _all: true },
     orderBy: { _count: { id: 'desc' } },
     take: 20,

@@ -14,6 +14,8 @@ import { withGuildScope } from '../middleware/withGuildScope';
 import {
   getAccountOrZero, recentTransactions, pay, adminPay, deposit, withdraw, transferBank, getConfig,
 } from '../../modules/economy/repository';
+import { forceLink, unlinkUser, type LinkClient } from '../../modules/linking/linkService';
+import { config } from '../../config';
 import { asUserDiscordId } from '../../types/scope';
 import type { GuildId } from '../../types/scope';
 import { logAudit } from '../../utils/logger';
@@ -85,22 +87,15 @@ export const linkCommand: Command = {
     const id = i.options.getString('id', true).trim();
     if (!isValidGameId(id)) { await statusReply(i, 'ERROR', 'Verknüpfung fehlgeschlagen', { description: 'Die ID ist ungültig.', fields: [{ name: '📝 Grund', value: 'Bitte Steam64 (17 Stellen, beginnt mit 7656) oder Charname (3–32 Zeichen) angeben.' }] }); return; }
 
-    try {
-      await prisma.economyLink.create({
-        data: {
-          guildId: scope.guildId, nitradoConnId: scope.nitradoConnId!,
-          userDiscordId: scope.actorDiscordId, gameId: id,
-        },
-      });
-    } catch (e) {
-      if ((e as { code?: string }).code === 'P2002') {
-        await statusReply(i, 'ERROR', 'Bereits verknüpft', { description: 'Die Verknüpfung konnte nicht erstellt werden.', fields: [{ name: '📝 Grund', value: 'Du bist bereits verknüpft oder die ID ist im aktiven Slot vergeben. Nutze zuerst /unlink.' }] });
-        return;
-      }
-      throw e;
+    // Einheitliche Bindung: verbindet den Discord-User mit seiner Spielidentitaet
+    // (GameIdentityLink, nur als HMAC gespeichert) und dient zugleich der Economy.
+    const r = await forceLink(prisma as unknown as LinkClient, { guildId: scope.guildId, nitradoConnId: scope.nitradoConnId! }, scope.actorDiscordId, id, config.security.encryptionKey);
+    if (!r.ok) {
+      await statusReply(i, 'ERROR', 'Bereits vergeben', { description: 'Die Verknüpfung konnte nicht erstellt werden.', fields: [{ name: '📝 Grund', value: 'Diese Spielidentität ist bereits mit einem anderen Discord-Account verknüpft.' }] });
+      return;
     }
-    logAudit('LINK_CREATED', 'ECONOMY', { guildId: scope.guildId, slotId: scope.nitradoConnId, actor: scope.actorDiscordId, gameId: id });
-    await statusReply(i, 'SUCCESS', 'Verknüpft', { description: 'Deine Spielfigur wurde verknüpft.', fields: [{ name: '🎮 Spielfigur', value: `\`${id}\`` }] });
+    logAudit('LINK_CREATED', 'ECONOMY', { guildId: scope.guildId, slotId: scope.nitradoConnId, actor: scope.actorDiscordId });
+    await statusReply(i, 'SUCCESS', 'Verknüpft', { description: 'Deine Spielfigur wurde mit deinem Account verknüpft.', fields: [{ name: '🎮 Spielfigur', value: `\`${id}\`` }] });
   }),
 };
 
@@ -112,10 +107,8 @@ export const unlinkCommand: Command = {
     .setName('unlink')
     .setDescription('Löscht deine Spielfigur-Verknüpfung im aktiven Server.'),
   execute: withGuildScope({ requireSlotToggle: 'economyActive' }, async (i, scope) => {
-    const out = await prisma.economyLink.deleteMany({
-      where: { guildId: scope.guildId, nitradoConnId: scope.nitradoConnId!, userDiscordId: scope.actorDiscordId },
-    });
-    if (out.count === 0) { await statusReply(i, 'INFO', 'Keine Verknüpfung', { description: 'Du hast in diesem Server keine Verknüpfung.' }); return; }
+    const removed = await unlinkUser(prisma as unknown as LinkClient, { guildId: scope.guildId, nitradoConnId: scope.nitradoConnId! }, scope.actorDiscordId);
+    if (!removed) { await statusReply(i, 'INFO', 'Keine Verknüpfung', { description: 'Du hast in diesem Server keine Verknüpfung.' }); return; }
     logAudit('LINK_DELETED', 'ECONOMY', { guildId: scope.guildId, slotId: scope.nitradoConnId, actor: scope.actorDiscordId });
     await statusReply(i, 'SUCCESS', 'Verknüpfung entfernt', { description: 'Deine Spielfigur-Verknüpfung wurde entfernt.' });
   }),
@@ -252,12 +245,12 @@ export const grantCommand: Command = {
     if (target.bot) { await statusReply(i, 'ERROR', 'Verknüpfung abgelehnt', { description: 'Die Verknüpfung konnte nicht erstellt werden.', fields: [{ name: '📝 Grund', value: 'Ein Bot kann nicht verknüpft werden.' }] }); return; }
     const id = i.options.getString('id', true).trim();
     if (!isValidGameId(id)) { await statusReply(i, 'ERROR', 'Verknüpfung abgelehnt', { description: 'Die ID ist ungültig.', fields: [{ name: '📝 Grund', value: 'Bitte Steam64 (17 Stellen) oder Charname (3–32 Zeichen) angeben.' }] }); return; }
-    await prisma.economyLink.upsert({
-      where: { guildId_nitradoConnId_userDiscordId: { guildId: scope.guildId, nitradoConnId: scope.nitradoConnId!, userDiscordId: asUserDiscordId(target.id) } },
-      create: { guildId: scope.guildId, nitradoConnId: scope.nitradoConnId!, userDiscordId: asUserDiscordId(target.id), gameId: id },
-      update: { gameId: id, linkedAt: new Date() },
-    });
-    logAudit('LINK_FORCE_GRANTED', 'ECONOMY', { guildId: scope.guildId, slotId: scope.nitradoConnId, target: target.id, gameId: id, actor: scope.actorDiscordId });
+    const r = await forceLink(prisma as unknown as LinkClient, { guildId: scope.guildId, nitradoConnId: scope.nitradoConnId! }, asUserDiscordId(target.id), id, config.security.encryptionKey);
+    if (!r.ok) {
+      await statusReply(i, 'ERROR', 'Verknüpfung abgelehnt', { description: 'Die Verknüpfung konnte nicht erstellt werden.', fields: [{ name: '📝 Grund', value: 'Diese Spielidentität ist bereits mit einem anderen Discord-Account verknüpft.' }] });
+      return;
+    }
+    logAudit('LINK_FORCE_GRANTED', 'ECONOMY', { guildId: scope.guildId, slotId: scope.nitradoConnId, target: target.id, actor: scope.actorDiscordId });
     await statusReply(i, 'SUCCESS', 'Verknüpfung erstellt', { description: 'Die Spielfigur wurde zugewiesen.', fields: [{ name: '👤 User', value: `<@${target.id}>` }, { name: '🎮 Spielfigur', value: `\`${id}\`` }] });
   }),
 };
@@ -268,13 +261,14 @@ export const grantCommand: Command = {
 export const linksCommand: Command = {
   data: new SlashCommandBuilder().setName('links').setDescription('Owner/Berechtigt: Listet alle Spielfigur-Verknüpfungen im aktiven Slot.'),
   execute: withGuildScope({ requirePerm: 'economy.view' }, async (i, scope) => {
-    const rows = await prisma.economyLink.findMany({
-      where: { guildId: scope.guildId, nitradoConnId: scope.nitradoConnId! },
-      orderBy: { linkedAt: 'desc' },
+    // Spielidentitaeten sind nur als HMAC gespeichert -> Anzeige ohne Klartext-ID.
+    const rows = await prisma.gameIdentityLink.findMany({
+      where: { guildId: scope.guildId, nitradoConnId: scope.nitradoConnId!, status: 'VERIFIED' },
+      orderBy: { verifiedAt: 'desc' },
       take: 50,
     });
-    if (rows.length === 0) { await statusReply(i, 'INFO', 'Verknüpfungen', { description: 'Im aktiven Slot gibt es noch keine Verknüpfungen.' }); return; }
-    const lines = rows.map(r => `<@${r.userDiscordId}> → \`${r.gameId}\``).join('\n');
+    if (rows.length === 0) { await statusReply(i, 'INFO', 'Verknüpfungen', { description: 'Im aktiven Slot gibt es noch keine verifizierten Verknüpfungen.' }); return; }
+    const lines = rows.map(r => `<@${r.userDiscordId}> • ✅ verifiziert`).join('\n');
     const e = new EmbedBuilder()
       .setColor(0xF1C40F)
       .setTitle(`🔗 Verknüpfungen (${rows.length})`)

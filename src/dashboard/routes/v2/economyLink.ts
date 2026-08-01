@@ -1,9 +1,10 @@
 /**
- * EconomyLink — Discord <-> Nitrado-Spielername-Bindung pro Guild+Slot+User.
+ * Spielidentitaets-Bindung (Discord <-> Spielidentitaet) pro Guild+Slot+User.
+ * Vereinheitlicht auf GameIdentityLink (nur HMAC, kein Klartext-GUID).
  *
- * GET    /                            (Owner / economy.view)  -> alle Links der Guild im aktiven Slot
- * DELETE /:userDiscordId              (Owner / economy.manage) -> force-unlink
- * POST   /grant                       (Owner / economy.manage) body: { userDiscordId, gameId } -> Force-Link Override
+ * GET    /                            (Owner / economy.view)  -> verifizierte Links im aktiven Slot
+ * DELETE /:userDiscordId              (Owner / economy.manage) -> Soft-Unlink
+ * POST   /grant                       (Owner / economy.manage) body: { userDiscordId, gameId } -> Force-Link
  *
  * Slot wird via Query-Param `?slot=N` ausgewaehlt; default = kleinster aktiver.
  */
@@ -13,6 +14,8 @@ import prisma from '../../../database/prisma';
 import { getSlot } from '../../../modules/nitrado/repository';
 import { asUserDiscordId } from '../../../types/scope';
 import { logAuditDb } from '../../../utils/logger';
+import { forceLink, unlinkUser, type LinkClient } from '../../../modules/linking/linkService';
+import { config } from '../../../config';
 
 export const economyLinkRouter = Router({ mergeParams: true });
 
@@ -31,16 +34,16 @@ economyLinkRouter.get('/', requireGuildPermission('economy.view'), async (req, r
   const scope = req.guildScope!;
   const connId = await resolveSlotId(scope.guildId, req.query.slot);
   if (!connId) { res.status(404).json({ error: 'Kein Nitrado-Slot.' }); return; }
-  const links = await prisma.economyLink.findMany({
-    where: { guildId: scope.guildId, nitradoConnId: connId },
-    orderBy: { linkedAt: 'desc' },
+  const links = await prisma.gameIdentityLink.findMany({
+    where: { guildId: scope.guildId, nitradoConnId: connId, status: 'VERIFIED' },
+    orderBy: { verifiedAt: 'desc' },
     take: 500,
   });
   res.json({
     links: links.map(l => ({
       userDiscordId: l.userDiscordId,
-      gameId: l.gameId,
-      linkedAt: l.linkedAt,
+      status: l.status,
+      verifiedAt: l.verifiedAt,
     })),
   });
 });
@@ -51,11 +54,9 @@ economyLinkRouter.delete('/:userDiscordId', requireGuildPermission('economy.mana
   if (!connId) { res.status(404).json({ error: 'Kein Nitrado-Slot.' }); return; }
   let target;
   try { target = asUserDiscordId(String(req.params.userDiscordId)); } catch { res.status(400).json({ error: 'userDiscordId ungueltig.' }); return; }
-  const out = await prisma.economyLink.deleteMany({
-    where: { guildId: scope.guildId, nitradoConnId: connId, userDiscordId: target },
-  });
+  const removed = await unlinkUser(prisma as unknown as LinkClient, { guildId: scope.guildId, nitradoConnId: connId }, target);
   logAuditDb('ECONOMY_LINK_REMOVED', 'ECONOMY', { actorUserId: req.auth!.userId, guildId: scope.guildId, details: { slotId: connId, target } });
-  res.json({ ok: true, deleted: out.count });
+  res.json({ ok: true, deleted: removed ? 1 : 0 });
 });
 
 economyLinkRouter.post('/grant', requireGuildPermission('economy.manage'), async (req, res) => {
@@ -67,17 +68,8 @@ economyLinkRouter.post('/grant', requireGuildPermission('economy.manage'), async
   try { target = asUserDiscordId(userDiscordId); } catch { res.status(400).json({ error: 'userDiscordId ungueltig.' }); return; }
   if (typeof gameId !== 'string' || gameId.length < 3 || gameId.length > 64) { res.status(400).json({ error: 'gameId 3..64 Zeichen.' }); return; }
 
-  // Force-Override: vorher ggf. existierende Link fuer diesen User loeschen
-  await prisma.economyLink.deleteMany({
-    where: { guildId: scope.guildId, nitradoConnId: connId, userDiscordId: target },
-  });
-  // Auch ggf. Link, der diese gameId schon hat (an anderen User), loeschen
-  await prisma.economyLink.deleteMany({
-    where: { guildId: scope.guildId, nitradoConnId: connId, gameId },
-  });
-  const link = await prisma.economyLink.create({
-    data: { guildId: scope.guildId, nitradoConnId: connId, userDiscordId: target, gameId },
-  });
-  logAuditDb('ECONOMY_LINK_GRANTED', 'ECONOMY', { actorUserId: req.auth!.userId, guildId: scope.guildId, details: { slotId: connId, target, gameId } });
-  res.status(201).json({ userDiscordId: link.userDiscordId, gameId: link.gameId, linkedAt: link.linkedAt });
+  const r = await forceLink(prisma as unknown as LinkClient, { guildId: scope.guildId, nitradoConnId: connId }, target, gameId, config.security.encryptionKey);
+  if (!r.ok) { res.status(409).json({ error: 'Spielidentitaet bereits mit anderem Account verknuepft.' }); return; }
+  logAuditDb('ECONOMY_LINK_GRANTED', 'ECONOMY', { actorUserId: req.auth!.userId, guildId: scope.guildId, details: { slotId: connId, target } });
+  res.status(201).json({ userDiscordId: target, status: 'VERIFIED' });
 });

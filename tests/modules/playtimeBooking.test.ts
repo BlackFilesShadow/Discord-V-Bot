@@ -42,25 +42,20 @@ function makeClient(sessions: UncreditedSession[], links: Record<string, string>
       findMany: async () => sessions.map(s => ({ ...s, bucketsCredited: credited.get(s.id) ?? s.bucketsCredited })),
       update: async ({ where, data }) => { credited.set(where.id as string, data.bucketsCredited as number); return {}; },
     },
-    economyLink: {
-      findUnique: async (args: unknown) => {
-        const gid = (args as { where: { guildId_nitradoConnId_gameId: { gameId: string } } }).where.guildId_nitradoConnId_gameId.gameId;
-        return links[gid] ? { userDiscordId: links[gid] } : null;
-      },
-    },
   };
-  return { client, accounts, credited };
+  const resolve = async (gameId: string): Promise<string | null> => links[gameId] ?? null;
+  return { client, accounts, credited, resolve };
 }
 
 const SCOPE = { guildId: 'g', nitradoConnId: 'n' };
 
 describe('bookPlaytimeRewards', () => {
   it('bucht neue Buckets und hebt bucketsCredited an', async () => {
-    const { client, accounts, credited } = makeClient(
+    const { client, accounts, credited, resolve } = makeClient(
       [{ id: 's1', gameId: 'p1', bucketsEarned: 3, bucketsCredited: 0 }],
       { p1: 'u1' },
     );
-    const r = await bookPlaytimeRewards(client, SCOPE, { perBucketAmount: 100n, rewardTarget: 'WALLET' });
+    const r = await bookPlaytimeRewards(client, SCOPE, { perBucketAmount: 100n, rewardTarget: 'WALLET' }, resolve);
     expect(r.credited).toBe(1);
     expect(r.total).toBe(300n);
     expect(accounts.get('g:u1')!.walletBalance).toBe(300n);
@@ -68,30 +63,30 @@ describe('bookPlaytimeRewards', () => {
   });
 
   it('zweiter Lauf ohne neue Buckets zahlt nichts', async () => {
-    const { client, accounts } = makeClient(
+    const { client, accounts, resolve } = makeClient(
       [{ id: 's1', gameId: 'p1', bucketsEarned: 3, bucketsCredited: 0 }],
       { p1: 'u1' },
     );
-    await bookPlaytimeRewards(client, SCOPE, { perBucketAmount: 100n, rewardTarget: 'WALLET' });
-    const r2 = await bookPlaytimeRewards(client, SCOPE, { perBucketAmount: 100n, rewardTarget: 'WALLET' });
+    await bookPlaytimeRewards(client, SCOPE, { perBucketAmount: 100n, rewardTarget: 'WALLET' }, resolve);
+    const r2 = await bookPlaytimeRewards(client, SCOPE, { perBucketAmount: 100n, rewardTarget: 'WALLET' }, resolve);
     expect(r2.credited).toBe(0);
     expect(accounts.get('g:u1')!.walletBalance).toBe(300n);
   });
 
   it('unverlinkter Spieler wird uebersprungen', async () => {
-    const { client, accounts, credited } = makeClient(
+    const { client, accounts, credited, resolve } = makeClient(
       [{ id: 's1', gameId: 'p1', bucketsEarned: 2, bucketsCredited: 0 }],
       {},
     );
-    const r = await bookPlaytimeRewards(client, SCOPE, { perBucketAmount: 100n, rewardTarget: 'WALLET' });
+    const r = await bookPlaytimeRewards(client, SCOPE, { perBucketAmount: 100n, rewardTarget: 'WALLET' }, resolve);
     expect(r.credited).toBe(0);
     expect(accounts.get('g:u1')).toBeUndefined();
     expect(credited.get('s1')).toBeUndefined();
   });
 
   it('perBucketAmount 0 -> nichts', async () => {
-    const { client } = makeClient([{ id: 's1', gameId: 'p1', bucketsEarned: 5, bucketsCredited: 0 }], { p1: 'u1' });
-    const r = await bookPlaytimeRewards(client, SCOPE, { perBucketAmount: 0n, rewardTarget: 'WALLET' });
+    const { client, resolve } = makeClient([{ id: 's1', gameId: 'p1', bucketsEarned: 5, bucketsCredited: 0 }], { p1: 'u1' });
+    const r = await bookPlaytimeRewards(client, SCOPE, { perBucketAmount: 0n, rewardTarget: 'WALLET' }, resolve);
     expect(r.credited).toBe(0);
   });
 });

@@ -4,7 +4,7 @@
  * abgelehnt; Soft-Unlink.
  */
 import {
-  createLinkChallenge, verifyByCode, unlinkUser, forceLink,
+  createLinkChallenge, verifyByCode, unlinkUser, forceLink, resolveVerifiedUser,
   type LinkClient, type GameIdentityRow,
 } from '../../src/modules/linking/linkService';
 import { identityHash } from '../../src/modules/linking/identity';
@@ -24,11 +24,12 @@ function makeClient(initial: GameIdentityRow[] = []) {
   const client: LinkClient = {
     gameIdentityLink: {
       findFirst: async (args: unknown) => {
-        const w = (args as { where: { challengeCode?: string; status?: string; userDiscordId?: string } }).where;
+        const w = (args as { where: { challengeCode?: string; status?: string; userDiscordId?: string; identityHash?: string } }).where;
         for (const r of rows.values()) {
           if (w.challengeCode && r.challengeCode !== w.challengeCode) continue;
           if (w.status && r.status !== w.status) continue;
           if (w.userDiscordId && r.userDiscordId !== w.userDiscordId) continue;
+          if (w.identityHash && r.identityHash !== w.identityHash) continue;
           return { ...r };
         }
         return null;
@@ -143,5 +144,25 @@ describe('unlinkUser / forceLink', () => {
     ]);
     const res = await forceLink(client, SCOPE, 'u1', '76561198000000000', SECRET, new Date());
     expect(res).toEqual({ ok: false, reason: 'IDENTITY_TAKEN' });
+  });
+});
+
+describe('resolveVerifiedUser', () => {
+  it('loest verifizierte Identitaet zum User auf (per Hash)', async () => {
+    const hash = identityHash('76561198000000000', SECRET);
+    const { client } = makeClient([
+      { userDiscordId: 'u1', identityHash: hash, status: 'VERIFIED', challengeCode: null, challengeExpiresAt: null },
+    ]);
+    const u = await resolveVerifiedUser(client, SCOPE, '76561198000000000', SECRET);
+    expect(u).toBe('u1');
+  });
+
+  it('nicht verifiziert / unbekannt -> null', async () => {
+    const hash = identityHash('76561198000000000', SECRET);
+    const { client } = makeClient([
+      { userDiscordId: 'u1', identityHash: hash, status: 'PENDING', challengeCode: 'X', challengeExpiresAt: null },
+    ]);
+    expect(await resolveVerifiedUser(client, SCOPE, '76561198000000000', SECRET)).toBeNull();
+    expect(await resolveVerifiedUser(client, SCOPE, 'unbekannt', SECRET)).toBeNull();
   });
 });

@@ -35,6 +35,7 @@ import { getRewardRule, effectiveBaseAmount, type RewardRuleClient } from '../ec
 import { getSlotEconomyConfig, admRewardsActive, type SlotConfigClient } from '../economy/slotConfig';
 import { bookPendingRewards, type RewardBookingClient } from '../economy/rewardBooking';
 import { bookPlaytimeRewards, type PlaytimeBookingClient } from '../economy/playtimeBooking';
+import { resolveVerifiedUser, type ResolveClient } from '../linking/linkService';
 import { emitGuildEvent } from '../../dashboard/socket/emitter';
 
 const SYNC_INTERVAL_MS = 15 * 60 * 1000;
@@ -143,22 +144,24 @@ async function processConnection(profileDir: string, conn: ConnRow): Promise<voi
 
     for (const [steam64, minutes] of perPlayer) {
       if (minutes <= 0) continue;
-      const link = await prisma.economyLink.findUnique({
-        where: {
-          guildId_nitradoConnId_gameId: { guildId: conn.guildId, nitradoConnId: conn.id, gameId: steam64 },
-        },
-      });
-      if (!link) continue;
+      // Aufloesung ueber verifizierte GameIdentityLink (HMAC), kein EconomyLink mehr.
+      const userDiscordId = await resolveVerifiedUser(
+        prisma as unknown as ResolveClient,
+        { guildId: conn.guildId, nitradoConnId: conn.id },
+        steam64,
+        config.security.encryptionKey,
+      );
+      if (!userDiscordId) continue;
       const reward = BigInt(Math.floor((minutes * pct) / 100));
       if (reward <= 0n) continue;
 
       try {
         await prisma.$transaction(async tx => {
           await tx.economyAccount.upsert({
-            where: { guildId_userDiscordId: { guildId: conn.guildId, userDiscordId: link.userDiscordId } },
+            where: { guildId_userDiscordId: { guildId: conn.guildId, userDiscordId } },
             create: {
               guildId: conn.guildId,
-              userDiscordId: link.userDiscordId,
+              userDiscordId,
               walletBalance: reward,
               lifetimeEarned: reward,
             },
@@ -170,23 +173,18 @@ async function processConnection(profileDir: string, conn: ConnRow): Promise<voi
           await tx.economyTransaction.create({
             data: {
               guildId: conn.guildId,
-              userDiscordId: link.userDiscordId,
+              userDiscordId,
               delta: reward,
               type: 'PLAYTIME_REWARD',
               reason: `ADM ${file.name}: ${minutes}min × ${pct}%`,
               actorDiscordId: null,
             },
           });
-          // eslint-disable-next-line local/no-unscoped-prisma-query -- link.id stammt aus vorheriger guildId-gescopter findUnique-Query (siehe oben).
-          await tx.economyLink.update({
-            where: { id: link.id },
-            data: { lastSeenAt: new Date() },
-          });
         });
         totalRewardedPlayers++;
         emitGuildEvent(conn.guildId, {
           type: 'economy.tx',
-          payload: { guildId: conn.guildId, userDiscordId: link.userDiscordId, type: 'PLAYTIME_REWARD' },
+          payload: { guildId: conn.guildId, userDiscordId, type: 'PLAYTIME_REWARD' },
         });
       } catch (e) {
         logger.warn(`ADM-Sync: Reward fehlgeschlagen fuer ${conn.id}/${steam64}: ${(e as Error).message}`);
@@ -264,6 +262,7 @@ async function processConnectionV2(
   // (echtes Geld, idempotent ueber Key reward:<decisionId>).
   try {
     const scopeRef = { guildId: conn.guildId, nitradoConnId: conn.id };
+    const resolveUser = (gameId: string) => resolveVerifiedUser(prisma as unknown as ResolveClient, scopeRef, gameId, config.security.encryptionKey);
     const slotCfg = await getSlotEconomyConfig(prisma as unknown as SlotConfigClient, scopeRef);
     const pvpRule = await getRewardRule(prisma as unknown as RewardRuleClient, scopeRef, 'pvp:default');
     const active = admRewardsActive(slotCfg);
@@ -272,6 +271,7 @@ async function processConnectionV2(
       prisma as unknown as RewardEngineClient,
       scopeRef,
       { rewardRuleId: 'pvp:default', baseAmount },
+      resolveUser,
     );
     if (active) {
       await bookPendingRewards(
@@ -293,10 +293,12 @@ async function processConnectionV2(
     const slotCfg = await getSlotEconomyConfig(prisma as unknown as SlotConfigClient, scopeRef);
     if (admRewardsActive(slotCfg)) {
       const playtimeRule = await getRewardRule(prisma as unknown as RewardRuleClient, scopeRef, 'playtime:default');
+      const resolveUser = (gameId: string) => resolveVerifiedUser(prisma as unknown as ResolveClient, scopeRef, gameId, config.security.encryptionKey);
       await bookPlaytimeRewards(
         prisma as unknown as PlaytimeBookingClient,
         scopeRef,
         { perBucketAmount: effectiveBaseAmount(playtimeRule), rewardTarget: slotCfg!.rewardTarget },
+        resolveUser,
       );
     }
   } catch (e) {

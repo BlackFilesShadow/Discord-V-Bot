@@ -637,8 +637,8 @@ function ChannelPicker({
 
 interface EconomyLink {
   userDiscordId: string;
-  gameId: string;
-  linkedAt: string;
+  status: string;
+  verifiedAt: string | null;
 }
 
 function EconomyLinksPanel({ guildId, slot }: { guildId: string; slot: string }) {
@@ -677,7 +677,7 @@ function EconomyLinksPanel({ guildId, slot }: { guildId: string; slot: string })
             <div className="font-mono">
               <span className="text-white">{l.userDiscordId}</span>
               <span className="text-muted mx-2">↔</span>
-              <span className="text-accent">{l.gameId}</span>
+              <span className="text-accent">✅ verifiziert</span>
             </div>
             <Button size="sm" variant="danger" onClick={() => unlink.mutate(l.userDiscordId)}>
               <Trash2 className="h-3 w-3" />

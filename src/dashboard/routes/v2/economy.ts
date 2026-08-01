@@ -128,7 +128,7 @@ economyRouter.get('/overview', requireGuildPermission('economy.view'), async (re
     getConfig(guildId),
     prisma.economyAccount.aggregate({ where: { guildId }, _sum: { walletBalance: true, bankBalance: true } }),
     prisma.economyAccount.count({ where: { guildId } }),
-    prisma.economyLink.count({ where: { guildId } }),
+    prisma.gameIdentityLink.count({ where: { guildId, status: 'VERIFIED' } }),
     prisma.economyTransaction.count({ where: { guildId } }),
     prisma.economyTransaction.findMany({
       where: { guildId }, orderBy: { createdAt: 'desc' }, take: 10,

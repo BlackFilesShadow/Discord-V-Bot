@@ -24,7 +24,7 @@ const path = require('path');
 const STRICT_MODELS = [
   'nitradoConnection', 'guildPermissionGrant', 'serverSettings', 'faction',
   'factionMember', 'whitelistEntry', 'whitelistRequest', 'economyConfig',
-  'economyAccount', 'economyTransaction', 'economyLink', 'casinoGame',
+  'economyAccount', 'economyTransaction', 'gameIdentityLink', 'casinoGame',
   'casinoRound', 'idempotencyKey', 'nitradoJob', 'killfeedConfig', 'killfeedEvent',
 ];
 
