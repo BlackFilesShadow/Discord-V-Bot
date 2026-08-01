@@ -52,8 +52,12 @@ export async function disableWelcome(guildId: string, updatedBy: string): Promis
   await setWelcomeConfig(guildId, { ...existing, enabled: false }, updatedBy);
 }
 
-export function renderWelcomeMessage(message: string, vars: { user: string; guild: string; memberCount: number }): string {
+export function renderWelcomeMessage(message: string, vars: { user: string; mention: string; guild: string; memberCount: number }): string {
+  // {user} = Anzeigename (Klartext), {mention} = optionaler Inline-Ping.
+  // Der eigentliche Ping liegt separat im content (sendWelcomeMessages), damit
+  // nicht doppelt getaggt wird.
   return renderTemplate(message, { user: vars.user })
+    .replace(/\{mention\}/g, vars.mention)
     .replace(/\{guild\}/g, vars.guild)
     .replace(/\{count\}/g, String(vars.memberCount))
     .replace(/\{member_count\}/g, String(vars.memberCount));

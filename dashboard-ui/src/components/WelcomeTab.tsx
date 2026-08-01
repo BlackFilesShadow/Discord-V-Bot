@@ -51,7 +51,8 @@ const TRIGGER_LABELS: Record<AutoRole['triggerType'], string> = {
 };
 
 const VARIABLES: Array<{ key: string; desc: string; example: string }> = [
-  { key: '{user}', desc: 'Erwähnung des neuen Mitglieds', example: '@MaxMustermann' },
+  { key: '{user}', desc: 'Anzeigename des neuen Mitglieds (kein Ping)', example: 'MaxMustermann' },
+  { key: '{mention}', desc: 'Erwähnung des neuen Mitglieds (optional, zusätzlich zum Ping)', example: '@MaxMustermann' },
   { key: '{guild}', desc: 'Name des Servers', example: 'Mein Server' },
   { key: '{count}', desc: 'Aktuelle Mitgliederzahl', example: '128' },
   { key: '{date}', desc: 'Aktuelles Datum', example: '3. April 2026' },
@@ -66,7 +67,8 @@ function renderPreview(template: string): string {
   const date = new Intl.DateTimeFormat('de-DE', { dateStyle: 'long', timeZone: 'Europe/Berlin' }).format(now);
   const time = new Intl.DateTimeFormat('de-DE', { timeStyle: 'short', timeZone: 'Europe/Berlin' }).format(now);
   return template
-    .replace(/\{user\}/g, '@MaxMustermann')
+    .replace(/\{user\}/g, 'MaxMustermann')
+    .replace(/\{mention\}/g, '@MaxMustermann')
     .replace(/\{guild\}/g, 'Mein Server')
     .replace(/\{count\}/g, '128')
     .replace(/\{member_count\}/g, '128')

@@ -128,7 +128,8 @@ const guildMemberAddEvent: BotEvent = {
             const memberCount = m.guild.memberCount;
 
             const messageText = renderWelcomeMessage(wcfg.message, {
-              user: userMention,
+              user: m.displayName,
+              mention: userMention,
               guild: m.guild.name,
               memberCount,
             });

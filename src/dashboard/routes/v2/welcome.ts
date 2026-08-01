@@ -242,8 +242,10 @@ welcomeRouter.post('/test', requireGuildPermission('welcome.manage'), async (req
 
   const userMention = `<@${scope.actorDiscordId}>`;
   const memberCount = guild.memberCount;
+  const testMember = await guild.members.fetch(scope.actorDiscordId).catch(() => null);
+  const displayName = testMember?.displayName ?? 'Mitglied';
 
-  const messageText = renderWelcomeMessage(cfg.message, { user: userMention, guild: guild.name, memberCount });
+  const messageText = renderWelcomeMessage(cfg.message, { user: displayName, mention: userMention, guild: guild.name, memberCount });
 
   const finalText = resolveCustomEmotes(messageText, guild);
   // Begruessung als Embed (Text als Beschreibung, optionales Bild im Embed).
