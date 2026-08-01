@@ -1695,9 +1695,19 @@ model WhitelistEntry {
   approvedByDiscordId String
   source              String            @default("DIRECT") // 'DIRECT' | 'REQUEST' | 'IMPORT'
   approvedAt          DateTime          @default(now())
+  syncState           WhitelistSyncState @default(LOCAL_ONLY) // Phase 7 WL-V2: Remote/Lokal-Status
+  lastSyncedAt        DateTime?
 
   @@unique([guildId, nitradoConnId, gameId])
   @@index([guildId])
+  @@index([guildId, nitradoConnId, syncState])
+}
+
+// Phase 7 WL-V2: Abgleichstatus lokaler Whitelist gegen den Gameserver.
+enum WhitelistSyncState {
+  LOCAL_ONLY     // lokal vorhanden, noch nicht am Server
+  SYNCED         // lokal + remote vorhanden
+  PENDING_REMOVE // lokal entfernt, Remote-Entfernung ausstehend
 }
 
 enum WhitelistRequestStatus {
