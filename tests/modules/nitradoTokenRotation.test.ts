@@ -32,6 +32,7 @@ jest.mock('../../src/modules/nitrado/nitradoClient', () => ({
   __esModule: true,
   NitradoClient: jest.fn().mockImplementation(() => ({
     validateToken: validateTokenMock,
+    validateTokenDetailed: async () => ((await validateTokenMock()) ? { kind: 'VALID' } : { kind: 'INVALID', status: 401 }),
     listServices: listServicesMock,
   })),
 }));
