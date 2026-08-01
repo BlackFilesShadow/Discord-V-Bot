@@ -1904,7 +1904,7 @@ model GameIdentityLink {
   guildId            String
   nitradoConnId      String
   userDiscordId      String
-  identityHash       String             @db.VarChar(64)
+  identityHash       String?            @db.VarChar(64)
   status             GameIdentityStatus @default(PENDING)
   challengeCode      String?            @db.VarChar(16)
   challengeExpiresAt DateTime?
