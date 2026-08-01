@@ -67,3 +67,47 @@ export function buildKillfeedEmbed(ev: KillEvent, t: KillfeedEmbedToggles): Embe
 
   return e;
 }
+
+// ============================================================
+// Killfeed V2 (Phase 6) — Embed aus normalisiertem AdmEvent-View.
+// KILL-COORD: exakte X/Y/Z-Rohwerte OHNE Rundung.
+// ============================================================
+import type { KillfeedView, KillCategoryV2 } from './killfeedV2';
+
+const TITLES_V2: Record<KillCategoryV2, string> = {
+  DEATH: 'PvP-Kill',
+  SUICIDE: 'Selbstmord',
+  NPC: 'NPC-Tod',
+  VEHICLE: 'Fahrzeug-Tod',
+};
+
+/** Rohkoordinaten: nur Klammern entfernen, KEINE Rundung (KILL-COORD). */
+function rawPos(pos: string | null): string | null {
+  if (!pos) return null;
+  const clean = pos.replace(/[<>]/g, '').trim();
+  return clean.length > 0 ? clean : null;
+}
+
+export function buildKillfeedEmbedV2(view: KillfeedView, embedColor: string): EmbedBuilder {
+  const e = new EmbedBuilder()
+    .setColor(parseHex(embedColor))
+    .setTitle(TITLES_V2[view.category])
+    .setTimestamp(view.occurredAt ?? null);
+
+  e.addFields({ name: 'Opfer', value: `\`${view.victimName}\``, inline: true });
+  if (view.killerName) {
+    e.addFields({ name: view.category === 'NPC' ? 'Verursacher' : 'Toeter', value: `\`${view.killerName}\``, inline: true });
+  }
+  if (view.weapon) {
+    e.addFields({ name: 'Waffe', value: safeEmbedField(view.weapon, 256), inline: true });
+  }
+  if (typeof view.distanceMeters === 'number') {
+    e.addFields({ name: 'Distanz', value: `${view.distanceMeters} m`, inline: true });
+  }
+  const vp = rawPos(view.victimPos);
+  if (vp) e.addFields({ name: 'Opfer-Pos', value: vp, inline: true });
+  const kp = rawPos(view.killerPos);
+  if (kp) e.addFields({ name: 'Toeter-Pos', value: kp, inline: true });
+
+  return e;
+}

@@ -228,7 +228,14 @@ async function main(): Promise<void> {
     startTokenValidationCron(client);
     startAdmSyncCron();
     startPermaOnlyCron();
-    startKillfeedWatcher();
+    // Killfeed: V2 (aus AdmEvents) wenn Pipeline aktiv, sonst alter Watcher —
+    // nie beide zugleich (kein Doppel-Posting).
+    if (config.nitrado.admEventPipelineV2) {
+      const { startKillfeedV2Cron } = await import('./modules/killfeed/killfeedV2Cron.js');
+      startKillfeedV2Cron();
+    } else {
+      startKillfeedWatcher();
+    }
     startBankInterestCron();
   } catch (e) {
     logger.warn('Nitrado-Worker-Init fehlgeschlagen:', e as Error);
