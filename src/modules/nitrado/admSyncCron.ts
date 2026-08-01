@@ -34,6 +34,7 @@ import { aggregatePlayerSessions, type PlayerSessionClient } from './adm/playerS
 import { getRewardRule, effectiveBaseAmount, type RewardRuleClient } from '../economy/rewardRules';
 import { getSlotEconomyConfig, admRewardsActive, type SlotConfigClient } from '../economy/slotConfig';
 import { bookPendingRewards, type RewardBookingClient } from '../economy/rewardBooking';
+import { bookPlaytimeRewards, type PlaytimeBookingClient } from '../economy/playtimeBooking';
 import { emitGuildEvent } from '../../dashboard/socket/emitter';
 
 const SYNC_INTERVAL_MS = 15 * 60 * 1000;
@@ -284,12 +285,20 @@ async function processConnectionV2(
   }
 
   // Sitzungs-Aggregation (kein Geld): Connect/Disconnect -> PlayerSessions +
-  // 10-Min-Buckets. Idempotent ueber connectEventId. Buchung erst Phase 5.
+  // 10-Min-Buckets. Idempotent ueber connectEventId. Produktive Spielzeit-
+  // Belohnung nur bei aktivem Slot-Gate (echtes Geld, idempotent je Bucket-Stufe).
   try {
-    await aggregatePlayerSessions(
-      prisma as unknown as PlayerSessionClient,
-      { guildId: conn.guildId, nitradoConnId: conn.id },
-    );
+    const scopeRef = { guildId: conn.guildId, nitradoConnId: conn.id };
+    await aggregatePlayerSessions(prisma as unknown as PlayerSessionClient, scopeRef);
+    const slotCfg = await getSlotEconomyConfig(prisma as unknown as SlotConfigClient, scopeRef);
+    if (admRewardsActive(slotCfg)) {
+      const playtimeRule = await getRewardRule(prisma as unknown as RewardRuleClient, scopeRef, 'playtime:default');
+      await bookPlaytimeRewards(
+        prisma as unknown as PlaytimeBookingClient,
+        scopeRef,
+        { perBucketAmount: effectiveBaseAmount(playtimeRule), rewardTarget: slotCfg!.rewardTarget },
+      );
+    }
   } catch (e) {
     logger.warn(`ADM-Sync V2: PlayerSession-Aggregation fehlgeschlagen fuer ${conn.id}: ${(e as Error).message}`);
   }
