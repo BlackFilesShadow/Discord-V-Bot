@@ -1889,6 +1889,36 @@ model EconomyLink {
   @@index([guildId])
 }
 
+enum GameIdentityStatus {
+  PENDING
+  VERIFIED
+  UNLINKED
+}
+
+// Verifizierte Discord<->Spielidentitaet-Bindung (Phase 7, LINK-001). Die
+// Spielidentitaet (Steam64/DAYZ-GUID) wird NIE im Klartext gespeichert, nur als
+// HMAC (identityHash). Verifikation ueber einen In-Game-Chat-Code (challengeCode
+// mit Ablauf). Soft-Unlink behaelt die Historie (status=UNLINKED).
+model GameIdentityLink {
+  id                 String             @id @default(cuid())
+  guildId            String
+  nitradoConnId      String
+  userDiscordId      String
+  identityHash       String             @db.VarChar(64)
+  status             GameIdentityStatus @default(PENDING)
+  challengeCode      String?            @db.VarChar(16)
+  challengeExpiresAt DateTime?
+  verifiedAt         DateTime?
+  unlinkedAt         DateTime?
+  createdAt          DateTime           @default(now())
+  updatedAt          DateTime           @updatedAt
+
+  @@unique([guildId, nitradoConnId, userDiscordId])
+  @@unique([guildId, nitradoConnId, identityHash])
+  @@index([guildId, nitradoConnId, status])
+  @@index([guildId, nitradoConnId, challengeCode])
+}
+
 enum CasinoGameType {
   SLOT
   COINFLIP
