@@ -9,6 +9,7 @@
  */
 
 import prisma from '../../database/prisma';
+import { randomUUID } from 'crypto';
 import type { GuildId, UserDiscordId } from '../../types/scope';
 import type { EconomyTxType, Prisma } from '@prisma/client';
 
@@ -320,6 +321,18 @@ export async function deposit(
         actorDiscordId: userId,
       },
     });
+    // Strukturierter Ledger-Satz (Wallet->Bank) im selben Transaktionsschritt.
+    await tx.economyLedgerEntry.create({
+      data: {
+        idempotencyKey: `deposit:${guildId}:${userId}:${randomUUID()}`,
+        guildId,
+        userDiscordId: userId,
+        walletDelta: -amount,
+        bankDelta: amount,
+        type: 'DEPOSIT',
+        reason: 'Wallet -> Bank',
+      },
+    });
   });
 }
 
@@ -343,6 +356,18 @@ export async function withdraw(
         type: 'WITHDRAW',
         reason: `Bank -> Wallet ${amount}`,
         actorDiscordId: userId,
+      },
+    });
+    // Strukturierter Ledger-Satz (Bank->Wallet) im selben Transaktionsschritt.
+    await tx.economyLedgerEntry.create({
+      data: {
+        idempotencyKey: `withdraw:${guildId}:${userId}:${randomUUID()}`,
+        guildId,
+        userDiscordId: userId,
+        walletDelta: amount,
+        bankDelta: -amount,
+        type: 'WITHDRAW',
+        reason: 'Bank -> Wallet',
       },
     });
   });
@@ -386,6 +411,28 @@ export async function transferBank(args: {
           reason: 'Bank-Transfer',
           actorDiscordId: args.fromUserId,
           counterpartDiscordId: args.fromUserId,
+        },
+      ],
+    });
+    // Strukturierte Ledger-Saetze fuer beide Seiten (nur Bank betroffen).
+    const transferId = randomUUID();
+    await tx.economyLedgerEntry.createMany({
+      data: [
+        {
+          idempotencyKey: `transfer:${transferId}:from`,
+          guildId: args.guildId,
+          userDiscordId: args.fromUserId,
+          bankDelta: -args.amount,
+          type: 'TRANSFER',
+          reason: 'Bank-Transfer',
+        },
+        {
+          idempotencyKey: `transfer:${transferId}:to`,
+          guildId: args.guildId,
+          userDiscordId: args.toUserId,
+          bankDelta: args.amount,
+          type: 'TRANSFER',
+          reason: 'Bank-Transfer',
         },
       ],
     });
