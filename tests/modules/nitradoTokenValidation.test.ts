@@ -43,6 +43,12 @@ describe('NIT-001 — validateTokenDetailed', () => {
     expect(r).toEqual({ kind: 'INVALID', status: null });
   });
 
+  it('VALID bei 2xx auch ohne valid-Feld (robuste Antwortstruktur)', async () => {
+    requestMock.mockResolvedValue({ status: 200, headers: {}, data: { data: { token: {} } } });
+    const r = await new NitradoClient('token-1234').validateTokenDetailed();
+    expect(r.kind).toBe('VALID');
+  });
+
   it('INVALID mit Status 401', async () => {
     requestMock.mockResolvedValue({ status: 401, headers: {}, data: { message: 'unauthorized' } });
     const r = await new NitradoClient('token-1234').validateTokenDetailed();

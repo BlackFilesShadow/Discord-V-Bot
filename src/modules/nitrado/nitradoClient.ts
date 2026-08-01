@@ -194,8 +194,12 @@ export class NitradoClient {
    */
   async validateTokenDetailed(): Promise<TokenValidationResult> {
     try {
-      const res = await this.request<{ data: { token?: { valid?: boolean } } }>('GET', '/token');
-      return res.data?.token?.valid === true ? { kind: 'VALID' } : { kind: 'INVALID', status: null };
+      const res = await this.request<{ data?: { token?: { valid?: boolean } } }>('GET', '/token');
+      // Ein 2xx auf /token bedeutet: der Token hat sich authentifiziert (ein
+      // ungueltiger Token liefert 401 und wirft oben). Nur ein EXPLIZITES
+      // valid:false gilt als ungueltig — eine abweichende Antwortstruktur darf
+      // einen echten Token NICHT faelschlich ablehnen.
+      return res.data?.token?.valid === false ? { kind: 'INVALID', status: null } : { kind: 'VALID' };
     } catch (e) {
       if (e instanceof NitradoCircuitOpenError) return { kind: 'CIRCUIT_OPEN' };
       if (e instanceof NitradoApiError) {

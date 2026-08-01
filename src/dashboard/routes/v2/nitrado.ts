@@ -6,7 +6,7 @@
  * DELETE /:slot         loescht Slot (Cascade!)
  * GET    /:slot/services proxy zu NitradoClient.listServices()
  */
-import { Router } from 'express';
+import { Router, type Response } from 'express';
 import { requireGuildOwner } from '../../middleware/auth';
 import { listSlots, createSlot, deleteSlot, getSlot, getDecryptedToken, updateToken, updateAlias, updateServiceId } from '../../../modules/nitrado/repository';
 import { NitradoClient } from '../../../modules/nitrado/nitradoClient';
@@ -14,6 +14,29 @@ import { asUserDiscordId, asNitradoConnId } from '../../../types/scope';
 import { logAuditDb, logger } from '../../../utils/logger';
 
 export const nitradoRouter = Router({ mergeParams: true });
+
+// Validiert den Token und schreibt bei Fehlschlag eine SPEZIFISCHE Meldung
+// (ungueltig vs. transient vs. Rate-Limit vs. Circuit) — nicht pauschal
+// "ungueltig", damit der Owner den echten Grund sieht. Liefert true bei VALID.
+async function validateTokenOrRespond(token: string, res: Response): Promise<boolean> {
+  const r = await new NitradoClient(token).validateTokenDetailed();
+  switch (r.kind) {
+    case 'VALID':
+      return true;
+    case 'INVALID':
+      res.status(400).json({ error: 'Nitrado-Token ungültig (von Nitrado abgelehnt). Token vollständig kopiert? Benötigte Scopes: rootserver, service, user_info.' });
+      return false;
+    case 'RATE_LIMITED':
+      res.status(429).json({ error: 'Nitrado-Rate-Limit erreicht — bitte in ~1 Minute erneut versuchen.' });
+      return false;
+    case 'CIRCUIT_OPEN':
+      res.status(503).json({ error: 'Nitrado-API vorübergehend gesperrt (zu viele Fehler zuvor) — bitte in ~1 Minute erneut versuchen.' });
+      return false;
+    default:
+      res.status(502).json({ error: `Nitrado-API nicht erreichbar${'message' in r && r.message ? ` (${r.message})` : ''} — bitte erneut versuchen.` });
+      return false;
+  }
+}
 
 /** Trennt 400 (Validierung) von 502 (Nitrado-API) bei der Service-ID-Pruefung. */
 class ServiceValidationError extends Error {
@@ -77,8 +100,7 @@ nitradoRouter.post('/', requireGuildOwner, async (req, res) => {
   if (existing) { res.status(409).json({ error: `Slot ${slot} ist bereits belegt.` }); return; }
 
   // Token vor dem Speichern validieren
-  const valid = await new NitradoClient(token).validateToken();
-  if (!valid) { res.status(400).json({ error: 'Nitrado-Token ungueltig.' }); return; }
+  if (!(await validateTokenOrRespond(token, res))) return;
 
   // Falls eine Service-ID mitgegeben wurde: gegen den Token-Account pruefen,
   // damit keine fremde/falsche Service-ID gespeichert werden kann.
@@ -128,8 +150,7 @@ nitradoRouter.patch('/:slot/token', requireGuildOwner, async (req, res) => {
   if (!existing) { res.status(404).json({ error: 'Slot nicht gefunden.' }); return; }
 
   const client = new NitradoClient(token);
-  const valid = await client.validateToken();
-  if (!valid) { res.status(400).json({ error: 'Nitrado-Token ungueltig.' }); return; }
+  if (!(await validateTokenOrRespond(token, res))) return;
 
   // NIT-003: Nach Tokenrotation pruefen, ob die gespeicherte Service-ID noch zum
   // NEUEN Token gehoert. Wenn nicht, wird sie entfernt (Owner muss neu
