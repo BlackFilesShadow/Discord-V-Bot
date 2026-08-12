@@ -150,7 +150,7 @@ export function looksLikeDayZFileQuestion(question: string): boolean {
   if (/\b(cfg[a-z0-9_]+|mapgroup[a-z0-9_]+|mapcluster[a-z0-9_]+)\.(xml|json)\b/.test(q)) return true;
   if (/\binit\.c\b|\bserverdz\.cfg\b/.test(q)) return true;
   if (/\bwelche\s+datei\b/.test(q) && /\b(dayz|loot|spawn|wetter|weather|tier|event|mission)\b/.test(q)) return true;
-  if (/\bloot\b.*\b(haus|häuser|haeuser|gebäude|gebaeude)\b/.test(q)) return true;
+  if (/\bloot\b.*\b(haus|häusern?|haeusern?|gebäuden?|gebaeuden?)\b/.test(q)) return true;
   return false;
 }
 
