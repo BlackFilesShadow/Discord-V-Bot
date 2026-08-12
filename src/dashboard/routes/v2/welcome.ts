@@ -1,21 +1,5 @@
 /**
  * Welcome-Routen — Begruessungssystem pro Guild (BotConfig key=`welcome:<guildId>`).
- *
- *   GET    /config        Aktuelle Welcome-Konfiguration
- *   POST   /config        Konfiguration speichern (enabled/channel/mode/message/media)
- *   POST   /test          Testnachricht in den Channel senden (rendert wie der Live-Join)
- *   POST   /disable       Welcome deaktivieren (Config bleibt erhalten)
- *   POST   /media         Willkommensbild hochladen (multipart, guild-scoped)
- *   DELETE /media         Willkommensbild entfernen (Config + Datei)
- *   GET    /autoroles     Auto-Rollen der Guild auflisten
- *   POST   /autoroles     Auto-Rolle (Trigger JOIN) hinzufuegen — mit Rollen-Validierung
- *   PATCH  /autoroles/:id Auto-Rolle aktivieren/deaktivieren
- *   DELETE /autoroles/:id Auto-Rolle entfernen
- *
- * Datenhaltung ausschliesslich ueber welcomeManager + AutoRole-Model (kein Parallel-State).
- * Medien werden ueber das bestehende /uploads-System (express.static) abgelegt:
- *   /uploads/media/welcome/<guildId>/<filename>  — strikt guild-scoped.
- * Strikte guildId-Scope-Pruefung in jeder Operation.
  */
 
 import { Router } from 'express';
@@ -27,7 +11,9 @@ import { PermissionFlagsBits } from 'discord.js';
 import { requireGuildPermission } from '../../middleware/auth';
 import prisma from '../../../database/prisma';
 import {
+  countWelcomeGraphemes,
   getWelcomeConfig,
+  MAX_WELCOME_TEMPLATE_GRAPHEMES,
   setWelcomeConfig,
   disableWelcome,
   renderWelcomeMessage,
@@ -45,17 +31,12 @@ export const welcomeRouter = Router({ mergeParams: true });
 
 const SNOWFLAKE_RE = /^\d{17,20}$/;
 const SUPPORTED_MEDIA = /^https?:\/\/.+\.(jpe?g|png|gif|webp|mp4|webm|mov)(\?.*)?$/i;
-const MAX_MESSAGE = 1000;
 
-// --- Medien-Upload (Willkommensbild) ----------------------------------------
-// Wiederverwendung des bestehenden /uploads-Systems (kein zweites Upload-System).
 const WELCOME_UPLOADS_BASE = path.join(config.upload.dir, 'media', 'welcome');
-const MAX_IMAGE_BYTES = 8 * 1024 * 1024; // 8 MB — Willkommensbilder sind Bilder, kein Video
+const MAX_IMAGE_BYTES = 8 * 1024 * 1024;
 const ALLOWED_IMAGE_MIME = new Set(['image/jpeg', 'image/png', 'image/webp', 'image/gif']);
 
 const imageUpload = multer({
-  // memoryStorage ist bewusst gewählt: das Bild wird nach Magic-/MIME-Prüfung
-  // direkt auf Platte geschrieben. RAM-Obergrenze pro Request = fileSize (8 MB).
   storage: multer.memoryStorage(),
   limits: { fileSize: MAX_IMAGE_BYTES, files: 1, fields: 10, parts: 12 },
   fileFilter: (_req, file, cb) => {
@@ -74,7 +55,6 @@ function imageExtFor(mime: string): string {
   }
 }
 
-/** Strikte Erlaubt-Pruefung fuer lokal hochgeladene Willkommensbilder (guild-scoped). */
 function localWelcomeMediaRe(guildId: string): RegExp {
   return new RegExp(`^/uploads/media/welcome/${guildId}/[A-Za-z0-9_-]+\\.(jpe?g|png|webp|gif)$`, 'i');
 }
@@ -97,23 +77,25 @@ function validateBody(b: WelcomeBody, guildId: string):
   if (typeof b.message !== 'string' || b.message.trim().length === 0) {
     return { ok: false, error: 'message darf nicht leer sein.' };
   }
-  if (b.message.length > MAX_MESSAGE) {
-    return { ok: false, error: `message darf maximal ${MAX_MESSAGE} Zeichen lang sein.` };
+  const visibleLength = countWelcomeGraphemes(b.message);
+  if (visibleLength > MAX_WELCOME_TEMPLATE_GRAPHEMES) {
+    return {
+      ok: false,
+      error: `message darf maximal ${MAX_WELCOME_TEMPLATE_GRAPHEMES} sichtbare Zeichen lang sein.`,
+    };
   }
-  // KI-Modus entfernt: Willkommen nutzt ausschliesslich statischen Text.
+
   let mediaUrl: string | undefined;
   if (b.mediaUrl != null && b.mediaUrl !== '') {
     if (typeof b.mediaUrl !== 'string') {
       return { ok: false, error: 'mediaUrl ist ungueltig.' };
     }
-    // Erlaubt: lokal hochgeladenes guild-scoped Bild ODER externe http(s)-Medien-URL.
     const isLocal = localWelcomeMediaRe(guildId).test(b.mediaUrl);
     if (!isLocal && !SUPPORTED_MEDIA.test(b.mediaUrl)) {
       return { ok: false, error: 'mediaUrl muss ein hochgeladenes Bild oder ein http(s)-Link auf jpg/png/gif/webp/mp4/webm/mov sein.' };
     }
     mediaUrl = b.mediaUrl;
   }
-  // Reihenfolge bei gesetztem Bild — Default image_first (Bild zuerst, Text darunter).
   const mediaLayout: 'image_first' | 'text_first' = b.mediaLayout === 'text_first' ? 'text_first' : 'image_first';
   return {
     ok: true,
@@ -160,10 +142,6 @@ welcomeRouter.get('/config', requireGuildPermission('welcome.view'), async (req,
   res.json(serialize(cfg));
 });
 
-/**
- * Read-only Auto-Rollen-Liste (Onboarding-Kontext). Verwaltung bleibt im
- * Discord-Command `/autorole`. Strikte guildId-Scope-Pruefung.
- */
 welcomeRouter.get('/autoroles', requireGuildPermission('welcome.view'), async (req, res) => {
   const scope = req.guildScope!;
   const rows = await prisma.autoRole.findMany({
@@ -221,7 +199,6 @@ welcomeRouter.post('/test', requireGuildPermission('welcome.manage'), async (req
   const guild = client.guilds.cache.get(scope.guildId);
   if (!guild) { res.status(404).json({ error: 'Bot ist nicht in dieser Guild.' }); return; }
 
-  // Body darf eine noch nicht gespeicherte Config zum Testen mitliefern.
   const body = req.body as WelcomeBody;
   let cfg: WelcomeConfig | null;
   if (body && typeof body.channelId === 'string' && body.message !== undefined) {
@@ -238,22 +215,34 @@ welcomeRouter.post('/test', requireGuildPermission('welcome.manage'), async (req
 
   const channel = await client.channels.fetch(cfg.channelId).catch(() => null);
   if (!channel || !channel.isTextBased() || channel.isDMBased()) {
-    res.status(400).json({ error: 'Channel ist kein sendbarer Text-Channel.' }); return; }
+    res.status(400).json({ error: 'Channel ist kein sendbarer Text-Channel.' }); return;
+  }
 
+  const actor = guild.members.cache.get(scope.actorDiscordId);
+  const userDisplayName = actor?.displayName ?? actor?.user.globalName ?? actor?.user.username ?? 'Testnutzer';
   const userMention = `<@${scope.actorDiscordId}>`;
   const memberCount = guild.memberCount;
 
-  const messageText = renderWelcomeMessage(cfg.message, { user: userMention, mention: userMention, guild: guild.name, memberCount });
+  const messageText = renderWelcomeMessage(cfg.message, {
+    user: userDisplayName,
+    mention: userMention,
+    guild: guild.name,
+    memberCount,
+  });
 
   const finalText = resolveCustomEmotes(messageText, guild);
-  // Begruessung als Embed (Text als Beschreibung, optionales Bild im Embed).
-  await sendWelcomeMessages(channel, {
-    text: `🧪 **Testnachricht** — ${finalText}`,
-    mediaUrl: cfg.mediaUrl,
-    mediaLayout: cfg.mediaLayout,
-    mentionUserId: scope.actorDiscordId,
-    mentionInContent: false,
-  });
+  try {
+    await sendWelcomeMessages(channel, {
+      text: `🧪 **Testnachricht** — ${finalText}`,
+      mediaUrl: cfg.mediaUrl,
+      mediaLayout: cfg.mediaLayout,
+      mentionUserId: scope.actorDiscordId,
+      mentionInContent: false,
+    });
+  } catch (err) {
+    res.status(400).json({ error: err instanceof Error ? err.message : 'Testnachricht ist ungueltig.' });
+    return;
+  }
   logAuditDb('WELCOME_TEST_SENT', 'WELCOME', {
     actorUserId: req.auth!.userId, guildId: scope.guildId,
     details: { channelId: cfg.channelId, mode: 'text' },
@@ -261,17 +250,6 @@ welcomeRouter.post('/test', requireGuildPermission('welcome.manage'), async (req
   res.json({ ok: true, channelId: cfg.channelId });
 });
 
-// ===========================================================================
-//  Medien-Upload (Willkommensbild) — guild-scoped, bestehendes /uploads-System
-// ===========================================================================
-
-/**
- * Bild hochladen. Multipart-Field `file`. Nur Bilder (PNG/JPG/JPEG/WEBP/GIF).
- * Ablage strikt guild-scoped unter /uploads/media/welcome/<guildId>/<uuid>.<ext>.
- * Der Client uebernimmt die zurueckgegebene URL ins Medien-Feld und speichert
- * sie ueber POST /config in die Welcome-Config. Der Upload-Pfad ist NICHT vom
- * Client bestimmbar (Dateiname serverseitig generiert, guildId aus dem Scope).
- */
 welcomeRouter.post(
   '/media',
   requireGuildPermission('welcome.manage'),
@@ -289,15 +267,12 @@ welcomeRouter.post(
 
     const dir = path.join(WELCOME_UPLOADS_BASE, scope.guildId);
     await fs.mkdir(dir, { recursive: true });
-
-    // Nur EIN Willkommensbild pro Guild: alte Dateien im Guild-Ordner entfernen,
-    // damit kein Disk-Leak durch ueberschriebene Uploads entsteht. Best-Effort.
     try {
       const entries = await fs.readdir(dir);
       for (const entry of entries) {
         await fs.unlink(path.join(dir, entry)).catch(() => {});
       }
-    } catch { /* Ordner ggf. neu — ignorieren */ }
+    } catch { /* ignore */ }
 
     const filename = `welcome-${randomUUID()}${imageExtFor(file.mimetype)}`;
     await fs.writeFile(path.join(dir, filename), file.buffer);
@@ -311,31 +286,20 @@ welcomeRouter.post(
   },
 );
 
-/**
- * Willkommensbild entfernen. Leert mediaUrl in der Config (falls vorhanden) und
- * loescht die lokale Datei, sofern es sich um ein guild-scoped Upload-Bild
- * handelt. Externe http(s)-URLs werden NICHT geloescht (liegen nicht bei uns) —
- * dann wird ausschliesslich das Config-Feld geleert.
- */
 welcomeRouter.delete('/media', requireGuildPermission('welcome.manage'), async (req, res) => {
   const scope = req.guildScope!;
   const existing = await getWelcomeConfig(scope.guildId);
   const prevUrl = existing?.mediaUrl;
 
-  // Datei nur loeschen, wenn sie strikt zu DIESER Guild gehoert (kein Pfad-Traversal).
   let fileDeleted = false;
   if (prevUrl && localWelcomeMediaRe(scope.guildId).test(prevUrl)) {
     const abs = path.join(process.cwd(), prevUrl.replace(/^\/+/, ''));
-    // Defense-in-Depth: sicherstellen, dass der aufgeloeste Pfad im Guild-Ordner liegt.
     const guildDir = path.join(WELCOME_UPLOADS_BASE, scope.guildId);
     if (abs.startsWith(guildDir + path.sep)) {
-      await fs.unlink(abs).then(() => { fileDeleted = true; }).catch(() => {
-        // Datei evtl. bereits weg — Config-Feld wird trotzdem geleert.
-      });
+      await fs.unlink(abs).then(() => { fileDeleted = true; }).catch(() => {});
     }
   }
 
-  // Config-Feld leeren (nur wenn eine Config existiert; sonst nichts zu tun).
   if (existing) {
     await setWelcomeConfig(scope.guildId, { ...existing, mediaUrl: undefined }, scope.actorDiscordId);
     emitGuildEvent(scope.guildId, { type: 'welcome.changed', payload: { guildId: scope.guildId } });
@@ -347,10 +311,6 @@ welcomeRouter.delete('/media', requireGuildPermission('welcome.manage'), async (
   });
   res.json({ ok: true, fileDeleted });
 });
-
-// ===========================================================================
-//  Auto-Rollen — guild-scoped Verwaltung (gleiche Datenhaltung wie /autorole)
-// ===========================================================================
 
 welcomeRouter.post('/autoroles', requireGuildPermission('welcome.manage'), async (req, res) => {
   const scope = req.guildScope!;
@@ -364,7 +324,6 @@ welcomeRouter.post('/autoroles', requireGuildPermission('welcome.manage'), async
   const guild = client.guilds.cache.get(scope.guildId);
   if (!guild) { res.status(404).json({ error: 'Bot ist nicht in dieser Guild.' }); return; }
 
-  // Rolle MUSS zur aktuellen Guild gehoeren (keine fremden Guild-Rollen).
   const role = guild.roles.cache.get(body.roleId);
   if (!role) { res.status(400).json({ error: 'Rolle gehoert nicht zu diesem Server.' }); return; }
   if (role.id === guild.id) { res.status(400).json({ error: '@everyone kann nicht als Auto-Rolle gesetzt werden.' }); return; }
@@ -379,7 +338,6 @@ welcomeRouter.post('/autoroles', requireGuildPermission('welcome.manage'), async
     res.status(400).json({ error: 'Bot-Rolle steht nicht ueber der Zielrolle — Vergabe nicht moeglich.' }); return;
   }
 
-  // Duplikat-Schutz: gleiche Rolle als JOIN-Trigger nicht doppelt anlegen.
   const dup = await prisma.autoRole.findFirst({
     where: { guildId: scope.guildId, roleId: role.id, triggerType: 'JOIN' },
   });
@@ -416,7 +374,6 @@ welcomeRouter.patch('/autoroles/:id', requireGuildPermission('welcome.manage'), 
   if (typeof body.isActive !== 'boolean') {
     res.status(400).json({ error: 'isActive muss ein Boolean sein.' }); return;
   }
-  // Scope-Pruefung: nur Auto-Rollen DIESER Guild aenderbar.
   const row = await prisma.autoRole.findFirst({ where: { id, guildId: scope.guildId } });
   if (!row) { res.status(404).json({ error: 'Auto-Rolle nicht gefunden.' }); return; }
 
@@ -432,7 +389,6 @@ welcomeRouter.patch('/autoroles/:id', requireGuildPermission('welcome.manage'), 
 welcomeRouter.delete('/autoroles/:id', requireGuildPermission('welcome.manage'), async (req, res) => {
   const scope = req.guildScope!;
   const id = String(req.params.id);
-  // Scope-Pruefung: nur Auto-Rollen DIESER Guild loeschbar.
   const row = await prisma.autoRole.findFirst({ where: { id, guildId: scope.guildId } });
   if (!row) { res.status(404).json({ error: 'Auto-Rolle nicht gefunden.' }); return; }
 
