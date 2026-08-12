@@ -127,16 +127,18 @@ const guildMemberAddEvent: BotEvent = {
             const userMention = `<@${m.user.id}>`;
             const memberCount = m.guild.memberCount;
 
+            // {user} ist absichtlich der lesbare Server-Anzeigename. Discord
+            // loest User-Mentions in Embed-Beschreibungen nicht zuverlaessig
+            // clientuebergreifend auf; dadurch konnte dort die rohe <@ID>
+            // sichtbar werden. {mention} bleibt fuer explizite Mentions erhalten.
             const messageText = renderWelcomeMessage(wcfg.message, {
-              user: userMention,
+              user: m.displayName,
               mention: userMention,
               guild: m.guild.name,
               memberCount,
             });
 
             const finalText = resolveCustomEmotes(messageText, m.guild);
-            // Begruessung als Embed; die User-Markierung steht IM Text, es gibt
-            // keinen separaten Ping im content (kein bares Tag ueber dem Embed).
             await sendWelcomeMessages(channel, {
               text: finalText,
               mediaUrl: wcfg.mediaUrl,
