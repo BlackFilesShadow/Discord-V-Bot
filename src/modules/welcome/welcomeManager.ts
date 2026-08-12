@@ -9,9 +9,8 @@ import { Colors, vEmbed } from '../../utils/embedDesign';
  * Welcome-System pro Guild (BotConfig key=`welcome:<guildId>`).
  *
  * Die Begruessung wird als Embed-Nachricht versendet (Text als Beschreibung,
- * optionales Bild im Embed). Der User-Ping liegt im `content`, damit der neue
- * Member zuverlaessig erwaehnt wird. Es gibt ausschliesslich statische,
- * selbst erstellte Texte mit Platzhaltern ({user}, {guild}, {count}) —
+ * optionales Bild im Embed). Es gibt ausschliesslich statische, selbst
+ * erstellte Texte mit Platzhaltern ({user}, {mention}, {guild}, {count}) —
  * KEINE KI-generierten Begruessungen mehr.
  */
 
@@ -24,7 +23,42 @@ export interface WelcomeConfig {
   mediaLayout?: 'image_first' | 'text_first'; // (Legacy; bei Embed steuert das Embed die Anordnung)
 }
 
+export const MAX_WELCOME_TEMPLATE_GRAPHEMES = 4000;
+export const MAX_WELCOME_EMBED_LENGTH = 4096;
+
 const KEY = (guildId: string) => `welcome:${guildId}`;
+
+/**
+ * Zaehlt sichtbare Unicode-Zeichen (Grapheme) statt UTF-16-Code-Units.
+ * Damit wird z. B. ein Emoji wie 🎉 als ein Zeichen gezaehlt. Bei sehr alten
+ * Laufzeiten ohne Intl.Segmenter faellt die Funktion auf Unicode-Codepoints zurueck.
+ */
+export function countWelcomeGraphemes(text: string): number {
+  const Segmenter = (Intl as unknown as {
+    Segmenter?: new (locale?: string | string[], options?: { granularity: 'grapheme' }) => {
+      segment(input: string): Iterable<unknown>;
+    };
+  }).Segmenter;
+
+  if (Segmenter) {
+    return Array.from(new Segmenter('de', { granularity: 'grapheme' }).segment(text)).length;
+  }
+  return Array.from(text).length;
+}
+
+/**
+ * Discord begrenzt die Embed-Beschreibung auf 4096 Zeichen. Hier wird bewusst
+ * die finale, bereits gerenderte Zeichenkette geprueft. Sie wird NICHT mehr
+ * still abgeschnitten, damit weder Text noch Emoji/Markdown zerstoert werden.
+ */
+export function assertWelcomeEmbedLength(text: string): void {
+  if (text.length > MAX_WELCOME_EMBED_LENGTH) {
+    throw new Error(
+      `Gerenderte Willkommensnachricht ist zu lang (${text.length}/${MAX_WELCOME_EMBED_LENGTH} Discord-Zeichen). ` +
+      'Bitte Text kuerzen oder Platzhalter reduzieren.',
+    );
+  }
+}
 
 export async function getWelcomeConfig(guildId: string): Promise<WelcomeConfig | null> {
   const cfg = await prisma.botConfig.findUnique({ where: { key: KEY(guildId) } });
@@ -53,9 +87,8 @@ export async function disableWelcome(guildId: string, updatedBy: string): Promis
 }
 
 export function renderWelcomeMessage(message: string, vars: { user: string; mention: string; guild: string; memberCount: number }): string {
-  // {user} und {mention} = Erwaehnung des neuen Mitglieds direkt im Text.
-  // Es gibt KEINEN separaten Ping im content mehr (kein bares Tag ueber dem
-  // Embed); die Markierung steht ausschliesslich in der Nachricht.
+  // {user} = lesbarer Server-Anzeigename; {mention} = explizite Discord-Mention.
+  // Ein separater Ping im content wird fuer Willkommen standardmaessig nicht gesetzt.
   return renderTemplate(message, { user: vars.user })
     .replace(/\{mention\}/g, vars.mention)
     .replace(/\{guild\}/g, vars.guild)
@@ -88,9 +121,9 @@ type SendableChannel = { send: (options: never) => Promise<unknown> };
  *   `attachment://`.
  * - Video (MP4/WEBM/MOV) -> als Datei-Anhang der Nachricht (Embeds koennen kein
  *   Video darstellen); externe Video-URLs werden als Link im Embed ergaenzt.
- * - Die User-Markierung steht im Embed-Text ({user}). Ein zusaetzlicher Ping im
- *   `content` (bares Tag ueber dem Embed) wird nur bei `mentionInContent: true`
- *   erzeugt; Standard fuer Willkommen ist ohne (keine Doppelmarkierung).
+ * - Die User-Markierung steht im Embed-Text. Ein zusaetzlicher Ping im `content`
+ *   wird nur bei `mentionInContent: true` erzeugt; Standard fuer Willkommen ist
+ *   ohne separaten Ping.
  */
 export async function sendWelcomeMessages(
   channel: SendableChannel,
@@ -100,10 +133,10 @@ export async function sendWelcomeMessages(
   const allowedMentions = opts.mentionUserId
     ? { users: [opts.mentionUserId], parse: [] as never[] }
     : { parse: [] as never[] };
-  // Ping im content nur, wenn explizit gewuenscht; sonst kein bares Tag oben.
   const content = opts.mentionUserId && opts.mentionInContent === true ? `<@${opts.mentionUserId}>` : undefined;
 
-  const embed: EmbedBuilder = vEmbed(Colors.Success).setDescription(opts.text.slice(0, 4096));
+  assertWelcomeEmbedLength(opts.text);
+  const embed: EmbedBuilder = vEmbed(Colors.Success).setDescription(opts.text);
   const files: AttachmentBuilder[] = [];
 
   if (opts.mediaUrl) {
