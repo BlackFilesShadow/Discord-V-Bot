@@ -12,6 +12,10 @@ import {
   detectToxicity,
   translateText,
 } from '../../modules/ai/aiHandler';
+import {
+  getDeveloperIdentityAnswer,
+  isDeveloperIdentityQuestion,
+} from '../../modules/ai/botIdentity';
 
 /**
  * /ai – Test- und Nutzungsschnittstelle für AI-Features.
@@ -63,9 +67,16 @@ export const aiCommand: Command = {
 
       if (sub === 'ask') {
         const q = interaction.options.getString('frage', true);
-        const r = await answerQuestion(q, { mode: 'oneshot' });
-        title = '🤖  AI-Antwort';
-        body = r.success ? r.result || '_(leer)_' : aiErr(r.error);
+        // Harte Bot-Identitaet: Entwicklerfragen werden niemals aus Guild-
+        // Owner-/Server-Kontext oder einem LLM abgeleitet.
+        if (isDeveloperIdentityQuestion(q)) {
+          title = '🤖  AI-Antwort';
+          body = getDeveloperIdentityAnswer();
+        } else {
+          const r = await answerQuestion(q, { mode: 'oneshot' });
+          title = '🤖  AI-Antwort';
+          body = r.success ? r.result || '_(leer)_' : aiErr(r.error);
+        }
       } else if (sub === 'sentiment') {
         const t = interaction.options.getString('text', true);
         const r = await analyzeSentiment(t);
