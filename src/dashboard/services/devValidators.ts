@@ -1,12 +1,9 @@
 /**
- * XML/JSON-Validatoren fuer den DEV-Bereich (Spec Sektion 6).
+ * XML/JSON validators for the DEV area.
  *
- * Beide liefern strukturierte Fehler mit Zeile/Spalte und einen
- * Best-Effort-Auto-Fix-Hinweis. Wir vermeiden externe Dependencies und
- * nutzen Native-JSON.parse plus einen schlanken handgeschriebenen XML-Sax.
- *
- * Die Validatoren NIE Inhalt veraendern — sie liefern nur Diagnose und
- * (optional) eine Fix-Vorschlag-Zeichenkette, die der User uebernehmen kann.
+ * DayZ-specific rules are grounded against the supplied 1.29 Chernarus,
+ * Livonia and Sakhal vanilla data. We validate syntax/shape, but do NOT invent
+ * numeric relationships for events.xml that real vanilla data contradicts.
  */
 import { XMLParser } from 'fast-xml-parser';
 
@@ -20,43 +17,32 @@ export interface DiagIssue {
 export interface ValidatorResult {
   ok: boolean;
   issues: DiagIssue[];
-  suggestedFix?: string; // optionale autom. Korrektur des gesamten Inputs
+  suggestedFix?: string;
 }
 
 function offsetToPos(input: string, offset: number): DiagPos {
-  let line = 1, col = 1;
+  let line = 1;
+  let column = 1;
   for (let i = 0; i < offset && i < input.length; i++) {
-    if (input.charCodeAt(i) === 10) { line++; col = 1; } else { col++; }
+    if (input.charCodeAt(i) === 10) { line += 1; column = 1; } else column += 1;
   }
-  return { line, column: col, offset };
+  return { line, column, offset };
 }
 
-// --- JSON ----------------------------------------------------------------
+// --- JSON -----------------------------------------------------------------
 
 const JSON_POS_RE = /position\s+(\d+)/i;
 const JSON_LINE_COL_RE = /line\s+(\d+)\s+column\s+(\d+)/i;
 
 function tryAutofixJson(input: string): string | undefined {
   let s = input;
-  // BOM entfernen
   if (s.charCodeAt(0) === 0xfeff) s = s.slice(1);
-  // Trailing-Commas entfernen
   s = s.replace(/,(\s*[}\]])/g, '$1');
-  // Single-Quotes -> Double-Quotes (heuristisch, nur wenn KEINE Double-Quotes)
-  if (!s.includes('"') && s.includes("'")) {
-    s = s.replace(/'/g, '"');
-  }
-  // // und /* */ Kommentare entfernen
+  if (!s.includes('"') && s.includes("'")) s = s.replace(/'/g, '"');
   s = s.replace(/\/\*[\s\S]*?\*\//g, '').replace(/(^|[^:])\/\/.*$/gm, '$1');
-  // Doppel-Kommas
   s = s.replace(/,\s*,/g, ',');
   if (s === input) return undefined;
-  try {
-    JSON.parse(s);
-    return s;
-  } catch {
-    return undefined;
-  }
+  try { JSON.parse(s); return s; } catch { return undefined; }
 }
 
 export function validateJson(input: string): ValidatorResult {
@@ -70,44 +56,35 @@ export function validateJson(input: string): ValidatorResult {
     const msg = (err as Error).message;
     let pos: DiagPos = { line: 1, column: 1, offset: 0 };
     const lc = JSON_LINE_COL_RE.exec(msg);
-    if (lc) {
-      pos = { line: parseInt(lc[1], 10), column: parseInt(lc[2], 10), offset: 0 };
-    } else {
+    if (lc) pos = { line: parseInt(lc[1], 10), column: parseInt(lc[2], 10), offset: 0 };
+    else {
       const p = JSON_POS_RE.exec(msg);
       if (p) pos = offsetToPos(input, parseInt(p[1], 10));
     }
     const fix = tryAutofixJson(input);
     return {
       ok: false,
-      issues: [{
-        severity: 'error',
-        message: msg,
-        pos,
-        hint: fix ? 'Auto-Fix verfuegbar (siehe suggestedFix).' : 'Pruefe Komma-Trennung, doppelte Quotes und schliessende Klammern.',
-      }],
+      issues: [{ severity: 'error', message: msg, pos, hint: fix ? 'Auto-Fix verfuegbar (siehe suggestedFix).' : 'Pruefe Kommas, Quotes und schliessende Klammern.' }],
       suggestedFix: fix,
     };
   }
 }
 
-// --- XML -----------------------------------------------------------------
+// --- XML ------------------------------------------------------------------
 
-interface XmlState {
-  stack: string[];
-  issues: DiagIssue[];
-}
+interface XmlState { stack: string[]; issues: DiagIssue[]; }
 
 function pushIssue(state: XmlState, input: string, offset: number, message: string, hint?: string): void {
   state.issues.push({ severity: 'error', message, pos: offsetToPos(input, offset), hint });
 }
 
 /**
- * Schlanker, toleranter XML-Validator. Erkennt:
- *  - nicht geschlossene Tags
- *  - falsche Verschachtelung
- *  - unentschluesselte Entities (&...;)
- *  - kaputte Attribut-Quotes
- *  - fehlende Root
+ * Lightweight tolerant XML validator.
+ *
+ * Comment content is deliberately treated as opaque until "-->". Bohemia's
+ * own DZ_129 cfgspawnabletypes.xml contains decorative comments with internal
+ * "--" sequences that strict W3C parsers can reject although they occur in the
+ * official DayZ mission data.
  */
 export function validateXml(input: string): ValidatorResult {
   if (input.trim().length === 0) {
@@ -117,107 +94,83 @@ export function validateXml(input: string): ValidatorResult {
   const state: XmlState = { stack: [], issues: [] };
   let i = 0;
   let rootSeen = false;
-
   while (i < input.length) {
-    const ch = input[i];
-    if (ch !== '<') { i++; continue; }
+    if (input[i] !== '<') { i += 1; continue; }
 
-    // Comment
     if (input.startsWith('<!--', i)) {
       const end = input.indexOf('-->', i + 4);
       if (end < 0) { pushIssue(state, input, i, 'Kommentar nicht geschlossen.'); break; }
-      i = end + 3; continue;
+      i = end + 3;
+      continue;
     }
-    // CDATA
     if (input.startsWith('<![CDATA[', i)) {
       const end = input.indexOf(']]>', i + 9);
       if (end < 0) { pushIssue(state, input, i, 'CDATA nicht geschlossen.'); break; }
-      i = end + 3; continue;
+      i = end + 3;
+      continue;
     }
-    // Processing instruction / declaration
     if (input.startsWith('<?', i) || input.startsWith('<!', i)) {
       const end = input.indexOf('>', i);
       if (end < 0) { pushIssue(state, input, i, 'Processing-Instruktion nicht geschlossen.'); break; }
-      i = end + 1; continue;
+      i = end + 1;
+      continue;
     }
-    // Closing tag
+
     if (input[i + 1] === '/') {
       const end = input.indexOf('>', i + 2);
       if (end < 0) { pushIssue(state, input, i, 'Schliessendes Tag nicht beendet.'); break; }
       const name = input.slice(i + 2, end).trim();
       const top = state.stack.pop();
-      if (!top) {
-        pushIssue(state, input, i, `Schliessendes Tag </${name}> ohne Oeffnung.`, 'Pruefe ob ein <${name}> fehlt.');
-      } else if (top !== name) {
-        pushIssue(state, input, i, `Falsche Verschachtelung: erwartet </${top}>, gefunden </${name}>.`,
-          `Schliesse zuerst <${top}> oder oeffne <${name}> korrekt.`);
-        // Stack zuruecksetzen, damit Folgefehler nicht eskalieren.
-        // Behalte top fuer den naechsten Vergleich.
+      if (!top) pushIssue(state, input, i, `Schliessendes Tag </${name}> ohne Oeffnung.`);
+      else if (top !== name) {
+        pushIssue(state, input, i, `Falsche Verschachtelung: erwartet </${top}>, gefunden </${name}>.`);
         state.stack.push(top);
       }
-      i = end + 1; continue;
+      i = end + 1;
+      continue;
     }
-    // Opening tag
+
     const end = input.indexOf('>', i);
     if (end < 0) { pushIssue(state, input, i, 'Tag nicht geschlossen ("<" ohne ">").'); break; }
     const inner = input.slice(i + 1, end);
-    const selfClosing = inner.endsWith('/');
-    const body = selfClosing ? inner.slice(0, -1) : inner;
+    const selfClosing = /\/\s*$/.test(inner);
+    const body = selfClosing ? inner.replace(/\/\s*$/, '') : inner;
     const nameMatch = /^([A-Za-z_][\w.:-]*)/.exec(body.trim());
     if (!nameMatch) {
       pushIssue(state, input, i, 'Tag-Name fehlt oder ungueltig.');
-      i = end + 1; continue;
+      i = end + 1;
+      continue;
     }
+
     const name = nameMatch[1];
-    // Attribut-Validierung: jedes attribute=value muss gequotet sein.
-    const attrs = body.slice(nameMatch[0].length);
-    const attrRe = /\s+([A-Za-z_][\w.:-]*)\s*(=\s*("([^"]*)"|'([^']*)'|([^\s/>]+)))?/g;
+    const attrs = body.slice(body.indexOf(name) + name.length);
+    const attrRe = /\s+([A-Za-z_][\w.:-]*)\s*(=\s*("[^"]*"|'[^']*'|([^\s/>]+)))?/g;
     let am: RegExpExecArray | null;
     while ((am = attrRe.exec(attrs)) !== null) {
-      if (am[2] && !am[3]?.startsWith('"') && !am[3]?.startsWith("'")) {
-        pushIssue(state, input, i + nameMatch[0].length + am.index,
-          `Attribut "${am[1]}" hat keinen Quote-Wert.`,
-          `Setze Quotes: ${am[1]}="..."`);
-      }
+      if (am[2] && am[4]) pushIssue(state, input, i + am.index, `Attribut "${am[1]}" hat keinen Quote-Wert.`, `Setze Quotes: ${am[1]}="..."`);
     }
-    if (!selfClosing) {
-      state.stack.push(name);
-      rootSeen = true;
-    } else {
-      rootSeen = true;
-    }
+    rootSeen = true;
+    if (!selfClosing) state.stack.push(name);
     i = end + 1;
   }
 
   if (state.stack.length > 0) {
-    pushIssue(state, input, input.length, `Unbalancierte Tags am Ende: ${state.stack.reverse().join(', ')}`,
-      'Schliesse fehlende Tags in umgekehrter Reihenfolge.');
+    const missing = [...state.stack].reverse();
+    pushIssue(state, input, input.length, `Unbalancierte Tags am Ende: ${missing.join(', ')}`, 'Schliesse fehlende Tags in umgekehrter Reihenfolge.');
   }
-  if (!rootSeen) {
-    pushIssue(state, input, 0, 'Kein Root-Element gefunden.');
-  }
-
-  // Auto-Fix-Vorschlag: nicht geschlossene Tags am Ende anhaengen.
-  let suggestedFix: string | undefined;
-  if (state.issues.length > 0 && state.issues.every(x => x.message.startsWith('Unbalancierte'))) {
-    const closing = state.stack.map(n => `</${n}>`).join('');
-    suggestedFix = input + closing;
-  }
-
-  return { ok: state.issues.length === 0, issues: state.issues, suggestedFix };
+  if (!rootSeen) pushIssue(state, input, 0, 'Kein Root-Element gefunden.');
+  return { ok: state.issues.length === 0, issues: state.issues };
 }
 
-// --- DayZ-spezifische XML-Struktur ---------------------------------------
+// --- DayZ structural validation -------------------------------------------
 
 export type DayzXmlKind = 'types' | 'events' | 'globals' | 'generic';
 
-/** Erkennt den DayZ-Dateityp anhand Dateiname und/oder Root-Element. */
 export function detectDayzXmlKind(input: string, fileName?: string): DayzXmlKind {
   const fn = (fileName ?? '').toLowerCase();
   if (fn.includes('types')) return 'types';
   if (fn.includes('events') && !fn.includes('cfgeventspawns')) return 'events';
   if (fn.includes('globals')) return 'globals';
-  // Fallback: am Root-Element erkennen.
   const head = input.slice(0, 4000);
   if (/<types\b/i.test(head)) return 'types';
   if (/<events\b/i.test(head) && !/<eventposdef\b/i.test(head)) return 'events';
@@ -237,12 +190,17 @@ function asArray<T>(v: T | T[] | undefined): T[] {
 }
 
 /**
- * DayZ-XML-Strukturvalidierung fuer types.xml / events.xml / globals.xml.
- * Laeuft NUR auf wohlgeformtem XML (sonst zuerst validateXml). Liefert
- * zusaetzliche, struktur-bezogene Diagnosen oben auf die Syntaxpruefung.
+ * Grounded DayZ structural checks.
+ *
+ * types.xml: validates required numeric fields, non-negative values and names.
+ * `min == nominal` is explicitly valid. `min > nominal` is flagged because it
+ * occurs zero times in all three supplied 1.29 vanilla files.
+ *
+ * events.xml: validates names and numeric shape only. There is deliberately NO
+ * min/max/nominal ordering rule: real 1.29 vanilla events contain nominal>max,
+ * min>max and nominal<min combinations depending on event semantics.
  */
 export function validateDayzXml(input: string, fileName?: string): ValidatorResult & { kind: DayzXmlKind } {
-  // 1) Erst Wohlgeformtheit pruefen.
   const base = validateXml(input);
   const kind = detectDayzXmlKind(input, fileName);
   if (!base.ok) return { ...base, kind };
@@ -262,6 +220,7 @@ export function validateDayzXml(input: string, fileName?: string): ValidatorResu
     const types = asArray(root?.type as Record<string, unknown> | Record<string, unknown>[] | undefined);
     if (types.length === 0) issues.push({ severity: 'warning', message: '<types> enthaelt keine <type>-Eintraege.', pos: at });
     const seen = new Set<string>();
+
     for (const t of types) {
       const name = t['@_name'] as string | undefined;
       if (!name || String(name).trim() === '') {
@@ -270,17 +229,18 @@ export function validateDayzXml(input: string, fileName?: string): ValidatorResu
       }
       if (seen.has(name)) issues.push({ severity: 'error', message: `Doppelter type name: "${name}".`, pos: at });
       seen.add(name);
+
       const nominal = num(t.nominal);
       const min = num(t.min);
       const lifetime = num(t.lifetime);
       const restock = num(t.restock);
-      for (const [k, v] of [['nominal', nominal], ['min', min], ['lifetime', lifetime]] as const) {
-        if (v === null) issues.push({ severity: 'warning', message: `type "${name}": <${k}> fehlt oder ist keine Zahl.`, pos: at });
-        else if (v < 0) issues.push({ severity: 'error', message: `type "${name}": <${k}> ist negativ (${v}).`, pos: at });
+      for (const [field, value] of [['nominal', nominal], ['min', min], ['lifetime', lifetime]] as const) {
+        if (value === null) issues.push({ severity: 'warning', message: `type "${name}": <${field}> fehlt oder ist keine Zahl.`, pos: at });
+        else if (value < 0) issues.push({ severity: 'error', message: `type "${name}": <${field}> ist negativ (${value}).`, pos: at });
       }
       if (restock !== null && restock < 0) issues.push({ severity: 'error', message: `type "${name}": <restock> ist negativ (${restock}).`, pos: at });
       if (nominal !== null && min !== null && min > nominal) {
-        issues.push({ severity: 'error', message: `type "${name}": min (${min}) > nominal (${nominal}).`, pos: at, hint: 'min darf nominal nicht ueberschreiten.' });
+        issues.push({ severity: 'error', message: `type "${name}": min (${min}) > nominal (${nominal}).`, pos: at, hint: 'In den drei geprueften Vanilla-1.29-Datensaetzen kommt min > nominal nicht vor; pruefe den Eintrag.' });
       }
     }
   } else if (kind === 'events') {
@@ -288,6 +248,7 @@ export function validateDayzXml(input: string, fileName?: string): ValidatorResu
     const events = asArray(root?.event as Record<string, unknown> | Record<string, unknown>[] | undefined);
     if (events.length === 0) issues.push({ severity: 'warning', message: '<events> enthaelt keine <event>-Eintraege.', pos: at });
     const seen = new Set<string>();
+
     for (const ev of events) {
       const name = ev['@_name'] as string | undefined;
       if (!name || String(name).trim() === '') {
@@ -296,17 +257,12 @@ export function validateDayzXml(input: string, fileName?: string): ValidatorResu
       }
       if (seen.has(name)) issues.push({ severity: 'warning', message: `Doppelter event name: "${name}".`, pos: at });
       seen.add(name);
-      const nominal = num(ev.nominal);
-      const min = num(ev.min);
-      const max = num(ev.max);
-      if (min !== null && max !== null && min > max) {
-        issues.push({ severity: 'error', message: `event "${name}": min (${min}) > max (${max}).`, pos: at });
-      }
-      if (nominal !== null && max !== null && nominal > max) {
-        issues.push({ severity: 'error', message: `event "${name}": nominal (${nominal}) > max (${max}).`, pos: at });
-      }
-      if (nominal !== null && min !== null && nominal < min) {
-        issues.push({ severity: 'warning', message: `event "${name}": nominal (${nominal}) < min (${min}).`, pos: at });
+      for (const field of ['nominal', 'min', 'max', 'lifetime', 'restock'] as const) {
+        const raw = ev[field];
+        if (raw === undefined) continue;
+        const value = num(raw);
+        if (value === null) issues.push({ severity: 'warning', message: `event "${name}": <${field}> ist keine Zahl.`, pos: at });
+        else if (value < 0) issues.push({ severity: 'error', message: `event "${name}": <${field}> ist negativ (${value}).`, pos: at });
       }
     }
   } else if (kind === 'globals') {
@@ -314,6 +270,7 @@ export function validateDayzXml(input: string, fileName?: string): ValidatorResu
     const vars = asArray(root?.var as Record<string, unknown> | Record<string, unknown>[] | undefined);
     if (vars.length === 0) issues.push({ severity: 'warning', message: '<variables> enthaelt keine <var>-Eintraege.', pos: at });
     const seen = new Set<string>();
+
     for (const v of vars) {
       const name = v['@_name'] as string | undefined;
       if (!name || String(name).trim() === '') {
@@ -322,11 +279,8 @@ export function validateDayzXml(input: string, fileName?: string): ValidatorResu
       }
       if (seen.has(name)) issues.push({ severity: 'warning', message: `Doppelte globale Variable: "${name}".`, pos: at });
       seen.add(name);
-      if (v['@_value'] === undefined || v['@_value'] === '') {
-        issues.push({ severity: 'error', message: `var "${name}": value fehlt.`, pos: at });
-      } else if (num(v['@_value']) === null) {
-        issues.push({ severity: 'warning', message: `var "${name}": value ist keine gueltige Zahl ("${String(v['@_value'])}").`, pos: at });
-      }
+      if (v['@_value'] === undefined || v['@_value'] === '') issues.push({ severity: 'error', message: `var "${name}": value fehlt.`, pos: at });
+      else if (num(v['@_value']) === null) issues.push({ severity: 'warning', message: `var "${name}": value ist keine gueltige Zahl ("${String(v['@_value'])}").`, pos: at });
     }
   }
 

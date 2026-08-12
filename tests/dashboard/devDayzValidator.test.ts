@@ -1,6 +1,6 @@
 import { validateDayzXml, detectDayzXmlKind } from '../../src/dashboard/services/devValidators';
 
-describe('validateDayzXml — DayZ XML structural validation (Spec §9)', () => {
+describe('validateDayzXml — grounded DayZ 1.29 structural validation', () => {
   describe('detectDayzXmlKind', () => {
     it('detects by file name', () => {
       expect(detectDayzXmlKind('<types></types>', 'types.xml')).toBe('types');
@@ -25,6 +25,16 @@ describe('validateDayzXml — DayZ XML structural validation (Spec §9)', () => 
       expect(r.issues).toHaveLength(0);
     });
 
+    it('accepts real 1.29 patterns with values >25 and min == nominal', () => {
+      const xml = '<types>'
+        + '<type name="WaterBottle"><nominal>100</nominal><min>85</min><lifetime>7200</lifetime></type>'
+        + '<type name="M4A1"><nominal>1</nominal><min>1</min><lifetime>7200</lifetime></type>'
+        + '</types>';
+      const r = validateDayzXml(xml, 'types.xml');
+      expect(r.ok).toBe(true);
+      expect(r.issues).toHaveLength(0);
+    });
+
     it('flags missing name', () => {
       const xml = '<types><type><nominal>10</nominal><min>5</min><lifetime>1</lifetime></type></types>';
       const r = validateDayzXml(xml, 'types.xml');
@@ -41,7 +51,7 @@ describe('validateDayzXml — DayZ XML structural validation (Spec §9)', () => 
       expect(r.issues.some(i => i.message.includes('Doppelter type name'))).toBe(true);
     });
 
-    it('flags min > nominal', () => {
+    it('flags min > nominal because it occurs zero times in all three supplied 1.29 vanilla datasets', () => {
       const xml = '<types><type name="A"><nominal>5</nominal><min>10</min><lifetime>1</lifetime></type></types>';
       const r = validateDayzXml(xml, 'types.xml');
       expect(r.issues.some(i => i.message.includes('min') && i.message.includes('> nominal'))).toBe(true);
@@ -55,11 +65,21 @@ describe('validateDayzXml — DayZ XML structural validation (Spec §9)', () => 
   });
 
   describe('events.xml', () => {
-    it('flags min > max', () => {
-      const xml = '<events><event name="E"><nominal>2</nominal><min>5</min><max>3</max></event></events>';
-      const r = validateDayzXml(xml, 'events.xml');
+    it('does not invent ordering rules for nominal/min/max', () => {
+      const realPatterns = '<events>'
+        + '<event name="AnimalCow"><nominal>7</nominal><min>2</min><max>3</max></event>'
+        + '<event name="Trajectory"><nominal>0</nominal><min>2</min><max>4</max></event>'
+        + '<event name="Variant"><nominal>5</nominal><min>4</min><max>3</max></event>'
+        + '</events>';
+      const r = validateDayzXml(realPatterns, 'events.xml');
       expect(r.kind).toBe('events');
-      expect(r.issues.some(i => i.message.includes('min') && i.message.includes('> max'))).toBe(true);
+      expect(r.issues.filter(i => /nominal|min|max/.test(i.message))).toHaveLength(0);
+    });
+
+    it('still rejects negative event counts', () => {
+      const xml = '<events><event name="E"><nominal>-1</nominal><min>0</min><max>1</max></event></events>';
+      const r = validateDayzXml(xml, 'events.xml');
+      expect(r.issues.some(i => i.message.includes('negativ'))).toBe(true);
     });
   });
 
