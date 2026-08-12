@@ -2,8 +2,7 @@ name: TEMP DayZ Grounding Patch
 
 on:
   push:
-    branches:
-      - fix/dayz-fail-closed-grounding
+    branches: [fix/dayz-fail-closed-grounding]
 
 permissions:
   contents: write
@@ -29,27 +28,18 @@ jobs:
           if old_import in s:
               s = s.replace(old_import, new_import, 1)
 
-          old_flags = """  const wantWebSearch = mode === 'chat' || mode === 'oneshot' || mode === 'trigger';
-          const wantCatalog = mode === 'chat' || mode === 'oneshot';
-          const wantKnowledgeBoundary = mode !== 'welcome';"""
-          new_flags = """  const dayzTechnical = mode !== 'welcome' && isDayzTechnicalAdminQuestion(question);
-          // Technical DayZ configuration is closed-world: generic Wikipedia/DDG
-          // snippets must not compete with the verified 1.29/Bohemia grounding.
-          const wantWebSearch = (mode === 'chat' || mode === 'oneshot' || mode === 'trigger') && !dayzTechnical;
-          const wantCatalog = mode === 'chat' || mode === 'oneshot';
-          const wantKnowledgeBoundary = mode !== 'welcome';"""
-          if old_flags in s:
-              s = s.replace(old_flags, new_flags, 1)
+          old_web = "  const wantWebSearch = mode === 'chat' || mode === 'oneshot' || mode === 'trigger';"
+          new_web = """  const dayzTechnical = mode !== 'welcome' && isDayzTechnicalAdminQuestion(question);
+          // Technical DayZ config is closed-world: generic Wikipedia/DDG must not
+          // compete with verified 1.29/Bohemia grounding.
+          const wantWebSearch = (mode === 'chat' || mode === 'oneshot' || mode === 'trigger') && !dayzTechnical;"""
+          if old_web in s:
+              s = s.replace(old_web, new_web, 1)
 
-          old_ans = """        if (ans.found) {
-                  nitradoHelpBlock = ans.text;
-                  nitradoHelpTopics = ans.topicIds;
-                } else if (looksLikeDayZFileQuestion(question)) {"""
-          new_ans = """        if (ans.found) {
-                  nitradoHelpBlock = ans.text;
-                  nitradoHelpTopics = ans.topicIds;
-                  // High-risk technical topics can provide a deterministic answer.
-                  // This bypasses the LLM completely, so it cannot invent extra switches.
+          needle = "        nitradoHelpTopics = ans.topicIds;\n"
+          if needle in s and 'if (ans.directAnswer)' not in s:
+              direct = """        nitradoHelpTopics = ans.topicIds;
+                  // High-risk technical topics can bypass the LLM completely.
                   if (ans.directAnswer) {
                     const direct = redactText(ans.directAnswer);
                     if (useMemory) {
@@ -66,15 +56,13 @@ jobs:
                     logger.info(`[DayZ-Grounding] deterministische Antwort (topics=${ans.topicIds.join(',')})`);
                     return { success: true, result: direct };
                   }
-                } else if (looksLikeDayZFileQuestion(question)) {"""
-          if old_ans in s:
-              s = s.replace(old_ans, new_ans, 1)
+          """
+              s = s.replace(needle, direct, 1)
 
           mem_start = s.find('    // Wenn der Wahrheits-Block injiziert wird, vorherige assistant-Turns mit')
           mem_end = s.find('    const response = await callAI([', mem_start)
           if mem_start != -1 and mem_end != -1:
-              new_mem = """    // For technical DayZ questions, do not let old assistant hallucinations
-              // re-enter the prompt through Conversation Memory.
+              new_mem = """    // Old assistant hallucinations must not re-enter technical DayZ prompts.
               if (dayzTechnical && nitradoHelpBlock && memoryTurns.length > 0) {
                 const before = memoryTurns.length;
                 memoryTurns = memoryTurns.filter((t) => {
@@ -92,8 +80,7 @@ jobs:
           guard_start = s.find('    // HARTE GRENZE')
           guard_end = s.find('    // Phase 14: Turn persistieren', guard_start)
           if guard_start != -1 and guard_end != -1:
-              new_guard = """    // Technical DayZ answers are fail-closed after generation. Unknown
-              // filenames/fields/parameters never reach Discord.
+              new_guard = """    // Fail closed after generation: unknown technical identifiers never reach Discord.
               if (dayzTechnical && safeResponse) {
                 const grounding = nitradoHelpBlock ?? getDayZFileTruthBlock();
                 const validation = validateDayzTechnicalAnswer(safeResponse, grounding, question);
