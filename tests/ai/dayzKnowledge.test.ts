@@ -32,7 +32,7 @@ describe('DayZ 1.29 grounded knowledge', () => {
     expect(r.text).toMatch(/Chernarus: nominal=40, min=35/);
     expect(r.text).toMatch(/Livonia: nominal=16, min=10/);
     expect(r.text).toMatch(/Sakhal: nominal=10, min=7/);
-    expect(r.text).toMatch(/KEINEN davon als universellen Vanilla-Wert/i);
+    expect(r.text).toMatch(/Varianten derselben DayZ-CE-Welt, keine austauschbaren Wertetabellen/i);
   });
 
   it('kodiert den vierfachen Halluzinationscheck', () => {
