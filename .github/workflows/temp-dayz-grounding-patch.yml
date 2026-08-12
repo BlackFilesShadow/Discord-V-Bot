@@ -1,0 +1,129 @@
+name: TEMP DayZ Grounding Patch
+
+on:
+  push:
+    branches:
+      - fix/dayz-fail-closed-grounding
+
+permissions:
+  contents: write
+
+jobs:
+  patch:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          ref: fix/dayz-fail-closed-grounding
+          fetch-depth: 0
+      - name: Apply fail-closed DayZ handler patch
+        shell: bash
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+          p = Path('src/modules/ai/aiHandler.ts')
+          s = p.read_text()
+
+          old_import = "import { lookupNitradoHelp, looksLikeDayZFileQuestion, getDayZFileTruthBlock, detectTypesXmlValueViolations, sanitizeDayZLootValues, looksLikeDayZLootContent } from './nitradoHelp';"
+          new_import = "import { lookupNitradoHelp, looksLikeDayZFileQuestion, getDayZFileTruthBlock, isDayzTechnicalAdminQuestion, validateDayzTechnicalAnswer, buildDayzTechnicalFallback } from './nitradoHelp';"
+          if old_import in s:
+              s = s.replace(old_import, new_import, 1)
+
+          old_flags = """  const wantWebSearch = mode === 'chat' || mode === 'oneshot' || mode === 'trigger';
+          const wantCatalog = mode === 'chat' || mode === 'oneshot';
+          const wantKnowledgeBoundary = mode !== 'welcome';"""
+          new_flags = """  const dayzTechnical = mode !== 'welcome' && isDayzTechnicalAdminQuestion(question);
+          // Technical DayZ configuration is closed-world: generic Wikipedia/DDG
+          // snippets must not compete with the verified 1.29/Bohemia grounding.
+          const wantWebSearch = (mode === 'chat' || mode === 'oneshot' || mode === 'trigger') && !dayzTechnical;
+          const wantCatalog = mode === 'chat' || mode === 'oneshot';
+          const wantKnowledgeBoundary = mode !== 'welcome';"""
+          if old_flags in s:
+              s = s.replace(old_flags, new_flags, 1)
+
+          old_ans = """        if (ans.found) {
+                  nitradoHelpBlock = ans.text;
+                  nitradoHelpTopics = ans.topicIds;
+                } else if (looksLikeDayZFileQuestion(question)) {"""
+          new_ans = """        if (ans.found) {
+                  nitradoHelpBlock = ans.text;
+                  nitradoHelpTopics = ans.topicIds;
+                  // High-risk technical topics can provide a deterministic answer.
+                  // This bypasses the LLM completely, so it cannot invent extra switches.
+                  if (ans.directAnswer) {
+                    const direct = redactText(ans.directAnswer);
+                    if (useMemory) {
+                      void (async () => {
+                        try {
+                          const { recordTurn } = await import('./conversationMemory.js');
+                          await recordTurn(opts.userId!, opts.channelId!, 'user', question, opts.guildId ?? null);
+                          await recordTurn(opts.userId!, opts.channelId!, 'assistant', direct, opts.guildId ?? null);
+                        } catch (e) {
+                          logger.warn(`conversationMemory.recordTurn fuer DayZ directAnswer fehlgeschlagen: ${String(e)}`);
+                        }
+                      })();
+                    }
+                    logger.info(`[DayZ-Grounding] deterministische Antwort (topics=${ans.topicIds.join(',')})`);
+                    return { success: true, result: direct };
+                  }
+                } else if (looksLikeDayZFileQuestion(question)) {"""
+          if old_ans in s:
+              s = s.replace(old_ans, new_ans, 1)
+
+          mem_start = s.find('    // Wenn der Wahrheits-Block injiziert wird, vorherige assistant-Turns mit')
+          mem_end = s.find('    const response = await callAI([', mem_start)
+          if mem_start != -1 and mem_end != -1:
+              new_mem = """    // For technical DayZ questions, do not let old assistant hallucinations
+              // re-enter the prompt through Conversation Memory.
+              if (dayzTechnical && nitradoHelpBlock && memoryTurns.length > 0) {
+                const before = memoryTurns.length;
+                memoryTurns = memoryTurns.filter((t) => {
+                  if (t.role !== 'assistant') return true;
+                  return validateDayzTechnicalAnswer(t.content, nitradoHelpBlock!, question).valid;
+                });
+                if (memoryTurns.length < before) {
+                  logger.info(`[DayZ-Grounding] ${before - memoryTurns.length} ungrounded Memory-Turn(s) gefiltert`);
+                }
+              }
+
+          """
+              s = s[:mem_start] + new_mem + s[mem_end:]
+
+          guard_start = s.find('    // HARTE GRENZE')
+          guard_end = s.find('    // Phase 14: Turn persistieren', guard_start)
+          if guard_start != -1 and guard_end != -1:
+              new_guard = """    // Technical DayZ answers are fail-closed after generation. Unknown
+              // filenames/fields/parameters never reach Discord.
+              if (dayzTechnical && safeResponse) {
+                const grounding = nitradoHelpBlock ?? getDayZFileTruthBlock();
+                const validation = validateDayzTechnicalAnswer(safeResponse, grounding, question);
+                if (!validation.valid) {
+                  logger.warn(`[DayZ-Grounding] LLM-Antwort blockiert: ${validation.violations.join('; ')}`);
+                  safeResponse = buildDayzTechnicalFallback(question, validation.violations);
+                }
+              }
+
+          """
+              s = s[:guard_start] + new_guard + s[guard_end:]
+
+          required = [
+              'isDayzTechnicalAdminQuestion(question)',
+              'if (ans.directAnswer)',
+              'validateDayzTechnicalAnswer(safeResponse, grounding, question)',
+              'buildDayzTechnicalFallback(question, validation.violations)',
+          ]
+          missing = [x for x in required if x not in s]
+          if missing:
+              raise SystemExit(f'patch incomplete, missing: {missing}')
+          p.write_text(s)
+          PY
+
+          if git diff --quiet -- src/modules/ai/aiHandler.ts; then
+            echo "Handler already patched; nothing to commit."
+            exit 0
+          fi
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add src/modules/ai/aiHandler.ts
+          git commit -m "Fail closed on ungrounded DayZ AI output"
+          git push origin HEAD:fix/dayz-fail-closed-grounding
