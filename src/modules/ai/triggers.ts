@@ -3,6 +3,8 @@ import { isSafeRegexPattern, safeRegexTest } from '../../utils/safeRegex';
 import {
   BOT_DEVELOPER,
   DEVELOPER_IDENTITY_TRIGGER_PATTERN,
+  getDeveloperIdentityAnswer,
+  isDeveloperIdentityQuestion,
 } from './botIdentity';
 
 // Globale AI-Trigger – feuern auf JEDEM Server, auf dem der Bot ist.
@@ -227,12 +229,33 @@ export async function clearTriggers(guildId: string, updatedBy: string): Promise
 /**
  * Prüft eine Nachricht gegen alle Trigger der Guild.
  * Gibt den ersten passenden Trigger zurück oder null.
+ *
+ * Direkte Bot-Erwähnungen/Replies sind interaktive Anfragen. Ein passender
+ * Trigger muss diese Anfrage deshalb vollständig konsumieren und darf nicht
+ * wegen eines Trigger-Cooldowns in den normalen LLM-Responder durchfallen.
+ * Passive Trigger ohne Bot-Erwähnung behalten ihren konfigurierten Cooldown.
  */
 export function findMatchingTrigger(
   triggers: AiTrigger[],
   content: string,
   isMention: boolean,
 ): AiTrigger | null {
+  // Autoritative Bot-Identität hat Vorrang vor Guild-Triggern und LLM-Kontext.
+  // So kann auch ein guild-eigener Trigger mit kollidierender ID niemals den
+  // Entwickler von V-Bot überschreiben oder in einen AI-Call umleiten.
+  if (isMention && isDeveloperIdentityQuestion(content)) {
+    return {
+      id: 'system-developer-identity',
+      trigger: DEVELOPER_IDENTITY_TRIGGER_PATTERN,
+      triggerType: 'regex',
+      responseMode: 'text',
+      responseText: getDeveloperIdentityAnswer(),
+      cooldownSeconds: 0,
+      createdAt: '2026-08-12T00:00:00.000Z',
+      createdBy: 'system',
+    };
+  }
+
   const lower = content.toLowerCase();
   for (const t of triggers) {
     if (t.triggerType === 'mention' && !isMention) continue;
@@ -242,7 +265,12 @@ export function findMatchingTrigger(
     } else if (t.triggerType === 'regex') {
       match = safeRegexTest(t.trigger, content, 'i');
     }
-    if (match) return t;
+    if (match) {
+      // Bei expliziter Ansprache darf der Trigger-Cooldown niemals dazu führen,
+      // dass dieselbe Nachricht anschließend vom allgemeinen AI-Responder
+      // verarbeitet wird. Passive Auto-Trigger bleiben unverändert gedrosselt.
+      return isMention ? { ...t, cooldownSeconds: 0 } : t;
+    }
   }
   return null;
 }
