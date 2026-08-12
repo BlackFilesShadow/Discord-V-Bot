@@ -127,12 +127,10 @@ const guildMemberAddEvent: BotEvent = {
             const userMention = `<@${m.user.id}>`;
             const memberCount = m.guild.memberCount;
 
-            // {user} ist absichtlich der lesbare Server-Anzeigename. Discord
-            // loest User-Mentions in Embed-Beschreibungen nicht zuverlaessig
-            // clientuebergreifend auf; dadurch konnte dort die rohe <@ID>
-            // sichtbar werden. {mention} bleibt fuer explizite Mentions erhalten.
+            // {user} und {mention} sind echte Discord-Erwaehnungen direkt im
+            // Embed-Text. Es wird bewusst KEIN separater content-Ping gesendet.
             const messageText = renderWelcomeMessage(wcfg.message, {
-              user: m.displayName,
+              user: userMention,
               mention: userMention,
               guild: m.guild.name,
               memberCount,
