@@ -1,3 +1,10 @@
+import prisma from '../../database/prisma';
+import { isSafeRegexPattern, safeRegexTest } from '../../utils/safeRegex';
+import {
+  BOT_DEVELOPER,
+  DEVELOPER_IDENTITY_TRIGGER_PATTERN,
+} from './botIdentity';
+
 // Globale AI-Trigger – feuern auf JEDEM Server, auf dem der Bot ist.
 // Können nicht über /ai-trigger gelöscht werden, da sie hardcoded sind.
 export const GLOBAL_AI_TRIGGERS: AiTrigger[] = [
@@ -70,10 +77,12 @@ export const GLOBAL_AI_TRIGGERS: AiTrigger[] = [
   // ===== HERKUNFT / ERSCHAFFER =====
   {
     id: 'erschaffer',
-    trigger: 'wer hat dich (gebaut|erschaffen|erstellt|programmiert|gemacht|entwickelt|gecodet)',
+    trigger: DEVELOPER_IDENTITY_TRIGGER_PATTERN,
     triggerType: 'regex',
     responseMode: 'text',
-    responseText: 'Ich wurde von **Void_Architect** erschaffen.\nMeine Aufgabe: unterstützen, helfen, Infos liefern – effizient, klar, zuverlässig. Mit einem Schuss Persönlichkeit obendrauf.',
+    // Harte, serverunabhaengige Identitaet. Guild-/Discord-Owner duerfen hier
+    // niemals als Entwickler interpretiert werden.
+    responseText: `Mein Entwickler ist **${BOT_DEVELOPER}**.`,
     cooldownSeconds: 30,
     createdAt: '2026-04-23T00:00:00.000Z',
     createdBy: 'system',
@@ -111,8 +120,6 @@ export const GLOBAL_AI_TRIGGERS: AiTrigger[] = [
     createdBy: 'system',
   },
 ];
-import prisma from '../../database/prisma';
-import { isSafeRegexPattern, safeRegexTest } from '../../utils/safeRegex';
 
 /**
  * AI-Trigger pro Guild (max 25, siehe MAX_TRIGGERS_PER_GUILD).
@@ -121,11 +128,11 @@ import { isSafeRegexPattern, safeRegexTest } from '../../utils/safeRegex';
  * Trigger-Typen:
  *  - keyword: Substring-Match (case-insensitive)
  *  - regex:   RegExp-Match
- *  - mention: nur wenn Bot direkt erw\u00e4hnt + Wort enthalten
+ *  - mention: nur wenn Bot direkt erwähnt + Wort enthalten
  *
  * Antwort-Modi:
  *  - text: statischer Text (kann Variablen wie {user}, {time}, {date}, {year} enthalten)
- *  - ai:   AI generiert Antwort mit aiPrompt als zus\u00e4tzlichem System-Hinweis
+ *  - ai:   AI generiert Antwort mit aiPrompt als zusätzlichem System-Prompt
  */
 
 export const MAX_TRIGGERS_PER_GUILD = 25;
@@ -144,9 +151,9 @@ export interface AiTrigger {
   triggerType: 'keyword' | 'regex' | 'mention';
   responseMode: 'text' | 'ai';
   responseText?: string;  // bei mode=text
-  aiPrompt?: string;      // bei mode=ai (zus\u00e4tzlicher System-Prompt)
+  aiPrompt?: string;      // bei mode=ai (zusätzlicher System-Prompt)
   mediaUrl?: string;      // optional JPG/PNG/GIF/MP4-URL, wird als Anhang/Embed gesendet
-  channelId?: string;     // optional: Trigger feuert NUR in diesem Channel (leer = \u00fcberall)
+  channelId?: string;     // optional: Trigger feuert NUR in diesem Channel (leer = überall)
   cooldownSeconds: number;
   createdAt: string;      // ISO
   createdBy: string;      // Discord-ID
@@ -173,7 +180,7 @@ export async function saveTriggers(guildId: string, triggers: AiTrigger[], updat
       key: KEY(guildId),
       value: triggers as unknown as object,
       category: 'ai_triggers',
-      description: `AI-Trigger f\u00fcr Guild ${guildId}`,
+      description: `AI-Trigger für Guild ${guildId}`,
       updatedBy,
     },
     update: { value: triggers as unknown as object, updatedBy },
@@ -218,8 +225,8 @@ export async function clearTriggers(guildId: string, updatedBy: string): Promise
 }
 
 /**
- * Pr\u00fcft eine Nachricht gegen alle Trigger der Guild.
- * Gibt den ersten passenden Trigger zur\u00fcck oder null.
+ * Prüft eine Nachricht gegen alle Trigger der Guild.
+ * Gibt den ersten passenden Trigger zurück oder null.
  */
 export function findMatchingTrigger(
   triggers: AiTrigger[],
