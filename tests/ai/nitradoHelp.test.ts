@@ -1,10 +1,15 @@
 import {
+  buildDayzTechnicalFallback,
+  detectKnownDayzHallucinatedIdentifiers,
   detectTypesXmlValueViolations,
+  extractDayzTechnicalIdentifiers,
   getDayZFileTruthBlock,
+  isDayzTechnicalAdminQuestion,
   isNitradoOrDayZHelpQuestion,
   looksLikeDayZFileQuestion,
   lookupNitradoHelp,
   sanitizeDayZLootValues,
+  validateDayzTechnicalAnswer,
 } from '../../src/modules/ai/nitradoHelp';
 
 describe('nitradoHelp — DayZ 1.29 grounded', () => {
@@ -55,11 +60,12 @@ describe('nitradoHelp — DayZ 1.29 grounded', () => {
     expect(a.text).toMatch(/Sakhal: nominal=2, min=1/i);
   });
 
-  it('Truth-Block korrigiert die alten falschen Universalregeln', () => {
+  it('Truth-Block korrigiert alte Universalregeln und erzwingt Closed World', () => {
     const t = getDayZFileTruthBlock();
     expect(t).toMatch(/db\/economy\.xml/);
     expect(t).toMatch(/Werte >25.*vorhanden/i);
     expect(t).toMatch(/min == nominal/i);
+    expect(t).toMatch(/CLOSED-WORLD-REGEL/);
     expect(t).not.toMatch(/max\. 25|MUSS zwischen 1 und 25/i);
   });
 
@@ -76,5 +82,70 @@ describe('nitradoHelp — DayZ 1.29 grounded', () => {
     const input = '<type name="WaterBottle"><nominal>100</nominal><min>85</min></type>';
     expect(sanitizeDayZLootValues(input)).toEqual({ text: input, changes: [] });
     expect(detectTypesXmlValueViolations(input)).toEqual([]);
+  });
+
+  it('beantwortet Bauen+ mit belegter 1.29-cfggameplay-Struktur deterministisch', () => {
+    const q = 'ich möchte auf meinen Dayz Server Bauen + Aktivieren';
+    const a = lookupNitradoHelp(q);
+    expect(a.found).toBe(true);
+    expect(a.topicIds).toContain('dayz-help:basebuilding-build-anywhere');
+    expect(a.directAnswer).toMatch(/cfggameplay\.json/i);
+    expect(a.directAnswer).toMatch(/BaseBuildingData/);
+    expect(a.directAnswer).toMatch(/enableCfgGameplayFile\s*=\s*1/);
+    expect(a.directAnswer).toMatch(/disableIsCollidingBBoxCheck/);
+    expect(a.directAnswer).toMatch(/disablePerformRoofCheck/);
+    expect(a.directAnswer).toMatch(/disableDistanceCheck/);
+  });
+
+  it('trennt DayZ-Engine-Semantik von Nitrado-Bedienwegen', () => {
+    const a = lookupNitradoHelp('DayZ Bauen + auf Nitrado aktivieren');
+    expect(a.text).toMatch(/GEPRUEFTE DAYZ-ENGINE-\/SERVER-KONFIGURATION/);
+    expect(a.text).toMatch(/NITRADO-BEDIENWEG/);
+  });
+
+  it('setzt unbekannte technische DayZ-Fragen auf fail-closed', () => {
+    const a = lookupNitradoHelp('DayZ Server SuperLootTurbo aktivieren');
+    expect(a.found).toBe(true);
+    expect(a.text).toMatch(/GROUNDING-STATUS: NICHT AUSREICHEND BELEGT/);
+    expect(a.text).toMatch(/keinen Parameter erfinden/i);
+    expect(a.directAnswer).toBeUndefined();
+  });
+
+  it('erkennt technische DayZ-Adminfragen ohne Allgemeinfragen zu verschlucken', () => {
+    expect(isDayzTechnicalAdminQuestion('DayZ Bauen + aktivieren')).toBe(true);
+    expect(isDayzTechnicalAdminQuestion('Was ist DayZ?')).toBe(false);
+    expect(isDayzTechnicalAdminQuestion('Was macht cfgGameplay.json?')).toBe(true);
+  });
+
+  it('blockiert bekannte und neu erfundene DayZ-Identifier nach der Generation', () => {
+    const q = 'DayZ Bauen + aktivieren';
+    const ground = lookupNitradoHelp(q).text;
+    const known = validateDayzTechnicalAnswer('Setze `enableBuilding = true` und `MaxConstructionObjects = 500` in `serverDZ.cfg`.', ground, q);
+    expect(known.valid).toBe(false);
+    expect(known.violations.join(' ')).toMatch(/enableBuilding/);
+    expect(known.violations.join(' ')).toMatch(/MaxConstructionObjects/);
+    const invented = validateDayzTechnicalAnswer('Nutze `superMagicBuildSwitch = true` in `cfggameplay.json`.', ground, q);
+    expect(invented.valid).toBe(false);
+    expect(invented.violations.join(' ')).toMatch(/superMagicBuildSwitch/);
+  });
+
+  it('akzeptiert belegte Bauen+-Parameter und blockiert falsche Aktivierungswerte', () => {
+    const q = 'DayZ Bauen + aktivieren';
+    const ground = lookupNitradoHelp(q).text;
+    expect(validateDayzTechnicalAnswer('Setze `enableCfgGameplayFile = 1;` und `disableDistanceCheck = true` in `cfggameplay.json`.', ground, q).valid).toBe(true);
+    const wrong = validateDayzTechnicalAnswer('Setze `enableCfgGameplayFile = 2;` und `disableDistanceCheck = false`.', ground, q);
+    expect(wrong.valid).toBe(false);
+  });
+
+  it('extrahiert technische Identifier konservativ', () => {
+    expect(detectKnownDayzHallucinatedIdentifiers('enableBuilding MaxConstructionObjects')).toEqual(expect.arrayContaining(['enableBuilding', 'MaxConstructionObjects']));
+    expect(extractDayzTechnicalIdentifiers('`cfggameplay.json` -> `BaseBuildingData`, superMagicBuildSwitch = true')).toEqual(expect.arrayContaining(['cfggameplay.json', 'BaseBuildingData', 'superMagicBuildSwitch']));
+  });
+
+  it('liefert nach blockierter Bauen+-Generation einen deterministischen Fallback', () => {
+    const fallback = buildDayzTechnicalFallback('DayZ Bauen + aktivieren', ['superMagicBuildSwitch']);
+    expect(fallback).toMatch(/cfggameplay\.json/i);
+    expect(fallback).toMatch(/enableCfgGameplayFile\s*=\s*1/);
+    expect(fallback).not.toMatch(/superMagicBuildSwitch/);
   });
 });
