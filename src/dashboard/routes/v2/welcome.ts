@@ -218,13 +218,11 @@ welcomeRouter.post('/test', requireGuildPermission('welcome.manage'), async (req
     res.status(400).json({ error: 'Channel ist kein sendbarer Text-Channel.' }); return;
   }
 
-  const actor = guild.members.cache.get(scope.actorDiscordId);
-  const userDisplayName = actor?.displayName ?? actor?.user.globalName ?? actor?.user.username ?? 'Testnutzer';
   const userMention = `<@${scope.actorDiscordId}>`;
   const memberCount = guild.memberCount;
 
   const messageText = renderWelcomeMessage(cfg.message, {
-    user: userDisplayName,
+    user: userMention,
     mention: userMention,
     guild: guild.name,
     memberCount,
