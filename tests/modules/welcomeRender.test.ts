@@ -1,8 +1,8 @@
 /**
  * Welcome-Renderer:
- * {user} ist der lesbare Server-Anzeigename, {mention} bleibt die explizite
- * Discord-Erwaehnung. Zusaetzlich werden die sichtbare Zeichenzahl und die
- * finale Discord-Embed-Grenze abgesichert.
+ * {user} und {mention} sind echte Discord-Erwaehnungen im Embed-Text.
+ * Zusaetzlich werden die sichtbare Zeichenzahl und die finale Discord-Embed-
+ * Grenze abgesichert.
  */
 import {
   assertWelcomeEmbedLength,
@@ -12,20 +12,20 @@ import {
   renderWelcomeMessage,
 } from '../../src/modules/welcome/welcomeManager';
 
-const VARS = { user: 'Void_Architect', mention: '<@123>', guild: 'Mein Server', memberCount: 128 };
+const VARS = { user: '<@123>', mention: '<@123>', guild: 'Mein Server', memberCount: 128 };
 
 describe('renderWelcomeMessage', () => {
-  it('{user} rendert den lesbaren Server-Anzeigenamen', () => {
-    expect(renderWelcomeMessage('Willkommen {user}!', VARS)).toBe('Willkommen Void_Architect!');
+  it('{user} rendert die Discord-Erwaehnung im Embed-Text', () => {
+    expect(renderWelcomeMessage('Willkommen {user}!', VARS)).toBe('Willkommen <@123>!');
   });
 
-  it('{mention} bleibt die explizite Discord-Erwaehnung', () => {
+  it('{mention} bleibt Alias fuer die Discord-Erwaehnung', () => {
     expect(renderWelcomeMessage('Hi {mention}', VARS)).toBe('Hi <@123>');
   });
 
   it('Standardtext ersetzt {user}/{guild}/{count}', () => {
     expect(renderWelcomeMessage('Willkommen {user} auf {guild}! Nr. {count}.', VARS))
-      .toBe('Willkommen Void_Architect auf Mein Server! Nr. 128.');
+      .toBe('Willkommen <@123> auf Mein Server! Nr. 128.');
   });
 
   it('{member_count} wird ebenfalls ersetzt', () => {
