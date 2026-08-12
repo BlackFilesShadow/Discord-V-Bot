@@ -7,7 +7,7 @@ import multer from 'multer';
 import * as path from 'node:path';
 import * as fs from 'node:fs/promises';
 import { randomUUID } from 'node:crypto';
-import { PermissionFlagsBits } from 'discord.js';
+import { PermissionFlagsBits, type PermissionResolvable } from 'discord.js';
 import { requireGuildPermission } from '../../middleware/auth';
 import prisma from '../../../database/prisma';
 import {
@@ -110,14 +110,18 @@ function validateBody(b: WelcomeBody, guildId: string):
   };
 }
 
-async function ensureChannel(channelId: string, guildId: string): Promise<string | null> {
+async function ensureChannel(channelId: string, guildId: string, mediaUrl?: string): Promise<string | null> {
   const client = tryGetDashboardClient();
   if (!client) return null;
-  const v = await validateBotChannelAccess(client, guildId, channelId, [
+
+  const requiredPerms: PermissionResolvable[] = [
     PermissionFlagsBits.ViewChannel,
     PermissionFlagsBits.SendMessages,
-    PermissionFlagsBits.EmbedLinks,
-  ]);
+  ];
+  if (mediaUrl?.startsWith('/uploads/')) requiredPerms.push(PermissionFlagsBits.AttachFiles);
+  else if (mediaUrl) requiredPerms.push(PermissionFlagsBits.EmbedLinks);
+
+  const v = await validateBotChannelAccess(client, guildId, channelId, requiredPerms);
   return v.ok ? null : v.reason;
 }
 
@@ -167,7 +171,7 @@ welcomeRouter.post('/config', requireGuildPermission('welcome.manage'), async (r
   const v = validateBody(req.body as WelcomeBody, scope.guildId);
   if (!v.ok) { res.status(400).json({ error: v.error }); return; }
 
-  const channelErr = await ensureChannel(v.data.channelId, scope.guildId);
+  const channelErr = await ensureChannel(v.data.channelId, scope.guildId, v.data.mediaUrl);
   if (channelErr) { res.status(400).json({ error: channelErr }); return; }
 
   await setWelcomeConfig(scope.guildId, v.data, scope.actorDiscordId);
@@ -210,7 +214,7 @@ welcomeRouter.post('/test', requireGuildPermission('welcome.manage'), async (req
   }
   if (!cfg) { res.status(400).json({ error: 'Keine Welcome-Konfiguration zum Testen.' }); return; }
 
-  const channelErr = await ensureChannel(cfg.channelId, scope.guildId);
+  const channelErr = await ensureChannel(cfg.channelId, scope.guildId, cfg.mediaUrl);
   if (channelErr) { res.status(400).json({ error: channelErr }); return; }
 
   const channel = await client.channels.fetch(cfg.channelId).catch(() => null);
@@ -235,7 +239,6 @@ welcomeRouter.post('/test', requireGuildPermission('welcome.manage'), async (req
       mediaUrl: cfg.mediaUrl,
       mediaLayout: cfg.mediaLayout,
       mentionUserId: scope.actorDiscordId,
-      mentionInContent: false,
     });
   } catch (err) {
     res.status(400).json({ error: err instanceof Error ? err.message : 'Testnachricht ist ungueltig.' });
