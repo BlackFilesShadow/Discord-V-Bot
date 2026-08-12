@@ -10,6 +10,7 @@ import { lookupNitradoHelp, looksLikeDayZFileQuestion, getDayZFileTruthBlock, de
 import { redactText } from '../nitrado/mirror/redactor';
 import { cached } from '../../utils/responseCache';
 import { clampBlock, clampHistory } from './promptBudget';
+import { classifyProviderHttpStatus, updateAllRateLimitedState } from './providerFailure';
 
 /**
  * AI-Integration (Sektion 4):
@@ -881,7 +882,7 @@ export async function callAI(messages: { role: string; content: string }[]): Pro
   };
 
   let lastError: unknown = null;
-  let allRateLimited = true; // wird false sobald ein Nicht-429 auftritt oder Provider gar nicht versucht wurde
+  let allRateLimited = true; // bleibt nur true, solange jeder fehlgeschlagene Versuch wirklich HTTP 429 war
   let anyAttempted = false;
   logger.info(`callAI start, provider-Reihenfolge: ${providers.join(' -> ')}`);
   for (const provider of providers) {
@@ -903,12 +904,11 @@ export async function callAI(messages: { role: string; content: string }[]): Pro
         lastError = error;
         const latency = Date.now() - t0;
         const status = (error as { response?: { status?: number } })?.response?.status;
-        const is429 = status === 429;
+        const { isRateLimit: is429, isAuthOrModel } = classifyProviderHttpStatus(status);
         // 401/403/404 = kaputter Key oder ungueltiges Modell -> Provider ist bis
-        // zur Neukonfiguration tot. NICHT als Rate-Limit werten und aus der
-        // Rotation nehmen, sonst bleibt er als „letzter Ueberlebender" haengen.
-        const isAuthOrModel = status === 401 || status === 403 || status === 404;
-        if (!is429 && !isAuthOrModel) allRateLimited = false;
+        // zur Neukonfiguration tot. Diese und alle anderen Nicht-429-Fehler
+        // widerlegen sofort die Aussage, dass ALLE Provider rate-limited seien.
+        allRateLimited = updateAllRateLimitedState(allRateLimited, status);
         const transient = isTransient(error);
         const errMsg = (error as Error)?.message || String(error);
         logger.warn(
@@ -966,4 +966,3 @@ async function getProviderOrder(): Promise<('groq' | 'cerebras' | 'openrouter' |
   const primary = config.ai.provider;
   return [primary, ...all.filter(p => p !== primary)];
 }
-
