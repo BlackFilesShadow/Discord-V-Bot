@@ -8,14 +8,25 @@ export const BOT_DEVELOPER = 'Void_Architect' as const;
 
 const DEVELOPER_TERMS = '(?:entwickler(?:in)?|developer|programmierer(?:in)?|ersteller(?:in)?|erschaffer(?:in)?|sch[oö]pfer(?:in)?|creator)';
 const CREATION_VERBS = '(?:gebaut|erschaffen|erstellt|programmiert|gemacht|entwickelt|gecodet|created|developed|programmed|built)';
-const VBOT = 'v[-_ ]?bot(?:\s+prime)?';
+const VBOT = 'v[-_ ]?bot(?:\\s+prime)?';
 
 /**
- * Regex fuer den globalen statischen Discord-Trigger.
- * Er matched nur Fragen/Aussagen zur Entwickler-Identitaet von V-Bot selbst,
- * nicht allgemeine Fragen wie "Wer ist der Entwickler von DayZ?".
+ * Kompakter Regex fuer den globalen statischen Discord-Trigger.
+ *
+ * GLOBAL_AI_TRIGGERS wird ueber safeRegexTest ausgewertet. Dort gilt bewusst
+ * ein 200-Zeichen-Limit fuer Regex-Patterns. Deshalb bleibt dieser Trigger
+ * kompakt und serverunabhaengig, ohne den globalen ReDoS-Schutz aufzuweichen.
  */
-export const DEVELOPER_IDENTITY_TRIGGER_PATTERN = [
+export const DEVELOPER_IDENTITY_TRIGGER_PATTERN =
+  '(?:dein\\w* (?:entwickler|programmierer)|(?:wer hat|von wem)\\b.*(?:dich|du|v[-_ ]?bot).*(?:entwick|programm|bau|erstell|erschaff|mach|cod)|(?:entwickler|hinter).*v[-_ ]?bot|who (?:.*ed|built) you)';
+
+/**
+ * Ausfuehrlicher Matcher fuer direkte Identitaetsfragen, z.B. /ai ask.
+ * Dieser Pattern ist nicht nutzerdefiniert und wird nicht ueber safeRegexTest
+ * ausgewertet; dadurch koennen hier alle relevanten Formulierungen praezise
+ * abgedeckt werden.
+ */
+const DEVELOPER_IDENTITY_MATCH_PATTERN = [
   `\\bwer\\s+ist\\s+dein(?:e|er)?\\s+${DEVELOPER_TERMS}\\b`,
   `\\bwer\\s+ist\\s+(?:der|die)\\s+${DEVELOPER_TERMS}\\s+(?:von|hinter)\\s+${VBOT}\\b`,
   `\\b${DEVELOPER_TERMS}\\s+(?:von|hinter)\\s+${VBOT}\\b`,
@@ -27,7 +38,7 @@ export const DEVELOPER_IDENTITY_TRIGGER_PATTERN = [
   '\\bwho\\s+(?:is\\s+your\\s+(?:developer|creator|programmer)|(?:developed|created|programmed|built)\\s+you)\\b',
 ].join('|');
 
-const developerIdentityRegex = new RegExp(DEVELOPER_IDENTITY_TRIGGER_PATTERN, 'i');
+const developerIdentityRegex = new RegExp(DEVELOPER_IDENTITY_MATCH_PATTERN, 'i');
 
 export function isDeveloperIdentityQuestion(text: string): boolean {
   if (!text) return false;
