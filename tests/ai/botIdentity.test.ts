@@ -14,6 +14,7 @@ import {
 import {
   GLOBAL_AI_TRIGGERS,
   findMatchingTrigger,
+  type AiTrigger,
 } from '../../src/modules/ai/triggers';
 
 describe('V-Bot developer identity', () => {
@@ -41,11 +42,46 @@ describe('V-Bot developer identity', () => {
     expect(isDeveloperIdentityQuestion(q)).toBe(true);
   });
 
-  it.each(questions)('globaler Trigger liefert immer Void_Architect: %s', (q) => {
+  it.each(questions)('direkte Bot-Anfrage liefert immer Void_Architect ohne Cooldown: %s', (q) => {
     const matched = findMatchingTrigger(GLOBAL_AI_TRIGGERS, q, true);
-    expect(matched?.id).toBe('erschaffer');
+    expect(matched?.id).toBe('system-developer-identity');
     expect(matched?.responseMode).toBe('text');
     expect(matched?.responseText).toBe('Mein Entwickler ist **Void_Architect**.');
+    expect(matched?.cooldownSeconds).toBe(0);
+  });
+
+  it('laesst einen Guild-Trigger die Entwickler-Identitaet nicht ueberschreiben', () => {
+    const forged: AiTrigger = {
+      id: 'erschaffer',
+      trigger: 'entwickler',
+      triggerType: 'keyword',
+      responseMode: 'text',
+      responseText: 'Mein Entwickler ist der Server-Owner.',
+      cooldownSeconds: 600,
+      createdAt: '2026-08-12T00:00:00.000Z',
+      createdBy: 'guild-owner',
+    };
+
+    const matched = findMatchingTrigger([forged], 'Wer ist dein Entwickler?', true);
+    expect(matched?.id).toBe('system-developer-identity');
+    expect(matched?.responseText).toBe('Mein Entwickler ist **Void_Architect**.');
+    expect(matched?.cooldownSeconds).toBe(0);
+  });
+
+  it('deaktiviert Trigger-Cooldown nur bei direkter Bot-Ansprache, nicht bei passiven Triggern', () => {
+    const trigger: AiTrigger = {
+      id: 'test-trigger',
+      trigger: 'ping',
+      triggerType: 'keyword',
+      responseMode: 'text',
+      responseText: 'pong',
+      cooldownSeconds: 45,
+      createdAt: '2026-08-12T00:00:00.000Z',
+      createdBy: 'test',
+    };
+
+    expect(findMatchingTrigger([trigger], 'ping', true)?.cooldownSeconds).toBe(0);
+    expect(findMatchingTrigger([trigger], 'ping', false)?.cooldownSeconds).toBe(45);
   });
 
   it.each([
