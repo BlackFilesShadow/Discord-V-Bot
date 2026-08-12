@@ -118,7 +118,7 @@ const guildMemberAddEvent: BotEvent = {
 
       logger.info(`Neuer Nutzer: ${m.user.username} (GUID: ${user.id})`);
 
-      // ===== WELCOME-NACHRICHT (Embed mit optionalen Medien) =====
+      // ===== WELCOME-NACHRICHT (normaler Discord-Text mit optionalem Medium) =====
       try {
         const wcfg = await getWelcomeConfig(m.guild.id);
         if (wcfg && wcfg.enabled && wcfg.channelId) {
@@ -128,7 +128,7 @@ const guildMemberAddEvent: BotEvent = {
             const memberCount = m.guild.memberCount;
 
             // {user} und {mention} sind echte Discord-Erwaehnungen direkt im
-            // Embed-Text. Es wird bewusst KEIN separater content-Ping gesendet.
+            // normalen Nachrichtentext. Es gibt keinen zusaetzlichen Ping.
             const messageText = renderWelcomeMessage(wcfg.message, {
               user: userMention,
               mention: userMention,
@@ -142,7 +142,6 @@ const guildMemberAddEvent: BotEvent = {
               mediaUrl: wcfg.mediaUrl,
               mediaLayout: wcfg.mediaLayout,
               mentionUserId: m.user.id,
-              mentionInContent: false,
             });
           }
         }

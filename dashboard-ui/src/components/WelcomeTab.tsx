@@ -43,8 +43,8 @@ const TRIGGER_LABELS: Record<AutoRole['triggerType'], string> = {
 };
 
 const VARIABLES: Array<{ key: string; desc: string; example: string }> = [
-  { key: '{user}', desc: 'Anzeigename des neuen Mitglieds', example: 'MaxMustermann' },
-  { key: '{mention}', desc: 'Discord-Erwähnung des neuen Mitglieds', example: '@MaxMustermann' },
+  { key: '{user}', desc: 'Discord-Erwähnung des neuen Mitglieds', example: '@MaxMustermann' },
+  { key: '{mention}', desc: 'Alias für die Discord-Erwähnung', example: '@MaxMustermann' },
   { key: '{guild}', desc: 'Name des Servers', example: 'Mein Server' },
   { key: '{count}', desc: 'Aktuelle Mitgliederzahl', example: '128' },
   { key: '{date}', desc: 'Aktuelles Datum', example: '3. April 2026' },
@@ -82,7 +82,7 @@ function renderPreview(template: string): string {
   const date = new Intl.DateTimeFormat('de-DE', { dateStyle: 'long', timeZone: 'Europe/Berlin' }).format(now);
   const time = new Intl.DateTimeFormat('de-DE', { timeStyle: 'short', timeZone: 'Europe/Berlin' }).format(now);
   return template
-    .replace(/\{user\}/g, 'MaxMustermann')
+    .replace(/\{user\}/g, '@MaxMustermann')
     .replace(/\{mention\}/g, '@MaxMustermann')
     .replace(/\{guild\}/g, 'Mein Server')
     .replace(/\{count\}/g, '128')
@@ -296,7 +296,7 @@ export function WelcomeTab({ guildId, canManage }: { guildId: string; canManage:
         <StatCard label="Willkommen-System" value={data?.enabled ? 'Aktiv' : 'Inaktiv'} accent={data?.enabled ? 'ok' : 'neutral'} />
         <StatCard label="Channel" value={channelSet ? channelName(data!.channelId) : '—'} accent={channelSet ? 'neutral' : 'warn'} />
         <StatCard label="Auto-Rollen" value={autoroleStatus.label} accent={autoroleStatus.variant === 'ok' ? 'ok' : autoroleStatus.variant === 'warn' ? 'warn' : 'neutral'} />
-        <StatCard label="Format" value="Embed" />
+        <StatCard label="Format" value="Normaler Text" />
       </div>
 
       {incomplete && (
@@ -346,7 +346,7 @@ export function WelcomeTab({ guildId, canManage }: { guildId: string; canManage:
       </Card>
 
       <Card>
-        <CardHeader><CardTitle>Willkommensnachricht</CardTitle><CardDesc>Aktivierung, Channel und Nachricht (wird als Embed gesendet).</CardDesc></CardHeader>
+        <CardHeader><CardTitle>Willkommensnachricht</CardTitle><CardDesc>Aktivierung, Channel und normale Discord-Nachricht ohne Bot-Embed.</CardDesc></CardHeader>
         <div className="space-y-4 mt-2">
           <Switch checked={enabled} onChange={setEnabled} label="Willkommen-System aktiviert" />
 
@@ -367,7 +367,7 @@ export function WelcomeTab({ guildId, canManage }: { guildId: string; canManage:
               className="input-premium w-full rounded-lg text-white px-3.5 py-2.5 text-sm placeholder:text-muted/80 focus:outline-none resize-y"
               placeholder={DEFAULT_MESSAGE}
             />
-            <span className="text-[11px] text-muted">{visibleMessageLength}/{MAX_MESSAGE_GRAPHEMES} sichtbare Zeichen</span>
+            <span className="text-[11px] text-muted">{visibleMessageLength}/{MAX_MESSAGE_GRAPHEMES} sichtbare Zeichen · längere Texte werden sicher in Discord-Teile mit max. 2000 Zeichen aufgeteilt</span>
           </label>
 
           <label className="block">
@@ -389,7 +389,7 @@ export function WelcomeTab({ guildId, canManage }: { guildId: string; canManage:
                 </Button>
               )}
             </div>
-            <span className="text-[11px] text-muted mt-1 block">Erlaubt: PNG, JPG, JPEG, WEBP, GIF (max. 8 MB). Datei wird serverbezogen gespeichert.</span>
+            <span className="text-[11px] text-muted mt-1 block">Erlaubt: PNG, JPG, JPEG, WEBP, GIF (max. 8 MB). Hochgeladene Bilder werden als eigene Datei-Nachricht gesendet; externe URLs als eigene Link-Nachricht.</span>
             {hasMedia && (
               <div className="mt-2 rounded-lg border border-border/60 bg-bg/60 p-2 inline-block max-w-full">
                 <img src={mediaUrl} alt="Vorschau Willkommensbild" className="max-h-48 max-w-full rounded object-contain" onError={e => { (e.currentTarget as HTMLImageElement).style.display = 'none'; }} />
@@ -428,7 +428,7 @@ export function WelcomeTab({ guildId, canManage }: { guildId: string; canManage:
       </Card>
 
       <Card>
-        <CardHeader><CardTitle>Vorschau & Test</CardTitle><CardDesc>Beispielhafte Ersetzung mit Beispieldaten.</CardDesc></CardHeader>
+        <CardHeader><CardTitle>Vorschau & Test</CardTitle><CardDesc>Beispielhafte Ersetzung und reale Reihenfolge von Bild und Text.</CardDesc></CardHeader>
         <div className="mt-2 rounded-lg border border-border/60 bg-bg/60 p-3">
           {hasMedia && mediaLayout === 'image_first' && (
             <img src={mediaUrl} alt="Vorschau Willkommensbild" className="mb-2 max-h-48 max-w-full rounded object-contain" onError={e => { (e.currentTarget as HTMLImageElement).style.display = 'none'; }} />
@@ -439,7 +439,7 @@ export function WelcomeTab({ guildId, canManage }: { guildId: string; canManage:
           )}
         </div>
         <p className="text-[11px] text-muted mt-2">
-          Beispielwerte: <code className="font-mono">{'{user}'}</code> → MaxMustermann ·{' '}
+          Beispielwerte: <code className="font-mono">{'{user}'}</code> → @MaxMustermann ·{' '}
           <code className="font-mono">{'{mention}'}</code> → @MaxMustermann ·{' '}
           <code className="font-mono">{'{guild}'}</code> → Mein Server ·{' '}
           <code className="font-mono">{'{count}'}</code> → 128
