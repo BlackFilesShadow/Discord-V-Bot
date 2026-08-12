@@ -6,7 +6,7 @@ import { liveSearch, looksFactQuestion, formatSearchResultsForPrompt } from './w
 import { asksAboutCommands, formatCatalogForPromptFocused } from './commandCatalog';
 import { recordCall, getRankedProviders, markProviderUnavailable, ProviderName } from './providerStats';
 import { checkRateLimit } from '../../utils/rateLimiter';
-import { lookupNitradoHelp, looksLikeDayZFileQuestion, getDayZFileTruthBlock, detectTypesXmlValueViolations, sanitizeDayZLootValues, looksLikeDayZLootContent } from './nitradoHelp';
+import { lookupNitradoHelp, looksLikeDayZFileQuestion, getDayZFileTruthBlock, isDayzTechnicalAdminQuestion, validateDayzTechnicalAnswer, buildDayzTechnicalFallback } from './nitradoHelp';
 import { redactText } from '../nitrado/mirror/redactor';
 import { cached } from '../../utils/responseCache';
 import { clampBlock, clampHistory } from './promptBudget';
@@ -335,7 +335,10 @@ export async function answerQuestion(
     }
   }
 
-  const wantWebSearch = mode === 'chat' || mode === 'oneshot' || mode === 'trigger';
+  const dayzTechnical = mode !== 'welcome' && isDayzTechnicalAdminQuestion(question);
+// Technical DayZ config is closed-world: generic Wikipedia/DDG must not
+// compete with verified 1.29/Bohemia grounding.
+const wantWebSearch = (mode === 'chat' || mode === 'oneshot' || mode === 'trigger') && !dayzTechnical;
   const wantCatalog = mode === 'chat' || mode === 'oneshot';
   const wantKnowledgeBoundary = mode !== 'welcome';
 
@@ -386,6 +389,23 @@ export async function answerQuestion(
         if (ans.found) {
           nitradoHelpBlock = ans.text;
           nitradoHelpTopics = ans.topicIds;
+        // High-risk technical topics can bypass the LLM completely.
+        if (ans.directAnswer) {
+          const direct = redactText(ans.directAnswer);
+          if (useMemory) {
+            void (async () => {
+              try {
+                const { recordTurn } = await import('./conversationMemory.js');
+                await recordTurn(opts.userId!, opts.channelId!, 'user', question, opts.guildId ?? null);
+                await recordTurn(opts.userId!, opts.channelId!, 'assistant', direct, opts.guildId ?? null);
+              } catch (e) {
+                logger.warn(`conversationMemory.recordTurn fuer DayZ directAnswer fehlgeschlagen: ${String(e)}`);
+              }
+            })();
+          }
+          logger.info(`[DayZ-Grounding] deterministische Antwort (topics=${ans.topicIds.join(',')})`);
+          return { success: true, result: direct };
+        }
         } else if (looksLikeDayZFileQuestion(question)) {
           // Frage klingt nach DayZ-Datei, aber kein konkretes Topic getroffen.
           // Mindestens den Wahrheits-Block injizieren, damit die LLM keine
@@ -398,18 +418,15 @@ export async function answerQuestion(
       }
     }
 
-    // Wenn der Wahrheits-Block injiziert wird, vorherige assistant-Turns mit
-    // unrealistischen nominal/min/max-Werten aus dem Memory entfernen \u2014 die LLM
-    // imitiert sonst ihre eigenen alten Halluzinationen.
-    if (nitradoHelpBlock && memoryTurns.length > 0) {
+    // Old assistant hallucinations must not re-enter technical DayZ prompts.
+    if (dayzTechnical && nitradoHelpBlock && memoryTurns.length > 0) {
       const before = memoryTurns.length;
       memoryTurns = memoryTurns.filter((t) => {
         if (t.role !== 'assistant') return true;
-        const violations = detectTypesXmlValueViolations(t.content);
-        return violations.length === 0;
+        return validateDayzTechnicalAnswer(t.content, nitradoHelpBlock!, question).valid;
       });
       if (memoryTurns.length < before) {
-        logger.info(`[Nitrado-Help] ${before - memoryTurns.length} halluzinierte Memory-Turn(s) gefiltert`);
+        logger.info(`[DayZ-Grounding] ${before - memoryTurns.length} ungrounded Memory-Turn(s) gefiltert`);
       }
     }
 
@@ -433,25 +450,13 @@ export async function answerQuestion(
     // sensible Substrings (IPs/Steam64/GUIDs) reingeschrieben hat.
     let safeResponse = response ? redactText(response) : response;
 
-    // HARTE GRENZE — Anti-Halluzinations-Sanitizer: schreibt unrealistische
-    // DayZ-Loot-Werte (nominal/min/max > 25) deterministisch auf
-    // Vanilla-Defaults (nominal=15, min=8, max=20) um. Laeuft IMMER, sobald
-    // der Output ueberhaupt nach DayZ-Loot-Kontext aussieht — UNABHAENGIG vom
-    // Topic-Match. Verhindert, dass die LLM Werte wie 70/100/150 vorschlaegt
-    // (User-Vorgabe: solche Werte duerfen NICHT EINMAL ausgegeben werden).
-    if (safeResponse && looksLikeDayZLootContent(safeResponse)) {
-      const sanitized = sanitizeDayZLootValues(safeResponse);
-      if (sanitized.changes.length > 0) {
-        logger.warn(`[Nitrado-Help] Sanitizer hat ${sanitized.changes.length} unrealistische Loot-Werte ueberschrieben: ${sanitized.changes.join('; ')}`);
-        safeResponse = `${sanitized.text}\n\n\u26a0\ufe0f **Werte automatisch korrigiert**: ${sanitized.changes.length} unrealistische DayZ-Loot-Wert(e) wurden auf Vanilla-Defaults zurueckgesetzt (nominal=15, min=8, max=20). Werte > 25 werden NIE empfohlen — sie sprengen den Loot-Pool.`;
-      }
-      // Zweite Verteidigung: Tabellen mit nominal/min/max in unklarer
-      // Spalten-Anordnung kann der Sanitizer nicht immer treffen. Falls noch
-      // Verletzungen bleiben, mind. eine Warnung anhaengen statt durchlassen.
-      const remaining = detectTypesXmlValueViolations(safeResponse);
-      if (remaining.length > 0) {
-        logger.warn(`[Nitrado-Help] Sanitizer hat ${remaining.length} Werte NICHT erfasst (Format unbekannt): ${remaining.join('; ')}`);
-        safeResponse = `${safeResponse}\n\n\u26a0\ufe0f **Achtung**: Die obige Antwort enthaelt noch Werte ausserhalb des Vanilla-Bereichs (max. 25). Bitte ignoriere alle Zahlen > 25 fuer \`nominal\`/\`min\`/\`max\` und nutze stattdessen: seltene Waffen \`nominal=10\`/\`min=5\`, normale Waffen/Munition \`nominal=15\`/\`min=8\`, Nahrung \`nominal=20\`/\`min=10\`.`;
+    // Fail closed after generation: unknown technical identifiers never reach Discord.
+    if (dayzTechnical && safeResponse) {
+      const grounding = nitradoHelpBlock ?? getDayZFileTruthBlock();
+      const validation = validateDayzTechnicalAnswer(safeResponse, grounding, question);
+      if (!validation.valid) {
+        logger.warn(`[DayZ-Grounding] LLM-Antwort blockiert: ${validation.violations.join('; ')}`);
+        safeResponse = buildDayzTechnicalFallback(question, validation.violations);
       }
     }
 
