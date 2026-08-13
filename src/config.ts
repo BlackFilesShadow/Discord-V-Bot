@@ -22,7 +22,9 @@ export const config = {
     clientId: requireEnv('DISCORD_CLIENT_ID'),
     clientSecret: requireEnv('DISCORD_CLIENT_SECRET'),
     guildId: optionalEnv('DISCORD_GUILD_ID'),
-    ownerId: optionalEnv('BOT_OWNER_ID'),
+    // BOT_OWNER_ID ist kanonisch. DISCORD_OWNER_ID bleibt nur als kontrollierter
+    // Migrationsalias fuer bestehende Deployments erhalten.
+    ownerId: optionalEnv('BOT_OWNER_ID') || optionalEnv('DISCORD_OWNER_ID'),
   },
 
   // Datenbank
