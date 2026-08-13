@@ -20,13 +20,18 @@ describe('DayZ classname / grounding regressions', () => {
     expect(searchDayz129Types('Tundra', 5)[0]).toBe('Winchester70');
   });
 
-  test('existing exact classname detail lookup still uses the full grounded catalog', () => {
-    const answer = answerDayz129CatalogQuestion('DayZ Classname WoodenPlank');
-    expect(answer?.topic).toBe('type');
-    expect(answer?.answer).toMatch(/Chernarus/);
-    expect(answer?.answer).toMatch(/Livonia/);
-    expect(answer?.answer).toMatch(/Sakhal/);
-    expect(answer?.answer).toMatch(/crafted=1/);
+  test('pure classname lookup is classname-only while an explicit detail question stays grounded', () => {
+    const classname = answerDayz129CatalogQuestion('DayZ Classname WoodenPlank');
+    expect(classname?.topic).toBe('type');
+    expect(classname?.answer).toBe('Der Classname ist **`WoodenPlank`**.');
+    expect(classname?.answer).not.toMatch(/Chernarus|Livonia|Sakhal|crafted=/);
+
+    const details = answerDayz129CatalogQuestion('Welche Werte hat WoodenPlank?');
+    expect(details?.topic).toBe('type');
+    expect(details?.answer).toMatch(/Chernarus/);
+    expect(details?.answer).toMatch(/Livonia/);
+    expect(details?.answer).toMatch(/Sakhal/);
+    expect(details?.answer).toMatch(/crafted=1/);
   });
 
   test('verified long DayZ classnames are not mistaken for GUIDs', () => {
