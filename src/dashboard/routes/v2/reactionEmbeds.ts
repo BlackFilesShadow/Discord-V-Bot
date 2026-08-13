@@ -1,28 +1,6 @@
 /**
- * Reaktions-Embeds Routen — Self-Role-Menus mit Buttons/Select/Reaktionen pro Guild.
- * Dashboard-only: es existieren KEINE Slash-/Prefix-Commands fuer dieses Feature.
- *
- * Baut additiv auf dem bestehenden SelfRoleMenu/SelfRoleOption-Modell auf
- * (Phase 2). Optional kann ein DashboardEmbed (Embed-Builder) als Nachrichten-
- * design verknuepft werden.
- *
- *   GET    /                    Menus der Guild auflisten
- *   GET    /:id                 Einzelnes Menu (inkl. Optionen)
- *   POST   /                    Menu anlegen
- *   PUT    /:id                 Menu aktualisieren
- *   DELETE /:id                 Menu loeschen (+ ggf. gepostete Nachricht best-effort)
- *   POST   /:id/options         Option hinzufuegen
- *   PUT    /:id/options/:optId  Option aktualisieren
- *   DELETE /:id/options/:optId  Option entfernen
- *   POST   /:id/reorder         Optionen neu sortieren
- *   POST   /:id/send            In Ziel-Channel posten (oder editieren)
- *   POST   /:id/sync            Bereits gepostete Nachricht aktualisieren
- *   POST   /:id/archive         Menu archivieren/reaktivieren
- *
- * Strikte guildId-Scope-Pruefung in jeder Operation (jede Prisma-Query traegt guildId).
- * Rollen-Schutz: nie @everyone, keine managed-Rollen, Bot-Hierarchie + ManageRoles.
+ * Reaktions-Embeds — Dashboard-only Self-Role-Menues.
  */
-
 import { Router } from 'express';
 import { PermissionFlagsBits, TextChannel } from 'discord.js';
 import { requireGuildPermission } from '../../middleware/auth';
@@ -32,6 +10,12 @@ import { validateBotChannelAccess } from '../../../utils/discordChannel';
 import { logAuditDb, logger } from '../../../utils/logger';
 import { emitGuildEvent } from '../../socket/emitter';
 import { getMenuFull, publishMenu, detachMenuComponents } from '../../../modules/selfrole/selfRoleMenu';
+import {
+  getOptionAssignModeMap,
+  normalizeOptionAssignMode,
+  setOptionAssignMode,
+  type OptionAssignMode,
+} from '../../../modules/selfrole/optionAssignModeStore';
 
 export const reactionEmbedsRouter = Router({ mergeParams: true });
 
@@ -41,7 +25,6 @@ const ASSIGN_MODES = new Set(['GIVE', 'REMOVE', 'TOGGLE']);
 const MODES = new Set(['MULTI', 'SINGLE']);
 const BUTTON_STYLES = new Set(['PRIMARY', 'SECONDARY', 'SUCCESS', 'DANGER']);
 
-// ── Serialisierung ──────────────────────────────────────────────────────────
 interface MenuRow {
   id: string;
   guildId: string;
@@ -61,6 +44,7 @@ interface MenuRow {
   updatedAt: Date;
   options?: OptionRow[];
 }
+
 interface OptionRow {
   id: string;
   roleId: string;
@@ -74,7 +58,7 @@ interface OptionRow {
   isActive: boolean;
 }
 
-function optionToApi(o: OptionRow) {
+function optionToApi(o: OptionRow, modes: Map<string, OptionAssignMode> = new Map()) {
   const roleIds = Array.isArray(o.roleIds) && o.roleIds.length > 0 ? o.roleIds : (o.roleId ? [o.roleId] : []);
   return {
     id: o.id,
@@ -87,10 +71,12 @@ function optionToApi(o: OptionRow) {
     position: o.position,
     buttonStyle: o.buttonStyle,
     isActive: o.isActive,
+    // null = Universal / Menu-Einstellung uebernehmen.
+    assignMode: modes.get(o.id) ?? null,
   };
 }
 
-function menuToApi(m: MenuRow) {
+function menuToApi(m: MenuRow, modes: Map<string, OptionAssignMode> = new Map()) {
   return {
     id: m.id,
     channelId: m.channelId,
@@ -108,11 +94,14 @@ function menuToApi(m: MenuRow) {
     createdBy: m.createdBy,
     createdAt: m.createdAt,
     updatedAt: m.updatedAt,
-    options: (m.options ?? []).map(optionToApi),
+    options: (m.options ?? []).map(o => optionToApi(o, modes)),
   };
 }
 
-// ── Body-Parsing ─────────────────────────────────────────────────────────────
+async function optionModesForMenus(menus: MenuRow[]): Promise<Map<string, OptionAssignMode>> {
+  return getOptionAssignModeMap(menus.flatMap(m => (m.options ?? []).map(o => o.id)));
+}
+
 function str(v: unknown, max: number): string {
   return typeof v === 'string' ? v.trim().slice(0, max) : '';
 }
@@ -146,30 +135,31 @@ function validateMenuBody(body: unknown): { ok: true; data: MenuInput } | { ok: 
     if (!Number.isInteger(n) || n < 1 || n > 25) return { ok: false, error: 'maxRolesPerUser muss 1..25 sein.' };
     maxRolesPerUser = n;
   }
-  // Reaktions-Embeds haengen an einer bestehenden Einbettung -> embedId ist Pflicht.
   const embedId = optStr(b.embedId, 64);
   if (!embedId) return { ok: false, error: 'Bitte eine Einbettung auswählen.' };
   return { ok: true, data: { title, description, mode, componentType, assignMode, maxRolesPerUser, embedId } };
 }
 
-/** Prueft, ob eine Rolle sicher als Self-Role verwendet werden kann.
- *  Erwartet, dass Rollen-Cache + Bot-Member zuvor frisch geladen wurden
- *  (siehe refreshGuildRoleState / parseOptionRoles). */
+function parseOptionMode(value: unknown): { ok: true; mode: OptionAssignMode | null } | { ok: false; error: string } {
+  if (value == null || value === '' || value === 'UNIVERSAL') return { ok: true, mode: null };
+  const mode = normalizeOptionAssignMode(value);
+  return mode
+    ? { ok: true, mode }
+    : { ok: false, error: 'assignMode muss UNIVERSAL, TOGGLE, GIVE oder REMOVE sein.' };
+}
+
 async function validateRole(guildId: string, roleId: string): Promise<string | null> {
   if (!SNOWFLAKE_RE.test(roleId)) return 'Ungültige roleId.';
   if (roleId === guildId) return '@everyone kann nicht als Reaktionsrolle verwendet werden.';
   const client = tryGetDashboardClient();
   const guild = client?.guilds.cache.get(guildId);
-  if (!guild) return null; // Ohne Client keine Live-Pruefung (Persistenz erlaubt).
+  if (!guild) return null;
   const role = guild.roles.cache.get(roleId) ?? await guild.roles.fetch(roleId).catch(() => null);
   if (!role) return 'Rolle nicht gefunden.';
   if (role.managed) return 'Von Integrationen verwaltete Rollen sind nicht erlaubt.';
   const me = guild.members.me;
-  if (!me) return null; // Bot-Member nicht ermittelbar -> Persistenz erlauben, Laufzeit prueft erneut.
-  if (!me.permissions.has(PermissionFlagsBits.ManageRoles)) {
-    return 'Dem Bot fehlt die Berechtigung „Rollen verwalten".';
-  }
-  // comparePositionTo nutzt die (frisch geladenen) Positionen aus guild.roles.cache.
+  if (!me) return null;
+  if (!me.permissions.has(PermissionFlagsBits.ManageRoles)) return 'Dem Bot fehlt die Berechtigung „Rollen verwalten".';
   if (me.roles.highest.comparePositionTo(role) <= 0) {
     logger.warn(
       `[ReactionRole] Hierarchie-Block: Bot-Top-Rolle "${me.roles.highest.name}" (pos ${me.roles.highest.position}) ` +
@@ -181,8 +171,6 @@ async function validateRole(guildId: string, roleId: string): Promise<string | n
   return null;
 }
 
-/** Laedt Rollen-Positionen + Bot-Member erzwungen neu, damit me.roles.highest
- *  korrekt ist (Cache kann nach dem Umsortieren von Rollen veraltet sein). */
 async function refreshGuildRoleState(guildId: string): Promise<void> {
   const guild = tryGetDashboardClient()?.guilds.cache.get(guildId);
   if (!guild) return;
@@ -192,11 +180,6 @@ async function refreshGuildRoleState(guildId: string): Promise<void> {
   ]);
 }
 
-/**
- * Loest die verknuepfte, bereits GESENDETE Einbettung auf. Reaktions-Buttons
- * haengen ausschliesslich an einer existierenden Embed-Nachricht -> die
- * Einbettung muss channelId + messageId besitzen (also gepostet sein).
- */
 async function resolveLinkedEmbed(
   embedId: string,
   guildId: string,
@@ -212,11 +195,6 @@ async function resolveLinkedEmbed(
   return { ok: true, channelId: emb.channelId, messageId: emb.messageId };
 }
 
-/**
- * Liest & validiert bis zu 5 Rollen fuer eine Option (ProBot-Stil).
- * Akzeptiert `roleIds: string[]` (bevorzugt) oder Fallback `roleId: string`.
- * Prueft jede Rolle einzeln (Snowflake, @everyone, managed, Hierarchie, ManageRoles).
- */
 async function parseOptionRoles(
   guildId: string,
   b: Record<string, unknown>,
@@ -227,9 +205,6 @@ async function parseOptionRoles(
   const ids = [...new Set(raw.filter((x): x is string => typeof x === 'string' && x.trim().length > 0).map(x => x.trim()))];
   if (ids.length < 1) return { ok: false, error: 'Mindestens eine Rolle ist erforderlich.' };
   if (ids.length > 5) return { ok: false, error: 'Maximal 5 Rollen pro Button.' };
-  // Rollen-Positionen + Bot-Member einmalig frisch laden: nach dem Umsortieren
-  // von Rollen kann der Cache veraltete Positionen enthalten, wodurch die
-  // Hierarchie-Pruefung faelschlich fehlschlaegt.
   await refreshGuildRoleState(guildId);
   for (const id of ids) {
     const err = await validateRole(guildId, id);
@@ -238,28 +213,28 @@ async function parseOptionRoles(
   return { ok: true, roleIds: ids };
 }
 
-// ===========================================================================
-//  MENU-CRUD
-// ===========================================================================
-
 reactionEmbedsRouter.get('/', requireGuildPermission('reactionroles.view'), async (req, res) => {
   const scope = req.guildScope!;
-  const menus = await prisma.selfRoleMenu.findMany({
+  const rows = await prisma.selfRoleMenu.findMany({
     where: { guildId: scope.guildId },
     orderBy: { createdAt: 'desc' },
     include: { options: { orderBy: { position: 'asc' } } },
   });
-  res.json({ menus: (menus as unknown as MenuRow[]).map(menuToApi) });
+  const menus = rows as unknown as MenuRow[];
+  const modes = await optionModesForMenus(menus);
+  res.json({ menus: menus.map(m => menuToApi(m, modes)) });
 });
 
 reactionEmbedsRouter.get('/:id', requireGuildPermission('reactionroles.view'), async (req, res) => {
   const scope = req.guildScope!;
-  const menu = await prisma.selfRoleMenu.findFirst({
+  const row = await prisma.selfRoleMenu.findFirst({
     where: { id: req.params.id, guildId: scope.guildId },
     include: { options: { orderBy: { position: 'asc' } } },
   });
-  if (!menu) { res.status(404).json({ error: 'Menü nicht gefunden.' }); return; }
-  res.json(menuToApi(menu as unknown as MenuRow));
+  if (!row) { res.status(404).json({ error: 'Menü nicht gefunden.' }); return; }
+  const menu = row as unknown as MenuRow;
+  const modes = await optionModesForMenus([menu]);
+  res.json(menuToApi(menu, modes));
 });
 
 reactionEmbedsRouter.post('/', requireGuildPermission('reactionroles.manage'), async (req, res) => {
@@ -319,11 +294,13 @@ reactionEmbedsRouter.put('/:id', requireGuildPermission('reactionroles.manage'),
     where: { id: existing.id, guildId: scope.guildId },
     include: { options: { orderBy: { position: 'asc' } } },
   });
+  const typed = updated as unknown as MenuRow;
+  const modes = await optionModesForMenus([typed]);
   logAuditDb('REACTION_EMBED_UPDATED', 'ROLE', {
     actorUserId: req.auth!.userId, guildId: scope.guildId, details: { menuId: existing.id },
   });
   emitGuildEvent(scope.guildId, { type: 'reactionEmbed.changed', payload: { guildId: scope.guildId, menuId: existing.id } });
-  res.json(menuToApi(updated as unknown as MenuRow));
+  res.json(menuToApi(typed, modes));
 });
 
 reactionEmbedsRouter.delete('/:id', requireGuildPermission('reactionroles.manage'), async (req, res) => {
@@ -337,12 +314,9 @@ reactionEmbedsRouter.delete('/:id', requireGuildPermission('reactionroles.manage
     const client = tryGetDashboardClient();
     if (client) {
       if (existing.embedId) {
-        // Verknuepfte Einbettung: NUR die Buttons/Reaktionen entfernen — die
-        // Embed-Nachricht gehoert dem Embed-Builder und bleibt erhalten.
         await detachMenuComponents(client, existing.channelId, existing.messageId, existing.componentType === 'REACTION');
         componentsRemoved = true;
       } else {
-        // Legacy: eigenstaendige Menu-Nachricht loeschen.
         const channel = client.channels.cache.get(existing.channelId)
           ?? await client.channels.fetch(existing.channelId).catch(() => null);
         if (channel && channel.isTextBased() && !channel.isDMBased()) {
@@ -353,15 +327,12 @@ reactionEmbedsRouter.delete('/:id', requireGuildPermission('reactionroles.manage
   }
   await prisma.selfRoleMenu.delete({ where: { id: existing.id } });
   logAuditDb('REACTION_EMBED_DELETED', 'ROLE', {
-    actorUserId: req.auth!.userId, guildId: scope.guildId, details: { menuId: existing.id, messageDeleted, componentsRemoved },
+    actorUserId: req.auth!.userId, guildId: scope.guildId,
+    details: { menuId: existing.id, messageDeleted, componentsRemoved },
   });
   emitGuildEvent(scope.guildId, { type: 'reactionEmbed.changed', payload: { guildId: scope.guildId, menuId: existing.id } });
   res.json({ ok: true, messageDeleted, componentsRemoved });
 });
-
-// ===========================================================================
-//  OPTIONEN
-// ===========================================================================
 
 reactionEmbedsRouter.post('/:id/options', requireGuildPermission('reactionroles.manage'), async (req, res) => {
   const scope = req.guildScope!;
@@ -374,6 +345,8 @@ reactionEmbedsRouter.post('/:id/options', requireGuildPermission('reactionroles.
   const description = optStr(b.description, 100);
   const confirmMessage = optStr(b.confirmMessage, 500);
   const buttonStyle = BUTTON_STYLES.has(String(b.buttonStyle)) ? String(b.buttonStyle) : 'SECONDARY';
+  const parsedMode = parseOptionMode(b.assignMode);
+  if (!parsedMode.ok) { res.status(400).json({ error: parsedMode.error }); return; }
   if (label.length < 1) { res.status(400).json({ error: 'label 1..80 Zeichen.' }); return; }
   const roles = await parseOptionRoles(scope.guildId, b);
   if (!roles.ok) { res.status(400).json({ error: roles.error }); return; }
@@ -389,11 +362,15 @@ reactionEmbedsRouter.post('/:id/options', requireGuildPermission('reactionroles.
         label, emoji, description, confirmMessage, buttonStyle, position: count,
       },
     });
+    await setOptionAssignMode(opt.id, parsedMode.mode);
+    const modes = new Map<string, OptionAssignMode>();
+    if (parsedMode.mode) modes.set(opt.id, parsedMode.mode);
     logAuditDb('REACTION_EMBED_OPTION_ADDED', 'ROLE', {
-      actorUserId: req.auth!.userId, guildId: scope.guildId, details: { menuId: menu.id, roleIds: roles.roleIds },
+      actorUserId: req.auth!.userId, guildId: scope.guildId,
+      details: { menuId: menu.id, roleIds: roles.roleIds, assignMode: parsedMode.mode ?? 'UNIVERSAL' },
     });
     emitGuildEvent(scope.guildId, { type: 'reactionEmbed.changed', payload: { guildId: scope.guildId, menuId: menu.id } });
-    res.status(201).json(optionToApi(opt as unknown as OptionRow));
+    res.status(201).json(optionToApi(opt as unknown as OptionRow, modes));
   } catch (e) {
     if ((e as { code?: string }).code === 'P2002') { res.status(409).json({ error: 'Diese Rolle ist bereits im Menü.' }); return; }
     throw e;
@@ -415,8 +392,9 @@ reactionEmbedsRouter.put('/:id/options/:optId', requireGuildPermission('reaction
   const confirmMessage = optStr(b.confirmMessage, 500);
   const buttonStyle = BUTTON_STYLES.has(String(b.buttonStyle)) ? String(b.buttonStyle) : opt.buttonStyle;
   const isActive = typeof b.isActive === 'boolean' ? b.isActive : opt.isActive;
+  const parsedMode = b.assignMode === undefined ? null : parseOptionMode(b.assignMode);
+  if (parsedMode && !parsedMode.ok) { res.status(400).json({ error: parsedMode.error }); return; }
 
-  // Rollen duerfen geaendert werden (1..5). Wenn nicht mitgeschickt, bestehende beibehalten.
   const data: Record<string, unknown> = { label, emoji, description, confirmMessage, buttonStyle, isActive };
   if (b.roleIds !== undefined || b.roleId !== undefined) {
     const roles = await parseOptionRoles(menu.guildId, b);
@@ -427,11 +405,16 @@ reactionEmbedsRouter.put('/:id/options/:optId', requireGuildPermission('reaction
 
   try {
     const updated = await prisma.selfRoleOption.update({ where: { id: opt.id }, data });
+    if (parsedMode?.ok) await setOptionAssignMode(opt.id, parsedMode.mode);
+    const modes = parsedMode?.ok
+      ? (parsedMode.mode ? new Map([[opt.id, parsedMode.mode]]) : new Map<string, OptionAssignMode>())
+      : await getOptionAssignModeMap([opt.id]);
     logAuditDb('REACTION_EMBED_OPTION_UPDATED', 'ROLE', {
-      actorUserId: req.auth!.userId, guildId: scope.guildId, details: { menuId: menu.id, optionId: opt.id },
+      actorUserId: req.auth!.userId, guildId: scope.guildId,
+      details: { menuId: menu.id, optionId: opt.id, assignMode: modes.get(opt.id) ?? 'UNIVERSAL' },
     });
     emitGuildEvent(scope.guildId, { type: 'reactionEmbed.changed', payload: { guildId: scope.guildId, menuId: menu.id } });
-    res.json(optionToApi(updated as unknown as OptionRow));
+    res.json(optionToApi(updated as unknown as OptionRow, modes));
   } catch (e) {
     if ((e as { code?: string }).code === 'P2002') { res.status(409).json({ error: 'Diese Rolle ist bereits im Menü.' }); return; }
     throw e;
@@ -462,16 +445,10 @@ reactionEmbedsRouter.post('/:id/reorder', requireGuildPermission('reactionroles.
   if (ids.length !== existing.length || !ids.every(id => existingIds.has(id))) {
     res.status(400).json({ error: 'order[] muss exakt alle Options-IDs enthalten.' }); return;
   }
-  await prisma.$transaction(ids.map((id, idx) =>
-    prisma.selfRoleOption.update({ where: { id }, data: { position: idx } }),
-  ));
+  await prisma.$transaction(ids.map((id, idx) => prisma.selfRoleOption.update({ where: { id }, data: { position: idx } })));
   emitGuildEvent(scope.guildId, { type: 'reactionEmbed.changed', payload: { guildId: scope.guildId, menuId: menu.id } });
   res.json({ ok: true });
 });
-
-// ===========================================================================
-//  POST / SYNC / ARCHIVE
-// ===========================================================================
 
 async function publishToChannel(guildId: string, menuId: string): Promise<{ error?: string; status?: number; messageId?: string }> {
   const full = await getMenuFull(menuId);
@@ -531,16 +508,11 @@ reactionEmbedsRouter.post('/:id/archive', requireGuildPermission('reactionroles.
     where: { id: menu.id },
     data: { archived, isActive: archived ? false : menu.isActive },
   });
-  // Archivieren: Buttons von der Embed-Nachricht entfernen (Embed bleibt).
-  // Reaktivieren: Buttons wieder anhaengen.
   if (menu.embedId && menu.messageId) {
     const client = tryGetDashboardClient();
     if (client) {
-      if (archived) {
-        await detachMenuComponents(client, menu.channelId, menu.messageId, menu.componentType === 'REACTION');
-      } else {
-        await publishToChannel(scope.guildId, menu.id).catch(() => null);
-      }
+      if (archived) await detachMenuComponents(client, menu.channelId, menu.messageId, menu.componentType === 'REACTION');
+      else await publishToChannel(scope.guildId, menu.id).catch(() => null);
     }
   }
   logAuditDb('REACTION_EMBED_ARCHIVED', 'ROLE', {
