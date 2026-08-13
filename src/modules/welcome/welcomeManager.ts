@@ -1,6 +1,13 @@
 import * as path from 'node:path';
 import * as fs from 'node:fs/promises';
-import { AttachmentBuilder, type BaseMessageOptions, type Message } from 'discord.js';
+import {
+  AttachmentBuilder,
+  MediaGalleryBuilder,
+  MessageFlags,
+  TextDisplayBuilder,
+  type BaseMessageOptions,
+  type Message,
+} from 'discord.js';
 import prisma from '../../database/prisma';
 import { renderTemplate } from '../ai/triggers';
 import { safeSend } from '../../utils/safeSend';
@@ -8,16 +15,16 @@ import { safeSend } from '../../utils/safeSend';
 /**
  * Welcome-System pro Guild (BotConfig key=`welcome:<guildId>`).
  *
- * Die Begruessung wird als normale Discord-Nachricht versendet. Ein optionales
- * Bild/Medium wird als eigene Nachricht davor oder danach gesendet, damit die
- * Dashboard-Auswahl "Bild oben / Bild unten" tatsaechlich eingehalten wird.
+ * Die Begruessung wird als EINE Discord Components-V2-Nachricht versendet.
+ * Bild/Medium und Text koennen dadurch in derselben Nachricht frei angeordnet
+ * werden (Bild oben / Bild unten), ohne sichtbare Trennung in mehrere Bot-Posts.
  */
 
 export interface WelcomeConfig {
   enabled: boolean;
   channelId: string;
   message: string;        // statischer Begruessungstext mit Platzhaltern
-  mediaUrl?: string;      // optional JPG/PNG/GIF/WEBP (Bild) oder MP4/WEBM/MOV (Legacy-Link)
+  mediaUrl?: string;      // optional JPG/PNG/GIF/WEBP/Video oder lokaler Upload
   mode?: 'text';          // nur noch statischer Text (KI-Modus entfernt)
   mediaLayout?: 'image_first' | 'text_first';
 }
@@ -47,9 +54,9 @@ export function countWelcomeGraphemes(text: string): number {
 }
 
 /**
- * Zerlegt Discord-Content in atomare Einheiten. Discord-Mentions und Custom-
- * Emoji-Tags bleiben als Ganzes erhalten und koennen daher nicht zwischen zwei
- * Nachrichten zerschnitten werden.
+ * Zerlegt Discord-Text in atomare Einheiten. Mentions und Custom-Emoji-Tags
+ * bleiben als Ganzes erhalten und werden nicht zwischen TextDisplay-Komponenten
+ * zerschnitten.
  */
 function tokenizeWelcomeContent(text: string): string[] {
   const tokens: string[] = [];
@@ -66,9 +73,9 @@ function tokenizeWelcomeContent(text: string): string[] {
 }
 
 /**
- * Teilt den final gerenderten Welcome-Text sicher auf normale Discord-Nachrichten
- * mit maximal 2000 UTF-16-Code-Units. Das ist konservativer als eine reine
- * Sichtzeichen-Zaehlung und verhindert Invalid-Form-Body-Fehler bei Emoji.
+ * Teilt den final gerenderten Welcome-Text konservativ in <= 2000 UTF-16-
+ * Code-Units. Die Teile werden spaeter NICHT als einzelne Discord-Nachrichten,
+ * sondern als mehrere TextDisplay-Komponenten innerhalb EINER Nachricht gesendet.
  * Bevorzugte Trennstellen: Absatz, Zeilenumbruch, Leerzeichen; erst danach hart
  * an einer Graphem-/Discord-Token-Grenze.
  */
@@ -139,7 +146,7 @@ export async function setWelcomeConfig(guildId: string, cfg: WelcomeConfig, upda
       key: KEY(guildId),
       value: cfg as unknown as object,
       category: 'welcome',
-      description: `Welcome-Konfiguration f\u00fcr Guild ${guildId}`,
+      description: `Welcome-Konfiguration fuer Guild ${guildId}`,
       updatedBy,
     },
     update: { value: cfg as unknown as object, updatedBy },
@@ -172,12 +179,17 @@ export function resolveWelcomeMediaSource(mediaUrl: string): string {
 
 type SendableChannel = { send: (options: never) => Promise<unknown> };
 
-type PreparedWelcomePart = {
-  kind: 'text' | 'media';
-  payload: BaseMessageOptions;
+type PreparedWelcomeMedia = {
+  component: MediaGalleryBuilder;
+  files: AttachmentBuilder[];
 };
 
-async function prepareWelcomeMedia(mediaUrl?: string): Promise<PreparedWelcomePart | null> {
+/**
+ * Bereitet das optionale Medium fuer eine Components-V2-MediaGallery vor.
+ * Lokale Uploads werden als Attachment referenziert; externe URLs bleiben URLs
+ * und werden weiterhin NICHT serverseitig geladen (SSRF-Schutz bleibt erhalten).
+ */
+async function prepareWelcomeMedia(mediaUrl?: string): Promise<PreparedWelcomeMedia | null> {
   const url = mediaUrl?.trim();
   if (!url) return null;
 
@@ -188,25 +200,25 @@ async function prepareWelcomeMedia(mediaUrl?: string): Promise<PreparedWelcomePa
     } catch {
       throw new Error('Das gespeicherte Willkommensbild wurde auf dem Server nicht gefunden.');
     }
-    return {
-      kind: 'media',
-      payload: {
-        files: [new AttachmentBuilder(src, { name: path.basename(src) })],
-        allowedMentions: { parse: [] },
-      },
-    };
+
+    const filename = path.basename(src);
+    const attachment = new AttachmentBuilder(src, { name: filename });
+    const component = new MediaGalleryBuilder().addItems({
+      media: { url: `attachment://${filename}` },
+      description: 'Willkommensbild',
+    });
+    return { component, files: [attachment] };
   }
 
-  // Externe Medien werden bewusst NICHT serverseitig heruntergeladen (SSRF-Schutz).
-  // Sie werden als eigene URL-Nachricht gesendet; Discord kann daraus eine Vorschau
-  // erzeugen. Die Reihenfolge zum Text bleibt dadurch trotzdem eindeutig.
   if (url.length > MAX_WELCOME_CONTENT_LENGTH) {
-    throw new Error('Die externe Medien-URL ist zu lang fuer eine Discord-Nachricht.');
+    throw new Error('Die externe Medien-URL ist zu lang.');
   }
-  return {
-    kind: 'media',
-    payload: { content: url, allowedMentions: { parse: [] } },
-  };
+
+  const component = new MediaGalleryBuilder().addItems({
+    media: { url },
+    description: 'Willkommensbild/-medium',
+  });
+  return { component, files: [] };
 }
 
 async function sendRequired(
@@ -219,22 +231,16 @@ async function sendRequired(
   return sent;
 }
 
-async function rollbackWelcomeParts(messages: Message[]): Promise<void> {
-  for (const message of [...messages].reverse()) {
-    try { await message.delete(); } catch { /* best effort: nur eigene bereits gesendete Welcome-Teile */ }
-  }
-}
-
 /**
- * Versendet die Begruessung ohne Bot-Embed als normale Discord-Nachrichten.
+ * Versendet die komplette Begruessung als EINE Discord Components-V2-Nachricht.
  *
- * - Text wird bei Bedarf sicher in <= 2000-Zeichen-Teile aufgeteilt.
- * - {user}/{mention} koennen nur den explizit uebergebenen User pingen.
- * - Lokale Bilder werden als eigener Datei-Anhang gesendet.
- * - Externe Medien bleiben als eigene URL-Nachricht (kein serverseitiger Download).
- * - mediaLayout steuert real die Reihenfolge: Bild/Medium zuerst oder Text zuerst.
- * - Schlaegt ein spaeterer Teil fehl, werden bereits gesendete Teile best-effort
- *   wieder geloescht, damit moeglichst keine halbe Welcome-Nachricht stehen bleibt.
+ * - Bild und Text gehoeren garantiert zur selben Bot-Nachricht.
+ * - mediaLayout steuert innerhalb dieser Nachricht die echte Reihenfolge.
+ * - Text bleibt normaler Discord-Markdown mit Mentions und Custom-Emotes.
+ * - Lange Texte werden in mehrere TextDisplay-Komponenten derselben Nachricht
+ *   aufgeteilt, statt mehrere sichtbare Bot-Posts zu erzeugen.
+ * - Lokale Bilder werden als Attachment in einer MediaGallery dargestellt.
+ * - Externe Medien bleiben direkte URLs; kein serverseitiger Download.
  *
  * `mentionInContent` bleibt nur fuer Abwaertskompatibilitaet in der Signatur und
  * wird absichtlich ignoriert: Es gibt keinen separaten Ping ausserhalb des Texts.
@@ -257,28 +263,23 @@ export async function sendWelcomeMessages(
   const chunks = splitWelcomeContent(opts.text);
   if (chunks.length === 0) throw new Error('Willkommensnachricht ist leer.');
 
-  // Medien vor dem ersten Discord-Send vorbereiten/validieren, damit ein lokaler
-  // Dateifehler nicht erst nach bereits gesendetem Text auffaellt.
-  const mediaPart = await prepareWelcomeMedia(opts.mediaUrl);
-  const textParts: PreparedWelcomePart[] = chunks.map(content => ({
-    kind: 'text',
-    payload: { content, allowedMentions },
-  }));
+  // Vor dem einzigen Discord-Send validieren, damit bei fehlendem lokalem Bild
+  // gar keine teilweise Welcome-Ausgabe entstehen kann.
+  const media = await prepareWelcomeMedia(opts.mediaUrl);
+  const textComponents = chunks.map(content => new TextDisplayBuilder().setContent(content));
 
-  const parts: PreparedWelcomePart[] = mediaPart
+  const components = media
     ? opts.mediaLayout === 'text_first'
-      ? [...textParts, mediaPart]
-      : [mediaPart, ...textParts]
-    : textParts;
+      ? [...textComponents, media.component]
+      : [media.component, ...textComponents]
+    : textComponents;
 
-  const sentMessages: Message[] = [];
-  try {
-    for (const part of parts) {
-      const label = part.kind === 'media' ? 'Willkommensbild/-medium' : 'Willkommenstext';
-      sentMessages.push(await sendRequired(ch, part.payload, label));
-    }
-  } catch (error) {
-    await rollbackWelcomeParts(sentMessages);
-    throw error;
-  }
+  const payload: BaseMessageOptions = {
+    flags: MessageFlags.IsComponentsV2,
+    components,
+    allowedMentions,
+    ...(media?.files.length ? { files: media.files } : {}),
+  };
+
+  await sendRequired(ch, payload, 'Willkommensnachricht');
 }
