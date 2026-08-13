@@ -1,11 +1,6 @@
 /**
  * Reaktions-Embeds ("Reaktions Embeds") — Dashboard-only.
- *
- * Self-Role-Menus mit Buttons / Dropdown / Emoji-Reaktionen. Optional kann ein
- * im Embed-Builder erstelltes Embed als Nachrichtendesign verknuepft werden.
- * Zweispaltig: links Editor, rechts Live-Vorschau (Embed + Komponenten).
- *
- * Backend: /api/v2/guilds/:guildId/reaction-embeds (CRUD + Optionen + send/sync/archive).
+ * Self-Role-Menus mit Buttons / Dropdown / Emoji-Reaktionen.
  */
 import { useMemo, useState } from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
@@ -24,9 +19,9 @@ import { useToast } from '@/components/ui/Toast';
 import { EmojiPicker } from '@/components/ui/EmojiPicker';
 import { DiscordEmbedPreview, type EmbedPreviewData } from '@/components/embed/DiscordEmbedPreview';
 
-// ── Typen ─────────────────────────────────────────────────────────────────
 type ComponentType = 'BUTTON' | 'SELECT' | 'REACTION';
 type AssignMode = 'GIVE' | 'REMOVE' | 'TOGGLE';
+type OptionAssignMode = 'UNIVERSAL' | AssignMode;
 type Mode = 'MULTI' | 'SINGLE';
 type ButtonStyle = 'PRIMARY' | 'SECONDARY' | 'SUCCESS' | 'DANGER';
 
@@ -41,6 +36,7 @@ interface ApiOption {
   position: number;
   buttonStyle: ButtonStyle;
   isActive: boolean;
+  assignMode: AssignMode | null;
 }
 
 interface ApiMenu {
@@ -78,12 +74,12 @@ interface MenuForm {
   componentType: ComponentType;
   assignMode: AssignMode;
   mode: Mode;
-  maxRolesPerUser: string; // Eingabe als String, '' = unbegrenzt
+  maxRolesPerUser: string;
   embedId: string;
 }
 
 interface OptionForm {
-  id?: string; // vorhandene DB-Option
+  id?: string;
   roleIds: string[];
   label: string;
   emoji: string;
@@ -91,6 +87,7 @@ interface OptionForm {
   confirmMessage: string;
   buttonStyle: ButtonStyle;
   isActive: boolean;
+  assignMode: OptionAssignMode;
 }
 
 const BUTTON_STYLE_COLORS: Record<ButtonStyle, string> = {
@@ -122,9 +119,15 @@ function menuToForm(m: ApiMenu): MenuForm {
 function optionToForm(o: ApiOption): OptionForm {
   const roleIds = Array.isArray(o.roleIds) && o.roleIds.length > 0 ? o.roleIds : (o.roleId ? [o.roleId] : []);
   return {
-    id: o.id, roleIds, label: o.label, emoji: o.emoji ?? '',
-    description: o.description ?? '', confirmMessage: o.confirmMessage ?? '',
-    buttonStyle: o.buttonStyle, isActive: o.isActive,
+    id: o.id,
+    roleIds,
+    label: o.label,
+    emoji: o.emoji ?? '',
+    description: o.description ?? '',
+    confirmMessage: o.confirmMessage ?? '',
+    buttonStyle: o.buttonStyle,
+    isActive: o.isActive,
+    assignMode: o.assignMode ?? 'UNIVERSAL',
   };
 }
 
@@ -191,12 +194,11 @@ export function ReactionEmbedsTab({ guildId, canManage }: { guildId: string; can
 
   function patch(p: Partial<MenuForm>) { setForm(f => ({ ...f, ...p })); }
 
-  // ── Options-Editor (lokaler Zustand) ──────────────────────────────────────
   function addOption() {
     if (options.length >= 25) { toast.error('Maximal 25 Optionen pro Menü.'); return; }
     setOptions(o => [...o, {
-      roleIds: [], label: '', emoji: '',
-      description: '', confirmMessage: '', buttonStyle: 'SECONDARY', isActive: true,
+      roleIds: [], label: '', emoji: '', description: '', confirmMessage: '',
+      buttonStyle: 'SECONDARY', isActive: true, assignMode: 'UNIVERSAL',
     }]);
   }
   function patchOption(idx: number, p: Partial<OptionForm>) {
@@ -225,7 +227,6 @@ export function ReactionEmbedsTab({ guildId, canManage }: { guildId: string; can
     });
   }
 
-  // ── Persistenz ─────────────────────────────────────────────────────────────
   function menuPayload(): Record<string, unknown> {
     return {
       title: form.title.trim(),
@@ -246,10 +247,10 @@ export function ReactionEmbedsTab({ guildId, canManage }: { guildId: string; can
       if (!Number.isInteger(n) || n < 1 || n > 25) return 'Max. Rollen pro User muss 1..25 sein.';
     }
     for (const o of options) {
-      if (o.roleIds.length < 1) return 'Jeder Button benötigt mindestens eine Rolle.';
-      if (o.roleIds.length > 5) return 'Maximal 5 Rollen pro Button.';
-      if (o.roleIds.some(r => !/^\d{17,20}$/.test(r))) return 'Ungültige Rolle in einem Button.';
-      if (o.label.trim().length < 1) return 'Jeder Button benötigt einen Namen.';
+      if (o.roleIds.length < 1) return 'Jede Option benötigt mindestens eine Rolle.';
+      if (o.roleIds.length > 5) return 'Maximal 5 Rollen pro Option.';
+      if (o.roleIds.some(r => !/^\d{17,20}$/.test(r))) return 'Ungültige Rolle in einer Option.';
+      if (o.label.trim().length < 1) return 'Jede Option benötigt einen Namen.';
       if (form.componentType === 'REACTION' && o.isActive && !o.emoji.trim()) {
         return 'Bei Reaktions-Menüs benötigt jede aktive Option ein Emoji.';
       }
@@ -257,23 +258,23 @@ export function ReactionEmbedsTab({ guildId, canManage }: { guildId: string; can
     return null;
   }
 
-  /** Synchronisiert Optionen eines bestehenden Menüs mit dem Backend (Create/Update/Delete/Reorder). */
   async function syncOptions(menuId: string, original: ApiOption[]) {
     const originalById = new Map(original.map(o => [o.id, o]));
     const keptIds = new Set(options.filter(o => o.id).map(o => o.id!));
-    // Loeschen: in original, aber nicht mehr in Form.
     for (const o of original) {
-      if (!keptIds.has(o.id)) {
-        await api.del(`/api/v2/guilds/${guildId}/reaction-embeds/${menuId}/options/${o.id}`);
-      }
+      if (!keptIds.has(o.id)) await api.del(`/api/v2/guilds/${guildId}/reaction-embeds/${menuId}/options/${o.id}`);
     }
-    // Anlegen/Aktualisieren in Reihenfolge.
     const finalIds: string[] = [];
     for (const o of options) {
       const body = {
-        roleIds: o.roleIds, label: o.label.trim(), emoji: o.emoji.trim() || null,
-        description: o.description.trim() || null, confirmMessage: o.confirmMessage.trim() || null,
-        buttonStyle: o.buttonStyle, isActive: o.isActive,
+        roleIds: o.roleIds,
+        label: o.label.trim(),
+        emoji: o.emoji.trim() || null,
+        description: o.description.trim() || null,
+        confirmMessage: o.confirmMessage.trim() || null,
+        buttonStyle: o.buttonStyle,
+        isActive: o.isActive,
+        assignMode: o.assignMode === 'UNIVERSAL' ? null : o.assignMode,
       };
       if (o.id && originalById.has(o.id)) {
         await api.put(`/api/v2/guilds/${guildId}/reaction-embeds/${menuId}/options/${o.id}`, body);
@@ -327,9 +328,7 @@ export function ReactionEmbedsTab({ guildId, canManage }: { guildId: string; can
       await qc.invalidateQueries({ queryKey: ['reaction-embeds', guildId] });
     } catch (e) {
       toast.error(e instanceof ApiError ? e.message : 'Senden fehlgeschlagen.');
-    } finally {
-      setBusy(false);
-    }
+    } finally { setBusy(false); }
   }
 
   async function sync(id: string) {
@@ -339,9 +338,7 @@ export function ReactionEmbedsTab({ guildId, canManage }: { guildId: string; can
       toast.success('Nachricht aktualisiert.');
     } catch (e) {
       toast.error(e instanceof ApiError ? e.message : 'Sync fehlgeschlagen.');
-    } finally {
-      setBusy(false);
-    }
+    } finally { setBusy(false); }
   }
 
   async function toggleArchive(m: ApiMenu) {
@@ -352,9 +349,7 @@ export function ReactionEmbedsTab({ guildId, canManage }: { guildId: string; can
       toast.success(m.archived ? 'Reaktiviert.' : 'Archiviert.');
     } catch (e) {
       toast.error(e instanceof ApiError ? e.message : 'Aktion fehlgeschlagen.');
-    } finally {
-      setBusy(false);
-    }
+    } finally { setBusy(false); }
   }
 
   async function remove(id: string) {
@@ -367,9 +362,7 @@ export function ReactionEmbedsTab({ guildId, canManage }: { guildId: string; can
       toast.success('Gelöscht.');
     } catch (e) {
       toast.error(e instanceof ApiError ? e.message : 'Löschen fehlgeschlagen.');
-    } finally {
-      setBusy(false);
-    }
+    } finally { setBusy(false); }
   }
 
   if (!canManage) {
@@ -401,7 +394,6 @@ export function ReactionEmbedsTab({ guildId, canManage }: { guildId: string; can
 
   return (
     <div className="grid grid-cols-1 lg:grid-cols-[1fr_400px] gap-4">
-      {/* ── Linke Spalte: Liste + Editor ─────────────────────────────── */}
       <div className="space-y-4">
         <Card>
           <CardHeader>
@@ -499,7 +491,6 @@ export function ReactionEmbedsTab({ guildId, canManage }: { guildId: string; can
                 </Field>
               </div>
 
-              {/* Optionen */}
               <div className="pt-2 border-t border-border">
                 <div className="flex items-center justify-between mb-2">
                   <span className="text-white text-sm font-medium">Rollen-Optionen ({options.length}/25)</span>
@@ -509,7 +500,6 @@ export function ReactionEmbedsTab({ guildId, canManage }: { guildId: string; can
                   {options.length === 0 && <p className="text-muted text-xs">Noch keine Buttons. Füge mindestens einen Button hinzu.</p>}
                   {options.map((o, idx) => (
                     <div key={o.id ?? `new-${idx}`} className="rounded-md border border-border p-2 space-y-2">
-                      {/* Kopf: Reihenfolge · Button-Name (frei) · aktiv · löschen */}
                       <div className="flex items-center gap-2">
                         <div className="flex flex-col gap-0.5">
                           <button className="text-muted hover:text-white disabled:opacity-30" onClick={() => moveOption(idx, -1)} disabled={idx === 0}><ArrowUp size={13} /></button>
@@ -520,7 +510,6 @@ export function ReactionEmbedsTab({ guildId, canManage }: { guildId: string; can
                         <button className="text-muted hover:text-red-400" onClick={() => removeOption(idx)}><Trash2 size={15} /></button>
                       </div>
 
-                      {/* Farbe (nur Button) + Emoji */}
                       <div className="grid grid-cols-2 gap-2">
                         {form.componentType === 'BUTTON' ? (
                           <Select value={o.buttonStyle} onChange={e => patchOption(idx, { buttonStyle: e.target.value as ButtonStyle })}>
@@ -533,9 +522,17 @@ export function ReactionEmbedsTab({ guildId, canManage }: { guildId: string; can
                         <EmojiPicker value={o.emoji} onChange={v => patchOption(idx, { emoji: v })} placeholder="Emoji (optional)" />
                       </div>
 
-                      {/* Rollen: bis zu 5 pro Button */}
+                      <Field label="Rollen-Verhalten für diese Option">
+                        <Select value={o.assignMode} onChange={e => patchOption(idx, { assignMode: e.target.value as OptionAssignMode })}>
+                          <option value="UNIVERSAL">Universal (Rollen-Verhalten oben übernehmen)</option>
+                          <option value="TOGGLE">Geben &amp; Nehmen</option>
+                          <option value="GIVE">Nur geben</option>
+                          <option value="REMOVE">Nur entfernen</option>
+                        </Select>
+                      </Field>
+
                       <div>
-                        <span className="text-muted text-xs mb-1 block">Rollen für diesen Button ({o.roleIds.length}/5)</span>
+                        <span className="text-muted text-xs mb-1 block">Rollen für diese Option ({o.roleIds.length}/5)</span>
                         {o.roleIds.length > 0 && (
                           <div className="flex flex-wrap gap-1.5 mb-1.5">
                             {o.roleIds.map(rid => (
@@ -554,7 +551,6 @@ export function ReactionEmbedsTab({ guildId, canManage }: { guildId: string; can
                         )}
                       </div>
 
-                      {/* Personalisierte Bestätigung (optional) */}
                       <textarea
                         className="w-full min-h-[48px] rounded-md bg-bg-elev border border-border text-white px-3 py-2 text-sm focus-ring"
                         value={o.confirmMessage} maxLength={500}
@@ -575,7 +571,6 @@ export function ReactionEmbedsTab({ guildId, canManage }: { guildId: string; can
         )}
       </div>
 
-      {/* ── Rechte Spalte: Live-Vorschau ─────────────────────────────── */}
       <div className="space-y-3">
         <Card>
           <CardHeader><CardTitle className="text-sm">Vorschau</CardTitle></CardHeader>
@@ -589,7 +584,6 @@ export function ReactionEmbedsTab({ guildId, canManage }: { guildId: string; can
   );
 }
 
-// ── Komponenten-Vorschau (Buttons/Select/Reaktionen) ──────────────────────
 function ComponentPreview({ form, options, roleName }: { form: MenuForm; options: OptionForm[]; roleName: (id: string) => string }) {
   const active = options.filter(o => o.isActive);
   if (active.length === 0) return null;
