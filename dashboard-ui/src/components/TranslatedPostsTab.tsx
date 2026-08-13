@@ -1,1 +1,1 @@
-export { TranslatedPostsTab } from './TranslatedPostsTabV2';
+export { TranslatedPostsTab } from './TranslatedPostsTabV3';
