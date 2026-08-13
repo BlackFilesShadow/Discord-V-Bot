@@ -1,8 +1,10 @@
 /**
- * /dev Namespace — DEVELOPER-only.
+ * /dev Namespace — globale DEVELOPER-Identitaet only.
  *
- * Auth: Session-User muss role===DEVELOPER haben UND eine aktive
- * DevSession besitzen (gleiche Logik wie requireDev-Middleware).
+ * Auth: Session-User muss der kanonischen Bot-Owner-ID entsprechen, seine
+ * aktuelle DB-Rolle muss DEVELOPER sein UND eine aktive DevSession muss
+ * existieren. Eine veraltete Session-Rolle oder nur das Shared Password reicht
+ * damit niemals fuer Socket-Zugriff.
  *
  * Events:
  *  -> 'log'        Live-Log-Zeile (winston-Tap, gepuffert).
@@ -16,6 +18,7 @@ import { logger } from '../../utils/logger';
 import { tryGetDashboardClient } from '../clientRegistry';
 import { emitDevLog } from './emitter';
 import type { SocketSessionShape } from './index';
+import { isGlobalDeveloperEligible } from '../../modules/auth/globalDeveloperIdentity';
 
 const HEARTBEAT_MS = 5_000;
 
@@ -25,15 +28,30 @@ export function registerDevNamespace(io: IOServer): void {
   ns.use(async (socket, next) => {
     const req = socket.request as { session?: SocketSessionShape };
     const session = req.session;
-    if (!session?.userId || session.role !== 'DEVELOPER') {
-      next(new Error('forbidden: DEVELOPER required'));
+    if (!session?.userId || !session.discordId) {
+      next(new Error('forbidden: authenticated user required'));
       return;
     }
-    if (!session.discordId) {
-      next(new Error('forbidden: missing discordId'));
-      return;
-    }
+
     try {
+      const dbUser = await prisma.user.findUnique({
+        where: { id: session.userId },
+        select: { role: true },
+      });
+      const currentRole = dbUser?.role ?? session.role ?? 'USER';
+      if (!isGlobalDeveloperEligible(session.discordId, currentRole)) {
+        await prisma.devSession.updateMany({
+          where: {
+            userDiscordId: session.discordId,
+            revokedAt: null,
+            expiresAt: { gt: new Date() },
+          },
+          data: { revokedAt: new Date() },
+        }).catch(() => undefined);
+        next(new Error('forbidden: global DEVELOPER identity required'));
+        return;
+      }
+
       const dev = await prisma.devSession.findFirst({
         where: { userDiscordId: session.discordId, revokedAt: null, expiresAt: { gt: new Date() } },
         orderBy: { createdAt: 'desc' },
