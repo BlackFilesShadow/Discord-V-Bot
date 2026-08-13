@@ -16,7 +16,7 @@
     "lint": "eslint src/**/*.ts tests/**/*.ts",
     "lint:ui": "cd dashboard-ui && npm run lint",
     "lint:all": "npm run lint && npm run lint:ui",
-    "test": "jest --coverage --forceExit",
+    "test": "node scripts/run-tests.cjs",
     "test:watch": "jest --watch",
     "db:generate": "prisma generate",
     "db:push": "prisma db push",
@@ -60,8 +60,7 @@
     "unzipper": "^0.12.3",
     "uuid": "^10.0.0",
     "winston": "^3.15.0",
-    "winston-daily-rotate-file": "^5.0.0",
-    "zod": "^3.23.8"
+    "winston-daily-rotate-file": "^5.0.0"
   },
   "devDependencies": {
     "@types/archiver": "^6.0.2",
