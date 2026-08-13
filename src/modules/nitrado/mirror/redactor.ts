@@ -1,3 +1,5 @@
+import { isKnownDayz129Identifier } from '../../ai/dayz129Catalog';
+
 /**
  * Anonymisierung sensibler Server-Daten für AI-Prompts und Bot-Antworten.
  *
@@ -77,10 +79,12 @@ export function redactText(input: string, opts: RedactOptions = {}): string {
   out = out.replace(RE_STEAM64, PLACEHOLDER.steam64);
   out = out.replace(RE_BATTLEYE_GUID, PLACEHOLDER.guid);
   out = out.replace(RE_PORT_FIELD, (m) => m.replace(/\d{2,5}/, PLACEHOLDER.port));
-  // DayZ-Console-IDs: vorsichtig — könnte auch class-Namen treffen.
-  // Nur wenn der String wie ein typischer Identifier aussieht (mit '_' oder '-' und gemischten Casings).
+  // DayZ-Console-IDs: verifizierte Vanilla-1.29-Identifier sind eine harte
+  // Allowlist und dürfen niemals als GUID maskiert werden. Alles andere bleibt
+  // fail-closed und wird nach der bisherigen Console-ID-Heuristik anonymisiert.
   out = out.replace(RE_DAYZ_CONSOLE_ID, (m) => {
-    if (/^[A-Z][a-zA-Z]+$/.test(m)) return m; // ClassName (z.B. AKM, Mosin) durchlassen
+    if (isKnownDayz129Identifier(m)) return m;
+    if (/^[A-Z][a-zA-Z]+$/.test(m)) return m; // einfacher Klassenname
     if (!/[_-]/.test(m) && !/=$/.test(m)) return m;
     return PLACEHOLDER.guid;
   });
