@@ -32,9 +32,9 @@ describe('DayZ 1.29 complete grounded catalog', () => {
   });
 
   test('normalizes common singular filename mistakes', () => {
-    expect(answerDayz129CatalogQuestion('Was ist die Event.xml?')?.answer).toMatch(/db\/events\.xml/);
-    expect(answerDayz129CatalogQuestion('Was ist die Type.xml?')?.answer).toMatch(/db\/types\.xml/);
-    expect(answerDayz129CatalogQuestion('Was ist die Message.xml?')?.answer).toMatch(/db\/messages\.xml/);
+    expect(answerDayz129CatalogQuestion('Was ist die Event.xml?')?.answer).toMatch(/db/events\.xml/);
+    expect(answerDayz129CatalogQuestion('Was ist die Type.xml?')?.answer).toMatch(/db\types\.xml/);
+    expect(answerDayz129CatalogQuestion('Was ist die Message.xml?')?.answer).toMatch(/db\messages\.xml/);
     expect(answerDayz129CatalogQuestion('Was ist die Global.xml?')?.answer).toMatch(/db\/globals\.xml/);
   });
 
@@ -58,10 +58,8 @@ describe('DayZ 1.29 complete grounded catalog', () => {
     expect(a?.answer).toMatch(/Central Economy/i);
     expect(a?.answer).toMatch(/nominal/);
     expect(a?.answer).toMatch(/WoodenPlank/);
-    expect(a?.answer).not.toMatch(
-      /nominal\s+(?:ist|bedeutet|entspricht)\s+(?:die\s+)?maximale Menge/i,
-    );
-    expect(a?.answer).toMatch(/nominal.*nicht pauschal.*maximale Menge/i);
+    expect(a?.answer).not.toMatch(/nominal\s+(?:ist|bedeutet|entspricht)\s+(?:die\s+)?maximale Menge/i);
+    expect(a?.answer).toMatch(/nominal.*nicht pauschal.$maximale Menge/i);
   });
 
   test('knows every real classname and never needs to invent one', () => {
@@ -82,8 +80,15 @@ describe('DayZ 1.29 complete grounded catalog', () => {
     for (const candidate of searchDayz129Types('Holzbretter', 20)) expect(isKnownDayz129Identifier(candidate)).toBe(true);
   });
 
-  test('answers an exact real classname with map-specific values', () => {
+  test('pure classname requests return exactly the real classname', () => {
     const a = answerDayz129CatalogQuestion('DayZ Classname WoodenPlank');
+    expect(a?.topic).toBe('type');
+    expect(a?.answer).toBe('Der Classname ist **`WoodenPlank`**.');
+    expect(a?.answer).not.toMatch(/Chernarus|Livonia|Sakhal|crafted=/);
+  });
+
+  test('explicit value questions still return grounded map-specific values', () => {
+    const a = answerDayz129CatalogQuestion('Welche Werte hat WoodenPlank?');
     expect(a?.topic).toBe('type');
     expect(a?.answer).toMatch(/WoodenPlank/);
     expect(a?.answer).toMatch(/Chernarus/);
@@ -114,12 +119,15 @@ describe('DayZ 1.29 complete grounded catalog', () => {
   test('unknown DayZ-looking files fail closed', () => {
     const a = answerDayz129CatalogQuestion('DayZ: was ist die SuperLootTurbo.xml?');
     expect(a?.topic).toBe('unknown-file');
-    expect(a?.answer).toMatch(/keinem.*Datensaetze/i);
+    expect(a?.answer).toMatch(/keinem.*Datensaettze/i);
     expect(a?.answer).toMatch(/erfinde/i);
   });
 
-  test('map-specific type and event questions only report the requested map', () => {
-    const t = answerDayz129CatalogQuestion('Classname M4A1 auf Sakhal');
+  test('classname requests stay classname-only even with a map suffix; explicit detail/event queries stay map-specific', () => {
+    const strict = answerDayz129CatalogQuestion('Classname M4A1 auf Sakhal');
+    expect(strict?.answer).toBe('Der Classname ist **`M4A1`**.');
+
+    const t = answerDayz129CatalogQuestion('Welche Werte hat M4A1 auf Sakhal?');
     expect(t?.answer).toMatch(/Sakhal/);
     expect(t?.answer).not.toMatch(/Chernarus/);
     expect(t?.answer).not.toMatch(/Livonia/);
