@@ -1,0 +1,31 @@
+name: TEMP Generate DayZ 1.29 Index
+
+on:
+  push:
+    branches: [feat/dayz129-complete-grounded-catalog]
+
+permissions:
+  contents: write
+
+jobs:
+  generate:
+    if: github.actor != 'github-actions[bot]'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout V-Bot branch
+        uses: actions/checkout@v5
+        with:
+          ref: feat/dayz129-complete-grounded-catalog
+          fetch-depth: 0
+      - name: Checkout Bohemia DZ_129 source
+        run: git clone --depth 1 --branch DZ_129 https://github.com/BohemiaInteractive/DayZ-Central-Economy.git /tmp/dayz-ce
+      - name: Verify supplied ZIP manifest and generate runtime index
+        run: python3 scripts/generate_dayz129_index.py --source /tmp/dayz-ce
+      - name: Commit generated corpus and remove temporary workflow
+        run: |
+          git rm .github/workflows/temp-generate-dayz129-index.yml
+          git add src/modules/ai/generated/dayz129IndexData.ts
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git commit -m "Generate verified complete DayZ 1.29 runtime index"
+          git push origin HEAD:feat/dayz129-complete-grounded-catalog
