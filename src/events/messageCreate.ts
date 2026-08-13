@@ -4,7 +4,7 @@ import { logger, logAudit } from '../utils/logger';
 import prisma from '../database/prisma';
 import { detectSpam } from '../utils/rateLimiter';
 import { answerQuestion } from '../modules/ai/aiHandler';
-import { enrichDayzTechnicalFollowUp } from '../modules/ai/nitradoHelp';
+import { enrichDayz129FollowUp } from '../modules/ai/dayz129Catalog';
 import { buildServerUserContext } from '../modules/ai/contextBuilder';
 import { trackMemberActivity } from '../modules/ai/memberAwareness';
 import { listTriggers, findMatchingTrigger, isOnCooldown, renderTemplate } from '../modules/ai/triggers';
@@ -479,7 +479,7 @@ const messageCreateEvent: BotEvent = {
               const recentBotMessages = Array.from(recent.values())
                 .filter(m => m.author.id === me && (m.content?.trim()?.length ?? 0) > 0);
               for (const previousBot of recentBotMessages) {
-                const enriched = enrichDayzTechnicalFollowUp(question, previousBot.content);
+                const enriched = enrichDayz129FollowUp(question, previousBot.content);
                 if (enriched !== question) {
                   aiQuestion = enriched;
                   break;

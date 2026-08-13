@@ -11,6 +11,7 @@ import { redactText } from '../nitrado/mirror/redactor';
 import { cached } from '../../utils/responseCache';
 import { clampBlock, clampHistory } from './promptBudget';
 import { classifyProviderHttpStatus, updateAllRateLimitedState } from './providerFailure';
+import { answerDayz129CatalogQuestion } from './dayz129Catalog';
 
 /**
  * AI-Integration (Sektion 4):
@@ -320,6 +321,19 @@ export async function answerQuestion(
       : (optionsOrContext ?? {});
   const mode: AnswerMode = opts.mode ?? 'chat';
   const context = opts.context;
+
+  // Complete DayZ 1.29 catalog: every indexed file/class/event is resolved before rate-limit/provider use.
+  if (mode !== 'welcome') {
+    try {
+      const catalogAnswer = answerDayz129CatalogQuestion(question);
+      if (catalogAnswer) {
+        logger.info(`[DayZ-129-Catalog] direct-answer preflight (topic=${catalogAnswer.topic}, ids=${catalogAnswer.ids.slice(0, 3).join(',')})`);
+        return { success: true, result: redactText(catalogAnswer.answer) };
+      }
+    } catch (e) {
+      logger.error(`[DayZ-129-Catalog] preflight fehlgeschlagen: ${String(e)}`);
+    }
+  }
 
   // DayZ direct-answer preflight: verified deterministic answers do not call an AI provider
   // and therefore must not consume or be blocked by the per-user AI rate limit.
