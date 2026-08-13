@@ -42,7 +42,7 @@ const EVENTS_XML_DIRECT_ANSWER = [
   '**Echtes Chernarus-1.29-Beispiel:** `StaticHeliCrash` hat in Bohemias DZ_129-Referenz `nominal=3`, `lifetime=2100`, `restock=0`, `saferadius=1000`, `distanceradius=1000`, `cleanupradius=1000`, `position=fixed`, `limit=child` und `active=1`. Als Child ist `Wreck_UH1Y` mit `lootmin=10`, `lootmax=15`, `min=1` und `max=3` hinterlegt.',
   '',
   'Wichtig: `events.xml` ist **nicht** die Datei fuer frei erfundene Start-/Endzeitplaene, Regenphasen oder zeitgesteuerte Zombie-Wellen. Solche Aussagen duerfen nicht aus dem Dateinamen abgeleitet werden.',
-].join('\\n');
+].join('\n');
 
 const DAYZ_ENGINE_TOPICS: HelpTopic[] = [
   {

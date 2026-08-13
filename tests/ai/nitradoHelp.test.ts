@@ -154,7 +154,7 @@ describe('nitradoHelp — DayZ 1.29 grounded', () => {
     expect(a.directAnswer).toMatch(/StaticHeliCrash/);
     expect(a.directAnswer).toMatch(/nominal=3/);
     expect(a.directAnswer).toMatch(/Wreck_UH1Y/);
-    expect(a.directAnswer).not.toMatch(/Start-.*Endzeit|Regenphasen|Zombie-Wellen.*festgelegten Zeiten/i);
+    expect(a.directAnswer).toMatch(/nicht.*Start-\/Endzeit/i);
   });
 
   it('kontextualisiert kurze DayZ-Folgefragen auf die vorherige Datei', () => {
