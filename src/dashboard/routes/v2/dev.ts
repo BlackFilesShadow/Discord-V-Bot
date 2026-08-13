@@ -14,6 +14,8 @@
  *   - KEIN Default. Es gilt ausschliesslich der env-Wert DEV_PASSWORD.
  *   - Fehlt DEV_PASSWORD, ist der Login fail-closed (503).
  *   - Vergleich serverseitig mit timingSafeEqual.
+ *   - Das Passwort ist ausschliesslich Step-up-Authentisierung und vergibt
+ *     niemals eine Rolle oder Identitaet.
  *
  * Brute-Force-Schutz:
  *   - In-Memory-Tracking pro userDiscordId+IP.
@@ -30,6 +32,7 @@ import { listActiveDevSessions, forceRevokeDevSession } from '../../services/dev
 import prisma from '../../../database/prisma';
 import { tryGetDashboardClient } from '../../clientRegistry';
 import { logAudit, logger } from '../../../utils/logger';
+import { config } from '../../../config';
 
 export const devRouter = Router();
 
@@ -59,6 +62,20 @@ function registerFail(key: string): void {
 }
 
 function clearFails(key: string): void { failures.delete(key); }
+
+/**
+ * Phase 10 / GlobalDeveloperIdentity:
+ * DEV ist genau die kanonische Bot-Owner-Identitaet UND eine bereits in der DB
+ * vergebene DEVELOPER-Rolle. Ein Shared-Password darf diese Entscheidung nie
+ * beeinflussen.
+ */
+export function isGlobalDeveloperEligible(
+  discordId: string,
+  role: string,
+  ownerId: string = config.discord.ownerId,
+): boolean {
+  return ownerId.length > 0 && role === 'DEVELOPER' && discordId === ownerId;
+}
 
 // --- Passwort-Aufloesung --------------------------------------------------
 // Sicherheits-Hardening: KEIN Default-Passwort. Wenn DEV_PASSWORD nicht gesetzt ist,
@@ -94,15 +111,39 @@ const loginLimiter = rateLimit({
 devRouter.post('/login', loginLimiter, async (req, res) => {
   if (!req.auth) { res.status(401).json({ error: 'Nicht angemeldet.' }); return; }
   // Frische DB-Rolle (Session-Rolle kann veraltet sein, wenn ein Admin eine
-  // Promotion gemacht hat ohne dass der User sich neu eingeloggt hat).
+  // Rollen-Aenderung vorgenommen hat ohne dass der User sich neu eingeloggt hat).
   const dbUser = await prisma.user.findUnique({
     where: { id: req.auth.userId },
     select: { role: true },
   });
   const currentRole = dbUser?.role ?? req.auth.role;
-  // Hinweis: KEINE Vorab-Rollensperre mehr. Das korrekte DEV_PASSWORD ist die
-  // Berechtigung. Bei Erfolg wird der User automatisch auf DEVELOPER befoerdert
-  // (siehe unten nach der Passwortpruefung).
+
+  // Fail-closed: Ohne kanonische globale Developer-ID ist die DEV-Konsole nicht
+  // korrekt konfiguriert. Ein Passwort darf diesen Zustand niemals ueberbruecken.
+  if (!config.discord.ownerId) {
+    logger.error('[DEV] Login-Versuch abgelehnt: BOT_OWNER_ID/DISCORD_OWNER_ID fehlt.');
+    logAudit('DEV_LOGIN_MISCONFIGURED', 'SECURITY', { userId: req.auth.userId, ip: req.ip });
+    res.status(503).json({ error: 'DEV-Login serverseitig nicht konfiguriert (BOT_OWNER_ID fehlt).' });
+    return;
+  }
+
+  if (!isGlobalDeveloperEligible(String(req.auth.discordId), currentRole)) {
+    logAudit('DEV_LOGIN_NOT_ELIGIBLE', 'SECURITY', {
+      userId: req.auth.userId,
+      discordId: req.auth.discordId,
+      role: currentRole,
+      ip: req.ip,
+    });
+    recordDevAuthFailure({
+      userId: req.auth.userId,
+      ip: req.ip,
+      userAgent: String(req.headers['user-agent'] ?? ''),
+      reason: 'not_eligible',
+      failureCount: 1,
+    });
+    res.status(403).json({ error: 'Keine DEV-Berechtigung.' });
+    return;
+  }
 
   const key = bruteKey(req.auth.discordId, req.ip);
   const lockedFor = isLocked(key);
@@ -147,19 +188,6 @@ devRouter.post('/login', loginLimiter, async (req, res) => {
 
   clearFails(key);
 
-  // Befoerderung: Wer das korrekte DEV_PASSWORD kennt, erhaelt automatisch die
-  // DEVELOPER-Rolle. Session-Rolle wird mitgezogen, damit Folge-Requests sofort
-  // konsistent sind (ohne Re-OAuth).
-  if (currentRole !== 'DEVELOPER') {
-    await prisma.user.update({
-      where: { id: req.auth.userId },
-      data: { role: 'DEVELOPER' },
-    });
-    (req.session as unknown as { role?: string }).role = 'DEVELOPER';
-    req.auth.role = 'DEVELOPER';
-    logAudit('DEV_ROLE_PROMOTED', 'SECURITY', { userId: req.auth.userId, from: currentRole, ip: req.ip });
-  }
-
   // Vorhandene DevSessions des Users widerrufen, damit nur eine aktiv ist.
   await prisma.devSession.updateMany({
     where: { userDiscordId: req.auth.discordId, revokedAt: null, expiresAt: { gt: new Date() } },
@@ -195,8 +223,7 @@ devRouter.post('/logout', async (req, res) => {
 
 devRouter.get('/status', async (req, res) => {
   if (!req.auth) { res.status(401).json({ error: 'Nicht angemeldet.' }); return; }
-  // Frische DB-Rolle (s. /login). Sorgt dafuer, dass das Frontend nach einer
-  // Rollen-Promotion sofort eligible:true sieht, ohne Re-OAuth.
+  // Frische DB-Rolle sorgt dafuer, dass Rollenentzug sofort wirksam wird.
   const dbUser = await prisma.user.findUnique({
     where: { id: req.auth.userId },
     select: { role: true },
@@ -206,7 +233,7 @@ devRouter.get('/status', async (req, res) => {
     (req.session as unknown as { role?: string }).role = currentRole;
     req.auth.role = currentRole;
   }
-  if (currentRole !== 'DEVELOPER') {
+  if (!isGlobalDeveloperEligible(String(req.auth.discordId), currentRole)) {
     res.json({ active: false, eligible: false });
     return;
   }
