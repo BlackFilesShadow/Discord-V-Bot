@@ -1,7 +1,8 @@
 /**
- * Welcome-Renderer und Versandlogik fuer normale Discord-Nachrichten.
- * {user} und {mention} sind echte Discord-Erwaehnungen im Nachrichtentext.
+ * Welcome-Renderer und Versandlogik fuer eine zusammenhaengende Discord-
+ * Components-V2-Nachricht. {user}/{mention} bleiben echte User-Erwaehnungen.
  */
+import { ComponentType, MessageFlags } from 'discord.js';
 import {
   countWelcomeGraphemes,
   MAX_WELCOME_CONTENT_LENGTH,
@@ -37,7 +38,7 @@ describe('welcome length limits and safe splitting', () => {
     expect(MAX_WELCOME_TEMPLATE_GRAPHEMES).toBe(4000);
   });
 
-  it('setzt normale Discord-Teile auf maximal 2000 Code-Units', () => {
+  it('teilt TextDisplay-Inhalt konservativ bei maximal 2000 Code-Units', () => {
     expect(MAX_WELCOME_CONTENT_LENGTH).toBe(2000);
   });
 
@@ -49,7 +50,7 @@ describe('welcome length limits and safe splitting', () => {
     expect(countWelcomeGraphemes('👨‍👩‍👧‍👦')).toBe(1);
   });
 
-  it('laesst 2000 ASCII-Zeichen in einer Nachricht', () => {
+  it('laesst 2000 ASCII-Zeichen in einer Komponente', () => {
     const chunks = splitWelcomeContent('a'.repeat(2000));
     expect(chunks).toEqual(['a'.repeat(2000)]);
   });
@@ -62,7 +63,7 @@ describe('welcome length limits and safe splitting', () => {
     expect(chunks.join('')).toBe(input);
   });
 
-  it('teilt 4000 ASCII-Zeichen in exakt zwei Discord-Nachrichten', () => {
+  it('teilt 4000 ASCII-Zeichen in exakt zwei TextDisplay-Komponenten', () => {
     const input = 'a'.repeat(4000);
     const chunks = splitWelcomeContent(input);
     expect(chunks).toHaveLength(2);
@@ -99,20 +100,27 @@ describe('welcome length limits and safe splitting', () => {
 
 function makeFakeChannel() {
   const payloads: unknown[] = [];
-  const deleted: number[] = [];
   const channel = {
     send: async (payload: unknown) => {
-      const index = payloads.push(payload) - 1;
-      return {
-        delete: async () => { deleted.push(index); },
-      };
+      payloads.push(payload);
+      return { delete: async () => undefined };
     },
   };
-  return { channel, payloads, deleted };
+  return { channel, payloads };
+}
+
+function serializedComponents(payload: unknown): Array<Record<string, unknown>> {
+  const raw = (payload as { components?: unknown[] }).components ?? [];
+  return raw.map(component => {
+    if (component && typeof component === 'object' && 'toJSON' in component && typeof (component as { toJSON?: unknown }).toJSON === 'function') {
+      return (component as { toJSON: () => Record<string, unknown> }).toJSON();
+    }
+    return component as Record<string, unknown>;
+  });
 }
 
 describe('sendWelcomeMessages', () => {
-  it('sendet ohne Medium nur normalen Content mit gezielt erlaubtem User-Ping', async () => {
+  it('sendet ohne Medium genau EINE Components-V2-Nachricht mit gezieltem User-Ping', async () => {
     const { channel, payloads } = makeFakeChannel();
     await sendWelcomeMessages(channel as never, {
       text: 'Hallo <@12345678901234567>',
@@ -121,13 +129,21 @@ describe('sendWelcomeMessages', () => {
 
     expect(payloads).toHaveLength(1);
     expect(payloads[0]).toMatchObject({
-      content: 'Hallo <@12345678901234567>',
+      flags: MessageFlags.IsComponentsV2,
       allowedMentions: { users: ['12345678901234567'], parse: [] },
     });
+    expect(payloads[0]).not.toHaveProperty('content');
     expect(payloads[0]).not.toHaveProperty('embeds');
+
+    const components = serializedComponents(payloads[0]);
+    expect(components).toHaveLength(1);
+    expect(components[0]).toMatchObject({
+      type: ComponentType.TextDisplay,
+      content: 'Hallo <@12345678901234567>',
+    });
   });
 
-  it('sendet image_first wirklich vor dem Text', async () => {
+  it('image_first rendert Medium und Text in genau EINER Nachricht in dieser Reihenfolge', async () => {
     const { channel, payloads } = makeFakeChannel();
     await sendWelcomeMessages(channel as never, {
       text: 'Willkommen <@12345678901234567>',
@@ -136,12 +152,19 @@ describe('sendWelcomeMessages', () => {
       mentionUserId: '12345678901234567',
     });
 
-    expect(payloads).toHaveLength(2);
-    expect(payloads[0]).toMatchObject({ content: 'https://example.com/welcome.png' });
-    expect(payloads[1]).toMatchObject({ content: 'Willkommen <@12345678901234567>' });
+    expect(payloads).toHaveLength(1);
+    const components = serializedComponents(payloads[0]);
+    expect(components.map(c => c.type)).toEqual([
+      ComponentType.MediaGallery,
+      ComponentType.TextDisplay,
+    ]);
+    expect(components[0]).toMatchObject({
+      items: [{ media: { url: 'https://example.com/welcome.png' } }],
+    });
+    expect(components[1]).toMatchObject({ content: 'Willkommen <@12345678901234567>' });
   });
 
-  it('sendet text_first wirklich vor dem Medium', async () => {
+  it('text_first rendert Text und Medium in genau EINER Nachricht in dieser Reihenfolge', async () => {
     const { channel, payloads } = makeFakeChannel();
     await sendWelcomeMessages(channel as never, {
       text: 'Willkommen <@12345678901234567>',
@@ -150,19 +173,29 @@ describe('sendWelcomeMessages', () => {
       mentionUserId: '12345678901234567',
     });
 
-    expect(payloads).toHaveLength(2);
-    expect(payloads[0]).toMatchObject({ content: 'Willkommen <@12345678901234567>' });
-    expect(payloads[1]).toMatchObject({ content: 'https://example.com/welcome.png' });
+    expect(payloads).toHaveLength(1);
+    const components = serializedComponents(payloads[0]);
+    expect(components.map(c => c.type)).toEqual([
+      ComponentType.TextDisplay,
+      ComponentType.MediaGallery,
+    ]);
+    expect(components[0]).toMatchObject({ content: 'Willkommen <@12345678901234567>' });
+    expect(components[1]).toMatchObject({
+      items: [{ media: { url: 'https://example.com/welcome.png' } }],
+    });
   });
 
-  it('sendet 4000 ASCII-Zeichen ohne stilles Abschneiden in zwei Teilen', async () => {
+  it('sendet 4000 ASCII-Zeichen ohne Abschneiden als zwei TextDisplays in EINER Nachricht', async () => {
     const { channel, payloads } = makeFakeChannel();
     const input = 'a'.repeat(4000);
     await sendWelcomeMessages(channel as never, { text: input });
 
-    expect(payloads).toHaveLength(2);
-    const combined = payloads.map(p => (p as { content: string }).content).join('');
+    expect(payloads).toHaveLength(1);
+    const components = serializedComponents(payloads[0]);
+    expect(components).toHaveLength(2);
+    expect(components.every(c => c.type === ComponentType.TextDisplay)).toBe(true);
+    const combined = components.map(c => String(c.content ?? '')).join('');
     expect(combined).toBe(input);
-    expect(payloads.every(p => (p as { content: string }).content.length <= 2000)).toBe(true);
+    expect(components.every(c => String(c.content ?? '').length <= 2000)).toBe(true);
   });
 });
