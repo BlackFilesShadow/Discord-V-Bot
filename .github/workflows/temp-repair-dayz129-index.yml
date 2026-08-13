@@ -51,10 +51,25 @@ jobs:
 
           chunks = [read_chunk(name) for name in names]
           encoded = ''.join(chunks)
+
+          # Node's Buffer.from(value, 'base64') accepts missing terminal padding.
+          # Reproduce only that tolerance: mod-4 == 1 is irrecoverably malformed,
+          # while 2/3 may be normalized with terminal '=' characters. Strict
+          # validation still rejects any illegal/internal base64 corruption.
+          remainder = len(encoded) % 4
+          if remainder == 1:
+              raise SystemExit(
+                  f'Invalid base64 payload length: {len(encoded)} characters (mod 4 = 1)'
+              )
+          normalized_encoded = encoded + ('=' * ((4 - remainder) % 4))
           try:
-              packed = base64.b64decode(encoded, validate=True)
+              packed = base64.b64decode(normalized_encoded, validate=True)
           except binascii.Error as exc:
               raise SystemExit(f'Invalid base64 payload: {exc}') from exc
+          print(
+              f'Base64 payload: chars={len(encoded)}, remainder={remainder}, '
+              f'padding_added={len(normalized_encoded) - len(encoded)}, bytes={len(packed)}'
+          )
 
           if len(packed) < 18 or packed[:3] != b'\x1f\x8b\x08':
               raise SystemExit('Payload is not a supported gzip stream')
@@ -157,7 +172,7 @@ jobs:
 
           repaired = gzip.compress(raw, compresslevel=9, mtime=0)
           repaired_b64 = base64.b64encode(repaired).decode('ascii')
-          if gzip.decompress(base64.b64decode(repaired_b64)) != raw:
+          if gzip.decompress(base64.b64decode(repaired_b64, validate=True)) != raw:
               raise SystemExit('Self-check of repaired gzip failed')
 
           # Preserve the existing module layout and the first ten chunk lengths;
