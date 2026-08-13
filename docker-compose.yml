@@ -41,6 +41,7 @@ services:
     build: .
     container_name: discord-v-bot
     restart: unless-stopped
+    init: true
     depends_on:
       postgres:
         condition: service_healthy
