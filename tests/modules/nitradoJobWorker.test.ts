@@ -35,9 +35,11 @@ const decryptMock = jest.fn();
 jest.mock('../../src/utils/security', () => ({ __esModule: true, decrypt: (...a: unknown[]) => decryptMock(...a) }));
 
 const addToWhitelist = jest.fn();
+const getServiceStatus = jest.fn();
+const startService = jest.fn();
 jest.mock('../../src/modules/nitrado/nitradoClient', () => ({
   __esModule: true,
-  NitradoClient: jest.fn().mockImplementation(() => ({ addToWhitelist })),
+  NitradoClient: jest.fn().mockImplementation(() => ({ addToWhitelist, getServiceStatus, start: startService })),
   NitradoApiError: class NitradoApiError extends Error { status: number | null = null; },
 }));
 
@@ -77,6 +79,35 @@ describe('NIT-005/007 — Job-Fehler vor API-Aufruf', () => {
     addToWhitelist.mockResolvedValue(undefined);
     await executeJob('j3');
     expect(addToWhitelist).toHaveBeenCalledWith('123', 'player1');
+    expect(lastUpdateData().status).toBe('DONE');
+  });
+});
+
+describe('KEEP-004 — RESTART_IF_DOWN respektiert administrative Zustaende', () => {
+  beforeEach(() => {
+    decryptMock.mockReturnValue('decrypted-token');
+  });
+
+  it('startet einen explizit gestoppten Service', async () => {
+    jobStore['restart-stopped'] = { id: 'restart-stopped', guildId: 'g1', nitradoConnId: 'conn-1', operation: 'RESTART_IF_DOWN', payload: {}, attempts: 0, maxAttempts: 8 };
+    getServiceStatus.mockResolvedValue('stopped');
+    startService.mockResolvedValue(undefined);
+
+    await executeJob('restart-stopped');
+
+    expect(getServiceStatus).toHaveBeenCalledWith('123');
+    expect(startService).toHaveBeenCalledWith('123');
+    expect(lastUpdateData().status).toBe('DONE');
+  });
+
+  it('startet einen suspendierten Service niemals automatisch', async () => {
+    jobStore['restart-suspended'] = { id: 'restart-suspended', guildId: 'g1', nitradoConnId: 'conn-1', operation: 'RESTART_IF_DOWN', payload: {}, attempts: 0, maxAttempts: 8 };
+    getServiceStatus.mockResolvedValue('suspended');
+
+    await executeJob('restart-suspended');
+
+    expect(getServiceStatus).toHaveBeenCalledWith('123');
+    expect(startService).not.toHaveBeenCalled();
     expect(lastUpdateData().status).toBe('DONE');
   });
 });
