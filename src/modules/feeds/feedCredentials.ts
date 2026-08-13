@@ -1,17 +1,15 @@
 /**
  * Pro-Feed API-Zugangsdaten (verschluesselt, AES-256-GCM).
  *
- * YouTube-Feeds koennen einen eigenen `YOUTUBE_API_KEY`, Twitch-Feeds eigene
- * `TWITCH_CLIENT_ID` + `TWITCH_CLIENT_SECRET` hinterlegen. Ist nichts hinterlegt,
- * greift der globale ENV-Key (Fallback). Gespeichert wird ausschliesslich der
- * verschluesselte JSON-Blob in `Feed.credentialsEnc`; die Klartext-Secrets
- * verlassen den Server nie ueber die API (write-only).
+ * YouTube-Feeds koennen einen eigenen API-Key, Twitch-Feeds eigene Client-ID
+ * + Client-Secret hinterlegen. Ist nichts hinterlegt, greift der globale ENV-Key.
+ * Gespeichert wird ausschliesslich der verschluesselte JSON-Blob in
+ * Feed.credentialsEnc; Klartext-Secrets werden nie ueber die Read-API ausgegeben.
  *
- * Format-Recherche (offizielle Muster):
- *  - YouTube Data API v3 Key: beginnt mit `AIza`, gesamt 39 Zeichen
- *    -> /^AIza[0-9A-Za-z_-]{35}$/
- *  - Twitch Client-ID:     30 Zeichen, klein-alphanumerisch  -> /^[a-z0-9]{30}$/
- *  - Twitch Client-Secret: 30 Zeichen, klein-alphanumerisch  -> /^[a-z0-9]{30}$/
+ * Wichtig: Die Anbieter dokumentieren die benoetigten Credential-Felder, aber
+ * keine stabile vertragliche Zeichenlaenge fuer alle zukuenftigen Keys. Deshalb
+ * validieren wir defensiv auf nicht-leere, whitespace-freie Tokens statt auf
+ * historische Beispiel-Laengen wie exakt 30/39 Zeichen.
  */
 import { encrypt, decrypt } from '../../utils/security';
 import { config } from '../../config';
@@ -21,36 +19,26 @@ export interface TwitchCreds { twitchClientId: string; twitchClientSecret: strin
 export interface YouTubeCreds { youtubeApiKey: string }
 export type FeedCreds = TwitchCreds | YouTubeCreds;
 
-const YOUTUBE_KEY_RE = /^AIza[0-9A-Za-z_-]{35}$/;
-const TWITCH_ID_RE = /^[a-z0-9]{30}$/;
-const TWITCH_SECRET_RE = /^[a-z0-9]{30}$/;
-
 function str(v: unknown): string {
   return typeof v === 'string' ? v.trim() : '';
 }
 
-/**
- * Ergebnis fuer die Route:
- *  - change:false            -> Body enthielt keine Credential-Felder -> unveraendert lassen
- *  - change:true, value:null -> Felder leer -> gespeicherte Credentials loeschen
- *  - change:true, value:str  -> verschluesselter Blob zum Speichern
- */
+function validToken(value: string, min: number, max = 256): boolean {
+  return value.length >= min && value.length <= max && !/\s/.test(value) && !/[\u0000-\u001f\u007f]/.test(value);
+}
+
 export type CredentialUpdate =
   | { ok: true; change: false }
   | { ok: true; change: true; value: string | null }
   | { ok: false; error: string };
 
-/**
- * Liest die typ-spezifischen Credential-Felder aus dem Request-Body, validiert
- * das Format und liefert den verschluesselten Blob (oder null zum Loeschen).
- */
 export function resolveCredentialUpdate(feedType: string, body: Record<string, unknown>): CredentialUpdate {
   if (feedType === 'YOUTUBE') {
     if (!('youtubeApiKey' in body)) return { ok: true, change: false };
     const key = str(body.youtubeApiKey);
-    if (key.length === 0) return { ok: true, change: true, value: null }; // entfernen
-    if (!YOUTUBE_KEY_RE.test(key)) {
-      return { ok: false, error: 'Ungültiger YouTube-API-Key (erwartet: „AIza…", 39 Zeichen).' };
+    if (key.length === 0) return { ok: true, change: true, value: null };
+    if (!validToken(key, 20)) {
+      return { ok: false, error: 'Ungültiger YouTube-API-Key (keine Leerzeichen, 20–256 Zeichen).' };
     }
     return { ok: true, change: true, value: encryptCreds({ youtubeApiKey: key }) };
   }
@@ -61,26 +49,23 @@ export function resolveCredentialUpdate(feedType: string, body: Record<string, u
     if (!hasId && !hasSecret) return { ok: true, change: false };
     const id = str(body.twitchClientId);
     const secret = str(body.twitchClientSecret);
-    if (id.length === 0 && secret.length === 0) return { ok: true, change: true, value: null }; // entfernen
-    if (!TWITCH_ID_RE.test(id)) {
-      return { ok: false, error: 'Ungültige Twitch-Client-ID (erwartet: 30 Zeichen a–z/0–9).' };
+    if (id.length === 0 && secret.length === 0) return { ok: true, change: true, value: null };
+    if (!validToken(id, 8)) {
+      return { ok: false, error: 'Ungültige Twitch-Client-ID (keine Leerzeichen, 8–256 Zeichen).' };
     }
-    if (!TWITCH_SECRET_RE.test(secret)) {
-      return { ok: false, error: 'Ungültiges Twitch-Client-Secret (erwartet: 30 Zeichen a–z/0–9).' };
+    if (!validToken(secret, 12)) {
+      return { ok: false, error: 'Ungültiges Twitch-Client-Secret (keine Leerzeichen, 12–256 Zeichen).' };
     }
     return { ok: true, change: true, value: encryptCreds({ twitchClientId: id, twitchClientSecret: secret }) };
   }
 
-  // Andere Feed-Typen kennen keine per-Feed-Credentials -> ignorieren.
   return { ok: true, change: false };
 }
 
-/** Verschluesselt einen Credential-Datensatz zu einem speicherbaren Blob. */
 export function encryptCreds(creds: FeedCreds): string {
   return encrypt(JSON.stringify(creds), config.security.encryptionKey);
 }
 
-/** Entschluesselt Twitch-Credentials eines Feeds (oder null bei fehlend/ungueltig). */
 export function getTwitchCreds(credentialsEnc: string | null | undefined): TwitchCreds | null {
   const c = decryptCreds(credentialsEnc);
   if (c && 'twitchClientId' in c && 'twitchClientSecret' in c && c.twitchClientId && c.twitchClientSecret) {
@@ -89,7 +74,6 @@ export function getTwitchCreds(credentialsEnc: string | null | undefined): Twitc
   return null;
 }
 
-/** Entschluesselt einen YouTube-Key eines Feeds (oder null bei fehlend/ungueltig). */
 export function getYouTubeKey(credentialsEnc: string | null | undefined): string | null {
   const c = decryptCreds(credentialsEnc);
   if (c && 'youtubeApiKey' in c && c.youtubeApiKey) return c.youtubeApiKey;
