@@ -4,6 +4,7 @@
  * Nitrado: hosting procedures only.
  */
 import { buildDayzKnowledgeContext, getDayzGroundingTruthBlock } from './dayzKnowledge';
+import { isKnownDayz129Identifier } from './dayz129Catalog';
 
 export interface HelpTopic {
   id: string;
@@ -244,6 +245,7 @@ export function validateDayzTechnicalAnswer(answer: string, grounding: string, q
     violations.add(`verbotener halluzinierter DayZ-Identifier: ${bad}`);
   }
   for (const identifier of extractDayzTechnicalIdentifiers(answer)) {
+    if (isKnownDayz129Identifier(identifier)) continue;
     if (!groundingContainsIdentifier(grounding, identifier)) violations.add(`nicht im Grounding belegter Identifier: ${identifier}`);
   }
 

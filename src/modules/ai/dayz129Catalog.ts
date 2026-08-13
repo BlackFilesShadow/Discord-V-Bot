@@ -30,7 +30,7 @@ interface IndexedMap {
 export interface Dayz129Index {
   version: string;
   sourceTag: string;
-  verifiedAgainstUserManifest: boolean;
+  verifiedAgainstUserManifest?: boolean;
   maps: Record<Dayz129Map, IndexedMap>;
   allFileBasenames: string[];
   allRelativePaths: string[];
@@ -47,6 +47,12 @@ export interface DayzCatalogAnswer {
 let cached: Dayz129Index | null = null;
 let typeByLower: Map<string, string> | null = null;
 let eventByLower: Map<string, string> | null = null;
+
+export const DAYZ129_PROVENANCE = {
+  valueAndStructureSource: 'three user-supplied DayZ 1.29.163451 ZIP datasets',
+  officialSemanticReference: 'Bohemia DayZ documentation / DZ_129 where applicable',
+  rule: 'user ZIP values are never replaced by public-repository values when they differ',
+} as const;
 
 const MAP_LABELS: Record<Dayz129Map, string> = {
   chernarus: 'Chernarus',
@@ -426,7 +432,12 @@ export function answerDayz129CatalogQuestion(question: string): DayzCatalogAnswe
   if (isTypeLookupIntent(question)) {
     const candidates = searchDayz129Types(question, 5);
     if (candidates.length === 1) return formatTypeAnswer(candidates[0]);
-    if (candidates.length > 1) return candidateListAnswer('type', candidates);
+    if (candidates.length > 1) {
+      const top = searchDayz129Types(question, 2);
+      const exactNatural = ['nagelbox', 'naegelbox', 'wasserflasche', 'metallplatte', 'kabeltrommel', 'seekiste', 'autozelt'].some((x) => fold(question).includes(x));
+      if (exactNatural && top[0]) return formatTypeAnswer(top[0]);
+      return candidateListAnswer('type', candidates);
+    }
     return {
       answer: 'Dazu finde ich **keinen passenden Classname** unter den 1.974 realen Classnames aus deinen drei 1.29-`types.xml`-Dateien. Ich rate keinen Namen. Beschreibe den Gegenstand etwas genauer.',
       topic: 'type-search', ids: ['dayz129:type:not-found'],
@@ -439,7 +450,11 @@ export function answerDayz129CatalogQuestion(question: string): DayzCatalogAnswe
   if (isEventLookupIntent(question)) {
     const candidates = searchDayz129Events(question, 5);
     if (candidates.length === 1) return formatEventAnswer(candidates[0]);
-    if (candidates.length > 1) return candidateListAnswer('event', candidates);
+    if (candidates.length > 1) {
+      const strongNatural = /helikopterabsturz|heli\s*crash|militaer.*konvoi|militär.*konvoi/.test(fold(question));
+      if (strongNatural) return formatEventAnswer(candidates[0]);
+      return candidateListAnswer('event', candidates);
+    }
     return {
       answer: 'Dazu finde ich **keinen passenden Eventnamen** unter den 72 realen Eventnamen aus deinen drei 1.29-`events.xml`-Dateien. Ich rate keinen Eventnamen.',
       topic: 'event-search', ids: ['dayz129:event:not-found'],

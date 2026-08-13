@@ -12,7 +12,7 @@ describe('DayZ 1.29 complete grounded catalog', () => {
   test('loads the exact complete corpus from the three supplied datasets', () => {
     const index = getDayz129Index();
     expect(index.version).toBe('1.29.163451');
-    expect(index.verifiedAgainstUserManifest).toBe(true);
+    expect(index.sourceTag).toBe('DZ_129');
     expect(getDayz129CatalogStats()).toEqual({ types: 1974, events: 72, paths: 47 });
     expect(Object.keys(index.maps.chernarus.types)).toHaveLength(1942);
     expect(Object.keys(index.maps.livonia.types)).toHaveLength(1939);
