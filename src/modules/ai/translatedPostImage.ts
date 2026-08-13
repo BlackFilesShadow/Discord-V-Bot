@@ -3,7 +3,10 @@ import path from 'node:path';
 import { randomUUID } from 'node:crypto';
 import { config } from '../../config';
 
-export const MAX_TRANSLATED_POST_IMAGE_BYTES = 8 * 1024 * 1024;
+// Discord's documented default per-attachment upload limit for apps is 10 MiB.
+// Higher limits can exist depending on Nitro/server boost state, but recurring
+// translated posts have no interaction attachment_size_limit to rely on safely.
+export const MAX_TRANSLATED_POST_IMAGE_BYTES = 10 * 1024 * 1024;
 const PREFIX = 'upload:translated-posts/';
 const ROOT = path.join(config.upload.dir, 'translated-posts');
 
@@ -19,7 +22,7 @@ function detectImageKind(buffer: Buffer): ImageKind | null {
 
 export function validateTranslatedPostImage(file: { buffer: Buffer; mimetype?: string }): { ok: true; kind: ImageKind } | { ok: false; error: string } {
   if (!file.buffer?.length) return { ok: false, error: 'Bilddatei ist leer.' };
-  if (file.buffer.length > MAX_TRANSLATED_POST_IMAGE_BYTES) return { ok: false, error: 'Bild ist größer als 8 MB.' };
+  if (file.buffer.length > MAX_TRANSLATED_POST_IMAGE_BYTES) return { ok: false, error: 'Bild ist größer als 10 MiB.' };
   const kind = detectImageKind(file.buffer);
   if (!kind) return { ok: false, error: 'Nur PNG, JPEG, GIF oder WebP sind erlaubt.' };
   const mime = (file.mimetype ?? '').toLowerCase();
