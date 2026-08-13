@@ -115,7 +115,7 @@ describe('DayZ 1.29 complete grounded catalog', () => {
     const a = answerDayz129CatalogQuestion('DayZ: was ist die SuperLootTurbo.xml?');
     expect(a?.topic).toBe('unknown-file');
     expect(a?.answer).toMatch(/keinem.*Datensaetze/i);
-    expect(a?.answer).toMatch(/erfinde/i);
+    expect(a?.answer).toMatch(/Mod-Datei|Mod-\/Dateiquelle/i);
   });
 
   test('map-specific type and event questions only report the requested map', () => {
