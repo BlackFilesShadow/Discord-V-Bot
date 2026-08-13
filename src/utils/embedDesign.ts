@@ -34,10 +34,64 @@ export const Brand = {
 } as const;
 
 /**
+ * Verbindliche Status-Sprache fuer feste V-Bot-Embeds.
+ * Thematische Emojis bleiben erhalten; das Statussymbol steht nur davor.
+ */
+export type EmbedStatus = 'SUCCESS' | 'INFO' | 'ERROR' | 'WARNING' | 'NEUTRAL';
+export type StatusIcon = '✅' | '❕' | '❌' | '⚠️';
+
+export const StatusIcons: Record<Exclude<EmbedStatus, 'NEUTRAL'>, StatusIcon> = {
+  SUCCESS: '✅',
+  INFO: '❕',
+  ERROR: '❌',
+  WARNING: '⚠️',
+} as const;
+
+const LEADING_STATUS_RE = /^(?:✅|❌|❕|⚠️|⚠|ℹ️|ℹ)\s*/u;
+
+/**
+ * Setzt exakt EIN Statussymbol vor einen Titel.
+ * Thematische Emojis wie 🎫, 📋, 🤖 oder 📦 bleiben unangetastet.
+ */
+export function statusTitle(status: EmbedStatus, title: string): string {
+  const trimmed = title.trim();
+  if (status === 'NEUTRAL') return trimmed;
+
+  const icon = StatusIcons[status];
+  const withoutOldStatus = trimmed.replace(LEADING_STATUS_RE, '').trim();
+  return withoutOldStatus ? `${icon} ${withoutOldStatus}` : icon;
+}
+
+/** Status anhand der zentralen Statusfarbe. Andere Modulfarben bleiben neutral. */
+export function statusForColor(color: number): EmbedStatus | null {
+  if (color === Colors.Success) return 'SUCCESS';
+  if (color === Colors.Error) return 'ERROR';
+  if (color === Colors.Info) return 'INFO';
+  if (color === Colors.Warning) return 'WARNING';
+  return null;
+}
+
+/**
+ * EmbedBuilder, der bei bekannten Statusfarben die Titel automatisch normiert.
+ * Bestehende thematische Emojis und der restliche Titel bleiben erhalten.
+ */
+class VEmbedBuilder extends EmbedBuilder {
+  constructor(private readonly status: EmbedStatus | null) {
+    super();
+  }
+
+  override setTitle(title: string): this {
+    return super.setTitle(this.status ? statusTitle(this.status, title) : title);
+  }
+}
+
+/**
  * Erstellt ein gebrandetes Embed mit konsistentem Styling.
+ * Success -> ✅, Info -> ❕, Error -> ❌, Warning -> ⚠️.
+ * Andere Modulfarben (Gold, Poll, Giveaway, Admin, Dev usw.) bleiben unverändert.
  */
 export function vEmbed(color: number = Colors.Primary): EmbedBuilder {
-  return new EmbedBuilder()
+  return new VEmbedBuilder(statusForColor(color))
     .setColor(color)
     .setFooter({ text: Brand.footerText })
     .setTimestamp();

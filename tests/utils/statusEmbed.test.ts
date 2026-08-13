@@ -1,6 +1,5 @@
 /**
- * Embed-Plan Rev IV §9.2: zentraler Status-Embed-Builder. Genau ein Symbol
- * pro Titel, verbindliche Symbol-Farb-Kopplung.
+ * Zentraler Status-Embed-Builder: verbindliche Symbol-Farb-Kopplung.
  */
 import { buildStatusEmbed, statusEmoji, statusColor } from '../../src/utils/statusEmbed';
 import { Colors } from '../../src/utils/embedDesign';
@@ -12,16 +11,26 @@ describe('buildStatusEmbed', () => {
     expect(e.color).toBe(Colors.Success);
   });
 
-  it('INFO -> ℹ️ + blaue Farbe', () => {
+  it('INFO -> Ausrufezeichen + blaue Farbe', () => {
     const e = buildStatusEmbed({ status: 'INFO', title: 'Beitrittsanfrage gestellt' }).toJSON();
-    expect(e.title).toBe('ℹ️ Beitrittsanfrage gestellt');
+    expect(e.title).toBe('❕ Beitrittsanfrage gestellt');
     expect(e.color).toBe(Colors.Info);
   });
 
-  it('ERROR -> ❌ + rote Farbe', () => {
+  it('ERROR -> Kreuz + rote Farbe', () => {
     const e = buildStatusEmbed({ status: 'ERROR', title: 'Unzureichendes Guthaben' }).toJSON();
     expect(e.title).toBe('❌ Unzureichendes Guthaben');
     expect(e.color).toBe(Colors.Error);
+  });
+
+  it('behält thematische Emojis hinter dem Statussymbol', () => {
+    const e = buildStatusEmbed({ status: 'INFO', title: '📋 Neue Anfrage' }).toJSON();
+    expect(e.title).toBe('❕ 📋 Neue Anfrage');
+  });
+
+  it('ersetzt alte Statussymbole statt sie zu verdoppeln', () => {
+    const e = buildStatusEmbed({ status: 'INFO', title: 'ℹ️ 📋 Neue Anfrage' }).toJSON();
+    expect(e.title).toBe('❕ 📋 Neue Anfrage');
   });
 
   it('Felder sind standardmäßig einspaltig (inline:false)', () => {
@@ -39,13 +48,14 @@ describe('buildStatusEmbed', () => {
   });
 
   it('genau ein Statussymbol im Titel (kein Doppel)', () => {
-    const e = buildStatusEmbed({ status: 'ERROR', title: 'Fehler' }).toJSON();
-    const count = ((e.title ?? '').match(/✅|ℹ️|❌/g) ?? []).length;
+    const e = buildStatusEmbed({ status: 'ERROR', title: '❌ Fehler' }).toJSON();
+    const count = ((e.title ?? '').match(/✅|❕|❌/g) ?? []).length;
     expect(count).toBe(1);
   });
 
   it('statusEmoji/statusColor liefern die verbindliche Kopplung', () => {
     expect(statusEmoji('SUCCESS')).toBe('✅');
+    expect(statusEmoji('INFO')).toBe('❕');
     expect(statusColor('ERROR')).toBe(Colors.Error);
   });
 });
