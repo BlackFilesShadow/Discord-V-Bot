@@ -1,0 +1,28 @@
+name: TEMP Finalize DayZ Catalog
+
+on:
+  push:
+    branches: [feat/dayz129-complete-grounded-catalog]
+
+permissions:
+  contents: write
+
+jobs:
+  patch:
+    if: github.actor != 'github-actions[bot]'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          ref: feat/dayz129-complete-grounded-catalog
+          fetch-depth: 0
+      - name: Apply final catalog fixes
+        run: python3 .github/scripts/temp_finalize_dayz_catalog.py
+      - name: Cleanup and commit
+        run: |
+          git rm -f .github/scripts/temp_finalize_dayz_catalog.py .github/workflows/temp-finalize-dayz-catalog.yml
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add src/modules/ai/dayz129Catalog.ts tests/ai/dayz129Catalog.test.ts
+          git commit -m "Finalize complete DayZ 1.29 catalog behavior"
+          git push origin HEAD:feat/dayz129-complete-grounded-catalog
