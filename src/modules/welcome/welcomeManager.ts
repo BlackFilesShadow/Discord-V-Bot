@@ -5,7 +5,7 @@ import {
   MediaGalleryBuilder,
   MessageFlags,
   TextDisplayBuilder,
-  type BaseMessageOptions,
+  type MessageCreateOptions,
   type Message,
 } from 'discord.js';
 import prisma from '../../database/prisma';
@@ -48,16 +48,10 @@ function splitIntoGraphemes(text: string): string[] {
   return Array.from(text);
 }
 
-/** Zaehlt sichtbare Unicode-Zeichen (Grapheme), sodass Emoji als ein Zeichen gelten. */
 export function countWelcomeGraphemes(text: string): number {
   return splitIntoGraphemes(text).length;
 }
 
-/**
- * Zerlegt Discord-Text in atomare Einheiten. Mentions und Custom-Emoji-Tags
- * bleiben als Ganzes erhalten und werden nicht zwischen TextDisplay-Komponenten
- * zerschnitten.
- */
 function tokenizeWelcomeContent(text: string): string[] {
   const tokens: string[] = [];
   let lastIndex = 0;
@@ -72,13 +66,6 @@ function tokenizeWelcomeContent(text: string): string[] {
   return tokens;
 }
 
-/**
- * Teilt den final gerenderten Welcome-Text konservativ in <= 2000 UTF-16-
- * Code-Units. Die Teile werden spaeter NICHT als einzelne Discord-Nachrichten,
- * sondern als mehrere TextDisplay-Komponenten innerhalb EINER Nachricht gesendet.
- * Bevorzugte Trennstellen: Absatz, Zeilenumbruch, Leerzeichen; erst danach hart
- * an einer Graphem-/Discord-Token-Grenze.
- */
 export function splitWelcomeContent(text: string, maxLength = MAX_WELCOME_CONTENT_LENGTH): string[] {
   if (!text) return [];
   if (!Number.isInteger(maxLength) || maxLength < 1) throw new Error('Ungueltiges Discord-Nachrichtenlimit.');
@@ -160,8 +147,6 @@ export async function disableWelcome(guildId: string, updatedBy: string): Promis
 }
 
 export function renderWelcomeMessage(message: string, vars: { user: string; mention: string; guild: string; memberCount: number }): string {
-  // {user} und {mention} werden vom Join-/Test-Flow mit derselben echten
-  // Discord-Erwaehnung befuellt. Es gibt keinen separaten Ping ausserhalb des Texts.
   return renderTemplate(message, { user: vars.user })
     .replace(/\{mention\}/g, vars.mention)
     .replace(/\{guild\}/g, vars.guild)
@@ -169,7 +154,6 @@ export function renderWelcomeMessage(message: string, vars: { user: string; ment
     .replace(/\{member_count\}/g, String(vars.memberCount));
 }
 
-/** Lokale Welcome-Uploads werden zu einem absoluten Dateisystempfad aufgeloest. */
 export function resolveWelcomeMediaSource(mediaUrl: string): string {
   if (mediaUrl.startsWith('/uploads/')) {
     return path.join(process.cwd(), mediaUrl.replace(/^\/+/, ''));
@@ -184,11 +168,6 @@ type PreparedWelcomeMedia = {
   files: AttachmentBuilder[];
 };
 
-/**
- * Bereitet das optionale Medium fuer eine Components-V2-MediaGallery vor.
- * Lokale Uploads werden als Attachment referenziert; externe URLs bleiben URLs
- * und werden weiterhin NICHT serverseitig geladen (SSRF-Schutz bleibt erhalten).
- */
 async function prepareWelcomeMedia(mediaUrl?: string): Promise<PreparedWelcomeMedia | null> {
   const url = mediaUrl?.trim();
   if (!url) return null;
@@ -223,7 +202,7 @@ async function prepareWelcomeMedia(mediaUrl?: string): Promise<PreparedWelcomeMe
 
 async function sendRequired(
   channel: Parameters<typeof safeSend>[0],
-  payload: BaseMessageOptions,
+  payload: MessageCreateOptions,
   label: string,
 ): Promise<Message> {
   const sent = await safeSend(channel, payload);
@@ -231,20 +210,6 @@ async function sendRequired(
   return sent;
 }
 
-/**
- * Versendet die komplette Begruessung als EINE Discord Components-V2-Nachricht.
- *
- * - Bild und Text gehoeren garantiert zur selben Bot-Nachricht.
- * - mediaLayout steuert innerhalb dieser Nachricht die echte Reihenfolge.
- * - Text bleibt normaler Discord-Markdown mit Mentions und Custom-Emotes.
- * - Lange Texte werden in mehrere TextDisplay-Komponenten derselben Nachricht
- *   aufgeteilt, statt mehrere sichtbare Bot-Posts zu erzeugen.
- * - Lokale Bilder werden als Attachment in einer MediaGallery dargestellt.
- * - Externe Medien bleiben direkte URLs; kein serverseitiger Download.
- *
- * `mentionInContent` bleibt nur fuer Abwaertskompatibilitaet in der Signatur und
- * wird absichtlich ignoriert: Es gibt keinen separaten Ping ausserhalb des Texts.
- */
 export async function sendWelcomeMessages(
   channel: SendableChannel,
   opts: {
@@ -263,8 +228,6 @@ export async function sendWelcomeMessages(
   const chunks = splitWelcomeContent(opts.text);
   if (chunks.length === 0) throw new Error('Willkommensnachricht ist leer.');
 
-  // Vor dem einzigen Discord-Send validieren, damit bei fehlendem lokalem Bild
-  // gar keine teilweise Welcome-Ausgabe entstehen kann.
   const media = await prepareWelcomeMedia(opts.mediaUrl);
   const textComponents = chunks.map(content => new TextDisplayBuilder().setContent(content));
 
@@ -274,7 +237,7 @@ export async function sendWelcomeMessages(
       : [media.component, ...textComponents]
     : textComponents;
 
-  const payload: BaseMessageOptions = {
+  const payload: MessageCreateOptions = {
     flags: MessageFlags.IsComponentsV2,
     components,
     allowedMentions,
