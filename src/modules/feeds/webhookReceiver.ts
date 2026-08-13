@@ -188,7 +188,15 @@ export async function deliverWebhookPayload(
       embeds: [embed],
       allowedMentions: { roles: roleIds, parse: [] },
     });
+  } catch (error) {
+    // Discord hat die Nachricht nicht angenommen. Nur in diesem Fall darf der
+    // Claim freigegeben werden, damit ein echter Zustell-Retry moeglich bleibt.
+    await releaseReplayKey(claimHash);
+    logger.warn(`Webhook: Zustellung fuer Feed ${feed.id} fehlgeschlagen: ${String(error)}`);
+    return { ok: false, status: 502, reason: 'Webhook-Zustellung fehlgeschlagen.' };
+  }
 
+  try {
     await prisma.$transaction([
       prisma.feed.update({ where: { id: feed.id }, data: { lastChecked: new Date() } }),
       prisma.idempotencyKey.update({
@@ -201,9 +209,12 @@ export async function deliverWebhookPayload(
       }),
     ]);
   } catch (error) {
-    await releaseReplayKey(claimHash);
-    logger.warn(`Webhook: Zustellung fuer Feed ${feed.id} fehlgeschlagen: ${String(error)}`);
-    return { ok: false, status: 502, reason: 'Webhook-Zustellung fehlgeschlagen.' };
+    // Die Discord-Zustellung ist bereits erfolgt. Den Replay-Claim absichtlich
+    // NICHT loeschen: ein Client-Retry duerfte sonst denselben Post duplizieren.
+    // PROCESSING bleibt damit fail-closed und blockiert identische Replays.
+    logger.error(`Webhook: Zustellung fuer Feed ${feed.id} erfolgreich, Finalisierung fehlgeschlagen: ${String(error)}`);
+    logAudit('FEED_WEBHOOK_FINALIZE_FAILED', 'SECURITY', { feedId: feed.id });
+    return { ok: true, status: 200 };
   }
 
   logAudit('FEED_WEBHOOK_DELIVERED', 'FEED', { feedId: feed.id, name: feed.name, title: data.title });
