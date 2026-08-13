@@ -8,4 +8,4 @@ export {
 } from './dayz129CatalogBase';
 export type { Dayz129Map, Dayz129Index, DayzCatalogAnswer } from './dayz129CatalogBase';
 
-export { searchTypes as searchDayz129Types, answer as answerDayz129CatalogQuestion } from './dayz129CatalogPriorityV3';
+export { searchTypes as searchDayz129Types, answer as answerDayz129CatalogQuestion } from './dayz129CatalogPriorityV4';
