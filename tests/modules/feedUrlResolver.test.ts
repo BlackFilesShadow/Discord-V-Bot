@@ -66,8 +66,8 @@ describe('Steam — nur URL-basiert', () => {
 });
 
 describe('YouTube — URL / Handle / Playlist', () => {
-  it('erkennt Kanal-URL, Handle und Playlist', () => {
-    expect(extractYouTubeRef('https://youtube.com/@MrBeast')).toContain('youtube.com');
+  it('erkennt Kanal-URL, Handle und Playlist und canonicalisiert Kanal-URLs', () => {
+    expect(extractYouTubeRef('https://youtube.com/@MrBeast')).toBe('@MrBeast');
     expect(extractYouTubeRef('@MrBeast')).toBe('@MrBeast');
     expect(extractYouTubeRef('MrBeast')).toBe('@MrBeast');
     expect(extractYouTubeRef('https://www.youtube.com/playlist?list=PL123abc')).toBe('playlist:PL123abc');
