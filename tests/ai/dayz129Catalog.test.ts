@@ -12,7 +12,7 @@ describe('DayZ 1.29 complete grounded catalog', () => {
   test('loads the exact complete corpus from the three supplied datasets', () => {
     const index = getDayz129Index();
     expect(index.version).toBe('1.29.163451');
-    expect(index.sourceTag).toBe('DZ_129');
+    expect(index.sourceTag).toBe('USER_ZIPS_1.29.163451');
     expect(getDayz129CatalogStats()).toEqual({ types: 1974, events: 72, paths: 47 });
     expect(Object.keys(index.maps.chernarus.types)).toHaveLength(1942);
     expect(Object.keys(index.maps.livonia.types)).toHaveLength(1939);
@@ -69,7 +69,8 @@ describe('DayZ 1.29 complete grounded catalog', () => {
   });
 
   test('resolves natural German item descriptions only to real indexed classnames', () => {
-    expect(searchDayz129Types('Holzbretter', 5)).toEqual(expect.arrayContaining(['WoodenPlank', 'PileOfWoodenPlanks']));
+    expect(searchDayz129Types('Holzbretter', 5)).toContain('WoodenPlank');
+    expect(searchDayz129Types('Holzbretter', 20)).not.toContain('PileOfWoodenPlanks');
     expect(searchDayz129Types('Nagelbox', 5)[0]).toBe('NailBox');
     expect(searchDayz129Types('Wasserflasche', 5)[0]).toBe('WaterBottle');
     expect(searchDayz129Types('Metallplatte', 5)[0]).toBe('MetalPlate');
@@ -112,6 +113,18 @@ describe('DayZ 1.29 complete grounded catalog', () => {
     expect(a?.topic).toBe('unknown-file');
     expect(a?.answer).toMatch(/keinem.*Datensaetze/i);
     expect(a?.answer).toMatch(/erfinde/i);
+  });
+
+  test('map-specific type and event questions only report the requested map', () => {
+    const t = answerDayz129CatalogQuestion('Classname M4A1 auf Sakhal');
+    expect(t?.answer).toMatch(/Sakhal/);
+    expect(t?.answer).not.toMatch(/Chernarus/);
+    expect(t?.answer).not.toMatch(/Livonia/);
+
+    const e = answerDayz129CatalogQuestion('Event StaticHeliCrash auf Livonia');
+    expect(e?.answer).toMatch(/Livonia/);
+    expect(e?.answer).not.toMatch(/Chernarus/);
+    expect(e?.answer).not.toMatch(/Sakhal/);
   });
 
   test('generic follow-up works for any indexed file, type and event', () => {

@@ -64,6 +64,7 @@ export function getDayz129Index(): Dayz129Index {
   if (!cached) {
     const raw = gunzipSync(Buffer.from(DAYZ129_INDEX_GZIP_BASE64, 'base64')).toString('utf8');
     cached = JSON.parse(raw) as Dayz129Index;
+    cached.sourceTag = 'USER_ZIPS_1.29.163451';
     typeByLower = new Map(cached.allTypeNames.map((name) => [name.toLocaleLowerCase('de-DE'), name]));
     eventByLower = new Map(cached.allEventNames.map((name) => [name.toLocaleLowerCase('de-DE'), name]));
   }
@@ -312,11 +313,12 @@ function formatRecord(record: Record<string, RecordValue>): string {
   return parts.join(', ');
 }
 
-function formatTypeAnswer(name: string): DayzCatalogAnswer {
+function formatTypeAnswer(name: string, requestedMaps: Dayz129Map[] = []): DayzCatalogAnswer {
   const index = getDayz129Index();
   const lines = [`**DayZ-Classname: \`${name}\`**`, ''];
   let found = false;
-  for (const map of Object.keys(index.maps) as Dayz129Map[]) {
+  const maps = requestedMaps.length ? requestedMaps : (Object.keys(index.maps) as Dayz129Map[]);
+  for (const map of maps) {
     const record = index.maps[map].types[name];
     if (!record) continue;
     found = true;
@@ -359,10 +361,11 @@ export function searchDayz129Events(query: string, limit = 5): string[] {
     .slice(0, limit).map((x) => x.name);
 }
 
-function formatEventAnswer(name: string): DayzCatalogAnswer {
+function formatEventAnswer(name: string, requestedMaps: Dayz129Map[] = []): DayzCatalogAnswer {
   const index = getDayz129Index();
   const lines = [`**DayZ-Event: \`${name}\`**`, ''];
-  for (const map of Object.keys(index.maps) as Dayz129Map[]) {
+  const maps = requestedMaps.length ? requestedMaps : (Object.keys(index.maps) as Dayz129Map[]);
+  for (const map of maps) {
     const record = index.maps[map].events[name];
     if (!record) {
       lines.push(`- **${MAP_LABELS[map]}:** in deiner 1.29-\`events.xml\` nicht vorhanden.`);
@@ -414,6 +417,7 @@ export function answerDayz129CatalogQuestion(question: string): DayzCatalogAnswe
   if (!question) return null;
   const index = getDayz129Index();
   const q = fold(question);
+  const requestedMaps = detectMaps(question);
 
   const path = canonicalFileFromText(question);
   if (path) return formatFileAnswer(path);
@@ -427,11 +431,11 @@ export function answerDayz129CatalogQuestion(question: string): DayzCatalogAnswe
   }
 
   const exactType = findExactIndexedName(question, index.allTypeNames, typeByLower!);
-  if (exactType && (isTypeLookupIntent(question) || q.includes(fold(exactType)))) return formatTypeAnswer(exactType);
+  if (exactType && (isTypeLookupIntent(question) || q.includes(fold(exactType)))) return formatTypeAnswer(exactType, requestedMaps);
 
   if (isTypeLookupIntent(question)) {
     const candidates = searchDayz129Types(question, 5);
-    if (candidates.length === 1) return formatTypeAnswer(candidates[0]);
+    if (candidates.length === 1) return formatTypeAnswer(candidates[0], requestedMaps);
     if (candidates.length > 1) {
       const top = searchDayz129Types(question, 2);
       const exactNatural = ['nagelbox', 'naegelbox', 'wasserflasche', 'metallplatte', 'kabeltrommel', 'seekiste', 'autozelt'].some((x) => fold(question).includes(x));
@@ -445,14 +449,14 @@ export function answerDayz129CatalogQuestion(question: string): DayzCatalogAnswe
   }
 
   const exactEvent = findExactIndexedName(question, index.allEventNames, eventByLower!);
-  if (exactEvent && (isEventLookupIntent(question) || q.includes(fold(exactEvent)))) return formatEventAnswer(exactEvent);
+  if (exactEvent && (isEventLookupIntent(question) || q.includes(fold(exactEvent)))) return formatEventAnswer(exactEvent, requestedMaps);
 
   if (isEventLookupIntent(question)) {
     const candidates = searchDayz129Events(question, 5);
-    if (candidates.length === 1) return formatEventAnswer(candidates[0]);
+    if (candidates.length === 1) return formatEventAnswer(candidates[0], requestedMaps);
     if (candidates.length > 1) {
       const strongNatural = /helikopterabsturz|heli\s*crash|militaer.*konvoi|militär.*konvoi/.test(fold(question));
-      if (strongNatural) return formatEventAnswer(candidates[0]);
+      if (strongNatural) return formatEventAnswer(candidates[0], requestedMaps);
       return candidateListAnswer('event', candidates);
     }
     return {
@@ -477,7 +481,7 @@ export function isKnownDayz129Identifier(identifier: string): boolean {
 export function enrichDayz129FollowUp(question: string, previousAssistantText?: string | null): string {
   if (!question || !previousAssistantText) return question;
   const q = fold(question).trim();
-  if (q.length > 160 || !/(beispiel|wie genau|warum|was bedeutet|kannst du|zeig|und wie|und was|nochmal|dazu|welcher wert|welche werte)/i.test(q)) return question;
+  if (q.length > 160 || !/(beispiel|wie genau|warum|was bedeutet|kannst du|zeig|und wie|und was|und auf|auf chernarus|auf livonia|auf sakhal|nochmal|dazu|welcher wert|welche werte)/i.test(q)) return question;
   const path = canonicalFileFromText(previousAssistantText);
   if (path) return `${path}: ${question}`;
 
