@@ -23,7 +23,7 @@ const DEFAULT_LIMITS: Record<string, RateLimitConfig> = {
   api: { windowMs: 60000, maxRequests: 60 },
   // Phase 2.2: KI-Aufrufe pro User abschirmen, damit ein einzelner Nutzer
   // weder das globale Provider-Budget noch die Bot-Latenz dominieren kann.
-  ai: { windowMs: 60_000, maxRequests: 10 },
+  ai: { windowMs: 60_000, maxRequests: 20 },
 };
 
 /**

@@ -4,6 +4,7 @@ import { logger, logAudit } from '../utils/logger';
 import prisma from '../database/prisma';
 import { detectSpam } from '../utils/rateLimiter';
 import { answerQuestion } from '../modules/ai/aiHandler';
+import { enrichDayzTechnicalFollowUp } from '../modules/ai/nitradoHelp';
 import { buildServerUserContext } from '../modules/ai/contextBuilder';
 import { trackMemberActivity } from '../modules/ai/memberAwareness';
 import { listTriggers, findMatchingTrigger, isOnCooldown, renderTemplate } from '../modules/ai/triggers';
@@ -394,7 +395,9 @@ const messageCreateEvent: BotEvent = {
                 if (r.success && r.result) {
                   responseText = r.result;
                 } else if (r.error === 'RATE_LIMIT') {
-                  responseText = '⏳ Mein KI-Kontingent ist gerade ausgeschöpft. Bitte versuch es in ein paar Minuten nochmal.';
+                  responseText = r.rateLimitSource === 'user'
+                    ? `⏳ Du hast gerade viele KI-Anfragen gesendet. Bitte warte noch etwa ${r.retryAfterSeconds ?? 60} Sekunden.`
+                    : '⏳ Die KI-Anbieter sind gerade im Rate-Limit. Bitte versuch es in ein paar Minuten nochmal.';
                 } else {
                   // Fallback: stiller Skip statt hässlicher Fehlermeldung
                   return;
@@ -463,6 +466,8 @@ const messageCreateEvent: BotEvent = {
           // "Tippt..."-Indikator
           await channel.sendTyping().catch(() => {});
 
+          let aiQuestion = question;
+
           // Letzte ~15 Nachrichten als Konversations-Kontext (inkl. Bot-Antworten,
           // damit der Bot weiss, was er selbst eben gesagt hat und Pronomen wie
           // "er", "sie", "das" auf vorherige Nachrichten beziehen kann).
@@ -470,6 +475,11 @@ const messageCreateEvent: BotEvent = {
           try {
             const recent = await msg.channel.messages.fetch({ limit: 15, before: msg.id });
             const me = msg.client.user?.id;
+            if (me) {
+              const previousBot = Array.from(recent.values()).find(m => m.author.id === me && (m.content?.trim()?.length ?? 0) > 0);
+              aiQuestion = enrichDayzTechnicalFollowUp(question, previousBot?.content);
+              if (aiQuestion !== question) logger.info(`[DayZ-Grounding] Folgefrage kontextualisiert: ${aiQuestion.slice(0, 120)}`);
+            }
             const ctxLines = Array.from(recent.values())
               .reverse()
               .filter(m => {
@@ -504,11 +514,11 @@ const messageCreateEvent: BotEvent = {
             channel: msg.channel as any,
             member: msg.member ?? undefined,
             user: msg.author,
-            question,
+            question: aiQuestion,
           });
           const mergedContext = [serverUserCtx, context].filter(Boolean).join('\n\n') || undefined;
 
-          const r = await answerQuestion(question, {
+          const r = await answerQuestion(aiQuestion, {
             mode: 'chat',
             context: mergedContext,
             userId: msg.author.id,
@@ -537,7 +547,9 @@ const messageCreateEvent: BotEvent = {
           } else {
             const userMsg =
               r.error === 'RATE_LIMIT'
-                ? '⏳ Mein KI-Kontingent ist gerade ausgeschöpft (Rate-Limit). Bitte versuch es in ein paar Minuten nochmal.'
+                ? (r.rateLimitSource === 'user'
+                    ? `⏳ Du hast gerade viele KI-Anfragen gesendet. Bitte warte noch etwa ${r.retryAfterSeconds ?? 60} Sekunden.`
+                    : '⏳ Die KI-Anbieter sind gerade im Rate-Limit. Bitte versuch es in ein paar Minuten nochmal.')
                 : "🤔 Hmm, da hat gerade etwas nicht geklappt. Versuch's bitte gleich nochmal.";
             await msg.reply({
               content: userMsg,

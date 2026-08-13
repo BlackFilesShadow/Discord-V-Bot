@@ -34,7 +34,30 @@ const BUILD_ANYWHERE_DIRECT_ANSWER = [
   'Alle drei gelieferten Vanilla-1.29-Dateien (Chernarus, Livonia, Sakhal) enthalten diese `BaseBuildingData`-Struktur; die untersuchten Check-Schalter stehen dort standardmaessig auf `false`. `disableBaseDamage`/`disableContainerDamage` sind dagegen Schadensregeln und **nicht** der Bauen+-Schalter.',
 ].join('\n');
 
+const EVENTS_XML_DIRECT_ANSWER = [
+  'Die Datei heisst **`events.xml`** (Plural; `Event.xml` ist nur eine haeufige Kurz-/Fehlschreibweise). `db/events.xml` definiert dynamische Events der DayZ Central Economy, z. B. Fahrzeuge, Tiere, Infected und statische Events wie Helikopter-Wracks.',
+  '',
+  'Typische Event-Felder sind `nominal`, `min`, `max`, `lifetime`, `restock`, `saferadius`, `distanceradius`, `cleanupradius`, `flags`, `position`, `limit`, `active` und `children`. Die vorgesehenen Weltpositionen eines Events werden davon getrennt in `cfgeventspawns.xml` beschrieben.',
+  '',
+  '**Echtes Chernarus-1.29-Beispiel:** `StaticHeliCrash` hat in Bohemias DZ_129-Referenz `nominal=3`, `lifetime=2100`, `restock=0`, `saferadius=1000`, `distanceradius=1000`, `cleanupradius=1000`, `position=fixed`, `limit=child` und `active=1`. Als Child ist `Wreck_UH1Y` mit `lootmin=10`, `lootmax=15`, `min=1` und `max=3` hinterlegt.',
+  '',
+  'Wichtig: `events.xml` ist **nicht** die Datei fuer frei erfundene Start-/Endzeitplaene, Regenphasen oder zeitgesteuerte Zombie-Wellen. Solche Aussagen duerfen nicht aus dem Dateinamen abgeleitet werden.',
+].join('\\n');
+
 const DAYZ_ENGINE_TOPICS: HelpTopic[] = [
+  {
+    id: 'events-xml',
+    title: 'DayZ 1.29 – events.xml',
+    triggers: ['events.xml', 'event.xml', 'event xml', 'eventxml', 'event-datei', 'event datei'],
+    body: [
+      '`db/events.xml` ist die Konfiguration fuer dynamische Central-Economy-Events.',
+      'Belegte Eventarten umfassen unter anderem Fahrzeuge, Tiere, Infected und statische Events. Die Datei beschreibt WAS unter welchen Eventregeln erzeugt wird; `cfgeventspawns.xml` beschreibt die vorgesehenen Positionen.',
+      'Belegte Felder sind unter anderem `nominal`, `min`, `max`, `lifetime`, `restock`, `saferadius`, `distanceradius`, `cleanupradius`, `flags`, `position`, `limit`, `active` und `children`.',
+      'Nicht als Zeitplan-Datei erklaeren: keine erfundenen Start-/Endzeitfelder, Wetterphasen oder automatisch geplanten Zombie-Wellen hinzudichten.',
+      'Chernarus DZ_129 `StaticHeliCrash`: nominal=3, lifetime=2100, restock=0, Radien=1000, position=fixed, limit=child, active=1; Child `Wreck_UH1Y` mit lootmin=10, lootmax=15, min=1, max=3.',
+    ].join('\\n'),
+    directAnswer: EVENTS_XML_DIRECT_ANSWER,
+  },
   {
     id: 'tag-nacht-zyklus',
     title: 'DayZ Serverzeit / Tag-Nacht',
@@ -112,7 +135,7 @@ function normalize(s: string): string { return s.toLocaleLowerCase('de-DE'); }
 export function looksLikeDayZFileQuestion(question: string): boolean {
   if (!question) return false;
   const q = normalize(question);
-  if (/\b(types|events|globals|messages|economy)\.xml\b/.test(q)) return true;
+  if (/\b(types|events?|globals|messages|economy)\.xml\b/.test(q)) return true;
   if (/\b(cfg[a-z0-9_]+|mapgroup[a-z0-9_]+|mapcluster[a-z0-9_]+)\.(xml|json)\b/.test(q)) return true;
   if (/\binit\.c\b|\bserverdz\.cfg\b/.test(q)) return true;
   if (/\bwelche\s+datei\b/.test(q) && /\b(dayz|loot|spawn|wetter|weather|tier|event|mission)\b/.test(q)) return true;
@@ -126,6 +149,18 @@ export function isDayzTechnicalAdminQuestion(question: string): boolean {
   const hasTechnical = /\b(server|nitrado|config|konfig|einstell|aktivier|deaktivier|bauen|bau|basebuilding|build|loot|spawn|event|xml|json|cfg|mission|mod|wetter|weather|lifetime|restock|nominal|globals|types|events)\b/.test(q)
     || /\.(xml|json|cfg|c)\b/.test(q);
   return (hasDayz && hasTechnical) || looksLikeDayZFileQuestion(question);
+}
+
+export function enrichDayzTechnicalFollowUp(question: string, previousAssistantText?: string | null): string {
+  if (!question || !previousAssistantText) return question;
+  const q = normalize(question).trim();
+  if (q.length > 140 || !/(beispiel|wie genau|warum genau|was bedeutet das|kannst du das|kannst du mir|zeig mir|zeig das|und wie|und was|nochmal|dazu)/i.test(q)) return question;
+
+  const match = previousAssistantText.match(/\b(?:events?|types|globals|messages|economy)\.xml\b|\b(?:cfg[a-z0-9_]+|mapgroup[a-z0-9_]+|mapcluster[a-z0-9_]+)\.(?:xml|json)\b|\bserverdz\.cfg\b|\binit\.c\b/i);
+  if (!match) return question;
+  let topic = match[0];
+  if (/^event\.xml$/i.test(topic)) topic = 'events.xml';
+  return `${topic}: ${question}`;
 }
 
 export const KNOWN_DAYZ_HALLUCINATED_IDENTIFIERS = [
@@ -176,6 +211,10 @@ function isBuildAnywhereQuestion(question: string): boolean {
   return /bauen\s*\+|bauen plus|build[ -]?anywhere|basebuilding|bauplatzierung|bauen aktivieren|bau aktivieren/.test(normalize(question));
 }
 
+function isEventsXmlQuestion(question: string): boolean {
+  return /\bevents?\.xml\b|\bevent\s+xml\b|\beventxml\b/.test(normalize(question));
+}
+
 export function validateDayzTechnicalAnswer(answer: string, grounding: string, question = ''): DayzAnswerValidation {
   const violations = new Set<string>();
   if (!answer) return { valid: false, violations: ['leere Antwort'] };
@@ -200,6 +239,7 @@ export function validateDayzTechnicalAnswer(answer: string, grounding: string, q
 
 export function buildDayzTechnicalFallback(question: string, violations: string[] = []): string {
   if (isBuildAnywhereQuestion(question)) return BUILD_ANYWHERE_DIRECT_ANSWER;
+  if (isEventsXmlQuestion(question)) return EVENTS_XML_DIRECT_ANSWER;
   const detail = violations.length ? ` (${violations.slice(0, 3).join('; ')})` : '';
   return `Ich habe die generierte DayZ-Antwort verworfen, weil mindestens ein technischer Name nicht ausreichend belegt war${detail}. Dazu nenne ich keinen geratenen Datei-, Feld- oder Parameternamen. Wenn du mir die konkrete Datei oder das genaue Ziel nennst, antworte ich nur mit der geprueften 1.29-/Bohemia-Grundlage.`;
 }
@@ -230,6 +270,7 @@ function findTopics(question: string, topics: HelpTopic[], limit = 2): HelpTopic
 export function isNitradoOrDayZHelpQuestion(question: string): boolean {
   if (!question) return false;
   if (isNitradoSpecificQuestion(question)) return true;
+  if (looksLikeDayZFileQuestion(question)) return true;
   if (buildDayzKnowledgeContext(question).found) return true;
   const q = normalize(question);
   return /\bdayz\b/.test(q) || /\bcentral economy\b/.test(q) || /\b(battleye|rcon)\b/.test(q);
