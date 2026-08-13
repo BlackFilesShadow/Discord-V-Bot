@@ -2,10 +2,12 @@
  * Token-Validation-Cron — taeglich pro NitradoConnection.
  *
  * - Iteriert alle Connections mit `status=ACTIVE`.
- * - Ruft `validateToken()` ueber den Nitrado-Client.
- * - Bei false: setzt Status `EXPIRED` + sendet Owner-DM mit Re-Connect-Hinweis.
+ * - Ruft die differenzierte Tokenvalidierung auf.
+ * - Nur INVALID setzt Status EXPIRED und informiert den Owner.
+ * - Transiente Fehler lassen den Status unveraendert.
  *
- * Single-instance: simpler `running`-Flag (gleiches Verfahren wie jobWorker).
+ * Scheduler-Lifecycle: Initial-Timeout und Intervall sind explizit stoppbar
+ * und via unref() kein Grund, einen ansonsten beendeten Prozess festzuhalten.
  */
 
 import type { Client } from 'discord.js';
@@ -18,8 +20,10 @@ import { setStatus, markValidated } from './repository';
 import { asGuildId, asNitradoConnId } from '../../types/scope';
 
 const VALIDATION_INTERVAL_MS = 24 * 60 * 60 * 1000; // taeglich
+const INITIAL_VALIDATION_DELAY_MS = 5 * 60 * 1000;
 
 let timer: NodeJS.Timeout | null = null;
+let initialTimer: NodeJS.Timeout | null = null;
 let running = false;
 
 async function checkOne(
@@ -102,13 +106,28 @@ async function pollOnce(discord: Client): Promise<void> {
 }
 
 export function startTokenValidationCron(discord: Client): void {
-  if (timer) return;
+  if (timer || initialTimer) return;
   logger.info(`Token-Validation-Cron gestartet (Intervall ${VALIDATION_INTERVAL_MS / 3_600_000}h)`);
-  // Erst-Lauf nach 5 min (damit Bot-Start nicht blockiert wird).
-  setTimeout(() => { void pollOnce(discord); }, 5 * 60 * 1000);
+
+  // Erst-Lauf nach 5 min (damit Bot-Start nicht blockiert wird). Der Handle ist
+  // lifecycle-sicher: stoppbar und unref'd.
+  initialTimer = setTimeout(() => {
+    initialTimer = null;
+    void pollOnce(discord);
+  }, INITIAL_VALIDATION_DELAY_MS);
+  initialTimer.unref?.();
+
   timer = setInterval(() => { void pollOnce(discord); }, VALIDATION_INTERVAL_MS);
+  timer.unref?.();
 }
 
 export function stopTokenValidationCron(): void {
-  if (timer) { clearInterval(timer); timer = null; }
+  if (initialTimer) {
+    clearTimeout(initialTimer);
+    initialTimer = null;
+  }
+  if (timer) {
+    clearInterval(timer);
+    timer = null;
+  }
 }
