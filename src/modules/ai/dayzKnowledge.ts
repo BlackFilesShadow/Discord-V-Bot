@@ -150,7 +150,7 @@ const FILE_FACTS: FileFact[] = [
     caveats: ['Konkrete Item-Werte nur aus einer eingebetteten 1.29-Referenz oder einer echten Serverdatei nennen.'],
   },
   {
-    id: 'events.xml', aliases: ['events.xml', 'eventsxml', 'dynamische events', 'dynamic event', 'event spawn'],
+    id: 'events.xml', aliases: ['events.xml', 'event.xml', 'event xml', 'eventxml', 'eventsxml', 'dynamische events', 'dynamic event', 'event spawn'],
     purpose: '`db/events.xml` definiert dynamische CE-Events, z. B. Fahrzeuge, Tiere und Infected. Felder wie `nominal`, `min`, `max`, `lifetime`, `restock`, `position`, `limit`, `active` und `children` sind eventbezogen zu lesen.',
     observed: ['1.29: Sakhal 62 Events, Livonia 53, Chernarus 59.', 'Event-Werte ueber 25 sind regulaer vorhanden; `max` reicht in den untersuchten Datensaetzen bis 250.', 'Event-Felder nicht als universelles types.xml-Lagerverhaeltnis interpretieren.'],
   },

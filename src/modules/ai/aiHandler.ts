@@ -24,13 +24,15 @@ import { classifyProviderHttpStatus, updateAllRateLimitedState } from './provide
  * - Custom AI-Modules
  */
 
-interface AiResponse {
+export interface AiResponse {
   success: boolean;
   result?: string;
   score?: number;
   label?: string;
   details?: Record<string, unknown>;
   error?: string;
+  rateLimitSource?: 'user' | 'provider';
+  retryAfterSeconds?: number;
 }
 
 /**
@@ -319,6 +321,20 @@ export async function answerQuestion(
   const mode: AnswerMode = opts.mode ?? 'chat';
   const context = opts.context;
 
+  // DayZ direct-answer preflight: verified deterministic answers do not call an AI provider
+  // and therefore must not consume or be blocked by the per-user AI rate limit.
+  if (mode !== 'welcome') {
+    try {
+      const preflightHelp = lookupNitradoHelp(question);
+      if (preflightHelp.directAnswer) {
+        logger.info(`[DayZ-Grounding] direct-answer preflight (topics=${preflightHelp.topicIds.join(',')})`);
+        return { success: true, result: redactText(preflightHelp.directAnswer) };
+      }
+    } catch (e) {
+      logger.warn(`[DayZ-Grounding] direct-answer preflight fehlgeschlagen: ${String(e)}`);
+    }
+  }
+
   // Phase 2.2: Per-User-Rate-Limit, um Provider-Budget und Latenz zu schuetzen.
   // Nur fuer interaktive Modi (chat/oneshot/trigger), nicht fuer welcome-DMs.
   if (opts.userId && mode !== 'welcome') {
@@ -326,7 +342,12 @@ export async function answerQuestion(
       const rl = await checkRateLimit(opts.userId, 'ai');
       if (!rl.allowed) {
         logger.info(`AI-Rate-Limit ueberschritten fuer user=${opts.userId} (mode=${mode})`);
-        return { success: false, error: 'RATE_LIMIT' };
+        return {
+          success: false,
+          error: 'RATE_LIMIT',
+          rateLimitSource: 'user',
+          retryAfterSeconds: Math.max(1, Math.ceil((rl.resetAt.getTime() - Date.now()) / 1000)),
+        };
       }
     } catch (e) {
       // Fail-open: bei Rate-Limiter-Fehler nicht blockieren, aber laut
@@ -487,7 +508,7 @@ const wantWebSearch = (mode === 'chat' || mode === 'oneshot' || mode === 'trigge
       code: err?.code,
     });
     if (err?.code === 'RATE_LIMIT' || /RATE_LIMIT|status code 429/.test(err?.message || '')) {
-      return { success: false, error: 'RATE_LIMIT' };
+      return { success: false, error: 'RATE_LIMIT', rateLimitSource: 'provider' };
     }
     return { success: false, error: 'AI nicht verf\u00fcgbar.' };
   }

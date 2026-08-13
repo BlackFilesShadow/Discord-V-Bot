@@ -3,6 +3,7 @@ import {
   detectKnownDayzHallucinatedIdentifiers,
   detectTypesXmlValueViolations,
   extractDayzTechnicalIdentifiers,
+  enrichDayzTechnicalFollowUp,
   getDayZFileTruthBlock,
   isDayzTechnicalAdminQuestion,
   isNitradoOrDayZHelpQuestion,
@@ -140,6 +141,29 @@ describe('nitradoHelp — DayZ 1.29 grounded', () => {
   it('extrahiert technische Identifier konservativ', () => {
     expect(detectKnownDayzHallucinatedIdentifiers('enableBuilding MaxConstructionObjects')).toEqual(expect.arrayContaining(['enableBuilding', 'MaxConstructionObjects']));
     expect(extractDayzTechnicalIdentifiers('`cfggameplay.json` -> `BaseBuildingData`, superMagicBuildSwitch = true')).toEqual(expect.arrayContaining(['cfggameplay.json', 'BaseBuildingData', 'superMagicBuildSwitch']));
+  });
+
+  it('erkennt Event.xml als events.xml und antwortet deterministisch ohne Zeitplan-Halluzination', () => {
+    expect(looksLikeDayZFileQuestion('Was ist die Event.xml?')).toBe(true);
+    expect(isDayzTechnicalAdminQuestion('Was ist die Event.xml?')).toBe(true);
+    expect(isNitradoOrDayZHelpQuestion('Was ist die Event.xml?')).toBe(true);
+    const a = lookupNitradoHelp('Was ist die Event.xml?');
+    expect(a.found).toBe(true);
+    expect(a.directAnswer).toMatch(/events\.xml/);
+    expect(a.directAnswer).toMatch(/dynamische Events/i);
+    expect(a.directAnswer).toMatch(/StaticHeliCrash/);
+    expect(a.directAnswer).toMatch(/nominal=3/);
+    expect(a.directAnswer).toMatch(/Wreck_UH1Y/);
+    expect(a.directAnswer).toMatch(/<event name=\"StaticHeliCrash\">/);
+    expect(a.directAnswer).toContain('\n');
+    expect(a.directAnswer).not.toContain('\\n');
+    expect(a.directAnswer).toMatch(/nicht.*Start-\/Endzeit/i);
+  });
+
+  it('kontextualisiert kurze DayZ-Folgefragen auf die vorherige Datei', () => {
+    expect(enrichDayzTechnicalFollowUp('hast du ein Beispiel?', 'Die events.xml definiert dynamische Events.')).toBe('events.xml: hast du ein Beispiel?');
+    expect(enrichDayzTechnicalFollowUp('hast du ein Beispiel?', 'Die Event.xml definiert Events.')).toBe('events.xml: hast du ein Beispiel?');
+    expect(enrichDayzTechnicalFollowUp('Wer ist Bundeskanzler?', 'Die events.xml definiert dynamische Events.')).toBe('Wer ist Bundeskanzler?');
   });
 
   it('liefert nach blockierter Bauen+-Generation einen deterministischen Fallback', () => {
