@@ -31,6 +31,18 @@ jest.mock('../../src/utils/logger', () => ({
 }));
 jest.mock('../../src/dashboard/socket/emitter', () => ({ __esModule: true, emitGuildEvent: jest.fn() }));
 
+const pgConnect = jest.fn(async () => undefined);
+const pgEnd = jest.fn(async () => undefined);
+const pgQuery = jest.fn(async (sql: string) => {
+  if (sql.includes('pg_try_advisory_lock')) return { rows: [{ locked: true }] };
+  if (sql.includes('pg_advisory_unlock')) return { rows: [{ pg_advisory_unlock: true }] };
+  return { rows: [] };
+});
+jest.mock('pg', () => ({
+  __esModule: true,
+  Client: jest.fn().mockImplementation(() => ({ connect: pgConnect, query: pgQuery, end: pgEnd })),
+}));
+
 const decryptMock = jest.fn();
 jest.mock('../../src/utils/security', () => ({ __esModule: true, decrypt: (...a: unknown[]) => decryptMock(...a) }));
 
@@ -43,7 +55,7 @@ jest.mock('../../src/modules/nitrado/nitradoClient', () => ({
   NitradoApiError: class NitradoApiError extends Error { status: number | null = null; },
 }));
 
-import { executeJob, drainAndStopJobWorker } from '../../src/modules/nitrado/jobWorker';
+import { executeJob, drainAndStopJobWorker, nitradoConnectionLockKeys } from '../../src/modules/nitrado/jobWorker';
 
 function lastUpdateData(): Record<string, unknown> {
   const calls = updateManyMock.mock.calls as unknown as Array<[{ data: Record<string, unknown> }]>;
@@ -52,7 +64,44 @@ function lastUpdateData(): Record<string, unknown> {
 
 beforeEach(() => {
   jest.clearAllMocks();
+  pgQuery.mockImplementation(async (sql: string) => {
+    if (sql.includes('pg_try_advisory_lock')) return { rows: [{ locked: true }] };
+    if (sql.includes('pg_advisory_unlock')) return { rows: [{ pg_advisory_unlock: true }] };
+    return { rows: [] };
+  });
   for (const k of Object.keys(jobStore)) delete jobStore[k];
+});
+
+describe('NIT-004 — per-Connection Multi-Instance-Lock', () => {
+  it('leitet stabile Advisory-Lock-Keys pro Connection ab', () => {
+    expect(nitradoConnectionLockKeys('conn-1')).toEqual(nitradoConnectionLockKeys('conn-1'));
+    expect(nitradoConnectionLockKeys('conn-1')).not.toEqual(nitradoConnectionLockKeys('conn-2'));
+  });
+
+  it('requeued einen geclaimten Job, wenn eine andere Instanz den Connection-Lock haelt', async () => {
+    jobStore['locked'] = { id: 'locked', guildId: 'g1', nitradoConnId: 'conn-1', operation: 'WHITELIST_ADD', payload: { gameId: 'player1' }, attempts: 0, maxAttempts: 8 };
+    pgQuery.mockImplementationOnce(async () => ({ rows: [{ locked: false }] }));
+
+    await executeJob('locked');
+
+    expect(prismaMock.nitradoConnection.findFirst).not.toHaveBeenCalled();
+    expect(addToWhitelist).not.toHaveBeenCalled();
+    expect(lastUpdateData().status).toBe('PENDING');
+    expect(pgEnd).toHaveBeenCalledTimes(1);
+  });
+
+  it('gibt einen gewonnenen Connection-Lock nach Jobabschluss wieder frei', async () => {
+    jobStore['lock-release'] = { id: 'lock-release', guildId: 'g1', nitradoConnId: 'conn-1', operation: 'WHITELIST_ADD', payload: { gameId: 'player1' }, attempts: 0, maxAttempts: 8 };
+    decryptMock.mockReturnValue('decrypted-token');
+    addToWhitelist.mockResolvedValue(undefined);
+
+    await executeJob('lock-release');
+
+    expect(pgQuery.mock.calls.some(([sql]) => String(sql).includes('pg_try_advisory_lock'))).toBe(true);
+    expect(pgQuery.mock.calls.some(([sql]) => String(sql).includes('pg_advisory_unlock'))).toBe(true);
+    expect(pgEnd).toHaveBeenCalledTimes(1);
+    expect(lastUpdateData().status).toBe('DONE');
+  });
 });
 
 describe('NIT-005/007 — Job-Fehler vor API-Aufruf', () => {
