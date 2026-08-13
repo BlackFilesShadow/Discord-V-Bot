@@ -126,8 +126,9 @@ export async function executeJob(jobId: string): Promise<void> {
       case 'RESTART_IF_DOWN': {
         if (!conn.nitradoServerId) throw new Error('Kein nitradoServerId fuer RESTART_IF_DOWN');
         const status = await client.getServiceStatus(conn.nitradoServerId);
-        // Nur starten wenn wirklich gestoppt; restarting/started/stopping = no-op
-        if (status === 'stopped' || status === 'suspended') {
+        // KEEP-004: Nur einen explizit gestoppten Service starten. `suspended`
+        // ist ein administrativer Zustand und darf niemals automatisch umgangen werden.
+        if (status === 'stopped') {
           await client.start(conn.nitradoServerId);
           logAudit('NITRADO_AUTO_START', 'NITRADO', { guildId: job.guildId, jobId: job.id, details: { nitradoConnId: conn.id, statusBefore: status } });
         } else {
@@ -262,6 +263,9 @@ export function startNitradoJobWorker(): void {
   if (timer) return;
   logger.info(`NitradoJob-Worker gestartet (Intervall ${JOB_POLL_INTERVAL_MS}ms, Parallel ${MAX_PARALLEL})`);
   timer = setInterval(() => { void pollOnce(); }, JOB_POLL_INTERVAL_MS);
+  // F-013/NIT-010: Der Poll-Timer darf einen ansonsten beendeten Prozess
+  // nicht kuenstlich am Leben halten; Shutdown wird ueber den expliziten Stop-Hook gesteuert.
+  timer.unref?.();
 }
 
 export function stopNitradoJobWorker(): void {
