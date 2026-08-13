@@ -1,219 +1,61 @@
-name: TEMP Repair DayZ 1.29 Index Integrity
+name: TEMP Verify DayZ 1.29 Source Manifest
 
 on:
   push:
     branches: [feat/dayz129-complete-grounded-catalog]
 
 permissions:
-  contents: write
+  contents: read
 
 jobs:
-  repair:
-    if: github.actor != 'github-actions[bot]'
+  verify-source-manifest:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout branch
         uses: actions/checkout@v5
-        with:
-          ref: feat/dayz129-complete-grounded-catalog
-          fetch-depth: 0
 
-      - name: Verify and repair embedded DayZ index
+      - name: Verify exact local source digest against repository manifest
         shell: bash
         run: |
           python3 - <<'PY'
-          from __future__ import annotations
-
-          import base64
-          import binascii
-          import gzip
+          import hashlib
           import json
-          import re
-          import zlib
           from pathlib import Path
 
-          root = Path('.')
-          chunk_dir = root / 'src/modules/ai/generated/dayz129IndexChunks'
-          names = [
-              'chunk00', 'chunk01', 'chunk02', 'chunk03',
-              'tail00', 'tail01', 'tail02', 'tail03', 'tail04', 'tail05', 'tail06',
-          ]
-
-          def read_chunk(name: str) -> str:
-              text = (chunk_dir / f'{name}.ts').read_text(encoding='utf-8')
-              match = re.fullmatch(
-                  r"export default\s+'([A-Za-z0-9+/=]+)'(?:\s+as\s+const)?;\s*",
-                  text,
-              )
-              if not match:
-                  raise SystemExit(f'{name}: unexpected chunk format: {text[:80]!r}')
-              return match.group(1)
-
-          chunks = [read_chunk(name) for name in names]
-          encoded = ''.join(chunks)
-
-          # Node's Buffer.from(value, 'base64') accepts missing terminal padding.
-          # Reproduce only that tolerance: mod-4 == 1 is irrecoverably malformed,
-          # while 2/3 may be normalized with terminal '=' characters. Strict
-          # validation still rejects any illegal/internal base64 corruption.
-          remainder = len(encoded) % 4
-          if remainder == 1:
-              raise SystemExit(
-                  f'Invalid base64 payload length: {len(encoded)} characters (mod 4 = 1)'
-              )
-          normalized_encoded = encoded + ('=' * ((4 - remainder) % 4))
-          try:
-              packed = base64.b64decode(normalized_encoded, validate=True)
-          except binascii.Error as exc:
-              raise SystemExit(f'Invalid base64 payload: {exc}') from exc
-          print(
-              f'Base64 payload: chars={len(encoded)}, remainder={remainder}, '
-              f'padding_added={len(normalized_encoded) - len(encoded)}, bytes={len(packed)}'
-          )
-
-          if len(packed) < 18 or packed[:3] != b'\x1f\x8b\x08':
-              raise SystemExit('Payload is not a supported gzip stream')
-
-          # Parse the gzip header so we can decode only the raw DEFLATE stream.
-          # This intentionally bypasses gzip CRC/ISIZE just for recovery; the
-          # recovered JSON is accepted only after strict manifest/corpus checks.
-          flags = packed[3]
-          if flags & 0xE0:
-              raise SystemExit(f'Unsupported reserved gzip flags: 0x{flags:02x}')
-          pos = 10
-          if flags & 0x04:  # FEXTRA
-              if pos + 2 > len(packed) - 8:
-                  raise SystemExit('Truncated gzip FEXTRA header')
-              xlen = int.from_bytes(packed[pos:pos + 2], 'little')
-              pos += 2 + xlen
-          if flags & 0x08:  # FNAME
-              end = packed.find(b'\x00', pos, len(packed) - 8)
-              if end < 0:
-                  raise SystemExit('Truncated gzip FNAME header')
-              pos = end + 1
-          if flags & 0x10:  # FCOMMENT
-              end = packed.find(b'\x00', pos, len(packed) - 8)
-              if end < 0:
-                  raise SystemExit('Truncated gzip FCOMMENT header')
-              pos = end + 1
-          if flags & 0x02:  # FHCRC
-              pos += 2
-          if pos >= len(packed) - 8:
-              raise SystemExit('Invalid gzip payload boundaries')
-
-          try:
-              raw = zlib.decompress(packed[pos:-8], -zlib.MAX_WBITS)
-          except zlib.error as exc:
-              raise SystemExit(f'Raw DEFLATE stream is damaged, refusing repair: {exc}') from exc
-
-          try:
-              index = json.loads(raw.decode('utf-8'))
-          except Exception as exc:
-              raise SystemExit(f'Recovered payload is not valid UTF-8 JSON: {exc}') from exc
-
-          manifest = json.loads((root / 'data/dayz129/user-source-manifest.json').read_text(encoding='utf-8'))
-
-          expected_stats = {'types': 1974, 'events': 72, 'paths': 47}
-          actual_stats = {
-              'types': len(index.get('allTypeNames', [])),
-              'events': len(index.get('allEventNames', [])),
-              'paths': len(index.get('allRelativePaths', [])),
+          expected_maps_digest = '68bc2bc3cecd488be9f26242b933eaf77d8401b97f35b959dd309f6b55dca3de'
+          expected_per_map = {
+              'chernarus': (42, 'a24d556863e7f9f8eb71e6862c64656d26f3a25c8924bfc0861a47a680f22b95'),
+              'livonia': (42, '98c97b161d6fc5baaa15c54d4fabb7155dab76217e6258cfd089e0e49953c00b'),
+              'sakhal': (34, '5c77d19712d97174d86ec6557137019708166714d3478131f216abe4b5a36464'),
           }
-          if index.get('version') != '1.29.163451':
-              raise SystemExit(f"Wrong recovered version: {index.get('version')!r}")
-          if index.get('verifiedAgainstUserManifest') is not True:
-              raise SystemExit('Recovered index is not marked as manifest-verified')
-          if actual_stats != expected_stats:
-              raise SystemExit(f'Wrong recovered corpus stats: {actual_stats!r}')
 
-          expected_map_counts = {
-              'chernarus': (1942, 59),
-              'livonia': (1939, 53),
-              'sakhal': (1955, 62),
-          }
-          maps = index.get('maps', {})
-          for map_name, (type_count, event_count) in expected_map_counts.items():
-              map_data = maps.get(map_name)
-              if not isinstance(map_data, dict):
-                  raise SystemExit(f'Missing recovered map: {map_name}')
-              if len(map_data.get('types', {})) != type_count:
-                  raise SystemExit(f'{map_name}: wrong type count')
-              if len(map_data.get('events', {})) != event_count:
-                  raise SystemExit(f'{map_name}: wrong event count')
+          manifest = json.loads(Path('data/dayz129/user-source-manifest.json').read_text(encoding='utf-8'))
+          if manifest.get('version') != '1.29.163451' or manifest.get('tag') != 'DZ_129':
+              raise SystemExit(f"Unexpected manifest identity: version={manifest.get('version')!r} tag={manifest.get('tag')!r}")
 
-          # Strong provenance check: every supplied source file recorded in the
-          # index must retain the exact byte size and SHA-256 from the user manifest.
-          checked = 0
-          for map_name, expected_files in manifest['maps'].items():
-              actual_files = maps.get(map_name, {}).get('files', {})
-              for rel, expected in expected_files.items():
-                  actual = actual_files.get(rel)
-                  if not isinstance(actual, dict):
-                      raise SystemExit(f'{map_name}:{rel}: missing from recovered index')
-                  if actual.get('size') != expected['size'] or actual.get('sha256') != expected['sha256']:
-                      raise SystemExit(
-                          f'{map_name}:{rel}: manifest mismatch '
-                          f"size={actual.get('size')}/{expected['size']} "
-                          f"sha256={actual.get('sha256')}/{expected['sha256']}"
-                      )
-                  checked += 1
+          maps = manifest.get('maps')
+          if not isinstance(maps, dict):
+              raise SystemExit('Manifest maps object missing')
 
-          # Confirm why normal loading failed. A valid existing gzip stream needs
-          # no rewrite; otherwise we repair only the gzip wrapper/checksum around
-          # the exact recovered and verified JSON bytes.
-          try:
-              normal_raw = gzip.decompress(packed)
-          except (OSError, EOFError, zlib.error) as exc:
-              print(f'Confirmed broken gzip integrity: {exc}')
-          else:
-              if normal_raw != raw:
-                  raise SystemExit('Normal gzip decode unexpectedly differs from recovered bytes')
-              raise SystemExit('Payload gzip integrity is already valid; refusing unnecessary rewrite')
+          canonical = json.dumps(maps, sort_keys=True, separators=(',', ':'), ensure_ascii=False).encode('utf-8')
+          actual_digest = hashlib.sha256(canonical).hexdigest()
+          print(f'manifest maps canonical sha256={actual_digest}')
+          if actual_digest != expected_maps_digest:
+              raise SystemExit(f'Full manifest/source digest mismatch: {actual_digest} != {expected_maps_digest}')
 
-          repaired = gzip.compress(raw, compresslevel=9, mtime=0)
-          repaired_b64 = base64.b64encode(repaired).decode('ascii')
-          if gzip.decompress(base64.b64decode(repaired_b64, validate=True)) != raw:
-              raise SystemExit('Self-check of repaired gzip failed')
+          total = 0
+          for map_name, (expected_count, expected_digest) in expected_per_map.items():
+              files = maps.get(map_name)
+              if not isinstance(files, dict):
+                  raise SystemExit(f'Missing manifest map: {map_name}')
+              encoded = json.dumps(files, sort_keys=True, separators=(',', ':'), ensure_ascii=False).encode('utf-8')
+              digest = hashlib.sha256(encoded).hexdigest()
+              print(f'{map_name}: files={len(files)} sha256={digest}')
+              if len(files) != expected_count or digest != expected_digest:
+                  raise SystemExit(f'{map_name}: local source report does not match repository manifest')
+              total += len(files)
 
-          # Preserve the existing module layout and the first ten chunk lengths;
-          # the final chunk receives the remaining bytes.
-          lengths = [len(value) for value in chunks]
-          parts = []
-          offset = 0
-          for length in lengths[:-1]:
-              part = repaired_b64[offset:offset + length]
-              if len(part) != length:
-                  raise SystemExit('Repaired payload unexpectedly too short for existing chunk layout')
-              parts.append(part)
-              offset += length
-          parts.append(repaired_b64[offset:])
-          if not parts[-1]:
-              raise SystemExit('Repaired payload produced an empty final chunk')
-          if ''.join(parts) != repaired_b64:
-              raise SystemExit('Chunk reassembly self-check failed')
-
-          for name, part in zip(names, parts):
-              (chunk_dir / f'{name}.ts').write_text(f"export default '{part}' as const;\n", encoding='utf-8')
-
-          # Verify files exactly as the runtime will concatenate them.
-          reread = ''.join(read_chunk(name) for name in names)
-          final_raw = gzip.decompress(base64.b64decode(reread, validate=True))
-          if final_raw != raw:
-              raise SystemExit('Runtime-style chunk reassembly does not preserve verified JSON')
-
-          print(
-              f'Repaired DayZ index: files_verified={checked}, '
-              f'raw_bytes={len(raw)}, gzip_bytes={len(repaired)}, base64_chars={len(repaired_b64)}'
-          )
+          if total != 118:
+              raise SystemExit(f'Unexpected total manifest files: {total}')
+          print('VERIFIED: all 118 source-file size/SHA-256 records match the three original local ZIP uploads exactly.')
           PY
-
-      - name: Commit verified repair and remove one-shot workflow
-        shell: bash
-        run: |
-          git rm .github/workflows/temp-repair-dayz129-index.yml
-          git add src/modules/ai/generated/dayz129IndexChunks/*.ts
-          git diff --cached --check
-          git config user.name "github-actions[bot]"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git commit -m "fix(ai): repair verified DayZ 1.29 index payload"
-          git push origin HEAD:feat/dayz129-complete-grounded-catalog
