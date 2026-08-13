@@ -476,8 +476,15 @@ const messageCreateEvent: BotEvent = {
             const recent = await msg.channel.messages.fetch({ limit: 15, before: msg.id });
             const me = msg.client.user?.id;
             if (me) {
-              const previousBot = Array.from(recent.values()).find(m => m.author.id === me && (m.content?.trim()?.length ?? 0) > 0);
-              aiQuestion = enrichDayzTechnicalFollowUp(question, previousBot?.content);
+              const recentBotMessages = Array.from(recent.values())
+                .filter(m => m.author.id === me && (m.content?.trim()?.length ?? 0) > 0);
+              for (const previousBot of recentBotMessages) {
+                const enriched = enrichDayzTechnicalFollowUp(question, previousBot.content);
+                if (enriched !== question) {
+                  aiQuestion = enriched;
+                  break;
+                }
+              }
               if (aiQuestion !== question) logger.info(`[DayZ-Grounding] Folgefrage kontextualisiert: ${aiQuestion.slice(0, 120)}`);
             }
             const ctxLines = Array.from(recent.values())

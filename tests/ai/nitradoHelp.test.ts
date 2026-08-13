@@ -154,6 +154,9 @@ describe('nitradoHelp — DayZ 1.29 grounded', () => {
     expect(a.directAnswer).toMatch(/StaticHeliCrash/);
     expect(a.directAnswer).toMatch(/nominal=3/);
     expect(a.directAnswer).toMatch(/Wreck_UH1Y/);
+    expect(a.directAnswer).toMatch(/<event name=\"StaticHeliCrash\">/);
+    expect(a.directAnswer).toContain('\n');
+    expect(a.directAnswer).not.toContain('\\n');
     expect(a.directAnswer).toMatch(/nicht.*Start-\/Endzeit/i);
   });
 

@@ -321,6 +321,20 @@ export async function answerQuestion(
   const mode: AnswerMode = opts.mode ?? 'chat';
   const context = opts.context;
 
+  // DayZ direct-answer preflight: verified deterministic answers do not call an AI provider
+  // and therefore must not consume or be blocked by the per-user AI rate limit.
+  if (mode !== 'welcome') {
+    try {
+      const preflightHelp = lookupNitradoHelp(question);
+      if (preflightHelp.directAnswer) {
+        logger.info(`[DayZ-Grounding] direct-answer preflight (topics=${preflightHelp.topicIds.join(',')})`);
+        return { success: true, result: redactText(preflightHelp.directAnswer) };
+      }
+    } catch (e) {
+      logger.warn(`[DayZ-Grounding] direct-answer preflight fehlgeschlagen: ${String(e)}`);
+    }
+  }
+
   // Phase 2.2: Per-User-Rate-Limit, um Provider-Budget und Latenz zu schuetzen.
   // Nur fuer interaktive Modi (chat/oneshot/trigger), nicht fuer welcome-DMs.
   if (opts.userId && mode !== 'welcome') {
