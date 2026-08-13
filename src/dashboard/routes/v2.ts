@@ -63,9 +63,12 @@ v2Router.use('/guilds/:guildId/feeds', feedsRouter);
 v2Router.use('/guilds/:guildId/translated-posts', translatedPostsRouter);
 v2Router.use('/guilds/:guildId/audit', auditRouter);
 
-// Basis-DEV-Router zuerst: /login und /status bleiben fuer bereits authentisierte
-// Dashboard-User erreichbar, damit Eligibility und Step-up ueberhaupt moeglich sind.
-// Seine privilegierten Endpunkte tragen das globale Developer-Gate selbst.
+// DEV-Basisrouter hat absichtlich zwei unprivilegierte, aber authentisierte
+// Endpunkte: /login (Step-up) und /status (Eligibility-Polling). Nur die
+// privilegierten Basisrouten bekommen das globale Developer-Gate vorab.
+v2Router.use('/dev/snapshot', requireGlobalDeveloperIdentity);
+v2Router.use('/dev/logs', requireGlobalDeveloperIdentity);
+v2Router.use('/dev/sessions', requireGlobalDeveloperIdentity);
 v2Router.use('/dev', devRouter);
 
 // Alle spezifischen DEV-Unterrouter muessen zusaetzlich zur aktiven DevSession
