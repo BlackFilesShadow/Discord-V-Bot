@@ -147,14 +147,10 @@ function canonicalFileFromText(question: string): string | null {
   const q = fold(question).replace(/\\/g, '/');
   const paths = [...index.allRelativePaths].sort((a, b) => b.length - a.length);
 
-  // Prefer complete indexed paths before any short aliases. This prevents names
-  // such as cfgspawnabletypes.xml from being mistaken for db/types.xml.
   for (const path of paths) {
     if (q.includes(fold(path))) return path;
   }
 
-  // If the question contains a concrete filename, resolve that token exactly.
-  // Unknown filenames must remain unknown instead of matching a suffix alias.
   const explicitFile = explicitFileLikeToken(question);
   if (explicitFile) {
     const explicit = fold(explicitFile).replace(/\\/g, '/');
@@ -171,8 +167,6 @@ function canonicalFileFromText(question: string): string | null {
     if (q.includes(fold(basename))) return path;
   }
 
-  // Dot-less convenience forms such as "typesxml" are accepted only as
-  // standalone tokens, never as substrings of another filename.
   for (const [alias, target] of Object.entries(FILE_ALIASES)) {
     const normalized = fold(alias);
     const escaped = normalized.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
@@ -271,6 +265,7 @@ const TYPE_SYNONYMS: Record<string, string[]> = {
   'autozelt': ['car', 'tent'], 'zelt': ['tent'], 'streichholz': ['match'], 'streichhoelzer': ['match'],
   'messer': ['knife'], 'axt': ['axe'], 'schaufel': ['shovel'], 'seil': ['rope'], 'fass': ['barrel'],
   'gewehr': ['rifle'], 'pistole': ['pistol'], 'magazin': ['mag'], 'munition': ['ammo'],
+  'tundra': ['winchester', '70'],
 };
 
 const TYPE_QUERY_EXCLUSIONS: Record<string, string[]> = {
@@ -319,7 +314,7 @@ export function searchDayz129Types(query: string, limit = 5): string[] {
   const index = getDayz129Index();
   const rawTokens = fold(query).split(/[^a-z0-9]+/).filter(Boolean);
   const excluded = new Set(rawTokens.flatMap((token) => TYPE_QUERY_EXCLUSIONS[token] ?? []));
-  const tokens = queryTokens(query, TYPE_SYNONYMS).filter((t) => !['class', 'classname', 'typename', 'type', 'item', 'gegenstand', 'dayz', 'heisst', 'heißt', 'wie', 'ist', 'der', 'die', 'das'].includes(t));
+  const tokens = queryTokens(query, TYPE_SYNONYMS).filter((t) => !['class', 'classname', 'typename', 'type', 'item', 'gegenstand', 'dayz', 'heisst', 'wie', 'ist', 'der', 'die', 'das', 'types', 'xml'].includes(t));
   return index.allTypeNames
     .filter((name) => !excluded.has(name))
     .map((name) => ({ name, score: candidateScore(name, query, tokens) }))
@@ -359,6 +354,20 @@ function formatTypeAnswer(name: string, requestedMaps: Dayz129Map[] = []): DayzC
   return { answer: lines.join('\n'), topic: 'type', ids: [`dayz129:type:${name}`] };
 }
 
+function formatDisplayAliasAnswer(displayName: string, className: string): DayzCatalogAnswer {
+  return {
+    answer: `Der DayZ-Classname der **${displayName}** ist **\`${className}\`**.`,
+    topic: 'type',
+    ids: [`dayz129:type:${className}`],
+  };
+}
+
+function findTypeDisplayAlias(question: string): { displayName: string; className: string } | null {
+  const q = fold(question);
+  if (/\b(?:m70\s+)?tundra\b/.test(q)) return { displayName: 'Tundra', className: 'Winchester70' };
+  return null;
+}
+
 const EVENT_SYNONYMS: Record<string, string[]> = {
   'heli': ['heli', 'crash'], 'helikopter': ['heli', 'crash'], 'helikopterabsturz': ['heli', 'crash'],
   'zombie': ['infected'], 'zombies': ['infected'], 'infizierte': ['infected'],
@@ -370,12 +379,11 @@ const EVENT_SYNONYMS: Record<string, string[]> = {
 
 export function searchDayz129Events(query: string, limit = 5): string[] {
   const index = getDayz129Index();
-  const tokens = queryTokens(query, EVENT_SYNONYMS).filter((t) => !['event', 'eventname', 'name', 'dayz', 'wie', 'heisst', 'heißt', 'der', 'die', 'das'].includes(t));
+  const tokens = queryTokens(query, EVENT_SYNONYMS).filter((t) => !['event', 'eventname', 'name', 'dayz', 'wie', 'heisst', 'der', 'die', 'das'].includes(t));
   const direct = index.allEventNames
     .map((name) => ({ name, score: candidateScore(name, query, tokens) }))
     .filter((x) => x.score >= 6);
 
-  // Also find events by a real child classname.
   for (const map of Object.keys(index.maps) as Dayz129Map[]) {
     for (const [eventName, event] of Object.entries(index.maps[map].events)) {
       const children = event.children;
@@ -419,13 +427,32 @@ function formatEventAnswer(name: string, requestedMaps: Dayz129Map[] = []): Dayz
 function isTypeLookupIntent(question: string): boolean {
   const q = fold(question);
   return /\b(class|classname|class name|typename|type name|itemname|item name)\b/.test(q)
-    || /wie\s+(heisst|heißt).*\b(item|gegenstand|class|classname)\b/.test(q)
-    || /\b(holzbretter|holzbrett|nagelbox|naegelbox|nägelbox|wasserflasche|metallplatte|kabeltrommel|seekiste|autozelt)\b/.test(q);
+    || /wie\s+.*\b(heisst|genannt)\b/.test(q) && /\b(types?\.xml|item|gegenstand|class|classname)\b/.test(q)
+    || /\b(holzbretter|holzbrett|nagelbox|naegelbox|wasserflasche|metallplatte|kabeltrommel|seekiste|autozelt|tundra)\b/.test(q);
 }
 
 function isEventLookupIntent(question: string): boolean {
   const q = fold(question);
-  return /\bevent(name)?\b/.test(q) || /\b(helikopterabsturz|heli\s*crash|zombie\s*event|militaer.*konvoi|militär.*konvoi)\b/.test(q);
+  return /\bevent(name)?\b/.test(q) || /\b(helikopterabsturz|heli\s*crash|zombie\s*event|militaer.*konvoi)\b/.test(q);
+}
+
+function isRestockMeaningQuestion(question: string): boolean {
+  const q = fold(question).trim();
+  if (!/\brestock\b/.test(q)) return false;
+  return q === 'restock'
+    || /\b(was|bedeutet|bedeutung|wofuer|wozu|funktion|wert|erklaer|erklaere)\b/.test(q);
+}
+
+function restockMeaningAnswer(): DayzCatalogAnswer {
+  return {
+    answer: [
+      '`restock` ist in `types.xml` ein **CE-Zeitparameter in Sekunden**, der bei der Wiederauffüllung eines Typs berücksichtigt wird.',
+      'Er ist **kein Timer eines einzelnen Loot-/Spawnpunkts** und startet nicht einfach beim Aufheben, Vergraben oder Entfernen eines konkreten Items.',
+      'In deinen drei DayZ-1.29-`types.xml`-Datensätzen kommen `restock`-Werte von `0` bis `43200` Sekunden vor.',
+    ].join('\n'),
+    topic: 'file',
+    ids: ['dayz129:field:types.xml:restock'],
+  };
 }
 
 function candidateListAnswer(kind: 'type' | 'event', candidates: string[]): DayzCatalogAnswer {
@@ -436,7 +463,7 @@ function candidateListAnswer(kind: 'type' | 'event', candidates: string[]): Dayz
       `Ich finde mehrere **reale 1.29-${title}-Kandidaten** in deinen drei Dateien:`,
       ...candidates.map((name) => `- \`${name}\``),
       '',
-      `Sag mir, welchen du meinst; ich gebe dann die kartenspezifischen Werte aus ${source} aus. Ich erfinde keinen Namen ausserhalb dieses Index.`,
+      `Sag mir, welchen du meinst; ich gebe dann die kartenspezifischen Werte aus ${source} aus.`,
     ].join('\n'),
     topic: kind === 'type' ? 'type-search' : 'event-search',
     ids: candidates.map((name) => `dayz129:${kind}:${name}`),
@@ -449,49 +476,65 @@ export function answerDayz129CatalogQuestion(question: string): DayzCatalogAnswe
   const q = fold(question);
   const requestedMaps = detectMaps(question);
 
-  const path = canonicalFileFromText(question);
-  if (path) return formatFileAnswer(path);
-
-  const explicitFile = explicitFileLikeToken(question);
-  if (explicitFile && /\b(dayz|server|mission|datei|file|xml|json|ce|central economy)\b/i.test(question)) {
-    return {
-      answer: `Die Datei **\`${explicitFile}\`** kommt in keinem deiner drei gelieferten DayZ-1.29-Datensaetze (Chernarus, Livonia, Sakhal) vor. Deshalb erfinde ich weder Pfad noch Funktion dafuer. Wenn es eine Mod-Datei ist, brauche ich die zugehoerige Mod-/Dateiquelle.`,
-      topic: 'unknown-file', ids: [`dayz129:unknown-file:${explicitFile}`],
-    };
+  // Spezifische Nutzerabsicht gewinnt immer gegen eine nur erwähnte Datei.
+  // So wird "wie heisst die Tundra in der types.xml?" nicht als generische
+  // Frage nach der Datei types.xml fehlklassifiziert.
+  const displayAlias = findTypeDisplayAlias(question);
+  if (displayAlias && isTypeLookupIntent(question)) {
+    if (index.allTypeNames.includes(displayAlias.className)) {
+      return formatDisplayAliasAnswer(displayAlias.displayName, displayAlias.className);
+    }
   }
 
   const exactType = findExactIndexedName(question, index.allTypeNames, typeByLower!);
-  if (exactType && (isTypeLookupIntent(question) || q.includes(fold(exactType)))) return formatTypeAnswer(exactType, requestedMaps);
+  if (exactType && (isTypeLookupIntent(question) || q.includes(fold(exactType)))) {
+    return formatTypeAnswer(exactType, requestedMaps);
+  }
 
   if (isTypeLookupIntent(question)) {
     const candidates = searchDayz129Types(question, 5);
     if (candidates.length === 1) return formatTypeAnswer(candidates[0], requestedMaps);
     if (candidates.length > 1) {
       const top = searchDayz129Types(question, 2);
-      const exactNatural = ['holzbretter', 'holzbrett', 'nagelbox', 'naegelbox', 'wasserflasche', 'metallplatte', 'kabeltrommel', 'seekiste', 'autozelt'].some((x) => fold(question).includes(x));
+      const exactNatural = ['holzbretter', 'holzbrett', 'nagelbox', 'naegelbox', 'wasserflasche', 'metallplatte', 'kabeltrommel', 'seekiste', 'autozelt', 'tundra'].some((x) => fold(question).includes(x));
       if (exactNatural && top[0]) return formatTypeAnswer(top[0], requestedMaps);
       return candidateListAnswer('type', candidates);
     }
     return {
-      answer: 'Dazu finde ich **keinen passenden Classname** unter den 1.974 realen Classnames aus deinen drei 1.29-`types.xml`-Dateien. Ich rate keinen Namen. Beschreibe den Gegenstand etwas genauer.',
+      answer: 'Dazu finde ich **keinen passenden Classname** unter den 1.974 realen Classnames aus deinen drei 1.29-`types.xml`-Dateien. Beschreibe den Gegenstand etwas genauer.',
       topic: 'type-search', ids: ['dayz129:type:not-found'],
     };
   }
 
   const exactEvent = findExactIndexedName(question, index.allEventNames, eventByLower!);
-  if (exactEvent && (isEventLookupIntent(question) || q.includes(fold(exactEvent)))) return formatEventAnswer(exactEvent, requestedMaps);
+  if (exactEvent && (isEventLookupIntent(question) || q.includes(fold(exactEvent)))) {
+    return formatEventAnswer(exactEvent, requestedMaps);
+  }
 
   if (isEventLookupIntent(question)) {
     const candidates = searchDayz129Events(question, 5);
     if (candidates.length === 1) return formatEventAnswer(candidates[0], requestedMaps);
     if (candidates.length > 1) {
-      const strongNatural = /helikopterabsturz|heli\s*crash|militaer.*konvoi|militär.*konvoi/.test(fold(question));
+      const strongNatural = /helikopterabsturz|heli\s*crash|militaer.*konvoi/.test(fold(question));
       if (strongNatural) return formatEventAnswer(candidates[0], requestedMaps);
       return candidateListAnswer('event', candidates);
     }
     return {
-      answer: 'Dazu finde ich **keinen passenden Eventnamen** unter den 72 realen Eventnamen aus deinen drei 1.29-`events.xml`-Dateien. Ich rate keinen Eventnamen.',
+      answer: 'Dazu finde ich **keinen passenden Eventnamen** unter den 72 realen Eventnamen aus deinen drei 1.29-`events.xml`-Dateien.',
       topic: 'event-search', ids: ['dayz129:event:not-found'],
+    };
+  }
+
+  if (isRestockMeaningQuestion(question)) return restockMeaningAnswer();
+
+  const path = canonicalFileFromText(question);
+  if (path) return formatFileAnswer(path);
+
+  const explicitFile = explicitFileLikeToken(question);
+  if (explicitFile && /\b(dayz|server|mission|datei|file|xml|json|ce|central economy)\b/i.test(question)) {
+    return {
+      answer: `Die Datei **\`${explicitFile}\`** kommt in keinem deiner drei gelieferten DayZ-1.29-Datensaetze (Chernarus, Livonia, Sakhal) vor. Wenn es eine Mod-Datei ist, brauche ich die zugehoerige Mod-/Dateiquelle.`,
+      topic: 'unknown-file', ids: [`dayz129:unknown-file:${explicitFile}`],
     };
   }
 
@@ -512,14 +555,15 @@ export function enrichDayz129FollowUp(question: string, previousAssistantText?: 
   if (!question || !previousAssistantText) return question;
   const q = fold(question).trim();
   if (q.length > 160 || !/(beispiel|wie genau|warum|was bedeutet|kannst du|zeig|und wie|und was|und auf|auf chernarus|auf livonia|auf sakhal|nochmal|dazu|welcher wert|welche werte)/i.test(q)) return question;
-  const path = canonicalFileFromText(previousAssistantText);
-  if (path) return `${path}: ${question}`;
 
   const index = getDayz129Index();
   const type = findExactIndexedName(previousAssistantText, index.allTypeNames, typeByLower!);
   if (type) return `Classname ${type}: ${question}`;
   const event = findExactIndexedName(previousAssistantText, index.allEventNames, eventByLower!);
   if (event) return `Event ${event}: ${question}`;
+
+  const path = canonicalFileFromText(previousAssistantText);
+  if (path) return `${path}: ${question}`;
   return question;
 }
 
