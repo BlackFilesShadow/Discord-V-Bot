@@ -58,7 +58,10 @@ describe('DayZ 1.29 complete grounded catalog', () => {
     expect(a?.answer).toMatch(/Central Economy/i);
     expect(a?.answer).toMatch(/nominal/);
     expect(a?.answer).toMatch(/WoodenPlank/);
-    expect(a?.answer).not.toMatch(/nominal.*maximale Menge/i);
+    expect(a?.answer).not.toMatch(
+      /nominal\s+(?:ist|bedeutet|entspricht)\s+(?:die\s+)?maximale Menge/i,
+    );
+    expect(a?.answer).toMatch(/nominal.*nicht pauschal.*maximale Menge/i);
   });
 
   test('knows every real classname and never needs to invent one', () => {
