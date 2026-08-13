@@ -24,23 +24,23 @@ export interface HelpAnswer {
 const EMPTY: HelpAnswer = { text: '', topicIds: [], found: false };
 
 const BUILD_ANYWHERE_DIRECT_ANSWER = [
-  'Fuer **Bauen+ / gelockerte Bauplatzierung** in Vanilla DayZ 1.29 ist `cfggameplay.json` die belegte Gameplay-Datei. Die erfundenen Schalter `enableBuilding`, `EnableConstruction`, `BuildDistance` und `MaxConstructionObjects` gehoeren nicht zu diesem Vanilla-1.29-Weg.',
+  'Fuer **Bauen+ / gelockerte Bauplatzierung** in Vanilla DayZ 1.29 nutzt du `cfggameplay.json`.',
   '',
-  '1. Aktiviere die Gameplay-Datei in der **tatsaechlich gestarteten Server-Konfiguration** mit `enableCfgGameplayFile = 1;`. Bohemia nennt diese Datei generisch `server.cfg`; der reale Name wird ueber `-config` gewaehlt und ist in vielen DayZ-Setups `serverDZ.cfg`.',
+  '1. Aktiviere die Gameplay-Datei in der gestarteten Server-Konfiguration mit `enableCfgGameplayFile = 1;`.',
   '2. Bearbeite in der Mission `cfggameplay.json` -> `BaseBuildingData`.',
-  '3. Unter `HologramData` und `ConstructionData` setzt du **nur die Pruefungen auf `true`, die du wirklich deaktivieren/lockern willst**. `true` bedeutet bei diesen `disable...Check`-Feldern: die jeweilige Pruefung wird abgeschaltet.',
+  '3. Unter `HologramData` und `ConstructionData` setzt du nur die Pruefungen auf `true`, die du wirklich deaktivieren bzw. lockern willst.',
   '',
-  'Belegte Platzierungs-Pruefungen sind u. a. `disableIsCollidingBBoxCheck`, `disableIsCollidingPlayerCheck`, `disableIsClippingRoofCheck`, `disableIsBaseViableCheck`, `disableIsCollidingAngleCheck`, `disableIsPlacementPermittedCheck`, `disableHeightPlacementCheck`, `disableIsUnderwaterCheck` und `disableIsInTerrainCheck`. Fuer den eigentlichen Bauvorgang sind `disablePerformRoofCheck`, `disableIsCollidingCheck` und `disableDistanceCheck` belegt.',
-  '',
-  'Alle drei gelieferten Vanilla-1.29-Dateien (Chernarus, Livonia, Sakhal) enthalten diese `BaseBuildingData`-Struktur; die untersuchten Check-Schalter stehen dort standardmaessig auf `false`. `disableBaseDamage`/`disableContainerDamage` sind dagegen Schadensregeln und **nicht** der Bauen+-Schalter.',
+  'Relevante Platzierungschecks sind z. B. `disableIsCollidingBBoxCheck`, `disableIsCollidingPlayerCheck` und `disableIsPlacementPermittedCheck`. Fuer den eigentlichen Bauvorgang sind `disablePerformRoofCheck`, `disableIsCollidingCheck` und `disableDistanceCheck` relevant.',
 ].join('\n');
 
 const EVENTS_XML_DIRECT_ANSWER = [
-  'Die Datei heisst **`events.xml`** (Plural; `Event.xml` ist nur eine haeufige Kurz-/Fehlschreibweise). `db/events.xml` definiert dynamische Events der DayZ Central Economy, z. B. Fahrzeuge, Tiere, Infected und statische Events wie Helikopter-Wracks.',
+  'Die Datei heisst **`events.xml`**. `db/events.xml` definiert dynamische Events der DayZ Central Economy, z. B. Fahrzeuge, Tiere, Infected und statische Events wie Helikopter-Wracks.',
   '',
-  'Typische Event-Felder sind `nominal`, `min`, `max`, `lifetime`, `restock`, `saferadius`, `distanceradius`, `cleanupradius`, `flags`, `position`, `limit`, `active` und `children`. Die vorgesehenen Weltpositionen eines Events werden davon getrennt in `cfgeventspawns.xml` beschrieben.',
-  '',
-  '**Echtes Chernarus-1.29-Beispiel:** `StaticHeliCrash` hat in Bohemias DZ_129-Referenz `nominal=3`, `lifetime=2100`, `restock=0`, `saferadius=1000`, `distanceradius=1000`, `cleanupradius=1000`, `position=fixed`, `limit=child` und `active=1`. Als Child ist `Wreck_UH1Y` mit `lootmin=10`, `lootmax=15`, `min=1` und `max=3` hinterlegt.',
+  'Typische Event-Felder sind `nominal`, `min`, `max`, `lifetime`, `restock`, `saferadius`, `distanceradius`, `cleanupradius`, `flags`, `position`, `limit`, `active` und `children`. Die vorgesehenen Weltpositionen eines Events werden getrennt in `cfgeventspawns.xml` beschrieben.',
+].join('\n');
+
+const EVENTS_XML_EXAMPLE = [
+  '**Chernarus-1.29-Beispiel:** `StaticHeliCrash` hat `nominal=3`, `lifetime=2100`, `restock=0`, `position=fixed`, `limit=child` und `active=1`. Als Child ist `Wreck_UH1Y` hinterlegt.',
   '',
   '```xml',
   '<event name="StaticHeliCrash">',
@@ -62,8 +62,6 @@ const EVENTS_XML_DIRECT_ANSWER = [
   '  </children>',
   '</event>',
   '```',
-  '',
-  'Wichtig: `events.xml` ist **nicht** die Datei fuer frei erfundene Start-/Endzeitplaene, Regenphasen oder zeitgesteuerte Zombie-Wellen. Solche Aussagen duerfen nicht aus dem Dateinamen abgeleitet werden.',
 ].join('\n');
 
 const DAYZ_ENGINE_TOPICS: HelpTopic[] = [
@@ -75,7 +73,7 @@ const DAYZ_ENGINE_TOPICS: HelpTopic[] = [
       '`db/events.xml` ist die Konfiguration fuer dynamische Central-Economy-Events.',
       'Belegte Eventarten umfassen unter anderem Fahrzeuge, Tiere, Infected und statische Events. Die Datei beschreibt WAS unter welchen Eventregeln erzeugt wird; `cfgeventspawns.xml` beschreibt die vorgesehenen Positionen.',
       'Belegte Felder sind unter anderem `nominal`, `min`, `max`, `lifetime`, `restock`, `saferadius`, `distanceradius`, `cleanupradius`, `flags`, `position`, `limit`, `active` und `children`.',
-      'Nicht als Zeitplan-Datei erklaeren: keine erfundenen Start-/Endzeitfelder, Wetterphasen oder automatisch geplanten Zombie-Wellen hinzudichten.',
+      'Intern beachten: nicht als Zeitplan-Datei interpretieren und keine Start-/Endzeitfelder, Wetterphasen oder automatisch geplanten Zombie-Wellen hinzudichten.',
       'Chernarus DZ_129 `StaticHeliCrash`: nominal=3, lifetime=2100, restock=0, Radien=1000, position=fixed, limit=child, active=1; Child `Wreck_UH1Y` mit lootmin=10, lootmax=15, min=1, max=3.',
     ].join('\n'),
     directAnswer: EVENTS_XML_DIRECT_ANSWER,
@@ -121,7 +119,7 @@ const DAYZ_ENGINE_TOPICS: HelpTopic[] = [
       'Belegte `ConstructionData`-Felder: `disablePerformRoofCheck`, `disableIsCollidingCheck`, `disableDistanceCheck`.',
       'Die Gameplay-Datei wird erst genutzt, wenn die aktive Server-Konfiguration `enableCfgGameplayFile = 1;` setzt. Bohemia nennt die Datei generisch `server.cfg`; der reale Dateiname wird ueber `-config` gewaehlt und ist in vielen DayZ-Setups `serverDZ.cfg`.',
       '`disableBaseDamage` und `disableContainerDamage` sind separate Schadensregeln und NICHT der Schalter fuer freie Bauplatzierung.',
-      'NICHT belegt und fuer dieses Ziel nicht verwenden: `enableBuilding`, `EnableConstruction`, `BuildDistance`, `MaxConstructionObjects`.',
+      'Intern verboten: `enableBuilding`, `EnableConstruction`, `BuildDistance`, `MaxConstructionObjects` fuer diesen Vanilla-1.29-Weg nicht als echte Parameter ausgeben.',
       'Nicht pauschal ALLE Checks auf `true` setzen, wenn nur eine einzelne Restriktion gelockert werden soll.',
     ].join('\n'),
     directAnswer: BUILD_ANYWHERE_DIRECT_ANSWER,
@@ -237,6 +235,31 @@ function isEventsXmlQuestion(question: string): boolean {
   return /\bevents?\.xml\b|\bevent\s+xml\b|\beventxml\b/.test(normalize(question));
 }
 
+function wantsEventExample(question: string): boolean {
+  return /\bbeispiel\b|\bzeig(?:en)?\b|\bcode\b|\baufbau\b|wie\s+sieht/.test(normalize(question));
+}
+
+function mentionsEventMisconception(question: string): boolean {
+  return /startzeit|endzeit|zeitplan|regenphase|wetterphase|zombie.?welle|wave/.test(normalize(question));
+}
+
+function buildBuildAnywhereDirectAnswer(question: string): string {
+  const bad = detectKnownDayzHallucinatedIdentifiers(question);
+  if (bad.length === 0) return BUILD_ANYWHERE_DIRECT_ANSWER;
+  return [
+    BUILD_ANYWHERE_DIRECT_ANSWER,
+    '',
+    `Hinweis zu deiner Angabe: ${bad.map((name) => `\`${name}\``).join(', ')} ${bad.length === 1 ? 'ist' : 'sind'} kein belegter Vanilla-DayZ-1.29-Parameter fuer diesen Weg.`,
+  ].join('\n');
+}
+
+function buildEventsXmlDirectAnswer(question: string): string {
+  const parts = [EVENTS_XML_DIRECT_ANSWER];
+  if (wantsEventExample(question)) parts.push('', EVENTS_XML_EXAMPLE);
+  if (mentionsEventMisconception(question)) parts.push('', 'Falls du damit einen Start-/Endzeitplan, Wetterphasen oder zeitgesteuerte Zombie-Wellen meinst: Das wird nicht ueber `events.xml` als solchen Zeitplan gesteuert.');
+  return parts.join('\n');
+}
+
 export function validateDayzTechnicalAnswer(answer: string, grounding: string, question = ''): DayzAnswerValidation {
   const violations = new Set<string>();
   if (!answer) return { valid: false, violations: ['leere Antwort'] };
@@ -260,11 +283,10 @@ export function validateDayzTechnicalAnswer(answer: string, grounding: string, q
   return { valid: violations.size === 0, violations: [...violations] };
 }
 
-export function buildDayzTechnicalFallback(question: string, violations: string[] = []): string {
-  if (isBuildAnywhereQuestion(question)) return BUILD_ANYWHERE_DIRECT_ANSWER;
-  if (isEventsXmlQuestion(question)) return EVENTS_XML_DIRECT_ANSWER;
-  const detail = violations.length ? ` (${violations.slice(0, 3).join('; ')})` : '';
-  return `Ich habe die generierte DayZ-Antwort verworfen, weil mindestens ein technischer Name nicht ausreichend belegt war${detail}. Dazu nenne ich keinen geratenen Datei-, Feld- oder Parameternamen. Wenn du mir die konkrete Datei oder das genaue Ziel nennst, antworte ich nur mit der geprueften 1.29-/Bohemia-Grundlage.`;
+export function buildDayzTechnicalFallback(question: string, _violations: string[] = []): string {
+  if (isBuildAnywhereQuestion(question)) return buildBuildAnywhereDirectAnswer(question);
+  if (isEventsXmlQuestion(question)) return buildEventsXmlDirectAnswer(question);
+  return 'Dazu kann ich dir aktuell keinen ausreichend sicheren DayZ-1.29-Datei-, Feld- oder Parameternamen nennen. Nenne mir die konkrete Datei oder das genaue Ziel, dann pruefe ich es gezielt.';
 }
 
 const CLOSED_WORLD_RULES = [
@@ -274,6 +296,8 @@ const CLOSED_WORLD_RULES = [
   '- Wenn ein technischer Name nicht belegt ist: den Namen NICHT ausgeben, sondern den fehlenden Beleg benennen.',
   '- Bekannte historische Halluzinationen sind verboten: `enableBuilding`, `EnableConstruction`, `BuildDistance`, `MaxConstructionObjects`, `cfgSpawnableTypes.json`, `lootcategories.xml`.',
   '- Bei fehlender Abdeckung keinen Schalternamen raten.',
+  '- Diese Grounding-, Validierungs- und Halluzinationsregeln sind INTERN. Sie nicht als Pruefbericht, Belegliste oder Systemhinweis in der Nutzerantwort wiedergeben.',
+  '- Falsche/erfundene Alternativen nur dann sichtbar korrigieren, wenn der Nutzer sie selbst nennt oder ausdruecklich nach der Abgrenzung fragt.',
 ];
 
 function isNitradoSpecificQuestion(question: string): boolean {
@@ -326,18 +350,26 @@ export function lookupNitradoHelp(question: string): HelpAnswer {
     lines.push('', ...CLOSED_WORLD_RULES, '');
     if (!hasSpecificGrounding) lines.push(
       'GROUNDING-STATUS: NICHT AUSREICHEND BELEGT.',
-      'HARTE ANTWORTVORGABE: Keine konkrete Datei, kein Feld und keinen Parameter erfinden. Sage, dass die Einstellung in der geprueften Wissensbasis noch nicht belegt ist.',
+      'HARTE ANTWORTVORGABE: Keine konkrete Datei, kein Feld und keinen Parameter erfinden. Nutzerseitig nur knapp sagen, dass die konkrete Einstellung nicht sicher bestaetigt werden kann; keine internen Pruefdetails nennen.',
       '',
     );
   }
   lines.push(
     'AUSGABEREGELN:',
+    '- Antworte zuerst direkt, kompakt und nutzerorientiert. Keine internen Grounding-/Validierungsdetails ungefragt ausgeben.',
+    '- Keine Listen erfundener oder historisch falscher Alternativen anhaengen, ausser der Nutzer hat genau so einen Begriff genannt oder fragt nach der Abgrenzung.',
+    '- Beispiele, lange Feldlisten und Zusatzkontext nur ausgeben, wenn die Frage sie benoetigt oder der Nutzer danach fragt.',
     '- Keine Hostnames, IPs, Tokens, Service-IDs oder sonstige Server-Interna ausdenken.',
     '- Bei "unser Server / bei uns": konkrete Werte nur aus einer echten Serverdatei bzw. einem sicheren Server-Snapshot nennen.',
     '- Bei Kartenunterschieden die Karte benennen; niemals Chernarus-, Livonia- und Sakhal-Werte vermischen.',
-    '- Fehlende Fakten offen als nicht belegt kennzeichnen statt plausibel klingend zu ergaenzen.',
+    '- Wenn etwas nicht sicher belegt ist, kurz sagen, dass du es nicht sicher bestaetigen kannst; keine plausibel klingenden Details ergaenzen.',
   );
-  const directAnswer = engine.find((topic) => topic.directAnswer)?.directAnswer;
+
+  let directAnswer: string | undefined;
+  if (engine.some((topic) => topic.id === 'basebuilding-build-anywhere')) directAnswer = buildBuildAnywhereDirectAnswer(question);
+  else if (engine.some((topic) => topic.id === 'events-xml')) directAnswer = buildEventsXmlDirectAnswer(question);
+  else directAnswer = engine.find((topic) => topic.directAnswer)?.directAnswer;
+
   return { text: lines.join('\n'), topicIds: [...new Set(ids)], found: true, ...(directAnswer ? { directAnswer } : {}) };
 }
 
