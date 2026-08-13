@@ -145,18 +145,38 @@ function purposeFor(path: string): string {
 function canonicalFileFromText(question: string): string | null {
   const index = getDayz129Index();
   const q = fold(question).replace(/\\/g, '/');
-
-  for (const [alias, target] of Object.entries(FILE_ALIASES)) {
-    if (q.includes(alias)) return target;
-  }
-
   const paths = [...index.allRelativePaths].sort((a, b) => b.length - a.length);
+
+  // Prefer complete indexed paths before any short aliases. This prevents names
+  // such as cfgspawnabletypes.xml from being mistaken for db/types.xml.
   for (const path of paths) {
     if (q.includes(fold(path))) return path;
   }
+
+  // If the question contains a concrete filename, resolve that token exactly.
+  // Unknown filenames must remain unknown instead of matching a suffix alias.
+  const explicitFile = explicitFileLikeToken(question);
+  if (explicitFile) {
+    const explicit = fold(explicitFile).replace(/\\/g, '/');
+    for (const path of paths) {
+      const basename = path.split('/').pop()!;
+      if (explicit === fold(path) || explicit === fold(basename)) return path;
+    }
+    const aliasTarget = FILE_ALIASES[explicit] ?? FILE_ALIASES[compact(explicitFile)];
+    return aliasTarget ?? null;
+  }
+
   for (const path of paths) {
     const basename = path.split('/').pop()!;
     if (q.includes(fold(basename))) return path;
+  }
+
+  // Dot-less convenience forms such as "typesxml" are accepted only as
+  // standalone tokens, never as substrings of another filename.
+  for (const [alias, target] of Object.entries(FILE_ALIASES)) {
+    const normalized = fold(alias);
+    const escaped = normalized.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    if (new RegExp(`(^|[^a-z0-9_.-])${escaped}([^a-z0-9_.-]|$)`, 'i').test(q)) return target;
   }
   return null;
 }
@@ -253,6 +273,13 @@ const TYPE_SYNONYMS: Record<string, string[]> = {
   'gewehr': ['rifle'], 'pistole': ['pistol'], 'magazin': ['mag'], 'munition': ['ammo'],
 };
 
+const TYPE_QUERY_EXCLUSIONS: Record<string, string[]> = {
+  'holzbrett': ['PileOfWoodenPlanks'],
+  'holzbretter': ['PileOfWoodenPlanks'],
+  'brett': ['PileOfWoodenPlanks'],
+  'bretter': ['PileOfWoodenPlanks'],
+};
+
 function queryTokens(question: string, synonyms: Record<string, string[]>): string[] {
   const raw = fold(question).split(/[^a-z0-9]+/).filter(Boolean);
   const out = new Set(raw);
@@ -290,8 +317,11 @@ function findExactIndexedName(question: string, names: string[], lookup: Map<str
 
 export function searchDayz129Types(query: string, limit = 5): string[] {
   const index = getDayz129Index();
+  const rawTokens = fold(query).split(/[^a-z0-9]+/).filter(Boolean);
+  const excluded = new Set(rawTokens.flatMap((token) => TYPE_QUERY_EXCLUSIONS[token] ?? []));
   const tokens = queryTokens(query, TYPE_SYNONYMS).filter((t) => !['class', 'classname', 'typename', 'type', 'item', 'gegenstand', 'dayz', 'heisst', 'heißt', 'wie', 'ist', 'der', 'die', 'das'].includes(t));
   return index.allTypeNames
+    .filter((name) => !excluded.has(name))
     .map((name) => ({ name, score: candidateScore(name, query, tokens) }))
     .filter((x) => x.score >= 6)
     .sort((a, b) => b.score - a.score || a.name.localeCompare(b.name))
@@ -438,8 +468,8 @@ export function answerDayz129CatalogQuestion(question: string): DayzCatalogAnswe
     if (candidates.length === 1) return formatTypeAnswer(candidates[0], requestedMaps);
     if (candidates.length > 1) {
       const top = searchDayz129Types(question, 2);
-      const exactNatural = ['nagelbox', 'naegelbox', 'wasserflasche', 'metallplatte', 'kabeltrommel', 'seekiste', 'autozelt'].some((x) => fold(question).includes(x));
-      if (exactNatural && top[0]) return formatTypeAnswer(top[0]);
+      const exactNatural = ['holzbretter', 'holzbrett', 'nagelbox', 'naegelbox', 'wasserflasche', 'metallplatte', 'kabeltrommel', 'seekiste', 'autozelt'].some((x) => fold(question).includes(x));
+      if (exactNatural && top[0]) return formatTypeAnswer(top[0], requestedMaps);
       return candidateListAnswer('type', candidates);
     }
     return {
