@@ -5,6 +5,7 @@ import {
   safeEmbedField,
   safeEmbedFooter,
 } from './embedSanitize';
+import { statusForColor, statusTitle } from './embedDesign';
 
 interface EmbedOptions {
   title?: string;
@@ -16,26 +17,35 @@ interface EmbedOptions {
   image?: string;
   url?: string;
   timestamp?: boolean;
-  /**
-   * P0-Hardening: Wenn true (oder unset), werden alle textuellen Felder durch
-   * embedSanitize-Helper geschickt (Markdown-Escape + Length-Cap). Nur explizit
-   * `false` setzen, wenn Bot-konstanter Markdown gewollt ist.
-   */
   sanitize?: boolean;
 }
 
-const DEFAULT_COLOR: ColorResolvable = '#5865F2'; // Discord Blurple
+const DEFAULT_COLOR: ColorResolvable = '#5865F2';
 const DEFAULT_FOOTER = 'Discord V Bot • © 2026';
+
+function colorNumber(color: ColorResolvable | undefined): number | null {
+  if (typeof color === 'number') return color;
+  if (typeof color !== 'string') return null;
+  const match = /^#?([0-9a-fA-F]{6})$/.exec(color.trim());
+  return match ? parseInt(match[1], 16) : null;
+}
 
 export function createBotEmbed(options: EmbedOptions = {}): EmbedBuilder {
   const sanitize = options.sanitize !== false;
+  const color = options.color || DEFAULT_COLOR;
   const embed = new EmbedBuilder()
-    .setColor(options.color || DEFAULT_COLOR)
+    .setColor(color)
     .setFooter({
       text: sanitize ? safeEmbedFooter(options.footer || DEFAULT_FOOTER) : (options.footer || DEFAULT_FOOTER),
     });
 
-  if (options.title) embed.setTitle(sanitize ? safeEmbedTitle(options.title) : options.title);
+  if (options.title) {
+    let title = sanitize ? safeEmbedTitle(options.title) : options.title;
+    const numeric = colorNumber(color);
+    const status = numeric === null ? null : statusForColor(numeric);
+    if (status) title = statusTitle(status, title);
+    embed.setTitle(title);
+  }
   if (options.description) embed.setDescription(sanitize ? safeEmbedDescription(options.description) : options.description);
   if (options.fields) {
     embed.addFields(
@@ -55,4 +65,3 @@ export function createBotEmbed(options: EmbedOptions = {}): EmbedBuilder {
 
   return embed;
 }
-
