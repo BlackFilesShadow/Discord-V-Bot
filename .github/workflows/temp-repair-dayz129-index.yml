@@ -41,9 +41,12 @@ jobs:
 
           def read_chunk(name: str) -> str:
               text = (chunk_dir / f'{name}.ts').read_text(encoding='utf-8')
-              match = re.fullmatch(r"export default '([A-Za-z0-9+/=]+)';\s*", text)
+              match = re.fullmatch(
+                  r"export default\s+'([A-Za-z0-9+/=]+)'(?:\s+as\s+const)?;\s*",
+                  text,
+              )
               if not match:
-                  raise SystemExit(f'{name}: unexpected chunk format')
+                  raise SystemExit(f'{name}: unexpected chunk format: {text[:80]!r}')
               return match.group(1)
 
           chunks = [read_chunk(name) for name in names]
@@ -175,7 +178,7 @@ jobs:
               raise SystemExit('Chunk reassembly self-check failed')
 
           for name, part in zip(names, parts):
-              (chunk_dir / f'{name}.ts').write_text(f"export default '{part}';\n", encoding='utf-8')
+              (chunk_dir / f'{name}.ts').write_text(f"export default '{part}' as const;\n", encoding='utf-8')
 
           # Verify files exactly as the runtime will concatenate them.
           reread = ''.join(read_chunk(name) for name in names)
