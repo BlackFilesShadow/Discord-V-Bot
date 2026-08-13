@@ -9,6 +9,7 @@
 import { Router } from 'express';
 import { requireAuth } from '../middleware/auth';
 import { idempotency } from '../middleware/idempotency';
+import { requireGlobalDeveloperIdentity } from '../middleware/globalDeveloperGate';
 
 import { guildsRouter } from './v2/guilds';
 import { dashboardRouter } from './v2/dashboard';
@@ -61,21 +62,22 @@ v2Router.use('/guilds/:guildId/reaction-embeds', reactionEmbedsRouter);
 v2Router.use('/guilds/:guildId/feeds', feedsRouter);
 v2Router.use('/guilds/:guildId/translated-posts', translatedPostsRouter);
 v2Router.use('/guilds/:guildId/audit', auditRouter);
-// WICHTIG: devRouter MUSS vor allen spezifischeren /dev/* Sub-Routern stehen.
-// Grund: devStatusRouter (mounted /dev/status) installiert requireDev als
-// Router-Middleware. Ohne diese Reihenfolge wuerde GET /api/v2/dev/status
-// (das im devRouter ohne requireDev liegt, damit das Frontend Eligibility
-// pollen kann) durch requireDev mit 403 abgebrochen — Login + UI brechen.
-// devRouter ruft fuer nicht registrierte Pfade next() auf und faellt sauber
-// auf die spezifischeren Sub-Router durch.
+
+// Basis-DEV-Router zuerst: /login und /status bleiben fuer bereits authentisierte
+// Dashboard-User erreichbar, damit Eligibility und Step-up ueberhaupt moeglich sind.
+// Seine privilegierten Endpunkte tragen das globale Developer-Gate selbst.
 v2Router.use('/dev', devRouter);
-v2Router.use('/dev/uploads', devUploadsRouter);
-v2Router.use('/dev/analytics', devAnalyticsRouter);
-v2Router.use('/dev/status', devStatusRouter);
-v2Router.use('/dev/nitrado-mirror', devNitradoMirrorRouter);
-v2Router.use('/dev/incident', devIncidentRouter);
-v2Router.use('/dev/observability', devObservabilityRouter);
-v2Router.use('/dev/stubs', devStubsRouter);
+
+// Alle spezifischen DEV-Unterrouter muessen zusaetzlich zur aktiven DevSession
+// die kanonische globale Developer-Identitaet bestehen. Dadurch werden alte
+// Sessions nach Rollen-/Owner-Aenderungen nicht weiter akzeptiert.
+v2Router.use('/dev/uploads', requireGlobalDeveloperIdentity, devUploadsRouter);
+v2Router.use('/dev/analytics', requireGlobalDeveloperIdentity, devAnalyticsRouter);
+v2Router.use('/dev/status', requireGlobalDeveloperIdentity, devStatusRouter);
+v2Router.use('/dev/nitrado-mirror', requireGlobalDeveloperIdentity, devNitradoMirrorRouter);
+v2Router.use('/dev/incident', requireGlobalDeveloperIdentity, devIncidentRouter);
+v2Router.use('/dev/observability', requireGlobalDeveloperIdentity, devObservabilityRouter);
+v2Router.use('/dev/stubs', requireGlobalDeveloperIdentity, devStubsRouter);
 
 // Bot-Admin: GLOBALER, passwortgeschuetzter Support-Bereich (wie /dev, eigener
 // Login). /login und /status liegen im Router OHNE requireBotAdmin, damit das
