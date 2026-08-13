@@ -18,6 +18,7 @@ import prisma from '../../database/prisma';
 import { tryGetDashboardClient } from '../../dashboard/clientRegistry';
 import { logger } from '../../utils/logger';
 import { safeEmbedField } from '../../utils/embedSanitize';
+import { Colors, statusTitle } from '../../utils/embedDesign';
 
 /** Max-Laenge fuer Whitelist-Reason (Eingabe + Anzeige, einheitlich). */
 export const WHITELIST_REASON_MAX = 500;
@@ -26,7 +27,6 @@ let warnedClientMissing = false;
 function client(): Client | null {
   const c = tryGetDashboardClient();
   if (!c) {
-    // Einmalige sichtbare Warnung statt stiller Degradation. Reset sobald Client wieder da ist.
     if (!warnedClientMissing) {
       warnedClientMissing = true;
       logger.warn('Whitelist: Discord-Client nicht verfuegbar — Discord-seitige Effekte werden uebersprungen, bis Client bereit ist.');
@@ -51,11 +51,7 @@ async function fetchTextChannel(guildId: string, channelId: string | null | unde
   return ch as GuildTextBasedChannel;
 }
 
-/**
- * Loescht (best-effort) das EINE Info-Embed aus einem (alten) Kanal.
- * Wird bei Channel-Wechsel/Repost vom Dashboard aufgerufen, damit keine
- * verwaisten Embeds zurueckbleiben.
- */
+/** Loescht best-effort das eine Info-Embed aus einem alten Kanal. */
 export async function deleteOldInfoEmbed(guildId: string, channelId: string, messageId: string): Promise<void> {
   const ch = await fetchTextChannel(guildId, channelId);
   if (!ch) return;
@@ -66,11 +62,7 @@ export async function deleteOldInfoEmbed(guildId: string, channelId: string, mes
   await msg.delete().catch(() => null);
 }
 
-/**
- * Finalisiert das Approval-Embed (Buttons entfernen, Status faerben).
- * Wird vom Dashboard-Decision-Endpoint aufgerufen, damit das Embed im
- * Discord-Annahme-Kanal denselben Endzustand zeigt wie beim Discord-Button.
- */
+/** Finalisiert das Approval-Embed und entfernt die Buttons. */
 export async function finalizeApprovalEmbed(args: {
   guildId: string; channelId: string; messageId: string;
   approved: boolean; decidedByDiscordId: string;
@@ -79,10 +71,6 @@ export async function finalizeApprovalEmbed(args: {
   if (!ch) return;
   const msg = await ch.messages.fetch(args.messageId).catch(() => null);
   if (!msg) {
-    // Embed wurde (manuell) geloescht — Stale-Referenz aufraeumen, damit der
-    // unique-Index nicht dauerhaft "verbrannt" bleibt. messageId ist global
-    // eindeutig (Discord-snowflake), guildId-Scoping daher nicht zwingend, aber
-    // wir scopen trotzdem fuer die Doktrin.
     await prisma.whitelistRequest.updateMany({
       where: { messageId: args.messageId, guildId: args.guildId },
       data: { messageId: null },
@@ -92,16 +80,16 @@ export async function finalizeApprovalEmbed(args: {
   const c = client();
   if (c?.user && msg.author.id !== c.user.id) return;
   const finalEmbed = EmbedBuilder.from(msg.embeds[0] ?? new EmbedBuilder())
-    .setColor(args.approved ? 0x57F287 : 0xED4245)
-    .setTitle(args.approved ? 'Whitelist-Antrag angenommen' : 'Whitelist-Antrag abgelehnt')
+    .setColor(args.approved ? Colors.Success : Colors.Error)
+    .setTitle(statusTitle(
+      args.approved ? 'SUCCESS' : 'ERROR',
+      args.approved ? 'Whitelist-Antrag angenommen' : 'Whitelist-Antrag abgelehnt',
+    ))
     .addFields({ name: args.approved ? 'Angenommen von' : 'Abgelehnt von', value: `<@${args.decidedByDiscordId}>` });
   await msg.edit({ embeds: [finalEmbed], components: [] }).catch(() => null);
 }
 
-/**
- * Postet/aktualisiert das EINE Command-Erklaerungs-Embed im Info-Kanal.
- * Garantie: pro (Guild+Slot) maximal 1 Embed dieses Bots in diesem Kanal.
- */
+/** Postet/aktualisiert das eine Command-Erklaerungs-Embed im Info-Kanal. */
 export async function ensureWhitelistInfoEmbed(guildId: string, nitradoConnId: string): Promise<{ posted: boolean; updated: boolean; messageId?: string }> {
   const settings = await prisma.serverSettings.findUnique({
     where: { guildId_nitradoConnId: { guildId, nitradoConnId } },
@@ -112,8 +100,8 @@ export async function ensureWhitelistInfoEmbed(guildId: string, nitradoConnId: s
   if (!ch) return { posted: false, updated: false };
 
   const embed = new EmbedBuilder()
-    .setTitle('Whitelist-System')
-    .setColor(0x5865F2)
+    .setTitle(statusTitle('INFO', 'Whitelist-System'))
+    .setColor(Colors.Info)
     .setDescription([
       'So beantragst du den Zutritt zum Server:',
       '',
@@ -124,24 +112,21 @@ export async function ensureWhitelistInfoEmbed(guildId: string, nitradoConnId: s
       '',
       '**Wichtig:** Gib deinen exakten Spielernamen an (Gross-/Kleinschreibung beachten).',
     ].join('\n'))
-    .setFooter({ text: 'V-Bot · Whitelist' })
+    .setFooter({ text: 'V-Bot • Whitelist' })
     .setTimestamp(new Date());
 
-  // Bestehende Nachricht updaten?
   if (settings.whitelistInfoMessageId) {
     const msg = await ch.messages.fetch(settings.whitelistInfoMessageId).catch(() => null);
     if (msg && msg.author.id === client()!.user!.id) {
       await msg.edit({ embeds: [embed] }).catch(() => null);
       return { posted: false, updated: true, messageId: msg.id };
     }
-    // Stale messageId (manuell geloescht) — zuruecksetzen, dann neu posten.
     await prisma.serverSettings.update({
       where: { guildId_nitradoConnId: { guildId, nitradoConnId } },
       data: { whitelistInfoMessageId: null },
     }).catch(() => null);
   }
 
-  // Neu posten + ID speichern
   const sent = await ch.send({ embeds: [embed] });
   await prisma.serverSettings.update({
     where: { guildId_nitradoConnId: { guildId, nitradoConnId } },
@@ -150,10 +135,7 @@ export async function ensureWhitelistInfoEmbed(guildId: string, nitradoConnId: s
   return { posted: true, updated: false, messageId: sent.id };
 }
 
-/**
- * Postet das Approval-Embed (Admin-Aktion) im konfigurierten Request-Kanal.
- * Speichert die messageId im WhitelistRequest.
- */
+/** Postet das Approval-Embed im konfigurierten Request-Kanal. */
 export async function postWhitelistApprovalEmbed(args: {
   guildId: string; nitradoConnId: string; requestId: string;
   requesterDiscordId: string; gameId: string;
@@ -169,18 +151,26 @@ export async function postWhitelistApprovalEmbed(args: {
   if (!ch) return null;
 
   const embed = new EmbedBuilder()
-    .setTitle('Neue Whitelist-Anfrage')
-    .setColor(0xFEE75C)
+    .setTitle(statusTitle('WARNING', 'Neue Whitelist-Anfrage'))
+    .setColor(Colors.Warning)
     .addFields(
       { name: 'Antragsteller', value: `<@${args.requesterDiscordId}>`, inline: true },
       { name: 'Beantragter Spielername', value: `\`${args.gameId}\``, inline: true },
     )
-    .setFooter({ text: `Request-ID: ${args.requestId}` })
+    .setFooter({ text: `V-Bot • Whitelist • Request-ID: ${args.requestId}` })
     .setTimestamp(new Date());
 
   const row = new ActionRowBuilder<ButtonBuilder>().addComponents(
-    new ButtonBuilder().setCustomId(`wlreq:a:${args.requestId}`).setLabel('Annehmen').setStyle(ButtonStyle.Success),
-    new ButtonBuilder().setCustomId(`wlreq:d:${args.requestId}`).setLabel('Ablehnen').setStyle(ButtonStyle.Danger),
+    new ButtonBuilder()
+      .setCustomId(`wlreq:a:${args.requestId}`)
+      .setLabel('Annehmen')
+      .setEmoji('✅')
+      .setStyle(ButtonStyle.Success),
+    new ButtonBuilder()
+      .setCustomId(`wlreq:d:${args.requestId}`)
+      .setLabel('Ablehnen')
+      .setEmoji('❌')
+      .setStyle(ButtonStyle.Danger),
   );
 
   const sent = await ch.send({ embeds: [embed], components: [row] });
@@ -191,20 +181,18 @@ export async function postWhitelistApprovalEmbed(args: {
   return sent.id;
 }
 
-/**
- * Schickt dem User per DM eine Benachrichtigung (Anfrage eingegangen).
- * Failen ist harmlos (User hat DMs aus).
- */
+/** Schickt dem User per DM eine Benachrichtigung, dass die Anfrage eingegangen ist. */
 export async function notifyRequesterPending(guildId: string, requesterDiscordId: string, gameId: string): Promise<void> {
   const c = client();
   if (!c) return;
   try {
     const user = await c.users.fetch(requesterDiscordId);
     const embed = new EmbedBuilder()
-      .setTitle('Whitelist-Anfrage eingegangen')
-      .setColor(0x5865F2)
+      .setTitle(statusTitle('INFO', 'Whitelist-Anfrage eingegangen'))
+      .setColor(Colors.Info)
       .setDescription('Deine Anfrage wurde dem zustaendigen Server-Team weitergeleitet. Bitte warte auf die Entscheidung.')
       .addFields({ name: 'Beantragter Name', value: `\`${gameId}\`` })
+      .setFooter({ text: 'V-Bot • Whitelist' })
       .setTimestamp(new Date());
     await user.send({ embeds: [embed] });
   } catch (e) {
@@ -212,9 +200,7 @@ export async function notifyRequesterPending(guildId: string, requesterDiscordId
   }
 }
 
-/**
- * Schickt User die Entscheidung per DM.
- */
+/** Schickt dem User die Entscheidung per DM. */
 export async function notifyRequesterDecision(args: {
   requesterDiscordId: string; gameId: string; approved: boolean; reason?: string;
 }): Promise<void> {
@@ -223,9 +209,13 @@ export async function notifyRequesterDecision(args: {
   try {
     const user = await c.users.fetch(args.requesterDiscordId);
     const embed = new EmbedBuilder()
-      .setTitle(args.approved ? 'Whitelist-Anfrage angenommen' : 'Whitelist-Anfrage abgelehnt')
-      .setColor(args.approved ? 0x57F287 : 0xED4245)
+      .setTitle(statusTitle(
+        args.approved ? 'SUCCESS' : 'ERROR',
+        args.approved ? 'Whitelist-Anfrage angenommen' : 'Whitelist-Anfrage abgelehnt',
+      ))
+      .setColor(args.approved ? Colors.Success : Colors.Error)
       .addFields({ name: 'Beantragter Name', value: `\`${args.gameId}\`` })
+      .setFooter({ text: 'V-Bot • Whitelist' })
       .setTimestamp(new Date());
     if (args.reason) embed.addFields({ name: 'Begruendung', value: safeEmbedField(args.reason, WHITELIST_REASON_MAX) });
     if (args.approved) embed.setDescription('Du wurdest auf die Whitelist gesetzt. Viel Spass!');
@@ -236,9 +226,7 @@ export async function notifyRequesterDecision(args: {
   }
 }
 
-/**
- * Postet ins Approve- oder Deny-Log-Kanal. Strikt nur dort.
- */
+/** Postet die Entscheidung strikt in den konfigurierten Approve- oder Deny-Log-Kanal. */
 export async function postDecisionLog(args: {
   guildId: string; nitradoConnId: string; approved: boolean;
   requesterDiscordId: string; gameId: string;
@@ -253,13 +241,17 @@ export async function postDecisionLog(args: {
   if (!ch) return;
 
   const embed = new EmbedBuilder()
-    .setTitle(args.approved ? 'Whitelist-Antrag angenommen' : 'Whitelist-Antrag abgelehnt')
-    .setColor(args.approved ? 0x57F287 : 0xED4245)
+    .setTitle(statusTitle(
+      args.approved ? 'SUCCESS' : 'ERROR',
+      args.approved ? 'Whitelist-Antrag angenommen' : 'Whitelist-Antrag abgelehnt',
+    ))
+    .setColor(args.approved ? Colors.Success : Colors.Error)
     .addFields(
       { name: 'Antragsteller', value: `<@${args.requesterDiscordId}>`, inline: true },
       { name: 'Spielername', value: `\`${args.gameId}\``, inline: true },
       { name: args.approved ? 'Angenommen von' : 'Abgelehnt von', value: `<@${args.decidedByDiscordId}>`, inline: false },
     )
+    .setFooter({ text: 'V-Bot • Whitelist' })
     .setTimestamp(new Date());
   if (args.reason) embed.addFields({ name: 'Begruendung', value: safeEmbedField(args.reason, WHITELIST_REASON_MAX) });
 
