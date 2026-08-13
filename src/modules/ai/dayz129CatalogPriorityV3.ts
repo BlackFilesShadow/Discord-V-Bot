@@ -59,6 +59,14 @@ function explicitLookupIntent(question: string): boolean {
     || (/\btypes?\.xml\b/.test(q) && /\b(wie|name|heisst)\b/.test(q));
 }
 
+function exactIndexedMention(question: string): string | null {
+  if (!explicitLookupIntent(question)) return null;
+  const q = fold(question);
+  const names = [...base.getDayz129Index().allTypeNames]
+    .sort((a, b) => b.length - a.length || a.localeCompare(b));
+  return names.find((name) => q.includes(fold(name))) ?? null;
+}
+
 function isShortItemFollowUp(question: string): boolean {
   const q = fold(question);
   if (/\b(?:was|warum|wo|wann|erklaer|funktioniert|werte?|stats?|schaden|damage|reichweite|nominal|min|max|lifetime|restock|usage|tier|spawn|magazin|munition|ammo|kaliber|attachment|zubehoer|zubehör)\b/.test(q)) return false;
@@ -81,6 +89,8 @@ function requestedColors(question: string): string[] {
 }
 
 function exactKnown(cleaned: string): string | null {
+  const direct = base.getDayz129Index().allTypeNames.filter((name) => fold(name) === fold(cleaned));
+  if (direct.length === 1) return direct[0];
   const q = compact(cleaned);
   if (!q) return null;
   const exact = base.getDayz129Index().allTypeNames.filter((name) => compact(name) === q);
@@ -115,8 +125,6 @@ function resolve(question: string): Resolution {
   const cleaned = cleanLookupText(question);
   if (!cleaned) return { matched: false, candidates: [] };
 
-  // An explicitly supplied real classname always wins and is returned alone,
-  // even when related colour variants exist.
   const exact = exactKnown(cleaned);
   if (exact) return { matched: true, candidates: [exact] };
 
@@ -132,8 +140,6 @@ function resolve(question: string): Resolution {
     if (family.length) return { matched: true, candidates: family };
   }
 
-  // Generic coverage for every colour-family represented in the embedded
-  // types.xml index, without maintaining a hand-written list per item.
   const families = new Map<string, string>();
   for (const name of base.getDayz129Index().allTypeNames) {
     const split = splitColor(name);
@@ -148,8 +154,6 @@ function resolve(question: string): Resolution {
     if (variants.length) return { matched: true, candidates: variants };
   }
 
-  // Safe model abbreviation resolution such as M4 -> M4A1. A result is only
-  // accepted when the shortest prefix match is clearly separated from the next.
   const prefix = strongPrefixCandidate(cleaned);
   if (prefix) return { matched: true, candidates: [prefix] };
 
@@ -178,6 +182,11 @@ export function answer(question: string): DayzCatalogAnswer | null {
   if (!question) return null;
   const explicit = explicitLookupIntent(question);
   const shortFollowUp = isShortItemFollowUp(question);
+
+  if (explicit) {
+    const exact = exactIndexedMention(question);
+    if (exact) return answerFor([exact]);
+  }
 
   if (explicit || shortFollowUp) {
     const strict = resolve(question);
