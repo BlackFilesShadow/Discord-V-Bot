@@ -10,6 +10,7 @@ process.env.SESSION_SECRET ||= 'test-session-secret';
  * - HMAC wird ueber Timestamp + Original-Rohbytes berechnet.
  * - Timestamp muss frisch sein.
  * - derselbe authentisierte Request darf persistent nur einmal zugestellt werden.
+ * - bei Downstream-Fehlern wird der Replay-Claim freigegeben, damit ein echter Retry moeglich bleibt.
  */
 
 import crypto from 'crypto';
@@ -90,6 +91,7 @@ function sign(body: string, timestamp: string): string {
 
 beforeEach(() => {
   jest.clearAllMocks();
+  channelSend.mockReset().mockResolvedValue({ id: 'msg-1' });
   claimed.clear();
   setWebhookClient(fakeClient);
 });
@@ -170,6 +172,26 @@ describe('F-001/F-002 — Webhook raw body, signed timestamp and replay protecti
     expect((await send()).status).toBe(200);
     expect((await send()).status).toBe(409);
     expect(channelSend).toHaveBeenCalledTimes(1);
+  });
+
+  it('gibt den Replay-Claim nach Discord-Fehler frei und erlaubt denselben Retry', async () => {
+    const body = JSON.stringify({ title: 'Retry after failure' });
+    const timestamp = nowTimestamp();
+    const send = () => request(makeApp())
+      .post(`/webhooks/feed/${FEED_ID}`)
+      .set('Content-Type', 'application/json')
+      .set('X-V-Webhook-Timestamp', timestamp)
+      .set('X-V-Webhook-Signature', sign(body, timestamp))
+      .send(body);
+
+    channelSend.mockRejectedValueOnce(new Error('Discord unavailable'));
+    expect((await send()).status).toBe(502);
+    expect(prismaMock.idempotencyKey.delete).toHaveBeenCalledTimes(1);
+    expect(claimed.size).toBe(0);
+
+    expect((await send()).status).toBe(200);
+    expect(channelSend).toHaveBeenCalledTimes(2);
+    expect(prismaMock.idempotencyKey.create).toHaveBeenCalledTimes(2);
   });
 
   it('unterstuetzt Token-Fallback nur mit frischem Timestamp und Dedup', async () => {
