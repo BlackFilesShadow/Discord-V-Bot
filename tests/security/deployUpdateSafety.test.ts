@@ -4,9 +4,26 @@ import path from 'path';
 describe('deploy/update.sh fail-closed invariants', () => {
   const script = fs.readFileSync(path.join(process.cwd(), 'deploy', 'update.sh'), 'utf8');
 
-  it('validiert Compose vor Build/Deployment', () => {
-    expect(script).toContain('docker compose config --quiet');
-    expect(script.indexOf('docker compose config --quiet')).toBeLessThan(script.indexOf('docker compose build "$COMPOSE_SERVICE"'));
+  it('validiert Compose sowohl vor als auch nach dem neuen Checkout', () => {
+    const configChecks = script.match(/docker compose config --quiet/g) ?? [];
+    expect(configChecks).toHaveLength(2);
+    const reset = script.indexOf('git reset --hard origin/main');
+    const first = script.indexOf('docker compose config --quiet');
+    const second = script.indexOf('docker compose config --quiet', first + 1);
+    const build = script.indexOf('docker compose build "$COMPOSE_SERVICE"');
+    expect(first).toBeLessThan(reset);
+    expect(second).toBeGreaterThan(reset);
+    expect(second).toBeLessThan(build);
+  });
+
+  it('stellt Postgres vor Baseline-/Sentinel-Abfragen explizit bereit', () => {
+    const up = script.indexOf('docker compose up -d postgres');
+    const ready = script.indexOf('docker compose exec -T postgres pg_isready');
+    const sentinelPhase = script.indexOf('Pruefe Baseline-/Migrationshistorie');
+    expect(up).toBeGreaterThan(-1);
+    expect(ready).toBeGreaterThan(up);
+    expect(sentinelPhase).toBeGreaterThan(ready);
+    expect(script).toContain('Postgres wurde innerhalb von 60s nicht bereit.');
   });
 
   it('adoptiert eine bestehende Baseline niemals implizit', () => {
