@@ -5,8 +5,10 @@
  *  - `g:<guildId>`: guild-weite Konfig-/UI-Aenderungen
  *  - `gs:<guildId>:<nitradoConnId>`: Gameplay eines EXAKTEN Gameservers
  *
- * Der Server-Room ist absichtlich enger als der Guild-Room. Jeder Join prueft
- * Auth, Guild-Zugriff und die kanonische Guild+Connection-Bindung erneut.
+ * Der Server-Room ist absichtlich enger als der Guild-Room. Live-Gameplay ist
+ * Killfeed-Daten und verlangt Owner oder killfeed.view/manage bzw. den bewusst
+ * delegierbaren dashboard.access-Allzugriff. Ein beliebiger anderer Guild-Scope
+ * reicht NICHT.
  */
 
 import type { Server as IOServer, Socket } from 'socket.io';
@@ -29,34 +31,58 @@ function isSnowflake(s: unknown): s is string {
 }
 
 function isConnectionId(s: unknown): s is string {
-  return typeof s === 'string' && s.length >= 8 && s.length <= 128;
+  return typeof s === 'string' && /^c[a-z0-9]{24}$/.test(s);
 }
 
-async function canAccessGuild(guildId: string, userDiscordId: string): Promise<boolean> {
+export function serverFeedPermissionAllows(isOwner: boolean, permissions: readonly string[]): boolean {
+  if (isOwner) return true;
+  const set = new Set(permissions);
+  return set.has('killfeed.view') || set.has('killfeed.manage') || set.has('dashboard.access');
+}
+
+interface GuildAccessResult {
+  allowed: boolean;
+  isOwner: boolean;
+  permissions: string[];
+}
+
+async function resolveGuildAccess(guildId: string, userDiscordId: string): Promise<GuildAccessResult> {
   const client = tryGetDashboardClient();
   const guild = client?.guilds.cache.get(guildId);
-  if (!guild) return false;
-  if (guild.ownerId === userDiscordId) return true;
+  if (!guild) return { allowed: false, isOwner: false, permissions: [] };
+  const isOwner = guild.ownerId === userDiscordId;
+  if (isOwner) return { allowed: true, isOwner: true, permissions: [] };
 
+  const permissions = new Set<string>();
   const userGrant = await prisma.guildPermissionGrant.findUnique({
     where: { guildId_userDiscordId: { guildId, userDiscordId } },
     select: { permissions: true },
   });
-  if (userGrant && Array.isArray(userGrant.permissions) && userGrant.permissions.length > 0) return true;
+  if (userGrant && Array.isArray(userGrant.permissions)) {
+    for (const permission of userGrant.permissions) {
+      if (typeof permission === 'string') permissions.add(permission);
+    }
+  }
 
-  // HTTP und Socket muessen dieselben Role-Grants respektieren. Sonst koennte
-  // ein korrekt berechtigter Dashboard-Nutzer REST sehen, aber Live-Updates
-  // verlieren (oder spaeter ein zweites, abweichendes Rechtemodell entstehen).
   const member = guild.members.cache.get(userDiscordId)
     ?? await guild.members.fetch(userDiscordId).catch(() => null);
-  if (!member) return false;
-  const roleIds = [...member.roles.cache.keys()];
-  if (roleIds.length === 0) return false;
-  const roleGrants = await prisma.guildPermissionRoleGrant.findMany({
-    where: { guildId, roleDiscordId: { in: roleIds } },
-    select: { permissions: true },
-  });
-  return roleGrants.some((grant) => Array.isArray(grant.permissions) && grant.permissions.length > 0);
+  if (member) {
+    const roleIds = [...member.roles.cache.keys()];
+    if (roleIds.length > 0) {
+      const roleGrants = await prisma.guildPermissionRoleGrant.findMany({
+        where: { guildId, roleDiscordId: { in: roleIds } },
+        select: { permissions: true },
+      });
+      for (const grant of roleGrants) {
+        if (!Array.isArray(grant.permissions)) continue;
+        for (const permission of grant.permissions) {
+          if (typeof permission === 'string') permissions.add(permission);
+        }
+      }
+    }
+  }
+
+  return { allowed: permissions.size > 0, isOwner: false, permissions: [...permissions] };
 }
 
 function sessionFor(socket: Socket): SocketSessionShape {
@@ -93,7 +119,8 @@ export function registerGuildNamespace(io: IOServer): void {
         return;
       }
       try {
-        if (!(await canAccessGuild(gid, userDiscordId))) {
+        const access = await resolveGuildAccess(gid, userDiscordId);
+        if (!access.allowed) {
           socket.emit('join.error', { guildId: gid, error: 'kein Scope fuer diese Guild' });
           return;
         }
@@ -113,8 +140,9 @@ export function registerGuildNamespace(io: IOServer): void {
         return;
       }
       try {
-        if (!(await canAccessGuild(gid, userDiscordId))) {
-          socket.emit('join.server.error', { guildId: gid, nitradoConnId: connId, error: 'kein Scope fuer diese Guild' });
+        const access = await resolveGuildAccess(gid, userDiscordId);
+        if (!serverFeedPermissionAllows(access.isOwner, access.permissions)) {
+          socket.emit('join.server.error', { guildId: gid, nitradoConnId: connId, error: 'killfeed.view erforderlich' });
           return;
         }
 
