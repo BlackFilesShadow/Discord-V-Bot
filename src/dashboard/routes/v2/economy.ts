@@ -1,10 +1,7 @@
 /**
- * Economy: Config + Accounts + Transactions.
- *
- * GET   /config                         -> Config-Snapshot
- * PUT   /config                         -> Update (Owner / economy.manage)
- * GET   /accounts/:userDiscordId        -> Account + letzte Tx
- * POST  /accounts/:userDiscordId/admin-pay  body: { delta, reason } -> ADMIN_PAY (Owner / economy.manage)
+ * Economy: Config + Accounts + Transactions — immer Guild+Gameserver-gescopt.
+ * Der vorgeschaltete requireSafeDashboardEconomyScope setzt
+ * req.guildScope.nitradoConnId nach Guild/Slot/Status-Pruefung.
  */
 import { Router } from 'express';
 import prisma from '../../../database/prisma';
@@ -17,16 +14,23 @@ import { logAuditDb } from '../../../utils/logger';
 import { emitGuildEvent } from '../../socket/emitter';
 
 export const economyRouter = Router({ mergeParams: true });
-
-// Sicherheits-Bound: ±10^15 (1 Billiarde) verhindert Absurd-Werte / Front-End-Overflow.
-// Account-Spalten sind BigInt in der DB — kein DB-Overflow, aber UI/JS-Number-Range wären irgendwann ein Problem.
 const ECONOMY_DELTA_MAX = 1_000_000_000_000_000n;
 const ECONOMY_DELTA_MIN = -ECONOMY_DELTA_MAX;
 
+type RawDb = { $queryRawUnsafe<T = unknown>(query: string, ...values: unknown[]): Promise<T> };
+const rawDb = prisma as unknown as RawDb;
+
+function scoped(req: Parameters<Parameters<typeof economyRouter.get>[1]>[0]) {
+  const scope = req.guildScope!;
+  if (!scope.nitradoConnId) throw new Error('Economy-Gameserver-Scope fehlt.');
+  return { scope, connId: scope.nitradoConnId };
+}
+
 economyRouter.get('/config', requireGuildPermission('economy.view'), async (req, res) => {
-  const cfg = await getConfig(req.guildScope!.guildId);
-  // BigInt is OK in JSON (we don't have any here, startBalance is Int)
+  const { scope, connId } = scoped(req);
+  const cfg = await getConfig(scope.guildId, connId);
   res.json({
+    nitradoConnId: connId,
     currencyName: cfg.currencyName,
     emoji: cfg.emoji,
     enabled: cfg.enabled,
@@ -38,7 +42,7 @@ economyRouter.get('/config', requireGuildPermission('economy.view'), async (req,
 });
 
 economyRouter.put('/config', requireGuildPermission('economy.manage'), async (req, res) => {
-  const scope = req.guildScope!;
+  const { scope, connId } = scoped(req);
   const b = req.body ?? {};
   const patch: Record<string, unknown> = {};
   if (typeof b.currencyName === 'string' && b.currencyName.length >= 1 && b.currencyName.length <= 40) patch.currencyName = b.currencyName;
@@ -49,10 +53,15 @@ economyRouter.put('/config', requireGuildPermission('economy.manage'), async (re
   if (typeof b.bankInterestPercent === 'number' && Number.isInteger(b.bankInterestPercent) && b.bankInterestPercent >= 0 && b.bankInterestPercent <= 100) patch.bankInterestPercent = b.bankInterestPercent;
   if (b.bankChannelId === null || (typeof b.bankChannelId === 'string' && /^\d{17,20}$/.test(b.bankChannelId))) patch.bankChannelId = b.bankChannelId;
 
-  const cfg = await upsertConfig(scope.guildId, patch);
-  logAuditDb('ECONOMY_CONFIG_UPDATED', 'ECONOMY', { actorUserId: req.auth!.userId, guildId: scope.guildId, details: { fields: Object.keys(patch) } });
-  emitGuildEvent(scope.guildId, { type: 'settings.changed', payload: { guildId: scope.guildId, slotId: '' } });
+  const cfg = await upsertConfig(scope.guildId, connId, patch);
+  logAuditDb('ECONOMY_CONFIG_UPDATED', 'ECONOMY', {
+    actorUserId: req.auth!.userId,
+    guildId: scope.guildId,
+    details: { nitradoConnId: connId, fields: Object.keys(patch) },
+  });
+  emitGuildEvent(scope.guildId, { type: 'settings.changed', payload: { guildId: scope.guildId, slotId: connId } });
   res.json({
+    nitradoConnId: connId,
     currencyName: cfg.currencyName,
     emoji: cfg.emoji,
     enabled: cfg.enabled,
@@ -64,31 +73,33 @@ economyRouter.put('/config', requireGuildPermission('economy.manage'), async (re
 });
 
 economyRouter.get('/accounts/:userDiscordId', requireGuildPermission('economy.view'), async (req, res) => {
-  const scope = req.guildScope!;
+  const { scope, connId } = scoped(req);
   let userId;
-  try { userId = asUserDiscordId(String(req.params.userDiscordId)); } catch { res.status(400).json({ error: 'userDiscordId ungueltig.' }); return; }
-  const acc = await getAccountOrZero(scope.guildId, userId);
-  const tx = await recentTransactions(scope.guildId, userId, 20);
+  try { userId = asUserDiscordId(String(req.params.userDiscordId)); }
+  catch { res.status(400).json({ error: 'userDiscordId ungueltig.' }); return; }
+  const acc = await getAccountOrZero(scope.guildId, connId, userId);
+  const tx = await recentTransactions(scope.guildId, connId, userId, 20);
   res.json({
+    nitradoConnId: connId,
     userDiscordId: acc.userDiscordId,
     walletBalance: acc.walletBalance.toString(),
     bankBalance: acc.bankBalance.toString(),
     lifetimeEarned: acc.lifetimeEarned.toString(),
     lifetimeSpent: acc.lifetimeSpent.toString(),
-    recentTransactions: tx.map(t => ({
-      id: t.id, delta: t.delta.toString(), type: t.type, reason: t.reason, createdAt: t.createdAt,
-    })),
+    recentTransactions: tx.map(t => ({ id: t.id, delta: t.delta.toString(), type: t.type, reason: t.reason, createdAt: t.createdAt })),
   });
 });
 
 economyRouter.post('/accounts/:userDiscordId/admin-pay', requireGuildPermission('economy.manage'), async (req, res) => {
-  const scope = req.guildScope!;
+  const { scope, connId } = scoped(req);
   let target;
-  try { target = asUserDiscordId(String(req.params.userDiscordId)); } catch { res.status(400).json({ error: 'userDiscordId ungueltig.' }); return; }
+  try { target = asUserDiscordId(String(req.params.userDiscordId)); }
+  catch { res.status(400).json({ error: 'userDiscordId ungueltig.' }); return; }
   const { delta, reason } = req.body ?? {};
   if (typeof delta !== 'string' && typeof delta !== 'number') { res.status(400).json({ error: 'delta muss string oder number sein.' }); return; }
   let bigDelta: bigint;
-  try { bigDelta = BigInt(delta as string | number); } catch { res.status(400).json({ error: 'delta nicht parsebar.' }); return; }
+  try { bigDelta = BigInt(delta as string | number); }
+  catch { res.status(400).json({ error: 'delta nicht parsebar.' }); return; }
   if (bigDelta === 0n) { res.status(400).json({ error: 'delta darf nicht 0 sein.' }); return; }
   if (bigDelta > ECONOMY_DELTA_MAX || bigDelta < ECONOMY_DELTA_MIN) {
     res.status(400).json({ error: `delta ausserhalb des erlaubten Bereichs (±${ECONOMY_DELTA_MAX.toString()}).` });
@@ -99,73 +110,80 @@ economyRouter.post('/accounts/:userDiscordId/admin-pay', requireGuildPermission(
   try {
     await adminPay({
       guildId: scope.guildId,
+      nitradoConnId: connId,
       targetUserId: target,
       delta: bigDelta,
       reason,
       actorDiscordId: asUserDiscordId(scope.actorDiscordId),
     });
     logAuditDb('ECONOMY_ADMIN_PAY', 'ECONOMY', {
-      actorUserId: req.auth!.userId, guildId: scope.guildId,
-      details: { target, delta: bigDelta.toString(), reason },
+      actorUserId: req.auth!.userId,
+      guildId: scope.guildId,
+      details: { nitradoConnId: connId, target, delta: bigDelta.toString(), reason },
     });
-    res.json({ ok: true });
+    res.json({ ok: true, nitradoConnId: connId });
   } catch (e) {
     res.status(400).json({ error: (e as Error).message });
   }
 });
 
-/**
- * GET /overview — Wirtschaft-Sammelansicht fuer das Dashboard.
- * Ersetzt den frueheren Economy-`/status` Discord-Command (Kollision mit
- * user/status.ts) durch eine guild-weite, read-only Uebersicht:
- * Economy-Status, Bank-Status, Casino-Status, Transaktionen, Links, Casino-Stats
- * und eine statische Casino/Bank-Kopplungsanalyse.
- */
-economyRouter.get('/overview', requireGuildPermission('economy.view'), async (req, res) => {
-  const guildId = req.guildScope!.guildId;
+interface OverviewAggregate { wallet: bigint | null; bank: bigint | null; count: bigint }
+interface OverviewTx { id: string; userDiscordId: string; delta: bigint; type: string; reason: string | null; createdAt: Date }
+interface OverviewCasinoRound { bet: bigint; payout: bigint; type: string }
+interface OverviewCasinoGame { type: string; enabled: boolean }
 
-  const [cfg, accAgg, accountCount, linkCount, txCount, recentTx, casinoRounds, casinoGames] = await Promise.all([
-    getConfig(guildId),
-    prisma.economyAccount.aggregate({ where: { guildId }, _sum: { walletBalance: true, bankBalance: true } }),
-    prisma.economyAccount.count({ where: { guildId } }),
-    prisma.gameIdentityLink.count({ where: { guildId, status: 'VERIFIED' } }),
-    prisma.economyTransaction.count({ where: { guildId } }),
-    prisma.economyTransaction.findMany({
-      where: { guildId }, orderBy: { createdAt: 'desc' }, take: 10,
-      select: { id: true, userDiscordId: true, delta: true, type: true, reason: true, createdAt: true },
-    }),
-    prisma.casinoRound.findMany({
-      where: { guildId }, select: { bet: true, payout: true, game: { select: { type: true } } }, take: 100_000,
-    }),
-    prisma.casinoGame.findMany({ where: { guildId }, select: { type: true, enabled: true } }),
+/** GET /overview — ausschliesslich fuer den validierten Gameserver. */
+economyRouter.get('/overview', requireGuildPermission('economy.view'), async (req, res) => {
+  const { scope, connId } = scoped(req);
+  const guildId = scope.guildId;
+  const [cfg, accountAggRows, linkCountRows, txCountRows, recentTx, casinoRounds, casinoGames] = await Promise.all([
+    getConfig(guildId, connId),
+    rawDb.$queryRawUnsafe<OverviewAggregate[]>(
+      'SELECT COALESCE(SUM("walletBalance"),0) AS wallet, COALESCE(SUM("bankBalance"),0) AS bank, COUNT(*)::bigint AS count FROM "EconomyAccount" WHERE "guildId"=$1 AND "nitradoConnId"=$2',
+      String(guildId), String(connId)),
+    rawDb.$queryRawUnsafe<Array<{ count: bigint }>>(
+      'SELECT COUNT(*)::bigint AS count FROM "GameIdentityLink" WHERE "guildId"=$1 AND "nitradoConnId"=$2 AND "status"=\'VERIFIED\'',
+      String(guildId), String(connId)),
+    rawDb.$queryRawUnsafe<Array<{ count: bigint }>>(
+      'SELECT COUNT(*)::bigint AS count FROM "EconomyTransaction" WHERE "guildId"=$1 AND "nitradoConnId"=$2',
+      String(guildId), String(connId)),
+    rawDb.$queryRawUnsafe<OverviewTx[]>(
+      'SELECT "id", "userDiscordId", "delta", "type"::text AS type, "reason", "createdAt" FROM "EconomyTransaction" WHERE "guildId"=$1 AND "nitradoConnId"=$2 ORDER BY "createdAt" DESC LIMIT 10',
+      String(guildId), String(connId)),
+    rawDb.$queryRawUnsafe<OverviewCasinoRound[]>(
+      'SELECT r."bet", r."payout", g."type"::text AS type FROM "CasinoRound" r JOIN "CasinoGame" g ON g."id"=r."gameId" WHERE r."guildId"=$1 AND r."nitradoConnId"=$2 LIMIT 100000',
+      String(guildId), String(connId)),
+    rawDb.$queryRawUnsafe<OverviewCasinoGame[]>(
+      'SELECT "type"::text AS type, "enabled" FROM "CasinoGame" WHERE "guildId"=$1 AND "nitradoConnId"=$2',
+      String(guildId), String(connId)),
   ]);
 
-  // Casino-Stats pro Spieltyp aggregieren.
   const buckets = new Map<string, { type: string; rounds: number; wins: number; bet: bigint; payout: bigint }>();
   for (const r of casinoRounds) {
-    const k = r.game.type;
-    const cur = buckets.get(k) ?? { type: k, rounds: 0, wins: 0, bet: 0n, payout: 0n };
+    const cur = buckets.get(r.type) ?? { type: r.type, rounds: 0, wins: 0, bet: 0n, payout: 0n };
     cur.rounds++;
     if (r.payout > 0n) cur.wins++;
     cur.bet += r.bet;
     cur.payout += r.payout;
-    buckets.set(k, cur);
+    buckets.set(r.type, cur);
   }
   const casinoTotalBet = casinoRounds.reduce((a, r) => a + r.bet, 0n);
   const casinoTotalPayout = casinoRounds.reduce((a, r) => a + r.payout, 0n);
+  const accAgg = accountAggRows[0] ?? { wallet: 0n, bank: 0n, count: 0n };
 
   res.json({
+    nitradoConnId: connId,
     economy: {
       enabled: cfg.enabled,
       currencyName: cfg.currencyName,
       emoji: cfg.emoji,
-      accounts: accountCount,
-      links: linkCount,
-      transactions: txCount,
+      accounts: Number(accAgg.count),
+      links: Number(linkCountRows[0]?.count ?? 0n),
+      transactions: Number(txCountRows[0]?.count ?? 0n),
     },
     bank: {
-      totalWallet: (accAgg._sum.walletBalance ?? 0n).toString(),
-      totalBank: (accAgg._sum.bankBalance ?? 0n).toString(),
+      totalWallet: (accAgg.wallet ?? 0n).toString(),
+      totalBank: (accAgg.bank ?? 0n).toString(),
       interestPercent: cfg.bankInterestPercent,
       bankChannelId: cfg.bankChannelId,
     },
@@ -185,14 +203,13 @@ economyRouter.get('/overview', requireGuildPermission('economy.view'), async (re
       id: t.id, userDiscordId: t.userDiscordId, delta: t.delta.toString(),
       type: t.type, reason: t.reason, createdAt: t.createdAt,
     })),
-    // Statische Kopplungsanalyse (Spec §10, Fragen 1–7). Quelle: Datenmodell + repository.ts.
     coupling: {
-      sharedCurrency: true, // Casino bucht auf EconomyAccount.walletBalance (gleiche Waehrung wie Bank/Economy)
-      sharedBalance: true, // CasinoRound nutzt walletBalance des Users
-      directlyBooked: true, // Gewinne/Verluste als EconomyTransaction CASINO_BET / CASINO_PAYOUT
+      sharedCurrency: true,
+      sharedBalance: true,
+      directlyBooked: true,
       sharedModels: ['EconomyAccount', 'EconomyTransaction'],
-      casinoStatsMovable: true, // /casino-stats ist read-only ueber CasinoRound — verschiebbar ohne Spiele zu brechen
-      raceConditionsGuarded: true, // economy/repository.ts kapselt Balance-Aenderungen in DB-Transaktionen
+      casinoStatsMovable: true,
+      raceConditionsGuarded: true,
       centralTransactionService: 'src/modules/economy/repository.ts',
     },
   });
