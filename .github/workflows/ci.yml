@@ -116,20 +116,26 @@ jobs:
           if [ "$status" -ne 0 ] || [ "$leak" = "true" ]; then
             exit 1
           fi
-      - name: Diagnose open handles
-        if: failure() && steps.jest.outputs.leak == 'true'
-        shell: bash
-        run: |
-          set -o pipefail
-          timeout --signal=TERM --kill-after=30s 8m npm run test:handles 2>&1 | tee jest-open-handles.log
-      - name: Upload Jest diagnostics
+      - name: Upload primary Jest log
         if: always()
         uses: actions/upload-artifact@v5
         with:
-          name: jest-diagnostics
-          path: |
-            jest-ci.log
-            jest-open-handles.log
+          name: jest-primary-log
+          path: jest-ci.log
+          if-no-files-found: warn
+      - name: Diagnose open handles
+        if: failure() && steps.jest.outputs.leak == 'true'
+        continue-on-error: true
+        shell: bash
+        run: |
+          set -o pipefail
+          timeout --signal=TERM --kill-after=30s 5m npm run test:handles 2>&1 | tee jest-open-handles.log
+      - name: Upload open-handle diagnostics
+        if: always()
+        uses: actions/upload-artifact@v5
+        with:
+          name: jest-open-handles
+          path: jest-open-handles.log
           if-no-files-found: ignore
       - name: Upload coverage
         uses: actions/upload-artifact@v5
