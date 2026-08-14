@@ -97,7 +97,7 @@ if [[ "$SCHEMA_PRESENT" == "t" && "$BASELINE_APPLIED" != "t" ]]; then
        AND to_regclass('public.\"IdempotencyKey\"') IS NOT NULL
        AND EXISTS (SELECT 1 FROM information_schema.columns WHERE table_schema='public' AND table_name='NitradoConnection' AND column_name='guildId')
        AND EXISTS (SELECT 1 FROM information_schema.columns WHERE table_schema='public' AND table_name='NitradoConnection' AND column_name='encryptedToken')
-       AND EXISTS (SELECT 1 FROM information_schema.columns WHERE table_schema='public' AND table_name='IdempotencyKey' AND column_name='guildId');" \
+       AND EXISTS (SELECT 1 FROM information_schema.columns WHERE table_schema='public' AND table_name='IdempotencyKey' AND column_name='hash');" \
     2>/dev/null | tr -d '[:space:]')
 
   if [[ "$SENTINEL_OK" != "t" ]]; then
