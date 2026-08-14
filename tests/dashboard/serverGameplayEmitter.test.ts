@@ -58,13 +58,12 @@ describe('server gameplay permission', () => {
     expect(serverFeedPermissionAllows(true, [])).toBe(true);
   });
 
-  it.each([
-    ['killfeed.view'],
-    ['killfeed.manage'],
-    ['dashboard.access'],
-  ])('akzeptiert den explizit passenden Scope %p', (permissions) => {
-    expect(serverFeedPermissionAllows(false, permissions)).toBe(true);
-  });
+  it.each(['killfeed.view', 'killfeed.manage', 'dashboard.access'])(
+    'akzeptiert den explizit passenden Scope %s',
+    (permission) => {
+      expect(serverFeedPermissionAllows(false, [permission])).toBe(true);
+    },
+  );
 
   it('lehnt beliebige andere Guild-Scopes ab', () => {
     expect(serverFeedPermissionAllows(false, ['economy.view', 'whitelist.view'])).toBe(false);
