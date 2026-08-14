@@ -9,10 +9,11 @@ export interface CleanupSchedule {
 /**
  * Plant einen einmaligen Startup-Lauf plus ein periodisches Intervall.
  * Beide Handles sind unref'ed und koennen gemeinsam deterministisch gestoppt
- * werden. Mehrfaches stop() ist idempotent.
+ * werden. Mehrfaches stop() ist idempotent. Rueckgabewerte der Cleanup-Funktion
+ * sind reine Diagnostik und werden vom Scheduler bewusst ignoriert.
  */
 export function scheduleCleanup(
-  task: () => void | Promise<void>,
+  task: () => unknown | Promise<unknown>,
   intervalMs: number,
   startupDelayMs: number,
   onError?: (error: unknown) => void,
