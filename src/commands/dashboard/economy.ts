@@ -17,7 +17,7 @@ import {
 import { createLinkChallenge, forceLink, unlinkUser, type LinkClient } from '../../modules/linking/linkService';
 import { config } from '../../config';
 import { asUserDiscordId } from '../../types/scope';
-import type { GuildId } from '../../types/scope';
+import type { GuildId, NitradoConnId } from '../../types/scope';
 import { logAudit } from '../../utils/logger';
 import { buildStatusEmbed, type EmbedStatus } from '../../utils/statusEmbed';
 
@@ -27,7 +27,6 @@ function isValidGameId(s: string): boolean { return STEAM64.test(s) || CHARNAME.
 
 function fmt(n: bigint): string { return n.toLocaleString('de-DE'); }
 
-// §5.2: Transaktionstypen als deutsche Klartext-Labels statt Enum-Namen.
 const TX_LABELS: Record<string, string> = {
   PAY: 'Zahlung',
   ADMIN_PAY: 'Admin-Zahlung',
@@ -44,12 +43,11 @@ const TX_LABELS: Record<string, string> = {
 };
 function txLabel(type: string): string { return TX_LABELS[type] ?? type; }
 
-// §5: Footer zeigt den Nitrado-Alias der Guild, nicht die Guild-ID.
-async function guildFooter(guildId: GuildId): Promise<string> {
+// Footer ist an denselben Gameserver-Scope wie die Buchung gebunden.
+async function guildFooter(guildId: GuildId, nitradoConnId: NitradoConnId): Promise<string> {
   try {
     const conn = await prisma.nitradoConnection.findFirst({
-      where: { guildId },
-      orderBy: { slot: 'asc' },
+      where: { id: nitradoConnId, guildId },
       select: { alias: true },
     });
     if (conn?.alias) return `V-Bot • ${conn.alias}`;
@@ -62,7 +60,6 @@ async function embedReply(i: ChatInputCommandInteraction, embed: EmbedBuilder, e
   else await i.reply({ embeds: [embed], allowedMentions: { parse: [] } });
 }
 
-// Embed-Plan Rev IV: jede Meldung als Status-Embed (kein Klartext mehr).
 async function statusReply(
   i: ChatInputCommandInteraction,
   status: EmbedStatus,
@@ -120,22 +117,15 @@ export const unlinkCommand: Command = {
 };
 
 // ============================================================
-// HINWEIS: Der fruehere Economy-`/status` Command wurde entfernt.
-// Grund: Namens-Kollision mit user/status.ts (Bot-Health `/status`).
-// Ersatz im Dashboard: Bereich "Wirtschaft" — GET /api/v2/guilds/:guildId/economy/overview
-// (guild-weite Uebersicht) + GET /accounts/:userDiscordId (Einzel-Lookup).
-// Spec §10: "Nur user/status.ts bleibt als Discord Command /status."
-// ============================================================
-
-// ============================================================
-// /balance — eigener Kontostand + letzte 5 Tx (Public Embed, V-Bot Style)
+// /balance — eigener Kontostand + letzte 5 Tx
 // ============================================================
 export const balanceCommand: Command = {
   data: new SlashCommandBuilder().setName('balance').setDescription('Dein Kontostand und die letzten 5 Transaktionen.'),
   execute: withGuildScope({ requireSlotToggle: 'economyActive' }, async (i, scope) => {
-    const acc = await getAccountOrZero(scope.guildId, scope.actorDiscordId);
-    const cfg = await getConfig(scope.guildId);
-    const txs = await recentTransactions(scope.guildId, scope.actorDiscordId, 5);
+    const connId = scope.nitradoConnId!;
+    const acc = await getAccountOrZero(scope.guildId, connId, scope.actorDiscordId);
+    const cfg = await getConfig(scope.guildId, connId);
+    const txs = await recentTransactions(scope.guildId, connId, scope.actorDiscordId, 5);
     const total = acc.walletBalance + acc.bankBalance;
     const lines = txs.length === 0
       ? '_keine Transaktionen_'
@@ -151,14 +141,14 @@ export const balanceCommand: Command = {
         { name: '\u03A3 Gesamt', value: `**${fmt(total)}** ${cfg.emoji}`, inline: true },
         { name: '\uD83D\uDCDC Letzte 5 Transaktionen', value: lines.slice(0, 1024), inline: false },
       )
-      .setFooter({ text: await guildFooter(scope.guildId) })
+      .setFooter({ text: await guildFooter(scope.guildId, connId) })
       .setTimestamp();
     await embedReply(i, e, false);
   }),
 };
 
 // ============================================================
-// /pay — User → User (Wallet)
+// /pay — User → User (Wallet), immer innerhalb desselben Slots
 // ============================================================
 export const payCommand: Command = {
   data: new SlashCommandBuilder()
@@ -168,6 +158,7 @@ export const payCommand: Command = {
     .addIntegerOption(o => o.setName('betrag').setDescription('Betrag').setRequired(true).setMinValue(1).setMaxValue(1_000_000_000))
     .addStringOption(o => o.setName('grund').setDescription('Grund (max 100)').setRequired(false).setMaxLength(100)) as SlashCommandBuilder,
   execute: withGuildScope({ requireSlotToggle: 'economyActive' }, async (i, scope) => {
+    const connId = scope.nitradoConnId!;
     const target = i.options.getUser('user', true);
     if (target.bot) { await statusReply(i, 'ERROR', 'Zahlung abgelehnt', { description: 'Die Zahlung konnte nicht durchgeführt werden.', fields: [{ name: '📝 Grund', value: 'Ein Bot kann keine Coins erhalten.' }] }); return; }
     if (target.id === i.user.id) { await statusReply(i, 'ERROR', 'Zahlung abgelehnt', { description: 'Die Zahlung konnte nicht durchgeführt werden.', fields: [{ name: '📝 Grund', value: 'Eine Zahlung an dich selbst ist nicht möglich.' }] }); return; }
@@ -176,6 +167,7 @@ export const payCommand: Command = {
     try {
       await pay({
         guildId: scope.guildId,
+        nitradoConnId: connId,
         fromUserId: scope.actorDiscordId,
         toUserId: asUserDiscordId(target.id),
         amount: betrag,
@@ -185,8 +177,8 @@ export const payCommand: Command = {
       await statusReply(i, 'ERROR', 'Zahlung fehlgeschlagen', { description: 'Die Zahlung konnte nicht durchgeführt werden.', fields: [{ name: '📝 Grund', value: (e as Error).message }] });
       return;
     }
-    logAudit('ECON_PAY', 'ECONOMY', { guildId: scope.guildId, from: scope.actorDiscordId, to: target.id, amount: betrag.toString() });
-    const cfg = await getConfig(scope.guildId);
+    logAudit('ECON_PAY', 'ECONOMY', { guildId: scope.guildId, nitradoConnId: connId, from: scope.actorDiscordId, to: target.id, amount: betrag.toString() });
+    const cfg = await getConfig(scope.guildId, connId);
     await statusReply(i, 'SUCCESS', 'Zahlung erfolgreich', {
       ephemeral: false,
       description: `Der Betrag wurde an <@${target.id}> gesendet.`,
@@ -200,7 +192,7 @@ export const payCommand: Command = {
 };
 
 // ============================================================
-// /admin-pay — Admin-Korrektur (positiv oder negativ)
+// /admin-pay — Admin-Korrektur im aktiven Slot
 // ============================================================
 export const adminPayCommand: Command = {
   data: new SlashCommandBuilder()
@@ -210,6 +202,7 @@ export const adminPayCommand: Command = {
     .addIntegerOption(o => o.setName('betrag').setDescription('Delta (negativ = abziehen, ungleich 0)').setRequired(true).setMinValue(-1_000_000_000).setMaxValue(1_000_000_000))
     .addStringOption(o => o.setName('grund').setDescription('Grund (3..200)').setRequired(true).setMinLength(3).setMaxLength(200)) as SlashCommandBuilder,
   execute: withGuildScope({ requirePerm: 'economy.manage' }, async (i, scope) => {
+    const connId = scope.nitradoConnId!;
     const target = i.options.getUser('user', true);
     if (target.bot) { await statusReply(i, 'ERROR', 'Aktion nicht erlaubt', { description: 'Die Aktion konnte nicht durchgeführt werden.', fields: [{ name: '📝 Grund', value: 'Ein Bot kann nicht begünstigt werden.' }] }); return; }
     const delta = BigInt(i.options.getInteger('betrag', true));
@@ -217,12 +210,16 @@ export const adminPayCommand: Command = {
     const grund = i.options.getString('grund', true);
     try {
       await adminPay({
-        guildId: scope.guildId, targetUserId: asUserDiscordId(target.id),
-        delta, reason: grund, actorDiscordId: scope.actorDiscordId,
+        guildId: scope.guildId,
+        nitradoConnId: connId,
+        targetUserId: asUserDiscordId(target.id),
+        delta,
+        reason: grund,
+        actorDiscordId: scope.actorDiscordId,
       });
     } catch (e) { await statusReply(i, 'ERROR', 'Aktion fehlgeschlagen', { description: 'Die Aktion konnte nicht durchgeführt werden.', fields: [{ name: '📝 Grund', value: (e as Error).message }] }); return; }
-    logAudit('ECON_ADMIN_PAY', 'ECONOMY', { guildId: scope.guildId, target: target.id, delta: delta.toString(), actor: scope.actorDiscordId });
-    const cfg = await getConfig(scope.guildId);
+    logAudit('ECON_ADMIN_PAY', 'ECONOMY', { guildId: scope.guildId, nitradoConnId: connId, target: target.id, delta: delta.toString(), actor: scope.actorDiscordId });
+    const cfg = await getConfig(scope.guildId, connId);
     const abs = delta < 0n ? -delta : delta;
     await statusReply(i, 'SUCCESS', delta > 0n ? 'Guthaben hinzugefügt' : 'Guthaben abgezogen', {
       footerText: 'V-Bot Economy • Administration',
@@ -266,9 +263,9 @@ export const grantCommand: Command = {
 export const linksCommand: Command = {
   data: new SlashCommandBuilder().setName('links').setDescription('Owner/Berechtigt: Listet alle Spielfigur-Verknüpfungen im aktiven Slot.'),
   execute: withGuildScope({ requirePerm: 'economy.view' }, async (i, scope) => {
-    // Spielidentitaeten sind nur als HMAC gespeichert -> Anzeige ohne Klartext-ID.
+    const connId = scope.nitradoConnId!;
     const rows = await prisma.gameIdentityLink.findMany({
-      where: { guildId: scope.guildId, nitradoConnId: scope.nitradoConnId!, status: 'VERIFIED' },
+      where: { guildId: scope.guildId, nitradoConnId: connId, status: 'VERIFIED' },
       orderBy: { verifiedAt: 'desc' },
       take: 50,
     });
@@ -278,7 +275,7 @@ export const linksCommand: Command = {
       .setColor(0xF1C40F)
       .setTitle(`🔗 Verknüpfungen (${rows.length})`)
       .setDescription(lines.slice(0, 4000))
-      .setFooter({ text: await guildFooter(scope.guildId) })
+      .setFooter({ text: await guildFooter(scope.guildId, connId) })
       .setTimestamp();
     await embedReply(i, e);
   }),
@@ -293,11 +290,12 @@ export const depositCommand: Command = {
     .setDescription('Bringt Coins von Wallet auf die Bank.')
     .addIntegerOption(o => o.setName('betrag').setDescription('Betrag').setRequired(true).setMinValue(1).setMaxValue(1_000_000_000)) as SlashCommandBuilder,
   execute: withGuildScope({ requireSlotToggle: 'economyActive' }, async (i, scope) => {
+    const connId = scope.nitradoConnId!;
     const amount = BigInt(i.options.getInteger('betrag', true));
-    try { await deposit(scope.guildId, scope.actorDiscordId, amount); }
+    try { await deposit(scope.guildId, connId, scope.actorDiscordId, amount); }
     catch (e) { await statusReply(i, 'ERROR', 'Einzahlung fehlgeschlagen', { footerText: 'V-Bot Bank', description: 'Die Einzahlung konnte nicht durchgeführt werden.', fields: [{ name: '📝 Grund', value: (e as Error).message }] }); return; }
-    const cfg = await getConfig(scope.guildId);
-    const acc = await getAccountOrZero(scope.guildId, scope.actorDiscordId);
+    const cfg = await getConfig(scope.guildId, connId);
+    const acc = await getAccountOrZero(scope.guildId, connId, scope.actorDiscordId);
     await statusReply(i, 'SUCCESS', 'Einzahlung erfolgreich', {
       footerText: 'V-Bot Bank',
       description: 'Der Betrag wurde von deiner Wallet auf dein Bankkonto übertragen.',
@@ -318,11 +316,12 @@ export const withdrawCommand: Command = {
     .setDescription('Hebt Coins von der Bank auf die Wallet ab.')
     .addIntegerOption(o => o.setName('betrag').setDescription('Betrag').setRequired(true).setMinValue(1).setMaxValue(1_000_000_000)) as SlashCommandBuilder,
   execute: withGuildScope({ requireSlotToggle: 'economyActive' }, async (i, scope) => {
+    const connId = scope.nitradoConnId!;
     const amount = BigInt(i.options.getInteger('betrag', true));
-    try { await withdraw(scope.guildId, scope.actorDiscordId, amount); }
+    try { await withdraw(scope.guildId, connId, scope.actorDiscordId, amount); }
     catch (e) { await statusReply(i, 'ERROR', 'Auszahlung fehlgeschlagen', { footerText: 'V-Bot Bank', description: 'Die Auszahlung konnte nicht durchgeführt werden.', fields: [{ name: '📝 Grund', value: (e as Error).message }] }); return; }
-    const cfg = await getConfig(scope.guildId);
-    const acc = await getAccountOrZero(scope.guildId, scope.actorDiscordId);
+    const cfg = await getConfig(scope.guildId, connId);
+    const acc = await getAccountOrZero(scope.guildId, connId, scope.actorDiscordId);
     await statusReply(i, 'SUCCESS', 'Auszahlung erfolgreich', {
       footerText: 'V-Bot Bank',
       description: 'Der Betrag wurde von deinem Bankkonto auf deine Wallet übertragen.',
@@ -335,7 +334,7 @@ export const withdrawCommand: Command = {
 };
 
 // ============================================================
-// /transfer — Bank → Bank (an anderen User)
+// /transfer — Bank → Bank, konstruktiv innerhalb desselben Slots
 // ============================================================
 export const transferCommand: Command = {
   data: new SlashCommandBuilder()
@@ -344,18 +343,22 @@ export const transferCommand: Command = {
     .addUserOption(o => o.setName('user').setDescription('Empfänger').setRequired(true))
     .addIntegerOption(o => o.setName('betrag').setDescription('Betrag').setRequired(true).setMinValue(1).setMaxValue(1_000_000_000)) as SlashCommandBuilder,
   execute: withGuildScope({ requireSlotToggle: 'economyActive' }, async (i, scope) => {
+    const connId = scope.nitradoConnId!;
     const target = i.options.getUser('user', true);
     if (target.bot) { await statusReply(i, 'ERROR', 'Überweisung abgelehnt', { footerText: 'V-Bot Bank', description: 'Die Überweisung konnte nicht durchgeführt werden.', fields: [{ name: '📝 Grund', value: 'Ein Bot kann keine Coins erhalten.' }] }); return; }
     if (target.id === i.user.id) { await statusReply(i, 'ERROR', 'Überweisung abgelehnt', { footerText: 'V-Bot Bank', description: 'Die Überweisung konnte nicht durchgeführt werden.', fields: [{ name: '📝 Grund', value: 'Eine Überweisung an das eigene Konto ist nicht möglich.' }] }); return; }
     const amount = BigInt(i.options.getInteger('betrag', true));
     try {
       await transferBank({
-        guildId: scope.guildId, fromUserId: scope.actorDiscordId,
-        toUserId: asUserDiscordId(target.id), amount,
+        guildId: scope.guildId,
+        nitradoConnId: connId,
+        fromUserId: scope.actorDiscordId,
+        toUserId: asUserDiscordId(target.id),
+        amount,
       });
     } catch (e) { await statusReply(i, 'ERROR', 'Überweisung fehlgeschlagen', { footerText: 'V-Bot Bank', description: 'Die Überweisung konnte nicht durchgeführt werden.', fields: [{ name: '📝 Grund', value: (e as Error).message }] }); return; }
-    logAudit('ECON_TRANSFER', 'ECONOMY', { guildId: scope.guildId, from: scope.actorDiscordId, to: target.id, amount: amount.toString() });
-    const cfg = await getConfig(scope.guildId);
+    logAudit('ECON_TRANSFER', 'ECONOMY', { guildId: scope.guildId, nitradoConnId: connId, from: scope.actorDiscordId, to: target.id, amount: amount.toString() });
+    const cfg = await getConfig(scope.guildId, connId);
     await statusReply(i, 'SUCCESS', 'Überweisung erfolgreich', {
       footerText: 'V-Bot Bank',
       description: `Der Betrag wurde an <@${target.id}> überwiesen.`,
@@ -374,8 +377,9 @@ export const transferCommand: Command = {
 export const bankCommand: Command = {
   data: new SlashCommandBuilder().setName('bank').setDescription('Zeigt Wallet, Bank und Gesamtguthaben.'),
   execute: withGuildScope({ requireSlotToggle: 'economyActive' }, async (i, scope) => {
-    const acc = await getAccountOrZero(scope.guildId, scope.actorDiscordId);
-    const cfg = await getConfig(scope.guildId);
+    const connId = scope.nitradoConnId!;
+    const acc = await getAccountOrZero(scope.guildId, connId, scope.actorDiscordId);
+    const cfg = await getConfig(scope.guildId, connId);
     const total = acc.walletBalance + acc.bankBalance;
     const e = new EmbedBuilder()
       .setColor(0xF1C40F)
@@ -387,7 +391,7 @@ export const bankCommand: Command = {
         { name: '\uD83C\uDFE6 Bank', value: `**${fmt(acc.bankBalance)}** ${cfg.emoji}`, inline: true },
         { name: '\u03A3 Gesamt', value: `**${fmt(total)}** ${cfg.emoji}`, inline: true },
       )
-      .setFooter({ text: await guildFooter(scope.guildId) })
+      .setFooter({ text: await guildFooter(scope.guildId, connId) })
       .setTimestamp();
     await embedReply(i, e, false);
   }),
