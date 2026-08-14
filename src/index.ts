@@ -27,7 +27,7 @@ import { processExpiredCases } from './modules/moderation/caseManager';
 import { acquireSingletonLock } from './utils/singleton';
 import { assertProductionEnv } from './utils/envValidation';
 import { startNitradoRuntime, type NitradoRuntimeHandle } from './modules/nitrado/runtime';
-import { stopAiBackgroundLoops } from './modules/ai/runtime';
+import { startAiBackgroundLoops, stopAiBackgroundLoops } from './modules/ai/runtime';
 
 /**
  * Discord-V-Bot Haupteinstiegspunkt.
@@ -117,40 +117,7 @@ async function main(): Promise<void> {
       logger.info(`Command-Sync (scoped) startet für ${guildIds.length} Guild(s)...`);
       const res = await deployCommandsScoped(client, config.discord.token, config.discord.clientId, guildIds);
       logger.info(`Command-Sync fertig: ${res.globalCount} global, ${res.guildCount} guild-scoped auf ${res.guildsOk} Guild(s).`);
-      // Phase 6: Guild-Stammdaten cachen / persistieren
-      try {
-        const { bootstrapGuildAwareness, startContentSyncLoop } = await import('./modules/ai/guildAwareness.js');
-        await bootstrapGuildAwareness(client);
-        // Phase 7: Auto-Sync Channels/Rules alle 60 min
-        startContentSyncLoop(client);
-        // Phase 9 (RAG): pgvector pruefen + Embeddings fuer alle aktiven Snippets nachziehen.
-        try {
-          const { checkPgvectorAvailability, backfillEmbeddings } = await import('./modules/ai/embeddings.js');
-          await checkPgvectorAvailability();
-          void backfillEmbeddings().catch((e) => {
-            logger.warn('Embedding-Backfill fehlgeschlagen:', e as Error);
-          });
-        } catch (e) {
-          logger.warn('RAG-Initialisierung fehlgeschlagen:', e as Error);
-        }
-        // Phase 14 (Conversation Memory): Cleanup-Loop starten.
-        try {
-          const { startConversationCleanupLoop, cleanupOld } = await import('./modules/ai/conversationMemory.js');
-          void cleanupOld();
-          startConversationCleanupLoop();
-        } catch (e) {
-          logger.warn('ConversationMemory-Init fehlgeschlagen:', e as Error);
-        }
-        // Phase 17 (TranslatedPost-Scheduler): Polling-Loop starten.
-        try {
-          const { startTranslatedPostScheduler } = await import('./modules/ai/translatedPostScheduler.js');
-          startTranslatedPostScheduler(client);
-        } catch (e) {
-          logger.warn('TranslatedPost-Scheduler-Init fehlgeschlagen:', e as Error);
-        }
-      } catch (e) {
-        logger.warn('GuildAwareness-Bootstrap fehlgeschlagen:', e as Error);
-      }
+      await startAiBackgroundLoops(client);
     } catch (e) {
       logger.error('Per-Guild Command-Sync Fehler:', e);
     }
