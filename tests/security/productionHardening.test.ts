@@ -1,24 +1,24 @@
 /**
- * Security-Regression-Tests fuer die Production-Haertung (Task 17).
+ * Security-Regression-Tests fuer die Production-Haertung (Task 17 / Revision VI).
  *
  * Deckt ab:
  *  - Start-Abbruch in Production bei Default-/Platzhalter-Secrets
- *  - DEV-Bereich ist NUR passwortgeschuetzt: kein Startzwang fuer 2FA/IP-Allowlist
+ *  - GlobalDeveloperIdentity: BOT_OWNER_ID/Legacy-Alias + Snowflake-Validierung
  *  - In Nicht-Production wird NICHT abgebrochen
  *  - package.json start/main zeigen auf dist/src/index.js
  *  - Faction-Upload akzeptiert nur passende Magic-Number (Mime != Inhalt -> reject)
  *  - DEV-Upload-Verzeichnis liegt NICHT unter dem oeffentlichen uploads-Pfad
  */
 import * as path from 'node:path';
-import { collectProductionEnvErrors } from '../../src/utils/envValidation';
+import { collectProductionEnvErrors, isDiscordSnowflake } from '../../src/utils/envValidation';
 
-// Eine vollstaendig gueltige Production-Umgebung als Basis fuer die Tests.
 function validProdEnv(): Record<string, string> {
   return {
     NODE_ENV: 'production',
     DISCORD_TOKEN: 'MTA-real-token-value',
     DISCORD_CLIENT_ID: '123456789012345678',
     DISCORD_CLIENT_SECRET: 'real-client-secret-value',
+    BOT_OWNER_ID: '123456789012345678',
     DATABASE_URL: 'postgresql://discordbot:S3cretPW@postgres:5432/db?schema=public',
     POSTGRES_PASSWORD: 'S3cretPW',
     SESSION_SECRET: 'a'.repeat(64),
@@ -74,26 +74,47 @@ describe('collectProductionEnvErrors', () => {
     expect(errors.some((e) => e.includes('POSTGRES_PASSWORD'))).toBe(true);
   });
 
-  it('erzwingt KEINE 2FA fuer den DEV-Bereich (nur Passwortschutz)', () => {
+  it('erzwingt eine globale Owner-ID in Production', () => {
     const env = validProdEnv();
-    delete env.DEV_REQUIRE_MFA;
-    env.DEV_REQUIRE_MFA = 'false';
+    delete env.BOT_OWNER_ID;
+    delete env.DISCORD_OWNER_ID;
+    const errors = collectProductionEnvErrors(env);
+    expect(errors.some((e) => e.includes('BOT_OWNER_ID fehlt'))).toBe(true);
+  });
+
+  it('akzeptiert den kontrollierten Legacy-Alias DISCORD_OWNER_ID', () => {
+    const env = validProdEnv();
+    delete env.BOT_OWNER_ID;
+    env.DISCORD_OWNER_ID = '123456789012345678';
     expect(collectProductionEnvErrors(env)).toEqual([]);
   });
 
-  it('erzwingt KEINE IP-Allowlist fuer den DEV-Bereich', () => {
+  it('lehnt ungueltige Owner-Snowflakes ab', () => {
+    const env = validProdEnv();
+    env.BOT_OWNER_ID = 'not-a-snowflake';
+    const errors = collectProductionEnvErrors(env);
+    expect(errors.some((e) => e.includes('Discord-Snowflake'))).toBe(true);
+    expect(isDiscordSnowflake('123456789012345678')).toBe(true);
+    expect(isDiscordSnowflake('123')).toBe(false);
+  });
+
+  it('lehnt widerspruechliche kanonische/Legacy-Owner-IDs ab', () => {
+    const env = validProdEnv();
+    env.DISCORD_OWNER_ID = '999999999999999999';
+    const errors = collectProductionEnvErrors(env);
+    expect(errors.some((e) => e.includes('widersprechen sich'))).toBe(true);
+  });
+
+  it('erzwingt KEINE optionale DEV-IP-Allowlist', () => {
     const env = validProdEnv();
     env.DEV_REQUIRE_IP_ALLOWLIST = 'false';
     env.DEV_IP_ALLOWLIST = '';
     expect(collectProductionEnvErrors(env)).toEqual([]);
   });
 
-  it('macht in Nicht-Production keine Vorgaben (collect liefert dennoch Liste, assert greift nicht)', () => {
-    // collectProductionEnvErrors prueft die Regeln unabhaengig von NODE_ENV;
-    // der NODE_ENV-Gate sitzt in assertProductionEnv. Hier nur Doku-Test:
+  it('macht in Nicht-Production keine Vorgaben im assert-Gate', () => {
     const env = validProdEnv();
     env.NODE_ENV = 'development';
-    // Selbst mit dev: die reinen Regeln bleiben gleich -> gueltige Basis = []
     expect(collectProductionEnvErrors(env)).toEqual([]);
   });
 });
@@ -130,6 +151,7 @@ describe('assertProductionEnv (Start-Gate)', () => {
     const env = validProdEnv();
     env.NODE_ENV = 'development';
     env.DISCORD_TOKEN = 'your_discord_bot_token_here';
+    delete env.BOT_OWNER_ID;
     const exit = jest.spyOn(process, 'exit').mockImplementation((() => undefined) as never);
 
     assertProductionEnv(env, () => { /* noop */ });
@@ -153,7 +175,6 @@ describe('package.json Startpfade', () => {
 });
 
 describe('Faction-Upload Magic-Number-Pruefung', () => {
-  // Lazy-Import: setzt Pflicht-Env, bevor config geladen wird.
   process.env.DISCORD_TOKEN ||= 'test-token';
   process.env.DISCORD_CLIENT_ID ||= 'test-client-id';
   process.env.DISCORD_CLIENT_SECRET ||= 'test-secret';
@@ -181,11 +202,8 @@ describe('Faction-Upload Magic-Number-Pruefung', () => {
   });
 
   it('lehnt Inhalt ab, der nicht zum MIME passt (Spoofing)', () => {
-    // PNG-Bytes, aber als image/jpeg deklariert -> reject
     expect(verifyMagicNumber('image/jpeg', PNG)).toBe(false);
-    // Reiner Text als image/png deklariert -> reject
     expect(verifyMagicNumber('image/png', Buffer.from('<?xml version="1.0"?>plain', 'ascii'))).toBe(false);
-    // Zu kurzer Buffer -> reject
     expect(verifyMagicNumber('image/png', Buffer.from([0x89, 0x50]))).toBe(false);
   });
 });
