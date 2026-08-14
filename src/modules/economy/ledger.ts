@@ -1,23 +1,21 @@
 /**
- * EconomyLedger (Phase 5) — idempotentes Buchungsprimitiv.
+ * EconomyLedger (Phase 5) — idempotentes, gameserver-gescoptes Buchungsprimitiv.
  *
  * `bookLedgerEntry` schreibt genau EINEN EconomyLedgerEntry und verrechnet
- * wallet-/bankDelta atomar auf den Account. Die Idempotenz kommt aus dem
- * eindeutigen `idempotencyKey`: dieselbe Quelle (AdmEvent-Reward, Zins-Lauf,
- * Spielzeit-Bucket) kann NIE zweimal Geld erzeugen (Release-Blocker gegen
- * Mehrfach-Auszahlung). Der bestehende EconomyTransaction-Audit-Trail bleibt
- * unberuehrt; dieser Ledger ist additiv.
+ * wallet-/bankDelta atomar auf den Account desselben Guild+Gameserver-Scopes.
+ * Die Idempotenz kommt aus dem eindeutigen `idempotencyKey`: dieselbe Quelle
+ * (AdmEvent-Reward, Zins-Lauf, Spielzeit-Bucket) kann NIE zweimal Geld erzeugen.
  *
- * Dieses Primitiv erzwingt KEINE Nicht-Negativitaet der Balance — das ist Sache
- * des Aufrufers (strukturierte Ein-/Auszahlung mit Deckungspruefung folgt in
- * einem eigenen Schritt). Rewards sind stets positiv und damit unkritisch.
+ * WICHTIG: Seit Phase 4 ist Wirtschaftsdaten-Wahrheit immer servergescoppt.
+ * Deshalb ist `nitradoConnId` hier zwingend. Ein Aufrufer kann nicht versehentlich
+ * auf einen Legacy-/Guild-weiten Account zurueckfallen.
  */
 
 export interface LedgerEntryInput {
   idempotencyKey: string;
   guildId: string;
+  nitradoConnId: string;
   userDiscordId: string;
-  nitradoConnId?: string | null;
   walletDelta?: bigint;
   bankDelta?: bigint;
   type: string; // EconomyTxType
@@ -57,7 +55,8 @@ function isUniqueViolation(e: unknown): boolean {
 /**
  * Bucht einen Ledger-Eintrag idempotent. Existiert der idempotencyKey bereits,
  * wird NICHTS veraendert und `{ booked: false }` zurueckgegeben. Andernfalls
- * werden Eintrag + Account-Verrechnung in EINER Transaktion geschrieben.
+ * werden Eintrag + exakt derselbe servergescoppte Account in EINER Transaktion
+ * geschrieben.
  */
 export async function bookLedgerEntry(
   client: LedgerClient,
@@ -73,7 +72,7 @@ export async function bookLedgerEntry(
         data: {
           idempotencyKey: input.idempotencyKey,
           guildId: input.guildId,
-          nitradoConnId: input.nitradoConnId ?? null,
+          nitradoConnId: input.nitradoConnId,
           userDiscordId: input.userDiscordId,
           walletDelta,
           bankDelta,
@@ -84,9 +83,16 @@ export async function bookLedgerEntry(
         },
       });
       await tx.economyAccount.upsert({
-        where: { guildId_userDiscordId: { guildId: input.guildId, userDiscordId: input.userDiscordId } },
+        where: {
+          guildServerUser: {
+            guildId: input.guildId,
+            nitradoConnId: input.nitradoConnId,
+            userDiscordId: input.userDiscordId,
+          },
+        },
         create: {
           guildId: input.guildId,
+          nitradoConnId: input.nitradoConnId,
           userDiscordId: input.userDiscordId,
           walletBalance: walletDelta,
           bankBalance: bankDelta,

@@ -1,7 +1,6 @@
 /**
- * Phase 5: produktive Reward-Buchung. Kernbeweis: dieselbe Decision bucht NIE
- * doppelt Geld (Ledger-Key reward:<id>), und PENDING wird korrekt auf PAID
- * gehoben.
+ * Phase 5 / Phase 4 scope regression: produktive Reward-Buchung bleibt
+ * idempotent und schreibt ausschliesslich in den ausgewaehlten Gameserver.
  */
 import {
   bookPendingRewards, type RewardBookingClient, type PendingRewardRow,
@@ -21,24 +20,32 @@ function makeClient(decisions: PendingRewardRow[]) {
         economyLedgerEntry: {
           create: async ({ data }) => {
             const key = data.idempotencyKey as string;
-            if (ledgerKeys.has(key)) { const e = new Error('unique') as Error & { code: string }; e.code = 'P2002'; throw e; }
+            if (ledgerKeys.has(key)) {
+              const e = new Error('unique') as Error & { code: string };
+              e.code = 'P2002';
+              throw e;
+            }
             ledgerKeys.add(key);
             return { id: 'ledger-' + key };
           },
         },
         economyAccount: {
           upsert: async ({ where, create, update }) => {
-            const w = where.guildId_userDiscordId as { guildId: string; userDiscordId: string };
-            const k = `${w.guildId}:${w.userDiscordId}`;
+            const w = where.guildServerUser as { guildId: string; nitradoConnId: string; userDiscordId: string };
+            const k = `${w.guildId}:${w.nitradoConnId}:${w.userDiscordId}`;
             if (!accounts.has(k)) {
               accounts.set(k, {
-                walletBalance: create.walletBalance as bigint, bankBalance: create.bankBalance as bigint,
-                lifetimeEarned: create.lifetimeEarned as bigint, lifetimeSpent: create.lifetimeSpent as bigint,
+                walletBalance: create.walletBalance as bigint,
+                bankBalance: create.bankBalance as bigint,
+                lifetimeEarned: create.lifetimeEarned as bigint,
+                lifetimeSpent: create.lifetimeSpent as bigint,
               });
             } else {
               const a = accounts.get(k)!;
               a.walletBalance += (update.walletBalance as { increment: bigint }).increment;
               a.bankBalance += (update.bankBalance as { increment: bigint }).increment;
+              a.lifetimeEarned += (update.lifetimeEarned as { increment: bigint }).increment;
+              a.lifetimeSpent += (update.lifetimeSpent as { increment: bigint }).increment;
             }
             return accounts.get(k);
           },
@@ -47,7 +54,7 @@ function makeClient(decisions: PendingRewardRow[]) {
       return fn(tx);
     },
     rewardDecision: {
-      findMany: async () => decisions.filter(d => (status.get(d.id)?.status ?? 'PENDING') === 'PENDING'),
+      findMany: async () => decisions.filter((d) => (status.get(d.id)?.status ?? 'PENDING') === 'PENDING'),
       update: async ({ where, data }) => {
         status.set(where.id as string, { status: data.status as string, paid: data.paid as bigint });
         return {};
@@ -60,7 +67,7 @@ function makeClient(decisions: PendingRewardRow[]) {
 const SCOPE = { guildId: 'g', nitradoConnId: 'n' };
 
 describe('bookPendingRewards', () => {
-  it('bucht offene Rewards auf die Wallet und markiert PAID', async () => {
+  it('bucht offene Rewards auf die servergescoppte Wallet und markiert PAID', async () => {
     const { client, accounts, status } = makeClient([
       { id: 'd1', userDiscordId: 'u1', calculated: 500n },
       { id: 'd2', userDiscordId: 'u2', calculated: 300n },
@@ -68,7 +75,7 @@ describe('bookPendingRewards', () => {
     const r = await bookPendingRewards(client, SCOPE, { rewardTarget: 'WALLET' });
     expect(r.paid).toBe(2);
     expect(r.totalAmount).toBe(800n);
-    expect(accounts.get('g:u1')!.walletBalance).toBe(500n);
+    expect(accounts.get('g:n:u1')!.walletBalance).toBe(500n);
     expect(status.get('d1')!.status).toBe('PAID');
   });
 
@@ -77,13 +84,20 @@ describe('bookPendingRewards', () => {
     await bookPendingRewards(client, SCOPE, { rewardTarget: 'WALLET' });
     const r2 = await bookPendingRewards(client, SCOPE, { rewardTarget: 'WALLET' });
     expect(r2.paid).toBe(0);
-    expect(accounts.get('g:u1')!.walletBalance).toBe(500n);
+    expect(accounts.get('g:n:u1')!.walletBalance).toBe(500n);
   });
 
-  it('rewardTarget BANK bucht auf die Bank', async () => {
+  it('rewardTarget BANK bucht auf die servergescoppte Bank', async () => {
     const { client, accounts } = makeClient([{ id: 'd1', userDiscordId: 'u1', calculated: 250n }]);
     await bookPendingRewards(client, SCOPE, { rewardTarget: 'BANK' });
-    expect(accounts.get('g:u1')!.bankBalance).toBe(250n);
-    expect(accounts.get('g:u1')!.walletBalance).toBe(0n);
+    expect(accounts.get('g:n:u1')!.bankBalance).toBe(250n);
+    expect(accounts.get('g:n:u1')!.walletBalance).toBe(0n);
+  });
+
+  it('trennt Rewards desselben Users zwischen zwei Gameservern', async () => {
+    const first = makeClient([{ id: 'd1', userDiscordId: 'u1', calculated: 100n }]);
+    await bookPendingRewards(first.client, { guildId: 'g', nitradoConnId: 'n1' }, { rewardTarget: 'WALLET' });
+    expect(first.accounts.get('g:n1:u1')!.walletBalance).toBe(100n);
+    expect(first.accounts.get('g:n2:u1')).toBeUndefined();
   });
 });
