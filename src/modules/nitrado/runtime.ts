@@ -1,10 +1,5 @@
 /**
  * Zentrale Runtime-Grenze fuer Nitrado-nahe Hintergrundarbeit.
- *
- * Start/Stop muessen symmetrisch bleiben: beim Shutdown werden zuerst alle
- * Poller gestoppt, damit keine neuen DB/API-Arbeiten entstehen; erst danach
- * wird der JobWorker gedraint. Discord/Prisma werden vom Aufrufer anschliessend
- * geschlossen.
  */
 
 import type { Client } from 'discord.js';
@@ -15,7 +10,7 @@ import { startAdmSyncCron, stopAdmSyncCron } from './admSyncCron';
 import { startPermaOnlyCron, stopPermaOnlyCron } from './permaOnlyCron';
 import { startWhitelistSyncCron, stopWhitelistSyncCron } from '../whitelist/whitelistSyncCron';
 import { startKillfeedWatcher, stopKillfeedWatcher } from '../killfeed/admWatcher';
-import { startKillfeedV2Cron, stopKillfeedV2Cron } from '../killfeed/killfeedV2Cron';
+import { startGameplayFeedRuntime, stopGameplayFeedRuntime } from '../gameplayFeeds/runtime';
 import { startBankInterestCron, stopBankInterestCron } from '../economy/interestCron';
 
 export interface NitradoRuntimeHandle {
@@ -29,8 +24,9 @@ export function startNitradoRuntime(client: Client): NitradoRuntimeHandle {
   startPermaOnlyCron();
   startWhitelistSyncCron();
 
-  // Nie beide Killfeed-Pfade gleichzeitig starten.
-  if (config.nitrado.admEventPipelineV2) startKillfeedV2Cron();
+  // Nie Legacy und V2 parallel posten. V2 vereinigt Deathfeed + Baufeed auf der
+  // kanonischen AdmEvent-Pipeline mit persistenter Retry-Zustellung.
+  if (config.nitrado.admEventPipelineV2) startGameplayFeedRuntime();
   else startKillfeedWatcher();
 
   startBankInterestCron();
@@ -41,9 +37,8 @@ export function startNitradoRuntime(client: Client): NitradoRuntimeHandle {
       if (stopped) return;
       stopped = true;
 
-      // Erst Producer/Poller stoppen, dann die bereits geclaimten Jobs drainen.
       stopBankInterestCron();
-      stopKillfeedV2Cron();
+      stopGameplayFeedRuntime();
       stopKillfeedWatcher();
       stopWhitelistSyncCron();
       stopPermaOnlyCron();
