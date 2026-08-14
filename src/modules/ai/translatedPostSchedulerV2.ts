@@ -128,8 +128,16 @@ async function sendPost(client: Client, post: { id: string; guildId: string; cha
 export function startTranslatedPostScheduler(client: Client): void {
   if (scheduler) return;
   scheduler = setInterval(() => { void runDuePosts(client); }, POLL_INTERVAL_MS);
+  scheduler.unref?.();
   logger.info(`translatedPostScheduler: gestartet (alle ${POLL_INTERVAL_MS / 1000}s).`);
 }
+
+export function stopTranslatedPostScheduler(): void {
+  if (!scheduler) return;
+  clearInterval(scheduler);
+  scheduler = null;
+}
+
 export function isTextSendable(type: ChannelType): boolean {
   return type === ChannelType.GuildText || type === ChannelType.GuildAnnouncement || type === ChannelType.PublicThread || type === ChannelType.PrivateThread || type === ChannelType.AnnouncementThread;
 }
