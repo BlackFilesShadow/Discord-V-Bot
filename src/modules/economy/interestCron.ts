@@ -1,7 +1,11 @@
 /**
  * Bank-Zins-Cron (Phase 5). Stuendlicher Sweep; die Tages-Idempotenz kommt aus
  * BankInterestRun (Guild+Gameserver+Tag) + serverbezogenen Ledger-Keys.
- * Nur aktive EconomyConfigs mit bankInterestPercent>0 werden bearbeitet.
+ *
+ * Legacy-NULL-Configs gehoeren ausschliesslich in den Economy-Scope-
+ * Migrationspfad und werden hier gar nicht mehr als ausfuehrbare Jobs geladen.
+ * Dadurch gibt es keinen wiederholten Runtime-Warnspam; eine mehrdeutige
+ * Migration bleibt weiterhin fail-closed und muss vom Owner aufgeloest werden.
  */
 
 import prisma from '../../database/prisma';
@@ -15,18 +19,21 @@ export async function runInterestSweepOnce(now = new Date()): Promise<void> {
   if (running) return;
   running = true;
   try {
-    // Globaler Scheduler-Sweep ist absichtlich guilduebergreifend. Jede konkrete
-    // Buchung wird danach strikt an Guild+Gameserver gebunden.
+    // Globaler Scheduler-Sweep ist absichtlich guilduebergreifend. Nur bereits
+    // servergescopte Configs sind operative Wahrheit.
     // eslint-disable-next-line local/no-unscoped-prisma-query
     const configs = await prisma.economyConfig.findMany({
-      where: { enabled: true, bankInterestPercent: { gt: 0 } },
+      where: {
+        enabled: true,
+        bankInterestPercent: { gt: 0 },
+        nitradoConnId: { not: null },
+      },
       select: { guildId: true, nitradoConnId: true, bankInterestPercent: true },
     });
     for (const c of configs) {
-      if (!c.nitradoConnId) {
-        logger.warn(`Zinslauf uebersprungen fuer Guild ${c.guildId}: EconomyConfig ohne Gameserver-Scope.`);
-        continue;
-      }
+      // Prisma behaelt Nullable-Typen trotz `not:null` im Select. Dieser Guard
+      // ist nur Type-Narrowing und erzeugt absichtlich keine Runtime-Warnung.
+      if (!c.nitradoConnId) continue;
       try {
         const runDate = interestDateKey(now, 'Europe/Berlin');
         const r = await runDailyInterestForServer(prisma as unknown as BankInterestClient, {
