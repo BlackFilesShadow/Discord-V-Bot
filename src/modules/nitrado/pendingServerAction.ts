@@ -1,3 +1,4 @@
+import { randomUUID } from 'node:crypto';
 import type { GuildId, NitradoConnId, UserDiscordId } from '../../types/scope';
 
 /** Phase 4 / SCOPE-003: Pending-Actions leben hoechstens fuenf Minuten. */
@@ -76,6 +77,10 @@ export async function createPendingServerAction(
 
   return client.pendingServerAction.create({
     data: {
+      // SCOPE-003: Die Action-ID ist kryptografisch zufaellig und wird bewusst
+      // im Service erzeugt (nicht nur ueber einen ORM-Default), damit auch
+      // alternative/injizierte Persistenzadapter dieselbe Sicherheitsregel haben.
+      id: randomUUID(),
       guildId: args.guildId,
       nitradoConnId: args.nitradoConnId,
       actorDiscordId: args.actorDiscordId,
