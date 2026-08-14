@@ -2,8 +2,8 @@
  * Kanonischer DayZ-ADM-Zeilenparser.
  *
  * Ein Ereignis wird nur so spezifisch klassifiziert, wie es die ADM-Zeile
- * tatsaechlich belegt. Insbesondere ist ein normaler `hit by [vehicle]` noch
- * kein Fahrzeug-Tod und `PLAYER_DIED` wird nicht als PvP-Kill ausgegeben.
+ * tatsaechlich belegt. ADM-Uhrzeiten sind Wanduhrzeiten des Servers; wenn eine
+ * IANA-Zeitzone konfiguriert ist, werden sie DST-sicher nach UTC aufgeloest.
  */
 
 export const ADM_PARSER_VERSION = 2;
@@ -46,6 +46,7 @@ export interface AdmDateContext {
   baseDate: Date | null;
   dayOffsetMs: number;
   prevTimeMs: number;
+  timeZone: string | null;
 }
 
 const HEADER_DATE_RE = /AdminLog started on (\d{4})-(\d{2})-(\d{2})/;
@@ -67,8 +68,56 @@ export function resolveBaseDate(text: string, fileName?: string): Date | null {
   return null;
 }
 
-export function newDateContext(baseDate: Date | null): AdmDateContext {
-  return { baseDate, dayOffsetMs: 0, prevTimeMs: -1 };
+export function newDateContext(baseDate: Date | null, timeZone: string | null = null): AdmDateContext {
+  return { baseDate, dayOffsetMs: 0, prevTimeMs: -1, timeZone };
+}
+
+function wallClockToUtc(
+  dateAnchor: Date,
+  dayOffsetMs: number,
+  hour: number,
+  minute: number,
+  second: number,
+  timeZone: string | null,
+): Date {
+  const day = new Date(dateAnchor.getTime() + dayOffsetMs);
+  const year = day.getUTCFullYear();
+  const month = day.getUTCMonth();
+  const date = day.getUTCDate();
+  const targetWallAsUtc = Date.UTC(year, month, date, hour, minute, second);
+  if (!timeZone) return new Date(targetWallAsUtc);
+
+  const formatter = new Intl.DateTimeFormat('en-CA', {
+    timeZone,
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+    hour: '2-digit',
+    minute: '2-digit',
+    second: '2-digit',
+    hourCycle: 'h23',
+  });
+
+  let guess = targetWallAsUtc;
+  // Two correction passes handle normal zone offsets and DST transitions
+  // without a third-party timezone dependency.
+  for (let pass = 0; pass < 3; pass++) {
+    const parts = formatter.formatToParts(new Date(guess));
+    const value = (type: Intl.DateTimeFormatPartTypes): number =>
+      Number(parts.find(part => part.type === type)?.value ?? 0);
+    const representedWallAsUtc = Date.UTC(
+      value('year'),
+      value('month') - 1,
+      value('day'),
+      value('hour'),
+      value('minute'),
+      value('second'),
+    );
+    const delta = targetWallAsUtc - representedWallAsUtc;
+    guess += delta;
+    if (delta === 0) break;
+  }
+  return new Date(guess);
 }
 
 function emptyEvent(rawLine: string, eventType: AdmParsedType, status: AdmParseStatus): ParsedAdmEvent {
@@ -165,10 +214,15 @@ export function parseAdmLine(line: string, ctx: AdmDateContext): ParsedAdmEvent 
 
   const time = TIME_RE.exec(line);
   if (!time) return null;
-  const timeMs = (+time[1] * 3600 + +time[2] * 60 + +time[3]) * 1000;
+  const hour = +time[1];
+  const minute = +time[2];
+  const second = +time[3];
+  const timeMs = (hour * 3600 + minute * 60 + second) * 1000;
   if (ctx.prevTimeMs >= 0 && timeMs < ctx.prevTimeMs - 60_000) ctx.dayOffsetMs += 86_400_000;
   ctx.prevTimeMs = timeMs;
-  const occurredAt = ctx.baseDate ? new Date(ctx.baseDate.getTime() + ctx.dayOffsetMs + timeMs) : null;
+  const occurredAt = ctx.baseDate
+    ? wallClockToUtc(ctx.baseDate, ctx.dayOffsetMs, hour, minute, second, ctx.timeZone)
+    : null;
   const timestampStatus: AdmParseStatus = ctx.baseDate ? 'OK' : 'UNRESOLVED_TIMESTAMP';
 
   const content = line.replace(/^\d{2}:\d{2}:\d{2}\s*\|?\s*/, '');
@@ -229,8 +283,6 @@ export function parseAdmLine(line: string, ctx: AdmDateContext): ParsedAdmEvent 
   }
 
   if (/\bhit by\b/i.test(content)) {
-    // Ein Vehicle-Hit ist nur dann ein Todesereignis, wenn die Opferzeile DEAD
-    // markiert ist. Nicht-toedliche Treffer bleiben PLAYER_HIT.
     const fatalVehicle = /\(DEAD\)/i.test(content)
       && (/\[vehicle\]/i.test(content) || /\bat speed\s+\d+(?:\.\d+)?\s*km\/h/i.test(content));
     return finalize(fill(content, fatalVehicle ? 'VEHICLE_DEATH' : 'PLAYER_HIT', extractActor(content)));
@@ -248,8 +300,6 @@ export function parseAdmLine(line: string, ctx: AdmDateContext): ParsedAdmEvent 
     return finalize(fill(content, 'PLAYER_POSITION', extractActor(content)));
   }
 
-  if (hasPlayer) {
-    return finalize(emptyEvent(content, 'UNKNOWN', 'UNKNOWN'));
-  }
+  if (hasPlayer) return finalize(emptyEvent(content, 'UNKNOWN', 'UNKNOWN'));
   return null;
 }
