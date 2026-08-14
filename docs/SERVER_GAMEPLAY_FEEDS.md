@@ -41,7 +41,8 @@ Objekt und Werkzeug werden getrennt normalisiert, z.B. `built Fence with Shovel`
 - `AdmEvent`: kanonischer normalisierter Server-Gameplay-Store.
 - `GameplayFeedConfig`: Subscription/Filter pro Gameserver, Feed-Typ und Discord-Channel.
 - `GameplayFeedDelivery`: persistente Zustellung pro `GameplayFeedConfig + AdmEvent`.
-- Delivery-Status: `PENDING`, `SENDING`, `SENT`, `RETRY`, `FAILED`.
+- Delivery-Status: `PENDING`, `SENDING`, `SENT`, `SKIPPED`, `RETRY`, `FAILED`.
+- `SKIPPED` bedeutet bewusst durch einen nachtraeglich geaenderten Kategorie-Filter verworfen und wird nie als Discord-Post ausgegeben.
 - Ein Lease verhindert parallele Doppelzustellung und macht abgestuerzte `SENDING`-Jobs wieder retrybar.
 - Exponentieller Retry behandelt temporaere Discord-Fehler.
 - Ein versteckter Footer-Marker `V-Bot event:<AdmEvent.id>` erlaubt die Reconciliation des Crash-Fensters: Discord-Send erfolgreich, DB-Commit danach fehlgeschlagen.
