@@ -10,7 +10,7 @@
  *     mehrere aktive Slots verlangen eine explizite Auswahl.
  *  3. Legacy-Slots > MAX_GAME_SERVERS_PER_GUILD werden fail-closed abgewiesen.
  *  4. Owner-Status + Permissions-Set ist aufgeloest.
- *  5. Falls `requirePerm` gesetzt: scoped Permission validiert.
+ *  5. Falls `requirePerm` gesetzt: scoped Command-Permission validiert.
  *  6. Economy/Casino-Pfade greifen waehrend der Legacy-Migration fail-closed
  *     nur auf den ausdruecklich aufgeloesten Primaerserver zu.
  */
@@ -18,7 +18,7 @@
 import type { ChatInputCommandInteraction } from 'discord.js';
 import { MessageFlags } from 'discord.js';
 import prisma from '../../database/prisma';
-import { asGuildId, asUserDiscordId, asNitradoConnId, hasPermission } from '../../types/scope';
+import { asGuildId, asUserDiscordId, asNitradoConnId, hasCommandPermission } from '../../types/scope';
 import type { GuildScope, NitradoConnId, PermissionScope } from '../../types/scope';
 import {
   MAX_GAME_SERVERS_PER_GUILD,
@@ -60,7 +60,7 @@ export interface WithGuildScopeOptions {
  * Legacy-Economy-Migration weiter funktionieren, damit Identitaetsdaten nicht
  * an einem Wirtschaftsmigrationszustand haengen.
  */
-const ECONOMY_GUARD_EXEMPT_COMMANDS = new Set(['link', 'unlink', 'grant']);
+const ECONOMY_GUARD_EXEMPT_COMMANDS = new Set(['link', 'unlink', 'grant', 'force-link', 'force-unlink']);
 
 function requiresLegacyEconomyGuard(commandName: string, opts: WithGuildScopeOptions): boolean {
   if (ECONOMY_GUARD_EXEMPT_COMMANDS.has(commandName)) return false;
@@ -81,9 +81,6 @@ async function resolveCommandServerScope(
     orderBy: [{ slot: 'asc' }, { id: 'asc' }],
   });
 
-  // Ein Token-/Connection-Datensatz ohne gebundene Gameserver-ID ist noch kein
-  // ausfuehrbarer Server-Scope. Solche Rows duerfen weder Auto-Resolve noch eine
-  // explizite Slot-Auswahl erfolgreich machen.
   const connections: ScopeCandidate[] = rows
     .filter(row => typeof row.nitradoServerId === 'string' && row.nitradoServerId.length > 0)
     .map(row => ({
@@ -232,7 +229,7 @@ export function withGuildScope(opts: WithGuildScopeOptions, handler: ScopedHandl
       permissions: permsSet,
     };
 
-    if (opts.requirePerm && !hasPermission(scope, opts.requirePerm)) {
+    if (opts.requirePerm && !hasCommandPermission(scope, opts.requirePerm)) {
       logAudit('CMD_PERM_DENIED', 'SECURITY', {
         guildId, actorId, perm: opts.requirePerm, command: interaction.commandName,
       });
