@@ -2,28 +2,20 @@
  * Production-Startup-Guards (P0/P1-Härtung).
  *
  * Schutzschicht, die NUR in Production (`NODE_ENV=production`) greift:
+ * - Default-/Platzhalter-Secrets verhindern.
+ * - Kanonische globale Developer-Identitaet erzwingen:
+ *   BOT_OWNER_ID ist primaer; DISCORD_OWNER_ID ist nur Legacy-Alias.
+ *   Die effektive Owner-ID muss eine Discord-Snowflake sein.
+ *   Wenn beide Variablen gesetzt sind, muessen sie identisch sein.
  *
- *   Default-/Platzhalter-Secrets verhindern (Task 2):
- *      Wenn ein Pflicht-Secret noch den .env.example-Platzhalter trägt
- *      (z.B. `your_discord_bot_token_here` oder `changeme`), bricht der
- *      Start ab. Leere OPTIONALE API-Keys bleiben erlaubt.
- *
- * Hinweis: Der DEV-Bereich ist bewusst NUR passwortgeschützt
- * (`DEV_PASSWORD`). Es gibt KEINEN Startzwang für 2FA oder IP-Allowlist.
- *
- * Die Funktion `collectProductionEnvErrors()` ist seiteneffektfrei und
- * vollständig testbar; `assertProductionEnv()` ruft sie auf und beendet
- * den Prozess mit klarer Meldung, falls Fehler vorliegen.
+ * `collectProductionEnvErrors()` ist seiteneffektfrei und testbar;
+ * `assertProductionEnv()` bricht den Production-Start fail-closed ab.
  */
 
 export interface EnvLike {
   [key: string]: string | undefined;
 }
 
-/**
- * Platzhalterwerte aus `.env.example`, die in Production niemals echte
- * Secrets sein dürfen. Key -> exakter verbotener Platzhalterwert.
- */
 const PLACEHOLDER_SECRETS: ReadonlyArray<{ key: string; placeholder: string }> = [
   { key: 'DISCORD_TOKEN', placeholder: 'your_discord_bot_token_here' },
   { key: 'DISCORD_CLIENT_ID', placeholder: 'your_client_id_here' },
@@ -37,6 +29,11 @@ const PLACEHOLDER_SECRETS: ReadonlyArray<{ key: string; placeholder: string }> =
   { key: 'OPENAI_API_KEY', placeholder: 'your_openai_api_key_here' },
 ];
 
+/** Discord-Snowflakes sind dezimale 64-bit IDs; 17..20 Ziffern decken Legacy + aktuelle IDs ab. */
+export function isDiscordSnowflake(value: string | undefined): boolean {
+  return typeof value === 'string' && /^\d{17,20}$/.test(value.trim());
+}
+
 /**
  * Sammelt alle Production-Startfehler. Leeres Array => Konfiguration ok.
  * `env` ist injizierbar, damit die Logik ohne globalen Zustand testbar ist.
@@ -44,10 +41,8 @@ const PLACEHOLDER_SECRETS: ReadonlyArray<{ key: string; placeholder: string }> =
 export function collectProductionEnvErrors(env: EnvLike = process.env): string[] {
   const errors: string[] = [];
 
-  // --- Task 2: Default-/Platzhalter-Secrets ---
   for (const { key, placeholder } of PLACEHOLDER_SECRETS) {
     const value = env[key];
-    // Leere optionale Werte sind erlaubt (z.B. ungenutzte API-Keys).
     if (value !== undefined && value.trim() === placeholder) {
       errors.push(
         `${key} trägt noch den Platzhalterwert "${placeholder}". In Production einen echten Wert setzen.`,
@@ -55,15 +50,27 @@ export function collectProductionEnvErrors(env: EnvLike = process.env): string[]
     }
   }
 
-  // DATABASE_URL enthält "changeme" -> Default-Passwort im Connection-String.
   const dbUrl = env.DATABASE_URL ?? '';
   if (dbUrl.includes('changeme')) {
     errors.push('DATABASE_URL enthält "changeme" — Default-Passwort in Production nicht erlaubt.');
   }
 
-  // Hinweis: Der DEV-Bereich ist bewusst NUR passwortgeschützt. Es gibt
-  // KEINEN Production-Startzwang für 2FA (DEV_REQUIRE_MFA) oder IP-Allowlist
-  // (DEV_REQUIRE_IP_ALLOWLIST) — diese bleiben optionale Opt-in-Features.
+  // Revision VI / DEV-ID-001:
+  // BOT_OWNER_ID ist kanonisch; DISCORD_OWNER_ID darf nur als Migrationsalias
+  // dienen. Rechte duerfen niemals aus einem Shared-Password entstehen.
+  const canonicalOwner = env.BOT_OWNER_ID?.trim() ?? '';
+  const legacyOwner = env.DISCORD_OWNER_ID?.trim() ?? '';
+  const effectiveOwner = canonicalOwner || legacyOwner;
+
+  if (!effectiveOwner) {
+    errors.push('BOT_OWNER_ID fehlt. In Production ist eine globale Developer-Owner-ID zwingend erforderlich.');
+  } else if (!isDiscordSnowflake(effectiveOwner)) {
+    errors.push('BOT_OWNER_ID/DISCORD_OWNER_ID ist keine gueltige Discord-Snowflake (17..20 Ziffern).');
+  }
+
+  if (canonicalOwner && legacyOwner && canonicalOwner !== legacyOwner) {
+    errors.push('BOT_OWNER_ID und DISCORD_OWNER_ID widersprechen sich. Legacy-Alias entfernen oder identisch setzen.');
+  }
 
   return errors;
 }
