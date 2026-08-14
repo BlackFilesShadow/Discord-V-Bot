@@ -23,7 +23,7 @@ export type GuildEvent =
   | { type: 'whitelist.changed'; payload: { guildId: string; entryId?: string; action: 'added' | 'removed' | 'requested' | 'decided' } }
   | { type: 'nitrado.job.updated'; payload: { guildId: string; jobId: string; status: string } }
   | { type: 'permissions.updated'; payload: { guildId: string; userDiscordId?: string; roleDiscordId?: string } }
-  | { type: 'economy.tx'; payload: { guildId: string; userDiscordId: string; type: string } }
+  | { type: 'economy.tx'; payload: { guildId: string; nitradoConnId: string; userDiscordId: string; type: string } }
   | { type: 'casino.round'; payload: { guildId: string; nitradoConnId: string | null; gameType: string; payout: string } }
   | { type: 'faction.changed'; payload: { guildId: string; factionId: string } }
   | { type: 'settings.changed'; payload: { guildId: string; slotId: string } }
@@ -31,6 +31,7 @@ export type GuildEvent =
   | { type: 'killfeed.changed'; payload: { guildId: string; configId?: string } }
   | { type: 'killfeed.event'; payload: { guildId: string; configId: string; category: string; victimName: string; shooterName?: string; weapon?: string; distance?: number; occurredAt: string } }
   | { type: 'welcome.changed'; payload: { guildId: string } }
+  | { type: 'embed.changed'; payload: { guildId: string } }
   | { type: 'embed.changed'; payload: { guildId: string; embedId?: string } }
   | { type: 'reactionEmbed.changed'; payload: { guildId: string; menuId?: string } }
   | { type: 'feed.changed'; payload: { guildId: string; feedId?: string } }
