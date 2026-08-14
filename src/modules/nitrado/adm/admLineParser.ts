@@ -1,27 +1,12 @@
 /**
- * Kanonischer DayZ-ADM-Zeilenparser (Phase 3, parserVersion 1).
+ * Kanonischer DayZ-ADM-Zeilenparser.
  *
- * Ziel: dieselbe normalisierte Ereignisstruktur fuer ALLE Verbraucher
- * (Killfeed, Economy-Rewards, Online-Liste, Analytics). Unbekannte Zeilen
- * werden als UNKNOWN markiert — niemals geraten. Fehlt der Basis-Datumskontext,
- * bleibt occurredAt null (parseStatus UNRESOLVED_TIMESTAMP) statt still `heute`
- * einzusetzen (ADM-007).
- *
- * Unterstuetzte dokumentierte Varianten (bewusst tolerant ggü. Whitespace,
- * optionalem "Player"-Praefix, optionalem "(DEAD)", Steam64/DAYZ-GUID):
- *   - "... Player "Name"(id=GUID) is connected" / "...) connected"
- *   - "... Player "Name"(id=GUID) has been disconnected" / "...) disconnected"
- *   - "... Player "Victim"(DEAD)(id=..,pos=<..>) killed by Player "Killer"(..) with W from N meters"
- *   - "... Player "Victim"(id=..) killed by "Killer"(..)"  (ohne (DEAD)/Player)
- *   - "... killed by <Tier/Infected>"  -> NPC
- *   - "... committed suicide" / "... bled out" / "... died"
- *   - "... hit by [vehicle] X" / "... at speed N km/h"
- *   - "... placed <Objekt>"
- *   - "... built|dismantled|destroyed <Objekt>"
- *   - PlayerList-Positionszeile "Player "Name"(id=..) pos=<..>"
+ * Ein Ereignis wird nur so spezifisch klassifiziert, wie es die ADM-Zeile
+ * tatsaechlich belegt. Insbesondere ist ein normaler `hit by [vehicle]` noch
+ * kein Fahrzeug-Tod und `PLAYER_DIED` wird nicht als PvP-Kill ausgegeben.
  */
 
-export const ADM_PARSER_VERSION = 1;
+export const ADM_PARSER_VERSION = 2;
 
 export type AdmParsedType =
   | 'PLAYER_CONNECTED'
@@ -68,18 +53,16 @@ const TIME_RE = /^(\d{2}):(\d{2}):(\d{2})/;
 const NAME_RE = /"([^"]+)"/;
 const ID_RE = /id=([^\s,)]+)/;
 const POS_RE = /pos=<([^>]+)>/;
-const WEAPON_RE = /\bwith\s+(.+?)(?:\s+from\s+[\d.]+\s*m(?:eters?)?)?\s*$/i;
 const DISTANCE_RE = /\bfrom\s+([\d.]+)\s*m(?:eters?)?\b/i;
 
-/** Basisdatum aus Header ("AdminLog started on YYYY-MM-DD") oder Dateiname. Sonst null. */
 export function resolveBaseDate(text: string, fileName?: string): Date | null {
   for (const line of text.split(/\r?\n/, 8)) {
-    const m = HEADER_DATE_RE.exec(line);
-    if (m) return new Date(Date.UTC(+m[1], +m[2] - 1, +m[3]));
+    const match = HEADER_DATE_RE.exec(line);
+    if (match) return new Date(Date.UTC(+match[1], +match[2] - 1, +match[3]));
   }
   if (fileName) {
-    const fm = /(\d{4})-(\d{2})-(\d{2})/.exec(fileName);
-    if (fm) return new Date(Date.UTC(+fm[1], +fm[2] - 1, +fm[3]));
+    const match = /(\d{4})-(\d{2})-(\d{2})/.exec(fileName);
+    if (match) return new Date(Date.UTC(+match[1], +match[2] - 1, +match[3]));
   }
   return null;
 }
@@ -88,151 +71,79 @@ export function newDateContext(baseDate: Date | null): AdmDateContext {
   return { baseDate, dayOffsetMs: 0, prevTimeMs: -1 };
 }
 
-function emptyEvent(rawLine: string, eventType: AdmParsedType, occurredAt: Date | null, status: AdmParseStatus): ParsedAdmEvent {
+function emptyEvent(rawLine: string, eventType: AdmParsedType, status: AdmParseStatus): ParsedAdmEvent {
   return {
-    eventType, occurredAt,
-    actorGameId: null, actorName: null, targetGameId: null, targetName: null,
-    objectType: null, toolOrWeapon: null, distanceMeters: null,
-    actorPosition: null, targetPosition: null,
-    rawLine, parseStatus: status,
+    eventType,
+    occurredAt: null,
+    actorGameId: null,
+    actorName: null,
+    targetGameId: null,
+    targetName: null,
+    objectType: null,
+    toolOrWeapon: null,
+    distanceMeters: null,
+    actorPosition: null,
+    targetPosition: null,
+    rawLine,
+    parseStatus: status,
   };
 }
 
-function extractActor(seg: string): { name: string | null; id: string | null; pos: string | null } {
+function extractActor(segment: string): { name: string | null; id: string | null; pos: string | null } {
   return {
-    name: NAME_RE.exec(seg)?.[1] ?? null,
-    id: ID_RE.exec(seg)?.[1] ?? null,
-    pos: POS_RE.exec(seg)?.[1] ?? null,
+    name: NAME_RE.exec(segment)?.[1] ?? null,
+    id: ID_RE.exec(segment)?.[1] ?? null,
+    pos: POS_RE.exec(segment)?.[1]?.trim() ?? null,
   };
 }
 
-/**
- * Parst eine einzelne ADM-Zeile. Aktualisiert den Datumskontext (Header/
- * Tageswechsel). Liefert null fuer Nicht-Ereigniszeilen (leer, Header,
- * ohne Zeitstempel).
- */
-export function parseAdmLine(line: string, ctx: AdmDateContext): ParsedAdmEvent | null {
-  const header = HEADER_DATE_RE.exec(line);
-  if (header) {
-    ctx.baseDate = new Date(Date.UTC(+header[1], +header[2] - 1, +header[3]));
-    return null;
-  }
-  const tm = TIME_RE.exec(line);
-  if (!tm) return null;
-
-  const timeMs = (+tm[1] * 3600 + +tm[2] * 60 + +tm[3]) * 1000;
-  if (ctx.prevTimeMs >= 0 && timeMs < ctx.prevTimeMs - 60_000) ctx.dayOffsetMs += 86_400_000;
-  ctx.prevTimeMs = timeMs;
-  const occurredAt = ctx.baseDate ? new Date(ctx.baseDate.getTime() + ctx.dayOffsetMs + timeMs) : null;
-  const status: AdmParseStatus = ctx.baseDate ? 'OK' : 'UNRESOLVED_TIMESTAMP';
-
-  // Inhalt nach "HH:MM:SS |" bzw. "HH:MM:SS"
-  const content = line.replace(/^\d{2}:\d{2}:\d{2}\s*\|?\s*/, '');
-  const hasPlayer = /Player\s*"/.test(content) || /"[^"]+"\s*\(/.test(content);
-
-  const finalize = (ev: ParsedAdmEvent): ParsedAdmEvent => {
-    ev.occurredAt = occurredAt;
-    if (ev.parseStatus === 'OK') ev.parseStatus = status;
-    return ev;
-  };
-
-  // 1) Connect / Disconnect
-  if (/\bis connected\b/.test(content) || /\)\s*connected\b/.test(content)) {
-    const a = extractActor(content);
-    return finalize(fill(content, 'PLAYER_CONNECTED', a));
-  }
-  if (/\bhas been disconnected\b/.test(content) || /\)\s*disconnected\b/.test(content)) {
-    const a = extractActor(content);
-    return finalize(fill(content, 'PLAYER_DISCONNECTED', a));
-  }
-
-  // 2) Toedliche Ereignisse
-  if (/committed suicide/i.test(content)) {
-    return finalize(fill(content, 'PLAYER_SUICIDE', extractActor(content)));
-  }
-  const killedByIdx = content.search(/killed by/i);
-  if (killedByIdx >= 0) {
-    const victimSeg = content.slice(0, killedByIdx);
-    const killerSeg = content.slice(killedByIdx + 'killed by'.length);
-    const victim = extractActor(victimSeg);
-    const isVehicle = /\[vehicle\]|at speed\s+\d+\s*km\/h/i.test(content);
-    const killerIsPlayer = /Player\s*"|"[^"]+"\s*\(id=/i.test(killerSeg);
-    const ev = emptyEvent(content, 'UNKNOWN', null, 'OK');
-    ev.actorName = victim.name; ev.actorGameId = victim.id; ev.actorPosition = victim.pos;
-    if (isVehicle) {
-      ev.eventType = 'VEHICLE_DEATH';
-    } else if (killerIsPlayer) {
-      ev.eventType = 'PLAYER_KILLED';
-      const killer = extractActor(killerSeg);
-      ev.targetName = killer.name; ev.targetGameId = killer.id; ev.targetPosition = killer.pos;
-      ev.toolOrWeapon = WEAPON_RE.exec(killerSeg)?.[1]?.trim() ?? null;
-      const dm = DISTANCE_RE.exec(killerSeg);
-      ev.distanceMeters = dm ? Number(dm[1]) : null;
-    } else {
-      ev.eventType = 'NPC_KILL';
-      ev.targetName = killerSeg.trim().replace(/[.\s]+$/, '') || null; // Tier/Infected-Name
-    }
-    return finalize(ev);
-  }
-  if (/\bbled out\b|\bdied\b/i.test(content)) {
-    return finalize(fill(content, 'PLAYER_DIED', extractActor(content)));
-  }
-  if (/\bhit by\b/i.test(content)) {
-    const isVehicle = /\[vehicle\]|at speed\s+\d+\s*km\/h/i.test(content);
-    return finalize(fill(content, isVehicle ? 'VEHICLE_DEATH' : 'PLAYER_HIT', extractActor(content)));
-  }
-
-  // 3) Bau / Platzierung
-  const placed = /\bplaced\s+(.+?)\s*$/i.exec(content);
-  if (placed) {
-    const ev = fill(content, 'PLACEMENT', extractActor(content));
-    ev.objectType = cleanObject(placed[1]);
-    return finalize(ev);
-  }
-  const built = /\bbuilt\s+(.+?)\s*$/i.exec(content);
-  if (built) {
-    const ev = fill(content, 'BUILD', extractActor(content));
-    ev.objectType = cleanObject(built[1]);
-    return finalize(ev);
-  }
-  const dismantled = /\bdismantled\s+(.+?)\s*$/i.exec(content);
-  if (dismantled) {
-    const ev = fill(content, 'DISMANTLE', extractActor(content));
-    ev.objectType = cleanObject(dismantled[1]);
-    return finalize(ev);
-  }
-  const destroyed = /\bdestroyed\s+(.+?)\s*$/i.exec(content);
-  if (destroyed) {
-    const ev = fill(content, 'DESTROY', extractActor(content));
-    ev.objectType = cleanObject(destroyed[1]);
-    return finalize(ev);
-  }
-
-  // 4) Reine Positionszeile (PlayerList): Player-Token + pos, keine Aktion
-  if (hasPlayer && POS_RE.test(content) && isBarePlayerPosition(content)) {
-    return finalize(fill(content, 'PLAYER_POSITION', extractActor(content)));
-  }
-
-  // 5) Zeitstempel-Zeile mit Spielerbezug, aber unbekanntes Format
-  if (hasPlayer) {
-    return finalize(emptyEvent(content, 'UNKNOWN', null, 'UNKNOWN'));
-  }
-  return null;
+function fill(
+  content: string,
+  type: AdmParsedType,
+  actor: { name: string | null; id: string | null; pos: string | null },
+): ParsedAdmEvent {
+  const event = emptyEvent(content, type, 'OK');
+  event.actorName = actor.name;
+  event.actorGameId = actor.id;
+  event.actorPosition = actor.pos;
+  return event;
 }
 
-function fill(content: string, type: AdmParsedType, a: { name: string | null; id: string | null; pos: string | null }): ParsedAdmEvent {
-  const ev = emptyEvent(content, type, null, 'OK');
-  ev.actorName = a.name;
-  ev.actorGameId = a.id;
-  ev.actorPosition = a.pos;
-  return ev;
+function cleanActionValue(value: string): string {
+  return value
+    .replace(/\s*\(id=[^)]*\)\s*$/i, '')
+    .replace(/\s*pos=<[^>]*>\s*$/i, '')
+    .replace(/[.\s]+$/, '')
+    .trim();
 }
 
-function cleanObject(s: string): string {
-  return s.replace(/\s*\(id=[^)]*\)\s*$/i, '').replace(/\s*pos=<[^>]*>\s*$/i, '').trim();
+function parseBuildAction(content: string): { type: AdmParsedType; object: string; tool: string | null } | null {
+  const match = /\b(placed|built|dismantled|destroyed)\s+(.+?)\s*$/i.exec(content);
+  if (!match) return null;
+  const action = match[1].toLowerCase();
+  const tail = match[2].trim();
+  const withMatch = /^(.+?)\s+with\s+(.+?)\s*$/i.exec(tail);
+  const object = cleanActionValue(withMatch?.[1] ?? tail);
+  const tool = withMatch ? cleanActionValue(withMatch[2]) : null;
+  const type: AdmParsedType = action === 'placed'
+    ? 'PLACEMENT'
+    : action === 'built'
+      ? 'BUILD'
+      : action === 'dismantled'
+        ? 'DISMANTLE'
+        : 'DESTROY';
+  return object ? { type, object, tool } : null;
 }
 
-/** Heuristik: Zeile besteht im Wesentlichen nur aus Player-Token + Position. */
+function extractWeapon(killerSegment: string): string | null {
+  const withIndex = killerSegment.search(/\bwith\s+/i);
+  if (withIndex < 0) return null;
+  let weapon = killerSegment.slice(withIndex).replace(/^.*?\bwith\s+/i, '');
+  weapon = weapon.replace(/\s+from\s+[\d.]+\s*m(?:eters?)?\s*$/i, '');
+  weapon = weapon.trim().replace(/[.\s]+$/, '');
+  return weapon || null;
+}
+
 function isBarePlayerPosition(content: string): boolean {
   const stripped = content
     .replace(/Player\s*/i, '')
@@ -241,4 +152,104 @@ function isBarePlayerPosition(content: string): boolean {
     .replace(/pos=<[^>]*>/i, '')
     .replace(/[(),\s]/g, '');
   return stripped.length === 0;
+}
+
+export function parseAdmLine(line: string, ctx: AdmDateContext): ParsedAdmEvent | null {
+  const header = HEADER_DATE_RE.exec(line);
+  if (header) {
+    ctx.baseDate = new Date(Date.UTC(+header[1], +header[2] - 1, +header[3]));
+    ctx.dayOffsetMs = 0;
+    ctx.prevTimeMs = -1;
+    return null;
+  }
+
+  const time = TIME_RE.exec(line);
+  if (!time) return null;
+  const timeMs = (+time[1] * 3600 + +time[2] * 60 + +time[3]) * 1000;
+  if (ctx.prevTimeMs >= 0 && timeMs < ctx.prevTimeMs - 60_000) ctx.dayOffsetMs += 86_400_000;
+  ctx.prevTimeMs = timeMs;
+  const occurredAt = ctx.baseDate ? new Date(ctx.baseDate.getTime() + ctx.dayOffsetMs + timeMs) : null;
+  const timestampStatus: AdmParseStatus = ctx.baseDate ? 'OK' : 'UNRESOLVED_TIMESTAMP';
+
+  const content = line.replace(/^\d{2}:\d{2}:\d{2}\s*\|?\s*/, '');
+  const hasPlayer = /Player\s*"/.test(content) || /"[^"]+"\s*\(/.test(content);
+
+  const finalize = (event: ParsedAdmEvent): ParsedAdmEvent => {
+    event.occurredAt = occurredAt;
+    if (event.parseStatus === 'OK') event.parseStatus = timestampStatus;
+    return event;
+  };
+
+  if (/\bis connected\b/i.test(content) || /\)\s*connected\b/i.test(content)) {
+    return finalize(fill(content, 'PLAYER_CONNECTED', extractActor(content)));
+  }
+  if (/\bhas been disconnected\b/i.test(content) || /\)\s*disconnected\b/i.test(content)) {
+    return finalize(fill(content, 'PLAYER_DISCONNECTED', extractActor(content)));
+  }
+
+  if (/committed suicide/i.test(content)) {
+    return finalize(fill(content, 'PLAYER_SUICIDE', extractActor(content)));
+  }
+
+  const killedByIndex = content.search(/\bkilled by\b/i);
+  if (killedByIndex >= 0) {
+    const victimSegment = content.slice(0, killedByIndex);
+    const killerSegment = content.slice(killedByIndex + 'killed by'.length).trim();
+    const victim = extractActor(victimSegment);
+    const event = emptyEvent(content, 'UNKNOWN', 'OK');
+    event.actorName = victim.name;
+    event.actorGameId = victim.id;
+    event.actorPosition = victim.pos;
+
+    if (/^\[vehicle\]/i.test(killerSegment) || /\bat speed\s+\d+(?:\.\d+)?\s*km\/h/i.test(killerSegment)) {
+      event.eventType = 'VEHICLE_DEATH';
+      event.targetName = killerSegment.replace(/^\[vehicle\]\s*/i, '').replace(/\s+at speed.*$/i, '').trim() || null;
+      return finalize(event);
+    }
+
+    const killerIsPlayer = /Player\s*"|"[^"]+"\s*\(id=/i.test(killerSegment);
+    if (killerIsPlayer) {
+      event.eventType = 'PLAYER_KILLED';
+      const killer = extractActor(killerSegment);
+      event.targetName = killer.name;
+      event.targetGameId = killer.id;
+      event.targetPosition = killer.pos;
+      event.toolOrWeapon = extractWeapon(killerSegment);
+      const distance = DISTANCE_RE.exec(killerSegment);
+      event.distanceMeters = distance ? Number(distance[1]) : null;
+    } else {
+      event.eventType = 'NPC_KILL';
+      event.targetName = killerSegment.replace(/\s+with\s+.*$/i, '').replace(/[.\s]+$/, '').trim() || null;
+    }
+    return finalize(event);
+  }
+
+  if (/\bbled out\b|\bdied\b/i.test(content)) {
+    return finalize(fill(content, 'PLAYER_DIED', extractActor(content)));
+  }
+
+  if (/\bhit by\b/i.test(content)) {
+    // Ein Vehicle-Hit ist nur dann ein Todesereignis, wenn die Opferzeile DEAD
+    // markiert ist. Nicht-toedliche Treffer bleiben PLAYER_HIT.
+    const fatalVehicle = /\(DEAD\)/i.test(content)
+      && (/\[vehicle\]/i.test(content) || /\bat speed\s+\d+(?:\.\d+)?\s*km\/h/i.test(content));
+    return finalize(fill(content, fatalVehicle ? 'VEHICLE_DEATH' : 'PLAYER_HIT', extractActor(content)));
+  }
+
+  const build = parseBuildAction(content);
+  if (build) {
+    const event = fill(content, build.type, extractActor(content));
+    event.objectType = build.object;
+    event.toolOrWeapon = build.tool;
+    return finalize(event);
+  }
+
+  if (hasPlayer && POS_RE.test(content) && isBarePlayerPosition(content)) {
+    return finalize(fill(content, 'PLAYER_POSITION', extractActor(content)));
+  }
+
+  if (hasPlayer) {
+    return finalize(emptyEvent(content, 'UNKNOWN', 'UNKNOWN'));
+  }
+  return null;
 }
