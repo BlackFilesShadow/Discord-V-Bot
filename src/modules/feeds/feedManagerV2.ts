@@ -26,6 +26,9 @@ export async function createFeed(
 
 const feedBackoff = new Map<string, { count: number; until: number }>();
 const processingFeeds = new Set<string>();
+const feedTimers = new Map<string, NodeJS.Timeout>();
+const feedIntervals = new Map<string, number>();
+let feedRefreshTimer: NodeJS.Timeout | null = null;
 
 async function resolveMentionableRoles(guild: Guild, roleIds: string[], feedId: string): Promise<string[]> {
   const ids = (roleIds ?? []).filter((id) => /^\d{17,20}$/.test(id) && id !== guild.id);
@@ -211,38 +214,53 @@ export async function runFeedNow(client: Client, feedId: string): Promise<void> 
   await processFeed(client, feedId, true, true);
 }
 
+function startFeedTimer(client: Client, feed: { id: string; name: string; interval: number }): void {
+  const timer = setInterval(() => { void processFeed(client, feed.id); }, feed.interval * 1000);
+  timer.unref?.();
+  feedTimers.set(feed.id, timer);
+  feedIntervals.set(feed.id, feed.interval);
+  logger.info(`Feed-Timer gestartet: ${feed.name} (alle ${feed.interval}s)`);
+}
+
+async function refreshFeedTimers(client: Client): Promise<void> {
+  const active = await prisma.feed.findMany({ where: { isActive: true }, select: { id: true, name: true, interval: true } });
+  const activeIds = new Set(active.map((feed) => feed.id));
+  for (const [id, timer] of feedTimers) {
+    if (!activeIds.has(id)) {
+      clearInterval(timer);
+      feedTimers.delete(id);
+      feedIntervals.delete(id);
+    }
+  }
+  for (const feed of active) {
+    if (!feedTimers.has(feed.id)) startFeedTimer(client, feed);
+    else if (feedIntervals.get(feed.id) !== feed.interval) {
+      clearInterval(feedTimers.get(feed.id)!);
+      feedTimers.delete(feed.id);
+      feedIntervals.delete(feed.id);
+      startFeedTimer(client, feed);
+    }
+  }
+}
+
 export function startFeedScheduler(client: Client): void {
-  const timers = new Map<string, NodeJS.Timeout>();
-  const intervals = new Map<string, number>();
-
-  const start = (feed: { id: string; name: string; interval: number }): void => {
-    const timer = setInterval(() => { void processFeed(client, feed.id); }, feed.interval * 1000);
-    timers.set(feed.id, timer);
-    intervals.set(feed.id, feed.interval);
-    logger.info(`Feed-Timer gestartet: ${feed.name} (alle ${feed.interval}s)`);
-  };
-
-  const refresh = async (): Promise<void> => {
-    const active = await prisma.feed.findMany({ where: { isActive: true }, select: { id: true, name: true, interval: true } });
-    const activeIds = new Set(active.map((feed) => feed.id));
-    for (const [id, timer] of timers) {
-      if (!activeIds.has(id)) {
-        clearInterval(timer);
-        timers.delete(id);
-        intervals.delete(id);
-      }
-    }
-    for (const feed of active) {
-      if (!timers.has(feed.id)) start(feed);
-      else if (intervals.get(feed.id) !== feed.interval) {
-        clearInterval(timers.get(feed.id)!);
-        timers.delete(feed.id);
-        start(feed);
-      }
-    }
-  };
-
-  void refresh().catch((error) => logger.error('Feed-Scheduler Init fehlgeschlagen:', error));
-  setInterval(() => { void refresh().catch((error) => logger.error('Feed-Scheduler Refresh fehlgeschlagen:', error)); }, 60_000);
+  if (feedRefreshTimer) return;
+  void refreshFeedTimers(client).catch((error) => logger.error('Feed-Scheduler Init fehlgeschlagen:', error));
+  feedRefreshTimer = setInterval(() => {
+    void refreshFeedTimers(client).catch((error) => logger.error('Feed-Scheduler Refresh fehlgeschlagen:', error));
+  }, 60_000);
+  feedRefreshTimer.unref?.();
   logger.info('Feed-Scheduler gestartet.');
+}
+
+export function stopFeedScheduler(): void {
+  if (feedRefreshTimer) {
+    clearInterval(feedRefreshTimer);
+    feedRefreshTimer = null;
+  }
+  for (const timer of feedTimers.values()) clearInterval(timer);
+  feedTimers.clear();
+  feedIntervals.clear();
+  processingFeeds.clear();
+  feedBackoff.clear();
 }
