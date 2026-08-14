@@ -1,11 +1,21 @@
 /**
  * Phase 7: Ban-Registry. Beweise: aktiver Bann = nicht aufgehoben + nicht
  * abgelaufen; add/lift/isBanned idempotent; Recovery-Unban bleibt scoped;
- * Default-Provider ohne Remote.
+ * Remote-Drift bleibt operativ sichtbar; Default-Provider ohne Remote.
  */
 import {
-  isBanActive, addBan, liftBan, liftBanById, isBanned, localOnlyBanProvider,
-  type BanClient, type BanEntry,
+  isBanActive,
+  addBan,
+  liftBan,
+  liftBanById,
+  isBanned,
+  listOperationalBans,
+  banOperationalState,
+  localOnlyBanProvider,
+  type BanClient,
+  type BanEntry,
+  type BanListClient,
+  type BanListRow,
 } from '../../src/modules/bans/banRegistry';
 
 const SCOPE = { guildId: 'g', nitradoConnId: 'n' };
@@ -126,6 +136,44 @@ describe('addBan / isBanned / liftBan', () => {
 
     expect(await liftBanById(client, { guildId: 'other', nitradoConnId: 'n' }, id, now)).toBe(false);
     expect(await liftBanById(client, SCOPE, id, now)).toBe(true);
+  });
+});
+
+describe('operative Ban-Sichtbarkeit', () => {
+  it('markiert lokal aufgehobenen, remote angewendeten Bann als REMOTE_DRIFT', () => {
+    expect(banOperationalState({ active: false, expiresAt: null, appliedRemotely: true }, now)).toBe('REMOTE_DRIFT');
+  });
+
+  it('markiert abgelaufenen, remote angewendeten Bann als REMOTE_DRIFT', () => {
+    expect(banOperationalState({
+      active: true,
+      expiresAt: new Date('2026-08-01T11:00:00Z'),
+      appliedRemotely: true,
+    }, now)).toBe('REMOTE_DRIFT');
+  });
+
+  it('listOperationalBans fragt Remote-Drift ODER lokal aktive Banns im exakten Scope ab', async () => {
+    const findMany = jest.fn(async (_args: unknown): Promise<BanListRow[]> => []);
+    const client: BanListClient = { serverBanEntry: { findMany } };
+
+    await listOperationalBans(client, SCOPE, now, 50);
+
+    expect(findMany).toHaveBeenCalledTimes(1);
+    expect(findMany.mock.calls[0]?.[0]).toEqual({
+      where: {
+        guildId: SCOPE.guildId,
+        nitradoConnId: SCOPE.nitradoConnId,
+        OR: [
+          { appliedRemotely: true },
+          {
+            active: true,
+            OR: [{ expiresAt: null }, { expiresAt: { gt: now } }],
+          },
+        ],
+      },
+      orderBy: { updatedAt: 'desc' },
+      take: 50,
+    });
   });
 });
 
