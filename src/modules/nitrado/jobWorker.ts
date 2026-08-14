@@ -83,6 +83,12 @@ interface JobPayload {
   [key: string]: unknown;
 }
 
+function jobPayloadGameId(value: unknown): string | null {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return null;
+  const gameId = (value as Record<string, unknown>).gameId;
+  return typeof gameId === 'string' && gameId.trim() ? gameId.trim() : null;
+}
+
 class PermanentJobError extends Error {
   constructor(message: string) {
     super(message);
@@ -321,8 +327,47 @@ export async function executeJob(jobId: string): Promise<void> {
             throw new PermanentJobError('Server-Ban-Identifier konnte nicht entschluesselt werden');
           }
           if (!matchesBanIdentifier(sensitiveIdentifier, ban.identityHash, config.security.encryptionKey)) {
-            throw new PermanentJobError('Server-Ban-Identifier passt nicht zur VERIFIED HMAC-Identitaet');
+            throw new PermanentJobError('Server-Ban-Identifier passt nicht zur gespeicherten HMAC-Identitaet');
           }
+
+          // Unter demselben per-Connection-Advisory-Lock alle inzwischen wieder
+          // PENDING gewordenen alten WHITELIST_ADD-Jobs fuer exakt diesen Namen
+          // neutralisieren. Ein zuvor RUNNING gewesener Add-Job muss den Lock erst
+          // freigeben und ist zu diesem Zeitpunkt entweder DONE oder wieder PENDING.
+          const pendingWhitelistAdds = await prisma.nitradoJob.findMany({
+            where: {
+              guildId: job.guildId,
+              nitradoConnId: conn.id,
+              operation: 'WHITELIST_ADD',
+              status: 'PENDING',
+            },
+            select: { id: true, payload: true },
+            take: 200,
+          });
+          const staleWhitelistAddIds = pendingWhitelistAdds
+            .filter(candidate => {
+              const gameId = jobPayloadGameId(candidate.payload);
+              return gameId !== null && gameId.toLowerCase() === sensitiveIdentifier!.toLowerCase();
+            })
+            .map(candidate => candidate.id);
+          if (staleWhitelistAddIds.length > 0) {
+            await prisma.nitradoJob.updateMany({
+              where: {
+                id: { in: staleWhitelistAddIds },
+                guildId: job.guildId,
+                nitradoConnId: conn.id,
+                operation: 'WHITELIST_ADD',
+                status: 'PENDING',
+              },
+              data: { status: 'DONE', payload: {}, lastError: null, updatedAt: new Date() },
+            });
+          }
+
+          // Harte Remote-Reihenfolge innerhalb EINER serialisierten Worker-
+          // Ausfuehrung: zuerst Whitelist entfernen, erst danach Banlist setzen.
+          // Schlaegt die Whitelist-Mutation fehl, greift der normale Job-Retry und
+          // es wird in diesem Versuch KEIN Remote-Bann gesetzt.
+          await client.removeFromWhitelist(conn.nitradoServerId, sensitiveIdentifier);
 
           // Idempotenz auch nach verlorener HTTP-Antwort: vor POST pruefen, ob
           // derselbe HMAC bereits auf der Remote-Banlist existiert.
@@ -387,7 +432,7 @@ export async function executeJob(jobId: string): Promise<void> {
           // Race-Kompensation: wurde waehrend des Remove-Calls lokal erneut
           // gebannt, den gerade bekannten Identifier sofort wieder als ADD
           // einreihen. Falls kein Remote-Match existierte, kann nur ein neuer
-          // /server-ban mit verifiziertem Identifier das Add sicher ausloesen.
+          // /server-ban mit bekanntem Identifier das Add sicher ausloesen.
           const after = await prisma.serverBanEntry.findFirst({
             where: { id: ban.id, guildId: job.guildId, nitradoConnId: conn.id },
             select: { active: true, expiresAt: true },
