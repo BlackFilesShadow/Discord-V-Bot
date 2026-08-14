@@ -16,6 +16,13 @@ jest.mock('fs/promises', () => ({ mkdir, writeFile, unlink }));
 import type { Attachment } from 'discord.js';
 import { MAX_MEDIA_BYTES, saveAttachment } from '../../src/modules/ai/mediaStorage';
 
+function pngBytes(): Buffer {
+  return Buffer.concat([
+    Buffer.from([0x89,0x50,0x4e,0x47,0x0d,0x0a,0x1a,0x0a]),
+    Buffer.alloc(24),
+  ]);
+}
+
 function attachment(overrides: Record<string, unknown> = {}): Attachment {
   return {
     name: 'image.png',
@@ -30,9 +37,9 @@ beforeEach(() => {
   jest.clearAllMocks();
 });
 
-describe('mediaStorage SSRF/size hardening', () => {
+describe('mediaStorage SSRF/size/content hardening', () => {
   it('downloads through safeAxiosGet with a hard response-size cap', async () => {
-    safeAxiosGet.mockResolvedValue({ data: Buffer.from('safe-image-bytes') });
+    safeAxiosGet.mockResolvedValue({ data: pngBytes(), headers: { 'content-type': 'image/png' } });
 
     const result = await saveAttachment(attachment(), 'triggers', '123456789012345678', 'trigger-1');
 
@@ -49,7 +56,7 @@ describe('mediaStorage SSRF/size hardening', () => {
   });
 
   it('does not trust the declared attachment size after download', async () => {
-    safeAxiosGet.mockResolvedValue({ data: Buffer.alloc(MAX_MEDIA_BYTES + 1) });
+    safeAxiosGet.mockResolvedValue({ data: Buffer.alloc(MAX_MEDIA_BYTES + 1), headers: {} });
 
     const result = await saveAttachment(attachment({ size: 1 }), 'welcome', '123456789012345678', 'welcome');
 
@@ -68,5 +75,28 @@ describe('mediaStorage SSRF/size hardening', () => {
 
     expect(result.ok).toBe(false);
     expect(safeAxiosGet).not.toHaveBeenCalled();
+  });
+
+  it('rejects spoofed image content even when filename and declared MIME look valid', async () => {
+    safeAxiosGet.mockResolvedValue({
+      data: Buffer.from('<html>not an image</html>'),
+      headers: { 'content-type': 'image/png' },
+    });
+
+    const result = await saveAttachment(attachment(), 'triggers', '123456789012345678', 'trigger-spoof');
+
+    expect(result.ok).toBe(false);
+    expect(result.message).toContain('Dateiinhalt');
+    expect(writeFile).not.toHaveBeenCalled();
+  });
+
+  it('rejects a response MIME that conflicts with the downloaded magic bytes', async () => {
+    safeAxiosGet.mockResolvedValue({ data: pngBytes(), headers: { 'content-type': 'image/jpeg' } });
+
+    const result = await saveAttachment(attachment(), 'welcome', '123456789012345678', 'mime-spoof');
+
+    expect(result.ok).toBe(false);
+    expect(result.message).toContain('MIME-Type');
+    expect(writeFile).not.toHaveBeenCalled();
   });
 });
