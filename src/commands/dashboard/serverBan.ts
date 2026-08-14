@@ -144,15 +144,17 @@ export const serverBanCommand: Command = {
       });
       if (!stored) throw new Error('Server-Ban konnte nach dem Anlegen nicht wiedergefunden werden.');
 
-      const queued = stored.appliedRemotely
-        ? false
-        : await enqueueServerBanAdd(
-          tx as unknown as BanOutboxClient,
-          banScope,
-          stored.id,
-          identifier,
-          config.security.encryptionKey,
-        );
+      // Auch bei appliedRemotely=true immer einen Reconcile-ADD sicherstellen.
+      // Das schliesst das Rennen mit einem parallel laufenden Remote-Unban:
+      // REMOVE und ADD werden pro Connection serialisiert, der spaetere ADD
+      // stellt den gewuenschten lokalen Zustand wieder her.
+      const queued = await enqueueServerBanAdd(
+        tx as unknown as BanOutboxClient,
+        banScope,
+        stored.id,
+        identifier,
+        config.security.encryptionKey,
+      );
 
       return { ...stored, queued };
     });
@@ -168,11 +170,11 @@ export const serverBanCommand: Command = {
       remoteQueued: result.queued,
     });
 
-    const enforcement = result.appliedRemotely
-      ? 'Remote bereits angewendet.'
-      : result.queued
-        ? 'Remote-Durchsetzung wurde sicher in die Nitrado-Outbox eingereiht.'
-        : 'Ein passender Remote-Job laeuft bereits.';
+    const enforcement = result.queued
+      ? result.appliedRemotely
+        ? 'Remote war bereits markiert; ein Reconcile-Job wurde trotzdem sicher eingereiht.'
+        : 'Remote-Durchsetzung wurde sicher in die Nitrado-Outbox eingereiht.'
+      : 'Ein passender Remote-Reconcile-Job laeuft bereits.';
 
     await reply(
       interaction,
