@@ -7,19 +7,15 @@
  *   2. Verarbeite nur Dateien mit `modified_at > cursor`. Der Cursor wird
  *      persistent in `NitradoAdmCursor` (pro guildId+nitradoConnId) gehalten,
  *      sodass nach einem Bot-Restart KEINE Spielzeit-Rewards verloren gehen.
- *   3. Download → `parseAdm` → `aggregateMinutesByPlayer`.
- *   4. Pro (steam64, minutes): wenn `EconomyLink(guildId, nitradoConnId, gameId)`
- *      existiert und Economy `enabled` ist → Reward
- *      `floor(minutes * playtimeRewardPercent / 100)` Coins atomar in Wallet
- *      gutschreiben + `EconomyTransaction(type=PLAYTIME_REWARD)` + Link.lastSeenAt.
+ *   3. Download → Link-Challenges verifizieren → ADM-Pipeline/Rewards.
  *
  * Erststart (kein Cursor vorhanden): Cursor wird auf "jetzt" verankert und KEIN
  * historischer Backlog verarbeitet. Folgelaeufe lesen/schreiben den DB-Cursor.
  *
  * Fehlerverhalten: Der Cursor wird nur bis zur letzten VOLLSTAENDIG erfolgreich
- * verarbeiteten Datei gesetzt. Schlaegt der Download einer Datei fehl, wird die
- * Verarbeitung dort abgebrochen — es wird nicht ueber die fehlerhafte Datei
- * hinausgesprungen (sie wird im naechsten Lauf erneut versucht).
+ * verarbeiteten Datei gesetzt. Schlaegt Download, Ingest oder Link-Verifikation
+ * fehl, wird nicht ueber die Datei hinausgesprungen. Der idempotente Ingest darf
+ * sie im naechsten Lauf sicher erneut sehen.
  */
 
 import prisma from '../../database/prisma';
@@ -35,7 +31,8 @@ import { getRewardRule, effectiveBaseAmount, type RewardRuleClient } from '../ec
 import { getSlotEconomyConfig, admRewardsActive, type SlotConfigClient } from '../economy/slotConfig';
 import { bookPendingRewards, type RewardBookingClient } from '../economy/rewardBooking';
 import { bookPlaytimeRewards, type PlaytimeBookingClient } from '../economy/playtimeBooking';
-import { resolveVerifiedUser, type ResolveClient } from '../linking/linkService';
+import { resolveVerifiedUser, type ResolveClient, type LinkClient } from '../linking/linkService';
+import { verifyLinkChallengesInAdmText } from '../linking/admChallengeVerifier';
 import { emitGuildEvent } from '../../dashboard/socket/emitter';
 
 const SYNC_INTERVAL_MS = 15 * 60 * 1000;
@@ -58,6 +55,28 @@ async function saveCursor(guildId: string, nitradoConnId: string, lastModifiedAt
     create: { guildId, nitradoConnId, lastModifiedAt, lastFileName },
     update: { lastModifiedAt, lastFileName },
   });
+}
+
+/**
+ * LINK-002: prueft eine bereits heruntergeladene ADM-Datei auf kurzlebige
+ * /link-Challenges. Wir loggen nur Anzahl/Scope, niemals Klartext-Spiel-IDs.
+ * Ein technischer DB-Fehler wird absichtlich hochgereicht, damit der Cursor die
+ * Datei nicht ueberspringt und der idempotente naechste Lauf erneut versucht.
+ */
+async function verifyLinkChallenges(conn: ConnRow, content: string): Promise<void> {
+  const summary = await verifyLinkChallengesInAdmText(
+    prisma as unknown as LinkClient,
+    { guildId: conn.guildId, nitradoConnId: conn.id },
+    content,
+    config.security.encryptionKey,
+  );
+  if (summary.verified > 0) {
+    logAudit('LINK_CHALLENGE_VERIFIED', 'LINKING', {
+      guildId: conn.guildId,
+      nitradoConnId: conn.id,
+      verified: summary.verified,
+    });
+  }
 }
 
 async function processConnection(profileDir: string, conn: ConnRow): Promise<void> {
@@ -113,19 +132,11 @@ async function processConnection(profileDir: string, conn: ConnRow): Promise<voi
     return;
   }
 
-  // EconomyConfig laden (1x pro Guild)
+  // Legacy-Rewardpfad bleibt optional. Linking ist davon bewusst unabhaengig:
+  // auch bei deaktivierter Economy muessen /link-Challenges verarbeitet werden.
   const cfg = await prisma.economyConfig.findUnique({ where: { guildId: conn.guildId } });
-  if (!cfg || !cfg.enabled || cfg.playtimeRewardPercent <= 0) {
-    // Economy aus: Dateien gelten als "gesehen", Cursor vorruecken (wie bisher).
-    const last = fresh[fresh.length - 1];
-    try {
-      await saveCursor(conn.guildId, conn.id, last.modified_at, last.name);
-    } catch (e) {
-      logger.warn(`ADM-Sync: Cursor-Save (Economy aus) fehlgeschlagen fuer ${conn.id}: ${(e as Error).message}`);
-    }
-    return;
-  }
-  const pct = cfg.playtimeRewardPercent;
+  const rewardsEnabled = !!cfg && cfg.enabled && cfg.playtimeRewardPercent > 0;
+  const pct = rewardsEnabled ? cfg.playtimeRewardPercent : 0;
 
   // Cursor nur bis zur letzten vollstaendig verarbeiteten Datei vorruecken.
   let lastSuccessfulModifiedAt = lastCursor;
@@ -139,58 +150,69 @@ async function processConnection(profileDir: string, conn: ConnRow): Promise<voi
       logger.warn(`ADM-Sync: download fehlgeschlagen fuer ${conn.id}/${file.name}: ${(e as Error).message} — Abbruch, Cursor bleibt vor dieser Datei.`);
       break;
     }
-    const sessions = parseAdm(content, file.name);
-    const perPlayer = aggregateMinutesByPlayer(sessions);
 
-    for (const [steam64, minutes] of perPlayer) {
-      if (minutes <= 0) continue;
-      // Aufloesung ueber verifizierte GameIdentityLink (HMAC), kein EconomyLink mehr.
-      const userDiscordId = await resolveVerifiedUser(
-        prisma as unknown as ResolveClient,
-        { guildId: conn.guildId, nitradoConnId: conn.id },
-        steam64,
-        config.security.encryptionKey,
-      );
-      if (!userDiscordId) continue;
-      const reward = BigInt(Math.floor((minutes * pct) / 100));
-      if (reward <= 0n) continue;
+    try {
+      await verifyLinkChallenges(conn, content);
+    } catch (e) {
+      logger.warn(`ADM-Sync: Link-Challenge-Verifikation fehlgeschlagen fuer ${conn.id}/${file.name}: ${(e as Error).message} — Abbruch, Cursor bleibt vor dieser Datei.`);
+      break;
+    }
 
-      try {
-        await prisma.$transaction(async tx => {
-          await tx.economyAccount.upsert({
-            where: { guildId_userDiscordId: { guildId: conn.guildId, userDiscordId } },
-            create: {
-              guildId: conn.guildId,
-              userDiscordId,
-              walletBalance: reward,
-              lifetimeEarned: reward,
-            },
-            update: {
-              walletBalance: { increment: reward },
-              lifetimeEarned: { increment: reward },
-            },
+    if (rewardsEnabled) {
+      const sessions = parseAdm(content, file.name);
+      const perPlayer = aggregateMinutesByPlayer(sessions);
+
+      for (const [steam64, minutes] of perPlayer) {
+        if (minutes <= 0) continue;
+        // Aufloesung ueber verifizierte GameIdentityLink (HMAC), kein EconomyLink mehr.
+        const userDiscordId = await resolveVerifiedUser(
+          prisma as unknown as ResolveClient,
+          { guildId: conn.guildId, nitradoConnId: conn.id },
+          steam64,
+          config.security.encryptionKey,
+        );
+        if (!userDiscordId) continue;
+        const reward = BigInt(Math.floor((minutes * pct) / 100));
+        if (reward <= 0n) continue;
+
+        try {
+          await prisma.$transaction(async tx => {
+            await tx.economyAccount.upsert({
+              where: { guildId_userDiscordId: { guildId: conn.guildId, userDiscordId } },
+              create: {
+                guildId: conn.guildId,
+                userDiscordId,
+                walletBalance: reward,
+                lifetimeEarned: reward,
+              },
+              update: {
+                walletBalance: { increment: reward },
+                lifetimeEarned: { increment: reward },
+              },
+            });
+            await tx.economyTransaction.create({
+              data: {
+                guildId: conn.guildId,
+                userDiscordId,
+                delta: reward,
+                type: 'PLAYTIME_REWARD',
+                reason: `ADM ${file.name}: ${minutes}min × ${pct}%`,
+                actorDiscordId: null,
+              },
+            });
           });
-          await tx.economyTransaction.create({
-            data: {
-              guildId: conn.guildId,
-              userDiscordId,
-              delta: reward,
-              type: 'PLAYTIME_REWARD',
-              reason: `ADM ${file.name}: ${minutes}min × ${pct}%`,
-              actorDiscordId: null,
-            },
+          totalRewardedPlayers++;
+          emitGuildEvent(conn.guildId, {
+            type: 'economy.tx',
+            payload: { guildId: conn.guildId, userDiscordId, type: 'PLAYTIME_REWARD' },
           });
-        });
-        totalRewardedPlayers++;
-        emitGuildEvent(conn.guildId, {
-          type: 'economy.tx',
-          payload: { guildId: conn.guildId, userDiscordId, type: 'PLAYTIME_REWARD' },
-        });
-      } catch (e) {
-        logger.warn(`ADM-Sync: Reward fehlgeschlagen fuer ${conn.id}/${steam64}: ${(e as Error).message}`);
+        } catch (e) {
+          logger.warn(`ADM-Sync: Reward fehlgeschlagen fuer ${conn.id}: ${(e as Error).message}`);
+        }
       }
     }
-    // Datei vollstaendig verarbeitet → als erfolgreichen Cursor-Stand merken.
+
+    // Datei inklusive Link-Challenges vollstaendig verarbeitet.
     lastSuccessfulModifiedAt = file.modified_at;
     lastSuccessfulFileName = file.name;
   }
@@ -240,8 +262,9 @@ async function processConnectionV2(
         { fileName: file.name, modifiedAt: file.modified_at, size: file.size, content },
       );
       totalInserted += r.inserted;
+      await verifyLinkChallenges(conn, content);
     } catch (e) {
-      logger.warn(`ADM-Sync V2: Ingest fehlgeschlagen fuer ${conn.id}/${file.name}: ${(e as Error).message} — Abbruch.`);
+      logger.warn(`ADM-Sync V2: Ingest/Link-Verifikation fehlgeschlagen fuer ${conn.id}/${file.name}: ${(e as Error).message} — Abbruch.`);
       break;
     }
     lastSuccessfulModifiedAt = file.modified_at;
@@ -347,6 +370,7 @@ export function startAdmSyncCron(): void {
     logger.info('ADM-Sync nutzt persistenten DB-Cursor (NitradoAdmCursor) — Spielzeit-Rewards gehen ueber Restarts nicht verloren.');
   }
   timer = setInterval(() => { void pollOnce(); }, SYNC_INTERVAL_MS);
+  timer.unref?.();
 }
 
 export function stopAdmSyncCron(): void {
