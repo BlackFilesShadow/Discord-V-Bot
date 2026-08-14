@@ -5,7 +5,7 @@ import prisma from '../../database/prisma';
 import { logger } from '../../utils/logger';
 import { Colors, Brand } from '../../utils/embedDesign';
 import { safeEmbedDescription, safeEmbedTitle, safeEmbedAuthor } from '../../utils/embedSanitize';
-import { resolveTranslatedPostImage, saveTranslatedPostImageFromUrl } from './translatedPostImage';
+import { resolveTranslatedPostImage, saveTranslatedPostImageFromUrl, removeTranslatedPostImage } from './translatedPostImage';
 import { translate, getLanguageName, SUPPORTED_LANGUAGES } from './translator';
 
 export function buildTranslatePostEmbed(opts: { guild: Guild | null; translated: string; targetLang: string; imageUrl?: string | null; customTitle?: string | null }): EmbedBuilder {
@@ -110,9 +110,18 @@ async function sendPost(client: Client, post: { id: string; guildId: string; cha
   let imageRef = post.imageUrl;
   let managed = resolveTranslatedPostImage(imageRef);
   if (!managed && imageRef && /^https?:\/\//i.test(imageRef)) {
+    let migratedRef: string | null = null;
     try {
-      imageRef = await saveTranslatedPostImageFromUrl(post.guildId, imageRef);
-      await prisma.translatedPost.update({ where: { id: post.id }, data: { imageUrl: imageRef } });
+      migratedRef = await saveTranslatedPostImageFromUrl(post.guildId, imageRef);
+      try {
+        await prisma.translatedPost.update({ where: { id: post.id }, data: { imageUrl: migratedRef } });
+      } catch (error) {
+        // Die neue Datei darf erst als aktiv gelten, wenn die DB-Referenz
+        // erfolgreich umgestellt wurde. Bei DB-Fehler sofort zurückrollen.
+        await removeTranslatedPostImage(migratedRef);
+        throw error;
+      }
+      imageRef = migratedRef;
       managed = resolveTranslatedPostImage(imageRef);
     } catch (error) {
       logger.warn(`translatedPostScheduler: Remote-Bild fuer ${post.id} verworfen: ${String(error)}`);
