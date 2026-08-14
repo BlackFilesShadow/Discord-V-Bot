@@ -1,14 +1,16 @@
 /**
- * Killfeed-V2-Cron (Phase 6). Speist den Killfeed aus normalisierten AdmEvents
- * (statt aus dem alten Parser). Idempotent ueber KillfeedDelivery. Wird nur
- * gestartet, wenn ADM_EVENT_PIPELINE_V2 aktiv ist; sonst laeuft der alte
- * admWatcher weiter (kein Doppel-Posting).
+ * Killfeed-V2-Cron (Phase 6/11). Speist den Killfeed aus normalisierten AdmEvents
+ * und spiegelt jedes tatsaechlich geclaimte Kill-Event zusaetzlich in den
+ * exakt servergescoppten Socket-Room. Persistente KillfeedDelivery bleibt die
+ * Source-of-Truth; der Realtime-Feed ist best-effort und erzeugt keine zweite
+ * Datenhaltung.
  */
 
 import type { GuildTextBasedChannel } from 'discord.js';
 import prisma from '../../database/prisma';
 import { logger } from '../../utils/logger';
 import { tryGetDashboardClient } from '../../dashboard/clientRegistry';
+import { emitServerGameplayEvent } from '../../dashboard/socket/emitter';
 import { buildKillfeedEmbedV2 } from './embedBuilder';
 import { deliverPendingKills, type DeliverClient, type KillfeedConfigRow, type KillfeedView } from './killfeedV2';
 
@@ -23,7 +25,7 @@ export async function deliverKillfeedV2Once(): Promise<void> {
     const client = tryGetDashboardClient();
     if (!client) return;
 
-    // eslint-disable-next-line local/no-unscoped-prisma-query -- Cron iteriert alle Guilds; Delivery ist pro Config (guildId) gebunden.
+    // eslint-disable-next-line local/no-unscoped-prisma-query -- Cron iteriert alle Guilds; Delivery ist pro Config (guildId+nitradoConnId) gebunden.
     const configs = await prisma.killfeedConfig.findMany({
       where: { isActive: true },
       select: {
@@ -43,7 +45,30 @@ export async function deliverKillfeedV2Once(): Promise<void> {
           });
           return msg.id;
         };
-        await deliverPendingKills(prisma as unknown as DeliverClient, cfg as KillfeedConfigRow, poster);
+
+        await deliverPendingKills(
+          prisma as unknown as DeliverClient,
+          cfg as KillfeedConfigRow,
+          poster,
+          {
+            onDelivered: (event, view) => {
+              emitServerGameplayEvent({
+                guildId: cfg.guildId,
+                nitradoConnId: cfg.nitradoConnId,
+                eventId: event.id,
+                source: 'ADM_V2',
+                eventType: event.eventType,
+                occurredAt: event.occurredAt?.toISOString() ?? null,
+                actorName: event.actorName,
+                targetName: event.targetName,
+                weapon: view.weapon,
+                distance: view.distanceMeters,
+                actorPosition: view.victimPos,
+                targetPosition: view.killerPos,
+              });
+            },
+          },
+        );
       } catch (e) {
         logger.warn(`Killfeed V2: Delivery fehlgeschlagen fuer Config ${cfg.id}: ${(e as Error).message}`);
       }
