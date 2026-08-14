@@ -33,7 +33,9 @@ import prisma from '../../../database/prisma';
 import { tryGetDashboardClient } from '../../clientRegistry';
 import { logAudit, logger } from '../../../utils/logger';
 import { config } from '../../../config';
+import { isGlobalDeveloperEligible } from '../../../modules/auth/globalDeveloperIdentity';
 
+export { isGlobalDeveloperEligible };
 export const devRouter = Router();
 
 // --- Brute-Force-Tracking -------------------------------------------------
@@ -62,20 +64,6 @@ function registerFail(key: string): void {
 }
 
 function clearFails(key: string): void { failures.delete(key); }
-
-/**
- * Phase 10 / GlobalDeveloperIdentity:
- * DEV ist genau die kanonische Bot-Owner-Identitaet UND eine bereits in der DB
- * vergebene DEVELOPER-Rolle. Ein Shared-Password darf diese Entscheidung nie
- * beeinflussen.
- */
-export function isGlobalDeveloperEligible(
-  discordId: string,
-  role: string,
-  ownerId: string = config.discord.ownerId,
-): boolean {
-  return ownerId.length > 0 && role === 'DEVELOPER' && discordId === ownerId;
-}
 
 // --- Passwort-Aufloesung --------------------------------------------------
 // Sicherheits-Hardening: KEIN Default-Passwort. Wenn DEV_PASSWORD nicht gesetzt ist,
