@@ -16,6 +16,9 @@ function optionalEnv(key: string, defaultValue: string = ''): string {
   return process.env[key] || defaultValue;
 }
 
+const metricsToken = optionalEnv('METRICS_TOKEN', '').trim();
+const metricsRequested = optionalEnv('METRICS_ENABLED', 'false') === 'true';
+
 export const config = {
   // Discord Bot
   discord: {
@@ -111,8 +114,13 @@ export const config = {
   },
 
   monitoring: {
-    metricsEnabled: optionalEnv('METRICS_ENABLED', 'true') !== 'false',
-    metricsToken: optionalEnv('METRICS_TOKEN', ''),
+    // /metrics ist nur dann aktiv, wenn die Funktion explizit angefordert UND
+    // ein ausreichend langes Bearer-Secret vorhanden ist. Ein altes
+    // METRICS_ENABLED=true ohne Token wird sicher als deaktiviert behandelt und
+    // erzeugt keinen widerspruechlichen Runtime-Warnzustand mehr.
+    metricsRequested,
+    metricsEnabled: metricsRequested && metricsToken.length >= 32,
+    metricsToken,
     errorWebhookUrl: optionalEnv('ERROR_WEBHOOK_URL', ''),
   },
 
