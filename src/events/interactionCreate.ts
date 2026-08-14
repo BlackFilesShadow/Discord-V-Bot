@@ -21,6 +21,7 @@ import { votePoll, getPollVotes, createPollEmbed } from '../modules/polls/pollSy
 import { createGiveawayEmbed } from '../modules/giveaway/giveawayManager';
 import { acceptTicket, denyTicket } from '../modules/ticket/ticketManager';
 import { config } from '../config';
+import { isGlobalDeveloperIdentity } from '../security/privilegedIdentity';
 import { timingSafeEqual } from 'crypto';
 import {
   getDevSessionExpires,
@@ -85,19 +86,30 @@ function isOwnerOrGuildOwner(userId: string, interaction: Interaction): boolean 
 }
 
 /**
- * Prüft ob ein User der Bot-Owner (BOT_OWNER_ID) ist.
- * NUR der Bot-Owner darf devOnly-Commands ohne Passwort/Session umgehen.
+ * Prüft nur die kanonische Bot-Owner-ID. Diese Information allein ist KEINE
+ * devOnly-Berechtigung; dafür gilt zusätzlich die globale DEVELOPER-Identität.
  */
 export function isBotOwner(userId: string): boolean {
   return userId === config.discord.ownerId;
 }
 
 /**
+ * Frische GlobalDeveloperIdentity für Discord-Kommandos: kanonische Owner-ID
+ * plus DEVELOPER-Rolle aus der DB. DEV_PASSWORD ist erst danach ein Step-up.
+ */
+async function hasGlobalDeveloperIdentity(discordId: string): Promise<boolean> {
+  const user = await prisma.user.findUnique({
+    where: { discordId },
+    select: { role: true },
+  });
+  return isGlobalDeveloperIdentity(discordId, user?.role ?? 'USER', config.discord.ownerId);
+}
+
+/**
  * Entscheidet, ob der Owner/Guild-Owner-Bypass für einen Command greift.
  *
  * Sicherheits-Invariante:
- * - devOnly wird NIE per Owner/Guild-Owner-Bypass umgangen (nur der Bot-Owner
- *   umgeht devOnly separat, siehe isBotOwner).
+ * - devOnly wird NIE per Owner/Guild-Owner-Bypass umgangen.
  * - manufacturerOnly wird NIE umgangen (an verifizierten GUID-Bereich gebunden).
  * - adminOnly darf sowohl Bot-Owner als auch Discord-Guild-Owner umgehen.
  */
@@ -124,11 +136,11 @@ async function hasAdminRole(discordId: string): Promise<boolean> {
 /**
  * Interaction-Create-Event
  *
- * Permission-Modell (siehe ownerBypassApplies/isBotOwner):
- * - Bot-Owner (BOT_OWNER_ID) → umgeht adminOnly UND (separat) devOnly
- * - Guild-Owner → umgeht adminOnly, aber NICHT devOnly
- * - Admin-Commands (adminOnly) → zusätzlich für User mit Admin-Rolle in DB (kein Passwort nötig)
- * - Dev-Commands (devOnly) → Passwort-Modal, 2-Stunden-Session (außer Bot-Owner)
+ * Permission-Modell:
+ * - Bot-/Guild-Owner → können adminOnly umgehen, aber NICHT devOnly
+ * - Admin-Commands (adminOnly) → zusätzlich für User mit Admin-Rolle in DB
+ * - Dev-Commands (devOnly) → GlobalDeveloperIdentity + Passwort/2h-Session
+ * - Manufacturer-Commands → ausschließlich verifizierter Herstellerstatus
  */
 const interactionCreateEvent: BotEvent = {
   name: Events.InteractionCreate,
@@ -367,70 +379,73 @@ const interactionCreateEvent: BotEvent = {
       const userId = i.user.id;
 
       // 1) Owner/Guild-Owner → Bypass NUR für adminOnly (NICHT devOnly,
-      //    NICHT manufacturerOnly). devOnly wird unten strikt geprüft; dort
-      //    umgeht ausschließlich der Bot-Owner (BOT_OWNER_ID). Manufacturer-
-      //    Commands sind an einen per /register manufacturer verifizierten
-      //    GUID-Bereich gebunden — auch der Owner muss sich registrieren.
+      //    NICHT manufacturerOnly). Developer-Identität wird unten separat aus
+      //    BOT_OWNER_ID + frischer DEVELOPER-DB-Rolle ermittelt.
       if (ownerBypassApplies(command, userId, i.guild?.ownerId ?? null)) {
         // Keine Prüfung nötig — direkt ausführen
       }
-      // 2) Dev-Commands → NUR der Bot-Owner (BOT_OWNER_ID) umgeht devOnly.
-      //    Discord-Guild-Owner haben hier KEINEN Bypass und müssen — wie alle
-      //    anderen — das Dev-Passwort / eine gültige Dev-Session (2h) nachweisen.
+      // 2) Dev-Commands → GlobalDeveloperIdentity zuerst, Passwort/Session danach.
       else if (command.devOnly) {
-        if (!isBotOwner(userId)) {
-          if (!config.developer.password) {
-            await i.reply({ content: '🔒 Developer-Passwort nicht konfiguriert.', ephemeral: true });
-            return;
-          }
-
-          // Lockout-Check vor Modal
-          const fails = await getDevFails(userId);
-          if (fails && fails.lockedUntil > Date.now()) {
-            const remainMin = Math.ceil((fails.lockedUntil - Date.now()) / 60_000);
-            await i.reply({
-              content: `🔒 Zu viele Fehlversuche. Dev-Login gesperrt für **${remainMin} Min.**`,
-              ephemeral: true,
-            });
-            logAudit('DEV_AUTH_BLOCKED_LOCKED', 'SECURITY', {
-              userId,
-              command: i.commandName,
-              remainMin,
-            });
-            return;
-          }
-
-          const devExpires = await getDevSessionExpires(userId);
-          if (!devExpires || devExpires <= Date.now()) {
-            await clearDevSession(userId);
-
-            const modalId = `dev_auth_${userId}_${Date.now()}`;
-            pendingDevAuth.set(modalId, {
-              commandName: i.commandName,
-              userId,
-              expires: Date.now() + 120_000,
-            });
-
-            const modal = new ModalBuilder()
-              .setCustomId(modalId)
-              .setTitle('🔐 Developer-Authentifizierung');
-
-            const passwordInput = new TextInputBuilder()
-              .setCustomId('dev_password')
-              .setLabel('Developer-Passwort eingeben')
-              .setPlaceholder('Passwort für den Developer-Bereich')
-              .setStyle(TextInputStyle.Short)
-              .setRequired(true);
-
-            const row = new ActionRowBuilder<TextInputBuilder>().addComponents(passwordInput);
-            modal.addComponents(row);
-
-            await i.showModal(modal);
-            return;
-          }
-          // Sonst: Dev bereits authentifiziert → durchlassen
+        if (!(await hasGlobalDeveloperIdentity(userId))) {
+          await clearDevSession(userId).catch(() => undefined);
+          logAudit('DEV_COMMAND_IDENTITY_DENIED', 'SECURITY', {
+            userId,
+            command: i.commandName,
+          });
+          await i.reply({ content: '🔒 Keine globale Developer-Berechtigung.', ephemeral: true });
+          return;
         }
-        // Bot-Owner ODER gültige Dev-Session → ausführen
+
+        if (!config.developer.password) {
+          await i.reply({ content: '🔒 Developer-Passwort nicht konfiguriert.', ephemeral: true });
+          return;
+        }
+
+        // Lockout-Check vor Modal
+        const fails = await getDevFails(userId);
+        if (fails && fails.lockedUntil > Date.now()) {
+          const remainMin = Math.ceil((fails.lockedUntil - Date.now()) / 60_000);
+          await i.reply({
+            content: `🔒 Zu viele Fehlversuche. Dev-Login gesperrt für **${remainMin} Min.**`,
+            ephemeral: true,
+          });
+          logAudit('DEV_AUTH_BLOCKED_LOCKED', 'SECURITY', {
+            userId,
+            command: i.commandName,
+            remainMin,
+          });
+          return;
+        }
+
+        const devExpires = await getDevSessionExpires(userId);
+        if (!devExpires || devExpires <= Date.now()) {
+          await clearDevSession(userId);
+
+          const modalId = `dev_auth_${userId}_${Date.now()}`;
+          pendingDevAuth.set(modalId, {
+            commandName: i.commandName,
+            userId,
+            expires: Date.now() + 120_000,
+          });
+
+          const modal = new ModalBuilder()
+            .setCustomId(modalId)
+            .setTitle('🔐 Developer-Authentifizierung');
+
+          const passwordInput = new TextInputBuilder()
+            .setCustomId('dev_password')
+            .setLabel('Developer-Passwort eingeben')
+            .setPlaceholder('Passwort für den Developer-Bereich')
+            .setStyle(TextInputStyle.Short)
+            .setRequired(true);
+
+          const row = new ActionRowBuilder<TextInputBuilder>().addComponents(passwordInput);
+          modal.addComponents(row);
+
+          await i.showModal(modal);
+          return;
+        }
+        // GlobalDeveloperIdentity + gültige Dev-Session → ausführen
       }
       // 3) Admin-Commands → DB-Rolle prüfen (kein Passwort nötig)
       else if (command.adminOnly) {
@@ -556,17 +571,10 @@ const interactionCreateEvent: BotEvent = {
   },
 };
 
-// Periodisch abgelaufene Einträge bereinigen (pendingDevAuth ist lokal/kurzlebig)
-setInterval(() => {
-  const now = Date.now();
-  for (const [key, value] of pendingDevAuth) {
-    if (value.expires < now) pendingDevAuth.delete(key);
-  }
-}, 60_000);
-
 /**
  * Verarbeitet Developer-Passwort-Modal.
- * Bei Erfolg: 2-Stunden-Session freischalten.
+ * Bei Erfolg: 2-Stunden-Session freischalten — aber nur für die zuvor und hier
+ * erneut bestätigte GlobalDeveloperIdentity.
  */
 async function handleDevPasswordModal(modal: ModalSubmitInteraction): Promise<void> {
   const pendingData = pendingDevAuth.get(modal.customId);
@@ -579,6 +587,19 @@ async function handleDevPasswordModal(modal: ModalSubmitInteraction): Promise<vo
 
   if (pendingData.userId !== modal.user.id) {
     await modal.reply({ content: '🔒 Unbefugter Zugriff.', ephemeral: true });
+    return;
+  }
+
+  // Identität beim Submit erneut prüfen: Rollenentzug zwischen Modal-Open und
+  // Submit darf nicht durch das Shared Password überbrückt werden.
+  if (!(await hasGlobalDeveloperIdentity(modal.user.id))) {
+    pendingDevAuth.delete(modal.customId);
+    await clearDevSession(modal.user.id).catch(() => undefined);
+    logAudit('DEV_AUTH_IDENTITY_DENIED', 'SECURITY', {
+      userId: modal.user.id,
+      command: pendingData.commandName,
+    });
+    await modal.reply({ content: '🔒 Keine globale Developer-Berechtigung.', ephemeral: true });
     return;
   }
 
@@ -654,7 +675,8 @@ async function handleDevPasswordModal(modal: ModalSubmitInteraction): Promise<vo
     command: pendingData.commandName,
   });
 
-  // 2-Stunden-Session freischalten
+  // 2-Stunden-Session freischalten. setDevSession prüft die globale Identität
+  // zusätzlich selbst (defense in depth).
   await setDevSession(modal.user.id, Date.now() + DEV_SESSION_MS);
 
   await modal.reply({
@@ -692,18 +714,18 @@ async function handleManufacturerButton(btn: ButtonInteraction): Promise<void> {
       const result = await approveManufacturer(targetUserId, btn.user.id);
       if (!result.success) {
         // Buttons sicher entfernen, damit nicht erneut geklickt werden kann.
-        // Wenn das gelingt, brauchen wir KEIN zus\u00e4tzliches followUp mit derselben
+        // Wenn das gelingt, brauchen wir KEIN zusätzliches followUp mit derselben
         // Nachricht (verhindert das doppelte Anzeigen der Meldung).
         let edited = false;
         try {
           const staleEmbed = EmbedBuilder.from(btn.message.embeds[0])
             .setColor(0x808080)
-            .setFooter({ text: `\u26a0\ufe0f Bereits bearbeitet \u2014 ${result.message}` });
+            .setFooter({ text: `⚠️ Bereits bearbeitet — ${result.message}` });
           await btn.editReply({ embeds: [staleEmbed], components: [] });
           edited = true;
         } catch { /* Edit kann scheitern, dann unten followUp als Fallback */ }
         if (!edited) {
-          try { await btn.followUp({ content: `\u26a0\ufe0f ${result.message}`, ephemeral: true }); } catch { /* ignore */ }
+          try { await btn.followUp({ content: `⚠️ ${result.message}`, ephemeral: true }); } catch { /* ignore */ }
         }
         return;
       }
@@ -732,7 +754,7 @@ async function handleManufacturerButton(btn: ButtonInteraction): Promise<void> {
         logger.warn(`Konnte DM an ${targetUserId} nicht senden.`);
       }
 
-      // Fallback: wenn DM fehlschl\u00e4gt, Admin per ephemeral followUp das OTP zeigen,
+      // Fallback: wenn DM fehlschlägt, Admin per ephemeral followUp das OTP zeigen,
       // damit es manuell weitergegeben werden kann.
       if (!dmSent) {
         try {
@@ -740,13 +762,13 @@ async function handleManufacturerButton(btn: ButtonInteraction): Promise<void> {
             ephemeral: true,
             embeds: [
               new EmbedBuilder()
-                .setTitle('\u26a0\ufe0f DM an Nutzer fehlgeschlagen')
+                .setTitle('⚠️ DM an Nutzer fehlgeschlagen')
                 .setDescription(
                   `Der Nutzer hat DMs von Server-Mitgliedern deaktiviert.\n\n` +
                   `**Einmal-Passwort (manuell weiterleiten):**\n\`\`\`${result.otp}\`\`\`\n` +
-                  `**G\u00fcltig bis:** <t:${Math.floor((result.expiresAt as Date).getTime() / 1000)}:R>\n\n` +
-                  `Bitte sende das Passwort dem Nutzer \u00fcber einen sicheren Kanal (z.B. tempor\u00e4rer privater Kanal). ` +
-                  `Das Passwort ist nur einmal verwendbar und l\u00e4uft in 30 Minuten ab.`
+                  `**Gültig bis:** <t:${Math.floor((result.expiresAt as Date).getTime() / 1000)}:R>\n\n` +
+                  `Bitte sende das Passwort dem Nutzer über einen sicheren Kanal (z.B. temporärer privater Kanal). ` +
+                  `Das Passwort ist nur einmal verwendbar und läuft in 30 Minuten ab.`
                 )
                 .setColor(0xff8800),
             ],
@@ -768,12 +790,12 @@ async function handleManufacturerButton(btn: ButtonInteraction): Promise<void> {
         try {
           const staleEmbed = EmbedBuilder.from(btn.message.embeds[0])
             .setColor(0x808080)
-            .setFooter({ text: `\u26a0\ufe0f Bereits bearbeitet \u2014 ${result.message}` });
+            .setFooter({ text: `⚠️ Bereits bearbeitet — ${result.message}` });
           await btn.editReply({ embeds: [staleEmbed], components: [] });
           edited = true;
         } catch { /* */ }
         if (!edited) {
-          try { await btn.followUp({ content: `\u26a0\ufe0f ${result.message}`, ephemeral: true }); } catch { /* ignore */ }
+          try { await btn.followUp({ content: `⚠️ ${result.message}`, ephemeral: true }); } catch { /* ignore */ }
         }
         return;
       }

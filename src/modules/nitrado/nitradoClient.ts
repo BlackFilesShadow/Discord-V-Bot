@@ -7,6 +7,7 @@
  *  - POST   /services/{id}/gameservers/settings (category, key, value) -> Settings setzen
  *  - GET    /services/{id}/gameservers/file_server/list?dir=...
  *  - GET    /services/{id}/gameservers/file_server/download?file=...
+ *  - GET/POST/DELETE /services/{id}/gameservers/games/banlist
  *  - POST   /services/{id}/gameservers/restart
  *
  * DayZ-Whitelist:
@@ -17,6 +18,11 @@
  *   Wir nutzen ausschliesslich `whitelist`. Aenderungen via Read-Modify-Write
  *   ueber POST /services/{id}/gameservers/settings (category=general,
  *   key=whitelist, value=<\r\n-Liste>).
+ *
+ * Gameserver-Banlist:
+ *   Der offizielle Nitrado-SDK-Vertrag nutzt denselben generischen Endpoint fuer
+ *   GET/POST/DELETE und das Form-Feld `identifier`. V-Bot speichert diese
+ *   Identifier nicht im Klartext; sie werden nur zur Laufzeit verarbeitet.
  *
  * Designziele:
  *   - axios-basiert, Bearer-Token im Header
@@ -55,6 +61,11 @@ export interface NitradoService {
 }
 
 export interface NitradoWhitelistEntry {
+  identifier: string;
+  added_at?: string;
+}
+
+export interface NitradoBanlistEntry {
   identifier: string;
   added_at?: string;
 }
@@ -109,6 +120,49 @@ function dedupe(items: string[]): string[] {
   const out: string[] = [];
   for (const it of items) {
     if (!seen.has(it)) { seen.add(it); out.push(it); }
+  }
+  return out;
+}
+
+/**
+ * Normalisiert die `data`-Nutzlast des Nitrado-Banlist-Endpoints.
+ * Fail-closed: Ein unbekanntes Format wird NICHT als leere Liste behandelt,
+ * weil das bei einem Unban sonst einen noch wirksamen Remote-Bann verbergen
+ * koennte.
+ */
+export function parseNitradoBanlistData(data: unknown): NitradoBanlistEntry[] {
+  let rawEntries: unknown[];
+  if (Array.isArray(data)) {
+    rawEntries = data;
+  } else if (data && typeof data === 'object') {
+    const obj = data as Record<string, unknown>;
+    const candidate = obj.banlist ?? obj.bans ?? obj.entries;
+    if (!Array.isArray(candidate)) {
+      throw new NitradoApiError('Unbekanntes Banlist-Antwortformat', null, 'banlist');
+    }
+    rawEntries = candidate;
+  } else {
+    throw new NitradoApiError('Unbekanntes Banlist-Antwortformat', null, 'banlist');
+  }
+
+  const out: NitradoBanlistEntry[] = [];
+  const seen = new Set<string>();
+  for (const raw of rawEntries) {
+    let identifier = '';
+    let addedAt: string | undefined;
+    if (typeof raw === 'string') {
+      identifier = raw.trim();
+    } else if (raw && typeof raw === 'object') {
+      const row = raw as Record<string, unknown>;
+      if (typeof row.identifier === 'string') identifier = row.identifier.trim();
+      if (typeof row.added_at === 'string') addedAt = row.added_at;
+    }
+    if (!identifier) {
+      throw new NitradoApiError('Ungueltiger Banlist-Eintrag ohne Identifier', null, 'banlist');
+    }
+    if (seen.has(identifier)) continue;
+    seen.add(identifier);
+    out.push(addedAt ? { identifier, added_at: addedAt } : { identifier });
   }
   return out;
 }
@@ -257,10 +311,41 @@ export class NitradoClient {
   }
 
   /**
-   * Liefert den aktuellen `whitelist`-String (newline-separiert) oder ''.
-   * Hinweis: Bei jungfraeulichen Servern kann das Feld den Default-Wert
-   * 'true'/'false' (Boolean-Toggle) statt einer Liste enthalten — den
-   * filtern wir hier raus, damit aus 'true' kein Whitelist-Eintrag wird.
+   * Offizieller Nitrado-Gameserver-Banlist-Endpoint. Die Antwort wird streng
+   * normalisiert; unbekannte Formate werfen statt still `[]` zu liefern.
+   */
+  async getBanlist(serviceId: string): Promise<NitradoBanlistEntry[]> {
+    const path = `/services/${serviceId}/gameservers/games/banlist`;
+    const res = await this.request<{ data?: unknown }>('GET', path);
+    if (!res || typeof res !== 'object' || !('data' in res)) {
+      throw new NitradoApiError('Banlist-Antwort ohne data-Feld', null, path);
+    }
+    return parseNitradoBanlistData(res.data);
+  }
+
+  /** Fuegt einen exakten Gameserver-Identifier zur Nitrado-Banlist hinzu. */
+  async addToBanlist(serviceId: string, identifier: string): Promise<void> {
+    const id = identifier.trim();
+    if (!id) throw new NitradoApiError('Leerer Identifier', null, 'banlist');
+    await this.request<unknown>('POST', `/services/${serviceId}/gameservers/games/banlist`, {
+      data: new URLSearchParams({ identifier: id }).toString(),
+      headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+    });
+  }
+
+  /** Entfernt einen exakten Gameserver-Identifier aus der Nitrado-Banlist. */
+  async removeFromBanlist(serviceId: string, identifier: string): Promise<void> {
+    const id = identifier.trim();
+    if (!id) throw new NitradoApiError('Leerer Identifier', null, 'banlist');
+    await this.request<unknown>('DELETE', `/services/${serviceId}/gameservers/games/banlist`, {
+      data: new URLSearchParams({ identifier: id }).toString(),
+      headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+    });
+  }
+
+  /**
+   * Liefert das aktuelle `whitelist`-Setting als String. Boolean-Defaults werden
+   * als leere Liste interpretiert, damit `true` nicht zum Spielernamen wird.
    */
   private async getWhitelistSetting(serviceId: string): Promise<string> {
     const res = await this.request<{ data: { gameserver?: { settings?: { general?: Record<string, string> } } } }>(

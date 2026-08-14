@@ -4,28 +4,25 @@
  *
  * GET  /api/v2/guilds/:guildId/dashboard/server/:slot/settings
  * PATCH /api/v2/guilds/:guildId/dashboard/server/:slot/settings
- *   -> ServerSettings (whitelistActive, economyActive, permaOnly) pro Slot.
+ *   -> ServerSettings + kanonisches Keep-Online-Flag pro Gameserver.
  */
 import { Router } from 'express';
+import type { Response } from 'express';
 import { requireGuildPermission } from '../../middleware/auth';
 import { getOrCreate as getOrCreateLink } from '../../../modules/dashboard/repository';
 import { listSlots } from '../../../modules/nitrado/repository';
 import { listGrants } from '../../../modules/permissions/repository';
 import { asUserDiscordId } from '../../../types/scope';
+import type { GuildScope, NitradoConnId } from '../../../types/scope';
 import { hasPermission as scopeHas } from '../../../types/scope';
 import prisma from '../../../database/prisma';
 import { logAuditDb } from '../../../utils/logger';
 import { emitGuildEvent } from '../../socket/emitter';
+import { cancelPendingKeepOnlineJobs, type KeepOnlineJobClient } from '../../../modules/nitrado/keepOnlineJobs';
+import { resolveDashboardGameServer, sendDashboardServerResolutionError } from './serverScope';
 
 export const dashboardRouter = Router({ mergeParams: true });
 
-// Lese-Recht: generischer Dashboard-Lesezugriff via 'dashboard.view'.
-// Owner sowie Inhaber von 'dashboard.access' (All-Access-Bypass, siehe Backend
-// `hasPermission`) behalten weiterhin Zugriff.
-//
-// HINWEIS (Migration): Bestehende 'whitelist.view'-Grants oeffnen kuenftig NICHT
-// mehr automatisch das Dashboard. Dafuer bitte 'dashboard.view' oder
-// 'dashboard.access' vergeben. Bewusst KEINE automatische Code-Migration.
 dashboardRouter.get('/', requireGuildPermission('dashboard.view'), async (req, res) => {
   const scope = req.guildScope!;
   const link = await getOrCreateLink(scope.guildId, asUserDiscordId(scope.actorDiscordId));
@@ -50,20 +47,27 @@ dashboardRouter.get('/', requireGuildPermission('dashboard.view'), async (req, r
   });
 });
 
-// --- Server-Settings pro Slot -------------------------------------------------
-
-async function resolveSlotConn(guildId: string, slotParam: string): Promise<{ id: string } | null> {
-  if (!/^[1-5]$/.test(slotParam)) return null;
-  return prisma.nitradoConnection.findUnique({
-    where: { guildId_slot: { guildId, slot: Number(slotParam) } },
-    select: { id: true },
+async function resolveSlotConn(
+  scope: Pick<GuildScope, 'guildId' | 'actorDiscordId'>,
+  slotParam: string,
+  res: Response,
+): Promise<{ id: NitradoConnId; keepOnlineEnabled: boolean } | null> {
+  const resolution = await resolveDashboardGameServer(scope.guildId, scope.actorDiscordId, slotParam);
+  if (resolution.kind !== 'RESOLVED') {
+    sendDashboardServerResolutionError(res, resolution);
+    return null;
+  }
+  const conn = await prisma.nitradoConnection.findFirst({
+    where: { id: resolution.nitradoConnId, guildId: scope.guildId },
+    select: { id: true, keepOnlineEnabled: true },
   });
+  return conn ? { id: resolution.nitradoConnId, keepOnlineEnabled: conn.keepOnlineEnabled } : null;
 }
 
 dashboardRouter.get('/server/:slot/settings', requireGuildPermission('whitelist.view'), async (req, res) => {
   const scope = req.guildScope!;
-  const conn = await resolveSlotConn(scope.guildId, String(req.params.slot));
-  if (!conn) { res.status(404).json({ error: 'Slot nicht gefunden.' }); return; }
+  const conn = await resolveSlotConn(scope, String(req.params.slot), res);
+  if (!conn) return;
   const s = await prisma.serverSettings.upsert({
     where: { guildId_nitradoConnId: { guildId: scope.guildId, nitradoConnId: conn.id } },
     create: { guildId: scope.guildId, nitradoConnId: conn.id },
@@ -72,7 +76,7 @@ dashboardRouter.get('/server/:slot/settings', requireGuildPermission('whitelist.
   res.json({
     whitelistActive: s.whitelistActive,
     economyActive: s.economyActive,
-    permaOnly: s.permaOnly,
+    permaOnly: conn.keepOnlineEnabled,
     whitelistChannelId: s.whitelistChannelId,
     whitelistRequestChannelId: s.whitelistRequestChannelId,
   });
@@ -80,41 +84,72 @@ dashboardRouter.get('/server/:slot/settings', requireGuildPermission('whitelist.
 
 dashboardRouter.patch('/server/:slot/settings', requireGuildPermission('whitelist.manage'), async (req, res) => {
   const scope = req.guildScope!;
-  const conn = await resolveSlotConn(scope.guildId, String(req.params.slot));
-  if (!conn) { res.status(404).json({ error: 'Slot nicht gefunden.' }); return; }
+  const conn = await resolveSlotConn(scope, String(req.params.slot), res);
+  if (!conn) return;
   const b = req.body ?? {};
   const data: Record<string, unknown> = {};
+  let keepOnlineEnabled = conn.keepOnlineEnabled;
+
   if (typeof b.whitelistActive === 'boolean') data.whitelistActive = b.whitelistActive;
   if (typeof b.economyActive === 'boolean') {
-    // economyActive ist ein Wirtschafts-Schalter und erfordert economy.manage —
-    // der Routen-Scope (whitelist.manage) deckt ihn NICHT ab. Owner sowie
-    // dashboard.access (All-Access) erfuellen scopeHas weiterhin.
     if (!scopeHas(scope, 'economy.manage')) {
       res.status(403).json({ error: 'economyActive erfordert economy.manage.' });
       return;
     }
     data.economyActive = b.economyActive;
   }
-  if (typeof b.permaOnly === 'boolean') data.permaOnly = b.permaOnly;
+  if (typeof b.permaOnly === 'boolean') {
+    if (!scopeHas(scope, 'nitrado.keep-online')) {
+      res.status(403).json({ error: 'Keep-Online erfordert nitrado.keep-online.' });
+      return;
+    }
+    keepOnlineEnabled = b.permaOnly;
+  }
   if (b.whitelistChannelId === null || (typeof b.whitelistChannelId === 'string' && /^\d{17,20}$/.test(b.whitelistChannelId))) {
     data.whitelistChannelId = b.whitelistChannelId;
   }
   if (b.whitelistRequestChannelId === null || (typeof b.whitelistRequestChannelId === 'string' && /^\d{17,20}$/.test(b.whitelistRequestChannelId))) {
     data.whitelistRequestChannelId = b.whitelistRequestChannelId;
   }
-  if (Object.keys(data).length === 0) { res.status(400).json({ error: 'Keine gueltigen Felder.' }); return; }
+  if (Object.keys(data).length === 0 && typeof b.permaOnly !== 'boolean') {
+    res.status(400).json({ error: 'Keine gueltigen Felder.' });
+    return;
+  }
 
-  const s = await prisma.serverSettings.upsert({
-    where: { guildId_nitradoConnId: { guildId: scope.guildId, nitradoConnId: conn.id } },
-    create: { guildId: scope.guildId, nitradoConnId: conn.id, ...data },
-    update: data,
+  const s = await prisma.$transaction(async tx => {
+    const settings = await tx.serverSettings.upsert({
+      where: { guildId_nitradoConnId: { guildId: scope.guildId, nitradoConnId: conn.id } },
+      create: { guildId: scope.guildId, nitradoConnId: conn.id, ...data },
+      update: data,
+    });
+    if (typeof b.permaOnly === 'boolean') {
+      await tx.nitradoConnection.updateMany({
+        where: { id: conn.id, guildId: scope.guildId },
+        data: { keepOnlineEnabled },
+      });
+      if (!keepOnlineEnabled) {
+        await cancelPendingKeepOnlineJobs(
+          tx as unknown as KeepOnlineJobClient,
+          { guildId: scope.guildId, nitradoConnId: conn.id },
+        );
+      }
+    }
+    return settings;
   });
-  logAuditDb('SERVER_SETTINGS_UPDATED', 'SERVER_SETTINGS', { actorUserId: req.auth!.userId, guildId: scope.guildId, details: { slotId: conn.id, fields: Object.keys(data) } });
+
+  logAuditDb('SERVER_SETTINGS_UPDATED', 'SERVER_SETTINGS', {
+    actorUserId: req.auth!.userId,
+    guildId: scope.guildId,
+    details: {
+      slotId: conn.id,
+      fields: [...Object.keys(data), ...(typeof b.permaOnly === 'boolean' ? ['keepOnlineEnabled'] : [])],
+    },
+  });
   emitGuildEvent(scope.guildId, { type: 'settings.changed', payload: { guildId: scope.guildId, slotId: conn.id } });
   res.json({
     whitelistActive: s.whitelistActive,
     economyActive: s.economyActive,
-    permaOnly: s.permaOnly,
+    permaOnly: keepOnlineEnabled,
     whitelistChannelId: s.whitelistChannelId,
     whitelistRequestChannelId: s.whitelistRequestChannelId,
   });

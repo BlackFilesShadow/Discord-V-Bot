@@ -40,42 +40,28 @@ export function asNitradoConnId(raw: string): NitradoConnId {
   return raw as NitradoConnId;
 }
 
-/**
- * Vollstaendiger Scope-Container, der durch jede Command-/Route-Handler
- * Pipeline durchgereicht wird. Nichts darf an Repos vorbei.
- */
 export interface GuildScope {
   guildId: GuildId;
-  nitradoConnId: NitradoConnId | null; // null = "Guild-only" (Tickets, Permissions)
+  nitradoConnId: NitradoConnId | null;
   actorDiscordId: UserDiscordId;
   isOwner: boolean;
   permissions: ReadonlySet<PermissionScope>;
 }
 
-/**
- * Hardcoded Permission-Scopes. Owner hat implizit alle.
- * KEIN Free-Text — Scope-Strings sind Compile-Zeit-Konstanten.
- *
- * Sonderscope:
- *   `dashboard.access` — Allgemeiner Vollzugriff fuers Dashboard. Macht die Guild
- *   in der Dashboard-Liste sichtbar UND wirkt als Bypass fuer alle anderen
- *   delegierbaren Scopes (siehe `hasPermission`). NICHT-delegierbare Scopes
- *   (nitrado.manage, permissions.manage, dev.console) bleiben Owner-only.
- *
- *   `dashboard.view` — Reiner generischer Lesezugriff aufs Dashboard
- *   (GET /dashboard). Oeffnet KEINE Modul-Scopes automatisch — wer einzelne
- *   Module sehen will, braucht den jeweiligen `*.view`-Scope oder `dashboard.access`.
- */
 export const PERMISSION_SCOPES = [
-  'dashboard.access',   // ALL-ACCESS Bypass fuer alle delegierbaren Scopes
-  'dashboard.view',     // Generischer Dashboard-Lesezugriff (oeffnet keine Module automatisch)
-  'nitrado.manage',     // Token connect/disconnect — NIE delegierbar (Owner-only-hardcoded an Routen-Layer)
-  'nitrado.view',       // Read-Only Nitrado-Daten ansehen (Snapshots, Settings, Files) — delegierbar
-  'nitrado.write',      // Normale schreibende Nitrado-Aktionen (Whitelist-Sync etc.) — delegierbar, Write-Protection-gegated
-  'nitrado.danger',     // Gefaehrliche Aktionen (Restart/Stop/Delete/File-Write/Config-Write) — NIE delegierbar
+  'commands.all',
+  'dashboard.access',
+  'dashboard.view',
+  'nitrado.manage',
+  'nitrado.view',
+  'nitrado.write',
+  'nitrado.keep-online',
+  'nitrado.danger',
   'tickets.manage',
   'whitelist.view',
   'whitelist.manage',
+  'bans.view',
+  'bans.manage',
   'factions.view',
   'factions.manage',
   'economy.view',
@@ -94,16 +80,12 @@ export const PERMISSION_SCOPES = [
   'feeds.manage',
   'translate.view',
   'translate.manage',
-  'permissions.manage', // NIE delegierbar
-  'dev.console',        // NIE delegierbar
+  'permissions.manage',
+  'dev.console',
 ] as const;
 
 export type PermissionScope = typeof PERMISSION_SCOPES[number];
 
-/**
- * Permissions, die NICHT via /perm-add delegierbar sind — auch wenn jemand
- * sie in den DB-Grant einschmuggelt, blockt der Routen-Layer.
- */
 export const NON_DELEGABLE_SCOPES: ReadonlySet<PermissionScope> = new Set([
   'nitrado.manage',
   'nitrado.danger',
@@ -111,14 +93,28 @@ export const NON_DELEGABLE_SCOPES: ReadonlySet<PermissionScope> = new Set([
   'dev.console',
 ]);
 
+/** Dashboard/REST-Aufloesung. `dashboard.access` ist nur hier ein All-Access-Bypass. */
 export function hasPermission(scope: GuildScope, perm: PermissionScope): boolean {
   if (scope.isOwner) return true;
-  // Direkter Treffer (z. B. expliziter `tickets.manage`-Grant).
   if (scope.permissions.has(perm)) return true;
-  // ALL-ACCESS Bypass: `dashboard.access` deckt alle Scopes ab — ausser den
-  // nicht-delegierbaren (Nitrado-Token, Permissions-Verwaltung, Dev-Console).
   if (scope.permissions.has('dashboard.access') && !NON_DELEGABLE_SCOPES.has(perm)) {
     return true;
   }
   return false;
+}
+
+/**
+ * Discord-Command-Aufloesung.
+ *
+ * Wichtig: `dashboard.access` wird hier absichtlich NICHT als Bypass verwendet.
+ * Ein Dashboard-Vollzugriff darf nicht stillschweigend privilegierte Slash-
+ * Commands freischalten. Fuer Commands gelten nur:
+ *  - Owner,
+ *  - der explizite Ziel-Scope,
+ *  - `commands.all` fuer delegierbare Ziel-Scopes.
+ */
+export function hasCommandPermission(scope: GuildScope, perm: PermissionScope): boolean {
+  if (scope.isOwner) return true;
+  if (scope.permissions.has(perm)) return true;
+  return scope.permissions.has('commands.all') && !NON_DELEGABLE_SCOPES.has(perm);
 }

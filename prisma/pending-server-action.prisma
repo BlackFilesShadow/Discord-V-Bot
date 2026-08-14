@@ -1,0 +1,23 @@
+// Phase 4 / SCOPE-003: kurzlebige, servergescopte One-Shot-Aktionen.
+//
+// Bewusst ohne Prisma-Relation zu NitradoConnection, damit das additive
+// Multi-File-Schema die grosse Legacy-Hauptschema-Datei nicht anfassen muss.
+// Die Migration legt den echten FK mit ON DELETE CASCADE an.
+// Der Service setzt die ID explizit via crypto.randomUUID(); uuid() ist ein
+// zweiter sicherer Default fuer direkte Prisma-Nutzung.
+model PendingServerAction {
+  id              String   @id @default(uuid())
+  guildId         String
+  nitradoConnId   String
+  actorDiscordId  String
+  actionType      String   @db.VarChar(64)
+  payload         Json
+  status          String   @default("PENDING") @db.VarChar(16)
+  expiresAt       DateTime
+  consumedAt      DateTime?
+  createdAt       DateTime @default(now())
+
+  @@index([guildId, actorDiscordId, status, expiresAt])
+  @@index([guildId, nitradoConnId, status, expiresAt])
+  @@index([expiresAt])
+}

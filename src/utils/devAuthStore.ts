@@ -1,18 +1,14 @@
 import prisma from '../database/prisma';
+import { config } from '../config';
+import { isGlobalDeveloperIdentity } from '../security/privilegedIdentity';
 
 /**
  * DB-gestützter Speicher für Dev-Auth-Session und Brute-Force-Lockout.
  *
- * Hintergrund (Multi-Server / Sharding, Entscheidung #8): Unter dem
- * ShardingManager läuft jeder Shard als eigener Prozess. Würde der
- * Fehlversuch-Zähler nur im Prozess-Speicher liegen, könnte ein Angreifer den
- * Lockout über mehrere Shards hinweg umgehen (MAX_FAILS Versuche je Shard) und
- * der Lockout überlebte keinen Restart. Daher global in BotConfig persistiert.
- *
- * Geringe Kardinalität (nur Owner/Developer), daher BotConfig-Key/Value
- * ausreichend — kein eigenes Modell nötig.
+ * Wichtig: DEV_PASSWORD ist nur Step-up. Eine Session darf ausschliesslich fuer
+ * die kanonische GlobalDeveloperIdentity existieren; Besitz des Shared Passwords
+ * kann niemals Developer-Rechte erzeugen.
  */
-
 const SESSION_PREFIX = 'dev:auth:session:';
 const FAILS_PREFIX = 'dev:auth:fails:';
 
@@ -21,7 +17,19 @@ export interface DevFailState {
   lockedUntil: number;
 }
 
+async function isEligible(discordId: string): Promise<boolean> {
+  const user = await prisma.user.findUnique({
+    where: { discordId },
+    select: { role: true },
+  });
+  return isGlobalDeveloperIdentity(discordId, user?.role ?? 'USER', config.discord.ownerId);
+}
+
 export async function getDevSessionExpires(userId: string): Promise<number | null> {
+  if (!(await isEligible(userId))) {
+    await prisma.botConfig.deleteMany({ where: { key: SESSION_PREFIX + userId } });
+    return null;
+  }
   const row = await prisma.botConfig.findUnique({ where: { key: SESSION_PREFIX + userId } });
   if (!row) return null;
   const v = row.value as { expires?: number } | null;
@@ -29,6 +37,9 @@ export async function getDevSessionExpires(userId: string): Promise<number | nul
 }
 
 export async function setDevSession(userId: string, expires: number): Promise<void> {
+  if (!(await isEligible(userId))) {
+    throw new Error('DEV-Session verweigert: keine GlobalDeveloperIdentity.');
+  }
   await prisma.botConfig.upsert({
     where: { key: SESSION_PREFIX + userId },
     create: {
@@ -70,10 +81,6 @@ export async function clearDevFails(userId: string): Promise<void> {
   await prisma.botConfig.deleteMany({ where: { key: FAILS_PREFIX + userId } });
 }
 
-/**
- * Entfernt abgelaufene Sessions und abgelaufene Lockouts. Best-effort,
- * periodisch aufgerufen. Niedrige Kardinalität -> in-JS-Filter ist günstig.
- */
 export async function cleanupDevAuth(): Promise<void> {
   const now = Date.now();
   const rows = await prisma.botConfig.findMany({
@@ -86,7 +93,6 @@ export async function cleanupDevAuth(): Promise<void> {
       if (typeof v?.expires !== 'number' || v.expires < now) toDelete.push(r.key);
     } else {
       const v = r.value as Partial<DevFailState> | null;
-      // Abgelaufene Lockouts entfernen (lockedUntil gesetzt und in Vergangenheit).
       if (typeof v?.lockedUntil === 'number' && v.lockedUntil > 0 && v.lockedUntil < now) {
         toDelete.push(r.key);
       }

@@ -19,6 +19,7 @@ process.env.SESSION_SECRET ||= 'test-session-secret';
  */
 
 const GID = '999999999999999999';
+const CONN_ID = 'caaaaaaaaaaaaaaaaaaaaaaaa';
 
 const txStub = {
   whitelistEntry: {
@@ -31,14 +32,17 @@ const txStub = {
 
 const prismaMock = {
   nitradoConnection: {
-    findUnique: jest.fn().mockResolvedValue({ id: 'conn-1' }),
-    findFirst: jest.fn().mockResolvedValue({ id: 'conn-1' }),
+    findMany: jest.fn().mockResolvedValue([
+      { id: CONN_ID, slot: 1, alias: 'Slot 1', status: 'ACTIVE', nitradoServerId: 'srv-1' },
+    ]),
+    findUnique: jest.fn().mockResolvedValue({ id: CONN_ID }),
+    findFirst: jest.fn().mockResolvedValue({ id: CONN_ID }),
   },
   whitelistEntry: { upsert: jest.fn().mockResolvedValue({}) },
   nitradoJob: { create: jest.fn().mockResolvedValue({}) },
   whitelistRequest: {
     findFirst: jest.fn().mockResolvedValue({
-      id: 'req-1', guildId: GID, nitradoConnId: 'conn-1', gameId: 'PlayerX',
+      id: 'req-1', guildId: GID, nitradoConnId: CONN_ID, gameId: 'PlayerX',
       requesterDiscordId: '123456789012345678', messageId: null, channelId: null,
     }),
     updateMany: jest.fn().mockResolvedValue({ count: 1 }),
@@ -78,7 +82,7 @@ jest.mock('../../src/dashboard/middleware/auth', () => ({
     next: () => void,
   ) => {
     req.auth = { userId: 'user-1', discordId: '888888888888888888', role: 'USER' };
-    req.guildScope = { guildId: '999999999999999999', actorDiscordId: '888888888888888888', permissions: ['whitelist.manage'] };
+    req.guildScope = { guildId: GID, actorDiscordId: '888888888888888888', permissions: ['whitelist.manage'] };
     next();
   },
 }));
@@ -113,10 +117,13 @@ afterAll(() => {
 
 beforeEach(() => {
   jest.clearAllMocks();
-  prismaMock.nitradoConnection.findUnique.mockResolvedValue({ id: 'conn-1' });
-  prismaMock.nitradoConnection.findFirst.mockResolvedValue({ id: 'conn-1' });
+  prismaMock.nitradoConnection.findMany.mockResolvedValue([
+    { id: CONN_ID, slot: 1, alias: 'Slot 1', status: 'ACTIVE', nitradoServerId: 'srv-1' },
+  ]);
+  prismaMock.nitradoConnection.findUnique.mockResolvedValue({ id: CONN_ID });
+  prismaMock.nitradoConnection.findFirst.mockResolvedValue({ id: CONN_ID });
   prismaMock.whitelistRequest.findFirst.mockResolvedValue({
-    id: 'req-1', guildId: GID, nitradoConnId: 'conn-1', gameId: 'PlayerX',
+    id: 'req-1', guildId: GID, nitradoConnId: CONN_ID, gameId: 'PlayerX',
     requesterDiscordId: '123456789012345678', messageId: null, channelId: null,
   });
   prismaMock.whitelistRequest.updateMany.mockResolvedValue({ count: 1 });

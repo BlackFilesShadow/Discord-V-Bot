@@ -114,6 +114,7 @@ export const SPEC_KEEP_COMMANDS = new Set<string>([
   'search', 'ticket', 'balance', 'bank', 'blackjack', 'coinflip', 'deposit',
   'dice', 'factions', 'join', 'leave', 'link', 'pay', 'slot', 'transfer',
   'unlink', 'withdraw', 'wl-add', 'perm-add', 'perm-remove', 'perms',
+  'server-ban', 'server-unban', 'server-ban-list',
 ]);
 
 export interface ClassifyInput {

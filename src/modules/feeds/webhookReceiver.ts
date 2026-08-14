@@ -7,19 +7,14 @@ import { logger, logAudit } from '../../utils/logger';
 /**
  * Eingehende Webhook-Posts (Typ WEBHOOK):
  * - Endpunkt: POST /webhooks/feed/:feedId
- * - Auth: HMAC-SHA256 ueber den raw body, gepruegt gegen Feed.webhookSecret
- *   (Header: X-V-Webhook-Signature: sha256=<hex>) — alternativ Token im Header
- *   X-V-Webhook-Token, falls die Quelle keine HMAC kann (z.B. simple WebHooks).
- * - Body-Format (JSON):
- *     {
- *       "title": "string",         // Pflicht
- *       "description": "string?",  // optional
- *       "url": "string?",          // optional
- *       "image": "string?",        // optional, http(s)
- *       "color": 0xRRGGBB?,        // optional
- *       "footer": "string?",       // optional, ueberschreibt Feed-Namen
- *       "timestamp": "ISO?"        // optional
- *     }
+ * - Auth: HMAC-SHA256 ueber `<unix-seconds>.<raw-body>`, geprueft gegen
+ *   Feed.webhookSecret. Header:
+ *     X-V-Webhook-Timestamp: <unix-seconds>
+ *     X-V-Webhook-Signature: sha256=<hex>
+ *   Alternativ kann X-V-Webhook-Token verwendet werden; auch dann sind
+ *   frischer Timestamp + persistente Replay-Dedup Pflicht.
+ * - Replay-Schutz: maximal 5 Minuten Clock-Skew; persistenter Claim im
+ *   IdempotencyKey-Store verhindert dieselbe signierte Zustellung erneut.
  */
 
 export interface WebhookPayload {
@@ -38,21 +33,60 @@ export interface DeliveryResult {
   reason?: string;
 }
 
+export const WEBHOOK_MAX_SKEW_MS = 5 * 60 * 1000;
+const WEBHOOK_REPLAY_TTL_MS = 24 * 60 * 60 * 1000;
+
 /** Generiert ein neues Secret mit cryptografischer Zufaelligkeit. */
 export function generateWebhookSecret(): string {
   return crypto.randomBytes(32).toString('hex');
 }
 
 /** Prueft HMAC-SHA256 (timing-safe). */
-function verifyHmac(secret: string, rawBody: string, signature: string): boolean {
-  const expected = crypto.createHmac('sha256', secret).update(rawBody).digest('hex');
+function verifyHmac(secret: string, signedPayload: string, signature: string): boolean {
+  const expected = crypto.createHmac('sha256', secret).update(signedPayload).digest('hex');
   const provided = signature.toLowerCase().replace(/^sha256=/, '');
   if (expected.length !== provided.length) return false;
   try {
-    return crypto.timingSafeEqual(Buffer.from(expected), Buffer.from(provided));
+    return crypto.timingSafeEqual(Buffer.from(expected, 'hex'), Buffer.from(provided, 'hex'));
   } catch {
     return false;
   }
+}
+
+function parseWebhookTimestamp(raw: string | string[] | undefined, nowMs = Date.now()): string | null {
+  if (typeof raw !== 'string' || !/^\d{10,13}$/.test(raw)) return null;
+  const n = Number(raw);
+  if (!Number.isSafeInteger(n)) return null;
+  const timestampMs = raw.length === 10 ? n * 1000 : n;
+  if (Math.abs(nowMs - timestampMs) > WEBHOOK_MAX_SKEW_MS) return null;
+  return raw;
+}
+
+function replayHash(feedId: string, timestamp: string, rawBody: string): string {
+  return `webhook:${crypto
+    .createHash('sha256')
+    .update(`${feedId}\n${timestamp}.${rawBody}`)
+    .digest('hex')}`;
+}
+
+async function claimReplayKey(hash: string): Promise<boolean> {
+  try {
+    await prisma.idempotencyKey.create({
+      data: {
+        hash,
+        status: 'PROCESSING',
+        expiresAt: new Date(Date.now() + WEBHOOK_REPLAY_TTL_MS),
+      },
+    });
+    return true;
+  } catch (error) {
+    if ((error as { code?: string }).code === 'P2002') return false;
+    throw error;
+  }
+}
+
+async function releaseReplayKey(hash: string): Promise<void> {
+  await prisma.idempotencyKey.delete({ where: { hash } }).catch(() => undefined);
 }
 
 /** Validiert das JSON-Payload schwach und gibt eine kurze Fehlermeldung zurueck. */
@@ -67,7 +101,6 @@ function validatePayload(input: unknown): { ok: true; data: WebhookPayload } | {
   if (p.color !== undefined && (typeof p.color !== 'number' || p.color < 0 || p.color > 0xffffff)) {
     return { ok: false, reason: '"color" muss 0..0xFFFFFF sein.' };
   }
-  // SSRF-light: nur http(s) URLs
   for (const k of ['url', 'image'] as const) {
     const v = p[k];
     if (typeof v === 'string' && v && !/^https?:\/\//i.test(v)) {
@@ -90,7 +123,7 @@ function validatePayload(input: unknown): { ok: true; data: WebhookPayload } | {
 
 /**
  * Liefert ein Webhook-Payload an den Discord-Channel des Feeds.
- * Verifiziert HMAC bzw. den Token-Header. Loggt Audit-Eintrag.
+ * Verifiziert Authentisierung, Timestamp und persistenten Replay-Claim.
  */
 export async function deliverWebhookPayload(
   client: Client,
@@ -105,14 +138,16 @@ export async function deliverWebhookPayload(
   if (feed.feedType !== 'WEBHOOK') return { ok: false, status: 400, reason: 'Feed ist kein WEBHOOK-Typ.' };
   if (!feed.webhookSecret) return { ok: false, status: 401, reason: 'Kein Secret gesetzt. Erst /feed webhook-rotate ausfuehren.' };
 
+  const timestamp = parseWebhookTimestamp(headers['x-v-webhook-timestamp']);
+  if (!timestamp) return { ok: false, status: 401, reason: 'Webhook-Timestamp fehlt, ist ungueltig oder abgelaufen.' };
+
   const sigHeader = (headers['x-v-webhook-signature'] ?? headers['x-hub-signature-256']) as string | undefined;
   const tokenHeader = headers['x-v-webhook-token'] as string | undefined;
 
   let authed = false;
   if (typeof sigHeader === 'string' && sigHeader) {
-    authed = verifyHmac(feed.webhookSecret, rawBody, sigHeader);
+    authed = verifyHmac(feed.webhookSecret, `${timestamp}.${rawBody}`, sigHeader);
   } else if (typeof tokenHeader === 'string' && tokenHeader) {
-    // Token-Vergleich timing-safe.
     const a = Buffer.from(tokenHeader);
     const b = Buffer.from(feed.webhookSecret);
     authed = a.length === b.length && crypto.timingSafeEqual(a, b);
@@ -129,6 +164,12 @@ export async function deliverWebhookPayload(
     return { ok: false, status: 502, reason: 'Discord-Channel nicht erreichbar.' };
   }
 
+  const claimHash = replayHash(feed.id, timestamp, rawBody);
+  if (!(await claimReplayKey(claimHash))) {
+    logAudit('FEED_WEBHOOK_REPLAY_BLOCKED', 'SECURITY', { feedId: feed.id });
+    return { ok: false, status: 409, reason: 'Webhook-Replay erkannt.' };
+  }
+
   const embed = new EmbedBuilder()
     .setTitle(data.title)
     .setColor(typeof data.color === 'number' ? data.color : 0x3498db)
@@ -141,13 +182,41 @@ export async function deliverWebhookPayload(
   const roleIds = (feed.mentionRoles ?? []).filter((id) => /^\d+$/.test(id));
   const pingPrefix = roleIds.length ? roleIds.map((id) => `<@&${id}>`).join(' ') : '';
 
-  await channel.send({
-    ...(pingPrefix ? { content: pingPrefix } : {}),
-    embeds: [embed],
-    allowedMentions: { roles: roleIds, parse: [] },
-  });
+  try {
+    await channel.send({
+      ...(pingPrefix ? { content: pingPrefix } : {}),
+      embeds: [embed],
+      allowedMentions: { roles: roleIds, parse: [] },
+    });
+  } catch (error) {
+    // Discord hat die Nachricht nicht angenommen. Nur in diesem Fall darf der
+    // Claim freigegeben werden, damit ein echter Zustell-Retry moeglich bleibt.
+    await releaseReplayKey(claimHash);
+    logger.warn(`Webhook: Zustellung fuer Feed ${feed.id} fehlgeschlagen: ${String(error)}`);
+    return { ok: false, status: 502, reason: 'Webhook-Zustellung fehlgeschlagen.' };
+  }
 
-  await prisma.feed.update({ where: { id: feed.id }, data: { lastChecked: new Date() } });
+  try {
+    await prisma.$transaction([
+      prisma.feed.update({ where: { id: feed.id }, data: { lastChecked: new Date() } }),
+      prisma.idempotencyKey.update({
+        where: { hash: claimHash },
+        data: {
+          status: 'DONE',
+          responseStatus: 200,
+          responseBody: { feedId: feed.id },
+        },
+      }),
+    ]);
+  } catch (error) {
+    // Die Discord-Zustellung ist bereits erfolgt. Den Replay-Claim absichtlich
+    // NICHT loeschen: ein Client-Retry duerfte sonst denselben Post duplizieren.
+    // PROCESSING bleibt damit fail-closed und blockiert identische Replays.
+    logger.error(`Webhook: Zustellung fuer Feed ${feed.id} erfolgreich, Finalisierung fehlgeschlagen: ${String(error)}`);
+    logAudit('FEED_WEBHOOK_FINALIZE_FAILED', 'SECURITY', { feedId: feed.id });
+    return { ok: true, status: 200 };
+  }
+
   logAudit('FEED_WEBHOOK_DELIVERED', 'FEED', { feedId: feed.id, name: feed.name, title: data.title });
   return { ok: true, status: 200 };
 }

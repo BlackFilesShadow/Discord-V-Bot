@@ -2,6 +2,7 @@ import { promises as fs } from 'node:fs';
 import path from 'node:path';
 import { randomUUID } from 'node:crypto';
 import { config } from '../../config';
+import { safeAxiosGet } from '../../utils/ssrf';
 
 // Discord's documented default per-attachment upload limit for apps is 10 MiB.
 // Higher limits can exist depending on Nitro/server boost state, but recurring
@@ -25,7 +26,7 @@ export function validateTranslatedPostImage(file: { buffer: Buffer; mimetype?: s
   if (file.buffer.length > MAX_TRANSLATED_POST_IMAGE_BYTES) return { ok: false, error: 'Bild ist größer als 10 MiB.' };
   const kind = detectImageKind(file.buffer);
   if (!kind) return { ok: false, error: 'Nur PNG, JPEG, GIF oder WebP sind erlaubt.' };
-  const mime = (file.mimetype ?? '').toLowerCase();
+  const mime = (file.mimetype ?? '').split(';', 1)[0].trim().toLowerCase();
   if (mime && mime !== 'application/octet-stream' && mime !== kind.mime && !(kind.mime === 'image/jpeg' && mime === 'image/jpg')) return { ok: false, error: 'Dateityp und Bildinhalt stimmen nicht überein.' };
   return { ok: true, kind };
 }
@@ -51,6 +52,26 @@ export async function saveTranslatedPostImage(guildId: string, file: { buffer: B
   const full = path.join(dir, name);
   await fs.writeFile(full, file.buffer, { mode: 0o640 });
   return `${PREFIX}${guildId}/${name}`;
+}
+
+/**
+ * Phase 9: Externe Bild-URLs werden niemals dauerhaft als aktive Remote-Quelle
+ * uebernommen. Sie werden ueber den zentralen SSRF-Client geladen (DNS-Pinning,
+ * Redirect-Revalidierung, Groessenlimit), per Magic Bytes validiert und danach
+ * als lokales Attachment persistiert. Bestehende Legacy-URLs bleiben lesbar.
+ */
+export async function saveTranslatedPostImageFromUrl(guildId: string, rawUrl: string): Promise<string> {
+  const response = await safeAxiosGet<ArrayBuffer>(rawUrl, {
+    responseType: 'arraybuffer',
+    timeout: 20_000,
+    maxContentLength: MAX_TRANSLATED_POST_IMAGE_BYTES,
+    maxBodyLength: MAX_TRANSLATED_POST_IMAGE_BYTES,
+  });
+  const buffer = Buffer.from(response.data);
+  if (buffer.length > MAX_TRANSLATED_POST_IMAGE_BYTES) throw new Error('Bild ist größer als 10 MiB.');
+  const contentTypeHeader = response.headers?.['content-type'];
+  const mimetype = typeof contentTypeHeader === 'string' ? contentTypeHeader : undefined;
+  return saveTranslatedPostImage(guildId, { buffer, mimetype });
 }
 
 export function resolveTranslatedPostImage(ref: string | null | undefined): { path: string; name: string } | null {

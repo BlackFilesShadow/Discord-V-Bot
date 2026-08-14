@@ -9,27 +9,21 @@ import { logSecurity } from './logger';
  */
 
 interface RateLimitConfig {
-  windowMs: number;    // Zeitfenster in ms
-  maxRequests: number; // Max. Anfragen im Zeitfenster
+  windowMs: number;
+  maxRequests: number;
 }
 
 const DEFAULT_LIMITS: Record<string, RateLimitConfig> = {
   command: { windowMs: 60000, maxRequests: 30 },
   upload: { windowMs: 300000, maxRequests: 10 },
   download: { windowMs: 60000, maxRequests: 20 },
-  login: { windowMs: 900000, maxRequests: 5 },      // 15 min, 5 Versuche
+  login: { windowMs: 900000, maxRequests: 5 },
   message: { windowMs: 10000, maxRequests: 5 },
   reaction: { windowMs: 5000, maxRequests: 10 },
   api: { windowMs: 60000, maxRequests: 60 },
-  // Phase 2.2: KI-Aufrufe pro User abschirmen, damit ein einzelner Nutzer
-  // weder das globale Provider-Budget noch die Bot-Latenz dominieren kann.
   ai: { windowMs: 60_000, maxRequests: 20 },
 };
 
-/**
- * Prüft ob ein Rate-Limit überschritten ist.
- * @returns true wenn erlaubt, false wenn Rate-Limit erreicht.
- */
 export async function checkRateLimit(
   identifier: string,
   action: string,
@@ -40,15 +34,12 @@ export async function checkRateLimit(
   const windowStart = new Date(now.getTime() - config.windowMs);
 
   try {
-    // Bestehenden Eintrag suchen (kein deleteMany im Hot-Path!)
     const existing = await prisma.rateLimitEntry.findUnique({
       where: { identifier_action: { identifier, action } },
     });
 
     if (existing && existing.windowStart > windowStart) {
-      // Innerhalb des Zeitfensters
       if (existing.count >= config.maxRequests) {
-        // Rate-Limit erreicht
         logSecurity('RATE_LIMIT_EXCEEDED', 'MEDIUM', {
           identifier,
           action,
@@ -63,7 +54,6 @@ export async function checkRateLimit(
         };
       }
 
-      // Zähler erhöhen
       await prisma.rateLimitEntry.update({
         where: { identifier_action: { identifier, action } },
         data: { count: existing.count + 1 },
@@ -76,7 +66,6 @@ export async function checkRateLimit(
       };
     }
 
-    // Neues Zeitfenster starten
     await prisma.rateLimitEntry.upsert({
       where: { identifier_action: { identifier, action } },
       create: {
@@ -99,7 +88,6 @@ export async function checkRateLimit(
       resetAt: new Date(now.getTime() + config.windowMs),
     };
   } catch (_error) {
-    // Bei DB-Fehler: Erlauben (fail-open nur für Rate-Limiting)
     return {
       allowed: true,
       remaining: config.maxRequests,
@@ -108,10 +96,6 @@ export async function checkRateLimit(
   }
 }
 
-/**
- * Anti-Raid Detection.
- * Erkennt massenhaften Beitritt in kurzer Zeit.
- */
 export async function detectRaid(
   guildId: string,
   joinCount: number,
@@ -130,10 +114,6 @@ export async function detectRaid(
   return false;
 }
 
-/**
- * Anti-Spam Detection.
- * Erkennt Spam-Verhalten (wiederholte gleiche Nachrichten).
- */
 export function detectSpam(
   messages: { content: string; timestamp: number }[],
   windowMs: number = 5000,
@@ -145,29 +125,32 @@ export function detectSpam(
   const recentMessages = messages.filter(m => now - m.timestamp < windowMs);
 
   if (recentMessages.length >= threshold) {
-    // Prüfe auf identische Nachrichten
     const contentSet = new Set(recentMessages.map(m => m.content.toLowerCase()));
     if (contentSet.size <= 2) {
-      return true; // Spam erkannt
+      return true;
     }
   }
 
   return false;
 }
 
-/**
- * Periodische Bereinigung abgelaufener Rate-Limit-Einträge.
- * Läuft alle 5 Minuten statt auf jedem Command-Call.
- */
-let cleanupStarted = false;
+let cleanupTimer: NodeJS.Timeout | null = null;
+
+/** Periodische Bereinigung abgelaufener Rate-Limit-Einträge. */
 export function startRateLimitCleanup(): void {
-  if (cleanupStarted) return;
-  cleanupStarted = true;
-  setInterval(async () => {
+  if (cleanupTimer) return;
+  cleanupTimer = setInterval(async () => {
     try {
       await prisma.rateLimitEntry.deleteMany({
         where: { expiresAt: { lt: new Date() } },
       });
     } catch { /* ignore */ }
   }, 5 * 60 * 1000);
+  cleanupTimer.unref?.();
+}
+
+export function stopRateLimitCleanup(): void {
+  if (!cleanupTimer) return;
+  clearInterval(cleanupTimer);
+  cleanupTimer = null;
 }

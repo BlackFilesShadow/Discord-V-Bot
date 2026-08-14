@@ -1,21 +1,28 @@
 /**
  * Übersetzungen-Routen — geplante / wiederkehrende Auto-Übersetzungs-Posts pro Guild.
  * Bilder werden als persistente lokale Uploads gespeichert und beim Versand
- * als Discord-Attachment verwendet. Legacy-http(s)-Bild-URLs bleiben nur fuer
- * bestehende/API-Clients lesbar, die Dashboard-UI verwendet ausschliesslich Uploads.
+ * als Discord-Attachment verwendet. Bereits persistierte Legacy-http(s)-URLs
+ * bleiben lesbar; neue oder geänderte Remote-Bilder werden sicher eingelesen
+ * und als lokales, validiertes Attachment materialisiert.
  */
 import { Router, type NextFunction, type Request, type Response } from 'express';
 import multer from 'multer';
 import { PermissionFlagsBits } from 'discord.js';
 import { requireGuildPermission } from '../../middleware/auth';
 import prisma from '../../../database/prisma';
-import { isBlockedHost } from '../../../utils/ssrf';
+import { validatePublicHttpUrl } from '../../../utils/ssrf';
 import { validateBotChannelAccess } from '../../../utils/discordChannel';
 import { tryGetDashboardClient } from '../../clientRegistry';
 import { SUPPORTED_LANGUAGES, LANGUAGE_CODES } from '../../../modules/ai/translator';
 import { parseRecurrence, nextRunFromRecurrence } from '../../../modules/ai/translatedPostScheduler';
-import { MAX_TRANSLATED_POST_IMAGE_BYTES, removeTranslatedPostImage, saveTranslatedPostImage, validateTranslatedPostImage } from '../../../modules/ai/translatedPostImage';
-import { logAuditDb } from '../../../utils/logger';
+import {
+  MAX_TRANSLATED_POST_IMAGE_BYTES,
+  removeTranslatedPostImage,
+  saveTranslatedPostImage,
+  saveTranslatedPostImageFromUrl,
+  validateTranslatedPostImage,
+} from '../../../modules/ai/translatedPostImage';
+import { logger, logAuditDb } from '../../../utils/logger';
 import { emitGuildEvent } from '../../socket/emitter';
 
 export const translatedPostsRouter = Router({ mergeParams: true });
@@ -26,7 +33,8 @@ const imageUpload = multer({ storage: multer.memoryStorage(), limits: { fileSize
 function receiveImage(req: Request, res: Response, next: NextFunction): void {
   imageUpload.single('image')(req, res, (err: unknown) => {
     if (err) {
-      res.status(400).json({ error: err instanceof multer.MulterError && err.code === 'LIMIT_FILE_SIZE' ? 'Bild ist größer als 8 MB.' : 'Bild-Upload konnte nicht verarbeitet werden.' });
+      const maxMiB = MAX_TRANSLATED_POST_IMAGE_BYTES / 1024 / 1024;
+      res.status(400).json({ error: err instanceof multer.MulterError && err.code === 'LIMIT_FILE_SIZE' ? `Bild ist größer als ${maxMiB} MiB.` : 'Bild-Upload konnte nicht verarbeitet werden.' });
       return;
     }
     next();
@@ -56,16 +64,21 @@ function normalizeRolePings(v: unknown): string | null {
 }
 function parseBoolean(v: unknown): boolean { return v === true || v === 'true' || v === '1' || v === 1; }
 
-function validLegacyImageUrl(v: unknown): { ok: true; value: string | null } | { ok: false; reason: string } {
-  if (v === undefined || v === null || v === '') return { ok: true, value: null };
+type ImageInput =
+  | { ok: true; kind: 'none'; value: null }
+  | { ok: true; kind: 'managed'; value: string }
+  | { ok: true; kind: 'remote'; value: string }
+  | { ok: false; reason: string };
+
+function parseImageInput(v: unknown): ImageInput {
+  if (v === undefined || v === null) return { ok: true, kind: 'none', value: null };
   if (typeof v !== 'string') return { ok: false, reason: 'Bild-URL ungültig.' };
-  if (v.startsWith('upload:translated-posts/')) return { ok: true, value: v };
-  try {
-    const u = new URL(v.trim());
-    if (!['http:', 'https:'].includes(u.protocol)) return { ok: false, reason: 'Bild-URL muss http(s) sein.' };
-    if (isBlockedHost(u.hostname)) return { ok: false, reason: 'Bild-URL: lokale/private Hosts nicht erlaubt.' };
-    return { ok: true, value: u.toString() };
-  } catch { return { ok: false, reason: 'Bild-URL ungültig.' }; }
+  const raw = v.trim();
+  if (!raw) return { ok: true, kind: 'none', value: null };
+  if (raw.startsWith('upload:translated-posts/')) return { ok: true, kind: 'managed', value: raw };
+  const validated = validatePublicHttpUrl(raw);
+  if (!validated.ok) return { ok: false, reason: `Bild-URL: ${validated.reason}` };
+  return { ok: true, kind: 'remote', value: validated.url.toString() };
 }
 
 interface ScheduleResult { ok: true; scheduledFor: Date | null; recurrenceCron: string | null; nextRunAt: Date; }
@@ -106,17 +119,36 @@ translatedPostsRouter.post('/', requireGuildPermission('translate.manage'), rece
   if (!LANGUAGE_CODES.includes(targetLang) || (sourceLang !== 'auto' && !LANGUAGE_CODES.includes(sourceLang))) { res.status(400).json({ error: 'Ungültige Sprache.' }); return; }
   if (!customTitle) { res.status(400).json({ error: 'Titel ist erforderlich.' }); return; } if (!MODES.has(mode)) { res.status(400).json({ error: 'Ungültiger Modus.' }); return; }
   const fileError = validateIncomingImage(req.file); if (fileError) { res.status(400).json({ error: fileError }); return; }
-  const legacy = validLegacyImageUrl(body.imageUrl); if (!legacy.ok) { res.status(400).json({ error: legacy.reason }); return; }
+  const imageInput = parseImageInput(body.imageUrl); if (!imageInput.ok) { res.status(400).json({ error: imageInput.reason }); return; }
+  if (!req.file && imageInput.kind === 'managed') { res.status(400).json({ error: 'Bestehende Upload-Referenzen dürfen nicht für neue Posts wiederverwendet werden. Bitte das Bild neu hochladen.' }); return; }
   const sched = computeSchedule(mode, body); if (!sched.ok) { res.status(400).json({ error: sched.reason }); return; }
   const channel = await ensureChannel(guildId, channelId); if (!channel.ok) { res.status(400).json({ error: channel.reason ?? 'Ziel-Channel ungültig.' }); return; }
-  let imageRef = legacy.value;
+
+  let imageRef: string | null = null;
+  let createdImageRef: string | null = null;
+  if (req.file) {
+    imageRef = await saveTranslatedPostImage(guildId, req.file);
+    createdImageRef = imageRef;
+  } else if (imageInput.kind === 'remote') {
+    try {
+      imageRef = await saveTranslatedPostImageFromUrl(guildId, imageInput.value);
+      createdImageRef = imageRef;
+    } catch {
+      res.status(400).json({ error: 'Remote-Bild konnte nicht sicher geladen und validiert werden.' });
+      return;
+    }
+  }
+
   try {
-    if (req.file) imageRef = await saveTranslatedPostImage(guildId, req.file);
     const post = await prisma.translatedPost.create({ data: { guildId, channelId, createdBy: actorDiscordId, sourceText, sourceLang, targetLang, customTitle, imageUrl: imageRef,
       rolePings: normalizeRolePings(body.rolePings), mode, scheduledFor: sched.scheduledFor, recurrenceCron: sched.recurrenceCron, nextRunAt: sched.nextRunAt, isActive: true } });
     logAuditDb('TRANSLATED_POST_CREATED', 'TRANSLATE', { actorUserId: req.auth!.userId, guildId, details: { postId: post.id, mode, targetLang, hasImage: Boolean(imageRef) } });
     emitGuildEvent(guildId, { type: 'translatedPost.changed', payload: { guildId, postId: post.id } }); res.status(201).json(postToApi(post as PostRow));
-  } catch (error) { if (req.file && imageRef) await removeTranslatedPostImage(imageRef); throw error; }
+  } catch (error) {
+    if (createdImageRef) await removeTranslatedPostImage(createdImageRef);
+    logger.error('TranslatedPost-Create fehlgeschlagen:', error as Error);
+    res.status(500).json({ error: 'Übersetzungs-Post konnte nicht gespeichert werden.' });
+  }
 });
 
 translatedPostsRouter.put('/:id', requireGuildPermission('translate.manage'), receiveImage, async (req, res) => {
@@ -130,16 +162,40 @@ translatedPostsRouter.put('/:id', requireGuildPermission('translate.manage'), re
   if (body.rolePings !== undefined) data.rolePings = normalizeRolePings(body.rolePings);
   if (body.mode !== undefined || body.scheduledAt !== undefined || body.recurrence !== undefined) { const mode = typeof body.mode === 'string' && MODES.has(body.mode) ? body.mode : existing.mode; const sched = computeSchedule(mode, body); if (!sched.ok) { res.status(400).json({ error: sched.reason }); return; } data.mode = mode; data.scheduledFor = sched.scheduledFor; data.recurrenceCron = sched.recurrenceCron; data.nextRunAt = sched.nextRunAt; }
   const fileError = validateIncomingImage(req.file); if (fileError) { res.status(400).json({ error: fileError }); return; }
-  const removeImage = parseBoolean(body.removeImage); let replacementRef: string | null = null; let replacingImage = false;
-  if (!req.file && body.imageUrl !== undefined) { const legacy = validLegacyImageUrl(body.imageUrl); if (!legacy.ok) { res.status(400).json({ error: legacy.reason }); return; } data.imageUrl = legacy.value; replacingImage = legacy.value !== existing.imageUrl; }
+  const removeImage = parseBoolean(body.removeImage);
+  const imageInput = !req.file && body.imageUrl !== undefined ? parseImageInput(body.imageUrl) : null;
+  if (imageInput && !imageInput.ok) { res.status(400).json({ error: imageInput.reason }); return; }
+  if (imageInput?.ok && imageInput.kind === 'managed' && imageInput.value !== existing.imageUrl) {
+    res.status(400).json({ error: 'Eine andere Upload-Referenz darf nicht übernommen werden. Bitte das Bild neu hochladen.' });
+    return;
+  }
+
+  let replacementRef: string | null = null;
+  let replacingImage = false;
+  if (!req.file && !removeImage && imageInput?.ok && imageInput.kind === 'remote' && imageInput.value !== existing.imageUrl) {
+    try {
+      replacementRef = await saveTranslatedPostImageFromUrl(guildId, imageInput.value);
+      data.imageUrl = replacementRef;
+      replacingImage = true;
+    } catch {
+      res.status(400).json({ error: 'Remote-Bild konnte nicht sicher geladen und validiert werden.' });
+      return;
+    }
+  }
+
   try {
     if (req.file) { replacementRef = await saveTranslatedPostImage(guildId, req.file); data.imageUrl = replacementRef; replacingImage = true; }
     else if (removeImage) { data.imageUrl = null; replacingImage = Boolean(existing.imageUrl); }
+    else if (imageInput?.ok && imageInput.kind === 'none' && existing.imageUrl) { data.imageUrl = null; replacingImage = true; }
     await prisma.translatedPost.update({ where: { id: existing.id }, data });
     if (replacingImage && existing.imageUrl && existing.imageUrl !== data.imageUrl) await removeTranslatedPostImage(existing.imageUrl);
     const post = await findGuildPost(guildId, existing.id); logAuditDb('TRANSLATED_POST_UPDATED', 'TRANSLATE', { actorUserId: req.auth!.userId, guildId, details: { postId: existing.id, imageChanged: replacingImage } });
     emitGuildEvent(guildId, { type: 'translatedPost.changed', payload: { guildId, postId: existing.id } }); res.json(postToApi(post!));
-  } catch (error) { if (replacementRef) await removeTranslatedPostImage(replacementRef); throw error; }
+  } catch (error) {
+    if (replacementRef) await removeTranslatedPostImage(replacementRef);
+    logger.error('TranslatedPost-Update fehlgeschlagen:', error as Error);
+    res.status(500).json({ error: 'Übersetzungs-Post konnte nicht aktualisiert werden.' });
+  }
 });
 
 translatedPostsRouter.delete('/:id', requireGuildPermission('translate.manage'), async (req, res) => { const { guildId } = req.guildScope!; const existing = await findGuildPost(guildId, req.params.id); if (!existing) { res.status(404).json({ error: 'Post nicht gefunden.' }); return; } await prisma.translatedPost.delete({ where: { id: existing.id } }); if (existing.imageUrl) await removeTranslatedPostImage(existing.imageUrl); logAuditDb('TRANSLATED_POST_DELETED', 'TRANSLATE', { actorUserId: req.auth!.userId, guildId, details: { postId: existing.id } }); emitGuildEvent(guildId, { type: 'translatedPost.changed', payload: { guildId, postId: existing.id } }); res.json({ ok: true }); });

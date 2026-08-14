@@ -5,6 +5,8 @@ import { Colors, Brand, vEmbed } from '../../utils/embedDesign';
 import { safeEmbedDescription, safeEmbedField } from '../../utils/embedSanitize';
 import crypto from 'crypto';
 
+let giveawaySchedulerTimer: NodeJS.Timeout | null = null;
+
 /**
  * Giveaway-Manager (Sektion 6):
  * - Giveaway-Command mit frei wählbarem Item-/Gegenstandsnamen
@@ -242,9 +244,10 @@ export async function drawWinners(giveawayId: string, guildId: string): Promise<
  * Sektion 6: Automatische Gewinnerermittlung nach Ablauf.
  */
 export function startGiveawayScheduler(client: Client): void {
+  if (giveawaySchedulerTimer) return;
   const CHECK_INTERVAL = 3000; // Alle 3 Sekunden
 
-  setInterval(async () => {
+  giveawaySchedulerTimer = setInterval(async () => {
     try {
       // Shard-Filter: nur Giveaways eigener Guilds (oder Legacy ohne guildId).
       // Bei Single-Instance enthaelt der Cache alle Guilds -> No-Op.
@@ -347,6 +350,13 @@ export function startGiveawayScheduler(client: Client): void {
       logger.error('Giveaway-Scheduler Fehler:', error);
     }
   }, CHECK_INTERVAL);
+  giveawaySchedulerTimer.unref?.();
 
   logger.info('Giveaway-Scheduler gestartet.');
+}
+
+export function stopGiveawayScheduler(): void {
+  if (!giveawaySchedulerTimer) return;
+  clearInterval(giveawaySchedulerTimer);
+  giveawaySchedulerTimer = null;
 }

@@ -1,29 +1,93 @@
 /**
- * /guild Namespace — per-Guild Update-Stream.
+ * /guild Namespace — Guild- und Gameserver-Streams.
  *
- * Routing:
- *  Client emittet 'join' { guildId } -> Server prueft Owner-/Permission-Status
- *  und stuft den Socket in den Room `g:<guildId>` ein. Ein Socket darf
- *  in mehreren Rooms parallel sitzen (bei mehreren Owner-Guilds).
+ * Rooms:
+ *  - `g:<guildId>`: guild-weite Konfig-/UI-Aenderungen
+ *  - `gs:<guildId>:<nitradoConnId>`: Gameplay eines EXAKTEN Gameservers
  *
- * Auth-Modell:
- *  - Eingeloggt (Session vorhanden) ist Pflicht.
- *  - Pro Join: Owner-Bypass via Bot-Cache, sonst Permission-Grant lookup.
- *  - Wer keinen Scope hat, bekommt 'join.error' und KEIN Room-Beitritt.
+ * Der Server-Room ist absichtlich enger als der Guild-Room. Live-Gameplay ist
+ * Killfeed-Daten und verlangt Owner oder killfeed.view/manage bzw. den bewusst
+ * delegierbaren dashboard.access-Allzugriff. Ein beliebiger anderer Guild-Scope
+ * reicht NICHT.
  */
 
-import type { Server as IOServer } from 'socket.io';
+import type { Server as IOServer, Socket } from 'socket.io';
 import prisma from '../../database/prisma';
 import { logger } from '../../utils/logger';
 import { tryGetDashboardClient } from '../clientRegistry';
 import type { SocketSessionShape } from './index';
+import { serverRoomName } from './emitter';
 
 interface JoinPayload {
   guildId?: unknown;
 }
 
+interface JoinServerPayload extends JoinPayload {
+  nitradoConnId?: unknown;
+}
+
 function isSnowflake(s: unknown): s is string {
   return typeof s === 'string' && /^[0-9]{17,20}$/.test(s);
+}
+
+function isConnectionId(s: unknown): s is string {
+  return typeof s === 'string' && /^c[a-z0-9]{24}$/.test(s);
+}
+
+export function serverFeedPermissionAllows(isOwner: boolean, permissions: readonly string[]): boolean {
+  if (isOwner) return true;
+  const set = new Set(permissions);
+  return set.has('killfeed.view') || set.has('killfeed.manage') || set.has('dashboard.access');
+}
+
+interface GuildAccessResult {
+  allowed: boolean;
+  isOwner: boolean;
+  permissions: string[];
+}
+
+async function resolveGuildAccess(guildId: string, userDiscordId: string): Promise<GuildAccessResult> {
+  const client = tryGetDashboardClient();
+  const guild = client?.guilds.cache.get(guildId);
+  if (!guild) return { allowed: false, isOwner: false, permissions: [] };
+  const isOwner = guild.ownerId === userDiscordId;
+  if (isOwner) return { allowed: true, isOwner: true, permissions: [] };
+
+  const permissions = new Set<string>();
+  const userGrant = await prisma.guildPermissionGrant.findUnique({
+    where: { guildId_userDiscordId: { guildId, userDiscordId } },
+    select: { permissions: true },
+  });
+  if (userGrant && Array.isArray(userGrant.permissions)) {
+    for (const permission of userGrant.permissions) {
+      if (typeof permission === 'string') permissions.add(permission);
+    }
+  }
+
+  const member = guild.members.cache.get(userDiscordId)
+    ?? await guild.members.fetch(userDiscordId).catch(() => null);
+  if (member) {
+    const roleIds = [...member.roles.cache.keys()];
+    if (roleIds.length > 0) {
+      const roleGrants = await prisma.guildPermissionRoleGrant.findMany({
+        where: { guildId, roleDiscordId: { in: roleIds } },
+        select: { permissions: true },
+      });
+      for (const grant of roleGrants) {
+        if (!Array.isArray(grant.permissions)) continue;
+        for (const permission of grant.permissions) {
+          if (typeof permission === 'string') permissions.add(permission);
+        }
+      }
+    }
+  }
+
+  return { allowed: permissions.size > 0, isOwner: false, permissions: [...permissions] };
+}
+
+function sessionFor(socket: Socket): SocketSessionShape {
+  const req = socket.request as { session?: SocketSessionShape };
+  return req.session as SocketSessionShape;
 }
 
 export function registerGuildNamespace(io: IOServer): void {
@@ -44,8 +108,7 @@ export function registerGuildNamespace(io: IOServer): void {
   });
 
   ns.on('connection', socket => {
-    const req = socket.request as { session?: SocketSessionShape };
-    const session = req.session as SocketSessionShape;
+    const session = sessionFor(socket);
     const userDiscordId = session.discordId!;
     logger.debug(`/guild verbunden: ${socket.id} (user=${userDiscordId})`);
 
@@ -56,18 +119,8 @@ export function registerGuildNamespace(io: IOServer): void {
         return;
       }
       try {
-        const client = tryGetDashboardClient();
-        const guild = client?.guilds.cache.get(gid);
-        const isOwner = guild?.ownerId === userDiscordId;
-
-        let allowed = isOwner;
-        if (!allowed) {
-          const grant = await prisma.guildPermissionGrant.findUnique({
-            where: { guildId_userDiscordId: { guildId: gid, userDiscordId } },
-          });
-          allowed = !!grant && Array.isArray(grant.permissions) && grant.permissions.length > 0;
-        }
-        if (!allowed) {
+        const access = await resolveGuildAccess(gid, userDiscordId);
+        if (!access.allowed) {
           socket.emit('join.error', { guildId: gid, error: 'kein Scope fuer diese Guild' });
           return;
         }
@@ -79,11 +132,59 @@ export function registerGuildNamespace(io: IOServer): void {
       }
     });
 
+    socket.on('join.server', async (payload: JoinServerPayload) => {
+      const gid = payload?.guildId;
+      const connId = payload?.nitradoConnId;
+      if (!isSnowflake(gid) || !isConnectionId(connId)) {
+        socket.emit('join.server.error', { error: 'guildId/nitradoConnId ungueltig' });
+        return;
+      }
+      try {
+        const access = await resolveGuildAccess(gid, userDiscordId);
+        if (!serverFeedPermissionAllows(access.isOwner, access.permissions)) {
+          socket.emit('join.server.error', { guildId: gid, nitradoConnId: connId, error: 'killfeed.view erforderlich' });
+          return;
+        }
+
+        // Fail-closed: nur ein aktuell aktiver, gebundener Slot 1..4 darf einen
+        // Live-Gameserver-Room besitzen. Legacy-Slot 5 und fremde Guilds fallen
+        // konstruktiv durch diese Abfrage.
+        const conn = await prisma.nitradoConnection.findFirst({
+          where: {
+            id: connId,
+            guildId: gid,
+            status: 'ACTIVE',
+            nitradoServerId: { not: null },
+            slot: { gte: 1, lte: 4 },
+          },
+          select: { id: true },
+        });
+        if (!conn) {
+          socket.emit('join.server.error', { guildId: gid, nitradoConnId: connId, error: 'Gameserver nicht aktiv/gebunden' });
+          return;
+        }
+
+        await socket.join(serverRoomName(gid, connId));
+        socket.emit('join.server.ok', { guildId: gid, nitradoConnId: connId });
+      } catch (e) {
+        logger.error('Gameserver-Room-Join-Fehler:', e as Error);
+        socket.emit('join.server.error', { guildId: gid, nitradoConnId: connId, error: 'internal' });
+      }
+    });
+
     socket.on('leave', async (payload: JoinPayload) => {
       const gid = payload?.guildId;
       if (!isSnowflake(gid)) return;
       await socket.leave(`g:${gid}`);
       socket.emit('leave.ok', { guildId: gid });
+    });
+
+    socket.on('leave.server', async (payload: JoinServerPayload) => {
+      const gid = payload?.guildId;
+      const connId = payload?.nitradoConnId;
+      if (!isSnowflake(gid) || !isConnectionId(connId)) return;
+      await socket.leave(serverRoomName(gid, connId));
+      socket.emit('leave.server.ok', { guildId: gid, nitradoConnId: connId });
     });
 
     socket.on('disconnect', reason => {

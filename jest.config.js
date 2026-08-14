@@ -8,6 +8,10 @@ module.exports = {
   // Live-DB und Test-Guild.
   testPathIgnorePatterns: ['/node_modules/', '/tests/e2e-live/'],
   moduleNameMapper: {
+    // Node16/TS source uses emitted `.js` specifiers for dynamic imports.
+    // During ts-jest there are only `.ts` source files, so strip the emitted
+    // extension to make Jest resolve the same module/mocks as production does.
+    '^(\\.{1,2}/.*)\\.js$': '$1',
     '^@utils/(.*)$': '<rootDir>/src/utils/$1',
     '^@modules/(.*)$': '<rootDir>/src/modules/$1',
     '^@commands/(.*)$': '<rootDir>/src/commands/$1',

@@ -61,9 +61,9 @@ describe('Screenshot regressions', () => {
     expect(findMatchingTrigger(GLOBAL_AI_TRIGGERS, text, true)).toBeNull();
   });
 
-  test('echte Entwicklerfragen funktionieren weiterhin', () => {
+  test('echte Entwicklerfragen respektieren die Mention-only-Aktivierung', () => {
     expect(isDeveloperIdentityQuestion('Wer steckt hinter V-Bot?')).toBe(true);
-    expect(findMatchingTrigger(GLOBAL_AI_TRIGGERS, 'Wer steckt hinter V-Bot?', false)?.id).toBe('erschaffer');
+    expect(findMatchingTrigger(GLOBAL_AI_TRIGGERS, 'Wer steckt hinter V-Bot?', false)).toBeNull();
     expect(findMatchingTrigger(GLOBAL_AI_TRIGGERS, 'Wer ist dein Entwickler?', true)?.id).toBe('system-developer-identity');
   });
 });

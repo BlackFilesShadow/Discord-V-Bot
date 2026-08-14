@@ -1,0 +1,17 @@
+/// Persistenter Diagnosezustand fuer Nitrado-Tokenpruefungen (NIT-001).
+/// Bewusst getrennt von NitradoConnection: Betriebsdiagnostik darf das
+/// Connection-/Slot-Datenmodell nicht aufblasen und kann unabhaengig resettet
+/// werden. Scope bleibt strikt Guild + Connection.
+model NitradoValidationHealth {
+  guildId          String
+  nitradoConnId    String
+  failureCount     Int      @default(0)
+  lastErrorMessage String?  @db.Text
+  lastFailureAt    DateTime?
+  lastAlertAt      DateTime?
+  createdAt        DateTime @default(now())
+  updatedAt        DateTime @updatedAt
+
+  @@id([guildId, nitradoConnId])
+  @@index([nitradoConnId])
+}

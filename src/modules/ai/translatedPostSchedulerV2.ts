@@ -5,7 +5,7 @@ import prisma from '../../database/prisma';
 import { logger } from '../../utils/logger';
 import { Colors, Brand } from '../../utils/embedDesign';
 import { safeEmbedDescription, safeEmbedTitle, safeEmbedAuthor } from '../../utils/embedSanitize';
-import { resolveTranslatedPostImage } from './translatedPostImage';
+import { resolveTranslatedPostImage, saveTranslatedPostImageFromUrl, removeTranslatedPostImage } from './translatedPostImage';
 import { translate, getLanguageName, SUPPORTED_LANGUAGES } from './translator';
 
 export function buildTranslatePostEmbed(opts: { guild: Guild | null; translated: string; targetLang: string; imageUrl?: string | null; customTitle?: string | null }): EmbedBuilder {
@@ -101,14 +101,41 @@ async function sendPost(client: Client, post: { id: string; guildId: string; cha
   if (rest.length) segments.push(rest);
   if (!segments.length) segments.push('_(leer)_');
   const channel = rawChannel as TextChannel | NewsChannel | ThreadChannel;
-  const managed = resolveTranslatedPostImage(post.imageUrl);
+
+  // Phase 9: Neue wie auch bereits gespeicherte Legacy-http(s)-Bilder duerfen
+  // niemals direkt von Discord als Remote-Embed geladen werden. Vor dem Versand
+  // werden sie SSRF-sicher heruntergeladen, per Magic Bytes validiert und in das
+  // persistente Upload-Volume ueberfuehrt. Bei Fehlern wird fail-closed ohne Bild
+  // gesendet, statt die ungepruefte Remote-URL weiterzureichen.
+  let imageRef = post.imageUrl;
+  let managed = resolveTranslatedPostImage(imageRef);
+  if (!managed && imageRef && /^https?:\/\//i.test(imageRef)) {
+    let migratedRef: string | null = null;
+    try {
+      migratedRef = await saveTranslatedPostImageFromUrl(post.guildId, imageRef);
+      try {
+        await prisma.translatedPost.update({ where: { id: post.id }, data: { imageUrl: migratedRef } });
+      } catch (error) {
+        // Die neue Datei darf erst als aktiv gelten, wenn die DB-Referenz
+        // erfolgreich umgestellt wurde. Bei DB-Fehler sofort zurückrollen.
+        await removeTranslatedPostImage(migratedRef);
+        throw error;
+      }
+      imageRef = migratedRef;
+      managed = resolveTranslatedPostImage(imageRef);
+    } catch (error) {
+      logger.warn(`translatedPostScheduler: Remote-Bild fuer ${post.id} verworfen: ${String(error)}`);
+      imageRef = null;
+      managed = null;
+    }
+  }
   const local = managed && existsSync(managed.path) ? managed : null;
-  const legacy = !managed && post.imageUrl && /^https?:\/\//i.test(post.imageUrl) ? post.imageUrl : null;
   if (managed && !local) logger.warn(`translatedPostScheduler: Bilddatei fuer ${post.id} fehlt.`);
+
   let first = true;
   for (const segment of segments) {
     const attachment = first && local ? new AttachmentBuilder(local.path, { name: local.name }) : null;
-    const imageUrl = first ? (attachment ? `attachment://${local!.name}` : legacy) : null;
+    const imageUrl = first && attachment ? `attachment://${local!.name}` : null;
     const embed = buildTranslatePostEmbed({ guild: channel.guild ?? null, translated: segment, targetLang: post.targetLang, imageUrl, customTitle: post.customTitle });
     try {
       await channel.send({ content: first && pings ? pings : undefined, embeds: [embed], files: attachment ? [attachment] : undefined, allowedMentions: { roles: roleIds, parse: wantsEveryone ? ['everyone'] : [] } });
@@ -128,8 +155,16 @@ async function sendPost(client: Client, post: { id: string; guildId: string; cha
 export function startTranslatedPostScheduler(client: Client): void {
   if (scheduler) return;
   scheduler = setInterval(() => { void runDuePosts(client); }, POLL_INTERVAL_MS);
+  scheduler.unref?.();
   logger.info(`translatedPostScheduler: gestartet (alle ${POLL_INTERVAL_MS / 1000}s).`);
 }
+
+export function stopTranslatedPostScheduler(): void {
+  if (!scheduler) return;
+  clearInterval(scheduler);
+  scheduler = null;
+}
+
 export function isTextSendable(type: ChannelType): boolean {
   return type === ChannelType.GuildText || type === ChannelType.GuildAnnouncement || type === ChannelType.PublicThread || type === ChannelType.PrivateThread || type === ChannelType.AnnouncementThread;
 }

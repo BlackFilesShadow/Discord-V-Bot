@@ -5,19 +5,23 @@
  * clientSeed (User-Input), nonce (BigInt-Counter pro Game). Outcome
  * wird via HMAC-SHA256 deterministisch ermittelt (siehe `roll()`).
  *
- * Atomicity: Bet-Abzug + Payout-Gutschrift + Round-Insert in einer
- * Prisma-Transaktion mit `walletBalance >= bet` als Race-Guard.
+ * Phase 4 / ECO-S01..S05: JEDE Casino-Datenoperation ist an
+ * guildId + nitradoConnId gebunden. Bis schema.prisma den additiven
+ * Server-Scope vollstaendig abbildet, werden die bereits migrierten
+ * Spalten hier ausschliesslich ueber statische, parameterisierte Raw-SQL-
+ * Statements adressiert.
  */
 
 import {
   SlashCommandBuilder, ChatInputCommandInteraction, EmbedBuilder, MessageFlags,
 } from 'discord.js';
-import { createHmac, randomBytes } from 'crypto';
+import { createHmac, randomBytes, randomUUID } from 'crypto';
 import type { CasinoGameType } from '@prisma/client';
 import type { Command } from '../../types';
 import prisma from '../../database/prisma';
 import { withGuildScope } from '../middleware/withGuildScope';
 import { getConfig } from '../../modules/economy/repository';
+import { assertEconomyScopeReady } from '../../modules/economy/scopeMigration';
 import { asUserDiscordId } from '../../types/scope';
 import type { GuildScope, UserDiscordId } from '../../types/scope';
 import { logAudit } from '../../utils/logger';
@@ -26,6 +30,31 @@ import { Colors } from '../../utils/embedDesign';
 import { buildStatusEmbed } from '../../utils/statusEmbed';
 
 function fmt(n: bigint): string { return n.toLocaleString('de-DE'); }
+
+type RawDb = {
+  $queryRawUnsafe<T = unknown>(query: string, ...values: unknown[]): Promise<T>;
+  $executeRawUnsafe(query: string, ...values: unknown[]): Promise<number>;
+};
+
+interface CasinoGameDbRow {
+  id: string;
+  enabled: boolean;
+  winChancePct: number;
+  minBet: bigint;
+  maxBet: bigint;
+  payoutMult: number;
+}
+
+interface CasinoRoundStatsRow {
+  bet: bigint;
+  payout: bigint;
+  gameId: string;
+}
+
+async function queryOne<T>(db: RawDb, sql: string, ...values: unknown[]): Promise<T | null> {
+  const rows = await db.$queryRawUnsafe<T[]>(sql, ...values);
+  return rows[0] ?? null;
+}
 
 // §4.12: Casino-Fehler immer als ERROR-Status-Embed, nicht als Klartext.
 async function statusFail(i: ChatInputCommandInteraction, e: unknown): Promise<void> {
@@ -56,7 +85,6 @@ function buildRoundEmbed(args: {
 }): EmbedBuilder {
   const net = args.payout - args.bet;
   const netStr = (net >= 0n ? '+' : '') + fmt(net);
-  // §4: Ausgang mit Statussymbol; Unentschieden (net 0) = gelb.
   const outcome: 'WON' | 'LOST' | 'DRAW' = args.payout === args.bet ? 'DRAW' : args.won ? 'WON' : 'LOST';
   const meta = outcome === 'WON'
     ? { sym: '✅', word: 'Gewonnen', color: Colors.Success }
@@ -84,19 +112,12 @@ function buildRoundEmbed(args: {
   return e;
 }
 
-/**
- * Hash des serverSeed fuer die Audit-Anzeige (kuerzt 64 Hex auf 16).
- */
 function shortHash(seed: string): string {
   return createHmac('sha256', 'public-display').update(seed).digest('hex').slice(0, 16);
 }
 
-/**
- * Provably-Fair Roll: HMAC(serverSeed, clientSeed:nonce) → BigInt → 0..maxExclusive-1.
- */
 function roll(serverSeed: string, clientSeed: string, nonce: bigint, maxExclusive: number): number {
   const h = createHmac('sha256', serverSeed).update(`${clientSeed}:${nonce.toString()}`).digest('hex');
-  // Erste 13 Hex-Chars = 52 Bit, sicher in JS-Number-Bereich.
   const slice = h.slice(0, 13);
   const v = Number.parseInt(slice, 16);
   return v % maxExclusive;
@@ -108,9 +129,7 @@ interface PlayResult {
   details: Record<string, unknown>;
 }
 
-/**
- * Atomare Bet-Verbuchung + Round-Insert. Wirft bei zu wenig Wallet.
- */
+/** Atomare, servergescopte Bet-Verbuchung + Round-Insert. */
 async function playRound(args: {
   scope: GuildScope;
   type: CasinoGameType;
@@ -118,9 +137,16 @@ async function playRound(args: {
   clientSeed: string | null;
   decide: (game: { winChancePct: number; payoutMult: number }, serverSeed: string, nonce: bigint) => PlayResult;
 }): Promise<{ result: PlayResult; serverSeed: string; nonce: bigint; gameRowId: string }> {
-  const game = await prisma.casinoGame.findUnique({
-    where: { guildId_type: { guildId: args.scope.guildId, type: args.type } },
-  });
+  const nitradoConnId = args.scope.nitradoConnId;
+  if (!nitradoConnId) throw new Error('Kein Gameserver-Scope fuer Casino aufgeloest.');
+  await assertEconomyScopeReady(args.scope.guildId, nitradoConnId);
+
+  const db = prisma as unknown as RawDb;
+  const game = await queryOne<CasinoGameDbRow>(
+    db,
+    'SELECT "id", "enabled", "winChancePct", "minBet", "maxBet", "payoutMult" FROM "CasinoGame" WHERE "guildId" = $1 AND "nitradoConnId" = $2 AND "type" = $3::"CasinoGameType" LIMIT 1',
+    String(args.scope.guildId), String(nitradoConnId), args.type,
+  );
   if (!game || !game.enabled) throw new Error('Spiel ist deaktiviert.');
   if (args.bet < game.minBet) throw new Error(`Mindesteinsatz: ${fmt(game.minBet)}`);
   if (args.bet > game.maxBet) throw new Error(`Hoechsteinsatz: ${fmt(game.maxBet)}`);
@@ -128,67 +154,51 @@ async function playRound(args: {
   const serverSeed = randomBytes(32).toString('hex');
 
   return prisma.$transaction(async tx => {
-    // Atomarer Bet-Abzug
-    const upd = await tx.economyAccount.updateMany({
-      where: {
-        guildId: args.scope.guildId,
-        userDiscordId: args.scope.actorDiscordId,
-        walletBalance: { gte: args.bet },
-      },
-      data: { walletBalance: { decrement: args.bet }, lifetimeSpent: { increment: args.bet } },
-    });
-    if (upd.count !== 1) throw new Error('Unzureichendes Guthaben.');
+    const tdb = tx as unknown as RawDb;
+    const updated = await tdb.$executeRawUnsafe(
+      'UPDATE "EconomyAccount" SET "walletBalance" = "walletBalance" - $4, "lifetimeSpent" = "lifetimeSpent" + $4, "updatedAt" = CURRENT_TIMESTAMP WHERE "guildId" = $1 AND "nitradoConnId" = $2 AND "userDiscordId" = $3 AND "walletBalance" >= $4',
+      String(args.scope.guildId), String(nitradoConnId), String(args.scope.actorDiscordId), args.bet,
+    );
+    if (updated !== 1) throw new Error('Unzureichendes Guthaben.');
 
-    await tx.economyTransaction.create({
-      data: {
-        guildId: args.scope.guildId, userDiscordId: args.scope.actorDiscordId,
-        delta: -args.bet, type: 'CASINO_BET', reason: args.type, actorDiscordId: args.scope.actorDiscordId,
-      },
-    });
+    await tdb.$executeRawUnsafe(
+      'INSERT INTO "EconomyTransaction" ("id", "guildId", "nitradoConnId", "userDiscordId", "delta", "type", "reason", "actorDiscordId", "counterpartDiscordId", "createdAt") VALUES ($1,$2,$3,$4,$5,$6::"EconomyTxType",$7,$8,NULL,CURRENT_TIMESTAMP)',
+      randomUUID(), String(args.scope.guildId), String(nitradoConnId), String(args.scope.actorDiscordId),
+      -args.bet, 'CASINO_BET', args.type, String(args.scope.actorDiscordId),
+    );
 
-    // Nonce erhoehen via count of prior rounds (best-effort uniqueness; fuer "echtes" Counting laeuft
-    // ein ServerSeed-Rotations-Job spaeter. Hier reicht der Zaehler).
-    const priorCount = await tx.casinoRound.count({
-      where: { guildId: args.scope.guildId, gameId: game.id, userDiscordId: args.scope.actorDiscordId },
-    });
-    const nonce = BigInt(priorCount);
+    const countRow = await queryOne<{ count: bigint }>(
+      tdb,
+      'SELECT COUNT(*)::bigint AS "count" FROM "CasinoRound" WHERE "guildId" = $1 AND "nitradoConnId" = $2 AND "gameId" = $3 AND "userDiscordId" = $4',
+      String(args.scope.guildId), String(nitradoConnId), game.id, String(args.scope.actorDiscordId),
+    );
+    const nonce = countRow?.count ?? 0n;
 
     const result = args.decide({ winChancePct: game.winChancePct, payoutMult: game.payoutMult }, serverSeed, nonce);
 
     if (result.won && result.payout > 0n) {
-      await tx.economyAccount.update({
-        where: { guildId_userDiscordId: { guildId: args.scope.guildId, userDiscordId: args.scope.actorDiscordId } },
-        data: { walletBalance: { increment: result.payout }, lifetimeEarned: { increment: result.payout } },
-      });
-      await tx.economyTransaction.create({
-        data: {
-          guildId: args.scope.guildId, userDiscordId: args.scope.actorDiscordId,
-          delta: result.payout, type: 'CASINO_PAYOUT', reason: args.type, actorDiscordId: args.scope.actorDiscordId,
-        },
-      });
+      const paid = await tdb.$executeRawUnsafe(
+        'UPDATE "EconomyAccount" SET "walletBalance" = "walletBalance" + $4, "lifetimeEarned" = "lifetimeEarned" + $4, "updatedAt" = CURRENT_TIMESTAMP WHERE "guildId" = $1 AND "nitradoConnId" = $2 AND "userDiscordId" = $3',
+        String(args.scope.guildId), String(nitradoConnId), String(args.scope.actorDiscordId), result.payout,
+      );
+      if (paid !== 1) throw new Error('Casino-Auszahlung konnte keinem Serverkonto zugeordnet werden.');
+      await tdb.$executeRawUnsafe(
+        'INSERT INTO "EconomyTransaction" ("id", "guildId", "nitradoConnId", "userDiscordId", "delta", "type", "reason", "actorDiscordId", "counterpartDiscordId", "createdAt") VALUES ($1,$2,$3,$4,$5,$6::"EconomyTxType",$7,$8,NULL,CURRENT_TIMESTAMP)',
+        randomUUID(), String(args.scope.guildId), String(nitradoConnId), String(args.scope.actorDiscordId),
+        result.payout, 'CASINO_PAYOUT', args.type, String(args.scope.actorDiscordId),
+      );
     }
 
-    await tx.casinoRound.create({
-      data: {
-        gameId: game.id,
-        guildId: args.scope.guildId,
-        userDiscordId: args.scope.actorDiscordId,
-        bet: args.bet,
-        payout: result.payout,
-        result: result as unknown as object,
-        serverSeed,
-        clientSeed: args.clientSeed,
-        nonce,
-      },
-    });
+    await tdb.$executeRawUnsafe(
+      'INSERT INTO "CasinoRound" ("id", "gameId", "guildId", "nitradoConnId", "userDiscordId", "bet", "payout", "result", "serverSeed", "clientSeed", "nonce", "createdAt") VALUES ($1,$2,$3,$4,$5,$6,$7,$8::jsonb,$9,$10,$11,CURRENT_TIMESTAMP)',
+      randomUUID(), game.id, String(args.scope.guildId), String(nitradoConnId), String(args.scope.actorDiscordId),
+      args.bet, result.payout, JSON.stringify(result, (_key, value) => typeof value === 'bigint' ? value.toString() : value), serverSeed, args.clientSeed, nonce,
+    );
 
     return { result, serverSeed, nonce, gameRowId: game.id };
   });
 }
 
-// ============================================================
-// /slot
-// ============================================================
 export const slotCommand: Command = {
   data: new SlashCommandBuilder()
     .setName('slot')
@@ -206,8 +216,8 @@ export const slotCommand: Command = {
         },
       });
     } catch (e) { await statusFail(i, e); return; }
-    const cfg = await getConfig(scope.guildId);
-    emitGuildEvent(scope.guildId, { type: 'casino.round', payload: { guildId: scope.guildId, gameType: 'SLOT', payout: out.result.payout.toString() } });
+    const cfg = await getConfig(scope.guildId, scope.nitradoConnId!);
+    emitGuildEvent(scope.guildId, { type: 'casino.round', payload: { guildId: scope.guildId, nitradoConnId: scope.nitradoConnId, gameType: 'SLOT', payout: out.result.payout.toString() } });
     const embed = buildRoundEmbed({
       i, title: 'Slot-Maschine', emoji: '\uD83C\uDFB0',
       won: out.result.won, bet, payout: out.result.payout, coin: cfg.emoji,
@@ -218,9 +228,6 @@ export const slotCommand: Command = {
   }),
 };
 
-// ============================================================
-// /coinflip
-// ============================================================
 export const coinflipCommand: Command = {
   data: new SlashCommandBuilder()
     .setName('coinflip')
@@ -238,7 +245,6 @@ export const coinflipCommand: Command = {
         scope, type: 'COINFLIP', bet, clientSeed: choice,
         decide: (g, s, n) => {
           const flip = roll(s, choice, n, 2) === 0 ? 'KOPF' : 'ZAHL';
-          // Falls winChancePct < 50, kann das Spiel "manipuliert" sein — dann gewinnt nur wenn auch Glueck.
           const fair = flip === choice;
           const lucky = roll(s, `${choice}:luck`, n, 100) < g.winChancePct;
           const won = fair && lucky;
@@ -246,9 +252,9 @@ export const coinflipCommand: Command = {
         },
       });
     } catch (e) { await statusFail(i, e); return; }
-    const cfg = await getConfig(scope.guildId);
+    const cfg = await getConfig(scope.guildId, scope.nitradoConnId!);
     const flip = (out.result.details as { flip: string }).flip;
-    emitGuildEvent(scope.guildId, { type: 'casino.round', payload: { guildId: scope.guildId, gameType: 'COINFLIP', payout: out.result.payout.toString() } });
+    emitGuildEvent(scope.guildId, { type: 'casino.round', payload: { guildId: scope.guildId, nitradoConnId: scope.nitradoConnId, gameType: 'COINFLIP', payout: out.result.payout.toString() } });
     const embed = buildRoundEmbed({
       i, title: 'Coinflip', emoji: '\uD83E\uDE99',
       won: out.result.won, bet, payout: out.result.payout, coin: cfg.emoji,
@@ -262,9 +268,6 @@ export const coinflipCommand: Command = {
   }),
 };
 
-// ============================================================
-// /dice
-// ============================================================
 export const diceCommand: Command = {
   data: new SlashCommandBuilder()
     .setName('dice')
@@ -285,9 +288,9 @@ export const diceCommand: Command = {
         },
       });
     } catch (e) { await statusFail(i, e); return; }
-    const cfg = await getConfig(scope.guildId);
+    const cfg = await getConfig(scope.guildId, scope.nitradoConnId!);
     const rolled = (out.result.details as { rolled: number }).rolled;
-    emitGuildEvent(scope.guildId, { type: 'casino.round', payload: { guildId: scope.guildId, gameType: 'DICE', payout: out.result.payout.toString() } });
+    emitGuildEvent(scope.guildId, { type: 'casino.round', payload: { guildId: scope.guildId, nitradoConnId: scope.nitradoConnId, gameType: 'DICE', payout: out.result.payout.toString() } });
     const embed = buildRoundEmbed({
       i, title: 'Würfel', emoji: '\uD83C\uDFB2',
       won: out.result.won, bet, payout: out.result.payout, coin: cfg.emoji,
@@ -301,9 +304,6 @@ export const diceCommand: Command = {
   }),
 };
 
-// ============================================================
-// /blackjack — vereinfacht (Single-Shot, keine Hit/Stand-UI)
-// ============================================================
 export const blackjackCommand: Command = {
   data: new SlashCommandBuilder()
     .setName('blackjack')
@@ -316,7 +316,6 @@ export const blackjackCommand: Command = {
       out = await playRound({
         scope, type: 'BLACKJACK', bet, clientSeed: 'bj',
         decide: (g, s, n) => {
-          // 4 Karten ziehen: P1, D1, P2, D2; danach Player zieht so lang er <17 hat.
           const draw = (k: number) => (roll(s, `card:${k}`, n, 13) % 13) + 1;
           const cardVal = (c: number) => (c >= 10 ? 10 : c === 1 ? 11 : c);
           const player = [draw(0), draw(2)];
@@ -336,7 +335,6 @@ export const blackjackCommand: Command = {
           const playerBust = ps > 21;
           const dealerBust = ds > 21;
           const won = !playerBust && (dealerBust || ps > ds);
-          // Subtle Hausvorteil via winChancePct: Bei Tie kann das Haus nach Wahrscheinlichkeit wegnehmen
           const tie = !playerBust && !dealerBust && ps === ds;
           const tieKept = tie && roll(s, 'tie', n, 100) < g.winChancePct;
           const finalWon = won || tieKept;
@@ -348,9 +346,9 @@ export const blackjackCommand: Command = {
         },
       });
     } catch (e) { await statusFail(i, e); return; }
-    const cfg = await getConfig(scope.guildId);
+    const cfg = await getConfig(scope.guildId, scope.nitradoConnId!);
     const d = out.result.details as { player: number[]; dealer: number[]; ps: number; ds: number; tie: boolean };
-    emitGuildEvent(scope.guildId, { type: 'casino.round', payload: { guildId: scope.guildId, gameType: 'BLACKJACK', payout: out.result.payout.toString() } });
+    emitGuildEvent(scope.guildId, { type: 'casino.round', payload: { guildId: scope.guildId, nitradoConnId: scope.nitradoConnId, gameType: 'BLACKJACK', payout: out.result.payout.toString() } });
     const embed = buildRoundEmbed({
       i, title: 'Blackjack', emoji: '\uD83C\uDCCF',
       won: out.result.won, bet, payout: out.result.payout, coin: cfg.emoji,
@@ -366,9 +364,6 @@ export const blackjackCommand: Command = {
   }),
 };
 
-// ============================================================
-// /casino-stats
-// ============================================================
 export const casinoStatsCommand: Command = {
   data: new SlashCommandBuilder()
     .setName('casino-stats')
@@ -377,10 +372,12 @@ export const casinoStatsCommand: Command = {
   execute: withGuildScope({ requireSlotToggle: 'economyActive' }, async (i, scope) => {
     const target = i.options.getUser('user') ?? i.user;
     const targetId: UserDiscordId = asUserDiscordId(target.id);
-    const rows = await prisma.casinoRound.findMany({
-      where: { guildId: scope.guildId, userDiscordId: targetId },
-      select: { bet: true, payout: true, gameId: true },
-    });
+    if (!scope.nitradoConnId) throw new Error('Kein Gameserver-Scope fuer Casino aufgeloest.');
+    await assertEconomyScopeReady(scope.guildId, scope.nitradoConnId);
+    const rows = await (prisma as unknown as RawDb).$queryRawUnsafe<CasinoRoundStatsRow[]>(
+      'SELECT "bet", "payout", "gameId" FROM "CasinoRound" WHERE "guildId" = $1 AND "nitradoConnId" = $2 AND "userDiscordId" = $3 ORDER BY "createdAt" DESC',
+      String(scope.guildId), String(scope.nitradoConnId), String(targetId),
+    );
     if (rows.length === 0) {
       const empty = buildStatusEmbed({
         status: 'INFO',
@@ -397,7 +394,7 @@ export const casinoStatsCommand: Command = {
       payout += r.payout;
       if (r.payout > 0n) wins++;
     }
-    const cfg = await getConfig(scope.guildId);
+    const cfg = await getConfig(scope.guildId, scope.nitradoConnId);
     const net = payout - bet;
     const netStr = (net >= 0n ? '+' : '') + fmt(net);
     const e = new EmbedBuilder()
@@ -414,6 +411,6 @@ export const casinoStatsCommand: Command = {
       .setFooter({ text: 'V-Bot Casino' })
       .setTimestamp();
     await i.reply({ embeds: [e], flags: target.id === i.user.id ? MessageFlags.Ephemeral : undefined, allowedMentions: { parse: [] } });
-    logAudit('CASINO_STATS', 'CASINO', { guildId: scope.guildId, target: target.id, rounds: rows.length });
+    logAudit('CASINO_STATS', 'CASINO', { guildId: scope.guildId, nitradoConnId: scope.nitradoConnId, target: target.id, rounds: rows.length });
   }),
 };

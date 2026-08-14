@@ -61,11 +61,6 @@ export interface KillfeedView {
   distanceMeters: number | null;
 }
 
-/**
- * Reine Ableitung eines Anzeige-Objekts. Koordinaten roh (keine Rundung), nur
- * gemaess Config-Schaltern; Killer-Coords default AUS. null, wenn der Eventtyp
- * kein Killfeed-Event ist.
- */
 export function deriveKillfeedView(ev: KillAdmEvent, cfg: KillfeedViewConfig): KillfeedView | null {
   const category = mapEventToCategory(ev.eventType);
   if (!category) return null;
@@ -94,10 +89,6 @@ function isUniqueViolation(e: unknown): boolean {
   return typeof e === 'object' && e !== null && (e as { code?: string }).code === 'P2002';
 }
 
-/**
- * Beansprucht die Zustellung eines AdmEvents fuer eine Config. Existiert sie
- * bereits, kommt `{ claimed: false }` (bereits zugestellt -> ueberspringen).
- */
 export async function claimDelivery(
   client: KillfeedDeliveryClient,
   args: { configId: string; admEventId: string; guildId: string; channelId: string },
@@ -134,14 +125,21 @@ export interface DeliverClient extends KillfeedDeliveryClient {
 /**
  * Stellt neue Kill-AdmEvents fuer eine Config zu. `poster` postet die Anzeige
  * und liefert die Discord-Message-ID (oder null). Idempotent: bereits
- * zugestellte Events werden ueber KillfeedDelivery uebersprungen. At-most-once:
- * bei Poster-Fehler bleibt die Zustellung beansprucht (kein Duplikat).
+ * zugestellte Events werden ueber KillfeedDelivery uebersprungen.
+ *
+ * `onDelivered` ist die serverinterne Feed-Bruecke. Sie bekommt genau das
+ * bereits geclaimte kanonische AdmEvent + View und darf nur side-effect-freie
+ * Echtzeit-Ausgaben (z.B. Socket.IO) erzeugen. Ein Fehler dort darf die
+ * persistente Discord-Zustellung nicht zurueckrollen oder duplizieren.
  */
 export async function deliverPendingKills(
   client: DeliverClient,
   cfg: KillfeedConfigRow,
   poster: (view: KillfeedView) => Promise<string | null>,
-  opts: { limit?: number } = {},
+  opts: {
+    limit?: number;
+    onDelivered?: (event: KillAdmEvent, view: KillfeedView) => void | Promise<void>;
+  } = {},
 ): Promise<{ delivered: number }> {
   const events = await client.admEvent.findMany({
     where: {
@@ -156,7 +154,7 @@ export async function deliverPendingKills(
   let delivered = 0;
   for (const ev of events) {
     const view = deriveKillfeedView(ev, cfg);
-    if (!view) continue; // kein Kill-Event -> nicht beanspruchen
+    if (!view) continue;
     const claim = await claimDelivery(client, {
       configId: cfg.id, admEventId: ev.id, guildId: cfg.guildId, channelId: cfg.channelId,
     });
@@ -164,6 +162,13 @@ export async function deliverPendingKills(
     const messageId = await poster(view);
     if (messageId && claim.id) {
       await client.killfeedDelivery.update({ where: { id: claim.id }, data: { messageId } });
+    }
+    if (opts.onDelivered) {
+      try {
+        await opts.onDelivered(ev, view);
+      } catch {
+        // Realtime-Feed ist best-effort; persistente Delivery bleibt Source-of-Truth.
+      }
     }
     delivered++;
   }

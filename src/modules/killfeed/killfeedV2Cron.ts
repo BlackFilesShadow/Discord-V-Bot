@@ -1,20 +1,26 @@
 /**
- * Killfeed-V2-Cron (Phase 6). Speist den Killfeed aus normalisierten AdmEvents
- * (statt aus dem alten Parser). Idempotent ueber KillfeedDelivery. Wird nur
- * gestartet, wenn ADM_EVENT_PIPELINE_V2 aktiv ist; sonst laeuft der alte
- * admWatcher weiter (kein Doppel-Posting).
+ * Killfeed-V2-Cron (Phase 6/11). Speist den Killfeed aus normalisierten AdmEvents
+ * und spiegelt jedes tatsaechlich geclaimte Kill-Event zusaetzlich in den
+ * exakt servergescoppten Socket-Room. Persistente KillfeedDelivery bleibt die
+ * Source-of-Truth; der Realtime-Feed ist best-effort und erzeugt keine zweite
+ * Datenhaltung.
  */
 
 import type { GuildTextBasedChannel } from 'discord.js';
 import prisma from '../../database/prisma';
 import { logger } from '../../utils/logger';
 import { tryGetDashboardClient } from '../../dashboard/clientRegistry';
+import { emitServerGameplayEvent } from '../../dashboard/socket/emitter';
 import { buildKillfeedEmbedV2 } from './embedBuilder';
 import { deliverPendingKills, type DeliverClient, type KillfeedConfigRow, type KillfeedView } from './killfeedV2';
 
 const POLL_INTERVAL_MS = 60_000;
 let timer: NodeJS.Timeout | null = null;
 let running = false;
+
+export function killfeedChannelBelongsToGuild(configGuildId: string, channelGuildId: string): boolean {
+  return configGuildId === channelGuildId;
+}
 
 export async function deliverKillfeedV2Once(): Promise<void> {
   if (running) return;
@@ -23,7 +29,7 @@ export async function deliverKillfeedV2Once(): Promise<void> {
     const client = tryGetDashboardClient();
     if (!client) return;
 
-    // eslint-disable-next-line local/no-unscoped-prisma-query -- Cron iteriert alle Guilds; Delivery ist pro Config (guildId) gebunden.
+    // eslint-disable-next-line local/no-unscoped-prisma-query -- Cron iteriert alle Guilds; Delivery ist pro Config (guildId+nitradoConnId) gebunden.
     const configs = await prisma.killfeedConfig.findMany({
       where: { isActive: true },
       select: {
@@ -37,13 +43,41 @@ export async function deliverKillfeedV2Once(): Promise<void> {
         const poster = async (view: KillfeedView): Promise<string | null> => {
           const ch = await client.channels.fetch(cfg.channelId).catch(() => null);
           if (!ch || !ch.isTextBased() || ch.isDMBased()) return null;
-          const msg = await (ch as GuildTextBasedChannel).send({
+          const textChannel = ch as GuildTextBasedChannel;
+          if (!killfeedChannelBelongsToGuild(cfg.guildId, textChannel.guildId)) {
+            logger.warn(`Killfeed V2: Cross-Guild-Channel verworfen fuer Config ${cfg.id}.`);
+            return null;
+          }
+          const msg = await textChannel.send({
             embeds: [buildKillfeedEmbedV2(view, cfg.embedColor)],
             allowedMentions: { parse: [] },
           });
           return msg.id;
         };
-        await deliverPendingKills(prisma as unknown as DeliverClient, cfg as KillfeedConfigRow, poster);
+
+        await deliverPendingKills(
+          prisma as unknown as DeliverClient,
+          cfg as KillfeedConfigRow,
+          poster,
+          {
+            onDelivered: (event, view) => {
+              emitServerGameplayEvent({
+                guildId: cfg.guildId,
+                nitradoConnId: cfg.nitradoConnId,
+                eventId: event.id,
+                source: 'ADM_V2',
+                eventType: event.eventType,
+                occurredAt: event.occurredAt?.toISOString() ?? null,
+                actorName: event.actorName,
+                targetName: event.targetName,
+                weapon: view.weapon,
+                distance: view.distanceMeters,
+                actorPosition: view.victimPos,
+                targetPosition: view.killerPos,
+              });
+            },
+          },
+        );
       } catch (e) {
         logger.warn(`Killfeed V2: Delivery fehlgeschlagen fuer Config ${cfg.id}: ${(e as Error).message}`);
       }

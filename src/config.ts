@@ -1,5 +1,6 @@
 import dotenv from 'dotenv';
 import path from 'path';
+import { resolveBotOwnerId } from './security/privilegedIdentity';
 
 dotenv.config();
 
@@ -22,7 +23,10 @@ export const config = {
     clientId: requireEnv('DISCORD_CLIENT_ID'),
     clientSecret: requireEnv('DISCORD_CLIENT_SECRET'),
     guildId: optionalEnv('DISCORD_GUILD_ID'),
-    ownerId: optionalEnv('BOT_OWNER_ID'),
+    // BOT_OWNER_ID ist kanonisch. DISCORD_OWNER_ID bleibt nur als kontrollierter
+    // Migrationsalias fuer bestehende Deployments erhalten. Konflikte oder
+    // ungueltige Snowflakes stoppen den Start statt eine Identitaet zu erraten.
+    ownerId: resolveBotOwnerId(),
   },
 
   // Datenbank
@@ -36,9 +40,6 @@ export const config = {
     url: optionalEnv('DASHBOARD_URL', 'http://localhost:3000'),
     sessionSecret: requireEnv('SESSION_SECRET'),
     oauth2RedirectUri: optionalEnv('OAUTH2_REDIRECT_URI', 'http://localhost:3000/auth/callback'),
-    // Express `trust proxy`-Wert. Standard `1` (genau ein Reverse-Proxy, z.B.
-    // Nginx/Traefik vor dem Container). Per TRUST_PROXY ueberschreibbar:
-    // Zahl (Hop-Anzahl), `true`/`false`, oder CIDR/IP-Liste. Siehe README.
     trustProxy: optionalEnv('TRUST_PROXY', '1'),
   },
 
@@ -55,25 +56,13 @@ export const config = {
   // Upload-System
   upload: {
     dir: path.resolve(optionalEnv('UPLOAD_DIR', './uploads')),
-    // Nur dieser Unterpfad von `dir` wird oeffentlich unter /uploads/factions
-    // per express.static ausgeliefert (siehe server.ts). Alles andere bleibt privat.
     factionsDir: path.resolve(optionalEnv('UPLOAD_DIR', './uploads'), 'factions'),
-    // Private Ablage ausserhalb des oeffentlichen uploads-Verzeichnisses.
     privateDir: path.resolve(optionalEnv('PRIVATE_UPLOAD_DIR', './private')),
-    // DEV-Log-Uploads. MUSS privat sein (nur ueber authentifizierten DEV-Endpoint
-    // lesbar) — daher unter ./private/dev-logs, NICHT unter ./uploads.
     devUploadDir: path.resolve(optionalEnv('DEV_UPLOAD_DIR', './private/dev-logs')),
-    // Private Export-Ablage. MUSS ausserhalb von `dir` liegen, da `dir`
-    // (uploads) per express.static oeffentlich unter /uploads ausgeliefert wird.
-    // Audit-/GDPR-Exporte duerfen niemals oeffentlich abrufbar sein.
     exportDir: path.resolve(optionalEnv('EXPORT_DIR', './private/exports')),
-    // Sicherheits-Default 25 MB: Uploads werden zur Validierung vollstaendig in
-    // den Speicher geladen (Buffer). Ein zu hoher Default (frueher 2 GB) erlaubt
-    // Memory-DoS. Erlaubt sind ohnehin nur .xml/.json — 25 MB ist dafuer
-    // grosszuegig. Bei Bedarf per MAX_FILE_SIZE_BYTES anheben.
-    maxFileSizeBytes: parseInt(optionalEnv('MAX_FILE_SIZE_BYTES', '26214400'), 10), // 25 MB
+    maxFileSizeBytes: parseInt(optionalEnv('MAX_FILE_SIZE_BYTES', '26214400'), 10),
     allowedExtensions: optionalEnv('ALLOWED_EXTENSIONS', '.xml,.json').split(','),
-    chunkSize: 10 * 1024 * 1024, // 10 MB chunks
+    chunkSize: 10 * 1024 * 1024,
   },
 
   // AI (Multi-Provider Fallback: Groq → Cerebras → OpenRouter → Gemini → OpenAI)
@@ -105,52 +94,39 @@ export const config = {
     youtubeApiKey: optionalEnv('YOUTUBE_API_KEY'),
   },
 
-  // Developer
+  // Developer: Passwort ist ausschliesslich Step-up und erzeugt niemals
+  // Developer-Identitaet oder -Rechte.
   developer: {
     password: optionalEnv('DEV_PASSWORD', ''),
   },
 
-  // Logging
   logging: {
     level: optionalEnv('LOG_LEVEL', 'info'),
     dir: path.resolve(optionalEnv('LOG_DIR', './logs')),
   },
 
-  // Rate Limiting
   rateLimit: {
     windowMs: parseInt(optionalEnv('RATE_LIMIT_WINDOW_MS', '60000'), 10),
     maxRequests: parseInt(optionalEnv('RATE_LIMIT_MAX_REQUESTS', '30'), 10),
   },
 
-  // Monitoring / Telemetrie
   monitoring: {
     metricsEnabled: optionalEnv('METRICS_ENABLED', 'true') !== 'false',
-    metricsToken: optionalEnv('METRICS_TOKEN', ''), // Optional: Bearer-Token-Schutz fuer /metrics
-    errorWebhookUrl: optionalEnv('ERROR_WEBHOOK_URL', ''), // Discord-Webhook fuer Error-Push
+    metricsToken: optionalEnv('METRICS_TOKEN', ''),
+    errorWebhookUrl: optionalEnv('ERROR_WEBHOOK_URL', ''),
   },
 
-  // Phase B: Quick-Wins
   features: {
-    feedbackChannelId: optionalEnv('FEEDBACK_CHANNEL_ID', ''), // Optional: alle /feedback gehen zusaetzlich hierher
+    feedbackChannelId: optionalEnv('FEEDBACK_CHANNEL_ID', ''),
   },
 
-  // Nitrado (Spec §12): Read-Only-Datenerfassung maximieren, Schreibaktionen extra schuetzen.
   nitrado: {
-    // Standard: AN. Schreibende Nitrado-Aktionen brauchen dann Permission + Confirm + Reason + Audit.
-    // Nur via NITRADO_WRITE_PROTECTION=false explizit deaktivierbar.
     writeProtection: optionalEnv('NITRADO_WRITE_PROTECTION', 'true') !== 'false',
-    // Phase 3: Kanonische ADM-Eventpipeline. Ist sie AN, speichert der ADM-Sync
-    // normalisierte AdmEvents (idempotent) und bucht NICHT mehr direkt Geld;
-    // Rewards laufen ueber die RewardEngine (WOULD_PAY/Shadow). Default AUS ->
-    // bestehendes Produktionsverhalten unveraendert.
     admEventPipelineV2: optionalEnv('ADM_EVENT_PIPELINE_V2', 'false') === 'true',
   },
 
-  // Member-Erfassung (Spec §11): optionaler Hintergrund-Sync.
   member: {
-    // Standard: AUS. Wenn AN, laeuft ein rate-limit-freundlicher Member-Sync-Job.
     syncEnabled: optionalEnv('MEMBER_SYNC_ENABLED', 'false') === 'true',
-    // Intervall in Stunden (default 12), nur relevant wenn syncEnabled.
     syncIntervalHours: Math.min(Math.max(parseInt(optionalEnv('MEMBER_SYNC_INTERVAL_HOURS', '12'), 10) || 12, 1), 24),
   },
 } as const;

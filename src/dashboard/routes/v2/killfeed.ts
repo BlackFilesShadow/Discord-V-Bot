@@ -1,13 +1,7 @@
 /**
- * Killfeed-Routen — pro Guild + Slot eigene Configs.
+ * Killfeed-Routen — pro Guild + Gameserver eigene Configs.
  *
- *   GET    /                   Liste aller KillfeedConfigs (slot-gefiltert)
- *   POST   /                   neue Config anlegen
- *   PATCH  /:id                Config updaten (Toggles, Categories, Channel)
- *   DELETE /:id                Config loeschen
- *   GET    /:id/recent         letzte 50 Events
- *
- * Strikte guildId-Scope-Pruefung in jeder Query — siehe ESLint-Rule.
+ * Strikte guildId+nitradoConnId-Scope-Pruefung in jeder serverbezogenen Query.
  */
 
 import { Router } from 'express';
@@ -18,6 +12,7 @@ import { logAuditDb } from '../../../utils/logger';
 import { emitGuildEvent } from '../../socket/emitter';
 import { tryGetDashboardClient } from '../../clientRegistry';
 import { validateBotChannelAccess } from '../../../utils/discordChannel';
+import { resolveDashboardGameServer, sendDashboardServerResolutionError } from './serverScope';
 
 export const killfeedRouter = Router({ mergeParams: true });
 
@@ -88,19 +83,6 @@ function validateBody(b: KillfeedBody, partial: boolean):
   return { ok: true, data };
 }
 
-async function activeSlotId(guildId: string, slotParam: unknown): Promise<string | null> {
-  if (typeof slotParam === 'string' && /^[1-5]$/.test(slotParam)) {
-    const c = await prisma.nitradoConnection.findUnique({
-      where: { guildId_slot: { guildId, slot: Number(slotParam) } }, select: { id: true },
-    });
-    return c?.id ?? null;
-  }
-  const c = await prisma.nitradoConnection.findFirst({
-    where: { guildId, status: 'ACTIVE' }, orderBy: { slot: 'asc' }, select: { id: true },
-  });
-  return c?.id ?? null;
-}
-
 async function ensureChannelInGuild(channelId: string, guildId: string): Promise<string | null> {
   const client = tryGetDashboardClient();
   if (!client) return null;
@@ -114,8 +96,9 @@ async function ensureChannelInGuild(channelId: string, guildId: string): Promise
 
 killfeedRouter.get('/', requireGuildPermission('killfeed.view'), async (req, res) => {
   const scope = req.guildScope!;
-  const connId = await activeSlotId(scope.guildId, req.query.slot);
-  if (!connId) { res.status(404).json({ error: 'Kein Nitrado-Slot.' }); return; }
+  const resolution = await resolveDashboardGameServer(scope.guildId, scope.actorDiscordId, req.query.slot);
+  if (resolution.kind !== 'RESOLVED') { sendDashboardServerResolutionError(res, resolution); return; }
+  const connId = resolution.nitradoConnId;
   const rows = await prisma.killfeedConfig.findMany({
     where: { guildId: scope.guildId, nitradoConnId: connId },
     orderBy: { createdAt: 'asc' },
@@ -143,8 +126,9 @@ killfeedRouter.get('/', requireGuildPermission('killfeed.view'), async (req, res
 
 killfeedRouter.post('/', requireGuildPermission('killfeed.manage'), async (req, res) => {
   const scope = req.guildScope!;
-  const connId = await activeSlotId(scope.guildId, req.query.slot);
-  if (!connId) { res.status(404).json({ error: 'Kein Nitrado-Slot.' }); return; }
+  const resolution = await resolveDashboardGameServer(scope.guildId, scope.actorDiscordId, req.query.slot);
+  if (resolution.kind !== 'RESOLVED') { sendDashboardServerResolutionError(res, resolution); return; }
+  const connId = resolution.nitradoConnId;
 
   const v = validateBody(req.body as KillfeedBody, false);
   if (!v.ok) { res.status(400).json({ error: v.error }); return; }
@@ -170,7 +154,7 @@ killfeedRouter.post('/', requireGuildPermission('killfeed.manage'), async (req, 
     });
     logAuditDb('KILLFEED_CONFIG_CREATED', 'KILLFEED', {
       actorUserId: req.auth!.userId, guildId: scope.guildId,
-      details: { configId: created.id, channelId: created.channelId },
+      details: { configId: created.id, channelId: created.channelId, nitradoConnId: connId },
     });
     emitGuildEvent(scope.guildId, { type: 'killfeed.changed', payload: { guildId: scope.guildId, configId: created.id } });
     res.status(201).json({ id: created.id });
@@ -186,13 +170,16 @@ killfeedRouter.post('/', requireGuildPermission('killfeed.manage'), async (req, 
 
 killfeedRouter.patch('/:id', requireGuildPermission('killfeed.manage'), async (req, res) => {
   const scope = req.guildScope!;
+  const resolution = await resolveDashboardGameServer(scope.guildId, scope.actorDiscordId, req.query.slot);
+  if (resolution.kind !== 'RESOLVED') { sendDashboardServerResolutionError(res, resolution); return; }
+  const connId = resolution.nitradoConnId;
   const id = String(req.params.id);
   const v = validateBody(req.body as KillfeedBody, true);
   if (!v.ok) { res.status(400).json({ error: v.error }); return; }
   const data = v.data;
 
   const existing = await prisma.killfeedConfig.findFirst({
-    where: { id, guildId: scope.guildId },
+    where: { id, guildId: scope.guildId, nitradoConnId: connId },
   });
   if (!existing) { res.status(404).json({ error: 'Killfeed-Config nicht gefunden.' }); return; }
 
@@ -203,12 +190,12 @@ killfeedRouter.patch('/:id', requireGuildPermission('killfeed.manage'), async (r
 
   try {
     await prisma.killfeedConfig.updateMany({
-      where: { id, guildId: scope.guildId },
+      where: { id, guildId: scope.guildId, nitradoConnId: connId },
       data,
     });
     logAuditDb('KILLFEED_CONFIG_UPDATED', 'KILLFEED', {
       actorUserId: req.auth!.userId, guildId: scope.guildId,
-      details: { configId: id, fields: Object.keys(data) },
+      details: { configId: id, nitradoConnId: connId, fields: Object.keys(data) },
     });
     emitGuildEvent(scope.guildId, { type: 'killfeed.changed', payload: { guildId: scope.guildId, configId: id } });
     res.json({ ok: true });
@@ -219,12 +206,15 @@ killfeedRouter.patch('/:id', requireGuildPermission('killfeed.manage'), async (r
 
 killfeedRouter.delete('/:id', requireGuildPermission('killfeed.manage'), async (req, res) => {
   const scope = req.guildScope!;
+  const resolution = await resolveDashboardGameServer(scope.guildId, scope.actorDiscordId, req.query.slot);
+  if (resolution.kind !== 'RESOLVED') { sendDashboardServerResolutionError(res, resolution); return; }
+  const connId = resolution.nitradoConnId;
   const id = String(req.params.id);
-  const r = await prisma.killfeedConfig.deleteMany({ where: { id, guildId: scope.guildId } });
+  const r = await prisma.killfeedConfig.deleteMany({ where: { id, guildId: scope.guildId, nitradoConnId: connId } });
   if (r.count === 0) { res.status(404).json({ error: 'Nicht gefunden.' }); return; }
   logAuditDb('KILLFEED_CONFIG_DELETED', 'KILLFEED', {
     actorUserId: req.auth!.userId, guildId: scope.guildId,
-    details: { configId: id },
+    details: { configId: id, nitradoConnId: connId },
   });
   emitGuildEvent(scope.guildId, { type: 'killfeed.changed', payload: { guildId: scope.guildId, configId: id } });
   res.json({ ok: true });
@@ -232,15 +222,18 @@ killfeedRouter.delete('/:id', requireGuildPermission('killfeed.manage'), async (
 
 killfeedRouter.get('/:id/recent', requireGuildPermission('killfeed.view'), async (req, res) => {
   const scope = req.guildScope!;
+  const resolution = await resolveDashboardGameServer(scope.guildId, scope.actorDiscordId, req.query.slot);
+  if (resolution.kind !== 'RESOLVED') { sendDashboardServerResolutionError(res, resolution); return; }
+  const connId = resolution.nitradoConnId;
   const id = String(req.params.id);
   const cfg = await prisma.killfeedConfig.findFirst({
-    where: { id, guildId: scope.guildId },
+    where: { id, guildId: scope.guildId, nitradoConnId: connId },
     select: { nitradoConnId: true },
   });
   if (!cfg) { res.status(404).json({ error: 'Nicht gefunden.' }); return; }
 
   const events = await prisma.killfeedEvent.findMany({
-    where: { guildId: scope.guildId, nitradoConnId: cfg.nitradoConnId },
+    where: { guildId: scope.guildId, nitradoConnId: connId },
     orderBy: { occurredAt: 'desc' },
     take: 50,
   });

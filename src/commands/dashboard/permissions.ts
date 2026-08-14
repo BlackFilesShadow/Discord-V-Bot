@@ -1,11 +1,11 @@
 /**
  * Phase 3 — Permissions-Commands (3 Stueck). Owner-only via withGuildScope
  * (Owner-Bypass deckt `permissions.manage` ab; NON_DELEGABLE_SCOPES sind
- * weder im Choice-Set noch ueber DB-Schmuggel akzeptiert).
+ * weder im Autocomplete noch ueber freie Eingabe akzeptiert).
  */
 
 import {
-  SlashCommandBuilder, ChatInputCommandInteraction, EmbedBuilder, MessageFlags,
+  SlashCommandBuilder, ChatInputCommandInteraction, AutocompleteInteraction, EmbedBuilder, MessageFlags,
 } from 'discord.js';
 import type { Command } from '../../types';
 import prisma from '../../database/prisma';
@@ -23,7 +23,19 @@ async function reply(i: ChatInputCommandInteraction, content: string, ephemeral 
 }
 
 const DELEGABLE: PermissionScope[] = PERMISSION_SCOPES.filter(s => !NON_DELEGABLE_SCOPES.has(s));
-const PERM_CHOICES = DELEGABLE.map(s => ({ name: s, value: s }));
+
+function isDelegablePermissionScope(value: string): value is PermissionScope {
+  return DELEGABLE.includes(value as PermissionScope);
+}
+
+async function autocompletePermissionScope(i: AutocompleteInteraction): Promise<void> {
+  const focused = i.options.getFocused().toString().trim().toLowerCase();
+  const matches = DELEGABLE
+    .filter(scope => !focused || scope.toLowerCase().includes(focused))
+    .slice(0, 25)
+    .map(scope => ({ name: scope, value: scope }));
+  await i.respond(matches);
+}
 
 // ============================================================
 // /perm-add
@@ -33,13 +45,18 @@ export const permAddCommand: Command = {
     .setName('perm-add')
     .setDescription('Owner: Vergibt einem User eine Scope-Permission fuer diesen Server.')
     .addUserOption(o => o.setName('user').setDescription('Ziel-User').setRequired(true))
-    .addStringOption(o => o.setName('scope').setDescription('Permission').setRequired(true).addChoices(...PERM_CHOICES)) as SlashCommandBuilder,
+    .addStringOption(o => o.setName('scope').setDescription('Permission').setRequired(true).setAutocomplete(true)) as SlashCommandBuilder,
+  autocomplete: autocompletePermissionScope,
   execute: withGuildScope({ guildOnly: true, requirePerm: 'permissions.manage' }, async (i, scope) => {
     if (!scope.isOwner) { await reply(i, 'Nur der Server-Owner kann Permissions vergeben.'); return; }
     const target = i.options.getUser('user', true);
     if (target.bot) { await reply(i, 'Bots koennen keine Permissions erhalten.'); return; }
-    const perm = i.options.getString('scope', true) as PermissionScope;
-    if (NON_DELEGABLE_SCOPES.has(perm)) { await reply(i, `\`${perm}\` ist nicht delegierbar.`); return; }
+    const rawPerm = i.options.getString('scope', true).trim();
+    if (!isDelegablePermissionScope(rawPerm)) {
+      await reply(i, 'Unbekannte oder nicht delegierbare Permission. Bitte einen Wert aus dem Autocomplete waehlen.');
+      return;
+    }
+    const perm = rawPerm;
 
     const existing = await prisma.guildPermissionGrant.findUnique({
       where: { guildId_userDiscordId: { guildId: scope.guildId, userDiscordId: asUserDiscordId(target.id) } },
@@ -72,11 +89,17 @@ export const permRemoveCommand: Command = {
     .setName('perm-remove')
     .setDescription('Owner: Entzieht eine Scope-Permission.')
     .addUserOption(o => o.setName('user').setDescription('Ziel-User').setRequired(true))
-    .addStringOption(o => o.setName('scope').setDescription('Permission').setRequired(true).addChoices(...PERM_CHOICES)) as SlashCommandBuilder,
+    .addStringOption(o => o.setName('scope').setDescription('Permission').setRequired(true).setAutocomplete(true)) as SlashCommandBuilder,
+  autocomplete: autocompletePermissionScope,
   execute: withGuildScope({ guildOnly: true, requirePerm: 'permissions.manage' }, async (i, scope) => {
     if (!scope.isOwner) { await reply(i, 'Nur der Server-Owner kann Permissions entziehen.'); return; }
     const target = i.options.getUser('user', true);
-    const perm = i.options.getString('scope', true) as PermissionScope;
+    const rawPerm = i.options.getString('scope', true).trim();
+    if (!isDelegablePermissionScope(rawPerm)) {
+      await reply(i, 'Unbekannte oder nicht delegierbare Permission. Bitte einen Wert aus dem Autocomplete waehlen.');
+      return;
+    }
+    const perm = rawPerm;
     const existing = await prisma.guildPermissionGrant.findUnique({
       where: { guildId_userDiscordId: { guildId: scope.guildId, userDiscordId: asUserDiscordId(target.id) } },
     });

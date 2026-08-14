@@ -177,16 +177,39 @@ Eine kompromisslos sichere, nachvollziehbare und fehlerfreie OAuth2-Organisation
 
 ---
 
-## 📝 Aktueller Entwicklungsstand & ToDo (Stand: 01.04.2026)
+## Aktueller technischer Abschlussstand (14.08.2026)
 
-### Offene Aufgaben (Session-Fortschritt)
+> Die Checkboxen oberhalb sind die langfristige Maximal-Funktionsliste und werden nicht pauschal als erledigt interpretiert. Dieser Abschnitt dokumentiert den aktuell verifizierten PR-/Rollout-Stand.
 
-- [x] LevelRole und LevelUpMessage Modelle zu schema.prisma hinzufügen
-- [ ] Prisma-Migration für neue Modelle ausführen (Fehler: DB-User benötigt CREATE DATABASE-Rechte für Shadow-DB)
-- [ ] Levelrollen- und Level-Up-Logik im Bot implementieren (pro Server, individuell)
-- [ ] Leaderboard-Logik für dynamische Anzeige anpassen (immer aktuell, Anzeigedauer konfigurierbar)
+### Auf PR #29 umgesetzt und auf dem Branch verifiziert
 
-**Hinweis:**
-- Die neuen Modelle für server-spezifische Levelrollen und Level-Up-Nachrichten sind im Schema vorhanden, Migration ist aber wegen fehlender Rechte noch nicht angewendet.
-- Nächster Schritt: Migration ausführen (DB-User-Rechte prüfen/erweitern oder alternative Migration lokal mit SQLite).
-- Danach: Bot-Logik für Levelrollen und Level-Up-Messages implementieren, Leaderboard dynamisieren.
+- [x] Idempotency-Baseline-Reparatur ist additiv, idempotent und bewahrt die 1118 nachgestellten Legacy-Zeilen im Regressionstest.
+- [x] Prisma-Migrationspfad nutzt `migrate deploy` + `migrate status`; kein produktives `db push`/Reset als Reparaturpfad.
+- [x] Gameserver-Scope ist für Nitrado/Economy/Killfeed/Whitelist servergebunden; Legacy-Slot 5 wird bei Mutationen fail-closed behandelt.
+- [x] Keep-Online ist über Reconciliation + deduplizierte NitradoJob-Outbox + Remote-Statusprüfung verdrahtet.
+- [x] Whitelist V2 besitzt 5-Minuten-Reconciliation, Remote-Diff und Outbox-Verarbeitung.
+- [x] ADM-/Killfeed-V2 nutzt normalisierte `AdmEvent`-Daten und idempotente `KillfeedDelivery`.
+- [x] Server-Gameplay-Livefeed nutzt exakte Rooms `gs:<guildId>:<nitradoConnId>` ohne Guild-Fallback.
+- [x] Privilegierte Commands verwenden servergescoppte, persistente Pending-Actions mit erneuter Scope-Prüfung bei Bestätigung.
+- [x] `commands.all` ist von `dashboard.access` getrennt und kann nicht-delegierbare Rechte nicht überstimmen.
+- [x] Globale Developer-/Bot-Admin-Identität wird aus kanonischer Owner-ID + aktueller DB-Rolle bestimmt; Shared Password ist nur Step-up.
+- [x] Translate-/Media-Ingestion validiert SSRF-sicher, größenbegrenzt und per Magic Bytes/MIME.
+- [x] Webhook-HMAC/Raw-Body/Replay-Schutz ist persistent und Retry-sicher.
+- [x] AI-Background-Lifecycle ist in `src/modules/ai/runtime.ts` symmetrisch gekapselt (Phase 12).
+- [x] Deploy-Script ist fail-closed: explizite Baseline-Adoption, mehrere Schema-Sentinels, Migration vor Botstart, Health/Login/Post-Start-Migrationsstatus als harte Gates.
+- [x] Jest läuft in CI ohne `--forceExit`; Open-Handle-Diagnose wird nur bei Bedarf ausgeführt.
+- [x] Branch-CI prüft Prisma, Jest, Lint, TypeScript, Security Audit/SBOM und Playwright.
+
+### Bewusst erst nach finalem Branch-Doppelcheck
+
+- [ ] PR #29 aus Draft nehmen und mergen.
+- [ ] `main`-CI inklusive Docker Build vollständig grün verifizieren.
+- [ ] Produktions-Preflight/Backup und echte Produktions-DB mit `prisma migrate deploy` + `migrate status` migrieren.
+- [ ] Produktions-Secrets/Flags auf gültige Werte prüfen (`BOT_OWNER_ID`, `DEV_PASSWORD`, `BOT_ADMIN_PASSWORD`, Nitrado/Monitoring usw.).
+- [ ] `ADM_EVENT_PIPELINE_V2` kontrolliert aktivieren und Killfeed/PlayerSessions beobachten.
+- [ ] Economy-/Reward-Features kontrolliert nach Server/Slot aktivieren; Ledger/Reward-Dedupe beobachten.
+- [ ] Live-Smokecheck: Health, Discord-Login, DB, Killfeed, Sessions, Economy, RestartCount/Zombie/Logs.
+
+### Historischer Hinweis
+
+Der frühere Abschnitt „Stand: 01.04.2026“ mit offenen Shadow-DB-/LevelRole-Migrationspunkten war ein Session-Snapshot und ist **nicht mehr der aktuelle Rollout-Plan**. Die aktuelle Migrations- und Produktionsfreigabe richtet sich ausschließlich nach den Gates oben und den dokumentierten Deploy-Skripten.

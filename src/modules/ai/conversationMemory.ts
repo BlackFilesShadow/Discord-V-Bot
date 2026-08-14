@@ -15,10 +15,6 @@ import { logger } from '../../utils/logger';
  */
 
 const MAX_TURNS_PER_CONTEXT = 10;
-// Bot-Antworten koennen via Chunking >2000 Zeichen erreichen. Wir speichern
-// daher bis 4000 Zeichen pro Turn, damit das Memory die vollstaendige
-// vorherige Antwort enthaelt und Bezuege ("wie eben gesagt", "und das
-// andere?") nicht ins Leere gehen.
 const MAX_CONTENT_PER_TURN = 4000;
 const TTL_MS = 24 * 60 * 60 * 1000;
 
@@ -59,7 +55,6 @@ export async function getRecentTurns(
       orderBy: { createdAt: 'desc' },
       take: limit,
     });
-    // Aelteste zuerst -> chronologisch korrekt fuer den Prompt.
     return rows.reverse().map((r) => ({ role: r.role as ConversationRole, content: r.content }));
   } catch (e) {
     logger.warn(`conversationMemory.getRecentTurns fehlgeschlagen: ${String(e)}`);
@@ -67,9 +62,6 @@ export async function getRecentTurns(
   }
 }
 
-/**
- * Loescht alte Turns (>24h). Wird periodisch aufgerufen, um die Tabelle klein zu halten.
- */
 export async function cleanupOld(): Promise<number> {
   try {
     const cutoff = new Date(Date.now() - TTL_MS);
@@ -82,10 +74,6 @@ export async function cleanupOld(): Promise<number> {
   }
 }
 
-/**
- * Loescht den Verlauf einer (userId, channelId)-Kombination - z.B. fuer ein
- * "Vergiss" / Reset-Kommando.
- */
 export async function clearConversation(userId: string, channelId: string): Promise<number> {
   try {
     const r = await prisma.aiConversationTurn.deleteMany({ where: { userId, channelId } });
@@ -97,9 +85,16 @@ export async function clearConversation(userId: string, channelId: string): Prom
 }
 
 let cleanupTimer: NodeJS.Timeout | null = null;
+
 export function startConversationCleanupLoop(): void {
   if (cleanupTimer) return;
-  // Alle 60 min aufraeumen.
   cleanupTimer = setInterval(() => { void cleanupOld(); }, 60 * 60 * 1000);
+  cleanupTimer.unref?.();
   logger.info('conversationMemory: Cleanup-Loop gestartet (alle 60 min).');
+}
+
+export function stopConversationCleanupLoop(): void {
+  if (!cleanupTimer) return;
+  clearInterval(cleanupTimer);
+  cleanupTimer = null;
 }

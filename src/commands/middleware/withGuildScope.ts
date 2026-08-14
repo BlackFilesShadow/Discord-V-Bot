@@ -5,17 +5,31 @@
  *
  * Garantien:
  *  1. interaction.guildId existiert (sonst ephemeral-Reply).
- *  2. ein aktiver Nitrado-Slot ist konfiguriert (oder per Option ausgewaehlt).
- *  3. Owner-Status + Permissions-Set ist aufgeloest.
- *  4. Falls `requirePerm` gesetzt: scoped Permission validiert.
- *  5. Bei Fehlern saubere ephemerale Replies, kein Leak von Stack-Traces.
+ *  2. Gameserver-Scope wird NIE durch eine implizite "kleinster Slot"-Regel
+ *     geraten: genau ein aktiver Slot darf automatisch aufgeloest werden;
+ *     mehrere aktive Slots verlangen eine explizite Auswahl.
+ *  3. Legacy-Slots > MAX_GAME_SERVERS_PER_GUILD werden fail-closed abgewiesen.
+ *  4. Owner-Status + Permissions-Set ist aufgeloest.
+ *  5. Falls `requirePerm` gesetzt: scoped Command-Permission validiert.
+ *  6. Economy/Casino-Pfade greifen waehrend der Legacy-Migration fail-closed
+ *     nur auf den ausdruecklich aufgeloesten Primaerserver zu.
  */
 
 import type { ChatInputCommandInteraction } from 'discord.js';
 import { MessageFlags } from 'discord.js';
 import prisma from '../../database/prisma';
-import { asGuildId, asUserDiscordId, asNitradoConnId, hasPermission } from '../../types/scope';
+import { asGuildId, asUserDiscordId, asNitradoConnId, hasCommandPermission } from '../../types/scope';
 import type { GuildScope, NitradoConnId, PermissionScope } from '../../types/scope';
+import {
+  MAX_GAME_SERVERS_PER_GUILD,
+  resolveOrPromptGameServerScope,
+  type ScopeCandidate,
+} from '../../modules/nitrado/gameServerScope';
+import {
+  assertEconomyScopeReady,
+  EconomyMigrationRequiredError,
+  EconomyScopeMismatchError,
+} from '../../modules/economy/scopeMigration';
 import { logger, logAudit } from '../../utils/logger';
 
 export type ScopedHandler = (
@@ -29,34 +43,119 @@ export interface WithGuildScopeOptions {
   /** Falls true, wird KEIN Nitrado-Slot aufgeloest (Guild-only Cmd, z.B. /perms). */
   guildOnly?: boolean;
   /**
-   * Falls true, akzeptiert die `slot`-Slash-Option als Override (1..5).
-   * Sonst wird der "aktive" Slot der Guild benutzt (Lowest active slot).
+   * Falls true, akzeptiert die `slot`-Slash-Option als explizite Auswahl
+   * (1..MAX_GAME_SERVERS_PER_GUILD). Ohne Auswahl wird nur dann automatisch
+   * aufgeloest, wenn exakt ein nutzbarer aktiver Server existiert.
    */
   acceptSlotOption?: boolean;
   /**
    * Wenn gesetzt: prueft ob das Toggle in `ServerSettings` (per Slot) `true` ist.
-   * Ist es `false`, wird der Command mit einer freundlichen Meldung abgewiesen.
-   * Greift nur, wenn `nitradoConnId` aufgeloest werden konnte (also nicht
-   * fuer `guildOnly`-Commands).
    */
   requireSlotToggle?: 'whitelistActive' | 'economyActive';
 }
 
-async function resolveActiveSlotId(guildId: string, slotOverride?: number): Promise<NitradoConnId | null> {
-  if (typeof slotOverride === 'number') {
-    const row = await prisma.nitradoConnection.findUnique({
-      where: { guildId_slot: { guildId, slot: slotOverride } },
-      select: { id: true },
-    });
-    return row ? asNitradoConnId(row.id) : null;
-  }
-  // Default: kleinster aktiver Slot
-  const row = await prisma.nitradoConnection.findFirst({
-    where: { guildId, status: 'ACTIVE' },
-    orderBy: { slot: 'asc' },
-    select: { id: true },
+/**
+ * Link/Unlink/Force-Link nutzen zwar historisch Economy-Permissions/-Toggle,
+ * lesen aber keine Wallet-/Bank-/Casino-Daten. Sie muessen auch waehrend einer
+ * Legacy-Economy-Migration weiter funktionieren, damit Identitaetsdaten nicht
+ * an einem Wirtschaftsmigrationszustand haengen.
+ */
+const ECONOMY_GUARD_EXEMPT_COMMANDS = new Set(['link', 'unlink', 'grant', 'force-link', 'force-unlink']);
+
+function requiresLegacyEconomyGuard(commandName: string, opts: WithGuildScopeOptions): boolean {
+  if (ECONOMY_GUARD_EXEMPT_COMMANDS.has(commandName)) return false;
+  if (opts.requireSlotToggle === 'economyActive') return true;
+  const perm = opts.requirePerm ?? '';
+  return perm.startsWith('economy.') || perm.startsWith('casino.');
+}
+
+async function resolveCommandServerScope(
+  interaction: ChatInputCommandInteraction,
+  guildId: ReturnType<typeof asGuildId>,
+  actorId: ReturnType<typeof asUserDiscordId>,
+  acceptSlotOption: boolean,
+): Promise<NitradoConnId | null> {
+  const rows = await prisma.nitradoConnection.findMany({
+    where: { guildId },
+    select: { id: true, slot: true, alias: true, status: true, nitradoServerId: true },
+    orderBy: [{ slot: 'asc' }, { id: 'asc' }],
   });
-  return row ? asNitradoConnId(row.id) : null;
+
+  const connections: ScopeCandidate[] = rows
+    .filter(row => typeof row.nitradoServerId === 'string' && row.nitradoServerId.length > 0)
+    .map(row => ({
+      id: asNitradoConnId(row.id),
+      slot: row.slot,
+      alias: row.alias,
+      status: row.status,
+    }));
+
+  let requestedNitradoConnId: NitradoConnId | undefined;
+  let requestedSlot: number | undefined;
+  if (acceptSlotOption) {
+    requestedSlot = interaction.options.getInteger('slot') ?? undefined;
+    if (requestedSlot !== undefined) {
+      if (requestedSlot < 1 || requestedSlot > MAX_GAME_SERVERS_PER_GUILD) {
+        await interaction.reply({
+          content: `Slot muss zwischen 1 und ${MAX_GAME_SERVERS_PER_GUILD} liegen. Historische Slots ausserhalb dieses Bereichs sind nur noch Legacy und fuer Mutationen gesperrt.`,
+          flags: MessageFlags.Ephemeral,
+        });
+        return null;
+      }
+      requestedNitradoConnId = connections.find(c => c.slot === requestedSlot)?.id;
+      if (!requestedNitradoConnId) {
+        await interaction.reply({
+          content: `Slot ${requestedSlot} ist nicht als aktiver Gameserver nutzbar.`,
+          flags: MessageFlags.Ephemeral,
+        });
+        return null;
+      }
+    }
+  }
+
+  const resolution = resolveOrPromptGameServerScope({
+    guildId,
+    actorDiscordId: actorId,
+    connections,
+    requestedNitradoConnId,
+  });
+
+  switch (resolution.kind) {
+    case 'RESOLVED':
+      return resolution.scope.nitradoConnId;
+    case 'NO_SERVER':
+      await interaction.reply({
+        content: 'Kein aktiver Nitrado-Gameserver konfiguriert. Bitte zuerst im Dashboard einen Slot mit einem Gameserver verbinden.',
+        flags: MessageFlags.Ephemeral,
+      });
+      return null;
+    case 'SERVER_NOT_FOUND':
+      await interaction.reply({ content: 'Der ausgewaehlte Gameserver existiert nicht.', flags: MessageFlags.Ephemeral });
+      return null;
+    case 'SERVER_INACTIVE':
+      await interaction.reply({ content: 'Der ausgewaehlte Gameserver ist nicht aktiv.', flags: MessageFlags.Ephemeral });
+      return null;
+    case 'LEGACY_SLOT':
+      await interaction.reply({
+        content: `Slot ${resolution.scope.slot} ist ein Legacy-Slot. Maximal ${MAX_GAME_SERVERS_PER_GUILD} aktive Gameserver sind erlaubt; migriere den Slot zuerst im Dashboard.`,
+        flags: MessageFlags.Ephemeral,
+      });
+      return null;
+    case 'PROMPT_REQUIRED': {
+      const options = resolution.options
+        .map(s => `• Slot ${s.slot}: **${s.alias}**`)
+        .join('\n');
+      const instruction = acceptSlotOption
+        ? 'Fuehre den Befehl erneut mit der Option `slot` aus.'
+        : 'Dieser Befehl hat noch keine explizite Slot-Auswahl und wird deshalb sicherheitshalber nicht ausgefuehrt.';
+      await interaction.reply({
+        content: `Mehrere aktive Gameserver gefunden. Eine explizite Auswahl ist erforderlich.\n${options}\n\n${instruction}`,
+        flags: MessageFlags.Ephemeral,
+        allowedMentions: { parse: [] },
+      });
+      return null;
+    }
+  }
 }
 
 export function withGuildScope(opts: WithGuildScopeOptions, handler: ScopedHandler) {
@@ -78,13 +177,11 @@ export function withGuildScope(opts: WithGuildScopeOptions, handler: ScopedHandl
       return;
     }
 
-    // Owner-Check via Bot-Cache (Guild MUSS gecacht sein, sonst Fehler).
     const guild = interaction.guild;
     const isOwner = !!guild && guild.ownerId === actorId;
 
     const permsSet = new Set<PermissionScope>();
     if (!isOwner) {
-      // 1) User-spezifische Grants
       try {
         const grant = await prisma.guildPermissionGrant.findUnique({
           where: { guildId_userDiscordId: { guildId, userDiscordId: actorId } },
@@ -94,10 +191,6 @@ export function withGuildScope(opts: WithGuildScopeOptions, handler: ScopedHandl
       } catch (e) {
         logger.error('GuildPermissionGrant-Lookup fehlgeschlagen:', e as Error);
       }
-      // 2) Role-Grants: Vereinigung aller Permissions aus Rollen, die der User
-      //    in dieser Guild aktuell traegt. KONSISTENT mit Dashboard-Middleware
-      //    (`requireGuildPermission`) — sonst greifen Role-Delegationen wie
-      //    `dashboard.access` zwar im Web-UI, aber nicht in Slash-Commands.
       try {
         const member = guild?.members.cache.get(actorId)
           ?? (guild ? await guild.members.fetch(actorId).catch(() => null) : null);
@@ -119,17 +212,13 @@ export function withGuildScope(opts: WithGuildScopeOptions, handler: ScopedHandl
 
     let nitradoConnId: NitradoConnId | null = null;
     if (!opts.guildOnly) {
-      const slotOpt = opts.acceptSlotOption ? interaction.options.getInteger('slot') ?? undefined : undefined;
-      nitradoConnId = await resolveActiveSlotId(guildId, slotOpt);
-      if (!nitradoConnId) {
-        await interaction.reply({
-          content: typeof slotOpt === 'number'
-            ? `Slot ${slotOpt} existiert nicht in diesem Server.`
-            : 'Kein aktiver Nitrado-Server konfiguriert. Bitte erst im Dashboard einen Slot anbinden.',
-          flags: MessageFlags.Ephemeral,
-        });
-        return;
-      }
+      nitradoConnId = await resolveCommandServerScope(
+        interaction,
+        guildId,
+        actorId,
+        opts.acceptSlotOption === true,
+      );
+      if (!nitradoConnId) return;
     }
 
     const scope: GuildScope = {
@@ -140,7 +229,7 @@ export function withGuildScope(opts: WithGuildScopeOptions, handler: ScopedHandl
       permissions: permsSet,
     };
 
-    if (opts.requirePerm && !hasPermission(scope, opts.requirePerm)) {
+    if (opts.requirePerm && !hasCommandPermission(scope, opts.requirePerm)) {
       logAudit('CMD_PERM_DENIED', 'SECURITY', {
         guildId, actorId, perm: opts.requirePerm, command: interaction.commandName,
       });
@@ -170,6 +259,28 @@ export function withGuildScope(opts: WithGuildScopeOptions, handler: ScopedHandl
       }
     }
 
+    if (nitradoConnId && requiresLegacyEconomyGuard(interaction.commandName, opts)) {
+      try {
+        await assertEconomyScopeReady(guildId, nitradoConnId);
+      } catch (error) {
+        if (error instanceof EconomyMigrationRequiredError || error instanceof EconomyScopeMismatchError) {
+          logAudit('ECONOMY_SCOPE_BLOCKED', 'ECONOMY', {
+            guildId,
+            nitradoConnId,
+            actorDiscordId: actorId,
+            command: interaction.commandName,
+            code: error.code,
+          });
+          await interaction.reply({
+            content: `${error.message}\n\nDie Economy wurde sicherheitshalber nicht gelesen oder veraendert.`,
+            flags: MessageFlags.Ephemeral,
+          });
+          return;
+        }
+        throw error;
+      }
+    }
+
     try {
       await handler(interaction, scope);
     } catch (err) {
@@ -189,12 +300,9 @@ export function withGuildScope(opts: WithGuildScopeOptions, handler: ScopedHandl
   };
 }
 
-/**
- * Embed-Schutz: assert dass dieselbe guildId mitgegeben wurde, die
- * der Interaction-Kontext hat. Wirft sofort, wenn fremder Scope.
- */
+/** Embed-Schutz gegen fremden Guild-Scope. */
 export function assertGuildScope(data: { guildId: string }, expectedGuildId: string): void {
   if (data.guildId !== expectedGuildId) {
-    throw new Error(`Scope-Verstoss: Daten geh\u00f6ren zu ${data.guildId}, Kontext ist ${expectedGuildId}.`);
+    throw new Error(`Scope-Verstoss: Daten gehoeren zu ${data.guildId}, Kontext ist ${expectedGuildId}.`);
   }
 }

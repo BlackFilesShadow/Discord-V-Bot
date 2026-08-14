@@ -1,12 +1,14 @@
 /**
  * Killfeed V2: Ableitung aus AdmEvent + idempotente Zustellung.
  * Kernbeweise: rohe Koordinaten + Schalter, Killer immer angezeigt (auch
- * unverlinkt), pro Config genau eine Zustellung je AdmEvent.
+ * unverlinkt), pro Config genau eine Zustellung je AdmEvent, Realtime-Hook
+ * nur fuer neue Claims und Cross-Guild-Channels werden verworfen.
  */
 import {
   mapEventToCategory, deriveKillfeedView, claimDelivery, deliverPendingKills,
   type KillAdmEvent, type KillfeedConfigRow, type DeliverClient,
 } from '../../src/modules/killfeed/killfeedV2';
+import { killfeedChannelBelongsToGuild } from '../../src/modules/killfeed/killfeedV2Cron';
 
 const CFG = {
   showShooterCoords: false, showVictimCoords: true, showWeapon: true, showDistance: true,
@@ -38,8 +40,8 @@ describe('deriveKillfeedView', () => {
     expect(v.victimGameId).toBe('victimId');
     expect(v.killerName).toBe('Killer');
     expect(v.killerGameId).toBe('killerId');
-    expect(v.victimPos).toBe('100.0 200.0 300.0'); // roh, keine Rundung
-    expect(v.killerPos).toBeNull(); // showShooterCoords=false
+    expect(v.victimPos).toBe('100.0 200.0 300.0');
+    expect(v.killerPos).toBeNull();
     expect(v.weapon).toBe('M4A1');
     expect(v.distanceMeters).toBe(123.4);
   });
@@ -64,6 +66,13 @@ describe('deriveKillfeedView', () => {
 
   it('Nicht-Kill-Event -> null', () => {
     expect(deriveKillfeedView(ev({ eventType: 'PLAYER_CONNECTED' }), CFG)).toBeNull();
+  });
+});
+
+describe('Killfeed V2 Guild-Isolation', () => {
+  it('akzeptiert nur Channels aus exakt derselben Guild', () => {
+    expect(killfeedChannelBelongsToGuild('111111111111111111', '111111111111111111')).toBe(true);
+    expect(killfeedChannelBelongsToGuild('111111111111111111', '222222222222222222')).toBe(false);
   });
 });
 
@@ -105,9 +114,30 @@ describe('claimDelivery / deliverPendingKills — Idempotenz', () => {
     const r1 = await deliverPendingKills(client, CONFIG, poster);
     const r2 = await deliverPendingKills(client, CONFIG, poster);
     expect(r1.delivered).toBe(2);
-    expect(r2.delivered).toBe(0); // bereits zugestellt
+    expect(r2.delivered).toBe(0);
     expect(poster).toHaveBeenCalledTimes(2);
     expect(messages.size).toBe(2);
+  });
+
+  it('Realtime-Hook laeuft ebenfalls nur fuer neu geclaimte Events', async () => {
+    const { client } = makeClient([ev({ id: 'e1' }), ev({ id: 'e2' })]);
+    const poster = jest.fn().mockResolvedValue('msg');
+    const onDelivered = jest.fn();
+    await deliverPendingKills(client, CONFIG, poster, { onDelivered });
+    await deliverPendingKills(client, CONFIG, poster, { onDelivered });
+    expect(onDelivered).toHaveBeenCalledTimes(2);
+    expect(onDelivered.mock.calls.map((c) => (c[0] as KillAdmEvent).id)).toEqual(['e1', 'e2']);
+  });
+
+  it('Realtime-Fehler erzeugt keine erneute persistente Zustellung', async () => {
+    const { client } = makeClient([ev({ id: 'e1' })]);
+    const poster = jest.fn().mockResolvedValue('msg');
+    const onDelivered = jest.fn().mockRejectedValue(new Error('socket down'));
+    const first = await deliverPendingKills(client, CONFIG, poster, { onDelivered });
+    const second = await deliverPendingKills(client, CONFIG, poster, { onDelivered });
+    expect(first.delivered).toBe(1);
+    expect(second.delivered).toBe(0);
+    expect(poster).toHaveBeenCalledTimes(1);
   });
 
   it('ueberspringt Nicht-Kill-Events (kein Claim, kein Post)', async () => {

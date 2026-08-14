@@ -17,14 +17,17 @@ import messageReactionRemoveEvent from './events/messageReactionRemove';
 import voiceStateUpdateEvent from './events/voiceStateUpdate';
 
 // Module importieren
-import { startGiveawayScheduler } from './modules/giveaway/giveawayManager';
-import { startFeedScheduler } from './modules/feeds/feedManager';
-import { startPollScheduler } from './modules/polls/pollSystem';
-import { startRateLimitCleanup } from './utils/rateLimiter';
+import { startGiveawayScheduler, stopGiveawayScheduler } from './modules/giveaway/giveawayManager';
+import { startFeedScheduler, stopFeedScheduler } from './modules/feeds/feedManager';
+import { startPollScheduler, stopPollScheduler } from './modules/polls/pollSystem';
+import { startRateLimitCleanup, stopRateLimitCleanup } from './utils/rateLimiter';
+import { startReminderScheduler, stopReminderScheduler } from './modules/reminders/reminderScheduler';
 import { startDashboard } from './dashboard/server';
 import { processExpiredCases } from './modules/moderation/caseManager';
 import { acquireSingletonLock } from './utils/singleton';
 import { assertProductionEnv } from './utils/envValidation';
+import { startNitradoRuntime, type NitradoRuntimeHandle } from './modules/nitrado/runtime';
+import { startAiBackgroundLoops, stopAiBackgroundLoops } from './modules/ai/runtime';
 
 /**
  * Discord-V-Bot Haupteinstiegspunkt.
@@ -114,40 +117,7 @@ async function main(): Promise<void> {
       logger.info(`Command-Sync (scoped) startet für ${guildIds.length} Guild(s)...`);
       const res = await deployCommandsScoped(client, config.discord.token, config.discord.clientId, guildIds);
       logger.info(`Command-Sync fertig: ${res.globalCount} global, ${res.guildCount} guild-scoped auf ${res.guildsOk} Guild(s).`);
-      // Phase 6: Guild-Stammdaten cachen / persistieren
-      try {
-        const { bootstrapGuildAwareness, startContentSyncLoop } = await import('./modules/ai/guildAwareness.js');
-        await bootstrapGuildAwareness(client);
-        // Phase 7: Auto-Sync Channels/Rules alle 60 min
-        startContentSyncLoop(client);
-        // Phase 9 (RAG): pgvector pruefen + Embeddings fuer alle aktiven Snippets nachziehen.
-        try {
-          const { checkPgvectorAvailability, backfillEmbeddings } = await import('./modules/ai/embeddings.js');
-          await checkPgvectorAvailability();
-          void backfillEmbeddings().catch((e) => {
-            logger.warn('Embedding-Backfill fehlgeschlagen:', e as Error);
-          });
-        } catch (e) {
-          logger.warn('RAG-Initialisierung fehlgeschlagen:', e as Error);
-        }
-        // Phase 14 (Conversation Memory): Cleanup-Loop starten.
-        try {
-          const { startConversationCleanupLoop, cleanupOld } = await import('./modules/ai/conversationMemory.js');
-          void cleanupOld();
-          startConversationCleanupLoop();
-        } catch (e) {
-          logger.warn('ConversationMemory-Init fehlgeschlagen:', e as Error);
-        }
-        // Phase 17 (TranslatedPost-Scheduler): Polling-Loop starten.
-        try {
-          const { startTranslatedPostScheduler } = await import('./modules/ai/translatedPostScheduler.js');
-          startTranslatedPostScheduler(client);
-        } catch (e) {
-          logger.warn('TranslatedPost-Scheduler-Init fehlgeschlagen:', e as Error);
-        }
-      } catch (e) {
-        logger.warn('GuildAwareness-Bootstrap fehlgeschlagen:', e as Error);
-      }
+      await startAiBackgroundLoops(client);
     } catch (e) {
       logger.error('Per-Guild Command-Sync Fehler:', e);
     }
@@ -208,35 +178,19 @@ async function main(): Promise<void> {
   // Web-Dashboard SOFORT nach Login starten, damit Healthcheck (/health) und
   // /metrics frueh verfuegbar sind. Der Command-Sync (scoped, im clientReady)
   // kann minutenlang dauern und darf den HTTP-Server nicht blockieren.
+  let dashboardRuntime: Awaited<ReturnType<typeof startDashboard>> | null = null;
   try {
-    await startDashboard(client);
+    dashboardRuntime = await startDashboard(client);
   } catch (error) {
     logger.error('Dashboard konnte nicht gestartet werden:', error);
   }
 
-  // Phase 3-Final: Hintergrund-Worker starten (NitradoJob-Outbox + Token/ADM-Crons).
-  let drainJobWorker: (() => Promise<void>) | null = null;
+  // Nitrado-nahe Worker/Scheduler als eine symmetrische Runtime-Grenze starten.
+  // Beim Shutdown stoppt sie erst alle Producer/Poller und draint danach den
+  // NitradoJobWorker, bevor Discord/Prisma geschlossen werden.
+  let nitradoRuntime: NitradoRuntimeHandle | null = null;
   try {
-    const { startNitradoJobWorker, drainAndStopJobWorker } = await import('./modules/nitrado/jobWorker.js');
-    const { startTokenValidationCron } = await import('./modules/nitrado/tokenValidationCron.js');
-    const { startAdmSyncCron } = await import('./modules/nitrado/admSyncCron.js');
-    const { startPermaOnlyCron } = await import('./modules/nitrado/permaOnlyCron.js');
-    const { startKillfeedWatcher } = await import('./modules/killfeed/admWatcher.js');
-    const { startBankInterestCron } = await import('./modules/economy/interestCron.js');
-    startNitradoJobWorker();
-    drainJobWorker = () => drainAndStopJobWorker();
-    startTokenValidationCron(client);
-    startAdmSyncCron();
-    startPermaOnlyCron();
-    // Killfeed: V2 (aus AdmEvents) wenn Pipeline aktiv, sonst alter Watcher —
-    // nie beide zugleich (kein Doppel-Posting).
-    if (config.nitrado.admEventPipelineV2) {
-      const { startKillfeedV2Cron } = await import('./modules/killfeed/killfeedV2Cron.js');
-      startKillfeedV2Cron();
-    } else {
-      startKillfeedWatcher();
-    }
-    startBankInterestCron();
+    nitradoRuntime = startNitradoRuntime(client);
   } catch (e) {
     logger.warn('Nitrado-Worker-Init fehlgeschlagen:', e as Error);
   }
@@ -244,22 +198,17 @@ async function main(): Promise<void> {
   // Hinweis: Die Command-Registrierung (scoped: global + guild) erfolgt im
   // clientReady-Listener oben, sobald der Guild-Cache verfuegbar ist.
 
-  // Scheduler starten
+  // Allgemeine Scheduler starten. Jeder besitzt einen Stop-Hook und darf den
+  // Prozess nicht durch einen ref'd Timer kuenstlich offen halten.
   startGiveawayScheduler(client);
   startFeedScheduler(client);
   startPollScheduler(client);
   startRateLimitCleanup();
+  startReminderScheduler(client);
 
-  // Phase B: Reminder-Scheduler
-  try {
-    const { startReminderScheduler } = await import('./modules/reminders/reminderScheduler.js');
-    startReminderScheduler(client);
-  } catch (e) {
-    logger.warn('Reminder-Scheduler-Init fehlgeschlagen:', e as Error);
-  }
-
-  // Moderation-Scheduler: Temp-Bans/Mutes alle 60s prüfen
-  setInterval(async () => {
+  // Moderation-Scheduler: Temp-Bans/Mutes alle 60s prüfen. Handle behalten,
+  // unref'en und beim Shutdown explizit stoppen.
+  const moderationTimer = setInterval(async () => {
     try {
       for (const guild of client.guilds.cache.values()) {
         const n = await processExpiredCases(guild);
@@ -269,11 +218,13 @@ async function main(): Promise<void> {
       logger.error('Moderation-Scheduler Fehler:', err as Error);
     }
   }, 60_000);
+  moderationTimer.unref?.();
 
   logger.info('Discord-V-Bot vollständig gestartet.');
 
-  // Graceful Shutdown (NIT-010: geordnet — erst Worker drainen, dann Discord,
-  // dann Prisma; Guard gegen Doppelaufruf; Watchdog gegen Haenger).
+  // Graceful Shutdown (NIT-010/F-013): erst alle Producer/Poller stoppen und
+  // Nitrado-Worker drainen, danach Discord, zuletzt Prisma. Guard gegen
+  // Doppelaufruf; Watchdog gegen Haenger.
   let shuttingDown = false;
   const shutdown = async (signal: string) => {
     if (shuttingDown) return;
@@ -284,11 +235,30 @@ async function main(): Promise<void> {
       process.exit(1);
     }, 20_000);
     watchdog.unref?.();
+
+    // Dashboard zuerst als externen Producer schliessen: keine neuen HTTP-/
+    // Socket-Aktionen duerfen waehrend Worker-Drain/DB-Shutdown entstehen.
     try {
-      if (drainJobWorker) await drainJobWorker();
+      if (dashboardRuntime) await dashboardRuntime.stop();
     } catch (e) {
-      logger.warn('Worker-Drain-Fehler beim Shutdown:', e as Error);
+      logger.warn('Dashboard-Runtime-Shutdown fehlgeschlagen:', e as Error);
     }
+
+    // Keine neuen allgemeinen/AI DB- oder Discord-Arbeiten mehr erzeugen.
+    stopAiBackgroundLoops();
+    clearInterval(moderationTimer);
+    stopReminderScheduler();
+    stopRateLimitCleanup();
+    stopPollScheduler();
+    stopFeedScheduler();
+    stopGiveawayScheduler();
+
+    try {
+      if (nitradoRuntime) await nitradoRuntime.stopAndDrain();
+    } catch (e) {
+      logger.warn('Nitrado-Runtime-Shutdown fehlgeschlagen:', e as Error);
+    }
+
     await client.destroy();
     await prisma.$disconnect();
     clearTimeout(watchdog);

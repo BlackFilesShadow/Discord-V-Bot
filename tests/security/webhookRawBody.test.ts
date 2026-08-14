@@ -6,9 +6,11 @@ process.env.ENCRYPTION_KEY ||= '0'.repeat(64);
 process.env.SESSION_SECRET ||= 'test-session-secret';
 
 /**
- * F-001 Regression: Der globale express.json()-Parser darf die HMAC-Pruefung
- * des Webhook-Endpunkts nicht zerstoeren. Die Signatur wird ueber die
- * Original-Rohbytes berechnet — nicht ueber ein re-serialisiertes JSON-Objekt.
+ * F-001/F-002 Regression:
+ * - HMAC wird ueber Timestamp + Original-Rohbytes berechnet.
+ * - Timestamp muss frisch sein.
+ * - derselbe authentisierte Request darf persistent nur einmal zugestellt werden.
+ * - bei Downstream-Fehlern wird der Replay-Claim freigegeben, damit ein echter Retry moeglich bleibt.
  */
 
 import crypto from 'crypto';
@@ -27,11 +29,29 @@ const feedRow = {
   mentionRoles: [] as string[],
 };
 
+const claimed = new Set<string>();
 const prismaMock = {
   feed: {
     findUnique: jest.fn(async () => feedRow),
     update: jest.fn(async () => feedRow),
   },
+  idempotencyKey: {
+    create: jest.fn(async ({ data }: { data: { hash: string } }) => {
+      if (claimed.has(data.hash)) {
+        const error = new Error('duplicate') as Error & { code?: string };
+        error.code = 'P2002';
+        throw error;
+      }
+      claimed.add(data.hash);
+      return data;
+    }),
+    update: jest.fn(async ({ where }: { where: { hash: string } }) => ({ hash: where.hash })),
+    delete: jest.fn(async ({ where }: { where: { hash: string } }) => {
+      claimed.delete(where.hash);
+      return { hash: where.hash };
+    }),
+  },
+  $transaction: jest.fn(async (ops: Array<Promise<unknown>>) => Promise.all(ops)),
 };
 jest.mock('../../src/database/prisma', () => ({ __esModule: true, default: prismaMock }));
 jest.mock('../../src/utils/logger', () => ({
@@ -50,10 +70,6 @@ const fakeClient = {
   channels: { fetch: jest.fn().mockResolvedValue({ send: channelSend }) },
 } as unknown as Parameters<typeof setWebhookClient>[0];
 
-/**
- * Baut die App exakt wie der produktive Server: globaler JSON-Parser MIT
- * verify-Hook, der die Rohbytes fuer die HMAC-Pruefung sichert.
- */
 function makeApp() {
   const app = express();
   app.use(express.json({
@@ -65,34 +81,45 @@ function makeApp() {
   return app;
 }
 
-function sign(body: string): string {
-  return 'sha256=' + crypto.createHmac('sha256', SECRET).update(body).digest('hex');
+function nowTimestamp(): string {
+  return String(Math.floor(Date.now() / 1000));
+}
+
+function sign(body: string, timestamp: string): string {
+  return 'sha256=' + crypto.createHmac('sha256', SECRET).update(`${timestamp}.${body}`).digest('hex');
 }
 
 beforeEach(() => {
   jest.clearAllMocks();
+  channelSend.mockReset().mockResolvedValue({ id: 'msg-1' });
+  claimed.clear();
   setWebhookClient(fakeClient);
 });
 
-describe('F-001 — Webhook-Rohbody / HMAC', () => {
-  it('akzeptiert einen korrekt signierten Body (200)', async () => {
+describe('F-001/F-002 — Webhook raw body, signed timestamp and replay protection', () => {
+  it('akzeptiert einen korrekt signierten frischen Body (200)', async () => {
     const body = JSON.stringify({ title: 'Hallo Welt', description: 'Test' });
+    const timestamp = nowTimestamp();
     const res = await request(makeApp())
       .post(`/webhooks/feed/${FEED_ID}`)
       .set('Content-Type', 'application/json')
-      .set('X-V-Webhook-Signature', sign(body))
+      .set('X-V-Webhook-Timestamp', timestamp)
+      .set('X-V-Webhook-Signature', sign(body, timestamp))
       .send(body);
     expect(res.status).toBe(200);
     expect(channelSend).toHaveBeenCalledTimes(1);
+    expect(prismaMock.idempotencyKey.create).toHaveBeenCalledTimes(1);
   });
 
   it('lehnt einen manipulierten Body ab (401)', async () => {
     const original = JSON.stringify({ title: 'Original' });
-    const signature = sign(original);
+    const timestamp = nowTimestamp();
+    const signature = sign(original, timestamp);
     const tampered = JSON.stringify({ title: 'Manipuliert' });
     const res = await request(makeApp())
       .post(`/webhooks/feed/${FEED_ID}`)
       .set('Content-Type', 'application/json')
+      .set('X-V-Webhook-Timestamp', timestamp)
       .set('X-V-Webhook-Signature', signature)
       .send(tampered);
     expect(res.status).toBe(401);
@@ -101,12 +128,84 @@ describe('F-001 — Webhook-Rohbody / HMAC', () => {
 
   it('lehnt eine falsche Signatur ab (401)', async () => {
     const body = JSON.stringify({ title: 'Hallo' });
+    const timestamp = nowTimestamp();
     const res = await request(makeApp())
       .post(`/webhooks/feed/${FEED_ID}`)
       .set('Content-Type', 'application/json')
+      .set('X-V-Webhook-Timestamp', timestamp)
       .set('X-V-Webhook-Signature', 'sha256=' + 'f'.repeat(64))
       .send(body);
     expect(res.status).toBe(401);
+  });
+
+  it('lehnt fehlende und abgelaufene Timestamps ab', async () => {
+    const body = JSON.stringify({ title: 'Hallo' });
+    const fresh = nowTimestamp();
+    const missing = await request(makeApp())
+      .post(`/webhooks/feed/${FEED_ID}`)
+      .set('Content-Type', 'application/json')
+      .set('X-V-Webhook-Signature', sign(body, fresh))
+      .send(body);
+    expect(missing.status).toBe(401);
+
+    const old = String(Math.floor((Date.now() - 10 * 60 * 1000) / 1000));
+    const expired = await request(makeApp())
+      .post(`/webhooks/feed/${FEED_ID}`)
+      .set('Content-Type', 'application/json')
+      .set('X-V-Webhook-Timestamp', old)
+      .set('X-V-Webhook-Signature', sign(body, old))
+      .send(body);
+    expect(expired.status).toBe(401);
+    expect(channelSend).not.toHaveBeenCalled();
+  });
+
+  it('blockiert denselben authentisierten Request beim zweiten Versuch persistent (409)', async () => {
+    const body = JSON.stringify({ title: 'Genau einmal' });
+    const timestamp = nowTimestamp();
+    const send = () => request(makeApp())
+      .post(`/webhooks/feed/${FEED_ID}`)
+      .set('Content-Type', 'application/json')
+      .set('X-V-Webhook-Timestamp', timestamp)
+      .set('X-V-Webhook-Signature', sign(body, timestamp))
+      .send(body);
+
+    expect((await send()).status).toBe(200);
+    expect((await send()).status).toBe(409);
+    expect(channelSend).toHaveBeenCalledTimes(1);
+  });
+
+  it('gibt den Replay-Claim nach Discord-Fehler frei und erlaubt denselben Retry', async () => {
+    const body = JSON.stringify({ title: 'Retry after failure' });
+    const timestamp = nowTimestamp();
+    const send = () => request(makeApp())
+      .post(`/webhooks/feed/${FEED_ID}`)
+      .set('Content-Type', 'application/json')
+      .set('X-V-Webhook-Timestamp', timestamp)
+      .set('X-V-Webhook-Signature', sign(body, timestamp))
+      .send(body);
+
+    channelSend.mockRejectedValueOnce(new Error('Discord unavailable'));
+    expect((await send()).status).toBe(502);
+    expect(prismaMock.idempotencyKey.delete).toHaveBeenCalledTimes(1);
+    expect(claimed.size).toBe(0);
+
+    expect((await send()).status).toBe(200);
+    expect(channelSend).toHaveBeenCalledTimes(2);
+    expect(prismaMock.idempotencyKey.create).toHaveBeenCalledTimes(2);
+  });
+
+  it('unterstuetzt Token-Fallback nur mit frischem Timestamp und Dedup', async () => {
+    const body = JSON.stringify({ title: 'Token source' });
+    const timestamp = nowTimestamp();
+    const send = () => request(makeApp())
+      .post(`/webhooks/feed/${FEED_ID}`)
+      .set('Content-Type', 'application/json')
+      .set('X-V-Webhook-Timestamp', timestamp)
+      .set('X-V-Webhook-Token', SECRET)
+      .send(body);
+
+    expect((await send()).status).toBe(200);
+    expect((await send()).status).toBe(409);
   });
 
   it('laesst den normalen JSON-Parser unveraendert', async () => {

@@ -4,7 +4,6 @@ import {
   Attachment,
   MessageFlags,
 } from 'discord.js';
-import axios from 'axios';
 import { Command } from '../../types';
 import prisma from '../../database/prisma';
 import {
@@ -15,6 +14,7 @@ import {
 } from '../../modules/upload/uploadHandler';
 import { config } from '../../config';
 import { Colors, Brand, vEmbed, formatBytes } from '../../utils/embedDesign';
+import { safeAxiosGet } from '../../utils/ssrf';
 
 /**
  * /upload (Sektion 2):
@@ -23,6 +23,8 @@ import { Colors, Brand, vEmbed, formatBytes } from '../../utils/embedDesign';
  *   Maximum geprueft → kein 2 GB-Memory-Spike mehr
  * - Multi-File-Loop sammelt ALLE Resultate (auch bei Teilfehlern) und liefert
  *   eine Zusammenfassung statt frueh abzubrechen.
+ * - F-003: Attachment-Downloads nutzen den zentralen SSRF-gehaerteten Client
+ *   (DNS-Pinning, Redirect-Recheck, Body-Limit).
  */
 const MAX_FILES = 10;
 
@@ -134,13 +136,21 @@ const uploadCommand: Command = {
       }
 
       try {
-        const response = await axios.get<ArrayBuffer>(att.url, {
+        const response = await safeAxiosGet<ArrayBuffer>(att.url, {
           responseType: 'arraybuffer',
           maxContentLength: maxBytes,
           maxBodyLength: maxBytes,
           timeout: 120_000,
         });
         const fileBuffer = Buffer.from(response.data);
+        if (fileBuffer.length > maxBytes) {
+          results.push({
+            name: fileName,
+            success: false,
+            message: `Zu gross: ${formatBytes(fileBuffer.length)} > ${formatBytes(maxBytes)}`,
+          });
+          continue;
+        }
 
         const result = await processUpload(
           dbUser.id,

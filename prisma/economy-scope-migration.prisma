@@ -1,0 +1,19 @@
+// Phase 4 / ECO-S03: Zustand der Legacy-Economy-Migration pro Discord-Guild.
+//
+// RESOLVED bedeutet: alle vorhandenen Legacy-Wirtschaftsdaten wurden genau
+// einem Primaerserver zugeordnet. MIGRATION_REQUIRED bedeutet: mehrere oder
+// keine eindeutig nutzbaren Gameserver wurden gefunden; bis zur ausdruecklichen
+// Owner-Auswahl bleibt die Economy fail-closed.
+model EconomyScopeMigration {
+  guildId                   String   @id
+  status                    String   @default("MIGRATION_REQUIRED") @db.VarChar(32)
+  primaryNitradoConnId      String?
+  detectedActiveServerCount Int      @default(0)
+  resolvedByDiscordId       String?
+  resolvedAt                DateTime?
+  createdAt                 DateTime @default(now())
+  updatedAt                 DateTime @updatedAt
+
+  @@index([status])
+  @@index([primaryNitradoConnId])
+}

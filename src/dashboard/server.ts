@@ -16,8 +16,9 @@ import { discordHealthRouter } from './routes/discordHealth';
 import { transcriptsRouter } from './routes/transcripts';
 import { setDashboardClient } from './clientRegistry';
 import { initSocketIo } from './socket';
-import { startDevUploadCleanupTimer } from './services/devUpload';
-import { startDevSessionCleanupTimer } from './services/devSessionLifecycle';
+import { cleanupExpiredUploads } from './services/devUpload';
+import { cleanupExpiredDevSessions } from './services/devSessionLifecycle';
+import { createDashboardRuntime, scheduleCleanup, type DashboardRuntimeHandle } from './runtime';
 import { attachPrismaLatencyMiddleware, attachLogRingBuffer } from './services/observability';
 import { readinessHandler } from './health';
 import prisma from '../database/prisma';
@@ -60,7 +61,7 @@ function dashboardWebsocketOrigins(): string[] {
  * - Developer-Bereich: Erweiterte Logs, Analytics, Fehlerberichte, API-Keys, Feature-Toggles
  */
 
-export async function startDashboard(client?: Client): Promise<void> {
+export async function startDashboard(client?: Client): Promise<DashboardRuntimeHandle> {
   const app = express();
   if (client) {
     setWebhookClient(client);
@@ -195,6 +196,7 @@ export async function startDashboard(client?: Client): Promise<void> {
     // F-007: Ein defekter Session-Store bedeutet kaputte Auth -> fail-fast,
     // statt scheinbar gesund weiterzulaufen.
     logger.error(`Session-Tabelle konnte nicht initialisiert werden: ${(e as Error).message}`);
+    await sessionPool.end().catch(() => undefined);
     throw new Error(`Dashboard-Start abgebrochen: Session-Store nicht initialisierbar (${(e as Error).message}).`);
   }
 
@@ -335,13 +337,49 @@ export async function startDashboard(client?: Client): Promise<void> {
   });
 
   const httpServer = http.createServer(app);
-  initSocketIo(httpServer, sessionMiddleware);
-  startDevUploadCleanupTimer();
-  startDevSessionCleanupTimer();
+  const io = initSocketIo(httpServer, sessionMiddleware);
+  const uploadCleanup = scheduleCleanup(
+    () => cleanupExpiredUploads(),
+    60 * 60 * 1000,
+    30_000,
+    error => logger.error('[DEV-Upload] cleanup error:', error as Error),
+  );
+  const sessionCleanup = scheduleCleanup(
+    () => cleanupExpiredDevSessions(),
+    60 * 60 * 1000,
+    60_000,
+    error => logger.error('[DevSession] cleanup error:', error as Error),
+  );
+  const runtime = createDashboardRuntime({
+    httpServer,
+    io,
+    sessionStore,
+    sessionPool,
+    cleanups: [uploadCleanup, sessionCleanup],
+  });
+
   attachPrismaLatencyMiddleware(prisma as unknown as Parameters<typeof attachPrismaLatencyMiddleware>[0]);
   attachLogRingBuffer(logger);
 
-  httpServer.listen(config.dashboard.port, () => {
-    logger.info(`Dashboard gestartet auf Port ${config.dashboard.port}`);
-  });
+  try {
+    await new Promise<void>((resolve, reject) => {
+      const onError = (error: Error) => {
+        httpServer.off('error', onError);
+        reject(error);
+      };
+      httpServer.once('error', onError);
+      httpServer.listen(config.dashboard.port, () => {
+        httpServer.off('error', onError);
+        logger.info(`Dashboard gestartet auf Port ${config.dashboard.port}`);
+        resolve();
+      });
+    });
+  } catch (error) {
+    await runtime.stop().catch(stopError => {
+      logger.warn('Dashboard-Ressourcen nach Startfehler konnten nicht vollstaendig geschlossen werden:', stopError as Error);
+    });
+    throw error;
+  }
+
+  return runtime;
 }

@@ -16,6 +16,10 @@ import {
   findMatchingTrigger,
   type AiTrigger,
 } from '../../src/modules/ai/triggers';
+import {
+  decideMessageActivation,
+  normalizeTriggerActivationMode,
+} from '../../src/modules/ai/messageActivation';
 
 describe('V-Bot developer identity', () => {
   const questions = [
@@ -68,9 +72,9 @@ describe('V-Bot developer identity', () => {
     expect(matched?.cooldownSeconds).toBe(0);
   });
 
-  it('deaktiviert Trigger-Cooldown nur bei direkter Bot-Ansprache, nicht bei passiven Triggern', () => {
-    const trigger: AiTrigger = {
-      id: 'test-trigger',
+  it('setzt Legacy-Trigger fail-safe auf MENTION_ONLY und erlaubt passiv nur ALWAYS', () => {
+    const legacy: AiTrigger = {
+      id: 'legacy-trigger',
       trigger: 'ping',
       triggerType: 'keyword',
       responseMode: 'text',
@@ -79,9 +83,19 @@ describe('V-Bot developer identity', () => {
       createdAt: '2026-08-12T00:00:00.000Z',
       createdBy: 'test',
     };
+    const passive: AiTrigger = { ...legacy, id: 'passive-trigger', activationMode: 'ALWAYS' };
 
-    expect(findMatchingTrigger([trigger], 'ping', true)?.cooldownSeconds).toBe(0);
-    expect(findMatchingTrigger([trigger], 'ping', false)?.cooldownSeconds).toBe(45);
+    expect(normalizeTriggerActivationMode(undefined)).toBe('MENTION_ONLY');
+    expect(findMatchingTrigger([legacy], 'ping', false)).toBeNull();
+    expect(findMatchingTrigger([legacy], 'ping', true)?.cooldownSeconds).toBe(0);
+    expect(findMatchingTrigger([passive], 'ping', false)?.cooldownSeconds).toBe(45);
+  });
+
+  it('zentralisiert Mention, Reply und /ai als explizite Bot-Ansprache', () => {
+    expect(decideMessageActivation({ isMentioned: true, isReplyToBot: false }).allowAiResponse).toBe(true);
+    expect(decideMessageActivation({ isMentioned: false, isReplyToBot: true }).allowAiResponse).toBe(true);
+    expect(decideMessageActivation({ isMentioned: false, isReplyToBot: false, isAiCommand: true }).allowAiResponse).toBe(true);
+    expect(decideMessageActivation({ isMentioned: false, isReplyToBot: false }).allowAiResponse).toBe(false);
   });
 
   it.each([

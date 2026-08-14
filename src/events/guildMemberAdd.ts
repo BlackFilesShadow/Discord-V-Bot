@@ -7,40 +7,30 @@ import { getWelcomeConfig, renderWelcomeMessage, sendWelcomeMessages } from '../
 import { resolveCustomEmotes } from '../modules/ai/emoteResolver';
 import { syncMemberProfile } from '../modules/ai/memberAwareness';
 import { maybeGrantStartBalance } from '../modules/economy/repository';
-import { asGuildId, asUserDiscordId } from '../types/scope';
+import { asGuildId, asNitradoConnId, asUserDiscordId } from '../types/scope';
 
-// Anti-Raid: Speichert Join-Timestamps
 const recentJoins: Map<string, number[]> = new Map();
 
-/**
- * GuildMemberAdd-Event: Neuer Nutzer tritt bei.
- * Sektion 1: GUID-Vergabe, Sektion 9: Auto-Rollen.
- */
 const guildMemberAddEvent: BotEvent = {
   name: Events.GuildMemberAdd,
   execute: async (member: unknown) => {
     const m = member as GuildMember;
 
-    // Anti-Raid Detection (Sektion 4)
     const guildId = m.guild.id;
     const now = Date.now();
     const joins = recentJoins.get(guildId) || [];
     joins.push(now);
-    // Nur Joins der letzten 10 Sekunden behalten
     const recentWindow = joins.filter(t => now - t < 10000);
     recentJoins.set(guildId, recentWindow);
 
     const isRaid = await detectRaid(guildId, recentWindow.length);
     if (isRaid) {
       logger.warn(`🚨 RAID ERKANNT auf Server ${guildId}! ${recentWindow.length} Joins in 10s.`);
-      // Hier könnte automatisches Lockdown implementiert werden
     }
 
     try {
-      // Phase 18: Per-Guild Member-Profil pflegen (best-effort).
       void syncMemberProfile(m);
 
-      // User in DB registrieren mit GUID (Sektion 1)
       const user = await prisma.user.upsert({
         where: { discordId: m.user.id },
         create: {
@@ -54,28 +44,23 @@ const guildMemberAddEvent: BotEvent = {
         },
       });
 
-      // Level-Data initialisieren für DIESE Guild (Sektion 8, guild-getrennt)
       await prisma.levelData.upsert({
         where: { userId_guildId: { userId: user.id, guildId: m.guild.id } },
         create: { userId: user.id, guildId: m.guild.id },
         update: {},
       });
 
-      // GDPR Consent Entry (Sektion 4: DSGVO)
       await prisma.gdprConsent.upsert({
         where: { userId: user.id },
         create: { userId: user.id },
         update: {},
       });
 
-      // Auto-Rollen vergeben (Sektion 9: Rollen nach Beitritt)
-      // Multi-Guild: NUR AutoRoles dieser Guild beruecksichtigen.
       const autoRoles = await prisma.autoRole.findMany({
         where: { guildId: m.guild.id, triggerType: 'JOIN', isActive: true },
       });
 
       for (const autoRole of autoRoles) {
-        // Prüfe Ablaufdatum
         if (autoRole.expiresAt && autoRole.expiresAt < new Date()) continue;
 
         try {
@@ -95,19 +80,47 @@ const guildMemberAddEvent: BotEvent = {
         }
       }
 
-      // Phase 3-Final: Startguthaben (idempotent, prueft EconomyConfig.startBalance)
       try {
-        const grantResult = await maybeGrantStartBalance(asGuildId(m.guild.id), asUserDiscordId(m.user.id));
-        if (grantResult.granted) {
-          logAudit('ECON_STARTBALANCE_GRANTED', 'ECONOMY', {
-            guildId: m.guild.id, userDiscordId: m.user.id, amount: grantResult.amount.toString(),
-          });
+        // ECO-S03: Ein Discord-Join besitzt bei Multi-Server-Guilds keinen
+        // eindeutigen Gameserver-Kontext. Startguthaben darf deshalb NIEMALS
+        // auf mehrere Server kopiert oder per "kleinster Slot" geraten werden.
+        const usableServers = await prisma.nitradoConnection.findMany({
+          where: {
+            guildId: m.guild.id,
+            status: 'ACTIVE',
+            slot: { gte: 1, lte: 4 },
+            nitradoServerId: { not: null },
+          },
+          select: { id: true },
+          orderBy: [{ slot: 'asc' }, { id: 'asc' }],
+          take: 2,
+        });
+
+        if (usableServers.length === 1) {
+          const nitradoConnId = asNitradoConnId(usableServers[0].id);
+          const grantResult = await maybeGrantStartBalance(
+            asGuildId(m.guild.id),
+            nitradoConnId,
+            asUserDiscordId(m.user.id),
+          );
+          if (grantResult.granted) {
+            logAudit('ECON_STARTBALANCE_GRANTED', 'ECONOMY', {
+              guildId: m.guild.id,
+              nitradoConnId,
+              userDiscordId: m.user.id,
+              amount: grantResult.amount.toString(),
+            });
+          }
+        } else {
+          logger.info(
+            `Startguthaben fuer ${m.user.id} in ${m.guild.id} uebersprungen: `
+            + `${usableServers.length === 0 ? 'kein' : 'mehr als ein'} eindeutiger aktiver Gameserver.`,
+          );
         }
       } catch (econErr) {
         logger.warn(`Startguthaben fuer ${m.user.id} in ${m.guild.id} fehlgeschlagen:`, econErr as Error);
       }
 
-      // Audit-Log
       logAudit('MEMBER_JOIN', 'SYSTEM', {
         userId: user.id,
         discordId: m.user.id,
@@ -118,19 +131,17 @@ const guildMemberAddEvent: BotEvent = {
 
       logger.info(`Neuer Nutzer: ${m.user.username} (GUID: ${user.id})`);
 
-      // ===== WELCOME-NACHRICHT (normaler Discord-Text mit optionalem Medium) =====
       try {
         const wcfg = await getWelcomeConfig(m.guild.id);
         if (wcfg && wcfg.enabled && wcfg.channelId) {
           const channel = m.guild.channels.cache.get(wcfg.channelId) as TextChannel | undefined;
           if (channel?.isTextBased()) {
             const userMention = `<@${m.user.id}>`;
+            const displayName = m.displayName || m.user.globalName || m.user.username;
             const memberCount = m.guild.memberCount;
 
-            // {user} und {mention} sind echte Discord-Erwaehnungen direkt im
-            // normalen Nachrichtentext. Es gibt keinen zusaetzlichen Ping.
             const messageText = renderWelcomeMessage(wcfg.message, {
-              user: userMention,
+              user: displayName,
               mention: userMention,
               guild: m.guild.name,
               memberCount,
