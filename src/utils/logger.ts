@@ -2,6 +2,7 @@ import winston from 'winston';
 import DailyRotateFile from 'winston-daily-rotate-file';
 import path from 'path';
 import fs from 'fs';
+import { Writable } from 'node:stream';
 
 const LOG_DIR = process.env.LOG_DIR || './logs';
 const IS_TEST_RUNTIME = process.env.NODE_ENV === 'test' || Boolean(process.env.JEST_WORKER_ID);
@@ -93,12 +94,50 @@ function auditTransports(): winston.transport[] {
   })];
 }
 
+/**
+ * Das DEV-Log-Ringbuffer-Modul liefert absichtlich ein minimales
+ * Transport-aehnliches Objekt. Winston 3 erkennt solche Nicht-Streams als
+ * LegacyTransport und druckt deshalb "undefined is a legacy winston transport".
+ * Dieser Adapter macht genau diesen internen Ringtransport zu einem echten
+ * objectMode-Writable mit moderner 2-Argument-log-Signatur. Alle normalen
+ * Winston-/DailyRotateFile-Transports bleiben unveraendert.
+ */
+class ModernRingTransportBridge extends Writable {
+  constructor(private readonly target: { log: (info: unknown, callback?: () => void) => void }) {
+    super({ objectMode: true });
+  }
+
+  log(info: unknown, callback: () => void): void {
+    this.target.log(info, callback);
+  }
+
+  override _write(info: unknown, _encoding: BufferEncoding, callback: (error?: Error | null) => void): void {
+    try {
+      this.target.log(info, () => callback());
+    } catch (error) {
+      callback(error as Error);
+    }
+  }
+}
+
+function installModernRingTransportAdapter(targetLogger: winston.Logger): void {
+  const originalAdd = targetLogger.add.bind(targetLogger);
+  targetLogger.add = ((transport: winston.transport) => {
+    const candidate = transport as unknown as { constructor?: { name?: string }; log?: (info: unknown, callback?: () => void) => void };
+    if (candidate?.constructor?.name === 'RingTransport' && typeof candidate.log === 'function') {
+      return originalAdd(new ModernRingTransportBridge(candidate as { log: (info: unknown, callback?: () => void) => void }) as unknown as winston.transport);
+    }
+    return originalAdd(transport);
+  }) as winston.Logger['add'];
+}
+
 export const logger = winston.createLogger({
   level: process.env.LOG_LEVEL || 'info',
   format: logFormat,
   defaultMeta: { service: 'discord-v-bot' },
   transports: mainTransports(),
 });
+installModernRingTransportAdapter(logger);
 
 // Security Logger
 export const securityLogger = winston.createLogger({
