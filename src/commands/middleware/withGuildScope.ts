@@ -11,6 +11,8 @@
  *  3. Legacy-Slots > MAX_GAME_SERVERS_PER_GUILD werden fail-closed abgewiesen.
  *  4. Owner-Status + Permissions-Set ist aufgeloest.
  *  5. Falls `requirePerm` gesetzt: scoped Permission validiert.
+ *  6. Economy/Casino-Pfade greifen waehrend der Legacy-Migration fail-closed
+ *     nur auf den ausdruecklich aufgeloesten Primaerserver zu.
  */
 
 import type { ChatInputCommandInteraction } from 'discord.js';
@@ -23,6 +25,11 @@ import {
   resolveOrPromptGameServerScope,
   type ScopeCandidate,
 } from '../../modules/nitrado/gameServerScope';
+import {
+  assertEconomyScopeReady,
+  EconomyMigrationRequiredError,
+  EconomyScopeMismatchError,
+} from '../../modules/economy/scopeMigration';
 import { logger, logAudit } from '../../utils/logger';
 
 export type ScopedHandler = (
@@ -47,6 +54,21 @@ export interface WithGuildScopeOptions {
   requireSlotToggle?: 'whitelistActive' | 'economyActive';
 }
 
+/**
+ * Link/Unlink/Force-Link nutzen zwar historisch Economy-Permissions/-Toggle,
+ * lesen aber keine Wallet-/Bank-/Casino-Daten. Sie muessen auch waehrend einer
+ * Legacy-Economy-Migration weiter funktionieren, damit Identitaetsdaten nicht
+ * an einem Wirtschaftsmigrationszustand haengen.
+ */
+const ECONOMY_GUARD_EXEMPT_COMMANDS = new Set(['link', 'unlink', 'grant']);
+
+function requiresLegacyEconomyGuard(commandName: string, opts: WithGuildScopeOptions): boolean {
+  if (ECONOMY_GUARD_EXEMPT_COMMANDS.has(commandName)) return false;
+  if (opts.requireSlotToggle === 'economyActive') return true;
+  const perm = opts.requirePerm ?? '';
+  return perm.startsWith('economy.') || perm.startsWith('casino.');
+}
+
 async function resolveCommandServerScope(
   interaction: ChatInputCommandInteraction,
   guildId: ReturnType<typeof asGuildId>,
@@ -55,15 +77,21 @@ async function resolveCommandServerScope(
 ): Promise<NitradoConnId | null> {
   const rows = await prisma.nitradoConnection.findMany({
     where: { guildId },
-    select: { id: true, slot: true, alias: true, status: true },
+    select: { id: true, slot: true, alias: true, status: true, nitradoServerId: true },
     orderBy: [{ slot: 'asc' }, { id: 'asc' }],
   });
-  const connections: ScopeCandidate[] = rows.map(row => ({
-    id: asNitradoConnId(row.id),
-    slot: row.slot,
-    alias: row.alias,
-    status: row.status,
-  }));
+
+  // Ein Token-/Connection-Datensatz ohne gebundene Gameserver-ID ist noch kein
+  // ausfuehrbarer Server-Scope. Solche Rows duerfen weder Auto-Resolve noch eine
+  // explizite Slot-Auswahl erfolgreich machen.
+  const connections: ScopeCandidate[] = rows
+    .filter(row => typeof row.nitradoServerId === 'string' && row.nitradoServerId.length > 0)
+    .map(row => ({
+      id: asNitradoConnId(row.id),
+      slot: row.slot,
+      alias: row.alias,
+      status: row.status,
+    }));
 
   let requestedNitradoConnId: NitradoConnId | undefined;
   let requestedSlot: number | undefined;
@@ -80,7 +108,7 @@ async function resolveCommandServerScope(
       requestedNitradoConnId = connections.find(c => c.slot === requestedSlot)?.id;
       if (!requestedNitradoConnId) {
         await interaction.reply({
-          content: `Slot ${requestedSlot} existiert in diesem Discord-Server nicht.`,
+          content: `Slot ${requestedSlot} ist nicht als aktiver Gameserver nutzbar.`,
           flags: MessageFlags.Ephemeral,
         });
         return null;
@@ -100,7 +128,7 @@ async function resolveCommandServerScope(
       return resolution.scope.nitradoConnId;
     case 'NO_SERVER':
       await interaction.reply({
-        content: 'Kein aktiver Nitrado-Server konfiguriert. Bitte zuerst im Dashboard einen Slot anbinden.',
+        content: 'Kein aktiver Nitrado-Gameserver konfiguriert. Bitte zuerst im Dashboard einen Slot mit einem Gameserver verbinden.',
         flags: MessageFlags.Ephemeral,
       });
       return null;
@@ -231,6 +259,28 @@ export function withGuildScope(opts: WithGuildScopeOptions, handler: ScopedHandl
           flags: MessageFlags.Ephemeral,
         });
         return;
+      }
+    }
+
+    if (nitradoConnId && requiresLegacyEconomyGuard(interaction.commandName, opts)) {
+      try {
+        await assertEconomyScopeReady(guildId, nitradoConnId);
+      } catch (error) {
+        if (error instanceof EconomyMigrationRequiredError || error instanceof EconomyScopeMismatchError) {
+          logAudit('ECONOMY_SCOPE_BLOCKED', 'ECONOMY', {
+            guildId,
+            nitradoConnId,
+            actorDiscordId: actorId,
+            command: interaction.commandName,
+            code: error.code,
+          });
+          await interaction.reply({
+            content: `${error.message}\n\nDie Economy wurde sicherheitshalber nicht gelesen oder veraendert.`,
+            flags: MessageFlags.Ephemeral,
+          });
+          return;
+        }
+        throw error;
       }
     }
 
