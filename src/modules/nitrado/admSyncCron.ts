@@ -22,6 +22,7 @@ import prisma from '../../database/prisma';
 import { logger, logAudit } from '../../utils/logger';
 import { config } from '../../config';
 import { decrypt } from '../../utils/security';
+import { asGuildId, asNitradoConnId } from '../../types/scope';
 import { NitradoClient } from './nitradoClient';
 import { parseAdm, aggregateMinutesByPlayer } from './admParser';
 import { ingestAdmFile } from './adm/admIngestService';
@@ -31,6 +32,7 @@ import { getRewardRule, effectiveBaseAmount, type RewardRuleClient } from '../ec
 import { getSlotEconomyConfig, admRewardsActive, type SlotConfigClient } from '../economy/slotConfig';
 import { bookPendingRewards, type RewardBookingClient } from '../economy/rewardBooking';
 import { bookPlaytimeRewards, type PlaytimeBookingClient } from '../economy/playtimeBooking';
+import { assertEconomyScopeReady } from '../economy/scopeMigration';
 import { resolveVerifiedUser, type ResolveClient, type LinkClient } from '../linking/linkService';
 import { verifyLinkChallengesInAdmText } from '../linking/admChallengeVerifier';
 import { emitGuildEvent } from '../../dashboard/socket/emitter';
@@ -134,7 +136,13 @@ async function processConnection(profileDir: string, conn: ConnRow): Promise<voi
 
   // Legacy-Rewardpfad bleibt optional. Linking ist davon bewusst unabhaengig:
   // auch bei deaktivierter Economy muessen /link-Challenges verarbeitet werden.
-  const cfg = await prisma.economyConfig.findUnique({ where: { guildId: conn.guildId } });
+  // Geldpfade bleiben trotzdem strikt an exakt diesen Gameserver gebunden.
+  const guildId = asGuildId(conn.guildId);
+  const nitradoConnId = asNitradoConnId(conn.id);
+  await assertEconomyScopeReady(guildId, nitradoConnId);
+  const cfg = await prisma.economyConfig.findUnique({
+    where: { guildServer: { guildId: conn.guildId, nitradoConnId: conn.id } },
+  });
   const rewardsEnabled = !!cfg && cfg.enabled && cfg.playtimeRewardPercent > 0;
   const pct = rewardsEnabled ? cfg.playtimeRewardPercent : 0;
 
@@ -178,9 +186,16 @@ async function processConnection(profileDir: string, conn: ConnRow): Promise<voi
         try {
           await prisma.$transaction(async tx => {
             await tx.economyAccount.upsert({
-              where: { guildId_userDiscordId: { guildId: conn.guildId, userDiscordId } },
+              where: {
+                guildServerUser: {
+                  guildId: conn.guildId,
+                  nitradoConnId: conn.id,
+                  userDiscordId,
+                },
+              },
               create: {
                 guildId: conn.guildId,
+                nitradoConnId: conn.id,
                 userDiscordId,
                 walletBalance: reward,
                 lifetimeEarned: reward,
@@ -193,6 +208,7 @@ async function processConnection(profileDir: string, conn: ConnRow): Promise<voi
             await tx.economyTransaction.create({
               data: {
                 guildId: conn.guildId,
+                nitradoConnId: conn.id,
                 userDiscordId,
                 delta: reward,
                 type: 'PLAYTIME_REWARD',
@@ -204,7 +220,7 @@ async function processConnection(profileDir: string, conn: ConnRow): Promise<voi
           totalRewardedPlayers++;
           emitGuildEvent(conn.guildId, {
             type: 'economy.tx',
-            payload: { guildId: conn.guildId, userDiscordId, type: 'PLAYTIME_REWARD' },
+            payload: { guildId: conn.guildId, nitradoConnId: conn.id, userDiscordId, type: 'PLAYTIME_REWARD' },
           });
         } catch (e) {
           logger.warn(`ADM-Sync: Reward fehlgeschlagen fuer ${conn.id}: ${(e as Error).message}`);
