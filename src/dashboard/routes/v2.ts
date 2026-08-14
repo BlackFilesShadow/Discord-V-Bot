@@ -40,6 +40,7 @@ import { devObservabilityRouter } from './v2/devObservability';
 import { devStubsRouter } from './v2/devStubs';
 import { auditRouter } from './v2/audit';
 import { botAdminRouter } from './v2/botAdmin';
+import { commandCatalogRouter } from './v2/commandCatalog';
 
 export const v2Router = Router();
 
@@ -54,9 +55,6 @@ v2Router.use('/guilds/:guildId/tickets', ticketsRouter);
 v2Router.use('/guilds/:guildId/whitelist', whitelistRouter);
 v2Router.use('/guilds/:guildId/factions', factionsRouter);
 
-// Phase 4 / ECO-S03: Owner-Aufloesung MUSS ausserhalb des fail-closed
-// Economy-Guards liegen, sonst koennte eine MIGRATION_REQUIRED-Guild ihren
-// Primaerserver niemals festlegen.
 v2Router.use('/guilds/:guildId/economy-scope', economyScopeRouter);
 v2Router.use('/guilds/:guildId/economy', requireSafeDashboardEconomyScope, economyRouter);
 v2Router.use('/guilds/:guildId/economy-links', economyLinkRouter);
@@ -70,9 +68,6 @@ v2Router.use('/guilds/:guildId/feeds', feedsRouter);
 v2Router.use('/guilds/:guildId/translated-posts', translatedPostsRouter);
 v2Router.use('/guilds/:guildId/audit', auditRouter);
 
-// DEV-Basisrouter hat absichtlich zwei authentisierte Step-up-Endpunkte:
-// /login und /status. Die eigentliche globale Identitaet wird vor jeder
-// privilegierten DEV-Flaeche erneut aus frischer DB-Rolle + BOT_OWNER_ID geprueft.
 v2Router.use('/dev/snapshot', requireGlobalDeveloperIdentity);
 v2Router.use('/dev/logs', requireGlobalDeveloperIdentity);
 v2Router.use('/dev/sessions', requireGlobalDeveloperIdentity);
@@ -86,7 +81,8 @@ v2Router.use('/dev/incident', requireGlobalDeveloperIdentity, devIncidentRouter)
 v2Router.use('/dev/observability', requireGlobalDeveloperIdentity, devObservabilityRouter);
 v2Router.use('/dev/stubs', requireGlobalDeveloperIdentity, devStubsRouter);
 
-// Bot-Admin: Shared Password = Step-up, NICHT Identitaet/Berechtigung. Das Gate
-// liegt vor dem kompletten Router, also auch vor /login und /status. Eine
-// entzogene globale Rolle invalidiert dadurch selbst bereits aktive Sessions.
+// Discord-/Dashboard-Paritaet: exakt derselbe Live-Katalog wie /help.
+v2Router.use('/bot-admin/command-catalog', requireGlobalBotAdminIdentity, commandCatalogRouter);
+
+// Bot-Admin: Shared Password = Step-up, NICHT Identitaet/Berechtigung.
 v2Router.use('/bot-admin', requireGlobalBotAdminIdentity, botAdminRouter);
