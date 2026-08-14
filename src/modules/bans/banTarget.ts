@@ -1,9 +1,13 @@
 /**
- * Sichere Zielauflösung für Server-Banns.
+ * Sichere Zielaufloesung fuer Server-Banns.
  *
- * Ein Ban-Command adressiert einen Discord-Nutzer. Gebannt wird intern jedoch
- * ausschließlich dessen bereits VERIFIED GameIdentityLink-HMAC. Rohe Game-IDs
- * werden hier weder dauerhaft gespeichert noch geloggt.
+ * Server-Banns duerfen direkt ueber einen exakten Gameserver-Identifier
+ * adressiert werden. Eine Discord-/Bot-Verknuepfung ist dafuer nicht erforderlich.
+ * Persistiert wird weiterhin nur der HMAC-Hash des Identifiers; Klartext bleibt
+ * auf Command-/Worker-Laufzeit beschraenkt.
+ *
+ * Die VERIFIED-Link-Aufloesung bleibt fuer bestehende Call-Sites erhalten, ist
+ * aber keine Vorbedingung mehr fuer /server-ban oder /server-unban.
  */
 
 import { timingSafeEqual } from 'crypto';
@@ -18,6 +22,11 @@ export interface BanTargetClient {
   gameIdentityLink: {
     findFirst: (args: unknown) => Promise<{ identityHash: string | null } | null>;
   };
+}
+
+/** HMAC eines exakten Gameserver-Identifiers; Klartext wird nicht persistiert. */
+export function hashBanIdentifier(rawIdentifier: string, secret: string): string {
+  return identityHash(rawIdentifier.trim(), secret);
 }
 
 /**
@@ -44,11 +53,9 @@ export async function resolveVerifiedBanIdentityHash(
 }
 
 /**
- * Prüft einen nur zur Laufzeit vorhandenen Gameserver-Identifier gegen den
- * bereits gespeicherten HMAC. Der Klartext wird nicht persistiert.
- *
- * Timing-safe Vergleich verhindert, dass ein Angreifer aus Vergleichszeiten
- * schrittweise Informationen über den erwarteten HMAC ableiten kann.
+ * Prueft einen nur zur Laufzeit vorhandenen Gameserver-Identifier gegen einen
+ * gespeicherten HMAC. Timing-safe, damit keine Hash-Information ueber
+ * Vergleichszeiten abgeleitet werden kann.
  */
 export function matchesBanIdentifier(
   rawIdentifier: string,
@@ -56,7 +63,7 @@ export function matchesBanIdentifier(
   secret: string,
 ): boolean {
   if (!/^[0-9a-f]{64}$/i.test(expectedIdentityHash)) return false;
-  const actual = Buffer.from(identityHash(rawIdentifier, secret), 'hex');
+  const actual = Buffer.from(hashBanIdentifier(rawIdentifier, secret), 'hex');
   const expected = Buffer.from(expectedIdentityHash, 'hex');
   return actual.length === expected.length && timingSafeEqual(actual, expected);
 }
