@@ -1,16 +1,18 @@
 /**
  * Whitelist-V2 Diff (Phase 7, WL-V2). Reine Abgleichslogik zwischen der lokalen
- * Whitelist und der am Gameserver vorhandenen (remote) Liste. Namen sind
- * case-insensitiv (Nitrado verwaltet die Whitelist per Name).
+ * Whitelist und der am Gameserver vorhandenen Liste. Namen sind case-insensitiv.
  *
- * Der eigentliche 5-Minuten-Sync inkl. voller Pagination gegen die Nitrado-API
- * ist Sache des Aufrufers (EXTERN) — diese Funktion trifft nur die Entscheidung.
+ * Der produktive 5-Minuten-Abgleich ist inzwischen in `whitelistSyncCron.ts`
+ * verdrahtet. Er liest das vollstaendige DayZ-`general.whitelist`-Setting ueber
+ * `NitradoClient.getWhitelist()` und legt notwendige Aenderungen ausschliesslich
+ * als NitradoJob-Outbox-Jobs an. Diese Datei bleibt bewusst I/O-freie, testbare
+ * Entscheidungslogik.
  */
 
 export interface WhitelistDiff {
-  toAdd: string[];    // lokal vorhanden, remote fehlt -> am Server hinzufuegen
-  toRemove: string[]; // remote vorhanden, lokal nicht (mehr) -> am Server entfernen
-  synced: string[];   // beidseitig vorhanden
+  toAdd: string[];
+  toRemove: string[];
+  synced: string[];
 }
 
 function norm(name: string): string {
@@ -18,7 +20,7 @@ function norm(name: string): string {
 }
 
 export function diffWhitelist(localNames: string[], remoteNames: string[]): WhitelistDiff {
-  const localMap = new Map<string, string>(); // norm -> original
+  const localMap = new Map<string, string>();
   for (const n of localNames) { const k = norm(n); if (k) localMap.set(k, n); }
   const remoteSet = new Set(remoteNames.map(norm).filter(Boolean));
 
