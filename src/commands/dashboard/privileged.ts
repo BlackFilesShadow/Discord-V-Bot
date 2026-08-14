@@ -76,12 +76,6 @@ function payloadString(payload: Record<string, unknown>, key: string): string {
   return value;
 }
 
-/**
- * Phase 8: explizite privilegierte Commands. Die fachliche Mutation bleibt in
- * den zentralen Economy-/Linking-Services. Mutationen werden zuerst als
- * persistente PendingServerAction gespeichert und erst durch /confirm-action
- * atomar geclaimt und ausgefuehrt.
- */
 export const addMoneyCommand: Command = {
   data: slotOption(new SlashCommandBuilder()
     .setName('add-money')
@@ -162,6 +156,18 @@ export const confirmActionCommand: Command = {
     const nitradoConnId = asNitradoConnId(action.nitradoConnId);
     const payload = payloadObject(action.payload);
     const targetUserId = asUserDiscordId(payloadString(payload, 'targetUserId'));
+
+    // Persistente Confirmations muessen den Serverzustand erneut validieren:
+    // zwischen Queue und Confirm kann der Slot deaktiviert, entkoppelt oder zu
+    // einem Legacy-Slot geworden sein. In diesen Faellen fail-closed.
+    const server = await prisma.nitradoConnection.findFirst({
+      where: { id: nitradoConnId, guildId: scope.guildId },
+      select: { slot: true, status: true, nitradoServerId: true },
+    });
+    if (!server || server.status !== 'ACTIVE' || !server.nitradoServerId || server.slot < 1 || server.slot > MAX_GAME_SERVERS_PER_GUILD) {
+      await reply(i, 'Der Gameserver dieser Pending-Action ist nicht mehr aktiv oder nicht mehr als gueltiger Slot 1–4 gebunden. Aktion wurde nicht ausgefuehrt.');
+      return;
+    }
 
     if (action.actionType === ACTIONS.ADD_MONEY || action.actionType === ACTIONS.REMOVE_MONEY) {
       const settings = await prisma.serverSettings.findUnique({
