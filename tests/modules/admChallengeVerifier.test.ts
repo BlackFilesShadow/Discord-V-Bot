@@ -13,8 +13,8 @@ function makeClient(code = 'ABCD2345') {
     const requested = args?.where?.challengeCode;
     return requested === code ? row : null;
   });
-  const updateMany = jest.fn(async () => ({ count: 1 }));
-  const upsert = jest.fn(async () => ({}));
+  const updateMany = jest.fn(async (_args: unknown) => ({ count: 1 }));
+  const upsert = jest.fn(async (_args: unknown) => ({}));
   const client: LinkClient = { gameIdentityLink: { findFirst, updateMany, upsert } };
   return { client, findFirst, updateMany };
 }
