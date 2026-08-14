@@ -7,8 +7,9 @@
  *   Gameserver der Guild.
  * - `slot` ist eine Alias-Autocomplete-Auswahl; intern wird die stabile
  *   NitradoConnection-ID uebertragen.
- * - Beim Ban wird der Identifier ZUERST remote aus der Nitrado-Whitelist
- *   entfernt. Nur bei erfolgreichem Whitelist-Schritt wird der Ban eingereiht.
+ * - Beim Ban wird der lokale Whitelist-Desired-State zuerst entfernt, danach
+ *   der Identifier remote aus der Nitrado-Whitelist entfernt und ERST DANACH
+ *   der Ban eingereiht. So kann der Reconciler den Namen nicht wieder adden.
  * - Klartext-Identifier werden nicht in ServerBanEntry oder Audit-Logs gespeichert.
  */
 
@@ -55,6 +56,12 @@ async function reply(interaction: ChatInputCommandInteraction, content: string):
 function safeLine(value: string | null | undefined, fallback = '—'): string {
   const cleaned = (value ?? '').replace(/[\r\n]+/g, ' ').replace(/`/g, "'").trim();
   return cleaned || fallback;
+}
+
+function safeErrorMessage(error: unknown, sensitiveIdentifier?: string): string {
+  const raw = error instanceof Error ? error.message : String(error);
+  const redacted = sensitiveIdentifier ? raw.split(sensitiveIdentifier).join('[REDACTED]') : raw;
+  return safeLine(redacted, 'Unbekannter Fehler');
 }
 
 function clientForTarget(target: CommandServerTarget): NitradoClient {
@@ -125,13 +132,9 @@ export const serverBanCommand: Command = {
     for (const target of targets) {
       const label = targetLabel(target);
       try {
-        // Harte Reihenfolge: erst Nitrado-Whitelist entfernen, DANN Ban-Outbox.
-        // removeFromWhitelist ist idempotent; nicht vorhandene Namen sind Erfolg.
-        await clientForTarget(target).removeFromWhitelist(target.nitradoServerId, identifier);
-
-        const stored = await prisma.$transaction(async tx => {
-          // Lokale Desired-State-Wahrheit ebenfalls entfernen, damit der
-          // Whitelist-Reconciler den gebannten Identifier nicht spaeter re-addet.
+        // 1) Lokalen Desired-State VOR dem Remote-Call entfernen. Damit kann der
+        // 5-Minuten-Reconciler waehrend des Ban-Vorgangs nichts wieder adden.
+        await prisma.$transaction(async tx => {
           await tx.whitelistEntry.deleteMany({
             where: { guildId: scope.guildId, nitradoConnId: target.id, gameId: identifier },
           });
@@ -144,7 +147,14 @@ export const serverBanCommand: Command = {
             },
             data: { status: 'CANCELLED' },
           });
+        });
 
+        // 2) Nitrado-Whitelist wirklich entfernen. Erst nach bestaetigtem Erfolg
+        // darf der Remote-Ban ueberhaupt eingereiht werden.
+        await clientForTarget(target).removeFromWhitelist(target.nitradoServerId, identifier);
+
+        // 3) Lokale Ban-Wahrheit + Remote-Ban-Outbox atomar schreiben.
+        const stored = await prisma.$transaction(async tx => {
           const banScope = { guildId: scope.guildId, nitradoConnId: target.id };
           await addBan(
             tx as unknown as BanClient,
@@ -189,12 +199,13 @@ export const serverBanCommand: Command = {
           banId: stored.id,
           expiresAt: expiresAt?.toISOString() ?? null,
           remoteQueued: stored.queued,
-          whitelistRemovedFirst: true,
+          whitelistDesiredRemovedFirst: true,
+          whitelistRemoteRemovedBeforeBan: true,
         });
 
         results.push(`✅ **${label}** — Whitelist bereinigt, Bann ${stored.queued ? 'eingereiht' : 'bereits in Bearbeitung'}.`);
       } catch (error) {
-        const message = safeLine(error instanceof Error ? error.message : String(error), 'Unbekannter Fehler');
+        const message = safeErrorMessage(error, identifier);
         results.push(`❌ **${label}** — nicht gebannt: ${message}`);
         logAudit('SERVER_BAN_SET_FAILED', 'MODERATION', {
           guildId: scope.guildId,
@@ -299,7 +310,7 @@ export const serverUnbanCommand: Command = {
         });
         results.push(`✅ **${label}** — Remote-Unban ${queued ? 'eingereiht' : 'bereits in Bearbeitung'}.`);
       } catch (error) {
-        const message = safeLine(error instanceof Error ? error.message : String(error), 'Unbekannter Fehler');
+        const message = safeErrorMessage(error, identifier);
         results.push(`❌ **${label}** — Unban fehlgeschlagen: ${message}`);
       }
     }
@@ -356,7 +367,7 @@ export const serverBanListCommand: Command = {
       } catch (error) {
         embeds.push(new EmbedBuilder()
           .setTitle(`Banlist • ${targetLabel(target)}`)
-          .setDescription(`❌ Nitrado-Liste konnte nicht gelesen werden: ${safeLine(error instanceof Error ? error.message : String(error))}`)
+          .setDescription(`❌ Nitrado-Liste konnte nicht gelesen werden: ${safeErrorMessage(error)}`)
           .setTimestamp());
       }
     }
