@@ -1,13 +1,14 @@
 /**
  * Killfeed V2: Ableitung aus AdmEvent + idempotente Zustellung.
  * Kernbeweise: rohe Koordinaten + Schalter, Killer immer angezeigt (auch
- * unverlinkt), pro Config genau eine Zustellung je AdmEvent und Realtime-Hook
- * nur fuer tatsaechlich neu geclaimte Events.
+ * unverlinkt), pro Config genau eine Zustellung je AdmEvent, Realtime-Hook
+ * nur fuer neue Claims und Cross-Guild-Channels werden verworfen.
  */
 import {
   mapEventToCategory, deriveKillfeedView, claimDelivery, deliverPendingKills,
   type KillAdmEvent, type KillfeedConfigRow, type DeliverClient,
 } from '../../src/modules/killfeed/killfeedV2';
+import { killfeedChannelBelongsToGuild } from '../../src/modules/killfeed/killfeedV2Cron';
 
 const CFG = {
   showShooterCoords: false, showVictimCoords: true, showWeapon: true, showDistance: true,
@@ -65,6 +66,13 @@ describe('deriveKillfeedView', () => {
 
   it('Nicht-Kill-Event -> null', () => {
     expect(deriveKillfeedView(ev({ eventType: 'PLAYER_CONNECTED' }), CFG)).toBeNull();
+  });
+});
+
+describe('Killfeed V2 Guild-Isolation', () => {
+  it('akzeptiert nur Channels aus exakt derselben Guild', () => {
+    expect(killfeedChannelBelongsToGuild('111111111111111111', '111111111111111111')).toBe(true);
+    expect(killfeedChannelBelongsToGuild('111111111111111111', '222222222222222222')).toBe(false);
   });
 });
 
