@@ -133,11 +133,25 @@ export async function executeJob(jobId: string): Promise<void> {
   }
 
   try {
-    let conn: { id: string; guildId: string; encryptedToken: string; nitradoServerId: string | null; status: string } | null = null;
+    let conn: {
+      id: string;
+      guildId: string;
+      encryptedToken: string;
+      nitradoServerId: string | null;
+      status: string;
+      keepOnlineEnabled: boolean;
+    } | null = null;
     try {
       conn = await prisma.nitradoConnection.findFirst({
         where: { id: job.nitradoConnId, guildId: job.guildId },
-        select: { id: true, guildId: true, encryptedToken: true, nitradoServerId: true, status: true },
+        select: {
+          id: true,
+          guildId: true,
+          encryptedToken: true,
+          nitradoServerId: true,
+          status: true,
+          keepOnlineEnabled: true,
+        },
       });
     } catch (e) {
       await failJob(job.id, job.guildId, job.attempts, job.maxAttempts, `Connection-Lookup fehlgeschlagen: ${(e as Error).message}`, true);
@@ -198,10 +212,30 @@ export async function executeJob(jobId: string): Promise<void> {
         }
         case 'RESTART_IF_DOWN': {
           if (!conn.nitradoServerId) throw new Error('Kein nitradoServerId fuer RESTART_IF_DOWN');
+
+          // KEEP: Ein bereits geclaimter Job darf nach einer Deaktivierung nicht
+          // mehr remote eingreifen. Erste Schranke vor jeder Status/API-Arbeit.
+          if (!conn.keepOnlineEnabled) {
+            logger.debug(`Keep-Online skip: fuer Connection ${conn.id} deaktiviert.`);
+            break;
+          }
+
           const status = await client.getServiceStatus(conn.nitradoServerId);
           // KEEP-004: Nur einen explizit gestoppten Service starten. `suspended`
           // ist ein administrativer Zustand und darf niemals automatisch umgangen werden.
           if (status === 'stopped') {
+            // Disable-Race schliessen: Die Einstellung kann sich waehrend der
+            // Remote-Statusabfrage geaendert haben. Unmittelbar vor `start()`
+            // deshalb erneut die kanonische DB-Wahrheit lesen.
+            const freshKeepOnline = await prisma.nitradoConnection.findFirst({
+              where: { id: conn.id, guildId: job.guildId },
+              select: { keepOnlineEnabled: true },
+            });
+            if (!freshKeepOnline?.keepOnlineEnabled) {
+              logger.info(`Keep-Online: Auto-Start ${job.id} nach zwischenzeitlicher Deaktivierung verworfen.`);
+              break;
+            }
+
             await client.start(conn.nitradoServerId);
             logAudit('NITRADO_AUTO_START', 'NITRADO', { guildId: job.guildId, jobId: job.id, details: { nitradoConnId: conn.id, statusBefore: status } });
           } else {
