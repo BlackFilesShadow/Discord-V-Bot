@@ -17,10 +17,11 @@ import messageReactionRemoveEvent from './events/messageReactionRemove';
 import voiceStateUpdateEvent from './events/voiceStateUpdate';
 
 // Module importieren
-import { startGiveawayScheduler } from './modules/giveaway/giveawayManager';
-import { startFeedScheduler } from './modules/feeds/feedManager';
-import { startPollScheduler } from './modules/polls/pollSystem';
-import { startRateLimitCleanup } from './utils/rateLimiter';
+import { startGiveawayScheduler, stopGiveawayScheduler } from './modules/giveaway/giveawayManager';
+import { startFeedScheduler, stopFeedScheduler } from './modules/feeds/feedManager';
+import { startPollScheduler, stopPollScheduler } from './modules/polls/pollSystem';
+import { startRateLimitCleanup, stopRateLimitCleanup } from './utils/rateLimiter';
+import { startReminderScheduler, stopReminderScheduler } from './modules/reminders/reminderScheduler';
 import { startDashboard } from './dashboard/server';
 import { processExpiredCases } from './modules/moderation/caseManager';
 import { acquireSingletonLock } from './utils/singleton';
@@ -228,19 +229,13 @@ async function main(): Promise<void> {
   // Hinweis: Die Command-Registrierung (scoped: global + guild) erfolgt im
   // clientReady-Listener oben, sobald der Guild-Cache verfuegbar ist.
 
-  // Scheduler starten
+  // Allgemeine Scheduler starten. Jeder besitzt einen Stop-Hook und darf den
+  // Prozess nicht durch einen ref'd Timer kuenstlich offen halten.
   startGiveawayScheduler(client);
   startFeedScheduler(client);
   startPollScheduler(client);
   startRateLimitCleanup();
-
-  // Phase B: Reminder-Scheduler
-  try {
-    const { startReminderScheduler } = await import('./modules/reminders/reminderScheduler.js');
-    startReminderScheduler(client);
-  } catch (e) {
-    logger.warn('Reminder-Scheduler-Init fehlgeschlagen:', e as Error);
-  }
+  startReminderScheduler(client);
 
   // Moderation-Scheduler: Temp-Bans/Mutes alle 60s prüfen. Handle behalten,
   // unref'en und beim Shutdown explizit stoppen.
@@ -272,7 +267,13 @@ async function main(): Promise<void> {
     }, 20_000);
     watchdog.unref?.();
 
+    // Keine neuen allgemeinen DB-/Discord-Arbeiten mehr erzeugen.
     clearInterval(moderationTimer);
+    stopReminderScheduler();
+    stopRateLimitCleanup();
+    stopPollScheduler();
+    stopFeedScheduler();
+    stopGiveawayScheduler();
 
     try {
       if (nitradoRuntime) await nitradoRuntime.stopAndDrain();
