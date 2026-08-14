@@ -39,7 +39,14 @@ export async function deliverKillfeedV2Once(): Promise<void> {
         const poster = async (view: KillfeedView): Promise<string | null> => {
           const ch = await client.channels.fetch(cfg.channelId).catch(() => null);
           if (!ch || !ch.isTextBased() || ch.isDMBased()) return null;
-          const msg = await (ch as GuildTextBasedChannel).send({
+          const textChannel = ch as GuildTextBasedChannel;
+          // Defense-in-depth: ein veralteter/manuell veraenderter DB-Wert darf
+          // niemals auf einen Channel einer anderen Guild posten.
+          if (textChannel.guildId !== cfg.guildId) {
+            logger.warn(`Killfeed V2: Cross-Guild-Channel verworfen fuer Config ${cfg.id}.`);
+            return null;
+          }
+          const msg = await textChannel.send({
             embeds: [buildKillfeedEmbedV2(view, cfg.embedColor)],
             allowedMentions: { parse: [] },
           });
