@@ -3,8 +3,11 @@
  *
  * Ein Ban-Command adressiert einen Discord-Nutzer. Gebannt wird intern jedoch
  * ausschließlich dessen bereits VERIFIED GameIdentityLink-HMAC. Rohe Game-IDs
- * werden hier weder benötigt noch zurückgegeben.
+ * werden hier weder dauerhaft gespeichert noch geloggt.
  */
+
+import { timingSafeEqual } from 'crypto';
+import { identityHash } from '../linking/identity';
 
 export interface BanTargetScope {
   guildId: string;
@@ -38,4 +41,22 @@ export async function resolveVerifiedBanIdentityHash(
   });
 
   return row?.identityHash ?? null;
+}
+
+/**
+ * Prüft einen nur zur Laufzeit vorhandenen Gameserver-Identifier gegen den
+ * bereits gespeicherten HMAC. Der Klartext wird nicht persistiert.
+ *
+ * Timing-safe Vergleich verhindert, dass ein Angreifer aus Vergleichszeiten
+ * schrittweise Informationen über den erwarteten HMAC ableiten kann.
+ */
+export function matchesBanIdentifier(
+  rawIdentifier: string,
+  expectedIdentityHash: string,
+  secret: string,
+): boolean {
+  if (!/^[0-9a-f]{64}$/i.test(expectedIdentityHash)) return false;
+  const actual = Buffer.from(identityHash(rawIdentifier, secret), 'hex');
+  const expected = Buffer.from(expectedIdentityHash, 'hex');
+  return actual.length === expected.length && timingSafeEqual(actual, expected);
 }
