@@ -1,9 +1,10 @@
 /**
  * Typed Emit-Helpers fuer Sockets.
  *
- * REST-Routen importieren `emitGuildEvent`/`emitDevLog` und feuern damit
- * Updates in die jeweiligen Namespaces. Wenn Socket.IO nicht initialisiert
- * ist (z.B. in Tests), werden die Calls stillschweigend verworfen.
+ * Guild-weite UI-Aenderungen gehen in `g:<guildId>`. Gameplay-/Server-Events
+ * gehen zusaetzlich in einen engeren Room `gs:<guildId>:<nitradoConnId>`, damit
+ * Clients mit mehreren Gameservern niemals Ereignisse eines anderen Slots
+ * vermischen muessen.
  */
 
 import type { Server as IOServer } from 'socket.io';
@@ -37,11 +38,45 @@ export type GuildEvent =
   | { type: 'translatedPost.changed'; payload: { guildId: string; postId?: string } };
 
 /**
- * Sendet Event an alle Clients im Room des betreffenden Guild-Namespace.
+ * Kanonisches, transportsicheres Gameplay-Event fuer den Server-internen Feed.
+ * `eventId` ist optional, weil der alte Killfeed vor AdmEvent-V2 eigene IDs
+ * verwendet. Der Scope ist dagegen IMMER vollstaendig.
  */
+export interface ServerGameplayEventPayload {
+  guildId: string;
+  nitradoConnId: string;
+  eventId?: string;
+  source: 'ADM_V1' | 'ADM_V2';
+  eventType: string;
+  occurredAt: string;
+  actorName?: string | null;
+  targetName?: string | null;
+  weapon?: string | null;
+  distance?: number | null;
+  actorPosition?: string | null;
+  targetPosition?: string | null;
+}
+
+export function serverRoomName(guildId: string, nitradoConnId: string): string {
+  return `gs:${guildId}:${nitradoConnId}`;
+}
+
+/** Sendet ein guild-weites UI-Event. */
 export function emitGuildEvent(guildId: string, event: GuildEvent): void {
   if (!io) return;
   io.of('/guild').to(`g:${guildId}`).emit(event.type, event.payload);
+}
+
+/**
+ * Sendet Gameplay nur an Clients, die explizit genau diesem Gameserver-Room
+ * beigetreten sind. Kein Fallback auf den Guild-Room: fail-closed gegen
+ * versehentliche Cross-Server-Datenvermischung.
+ */
+export function emitServerGameplayEvent(event: ServerGameplayEventPayload): void {
+  if (!io) return;
+  io.of('/guild')
+    .to(serverRoomName(event.guildId, event.nitradoConnId))
+    .emit('server.gameplay.event', event);
 }
 
 export interface DevLogLine {
@@ -51,9 +86,7 @@ export interface DevLogLine {
   meta?: Record<string, unknown>;
 }
 
-/**
- * Pusht eine Log-Zeile in den /dev-Namespace.
- */
+/** Pusht eine Log-Zeile in den /dev-Namespace. */
 export function emitDevLog(line: DevLogLine): void {
   if (!io) return;
   io.of('/dev').emit('log', line);
