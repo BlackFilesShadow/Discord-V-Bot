@@ -171,7 +171,7 @@ CREATE INDEX IF NOT EXISTS "EconomyConfig_guildId_nitradoConnId_idx"
   ON "EconomyConfig"("guildId", "nitradoConnId");
 CREATE INDEX IF NOT EXISTS "EconomyAccount_guildId_nitradoConnId_idx"
   ON "EconomyAccount"("guildId", "nitradoConnId");
-CREATE INDEX IF NOT EXISTS "EconomyTransaction_guildId_nitradoConnId_userDiscordId_createdAt_idx"
+CREATE INDEX IF NOT EXISTS "EconomyTx_guild_conn_user_created_idx"
   ON "EconomyTransaction"("guildId", "nitradoConnId", "userDiscordId", "createdAt");
 CREATE INDEX IF NOT EXISTS "BankInterestRun_guildId_nitradoConnId_idx"
   ON "BankInterestRun"("guildId", "nitradoConnId");
