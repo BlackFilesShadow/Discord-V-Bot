@@ -1,3 +1,4 @@
+import { randomUUID } from 'node:crypto';
 import { Attachment } from 'discord.js';
 import * as fs from 'fs/promises';
 import * as path from 'path';
@@ -81,7 +82,10 @@ async function persistMedia(
   if (!safeGuild || !safeKey) return { ok: false, message: '❌ Ungültiger Media-Speicherschlüssel.' };
 
   const dir = path.join(MEDIA_BASE_DIR, scope, safeGuild);
-  const fullPath = path.join(dir, `${safeKey}${ext}`);
+  // Jede Ingestion bekommt einen neuen Pfad. So bleibt die bisher aktive Datei
+  // bis zum erfolgreichen DB-Schreibvorgang unangetastet; erst der Aufrufer
+  // entfernt sie nach erfolgreichem Commit.
+  const fullPath = path.join(dir, `${safeKey}_${randomUUID()}${ext}`);
   try {
     await fs.mkdir(dir, { recursive: true, mode: 0o750 });
     await fs.writeFile(fullPath, buffer, { mode: 0o640 });
@@ -95,7 +99,7 @@ async function persistMedia(
 
 /**
  * Lädt das Discord-Attachment herunter und speichert es persistent.
- * Pfad-Schema: uploads/media/<scope>/<guildId>/<key>.<ext>
+ * Pfad-Schema: uploads/media/<scope>/<guildId>/<key>_<uuid>.<ext>
  */
 export async function saveAttachment(
   attachment: Attachment,
