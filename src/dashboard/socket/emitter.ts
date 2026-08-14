@@ -24,7 +24,7 @@ export type GuildEvent =
   | { type: 'nitrado.job.updated'; payload: { guildId: string; jobId: string; status: string } }
   | { type: 'permissions.updated'; payload: { guildId: string; userDiscordId?: string; roleDiscordId?: string } }
   | { type: 'economy.tx'; payload: { guildId: string; userDiscordId: string; type: string } }
-  | { type: 'casino.round'; payload: { guildId: string; nitradoConnId: string; gameType: string; payout: string } }
+  | { type: 'casino.round'; payload: { guildId: string; nitradoConnId: string | null; gameType: string; payout: string } }
   | { type: 'faction.changed'; payload: { guildId: string; factionId: string } }
   | { type: 'settings.changed'; payload: { guildId: string; slotId: string } }
   | { type: 'tickets.changed'; payload: { guildId: string; templateId?: string } }
