@@ -9,6 +9,24 @@ DO $$ BEGIN
 EXCEPTION WHEN duplicate_object THEN NULL;
 END $$;
 
+CREATE TABLE IF NOT EXISTS "NitradoAdmProfileConfig" (
+  "id" TEXT NOT NULL,
+  "guildId" TEXT NOT NULL,
+  "nitradoConnId" TEXT NOT NULL,
+  "profileDir" TEXT NOT NULL,
+  "source" VARCHAR(24) NOT NULL DEFAULT 'AUTO',
+  "timeZone" VARCHAR(80),
+  "lastVerifiedAt" TIMESTAMP(3),
+  "lastError" TEXT,
+  "createdAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  "updatedAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  CONSTRAINT "NitradoAdmProfileConfig_pkey" PRIMARY KEY ("id")
+);
+CREATE UNIQUE INDEX IF NOT EXISTS "NitradoAdmProfileConfig_scope_key"
+  ON "NitradoAdmProfileConfig"("guildId", "nitradoConnId");
+CREATE INDEX IF NOT EXISTS "NitradoAdmProfileConfig_nitradoConnId_idx"
+  ON "NitradoAdmProfileConfig"("nitradoConnId");
+
 CREATE TABLE IF NOT EXISTS "GameplayFeedConfig" (
   "id" TEXT NOT NULL,
   "guildId" TEXT NOT NULL,
