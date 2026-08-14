@@ -1,10 +1,11 @@
 /**
- * BankInterest (Phase 5) — tagesidempotente Bankzinsen.
+ * BankInterest (Phase 5) — tagesidempotente, gameserver-gescoppte Bankzinsen.
  *
- * Zinsen werden pro Tag genau einmal gutgeschrieben. Doppelte Absicherung:
- *  - BankInterestRun (@@unique[guildId, runDate]) markiert den Tageslauf,
- *  - der Ledger-Key `interest:<guild>:<date>:<user>` verhindert je User eine
- *    Doppelbuchung (auch bei Teilabbruch + Retry).
+ * Zinsen werden pro Guild+Gameserver+Tag genau einmal gutgeschrieben.
+ * Doppelte Absicherung:
+ *  - BankInterestRun (guildServerRunDate) markiert den Tageslauf,
+ *  - der Ledger-Key `interest:<guild>:<server>:<date>:<user>` verhindert je User
+ *    eine Doppelbuchung (auch bei Teilabbruch + Retry).
  * Standard bankInterestPercent=0 -> es passiert nichts (dormant).
  */
 
@@ -18,7 +19,6 @@ export function computeInterest(bankBalance: bigint, percent: number): bigint {
 
 /** Tagesschluessel YYYY-MM-DD in der angegebenen Zeitzone. */
 export function interestDateKey(now: Date, timeZone = 'Europe/Berlin'): string {
-  // en-CA formatiert als YYYY-MM-DD.
   return new Intl.DateTimeFormat('en-CA', { timeZone, year: 'numeric', month: '2-digit', day: '2-digit' }).format(now);
 }
 
@@ -34,7 +34,6 @@ export interface BankInterestClient extends LedgerClient {
   };
   economyAccount: {
     findMany: (args: unknown) => Promise<InterestAccountRow[]>;
-    // upsert wird von bookLedgerEntry (LedgerClient) mitgenutzt.
     upsert: (args: {
       where: Record<string, unknown>;
       create: Record<string, unknown>;
@@ -43,24 +42,39 @@ export interface BankInterestClient extends LedgerClient {
   };
 }
 
+export interface BankInterestScope {
+  guildId: string;
+  nitradoConnId: string;
+}
+
 /**
- * Fuehrt den Tages-Zinslauf fuer eine Guild aus. Idempotent: bereits erfasste
- * Tage werden uebersprungen; einzelne User sind zusaetzlich ueber den Ledger-Key
- * abgesichert. Bucht auf die Bank.
+ * Fuehrt den Tages-Zinslauf fuer exakt einen Gameserver aus.
+ * Idempotent: bereits erfasste Server-Tage werden uebersprungen; einzelne User
+ * sind zusaetzlich ueber den serverbezogenen Ledger-Key abgesichert.
  */
-export async function runDailyInterestForGuild(
+export async function runDailyInterestForServer(
   client: BankInterestClient,
-  args: { guildId: string; percent: number; runDate: string; limit?: number },
+  args: BankInterestScope & { percent: number; runDate: string; limit?: number },
 ): Promise<{ credited: number; total: bigint; skipped: boolean }> {
   if (args.percent <= 0) return { credited: 0, total: 0n, skipped: true };
 
   const already = await client.bankInterestRun.findUnique({
-    where: { guildId_runDate: { guildId: args.guildId, runDate: args.runDate } },
+    where: {
+      guildServerRunDate: {
+        guildId: args.guildId,
+        nitradoConnId: args.nitradoConnId,
+        runDate: args.runDate,
+      },
+    },
   });
   if (already) return { credited: 0, total: 0n, skipped: true };
 
   const accounts = await client.economyAccount.findMany({
-    where: { guildId: args.guildId, bankBalance: { gt: 0 } },
+    where: {
+      guildId: args.guildId,
+      nitradoConnId: args.nitradoConnId,
+      bankBalance: { gt: 0 },
+    },
     take: args.limit ?? 10000,
   });
 
@@ -70,29 +84,34 @@ export async function runDailyInterestForGuild(
     const interest = computeInterest(a.bankBalance, args.percent);
     if (interest <= 0n) continue;
     const res = await bookLedgerEntry(client, {
-      idempotencyKey: `interest:${args.guildId}:${args.runDate}:${a.userDiscordId}`,
+      idempotencyKey: `interest:${args.guildId}:${args.nitradoConnId}:${args.runDate}:${a.userDiscordId}`,
       guildId: args.guildId,
+      nitradoConnId: args.nitradoConnId,
       userDiscordId: a.userDiscordId,
       bankDelta: interest,
       type: 'INTEREST',
       reason: 'Bank-Zinsen',
     });
-    if (res.booked) { credited++; total += interest; }
+    if (res.booked) {
+      credited++;
+      total += interest;
+    }
   }
 
-  // Tageslauf erfassen (nach der Gutschrift; Doppelbuchung bereits ueber
-  // Ledger-Keys ausgeschlossen). Kollision am selben Tag -> ignorieren.
+  // Tageslauf erst nach den Gutschriften erfassen. Bei Parallel-Runs bleiben die
+  // eigentlichen Geldbuchungen durch die Ledger-Keys idempotent.
   try {
     await client.bankInterestRun.create({
       data: {
         guildId: args.guildId,
+        nitradoConnId: args.nitradoConnId,
         runDate: args.runDate,
         interestPercent: Math.floor(args.percent),
         accountsCredited: credited,
         totalCredited: total,
       },
     });
-  } catch { /* @@unique-Kollision durch Parallel-Lauf -> ok */ }
+  } catch { /* Unique-Kollision durch Parallel-Lauf -> Geld bleibt idempotent */ }
 
   return { credited, total, skipped: false };
 }
