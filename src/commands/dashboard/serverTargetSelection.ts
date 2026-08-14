@@ -43,6 +43,36 @@ export async function listCommandServerTargets(guildId: string): Promise<Command
     }));
 }
 
+function findSelectedTarget(targets: CommandServerTarget[], raw: string): CommandServerTarget | null {
+  const normalized = raw.toLowerCase();
+  return targets.find(target =>
+    target.id === raw
+    || target.alias.toLowerCase() === normalized
+    || String(target.slot) === raw,
+  ) ?? null;
+}
+
+async function rejectMissingTargets(interaction: ChatInputCommandInteraction): Promise<null> {
+  await interaction.reply({
+    content: 'Kein aktiver, verknuepfter Nitrado-Gameserver verfuegbar.',
+    flags: MessageFlags.Ephemeral,
+  });
+  return null;
+}
+
+async function rejectUnknownTarget(
+  interaction: ChatInputCommandInteraction,
+  targets: CommandServerTarget[],
+): Promise<null> {
+  const available = targets.map(t => `• **${t.alias}** (Slot ${t.slot})`).join('\n');
+  await interaction.reply({
+    content: `Der ausgewaehlte Server gehoert nicht zu den aktiven Gameservern dieser Guild.\n\n${available}`,
+    flags: MessageFlags.Ephemeral,
+    allowedMentions: { parse: [] },
+  });
+  return null;
+}
+
 /**
  * `slot` ist absichtlich eine String-Autocomplete-Option. Discord zeigt dem
  * Operator den hinterlegten Alias, waehrend als stabiler Wert die Connection-ID
@@ -54,34 +84,45 @@ export async function resolveSelectedOrAllServers(
   guildId: string,
 ): Promise<CommandServerTarget[] | null> {
   const targets = await listCommandServerTargets(guildId);
-  if (targets.length === 0) {
-    await interaction.reply({
-      content: 'Kein aktiver, verknuepfter Nitrado-Gameserver verfuegbar.',
-      flags: MessageFlags.Ephemeral,
-    });
-    return null;
-  }
+  if (targets.length === 0) return rejectMissingTargets(interaction);
 
   const raw = interaction.options.getString('slot')?.trim() ?? '';
   if (!raw) return targets;
 
-  const normalized = raw.toLowerCase();
-  const selected = targets.find(target =>
-    target.id === raw
-    || target.alias.toLowerCase() === normalized
-    || String(target.slot) === raw,
-  );
-  if (!selected) {
-    const available = targets.map(t => `• **${t.alias}** (Slot ${t.slot})`).join('\n');
-    await interaction.reply({
-      content: `Der ausgewaehlte Server gehoert nicht zu den aktiven Gameservern dieser Guild.\n\n${available}`,
-      flags: MessageFlags.Ephemeral,
-      allowedMentions: { parse: [] },
-    });
-    return null;
+  const selected = findSelectedTarget(targets, raw);
+  if (!selected) return rejectUnknownTarget(interaction, targets);
+  return [selected];
+}
+
+/**
+ * Fuer Workflows, die fachlich genau EINEN Server benoetigen (z.B. ein
+ * Whitelist-Antrag mit serverspezifischem Approval-Kanal). Bei genau einem
+ * verknuepften Server ist keine Auswahl noetig; bei mehreren ist der Alias
+ * verpflichtend.
+ */
+export async function resolveSingleServer(
+  interaction: ChatInputCommandInteraction,
+  guildId: string,
+): Promise<CommandServerTarget | null> {
+  const targets = await listCommandServerTargets(guildId);
+  if (targets.length === 0) return rejectMissingTargets(interaction);
+
+  const raw = interaction.options.getString('slot')?.trim() ?? '';
+  if (raw) {
+    const selected = findSelectedTarget(targets, raw);
+    if (!selected) return rejectUnknownTarget(interaction, targets);
+    return selected;
   }
 
-  return [selected];
+  if (targets.length === 1) return targets[0];
+
+  const available = targets.map(t => `• **${t.alias}** (Slot ${t.slot})`).join('\n');
+  await interaction.reply({
+    content: `Mehrere aktive Gameserver gefunden. Waehle fuer diesen Vorgang den Server ueber seinen Alias aus.\n\n${available}`,
+    flags: MessageFlags.Ephemeral,
+    allowedMentions: { parse: [] },
+  });
+  return null;
 }
 
 export async function autocompleteServerAlias(interaction: AutocompleteInteraction): Promise<void> {
