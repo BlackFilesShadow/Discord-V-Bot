@@ -1,6 +1,8 @@
 import prisma from '../../../database/prisma';
 import { NitradoClient } from '../nitradoClient';
 
+const VERIFY_CACHE_MS = 10 * 60_000;
+
 export interface AdmConnectionScope {
   id: string;
   guildId: string;
@@ -78,11 +80,17 @@ async function persistResolved(
   return { profileDir: row.profileDir, timeZone: row.timeZone, source: row.source };
 }
 
+export async function recordAdmSourceError(scope: { id: string; guildId: string }, message: string | null): Promise<void> {
+  await prisma.nitradoAdmProfileConfig.updateMany({
+    where: { guildId: scope.guildId, nitradoConnId: scope.id },
+    data: { lastError: message },
+  });
+}
+
 /**
  * Resolve the ADM directory once per Nitrado connection and persist it. Manual
- * config wins; AUTO entries are revalidated and rediscovered when they become
- * invalid. NITRADO_ADM_DIR is only a legacy fallback and is copied into the
- * per-server row after verification.
+ * config wins; AUTO entries are periodically revalidated and rediscovered when
+ * invalid. The verification TTL avoids an extra Nitrado request every live tick.
  */
 export async function resolveAdmProfile(
   scope: AdmConnectionScope,
@@ -94,6 +102,11 @@ export async function resolveAdmProfile(
 
   if (existing) {
     const configured = cleanRemoteDir(existing.profileDir);
+    const recentlyVerified = existing.lastVerifiedAt !== null
+      && Date.now() - existing.lastVerifiedAt.getTime() < VERIFY_CACHE_MS;
+    if (configured && recentlyVerified) {
+      return { profileDir: configured, timeZone: existing.timeZone, source: existing.source };
+    }
     if (configured && await dirWorks(client, scope.nitradoServerId, configured)) {
       await prisma.nitradoAdmProfileConfig.updateMany({
         where: { id: existing.id, guildId: scope.guildId, nitradoConnId: scope.id },
@@ -128,9 +141,6 @@ export async function resolveAdmProfile(
     gamePath,
   ]);
 
-  // Prefer a candidate that already contains ADM files; otherwise an existing
-  // directory is sufficient for a freshly created server whose first ADM log
-  // has not been written yet.
   let firstExisting: string | null = null;
   for (const candidate of candidates) {
     try {
@@ -147,8 +157,6 @@ export async function resolveAdmProfile(
     return persistResolved(scope, firstExisting, firstExisting === legacyEnv ? 'LEGACY_ENV' : 'AUTO', existing?.timeZone ?? null);
   }
 
-  // Last-resort recursive search supported by Nitrado's FileServer API. Search
-  // results may expose either path or a slash-containing name depending on host.
   const roots = unique([gamePath, userRoot, '/games']);
   for (const root of roots) {
     try {
@@ -192,5 +200,5 @@ export async function setManualAdmProfile(
   if (!(await dirWorks(client, scope.nitradoServerId, dir))) {
     throw new Error('ADM-Verzeichnis ist bei Nitrado nicht erreichbar.');
   }
-  return persistResolved(scope, dir, 'MANUAL', timeZone,);
+  return persistResolved(scope, dir, 'MANUAL', timeZone);
 }
