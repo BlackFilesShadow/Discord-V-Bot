@@ -1,7 +1,7 @@
 #!/bin/bash
 # =============================================
 # Discord-V-Bot - Update Script (Docker-Workflow)
-# Pull -> Rebuild Container -> DB-Schema-Sync -> Status
+# Pull -> Build -> sichere DB-Migration -> Start -> Health/Login/Drift-Gates
 # =============================================
 set -euo pipefail
 
@@ -26,10 +26,15 @@ fi
 
 cd "$BOT_DIR" || err "BOT_DIR nicht gefunden: $BOT_DIR"
 
-# Git safe.directory (root <-> repo-owner mismatch)
 git config --global --add safe.directory "$BOT_DIR" >/dev/null 2>&1 || true
 
 info "Discord-V-Bot Update gestartet ($BOT_DIR)"
+
+# 0) Compose/.env VOR jeder Aenderung validieren. So wird bei fehlenden
+#    Pflichtvariablen oder ungueltiger Compose-Datei nichts halb deployed.
+info "Docker-Compose-Konfiguration wird validiert..."
+docker compose config --quiet || err "docker compose config fehlgeschlagen. .env/Compose pruefen."
+log "Compose-Konfiguration gueltig."
 
 # 1) Code ziehen
 info "Git fetch + reset auf origin/main..."
@@ -48,16 +53,19 @@ fi
 
 git --no-pager log --oneline "$OLD_COMMIT..$NEW_COMMIT" 2>/dev/null | head -10 || true
 
-# 2) Image bauen (noch NICHT starten — erst Baseline adoptieren, denn der
-#    Container migriert beim Start automatisch via CMD `prisma migrate deploy`).
+# 2) Image bauen (noch NICHT starten).
 info "Docker-Image wird gebaut..."
-docker compose build "$COMPOSE_SERVICE"
+docker compose build "$COMPOSE_SERVICE" || err "Docker-Build fehlgeschlagen."
 
-# 3) Baseline-Adoption VOR dem Containerstart. Ein Bestandsschema ohne
-#    Baseline-Eintrag (egal ob aus `db push` ohne History oder aus der alten
-#    Migrationskette mit Legacy-History) wuerde beim automatischen migrate deploy
-#    scheitern, weil die Baseline CREATE TABLE auf bestehende Tabellen wirft.
-info "Pruefe Baseline-Adoption..."
+# 3) Baseline-Adoption VOR dem Containerstart.
+#
+# SICHERHEITSREGEL:
+# Eine bestehende DB ohne Baseline-Eintrag wird NIE mehr allein aufgrund einer
+# einzelnen vorhandenen Tabelle als kompatibel angenommen. Automatische
+# Baseline-Adoption ist nur erlaubt, wenn der Operator sie fuer GENAU dieses
+# Deployment explizit mit ALLOW_BASELINE_ADOPTION=true freigibt UND mehrere
+# unabhaengige Schema-Sentinels vorhanden sind. Ansonsten fail-closed.
+info "Pruefe Baseline-/Migrationshistorie..."
 BASELINE_MIGRATION="00000000000000_baseline"
 PGU="${POSTGRES_USER:-discordbot}"
 PGD="${POSTGRES_DB:-discord_v_bot}"
@@ -68,43 +76,56 @@ HISTORY_TABLE=$(docker compose exec -T postgres psql -U "$PGU" -d "$PGD" -tAc \
 BASELINE_APPLIED="f"
 if [[ "$HISTORY_TABLE" == "t" ]]; then
   BASELINE_APPLIED=$(docker compose exec -T postgres psql -U "$PGU" -d "$PGD" -tAc \
-    "SELECT EXISTS(SELECT 1 FROM public._prisma_migrations WHERE migration_name='$BASELINE_MIGRATION');" 2>/dev/null | tr -d '[:space:]')
+    "SELECT EXISTS(SELECT 1 FROM public._prisma_migrations WHERE migration_name='$BASELINE_MIGRATION' AND finished_at IS NOT NULL AND rolled_back_at IS NULL);" 2>/dev/null | tr -d '[:space:]')
 fi
+
 if [[ "$SCHEMA_PRESENT" == "t" && "$BASELINE_APPLIED" != "t" ]]; then
-  warn "Bestehendes Schema ohne Baseline-Eintrag erkannt -> adoptiere Baseline ($BASELINE_MIGRATION)."
+  warn "Bestehendes Schema ohne angewendete Prisma-Baseline erkannt."
+
+  if [[ "${ALLOW_BASELINE_ADOPTION:-false}" != "true" ]]; then
+    err "Baseline-Adoption ist fail-closed. Nach manueller DB-Pruefung fuer einen einzelnen Lauf ALLOW_BASELINE_ADOPTION=true setzen."
+  fi
+
+  info "Explizites Baseline-Opt-in erkannt; pruefe Schema-Sentinels..."
+  SENTINEL_OK=$(docker compose exec -T postgres psql -U "$PGU" -d "$PGD" -tAc \
+    "SELECT
+       to_regclass('public.\"User\"') IS NOT NULL
+       AND to_regclass('public.\"Package\"') IS NOT NULL
+       AND to_regclass('public.\"Upload\"') IS NOT NULL
+       AND to_regclass('public.\"AuditLog\"') IS NOT NULL
+       AND to_regclass('public.\"NitradoConnection\"') IS NOT NULL
+       AND to_regclass('public.\"IdempotencyKey\"') IS NOT NULL
+       AND EXISTS (SELECT 1 FROM information_schema.columns WHERE table_schema='public' AND table_name='NitradoConnection' AND column_name='guildId')
+       AND EXISTS (SELECT 1 FROM information_schema.columns WHERE table_schema='public' AND table_name='NitradoConnection' AND column_name='encryptedToken')
+       AND EXISTS (SELECT 1 FROM information_schema.columns WHERE table_schema='public' AND table_name='IdempotencyKey' AND column_name='guildId');" \
+    2>/dev/null | tr -d '[:space:]')
+
+  if [[ "$SENTINEL_OK" != "t" ]]; then
+    err "Schema-Sentinels passen nicht zur erwarteten Legacy/Baseline-Struktur. Keine Baseline-Adoption; DB manuell untersuchen."
+  fi
+
+  info "Schema-Sentinels gueltig; adoptiere Baseline einmalig..."
   docker compose run --rm "$COMPOSE_SERVICE" npx prisma migrate resolve --applied "$BASELINE_MIGRATION" \
-    || warn "Baseline-Adoption fehlgeschlagen - bitte manuell pruefen."
+    || err "Baseline-Adoption fehlgeschlagen. Deployment abgebrochen."
+  log "Baseline explizit und erfolgreich adoptiert."
 fi
 
-# 4) Container starten (CMD wendet die ausstehenden Migrationen an) + Health.
-info "Container wird gestartet..."
-docker compose up -d "$COMPOSE_SERVICE"
+# Eine leere DB wird NICHT resolved; migrate deploy erzeugt sie regulaer.
 
-info "Warte auf Container-Health..."
-for i in {1..30}; do
-  STATUS=$(docker inspect --format='{{.State.Health.Status}}' "$CONTAINER_NAME" 2>/dev/null || echo "starting")
-  if [[ "$STATUS" == "healthy" ]]; then
-    log "Container ist healthy."
-    break
-  fi
-  if [[ "$STATUS" == "unhealthy" ]]; then
-    docker compose logs --tail=40 "$COMPOSE_SERVICE"
-    err "Container wurde unhealthy nach Update."
-  fi
-  sleep 2
-done
+# 4) Migrationen VOR dem eigentlichen Bot-Start auf einem Einmal-Container
+#    anwenden. So startet nie eine neue App-Version gegen ein ungeprueftes Schema.
+info "Prisma-Migrationen werden angewendet..."
+docker compose run --rm "$COMPOSE_SERVICE" npx prisma migrate deploy \
+  || err "Prisma migrate deploy fehlgeschlagen. Bot wird nicht gestartet."
+log "Prisma migrate deploy erfolgreich."
 
-# 4a) Sicherheitsnetz: explizites migrate deploy (idempotent — der Container-CMD
-#     hat es beim Start bereits ausgefuehrt; hier nur als Gate/Logausgabe).
-info "Prisma-Migrationen werden verifiziert..."
-if docker compose exec -T "$COMPOSE_SERVICE" npx prisma migrate deploy; then
-  log "DB-Migrationen angewendet."
-else
-  err "Prisma migrate deploy fehlgeschlagen - Deployment gestoppt (Schema inkonsistent)."
-fi
+info "Prisma-Migrationsstatus wird verifiziert..."
+docker compose run --rm "$COMPOSE_SERVICE" npx prisma migrate status \
+  || err "Prisma migrate status meldet Pending/Fehler. Deployment abgebrochen."
+log "Prisma-Migrationsstatus sauber."
 
-# 4b) Zusaetzliche idempotente SQL-Skripte (deploy/sql/*.sql) anwenden.
-#     Erlaubt additive Indices/Extensions ohne Prisma-Schema-Aenderung.
+# 4a) Zusaetzliche idempotente SQL-Skripte. Auch diese sind jetzt ein hartes
+#     Gate: ein partiell angewendetes Deployment ist gefaehrlicher als Abbruch.
 SQL_DIR="$(cd "$(dirname "$0")" && pwd)/sql"
 if [[ -d "$SQL_DIR" ]]; then
   shopt -s nullglob
@@ -114,36 +135,69 @@ if [[ -d "$SQL_DIR" ]]; then
     info "Wende ${#SQL_FILES[@]} SQL-Skript(e) aus deploy/sql/ an..."
     for f in "${SQL_FILES[@]}"; do
       name="$(basename "$f")"
-      if docker compose exec -T postgres psql -U "${POSTGRES_USER:-discordbot}" -d "${POSTGRES_DB:-discord_v_bot}" -v ON_ERROR_STOP=1 < "$f" >/dev/null 2>&1; then
-        log "SQL angewendet: $name"
-      else
-        warn "SQL fehlgeschlagen: $name (siehe psql-Output)"
-      fi
+      docker compose exec -T postgres psql -U "$PGU" -d "$PGD" -v ON_ERROR_STOP=1 < "$f" >/dev/null \
+        || err "SQL fehlgeschlagen: $name. Deployment abgebrochen."
+      log "SQL angewendet: $name"
     done
   fi
 fi
 
-# 5) Letzte Logs zur Kontrolle
-info "Letzte Bot-Logs:"
-docker compose logs --tail=20 "$COMPOSE_SERVICE" | tail -25
+# 5) Bot erst NACH erfolgreichem DB-Gate starten.
+info "Bot-Container wird gestartet..."
+docker compose up -d "$COMPOSE_SERVICE" || err "docker compose up fehlgeschlagen."
 
-# 6) Login-Detection: warte bis "Bot eingeloggt" in den Logs auftaucht.
-#    Faengt verzoegerte Crashes / Token-Probleme, die der Docker-Healthcheck
-#    nicht erkennt (Container "healthy" aber Discord-Login schlug fehl).
+info "Warte auf Container-Health..."
+HEALTH_OK=0
+for i in {1..45}; do
+  STATUS=$(docker inspect --format='{{.State.Health.Status}}' "$CONTAINER_NAME" 2>/dev/null || echo "starting")
+  if [[ "$STATUS" == "healthy" ]]; then
+    HEALTH_OK=1
+    log "Container ist healthy."
+    break
+  fi
+  if [[ "$STATUS" == "unhealthy" ]]; then
+    docker compose logs --tail=80 "$COMPOSE_SERVICE" || true
+    err "Container wurde unhealthy nach Update."
+  fi
+  sleep 2
+done
+if [[ "$HEALTH_OK" -ne 1 ]]; then
+  docker compose logs --tail=80 "$COMPOSE_SERVICE" || true
+  err "Container wurde innerhalb von 90s nicht healthy."
+fi
+
+# 6) Discord-Login ist ebenfalls ein hartes Gate. Health allein beweist nicht,
+#    dass der Bot mit Discord verbunden ist.
 info "Pruefe Discord-Login..."
 LOGIN_OK=0
-for i in {1..15}; do
-  if docker compose logs --tail=80 "$COMPOSE_SERVICE" 2>/dev/null | grep -q "Bot eingeloggt als"; then
+for i in {1..30}; do
+  if docker compose logs --tail=160 "$COMPOSE_SERVICE" 2>/dev/null | grep -q "Bot eingeloggt als"; then
     LOGIN_OK=1
     break
   fi
   sleep 2
 done
-
-if [[ "$LOGIN_OK" -eq 1 ]]; then
-  log "Discord-Login bestaetigt."
-else
-  warn "Kein 'Bot eingeloggt'-Log innerhalb von 30s gefunden \u2013 bitte 'docker compose logs $COMPOSE_SERVICE' pruefen."
+if [[ "$LOGIN_OK" -ne 1 ]]; then
+  docker compose logs --tail=120 "$COMPOSE_SERVICE" || true
+  err "Discord-Login wurde innerhalb von 60s nicht bestaetigt."
 fi
+log "Discord-Login bestaetigt."
+
+# 7) Nach dem Start migrationsseitig erneut read-only verifizieren.
+info "Post-Start Migration-Drift/Pending-Check..."
+docker compose exec -T "$COMPOSE_SERVICE" npx prisma migrate status \
+  || err "Post-Start Prisma-Status ist nicht sauber."
+log "Post-Start Prisma-Status sauber."
+
+# 8) Prozess-/Container-Hygiene.
+info "Container-/Restart-Status:"
+docker compose ps "$COMPOSE_SERVICE"
+RESTART_COUNT=$(docker inspect --format='{{.RestartCount}}' "$CONTAINER_NAME" 2>/dev/null || echo "unknown")
+if [[ "$RESTART_COUNT" != "0" ]]; then
+  warn "Container RestartCount=$RESTART_COUNT. Logs vor Freigabe pruefen."
+fi
+
+info "Letzte Bot-Logs:"
+docker compose logs --tail=40 "$COMPOSE_SERVICE" | tail -50
 
 log "Update erfolgreich. Bot laeuft auf Commit $NEW_COMMIT."
