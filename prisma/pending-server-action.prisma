@@ -3,8 +3,10 @@
 // Bewusst ohne Prisma-Relation zu NitradoConnection, damit das additive
 // Multi-File-Schema die grosse Legacy-Hauptschema-Datei nicht anfassen muss.
 // Die Migration legt den echten FK mit ON DELETE CASCADE an.
+// Der Service setzt die ID explizit via crypto.randomUUID(); uuid() ist ein
+// zweiter sicherer Default fuer direkte Prisma-Nutzung.
 model PendingServerAction {
-  id              String   @id @default(cuid())
+  id              String   @id @default(uuid())
   guildId         String
   nitradoConnId   String
   actorDiscordId  String
