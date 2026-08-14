@@ -25,18 +25,16 @@ if [[ $EUID -ne 0 ]]; then
 fi
 
 cd "$BOT_DIR" || err "BOT_DIR nicht gefunden: $BOT_DIR"
-
 git config --global --add safe.directory "$BOT_DIR" >/dev/null 2>&1 || true
-
 info "Discord-V-Bot Update gestartet ($BOT_DIR)"
 
-# 0) Compose/.env VOR jeder Aenderung validieren. So wird bei fehlenden
-#    Pflichtvariablen oder ungueltiger Compose-Datei nichts halb deployed.
-info "Docker-Compose-Konfiguration wird validiert..."
+# 0) Bestehende Compose/.env-Konfiguration validieren, bevor der Checkout
+#    veraendert wird. Das faengt fehlende Pflichtvariablen sofort ab.
+info "Aktuelle Docker-Compose-Konfiguration wird validiert..."
 docker compose config --quiet || err "docker compose config fehlgeschlagen. .env/Compose pruefen."
-log "Compose-Konfiguration gueltig."
+log "Aktuelle Compose-Konfiguration gueltig."
 
-# 1) Code ziehen
+# 1) Code ziehen.
 info "Git fetch + reset auf origin/main..."
 OLD_COMMIT=$(git rev-parse --short HEAD || echo "unknown")
 git fetch origin main
@@ -53,22 +51,43 @@ fi
 
 git --no-pager log --oneline "$OLD_COMMIT..$NEW_COMMIT" 2>/dev/null | head -10 || true
 
-# 2) Image bauen (noch NICHT starten).
+# Die NEU gezogene Compose-Datei erneut validieren. Nur die alte Datei vor dem
+# reset zu pruefen wuerde Syntax-/Configfehler des neuen Releases uebersehen.
+info "Neue Docker-Compose-Konfiguration wird validiert..."
+docker compose config --quiet || err "Neue docker-compose.yml/.env-Kombination ist ungueltig. Deployment abgebrochen."
+log "Neue Compose-Konfiguration gueltig."
+
+# 2) Image bauen (noch NICHT Bot starten).
 info "Docker-Image wird gebaut..."
 docker compose build "$COMPOSE_SERVICE" || err "Docker-Build fehlgeschlagen."
 
-# 3) Baseline-Adoption VOR dem Containerstart.
-#
-# SICHERHEITSREGEL:
-# Eine bestehende DB ohne Baseline-Eintrag wird NIE mehr allein aufgrund einer
-# einzelnen vorhandenen Tabelle als kompatibel angenommen. Automatische
-# Baseline-Adoption ist nur erlaubt, wenn der Operator sie fuer GENAU dieses
-# Deployment explizit mit ALLOW_BASELINE_ADOPTION=true freigibt UND mehrere
-# unabhaengige Schema-Sentinels vorhanden sind. Ansonsten fail-closed.
-info "Pruefe Baseline-/Migrationshistorie..."
-BASELINE_MIGRATION="00000000000000_baseline"
+# 2a) Datenbank-Infrastruktur explizit bereitstellen. Baseline-/Sentinel-Checks
+#     verwenden `docker compose exec postgres` und duerfen nicht davon abhaengen,
+#     ob Postgres zufaellig bereits lief.
+info "Postgres wird gestartet/verifiziert..."
+docker compose up -d postgres || err "Postgres konnte nicht gestartet werden."
 PGU="${POSTGRES_USER:-discordbot}"
 PGD="${POSTGRES_DB:-discord_v_bot}"
+PG_READY=0
+for i in {1..30}; do
+  if docker compose exec -T postgres pg_isready -U "$PGU" -d "$PGD" >/dev/null 2>&1; then
+    PG_READY=1
+    break
+  fi
+  sleep 2
+done
+if [[ "$PG_READY" -ne 1 ]]; then
+  docker compose logs --tail=80 postgres || true
+  err "Postgres wurde innerhalb von 60s nicht bereit."
+fi
+log "Postgres ist bereit."
+
+# 3) Baseline-Adoption VOR dem Bot-Containerstart.
+# Eine bestehende DB ohne Baseline-Eintrag wird NIE allein aufgrund einer
+# einzelnen Tabelle als kompatibel angenommen. Adoption braucht explizites
+# Einmal-Opt-in + mehrere unabhaengige Schema-Sentinels.
+info "Pruefe Baseline-/Migrationshistorie..."
+BASELINE_MIGRATION="00000000000000_baseline"
 SCHEMA_PRESENT=$(docker compose exec -T postgres psql -U "$PGU" -d "$PGD" -tAc \
   "SELECT to_regclass('public.\"User\"') IS NOT NULL;" 2>/dev/null | tr -d '[:space:]')
 HISTORY_TABLE=$(docker compose exec -T postgres psql -U "$PGU" -d "$PGD" -tAc \
@@ -81,7 +100,6 @@ fi
 
 if [[ "$SCHEMA_PRESENT" == "t" && "$BASELINE_APPLIED" != "t" ]]; then
   warn "Bestehendes Schema ohne angewendete Prisma-Baseline erkannt."
-
   if [[ "${ALLOW_BASELINE_ADOPTION:-false}" != "true" ]]; then
     err "Baseline-Adoption ist fail-closed. Nach manueller DB-Pruefung fuer einen einzelnen Lauf ALLOW_BASELINE_ADOPTION=true setzen."
   fi
@@ -112,8 +130,7 @@ fi
 
 # Eine leere DB wird NICHT resolved; migrate deploy erzeugt sie regulaer.
 
-# 4) Migrationen VOR dem eigentlichen Bot-Start auf einem Einmal-Container
-#    anwenden. So startet nie eine neue App-Version gegen ein ungeprueftes Schema.
+# 4) Migrationen VOR dem eigentlichen Bot-Start anwenden.
 info "Prisma-Migrationen werden angewendet..."
 docker compose run --rm "$COMPOSE_SERVICE" npx prisma migrate deploy \
   || err "Prisma migrate deploy fehlgeschlagen. Bot wird nicht gestartet."
@@ -124,8 +141,7 @@ docker compose run --rm "$COMPOSE_SERVICE" npx prisma migrate status \
   || err "Prisma migrate status meldet Pending/Fehler. Deployment abgebrochen."
 log "Prisma-Migrationsstatus sauber."
 
-# 4a) Zusaetzliche idempotente SQL-Skripte. Auch diese sind jetzt ein hartes
-#     Gate: ein partiell angewendetes Deployment ist gefaehrlicher als Abbruch.
+# 4a) Zusaetzliche idempotente SQL-Skripte sind ebenfalls harte Gates.
 SQL_DIR="$(cd "$(dirname "$0")" && pwd)/sql"
 if [[ -d "$SQL_DIR" ]]; then
   shopt -s nullglob
@@ -166,8 +182,7 @@ if [[ "$HEALTH_OK" -ne 1 ]]; then
   err "Container wurde innerhalb von 90s nicht healthy."
 fi
 
-# 6) Discord-Login ist ebenfalls ein hartes Gate. Health allein beweist nicht,
-#    dass der Bot mit Discord verbunden ist.
+# 6) Discord-Login ist ebenfalls ein hartes Gate.
 info "Pruefe Discord-Login..."
 LOGIN_OK=0
 for i in {1..30}; do
