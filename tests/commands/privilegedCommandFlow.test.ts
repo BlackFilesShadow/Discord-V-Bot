@@ -16,6 +16,9 @@ const forceLink = jest.fn();
 const unlinkUser = jest.fn();
 
 const prismaMock = {
+  nitradoConnection: {
+    findFirst: jest.fn(),
+  },
   serverSettings: {
     findUnique: jest.fn(),
   },
@@ -54,17 +57,31 @@ function addInteraction() {
 function confirmInteraction(id: string) {
   const reply = jest.fn().mockResolvedValue(undefined);
   const interaction = {
-    options: {
-      getString: jest.fn().mockReturnValue(id),
-    },
+    options: { getString: jest.fn().mockReturnValue(id) },
     reply,
   } as unknown as ChatInputCommandInteraction;
   return { interaction, reply };
 }
 
+function consumedAddMoneyAction(actionId: string) {
+  return {
+    id: actionId,
+    guildId: scope.guildId,
+    nitradoConnId: scope.nitradoConnId,
+    actorDiscordId: scope.actorDiscordId,
+    actionType: 'ADD_MONEY',
+    payload: { targetUserId: '323456789012345678', amount: '250', reason: 'Korrektur' },
+    status: 'CONSUMED',
+    expiresAt: new Date(Date.now() + 60_000),
+    consumedAt: new Date(),
+    createdAt: new Date(),
+  };
+}
+
 describe('Phase 8 privileged command confirmation flow', () => {
   beforeEach(() => {
     jest.clearAllMocks();
+    prismaMock.nitradoConnection.findFirst.mockResolvedValue({ slot: 1, status: 'ACTIVE', nitradoServerId: '12345' });
     prismaMock.serverSettings.findUnique.mockResolvedValue({ economyActive: true });
   });
 
@@ -82,11 +99,7 @@ describe('Phase 8 privileged command confirmation flow', () => {
         nitradoConnId: scope.nitradoConnId,
         actorDiscordId: scope.actorDiscordId,
         actionType: 'ADD_MONEY',
-        payload: {
-          targetUserId: '323456789012345678',
-          amount: '250',
-          reason: 'Korrektur',
-        },
+        payload: { targetUserId: '323456789012345678', amount: '250', reason: 'Korrektur' },
       }),
     );
     expect(adminPay).not.toHaveBeenCalled();
@@ -95,18 +108,7 @@ describe('Phase 8 privileged command confirmation flow', () => {
 
   it('/confirm-action consumes the action once and executes the server-scoped mutation', async () => {
     const actionId = '123e4567-e89b-42d3-a456-426614174000';
-    consumePendingServerAction.mockResolvedValue({
-      id: actionId,
-      guildId: scope.guildId,
-      nitradoConnId: scope.nitradoConnId,
-      actorDiscordId: scope.actorDiscordId,
-      actionType: 'ADD_MONEY',
-      payload: { targetUserId: '323456789012345678', amount: '250', reason: 'Korrektur' },
-      status: 'CONSUMED',
-      expiresAt: new Date(Date.now() + 60_000),
-      consumedAt: new Date(),
-      createdAt: new Date(),
-    });
+    consumePendingServerAction.mockResolvedValue(consumedAddMoneyAction(actionId));
     const { interaction, reply } = confirmInteraction(actionId);
 
     await confirmActionCommand.execute(interaction);
@@ -115,6 +117,10 @@ describe('Phase 8 privileged command confirmation flow', () => {
       prismaMock,
       expect.objectContaining({ id: actionId, guildId: scope.guildId, actorDiscordId: scope.actorDiscordId }),
     );
+    expect(prismaMock.nitradoConnection.findFirst).toHaveBeenCalledWith({
+      where: { id: scope.nitradoConnId, guildId: scope.guildId },
+      select: { slot: true, status: true, nitradoServerId: true },
+    });
     expect(adminPay).toHaveBeenCalledWith({
       guildId: scope.guildId,
       nitradoConnId: scope.nitradoConnId,
@@ -124,5 +130,19 @@ describe('Phase 8 privileged command confirmation flow', () => {
       actorDiscordId: scope.actorDiscordId,
     });
     expect(reply).toHaveBeenCalledWith(expect.objectContaining({ content: 'Guthaben wurde hinzugefuegt.' }));
+  });
+
+  it('/confirm-action fails closed when the bound server became inactive', async () => {
+    const actionId = '123e4567-e89b-42d3-a456-426614174000';
+    consumePendingServerAction.mockResolvedValue(consumedAddMoneyAction(actionId));
+    prismaMock.nitradoConnection.findFirst.mockResolvedValue({ slot: 1, status: 'REVOKED', nitradoServerId: '12345' });
+    const { interaction, reply } = confirmInteraction(actionId);
+
+    await confirmActionCommand.execute(interaction);
+
+    expect(adminPay).not.toHaveBeenCalled();
+    expect(forceLink).not.toHaveBeenCalled();
+    expect(unlinkUser).not.toHaveBeenCalled();
+    expect(reply).toHaveBeenCalledWith(expect.objectContaining({ content: expect.stringContaining('nicht mehr aktiv') }));
   });
 });
