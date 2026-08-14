@@ -101,6 +101,58 @@ export async function isBanned(
   return isBanActive(entry, now);
 }
 
+export interface BanListRow extends BanEntry {
+  id: string;
+  identityHash: string;
+  reason: string | null;
+  appliedRemotely: boolean;
+}
+
+export interface BanListClient {
+  serverBanEntry: {
+    findMany: (args: unknown) => Promise<BanListRow[]>;
+  };
+}
+
+/**
+ * Listet alles, was operativ sichtbar bleiben muss:
+ * - lokal aktive, noch nicht abgelaufene Banns;
+ * - JEDEN als remote angewendet markierten Bann, auch wenn er lokal bereits
+ *   aufgehoben oder abgelaufen ist. So wird Remote-Drift nie unsichtbar.
+ */
+export async function listOperationalBans(
+  client: BanListClient,
+  scope: BanScope,
+  now: Date = new Date(),
+  take = 50,
+): Promise<BanListRow[]> {
+  return client.serverBanEntry.findMany({
+    where: {
+      guildId: scope.guildId,
+      nitradoConnId: scope.nitradoConnId,
+      OR: [
+        { appliedRemotely: true },
+        {
+          active: true,
+          OR: [{ expiresAt: null }, { expiresAt: { gt: now } }],
+        },
+      ],
+    },
+    orderBy: { updatedAt: 'desc' },
+    take,
+  });
+}
+
+export function banOperationalState(
+  entry: BanEntry & { appliedRemotely: boolean },
+  now: Date = new Date(),
+): 'LOCAL_ONLY' | 'LOCAL_AND_REMOTE' | 'REMOTE_DRIFT' {
+  const locallyActive = isBanActive(entry, now);
+  if (!locallyActive && entry.appliedRemotely) return 'REMOTE_DRIFT';
+  if (locallyActive && entry.appliedRemotely) return 'LOCAL_AND_REMOTE';
+  return 'LOCAL_ONLY';
+}
+
 // ---- Capability-basierte Durchsetzung ----
 
 export interface BanEnforcementCapabilities {
