@@ -72,4 +72,22 @@ describe('requireGlobalBotAdminIdentity', () => {
 
     expect(next).toHaveBeenCalledTimes(1);
   });
+
+  it('denies and revokes a stale privileged session when the DB user no longer exists', async () => {
+    findUnique.mockResolvedValue(null);
+    const req = request('123456789012345678', 'DEVELOPER');
+    const res = response();
+    const next = jest.fn();
+
+    await requireGlobalBotAdminIdentity(req, res, next);
+
+    expect(next).not.toHaveBeenCalled();
+    expect(res.status).toHaveBeenCalledWith(403);
+    expect(updateMany).toHaveBeenCalledTimes(1);
+    expect(logAudit).toHaveBeenCalledWith(
+      'BOTADMIN_IDENTITY_DENIED',
+      'SECURITY',
+      expect.objectContaining({ reason: 'DB_USER_MISSING' }),
+    );
+  });
 });
