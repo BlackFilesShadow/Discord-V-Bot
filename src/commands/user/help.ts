@@ -10,13 +10,11 @@ import {
 } from 'discord.js';
 import type { Command, ExtendedClient } from '../../types';
 import prisma from '../../database/prisma';
-import { config } from '../../config';
 import { visibleCommandCatalog, type CommandCatalogEntry } from '../catalog';
-import { isGlobalDeveloperIdentity } from '../../security/privilegedIdentity';
 import { Colors, Brand } from '../../utils/embedDesign';
 
 const PAGE_SIZE = 18;
-type HelpFilter = 'all' | 'public' | 'admin' | 'developer' | 'manufacturer' | 'dashboard';
+type HelpFilter = 'all' | 'public' | 'manufacturer' | 'dashboard';
 
 function truncate(value: string, max: number): string {
   return value.length <= max ? value : `${value.slice(0, max - 1)}…`;
@@ -25,13 +23,13 @@ function truncate(value: string, max: number): string {
 async function resolveAccess(discordId: string): Promise<{ isAdmin: boolean; isDeveloper: boolean; isManufacturer: boolean }> {
   const user = await prisma.user.findUnique({
     where: { discordId },
-    select: { role: true, isManufacturer: true, status: true },
+    select: { isManufacturer: true, status: true },
   });
-  const role = user?.role ?? 'USER';
-  const owner = Boolean(config.discord.ownerId) && discordId === config.discord.ownerId;
   return {
-    isAdmin: owner || role === 'ADMIN' || role === 'SUPER_ADMIN' || role === 'DEVELOPER',
-    isDeveloper: isGlobalDeveloperIdentity(discordId, role, config.discord.ownerId),
+    // /help is intentionally never a discovery surface for Bot-Admin/DEV
+    // commands. Those capabilities belong in their dedicated dashboard areas.
+    isAdmin: false,
+    isDeveloper: false,
     isManufacturer: Boolean(user?.isManufacturer && user.status === 'ACTIVE'),
   };
 }
@@ -48,8 +46,6 @@ function pageEmbed(entries: CommandCatalogEntry[], page: number, totalPages: num
   const body = chunk.length
     ? chunk.map((entry) => {
       const badges = [
-        entry.audience === 'admin' ? '🔧' : '',
-        entry.audience === 'developer' ? '🔐' : '',
         entry.audience === 'manufacturer' ? '🏭' : '',
         entry.dashboardReplacement ? '🖥️' : '',
       ].filter(Boolean).join('');
@@ -62,10 +58,10 @@ function pageEmbed(entries: CommandCatalogEntry[], page: number, totalPages: num
     .setTitle('📚 Command-Katalog')
     .setDescription(
       `Filter: **${filter}** · ${entries.length} Commands · Seite ${page + 1}/${totalPages}\n` +
-      '🔧 Admin · 🔐 Developer · 🏭 Hersteller · 🖥️ auch im Dashboard\n\n' +
+      '🏭 Hersteller · 🖥️ auch im Dashboard\n\n' +
       `${Brand.divider}\n${body}`,
     )
-    .setFooter({ text: 'Diese Liste wird direkt aus der aktiven Command-Registry erzeugt.' })
+    .setFooter({ text: 'Bot-Admin- und DEV-Funktionen werden nicht in /help angezeigt.' })
     .setTimestamp();
 }
 
@@ -87,8 +83,6 @@ const helpCommand: Command = {
       .addChoices(
         { name: 'Alle sichtbaren Commands', value: 'all' },
         { name: 'Öffentlich', value: 'public' },
-        { name: 'Admin', value: 'admin' },
-        { name: 'Developer', value: 'developer' },
         { name: 'Hersteller', value: 'manufacturer' },
         { name: 'Auch im Dashboard', value: 'dashboard' },
       )),
