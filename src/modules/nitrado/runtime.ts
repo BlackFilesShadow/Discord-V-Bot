@@ -7,6 +7,7 @@ import { config } from '../../config';
 import { startNitradoJobWorker, drainAndStopJobWorker } from './jobWorker';
 import { startTokenValidationCron, stopTokenValidationCron } from './tokenValidationCron';
 import { startAdmSyncCron, stopAdmSyncCron } from './admSyncCron';
+import { startAdmLiveSyncCron, stopAdmLiveSyncCron } from './adm/admLiveSyncCron';
 import { startPermaOnlyCron, stopPermaOnlyCron } from './permaOnlyCron';
 import { startWhitelistSyncCron, stopWhitelistSyncCron } from '../whitelist/whitelistSyncCron';
 import { startKillfeedWatcher, stopKillfeedWatcher } from '../killfeed/admWatcher';
@@ -20,14 +21,20 @@ export interface NitradoRuntimeHandle {
 export function startNitradoRuntime(client: Client): NitradoRuntimeHandle {
   startNitradoJobWorker();
   startTokenValidationCron(client);
+  // Der 15-Minuten-Sync bleibt fuer Linking/Rewards/Session-Aggregation aktiv.
   startAdmSyncCron();
   startPermaOnlyCron();
   startWhitelistSyncCron();
 
-  // Nie Legacy und V2 parallel posten. V2 vereinigt Deathfeed + Baufeed auf der
-  // kanonischen AdmEvent-Pipeline mit persistenter Retry-Zustellung.
-  if (config.nitrado.admEventPipelineV2) startGameplayFeedRuntime();
-  else startKillfeedWatcher();
+  // Nie Legacy und V2 parallel posten. V2 bekommt zusaetzlich den schnellen,
+  // byte-inkrementellen ADM-Producer; beide V2-Komponenten teilen AdmEvent als
+  // idempotente Source-of-Truth.
+  if (config.nitrado.admEventPipelineV2) {
+    startAdmLiveSyncCron();
+    startGameplayFeedRuntime();
+  } else {
+    startKillfeedWatcher();
+  }
 
   startBankInterestCron();
 
@@ -39,6 +46,7 @@ export function startNitradoRuntime(client: Client): NitradoRuntimeHandle {
 
       stopBankInterestCron();
       stopGameplayFeedRuntime();
+      stopAdmLiveSyncCron();
       stopKillfeedWatcher();
       stopWhitelistSyncCron();
       stopPermaOnlyCron();
