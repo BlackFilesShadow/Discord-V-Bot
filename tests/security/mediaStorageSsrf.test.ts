@@ -13,8 +13,17 @@ const unlink = jest.fn(async () => undefined);
 jest.mock('../../src/utils/ssrf', () => ({ safeAxiosGet }));
 jest.mock('fs/promises', () => ({ mkdir, writeFile, unlink }));
 
+import path from 'node:path';
 import type { Attachment } from 'discord.js';
-import { MAX_MEDIA_BYTES, saveAttachment } from '../../src/modules/ai/mediaStorage';
+import {
+  MEDIA_BASE_DIR,
+  MAX_MEDIA_BYTES,
+  deleteMediaIfLocal,
+  saveAttachment,
+  saveRemoteMedia,
+} from '../../src/modules/ai/mediaStorage';
+
+const GUILD_ID = '123456789012345678';
 
 function pngBytes(): Buffer {
   return Buffer.concat([
@@ -41,7 +50,7 @@ describe('mediaStorage SSRF/size/content hardening', () => {
   it('downloads through safeAxiosGet with a hard response-size cap', async () => {
     safeAxiosGet.mockResolvedValue({ data: pngBytes(), headers: { 'content-type': 'image/png' } });
 
-    const result = await saveAttachment(attachment(), 'triggers', '123456789012345678', 'trigger-1');
+    const result = await saveAttachment(attachment(), 'triggers', GUILD_ID, 'trigger-1');
 
     expect(result.ok).toBe(true);
     expect(safeAxiosGet).toHaveBeenCalledWith(
@@ -58,7 +67,7 @@ describe('mediaStorage SSRF/size/content hardening', () => {
   it('does not trust the declared attachment size after download', async () => {
     safeAxiosGet.mockResolvedValue({ data: Buffer.alloc(MAX_MEDIA_BYTES + 1), headers: {} });
 
-    const result = await saveAttachment(attachment({ size: 1 }), 'welcome', '123456789012345678', 'welcome');
+    const result = await saveAttachment(attachment({ size: 1 }), 'welcome', GUILD_ID, 'welcome');
 
     expect(result.ok).toBe(false);
     expect(result.message).toContain('zu groß');
@@ -69,7 +78,7 @@ describe('mediaStorage SSRF/size/content hardening', () => {
     const result = await saveAttachment(
       attachment({ size: MAX_MEDIA_BYTES + 1 }),
       'triggers',
-      '123456789012345678',
+      GUILD_ID,
       'trigger-2',
     );
 
@@ -83,7 +92,7 @@ describe('mediaStorage SSRF/size/content hardening', () => {
       headers: { 'content-type': 'image/png' },
     });
 
-    const result = await saveAttachment(attachment(), 'triggers', '123456789012345678', 'trigger-spoof');
+    const result = await saveAttachment(attachment(), 'triggers', GUILD_ID, 'trigger-spoof');
 
     expect(result.ok).toBe(false);
     expect(result.message).toContain('Dateiinhalt');
@@ -93,10 +102,59 @@ describe('mediaStorage SSRF/size/content hardening', () => {
   it('rejects a response MIME that conflicts with the downloaded magic bytes', async () => {
     safeAxiosGet.mockResolvedValue({ data: pngBytes(), headers: { 'content-type': 'image/jpeg' } });
 
-    const result = await saveAttachment(attachment(), 'welcome', '123456789012345678', 'mime-spoof');
+    const result = await saveAttachment(attachment(), 'welcome', GUILD_ID, 'mime-spoof');
 
     expect(result.ok).toBe(false);
     expect(result.message).toContain('MIME-Type');
     expect(writeFile).not.toHaveBeenCalled();
+  });
+
+  it('materializes remote media through the SSRF-safe client and derives the local extension from magic bytes', async () => {
+    safeAxiosGet.mockResolvedValue({ data: pngBytes(), headers: { 'content-type': 'image/png' } });
+
+    const result = await saveRemoteMedia('https://media.example.test/no-extension', 'triggers', GUILD_ID, 'remote-1');
+
+    expect(result.ok).toBe(true);
+    expect(safeAxiosGet).toHaveBeenCalledWith(
+      'https://media.example.test/no-extension',
+      expect.objectContaining({
+        responseType: 'arraybuffer',
+        maxContentLength: MAX_MEDIA_BYTES,
+        maxBodyLength: MAX_MEDIA_BYTES,
+      }),
+    );
+    expect(result.localPath).toBe(path.join(MEDIA_BASE_DIR, 'triggers', GUILD_ID, 'remote-1.png'));
+    expect(writeFile).toHaveBeenCalledWith(result.localPath, expect.any(Buffer), { mode: 0o640 });
+  });
+
+  it('rejects remote media when response MIME conflicts with magic bytes', async () => {
+    safeAxiosGet.mockResolvedValue({ data: pngBytes(), headers: { 'content-type': 'video/mp4' } });
+
+    const result = await saveRemoteMedia('https://media.example.test/spoof', 'triggers', GUILD_ID, 'remote-spoof');
+
+    expect(result.ok).toBe(false);
+    expect(result.message).toContain('MIME-Type');
+    expect(writeFile).not.toHaveBeenCalled();
+  });
+
+  it('rejects oversized remote bodies even if the HTTP client mock returns them', async () => {
+    safeAxiosGet.mockResolvedValue({ data: Buffer.alloc(MAX_MEDIA_BYTES + 1), headers: { 'content-type': 'image/png' } });
+
+    const result = await saveRemoteMedia('https://media.example.test/large', 'triggers', GUILD_ID, 'remote-large');
+
+    expect(result.ok).toBe(false);
+    expect(result.message).toContain('zu groß');
+    expect(writeFile).not.toHaveBeenCalled();
+  });
+
+  it('never deletes a sibling path that merely shares the media-root prefix', async () => {
+    await deleteMediaIfLocal(`${MEDIA_BASE_DIR}-backup/secret.png`);
+    expect(unlink).not.toHaveBeenCalled();
+  });
+
+  it('deletes a file only when its resolved path is truly inside the managed media root', async () => {
+    const managed = path.join(MEDIA_BASE_DIR, 'triggers', GUILD_ID, 'remote-1.png');
+    await deleteMediaIfLocal(managed);
+    expect(unlink).toHaveBeenCalledWith(path.resolve(managed));
   });
 });
