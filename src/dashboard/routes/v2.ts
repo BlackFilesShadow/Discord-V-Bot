@@ -10,6 +10,7 @@ import { Router } from 'express';
 import { requireAuth } from '../middleware/auth';
 import { idempotency } from '../middleware/idempotency';
 import { requireGlobalDeveloperIdentity } from '../middleware/globalDeveloperGate';
+import { requireGlobalBotAdminIdentity } from '../middleware/globalBotAdminGate';
 import { requireSafeDashboardEconomyScope } from '../middleware/economyScopeGuard';
 
 import { guildsRouter } from './v2/guilds';
@@ -42,12 +43,10 @@ import { botAdminRouter } from './v2/botAdmin';
 
 export const v2Router = Router();
 
-// requireAuth fuer ALLE v2-Routen
 v2Router.use(requireAuth);
-// Idempotenz fuer Schreib-Routen
 v2Router.use(idempotency);
 
-v2Router.use('/guilds', guildsRouter); // listet eigene Guilds
+v2Router.use('/guilds', guildsRouter);
 v2Router.use('/guilds/:guildId/dashboard', dashboardRouter);
 v2Router.use('/guilds/:guildId/permissions', permissionsRouter);
 v2Router.use('/guilds/:guildId/nitrado', nitradoRouter);
@@ -59,9 +58,6 @@ v2Router.use('/guilds/:guildId/factions', factionsRouter);
 // Economy-Guards liegen, sonst koennte eine MIGRATION_REQUIRED-Guild ihren
 // Primaerserver niemals festlegen.
 v2Router.use('/guilds/:guildId/economy-scope', economyScopeRouter);
-// Die alten Dashboard-Economy/Casino-Routen sind noch guildweit. Bis deren
-// kompletter nitradoConnId-Umbau abgeschlossen ist, blockiert dieser Guard
-// Multi-Server-Zugriffe statt Daten aus verschiedenen Servern zu vermischen.
 v2Router.use('/guilds/:guildId/economy', requireSafeDashboardEconomyScope, economyRouter);
 v2Router.use('/guilds/:guildId/economy-links', economyLinkRouter);
 v2Router.use('/guilds/:guildId/casino', requireSafeDashboardEconomyScope, casinoRouter);
@@ -74,17 +70,14 @@ v2Router.use('/guilds/:guildId/feeds', feedsRouter);
 v2Router.use('/guilds/:guildId/translated-posts', translatedPostsRouter);
 v2Router.use('/guilds/:guildId/audit', auditRouter);
 
-// DEV-Basisrouter hat absichtlich zwei unprivilegierte, aber authentisierte
-// Endpunkte: /login (Step-up) und /status (Eligibility-Polling). Nur die
-// privilegierten Basisrouten bekommen das globale Developer-Gate vorab.
+// DEV-Basisrouter hat absichtlich zwei authentisierte Step-up-Endpunkte:
+// /login und /status. Die eigentliche globale Identitaet wird vor jeder
+// privilegierten DEV-Flaeche erneut aus frischer DB-Rolle + BOT_OWNER_ID geprueft.
 v2Router.use('/dev/snapshot', requireGlobalDeveloperIdentity);
 v2Router.use('/dev/logs', requireGlobalDeveloperIdentity);
 v2Router.use('/dev/sessions', requireGlobalDeveloperIdentity);
 v2Router.use('/dev', devRouter);
 
-// Alle spezifischen DEV-Unterrouter muessen zusaetzlich zur aktiven DevSession
-// die kanonische globale Developer-Identitaet bestehen. Dadurch werden alte
-// Sessions nach Rollen-/Owner-Aenderungen nicht weiter akzeptiert.
 v2Router.use('/dev/uploads', requireGlobalDeveloperIdentity, devUploadsRouter);
 v2Router.use('/dev/analytics', requireGlobalDeveloperIdentity, devAnalyticsRouter);
 v2Router.use('/dev/status', requireGlobalDeveloperIdentity, devStatusRouter);
@@ -93,7 +86,7 @@ v2Router.use('/dev/incident', requireGlobalDeveloperIdentity, devIncidentRouter)
 v2Router.use('/dev/observability', requireGlobalDeveloperIdentity, devObservabilityRouter);
 v2Router.use('/dev/stubs', requireGlobalDeveloperIdentity, devStubsRouter);
 
-// Bot-Admin: GLOBALER, passwortgeschuetzter Support-Bereich (wie /dev, eigener
-// Login). /login und /status liegen im Router OHNE requireBotAdmin, damit das
-// Frontend pollen/anmelden kann; alle Datenrouten nutzen requireBotAdmin.
-v2Router.use('/bot-admin', botAdminRouter);
+// Bot-Admin: Shared Password = Step-up, NICHT Identitaet/Berechtigung. Das Gate
+// liegt vor dem kompletten Router, also auch vor /login und /status. Eine
+// entzogene globale Rolle invalidiert dadurch selbst bereits aktive Sessions.
+v2Router.use('/bot-admin', requireGlobalBotAdminIdentity, botAdminRouter);
