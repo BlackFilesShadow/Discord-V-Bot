@@ -6,6 +6,7 @@
  *  - /slot, /coinflip, /dice, /blackjack antworten public mit Embed.
  *  - allowedMentions.parse: [] verhindert Self-Ping / @everyone-Eskalation.
  *  - Provably-Fair-Footer ist gesetzt (Hash + Nonce).
+ *  - CasinoRound.result bleibt JSONB-kompatibel, auch wenn PlayResult BigInt-Werte enthaelt.
  */
 
 import { EmbedBuilder, MessageFlags } from 'discord.js';
@@ -160,5 +161,21 @@ describe('Casino + Bank Embeds (Public, kein Self-Ping)', () => {
     expect(fieldsStr).toContain('Einsatz');
     expect(fieldsStr).toContain('Auszahlung');
     expect(fieldsStr).toMatch(/Netto|Gewinn|Verlust/);
+  });
+
+  it('/slot: CasinoRound.result serialisiert BigInt payout als JSON-String', async () => {
+    const { i } = makeInteraction({ intOpt: 10 });
+    await slotCommand.execute(i as never);
+
+    const roundInsert = rawExecute.mock.calls.find(
+      call => typeof call[0] === 'string' && call[0].includes('INSERT INTO "CasinoRound"'),
+    );
+    expect(roundInsert).toBeDefined();
+
+    const serializedResult = roundInsert![8];
+    expect(typeof serializedResult).toBe('string');
+    const parsed = JSON.parse(serializedResult as string) as { payout: unknown };
+    expect(typeof parsed.payout).toBe('string');
+    expect(parsed.payout).toMatch(/^\d+$/);
   });
 });
