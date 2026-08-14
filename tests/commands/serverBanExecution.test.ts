@@ -2,7 +2,6 @@ var mockTx: any;
 var mockScope: any;
 var mockTargets: any[];
 var mockOrder: string[];
-var mockRemoteWhitelistFailure = false;
 
 jest.mock('../../src/database/prisma', () => ({
   __esModule: true,
@@ -42,13 +41,7 @@ jest.mock('../../src/modules/bans/banOutbox', () => ({
 }));
 
 jest.mock('../../src/modules/nitrado/nitradoClient', () => ({
-  NitradoClient: jest.fn().mockImplementation(() => ({
-    removeFromWhitelist: async () => {
-      mockOrder.push('remote-whitelist-remove');
-      if (mockRemoteWhitelistFailure) throw new Error('remote whitelist failed');
-    },
-    getBanlist: async () => [],
-  })),
+  NitradoClient: jest.fn().mockImplementation(() => ({ getBanlist: async () => [] })),
 }));
 
 jest.mock('../../src/config', () => ({
@@ -78,7 +71,6 @@ describe('server-ban/server-unban execution', () => {
   beforeEach(() => {
     jest.clearAllMocks();
     mockOrder = [];
-    mockRemoteWhitelistFailure = false;
     mockScope = {
       guildId: 'guild-1',
       nitradoConnId: null,
@@ -120,7 +112,7 @@ describe('server-ban/server-unban execution', () => {
     };
   });
 
-  it('entfernt lokalen Whitelist-Desired-State, dann Nitrado-Whitelist, dann queued es den Ban', async () => {
+  it('entfernt zuerst den lokalen Whitelist-Desired-State und queued danach den serialisierten Ban-Worker', async () => {
     const interaction = interactionFor('ban');
 
     await serverBanCommand.execute(interaction);
@@ -128,31 +120,12 @@ describe('server-ban/server-unban execution', () => {
     expect(mockOrder).toEqual([
       'local-whitelist-delete',
       'local-request-cancel',
-      'remote-whitelist-remove',
       'add-ban',
       'lookup-ban',
       'enqueue-ban',
     ]);
     expect(interaction.reply).toHaveBeenCalledWith(expect.objectContaining({
-      content: expect.stringContaining('Whitelist bereinigt'),
-    }));
-  });
-
-  it('queued keinen Ban, wenn die Nitrado-Whitelist nicht sicher entfernt werden konnte', async () => {
-    mockRemoteWhitelistFailure = true;
-    const interaction = interactionFor('ban');
-
-    await serverBanCommand.execute(interaction);
-
-    expect(mockOrder).toEqual([
-      'local-whitelist-delete',
-      'local-request-cancel',
-      'remote-whitelist-remove',
-    ]);
-    expect(mockOrder).not.toContain('add-ban');
-    expect(mockOrder).not.toContain('enqueue-ban');
-    expect(interaction.reply).toHaveBeenCalledWith(expect.objectContaining({
-      content: expect.stringContaining('nicht gebannt'),
+      content: expect.stringContaining('Whitelist-Entfernung + Bann'),
     }));
   });
 
