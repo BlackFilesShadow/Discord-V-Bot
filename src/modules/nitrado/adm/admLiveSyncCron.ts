@@ -1,17 +1,17 @@
 /**
- * Live ADM ingestion for Gameplay Feeds V2.
+ * Kanonischer Live-ADM-Ingest fuer alle aktiven Nitrado-Gameserver.
  *
- * Only connections with an active GameplayFeedConfig are polled. Nitrado's
- * file_server/seek API reads only bytes after AdmSourceCursor. The old 15-min
- * ADM sync remains responsible for linking/reward/session side effects; both
- * paths share the same idempotent AdmEvent store.
+ * Nitrados file_server/seek liest nur neue Bytes nach AdmSourceCursor. Dieser
+ * Pfad ist damit die einzige Datei-Quelle fuer Death/Baufeed, Linking, Rewards
+ * und PlayerSessions. Alte Voll-Downloads und NITRADO_ADM_DIR sind nicht mehr
+ * Teil der Runtime.
  */
 
 import crypto from 'crypto';
 import prisma from '../../../database/prisma';
 import { config } from '../../../config';
 import { decrypt } from '../../../utils/security';
-import { logger } from '../../../utils/logger';
+import { logger, logAudit } from '../../../utils/logger';
 import { NitradoClient } from '../nitradoClient';
 import { recordAdmSourceError, resolveAdmProfile } from './profileResolver';
 import {
@@ -21,6 +21,8 @@ import {
   type AdmSourceMeta,
 } from './serverLogIngestor';
 import { newDateContext, resolveBaseDate, type AdmDateContext } from './admLineParser';
+import { verifyLinkChallengesInAdmText } from '../../linking/admChallengeVerifier';
+import type { LinkClient } from '../../linking/linkService';
 
 const POLL_INTERVAL_MS = 30_000;
 const RANGE_BYTES = 512 * 1024;
@@ -52,6 +54,32 @@ function safeError(error: unknown): string {
 function fingerprint(content: string): string | null {
   if (!content) return null;
   return crypto.createHash('sha256').update(content.slice(0, 4096)).digest('hex');
+}
+
+function completeLines(content: string): string {
+  const lf = content.lastIndexOf('\n');
+  const cr = content.lastIndexOf('\r');
+  const end = Math.max(lf, cr);
+  return end >= 0 ? content.slice(0, end + 1) : '';
+}
+
+async function verifyLinkChallenges(conn: LiveConn, content: string): Promise<void> {
+  const complete = completeLines(content);
+  if (!complete) return;
+  const summary = await verifyLinkChallengesInAdmText(
+    prisma as unknown as LinkClient,
+    { guildId: conn.guildId, nitradoConnId: conn.id },
+    complete,
+    config.security.encryptionKey,
+  );
+  if (summary.verified > 0) {
+    logAudit('LINK_CHALLENGE_VERIFIED', 'LINKING', {
+      guildId: conn.guildId,
+      nitradoConnId: conn.id,
+      verified: summary.verified,
+      source: 'ADM_V2_LIVE',
+    });
+  }
 }
 
 function localParts(date: Date, timeZone: string | null): { date: Date; timeMs: number } {
@@ -104,11 +132,10 @@ async function dateContextForOffset(
 }
 
 /**
- * Source health is stored on NitradoAdmProfileConfig. GameplayFeedConfig's
- * lastErrorMsg belongs exclusively to Discord/delivery failures and must not be
- * cleared by a successful Nitrado poll.
+ * Source-Health lebt auf NitradoAdmProfileConfig. FeedConfig.lastErrorMsg bleibt
+ * ausschliesslich fuer Discord-Zustellfehler reserviert.
  */
-async function setFeedSourceStatus(conn: LiveConn, message: string | null): Promise<void> {
+async function setSourceStatus(conn: LiveConn, message: string | null): Promise<void> {
   await Promise.all([
     prisma.gameplayFeedConfig.updateMany({
       where: { guildId: conn.guildId, nitradoConnId: conn.id, isActive: true },
@@ -187,6 +214,7 @@ async function ingestFile(
       result,
       fingerprint(chunk),
     );
+    await verifyLinkChallenges(conn, chunk);
 
     if (result.newOffset <= offset) break;
     offset = result.newOffset;
@@ -202,7 +230,7 @@ async function processConnection(conn: LiveConn): Promise<void> {
   try {
     token = decrypt(conn.encryptedToken, config.security.encryptionKey);
   } catch {
-    await setFeedSourceStatus(conn, 'Nitrado-Token konnte nicht entschluesselt werden.');
+    await setSourceStatus(conn, 'Nitrado-Token konnte nicht entschluesselt werden.');
     return;
   }
 
@@ -216,7 +244,7 @@ async function processConnection(conn: LiveConn): Promise<void> {
       .filter(file => Number.isSafeInteger(file.modified_at) && Number.isSafeInteger(file.size) && file.size >= 0)
       .sort((a, b) => a.modified_at - b.modified_at || a.name.localeCompare(b.name));
     if (files.length === 0) {
-      await setFeedSourceStatus(conn, null);
+      await setSourceStatus(conn, null);
       return;
     }
 
@@ -227,7 +255,7 @@ async function processConnection(conn: LiveConn): Promise<void> {
 
     if (!latestCursor) {
       await baselineCurrentFile(conn, client, profile.profileDir, files[files.length - 1]);
-      await setFeedSourceStatus(conn, null);
+      await setSourceStatus(conn, null);
       return;
     }
 
@@ -271,11 +299,11 @@ async function processConnection(conn: LiveConn): Promise<void> {
         cursor ? Number(cursor.processedByteOffset) : 0,
       );
     }
-    await setFeedSourceStatus(conn, null);
+    await setSourceStatus(conn, null);
   } catch (error) {
     const message = safeError(error);
     logger.warn(`ADM-Live-Sync ${conn.id}: ${message}`);
-    await setFeedSourceStatus(conn, message);
+    await setSourceStatus(conn, message);
   }
 }
 
@@ -283,25 +311,14 @@ export async function runAdmLiveSyncOnce(): Promise<void> {
   if (running) return;
   running = true;
   try {
-    // eslint-disable-next-line local/no-unscoped-prisma-query -- global producer discovery; exact scope enforced below
-    const feeds = await prisma.gameplayFeedConfig.findMany({
-      where: { isActive: true },
-      select: { guildId: true, nitradoConnId: true },
-      distinct: ['guildId', 'nitradoConnId'],
-    });
-    if (feeds.length === 0) return;
-
-    const ids = Array.from(new Set(feeds.map(feed => feed.nitradoConnId)));
-    // eslint-disable-next-line local/no-unscoped-prisma-query -- IDs originate from scoped active feed configs
+    // Der Live-Ingest ist die zentrale ADM-Quelle und muss daher unabhaengig von
+    // einer aktivierten Discord-Feed-Konfiguration fuer jeden aktiven Server laufen.
+    // eslint-disable-next-line local/no-unscoped-prisma-query -- globaler Producer-Sweep; processConnection bleibt Guild+Connection scoped.
     const connections = await prisma.nitradoConnection.findMany({
-      where: { id: { in: ids }, status: 'ACTIVE', nitradoServerId: { not: null } },
+      where: { status: 'ACTIVE', nitradoServerId: { not: null } },
       select: { id: true, guildId: true, encryptedToken: true, nitradoServerId: true },
     });
-    const allowedScopes = new Set(feeds.map(feed => `${feed.guildId}\u0000${feed.nitradoConnId}`));
-    for (const connection of connections) {
-      if (!allowedScopes.has(`${connection.guildId}\u0000${connection.id}`)) continue;
-      await processConnection(connection);
-    }
+    for (const connection of connections) await processConnection(connection);
   } catch (error) {
     logger.error('ADM-Live-Sync Fehler:', error as Error);
   } finally {
@@ -311,6 +328,7 @@ export async function runAdmLiveSyncOnce(): Promise<void> {
 
 export function startAdmLiveSyncCron(): void {
   if (timer) return;
+  logger.info(`ADM-V2-Live-Sync gestartet (Intervall ${POLL_INTERVAL_MS / 1000}s, per-Server-Quelle).`);
   timer = setInterval(() => { void runAdmLiveSyncOnce(); }, POLL_INTERVAL_MS);
   timer.unref?.();
   void runAdmLiveSyncOnce();
