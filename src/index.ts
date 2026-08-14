@@ -25,6 +25,7 @@ import { startDashboard } from './dashboard/server';
 import { processExpiredCases } from './modules/moderation/caseManager';
 import { acquireSingletonLock } from './utils/singleton';
 import { assertProductionEnv } from './utils/envValidation';
+import { startNitradoRuntime, type NitradoRuntimeHandle } from './modules/nitrado/runtime';
 
 /**
  * Discord-V-Bot Haupteinstiegspunkt.
@@ -214,29 +215,12 @@ async function main(): Promise<void> {
     logger.error('Dashboard konnte nicht gestartet werden:', error);
   }
 
-  // Phase 3-Final: Hintergrund-Worker starten (NitradoJob-Outbox + Token/ADM-Crons).
-  let drainJobWorker: (() => Promise<void>) | null = null;
+  // Nitrado-nahe Worker/Scheduler als eine symmetrische Runtime-Grenze starten.
+  // Beim Shutdown stoppt sie erst alle Producer/Poller und draint danach den
+  // NitradoJobWorker, bevor Discord/Prisma geschlossen werden.
+  let nitradoRuntime: NitradoRuntimeHandle | null = null;
   try {
-    const { startNitradoJobWorker, drainAndStopJobWorker } = await import('./modules/nitrado/jobWorker.js');
-    const { startTokenValidationCron } = await import('./modules/nitrado/tokenValidationCron.js');
-    const { startAdmSyncCron } = await import('./modules/nitrado/admSyncCron.js');
-    const { startPermaOnlyCron } = await import('./modules/nitrado/permaOnlyCron.js');
-    const { startKillfeedWatcher } = await import('./modules/killfeed/admWatcher.js');
-    const { startBankInterestCron } = await import('./modules/economy/interestCron.js');
-    startNitradoJobWorker();
-    drainJobWorker = () => drainAndStopJobWorker();
-    startTokenValidationCron(client);
-    startAdmSyncCron();
-    startPermaOnlyCron();
-    // Killfeed: V2 (aus AdmEvents) wenn Pipeline aktiv, sonst alter Watcher —
-    // nie beide zugleich (kein Doppel-Posting).
-    if (config.nitrado.admEventPipelineV2) {
-      const { startKillfeedV2Cron } = await import('./modules/killfeed/killfeedV2Cron.js');
-      startKillfeedV2Cron();
-    } else {
-      startKillfeedWatcher();
-    }
-    startBankInterestCron();
+    nitradoRuntime = startNitradoRuntime(client);
   } catch (e) {
     logger.warn('Nitrado-Worker-Init fehlgeschlagen:', e as Error);
   }
@@ -258,8 +242,9 @@ async function main(): Promise<void> {
     logger.warn('Reminder-Scheduler-Init fehlgeschlagen:', e as Error);
   }
 
-  // Moderation-Scheduler: Temp-Bans/Mutes alle 60s prüfen
-  setInterval(async () => {
+  // Moderation-Scheduler: Temp-Bans/Mutes alle 60s prüfen. Handle behalten,
+  // unref'en und beim Shutdown explizit stoppen.
+  const moderationTimer = setInterval(async () => {
     try {
       for (const guild of client.guilds.cache.values()) {
         const n = await processExpiredCases(guild);
@@ -269,11 +254,13 @@ async function main(): Promise<void> {
       logger.error('Moderation-Scheduler Fehler:', err as Error);
     }
   }, 60_000);
+  moderationTimer.unref?.();
 
   logger.info('Discord-V-Bot vollständig gestartet.');
 
-  // Graceful Shutdown (NIT-010: geordnet — erst Worker drainen, dann Discord,
-  // dann Prisma; Guard gegen Doppelaufruf; Watchdog gegen Haenger).
+  // Graceful Shutdown (NIT-010/F-013): erst alle Producer/Poller stoppen und
+  // Nitrado-Worker drainen, danach Discord, zuletzt Prisma. Guard gegen
+  // Doppelaufruf; Watchdog gegen Haenger.
   let shuttingDown = false;
   const shutdown = async (signal: string) => {
     if (shuttingDown) return;
@@ -284,11 +271,15 @@ async function main(): Promise<void> {
       process.exit(1);
     }, 20_000);
     watchdog.unref?.();
+
+    clearInterval(moderationTimer);
+
     try {
-      if (drainJobWorker) await drainJobWorker();
+      if (nitradoRuntime) await nitradoRuntime.stopAndDrain();
     } catch (e) {
-      logger.warn('Worker-Drain-Fehler beim Shutdown:', e as Error);
+      logger.warn('Nitrado-Runtime-Shutdown fehlgeschlagen:', e as Error);
     }
+
     await client.destroy();
     await prisma.$disconnect();
     clearTimeout(watchdog);
