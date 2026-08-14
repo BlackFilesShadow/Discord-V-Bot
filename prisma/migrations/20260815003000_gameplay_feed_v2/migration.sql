@@ -5,7 +5,7 @@ EXCEPTION WHEN duplicate_object THEN NULL;
 END $$;
 
 DO $$ BEGIN
-  CREATE TYPE "GameplayDeliveryStatus" AS ENUM ('PENDING', 'SENDING', 'SENT', 'RETRY', 'FAILED');
+  CREATE TYPE "GameplayDeliveryStatus" AS ENUM ('PENDING', 'SENDING', 'SENT', 'SKIPPED', 'RETRY', 'FAILED');
 EXCEPTION WHEN duplicate_object THEN NULL;
 END $$;
 
