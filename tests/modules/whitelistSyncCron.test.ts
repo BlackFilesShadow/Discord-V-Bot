@@ -52,7 +52,9 @@ beforeEach(() => {
   jest.clearAllMocks();
   connectionFindMany.mockResolvedValue([conn]);
   whitelistFindMany.mockResolvedValue([]);
+  whitelistUpdateMany.mockResolvedValue({ count: 1 });
   jobFindMany.mockResolvedValue([]);
+  jobCreate.mockResolvedValue({});
   getWhitelist.mockResolvedValue([]);
 });
 
@@ -123,9 +125,10 @@ it('isoliert einen Connection-Fehler und verarbeitet weitere Connections', async
   getWhitelist
     .mockRejectedValueOnce(new Error('temporary remote error'))
     .mockResolvedValueOnce([{ identifier: 'Bob' }]);
-  whitelistFindMany
-    .mockResolvedValueOnce([])
-    .mockResolvedValueOnce([{ id: 'wl-2', gameId: 'Bob' }]);
+  whitelistFindMany.mockImplementation(async ({ where }: { where: { nitradoConnId: string } }) => {
+    if (where.nitradoConnId === 'conn-2') return [{ id: 'wl-2', gameId: 'Bob' }];
+    return [];
+  });
 
   await runWhitelistSyncOnce();
 
