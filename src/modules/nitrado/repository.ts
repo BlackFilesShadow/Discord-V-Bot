@@ -129,7 +129,13 @@ export async function deleteSlot(guildId: GuildId, slot: number): Promise<Nitrad
     select: { id: true },
   });
   if (!row) return null;
-  await prisma.nitradoConnection.deleteMany({ where: { id: row.id, guildId } }); // Cascade greift
+
+  // Diagnosezustand und Connection gemeinsam entfernen. Kein unmodellierter
+  // DB-FK noetig; Prisma-Schema und physische DB bleiben drift-frei.
+  await prisma.$transaction([
+    prisma.nitradoValidationHealth.deleteMany({ where: { guildId, nitradoConnId: row.id } }),
+    prisma.nitradoConnection.deleteMany({ where: { id: row.id, guildId } }),
+  ]);
   return asNitradoConnId(row.id);
 }
 
@@ -144,21 +150,33 @@ export async function setStatus(
   });
 }
 
-/** Markiert eine Verbindung nach erfolgreicher Token-Pruefung als ACTIVE und
- *  vermerkt den Validierungszeitpunkt (Auto-Recovery aus EXPIRED). */
+/** Markiert eine Verbindung nach erfolgreicher Token-Pruefung als ACTIVE,
+ *  vermerkt den Validierungszeitpunkt und beginnt einen neuen Diagnose-Streak. */
 export async function markValidated(
   guildId: GuildId,
   id: NitradoConnId,
 ): Promise<void> {
-  await prisma.nitradoConnection.updateMany({
-    where: { id, guildId },
-    data: { status: 'ACTIVE', lastValidatedAt: new Date(), lastErrorMessage: null },
-  });
+  await prisma.$transaction([
+    prisma.nitradoConnection.updateMany({
+      where: { id, guildId },
+      data: { status: 'ACTIVE', lastValidatedAt: new Date(), lastErrorMessage: null },
+    }),
+    prisma.nitradoValidationHealth.updateMany({
+      where: { guildId, nitradoConnId: id },
+      data: {
+        failureCount: 0,
+        lastErrorMessage: null,
+        lastFailureAt: null,
+        lastAlertAt: null,
+      },
+    }),
+  ]);
 }
 
 /**
  * Tauscht den verschluesselten Token eines existierenden Slots aus.
- * Setzt Status zurueck auf ACTIVE (z.B. wenn vorher EXPIRED war).
+ * Setzt Status zurueck auf ACTIVE (z.B. wenn vorher EXPIRED war) und loescht
+ * den vorherigen Validierungsfehler-Streak.
  * Caller MUSS den neuen Token vorher gegen die Nitrado-API validiert haben.
  */
 export async function updateToken(
@@ -168,11 +186,28 @@ export async function updateToken(
 ): Promise<NitradoConnectionRow | null> {
   if (!rawToken || rawToken.length < 8) throw new Error('Token leer/zu kurz');
   const encryptedToken = encrypt(rawToken, config.security.encryptionKey);
-  const updated = await prisma.nitradoConnection.updateMany({
-    where: { guildId, slot },
-    data: { encryptedToken, status: 'ACTIVE' },
+  const current = await prisma.nitradoConnection.findUnique({
+    where: { guildId_slot: { guildId, slot } },
+    select: { id: true },
   });
-  if (updated.count === 0) return null;
+  if (!current) return null;
+
+  await prisma.$transaction([
+    prisma.nitradoConnection.updateMany({
+      where: { guildId, slot },
+      data: { encryptedToken, status: 'ACTIVE', lastErrorMessage: null },
+    }),
+    prisma.nitradoValidationHealth.updateMany({
+      where: { guildId, nitradoConnId: current.id },
+      data: {
+        failureCount: 0,
+        lastErrorMessage: null,
+        lastFailureAt: null,
+        lastAlertAt: null,
+      },
+    }),
+  ]);
+
   const row = await prisma.nitradoConnection.findUnique({
     where: { guildId_slot: { guildId, slot } },
   });
