@@ -1,10 +1,13 @@
 /**
- * Casino: Game-Konfiguration + Stats.
+ * Casino: Game-Konfiguration + Stats — immer Guild+Gameserver-gescopt.
  *
- * GET    /games               -> alle Games der Guild
+ * Der vorgeschaltete requireSafeDashboardEconomyScope validiert den aktiven
+ * Gameserver und setzt req.guildScope.nitradoConnId.
+ *
+ * GET    /games               -> alle Games des ausgewaehlten Gameservers
  * PUT    /games/:type         body: { winChancePct, minBet, maxBet, enabled, configJson? }
- * GET    /stats               -> aggregierte Win-Rate je Type
- * GET    /rounds              -> letzte 100 Rounds (Audit)
+ * GET    /stats               -> aggregierte Win-Rate je Type im Gameserver
+ * GET    /rounds              -> letzte 100 Rounds im Gameserver (Audit)
  */
 import { Router } from 'express';
 import { requireGuildPermission } from '../../middleware/auth';
@@ -22,8 +25,12 @@ const MAX_CASINO_BET = 1_000_000_000_000_000n;
 
 casinoRouter.get('/games', requireGuildPermission('casino.view'), async (req, res) => {
   const scope = req.guildScope!;
-  const games = await prisma.casinoGame.findMany({ where: { guildId: scope.guildId } });
+  const connId = scope.nitradoConnId!;
+  const games = await prisma.casinoGame.findMany({
+    where: { guildId: scope.guildId, nitradoConnId: connId },
+  });
   res.json({
+    nitradoConnId: connId,
     games: games.map(g => ({
       type: g.type, enabled: g.enabled, winChancePct: g.winChancePct,
       minBet: g.minBet.toString(), maxBet: g.maxBet.toString(),
@@ -34,6 +41,7 @@ casinoRouter.get('/games', requireGuildPermission('casino.view'), async (req, re
 
 casinoRouter.put('/games/:type', requireGuildPermission('casino.manage'), async (req, res) => {
   const scope = req.guildScope!;
+  const connId = scope.nitradoConnId!;
   const t = String(req.params.type) as CasinoGameType;
   if (!VALID_TYPES.has(t)) { res.status(400).json({ error: 'Unbekannter Game-Type.' }); return; }
   const b = req.body ?? {};
@@ -57,13 +65,21 @@ casinoRouter.put('/games/:type', requireGuildPermission('casino.manage'), async 
   }
 
   const g = await prisma.casinoGame.upsert({
-    where: { guildId_type: { guildId: scope.guildId, type: t } },
-    create: { guildId: scope.guildId, type: t, ...data },
+    where: { guildServerType: { guildId: scope.guildId, nitradoConnId: connId, type: t } },
+    create: { guildId: scope.guildId, nitradoConnId: connId, type: t, ...data },
     update: data,
   });
-  logAuditDb('CASINO_GAME_UPDATED', 'CASINO', { actorUserId: req.auth!.userId, guildId: scope.guildId, details: { type: t, fields: Object.keys(data) } });
-  emitGuildEvent(scope.guildId, { type: 'settings.changed', payload: { guildId: scope.guildId, slotId: '' } });
+  logAuditDb('CASINO_GAME_UPDATED', 'CASINO', {
+    actorUserId: req.auth!.userId,
+    guildId: scope.guildId,
+    details: { nitradoConnId: connId, type: t, fields: Object.keys(data) },
+  });
+  emitGuildEvent(scope.guildId, {
+    type: 'settings.changed',
+    payload: { guildId: scope.guildId, slotId: connId },
+  });
   res.json({
+    nitradoConnId: connId,
     type: g.type, enabled: g.enabled, winChancePct: g.winChancePct,
     minBet: g.minBet.toString(), maxBet: g.maxBet.toString(), payoutMult: g.payoutMult,
   });
@@ -71,9 +87,10 @@ casinoRouter.put('/games/:type', requireGuildPermission('casino.manage'), async 
 
 casinoRouter.get('/stats', requireGuildPermission('casino.view'), async (req, res) => {
   const scope = req.guildScope!;
+  const connId = scope.nitradoConnId!;
   // Win/Loss aus payout > 0 ableiten; type per JOIN aus Game.
   const rounds = await prisma.casinoRound.findMany({
-    where: { guildId: scope.guildId },
+    where: { guildId: scope.guildId, nitradoConnId: connId },
     select: { bet: true, payout: true, game: { select: { type: true } } },
     take: 100_000,
   });
@@ -87,6 +104,7 @@ casinoRouter.get('/stats', requireGuildPermission('casino.view'), async (req, re
     buckets.set(k, cur);
   }
   res.json({
+    nitradoConnId: connId,
     stats: Array.from(buckets.values()).map(b => ({
       type: b.type, wins: b.wins, losses: b.losses,
       bet: b.bet.toString(), payout: b.payout.toString(),
@@ -96,13 +114,15 @@ casinoRouter.get('/stats', requireGuildPermission('casino.view'), async (req, re
 
 casinoRouter.get('/rounds', requireGuildPermission('casino.view'), async (req, res) => {
   const scope = req.guildScope!;
+  const connId = scope.nitradoConnId!;
   const rounds = await prisma.casinoRound.findMany({
-    where: { guildId: scope.guildId },
+    where: { guildId: scope.guildId, nitradoConnId: connId },
     orderBy: { createdAt: 'desc' },
     take: 100,
     include: { game: { select: { type: true } } },
   });
   res.json({
+    nitradoConnId: connId,
     rounds: rounds.map(r => ({
       id: r.id, type: r.game.type, userDiscordId: r.userDiscordId,
       win: r.payout > 0n,
