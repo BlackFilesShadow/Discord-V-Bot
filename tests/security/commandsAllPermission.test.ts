@@ -36,6 +36,19 @@ describe('commands.all', () => {
     expect(hasPermission(s, 'dashboard.access')).toBe(false);
   });
 
+  it('does not let dashboard.access become a command bypass', () => {
+    const s = scope(['dashboard.access']);
+    expect(hasPermission(s, 'economy.manage')).toBe(true);
+    expect(hasCommandPermission(s, 'economy.manage')).toBe(false);
+    expect(hasCommandPermission(s, 'whitelist.manage')).toBe(false);
+  });
+
+  it('still accepts explicit command target scopes', () => {
+    const s = scope(['economy.manage']);
+    expect(hasCommandPermission(s, 'economy.manage')).toBe(true);
+    expect(hasCommandPermission(s, 'whitelist.manage')).toBe(false);
+  });
+
   it('keeps owner bypass intact', () => {
     const s = { ...scope([]), isOwner: true };
     expect(hasCommandPermission(s, 'dev.console')).toBe(true);
