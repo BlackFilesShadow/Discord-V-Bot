@@ -58,7 +58,9 @@ setInterval(() => {
 function safeEqual(a: string, b: string): boolean {
   const bufA = Buffer.from(a, 'utf8');
   const bufB = Buffer.from(b, 'utf8');
+  // Wenn Längen unterschiedlich → Vergleich auf gleichlange Puffer und false zurück
   if (bufA.length !== bufB.length) {
+    // Trotzdem vergleichen, um konstante Laufzeit zu erzwingen
     const max = Math.max(bufA.length, bufB.length, 1);
     const padA = Buffer.alloc(max);
     const padB = Buffer.alloc(max);
@@ -70,16 +72,35 @@ function safeEqual(a: string, b: string): boolean {
   return timingSafeEqual(bufA, bufB);
 }
 
+// In-Memory Rate-Limits leben jetzt in src/utils/rateLimit.ts (synchron, testbar).
+// Hier nur noch das Wiring an Discord-spezifische Counters/Replies.
+
+/**
+ * Prüft ob ein User Owner oder Guild-Owner ist.
+ */
 function isOwnerOrGuildOwner(userId: string, interaction: Interaction): boolean {
   if (userId === config.discord.ownerId) return true;
   if (interaction.guild && interaction.guild.ownerId === userId) return true;
   return false;
 }
 
+/**
+ * Prüft ob ein User der Bot-Owner (BOT_OWNER_ID) ist.
+ * NUR der Bot-Owner darf devOnly-Commands ohne Passwort/Session umgehen.
+ */
 export function isBotOwner(userId: string): boolean {
   return userId === config.discord.ownerId;
 }
 
+/**
+ * Entscheidet, ob der Owner/Guild-Owner-Bypass für einen Command greift.
+ *
+ * Sicherheits-Invariante:
+ * - devOnly wird NIE per Owner/Guild-Owner-Bypass umgangen (nur der Bot-Owner
+ *   umgeht devOnly separat, siehe isBotOwner).
+ * - manufacturerOnly wird NIE umgangen (an verifizierten GUID-Bereich gebunden).
+ * - adminOnly darf sowohl Bot-Owner als auch Discord-Guild-Owner umgehen.
+ */
 export function ownerBypassApplies(
   command: { devOnly?: boolean; manufacturerOnly?: boolean },
   userId: string,
@@ -91,17 +112,30 @@ export function ownerBypassApplies(
   return false;
 }
 
+/**
+ * Prüft ob ein User eine Admin-Rolle in der DB hat.
+ */
 async function hasAdminRole(discordId: string): Promise<boolean> {
   const user = await prisma.user.findUnique({ where: { discordId } });
   if (!user) return false;
   return ['ADMIN', 'SUPER_ADMIN', 'DEVELOPER'].includes(user.role);
 }
 
+/**
+ * Interaction-Create-Event
+ *
+ * Permission-Modell (siehe ownerBypassApplies/isBotOwner):
+ * - Bot-Owner (BOT_OWNER_ID) → umgeht adminOnly UND (separat) devOnly
+ * - Guild-Owner → umgeht adminOnly, aber NICHT devOnly
+ * - Admin-Commands (adminOnly) → zusätzlich für User mit Admin-Rolle in DB (kein Passwort nötig)
+ * - Dev-Commands (devOnly) → Passwort-Modal, 2-Stunden-Session (außer Bot-Owner)
+ */
 const interactionCreateEvent: BotEvent = {
   name: Events.InteractionCreate,
   execute: async (interaction: unknown) => {
     const i = interaction as Interaction;
 
+    // Autocomplete-Dispatch (vor Command-Routing, damit isChatInputCommand spaeter greift)
     if (i.isAutocomplete && i.isAutocomplete()) {
       const client = i.client as ExtendedClient;
       const cmd = client.commands.get(i.commandName);
@@ -113,6 +147,10 @@ const interactionCreateEvent: BotEvent = {
       return;
     }
 
+    // Komponenten-Interaktionen (Buttons/Modals/Select-Menus) gegen Klick-Spam
+    // absichern — eigener Bucket (koppelt nicht an das Command-Budget). Greift
+    // VOR jeder Komponenten-Dispatch-Logik, damit auch Modul-Handler geschützt
+    // sind, die ihre eigenen Permission-Checks erst danach ausführen.
     const isComponentInteraction =
       ('isButton' in i && (i as ButtonInteraction).isButton()) ||
       ('isModalSubmit' in i && (i as ModalSubmitInteraction).isModalSubmit()) ||
@@ -128,6 +166,7 @@ const interactionCreateEvent: BotEvent = {
       }
     }
 
+    // Modal-Submit verarbeiten (Dev-Passwort)
     if ('isModalSubmit' in i && (i as ModalSubmitInteraction).isModalSubmit()) {
       const modal = i as ModalSubmitInteraction;
       if (modal.customId.startsWith('dev_auth_')) {
@@ -144,6 +183,8 @@ const interactionCreateEvent: BotEvent = {
         return;
       }
       if (modal.customId.startsWith('ttkt:adduser:')) {
+        // Backward-Compat-Stub: alter Modal-Flow wurde durch UserSelectMenu ersetzt.
+        // Falls eine Legacy-Submission eintrifft, freundlich aufloesen.
         try {
           await modal.reply({ content: 'Bitte den Button erneut klicken — das Add-User-Modal wurde durch ein Auswahlmenu ersetzt.', ephemeral: true });
         } catch { /* ignore */ }
@@ -160,6 +201,7 @@ const interactionCreateEvent: BotEvent = {
       }
     }
 
+    // User-Select-Menu: Ticket-AddUser-Flow.
     if ('isUserSelectMenu' in i && (i as { isUserSelectMenu: () => boolean }).isUserSelectMenu()) {
       const sel = i as import('discord.js').UserSelectMenuInteraction;
       if (sel.customId.startsWith('ttkt:adduser:')) {
@@ -173,6 +215,7 @@ const interactionCreateEvent: BotEvent = {
       }
     }
 
+    // String-Select-Menu: SelfRole-Auswahl (Reaktions-Embeds, componentType SELECT).
     if ('isStringSelectMenu' in i && (i as { isStringSelectMenu: () => boolean }).isStringSelectMenu()) {
       const sel = i as import('discord.js').StringSelectMenuInteraction;
       if (sel.customId.startsWith('selfrole_sel_')) {
@@ -186,6 +229,7 @@ const interactionCreateEvent: BotEvent = {
       }
     }
 
+    // Button-Interaktionen verarbeiten (Approve/Deny Hersteller)
     if ('isButton' in i && (i as ButtonInteraction).isButton()) {
       const btn = i as ButtonInteraction;
       if (btn.customId.startsWith('approve_manufacturer_') || btn.customId.startsWith('deny_manufacturer_')) {
@@ -258,6 +302,7 @@ const interactionCreateEvent: BotEvent = {
         }
         return;
       }
+      // Help-Pagination wird direkt vom Collector in help.ts verarbeitet — hier nichts tun
     }
 
     if (!i.isChatInputCommand()) return;
@@ -270,12 +315,18 @@ const interactionCreateEvent: BotEvent = {
       return;
     }
 
+    // In-memory Rate-Limit (synchron, 0 DB-Calls) um Discord's 3s-Timeout einzuhalten.
+    // DB-basiertes Rate-Limit läuft zusätzlich in Hintergrund-Jobs.
+    // Zwei Buckets:
+    //  1) global per User  -> Spam-Bot-Schutz (30/60s)
+    //  2) per (User × Command) -> verhindert dass ein einzelner teurer
+    //     Command (AI, Help-Pagination) das globale Budget verbrennt (10/60s)
     if (!checkGlobalRateLimit(i.user.id)) {
       rateLimitedCounter.inc({ kind: 'in_memory' });
       commandCounter.inc({ command: i.commandName, status: 'ratelimit' });
       try {
         await i.reply({
-          content: '⚠️ Zu viele Commands. Bitte einen Moment warten.',
+          content: `⚠️ Zu viele Commands. Bitte einen Moment warten.`,
           ephemeral: true,
         });
       } catch { /* interaction evtl. abgelaufen */ }
@@ -293,6 +344,7 @@ const interactionCreateEvent: BotEvent = {
       return;
     }
 
+    // Per-Command-Cooldown (Owner umgeht Cooldown)
     if (command.cooldown && !isOwnerOrGuildOwner(i.user.id, i)) {
       const cd = checkCooldown(i.user.id, i.commandName, command.cooldown);
       if (!cd.ok) {
@@ -308,18 +360,31 @@ const interactionCreateEvent: BotEvent = {
       }
     }
 
+    // ──────────────────────────────────────────
+    // PERMISSION-CHECK für Admin/Dev-Commands
+    // ──────────────────────────────────────────
     if (command.adminOnly || command.devOnly || command.manufacturerOnly) {
       const userId = i.user.id;
 
+      // 1) Owner/Guild-Owner → Bypass NUR für adminOnly (NICHT devOnly,
+      //    NICHT manufacturerOnly). devOnly wird unten strikt geprüft; dort
+      //    umgeht ausschließlich der Bot-Owner (BOT_OWNER_ID). Manufacturer-
+      //    Commands sind an einen per /register manufacturer verifizierten
+      //    GUID-Bereich gebunden — auch der Owner muss sich registrieren.
       if (ownerBypassApplies(command, userId, i.guild?.ownerId ?? null)) {
-        // keine weitere Prüfung
-      } else if (command.devOnly) {
+        // Keine Prüfung nötig — direkt ausführen
+      }
+      // 2) Dev-Commands → NUR der Bot-Owner (BOT_OWNER_ID) umgeht devOnly.
+      //    Discord-Guild-Owner haben hier KEINEN Bypass und müssen — wie alle
+      //    anderen — das Dev-Passwort / eine gültige Dev-Session (2h) nachweisen.
+      else if (command.devOnly) {
         if (!isBotOwner(userId)) {
           if (!config.developer.password) {
             await i.reply({ content: '🔒 Developer-Passwort nicht konfiguriert.', ephemeral: true });
             return;
           }
 
+          // Lockout-Check vor Modal
           const fails = await getDevFails(userId);
           if (fails && fails.lockedUntil > Date.now()) {
             const remainMin = Math.ceil((fails.lockedUntil - Date.now()) / 60_000);
@@ -363,8 +428,12 @@ const interactionCreateEvent: BotEvent = {
             await i.showModal(modal);
             return;
           }
+          // Sonst: Dev bereits authentifiziert → durchlassen
         }
-      } else if (command.adminOnly) {
+        // Bot-Owner ODER gültige Dev-Session → ausführen
+      }
+      // 3) Admin-Commands → DB-Rolle prüfen (kein Passwort nötig)
+      else if (command.adminOnly) {
         const isAdmin = await hasAdminRole(userId);
         if (!isAdmin) {
           await i.reply({
@@ -378,7 +447,12 @@ const interactionCreateEvent: BotEvent = {
           });
           return;
         }
-      } else if (command.manufacturerOnly) {
+        // Admin-Rolle vorhanden → durchlassen
+      }
+      // 4) Manufacturer-Commands → AUSSCHLIESSLICH isManufacturer=true UND status=ACTIVE
+      //    Admins/Developer haben hier KEINEN Bypass — Upload ist ausnahmslos
+      //    der Hersteller-Rolle vorbehalten.
+      else if (command.manufacturerOnly) {
         const dbUser = await prisma.user.findUnique({ where: { discordId: userId } });
         if (!dbUser) {
           await i.reply({
@@ -406,9 +480,13 @@ const interactionCreateEvent: BotEvent = {
           });
           return;
         }
+        // Hersteller aktiv → durchlassen
       }
     }
 
+    // Zentrale Discord-Permission-Pruefung: command.permissions (falls gesetzt)
+    // verlangt, dass das aufrufende Mitglied ALLE angegebenen Discord-Rechte im
+    // Server besitzt. Das Feld war bisher deklariert, aber nirgends erzwungen.
     if (command.permissions && command.permissions.length > 0) {
       if (!i.inGuild()) {
         await i.reply({ content: '🔒 Dieser Command ist nur in Servern verfügbar.', ephemeral: true });
@@ -429,6 +507,7 @@ const interactionCreateEvent: BotEvent = {
       }
     }
 
+    // Command ausführen
     const stopTimer = commandDurationHistogram.startTimer({ command: i.commandName });
     try {
       logAudit('COMMAND_EXECUTE', 'SYSTEM', {
@@ -442,6 +521,8 @@ const interactionCreateEvent: BotEvent = {
       await command.execute(i);
       commandCounter.inc({ command: i.commandName, status: 'success' });
     } catch (error: any) {
+      // 10062 (Unknown interaction) und 40060 (Already acknowledged) silently behandeln —
+      // diese sind nicht durch Code-Bugs, sondern durch Discord-Latenz/Cold-Start verursacht.
       const code = error?.code ?? error?.rawError?.code;
       if (code === 10062 || code === 40060) {
         logger.warn(`Command ${i.commandName}: Interaction abgelaufen (${code}) — ignoriert.`);
@@ -466,6 +547,7 @@ const interactionCreateEvent: BotEvent = {
           await i.reply({ content: errorMessage, ephemeral: true });
         }
       } catch (replyError: any) {
+        // Ignorieren wenn Antwort nicht mehr möglich
         logger.warn(`Konnte Fehler-Antwort nicht senden für ${i.commandName}: ${replyError?.message}`);
       }
     } finally {
@@ -474,6 +556,10 @@ const interactionCreateEvent: BotEvent = {
   },
 };
 
+/**
+ * Verarbeitet Developer-Passwort-Modal.
+ * Bei Erfolg: 2-Stunden-Session freischalten.
+ */
 async function handleDevPasswordModal(modal: ModalSubmitInteraction): Promise<void> {
   const pendingData = pendingDevAuth.get(modal.customId);
 
@@ -488,6 +574,7 @@ async function handleDevPasswordModal(modal: ModalSubmitInteraction): Promise<vo
     return;
   }
 
+  // Lockout-Check vor dem Vergleich
   const fails = await getDevFails(modal.user.id);
   if (fails && fails.lockedUntil > Date.now()) {
     const remainMin = Math.ceil((fails.lockedUntil - Date.now()) / 60_000);
@@ -500,6 +587,8 @@ async function handleDevPasswordModal(modal: ModalSubmitInteraction): Promise<vo
 
   const enteredPassword = modal.fields.getTextInputValue('dev_password');
 
+  // Fail-closed: Wenn serverseitig kein DEV_PASSWORD konfiguriert ist, darf
+  // niemand authentifiziert werden (verhindert Login mit leerem Passwort).
   if (!config.developer.password) {
     pendingDevAuth.delete(modal.customId);
     logAudit('DEV_AUTH_FAILED', 'SECURITY', {
@@ -517,6 +606,8 @@ async function handleDevPasswordModal(modal: ModalSubmitInteraction): Promise<vo
   if (!safeEqual(enteredPassword, config.developer.password)) {
     pendingDevAuth.delete(modal.customId);
 
+    // Fehlversuch zählen. Nach abgelaufenem Lockout Zähler zurücksetzen,
+    // damit eine bereits abgelaufene Sperre nicht sofort erneut greift.
     const prev = await getDevFails(modal.user.id);
     const cur = (prev && prev.lockedUntil <= Date.now() && prev.lockedUntil > 0)
       ? { count: 0, lockedUntil: 0 }
@@ -548,13 +639,14 @@ async function handleDevPasswordModal(modal: ModalSubmitInteraction): Promise<vo
   }
 
   pendingDevAuth.delete(modal.customId);
-  await clearDevFails(modal.user.id);
+  await clearDevFails(modal.user.id); // Reset bei Erfolg
 
   logAudit('DEV_AUTH_SUCCESS', 'AUTH', {
     userId: modal.user.id,
     command: pendingData.commandName,
   });
 
+  // 2-Stunden-Session freischalten
   await setDevSession(modal.user.id, Date.now() + DEV_SESSION_MS);
 
   await modal.reply({
@@ -563,7 +655,11 @@ async function handleDevPasswordModal(modal: ModalSubmitInteraction): Promise<vo
   });
 }
 
+/**
+ * Verarbeitet Approve/Deny-Buttons für Hersteller-Anfragen per DM.
+ */
 async function handleManufacturerButton(btn: ButtonInteraction): Promise<void> {
+  // Nur Owner oder Admins dürfen Hersteller-Anfragen bearbeiten
   const userId = btn.user.id;
   const isOwner = userId === config.discord.ownerId;
   const isAdmin = isOwner || await hasAdminRole(userId);
@@ -576,14 +672,20 @@ async function handleManufacturerButton(btn: ButtonInteraction): Promise<void> {
   const isApprove = btn.customId.startsWith('approve_manufacturer_');
   const targetUserId = btn.customId.replace(/^(approve|deny)_manufacturer_/, '');
 
+  // SOFORT acknowledgen – DM-Versand kann >3s dauern (Discord Token läuft sonst ab)
   try {
     await btn.deferUpdate();
-  } catch { /* already acknowledged */ }
+  } catch {
+    // bereits acknowledged – dann verwenden wir editReply
+  }
 
   try {
     if (isApprove) {
       const result = await approveManufacturer(targetUserId, btn.user.id);
       if (!result.success) {
+        // Buttons sicher entfernen, damit nicht erneut geklickt werden kann.
+        // Wenn das gelingt, brauchen wir KEIN zusätzliches followUp mit derselben
+        // Nachricht (verhindert das doppelte Anzeigen der Meldung).
         let edited = false;
         try {
           const staleEmbed = EmbedBuilder.from(btn.message.embeds[0])
@@ -591,13 +693,14 @@ async function handleManufacturerButton(btn: ButtonInteraction): Promise<void> {
             .setFooter({ text: `⚠️ Bereits bearbeitet — ${result.message}` });
           await btn.editReply({ embeds: [staleEmbed], components: [] });
           edited = true;
-        } catch { /* fallback below */ }
+        } catch { /* Edit kann scheitern, dann unten followUp als Fallback */ }
         if (!edited) {
           try { await btn.followUp({ content: `⚠️ ${result.message}`, ephemeral: true }); } catch { /* ignore */ }
         }
         return;
       }
 
+      // OTP dem User per DM senden
       let dmSent = false;
       try {
         const targetUser = await btn.client.users.fetch(targetUserId);
@@ -621,6 +724,8 @@ async function handleManufacturerButton(btn: ButtonInteraction): Promise<void> {
         logger.warn(`Konnte DM an ${targetUserId} nicht senden.`);
       }
 
+      // Fallback: wenn DM fehlschlägt, Admin per ephemeral followUp das OTP zeigen,
+      // damit es manuell weitergegeben werden kann.
       if (!dmSent) {
         try {
           await btn.followUp({
@@ -632,7 +737,8 @@ async function handleManufacturerButton(btn: ButtonInteraction): Promise<void> {
                   `Der Nutzer hat DMs von Server-Mitgliedern deaktiviert.\n\n` +
                   `**Einmal-Passwort (manuell weiterleiten):**\n\`\`\`${result.otp}\`\`\`\n` +
                   `**Gültig bis:** <t:${Math.floor((result.expiresAt as Date).getTime() / 1000)}:R>\n\n` +
-                  `Bitte sende das Passwort dem Nutzer über einen sicheren Kanal. Das Passwort ist nur einmal verwendbar.`
+                  `Bitte sende das Passwort dem Nutzer über einen sicheren Kanal (z.B. temporärer privater Kanal). ` +
+                  `Das Passwort ist nur einmal verwendbar und läuft in 30 Minuten ab.`
                 )
                 .setColor(0xff8800),
             ],
@@ -687,7 +793,10 @@ async function handleManufacturerButton(btn: ButtonInteraction): Promise<void> {
     }
   } catch (error) {
     logger.error('Fehler bei Hersteller-Button:', error);
-    try { await btn.editReply({ components: [] }); } catch { /* */ }
+    // Buttons trotzdem entfernen, um Endlos-Klicken zu vermeiden
+    try {
+      await btn.editReply({ components: [] });
+    } catch { /* */ }
     try {
       if (btn.deferred || btn.replied) {
         await btn.followUp({ content: '❌ Ein Fehler ist aufgetreten.', ephemeral: true });
@@ -700,15 +809,21 @@ async function handleManufacturerButton(btn: ButtonInteraction): Promise<void> {
 
 export default interactionCreateEvent;
 
+/**
+ * Poll-Button: Stimme abgeben / zurückziehen per Button-Klick.
+ * CustomId-Format: `poll_vote_{pollId}_{optionId}`
+ */
 async function handlePollVoteButton(btn: ButtonInteraction): Promise<void> {
   try {
     await btn.deferReply({ ephemeral: true });
 
+    // Strikte Guild-Bindung: Poll-Votes nur im Server-Kontext.
     if (!btn.guildId) {
       await btn.editReply({ content: '❌ Diese Aktion ist nur auf einem Server verfügbar.' });
       return;
     }
 
+    // customId parsen: poll_vote_<pollId>_<opt_N>
     const rest = btn.customId.substring('poll_vote_'.length);
     const lastUnderscore = rest.lastIndexOf('_opt_');
     if (lastUnderscore === -1) {
@@ -724,6 +839,7 @@ async function handlePollVoteButton(btn: ButtonInteraction): Promise<void> {
       update: {},
     });
 
+    // Mandantentrennung (strikt): Poll nur in eigener Guild abrufbar.
     const poll = await prisma.poll.findFirst({ where: { id: pollId, guildId: btn.guildId } });
     if (!poll) {
       await btn.editReply({ content: '❌ Umfrage nicht gefunden.' });
@@ -734,12 +850,14 @@ async function handlePollVoteButton(btn: ButtonInteraction): Promise<void> {
       return;
     }
 
+    // Toggle-Logik: bestehende Stimme? → zurückziehen. Sonst → abgeben.
     const existing = await prisma.pollVote.findFirst({
       where: { pollId, userId: dbUser.id, optionId },
     });
 
     let userMessage: string;
     if (existing) {
+      // Atomar: Stimme loeschen + Counter dekrementieren (sonst Counter-Drift bei Crash).
       await prisma.$transaction([
         prisma.pollVote.delete({ where: { id: existing.id } }),
         prisma.poll.update({
@@ -750,14 +868,21 @@ async function handlePollVoteButton(btn: ButtonInteraction): Promise<void> {
       userMessage = '↩️ Deine Stimme wurde zurückgezogen.';
       logAudit('POLL_VOTE_REMOVED', 'POLL', { pollId, userId: dbUser.id, optionId });
     } else {
+      // Bei Einzelwahl: vorherige Stimmen des Users löschen
       if (!poll.allowMultiple) {
         const prev = await prisma.pollVote.findMany({
           where: { pollId, userId: dbUser.id },
         });
         if (prev.length > 0) {
+          // Atomar: alte Stimmen weg + Counter um die exakte Anzahl korrigieren.
           await prisma.$transaction([
-            prisma.pollVote.deleteMany({ where: { pollId, userId: dbUser.id } }),
-            prisma.poll.update({ where: { id: pollId }, data: { totalVotes: { decrement: prev.length } } }),
+            prisma.pollVote.deleteMany({
+              where: { pollId, userId: dbUser.id },
+            }),
+            prisma.poll.update({
+              where: { id: pollId },
+              data: { totalVotes: { decrement: prev.length } },
+            }),
           ]);
         }
       }
@@ -772,6 +897,7 @@ async function handlePollVoteButton(btn: ButtonInteraction): Promise<void> {
 
     await btn.editReply({ content: userMessage });
 
+    // Original-Nachricht aktualisieren
     try {
       const votes = await getPollVotes(pollId);
       const totalVotes = Object.values(votes).reduce<number>((a, b) => a + (b as number), 0);
@@ -794,10 +920,15 @@ async function handlePollVoteButton(btn: ButtonInteraction): Promise<void> {
   }
 }
 
+/**
+ * Giveaway-Button: Toggle Teilnahme.
+ * CustomId-Format: `giveaway_enter_{giveawayId}`
+ */
 async function handleGiveawayEnterButton(btn: ButtonInteraction): Promise<void> {
   try {
     await btn.deferReply({ ephemeral: true });
 
+    // Strikte Guild-Bindung: Giveaway-Teilnahme nur im Server-Kontext.
     if (!btn.guildId) {
       await btn.editReply({ content: '❌ Diese Aktion ist nur auf einem Server verfügbar.' });
       return;
@@ -805,6 +936,7 @@ async function handleGiveawayEnterButton(btn: ButtonInteraction): Promise<void> 
 
     const giveawayId = btn.customId.substring('giveaway_enter_'.length);
 
+    // Mandantentrennung (strikt): Giveaway nur in eigener Guild abrufbar.
     const giveaway = await prisma.giveaway.findFirst({ where: { id: giveawayId, guildId: btn.guildId } });
     if (!giveaway) {
       await btn.editReply({ content: '❌ Giveaway nicht gefunden.' });
@@ -815,6 +947,7 @@ async function handleGiveawayEnterButton(btn: ButtonInteraction): Promise<void> 
       return;
     }
 
+    // Rollen-Checks
     if (giveaway.minRole && btn.guild) {
       const member = await btn.guild.members.fetch(btn.user.id);
       if (!member.roles.cache.has(giveaway.minRole)) {
@@ -837,6 +970,7 @@ async function handleGiveawayEnterButton(btn: ButtonInteraction): Promise<void> 
       update: {},
     });
 
+    // Toggle: bereits Teilnehmer? → austragen. Sonst → eintragen.
     const existing = await prisma.giveawayEntry.findFirst({
       where: { giveawayId, userId: dbUser.id },
     });
@@ -848,8 +982,12 @@ async function handleGiveawayEnterButton(btn: ButtonInteraction): Promise<void> 
       logAudit('GIVEAWAY_LEAVE', 'GIVEAWAY', { giveawayId, userId: dbUser.id });
     } else {
       try {
-        await prisma.giveawayEntry.create({ data: { giveawayId, userId: dbUser.id } });
+        await prisma.giveawayEntry.create({
+          data: { giveawayId, userId: dbUser.id },
+        });
       } catch (e) {
+        // Race-Schutz: Parallel-Klick kann den Eintrag bereits angelegt haben.
+        // Der Unique-Constraint (giveawayId, userId) macht das idempotent.
         if ((e as { code?: string })?.code !== 'P2002') throw e;
       }
       userMessage = '🎉 Du nimmst jetzt teil!';
@@ -858,6 +996,7 @@ async function handleGiveawayEnterButton(btn: ButtonInteraction): Promise<void> 
 
     await btn.editReply({ content: userMessage });
 
+    // Original-Embed aktualisieren
     try {
       const participantCount = await prisma.giveawayEntry.count({ where: { giveawayId } });
       const creator = await prisma.user.findUnique({
@@ -879,6 +1018,10 @@ async function handleGiveawayEnterButton(btn: ButtonInteraction): Promise<void> 
   }
 }
 
+/**
+ * Ticket-Buttons (Akzeptieren / Ablehnen) aus der Owner-DM.
+ * CustomId: ticket_accept_<ticketId> | ticket_deny_<ticketId>
+ */
 async function handleTicketButton(btn: ButtonInteraction): Promise<void> {
   try {
     const isAccept = btn.customId.startsWith('ticket_accept_');
@@ -891,6 +1034,7 @@ async function handleTicketButton(btn: ButtonInteraction): Promise<void> {
 
     await btn.editReply({ content: (result.success ? (isAccept ? '✅ ' : '❌ ') : '⚠️ ') + result.message });
 
+    // Buttons aus der urspruenglichen DM entfernen, damit nichts doppelt gedrueckt wird
     try {
       if (btn.message.editable) {
         await btn.message.edit({ components: [] });
