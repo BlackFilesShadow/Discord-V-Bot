@@ -4,9 +4,13 @@ import path from 'path';
 import fs from 'fs';
 
 const LOG_DIR = process.env.LOG_DIR || './logs';
+const IS_TEST_RUNTIME = process.env.NODE_ENV === 'test' || Boolean(process.env.JEST_WORKER_ID);
 
-// Log-Verzeichnis erstellen
-if (!fs.existsSync(LOG_DIR)) {
+// File-Rotation ist eine Production-Ressource. Unter Jest wuerden die
+// winston-daily-rotate-file-Transports Dateistreams/Rotation im Hintergrund
+// offen halten und damit Open-Handle-Erkennung verfaelschen. Tests nutzen daher
+// ausschliesslich Console-Transports; Production-Verhalten bleibt unveraendert.
+if (!IS_TEST_RUNTIME && !fs.existsSync(LOG_DIR)) {
   fs.mkdirSync(LOG_DIR, { recursive: true });
 }
 
@@ -38,57 +42,62 @@ const consoleFormat = winston.format.combine(
   })
 );
 
-// Tägliche Rotation fuer langfristige, append-only Aufbewahrung
-const dailyRotateTransport = new DailyRotateFile({
-  filename: path.join(LOG_DIR, 'app-%DATE%.log'),
-  datePattern: 'YYYY-MM-DD',
-  maxSize: '50m',
-  maxFiles: '365d', // 1 Jahr Aufbewahrung
-  zippedArchive: true,
-  format: logFormat,
-});
+function mainTransports(): winston.transport[] {
+  const consoleTransport = new winston.transports.Console({ format: consoleFormat });
+  if (IS_TEST_RUNTIME) return [consoleTransport];
 
-// Separate Security-Logs
-const securityTransport = new DailyRotateFile({
-  filename: path.join(LOG_DIR, 'security-%DATE%.log'),
-  datePattern: 'YYYY-MM-DD',
-  maxSize: '50m',
-  maxFiles: '365d',
-  zippedArchive: true,
-  format: logFormat,
-  level: 'warn',
-});
+  return [
+    new DailyRotateFile({
+      filename: path.join(LOG_DIR, 'app-%DATE%.log'),
+      datePattern: 'YYYY-MM-DD',
+      maxSize: '50m',
+      maxFiles: '365d',
+      zippedArchive: true,
+      format: logFormat,
+    }),
+    new DailyRotateFile({
+      filename: path.join(LOG_DIR, 'error-%DATE%.log'),
+      datePattern: 'YYYY-MM-DD',
+      maxSize: '50m',
+      maxFiles: '365d',
+      zippedArchive: true,
+      format: logFormat,
+      level: 'error',
+    }),
+    consoleTransport,
+  ];
+}
 
-// Audit-Log (append-only Datei; DB-Persistenz uebernimmt logAuditDb)
-const auditTransport = new DailyRotateFile({
-  filename: path.join(LOG_DIR, 'audit-%DATE%.log'),
-  datePattern: 'YYYY-MM-DD',
-  maxSize: '100m',
-  maxFiles: '730d', // 2 Jahre
-  zippedArchive: true,
-  format: logFormat,
-});
+function securityTransports(): winston.transport[] {
+  if (IS_TEST_RUNTIME) return [new winston.transports.Console({ silent: true })];
+  return [new DailyRotateFile({
+    filename: path.join(LOG_DIR, 'security-%DATE%.log'),
+    datePattern: 'YYYY-MM-DD',
+    maxSize: '50m',
+    maxFiles: '365d',
+    zippedArchive: true,
+    format: logFormat,
+    level: 'warn',
+  })];
+}
 
-// Error-Log
-const errorTransport = new DailyRotateFile({
-  filename: path.join(LOG_DIR, 'error-%DATE%.log'),
-  datePattern: 'YYYY-MM-DD',
-  maxSize: '50m',
-  maxFiles: '365d',
-  zippedArchive: true,
-  format: logFormat,
-  level: 'error',
-});
+function auditTransports(): winston.transport[] {
+  if (IS_TEST_RUNTIME) return [new winston.transports.Console({ silent: true })];
+  return [new DailyRotateFile({
+    filename: path.join(LOG_DIR, 'audit-%DATE%.log'),
+    datePattern: 'YYYY-MM-DD',
+    maxSize: '100m',
+    maxFiles: '730d', // 2 Jahre Aufbewahrung
+    zippedArchive: true,
+    format: logFormat,
+  })];
+}
 
 export const logger = winston.createLogger({
   level: process.env.LOG_LEVEL || 'info',
   format: logFormat,
   defaultMeta: { service: 'discord-v-bot' },
-  transports: [
-    dailyRotateTransport,
-    errorTransport,
-    new winston.transports.Console({ format: consoleFormat }),
-  ],
+  transports: mainTransports(),
 });
 
 // Security Logger
@@ -96,7 +105,7 @@ export const securityLogger = winston.createLogger({
   level: 'info',
   format: logFormat,
   defaultMeta: { service: 'discord-v-bot-security' },
-  transports: [securityTransport],
+  transports: securityTransports(),
 });
 
 // Audit Logger (append-only Datei-Log; siehe Header zur Manipulationssicherheit).
@@ -105,7 +114,7 @@ export const auditLogger = winston.createLogger({
   level: 'info',
   format: logFormat,
   defaultMeta: { service: 'discord-v-bot-audit', immutable: true },
-  transports: [auditTransport],
+  transports: auditTransports(),
 });
 
 /**
