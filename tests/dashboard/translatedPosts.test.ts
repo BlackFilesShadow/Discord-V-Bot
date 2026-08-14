@@ -73,10 +73,25 @@ jest.mock('../../src/dashboard/middleware/auth', () => ({
     next();
   },
 }));
+jest.mock('../../src/modules/ai/translatedPostImage', () => ({
+  MAX_TRANSLATED_POST_IMAGE_BYTES: 10 * 1024 * 1024,
+  validateTranslatedPostImage: jest.fn(() => ({ ok: true, kind: { ext: 'png', mime: 'image/png' } })),
+  saveTranslatedPostImage: jest.fn(async (guildId: string) =>
+    `upload:translated-posts/${guildId}/11111111-1111-4111-8111-111111111111.png`),
+  saveTranslatedPostImageFromUrl: jest.fn(async (guildId: string) =>
+    `upload:translated-posts/${guildId}/22222222-2222-4222-8222-222222222222.png`),
+  removeTranslatedPostImage: jest.fn(async () => undefined),
+}));
 
 import express from 'express';
 import request from 'supertest';
 import { translatedPostsRouter } from '../../src/dashboard/routes/v2/translatedPosts';
+
+const translatedPostImage = jest.requireMock('../../src/modules/ai/translatedPostImage') as {
+  saveTranslatedPostImage: jest.Mock;
+  saveTranslatedPostImageFromUrl: jest.Mock;
+  removeTranslatedPostImage: jest.Mock;
+};
 
 function makeApp() {
   const app = express();
@@ -89,6 +104,7 @@ function makeApp() {
 }
 
 const BASE = `/api/v2/guilds/${GID}/translated-posts`;
+const REMOTE_MANAGED_REF = `upload:translated-posts/${GID}/22222222-2222-4222-8222-222222222222.png`;
 
 beforeEach(() => {
   jest.clearAllMocks();
@@ -165,10 +181,50 @@ describe('Übersetzungen-Router — CRUD & Validierung', () => {
     expect(res.status).toBe(400);
   });
 
-  it('blockt SSRF-Bild-URLs', async () => {
+  it('blockt SSRF-Bild-URLs vor der Remote-Ingestion', async () => {
     const app = makeApp();
     const res = await createPost(app, { imageUrl: 'http://127.0.0.1/x.png' });
     expect(res.status).toBe(400);
+    expect(translatedPostImage.saveTranslatedPostImageFromUrl).not.toHaveBeenCalled();
+  });
+
+  it('materialisiert eine öffentliche Remote-Bild-URL und speichert nie die rohe URL', async () => {
+    const app = makeApp();
+    const remoteUrl = 'https://images.example.test/pic.png';
+    const res = await createPost(app, { imageUrl: remoteUrl });
+
+    expect(res.status).toBe(201);
+    expect(translatedPostImage.saveTranslatedPostImageFromUrl).toHaveBeenCalledWith(GID, remoteUrl);
+    expect(res.body.imageUrl).toBe(REMOTE_MANAGED_REF);
+    expect(posts.get(res.body.id)?.imageUrl).toBe(REMOTE_MANAGED_REF);
+    expect(posts.get(res.body.id)?.imageUrl).not.toBe(remoteUrl);
+  });
+
+  it('akzeptiert für neue Posts keine fremden oder wiederverwendeten Managed-Refs', async () => {
+    const app = makeApp();
+    const res = await createPost(app, {
+      imageUrl: `upload:translated-posts/${OTHER_GID}/aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa.png`,
+    });
+    expect(res.status).toBe(400);
+    expect(prismaMock.translatedPost.create).not.toHaveBeenCalled();
+  });
+
+  it('antwortet bei fehlgeschlagener Remote-Ingestion fail-closed und persistiert nichts', async () => {
+    translatedPostImage.saveTranslatedPostImageFromUrl.mockRejectedValueOnce(new Error('blocked redirect'));
+    const app = makeApp();
+    const res = await createPost(app, { imageUrl: 'https://images.example.test/pic.png' });
+    expect(res.status).toBe(400);
+    expect(prismaMock.translatedPost.create).not.toHaveBeenCalled();
+    expect(posts.size).toBe(0);
+  });
+
+  it('räumt ein neu materialisiertes Bild auf, wenn das DB-Create scheitert', async () => {
+    prismaMock.translatedPost.create.mockRejectedValueOnce(new Error('db down'));
+    const app = makeApp();
+    const res = await createPost(app, { imageUrl: 'https://images.example.test/pic.png' });
+    expect(res.status).toBe(500);
+    expect(translatedPostImage.removeTranslatedPostImage).toHaveBeenCalledWith(REMOTE_MANAGED_REF);
+    expect(posts.size).toBe(0);
   });
 
   it('normalisiert Rollen-Pings (max 3, nur Snowflakes)', async () => {
@@ -211,5 +267,28 @@ describe('Übersetzungen-Router — scope & lifecycle', () => {
     const res = await request(app).put(`${BASE}/${c.body.id}`).send({ targetLang: 'en' });
     expect(res.status).toBe(200);
     expect(res.body.targetLang).toBe('en');
+  });
+
+  it('materialisiert auch Remote-Bilder beim Update und ersetzt nur durch Managed-Refs', async () => {
+    const app = makeApp();
+    const c = await createPost(app);
+    const remoteUrl = 'https://images.example.test/new.png';
+    const res = await request(app).put(`${BASE}/${c.body.id}`).send({ imageUrl: remoteUrl });
+
+    expect(res.status).toBe(200);
+    expect(translatedPostImage.saveTranslatedPostImageFromUrl).toHaveBeenCalledWith(GID, remoteUrl);
+    expect(res.body.imageUrl).toBe(REMOTE_MANAGED_REF);
+    expect(posts.get(c.body.id)?.imageUrl).toBe(REMOTE_MANAGED_REF);
+  });
+
+  it('räumt ein neues Update-Bild auf, wenn das DB-Update scheitert', async () => {
+    const app = makeApp();
+    const c = await createPost(app);
+    prismaMock.translatedPost.update.mockRejectedValueOnce(new Error('db down'));
+
+    const res = await request(app).put(`${BASE}/${c.body.id}`).send({ imageUrl: 'https://images.example.test/new.png' });
+    expect(res.status).toBe(500);
+    expect(translatedPostImage.removeTranslatedPostImage).toHaveBeenCalledWith(REMOTE_MANAGED_REF);
+    expect(posts.get(c.body.id)?.imageUrl).toBeNull();
   });
 });
