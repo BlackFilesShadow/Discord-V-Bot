@@ -51,6 +51,16 @@ fi
 
 git --no-pager log --oneline "$OLD_COMMIT..$NEW_COMMIT" 2>/dev/null | head -10 || true
 
+# 1a) Wenn Metrics in der BESTEHENDEN lokalen .env ausdruecklich aktiviert
+#     sind, muss vor dem neuen Compose-/Build-Gate ein starker Bearer-Token
+#     vorhanden sein. Das neue Release bringt den Bootstrap mit; der Token wird
+#     einmalig lokal erzeugt, nie ins Repository geschrieben oder ausgegeben.
+if [[ -f "$BOT_DIR/deploy/ensure-metrics-token.sh" ]]; then
+  info "Metrics-Konfiguration wird sicher verifiziert..."
+  bash "$BOT_DIR/deploy/ensure-metrics-token.sh" "$BOT_DIR/.env" \
+    || err "Metrics-Token-Bootstrap fehlgeschlagen. Deployment abgebrochen."
+fi
+
 # Die NEU gezogene Compose-Datei erneut validieren. Nur die alte Datei vor dem
 # reset zu pruefen wuerde Syntax-/Configfehler des neuen Releases uebersehen.
 info "Neue Docker-Compose-Konfiguration wird validiert..."
