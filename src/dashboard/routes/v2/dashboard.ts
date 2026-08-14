@@ -4,7 +4,7 @@
  *
  * GET  /api/v2/guilds/:guildId/dashboard/server/:slot/settings
  * PATCH /api/v2/guilds/:guildId/dashboard/server/:slot/settings
- *   -> ServerSettings (whitelistActive, economyActive, permaOnly) pro Slot.
+ *   -> ServerSettings + kanonisches Keep-Online-Flag pro Slot.
  */
 import { Router } from 'express';
 import { requireGuildPermission } from '../../middleware/auth';
@@ -52,11 +52,11 @@ dashboardRouter.get('/', requireGuildPermission('dashboard.view'), async (req, r
 
 // --- Server-Settings pro Slot -------------------------------------------------
 
-async function resolveSlotConn(guildId: string, slotParam: string): Promise<{ id: string } | null> {
+async function resolveSlotConn(guildId: string, slotParam: string): Promise<{ id: string; keepOnlineEnabled: boolean } | null> {
   if (!/^[1-5]$/.test(slotParam)) return null;
   return prisma.nitradoConnection.findUnique({
     where: { guildId_slot: { guildId, slot: Number(slotParam) } },
-    select: { id: true },
+    select: { id: true, keepOnlineEnabled: true },
   });
 }
 
@@ -72,7 +72,9 @@ dashboardRouter.get('/server/:slot/settings', requireGuildPermission('whitelist.
   res.json({
     whitelistActive: s.whitelistActive,
     economyActive: s.economyActive,
-    permaOnly: s.permaOnly,
+    // API-Kompatibilitaet: Frontend-Feld bleibt `permaOnly`, Quelle ist aber
+    // ausschliesslich NitradoConnection.keepOnlineEnabled.
+    permaOnly: conn.keepOnlineEnabled,
     whitelistChannelId: s.whitelistChannelId,
     whitelistRequestChannelId: s.whitelistRequestChannelId,
   });
@@ -84,6 +86,8 @@ dashboardRouter.patch('/server/:slot/settings', requireGuildPermission('whitelis
   if (!conn) { res.status(404).json({ error: 'Slot nicht gefunden.' }); return; }
   const b = req.body ?? {};
   const data: Record<string, unknown> = {};
+  let keepOnlineEnabled = conn.keepOnlineEnabled;
+
   if (typeof b.whitelistActive === 'boolean') data.whitelistActive = b.whitelistActive;
   if (typeof b.economyActive === 'boolean') {
     // economyActive ist ein Wirtschafts-Schalter und erfordert economy.manage —
@@ -95,26 +99,54 @@ dashboardRouter.patch('/server/:slot/settings', requireGuildPermission('whitelis
     }
     data.economyActive = b.economyActive;
   }
-  if (typeof b.permaOnly === 'boolean') data.permaOnly = b.permaOnly;
+  if (typeof b.permaOnly === 'boolean') {
+    // KEEP: Auto-Start ist ein eigener delegierbarer Scope und darf nicht mehr
+    // ueber whitelist.manage implizit aktiviert werden.
+    if (!scopeHas(scope, 'nitrado.keep-online')) {
+      res.status(403).json({ error: 'Keep-Online erfordert nitrado.keep-online.' });
+      return;
+    }
+    keepOnlineEnabled = b.permaOnly;
+  }
   if (b.whitelistChannelId === null || (typeof b.whitelistChannelId === 'string' && /^\d{17,20}$/.test(b.whitelistChannelId))) {
     data.whitelistChannelId = b.whitelistChannelId;
   }
   if (b.whitelistRequestChannelId === null || (typeof b.whitelistRequestChannelId === 'string' && /^\d{17,20}$/.test(b.whitelistRequestChannelId))) {
     data.whitelistRequestChannelId = b.whitelistRequestChannelId;
   }
-  if (Object.keys(data).length === 0) { res.status(400).json({ error: 'Keine gueltigen Felder.' }); return; }
+  if (Object.keys(data).length === 0 && typeof b.permaOnly !== 'boolean') {
+    res.status(400).json({ error: 'Keine gueltigen Felder.' });
+    return;
+  }
 
-  const s = await prisma.serverSettings.upsert({
-    where: { guildId_nitradoConnId: { guildId: scope.guildId, nitradoConnId: conn.id } },
-    create: { guildId: scope.guildId, nitradoConnId: conn.id, ...data },
-    update: data,
+  const s = await prisma.$transaction(async tx => {
+    const settings = await tx.serverSettings.upsert({
+      where: { guildId_nitradoConnId: { guildId: scope.guildId, nitradoConnId: conn.id } },
+      create: { guildId: scope.guildId, nitradoConnId: conn.id, ...data },
+      update: data,
+    });
+    if (typeof b.permaOnly === 'boolean') {
+      await tx.nitradoConnection.updateMany({
+        where: { id: conn.id, guildId: scope.guildId },
+        data: { keepOnlineEnabled },
+      });
+    }
+    return settings;
   });
-  logAuditDb('SERVER_SETTINGS_UPDATED', 'SERVER_SETTINGS', { actorUserId: req.auth!.userId, guildId: scope.guildId, details: { slotId: conn.id, fields: Object.keys(data) } });
+
+  logAuditDb('SERVER_SETTINGS_UPDATED', 'SERVER_SETTINGS', {
+    actorUserId: req.auth!.userId,
+    guildId: scope.guildId,
+    details: {
+      slotId: conn.id,
+      fields: [...Object.keys(data), ...(typeof b.permaOnly === 'boolean' ? ['keepOnlineEnabled'] : [])],
+    },
+  });
   emitGuildEvent(scope.guildId, { type: 'settings.changed', payload: { guildId: scope.guildId, slotId: conn.id } });
   res.json({
     whitelistActive: s.whitelistActive,
     economyActive: s.economyActive,
-    permaOnly: s.permaOnly,
+    permaOnly: keepOnlineEnabled,
     whitelistChannelId: s.whitelistChannelId,
     whitelistRequestChannelId: s.whitelistRequestChannelId,
   });
