@@ -6,15 +6,11 @@ import { recordPrismaLatency } from '../dashboard/services/observability';
  * Prisma-Client mit getunten Connection-Pool-Defaults.
  *
  * Tuning-Strategie:
- * - Pool-Limit fest auf 10 gesetzt (Prisma-Default-Heuristik
- *   `num_physical_cpus * 2 + 1` ist auf shared Hostern zu hoch und
- *   kann das Postgres-`max_connections`-Limit reissen, wenn mehrere
- *   Bot-Shards laufen).
- * - Pool-Timeout 20s (Default 10s) — vermeidet "Timed out fetching a new
- *   connection"-Spikes bei kurzfristigen Lastspitzen.
- *
- * Werte werden NUR in DATABASE_URL gemerged, wenn dort noch nicht gesetzt —
- * Operator-Override (z.B. fuer kleine VMs) jederzeit moeglich.
+ * - Pool-Limit fest auf 10 gesetzt.
+ * - Pool-Timeout/Idle-Verhalten explizit am pg-Adapter konfiguriert.
+ * - Unter Jest/Test darf ein ausschliesslich idle DB-Pool den Node-Prozess
+ *   nicht kuenstlich am Leben halten (`allowExitOnIdle`). Production bleibt
+ *   unveraendert und wird weiterhin ueber den geordneten Shutdown geschlossen.
  */
 export function ensureConnectionPoolParams(rawUrl: string | undefined): string | undefined {
   if (!rawUrl) return rawUrl;
@@ -28,30 +24,26 @@ export function ensureConnectionPoolParams(rawUrl: string | undefined): string |
     }
     return url.toString();
   } catch {
-    // URL nicht parsebar (z.B. unix socket path) -> unveraendert lassen
     return rawUrl;
   }
 }
 
 const tunedUrl = ensureConnectionPoolParams(process.env.DATABASE_URL);
+const isTestRuntime = process.env.NODE_ENV === 'test' || Boolean(process.env.JEST_WORKER_ID);
 
-// Prisma 7: Direkter Connection-Mode entfernt — PrismaClient benoetigt jetzt
-// einen Driver Adapter (oder accelerateUrl). Wir nutzen `@prisma/adapter-pg`
-// mit der getunten URL (Pool-Limit/Timeout via Query-Params von node-postgres
-// werden ignoriert, daher steuert der Adapter selbst den Pool).
+// Prisma 7: PrismaClient benoetigt einen Driver Adapter. PrismaPg akzeptiert
+// die node-postgres PoolConfig; allowExitOnIdle ist bewusst NUR im Test aktiv.
 const adapter = new PrismaPg({
   connectionString: tunedUrl ?? process.env.DATABASE_URL ?? '',
   max: 10,
-  // node-postgres pool: idle clients werden nach 20s geschlossen
   idleTimeoutMillis: 20_000,
+  allowExitOnIdle: isTestRuntime,
 });
 
 const prisma = new PrismaClient({
   adapter,
   log: process.env.NODE_ENV === 'development' ? ['query', 'info', 'warn', 'error'] : ['error'],
 }).$extends({
-  // Prisma 7: $use Middleware-API wurde entfernt. Wir nutzen $extends mit
-  // query.$allOperations fuer Latenz-Tracking (siehe observability.ts).
   query: {
     $allOperations: async ({ model, operation, args, query }) => {
       const start = process.hrtime.bigint();
