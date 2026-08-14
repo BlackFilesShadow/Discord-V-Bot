@@ -19,6 +19,15 @@ describe('renderWelcomeMessage', () => {
     expect(renderWelcomeMessage('Willkommen {user}!', VARS)).toBe('Willkommen <@12345678901234567>!');
   });
 
+  it('{user} bleibt auch dann eine echte Mention, wenn ein Call-Site versehentlich einen Anzeigenamen als user liefert', () => {
+    expect(renderWelcomeMessage('Hey {user}, willkommen!', {
+      user: 'Eclipse_King',
+      mention: '<@12345678901234567>',
+      guild: 'Mein Server',
+      memberCount: 3,
+    })).toBe('Hey <@12345678901234567>, willkommen!');
+  });
+
   it('{mention} bleibt Alias fuer die Discord-Erwaehnung', () => {
     expect(renderWelcomeMessage('Hi {mention}', VARS)).toBe('Hi <@12345678901234567>');
   });
