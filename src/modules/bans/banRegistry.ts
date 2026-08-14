@@ -1,11 +1,10 @@
 /**
- * Ban-Registry (Phase 7, BAN-001..005). Fuehrt Server-Banns als DB-Wahrheit.
- * Gebannt wird die HMAC-Identitaet (kein Klartext-GUID).
+ * Ban-Registry (Phase 7, BAN-001..005). Fuehrt Server-Banns als lokale
+ * DB-Wahrheit. Gebannt wird die HMAC-Identitaet (kein Klartext-GUID).
  *
- * Durchsetzung am Gameserver ist CAPABILITY-basiert: ein BanEnforcementProvider
- * meldet, was real moeglich ist (z.B. Banlist-Datei). Es wird KEINE nicht
- * existierende Nitrado-Ban-API vorausgesetzt; ohne Capability bleibt der Bann
- * lokal (active) mit appliedRemotely=false.
+ * Die echte Nitrado-Durchsetzung erfolgt asynchron ueber die Server-Ban-Outbox
+ * und den offiziellen Gameserver-Banlist-Endpoint. `appliedRemotely` ist dabei
+ * ein bestaetigter Sync-Status, keine Wunschannahme.
  */
 
 export interface BanEntry {
@@ -48,12 +47,14 @@ export async function addBan(
       expiresAt: args.expiresAt ?? null,
       active: true, appliedRemotely: false, liftedAt: null,
     },
-    // Re-Ban: reaktivieren und den Bann-Zeitpunkt/Metadaten erneuern.
+    // Re-Ban: reaktivieren, Metadaten erneuern UND Remote-Status bewusst auf
+    // unbestaetigt setzen. Der anschliessende ADD-Outbox-Job liest Nitrados
+    // echte Banlist und repariert damit auch extern/manuell entstandenen Drift.
     update: {
       gameLabel: args.gameLabel ?? null, reason: args.reason ?? null,
       bannedByDiscordId: args.bannedByDiscordId, bannedAt: now,
       expiresAt: args.expiresAt ?? null,
-      active: true, liftedAt: null,
+      active: true, appliedRemotely: false, liftedAt: null,
     },
   });
 }
@@ -153,7 +154,7 @@ export function banOperationalState(
   return 'LOCAL_ONLY';
 }
 
-// ---- Capability-basierte Durchsetzung ----
+// ---- Capability-Abstraktion fuer Tests/Fallbacks ----
 
 export interface BanEnforcementCapabilities {
   canApplyRemote: boolean;
@@ -165,7 +166,7 @@ export interface BanEnforcementProvider {
   removeBan?(identityHash: string): Promise<boolean>;
 }
 
-/** Standard: keine Remote-Durchsetzung (nur lokale DB-Wahrheit). */
+/** Fallback/Test-Provider ohne Remote-Durchsetzung. Produktion nutzt die Outbox. */
 export const localOnlyBanProvider: BanEnforcementProvider = {
   capabilities: () => ({ canApplyRemote: false }),
 };
