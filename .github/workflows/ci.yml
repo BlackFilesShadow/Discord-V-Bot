@@ -70,7 +70,7 @@ jobs:
       DISCORD_TOKEN: test-token
       DISCORD_CLIENT_ID: test-client-id
       DISCORD_CLIENT_SECRET: test-secret
-      BOT_OWNER_ID: 123456789012345678
+      BOT_OWNER_ID: '123456789012345678'
       ENCRYPTION_KEY: 0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef
       SESSION_SECRET: test-session-secret
       DASHBOARD_URL: http://localhost:3000
