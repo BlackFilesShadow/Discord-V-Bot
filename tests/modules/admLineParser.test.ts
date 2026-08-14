@@ -19,6 +19,13 @@ describe('admLineParser — Golden', () => {
     expect(ctx.baseDate?.getUTCFullYear()).toBe(2026);
   });
 
+  it('loest ADM-Wanduhr mit IANA-Zeitzone DST-sicher nach UTC auf', () => {
+    const ctx = newDateContext(new Date(Date.UTC(2026, 6, 1)), 'Europe/Berlin');
+    const event = parseAdmLine('18:00:12 | Player "Alpha"(id=1) is connected', ctx);
+    // 1. Juli: CEST = UTC+2.
+    expect(event?.occurredAt?.toISOString()).toBe('2026-07-01T16:00:12.000Z');
+  });
+
   it('connect: beide Formulierungen', () => {
     const a = parseAdmLine('18:00:12 | Player "Alpha"(id=76561190000000001) is connected', ctxWithDate());
     expect(a?.eventType).toBe('PLAYER_CONNECTED');
