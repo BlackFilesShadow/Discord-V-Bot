@@ -18,8 +18,8 @@ const devSessionUpdateMany = jest.fn(async () => ({ count: 1 }));
 jest.mock('../../src/database/prisma', () => ({
   __esModule: true,
   default: {
-    user: { findUnique: (...args: unknown[]) => userFindUnique(...args) },
-    devSession: { updateMany: (...args: unknown[]) => devSessionUpdateMany(...args) },
+    user: { findUnique: userFindUnique },
+    devSession: { updateMany: devSessionUpdateMany },
   },
 }));
 
