@@ -169,7 +169,7 @@ describe('NIT-005/007 — Job-Fehler vor API-Aufruf', () => {
 });
 
 describe('Phase 7 — SERVER_BAN Outbox', () => {
-  const key = '0'.repeat(64);
+  const key = process.env.ENCRYPTION_KEY!;
   const rawIdentifier = '76561198000000000';
   const hash = identityHash(rawIdentifier, key);
 
