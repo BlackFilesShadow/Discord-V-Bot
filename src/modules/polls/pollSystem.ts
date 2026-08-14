@@ -4,6 +4,8 @@ import { Client, EmbedBuilder, TextChannel } from 'discord.js';
 import { Colors, Brand, vEmbed, percentBar } from '../../utils/embedDesign';
 import { safeSend } from '../../utils/safeSend';
 
+let pollSchedulerTimer: NodeJS.Timeout | null = null;
+
 /**
  * Poll-System Modul (Sektion 10):
  * - Schnelle Umfragen und Abstimmungen per Command
@@ -246,7 +248,8 @@ export async function getPollVotes(pollId: string): Promise<Record<string, numbe
  * Scheduler: Beendet abgelaufene Umfragen automatisch.
  */
 export function startPollScheduler(client: Client): void {
-  setInterval(async () => {
+  if (pollSchedulerTimer) return;
+  pollSchedulerTimer = setInterval(async () => {
     try {
       // Shard-Filter: nur Polls eigener Guilds (oder Legacy ohne guildId).
       // Bei Single-Instance enthaelt der Cache alle Guilds -> No-Op.
@@ -319,4 +322,11 @@ export function startPollScheduler(client: Client): void {
       logger.error('Poll-Scheduler: Allgemeiner Fehler', { error });
     }
   }, 5_000); // Alle 5 Sekunden prüfen
+  pollSchedulerTimer.unref?.();
+}
+
+export function stopPollScheduler(): void {
+  if (!pollSchedulerTimer) return;
+  clearInterval(pollSchedulerTimer);
+  pollSchedulerTimer = null;
 }
