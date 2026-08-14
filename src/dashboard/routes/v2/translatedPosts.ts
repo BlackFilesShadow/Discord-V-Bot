@@ -22,7 +22,7 @@ import {
   saveTranslatedPostImageFromUrl,
   validateTranslatedPostImage,
 } from '../../../modules/ai/translatedPostImage';
-import { logAuditDb } from '../../../utils/logger';
+import { logger, logAuditDb } from '../../../utils/logger';
 import { emitGuildEvent } from '../../socket/emitter';
 
 export const translatedPostsRouter = Router({ mergeParams: true });
@@ -144,7 +144,11 @@ translatedPostsRouter.post('/', requireGuildPermission('translate.manage'), rece
       rolePings: normalizeRolePings(body.rolePings), mode, scheduledFor: sched.scheduledFor, recurrenceCron: sched.recurrenceCron, nextRunAt: sched.nextRunAt, isActive: true } });
     logAuditDb('TRANSLATED_POST_CREATED', 'TRANSLATE', { actorUserId: req.auth!.userId, guildId, details: { postId: post.id, mode, targetLang, hasImage: Boolean(imageRef) } });
     emitGuildEvent(guildId, { type: 'translatedPost.changed', payload: { guildId, postId: post.id } }); res.status(201).json(postToApi(post as PostRow));
-  } catch (error) { if (createdImageRef) await removeTranslatedPostImage(createdImageRef); throw error; }
+  } catch (error) {
+    if (createdImageRef) await removeTranslatedPostImage(createdImageRef);
+    logger.error('TranslatedPost-Create fehlgeschlagen:', error as Error);
+    res.status(500).json({ error: 'Übersetzungs-Post konnte nicht gespeichert werden.' });
+  }
 });
 
 translatedPostsRouter.put('/:id', requireGuildPermission('translate.manage'), receiveImage, async (req, res) => {
@@ -187,7 +191,11 @@ translatedPostsRouter.put('/:id', requireGuildPermission('translate.manage'), re
     if (replacingImage && existing.imageUrl && existing.imageUrl !== data.imageUrl) await removeTranslatedPostImage(existing.imageUrl);
     const post = await findGuildPost(guildId, existing.id); logAuditDb('TRANSLATED_POST_UPDATED', 'TRANSLATE', { actorUserId: req.auth!.userId, guildId, details: { postId: existing.id, imageChanged: replacingImage } });
     emitGuildEvent(guildId, { type: 'translatedPost.changed', payload: { guildId, postId: existing.id } }); res.json(postToApi(post!));
-  } catch (error) { if (replacementRef) await removeTranslatedPostImage(replacementRef); throw error; }
+  } catch (error) {
+    if (replacementRef) await removeTranslatedPostImage(replacementRef);
+    logger.error('TranslatedPost-Update fehlgeschlagen:', error as Error);
+    res.status(500).json({ error: 'Übersetzungs-Post konnte nicht aktualisiert werden.' });
+  }
 });
 
 translatedPostsRouter.delete('/:id', requireGuildPermission('translate.manage'), async (req, res) => { const { guildId } = req.guildScope!; const existing = await findGuildPost(guildId, req.params.id); if (!existing) { res.status(404).json({ error: 'Post nicht gefunden.' }); return; } await prisma.translatedPost.delete({ where: { id: existing.id } }); if (existing.imageUrl) await removeTranslatedPostImage(existing.imageUrl); logAuditDb('TRANSLATED_POST_DELETED', 'TRANSLATE', { actorUserId: req.auth!.userId, guildId, details: { postId: existing.id } }); emitGuildEvent(guildId, { type: 'translatedPost.changed', payload: { guildId, postId: existing.id } }); res.json({ ok: true }); });
