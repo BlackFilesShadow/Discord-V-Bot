@@ -1,11 +1,15 @@
 /**
- * Phase 7 — Bedienebene fuer die Server-Ban-Registry + echte Nitrado-Outbox.
+ * Nitrado-Server-Bans fuer einen einzelnen Alias oder alle verknuepften Server.
  *
- * Remote-Bans laufen ausschliesslich gegen den offiziellen Gameserver-Banlist-
- * Endpoint. Der echte Gameserver-Identifier wird beim Ban-Aufruf gegen den
- * VERIFIED GameIdentityLink-HMAC geprueft und nie im Klartext persistiert oder
- * geloggt. Unban/Timeout loesen den Identifier spaeter live aus der Remote-
- * Banlist per HMAC auf.
+ * Fachliche Invarianten:
+ * - Der exakte Gameserver-Identifier ist ausreichend; kein Discord-/Bot-Link.
+ * - Ohne `slot`-Auswahl gilt Ban/Unban/List fuer alle aktiven verknuepften
+ *   Gameserver der Guild.
+ * - `slot` ist eine Alias-Autocomplete-Auswahl; intern wird die stabile
+ *   NitradoConnection-ID uebertragen.
+ * - Beim Ban wird der Identifier ZUERST remote aus der Nitrado-Whitelist
+ *   entfernt. Nur bei erfolgreichem Whitelist-Schritt wird der Ban eingereiht.
+ * - Klartext-Identifier werden nicht in ServerBanEntry oder Audit-Logs gespeichert.
  */
 
 import {
@@ -17,31 +21,28 @@ import {
 import type { Command } from '../../types';
 import prisma from '../../database/prisma';
 import { withGuildScope } from '../middleware/withGuildScope';
-import {
-  addBan,
-  liftBan,
-  liftBanById,
-  listOperationalBans,
-  banOperationalState,
-  type BanClient,
-  type BanListClient,
-} from '../../modules/bans/banRegistry';
-import {
-  resolveVerifiedBanIdentityHash,
-  matchesBanIdentifier,
-  type BanTargetClient,
-} from '../../modules/bans/banTarget';
+import { addBan, type BanClient } from '../../modules/bans/banRegistry';
+import { hashBanIdentifier } from '../../modules/bans/banTarget';
 import {
   enqueueServerBanAdd,
   enqueueServerBanRemove,
   type BanOutboxClient,
 } from '../../modules/bans/banOutbox';
 import { config } from '../../config';
+import { decrypt } from '../../utils/security';
 import { logAudit } from '../../utils/logger';
+import { NitradoClient } from '../../modules/nitrado/nitradoClient';
+import {
+  autocompleteServerAlias,
+  resolveSelectedOrAllServers,
+  targetLabel,
+  type CommandServerTarget,
+} from './serverTargetSelection';
 
 const MAX_BAN_MINUTES = 365 * 24 * 60;
 const MAX_REASON_LENGTH = 300;
 const IDENTIFIER_RE = /^[^\r\n\t]{1,128}$/;
+const LIST_PAGE_SIZE = 25;
 
 async function reply(interaction: ChatInputCommandInteraction, content: string): Promise<void> {
   await interaction.reply({
@@ -56,24 +57,38 @@ function safeLine(value: string | null | undefined, fallback = '—'): string {
   return cleaned || fallback;
 }
 
-function operationalStateLabel(state: ReturnType<typeof banOperationalState>): string {
-  if (state === 'REMOTE_DRIFT') return '⚠️ REMOTE-ABWEICHUNG • lokal inaktiv, remote markiert';
-  if (state === 'LOCAL_AND_REMOTE') return 'Lokal aktiv • Remote angewendet';
-  return 'Lokal aktiv • Remote ausstehend/nicht angewendet';
+function clientForTarget(target: CommandServerTarget): NitradoClient {
+  const token = decrypt(target.encryptedToken, config.security.encryptionKey);
+  return new NitradoClient(token);
+}
+
+async function replyEmbeds(interaction: ChatInputCommandInteraction, embeds: EmbedBuilder[]): Promise<void> {
+  const chunks: EmbedBuilder[][] = [];
+  for (let i = 0; i < embeds.length; i += 10) chunks.push(embeds.slice(i, i + 10));
+  const first = chunks.shift() ?? [];
+  await interaction.reply({
+    embeds: first,
+    flags: MessageFlags.Ephemeral,
+    allowedMentions: { parse: [] },
+  });
+  for (const chunk of chunks) {
+    await interaction.followUp({
+      embeds: chunk,
+      flags: MessageFlags.Ephemeral,
+      allowedMentions: { parse: [] },
+    });
+  }
 }
 
 // ============================================================
-// /server-ban — lokalen Bann + verifizierten Remote-Ban queued setzen
+// /server-ban — Identifier reicht; optional Alias, leer = alle Server
 // ============================================================
 export const serverBanCommand: Command = {
   data: new SlashCommandBuilder()
     .setName('server-ban')
-    .setDescription('Bannt einen verifizierten Spieler im ausgewaehlten Gameserver.')
-    .addUserOption(o =>
-      o.setName('user').setDescription('Verifizierter Discord-Nutzer').setRequired(true),
-    )
+    .setDescription('Bannt eine Game-ID auf einem Alias oder allen verknuepften Nitrado-Servern.')
     .addStringOption(o =>
-      o.setName('identifier').setDescription('Exakte Game-ID aus ADM/Nitrado; wird nicht im Klartext gespeichert').setRequired(true).setMinLength(1).setMaxLength(128),
+      o.setName('identifier').setDescription('Exakter Spielername / Gameserver-Identifier').setRequired(true).setMinLength(1).setMaxLength(128),
     )
     .addStringOption(o =>
       o.setName('grund').setDescription('Grund fuer den Server-Bann').setRequired(true).setMinLength(1).setMaxLength(MAX_REASON_LENGTH),
@@ -81,289 +96,271 @@ export const serverBanCommand: Command = {
     .addIntegerOption(o =>
       o.setName('dauer').setDescription('Dauer in Minuten; leer = permanent').setRequired(false).setMinValue(1).setMaxValue(MAX_BAN_MINUTES),
     )
-    .addIntegerOption(o =>
-      o.setName('slot').setDescription('Nitrado-Slot 1-5; leer = aktiver Slot').setRequired(false).setMinValue(1).setMaxValue(5),
+    .addStringOption(o =>
+      o.setName('slot').setDescription('Server-Alias auswaehlen; leer = ALLE verknuepften Server').setRequired(false).setAutocomplete(true),
     ) as SlashCommandBuilder,
 
-  execute: withGuildScope({ requirePerm: 'bans.manage', acceptSlotOption: true }, async (interaction, scope) => {
-    const target = interaction.options.getUser('user', true);
+  autocomplete: autocompleteServerAlias,
+
+  execute: withGuildScope({ requirePerm: 'bans.manage', guildOnly: true }, async (interaction, scope) => {
     const identifier = interaction.options.getString('identifier', true).trim();
     const reason = interaction.options.getString('grund', true).trim();
     const durationMinutes = interaction.options.getInteger('dauer');
-    const banScope = { guildId: scope.guildId, nitradoConnId: scope.nitradoConnId! };
 
     if (!IDENTIFIER_RE.test(identifier)) {
-      await reply(interaction, 'Ungueltiger Gameserver-Identifier. Er darf keine Zeilenumbrueche/Tabulatoren enthalten und maximal 128 Zeichen lang sein.');
+      await reply(interaction, 'Ungueltiger Gameserver-Identifier. Keine Zeilenumbrueche/Tabulatoren; maximal 128 Zeichen.');
       return;
     }
 
-    const identityHash = await resolveVerifiedBanIdentityHash(
-      prisma as unknown as BanTargetClient,
-      banScope,
-      target.id,
-    );
-    if (!identityHash) {
-      await reply(interaction, 'Dieser Nutzer hat in diesem Slot keine VERIFIED Game-Verknuepfung. Ein sicherer Server-Bann kann deshalb nicht angelegt werden.');
-      return;
-    }
+    const targets = await resolveSelectedOrAllServers(interaction, scope.guildId);
+    if (!targets) return;
 
-    // Kritische Schutzschranke: Der vom Moderator eingegebene Identifier muss
-    // exakt zu der bereits per /link verifizierten HMAC-Identitaet gehoeren.
-    if (!matchesBanIdentifier(identifier, identityHash, config.security.encryptionKey)) {
-      await reply(interaction, 'Der angegebene Gameserver-Identifier passt nicht zur VERIFIED Game-Verknuepfung dieses Nutzers. Es wurde kein Bann angelegt.');
-      return;
-    }
-
+    const identityHash = hashBanIdentifier(identifier, config.security.encryptionKey);
     const now = new Date();
     const expiresAt = durationMinutes
       ? new Date(now.getTime() + durationMinutes * 60_000)
       : null;
 
-    const result = await prisma.$transaction(async tx => {
-      await addBan(
-        tx as unknown as BanClient,
-        banScope,
-        {
-          identityHash,
-          reason,
-          bannedByDiscordId: scope.actorDiscordId,
-          expiresAt,
-        },
-        now,
-      );
+    const results: string[] = [];
+    for (const target of targets) {
+      const label = targetLabel(target);
+      try {
+        // Harte Reihenfolge: erst Nitrado-Whitelist entfernen, DANN Ban-Outbox.
+        // removeFromWhitelist ist idempotent; nicht vorhandene Namen sind Erfolg.
+        await clientForTarget(target).removeFromWhitelist(target.nitradoServerId, identifier);
 
-      const stored = await tx.serverBanEntry.findUnique({
-        where: {
-          guildId_nitradoConnId_identityHash: {
-            guildId: scope.guildId,
-            nitradoConnId: scope.nitradoConnId!,
-            identityHash,
-          },
-        },
-        select: { id: true, appliedRemotely: true },
-      });
-      if (!stored) throw new Error('Server-Ban konnte nach dem Anlegen nicht wiedergefunden werden.');
+        const stored = await prisma.$transaction(async tx => {
+          // Lokale Desired-State-Wahrheit ebenfalls entfernen, damit der
+          // Whitelist-Reconciler den gebannten Identifier nicht spaeter re-addet.
+          await tx.whitelistEntry.deleteMany({
+            where: { guildId: scope.guildId, nitradoConnId: target.id, gameId: identifier },
+          });
+          await tx.whitelistRequest.updateMany({
+            where: {
+              guildId: scope.guildId,
+              nitradoConnId: target.id,
+              gameId: identifier,
+              status: { in: ['PENDING', 'APPROVED'] },
+            },
+            data: { status: 'CANCELLED' },
+          });
 
-      // Auch bei appliedRemotely=true immer einen Reconcile-ADD sicherstellen.
-      // Das schliesst das Rennen mit einem parallel laufenden Remote-Unban:
-      // REMOVE und ADD werden pro Connection serialisiert, der spaetere ADD
-      // stellt den gewuenschten lokalen Zustand wieder her.
-      const queued = await enqueueServerBanAdd(
-        tx as unknown as BanOutboxClient,
-        banScope,
-        stored.id,
-        identifier,
-        config.security.encryptionKey,
-      );
+          const banScope = { guildId: scope.guildId, nitradoConnId: target.id };
+          await addBan(
+            tx as unknown as BanClient,
+            banScope,
+            {
+              identityHash,
+              reason,
+              bannedByDiscordId: scope.actorDiscordId,
+              expiresAt,
+            },
+            now,
+          );
 
-      return { ...stored, queued };
-    });
+          const row = await tx.serverBanEntry.findUnique({
+            where: {
+              guildId_nitradoConnId_identityHash: {
+                guildId: scope.guildId,
+                nitradoConnId: target.id,
+                identityHash,
+              },
+            },
+            select: { id: true },
+          });
+          if (!row) throw new Error('Server-Ban konnte nach dem Anlegen nicht wiedergefunden werden.');
 
-    logAudit('SERVER_BAN_SET', 'MODERATION', {
-      guildId: scope.guildId,
-      slotId: scope.nitradoConnId,
-      actor: scope.actorDiscordId,
-      targetDiscordId: target.id,
-      banId: result.id,
-      expiresAt: expiresAt?.toISOString() ?? null,
-      appliedRemotely: result.appliedRemotely,
-      remoteQueued: result.queued,
-    });
+          const queued = await enqueueServerBanAdd(
+            tx as unknown as BanOutboxClient,
+            banScope,
+            row.id,
+            identifier,
+            config.security.encryptionKey,
+          );
+          return { id: row.id, queued };
+        });
 
-    const enforcement = result.queued
-      ? result.appliedRemotely
-        ? 'Remote war bereits markiert; ein Reconcile-Job wurde trotzdem sicher eingereiht.'
-        : 'Remote-Durchsetzung wurde sicher in die Nitrado-Outbox eingereiht.'
-      : 'Ein passender Remote-Reconcile-Job laeuft bereits.';
+        logAudit('SERVER_BAN_SET', 'MODERATION', {
+          guildId: scope.guildId,
+          slotId: target.id,
+          slot: target.slot,
+          alias: target.alias,
+          actor: scope.actorDiscordId,
+          banId: stored.id,
+          expiresAt: expiresAt?.toISOString() ?? null,
+          remoteQueued: stored.queued,
+          whitelistRemovedFirst: true,
+        });
 
+        results.push(`✅ **${label}** — Whitelist bereinigt, Bann ${stored.queued ? 'eingereiht' : 'bereits in Bearbeitung'}.`);
+      } catch (error) {
+        const message = safeLine(error instanceof Error ? error.message : String(error), 'Unbekannter Fehler');
+        results.push(`❌ **${label}** — nicht gebannt: ${message}`);
+        logAudit('SERVER_BAN_SET_FAILED', 'MODERATION', {
+          guildId: scope.guildId,
+          slotId: target.id,
+          slot: target.slot,
+          alias: target.alias,
+          actor: scope.actorDiscordId,
+          error: message,
+        });
+      }
+    }
+
+    const scopeText = targets.length === 1 ? targetLabel(targets[0]) : `alle ${targets.length} verknuepften Server`;
     await reply(
       interaction,
-      `Server-Bann fuer <@${target.id}> registriert.\n` +
-      `Ban-ID: \`${result.id}\`\n` +
-      `Dauer: ${expiresAt ? `<t:${Math.floor(expiresAt.getTime() / 1000)}:R>` : 'Permanent'}\n` +
-      `Status: ${enforcement}`,
+      `Server-Bann fuer den Identifier wurde auf **${scopeText}** verarbeitet.\n` +
+      `Dauer: ${expiresAt ? `<t:${Math.floor(expiresAt.getTime() / 1000)}:R>` : 'Permanent'}\n\n` +
+      results.join('\n'),
     );
   }),
 };
 
 // ============================================================
-// /server-unban — lokal aufheben + Remote-Removal queued
+// /server-unban — exakte ID; funktioniert auch ohne lokale Link-/Ban-Zeile
 // ============================================================
 export const serverUnbanCommand: Command = {
   data: new SlashCommandBuilder()
     .setName('server-unban')
-    .setDescription('Hebt einen Server-Bann per Nutzer oder Ban-ID auf.')
-    .addUserOption(o =>
-      o.setName('user').setDescription('Aktuell VERIFIED Nutzer-Link').setRequired(false),
+    .setDescription('Entbannt eine Game-ID auf einem Alias oder allen verknuepften Nitrado-Servern.')
+    .addStringOption(o =>
+      o.setName('identifier').setDescription('Exakter Spielername / Gameserver-Identifier').setRequired(true).setMinLength(1).setMaxLength(128),
     )
     .addStringOption(o =>
-      o.setName('ban-id').setDescription('Ban-ID aus /server-ban-list').setRequired(false).setMinLength(1).setMaxLength(64),
-    )
-    .addIntegerOption(o =>
-      o.setName('slot').setDescription('Nitrado-Slot 1-5; leer = aktiver Slot').setRequired(false).setMinValue(1).setMaxValue(5),
+      o.setName('slot').setDescription('Server-Alias auswaehlen; leer = ALLE verknuepften Server').setRequired(false).setAutocomplete(true),
     ) as SlashCommandBuilder,
 
-  execute: withGuildScope({ requirePerm: 'bans.manage', acceptSlotOption: true }, async (interaction, scope) => {
-    const target = interaction.options.getUser('user');
-    const banId = interaction.options.getString('ban-id')?.trim() ?? null;
-    if ((!target && !banId) || (target && banId)) {
-      await reply(interaction, 'Bitte genau eines angeben: `user` oder `ban-id`.');
+  autocomplete: autocompleteServerAlias,
+
+  execute: withGuildScope({ requirePerm: 'bans.manage', guildOnly: true }, async (interaction, scope) => {
+    const identifier = interaction.options.getString('identifier', true).trim();
+    if (!IDENTIFIER_RE.test(identifier)) {
+      await reply(interaction, 'Ungueltiger Gameserver-Identifier. Keine Zeilenumbrueche/Tabulatoren; maximal 128 Zeichen.');
       return;
     }
 
-    const banScope = { guildId: scope.guildId, nitradoConnId: scope.nitradoConnId! };
+    const targets = await resolveSelectedOrAllServers(interaction, scope.guildId);
+    if (!targets) return;
+
+    const identityHash = hashBanIdentifier(identifier, config.security.encryptionKey);
     const now = new Date();
-    const targetDiscordId: string | null = target?.id ?? null;
+    const results: string[] = [];
 
-    let identityHash: string | null = null;
-    if (target) {
-      identityHash = await resolveVerifiedBanIdentityHash(
-        prisma as unknown as BanTargetClient,
-        banScope,
-        target.id,
-      );
-      if (!identityHash) {
-        await reply(interaction, 'Kein aktueller VERIFIED Link gefunden. Nutze bei einem alten/unlinkten Bann die `ban-id` aus `/server-ban-list`.');
-        return;
-      }
-    }
-
-    const result = await prisma.$transaction(async tx => {
-      const row = banId
-        ? await tx.serverBanEntry.findFirst({
-          where: { id: banId, guildId: scope.guildId, nitradoConnId: scope.nitradoConnId! },
-          select: { id: true, active: true, appliedRemotely: true },
-        })
-        : await tx.serverBanEntry.findUnique({
-          where: {
-            guildId_nitradoConnId_identityHash: {
-              guildId: scope.guildId,
-              nitradoConnId: scope.nitradoConnId!,
-              identityHash: identityHash!,
+    for (const target of targets) {
+      const label = targetLabel(target);
+      try {
+        const queued = await prisma.$transaction(async tx => {
+          // Reconcile-Anker: auch ein extern/manuell gesetzter Nitrado-Bann ohne
+          // lokale Registry-Zeile kann dadurch ueber die bestehende sichere
+          // REMOVE-Outbox per HMAC gefunden und entfernt werden.
+          const row = await tx.serverBanEntry.upsert({
+            where: {
+              guildId_nitradoConnId_identityHash: {
+                guildId: scope.guildId,
+                nitradoConnId: target.id,
+                identityHash,
+              },
             },
-          },
-          select: { id: true, active: true, appliedRemotely: true },
+            create: {
+              guildId: scope.guildId,
+              nitradoConnId: target.id,
+              identityHash,
+              reason: 'Remote-Unban-Reconcile',
+              bannedByDiscordId: scope.actorDiscordId,
+              bannedAt: now,
+              active: false,
+              appliedRemotely: true,
+              liftedAt: now,
+            },
+            update: {
+              active: false,
+              appliedRemotely: true,
+              liftedAt: now,
+            },
+            select: { id: true },
+          });
+
+          return enqueueServerBanRemove(
+            tx as unknown as BanOutboxClient,
+            { guildId: scope.guildId, nitradoConnId: target.id },
+            row.id,
+          );
         });
 
-      if (!row) return null;
-
-      let lifted = false;
-      if (row.active) {
-        lifted = banId
-          ? await liftBanById(tx as unknown as BanClient, banScope, row.id, now)
-          : await liftBan(tx as unknown as BanClient, banScope, identityHash!, now);
+        logAudit('SERVER_BAN_LIFT', 'MODERATION', {
+          guildId: scope.guildId,
+          slotId: target.id,
+          slot: target.slot,
+          alias: target.alias,
+          actor: scope.actorDiscordId,
+          remoteQueued: queued,
+          directIdentifier: true,
+        });
+        results.push(`✅ **${label}** — Remote-Unban ${queued ? 'eingereiht' : 'bereits in Bearbeitung'}.`);
+      } catch (error) {
+        const message = safeLine(error instanceof Error ? error.message : String(error), 'Unbekannter Fehler');
+        results.push(`❌ **${label}** — Unban fehlgeschlagen: ${message}`);
       }
-
-      const remoteQueued = row.appliedRemotely
-        ? await enqueueServerBanRemove(
-          tx as unknown as BanOutboxClient,
-          banScope,
-          row.id,
-        )
-        : false;
-
-      return {
-        id: row.id,
-        lifted,
-        needsRemoteRemoval: row.appliedRemotely,
-        remoteQueued,
-      };
-    });
-
-    if (!result) {
-      await reply(interaction, banId
-        ? 'Keine Ban-ID in diesem Guild+Slot-Scope gefunden.'
-        : 'Fuer diesen verifizierten Nutzer existiert in diesem Slot kein Server-Bann.');
-      return;
     }
 
-    if (!result.lifted && !result.needsRemoteRemoval) {
-      await reply(interaction, 'Der gefundene Bann ist bereits vollstaendig aufgehoben.');
-      return;
-    }
-
-    logAudit('SERVER_BAN_LIFT', 'MODERATION', {
-      guildId: scope.guildId,
-      slotId: scope.nitradoConnId,
-      actor: scope.actorDiscordId,
-      targetDiscordId,
-      banId: result.id,
-      remoteQueued: result.remoteQueued,
-      needsRemoteRemoval: result.needsRemoteRemoval,
-    });
-
-    const remoteStatus = result.needsRemoteRemoval
-      ? result.remoteQueued
-        ? ' Remote-Unban wurde in die Nitrado-Outbox eingereiht.'
-        : ' Ein passender Remote-Unban-Job laeuft bereits.'
-      : '';
-    await reply(interaction, `Server-Bann \`${result.id}\` lokal aufgehoben.${remoteStatus}`);
+    const scopeText = targets.length === 1 ? targetLabel(targets[0]) : `alle ${targets.length} verknuepften Server`;
+    await reply(interaction, `Server-Unban wurde fuer **${scopeText}** verarbeitet.\n\n${results.join('\n')}`);
   }),
 };
 
 // ============================================================
-// /server-ban-list — aktive Registry + sichtbare Remote-Abweichungen
+// /server-ban-list — echte Nitrado-Banlist, pro Alias immer getrennt
 // ============================================================
 export const serverBanListCommand: Command = {
   data: new SlashCommandBuilder()
     .setName('server-ban-list')
-    .setDescription('Zeigt aktive Server-Banns und Remote-Abweichungen des Slots (max. 50).')
-    .addIntegerOption(o =>
-      o.setName('slot').setDescription('Nitrado-Slot 1-5; leer = aktiver Slot').setRequired(false).setMinValue(1).setMaxValue(5),
+    .setDescription('Zeigt die Nitrado-Banlist pro Server-Alias getrennt an.')
+    .addStringOption(o =>
+      o.setName('slot').setDescription('Server-Alias auswaehlen; leer = ALLE verknuepften Server').setRequired(false).setAutocomplete(true),
     ) as SlashCommandBuilder,
 
-  execute: withGuildScope({ requirePerm: 'bans.view', acceptSlotOption: true }, async (interaction, scope) => {
-    const now = new Date();
-    const banScope = { guildId: scope.guildId, nitradoConnId: scope.nitradoConnId! };
-    const rows = await listOperationalBans(
-      prisma as unknown as BanListClient,
-      banScope,
-      now,
-      50,
-    );
+  autocomplete: autocompleteServerAlias,
 
-    if (rows.length === 0) {
-      await reply(interaction, 'Keine aktiven Server-Banns oder Remote-Abweichungen in diesem Slot.');
-      return;
+  execute: withGuildScope({ requirePerm: 'bans.view', guildOnly: true }, async (interaction, scope) => {
+    const targets = await resolveSelectedOrAllServers(interaction, scope.guildId);
+    if (!targets) return;
+
+    const embeds: EmbedBuilder[] = [];
+    for (const target of targets) {
+      try {
+        const rows = await clientForTarget(target).getBanlist(target.nitradoServerId);
+        if (rows.length === 0) {
+          embeds.push(new EmbedBuilder()
+            .setTitle(`Banlist • ${targetLabel(target)}`)
+            .setDescription('_Banlist leer_')
+            .setFooter({ text: 'Quelle: Nitrado Gameserver Banlist' })
+            .setTimestamp());
+          continue;
+        }
+
+        for (let offset = 0; offset < rows.length; offset += LIST_PAGE_SIZE) {
+          const page = rows.slice(offset, offset + LIST_PAGE_SIZE);
+          const pageNo = Math.floor(offset / LIST_PAGE_SIZE) + 1;
+          const pages = Math.ceil(rows.length / LIST_PAGE_SIZE);
+          const lines = page.map((row, index) => {
+            const added = row.added_at ? ` • seit ${safeLine(row.added_at)}` : '';
+            return `${offset + index + 1}. \`${safeLine(row.identifier)}\`${added}`;
+          });
+          embeds.push(new EmbedBuilder()
+            .setTitle(`Banlist • ${targetLabel(target)}${pages > 1 ? ` • ${pageNo}/${pages}` : ''}`)
+            .setDescription(lines.join('\n'))
+            .setFooter({ text: `${rows.length} Eintraege • Quelle: Nitrado` })
+            .setTimestamp());
+        }
+      } catch (error) {
+        embeds.push(new EmbedBuilder()
+          .setTitle(`Banlist • ${targetLabel(target)}`)
+          .setDescription(`❌ Nitrado-Liste konnte nicht gelesen werden: ${safeLine(error instanceof Error ? error.message : String(error))}`)
+          .setTimestamp());
+      }
     }
 
-    const hashes = rows.map(r => r.identityHash);
-    const links = await prisma.gameIdentityLink.findMany({
-      where: {
-        guildId: scope.guildId,
-        nitradoConnId: scope.nitradoConnId!,
-        identityHash: { in: hashes },
-      },
-      select: { identityHash: true, userDiscordId: true },
-    });
-    const userByHash = new Map<string, string>();
-    for (const link of links) {
-      if (link.identityHash) userByHash.set(link.identityHash, link.userDiscordId);
-    }
-
-    const lines = rows.map(row => {
-      const userId = userByHash.get(row.identityHash);
-      const target = userId ? `<@${userId}>` : `Hash \`${row.identityHash.slice(0, 10)}…\``;
-      const expiry = row.expiresAt
-        ? `<t:${Math.floor(row.expiresAt.getTime() / 1000)}:R>`
-        : 'Permanent';
-      const state = operationalStateLabel(banOperationalState(row, now));
-      return [
-        `**${target}** • ${state} • ${expiry}`,
-        `ID: \`${row.id}\` • Grund: ${safeLine(row.reason)}`,
-      ].join('\n');
-    });
-
-    const embed = new EmbedBuilder()
-      .setTitle(`Server-Banns / Remote-Abweichungen (${rows.length})`)
-      .setDescription(lines.join('\n\n').slice(0, 4000))
-      .setFooter({ text: 'V-Bot • Lokale Registry + Nitrado-Remote-Sync' })
-      .setTimestamp(now);
-
-    await interaction.reply({
-      embeds: [embed],
-      flags: MessageFlags.Ephemeral,
-      allowedMentions: { parse: [] },
-    });
+    await replyEmbeds(interaction, embeds);
   }),
 };
