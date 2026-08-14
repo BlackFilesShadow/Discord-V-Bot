@@ -7,9 +7,9 @@
  *   Gameserver der Guild.
  * - `slot` ist eine Alias-Autocomplete-Auswahl; intern wird die stabile
  *   NitradoConnection-ID uebertragen.
- * - Beim Ban wird der lokale Whitelist-Desired-State zuerst entfernt, danach
- *   der Identifier remote aus der Nitrado-Whitelist entfernt und ERST DANACH
- *   der Ban eingereiht. So kann der Reconciler den Namen nicht wieder adden.
+ * - Beim Ban wird der lokale Whitelist-Desired-State zuerst entfernt. Der
+ *   SERVER_BAN_ADD-Worker entfernt danach unter dem per-Connection-Lock zuerst
+ *   die echte Nitrado-Whitelist und setzt erst anschliessend die Banlist.
  * - Klartext-Identifier werden nicht in ServerBanEntry oder Audit-Logs gespeichert.
  */
 
@@ -132,8 +132,8 @@ export const serverBanCommand: Command = {
     for (const target of targets) {
       const label = targetLabel(target);
       try {
-        // 1) Lokalen Desired-State VOR dem Remote-Call entfernen. Damit kann der
-        // 5-Minuten-Reconciler waehrend des Ban-Vorgangs nichts wieder adden.
+        // 1) Lokalen Desired-State zuerst entfernen. Dadurch erzeugt der
+        // Whitelist-Reconciler keine neuen ADD-Jobs fuer den gebannten Namen.
         await prisma.$transaction(async tx => {
           await tx.whitelistEntry.deleteMany({
             where: { guildId: scope.guildId, nitradoConnId: target.id, gameId: identifier },
@@ -149,11 +149,9 @@ export const serverBanCommand: Command = {
           });
         });
 
-        // 2) Nitrado-Whitelist wirklich entfernen. Erst nach bestaetigtem Erfolg
-        // darf der Remote-Ban ueberhaupt eingereiht werden.
-        await clientForTarget(target).removeFromWhitelist(target.nitradoServerId, identifier);
-
-        // 3) Lokale Ban-Wahrheit + Remote-Ban-Outbox atomar schreiben.
+        // 2) Lokale Ban-Wahrheit + SERVER_BAN_ADD atomar schreiben. Der Worker
+        // neutralisiert unter seinem Connection-Lock alte PENDING-WHITELIST_ADD-
+        // Jobs, entfernt die Remote-Whitelist und setzt DANACH die Banlist.
         const stored = await prisma.$transaction(async tx => {
           const banScope = { guildId: scope.guildId, nitradoConnId: target.id };
           await addBan(
@@ -200,10 +198,10 @@ export const serverBanCommand: Command = {
           expiresAt: expiresAt?.toISOString() ?? null,
           remoteQueued: stored.queued,
           whitelistDesiredRemovedFirst: true,
-          whitelistRemoteRemovedBeforeBan: true,
+          remoteSequence: 'WHITELIST_REMOVE_THEN_BAN',
         });
 
-        results.push(`✅ **${label}** — Whitelist bereinigt, Bann ${stored.queued ? 'eingereiht' : 'bereits in Bearbeitung'}.`);
+        results.push(`✅ **${label}** — Whitelist-Entfernung + Bann ${stored.queued ? 'sicher eingereiht' : 'bereits in Bearbeitung'}.`);
       } catch (error) {
         const message = safeErrorMessage(error, identifier);
         results.push(`❌ **${label}** — nicht gebannt: ${message}`);
