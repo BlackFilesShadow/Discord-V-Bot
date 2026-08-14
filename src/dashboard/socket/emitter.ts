@@ -11,7 +11,7 @@ import type { Server as IOServer } from 'socket.io';
 
 let io: IOServer | null = null;
 
-export function setIo(instance: IOServer): void {
+export function setIo(instance: IOServer | null): void {
   io = instance;
 }
 
@@ -48,7 +48,7 @@ export interface ServerGameplayEventPayload {
   eventId?: string;
   source: 'ADM_V1' | 'ADM_V2';
   eventType: string;
-  occurredAt: string;
+  occurredAt: string | null;
   actorName?: string | null;
   targetName?: string | null;
   weapon?: string | null;
