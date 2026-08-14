@@ -13,11 +13,6 @@ import { resolveDashboardGameServer, sendDashboardServerResolutionError } from '
 
 export const economyLinkRouter = Router({ mergeParams: true });
 
-async function resolveForRequest(req: Parameters<typeof resolveDashboardGameServer>[0] extends never ? never : any) {
-  const scope = req.guildScope!;
-  return resolveDashboardGameServer(scope.guildId, scope.actorDiscordId, req.query.slot);
-}
-
 economyLinkRouter.get('/', requireGuildPermission('economy.view'), async (req, res) => {
   const scope = req.guildScope!;
   const resolution = await resolveDashboardGameServer(scope.guildId, scope.actorDiscordId, req.query.slot);
