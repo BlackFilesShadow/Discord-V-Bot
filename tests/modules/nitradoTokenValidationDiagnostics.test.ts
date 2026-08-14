@@ -24,22 +24,21 @@ jest.mock('../../src/utils/logger', () => ({
   logAudit: jest.fn(),
 }));
 
-const decryptMock = jest.fn(() => 'token-1234');
-jest.mock('../../src/utils/security', () => ({
-  decrypt: (...args: unknown[]) => decryptMock(...args),
-}));
+const decryptMock = jest.fn((_value: string, _key: string): string => 'token-1234');
+jest.mock('../../src/utils/security', () => ({ decrypt: decryptMock }));
 
-const setStatus = jest.fn(async () => undefined);
-const markValidated = jest.fn(async () => undefined);
+const setStatus = jest.fn(async (_guildId: string, _connId: string, _status: string) => undefined);
+const markValidated = jest.fn(async (_guildId: string, _connId: string) => undefined);
 jest.mock('../../src/modules/nitrado/repository', () => ({ setStatus, markValidated }));
 
-const recordValidationFailure = jest.fn();
+const recordValidationFailure = jest.fn(async () => ({
+  failureCount: 1,
+  shouldAlert: false,
+  safeMessage: 'temporary',
+}));
 jest.mock('../../src/modules/nitrado/validationHealth', () => {
   const actual = jest.requireActual('../../src/modules/nitrado/validationHealth');
-  return {
-    ...actual,
-    recordValidationFailure,
-  };
+  return { ...actual, recordValidationFailure };
 });
 
 const validateTokenDetailed = jest.fn();
@@ -50,19 +49,21 @@ jest.mock('../../src/modules/nitrado/nitradoClient', () => ({
 import type { Client } from 'discord.js';
 import { validateConnectionTokenOnce } from '../../src/modules/nitrado/tokenValidationCron';
 
-const send = jest.fn(async () => undefined);
+const send = jest.fn(async (_content: string) => undefined);
 const owner = { send };
 const guild = {
   name: 'Test Guild',
   fetchOwner: jest.fn(async () => owner),
 };
+const guildId = '123456789012345678';
+const connId = 'c123456789012345678901234';
 const discord = {
-  guilds: { cache: new Map([['guild-1', guild]]) },
+  guilds: { cache: new Map([[guildId, guild]]) },
 } as unknown as Client;
 
 const conn = {
-  id: 'conn-1',
-  guildId: 'guild-1',
+  id: connId,
+  guildId,
   alias: 'Main',
   alias5: 'ABCDE',
   status: 'ACTIVE',
@@ -121,14 +122,13 @@ describe('NIT-001 token validation diagnostics', () => {
 
     expect(setStatus).not.toHaveBeenCalled();
     expect(send).toHaveBeenCalledTimes(1);
-    expect(String(send.mock.calls[0]?.[0])).toContain('3 Mal in Folge');
-    expect(String(send.mock.calls[0]?.[0])).toContain('nicht automatisch als abgelaufen');
+    const message = send.mock.calls[0]?.[0] ?? '';
+    expect(message).toContain('3 Mal in Folge');
+    expect(message).toContain('nicht automatisch als abgelaufen');
   });
 
   it('INVALID markiert nur ACTIVE als EXPIRED und nutzt die spezifische Ablauf-DM', async () => {
     validateTokenDetailed.mockResolvedValue({ kind: 'INVALID', status: 401 });
-    // Selbst wenn der DB-Claim true waere, INVALID darf keinen zusaetzlichen
-    // generischen Wiederholungs-Alert senden.
     recordValidationFailure.mockResolvedValue({
       failureCount: 3,
       shouldAlert: true,
@@ -137,9 +137,9 @@ describe('NIT-001 token validation diagnostics', () => {
 
     await validateConnectionTokenOnce(discord, conn);
 
-    expect(setStatus).toHaveBeenCalledWith('guild-1', 'conn-1', 'EXPIRED');
+    expect(setStatus).toHaveBeenCalledWith(guildId, connId, 'EXPIRED');
     expect(send).toHaveBeenCalledTimes(1);
-    expect(String(send.mock.calls[0]?.[0])).toContain('abgelaufen');
+    expect(send.mock.calls[0]?.[0] ?? '').toContain('abgelaufen');
   });
 
   it('bereits EXPIRED erzeugt bei erneut INVALID keine weitere Ablauf-DM', async () => {
