@@ -60,11 +60,25 @@ describe('serverTargetSelection', () => {
     expect(result?.[0]).toEqual(expect.objectContaining({ id: 'conn-b', alias: 'Livonia PVE', slot: 2 }));
   });
 
-  it('akzeptiert aus Robustheitsgruenden auch einen exakt eingegebenen Alias', async () => {
+  it('akzeptiert aus Robustheitsgruenden auch einen exakt eingegebenen eindeutigen Alias', async () => {
     const interaction = chatInteraction('chernarus main');
     const result = await resolveSelectedOrAllServers(interaction, 'guild-1');
 
     expect(result?.[0]?.id).toBe('conn-a');
+  });
+
+  it('waehlt bei doppeltem manuellem Alias niemals still den ersten Server', async () => {
+    findMany.mockResolvedValue([
+      { ...rows[0], alias: 'Production' },
+      { ...rows[1], alias: 'Production' },
+    ]);
+    const interaction = chatInteraction('production');
+    const result = await resolveSelectedOrAllServers(interaction, 'guild-1');
+
+    expect(result).toBeNull();
+    expect(interaction.reply).toHaveBeenCalledWith(expect.objectContaining({
+      content: expect.stringContaining('nicht eindeutig'),
+    }));
   });
 
   it('weist fremde/ungueltige Alias-Werte fail-closed ab', async () => {
