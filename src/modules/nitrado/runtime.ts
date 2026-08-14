@@ -6,13 +6,13 @@ import type { Client } from 'discord.js';
 import { config } from '../../config';
 import { startNitradoJobWorker, drainAndStopJobWorker } from './jobWorker';
 import { startTokenValidationCron, stopTokenValidationCron } from './tokenValidationCron';
-import { startAdmSyncCron, stopAdmSyncCron } from './admSyncCron';
 import { startAdmLiveSyncCron, stopAdmLiveSyncCron } from './adm/admLiveSyncCron';
+import { startAdmPostProcessCron, stopAdmPostProcessCron } from './adm/admPostProcessCron';
 import { startPermaOnlyCron, stopPermaOnlyCron } from './permaOnlyCron';
 import { startWhitelistSyncCron, stopWhitelistSyncCron } from '../whitelist/whitelistSyncCron';
-import { startKillfeedWatcher, stopKillfeedWatcher } from '../killfeed/admWatcher';
 import { startGameplayFeedRuntime, stopGameplayFeedRuntime } from '../gameplayFeeds/runtime';
 import { startBankInterestCron, stopBankInterestCron } from '../economy/interestCron';
+import { startBanExpiryRuntime, stopBanExpiryRuntime } from '../bans/expiryRuntime';
 
 export interface NitradoRuntimeHandle {
   stopAndDrain(): Promise<void>;
@@ -20,20 +20,19 @@ export interface NitradoRuntimeHandle {
 
 export function startNitradoRuntime(client: Client): NitradoRuntimeHandle {
   startNitradoJobWorker();
+  startBanExpiryRuntime();
   startTokenValidationCron(client);
-  // Der 15-Minuten-Sync bleibt fuer Linking/Rewards/Session-Aggregation aktiv.
-  startAdmSyncCron();
   startPermaOnlyCron();
   startWhitelistSyncCron();
 
-  // Nie Legacy und V2 parallel posten. V2 bekommt zusaetzlich den schnellen,
-  // byte-inkrementellen ADM-Producer; beide V2-Komponenten teilen AdmEvent als
-  // idempotente Source-of-Truth.
+  // ADM-V2 ist jetzt die einzige Datei-Quelle. Der Live-Ingest laeuft immer,
+  // damit Linking/Rewards/Sessions unabhaengig vom oeffentlichen Feed-Gate
+  // funktionieren. ADM_EVENT_PIPELINE_V2 steuert nur noch die Discord-
+  // Death/Baufeed-Auslieferung.
+  startAdmLiveSyncCron();
+  startAdmPostProcessCron();
   if (config.nitrado.admEventPipelineV2) {
-    startAdmLiveSyncCron();
     startGameplayFeedRuntime();
-  } else {
-    startKillfeedWatcher();
   }
 
   startBankInterestCron();
@@ -46,12 +45,12 @@ export function startNitradoRuntime(client: Client): NitradoRuntimeHandle {
 
       stopBankInterestCron();
       stopGameplayFeedRuntime();
+      stopAdmPostProcessCron();
       stopAdmLiveSyncCron();
-      stopKillfeedWatcher();
       stopWhitelistSyncCron();
       stopPermaOnlyCron();
-      stopAdmSyncCron();
       stopTokenValidationCron();
+      stopBanExpiryRuntime();
       await drainAndStopJobWorker();
     },
   };
