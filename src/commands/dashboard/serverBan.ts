@@ -1,10 +1,11 @@
 /**
- * Phase 7 — Bedienebene fuer die lokale Server-Ban-Registry.
+ * Phase 7 — Bedienebene fuer die Server-Ban-Registry + echte Nitrado-Outbox.
  *
- * Wichtig: Es existiert aktuell keine verifizierte Nitrado-/DayZ-Ban-Capability
- * im Client. Diese Commands verwalten daher die DB-Wahrheit und kennzeichnen
- * offen, ob ein Bann remote durchgesetzt wurde. Keine rohe Game-ID wird
- * gespeichert oder angezeigt; Ziel ist der VERIFIED GameIdentityLink-HMAC.
+ * Remote-Bans laufen ausschliesslich gegen den offiziellen Gameserver-Banlist-
+ * Endpoint. Der echte Gameserver-Identifier wird beim Ban-Aufruf gegen den
+ * VERIFIED GameIdentityLink-HMAC geprueft und nie im Klartext persistiert oder
+ * geloggt. Unban/Timeout loesen den Identifier spaeter live aus der Remote-
+ * Banlist per HMAC auf.
  */
 
 import {
@@ -22,18 +23,25 @@ import {
   liftBanById,
   listOperationalBans,
   banOperationalState,
-  localOnlyBanProvider,
   type BanClient,
   type BanListClient,
 } from '../../modules/bans/banRegistry';
 import {
   resolveVerifiedBanIdentityHash,
+  matchesBanIdentifier,
   type BanTargetClient,
 } from '../../modules/bans/banTarget';
+import {
+  enqueueServerBanAdd,
+  enqueueServerBanRemove,
+  type BanOutboxClient,
+} from '../../modules/bans/banOutbox';
+import { config } from '../../config';
 import { logAudit } from '../../utils/logger';
 
 const MAX_BAN_MINUTES = 365 * 24 * 60;
 const MAX_REASON_LENGTH = 300;
+const IDENTIFIER_RE = /^[^\r\n\t]{1,128}$/;
 
 async function reply(interaction: ChatInputCommandInteraction, content: string): Promise<void> {
   await interaction.reply({
@@ -51,18 +59,21 @@ function safeLine(value: string | null | undefined, fallback = '—'): string {
 function operationalStateLabel(state: ReturnType<typeof banOperationalState>): string {
   if (state === 'REMOTE_DRIFT') return '⚠️ REMOTE-ABWEICHUNG • lokal inaktiv, remote markiert';
   if (state === 'LOCAL_AND_REMOTE') return 'Lokal aktiv • Remote angewendet';
-  return 'Lokal aktiv • Nicht remote angewendet';
+  return 'Lokal aktiv • Remote ausstehend/nicht angewendet';
 }
 
 // ============================================================
-// /server-ban — lokalen Server-Bann setzen / reaktivieren
+// /server-ban — lokalen Bann + verifizierten Remote-Ban queued setzen
 // ============================================================
 export const serverBanCommand: Command = {
   data: new SlashCommandBuilder()
     .setName('server-ban')
-    .setDescription('Registriert einen Server-Bann fuer einen verifizierten Spieler-Link.')
+    .setDescription('Bannt einen verifizierten Spieler im ausgewaehlten Gameserver.')
     .addUserOption(o =>
       o.setName('user').setDescription('Verifizierter Discord-Nutzer').setRequired(true),
+    )
+    .addStringOption(o =>
+      o.setName('identifier').setDescription('Exakte Game-ID aus ADM/Nitrado; wird nicht im Klartext gespeichert').setRequired(true).setMinLength(1).setMaxLength(128),
     )
     .addStringOption(o =>
       o.setName('grund').setDescription('Grund fuer den Server-Bann').setRequired(true).setMinLength(1).setMaxLength(MAX_REASON_LENGTH),
@@ -76,9 +87,15 @@ export const serverBanCommand: Command = {
 
   execute: withGuildScope({ requirePerm: 'bans.manage', acceptSlotOption: true }, async (interaction, scope) => {
     const target = interaction.options.getUser('user', true);
+    const identifier = interaction.options.getString('identifier', true).trim();
     const reason = interaction.options.getString('grund', true).trim();
     const durationMinutes = interaction.options.getInteger('dauer');
     const banScope = { guildId: scope.guildId, nitradoConnId: scope.nitradoConnId! };
+
+    if (!IDENTIFIER_RE.test(identifier)) {
+      await reply(interaction, 'Ungueltiger Gameserver-Identifier. Er darf keine Zeilenumbrueche/Tabulatoren enthalten und maximal 128 Zeichen lang sein.');
+      return;
+    }
 
     const identityHash = await resolveVerifiedBanIdentityHash(
       prisma as unknown as BanTargetClient,
@@ -90,32 +107,54 @@ export const serverBanCommand: Command = {
       return;
     }
 
+    // Kritische Schutzschranke: Der vom Moderator eingegebene Identifier muss
+    // exakt zu der bereits per /link verifizierten HMAC-Identitaet gehoeren.
+    if (!matchesBanIdentifier(identifier, identityHash, config.security.encryptionKey)) {
+      await reply(interaction, 'Der angegebene Gameserver-Identifier passt nicht zur VERIFIED Game-Verknuepfung dieses Nutzers. Es wurde kein Bann angelegt.');
+      return;
+    }
+
     const now = new Date();
     const expiresAt = durationMinutes
       ? new Date(now.getTime() + durationMinutes * 60_000)
       : null;
 
-    await addBan(
-      prisma as unknown as BanClient,
-      banScope,
-      {
-        identityHash,
-        reason,
-        bannedByDiscordId: scope.actorDiscordId,
-        expiresAt,
-      },
-      now,
-    );
-
-    const stored = await prisma.serverBanEntry.findUnique({
-      where: {
-        guildId_nitradoConnId_identityHash: {
-          guildId: scope.guildId,
-          nitradoConnId: scope.nitradoConnId!,
+    const result = await prisma.$transaction(async tx => {
+      await addBan(
+        tx as unknown as BanClient,
+        banScope,
+        {
           identityHash,
+          reason,
+          bannedByDiscordId: scope.actorDiscordId,
+          expiresAt,
         },
-      },
-      select: { id: true, appliedRemotely: true },
+        now,
+      );
+
+      const stored = await tx.serverBanEntry.findUnique({
+        where: {
+          guildId_nitradoConnId_identityHash: {
+            guildId: scope.guildId,
+            nitradoConnId: scope.nitradoConnId!,
+            identityHash,
+          },
+        },
+        select: { id: true, appliedRemotely: true },
+      });
+      if (!stored) throw new Error('Server-Ban konnte nach dem Anlegen nicht wiedergefunden werden.');
+
+      const queued = stored.appliedRemotely
+        ? false
+        : await enqueueServerBanAdd(
+          tx as unknown as BanOutboxClient,
+          banScope,
+          stored.id,
+          identifier,
+          config.security.encryptionKey,
+        );
+
+      return { ...stored, queued };
     });
 
     logAudit('SERVER_BAN_SET', 'MODERATION', {
@@ -123,22 +162,22 @@ export const serverBanCommand: Command = {
       slotId: scope.nitradoConnId,
       actor: scope.actorDiscordId,
       targetDiscordId: target.id,
-      banId: stored?.id,
+      banId: result.id,
       expiresAt: expiresAt?.toISOString() ?? null,
-      appliedRemotely: stored?.appliedRemotely ?? false,
+      appliedRemotely: result.appliedRemotely,
+      remoteQueued: result.queued,
     });
 
-    const capability = localOnlyBanProvider.capabilities();
-    const enforcement = stored?.appliedRemotely
-      ? 'Remote-Durchsetzung ist fuer diesen Eintrag als aktiv markiert.'
-      : capability.canApplyRemote
-        ? 'Remote-Durchsetzung ist verfuegbar, wurde fuer diesen Eintrag aber noch nicht bestaetigt.'
-        : 'Aktuell existiert keine verifizierte Gameserver-Ban-Capability. Der Bann ist nur lokal in V-Bot registriert.';
+    const enforcement = result.appliedRemotely
+      ? 'Remote bereits angewendet.'
+      : result.queued
+        ? 'Remote-Durchsetzung wurde sicher in die Nitrado-Outbox eingereiht.'
+        : 'Ein passender Remote-Job laeuft bereits.';
 
     await reply(
       interaction,
       `Server-Bann fuer <@${target.id}> registriert.\n` +
-      `Ban-ID: \`${stored?.id ?? 'unbekannt'}\`\n` +
+      `Ban-ID: \`${result.id}\`\n` +
       `Dauer: ${expiresAt ? `<t:${Math.floor(expiresAt.getTime() / 1000)}:R>` : 'Permanent'}\n` +
       `Status: ${enforcement}`,
     );
@@ -146,12 +185,12 @@ export const serverBanCommand: Command = {
 };
 
 // ============================================================
-// /server-unban — ueber User oder Ban-ID aufheben
+// /server-unban — lokal aufheben + Remote-Removal queued
 // ============================================================
 export const serverUnbanCommand: Command = {
   data: new SlashCommandBuilder()
     .setName('server-unban')
-    .setDescription('Hebt einen lokalen Server-Bann per Nutzer oder Ban-ID auf.')
+    .setDescription('Hebt einen Server-Bann per Nutzer oder Ban-ID auf.')
     .addUserOption(o =>
       o.setName('user').setDescription('Aktuell VERIFIED Nutzer-Link').setRequired(false),
     )
@@ -172,25 +211,11 @@ export const serverUnbanCommand: Command = {
 
     const banScope = { guildId: scope.guildId, nitradoConnId: scope.nitradoConnId! };
     const now = new Date();
-    let lifted = false;
-    let selectedBanId: string | null = banId;
-    let appliedRemotely = false;
     const targetDiscordId: string | null = target?.id ?? null;
 
-    if (banId) {
-      const row = await prisma.serverBanEntry.findFirst({
-        where: { id: banId, guildId: scope.guildId, nitradoConnId: scope.nitradoConnId! },
-        select: { id: true, appliedRemotely: true },
-      });
-      if (!row) {
-        await reply(interaction, 'Keine Ban-ID in diesem Guild+Slot-Scope gefunden.');
-        return;
-      }
-      appliedRemotely = row.appliedRemotely;
-      selectedBanId = row.id;
-      lifted = await liftBanById(prisma as unknown as BanClient, banScope, row.id, now);
-    } else if (target) {
-      const identityHash = await resolveVerifiedBanIdentityHash(
+    let identityHash: string | null = null;
+    if (target) {
+      identityHash = await resolveVerifiedBanIdentityHash(
         prisma as unknown as BanTargetClient,
         banScope,
         target.id,
@@ -199,27 +224,59 @@ export const serverUnbanCommand: Command = {
         await reply(interaction, 'Kein aktueller VERIFIED Link gefunden. Nutze bei einem alten/unlinkten Bann die `ban-id` aus `/server-ban-list`.');
         return;
       }
-      const row = await prisma.serverBanEntry.findUnique({
-        where: {
-          guildId_nitradoConnId_identityHash: {
-            guildId: scope.guildId,
-            nitradoConnId: scope.nitradoConnId!,
-            identityHash,
-          },
-        },
-        select: { id: true, appliedRemotely: true },
-      });
-      if (!row) {
-        await reply(interaction, 'Fuer diesen verifizierten Nutzer existiert in diesem Slot kein Server-Bann.');
-        return;
-      }
-      selectedBanId = row.id;
-      appliedRemotely = row.appliedRemotely;
-      lifted = await liftBan(prisma as unknown as BanClient, banScope, identityHash, now);
     }
 
-    if (!lifted) {
-      await reply(interaction, 'Der gefundene Bann ist bereits aufgehoben oder nicht mehr aktiv.');
+    const result = await prisma.$transaction(async tx => {
+      const row = banId
+        ? await tx.serverBanEntry.findFirst({
+          where: { id: banId, guildId: scope.guildId, nitradoConnId: scope.nitradoConnId! },
+          select: { id: true, active: true, appliedRemotely: true },
+        })
+        : await tx.serverBanEntry.findUnique({
+          where: {
+            guildId_nitradoConnId_identityHash: {
+              guildId: scope.guildId,
+              nitradoConnId: scope.nitradoConnId!,
+              identityHash: identityHash!,
+            },
+          },
+          select: { id: true, active: true, appliedRemotely: true },
+        });
+
+      if (!row) return null;
+
+      let lifted = false;
+      if (row.active) {
+        lifted = banId
+          ? await liftBanById(tx as unknown as BanClient, banScope, row.id, now)
+          : await liftBan(tx as unknown as BanClient, banScope, identityHash!, now);
+      }
+
+      const remoteQueued = row.appliedRemotely
+        ? await enqueueServerBanRemove(
+          tx as unknown as BanOutboxClient,
+          banScope,
+          row.id,
+        )
+        : false;
+
+      return {
+        id: row.id,
+        lifted,
+        needsRemoteRemoval: row.appliedRemotely,
+        remoteQueued,
+      };
+    });
+
+    if (!result) {
+      await reply(interaction, banId
+        ? 'Keine Ban-ID in diesem Guild+Slot-Scope gefunden.'
+        : 'Fuer diesen verifizierten Nutzer existiert in diesem Slot kein Server-Bann.');
+      return;
+    }
+
+    if (!result.lifted && !result.needsRemoteRemoval) {
+      await reply(interaction, 'Der gefundene Bann ist bereits vollstaendig aufgehoben.');
       return;
     }
 
@@ -228,14 +285,17 @@ export const serverUnbanCommand: Command = {
       slotId: scope.nitradoConnId,
       actor: scope.actorDiscordId,
       targetDiscordId,
-      banId: selectedBanId,
-      appliedRemotely,
+      banId: result.id,
+      remoteQueued: result.remoteQueued,
+      needsRemoteRemoval: result.needsRemoteRemoval,
     });
 
-    const remoteWarning = appliedRemotely
-      ? '\nAchtung: Der Eintrag war als remote angewendet markiert. V-Bot besitzt aktuell keine verifizierte Remove-Ban-Capability; der Eintrag bleibt deshalb als REMOTE-ABWEICHUNG in `/server-ban-list` sichtbar, bis die Gameserver-Seite geklaert ist.'
+    const remoteStatus = result.needsRemoteRemoval
+      ? result.remoteQueued
+        ? ' Remote-Unban wurde in die Nitrado-Outbox eingereiht.'
+        : ' Ein passender Remote-Unban-Job laeuft bereits.'
       : '';
-    await reply(interaction, `Server-Bann \`${selectedBanId ?? 'unbekannt'}\` lokal aufgehoben.${remoteWarning}`);
+    await reply(interaction, `Server-Bann \`${result.id}\` lokal aufgehoben.${remoteStatus}`);
   }),
 };
 
@@ -295,7 +355,7 @@ export const serverBanListCommand: Command = {
     const embed = new EmbedBuilder()
       .setTitle(`Server-Banns / Remote-Abweichungen (${rows.length})`)
       .setDescription(lines.join('\n\n').slice(0, 4000))
-      .setFooter({ text: 'V-Bot • Lokale Registry; Remote-Abweichungen bleiben sichtbar' })
+      .setFooter({ text: 'V-Bot • Lokale Registry + Nitrado-Remote-Sync' })
       .setTimestamp(now);
 
     await interaction.reply({
