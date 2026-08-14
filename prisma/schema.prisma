@@ -91,6 +91,7 @@ enum UserStatus {
   PENDING_VERIFICATION
 }
 
+// Hersteller-Anfragen (Admin per PN)
 model ManufacturerRequest {
   id         String        @id @default(uuid())
   userId     String        @unique
@@ -112,11 +113,12 @@ enum RequestStatus {
   DENIED
 }
 
+// Einmal-Passwörter (hochkomplex, zeitlich limitiert, GUID-gebunden)
 model OneTimePassword {
   id           String    @id @default(uuid())
   userId       String
   user         User      @relation(fields: [userId], references: [id], onDelete: Cascade)
-  passwordHash String
+  passwordHash String // Argon2 Hash
   expiresAt    DateTime
   usedAt       DateTime?
   isUsed       Boolean   @default(false)
@@ -127,6 +129,11 @@ model OneTimePassword {
   @@index([expiresAt])
 }
 
+// ============================================================
+// SEKTION 2 & 3: Upload- & Download-System
+// ============================================================
+
+// Pakete (GUID-gebunden, frei benennbar)
 model Package {
   id            String        @id @default(uuid())
   userId        String
@@ -134,7 +141,7 @@ model Package {
   name          String
   description   String?
   status        PackageStatus @default(ACTIVE)
-  isDeleted     Boolean       @default(false)
+  isDeleted     Boolean       @default(false) // Soft-Delete
   deletedAt     DateTime?
   deletedBy     String?
   totalSize     BigInt        @default(0)
@@ -142,19 +149,27 @@ model Package {
   downloadCount Int           @default(0)
   createdAt     DateTime      @default(now())
   updatedAt     DateTime      @updatedAt
-  files         Upload[]
-  downloads     Download[]
-  validations   ValidationResult[]
 
-  @@unique([userId, name])
+  // Relations
+  files       Upload[]
+  downloads   Download[]
+  validations ValidationResult[]
+
+  @@unique([userId, name]) // Keine Namenskonflikte pro GUID-Bereich
   @@index([userId])
   @@index([status])
   @@index([isDeleted])
   @@index([name])
 }
 
-enum PackageStatus { ACTIVE QUARANTINED DELETED VALIDATING }
+enum PackageStatus {
+  ACTIVE
+  QUARANTINED
+  DELETED
+  VALIDATING
+}
 
+// Einzelne Dateien (bis 2 GB, Chunked-Upload)
 model Upload {
   id               String           @id @default(uuid())
   userId           String
@@ -166,7 +181,7 @@ model Upload {
   filePath         String
   fileSize         BigInt
   mimeType         String
-  fileHash         String
+  fileHash         String // SHA-256 Integrity Hash
   fileType         FileType
   isValid          Boolean          @default(false)
   validationStatus ValidationStatus @default(PENDING)
@@ -178,8 +193,10 @@ model Upload {
   isChunked        Boolean          @default(false)
   createdAt        DateTime         @default(now())
   updatedAt        DateTime         @updatedAt
-  validations      ValidationResult[]
-  downloadRecords  Download[]
+
+  // Relations
+  validations     ValidationResult[]
+  downloadRecords Download[]
 
   @@index([userId])
   @@index([packageId])
@@ -188,9 +205,21 @@ model Upload {
   @@index([isDeleted])
 }
 
-enum FileType { XML JSON OTHER }
-enum ValidationStatus { PENDING VALID INVALID ERROR QUARANTINED }
+enum FileType {
+  XML
+  JSON
+  OTHER
+}
 
+enum ValidationStatus {
+  PENDING
+  VALID
+  INVALID
+  ERROR
+  QUARANTINED
+}
+
+// Validierungsergebnisse (XML- & JSON-Validator)
 model ValidationResult {
   id          String   @id @default(uuid())
   uploadId    String?
@@ -198,16 +227,17 @@ model ValidationResult {
   packageId   String?
   package     Package? @relation(fields: [packageId], references: [id], onDelete: Cascade)
   isValid     Boolean
-  errors      Json?
-  warnings    Json?
-  suggestions Json?
-  validatedBy String?
+  errors      Json? // Detaillierte Fehlerliste
+  warnings    Json? // Warnungen
+  suggestions Json? // Vorschläge
+  validatedBy String? // "system" oder Admin-GUID
   createdAt   DateTime @default(now())
 
   @@index([uploadId])
   @@index([packageId])
 }
 
+// Download-Tracking
 model Download {
   id           String       @id @default(uuid())
   userId       String?
@@ -227,12 +257,21 @@ model Download {
   @@index([createdAt])
 }
 
-enum DownloadType { SINGLE_FILE PACKAGE_ZIP PACKAGE_TAR }
+enum DownloadType {
+  SINGLE_FILE
+  PACKAGE_ZIP
+  PACKAGE_TAR
+}
 
+// ============================================================
+// SEKTION 4: Moderation, AI & Sicherheit
+// ============================================================
+
+// Moderationsfall (Kick, Ban, Mute, Warn, Case-Management)
 model ModerationCase {
   id              String           @id @default(uuid())
   caseNumber      Int              @unique @default(autoincrement())
-  guildId         String?
+  guildId         String? // Discord-Guild-ID (für Guild-Trennung; nullable für Legacy-Records)
   targetUserId    String
   targetUser      User             @relation("TargetUser", fields: [targetUserId], references: [id], onDelete: Cascade)
   moderatorId     String
@@ -240,7 +279,7 @@ model ModerationCase {
   action          ModerationAction
   reason          String
   details         String?
-  duration        Int?
+  duration        Int? // Dauer in Minuten (für Mute/Ban)
   expiresAt       DateTime?
   escalationLevel Int              @default(0)
   isActive        Boolean          @default(true)
@@ -248,7 +287,9 @@ model ModerationCase {
   revokedBy       String?
   createdAt       DateTime         @default(now())
   updatedAt       DateTime         @updatedAt
-  appeals         Appeal[]
+
+  // Relations
+  appeals Appeal[]
 
   @@index([targetUserId])
   @@index([moderatorId])
@@ -258,8 +299,19 @@ model ModerationCase {
   @@index([guildId])
 }
 
-enum ModerationAction { KICK BAN TEMP_BAN MUTE TEMP_MUTE WARN FILTER AUTO_MOD ESCALATION }
+enum ModerationAction {
+  KICK
+  BAN
+  TEMP_BAN
+  MUTE
+  TEMP_MUTE
+  WARN
+  FILTER
+  AUTO_MOD
+  ESCALATION
+}
 
+// Appeal-System
 model Appeal {
   id         String         @id @default(uuid())
   caseId     String
@@ -273,32 +325,51 @@ model Appeal {
   reviewedAt DateTime?
   createdAt  DateTime       @default(now())
   updatedAt  DateTime       @updatedAt
+
   @@index([caseId])
   @@index([userId])
   @@index([status])
 }
 
-enum AppealStatus { PENDING APPROVED DENIED ESCALATED }
+enum AppealStatus {
+  PENDING
+  APPROVED
+  DENIED
+  ESCALATED
+}
 
+// Auto-Mod Filter
 model AutoModFilter {
   id         String           @id @default(uuid())
-  guildId    String?
-  pattern    String
+  guildId    String? // Mandantentrennung (nullable fuer Bestandsdaten)
+  pattern    String // Regex oder Keyword
   filterType FilterType
   action     ModerationAction @default(FILTER)
   severity   Int              @default(1)
   isActive   Boolean          @default(true)
-  channelIds Json?
+  channelIds Json? // Optionale Channel-Beschränkung
   createdBy  String
   createdAt  DateTime         @default(now())
   updatedAt  DateTime         @updatedAt
+
   @@index([filterType])
   @@index([isActive])
   @@index([guildId])
 }
 
-enum FilterType { KEYWORD REGEX LINK INVITE SPAM CAPS EMOJI_SPAM MENTION_SPAM CUSTOM }
+enum FilterType {
+  KEYWORD
+  REGEX
+  LINK
+  INVITE
+  SPAM
+  CAPS
+  EMOJI_SPAM
+  MENTION_SPAM
+  CUSTOM
+}
 
+// Invite-Tracking
 model InviteTracking {
   id         String    @id @default(uuid())
   inviteCode String    @unique
@@ -309,9 +380,11 @@ model InviteTracking {
   expiresAt  DateTime?
   channelId  String?
   createdAt  DateTime  @default(now())
+
   @@index([inviterId])
 }
 
+// AI-Analyse (Sentiment, Toxicity)
 model AiAnalysis {
   id           String         @id @default(uuid())
   messageId    String
@@ -323,41 +396,61 @@ model AiAnalysis {
   details      Json?
   actionTaken  String?
   createdAt    DateTime       @default(now())
+
   @@index([userId])
   @@index([analysisType])
   @@index([createdAt])
 }
 
-enum AiAnalysisType { SENTIMENT TOXICITY CONTEXT TRANSLATION KNOWLEDGE CUSTOM }
+enum AiAnalysisType {
+  SENTIMENT
+  TOXICITY
+  CONTEXT
+  TRANSLATION
+  KNOWLEDGE
+  CUSTOM
+}
+
+// ============================================================
+// SEKTION 6: Giveaway-System
+// ============================================================
 
 model Giveaway {
   id             String         @id @default(uuid())
-  guildId        String?
+  guildId        String? // Mandantentrennung (nullable fuer Bestandsdaten)
   creatorId      String
   creator        User           @relation(fields: [creatorId], references: [id], onDelete: Cascade)
   channelId      String
-  messageId      String?
-  prize          String
+  messageId      String? // Embed-Nachricht ID
+  prize          String // Frei wählbarer Item-/Gegenstandsname
   description    String?
-  duration       Int
+  duration       Int // Dauer in Sekunden
   endsAt         DateTime
   winnerId       String?
   winnerCount    Int            @default(1)
   status         GiveawayStatus @default(ACTIVE)
-  minRole        String?
-  blacklistRoles Json?
-  customEmoji    String?
-  notifyRoleId   String?
+  minRole        String? // Mindestrolle
+  blacklistRoles Json? // Blacklisted Rollen
+  customEmoji    String? // Custom-Emoji für Teilnahme
+  notifyRoleId   String? // Rolle die bei Beendigung gepingt wird
   createdAt      DateTime       @default(now())
   updatedAt      DateTime       @updatedAt
-  entries        GiveawayEntry[]
+
+  // Relations
+  entries GiveawayEntry[]
+
   @@index([status])
   @@index([endsAt])
   @@index([channelId])
   @@index([guildId])
 }
 
-enum GiveawayStatus { ACTIVE ENDED CANCELLED REROLLED }
+enum GiveawayStatus {
+  ACTIVE
+  ENDED
+  CANCELLED
+  REROLLED
+}
 
 model GiveawayEntry {
   id         String   @id @default(uuid())
@@ -367,10 +460,15 @@ model GiveawayEntry {
   user       User     @relation(fields: [userId], references: [id], onDelete: Cascade)
   isWinner   Boolean  @default(false)
   enteredAt  DateTime @default(now())
-  @@unique([giveawayId, userId])
+
+  @@unique([giveawayId, userId]) // Keine Mehrfachteilnahme
   @@index([giveawayId])
   @@index([userId])
 }
+
+// ============================================================
+// SEKTION 8: Level- & XP-System
+// ============================================================
 
 model LevelData {
   id            String    @id @default(uuid())
@@ -384,6 +482,7 @@ model LevelData {
   lastXpGain    DateTime?
   createdAt     DateTime  @default(now())
   updatedAt     DateTime  @updatedAt
+
   @@unique([userId, guildId])
   @@index([guildId])
   @@index([level])
@@ -400,131 +499,180 @@ model XpRecord {
   channelId   String?
   description String?
   createdAt   DateTime @default(now())
+
   @@index([userId])
   @@index([guildId])
   @@index([source])
   @@index([createdAt])
 }
 
-enum XpSource { MESSAGE VOICE EVENT REACTION BOOST ADMIN RESET CUSTOM }
+enum XpSource {
+  MESSAGE
+  VOICE
+  EVENT
+  REACTION
+  BOOST
+  ADMIN
+  RESET
+  CUSTOM
+}
 
+// XP-Konfiguration
 model XpConfig {
   id                String   @id @default(uuid())
   messageXpMin      Int      @default(15)
   messageXpMax      Int      @default(25)
   voiceXpPerMinute  Int      @default(5)
   eventXpBonus      Int      @default(50)
-  xpCooldownSeconds Int      @default(60)
-  levelUpRoleIds    Json?
+  xpCooldownSeconds Int      @default(60) // Anti-Spam
+  levelUpRoleIds    Json? // {level: roleId} Mapping
   levelMultiplier   Float    @default(1.0)
   isActive          Boolean  @default(true)
-  allowedRoleIds    Json?
-  allowedChannelIds Json?
+  // XP nur an User mit einer dieser Rollen vergeben (leer = alle)
+  allowedRoleIds    Json? // string[] mit Discord-Rollen-IDs
+  // XP nur in diesen Kanälen vergeben (leer = alle Kanäle)
+  allowedChannelIds Json? // string[] mit Discord-Channel-IDs
+  // Max-Level (Endstufe) und Belohnungsrolle bei Erreichen
   maxLevel          Int      @default(20)
-  maxLevelRoleId    String?
+  maxLevelRoleId    String? // Discord-Rollen-ID, optional
   createdAt         DateTime @default(now())
   updatedAt         DateTime @updatedAt
 }
 
+// Level-Belohnungen
 model LevelReward {
   id        String   @id @default(uuid())
   level     Int      @unique
-  roleId    String?
-  reward    String?
+  roleId    String? // Discord Rolle
+  reward    String? // Beschreibung der Belohnung
   isActive  Boolean  @default(true)
   createdAt DateTime @default(now())
+
   @@index([level])
 }
 
+// Server-spezifische Levelrollen
 model LevelRole {
   id        String   @id @default(uuid())
-  guildId   String
+  guildId   String // Discord Server ID
   level     Int
-  roleId    String
+  roleId    String // Discord Rollen-ID
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
+
   @@unique([guildId, level])
   @@index([guildId])
   @@index([roleId])
 }
 
+// Server-spezifische Level-Up-Nachrichten
 model LevelUpMessage {
   id        String   @id @default(uuid())
-  guildId   String
+  guildId   String // Discord Server ID
   level     Int
-  message   String
+  message   String // Nachricht (kann Platzhalter enthalten)
   isActive  Boolean  @default(true)
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
+
   @@unique([guildId, level])
   @@index([guildId])
 }
 
+// ============================================================
+// SEKTION 9: Automatische Rollenvergabe
+// ============================================================
+
 model AutoRole {
   id             String          @id @default(uuid())
-  guildId        String?
+  guildId        String? // Multi-Guild-Trennung (nullable für Altdaten; neue Einträge IMMER gesetzt)
   roleId         String
   roleName       String
   triggerType    AutoRoleTrigger
-  triggerValue   String?
-  channelId      String?
-  messageId      String?
+  triggerValue   String? // z.B. Emoji, Level, Event-Name
+  channelId      String? // Für Reaction-Roles
+  messageId      String? // Für Reaction-Roles
   isActive       Boolean         @default(true)
-  expiresAt      DateTime?
-  blacklistRoles Json?
-  whitelistRoles Json?
+  expiresAt      DateTime? // Zeitlimitierte Rollen
+  blacklistRoles Json? // Blacklisted Rollen
+  whitelistRoles Json? // Whitelist Rollen
   createdAt      DateTime        @default(now())
   updatedAt      DateTime        @updatedAt
+
   @@index([guildId])
   @@index([triggerType])
   @@index([isActive])
 }
 
-enum AutoRoleTrigger { JOIN REACTION LEVEL ACTIVITY EVENT GIVEAWAY CUSTOM }
+enum AutoRoleTrigger {
+  JOIN
+  REACTION
+  LEVEL
+  ACTIVITY
+  EVENT
+  GIVEAWAY
+  CUSTOM
+}
 
 model UserRoleAssignment {
   id         String    @id @default(uuid())
   userId     String
   user       User      @relation(fields: [userId], references: [id], onDelete: Cascade)
   roleId     String
-  assignedBy String
+  assignedBy String // "auto" oder Admin-GUID
   reason     String?
   expiresAt  DateTime?
   isActive   Boolean   @default(true)
   createdAt  DateTime  @default(now())
+
   @@index([userId])
   @@index([roleId])
   @@index([isActive])
 }
 
+// ============================================================
+// SEKTION 10: Umfrage- & Abstimmungssystem
+// ============================================================
+
 model Poll {
   id            String     @id @default(uuid())
-  guildId       String?
+  guildId       String? // Mandantentrennung (nullable fuer Bestandsdaten)
   creatorId     String
   channelId     String
   messageId     String?
   title         String
   description   String?
-  options       Json
+  options       Json // Array von {id, text, emoji}
   pollType      PollType   @default(PUBLIC)
   allowMultiple Boolean    @default(false)
   maxChoices    Int        @default(1)
   endsAt        DateTime?
   status        PollStatus @default(ACTIVE)
   totalVotes    Int        @default(0)
-  results       Json?
-  notifyRoleId  String?
+  results       Json? // Ergebnisse nach Abschluss
+  notifyRoleId  String? // Rolle die bei Beendigung gepingt wird
   createdAt     DateTime   @default(now())
   updatedAt     DateTime   @updatedAt
-  votes         PollVote[]
+
+  // Relations
+  votes PollVote[]
+
   @@index([status])
   @@index([channelId])
   @@index([endsAt])
   @@index([guildId])
 }
 
-enum PollType { PUBLIC ANONYMOUS }
-enum PollStatus { ACTIVE ENDED ARCHIVED }
+enum PollType {
+  PUBLIC
+  ANONYMOUS
+}
+
+enum PollStatus {
+  ACTIVE
+  ENDED
+  ARCHIVED
+}
 
 model PollVote {
   id        String   @id @default(uuid())
@@ -534,32 +682,43 @@ model PollVote {
   user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
   optionId  String
   createdAt DateTime @default(now())
-  @@unique([pollId, userId, optionId])
+
+  @@unique([pollId, userId, optionId]) // Eine Stimme pro Option pro User
   @@index([pollId])
   @@index([userId])
 }
+
+// ============================================================
+// SEKTION 7 & 12: OAuth2-Organisation & Web-Dashboard
+// ============================================================
 
 model Session {
   id           String   @id @default(uuid())
   userId       String
   user         User     @relation(fields: [userId], references: [id], onDelete: Cascade)
   token        String   @unique
-  deviceInfo   String?
+  deviceInfo   String? // Device-Bindung
   ipAddress    String?
   expiresAt    DateTime
   isActive     Boolean  @default(true)
   lastActivity DateTime @default(now())
   createdAt    DateTime @default(now())
+
   @@index([userId])
   @@index([token])
   @@index([expiresAt])
   @@index([isActive])
 }
 
+/// Express-Session-Store-Tabelle fuer connect-pg-simple.
+/// Wird durch deploy/sql/003_session_table.sql idempotent angelegt.
+/// Hier nur deklariert, damit `prisma db push` sie NICHT als orphan droppt.
+/// @@ignore haelt sie ausserhalb des Prisma-Clients (kein Code-Zugriff).
 model pg_simple_session {
   sid    String   @id @db.VarChar
   sess   Json     @db.Json
   expire DateTime @db.Timestamp(6)
+
   @@index([expire], map: "IDX_session_expire")
   @@map("session")
   @@ignore
@@ -569,14 +728,15 @@ model OAuthToken {
   id              String    @id @default(uuid())
   userId          String
   user            User      @relation(fields: [userId], references: [id], onDelete: Cascade)
-  accessTokenEnc  String?
-  refreshTokenEnc String?
+  accessTokenEnc  String? // Optional: Access-Token nur im RAM (Sektion 12)
+  refreshTokenEnc String? // Verschlüsselter Refresh-Token
   tokenType       String    @default("Bearer")
   scope           String
   expiresAt       DateTime
   lastRefresh     DateTime?
   createdAt       DateTime  @default(now())
   updatedAt       DateTime  @updatedAt
+
   @@index([userId])
   @@index([expiresAt])
 }
@@ -585,15 +745,19 @@ model TwoFactorAuth {
   id                  String    @id @default(uuid())
   userId              String    @unique
   user                User      @relation(fields: [userId], references: [id], onDelete: Cascade)
-  secretEnc           String?
+  secretEnc           String? // Verschlüsselter TOTP Secret
   isEnabled           Boolean   @default(false)
-  backupCodes         Json?
+  backupCodes         Json? // Verschlüsselte Backup-Codes
   webauthnEnabled     Boolean   @default(false)
-  webauthnCredentials Json?
+  webauthnCredentials Json? // Array von WebAuthn Credentials
   verifiedAt          DateTime?
   createdAt           DateTime  @default(now())
   updatedAt           DateTime  @updatedAt
 }
+
+// ============================================================
+// SEKTION 11: Logging & Analytics + Audit-Log
+// ============================================================
 
 model AuditLog {
   id          String        @id @default(uuid())
@@ -608,8 +772,9 @@ model AuditLog {
   userAgent   String?
   channelId   String?
   guildId     String?
-  isImmutable Boolean       @default(true)
+  isImmutable Boolean       @default(true) // Revisionssicher, unveränderbar
   createdAt   DateTime      @default(now())
+
   @@index([actorId])
   @@index([targetId])
   @@index([action])
@@ -617,8 +782,39 @@ model AuditLog {
   @@index([createdAt])
 }
 
-enum AuditCategory { AUTH REGISTRATION UPLOAD DOWNLOAD MODERATION GIVEAWAY LEVEL ROLE POLL SECURITY ADMIN SYSTEM CONFIG GDPR AI FEED TRANSLATE APPEAL TICKET NITRADO ECONOMY CASINO DASHBOARD WHITELIST FACTION SERVER_SETTINGS EMBED KILLFEED WELCOME }
+enum AuditCategory {
+  AUTH
+  REGISTRATION
+  UPLOAD
+  DOWNLOAD
+  MODERATION
+  GIVEAWAY
+  LEVEL
+  ROLE
+  POLL
+  SECURITY
+  ADMIN
+  SYSTEM
+  CONFIG
+  GDPR
+  AI
+  FEED
+  TRANSLATE
+  APPEAL
+  TICKET
+  NITRADO
+  ECONOMY
+  CASINO
+  DASHBOARD
+  WHITELIST
+  FACTION
+  SERVER_SETTINGS
+  EMBED
+  KILLFEED
+  WELCOME
+}
 
+// Security-Events
 model SecurityEvent {
   id          String            @id @default(uuid())
   userId      String?
@@ -633,6 +829,7 @@ model SecurityEvent {
   resolvedBy  String?
   resolvedAt  DateTime?
   createdAt   DateTime          @default(now())
+
   @@index([eventType])
   @@index([severity])
   @@index([userId])
@@ -640,9 +837,31 @@ model SecurityEvent {
   @@index([createdAt])
 }
 
-enum SecurityEventType { LOGIN_FAILURE BRUTE_FORCE RATE_LIMIT_EXCEEDED SUSPICIOUS_ACTIVITY TOKEN_ABUSE UNAUTHORIZED_ACCESS DATA_BREACH_ATTEMPT MALWARE_DETECTED RAID_DETECTED SPAM_DETECTED IP_BLACKLISTED DEVICE_CHANGE PRIVILEGE_ESCALATION CUSTOM }
-enum SecuritySeverity { LOW MEDIUM HIGH CRITICAL }
+enum SecurityEventType {
+  LOGIN_FAILURE
+  BRUTE_FORCE
+  RATE_LIMIT_EXCEEDED
+  SUSPICIOUS_ACTIVITY
+  TOKEN_ABUSE
+  UNAUTHORIZED_ACCESS
+  DATA_BREACH_ATTEMPT
+  MALWARE_DETECTED
+  RAID_DETECTED
+  SPAM_DETECTED
+  IP_BLACKLISTED
+  DEVICE_CHANGE
+  PRIVILEGE_ESCALATION
+  CUSTOM
+}
 
+enum SecuritySeverity {
+  LOW
+  MEDIUM
+  HIGH
+  CRITICAL
+}
+
+// IP Blacklist/Whitelist
 model IpList {
   id        String    @id @default(uuid())
   ipAddress String    @unique
@@ -651,11 +870,19 @@ model IpList {
   addedBy   String
   expiresAt DateTime?
   createdAt DateTime  @default(now())
+
   @@index([listType])
   @@index([ipAddress])
 }
 
-enum ListType { BLACKLIST WHITELIST }
+enum ListType {
+  BLACKLIST
+  WHITELIST
+}
+
+// ============================================================
+// DSGVO-Compliance
+// ============================================================
 
 model GdprConsent {
   id             String    @id @default(uuid())
@@ -669,9 +896,11 @@ model GdprConsent {
   consentedAt    DateTime  @default(now())
   withdrawnAt    DateTime?
   updatedAt      DateTime  @updatedAt
+
   @@index([userId])
 }
 
+// Automatische Datenlöschung (DSGVO)
 model DataDeletionRequest {
   id          String         @id @default(uuid())
   userId      String
@@ -682,38 +911,66 @@ model DataDeletionRequest {
   completedAt DateTime?
   details     Json?
   createdAt   DateTime       @default(now())
+
   @@index([status])
   @@index([scheduledAt])
 }
 
-enum DeletionType { FULL_DELETION PARTIAL_DELETION DATA_EXPORT ANONYMIZATION }
-enum DeletionStatus { PENDING IN_PROGRESS COMPLETED FAILED }
+enum DeletionType {
+  FULL_DELETION
+  PARTIAL_DELETION
+  DATA_EXPORT
+  ANONYMIZATION
+}
+
+enum DeletionStatus {
+  PENDING
+  IN_PROGRESS
+  COMPLETED
+  FAILED
+}
+
+// ============================================================
+// Live-Feeds & externe APIs (Sektion 7)
+// ============================================================
 
 model Feed {
-  id             String    @id @default(uuid())
-  guildId        String?
-  name           String
-  feedType       FeedType
-  url            String
-  channelId      String
-  interval       Int       @default(300)
-  lastChecked    DateTime?
-  lastItemId     String?
-  isActive       Boolean   @default(true)
-  filters        Json?
-  mentionRoles   String[]  @default([])
-  webhookSecret  String?
-  credentialsEnc String?   @db.Text
-  createdBy      String
-  createdAt      DateTime  @default(now())
-  updatedAt      DateTime  @updatedAt
-  subscriptions  FeedSubscription[]
+  id            String    @id @default(uuid())
+  guildId       String? // Mandantentrennung (nullable fuer Bestandsdaten)
+  name          String
+  feedType      FeedType
+  url           String
+  channelId     String // Ziel-Channel
+  interval      Int       @default(300) // Sekunden
+  lastChecked   DateTime?
+  lastItemId    String?
+  isActive      Boolean   @default(true)
+  filters       Json? // Filterregeln
+  mentionRoles  String[]  @default([]) // Rollen, die bei jedem neuen Eintrag gepingt werden
+  webhookSecret String? // HMAC-Secret fuer eingehende Webhook-Posts (nur WEBHOOK-Typ)
+  credentialsEnc String? @db.Text // AES-256-GCM: pro-Feed API-Keys (YouTube-Key ODER Twitch-ID+Secret als JSON). null = globale ENV-Keys nutzen.
+  createdBy     String
+  createdAt     DateTime  @default(now())
+  updatedAt     DateTime  @updatedAt
+
+  // Relations
+  subscriptions FeedSubscription[]
+
   @@index([feedType])
   @@index([isActive])
   @@index([guildId])
 }
 
-enum FeedType { RSS TWITCH TWITTER STEAM NEWS YOUTUBE WEBHOOK CUSTOM }
+enum FeedType {
+  RSS
+  TWITCH
+  TWITTER
+  STEAM
+  NEWS
+  YOUTUBE
+  WEBHOOK
+  CUSTOM
+}
 
 model FeedSubscription {
   id        String   @id @default(uuid())
@@ -723,10 +980,15 @@ model FeedSubscription {
   user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
   notifyDm  Boolean  @default(false)
   createdAt DateTime @default(now())
+
   @@unique([feedId, userId])
   @@index([feedId])
   @@index([userId])
 }
+
+// ============================================================
+// Bot-Konfiguration (Admin-Config, Limits, Security-Policies)
+// ============================================================
 
 model BotConfig {
   id          String   @id @default(uuid())
@@ -737,59 +999,78 @@ model BotConfig {
   updatedBy   String?
   createdAt   DateTime @default(now())
   updatedAt   DateTime @updatedAt
+
   @@index([category])
   @@index([key])
 }
 
+// Rate-Limiting Tracking
 model RateLimitEntry {
   id          String   @id @default(uuid())
-  identifier  String
+  identifier  String // User-ID oder IP
   action      String
   count       Int      @default(1)
   windowStart DateTime @default(now())
   expiresAt   DateTime
+
   @@unique([identifier, action])
   @@index([identifier])
   @@index([expiresAt])
 }
 
+// ============================================================
+// SEKTION 7: API-Key Management
+// ============================================================
+
 model ApiKey {
   id          String    @id @default(uuid())
   userId      String
   name        String
-  keyHash     String    @unique
-  keyPrefix   String
-  permissions Json      @default("[]")
-  rateLimit   Int       @default(100)
+  keyHash     String    @unique // SHA-256 Hash des API-Keys
+  keyPrefix   String // Erste 8 Zeichen für Identifikation
+  permissions Json      @default("[]") // Array von erlaubten Aktionen
+  rateLimit   Int       @default(100) // Requests pro Minute
   isActive    Boolean   @default(true)
   lastUsedAt  DateTime?
   expiresAt   DateTime?
   createdAt   DateTime  @default(now())
   updatedAt   DateTime  @updatedAt
-  user        User      @relation(fields: [userId], references: [id])
+
+  user User @relation(fields: [userId], references: [id])
+
   @@index([userId])
   @@index([keyHash])
   @@index([keyPrefix])
 }
 
-enum TicketStatus { PENDING OPEN DENIED CLOSED }
+// ============================================================
+// TICKET-SYSTEM (Sektion: Owner-Kontakt via DM-Bridge)
+// ============================================================
+
+enum TicketStatus {
+  PENDING // Wartet auf Owner-Entscheidung
+  OPEN // Owner hat akzeptiert, Chat aktiv
+  DENIED // Owner hat abgelehnt
+  CLOSED // Beendet
+}
 
 model Ticket {
   id               String          @id @default(uuid())
   ticketNumber     Int             @unique @default(autoincrement())
-  userDiscordId    String
+  userDiscordId    String // Anfrage-Steller
   username         String
-  guildId          String?
+  guildId          String? // Server, von dem die Anfrage kam
   guildName        String?
   subject          String
   initialMessage   String          @db.Text
   status           TicketStatus    @default(PENDING)
-  ownerDiscordId   String
-  ownerNoticeMsgId String?
+  ownerDiscordId   String // Empfaenger (Bot-Owner)
+  ownerNoticeMsgId String? // Discord MessageId der DM mit Buttons (zum spaeteren Editieren)
   createdAt        DateTime        @default(now())
   updatedAt        DateTime        @updatedAt
   closedAt         DateTime?
   messages         TicketMessage[]
+
   @@index([userDiscordId])
   @@index([status])
   @@index([ticketNumber])
@@ -799,75 +1080,102 @@ model TicketMessage {
   id            String   @id @default(uuid())
   ticketId      String
   ticket        Ticket   @relation(fields: [ticketId], references: [id], onDelete: Cascade)
-  fromDiscordId String
-  fromRole      String
+  fromDiscordId String // Wer hat geschrieben
+  fromRole      String // 'USER' | 'OWNER'
   content       String   @db.Text
   createdAt     DateTime @default(now())
+
   @@index([ticketId])
   @@index([createdAt])
 }
 
+// ============================================================
+// GUILD-LEVEL SUPPORT-TICKET-SYSTEM (Dashboard Phase 6)
+// Eigenes System: Server-Owner konfigurieren bis zu 5 Templates,
+// User klickt im konfigurierten Channel auf den Embed-Button und
+// bekommt einen privaten Ticket-Channel. Beim Schliessen wird ein
+// Markdown-Transcript ins konfigurierte Transcript-Channel gepostet.
+// Trennt sich strikt vom Bot-Owner-DM-Bridge-Ticket-System oben.
+// ============================================================
+
 model TicketTemplate {
   id                  String           @id @default(uuid())
   guildId             String
-  slot                Int
-  label               String
-  buttonLabel         String?
-  welcomeText         String           @db.Text
-  welcomeMessages     Json             @default("[]")
-  embedTitle          String
-  embedDescription    String?          @db.Text
-  embedColor          String           @default("#dc2626")
-  postChannelId       String
-  postedMessageId     String?
-  categoryId          String?
-  staffRoleId         String?
-  managerRoleIds      String[]         @default([])
-  mentionRoleIds      String[]         @default([])
-  transcriptChannelId String
-  archiveChannelId    String?
+  slot                Int // 1..5 pro Guild
+  label               String // Anzeige-Name / Channel-Base (z.B. "Support") — Ticket-Ausgabe (Channel-Name + Transcript-Header)
+  buttonLabel         String? // Optionaler separater Button-Text (Knopf-Beschriftung). Falls leer, wird `label` als Fallback verwendet.
+  welcomeText         String           @db.Text // Legacy/Backward-Compat (= welcomeMessages[0])
+  welcomeMessages     Json             @default("[]") // Array<string>, max 5, je 1..2000 Zeichen
+  embedTitle          String // Titel des Public-Embeds mit Open-Button
+  embedDescription    String?          @db.Text // Optionaler Beschreibungs-Text im Public-Embed (0..4000 Zeichen). Falls null/leer -> Default-Text.
+  embedColor          String           @default("#dc2626") // Hex-Color
+  postChannelId       String // Channel, in dem der Embed mit Open-Button lebt
+  postedMessageId     String? // ID der zuletzt geposteten Embed-Nachricht (zum Edit)
+  categoryId          String? // Discord-Category, unter der Ticket-Channels erstellt werden (optional)
+  staffRoleId         String? // Rolle die mit-Zugriff auf jeden Ticket-Channel bekommt (optional, legacy single-role)
+  managerRoleIds      String[]         @default([]) // Multi-Manager-Rollen: View+Send+ReadHistory + dürfen Tickets schließen (server-side enforced)
+  mentionRoleIds      String[]         @default([]) // Rollen die beim Ticket-Open im Channel erwaehnt werden (max 5)
+  transcriptChannelId String // Channel fuer Transcript-Uploads beim Close
+  archiveChannelId    String? // Optionaler separater Archiv-Channel (zusaetzlich zu Transcript)
   isActive            Boolean          @default(true)
+  // Per-Template fortlaufender Ticket-Counter. Wird im Open-Flow atomar inkrementiert
+  // und als TicketInstance.templateNumber persistiert. Erlaubt parallele Nummernkreise
+  // pro Template (z.B. Support-0007 und Bewerbung-0007 nebeneinander).
   ticketCounter       Int              @default(0)
   createdAt           DateTime         @default(now())
   updatedAt           DateTime         @updatedAt
   instances           TicketInstance[]
+
   @@unique([guildId, slot])
   @@index([guildId])
 }
 
 model TicketInstance {
   id                  String         @id @default(uuid())
-  ticketNumber        Int            @unique @default(autoincrement())
+  ticketNumber        Int            @unique @default(autoincrement()) // Globale interne Sequenz (Legacy/Eindeutigkeit)
+  // Pro-Template fortlaufende Nummer. Wird beim Open atomar aus TicketTemplate.ticketCounter
+  // gezogen und fuer Channel-Name + Embed + Transcript verwendet. Nullable fuer Legacy-Rows
+  // vor der Migration 20260504_ticket_per_template_counter.
   templateNumber      Int?
   templateId          String
   template            TicketTemplate @relation(fields: [templateId], references: [id], onDelete: Cascade)
   guildId             String
-  channelId           String         @unique
+  channelId           String         @unique // Discord-Channel des Tickets
   openerDiscordId     String
   openerName          String
-  status              String         @default("OPEN")
+  status              String         @default("OPEN") // 'OPEN' | 'CLOSED'
   openedAt            DateTime       @default(now())
   closedAt            DateTime?
-  closedBy            String?
-  closedByName        String?
-  closeReason         String?
-  claimedBy           String?
-  claimedByName       String?
+  closedBy            String?        // Discord-Snowflake des Schliessenden (oder 'SYSTEM')
+  closedByName        String? // Display-Name beim Close-Zeitpunkt (Snapshot, kein Re-Lookup noetig)
+  closeReason         String? // Optionaler Schliess-Grund (per "Reason bearbeiten"-Modal editierbar)
+  claimedBy           String? // Discord-Snowflake des Staff der Ticket "claimed" hat
+  claimedByName       String? // Display-Name des Claimers (Snapshot)
   claimedAt           DateTime?
   transcriptMessageId String?
+  // Persistierte Transcripts: Markdown (Quelle) + HTML (Render) fuer die public Web-Ansicht.
+  // Public URL: /transcripts/<id> — KEINE Auth, ID ist UUID v4 (unguessable).
   transcriptText      String?        @db.Text
   transcriptHtml      String?        @db.Text
   transcriptCreatedAt DateTime?
-  userIds              String[]       @default([])
+  userIds          String[]        @default([])
+
   @@index([guildId, status])
   @@index([templateId])
   @@index([templateId, templateNumber])
 }
 
+// ============================================================
+// SEKTION 13: Guild-Awareness (Phase 6)
+// Stammdaten pro Discord-Guild, in der der Bot Mitglied ist.
+// Wird vom GuildAwareness-Modul aktuell gehalten und in AI-Prompts
+// eingespeist, damit die AI weiss, auf welchem Server sie ist.
+// ============================================================
+
 model GuildProfile {
-  guildId                  String    @id
+  guildId                  String    @id // Discord-Guild-ID
   name                     String
-  ownerId                  String?
+  ownerId                  String? // Discord-User-ID des Server-Owners
   ownerName                String?
   memberCount              Int       @default(0)
   channelCount             Int       @default(0)
@@ -875,17 +1183,21 @@ model GuildProfile {
   iconUrl                  String?
   preferredLocale          String?
   description              String?   @db.Text
-  features                 Json?
+  features                 Json? // string[] mit Discord-Guild-Features
+  // Phase 17a: Server-Erstellungsdatum (von Discord), damit Bot "wann wurde der Server erschaffen" beantworten kann.
   serverCreatedAt          DateTime?
-  channelsJson             Json?
-  rulesText                String?   @db.Text
+  // Phase 7: Channels & Rules Snapshot
+  channelsJson             Json? // Array<{ name, type, parent? }> ohne IDs
+  rulesText                String?   @db.Text // Inhalt des Rules-Channels (Topic + erste Pins)
   contentSyncedAt          DateTime?
-  aiPersonaOverride        String?   @db.Text
-  aiBrief                  String?   @db.Text
+  // Phase 8: Custom Persona-Override und AI-Brief
+  aiPersonaOverride        String?   @db.Text // Owner kann zusaetzlichen Persona-Hinweis setzen
+  aiBrief                  String?   @db.Text // Auto-generierter Kurz-Brief des Servers
   aiBriefAt                DateTime?
-  verificationLevel        String?
-  premiumTier              Int?
-  premiumSubscriptionCount Int?
+  // Phase 18: Erweiterte Server-Stammdaten fuer praezise AI-Kontextualisierung
+  verificationLevel        String? // NONE/LOW/MEDIUM/HIGH/VERY_HIGH
+  premiumTier              Int? // Boost-Stufe 0..3
+  premiumSubscriptionCount Int? // Anzahl aktiver Boosts
   vanityUrlCode            String?
   bannerUrl                String?
   splashUrl                String?
@@ -895,21 +1207,28 @@ model GuildProfile {
   rulesChannelName         String?
   publicUpdatesChannelName String?
   nsfwLevel                String?
-  mfaLevel                 String?
+  mfaLevel                 String? // NONE/ELEVATED
   emojiCount               Int?
   stickerCount             Int?
   isLarge                  Boolean?
   botCount                 Int?
-  topRolesJson             Json?
+  topRolesJson             Json? // [{ name, color, position, memberCount? }]
+  // Feedback-Channel: wenn gesetzt, werden /feedback-Embeds dorthin gespiegelt
   feedbackChannelId        String?
   joinedAt                 DateTime  @default(now())
   lastSyncedAt             DateTime  @default(now())
   updatedAt                DateTime  @updatedAt
-  knowledge                GuildKnowledge[]
-  members                  GuildMemberProfile[]
+
+  knowledge GuildKnowledge[]
+  members   GuildMemberProfile[]
+
   @@index([name])
 }
 
+// Phase 18: Pro Guild eine kompakte Member-Profil-Zeile.
+// Wird via messageCreate (throttled) und guildMemberAdd / guildMemberUpdate /
+// guildMemberRemove gepflegt. Erlaubt der AI, exakt zu wissen, wer welche
+// Rolle hat, wann er beigetreten ist und wann er zuletzt aktiv war.
 model GuildMemberProfile {
   id            String       @id @default(uuid())
   guildId       String
@@ -918,196 +1237,259 @@ model GuildMemberProfile {
   username      String?
   nickname      String?
   joinedAt      DateTime?
-  topRolesJson  Json?
+  topRolesJson  Json? // string[] der Top-Rollennamen (max 8)
   isBoosting    Boolean      @default(false)
   boostingSince DateTime?
   isPending     Boolean      @default(false)
   timeoutUntil  DateTime?
-  isLeft        Boolean      @default(false)
+  isLeft        Boolean      @default(false) // gesetzt bei guildMemberRemove
   leftAt        DateTime?
-  messageCount  Int          @default(0)
+  messageCount  Int          @default(0) // Pro Guild gezaehlt
   lastSeenAt    DateTime     @default(now())
   createdAt     DateTime     @default(now())
   updatedAt     DateTime     @updatedAt
+
   @@unique([guildId, discordId])
   @@index([guildId])
   @@index([discordId])
   @@index([guildId, lastSeenAt])
 }
 
+// Phase 8: Owner/Admin koennen pro Guild eigene Wissens-Snippets hinterlegen,
+// die der AI bei thematisch passenden Anfragen eingespeist werden (kompakter
+// keyword-basierter Match in contextBuilder).
 model GuildKnowledge {
-  id             String       @id @default(uuid())
-  guildId        String
-  guild          GuildProfile @relation(fields: [guildId], references: [guildId], onDelete: Cascade)
-  label          String
-  content        String       @db.Text
-  createdBy      String
-  isActive       Boolean      @default(true)
-  createdAt      DateTime     @default(now())
-  updatedAt      DateTime     @updatedAt
-  embedding      String?      @db.Text
+  id        String       @id @default(uuid())
+  guildId   String
+  guild     GuildProfile @relation(fields: [guildId], references: [guildId], onDelete: Cascade)
+  label     String // Kurzer Titel, dient zugleich als Schluesselwort-Trigger
+  content   String       @db.Text // Faktenblock, max ~2000 Zeichen empfohlen
+  createdBy String // Discord-User-ID des Erstellers
+  isActive  Boolean      @default(true)
+  createdAt DateTime     @default(now())
+  updatedAt DateTime     @updatedAt
+
+  // Phase 9 (RAG): Embedding-Cache. Vektor wird als JSON-Array von Floats serialisiert,
+  // damit auch ohne pgvector-Extension semantische Suche moeglich ist (JS-Fallback).
+  embedding      String?   @db.Text
   embeddingModel String?
   embeddedAt     DateTime?
+
   @@index([guildId])
   @@index([guildId, isActive])
 }
 
+// Phase 9b (RAG): Persistenter Embedding-Cache.
+// Verhindert doppelte Embedding-API-Calls fuer identische Texte (Snippets,
+// User-Fragen, Threads). Key = sha256(text) + Provider-Model-String. Survivt
+// Bot-Restarts und teilt Embeddings ueber Guilds hinweg.
 model EmbeddingCache {
   id         String   @id @default(uuid())
-  textHash   String
-  model      String
-  vector     String   @db.Text
-  dim        Int
+  textHash   String   // SHA-256 hex des trimmed lowercase Text
+  model      String   // z.B. 'gemini:text-embedding-004'
+  vector     String   @db.Text // JSON-Array von Floats
+  dim        Int      // Vektor-Dimension (Sanity-Check)
   useCount   Int      @default(1)
   createdAt  DateTime @default(now())
   lastUsedAt DateTime @default(now())
+
   @@unique([textHash, model])
   @@index([lastUsedAt])
 }
 
+// Phase 10 (B3 Modell-Check): Persistente Statistik je AI-Provider.
+// Wird nach jedem callAI-Aufruf in providerStats.recordCall() aktualisiert.
+// Dient als Grundlage fuer adaptive Provider-Reihenfolge (success rate gewichtet).
 model AiProviderStat {
   id               String    @id @default(uuid())
-  provider         String    @unique
+  provider         String    @unique // 'groq' | 'cerebras' | 'openrouter' | 'gemini' | 'openai'
   successCount     Int       @default(0)
   failureCount     Int       @default(0)
   rateLimitCount   Int       @default(0)
-  totalLatencyMs   BigInt    @default(0)
+  totalLatencyMs   BigInt    @default(0) // Summe ueber alle Erfolge -> Avg = totalLatencyMs / successCount
   lastSuccessAt    DateTime?
   lastFailureAt    DateTime?
   lastError        String?
+  // P0-Hardening: Persistente 429-Cooldowns ueber Restart hinweg + ueber
+  // Multi-Process-Replicas konsistent (Datenbank ist Single-Source-of-Truth).
   cooldownUntil    DateTime?
   cooldownReason   String?
-  cooldownStreak   Int       @default(0)
+  cooldownStreak   Int       @default(0) // aufeinander folgende 429 fuer exp. Backoff
   updatedAt        DateTime  @updatedAt
 }
 
+// Phase 14: Conversation Memory. Speichert pro (userId, channelId) die letzten
+// Turns zwischen User und Bot, damit /ai mit Kontext zu vorhergehenden Nachrichten
+// antworten kann. TTL wird im Modul (conversationMemory.ts) angewandt - hier nur
+// die Persistenz. Indexed nach (channelId, userId, createdAt) fuer schnelles Tail.
 model AiConversationTurn {
   id        String   @id @default(uuid())
   userId    String
   channelId String
   guildId   String?
-  role      String
+  role      String // 'user' | 'assistant'
   content   String   @db.Text
   createdAt DateTime @default(now())
+
   @@index([userId, channelId, createdAt])
   @@index([createdAt])
 }
 
+// Phase 17: Auto-Translate Scheduled Messages.
+// Speichert geplante / wiederkehrende Posts mit Auto-Translation.
+// - mode = 'once'         -> einmaliger Post zum scheduledFor
+// - mode = 'recurring'    -> recurrenceCron / recurrenceWeekday + recurrenceTime
+// - mode = 'now'          -> sofort (wird nach Versand auf isActive=false gesetzt)
 model TranslatedPost {
   id             String    @id @default(uuid())
   guildId        String
   channelId      String
   createdBy      String
   sourceText     String    @db.Text
-  sourceLang     String
-  targetLang     String
-  translatedText String?   @db.Text
-  customTitle    String?   @db.VarChar(200)
-  imageUrl       String?
-  rolePings      String?
-  mode           String
+  sourceLang     String // ISO-Kurzcode der Quellsprache (de/en/fr/...)
+  targetLang     String // ISO-Kurzcode der Zielsprache
+  translatedText String?   @db.Text // Wird beim ersten Versand befuellt + gecached
+  customTitle    String?   @db.VarChar(200) // Optionaler benutzerdefinierter Embed-Titel
+  imageUrl       String? // Optionale Bild-URL (Discord-Attachment-Link)
+  rolePings      String? // Comma-separated Discord-Role-IDs
+  mode           String // 'now' | 'once' | 'recurring'
   scheduledFor   DateTime?
-  recurrenceCron String?
+  recurrenceCron String? // Vereinfacht: "WEEKLY:MON:09:00" oder "DAILY:09:00"
   nextRunAt      DateTime?
   lastRunAt      DateTime?
   isActive       Boolean   @default(true)
   createdAt      DateTime  @default(now())
   updatedAt      DateTime  @updatedAt
+
   @@index([guildId, isActive])
   @@index([nextRunAt, isActive])
 }
 
+// ─── Phase B (Quick-Wins User) ───────────────────────────────────────────
+
+// /feedback: User-eingereichte Bug-Reports / Ideen / Lob.
+// Geht in Admin-Channel (per BotConfig.feedbackChannelId) und in DB.
 model Feedback {
   id              String    @id @default(cuid())
   guildId         String?
-  userId          String
+  userId          String // Discord-User-ID des Einreichers
   username        String
-  category        String
+  category        String // 'BUG' | 'IDEA' | 'PRAISE' | 'OTHER'
   subject         String    @db.VarChar(120)
   message         String    @db.Text
   attachmentUrl   String?
-  status          String    @default("OPEN")
+  status          String    @default("OPEN") // 'OPEN' | 'IN_REVIEW' | 'RESOLVED' | 'WONTFIX'
   adminNote       String?   @db.Text
-  reviewedBy      String?
+  reviewedBy      String? // Discord-ID des Admins
   reviewedAt      DateTime?
-  notifyChannelId String?
-  notifyMessageId String?
+  notifyChannelId String? // Channel, in den die Notify-Nachricht gepostet wurde
+  notifyMessageId String? // Message-ID der Notify-Nachricht (fuer Live-Status-Update)
   createdAt       DateTime  @default(now())
   updatedAt       DateTime  @updatedAt
+
   @@index([guildId, status, createdAt])
   @@index([userId])
 }
 
+// /erinnerung: User setzt Reminder per DM oder Channel.
+// Scheduler prueft alle 30s nextDueAt <= now() AND isActive.
 model Reminder {
   id           String   @id @default(cuid())
-  userId       String
+  userId       String // Discord-User-ID
   guildId      String?
-  channelId    String?
+  channelId    String? // Wenn null → DM
   message      String   @db.Text
   dueAt        DateTime
   isRecurring  Boolean  @default(false)
-  recurrenceMs Int?
+  recurrenceMs Int? // Bei isRecurring=true: Intervall in ms
   isActive     Boolean  @default(true)
   fireCount    Int      @default(0)
   createdAt    DateTime @default(now())
   updatedAt    DateTime @updatedAt
+
   @@index([userId, isActive])
   @@index([dueAt, isActive])
 }
 
+// /selfrole: Admin baut Self-Role-Menu, User bekommt/entfernt Rolle per Button.
+// Eine Message kann mehrere SelfRoleOption haben (bis zu 25 Buttons in 5 Rows).
 model SelfRoleMenu {
-  id              String           @id @default(cuid())
-  guildId         String
-  channelId       String
-  messageId       String?          @unique
-  title           String           @db.VarChar(120)
-  description     String?          @db.Text
-  mode            String           @default("MULTI")
-  isActive        Boolean          @default(true)
-  createdBy       String
-  createdAt       DateTime         @default(now())
-  updatedAt       DateTime         @updatedAt
-  options         SelfRoleOption[]
+  id          String           @id @default(cuid())
+  guildId     String
+  channelId   String
+  messageId   String?          @unique // gefuellt nach erstem Post
+  title       String           @db.VarChar(120)
+  description String?          @db.Text
+  mode        String           @default("MULTI") // 'MULTI' | 'SINGLE' (Single = nur eine Rolle gleichzeitig)
+  isActive    Boolean          @default(true)
+  createdBy   String
+  createdAt   DateTime         @default(now())
+  updatedAt   DateTime         @updatedAt
+  options     SelfRoleOption[]
+
+  // ── Reaktions-Embeds (Phase 2, additiv/non-breaking) ──────────────────
+  // Optionales Nachrichtendesign aus dem Embed-Builder statt Standard-Layout.
   embedId         String?
-  embed           DashboardEmbed?  @relation(fields: [embedId], references: [id], onDelete: SetNull)
-  componentType   String           @default("BUTTON")
-  assignMode      String           @default("TOGGLE")
+  embed           DashboardEmbed? @relation(fields: [embedId], references: [id], onDelete: SetNull)
+  // Interaktionsart: BUTTON (Buttons) | SELECT (Dropdown) | REACTION (Emoji-Reaktionen).
+  componentType   String          @default("BUTTON")
+  // Rollen-Verhalten: GIVE (nur geben) | REMOVE (nur entfernen) | TOGGLE (umschalten).
+  assignMode      String          @default("TOGGLE")
+  // Max. gleichzeitige Rollen aus diesem Menu pro User (nur MULTI; null = unbegrenzt).
   maxRolesPerUser Int?
-  archived        Boolean          @default(false)
+  // Archiviert: nicht mehr aktiv, aber historisch erhalten (keine Interaktion mehr).
+  archived        Boolean         @default(false)
+
   @@index([guildId, isActive])
   @@index([guildId, archived])
   @@index([embedId])
 }
 
 model SelfRoleOption {
-  id             String       @id @default(cuid())
-  menuId         String
-  menu           SelfRoleMenu @relation(fields: [menuId], references: [id], onDelete: Cascade)
-  roleId         String
-  label          String       @db.VarChar(80)
-  emoji          String?
-  description    String?      @db.VarChar(100)
-  position       Int          @default(0)
-  createdAt      DateTime     @default(now())
-  buttonStyle    String       @default("SECONDARY")
-  isActive       Boolean      @default(true)
-  roleIds        String[]     @default([])
-  confirmMessage String?      @db.VarChar(500)
+  id          String       @id @default(cuid())
+  menuId      String
+  menu        SelfRoleMenu @relation(fields: [menuId], references: [id], onDelete: Cascade)
+  // Primaerrolle (= roleIds[0]) — bleibt fuer Kompatibilitaet + Unique-Index.
+  roleId      String
+  label       String       @db.VarChar(80)
+  emoji       String?
+  description String?      @db.VarChar(100)
+  position    Int          @default(0)
+  createdAt   DateTime     @default(now())
+
+  // ── Reaktions-Embeds (Phase 2, additiv/non-breaking) ──────────────────
+  // Button-Farbe (nur componentType BUTTON): PRIMARY | SECONDARY | SUCCESS | DANGER.
+  buttonStyle String  @default("SECONDARY")
+  // Deaktivierte Optionen werden nicht mehr als Button/Select/Reaktion angeboten.
+  isActive    Boolean @default(true)
+
+  // ── ProBot-Stil (additiv/non-breaking) ────────────────────────────────
+  // Bis zu 5 Rollen pro Button/Option. Leerer Array => Fallback auf [roleId].
+  roleIds        String[] @default([])
+  // Personalisierte Bestaetigung, die der User beim Klick als Embed erhaelt.
+  confirmMessage String?  @db.VarChar(500)
+
   @@unique([menuId, roleId])
   @@index([menuId, position])
 }
 
+// ============================================================
+// EMBED-BUILDER (Dashboard-only) — eigenständige eingebettete
+// Nachrichten. Wird ausschliesslich ueber das Dashboard verwaltet
+// (keine Slash-/Prefix-Commands). messageId wird nach erstem Senden
+// gefuellt, damit spaeter editiert/synchronisiert werden kann.
+// ============================================================
 model DashboardEmbed {
   id            String   @id @default(uuid())
   guildId       String
   name          String   @db.VarChar(120)
-  channelId     String?  @db.VarChar(32)
-  messageId     String?  @unique
-  content       String?  @db.VarChar(2000)
+  channelId     String?  @db.VarChar(32) // Ziel-Channel (optional bis zum Senden)
+  messageId     String?  @unique // gefuellt nach erstem Post; ermoeglicht Edit/Sync
+  content       String?  @db.VarChar(2000) // Nachrichtentext ausserhalb des Embeds
   title         String?  @db.VarChar(256)
   description   String?  @db.Text
   url           String?  @db.VarChar(512)
-  color         String?  @db.VarChar(9)
+  color         String?  @db.VarChar(9) // #RRGGBB oder #AARRGGBB
   authorName    String?  @db.VarChar(256)
   authorIconUrl String?  @db.VarChar(512)
   authorUrl     String?  @db.VarChar(512)
@@ -1116,85 +1498,113 @@ model DashboardEmbed {
   thumbnailUrl  String?  @db.VarChar(512)
   imageUrl      String?  @db.VarChar(512)
   showTimestamp Boolean  @default(false)
-  fields        Json?
-  isTemplate    Boolean  @default(false)
-  isDraft       Boolean  @default(false)
+  fields        Json? // Array<{ name: string; value: string; inline: boolean }>, max 25
+  isTemplate    Boolean  @default(false) // wiederverwendbare Vorlage
+  isDraft       Boolean  @default(false) // noch nicht gesendeter Entwurf
   createdBy     String
   createdAt     DateTime @default(now())
   updatedAt     DateTime @updatedAt
+
+  // Reaktions-Embeds (Phase 2): dieses Embed kann als Nachrichtendesign eines
+  // SelfRoleMenu wiederverwendet werden (onDelete SetNull -> Menu bleibt erhalten).
   selfRoleMenus SelfRoleMenu[]
+
   @@index([guildId, isTemplate])
   @@index([guildId, isDraft])
   @@index([guildId, name])
 }
 
+// ============================================================
+// DASHBOARD V2 — MULTI-GUILD SELF-SERVICE
+// Strikte Guild + Nitrado-Server-Slot-Trennung. Siehe plan.md Phase 3.5.
+// ============================================================
+
+// Aktivierte Guilds im Dashboard. Wenn der Owner sich einloggt + den
+// Bot bereits in der Guild hat, wird hier ein Eintrag angelegt.
 model DashboardGuildLink {
   id             String   @id @default(cuid())
   guildId        String   @unique
   ownerDiscordId String
-  alias5         String   @unique @db.VarChar(5)
+  alias5         String   @unique @db.VarChar(5) // 5-stelliger Identifier (auch im Dashboard sichtbar)
   isActive       Boolean  @default(true)
   createdAt      DateTime @default(now())
   updatedAt      DateTime @updatedAt
+
   @@index([ownerDiscordId])
 }
 
-enum NitradoConnectionStatus { ACTIVE EXPIRED REVOKED PROBE_FAILED }
+enum NitradoConnectionStatus {
+  ACTIVE
+  EXPIRED
+  REVOKED
+  PROBE_FAILED
+}
 
+// Pro Guild bis zu 5 Slots fuer Nitrado-Tokens. Token verschluesselt.
 model NitradoConnection {
-  id                  String                  @id @default(cuid())
-  guildId             String
-  slot                Int
-  alias               String                  @db.VarChar(40)
-  alias5              String                  @unique @db.VarChar(5)
-  encryptedToken      String                  @db.Text
-  nitradoServerId     String?
-  serviceId           String?
-  status              NitradoConnectionStatus @default(ACTIVE)
-  lastValidatedAt     DateTime?
-  lastErrorMessage    String?                 @db.Text
-  keepOnlineEnabled   Boolean                 @default(false)
-  addedByDiscordId    String
-  createdAt           DateTime                @default(now())
-  updatedAt           DateTime                @updatedAt
-  serverSettings      ServerSettings[]
-  whitelistEntries    WhitelistEntry[]
-  whitelistRequests   WhitelistRequest[]
-  factions            Faction[]
-  factionConfigs      FactionSystemConfig[]
-  mirrorSnapshots     NitradoSnapshot[]
-  killfeedConfigs     KillfeedConfig[]
-  killfeedEvents      KillfeedEvent[]
-  jobs                NitradoJob[]
-  admCursors          NitradoAdmCursor[]
+  id               String                  @id @default(cuid())
+  guildId          String
+  slot             Int // 1..5
+  alias            String                  @db.VarChar(40)
+  alias5           String                  @unique @db.VarChar(5) // pro-Slot eigener 5-stelliger Identifier
+  encryptedToken   String                  @db.Text
+  nitradoServerId  String?
+  serviceId        String? // Nitrado-Service-ID
+  status           NitradoConnectionStatus @default(ACTIVE)
+  lastValidatedAt  DateTime?
+  lastErrorMessage String?                 @db.Text
+  keepOnlineEnabled Boolean                @default(false) // Phase 7 KEEP: Auto-Start bei gestopptem Server (nie aus suspended)
+  addedByDiscordId String
+  createdAt        DateTime                @default(now())
+  updatedAt        DateTime                @updatedAt
+
+  serverSettings    ServerSettings[]
+  whitelistEntries  WhitelistEntry[]
+  whitelistRequests WhitelistRequest[]
+  factions          Faction[]
+  factionConfigs    FactionSystemConfig[]
+  mirrorSnapshots   NitradoSnapshot[]
+  killfeedConfigs   KillfeedConfig[]
+  killfeedEvents    KillfeedEvent[]
+  jobs              NitradoJob[]
+  admCursors        NitradoAdmCursor[]
+
   @@unique([guildId, slot])
   @@index([guildId])
 }
 
+// Subuser-Permissions pro Guild. Owner darf delegieren, ausser
+// `nitrado.manage` (hardcoded blockiert auf Code-Ebene, hier nur Doku).
 model GuildPermissionGrant {
   id                 String   @id @default(cuid())
   guildId            String
   userDiscordId      String
-  permissions        Json
+  permissions        Json // { "economy.manage": true, "whitelist.view": true, ... }
   grantedByDiscordId String
   createdAt          DateTime @default(now())
   updatedAt          DateTime @updatedAt
+
   @@unique([guildId, userDiscordId])
   @@index([guildId])
 }
 
+/// Wie GuildPermissionGrant, aber zielt auf eine Discord-ROLLE statt auf einen
+/// einzelnen User. Beim Permission-Check werden alle Rollen des aktiven Users
+/// in der Guild gegen diese Tabelle geprueft (Vereinigung aller Rollen-Scopes).
 model GuildPermissionRoleGrant {
   id                 String   @id @default(cuid())
   guildId            String
   roleDiscordId      String
-  permissions        Json
+  permissions        Json // wie oben: Array von Scope-Strings
   grantedByDiscordId String
   createdAt          DateTime @default(now())
   updatedAt          DateTime @updatedAt
+
   @@unique([guildId, roleDiscordId])
   @@index([guildId])
 }
 
+// Settings pro (Guild + Nitrado-Slot). Whitelist/Economy/PermaOnly-Toggles.
 model ServerSettings {
   id                           String            @id @default(cuid())
   guildId                      String
@@ -1210,38 +1620,45 @@ model ServerSettings {
   whitelistDenyLogChannelId    String?
   createdAt                    DateTime          @default(now())
   updatedAt                    DateTime          @updatedAt
+
   @@unique([guildId, nitradoConnId])
   @@index([guildId])
 }
 
+// Fraktionen pro Guild. Optional an einen Nitrado-Slot gekoppelt (Legacy/DayZ).
+// Discord-only Mode: nitradoConnId = NULL.
 model Faction {
   id                 String             @id @default(cuid())
   guildId            String
   nitradoConnId      String?
   nitradoConn        NitradoConnection? @relation(fields: [nitradoConnId], references: [id], onDelete: Cascade)
   name               String             @db.VarChar(60)
-  flagUrl            String?            @db.Text
+  flagUrl            String?            @db.Text // optional: URL ODER lokaler Pfad /uploads/factions/...
   bannerUrl          String?            @db.Text
-  mediaUrl           String?            @db.Text
+  mediaUrl           String?            @db.Text // optionales JPG/MP4 (Armband/Logo)
   leaderDiscordId    String?
-  deputyDiscordId    String?
+  deputyDiscordId    String? // Stellvertretung (separat von Treasurer)
   treasurerDiscordId String?
   embedChannelId     String?
   embedMessageId     String?
-  roleId             String?
-  joinPolicy         String             @default("REQUEST")
-  status             String             @default("ACTIVE") @db.VarChar(16)
+  roleId             String? // Optionale Discord-Rolle: wird Mitgliedern automatisch zugewiesen / entfernt.
+  joinPolicy         String             @default("REQUEST") // 'OPEN' | 'REQUEST' | 'CLOSED'
+  status             String             @default("ACTIVE") @db.VarChar(16) // 'ACTIVE' | 'RECRUITING' | 'INACTIVE' | 'ARCHIVED'
   description        String?            @db.Text
-  color              String?            @db.VarChar(7)
+  color              String?            @db.VarChar(7) // Hex z.B. '#dc2626'
   isActive           Boolean            @default(true)
   createdAt          DateTime           @default(now())
   updatedAt          DateTime           @updatedAt
   members            FactionMember[]
+
+  // Discord-only Eindeutigkeit: ein Name pro Guild, unabhaengig vom Slot.
   @@unique([guildId, name])
   @@index([guildId])
   @@index([guildId, nitradoConnId])
 }
 
+// Globale Konfiguration des Fraktionssystems pro Guild (Discord-only).
+// nitradoConnId optional fuer Legacy-Setups, in der Praxis nur eine Config pro Guild.
 model FactionSystemConfig {
   id               String             @id @default(cuid())
   guildId          String             @unique
@@ -1251,6 +1668,7 @@ model FactionSystemConfig {
   listMessageId    String?
   createdAt        DateTime           @default(now())
   updatedAt        DateTime           @updatedAt
+
   @@index([guildId])
 }
 
@@ -1259,30 +1677,44 @@ model FactionMember {
   factionId     String
   faction       Faction  @relation(fields: [factionId], references: [id], onDelete: Cascade)
   userDiscordId String
-  role          String   @default("MEMBER")
+  role          String   @default("MEMBER") // 'LEADER' | 'TREASURER' | 'MEMBER' | 'PENDING'
   joinedAt      DateTime @default(now())
+
   @@unique([factionId, userDiscordId])
   @@index([userDiscordId])
 }
 
+// Whitelist auf Nitrado. DB ist Spiegel der Nitrado-API + lokale History.
 model WhitelistEntry {
-  id                  String             @id @default(cuid())
+  id                  String            @id @default(cuid())
   guildId             String
   nitradoConnId       String
-  nitradoConn         NitradoConnection  @relation(fields: [nitradoConnId], references: [id], onDelete: Cascade)
-  gameId              String
+  nitradoConn         NitradoConnection @relation(fields: [nitradoConnId], references: [id], onDelete: Cascade)
+  gameId              String // Spielername (Nitrado managed Whitelist by name)
   approvedByDiscordId String
-  source              String             @default("DIRECT")
-  approvedAt          DateTime           @default(now())
-  syncState           WhitelistSyncState @default(LOCAL_ONLY)
+  source              String            @default("DIRECT") // 'DIRECT' | 'REQUEST' | 'IMPORT'
+  approvedAt          DateTime          @default(now())
+  syncState           WhitelistSyncState @default(LOCAL_ONLY) // Phase 7 WL-V2: Remote/Lokal-Status
   lastSyncedAt        DateTime?
+
   @@unique([guildId, nitradoConnId, gameId])
   @@index([guildId])
   @@index([guildId, nitradoConnId, syncState])
 }
 
-enum WhitelistSyncState { LOCAL_ONLY SYNCED PENDING_REMOVE }
-enum WhitelistRequestStatus { PENDING APPROVED DENIED CANCELLED }
+// Phase 7 WL-V2: Abgleichstatus lokaler Whitelist gegen den Gameserver.
+enum WhitelistSyncState {
+  LOCAL_ONLY     // lokal vorhanden, noch nicht am Server
+  SYNCED         // lokal + remote vorhanden
+  PENDING_REMOVE // lokal entfernt, Remote-Entfernung ausstehend
+}
+
+enum WhitelistRequestStatus {
+  PENDING
+  APPROVED
+  DENIED
+  CANCELLED
+}
 
 model WhitelistRequest {
   id                 String                 @id @default(cuid())
@@ -1298,72 +1730,95 @@ model WhitelistRequest {
   decidedAt          DateTime?
   reason             String?                @db.Text
   createdAt          DateTime               @default(now())
+
   @@index([guildId, status])
 }
 
-// Phase 4 / ECO-S01..S05: Konfiguration pro Guild + Gameserver.
+// Economy-Konfiguration pro Guild.
 model EconomyConfig {
   id                    String   @id @default(cuid())
-  guildId               String
-  nitradoConnId         String?
+  guildId               String   @unique
   currencyName          String   @default("Coins") @db.VarChar(40)
   emoji                 String   @default("💰") @db.VarChar(40)
   enabled               Boolean  @default(false)
-  startBalance          Int      @default(0)
-  playtimeRewardPercent Int      @default(5)
+  startBalance          Int      @default(0) // bei guildMemberAdd, optional
+  playtimeRewardPercent Int      @default(5) // 5..unbegrenzt — pro Spielminute Coins
   bankChannelId         String?
-  bankInterestPercent   Int      @default(0)
+  bankInterestPercent   Int      @default(0) // pro Tag, optional
   createdAt             DateTime @default(now())
   updatedAt             DateTime @updatedAt
-  @@unique([guildId, nitradoConnId])
-  @@index([guildId, nitradoConnId])
+
+  @@index([guildId])
 }
 
+// Tages-Zinslauf (Phase 5). @@unique[guildId, runDate] verhindert doppelte
+// Zinsgutschrift am selben Tag. Die eigentliche Geld-Idempotenz kommt zusaetzlich
+// aus dem Ledger-Key `interest:<guild>:<date>:<user>`.
 model BankInterestRun {
   id               String   @id @default(cuid())
   guildId          String
-  nitradoConnId    String?
-  runDate          String   @db.VarChar(10)
+  runDate          String   @db.VarChar(10) // YYYY-MM-DD (Guild-Zeitzone)
   interestPercent  Int
   accountsCredited Int      @default(0)
   totalCredited    BigInt   @default(0)
   createdAt        DateTime @default(now())
-  @@unique([guildId, nitradoConnId, runDate])
-  @@index([guildId, nitradoConnId])
+
+  @@unique([guildId, runDate])
+  @@index([guildId])
 }
 
 model EconomyAccount {
   id             String   @id @default(cuid())
   guildId        String
-  nitradoConnId  String?
   userDiscordId  String
-  walletBalance  BigInt   @default(0)
-  bankBalance    BigInt   @default(0)
+  walletBalance  BigInt   @default(0) // direkt nutzbar (Casino, Pay)
+  bankBalance    BigInt   @default(0) // sicher (Zinsen, Transfer)
   lifetimeEarned BigInt   @default(0)
   lifetimeSpent  BigInt   @default(0)
   createdAt      DateTime @default(now())
   updatedAt      DateTime @updatedAt
-  @@unique([guildId, nitradoConnId, userDiscordId])
-  @@index([guildId, nitradoConnId])
+
+  @@unique([guildId, userDiscordId])
+  @@index([guildId])
 }
 
-enum EconomyTxType { PAY ADMIN_PAY DEPOSIT WITHDRAW TRANSFER CASINO_BET CASINO_PAYOUT PLAYTIME_REWARD STARTBALANCE_JOIN GRANT FINE INTEREST }
+enum EconomyTxType {
+  PAY
+  ADMIN_PAY
+  DEPOSIT
+  WITHDRAW
+  TRANSFER
+  CASINO_BET
+  CASINO_PAYOUT
+  PLAYTIME_REWARD
+  STARTBALANCE_JOIN
+  GRANT
+  FINE
+  INTEREST
+}
 
+// Audit-Trail jeder Balance-Aenderung. Atomar mit Account-Update.
 model EconomyTransaction {
   id                   String        @id @default(cuid())
   guildId              String
-  nitradoConnId         String?
-  userDiscordId        String
-  delta                BigInt
+  userDiscordId        String // Empfaenger der Aenderung
+  delta                BigInt // positiv = Gutschrift, negativ = Abzug
   type                 EconomyTxType
   reason               String?       @db.VarChar(200)
-  actorDiscordId       String?
-  counterpartDiscordId String?
+  actorDiscordId       String? // null bei System-Tx (Zinsen, Playtime)
+  counterpartDiscordId String? // bei Pay/Transfer der Andere
   createdAt            DateTime      @default(now())
-  @@index([guildId, nitradoConnId, userDiscordId, createdAt])
-  @@index([guildId, nitradoConnId, createdAt])
+
+  @@index([guildId, userDiscordId, createdAt])
+  @@index([guildId, createdAt])
 }
 
+// Idempotenter, strukturierter Buchungssatz (Phase 5). idempotencyKey (unique)
+// verhindert die Doppelbuchung derselben Quelle — z.B. ein AdmEvent-Reward, ein
+// Zins-Lauf oder eine Spielzeit-Gutschrift kann NIE zweimal Geld erzeugen
+// (Release-Blocker gegen Mehrfach-Auszahlung). Additiv neben EconomyTransaction:
+// der Audit-Trail bleibt unveraendert; walletDelta/bankDelta sind getrennt,
+// buckets = zugrunde liegende 10-Min-Einheiten (Playtime).
 model EconomyLedgerEntry {
   id             String        @id @default(cuid())
   idempotencyKey String        @unique @db.VarChar(200)
@@ -1377,12 +1832,20 @@ model EconomyLedgerEntry {
   buckets        Int           @default(0)
   sourceRef      String?       @db.VarChar(200)
   createdAt      DateTime      @default(now())
+
   @@index([guildId, userDiscordId, createdAt])
   @@index([guildId, nitradoConnId, type])
 }
 
-enum EconomyRewardTarget { WALLET BANK }
+enum EconomyRewardTarget {
+  WALLET
+  BANK
+}
 
+// Konfigurierbare Reward-Regel pro Slot (Phase 5). Haelt Basisbetrag, Ziel-Konto
+// und Anti-Farm-Limits. Standard `enabled=false` -> effektiver Betrag 0
+// (Shadow-sicher: erst bei bewusster Aktivierung fliesst Geld). ruleKey z.B.
+// 'pvp:default' oder 'playtime:default'.
 model EconomyRewardRule {
   id              String              @id @default(cuid())
   guildId         String
@@ -1396,10 +1859,15 @@ model EconomyRewardRule {
   cooldownSeconds Int                 @default(0)
   createdAt       DateTime            @default(now())
   updatedAt       DateTime            @updatedAt
+
   @@unique([guildId, nitradoConnId, ruleKey])
   @@index([guildId, nitradoConnId, enabled])
 }
 
+// Wirtschafts-Konfiguration pro Slot (Phase 5). `admRewardsEnabled` ist der
+// Master-Schalter fuer produktive ADM-Rewards: nur wenn er UND die jeweilige
+// EconomyRewardRule aktiv sind, wird spaeter echtes Geld gebucht (bis dahin
+// Shadow). `timezone` steuert Tagesgrenzen (dailyCap, Zinslauf).
 model EconomySlotConfig {
   id                String              @id @default(cuid())
   guildId           String
@@ -1410,12 +1878,24 @@ model EconomySlotConfig {
   timezone          String              @default("Europe/Berlin") @db.VarChar(64)
   createdAt         DateTime            @default(now())
   updatedAt         DateTime            @updatedAt
+
   @@unique([guildId, nitradoConnId])
   @@index([guildId])
 }
 
-enum GameIdentityStatus { PENDING VERIFIED UNLINKED }
+// Discord <-> Nitrado-Spielername Bindung: entfernt (Phase 7). Vereinheitlicht
+// auf GameIdentityLink (nur HMAC, kein Klartext-GUID).
 
+enum GameIdentityStatus {
+  PENDING
+  VERIFIED
+  UNLINKED
+}
+
+// Verifizierte Discord<->Spielidentitaet-Bindung (Phase 7, LINK-001). Die
+// Spielidentitaet (Steam64/DAYZ-GUID) wird NIE im Klartext gespeichert, nur als
+// HMAC (identityHash). Verifikation ueber einen In-Game-Chat-Code (challengeCode
+// mit Ablauf). Soft-Unlink behaelt die Historie (status=UNLINKED).
 model GameIdentityLink {
   id                 String             @id @default(cuid())
   guildId            String
@@ -1429,12 +1909,17 @@ model GameIdentityLink {
   unlinkedAt         DateTime?
   createdAt          DateTime           @default(now())
   updatedAt          DateTime           @updatedAt
+
   @@unique([guildId, nitradoConnId, userDiscordId])
   @@unique([guildId, nitradoConnId, identityHash])
   @@index([guildId, nitradoConnId, status])
   @@index([guildId, nitradoConnId, challengeCode])
 }
 
+// Server-Bann (Phase 7, BAN-001..005). Gebannt wird die HMAC-Identitaet (kein
+// Klartext-GUID). `appliedRemotely` haelt fest, ob der Bann am Gameserver
+// tatsaechlich durchgesetzt wurde — es wird KEINE erfundene Nitrado-Ban-API
+// vorausgesetzt; Durchsetzung nur ueber real vorhandene Capabilities.
 model ServerBanEntry {
   id                String    @id @default(cuid())
   guildId           String
@@ -1449,58 +1934,70 @@ model ServerBanEntry {
   active            Boolean   @default(true)
   appliedRemotely   Boolean   @default(false)
   updatedAt         DateTime  @updatedAt
+
   @@unique([guildId, nitradoConnId, identityHash])
   @@index([guildId, nitradoConnId, active])
 }
 
-enum CasinoGameType { SLOT COINFLIP DICE BLACKJACK }
-
-model CasinoGame {
-  id            String         @id @default(cuid())
-  guildId       String
-  nitradoConnId String?
-  type          CasinoGameType
-  enabled       Boolean        @default(true)
-  winChancePct  Int            @default(45)
-  minBet        BigInt         @default(1)
-  maxBet        BigInt         @default(10000)
-  payoutMult    Float          @default(2.0)
-  createdAt     DateTime       @default(now())
-  updatedAt     DateTime       @updatedAt
-  rounds        CasinoRound[]
-  @@unique([guildId, nitradoConnId, type])
-  @@index([guildId, nitradoConnId])
+enum CasinoGameType {
+  SLOT
+  COINFLIP
+  DICE
+  BLACKJACK
 }
 
+// Spiel-Konfiguration pro Guild und Spieltyp.
+model CasinoGame {
+  id           String         @id @default(cuid())
+  guildId      String
+  type         CasinoGameType
+  enabled      Boolean        @default(true)
+  winChancePct Int            @default(45) // 1..99
+  minBet       BigInt         @default(1)
+  maxBet       BigInt         @default(10000)
+  payoutMult   Float          @default(2.0) // Auszahlungsmultiplikator
+  createdAt    DateTime       @default(now())
+  updatedAt    DateTime       @updatedAt
+  rounds       CasinoRound[]
+
+  @@unique([guildId, type])
+}
+
+// Spielprotokoll. Provably-Fair: serverSeed + clientSeed + nonce.
 model CasinoRound {
   id            String     @id @default(cuid())
   gameId        String
   game          CasinoGame @relation(fields: [gameId], references: [id], onDelete: Cascade)
   guildId       String
-  nitradoConnId String?
   userDiscordId String
   bet           BigInt
   payout        BigInt     @default(0)
-  result        Json
+  result        Json // { won: bool, details: {...} }
   serverSeed    String     @db.VarChar(128)
   clientSeed    String?    @db.VarChar(128)
   nonce         BigInt     @default(0)
   createdAt     DateTime   @default(now())
-  @@index([guildId, nitradoConnId, userDiscordId, createdAt])
+
+  @@index([guildId, userDiscordId, createdAt])
   @@index([gameId, createdAt])
 }
 
+// DEV-Sessions (separater Login-Pfad fuer Live-Konsole).
 model DevSession {
   id            String    @id @default(cuid())
   userDiscordId String
-  scope         Json
+  scope         Json // { logs: true, restart: false, ... }
   expiresAt     DateTime
   createdAt     DateTime  @default(now())
   revokedAt     DateTime?
+
   @@index([userDiscordId])
   @@index([expiresAt])
 }
 
+// Bot-Admin-Session — globaler, passwortgeschuetzter Support-Bereich (analog
+// DevSession, aber eigene "Bot Admin"-Berechtigung). Wird per Passwort-Login
+// (BOT_ADMIN_PASSWORD) erzeugt und ist zeit-/revoke-gesteuert.
 model BotAdminSession {
   id            String    @id @default(cuid())
   userDiscordId String
@@ -1508,45 +2005,62 @@ model BotAdminSession {
   expiresAt     DateTime
   createdAt     DateTime  @default(now())
   revokedAt     DateTime?
+
   @@index([userDiscordId])
   @@index([expiresAt])
 }
 
+// DEV-Uploads (ADM/RPT/XML/JSON-Logs zur Analyse, Phase 2).
+// Per-User isoliert; TTL via expiresAt + Cleanup-Job.
+// Inhalt liegt unter uploads/dev-logs/<userDiscordId>/<id>/<safeName>.
 model DevUpload {
   id            String    @id @default(cuid())
   userDiscordId String
-  kind          String    @db.VarChar(8)
+  kind          String    @db.VarChar(8) // 'ADM' | 'RPT' | 'XML' | 'JSON'
   originalName  String    @db.VarChar(255)
-  storedPath    String    @db.VarChar(512)
+  storedPath    String    @db.VarChar(512) // relativ zu uploads/, z.B. dev-logs/<uid>/<id>/log.adm
   mimeType      String    @db.VarChar(120)
   sizeBytes     Int
   sha256        String    @db.VarChar(64)
   createdAt     DateTime  @default(now())
   expiresAt     DateTime
   deletedAt     DateTime?
+
   @@index([userDiscordId, createdAt])
   @@index([expiresAt])
 }
 
-enum IdempotencyStatus { PROCESSING DONE }
+// Idempotenz-Keys fuer alle Mutation-Routen (Haertung A1).
+enum IdempotencyStatus {
+  PROCESSING
+  DONE
+}
 
 model IdempotencyKey {
-  hash           String            @id
+  hash           String            @id // sha256 von (userId + route + body)
   status         IdempotencyStatus @default(DONE)
   responseBody   Json?
   responseStatus Int?
   createdAt      DateTime          @default(now())
   expiresAt      DateTime
+
   @@index([expiresAt])
 }
 
-enum NitradoJobStatus { PENDING RUNNING DONE FAILED DEAD }
+enum NitradoJobStatus {
+  PENDING
+  RUNNING
+  DONE
+  FAILED
+  DEAD
+}
 
+// Outbox fuer Nitrado-API-Calls (Haertung A2). Worker pickt PENDING + nextRunAt<=now.
 model NitradoJob {
   id            String           @id @default(cuid())
   guildId       String
   nitradoConnId String
-  operation     String           @db.VarChar(40)
+  operation     String           @db.VarChar(40) // 'WHITELIST_ADD' | 'WHITELIST_REMOVE' | 'KEEPALIVE' | 'DOWNLOAD_ADM' | 'RESTART_IF_DOWN'
   payload       Json
   status        NitradoJobStatus @default(PENDING)
   attempts      Int              @default(0)
@@ -1555,26 +2069,43 @@ model NitradoJob {
   lastError     String?          @db.Text
   createdAt     DateTime         @default(now())
   updatedAt     DateTime         @updatedAt
-  nitradoConn   NitradoConnection @relation(fields: [nitradoConnId], references: [id], onDelete: Cascade)
+
+  nitradoConn NitradoConnection @relation(fields: [nitradoConnId], references: [id], onDelete: Cascade)
+
   @@index([status, nextRunAt])
   @@index([guildId])
   @@index([nitradoConnId])
 }
 
+// ============================================================
+// ADM-SYNC-CURSOR — persistenter Cursor pro NitradoConnection,
+// damit Spielzeit-Rewards nach Bot-Restarts nicht verloren gehen.
+// Bewusst OHNE deklarierte Relation (wie NitradoJob) — nur
+// String-Felder, Scoping erfolgt im Code ueber guildId+nitradoConnId.
+// ============================================================
 model NitradoAdmCursor {
   id             String   @id @default(cuid())
   guildId        String
   nitradoConnId  String
-  lastModifiedAt Int
+  lastModifiedAt Int // Unix-Sekunden der zuletzt erfolgreich verarbeiteten ADM-Datei
   lastFileName   String?
   createdAt      DateTime @default(now())
   updatedAt      DateTime @updatedAt
-  nitradoConn    NitradoConnection @relation(fields: [nitradoConnId], references: [id], onDelete: Cascade)
+
+  nitradoConn NitradoConnection @relation(fields: [nitradoConnId], references: [id], onDelete: Cascade)
+
   @@unique([guildId, nitradoConnId])
   @@index([guildId])
   @@index([nitradoConnId])
 }
 
+// ============================================================
+// PHASE 3: Kanonische ADM-Eventpipeline (Release-Blocker gegen
+// Mehrfach-Auszahlung). Genau EIN Ingestor schreibt AdmEvent;
+// Rewards sind ueber (admEventId + rewardRuleId) idempotent.
+// ============================================================
+
+// Byte-genauer Quellcursor pro ADM-Datei (append-only Ingestion).
 model AdmSourceCursor {
   id                  String    @id @default(cuid())
   guildId             String
@@ -1590,12 +2121,30 @@ model AdmSourceCursor {
   lastError           String?   @db.Text
   createdAt           DateTime  @default(now())
   updatedAt           DateTime  @updatedAt
+
   @@unique([guildId, nitradoConnId, fileIdentity])
   @@index([guildId, nitradoConnId])
 }
 
-enum AdmEventType { PLAYER_CONNECTED PLAYER_DISCONNECTED PLAYER_HIT PLAYER_KILLED PLAYER_DIED PLAYER_SUICIDE NPC_KILL VEHICLE_DEATH BUILD DISMANTLE DESTROY PLACEMENT PLAYER_POSITION UNKNOWN }
+enum AdmEventType {
+  PLAYER_CONNECTED
+  PLAYER_DISCONNECTED
+  PLAYER_HIT
+  PLAYER_KILLED
+  PLAYER_DIED
+  PLAYER_SUICIDE
+  NPC_KILL
+  VEHICLE_DEATH
+  BUILD
+  DISMANTLE
+  DESTROY
+  PLACEMENT
+  PLAYER_POSITION
+  UNKNOWN
+}
 
+// Normalisiertes, eindeutiges Logereignis. eventKey (Hash aus Datei +
+// Byteposition + Inhalt) garantiert Idempotenz gegen Neuverarbeitung.
 model AdmEvent {
   id              String       @id @default(cuid())
   eventKey        String       @unique @db.VarChar(64)
@@ -1619,12 +2168,21 @@ model AdmEvent {
   parserVersion   Int          @default(1)
   parseStatus     String
   createdAt       DateTime     @default(now())
+
   @@index([guildId, nitradoConnId, occurredAt])
   @@index([eventType, occurredAt])
 }
 
-enum RewardDecisionStatus { PENDING PAID SKIPPED REVIEW FAILED_RETRYABLE ERROR }
+enum RewardDecisionStatus {
+  PENDING
+  PAID
+  SKIPPED
+  REVIEW
+  FAILED_RETRYABLE
+  ERROR
+}
 
+// Idempotente Reward-Entscheidung: genau eine je (AdmEvent + RewardRule).
 model RewardDecision {
   id            String               @id @default(cuid())
   admEventId    String
@@ -1639,12 +2197,21 @@ model RewardDecision {
   ledgerEntryId String?
   createdAt     DateTime             @default(now())
   updatedAt     DateTime             @updatedAt
+
   @@unique([admEventId, rewardRuleId])
   @@index([guildId, nitradoConnId, status])
 }
 
-enum PlayerSessionStatus { OPEN CLOSED }
+enum PlayerSessionStatus {
+  OPEN
+  CLOSED
+}
 
+// Aus PLAYER_CONNECTED/PLAYER_DISCONNECTED AdmEvents abgeleitete Spielsitzung.
+// connectEventId ist eindeutig -> dieselbe Connect-Zeile erzeugt nie zwei
+// Sessions (idempotent). bucketsEarned = abgeschlossene 10-Min-Intervalle fuer
+// spaetere Spielzeitbelohnungen (Phase 5); bucketsCredited verhindert
+// Doppel-Gutschrift beim spaeteren Buchen.
 model PlayerSession {
   id                String              @id @default(cuid())
   guildId           String
@@ -1661,32 +2228,47 @@ model PlayerSession {
   status            PlayerSessionStatus @default(OPEN)
   createdAt         DateTime            @default(now())
   updatedAt         DateTime            @updatedAt
+
   @@index([guildId, nitradoConnId, gameId])
   @@index([guildId, nitradoConnId, status])
 }
 
-enum NitradoSnapshotStatus { RUNNING OK PARTIAL FAILED }
+// ============================================================
+// NITRADO MIRROR (READ-ONLY) — Einmaliger Voll-Snapshot pro
+// NitradoConnection. Strikt nur GET-Aufrufe. Datei-Inhalte
+// inhaltsadressiert auf Disk unter
+// uploads/nitrado-mirror/<connId>/<sha256>. Zweck: lückenlose
+// Quelle für Bot-/KI-Antworten zu DayZ-Server-Daten.
+// ============================================================
+
+enum NitradoSnapshotStatus {
+  RUNNING
+  OK
+  PARTIAL
+  FAILED
+}
 
 model NitradoSnapshot {
   id              String                @id @default(cuid())
   guildId         String
   nitradoConnId   String
   nitradoConn     NitradoConnection     @relation(fields: [nitradoConnId], references: [id], onDelete: Cascade)
-  serviceId       String?
+  serviceId       String? // Nitrado-Service-ID zum Snapshot-Zeitpunkt
   startedAt       DateTime              @default(now())
   finishedAt      DateTime?
   status          NitradoSnapshotStatus @default(RUNNING)
   totalFiles      Int                   @default(0)
   totalDirs       Int                   @default(0)
   totalBytes      BigInt                @default(0)
-  storedBytes     BigInt                @default(0)
-  oversizeFiles   Int                   @default(0)
+  storedBytes     BigInt                @default(0) // tatsächlich auf Disk geschrieben (ohne übergroße)
+  oversizeFiles   Int                   @default(0) // > MAX_FILE_BYTES, nur Meta gespeichert
   errorCount      Int                   @default(0)
   lastError       String?               @db.Text
-  triggeredBy     String
-  settingsJson    Json?
-  serviceMetaJson Json?
+  triggeredBy     String // Discord-User-Id
+  settingsJson    Json? // komplettes /services/{id}/gameservers Antwort-Objekt
+  serviceMetaJson Json? // Eintrag aus /services
   files           NitradoSnapshotFile[]
+
   @@index([guildId, nitradoConnId, startedAt])
   @@index([nitradoConnId, status])
 }
@@ -1695,7 +2277,7 @@ model NitradoSnapshotFile {
   id          String          @id @default(cuid())
   snapshotId  String
   snapshot    NitradoSnapshot @relation(fields: [snapshotId], references: [id], onDelete: Cascade)
-  path        String          @db.VarChar(1024)
+  path        String          @db.VarChar(1024) // absoluter Pfad innerhalb des Gameservers
   name        String          @db.VarChar(512)
   parentDir   String          @db.VarChar(1024)
   isDir       Boolean         @default(false)
@@ -1704,38 +2286,54 @@ model NitradoSnapshotFile {
   sha256      String?         @db.VarChar(64)
   mimeGuess   String?         @db.VarChar(120)
   isText      Boolean         @default(false)
-  contentText String?         @db.Text
-  storedPath  String?         @db.VarChar(512)
-  oversize    Boolean         @default(false)
+  contentText String?         @db.Text // nur für Text < INLINE_TEXT_BYTES
+  storedPath  String?         @db.VarChar(512) // relativ zu uploads/, falls auf Disk
+  oversize    Boolean         @default(false) // übergroß: nur Meta
   errorMsg    String?         @db.Text
+
   @@index([snapshotId, parentDir])
   @@index([snapshotId, name])
   @@index([snapshotId, sha256])
 }
 
-enum KillCategory { DEATH SUICIDE NPC VEHICLE }
+// ============================================================
+// KILLFEED — Live-PvP-Tracking aus DayZ ADM-Logs
+// Polling im 60s-Takt mit ETag/If-Modified-Since.
+// ============================================================
+enum KillCategory {
+  DEATH
+  SUICIDE
+  NPC
+  VEHICLE
+}
 
 model KillfeedConfig {
-  id                String            @id @default(cuid())
-  guildId           String
-  nitradoConnId     String
-  nitradoConn       NitradoConnection @relation(fields: [nitradoConnId], references: [id], onDelete: Cascade)
-  channelId         String            @db.VarChar(32)
-  isActive          Boolean           @default(true)
-  categories        KillCategory[]
-  showShooterCoords Boolean           @default(false)
-  showVictimCoords  Boolean           @default(true)
-  showWeapon        Boolean           @default(true)
-  showDistance      Boolean           @default(true)
-  embedColor        String            @default("#dc2626") @db.VarChar(9)
-  lastEventAt       DateTime?
-  lastEtag          String?           @db.VarChar(128)
-  lastFileName      String?           @db.VarChar(256)
-  lastByteOffset    BigInt            @default(0)
-  lastPolledAt      DateTime?
-  lastErrorMsg      String?           @db.Text
-  createdAt         DateTime          @default(now())
-  updatedAt         DateTime          @updatedAt
+  id            String            @id @default(cuid())
+  guildId       String
+  nitradoConnId String
+  nitradoConn   NitradoConnection @relation(fields: [nitradoConnId], references: [id], onDelete: Cascade)
+  channelId     String            @db.VarChar(32)
+  isActive      Boolean           @default(true)
+  categories    KillCategory[]
+
+  // Anzeige-Toggles
+  showShooterCoords Boolean @default(false)
+  showVictimCoords  Boolean @default(true)
+  showWeapon        Boolean @default(true)
+  showDistance      Boolean @default(true)
+  embedColor        String  @default("#dc2626") @db.VarChar(9)
+
+  // Polling-State
+  lastEventAt    DateTime?
+  lastEtag       String?   @db.VarChar(128)
+  lastFileName   String?   @db.VarChar(256)
+  lastByteOffset BigInt    @default(0)
+  lastPolledAt   DateTime?
+  lastErrorMsg   String?   @db.Text
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
   @@unique([guildId, nitradoConnId, channelId])
   @@index([guildId, nitradoConnId])
   @@index([guildId, isActive])
@@ -1757,10 +2355,15 @@ model KillfeedEvent {
   rawLine       String            @db.Text
   postedAt      DateTime?
   createdAt     DateTime          @default(now())
+
   @@index([guildId, nitradoConnId, occurredAt])
   @@index([guildId, nitradoConnId, category])
 }
 
+// Killfeed V2: Zustellungs-Journal, getrennt von der Anzeige. @@unique[configId,
+// admEventId] garantiert, dass ein normalisiertes AdmEvent pro Killfeed-Config
+// GENAU EINMAL zugestellt wird (KILL-001, keine Duplikate). Aus AdmEvent
+// abgeleitet; unverlinkter Killer wird trotzdem angezeigt (KILL-ECO-001).
 model KillfeedDelivery {
   id          String   @id @default(cuid())
   configId    String
@@ -1769,6 +2372,7 @@ model KillfeedDelivery {
   channelId   String   @db.VarChar(32)
   messageId   String?  @db.VarChar(32)
   deliveredAt DateTime @default(now())
+
   @@unique([configId, admEventId])
   @@index([guildId, admEventId])
 }
