@@ -80,8 +80,8 @@ function makeClient() {
   return { client, rows, key };
 }
 
-const guildId = asGuildId('guild-1');
-const connId = asNitradoConnId('conn-1');
+const guildId = asGuildId('123456789012345678');
+const connId = asNitradoConnId('c123456789012345678901234');
 const t1 = new Date('2026-08-14T08:00:00Z');
 
 describe('NIT-001 validation health', () => {
@@ -134,7 +134,7 @@ describe('NIT-001 validation health', () => {
 
   it('trennt den Diagnosezustand strikt nach Guild+Connection', async () => {
     const { client, rows, key } = makeClient();
-    const otherGuild = asGuildId('guild-2');
+    const otherGuild = asGuildId('223456789012345678');
     await recordValidationFailure(guildId, connId, 'one', t1, client);
     await recordValidationFailure(otherGuild, connId, 'two', t1, client);
 
