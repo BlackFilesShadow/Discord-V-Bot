@@ -60,7 +60,7 @@ const encryptMock = jest.fn((text: string) => `cipher:${text}`);
 jest.mock('../../src/utils/security', () => ({
   __esModule: true,
   decrypt: (...a: unknown[]) => decryptMock(...a),
-  encrypt: (...a: unknown[]) => encryptMock(...a),
+  encrypt: encryptMock,
 }));
 
 const addToWhitelist = jest.fn();
