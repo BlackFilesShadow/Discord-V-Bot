@@ -12,6 +12,8 @@ import {
   pay,
   upsertConfig,
 } from '../../src/modules/economy/repository';
+import { bookLedgerEntry, type LedgerClient } from '../../src/modules/economy/ledger';
+import { runDailyInterestForServer, type BankInterestClient } from '../../src/modules/economy/bankInterest';
 import {
   asGuildId,
   asNitradoConnId,
@@ -28,6 +30,7 @@ const connA = asNitradoConnId('c111111111111111111111111');
 const connB = asNitradoConnId('c222222222222222222222222');
 
 async function cleanup(): Promise<void> {
+  await prisma.bankInterestRun.deleteMany({ where: { guildId } });
   await prisma.economyLedgerEntry.deleteMany({ where: { guildId } });
   await prisma.economyTransaction.deleteMany({ where: { guildId } });
   await prisma.economyAccount.deleteMany({ where: { guildId } });
@@ -126,6 +129,70 @@ describeDb('Phase 4 Economy PostgreSQL two-server isolation', () => {
       select: { nitradoConnId: true },
     });
     expect(payTx).toHaveLength(2);
-    expect(payTx.every(row => row.nitradoConnId === connA)).toBe(true);
+    expect(payTx.every((row) => row.nitradoConnId === connA)).toBe(true);
+  });
+
+  it('verwendet echte Prisma-Compound-Keys fuer Ledger und Bankzinsen pro Gameserver', async () => {
+    const ledgerClient = prisma as unknown as LedgerClient;
+    await bookLedgerEntry(ledgerClient, {
+      idempotencyKey: 'phase4-interest-seed-a',
+      guildId,
+      nitradoConnId: connA,
+      userDiscordId: payerId,
+      bankDelta: 1_000n,
+      type: 'GRANT',
+      reason: 'Integration seed A',
+    });
+    await bookLedgerEntry(ledgerClient, {
+      idempotencyKey: 'phase4-interest-seed-b',
+      guildId,
+      nitradoConnId: connB,
+      userDiscordId: payerId,
+      bankDelta: 2_000n,
+      type: 'GRANT',
+      reason: 'Integration seed B',
+    });
+
+    const interestClient = prisma as unknown as BankInterestClient;
+    const runDate = '2099-08-14';
+    const firstA = await runDailyInterestForServer(interestClient, {
+      guildId,
+      nitradoConnId: connA,
+      percent: 5,
+      runDate,
+    });
+    const duplicateA = await runDailyInterestForServer(interestClient, {
+      guildId,
+      nitradoConnId: connA,
+      percent: 5,
+      runDate,
+    });
+    const firstB = await runDailyInterestForServer(interestClient, {
+      guildId,
+      nitradoConnId: connB,
+      percent: 5,
+      runDate,
+    });
+
+    expect(firstA).toEqual({ credited: 1, total: 50n, skipped: false });
+    expect(duplicateA).toEqual({ credited: 0, total: 0n, skipped: true });
+    expect(firstB).toEqual({ credited: 1, total: 100n, skipped: false });
+
+    const [accountA, accountB] = await Promise.all([
+      getAccountOrZero(guildId, connA, payerId),
+      getAccountOrZero(guildId, connB, payerId),
+    ]);
+    expect(accountA.bankBalance).toBe(1_050n);
+    expect(accountB.bankBalance).toBe(2_100n);
+
+    const runs = await prisma.bankInterestRun.findMany({
+      where: { guildId, runDate },
+      orderBy: { nitradoConnId: 'asc' },
+      select: { nitradoConnId: true, totalCredited: true },
+    });
+    expect(runs).toEqual([
+      { nitradoConnId: connA, totalCredited: 50n },
+      { nitradoConnId: connB, totalCredited: 100n },
+    ]);
   });
 });
