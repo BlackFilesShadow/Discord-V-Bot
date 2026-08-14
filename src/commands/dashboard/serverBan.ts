@@ -12,6 +12,8 @@
  *   unter dem per-Connection-Lock zuerst die echte Nitrado-Whitelist und setzt
  *   erst anschliessend die Banlist.
  * - Klartext-Identifier werden nicht in ServerBanEntry oder Audit-Logs gespeichert.
+ * - Fuer zeitlich begrenzte Banns wird der Identifier nur AES-verschluesselt bis
+ *   zur einmaligen Ablaufmeldung im urspruenglichen Command-Kanal gehalten.
  */
 
 import {
@@ -31,7 +33,7 @@ import {
   type BanOutboxClient,
 } from '../../modules/bans/banOutbox';
 import { config } from '../../config';
-import { decrypt } from '../../utils/security';
+import { decrypt, encrypt } from '../../utils/security';
 import { logAudit } from '../../utils/logger';
 import { NitradoClient } from '../../modules/nitrado/nitradoClient';
 import {
@@ -128,13 +130,14 @@ export const serverBanCommand: Command = {
     const expiresAt = durationMinutes
       ? new Date(now.getTime() + durationMinutes * 60_000)
       : null;
+    const noticeIdentifierEnc = expiresAt
+      ? encrypt(identifier, config.security.encryptionKey)
+      : null;
 
     const results: string[] = [];
     for (const target of targets) {
       const label = targetLabel(target);
       try {
-        // Eine lokale Transaktion pro Server: Whitelist-Desired-State darf nie
-        // ohne die dazugehoerige Ban-Wahrheit/Outbox verschwinden und umgekehrt.
         const stored = await prisma.$transaction(async tx => {
           await tx.whitelistEntry.deleteMany({
             where: { guildId: scope.guildId, nitradoConnId: target.id, gameId: identifier },
@@ -174,6 +177,39 @@ export const serverBanCommand: Command = {
           });
           if (!row) throw new Error('Server-Ban konnte nach dem Anlegen nicht wiedergefunden werden.');
 
+          if (expiresAt && noticeIdentifierEnc) {
+            await tx.serverBanExpiryNotice.upsert({
+              where: { banId: row.id },
+              create: {
+                banId: row.id,
+                guildId: scope.guildId,
+                nitradoConnId: target.id,
+                channelId: interaction.channelId,
+                identifierEnc: noticeIdentifierEnc,
+                expiresAt,
+                status: 'PENDING',
+                nextAttemptAt: expiresAt,
+              },
+              update: {
+                guildId: scope.guildId,
+                nitradoConnId: target.id,
+                channelId: interaction.channelId,
+                identifierEnc: noticeIdentifierEnc,
+                expiresAt,
+                status: 'PENDING',
+                attempts: 0,
+                nextAttemptAt: expiresAt,
+                leaseUntil: null,
+                remoteRemovedAt: null,
+                sentAt: null,
+                messageId: null,
+                lastError: null,
+              },
+            });
+          } else {
+            await tx.serverBanExpiryNotice.deleteMany({ where: { banId: row.id } });
+          }
+
           const queued = await enqueueServerBanAdd(
             tx as unknown as BanOutboxClient,
             banScope,
@@ -192,6 +228,7 @@ export const serverBanCommand: Command = {
           actor: scope.actorDiscordId,
           banId: stored.id,
           expiresAt: expiresAt?.toISOString() ?? null,
+          expiryNoticeChannelId: expiresAt ? interaction.channelId : null,
           remoteQueued: stored.queued,
           whitelistDesiredRemovedFirst: true,
           remoteSequence: 'WHITELIST_REMOVE_THEN_BAN',
@@ -256,9 +293,6 @@ export const serverUnbanCommand: Command = {
       const label = targetLabel(target);
       try {
         const queued = await prisma.$transaction(async tx => {
-          // Reconcile-Anker: auch ein extern/manuell gesetzter Nitrado-Bann ohne
-          // lokale Registry-Zeile kann dadurch ueber die bestehende sichere
-          // REMOVE-Outbox per HMAC gefunden und entfernt werden.
           const row = await tx.serverBanEntry.upsert({
             where: {
               guildId_nitradoConnId_identityHash: {
@@ -286,6 +320,21 @@ export const serverUnbanCommand: Command = {
             select: { id: true },
           });
 
+          await tx.serverBanExpiryNotice.updateMany({
+            where: {
+              banId: row.id,
+              guildId: scope.guildId,
+              nitradoConnId: target.id,
+              status: { in: ['PENDING', 'READY', 'SENDING', 'FAILED'] },
+            },
+            data: {
+              status: 'CANCELLED',
+              identifierEnc: null,
+              leaseUntil: null,
+              lastError: null,
+            },
+          });
+
           return enqueueServerBanRemove(
             tx as unknown as BanOutboxClient,
             { guildId: scope.guildId, nitradoConnId: target.id },
@@ -301,6 +350,7 @@ export const serverUnbanCommand: Command = {
           actor: scope.actorDiscordId,
           remoteQueued: queued,
           directIdentifier: true,
+          automaticExpiryNotice: false,
         });
         results.push(`✅ **${label}** — Remote-Unban ${queued ? 'eingereiht' : 'bereits in Bearbeitung'}.`);
       } catch (error) {
