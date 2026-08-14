@@ -18,6 +18,10 @@ const POLL_INTERVAL_MS = 60_000;
 let timer: NodeJS.Timeout | null = null;
 let running = false;
 
+export function killfeedChannelBelongsToGuild(configGuildId: string, channelGuildId: string): boolean {
+  return configGuildId === channelGuildId;
+}
+
 export async function deliverKillfeedV2Once(): Promise<void> {
   if (running) return;
   running = true;
@@ -40,9 +44,7 @@ export async function deliverKillfeedV2Once(): Promise<void> {
           const ch = await client.channels.fetch(cfg.channelId).catch(() => null);
           if (!ch || !ch.isTextBased() || ch.isDMBased()) return null;
           const textChannel = ch as GuildTextBasedChannel;
-          // Defense-in-depth: ein veralteter/manuell veraenderter DB-Wert darf
-          // niemals auf einen Channel einer anderen Guild posten.
-          if (textChannel.guildId !== cfg.guildId) {
+          if (!killfeedChannelBelongsToGuild(cfg.guildId, textChannel.guildId)) {
             logger.warn(`Killfeed V2: Cross-Guild-Channel verworfen fuer Config ${cfg.id}.`);
             return null;
           }
