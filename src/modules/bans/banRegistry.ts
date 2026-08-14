@@ -36,6 +36,7 @@ export async function addBan(
   client: BanClient,
   scope: BanScope,
   args: { identityHash: string; gameLabel?: string | null; reason?: string | null; bannedByDiscordId: string; expiresAt?: Date | null },
+  now: Date = new Date(),
 ): Promise<void> {
   const where = { guildId_nitradoConnId_identityHash: { guildId: scope.guildId, nitradoConnId: scope.nitradoConnId, identityHash: args.identityHash } };
   await client.serverBanEntry.upsert({
@@ -43,13 +44,15 @@ export async function addBan(
     create: {
       guildId: scope.guildId, nitradoConnId: scope.nitradoConnId, identityHash: args.identityHash,
       gameLabel: args.gameLabel ?? null, reason: args.reason ?? null,
-      bannedByDiscordId: args.bannedByDiscordId, expiresAt: args.expiresAt ?? null,
+      bannedByDiscordId: args.bannedByDiscordId, bannedAt: now,
+      expiresAt: args.expiresAt ?? null,
       active: true, appliedRemotely: false, liftedAt: null,
     },
-    // Re-Ban: reaktivieren, neue Metadaten.
+    // Re-Ban: reaktivieren und den Bann-Zeitpunkt/Metadaten erneuern.
     update: {
       gameLabel: args.gameLabel ?? null, reason: args.reason ?? null,
-      bannedByDiscordId: args.bannedByDiscordId, expiresAt: args.expiresAt ?? null,
+      bannedByDiscordId: args.bannedByDiscordId, bannedAt: now,
+      expiresAt: args.expiresAt ?? null,
       active: true, liftedAt: null,
     },
   });
@@ -63,6 +66,24 @@ export async function liftBan(
 ): Promise<boolean> {
   const r = await client.serverBanEntry.updateMany({
     where: { guildId: scope.guildId, nitradoConnId: scope.nitradoConnId, identityHash, active: true },
+    data: { active: false, liftedAt: now },
+  });
+  return r.count > 0;
+}
+
+/**
+ * Hebt einen Bann ueber seine DB-ID auf, weiterhin strikt auf Guild+Slot
+ * begrenzt. Das ist der Recovery-Pfad fuer unlinkte/relinkte Nutzer, deren
+ * aktueller GameIdentityLink nicht mehr auf den urspruenglichen Hash zeigt.
+ */
+export async function liftBanById(
+  client: BanClient,
+  scope: BanScope,
+  banId: string,
+  now: Date = new Date(),
+): Promise<boolean> {
+  const r = await client.serverBanEntry.updateMany({
+    where: { id: banId, guildId: scope.guildId, nitradoConnId: scope.nitradoConnId, active: true },
     data: { active: false, liftedAt: now },
   });
   return r.count > 0;
