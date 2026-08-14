@@ -57,6 +57,23 @@ describe('Command Handler (Sektion 5)', () => {
     expect(client.commands.has('admin-monitor')).toBe(true);
   });
 
+  it('sollte Permission- und Server-Ban-Commands vollstaendig laden', async () => {
+    const client = createMockClient();
+    await loadCommands(client);
+
+    // Regression: Discord erlaubt maximal 25 feste String-Choices. Diese
+    // Commands muessen auch nach Erweiterung der Scope-Liste weiterhin
+    // erfolgreich gebaut und vom Handler registriert werden.
+    expect(client.commands.has('perm-add')).toBe(true);
+    expect(client.commands.has('perm-remove')).toBe(true);
+    expect(client.commands.has('perms')).toBe(true);
+
+    // Phase 7: Server-Ban-Bedienebene muss als Named-Export registriert sein.
+    expect(client.commands.has('server-ban')).toBe(true);
+    expect(client.commands.has('server-unban')).toBe(true);
+    expect(client.commands.has('server-ban-list')).toBe(true);
+  });
+
   it('sollte jeder Command eine execute-Funktion haben', async () => {
     const client = createMockClient();
     await loadCommands(client);
