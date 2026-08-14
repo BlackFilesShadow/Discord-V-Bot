@@ -52,15 +52,11 @@ async function canAccessGuild(guildId: string, userDiscordId: string): Promise<b
   if (!member) return false;
   const roleIds = [...member.roles.cache.keys()];
   if (roleIds.length === 0) return false;
-  const roleGrant = await prisma.guildPermissionRoleGrant.findFirst({
-    where: {
-      guildId,
-      roleDiscordId: { in: roleIds },
-      NOT: { permissions: { equals: [] } },
-    },
-    select: { id: true },
+  const roleGrants = await prisma.guildPermissionRoleGrant.findMany({
+    where: { guildId, roleDiscordId: { in: roleIds } },
+    select: { permissions: true },
   });
-  return Boolean(roleGrant);
+  return roleGrants.some((grant) => Array.isArray(grant.permissions) && grant.permissions.length > 0);
 }
 
 function sessionFor(socket: Socket): SocketSessionShape {
