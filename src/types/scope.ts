@@ -77,6 +77,8 @@ export const PERMISSION_SCOPES = [
   'tickets.manage',
   'whitelist.view',
   'whitelist.manage',
+  'bans.view',          // Lokale Server-Ban-Registry ansehen — delegierbar
+  'bans.manage',        // Lokale Server-Bans setzen/aufheben — delegierbar
   'factions.view',
   'factions.manage',
   'economy.view',
