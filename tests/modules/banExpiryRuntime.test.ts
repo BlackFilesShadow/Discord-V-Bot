@@ -8,6 +8,7 @@ jest.mock('../../src/database/prisma', () => {
     serverBanExpiryNotice: {
       updateMany: jest.fn(),
       findMany: jest.fn(),
+      findFirst: jest.fn(),
     },
     nitradoConnection: { findFirst: jest.fn() },
     nitradoJob: { findMany: jest.fn(), create: jest.fn() },
@@ -42,6 +43,7 @@ import {
 const db = prisma as any;
 const getClient = tryGetDashboardClient as jest.Mock;
 const NOW = new Date('2026-08-15T00:00:10.000Z');
+const EXPIRES = new Date('2026-08-15T00:00:00.000Z');
 
 beforeEach(() => {
   jest.clearAllMocks();
@@ -49,6 +51,7 @@ beforeEach(() => {
   db.nitradoJob.create.mockResolvedValue({});
   db.serverBanExpiryNotice.updateMany.mockResolvedValue({ count: 1 });
   db.serverBanExpiryNotice.findMany.mockResolvedValue([]);
+  db.serverBanExpiryNotice.findFirst.mockResolvedValue({ id: 'notice-1' });
 });
 
 describe('timed server-ban expiry', () => {
@@ -99,11 +102,11 @@ describe('timed server-ban expiry', () => {
       nitradoConnId: 'n3',
       channelId: 'channel-1',
       identifierEnc: null,
-      expiresAt: new Date('2026-08-15T00:00:00.000Z'),
+      expiresAt: EXPIRES,
       attempts: 0,
     }]);
     db.serverBanEntry.findFirst.mockResolvedValue({
-      reason: 'Testgrund', liftedAt: NOW,
+      id: 'ban-3', reason: 'Testgrund', liftedAt: NOW,
     });
     db.nitradoConnection.findFirst.mockResolvedValue({ alias: 'Test1', slot: 1 });
 
@@ -124,13 +127,51 @@ describe('timed server-ban expiry', () => {
     await runBanExpiryRuntimeOnce(NOW);
 
     expect(send).toHaveBeenCalledTimes(1);
-    expect(send).toHaveBeenCalledWith(expect.objectContaining({
-      embeds: [expect.objectContaining({ data: expect.objectContaining({ title: '✅ Server-Bann abgelaufen' }) })],
-      allowedMentions: { parse: [] },
-    }));
+    const payload = send.mock.calls[0][0];
+    expect(payload.allowedMentions).toEqual({ parse: [] });
+    expect(payload.embeds[0].data.title).toBe('✅ Server-Bann abgelaufen');
+    expect(payload.embeds[0].data.footer?.text).toContain('ban-expiry:ban-3');
     expect(db.serverBanExpiryNotice.updateMany).toHaveBeenCalledWith(expect.objectContaining({
       where: { id: 'notice-1', status: 'SENDING' },
       data: expect.objectContaining({ status: 'SENT', messageId: 'discord-message-1', identifierEnc: null }),
+    }));
+  });
+
+  it('verwirft die Meldung, wenn der Bann direkt vor Discord-Send erneut geaendert wurde', async () => {
+    db.serverBanEntry.findMany.mockResolvedValue([]);
+    db.serverBanExpiryNotice.findMany.mockResolvedValue([{
+      id: 'notice-race',
+      banId: 'ban-race',
+      guildId: 'g-race',
+      nitradoConnId: 'n-race',
+      channelId: 'channel-race',
+      identifierEnc: null,
+      expiresAt: EXPIRES,
+      attempts: 0,
+    }]);
+    db.serverBanEntry.findFirst
+      .mockResolvedValueOnce({ reason: 'Alt', liftedAt: NOW })
+      .mockResolvedValueOnce(null);
+    db.serverBanExpiryNotice.findFirst.mockResolvedValue({ id: 'notice-race' });
+    db.nitradoConnection.findFirst.mockResolvedValue({ alias: 'Test1', slot: 1 });
+
+    const send = jest.fn();
+    const channel = {
+      guildId: 'g-race',
+      isTextBased: () => true,
+      isDMBased: () => false,
+      messages: { fetch: jest.fn().mockResolvedValue(new Map()) },
+      client: { user: { id: 'bot-user' } },
+      send,
+    };
+    getClient.mockReturnValue({ channels: { fetch: jest.fn().mockResolvedValue(channel) } });
+
+    await runBanExpiryRuntimeOnce(NOW);
+
+    expect(send).not.toHaveBeenCalled();
+    expect(db.serverBanExpiryNotice.updateMany).toHaveBeenCalledWith(expect.objectContaining({
+      where: { id: 'notice-race', status: 'SENDING' },
+      data: expect.objectContaining({ status: 'CANCELLED', identifierEnc: null }),
     }));
   });
 
