@@ -2,14 +2,9 @@
  * Whitelist: lokale DB als Source-of-Truth, Push zu Nitrado im Hintergrund
  * via NitradoJob (Outbox, Haertung A2). REST-Routen erstellen nur den Job
  * und den DB-Eintrag, kein synchroner API-Call.
- *
- * GET    /                           Liste lokaler Eintraege
- * POST   /                           body: { gameId, source? } -> WhitelistEntry + NitradoJob('WHITELIST_ADD')
- * DELETE /:gameId                    -> Loescht Entry + NitradoJob('WHITELIST_REMOVE')
- * GET    /requests                   PENDING-Requests
- * POST   /requests/:id/decision      body: { approve: boolean, reason? }
  */
 import { Router } from 'express';
+import type { Response } from 'express';
 import { requireGuildPermission } from '../../middleware/auth';
 import prisma from '../../../database/prisma';
 import { logAuditDb, logger } from '../../../utils/logger';
@@ -17,34 +12,34 @@ import { emitGuildEvent } from '../../socket/emitter';
 import { getDecryptedToken } from '../../../modules/nitrado/repository';
 import { NitradoClient } from '../../../modules/nitrado/nitradoClient';
 import { asNitradoConnId } from '../../../types/scope';
+import type { GuildScope, NitradoConnId } from '../../../types/scope';
 import { ensureNitradoWriteAllowed } from '../../middleware/nitradoWriteGuard';
+import { resolveDashboardGameServer, sendDashboardServerResolutionError } from './serverScope';
 
 export const whitelistRouter = Router({ mergeParams: true });
 
-// Nitrado verwaltet die Whitelist per Spielername. Wir validieren nur Form
-// und Laenge — alles andere geht 1:1 an Nitrado.
 const NAME_RE = /^[^\r\n\t]{1,64}$/;
 function isValidName(s: unknown): s is string {
   return typeof s === 'string' && NAME_RE.test(s.trim()) && s.trim().length >= 1;
 }
 
-async function activeSlotId(guildId: string, slotParam: unknown): Promise<string | null> {
-  if (typeof slotParam === 'string' && /^[1-5]$/.test(slotParam)) {
-    const c = await prisma.nitradoConnection.findUnique({
-      where: { guildId_slot: { guildId, slot: Number(slotParam) } }, select: { id: true },
-    });
-    return c?.id ?? null;
+async function activeSlotId(
+  scope: Pick<GuildScope, 'guildId' | 'actorDiscordId'>,
+  slotParam: unknown,
+  res: Response,
+): Promise<NitradoConnId | null> {
+  const resolution = await resolveDashboardGameServer(scope.guildId, scope.actorDiscordId, slotParam);
+  if (resolution.kind !== 'RESOLVED') {
+    sendDashboardServerResolutionError(res, resolution);
+    return null;
   }
-  const c = await prisma.nitradoConnection.findFirst({
-    where: { guildId, status: 'ACTIVE' }, orderBy: { slot: 'asc' }, select: { id: true },
-  });
-  return c?.id ?? null;
+  return resolution.nitradoConnId;
 }
 
 whitelistRouter.get('/', requireGuildPermission('whitelist.view'), async (req, res) => {
   const scope = req.guildScope!;
-  const connId = await activeSlotId(scope.guildId, req.query.slot);
-  if (!connId) { res.status(404).json({ error: 'Kein Nitrado-Slot.' }); return; }
+  const connId = await activeSlotId(scope, req.query.slot, res);
+  if (!connId) return;
   const rows = await prisma.whitelistEntry.findMany({
     where: { guildId: scope.guildId, nitradoConnId: connId },
     orderBy: { approvedAt: 'desc' },
@@ -55,15 +50,13 @@ whitelistRouter.get('/', requireGuildPermission('whitelist.view'), async (req, r
 
 whitelistRouter.post('/', requireGuildPermission('whitelist.manage'), async (req, res) => {
   const scope = req.guildScope!;
-  const connId = await activeSlotId(scope.guildId, req.query.slot);
-  if (!connId) { res.status(404).json({ error: 'Kein Nitrado-Slot.' }); return; }
+  const connId = await activeSlotId(scope, req.query.slot, res);
+  if (!connId) return;
   const { gameId: rawId, source } = req.body ?? {};
   if (!isValidName(rawId)) { res.status(400).json({ error: 'Name erforderlich (1-64 Zeichen, keine Zeilenumbrueche).' }); return; }
   const gameId = (rawId as string).trim();
   const src = (source === 'REQUEST' || source === 'IMPORT') ? source : 'DIRECT';
 
-  // Spec §12: erstellt einen NitradoJob('WHITELIST_ADD') -> schreibende
-  // Nitrado-Aktion. Bei aktivem Schreibschutz Confirm + Reason + Audit noetig.
   if (!ensureNitradoWriteAllowed(req, res, { action: 'NITRADO_WHITELIST_ADD', danger: false })) return;
 
   try {
@@ -94,12 +87,10 @@ whitelistRouter.post('/', requireGuildPermission('whitelist.manage'), async (req
 
 whitelistRouter.delete('/:gameId', requireGuildPermission('whitelist.manage'), async (req, res) => {
   const scope = req.guildScope!;
-  const connId = await activeSlotId(scope.guildId, req.query.slot);
-  if (!connId) { res.status(404).json({ error: 'Kein Nitrado-Slot.' }); return; }
+  const connId = await activeSlotId(scope, req.query.slot, res);
+  if (!connId) return;
   const gameId = String(req.params.gameId).trim();
   if (!isValidName(gameId)) { res.status(400).json({ error: 'Ungueltiger Name.' }); return; }
-  // Spec §12: erstellt einen NitradoJob('WHITELIST_REMOVE') -> schreibende
-  // Nitrado-Aktion. Bei aktivem Schreibschutz Confirm + Reason + Audit noetig.
   if (!ensureNitradoWriteAllowed(req, res, { action: 'NITRADO_WHITELIST_REMOVE', danger: false })) return;
   await prisma.$transaction(async tx => {
     await tx.whitelistEntry.deleteMany({
@@ -111,8 +102,6 @@ whitelistRouter.delete('/:gameId', requireGuildPermission('whitelist.manage'), a
         operation: 'WHITELIST_REMOVE', payload: { gameId },
       },
     });
-    // Cap-Reset (siehe /wl-remove): APPROVED-Requests des urspruenglichen
-    // Antragstellers auf CANCELLED setzen, sonst bleibt sein Cap belegt.
     await tx.whitelistRequest.updateMany({
       where: { guildId: scope.guildId, nitradoConnId: connId, gameId, status: 'APPROVED' },
       data: { status: 'CANCELLED' },
@@ -125,8 +114,8 @@ whitelistRouter.delete('/:gameId', requireGuildPermission('whitelist.manage'), a
 
 whitelistRouter.get('/requests', requireGuildPermission('whitelist.manage'), async (req, res) => {
   const scope = req.guildScope!;
-  const connId = await activeSlotId(scope.guildId, req.query.slot);
-  if (!connId) { res.status(404).json({ error: 'Kein Nitrado-Slot.' }); return; }
+  const connId = await activeSlotId(scope, req.query.slot, res);
+  if (!connId) return;
   const rows = await prisma.whitelistRequest.findMany({
     where: { guildId: scope.guildId, nitradoConnId: connId, status: 'PENDING' },
     orderBy: { createdAt: 'desc' },
@@ -140,21 +129,16 @@ whitelistRouter.post('/requests/:id/decision', requireGuildPermission('whitelist
   if (typeof approve !== 'boolean') { res.status(400).json({ error: 'approve muss boolean sein.' }); return; }
   if (reason !== undefined && (typeof reason !== 'string' || reason.length > 500)) { res.status(400).json({ error: 'reason max 500.' }); return; }
 
-  // Slot-Scope erzwingen: Decision nur fuer den aktuell ausgewaehlten Nitrado-Slot.
-  const connId = await activeSlotId(scope.guildId, req.query.slot);
-  if (!connId) { res.status(404).json({ error: 'Kein Nitrado-Slot.' }); return; }
+  const connId = await activeSlotId(scope, req.query.slot, res);
+  if (!connId) return;
 
   const reqRow = await prisma.whitelistRequest.findFirst({
     where: { id: String(req.params.id), guildId: scope.guildId, nitradoConnId: connId },
   });
   if (!reqRow) { res.status(404).json({ error: 'Request nicht gefunden.' }); return; }
 
-  // Spec §12: nur die Genehmigung erzeugt einen NitradoJob('WHITELIST_ADD')
-  // (schreibende Nitrado-Aktion). Ablehnung schreibt nichts nach Nitrado und
-  // bleibt ungated. Guard VOR dem CAS, damit bei 412 kein Statuswechsel erfolgt.
   if (approve && !ensureNitradoWriteAllowed(req, res, { action: 'NITRADO_WHITELIST_REQUEST_APPROVE', danger: false })) return;
 
-  // Atomic CAS: nur entscheiden wenn noch PENDING (schliesst Race mit Discord-Button).
   const cas = await prisma.whitelistRequest.updateMany({
     where: { id: reqRow.id, guildId: scope.guildId, nitradoConnId: connId, status: 'PENDING' },
     data: {
@@ -184,12 +168,10 @@ whitelistRouter.post('/requests/:id/decision', requireGuildPermission('whitelist
   }
   logAuditDb('WHITELIST_REQUEST_DECISION', 'WHITELIST', {
     actorUserId: req.auth!.userId, guildId: scope.guildId,
-    details: { requestId: reqRow.id, approve },
+    details: { requestId: reqRow.id, approve, nitradoConnId: connId },
   });
   emitGuildEvent(scope.guildId, { type: 'whitelist.changed', payload: { guildId: scope.guildId, entryId: reqRow.id, action: 'decided' } });
 
-  // Konsistenz mit Discord-Button-Pfad: User per DM benachrichtigen + Decision-Log
-  // posten + Approval-Embed im Request-Channel finalisieren (Buttons entfernen).
   try {
     const { notifyRequesterDecision, postDecisionLog, finalizeApprovalEmbed } = await import('../../../modules/whitelist/whitelistChannels.js');
     void Promise.allSettled([
@@ -212,27 +194,10 @@ whitelistRouter.post('/requests/:id/decision', requireGuildPermission('whitelist
   res.json({ ok: true });
 });
 
-/**
- * POST /sync  body: { mode?: 'preview' | 'apply', direction?: 'pull' | 'push' | 'merge' }
- *
- * Gleicht lokale `WhitelistEntry`-Tabelle und Nitrado-Whitelist (settings.general.whitelist) ab.
- *
- * direction:
- *   - 'pull'   : Nitrado ist Source-of-Truth. Lokal fehlende werden in DB importiert,
- *                lokal ueberzaehlige werden aus DB geloescht. Nitrado bleibt unangetastet.
- *   - 'push'   : DB ist Source-of-Truth. Es entsteht 1 NitradoJob WHITELIST_SYNC,
- *                der die Nitrado-Liste komplett auf den DB-Stand setzt.
- *   - 'merge'  : (default) Vereinigung beider Listen. Lokal fehlende werden importiert,
- *                Nitrado fehlende werden via WHITELIST_ADD-Jobs nachgetragen.
- *
- * mode:
- *   - 'preview' (default): kein Schreibzugriff, nur Diff-Bericht
- *   - 'apply'           : fuehrt die Aenderungen aus
- */
 whitelistRouter.post('/sync', requireGuildPermission('whitelist.manage'), async (req, res) => {
   const scope = req.guildScope!;
-  const connId = await activeSlotId(scope.guildId, req.query.slot);
-  if (!connId) { res.status(404).json({ error: 'Kein Nitrado-Slot.' }); return; }
+  const connId = await activeSlotId(scope, req.query.slot, res);
+  if (!connId) return;
 
   const mode = (req.body?.mode === 'apply') ? 'apply' : 'preview';
   const direction = (['pull', 'push', 'merge'].includes(req.body?.direction))
@@ -247,7 +212,6 @@ whitelistRouter.post('/sync', requireGuildPermission('whitelist.manage'), async 
   if (!conn.nitradoServerId) { res.status(400).json({ error: 'Slot hat keine Nitrado-Service-ID.' }); return; }
   if (conn.status !== 'ACTIVE') { res.status(400).json({ error: `Slot ist ${conn.status}.` }); return; }
 
-  // 1) Beide Quellen lesen
   let nitradoList: string[];
   try {
     const token = await getDecryptedToken(scope.guildId, asNitradoConnId(conn.id));
@@ -265,8 +229,8 @@ whitelistRouter.post('/sync', requireGuildPermission('whitelist.manage'), async 
 
   const localSet = new Set(localList);
   const remoteSet = new Set(nitradoList);
-  const onlyLocal = localList.filter(n => !remoteSet.has(n));   // bei push: nach Nitrado nachtragen
-  const onlyRemote = nitradoList.filter(n => !localSet.has(n)); // bei pull: in DB importieren
+  const onlyLocal = localList.filter(n => !remoteSet.has(n));
+  const onlyRemote = nitradoList.filter(n => !localSet.has(n));
   const both = localList.filter(n => remoteSet.has(n));
 
   const diff = {
@@ -277,10 +241,6 @@ whitelistRouter.post('/sync', requireGuildPermission('whitelist.manage'), async 
 
   if (mode === 'preview') { res.json({ ok: true, preview: true, diff }); return; }
 
-  // 2) APPLY
-  // Spec §12: Schreibende Nitrado-Aktionen (Remote-Whitelist aendern) sind bei
-  // aktivem NITRADO_WRITE_PROTECTION durch Confirm + Reason + Audit geschuetzt.
-  // 'pull' schreibt nur in die lokale DB (kein Nitrado-Write) und bleibt ungated.
   if ((direction === 'push' || direction === 'merge') && onlyLocal.length + (direction === 'push' ? onlyRemote.length : 0) > 0) {
     if (!ensureNitradoWriteAllowed(req, res, { action: 'NITRADO_WHITELIST_SYNC_PUSH', danger: false })) return;
   }
@@ -288,7 +248,6 @@ whitelistRouter.post('/sync', requireGuildPermission('whitelist.manage'), async 
   let dbInserted = 0, dbDeleted = 0, jobsCreated = 0;
 
   if (direction === 'pull' || direction === 'merge') {
-    // Nitrado -> DB: onlyRemote in DB einfuegen
     for (const name of onlyRemote) {
       try {
         await prisma.whitelistEntry.create({
@@ -304,13 +263,11 @@ whitelistRouter.post('/sync', requireGuildPermission('whitelist.manage'), async 
     }
   }
   if (direction === 'pull') {
-    // pull: lokal ueberzaehlige loeschen
     if (onlyLocal.length > 0) {
       const r = await prisma.whitelistEntry.deleteMany({
         where: { guildId: scope.guildId, nitradoConnId: connId, gameId: { in: onlyLocal } },
       });
       dbDeleted = r.count;
-      // Cap-Reset fuer alle betroffenen User
       await prisma.whitelistRequest.updateMany({
         where: { guildId: scope.guildId, nitradoConnId: connId, gameId: { in: onlyLocal }, status: 'APPROVED' },
         data: { status: 'CANCELLED' },
@@ -318,8 +275,6 @@ whitelistRouter.post('/sync', requireGuildPermission('whitelist.manage'), async 
     }
   }
   if (direction === 'push' || direction === 'merge') {
-    // DB -> Nitrado: pro onlyLocal-Eintrag ein WHITELIST_ADD-Job
-    // (Worker serialisiert pro Connection, daher kein Datenverlust)
     for (const name of onlyLocal) {
       await prisma.nitradoJob.create({
         data: {
@@ -331,7 +286,6 @@ whitelistRouter.post('/sync', requireGuildPermission('whitelist.manage'), async 
     }
   }
   if (direction === 'push') {
-    // push: in Nitrado ueberzaehlige entfernen
     for (const name of onlyRemote) {
       await prisma.nitradoJob.create({
         data: {
@@ -345,19 +299,16 @@ whitelistRouter.post('/sync', requireGuildPermission('whitelist.manage'), async 
 
   logAuditDb('WHITELIST_SYNC', 'WHITELIST', {
     actorUserId: req.auth!.userId, guildId: scope.guildId,
-    details: { direction, dbInserted, dbDeleted, jobsCreated, ...diff.counts },
+    details: { direction, dbInserted, dbDeleted, jobsCreated, nitradoConnId: connId, ...diff.counts },
   });
   emitGuildEvent(scope.guildId, { type: 'whitelist.changed', payload: { guildId: scope.guildId, action: 'added' } });
   res.json({ ok: true, applied: true, diff, dbInserted, dbDeleted, jobsCreated });
 });
 
-/**
- * GET /channels  Owner: liefert die 4 Whitelist-Kanal-IDs.
- */
 whitelistRouter.get('/channels', requireGuildPermission('whitelist.manage'), async (req, res) => {
   const scope = req.guildScope!;
-  const connId = await activeSlotId(scope.guildId, req.query.slot);
-  if (!connId) { res.status(404).json({ error: 'Kein Nitrado-Slot.' }); return; }
+  const connId = await activeSlotId(scope, req.query.slot, res);
+  if (!connId) return;
   const settings = await prisma.serverSettings.findUnique({
     where: { guildId_nitradoConnId: { guildId: scope.guildId, nitradoConnId: connId } },
   });
@@ -370,16 +321,10 @@ whitelistRouter.get('/channels', requireGuildPermission('whitelist.manage'), asy
   });
 });
 
-/**
- * PUT /channels  Owner: setzt eine oder mehrere Kanal-IDs.
- * body: { infoChannelId?, requestChannelId?, approveLogChannelId?, denyLogChannelId? }
- * (null = entfernen). Wenn infoChannelId gesetzt/geaendert wird, wird das
- * Info-Embed automatisch (re)posted.
- */
 whitelistRouter.put('/channels', requireGuildPermission('whitelist.manage'), async (req, res) => {
   const scope = req.guildScope!;
-  const connId = await activeSlotId(scope.guildId, req.query.slot);
-  if (!connId) { res.status(404).json({ error: 'Kein Nitrado-Slot.' }); return; }
+  const connId = await activeSlotId(scope, req.query.slot, res);
+  if (!connId) return;
 
   const body = req.body ?? {};
   const validateId = (v: unknown): string | null | undefined => {
@@ -402,8 +347,6 @@ whitelistRouter.put('/channels', requireGuildPermission('whitelist.manage'), asy
     res.status(400).json({ error: (e as Error).message }); return;
   }
 
-  // Wenn Info-Channel veraendert wird, alte Nachricht im ALTEN Kanal loeschen
-  // und messageId zuruecksetzen, sonst bleiben verwaiste Embeds zurueck.
   const before = await prisma.serverSettings.findUnique({
     where: { guildId_nitradoConnId: { guildId: scope.guildId, nitradoConnId: connId } },
   });
@@ -425,7 +368,6 @@ whitelistRouter.put('/channels', requireGuildPermission('whitelist.manage'), asy
     update: upd,
   });
 
-  // Auto-Post Info-Embed wenn InfoChannel gesetzt
   let infoResult: { posted: boolean; updated: boolean; messageId?: string } | null = null;
   if (after.whitelistChannelId) {
     try {
@@ -438,7 +380,7 @@ whitelistRouter.put('/channels', requireGuildPermission('whitelist.manage'), asy
 
   logAuditDb('WHITELIST_CHANNELS_SET', 'WHITELIST', {
     actorUserId: req.auth!.userId, guildId: scope.guildId,
-    details: { upd, infoResult },
+    details: { nitradoConnId: connId, upd, infoResult },
   });
 
   res.json({
@@ -452,14 +394,10 @@ whitelistRouter.put('/channels', requireGuildPermission('whitelist.manage'), asy
   });
 });
 
-/**
- * POST /channels/info/repost  Owner: postet das Info-Embed neu (loescht ggf. das alte).
- */
 whitelistRouter.post('/channels/info/repost', requireGuildPermission('whitelist.manage'), async (req, res) => {
   const scope = req.guildScope!;
-  const connId = await activeSlotId(scope.guildId, req.query.slot);
-  if (!connId) { res.status(404).json({ error: 'Kein Nitrado-Slot.' }); return; }
-  // Alte Nachricht im aktuellen Info-Kanal loeschen, dann MessageId reset
+  const connId = await activeSlotId(scope, req.query.slot, res);
+  if (!connId) return;
   const cur = await prisma.serverSettings.findUnique({
     where: { guildId_nitradoConnId: { guildId: scope.guildId, nitradoConnId: connId } },
   });
