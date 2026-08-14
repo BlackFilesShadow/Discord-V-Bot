@@ -130,7 +130,7 @@ async function findExistingDiscordMessage(
   eventId: string,
 ): Promise<string | null> {
   try {
-    const messages = await channel.messages.fetch({ limit: 50 });
+    const messages = await channel.messages.fetch({ limit: 100 });
     const marker = gameplayEventMarker(eventId);
     for (const message of messages.values()) {
       if (message.author.id !== channel.client.user.id) continue;
@@ -253,11 +253,23 @@ async function deliverOne(
     }) as GameplayAdmEvent | null;
     if (!event) throw new Error('ADM-Ereignis fuer Feed-Zustellung nicht mehr vorhanden');
     if (!categoryAllowed(config.kind, config.categories, event.eventType)) {
-      // Config wurde nach dem Enqueue geaendert: nicht mehr gewuenschte Events
-      // gelten als bewusst uebersprungen und werden nicht erneut versucht.
+      // Die Config wurde nach dem Enqueue geaendert. Das Ereignis wurde
+      // absichtlich nicht gepostet und darf in /recent nicht als SENT erscheinen.
       await prisma.gameplayFeedDelivery.updateMany({
-        where: { id: delivery.id, configId: config.id, status: GameplayDeliveryStatus.SENDING },
-        data: { status: GameplayDeliveryStatus.SENT, sentAt: new Date(), leaseUntil: null, lastError: 'Skipped after config filter change' },
+        where: {
+          id: delivery.id,
+          configId: config.id,
+          guildId: config.guildId,
+          nitradoConnId: config.nitradoConnId,
+          status: GameplayDeliveryStatus.SENDING,
+        },
+        data: {
+          status: GameplayDeliveryStatus.SKIPPED,
+          sentAt: null,
+          messageId: null,
+          leaseUntil: null,
+          lastError: 'Skipped after config filter change',
+        },
       });
       return;
     }
