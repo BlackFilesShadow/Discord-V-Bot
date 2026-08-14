@@ -28,6 +28,24 @@ describe('Dashboard runtime lifecycle (NIT-010)', () => {
     expect(onError).not.toHaveBeenCalled();
   });
 
+  it('isoliert einen fehlgeschlagenen Cleanup-Lauf ueber onError', async () => {
+    jest.useFakeTimers();
+    const error = new Error('cleanup failed');
+    const task = jest.fn(async () => { throw error; });
+    const onError = jest.fn();
+    const schedule = scheduleCleanup(task, 1_000, 100, onError);
+
+    await jest.advanceTimersByTimeAsync(100);
+    expect(task).toHaveBeenCalledTimes(1);
+    expect(onError).toHaveBeenCalledWith(error);
+
+    await jest.advanceTimersByTimeAsync(1_000);
+    expect(task).toHaveBeenCalledTimes(2);
+    expect(onError).toHaveBeenCalledTimes(2);
+
+    schedule.stop();
+  });
+
   it('schliesst Ressourcen in sicherer Reihenfolge und nur einmal', async () => {
     const order: string[] = [];
     const cleanup = { stop: jest.fn(() => { order.push('cleanup'); }) };
