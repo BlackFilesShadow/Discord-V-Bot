@@ -1,7 +1,7 @@
 /**
  * Phase 7: Ban-Registry. Beweise: aktiver Bann = nicht aufgehoben + nicht
  * abgelaufen; add/lift/isBanned idempotent; Recovery-Unban bleibt scoped;
- * Remote-Drift bleibt operativ sichtbar; Default-Provider ohne Remote.
+ * Remote-Drift bleibt operativ sichtbar; Re-Ban erzwingt Remote-Reconcile.
  */
 import {
   isBanActive,
@@ -116,17 +116,19 @@ describe('addBan / isBanned / liftBan', () => {
     expect(await liftBan(client, SCOPE, 'nope', now)).toBe(false);
   });
 
-  it('Re-Ban reaktiviert und erneuert bannedAt', async () => {
+  it('Re-Ban reaktiviert, erneuert bannedAt und erzwingt Remote-Reconcile', async () => {
     const { client, rows } = makeClient();
     const first = new Date('2026-08-01T10:00:00Z');
     const second = new Date('2026-08-01T12:00:00Z');
     await addBan(client, SCOPE, { identityHash: 'h1', bannedByDiscordId: 'admin' }, first);
+    rows.get('h1')!.appliedRemotely = true; // simulierter zuvor bestaetigter Remote-Bann
     await liftBan(client, SCOPE, 'h1', new Date('2026-08-01T11:00:00Z'));
     await addBan(client, SCOPE, { identityHash: 'h1', bannedByDiscordId: 'admin2' }, second);
 
     expect(rows.get('h1')?.active).toBe(true);
     expect(rows.get('h1')?.liftedAt).toBeNull();
     expect(rows.get('h1')?.bannedAt).toEqual(second);
+    expect(rows.get('h1')?.appliedRemotely).toBe(false);
   });
 
   it('liftBanById bleibt strikt auf Guild+Slot begrenzt', async () => {
