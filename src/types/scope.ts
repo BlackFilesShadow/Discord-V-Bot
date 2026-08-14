@@ -72,6 +72,7 @@ export const PERMISSION_SCOPES = [
   'nitrado.manage',     // Token connect/disconnect — NIE delegierbar (Owner-only-hardcoded an Routen-Layer)
   'nitrado.view',       // Read-Only Nitrado-Daten ansehen (Snapshots, Settings, Files) — delegierbar
   'nitrado.write',      // Normale schreibende Nitrado-Aktionen (Whitelist-Sync etc.) — delegierbar, Write-Protection-gegated
+  'nitrado.keep-online',// Auto-Start fuer gestoppte Server — delegierbar, getrennt von nitrado.danger
   'nitrado.danger',     // Gefaehrliche Aktionen (Restart/Stop/Delete/File-Write/Config-Write) — NIE delegierbar
   'tickets.manage',
   'whitelist.view',
