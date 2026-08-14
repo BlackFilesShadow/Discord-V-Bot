@@ -123,8 +123,23 @@ describe('mediaStorage SSRF/size/content hardening', () => {
         maxBodyLength: MAX_MEDIA_BYTES,
       }),
     );
-    expect(result.localPath).toBe(path.join(MEDIA_BASE_DIR, 'triggers', GUILD_ID, 'remote-1.png'));
+    const expectedPrefix = path.join(MEDIA_BASE_DIR, 'triggers', GUILD_ID, 'remote-1_');
+    expect(result.localPath?.startsWith(expectedPrefix)).toBe(true);
+    expect(result.localPath?.endsWith('.png')).toBe(true);
     expect(writeFile).toHaveBeenCalledWith(result.localPath, expect.any(Buffer), { mode: 0o640 });
+  });
+
+  it('creates a fresh local path for every ingestion so replacements cannot overwrite the active file', async () => {
+    safeAxiosGet.mockResolvedValue({ data: pngBytes(), headers: { 'content-type': 'image/png' } });
+
+    const first = await saveRemoteMedia('https://media.example.test/a', 'triggers', GUILD_ID, 'same-trigger');
+    const second = await saveRemoteMedia('https://media.example.test/b', 'triggers', GUILD_ID, 'same-trigger');
+
+    expect(first.ok).toBe(true);
+    expect(second.ok).toBe(true);
+    expect(first.localPath).toBeTruthy();
+    expect(second.localPath).toBeTruthy();
+    expect(first.localPath).not.toBe(second.localPath);
   });
 
   it('rejects remote media when response MIME conflicts with magic bytes', async () => {
