@@ -13,7 +13,7 @@ import { Router } from 'express';
 import type { Response } from 'express';
 import { requireGuildPermission } from '../../middleware/auth';
 import prisma from '../../../database/prisma';
-import { asUserDiscordId } from '../../../types/scope';
+import { asNitradoConnId, asUserDiscordId } from '../../../types/scope';
 import { MAX_GAME_SERVERS_PER_GUILD } from '../../../modules/nitrado/gameServerScope';
 import { logAuditDb } from '../../../utils/logger';
 import { forceLink, unlinkUser, type LinkClient } from '../../../modules/linking/linkService';
@@ -114,10 +114,10 @@ economyLinkRouter.delete('/:userDiscordId', requireGuildPermission('economy.mana
   const scope = req.guildScope!;
   const resolution = await resolveServer(scope.guildId, req.query.slot);
   if (resolution.kind !== 'RESOLVED') { sendResolutionError(res, resolution); return; }
-  const connId = resolution.nitradoConnId;
+  const connId = asNitradoConnId(resolution.nitradoConnId);
   let target;
   try { target = asUserDiscordId(String(req.params.userDiscordId)); } catch { res.status(400).json({ error: 'userDiscordId ungueltig.' }); return; }
-  const removed = await unlinkUser(prisma as unknown as LinkClient, { guildId: scope.guildId, nitradoConnId: connId as never }, target);
+  const removed = await unlinkUser(prisma as unknown as LinkClient, { guildId: scope.guildId, nitradoConnId: connId }, target);
   logAuditDb('ECONOMY_LINK_REMOVED', 'ECONOMY', { actorUserId: req.auth!.userId, guildId: scope.guildId, details: { slotId: connId, target } });
   res.json({ ok: true, deleted: removed ? 1 : 0 });
 });
@@ -126,13 +126,13 @@ economyLinkRouter.post('/grant', requireGuildPermission('economy.manage'), async
   const scope = req.guildScope!;
   const resolution = await resolveServer(scope.guildId, req.query.slot);
   if (resolution.kind !== 'RESOLVED') { sendResolutionError(res, resolution); return; }
-  const connId = resolution.nitradoConnId;
+  const connId = asNitradoConnId(resolution.nitradoConnId);
   const { userDiscordId, gameId } = req.body ?? {};
   let target;
   try { target = asUserDiscordId(userDiscordId); } catch { res.status(400).json({ error: 'userDiscordId ungueltig.' }); return; }
   if (typeof gameId !== 'string' || gameId.length < 3 || gameId.length > 64) { res.status(400).json({ error: 'gameId 3..64 Zeichen.' }); return; }
 
-  const r = await forceLink(prisma as unknown as LinkClient, { guildId: scope.guildId, nitradoConnId: connId as never }, target, gameId, config.security.encryptionKey);
+  const r = await forceLink(prisma as unknown as LinkClient, { guildId: scope.guildId, nitradoConnId: connId }, target, gameId, config.security.encryptionKey);
   if (!r.ok) { res.status(409).json({ error: 'Spielidentitaet bereits mit anderem Account verknuepft.' }); return; }
   logAuditDb('ECONOMY_LINK_GRANTED', 'ECONOMY', { actorUserId: req.auth!.userId, guildId: scope.guildId, details: { slotId: connId, target } });
   res.status(201).json({ userDiscordId: target, status: 'VERIFIED' });
