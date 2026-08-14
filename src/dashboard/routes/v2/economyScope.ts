@@ -6,6 +6,7 @@ import {
   getEconomyScopeMigrationState,
   resolveLegacyEconomyPrimaryServer,
 } from '../../../modules/economy/scopeMigration';
+import { MAX_GAME_SERVERS_PER_GUILD } from '../../../modules/nitrado/gameServerScope';
 
 export const economyScopeRouter = Router({ mergeParams: true });
 
@@ -18,7 +19,7 @@ economyScopeRouter.get('/status', requireGuildOwner, async (req, res) => {
       where: {
         guildId,
         status: 'ACTIVE',
-        slot: { gte: 1, lte: 4 },
+        slot: { gte: 1, lte: MAX_GAME_SERVERS_PER_GUILD },
         nitradoServerId: { not: null },
       },
       select: { id: true, slot: true, alias: true, nitradoServerId: true },
