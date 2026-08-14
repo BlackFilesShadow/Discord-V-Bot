@@ -20,8 +20,11 @@ import {
   addBan,
   liftBan,
   liftBanById,
+  listOperationalBans,
+  banOperationalState,
   localOnlyBanProvider,
   type BanClient,
+  type BanListClient,
 } from '../../modules/bans/banRegistry';
 import {
   resolveVerifiedBanIdentityHash,
@@ -45,17 +48,9 @@ function safeLine(value: string | null | undefined, fallback = '—'): string {
   return cleaned || fallback;
 }
 
-function banStateLabel(
-  active: boolean,
-  expiresAt: Date | null,
-  appliedRemotely: boolean,
-  now: Date,
-): string {
-  const locallyActive = active && (expiresAt === null || expiresAt.getTime() > now.getTime());
-  if (!locallyActive && appliedRemotely) {
-    return '⚠️ REMOTE-ABWEICHUNG • lokal inaktiv, remote markiert';
-  }
-  if (locallyActive && appliedRemotely) return 'Lokal aktiv • Remote angewendet';
+function operationalStateLabel(state: ReturnType<typeof banOperationalState>): string {
+  if (state === 'REMOTE_DRIFT') return '⚠️ REMOTE-ABWEICHUNG • lokal inaktiv, remote markiert';
+  if (state === 'LOCAL_AND_REMOTE') return 'Lokal aktiv • Remote angewendet';
   return 'Lokal aktiv • Nicht remote angewendet';
 }
 
@@ -257,21 +252,13 @@ export const serverBanListCommand: Command = {
 
   execute: withGuildScope({ requirePerm: 'bans.view', acceptSlotOption: true }, async (interaction, scope) => {
     const now = new Date();
-    const rows = await prisma.serverBanEntry.findMany({
-      where: {
-        guildId: scope.guildId,
-        nitradoConnId: scope.nitradoConnId!,
-        OR: [
-          { appliedRemotely: true },
-          {
-            active: true,
-            OR: [{ expiresAt: null }, { expiresAt: { gt: now } }],
-          },
-        ],
-      },
-      orderBy: { updatedAt: 'desc' },
-      take: 50,
-    });
+    const banScope = { guildId: scope.guildId, nitradoConnId: scope.nitradoConnId! };
+    const rows = await listOperationalBans(
+      prisma as unknown as BanListClient,
+      banScope,
+      now,
+      50,
+    );
 
     if (rows.length === 0) {
       await reply(interaction, 'Keine aktiven Server-Banns oder Remote-Abweichungen in diesem Slot.');
@@ -298,8 +285,9 @@ export const serverBanListCommand: Command = {
       const expiry = row.expiresAt
         ? `<t:${Math.floor(row.expiresAt.getTime() / 1000)}:R>`
         : 'Permanent';
+      const state = operationalStateLabel(banOperationalState(row, now));
       return [
-        `**${target}** • ${banStateLabel(row.active, row.expiresAt, row.appliedRemotely, now)} • ${expiry}`,
+        `**${target}** • ${state} • ${expiry}`,
         `ID: \`${row.id}\` • Grund: ${safeLine(row.reason)}`,
       ].join('\n');
     });
