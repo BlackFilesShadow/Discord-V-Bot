@@ -27,6 +27,7 @@ import { processExpiredCases } from './modules/moderation/caseManager';
 import { acquireSingletonLock } from './utils/singleton';
 import { assertProductionEnv } from './utils/envValidation';
 import { startNitradoRuntime, type NitradoRuntimeHandle } from './modules/nitrado/runtime';
+import { stopAiBackgroundLoops } from './modules/ai/runtime';
 
 /**
  * Discord-V-Bot Haupteinstiegspunkt.
@@ -267,7 +268,8 @@ async function main(): Promise<void> {
     }, 20_000);
     watchdog.unref?.();
 
-    // Keine neuen allgemeinen DB-/Discord-Arbeiten mehr erzeugen.
+    // Keine neuen allgemeinen/AI DB- oder Discord-Arbeiten mehr erzeugen.
+    stopAiBackgroundLoops();
     clearInterval(moderationTimer);
     stopReminderScheduler();
     stopRateLimitCleanup();
