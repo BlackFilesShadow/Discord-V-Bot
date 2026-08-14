@@ -192,7 +192,7 @@ async function playRound(args: {
     await tdb.$executeRawUnsafe(
       'INSERT INTO "CasinoRound" ("id", "gameId", "guildId", "nitradoConnId", "userDiscordId", "bet", "payout", "result", "serverSeed", "clientSeed", "nonce", "createdAt") VALUES ($1,$2,$3,$4,$5,$6,$7,$8::jsonb,$9,$10,$11,CURRENT_TIMESTAMP)',
       randomUUID(), game.id, String(args.scope.guildId), String(nitradoConnId), String(args.scope.actorDiscordId),
-      args.bet, result.payout, JSON.stringify(result), serverSeed, args.clientSeed, nonce,
+      args.bet, result.payout, JSON.stringify(result, (_key, value) => typeof value === 'bigint' ? value.toString() : value), serverSeed, args.clientSeed, nonce,
     );
 
     return { result, serverSeed, nonce, gameRowId: game.id };
