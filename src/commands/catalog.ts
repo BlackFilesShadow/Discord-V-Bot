@@ -58,7 +58,11 @@ export function visibleCommandCatalog(
   access: { isAdmin: boolean; isDeveloper: boolean; isManufacturer: boolean },
 ): CommandCatalogEntry[] {
   return buildCommandCatalog(client).filter((entry) => {
-    if (!entry.staysInDiscord) return false;
+    // The catalog is built from the commands that are actually loaded in the
+    // Discord client. Migration metadata may mark a dashboard replacement as
+    // the long-term target, but while the command is live it must remain
+    // discoverable in /help so help, runtime and dashboard diagnostics cannot
+    // drift apart.
     if (entry.audience === 'developer') return access.isDeveloper;
     if (entry.audience === 'admin') return access.isAdmin;
     if (entry.audience === 'manufacturer') return access.isManufacturer;
