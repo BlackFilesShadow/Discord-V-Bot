@@ -7,13 +7,15 @@ Serverinterne Live-Feeds fuehren keine zweite Gameplay-Wahrheit ein. Die normali
 ## ADM-Quelle
 
 - `NitradoAdmProfileConfig` speichert das ADM-Verzeichnis **pro Nitrado-Connection**.
-- Der Pfad wird automatisch aus bekannten DayZ/Nitrado-Verzeichnissen erkannt; `NITRADO_ADM_DIR` ist nur Legacy-Fallback.
+- Der Pfad wird automatisch aus bekannten DayZ/Nitrado-Verzeichnissen erkannt. Eine globale `NITRADO_ADM_DIR`-Runtime gibt es nicht mehr.
 - Owner koennen Pfad und optionale IANA-Zeitzone ueber `/api/v2/guilds/:guildId/adm-source?slot=N` pruefen bzw. korrigieren.
-- V2 pollt nur Connections mit aktivem Gameplay-Feed alle 30 Sekunden.
+- Der kanonische ADM-V2-Ingest pollt **alle aktiven, an einen Gameserver gebundenen Connections** alle 30 Sekunden. Dadurch funktionieren Linking, Rewards und PlayerSessions unabhaengig davon, ob ein oeffentlicher Gameplay-Feed aktiviert ist.
 - Der Live-Pfad verwendet Nitrados `file_server/seek` ab `AdmSourceCursor.processedByteOffset`; wachsende ADM-Dateien werden nicht wiederholt vollstaendig heruntergeladen.
 - Unvollstaendige Schlusszeilen bewegen den Byte-Cursor nicht und werden beim naechsten Poll vollstaendig gelesen.
-- Beim allerersten V2-Start wird der aktuelle Live-Log gebaselined; historischer Backlog wird nicht ungefragt gepostet.
-- Der bestehende 15-Minuten-ADM-Sync bleibt vorerst fuer Linking, Rewards und PlayerSessions aktiv. Beide Pfade schreiben idempotent in `AdmEvent`.
+- Beim allerersten V2-Start wird der aktuelle Live-Log gebaselined; historischer Backlog wird nicht ungefragt verarbeitet oder gepostet.
+- Linking-Challenges werden direkt aus den neu gelesenen vollstaendigen ADM-Zeilen verifiziert.
+- Rewards und PlayerSessions werden anschliessend durch den V2-Postprocessor aus der kanonischen `AdmEvent`-Wahrheit verarbeitet.
+- Der alte 15-Minuten-Vollfile-Sync und der Legacy-Killfeed-Watcher sind entfernt; es gibt nur noch einen ADM-Datei-Producer.
 
 ## Kanonische Ereignisse
 
@@ -75,16 +77,17 @@ Feed-Channels benoetigen `ViewChannel`, `SendMessages`, `EmbedLinks` und `ReadMe
 
 ## Produktionsfreigabe
 
-`ADM_EVENT_PIPELINE_V2=false` bleibt bis zur kontrollierten Live-Freigabe Standard. Bei `false` laeuft weiterhin nur der Legacy-Killfeed; Legacy und V2 posten niemals gleichzeitig.
+`ADM_EVENT_PIPELINE_V2=false` bleibt bis zur kontrollierten Live-Freigabe des **oeffentlichen Death-/Baufeeds** Standard. Der per-Server ADM-V2-Ingest fuer Linking, Rewards und PlayerSessions laeuft bereits unabhaengig von diesem Schalter. Bei `false` wird lediglich keine neue Gameplay-Feed-Nachricht an Discord zugestellt.
 
 Nach Merge und Migration:
 
 1. Produktions-Preflight/Backup und `prisma migrate deploy` + `prisma migrate status`.
 2. Bot mit `ADM_EVENT_PIPELINE_V2=false` starten und Health/Login/DB/Migration pruefen.
-3. ADM-Quelle eines Testslots per `adm-source` pruefen; Pfad und Zeitzone bei Bedarf manuell setzen.
-4. DayZ-Servereinstellungen fuer Death-/Baufeed pruefen: die benoetigten Admin-Logs muessen serverseitig aktiviert sein.
-5. `ADM_EVENT_PIPELINE_V2=true` kontrolliert fuer den Testlauf aktivieren.
-6. Auf einem Server PvP, normaler Tod, Suizid, NPC, Fahrzeug sowie Placement/Build/Dismantle/Destroy pruefen.
-7. Nitrado-Dateiwechsel/Serverrestart, Botrestart und Discord-Fehler/Retry testen.
-8. Bestaetigen: keine Doppelposts, keine verlorenen Posts, kein Cross-Server-Leak und korrekte Zeitstempel.
-9. Erst danach weitere Server und Reward-Gates freigeben.
+3. Im DEV-ADM-Status bestaetigen, dass pro aktivem Slot eine Quelle und ein Byte-Cursor erkannt werden; Pfad und Zeitzone bei Bedarf ueber `adm-source` korrigieren.
+4. Linking-Challenge und PlayerSession/Reward-Postprocessing auf einem Testslot pruefen.
+5. DayZ-Servereinstellungen fuer Death-/Baufeed pruefen: die benoetigten Admin-Logs muessen serverseitig aktiviert sein.
+6. `ADM_EVENT_PIPELINE_V2=true` kontrolliert fuer den oeffentlichen Testfeed aktivieren.
+7. Auf einem Server PvP, normaler Tod, Suizid, NPC, Fahrzeug sowie Placement/Build/Dismantle/Destroy pruefen.
+8. Nitrado-Dateiwechsel/Serverrestart, Botrestart und Discord-Fehler/Retry testen.
+9. Bestaetigen: keine Doppelposts, keine verlorenen Posts, kein Cross-Server-Leak und korrekte Zeitstempel.
+10. Erst danach weitere Server und Reward-Gates freigeben.
