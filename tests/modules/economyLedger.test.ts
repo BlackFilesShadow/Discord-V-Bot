@@ -1,6 +1,7 @@
 /**
- * Phase 5, Schritt 1: idempotentes Ledger-Buchungsprimitiv.
- * Kernbeweis: derselbe idempotencyKey bucht NIE zweimal (kein Doppel-Geld).
+ * Phase 5 / Phase 4 scope regression: idempotentes, servergescoptes Ledger.
+ * Kernbeweis: derselbe User in zwei Gameservern derselben Guild besitzt zwei
+ * getrennte EconomyAccounts; derselbe idempotencyKey bucht weiterhin nie doppelt.
  */
 import {
   bookLedgerEntry, computeLifetimeDeltas, type LedgerClient, type LedgerTx,
@@ -25,7 +26,6 @@ function makeClient() {
   const accounts = new Map<string, Account>();
   const client: LedgerClient = {
     $transaction: async <T>(fn: (tx: LedgerTx) => Promise<T>): Promise<T> => {
-      // Snapshot fuer atomares Rollback bei P2002.
       const keysBefore = new Set(keys);
       const accBefore = new Map([...accounts].map(([k, v]) => [k, { ...v }]));
       try {
@@ -33,15 +33,19 @@ function makeClient() {
           economyLedgerEntry: {
             create: async ({ data }) => {
               const key = data.idempotencyKey as string;
-              if (keys.has(key)) { const err = new Error('unique') as Error & { code: string }; err.code = 'P2002'; throw err; }
+              if (keys.has(key)) {
+                const err = new Error('unique') as Error & { code: string };
+                err.code = 'P2002';
+                throw err;
+              }
               keys.add(key);
               return { id: 'ledger-' + key };
             },
           },
           economyAccount: {
             upsert: async ({ where, create, update }) => {
-              const w = where.guildId_userDiscordId as { guildId: string; userDiscordId: string };
-              const k = `${w.guildId}:${w.userDiscordId}`;
+              const w = where.guildServerUser as { guildId: string; nitradoConnId: string; userDiscordId: string };
+              const k = `${w.guildId}:${w.nitradoConnId}:${w.userDiscordId}`;
               if (!accounts.has(k)) {
                 accounts.set(k, {
                   walletBalance: create.walletBalance as bigint,
@@ -62,7 +66,6 @@ function makeClient() {
         };
         return await fn(tx);
       } catch (e) {
-        // Rollback
         keys.clear(); for (const kk of keysBefore) keys.add(kk);
         accounts.clear(); for (const [kk, vv] of accBefore) accounts.set(kk, vv);
         throw e;
@@ -72,14 +75,14 @@ function makeClient() {
   return { client, accounts };
 }
 
-describe('bookLedgerEntry — Idempotenz', () => {
-  const base = { guildId: 'g', userDiscordId: 'u', type: 'PLAYTIME_REWARD' as const };
+describe('bookLedgerEntry — Idempotenz und Gameserver-Scope', () => {
+  const base = { guildId: 'g', nitradoConnId: 'n1', userDiscordId: 'u', type: 'PLAYTIME_REWARD' as const };
 
-  it('bucht Wallet-Gutschrift und legt Account an', async () => {
+  it('bucht Wallet-Gutschrift und legt servergescoppten Account an', async () => {
     const { client, accounts } = makeClient();
     const r = await bookLedgerEntry(client, { ...base, idempotencyKey: 'k1', walletDelta: 250n });
     expect(r.booked).toBe(true);
-    expect(accounts.get('g:u')).toEqual({ walletBalance: 250n, bankBalance: 0n, lifetimeEarned: 250n, lifetimeSpent: 0n });
+    expect(accounts.get('g:n1:u')).toEqual({ walletBalance: 250n, bankBalance: 0n, lifetimeEarned: 250n, lifetimeSpent: 0n });
   });
 
   it('zweite Buchung mit gleichem Key ist No-op (kein Doppel-Geld)', async () => {
@@ -87,24 +90,34 @@ describe('bookLedgerEntry — Idempotenz', () => {
     await bookLedgerEntry(client, { ...base, idempotencyKey: 'k1', walletDelta: 250n });
     const r2 = await bookLedgerEntry(client, { ...base, idempotencyKey: 'k1', walletDelta: 250n });
     expect(r2.booked).toBe(false);
-    expect(accounts.get('g:u')!.walletBalance).toBe(250n); // unveraendert
+    expect(accounts.get('g:n1:u')!.walletBalance).toBe(250n);
   });
 
-  it('verschiedene Keys summieren sich', async () => {
+  it('verschiedene Keys summieren sich nur im selben Server-Account', async () => {
     const { client, accounts } = makeClient();
     await bookLedgerEntry(client, { ...base, idempotencyKey: 'k1', walletDelta: 100n });
     await bookLedgerEntry(client, { ...base, idempotencyKey: 'k2', walletDelta: 50n, bankDelta: 30n });
-    const a = accounts.get('g:u')!;
+    const a = accounts.get('g:n1:u')!;
     expect(a.walletBalance).toBe(150n);
     expect(a.bankBalance).toBe(30n);
     expect(a.lifetimeEarned).toBe(180n);
   });
 
-  it('Abzug reduziert Balance und zaehlt als spent', async () => {
+  it('trennt denselben User derselben Guild zwischen zwei Gameservern', async () => {
+    const { client, accounts } = makeClient();
+    await bookLedgerEntry(client, { ...base, idempotencyKey: 'n1-k', walletDelta: 100n });
+    await bookLedgerEntry(client, { ...base, nitradoConnId: 'n2', idempotencyKey: 'n2-k', walletDelta: 25n });
+
+    expect(accounts.get('g:n1:u')!.walletBalance).toBe(100n);
+    expect(accounts.get('g:n2:u')!.walletBalance).toBe(25n);
+    expect(accounts.size).toBe(2);
+  });
+
+  it('Abzug reduziert nur den angesprochenen Server-Account und zaehlt als spent', async () => {
     const { client, accounts } = makeClient();
     await bookLedgerEntry(client, { ...base, idempotencyKey: 'k1', walletDelta: 200n });
     await bookLedgerEntry(client, { ...base, idempotencyKey: 'k2', walletDelta: -80n, type: 'WITHDRAW' });
-    const a = accounts.get('g:u')!;
+    const a = accounts.get('g:n1:u')!;
     expect(a.walletBalance).toBe(120n);
     expect(a.lifetimeSpent).toBe(80n);
   });
