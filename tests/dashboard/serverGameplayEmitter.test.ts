@@ -4,6 +4,7 @@ import {
   serverRoomName,
   setIo,
 } from '../../src/dashboard/socket/emitter';
+import { serverFeedPermissionAllows } from '../../src/dashboard/socket/guild';
 
 describe('server-scoped gameplay socket emitter', () => {
   afterEach(() => setIo(null));
@@ -49,5 +50,24 @@ describe('server-scoped gameplay socket emitter', () => {
       eventType: 'PLAYER_CONNECTED',
       occurredAt: null,
     })).not.toThrow();
+  });
+});
+
+describe('server gameplay permission', () => {
+  it('Owner darf den Feed sehen', () => {
+    expect(serverFeedPermissionAllows(true, [])).toBe(true);
+  });
+
+  it.each([
+    ['killfeed.view'],
+    ['killfeed.manage'],
+    ['dashboard.access'],
+  ])('akzeptiert den explizit passenden Scope %p', (permissions) => {
+    expect(serverFeedPermissionAllows(false, permissions)).toBe(true);
+  });
+
+  it('lehnt beliebige andere Guild-Scopes ab', () => {
+    expect(serverFeedPermissionAllows(false, ['economy.view', 'whitelist.view'])).toBe(false);
+    expect(serverFeedPermissionAllows(false, [])).toBe(false);
   });
 });
