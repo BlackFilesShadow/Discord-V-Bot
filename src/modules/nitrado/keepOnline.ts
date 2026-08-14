@@ -4,8 +4,13 @@
  * Reine Entscheidungslogik: WANN ein gestoppter Server automatisch gestartet
  * werden soll. Zentrale Sicherheitsregel: ein `suspended` (gesperrter) Server
  * wird NIEMALS automatisch gestartet. Ist Keep-Online deaktiviert, wird nie
- * gestartet (sofortige Cancellation ergibt sich aus der naechsten Auswertung).
- * Der reale Nitrado-Start ist Sache des Aufrufers (capability-abhaengig, EXTERN).
+ * gestartet.
+ *
+ * Die reale Ausfuehrung ist inzwischen produktiv verdrahtet:
+ * `permaOnlyCron` enqueued deduplizierte `RESTART_IF_DOWN`-Jobs und der
+ * `jobWorker` prueft Remote-Status + keepOnlineEnabled unmittelbar vor
+ * `NitradoClient.start()`. Diese Datei bleibt bewusst die testbare, reine
+ * Entscheidungsfunktion und ist nicht selbst fuer HTTP-I/O verantwortlich.
  */
 
 export type ServerRunState = 'started' | 'stopped' | 'suspended' | 'restarting' | 'unknown';
@@ -13,7 +18,6 @@ export type KeepOnlineAction = 'START' | 'NONE';
 
 export function decideKeepOnlineAction(args: { enabled: boolean; state: ServerRunState }): KeepOnlineAction {
   if (!args.enabled) return 'NONE';
-  // Nur einen sauber gestoppten Server starten — nie aus suspended/restarting/unknown.
   return args.state === 'stopped' ? 'START' : 'NONE';
 }
 
