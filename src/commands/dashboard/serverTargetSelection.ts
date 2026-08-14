@@ -12,6 +12,8 @@ export interface CommandServerTarget {
   encryptedToken: string;
 }
 
+type TargetLookup = CommandServerTarget | 'AMBIGUOUS' | null;
+
 export async function listCommandServerTargets(guildId: string): Promise<CommandServerTarget[]> {
   const rows = await prisma.nitradoConnection.findMany({
     where: {
@@ -43,13 +45,23 @@ export async function listCommandServerTargets(guildId: string): Promise<Command
     }));
 }
 
-function findSelectedTarget(targets: CommandServerTarget[], raw: string): CommandServerTarget | null {
+function findSelectedTarget(targets: CommandServerTarget[], raw: string): TargetLookup {
+  // Der Autocomplete uebertraegt immer die eindeutige Connection-ID.
+  const byId = targets.find(target => target.id === raw);
+  if (byId) return byId;
+
+  // Numerischer Fallback bleibt eindeutig, weil Slots innerhalb der Guild
+  // eindeutig sind.
+  const bySlot = targets.find(target => String(target.slot) === raw);
+  if (bySlot) return bySlot;
+
+  // Manuell eingetippte Aliase sind nur erlaubt, wenn genau EIN Server passt.
+  // Doppelte Aliase duerfen niemals still den ersten Server auswaehlen.
   const normalized = raw.toLowerCase();
-  return targets.find(target =>
-    target.id === raw
-    || target.alias.toLowerCase() === normalized
-    || String(target.slot) === raw,
-  ) ?? null;
+  const aliasMatches = targets.filter(target => target.alias.toLowerCase() === normalized);
+  if (aliasMatches.length === 1) return aliasMatches[0];
+  if (aliasMatches.length > 1) return 'AMBIGUOUS';
+  return null;
 }
 
 async function rejectMissingTargets(interaction: ChatInputCommandInteraction): Promise<null> {
@@ -73,6 +85,19 @@ async function rejectUnknownTarget(
   return null;
 }
 
+async function rejectAmbiguousTarget(
+  interaction: ChatInputCommandInteraction,
+  targets: CommandServerTarget[],
+): Promise<null> {
+  const available = targets.map(t => `• **${t.alias}** (Slot ${t.slot})`).join('\n');
+  await interaction.reply({
+    content: `Dieser Alias ist nicht eindeutig. Waehle den Server aus der Discord-Autocomplete-Liste oder verwende die eindeutige Slotnummer.\n\n${available}`,
+    flags: MessageFlags.Ephemeral,
+    allowedMentions: { parse: [] },
+  });
+  return null;
+}
+
 /**
  * `slot` ist absichtlich eine String-Autocomplete-Option. Discord zeigt dem
  * Operator den hinterlegten Alias, waehrend als stabiler Wert die Connection-ID
@@ -90,6 +115,7 @@ export async function resolveSelectedOrAllServers(
   if (!raw) return targets;
 
   const selected = findSelectedTarget(targets, raw);
+  if (selected === 'AMBIGUOUS') return rejectAmbiguousTarget(interaction, targets);
   if (!selected) return rejectUnknownTarget(interaction, targets);
   return [selected];
 }
@@ -110,6 +136,7 @@ export async function resolveSingleServer(
   const raw = interaction.options.getString('slot')?.trim() ?? '';
   if (raw) {
     const selected = findSelectedTarget(targets, raw);
+    if (selected === 'AMBIGUOUS') return rejectAmbiguousTarget(interaction, targets);
     if (!selected) return rejectUnknownTarget(interaction, targets);
     return selected;
   }
