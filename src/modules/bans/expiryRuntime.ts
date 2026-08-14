@@ -46,7 +46,7 @@ function safeText(value: string | null | undefined, fallback = '—'): string {
 
 /**
  * Finalisiert ausschliesslich echte ZEITABLAEUFE. Manuelle /server-unban-
- * Vorgänge setzen `active=false` und werden von dieser Query nicht erfasst.
+ * Vorgaenge setzen `active=false` und werden von dieser Query nicht erfasst.
  */
 export async function reconcileExpiredServerBansOnce(now = new Date()): Promise<void> {
   // eslint-disable-next-line local/no-unscoped-prisma-query -- globaler Scheduler-Sweep ueber eigene Ban-Registry; jede Mutation bleibt Guild+Connection scoped.
@@ -167,6 +167,18 @@ async function failNotice(
   });
 }
 
+async function cancelStaleNotice(id: string, reason: string): Promise<void> {
+  await prisma.serverBanExpiryNotice.updateMany({
+    where: { id, status: 'SENDING' },
+    data: {
+      status: 'CANCELLED',
+      identifierEnc: null,
+      leaseUntil: null,
+      lastError: reason,
+    },
+  });
+}
+
 async function deliverNotice(notice: {
   id: string;
   banId: string;
@@ -199,6 +211,7 @@ async function deliverNotice(notice: {
           nitradoConnId: notice.nitradoConnId,
           active: false,
           appliedRemotely: false,
+          expiresAt: notice.expiresAt,
         },
         select: { reason: true, liftedAt: true },
       }),
@@ -207,7 +220,10 @@ async function deliverNotice(notice: {
         select: { alias: true, slot: true },
       }),
     ]);
-    if (!ban) throw new Error('Ban ist noch nicht als remote entfernt finalisiert.');
+    if (!ban) {
+      await cancelStaleNotice(notice.id, 'Ban wurde vor der Ablaufmeldung geaendert oder erneut aktiviert.');
+      return;
+    }
 
     let identifier = 'Spieler';
     if (notice.identifierEnc) {
@@ -230,6 +246,39 @@ async function deliverNotice(notice: {
     const existingMessageId = await findExistingNotice(textChannel, notice.banId);
     if (existingMessageId) {
       await markNoticeSent(notice.id, existingMessageId);
+      return;
+    }
+
+    // Letzte kanonische Race-Pruefung direkt vor dem externen Discord-Sideeffect:
+    // Ein Re-Ban setzt die Notice wieder PENDING und `active=true`, ein manueller
+    // Unban setzt sie CANCELLED. In beiden Faellen darf keine alte
+    // "Strafe vorbei"-Meldung mehr gesendet werden.
+    const [freshNotice, freshBan] = await Promise.all([
+      prisma.serverBanExpiryNotice.findFirst({
+        where: {
+          id: notice.id,
+          banId: notice.banId,
+          guildId: notice.guildId,
+          nitradoConnId: notice.nitradoConnId,
+          status: 'SENDING',
+          expiresAt: notice.expiresAt,
+        },
+        select: { id: true },
+      }),
+      prisma.serverBanEntry.findFirst({
+        where: {
+          id: notice.banId,
+          guildId: notice.guildId,
+          nitradoConnId: notice.nitradoConnId,
+          active: false,
+          appliedRemotely: false,
+          expiresAt: notice.expiresAt,
+        },
+        select: { id: true },
+      }),
+    ]);
+    if (!freshNotice || !freshBan) {
+      await cancelStaleNotice(notice.id, 'Ablaufmeldung wegen zwischenzeitlicher Ban-Aenderung verworfen.');
       return;
     }
 
