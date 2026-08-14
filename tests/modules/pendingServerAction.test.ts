@@ -10,13 +10,12 @@ import { asGuildId, asNitradoConnId, asUserDiscordId } from '../../src/types/sco
 
 function makeClient() {
   const rows = new Map<string, PendingServerActionRow>();
-  let seq = 0;
 
   const client: PendingServerActionClient = {
     pendingServerAction: {
       async create({ data }) {
         const row: PendingServerActionRow = {
-          id: `psa-${++seq}`,
+          id: String(data.id),
           guildId: String(data.guildId),
           nitradoConnId: String(data.nitradoConnId),
           actorDiscordId: String(data.actorDiscordId),
@@ -68,6 +67,29 @@ const actorDiscordId = asUserDiscordId('234567890123456789');
 const now = new Date('2026-08-14T11:00:00.000Z');
 
 describe('PendingServerAction / SCOPE-003', () => {
+  it('erzeugt kryptografisch zufaellige UUIDv4-Action-IDs', async () => {
+    const { client } = makeClient();
+    const first = await createPendingServerAction(client, {
+      guildId,
+      nitradoConnId,
+      actorDiscordId,
+      actionType: 'SAFE_ACTION',
+      now,
+    });
+    const second = await createPendingServerAction(client, {
+      guildId,
+      nitradoConnId,
+      actorDiscordId,
+      actionType: 'SAFE_ACTION',
+      now,
+    });
+
+    const uuidV4 = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+    expect(first.id).toMatch(uuidV4);
+    expect(second.id).toMatch(uuidV4);
+    expect(first.id).not.toBe(second.id);
+  });
+
   it('begrenzt die Lebensdauer hart auf hoechstens fuenf Minuten', async () => {
     const { client } = makeClient();
     const row = await createPendingServerAction(client, {
