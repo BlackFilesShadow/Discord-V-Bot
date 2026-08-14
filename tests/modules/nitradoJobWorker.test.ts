@@ -19,7 +19,7 @@ const prismaMock = {
   },
   nitradoConnection: {
     findFirst: jest.fn(async () => ({
-      id: 'conn-1', guildId: 'g1', encryptedToken: 'enc', nitradoServerId: '123', status: 'ACTIVE',
+      id: 'conn-1', guildId: 'g1', encryptedToken: 'enc', nitradoServerId: '123', status: 'ACTIVE', keepOnlineEnabled: true,
     })),
   },
 };
@@ -69,6 +69,9 @@ beforeEach(() => {
     if (sql.includes('pg_advisory_unlock')) return { rows: [{ pg_advisory_unlock: true }] };
     return { rows: [] };
   });
+  prismaMock.nitradoConnection.findFirst.mockImplementation(async () => ({
+    id: 'conn-1', guildId: 'g1', encryptedToken: 'enc', nitradoServerId: '123', status: 'ACTIVE', keepOnlineEnabled: true,
+  }));
   for (const k of Object.keys(jobStore)) delete jobStore[k];
 });
 
@@ -157,6 +160,38 @@ describe('KEEP-004 — RESTART_IF_DOWN respektiert administrative Zustaende', ()
 
     expect(getServiceStatus).toHaveBeenCalledWith('123');
     expect(startService).not.toHaveBeenCalled();
+    expect(lastUpdateData().status).toBe('DONE');
+  });
+
+  it('macht bei bereits deaktiviertem Keep-Online keinen Remote-Status- oder Start-Aufruf', async () => {
+    jobStore['restart-disabled'] = { id: 'restart-disabled', guildId: 'g1', nitradoConnId: 'conn-1', operation: 'RESTART_IF_DOWN', payload: {}, attempts: 0, maxAttempts: 8 };
+    prismaMock.nitradoConnection.findFirst.mockResolvedValueOnce({
+      id: 'conn-1', guildId: 'g1', encryptedToken: 'enc', nitradoServerId: '123', status: 'ACTIVE', keepOnlineEnabled: false,
+    });
+
+    await executeJob('restart-disabled');
+
+    expect(getServiceStatus).not.toHaveBeenCalled();
+    expect(startService).not.toHaveBeenCalled();
+    expect(lastUpdateData().status).toBe('DONE');
+  });
+
+  it('verwirft den Auto-Start wenn Keep-Online waehrend der Statusabfrage deaktiviert wird', async () => {
+    jobStore['restart-disable-race'] = { id: 'restart-disable-race', guildId: 'g1', nitradoConnId: 'conn-1', operation: 'RESTART_IF_DOWN', payload: {}, attempts: 0, maxAttempts: 8 };
+    prismaMock.nitradoConnection.findFirst
+      .mockResolvedValueOnce({
+        id: 'conn-1', guildId: 'g1', encryptedToken: 'enc', nitradoServerId: '123', status: 'ACTIVE', keepOnlineEnabled: true,
+      })
+      .mockResolvedValueOnce({
+        id: 'conn-1', guildId: 'g1', encryptedToken: 'enc', nitradoServerId: '123', status: 'ACTIVE', keepOnlineEnabled: false,
+      });
+    getServiceStatus.mockResolvedValue('stopped');
+
+    await executeJob('restart-disable-race');
+
+    expect(getServiceStatus).toHaveBeenCalledWith('123');
+    expect(startService).not.toHaveBeenCalled();
+    expect(prismaMock.nitradoConnection.findFirst).toHaveBeenCalledTimes(2);
     expect(lastUpdateData().status).toBe('DONE');
   });
 });
