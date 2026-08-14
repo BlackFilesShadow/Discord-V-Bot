@@ -16,6 +16,7 @@ import { hasPermission as scopeHas } from '../../../types/scope';
 import prisma from '../../../database/prisma';
 import { logAuditDb } from '../../../utils/logger';
 import { emitGuildEvent } from '../../socket/emitter';
+import { cancelPendingKeepOnlineJobs, type KeepOnlineJobClient } from '../../../modules/nitrado/keepOnlineJobs';
 
 export const dashboardRouter = Router({ mergeParams: true });
 
@@ -130,6 +131,15 @@ dashboardRouter.patch('/server/:slot/settings', requireGuildPermission('whitelis
         where: { id: conn.id, guildId: scope.guildId },
         data: { keepOnlineEnabled },
       });
+      // Sofortige Cancellation: Beim Ausschalten duerfen bereits geplante
+      // RESTART_IF_DOWN-Jobs nicht nachtraeglich feuern. RUNNING-Jobs werden
+      // zusaetzlich im Worker unmittelbar vor der Remote-Aktion revalidiert.
+      if (!keepOnlineEnabled) {
+        await cancelPendingKeepOnlineJobs(
+          tx as unknown as KeepOnlineJobClient,
+          { guildId: scope.guildId, nitradoConnId: conn.id },
+        );
+      }
     }
     return settings;
   });
