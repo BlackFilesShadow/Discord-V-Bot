@@ -13,7 +13,7 @@ import { config } from '../../../config';
 import { decrypt } from '../../../utils/security';
 import { logger } from '../../../utils/logger';
 import { NitradoClient } from '../nitradoClient';
-import { resolveAdmProfile } from './profileResolver';
+import { recordAdmSourceError, resolveAdmProfile } from './profileResolver';
 import {
   ingestChunk,
   persistAdmEvents,
@@ -103,11 +103,19 @@ async function dateContextForOffset(
   return newDateContext(resolveBaseDate('', fileName), timeZone);
 }
 
-async function setFeedSourceError(conn: LiveConn, message: string | null): Promise<void> {
-  await prisma.gameplayFeedConfig.updateMany({
-    where: { guildId: conn.guildId, nitradoConnId: conn.id, isActive: true },
-    data: { lastErrorMsg: message, lastPolledAt: new Date() },
-  });
+/**
+ * Source health is stored on NitradoAdmProfileConfig. GameplayFeedConfig's
+ * lastErrorMsg belongs exclusively to Discord/delivery failures and must not be
+ * cleared by a successful Nitrado poll.
+ */
+async function setFeedSourceStatus(conn: LiveConn, message: string | null): Promise<void> {
+  await Promise.all([
+    prisma.gameplayFeedConfig.updateMany({
+      where: { guildId: conn.guildId, nitradoConnId: conn.id, isActive: true },
+      data: { lastPolledAt: new Date() },
+    }),
+    recordAdmSourceError({ id: conn.id, guildId: conn.guildId }, message),
+  ]);
 }
 
 async function baselineCurrentFile(
@@ -116,8 +124,6 @@ async function baselineCurrentFile(
   profileDir: string,
   file: AdmFile,
 ): Promise<void> {
-  // No historical replay on the first ever V2 start. Anchor on the last full
-  // newline where practical, but never read more than a small tail.
   let newOffset = file.size;
   let tail = '';
   if (file.size > 0) {
@@ -182,7 +188,7 @@ async function ingestFile(
       fingerprint(chunk),
     );
 
-    if (result.newOffset <= offset) break; // trailing partial line; retry next poll
+    if (result.newOffset <= offset) break;
     offset = result.newOffset;
     context = result.events.length > 0
       ? await dateContextForOffset(conn, file.name, offset, timeZone)
@@ -196,7 +202,7 @@ async function processConnection(conn: LiveConn): Promise<void> {
   try {
     token = decrypt(conn.encryptedToken, config.security.encryptionKey);
   } catch {
-    await setFeedSourceError(conn, 'Nitrado-Token konnte nicht entschluesselt werden.');
+    await setFeedSourceStatus(conn, 'Nitrado-Token konnte nicht entschluesselt werden.');
     return;
   }
 
@@ -210,7 +216,7 @@ async function processConnection(conn: LiveConn): Promise<void> {
       .filter(file => Number.isSafeInteger(file.modified_at) && Number.isSafeInteger(file.size) && file.size >= 0)
       .sort((a, b) => a.modified_at - b.modified_at || a.name.localeCompare(b.name));
     if (files.length === 0) {
-      await setFeedSourceError(conn, null);
+      await setFeedSourceStatus(conn, null);
       return;
     }
 
@@ -221,7 +227,7 @@ async function processConnection(conn: LiveConn): Promise<void> {
 
     if (!latestCursor) {
       await baselineCurrentFile(conn, client, profile.profileDir, files[files.length - 1]);
-      await setFeedSourceError(conn, null);
+      await setFeedSourceStatus(conn, null);
       return;
     }
 
@@ -265,11 +271,11 @@ async function processConnection(conn: LiveConn): Promise<void> {
         cursor ? Number(cursor.processedByteOffset) : 0,
       );
     }
-    await setFeedSourceError(conn, null);
+    await setFeedSourceStatus(conn, null);
   } catch (error) {
     const message = safeError(error);
     logger.warn(`ADM-Live-Sync ${conn.id}: ${message}`);
-    await setFeedSourceError(conn, message);
+    await setFeedSourceStatus(conn, message);
   }
 }
 
@@ -277,7 +283,6 @@ export async function runAdmLiveSyncOnce(): Promise<void> {
   if (running) return;
   running = true;
   try {
-    // Only feed-enabled scopes need low-latency Nitrado polling.
     // eslint-disable-next-line local/no-unscoped-prisma-query -- global producer discovery; exact scope enforced below
     const feeds = await prisma.gameplayFeedConfig.findMany({
       where: { isActive: true },
