@@ -1,29 +1,36 @@
-import { selectEconomyLinkServer } from '../../src/dashboard/routes/v2/economyLink';
+import { selectDashboardGameServer } from '../../src/dashboard/routes/v2/serverScope';
+import type { GuildId, UserDiscordId } from '../../src/types/scope';
 
-const active = (id: string, slot: number) => ({ id, slot, status: 'ACTIVE', nitradoServerId: `srv-${slot}` });
+const guildId = '123456789012345678' as GuildId;
+const actorDiscordId = '223456789012345678' as UserDiscordId;
+const connA = 'caaaaaaaaaaaaaaaaaaaaaaaa';
+const connB = 'cbbbbbbbbbbbbbbbbbbbbbbbb';
+const connLegacy = 'ccccccccccccccccccccccccc';
+const active = (id: string, slot: number) => ({ id, slot, alias: `Slot ${slot}`, status: 'ACTIVE', nitradoServerId: `srv-${slot}` });
+const select = (rows: ReturnType<typeof active>[], slot?: string) => selectDashboardGameServer(guildId, actorDiscordId, rows, slot);
 
-describe('economyLink server scope', () => {
+describe('shared dashboard gameserver scope', () => {
   it('auto-resolves only when exactly one usable server exists', () => {
-    expect(selectEconomyLinkServer([active('a', 1)], undefined)).toEqual({ kind: 'RESOLVED', nitradoConnId: 'a' });
+    expect(select([active(connA, 1)])).toEqual({ kind: 'RESOLVED', nitradoConnId: connA });
   });
 
   it('fails closed when multiple usable servers exist without explicit slot', () => {
-    expect(selectEconomyLinkServer([active('a', 1), active('b', 2)], undefined)).toEqual({ kind: 'PROMPT_REQUIRED' });
+    expect(select([active(connA, 1), active(connB, 2)])).toEqual({ kind: 'PROMPT_REQUIRED', slots: [1, 2] });
   });
 
   it('resolves an explicitly selected active slot', () => {
-    expect(selectEconomyLinkServer([active('a', 1), active('b', 2)], '2')).toEqual({ kind: 'RESOLVED', nitradoConnId: 'b' });
+    expect(select([active(connA, 1), active(connB, 2)], '2')).toEqual({ kind: 'RESOLVED', nitradoConnId: connB });
   });
 
   it('rejects legacy slot 5 instead of selecting it', () => {
-    expect(selectEconomyLinkServer([active('legacy', 5)], '5')).toEqual({ kind: 'INVALID_SLOT' });
+    expect(select([active(connLegacy, 5)], '5')).toEqual({ kind: 'INVALID_SLOT' });
   });
 
   it('does not treat inactive or unbound connections as usable servers', () => {
     const rows = [
-      { id: 'inactive', slot: 1, status: 'REVOKED', nitradoServerId: 'srv-1' },
-      { id: 'unbound', slot: 2, status: 'ACTIVE', nitradoServerId: null },
+      { id: connA, slot: 1, alias: 'Inactive', status: 'REVOKED', nitradoServerId: 'srv-1' },
+      { id: connB, slot: 2, alias: 'Unbound', status: 'ACTIVE', nitradoServerId: null },
     ];
-    expect(selectEconomyLinkServer(rows, undefined)).toEqual({ kind: 'NO_SERVER' });
+    expect(selectDashboardGameServer(guildId, actorDiscordId, rows, undefined)).toEqual({ kind: 'NO_SERVER' });
   });
 });
