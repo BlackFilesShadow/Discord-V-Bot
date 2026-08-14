@@ -61,7 +61,7 @@ export interface DashboardRuntimeHandle {
 
 function closeIo(io: IOServer): Promise<void> {
   return new Promise(resolve => {
-    io.close(() => resolve());
+    void io.close(() => resolve());
   });
 }
 
