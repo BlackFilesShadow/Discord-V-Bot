@@ -78,7 +78,7 @@ afterEach(() => {
 
 describe('translated post legacy remote-image migration', () => {
   it('removes the freshly materialized image if persisting its managed ref fails', async () => {
-    const send = jest.fn(async () => undefined);
+    const send = jest.fn(async (_payload?: unknown) => undefined);
     const client = {
       channels: {
         fetch: jest.fn(async () => ({ send, guild: null })),
