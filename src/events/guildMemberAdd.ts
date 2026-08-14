@@ -137,11 +137,13 @@ const guildMemberAddEvent: BotEvent = {
           const channel = m.guild.channels.cache.get(wcfg.channelId) as TextChannel | undefined;
           if (channel?.isTextBased()) {
             const userMention = `<@${m.user.id}>`;
-            const displayName = m.displayName || m.user.globalName || m.user.username;
             const memberCount = m.guild.memberCount;
 
+            // {user} und {mention} sind laut Dashboard beide echte Discord-
+            // Mentions. Der reale Join-Pfad muss deshalb dieselbe Mention wie
+            // der Dashboard-Testpfad an den Renderer uebergeben.
             const messageText = renderWelcomeMessage(wcfg.message, {
-              user: displayName,
+              user: userMention,
               mention: userMention,
               guild: m.guild.name,
               memberCount,
