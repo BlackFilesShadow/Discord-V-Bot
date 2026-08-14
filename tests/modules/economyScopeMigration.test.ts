@@ -8,7 +8,7 @@ process.env.SESSION_SECRET ||= 'test-session-secret';
 const migrationFindUnique = jest.fn();
 const migrationUpdate = jest.fn(async () => ({}));
 const connectionFindFirst = jest.fn();
-const executeRawUnsafe = jest.fn(async () => 1);
+const executeRawUnsafe = jest.fn(async (..._args: unknown[]) => 1);
 const transaction = jest.fn(async (fn: (tx: unknown) => Promise<unknown>) => fn({
   $executeRawUnsafe: executeRawUnsafe,
   economyScopeMigration: { update: migrationUpdate },
@@ -149,7 +149,8 @@ describe('ECO-S03 Legacy-Economy Scope Migration', () => {
     expect(result.primaryNitradoConnId).toBe(connA);
     expect(result.updatedRows).toBe(8);
     expect(executeRawUnsafe).toHaveBeenCalledTimes(8);
-    for (const [sql] of executeRawUnsafe.mock.calls) {
+    const rawCalls = executeRawUnsafe.mock.calls as unknown as Array<[string, ...unknown[]]>;
+    for (const [sql] of rawCalls) {
       expect(String(sql)).toMatch(/^UPDATE /);
       expect(String(sql)).not.toMatch(/\bINSERT\b|\bCOPY\b/i);
     }
