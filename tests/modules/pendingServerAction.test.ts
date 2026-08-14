@@ -63,7 +63,7 @@ function makeClient() {
 }
 
 const guildId = asGuildId('123456789012345678');
-const nitradoConnId = asNitradoConnId('conn-1');
+const nitradoConnId = asNitradoConnId('clx1234567890123456789012');
 const actorDiscordId = asUserDiscordId('234567890123456789');
 const now = new Date('2026-08-14T11:00:00.000Z');
 
