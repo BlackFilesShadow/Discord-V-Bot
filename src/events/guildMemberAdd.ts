@@ -9,38 +9,28 @@ import { syncMemberProfile } from '../modules/ai/memberAwareness';
 import { maybeGrantStartBalance } from '../modules/economy/repository';
 import { asGuildId, asUserDiscordId } from '../types/scope';
 
-// Anti-Raid: Speichert Join-Timestamps
 const recentJoins: Map<string, number[]> = new Map();
 
-/**
- * GuildMemberAdd-Event: Neuer Nutzer tritt bei.
- * Sektion 1: GUID-Vergabe, Sektion 9: Auto-Rollen.
- */
 const guildMemberAddEvent: BotEvent = {
   name: Events.GuildMemberAdd,
   execute: async (member: unknown) => {
     const m = member as GuildMember;
 
-    // Anti-Raid Detection (Sektion 4)
     const guildId = m.guild.id;
     const now = Date.now();
     const joins = recentJoins.get(guildId) || [];
     joins.push(now);
-    // Nur Joins der letzten 10 Sekunden behalten
     const recentWindow = joins.filter(t => now - t < 10000);
     recentJoins.set(guildId, recentWindow);
 
     const isRaid = await detectRaid(guildId, recentWindow.length);
     if (isRaid) {
       logger.warn(`🚨 RAID ERKANNT auf Server ${guildId}! ${recentWindow.length} Joins in 10s.`);
-      // Hier könnte automatisches Lockdown implementiert werden
     }
 
     try {
-      // Phase 18: Per-Guild Member-Profil pflegen (best-effort).
       void syncMemberProfile(m);
 
-      // User in DB registrieren mit GUID (Sektion 1)
       const user = await prisma.user.upsert({
         where: { discordId: m.user.id },
         create: {
@@ -54,28 +44,23 @@ const guildMemberAddEvent: BotEvent = {
         },
       });
 
-      // Level-Data initialisieren für DIESE Guild (Sektion 8, guild-getrennt)
       await prisma.levelData.upsert({
         where: { userId_guildId: { userId: user.id, guildId: m.guild.id } },
         create: { userId: user.id, guildId: m.guild.id },
         update: {},
       });
 
-      // GDPR Consent Entry (Sektion 4: DSGVO)
       await prisma.gdprConsent.upsert({
         where: { userId: user.id },
         create: { userId: user.id },
         update: {},
       });
 
-      // Auto-Rollen vergeben (Sektion 9: Rollen nach Beitritt)
-      // Multi-Guild: NUR AutoRoles dieser Guild beruecksichtigen.
       const autoRoles = await prisma.autoRole.findMany({
         where: { guildId: m.guild.id, triggerType: 'JOIN', isActive: true },
       });
 
       for (const autoRole of autoRoles) {
-        // Prüfe Ablaufdatum
         if (autoRole.expiresAt && autoRole.expiresAt < new Date()) continue;
 
         try {
@@ -95,7 +80,6 @@ const guildMemberAddEvent: BotEvent = {
         }
       }
 
-      // Phase 3-Final: Startguthaben (idempotent, prueft EconomyConfig.startBalance)
       try {
         const grantResult = await maybeGrantStartBalance(asGuildId(m.guild.id), asUserDiscordId(m.user.id));
         if (grantResult.granted) {
@@ -107,7 +91,6 @@ const guildMemberAddEvent: BotEvent = {
         logger.warn(`Startguthaben fuer ${m.user.id} in ${m.guild.id} fehlgeschlagen:`, econErr as Error);
       }
 
-      // Audit-Log
       logAudit('MEMBER_JOIN', 'SYSTEM', {
         userId: user.id,
         discordId: m.user.id,
@@ -118,19 +101,19 @@ const guildMemberAddEvent: BotEvent = {
 
       logger.info(`Neuer Nutzer: ${m.user.username} (GUID: ${user.id})`);
 
-      // ===== WELCOME-NACHRICHT (normaler Discord-Text mit optionalem Medium) =====
       try {
         const wcfg = await getWelcomeConfig(m.guild.id);
         if (wcfg && wcfg.enabled && wcfg.channelId) {
           const channel = m.guild.channels.cache.get(wcfg.channelId) as TextChannel | undefined;
           if (channel?.isTextBased()) {
             const userMention = `<@${m.user.id}>`;
+            const displayName = m.displayName || m.user.globalName || m.user.username;
             const memberCount = m.guild.memberCount;
 
-            // {user} und {mention} sind echte Discord-Erwaehnungen direkt im
-            // normalen Nachrichtentext. Es gibt keinen zusaetzlichen Ping.
+            // W-001: {user} ist ein lesbarer Anzeigename; nur {mention} pingt.
+            // allowedMentions im Sender ist weiterhin hart auf genau die neue User-ID begrenzt.
             const messageText = renderWelcomeMessage(wcfg.message, {
-              user: userMention,
+              user: displayName,
               mention: userMention,
               guild: m.guild.name,
               memberCount,
