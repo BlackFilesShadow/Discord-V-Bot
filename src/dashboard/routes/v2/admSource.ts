@@ -1,4 +1,4 @@
-import { Router } from 'express';
+import { Router, type Request, type Response } from 'express';
 import { requireGuildOwner } from '../../middleware/auth';
 import prisma from '../../../database/prisma';
 import { getSlot, getDecryptedToken } from '../../../modules/nitrado/repository';
@@ -13,22 +13,20 @@ import { logAuditDb } from '../../../utils/logger';
 
 export const admSourceRouter = Router({ mergeParams: true });
 
+interface SlotContext {
+  guildId: string;
+  slot: number;
+  conn: { id: string; nitradoServerId: string };
+  client: NitradoClient;
+}
+
 function readSlot(raw: unknown): number | null {
   const slot = Number(String(raw ?? ''));
   return Number.isInteger(slot) && slot >= 1 && slot <= 5 ? slot : null;
 }
 
-async function context(req: Parameters<typeof requireGuildOwner>[0] & { guildScope?: never }) {
-  void req;
-}
-
-async function resolveSlotContext(req: any, res: any): Promise<{
-  guildId: string;
-  slot: number;
-  conn: Awaited<ReturnType<typeof getSlot>> & { id: string; nitradoServerId: string };
-  client: NitradoClient;
-} | null> {
-  const guildId = req.guildScope!.guildId as string;
+async function resolveSlotContext(req: Request, res: Response): Promise<SlotContext | null> {
+  const guildId = req.guildScope!.guildId;
   const slot = readSlot(req.query.slot);
   if (!slot) { res.status(400).json({ error: 'slot 1..5 ist erforderlich.' }); return null; }
   const found = await getSlot(guildId, slot);
@@ -38,7 +36,7 @@ async function resolveSlotContext(req: any, res: any): Promise<{
   return {
     guildId,
     slot,
-    conn: found as typeof found & { id: string; nitradoServerId: string },
+    conn: { id: found.id, nitradoServerId: found.nitradoServerId },
     client: new NitradoClient(token),
   };
 }
