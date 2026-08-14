@@ -43,6 +43,14 @@ describe('F-003 — safeLookup (DNS-Rebinding)', () => {
     });
   });
 
+  it('blockiert IPv6 Link-Local auch ausserhalb des fe80::/16-Präfixes', (done) => {
+    lookupMock.mockImplementation((_h: string, _o: unknown, cb: Cb) => cb(null, [{ address: 'febf::1', family: 6 }]));
+    safeLookup('ipv6-link-local.evil', { all: true }, (err) => {
+      expect(err).toBeInstanceOf(Error);
+      done();
+    });
+  });
+
   it('filtert gemischte Ergebnisse auf die oeffentlichen IPs', (done) => {
     lookupMock.mockImplementation((_h: string, _o: unknown, cb: Cb) => cb(null, [
       { address: '10.0.0.5', family: 4 },
@@ -74,5 +82,24 @@ describe('F-003 — safeAxiosGet (Vorab-Validierung)', () => {
     expect(isBlockedHost('169.254.169.254')).toBe(true);
     expect(isBlockedHost('10.1.2.3')).toBe(true);
     expect(isBlockedHost('93.184.216.34')).toBe(false);
+  });
+
+  it('blockiert den gesamten IPv6 Link-Local-Bereich fe80::/10', () => {
+    expect(isBlockedHost('fe80::1')).toBe(true);
+    expect(isBlockedHost('fe9a::1')).toBe(true);
+    expect(isBlockedHost('fea0::1')).toBe(true);
+    expect(isBlockedHost('febf::1')).toBe(true);
+  });
+
+  it('blockiert ULA, Multicast und IPv4-mapped Loopback auch in Hex-Schreibweise', () => {
+    expect(isBlockedHost('fc00::1')).toBe(true);
+    expect(isBlockedHost('fd12:3456::1')).toBe(true);
+    expect(isBlockedHost('ff02::1')).toBe(true);
+    expect(isBlockedHost('::ffff:7f00:1')).toBe(true);
+    expect(isBlockedHost('::ffff:10.0.0.1')).toBe(true);
+  });
+
+  it('laesst globale IPv6-Adressen weiterhin zu', () => {
+    expect(isBlockedHost('2606:4700:4700::1111')).toBe(false);
   });
 });
