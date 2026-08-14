@@ -65,6 +65,13 @@ function registerFail(key: string): void {
 
 function clearFails(key: string): void { failures.delete(key); }
 
+async function revokeActiveDevSessions(userDiscordId: string): Promise<void> {
+  await prisma.devSession.updateMany({
+    where: { userDiscordId, revokedAt: null, expiresAt: { gt: new Date() } },
+    data: { revokedAt: new Date() },
+  }).catch(() => undefined);
+}
+
 // --- Passwort-Aufloesung --------------------------------------------------
 // Sicherheits-Hardening: KEIN Default-Passwort. Wenn DEV_PASSWORD nicht gesetzt ist,
 // fail-closed (alle Login-Versuche werden mit 503 abgelehnt). Verhindert versehentliche
@@ -98,13 +105,6 @@ const loginLimiter = rateLimit({
 
 devRouter.post('/login', loginLimiter, async (req, res) => {
   if (!req.auth) { res.status(401).json({ error: 'Nicht angemeldet.' }); return; }
-  // Frische DB-Rolle (Session-Rolle kann veraltet sein, wenn ein Admin eine
-  // Rollen-Aenderung vorgenommen hat ohne dass der User sich neu eingeloggt hat).
-  const dbUser = await prisma.user.findUnique({
-    where: { id: req.auth.userId },
-    select: { role: true },
-  });
-  const currentRole = dbUser?.role ?? req.auth.role;
 
   // Fail-closed: Ohne kanonische globale Developer-ID ist die DEV-Konsole nicht
   // korrekt konfiguriert. Ein Passwort darf diesen Zustand niemals ueberbruecken.
@@ -113,6 +113,37 @@ devRouter.post('/login', loginLimiter, async (req, res) => {
     logAudit('DEV_LOGIN_MISCONFIGURED', 'SECURITY', { userId: req.auth.userId, ip: req.ip });
     res.status(503).json({ error: 'DEV-Login serverseitig nicht konfiguriert (BOT_OWNER_ID fehlt).' });
     return;
+  }
+
+  // Frische DB-Rolle ist zwingend. Ein geloeschter DB-User darf niemals ueber
+  // eine alte Session-Rolle weiterhin fuer DEV berechtigt erscheinen.
+  const dbUser = await prisma.user.findUnique({
+    where: { id: req.auth.userId },
+    select: { role: true },
+  });
+  if (!dbUser) {
+    await revokeActiveDevSessions(String(req.auth.discordId));
+    logAudit('DEV_LOGIN_NOT_ELIGIBLE', 'SECURITY', {
+      userId: req.auth.userId,
+      discordId: req.auth.discordId,
+      role: req.auth.role,
+      reason: 'DB_USER_MISSING',
+      ip: req.ip,
+    });
+    recordDevAuthFailure({
+      userId: req.auth.userId,
+      ip: req.ip,
+      userAgent: String(req.headers['user-agent'] ?? ''),
+      reason: 'not_eligible',
+      failureCount: 1,
+    });
+    res.status(403).json({ error: 'Keine DEV-Berechtigung.' });
+    return;
+  }
+  const currentRole = dbUser.role;
+  if (currentRole !== req.auth.role) {
+    (req.session as unknown as { role?: string }).role = currentRole;
+    req.auth.role = currentRole;
   }
 
   if (!isGlobalDeveloperEligible(String(req.auth.discordId), currentRole)) {
@@ -177,10 +208,7 @@ devRouter.post('/login', loginLimiter, async (req, res) => {
   clearFails(key);
 
   // Vorhandene DevSessions des Users widerrufen, damit nur eine aktiv ist.
-  await prisma.devSession.updateMany({
-    where: { userDiscordId: req.auth.discordId, revokedAt: null, expiresAt: { gt: new Date() } },
-    data: { revokedAt: new Date() },
-  });
+  await revokeActiveDevSessions(String(req.auth.discordId));
 
   const session = await prisma.devSession.create({
     data: {
@@ -211,12 +239,18 @@ devRouter.post('/logout', async (req, res) => {
 
 devRouter.get('/status', async (req, res) => {
   if (!req.auth) { res.status(401).json({ error: 'Nicht angemeldet.' }); return; }
-  // Frische DB-Rolle sorgt dafuer, dass Rollenentzug sofort wirksam wird.
+  // Frische DB-Rolle ist zwingend; fehlt der DB-User, wird eine eventuell noch
+  // aktive DEV-Session widerrufen und die Berechtigung fail-closed verneint.
   const dbUser = await prisma.user.findUnique({
     where: { id: req.auth.userId },
     select: { role: true },
   });
-  const currentRole = dbUser?.role ?? req.auth.role;
+  if (!dbUser) {
+    await revokeActiveDevSessions(String(req.auth.discordId));
+    res.json({ active: false, eligible: false });
+    return;
+  }
+  const currentRole = dbUser.role;
   if (currentRole !== req.auth.role) {
     (req.session as unknown as { role?: string }).role = currentRole;
     req.auth.role = currentRole;
