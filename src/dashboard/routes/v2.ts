@@ -10,12 +10,14 @@ import { Router } from 'express';
 import { requireAuth } from '../middleware/auth';
 import { idempotency } from '../middleware/idempotency';
 import { requireGlobalDeveloperIdentity } from '../middleware/globalDeveloperGate';
+import { requireSafeDashboardEconomyScope } from '../middleware/economyScopeGuard';
 
 import { guildsRouter } from './v2/guilds';
 import { dashboardRouter } from './v2/dashboard';
 import { permissionsRouter } from './v2/permissions';
 import { nitradoRouter } from './v2/nitrado';
 import { economyRouter } from './v2/economy';
+import { economyScopeRouter } from './v2/economyScope';
 import { economyLinkRouter } from './v2/economyLink';
 import { whitelistRouter } from './v2/whitelist';
 import { factionsRouter } from './v2/factions';
@@ -52,9 +54,18 @@ v2Router.use('/guilds/:guildId/nitrado', nitradoRouter);
 v2Router.use('/guilds/:guildId/tickets', ticketsRouter);
 v2Router.use('/guilds/:guildId/whitelist', whitelistRouter);
 v2Router.use('/guilds/:guildId/factions', factionsRouter);
-v2Router.use('/guilds/:guildId/economy', economyRouter);
+
+// Phase 4 / ECO-S03: Owner-Aufloesung MUSS ausserhalb des fail-closed
+// Economy-Guards liegen, sonst koennte eine MIGRATION_REQUIRED-Guild ihren
+// Primaerserver niemals festlegen.
+v2Router.use('/guilds/:guildId/economy-scope', economyScopeRouter);
+// Die alten Dashboard-Economy/Casino-Routen sind noch guildweit. Bis deren
+// kompletter nitradoConnId-Umbau abgeschlossen ist, blockiert dieser Guard
+// Multi-Server-Zugriffe statt Daten aus verschiedenen Servern zu vermischen.
+v2Router.use('/guilds/:guildId/economy', requireSafeDashboardEconomyScope, economyRouter);
 v2Router.use('/guilds/:guildId/economy-links', economyLinkRouter);
-v2Router.use('/guilds/:guildId/casino', casinoRouter);
+v2Router.use('/guilds/:guildId/casino', requireSafeDashboardEconomyScope, casinoRouter);
+
 v2Router.use('/guilds/:guildId/killfeed', killfeedRouter);
 v2Router.use('/guilds/:guildId/welcome', welcomeRouter);
 v2Router.use('/guilds/:guildId/embeds', embedsRouter);
