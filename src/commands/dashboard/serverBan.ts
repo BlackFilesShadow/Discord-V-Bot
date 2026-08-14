@@ -45,8 +45,18 @@ function safeLine(value: string | null | undefined, fallback = '—'): string {
   return cleaned || fallback;
 }
 
-function remoteLabel(appliedRemotely: boolean): string {
-  return appliedRemotely ? 'Remote angewendet' : 'Nur lokal registriert';
+function banStateLabel(
+  active: boolean,
+  expiresAt: Date | null,
+  appliedRemotely: boolean,
+  now: Date,
+): string {
+  const locallyActive = active && (expiresAt === null || expiresAt.getTime() > now.getTime());
+  if (!locallyActive && appliedRemotely) {
+    return '⚠️ REMOTE-ABWEICHUNG • lokal inaktiv, remote markiert';
+  }
+  if (locallyActive && appliedRemotely) return 'Lokal aktiv • Remote angewendet';
+  return 'Lokal aktiv • Nicht remote angewendet';
 }
 
 // ============================================================
@@ -170,7 +180,7 @@ export const serverUnbanCommand: Command = {
     let lifted = false;
     let selectedBanId: string | null = banId;
     let appliedRemotely = false;
-    let targetDiscordId: string | null = target?.id ?? null;
+    const targetDiscordId: string | null = target?.id ?? null;
 
     if (banId) {
       const row = await prisma.serverBanEntry.findFirst({
@@ -228,19 +238,19 @@ export const serverUnbanCommand: Command = {
     });
 
     const remoteWarning = appliedRemotely
-      ? '\nAchtung: Der Eintrag war als remote angewendet markiert. V-Bot besitzt aktuell keine verifizierte Remove-Ban-Capability; pruefe die Gameserver-Seite manuell.'
+      ? '\nAchtung: Der Eintrag war als remote angewendet markiert. V-Bot besitzt aktuell keine verifizierte Remove-Ban-Capability; der Eintrag bleibt deshalb als REMOTE-ABWEICHUNG in `/server-ban-list` sichtbar, bis die Gameserver-Seite geklaert ist.'
       : '';
     await reply(interaction, `Server-Bann \`${selectedBanId ?? 'unbekannt'}\` lokal aufgehoben.${remoteWarning}`);
   }),
 };
 
 // ============================================================
-// /server-ban-list — aktive, nicht abgelaufene lokale Registry
+// /server-ban-list — aktive Registry + sichtbare Remote-Abweichungen
 // ============================================================
 export const serverBanListCommand: Command = {
   data: new SlashCommandBuilder()
     .setName('server-ban-list')
-    .setDescription('Zeigt aktive Server-Banns des ausgewaehlten Slots (max. 50).')
+    .setDescription('Zeigt aktive Server-Banns und Remote-Abweichungen des Slots (max. 50).')
     .addIntegerOption(o =>
       o.setName('slot').setDescription('Nitrado-Slot 1-5; leer = aktiver Slot').setRequired(false).setMinValue(1).setMaxValue(5),
     ) as SlashCommandBuilder,
@@ -251,15 +261,20 @@ export const serverBanListCommand: Command = {
       where: {
         guildId: scope.guildId,
         nitradoConnId: scope.nitradoConnId!,
-        active: true,
-        OR: [{ expiresAt: null }, { expiresAt: { gt: now } }],
+        OR: [
+          { appliedRemotely: true },
+          {
+            active: true,
+            OR: [{ expiresAt: null }, { expiresAt: { gt: now } }],
+          },
+        ],
       },
       orderBy: { updatedAt: 'desc' },
       take: 50,
     });
 
     if (rows.length === 0) {
-      await reply(interaction, 'Keine aktiven Server-Banns in diesem Slot.');
+      await reply(interaction, 'Keine aktiven Server-Banns oder Remote-Abweichungen in diesem Slot.');
       return;
     }
 
@@ -284,15 +299,15 @@ export const serverBanListCommand: Command = {
         ? `<t:${Math.floor(row.expiresAt.getTime() / 1000)}:R>`
         : 'Permanent';
       return [
-        `**${target}** • ${remoteLabel(row.appliedRemotely)} • ${expiry}`,
+        `**${target}** • ${banStateLabel(row.active, row.expiresAt, row.appliedRemotely, now)} • ${expiry}`,
         `ID: \`${row.id}\` • Grund: ${safeLine(row.reason)}`,
       ].join('\n');
     });
 
     const embed = new EmbedBuilder()
-      .setTitle(`Server-Banns (${rows.length})`)
+      .setTitle(`Server-Banns / Remote-Abweichungen (${rows.length})`)
       .setDescription(lines.join('\n\n').slice(0, 4000))
-      .setFooter({ text: 'V-Bot • Ban-Registry; Remote-Status wird nicht vorausgesetzt' })
+      .setFooter({ text: 'V-Bot • Lokale Registry; Remote-Abweichungen bleiben sichtbar' })
       .setTimestamp(now);
 
     await interaction.reply({
