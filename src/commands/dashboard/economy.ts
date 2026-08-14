@@ -14,7 +14,7 @@ import { withGuildScope } from '../middleware/withGuildScope';
 import {
   getAccountOrZero, recentTransactions, pay, adminPay, deposit, withdraw, transferBank, getConfig,
 } from '../../modules/economy/repository';
-import { forceLink, unlinkUser, type LinkClient } from '../../modules/linking/linkService';
+import { createLinkChallenge, forceLink, unlinkUser, type LinkClient } from '../../modules/linking/linkService';
 import { config } from '../../config';
 import { asUserDiscordId } from '../../types/scope';
 import type { GuildId } from '../../types/scope';
@@ -76,26 +76,31 @@ async function statusReply(
 }
 
 // ============================================================
-// /link — bindet Discord-User an Steam64/Charname im aktiven Slot
+// /link — startet den sicheren Ingame-Challenge-Flow im aktiven Slot
 // ============================================================
 export const linkCommand: Command = {
   data: new SlashCommandBuilder()
     .setName('link')
-    .setDescription('Verknüpft deinen Discord-Account mit deiner Spielfigur (Steam64 oder Charname).')
-    .addStringOption(o => o.setName('id').setDescription('Steam64-ID (17 Stellen) oder Charname').setRequired(true).setMaxLength(64)),
-  execute: withGuildScope({ requireSlotToggle: 'economyActive' }, async (i, scope) => {
-    const id = i.options.getString('id', true).trim();
-    if (!isValidGameId(id)) { await statusReply(i, 'ERROR', 'Verknüpfung fehlgeschlagen', { description: 'Die ID ist ungültig.', fields: [{ name: '📝 Grund', value: 'Bitte Steam64 (17 Stellen, beginnt mit 7656) oder Charname (3–32 Zeichen) angeben.' }] }); return; }
-
-    // Einheitliche Bindung: verbindet den Discord-User mit seiner Spielidentitaet
-    // (GameIdentityLink, nur als HMAC gespeichert) und dient zugleich der Economy.
-    const r = await forceLink(prisma as unknown as LinkClient, { guildId: scope.guildId, nitradoConnId: scope.nitradoConnId! }, scope.actorDiscordId, id, config.security.encryptionKey);
-    if (!r.ok) {
-      await statusReply(i, 'ERROR', 'Bereits vergeben', { description: 'Die Verknüpfung konnte nicht erstellt werden.', fields: [{ name: '📝 Grund', value: 'Diese Spielidentität ist bereits mit einem anderen Discord-Account verknüpft.' }] });
-      return;
-    }
-    logAudit('LINK_CREATED', 'ECONOMY', { guildId: scope.guildId, slotId: scope.nitradoConnId, actor: scope.actorDiscordId });
-    await statusReply(i, 'SUCCESS', 'Verknüpft', { description: 'Deine Spielfigur wurde mit deinem Account verknüpft.', fields: [{ name: '🎮 Spielfigur', value: `\`${id}\`` }] });
+    .setDescription('Startet die sichere Verknüpfung mit deiner Spielfigur per Ingame-Code.'),
+  execute: withGuildScope({}, async (i, scope) => {
+    const { code, expiresAt } = await createLinkChallenge(
+      prisma as unknown as LinkClient,
+      { guildId: scope.guildId, nitradoConnId: scope.nitradoConnId! },
+      scope.actorDiscordId,
+    );
+    logAudit('LINK_CHALLENGE_CREATED', 'LINKING', {
+      guildId: scope.guildId,
+      slotId: scope.nitradoConnId,
+      actor: scope.actorDiscordId,
+      expiresAt: expiresAt.toISOString(),
+    });
+    await statusReply(i, 'SUCCESS', 'Verknüpfung gestartet', {
+      description: 'Schreibe den folgenden Code **im Spielchat auf dem ausgewählten DayZ-Server**. Erst die ADM-Erkennung verknüpft danach deine Spielidentität mit Discord.',
+      fields: [
+        { name: '🔐 Ingame-Code', value: `\`${code}\`` },
+        { name: '⏱️ Gültig', value: `<t:${Math.floor(expiresAt.getTime() / 1000)}:R>` },
+      ],
+    });
   }),
 };
 
