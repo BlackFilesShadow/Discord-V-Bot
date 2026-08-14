@@ -14,6 +14,22 @@ enum GameplayDeliveryStatus {
   FAILED
 }
 
+model NitradoAdmProfileConfig {
+  id             String   @id @default(cuid())
+  guildId        String
+  nitradoConnId  String
+  profileDir     String   @db.Text
+  source         String   @default("AUTO") @db.VarChar(24)
+  timeZone       String?  @db.VarChar(80)
+  lastVerifiedAt DateTime?
+  lastError      String?  @db.Text
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+
+  @@unique([guildId, nitradoConnId])
+  @@index([nitradoConnId])
+}
+
 model GameplayFeedConfig {
   id                     String           @id @default(cuid())
   guildId                String
