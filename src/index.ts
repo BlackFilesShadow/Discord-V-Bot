@@ -211,8 +211,9 @@ async function main(): Promise<void> {
   // Web-Dashboard SOFORT nach Login starten, damit Healthcheck (/health) und
   // /metrics frueh verfuegbar sind. Der Command-Sync (scoped, im clientReady)
   // kann minutenlang dauern und darf den HTTP-Server nicht blockieren.
+  let dashboardRuntime: Awaited<ReturnType<typeof startDashboard>> | null = null;
   try {
-    await startDashboard(client);
+    dashboardRuntime = await startDashboard(client);
   } catch (error) {
     logger.error('Dashboard konnte nicht gestartet werden:', error);
   }
@@ -267,6 +268,14 @@ async function main(): Promise<void> {
       process.exit(1);
     }, 20_000);
     watchdog.unref?.();
+
+    // Dashboard zuerst als externen Producer schliessen: keine neuen HTTP-/
+    // Socket-Aktionen duerfen waehrend Worker-Drain/DB-Shutdown entstehen.
+    try {
+      if (dashboardRuntime) await dashboardRuntime.stop();
+    } catch (e) {
+      logger.warn('Dashboard-Runtime-Shutdown fehlgeschlagen:', e as Error);
+    }
 
     // Keine neuen allgemeinen/AI DB- oder Discord-Arbeiten mehr erzeugen.
     stopAiBackgroundLoops();
