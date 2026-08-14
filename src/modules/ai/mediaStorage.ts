@@ -5,11 +5,9 @@ import { logger } from '../../utils/logger';
 import { safeAxiosGet } from '../../utils/ssrf';
 
 /**
- * Persistente Speicherung von Discord-Attachments im uploads-Volume.
- * Discord-CDN-URLs verfallen, daher lokale Kopie. Auch eine von Discord
- * gelieferte URL wird wie externe Eingabe behandelt: DNS/Redirects werden vom
- * zentralen SSRF-Client erneut validiert und die tatsaechliche Responsegroesse
- * sowie der Dateiinhalt werden nach dem Download nochmals geprueft.
+ * Persistente Speicherung von Discord-Attachments und externer Media im
+ * uploads-Volume. Jede externe URL wird über den zentralen SSRF-Client geladen;
+ * Größe, MIME und Magic Bytes werden nach dem Download erneut geprüft.
  */
 
 export const MEDIA_BASE_DIR = path.resolve(process.cwd(), 'uploads', 'media');
@@ -18,6 +16,7 @@ const ALLOWED_EXT = /\.(jpe?g|png|gif|webp|mp4|webm|mov)$/i;
 const ALLOWED_MIME = /^(image\/(jpeg|png|gif|webp)|video\/(mp4|webm|quicktime))$/i;
 
 type MediaKind = 'jpeg' | 'png' | 'gif' | 'webp' | 'mp4' | 'webm';
+type MediaScope = 'triggers' | 'welcome';
 
 export interface SavedMedia {
   ok: boolean;
@@ -56,6 +55,11 @@ function extMatchesKind(ext: string, kind: MediaKind): boolean {
   return ext === `.${kind}`;
 }
 
+function canonicalExt(kind: MediaKind): string {
+  if (kind === 'jpeg') return '.jpg';
+  return `.${kind}`;
+}
+
 function mimeMatchesKind(rawMime: string | null | undefined, kind: MediaKind): boolean {
   if (!rawMime) return true;
   const mime = rawMime.split(';', 1)[0].trim().toLowerCase();
@@ -65,13 +69,37 @@ function mimeMatchesKind(rawMime: string | null | undefined, kind: MediaKind): b
   return mime === (kind === 'png' || kind === 'gif' || kind === 'webp' ? `image/${kind}` : 'video/webm');
 }
 
+async function persistMedia(
+  buffer: Buffer,
+  scope: MediaScope,
+  guildId: string,
+  key: string,
+  ext: string,
+): Promise<SavedMedia> {
+  const safeGuild = sanitize(guildId);
+  const safeKey = sanitize(key);
+  if (!safeGuild || !safeKey) return { ok: false, message: '❌ Ungültiger Media-Speicherschlüssel.' };
+
+  const dir = path.join(MEDIA_BASE_DIR, scope, safeGuild);
+  const fullPath = path.join(dir, `${safeKey}${ext}`);
+  try {
+    await fs.mkdir(dir, { recursive: true, mode: 0o750 });
+    await fs.writeFile(fullPath, buffer, { mode: 0o640 });
+  } catch (err) {
+    logger.error('Media-Speichern Fehler:', err);
+    return { ok: false, message: `❌ Speichern fehlgeschlagen: ${String(err).slice(0, 200)}` };
+  }
+
+  return { ok: true, message: '✅ Media gespeichert.', localPath: fullPath };
+}
+
 /**
  * Lädt das Discord-Attachment herunter und speichert es persistent.
  * Pfad-Schema: uploads/media/<scope>/<guildId>/<key>.<ext>
  */
 export async function saveAttachment(
   attachment: Attachment,
-  scope: 'triggers' | 'welcome',
+  scope: MediaScope,
   guildId: string,
   key: string,
 ): Promise<SavedMedia> {
@@ -113,26 +141,61 @@ export async function saveAttachment(
     return { ok: false, message: '❌ MIME-Type und Dateiinhalt stimmen nicht überein.' };
   }
 
-  const dir = path.join(MEDIA_BASE_DIR, scope, sanitize(guildId));
-  await fs.mkdir(dir, { recursive: true });
-  const filename = `${sanitize(key)}${ext}`;
-  const fullPath = path.join(dir, filename);
+  return persistMedia(buffer, scope, guildId, key, ext);
+}
+
+/**
+ * Materialisiert nutzergesteuerte Remote-Media. Anders als beim Discord-
+ * Attachment wird keiner URL-Endung vertraut: der lokale Dateityp wird allein
+ * aus den validierten Magic Bytes abgeleitet.
+ */
+export async function saveRemoteMedia(
+  rawUrl: string,
+  scope: MediaScope,
+  guildId: string,
+  key: string,
+): Promise<SavedMedia> {
+  let buffer: Buffer;
+  let responseContentType: string | undefined;
   try {
-    await fs.writeFile(fullPath, buffer);
+    const res = await safeAxiosGet<ArrayBuffer>(rawUrl, {
+      responseType: 'arraybuffer',
+      timeout: 30_000,
+      maxContentLength: MAX_MEDIA_BYTES,
+      maxBodyLength: MAX_MEDIA_BYTES,
+    });
+    buffer = Buffer.from(res.data);
+    const header = res.headers?.['content-type'];
+    responseContentType = typeof header === 'string' ? header : undefined;
+    if (buffer.length > MAX_MEDIA_BYTES) {
+      return { ok: false, message: `❌ Datei zu groß (max ${MAX_MEDIA_BYTES / 1024 / 1024} MB).` };
+    }
   } catch (err) {
-    logger.error('Media-Speichern Fehler:', err);
-    return { ok: false, message: `❌ Speichern fehlgeschlagen: ${String(err).slice(0, 200)}` };
+    logger.error('Remote-Media-Download Fehler:', err);
+    return { ok: false, message: `❌ Download-Fehler: ${String(err).slice(0, 200)}` };
   }
 
-  return { ok: true, message: '✅ Media gespeichert.', localPath: fullPath };
+  const kind = detectMediaKind(buffer);
+  if (!kind) return { ok: false, message: '❌ Dateiinhalt ist kein unterstütztes Bild/Video.' };
+  if (!mimeMatchesKind(responseContentType, kind)) {
+    return { ok: false, message: '❌ MIME-Type und Dateiinhalt stimmen nicht überein.' };
+  }
+
+  return persistMedia(buffer, scope, guildId, key, canonicalExt(kind));
+}
+
+function isManagedMediaPath(filePath: string): boolean {
+  const base = path.resolve(MEDIA_BASE_DIR);
+  const candidate = path.resolve(filePath);
+  const rel = path.relative(base, candidate);
+  return rel.length > 0 && !rel.startsWith('..') && !path.isAbsolute(rel);
 }
 
 /** Löscht eine zuvor gespeicherte Mediendatei (best effort). */
 export async function deleteMediaIfLocal(filePath?: string | null): Promise<void> {
-  if (!filePath) return;
-  if (!filePath.startsWith(MEDIA_BASE_DIR)) return;
+  if (!filePath || !isManagedMediaPath(filePath)) return;
   try {
-    await fs.unlink(filePath);
+    await fs.unlink(path.resolve(filePath));
   } catch {
     /* ignore */
   }
