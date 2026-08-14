@@ -4,29 +4,25 @@
  *
  * GET  /api/v2/guilds/:guildId/dashboard/server/:slot/settings
  * PATCH /api/v2/guilds/:guildId/dashboard/server/:slot/settings
- *   -> ServerSettings + kanonisches Keep-Online-Flag pro Slot.
+ *   -> ServerSettings + kanonisches Keep-Online-Flag pro Gameserver.
  */
 import { Router } from 'express';
+import type { Response } from 'express';
 import { requireGuildPermission } from '../../middleware/auth';
 import { getOrCreate as getOrCreateLink } from '../../../modules/dashboard/repository';
 import { listSlots } from '../../../modules/nitrado/repository';
 import { listGrants } from '../../../modules/permissions/repository';
 import { asUserDiscordId } from '../../../types/scope';
+import type { GuildScope, NitradoConnId } from '../../../types/scope';
 import { hasPermission as scopeHas } from '../../../types/scope';
 import prisma from '../../../database/prisma';
 import { logAuditDb } from '../../../utils/logger';
 import { emitGuildEvent } from '../../socket/emitter';
 import { cancelPendingKeepOnlineJobs, type KeepOnlineJobClient } from '../../../modules/nitrado/keepOnlineJobs';
+import { resolveDashboardGameServer, sendDashboardServerResolutionError } from './serverScope';
 
 export const dashboardRouter = Router({ mergeParams: true });
 
-// Lese-Recht: generischer Dashboard-Lesezugriff via 'dashboard.view'.
-// Owner sowie Inhaber von 'dashboard.access' (All-Access-Bypass, siehe Backend
-// `hasPermission`) behalten weiterhin Zugriff.
-//
-// HINWEIS (Migration): Bestehende 'whitelist.view'-Grants oeffnen kuenftig NICHT
-// mehr automatisch das Dashboard. Dafuer bitte 'dashboard.view' oder
-// 'dashboard.access' vergeben. Bewusst KEINE automatische Code-Migration.
 dashboardRouter.get('/', requireGuildPermission('dashboard.view'), async (req, res) => {
   const scope = req.guildScope!;
   const link = await getOrCreateLink(scope.guildId, asUserDiscordId(scope.actorDiscordId));
@@ -51,20 +47,27 @@ dashboardRouter.get('/', requireGuildPermission('dashboard.view'), async (req, r
   });
 });
 
-// --- Server-Settings pro Slot -------------------------------------------------
-
-async function resolveSlotConn(guildId: string, slotParam: string): Promise<{ id: string; keepOnlineEnabled: boolean } | null> {
-  if (!/^[1-5]$/.test(slotParam)) return null;
-  return prisma.nitradoConnection.findUnique({
-    where: { guildId_slot: { guildId, slot: Number(slotParam) } },
+async function resolveSlotConn(
+  scope: Pick<GuildScope, 'guildId' | 'actorDiscordId'>,
+  slotParam: string,
+  res: Response,
+): Promise<{ id: NitradoConnId; keepOnlineEnabled: boolean } | null> {
+  const resolution = await resolveDashboardGameServer(scope.guildId, scope.actorDiscordId, slotParam);
+  if (resolution.kind !== 'RESOLVED') {
+    sendDashboardServerResolutionError(res, resolution);
+    return null;
+  }
+  const conn = await prisma.nitradoConnection.findFirst({
+    where: { id: resolution.nitradoConnId, guildId: scope.guildId },
     select: { id: true, keepOnlineEnabled: true },
   });
+  return conn ? { id: resolution.nitradoConnId, keepOnlineEnabled: conn.keepOnlineEnabled } : null;
 }
 
 dashboardRouter.get('/server/:slot/settings', requireGuildPermission('whitelist.view'), async (req, res) => {
   const scope = req.guildScope!;
-  const conn = await resolveSlotConn(scope.guildId, String(req.params.slot));
-  if (!conn) { res.status(404).json({ error: 'Slot nicht gefunden.' }); return; }
+  const conn = await resolveSlotConn(scope, String(req.params.slot), res);
+  if (!conn) return;
   const s = await prisma.serverSettings.upsert({
     where: { guildId_nitradoConnId: { guildId: scope.guildId, nitradoConnId: conn.id } },
     create: { guildId: scope.guildId, nitradoConnId: conn.id },
@@ -73,8 +76,6 @@ dashboardRouter.get('/server/:slot/settings', requireGuildPermission('whitelist.
   res.json({
     whitelistActive: s.whitelistActive,
     economyActive: s.economyActive,
-    // API-Kompatibilitaet: Frontend-Feld bleibt `permaOnly`, Quelle ist aber
-    // ausschliesslich NitradoConnection.keepOnlineEnabled.
     permaOnly: conn.keepOnlineEnabled,
     whitelistChannelId: s.whitelistChannelId,
     whitelistRequestChannelId: s.whitelistRequestChannelId,
@@ -83,17 +84,14 @@ dashboardRouter.get('/server/:slot/settings', requireGuildPermission('whitelist.
 
 dashboardRouter.patch('/server/:slot/settings', requireGuildPermission('whitelist.manage'), async (req, res) => {
   const scope = req.guildScope!;
-  const conn = await resolveSlotConn(scope.guildId, String(req.params.slot));
-  if (!conn) { res.status(404).json({ error: 'Slot nicht gefunden.' }); return; }
+  const conn = await resolveSlotConn(scope, String(req.params.slot), res);
+  if (!conn) return;
   const b = req.body ?? {};
   const data: Record<string, unknown> = {};
   let keepOnlineEnabled = conn.keepOnlineEnabled;
 
   if (typeof b.whitelistActive === 'boolean') data.whitelistActive = b.whitelistActive;
   if (typeof b.economyActive === 'boolean') {
-    // economyActive ist ein Wirtschafts-Schalter und erfordert economy.manage —
-    // der Routen-Scope (whitelist.manage) deckt ihn NICHT ab. Owner sowie
-    // dashboard.access (All-Access) erfuellen scopeHas weiterhin.
     if (!scopeHas(scope, 'economy.manage')) {
       res.status(403).json({ error: 'economyActive erfordert economy.manage.' });
       return;
@@ -101,8 +99,6 @@ dashboardRouter.patch('/server/:slot/settings', requireGuildPermission('whitelis
     data.economyActive = b.economyActive;
   }
   if (typeof b.permaOnly === 'boolean') {
-    // KEEP: Auto-Start ist ein eigener delegierbarer Scope und darf nicht mehr
-    // ueber whitelist.manage implizit aktiviert werden.
     if (!scopeHas(scope, 'nitrado.keep-online')) {
       res.status(403).json({ error: 'Keep-Online erfordert nitrado.keep-online.' });
       return;
@@ -131,9 +127,6 @@ dashboardRouter.patch('/server/:slot/settings', requireGuildPermission('whitelis
         where: { id: conn.id, guildId: scope.guildId },
         data: { keepOnlineEnabled },
       });
-      // Sofortige Cancellation: Beim Ausschalten duerfen bereits geplante
-      // RESTART_IF_DOWN-Jobs nicht nachtraeglich feuern. RUNNING-Jobs werden
-      // zusaetzlich im Worker unmittelbar vor der Remote-Aktion revalidiert.
       if (!keepOnlineEnabled) {
         await cancelPendingKeepOnlineJobs(
           tx as unknown as KeepOnlineJobClient,
