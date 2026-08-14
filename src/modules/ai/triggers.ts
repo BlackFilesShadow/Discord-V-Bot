@@ -6,11 +6,16 @@ import {
   getDeveloperIdentityAnswer,
   isDeveloperIdentityQuestion,
 } from './botIdentity';
+import {
+  decideMessageActivation,
+  normalizeTriggerActivationMode,
+  type TriggerActivationMode,
+} from './messageActivation';
 
-// Globale AI-Trigger – feuern auf JEDEM Server, auf dem der Bot ist.
-// Können nicht über /ai-trigger gelöscht werden, da sie hardcoded sind.
+// Globale AI-Trigger – standardmaessig MENTION_ONLY. Ein passiver Trigger muss
+// explizit activationMode='ALWAYS' setzen; Legacy-Eintraege ohne Feld werden
+// sicher als MENTION_ONLY normalisiert.
 export const GLOBAL_AI_TRIGGERS: AiTrigger[] = [
-  // ===== INTRO =====
   {
     id: 'intro1',
     trigger: 'stell dich vor',
@@ -51,8 +56,6 @@ export const GLOBAL_AI_TRIGGERS: AiTrigger[] = [
     createdAt: '2026-04-23T00:00:00.000Z',
     createdBy: 'system',
   },
-
-  // ===== STAR WARS / ORDER 66 =====
   {
     id: 'order66',
     trigger: 'order 66',
@@ -63,8 +66,6 @@ export const GLOBAL_AI_TRIGGERS: AiTrigger[] = [
     createdAt: '2026-04-23T00:00:00.000Z',
     createdBy: 'system',
   },
-
-  // ===== SPARTAN / 300 =====
   {
     id: 'handwerk',
     trigger: 'was ist euer handwerk',
@@ -75,22 +76,16 @@ export const GLOBAL_AI_TRIGGERS: AiTrigger[] = [
     createdAt: '2026-04-23T00:00:00.000Z',
     createdBy: 'system',
   },
-
-  // ===== HERKUNFT / ERSCHAFFER =====
   {
     id: 'erschaffer',
     trigger: DEVELOPER_IDENTITY_TRIGGER_PATTERN,
     triggerType: 'regex',
     responseMode: 'text',
-    // Harte, serverunabhaengige Identitaet. Guild-/Discord-Owner duerfen hier
-    // niemals als Entwickler interpretiert werden.
     responseText: `Mein Entwickler ist **${BOT_DEVELOPER}**.`,
     cooldownSeconds: 30,
     createdAt: '2026-04-23T00:00:00.000Z',
     createdBy: 'system',
   },
-
-  // ===== COMMANDS / WAS KANNST DU =====
   {
     id: 'commands',
     trigger: 'wie funktionieren deine commands',
@@ -123,69 +118,65 @@ export const GLOBAL_AI_TRIGGERS: AiTrigger[] = [
   },
 ];
 
-/**
- * AI-Trigger pro Guild (max 25, siehe MAX_TRIGGERS_PER_GUILD).
- * Persistiert in BotConfig (key=`triggers:<guildId>`, value=Json[]).
- *
- * Trigger-Typen:
- *  - keyword: Substring-Match (case-insensitive)
- *  - regex:   RegExp-Match
- *  - mention: nur wenn Bot direkt erwähnt + Wort enthalten
- *
- * Antwort-Modi:
- *  - text: statischer Text (kann Variablen wie {user}, {time}, {date}, {year} enthalten)
- *  - ai:   AI generiert Antwort mit aiPrompt als zusätzlichem System-Prompt
- */
-
 export const MAX_TRIGGERS_PER_GUILD = 25;
 
-/** Liefert nur die guild-eigenen Trigger (ohne globale). Fuer Limit-Check & Verwaltung. */
-async function listGuildOnly(guildId: string): Promise<AiTrigger[]> {
-  const cfg = await prisma.botConfig.findUnique({ where: { key: KEY(guildId) } });
-  if (!cfg) return [];
-  const arr = cfg.value as unknown;
-  return Array.isArray(arr) ? (arr as AiTrigger[]) : [];
-}
-
 export interface AiTrigger {
-  id: string;             // kurze ID (z.B. nanoid 6)
-  trigger: string;        // Pattern
+  id: string;
+  trigger: string;
   triggerType: 'keyword' | 'regex' | 'mention';
   responseMode: 'text' | 'ai';
-  responseText?: string;  // bei mode=text
-  aiPrompt?: string;      // bei mode=ai (zusätzlicher System-Prompt)
-  mediaUrl?: string;      // optional JPG/PNG/GIF/MP4-URL, wird als Anhang/Embed gesendet
-  channelId?: string;     // optional: Trigger feuert NUR in diesem Channel (leer = überall)
+  responseText?: string;
+  aiPrompt?: string;
+  mediaUrl?: string;
+  channelId?: string;
+  /** Legacy/default = MENTION_ONLY; passiv nur mit explizitem ALWAYS. */
+  activationMode?: TriggerActivationMode;
   cooldownSeconds: number;
-  createdAt: string;      // ISO
-  createdBy: string;      // Discord-ID
+  createdAt: string;
+  createdBy: string;
 }
 
 const KEY = (guildId: string) => `triggers:${guildId}`;
 
+function normalizeTrigger(trigger: AiTrigger): AiTrigger {
+  return {
+    ...trigger,
+    activationMode: normalizeTriggerActivationMode(trigger.activationMode),
+  };
+}
+
+function normalizeTriggers(value: unknown): AiTrigger[] {
+  if (!Array.isArray(value)) return [];
+  return (value as AiTrigger[]).map(normalizeTrigger);
+}
+
+/** Liefert nur die guild-eigenen Trigger (ohne globale). */
+async function listGuildOnly(guildId: string): Promise<AiTrigger[]> {
+  const cfg = await prisma.botConfig.findUnique({ where: { key: KEY(guildId) } });
+  return cfg ? normalizeTriggers(cfg.value) : [];
+}
+
 export async function listTriggers(guildId: string): Promise<AiTrigger[]> {
-  // Globale Trigger immer zuerst
-  const global = GLOBAL_AI_TRIGGERS;
+  const global = GLOBAL_AI_TRIGGERS.map(normalizeTrigger);
   const cfg = await prisma.botConfig.findUnique({ where: { key: KEY(guildId) } });
   if (!cfg) return global;
-  const arr = cfg.value as unknown;
-  const guildTriggers = Array.isArray(arr) ? (arr as AiTrigger[]) : [];
-  // Kombiniere globale und guild-spezifische Trigger (guild überschreibt id-Kollisionen)
+  const guildTriggers = normalizeTriggers(cfg.value);
   const ids = new Set(guildTriggers.map(t => t.id));
   return [...global.filter(t => !ids.has(t.id)), ...guildTriggers];
 }
 
 export async function saveTriggers(guildId: string, triggers: AiTrigger[], updatedBy: string): Promise<void> {
+  const normalized = triggers.map(normalizeTrigger);
   await prisma.botConfig.upsert({
     where: { key: KEY(guildId) },
     create: {
       key: KEY(guildId),
-      value: triggers as unknown as object,
+      value: normalized as unknown as object,
       category: 'ai_triggers',
       description: `AI-Trigger für Guild ${guildId}`,
       updatedBy,
     },
-    update: { value: triggers as unknown as object, updatedBy },
+    update: { value: normalized as unknown as object, updatedBy },
   });
 }
 
@@ -198,13 +189,10 @@ export async function addTrigger(guildId: string, trigger: AiTrigger): Promise<{
   if (combined.some(t => t.id === trigger.id)) {
     return { ok: false, message: `Trigger-ID "${trigger.id}" existiert bereits.` };
   }
-  // Regex validieren (inkl. ReDoS-Schutz: keine verschachtelten Quantoren).
-  if (trigger.triggerType === 'regex') {
-    if (!isSafeRegexPattern(trigger.trigger)) {
-      return { ok: false, message: 'Ungültiges oder potenziell unsicheres Regex-Pattern (ReDoS-Schutz).' };
-    }
+  if (trigger.triggerType === 'regex' && !isSafeRegexPattern(trigger.trigger)) {
+    return { ok: false, message: 'Ungültiges oder potenziell unsicheres Regex-Pattern (ReDoS-Schutz).' };
   }
-  guildOnly.push(trigger);
+  guildOnly.push(normalizeTrigger(trigger));
   await saveTriggers(guildId, guildOnly, trigger.createdBy);
   return { ok: true, message: `Trigger "${trigger.id}" gespeichert (${guildOnly.length}/${MAX_TRIGGERS_PER_GUILD}).` };
 }
@@ -227,29 +215,24 @@ export async function clearTriggers(guildId: string, updatedBy: string): Promise
 }
 
 /**
- * Prüft eine Nachricht gegen alle Trigger der Guild.
- * Gibt den ersten passenden Trigger zurück oder null.
- *
- * Direkte Bot-Erwähnungen/Replies sind interaktive Anfragen. Ein passender
- * Trigger muss diese Anfrage deshalb vollständig konsumieren und darf nicht
- * wegen eines Trigger-Cooldowns in den normalen LLM-Responder durchfallen.
- * Passive Trigger ohne Bot-Erwähnung behalten ihren konfigurierten Cooldown.
+ * Prueft eine Nachricht gegen alle Trigger der Guild.
+ * `isExplicitBotAddress` bedeutet direkte Bot-Mention ODER Reply auf den Bot.
+ * Legacy/Mention-only Trigger duerfen ohne diese explizite Ansprache nicht
+ * feuern. Nur activationMode=ALWAYS erlaubt passive Trigger.
  */
 export function findMatchingTrigger(
   triggers: AiTrigger[],
   content: string,
-  isMention: boolean,
+  isExplicitBotAddress: boolean,
 ): AiTrigger | null {
-  // Autoritative Bot-Identität hat Vorrang vor Guild-Triggern und LLM-Kontext.
-  // So kann auch ein guild-eigener Trigger mit kollidierender ID niemals den
-  // Entwickler von V-Bot überschreiben oder in einen AI-Call umleiten.
-  if (isMention && isDeveloperIdentityQuestion(content)) {
+  if (isExplicitBotAddress && isDeveloperIdentityQuestion(content)) {
     return {
       id: 'system-developer-identity',
       trigger: DEVELOPER_IDENTITY_TRIGGER_PATTERN,
       triggerType: 'regex',
       responseMode: 'text',
       responseText: getDeveloperIdentityAnswer(),
+      activationMode: 'MENTION_ONLY',
       cooldownSeconds: 0,
       createdAt: '2026-08-12T00:00:00.000Z',
       createdBy: 'system',
@@ -257,25 +240,31 @@ export function findMatchingTrigger(
   }
 
   const lower = content.toLowerCase();
-  for (const t of triggers) {
-    if (t.triggerType === 'mention' && !isMention) continue;
+  for (const rawTrigger of triggers) {
+    const t = normalizeTrigger(rawTrigger);
+    const activation = decideMessageActivation({
+      isMentioned: isExplicitBotAddress,
+      isReplyToBot: false,
+      isAiCommand: false,
+      triggerActivationMode: t.activationMode,
+    });
+    if (!activation.allowTrigger) continue;
+    if (t.triggerType === 'mention' && !isExplicitBotAddress) continue;
+
     let match = false;
     if (t.triggerType === 'keyword' || t.triggerType === 'mention') {
       match = lower.includes(t.trigger.toLowerCase());
     } else if (t.triggerType === 'regex') {
       match = safeRegexTest(t.trigger, content, 'i');
     }
+
     if (match) {
-      // Bei expliziter Ansprache darf der Trigger-Cooldown niemals dazu führen,
-      // dass dieselbe Nachricht anschließend vom allgemeinen AI-Responder
-      // verarbeitet wird. Passive Auto-Trigger bleiben unverändert gedrosselt.
-      return isMention ? { ...t, cooldownSeconds: 0 } : t;
+      return isExplicitBotAddress ? { ...t, cooldownSeconds: 0 } : t;
     }
   }
   return null;
 }
 
-// Cooldowns pro Guild+Trigger
 const cooldowns: Map<string, number> = new Map();
 
 export function isOnCooldown(guildId: string, triggerId: string, cooldownSeconds: number): boolean {
@@ -286,9 +275,6 @@ export function isOnCooldown(guildId: string, triggerId: string, cooldownSeconds
   return false;
 }
 
-/**
- * Ersetzt Variablen in statischen Antworten.
- */
 export function renderTemplate(text: string, vars: { user?: string; channel?: string }): string {
   const now = new Date();
   const date = new Intl.DateTimeFormat('de-DE', { dateStyle: 'long', timeZone: 'Europe/Berlin' }).format(now);
