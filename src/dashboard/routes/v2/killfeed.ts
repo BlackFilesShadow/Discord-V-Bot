@@ -1,11 +1,12 @@
 /**
- * Killfeed-Routen — pro Guild + Gameserver eigene Configs.
- *
- * Strikte guildId+nitradoConnId-Scope-Pruefung in jeder serverbezogenen Query.
+ * Gameplay-Feed-Routen. Der bestehende /killfeed-Pfad bleibt aus
+ * Rueckwaertskompatibilitaet erhalten; `?kind=DEATH|BUILD` waehlt Deathfeed
+ * oder Baufeed. Ohne kind gilt DEATH.
  */
 
 import { Router } from 'express';
 import { PermissionFlagsBits } from 'discord.js';
+import { GameplayFeedKind } from '@prisma/client';
 import { requireGuildPermission } from '../../middleware/auth';
 import prisma from '../../../database/prisma';
 import { logAuditDb } from '../../../utils/logger';
@@ -13,191 +14,256 @@ import { emitGuildEvent } from '../../socket/emitter';
 import { tryGetDashboardClient } from '../../clientRegistry';
 import { validateBotChannelAccess } from '../../../utils/discordChannel';
 import { resolveDashboardGameServer, sendDashboardServerResolutionError } from './serverScope';
+import {
+  BUILD_CATEGORIES,
+  DEATH_CATEGORIES,
+  categoryForEvent,
+  type GameplayFeedKindValue,
+} from '../../../modules/gameplayFeeds/types';
 
 export const killfeedRouter = Router({ mergeParams: true });
 
 const SNOWFLAKE_RE = /^\d{17,20}$/;
 const HEX_RE = /^#?[0-9a-fA-F]{6}$/;
-const VALID_CATEGORIES = ['DEATH', 'SUICIDE', 'NPC', 'VEHICLE'] as const;
-type Category = typeof VALID_CATEGORIES[number];
 
-interface KillfeedBody {
+interface FeedBody {
   channelId?: string;
   isActive?: boolean;
   categories?: string[];
+  showActorCoords?: boolean;
+  showTargetCoords?: boolean;
+  showTool?: boolean;
+  showDistance?: boolean;
+  embedColor?: string;
+  // Legacy-Aliase fuer bestehende Dashboard-Clients.
   showShooterCoords?: boolean;
   showVictimCoords?: boolean;
   showWeapon?: boolean;
-  showDistance?: boolean;
-  embedColor?: string;
 }
 
-function validateBody(b: KillfeedBody, partial: boolean):
-  | { ok: true; data: Record<string, unknown> }
-  | { ok: false; error: string } {
+function readKind(raw: unknown): GameplayFeedKindValue | null {
+  const value = String(raw ?? 'DEATH').trim().toUpperCase();
+  return value === 'DEATH' || value === 'BUILD' ? value : null;
+}
+
+function allowedCategories(kind: GameplayFeedKindValue): readonly string[] {
+  return kind === 'DEATH' ? DEATH_CATEGORIES : BUILD_CATEGORIES;
+}
+
+function defaultCategories(kind: GameplayFeedKindValue): string[] {
+  return [...allowedCategories(kind)];
+}
+
+function validateBody(
+  body: FeedBody,
+  kind: GameplayFeedKindValue,
+  partial: boolean,
+): { ok: true; data: Record<string, unknown> } | { ok: false; error: string } {
   const data: Record<string, unknown> = {};
 
-  if (b.channelId !== undefined) {
-    if (typeof b.channelId !== 'string' || !SNOWFLAKE_RE.test(b.channelId)) {
+  if (body.channelId !== undefined) {
+    if (typeof body.channelId !== 'string' || !SNOWFLAKE_RE.test(body.channelId)) {
       return { ok: false, error: 'channelId muss Discord-Snowflake sein.' };
     }
-    data.channelId = b.channelId;
-  } else if (!partial) return { ok: false, error: 'channelId fehlt.' };
-
-  if (b.isActive !== undefined) {
-    if (typeof b.isActive !== 'boolean') return { ok: false, error: 'isActive muss bool sein.' };
-    data.isActive = b.isActive;
-  }
-
-  if (b.categories !== undefined) {
-    if (!Array.isArray(b.categories)) return { ok: false, error: 'categories muss Array sein.' };
-    const dedup = new Set<Category>();
-    for (const c of b.categories) {
-      if (typeof c !== 'string' || !VALID_CATEGORIES.includes(c as Category)) {
-        return { ok: false, error: `Ungueltige Kategorie: ${String(c)}.` };
-      }
-      dedup.add(c as Category);
-    }
-    data.categories = Array.from(dedup);
+    data.channelId = body.channelId;
   } else if (!partial) {
-    data.categories = ['DEATH', 'SUICIDE', 'NPC', 'VEHICLE'];
+    return { ok: false, error: 'channelId fehlt.' };
   }
 
-  for (const k of ['showShooterCoords', 'showVictimCoords', 'showWeapon', 'showDistance'] as const) {
-    if (b[k] !== undefined) {
-      if (typeof b[k] !== 'boolean') return { ok: false, error: `${k} muss bool sein.` };
-      data[k] = b[k];
+  if (body.isActive !== undefined) {
+    if (typeof body.isActive !== 'boolean') return { ok: false, error: 'isActive muss bool sein.' };
+    data.isActive = body.isActive;
+  }
+
+  if (body.categories !== undefined) {
+    if (!Array.isArray(body.categories)) return { ok: false, error: 'categories muss Array sein.' };
+    const allowed = allowedCategories(kind);
+    const categories = Array.from(new Set(body.categories.map(value => String(value).trim().toUpperCase())));
+    if (categories.length === 0) return { ok: false, error: 'Mindestens eine Kategorie ist erforderlich.' };
+    for (const category of categories) {
+      if (!allowed.includes(category)) return { ok: false, error: `Ungueltige ${kind}-Kategorie: ${category}.` };
     }
+    data.categories = categories;
+  } else if (!partial) {
+    data.categories = defaultCategories(kind);
   }
 
-  if (b.embedColor !== undefined) {
-    if (typeof b.embedColor !== 'string' || !HEX_RE.test(b.embedColor)) {
+  const actorCoords = body.showActorCoords ?? body.showVictimCoords;
+  const targetCoords = body.showTargetCoords ?? body.showShooterCoords;
+  const showTool = body.showTool ?? body.showWeapon;
+  for (const [key, value] of [
+    ['showActorCoords', actorCoords],
+    ['showTargetCoords', targetCoords],
+    ['showTool', showTool],
+    ['showDistance', body.showDistance],
+  ] as const) {
+    if (value === undefined) continue;
+    if (typeof value !== 'boolean') return { ok: false, error: `${key} muss bool sein.` };
+    data[key] = value;
+  }
+
+  if (body.embedColor !== undefined) {
+    if (typeof body.embedColor !== 'string' || !HEX_RE.test(body.embedColor)) {
       return { ok: false, error: 'embedColor muss Hex sein (z.B. #dc2626).' };
     }
-    data.embedColor = b.embedColor.startsWith('#') ? b.embedColor : `#${b.embedColor}`;
+    data.embedColor = body.embedColor.startsWith('#') ? body.embedColor : `#${body.embedColor}`;
   }
 
-  if (partial && Object.keys(data).length === 0) {
-    return { ok: false, error: 'Keine gueltigen Felder.' };
-  }
+  if (partial && Object.keys(data).length === 0) return { ok: false, error: 'Keine gueltigen Felder.' };
   return { ok: true, data };
 }
 
 async function ensureChannelInGuild(channelId: string, guildId: string): Promise<string | null> {
   const client = tryGetDashboardClient();
-  if (!client) return null;
-  const v = await validateBotChannelAccess(client, guildId, channelId, [
+  if (!client) return 'Discord-Client ist derzeit nicht verfuegbar.';
+  const result = await validateBotChannelAccess(client, guildId, channelId, [
     PermissionFlagsBits.ViewChannel,
     PermissionFlagsBits.SendMessages,
     PermissionFlagsBits.EmbedLinks,
+    PermissionFlagsBits.ReadMessageHistory,
   ]);
-  return v.ok ? null : v.reason;
+  return result.ok ? null : result.reason;
+}
+
+function responseConfig(row: {
+  id: string;
+  kind: GameplayFeedKind;
+  nitradoConnId: string;
+  channelId: string;
+  isActive: boolean;
+  categories: string[];
+  showActorCoords: boolean;
+  showTargetCoords: boolean;
+  showTool: boolean;
+  showDistance: boolean;
+  embedColor: string;
+  lastEventAt: Date | null;
+  lastPolledAt: Date | null;
+  lastErrorMsg: string | null;
+  createdAt: Date;
+  updatedAt: Date;
+}) {
+  return {
+    id: row.id,
+    kind: row.kind,
+    nitradoConnId: row.nitradoConnId,
+    channelId: row.channelId,
+    isActive: row.isActive,
+    categories: row.categories,
+    showActorCoords: row.showActorCoords,
+    showTargetCoords: row.showTargetCoords,
+    showTool: row.showTool,
+    showDistance: row.showDistance,
+    // Legacy-Aliase.
+    showVictimCoords: row.showActorCoords,
+    showShooterCoords: row.showTargetCoords,
+    showWeapon: row.showTool,
+    embedColor: row.embedColor,
+    lastEventAt: row.lastEventAt?.toISOString() ?? null,
+    lastPolledAt: row.lastPolledAt?.toISOString() ?? null,
+    lastErrorMsg: row.lastErrorMsg,
+    createdAt: row.createdAt.toISOString(),
+    updatedAt: row.updatedAt.toISOString(),
+  };
 }
 
 killfeedRouter.get('/', requireGuildPermission('killfeed.view'), async (req, res) => {
   const scope = req.guildScope!;
+  const kind = readKind(req.query.kind);
+  if (!kind) { res.status(400).json({ error: 'kind muss DEATH oder BUILD sein.' }); return; }
   const resolution = await resolveDashboardGameServer(scope.guildId, scope.actorDiscordId, req.query.slot);
   if (resolution.kind !== 'RESOLVED') { sendDashboardServerResolutionError(res, resolution); return; }
-  const connId = resolution.nitradoConnId;
-  const rows = await prisma.killfeedConfig.findMany({
-    where: { guildId: scope.guildId, nitradoConnId: connId },
+
+  const rows = await prisma.gameplayFeedConfig.findMany({
+    where: {
+      guildId: scope.guildId,
+      nitradoConnId: resolution.nitradoConnId,
+      kind: kind as GameplayFeedKind,
+    },
     orderBy: { createdAt: 'asc' },
   });
-  res.json({
-    configs: rows.map(r => ({
-      id: r.id,
-      channelId: r.channelId,
-      isActive: r.isActive,
-      categories: r.categories,
-      showShooterCoords: r.showShooterCoords,
-      showVictimCoords: r.showVictimCoords,
-      showWeapon: r.showWeapon,
-      showDistance: r.showDistance,
-      embedColor: r.embedColor,
-      lastEventAt: r.lastEventAt?.toISOString() ?? null,
-      lastFileName: r.lastFileName,
-      lastPolledAt: r.lastPolledAt?.toISOString() ?? null,
-      lastErrorMsg: r.lastErrorMsg,
-      createdAt: r.createdAt.toISOString(),
-      updatedAt: r.updatedAt.toISOString(),
-    })),
-  });
+  res.json({ kind, configs: rows.map(responseConfig) });
 });
 
 killfeedRouter.post('/', requireGuildPermission('killfeed.manage'), async (req, res) => {
   const scope = req.guildScope!;
+  const kind = readKind(req.query.kind);
+  if (!kind) { res.status(400).json({ error: 'kind muss DEATH oder BUILD sein.' }); return; }
   const resolution = await resolveDashboardGameServer(scope.guildId, scope.actorDiscordId, req.query.slot);
   if (resolution.kind !== 'RESOLVED') { sendDashboardServerResolutionError(res, resolution); return; }
-  const connId = resolution.nitradoConnId;
 
-  const v = validateBody(req.body as KillfeedBody, false);
-  if (!v.ok) { res.status(400).json({ error: v.error }); return; }
-  const data = v.data;
-
-  const channelErr = await ensureChannelInGuild(data.channelId as string, scope.guildId);
-  if (channelErr) { res.status(400).json({ error: channelErr }); return; }
+  const parsed = validateBody(req.body as FeedBody, kind, false);
+  if (!parsed.ok) { res.status(400).json({ error: parsed.error }); return; }
+  const data = parsed.data;
+  const channelError = await ensureChannelInGuild(data.channelId as string, scope.guildId);
+  if (channelError) { res.status(400).json({ error: channelError }); return; }
 
   try {
-    const created = await prisma.killfeedConfig.create({
+    const created = await prisma.gameplayFeedConfig.create({
       data: {
         guildId: scope.guildId,
-        nitradoConnId: connId,
+        nitradoConnId: resolution.nitradoConnId,
+        kind: kind as GameplayFeedKind,
         channelId: data.channelId as string,
         isActive: (data.isActive as boolean | undefined) ?? true,
-        categories: data.categories as Category[],
-        showShooterCoords: (data.showShooterCoords as boolean | undefined) ?? false,
-        showVictimCoords: (data.showVictimCoords as boolean | undefined) ?? true,
-        showWeapon: (data.showWeapon as boolean | undefined) ?? true,
-        showDistance: (data.showDistance as boolean | undefined) ?? true,
-        embedColor: (data.embedColor as string | undefined) ?? '#dc2626',
+        categories: data.categories as string[],
+        showActorCoords: (data.showActorCoords as boolean | undefined) ?? true,
+        showTargetCoords: (data.showTargetCoords as boolean | undefined) ?? false,
+        showTool: (data.showTool as boolean | undefined) ?? true,
+        showDistance: kind === 'DEATH' ? ((data.showDistance as boolean | undefined) ?? true) : false,
+        embedColor: (data.embedColor as string | undefined) ?? (kind === 'BUILD' ? '#eab308' : '#dc2626'),
+        // Neue Configs starten am Jetzt-Punkt und replayen keinen historischen ADM-Backlog.
+        cursorCreatedAt: new Date(),
+        cursorEventId: '',
       },
     });
-    logAuditDb('KILLFEED_CONFIG_CREATED', 'KILLFEED', {
-      actorUserId: req.auth!.userId, guildId: scope.guildId,
-      details: { configId: created.id, channelId: created.channelId, nitradoConnId: connId },
+    logAuditDb('GAMEPLAY_FEED_CREATED', 'KILLFEED', {
+      actorUserId: req.auth!.userId,
+      guildId: scope.guildId,
+      details: { configId: created.id, kind, channelId: created.channelId, nitradoConnId: resolution.nitradoConnId },
     });
-    emitGuildEvent(scope.guildId, { type: 'killfeed.changed', payload: { guildId: scope.guildId, configId: created.id } });
-    res.status(201).json({ id: created.id });
-  } catch (e) {
-    const msg = (e as Error).message;
-    if (msg.includes('Unique')) {
-      res.status(409).json({ error: 'Killfeed-Config fuer diesen Channel existiert bereits.' });
+    emitGuildEvent(scope.guildId, { type: 'killfeed.changed', payload: { guildId: scope.guildId, configId: created.id, kind } });
+    res.status(201).json({ id: created.id, kind });
+  } catch (error) {
+    if ((error as { code?: string }).code === 'P2002') {
+      res.status(409).json({ error: 'Feed fuer diesen Server, Typ und Channel existiert bereits.' });
       return;
     }
-    res.status(500).json({ error: 'Konnte Killfeed-Config nicht anlegen.' });
+    res.status(500).json({ error: 'Feed konnte nicht angelegt werden.' });
   }
 });
 
 killfeedRouter.patch('/:id', requireGuildPermission('killfeed.manage'), async (req, res) => {
   const scope = req.guildScope!;
+  const kind = readKind(req.query.kind);
+  if (!kind) { res.status(400).json({ error: 'kind muss DEATH oder BUILD sein.' }); return; }
   const resolution = await resolveDashboardGameServer(scope.guildId, scope.actorDiscordId, req.query.slot);
   if (resolution.kind !== 'RESOLVED') { sendDashboardServerResolutionError(res, resolution); return; }
-  const connId = resolution.nitradoConnId;
   const id = String(req.params.id);
-  const v = validateBody(req.body as KillfeedBody, true);
-  if (!v.ok) { res.status(400).json({ error: v.error }); return; }
-  const data = v.data;
+  const parsed = validateBody(req.body as FeedBody, kind, true);
+  if (!parsed.ok) { res.status(400).json({ error: parsed.error }); return; }
 
-  const existing = await prisma.killfeedConfig.findFirst({
-    where: { id, guildId: scope.guildId, nitradoConnId: connId },
+  const existing = await prisma.gameplayFeedConfig.findFirst({
+    where: { id, guildId: scope.guildId, nitradoConnId: resolution.nitradoConnId, kind: kind as GameplayFeedKind },
   });
-  if (!existing) { res.status(404).json({ error: 'Killfeed-Config nicht gefunden.' }); return; }
+  if (!existing) { res.status(404).json({ error: 'Feed-Config nicht gefunden.' }); return; }
 
-  if (typeof data.channelId === 'string' && data.channelId !== existing.channelId) {
-    const channelErr = await ensureChannelInGuild(data.channelId, scope.guildId);
-    if (channelErr) { res.status(400).json({ error: channelErr }); return; }
+  if (typeof parsed.data.channelId === 'string' && parsed.data.channelId !== existing.channelId) {
+    const channelError = await ensureChannelInGuild(parsed.data.channelId, scope.guildId);
+    if (channelError) { res.status(400).json({ error: channelError }); return; }
   }
 
   try {
-    await prisma.killfeedConfig.updateMany({
-      where: { id, guildId: scope.guildId, nitradoConnId: connId },
-      data,
+    await prisma.gameplayFeedConfig.updateMany({
+      where: { id, guildId: scope.guildId, nitradoConnId: resolution.nitradoConnId, kind: kind as GameplayFeedKind },
+      data: parsed.data,
     });
-    logAuditDb('KILLFEED_CONFIG_UPDATED', 'KILLFEED', {
-      actorUserId: req.auth!.userId, guildId: scope.guildId,
-      details: { configId: id, nitradoConnId: connId, fields: Object.keys(data) },
+    logAuditDb('GAMEPLAY_FEED_UPDATED', 'KILLFEED', {
+      actorUserId: req.auth!.userId,
+      guildId: scope.guildId,
+      details: { configId: id, kind, nitradoConnId: resolution.nitradoConnId, fields: Object.keys(parsed.data) },
     });
-    emitGuildEvent(scope.guildId, { type: 'killfeed.changed', payload: { guildId: scope.guildId, configId: id } });
+    emitGuildEvent(scope.guildId, { type: 'killfeed.changed', payload: { guildId: scope.guildId, configId: id, kind } });
     res.json({ ok: true });
   } catch {
     res.status(500).json({ error: 'Update fehlgeschlagen.' });
@@ -206,17 +272,21 @@ killfeedRouter.patch('/:id', requireGuildPermission('killfeed.manage'), async (r
 
 killfeedRouter.delete('/:id', requireGuildPermission('killfeed.manage'), async (req, res) => {
   const scope = req.guildScope!;
+  const kind = readKind(req.query.kind);
+  if (!kind) { res.status(400).json({ error: 'kind muss DEATH oder BUILD sein.' }); return; }
   const resolution = await resolveDashboardGameServer(scope.guildId, scope.actorDiscordId, req.query.slot);
   if (resolution.kind !== 'RESOLVED') { sendDashboardServerResolutionError(res, resolution); return; }
-  const connId = resolution.nitradoConnId;
   const id = String(req.params.id);
-  const r = await prisma.killfeedConfig.deleteMany({ where: { id, guildId: scope.guildId, nitradoConnId: connId } });
-  if (r.count === 0) { res.status(404).json({ error: 'Nicht gefunden.' }); return; }
-  logAuditDb('KILLFEED_CONFIG_DELETED', 'KILLFEED', {
-    actorUserId: req.auth!.userId, guildId: scope.guildId,
-    details: { configId: id, nitradoConnId: connId },
+  const result = await prisma.gameplayFeedConfig.deleteMany({
+    where: { id, guildId: scope.guildId, nitradoConnId: resolution.nitradoConnId, kind: kind as GameplayFeedKind },
   });
-  emitGuildEvent(scope.guildId, { type: 'killfeed.changed', payload: { guildId: scope.guildId, configId: id } });
+  if (result.count === 0) { res.status(404).json({ error: 'Nicht gefunden.' }); return; }
+  logAuditDb('GAMEPLAY_FEED_DELETED', 'KILLFEED', {
+    actorUserId: req.auth!.userId,
+    guildId: scope.guildId,
+    details: { configId: id, kind, nitradoConnId: resolution.nitradoConnId },
+  });
+  emitGuildEvent(scope.guildId, { type: 'killfeed.changed', payload: { guildId: scope.guildId, configId: id, kind } });
   res.json({ ok: true });
 });
 
@@ -224,29 +294,49 @@ killfeedRouter.get('/:id/recent', requireGuildPermission('killfeed.view'), async
   const scope = req.guildScope!;
   const resolution = await resolveDashboardGameServer(scope.guildId, scope.actorDiscordId, req.query.slot);
   if (resolution.kind !== 'RESOLVED') { sendDashboardServerResolutionError(res, resolution); return; }
-  const connId = resolution.nitradoConnId;
   const id = String(req.params.id);
-  const cfg = await prisma.killfeedConfig.findFirst({
-    where: { id, guildId: scope.guildId, nitradoConnId: connId },
-    select: { nitradoConnId: true },
+  const config = await prisma.gameplayFeedConfig.findFirst({
+    where: { id, guildId: scope.guildId, nitradoConnId: resolution.nitradoConnId },
   });
-  if (!cfg) { res.status(404).json({ error: 'Nicht gefunden.' }); return; }
+  if (!config) { res.status(404).json({ error: 'Nicht gefunden.' }); return; }
 
-  const events = await prisma.killfeedEvent.findMany({
-    where: { guildId: scope.guildId, nitradoConnId: connId },
-    orderBy: { occurredAt: 'desc' },
+  const deliveries = await prisma.gameplayFeedDelivery.findMany({
+    where: {
+      configId: id,
+      guildId: scope.guildId,
+      nitradoConnId: resolution.nitradoConnId,
+      status: 'SENT',
+    },
+    orderBy: { sentAt: 'desc' },
     take: 50,
+    select: { admEventId: true, messageId: true, sentAt: true },
   });
+  const eventIds = deliveries.map(delivery => delivery.admEventId);
+  const events = eventIds.length === 0 ? [] : await prisma.admEvent.findMany({
+    where: { id: { in: eventIds }, guildId: scope.guildId, nitradoConnId: resolution.nitradoConnId },
+  });
+  const byId = new Map(events.map(event => [event.id, event]));
+
   res.json({
-    events: events.map(e => ({
-      id: e.id,
-      category: e.category,
-      occurredAt: e.occurredAt.toISOString(),
-      shooterName: e.shooterName,
-      victimName: e.victimName,
-      weapon: e.weapon,
-      distance: e.distance,
-      postedAt: e.postedAt?.toISOString() ?? null,
-    })),
+    kind: config.kind,
+    events: deliveries.flatMap(delivery => {
+      const event = byId.get(delivery.admEventId);
+      if (!event) return [];
+      return [{
+        id: event.id,
+        category: categoryForEvent(event.eventType),
+        eventType: event.eventType,
+        occurredAt: event.occurredAt?.toISOString() ?? null,
+        actorName: event.actorName,
+        targetName: event.targetName,
+        objectType: event.objectType,
+        toolOrWeapon: event.toolOrWeapon,
+        distanceMeters: event.distanceMeters,
+        actorPosition: event.actorPosition,
+        targetPosition: event.targetPosition,
+        messageId: delivery.messageId,
+        sentAt: delivery.sentAt?.toISOString() ?? null,
+      }];
+    }),
   });
 });

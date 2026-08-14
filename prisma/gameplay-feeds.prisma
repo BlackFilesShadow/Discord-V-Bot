@@ -1,0 +1,84 @@
+// Gameplay-Feeds V2: gemeinsame persistente Zustellung fuer Deathfeed und Baufeed.
+// Liegt als additive Multi-File-Prisma-Domaene neben schema.prisma.
+
+enum GameplayFeedKind {
+  DEATH
+  BUILD
+}
+
+enum GameplayDeliveryStatus {
+  PENDING
+  SENDING
+  SENT
+  SKIPPED
+  RETRY
+  FAILED
+}
+
+model NitradoAdmProfileConfig {
+  id             String   @id @default(cuid())
+  guildId        String
+  nitradoConnId  String
+  profileDir     String   @db.Text
+  source         String   @default("AUTO") @db.VarChar(24)
+  timeZone       String?  @db.VarChar(80)
+  lastVerifiedAt DateTime?
+  lastError      String?  @db.Text
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+
+  @@unique([guildId, nitradoConnId])
+  @@index([nitradoConnId])
+}
+
+model GameplayFeedConfig {
+  id                     String           @id @default(cuid())
+  guildId                String
+  nitradoConnId          String
+  kind                    GameplayFeedKind
+  channelId               String           @db.VarChar(32)
+  isActive                Boolean          @default(true)
+  categories              String[]
+  showActorCoords         Boolean          @default(true)
+  showTargetCoords        Boolean          @default(false)
+  showTool                Boolean          @default(true)
+  showDistance            Boolean          @default(true)
+  embedColor              String           @default("#dc2626") @db.VarChar(9)
+  legacyKillfeedConfigId  String?          @unique
+  cursorCreatedAt         DateTime         @default(now())
+  cursorEventId           String           @default("")
+  lastEventAt             DateTime?
+  lastPolledAt            DateTime?
+  lastErrorMsg            String?          @db.Text
+  createdAt               DateTime         @default(now())
+  updatedAt               DateTime         @updatedAt
+
+  deliveries GameplayFeedDelivery[]
+
+  @@unique([guildId, nitradoConnId, kind, channelId])
+  @@index([guildId, nitradoConnId, kind, isActive])
+}
+
+model GameplayFeedDelivery {
+  id            String                 @id @default(cuid())
+  configId      String
+  config        GameplayFeedConfig     @relation(fields: [configId], references: [id], onDelete: Cascade)
+  admEventId    String
+  guildId       String
+  nitradoConnId String
+  channelId     String                 @db.VarChar(32)
+  status        GameplayDeliveryStatus @default(PENDING)
+  attempts      Int                    @default(0)
+  nextAttemptAt DateTime               @default(now())
+  leaseUntil    DateTime?
+  messageId     String?                @db.VarChar(32)
+  lastError     String?                @db.Text
+  sentAt        DateTime?
+  createdAt     DateTime               @default(now())
+  updatedAt     DateTime               @updatedAt
+
+  @@unique([configId, admEventId])
+  @@index([status, nextAttemptAt])
+  @@index([guildId, nitradoConnId, status])
+  @@index([configId, sentAt])
+}

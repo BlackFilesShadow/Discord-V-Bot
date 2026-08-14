@@ -1,11 +1,12 @@
 /**
- * Phase 7 Remote-Ban: offizieller Nitrado Gameserver-Banlist-Vertrag.
- * GET wird fail-closed geparst; POST/DELETE schicken `identifier` form-urlencoded.
+ * Phase 7 Remote-Ban: DayZ-Playerlisten werden ueber das Gameserver-Setting
+ * `general.bans` gelesen und per Read-Modify-Write geschrieben. Damit nutzt Ban
+ * exakt denselben produktiv bewaehrten Mechanismus wie die Whitelist.
  */
 const requestMock = jest.fn();
 jest.mock('axios', () => ({
   __esModule: true,
-  default: { create: () => ({ request: requestMock }) },
+  default: { create: () => ({ request: requestMock }), get: jest.fn() },
 }));
 jest.mock('../../src/modules/nitrado/circuitBreaker', () => {
   const b = { preflight: jest.fn(), recordFailure: jest.fn(), recordSuccess: jest.fn() };
@@ -29,73 +30,89 @@ import {
 
 beforeEach(() => { jest.clearAllMocks(); });
 
-describe('parseNitradoBanlistData', () => {
-  it('akzeptiert Objekt- und String-Eintraege und dedupliziert', () => {
+function gameserverSettings(bans: unknown, whitelist: unknown = '') {
+  return {
+    status: 200,
+    headers: {},
+    data: { data: { gameserver: { settings: { general: { bans, whitelist } } } } },
+  };
+}
+
+describe('parseNitradoBanlistData compatibility', () => {
+  it('akzeptiert alten identifier- und neuen id-Vertrag und dedupliziert', () => {
     expect(parseNitradoBanlistData({
       banlist: [
         { identifier: 'player-a', added_at: '2026-08-14T00:00:00Z' },
-        'player-b',
+        { id: 'player-b', name: 'Display B', id_type: 'identifier' },
+        'player-c',
         { identifier: 'player-a' },
       ],
     })).toEqual([
       { identifier: 'player-a', added_at: '2026-08-14T00:00:00Z' },
       { identifier: 'player-b' },
+      { identifier: 'player-c' },
     ]);
-  });
-
-  it('akzeptiert eine leere, bekannte Banlist', () => {
-    expect(parseNitradoBanlistData({ banlist: [] })).toEqual([]);
   });
 
   it('behandelt unbekannte Antwortformate niemals als leere Liste', () => {
     expect(() => parseNitradoBanlistData({ somethingElse: [] })).toThrow(NitradoApiError);
     expect(() => parseNitradoBanlistData(null)).toThrow(NitradoApiError);
   });
-
-  it('bricht bei Eintraegen ohne Identifier fail-closed ab', () => {
-    expect(() => parseNitradoBanlistData({ banlist: [{ foo: 'bar' }] })).toThrow(NitradoApiError);
-  });
 });
 
-describe('NitradoClient Banlist API', () => {
-  it('liest GET /gameservers/games/banlist', async () => {
-    requestMock.mockResolvedValue({
-      status: 200,
-      headers: {},
-      data: { data: { banlist: [{ identifier: 'player-a' }] } },
-    });
+describe('NitradoClient DayZ ban settings', () => {
+  it('liest general.bans und akzeptiert CRLF, LF und CR', async () => {
+    requestMock.mockResolvedValueOnce(gameserverSettings('player-a\r\nplayer-b\rplayer-c\nplayer-a'));
     const client = new NitradoClient('token-1234');
 
-    await expect(client.getBanlist('123')).resolves.toEqual([{ identifier: 'player-a' }]);
+    await expect(client.getBanlist('123')).resolves.toEqual([
+      { identifier: 'player-a' },
+      { identifier: 'player-b' },
+      { identifier: 'player-c' },
+      { identifier: 'player-a' },
+    ]);
     expect(requestMock).toHaveBeenCalledWith(expect.objectContaining({
       method: 'GET',
-      url: '/services/123/gameservers/games/banlist',
+      url: '/services/123/gameservers',
     }));
   });
 
-  it('sendet POST mit identifier als form-urlencoded', async () => {
-    requestMock.mockResolvedValue({ status: 200, headers: {}, data: { data: {} } });
+  it('fuegt einen Bann hinzu ohne bestehende Banns zu verlieren', async () => {
+    requestMock
+      .mockResolvedValueOnce(gameserverSettings('player-a\r\nplayer-b'))
+      .mockResolvedValueOnce({ status: 200, headers: {}, data: { data: {} } });
     const client = new NitradoClient('token-1234');
 
-    await client.addToBanlist('123', 'player-a');
-    expect(requestMock).toHaveBeenCalledWith(expect.objectContaining({
+    await client.addToBanlist('123', 'player-c');
+
+    expect(requestMock).toHaveBeenNthCalledWith(2, expect.objectContaining({
       method: 'POST',
-      url: '/services/123/gameservers/games/banlist',
-      data: 'identifier=player-a',
+      url: '/services/123/gameservers/settings',
+      data: expect.stringContaining('key=bans'),
       headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
     }));
+    const post = requestMock.mock.calls[1][0] as { data: string };
+    expect(new URLSearchParams(post.data).get('value')).toBe('player-a\r\nplayer-b\r\nplayer-c');
   });
 
-  it('sendet DELETE mit identifier als form-urlencoded', async () => {
-    requestMock.mockResolvedValue({ status: 200, headers: {}, data: { data: {} } });
+  it('entfernt exakt einen Bann und erhaelt alle anderen', async () => {
+    requestMock
+      .mockResolvedValueOnce(gameserverSettings('player-a\r\nplayer-b\r\nplayer-c'))
+      .mockResolvedValueOnce({ status: 200, headers: {}, data: { data: {} } });
     const client = new NitradoClient('token-1234');
 
-    await client.removeFromBanlist('123', 'player-a');
-    expect(requestMock).toHaveBeenCalledWith(expect.objectContaining({
-      method: 'DELETE',
-      url: '/services/123/gameservers/games/banlist',
-      data: 'identifier=player-a',
-      headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-    }));
+    await client.removeFromBanlist('123', 'player-b');
+
+    const post = requestMock.mock.calls[1][0] as { data: string };
+    expect(new URLSearchParams(post.data).get('value')).toBe('player-a\r\nplayer-c');
+  });
+
+  it('schreibt bei bereits vorhandenem Bann nicht erneut', async () => {
+    requestMock.mockResolvedValueOnce(gameserverSettings('player-a\r\nplayer-b'));
+    const client = new NitradoClient('token-1234');
+
+    await client.addToBanlist('123', 'player-b');
+
+    expect(requestMock).toHaveBeenCalledTimes(1);
   });
 });
