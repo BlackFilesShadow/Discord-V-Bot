@@ -146,8 +146,14 @@ export async function disableWelcome(guildId: string, updatedBy: string): Promis
   await setWelcomeConfig(guildId, { ...existing, enabled: false }, updatedBy);
 }
 
+/**
+ * {user} und {mention} sind im Welcome-System beide absichtlich echte Discord-
+ * Erwaehnungen. Das Dashboard dokumentiert {user} ebenfalls als Mention.
+ * `vars.user` bleibt nur aus API-Kompatibilitaet erhalten; fuer die beiden
+ * Mention-Platzhalter ist ausschliesslich `vars.mention` die kanonische Quelle.
+ */
 export function renderWelcomeMessage(message: string, vars: { user: string; mention: string; guild: string; memberCount: number }): string {
-  return renderTemplate(message, { user: vars.user })
+  return renderTemplate(message, { user: vars.mention })
     .replace(/\{mention\}/g, vars.mention)
     .replace(/\{guild\}/g, vars.guild)
     .replace(/\{count\}/g, String(vars.memberCount))
