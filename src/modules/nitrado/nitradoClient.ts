@@ -383,7 +383,7 @@ export class NitradoClient {
 
   /** Diagnose: rohe Verzeichnisauflistung (Dateien + Ordner) eines Pfads. */
   async listDir(serviceId: string, dir: string): Promise<Array<{ name: string; type: string; modified_at: number; size: number }>> {
-    const res = await this.request<{ data: { entries: Array<{ name: string; type: string; modified_at: number; size: number } } }>(
+    const res = await this.request<{ data: { entries: Array<{ name: string; type: string; modified_at: number; size: number }> } }>(
       'GET',
       `/services/${serviceId}/gameservers/file_server/list`,
       { params: { dir } },
