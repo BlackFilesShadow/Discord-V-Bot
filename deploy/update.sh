@@ -1,7 +1,7 @@
 #!/bin/bash
 # =============================================
 # Discord-V-Bot - Update Script (Docker-Workflow)
-# Pull -> Build -> sichere DB-Migration -> Start -> Health/Login/Drift-Gates
+# Pull -> Build -> sichere DB-Migration -> Start -> Health/Login/Drift/Smoke-Gates
 # =============================================
 set -euo pipefail
 
@@ -14,6 +14,7 @@ NC='\033[0m'
 BOT_DIR="${BOT_DIR:-/opt/discord-v-bot}"
 COMPOSE_SERVICE="bot"
 CONTAINER_NAME="discord-v-bot"
+SMOKE_BASE_URL="${SMOKE_BASE_URL:-http://127.0.0.1:3000}"
 
 log()  { echo -e "${GREEN}[\u2713]${NC} $1"; }
 info() { echo -e "${BLUE}[i]${NC} $1"; }
@@ -219,7 +220,17 @@ docker compose exec -T "$COMPOSE_SERVICE" npx prisma migrate status \
   || err "Post-Start Prisma-Status ist nicht sauber."
 log "Post-Start Prisma-Status sauber."
 
-# 8) Prozess-/Container-Hygiene.
+# 8) Echte laufende Dashboard-Instanz intern pruefen. Dieser Smoke laeuft gegen
+# den auf dem Host publizierten Loopback-Port und blockiert die Freigabe bei
+# 5xx, kaputtem OAuth-Start oder gebrochenen Auth-Gates.
+info "Fuehre internen Live-Smoke-Test aus ($SMOKE_BASE_URL)..."
+if ! bash "$BOT_DIR/deploy/smoke.sh" "$SMOKE_BASE_URL"; then
+  docker compose logs --tail=120 "$COMPOSE_SERVICE" || true
+  err "Live-Smoke-Test fehlgeschlagen. Deployment nicht freigegeben."
+fi
+log "Live-Smoke-Test erfolgreich."
+
+# 9) Prozess-/Container-Hygiene.
 info "Container-/Restart-Status:"
 docker compose ps "$COMPOSE_SERVICE"
 RESTART_COUNT=$(docker inspect --format='{{.RestartCount}}' "$CONTAINER_NAME" 2>/dev/null || echo "unknown")
