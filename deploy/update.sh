@@ -192,11 +192,13 @@ if [[ "$HEALTH_OK" -ne 1 ]]; then
   err "Container wurde innerhalb von 90s nicht healthy."
 fi
 
-# 6) Discord-Login ist ebenfalls ein hartes Gate.
+# 6) Discord-Login ist ebenfalls ein hartes Gate. Der Marker ist absichtlich
+# produktnamensneutral, damit Branding-Aenderungen keinen erfolgreichen Deploy
+# als Fehler klassifizieren.
 info "Pruefe Discord-Login..."
 LOGIN_OK=0
 for i in {1..30}; do
-  if docker compose logs --tail=160 "$COMPOSE_SERVICE" 2>/dev/null | grep -q "Bot eingeloggt als"; then
+  if docker compose logs --tail=160 "$COMPOSE_SERVICE" 2>/dev/null | grep -q "eingeloggt als"; then
     LOGIN_OK=1
     break
   fi
