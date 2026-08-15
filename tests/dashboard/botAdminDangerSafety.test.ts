@@ -16,29 +16,23 @@ jest.mock('../../src/database/prisma', () => ({
   },
 }));
 
-const hardDeleteMock = jest.fn();
-class MockHardDeletePackageError extends Error {
-  constructor(message: string, public readonly status = 500) {
-    super(message);
-    this.name = 'HardDeletePackageError';
-  }
-}
+const mockHardDelete = jest.fn();
+jest.mock('../../src/modules/packages/hardDeletePackage', () => {
+  const actual = jest.requireActual('../../src/modules/packages/hardDeletePackage');
+  return { ...actual, hardDeletePackage: mockHardDelete };
+});
 
-jest.mock('../../src/modules/packages/hardDeletePackage', () => ({
-  hardDeletePackage: hardDeleteMock,
-  HardDeletePackageError: MockHardDeletePackageError,
-}));
-
-const logAuditMock = jest.fn();
-const logAuditDbMock = jest.fn();
+const mockLogAudit = jest.fn();
+const mockLogAuditDb = jest.fn();
 jest.mock('../../src/utils/logger', () => ({
-  logAudit: logAuditMock,
-  logAuditDb: logAuditDbMock,
+  logAudit: mockLogAudit,
+  logAuditDb: mockLogAuditDb,
 }));
 
 import express from 'express';
 import request from 'supertest';
 import prisma from '../../src/database/prisma';
+import { HardDeletePackageError } from '../../src/modules/packages/hardDeletePackage';
 import { botAdminDangerSafetyRouter } from '../../src/dashboard/routes/v2/botAdminDangerSafety';
 
 const findManyMock = prisma.package.findMany as jest.Mock;
@@ -54,14 +48,14 @@ describe('BotAdmin danger purge safety', () => {
   beforeEach(() => {
     jest.clearAllMocks();
     findManyMock.mockResolvedValue([{ id: 'pkg-a' }, { id: 'pkg-b' }]);
-    hardDeleteMock.mockResolvedValue({ filesRemoved: 1, filesAlreadyMissing: 0 });
+    mockHardDelete.mockResolvedValue({ filesRemoved: 1, filesAlreadyMissing: 0 });
   });
 
   it('verlangt weiterhin die explizite DELETE-Bestaetigung', async () => {
     const res = await request(app()).post('/bot-admin/danger/purge-deleted-packages').send({});
     expect(res.status).toBe(400);
     expect(findManyMock).not.toHaveBeenCalled();
-    expect(hardDeleteMock).not.toHaveBeenCalled();
+    expect(mockHardDelete).not.toHaveBeenCalled();
   });
 
   it('purgt jedes Soft-Delete-Paket ausschliesslich ueber den kanonischen Filesystem-Service', async () => {
@@ -75,16 +69,16 @@ describe('BotAdmin danger purge safety', () => {
       select: { id: true },
       orderBy: { createdAt: 'asc' },
     });
-    expect(hardDeleteMock).toHaveBeenNthCalledWith(1, 'pkg-a', { requireSoftDeleted: true });
-    expect(hardDeleteMock).toHaveBeenNthCalledWith(2, 'pkg-b', { requireSoftDeleted: true });
+    expect(mockHardDelete).toHaveBeenNthCalledWith(1, 'pkg-a', { requireSoftDeleted: true });
+    expect(mockHardDelete).toHaveBeenNthCalledWith(2, 'pkg-b', { requireSoftDeleted: true });
     expect(res.body).toMatchObject({ purged: 2, totalCandidates: 2, filesRemoved: 2, filesAlreadyMissing: 0 });
-    expect(logAuditMock).toHaveBeenCalledWith('BOTADMIN_DANGER_PURGE_PACKAGES', 'ADMIN', expect.any(Object));
-    expect(logAuditDbMock).toHaveBeenCalled();
+    expect(mockLogAudit).toHaveBeenCalledWith('BOTADMIN_DANGER_PURGE_PACKAGES', 'ADMIN', expect.any(Object));
+    expect(mockLogAuditDb).toHaveBeenCalled();
   });
 
   it('ueberspringt ein parallel wiederhergestelltes Paket statt es physisch zu loeschen', async () => {
-    hardDeleteMock
-      .mockRejectedValueOnce(new MockHardDeletePackageError('Hard-Delete blockiert: Paket ist nicht mehr als geloescht markiert.', 409))
+    mockHardDelete
+      .mockRejectedValueOnce(new HardDeletePackageError('Hard-Delete blockiert: Paket ist nicht mehr als geloescht markiert.', 409))
       .mockResolvedValueOnce({ filesRemoved: 2, filesAlreadyMissing: 1 });
 
     const res = await request(app())
@@ -96,9 +90,9 @@ describe('BotAdmin danger purge safety', () => {
   });
 
   it('bricht bei echtem Delete-Fehler mit explizitem Partial-State ab', async () => {
-    hardDeleteMock
+    mockHardDelete
       .mockResolvedValueOnce({ filesRemoved: 1, filesAlreadyMissing: 0 })
-      .mockRejectedValueOnce(new MockHardDeletePackageError('Datei konnte nicht entfernt werden.', 500));
+      .mockRejectedValueOnce(new HardDeletePackageError('Datei konnte nicht entfernt werden.', 500));
 
     const res = await request(app())
       .post('/bot-admin/danger/purge-deleted-packages')
@@ -112,7 +106,7 @@ describe('BotAdmin danger purge safety', () => {
       total: 2,
       filesRemoved: 1,
     });
-    expect(logAuditMock).toHaveBeenCalledWith('BOTADMIN_DANGER_PURGE_ABORTED', 'ADMIN', expect.objectContaining({ failedPackageId: 'pkg-b' }));
-    expect(logAuditDbMock).toHaveBeenCalled();
+    expect(mockLogAudit).toHaveBeenCalledWith('BOTADMIN_DANGER_PURGE_ABORTED', 'ADMIN', expect.objectContaining({ failedPackageId: 'pkg-b' }));
+    expect(mockLogAuditDb).toHaveBeenCalled();
   });
 });
