@@ -15,6 +15,8 @@ jest.mock('../../src/commands/handler', () => ({
   deployCommandsScoped: jest.fn(),
 }));
 
+import fs from 'node:fs';
+import path from 'node:path';
 import express from 'express';
 import request from 'supertest';
 import { tryGetDashboardClient } from '../../src/dashboard/clientRegistry';
@@ -46,6 +48,14 @@ describe('DEV command deploy route', () => {
   beforeEach(() => {
     jest.clearAllMocks();
     installClient();
+  });
+
+  it('ist der einzige Command-Reload-Handler und laesst keinen shadowed Legacy-Pfad im Sammelrouter stehen', () => {
+    const commandCenter = fs.readFileSync(
+      path.resolve(process.cwd(), 'src/dashboard/routes/v2/devCommandCenter.ts'),
+      'utf8',
+    );
+    expect(commandCenter).not.toContain("devCommandCenterRouter.post('/commands/reload'");
   });
 
   it('meldet Guild-Teilfehler als HTTP-Fehler statt gruenem Erfolg', async () => {
