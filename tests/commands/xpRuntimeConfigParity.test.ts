@@ -20,9 +20,10 @@ describe('XP runtime config parity', () => {
     expect(message).not.toContain('xpConfig?.levelMultiplier || 1.0');
   });
 
-  it('verwendet dieselbe nullish-Semantik im Voice-XP-Pfad', () => {
+  it('verwendet dieselbe nullish-Semantik und den Prisma-Default im Voice-XP-Pfad', () => {
     expect(voice).toContain('xpConfig?.xpCooldownSeconds ?? 60');
-    expect(voice).toContain('xpConfig?.voiceXpPerMinute ?? 2');
+    expect(voice).toContain('xpConfig?.voiceXpPerMinute ?? 5');
     expect(voice).toContain('xpConfig?.levelMultiplier ?? 1.0');
+    expect(voice).not.toContain('xpConfig?.voiceXpPerMinute ?? 2');
   });
 });
