@@ -9,13 +9,13 @@ Serverinterne Live-Feeds fuehren keine zweite Gameplay-Wahrheit ein. Die normali
 - `NitradoAdmProfileConfig` speichert das ADM-Verzeichnis **pro Nitrado-Connection**.
 - Der Pfad wird automatisch aus bekannten DayZ/Nitrado-Verzeichnissen erkannt. Eine globale `NITRADO_ADM_DIR`-Runtime gibt es nicht mehr.
 - Owner koennen Pfad und optionale IANA-Zeitzone ueber `/api/v2/guilds/:guildId/adm-source?slot=N` pruefen bzw. korrigieren.
-- Der kanonische ADM-V2-Ingest pollt **alle aktiven, an einen Gameserver gebundenen Connections** alle 30 Sekunden. Dadurch funktionieren Linking, Rewards und PlayerSessions unabhaengig davon, ob ein oeffentlicher Gameplay-Feed aktiviert ist.
+- Der kanonische ADM-V2-Ingest pollt **alle aktiven, an einen Gameserver gebundenen Connections** alle 30 Sekunden. Dadurch funktionieren Linking, Rewards und PlayerSessions unabhaengig davon, ob ein oeffentlicher Gameplay-Feed konfiguriert ist.
 - Der Live-Pfad verwendet Nitrados `file_server/seek` ab `AdmSourceCursor.processedByteOffset`; wachsende ADM-Dateien werden nicht wiederholt vollstaendig heruntergeladen.
 - Unvollstaendige Schlusszeilen bewegen den Byte-Cursor nicht und werden beim naechsten Poll vollstaendig gelesen.
 - Beim allerersten V2-Start wird der aktuelle Live-Log gebaselined; historischer Backlog wird nicht ungefragt verarbeitet oder gepostet.
 - Linking-Challenges werden direkt aus den neu gelesenen vollstaendigen ADM-Zeilen verifiziert.
 - Rewards und PlayerSessions werden anschliessend durch den V2-Postprocessor aus der kanonischen `AdmEvent`-Wahrheit verarbeitet.
-- Der alte 15-Minuten-Vollfile-Sync und der Legacy-Killfeed-Watcher sind entfernt; es gibt nur noch einen ADM-Datei-Producer.
+- Der alte 15-Minuten-Vollfile-Sync und die parallele Legacy-Killfeed-Runtime sind entfernt; es gibt nur noch einen ADM-Datei-Producer und einen Gameplay-Feed-Delivery-Pfad.
 
 ## Kanonische Ereignisse
 
@@ -53,6 +53,12 @@ Objekt und Werkzeug werden getrennt normalisiert, z.B. `built Fence with Shovel`
 
 Bestehende `KillfeedConfig`-Datensaetze werden bei der Migration als `DEATH`-Feeds uebernommen. Historische `DEATH`-Kategorie entspricht dabei `PVP`. Alte erfolgreiche Deliveries werden als `SENT` uebernommen; alte Claims ohne `messageId` werden als `RETRY` behandelt, weil sie keinen erfolgreichen Discord-Post beweisen.
 
+## Runtime-Gate
+
+Die produktive Gameplay-Feed-Runtime wird immer zusammen mit der Nitrado-Runtime gestartet. Es gibt kein zusaetzliches globales `ADM_EVENT_PIPELINE_V2`-Environment-Gate mehr.
+
+Das eigentliche Opt-in bleibt strikt servergescoppt: Nur eine vorhandene `GameplayFeedConfig` mit `isActive=true`, passender Kategorie und gueltigem Discord-Channel erzeugt eine Nachricht. Damit kann eine bewusst konfigurierte Feed-Subscription nicht mehr durch einen versteckten globalen Schalter stillgelegt werden, waehrend Server ohne aktive Feed-Config weiterhin nichts posten.
+
 ## Realtime-Transport
 
 Socket.IO `/guild` besitzt zwei getrennte Room-Typen:
@@ -75,19 +81,19 @@ Der bestehende Pfad bleibt kompatibel:
 
 Feed-Channels benoetigen `ViewChannel`, `SendMessages`, `EmbedLinks` und `ReadMessageHistory` (letzteres fuer Crash-Reconciliation).
 
-## Produktionsfreigabe
-
-`ADM_EVENT_PIPELINE_V2=false` bleibt bis zur kontrollierten Live-Freigabe des **oeffentlichen Death-/Baufeeds** Standard. Der per-Server ADM-V2-Ingest fuer Linking, Rewards und PlayerSessions laeuft bereits unabhaengig von diesem Schalter. Bei `false` wird lediglich keine neue Gameplay-Feed-Nachricht an Discord zugestellt.
+## Produktionspruefung
 
 Nach Merge und Migration:
 
 1. Produktions-Preflight/Backup und `prisma migrate deploy` + `prisma migrate status`.
-2. Bot mit `ADM_EVENT_PIPELINE_V2=false` starten und Health/Login/DB/Migration pruefen.
+2. Bot starten und Health/Login/DB/Migration pruefen.
 3. Im DEV-ADM-Status bestaetigen, dass pro aktivem Slot eine Quelle und ein Byte-Cursor erkannt werden; Pfad und Zeitzone bei Bedarf ueber `adm-source` korrigieren.
-4. Linking-Challenge und PlayerSession/Reward-Postprocessing auf einem Testslot pruefen.
-5. DayZ-Servereinstellungen fuer Death-/Baufeed pruefen: die benoetigten Admin-Logs muessen serverseitig aktiviert sein.
-6. `ADM_EVENT_PIPELINE_V2=true` kontrolliert fuer den oeffentlichen Testfeed aktivieren.
-7. Auf einem Server PvP, normaler Tod, Suizid, NPC, Fahrzeug sowie Placement/Build/Dismantle/Destroy pruefen.
-8. Nitrado-Dateiwechsel/Serverrestart, Botrestart und Discord-Fehler/Retry testen.
-9. Bestaetigen: keine Doppelposts, keine verlorenen Posts, kein Cross-Server-Leak und korrekte Zeitstempel.
-10. Erst danach weitere Server und Reward-Gates freigeben.
+4. Pruefen, dass fuer den Zielserver eine aktive `GameplayFeedConfig` mit dem gewuenschten Discord-Channel vorhanden ist.
+5. Linking-Challenge und PlayerSession/Reward-Postprocessing auf einem Testslot pruefen.
+6. DayZ-Servereinstellungen fuer Death-/Baufeed pruefen: die benoetigten Admin-Logs muessen serverseitig aktiviert sein.
+7. Auf dem verbundenen Server **nach** aktivierter Feed-Konfiguration einen neuen PvP-Kill, normalen Tod, Suizid, NPC-/Tier-Tod, Fahrzeugtod sowie Placement/Build/Dismantle/Destroy erzeugen.
+8. Fuer einen neuen Live-Kill bis zu etwa 45 Sekunden einplanen: ADM-Poll maximal 30 Sekunden plus Gameplay-Feed-Poll maximal 15 Sekunden.
+9. Nitrado-Dateiwechsel/Serverrestart, Botrestart und Discord-Fehler/Retry testen.
+10. Bestaetigen: keine Doppelposts, keine verlorenen Posts, kein Cross-Server-Leak und korrekte Zeitstempel.
+
+Die Regression `tests/modules/gameplayFeedDeliveryE2E.test.ts` beweist zusaetzlich die produktive Kernkette von einer rohen DayZ-ADM-PvP-Zeile ueber Persistenz und Kategorie-Ableitung bis zum Discord-Embed sowie den RETRY-Pfad bei einem temporaer nicht erreichbaren Feed-Channel.
