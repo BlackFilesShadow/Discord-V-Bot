@@ -15,13 +15,15 @@ class CommandCollisionError extends Error {
 /**
  * Command-Handler: Lädt alle Slash-Commands atomar in eine neue Collection.
  * Die aktive Runtime-Registry wird erst ersetzt, wenn der komplette Loader-
- * Durchlauf erfolgreich beendet ist. Ein strikter Fehler kann dadurch niemals
- * einen halb geladenen Command-Satz im laufenden Bot hinterlassen.
+ * Durchlauf erfolgreich beendet ist. Im Standardmodus verwirft jeder
+ * Modul-/Registryfehler den neuen Snapshot; nur COMMAND_LOADER_STRICT=false
+ * erlaubt den explizit toleranten Legacy-Modus.
  */
 export async function loadCommands(client: ExtendedClient): Promise<void> {
   const nextCommands = new Collection<string, Command>();
   const commandSources = new Map<string, string>();
   let collisionCount = 0;
+  const strict = process.env.COMMAND_LOADER_STRICT !== 'false';
 
   const registerCommand = (cmd: Command, sourceFile: string): void => {
     const existing = commandSources.get(cmd.data.name);
@@ -29,7 +31,7 @@ export async function loadCommands(client: ExtendedClient): Promise<void> {
       collisionCount++;
       const base = `[Command-Collision] /${cmd.data.name} ist doppelt definiert: ` +
         `"${existing}" und "${sourceFile}".`;
-      if (process.env.COMMAND_LOADER_STRICT !== 'false') {
+      if (strict) {
         logger.error(`${base} Abbruch (setze COMMAND_LOADER_STRICT=false zum Tolerieren).`);
         throw new CommandCollisionError(`Command-Collision: /${cmd.data.name} in "${existing}" und "${sourceFile}"`);
       }
@@ -76,6 +78,12 @@ export async function loadCommands(client: ExtendedClient): Promise<void> {
       } catch (error) {
         if (error instanceof CommandCollisionError) throw error;
         logger.error(`Fehler beim Laden von Command ${file}:`, error);
+        if (strict) {
+          throw error instanceof Error
+            ? error
+            : new Error(`Unbekannter Fehler beim Laden von Command ${relSource}`);
+        }
+        logger.warn(`Command ${relSource} wurde nur wegen COMMAND_LOADER_STRICT=false uebersprungen.`);
       }
     }
   }
@@ -170,9 +178,9 @@ export async function deployCommandsScoped(
     try {
       await rest.put(Routes.applicationGuildCommands(clientId, gid), { body: guildCmds });
       guildsOk++;
-    } catch (e) {
+    } catch (error) {
       failedGuildIds.push(gid);
-      logger.warn(`Guild-Deploy fuer ${gid} fehlgeschlagen:`, e as Error);
+      logger.warn(`Guild-Deploy fuer ${gid} fehlgeschlagen:`, error as Error);
     }
   }
   logger.info(`${guildCmds.length} guild-Commands auf ${guildsOk}/${guildIds.length} Guild(s) registriert.`);
