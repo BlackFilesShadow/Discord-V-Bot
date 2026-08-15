@@ -194,11 +194,14 @@ fi
 
 # 6) Discord-Login ist ebenfalls ein hartes Gate. Der Marker ist absichtlich
 # produktnamensneutral, damit Branding-Aenderungen keinen erfolgreichen Deploy
-# als Fehler klassifizieren.
+# als Fehler klassifizieren. Die Logs werden zuerst vollstaendig eingelesen:
+# `grep -q` direkt hinter `docker compose logs` kann unter `set -o pipefail`
+# durch SIGPIPE des Upstream-Prozesses trotz Treffer einen Fehlstatus liefern.
 info "Pruefe Discord-Login..."
 LOGIN_OK=0
 for i in {1..30}; do
-  if docker compose logs --tail=160 "$COMPOSE_SERVICE" 2>/dev/null | grep -q "eingeloggt als"; then
+  LOGIN_LOGS=$(docker compose logs --tail=160 "$COMPOSE_SERVICE" 2>/dev/null || true)
+  if grep -Fq "eingeloggt als" <<<"$LOGIN_LOGS"; then
     LOGIN_OK=1
     break
   fi
