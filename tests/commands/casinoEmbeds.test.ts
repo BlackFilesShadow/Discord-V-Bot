@@ -85,6 +85,13 @@ interface FakeReplyArg {
   content?: string;
 }
 
+interface NumericSlotOption {
+  name: string;
+  required?: boolean;
+  min_value?: number;
+  max_value?: number;
+}
+
 function makeInteraction(opts: { intOpt?: number; strOpt?: string } = {}) {
   const reply = jest.fn().mockResolvedValue(undefined);
   const i = {
@@ -186,7 +193,7 @@ describe('Casino + Bank Embeds (Public, kein Self-Ping)', () => {
   it('alle Casino-Commands bieten optionale Slot-Auswahl fuer Multi-Server-Guilds', () => {
     for (const command of [slotCommand, coinflipCommand, diceCommand, blackjackCommand, casinoStatsCommand]) {
       const json = command.data.toJSON();
-      const slot = json.options?.find(option => option.name === 'slot');
+      const slot = json.options?.find(option => option.name === 'slot') as NumericSlotOption | undefined;
       expect(slot).toBeDefined();
       expect(slot?.required).toBe(false);
       expect(slot?.min_value).toBe(1);
