@@ -67,6 +67,15 @@ describe('DEV XP mutation input guard', () => {
     expect((await request(app()).patch(`/dev/command-center/xp/${GUILD}`).send({ messageXpMin: 11, messageXpMax: 39 })).status).toBe(204);
   });
 
+  it('failt bei DB-Ausfall unter Express 4 geschlossen mit 503 statt die Promise unhandled abzulehnen', async () => {
+    findMock.mockRejectedValueOnce(new Error('postgres unavailable'));
+    const res = await request(app())
+      .patch(`/dev/command-center/xp/${GUILD}`)
+      .send({ messageXpMin: 20 });
+    expect(res.status).toBe(503);
+    expect(res.body.error).toMatch(/nicht sicher geprüft/i);
+  });
+
   it('ignoriert Nicht-XP- und Nicht-PATCH-Routen', async () => {
     expect((await request(app()).get(`/dev/command-center/xp/${GUILD}`)).status).toBe(204);
     expect((await request(app()).patch('/dev/command-center/config/foo').send({ value: 1 })).status).toBe(204);
