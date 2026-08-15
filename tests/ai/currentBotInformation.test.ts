@@ -17,6 +17,7 @@ function walkTs(dir: string): string[] {
 describe('current bot information surfaces', () => {
   const aiCatalog = read('src/modules/ai/commandCatalog.ts');
   const aiHandler = read('src/modules/ai/aiHandler.ts');
+  const aiTriggers = read('src/modules/ai/triggers.ts');
   const about = read('src/commands/about.ts');
   const botInfo = read('src/content/botInfo.ts');
   const help = read('src/commands/user/help.ts');
@@ -36,6 +37,9 @@ describe('current bot information surfaces', () => {
     expect(aiHandler).not.toContain('Beispiele wie /ai-trigger');
     expect(aiHandler).not.toContain('/ticket, /feed');
     expect(aiHandler).toContain('Bot-Admin- und DEV-Verwaltung ist Dashboard-only');
+    expect(aiTriggers).not.toContain('User-, Admin- und Developer-Commands');
+    expect(aiTriggers).not.toContain('Slash-Commands für User/Admin');
+    expect(aiTriggers).toContain('globale Bot-Admin-/DEV-Verwaltung im Dashboard');
   });
 
   it('kennt aktuelle Discord-Funktionsgruppen', () => {
