@@ -12,7 +12,7 @@ import { config } from '../../config';
  * - probeProvider(): aktiver Health-Check mit Mini-Prompt + Latenz
  *
  * Die fruehere Discord-Ausgabe ueber /admin-aimodels ist in das Dashboard
- * migriert; dieses Modul ist weiterhin die kanonische Runtime-Datenquelle.
+ * migriert; dieses Modul bleibt die kanonische Runtime-Datenquelle.
  */
 
 export type ProviderName = 'groq' | 'cerebras' | 'openrouter' | 'gemini' | 'openai';
@@ -25,7 +25,7 @@ export interface ProviderStat {
   failureCount: number;
   rateLimitCount: number;
   avgLatencyMs: number;
-  successRate: number; // 0..1
+  successRate: number;
   lastSuccessAt: Date | null;
   lastFailureAt: Date | null;
   lastError: string | null;
@@ -42,16 +42,7 @@ function isConfigured(p: ProviderName): boolean {
   }
 }
 
-// =====================================================================
-// Phase 12 + P0-Hardening: Persistente Cooldowns. Bei 429 wird der Provider
-// fuer N Sekunden komplett aus der Ranking-Liste entfernt. Backoff waechst
-// exponentiell: 30s -> 60s -> 120s -> max 300s.
-//
-// Persistierung: AiProviderStat.cooldownUntil/cooldownStreak. In-Memory
-// Cache ist nur noch Beschleunigung; DB ist Source-of-Truth (Multi-Replica
-// + Restart-sicher).
-// =====================================================================
-interface CooldownState { until: number; consecutive: number; }
+interface CooldownState { until: number; consecutive: number }
 const cooldowns = new Map<ProviderName, CooldownState>();
 const COOLDOWN_BASE_MS = 30_000;
 const COOLDOWN_MAX_MS = 300_000;
@@ -105,199 +96,202 @@ export function markRateLimited(provider: ProviderName, retryAfterMs?: number): 
   return ms;
 }
 
-export function markProviderUnavailable(provider: ProviderName, reason = 'auth_or_model_error'): void {
+export function markProviderUnavailable(provider: ProviderName, reason: string): void {
   const until = Date.now() + UNAVAILABLE_COOLDOWN_MS;
-  cooldowns.set(provider, { until, consecutive: 1 });
-  logger.warn(`providerStats: ${provider} ${Math.round(UNAVAILABLE_COOLDOWN_MS / 60_000)}min deaktiviert (${reason})`);
-  persistCooldown(provider, until, reason, 1);
+  const consecutive = (cooldowns.get(provider)?.consecutive ?? 0) + 1;
+  cooldowns.set(provider, { until, consecutive });
+  logger.warn(`providerStats: ${provider} ${Math.round(UNAVAILABLE_COOLDOWN_MS / 60000)}min aus Rotation (${reason} — Key/Model pruefen)`);
+  persistCooldown(provider, until, reason, consecutive);
 }
 
-function persistCooldown(provider: ProviderName, untilMs: number, reason: string, consecutive: number): void {
-  void prisma.aiProviderStat.upsert({
+function persistCooldown(provider: ProviderName, until: number, reason: string, streak: number): void {
+  void prisma.aiProviderStat.update({
     where: { provider },
-    create: {
-      provider,
-      successCount: 0,
-      failureCount: 0,
-      rateLimitCount: 0,
-      avgLatencyMs: 0,
-      lastError: reason,
-      cooldownUntil: new Date(untilMs),
-      cooldownStreak: consecutive,
-    },
-    update: {
-      lastError: reason,
-      cooldownUntil: new Date(untilMs),
-      cooldownStreak: consecutive,
-    },
-  }).catch((e: unknown) => logger.warn(`providerStats.persistCooldown ${provider}: ${(e as Error).message}`));
+    data: { cooldownUntil: new Date(until), cooldownReason: reason, cooldownStreak: streak },
+  }).catch((e: unknown) => {
+    if ((e as { code?: string }).code === 'P2025') {
+      void prisma.aiProviderStat.create({
+        data: { provider, cooldownUntil: new Date(until), cooldownReason: reason, cooldownStreak: streak },
+      }).catch(() => { /* ignore secondary error */ });
+    }
+  });
 }
 
-function isOnCooldown(provider: ProviderName): boolean {
+export function clearCooldown(provider: ProviderName): void {
+  if (!cooldowns.has(provider)) return;
+  cooldowns.delete(provider);
+  void prisma.aiProviderStat.updateMany({
+    where: { provider, cooldownUntil: { not: null } },
+    data: { cooldownUntil: null, cooldownReason: null, cooldownStreak: 0 },
+  }).catch(() => { /* ignore */ });
+}
+
+export function isOnCooldown(provider: ProviderName): boolean {
   const c = cooldowns.get(provider);
   if (!c) return false;
   if (Date.now() >= c.until) {
     cooldowns.delete(provider);
-    void prisma.aiProviderStat.update({
-      where: { provider },
-      data: { cooldownUntil: null, cooldownStreak: 0 },
-    }).catch(() => {});
     return false;
   }
   return true;
 }
 
-export function getAllCooldowns(): Partial<Record<ProviderName, { untilMs: number; remainingMs: number; consecutive: number }>> {
-  const out: Partial<Record<ProviderName, { untilMs: number; remainingMs: number; consecutive: number }>> = {};
+export function getCooldownRemainingMs(provider: ProviderName): number {
+  const c = cooldowns.get(provider);
+  if (!c) return 0;
+  return Math.max(0, c.until - Date.now());
+}
+
+export function getAllCooldowns(): Array<{ provider: ProviderName; remainingMs: number; consecutive: number }> {
+  const out: Array<{ provider: ProviderName; remainingMs: number; consecutive: number }> = [];
   for (const p of ALL_PROVIDERS) {
     const c = cooldowns.get(p);
-    if (c && c.until > Date.now()) out[p] = { untilMs: c.until, remainingMs: c.until - Date.now(), consecutive: c.consecutive };
+    if (c && Date.now() < c.until) {
+      out.push({ provider: p, remainingMs: c.until - Date.now(), consecutive: c.consecutive });
+    }
   }
   return out;
 }
 
-export function clearCooldown(provider: ProviderName): void {
-  cooldowns.delete(provider);
-  void prisma.aiProviderStat.update({
-    where: { provider },
-    data: { cooldownUntil: null, cooldownStreak: 0, lastError: null },
-  }).catch(() => {});
-}
-
 export async function recordCall(
   provider: ProviderName,
-  result: 'success' | 'failure' | 'rateLimit',
+  outcome: 'success' | 'failure' | 'rateLimit',
   latencyMs: number,
   error?: string,
   opts?: { retryAfterMs?: number },
 ): Promise<void> {
+  if (outcome === 'success') clearCooldown(provider);
+  if (outcome === 'rateLimit') markRateLimited(provider, opts?.retryAfterMs);
   try {
-    const existing = await prisma.aiProviderStat.findUnique({ where: { provider } });
-    const prevCalls = (existing?.successCount ?? 0) + (existing?.failureCount ?? 0) + (existing?.rateLimitCount ?? 0);
-    const nextAvg = prevCalls === 0
-      ? latencyMs
-      : Math.round(((existing?.avgLatencyMs ?? 0) * prevCalls + latencyMs) / (prevCalls + 1));
-
-    const data = result === 'success'
-      ? {
-        successCount: { increment: 1 },
-        avgLatencyMs: nextAvg,
-        lastSuccessAt: new Date(),
-        lastError: null,
-        cooldownUntil: null,
-        cooldownStreak: 0,
-      }
-      : result === 'rateLimit'
-        ? {
-          rateLimitCount: { increment: 1 },
-          avgLatencyMs: nextAvg,
-          lastFailureAt: new Date(),
-          lastError: error?.slice(0, 500) ?? '429',
-        }
-        : {
-          failureCount: { increment: 1 },
-          avgLatencyMs: nextAvg,
-          lastFailureAt: new Date(),
-          lastError: error?.slice(0, 500) ?? 'unknown',
-        };
-
+    const now = new Date();
+    const data: Record<string, unknown> = {};
+    if (outcome === 'success') {
+      data.successCount = { increment: 1 };
+      data.totalLatencyMs = { increment: BigInt(Math.max(0, Math.round(latencyMs))) };
+      data.lastSuccessAt = now;
+    } else if (outcome === 'rateLimit') {
+      data.rateLimitCount = { increment: 1 };
+      data.lastFailureAt = now;
+      data.lastError = (error || '429 Rate Limit').slice(0, 500);
+    } else {
+      data.failureCount = { increment: 1 };
+      data.lastFailureAt = now;
+      data.lastError = (error || 'unknown').slice(0, 500);
+    }
     await prisma.aiProviderStat.upsert({
       where: { provider },
+      update: data,
       create: {
         provider,
-        successCount: result === 'success' ? 1 : 0,
-        failureCount: result === 'failure' ? 1 : 0,
-        rateLimitCount: result === 'rateLimit' ? 1 : 0,
-        avgLatencyMs: latencyMs,
-        lastSuccessAt: result === 'success' ? new Date() : null,
-        lastFailureAt: result !== 'success' ? new Date() : null,
-        lastError: result === 'success' ? null : error?.slice(0, 500) ?? null,
+        successCount: outcome === 'success' ? 1 : 0,
+        failureCount: outcome === 'failure' ? 1 : 0,
+        rateLimitCount: outcome === 'rateLimit' ? 1 : 0,
+        totalLatencyMs: outcome === 'success' ? BigInt(Math.max(0, Math.round(latencyMs))) : BigInt(0),
+        lastSuccessAt: outcome === 'success' ? now : null,
+        lastFailureAt: outcome !== 'success' ? now : null,
+        lastError: outcome !== 'success' ? (error || '').slice(0, 500) : null,
       },
-      update: data,
     });
-
-    if (result === 'rateLimit') markRateLimited(provider, opts?.retryAfterMs);
-    else if (result === 'success') clearCooldown(provider);
   } catch (e) {
-    logger.warn(`providerStats.recordCall(${provider}) fehlgeschlagen: ${(e as Error).message}`);
+    logger.warn(`providerStats.recordCall fehlgeschlagen: ${String(e)}`);
   }
 }
 
 export async function getStats(): Promise<ProviderStat[]> {
   const rows = await prisma.aiProviderStat.findMany();
-  return ALL_PROVIDERS.map(provider => {
-    const r = rows.find(x => x.provider === provider);
+  const map = new Map<string, typeof rows[number]>();
+  for (const r of rows) map.set(r.provider, r);
+  return ALL_PROVIDERS.map((p) => {
+    const r = map.get(p);
     const success = r?.successCount ?? 0;
-    const failure = r?.failureCount ?? 0;
+    const fail = r?.failureCount ?? 0;
     const rate = r?.rateLimitCount ?? 0;
-    const total = success + failure + rate;
+    const total = success + fail + rate;
+    const totalLatency = r ? Number(r.totalLatencyMs) : 0;
     return {
-      provider,
+      provider: p,
       successCount: success,
-      failureCount: failure,
+      failureCount: fail,
       rateLimitCount: rate,
-      avgLatencyMs: r?.avgLatencyMs ?? 0,
-      successRate: total > 0 ? success / total : 0.5,
+      avgLatencyMs: success > 0 ? Math.round(totalLatency / success) : 0,
+      successRate: total > 0 ? success / total : 0,
       lastSuccessAt: r?.lastSuccessAt ?? null,
       lastFailureAt: r?.lastFailureAt ?? null,
       lastError: r?.lastError ?? null,
-      configured: isConfigured(provider),
+      configured: isConfigured(p),
     };
   });
 }
 
 export async function getRankedProviders(): Promise<ProviderName[]> {
   const stats = await getStats();
-  return stats
-    .filter(s => s.configured && !isOnCooldown(s.provider))
-    .sort((a, b) => {
-      const scoreA = a.successRate * 1000 - a.avgLatencyMs * 0.1;
-      const scoreB = b.successRate * 1000 - b.avgLatencyMs * 0.1;
-      return scoreB - scoreA;
+  const primary = config.ai.provider as ProviderName;
+  const scored = stats
+    .filter((s) => s.configured)
+    .filter((s) => !isOnCooldown(s.provider))
+    .map((s) => {
+      const total = s.successCount + s.failureCount + s.rateLimitCount;
+      const successScore = (s.successCount + 1) / (total + 2);
+      const latencyScore = 1 / (1 + (s.avgLatencyMs || 1500) / 5000);
+      const primaryBias = s.provider === primary ? 1.05 : 1;
+      return { provider: s.provider, score: successScore * latencyScore * primaryBias };
     })
-    .map(s => s.provider);
+    .sort((a, b) => b.score - a.score)
+    .map((x) => x.provider);
+  if (scored.length === 0) {
+    if (isConfigured(primary)) return [primary];
+    const anyConfigured = ALL_PROVIDERS.find((p) => isConfigured(p));
+    return anyConfigured ? [anyConfigured] : [];
+  }
+  return scored;
 }
 
-export async function probeProvider(provider: ProviderName): Promise<{ ok: boolean; latencyMs: number; error?: string }> {
+export async function probeProvider(provider: ProviderName): Promise<{
+  ok: boolean;
+  latencyMs: number;
+  error?: string;
+  reply?: string;
+}> {
+  if (!isConfigured(provider)) {
+    return { ok: false, latencyMs: 0, error: 'Kein API-Key konfiguriert' };
+  }
   const t0 = Date.now();
   try {
-    const cfg = config.ai;
-    let baseUrl: string;
-    let apiKey: string;
-    let model: string;
-    let headers: Record<string, string> = {};
-    let body: unknown;
-
+    let reply = '';
     if (provider === 'gemini') {
-      if (!cfg.geminiApiKey) return { ok: false, latencyMs: 0, error: 'nicht konfiguriert' };
-      baseUrl = `https://generativelanguage.googleapis.com/v1beta/models/${cfg.geminiModel}:generateContent`;
-      apiKey = cfg.geminiApiKey;
-      model = cfg.geminiModel;
-      headers = { 'x-goog-api-key': apiKey, 'Content-Type': 'application/json' };
-      body = { contents: [{ role: 'user', parts: [{ text: 'ping' }] }], generationConfig: { maxOutputTokens: 8 } };
+      const url = `https://generativelanguage.googleapis.com/v1beta/models/${config.ai.geminiModel}:generateContent`;
+      const res = await axios.post(
+        url,
+        { contents: [{ role: 'user', parts: [{ text: 'ping' }] }], generationConfig: { maxOutputTokens: 5 } },
+        { headers: { 'Content-Type': 'application/json', 'x-goog-api-key': config.ai.geminiApiKey }, timeout: 10000 },
+      );
+      reply = res.data?.candidates?.[0]?.content?.parts?.[0]?.text || '';
     } else {
-      const map: Record<Exclude<ProviderName, 'gemini'>, { url: string; key: string; model: string }> = {
-        groq: { url: 'https://api.groq.com/openai/v1/chat/completions', key: cfg.groqApiKey, model: cfg.groqModel },
-        cerebras: { url: 'https://api.cerebras.ai/v1/chat/completions', key: cfg.cerebrasApiKey, model: cfg.cerebrasModel },
-        openrouter: { url: 'https://openrouter.ai/api/v1/chat/completions', key: cfg.openrouterApiKey, model: cfg.openrouterModel },
-        openai: { url: 'https://api.openai.com/v1/chat/completions', key: cfg.openaiApiKey, model: cfg.openaiModel },
+      const cfg: Record<ProviderName, { url: string; key: string; model: string } | null> = {
+        groq:       { url: 'https://api.groq.com/openai/v1', key: config.ai.groqApiKey, model: config.ai.groqModel },
+        cerebras:   { url: 'https://api.cerebras.ai/v1',     key: config.ai.cerebrasApiKey, model: config.ai.cerebrasModel },
+        openrouter: { url: 'https://openrouter.ai/api/v1',   key: config.ai.openrouterApiKey, model: config.ai.openrouterModel },
+        gemini:     null,
+        openai:     { url: 'https://api.openai.com/v1',      key: config.ai.openaiApiKey, model: config.ai.openaiModel },
       };
-      const p = map[provider];
-      if (!p.key) return { ok: false, latencyMs: 0, error: 'nicht konfiguriert' };
-      baseUrl = p.url; apiKey = p.key; model = p.model;
-      headers = { Authorization: `Bearer ${apiKey}`, 'Content-Type': 'application/json' };
-      body = { model, messages: [{ role: 'user', content: 'ping' }], max_tokens: 8, temperature: 0 };
+      const c = cfg[provider];
+      if (!c) return { ok: false, latencyMs: 0, error: 'Unbekannter Provider' };
+      const res = await axios.post(
+        `${c.url}/chat/completions`,
+        { model: c.model, messages: [{ role: 'user', content: 'ping' }], max_tokens: 5 },
+        {
+          headers: { Authorization: `Bearer ${c.key}`, 'Content-Type': 'application/json' },
+          timeout: 10000,
+        },
+      );
+      reply = res.data.choices?.[0]?.message?.content || '';
     }
-
-    await axios.post(baseUrl, body, { headers, timeout: 10_000 });
-    const latencyMs = Date.now() - t0;
-    await recordCall(provider, 'success', latencyMs);
-    return { ok: true, latencyMs };
+    const latency = Date.now() - t0;
+    return { ok: true, latencyMs: latency, reply: reply.slice(0, 80) };
   } catch (e) {
-    const latencyMs = Date.now() - t0;
-    const status = (e as { response?: { status?: number } })?.response?.status;
-    const error = `${status ?? ''} ${(e as Error).message}`.trim().slice(0, 300);
-    await recordCall(provider, status === 429 ? 'rateLimit' : 'failure', latencyMs, error);
-    return { ok: false, latencyMs, error };
+    const latency = Date.now() - t0;
+    const err = e as { response?: { status?: number }; message?: string };
+    const msg = err?.response?.status ? `HTTP ${err.response.status}` : (err?.message || String(e));
+    return { ok: false, latencyMs: latency, error: msg };
   }
 }
