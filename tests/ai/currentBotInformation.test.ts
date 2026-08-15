@@ -18,6 +18,7 @@ describe('current bot information surfaces', () => {
   const aiCatalog = read('src/modules/ai/commandCatalog.ts');
   const aiHandler = read('src/modules/ai/aiHandler.ts');
   const about = read('src/commands/about.ts');
+  const botInfo = read('src/content/botInfo.ts');
   const help = read('src/commands/user/help.ts');
   const readme = read('README.md');
   const security = read('SECURITY.md');
@@ -56,14 +57,16 @@ describe('current bot information surfaces', () => {
     expect(aiCatalog).toContain('config.upload.maxFileSizeBytes');
     expect(aiCatalog).toContain('config.upload.allowedExtensions');
     expect(aiCatalog).not.toMatch(/2\s*GB/i);
-    expect(about).toContain('config.upload.maxFileSizeBytes');
+    expect(botInfo).toContain('config.upload.maxFileSizeBytes');
   });
 
-  it('stellt den Bot ohne fehlende about.md-Runtime-Abhaengigkeit vor', () => {
+  it('nutzt fuer Bot-Selbstauskunft eine einzige kanonische Quelle ohne Runtime-Markdown', () => {
     expect(about).not.toContain('about.md');
-    expect(about).toContain("import { BOT_DEVELOPER }");
-    expect(about).toContain('/help');
-    expect(about).toContain('Bot-Admin- und DEV-Werkzeuge werden im Web-Dashboard verwaltet');
+    expect(about).toContain("from '../content/botInfo'");
+    expect(botInfo).toContain("import { BOT_DEVELOPER }");
+    expect(botInfo).toContain('/help');
+    expect(botInfo).toContain('Bot-Admin-/DEV-Werkzeuge');
+    expect(botInfo).toContain('Hersteller');
   });
 
   it('/help erklaert die aktuelle Dashboard-Trennung', () => {
