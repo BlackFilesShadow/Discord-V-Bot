@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { api, ApiError } from '@/lib/api';
 import { Card } from '@/components/ui/Card';
@@ -49,7 +49,7 @@ function Admins() {
   const q = useQuery({ queryKey: [base, 'admins'], queryFn: () => api.get<{ items: Array<{ id: string; discordId: string; username: string; role: string }> }>(`${base}/admins`) });
   const add = useMutation({ mutationFn: () => api.post(`${base}/admins`, { discordId, reason, reAuth }), onSuccess: () => { toast.success('Admin hinzugefügt'); void qc.invalidateQueries({ queryKey: [base, 'admins'] }); }, onError: e => toast.error('Fehler', errorText(e)) });
   const remove = useMutation({ mutationFn: (id: string) => api.del(`${base}/admins/${id}`, { reason, reAuth }), onSuccess: () => { toast.success('Admin entfernt'); void qc.invalidateQueries({ queryKey: [base, 'admins'] }); }, onError: e => toast.error('Fehler', errorText(e)) });
-  return <Card glow><h2 className="font-semibold mb-3">Admin-Rollen</h2><StepUp reason={reason} setReason={setReason} reAuth={reAuth} setReAuth={setReAuth}/><div className="flex gap-2"><Input value={discordId} onChange={e => setDiscordId(e.target.value)} placeholder="Discord-ID"/><Button size="sm" onClick={() => add.mutate()} disabled={!discordId}>ADMIN hinzufügen</Button></div><div className="space-y-2 mt-4">{(q.data?.items ?? []).map(a => <div key={a.id} className="flex items-center justify-between gap-2 border border-border rounded-md p-2"><span><b>{a.username}</b> <span className="text-muted text-xs">{a.discordId} · {a.role}</span></span>{a.role === 'ADMIN' && <Button size="sm" variant="danger" onClick={() => remove.mutate(a.discordId)}>Entfernen</Button>}</div>)}</div></Card>;
+  return <Card glow><h2 className="font-semibold mb-3">Admin-Rollen</h2><StepUp reason={reason} setReason={setReason} reAuth={reAuth} setReAuth={setReAuth}/><div className="flex flex-col gap-2 sm:flex-row"><Input value={discordId} onChange={e => setDiscordId(e.target.value)} placeholder="Discord-ID"/><Button size="sm" onClick={() => add.mutate()} disabled={!discordId}>ADMIN hinzufügen</Button></div><div className="space-y-2 mt-4">{(q.data?.items ?? []).map(a => <div key={a.id} className="flex flex-col items-start justify-between gap-2 border border-border rounded-md p-2 sm:flex-row sm:items-center"><span><b>{a.username}</b> <span className="text-muted text-xs break-all">{a.discordId} · {a.role}</span></span>{a.role === 'ADMIN' && <Button size="sm" variant="danger" onClick={() => remove.mutate(a.discordId)}>Entfernen</Button>}</div>)}</div></Card>;
 }
 
 function DatabaseTools() {
@@ -69,7 +69,7 @@ function ConfigTools() {
   const q = useQuery({ queryKey: [base, 'config'], queryFn: () => api.get<ConfigResponse>(`${base}/config`) });
   const save = useMutation({ mutationFn: () => api.put(`${base}/config/${encodeURIComponent(key)}`, { value, description, reason, reAuth }), onSuccess: () => { toast.success('Konfiguration gespeichert'); void qc.invalidateQueries({ queryKey: [base, 'config'] }); }, onError: e => toast.error('Fehler', errorText(e)) });
   const del = useMutation({ mutationFn: () => api.del(`${base}/config/${encodeURIComponent(key)}`, { reason, reAuth }), onSuccess: () => { toast.success('Konfiguration gelöscht'); void qc.invalidateQueries({ queryKey: [base, 'config'] }); }, onError: e => toast.error('Fehler', errorText(e)) });
-  return <Card glow><h2 className="font-semibold mb-3">Live-Konfiguration</h2><StepUp reason={reason} setReason={setReason} reAuth={reAuth} setReAuth={setReAuth}/><div className="grid gap-2 md:grid-cols-3"><Select value={key} onChange={e => setKey(e.target.value)}><option value="">— Schlüssel —</option>{(q.data?.allowedKeys ?? []).map(k => <option key={k} value={k}>{k}</option>)}</Select><Input value={value} onChange={e => setValue(e.target.value)} placeholder="Wert (JSON oder Text)"/><Input value={description} onChange={e => setDescription(e.target.value)} placeholder="Beschreibung optional"/></div><div className="flex gap-2 mt-2"><Button size="sm" onClick={() => save.mutate()} disabled={!key}>Setzen</Button><Button size="sm" variant="danger" onClick={() => del.mutate()} disabled={!key}>Löschen</Button></div><div className="mt-4"><JsonBlock value={q.data?.items ?? []}/></div></Card>;
+  return <Card glow><h2 className="font-semibold mb-3">Live-Konfiguration</h2><StepUp reason={reason} setReason={setReason} reAuth={reAuth} setReAuth={setReAuth}/><div className="grid gap-2 md:grid-cols-3"><Select value={key} onChange={e => setKey(e.target.value)}><option value="">— Schlüssel —</option>{(q.data?.allowedKeys ?? []).map(k => <option key={k} value={k}>{k}</option>)}</Select><Input value={value} onChange={e => setValue(e.target.value)} placeholder="Wert (JSON oder Text)"/><Input value={description} onChange={e => setDescription(e.target.value)} placeholder="Beschreibung optional"/></div><div className="flex flex-wrap gap-2 mt-2"><Button size="sm" onClick={() => save.mutate()} disabled={!key}>Setzen</Button><Button size="sm" variant="danger" onClick={() => del.mutate()} disabled={!key}>Löschen</Button></div><div className="mt-4"><JsonBlock value={q.data?.items ?? []}/></div></Card>;
 }
 
 function SecurityTools() {
@@ -79,28 +79,141 @@ function SecurityTools() {
   const setIpMutation = useMutation({ mutationFn: () => api.put(`${base}/security/ip/${encodeURIComponent(ip)}`, { listType, listReason, durationHours: Number(hours), reason, reAuth }), onSuccess: () => { toast.success('IP-Liste aktualisiert'); void qc.invalidateQueries({ queryKey: [base, 'security'] }); }, onError: e => toast.error('Fehler', errorText(e)) });
   const removeIp = useMutation({ mutationFn: () => api.del(`${base}/security/ip/${encodeURIComponent(ip)}`, { reason, reAuth }), onSuccess: () => { toast.success('IP entfernt'); void qc.invalidateQueries({ queryKey: [base, 'security'] }); }, onError: e => toast.error('Fehler', errorText(e)) });
   const resolve = useMutation({ mutationFn: () => api.post(`${base}/security/events/${eventId}/resolve`, { reason, reAuth }), onSuccess: () => { toast.success('Event gelöst'); void qc.invalidateQueries({ queryKey: [base, 'security'] }); }, onError: e => toast.error('Fehler', errorText(e)) });
-  return <div className="space-y-4"><Card glow><h2 className="font-semibold mb-3">IP Black-/Whitelist & Event-Auflösung</h2><StepUp reason={reason} setReason={setReason} reAuth={reAuth} setReAuth={setReAuth}/><div className="grid gap-2 md:grid-cols-4"><Input value={ip} onChange={e => setIpValue(e.target.value)} placeholder="IPv4 / IPv6"/><Select value={listType} onChange={e => setListType(e.target.value)}><option value="BLACKLIST">BLACKLIST</option><option value="WHITELIST">WHITELIST</option></Select><Input value={listReason} onChange={e => setListReason(e.target.value)} placeholder="Listen-Begründung"/><Input value={hours} onChange={e => setHours(e.target.value)} type="number" placeholder="Stunden (0=permanent)"/></div><div className="flex gap-2 mt-2"><Button size="sm" onClick={() => setIpMutation.mutate()} disabled={!ip}>IP setzen</Button><Button size="sm" variant="danger" onClick={() => removeIp.mutate()} disabled={!ip}>IP entfernen</Button></div><div className="flex gap-2 mt-4"><Input value={eventId} onChange={e => setEventId(e.target.value)} placeholder="SecurityEvent-ID"/><Button size="sm" onClick={() => resolve.mutate()} disabled={!eventId}>Event als gelöst markieren</Button></div></Card><Card><JsonBlock value={q.data ?? {}}/></Card></div>;
+  return <div className="space-y-4"><Card glow><h2 className="font-semibold mb-3">IP Black-/Whitelist & Event-Auflösung</h2><StepUp reason={reason} setReason={setReason} reAuth={reAuth} setReAuth={setReAuth}/><div className="grid gap-2 md:grid-cols-4"><Input value={ip} onChange={e => setIpValue(e.target.value)} placeholder="IPv4 / IPv6"/><Select value={listType} onChange={e => setListType(e.target.value)}><option value="BLACKLIST">BLACKLIST</option><option value="WHITELIST">WHITELIST</option></Select><Input value={listReason} onChange={e => setListReason(e.target.value)} placeholder="Listen-Begründung"/><Input value={hours} onChange={e => setHours(e.target.value)} type="number" placeholder="Stunden (0=permanent)"/></div><div className="flex flex-wrap gap-2 mt-2"><Button size="sm" onClick={() => setIpMutation.mutate()} disabled={!ip}>IP setzen</Button><Button size="sm" variant="danger" onClick={() => removeIp.mutate()} disabled={!ip}>IP entfernen</Button></div><div className="flex flex-col gap-2 mt-4 sm:flex-row"><Input value={eventId} onChange={e => setEventId(e.target.value)} placeholder="SecurityEvent-ID"/><Button size="sm" onClick={() => resolve.mutate()} disabled={!eventId}>Event als gelöst markieren</Button></div></Card><Card><JsonBlock value={q.data ?? {}}/></Card></div>;
 }
 
 interface GuildRow { id: string; name: string; botPresent: boolean }
-interface XpData { config: unknown; levelRoles: unknown[]; roleOptions: Array<{ id: string; name: string }>; channelOptions: Array<{ id: string; name: string }> }
+interface XpConfigView {
+  id: string;
+  messageXpMin: number;
+  messageXpMax: number;
+  voiceXpPerMinute: number;
+  levelMultiplier: number;
+  maxLevel: number;
+  maxLevelRoleId: string | null;
+  allowedRoleIds: string[];
+  allowedChannelIds: string[];
+}
+interface XpData {
+  config: XpConfigView;
+  levelRoles: Array<{ level: number; roleId: string }>;
+  roleOptions: Array<{ id: string; name: string }>;
+  channelOptions: Array<{ id: string; name: string; type?: number }>;
+}
+
+function toggleId(list: string[], id: string, checked: boolean): string[] {
+  return checked ? [...new Set([...list, id])] : list.filter(value => value !== id);
+}
+
 function XpTools() {
   const qc = useQueryClient(); const toast = useToast();
   const [guildId, setGuildId] = useState(''); const [reason, setReason] = useState('XP Konfiguration'); const [reAuth, setReAuth] = useState('');
-  const [min, setMin] = useState(''); const [max, setMax] = useState(''); const [voice, setVoice] = useState(''); const [multiplier, setMultiplier] = useState(''); const [maxLevel, setMaxLevel] = useState(''); const [maxRole, setMaxRole] = useState(''); const [allowedRoles, setAllowedRoles] = useState(''); const [allowedChannels, setAllowedChannels] = useState(''); const [level, setLevel] = useState(''); const [levelRoleId, setLevelRoleId] = useState('');
+  const [min, setMin] = useState(''); const [max, setMax] = useState(''); const [voice, setVoice] = useState(''); const [multiplier, setMultiplier] = useState(''); const [maxLevel, setMaxLevel] = useState('');
+  const [maxRole, setMaxRole] = useState(''); const [allowedRoles, setAllowedRoles] = useState<string[]>([]); const [allowedChannels, setAllowedChannels] = useState<string[]>([]);
+  const [level, setLevel] = useState(''); const [levelRoleId, setLevelRoleId] = useState('');
   const guilds = useQuery({ queryKey: ['dev-command-guilds'], queryFn: () => api.get<{ guilds: GuildRow[] }>('/api/v2/guilds') });
   const xp = useQuery({ queryKey: [base, 'xp', guildId], queryFn: () => api.get<XpData>(`${base}/xp/${guildId}`), enabled: !!guildId });
-  const patch = useMutation({ mutationFn: () => api.patch(`${base}/xp/${guildId}`, {
-    ...(min !== '' && { messageXpMin: Number(min) }), ...(max !== '' && { messageXpMax: Number(max) }), ...(voice !== '' && { voiceXpPerMinute: Number(voice) }), ...(multiplier !== '' && { levelMultiplier: Number(multiplier) }), ...(maxLevel !== '' && { maxLevel: Number(maxLevel) }),
-    maxLevelRoleId: maxRole || null, allowedRoleIds: allowedRoles.split(',').map(x => x.trim()).filter(Boolean), allowedChannelIds: allowedChannels.split(',').map(x => x.trim()).filter(Boolean), reason, reAuth,
-  }), onSuccess: () => { toast.success('XP-Konfiguration gespeichert'); void qc.invalidateQueries({ queryKey: [base, 'xp', guildId] }); }, onError: e => toast.error('Fehler', errorText(e)) });
+
+  useEffect(() => {
+    setMin(''); setMax(''); setVoice(''); setMultiplier(''); setMaxLevel('');
+    setMaxRole(''); setAllowedRoles([]); setAllowedChannels([]); setLevel(''); setLevelRoleId('');
+  }, [guildId]);
+
+  useEffect(() => {
+    const cfg = xp.data?.config;
+    if (!cfg) return;
+    setMin(String(cfg.messageXpMin));
+    setMax(String(cfg.messageXpMax));
+    setVoice(String(cfg.voiceXpPerMinute));
+    setMultiplier(String(cfg.levelMultiplier));
+    setMaxLevel(String(cfg.maxLevel));
+    setMaxRole(cfg.maxLevelRoleId ?? '');
+    setAllowedRoles(Array.isArray(cfg.allowedRoleIds) ? cfg.allowedRoleIds : []);
+    setAllowedChannels(Array.isArray(cfg.allowedChannelIds) ? cfg.allowedChannelIds : []);
+  }, [xp.data]);
+
+  const patch = useMutation({
+    mutationFn: () => api.patch(`${base}/xp/${guildId}`, {
+      messageXpMin: Number(min),
+      messageXpMax: Number(max),
+      voiceXpPerMinute: Number(voice),
+      levelMultiplier: Number(multiplier),
+      maxLevel: Number(maxLevel),
+      maxLevelRoleId: maxRole || null,
+      clearMaxLevelRoleId: maxRole === '',
+      allowedRoleIds: allowedRoles,
+      clearAllowedRoleIds: allowedRoles.length === 0,
+      allowedChannelIds: allowedChannels,
+      clearAllowedChannelIds: allowedChannels.length === 0,
+      reason,
+      reAuth,
+    }),
+    onSuccess: () => { toast.success('XP-Konfiguration gespeichert'); void qc.invalidateQueries({ queryKey: [base, 'xp', guildId] }); },
+    onError: e => toast.error('Fehler', errorText(e)),
+  });
   const levelRoleSave = useMutation({ mutationFn: () => api.put(`${base}/xp/${guildId}/level-role/${level}`, { roleId: levelRoleId, reason, reAuth }), onSuccess: () => { toast.success('Level-Rolle gespeichert'); void qc.invalidateQueries({ queryKey: [base, 'xp', guildId] }); }, onError: e => toast.error('Fehler', errorText(e)) });
   const levelRoleDelete = useMutation({ mutationFn: () => api.del(`${base}/xp/${guildId}/level-role/${level}`, { reason, reAuth }), onSuccess: () => { toast.success('Level-Rolle entfernt'); void qc.invalidateQueries({ queryKey: [base, 'xp', guildId] }); }, onError: e => toast.error('Fehler', errorText(e)) });
-  return <div className="space-y-4"><Card glow><h2 className="font-semibold mb-3">Guild-spezifische XP-Konfiguration</h2><Select value={guildId} onChange={e => setGuildId(e.target.value)}><option value="">— Guild wählen —</option>{(guilds.data?.guilds ?? []).filter(g => g.botPresent).map(g => <option key={g.id} value={g.id}>{g.name}</option>)}</Select>{guildId && <><div className="mt-3"><StepUp reason={reason} setReason={setReason} reAuth={reAuth} setReAuth={setReAuth}/></div><div className="grid gap-2 md:grid-cols-4"><Input value={min} onChange={e => setMin(e.target.value)} placeholder="Message XP min"/><Input value={max} onChange={e => setMax(e.target.value)} placeholder="Message XP max"/><Input value={voice} onChange={e => setVoice(e.target.value)} placeholder="Voice XP/min"/><Input value={multiplier} onChange={e => setMultiplier(e.target.value)} placeholder="Level Multiplier"/><Input value={maxLevel} onChange={e => setMaxLevel(e.target.value)} placeholder="Max Level"/><Input value={maxRole} onChange={e => setMaxRole(e.target.value)} placeholder="Max-Level Role-ID"/><Input value={allowedRoles} onChange={e => setAllowedRoles(e.target.value)} placeholder="Allowed Role IDs, kommasepariert"/><Input value={allowedChannels} onChange={e => setAllowedChannels(e.target.value)} placeholder="Allowed Channel IDs, kommasepariert"/></div><Button size="sm" className="mt-2" onClick={() => patch.mutate()}>XP speichern</Button><div className="flex gap-2 mt-4"><Input value={level} onChange={e => setLevel(e.target.value)} placeholder="Level"/><Input value={levelRoleId} onChange={e => setLevelRoleId(e.target.value)} placeholder="Role-ID"/><Button size="sm" onClick={() => levelRoleSave.mutate()} disabled={!level || !levelRoleId}>Level-Rolle setzen</Button><Button size="sm" variant="danger" onClick={() => levelRoleDelete.mutate()} disabled={!level}>Entfernen</Button></div></>}</Card>{guildId && <Card><JsonBlock value={xp.data ?? {}}/></Card>}</div>;
+
+  const ready = Boolean(xp.data && min !== '' && max !== '' && voice !== '' && multiplier !== '' && maxLevel !== '');
+  return <div className="space-y-4">
+    <Card glow>
+      <h2 className="font-semibold mb-3">Guild-spezifische XP-Konfiguration</h2>
+      <Select value={guildId} onChange={e => setGuildId(e.target.value)}><option value="">— Guild wählen —</option>{(guilds.data?.guilds ?? []).filter(g => g.botPresent).map(g => <option key={g.id} value={g.id}>{g.name}</option>)}</Select>
+      {guildId && <>
+        <div className="mt-3"><StepUp reason={reason} setReason={setReason} reAuth={reAuth} setReAuth={setReAuth}/></div>
+        {xp.isLoading ? <p className="text-sm text-muted">XP-Konfiguration wird geladen…</p> : xp.isError ? <p className="text-sm text-danger">{errorText(xp.error)}</p> : <>
+          <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-5">
+            <Input value={min} onChange={e => setMin(e.target.value)} type="number" min={0} max={10000} placeholder="Message XP min"/>
+            <Input value={max} onChange={e => setMax(e.target.value)} type="number" min={0} max={10000} placeholder="Message XP max"/>
+            <Input value={voice} onChange={e => setVoice(e.target.value)} type="number" min={0} max={10000} placeholder="Voice XP/min"/>
+            <Input value={multiplier} onChange={e => setMultiplier(e.target.value)} type="number" min={0} max={100} step="0.1" placeholder="Level Multiplier"/>
+            <Input value={maxLevel} onChange={e => setMaxLevel(e.target.value)} type="number" min={1} max={100} placeholder="Max Level"/>
+          </div>
+
+          <div className="grid gap-3 mt-4 lg:grid-cols-3">
+            <div>
+              <label className="text-xs text-muted block mb-1">Max-Level-Rolle</label>
+              <Select value={maxRole} onChange={e => setMaxRole(e.target.value)}>
+                <option value="">Keine Max-Level-Rolle</option>
+                {(xp.data?.roleOptions ?? []).map(role => <option key={role.id} value={role.id}>{role.name}</option>)}
+              </Select>
+            </div>
+            <fieldset className="border border-border rounded-lg p-3 min-w-0">
+              <legend className="text-xs text-muted px-1">Erlaubte Rollen</legend>
+              <div className="max-h-44 overflow-auto space-y-1">
+                {(xp.data?.roleOptions ?? []).map(role => <label key={role.id} className="flex items-center gap-2 rounded px-1 py-1 text-sm cursor-pointer"><input type="checkbox" checked={allowedRoles.includes(role.id)} onChange={e => setAllowedRoles(current => toggleId(current, role.id, e.target.checked))}/><span className="truncate">{role.name}</span></label>)}
+                {(xp.data?.roleOptions ?? []).length === 0 && <p className="text-xs text-muted">Keine verwendbaren Rollen.</p>}
+              </div>
+            </fieldset>
+            <fieldset className="border border-border rounded-lg p-3 min-w-0">
+              <legend className="text-xs text-muted px-1">Erlaubte Text-/Voice-Channels</legend>
+              <div className="max-h-44 overflow-auto space-y-1">
+                {(xp.data?.channelOptions ?? []).map(channel => <label key={channel.id} className="flex items-center gap-2 rounded px-1 py-1 text-sm cursor-pointer"><input type="checkbox" checked={allowedChannels.includes(channel.id)} onChange={e => setAllowedChannels(current => toggleId(current, channel.id, e.target.checked))}/><span className="truncate">{channel.name}</span></label>)}
+                {(xp.data?.channelOptions ?? []).length === 0 && <p className="text-xs text-muted">Keine verwendbaren Channels.</p>}
+              </div>
+            </fieldset>
+          </div>
+
+          <div className="flex flex-wrap gap-2 mt-3">
+            <Button size="sm" onClick={() => patch.mutate()} loading={patch.isPending} disabled={!ready}>XP speichern</Button>
+            <span className="text-xs text-muted self-center">Leere Rollen-/Channel-Auswahl wird bewusst als „Filter entfernen“ gespeichert.</span>
+          </div>
+
+          <div className="grid gap-2 mt-5 sm:grid-cols-[120px_minmax(0,1fr)_auto_auto]">
+            <Input value={level} onChange={e => setLevel(e.target.value)} type="number" min={1} max={1000} placeholder="Level"/>
+            <Select value={levelRoleId} onChange={e => setLevelRoleId(e.target.value)}><option value="">— Level-Rolle wählen —</option>{(xp.data?.roleOptions ?? []).map(role => <option key={role.id} value={role.id}>{role.name}</option>)}</Select>
+            <Button size="sm" onClick={() => levelRoleSave.mutate()} disabled={!level || !levelRoleId}>Level-Rolle setzen</Button>
+            <Button size="sm" variant="danger" onClick={() => levelRoleDelete.mutate()} disabled={!level}>Entfernen</Button>
+          </div>
+        </>}
+      </>}
+    </Card>
+    {guildId && <Card><JsonBlock value={xp.data ?? {}}/></Card>}
+  </div>;
 }
 
 function CommandReload() {
   const toast = useToast(); const [scope, setScope] = useState('deploy'); const [reason, setReason] = useState('Command Registry aktualisieren'); const [reAuth, setReAuth] = useState('');
   const run = useMutation({ mutationFn: () => api.post(`${base}/commands/reload`, { scope, reason, reAuth }), onSuccess: data => toast.success('Command Registry aktualisiert', JSON.stringify(data)), onError: e => toast.error('Reload fehlgeschlagen', errorText(e)) });
-  return <Card glow><h2 className="font-semibold mb-3">Command Hot-Reload / Discord Deploy</h2><p className="text-xs text-muted mb-3">Der Discord-Deploy ersetzt die Registries vollständig und entfernt damit die migrierten Slash-Commands. Der Vorgang verlangt eine echte Step-Up-Re-Authentisierung.</p><StepUp reason={reason} setReason={setReason} reAuth={reAuth} setReAuth={setReAuth}/><div className="flex gap-2"><Select value={scope} onChange={e => setScope(e.target.value)} className="!w-auto"><option value="deploy">Nur Deploy</option><option value="all">Neu laden + Deploy</option></Select><Button size="sm" variant="danger" onClick={() => run.mutate()} loading={run.isPending}>Ausführen</Button></div></Card>;
+  return <Card glow><h2 className="font-semibold mb-3">Command Hot-Reload / Discord Deploy</h2><p className="text-xs text-muted mb-3">Der Discord-Deploy ersetzt die Registries vollständig und entfernt damit die migrierten Slash-Commands. Der Vorgang verlangt eine echte Step-Up-Re-Authentisierung.</p><StepUp reason={reason} setReason={setReason} reAuth={reAuth} setReAuth={setReAuth}/><div className="flex flex-wrap gap-2"><Select value={scope} onChange={e => setScope(e.target.value)} className="!w-auto"><option value="deploy">Nur Deploy</option><option value="all">Neu laden + Deploy</option></Select><Button size="sm" variant="danger" onClick={() => run.mutate()} loading={run.isPending}>Ausführen</Button></div></Card>;
 }
