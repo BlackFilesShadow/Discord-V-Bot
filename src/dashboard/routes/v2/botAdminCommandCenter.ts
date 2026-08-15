@@ -4,7 +4,7 @@ import os from 'node:os';
 import fs from 'node:fs/promises';
 import path from 'node:path';
 import { randomUUID } from 'node:crypto';
-import { EmbedBuilder, type TextChannel } from 'discord.js';
+import { ChannelType, EmbedBuilder, type TextChannel } from 'discord.js';
 import { Prisma } from '@prisma/client';
 import { requireBotAdmin } from '../../middleware/auth';
 import prisma from '../../../database/prisma';
@@ -52,6 +52,26 @@ const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: MAX
 
 function actor(req: Parameters<typeof requireBotAdmin>[0]): string {
   return String(req.auth?.discordId ?? req.auth?.userId ?? 'dashboard');
+}
+
+function isBotOwnerRequest(req: Parameters<typeof requireBotAdmin>[0]): boolean {
+  return Boolean(config.discord.ownerId) && String(req.auth?.discordId ?? '') === config.discord.ownerId;
+}
+
+async function feedbackChannelValidationError(
+  channelId: string,
+  guildId?: string,
+): Promise<{ status: number; error: string } | null> {
+  const client = tryGetDashboardClient();
+  if (!client) return { status: 503, error: 'Discord-Client nicht verfügbar.' };
+  const channel = await client.channels.fetch(channelId).catch(() => null);
+  if (!channel || (channel.type !== ChannelType.GuildText && channel.type !== ChannelType.GuildAnnouncement)) {
+    return { status: 400, error: 'Feedback-Channel muss ein erreichbarer Text- oder Ankündigungskanal sein.' };
+  }
+  if (guildId && channel.guildId !== guildId) {
+    return { status: 400, error: 'Feedback-Channel gehört nicht zum ausgewählten Server.' };
+  }
+  return null;
 }
 
 function audit(req: Parameters<typeof requireBotAdmin>[0], action: string, category: string, details: Record<string, unknown>): void {
@@ -392,6 +412,14 @@ botAdminCommandCenterRouter.put('/feedback-channel', async (req, res) => {
   const channelId = typeof req.body?.channelId === 'string' && req.body.channelId.trim() ? req.body.channelId.trim() : null;
   if (channelId && !SNOWFLAKE.test(channelId)) { res.status(400).json({ error: 'Ungültige channelId.' }); return; }
   if (scope === 'global') {
+    // Paritaet zum entfernten /admin-feedback: Der globale Fallback war und
+    // bleibt ausschliesslich eine Bot-Owner-Aktion. Ein BotAdmin-Step-up darf
+    // diese zusaetzliche Owner-Grenze nicht aufweichen.
+    if (!isBotOwnerRequest(req)) { res.status(403).json({ error: 'Nur der Bot-Owner darf den globalen Feedback-Channel setzen.' }); return; }
+    if (channelId) {
+      const invalid = await feedbackChannelValidationError(channelId);
+      if (invalid) { res.status(invalid.status).json({ error: invalid.error }); return; }
+    }
     await prisma.botConfig.upsert({
       where: { key: 'globalFeedbackChannelId' },
       create: { key: 'globalFeedbackChannelId', value: channelId ?? Prisma.JsonNull, category: 'feedback', description: 'Owner-Fallback-Channel für /feedback.', updatedBy: actor(req) },
@@ -400,10 +428,18 @@ botAdminCommandCenterRouter.put('/feedback-channel', async (req, res) => {
     audit(req, 'FEEDBACK_GLOBAL_CHANNEL_SET', 'ADMIN', { channelId });
     res.json({ ok: true }); return;
   }
+
   const guildId = String(req.body?.guildId ?? '');
   if (!SNOWFLAKE.test(guildId)) { res.status(400).json({ error: 'Gültige guildId erforderlich.' }); return; }
   const client = tryGetDashboardClient();
-  await prisma.guildProfile.upsert({ where: { guildId }, create: { guildId, name: client?.guilds.cache.get(guildId)?.name ?? 'unknown', feedbackChannelId: channelId }, update: { feedbackChannelId: channelId } });
+  if (!client) { res.status(503).json({ error: 'Discord-Client nicht verfügbar.' }); return; }
+  const guild = client.guilds.cache.get(guildId) ?? await client.guilds.fetch(guildId).catch(() => null);
+  if (!guild) { res.status(400).json({ error: 'Bot ist auf dem ausgewählten Server nicht verfügbar.' }); return; }
+  if (channelId) {
+    const invalid = await feedbackChannelValidationError(channelId, guildId);
+    if (invalid) { res.status(invalid.status).json({ error: invalid.error }); return; }
+  }
+  await prisma.guildProfile.upsert({ where: { guildId }, create: { guildId, name: guild.name, feedbackChannelId: channelId }, update: { feedbackChannelId: channelId } });
   audit(req, 'FEEDBACK_CHANNEL_SET', 'ADMIN', { guildId, channelId });
   res.json({ ok: true });
 });
