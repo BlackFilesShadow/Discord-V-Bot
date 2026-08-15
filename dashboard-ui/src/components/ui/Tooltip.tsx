@@ -1,59 +1,140 @@
 /**
  * Minimaler Tooltip auf Hover/Focus.
  *
- * Kein external Lib (Floating-UI etc.) — positioniert sich relativ zum
- * Anchor und nutzt CSS-Klasse `.tooltip` aus index.css. Gut genug fuer
- * Icon-Buttons in Topbar/Sidebar; nicht fuer komplexe Inhalte gedacht.
+ * Kein external Lib (Floating-UI etc.). Anders als die fruehere rein relative
+ * Positionierung wird der Tooltip viewport-bezogen gemessen und geklemmt.
+ * Dadurch koennen Topbar-Tooltips auf schmalen Mobile-Viewports keinen
+ * horizontalen Dokument-Overflow mehr erzeugen.
  */
-import { useState, type ReactElement, type ReactNode, cloneElement, useId } from 'react';
+import {
+  cloneElement,
+  useId,
+  useLayoutEffect,
+  useRef,
+  useState,
+  type CSSProperties,
+  type ReactElement,
+  type ReactNode,
+} from 'react';
 import { twMerge } from 'tailwind-merge';
 
 interface TooltipProps {
   content: ReactNode;
   side?: 'top' | 'bottom' | 'left' | 'right';
-  /** Einzelnes interaktives Kind, dessen onMouseEnter/Focus wir verkleben. */
+  /** Einzelnes interaktives Kind, dessen Hover-/Focus-Handler wir verkleben. */
   children: ReactElement;
   className?: string;
 }
 
-const sideCls: Record<NonNullable<TooltipProps['side']>, string> = {
-  top:    'bottom-full mb-1 left-1/2 -translate-x-1/2',
-  bottom: 'top-full   mt-1 left-1/2 -translate-x-1/2',
-  left:   'right-full mr-1 top-1/2  -translate-y-1/2',
-  right:  'left-full  ml-1 top-1/2  -translate-y-1/2',
-};
+const GAP_PX = 6;
+const VIEWPORT_MARGIN_PX = 8;
+
+function clamp(value: number, min: number, max: number): number {
+  if (max < min) return min;
+  return Math.min(Math.max(value, min), max);
+}
 
 export function Tooltip({ content, side = 'bottom', children, className }: TooltipProps) {
   const [open, setOpen] = useState(false);
+  const [position, setPosition] = useState<CSSProperties | null>(null);
+  const wrapperRef = useRef<HTMLSpanElement | null>(null);
+  const tooltipRef = useRef<HTMLSpanElement | null>(null);
   const id = useId();
-  // Wir wrappen das Kind in <span class="relative inline-flex"> damit der
-  // Tooltip absolut positioniert werden kann; greifen onMouseEnter/Leave/
-  // Focus/Blur ab und merken sie mit ggf. vorhandenen Handlern.
+
+  useLayoutEffect(() => {
+    if (!open) {
+      setPosition(null);
+      return;
+    }
+
+    const updatePosition = (): void => {
+      const wrapper = wrapperRef.current;
+      const tooltip = tooltipRef.current;
+      if (!wrapper || !tooltip) return;
+
+      const anchor = wrapper.getBoundingClientRect();
+      const tip = tooltip.getBoundingClientRect();
+      let left = anchor.left + (anchor.width - tip.width) / 2;
+      let top = anchor.bottom + GAP_PX;
+
+      switch (side) {
+        case 'top':
+          top = anchor.top - tip.height - GAP_PX;
+          break;
+        case 'left':
+          left = anchor.left - tip.width - GAP_PX;
+          top = anchor.top + (anchor.height - tip.height) / 2;
+          break;
+        case 'right':
+          left = anchor.right + GAP_PX;
+          top = anchor.top + (anchor.height - tip.height) / 2;
+          break;
+        case 'bottom':
+        default:
+          break;
+      }
+
+      const maxLeft = window.innerWidth - tip.width - VIEWPORT_MARGIN_PX;
+      const maxTop = window.innerHeight - tip.height - VIEWPORT_MARGIN_PX;
+      setPosition({
+        position: 'fixed',
+        left: `${Math.round(clamp(left, VIEWPORT_MARGIN_PX, maxLeft))}px`,
+        top: `${Math.round(clamp(top, VIEWPORT_MARGIN_PX, maxTop))}px`,
+        transform: 'none',
+        visibility: 'visible',
+      });
+    };
+
+    updatePosition();
+    window.addEventListener('resize', updatePosition);
+    // Capture-Scroll: auch verschachtelte Scroll-Container verschieben den
+    // Anchor und muessen den fixed Tooltip neu positionieren.
+    window.addEventListener('scroll', updatePosition, true);
+    return () => {
+      window.removeEventListener('resize', updatePosition);
+      window.removeEventListener('scroll', updatePosition, true);
+    };
+  }, [open, side, content]);
+
   const child = cloneElement(children, {
     'aria-describedby': open ? id : undefined,
-    onMouseEnter: (e: React.MouseEvent) => {
+    onMouseEnter: (event: React.MouseEvent) => {
       setOpen(true);
-      (children.props.onMouseEnter as ((e: React.MouseEvent) => void) | undefined)?.(e);
+      (children.props.onMouseEnter as ((event: React.MouseEvent) => void) | undefined)?.(event);
     },
-    onMouseLeave: (e: React.MouseEvent) => {
+    onMouseLeave: (event: React.MouseEvent) => {
       setOpen(false);
-      (children.props.onMouseLeave as ((e: React.MouseEvent) => void) | undefined)?.(e);
+      (children.props.onMouseLeave as ((event: React.MouseEvent) => void) | undefined)?.(event);
     },
-    onFocus: (e: React.FocusEvent) => {
+    onFocus: (event: React.FocusEvent) => {
       setOpen(true);
-      (children.props.onFocus as ((e: React.FocusEvent) => void) | undefined)?.(e);
+      (children.props.onFocus as ((event: React.FocusEvent) => void) | undefined)?.(event);
     },
-    onBlur: (e: React.FocusEvent) => {
+    onBlur: (event: React.FocusEvent) => {
       setOpen(false);
-      (children.props.onBlur as ((e: React.FocusEvent) => void) | undefined)?.(e);
+      (children.props.onBlur as ((event: React.FocusEvent) => void) | undefined)?.(event);
     },
   });
 
   return (
-    <span className={twMerge('relative inline-flex', className)}>
+    <span ref={wrapperRef} className={twMerge('relative inline-flex', className)}>
       {child}
       {open && (
-        <span id={id} role="tooltip" className={twMerge('tooltip', sideCls[side])}>{content}</span>
+        <span
+          ref={tooltipRef}
+          id={id}
+          role="tooltip"
+          className="tooltip"
+          style={position ?? {
+            position: 'fixed',
+            left: 0,
+            top: 0,
+            transform: 'none',
+            visibility: 'hidden',
+          }}
+        >
+          {content}
+        </span>
       )}
     </span>
   );
