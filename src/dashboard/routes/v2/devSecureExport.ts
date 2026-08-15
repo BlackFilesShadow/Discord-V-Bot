@@ -1,4 +1,4 @@
-import { Router } from 'express';
+import { Router, type Response } from 'express';
 import { Prisma } from '@prisma/client';
 import prisma from '../../../database/prisma';
 import { logDevAction } from '../../middleware/devSecurity';
@@ -13,7 +13,7 @@ function safeFilenamePart(value: string): string {
   return value.replace(/[^a-z0-9_.-]/gi, '_').slice(0, 80) || 'export';
 }
 
-function sendJsonAttachment(res: Parameters<typeof devSecureExportRouter.post>[1], filename: string, payload: unknown): void {
+function sendJsonAttachment(res: Response, filename: string, payload: unknown): void {
   res.setHeader('Content-Type', 'application/json; charset=utf-8');
   res.setHeader('Content-Disposition', `attachment; filename="${safeFilenamePart(filename)}"`);
   res.setHeader('Cache-Control', 'no-store, private');
