@@ -15,21 +15,39 @@ describe('Bot-Admin UI parity and mobile safety', () => {
     expect(source).not.toContain('placeholder="Channel-ID optional"');
   });
 
-  it('verwirft die Channel-Auswahl beim Guild-Wechsel', () => {
+  it('verwirft die Trigger-Channel-Auswahl beim Guild-Wechsel', () => {
     expect(source).toContain('useEffect(() => {');
     expect(source).toContain("setChannelId('')");
     expect(source).toContain('}, [guildId]);');
   });
 
+  it('laedt bestehende Feedback-Channelwerte und bietet Guild-Channels als Auswahl an', () => {
+    expect(source).toContain('interface FeedbackChannelResponse');
+    expect(source).toContain("setGlobalChannel(cfg.data.globalChannelId ?? '')");
+    expect(source).toContain("setGuildChannel(cfg.data.guildChannelId ?? '')");
+    expect(source).toContain('cfg.data?.channelOptions');
+    expect(source).toContain('Guild-Feedback deaktivieren');
+    expect(source).toContain('(nicht erreichbar)');
+  });
+
+  it('fordert echte CLEAR-/DELETE-Eingaben statt fest codierter Ein-Klick-Bestaetigung', () => {
+    expect(source).toContain('confirm: clearConfirm');
+    expect(source).toContain("disabled={clearConfirm !== 'CLEAR'}");
+    expect(source).toContain('confirm: deleteConfirm');
+    expect(source).toContain("deleteConfirm !== 'DELETE'");
+    expect(source).not.toContain("confirm: 'CLEAR'");
+    expect(source).not.toContain("confirm: 'DELETE'");
+  });
+
   it('stapelt kritische Maintenance-Aktionen auf kleinen Displays', () => {
     expect(source.match(/sm:grid-cols-\[minmax\(0,1fr\)_auto_auto\]/g)?.length).toBeGreaterThanOrEqual(3);
-    expect(source).toContain('disabled={!packageId}');
-    expect(source).toContain('disabled={!uploadId}');
-    expect(source).toContain('disabled={!userId}');
+    expect(source).toContain('disabled={!packageId || deleteConfirm !==');
+    expect(source).toContain('disabled={!uploadId || deleteConfirm !==');
+    expect(source).toContain('disabled={!userId || deleteConfirm !==');
   });
 
   it('vermeidet starre horizontale Server- und Feedback-Zeilen auf Mobil', () => {
     expect(source).toContain('flex flex-col items-stretch gap-2 sm:flex-row sm:items-center');
-    expect(source.match(/flex flex-col gap-2 sm:flex-row/g)?.length).toBeGreaterThanOrEqual(2);
+    expect(source.match(/flex flex-col gap-2 sm:flex-row/g)?.length).toBeGreaterThanOrEqual(3);
   });
 });
