@@ -11,19 +11,16 @@ import { logger, logAudit } from '../../utils/logger';
 import { Colors, Brand, vEmbed } from '../../utils/embedDesign';
 
 /**
- * Ticket-System: User -> Owner DM-Bridge.
+ * Legacy Owner-DM-Bridge fuer /ticket.
  *
- * @deprecated DM-Owner-Bridge — fuer Self-Hosted-Setups mit einzelnem
- * Bot-Owner gedacht. Der MODERNE Ticket-Flow lebt unter
- * src/modules/tickets/ticketSystem.ts (Guild-Templates + Channel-Tickets,
- * vom Dashboard verwaltbar). Dieses Modul bleibt aktiv, bis der DM-Flow
- * vollstaendig in das Guild-System migriert ist (geplant: Phase 16).
- *
- * Flow:
- *  1. /ticket open subject:".." nachricht:".." -> Owner bekommt DM mit Embed + Buttons
- *  2. Owner klickt "Akzeptieren" -> Ticket OPEN, beide Seiten bekommen Bestaetigung
- *  3. Beide schreiben in ihre eigene DM mit dem Bot, Bot relayt -> Bridge
- *  4. /ticket close oder Owner-Button "Schliessen" -> Ticket CLOSED
+ * Sicherheits-/Routing-Invarianten:
+ * - Accept/Deny/Close nutzen CAS-Updates auf den aktuellen Status.
+ * - Ein nachgelagertes Fehler beim Speichern der Notice-Message-ID macht ein
+ *   bereits erfolgreich zugestelltes Ticket nicht faelschlich DENIED.
+ * - User haben weiterhin hoechstens ein aktives Bridge-Ticket.
+ * - Hat der Owner mehrere OPEN-Tickets, wird niemals nach "zuletzt geaendert"
+ *   geraten. Dann ist eine eindeutige Discord-Reply-Referenz mit Ticketnummer
+ *   erforderlich.
  */
 
 const OWNER_ID = (): string | null => config.discord.ownerId || null;
@@ -47,17 +44,12 @@ export async function createTicket(opts: {
   if (!ownerId) {
     return { success: false, message: 'Bot-Owner ist nicht konfiguriert. Anfrage nicht moeglich.' };
   }
-
-  // Self-Ticket verhindern: Owner kann kein Ticket an sich selbst stellen
-  // (waere ein sinnloser Selbst-Echo-Loop in der DM-Bridge).
   if (opts.userDiscordId === ownerId) {
-    return {
-      success: false,
-      message: 'Du bist selbst der Owner – ein Ticket an dich selbst ergibt keinen Sinn. Lass einen anderen User `/ticket open` benutzen.',
-    };
+    return { success: false, message: 'Als Bot-Owner kannst du kein Ticket an dich selbst stellen.' };
   }
 
-  // Rate-Limit: max. 1 PENDING-Ticket pro User
+  // Die DM-Bridge kann User-Nachrichten nur dann eindeutig routen, wenn pro
+  // User maximal ein aktives Ticket existiert. Daher bewusst guilduebergreifend.
   const existing = await prisma.ticket.findFirst({
     where: { userDiscordId: opts.userDiscordId, status: { in: ['PENDING', 'OPEN'] } },
   });
@@ -80,7 +72,7 @@ export async function createTicket(opts: {
     },
   });
 
-  // Owner per DM benachrichtigen
+  let sentMessageId: string;
   try {
     const owner = await opts.client.users.fetch(ownerId);
     const embed = vEmbed(Colors.Info)
@@ -89,7 +81,7 @@ export async function createTicket(opts: {
         `${Brand.divider}\n\n` +
         `**${opts.subject}**\n\n` +
         '```\n' + opts.initialMessage.slice(0, 1500) + '\n```\n' +
-        Brand.divider
+        Brand.divider,
       )
       .addFields(
         { name: '👤 User', value: `${opts.username}\n\`${opts.userDiscordId}\``, inline: true },
@@ -110,22 +102,30 @@ export async function createTicket(opts: {
     const row = new ActionRowBuilder<ButtonBuilder>().addComponents(accept, deny);
 
     const sent = await owner.send({ embeds: [embed], components: [row] });
-    await prisma.ticket.update({
-      where: { id: ticket.id },
-      data: { ownerNoticeMsgId: sent.id },
-    });
+    sentMessageId = sent.id;
   } catch (e) {
     logger.warn(`Ticket #${ticket.ticketNumber}: Owner-DM fehlgeschlagen`, { e: String(e) });
-    await prisma.ticket.update({ where: { id: ticket.id }, data: { status: 'DENIED', closedAt: new Date() } });
+    await prisma.ticket.updateMany({
+      where: { id: ticket.id, status: 'PENDING' },
+      data: { status: 'DENIED', closedAt: new Date() },
+    });
     return { success: false, message: 'Konnte den Owner nicht per DM erreichen. Bitte spaeter erneut versuchen.' };
   }
+
+  // Notice-ID ist Metadatenpflege, nicht Teil der Zustellung. Ein Fehler hier
+  // darf das bereits beim Owner liegende, funktionierende Ticket nicht kippen.
+  await prisma.ticket.update({
+    where: { id: ticket.id },
+    data: { ownerNoticeMsgId: sentMessageId },
+  }).catch(e => {
+    logger.warn(`Ticket #${ticket.ticketNumber}: ownerNoticeMsgId konnte nicht gespeichert werden`, { e: String(e) });
+  });
 
   logAudit('TICKET_CREATED', 'TICKET', {
     ticketNumber: ticket.ticketNumber,
     userId: opts.userDiscordId,
     guildId: opts.guildId,
   });
-
   return {
     success: true,
     ticketNumber: ticket.ticketNumber,
@@ -133,15 +133,24 @@ export async function createTicket(opts: {
   };
 }
 
-export async function acceptTicket(ticketId: string, ownerDiscordId: string, client: Client): Promise<{ success: boolean; message: string }> {
+export async function acceptTicket(
+  ticketId: string,
+  ownerDiscordId: string,
+  client: Client,
+): Promise<{ success: boolean; message: string }> {
   const ticket = await prisma.ticket.findUnique({ where: { id: ticketId } });
   if (!ticket) return { success: false, message: 'Ticket nicht gefunden.' };
-  if (ticket.status !== 'PENDING') return { success: false, message: `Ticket ist nicht mehr offen (Status: ${ticket.status}).` };
   if (ticket.ownerDiscordId !== ownerDiscordId) return { success: false, message: 'Du bist nicht der Empfaenger dieses Tickets.' };
 
-  await prisma.ticket.update({ where: { id: ticketId }, data: { status: 'OPEN' } });
+  const claimed = await prisma.ticket.updateMany({
+    where: { id: ticketId, ownerDiscordId, status: 'PENDING' },
+    data: { status: 'OPEN' },
+  });
+  if (claimed.count !== 1) {
+    const current = await prisma.ticket.findUnique({ where: { id: ticketId }, select: { status: true } });
+    return { success: false, message: `Ticket wurde bereits bearbeitet (Status: ${current?.status ?? 'unbekannt'}).` };
+  }
 
-  // User benachrichtigen
   try {
     const user = await client.users.fetch(ticket.userDiscordId);
     await user.send({
@@ -162,16 +171,27 @@ export async function acceptTicket(ticketId: string, ownerDiscordId: string, cli
   }
 
   logAudit('TICKET_ACCEPTED', 'TICKET', { ticketNumber: ticket.ticketNumber, ownerId: ownerDiscordId });
-  return { success: true, message: `Ticket #${ticket.ticketNumber} ist jetzt offen. Schreib einfach in dieser DM, ich leite weiter.` };
+  return { success: true, message: `Ticket #${ticket.ticketNumber} ist jetzt offen.` };
 }
 
-export async function denyTicket(ticketId: string, ownerDiscordId: string, client: Client, reason?: string): Promise<{ success: boolean; message: string }> {
+export async function denyTicket(
+  ticketId: string,
+  ownerDiscordId: string,
+  client: Client,
+  reason?: string,
+): Promise<{ success: boolean; message: string }> {
   const ticket = await prisma.ticket.findUnique({ where: { id: ticketId } });
   if (!ticket) return { success: false, message: 'Ticket nicht gefunden.' };
-  if (ticket.status !== 'PENDING') return { success: false, message: `Ticket ist nicht mehr offen (Status: ${ticket.status}).` };
   if (ticket.ownerDiscordId !== ownerDiscordId) return { success: false, message: 'Du bist nicht der Empfaenger dieses Tickets.' };
 
-  await prisma.ticket.update({ where: { id: ticketId }, data: { status: 'DENIED', closedAt: new Date() } });
+  const claimed = await prisma.ticket.updateMany({
+    where: { id: ticketId, ownerDiscordId, status: 'PENDING' },
+    data: { status: 'DENIED', closedAt: new Date() },
+  });
+  if (claimed.count !== 1) {
+    const current = await prisma.ticket.findUnique({ where: { id: ticketId }, select: { status: true } });
+    return { success: false, message: `Ticket wurde bereits bearbeitet (Status: ${current?.status ?? 'unbekannt'}).` };
+  }
 
   try {
     const user = await client.users.fetch(ticket.userDiscordId);
@@ -188,19 +208,26 @@ export async function denyTicket(ticketId: string, ownerDiscordId: string, clien
   return { success: true, message: `Ticket #${ticket.ticketNumber} abgelehnt.` };
 }
 
-export async function closeTicket(ticketId: string, byDiscordId: string, client: Client): Promise<{ success: boolean; message: string }> {
+export async function closeTicket(
+  ticketId: string,
+  byDiscordId: string,
+  client: Client,
+): Promise<{ success: boolean; message: string }> {
   const ticket = await prisma.ticket.findUnique({ where: { id: ticketId } });
   if (!ticket) return { success: false, message: 'Ticket nicht gefunden.' };
-  if (ticket.status === 'CLOSED' || ticket.status === 'DENIED') {
-    return { success: false, message: `Ticket ist bereits geschlossen (${ticket.status}).` };
-  }
   if (ticket.userDiscordId !== byDiscordId && ticket.ownerDiscordId !== byDiscordId) {
     return { success: false, message: 'Du bist nicht Teil dieses Tickets.' };
   }
 
-  await prisma.ticket.update({ where: { id: ticketId }, data: { status: 'CLOSED', closedAt: new Date() } });
+  const closed = await prisma.ticket.updateMany({
+    where: { id: ticketId, status: { in: ['PENDING', 'OPEN'] } },
+    data: { status: 'CLOSED', closedAt: new Date() },
+  });
+  if (closed.count !== 1) {
+    const current = await prisma.ticket.findUnique({ where: { id: ticketId }, select: { status: true } });
+    return { success: false, message: `Ticket ist bereits beendet (${current?.status ?? 'unbekannt'}).` };
+  }
 
-  // Beide Seiten informieren
   for (const targetId of [ticket.userDiscordId, ticket.ownerDiscordId]) {
     if (targetId === byDiscordId) continue;
     try {
@@ -212,34 +239,86 @@ export async function closeTicket(ticketId: string, byDiscordId: string, client:
             .setDescription('Die Konversation wurde beendet.'),
         ],
       });
-    } catch { /* ignore */ }
+    } catch { /* DM optional */ }
   }
 
   logAudit('TICKET_CLOSED', 'TICKET', { ticketNumber: ticket.ticketNumber, byUserId: byDiscordId });
   return { success: true, message: `Ticket #${ticket.ticketNumber} geschlossen.` };
 }
 
+function ticketNumberFromReferencedMessage(message: Message): number | null {
+  const candidates = [
+    message.content,
+    ...message.embeds.flatMap(embed => [embed.title ?? '', embed.description ?? '']),
+  ];
+  for (const value of candidates) {
+    const match = /Ticket\s*#(\d+)/i.exec(value);
+    if (!match) continue;
+    const parsed = Number.parseInt(match[1], 10);
+    if (Number.isSafeInteger(parsed) && parsed > 0) return parsed;
+  }
+  return null;
+}
+
+async function resolveOwnerTicketByReply(msg: Message, openTickets: Array<{ ticketNumber: number }>): Promise<number | null> {
+  if (!msg.reference?.messageId) return null;
+  const referenced = await msg.fetchReference().catch(() => null);
+  if (!referenced) return null;
+  const number = ticketNumberFromReferencedMessage(referenced);
+  if (!number) return null;
+  return openTickets.some(t => t.ticketNumber === number) ? number : null;
+}
+
 /**
- * DM-Bridge: leitet eine DM-Nachricht in das aktive Ticket weiter.
- * Wird aus messageCreate.ts aufgerufen, wenn msg.guild == null.
- * Returns true wenn die Nachricht gehandled wurde.
+ * DM-Bridge: leitet eine DM-Nachricht in ein eindeutig bestimmtes OPEN-Ticket.
+ * Bei mehreren Owner-Tickets ist eine Discord-Reply-Referenz zwingend.
  */
 export async function handleTicketDm(msg: Message): Promise<boolean> {
   const userId = msg.author.id;
-  // Aktives Ticket finden, an dem dieser Discord-User beteiligt ist (User oder Owner)
-  const ticket = await prisma.ticket.findFirst({
+  const tickets = await prisma.ticket.findMany({
     where: {
       status: 'OPEN',
       OR: [{ userDiscordId: userId }, { ownerDiscordId: userId }],
     },
     orderBy: { updatedAt: 'desc' },
+    take: 50,
   });
+  if (tickets.length === 0) return false;
+
+  const asUser = tickets.filter(t => t.userDiscordId === userId);
+  const asOwner = tickets.filter(t => t.ownerDiscordId === userId);
+  let ticket = asUser[0] ?? null;
+
+  if (!ticket && asOwner.length === 1) {
+    ticket = asOwner[0];
+  } else if (!ticket && asOwner.length > 1) {
+    const referencedNumber = await resolveOwnerTicketByReply(msg, asOwner);
+    ticket = referencedNumber
+      ? asOwner.find(t => t.ticketNumber === referencedNumber) ?? null
+      : null;
+    if (!ticket) {
+      const list = asOwner.slice(0, 15).map(t => `• Ticket #${t.ticketNumber} · ${t.username} · ${t.subject.slice(0, 70)}`).join('\n');
+      await msg.reply({
+        embeds: [
+          vEmbed(Colors.Info)
+            .setTitle('🎟️  Ticket eindeutig auswaehlen')
+            .setDescription(
+              'Du hast mehrere offene Tickets. Aus Sicherheitsgruenden rate ich **nicht**, wohin diese Nachricht gehoert.\n\n' +
+              'Nutze Discord **Antworten** auf eine Bot-Nachricht des gewuenschten Tickets und sende deine Antwort erneut.\n\n' +
+              list,
+            ),
+        ],
+        allowedMentions: { parse: [] },
+      }).catch(() => undefined);
+      return true;
+    }
+  }
+
   if (!ticket) return false;
 
   const fromRole: 'USER' | 'OWNER' = ticket.userDiscordId === userId ? 'USER' : 'OWNER';
   const targetId = fromRole === 'USER' ? ticket.ownerDiscordId : ticket.userDiscordId;
 
-  // Persistieren
   await prisma.ticketMessage.create({
     data: {
       ticketId: ticket.id,
@@ -250,50 +329,31 @@ export async function handleTicketDm(msg: Message): Promise<boolean> {
   });
   await prisma.ticket.update({ where: { id: ticket.id }, data: { updatedAt: new Date() } });
 
-  // Weiterleiten
   try {
     const target = await msg.client.users.fetch(targetId);
-    const senderLabel = fromRole === 'OWNER' ? `🛡️ Owner` : `👤 ${ticket.username}`;
+    const senderLabel = fromRole === 'OWNER' ? '🛡️ Owner' : `👤 ${ticket.username}`;
     const header = `**${senderLabel}** · Ticket #${ticket.ticketNumber}`;
     const body = msg.content.slice(0, 1800);
-    await target.send({
-      content: `${header}\n${body}`,
-      allowedMentions: { parse: [] },
-    });
-    // Bestaetigung an Sender: Reaction + klare Ticket-Referenz (besonders wichtig
-    // wenn der Owner mehrere offene Tickets hat und wissen muss, an welches die
-    // letzte Nachricht ging).
-    try { await msg.react('📨'); } catch { /* DM-React kann fehlschlagen */ }
+    await target.send({ content: `${header}\n${body}`, allowedMentions: { parse: [] } });
+    try { await msg.react('📨'); } catch { /* optional */ }
     try {
       await msg.reply({
         content: `↳ weitergeleitet · Ticket #${ticket.ticketNumber}`,
         allowedMentions: { parse: [] },
       });
-    } catch { /* DM-Reply optional */ }
+    } catch { /* optional */ }
   } catch (e) {
     logger.warn(`Ticket #${ticket.ticketNumber}: Relay-DM an ${targetId} fehlgeschlagen`, { e: String(e) });
-    // Sender informieren
     try {
       await msg.reply({
-        content: `⚠️ Konnte Nachricht nicht zustellen (Empfaenger hat DMs blockiert?). Ticket #${ticket.ticketNumber} bleibt offen.`,
+        embeds: [
+          vEmbed(Colors.Warning)
+            .setTitle(`⚠️  Ticket #${ticket.ticketNumber} nicht zugestellt`)
+            .setDescription('Der Empfaenger konnte per DM nicht erreicht werden. Das Ticket bleibt offen.'),
+        ],
         allowedMentions: { parse: [] },
       });
-    } catch { /* ignore */ }
-    // Wenn der USER schreibt und seine Nachricht den Owner nicht erreicht,
-    // bekommt der Owner zumindest eine Audit-Spur. Wenn der OWNER schreibt
-    // und der User DMs blockiert hat, bekommt der Owner zusaetzlich eine
-    // ausdrueckliche Notiz (damit er nicht denkt, die Antwort ging raus).
-    if (fromRole === 'OWNER') {
-      try {
-        const owner = await msg.client.users.fetch(ticket.ownerDiscordId);
-        await owner.send({
-          content:
-            `⚠️ Ticket #${ticket.ticketNumber}: Deine Antwort konnte ${ticket.username} ` +
-            `nicht erreichen (DMs blockiert / Bot geblockt). Ticket bleibt offen.`,
-          allowedMentions: { parse: [] },
-        });
-      } catch { /* ignore */ }
-    }
+    } catch { /* optional */ }
     logAudit('TICKET_RELAY_FAILED', 'TICKET', {
       ticketNumber: ticket.ticketNumber,
       fromRole,
