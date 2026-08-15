@@ -55,7 +55,7 @@ export async function loadCommands(client: ExtendedClient): Promise<void> {
         // WICHTIG: require() statt dynamic import().
         // Mit tsconfig "module": "Node16" triggert dynamic import() den nativen
         // ESM-Resolver, der KEINE Directory-Imports (z.B. `from '../../types'`)
-        // unterstuetzt \u2013 alle Command-Files wuerden mit ERR_UNSUPPORTED_DIR_IMPORT
+        // unterstuetzt – alle Command-Files wuerden mit ERR_UNSUPPORTED_DIR_IMPORT
         // crashen. require() laeuft ueber den CommonJS-Resolver von ts-node und
         // findet `index.ts` in Verzeichnissen problemlos.
         const commandModule = require(path.join(dir, file));
@@ -103,7 +103,7 @@ export async function loadCommands(client: ExtendedClient): Promise<void> {
  *
  * Wichtig: Wir leeren IMMER beide Scopes (global + Guild) bevor wir den
  * gewuenschten Scope neu befuellen. Sonst koennen Commands gleichzeitig
- * global UND per-Guild registriert sein \u2013 Discord merged das im
+ * global UND per-Guild registriert sein – Discord merged das im
  * Autocomplete und zeigt jeden Subcommand doppelt an.
  */
 export async function deployCommands(client: ExtendedClient, token: string, clientId: string, guildId?: string): Promise<void> {
@@ -128,14 +128,13 @@ export async function deployCommands(client: ExtendedClient, token: string, clie
 }
 
 /**
- * Teilt die geladenen Commands nach Berechtigungs-/Verzeichnis-Scope auf:
- *  - GLOBAL: Admin-, Dev- und Manufacturer-Commands (classifyCommand →
- *    category 'admin' | 'dev'). Diese sollen ueberall identisch verfuegbar sein.
- *  - GUILD:  alle uebrigen "normalen" Commands (category 'keep') – werden pro
- *    Guild registriert (instant sichtbar, koennen serverspezifisch abweichen).
- *  - 'remove'-Commands landen in KEINEM Scope.
+ * Teilt die geladenen Commands anhand des kanonischen Inventars auf.
  *
- * WICHTIG: Jeder Command landet in GENAU EINEM Scope → keine Duplikate.
+ * Entscheidend ist `staysInDiscord`, nicht nur die grobe Kategorie. Damit kann
+ * eine versehentlich noch geladene Definition eines bereits ins Dashboard
+ * migrierten Admin-/DEV-Commands beim Deploy nicht wieder registriert werden.
+ * Hersteller-Funktionen sind die ausdrueckliche Ausnahme: ihr Inventory-Eintrag
+ * hat `staysInDiscord=true` und bleibt global.
  */
 export function splitCommandsByScope(client: ExtendedClient): {
   global: ReturnType<Command['data']['toJSON']>[];
@@ -152,7 +151,12 @@ export function splitCommandsByScope(client: ExtendedClient): {
       devOnly: cmd.devOnly,
       manufacturerOnly: cmd.manufacturerOnly,
     });
-    if (cls.category === 'remove') continue;
+
+    // Defense in depth: selbst wenn eine migrierte/zu entfernende Datei durch
+    // Build-Artefakte oder einen spaeteren Refactor wieder im Loader landet,
+    // darf sie nicht zu Discord deployed werden.
+    if (!cls.staysInDiscord) continue;
+
     const json = cmd.data.toJSON();
     if (cls.category === 'admin' || cls.category === 'dev') globalCmds.push(json);
     else guildCmds.push(json);
@@ -162,8 +166,10 @@ export function splitCommandsByScope(client: ExtendedClient): {
 
 /**
  * Registriert die Commands scope-getrennt bei Discord:
- *  - globaler Scope erhaelt die Admin/Dev/Manufacturer-Commands,
- *  - jede uebergebene Guild erhaelt die "normalen" Commands guild-scoped.
+ *  - globaler Scope erhaelt ausschliesslich laut Inventory erhaltene globale
+ *    Funktionen (aktuell insbesondere Hersteller-Funktionen),
+ *  - jede uebergebene Guild erhaelt die laut Inventory erhaltenen normalen
+ *    Commands guild-scoped.
  *
  * Beide put()-Aufrufe ERSETZEN den jeweiligen Scope vollstaendig, sodass keine
  * Altlasten/Duplikate zurueckbleiben.
@@ -178,7 +184,7 @@ export async function deployCommandsScoped(
   const { global: globalCmds, guild: guildCmds } = splitCommandsByScope(client);
 
   await rest.put(Routes.applicationCommands(clientId), { body: globalCmds });
-  logger.info(`${globalCmds.length} globale Commands (Admin/Dev/Manufacturer) registriert.`);
+  logger.info(`${globalCmds.length} erhaltene globale Discord-Commands registriert.`);
 
   let guildsOk = 0;
   for (const gid of guildIds) {
