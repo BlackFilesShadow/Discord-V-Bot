@@ -311,22 +311,23 @@ botAdminCommandCenterRouter.get('/triggers', async (req, res) => {
 });
 
 botAdminCommandCenterRouter.post('/triggers', async (req, res) => {
-  const guildId = guildIdFrom(req);
-  if (!guildId) { res.status(400).json({ error: 'Gültige guildId erforderlich.' }); return; }
-  const id = String(req.body?.id ?? '').toLowerCase().replace(/[^a-z0-9_-]/g, '').slice(0, 20);
-  if (!id) { res.status(400).json({ error: 'Ungültige Trigger-ID.' }); return; }
+  // Alle nicht-Media-Felder zuerst validieren. Ungueltige Payloads duerfen
+  // weder Netzwerk-I/O noch persistente Media-Dateien ausloesen.
+  const parsed = parseTrigger(req);
+  if (!parsed.ok) { res.status(400).json({ error: parsed.error }); return; }
+
   let media: string | undefined;
   const remoteUrl = typeof req.body?.mediaUrl === 'string' ? req.body.mediaUrl.trim() : '';
   if (remoteUrl) {
-    const saved = await saveRemoteMedia(remoteUrl, 'triggers', guildId, id);
+    const saved = await saveRemoteMedia(remoteUrl, 'triggers', parsed.guildId, parsed.trigger.id);
     if (!saved.ok || !saved.localPath) { res.status(400).json({ error: saved.message }); return; }
     media = saved.localPath;
   }
-  const parsed = parseTrigger(req, media);
-  if (!parsed.ok) { if (media) await deleteMediaIfLocal(media); res.status(400).json({ error: parsed.error }); return; }
-  const result = await addTrigger(guildId, parsed.trigger);
+
+  const trigger = media ? { ...parsed.trigger, mediaUrl: media } : parsed.trigger;
+  const result = await addTrigger(parsed.guildId, trigger);
   if (!result.ok) { if (media) await deleteMediaIfLocal(media); res.status(400).json({ error: result.message }); return; }
-  audit(req, 'BOTADMIN_AI_TRIGGER_UPSERT', 'AI', { guildId, triggerId: parsed.trigger.id, triggerType: parsed.trigger.triggerType, responseMode: parsed.trigger.responseMode });
+  audit(req, 'BOTADMIN_AI_TRIGGER_UPSERT', 'AI', { guildId: parsed.guildId, triggerId: trigger.id, triggerType: trigger.triggerType, responseMode: trigger.responseMode });
   res.status(201).json({ ok: true, message: result.message });
 });
 
@@ -334,17 +335,18 @@ botAdminCommandCenterRouter.post('/triggers/upload', upload.single('file'), asyn
   const file = req.file;
   if (!file) { res.status(400).json({ error: 'Datei fehlt.' }); return; }
   if (typeof req.body?.mediaUrl === 'string' && req.body.mediaUrl.trim()) { res.status(400).json({ error: 'Bitte entweder Datei ODER mediaUrl angeben, nicht beides.' }); return; }
-  const guildId = guildIdFrom(req);
-  if (!guildId) { res.status(400).json({ error: 'Gültige guildId erforderlich.' }); return; }
-  const id = String(req.body?.id ?? '').toLowerCase().replace(/[^a-z0-9_-]/g, '').slice(0, 20);
-  if (!id) { res.status(400).json({ error: 'Ungültige Trigger-ID.' }); return; }
-  const saved = await saveBrowserMedia(file, guildId, id);
+
+  // Multer muss multipart zuerst parsen, aber vor dem Schreiben auf Disk wird
+  // die komplette Trigger-Payload validiert.
+  const parsed = parseTrigger(req);
+  if (!parsed.ok) { res.status(400).json({ error: parsed.error }); return; }
+
+  const saved = await saveBrowserMedia(file, parsed.guildId, parsed.trigger.id);
   if (!saved.ok) { res.status(400).json({ error: saved.error }); return; }
-  const parsed = parseTrigger(req, saved.localPath);
-  if (!parsed.ok) { await deleteMediaIfLocal(saved.localPath); res.status(400).json({ error: parsed.error }); return; }
-  const result = await addTrigger(guildId, parsed.trigger);
+  const trigger = { ...parsed.trigger, mediaUrl: saved.localPath };
+  const result = await addTrigger(parsed.guildId, trigger);
   if (!result.ok) { await deleteMediaIfLocal(saved.localPath); res.status(400).json({ error: result.message }); return; }
-  audit(req, 'BOTADMIN_AI_TRIGGER_UPSERT', 'AI', { guildId, triggerId: parsed.trigger.id, mediaUpload: true });
+  audit(req, 'BOTADMIN_AI_TRIGGER_UPSERT', 'AI', { guildId: parsed.guildId, triggerId: trigger.id, mediaUpload: true });
   res.status(201).json({ ok: true, message: result.message });
 });
 
