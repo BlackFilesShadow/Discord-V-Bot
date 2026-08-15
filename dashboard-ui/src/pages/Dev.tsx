@@ -1,6 +1,6 @@
 /**
  * DEV-Konsole — Layout mit Sidebar (Search + Categories + Pinned + Recent)
- * und 3-Gate-Auth (Spec 4 + 5).
+ * und geschuetzter DEV-Session.
  */
 import { useMemo, useState } from 'react';
 import { Outlet, NavLink, useLocation } from 'react-router-dom';
@@ -64,16 +64,25 @@ function DevSidebar() {
   }, [query]);
 
   const commandCenterActive = loc.pathname === '/dev/command-center';
+  const secureExportActive = loc.pathname === '/dev/secure-export';
   return (
     <nav aria-label="DEV Tools" className="space-y-4">
       <div className="flex items-center justify-between px-1"><span className="text-[10px] uppercase tracking-widest text-muted">DEV Tools</span><Badge variant="ok" pulse><Unlock className="h-3 w-3" /> ON</Badge></div>
 
-      <NavLink to="/dev/command-center" className={[
-        'flex items-center gap-2.5 px-2.5 py-2 rounded-md text-xs font-semibold transition-colors focus-ring border',
-        commandCenterActive ? 'bg-accent/15 text-white border-accent/30' : 'text-accent border-accent/20 hover:bg-accent/10',
-      ].join(' ')}>
-        <TerminalSquare className="h-4 w-4" /><span>DEV Command Center</span>
-      </NavLink>
+      <div className="space-y-1">
+        <NavLink to="/dev/command-center" className={[
+          'flex items-center gap-2.5 px-2.5 py-2 rounded-md text-xs font-semibold transition-colors focus-ring border',
+          commandCenterActive ? 'bg-accent/15 text-white border-accent/30' : 'text-accent border-accent/20 hover:bg-accent/10',
+        ].join(' ')}>
+          <TerminalSquare className="h-4 w-4" /><span>DEV Command Center</span>
+        </NavLink>
+        <NavLink to="/dev/secure-export" className={[
+          'flex items-center gap-2.5 px-2.5 py-2 rounded-md text-xs font-semibold transition-colors focus-ring border',
+          secureExportActive ? 'bg-accent/15 text-white border-accent/30' : 'text-accent border-accent/20 hover:bg-accent/10',
+        ].join(' ')}>
+          <Lock className="h-4 w-4" /><span>Sichere Exporte</span>
+        </NavLink>
+      </div>
 
       <div className="relative">
         <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-muted" />
