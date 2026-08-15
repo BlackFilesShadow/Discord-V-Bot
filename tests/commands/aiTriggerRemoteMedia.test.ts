@@ -21,6 +21,7 @@ const logAuditDbMock = jest.fn();
 
 jest.mock('../../src/modules/ai/triggers', () => ({
   MAX_TRIGGERS_PER_GUILD: 25,
+  GLOBAL_AI_TRIGGERS: [{ id: 'intro1' }],
   listTriggers: listTriggersMock,
   addTrigger: addTriggerMock,
   removeTrigger: removeTriggerMock,
@@ -90,11 +91,12 @@ beforeEach(() => {
   jest.clearAllMocks();
   listTriggersMock.mockResolvedValue([]);
   addTriggerMock.mockResolvedValue({ ok: true, message: 'gespeichert' });
+  clearTriggersMock.mockResolvedValue(undefined);
   saveRemoteMediaMock.mockResolvedValue({ ok: true, message: 'ok', localPath: LOCAL_PATH });
   deleteMediaIfLocalMock.mockResolvedValue(undefined);
 });
 
-describe('Bot-Admin AI trigger remote media lifecycle', () => {
+describe('Bot-Admin AI trigger media and validation parity', () => {
   it('materializes a remote URL without trusting a filename extension and persists only the local path', async () => {
     const response = await request(makeApp()).post('/bot-admin/triggers').send(payload());
 
@@ -122,6 +124,49 @@ describe('Bot-Admin AI trigger remote media lifecycle', () => {
     expect(deleteMediaIfLocalMock).not.toHaveBeenCalled();
   });
 
+  it('rejects an invalid trigger id before any remote media download starts', async () => {
+    const response = await request(makeApp()).post('/bot-admin/triggers').send(payload({ id: '!!!' }));
+
+    expect(response.status).toBe(400);
+    expect(response.body.error).toBe('Ungültige Trigger-ID.');
+    expect(saveRemoteMediaMock).not.toHaveBeenCalled();
+    expect(addTriggerMock).not.toHaveBeenCalled();
+  });
+
+  it('preserves an explicit zero-second cooldown exactly like the former slash command', async () => {
+    const response = await request(makeApp()).post('/bot-admin/triggers').send(payload({ mediaUrl: '', cooldownSeconds: 0 }));
+
+    expect(response.status).toBe(201);
+    expect(addTriggerMock).toHaveBeenCalledWith(
+      GUILD_ID,
+      expect.objectContaining({ cooldownSeconds: 0, mediaUrl: undefined }),
+    );
+  });
+
+  it('rejects fractional cooldown values and rolls back already materialized remote media', async () => {
+    const response = await request(makeApp()).post('/bot-admin/triggers').send(payload({ cooldownSeconds: 1.5 }));
+
+    expect(response.status).toBe(400);
+    expect(response.body.error).toContain('Cooldown');
+    expect(addTriggerMock).not.toHaveBeenCalled();
+    expect(deleteMediaIfLocalMock).toHaveBeenCalledWith(LOCAL_PATH);
+  });
+
+  it('rejects file plus remote URL at the backend even when a client bypasses the UI guard', async () => {
+    const pngHeader = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]);
+    const response = await request(makeApp())
+      .post('/bot-admin/triggers/upload')
+      .field('guildId', GUILD_ID)
+      .field('id', 'welcome')
+      .field('mediaUrl', REMOTE_URL)
+      .attach('file', pngHeader, { filename: 'test.png', contentType: 'image/png' });
+
+    expect(response.status).toBe(400);
+    expect(response.body.error).toContain('entweder Datei ODER mediaUrl');
+    expect(saveRemoteMediaMock).not.toHaveBeenCalled();
+    expect(addTriggerMock).not.toHaveBeenCalled();
+  });
+
   it('rolls back newly materialized media when trigger validation fails', async () => {
     const response = await request(makeApp()).post('/bot-admin/triggers').send(payload({ pattern: '' }));
 
@@ -137,6 +182,23 @@ describe('Bot-Admin AI trigger remote media lifecycle', () => {
 
     expect(response.status).toBe(400);
     expect(deleteMediaIfLocalMock).toHaveBeenCalledWith(LOCAL_PATH);
+  });
+
+  it('clears only guild-owned triggers and never reports global triggers as deleted', async () => {
+    listTriggersMock.mockResolvedValueOnce([
+      { id: 'intro1', mediaUrl: '/srv/uploads/media/global.png' },
+      { id: 'custom', mediaUrl: '/srv/uploads/media/custom.png' },
+    ]);
+
+    const response = await request(makeApp())
+      .post('/bot-admin/triggers/clear')
+      .send({ guildId: GUILD_ID, confirm: 'CLEAR' });
+
+    expect(response.status).toBe(200);
+    expect(response.body).toEqual({ ok: true, cleared: 1 });
+    expect(clearTriggersMock).toHaveBeenCalledWith(GUILD_ID, '223456789012345678');
+    expect(deleteMediaIfLocalMock).toHaveBeenCalledTimes(1);
+    expect(deleteMediaIfLocalMock).toHaveBeenCalledWith('/srv/uploads/media/custom.png');
   });
 
   it('records the dashboard mutation in both audit channels after success', async () => {
