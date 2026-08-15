@@ -10,9 +10,9 @@ describe('Bot-Admin compatibility safety overrides', () => {
   const validateRoute = read('src/dashboard/routes/v2/botAdminSafeValidation.ts');
   const validateService = read('src/modules/dashboard/safeUploadValidation.ts');
 
-  it('mountet Safety-Overrides und Guild-Referenzguard vor dem Legacy BotAdmin-Router', () => {
+  it('mountet Retirement-/Danger-/Safety-Overrides und Guild-Guard vor dem Legacy BotAdmin-Router', () => {
     expect(routes).toContain(
-      "v2Router.use('/bot-admin', requireGlobalBotAdminIdentity, botAdminSafeValidationRouter, botAdminSafePackageDeleteRouter, guardBotAdminGuildReferences, botAdminRouter);",
+      "v2Router.use('/bot-admin', requireGlobalBotAdminIdentity, botAdminXpRetirementRouter, botAdminDangerSafetyRouter, botAdminSafeValidationRouter, botAdminSafePackageDeleteRouter, guardBotAdminGuildReferences, botAdminRouter);",
     );
   });
 
