@@ -3,6 +3,11 @@ export class ApiError extends Error {
   constructor(message: string, public readonly status: number, public readonly code: string | null = null, public readonly body: unknown = null) { super(message); }
 }
 
+export interface ApiDownload {
+  blob: Blob;
+  filename: string;
+}
+
 function extractError(data: unknown, status: number): { msg: string; code: string | null } {
   if (data && typeof data === 'object') {
     const obj = data as Record<string, unknown>;
@@ -32,6 +37,26 @@ async function request<T>(method: string, path: string, body?: unknown): Promise
   return decode<T>(await fetch(path, { method, headers, body: payload, credentials: 'include' }));
 }
 
+async function downloadPost(path: string, body: unknown): Promise<ApiDownload> {
+  const res = await fetch(path, {
+    method: 'POST',
+    headers: {
+      Accept: 'application/json',
+      'Content-Type': 'application/json',
+      'X-Idempotency-Key': uuid(),
+    },
+    body: JSON.stringify(body),
+    credentials: 'include',
+  });
+  if (!res.ok) return decode<ApiDownload>(res);
+  const disposition = res.headers.get('content-disposition') ?? '';
+  const match = disposition.match(/filename="?([^";]+)"?/i);
+  return {
+    blob: await res.blob(),
+    filename: match?.[1] ?? `download_${Date.now()}.json`,
+  };
+}
+
 async function formRequest<T>(method: 'POST' | 'PUT' | 'PATCH', path: string, fd: FormData): Promise<T> {
   const headers: Record<string, string> = { Accept: 'application/json', 'X-Idempotency-Key': uuid() };
   return decode<T>(await fetch(path, { method, headers, body: fd, credentials: 'include' }));
@@ -49,6 +74,7 @@ export const api = {
   put: <T,>(p: string, b?: unknown) => request<T>('PUT', p, b),
   patch: <T,>(p: string, b?: unknown) => request<T>('PATCH', p, b),
   del: <T,>(p: string, b?: unknown) => request<T>('DELETE', p, b),
+  downloadPost,
   upload: <T,>(p: string, file: File, fieldName?: string) => uploadRequest<T>(p, file, fieldName),
   uploadForm: <T,>(p: string, fd: FormData) => formRequest<T>('POST', p, fd),
   form: <T,>(method: 'POST' | 'PUT' | 'PATCH', p: string, fd: FormData) => formRequest<T>(method, p, fd),
