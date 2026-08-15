@@ -13,6 +13,7 @@ describe('current bot information surfaces', () => {
   const readme = read('README.md');
   const security = read('SECURITY.md');
   const architecture = read('docs/ARCHITECTURE.md');
+  const performance = read('docs/PERFORMANCE.md');
 
   it('haelt entfernte Admin/DEV-Slash-Beispiele aus Bot-Antworten fern', () => {
     expect(aiCatalog).not.toContain("name: '/autorole");
@@ -53,7 +54,7 @@ describe('current bot information surfaces', () => {
   });
 
   it('kanonische Doku beschreibt keinen alten globalen Admin/DEV-Slash-Betrieb mehr', () => {
-    for (const doc of [readme, security, architecture]) {
+    for (const doc of [readme, security, architecture, performance]) {
       expect(doc).toContain('Dashboard');
       expect(doc).not.toMatch(/\/admin-aimodels\b/);
       expect(doc).not.toMatch(/\/dev-login\b/);
@@ -62,5 +63,8 @@ describe('current bot information surfaces', () => {
     expect(readme).toContain('Void_Architect');
     expect(security).toMatch(/verifiziert\w* Step-Up/i);
     expect(architecture).toContain('ADM V2');
+    expect(performance).toContain('METRICS_ENABLED=true');
+    expect(performance).toContain('METRICS_TOKEN');
+    expect(performance).not.toContain('/translate-post');
   });
 });
