@@ -4,6 +4,7 @@ process.env.DISCORD_CLIENT_SECRET ||= 'test-secret';
 process.env.DATABASE_URL ||= 'postgresql://test:test@localhost:5432/test';
 process.env.ENCRYPTION_KEY ||= '0'.repeat(64);
 process.env.SESSION_SECRET ||= 'test-session-secret';
+process.env.BOT_OWNER_ID ||= '323456789012345678';
 
 import express, { type NextFunction, type Request, type Response } from 'express';
 import request from 'supertest';
@@ -18,6 +19,7 @@ const deleteMediaIfLocalMock = jest.fn();
 const loggerErrorMock = jest.fn();
 const logAuditMock = jest.fn();
 const logAuditDbMock = jest.fn();
+const dashboardClientMock = jest.fn();
 
 jest.mock('../../src/modules/ai/triggers', () => ({
   MAX_TRIGGERS_PER_GUILD: 25,
@@ -43,6 +45,10 @@ jest.mock('../../src/utils/logger', () => ({
   logger: { error: loggerErrorMock, warn: jest.fn(), info: jest.fn() },
   logAudit: logAuditMock,
   logAuditDb: logAuditDbMock,
+}));
+
+jest.mock('../../src/dashboard/clientRegistry', () => ({
+  tryGetDashboardClient: dashboardClientMock,
 }));
 
 jest.mock('../../src/dashboard/middleware/auth', () => ({
@@ -89,6 +95,7 @@ function payload(overrides: Record<string, unknown> = {}) {
 
 beforeEach(() => {
   jest.clearAllMocks();
+  dashboardClientMock.mockReturnValue(null);
   listTriggersMock.mockResolvedValue([]);
   addTriggerMock.mockResolvedValue({ ok: true, message: 'gespeichert' });
   clearTriggersMock.mockResolvedValue(undefined);
@@ -209,5 +216,35 @@ describe('Bot-Admin AI trigger media and validation parity', () => {
     expect(response.status).toBe(201);
     expect(logAuditMock).toHaveBeenCalled();
     expect(logAuditDbMock).toHaveBeenCalled();
+  });
+});
+
+describe('Bot-Admin feedback permission parity', () => {
+  it('does not let a normal BotAdmin replace the owner-only global feedback channel', async () => {
+    const response = await request(makeApp())
+      .put('/bot-admin/feedback-channel')
+      .send({ scope: 'global', channelId: null });
+
+    expect(response.status).toBe(403);
+    expect(response.body.error).toContain('Bot-Owner');
+  });
+
+  it('rejects a guild feedback target that is not a text or announcement channel', async () => {
+    dashboardClientMock.mockReturnValue({
+      guilds: {
+        cache: new Map([[GUILD_ID, { id: GUILD_ID, name: 'Test Guild' }]]),
+        fetch: jest.fn(),
+      },
+      channels: {
+        fetch: jest.fn().mockResolvedValue({ type: 2, guildId: GUILD_ID }),
+      },
+    });
+
+    const response = await request(makeApp())
+      .put('/bot-admin/feedback-channel')
+      .send({ scope: 'guild', guildId: GUILD_ID, channelId: '423456789012345678' });
+
+    expect(response.status).toBe(400);
+    expect(response.body.error).toContain('Text- oder Ankündigungskanal');
   });
 });
