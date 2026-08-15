@@ -10,18 +10,22 @@ describe('strict command loader invariants', () => {
     expect(source).toContain('if (error instanceof CommandCollisionError) throw error;');
   });
 
-  it('toleriert Kollisionen nur bei explizitem COMMAND_LOADER_STRICT=false', () => {
-    expect(source).toContain("process.env.COMMAND_LOADER_STRICT !== 'false'");
-    expect(source).toContain('COMMAND_LOADER_STRICT=false');
+  it('toleriert Kollisionen und Modul-Ladefehler nur bei explizitem COMMAND_LOADER_STRICT=false', () => {
+    expect(source).toContain("const strict = process.env.COMMAND_LOADER_STRICT !== 'false'");
+    expect(source).toContain('if (strict) {');
+    expect(source).toContain('throw error instanceof Error');
+    expect(source).toContain('wurde nur wegen COMMAND_LOADER_STRICT=false uebersprungen');
   });
 
   it('baut einen neuen Snapshot und ersetzt die aktive Runtime-Registry erst am Ende', () => {
     const create = source.indexOf('const nextCommands = new Collection<string, Command>()');
     const populate = source.indexOf('nextCommands.set(cmd.data.name, cmd)');
+    const strictRethrow = source.indexOf('throw error instanceof Error');
     const commit = source.indexOf('client.commands = nextCommands');
     expect(create).toBeGreaterThanOrEqual(0);
     expect(populate).toBeGreaterThan(create);
-    expect(commit).toBeGreaterThan(populate);
+    expect(strictRethrow).toBeGreaterThan(populate);
+    expect(commit).toBeGreaterThan(strictRethrow);
     expect(source.slice(0, commit)).not.toContain('client.commands = new Collection');
   });
 });
