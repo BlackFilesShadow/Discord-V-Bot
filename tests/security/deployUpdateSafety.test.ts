@@ -42,6 +42,12 @@ describe('deploy/update.sh fail-closed invariants', () => {
     expect(start).toBeGreaterThan(status);
   });
 
+  it('erkennt den Discord-Login ueber einen stabilen Marker statt eines Produktnamens', () => {
+    expect(script).toContain('grep -q "eingeloggt als"');
+    expect(script).not.toContain('grep -q "Bot eingeloggt als"');
+    expect(script).not.toContain('grep -q "V-Bot Prime eingeloggt als"');
+  });
+
   it('behandelt SQL-, Health-, Discord-Login- und Post-Start-Migrationsfehler als harte Gates', () => {
     expect(script).toContain('SQL fehlgeschlagen: $name. Deployment abgebrochen.');
     expect(script).toContain('Container wurde innerhalb von 90s nicht healthy.');
