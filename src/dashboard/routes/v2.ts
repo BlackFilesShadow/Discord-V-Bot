@@ -48,6 +48,7 @@ import { auditRouter } from './v2/audit';
 import { botAdminRouter } from './v2/botAdmin';
 import { botAdminCommandCenterRouter } from './v2/botAdminCommandCenter';
 import { botAdminSafePackageDeleteRouter } from './v2/botAdminSafePackageDelete';
+import { botAdminSafeValidationRouter } from './v2/botAdminSafeValidation';
 import { commandCatalogRouter } from './v2/commandCatalog';
 
 export const v2Router = Router();
@@ -96,7 +97,7 @@ v2Router.use('/dev/secure-export', requireGlobalDeveloperIdentity, requireDev, r
 v2Router.use('/bot-admin/command-catalog', requireGlobalBotAdminIdentity, commandCatalogRouter);
 v2Router.use('/bot-admin/command-center', requireGlobalBotAdminIdentity, guardBotAdminCommandCenterInput, botAdminCommandCenterRouter);
 
-// Bot-Admin: globale Identitaet + aktive BotAdminSession. Der Safe-Delete-Router
-// muss vor dem Legacy-Router laufen, damit `?hard=true` physische Dateien nicht
-// mehr als Orphans zuruecklassen kann.
-v2Router.use('/bot-admin', requireGlobalBotAdminIdentity, botAdminSafePackageDeleteRouter, botAdminRouter);
+// Bot-Admin: globale Identitaet + aktive BotAdminSession. Safety-Overrides
+// muessen vor dem Legacy-Router laufen, damit bestehende UI-Pfade dieselben
+// Schutzschranken wie die migrierten Command-Center-Funktionen besitzen.
+v2Router.use('/bot-admin', requireGlobalBotAdminIdentity, botAdminSafeValidationRouter, botAdminSafePackageDeleteRouter, botAdminRouter);
