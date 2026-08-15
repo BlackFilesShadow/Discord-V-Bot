@@ -5,6 +5,15 @@ function read(rel: string): string {
   return fs.readFileSync(path.resolve(process.cwd(), rel), 'utf8');
 }
 
+function walkTs(dir: string): string[] {
+  if (!fs.existsSync(dir)) return [];
+  return fs.readdirSync(dir, { withFileTypes: true }).flatMap((entry) => {
+    const full = path.join(dir, entry.name);
+    if (entry.isDirectory()) return walkTs(full);
+    return entry.isFile() && full.endsWith('.ts') && !full.includes(`${path.sep}__tests__${path.sep}`) ? [full] : [];
+  });
+}
+
 describe('current bot information surfaces', () => {
   const aiCatalog = read('src/modules/ai/commandCatalog.ts');
   const aiHandler = read('src/modules/ai/aiHandler.ts');
@@ -31,6 +40,16 @@ describe('current bot information surfaces', () => {
     ]) {
       expect(aiCatalog).toContain(`name: '${cmd}'`);
     }
+  });
+
+  it('dokumentiert keinen AI-Slash-Basisnamen ohne reale Command-Definition', () => {
+    const source = walkTs(path.resolve(process.cwd(), 'src/commands'))
+      .map((file) => fs.readFileSync(file, 'utf8'))
+      .join('\n');
+    const defined = new Set([...source.matchAll(/\.setName\(\s*['"]([a-z0-9-]+)['"]\s*\)/g)].map((m) => m[1]));
+    const documented = [...aiCatalog.matchAll(/name:\s*['"]\/([a-z0-9-]+)/g)].map((m) => m[1]);
+    const missing = [...new Set(documented.filter((name) => !defined.has(name)))];
+    expect(missing).toEqual([]);
   });
 
   it('leitet Hersteller-Uploadinformationen aus der echten Config ab statt alte 2GB zu behaupten', () => {
