@@ -285,7 +285,12 @@ devCommandCenterRouter.get('/export/logs', async (req, res) => {
   const all = [];
   let cursor: string | undefined;
   while (all.length < 50_000) {
-    const page = await prisma.auditLog.findMany({ where, orderBy: [{ createdAt: 'desc' }, { id: 'desc' }], take: Math.min(1000, 50_000 - all.length), ...(cursor ? { skip: 1, cursor: { id: cursor } } : {}) });
+    const page: Awaited<ReturnType<typeof prisma.auditLog.findMany>> = await prisma.auditLog.findMany({
+      where,
+      orderBy: [{ createdAt: 'desc' }, { id: 'desc' }],
+      take: Math.min(1000, 50_000 - all.length),
+      ...(cursor ? { skip: 1, cursor: { id: cursor } } : {}),
+    });
     if (!page.length) break;
     all.push(...page);
     cursor = page[page.length - 1].id;
