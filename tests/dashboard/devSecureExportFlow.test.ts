@@ -32,6 +32,15 @@ describe('DEV command-center security wiring', () => {
     expect(secureExport).not.toContain('devSecureExportRouter.get(');
   });
 
+  it('streamt grosse Audit-Exporte seitenweise statt bis zu 50k Rows im RAM zu sammeln', () => {
+    expect(secureExport).toContain('async function writeChunk');
+    expect(secureExport).toContain("if (!(await writeChunk(res, '['))) return;");
+    expect(secureExport).toContain('take: Math.min(AUDIT_PAGE_SIZE, MAX_ROWS - count)');
+    expect(secureExport).toContain('prefix + jsonStringify(row)');
+    expect(secureExport).not.toMatch(/const\s+rows\s*:[\s\S]*?=\s*\[\]/);
+    expect(secureExport).not.toContain('rows.push(...page)');
+  });
+
   it('hat eine geschuetzte Dashboard-Seite fuer die erneute Export-Authentisierung', () => {
     expect(app).toContain("import SecureDevExport from './pages/dev/SecureDevExport';");
     expect(app).toContain('<Route path="secure-export" element={<SecureDevExport />} />');
