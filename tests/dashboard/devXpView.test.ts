@@ -15,6 +15,8 @@ jest.mock('../../src/database/prisma', () => ({
 
 jest.mock('../../src/dashboard/clientRegistry', () => ({ tryGetDashboardClient: jest.fn() }));
 
+import fs from 'node:fs';
+import path from 'node:path';
 import express from 'express';
 import request from 'supertest';
 import { ChannelType } from 'discord.js';
@@ -65,6 +67,14 @@ describe('DEV XP read-only view', () => {
     jest.clearAllMocks();
     findLevelRoles.mockResolvedValue([]);
     installDiscord();
+  });
+
+  it('ist der einzige GET-XP-Handler und laesst keinen shadowed Legacy-Read im Sammelrouter stehen', () => {
+    const commandCenter = fs.readFileSync(
+      path.resolve(process.cwd(), 'src/dashboard/routes/v2/devCommandCenter.ts'),
+      'utf8',
+    );
+    expect(commandCenter).not.toContain("devCommandCenterRouter.get('/xp/:guildId'");
   });
 
   it('liefert Prisma-Defaults ohne eine Config-Zeile anzulegen', async () => {
