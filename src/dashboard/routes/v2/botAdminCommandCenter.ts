@@ -1,7 +1,6 @@
 import { Router } from 'express';
 import os from 'node:os';
 import fs from 'node:fs/promises';
-import path from 'node:path';
 import { ChannelType, EmbedBuilder, type TextChannel } from 'discord.js';
 import { Prisma } from '@prisma/client';
 import { requireBotAdmin } from '../../middleware/auth';
@@ -98,22 +97,15 @@ botAdminCommandCenterRouter.get('/overview', async (_req, res) => {
     prisma.securityEvent.count({ where: { isResolved: false, severity: { in: ['CRITICAL', 'HIGH'] } } }),
   ]);
 
-  let uploadDir = { exists: false, writable: false, bytes: 0 };
+  // Paritaet zum bisherigen /admin-monitor: Der Health-Read prueft nur
+  // Existenz/Schreibbarkeit. Ein rekursiver Vollscan des Upload-Baums wuerde
+  // die Laufzeit mit dem Datenbestand skalieren und gehoert nicht in diesen
+  // regelmaessig abgefragten Status-Endpunkt.
+  const uploadDir = { exists: false, writable: false };
   try {
     await fs.access(config.upload.dir);
     uploadDir.exists = true;
     try { await fs.access(config.upload.dir, 2); uploadDir.writable = true; } catch { /* read-only */ }
-    const walk = async (dir: string): Promise<number> => {
-      let total = 0;
-      const entries = await fs.readdir(dir, { withFileTypes: true }).catch(() => []);
-      for (const entry of entries) {
-        const full = path.join(dir, entry.name);
-        if (entry.isDirectory()) total += await walk(full);
-        else total += (await fs.stat(full).catch(() => null))?.size ?? 0;
-      }
-      return total;
-    };
-    uploadDir.bytes = await walk(config.upload.dir);
   } catch { /* missing */ }
 
   const client = tryGetDashboardClient();
@@ -329,9 +321,29 @@ botAdminCommandCenterRouter.get('/feedback-channel', async (req, res) => {
         })
       : Promise.resolve(null),
   ]);
+
+  let channelOptions: Array<{ id: string; name: string; type: ChannelType }> = [];
+  if (guildId) {
+    const client = tryGetDashboardClient();
+    if (!client) {
+      res.status(503).json({ error: 'Discord-Client nicht verfügbar.' });
+      return;
+    }
+    const guild = client.guilds.cache.get(guildId) ?? await client.guilds.fetch(guildId).catch(() => null);
+    if (!guild) {
+      res.status(404).json({ error: 'Bot ist auf dem ausgewählten Server nicht verfügbar.' });
+      return;
+    }
+    channelOptions = guild.channels.cache
+      .filter(channel => channel.type === ChannelType.GuildText || channel.type === ChannelType.GuildAnnouncement)
+      .map(channel => ({ id: channel.id, name: channel.name, type: channel.type }))
+      .sort((a, b) => a.name.localeCompare(b.name, 'de'));
+  }
+
   res.json({
     globalChannelId: typeof globalCfg?.value === 'string' ? globalCfg.value : null,
     guildChannelId: profile?.feedbackChannelId ?? null,
+    channelOptions,
   });
 });
 
