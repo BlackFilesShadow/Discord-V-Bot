@@ -14,6 +14,7 @@ import { requireGlobalBotAdminIdentity } from '../middleware/globalBotAdminGate'
 import { requireSafeDashboardEconomyScope } from '../middleware/economyScopeGuard';
 import { guardBotAdminCommandCenterInput, guardDevCommandCenterInput } from '../middleware/commandCenterInputGuard';
 import { requireVerifiedDevMutationStepUp, redirectLegacyDevExports } from '../middleware/devStepUp';
+import { guardDevXpGuildObjects } from '../middleware/devXpScopeGuard';
 
 import { guildsRouter } from './v2/guilds';
 import { dashboardRouter } from './v2/dashboard';
@@ -87,7 +88,7 @@ v2Router.use('/dev/nitrado-mirror', requireGlobalDeveloperIdentity, devNitradoMi
 v2Router.use('/dev/incident', requireGlobalDeveloperIdentity, requireDev, requireVerifiedDevMutationStepUp, devIncidentRouter);
 v2Router.use('/dev/observability', requireGlobalDeveloperIdentity, devObservabilityRouter);
 v2Router.use('/dev/stubs', requireGlobalDeveloperIdentity, requireDev, requireVerifiedDevMutationStepUp, devStubsRouter);
-v2Router.use('/dev/command-center', requireGlobalDeveloperIdentity, requireDev, redirectLegacyDevExports, guardDevCommandCenterInput, requireVerifiedDevMutationStepUp, devCommandCenterRouter);
+v2Router.use('/dev/command-center', requireGlobalDeveloperIdentity, requireDev, redirectLegacyDevExports, guardDevCommandCenterInput, requireVerifiedDevMutationStepUp, guardDevXpGuildObjects, devCommandCenterRouter);
 v2Router.use('/dev/secure-export', requireGlobalDeveloperIdentity, requireDev, requireVerifiedDevMutationStepUp, devSecureExportRouter);
 
 // Discord-/Dashboard-Paritaet: exakt derselbe Live-Katalog wie /help.
