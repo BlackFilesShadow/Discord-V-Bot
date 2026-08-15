@@ -7,7 +7,7 @@
  */
 
 import { Router } from 'express';
-import { requireAuth, requireDev } from '../middleware/auth';
+import { requireAuth, requireDev, requireBotAdmin } from '../middleware/auth';
 import { idempotency } from '../middleware/idempotency';
 import { requireGlobalDeveloperIdentity } from '../middleware/globalDeveloperGate';
 import { requireGlobalBotAdminIdentity } from '../middleware/globalBotAdminGate';
@@ -104,8 +104,9 @@ v2Router.use('/dev/stubs', requireGlobalDeveloperIdentity, requireDev, requireVe
 v2Router.use('/dev/command-center', requireGlobalDeveloperIdentity, requireDev, redirectLegacyDevExports, guardDevCommandCenterInput, guardDevSecurityInput, requireVerifiedDevMutationStepUp, guardDevAdminTarget, guardDevXpGuildObjects, devCommandDeployRouter, devXpViewRouter, devCommandCenterRouter);
 v2Router.use('/dev/secure-export', requireGlobalDeveloperIdentity, requireDev, requireVerifiedDevMutationStepUp, devSecureExportRouter);
 
-// Discord-/Dashboard-Paritaet: exakt derselbe Live-Katalog wie /help.
-v2Router.use('/bot-admin/command-catalog', requireGlobalBotAdminIdentity, commandCatalogRouter);
+// Discord-/Dashboard-Paritaet: derselbe deploybare Live-Katalog wie /help;
+// auch reine Diagnose-Reads bleiben hinter aktiver BotAdminSession.
+v2Router.use('/bot-admin/command-catalog', requireGlobalBotAdminIdentity, requireBotAdmin, commandCatalogRouter);
 // Grosse Audit-Downloads, Trigger sowie Datei-/Delete-Operationen besitzen
 // spezifische kanonische Router und muessen vor dem Sammelrouter laufen.
 v2Router.use('/bot-admin/command-center/audit/export', requireGlobalBotAdminIdentity, botAdminAuditExportRouter);
