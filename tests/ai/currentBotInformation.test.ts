@@ -14,6 +14,13 @@ function walkTs(dir: string): string[] {
   });
 }
 
+const CANONICAL_COMMAND_RENAMES: Readonly<Record<string, string>> = {
+  whitelist: 'whitelist-antrag',
+  'wl-add': 'whitelist-add',
+  'wl-remove': 'whitelist-remove',
+  'wl-list': 'whitelist',
+};
+
 describe('current bot information surfaces', () => {
   const aiCatalog = read('src/modules/ai/commandCatalog.ts');
   const aiHandler = read('src/modules/ai/aiHandler.ts');
@@ -21,6 +28,7 @@ describe('current bot information surfaces', () => {
   const about = read('src/commands/about.ts');
   const botInfo = read('src/content/botInfo.ts');
   const help = read('src/commands/user/help.ts');
+  const handler = read('src/commands/handler.ts');
   const readme = read('README.md');
   const security = read('SECURITY.md');
   const architecture = read('docs/ARCHITECTURE.md');
@@ -51,13 +59,19 @@ describe('current bot information surfaces', () => {
     }
   });
 
-  it('dokumentiert keinen AI-Slash-Basisnamen ohne reale Command-Definition', () => {
+  it('dokumentiert nur reale oder zentral kanonisch umbenannte Slash-Basisnamen', () => {
     const source = walkTs(path.resolve(process.cwd(), 'src/commands'))
       .map((file) => fs.readFileSync(file, 'utf8'))
       .join('\n');
-    const defined = new Set([...source.matchAll(/\.setName\(\s*['"]([a-z0-9-]+)['"]\s*\)/g)].map((m) => m[1]));
+    const rawDefined = [...source.matchAll(/\.setName\(\s*['"]([a-z0-9-]+)['"]\s*\)/g)].map((m) => m[1]);
+    const defined = new Set(rawDefined.map((name) => CANONICAL_COMMAND_RENAMES[name] ?? name));
     const documented = [...aiCatalog.matchAll(/name:\s*['"]\/([a-z0-9-]+)/g)].map((m) => m[1]);
     const missing = [...new Set(documented.filter((name) => !defined.has(name)))];
+
+    expect(handler).toContain("whitelist: 'whitelist-antrag'");
+    expect(handler).toContain("'wl-add': 'whitelist-add'");
+    expect(handler).toContain("'wl-remove': 'whitelist-remove'");
+    expect(handler).toContain("'wl-list': 'whitelist'");
     expect(missing).toEqual([]);
   });
 
@@ -73,14 +87,15 @@ describe('current bot information surfaces', () => {
     expect(about).toContain("from '../content/botInfo'");
     expect(botInfo).toContain("import { BOT_DEVELOPER }");
     expect(botInfo).toContain('/help');
-    expect(botInfo).toContain('Bot-Admin-/DEV-Werkzeuge');
+    expect(botInfo).toContain('getrennte Bot-Admin- und DEV-Bereiche');
     expect(botInfo).toContain('Hersteller');
   });
 
-  it('/help erklaert die aktuelle Dashboard-Trennung', () => {
-    expect(help).toContain('Aktuelle Discord-Commands');
-    expect(help).toContain('Bot-Admin & DEV: Web-Dashboard');
-    expect(help).toContain('Hersteller-Slash-Funktionen bleiben in Discord');
+  it('/help erklaert die aktuelle sichtbare Command-Trennung', () => {
+    expect(help).toContain('V-Bot Prime · Command-Hilfe');
+    expect(help).toContain('DEV-Funktionen und `/ai` werden hier bewusst nicht angezeigt');
+    expect(help).toContain("id: 'manufacturer'");
+    expect(help).toContain('Manufacturer-Commands duerfen in der Hilfe auffindbar sein');
   });
 
   it('kanonische Doku beschreibt keinen alten globalen Admin/DEV-Slash-Betrieb mehr', () => {
