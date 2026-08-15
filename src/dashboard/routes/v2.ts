@@ -6,12 +6,21 @@
  * `idempotency`-Middleware gesichert (Haertung A1).
  */
 
+import '../expressAsyncErrors';
 import { Router } from 'express';
-import { requireAuth } from '../middleware/auth';
+import { requireAuth, requireDev, requireBotAdmin } from '../middleware/auth';
 import { idempotency } from '../middleware/idempotency';
 import { requireGlobalDeveloperIdentity } from '../middleware/globalDeveloperGate';
 import { requireGlobalBotAdminIdentity } from '../middleware/globalBotAdminGate';
 import { requireSafeDashboardEconomyScope } from '../middleware/economyScopeGuard';
+import { guardBotAdminCommandCenterInput, guardDevCommandCenterInput } from '../middleware/commandCenterInputGuard';
+import { requireVerifiedDevMutationStepUp, redirectLegacyDevExports } from '../middleware/devStepUp';
+import { guardDevAdminTarget } from '../middleware/devAdminTargetGuard';
+import { guardDevXpGuildObjects } from '../middleware/devXpScopeGuard';
+import { guardDevXpMutationInput } from '../middleware/devXpMutationInputGuard';
+import { guardDevSecurityInput } from '../middleware/devSecurityInputGuard';
+import { guardBotAdminGuildReferences } from '../middleware/botAdminGuildReferenceGuard';
+import { v2AsyncErrorBoundary } from '../middleware/v2AsyncErrorBoundary';
 
 import { guildsRouter } from './v2/guilds';
 import { dashboardRouter } from './v2/dashboard';
@@ -39,8 +48,20 @@ import { devNitradoMirrorRouter } from './v2/devNitradoMirror';
 import { devIncidentRouter } from './v2/devIncident';
 import { devObservabilityRouter } from './v2/devObservability';
 import { devStubsRouter } from './v2/devStubs';
+import { devCommandCenterRouter } from './v2/devCommandCenter';
+import { devCommandDeployRouter } from './v2/devCommandDeploy';
+import { devXpViewRouter } from './v2/devXpView';
+import { devSecureExportRouter } from './v2/devSecureExport';
 import { auditRouter } from './v2/audit';
 import { botAdminRouter } from './v2/botAdmin';
+import { botAdminCommandCenterRouter } from './v2/botAdminCommandCenter';
+import { botAdminCommandCenterSafetyRouter } from './v2/botAdminCommandCenterSafety';
+import { botAdminAuditExportRouter } from './v2/botAdminAuditExport';
+import { botAdminTriggersRouter } from './v2/botAdminTriggers';
+import { botAdminSafePackageDeleteRouter } from './v2/botAdminSafePackageDelete';
+import { botAdminSafeValidationRouter } from './v2/botAdminSafeValidation';
+import { botAdminDangerSafetyRouter } from './v2/botAdminDangerSafety';
+import { botAdminXpRetirementRouter } from './v2/botAdminXpRetirement';
 import { commandCatalogRouter } from './v2/commandCatalog';
 
 export const v2Router = Router();
@@ -72,19 +93,37 @@ v2Router.use('/guilds/:guildId/audit', auditRouter);
 
 v2Router.use('/dev/snapshot', requireGlobalDeveloperIdentity);
 v2Router.use('/dev/logs', requireGlobalDeveloperIdentity);
-v2Router.use('/dev/sessions', requireGlobalDeveloperIdentity);
+// Session-Lesezugriff braucht eine aktive DevSession; mutierende Session-
+// Aktionen (insb. Force-Revoke) verlangen zusaetzlich denselben kryptografisch
+// verifizierten Step-Up wie andere sensible DEV-Mutationen.
+v2Router.use('/dev/sessions', requireGlobalDeveloperIdentity, requireDev, requireVerifiedDevMutationStepUp);
 v2Router.use('/dev', devRouter);
 
 v2Router.use('/dev/uploads', requireGlobalDeveloperIdentity, devUploadsRouter);
 v2Router.use('/dev/analytics', requireGlobalDeveloperIdentity, devAnalyticsRouter);
 v2Router.use('/dev/status', requireGlobalDeveloperIdentity, devStatusRouter);
 v2Router.use('/dev/nitrado-mirror', requireGlobalDeveloperIdentity, devNitradoMirrorRouter);
-v2Router.use('/dev/incident', requireGlobalDeveloperIdentity, devIncidentRouter);
+v2Router.use('/dev/incident', requireGlobalDeveloperIdentity, requireDev, requireVerifiedDevMutationStepUp, devIncidentRouter);
 v2Router.use('/dev/observability', requireGlobalDeveloperIdentity, devObservabilityRouter);
-v2Router.use('/dev/stubs', requireGlobalDeveloperIdentity, devStubsRouter);
+v2Router.use('/dev/stubs', requireGlobalDeveloperIdentity, requireDev, requireVerifiedDevMutationStepUp, devStubsRouter);
+v2Router.use('/dev/command-center', requireGlobalDeveloperIdentity, requireDev, redirectLegacyDevExports, guardDevCommandCenterInput, guardDevSecurityInput, requireVerifiedDevMutationStepUp, guardDevAdminTarget, guardDevXpMutationInput, guardDevXpGuildObjects, devCommandDeployRouter, devXpViewRouter, devCommandCenterRouter);
+v2Router.use('/dev/secure-export', requireGlobalDeveloperIdentity, requireDev, requireVerifiedDevMutationStepUp, devSecureExportRouter);
 
-// Discord-/Dashboard-Paritaet: exakt derselbe Live-Katalog wie /help.
-v2Router.use('/bot-admin/command-catalog', requireGlobalBotAdminIdentity, commandCatalogRouter);
+// Discord-/Dashboard-Paritaet: derselbe deploybare Live-Katalog wie /help;
+// auch reine Diagnose-Reads bleiben hinter aktiver BotAdminSession.
+v2Router.use('/bot-admin/command-catalog', requireGlobalBotAdminIdentity, requireBotAdmin, commandCatalogRouter);
+// Grosse Audit-Downloads, Trigger sowie Datei-/Delete-Operationen besitzen
+// spezifische kanonische Router und muessen vor dem Sammelrouter laufen.
+v2Router.use('/bot-admin/command-center/audit/export', requireGlobalBotAdminIdentity, botAdminAuditExportRouter);
+v2Router.use('/bot-admin/command-center/triggers', requireGlobalBotAdminIdentity, botAdminTriggersRouter);
+v2Router.use('/bot-admin/command-center', requireGlobalBotAdminIdentity, guardBotAdminCommandCenterInput, botAdminCommandCenterSafetyRouter, botAdminCommandCenterRouter);
 
-// Bot-Admin: Shared Password = Step-up, NICHT Identitaet/Berechtigung.
-v2Router.use('/bot-admin', requireGlobalBotAdminIdentity, botAdminRouter);
+// Bot-Admin: globale Identitaet + aktive BotAdminSession. Safety-Overrides und
+// Guild-Referenzpruefung muessen vor dem Legacy-Router laufen. XP wird fail-
+// closed in DEV umgeleitet; Danger-Purge und physische Paketloeschung laufen
+// ausschliesslich ueber ihre kanonischen Filesystem-Safety-Services.
+v2Router.use('/bot-admin', requireGlobalBotAdminIdentity, botAdminXpRetirementRouter, botAdminDangerSafetyRouter, botAdminSafeValidationRouter, botAdminSafePackageDeleteRouter, guardBotAdminGuildReferences, botAdminRouter);
+
+// Letzte v2-Error-Grenze: normale Fehler gehen an den globalen Dashboard-
+// Handler; bei bereits begonnenen Streams wird die partielle Verbindung beendet.
+v2Router.use(v2AsyncErrorBoundary);

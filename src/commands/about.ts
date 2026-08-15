@@ -1,26 +1,23 @@
 import { ChatInputCommandInteraction, SlashCommandBuilder } from 'discord.js';
 import { Command } from '../types';
-import fs from 'fs/promises';
 import { Colors, vEmbed } from '../utils/embedDesign';
+import { BOT_PRODUCT_NAME, buildBotAboutText } from '../content/botInfo';
 
-const aboutPath = __dirname + '/about.md';
-
+/**
+ * Oeffentliche Bot-Selbstvorstellung aus derselben kanonischen Quelle wie der
+ * Mention-Responder. Keine Runtime-Markdown-Abhaengigkeit und keine getrennt
+ * gepflegten, widerspruechlichen Feature-Listen.
+ */
 const aboutCommand: Command = {
   data: new SlashCommandBuilder()
     .setName('stell-dich-vor')
-    .setDescription('Stellt den Bot und seine Features attraktiv vor'),
+    .setDescription('Stellt V-Bot Prime und seine aktuell verfuegbaren Bereiche vor'),
   async execute(interaction: ChatInputCommandInteraction) {
-    let aboutText = '';
-    try {
-      aboutText = await fs.readFile(aboutPath, 'utf-8');
-    } catch {
-      aboutText = '🤖 Discord-V-Bot – Dein smarter Community-Manager\n\n(Über mich-Text konnte nicht geladen werden)';
-    }
-    if (aboutText.length > 4000) aboutText = aboutText.slice(0, 3990) + '...';
+    const description = buildBotAboutText();
     const embed = vEmbed(Colors.Info)
-      .setTitle('🤖 Discord-V-Bot – Stell dich vor')
-      .setDescription(aboutText)
-      .setFooter({ text: 'V-Bot • Info' });
+      .setTitle(`🤖 ${BOT_PRODUCT_NAME} — aktueller Funktionsstand`)
+      .setDescription(description.length > 4096 ? `${description.slice(0, 4093)}...` : description)
+      .setFooter({ text: `${BOT_PRODUCT_NAME} • Live-Funktionsuebersicht` });
     await interaction.reply({ embeds: [embed], ephemeral: false });
   },
 };

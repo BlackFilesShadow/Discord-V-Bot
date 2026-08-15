@@ -1,5 +1,6 @@
 import prisma from '../../database/prisma';
 import { isSafeRegexPattern, safeRegexTest } from '../../utils/safeRegex';
+import { logger } from '../../utils/logger';
 import {
   BOT_DEVELOPER,
   DEVELOPER_IDENTITY_TRIGGER_PATTERN,
@@ -31,7 +32,7 @@ export const GLOBAL_AI_TRIGGERS: AiTrigger[] = [
     trigger: 'stell dich vor',
     triggerType: 'keyword',
     responseMode: 'ai',
-    aiPrompt: 'Begrüße locker und kurz, sag was du machst (Slash-Commands, Hilfe, Trigger, AI). Max. 2 Sätze, 1 Emoji, Tick Humor.',
+    aiPrompt: 'Begrüße locker und kurz. Sag korrekt, dass du Discord-Commands für Community-Funktionen, AI-Hilfe und Trigger hast und dass globale Bot-Admin-/DEV-Verwaltung im geschützten Dashboard liegt. Max. 2 Sätze, 1 Emoji, Tick Humor.',
     cooldownSeconds: 10,
     createdAt: '2026-04-23T00:00:00.000Z',
     createdBy: 'system',
@@ -91,7 +92,7 @@ export const GLOBAL_AI_TRIGGERS: AiTrigger[] = [
     trigger: 'wie funktionieren deine commands',
     triggerType: 'keyword',
     responseMode: 'ai',
-    aiPrompt: 'Erkläre kurz und locker, wie deine Commands funktionieren: Slash-Commands (/), es gibt User-, Admin- und Developer-Commands, letztere nur für Berechtigte. Nenne 3-5 Beispiele wie /help, /level, /ai. Max. 800 Zeichen, kein Roman.',
+    aiPrompt: 'Erkläre kurz und korrekt: Discord-Commands beginnen mit /. Nenne nur tatsächlich in Discord geladene Beispiele wie /help oder Community-Funktionen aus dem aktuellen Command-Katalog. Globale Bot-Admin- und DEV-Verwaltung läuft im geschützten Dashboard und darf nicht als /admin-* oder /dev-* Slash-Command behauptet werden; Hersteller-Funktionen sind die dokumentierte Ausnahme. Max. 800 Zeichen, kein Roman.',
     cooldownSeconds: 30,
     createdAt: '2026-04-23T00:00:00.000Z',
     createdBy: 'system',
@@ -101,7 +102,7 @@ export const GLOBAL_AI_TRIGGERS: AiTrigger[] = [
     trigger: 'was kannst du',
     triggerType: 'keyword',
     responseMode: 'ai',
-    aiPrompt: 'Sag locker und kurz, was du draufhast: Slash-Commands für User/Admin, AI-Antworten via Mention, Level/XP-System, Moderation, Polls, Giveaways, Uploads. Max. 4 Sätze, 1 Emoji.',
+    aiPrompt: 'Sag locker und kurz, was du draufhast: Discord-Commands für Community-/Nutzerfunktionen, AI-Antworten via Mention, Level/XP, Moderation, Polls, Giveaways und Hersteller-Workflows. Erwähne bei Bedarf, dass globale Bot-Admin-/DEV-Verwaltung im Dashboard liegt. Erfinde keine entfernten Admin-/DEV-Slash-Commands. Max. 4 Sätze, 1 Emoji.',
     cooldownSeconds: 30,
     createdAt: '2026-04-23T00:00:00.000Z',
     createdBy: 'system',
@@ -111,7 +112,7 @@ export const GLOBAL_AI_TRIGGERS: AiTrigger[] = [
     trigger: 'was bist du',
     triggerType: 'keyword',
     responseMode: 'ai',
-    aiPrompt: 'Sag kurz und entspannt was du bist (Discord-Bot mit AI, Multi-Server, Slash-Commands). Max. 2 Sätze.',
+    aiPrompt: 'Sag kurz und entspannt was du bist: ein Discord-/Community-Bot mit AI, Multi-Server-Funktionen, Discord-Commands und geschütztem Dashboard. Max. 2 Sätze.',
     cooldownSeconds: 30,
     createdAt: '2026-04-23T00:00:00.000Z',
     createdBy: 'system',
@@ -181,20 +182,32 @@ export async function saveTriggers(guildId: string, triggers: AiTrigger[], updat
 }
 
 export async function addTrigger(guildId: string, trigger: AiTrigger): Promise<{ ok: boolean; message: string }> {
-  const guildOnly = await listGuildOnly(guildId);
-  if (guildOnly.length >= MAX_TRIGGERS_PER_GUILD) {
-    return { ok: false, message: `Maximal ${MAX_TRIGGERS_PER_GUILD} eigene Trigger pro Server erlaubt (globale Trigger zaehlen nicht mit).` };
+  try {
+    const guildOnly = await listGuildOnly(guildId);
+    if (guildOnly.length >= MAX_TRIGGERS_PER_GUILD) {
+      return { ok: false, message: `Maximal ${MAX_TRIGGERS_PER_GUILD} eigene Trigger pro Server erlaubt (globale Trigger zaehlen nicht mit).` };
+    }
+    const combined = await listTriggers(guildId);
+    if (combined.some(t => t.id === trigger.id)) {
+      return { ok: false, message: `Trigger-ID "${trigger.id}" existiert bereits.` };
+    }
+    if (trigger.triggerType === 'regex' && !isSafeRegexPattern(trigger.trigger)) {
+      return { ok: false, message: 'Ungültiges oder potenziell unsicheres Regex-Pattern (ReDoS-Schutz).' };
+    }
+    guildOnly.push(normalizeTrigger(trigger));
+    await saveTriggers(guildId, guildOnly, trigger.createdBy);
+    return { ok: true, message: `Trigger "${trigger.id}" gespeichert (${guildOnly.length}/${MAX_TRIGGERS_PER_GUILD}).` };
+  } catch (error) {
+    // addTrigger hat bewusst einen Result-Vertrag statt Exception-Vertrag. Das
+    // ist fuer HTTP-/Media-Caller wichtig: sie koennen bei ok=false ihre bereits
+    // materialisierten Dateien deterministisch zurueckrollen.
+    logger.error('AI-Trigger konnte nicht gespeichert werden.', {
+      guildId,
+      triggerId: trigger.id,
+      error: error instanceof Error ? error.message : String(error),
+    });
+    return { ok: false, message: 'Trigger konnte wegen eines Persistenzfehlers nicht gespeichert werden.' };
   }
-  const combined = await listTriggers(guildId);
-  if (combined.some(t => t.id === trigger.id)) {
-    return { ok: false, message: `Trigger-ID "${trigger.id}" existiert bereits.` };
-  }
-  if (trigger.triggerType === 'regex' && !isSafeRegexPattern(trigger.trigger)) {
-    return { ok: false, message: 'Ungültiges oder potenziell unsicheres Regex-Pattern (ReDoS-Schutz).' };
-  }
-  guildOnly.push(normalizeTrigger(trigger));
-  await saveTriggers(guildId, guildOnly, trigger.createdBy);
-  return { ok: true, message: `Trigger "${trigger.id}" gespeichert (${guildOnly.length}/${MAX_TRIGGERS_PER_GUILD}).` };
 }
 
 export async function removeTrigger(guildId: string, id: string, updatedBy: string): Promise<{ ok: boolean; message: string }> {

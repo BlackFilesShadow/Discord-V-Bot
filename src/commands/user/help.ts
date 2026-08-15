@@ -26,8 +26,9 @@ async function resolveAccess(discordId: string): Promise<{ isAdmin: boolean; isD
     select: { isManufacturer: true, status: true },
   });
   return {
-    // /help is intentionally never a discovery surface for Bot-Admin/DEV
-    // commands. Those capabilities belong in their dedicated dashboard areas.
+    // /help ist die Wahrheitsquelle fuer bei Discord geladene Nutzer-Commands.
+    // Globale Bot-Admin-/DEV-Verwaltung lebt im Web-Dashboard und wird hier
+    // absichtlich nicht als Slash-Command-Oberflaeche exponiert.
     isAdmin: false,
     isDeveloper: false,
     isManufacturer: Boolean(user?.isManufacturer && user.status === 'ACTIVE'),
@@ -55,13 +56,13 @@ function pageEmbed(entries: CommandCatalogEntry[], page: number, totalPages: num
 
   return new EmbedBuilder()
     .setColor(Colors.Primary)
-    .setTitle('📚 Command-Katalog')
+    .setTitle('📚 Aktuelle Discord-Commands')
     .setDescription(
       `Filter: **${filter}** · ${entries.length} Commands · Seite ${page + 1}/${totalPages}\n` +
-      '🏭 Hersteller · 🖥️ auch im Dashboard\n\n' +
+      '🏭 Hersteller-Funktion · 🖥️ hat zusaetzliche Dashboard-Oberflaeche\n\n' +
       `${Brand.divider}\n${body}`,
     )
-    .setFooter({ text: 'Bot-Admin- und DEV-Funktionen werden nicht in /help angezeigt.' })
+    .setFooter({ text: 'Bot-Admin & DEV: Web-Dashboard • Hersteller-Slash-Funktionen bleiben in Discord' })
     .setTimestamp();
 }
 
@@ -75,14 +76,14 @@ function buttons(page: number, totalPages: number): ActionRowBuilder<ButtonBuild
 const helpCommand: Command = {
   data: new SlashCommandBuilder()
     .setName('help')
-    .setDescription('Zeigt den aktuellen Command-Katalog an.')
+    .setDescription('Zeigt die aktuell bei Discord geladenen Commands an.')
     .addStringOption((option) => option
       .setName('category')
       .setDescription('Command-Gruppe filtern')
       .setRequired(false)
       .addChoices(
         { name: 'Alle sichtbaren Commands', value: 'all' },
-        { name: 'Öffentlich', value: 'public' },
+        { name: 'Oeffentlich', value: 'public' },
         { name: 'Hersteller', value: 'manufacturer' },
         { name: 'Auch im Dashboard', value: 'dashboard' },
       )),

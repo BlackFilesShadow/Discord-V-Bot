@@ -28,6 +28,8 @@ import JsonValidator from './pages/dev/JsonValidator';
 import DebugTools from './pages/dev/DebugTools';
 import AuditLogs from './pages/dev/AuditLogs';
 import CommandDiagnostics from './pages/dev/CommandDiagnostics';
+import CommandCenter from './pages/dev/CommandCenter';
+import SecureDevExport from './pages/dev/SecureDevExport';
 import Killfeed from './pages/dev/Killfeed';
 import PlayerTracking from './pages/dev/PlayerTracking';
 import RaidAnalysisTool from './pages/dev/RaidAnalysis';
@@ -48,7 +50,6 @@ function Protected({ children }: { children: JSX.Element }) {
   return children;
 }
 
-// Slug -> Component Mapping. Reihenfolge muss zu DEV_TOOLS in pages/Dev.tsx passen.
 const DEV_PAGES: Record<string, () => JSX.Element> = {
   'bot-status': LiveBotStatus,
   'dashboard-status': DashboardStatus,
@@ -85,8 +86,6 @@ const DEV_PAGES: Record<string, () => JSX.Element> = {
   'nitrado-mirror': NitradoMirror,
 };
 
-// Registry-Konsistenz-Check (Compile-Zeit-Hilfe; failt frueh wenn Tools/Pages
-// auseinanderlaufen).
 const _missing = DEV_TOOLS.filter(t => !DEV_PAGES[t.slug]).map(t => t.slug);
 if (_missing.length > 0) {
   // eslint-disable-next-line no-console
@@ -104,6 +103,8 @@ export default function App() {
         <Route path="/bot-admin" element={<Protected><BotAdmin /></Protected>} />
         <Route path="/dev" element={<Protected><Dev /></Protected>}>
           <Route index element={<Navigate to="bot-status" replace />} />
+          <Route path="command-center" element={<CommandCenter />} />
+          <Route path="secure-export" element={<SecureDevExport />} />
           {DEV_TOOLS.map(t => {
             const Page = DEV_PAGES[t.slug];
             if (!Page) return null;
@@ -113,7 +114,6 @@ export default function App() {
         </Route>
         <Route path="*" element={<Navigate to="/servers" replace />} />
       </Routes>
-      {/* DevLoginPanel ist in Shell.tsx in der Topbar eingebettet. */}
     </Toaster>
   );
 }

@@ -1,144 +1,257 @@
-# Architecture — V-Bot Prime
+# V-Bot Prime — Architektur
 
-> High-Level-Übersicht des Systems. Für tiefe Modul-Details siehe Inline-JSDoc.
+> Stand: August 2026. Dieses Dokument beschreibt die aktuell laufende Architektur, nicht historische Zwischenstände.
 
----
+## 1. Systemübersicht
 
-## Top-Level
+V-Bot besteht aus vier eng gekoppelten, aber sicher getrennten Oberflächen:
 
+1. **Discord Runtime** — Nutzer-, Community-, Hersteller- und servergescoppte Gameserver-Funktionen.
+2. **Guild Dashboard** — Self-Service-Konfiguration pro Discord-Guild und Nitrado-Slot.
+3. **Bot-Admin Dashboard** — globale Betriebs-/Supportverwaltung.
+4. **DEV Dashboard** — technische Administration, Diagnose, Forensik und kontrollierte Runtime-Werkzeuge.
+
+PostgreSQL/Prisma ist die kanonische Persistenz. Nitrado-Remoteänderungen laufen über servergescoppte Jobs/Outbox-Pfade. Socket.IO liefert Dashboard-Liveupdates.
+
+## 2. Command-Modell
+
+### Discord
+
+`src/commands/` ist kein reiner „ein File = ein öffentlicher Slash-Command“-Ordner mehr.
+
+- `src/commands/user/` — Nutzer-/Community-/Hersteller-Commands.
+- `src/commands/dashboard/` — **Discord**-Commands mit Guild-/Gameserver-Scope, z. B. Economy, Casino, Fraktionen, Permissions, Whitelist und Server-Bans. Der historische Ordnername bedeutet nicht, dass diese Commands nur im Web laufen.
+- `src/commands/developer/` — nur bewusst erhaltene Hersteller-Ausnahme (`devManufacturer.ts`).
+- `src/commands/inventory.ts` — Klassifizierung, Migrationsstatus und Hersteller-Preserve-Regeln.
+- `src/commands/catalog.ts` — Live-Katalog aus den tatsächlich geladenen Discord-Commands; `/help` und Dashboard-Diagnostik nutzen diese Quelle.
+
+### Bot-Admin / DEV
+
+Globale `adminOnly`-/`devOnly`-Slash-Funktionen wurden in Web-Command-Center migriert. Die Migrationsregel lautet:
+
+1. funktionsgleichen Dashboard-Ersatz bauen,
+2. Rechte/Security-Parität prüfen,
+3. Regressionstests ergänzen,
+4. im Inventory als `moved_to_dashboard` markieren,
+5. erst danach Slash-Implementierung entfernen.
+
+Herstellerfunktionen sind die einzige bewusst erhaltene Ausnahme.
+
+## 3. HTTP Request Flow
+
+### Guild-Routen
+
+```text
+Browser
+  -> Discord OAuth Session / requireAuth
+  -> Guild Owner oder delegierter Permission-Scope
+  -> optional Gameserver-Scope-Guard
+  -> Route
+  -> Prisma / Outbox / Discord / Nitrado
 ```
-┌─────────────────┐         ┌──────────────────────────────────┐
-│   Discord API   │◄───────►│  Bot-Process (src/index.ts)      │
-└─────────────────┘  WS+REST│  - Slash-Commands (commands/)    │
-                            │  - Events (events/)              │
-                            │  - Module (modules/)             │
-                            │    XP, Tickets, Whitelist, AI,   │
-                            │    Killfeed, Translate, RAG, ... │
-                            └────────┬─────────────────────────┘
-                                     │
-                                     ▼
-                            ┌──────────────────┐
-                            │  PostgreSQL 16   │
-                            │  + pgvector      │
-                            │  (Prisma-ORM)    │
-                            └────────▲─────────┘
-                                     │
-┌──────────────────┐                 │
-│ Dashboard-UI     │  HTTP/WS        │
-│ (Vite + React)   │◄────────────────┤
-└──────────────────┘                 │
-                            ┌────────┴─────────────────────────┐
-                            │  Dashboard-Server                │
-                            │  (src/dashboard/server.ts)       │
-                            │  - Express + Helmet + CSP        │
-                            │  - OAuth2 + Session(PG-Store)    │
-                            │  - REST (/api, /api/v2)          │
-                            │  - Socket.io (Live-Updates)      │
-                            │  - Webhooks (HMAC)               │
-                            └──────────────────────────────────┘
+
+Guild-gebundene Daten dürfen niemals nur über eine globale Rolle autorisiert werden. `guildId` und bei Gameserverdaten `nitradoConnId` bleiben Teil des fachlichen Scopes.
+
+### Bot-Admin
+
+```text
+requireAuth
+  -> requireGlobalBotAdminIdentity
+  -> BotAdminSession
+  -> Bot-Admin Router / Command Center
 ```
 
----
+### DEV
 
-## Verzeichnis-Struktur (Top-Level)
+```text
+requireAuth
+  -> requireGlobalDeveloperIdentity
+  -> requireDev (aktive DevSession)
+  -> optional globales MFA/IP-Gate je Konfiguration
+  -> bei sensibler Mutation: verified DEV Step-Up
+  -> DEV Router / Command Center
+```
 
-| Pfad             | Zweck                                                            |
-|------------------|------------------------------------------------------------------|
-| `src/commands/`  | Slash-Commands (eine Datei = ein Command)                        |
-| `src/events/`    | Discord-Gateway-Event-Handler                                    |
-| `src/modules/`   | Domain-Logik, geteilt zwischen Commands+Events                   |
-| `src/dashboard/` | Web-Dashboard (Express + Routes + Services)                      |
-| `src/database/`  | Prisma-Client + DB-Helper                                        |
-| `src/utils/`     | Stateless-Helfer (Logger, Validator, EmbedSanitize, Metrics)     |
-| `src/scripts/`   | Maintenance-Skripte (one-shot)                                   |
-| `prisma/`        | Schema + Migrationen                                             |
-| `dashboard-ui/`  | Vite-React-Frontend (separates Build-Target)                     |
-| `deploy/`        | Server-Side-Skripte (`bot.sh`, `update.sh`, `backup.sh`, …)      |
-| `tests/`         | Jest-Tests (Spiegelung der `src/`-Struktur)                      |
-| `eslint-rules/`  | Custom ESLint-Rules (z.B. `no-unscoped-prisma-query`)            |
+`DEV_REQUIRE_MFA=true` und `DEV_REQUIRE_IP_ALLOWLIST=true` sind explizite zusätzliche Gates; sie sind nicht pauschal als immer aktiv anzunehmen.
 
----
+Sensible DEV-Mutationen besitzen unabhängig davon ein eigenes Re-Auth-Gate: aktive 2FA => TOTP; sonst erneute Prüfung von `DEV_PASSWORD`.
 
-## Datenfluss-Beispiele
+## 4. Dashboard-Routen
 
-### Slash-Command-Lebenszyklus
-1. User tippt `/befehl`
-2. Discord-Gateway → `events/interactionCreate.ts`
-3. Dispatcher findet Command-File in `commands/`
-4. Permission-Check (`requirePermission`)
-5. Handler-Logik (DB-Query via Prisma, ggf. AI-Call)
-6. User-Content für Embed → `safeEmbedField`
-7. Reply via `interaction.reply` oder `editReply`
-8. Action-Audit-Trail (DB-Insert)
+Zentraler Mount: `/api/v2`.
 
-### Dashboard-API-Request
-1. Browser → Caddy/nginx (TLS-Termination, HTTP→HTTPS)
-2. Reverse-Proxy → Express
-3. Helmet/CSP/Permissions-Policy headers
-4. Session-Lookup (PG-Store)
-5. Route-Handler mit `requireAuth` / `requireDev`
-6. Bei `/api/v2/dev/*`: zusätzlich MFA + IP-Allowlist
-7. Prisma-Query → Response (JSON)
-8. SecurityEvent-Log bei sensiblen Aktionen
+Wichtige Domänen:
 
-### Webhook-Empfang
-1. Externer Sender → POST `/webhooks/<provider>`
-2. Raw-Body-Parser (Signatur braucht ungeparsten Body)
-3. HMAC-SHA256 Vergleich (Constant-Time)
-4. Replay-Schutz via Timestamp-Window
-5. Domain-Logik dispatcht an passendes Modul
+- `/guilds/:guildId/...` — Guild-/Gameserver-Self-Service.
+- `/bot-admin/...` — globale Bot-Administration.
+- `/bot-admin/command-center/...` — Dashboard-Ersatz ehemaliger globaler Admin-Slash-Funktionen.
+- `/dev/...` — DEV Session/Status und technische Routen.
+- `/dev/command-center/...` — Dashboard-Ersatz ehemaliger DEV-Slash-Funktionen.
+- `/dev/secure-export/...` — sensible Exporte ausschließlich per POST + verifiziertem Step-Up.
 
----
+## 5. Nitrado Multi-Server-Scope
 
-## Wichtige Architektur-Prinzipien
+Ein Discord-Server kann mehrere Nitrado-DayZ-Server binden. Fachliche Wahrheit ist immer:
 
-### Multi-Tenancy / Guild-Scoping
-- Jede Tabelle, die Guild-bezogene Daten hält, **muss** `guildId` als Spalte haben
-- Jede Query auf solche Tabellen **muss** nach `guildId` filtern
-- ESLint-Rule [`eslint-rules/no-unscoped-prisma-query.js`](eslint-rules/no-unscoped-prisma-query.js) erzwingt das
+```text
+guildId + nitradoConnId
+```
 
-### Defense-in-depth
-- Auth-Layer ist nie Single-Point-of-Failure
-- Beispiel Dev-Dashboard: Session → Role → DevSession → MFA → IP (5 Gates)
+Slotnummern/Aliase sind Bedienoberfläche; persistente Beziehungen verwenden die stabile `NitradoConnection`.
 
-### Multi-Provider-Failover (AI)
-- 5 AI-Provider in Reihe: Cerebras → OpenRouter → Groq → Gemini → OpenAI
-- Health-Stats pro Provider in `aiProviderStats`-Tabelle
-- Automatisches Re-Routing bei Quota/Error/Latenz
+Scope gilt insbesondere für:
 
-### Backup & Recovery
-- Tägliches `pg_dump` via `deploy/backup.sh`
-- Verifizierung via `deploy/backup-verify.sh` (Restore in Throwaway-DB)
-- Backup-Retention: 30 Tage rolling
+- Whitelist,
+- Server-Bans,
+- Economy/Bank/Casino,
+- Spielidentitäts-Linking,
+- Fraktionen,
+- ADM-Quelle/Cursor,
+- Sessions/Rewards/Gameplay-Events.
 
----
+Cross-Slot-Fallbacks sind bei Mutationen zu vermeiden; unklare Legacy-Scope-Zustände werden fail-closed behandelt.
 
-## Ports & Prozesse (Production)
+## 6. Nitrado Job-/Outbox-Modell
 
-| Prozess          | Port  | Rolle                                    |
-|------------------|-------|------------------------------------------|
-| `bot.ts`         | —     | Discord-Gateway, kein offener Port       |
-| `dashboard`      | 3000  | Express, hinter Reverse-Proxy            |
-| `postgres`       | 5432  | Nur localhost-bound im Compose           |
-| `caddy`/`nginx`  | 443   | TLS-Termination, HTTP→HTTPS-Redirect     |
+Remoteänderungen werden nicht als „DB geschrieben = remote erfolgreich“ behandelt.
 
----
+```text
+Command/Dashboard
+  -> lokale fachliche Transaktion
+  -> NitradoJob / deduplizierte Outbox
+  -> Worker mit Connection-Lock
+  -> Nitrado API
+  -> Remote-State bestätigen
+  -> lokalen Sync-Status aktualisieren
+```
 
-## Observability
+Dadurch bleiben Whitelist-/Ban-Operationen retryfähig und servergescoppt.
 
-- **Logs**: strukturiertes JSON via `src/utils/logger.ts`, PII-Redactor aktiv
-- **Metrics**: Prometheus-kompatibler Endpoint `/metrics` (Bearer-Token)
-- **Health**: `/api/health` ohne Auth (Liveness)
-- **Error-Sink**: kritische Fehler → Discord-Webhook (optional konfigurierbar)
-- **Latency-Tracking**: `attachPrismaLatencyMiddleware` instrumentiert alle DB-Calls
+## 7. Zeitliche Server-Bans
 
----
+`/server-ban` kann permanent oder zeitlich begrenzt sein.
 
-## Erweitern: neues Modul anlegen
+Für zeitliche Bans:
 
-1. Ordner in `src/modules/<feature>/`
-2. Falls Persistenz nötig: Prisma-Schema-Update + Migration
-3. Falls Slash-Command: Datei in `src/commands/<gruppe>/`
-4. Falls Dashboard-Endpunkt: Router in `src/dashboard/routes/v2/`
-5. Tests in `tests/<bereich>/`
-6. Doku im Modul-Top-Kommentar
+1. lokale Ban-Wahrheit + Outbox werden atomar geschrieben,
+2. Ablauf-Metadaten liegen in `ServerBanExpiryNotice`,
+3. die Ablauf-Runtime pollt regelmäßig,
+4. Remote-Unban wird über die bestehende Nitrado-Outbox ausgeführt,
+5. erst nach bestätigter Remote-Entfernung wird die Ablaufmeldung im ursprünglichen Command-Kanal veröffentlicht,
+6. Re-Ban/manueller Unban canceln veraltete Ablaufmeldungen fail-safe.
+
+## 8. ADM V2
+
+Der frühere globale Runtime-Pfad über `NITRADO_ADM_DIR`, `admSyncCron` und `admWatcher` ist entfernt.
+
+Aktueller Datenfluss:
+
+```text
+NitradoConnection
+  -> per-Server ADM-Profil / auto-discovery
+  -> AdmSourceCursor
+  -> ADM-V2 Live Sync
+  -> kanonisches AdmEvent
+  -> ADM-V2 Postprocess
+       -> Link-Challenges
+       -> Sessions / Playtime
+       -> Rewards
+       -> Gameplay-/Feed-Verarbeitung
+```
+
+Die kanonische Erfassung darf nicht vom öffentlichen Gameplay-Feed-Schalter abhängen. Feed-Ausgabe kann deaktiviert sein, während ADM weiterhin korrekt ingestiert und postprocessed wird.
+
+## 9. AI Architektur
+
+Provider:
+
+- Groq
+- Cerebras
+- OpenRouter
+- Gemini
+- OpenAI
+
+Die Reihenfolge ist **adaptiv** aus persistierten Provider-Statistiken. Falls diese nicht verfügbar sind, wird mit dem konfigurierten Primary und dem definierten Fallback-Set weitergearbeitet.
+
+Vor externen AI-Aufrufen werden sensible Daten redigiert. Technische DayZ-Fragen verwenden zusätzlich verifiziertes DayZ-1.29-/Nitrado-Grounding und eine Fail-Closed-Ausgabeprüfung.
+
+### Bot-Informationen
+
+- Entwickleridentität: kanonisch `Void_Architect`.
+- `/help`: Laufzeit-Katalog aus tatsächlich geladenen Commands.
+- AI-Command-Hilfe: eigener aktueller Public-Katalog; keine globalen Bot-Admin-/DEV-Slash-Commands erfinden.
+- `/stell-dich-vor`: statische aktuelle Funktionsübersicht, keine externe/nicht vorhandene Markdown-Datei.
+
+## 10. Uploads
+
+Hersteller-Uploads:
+
+- maximal 10 Attachments pro `/upload`-Aufruf,
+- Standardlimit `MAX_FILE_SIZE_BYTES=26214400` = 25 MiB pro Datei,
+- erlaubte Endungen standardmäßig `.xml,.json`,
+- Größen-/Dateityp-/Validierungsprüfung vor finaler Freigabe,
+- GUID-getrennte Paketpfade.
+
+Dokumentation und Bot-Antworten sollen das Limit aus `config.upload.maxFileSizeBytes` ableiten, statt eine feste alte Zahl zu behaupten.
+
+## 11. Security
+
+Siehe `SECURITY.md` für Details. Architektur-Invarianten:
+
+- globale Identität niemals allein aus einer alten Session-Rolle ableiten,
+- Guild-Daten nie ohne Guild-Scope,
+- Gameserver-Daten nie ohne `nitradoConnId`,
+- sensible DEV-Mutationen nur nach echtem serverseitigem Step-Up,
+- Secrets nie in URL, Client-Logs oder Audit-Details,
+- produktive DB-Änderungen nur über versionierte Migrationen.
+
+## 12. Observability
+
+- strukturierte Winston-Logs,
+- Security/Audit-Events in DB,
+- optional Prometheus `/metrics`, nur bei explizitem Enable + gültigem Token,
+- DEV-Observability/Statusseiten,
+- Healthchecks in Deploy/Container.
+
+Der frühere Custom-Ring-Transport wird über einen modernen object-mode Writable-Bridge an Winston angebunden; Legacy-Transport-Warnungen sind kein erwarteter Normalzustand mehr.
+
+## 13. Deployment
+
+Produktiver Standard:
+
+```text
+git update/reset auf origin/main
+  -> Secret/Environment Guards
+  -> Prisma generate
+  -> prisma migrate deploy
+  -> prisma migrate status
+  -> Docker build/start
+  -> Health + Discord Login + Post-Start Checks
+```
+
+Kein produktiver automatischer `prisma db push` als Schema-Reparaturpfad.
+
+## 14. CI
+
+PR/main werden mit folgenden Ebenen geprüft:
+
+- Dependency/Security Audit,
+- Prisma Generate/Validate/Migrationen,
+- Jest,
+- Lint,
+- Backend TypeScript,
+- Frontend Build,
+- Playwright E2E,
+- Docker Build auf dem dafür vorgesehenen Workflow-Pfad.
+
+## 15. Wahrheitsquellen
+
+Bei Widersprüchen gilt in dieser Reihenfolge:
+
+1. aktuelle Runtime-/Command-Definition,
+2. Prisma-Schema + produktive Migrationen,
+3. zentrale Config,
+4. `/help`/Live-Command-Katalog für Discord,
+5. diese Dokumentation.
+
+Historische Cleanup-/Rollout-Dokumente dürfen historische Zustände beschreiben, müssen aber als solche gekennzeichnet bleiben.

@@ -1,263 +1,155 @@
-/**
- * Command-Catalog fuer die AI.
- *
- * Wird als System-Prompt-Block eingespeist, wenn der Nutzer nach Commands /
- * Funktionen / "was kannst du" / Hilfe fragt. So kann der Bot User UND
- * Owner gleichermassen verstaendlich erklaeren, was der Bot kann \u2013
- * ohne DEV- und ADMIN-Commands zu erwaehnen.
- *
- * Wahrheitsgemaess gepflegt anhand der tatsaechlichen Command-Definitionen
- * in src/commands/user/.
- */
+import { config } from '../../config';
 
+/**
+ * Oeffentlicher/benutzerrelevanter Command-Katalog fuer die AI.
+ *
+ * Diese Datei beschreibt ausschliesslich Commands, die nach der
+ * Dashboard-Migration weiterhin bei Discord registriert werden. Bot-Admin- und
+ * DEV-Command-Center-Funktionen sind Dashboard-only und duerfen von der AI
+ * nicht als Slash-Commands ausgegeben werden. Hersteller-Funktionen sind die
+ * ausdrueckliche Ausnahme und bleiben in Discord.
+ */
 export interface PublicCommandDoc {
-  name: string;            // /name oder /name subcommand
-  short: string;           // einzeiler
-  details: string;         // 1\u20133 Saetze in Klartext
-  examples?: string[];     // optional konkrete Beispielaufrufe
-  /** Voraussetzungen (z.B. "verifizierter Hersteller", "Mod-Rolle"). */
+  name: string;
+  short: string;
+  details: string;
+  examples?: string[];
   requires?: string;
-  /** Limits / Quoten (z.B. "max 10 Dateien", "60s Cooldown"). */
   limits?: string;
-  /** Verwandte Commands (Querverweise) – als reine Namen z.B. "/upload". */
   related?: string[];
 }
 
-/**
- * Mini-Glossar fuer Begriffe, die der Bot oft erklaeren muss.
- * Wird zusammen mit dem Katalog eingespeist.
- */
+const uploadMiB = Math.max(1, Math.floor(config.upload.maxFileSizeBytes / 1024 / 1024));
+
 export const GLOSSARY: { term: string; explanation: string }[] = [
-  { term: 'GUID',         explanation: 'Eindeutige interne ID, die jeder User & jeder Hersteller-Bereich automatisch bekommt.' },
-  { term: 'OTP',          explanation: 'Einmal-Passwort per DM, gueltig 30 Min, zur Hersteller-Verifikation.' },
-  { term: 'Soft-Delete',  explanation: 'Markiert als geloescht, aber wiederherstellbar. Echter Loeschvorgang nur durch Admin.' },
-  { term: 'Hersteller',   explanation: 'Verifizierter User mit eigenem GUID-Bereich, der Pakete hochladen darf.' },
-  { term: 'Auto-Rolle',   explanation: 'Rolle, die der Bot automatisch nach einem Trigger (Join/Reaction/Level/...) vergibt.' },
-  { term: 'Ticket',       explanation: 'Privater Support-Chat zwischen User und Owner per DM-Bridge. Wird archiviert, nie geloescht.' },
-  { term: 'XP-Cooldown',  explanation: 'Mindestabstand zwischen zwei XP-Vergaben pro User (Anti-Spam, Standard 60s).' },
+  { term: 'GUID', explanation: 'Eindeutige interne ID fuer getrennte Hersteller-Bereiche.' },
+  { term: 'OTP', explanation: 'Einmal-Passwort zur Hersteller-Verifikation; standardmaessig 30 Minuten gueltig.' },
+  { term: 'Soft-Delete', explanation: 'Als geloescht markiert, aber weiterhin wiederherstellbar.' },
+  { term: 'Hersteller', explanation: 'Verifizierter User, der die Hersteller-Slash-Funktionen /upload und /mypackages nutzen darf.' },
+  { term: 'Gameserver-Slot', explanation: 'Ein mit der Discord-Guild verknuepfter Nitrado-DayZ-Server. Serveraktionen bleiben pro Slot getrennt.' },
+  { term: 'XP-Cooldown', explanation: 'Mindestabstand zwischen XP-Vergaben als Anti-Spam-Schutz.' },
 ];
 
 export const PUBLIC_COMMAND_CATALOG: PublicCommandDoc[] = [
-  // ----- Hilfe / Info -----
+  // Hilfe / Bot
   {
     name: '/help',
-    short: 'Zeigt eine \u00dcbersicht aller verf\u00fcgbaren Commands an.',
-    details:
-      'Interaktive Hilfe mit Pagination. Optional kannst du direkt zu einer Kategorie springen, z.B. Registrierung, Pakete, Giveaways, Polls, XP, AI.',
-    examples: ['/help', '/help category:Pakete'],
+    short: 'Zeigt den aktuell geladenen Discord-Command-Katalog.',
+    details: 'Die Hilfe wird aus der Live-Command-Registry aufgebaut. Bot-Admin- und DEV-Funktionen werden im Web-Dashboard verwaltet und dort nicht als Slash-Commands dargestellt.',
+    examples: ['/help'],
+  },
+  {
+    name: '/stell-dich-vor',
+    short: 'Zeigt eine aktuelle Kurzvorstellung von V-Bot.',
+    details: 'Fasst die wichtigsten Nutzer-, DayZ-/Nitrado-, Economy- und Herstellerfunktionen zusammen.',
   },
 
-  // ----- Registrierung / Hersteller -----
+  // AI
+  {
+    name: '/ai ask',
+    short: 'Stellt V-Bot eine Wissensfrage.',
+    details: 'Nutzt Multi-Provider-AI, Serverkontext wo passend und bei aktuellen Faktfragen die konfigurierte Live-Recherche.',
+    examples: ['/ai ask frage:Wie funktioniert das XP-System?'],
+  },
+  { name: '/ai sentiment', short: 'Analysiert die Stimmung eines Textes.', details: 'Liefert positiv, neutral oder negativ mit Score.' },
+  { name: '/ai toxicity', short: 'Prueft Text auf toxische Inhalte.', details: 'Klassifiziert u.a. Hate, Harassment, Violence, Sexual und Spam.' },
+  { name: '/ai translate', short: 'Uebersetzt Text in eine Zielsprache.', details: 'Uebersetzt den angegebenen Text ueber die AI-Provider.' },
+
+  // Hersteller
   {
     name: '/register manufacturer',
-    short: 'Hersteller-Status beim Admin beantragen.',
-    details:
-      'Sendet eine Hersteller-Anfrage per DM an den Admin. Bei Annahme bekommst du ein 30 Min g\u00fcltiges Einmal-Passwort (OTP) per DM.',
-    examples: ['/register manufacturer reason:Modding-Studio XYZ'],
+    short: 'Beantragt den Hersteller-Status.',
+    details: 'Erstellt eine Hersteller-Anfrage. Nach Freigabe wird die Verifikation ueber ein zeitlich begrenztes OTP abgeschlossen.',
+    related: ['/register verify', '/upload'],
   },
   {
     name: '/register verify',
-    short: 'OTP eingeben und Hersteller-Bereich freischalten.',
-    details:
-      'Verifiziert das per DM erhaltene Einmal-Passwort. Danach ist dein eigener GUID-Bereich aktiv und du kannst Pakete hochladen.',
-    examples: ['/register verify password:DEIN_OTP'],
+    short: 'Schliesst die Hersteller-Verifikation mit OTP ab.',
+    details: 'Aktiviert nach erfolgreicher OTP-Pruefung den Hersteller-Zugang.',
   },
-
-  // ----- Upload / Pakete (Hersteller) -----
   {
     name: '/upload',
-    short: 'Dateien in ein Paket hochladen (XML/JSON, bis 2 GB pro Datei).',
-    details:
-      'Nur f\u00fcr verifizierte Hersteller. Du gibst einen Paketnamen an und h\u00e4ngst bis zu 10 Dateien an. Dateien werden validiert (XML/JSON-Schema) und im eigenen GUID-Bereich gespeichert.',
-    examples: ['/upload paketname:MeinPaket datei:file.xml'],
-    requires: 'verifizierter Hersteller (siehe /register manufacturer + /register verify)',
-    limits: 'max. 10 Dateien pro Aufruf, 2 GB pro Datei, nur XML/JSON',
-    related: ['/mypackages list', '/register manufacturer'],
+    short: `Laedt XML/JSON-Dateien in ein Hersteller-Paket hoch (standardmaessig bis ${uploadMiB} MiB pro Datei).`,
+    details: 'Nur fuer verifizierte Hersteller. Bis zu 10 Attachments werden in einem Aufruf verarbeitet; jede Datei wird gegen das konfigurierte Groessenlimit und die Upload-Validierung geprueft.',
+    requires: 'verifizierter Hersteller',
+    limits: `max. 10 Dateien pro Aufruf; aktuelles konfiguriertes Limit ${uploadMiB} MiB pro Datei; erlaubte Endungen: ${config.upload.allowedExtensions.join(', ')}`,
+    related: ['/mypackages list'],
   },
-  {
-    name: '/mypackages list',
-    short: 'Eigene Pakete anzeigen.',
-    details:
-      'Listet alle Pakete des Herstellers mit Status, Gr\u00f6sse und Dateianzahl. Filter und Sortierung m\u00f6glich.',
-  },
-  {
-    name: '/mypackages info',
-    short: 'Details zu einem eigenen Paket anzeigen.',
-    details: 'Zeigt Beschreibung, Dateien, Gr\u00f6sse, Validierungsstatus und Download-Z\u00e4hler.',
-  },
-  {
-    name: '/mypackages delete',
-    short: 'Eigenes Paket l\u00f6schen (Soft-Delete, wiederherstellbar).',
-    details: 'Markiert das Paket als gel\u00f6scht. Es ist danach nicht mehr downloadbar, kann aber wiederhergestellt werden.',
-  },
-  {
-    name: '/mypackages restore',
-    short: 'Gel\u00f6schtes eigenes Paket wiederherstellen.',
-    details: 'Macht ein per Soft-Delete entferntes Paket wieder sichtbar und downloadbar.',
-  },
-  {
-    name: '/mypackages delete-file',
-    short: 'Einzelne Dateien aus eigenen Paketen l\u00f6schen.',
-    details: 'Interaktives Dropdown: erst Paket, dann Datei(en) zum L\u00f6schen w\u00e4hlen.',
-  },
+  { name: '/mypackages list', short: 'Listet eigene Hersteller-Pakete.', details: 'Zeigt die eigenen Pakete und deren Status.', requires: 'verifizierter Hersteller' },
+  { name: '/mypackages info', short: 'Zeigt Details zu einem eigenen Paket.', details: 'Zeigt Paket- und Dateiinformationen.', requires: 'verifizierter Hersteller' },
+  { name: '/mypackages delete', short: 'Loescht ein eigenes Paket per Soft-Delete.', details: 'Das Paket kann spaeter wiederhergestellt werden.', requires: 'verifizierter Hersteller' },
+  { name: '/mypackages restore', short: 'Stellt ein Soft-Deleted Paket wieder her.', details: 'Aktiviert ein zuvor geloeschtes eigenes Paket wieder.', requires: 'verifizierter Hersteller' },
+  { name: '/mypackages delete-file', short: 'Entfernt einzelne Dateien aus einem eigenen Paket.', details: 'Die Datei wird innerhalb des eigenen Hersteller-Bereichs ausgewaehlt.', requires: 'verifizierter Hersteller' },
 
-  // ----- Download / Suche (alle User) -----
+  // Pakete / Feedback / Reminder
+  { name: '/search', short: 'Sucht veroeffentlichte Pakete.', details: 'Sucht nach Paketdaten und verfuegbaren Dateien.' },
+  { name: '/download', short: 'Laedt freigegebene Hersteller-Dateien oder Pakete herunter.', details: 'Fuehrt interaktiv durch Hersteller, Paket und Datei/ZIP und protokolliert Downloads.' },
+  { name: '/feedback', short: 'Sendet Bug-Reports, Ideen, Lob oder sonstiges Feedback.', details: 'Oeffnet ein Modal und speichert das Feedback fuer die Bot-Administration.', limits: '30 Sekunden Command-Cooldown' },
   {
-    name: '/download',
-    short: 'Dateien oder Pakete von Herstellern herunterladen.',
-    details:
-      'Interaktiv: w\u00e4hle einen Hersteller, dann ein Paket, dann eine Datei oder das ganze Paket als ZIP. Downloads werden geloggt.',
+    name: '/erinnerung setzen',
+    short: 'Legt eine persoenliche Erinnerung an.',
+    details: 'Zustellung per DM oder aktuellem Textkanal; optional wiederkehrend.',
+    limits: 'max. 25 aktive Reminder pro User; 5 Sekunden bis 1 Jahr; wiederkehrend mindestens 1 Minute',
+    related: ['/erinnerung liste', '/erinnerung loeschen'],
   },
-  {
-    name: '/search',
-    short: 'Pakete nach Name, Hersteller oder Beschreibung suchen.',
-    details: 'Volltextsuche \u00fcber alle ver\u00f6ffentlichten Pakete. Optionaler Filter nach Dateityp (XML/JSON).',
-    examples: ['/search query:engine dateityp:XML'],
-  },
+  { name: '/erinnerung liste', short: 'Zeigt eigene aktive Erinnerungen.', details: 'Listet die persoenlichen Reminder.' },
+  { name: '/erinnerung loeschen', short: 'Loescht eine eigene Erinnerung.', details: 'Verwendet die Reminder-ID aus /erinnerung liste.' },
 
-  // ----- AI -----
-  {
-    name: '/ai ask',
-    short: 'Stelle dem Bot eine Wissensfrage.',
-    details:
-      'Beantwortet allgemeine Fragen. Bei Aktualit\u00e4tsthemen recherchiert der Bot live im Web (Wikipedia/DDG). Du kannst mich auch einfach im Chat erw\u00e4hnen \u2013 dann antworte ich direkt.',
-    examples: ['/ai ask frage:Wer ist Bundeskanzler?'],
-  },
-  {
-    name: '/ai sentiment',
-    short: 'Sentiment (Stimmung) eines Texts analysieren.',
-    details: 'Liefert positiv / neutral / negativ inkl. Score.',
-  },
-  {
-    name: '/ai toxicity',
-    short: 'Text auf toxische / beleidigende Inhalte pr\u00fcfen.',
-    details: 'Klassifiziert in Kategorien (hate, harassment, violence, sexual, spam) mit Score.',
-  },
-  {
-    name: '/ai translate',
-    short: '\u00dcbersetzt einen Text in eine Zielsprache.',
-    details: 'Standardziel ist Deutsch, andere Sprachen via Code (en, fr, es, ...).',
-    examples: ['/ai translate text:"Hello world" sprache:de'],
-  },
+  // XP / Community
+  { name: '/level', short: 'Zeigt Level und XP.', details: 'Zeigt den eigenen oder optional den Levelstand eines anderen Users.' },
+  { name: '/leaderboard', short: 'Zeigt die XP-Bestenliste der Guild.', details: 'Stellt die Server-Rangliste anhand der konfigurierten XP-Daten dar.' },
+  { name: '/giveaway', short: 'Verwaltet Giveaways.', details: 'Start, Teilnahme, Info, Liste und Beenden laufen ueber die Subcommands des aktuell geladenen Giveaway-Commands.' },
+  { name: '/poll', short: 'Verwaltet Umfragen.', details: 'Erstellen, abstimmen, Ergebnis, Liste und Beenden laufen ueber die Poll-Subcommands.' },
+  { name: '/ticket open', short: 'Oeffnet ein Support-Ticket.', details: 'Erstellt eine private Support-Anfrage; der bestehende Ticket-Flow kann anschliessend per Bot/DM weitergefuehrt werden.', related: ['/ticket close', '/ticket status'] },
+  { name: '/ticket close', short: 'Schliesst das eigene aktive Ticket.', details: 'Beendet den aktiven Support-Flow.' },
+  { name: '/ticket status', short: 'Zeigt den Status eigener Tickets.', details: 'Listet die letzten Support-Tickets und deren Status.' },
 
-  // ----- Level / XP -----
-  {
-    name: '/level',
-    short: 'Eigenes Level und XP anzeigen.',
-    details: 'Zeigt Level, aktuelle XP, XP bis zum n\u00e4chsten Level, Nachrichtenanzahl und Voice-Minuten. Optional f\u00fcr einen anderen User.',
-    examples: ['/level', '/level user:@Freund'],
-  },
-  {
-    name: '/leaderboard',
-    short: 'XP-Bestenliste des Servers.',
-    details: 'Sortierbar nach XP, Level, Nachrichten oder Voice. Einmalige Anzeige oder Live-Feed mit Intervall.',
-    examples: ['/leaderboard sortierung:xp', '/leaderboard modus:feed intervall:30'],
-  },
+  // Discord-Moderation
+  { name: '/kick', short: 'Kickt einen Nutzer.', details: 'Entfernt den Nutzer aus der Guild und protokolliert die Moderationsaktion.', requires: 'entsprechende Moderationsberechtigung' },
+  { name: '/ban', short: 'Bannt einen Discord-Nutzer.', details: 'Discord-Moderationsban; getrennt von den Nitrado-Server-Bans.', requires: 'entsprechende Moderationsberechtigung' },
+  { name: '/mute', short: 'Setzt einen Discord-Timeout.', details: 'Schaltet einen Nutzer fuer die angegebene Dauer stumm.', requires: 'entsprechende Moderationsberechtigung' },
+  { name: '/warn', short: 'Verwarnt einen Nutzer.', details: 'Erzeugt einen Moderations-/Warn-Eintrag.', requires: 'entsprechende Moderationsberechtigung' },
+  { name: '/appeal', short: 'Reicht einen Einspruch zu einer Moderationsaktion ein.', details: 'Der Einspruch wird zur Pruefung gespeichert.' },
 
-  // ----- Giveaways -----
-  {
-    name: '/giveaway start',
-    short: 'Neues Giveaway starten.',
-    details: 'Preis, Dauer (z.B. 1h, 30m, 2d, 1w), Anzahl Gewinner, Mindestrolle und Custom-Emoji einstellbar.',
-    examples: ['/giveaway start preis:Nitro dauer:24h gewinner:2'],
-  },
-  { name: '/giveaway enter',  short: 'An einem laufenden Giveaway teilnehmen.', details: 'Per Giveaway-ID. Alternativ \u00fcber den Teilnahme-Button am Giveaway-Embed.' },
-  { name: '/giveaway info',   short: 'Details zu einem Giveaway anzeigen.',     details: 'Preis, Endzeit, Teilnehmerzahl, Bedingungen.' },
-  { name: '/giveaway list',   short: 'Aktive Giveaways auflisten.',             details: 'Zeigt alle laufenden Giveaways des Servers.' },
-  { name: '/giveaway end',    short: 'Eigenes Giveaway vorzeitig beenden.',     details: 'Beendet das Giveaway sofort und zieht Gewinner.' },
+  // Fraktionen
+  { name: '/fraktionen', short: 'Listet Fraktionen des Servers gruppiert nach Gameserver-Slot.', details: 'Zeigt Fraktionen der aktuellen Guild slotuebergreifend.' },
+  { name: '/factions', short: 'Listet aktive Fraktionen.', details: 'Zeigt aktive Fraktionen des aktuellen Gameserver-Kontexts.' },
+  { name: '/faction', short: 'Zeigt Details zu einer Fraktion.', details: 'Zeigt Leitung, Mitglieder und Status.' },
+  { name: '/join', short: 'Tritt einer Fraktion bei oder stellt eine Anfrage.', details: 'Das Verhalten richtet sich nach der Join-Policy der Fraktion.' },
+  { name: '/leave', short: 'Verlaesst die aktuelle Fraktion.', details: 'Entfernt die eigene Mitgliedschaft im Fraktionssystem.' },
 
-  // ----- Umfragen -----
-  {
-    name: '/poll erstellen',
-    short: 'Umfrage erstellen (\u00f6ffentlich oder anonym).',
-    details: 'Bis zu 10 Optionen, Mehrfachauswahl m\u00f6glich, optional mit Dauer und Benachrichtigungs-Rolle.',
-    examples: ['/poll erstellen titel:Pizza? optionen:Margherita,Salami,Veggie typ:public'],
-  },
-  { name: '/poll abstimmen', short: 'F\u00fcr eine Option abstimmen.', details: 'Per Poll-ID und Optionsnummer (1\u201310). Einfacher: Buttons unter dem Poll-Embed.' },
-  { name: '/poll ergebnis',  short: 'Aktuelle Ergebnisse anzeigen.',  details: 'Zeigt Stimmenverteilung. Bei anonymen Polls nur Summen, keine Namen.' },
-  { name: '/poll beenden',   short: 'Eigene Umfrage manuell beenden.', details: 'Schliesst die Abstimmung sofort und zeigt das Endergebnis.' },
-  { name: '/poll liste',     short: 'Aktive Umfragen anzeigen.',       details: 'Listet alle laufenden Polls des Servers.' },
+  // Economy / Identitaets-Link
+  { name: '/link', short: 'Startet die sichere Verknuepfung mit der DayZ-Spielidentitaet.', details: 'Erzeugt einen Ingame-Code; die ADM-Erkennung bestaetigt die Spielidentitaet servergescopet.' },
+  { name: '/unlink', short: 'Entfernt die eigene Spielidentitaets-Verknuepfung.', details: 'Entfernt die Verknuepfung im aktiven Gameserver-Slot.' },
+  { name: '/balance', short: 'Zeigt Wallet, Bank und letzte Transaktionen.', details: 'Economy-Daten sind pro Guild und Gameserver-Slot getrennt.' },
+  { name: '/bank', short: 'Zeigt Wallet, Bank und Gesamtguthaben.', details: 'Zeigt die eigene Economy-Uebersicht im aktiven Slot.' },
+  { name: '/pay', short: 'Sendet Coins aus der Wallet an einen anderen User.', details: 'Die Zahlung bleibt im selben Gameserver-Scope.' },
+  { name: '/deposit', short: 'Verschiebt Coins von Wallet auf Bank.', details: 'Bucht den angegebenen Betrag auf das eigene Bankkonto.' },
+  { name: '/withdraw', short: 'Verschiebt Coins von Bank auf Wallet.', details: 'Hebt den angegebenen Betrag vom eigenen Bankkonto ab.' },
+  { name: '/transfer', short: 'Ueberweist Coins von Bank zu Bank.', details: 'Ueberweisung an einen anderen User innerhalb desselben Gameserver-Slots.' },
 
-  // ----- Auto-Roles -----
-  {
-    name: '/autorole erstellen',
-    short: 'Automatische Rollenvergabe einrichten.',
-    details:
-      'Trigger: Join, Reaction, Level, Activity, Event, Giveaway. Optional zeitlimitiert. F\u00fcr Reaction-Roles: Channel + Nachricht-ID + Emoji angeben.',
-  },
-  { name: '/autorole liste',     short: 'Alle Auto-Rollen anzeigen.',                 details: '\u00dcbersicht mit Trigger-Typ, Status und Konfiguration.' },
-  { name: '/autorole loeschen',  short: 'Auto-Rolle entfernen.',                      details: 'Per Auto-Rolle-ID.' },
-  { name: '/autorole toggle',    short: 'Auto-Rolle aktivieren / deaktivieren.',      details: 'Schaltet sie an oder aus, ohne sie zu l\u00f6schen.' },
-  { name: '/autorole blacklist', short: 'Rolle zur Blacklist einer Auto-Rolle hinzuf\u00fcgen.', details: 'Verhindert Vergabe an User mit bestimmten Rollen.' },
-  { name: '/autorole whitelist', short: 'Rolle zur Whitelist einer Auto-Rolle hinzuf\u00fcgen.', details: 'Vergibt Rolle nur an User mit bestimmten Rollen.' },
+  // Casino
+  { name: '/slot', short: 'Spielt die konfigurierte Slot-Maschine.', details: 'Einsatz und Auszahlung laufen ueber das servergescopte Economy-Konto.' },
+  { name: '/coinflip', short: 'Spielt Kopf oder Zahl.', details: 'Casino-Spiel mit konfiguriertem Einsatz-/Auszahlungsmodell.' },
+  { name: '/dice', short: 'Spielt das Wuerfelspiel.', details: 'Tippe eine Zahl von 1 bis 6 und setze Coins.' },
+  { name: '/blackjack', short: 'Spielt vereinfachtes Blackjack.', details: 'Casino-Spiel im aktiven Economy-Slot.' },
+  { name: '/casino-stats', short: 'Zeigt Casino-Statistiken.', details: 'Zeigt Runden, Win-Rate, Einsatz, Auszahlung und Netto fuer den aktiven Slot.' },
 
-  // ----- Moderation (User-seitig: appeal) -----
-  {
-    name: '/appeal',
-    short: 'Beschwerde gegen eine Moderationsaktion einreichen.',
-    details: 'Per Case-Nummer (steht in der Mod-Nachricht) und Begr\u00fcndung. Wird vom Mod-Team gepr\u00fcft.',
-    examples: ['/appeal case:42 begruendung:War ein Missverst\u00e4ndnis'],
-  },
+  // Nitrado Whitelist / Ban
+  { name: '/whitelist', short: 'Stellt eine Whitelist-Anfrage fuer einen Spielernamen.', details: 'Bei mehreren Nitrado-Servern wird der Server ueber Alias ausgewaehlt; die Anfrage wird serverspezifisch verarbeitet.' },
+  { name: '/wl-add', short: 'Fuegt einen Spielernamen zur Nitrado-Whitelist hinzu.', details: 'Optional fuer einen Alias, sonst fuer alle aktiven verknuepften Gameserver.', requires: 'whitelist.manage bzw. Owner' },
+  { name: '/wl-remove', short: 'Entfernt einen Spielernamen von der Nitrado-Whitelist.', details: 'Optional fuer einen Alias, sonst fuer alle aktiven verknuepften Gameserver.', requires: 'whitelist.manage bzw. Owner' },
+  { name: '/wl-list', short: 'Liest die echte Nitrado-Whitelist.', details: 'Zeigt die Remote-Whitelist getrennt pro ausgewaehltem/verknuepftem Gameserver.', requires: 'whitelist.manage bzw. Owner' },
+  { name: '/server-ban', short: 'Bannt einen Gameserver-Identifier auf Nitrado.', details: 'Optional zeitlich begrenzt. Ein zeitlicher Ban wird nach Ablauf automatisch aus der echten Nitrado-Banliste entfernt und im urspruenglichen Command-Kanal bestaetigt.', requires: 'bans.manage bzw. Owner' },
+  { name: '/server-unban', short: 'Entfernt einen Gameserver-Ban.', details: 'Entfernt den lokalen/Remote-Ban im gewaehlten oder allen verknuepften Gameservern.', requires: 'bans.manage bzw. Owner' },
+  { name: '/server-ban-list', short: 'Zeigt die Nitrado-Server-Banliste.', details: 'Liest Ban-Informationen pro verknuepftem Gameserver.', requires: 'bans.manage bzw. Owner' },
 
-  // ----- Moderation (Mod-Rolle erforderlich) -----
-  {
-    name: '/kick',
-    short: 'Einen Nutzer kicken.',
-    details: 'Entfernt den User vom Server. Er kann mit neuem Invite zurueckkommen. Aktion wird im Mod-Log dokumentiert.',
-    examples: ['/kick user:@spam grund:Werbung'],
-    requires: 'Mod-/Admin-Rolle in der Datenbank',
-    related: ['/ban', '/warn'],
-  },
-  {
-    name: '/ban',
-    short: 'Einen Nutzer bannen (optional temporaer).',
-    details: 'Permanent oder zeitlich begrenzt. Bei Dauer in Minuten wird der Ban automatisch wieder aufgehoben. Wird im Mod-Log dokumentiert.',
-    examples: ['/ban user:@trouble grund:Toxisch dauer:1440'],
-    requires: 'Mod-/Admin-Rolle',
-    related: ['/kick', '/appeal'],
-  },
-  {
-    name: '/mute',
-    short: 'Einen Nutzer stummschalten (Discord-Timeout).',
-    details: 'Setzt einen Timeout (Standard: 60 Min, max. 28 Tage). User kann nichts schreiben oder reagieren.',
-    examples: ['/mute user:@laut grund:Spam dauer:30'],
-    requires: 'Mod-/Admin-Rolle',
-  },
-  {
-    name: '/warn',
-    short: 'Einen Nutzer verwarnen.',
-    details: 'Erzeugt einen Warn-Eintrag im Modul. Mehrere Warns koennen Auto-Mute/Ban triggern (je nach Konfiguration).',
-    examples: ['/warn user:@regelbruch grund:Off-Topic'],
-    requires: 'Mod-/Admin-Rolle',
-    related: ['/appeal'],
-  },
-
-  // ----- Support / Tickets -----
-  {
-    name: '/ticket open',
-    short: 'Neues Support-Ticket an den Owner senden.',
-    details: 'Owner bekommt deine Anfrage per DM mit Annehmen/Ablehnen-Buttons. Bei Annahme entsteht eine private DM-Bridge: alles was du dem Bot per DM schreibst, geht direkt zum Owner und umgekehrt.',
-    examples: ['/ticket open betreff:Frage nachricht:"Wie funktioniert Upload?"'],
-    limits: '1 offenes Ticket pro User; max. 150 Zeichen Betreff, 1500 Zeichen Nachricht',
-    related: ['/ticket close', '/ticket status'],
-  },
-  {
-    name: '/ticket close',
-    short: 'Eigenes aktives Ticket schliessen.',
-    details: 'Beendet die DM-Bridge. Das Ticket wird archiviert (nie geloescht), du kannst es per /ticket status weiterhin einsehen.',
-    related: ['/ticket open', '/ticket status'],
-  },
-  {
-    name: '/ticket status',
-    short: 'Status deiner letzten Tickets anzeigen.',
-    details: 'Listet die letzten Tickets mit Nummer, Betreff und Status (PENDING/OPEN/CLOSED/DENIED).',
-    related: ['/ticket open'],
-  },
+  // Delegierte Serververwaltung (keine globalen Bot-Admin/DEV-Funktionen)
+  { name: '/perm-add', short: 'Vergibt einen delegierbaren Server-Scope.', details: 'Nur der Discord-Server-Owner kann delegierbare Dashboard/Gameserver-Berechtigungen vergeben.', requires: 'Discord-Server-Owner' },
+  { name: '/perm-remove', short: 'Entzieht einen delegierbaren Server-Scope.', details: 'Entfernt einen zuvor vergebenen Guild-Scope.', requires: 'Discord-Server-Owner' },
+  { name: '/perms', short: 'Listet Permission-Grants der Guild.', details: 'Zeigt die delegierten Server-Scope-Berechtigungen.', requires: 'Discord-Server-Owner' },
 ];
 
-/**
- * Heuristik: Fragt der Nutzer nach Commands / F\u00e4higkeiten?
- */
 export function asksAboutCommands(question: string): boolean {
   const q = question.toLowerCase();
   return (
@@ -266,25 +158,14 @@ export function asksAboutCommands(question: string): boolean {
     /\b(welche|wie viele)\s+(commands?|befehle|funktionen|features)\b/.test(q) ||
     /\b(hilfe|help)\b/.test(q) ||
     /\bwie\s+(funktioniert|nutze|benutze)\s+(ich\s+)?(der\s+|den\s+|die\s+|das\s+)?bot\b/.test(q) ||
-    /\/[a-z][a-z-]*/i.test(q) // Slash-Command direkt erwaehnt (z.B. "wie geht /upload?")
+    /\/[a-z][a-z-]*/i.test(q)
   );
 }
 
-/**
- * Findet die im Text erwaehnten Commands (mit oder ohne Subcommand).
- * Gibt eine Liste der passenden Katalogeintraege zurueck.
- *
- * Beispiele:
- *  - "wie nutze ich /poll abstimmen?"  -> [/poll abstimmen]
- *  - "was macht /ticket?"              -> alle /ticket *-Subcommands
- *  - "kann ich /upload nutzen"         -> [/upload]
- */
 export function findReferencedCommands(question: string): PublicCommandDoc[] {
   const q = question.toLowerCase();
   const matches: PublicCommandDoc[] = [];
   const seen = new Set<string>();
-
-  // 1) Exakter Subcommand-Match: "/poll abstimmen"
   for (const c of PUBLIC_COMMAND_CATALOG) {
     const needle = c.name.toLowerCase();
     if (q.includes(needle) && !seen.has(c.name)) {
@@ -294,96 +175,60 @@ export function findReferencedCommands(question: string): PublicCommandDoc[] {
   }
   if (matches.length > 0) return matches;
 
-  // 2) Fallback: Basis-Command ohne Subcommand erwaehnt -> alle Subcommands liefern
   const baseRegex = /\/([a-z][a-z-]*)/gi;
   const bases = new Set<string>();
   for (const m of q.matchAll(baseRegex)) bases.add(m[1].toLowerCase());
-
   for (const base of bases) {
     for (const c of PUBLIC_COMMAND_CATALOG) {
       if (seen.has(c.name)) continue;
-      const cmdBase = c.name.toLowerCase().split(/\s+/)[0]; // "/poll erstellen" -> "/poll"
-      if (cmdBase === `/${base}`) {
+      if (c.name.toLowerCase().split(/\s+/)[0] === `/${base}`) {
         matches.push(c);
         seen.add(c.name);
       }
     }
   }
-
   return matches;
 }
 
-/**
- * Formatiert einen einzelnen Katalog-Eintrag als kompakter Block.
- */
 function formatEntry(c: PublicCommandDoc): string {
-  const lines: string[] = [];
-  lines.push(`- ${c.name} \u2014 ${c.short}`);
-  lines.push(`  ${c.details}`);
+  const lines = [`- ${c.name} — ${c.short}`, `  ${c.details}`];
   if (c.requires) lines.push(`  Voraussetzung: ${c.requires}`);
-  if (c.limits)   lines.push(`  Limits: ${c.limits}`);
-  if (c.related && c.related.length > 0) {
-    lines.push(`  Verwandt: ${c.related.join(', ')}`);
-  }
-  if (c.examples && c.examples.length > 0) {
-    lines.push(`  Beispiel: ${c.examples.join(' | ')}`);
-  }
+  if (c.limits) lines.push(`  Limits: ${c.limits}`);
+  if (c.related?.length) lines.push(`  Verwandt: ${c.related.join(', ')}`);
+  if (c.examples?.length) lines.push(`  Beispiel: ${c.examples.join(' | ')}`);
   return lines.join('\n');
 }
 
-/**
- * Formatiert den vollen Katalog als kompakter System-Prompt-Block fuer die AI.
- * Wird nur bei Bedarf eingespeist (Token-Schonung).
- */
 export function formatCatalogForPrompt(): string {
-  const lines: string[] = [
-    'KATALOG DER \u00d6FFENTLICHEN COMMANDS (nur diese darfst du erw\u00e4hnen \u2013 NIEMALS Dev- oder Admin-Commands):',
+  const lines = [
+    'AKTUELLER DISCORD-COMMAND-KATALOG:',
+    'Bot-Admin- und DEV-Verwaltung ist Dashboard-only. Erfinde dafuer keine Slash-Commands. Hersteller-Slash-Funktionen bleiben in Discord.',
     '',
   ];
   for (const c of PUBLIC_COMMAND_CATALOG) lines.push(formatEntry(c));
-  lines.push('');
-  lines.push('GLOSSAR:');
+  lines.push('', 'GLOSSAR:');
   for (const g of GLOSSARY) lines.push(`- ${g.term}: ${g.explanation}`);
-  lines.push('');
-  lines.push(answerRules());
+  lines.push('', answerRules());
   return lines.join('\n');
 }
 
-/**
- * Formatiert nur die im Text erwaehnten Commands. Token-schonender als der
- * volle Katalog, deutlich praeziser. Faellt auf den Voll-Katalog zurueck,
- * wenn keine konkreten Commands erkannt wurden, der Nutzer aber generisch
- * nach Commands gefragt hat.
- */
 export function formatCatalogForPromptFocused(question: string): string {
   const matches = findReferencedCommands(question);
   if (matches.length === 0) return formatCatalogForPrompt();
-
-  const lines: string[] = [
-    'KATALOG-AUSZUG (nur die im Nutzertext erwaehnten Commands):',
-    '',
-  ];
+  const lines = ['AKTUELLER COMMAND-KATALOG-AUSZUG:', ''];
   for (const c of matches) lines.push(formatEntry(c));
-  lines.push('');
-  lines.push('GLOSSAR (relevante Begriffe):');
-  for (const g of GLOSSARY) {
-    const t = g.term.toLowerCase();
-    if (question.toLowerCase().includes(t)) lines.push(`- ${g.term}: ${g.explanation}`);
-  }
-  lines.push('');
-  lines.push(answerRules());
+  lines.push('', answerRules());
   return lines.join('\n');
 }
 
 function answerRules(): string {
   return [
-    'ANTWORT-REGELN beim Erkl\u00e4ren von Commands:',
-    '- Erkl\u00e4re nur, was wirklich gefragt wurde. Keine vollst\u00e4ndige Auflistung, wenn der Nutzer nur ein Thema will.',
-    '- Sprich Nutzer und Owner gleichermassen verst\u00e4ndlich an, ohne zu bevormunden.',
-    '- Erw\u00e4hne NIEMALS Developer- oder Admin-Commands (z.B. /dev-*, /admin-*, xp-config). Diese existieren f\u00fcr dich nicht.',
-    '- Erfinde keine Commands oder Optionen, die nicht im Katalog stehen. Wenn der Nutzer einen Command nennt, der nicht im Katalog ist: sag klar "den Command gibt es nicht".',
-    '- Bei Folgefragen ("wie geht das genau?", "was passiert dann?") darfst du auf Basis des Katalogs ausf\u00fchrlicher werden.',
-    '- Halte die Sprache locker und kurz, kein Marketing-Ton.',
-    '- Wenn ein Beispielaufruf vorhanden ist, zeige ihn (das hilft dem Nutzer mehr als reine Beschreibung).',
+    'ANTWORT-REGELN BEI COMMAND-/FUNKTIONSFRAGEN:',
+    '- Erklaere nur, was wirklich gefragt wurde.',
+    '- Stelle Bot-Admin- oder DEV-Dashboard-Funktionen niemals als Discord-Slash-Commands dar.',
+    '- Hersteller-Slash-Funktionen /upload, /mypackages und die interne Herstellerverwaltung sind die bewusst erhaltene Ausnahme.',
+    '- Erfinde keine Optionen oder Subcommands.',
+    '- Wenn ein genannter Slash-Command nicht in diesem Katalog steht, sage nicht automatisch, dass die Funktion generell nicht existiert. Sage: "Diesen Discord-Command sehe ich im aktuellen Katalog nicht."',
+    '- Fuer den vollstaendigen aktuellen Discord-Stand ist /help die Live-Wahrheitsquelle, weil /help direkt aus der geladenen Command-Registry erzeugt wird.',
   ].join('\n');
 }

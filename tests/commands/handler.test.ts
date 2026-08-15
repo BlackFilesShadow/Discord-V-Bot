@@ -1,6 +1,7 @@
 import { loadCommands } from '../../src/commands/handler';
 import { Collection } from 'discord.js';
 import { Command, ExtendedClient } from '../../src/types';
+import { MOVED_TO_DASHBOARD, PRESERVED_MANUFACTURER_COMMANDS } from '../../src/commands/inventory';
 
 process.env.DISCORD_TOKEN = 'test-token';
 process.env.DISCORD_CLIENT_ID = 'test-client-id';
@@ -16,7 +17,7 @@ function createMockClient(): ExtendedClient {
 }
 
 describe('Command Handler (Sektion 5)', () => {
-  it('sollte Commands aus user/ und admin/ laden', async () => {
+  it('laedt die weiterhin aktiven Discord-Commands', async () => {
     const client = createMockClient();
     await loadCommands(client);
     expect(client.commands.size).toBeGreaterThan(0);
@@ -39,13 +40,21 @@ describe('Command Handler (Sektion 5)', () => {
     expect(client.commands.has('appeal')).toBe(true);
   });
 
-  it('sollte Admin-Commands laden', async () => {
+  it('laedt keine vollstaendig ins Dashboard migrierten Slash-Commands mehr', async () => {
     const client = createMockClient();
     await loadCommands(client);
-    expect(client.commands.has('admin-list-pakete')).toBe(true);
-    expect(client.commands.has('admin-config')).toBe(true);
-    expect(client.commands.has('admin-stats')).toBe(true);
-    expect(client.commands.has('admin-monitor')).toBe(true);
+
+    const stillLoaded = [...MOVED_TO_DASHBOARD].filter((name) => client.commands.has(name));
+    expect(stillLoaded).toEqual([]);
+  });
+
+  it('behaelt die expliziten Hersteller-Kommandos im Discord-Loader', async () => {
+    const client = createMockClient();
+    await loadCommands(client);
+
+    for (const name of PRESERVED_MANUFACTURER_COMMANDS) {
+      expect(client.commands.has(name)).toBe(true);
+    }
   });
 
   it('sollte Permission-, Server-Ban- und Phase-8-Commands vollstaendig laden', async () => {

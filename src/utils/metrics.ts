@@ -1,25 +1,22 @@
 /**
- * Prometheus-Metriken für den Discord-V-Bot.
+ * Prometheus-Metriken fuer V-Bot Prime.
  *
- * Exponiert über GET /metrics auf dem Dashboard-Server.
- * Default-Metriken (Process-CPU/Mem/EventLoop) sind aktiv,
- * dazu Custom-Counter/Histograms für Commands, Errors, DB-Queries.
- *
- * Token-geschützt via METRICS_TOKEN env, falls gesetzt.
+ * Der Registry-Code sammelt Default- und Custom-Metriken. Ob GET /metrics
+ * tatsaechlich exponiert wird, entscheidet die Dashboard-Konfiguration:
+ * METRICS_ENABLED muss explizit aktiviert sein UND ein gueltiger
+ * METRICS_TOKEN muss vorhanden sein. Der Endpoint ist Bearer-geschuetzt.
  */
 
 import { Registry, Counter, Histogram, Gauge, collectDefaultMetrics } from 'prom-client';
 
 export const metricsRegistry = new Registry();
 
-// Default Node.js-Process-Metriken
 collectDefaultMetrics({ register: metricsRegistry, prefix: 'vbot_' });
 
-// ─── Slash-Commands ──────────────────────────────────────────
 export const commandCounter = new Counter({
   name: 'vbot_commands_total',
   help: 'Anzahl ausgefuehrter Slash-Commands',
-  labelNames: ['command', 'status'] as const, // status: success | error | denied | cooldown | ratelimit
+  labelNames: ['command', 'status'] as const,
   registers: [metricsRegistry],
 });
 
@@ -31,15 +28,13 @@ export const commandDurationHistogram = new Histogram({
   registers: [metricsRegistry],
 });
 
-// ─── Errors ──────────────────────────────────────────────────
 export const errorCounter = new Counter({
   name: 'vbot_errors_total',
   help: 'Anzahl Fehler nach Quelle',
-  labelNames: ['source'] as const, // source: command | dashboard | event | ai | db | other
+  labelNames: ['source'] as const,
   registers: [metricsRegistry],
 });
 
-// ─── Discord-Connection ──────────────────────────────────────
 export const guildGauge = new Gauge({
   name: 'vbot_guilds',
   help: 'Anzahl verbundener Discord-Guilds',
@@ -52,7 +47,6 @@ export const wsLatencyGauge = new Gauge({
   registers: [metricsRegistry],
 });
 
-// ─── DB-Performance ──────────────────────────────────────────
 export const dbQueryHistogram = new Histogram({
   name: 'vbot_db_query_duration_seconds',
   help: 'Prisma-DB-Query-Dauer in Sekunden',
@@ -61,17 +55,14 @@ export const dbQueryHistogram = new Histogram({
   registers: [metricsRegistry],
 });
 
-// ─── Rate-Limiter / Cooldowns ────────────────────────────────
 export const rateLimitedCounter = new Counter({
   name: 'vbot_rate_limited_total',
   help: 'Anzahl Rate-Limit-Treffer',
-  labelNames: ['kind'] as const, // kind: in_memory | per_command | cooldown | component
+  labelNames: ['kind'] as const,
   registers: [metricsRegistry],
 });
 
-/**
- * Convenience-Helper: misst die Dauer eines async-Calls und schreibt sie in ein Histogram.
- */
+/** Misst die Dauer eines async-Calls und schreibt sie in ein Histogramm. */
 export async function timed<T>(hist: Histogram<string>, labels: Record<string, string>, fn: () => Promise<T>): Promise<T> {
   const end = hist.startTimer(labels);
   try {

@@ -8,8 +8,8 @@ groups:
         labels:
           severity: critical
         annotations:
-          summary: "V-Bot Prozess nicht erreichbar"
-          description: "Prometheus scrape failt fuer >2 min. Siehe deploy/bot.sh + docker-compose logs."
+          summary: "V-Bot Prime Prozess nicht erreichbar"
+          description: "Prometheus scrape failt fuer >2 min. Container-/Deploy-Logs und Healthcheck pruefen."
 
       - alert: VBotErrorSpike
         expr: |
@@ -37,13 +37,13 @@ groups:
       - alert: VBotDbLatencyP99High
         expr: |
           histogram_quantile(0.99,
-            sum(rate(vbot_db_query_duration_seconds_bucket[5m])) by (le, op)
+            sum(rate(vbot_db_query_duration_seconds_bucket[5m])) by (le, model, action)
           ) > 1
         for: 10m
         labels:
           severity: warning
         annotations:
-          summary: "DB-p99 > 1s fuer op={{ $labels.op }}"
+          summary: "DB-p99 > 1s fuer {{ $labels.model }}.{{ $labels.action }}"
           description: "Prisma-Query-Latenz p99 = {{ $value }}s. Index-Check oder Query-Refactor noetig."
 
       - alert: VBotCommandSlow
@@ -56,7 +56,7 @@ groups:
           severity: warning
         annotations:
           summary: "Command '{{ $labels.command }}' p95 > 5s"
-          description: "User-Wartezeit > 5s fuer '/{{ $labels.command }}'. Logging und AI-Provider-Fallback pruefen."
+          description: "User-Wartezeit > 5s fuer '/{{ $labels.command }}'. Logging und externe Abhaengigkeiten pruefen."
 
       - alert: VBotRateLimitFlood
         expr: |

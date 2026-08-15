@@ -4,12 +4,15 @@ import { logger } from '../../utils/logger';
 import { config } from '../../config';
 
 /**
- * Phase 10 (B3 Modell-Check): Provider-Health-Tracking + adaptive Reihenfolge.
+ * Provider-Health-Tracking + adaptive Reihenfolge.
  *
  * - recordCall(): nach jedem callAI-Versuch persistente Stats updaten
  * - getRankedProviders(): Reihenfolge nach Score statt fester Konfig-Reihenfolge
- * - getStats(): formatiert fuer /admin-aimodels
+ * - getStats(): formatiert fuer Bot-Admin/DEV-Dashboard-Diagnostik
  * - probeProvider(): aktiver Health-Check mit Mini-Prompt + Latenz
+ *
+ * Die fruehere Discord-Ausgabe ueber /admin-aimodels ist in das Dashboard
+ * migriert; dieses Modul bleibt die kanonische Runtime-Datenquelle.
  */
 
 export type ProviderName = 'groq' | 'cerebras' | 'openrouter' | 'gemini' | 'openai';
@@ -22,7 +25,7 @@ export interface ProviderStat {
   failureCount: number;
   rateLimitCount: number;
   avgLatencyMs: number;
-  successRate: number; // 0..1
+  successRate: number;
   lastSuccessAt: Date | null;
   lastFailureAt: Date | null;
   lastError: string | null;
@@ -39,29 +42,12 @@ function isConfigured(p: ProviderName): boolean {
   }
 }
 
-// =====================================================================
-// Phase 12 + P0-Hardening: Persistente Cooldowns. Bei 429 wird der Provider
-// fuer N Sekunden komplett aus der Ranking-Liste entfernt. Backoff waechst
-// exponentiell: 30s -> 60s -> 120s -> max 300s.
-//
-// Persistierung: AiProviderStat.cooldownUntil/cooldownStreak. In-Memory
-// Cache ist nur noch Beschleunigung; DB ist Source-of-Truth (Multi-Replica
-// + Restart-sicher).
-// =====================================================================
-interface CooldownState { until: number; consecutive: number; }
+interface CooldownState { until: number; consecutive: number }
 const cooldowns = new Map<ProviderName, CooldownState>();
 const COOLDOWN_BASE_MS = 30_000;
 const COOLDOWN_MAX_MS = 300_000;
-// Auth-/Modell-Fehler (401/403/404) = kaputter Key/Model -> Provider fuer diese
-// Zeit KOMPLETT aus der Rotation nehmen, damit er nicht als „letzter Ueberlebender"
-// die Rotation vergiftet, waehrend gesunde Provider kurz rate-limited sind.
 const UNAVAILABLE_COOLDOWN_MS = 15 * 60_000;
 
-/**
- * Hydratisiert den In-Memory-Cache aus DB. Wird bei Boot einmalig + danach
- * alle 60s aufgerufen (siehe scheduleProviderCooldownSync), damit ein zweiter
- * Bot-Replica seine Cooldowns sieht.
- */
 export async function hydrateCooldownsFromDb(): Promise<void> {
   try {
     const rows = await prisma.aiProviderStat.findMany({
@@ -73,15 +59,13 @@ export async function hydrateCooldownsFromDb(): Promise<void> {
       if (!ALL_PROVIDERS.includes(r.provider as ProviderName)) continue;
       if (!r.cooldownUntil) continue;
       const until = r.cooldownUntil.getTime();
-      if (Date.now() >= until) continue; // expired
+      if (Date.now() >= until) continue;
       cooldowns.set(r.provider as ProviderName, {
         until,
         consecutive: r.cooldownStreak ?? 1,
       });
       seen.add(r.provider as ProviderName);
     }
-    // In-Memory-Eintraege, die nicht mehr in der DB sind, evtl. lokal expired:
-    // bei naechstem isOnCooldown()-Call werden sie ohnehin bereinigt.
     for (const [p] of cooldowns) {
       if (!seen.has(p) && cooldowns.get(p)!.until <= Date.now()) cooldowns.delete(p);
     }
@@ -102,9 +86,6 @@ export function markRateLimited(provider: ProviderName, retryAfterMs?: number): 
   const prev = cooldowns.get(provider);
   const consecutive = (prev?.consecutive ?? 0) + 1;
   const backoff = Math.min(COOLDOWN_BASE_MS * Math.pow(2, consecutive - 1), COOLDOWN_MAX_MS);
-  // Wenn der Provider ein Retry-After/Reset liefert, dieses (gedeckelt) nutzen —
-  // Free-Tier-Limits setzen sich oft in 1-2s zurueck, ein fixer 30s-Cooldown
-  // wuerde gesunde Provider unnoetig lange aus der Rotation nehmen.
   const ms = retryAfterMs && retryAfterMs > 0
     ? Math.min(Math.max(retryAfterMs, 1_000), COOLDOWN_MAX_MS)
     : backoff;
@@ -115,11 +96,6 @@ export function markRateLimited(provider: ProviderName, retryAfterMs?: number): 
   return ms;
 }
 
-/**
- * Provider wegen Auth-/Modell-Fehler (401/403/404) fuer laengere Zeit aus der
- * Rotation nehmen. Ein kaputter API-Key darf nicht als einziger „verfuegbarer"
- * Provider uebrig bleiben und alle Anfragen scheitern lassen.
- */
 export function markProviderUnavailable(provider: ProviderName, reason: string): void {
   const until = Date.now() + UNAVAILABLE_COOLDOWN_MS;
   const consecutive = (cooldowns.get(provider)?.consecutive ?? 0) + 1;
@@ -128,7 +104,6 @@ export function markProviderUnavailable(provider: ProviderName, reason: string):
   persistCooldown(provider, until, reason, consecutive);
 }
 
-/** Persistiert einen Cooldown (best-effort, create-on-missing). */
 function persistCooldown(provider: ProviderName, until: number, reason: string, streak: number): void {
   void prisma.aiProviderStat.update({
     where: { provider },
@@ -145,7 +120,6 @@ function persistCooldown(provider: ProviderName, until: number, reason: string, 
 export function clearCooldown(provider: ProviderName): void {
   if (!cooldowns.has(provider)) return;
   cooldowns.delete(provider);
-  // Persistente Cooldown-Spur ebenfalls loeschen (best-effort).
   void prisma.aiProviderStat.updateMany({
     where: { provider, cooldownUntil: { not: null } },
     data: { cooldownUntil: null, cooldownReason: null, cooldownStreak: 0 },
@@ -186,9 +160,7 @@ export async function recordCall(
   error?: string,
   opts?: { retryAfterMs?: number },
 ): Promise<void> {
-  // Phase 12: Bei Erfolg den eventuellen Cooldown clearen.
   if (outcome === 'success') clearCooldown(provider);
-  // Bei 429: Cooldown-Backoff aktivieren (in-memory), ggf. mit Retry-After.
   if (outcome === 'rateLimit') markRateLimited(provider, opts?.retryAfterMs);
   try {
     const now = new Date();
@@ -251,37 +223,21 @@ export async function getStats(): Promise<ProviderStat[]> {
   });
 }
 
-/**
- * Adaptive Reihenfolge: nur konfigurierte Provider, sortiert nach
- * Score = successRate * latencyBonus. Provider ohne Daten erhalten den
- * primaer-Konfig-Bonus, damit ein frischer Bot nicht gleich umsortiert.
- *
- * Formel:
- *   score = (success + 1) / (total + 2)         // Laplace-geglaettet
- *           * (1 / (1 + avgLatencyMs / 5000))   // schneller = besser, 5s neutral
- *           * (provider == primary ? 1.05 : 1)  // leichter Bias auf konfigurierten Primary
- */
 export async function getRankedProviders(): Promise<ProviderName[]> {
   const stats = await getStats();
   const primary = config.ai.provider as ProviderName;
   const scored = stats
     .filter((s) => s.configured)
-    // Phase 12: Provider im Cooldown (429-Strafe) ueberspringen.
     .filter((s) => !isOnCooldown(s.provider))
     .map((s) => {
       const total = s.successCount + s.failureCount + s.rateLimitCount;
       const successScore = (s.successCount + 1) / (total + 2);
       const latencyScore = 1 / (1 + (s.avgLatencyMs || 1500) / 5000);
       const primaryBias = s.provider === primary ? 1.05 : 1;
-      const score = successScore * latencyScore * primaryBias;
-      return { provider: s.provider, score };
+      return { provider: s.provider, score: successScore * latencyScore * primaryBias };
     })
     .sort((a, b) => b.score - a.score)
     .map((x) => x.provider);
-  // Wenn ALLE konfigurierten Provider auf Cooldown sind: wenigstens einen
-  // konfigurierten Provider zurueckgeben (callAI versucht ihn dann; bekommt
-  // im Worst-Case wieder 429, ist aber besser als komplett 0 Provider).
-  // H12: Falls primary nicht konfiguriert ist, ersten beliebigen konfigurierten waehlen.
   if (scored.length === 0) {
     if (isConfigured(primary)) return [primary];
     const anyConfigured = ALL_PROVIDERS.find((p) => isConfigured(p));
@@ -290,10 +246,6 @@ export async function getRankedProviders(): Promise<ProviderName[]> {
   return scored;
 }
 
-/**
- * Aktiver Health-Check: schickt einen winzigen Prompt an einen Provider
- * und misst Latenz. Nutzt die gleichen Endpoints wie callAI.
- */
 export async function probeProvider(provider: ProviderName): Promise<{
   ok: boolean;
   latencyMs: number;
@@ -307,8 +259,6 @@ export async function probeProvider(provider: ProviderName): Promise<{
   try {
     let reply = '';
     if (provider === 'gemini') {
-      // API-Key im Header (x-goog-api-key), NICHT als URL-Query — sonst landet
-      // das Secret in Proxy-/Access-Logs. Konsistent zu aiHandler.callGemini.
       const url = `https://generativelanguage.googleapis.com/v1beta/models/${config.ai.geminiModel}:generateContent`;
       const res = await axios.post(
         url,

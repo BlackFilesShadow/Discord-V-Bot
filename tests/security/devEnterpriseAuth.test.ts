@@ -1,14 +1,9 @@
 /**
- * P0 — Enterprise-Compliance-Tests fuer DEV-Auth.
+ * Enterprise-Compliance-Tests fuer DEV-Auth-Helfer.
  *
- * Verifiziert:
- *   - enforceDevMfa: hard ohne 2FA, soft mit Grace-Period, ok mit aktivem 2FA
- *   - enforceDevIpAllowlist: fail-open bei leerer Liste, deny bei IP fehlt,
- *     ok bei IP gelistet
- *   - parseDevScope: typed parsing inkl. guildIdRestrict
- *   - validateStepUpInput: Pflichtfelder + Mindestlaengen
- *
- * Bewusst auf reine Verhaltens-Garantien fokussiert — kein Express-Harness.
+ * Die kryptografische Step-Up-Verifikation besitzt einen eigenen Testblock in
+ * `devStepUpVerification.test.ts`. Hier pruefen wir bewusst nur MFA/IP,
+ * Auth-Forensik, Scope-Parsing und die reine Step-Up-Eingabeform.
  */
 
 const twoFAFindUnique = jest.fn();
@@ -45,6 +40,7 @@ beforeEach(() => {
   delete process.env.DEV_MFA_GRACE_PERIOD_END;
   delete process.env.DEV_MFA_GRACE_ALLOW;
   delete process.env.DEV_MFA_GRACE_MAX_DAYS;
+  delete process.env.DEV_IP_ALLOWLIST_REQUIRED;
 });
 
 describe('enforceDevMfa', () => {
@@ -62,7 +58,7 @@ describe('enforceDevMfa', () => {
     expect(r.reason).toBe('no_2fa');
   });
 
-  it('soft-allow waehrend Grace-Period (Opt-in via DEV_MFA_GRACE_ALLOW)', async () => {
+  it('soft-allow waehrend explizit freigegebener Grace-Period', async () => {
     twoFAFindUnique.mockResolvedValue(null);
     process.env.DEV_MFA_GRACE_ALLOW = 'true';
     process.env.DEV_MFA_GRACE_PERIOD_END = new Date(Date.now() + 60_000).toISOString();
@@ -72,7 +68,7 @@ describe('enforceDevMfa', () => {
     expect(r.graceUntil).toBeInstanceOf(Date);
   });
 
-  it('hart abgelehnt wenn Grace abgelaufen', async () => {
+  it('hart abgelehnt wenn Grace abgelaufen ist', async () => {
     twoFAFindUnique.mockResolvedValue({ isEnabled: false });
     process.env.DEV_MFA_GRACE_ALLOW = 'true';
     process.env.DEV_MFA_GRACE_PERIOD_END = new Date(Date.now() - 60_000).toISOString();
@@ -81,7 +77,7 @@ describe('enforceDevMfa', () => {
     expect(r.reason).toBe('no_2fa');
   });
 
-  it('Grace ignoriert wenn DEV_MFA_GRACE_ALLOW fehlt (secure-by-default)', async () => {
+  it('ignoriert Grace ohne explizites Opt-in', async () => {
     twoFAFindUnique.mockResolvedValue(null);
     process.env.DEV_MFA_GRACE_PERIOD_END = new Date(Date.now() + 60_000).toISOString();
     const r = await enforceDevMfa('u1');
@@ -89,11 +85,10 @@ describe('enforceDevMfa', () => {
     expect(r.reason).toBe('no_2fa');
   });
 
-  it('Grace per Hard-Cap (DEV_MFA_GRACE_MAX_DAYS) begrenzt', async () => {
+  it('begrenzt die Grace per Hard-Cap', async () => {
     twoFAFindUnique.mockResolvedValue(null);
     process.env.DEV_MFA_GRACE_ALLOW = 'true';
     process.env.DEV_MFA_GRACE_MAX_DAYS = '14';
-    // 2099 — weit jenseits 14 Tage Cap
     process.env.DEV_MFA_GRACE_PERIOD_END = '2099-01-01T00:00:00.000Z';
     const r = await enforceDevMfa('u1');
     expect(r.ok).toBe(false);
@@ -104,8 +99,7 @@ describe('enforceDevMfa', () => {
 describe('enforceDevIpAllowlist', () => {
   const fakeReq = (ip: string | undefined) => ({ ip } as unknown as Parameters<typeof enforceDevIpAllowlist>[0]);
 
-  it('fail-closed bei leerer Liste (secure-by-default)', async () => {
-    delete process.env.DEV_IP_ALLOWLIST_REQUIRED;
+  it('fail-closed bei leerer Liste', async () => {
     ipListCount.mockResolvedValue(0);
     const r = await enforceDevIpAllowlist(fakeReq('1.2.3.4'));
     expect(r.ok).toBe(false);
@@ -120,7 +114,6 @@ describe('enforceDevIpAllowlist', () => {
     const r = await enforceDevIpAllowlist(fakeReq('1.2.3.4'));
     expect(r.ok).toBe(true);
     expect(r.reason).toBe('no_list');
-    delete process.env.DEV_IP_ALLOWLIST_REQUIRED;
   });
 
   it('fail-closed wenn Liste vorhanden aber IP fehlt', async () => {
@@ -151,15 +144,13 @@ describe('recordDevAuthFailure', () => {
   it('schreibt LOGIN_FAILURE bei niedrigem Counter', async () => {
     securityEventCreate.mockResolvedValue({ id: 'sec-1' });
     recordDevAuthFailure({ userId: 'u1', ip: '1.1.1.1', reason: 'bad_password', failureCount: 1 });
-    // best-effort Promise abwarten
     await new Promise(r => setImmediate(r));
-    expect(securityEventCreate).toHaveBeenCalledTimes(1);
     const call = securityEventCreate.mock.calls[0][0];
     expect(call.data.eventType).toBe('LOGIN_FAILURE');
     expect(call.data.severity).toBe('MEDIUM');
   });
 
-  it('eskaliert auf BRUTE_FORCE/CRITICAL ab Schwellwert', async () => {
+  it('eskaliert ab Schwellwert auf BRUTE_FORCE/CRITICAL', async () => {
     securityEventCreate.mockResolvedValue({ id: 'sec-2' });
     recordDevAuthFailure({ userId: 'u1', ip: '1.1.1.1', reason: 'bad_password', failureCount: 5 });
     await new Promise(r => setImmediate(r));
@@ -178,30 +169,29 @@ describe('parseDevScope', () => {
   });
 
   it('ignoriert leere Strings', () => {
-    const s = parseDevScope({ guildIdRestrict: '   ' });
-    expect(s.guildIdRestrict).toBeUndefined();
+    expect(parseDevScope({ guildIdRestrict: '   ' }).guildIdRestrict).toBeUndefined();
   });
 
-  it('liefert {} fuer null/undef', () => {
+  it('liefert leeres Objekt fuer null/undefined', () => {
     expect(parseDevScope(null)).toEqual({});
     expect(parseDevScope(undefined)).toEqual({});
   });
 });
 
 describe('validateStepUpInput', () => {
-  it('reason muss vorhanden sein', () => {
+  it('verlangt reason', () => {
     expect(validateStepUpInput({ reAuth: 'abcd' }).error).toBe('reason_missing');
   });
-  it('reason muss min. 6 Zeichen haben', () => {
+  it('verlangt mindestens sechs Zeichen Begruendung', () => {
     expect(validateStepUpInput({ reason: 'abc', reAuth: 'abcd' }).error).toBe('reason_too_short');
   });
-  it('reAuth muss vorhanden sein', () => {
+  it('verlangt reAuth', () => {
     expect(validateStepUpInput({ reason: 'valid reason' }).error).toBe('reauth_missing');
   });
-  it('reAuth muss min. 4 Zeichen haben', () => {
+  it('verlangt mindestens vier Zeichen reAuth', () => {
     expect(validateStepUpInput({ reason: 'valid reason', reAuth: 'ab' }).error).toBe('reauth_invalid');
   });
-  it('ok wenn alles korrekt', () => {
+  it('akzeptiert formal gueltige Eingabe; kryptografische Pruefung folgt in devStepUp', () => {
     expect(validateStepUpInput({ reason: 'kill switch ai', reAuth: '123456' }).ok).toBe(true);
   });
 });

@@ -1,7 +1,7 @@
 {
   "name": "discord-v-bot",
   "version": "1.0.0",
-  "description": "Maximaler Discord-Bot mit GUID-basierter Usertrennung, Upload/Download-System, Moderation, AI, Giveaways, Leveling, Polls, OAuth2 Dashboard",
+  "description": "V-Bot Prime: Discord-, Community- und DayZ/Nitrado-Bot mit AI, Hersteller-Workflows und getrenntem Guild-/Bot-Admin-/DEV-Dashboard",
   "main": "dist/src/index.js",
   "scripts": {
     "postinstall": "prisma generate",

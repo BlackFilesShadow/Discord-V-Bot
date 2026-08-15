@@ -6,9 +6,9 @@ import type { ExtendedClient } from '../../../types';
 export const commandCatalogRouter = Router();
 
 /**
- * Same source of truth as Discord /help. The surrounding v2 mount applies the
- * global Bot-Admin identity gate, so this endpoint does not create a second
- * permission model.
+ * Same source of truth as Discord /help and the scoped Discord deploy. The
+ * surrounding v2 mount applies the global Bot-Admin identity gate, so this
+ * endpoint does not create a second permission model.
  */
 commandCatalogRouter.get('/', (_req, res) => {
   const client = tryGetDashboardClient();
@@ -16,7 +16,7 @@ commandCatalogRouter.get('/', (_req, res) => {
     res.status(503).json({ ready: false, commands: [], summary: null });
     return;
   }
-  const commands = buildCommandCatalog(client as ExtendedClient);
+  const commands = buildCommandCatalog(client as ExtendedClient).filter((entry) => entry.staysInDiscord);
   res.json({
     ready: true,
     commands,

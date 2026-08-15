@@ -5,16 +5,16 @@ import { loadCommands, deployCommandsScoped } from './handler';
 import { logger } from '../utils/logger';
 
 /**
- * Deploy-Script: Registriert alle Slash-Commands bei Discord – scope-getrennt.
- *  - GLOBAL: Admin-, Dev- und Manufacturer-Commands.
- *  - GUILD:  alle uebrigen Commands pro verbundener Guild.
- * Loggt sich kurz ein, um die aktuelle Guild-Liste zu erhalten.
+ * Deploy-Script: Registriert die aktuell geladenen Discord-Slash-Commands
+ * scope-getrennt.
+ *
+ * Globale Bot-Admin-/DEV-Verwaltungsfunktionen sind in das Web-Dashboard
+ * migriert und werden hier nicht mehr als Slash-Commands erzeugt. Globale
+ * Herstellerfunktionen bleiben erhalten; alle weiteren Commands werden
+ * guild-scoped registriert.
  */
 async function deploy(): Promise<void> {
-  const client = new Client({
-    intents: [GatewayIntentBits.Guilds],
-  }) as ExtendedClient;
-
+  const client = new Client({ intents: [GatewayIntentBits.Guilds] }) as ExtendedClient;
   client.commands = new Collection();
 
   await loadCommands(client);
@@ -22,11 +22,21 @@ async function deploy(): Promise<void> {
   client.once('clientReady', async () => {
     try {
       const guildIds = [...client.guilds.cache.keys()];
-      const res = await deployCommandsScoped(client, config.discord.token, config.discord.clientId, guildIds);
-      logger.info(`Commands deployed: ${res.globalCount} global, ${res.guildCount} guild-scoped auf ${res.guildsOk} Guild(s).`);
+      const result = await deployCommandsScoped(client, config.discord.token, config.discord.clientId, guildIds);
+      logger.info(
+        `Commands deployed: ${result.globalCount} global, ${result.guildCount} guild-scoped auf ` +
+        `${result.guildsOk}/${guildIds.length} Guild(s).`,
+      );
+      if (result.guildsFailed > 0) {
+        throw new Error(
+          `Command-Deploy unvollständig: ${result.guildsFailed}/${guildIds.length} Guild(s) fehlgeschlagen ` +
+          `(${result.failedGuildIds.join(', ')}).`,
+        );
+      }
     } catch (err) {
       logger.error('Deploy-Fehler:', err);
       process.exit(1);
+      return;
     }
     process.exit(0);
   });
