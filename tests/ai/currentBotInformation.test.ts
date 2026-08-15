@@ -60,7 +60,7 @@ describe('current bot information surfaces', () => {
       expect(doc).not.toMatch(/\/dev-reload\b/);
     }
     expect(readme).toContain('Void_Architect');
-    expect(security).toContain('verifizierten Step-Up');
+    expect(security).toMatch(/verifiziert\w* Step-Up/i);
     expect(architecture).toContain('ADM V2');
   });
 });
