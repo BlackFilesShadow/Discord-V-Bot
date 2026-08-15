@@ -9,6 +9,8 @@ jest.mock('../../src/dashboard/clientRegistry', () => ({
   tryGetDashboardClient: jest.fn(),
 }));
 
+import fs from 'node:fs';
+import path from 'node:path';
 import express from 'express';
 import request from 'supertest';
 import { Collection, SlashCommandBuilder } from 'discord.js';
@@ -55,6 +57,11 @@ describe('Bot-Admin command catalog route', () => {
   beforeEach(() => {
     jest.clearAllMocks();
     clientMock.mockReturnValue(fakeClient());
+  });
+
+  it('ist im echten v2-Mount hinter globaler Identitaet UND aktiver BotAdminSession', () => {
+    const routes = fs.readFileSync(path.resolve(process.cwd(), 'src/dashboard/routes/v2.ts'), 'utf8');
+    expect(routes).toContain("'/bot-admin/command-catalog', requireGlobalBotAdminIdentity, requireBotAdmin, commandCatalogRouter");
   });
 
   it('liefert nur Commands, die der Discord-Deploy ebenfalls behalten wuerde', async () => {
