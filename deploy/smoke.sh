@@ -2,7 +2,7 @@
 # Smoke-Test fuer das Live-Dashboard (Hetzner-Deploy + lokal).
 #
 # Prueft, dass die wichtigsten Endpunkte erreichbar sind und nicht-authentifizierte
-# Requests sauber mit 401/403 abgewiesen werden (KEIN 500/Crash).
+# Requests sauber fail-closed abgewiesen werden (KEIN 500/Crash).
 #
 # Aufruf:
 #   ./deploy/smoke.sh                     # default localhost:3000
@@ -35,7 +35,7 @@ assert_status() {
 assert_status GET  /                                      200 "Dashboard-SPA"
 assert_status GET  /health                                200 "Liveness"
 
-# 2) Auth-Gates: alle geschuetzten Endpunkte muessen 401 (nicht 500) liefern
+# 2) Auth-Gates: geschuetzte Endpunkte muessen ohne Login fail-closed mit 401 liefern.
 assert_status GET  /api/stats                             401 "Legacy-API ohne Login"
 assert_status GET  /api/v2/guilds                         401 "v2-Guilds ohne Login"
 assert_status GET  /api/v2/dev/status/system              401 "Dev-Status ohne Login"
@@ -44,13 +44,16 @@ assert_status GET  /api/v2/dev/status/discord             401 "Dev-Status Discor
 assert_status GET  /api/v2/dev/status/nitrado             401 "Dev-Status Nitrado ohne Login"
 assert_status GET  /api/v2/dev/status/ai-providers        401 "Dev-Status AI-Providers ohne Login"
 assert_status GET  /api/v2/bot-admin/command-catalog      401 "BotAdmin-Katalog ohne Login"
-assert_status GET  /admin/users                           401 "Admin-API ohne Login"
+
+# Legacy-/admin-Router ist absichtlich entfernt: kein Auth-Leak, Route existiert nicht mehr.
+assert_status GET  /admin/users                           404 "Legacy-Admin-API entfernt"
 
 # 3) Health-Probes (oeffentlich)
 assert_status GET  /api/health/discord                    200 "Discord-Health public"
 
-# 4) Robustheit: ungueltige Routen liefern 404, NICHT 500
-assert_status GET  /api/v2/does-not-exist                 404 "404 statt 500 bei unbekannter Route"
+# 4) Auth-first-Robustheit: unbekannte v2-Routen werden vor dem Routing durch
+# requireAuth abgefangen. Anonyme Clients erhalten deshalb bewusst 401 statt 404.
+assert_status GET  /api/v2/does-not-exist                 401 "Auth-first bei unbekannter v2-Route"
 
 # 5) OAuth-Pfad existiert (302/200)
 oauth_code=$(curl -s -o /dev/null -w '%{http_code}' "${BASE}/auth/discord" --max-time 10 || echo "000")
