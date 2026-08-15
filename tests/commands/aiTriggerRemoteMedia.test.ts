@@ -143,13 +143,14 @@ describe('Bot-Admin AI trigger media and validation parity', () => {
     );
   });
 
-  it('rejects fractional cooldown values and rolls back already materialized remote media', async () => {
+  it('rejects fractional cooldown values before remote media IO', async () => {
     const response = await request(makeApp()).post('/bot-admin/triggers').send(payload({ cooldownSeconds: 1.5 }));
 
     expect(response.status).toBe(400);
     expect(response.body.error).toContain('Cooldown');
+    expect(saveRemoteMediaMock).not.toHaveBeenCalled();
     expect(addTriggerMock).not.toHaveBeenCalled();
-    expect(deleteMediaIfLocalMock).toHaveBeenCalledWith(LOCAL_PATH);
+    expect(deleteMediaIfLocalMock).not.toHaveBeenCalled();
   });
 
   it('rejects file plus remote URL at the backend even when a client bypasses the UI guard', async () => {
@@ -167,12 +168,13 @@ describe('Bot-Admin AI trigger media and validation parity', () => {
     expect(addTriggerMock).not.toHaveBeenCalled();
   });
 
-  it('rolls back newly materialized media when trigger validation fails', async () => {
+  it('rejects invalid trigger fields before remote media is materialized', async () => {
     const response = await request(makeApp()).post('/bot-admin/triggers').send(payload({ pattern: '' }));
 
     expect(response.status).toBe(400);
+    expect(saveRemoteMediaMock).not.toHaveBeenCalled();
     expect(addTriggerMock).not.toHaveBeenCalled();
-    expect(deleteMediaIfLocalMock).toHaveBeenCalledWith(LOCAL_PATH);
+    expect(deleteMediaIfLocalMock).not.toHaveBeenCalled();
   });
 
   it('rolls back newly materialized media when addTrigger returns a domain failure', async () => {
