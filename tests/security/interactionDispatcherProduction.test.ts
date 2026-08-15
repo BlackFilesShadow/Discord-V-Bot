@@ -44,7 +44,7 @@ describe('interactionCreate production invariants', () => {
     expect(commandRateLimits).toContain("interactionNotice('warning', 'Command-Limit erreicht'");
     expect(commandRateLimits).toContain("interactionNotice('info', 'Command noch im Cooldown'");
 
-    const permissionBlock = section('if (command.adminOnly || command.devOnly || command.manufacturerOnly)', '// Command ausfuehren');
+    const permissionBlock = section('if (command.adminOnly || command.devOnly || command.manufacturerOnly)', 'const stopTimer = commandDurationHistogram.startTimer');
     expect(permissionBlock).toContain("interactionNotice('error', 'Developer-Zugriff verweigert'");
     expect(permissionBlock).toContain("interactionNotice('error', 'Server-Berechtigung fehlt'");
 
