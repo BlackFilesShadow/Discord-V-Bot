@@ -103,10 +103,24 @@ async function main(): Promise<void> {
       const guildIds = [...client.guilds.cache.keys()];
       logger.info(`Command-Sync (scoped) startet für ${guildIds.length} Guild(s)...`);
       const res = await deployCommandsScoped(client, config.discord.token, config.discord.clientId, guildIds);
-      logger.info(`Command-Sync fertig: ${res.globalCount} global, ${res.guildCount} guild-scoped auf ${res.guildsOk} Guild(s).`);
-      await startAiBackgroundLoops(client);
+      if (res.guildsFailed > 0) {
+        logger.error(`Command-Sync unvollständig: ${res.globalCount} global, ${res.guildCount} guild-scoped; ${res.guildsOk}/${guildIds.length} Guild(s) erfolgreich.`, {
+          failedGuildIds: res.failedGuildIds,
+        });
+      } else {
+        logger.info(`Command-Sync fertig: ${res.globalCount} global, ${res.guildCount} guild-scoped auf ${res.guildsOk} Guild(s).`);
+      }
     } catch (e) {
       logger.error('Per-Guild Command-Sync Fehler:', e);
+    }
+
+    // AI-Hintergrundlogik darf nicht an einem transienten Discord-Command-
+    // Deploy fuer eine einzelne Guild haengen. Der Deploy-Fehler bleibt oben
+    // sichtbar/operativ fehlerhaft, waehrend die unabhaengige Runtime startet.
+    try {
+      await startAiBackgroundLoops(client);
+    } catch (e) {
+      logger.error('AI-Hintergrundruntime konnte nicht gestartet werden:', e);
     }
   });
 
@@ -162,7 +176,13 @@ async function main(): Promise<void> {
   try {
     dashboardRuntime = await startDashboard(client);
   } catch (error) {
-    logger.error('Dashboard konnte nicht gestartet werden:', error);
+    // Bot-Admin und DEV sind nach der Command-Migration dashboard-only. Ein
+    // Prozess ohne Dashboard waere daher funktional unvollstaendig und darf
+    // nicht als produktionsbereit weiterlaufen.
+    logger.error('Dashboard konnte nicht gestartet werden; Start wird abgebrochen:', error);
+    client.destroy();
+    await prisma.$disconnect().catch(() => undefined);
+    throw error;
   }
 
   let nitradoRuntime: NitradoRuntimeHandle | null = null;
