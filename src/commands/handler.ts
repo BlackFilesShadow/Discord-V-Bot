@@ -5,6 +5,13 @@ import { classifyCommand } from './inventory';
 import path from 'path';
 import fs from 'fs';
 
+class CommandCollisionError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = 'CommandCollisionError';
+  }
+}
+
 /**
  * Command-Handler: Lädt und registriert alle Slash-Commands.
  * Sektion 5: Übersichtliche, erweiterbare Command-Struktur.
@@ -24,12 +31,12 @@ export async function loadCommands(client: ExtendedClient): Promise<void> {
       const base = `[Command-Collision] /${cmd.data.name} ist doppelt definiert: ` +
         `"${existing}" und "${sourceFile}".`;
       // Strikt per Default: eine Namenskollision ist ein Konfigurationsfehler und
-      // darf nicht still zu einem ueberschriebenen Command fuehren (unklares
-      // Verhalten, Sicherheits-/Permission-Risiko). Nur mit explizitem
-      // COMMAND_LOADER_STRICT=false wird toleriert (warnen + ueberschreiben).
+      // muss den gesamten Loader wirklich abbrechen. Ein normaler File-Import-
+      // Fehler darf dagegen weiterhin isoliert geloggt werden, damit ein einzelnes
+      // defektes optionales Command nicht pauschal alle anderen versteckt.
       if (process.env.COMMAND_LOADER_STRICT !== 'false') {
         logger.error(`${base} Abbruch (setze COMMAND_LOADER_STRICT=false zum Tolerieren).`);
-        throw new Error(`Command-Collision: /${cmd.data.name} in "${existing}" und "${sourceFile}"`);
+        throw new CommandCollisionError(`Command-Collision: /${cmd.data.name} in "${existing}" und "${sourceFile}"`);
       }
       logger.warn(`${base} Letztere ueberschreibt erstere (COMMAND_LOADER_STRICT=false).`);
     }
@@ -52,25 +59,16 @@ export async function loadCommands(client: ExtendedClient): Promise<void> {
     for (const file of files) {
       const relSource = path.join(path.basename(dir), file);
       try {
-        // WICHTIG: require() statt dynamic import().
-        // Mit tsconfig "module": "Node16" triggert dynamic import() den nativen
-        // ESM-Resolver, der KEINE Directory-Imports (z.B. `from '../../types'`)
-        // unterstuetzt – alle Command-Files wuerden mit ERR_UNSUPPORTED_DIR_IMPORT
-        // crashen. require() laeuft ueber den CommonJS-Resolver von ts-node und
-        // findet `index.ts` in Verzeichnissen problemlos.
+        // WICHTIG: require() statt dynamic import(). Mit tsconfig "module":
+        // "Node16" wuerde der native ESM-Resolver Directory-Imports ablehnen.
         const commandModule = require(path.join(dir, file));
-
-        // Bei CJS-kompilierten Modulen kann `default` doppelt verschachtelt sein
-        // (Node 20 dynamic import aus CommonJS): m.default.default
         const maybeDefault = commandModule.default?.default ?? commandModule.default;
 
-        // Default export
         if (maybeDefault?.data?.name && typeof maybeDefault.execute === 'function') {
           const command: Command = maybeDefault;
           registerCommand(command, relSource);
           logger.info(`Command geladen: /${command.data.name}`);
         } else {
-          // Named exports (z.B. moderation.ts mit kickCommand, banCommand, etc.)
           const source = commandModule.default && typeof commandModule.default === 'object'
             ? { ...commandModule, ...commandModule.default }
             : commandModule;
@@ -84,6 +82,9 @@ export async function loadCommands(client: ExtendedClient): Promise<void> {
           }
         }
       } catch (error) {
+        // Kritische Invariante: Der Strict-Collision-Guard darf nicht vom
+        // generischen Datei-Fehlerhandler wieder verschluckt werden.
+        if (error instanceof CommandCollisionError) throw error;
         logger.error(`Fehler beim Laden von Command ${file}:`, error);
       }
     }
@@ -92,27 +93,15 @@ export async function loadCommands(client: ExtendedClient): Promise<void> {
   if (collisionCount > 0) {
     logger.warn(`[Command-Collision] ${collisionCount} doppelte Command-Name(n) erkannt.`);
   }
-  // Source-Map fuer Command-Inventory/Migration (Spec §15) am Client ablegen.
   client.commandSources = commandSources;
   client.commandCollisions = collisionCount;
   logger.info(`${client.commands.size} Commands geladen.`);
 }
 
-/**
- * Registriert alle Commands bei Discord.
- *
- * Wichtig: Wir leeren IMMER beide Scopes (global + Guild) bevor wir den
- * gewuenschten Scope neu befuellen. Sonst koennen Commands gleichzeitig
- * global UND per-Guild registriert sein – Discord merged das im
- * Autocomplete und zeigt jeden Subcommand doppelt an.
- */
+/** Registriert alle geladenen Commands in genau einem Discord-Scope. */
 export async function deployCommands(client: ExtendedClient, token: string, clientId: string, guildId?: string): Promise<void> {
   const rest = new REST({ version: '10' }).setToken(token);
   const commandData = client.commands.map(c => c.data.toJSON());
-
-  // GUILD-DEPLOY: nur Guild-Scope schreiben - instant verfuegbar.
-  // GLOBAL-DEPLOY: nur globalen Scope schreiben (kann bis 1h propagieren).
-  // Niemals den jeweils anderen Scope loeschen, sonst entstehen Luecken.
   try {
     if (guildId) {
       await rest.put(Routes.applicationGuildCommands(clientId, guildId), { body: commandData });
@@ -129,12 +118,8 @@ export async function deployCommands(client: ExtendedClient, token: string, clie
 
 /**
  * Teilt die geladenen Commands anhand des kanonischen Inventars auf.
- *
- * Entscheidend ist `staysInDiscord`, nicht nur die grobe Kategorie. Damit kann
- * eine versehentlich noch geladene Definition eines bereits ins Dashboard
- * migrierten Admin-/DEV-Commands beim Deploy nicht wieder registriert werden.
- * Hersteller-Funktionen sind die ausdrueckliche Ausnahme: ihr Inventory-Eintrag
- * hat `staysInDiscord=true` und bleibt global.
+ * `staysInDiscord` ist die entscheidende Deploy-Grenze; migrierte Commands
+ * koennen dadurch auch bei versehentlichem Wiederladen nicht zurueckkehren.
  */
 export function splitCommandsByScope(client: ExtendedClient): {
   global: ReturnType<Command['data']['toJSON']>[];
@@ -151,10 +136,6 @@ export function splitCommandsByScope(client: ExtendedClient): {
       devOnly: cmd.devOnly,
       manufacturerOnly: cmd.manufacturerOnly,
     });
-
-    // Defense in depth: selbst wenn eine migrierte/zu entfernende Datei durch
-    // Build-Artefakte oder einen spaeteren Refactor wieder im Loader landet,
-    // darf sie nicht zu Discord deployed werden.
     if (!cls.staysInDiscord) continue;
 
     const json = cmd.data.toJSON();
@@ -165,14 +146,9 @@ export function splitCommandsByScope(client: ExtendedClient): {
 }
 
 /**
- * Registriert die Commands scope-getrennt bei Discord:
- *  - globaler Scope erhaelt ausschliesslich laut Inventory erhaltene globale
- *    Funktionen (aktuell insbesondere Hersteller-Funktionen),
- *  - jede uebergebene Guild erhaelt die laut Inventory erhaltenen normalen
- *    Commands guild-scoped.
- *
- * Beide put()-Aufrufe ERSETZEN den jeweiligen Scope vollstaendig, sodass keine
- * Altlasten/Duplikate zurueckbleiben.
+ * Registriert die Commands scope-getrennt. Die globalen und Guild-Sets werden
+ * jeweils vollstaendig ersetzt, sodass keine alten Discord-Registrierungen
+ * zurueckbleiben.
  */
 export async function deployCommandsScoped(
   client: ExtendedClient,
@@ -199,10 +175,7 @@ export async function deployCommandsScoped(
   return { globalCount: globalCmds.length, guildCount: guildCmds.length, guildsOk };
 }
 
-/**
- * Registriert die guild-scoped "normalen" Commands fuer EINE Guild (z.B. nach
- * guildCreate). Der globale Scope bleibt unberuehrt.
- */
+/** Registriert die guild-scoped Commands fuer genau eine Guild. */
 export async function deployGuildCommands(
   client: ExtendedClient,
   token: string,
