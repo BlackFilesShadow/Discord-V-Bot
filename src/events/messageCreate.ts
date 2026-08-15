@@ -12,6 +12,7 @@ import { resolveCustomEmotes } from '../modules/ai/emoteResolver';
 import { getLevelUpMessage, getMaxLevelRewardMessage } from '../modules/xp/levelMessages.js';
 import { handleTicketDm } from '../modules/ticket/ticketManager';
 import { safeRegexTest } from '../utils/safeRegex';
+import { buildBotAboutText, buildBotFeaturesText } from '../content/botInfo';
 
 // Anti-Spam: Nachrichtenhistorie pro User
 const messageHistory: Map<string, { content: string; timestamp: number }[]> = new Map();
@@ -69,7 +70,7 @@ setInterval(() => {
   }
 }, 60 * 1000).unref?.();
 
-// Periodischer Cleanup: Eintr\u00e4ge \u00e4lter als 5 Min entfernen, leere User droppen
+// Periodischer Cleanup: Eintraege aelter als 5 Min entfernen, leere User droppen
 setInterval(() => {
   const cutoff = Date.now() - 5 * 60 * 1000;
   for (const [userId, history] of messageHistory) {
@@ -187,14 +188,16 @@ const messageCreateEvent: BotEvent = {
           case 'INVITE':
             matches = /discord\.(gg|io|me|li)|discordapp\.com\/invite/i.test(msg.content);
             break;
-          case 'CAPS':
+          case 'CAPS': {
             const capsRatio = (msg.content.match(/[A-Z]/g) || []).length / Math.max(msg.content.length, 1);
             matches = capsRatio > 0.7 && msg.content.length > 10;
             break;
-          case 'EMOJI_SPAM':
+          }
+          case 'EMOJI_SPAM': {
             const emojiCount = (msg.content.match(/<a?:\w+:\d+>|[\u{1F600}-\u{1F64F}\u{1F300}-\u{1F5FF}\u{1F680}-\u{1F6FF}\u{1F1E0}-\u{1F1FF}]/gu) || []).length;
             matches = emojiCount > 10;
             break;
+          }
           case 'MENTION_SPAM':
             matches = (msg.mentions.users.size + msg.mentions.roles.size) > 5;
             break;
@@ -227,7 +230,10 @@ const messageCreateEvent: BotEvent = {
       logger.error('Auto-Mod Fehler:', error);
     }
 
-    // ===== "STELL DICH VOR" / "WAS KANNST DU" – Priorität vor allen AI/Trigger/Auto-Respondern =====
+    // ===== "STELL DICH VOR" / "WAS KANNST DU" – vor AI/Trigger-Antworten =====
+    // Beide Antworten stammen aus derselben kanonischen Quelle wie
+    // `/stell-dich-vor`; dadurch koennen Limits und Command-Architektur nicht
+    // getrennt voneinander veralten.
     try {
       const botId = msg.client.user?.id;
       const isMentioned = botId ? msg.mentions.users.has(botId) : false;
@@ -244,71 +250,12 @@ const messageCreateEvent: BotEvent = {
           .trim()
           .toLowerCase();
 
-        const ABOUT_TEXT =
-          '🤖 **Discord-V-Bot – Dein smarter Community-Manager**\n\n' +
-          'Hallo! Ich bin **Discord-V-Bot** – dein vielseitiger, sicherer und datenschutzkonformer ' +
-          'All-in-One-Bot für Discord-Server mit Anspruch.\n' +
-          'Ob Community, Entwicklerteam oder Organisation: Ich unterstütze dich bei allem, was moderne Server brauchen.\n\n' +
-          '🔒 **Datenschutz made in EU** – DSGVO-Ready, Consent-Management, Audit-Logs.\n' +
-          '🛡️ **Sicherheit first** – Virenscan, Rechteverwaltung, 2FA, OTP-Login.\n' +
-          '📦 **Datei- & Paketverwaltung** – bis 2 GB pro Datei, Validierung, Soft-Delete.\n' +
-          '🏭 **Hersteller- & User-Management** – Bewerbungen, Rollen, Statistiken.\n' +
-          '📝 **Feedback-, Support- & Appeal-System** für faire Community-Entscheidungen.\n' +
-          '⚙️ **Automatisierung** – Reminder, Scheduler, XP/Level, Self-Roles, Polls, Giveaways.\n' +
-          '🌐 **Dashboard & API** für externe Tools.\n\n' +
-          'Frag mich `was kannst du?` für eine detaillierte Funktions-Übersicht.\n' +
-          'Oder nutze `/help` für alle Befehle.';
-
-        const FEATURES_TEXT =
-          '🛠️ **Meine Funktionen im Detail**\n\n' +
-          '**🔒 Datenschutz & Compliance**\n' +
-          '• DSGVO-Einwilligungs-Management & Audit-Logs\n' +
-          '• Compliance-Check (`/admin-audit compliance`) inkl. Übersicht & Export\n' +
-          '• Datenexport (Audit, User, Pakete) als JSON/CSV\n\n' +
-          '**📦 Datei- & Paketverwaltung**\n' +
-          '• Upload bis zu 10 Dateien gleichzeitig (XML/JSON, bis 2 GB)\n' +
-          '• Virenscan, Hash-Integritätsprüfung, Validierung\n' +
-          '• Pakete pro Hersteller einzigartig (case-insensitive), Soft-Delete\n' +
-          '• Download-Übersicht mit Statistiken\n\n' +
-          '**🏭 Hersteller- & User-Management**\n' +
-          '• Hersteller-Bewerbung, Admin-Review, Status-Reset\n' +
-          '• Rollen- und Rechteverwaltung, Self-Role-Menüs\n' +
-          '• OTP-Login & Zwei-Faktor-Authentifizierung\n\n' +
-          '**🛡️ Moderation & Sicherheit**\n' +
-          '• Auto-Mod (Spam, Caps, Links, Invites, Mention-Spam, Regex)\n' +
-          '• Bann/Kick/Mute mit Case-Management & Appeal-System\n' +
-          '• Rate-Limiting, Security-Events-Logging, API-Key-Verwaltung\n\n' +
-          '**📝 Feedback & Support**\n' +
-          '• Feedback-System pro Guild + globalem Fallback-Channel\n' +
-          '• Ticket-System per DM-Bridge\n' +
-          '• Appeal-Modul für Bann-Einsprüche\n\n' +
-          '**🤖 KI-Features**\n' +
-          '• ChatGPT-Style Antworten bei Erwähnung (mit Verlaufs-Kontext)\n' +
-          '• Auto-Responder & Owner-definierte Trigger pro Guild\n' +
-          '• Member-Awareness, RAG mit pgvector\n' +
-          '• Auto-Übersetzung (Dashboard → Übersetzungen) in 10 Sprachen, mit Rollen-Ping & Scheduler\n\n' +
-          '**📊 Audit & Transparenz**\n' +
-          '• Lückenlose Aktions-Protokollierung (Volltext-Suche)\n' +
-          '• Audit-Export für jeden Zeitraum\n\n' +
-          '**⚙️ Community & Automatisierung**\n' +
-          '• Level- & XP-System mit Levelrollen + Level-Up-Nachrichten\n' +
-          '• Reminder-Scheduler (täglich/wöchentlich/monatlich/stündlich)\n' +
-          '• Giveaways, Polls, Self-Role-Menüs\n' +
-          '• Automatische Rollenvergabe & Eventrollen\n\n' +
-          '**🌐 Dashboard & API**\n' +
-          '• Web-Dashboard zur Verwaltung\n' +
-          '• REST-API & Webhooks für externe Integrationen\n\n' +
-          'Tipp: `/help` zeigt dir alle verfügbaren Slash-Commands.';
-
-        // Normalisiere fuer striktes Matching: nur Buchstaben/Ziffern/Spaces, kollabierte Spaces
+        // Normalisiere fuer striktes Matching: nur Buchstaben/Ziffern/Spaces.
         const normalized = cleaned
           .replace(/[^\p{L}\p{N}\s]/gu, ' ')
           .replace(/\s+/g, ' ')
           .trim();
 
-        // Whitelist exakter Trigger-Phrasen (case-insensitive). Nur wenn die
-        // bereinigte Nachricht GENAU einer dieser Phrasen entspricht, antworten
-        // wir mit dem Vorstellungs-/Funktions-Text. Sonst geht alles an die KI.
         const ABOUT_TRIGGERS = new Set([
           'stell dich vor',
           'stelle dich vor',
@@ -331,17 +278,20 @@ const messageCreateEvent: BotEvent = {
           'welche funktionen hast du',
         ]);
 
-        // 1) "Stell dich vor" / "Wer bist du" -> ABOUT
         if (ABOUT_TRIGGERS.has(normalized)) {
           logger.info(`STELL-DICH-VOR feuert msgId=${msg.id} userId=${msg.author.id}`);
-          await msg.reply({ content: ABOUT_TEXT, allowedMentions: { repliedUser: true, parse: [] } });
+          const text = buildBotAboutText();
+          const chunks = splitForDiscord(text, 1900);
+          await msg.reply({ content: chunks[0], allowedMentions: { repliedUser: true, parse: [] } });
+          for (const c of chunks.slice(1)) {
+            await channel.send({ content: c, allowedMentions: { parse: [] } });
+          }
           return;
         }
 
-        // 2) "Was kannst du" -> FEATURES (in Chunks, da > 2000 Zeichen)
         if (FEATURES_TRIGGERS.has(normalized)) {
           logger.info(`WAS-KANNST-DU feuert msgId=${msg.id} userId=${msg.author.id}`);
-          const chunks = FEATURES_TEXT.match(/[\s\S]{1,1900}/g) || [FEATURES_TEXT];
+          const chunks = splitForDiscord(buildBotFeaturesText(), 1900);
           await msg.reply({ content: chunks[0], allowedMentions: { repliedUser: true, parse: [] } });
           for (const c of chunks.slice(1)) {
             await channel.send({ content: c, allowedMentions: { parse: [] } });
@@ -370,7 +320,7 @@ const messageCreateEvent: BotEvent = {
       if (msg.guildId) {
         try {
           const triggers = await listTriggers(msg.guildId);
-          // Channel-Filter: nur Trigger, die im aktuellen Channel aktiv sind (oder \u00fcberall)
+          // Channel-Filter: nur Trigger, die im aktuellen Channel aktiv sind (oder ueberall)
           const channelTriggers = triggers.filter(t => !t.channelId || t.channelId === msg.channelId);
           if (channelTriggers.length > 0) {
             const matched = findMatchingTrigger(channelTriggers, msg.content, isMentioned || isReplyToBot);
@@ -403,7 +353,7 @@ const messageCreateEvent: BotEvent = {
                   return;
                 }
               } else {
-                // Mehrere Varianten getrennt durch ||| -> zuf\u00e4llig eine ausw\u00e4hlen
+                // Mehrere Varianten getrennt durch ||| -> zufaellig eine auswaehlen
                 const raw = matched.responseText || '';
                 const variants = raw.split('|||').map(s => s.trim()).filter(s => s.length > 0);
                 const pick = variants.length > 1
@@ -417,7 +367,7 @@ const messageCreateEvent: BotEvent = {
 
               const files = matched.mediaUrl ? [new AttachmentBuilder(matched.mediaUrl)] : undefined;
               try {
-                // Custom-Emojis :name: zur Sendezeit aufl\u00f6sen (Cache aktuell, alte Trigger profitieren auch)
+                // Custom-Emojis :name: zur Sendezeit aufloesen (Cache aktuell, alte Trigger profitieren auch)
                 const finalText = resolveCustomEmotes(responseText, msg.guild);
                 logger.info(`TRIGGER feuert msgId=${msg.id} triggerId=${matched.id} guildId=${msg.guildId}`);
                 await msg.reply({
@@ -437,7 +387,7 @@ const messageCreateEvent: BotEvent = {
             }
           }
         } catch (triggerErr) {
-          logger.error('Trigger-Pr\u00fcfung Fehler:', triggerErr);
+          logger.error('Trigger-Pruefung Fehler:', triggerErr);
         }
       }
 
@@ -451,7 +401,6 @@ const messageCreateEvent: BotEvent = {
           .replace(new RegExp(`<@!?${botId}>`, 'g'), '')
           .trim();
 
-        // ...sonst wie gehabt:
         if (question.length === 0) {
           await channel.send({
             content: `<@${msg.author.id}> Hi! Stell mir eine Frage – ich antworte gerne. 🤖`,
@@ -463,7 +412,6 @@ const messageCreateEvent: BotEvent = {
             allowedMentions: { users: [msg.author.id] },
           });
         } else {
-          // "Tippt..."-Indikator
           await channel.sendTyping().catch(() => {});
 
           let aiQuestion = question;
@@ -539,10 +487,6 @@ const messageCreateEvent: BotEvent = {
               .replace(/[ \t]{2,}/g, ' ')
               .trim();
             if (cleaned.length === 0) cleaned = '...';
-            // Markdown-bewusstes Chunking: Wir versuchen an Zeilenumbruechen
-            // zu splitten und niemals einen offenen Code-Fence (```) ueber
-            // mehrere Nachrichten ziehen zu lassen. Discord rendert sonst
-            // den Codeblock kaputt.
             const chunks = splitForDiscord(cleaned, 1900);
             await msg.reply({
               content: chunks[0],
@@ -578,14 +522,8 @@ const messageCreateEvent: BotEvent = {
 
     // ===== SEKTION 8: XP-VERGABE (guild-getrennt) =====
     try {
-      // Kein XP in DMs / ohne Guild-Kontext.
       if (!msg.guildId) return;
 
-      // BUGFIX: Vorher wurde nur findUnique verwendet → User, die nie via
-      // guildMemberAdd registriert wurden (z. B. bereits vor dem Bot auf
-      // dem Server, oder Bot war beim Join offline), bekamen NIE XP.
-      // Jetzt: upsert garantiert, dass jeder aktive Schreiber in der DB
-      // existiert. Damit erfasst das XP-System wirklich alle User.
       const user = await prisma.user.upsert({
         where: { discordId: msg.author.id },
         create: {
@@ -600,21 +538,19 @@ const messageCreateEvent: BotEvent = {
       });
 
       {
-        // Guild-spezifische XP-Konfiguration (id == guildId)
+        // Guild-spezifische XP-Konfiguration (id == guildId). Die privilegierte
+        // Konfiguration liegt nach der Command-Migration im DEV-Dashboard.
         const xpConfig = await prisma.xpConfig.findUnique({ where: { id: msg.guildId } });
 
-        // XP-System global deaktiviert?
         if (xpConfig && xpConfig.isActive === false) return;
 
-        // Kanal-Filter (STRIKT): Wenn allowedChannelIds gesetzt, nur dort XP
         const allowedChannels = Array.isArray(xpConfig?.allowedChannelIds)
           ? (xpConfig!.allowedChannelIds as string[])
           : [];
         if (allowedChannels.length > 0 && !allowedChannels.includes(msg.channelId)) {
-          return; // Nachricht nicht in einem berechtigten Kanal → kein XP
+          return;
         }
 
-        // Rollen-Filter: Wenn allowedRoleIds gesetzt, muss Member mind. eine davon haben
         const allowedRoles = Array.isArray(xpConfig?.allowedRoleIds)
           ? (xpConfig!.allowedRoleIds as string[])
           : [];
@@ -622,10 +558,9 @@ const messageCreateEvent: BotEvent = {
           const member = msg.member;
           if (!member) return;
           const hasAllowed = allowedRoles.some(rid => member.roles.cache.has(rid));
-          if (!hasAllowed) return; // User hat keine berechtigte Rolle → kein XP
+          if (!hasAllowed) return;
         }
 
-        // XP-Cooldown prüfen (Anti-Spam für XP)
         const cooldownSeconds = xpConfig?.xpCooldownSeconds || 60;
 
         const levelData = await prisma.levelData.findUnique({
@@ -636,18 +571,16 @@ const messageCreateEvent: BotEvent = {
         if (levelData?.lastXpGain) {
           const timeSinceLastXp = now.getTime() - levelData.lastXpGain.getTime();
           if (timeSinceLastXp < cooldownSeconds * 1000) {
-            return; // XP-Cooldown aktiv
+            return;
           }
         }
 
-        // XP berechnen
         const xpMin = xpConfig?.messageXpMin || 15;
         const xpMax = xpConfig?.messageXpMax || 25;
         const xpAmount = Math.floor(Math.random() * (xpMax - xpMin + 1)) + xpMin;
         const multiplier = xpConfig?.levelMultiplier || 1.0;
         const totalXp = Math.floor(xpAmount * multiplier);
 
-        // XP vergeben
         const updated = await prisma.levelData.upsert({
           where: { userId_guildId: { userId: user.id, guildId: msg.guildId! } },
           create: {
@@ -664,7 +597,6 @@ const messageCreateEvent: BotEvent = {
           },
         });
 
-        // XP-Record speichern
         await prisma.xpRecord.create({
           data: {
             userId: user.id,
@@ -675,7 +607,6 @@ const messageCreateEvent: BotEvent = {
           },
         });
 
-        // Level-Up prüfen
         const currentXp = Number(updated.xp);
         const maxLevel = xpConfig?.maxLevel ?? 20;
         let newLevel = calculateLevel(currentXp);
@@ -687,7 +618,6 @@ const messageCreateEvent: BotEvent = {
             data: { level: newLevel },
           });
 
-          // Frecher DayZ-Glückwunsch
           try {
             await channel.send({
               content: getLevelUpMessage({
@@ -739,8 +669,8 @@ const messageCreateEvent: BotEvent = {
             }
           }
 
-          // Level-Belohnung prüfen — Rolle aus LevelRole (per Guild konfigurierbar via /xp-config levelrole)
-          // sowie Fallback aus globaler LevelReward-Tabelle.
+          // Level-Belohnung: guild-spezifische LevelRole aus dem DEV-Dashboard,
+          // mit globaler LevelReward-Tabelle als Fallback.
           let rewardRoleId: string | null = null;
           let rewardText: string | null = null;
 
@@ -753,7 +683,6 @@ const messageCreateEvent: BotEvent = {
             }
           }
 
-          // Fallback: globale Level-Belohnung
           if (!rewardRoleId) {
             const globalReward = await prisma.levelReward.findUnique({
               where: { level: newLevel },
