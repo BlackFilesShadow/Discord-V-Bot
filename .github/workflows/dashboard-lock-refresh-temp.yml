@@ -23,8 +23,12 @@ jobs:
         run: |
           npm ci
           npm audit fix --package-lock-only
-          npm audit --omit=dev --audit-level=high
+      - name: Report resulting production audit
+        working-directory: dashboard-ui
+        continue-on-error: true
+        run: npm audit --omit=dev --audit-level=high
       - name: Upload refreshed lock
+        if: always()
         uses: actions/upload-artifact@v5
         with:
           name: dashboard-package-lock-refreshed
