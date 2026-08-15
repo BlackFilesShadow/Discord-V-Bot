@@ -1,215 +1,125 @@
-# Discord-V-Bot
+# V-Bot — Interne Abschluss- und Verifikationscheckliste
 
+> Stand: August 2026. Diese Datei ist keine historische Wunschliste mehr, sondern die aktuelle technische Prüfliste für Änderungen an V-Bot.
 
+## 1. Command-Architektur
 
-## Maximale Funktions- und Sicherheits-Checkliste
+- [x] Globale Bot-Admin-Funktionen sind im Bot-Admin-Dashboard integriert.
+- [x] Globale DEV-Funktionen sind im DEV-Dashboard integriert.
+- [x] Migrierte `adminOnly`-/`devOnly`-Slash-Implementierungen sind aus dem Discord-Loader entfernt.
+- [x] `/ping` und `/status` als frühere DEV-Diagnostik sind nicht mehr als normale Discord-Slash-Commands registriert.
+- [x] Hersteller-Funktionen bleiben bewusst in Discord.
+- [x] `src/commands/developer/` enthält nur die Hersteller-Ausnahme `devManufacturer.ts`.
+- [x] `src/commands/inventory.ts` dokumentiert `moved_to_dashboard` und Hersteller-Preserve-Regeln.
+- [x] Regressionstest verhindert neue globale Admin-/DEV-Slash-Commands außerhalb der Hersteller-Ausnahme.
+- [ ] Nach jeder Command-Änderung `/help`, Command-Diagnostics und Discord-Deployment-Scope gemeinsam prüfen.
 
-### 1. Registrierung & GUID-basierte Usertrennung
-- [ ] Jeder Nutzer und Hersteller erhält eine eindeutige, kryptografisch sichere GUID (UUIDv4 oder besser)
-- [ ] Alle Daten, Pakete, Logs, Rechte werden strikt nach GUID gespeichert und verwaltet
-- [ ] Registrierung als Hersteller per Command, Anfrage an Admin per PN
-- [ ] Admin kann annehmen/ablehnen, alles wird geloggt
-- [ ] Bei Annahme: Nutzer erhält Einmal-Passwort (hochkomplex, zeitlich limitiert, nur für GUID gültig)
-- [ ] Nach Passwort-Eingabe: Automatische, GUID-basierte Bereichserstellung (keine Namenskonflikte möglich)
-- [ ] Uploadrechte nur für eigenen GUID-Bereich, Passwort sofort ungültig
-- [ ] Absolute Trennung aller Nutzerbereiche, keine Möglichkeit auf fremde Daten zuzugreifen
+## 2. Bot-Informationskonsistenz
 
-### 2. Upload- & Download-System (maximal sicher & flexibel)
-- [ ] Unbegrenzte Uploads pro Nutzer/GUID-Bereich
-- [ ] Upload von beliebig vielen Dateien gleichzeitig als Paket (z. B. „Base“, „Trader“), keine künstlichen Limits
-- [ ] Paketname frei wählbar, GUID-gebunden, keine Namenskonflikte
-- [ ] Dateien (XML, JSON, gemischt) bis 2 GB pro Datei, Chunked-Upload für große Dateien
-- [ ] Hochmoderner XML- & JSON-Validator (exakt, fehlertolerant, prüft Struktur, Syntax, XSD/Schema, Custom Rules)
-- [ ] Integritätsprüfung (Größe, Format, Hash, Validität, Virenscan, Quarantäne bei Verdacht)
-- [ ] Validierungs- und Upload-Feedback direkt per Command (detaillierte Fehler, Erfolg, Vorschläge)
-- [ ] Pakete und enthaltene Dateien im eigenen GUID-Bereich sichtbar, mit Metadaten (Uploadzeit, Größe, Status)
-- [ ] Übersicht, Suche und Verwaltung aller eigenen Pakete/Dateien (Filter, Sortierung, Bulk-Operationen)
-- [ ] Pakete können vom Nutzer/Admin gelöscht werden (Soft-Delete, Restore möglich)
-- [ ] Download von Einzeldateien oder kompletten Paketen (ZIP, TAR, Einzeldateien), global für alle Nutzer
-- [ ] Download-Tracking, Rate-Limit, Abuse-Detection
+- [x] Entwickleridentität wird kanonisch als `Void_Architect` ausgegeben.
+- [x] `/help` wird aus der geladenen Command-Registry erzeugt.
+- [x] AI-Command-Katalog enthält keine entfernten `/autorole`-/globalen Admin-/DEV-Slash-Funktionen.
+- [x] AI-Upload-Information leitet das Größenlimit aus `config.upload.maxFileSizeBytes` ab.
+- [x] `/stell-dich-vor` hängt nicht mehr von einer nicht vorhandenen `about.md` ab.
+- [x] README/Security/Architecture beschreiben Dashboard-only Bot-Admin/DEV statt alter Slash-Listen.
+- [ ] Bei neuen Commands oder Verschiebungen AI-Katalog und nutzersichtbare Info-Texte im selben PR aktualisieren.
 
-### 3. Download-System
-- [ ] Download von Einzeldateien oder kompletten Paketen (wie Upload-Pakete)
-- [ ] Download ist global für alle Nutzer möglich
-- [ ] Suche nach Paketnamen, Dateityp oder Nutzer
+## 3. Hersteller / Upload
 
-### 4. Moderation, AI & Sicherheit (Maximum)
-- [ ] Modernste Moderationsfunktionen: Kick, Ban, Mute, Warn, Filter, Auto-Mod, Eskalationsstufen, Audit-Log, Case-Management, Appeal-System
-- [ ] Dynamisches Rollenmanagement, Invite-Tracking, Rechte auf GUID- und Channel-Ebene
-- [ ] OAuth2-Verifizierung, Multi-Faktor-Authentifizierung, Session-Management
-- [ ] AI-Integration: Wissensfragen, Moderationshinweise, Übersetzung, Sentiment-Analyse, Kontext-Analyse, Toxicity-Detection, Auto-Responder, Custom AI-Modules
-- [ ] Live-Verlinkung: News, Streams, Social Media, Webhooks, RSS, Echtzeit-Feeds, Filter, Benachrichtigungen
-- [ ] Help-Menü mit Developer-Authentifizierung (Passwort-Hash, 2FA, Rechteverwaltung, Audit-Log)
-- [ ] Logging aller Aktionen, revisionssicher, unveränderbar, Export/Analyse möglich
-- [ ] DSGVO-konforme Datenverarbeitung, Privacy-by-Design, automatische Datenlöschung, Opt-In/Opt-Out
-- [ ] Schutz vor Missbrauch: Rate-Limit, Abuse-Detection, Anti-Spam, Anti-Raid, IP- und Verhaltensanalyse, Blacklist/Whitelist
+- [x] Herstellerzugang ist DB-/Status-gebunden.
+- [x] `/upload` und `/mypackages` bleiben Discord-Slash-Funktionen.
+- [x] Uploads sind GUID-getrennt.
+- [x] Maximal 10 Attachments pro `/upload`-Aufruf.
+- [x] Standardlimit 25 MiB pro Datei (`MAX_FILE_SIZE_BYTES=26214400`), konfigurierbar.
+- [x] Standard-Endungen `.xml,.json`.
+- [x] Größen-/Dateityp-/Validierungsprüfungen vor finaler Freigabe.
 
-### 5. Anforderungen (Maximum)
-- Discord-Bot-Framework (z. B. discord.js, discord.py, mit Sharding und Skalierung)
-- Hochleistungsfähige, verschlüsselte Datenbank (z. B. PostgreSQL, MongoDB, mit GUID-Partitionierung)
-- Speicherlösung für große Dateien (bis 2 GB pro Datei, Cloud-Storage, redundante Backups, Verschlüsselung)
-- Sichere Passwort-/Token-Generierung und -Verwaltung (Argon2, bcrypt, zeitlich limitiert, Device-Bindung)
-- Automatisierte PN-Kommunikation für Anfragen, Status, Validierungsfeedback, Alerts
-- Übersichtliche, erweiterbare Command-Struktur (Slash-Commands, Kontextmenüs, Bulk- und Admin-Commands)
-- Dokumentation, Support-Kanal, automatisierte Fehlerberichte, Monitoring, Alerting
-- Vollständige Testabdeckung, CI/CD, automatisierte Security- und Integritätsprüfungen
+## 4. DEV Security
 
+- [x] `requireGlobalDeveloperIdentity` prüft kanonische Developer-ID und frische DB-Rolle.
+- [x] `requireDev` verlangt eine aktive, nicht widerrufene `DevSession`.
+- [x] MFA ist optional über `DEV_REQUIRE_MFA=true` erzwingbar.
+- [x] IP-Allowlist ist optional über `DEV_REQUIRE_IP_ALLOWLIST=true` erzwingbar.
+- [x] Sensible DEV-Mutationen besitzen zusätzlich echten kryptografischen Step-Up.
+- [x] Aktive 2FA => TOTP; kein Passwort-Fallback bei falschem TOTP.
+- [x] Ohne aktive 2FA => erneute timing-sichere Prüfung von `DEV_PASSWORD`.
+- [x] Step-Up fail-closed bei fehlender serverseitiger Credential-Konfiguration.
+- [x] Wiederholte Step-Up-Fehler => temporärer Lockout + Audit.
+- [x] `reAuth` wird nicht in URLs/Auditdetails geschrieben.
 
-### 6. Giveaway-System (Automatisierte Verlosungen)
-- [ ] Giveaway-Command: Starte ein neues Giveaway mit frei wählbarem Item-/Gegenstandsnamen, Beschreibung und Dauer (z. B. !giveaway Preis "Beschreibung" 1h)
-- [ ] Teilnehmerverwaltung: User können per Reaktion oder Command teilnehmen, Namen/Tags werden DSGVO-konform gespeichert
-- [ ] Echtzeit-Timer: Embed zeigt verbleibende Zeit live an, inklusive Verlosungstext und Itemnamen
-- [ ] Automatische Gewinnerermittlung: Nach Ablauf wird ein Gewinner zufällig aus allen Teilnehmern gezogen und im Channel bekanntgegeben
-- [ ] Gewinn- und Teilnehmerdaten: Embed enthält Preis, Teilnehmerzahl, Timer, Beschreibung und Gewinner
-- [ ] Community-Management: Teilnehmerdaten werden sicher verwaltet, Mehrfachteilnahmen werden verhindert
-- [ ] Transparenz: Alle Aktionen (Start, Teilnahme, Auslosung) werden geloggt und sind für Admins nachvollziehbar
-- [ ] Erweiterbar: Optionale Features wie Mehrfachgewinne, Blacklist, Mindestrollen, Custom-Emojis für Teilnahme
+## 5. DEV Exporte
 
-**Ziel:**
-Ein maximal sicheres, transparentes und automatisiertes Giveaway-System, das Community-Events fördert und Missbrauch verhindert. Der Item-/Gegenstandsname ist frei wählbar und wird prominent im Embed angezeigt. Die Teilnahme ist einfach, die Auslosung erfolgt fair und automatisch nach Ablauf des Timers.
+- [x] Paket-, User-/GDPR- und Audit-Exporte sind POST-only hinter `requireDev` + verifiziertem Step-Up.
+- [x] Alte GET-Exportpfade geben keine sensiblen Daten direkt aus.
+- [x] Exportantworten sind `no-store, private`.
+- [x] Audit-Export: Kategorie-Allowlist, 1–365 Tage, Hard-Cap 50.000 Zeilen.
 
+## 6. Guild-/Gameserver-Scope
 
----
+- [x] Nitrado-/Economy-/Casino-/Whitelist-/Ban-/ADM-Daten sind an `guildId + nitradoConnId` gebunden.
+- [x] Mehrere Gameserver dürfen nicht über Slot-/Guild-Fallbacks vermischt werden.
+- [x] Permission-Grants sind Guild-gebunden; nicht delegierbare Scopes bleiben Owner-only.
+- [x] Economy-Scope-Migration ordnet nur eindeutige Legacy-Fälle automatisch zu und rät bei Mehrdeutigkeit nicht.
 
-## Developer-Bereich (maximal modern, sicher & mächtig)
+## 7. Nitrado Whitelist / Server-Bans
 
-### Sichtbare Informationen & Tools
-- Übersicht aller Nutzer & Hersteller (GUID, Status, Upload-Statistiken, Rechte, Historie)
-- Live-Logs aller Aktionen (Uploads, Downloads, Moderation, Validierungsfehler, Security-Events)
-- Übersicht aller Pakete und Inhalte (Dateigröße, Validierungsstatus, Download-Statistik, Änderungsverlauf)
-- Systemstatus (Speicher, Auslastung, Fehler, Warnungen, Security-Alerts, Integritätsstatus)
-- Übersicht aller laufenden und vergangenen Moderationsaktionen, inkl. Eskalationsstufen, Appeals
-- Audit-Log mit Filter, Export, Analyse
-- Bulk-Operationen (z. B. Massenlöschung, Rechteänderung)
+- [x] Whitelist-Remoteänderungen laufen über Nitrado-Job/Outbox.
+- [x] `/wl-list` liest die echte Remote-Whitelist getrennt pro Server.
+- [x] `/server-ban` entfernt den lokalen Whitelist-Desired-State und reiht Remote-Ban ein.
+- [x] Zeitliche Server-Bans besitzen persistente Ablauf-Metadaten.
+- [x] Ban-Ablauf-Runtime prüft regelmäßig und reiht Remote-Unban ein.
+- [x] Ablauf-Embed wird erst nach bestätigter Remote-Entfernung gesendet.
+- [x] Re-Ban/manueller Unban verhindern veraltete automatische Ablaufmeldungen.
 
-### Developer-Commands (Maximum)
-- /admin-approve [user]: Hersteller-Anfrage annehmen
-- /admin-deny [user]: Hersteller-Anfrage ablehnen
-- /admin-list-users: Alle Nutzer/Hersteller (GUID, Status, Rechte, Historie)
-- /admin-list-pakete: Alle Pakete und Inhalte (GUID, Metadaten, Validierungsstatus)
-- /admin-logs [filter]: Live-Log-Stream mit Filteroptionen (z. B. Security, Upload, Moderation)
-- /admin-delete [user|paket|datei]: Löschen (Soft/Hard), Restore, Bulk-Operationen
-- (Broadcast ins Dashboard migriert: Bot-Admin → Broadcast, früher /admin-broadcast)
-- /admin-stats: System-, Nutzungs-, Sicherheitsstatistiken
-- /admin-validate [paket|datei]: Manuelle (Re-)Validierung, Fehleranalyse, Quarantäne
-- /admin-reset-password [user]: Passwort/Token zurücksetzen, Ablaufzeit setzen
-- /admin-toggle-upload [user]: Uploadrechte temporär entziehen/geben, History
-- /admin-export [bereich|paket]: Export für Backup, Analyse, Compliance
-- /admin-error-report: Fehlerberichte, Security-Events, Integritätswarnungen
-- /admin-config: Einstellungen, Limits, Security-Policies live anpassen
-- /admin-audit [filter]: Audit-Log-Analyse, Compliance-Check
-- /admin-appeals: Übersicht und Bearbeitung von Moderations-Appeals
-- /admin-security: Security-Events, Blacklist/Whitelist, IP-Analyse
-- /admin-monitor: Live-Monitoring aller Systemkomponenten
+## 8. ADM V2
 
-### Sicherheit im Developer-Bereich (Maximum)
-- Zugriff nur nach starker Authentifizierung (Passwort-Hash, 2FA, Device-Bindung, Session-Timeout)
-- Alle Aktionen werden revisionssicher, unveränderbar und mit GUID geloggt
-- Rechtevergabe granular steuerbar (Super-Admin, Admin, Moderator, Read-Only, Custom)
-- Automatische Benachrichtigung bei sicherheitsrelevanten Ereignissen, Eskalationsstufen
-- Security- und Compliance-Checks, regelmäßige Audits, Penetration-Tests
+- [x] Legacy `admSyncCron`, `admWatcher` und globaler Runtime-Fallback `NITRADO_ADM_DIR` sind entfernt.
+- [x] ADM-V2-Live-Sync arbeitet per `NitradoConnection` + Profil + Cursor.
+- [x] Kanonische `AdmEvent`s werden unabhängig von öffentlicher Feed-Ausgabe erfasst.
+- [x] ADM-V2-Postprocess verarbeitet Sessions/Rewards/Link-Folgeprozesse.
+- [ ] Produktiv pro aktivem Gameserver Quelle/Cursor/Rotation beobachten.
+- [ ] Multi-Server- und Backlog-Smokechecks nach größeren ADM-Änderungen wiederholen.
 
----
-Diese maximal moderne und sichere Checkliste sowie die Developer-Übersicht bieten absolute Kontrolle, maximale Sicherheit, kompromisslose User- und GUID-Trennung und höchste Flexibilität für die Entwicklung und Administration des Discord-Bots – alles ohne Dashboard, vollständig per Command steuerbar.
+## 9. AI / Selbstauskunft
 
-### 7. API-Integration & Web-Dashboard
-- [ ] Anbindung an externe Dienste (z. B. Twitch, Twitter, Steam, Wetter, News) für Live-Feeds, Alerts und Community-Features
-- [ ] Web-Dashboard für Admins/Entwickler: Übersicht, Steuerung, Statistiken, Logs, Rollen- und Rechteverwaltung, Giveaways, Musik, Levelsystem etc.
-- [ ] Authentifizierung über Discord OAuth2, 2FA für Developer-Bereich
-- [ ] Developer-Bereich: Erweiterte Logs, Analytics, Fehlerberichte, API-Keys, Feature-Toggles, Testumgebung
+- [x] Multi-Provider-Fallback: Groq, Cerebras, OpenRouter, Gemini, OpenAI.
+- [x] Reihenfolge kann aus Provider-Statistiken adaptiv bestimmt werden.
+- [x] Outbound-Redaction vor externen Provider-Aufrufen.
+- [x] DayZ-Technik besitzt verifiziertes Grounding + Ausgabeprüfung.
+- [x] Public AI-Command-Hilfe darf keine Bot-Admin-/DEV-Dashboard-Aktionen als Slash-Commands erfinden.
+- [x] `/help` bleibt die Live-Wahrheitsquelle für tatsächlich geladene Discord-Commands.
 
-### 8. Level- & XP-System
-- [ ] Automatisches XP-System: User erhalten XP für Aktivität (Nachrichten, Voice, Events)
-- [ ] Levelaufstieg mit individuellen Rängen, Rollen und Belohnungen
-- [ ] Leaderboard-Command: Zeigt die aktivsten User und deren Level
-- [ ] Anpassbare XP-Raten, Anti-Spam-Mechanismen, XP-Reset für Events
-- [ ] Transparente XP- und Level-Anzeige im Profil oder per Command
+## 10. Metrics / Logging
 
-### 9. Automatische Rollenvergabe
-- [ ] Rollen nach Beitritt, Reaktion oder Aktivität automatisch vergeben
-- [ ] Custom-Rollen für bestimmte Events, Level oder Giveaways
-- [ ] Rollen-Management per Command und Web-Dashboard
-- [ ] Mehrfachrollen, Blacklist/Whitelist, Zeitlimitierte Rollen
+- [x] Metrics sind nur aktiv, wenn explizit aktiviert und ein ausreichend langer Token vorhanden ist.
+- [x] Deploy kann bei aktivierten Metrics einen fehlenden Token erzeugen, ohne ihn auszugeben.
+- [x] Custom RingTransport wird über modernen Writable-Bridge an Winston angebunden.
+- [ ] Produktiv Logs auf neue Warnungen/Fehler prüfen.
 
-### 10. Umfrage- & Abstimmungssystem
-- [ ] Schnelle Umfragen und Abstimmungen per Command oder Web-Dashboard
-- [ ] Anonyme oder öffentliche Votes, Mehrfachauswahl, Zeitlimit
-- [ ] Ergebnisse als Live-Embed, mit Diagrammen und Statistiken
-- [ ] Automatische Auswertung und Archivierung der Umfragen
-- [ ] Integration in Community-Events, Giveaways und Moderation
+## 11. Migration / Deployment
 
-### 11. Logging & Analytics (Developer-Bereich)
-- [ ] Detaillierte Logs aller Aktionen (Join/Leave, Nachrichten, Moderation, Giveaways, Rollen, Votes)
-- [ ] Statistiken und Auswertungen für Admins und Entwickler
-- [ ] Exportfunktionen, Filter, Alerting bei Auffälligkeiten
-- [ ] Zugriff nur für Developer/Admins, DSGVO-konform
+- [x] Produktive Schemaänderungen sind versionierte Prisma-Migrationen.
+- [x] Deploy verwendet `prisma migrate deploy` + `prisma migrate status`.
+- [x] Kein automatischer produktiver `db push` als Reparaturpfad.
+- [x] Health/Discord/Post-Start-Checks sind Teil des Deploy-Flows.
+- [ ] Vor produktiver Freigabe immer Backup/Preflight und finalen `main`-CI prüfen.
 
-### 12. Discord OAuth2-Organisation (exakt & sicher)
-1. **Registrierung & Authentifizierung**
-   - Nur Discord OAuth2 (keine Drittanbieter-Logins)
-   - Scopes: identify, guilds, email (optional), keine unnötigen Rechte
-   - State-Parameter für CSRF-Schutz, Nonce für Replay-Schutz
-   - Redirect-URIs strikt whitelisten, keine Wildcards
-   - PKCE (Proof Key for Code Exchange) für Public Clients
+## 12. Vierfach-Prüfung für größere Refactors
 
-2. **Token-Handling**
-   - Access-Token nie persistent speichern, nur im RAM, kurze Lebensdauer
-   - Refresh-Token verschlüsselt, nur Server-seitig, Rotation erzwingen
-   - Tokens niemals im Frontend/Client anzeigen oder loggen
+Jeder größere Architektur-/Security-Refactor gilt erst als abgeschlossen, wenn alle vier Ebenen erfüllt sind:
 
-3. **Rechte- und Rollenzuweisung**
-   - Nach Login: User- und Guild-IDs prüfen, Rechte zuweisen
-   - Rollen- und Rechteverwaltung ausschließlich Server-seitig
-   - Keine Rechteerweiterung ohne explizite Admin-Freigabe
+1. **Inventar-/Referenzprüfung** — keine verwaisten Loader-, Import-, Command- oder Legacy-Referenzen.
+2. **Funktion-/Security-Parität** — Rechte, Scope, Step-Up, Audit und Fehlerpfade gegen den alten Funktionsumfang geprüft.
+3. **Automatisierte CI** — Prisma, Jest, Lint, TypeScript/Frontend-Build, Security/SBOM grün.
+4. **E2E/Runtime-Plausibilität** — Playwright grün plus gezielte Live-/Smokechecks für Remote-Funktionen.
 
-4. **Sicherheit & Monitoring**
-   - Alle OAuth2-Events (Login, Token-Refresh, Fehler) revisionssicher loggen und überwachen
-   - Rate-Limit für Login-Versuche, IP- und Verhaltensanalyse
-   - Automatische Benachrichtigung bei verdächtigen Aktivitäten
+## 13. Noch bewusst produktiv zu prüfen
 
-5. **Developer/Owner-Authentifizierung**
-   - 2FA verpflichtend für Developer/Admins (z. B. TOTP, FIDO2)
-   - Device-Bindung und Session-Timeouts für erhöhte Sicherheit
-   - Rechtevergabe granular, kein Super-Admin ohne 2FA
+- [ ] 1-Minuten-Server-Ban: echte Nitrado-Banliste entfernen + genau ein Ablauf-Embed im Ursprungskanal.
+- [ ] Whitelist/Ban Multi-Server-Smokecheck.
+- [ ] Economy-Scope für mögliche mehrdeutige Legacy-Konfigurationen bestätigen.
+- [ ] ADM-V2 je produktivem Gameserver: Quelle, Cursor, Rotation, Events, Postprocess.
+- [ ] Death-/Build-Feed kontrolliert aktivieren und Ereignisklassen prüfen.
+- [ ] Retry/Restart/Dedupe/Backlog-Stresstest für Gameplay-Delivery.
 
-**Ziel:**
-Eine kompromisslos sichere, nachvollziehbare und fehlerfreie OAuth2-Organisation, die alle Angriffsvektoren minimiert und maximale Kontrolle über Rechte und Tokens bietet.
-
----
-
-## Aktueller technischer Abschlussstand (14.08.2026)
-
-> Die Checkboxen oberhalb sind die langfristige Maximal-Funktionsliste und werden nicht pauschal als erledigt interpretiert. Dieser Abschnitt dokumentiert den aktuell verifizierten PR-/Rollout-Stand.
-
-### Auf PR #29 umgesetzt und auf dem Branch verifiziert
-
-- [x] Idempotency-Baseline-Reparatur ist additiv, idempotent und bewahrt die 1118 nachgestellten Legacy-Zeilen im Regressionstest.
-- [x] Prisma-Migrationspfad nutzt `migrate deploy` + `migrate status`; kein produktives `db push`/Reset als Reparaturpfad.
-- [x] Gameserver-Scope ist für Nitrado/Economy/Killfeed/Whitelist servergebunden; Legacy-Slot 5 wird bei Mutationen fail-closed behandelt.
-- [x] Keep-Online ist über Reconciliation + deduplizierte NitradoJob-Outbox + Remote-Statusprüfung verdrahtet.
-- [x] Whitelist V2 besitzt 5-Minuten-Reconciliation, Remote-Diff und Outbox-Verarbeitung.
-- [x] ADM-/Killfeed-V2 nutzt normalisierte `AdmEvent`-Daten und idempotente `KillfeedDelivery`.
-- [x] Server-Gameplay-Livefeed nutzt exakte Rooms `gs:<guildId>:<nitradoConnId>` ohne Guild-Fallback.
-- [x] Privilegierte Commands verwenden servergescoppte, persistente Pending-Actions mit erneuter Scope-Prüfung bei Bestätigung.
-- [x] `commands.all` ist von `dashboard.access` getrennt und kann nicht-delegierbare Rechte nicht überstimmen.
-- [x] Globale Developer-/Bot-Admin-Identität wird aus kanonischer Owner-ID + aktueller DB-Rolle bestimmt; Shared Password ist nur Step-up.
-- [x] Translate-/Media-Ingestion validiert SSRF-sicher, größenbegrenzt und per Magic Bytes/MIME.
-- [x] Webhook-HMAC/Raw-Body/Replay-Schutz ist persistent und Retry-sicher.
-- [x] AI-Background-Lifecycle ist in `src/modules/ai/runtime.ts` symmetrisch gekapselt (Phase 12).
-- [x] Deploy-Script ist fail-closed: explizite Baseline-Adoption, mehrere Schema-Sentinels, Migration vor Botstart, Health/Login/Post-Start-Migrationsstatus als harte Gates.
-- [x] Jest läuft in CI ohne `--forceExit`; Open-Handle-Diagnose wird nur bei Bedarf ausgeführt.
-- [x] Branch-CI prüft Prisma, Jest, Lint, TypeScript, Security Audit/SBOM und Playwright.
-
-### Bewusst erst nach finalem Branch-Doppelcheck
-
-- [ ] PR #29 aus Draft nehmen und mergen.
-- [ ] `main`-CI inklusive Docker Build vollständig grün verifizieren.
-- [ ] Produktions-Preflight/Backup und echte Produktions-DB mit `prisma migrate deploy` + `migrate status` migrieren.
-- [ ] Produktions-Secrets/Flags auf gültige Werte prüfen (`BOT_OWNER_ID`, `DEV_PASSWORD`, `BOT_ADMIN_PASSWORD`, Nitrado/Monitoring usw.).
-- [ ] `ADM_EVENT_PIPELINE_V2` kontrolliert aktivieren und Killfeed/PlayerSessions beobachten.
-- [ ] Economy-/Reward-Features kontrolliert nach Server/Slot aktivieren; Ledger/Reward-Dedupe beobachten.
-- [ ] Live-Smokecheck: Health, Discord-Login, DB, Killfeed, Sessions, Economy, RestartCount/Zombie/Logs.
-
-### Historischer Hinweis
-
-Der frühere Abschnitt „Stand: 01.04.2026“ mit offenen Shadow-DB-/LevelRole-Migrationspunkten war ein Session-Snapshot und ist **nicht mehr der aktuelle Rollout-Plan**. Die aktuelle Migrations- und Produktionsfreigabe richtet sich ausschließlich nach den Gates oben und den dokumentierten Deploy-Skripten.
+Historische PR-/Phasenlisten gehören in historische Rollout-/Cleanup-Dokumente, nicht in diese aktuelle Checkliste.
