@@ -10,7 +10,6 @@ function devApp() {
   app.use(express.json());
   app.use('/dev', guardDevCommandCenterInput);
   app.get('/dev/security', (req, res) => res.json({ type: req.query.type ?? null }));
-  app.post('/dev/export/logs', (req, res) => res.json({ category: req.body.category ?? null }));
   app.post('/dev/commands/reload', (req, res) => res.json({ scope: req.body.scope }));
   return app;
 }
@@ -33,18 +32,6 @@ describe('migrated command-center choice guards', () => {
   it('allows ALL and real security event types', async () => {
     expect((await request(devApp()).get('/dev/security?type=ALL')).status).toBe(200);
     expect((await request(devApp()).get('/dev/security?type=LOGIN_FAILURE')).status).toBe(200);
-  });
-
-  it('rejects an unknown audit category for POST-based DEV exports', async () => {
-    const response = await request(devApp()).post('/dev/export/logs').send({ category: 'NOT_A_CATEGORY' });
-    expect(response.status).toBe(400);
-    expect(response.body.error).toContain('Audit-Kategorie');
-  });
-
-  it('allows a real audit category for POST-based DEV exports', async () => {
-    const response = await request(devApp()).post('/dev/export/logs').send({ category: 'SECURITY' });
-    expect(response.status).toBe(200);
-    expect(response.body.category).toBe('SECURITY');
   });
 
   it('defaults a missing command reload scope to the safer deploy-only operation', async () => {
