@@ -130,7 +130,10 @@ export const config = {
 
   nitrado: {
     writeProtection: optionalEnv('NITRADO_WRITE_PROTECTION', 'true') !== 'false',
-    admEventPipelineV2: optionalEnv('ADM_EVENT_PIPELINE_V2', 'false') === 'true',
+    // Kompatibilitaets-/Statuswert: Die Gameplay-Feed-Runtime ist produktiv
+    // immer aktiv. Ob Discord-Nachrichten entstehen, steuern nur explizite
+    // GameplayFeedConfig-Eintraege pro Guild + Gameserver + Channel.
+    admEventPipelineV2: true,
   },
 
   member: {

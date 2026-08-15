@@ -3,7 +3,6 @@
  */
 
 import type { Client } from 'discord.js';
-import { config } from '../../config';
 import { startNitradoJobWorker, drainAndStopJobWorker } from './jobWorker';
 import { startTokenValidationCron, stopTokenValidationCron } from './tokenValidationCron';
 import { startAdmLiveSyncCron, stopAdmLiveSyncCron } from './adm/admLiveSyncCron';
@@ -25,15 +24,15 @@ export function startNitradoRuntime(client: Client): NitradoRuntimeHandle {
   startPermaOnlyCron();
   startWhitelistSyncCron();
 
-  // ADM-V2 ist jetzt die einzige Datei-Quelle. Der Live-Ingest laeuft immer,
-  // damit Linking/Rewards/Sessions unabhaengig vom oeffentlichen Feed-Gate
-  // funktionieren. ADM_EVENT_PIPELINE_V2 steuert nur noch die Discord-
-  // Death/Baufeed-Auslieferung.
+  // ADM-V2 ist die einzige Datei-Quelle. Der Live-Ingest und der persistente
+  // Gameplay-Feed-Worker laufen immer. Ob tatsaechlich etwas nach Discord
+  // gesendet wird, entscheidet ausschliesslich die explizite, servergescoppte
+  // GameplayFeedConfig (`isActive` + Kategorien + Channel). Damit kann eine
+  // gueltige Feed-Konfiguration nicht mehr durch ein unsichtbares globales
+  // Environment-Gate stillgelegt werden.
   startAdmLiveSyncCron();
   startAdmPostProcessCron();
-  if (config.nitrado.admEventPipelineV2) {
-    startGameplayFeedRuntime();
-  }
+  startGameplayFeedRuntime();
 
   startBankInterestCron();
 
