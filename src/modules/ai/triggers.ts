@@ -1,5 +1,6 @@
 import prisma from '../../database/prisma';
 import { isSafeRegexPattern, safeRegexTest } from '../../utils/safeRegex';
+import { logger } from '../../utils/logger';
 import {
   BOT_DEVELOPER,
   DEVELOPER_IDENTITY_TRIGGER_PATTERN,
@@ -181,20 +182,32 @@ export async function saveTriggers(guildId: string, triggers: AiTrigger[], updat
 }
 
 export async function addTrigger(guildId: string, trigger: AiTrigger): Promise<{ ok: boolean; message: string }> {
-  const guildOnly = await listGuildOnly(guildId);
-  if (guildOnly.length >= MAX_TRIGGERS_PER_GUILD) {
-    return { ok: false, message: `Maximal ${MAX_TRIGGERS_PER_GUILD} eigene Trigger pro Server erlaubt (globale Trigger zaehlen nicht mit).` };
+  try {
+    const guildOnly = await listGuildOnly(guildId);
+    if (guildOnly.length >= MAX_TRIGGERS_PER_GUILD) {
+      return { ok: false, message: `Maximal ${MAX_TRIGGERS_PER_GUILD} eigene Trigger pro Server erlaubt (globale Trigger zaehlen nicht mit).` };
+    }
+    const combined = await listTriggers(guildId);
+    if (combined.some(t => t.id === trigger.id)) {
+      return { ok: false, message: `Trigger-ID "${trigger.id}" existiert bereits.` };
+    }
+    if (trigger.triggerType === 'regex' && !isSafeRegexPattern(trigger.trigger)) {
+      return { ok: false, message: 'Ungültiges oder potenziell unsicheres Regex-Pattern (ReDoS-Schutz).' };
+    }
+    guildOnly.push(normalizeTrigger(trigger));
+    await saveTriggers(guildId, guildOnly, trigger.createdBy);
+    return { ok: true, message: `Trigger "${trigger.id}" gespeichert (${guildOnly.length}/${MAX_TRIGGERS_PER_GUILD}).` };
+  } catch (error) {
+    // addTrigger hat bewusst einen Result-Vertrag statt Exception-Vertrag. Das
+    // ist fuer HTTP-/Media-Caller wichtig: sie koennen bei ok=false ihre bereits
+    // materialisierten Dateien deterministisch zurueckrollen.
+    logger.error('AI-Trigger konnte nicht gespeichert werden.', {
+      guildId,
+      triggerId: trigger.id,
+      error: error instanceof Error ? error.message : String(error),
+    });
+    return { ok: false, message: 'Trigger konnte wegen eines Persistenzfehlers nicht gespeichert werden.' };
   }
-  const combined = await listTriggers(guildId);
-  if (combined.some(t => t.id === trigger.id)) {
-    return { ok: false, message: `Trigger-ID "${trigger.id}" existiert bereits.` };
-  }
-  if (trigger.triggerType === 'regex' && !isSafeRegexPattern(trigger.trigger)) {
-    return { ok: false, message: 'Ungültiges oder potenziell unsicheres Regex-Pattern (ReDoS-Schutz).' };
-  }
-  guildOnly.push(normalizeTrigger(trigger));
-  await saveTriggers(guildId, guildOnly, trigger.createdBy);
-  return { ok: true, message: `Trigger "${trigger.id}" gespeichert (${guildOnly.length}/${MAX_TRIGGERS_PER_GUILD}).` };
 }
 
 export async function removeTrigger(guildId: string, id: string, updatedBy: string): Promise<{ ok: boolean; message: string }> {
