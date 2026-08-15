@@ -17,7 +17,7 @@ function JsonBlock({ value }: { value: unknown }) {
   return <pre className="text-[11px] whitespace-pre-wrap break-all bg-bg-elev rounded-md p-3 max-h-96 overflow-auto">{JSON.stringify(value, null, 2)}</pre>;
 }
 function StepUp({ reason, setReason, reAuth, setReAuth }: { reason: string; setReason: (v: string) => void; reAuth: string; setReAuth: (v: string) => void }) {
-  return <div className="grid gap-2 md:grid-cols-2 mb-3"><Input value={reason} onChange={e => setReason(e.target.value)} placeholder="Begründung (mind. 6 Zeichen)"/><Input value={reAuth} onChange={e => setReAuth(e.target.value)} placeholder="Re-Auth / TOTP" type="password"/></div>;
+  return <div className="grid gap-2 md:grid-cols-2 mb-3"><Input value={reason} onChange={e => setReason(e.target.value)} placeholder="Begründung (mind. 6 Zeichen)"/><Input value={reAuth} onChange={e => setReAuth(e.target.value)} placeholder="DEV-Passwort oder TOTP" type="password" autoComplete="current-password"/></div>;
 }
 
 export default function CommandCenter() {
@@ -27,7 +27,7 @@ export default function CommandCenter() {
     ['security', 'Security'], ['exports', 'Exporte'], ['xp', 'XP-Konfiguration'], ['commands', 'Command Registry'],
   ];
   return <div className="space-y-4">
-    <Card glow><h1 className="text-lg font-semibold">DEV Command Center</h1><p className="text-sm text-muted mt-1">Dashboard-Ersatz aller ehemaligen DEV-Slash-Commands. Hersteller-Funktionen bleiben bewusst in Discord.</p><div className="flex flex-wrap gap-2 mt-4">{tabs.map(([key, label]) => <Button key={key} size="sm" variant={tab === key ? 'primary' : 'ghost'} onClick={() => setTab(key)}>{label}</Button>)}</div></Card>
+    <Card glow><h1 className="text-lg font-semibold">DEV Command Center</h1><p className="text-sm text-muted mt-1">Dashboard-Ersatz aller ehemaligen DEV-Slash-Commands. Hersteller-Funktionen bleiben bewusst in Discord. Sensible Aktionen verlangen eine erneute serverseitige Authentisierung.</p><div className="flex flex-wrap gap-2 mt-4">{tabs.map(([key, label]) => <Button key={key} size="sm" variant={tab === key ? 'primary' : 'ghost'} onClick={() => setTab(key)}>{label}</Button>)}</div></Card>
     {tab === 'diagnostics' && <Diagnostics/>}
     {tab === 'admins' && <Admins/>}
     {tab === 'database' && <DatabaseTools/>}
@@ -83,10 +83,32 @@ function SecurityTools() {
   return <div className="space-y-4"><Card glow><h2 className="font-semibold mb-3">IP Black-/Whitelist & Event-Auflösung</h2><StepUp reason={reason} setReason={setReason} reAuth={reAuth} setReAuth={setReAuth}/><div className="grid gap-2 md:grid-cols-4"><Input value={ip} onChange={e => setIpValue(e.target.value)} placeholder="IPv4 / IPv6"/><Select value={listType} onChange={e => setListType(e.target.value)}><option value="BLACKLIST">BLACKLIST</option><option value="WHITELIST">WHITELIST</option></Select><Input value={listReason} onChange={e => setListReason(e.target.value)} placeholder="Listen-Begründung"/><Input value={hours} onChange={e => setHours(e.target.value)} type="number" placeholder="Stunden (0=permanent)"/></div><div className="flex gap-2 mt-2"><Button size="sm" onClick={() => setIpMutation.mutate()} disabled={!ip}>IP setzen</Button><Button size="sm" variant="danger" onClick={() => removeIp.mutate()} disabled={!ip}>IP entfernen</Button></div><div className="flex gap-2 mt-4"><Input value={eventId} onChange={e => setEventId(e.target.value)} placeholder="SecurityEvent-ID"/><Button size="sm" onClick={() => resolve.mutate()} disabled={!eventId}>Event als gelöst markieren</Button></div></Card><Card><JsonBlock value={q.data ?? {}}/></Card></div>;
 }
 
+function triggerDownload(blob: Blob, filename: string) {
+  const href = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = href;
+  a.download = filename;
+  a.rel = 'noopener';
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  URL.revokeObjectURL(href);
+}
+
 function Exports() {
+  const toast = useToast();
   const [discordId, setDiscordId] = useState(''); const [category, setCategory] = useState('ALL'); const [days, setDays] = useState('30');
-  const go = (url: string) => { window.location.assign(url); };
-  return <Card glow><h2 className="font-semibold mb-3">Sensible Exporte</h2><p className="text-xs text-muted mb-3">Downloads laufen über die geschützte DEV-Session und werden auditiert.</p><div className="flex gap-2"><Input value={discordId} onChange={e => setDiscordId(e.target.value)} placeholder="Discord-ID"/><Button size="sm" onClick={() => go(`${base}/export/packages/${discordId}`)} disabled={!discordId}>Pakete</Button><Button size="sm" onClick={() => go(`${base}/export/user/${discordId}`)} disabled={!discordId}>GDPR User</Button></div><div className="flex gap-2 mt-3"><Select value={category} onChange={e => setCategory(e.target.value)} className="!w-auto">{['ALL','SECURITY','MODERATION','GDPR'].map(x => <option key={x} value={x}>{x}</option>)}</Select><Input value={days} onChange={e => setDays(e.target.value)} type="number" min={1} max={365}/><Button size="sm" onClick={() => go(`${base}/export/logs?category=${category}&days=${days}`)}>Audit-Logs</Button></div></Card>;
+  const [reason, setReason] = useState('Sensibler Datenexport'); const [reAuth, setReAuth] = useState('');
+  const run = useMutation({
+    mutationFn: async (kind: 'packages' | 'user' | 'logs') => {
+      const path = kind === 'logs' ? `${base}/export/logs` : `${base}/export/${kind}/${encodeURIComponent(discordId)}`;
+      const body = kind === 'logs' ? { category, days: Number(days), reason, reAuth } : { reason, reAuth };
+      return api.downloadPost(path, body);
+    },
+    onSuccess: result => { triggerDownload(result.blob, result.filename); toast.success('Export erstellt'); },
+    onError: e => toast.error('Export fehlgeschlagen', errorText(e)),
+  });
+  return <Card glow><h2 className="font-semibold mb-3">Sensible Exporte</h2><p className="text-xs text-muted mb-3">Jeder Export läuft über die aktive DEV-Session, verlangt zusätzlich DEV-Passwort oder TOTP und wird auditiert. Die Antwort wird nicht gecacht.</p><StepUp reason={reason} setReason={setReason} reAuth={reAuth} setReAuth={setReAuth}/><div className="flex gap-2"><Input value={discordId} onChange={e => setDiscordId(e.target.value)} placeholder="Discord-ID"/><Button size="sm" onClick={() => run.mutate('packages')} disabled={!discordId || run.isPending}>Pakete</Button><Button size="sm" onClick={() => run.mutate('user')} disabled={!discordId || run.isPending}>GDPR User</Button></div><div className="flex gap-2 mt-3"><Select value={category} onChange={e => setCategory(e.target.value)} className="!w-auto">{['ALL','SECURITY','MODERATION','GDPR'].map(x => <option key={x} value={x}>{x}</option>)}</Select><Input value={days} onChange={e => setDays(e.target.value)} type="number" min={1} max={365}/><Button size="sm" onClick={() => run.mutate('logs')} loading={run.isPending}>Audit-Logs</Button></div></Card>;
 }
 
 interface GuildRow { id: string; name: string; botPresent: boolean }
@@ -109,5 +131,5 @@ function XpTools() {
 function CommandReload() {
   const toast = useToast(); const [scope, setScope] = useState('deploy'); const [reason, setReason] = useState('Command Registry aktualisieren'); const [reAuth, setReAuth] = useState('');
   const run = useMutation({ mutationFn: () => api.post(`${base}/commands/reload`, { scope, reason, reAuth }), onSuccess: data => toast.success('Command Registry aktualisiert', JSON.stringify(data)), onError: e => toast.error('Reload fehlgeschlagen', errorText(e)) });
-  return <Card glow><h2 className="font-semibold mb-3">Command Hot-Reload / Discord Deploy</h2><p className="text-xs text-muted mb-3">Der Discord-Deploy ersetzt die Registries vollständig und entfernt damit die migrierten Slash-Commands.</p><StepUp reason={reason} setReason={setReason} reAuth={reAuth} setReAuth={setReAuth}/><div className="flex gap-2"><Select value={scope} onChange={e => setScope(e.target.value)} className="!w-auto"><option value="deploy">Nur Deploy</option><option value="all">Neu laden + Deploy</option></Select><Button size="sm" variant="danger" onClick={() => run.mutate()} loading={run.isPending}>Ausführen</Button></div></Card>;
+  return <Card glow><h2 className="font-semibold mb-3">Command Hot-Reload / Discord Deploy</h2><p className="text-xs text-muted mb-3">Der Discord-Deploy ersetzt die Registries vollständig und entfernt damit die migrierten Slash-Commands. Der Vorgang verlangt eine echte Step-Up-Re-Authentisierung.</p><StepUp reason={reason} setReason={setReason} reAuth={reAuth} setReAuth={setReAuth}/><div className="flex gap-2"><Select value={scope} onChange={e => setScope(e.target.value)} className="!w-auto"><option value="deploy">Nur Deploy</option><option value="all">Neu laden + Deploy</option></Select><Button size="sm" variant="danger" onClick={() => run.mutate()} loading={run.isPending}>Ausführen</Button></div></Card>;
 }
