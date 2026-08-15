@@ -23,12 +23,12 @@ function audienceOf(command: Command): CommandAudience {
 }
 
 /**
- * Canonical live command catalog. Discord /help and dashboard diagnostics must
- * derive command metadata from this registry instead of maintaining separate
- * handwritten command lists.
+ * Kanonischer Live-Katalog der Loader-Registry. Diagnostik darf die komplette
+ * Registry sehen; oeffentliche Hilfe wird ausschliesslich ueber
+ * visibleCommandCatalog() erzeugt.
  */
 export function buildCommandCatalog(client: ExtendedClient): CommandCatalogEntry[] {
-  const entries = [...client.commands.values()].map((command) => {
+  const entries = [...client.commands.values()].map(command => {
     const source = client.commandSources?.get(command.data.name) ?? null;
     const classification = classifyCommand({
       name: command.data.name,
@@ -57,12 +57,15 @@ export function visibleCommandCatalog(
   client: ExtendedClient,
   access: { isAdmin: boolean; isDeveloper: boolean; isManufacturer: boolean },
 ): CommandCatalogEntry[] {
-  return buildCommandCatalog(client).filter((entry) => {
-    // /help muss dieselbe Wahrheit wie der Discord-Deploy verwenden. Ein
-    // migrierter Command darf selbst dann nicht wieder als Discord-Funktion
-    // erscheinen, wenn eine alte Datei versehentlich erneut geladen wird.
+  return buildCommandCatalog(client).filter(entry => {
+    // Deploy-Wahrheit zuerst: migrierte/entfernte Commands erscheinen nie.
     if (!entry.staysInDiscord) return false;
-    if (entry.audience === 'developer') return access.isDeveloper;
+
+    // Produktvorgabe: /ai und DEV-Commands sind in /help vollstaendig unsichtbar,
+    // auch fuer privilegierte Nutzer. Der technische Live-Katalog bleibt fuer
+    // Diagnostik separat ueber buildCommandCatalog() verfuegbar.
+    if (entry.name === 'ai' || entry.audience === 'developer') return false;
+
     if (entry.audience === 'admin') return access.isAdmin;
     if (entry.audience === 'manufacturer') return access.isManufacturer;
     return true;
@@ -72,10 +75,10 @@ export function visibleCommandCatalog(
 export function commandCatalogSummary(entries: readonly CommandCatalogEntry[]) {
   return {
     total: entries.length,
-    public: entries.filter((e) => e.audience === 'public').length,
-    admin: entries.filter((e) => e.audience === 'admin').length,
-    developer: entries.filter((e) => e.audience === 'developer').length,
-    manufacturer: entries.filter((e) => e.audience === 'manufacturer').length,
-    dashboardReplacement: entries.filter((e) => e.dashboardReplacement).length,
+    public: entries.filter(entry => entry.audience === 'public').length,
+    admin: entries.filter(entry => entry.audience === 'admin').length,
+    developer: entries.filter(entry => entry.audience === 'developer').length,
+    manufacturer: entries.filter(entry => entry.audience === 'manufacturer').length,
+    dashboardReplacement: entries.filter(entry => entry.dashboardReplacement).length,
   };
 }
