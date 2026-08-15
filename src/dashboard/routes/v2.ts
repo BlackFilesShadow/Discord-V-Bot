@@ -88,7 +88,10 @@ v2Router.use('/guilds/:guildId/audit', auditRouter);
 
 v2Router.use('/dev/snapshot', requireGlobalDeveloperIdentity);
 v2Router.use('/dev/logs', requireGlobalDeveloperIdentity);
-v2Router.use('/dev/sessions', requireGlobalDeveloperIdentity);
+// Session-Lesezugriff braucht eine aktive DevSession; mutierende Session-
+// Aktionen (insb. Force-Revoke) verlangen zusaetzlich denselben kryptografisch
+// verifizierten Step-Up wie andere sensible DEV-Mutationen.
+v2Router.use('/dev/sessions', requireGlobalDeveloperIdentity, requireDev, requireVerifiedDevMutationStepUp);
 v2Router.use('/dev', devRouter);
 
 v2Router.use('/dev/uploads', requireGlobalDeveloperIdentity, devUploadsRouter);
