@@ -7,6 +7,7 @@ process.env.SESSION_SECRET ||= 'test-session-secret';
 
 import express, { type NextFunction, type Request, type Response } from 'express';
 import request from 'supertest';
+import type { UserDiscordId } from '../../src/types/scope';
 
 const listTriggersMock = jest.fn();
 const addTriggerMock = jest.fn();
@@ -45,11 +46,15 @@ jest.mock('../../src/utils/logger', () => ({
 
 jest.mock('../../src/dashboard/middleware/auth', () => ({
   requireBotAdmin: (
-    req: Request & { auth?: { discordId: string; userId: string } },
+    req: Request,
     _res: Response,
     next: NextFunction,
   ) => {
-    req.auth = { discordId: '223456789012345678', userId: 'test-user-id' };
+    req.auth = {
+      discordId: '223456789012345678' as UserDiscordId,
+      userId: 'test-user-id',
+      role: 'ADMIN',
+    };
     next();
   },
 }));
