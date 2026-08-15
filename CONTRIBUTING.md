@@ -1,105 +1,142 @@
 # Contributing — V-Bot Prime
 
-> Danke, dass du beitragen willst! Diese Anleitung beschreibt die kürzesten Wege
-> zu einem PR, der reviewt und gemerged werden kann.
-
----
+Diese Anleitung beschreibt den aktuellen Entwicklungs- und PR-Workflow.
 
 ## Voraussetzungen
 
-- **Node.js** ≥ 22 LTS
-- **PostgreSQL** ≥ 16 mit `pgvector`-Extension
-- **Discord-Bot-Token** + OAuth-App für lokales Dashboard-Login
+- Node.js >= 22
+- PostgreSQL >= 16
+- Discord-Bot-/OAuth-Credentials für lokale Integrationsarbeit
 
 ```bash
 git clone https://github.com/<owner>/Discord-V-Bot.git
 cd Discord-V-Bot
-cp .env.example .env   # .env mit eigenen Credentials befüllen
+cp .env.example .env
 npm ci
 npx prisma migrate deploy
-npm run dev            # Bot
-npm run dev:dashboard  # Dashboard separat (optional)
+npm run dev
 ```
 
----
+Das Dashboard-Backend wird im normalen Bot-Prozess gestartet. Für Frontend-Entwicklung kann zusätzlich der Vite-Devserver verwendet werden:
+
+```bash
+npm run ui:dev
+```
+
+`npm run dashboard` startet das Dashboard-Backend separat und ist vor allem für gezielte Backend-Entwicklung gedacht.
 
 ## Branch- & Commit-Konventionen
 
-- Feature-Branch: `feature/<kurz-beschreibung>`
-- Bugfix-Branch: `fix/<kurz-beschreibung>`
-- Commits: **Conventional Commits**, z.B. `feat(xp): adaptive level-up message`
-- Eine logische Änderung = ein Commit. Squash beim Merge.
+- Feature: `feature/<kurz-beschreibung>`
+- Bugfix: `fix/<kurz-beschreibung>`
+- Refactor: `refactor/<kurz-beschreibung>`
+- Commits sollen eine logisch zusammenhängende Änderung beschreiben.
 
-### Erlaubte Typen
-`feat` · `fix` · `refactor` · `perf` · `docs` · `test` · `chore` · `security` · `build`
+## Pflicht-Checks vor einem PR
 
----
-
-## Pflicht-Checks vor jedem PR
+Lokale Entsprechung der wichtigsten CI-Schritte:
 
 ```bash
-npm run lint          # ESLint inkl. custom rule no-unscoped-prisma-query
-npx tsc --noEmit      # TypeScript strict, Zero Errors
-npx jest --coverage --forceExit   # Alle 350+ Tests grün, Coverage-Floor erfüllt
+npm ci
+npm run lint:all
+npm run test:ci
+npm run build
+npx prisma validate
 ```
 
-CI rejectet jeden PR, der einen dieser Checks nicht besteht.
+Für offene Handles gibt es bei Bedarf zusätzlich:
 
-**Coverage-Ratchet**: `jest.config.js` setzt einen unteren Schwellwert
-(statements 14%, branches 4%, functions 24%, lines 14%) — knapp unter Ist.
-Neue Tests dürfen die Werte erhöhen, aber nicht senken. Beim Anheben:
-auch die Schwelle in `coverageThreshold` mit nachziehen.
+```bash
+npm run test:handles
+```
 
----
+**Kein `--forceExit` als Normalweg.** Die CI läuft bewusst ohne Force-Exit, damit geleakte Timer/Handles nicht verdeckt werden.
+
+Playwright liegt im Dashboard-Projekt und wird im eigenen E2E-Workflow ausgeführt.
+
+## Command-Architektur
+
+Globale Bot-Admin- und DEV-Verwaltung ist Dashboard-only. Neue globale `adminOnly`-/`devOnly`-Slash-Commands dürfen nicht einfach wieder in den Discord-Loader eingeführt werden.
+
+Bei einer neuen oder verschobenen Funktion gilt:
+
+1. Zielbereich bestimmen: Discord, Guild-Dashboard, Bot-Admin oder DEV.
+2. Bei Bot-Admin/DEV zuerst funktionsgleichen Dashboard-Pfad bauen.
+3. Auth, Scope, Step-Up und Audit prüfen.
+4. Regressionstests ergänzen.
+5. Command-Inventar aktualisieren.
+6. Erst danach einen ersetzten Slash-Pfad entfernen.
+
+Hersteller-Funktionen sind die ausdrücklich dokumentierte Discord-Ausnahme.
+
+## Bot-Informationen aktuell halten
+
+Nutzer-/Operator-Information ist Teil der Funktion und muss im selben PR aktualisiert werden, wenn Verhalten oder Architektur geändert wird.
+
+Wichtige Wahrheitsquellen:
+
+- `/help` -> tatsächlich geladene Discord-Command-Registry,
+- `src/content/botInfo.ts` -> öffentliche V-Bot-Selbstauskunft,
+- `src/modules/ai/commandCatalog.ts` -> AI-Hilfe zu Discord-Funktionen,
+- `README.md`, `SECURITY.md`, `docs/ARCHITECTURE.md` -> kanonische technische Doku,
+- `.env.example` -> aktuelle Environment-Namen und Defaults.
+
+Keine festen Command-Zahlen, Upload-Limits oder Runtime-Werte in Doku schreiben, wenn sie aus Config/Runtime ableitbar sind.
 
 ## Code-Stil
 
-- **TypeScript strict mode** — kein `any` ohne Begründung im Kommentar
-- **Keine ungescoped Prisma-Queries** — `WHERE guildId` ist Pflicht in Multi-Tenant-Tabellen (ESLint-Rule erzwingt das)
-- **User-Content in Embeds** → immer durch [`src/utils/embedSanitize.ts`](src/utils/embedSanitize.ts) leiten
-- **Logger** statt `console.*` (PII-Redactor läuft nur über logger)
-- **Keine Magic Numbers** in Limits — Konstanten in `src/config.ts` oder Modul-Top
-- **i18n** wo User-sichtbar: Übersetzungs-Helfer nutzen, kein hardgecodetes Englisch
+- TypeScript strict.
+- Keine ungescopten Prisma-Zugriffe auf mandanten-/servergebundene Daten.
+- User-/Remote-Inhalte vor Discord-Ausgabe sanitizen, wenn der jeweilige Pfad nicht bereits zentral geschützt ist.
+- `logger` statt `console.*` im Backend.
+- Secrets, Tokens, TOTP und DEV-ReAuth niemals loggen.
+- Limits möglichst aus zentraler Config/Modulkonstanten ableiten.
 
----
+## Dashboard- und Security-Routen
 
-## Tests schreiben
+Neue privilegierte Routen brauchen den passenden Gate-Stack:
 
-- Unit-Tests: `tests/<bereich>/<dateiname>.test.ts`
-- Mocks: prefer `jest.mock(...)` mit Factory-Funktionen
-- Prisma-Mocks: alle benötigten Modelle/Methoden ergänzen — fehlende Mocks
-  führen zu schwer auffindbaren Cascade-Failures
-- Dashboard-Routes: integriertes Setup in `tests/dashboard/api.test.ts` als Vorlage
+- Guild-Routen: Auth + Guild Owner/Permission + ggf. Gameserver-Scope.
+- Bot-Admin: globale Bot-Admin-Identität + BotAdminSession.
+- DEV: globale Developer-Identität + DevSession.
+- Sensible DEV-Mutationen/Exporte zusätzlich über verifizierten Step-Up.
 
----
+Step-Up bedeutet echte serverseitige Credential-Prüfung, nicht nur ein vorhandenes Eingabefeld.
+
+## Tests
+
+- Unit/Integration: `tests/<bereich>/...test.ts`
+- Dashboard-Routen: Auth-/Scope-/Fehlerpfade mitprüfen.
+- Command-Migrationen: Loader-/Inventory-/Paritätsregressionen ergänzen.
+- Bot-Informationen: Drift-Tests ergänzen, wenn neue öffentliche Funktionsinformationen entstehen.
 
 ## Datenbank-Änderungen
 
-1. Schema in [`prisma/schema.prisma`](prisma/schema.prisma) anpassen
-2. Migration generieren: `npx prisma migrate dev --name <kurz>`
-3. Migration im PR mitcommitten (niemals manuelle SQL-Edits an existierenden Migrations)
-4. Falls Daten-Migration nötig → SQL-Skript in [`deploy/sql/`](deploy/sql/) anlegen
+1. `prisma/schema.prisma` ändern.
+2. Versionierte Migration erzeugen.
+3. Migration mit dem PR committen.
+4. Datenreparaturen deterministisch/fail-closed gestalten.
+5. Produktivpfad bleibt `prisma migrate deploy` + `prisma migrate status`.
 
----
+Kein automatischer produktiver `prisma db push` als Reparaturweg.
 
 ## Security-relevante Änderungen
 
-- Neue User-Eingabe-Pfade → Threat-Modell-Notiz im PR
-- Neue API-Endpunkte → Auth-Gate + Rate-Limit verpflichtend dokumentieren
-- Schwachstellen → **NICHT als Issue**, sondern via [SECURITY.md](SECURITY.md)
+- neue Eingabe-/Uploadpfade -> Validierung und Abuse-Limits,
+- neue API-Endpunkte -> passendes Auth-/Scope-Gate,
+- sensible Mutation -> Step-Up, Audit und Idempotency prüfen,
+- Secrets/PII -> Redaction und Ausgabewege prüfen,
+- Schwachstellen nicht mit sensiblen Exploitdetails in öffentliche Issues schreiben.
 
----
+## PR-Evidenz
 
-## Pull-Request-Template
+Ein größerer Refactor soll vier Ebenen belegen:
 
-Im PR-Body bitte angeben:
-- **Was** wurde geändert (1-2 Sätze)
-- **Warum** (Bezug zu Issue / User-Need)
-- **Test-Evidenz** (CI-Output reicht, plus optional manueller Smoke)
-- **Risiko-Einschätzung**: low / medium / high + Mitigation
-
----
+1. Inventar-/Restreferenzscan,
+2. Funktions-/Security-Parität,
+3. CI: Prisma, Jest, Lint, TypeScript/UI-Build, Security/SBOM,
+4. E2E plus passende Runtime-/Remote-Smokechecks.
 
 ## Kontakt
 
-Fragen vor dem PR? Discord-Server (siehe README) oder GitHub-Discussion.
+Repository-Verantwortung/Entwicklung: **Void_Architect**.
