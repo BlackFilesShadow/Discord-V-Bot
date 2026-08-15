@@ -1,29 +1,17 @@
 # Monitoring — V-Bot Prime
 
-> Alle exportierten Metriken, Setup-Anleitung und Alerting-Regeln.
-> Endpoint: `GET /metrics` (Bearer-Auth via `METRICS_BEARER_TOKEN`).
+> Aktueller Prometheus-/Alerting-Stand.
 
----
+## Aktivierung und Zugriff
 
-## Exportierte Metriken (`vbot_*`)
+`GET /metrics` ist **optional** und nur verfügbar, wenn:
 
-| Metric                              | Type      | Labels                  | Bedeutung                                        |
-|-------------------------------------|-----------|-------------------------|--------------------------------------------------|
-| `vbot_commands_total`               | Counter   | command, status         | Slash-Command-Aufrufe nach Status                |
-| `vbot_command_duration_seconds`     | Histogram | command                 | Command-Laufzeiten (Buckets 0.01–5s)             |
-| `vbot_errors_total`                 | Counter   | source                  | Fehler nach Quelle (command/dashboard/ai/db/…)   |
-| `vbot_guilds`                       | Gauge     | —                       | Anzahl Guilds (live)                             |
-| `vbot_discord_ws_latency_ms`        | Gauge     | —                       | Discord-WebSocket-Latenz                         |
-| `vbot_db_query_duration_seconds`    | Histogram | op                      | Prisma-Query-Latenz pro Operation                |
-| `vbot_rate_limited_total`           | Counter   | kind                    | Rate-Limit-Treffer (in_memory/per_command/cooldown) |
+- `METRICS_ENABLED=true` gesetzt ist und
+- `METRICS_TOKEN` ausreichend lang konfiguriert ist.
 
-Plus `process_*`/`nodejs_*`-Default-Metriken von `prom-client`.
+Der Endpoint ist Bearer-geschützt. Ohne gültigen Bearer-Token werden keine Metriken ausgegeben. Der Deploy-Pfad kann bei aktivierten Metrics einen fehlenden Token sicher lokal erzeugen und in `.env` speichern, ohne ihn im Log anzuzeigen.
 
----
-
-## Prometheus-Setup
-
-### Scrape-Konfig
+Beispiel:
 
 ```yaml
 scrape_configs:
@@ -32,106 +20,114 @@ scrape_configs:
     scheme: https
     static_configs:
       - targets: ['<dein-host>:443']
-    bearer_token: '<METRICS_BEARER_TOKEN>'
+    authorization:
+      type: Bearer
+      credentials: '<METRICS_TOKEN>'
     scrape_interval: 30s
     scrape_timeout: 10s
 ```
 
-### Alerting
-
-Die Datei [`prometheus-alerts.yml`](prometheus-alerts.yml) enthält 7 Regeln in
-3 Gruppen (`vbot.critical`, `vbot.performance`, `vbot.fleet`).
-
-In `prometheus.yml`:
-
-```yaml
-rule_files:
-  - /etc/prometheus/rules/vbot.yml
-```
-
-und die Datei nach `/etc/prometheus/rules/vbot.yml` kopieren.
-
-Empfohlener Receiver-Mapping (`alertmanager.yml`):
-- `severity: critical` → Discord-Webhook + E-Mail
-- `severity: warning` → Discord-Webhook
-- `severity: info` → nur Logging
+`<METRICS_TOKEN>` steht hier nur als Platzhalter. Niemals den echten Token in Repository, Screenshots oder Logs übernehmen.
 
 ---
 
-## Grafana-Dashboard (Skeleton)
+## Exportierte Metriken (`vbot_*`)
 
-Minimal-Dashboard mit den wichtigsten Panels — als Startpunkt; importierbar
-über *Dashboards → New → Import → Paste JSON*.
+| Metrik | Typ | Labels | Bedeutung |
+|---|---|---|---|
+| `vbot_commands_total` | Counter | `command`, `status` | ausgeführte Discord-Slash-Commands nach Status |
+| `vbot_command_duration_seconds` | Histogram | `command` | Command-Laufzeiten |
+| `vbot_errors_total` | Counter | `source` | Fehler nach Quelle |
+| `vbot_guilds` | Gauge | — | aktuell verbundene Discord-Guilds |
+| `vbot_discord_ws_latency_ms` | Gauge | — | Discord-WebSocket-Latenz |
+| `vbot_db_query_duration_seconds` | Histogram | `model`, `action` | Prisma-Query-Latenz pro Modell/Aktion |
+| `vbot_rate_limited_total` | Counter | `kind` | Rate-Limit-/Cooldown-Treffer |
 
-```json
-{
-  "title": "V-Bot Overview",
-  "schemaVersion": 39,
-  "panels": [
-    {
-      "title": "Commands per Minute",
-      "type": "timeseries",
-      "targets": [
-        { "expr": "sum(rate(vbot_commands_total[1m])) by (status)" }
-      ]
-    },
-    {
-      "title": "Command Latency p95",
-      "type": "timeseries",
-      "targets": [
-        {
-          "expr": "histogram_quantile(0.95, sum(rate(vbot_command_duration_seconds_bucket[5m])) by (le, command))",
-          "legendFormat": "{{ command }}"
-        }
-      ]
-    },
-    {
-      "title": "Errors / sec by Source",
-      "type": "timeseries",
-      "targets": [
-        { "expr": "sum(rate(vbot_errors_total[5m])) by (source)" }
-      ]
-    },
-    {
-      "title": "DB Query p99",
-      "type": "timeseries",
-      "targets": [
-        {
-          "expr": "histogram_quantile(0.99, sum(rate(vbot_db_query_duration_seconds_bucket[5m])) by (le, op))",
-          "legendFormat": "{{ op }}"
-        }
-      ]
-    },
-    {
-      "title": "Discord WS Latency",
-      "type": "stat",
-      "targets": [{ "expr": "vbot_discord_ws_latency_ms" }],
-      "fieldConfig": { "defaults": { "unit": "ms" } }
-    },
-    {
-      "title": "Guilds",
-      "type": "stat",
-      "targets": [{ "expr": "vbot_guilds" }]
-    },
-    {
-      "title": "Rate-Limit Hits",
-      "type": "timeseries",
-      "targets": [
-        { "expr": "sum(rate(vbot_rate_limited_total[5m])) by (kind)" }
-      ]
-    }
-  ]
-}
+Zusätzlich registriert `prom-client` Node-/Process-Default-Metriken mit `vbot_`-Prefix.
+
+Die Command-Metriken messen **tatsächlich geladene Discord-Commands**. Globale Bot-Admin-/DEV-Verwaltung ist Dashboard-only und taucht deshalb nicht als ehemaliger privilegierter Slash-Command in diesen Reihen auf.
+
+---
+
+## Beispiel-PromQL
+
+```promql
+# Command-Rate nach Status
+sum(rate(vbot_commands_total[5m])) by (status)
+
+# p95 Command-Latenz
+histogram_quantile(
+  0.95,
+  sum(rate(vbot_command_duration_seconds_bucket[5m])) by (le, command)
+)
+
+# Fehler nach Quelle
+sum(rate(vbot_errors_total[5m])) by (source)
+
+# p99 DB-Latenz nach Prisma-Modell/Aktion
+histogram_quantile(
+  0.99,
+  sum(rate(vbot_db_query_duration_seconds_bucket[5m])) by (le, model, action)
+)
+
+# Discord-Gateway-Latenz
+vbot_discord_ws_latency_ms
+
+# Rate-Limit-Hits
+sum(rate(vbot_rate_limited_total[5m])) by (kind)
 ```
 
 ---
 
-## Error-Sink (Discord-Webhook)
+## Alerting
 
-Zusätzlich zu Prometheus: kritische Fehler pushen an `ERROR_WEBHOOK_URL`
-(Discord-Webhook). Implementierung in [`src/utils/errorSink.ts`](../../src/utils/errorSink.ts).
+`prometheus-alerts.yml` enthält die Repository-Alertregeln. Vor produktiver Nutzung immer gegen die tatsächlich exportierten Metric-Namen/Labels aus `/metrics` validieren.
 
-- **Throttling**: 1 Push pro Fehler-Signature je 5 min (verhindert Flood)
-- **Retention**: max 1000 Signaturen, LRU-Eviction
-- **Felder**: source, host, command, userId, guildId, stack (max 6 Frames)
-- **Fail-Safe**: Webhook-Fehler werden geschluckt — keine App-Disruption
+Empfohlene Severity-Zuordnung:
+
+- `critical` → unmittelbare Alarmierung,
+- `warning` → Betriebswarnung,
+- `info` → Logging/Beobachtung.
+
+---
+
+## Grafana-Grundpanels
+
+Sinnvolle Panels:
+
+- Commands/min nach Status,
+- Command p95 nach `command`,
+- Errors/sec nach `source`,
+- DB p95/p99 nach `model` + `action`,
+- Discord WS-Latenz,
+- Guild-Anzahl,
+- Rate-Limit-Hits nach `kind`,
+- Node-/Process-RAM und CPU.
+
+Die Dashboard-Abfragen sollten direkt gegen den aktuell laufenden `/metrics`-Output geprüft werden; fest gespeicherte Beispielwerte sind keine Laufzeit-Wahrheit.
+
+---
+
+## Error-Sink
+
+Zusätzlich zu Prometheus können kritische Fehler über `ERROR_WEBHOOK_URL` an einen Discord-Webhook gemeldet werden. Die Implementierung liegt in `src/utils/errorSink.ts`.
+
+Schutzmechanismen:
+
+- Throttling pro Fehler-Signatur,
+- begrenzte Signatur-Retention,
+- Fail-Safe bei Webhook-Fehlern,
+- keine absichtliche Weitergabe von Secrets/DEV-ReAuth-Credentials.
+
+---
+
+## Prüfung nach Deploy
+
+Wenn Metrics aktiviert sein sollen:
+
+1. sicherstellen, dass `METRICS_ENABLED=true` gesetzt ist,
+2. sicherstellen, dass ein ausreichend langer `METRICS_TOKEN` existiert,
+3. Request ohne Bearer-Token muss abgewiesen werden,
+4. Request mit gültigem Token muss Prometheus-Text liefern,
+5. Metric-Namen und Labels gegen diese Datei und `src/utils/metrics.ts` prüfen,
+6. Token niemals ausgeben oder in Support-Logs kopieren.
