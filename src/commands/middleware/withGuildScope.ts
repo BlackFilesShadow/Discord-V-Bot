@@ -17,7 +17,7 @@
  *     technischen Details an Discord-Benutzer geleakt.
  */
 
-import type { ChatInputCommandInteraction } from 'discord.js';
+import type { ChatInputCommandInteraction, InteractionReplyOptions } from 'discord.js';
 import { MessageFlags } from 'discord.js';
 import prisma from '../../database/prisma';
 import { asGuildId, asUserDiscordId, asNitradoConnId, hasCommandPermission } from '../../types/scope';
@@ -76,10 +76,10 @@ async function statusReply(
   description: string,
   fields?: { name: string; value: string }[],
 ): Promise<void> {
-  const payload = {
+  const payload: InteractionReplyOptions = {
     embeds: [buildStatusEmbed({ status, title, description, fields, footerText: 'V-Bot Command-System' })],
     flags: MessageFlags.Ephemeral,
-    allowedMentions: { parse: [] as string[] },
+    allowedMentions: { parse: [] },
   };
   if (interaction.deferred || interaction.replied) {
     await interaction.followUp(payload).catch(() => undefined);
