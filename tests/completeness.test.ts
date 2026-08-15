@@ -1,6 +1,7 @@
 /**
  * Vollständigkeitstest: Stellt sicher, dass alle README-Sektionen implementiert sind.
- * Prüft die Existenz aller geforderten Dateien und Module.
+ * Prüft die Existenz der geforderten Module und nach Migration auch, dass
+ * ersetzte privilegierte Slash-Commands nicht wieder in den Loader-Pfad geraten.
  */
 import fs from 'fs';
 import path from 'path';
@@ -105,18 +106,30 @@ describe('README-Vollständigkeit: Alle Sektionen implementiert', () => {
     });
   });
 
-  describe('Developer-Commands (alle 11)', () => {
-    const adminCommands = [
+  describe('Privilegierte Commands: Dashboard-Migration', () => {
+    it('Bot-Admin- und DEV-Command-Center existieren als Ersatz', () => {
+      expect(fileExists('src/dashboard/routes/v2/botAdminCommandCenter.ts')).toBe(true);
+      expect(fileExists('src/dashboard/routes/v2/devCommandCenter.ts')).toBe(true);
+      expect(fileExists('dashboard-ui/src/components/BotAdminCommandCenter.tsx')).toBe(true);
+      expect(fileExists('dashboard-ui/src/pages/dev/CommandCenter.tsx')).toBe(true);
+      expect(fileExists('src/commands/inventory.ts')).toBe(true);
+    });
+
+    const migratedAdminCommands = [
       'adminListPakete', 'adminLogs', 'adminDelete', 'adminStats',
       'adminValidate', 'adminExport', 'adminErrorReport', 'adminConfig',
       'adminAudit', 'adminSecurity', 'adminMonitor',
     ];
 
-    for (const cmd of adminCommands) {
-      it(`/admin ${cmd} Command existiert`, () => {
-        expect(fileExists(`src/commands/admin/${cmd}.ts`)).toBe(true);
+    for (const cmd of migratedAdminCommands) {
+      it(`entfernt den ersetzten Slash-Command ${cmd} aus src/commands/admin`, () => {
+        expect(fileExists(`src/commands/admin/${cmd}.ts`)).toBe(false);
       });
     }
+
+    it('behaelt die Hersteller-Ausnahme als Discord-Command', () => {
+      expect(fileExists('src/commands/developer/devManufacturer.ts')).toBe(true);
+    });
   });
 
   describe('Sektion 7: API-Integration & Web-Dashboard', () => {
@@ -130,8 +143,6 @@ describe('README-Vollständigkeit: Alle Sektionen implementiert', () => {
       expect(fileExists('src/dashboard/routes/api.ts')).toBe(true);
     });
     it('Admin-Funktionalitaet existiert (v2 Bot-Admin-Router)', () => {
-      // Der ungeschuetzte Legacy-/admin-Router wurde als P0-Sicherheitsfix
-      // entfernt; Admin-Funktionen laufen ueber den v2-Bot-Admin-Router.
       expect(fileExists('src/dashboard/routes/v2/botAdmin.ts')).toBe(true);
     });
   });
