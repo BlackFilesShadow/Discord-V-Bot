@@ -70,7 +70,7 @@ describe('aiHandler – pure helpers', () => {
       // Pflicht-Strukturpunkte
       expect(out).toMatch(/Identitaet/);
       expect(out).toMatch(/Kernfaehigkeiten/);
-      expect(out).toMatch(/Slash-Commands/);
+      expect(out).toMatch(/Discord-Commands/);
       // darf KEINE Admin-/Dev-Commands erwaehnen
       expect(out).not.toMatch(/\/dev-/);
       expect(out).not.toMatch(/\/admin-/);
