@@ -6,9 +6,17 @@ import { decrypt, verify2FAToken } from '../../utils/security';
 import { logAudit } from '../../utils/logger';
 import { validateStepUpInput, type StepUpInput } from './devSecurity';
 
+export type DevStepUpError =
+  | 'reason_missing'
+  | 'reason_too_short'
+  | 'reauth_missing'
+  | 'reauth_invalid'
+  | 'no_credential'
+  | 'rate_limited';
+
 export type VerifiedDevStepUpResult =
   | { ok: true; mode: 'totp' | 'password' }
-  | { ok: false; error: 'reason_missing' | 'reason_too_short' | 'reauth_missing' | 'reauth_invalid' | 'no_credential' | 'rate_limited' };
+  | { ok: false; error: DevStepUpError };
 
 const MAX_FAILURES = 5;
 const LOCK_MS = 15 * 60 * 1000;
@@ -107,7 +115,7 @@ export async function verifyDevStepUp(req: Request, input: StepUpInput): Promise
   return { ok: true, mode };
 }
 
-function statusFor(error: VerifiedDevStepUpResult extends { ok: false; error: infer E } ? E : never): number {
+function statusFor(error: DevStepUpError): number {
   if (error === 'rate_limited') return 429;
   if (error === 'no_credential') return 503;
   if (error === 'reauth_invalid') return 403;
