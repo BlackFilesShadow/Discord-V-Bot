@@ -7,6 +7,9 @@ const txMock = {
   pollVote: {
     findMany: jest.fn(),
     create: jest.fn(),
+    delete: jest.fn(),
+    deleteMany: jest.fn(),
+    count: jest.fn(),
   },
 };
 
@@ -27,7 +30,7 @@ jest.mock('../../src/utils/logger', () => ({
   logger: { error: jest.fn(), warn: jest.fn(), debug: jest.fn(), info: jest.fn() },
 }));
 
-import { endPoll, votePoll } from '../../src/modules/polls/pollSystem';
+import { endPoll, togglePollVote, votePoll } from '../../src/modules/polls/pollSystem';
 
 const ACTIVE_POLL = {
   id: 'poll-1',
@@ -45,14 +48,15 @@ const ACTIVE_POLL = {
 beforeEach(() => {
   jest.clearAllMocks();
   txMock.$queryRawUnsafe.mockResolvedValue([]);
+  txMock.pollVote.count.mockResolvedValue(1);
+  txMock.poll.update.mockResolvedValue({});
 });
 
 describe('Poll voting/finalization atomicity', () => {
-  it('serialisiert Vote-Pruefung + Insert + Counter unter demselben DB-Lock', async () => {
+  it('serialisiert Vote-Pruefung + Insert + exakten Counter unter demselben DB-Lock', async () => {
     txMock.poll.findFirst.mockResolvedValue(ACTIVE_POLL);
     txMock.pollVote.findMany.mockResolvedValue([]);
     txMock.pollVote.create.mockResolvedValue({ id: 'vote-1' });
-    txMock.poll.update.mockResolvedValue({});
 
     const result = await votePoll('poll-1', 'user-1', 'opt_0', 'guild-1');
 
@@ -65,13 +69,14 @@ describe('Poll voting/finalization atomicity', () => {
     expect(txMock.pollVote.create).toHaveBeenCalledWith({
       data: { pollId: 'poll-1', userId: 'user-1', optionId: 'opt_0' },
     });
+    expect(txMock.pollVote.count).toHaveBeenCalledWith({ where: { pollId: 'poll-1' } });
     expect(txMock.poll.update).toHaveBeenCalledWith({
       where: { id: 'poll-1' },
-      data: { totalVotes: { increment: 1 } },
+      data: { totalVotes: 1 },
     });
   });
 
-  it('blockiert eine zweite Stimme bei allowMultiple=false vor jeder Mutation', async () => {
+  it('blockiert eine zweite Slash-Stimme bei allowMultiple=false vor jeder Mutation', async () => {
     txMock.poll.findFirst.mockResolvedValue(ACTIVE_POLL);
     txMock.pollVote.findMany.mockResolvedValue([{ id: 'vote-old', optionId: 'opt_1' }]);
 
@@ -80,6 +85,38 @@ describe('Poll voting/finalization atomicity', () => {
     expect(result.success).toBe(false);
     expect(txMock.pollVote.create).not.toHaveBeenCalled();
     expect(txMock.poll.update).not.toHaveBeenCalled();
+  });
+
+  it('wechselt Single-Choice beim Button atomar statt Delete und Vote zu trennen', async () => {
+    txMock.poll.findFirst.mockResolvedValue(ACTIVE_POLL);
+    txMock.pollVote.findMany.mockResolvedValue([{ id: 'vote-old', optionId: 'opt_1' }]);
+    txMock.pollVote.create.mockResolvedValue({ id: 'vote-new' });
+    txMock.pollVote.deleteMany.mockResolvedValue({ count: 1 });
+
+    const result = await togglePollVote('poll-1', 'user-1', 'opt_0', 'guild-1');
+
+    expect(result).toEqual(expect.objectContaining({ success: true, action: 'ADDED' }));
+    expect(txMock.pollVote.deleteMany).toHaveBeenCalledWith({ where: { pollId: 'poll-1', userId: 'user-1' } });
+    expect(txMock.pollVote.create).toHaveBeenCalledWith({
+      data: { pollId: 'poll-1', userId: 'user-1', optionId: 'opt_0' },
+    });
+    expect(txMock.pollVote.count).toHaveBeenCalled();
+  });
+
+  it('entfernt einen Button-Vote unter demselben Lock und synchronisiert den Counter', async () => {
+    txMock.poll.findFirst.mockResolvedValue({ ...ACTIVE_POLL, allowMultiple: true, maxChoices: 3 });
+    txMock.pollVote.findMany.mockResolvedValue([{ id: 'vote-old', optionId: 'opt_0' }]);
+    txMock.pollVote.count.mockResolvedValue(0);
+    txMock.pollVote.delete.mockResolvedValue({});
+
+    const result = await togglePollVote('poll-1', 'user-1', 'opt_0', 'guild-1');
+
+    expect(result).toEqual(expect.objectContaining({ success: true, action: 'REMOVED' }));
+    expect(txMock.pollVote.delete).toHaveBeenCalledWith({ where: { id: 'vote-old' } });
+    expect(txMock.poll.update).toHaveBeenCalledWith({
+      where: { id: 'poll-1' },
+      data: { totalVotes: 0 },
+    });
   });
 
   it('finalisiert DB-Status nicht, wenn die kritische Discord-Ausgabe fehlschlaegt', async () => {
@@ -102,7 +139,6 @@ describe('Poll voting/finalization atomicity', () => {
       title: 'Test',
       votes: [{ optionId: 'opt_0' }, { optionId: 'opt_0' }],
     });
-    txMock.poll.update.mockResolvedValue({});
     const order: string[] = [];
     const publish = jest.fn(async () => { order.push('publish'); });
     txMock.poll.update.mockImplementation(async () => { order.push('db'); return {}; });
