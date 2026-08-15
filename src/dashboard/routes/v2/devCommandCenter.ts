@@ -6,8 +6,6 @@ import { requireDev } from '../../middleware/auth';
 import { logDevAction } from '../../middleware/devSecurity';
 import prisma from '../../../database/prisma';
 import { tryGetDashboardClient } from '../../clientRegistry';
-import { loadCommands, deployCommandsScoped } from '../../../commands/handler';
-import { config } from '../../../config';
 
 /**
  * Dashboard-Paritaet fuer ehemalige devOnly Slash-Commands (Hersteller-Ausnahme
@@ -16,7 +14,9 @@ import { config } from '../../../config';
  * Mutation-Step-Up aus `devStepUp.ts`.
  *
  * Sensible Exporte leben ausschliesslich unter `/dev/secure-export`; hier gibt
- * es bewusst keinen zweiten Export- oder Re-Auth-Pfad.
+ * es bewusst keinen zweiten Export- oder Re-Auth-Pfad. XP-Leseansicht und
+ * Command-Deploy liegen ebenfalls ausschliesslich in ihren spezifischen Routern,
+ * damit es keine verdeckten Parallelimplementierungen gibt.
  */
 export const devCommandCenterRouter = Router();
 devCommandCenterRouter.use(requireDev);
@@ -245,18 +245,6 @@ async function xpConfig(guildId: string) {
   return prisma.xpConfig.upsert({ where: { id: guildId }, update: {}, create: { id: guildId } });
 }
 
-devCommandCenterRouter.get('/xp/:guildId', async (req, res) => {
-  const guildId = String(req.params.guildId);
-  if (!SNOWFLAKE.test(guildId)) { res.status(400).json({ error: 'Ungültige guildId.' }); return; }
-  if (!requireGuildScope(req, res, guildId)) return;
-  const [cfg, levelRoles] = await Promise.all([xpConfig(guildId), prisma.levelRole.findMany({ where: { guildId }, orderBy: { level: 'asc' } })]);
-  const client = tryGetDashboardClient();
-  const guild = client?.guilds.cache.get(guildId);
-  const roleOptions = guild ? [...guild.roles.cache.values()].filter(r => !r.managed && r.id !== guild.id).map(r => ({ id: r.id, name: r.name })).sort((a, b) => a.name.localeCompare(b.name)) : [];
-  const channelOptions = guild ? [...guild.channels.cache.values()].filter(c => c.isTextBased()).map(c => ({ id: c.id, name: c.name })).sort((a, b) => a.name.localeCompare(b.name)) : [];
-  res.json({ config: cfg, levelRoles, roleOptions, channelOptions });
-});
-
 devCommandCenterRouter.patch('/xp/:guildId', async (req, res) => {
   const guildId = String(req.params.guildId);
   if (!SNOWFLAKE.test(guildId)) { res.status(400).json({ error: 'Ungültige guildId.' }); return; }
@@ -310,23 +298,11 @@ devCommandCenterRouter.put('/xp/:guildId/level-role/:level', async (req, res) =>
 });
 
 devCommandCenterRouter.delete('/xp/:guildId/level-role/:level', async (req, res) => {
-  const guildId = String(req.params.guildId); const level = Number(req.params.level);
+  const guildId = String(req.params.guildId);
+  const level = Number(req.params.level);
   if (!SNOWFLAKE.test(guildId) || !Number.isInteger(level)) { res.status(400).json({ error: 'Ungültige Guild/Level.' }); return; }
   if (!requireGuildScope(req, res, guildId)) return;
   const r = await prisma.levelRole.deleteMany({ where: { guildId, level } });
   logDevAction('DEV_XP_LEVELROLE_REMOVE', req, { guildId, level, count: r.count, reason: String(req.body.reason) });
   res.json({ deleted: r.count });
-});
-
-// /dev-reload ----------------------------------------------------------------
-devCommandCenterRouter.post('/commands/reload', async (req, res) => {
-  const scope = req.body?.scope === 'deploy' ? 'deploy' : 'all';
-  const client = tryGetDashboardClient();
-  if (!client) { res.status(503).json({ error: 'Discord-Client nicht verfügbar.' }); return; }
-  const oldCount = client.commands.size;
-  if (scope === 'all') await loadCommands(client);
-  const guildIds = [...client.guilds.cache.keys()];
-  const result = await deployCommandsScoped(client, config.discord.token, config.discord.clientId, guildIds);
-  logDevAction('DEV_COMMAND_RELOAD', req, { scope, oldCount, newCount: client.commands.size, ...result, reason: String(req.body.reason) });
-  res.json({ oldCount, newCount: client.commands.size, ...result });
 });
