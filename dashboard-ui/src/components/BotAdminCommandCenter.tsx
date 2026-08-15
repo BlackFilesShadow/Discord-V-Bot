@@ -298,7 +298,7 @@ function Maintenance({ center }: { center: string }) {
       <div className="grid gap-2 sm:grid-cols-[minmax(0,1fr)_auto_auto]">
         <Input value={uploadId} onChange={e => setUploadId(e.target.value)} placeholder="Upload/File-ID"/>
         <Button size="sm" onClick={() => run(api.post(`${center}/validate/upload/${uploadId}`), 'Datei validiert')} disabled={!uploadId}>Datei validieren</Button>
-        <Button size="sm" variant="danger" onClick={() => runDestructive(api.del(`${center}/uploads/${uploadId}`), 'Datei gelöscht')} disabled={!uploadId || deleteConfirm !== 'DELETE'}>Datei löschen</Button>
+        <Button size="sm" variant="danger" onClick={() => runDestructive(api.del(`${center}/uploads/${uploadId}`, { confirm: deleteConfirm }), 'Datei gelöscht')} disabled={!uploadId || deleteConfirm !== 'DELETE'}>Datei löschen</Button>
       </div>
       <div className="grid gap-2 sm:grid-cols-[minmax(0,1fr)_auto_auto]">
         <Input value={userId} onChange={e => setUserId(e.target.value)} placeholder="Interne User-ID"/>
