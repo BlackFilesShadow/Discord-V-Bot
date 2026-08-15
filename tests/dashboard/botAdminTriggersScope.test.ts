@@ -44,7 +44,7 @@ jest.mock('../../src/utils/logger', () => ({
 
 import express from 'express';
 import request from 'supertest';
-import { ChannelType } from 'discord.js';
+import { ChannelType, Collection } from 'discord.js';
 import { tryGetDashboardClient } from '../../src/dashboard/clientRegistry';
 import { addTrigger, listTriggers } from '../../src/modules/ai/triggers';
 import { botAdminTriggersRouter } from '../../src/dashboard/routes/v2/botAdminTriggers';
@@ -76,10 +76,14 @@ function installClient(options?: { guildPresent?: boolean; channelGuildId?: stri
     guildId: GUILD,
     type: ChannelType.GuildVoice,
   };
+  const channelCache = new Collection<string, typeof primaryChannel | typeof voiceChannel>([
+    [CHANNEL, primaryChannel],
+    [VOICE_CHANNEL, voiceChannel],
+  ]);
   const guild = {
     id: GUILD,
     name: 'Test Guild',
-    channels: { cache: new Map([[CHANNEL, primaryChannel], [VOICE_CHANNEL, voiceChannel]]) },
+    channels: { cache: channelCache },
   };
   const guildPresent = options?.guildPresent ?? true;
   clientMock.mockReturnValue({
