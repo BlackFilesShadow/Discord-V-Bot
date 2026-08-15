@@ -35,6 +35,10 @@ function messageOf(error: unknown): string {
   return error instanceof Error ? error.message : 'Unbekannter Fehler.';
 }
 
+function requireDeleteConfirmation(req: Request): boolean {
+  return req.body?.confirm === 'DELETE';
+}
+
 botAdminCommandCenterSafetyRouter.post('/validate/package/:id', async (req, res) => {
   const packageId = String(req.params.id ?? '');
   const pkg = await prisma.package.findUnique({
@@ -79,6 +83,10 @@ botAdminCommandCenterSafetyRouter.post('/validate/upload/:id', async (req, res) 
 });
 
 botAdminCommandCenterSafetyRouter.delete('/uploads/:id', async (req, res) => {
+  if (!requireDeleteConfirmation(req)) {
+    res.status(400).json({ error: 'Bestätigung DELETE erforderlich.' });
+    return;
+  }
   try {
     const result = await safeDeleteUpload(String(req.params.id ?? ''));
     audit(req, 'BOTADMIN_FILE_DELETE', {
@@ -94,7 +102,7 @@ botAdminCommandCenterSafetyRouter.delete('/uploads/:id', async (req, res) => {
 });
 
 botAdminCommandCenterSafetyRouter.delete('/packages/:id/hard', async (req, res) => {
-  if (req.body?.confirm !== 'DELETE') {
+  if (!requireDeleteConfirmation(req)) {
     res.status(400).json({ error: 'Bestätigung DELETE erforderlich.' });
     return;
   }
@@ -117,7 +125,7 @@ botAdminCommandCenterSafetyRouter.post('/users/:id/packages/delete', async (req,
   }
 
   const hard = req.body?.hard === true;
-  if (hard && req.body?.confirm !== 'DELETE') {
+  if (hard && !requireDeleteConfirmation(req)) {
     res.status(400).json({ error: 'Bestätigung DELETE erforderlich.' });
     return;
   }
