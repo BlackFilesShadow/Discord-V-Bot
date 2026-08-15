@@ -4,53 +4,54 @@ export default {
   theme: {
     extend: {
       colors: {
+        // Bestehende Utility-Namen bleiben stabil; nur ihre Werte werden aus
+        // den Theme-Tokens gelesen. Dadurch braucht der Light-Mode keinen
+        // komponentenweisen Klassen-Fork.
         bg: {
-          DEFAULT: '#08080a',
-          card: '#111114',
-          elev: '#181820',
-          hover: '#22222c',
-          subtle: '#0c0c10',
+          DEFAULT: 'rgb(var(--color-bg) / <alpha-value>)',
+          card: 'rgb(var(--color-bg-card) / <alpha-value>)',
+          elev: 'rgb(var(--color-bg-elev) / <alpha-value>)',
+          hover: 'rgb(var(--color-bg-hover) / <alpha-value>)',
+          subtle: 'rgb(var(--color-bg-subtle) / <alpha-value>)',
         },
+        white: 'rgb(var(--color-fg) / <alpha-value>)',
+        muted: 'rgb(var(--color-muted) / <alpha-value>)',
+        border: 'rgb(var(--color-border) / <alpha-value>)',
         accent: {
           DEFAULT: '#dc2626',
           hover: '#b91c1c',
           glow: '#ef4444',
           dim: '#7f1d1d',
         },
-        muted: '#6b7280',
-        border: '#262630',
         ok: '#10b981',
         warn: '#f59e0b',
         danger: '#ef4444',
         info: '#38bdf8',
         planned: '#7c3aed',
-        // Severity-Skala fuer enterprise-typische Status-Anzeigen
         severity: {
           neutral: '#6b7280',
-          info:    '#38bdf8',
-          ok:      '#10b981',
-          warn:    '#f59e0b',
-          danger:  '#ef4444',
-          crit:    '#b91c1c',
+          info: '#38bdf8',
+          ok: '#10b981',
+          warn: '#f59e0b',
+          danger: '#ef4444',
+          crit: '#b91c1c',
         },
       },
       fontSize: {
-        // Enterprise-Typo-Skala (kompakter als Default)
         '2xs': ['10px', { lineHeight: '14px', letterSpacing: '0.04em' }],
-        'micro': ['9px',  { lineHeight: '12px', letterSpacing: '0.06em' }],
+        micro: ['9px', { lineHeight: '12px', letterSpacing: '0.06em' }],
       },
       spacing: {
-        // Density-aware Basis (mit CSS-Vars in index.css gepaart)
-        'gutter': 'var(--gutter, 1.5rem)',
-        'row':    'var(--row-h, 2.5rem)',
+        gutter: 'var(--gutter, 1.5rem)',
+        row: 'var(--row-h, 2.5rem)',
       },
       maxWidth: {
-        'content':       '76rem',  // 1216px — Standard-Content-Container
-        'content-wide':  '96rem',  // 1536px — fuer Tabellen/Heatmaps
+        content: '76rem',
+        'content-wide': '96rem',
       },
       zIndex: {
-        modal:   '60',
-        toast:   '70',
+        modal: '60',
+        toast: '70',
         palette: '80',
       },
       boxShadow: {
@@ -75,10 +76,10 @@ export default {
         },
         pulseGlow: {
           '0%, 100%': { boxShadow: '0 0 18px rgba(220,38,38,0.45)' },
-          '50%':      { boxShadow: '0 0 32px rgba(220,38,38,0.65)' },
+          '50%': { boxShadow: '0 0 32px rgba(220,38,38,0.65)' },
         },
         shimmer: {
-          '0%':   { backgroundPosition: '-200% 0' },
+          '0%': { backgroundPosition: '-200% 0' },
           '100%': { backgroundPosition: '200% 0' },
         },
       },
