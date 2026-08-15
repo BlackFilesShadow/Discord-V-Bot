@@ -44,6 +44,7 @@ import { devIncidentRouter } from './v2/devIncident';
 import { devObservabilityRouter } from './v2/devObservability';
 import { devStubsRouter } from './v2/devStubs';
 import { devCommandCenterRouter } from './v2/devCommandCenter';
+import { devXpViewRouter } from './v2/devXpView';
 import { devSecureExportRouter } from './v2/devSecureExport';
 import { auditRouter } from './v2/audit';
 import { botAdminRouter } from './v2/botAdmin';
@@ -93,7 +94,7 @@ v2Router.use('/dev/nitrado-mirror', requireGlobalDeveloperIdentity, devNitradoMi
 v2Router.use('/dev/incident', requireGlobalDeveloperIdentity, requireDev, requireVerifiedDevMutationStepUp, devIncidentRouter);
 v2Router.use('/dev/observability', requireGlobalDeveloperIdentity, devObservabilityRouter);
 v2Router.use('/dev/stubs', requireGlobalDeveloperIdentity, requireDev, requireVerifiedDevMutationStepUp, devStubsRouter);
-v2Router.use('/dev/command-center', requireGlobalDeveloperIdentity, requireDev, redirectLegacyDevExports, guardDevCommandCenterInput, requireVerifiedDevMutationStepUp, guardDevAdminTarget, guardDevXpGuildObjects, devCommandCenterRouter);
+v2Router.use('/dev/command-center', requireGlobalDeveloperIdentity, requireDev, redirectLegacyDevExports, guardDevCommandCenterInput, requireVerifiedDevMutationStepUp, guardDevAdminTarget, guardDevXpGuildObjects, devXpViewRouter, devCommandCenterRouter);
 v2Router.use('/dev/secure-export', requireGlobalDeveloperIdentity, requireDev, requireVerifiedDevMutationStepUp, devSecureExportRouter);
 
 // Discord-/Dashboard-Paritaet: exakt derselbe Live-Katalog wie /help.
