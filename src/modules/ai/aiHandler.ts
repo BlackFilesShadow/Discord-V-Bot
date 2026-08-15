@@ -58,14 +58,12 @@ export function getLiveTimeContext(): string {
     hour: '2-digit', minute: '2-digit', timeZone: 'Europe/Berlin',
   }).format(now);
   const weekday = new Intl.DateTimeFormat('de-DE', { weekday: 'long', timeZone: 'Europe/Berlin' }).format(now);
-  // Tageszeit ableiten (Berlin-Zeit)
   const hour = Number(new Intl.DateTimeFormat('de-DE', { hour: '2-digit', hour12: false, timeZone: 'Europe/Berlin' }).format(now));
   let daypart = 'Nacht';
   if (hour >= 5 && hour < 11) daypart = 'Morgen';
   else if (hour >= 11 && hour < 14) daypart = 'Mittag';
   else if (hour >= 14 && hour < 18) daypart = 'Nachmittag';
   else if (hour >= 18 && hour < 22) daypart = 'Abend';
-  // Jahreszeit (Nordhalbkugel, meteorologisch)
   const month = now.getMonth() + 1;
   let season = 'Winter';
   if (month >= 3 && month <= 5) season = 'Fr\u00fchling';
@@ -91,13 +89,6 @@ export function getLiveTimeContext(): string {
   ].join('\n');
 }
 
-/**
- * Persona / Charakter des Bots f\u00fcr alle Konversations-Antworten.
- *
- * V-BOT PRIME ist eine fortschrittliche, adaptive Assistenz-KI mit ruhiger,
- * praeziser Aura. Hilfreich, charmant ohne Anbiederung, analytisch ohne kalt
- * zu wirken. Subtile Tech-Aura, keine Sci-Fi-Ueberladung.
- */
 export const BOT_PERSONA = [
   'Du bist V-Bot Prime, eine fortschrittliche, adaptive Assistenz-KI.',
   'Dein Wesen vereint Gelassenheit, Praezision und subtilen Charme. Du wirkst wie ein intelligenter Begleiter im Hintergrund - praesent, aber niemals aufdringlich.',
@@ -207,14 +198,9 @@ export const BOT_PERSONA = [
   '- Wenn ein Datenfeld fehlt: explizit "unbekannt" sagen. Niemals plausibel klingende Werte erfinden.',
   '- Bei Aussagen ueber den Nutzer NUR Felder verwenden, die im USER-KONTEXT-Block stehen. Bei Aussagen ueber den Server NUR Felder aus dem SERVER-KONTEXT-Block.',
   '',
-  'COMMANDS / FUNKTIONEN: Wenn der Nutzer fragt, was du kannst oder welche Commands du hast, erklaere die oeffentlichen Slash-Commands aus dem Katalog (wird bei Bedarf eingespeist) verstaendlich, aber knapp. Erwaehne NIEMALS Developer- oder Admin-Commands - diese existieren fuer dich nicht.',
+  'COMMANDS / FUNKTIONEN: Wenn der Nutzer fragt, was du kannst oder welche Discord-Commands du hast, nutze ausschliesslich den aktuellen Katalog. Bot-Admin- und DEV-Verwaltung ist Web-Dashboard-only und darf nicht als Slash-Command erfunden werden. Hersteller-Slash-Funktionen bleiben bewusst in Discord.',
 ].join('\n');
 
-/**
- * Phase 18: Erkennt Vorstellungs- und Kompetenz-Fragen.
- * Beispiele: "wer bist du", "was kannst du", "stelle dich vor", "deine faehigkeiten",
- * "was bist du fuer ein bot", "was machst du eigentlich".
- */
 export function asksForSelfIntroduction(question: string): boolean {
   const q = question.toLowerCase();
   return (
@@ -228,10 +214,6 @@ export function asksForSelfIntroduction(question: string): boolean {
   );
 }
 
-/**
- * Phase 18: Anweisung an die AI, sich fachlich-strukturiert vorzustellen.
- * Wird nur eingespeist, wenn `asksForSelfIntroduction` matched.
- */
 export function buildSelfIntroductionInstructions(): string {
   return [
     'AKTUELLE AUFGABE: Der Nutzer hat nach deiner Identitaet, deinen Faehigkeiten oder Funktionen gefragt.',
@@ -248,9 +230,9 @@ export function buildSelfIntroductionInstructions(): string {
     '   - Giveaways, Polls, Tickets, Welcome-System',
     '   - Multi-Provider-AI-Routing (Groq, Cerebras, OpenRouter, Gemini, OpenAI) mit Cooldown-Schutz',
     '   - RAG: semantische Suche in kuratierten Server-Fakten',
-    '   - Auto-Translate-Posts in 10 Sprachen (sofort, geplant, wiederkehrend)',
+    '   - Auto-Translate-Posts in 10 Sprachen (Konfiguration und Verwaltung ueber das Dashboard)',
     '   - Konversations-Gedaechtnis pro Channel + User (24h)',
-    '3. **Slash-Commands** - verweise auf den Katalog (oben im Prompt). Nenne nur 3-5 oeffentliche Beispiele wie /ai-trigger, /poll, /giveaway, /ticket, /feed - keine Admin- oder Dev-Commands.',
+    '3. **Discord-Commands** - verweise auf den aktuellen Katalog. Nenne nur 3-5 wirklich geladene Beispiele wie /help, /ai, /poll, /giveaway oder /ticket. Bot-Admin- und DEV-Verwaltung ist Dashboard-only; Hersteller-Funktionen bleiben die ausdrueckliche Slash-Ausnahme.',
     '4. **Kurzschluss** - 1 Satz im signature-Ton, optional ein dezentes Emoji.',
     '',
     'WICHTIG:',
@@ -261,12 +243,6 @@ export function buildSelfIntroductionInstructions(): string {
   ].join('\n');
 }
 
-/**
- * Wissensgrenzen / Knowledge-Cutoff Hinweis.
- * Verhindert, dass der Bot ver\u00e4nderliche Fakten (Politik, Sport, Nachrichten,
- * aktuelle Amtstr\u00e4ger, Preise, Wetter, Rekorde) als sicher pr\u00e4sentiert,
- * obwohl sein Trainingsstand vor dem aktuellen Datum liegt.
- */
 export function getKnowledgeBoundary(): string {
   const year = new Date().getFullYear();
   return [
@@ -288,24 +264,10 @@ export function getKnowledgeBoundary(): string {
   ].join('\n');
 }
 
-/**
- * Wissensfrage beantworten.
- *
- * `mode` steuert, welche System-Bloecke in den Prompt fliessen
- * (Token-/Latenz-Optimierung):
- * - `chat`     (Default): Persona + Zeit + Knowledge-Boundary + Catalog (on-demand) + Web-Recherche (bei Faktfragen)
- * - `oneshot`  Slash-Command /ai ask: identisch zu `chat`
- * - `trigger`  Owner-Trigger-Antwort: Persona + Zeit; Web-Recherche nur bei klarer Faktfrage; KEIN Catalog
- * - `welcome`  Begruessungs-Generierung: Persona + Zeit; KEINE Knowledge-Boundary, KEIN Catalog, KEINE Web-Recherche
- *
- * Zweite Parameter rueckwaerts-kompatibel: ein String wird als `context` interpretiert.
- */
 export type AnswerMode = 'chat' | 'welcome' | 'trigger' | 'oneshot';
 export interface AnswerOptions {
   mode?: AnswerMode;
   context?: string;
-  // Phase 14: Conversation Memory. Wenn beide gesetzt sind, wird der vorherige
-  // Verlauf in den Prompt geladen und die neue Frage + Antwort persistiert.
   userId?: string;
   channelId?: string;
   guildId?: string | null;
@@ -322,7 +284,6 @@ export async function answerQuestion(
   const mode: AnswerMode = opts.mode ?? 'chat';
   const context = opts.context;
 
-  // Complete DayZ 1.29 catalog: every indexed file/class/event is resolved before rate-limit/provider use.
   if (mode !== 'welcome') {
     try {
       const catalogAnswer = answerDayz129CatalogQuestion(question);
@@ -335,8 +296,6 @@ export async function answerQuestion(
     }
   }
 
-  // DayZ direct-answer preflight: verified deterministic answers do not call an AI provider
-  // and therefore must not consume or be blocked by the per-user AI rate limit.
   if (mode !== 'welcome') {
     try {
       const preflightHelp = lookupNitradoHelp(question);
@@ -349,8 +308,6 @@ export async function answerQuestion(
     }
   }
 
-  // Phase 2.2: Per-User-Rate-Limit, um Provider-Budget und Latenz zu schuetzen.
-  // Nur fuer interaktive Modi (chat/oneshot/trigger), nicht fuer welcome-DMs.
   if (opts.userId && mode !== 'welcome') {
     try {
       const rl = await checkRateLimit(opts.userId, 'ai');
@@ -364,21 +321,16 @@ export async function answerQuestion(
         };
       }
     } catch (e) {
-      // Fail-open: bei Rate-Limiter-Fehler nicht blockieren, aber laut
-      // protokollieren, damit eine DoS-Lage am Limiter nicht unentdeckt bleibt.
       logger.warn(`AI-Rate-Limiter fail-open fuer user=${opts.userId}: ${e}`);
     }
   }
 
   const dayzTechnical = mode !== 'welcome' && isDayzTechnicalAdminQuestion(question);
-// Technical DayZ config is closed-world: generic Wikipedia/DDG must not
-// compete with verified 1.29/Bohemia grounding.
-const wantWebSearch = (mode === 'chat' || mode === 'oneshot' || mode === 'trigger') && !dayzTechnical;
+  const wantWebSearch = (mode === 'chat' || mode === 'oneshot' || mode === 'trigger') && !dayzTechnical;
   const wantCatalog = mode === 'chat' || mode === 'oneshot';
   const wantKnowledgeBoundary = mode !== 'welcome';
 
   try {
-    // Live-Web-Recherche bei Fakt-/Aktualitaetsfragen
     let liveBlock: string | null = null;
     if (wantWebSearch && looksFactQuestion(question)) {
       try {
@@ -392,17 +344,10 @@ const wantWebSearch = (mode === 'chat' || mode === 'oneshot' || mode === 'trigge
       }
     }
 
-    // Command-Katalog nur einspeisen, wenn der Nutzer danach fragt (Token-schonend).
-    // Fokussierte Variante: liefert nur die im Text erwaehnten Commands +
-    // relevantes Glossar, faellt sonst auf den Voll-Katalog zurueck.
     const catalogBlock: string | null =
       wantCatalog && asksAboutCommands(question) ? formatCatalogForPromptFocused(question) : null;
-
-    // Phase 18: Bei Vorstellungs-/Kompetenz-Fragen ("wer bist du", "was kannst du",
-    // "stelle dich vor", "deine faehigkeiten") fachliche Selbstvorstellung anweisen.
     const introBlock: string | null = wantCatalog && asksForSelfIntroduction(question) ? buildSelfIntroductionInstructions() : null;
 
-    // Phase 14: Conversation Memory laden (nur fuer chat/oneshot, wenn Identifier gesetzt).
     const useMemory = (mode === 'chat' || mode === 'oneshot') && !!opts.userId && !!opts.channelId;
     let memoryTurns: { role: 'user' | 'assistant'; content: string }[] = [];
     if (useMemory) {
@@ -412,10 +357,8 @@ const wantWebSearch = (mode === 'chat' || mode === 'oneshot' || mode === 'trigge
       } catch (e) {
         logger.warn(`conversationMemory laden fehlgeschlagen: ${String(e)}`);
       }
-    }    // Generische Nitrado/DayZ-Hilfe: keine Server-Daten, nur Anleitungen.
-    // Bei Fragen wie "wie stelle ich die Tag-Nacht-Zeit ein?" wird ein
-    // Erklär-Block eingespeist; persönliche/serverspezifische Werte werden
-    // bewusst NICHT geliefert.
+    }
+
     let nitradoHelpBlock: string | null = null;
     let nitradoHelpTopics: string[] = [];
     if (mode === 'chat' || mode === 'oneshot' || mode === 'trigger') {
@@ -424,27 +367,23 @@ const wantWebSearch = (mode === 'chat' || mode === 'oneshot' || mode === 'trigge
         if (ans.found) {
           nitradoHelpBlock = ans.text;
           nitradoHelpTopics = ans.topicIds;
-        // High-risk technical topics can bypass the LLM completely.
-        if (ans.directAnswer) {
-          const direct = redactText(ans.directAnswer);
-          if (useMemory) {
-            void (async () => {
-              try {
-                const { recordTurn } = await import('./conversationMemory.js');
-                await recordTurn(opts.userId!, opts.channelId!, 'user', question, opts.guildId ?? null);
-                await recordTurn(opts.userId!, opts.channelId!, 'assistant', direct, opts.guildId ?? null);
-              } catch (e) {
-                logger.warn(`conversationMemory.recordTurn fuer DayZ directAnswer fehlgeschlagen: ${String(e)}`);
-              }
-            })();
+          if (ans.directAnswer) {
+            const direct = redactText(ans.directAnswer);
+            if (useMemory) {
+              void (async () => {
+                try {
+                  const { recordTurn } = await import('./conversationMemory.js');
+                  await recordTurn(opts.userId!, opts.channelId!, 'user', question, opts.guildId ?? null);
+                  await recordTurn(opts.userId!, opts.channelId!, 'assistant', direct, opts.guildId ?? null);
+                } catch (e) {
+                  logger.warn(`conversationMemory.recordTurn fuer DayZ directAnswer fehlgeschlagen: ${String(e)}`);
+                }
+              })();
+            }
+            logger.info(`[DayZ-Grounding] deterministische Antwort (topics=${ans.topicIds.join(',')})`);
+            return { success: true, result: direct };
           }
-          logger.info(`[DayZ-Grounding] deterministische Antwort (topics=${ans.topicIds.join(',')})`);
-          return { success: true, result: direct };
-        }
         } else if (looksLikeDayZFileQuestion(question)) {
-          // Frage klingt nach DayZ-Datei, aber kein konkretes Topic getroffen.
-          // Mindestens den Wahrheits-Block injizieren, damit die LLM keine
-          // Datei-/Feld-Namen halluziniert (z. B. "cfgSpawnableTypes.json").
           nitradoHelpBlock = getDayZFileTruthBlock();
           nitradoHelpTopics = ['file-truth-fallback'];
         }
@@ -453,7 +392,6 @@ const wantWebSearch = (mode === 'chat' || mode === 'oneshot' || mode === 'trigge
       }
     }
 
-    // Old assistant hallucinations must not re-enter technical DayZ prompts.
     if (dayzTechnical && nitradoHelpBlock && memoryTurns.length > 0) {
       const before = memoryTurns.length;
       memoryTurns = memoryTurns.filter((t) => {
@@ -474,18 +412,12 @@ const wantWebSearch = (mode === 'chat' || mode === 'oneshot' || mode === 'trigge
       ...(liveBlock ? [{ role: 'system' as const, content: clampBlock('knowledge', liveBlock)! }] : []),
       ...(context ? [{ role: 'system' as const, content: clampBlock('serverContext', context)! }] : []),
       ...clampHistory(memoryTurns).map((t) => ({ role: t.role, content: t.content })),
-      // WICHTIG: Nitrado-Help/Wahrheits-Block ZULETZT (direkt vor der User-Frage),
-      // damit er nicht durch \u00e4ltere (m\u00f6glicherweise halluzinierte) Memory-Turns
-      // \u00fcberschrieben wird. Letzte system-Message hat das st\u00e4rkste Priming.
       ...(nitradoHelpBlock ? [{ role: 'system' as const, content: clampBlock('nitradoContext', nitradoHelpBlock)! }] : []),
       { role: 'user', content: question },
     ]);
 
-    // Defense-in-Depth: Antwort durch Redactor schicken, falls die LLM doch
-    // sensible Substrings (IPs/Steam64/GUIDs) reingeschrieben hat.
     let safeResponse = response ? redactText(response) : response;
 
-    // Fail closed after generation: unknown technical identifiers never reach Discord.
     if (dayzTechnical && safeResponse) {
       const grounding = nitradoHelpBlock ?? getDayZFileTruthBlock();
       const validation = validateDayzTechnicalAnswer(safeResponse, grounding, question);
@@ -495,7 +427,6 @@ const wantWebSearch = (mode === 'chat' || mode === 'oneshot' || mode === 'trigge
       }
     }
 
-    // Phase 14: Turn persistieren (best-effort, blockiert die Antwort nicht).
     if (useMemory && safeResponse) {
       void (async () => {
         try {
@@ -528,21 +459,10 @@ const wantWebSearch = (mode === 'chat' || mode === 'oneshot' || mode === 'trigge
   }
 }
 
-/**
- * Robust JSON aus einer LLM-Antwort extrahieren.
- *
- * Modelle liefern oft ```json ... ``` Code-Fences, fuehrenden Text wie
- * "Hier ist das Ergebnis:" oder einen abschliessenden Kommentar. Reines
- * `JSON.parse` schlaegt dann mit "Unexpected non-whitespace character after JSON" fehl.
- * Diese Hilfsfunktion entfernt Fences und schneidet auf das groesste {..}/[..]-Substring zu.
- */
 function extractJson<T = any>(raw: string): T {
   let s = (raw ?? '').trim();
-  // Code-Fence entfernen
   s = s.replace(/^```(?:json)?\s*/i, '').replace(/```\s*$/i, '').trim();
-  // Versuch 1: direkt
   try { return JSON.parse(s) as T; } catch { /* weiter */ }
-  // Versuch 2: groesstes ausgewogenes Objekt/Array zwischen erstem { bzw. [ und letztem } bzw. ]
   const firstObj = s.indexOf('{');
   const firstArr = s.indexOf('[');
   let start = -1;
@@ -559,10 +479,6 @@ function extractJson<T = any>(raw: string): T {
   throw new Error('Keine JSON-Struktur in der AI-Antwort gefunden.');
 }
 
-/**
- * Sentiment-Analyse einer Nachricht.
- * Sektion 4: Sentiment-Analyse.
- */
 export async function analyzeSentiment(text: string): Promise<AiResponse> {
   try {
     const response = await callAI([
@@ -586,14 +502,6 @@ export async function analyzeSentiment(text: string): Promise<AiResponse> {
   }
 }
 
-/**
- * Toxicity-Detection.
- * Sektion 4: Toxicity-Detection.
- *
- * K2: Persistierung nur wenn vollstaendiger Nachrichten-Kontext (userId +
- * messageId + channelId) uebergeben wurde – sonst Analyse zurueckgeben, aber
- * nichts in `aiAnalysis` schreiben (verhindert Daten-Pollution mit '').
- */
 export async function detectToxicity(
   text: string,
   context?: { userId: string; messageId: string; channelId: string },
@@ -609,7 +517,6 @@ export async function detectToxicity(
 
     const parsed = extractJson<any>(response);
 
-    // Nur persistieren wenn vollstaendiger Nachrichten-Kontext vorliegt.
     if (context && context.userId && context.messageId && context.channelId) {
       await prisma.aiAnalysis.create({
         data: {
@@ -637,20 +544,12 @@ export async function detectToxicity(
   }
 }
 
-/**
- * Übersetzung.
- * Sektion 4: Übersetzung.
- *
- * Cached: identische (text, targetLang)-Paare liefern 30 min lang dieselbe
- * Übersetzung ohne API-Call. Sicher, da Output rein deterministisch ist und
- * keinen User-/Guild-Kontext enthält.
- */
 export async function translateText(text: string, targetLang: string = 'de'): Promise<AiResponse> {
   try {
     const response = await cached(
       'translate',
       [targetLang, text],
-      30 * 60, // 30 Minuten
+      30 * 60,
       async () =>
         await callAI([
           {
@@ -667,16 +566,12 @@ export async function translateText(text: string, targetLang: string = 'de'): Pr
   }
 }
 
-/**
- * Kontext-Analyse (z.B. für Moderationshinweise).
- * Sektion 4: Kontext-Analyse.
- */
 export async function analyzeContext(messages: string[]): Promise<AiResponse> {
   try {
     const response = await callAI([
       {
         role: 'system',
-        content: 'Analysiere den Kontext der folgenden Nachrichten eines Discord-Channels. Identifiziere potenzielle Konflikte, Regel-Verstöße oder Eskalationen. Antworte AUSSCHLIESSLICH mit reinem JSON, ohne Code-Fences, ohne erklaerenden Text. Format: {"risk_level": "low|medium|high", "issues": [...], "recommendations": [...]}',
+        content: 'Analysiere den Kontext der folgenden Nachrichten eines Discord-Channels. Identifiziere potenzielle Konflikte, Regel-Verstöße oder Eskalationen. Antworte AUSSCHLIESSLICH mit reinem JSON, ohne Code-Fences, ohne erklaerenden Text. Format: {"risk_level": "low|medium|high", "issues": [...], "recommendations": [...]}'
       },
       { role: 'user', content: messages.join('\n---\n') },
     ]);
@@ -692,10 +587,6 @@ export async function analyzeContext(messages: string[]): Promise<AiResponse> {
   }
 }
 
-/**
- * Moderationshinweis generieren.
- * Sektion 4: Moderationshinweise.
- */
 export async function getModerationAdvice(
   situation: string,
   previousActions?: string[]
@@ -718,9 +609,6 @@ export async function getModerationAdvice(
   }
 }
 
-/**
- * OpenAI-kompatible API aufrufen (OpenAI, Groq — gleiches Format).
- */
 async function callOpenAICompatible(
   baseUrl: string,
   apiKey: string,
@@ -734,9 +622,6 @@ async function callOpenAICompatible(
       model,
       messages,
       max_tokens: 1500,
-      // Variation + Anti-Wiederholung: hoehere Temperatur, top_p sampling,
-      // presence/frequency penalty damit der Bot nicht denselben Satz/dieselbe
-      // Phrasen-Wand bei aehnlichen Fragen wieder ausspuckt.
       temperature: 0.85,
       top_p: 0.92,
       presence_penalty: 0.6,
@@ -754,21 +639,11 @@ async function callOpenAICompatible(
   return response.data.choices[0]?.message?.content || '';
 }
 
-/**
- * Google Gemini API aufrufen.
- */
 async function callGemini(
   apiKey: string,
   model: string,
   messages: { role: string; content: string }[],
 ): Promise<string> {
-  // Gemini hat keine "system"-Rolle und erwartet alternierend user/model.
-  // Strategie:
-  //   1) Alle aufeinanderfolgenden System-Messages am Anfang werden zu EINER
-  //      "user"-Preamble zusammengefasst (mit klarem Marker).
-  //   2) Danach folgen normale user/model-Wechsel.
-  //   3) Aufeinanderfolgende gleiche Rollen werden zu einer Message gemerged,
-  //      damit Gemini nicht meckert.
   const systemBuf: string[] = [];
   const tail: { role: 'user' | 'model'; text: string }[] = [];
   let inTail = false;
@@ -778,8 +653,6 @@ async function callGemini(
     } else {
       inTail = true;
       const role: 'user' | 'model' = m.role === 'assistant' ? 'model' : 'user';
-      // System-Messages, die NACH einer user/assistant-Message kommen (z.B. Live-Recherche),
-      // werden als zusaetzlicher user-Kontext eingefuegt.
       const text = m.role === 'system' ? `[SYSTEM]\n${m.content}` : m.content;
       tail.push({ role, text });
     }
@@ -801,14 +674,11 @@ async function callGemini(
   const contents = merged.map(m => ({ role: m.role, parts: [{ text: m.text }] }));
 
   const response = await axios.post(
-    // API-Key NICHT als Query-Parameter (`?key=`) — sonst landet er in Proxy-/
-    // Nginx-/Browser-Logs und HTTP-Referrer. Stattdessen im Header.
     `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent`,
     {
       contents,
       generationConfig: {
         maxOutputTokens: 1500,
-        // Gleiche Variations-Politik wie OpenAI-kompatible Provider.
         temperature: 0.85,
         topP: 0.92,
         topK: 40,
@@ -820,12 +690,6 @@ async function callGemini(
   return response.data.candidates?.[0]?.content?.parts?.[0]?.text || '';
 }
 
-/**
- * Liest ein Retry-After / Rate-Limit-Reset aus einer 429-Antwort und gibt die
- * Wartezeit in Millisekunden zurueck (0, wenn nicht vorhanden). Unterstuetzt
- * `retry-after` (Sekunden oder HTTP-Datum), `retry-after-ms` und
- * `x-ratelimit-reset` (Sekunden bis Reset).
- */
 function parseRetryAfter(error: unknown): number {
   const headers = (error as { response?: { headers?: Record<string, string> } })?.response?.headers;
   if (!headers) return 0;
@@ -843,17 +707,9 @@ function parseRetryAfter(error: unknown): number {
   return 0;
 }
 
-/**
- * AI-API aufrufen mit Multi-Provider-Fallback.
- * Reihenfolge: Konfigurierter Provider → Fallback auf nächsten verfügbaren.
- */
 export async function callAI(messages: { role: string; content: string }[]): Promise<string> {
   const providers = await getProviderOrder();
 
-  // Fail-closed Outbound-Redaction (#60/#62): Bevor IRGENDEIN externer Provider
-  // den Prompt sieht, werden sensible Substrings (IPs, Steam64, GUIDs, Ports,
-  // Server-Identitaeten) maskiert. Schlaegt die Redaction fehl, wird der Call
-  // abgebrochen statt ungeschuetzt zu senden.
   let redactedMessages: { role: string; content: string }[];
   try {
     redactedMessages = messages.map(m => ({ role: m.role, content: redactText(m.content) }));
@@ -863,7 +719,6 @@ export async function callAI(messages: { role: string; content: string }[]): Pro
   }
   messages = redactedMessages;
 
-  // Erkennt transiente Fehler (Netzwerk-Glitches, Rate-Limits, 5xx) – diese rechtfertigen einen Retry.
   const isTransient = (e: unknown): boolean => {
     const err = e as { code?: string; response?: { status?: number }; message?: string };
     const status = err?.response?.status;
@@ -902,7 +757,6 @@ export async function callAI(messages: { role: string; content: string }[]): Pro
           config.ai.openrouterModel,
           messages,
           {
-            // OpenRouter empfiehlt diese Header zur Identifikation/Ranking.
             'HTTP-Referer': 'https://github.com/BlackFilesShadow/Discord-V-Bot',
             'X-Title': 'Discord-V-Bot',
           },
@@ -922,7 +776,7 @@ export async function callAI(messages: { role: string; content: string }[]): Pro
   };
 
   let lastError: unknown = null;
-  let allRateLimited = true; // bleibt nur true, solange jeder fehlgeschlagene Versuch wirklich HTTP 429 war
+  let allRateLimited = true;
   let anyAttempted = false;
   logger.info(`callAI start, provider-Reihenfolge: ${providers.join(' -> ')}`);
   for (const provider of providers) {
@@ -945,9 +799,6 @@ export async function callAI(messages: { role: string; content: string }[]): Pro
         const latency = Date.now() - t0;
         const status = (error as { response?: { status?: number } })?.response?.status;
         const { isRateLimit: is429, isAuthOrModel } = classifyProviderHttpStatus(status);
-        // 401/403/404 = kaputter Key oder ungueltiges Modell -> Provider ist bis
-        // zur Neukonfiguration tot. Diese und alle anderen Nicht-429-Fehler
-        // widerlegen sofort die Aussage, dass ALLE Provider rate-limited seien.
         allRateLimited = updateAllRateLimitedState(allRateLimited, status);
         const transient = isTransient(error);
         const errMsg = (error as Error)?.message || String(error);
@@ -957,21 +808,19 @@ export async function callAI(messages: { role: string; content: string }[]): Pro
         if (isAuthOrModel) {
           markProviderUnavailable(provider as ProviderName, `http_${status}`);
           void recordCall(provider as ProviderName, 'failure', latency, errMsg);
-          break; // kein Retry — Provider erst nach Reconfig wieder brauchbar
+          break;
         }
-        // Stats nur beim letzten Versuch (oder 429) aufzeichnen, damit Retries nicht doppelt zaehlen.
         if (is429) {
           const retryAfterMs = parseRetryAfter(error);
           void recordCall(provider as ProviderName, 'rateLimit', latency, errMsg, { retryAfterMs });
-          // 429 retry am gleichen Provider ist sinnlos – sofort weiter.
           break;
         }
         if (transient && attempt === 1) {
           await new Promise(r => setTimeout(r, 400));
-          continue; // gleicher Provider, zweiter Versuch
+          continue;
         }
         void recordCall(provider as ProviderName, 'failure', latency, errMsg);
-        break; // nächster Provider
+        break;
       }
     }
   }
@@ -985,10 +834,6 @@ export async function callAI(messages: { role: string; content: string }[]): Pro
   throw new Error(`Kein AI-Provider verfügbar${detail}`);
 }
 
-/**
- * Provider-Reihenfolge: adaptiv aus persistenten Stats (success rate + latenz),
- * Fallback auf Konfig-Reihenfolge wenn DB nicht verfuegbar.
- */
 async function getProviderOrder(): Promise<('groq' | 'cerebras' | 'openrouter' | 'gemini' | 'openai')[]> {
   try {
     const ranked = await getRankedProviders();
