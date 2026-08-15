@@ -8,14 +8,15 @@
  * BotAdminSession (Passwort-Login, requireBotAdmin) freigeschaltet — eine
  * einzige Bot-Admin-Berechtigung schaltet alle Aktionen frei.
  *
- * Einige Sektionen sind serverbezogen (Selfroles, Feeds, Uebersetzungen, XP)
- * und erwarten eine guildId, die ueber den Server-Selektor gewaehlt wird.
+ * Einige Sektionen sind serverbezogen (Selfroles, Feeds, Uebersetzungen,
+ * Wissensbank) und erwarten eine guildId, die ueber den Server-Selektor
+ * gewaehlt wird. XP-Konfiguration ist DEV-only und lebt im DEV Command Center.
  */
 import { useState, type ReactNode, type ComponentType } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import {
   LayoutDashboard, Gavel, MessageSquare, Megaphone, UploadCloud, Download, ShieldCheck,
-  Package, Users, Ticket, Tags, Rss, Languages, TrendingUp, AlertOctagon,
+  Package, Users, Ticket, Tags, Rss, Languages, AlertOctagon,
   RefreshCw, Loader2, Inbox, Trash2, Power, KeyRound, X, AlertTriangle, BookOpen,
 } from 'lucide-react';
 import { api, ApiError } from '@/lib/api';
@@ -30,7 +31,7 @@ import { useToast } from '@/components/ui/Toast';
 
 type SectionKey =
   | 'overview' | 'appeals' | 'feedback' | 'broadcast' | 'upload' | 'export' | 'validate'
-  | 'packages' | 'users' | 'tickets' | 'selfroles' | 'feeds' | 'translate' | 'xp' | 'knowledge' | 'danger';
+  | 'packages' | 'users' | 'tickets' | 'selfroles' | 'feeds' | 'translate' | 'knowledge' | 'danger';
 
 interface SectionDef {
   key: SectionKey;
@@ -54,13 +55,12 @@ const SECTIONS: ReadonlyArray<SectionDef> = [
   { key: 'selfroles', label: 'Selfroles', icon: Tags, desc: 'Self-Role-Menüs' },
   { key: 'feeds', label: 'Feeds', icon: Rss, desc: 'Feed-Quellen' },
   { key: 'translate', label: 'Übersetzungen', icon: Languages, desc: 'Posts übersetzen' },
-  { key: 'xp', label: 'XP-System', icon: TrendingUp, desc: 'Level & Raten' },
   { key: 'knowledge', label: 'Wissensbank', icon: BookOpen, desc: 'AI-Wissen & Persona' },
   { key: 'danger', label: 'Gefahrenzone', icon: AlertOctagon, desc: 'Gefährliche Aktionen', danger: true },
 ];
 
 // Sektionen, die einen ausgewaehlten Server (guildId) benoetigen.
-const GUILD_SCOPED = new Set<SectionKey>(['selfroles', 'feeds', 'translate', 'xp', 'knowledge']);
+const GUILD_SCOPED = new Set<SectionKey>(['selfroles', 'feeds', 'translate', 'knowledge']);
 
 interface GuildOption { id: string; name: string; memberCount: number }
 
@@ -133,7 +133,6 @@ export function BotAdminTab() {
             {section === 'selfroles' && <SelfrolesSection base={base} guildId={guildId} canManage={canManage} />}
             {section === 'feeds' && <FeedsSection base={base} guildId={guildId} canManage={canManage} />}
             {section === 'translate' && <TranslateSection base={base} guildId={guildId} canManage={canManage} />}
-            {section === 'xp' && <XpSection base={base} guildId={guildId} canManage={canManage} />}
             {section === 'knowledge' && <KnowledgeSection base={base} guildId={guildId} canManage={canManage} />}
             {section === 'danger' && <DangerSection base={base} canDanger={canDanger} />}
           </>
@@ -1135,74 +1134,6 @@ function TranslateCreateForm({ languages, onSubmit, loading }: { languages: stri
         <Input value={channelId} onChange={e => setChannelId(e.target.value)} placeholder="Channel-ID" />
       </div>
       <Button size="sm" disabled={!sourceText.trim() || !channelId.trim()} loading={loading} onClick={() => onSubmit({ sourceText, targetLang, channelId, customTitle: customTitle || undefined })}>Übersetzen</Button>
-    </div>
-  );
-}
-
-// ════════════════════════════════════════════════════════════════════════
-// XP-SYSTEM
-// ════════════════════════════════════════════════════════════════════════
-interface XpConfig { id: string; messageXpMin: number; messageXpMax: number; voiceXpPerMinute: number; eventXpBonus: number; xpCooldownSeconds: number; levelMultiplier: number; maxLevel: number; isActive: boolean }
-interface LevelRoleRow { id: string; level: number; roleId: string }
-
-function XpSection({ base, guildId, canManage }: { base: string; guildId: string; canManage: boolean }) {
-  const qc = useQueryClient();
-  const toast = useToast();
-  const g = (p: string) => `${base}${p}${p.includes('?') ? '&' : '?'}guildId=${guildId}`;
-  const q = useQuery({ queryKey: [base, 'xp', guildId], queryFn: () => api.get<{ config: XpConfig; levelRoles: LevelRoleRow[] }>(g('/xp')), enabled: !!guildId });
-  const inv = () => qc.invalidateQueries({ queryKey: [base, 'xp', guildId] });
-  const patch = useMutation({ mutationFn: (b: Partial<XpConfig>) => api.patch(`${base}/xp`, b), onSuccess: () => { toast.success('XP-Konfiguration gespeichert.'); inv(); }, onError: e => toast.error(errMsg(e)) });
-  const addRole = useMutation({ mutationFn: (b: unknown) => api.post(g('/xp/level-roles'), b), onSuccess: () => { toast.success('Level-Rolle hinzugefügt.'); inv(); }, onError: e => toast.error(errMsg(e)) });
-  const delRole = useMutation({ mutationFn: (id: string) => api.del(g(`/xp/level-roles/${id}`)), onSuccess: () => inv(), onError: e => toast.error(errMsg(e)) });
-  const [draft, setDraft] = useState<Partial<XpConfig> | null>(null);
-  const cfg = { ...(q.data?.config as XpConfig | undefined), ...draft } as XpConfig | undefined;
-  const num = (k: keyof XpConfig, label: string) => (
-    <label className="block">
-      <span className="text-xs text-muted">{label}</span>
-      <Input type="number" value={cfg ? String(cfg[k]) : ''} disabled={!canManage} onChange={e => setDraft(d => ({ ...d, [k]: Number(e.target.value) }))} />
-    </label>
-  );
-  return (
-    <Card glow>
-      <SectionHeader title="XP-System" desc="Level & Raten (früher /xp-config)" onRefresh={() => q.refetch()} loading={q.isFetching} />
-      <ReadOnlyHint canManage={canManage} />
-      {cfg && (
-        <div className="space-y-4 max-w-2xl">
-          <div className="grid gap-3 sm:grid-cols-3">
-            {num('messageXpMin', 'Nachricht XP min')}
-            {num('messageXpMax', 'Nachricht XP max')}
-            {num('voiceXpPerMinute', 'Voice XP/min')}
-            {num('eventXpBonus', 'Event-Bonus')}
-            {num('xpCooldownSeconds', 'Cooldown (Sek.)')}
-            {num('maxLevel', 'Max-Level')}
-          </div>
-          {canManage && <Button size="sm" disabled={!draft} loading={patch.isPending} onClick={() => { if (draft) patch.mutate(draft); setDraft(null); }}>Speichern</Button>}
-          <div>
-            <h3 className="text-sm font-semibold text-white mb-2">Level-Rollen</h3>
-            <div className="space-y-1 mb-2">
-              {q.data?.levelRoles.map(lr => (
-                <div key={lr.id} className="flex items-center justify-between p-2 rounded bg-bg-elev border border-border text-sm">
-                  <span className="text-muted">Level {lr.level} → <span className="font-mono">{lr.roleId}</span></span>
-                  {canManage && <button type="button" onClick={() => delRole.mutate(lr.id)} className="text-muted hover:text-danger"><Trash2 className="h-4 w-4" /></button>}
-                </div>
-              ))}
-            </div>
-            {canManage && <LevelRoleForm onSubmit={b => addRole.mutate(b)} loading={addRole.isPending} />}
-          </div>
-        </div>
-      )}
-    </Card>
-  );
-}
-
-function LevelRoleForm({ onSubmit, loading }: { onSubmit: (b: unknown) => void; loading: boolean }) {
-  const [level, setLevel] = useState('');
-  const [roleId, setRoleId] = useState('');
-  return (
-    <div className="flex gap-2">
-      <Input type="number" value={level} onChange={e => setLevel(e.target.value)} placeholder="Level" className="!w-24" />
-      <Input value={roleId} onChange={e => setRoleId(e.target.value)} placeholder="Rollen-ID" />
-      <Button size="sm" variant="secondary" disabled={!level || !roleId.trim()} loading={loading} onClick={() => { onSubmit({ level: Number(level), roleId }); setLevel(''); setRoleId(''); }}>+</Button>
     </div>
   );
 }
