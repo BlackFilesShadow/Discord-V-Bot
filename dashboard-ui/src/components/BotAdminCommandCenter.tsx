@@ -132,10 +132,12 @@ function Triggers({ center, guildId }: { center: string; guildId: string }) {
   const [cooldown, setCooldown] = useState('10');
   const [mediaUrl, setMediaUrl] = useState('');
   const [file, setFile] = useState<File | null>(null);
+  const [clearConfirm, setClearConfirm] = useState('');
   const list = useQuery({ queryKey: [center, 'triggers', guildId], queryFn: () => api.get<TriggerListResponse>(`${center}/triggers?guildId=${guildId}`), enabled: !!guildId });
 
   useEffect(() => {
     setChannelId('');
+    setClearConfirm('');
   }, [guildId]);
 
   const save = useMutation({
@@ -154,7 +156,11 @@ function Triggers({ center, guildId }: { center: string; guildId: string }) {
     onError: e => toast.error('Trigger fehlgeschlagen', msg(e)),
   });
   const del = useMutation({ mutationFn: (triggerId: string) => api.del(`${center}/triggers/${encodeURIComponent(triggerId)}?guildId=${guildId}`), onSuccess: () => qc.invalidateQueries({ queryKey: [center, 'triggers', guildId] }) });
-  const clear = useMutation({ mutationFn: () => api.post(`${center}/triggers/clear`, { guildId, confirm: 'CLEAR' }), onSuccess: () => qc.invalidateQueries({ queryKey: [center, 'triggers', guildId] }) });
+  const clear = useMutation({
+    mutationFn: () => api.post(`${center}/triggers/clear`, { guildId, confirm: clearConfirm }),
+    onSuccess: () => { setClearConfirm(''); toast.success('Alle Guild-Trigger gelöscht'); qc.invalidateQueries({ queryKey: [center, 'triggers', guildId] }); },
+    onError: e => toast.error('Trigger konnten nicht gelöscht werden', msg(e)),
+  });
 
   if (!guildId) return <Card><p className="text-muted">Bitte einen Server auswählen.</p></Card>;
   return <div className="space-y-4">
@@ -182,10 +188,22 @@ function Triggers({ center, guildId }: { center: string; guildId: string }) {
       <Button size="sm" className="mt-2" onClick={() => save.mutate()} loading={save.isPending} disabled={list.isError}><Upload className="h-4 w-4"/>Speichern</Button>
     </Card>
     <Card>
-      <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between"><h2 className="font-semibold">Vorhandene Trigger</h2><Button size="sm" variant="danger" onClick={() => clear.mutate()} loading={clear.isPending}>Alle löschen</Button></div>
+      <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
+        <h2 className="font-semibold">Vorhandene Trigger</h2>
+        <div className="flex flex-col gap-2 sm:flex-row">
+          <Input value={clearConfirm} onChange={e => setClearConfirm(e.target.value)} placeholder="CLEAR eingeben" className="sm:!w-36"/>
+          <Button size="sm" variant="danger" onClick={() => clear.mutate()} loading={clear.isPending} disabled={clearConfirm !== 'CLEAR'}>Alle löschen</Button>
+        </div>
+      </div>
       <div className="space-y-2 mt-3">{(list.data?.items ?? []).map(trigger => <div key={trigger.id} className="border border-border rounded-md p-3"><div className="flex flex-col gap-2 sm:flex-row sm:items-start sm:justify-between"><div className="min-w-0"><b>{trigger.id}</b> <Badge>{trigger.triggerType}</Badge> <Badge>{trigger.responseMode}</Badge><div className="text-xs text-muted mt-1 break-words">{trigger.trigger} · CD {trigger.cooldownSeconds ?? 10}s{trigger.mediaUrl ? ' · Media' : ''}</div></div><Button size="sm" variant="danger" onClick={() => del.mutate(trigger.id)} loading={del.isPending}><Trash2 className="h-4 w-4"/></Button></div></div>)}</div>
     </Card>
   </div>;
+}
+
+interface FeedbackChannelResponse {
+  globalChannelId: string | null;
+  guildChannelId: string | null;
+  channelOptions: Array<{ id: string; name: string; type: number }>;
 }
 
 function Feedback({ center, guildId }: { center: string; guildId: string }) {
@@ -196,22 +214,50 @@ function Feedback({ center, guildId }: { center: string; guildId: string }) {
   const [feedbackId, setFeedbackId] = useState('');
   const [status, setStatus] = useState('OPEN');
   const [note, setNote] = useState('');
-  const cfg = useQuery({ queryKey: [center, 'feedback-channel', guildId], queryFn: () => api.get<{ globalChannelId: string | null; guildChannelId: string | null }>(`${center}/feedback-channel${guildId ? `?guildId=${guildId}` : ''}`) });
-  const save = useMutation({ mutationFn: (scope: 'guild'|'global') => api.put(`${center}/feedback-channel`, scope === 'global' ? { scope, channelId: globalChannel || null } : { scope, guildId, channelId: guildChannel || null }), onSuccess: () => { toast.success('Feedback-Kanal aktualisiert'); qc.invalidateQueries({ queryKey: [center, 'feedback-channel'] }); }, onError: e => toast.error('Fehler', msg(e)) });
+  const cfg = useQuery({ queryKey: [center, 'feedback-channel', guildId], queryFn: () => api.get<FeedbackChannelResponse>(`${center}/feedback-channel${guildId ? `?guildId=${guildId}` : ''}`) });
+
+  useEffect(() => {
+    setGuildChannel('');
+  }, [guildId]);
+
+  useEffect(() => {
+    if (!cfg.data) return;
+    setGlobalChannel(cfg.data.globalChannelId ?? '');
+    setGuildChannel(cfg.data.guildChannelId ?? '');
+  }, [cfg.data]);
+
+  const save = useMutation({
+    mutationFn: (scope: 'guild'|'global') => api.put(`${center}/feedback-channel`, scope === 'global'
+      ? { scope, channelId: globalChannel || null }
+      : { scope, guildId, channelId: guildChannel || null }),
+    onSuccess: () => { toast.success('Feedback-Kanal aktualisiert'); qc.invalidateQueries({ queryKey: [center, 'feedback-channel'] }); },
+    onError: e => toast.error('Fehler', msg(e)),
+  });
   const patch = useMutation({ mutationFn: () => api.patch(`${center}/feedback/${feedbackId}`, { status, adminNote: note }), onSuccess: () => toast.success('Feedback aktualisiert inkl. Notify-Embed'), onError: e => toast.error('Fehler', msg(e)) });
+  const options = cfg.data?.channelOptions ?? [];
+  const currentGuildChannelMissing = Boolean(guildChannel) && !options.some(channel => channel.id === guildChannel);
+
   return <div className="space-y-4">
     <Card glow>
       <h2 className="font-semibold mb-3">Feedback-Channel-Konfiguration</h2>
       <p className="text-xs text-muted mb-2 break-all">Aktuell global: {cfg.data?.globalChannelId ?? '–'} · Guild: {cfg.data?.guildChannelId ?? '–'}</p>
       <div className="grid gap-2 md:grid-cols-2">
         <div className="flex flex-col gap-2 sm:flex-row"><Input value={globalChannel} onChange={e => setGlobalChannel(e.target.value)} placeholder="Global Channel-ID / leer deaktiviert"/><Button size="sm" onClick={() => save.mutate('global')}>Global setzen</Button></div>
-        <div className="flex flex-col gap-2 sm:flex-row"><Input value={guildChannel} onChange={e => setGuildChannel(e.target.value)} placeholder="Guild Channel-ID / leer deaktiviert" disabled={!guildId}/><Button size="sm" onClick={() => save.mutate('guild')} disabled={!guildId}>Guild setzen</Button></div>
+        <div className="flex flex-col gap-2 sm:flex-row">
+          <Select value={guildChannel} onChange={e => setGuildChannel(e.target.value)} disabled={!guildId || cfg.isLoading || cfg.isError}>
+            <option value="">Guild-Feedback deaktivieren</option>
+            {currentGuildChannelMissing && <option value={guildChannel}>Aktuell gespeichert: {guildChannel} (nicht erreichbar)</option>}
+            {options.map(channel => <option key={channel.id} value={channel.id}>{channel.name}</option>)}
+          </Select>
+          <Button size="sm" onClick={() => save.mutate('guild')} disabled={!guildId || cfg.isLoading || cfg.isError}>Guild setzen</Button>
+        </div>
       </div>
+      <p className="text-[11px] text-muted mt-2">Der globale Fallback ist Bot-Owner-only. Für die ausgewählte Guild werden nur erreichbare Text-/Ankündigungskanäle angeboten.</p>
     </Card>
     <Card>
       <h2 className="font-semibold mb-3">Feedback-Status / Admin-Notiz</h2>
       <div className="grid gap-2 md:grid-cols-3"><Input value={feedbackId} onChange={e => setFeedbackId(e.target.value)} placeholder="Feedback-ID"/><Select value={status} onChange={e => setStatus(e.target.value)}>{['OPEN','IN_REVIEW','RESOLVED','WONTFIX'].map(x => <option key={x}>{x}</option>)}</Select><Input value={note} onChange={e => setNote(e.target.value)} placeholder="Admin-Notiz"/></div>
-      <Button size="sm" className="mt-2" onClick={() => patch.mutate()}>Speichern + Notify aktualisieren</Button>
+      <Button size="sm" className="mt-2" onClick={() => patch.mutate()} disabled={!feedbackId}>Speichern + Notify aktualisieren</Button>
     </Card>
   </div>;
 }
@@ -221,32 +267,43 @@ function Maintenance({ center }: { center: string }) {
   const [packageId, setPackageId] = useState('');
   const [uploadId, setUploadId] = useState('');
   const [userId, setUserId] = useState('');
-  const run = async (promise: Promise<unknown>, label: string) => {
+  const [deleteConfirm, setDeleteConfirm] = useState('');
+  const run = async (promise: Promise<unknown>, label: string): Promise<boolean> => {
     try {
       const data = await promise;
       toast.success(label, JSON.stringify(data));
+      return true;
     } catch (error) {
       toast.error(`${label} fehlgeschlagen`, msg(error));
+      return false;
     }
+  };
+  const runDestructive = async (promise: Promise<unknown>, label: string) => {
+    if (deleteConfirm !== 'DELETE') return;
+    if (await run(promise, label)) setDeleteConfirm('');
   };
 
   return <Card glow>
     <h2 className="font-semibold mb-3">Validierung & sichere Löschung</h2>
+    <div className="mb-4 rounded-lg border border-danger/30 p-3">
+      <p className="text-xs text-muted mb-2">Für jede physische/irreversible Löschung exakt <b>DELETE</b> eingeben. Nach erfolgreicher Löschung wird die Bestätigung zurückgesetzt.</p>
+      <Input value={deleteConfirm} onChange={e => setDeleteConfirm(e.target.value)} placeholder="DELETE eingeben" autoComplete="off"/>
+    </div>
     <div className="space-y-4">
       <div className="grid gap-2 sm:grid-cols-[minmax(0,1fr)_auto_auto]">
         <Input value={packageId} onChange={e => setPackageId(e.target.value)} placeholder="Package-ID"/>
         <Button size="sm" onClick={() => run(api.post(`${center}/validate/package/${packageId}`), 'Paket validiert')} disabled={!packageId}>Paket validieren</Button>
-        <Button size="sm" variant="danger" onClick={() => run(api.del(`${center}/packages/${packageId}/hard`, { confirm: 'DELETE' }), 'Paket physisch gelöscht')} disabled={!packageId}>Hard Delete</Button>
+        <Button size="sm" variant="danger" onClick={() => runDestructive(api.del(`${center}/packages/${packageId}/hard`, { confirm: deleteConfirm }), 'Paket physisch gelöscht')} disabled={!packageId || deleteConfirm !== 'DELETE'}>Hard Delete</Button>
       </div>
       <div className="grid gap-2 sm:grid-cols-[minmax(0,1fr)_auto_auto]">
         <Input value={uploadId} onChange={e => setUploadId(e.target.value)} placeholder="Upload/File-ID"/>
         <Button size="sm" onClick={() => run(api.post(`${center}/validate/upload/${uploadId}`), 'Datei validiert')} disabled={!uploadId}>Datei validieren</Button>
-        <Button size="sm" variant="danger" onClick={() => run(api.del(`${center}/uploads/${uploadId}`), 'Datei gelöscht')} disabled={!uploadId}>Datei löschen</Button>
+        <Button size="sm" variant="danger" onClick={() => runDestructive(api.del(`${center}/uploads/${uploadId}`), 'Datei gelöscht')} disabled={!uploadId || deleteConfirm !== 'DELETE'}>Datei löschen</Button>
       </div>
       <div className="grid gap-2 sm:grid-cols-[minmax(0,1fr)_auto_auto]">
         <Input value={userId} onChange={e => setUserId(e.target.value)} placeholder="Interne User-ID"/>
         <Button size="sm" variant="danger" onClick={() => run(api.post(`${center}/users/${userId}/packages/delete`, { hard: false }), 'Pakete soft gelöscht')} disabled={!userId}>Alle Pakete Soft Delete</Button>
-        <Button size="sm" variant="danger" onClick={() => run(api.post(`${center}/users/${userId}/packages/delete`, { hard: true, confirm: 'DELETE' }), 'Pakete physisch gelöscht')} disabled={!userId}>Alle Pakete Hard Delete</Button>
+        <Button size="sm" variant="danger" onClick={() => runDestructive(api.post(`${center}/users/${userId}/packages/delete`, { hard: true, confirm: deleteConfirm }), 'Pakete physisch gelöscht')} disabled={!userId || deleteConfirm !== 'DELETE'}>Alle Pakete Hard Delete</Button>
       </div>
     </div>
   </Card>;
