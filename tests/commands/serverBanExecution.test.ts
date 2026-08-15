@@ -2,6 +2,7 @@ var mockTx: any;
 var mockScope: any;
 var mockTargets: any[];
 var mockOrder: string[];
+var mockRemoteBanRows: Array<{ identifier: string }>;
 
 jest.mock('../../src/database/prisma', () => ({
   __esModule: true,
@@ -23,6 +24,7 @@ jest.mock('../../src/commands/dashboard/serverTargetSelection', () => ({
 
 jest.mock('../../src/modules/bans/banTarget', () => ({
   hashBanIdentifier: () => 'a'.repeat(64),
+  matchesBanIdentifier: (identifier: string) => identifier === 'Player-123',
 }));
 
 jest.mock('../../src/modules/bans/banRegistry', () => ({
@@ -41,7 +43,9 @@ jest.mock('../../src/modules/bans/banOutbox', () => ({
 }));
 
 jest.mock('../../src/modules/nitrado/nitradoClient', () => ({
-  NitradoClient: jest.fn().mockImplementation(() => ({ getBanlist: async () => [] })),
+  NitradoClient: jest.fn().mockImplementation(() => ({
+    getBanlist: async () => mockRemoteBanRows,
+  })),
 }));
 
 jest.mock('../../src/config', () => ({
@@ -75,6 +79,7 @@ describe('server-ban/server-unban execution', () => {
   beforeEach(() => {
     jest.clearAllMocks();
     mockOrder = [];
+    mockRemoteBanRows = [];
     mockScope = {
       guildId: 'guild-1',
       nitradoConnId: null,
@@ -92,8 +97,8 @@ describe('server-ban/server-unban execution', () => {
     }];
     mockTx = {
       whitelistEntry: {
-        deleteMany: jest.fn(async () => {
-          mockOrder.push('local-whitelist-delete');
+        updateMany: jest.fn(async () => {
+          mockOrder.push('local-whitelist-pending');
           return { count: 1 };
         }),
       },
@@ -121,21 +126,24 @@ describe('server-ban/server-unban execution', () => {
     };
   });
 
-  it('entfernt zuerst den lokalen Whitelist-Desired-State und queued danach den serialisierten Ban-Worker', async () => {
+  it('markiert Whitelist PENDING_REMOVE und queued danach den serialisierten Ban-Worker', async () => {
     const interaction = interactionFor('ban');
 
     await serverBanCommand.execute(interaction);
 
     expect(mockOrder).toEqual([
-      'local-whitelist-delete',
+      'local-whitelist-pending',
       'local-request-cancel',
       'add-ban',
       'lookup-ban',
       'enqueue-ban',
     ]);
+    expect(mockTx.whitelistEntry.updateMany).toHaveBeenCalledWith(expect.objectContaining({
+      data: { syncState: 'PENDING_REMOVE', lastSyncedAt: null },
+    }));
     expect(mockTx.serverBanExpiryNotice.deleteMany).toHaveBeenCalledWith({ where: { banId: 'ban-1' } });
     expect(interaction.reply).toHaveBeenCalledWith(expect.objectContaining({
-      content: expect.stringContaining('Whitelist-Entfernung + Bann'),
+      embeds: expect.any(Array),
     }));
   });
 
@@ -161,27 +169,32 @@ describe('server-ban/server-unban execution', () => {
     expect(mockOrder.at(-1)).toBe('enqueue-ban');
   });
 
-  it('kann einen Remote-Unban nur aus dem Identifier ableiten und braucht keinen VERIFIED Link', async () => {
+  it('queued Remote-Unban nur nachdem der echte Nitrado-Read den Identifier bestaetigt', async () => {
+    mockRemoteBanRows = [{ identifier: 'Player-123' }];
     const interaction = interactionFor('unban');
 
     await serverUnbanCommand.execute(interaction);
 
     expect(mockOrder).toEqual(['upsert-unban-anchor', 'enqueue-unban']);
     expect(mockTx.serverBanEntry.upsert).toHaveBeenCalledWith(expect.objectContaining({
-      where: {
-        guildId_nitradoConnId_identityHash: {
-          guildId: 'guild-1',
-          nitradoConnId: 'conn-a',
-          identityHash: 'a'.repeat(64),
-        },
-      },
+      update: expect.objectContaining({ active: false, appliedRemotely: true }),
     }));
     expect(mockTx.serverBanExpiryNotice.updateMany).toHaveBeenCalledWith(expect.objectContaining({
       where: expect.objectContaining({ banId: 'ban-1' }),
       data: expect.objectContaining({ status: 'CANCELLED', identifierEnc: null }),
     }));
-    expect(interaction.reply).toHaveBeenCalledWith(expect.objectContaining({
-      content: expect.stringContaining('Remote-Unban'),
+    expect(interaction.reply).toHaveBeenCalledWith(expect.objectContaining({ embeds: expect.any(Array) }));
+  });
+
+  it('erfindet bei remote bereits entferntem Ban kein appliedRemotely und queued keinen Unban', async () => {
+    mockRemoteBanRows = [];
+    const interaction = interactionFor('unban');
+
+    await serverUnbanCommand.execute(interaction);
+
+    expect(mockOrder).toEqual(['upsert-unban-anchor']);
+    expect(mockTx.serverBanEntry.upsert).toHaveBeenCalledWith(expect.objectContaining({
+      update: expect.objectContaining({ active: false, appliedRemotely: false }),
     }));
   });
 });
