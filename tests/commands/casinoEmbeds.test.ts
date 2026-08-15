@@ -1,12 +1,13 @@
 /**
- * Tiefen-Tests fuer die Casino + Bank Embed-Umstellung.
+ * Tiefen-Tests fuer Casino + Bank Embeds und Server-Scope.
  *
  * Garantien:
  *  - /bank antwortet mit einem EmbedBuilder, NICHT ephemeral, ohne pingbare Mentions.
  *  - /slot, /coinflip, /dice, /blackjack antworten public mit Embed.
  *  - allowedMentions.parse: [] verhindert Self-Ping / @everyone-Eskalation.
- *  - Provably-Fair-Footer ist gesetzt (Hash + Nonce).
+ *  - Casino-Footer weist ehrlich auf Runden-Audit (Hash + Nonce) hin.
  *  - CasinoRound.result bleibt JSONB-kompatibel, auch wenn PlayResult BigInt-Werte enthaelt.
+ *  - alle Casino-Commands bieten eine optionale Gameserver-Slot-Auswahl.
  */
 
 import { EmbedBuilder, MessageFlags } from 'discord.js';
@@ -73,7 +74,9 @@ jest.mock('../../src/utils/logger', () => ({
 }));
 
 import { bankCommand } from '../../src/commands/dashboard/economy';
-import { slotCommand, coinflipCommand, diceCommand, blackjackCommand } from '../../src/commands/dashboard/casino';
+import {
+  slotCommand, coinflipCommand, diceCommand, blackjackCommand, casinoStatsCommand,
+} from '../../src/commands/dashboard/casino';
 
 interface FakeReplyArg {
   embeds?: EmbedBuilder[];
@@ -116,7 +119,7 @@ beforeEach(() => {
 });
 
 describe('Casino + Bank Embeds (Public, kein Self-Ping)', () => {
-  it('/bank: public Embed mit Wallet/Bank/Gesamt/Zinsen + allowedMentions.parse=[]', async () => {
+  it('/bank: public Embed mit Wallet/Bank/Gesamt + allowedMentions.parse=[]', async () => {
     const { i, reply } = makeInteraction();
     await bankCommand.execute(i as never);
 
@@ -131,7 +134,6 @@ describe('Casino + Bank Embeds (Public, kein Self-Ping)', () => {
     expect(JSON.stringify(json.fields)).toContain('Wallet');
     expect(JSON.stringify(json.fields)).toContain('Bank');
     expect(JSON.stringify(json.fields)).toContain('Gesamt');
-    expect(JSON.stringify(json.fields)).not.toContain('Zinsen');
     expect(json.footer?.text ?? '').not.toMatch(/Guild\s+GUILD_X/);
     expect(json.description ?? '').not.toMatch(/<@!?\d+>/);
   });
@@ -141,7 +143,7 @@ describe('Casino + Bank Embeds (Public, kein Self-Ping)', () => {
     ['coinflip', () => coinflipCommand.execute, { strOpt: 'KOPF', intOpt: 10 }],
     ['dice', () => diceCommand.execute, { intOpt: 3 }],
     ['blackjack', () => blackjackCommand.execute, { intOpt: 10 }],
-  ])('/%s: public Embed + allowedMentions.parse=[] + ProvablyFair-Footer', async (_name, exec, optArgs) => {
+  ])('/%s: public Embed + allowedMentions.parse=[] + Runden-Audit-Footer', async (_name, exec, optArgs) => {
     const { i, reply } = makeInteraction(optArgs as { intOpt?: number; strOpt?: string });
     await exec()(i as never);
 
@@ -153,7 +155,8 @@ describe('Casino + Bank Embeds (Public, kein Self-Ping)', () => {
 
     const json = arg.embeds![0].toJSON();
     expect(json.description ?? '').toMatch(/Gewonnen|Verloren|Unentschieden/);
-    expect(json.footer?.text ?? '').toContain('Provably Fair');
+    expect(json.footer?.text ?? '').toContain('Runden-Audit');
+    expect(json.footer?.text ?? '').not.toContain('Provably Fair');
     expect(json.footer?.text ?? '').toMatch(/Hash:\s+[a-f0-9]{16}/);
     expect(json.footer?.text ?? '').toMatch(/Nonce:\s+\d+/);
 
@@ -174,8 +177,20 @@ describe('Casino + Bank Embeds (Public, kein Self-Ping)', () => {
 
     const serializedResult = roundInsert![8];
     expect(typeof serializedResult).toBe('string');
-    const parsed = JSON.parse(serializedResult as string) as { payout: unknown };
+    const parsed = JSON.parse(serializedResult as string) as { payout: unknown; draw: unknown };
     expect(typeof parsed.payout).toBe('string');
     expect(parsed.payout).toMatch(/^\d+$/);
+    expect(typeof parsed.draw).toBe('boolean');
+  });
+
+  it('alle Casino-Commands bieten optionale Slot-Auswahl fuer Multi-Server-Guilds', () => {
+    for (const command of [slotCommand, coinflipCommand, diceCommand, blackjackCommand, casinoStatsCommand]) {
+      const json = command.data.toJSON();
+      const slot = json.options?.find(option => option.name === 'slot');
+      expect(slot).toBeDefined();
+      expect(slot?.required).toBe(false);
+      expect(slot?.min_value).toBe(1);
+      expect(slot?.max_value).toBeGreaterThanOrEqual(1);
+    }
   });
 });
