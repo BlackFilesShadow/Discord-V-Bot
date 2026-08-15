@@ -51,6 +51,7 @@ import { devSecureExportRouter } from './v2/devSecureExport';
 import { auditRouter } from './v2/audit';
 import { botAdminRouter } from './v2/botAdmin';
 import { botAdminCommandCenterRouter } from './v2/botAdminCommandCenter';
+import { botAdminCommandCenterSafetyRouter } from './v2/botAdminCommandCenterSafety';
 import { botAdminAuditExportRouter } from './v2/botAdminAuditExport';
 import { botAdminTriggersRouter } from './v2/botAdminTriggers';
 import { botAdminSafePackageDeleteRouter } from './v2/botAdminSafePackageDelete';
@@ -101,11 +102,11 @@ v2Router.use('/dev/secure-export', requireGlobalDeveloperIdentity, requireDev, r
 
 // Discord-/Dashboard-Paritaet: exakt derselbe Live-Katalog wie /help.
 v2Router.use('/bot-admin/command-catalog', requireGlobalBotAdminIdentity, commandCatalogRouter);
-// Grosse Audit-Downloads sowie Trigger besitzen spezifische Router und muessen
-// vor dem Sammelrouter laufen. So bleiben Streaming und Guild-Scope kanonisch.
+// Grosse Audit-Downloads, Trigger sowie Datei-/Delete-Operationen besitzen
+// spezifische kanonische Router und muessen vor dem Sammelrouter laufen.
 v2Router.use('/bot-admin/command-center/audit/export', requireGlobalBotAdminIdentity, botAdminAuditExportRouter);
 v2Router.use('/bot-admin/command-center/triggers', requireGlobalBotAdminIdentity, botAdminTriggersRouter);
-v2Router.use('/bot-admin/command-center', requireGlobalBotAdminIdentity, guardBotAdminCommandCenterInput, botAdminCommandCenterRouter);
+v2Router.use('/bot-admin/command-center', requireGlobalBotAdminIdentity, guardBotAdminCommandCenterInput, botAdminCommandCenterSafetyRouter, botAdminCommandCenterRouter);
 
 // Bot-Admin: globale Identitaet + aktive BotAdminSession. Safety-Overrides und
 // Guild-Referenzpruefung muessen vor dem Legacy-Router laufen, damit bestehende
