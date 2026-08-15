@@ -7,12 +7,13 @@
  */
 
 import { Router } from 'express';
-import { requireAuth } from '../middleware/auth';
+import { requireAuth, requireDev } from '../middleware/auth';
 import { idempotency } from '../middleware/idempotency';
 import { requireGlobalDeveloperIdentity } from '../middleware/globalDeveloperGate';
 import { requireGlobalBotAdminIdentity } from '../middleware/globalBotAdminGate';
 import { requireSafeDashboardEconomyScope } from '../middleware/economyScopeGuard';
 import { guardBotAdminCommandCenterInput, guardDevCommandCenterInput } from '../middleware/commandCenterInputGuard';
+import { requireVerifiedDevMutationStepUp, redirectLegacyDevExports } from '../middleware/devStepUp';
 
 import { guildsRouter } from './v2/guilds';
 import { dashboardRouter } from './v2/dashboard';
@@ -41,6 +42,7 @@ import { devIncidentRouter } from './v2/devIncident';
 import { devObservabilityRouter } from './v2/devObservability';
 import { devStubsRouter } from './v2/devStubs';
 import { devCommandCenterRouter } from './v2/devCommandCenter';
+import { devSecureExportRouter } from './v2/devSecureExport';
 import { auditRouter } from './v2/audit';
 import { botAdminRouter } from './v2/botAdmin';
 import { botAdminCommandCenterRouter } from './v2/botAdminCommandCenter';
@@ -82,10 +84,11 @@ v2Router.use('/dev/uploads', requireGlobalDeveloperIdentity, devUploadsRouter);
 v2Router.use('/dev/analytics', requireGlobalDeveloperIdentity, devAnalyticsRouter);
 v2Router.use('/dev/status', requireGlobalDeveloperIdentity, devStatusRouter);
 v2Router.use('/dev/nitrado-mirror', requireGlobalDeveloperIdentity, devNitradoMirrorRouter);
-v2Router.use('/dev/incident', requireGlobalDeveloperIdentity, devIncidentRouter);
+v2Router.use('/dev/incident', requireGlobalDeveloperIdentity, requireDev, requireVerifiedDevMutationStepUp, devIncidentRouter);
 v2Router.use('/dev/observability', requireGlobalDeveloperIdentity, devObservabilityRouter);
-v2Router.use('/dev/stubs', requireGlobalDeveloperIdentity, devStubsRouter);
-v2Router.use('/dev/command-center', requireGlobalDeveloperIdentity, guardDevCommandCenterInput, devCommandCenterRouter);
+v2Router.use('/dev/stubs', requireGlobalDeveloperIdentity, requireDev, requireVerifiedDevMutationStepUp, devStubsRouter);
+v2Router.use('/dev/command-center', requireGlobalDeveloperIdentity, requireDev, redirectLegacyDevExports, guardDevCommandCenterInput, requireVerifiedDevMutationStepUp, devCommandCenterRouter);
+v2Router.use('/dev/secure-export', requireGlobalDeveloperIdentity, requireDev, requireVerifiedDevMutationStepUp, devSecureExportRouter);
 
 // Discord-/Dashboard-Paritaet: exakt derselbe Live-Katalog wie /help.
 v2Router.use('/bot-admin/command-catalog', requireGlobalBotAdminIdentity, commandCatalogRouter);
