@@ -3,18 +3,20 @@ import os from 'node:os';
 import { isIP } from 'node:net';
 import { Prisma } from '@prisma/client';
 import { requireDev } from '../../middleware/auth';
-import { verifyDevStepUp, logDevAction } from '../../middleware/devSecurity';
+import { logDevAction } from '../../middleware/devSecurity';
 import prisma from '../../../database/prisma';
 import { tryGetDashboardClient } from '../../clientRegistry';
 import { loadCommands, deployCommandsScoped } from '../../../commands/handler';
 import { config } from '../../../config';
 
 /**
- * Dashboard-Paritaet fuer alle devOnly Slash-Commands (ausser explizit
- * beibehaltene Hersteller-Funktionen). Alle Endpunkte sind requireDev-geschuetzt
- * (Developer-Identitaet + aktive DevSession + optionale MFA/IP-Gates im
- * zentralen Stack). Sensible Mutationen und Exporte verlangen zusaetzlich
- * kryptografisch verifiziertes Step-Up (TOTP oder DEV_PASSWORD-Reconfirm).
+ * Dashboard-Paritaet fuer ehemalige devOnly Slash-Commands (Hersteller-Ausnahme
+ * ausgenommen). `v2.ts` legt vor diesen Router bereits globale Developer-
+ * Identitaet, aktive DevSession, Input-Guard und den kanonischen verifizierten
+ * Mutation-Step-Up aus `devStepUp.ts`.
+ *
+ * Sensible Exporte leben ausschliesslich unter `/dev/secure-export`; hier gibt
+ * es bewusst keinen zweiten Export- oder Re-Auth-Pfad.
  */
 export const devCommandCenterRouter = Router();
 devCommandCenterRouter.use(requireDev);
@@ -31,17 +33,6 @@ const MAX_CONFIG_VALUE_LEN = 4096;
 
 function actor(req: Parameters<typeof requireDev>[0]): string {
   return String(req.auth?.discordId ?? req.auth?.userId ?? 'developer');
-}
-
-async function requireStepUp(req: Parameters<typeof requireDev>[0], res: Parameters<typeof requireDev>[1]): Promise<boolean> {
-  const r = await verifyDevStepUp(req, {
-    reason: String(req.body?.reason ?? ''),
-    reAuth: String(req.body?.reAuth ?? ''),
-  });
-  if (r.ok) return true;
-  const status = r.error === 'reauth_invalid' ? 403 : r.error === 'no_credential' ? 503 : 400;
-  res.status(status).json({ error: r.error ?? 'step_up_invalid' });
-  return false;
 }
 
 function requireGuildScope(req: Parameters<typeof requireDev>[0], res: Parameters<typeof requireDev>[1], guildId: string): boolean {
@@ -61,9 +52,7 @@ function toJson<T>(v: T): T {
   return JSON.parse(JSON.stringify(v, (_k, x) => typeof x === 'bigint' ? x.toString() : x));
 }
 
-// ---------------------------------------------------------------------------
-// /ping + /status + /dev-eval
-// ---------------------------------------------------------------------------
+// /ping + /status + /dev-eval ------------------------------------------------
 devCommandCenterRouter.get('/diagnostics', async (_req, res) => {
   const client = tryGetDashboardClient();
   const mem = process.memoryUsage();
@@ -91,9 +80,7 @@ devCommandCenterRouter.get('/diagnostics', async (_req, res) => {
   });
 });
 
-// ---------------------------------------------------------------------------
-// /dev-admin
-// ---------------------------------------------------------------------------
+// /dev-admin ----------------------------------------------------------------
 devCommandCenterRouter.get('/admins', async (_req, res) => {
   const items = await prisma.user.findMany({
     where: { role: { in: ['ADMIN', 'SUPER_ADMIN', 'DEVELOPER'] } },
@@ -104,7 +91,6 @@ devCommandCenterRouter.get('/admins', async (_req, res) => {
 });
 
 devCommandCenterRouter.post('/admins', async (req, res) => {
-  if (!(await requireStepUp(req, res))) return;
   const discordId = String(req.body?.discordId ?? '').trim();
   if (!SNOWFLAKE.test(discordId)) { res.status(400).json({ error: 'Ungültige Discord-ID.' }); return; }
   const client = tryGetDashboardClient();
@@ -121,7 +107,6 @@ devCommandCenterRouter.post('/admins', async (req, res) => {
 });
 
 devCommandCenterRouter.delete('/admins/:discordId', async (req, res) => {
-  if (!(await requireStepUp(req, res))) return;
   const discordId = String(req.params.discordId);
   const user = await prisma.user.findUnique({ where: { discordId } });
   if (!user || user.role !== 'ADMIN') {
@@ -133,9 +118,7 @@ devCommandCenterRouter.delete('/admins/:discordId', async (req, res) => {
   res.json({ ok: true });
 });
 
-// ---------------------------------------------------------------------------
-// /dev-db
-// ---------------------------------------------------------------------------
+// /dev-db -------------------------------------------------------------------
 devCommandCenterRouter.get('/database', async (_req, res) => {
   const [users, packages, uploads, auditLogs, sessions, giveaways, otps] = await Promise.all([
     prisma.user.count(), prisma.package.count(), prisma.upload.count(), prisma.auditLog.count(),
@@ -166,7 +149,6 @@ devCommandCenterRouter.get('/database/packages', async (req, res) => {
 });
 
 devCommandCenterRouter.post('/database/cleanup', async (req, res) => {
-  if (!(await requireStepUp(req, res))) return;
   const now = new Date();
   const [sessions, otps] = await prisma.$transaction([
     prisma.session.deleteMany({ where: { expiresAt: { lt: now } } }),
@@ -176,9 +158,7 @@ devCommandCenterRouter.post('/database/cleanup', async (req, res) => {
   res.json({ sessionsDeleted: sessions.count, otpsDeleted: otps.count });
 });
 
-// ---------------------------------------------------------------------------
-// /admin-config (devOnly)
-// ---------------------------------------------------------------------------
+// /admin-config (historisch devOnly) -----------------------------------------
 devCommandCenterRouter.get('/config', async (req, res) => {
   const category = typeof req.query.category === 'string' ? req.query.category.trim() : '';
   const items = await prisma.botConfig.findMany({ where: category ? { category } : {}, orderBy: [{ category: 'asc' }, { key: 'asc' }] });
@@ -186,7 +166,6 @@ devCommandCenterRouter.get('/config', async (req, res) => {
 });
 
 devCommandCenterRouter.put('/config/:key', async (req, res) => {
-  if (!(await requireStepUp(req, res))) return;
   const key = decodeURIComponent(String(req.params.key));
   if (PROTECTED_PREFIXES.some(p => key.toLowerCase().startsWith(p)) || !ALLOWED_CONFIG_KEYS.has(key)) { res.status(403).json({ error: 'Schlüssel ist geschützt oder nicht freigegeben.' }); return; }
   const raw = typeof req.body?.value === 'string' ? req.body.value : JSON.stringify(req.body?.value);
@@ -204,7 +183,6 @@ devCommandCenterRouter.put('/config/:key', async (req, res) => {
 });
 
 devCommandCenterRouter.delete('/config/:key', async (req, res) => {
-  if (!(await requireStepUp(req, res))) return;
   const key = decodeURIComponent(String(req.params.key));
   if (PROTECTED_PREFIXES.some(p => key.toLowerCase().startsWith(p)) || !ALLOWED_CONFIG_KEYS.has(key)) { res.status(403).json({ error: 'Schlüssel ist geschützt oder nicht freigegeben.' }); return; }
   const existing = await prisma.botConfig.findUnique({ where: { key } });
@@ -215,9 +193,7 @@ devCommandCenterRouter.delete('/config/:key', async (req, res) => {
   res.json({ deleted: true });
 });
 
-// ---------------------------------------------------------------------------
-// /admin-security (devOnly)
-// ---------------------------------------------------------------------------
+// /admin-security (historisch devOnly) ---------------------------------------
 devCommandCenterRouter.get('/security', async (req, res) => {
   const type = typeof req.query.type === 'string' ? req.query.type.toUpperCase() : 'ALL';
   const where: Prisma.SecurityEventWhereInput = type !== 'ALL' ? { eventType: type as never } : {};
@@ -229,7 +205,6 @@ devCommandCenterRouter.get('/security', async (req, res) => {
 });
 
 devCommandCenterRouter.put('/security/ip/:ip', async (req, res) => {
-  if (!(await requireStepUp(req, res))) return;
   const ip = decodeURIComponent(String(req.params.ip)).trim();
   if (isIP(ip) === 0) { res.status(400).json({ error: 'Ungültige IPv4/IPv6-Adresse.' }); return; }
   const listType = String(req.body?.listType ?? '').toUpperCase();
@@ -248,7 +223,6 @@ devCommandCenterRouter.put('/security/ip/:ip', async (req, res) => {
 });
 
 devCommandCenterRouter.delete('/security/ip/:ip', async (req, res) => {
-  if (!(await requireStepUp(req, res))) return;
   const ip = decodeURIComponent(String(req.params.ip)).trim();
   if (isIP(ip) === 0) { res.status(400).json({ error: 'Ungültige IP.' }); return; }
   const row = await prisma.ipList.findUnique({ where: { ipAddress: ip } });
@@ -259,7 +233,6 @@ devCommandCenterRouter.delete('/security/ip/:ip', async (req, res) => {
 });
 
 devCommandCenterRouter.post('/security/events/:id/resolve', async (req, res) => {
-  if (!(await requireStepUp(req, res))) return;
   const event = await prisma.securityEvent.findUnique({ where: { id: String(req.params.id) } });
   if (!event) { res.status(404).json({ error: 'Security-Event nicht gefunden.' }); return; }
   if (!event.isResolved) await prisma.securityEvent.update({ where: { id: event.id }, data: { isResolved: true, resolvedBy: actor(req), resolvedAt: new Date() } });
@@ -267,74 +240,7 @@ devCommandCenterRouter.post('/security/events/:id/resolve', async (req, res) => 
   res.json({ ok: true, alreadyResolved: event.isResolved });
 });
 
-// ---------------------------------------------------------------------------
-// /admin-export (devOnly) - POST + echtes Step-Up vor jeder Datenausgabe
-// ---------------------------------------------------------------------------
-async function findUserByDiscord(discordId: string) {
-  return prisma.user.findUnique({ where: { discordId } });
-}
-
-function sendJsonAttachment(res: Parameters<typeof requireDev>[1], filename: string, payload: unknown): void {
-  res.setHeader('Content-Type', 'application/json; charset=utf-8');
-  res.setHeader('Content-Disposition', `attachment; filename="${filename.replace(/[^a-z0-9_.-]/gi, '_')}"`);
-  res.setHeader('Cache-Control', 'no-store, private');
-  res.send(JSON.stringify(toJson(payload), null, 2));
-}
-
-devCommandCenterRouter.post('/export/packages/:discordId', async (req, res) => {
-  if (!(await requireStepUp(req, res))) return;
-  const discordId = String(req.params.discordId).trim();
-  if (!SNOWFLAKE.test(discordId)) { res.status(400).json({ error: 'Ungültige Discord-ID.' }); return; }
-  const user = await findUserByDiscord(discordId);
-  if (!user) { res.status(404).json({ error: 'User nicht in der Datenbank.' }); return; }
-  const packages = await prisma.package.findMany({ where: { userId: user.id }, include: { files: true } });
-  logDevAction('DATA_EXPORT', req, { type: 'packages', targetUserId: user.id, targetDiscordId: discordId, reason: String(req.body.reason) });
-  sendJsonAttachment(res, `pakete_${user.username}_${Date.now()}.json`, packages);
-});
-
-devCommandCenterRouter.post('/export/logs', async (req, res) => {
-  if (!(await requireStepUp(req, res))) return;
-  const category = typeof req.body?.category === 'string' ? req.body.category.toUpperCase() : 'ALL';
-  const rawDays = req.body?.days === undefined ? 30 : Number(req.body.days);
-  if (!Number.isInteger(rawDays) || rawDays < 1 || rawDays > 365) { res.status(400).json({ error: 'days muss eine ganze Zahl von 1 bis 365 sein.' }); return; }
-  const days = rawDays;
-  const since = new Date(Date.now() - days * 86_400_000);
-  const where: Prisma.AuditLogWhereInput = { createdAt: { gte: since } };
-  if (category !== 'ALL') where.category = category as never;
-  const all = [];
-  let cursor: string | undefined;
-  while (all.length < 50_000) {
-    const page: Awaited<ReturnType<typeof prisma.auditLog.findMany>> = await prisma.auditLog.findMany({
-      where,
-      orderBy: [{ createdAt: 'desc' }, { id: 'desc' }],
-      take: Math.min(1000, 50_000 - all.length),
-      ...(cursor ? { skip: 1, cursor: { id: cursor } } : {}),
-    });
-    if (!page.length) break;
-    all.push(...page);
-    cursor = page[page.length - 1].id;
-    if (page.length < 1000) break;
-  }
-  logDevAction('LOG_EXPORT', req, { category, days, count: all.length, reason: String(req.body.reason) });
-  sendJsonAttachment(res, `audit_logs_${category}_${days}d_${Date.now()}.json`, all);
-});
-
-devCommandCenterRouter.post('/export/user/:discordId', async (req, res) => {
-  if (!(await requireStepUp(req, res))) return;
-  const discordId = String(req.params.discordId).trim();
-  if (!SNOWFLAKE.test(discordId)) { res.status(400).json({ error: 'Ungültige Discord-ID.' }); return; }
-  const user = await prisma.user.findUnique({
-    where: { discordId },
-    include: { packages: true, uploads: true, downloads: true, moderationCases: true, appeals: true, levelData: true, xpRecords: true, giveawayEntries: true, pollVotes: true, gdprConsent: true },
-  });
-  if (!user) { res.status(404).json({ error: 'User nicht in der Datenbank.' }); return; }
-  logDevAction('GDPR_DATA_EXPORT', req, { targetUserId: user.id, targetDiscordId: discordId, reason: String(req.body.reason) });
-  sendJsonAttachment(res, `nutzerdaten_${user.username}_${Date.now()}.json`, user);
-});
-
-// ---------------------------------------------------------------------------
-// /xp-config (devOnly) - strikt pro Guild, vollstaendige Paritaet
-// ---------------------------------------------------------------------------
+// /xp-config (historisch devOnly; strikt pro Guild) --------------------------
 async function xpConfig(guildId: string) {
   return prisma.xpConfig.upsert({ where: { id: guildId }, update: {}, create: { id: guildId } });
 }
@@ -352,7 +258,6 @@ devCommandCenterRouter.get('/xp/:guildId', async (req, res) => {
 });
 
 devCommandCenterRouter.patch('/xp/:guildId', async (req, res) => {
-  if (!(await requireStepUp(req, res))) return;
   const guildId = String(req.params.guildId);
   if (!SNOWFLAKE.test(guildId)) { res.status(400).json({ error: 'Ungültige guildId.' }); return; }
   if (!requireGuildScope(req, res, guildId)) return;
@@ -368,13 +273,17 @@ devCommandCenterRouter.patch('/xp/:guildId', async (req, res) => {
     res.status(400).json({ error: 'Ungültiger XP-Zahlenwert.' }); return;
   }
   if (req.body?.levelMultiplier !== undefined) {
-    const v = Number(req.body.levelMultiplier); if (!Number.isFinite(v) || v < 0 || v > 100) { res.status(400).json({ error: 'levelMultiplier 0..100.' }); return; } data.levelMultiplier = v;
+    const v = Number(req.body.levelMultiplier);
+    if (!Number.isFinite(v) || v < 0 || v > 100) { res.status(400).json({ error: 'levelMultiplier 0..100.' }); return; }
+    data.levelMultiplier = v;
   }
   const effMin = Number(data.messageXpMin ?? current.messageXpMin);
   const effMax = Number(data.messageXpMax ?? current.messageXpMax);
   if (effMin > effMax) { res.status(400).json({ error: 'Min-XP darf nicht größer als Max-XP sein.' }); return; }
   if (req.body?.maxLevelRoleId !== undefined) {
-    const v = req.body.maxLevelRoleId; if (v !== null && !SNOWFLAKE.test(String(v))) { res.status(400).json({ error: 'Ungültige maxLevelRoleId.' }); return; } data.maxLevelRoleId = v === null ? null : String(v);
+    const v = req.body.maxLevelRoleId;
+    if (v !== null && !SNOWFLAKE.test(String(v))) { res.status(400).json({ error: 'Ungültige maxLevelRoleId.' }); return; }
+    data.maxLevelRoleId = v === null ? null : String(v);
   }
   if (req.body?.allowedRoleIds !== undefined) {
     if (!Array.isArray(req.body.allowedRoleIds) || !req.body.allowedRoleIds.every((x: unknown) => typeof x === 'string' && SNOWFLAKE.test(x))) { res.status(400).json({ error: 'allowedRoleIds ungültig.' }); return; }
@@ -390,7 +299,6 @@ devCommandCenterRouter.patch('/xp/:guildId', async (req, res) => {
 });
 
 devCommandCenterRouter.put('/xp/:guildId/level-role/:level', async (req, res) => {
-  if (!(await requireStepUp(req, res))) return;
   const guildId = String(req.params.guildId);
   const level = Number(req.params.level);
   const roleId = String(req.body?.roleId ?? '');
@@ -402,7 +310,6 @@ devCommandCenterRouter.put('/xp/:guildId/level-role/:level', async (req, res) =>
 });
 
 devCommandCenterRouter.delete('/xp/:guildId/level-role/:level', async (req, res) => {
-  if (!(await requireStepUp(req, res))) return;
   const guildId = String(req.params.guildId); const level = Number(req.params.level);
   if (!SNOWFLAKE.test(guildId) || !Number.isInteger(level)) { res.status(400).json({ error: 'Ungültige Guild/Level.' }); return; }
   if (!requireGuildScope(req, res, guildId)) return;
@@ -411,11 +318,8 @@ devCommandCenterRouter.delete('/xp/:guildId/level-role/:level', async (req, res)
   res.json({ deleted: r.count });
 });
 
-// ---------------------------------------------------------------------------
-// /dev-reload - Dashboard-only Command Registry Deployment
-// ---------------------------------------------------------------------------
+// /dev-reload ----------------------------------------------------------------
 devCommandCenterRouter.post('/commands/reload', async (req, res) => {
-  if (!(await requireStepUp(req, res))) return;
   const scope = req.body?.scope === 'deploy' ? 'deploy' : 'all';
   const client = tryGetDashboardClient();
   if (!client) { res.status(503).json({ error: 'Discord-Client nicht verfügbar.' }); return; }
