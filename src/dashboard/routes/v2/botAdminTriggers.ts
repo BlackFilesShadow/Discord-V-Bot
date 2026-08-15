@@ -208,8 +208,23 @@ async function verifiedGuildId(req: Request): Promise<{ guildId: string; guild: 
 
 botAdminTriggersRouter.get('/', async (req, res) => {
   const verified = await verifiedGuildId(req);
-  if (!verified) { res.status(guildIdFrom(req) ? 404 : 400).json({ error: guildIdFrom(req) ? 'Bot ist auf dem ausgewählten Server nicht verfügbar.' : 'Gültige guildId erforderlich.' }); return; }
-  res.json({ items: await listTriggers(verified.guildId), max: MAX_TRIGGERS_PER_GUILD });
+  if (!verified) {
+    res.status(guildIdFrom(req) ? 404 : 400).json({
+      error: guildIdFrom(req)
+        ? 'Bot ist auf dem ausgewählten Server nicht verfügbar.'
+        : 'Gültige guildId erforderlich.',
+    });
+    return;
+  }
+  const channelOptions = verified.guild.channels.cache
+    .filter(channel => ALLOWED_TRIGGER_CHANNEL_TYPES.has(channel.type as ChannelType))
+    .map(channel => ({ id: channel.id, name: channel.name, type: channel.type }))
+    .sort((a, b) => a.name.localeCompare(b.name, 'de'));
+  res.json({
+    items: await listTriggers(verified.guildId),
+    max: MAX_TRIGGERS_PER_GUILD,
+    channelOptions,
+  });
 });
 
 botAdminTriggersRouter.post('/', async (req, res) => {
