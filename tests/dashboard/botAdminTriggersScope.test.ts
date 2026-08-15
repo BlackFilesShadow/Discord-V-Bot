@@ -54,6 +54,7 @@ const addTriggerMock = addTrigger as jest.MockedFunction<typeof addTrigger>;
 const listTriggersMock = listTriggers as jest.MockedFunction<typeof listTriggers>;
 const GUILD = '123456789012345678';
 const CHANNEL = '223456789012345678';
+const VOICE_CHANNEL = '323456789012345678';
 
 function app() {
   const instance = express();
@@ -63,7 +64,23 @@ function app() {
 }
 
 function installClient(options?: { guildPresent?: boolean; channelGuildId?: string; channelType?: ChannelType }) {
-  const guild = { id: GUILD, name: 'Test Guild' };
+  const primaryChannel = {
+    id: CHANNEL,
+    name: 'general',
+    guildId: options?.channelGuildId ?? GUILD,
+    type: options?.channelType ?? ChannelType.GuildText,
+  };
+  const voiceChannel = {
+    id: VOICE_CHANNEL,
+    name: 'voice',
+    guildId: GUILD,
+    type: ChannelType.GuildVoice,
+  };
+  const guild = {
+    id: GUILD,
+    name: 'Test Guild',
+    channels: { cache: new Map([[CHANNEL, primaryChannel], [VOICE_CHANNEL, voiceChannel]]) },
+  };
   const guildPresent = options?.guildPresent ?? true;
   clientMock.mockReturnValue({
     guilds: {
@@ -71,11 +88,7 @@ function installClient(options?: { guildPresent?: boolean; channelGuildId?: stri
       fetch: jest.fn(async (id: string) => guildPresent && id === GUILD ? guild : null),
     },
     channels: {
-      fetch: jest.fn(async (id: string) => id === CHANNEL ? {
-        id: CHANNEL,
-        guildId: options?.channelGuildId ?? GUILD,
-        type: options?.channelType ?? ChannelType.GuildText,
-      } : null),
+      fetch: jest.fn(async (id: string) => id === CHANNEL ? primaryChannel : id === VOICE_CHANNEL ? voiceChannel : null),
     },
   } as never);
 }
@@ -108,8 +121,20 @@ describe('BotAdmin trigger guild/channel scope', () => {
     expect(listTriggersMock).not.toHaveBeenCalled();
   });
 
+  it('liefert nur erlaubte Channels derselben verifizierten Guild als UI-Optionen', async () => {
+    const res = await request(app()).get(`/triggers?guildId=${GUILD}`);
+    expect(res.status).toBe(200);
+    expect(res.body.max).toBe(25);
+    expect(res.body.channelOptions).toEqual([
+      expect.objectContaining({ id: CHANNEL, name: 'general', type: ChannelType.GuildText }),
+    ]);
+    expect(res.body.channelOptions).not.toEqual(expect.arrayContaining([
+      expect.objectContaining({ id: VOICE_CHANNEL }),
+    ]));
+  });
+
   it('blockiert Channel-IDs aus einer anderen Guild', async () => {
-    installClient({ channelGuildId: '323456789012345678' });
+    installClient({ channelGuildId: '423456789012345678' });
     const res = await request(app()).post('/triggers').send(triggerPayload({ channelId: CHANNEL }));
     expect(res.status).toBe(400);
     expect(res.body.error).toMatch(/gehört nicht/i);
