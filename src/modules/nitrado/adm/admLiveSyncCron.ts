@@ -176,6 +176,7 @@ async function baselineCurrentFile(
     { events: [], newOffset, trailingPartial: '', wasReset: false },
     fingerprint(tail),
   );
+  logger.info(`ADM-Live-Sync ${conn.id}: Baseline ${file.name} bei Byte ${newOffset}/${file.size} (${profileDir}).`);
 }
 
 async function ingestFile(
@@ -216,6 +217,10 @@ async function ingestFile(
     );
     await verifyLinkChallenges(conn, chunk);
 
+    if (result.events.length > 0) {
+      logger.info(`ADM-Live-Sync ${conn.id}: ${result.events.length} Event(s) aus ${file.name} verarbeitet (Bytes ${offset}-${result.newOffset}).`);
+    }
+
     if (result.newOffset <= offset) break;
     offset = result.newOffset;
     context = result.events.length > 0
@@ -244,7 +249,7 @@ async function processConnection(conn: LiveConn): Promise<void> {
       .filter(file => Number.isSafeInteger(file.modified_at) && Number.isSafeInteger(file.size) && file.size >= 0)
       .sort((a, b) => a.modified_at - b.modified_at || a.name.localeCompare(b.name));
     if (files.length === 0) {
-      await setSourceStatus(conn, null);
+      await setSourceStatus(conn, `Keine .ADM-Dateien im aufgeloesten Verzeichnis ${profile.profileDir} gefunden.`);
       return;
     }
 
