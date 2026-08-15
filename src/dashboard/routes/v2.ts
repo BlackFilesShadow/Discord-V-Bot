@@ -47,6 +47,7 @@ import { devSecureExportRouter } from './v2/devSecureExport';
 import { auditRouter } from './v2/audit';
 import { botAdminRouter } from './v2/botAdmin';
 import { botAdminCommandCenterRouter } from './v2/botAdminCommandCenter';
+import { botAdminTriggersRouter } from './v2/botAdminTriggers';
 import { botAdminSafePackageDeleteRouter } from './v2/botAdminSafePackageDelete';
 import { botAdminSafeValidationRouter } from './v2/botAdminSafeValidation';
 import { commandCatalogRouter } from './v2/commandCatalog';
@@ -95,6 +96,9 @@ v2Router.use('/dev/secure-export', requireGlobalDeveloperIdentity, requireDev, r
 
 // Discord-/Dashboard-Paritaet: exakt derselbe Live-Katalog wie /help.
 v2Router.use('/bot-admin/command-catalog', requireGlobalBotAdminIdentity, commandCatalogRouter);
+// Trigger besitzen als migrierte Guild-Funktion einen eigenen, streng
+// guild-/channel-gescoppten Router. Dieser muss vor dem Sammelrouter laufen.
+v2Router.use('/bot-admin/command-center/triggers', requireGlobalBotAdminIdentity, botAdminTriggersRouter);
 v2Router.use('/bot-admin/command-center', requireGlobalBotAdminIdentity, guardBotAdminCommandCenterInput, botAdminCommandCenterRouter);
 
 // Bot-Admin: globale Identitaet + aktive BotAdminSession. Safety-Overrides
