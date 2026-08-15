@@ -10,21 +10,21 @@ import type { RequestHandler } from 'express';
 const AUDIT_CATEGORIES = new Set<string>(Object.values(AuditCategory));
 const SECURITY_EVENT_TYPES = new Set<string>(Object.values(SecurityEventType));
 
-function queryValue(value: unknown): string {
+function normalizedValue(value: unknown): string {
   return typeof value === 'string' ? value.trim().toUpperCase() : '';
 }
 
 export const guardDevCommandCenterInput: RequestHandler = (req, res, next) => {
   if (req.method === 'GET' && req.path === '/security') {
-    const type = queryValue(req.query.type);
+    const type = normalizedValue(req.query.type);
     if (type && type !== 'ALL' && !SECURITY_EVENT_TYPES.has(type)) {
       res.status(400).json({ error: 'Unbekannter Security-Event-Typ.' });
       return;
     }
   }
 
-  if (req.method === 'GET' && req.path === '/export/logs') {
-    const category = queryValue(req.query.category);
+  if (req.method === 'POST' && req.path === '/export/logs') {
+    const category = normalizedValue(req.body?.category);
     if (category && category !== 'ALL' && !AUDIT_CATEGORIES.has(category)) {
       res.status(400).json({ error: 'Unbekannte Audit-Kategorie.' });
       return;
@@ -48,7 +48,7 @@ export const guardDevCommandCenterInput: RequestHandler = (req, res, next) => {
 
 export const guardBotAdminCommandCenterInput: RequestHandler = (req, res, next) => {
   if (req.method === 'GET' && req.path === '/audit') {
-    const category = queryValue(req.query.category);
+    const category = normalizedValue(req.query.category);
     if (category && !AUDIT_CATEGORIES.has(category)) {
       res.status(400).json({ error: 'Unbekannte Audit-Kategorie.' });
       return;
