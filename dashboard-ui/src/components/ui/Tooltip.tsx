@@ -28,6 +28,11 @@ interface TooltipProps {
 
 const GAP_PX = 6;
 const VIEWPORT_MARGIN_PX = 8;
+const VIEWPORT_WIDTH_STYLE: CSSProperties = {
+  width: 'max-content',
+  maxWidth: `calc(100vw - ${VIEWPORT_MARGIN_PX * 2}px)`,
+  whiteSpace: 'normal',
+};
 
 function clamp(value: number, min: number, max: number): number {
   if (max < min) return min;
@@ -77,6 +82,7 @@ export function Tooltip({ content, side = 'bottom', children, className }: Toolt
       const maxLeft = window.innerWidth - tip.width - VIEWPORT_MARGIN_PX;
       const maxTop = window.innerHeight - tip.height - VIEWPORT_MARGIN_PX;
       setPosition({
+        ...VIEWPORT_WIDTH_STYLE,
         position: 'fixed',
         left: `${Math.round(clamp(left, VIEWPORT_MARGIN_PX, maxLeft))}px`,
         top: `${Math.round(clamp(top, VIEWPORT_MARGIN_PX, maxTop))}px`,
@@ -126,6 +132,7 @@ export function Tooltip({ content, side = 'bottom', children, className }: Toolt
           role="tooltip"
           className="tooltip"
           style={position ?? {
+            ...VIEWPORT_WIDTH_STYLE,
             position: 'fixed',
             left: 0,
             top: 0,
