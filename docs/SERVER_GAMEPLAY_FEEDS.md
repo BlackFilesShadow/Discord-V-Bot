@@ -29,6 +29,8 @@ Serverinterne Live-Feeds fuehren keine zweite Gameplay-Wahrheit ein. Die normali
 
 Ein normaler `PLAYER_DIED` ist **kein PvP-Kill**. Ein nicht-toedlicher `hit by [vehicle]` bleibt `PLAYER_HIT` und erscheint nicht im Deathfeed.
 
+DayZ kann fuer denselben finalen Tod mehrere ADM-Zeilen schreiben, beispielsweise einen spezifischen `PLAYER_SUICIDE` und unmittelbar danach einen generischen `PLAYER_DIED`. Beide `AdmEvent`-Datensaetze bleiben fuer Diagnose und Historie erhalten. Fuer Discord wird der generische `PLAYER_DIED` jedoch unterdrueckt, wenn fuer denselben Spieler und dieselbe Position innerhalb von +/- 5 Sekunden bereits `PLAYER_KILLED`, `PLAYER_SUICIDE`, `NPC_KILL` oder `VEHICLE_DEATH` existiert. Dadurch wird ein Ereignis nicht gleichzeitig als z.B. **Suizid** und **Tod** gepostet.
+
 ### Baufeed
 
 - `PLACEMENT`
@@ -37,6 +39,14 @@ Ein normaler `PLAYER_DIED` ist **kein PvP-Kill**. Ein nicht-toedlicher `hit by [
 - `DESTROY`
 
 Objekt und Werkzeug werden getrennt normalisiert, z.B. `built Fence with Shovel` -> Objekt `Fence`, Werkzeug `Shovel`.
+
+## Discord-Embed
+
+- Spielernamen werden Markdown-sicher gerendert, aber nicht mehr in einen Inline-Codeblock gepackt. Namen mit Unterstrichen wie `Void__Architect` erscheinen dadurch ohne sichtbare Escape-Zeichen.
+- Positionsfelder sind klickbare iZurvive-Location-Links nach dem Format `#location=x;y;zoomlevel`.
+- Opfer-, Toeter- und Baupositionen verwenden denselben Link-Renderer.
+- Technische Event-ID, Serveralias und Embed-Zeitstempel werden nicht mehr im sichtbaren Footer ausgegeben. Der Feed bleibt bewusst kompakt und clean.
+- Die technische Idempotenz liegt unsichtbar in Discord `nonce + enforce_nonce`, nicht mehr in sichtbaren Embed-Inhalten.
 
 ## Persistenz und Zustellung
 
@@ -47,7 +57,7 @@ Objekt und Werkzeug werden getrennt normalisiert, z.B. `built Fence with Shovel`
 - `SKIPPED` bedeutet bewusst durch einen nachtraeglich geaenderten Kategorie-Filter verworfen und wird nie als Discord-Post ausgegeben.
 - Ein Lease verhindert parallele Doppelzustellung und macht abgestuerzte `SENDING`-Jobs wieder retrybar.
 - Exponentieller Retry behandelt temporaere Discord-Fehler.
-- Ein versteckter Footer-Marker `V-Bot event:<AdmEvent.id>` erlaubt die Reconciliation des Crash-Fensters: Discord-Send erfolgreich, DB-Commit danach fehlgeschlagen.
+- Jede ADM-Zustellung verwendet einen stabilen Discord-Nonce. Wird das Crash-Fenster `Discord-Send erfolgreich, DB-Commit danach fehlgeschlagen` erneut ausgefuehrt, verhindert Discord mit `enforce_nonce` einen zweiten sichtbaren Post.
 - Der Scan nutzt einen persistenten High-Watermark (`cursorCreatedAt + cursorEventId`) statt immer die aeltesten 200 Events zu lesen. Dadurch bleiben neue Ereignisse auch bei grossem Backlog erreichbar.
 - Kategorie-Filter werden vor dem Enqueue und erneut vor dem Send angewendet.
 
@@ -79,7 +89,7 @@ Der bestehende Pfad bleibt kompatibel:
 - `GET/PATCH /api/v2/guilds/:guildId/adm-source?slot=N`
 - `POST /api/v2/guilds/:guildId/adm-source/rediscover?slot=N`
 
-Feed-Channels benoetigen `ViewChannel`, `SendMessages`, `EmbedLinks` und `ReadMessageHistory` (letzteres fuer Crash-Reconciliation).
+Feed-Channels benoetigen nur `ViewChannel`, `SendMessages` und `EmbedLinks`. `ReadMessageHistory` ist fuer den Gameplay-Feed nicht mehr erforderlich, weil die Retry-Deduplizierung ueber den stabilen Discord-Nonce erfolgt.
 
 ## Produktionspruefung
 
@@ -92,8 +102,8 @@ Nach Merge und Migration:
 5. Linking-Challenge und PlayerSession/Reward-Postprocessing auf einem Testslot pruefen.
 6. DayZ-Servereinstellungen fuer Death-/Baufeed pruefen: die benoetigten Admin-Logs muessen serverseitig aktiviert sein.
 7. Auf dem verbundenen Server **nach** aktivierter Feed-Konfiguration einen neuen PvP-Kill, normalen Tod, Suizid, NPC-/Tier-Tod, Fahrzeugtod sowie Placement/Build/Dismantle/Destroy erzeugen.
-8. Fuer einen neuen Live-Kill bis zu etwa 45 Sekunden einplanen: ADM-Poll maximal 30 Sekunden plus Gameplay-Feed-Poll maximal 15 Sekunden.
+8. Fuer ein neues Live-Ereignis bis zu etwa 45 Sekunden einplanen: ADM-Poll maximal 30 Sekunden plus Gameplay-Feed-Poll maximal 15 Sekunden.
 9. Nitrado-Dateiwechsel/Serverrestart, Botrestart und Discord-Fehler/Retry testen.
-10. Bestaetigen: keine Doppelposts, keine verlorenen Posts, kein Cross-Server-Leak und korrekte Zeitstempel.
+10. Bestaetigen: keine doppelten generischen/spezifischen Todesposts, keine verlorenen Posts, kein Cross-Server-Leak, saubere Embed-Darstellung und korrekte Kartenlinks.
 
-Die Regression `tests/modules/gameplayFeedDeliveryE2E.test.ts` beweist zusaetzlich die produktive Kernkette von einer rohen DayZ-ADM-PvP-Zeile ueber Persistenz und Kategorie-Ableitung bis zum Discord-Embed sowie den RETRY-Pfad bei einem temporaer nicht erreichbaren Feed-Channel.
+Die Regression `tests/modules/gameplayFeedDeliveryE2E.test.ts` beweist zusaetzlich die produktive Kernkette von einer rohen DayZ-ADM-PvP-Zeile ueber Persistenz und Kategorie-Ableitung bis zum Discord-Embed, den RETRY-Pfad sowie die Unterdrueckung eines generischen `PLAYER_DIED` neben einem spezifischen Todesereignis. `tests/modules/gameplayFeedEmbed.test.ts` prueft die saubere Namensdarstellung, den fehlenden Footer/Zeitstempel und die iZurvive-Positionslinks.
