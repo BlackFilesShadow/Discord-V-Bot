@@ -805,7 +805,7 @@ async function openTicketLocked(btn: ButtonInteraction, t: Awaited<ReturnType<ty
       .setColor(color)
       .setTimestamp(openedAt)
       .addFields(
-        { name: 'Eroeffnet von', value: btn.user.globalName ?? btn.user.username, inline: true },
+        { name: 'Eroeffnet von', value: `<@${btn.user.id}>`, inline: true },
         { name: 'Eroeffnet am', value: `<t:${Math.floor(openedAt.getTime() / 1000)}:F> (<t:${Math.floor(openedAt.getTime() / 1000)}:R>)`, inline: true },
         { name: 'Ticket-Nr.', value: `#${numStr}`, inline: true },
       )
