@@ -91,11 +91,17 @@ describe('current bot information surfaces', () => {
     expect(botInfo).toContain('Hersteller');
   });
 
-  it('/help erklaert die aktuelle sichtbare Command-Trennung', () => {
-    expect(help).toContain('V-Bot Prime · Command-Hilfe');
+  it('/help erklaert die aktuelle sichtbare Command-Trennung und nutzt Detailseiten', () => {
+    expect(help).toContain('V-Bot Prime · Command-Katalog');
     expect(help).toContain('DEV-Funktionen und `/ai` werden hier bewusst nicht angezeigt');
     expect(help).toContain("id: 'manufacturer'");
-    expect(help).toContain('Manufacturer-Commands duerfen in der Hilfe auffindbar sein');
+    expect(help).toContain('Hersteller-Commands duerfen im Katalog auffindbar sein');
+    expect(help).toContain('function detailEmbed(');
+    expect(help).toContain('function commandSelect(');
+    expect(help).toContain(".setCustomId('help_prev')");
+    expect(help).toContain(".setCustomId('help_next')");
+    expect(help).toContain(".setCustomId('help_home')");
+    expect(help).toContain('syntaxLines(entry.name, options)');
   });
 
   it('kanonische Doku beschreibt keinen alten globalen Admin/DEV-Slash-Betrieb mehr', () => {

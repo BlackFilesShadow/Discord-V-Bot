@@ -2,19 +2,27 @@ import {
   ActionRowBuilder,
   ButtonBuilder,
   ButtonStyle,
-  ComponentType,
   EmbedBuilder,
   MessageFlags,
+  PermissionsBitField,
   SlashCommandBuilder,
+  StringSelectMenuBuilder,
+  StringSelectMenuOptionBuilder,
   type ChatInputCommandInteraction,
 } from 'discord.js';
 import type { Command, ExtendedClient } from '../../types';
 import { visibleCommandCatalog, type CommandCatalogEntry } from '../catalog';
 import { Colors, Brand, vEmbed } from '../../utils/embedDesign';
 
-const PAGE_SIZE = 14;
-
 type HelpCategory = 'overview' | 'moderation' | 'nitrado' | 'economy' | 'manufacturer' | 'community';
+
+type JsonOption = {
+  type: number;
+  name: string;
+  description?: string;
+  required?: boolean;
+  options?: JsonOption[];
+};
 
 interface CategoryDefinition {
   id: Exclude<HelpCategory, 'overview'>;
@@ -89,68 +97,215 @@ function entriesFor(entries: CommandCatalogEntry[], category: HelpCategory): Com
 
 function overviewEmbed(entries: CommandCatalogEntry[]): EmbedBuilder {
   const embed = vEmbed(Colors.Primary)
-    .setTitle('V-Bot Prime · Command-Hilfe')
+    .setTitle('V-Bot Prime · Command-Katalog')
     .setDescription(
-      'Die sichtbaren Discord-Commands sind nach Funktionsbereich geordnet. ' +
+      'Alle sichtbaren Discord-Funktionen sind nach Bereichen sortiert. ' +
+      '**Waehle unten eine Kategorie; danach hat jeder Command seine eigene Detailseite.**\n\n' +
       '**DEV-Funktionen und `/ai` werden hier bewusst nicht angezeigt.**\n\n' +
       `${Brand.divider}`,
     );
 
-  // Reihenfolge ist Produktvorgabe: Moderation -> Nitrado -> Economy -> Hersteller.
   for (const category of CATEGORIES) {
     const commands = entries
       .filter(entry => categoryFor(entry).id === category.id)
       .map(entry => `\`/${entry.name}\``);
     if (commands.length === 0) continue;
     embed.addFields({
-      name: `${category.emoji} ${category.label}`,
+      name: `${category.emoji} ${category.label} · ${commands.length}`,
       value: `${category.description}\n${commands.join(' · ')}`.slice(0, 1024),
       inline: false,
     });
   }
 
-  return embed.setFooter({ text: 'Kategorie waehlen fuer Beschreibungen · DEV & /ai bleiben unsichtbar' });
+  return embed.setFooter({ text: `${entries.length} sichtbare Funktionen · Kategorie waehlen · DEV & /ai bleiben unsichtbar` });
 }
 
-function categoryEmbed(
-  entries: CommandCatalogEntry[],
-  category: Exclude<HelpCategory, 'overview'>,
-  page: number,
-  totalPages: number,
+function optionToken(option: JsonOption): string {
+  return option.required ? `<${option.name}>` : `[${option.name}]`;
+}
+
+function optionSuffix(options: JsonOption[] | undefined): string {
+  const normal = (options ?? []).filter(option => option.type !== 1 && option.type !== 2);
+  return normal.length ? ` ${normal.map(optionToken).join(' ')}` : '';
+}
+
+function syntaxLines(commandName: string, options: JsonOption[]): string[] {
+  const lines: string[] = [];
+
+  for (const option of options) {
+    if (option.type === 1) {
+      lines.push(`/${commandName} ${option.name}${optionSuffix(option.options)}`);
+      continue;
+    }
+    if (option.type === 2) {
+      const subcommands = (option.options ?? []).filter(child => child.type === 1);
+      for (const subcommand of subcommands) {
+        lines.push(`/${commandName} ${option.name} ${subcommand.name}${optionSuffix(subcommand.options)}`);
+      }
+    }
+  }
+
+  if (lines.length === 0) lines.push(`/${commandName}${optionSuffix(options)}`);
+  return lines;
+}
+
+function parameterLines(options: JsonOption[], prefix = ''): string[] {
+  const result: string[] = [];
+  for (const option of options) {
+    if (option.type === 1 || option.type === 2) {
+      const scope = prefix ? `${prefix} ${option.name}` : option.name;
+      if (option.description) result.push(`**${scope}** — ${option.description}`);
+      result.push(...parameterLines(option.options ?? [], scope));
+      continue;
+    }
+
+    const scope = prefix ? `${prefix} · ${option.name}` : option.name;
+    const requirement = option.required ? 'Pflicht' : 'optional';
+    result.push(`\`${scope}\` · ${requirement} — ${option.description || 'Keine Beschreibung.'}`);
+  }
+  return result;
+}
+
+function accessText(command: Command | undefined, entry: CommandCatalogEntry): string {
+  const access = entry.audience === 'manufacturer'
+    ? '🔒 Verifizierter Hersteller'
+    : entry.audience === 'admin'
+      ? '🛡️ Bot-Admin'
+      : '🌐 Sichtbarer Nutzer-Command';
+
+  if (!command?.permissions?.length) return access;
+  const permissions = new PermissionsBitField(command.permissions).toArray();
+  if (!permissions.length) return access;
+  return `${access}\nDiscord-Berechtigung: ${permissions.map(permission => `\`${permission}\``).join(', ')}`;
+}
+
+function detailEmbed(
+  client: ExtendedClient,
+  entry: CommandCatalogEntry,
+  index: number,
+  total: number,
 ): EmbedBuilder {
-  const definition = CATEGORIES.find(item => item.id === category) ?? CATEGORIES[CATEGORIES.length - 1];
-  const start = page * PAGE_SIZE;
-  const chunk = entries.slice(start, start + PAGE_SIZE);
-  const body = chunk.length
-    ? chunk.map(entry => {
-      const manufacturerBadge = entry.audience === 'manufacturer' ? ' 🔒' : '';
-      return `**\`/${entry.name}\`**${manufacturerBadge}\n${truncate(entry.description || 'Keine Beschreibung.', 180)}`;
-    }).join('\n\n')
-    : '_Keine sichtbaren Commands in dieser Kategorie._';
+  const definition = categoryFor(entry);
+  const command = client.commands.get(entry.name);
+  const json = command?.data.toJSON() as { options?: JsonOption[] } | undefined;
+  const options = json?.options ?? [];
+  const syntax = syntaxLines(entry.name, options).map(line => `\`${line}\``).join('\n');
+  const parameters = parameterLines(options).join('\n');
 
   return vEmbed(Colors.Primary)
-    .setTitle(`${definition.emoji} ${definition.label}`)
-    .setDescription(
-      `${definition.description}\n\n${Brand.divider}\n\n${body}\n\n${Brand.divider}\n` +
-      `Seite **${page + 1}/${totalPages}** · ${entries.length} Commands`,
+    .setTitle(`${definition.emoji} /${entry.name}`)
+    .setDescription(`${entry.description || 'Keine Beschreibung vorhanden.'}\n\n${Brand.divider}`)
+    .addFields(
+      {
+        name: '📁 Bereich',
+        value: `${definition.label}\n${definition.description}`,
+        inline: false,
+      },
+      {
+        name: '⌨️ Verwendung',
+        value: truncate(syntax, 1024),
+        inline: false,
+      },
+      {
+        name: '🧩 Parameter & Funktionen',
+        value: parameters ? truncate(parameters, 1024) : '_Keine zusaetzlichen Parameter._',
+        inline: false,
+      },
+      {
+        name: '🔐 Zugriff',
+        value: truncate(accessText(command, entry), 1024),
+        inline: false,
+      },
+      {
+        name: '⏱️ Cooldown',
+        value: entry.cooldownSeconds && entry.cooldownSeconds > 0
+          ? `${entry.cooldownSeconds} Sekunden`
+          : 'Kein zusaetzlicher Command-Cooldown',
+        inline: false,
+      },
     )
-    .setFooter({ text: '🔒 erfordert verifizierten Herstellerstatus · DEV & /ai nicht gelistet' });
+    .setFooter({
+      text: `Funktion ${index + 1}/${total} in ${definition.label} · DEV & /ai nicht gelistet`,
+    });
 }
 
-function buttons(page: number, totalPages: number): ActionRowBuilder<ButtonBuilder> {
+function emptyCategoryEmbed(category: Exclude<HelpCategory, 'overview'>): EmbedBuilder {
+  const definition = CATEGORIES.find(item => item.id === category) ?? CATEGORIES[CATEGORIES.length - 1];
+  return vEmbed(Colors.Primary)
+    .setTitle(`${definition.emoji} ${definition.label}`)
+    .setDescription(`${definition.description}\n\n_Aktuell sind in diesem Bereich keine sichtbaren Commands verfuegbar._`)
+    .setFooter({ text: 'Andere Kategorie im Auswahlmenue waehlen' });
+}
+
+function categorySelect(selected: HelpCategory): ActionRowBuilder<StringSelectMenuBuilder> {
+  const menu = new StringSelectMenuBuilder()
+    .setCustomId('help_category')
+    .setPlaceholder('Kategorie waehlen')
+    .addOptions(
+      new StringSelectMenuOptionBuilder()
+        .setLabel('Uebersicht')
+        .setValue('overview')
+        .setEmoji('📚')
+        .setDefault(selected === 'overview'),
+      ...CATEGORIES.map(category => new StringSelectMenuOptionBuilder()
+        .setLabel(truncate(category.label, 100))
+        .setValue(category.id)
+        .setEmoji(category.emoji)
+        .setDefault(selected === category.id)),
+    );
+  return new ActionRowBuilder<StringSelectMenuBuilder>().addComponents(menu);
+}
+
+function commandSelect(
+  entries: CommandCatalogEntry[],
+  selectedIndex: number,
+): ActionRowBuilder<StringSelectMenuBuilder> {
+  // Discord erlaubt maximal 25 Select-Optionen. Bei groesseren Kategorien
+  // folgt das Menue automatisch dem aktuellen 25er-Fenster; Vor/Zurueck
+  // navigiert trotzdem ueber die komplette Kategorie.
+  const windowStart = Math.floor(selectedIndex / 25) * 25;
+  const windowEntries = entries.slice(windowStart, windowStart + 25);
+  const selected = entries[selectedIndex];
+  const menu = new StringSelectMenuBuilder()
+    .setCustomId('help_command')
+    .setPlaceholder(selected ? `/${selected.name} · Funktion waehlen` : 'Funktion waehlen')
+    .addOptions(windowEntries.map(entry => new StringSelectMenuOptionBuilder()
+      .setLabel(truncate(`/${entry.name}`, 100))
+      .setDescription(truncate(entry.description || 'Keine Beschreibung.', 100))
+      .setValue(entry.name)
+      .setDefault(entry.name === selected?.name)));
+  return new ActionRowBuilder<StringSelectMenuBuilder>().addComponents(menu);
+}
+
+function navigationButtons(index: number, total: number): ActionRowBuilder<ButtonBuilder> {
   return new ActionRowBuilder<ButtonBuilder>().addComponents(
-    new ButtonBuilder().setCustomId('help_prev').setEmoji('◀️').setStyle(ButtonStyle.Secondary).setDisabled(page <= 0),
-    new ButtonBuilder().setCustomId('help_next').setEmoji('▶️').setStyle(ButtonStyle.Secondary).setDisabled(page >= totalPages - 1),
+    new ButtonBuilder()
+      .setCustomId('help_prev')
+      .setLabel('Zurueck')
+      .setEmoji('◀️')
+      .setStyle(ButtonStyle.Secondary)
+      .setDisabled(index <= 0),
+    new ButtonBuilder()
+      .setCustomId('help_home')
+      .setLabel('Katalog')
+      .setEmoji('📚')
+      .setStyle(ButtonStyle.Primary),
+    new ButtonBuilder()
+      .setCustomId('help_next')
+      .setLabel('Weiter')
+      .setEmoji('▶️')
+      .setStyle(ButtonStyle.Secondary)
+      .setDisabled(index >= total - 1),
   );
 }
 
 const helpCommand: Command = {
   data: new SlashCommandBuilder()
     .setName('help')
-    .setDescription('Zeigt die strukturierten, oeffentlich freigegebenen Discord-Commands.')
+    .setDescription('Oeffnet den interaktiven Katalog der freigegebenen Discord-Funktionen.')
     .addStringOption(option => option
       .setName('category')
-      .setDescription('Funktionsbereich anzeigen')
+      .setDescription('Funktionsbereich direkt oeffnen')
       .setRequired(false)
       .addChoices(
         { name: 'Uebersicht', value: 'overview' },
@@ -165,42 +320,73 @@ const helpCommand: Command = {
     await interaction.deferReply({ flags: MessageFlags.Ephemeral });
     const client = interaction.client as ExtendedClient;
 
-    // Manufacturer-Commands duerfen in der Hilfe auffindbar sein; ihre echte
-    // Nutzung bleibt weiterhin durch manufacturerOnly hart abgesichert.
+    // Hersteller-Commands duerfen im Katalog auffindbar sein; die eigentliche
+    // Ausfuehrung bleibt unveraendert durch manufacturerOnly abgesichert.
     const visible = visibleCommandCatalog(client, {
       isAdmin: false,
       isDeveloper: false,
       isManufacturer: true,
     });
 
-    const requested = (interaction.options.getString('category') ?? 'overview') as HelpCategory;
-    if (requested === 'overview') {
-      await interaction.editReply({ embeds: [overviewEmbed(visible)], components: [] });
-      return;
-    }
+    let category = (interaction.options.getString('category') ?? 'overview') as HelpCategory;
+    let entries = entriesFor(visible, category);
+    let index = 0;
 
-    const entries = entriesFor(visible, requested);
-    const totalPages = Math.max(1, Math.ceil(entries.length / PAGE_SIZE));
-    let page = 0;
-    const message = await interaction.editReply({
-      embeds: [categoryEmbed(entries, requested, page, totalPages)],
-      components: totalPages > 1 ? [buttons(page, totalPages)] : [],
-    });
+    const render = () => {
+      if (category === 'overview') {
+        return {
+          embeds: [overviewEmbed(visible)],
+          components: [categorySelect(category)],
+        };
+      }
 
-    if (totalPages <= 1) return;
+      if (entries.length === 0) {
+        return {
+          embeds: [emptyCategoryEmbed(category)],
+          components: [categorySelect(category)],
+        };
+      }
+
+      index = Math.min(Math.max(index, 0), entries.length - 1);
+      return {
+        embeds: [detailEmbed(client, entries[index], index, entries.length)],
+        components: [
+          categorySelect(category),
+          commandSelect(entries, index),
+          navigationButtons(index, entries.length),
+        ],
+      };
+    };
+
+    const message = await interaction.editReply(render());
     const collector = message.createMessageComponentCollector({
-      componentType: ComponentType.Button,
-      time: 5 * 60 * 1000,
+      time: 10 * 60 * 1000,
       filter: component => component.user.id === interaction.user.id,
     });
+
     collector.on('collect', async component => {
-      if (component.customId === 'help_prev') page = Math.max(0, page - 1);
-      if (component.customId === 'help_next') page = Math.min(totalPages - 1, page + 1);
-      await component.update({
-        embeds: [categoryEmbed(entries, requested, page, totalPages)],
-        components: [buttons(page, totalPages)],
-      });
+      if (component.isStringSelectMenu()) {
+        if (component.customId === 'help_category') {
+          category = component.values[0] as HelpCategory;
+          entries = entriesFor(visible, category);
+          index = 0;
+        } else if (component.customId === 'help_command') {
+          const selectedIndex = entries.findIndex(entry => entry.name === component.values[0]);
+          if (selectedIndex >= 0) index = selectedIndex;
+        }
+      } else if (component.isButton()) {
+        if (component.customId === 'help_prev') index = Math.max(0, index - 1);
+        if (component.customId === 'help_next') index = Math.min(entries.length - 1, index + 1);
+        if (component.customId === 'help_home') {
+          category = 'overview';
+          entries = visible;
+          index = 0;
+        }
+      }
+
+      await component.update(render());
     });
+
     collector.on('end', () => {
       void interaction.editReply({ components: [] }).catch(() => undefined);
     });
