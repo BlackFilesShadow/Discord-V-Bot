@@ -1,30 +1,14 @@
 /**
- * P0 — Enterprise Compliance Middleware fuer DEV-Endpoints.
+ * Enterprise-Sicherheitsbausteine fuer DEV-Endpoints.
  *
- * Liefert Sicherheitsbausteine, die als Stack hinter `requireDev` greifen:
- *   1. enforceDevMfa(userId)            — TwoFactorAuth.isEnabled erforderlich
- *                                         (mit Grace-Period via DEV_MFA_GRACE_PERIOD_END)
- *   2. enforceDevIpAllowlist(req)       — IpList(WHITELIST). Leer = fail-closed
- *                                         (Opt-out via DEV_IP_ALLOWLIST_REQUIRED=false).
- *   3. recordDevAuthFailure(...)        — Persistiert LOGIN_FAILURE/BRUTE_FORCE
- *                                         in SecurityEvent (zusaetzlich zur In-Memory-Map).
- *   4. parseDevScope(scope)/getActiveDevSession(req)
- *                                       — Typisierter DevSession-Scope incl.
- *                                         optionalem guildIdRestrict.
- *   5. verifyDevStepUp(req, input)      — echte Re-Authentisierung fuer sensible
- *                                         DEV-Aktionen: TOTP wenn 2FA aktiv ist,
- *                                         sonst DEV_PASSWORD-Reconfirm.
- *
- * Alle Funktionen sind side-effect-arm und ohne Express-Magic, damit sie
- * sowohl in Middleware-Stacks als auch in Socket-Auth-Pfaden wiederverwendbar
- * sind (siehe socket/dev.ts).
+ * Dieses Modul enthaelt Session-/MFA-/IP-Helfer, Auth-Forensik, Scope-Parsing
+ * sowie die reine Step-Up-Eingabevalidierung. Die kryptografische
+ * Re-Authentisierung fuer sensible Aktionen lebt ausschliesslich in
+ * `devStepUp.ts`, damit es genau einen kanonischen Verifikationspfad gibt.
  */
 
-import crypto from 'node:crypto';
 import type { Request } from 'express';
 import prisma from '../../database/prisma';
-import { config } from '../../config';
-import { decrypt, verify2FAToken } from '../../utils/security';
 import { logger, logAudit } from '../../utils/logger';
 
 // ---------------------------------------------------------------------------
@@ -37,22 +21,6 @@ export interface MfaCheckResult {
   graceUntil?: Date | null;
 }
 
-/**
- * Prueft ob TwoFactorAuth fuer den User aktiv ist.
- *
- * Grace-Period (P0-gehaertet, secure-by-default):
- *   - 2FA ist STANDARDMAESSIG hart erforderlich. Ohne 2FA -> ok=false.
- *   - Loophole nur wenn ALLE drei Bedingungen erfuellt sind:
- *       1. ENV `DEV_MFA_GRACE_ALLOW=true` (explizites Opt-in)
- *       2. ENV `DEV_MFA_GRACE_PERIOD_END` ist ein gueltiges ISO-Date in
- *          der Zukunft
- *       3. Grace-Ende liegt max. `DEV_MFA_GRACE_MAX_DAYS` (Default 14) in
- *          der Zukunft, gemessen ab JETZT
- *   - Jede Nutzung wird in `auth.ts` als `DEV_MFA_GRACE_USED` auditiert.
- *
- * Damit kann ein vergessenes/falsch gesetztes `DEV_MFA_GRACE_PERIOD_END`
- * (z.B. Jahr 2099) nicht mehr 2FA dauerhaft umgehen.
- */
 export async function enforceDevMfa(userId: string): Promise<MfaCheckResult> {
   const tfa = await prisma.twoFactorAuth.findUnique({
     where: { userId },
@@ -60,7 +28,6 @@ export async function enforceDevMfa(userId: string): Promise<MfaCheckResult> {
   });
   if (tfa?.isEnabled) return { ok: true };
 
-  // Secure-by-default: Loophole muss EXPLIZIT geoeffnet werden.
   if (process.env.DEV_MFA_GRACE_ALLOW !== 'true') {
     return { ok: false, reason: 'no_2fa', graceUntil: null };
   }
@@ -73,7 +40,6 @@ export async function enforceDevMfa(userId: string): Promise<MfaCheckResult> {
     return { ok: false, reason: 'no_2fa', graceUntil: null };
   }
 
-  // Hard cap: keine Grace > N Tage in die Zukunft.
   const maxDays = Number(process.env.DEV_MFA_GRACE_MAX_DAYS ?? 14);
   const ceiling = Date.now() + maxDays * 86_400_000;
   if (end.getTime() > ceiling) {
@@ -87,7 +53,7 @@ export async function enforceDevMfa(userId: string): Promise<MfaCheckResult> {
 }
 
 // ---------------------------------------------------------------------------
-// 2) IP-Allowlist (fail-open bei leerer Liste)
+// 2) IP-Allowlist
 // ---------------------------------------------------------------------------
 
 export interface IpCheckResult {
@@ -96,19 +62,6 @@ export interface IpCheckResult {
   listSize: number;
 }
 
-/**
- * Prueft ob die Request-IP in der DEV-IP-Allowlist (IpList.listType=WHITELIST) ist.
- *
- * Verhalten (secure-by-default, P0-gehaertet):
- *   - Liste leer  -> fail-CLOSED (ok=false, reason='no_list'), AUSSER es ist
- *                    explizit `DEV_IP_ALLOWLIST_REQUIRED=false` gesetzt; dann
- *                    fail-open (Notfall-/Bootstrap-Override).
- *   - IP fehlt    -> fail-closed (ok=false, reason='no_ip')
- *   - IP gelistet -> ok=true
- *   - IP fehlt in Liste -> ok=false, reason='not_listed'
- *
- * Whitelist-Eintraege mit `expiresAt` in der Vergangenheit werden ignoriert.
- */
 export async function enforceDevIpAllowlist(req: Request): Promise<IpCheckResult> {
   const ip = req.ip ?? null;
   const count = await prisma.ipList.count({
@@ -118,8 +71,6 @@ export async function enforceDevIpAllowlist(req: Request): Promise<IpCheckResult
     },
   });
   if (count === 0) {
-    // Secure-by-default: leere Allowlist sperrt DEV-Zugriff. Nur ein
-    // explizites Opt-out erlaubt Bootstrap ohne Allowlist.
     if (process.env.DEV_IP_ALLOWLIST_REQUIRED === 'false') {
       return { ok: true, reason: 'no_list', listSize: 0 };
     }
@@ -140,7 +91,7 @@ export async function enforceDevIpAllowlist(req: Request): Promise<IpCheckResult
 }
 
 // ---------------------------------------------------------------------------
-// 3) Brute-Force-Persistenz (zusaetzlich zur In-Memory-Map in dev.ts)
+// 3) Auth-Forensik / Brute-Force-Persistenz
 // ---------------------------------------------------------------------------
 
 export interface AuthFailureContext {
@@ -152,12 +103,6 @@ export interface AuthFailureContext {
   lockedUntil?: Date | null;
 }
 
-/**
- * Persistiert einen DEV-Login-Fehlversuch in SecurityEvent.
- *
- * Best-effort (no-await fuer Caller). Eskaliert auf BRUTE_FORCE/CRITICAL,
- * sobald `failureCount` den Schwellwert erreicht.
- */
 export function recordDevAuthFailure(ctx: AuthFailureContext): void {
   void persistDevAuthFailure(ctx).catch((e: unknown) => {
     logger.warn('recordDevAuthFailure: DB-Persist fehlgeschlagen', { err: (e as Error).message });
@@ -188,10 +133,6 @@ async function persistDevAuthFailure(ctx: AuthFailureContext): Promise<void> {
   });
 }
 
-/**
- * Persistiert einen erfolgreichen DEV-Login als SecurityEvent (LOW),
- * damit Audit-/Forensik-Pages zeitliche Zugriffsmuster sehen.
- */
 export async function recordDevAuthSuccess(ctx: { userId: string; ip?: string | null; userAgent?: string | null; sessionId: string }): Promise<void> {
   try {
     await prisma.securityEvent.create({
@@ -211,20 +152,13 @@ export async function recordDevAuthSuccess(ctx: { userId: string; ip?: string | 
 }
 
 // ---------------------------------------------------------------------------
-// 4) DevSession-Scope-Parser (typisiert)
+// 4) DevSession-Scope
 // ---------------------------------------------------------------------------
 
 export interface DevSessionScope {
-  /** Klassische Flags (Bestand). */
   logs?: boolean;
   snapshot?: boolean;
-  /**
-   * Multi-Guild-Schutz: wenn gesetzt, duerfen DEV-Endpoints, die auf
-   * einzelne Guilds aggregieren, NUR Daten dieser Guild ausliefern.
-   * Leer/undefined = global view (Bestandsverhalten).
-   */
   guildIdRestrict?: string;
-  /** Step-Up-Profil (P2). */
   readOnly?: boolean;
   allowMutations?: boolean;
   allowMirrorTrigger?: boolean;
@@ -252,11 +186,6 @@ export interface ActiveDevSession {
   expiresAt: Date;
 }
 
-/**
- * Laedt die aktive DevSession des aktuell eingeloggten Users (oder null).
- * Wird von `requireDev` schon aufgerufen — andere Routen koennen die Funktion
- * nutzen, um auf den Scope zuzugreifen ohne eigene Query.
- */
 export async function getActiveDevSession(req: Request): Promise<ActiveDevSession | null> {
   if (!req.auth) return null;
   const s = await prisma.devSession.findFirst({
@@ -269,7 +198,7 @@ export async function getActiveDevSession(req: Request): Promise<ActiveDevSessio
 }
 
 // ---------------------------------------------------------------------------
-// 5) Step-Up-Re-Auth
+// 5) Step-Up-Eingabeform (Verifikation: devStepUp.ts)
 // ---------------------------------------------------------------------------
 
 export interface StepUpInput {
@@ -285,7 +214,6 @@ export interface StepUpResult {
 const STEP_UP_REASON_MIN = 6;
 const STEP_UP_REASON_MAX = 500;
 
-/** Form-/Pflichtfeldvalidierung fuer Step-Up. */
 export function validateStepUpInput(input: StepUpInput): StepUpResult {
   const reason = (input.reason ?? '').trim();
   if (!reason) return { ok: false, error: 'reason_missing' };
@@ -298,76 +226,10 @@ export function validateStepUpInput(input: StepUpInput): StepUpResult {
   return { ok: true };
 }
 
-/**
- * Verifiziert die Re-Authentisierung kryptografisch auf dem Server:
- * - Hat der DEV-User aktive 2FA, ist ein gueltiger TOTP zwingend.
- * - Ohne aktive 2FA muss das aktuelle DEV_PASSWORD erneut bestaetigt werden.
- *
- * Das Re-Auth-Geheimnis wird niemals geloggt oder in Audit-Details geschrieben.
- */
-export async function verifyDevStepUp(req: Request, input: StepUpInput): Promise<StepUpResult> {
-  const shape = validateStepUpInput(input);
-  if (!shape.ok) return shape;
-  if (!req.auth?.userId) return { ok: false, error: 'reauth_invalid' };
-
-  const reAuth = String(input.reAuth ?? '').trim();
-  const tfa = await prisma.twoFactorAuth.findUnique({
-    where: { userId: req.auth.userId },
-    select: { isEnabled: true, secretEnc: true },
-  });
-
-  if (tfa?.isEnabled) {
-    if (!tfa.secretEnc) {
-      logger.error('[DEV] Step-Up kann nicht verifiziert werden: aktive 2FA ohne Secret.', { userId: req.auth.userId });
-      return { ok: false, error: 'no_credential' };
-    }
-    try {
-      const secret = decrypt(tfa.secretEnc, config.security.encryptionKey);
-      if (verify2FAToken(secret, reAuth)) return { ok: true };
-    } catch (e) {
-      logger.error('[DEV] Step-Up TOTP-Verifikation fehlgeschlagen.', {
-        userId: req.auth.userId,
-        err: (e as Error).message,
-      });
-      return { ok: false, error: 'no_credential' };
-    }
-    logAudit('DEV_STEP_UP_FAILED', 'SECURITY', {
-      userId: req.auth.userId,
-      discordId: req.auth.discordId,
-      ip: req.ip,
-      mode: 'totp',
-    });
-    return { ok: false, error: 'reauth_invalid' };
-  }
-
-  const expected = process.env.DEV_PASSWORD;
-  if (!expected) {
-    logger.error('[DEV] Step-Up kann nicht verifiziert werden: DEV_PASSWORD fehlt.', { userId: req.auth.userId });
-    return { ok: false, error: 'no_credential' };
-  }
-
-  const providedDigest = crypto.createHash('sha256').update(reAuth).digest();
-  const expectedDigest = crypto.createHash('sha256').update(expected).digest();
-  if (crypto.timingSafeEqual(providedDigest, expectedDigest)) return { ok: true };
-
-  logAudit('DEV_STEP_UP_FAILED', 'SECURITY', {
-    userId: req.auth.userId,
-    discordId: req.auth.discordId,
-    ip: req.ip,
-    mode: 'password',
-  });
-  return { ok: false, error: 'reauth_invalid' };
-}
-
 // ---------------------------------------------------------------------------
-// 6) Convenience-Audit-Wrapper fuer DEV-Aktionen
+// 6) DEV-Audit
 // ---------------------------------------------------------------------------
 
-/**
- * Loggt eine DEV-Privileg-Aktion in beide Senken (Winston + AuditLog-DB).
- * Duenn ueber logAuditDb, um `category='SECURITY'` und Standardfelder
- * konsistent zu setzen.
- */
 export function logDevAction(
   action: string,
   req: Request,
@@ -376,7 +238,6 @@ export function logDevAction(
   logAudit(action, 'SECURITY', {
     actorUserId: req.auth?.userId, ip: req.ip, ua: req.headers['user-agent'], ...details,
   });
-  // DB-Persistenz via Lazy-Import gegen Zirkularitaet
   void (async () => {
     try {
       const { logAuditDb } = await import('../../utils/logger.js');
