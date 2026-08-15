@@ -20,6 +20,7 @@ import { guardDevXpGuildObjects } from '../middleware/devXpScopeGuard';
 import { guardDevXpMutationInput } from '../middleware/devXpMutationInputGuard';
 import { guardDevSecurityInput } from '../middleware/devSecurityInputGuard';
 import { guardBotAdminGuildReferences } from '../middleware/botAdminGuildReferenceGuard';
+import { v2AsyncErrorBoundary } from '../middleware/v2AsyncErrorBoundary';
 
 import { guildsRouter } from './v2/guilds';
 import { dashboardRouter } from './v2/dashboard';
@@ -122,3 +123,7 @@ v2Router.use('/bot-admin/command-center', requireGlobalBotAdminIdentity, guardBo
 // closed in DEV umgeleitet; Danger-Purge und physische Paketloeschung laufen
 // ausschliesslich ueber ihre kanonischen Filesystem-Safety-Services.
 v2Router.use('/bot-admin', requireGlobalBotAdminIdentity, botAdminXpRetirementRouter, botAdminDangerSafetyRouter, botAdminSafeValidationRouter, botAdminSafePackageDeleteRouter, guardBotAdminGuildReferences, botAdminRouter);
+
+// Letzte v2-Error-Grenze: normale Fehler gehen an den globalen Dashboard-
+// Handler; bei bereits begonnenen Streams wird die partielle Verbindung beendet.
+v2Router.use(v2AsyncErrorBoundary);
