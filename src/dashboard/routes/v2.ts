@@ -12,6 +12,7 @@ import { idempotency } from '../middleware/idempotency';
 import { requireGlobalDeveloperIdentity } from '../middleware/globalDeveloperGate';
 import { requireGlobalBotAdminIdentity } from '../middleware/globalBotAdminGate';
 import { requireSafeDashboardEconomyScope } from '../middleware/economyScopeGuard';
+import { guardBotAdminCommandCenterInput, guardDevCommandCenterInput } from '../middleware/commandCenterInputGuard';
 
 import { guildsRouter } from './v2/guilds';
 import { dashboardRouter } from './v2/dashboard';
@@ -84,11 +85,11 @@ v2Router.use('/dev/nitrado-mirror', requireGlobalDeveloperIdentity, devNitradoMi
 v2Router.use('/dev/incident', requireGlobalDeveloperIdentity, devIncidentRouter);
 v2Router.use('/dev/observability', requireGlobalDeveloperIdentity, devObservabilityRouter);
 v2Router.use('/dev/stubs', requireGlobalDeveloperIdentity, devStubsRouter);
-v2Router.use('/dev/command-center', requireGlobalDeveloperIdentity, devCommandCenterRouter);
+v2Router.use('/dev/command-center', requireGlobalDeveloperIdentity, guardDevCommandCenterInput, devCommandCenterRouter);
 
 // Discord-/Dashboard-Paritaet: exakt derselbe Live-Katalog wie /help.
 v2Router.use('/bot-admin/command-catalog', requireGlobalBotAdminIdentity, commandCatalogRouter);
-v2Router.use('/bot-admin/command-center', requireGlobalBotAdminIdentity, botAdminCommandCenterRouter);
+v2Router.use('/bot-admin/command-center', requireGlobalBotAdminIdentity, guardBotAdminCommandCenterInput, botAdminCommandCenterRouter);
 
 // Bot-Admin: Shared Password = Step-up, NICHT Identitaet/Berechtigung.
 v2Router.use('/bot-admin', requireGlobalBotAdminIdentity, botAdminRouter);
