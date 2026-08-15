@@ -5,7 +5,7 @@
  *  - GET /database     Postgres-Pool, Latenz, Migrations, top tables
  *  - GET /discord      Gateway-Status, Shard-Latenzen, Cache-Sizes
  *  - GET /nitrado      NitradoJob-Outbox-Statistik
- *  - GET /adm          ADM-Sync-Status + persistenter Cursor pro Connection
+ *  - GET /adm          ADM-V2-Source/Cursor pro Connection
  *  - GET /system       CPU, RAM, Disk, Load, Process-Memory
  *  - GET /ai-providers Provider-Stats + Anomalie-Befunde (Spec 9)
  *
@@ -111,7 +111,7 @@ devStatusRouter.get('/discord', (_req, res) => {
     pingMs: s.ping,
   }));
   res.json({
-    ok: wsStatus === 0, // Status.Ready === 0
+    ok: wsStatus === 0,
     statusCode: wsStatus,
     averagePingMs: wsPing,
     shards,
@@ -127,15 +127,11 @@ devStatusRouter.get('/discord', (_req, res) => {
 // --- Nitrado --------------------------------------------------------------
 
 devStatusRouter.get('/nitrado', async (req, res) => {
-  // Multi-Guild-Schutz (P0): Wenn die DevSession einen guildIdRestrict
-  // gesetzt hat, NUR Daten dieser Guild aggregieren. Sonst global view.
   const restrict = req.devSession?.scope.guildIdRestrict ?? null;
   const baseWhere = restrict ? { guildId: restrict } : undefined;
 
   const counts = await timed(async () => {
-    // DEV-only globaler Worker-View ueber alle Guilds. requireDev gateway haelt
-    // nicht-Developer raus, daher bewusst kein guildId-Filter (oder restrict).
-    // eslint-disable-next-line local/no-unscoped-prisma-query
+    // eslint-disable-next-line local/no-unscoped-prisma-query -- DEV-globaler Worker-View; optional guild-restricted.
     const rows = await prisma.nitradoJob.groupBy({
       by: ['status'],
       _count: { _all: true },
@@ -147,7 +143,7 @@ devStatusRouter.get('/nitrado', async (req, res) => {
   });
 
   const recentFailures = await timed(async () => {
-    // eslint-disable-next-line local/no-unscoped-prisma-query
+    // eslint-disable-next-line local/no-unscoped-prisma-query -- DEV-globaler Worker-View; optional guild-restricted.
     return prisma.nitradoJob.findMany({
       where: { status: { in: ['FAILED', 'DEAD'] }, ...(restrict ? { guildId: restrict } : {}) },
       orderBy: { updatedAt: 'desc' },
@@ -157,7 +153,7 @@ devStatusRouter.get('/nitrado', async (req, res) => {
   });
 
   const oldestPending = await timed(async () => {
-    // eslint-disable-next-line local/no-unscoped-prisma-query
+    // eslint-disable-next-line local/no-unscoped-prisma-query -- DEV-globaler Worker-View; optional guild-restricted.
     return prisma.nitradoJob.findFirst({
       where: { status: 'PENDING', ...(restrict ? { guildId: restrict } : {}) },
       orderBy: { createdAt: 'asc' },
@@ -175,16 +171,14 @@ devStatusRouter.get('/nitrado', async (req, res) => {
   });
 });
 
-// --- ADM-Sync-Status ------------------------------------------------------
-// Zeigt den persistenten ADM-Cursor (NitradoAdmCursor) pro aktiver Connection.
-// KEINE Secrets: Token wird niemals geladen/zurueckgegeben — nur Alias, Slot,
-// Service-ID und der Cursor-Stand. Respektiert guildIdRestrict wie /nitrado.
+// --- ADM-V2-Status --------------------------------------------------------
+// Keine globale Pfadkonfiguration mehr. Quelle und Byte-Cursor sind pro
+// NitradoConnection persistent und enthalten keine Tokens/Secrets.
 devStatusRouter.get('/adm', async (req, res) => {
   const restrict = req.devSession?.scope.guildIdRestrict ?? null;
-  const admDir = process.env.NITRADO_ADM_DIR ?? null;
 
   const data = await timed(async () => {
-    // eslint-disable-next-line local/no-unscoped-prisma-query -- DEV-globaler Worker-View; requireDev-Gate; optional auf restrict beschraenkt.
+    // eslint-disable-next-line local/no-unscoped-prisma-query -- DEV-globaler Status-View; optional guild-restricted.
     const conns = await prisma.nitradoConnection.findMany({
       where: { status: 'ACTIVE', ...(restrict ? { guildId: restrict } : {}) },
       select: { id: true, guildId: true, slot: true, alias: true, alias5: true, nitradoServerId: true, serviceId: true },
@@ -192,14 +186,44 @@ devStatusRouter.get('/adm', async (req, res) => {
     });
     if (conns.length === 0) return [];
 
-    const cursors = await prisma.nitradoAdmCursor.findMany({
-      where: { nitradoConnId: { in: conns.map(c => c.id) } },
-      select: { nitradoConnId: true, lastModifiedAt: true, lastFileName: true, updatedAt: true },
-    });
-    const byConn = new Map(cursors.map(c => [c.nitradoConnId, c]));
+    const ids = conns.map(c => c.id);
+    const [profiles, cursors] = await Promise.all([
+      prisma.nitradoAdmProfileConfig.findMany({
+        where: { nitradoConnId: { in: ids } },
+        select: {
+          nitradoConnId: true,
+          profileDir: true,
+          source: true,
+          timeZone: true,
+          lastVerifiedAt: true,
+          lastError: true,
+          updatedAt: true,
+        },
+      }),
+      prisma.admSourceCursor.findMany({
+        where: { nitradoConnId: { in: ids } },
+        orderBy: [{ lastModifiedAt: 'desc' }, { fileName: 'desc' }],
+        select: {
+          nitradoConnId: true,
+          fileName: true,
+          lastModifiedAt: true,
+          lastKnownSize: true,
+          processedByteOffset: true,
+          lastSuccessAt: true,
+          lastError: true,
+          updatedAt: true,
+        },
+      }),
+    ]);
+    const profileByConn = new Map(profiles.map(p => [p.nitradoConnId, p]));
+    const cursorByConn = new Map<string, (typeof cursors)[number]>();
+    for (const cursor of cursors) {
+      if (!cursorByConn.has(cursor.nitradoConnId)) cursorByConn.set(cursor.nitradoConnId, cursor);
+    }
 
     return conns.map(c => {
-      const cur = byConn.get(c.id);
+      const profile = profileByConn.get(c.id);
+      const cursor = cursorByConn.get(c.id);
       return {
         nitradoConnId: c.id,
         guildId: c.guildId,
@@ -208,21 +232,32 @@ devStatusRouter.get('/adm', async (req, res) => {
         alias5: c.alias5,
         serviceId: c.serviceId ?? c.nitradoServerId ?? null,
         admLinked: !!c.nitradoServerId,
-        cursor: cur
-          ? {
-              lastModifiedAt: cur.lastModifiedAt,
-              lastModifiedIso: new Date(cur.lastModifiedAt * 1000).toISOString(),
-              lastFileName: cur.lastFileName,
-              updatedAt: cur.updatedAt,
-            }
-          : null,
+        source: profile ? {
+          profileDir: profile.profileDir,
+          source: profile.source,
+          timeZone: profile.timeZone,
+          lastVerifiedAt: profile.lastVerifiedAt,
+          lastError: profile.lastError,
+          updatedAt: profile.updatedAt,
+        } : null,
+        cursor: cursor ? {
+          fileName: cursor.fileName,
+          lastModifiedAt: cursor.lastModifiedAt,
+          lastModifiedIso: new Date(cursor.lastModifiedAt * 1000).toISOString(),
+          lastKnownSize: Number(cursor.lastKnownSize),
+          processedByteOffset: Number(cursor.processedByteOffset),
+          lastSuccessAt: cursor.lastSuccessAt,
+          lastError: cursor.lastError,
+          updatedAt: cursor.updatedAt,
+        } : null,
       };
     });
   });
 
   res.json({
-    admDirConfigured: !!admDir,
-    intervalMin: 15,
+    sourceMode: 'PER_SERVER_V2',
+    pollIntervalSec: 30,
+    publicGameplayFeedEnabled: config.nitrado.admEventPipelineV2,
     queryMs: data.ms,
     connections: data.value ?? [],
     scope: restrict ? { guildIdRestrict: restrict } : { global: true },
@@ -230,14 +265,12 @@ devStatusRouter.get('/adm', async (req, res) => {
 });
 
 // --- Nitrado Write-Protection (Spec §12) ----------------------------------
-// Read-only Status: ist der Schreibschutz aktiv, welche Scopes existieren,
-// und wie viele Long-Life-Token-Connections sind verknuepft (OHNE Token-Werte).
 devStatusRouter.get('/nitrado-protection', async (req, res) => {
   const restrict = req.devSession?.scope.guildIdRestrict ?? null;
   const status = nitradoWriteProtectionStatus();
 
   const data = await timed(async () => {
-    // eslint-disable-next-line local/no-unscoped-prisma-query -- DEV-globaler Worker-View; requireDev-Gate; optional auf restrict beschraenkt.
+    // eslint-disable-next-line local/no-unscoped-prisma-query -- DEV-globaler Worker-View; optional guild-restricted.
     const conns = await prisma.nitradoConnection.findMany({
       where: { ...(restrict ? { guildId: restrict } : {}) },
       select: { id: true, guildId: true, slot: true, status: true, nitradoServerId: true, serviceId: true, lastValidatedAt: true },
@@ -249,7 +282,6 @@ devStatusRouter.get('/nitrado-protection', async (req, res) => {
       connectionsTotal: conns.length,
       connectionsActive: active,
       connectionsWithService: linked,
-      // KEINE Token-Werte — nur ob eine Service-ID hinterlegt ist.
       services: conns.map(c => ({
         guildId: c.guildId,
         slot: c.slot,
@@ -277,7 +309,6 @@ devStatusRouter.get('/member-detection', async (req, res) => {
   const restrict = req.devSession?.scope.guildIdRestrict ?? null;
   const client = tryGetDashboardClient();
 
-  // Discord-Cache-Sicht (keine Full-Fetches im Request-Pfad — nur Cache).
   const guildsView = client
     ? Array.from(client.guilds.cache.values())
         .filter(g => !restrict || g.id === restrict)
@@ -286,7 +317,7 @@ devStatusRouter.get('/member-detection', async (req, res) => {
           name: g.name,
           memberCount: g.memberCount,
           cachedMembers: g.members.cache.size,
-          roleCount: g.roles.cache.size - 1, // @everyone abziehen
+          roleCount: g.roles.cache.size - 1,
         }))
         .sort((a, b) => b.memberCount - a.memberCount)
     : [];
@@ -386,9 +417,9 @@ interface ProviderAnomaly {
 }
 
 const STALE_HOURS = 24;
-const HIGH_FAILURE_RATIO = 0.3;        // > 30% failures
-const HIGH_RATELIMIT_RATIO = 0.2;      // > 20% rate-limited
-const HIGH_LATENCY_MS = 8000;          // > 8s avg
+const HIGH_FAILURE_RATIO = 0.3;
+const HIGH_RATELIMIT_RATIO = 0.2;
+const HIGH_LATENCY_MS = 8000;
 
 function detectAnomalies(stats: Awaited<ReturnType<typeof getStats>>): ProviderAnomaly[] {
   const out: ProviderAnomaly[] = [];
@@ -463,9 +494,6 @@ devStatusRouter.get('/ai-providers', async (_req, res) => {
 });
 
 // --- AI-Kontext-Debugger / Retrieval-Debugger (Spec §6.B) -----------------
-// POST /ai-retrieval-debug  { guildId, question, limit? }
-//   -> Hybrid-Score-Aufschluesselung pro Snippet (Cosine/Keyword/Label/Recency),
-//      Auswahl-Begruendung, verwendetes Embedding-Modell und Budgets.
 devStatusRouter.post('/ai-retrieval-debug', async (req, res) => {
   try {
     const guildId = String(req.body?.guildId ?? '').trim();

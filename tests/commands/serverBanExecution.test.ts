@@ -48,16 +48,20 @@ jest.mock('../../src/config', () => ({
   config: { security: { encryptionKey: '0'.repeat(64) } },
 }));
 
-jest.mock('../../src/utils/security', () => ({ decrypt: () => 'valid-test-token' }));
+jest.mock('../../src/utils/security', () => ({
+  decrypt: () => 'valid-test-token',
+  encrypt: () => 'encrypted-player',
+}));
 jest.mock('../../src/utils/logger', () => ({ logAudit: jest.fn() }));
 
 import { serverBanCommand, serverUnbanCommand } from '../../src/commands/dashboard/serverBan';
 
-function interactionFor(command: 'ban' | 'unban') {
+function interactionFor(command: 'ban' | 'unban', duration: number | null = null) {
   const values: Record<string, unknown> = command === 'ban'
-    ? { identifier: 'Player-123', grund: 'Testgrund', dauer: null, slot: null }
+    ? { identifier: 'Player-123', grund: 'Testgrund', dauer: duration, slot: null }
     : { identifier: 'Player-123', slot: null };
   return {
+    channelId: 'command-channel-1',
     options: {
       getString: jest.fn((name: string) => values[name] ?? null),
       getInteger: jest.fn((name: string) => values[name] ?? null),
@@ -109,6 +113,11 @@ describe('server-ban/server-unban execution', () => {
           return { id: 'ban-1' };
         }),
       },
+      serverBanExpiryNotice: {
+        upsert: jest.fn(async () => ({})),
+        deleteMany: jest.fn(async () => ({ count: 0 })),
+        updateMany: jest.fn(async () => ({ count: 1 })),
+      },
     };
   });
 
@@ -124,9 +133,32 @@ describe('server-ban/server-unban execution', () => {
       'lookup-ban',
       'enqueue-ban',
     ]);
+    expect(mockTx.serverBanExpiryNotice.deleteMany).toHaveBeenCalledWith({ where: { banId: 'ban-1' } });
     expect(interaction.reply).toHaveBeenCalledWith(expect.objectContaining({
       content: expect.stringContaining('Whitelist-Entfernung + Bann'),
     }));
+  });
+
+  it('speichert bei einem zeitbegrenzten Bann den urspruenglichen Command-Kanal fuer die Ablaufmeldung', async () => {
+    const before = Date.now();
+    const interaction = interactionFor('ban', 1);
+
+    await serverBanCommand.execute(interaction);
+
+    expect(mockTx.serverBanExpiryNotice.upsert).toHaveBeenCalledWith(expect.objectContaining({
+      where: { banId: 'ban-1' },
+      create: expect.objectContaining({
+        banId: 'ban-1',
+        guildId: 'guild-1',
+        nitradoConnId: 'conn-a',
+        channelId: 'command-channel-1',
+        identifierEnc: 'encrypted-player',
+        status: 'PENDING',
+      }),
+    }));
+    const call = mockTx.serverBanExpiryNotice.upsert.mock.calls[0][0];
+    expect(call.create.expiresAt.getTime()).toBeGreaterThanOrEqual(before + 59_000);
+    expect(mockOrder.at(-1)).toBe('enqueue-ban');
   });
 
   it('kann einen Remote-Unban nur aus dem Identifier ableiten und braucht keinen VERIFIED Link', async () => {
@@ -143,6 +175,10 @@ describe('server-ban/server-unban execution', () => {
           identityHash: 'a'.repeat(64),
         },
       },
+    }));
+    expect(mockTx.serverBanExpiryNotice.updateMany).toHaveBeenCalledWith(expect.objectContaining({
+      where: expect.objectContaining({ banId: 'ban-1' }),
+      data: expect.objectContaining({ status: 'CANCELLED', identifierEnc: null }),
     }));
     expect(interaction.reply).toHaveBeenCalledWith(expect.objectContaining({
       content: expect.stringContaining('Remote-Unban'),

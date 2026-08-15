@@ -1,0 +1,26 @@
+// Persistente, retry-faehige Ablaufbenachrichtigung fuer zeitlich begrenzte
+// Gameserver-Banns. Der Klartext-Identifier wird nur verschluesselt und nur bis
+// zur erfolgreichen Ablaufmeldung gehalten.
+model ServerBanExpiryNotice {
+  id             String   @id @default(cuid())
+  banId          String   @unique
+  guildId        String
+  nitradoConnId  String
+  channelId      String   @db.VarChar(32)
+  identifierEnc  String?  @db.Text
+  expiresAt      DateTime
+  status         String   @default("PENDING") @db.VarChar(16)
+  attempts       Int      @default(0)
+  nextAttemptAt  DateTime @default(now())
+  leaseUntil     DateTime?
+  remoteRemovedAt DateTime?
+  sentAt         DateTime?
+  messageId      String?  @db.VarChar(32)
+  lastError      String?  @db.Text
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+
+  @@index([status, nextAttemptAt])
+  @@index([guildId, nitradoConnId])
+  @@index([expiresAt, status])
+}

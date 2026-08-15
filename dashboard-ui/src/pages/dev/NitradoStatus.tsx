@@ -12,8 +12,9 @@ interface NitradoStatus {
 }
 
 interface AdmStatus {
-  admDirConfigured: boolean;
-  intervalMin: number;
+  sourceMode: 'PER_SERVER_V2';
+  pollIntervalSec: number;
+  publicGameplayFeedEnabled: boolean;
   queryMs: number;
   connections: Array<{
     nitradoConnId: string;
@@ -23,7 +24,24 @@ interface AdmStatus {
     alias5: string;
     serviceId: string | null;
     admLinked: boolean;
-    cursor: { lastModifiedAt: number; lastModifiedIso: string; lastFileName: string | null; updatedAt: string } | null;
+    source: {
+      profileDir: string;
+      source: string;
+      timeZone: string | null;
+      lastVerifiedAt: string | null;
+      lastError: string | null;
+      updatedAt: string;
+    } | null;
+    cursor: {
+      fileName: string;
+      lastModifiedAt: number;
+      lastModifiedIso: string;
+      lastKnownSize: number;
+      processedByteOffset: number;
+      lastSuccessAt: string | null;
+      lastError: string | null;
+      updatedAt: string;
+    } | null;
   }>;
 }
 
@@ -90,11 +108,10 @@ export default function NitradoStatus() {
         </>
       )}
 
-      {/* ADM-Sync-Status: persistenter Cursor pro Connection (keine Secrets). */}
       <Card>
         <CardHeader>
-          <CardTitle>ADM-Sync Status</CardTitle>
-          <CardDesc>Persistenter Cursor pro Verbindung — Spielzeit-Rewards gehen ueber Restarts nicht verloren.</CardDesc>
+          <CardTitle>ADM-V2 Status</CardTitle>
+          <CardDesc>Per-Server-Quelle und bytegenauer Cursor. Kein globales ADM-Verzeichnis und kein Legacy-Watcher.</CardDesc>
         </CardHeader>
         {adm.error && (
           <div role="alert" className="text-xs text-danger flex gap-2 mb-2"><AlertTriangle className="h-3.5 w-3.5 mt-0.5" /> {adm.error}</div>
@@ -102,39 +119,59 @@ export default function NitradoStatus() {
         {adm.data && (
           <>
             <div className="text-xs mb-3 flex flex-wrap gap-x-4 gap-y-1">
+              <span>Quelle: <strong className="text-ok">pro Server (V2)</strong></span>
+              <span className="text-muted">Poll: {adm.data.pollIntervalSec}s</span>
               <span>
-                NITRADO_ADM_DIR:{' '}
-                {adm.data.admDirConfigured
-                  ? <strong className="text-ok">gesetzt</strong>
-                  : <strong className="text-warn">nicht gesetzt (Sync passiv)</strong>}
+                Discord Death-/Baufeed:{' '}
+                {adm.data.publicGameplayFeedEnabled
+                  ? <strong className="text-ok">aktiv</strong>
+                  : <strong className="text-muted">noch gegated</strong>}
               </span>
-              <span className="text-muted">Intervall: {adm.data.intervalMin} min</span>
             </div>
             <table className="w-full text-xs">
               <thead className="text-muted">
                 <tr>
                   <th className="text-left">Alias</th>
                   <th className="text-left">Slot</th>
-                  <th className="text-left">Service-ID</th>
-                  <th className="text-left">Letzte ADM-Datei</th>
-                  <th className="text-left">Cursor (Datei-Zeit)</th>
-                  <th className="text-left">Aktualisiert</th>
+                  <th className="text-left">ADM-Quelle</th>
+                  <th className="text-left">Letzte Datei</th>
+                  <th className="text-left">Byte-Cursor</th>
+                  <th className="text-left">Status</th>
                 </tr>
               </thead>
               <tbody>
                 {adm.data.connections.length === 0 && (
                   <tr><td colSpan={6} className="text-muted py-2">Keine aktiven Verbindungen.</td></tr>
                 )}
-                {adm.data.connections.map(c => (
-                  <tr key={c.nitradoConnId} className="border-t border-border/20">
-                    <td className="py-1">{c.alias} <span className="text-muted font-mono">({c.alias5})</span></td>
-                    <td>{c.slot}</td>
-                    <td className="font-mono text-muted">{c.serviceId ?? <span className="text-warn">—</span>}</td>
-                    <td className="font-mono break-all">{c.cursor?.lastFileName ?? <span className="text-muted">—</span>}</td>
-                    <td className="text-muted">{c.cursor ? new Date(c.cursor.lastModifiedIso).toLocaleString() : <span className="text-warn">kein Cursor</span>}</td>
-                    <td className="text-muted">{c.cursor ? new Date(c.cursor.updatedAt).toLocaleString() : '—'}</td>
-                  </tr>
-                ))}
+                {adm.data.connections.map(c => {
+                  const sourceError = c.source?.lastError;
+                  const cursorError = c.cursor?.lastError;
+                  const statusError = sourceError || cursorError;
+                  return (
+                    <tr key={c.nitradoConnId} className="border-t border-border/20 align-top">
+                      <td className="py-1">{c.alias} <span className="text-muted font-mono">({c.alias5})</span></td>
+                      <td>{c.slot}</td>
+                      <td className="font-mono break-all">
+                        {c.source
+                          ? <>{c.source.profileDir}<div className="text-[10px] text-muted">{c.source.source}{c.source.timeZone ? ` · ${c.source.timeZone}` : ''}</div></>
+                          : <span className="text-warn">noch nicht erkannt</span>}
+                      </td>
+                      <td className="font-mono break-all">{c.cursor?.fileName ?? <span className="text-muted">—</span>}</td>
+                      <td className="text-muted">
+                        {c.cursor
+                          ? <>{c.cursor.processedByteOffset.toLocaleString()} / {c.cursor.lastKnownSize.toLocaleString()} B<div className="text-[10px]">{new Date(c.cursor.updatedAt).toLocaleString()}</div></>
+                          : <span className="text-warn">kein Cursor</span>}
+                      </td>
+                      <td>
+                        {statusError
+                          ? <span className="text-danger break-all">{statusError}</span>
+                          : c.source && c.cursor
+                            ? <span className="text-ok">bereit</span>
+                            : <span className="text-warn">initialisiert</span>}
+                      </td>
+                    </tr>
+                  );
+                })}
               </tbody>
             </table>
           </>

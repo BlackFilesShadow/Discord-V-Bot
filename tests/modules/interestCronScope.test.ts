@@ -17,12 +17,11 @@ jest.mock('../../src/utils/logger', () => ({
 
 import prisma from '../../src/database/prisma';
 import { runDailyInterestForServer } from '../../src/modules/economy/bankInterest';
-import { logger, logAudit } from '../../src/utils/logger';
+import { logAudit } from '../../src/utils/logger';
 import { runInterestSweepOnce } from '../../src/modules/economy/interestCron';
 
 const findMany = prisma.economyConfig.findMany as jest.Mock;
 const runInterest = runDailyInterestForServer as jest.Mock;
-const warn = logger.warn as jest.Mock;
 const audit = logAudit as jest.Mock;
 
 describe('interestCron gameserver scope', () => {
@@ -30,7 +29,7 @@ describe('interestCron gameserver scope', () => {
     jest.clearAllMocks();
   });
 
-  it('reicht Guild und nitradoConnId gemeinsam an den Tageslauf weiter', async () => {
+  it('fragt nur bereits servergescopte Configs ab und reicht den Scope weiter', async () => {
     findMany.mockResolvedValue([
       { guildId: 'g1', nitradoConnId: 'n1', bankInterestPercent: 5 },
     ]);
@@ -38,6 +37,14 @@ describe('interestCron gameserver scope', () => {
 
     await runInterestSweepOnce(new Date('2026-08-14T10:00:00.000Z'));
 
+    expect(findMany).toHaveBeenCalledWith({
+      where: {
+        enabled: true,
+        bankInterestPercent: { gt: 0 },
+        nitradoConnId: { not: null },
+      },
+      select: { guildId: true, nitradoConnId: true, bankInterestPercent: true },
+    });
     expect(runInterest).toHaveBeenCalledTimes(1);
     expect(runInterest).toHaveBeenCalledWith(
       prisma,
@@ -55,7 +62,7 @@ describe('interestCron gameserver scope', () => {
     );
   });
 
-  it('ueberspringt Legacy-Configs ohne Gameserver-Scope fail-closed', async () => {
+  it('fuehrt defensive NULL-Zeilen nicht aus, falls ein Mock/DB-Treiber den Filter verletzt', async () => {
     findMany.mockResolvedValue([
       { guildId: 'legacy-guild', nitradoConnId: null, bankInterestPercent: 5 },
     ]);
@@ -63,6 +70,5 @@ describe('interestCron gameserver scope', () => {
     await runInterestSweepOnce(new Date('2026-08-14T10:00:00.000Z'));
 
     expect(runInterest).not.toHaveBeenCalled();
-    expect(warn).toHaveBeenCalledWith(expect.stringContaining('ohne Gameserver-Scope'));
   });
 });

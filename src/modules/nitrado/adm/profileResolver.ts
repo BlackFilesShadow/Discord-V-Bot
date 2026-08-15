@@ -88,9 +88,10 @@ export async function recordAdmSourceError(scope: { id: string; guildId: string 
 }
 
 /**
- * Resolve the ADM directory once per Nitrado connection and persist it. Manual
- * config wins; AUTO entries are periodically revalidated and rediscovered when
- * invalid. The verification TTL avoids an extra Nitrado request every live tick.
+ * Loest das ADM-Verzeichnis strikt pro Nitrado-Connection auf und persistiert
+ * es. Manuelle Konfiguration gewinnt; AUTO-Eintraege werden periodisch
+ * revalidiert und bei Bedarf neu entdeckt. Eine globale ENV-Pfadquelle gibt es
+ * absichtlich nicht mehr.
  */
 export async function resolveAdmProfile(
   scope: AdmConnectionScope,
@@ -125,13 +126,11 @@ export async function resolveAdmProfile(
   }
 
   const info = await client.getGameserverInfo(scope.nitradoServerId);
-  const legacyEnv = cleanRemoteDir(process.env.NITRADO_ADM_DIR ?? '');
   const gamePath = cleanRemoteDir(info.path || '');
   const username = info.username.trim();
   const userRoot = username ? cleanRemoteDir(`/games/${username}`) : null;
 
   const candidates = unique([
-    legacyEnv,
     gamePath ? joinRemote(gamePath, 'logs') : null,
     userRoot ? joinRemote(userRoot, 'dayzstandalone/logs') : null,
     userRoot ? joinRemote(userRoot, 'dayzstandalone/profiles') : null,
@@ -147,14 +146,14 @@ export async function resolveAdmProfile(
       const entries = await client.listAdmFiles(scope.nitradoServerId, candidate);
       if (!firstExisting) firstExisting = candidate;
       if (entries.length > 0) {
-        return persistResolved(scope, candidate, candidate === legacyEnv ? 'LEGACY_ENV' : 'AUTO', existing?.timeZone ?? null);
+        return persistResolved(scope, candidate, 'AUTO', existing?.timeZone ?? null);
       }
     } catch {
       // Try next known DayZ layout.
     }
   }
   if (firstExisting) {
-    return persistResolved(scope, firstExisting, firstExisting === legacyEnv ? 'LEGACY_ENV' : 'AUTO', existing?.timeZone ?? null);
+    return persistResolved(scope, firstExisting, 'AUTO', existing?.timeZone ?? null);
   }
 
   const roots = unique([gamePath, userRoot, '/games']);
