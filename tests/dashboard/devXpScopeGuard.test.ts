@@ -105,6 +105,34 @@ describe('guardDevXpGuildObjects', () => {
     expect(res.status).not.toHaveBeenCalled();
   });
 
+  it('entfernt leere UI-Initialwerte aus PATCH statt bestehende XP-Scope-Werte still zu loeschen', async () => {
+    const body: Record<string, unknown> = {
+      messageXpMin: 20,
+      maxLevelRoleId: null,
+      allowedRoleIds: [],
+      allowedChannelIds: [],
+    };
+    const next = jest.fn() as NextFunction;
+    await guardDevXpGuildObjects(requestMock(`/xp/${GUILD}`, 'PATCH', body), responseMock(), next);
+    expect(next).toHaveBeenCalledTimes(1);
+    expect(body).toEqual({ messageXpMin: 20 });
+  });
+
+  it('erlaubt bewusstes Leeren nur mit expliziten Clear-Flags', async () => {
+    const body: Record<string, unknown> = {
+      maxLevelRoleId: null,
+      allowedRoleIds: [],
+      allowedChannelIds: [],
+      clearMaxLevelRoleId: true,
+      clearAllowedRoleIds: true,
+      clearAllowedChannelIds: true,
+    };
+    const next = jest.fn() as NextFunction;
+    await guardDevXpGuildObjects(requestMock(`/xp/${GUILD}`, 'PATCH', body), responseMock(), next);
+    expect(next).toHaveBeenCalledTimes(1);
+    expect(body).toEqual({ maxLevelRoleId: null, allowedRoleIds: [], allowedChannelIds: [] });
+  });
+
   it('blockiert fremde Rollen in allowedRoleIds', async () => {
     const next = jest.fn() as NextFunction;
     const res = responseMock();
