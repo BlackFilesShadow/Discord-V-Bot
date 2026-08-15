@@ -31,7 +31,8 @@ assert_status() {
   fi
 }
 
-# 1) Liveness
+# 1) Liveness + ausgelieferte Dashboard-Oberflaeche
+assert_status GET  /                                      200 "Dashboard-SPA"
 assert_status GET  /health                                200 "Liveness"
 
 # 2) Auth-Gates: alle geschuetzten Endpunkte muessen 401 (nicht 500) liefern
@@ -42,6 +43,7 @@ assert_status GET  /api/v2/dev/status/database            401 "Dev-Status DB ohn
 assert_status GET  /api/v2/dev/status/discord             401 "Dev-Status Discord ohne Login"
 assert_status GET  /api/v2/dev/status/nitrado             401 "Dev-Status Nitrado ohne Login"
 assert_status GET  /api/v2/dev/status/ai-providers        401 "Dev-Status AI-Providers ohne Login"
+assert_status GET  /api/v2/bot-admin/command-catalog      401 "BotAdmin-Katalog ohne Login"
 assert_status GET  /admin/users                           401 "Admin-API ohne Login"
 
 # 3) Health-Probes (oeffentlich)
