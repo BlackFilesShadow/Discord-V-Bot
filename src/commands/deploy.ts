@@ -5,10 +5,14 @@ import { loadCommands, deployCommandsScoped } from './handler';
 import { logger } from '../utils/logger';
 
 /**
- * Deploy-Script: Registriert alle Slash-Commands bei Discord – scope-getrennt.
- *  - GLOBAL: Admin-, Dev- und Manufacturer-Commands.
- *  - GUILD:  alle uebrigen Commands pro verbundener Guild.
- * Loggt sich kurz ein, um die aktuelle Guild-Liste zu erhalten.
+ * Deploy-Script: Registriert die aktuell geladenen Discord-Slash-Commands
+ * scope-getrennt.
+ *
+ * Globale Bot-Admin-/DEV-Verwaltungsfunktionen sind in das Web-Dashboard
+ * migriert und werden hier nicht mehr als Slash-Commands erzeugt. Globale
+ * Herstellerfunktionen (einschliesslich der bewusst erhaltenen
+ * dev-manufacturer-Ausnahme) bleiben erhalten. Alle weiteren Commands werden
+ * entsprechend ihrer Laufzeit-Klassifizierung guild-/global-gescoppt.
  */
 async function deploy(): Promise<void> {
   const client = new Client({
