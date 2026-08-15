@@ -10,9 +10,9 @@ describe('Bot-Admin compatibility safety overrides', () => {
   const validateRoute = read('src/dashboard/routes/v2/botAdminSafeValidation.ts');
   const validateService = read('src/modules/dashboard/safeUploadValidation.ts');
 
-  it('mountet sichere Validation und Hard-Delete vor dem Legacy BotAdmin-Router', () => {
+  it('mountet Safety-Overrides und Guild-Referenzguard vor dem Legacy BotAdmin-Router', () => {
     expect(routes).toContain(
-      "v2Router.use('/bot-admin', requireGlobalBotAdminIdentity, botAdminSafeValidationRouter, botAdminSafePackageDeleteRouter, botAdminRouter);",
+      "v2Router.use('/bot-admin', requireGlobalBotAdminIdentity, botAdminSafeValidationRouter, botAdminSafePackageDeleteRouter, guardBotAdminGuildReferences, botAdminRouter);",
     );
   });
 
@@ -21,13 +21,20 @@ describe('Bot-Admin compatibility safety overrides', () => {
     expect(validateRoute).toContain('safeValidateUpload(');
   });
 
-  it('erzwingt Upload-Root, Groessenlimit und Timeout vor persistierter Validierung', () => {
-    const rootCheck = validateService.indexOf('isInsideUploadRoot(upload.filePath)');
+  it('erzwingt lexikalischen und realen Upload-Root, Groessenlimit und Timeout vor persistierter Validierung', () => {
+    const lexicalRootCheck = validateService.indexOf('isInsideUploadRoot(upload.filePath)');
+    const realRootResolution = validateService.indexOf('realUploadRoot = await fs.realpath(config.upload.dir)');
+    const realFileResolution = validateService.indexOf('realFile = await fs.realpath(upload.filePath)');
+    const realRootCheck = validateService.indexOf('isInsideRoot(realFile, realUploadRoot)');
     const sizeCheck = validateService.indexOf('stat.size > MAX_VALIDATE_BYTES');
-    const timeout = validateService.indexOf('withTimeout(validateFile(upload.filePath)');
+    const timeout = validateService.indexOf('withTimeout(validateFile(realFile)');
     const transaction = validateService.indexOf('await prisma.$transaction');
-    expect(rootCheck).toBeGreaterThanOrEqual(0);
-    expect(sizeCheck).toBeGreaterThan(rootCheck);
+
+    expect(lexicalRootCheck).toBeGreaterThanOrEqual(0);
+    expect(realRootResolution).toBeGreaterThan(lexicalRootCheck);
+    expect(realFileResolution).toBeGreaterThan(realRootResolution);
+    expect(realRootCheck).toBeGreaterThan(realFileResolution);
+    expect(sizeCheck).toBeGreaterThan(realRootCheck);
     expect(timeout).toBeGreaterThan(sizeCheck);
     expect(transaction).toBeGreaterThan(timeout);
   });
