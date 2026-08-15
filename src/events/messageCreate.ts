@@ -561,7 +561,9 @@ const messageCreateEvent: BotEvent = {
           if (!hasAllowed) return;
         }
 
-        const cooldownSeconds = xpConfig?.xpCooldownSeconds || 60;
+        // Nullish defaults sind hier absichtlich: 0 ist fuer Cooldown, XP-Raten
+        // und Multiplikator ein gueltiger, vom DEV-Dashboard speicherbarer Wert.
+        const cooldownSeconds = xpConfig?.xpCooldownSeconds ?? 60;
 
         const levelData = await prisma.levelData.findUnique({
           where: { userId_guildId: { userId: user.id, guildId: msg.guildId! } },
@@ -575,10 +577,10 @@ const messageCreateEvent: BotEvent = {
           }
         }
 
-        const xpMin = xpConfig?.messageXpMin || 15;
-        const xpMax = xpConfig?.messageXpMax || 25;
+        const xpMin = xpConfig?.messageXpMin ?? 15;
+        const xpMax = xpConfig?.messageXpMax ?? 25;
         const xpAmount = Math.floor(Math.random() * (xpMax - xpMin + 1)) + xpMin;
-        const multiplier = xpConfig?.levelMultiplier || 1.0;
+        const multiplier = xpConfig?.levelMultiplier ?? 1.0;
         const totalXp = Math.floor(xpAmount * multiplier);
 
         const updated = await prisma.levelData.upsert({
