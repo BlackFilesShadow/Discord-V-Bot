@@ -27,6 +27,24 @@ describe('Bot-Admin Command-Center Safety', () => {
     expect(safety).toContain('hardDeletePackage(');
   });
 
+  it('erzwingt DELETE serverseitig fuer Einzeldatei, Paket-Hard-Delete und Bulk-Hard-Delete', () => {
+    expect(safety).toContain("function requireDeleteConfirmation(req: Request): boolean");
+    expect(safety).toContain("return req.body?.confirm === 'DELETE'");
+
+    const uploadDelete = safety.indexOf("delete('/uploads/:id'");
+    const packageDelete = safety.indexOf("delete('/packages/:id/hard'");
+    const bulkDelete = safety.indexOf("post('/users/:id/packages/delete'");
+    const uploadConfirm = safety.indexOf('if (!requireDeleteConfirmation(req))', uploadDelete);
+    const packageConfirm = safety.indexOf('if (!requireDeleteConfirmation(req))', packageDelete);
+    const bulkConfirm = safety.indexOf('if (hard && !requireDeleteConfirmation(req))', bulkDelete);
+
+    expect(uploadConfirm).toBeGreaterThan(uploadDelete);
+    expect(uploadConfirm).toBeLessThan(packageDelete);
+    expect(packageConfirm).toBeGreaterThan(packageDelete);
+    expect(packageConfirm).toBeLessThan(bulkDelete);
+    expect(bulkConfirm).toBeGreaterThan(bulkDelete);
+  });
+
   it('meldet Bulk-Hard-Delete-Teilfehler explizit statt Erfolg zu simulieren', () => {
     expect(safety).toContain("'BOTADMIN_BULK_HARD_DELETE_ABORTED'");
     expect(safety).toContain('failedPackageId');
