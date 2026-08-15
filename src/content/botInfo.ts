@@ -28,7 +28,7 @@ export function buildBotAboutText(): string {
     '🌐 **Dashboard** – Serververwaltung plus getrennte Bot-Admin- und DEV-Bereiche. Privilegierte Bot-Admin-/DEV-Werkzeuge werden dort verwaltet und nicht mehr als normale Discord-Slash-Commands angeboten.',
     '🏭 **Discord-Ausnahme Hersteller** – Hersteller-Workflows bleiben gezielt als Slash-Commands verfügbar.',
     '',
-    'Mit `/help` siehst du den **aktuell wirklich geladenen Discord-Command-Katalog**. Bot-Admin- und DEV-Funktionen werden dort bewusst nicht offengelegt.',
+    'Mit `/help` siehst du den **aktuell für Discord freigegebenen Command-Katalog**. Bot-Admin- und DEV-Funktionen werden dort bewusst nicht als Slash-Commands offengelegt.',
   ].join('\n');
 }
 
@@ -74,6 +74,6 @@ export function buildBotFeaturesText(): string {
     '• Hersteller-Funktionen sind die bewusste Ausnahme und bleiben in Discord',
     '',
     `**Entwickler:** ${BOT_DEVELOPER}`,
-    'Tipp: `/help` wird aus der Live-Command-Registry aufgebaut und zeigt deshalb nur Commands, die Discord aktuell wirklich anbietet.',
+    'Tipp: `/help` wird aus der Live-Registry plus Migrations-/Deploy-Regeln aufgebaut und zeigt deshalb nur Commands, die Discord tatsächlich anbieten soll.',
   ].join('\n');
 }
