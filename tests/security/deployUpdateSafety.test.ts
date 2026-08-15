@@ -42,8 +42,10 @@ describe('deploy/update.sh fail-closed invariants', () => {
     expect(start).toBeGreaterThan(status);
   });
 
-  it('erkennt den Discord-Login ueber einen stabilen Marker statt eines Produktnamens', () => {
-    expect(script).toContain('grep -q "eingeloggt als"');
+  it('erkennt den Discord-Login ueber einen stabilen Marker ohne pipefail-SIGPIPE-Risiko', () => {
+    expect(script).toContain('LOGIN_LOGS=$(docker compose logs --tail=160 "$COMPOSE_SERVICE" 2>/dev/null || true)');
+    expect(script).toContain('grep -Fq "eingeloggt als" <<<"$LOGIN_LOGS"');
+    expect(script).not.toContain('| grep -q "eingeloggt als"');
     expect(script).not.toContain('grep -q "Bot eingeloggt als"');
     expect(script).not.toContain('grep -q "V-Bot Prime eingeloggt als"');
   });
