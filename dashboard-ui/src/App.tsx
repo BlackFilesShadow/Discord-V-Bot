@@ -72,7 +72,6 @@ const DEV_PAGES: Record<string, () => JSX.Element> = {
   'debug-tools': DebugTools,
   'audit-logs': AuditLogs,
   'command-diag': CommandDiagnostics,
-  'command-center': CommandCenter,
   'killfeed': Killfeed,
   'player-tracking': PlayerTracking,
   'raid-analysis': RaidAnalysisTool,
@@ -103,6 +102,7 @@ export default function App() {
         <Route path="/bot-admin" element={<Protected><BotAdmin /></Protected>} />
         <Route path="/dev" element={<Protected><Dev /></Protected>}>
           <Route index element={<Navigate to="bot-status" replace />} />
+          <Route path="command-center" element={<CommandCenter />} />
           {DEV_TOOLS.map(t => {
             const Page = DEV_PAGES[t.slug];
             if (!Page) return null;
