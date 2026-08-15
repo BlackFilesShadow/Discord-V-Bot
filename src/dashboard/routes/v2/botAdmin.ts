@@ -2,13 +2,12 @@
  * Bot-Admin-Bereich (Dashboard) — GLOBALER, passwortgeschuetzter Support-Bereich.
  *
  * Analog zum DEV-Bereich, aber als eigene "Bot Admin"-Berechtigung:
- *   - Zugang ueber Passwort-Login (BOT_ADMIN_PASSWORD; Default "ASH" nur Entwicklung).
+ *   - Zugang ueber Passwort-Login (BOT_ADMIN_PASSWORD, Default "ASH").
  *   - Erfolgreicher Login erzeugt eine BotAdminSession (1h, zeit-/revoke-gesteuert).
  *   - Alle Daten-Routen verlangen `requireBotAdmin` (aktive Session).
  *   - KEIN Server-Bezug: der Bereich ist global (wie DEV). Guild-gebundene
- *     Unterbereiche (Feeds, Selfroles, Uebersetzungen, Wissensbank) erhalten
+ *     Unterbereiche (Feeds, Selfroles, Uebersetzungen, Level-Rollen) erhalten
  *     die Ziel-Guild per `?guildId=`/Body.
- *   - XP-Konfiguration ist DEV-only und wird hier nicht mehr implementiert.
  *
  * Routen:
  *   POST /login   { password }   -> BotAdminSession
@@ -38,7 +37,6 @@ import { isBlockedHost } from '../../../utils/ssrf';
 import { getMenuFull, publishMenu } from '../../../modules/selfrole/selfRoleMenu';
 import { closeTicket } from '../../../modules/ticket/ticketManager';
 import { translate } from '../../../modules/ai/translator';
-import { hardDeletePackage, HardDeletePackageError } from '../../../modules/packages/hardDeletePackage';
 import {
   listKnowledgeAdmin,
   addKnowledge,
@@ -134,6 +132,7 @@ botAdminRouter.post('/login', loginLimiter, async (req, res) => {
 
   const expected = resolveBotAdminPassword();
   if (expected === null) {
+    // Fail-closed: in Produktion ohne gesetztes BOT_ADMIN_PASSWORD kein Login.
     logAudit('BOTADMIN_LOGIN_NO_PASSWORD', 'SECURITY', { userId: req.auth.userId, ip: req.ip });
     res.status(503).json({ error: 'Bot-Admin ist nicht konfiguriert (BOT_ADMIN_PASSWORD fehlt).' });
     return;
@@ -147,6 +146,7 @@ botAdminRouter.post('/login', loginLimiter, async (req, res) => {
     return;
   }
   clearFails(key);
+  // Nur eine aktive Session pro User.
   await prisma.botAdminSession.updateMany({
     where: { userDiscordId: req.auth.discordId, revokedAt: null, expiresAt: { gt: new Date() } },
     data: { revokedAt: new Date() },
@@ -177,6 +177,7 @@ botAdminRouter.get('/status', async (req, res) => {
   res.json({ active: !!session, expiresAt: session?.expiresAt ?? null });
 });
 
+// Bot-Guilds (fuer guild-gebundene Unterbereiche). Nur id+name+memberCount.
 botAdminRouter.get('/guilds', ba, (_req, res) => {
   const client = tryGetDashboardClient();
   if (!client) { res.json({ items: [] }); return; }
@@ -186,6 +187,7 @@ botAdminRouter.get('/guilds', ba, (_req, res) => {
   res.json({ items });
 });
 
+// ── Helfer ────────────────────────────────────────────────────────────────
 function audit(
   req: Request,
   action: string,
@@ -209,6 +211,7 @@ function parsePage(req: Request): { page: number; pageSize: number; skip: number
   return { page, pageSize, skip: (page - 1) * pageSize };
 }
 
+/** Guild-ID aus Query oder Body lesen + validieren. Sendet 400 + return null bei Fehler. */
 function reqGuildId(req: Request, res: Response): string | null {
   const raw = req.query.guildId ?? (req.body as { guildId?: unknown } | undefined)?.guildId;
   const gid = typeof raw === 'string' ? raw : Array.isArray(raw) ? String(raw[0]) : '';
@@ -223,6 +226,9 @@ async function getBotConfig<T>(key: string, fallback: T): Promise<T> {
   return row ? (row.value as unknown as T) : fallback;
 }
 
+// ════════════════════════════════════════════════════════════════════════
+// ÜBERSICHT
+// ════════════════════════════════════════════════════════════════════════
 botAdminRouter.get('/overview', ba, async (_req, res) => {
   try {
     const since = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000);
@@ -237,10 +243,24 @@ botAdminRouter.get('/overview', ba, async (_req, res) => {
       ]);
 
     const [recentBroadcasts, recentExports, recentAdminActions, criticalWarnings] = await Promise.all([
-      prisma.auditLog.findMany({ where: { action: 'BOTADMIN_BROADCAST_SENT' }, orderBy: { createdAt: 'desc' }, take: 5, select: { id: true, action: true, details: true, createdAt: true } }),
-      prisma.auditLog.findMany({ where: { action: { startsWith: 'BOTADMIN_EXPORT_' } }, orderBy: { createdAt: 'desc' }, take: 5, select: { id: true, action: true, details: true, createdAt: true } }),
-      prisma.auditLog.findMany({ where: { category: 'ADMIN' }, orderBy: { createdAt: 'desc' }, take: 10, select: { id: true, action: true, actorId: true, details: true, createdAt: true } }),
-      prisma.securityEvent.count({ where: { severity: { in: ['HIGH', 'CRITICAL'] }, createdAt: { gte: since } } }),
+      prisma.auditLog.findMany({
+        where: { action: 'BOTADMIN_BROADCAST_SENT' },
+        orderBy: { createdAt: 'desc' }, take: 5,
+        select: { id: true, action: true, details: true, createdAt: true },
+      }),
+      prisma.auditLog.findMany({
+        where: { action: { startsWith: 'BOTADMIN_EXPORT_' } },
+        orderBy: { createdAt: 'desc' }, take: 5,
+        select: { id: true, action: true, details: true, createdAt: true },
+      }),
+      prisma.auditLog.findMany({
+        where: { category: 'ADMIN' },
+        orderBy: { createdAt: 'desc' }, take: 10,
+        select: { id: true, action: true, actorId: true, details: true, createdAt: true },
+      }),
+      prisma.securityEvent.count({
+        where: { severity: { in: ['HIGH', 'CRITICAL'] }, createdAt: { gte: since } },
+      }),
     ]);
 
     res.json({
@@ -254,20 +274,29 @@ botAdminRouter.get('/overview', ba, async (_req, res) => {
   }
 });
 
+// ════════════════════════════════════════════════════════════════════════
+// APPEALS
+// ════════════════════════════════════════════════════════════════════════
 botAdminRouter.get('/appeals', ba, async (req, res) => {
   const { page, pageSize, skip } = parsePage(req);
   const status = typeof req.query.status === 'string' ? req.query.status.toUpperCase() : undefined;
   const where = status && ['PENDING', 'APPROVED', 'DENIED', 'ESCALATED'].includes(status)
     ? { status: status as 'PENDING' | 'APPROVED' | 'DENIED' | 'ESCALATED' } : {};
   const [items, total] = await Promise.all([
-    prisma.appeal.findMany({ where, orderBy: { createdAt: 'desc' }, skip, take: pageSize, include: { user: { select: { id: true, discordId: true, username: true } }, case: { select: { id: true, reason: true, action: true } } } }),
+    prisma.appeal.findMany({
+      where, orderBy: { createdAt: 'desc' }, skip, take: pageSize,
+      include: { user: { select: { id: true, discordId: true, username: true } }, case: { select: { id: true, reason: true, action: true } } },
+    }),
     prisma.appeal.count({ where }),
   ]);
   res.json({ items, total, page, pageSize });
 });
 
 botAdminRouter.get('/appeals/:id', ba, async (req, res) => {
-  const appeal = await prisma.appeal.findUnique({ where: { id: String(req.params.id) }, include: { user: { select: { id: true, discordId: true, username: true } }, case: true } });
+  const appeal = await prisma.appeal.findUnique({
+    where: { id: String(req.params.id) },
+    include: { user: { select: { id: true, discordId: true, username: true } }, case: true },
+  });
   if (!appeal) { res.status(404).json({ error: 'Appeal nicht gefunden.' }); return; }
   res.json(appeal);
 });
@@ -275,15 +304,27 @@ botAdminRouter.get('/appeals/:id', ba, async (req, res) => {
 botAdminRouter.post('/appeals/:id/decision', ba, async (req, res) => {
   const decision = String(req.body?.decision ?? '').toUpperCase();
   const note = typeof req.body?.note === 'string' ? req.body.note.slice(0, 1000) : null;
-  if (!['APPROVED', 'DENIED', 'ESCALATED'].includes(decision)) { res.status(400).json({ error: 'decision muss APPROVED, DENIED oder ESCALATED sein.' }); return; }
+  if (!['APPROVED', 'DENIED', 'ESCALATED'].includes(decision)) {
+    res.status(400).json({ error: 'decision muss APPROVED, DENIED oder ESCALATED sein.' }); return;
+  }
   const appeal = await prisma.appeal.findUnique({ where: { id: String(req.params.id) } });
   if (!appeal) { res.status(404).json({ error: 'Appeal nicht gefunden.' }); return; }
-  const updated = await prisma.appeal.update({ where: { id: appeal.id }, data: { status: decision as 'APPROVED' | 'DENIED' | 'ESCALATED', reviewNote: note, reviewedBy: actor(req), reviewedAt: new Date() } });
-  if (decision === 'APPROVED') await prisma.moderationCase.update({ where: { id: appeal.caseId }, data: { isActive: false } }).catch(() => null);
+
+  const updated = await prisma.appeal.update({
+    where: { id: appeal.id },
+    data: { status: decision as 'APPROVED' | 'DENIED' | 'ESCALATED', reviewNote: note, reviewedBy: actor(req), reviewedAt: new Date() },
+  });
+  // Bei Genehmigung: zugehoerigen Moderations-Case aufheben.
+  if (decision === 'APPROVED') {
+    await prisma.moderationCase.update({ where: { id: appeal.caseId }, data: { isActive: false } }).catch(() => null);
+  }
   audit(req, 'BOTADMIN_APPEAL_DECISION', { appealId: appeal.id, decision }, { category: 'APPEAL', targetUserId: appeal.userId });
   res.json(updated);
 });
 
+// ════════════════════════════════════════════════════════════════════════
+// FEEDBACK
+// ════════════════════════════════════════════════════════════════════════
 botAdminRouter.get('/feedback', ba, async (req, res) => {
   const { page, pageSize, skip } = parsePage(req);
   const status = typeof req.query.status === 'string' ? req.query.status.toUpperCase() : undefined;
@@ -308,13 +349,22 @@ botAdminRouter.patch('/feedback/:id', ba, async (req, res) => {
   if (!['OPEN', 'IN_REVIEW', 'RESOLVED', 'WONTFIX'].includes(status)) { res.status(400).json({ error: 'Ungültiger status.' }); return; }
   const fb = await prisma.feedback.findUnique({ where: { id: String(req.params.id) } });
   if (!fb) { res.status(404).json({ error: 'Feedback nicht gefunden.' }); return; }
-  const updated = await prisma.feedback.update({ where: { id: fb.id }, data: { status: status as 'OPEN' | 'IN_REVIEW' | 'RESOLVED' | 'WONTFIX', adminNote, reviewedBy: actor(req), reviewedAt: new Date() } });
+  const updated = await prisma.feedback.update({
+    where: { id: fb.id },
+    data: { status: status as 'OPEN' | 'IN_REVIEW' | 'RESOLVED' | 'WONTFIX', adminNote, reviewedBy: actor(req), reviewedAt: new Date() },
+  });
   audit(req, 'BOTADMIN_FEEDBACK_UPDATE', { feedbackId: fb.id, status }, { category: 'ADMIN', targetUserId: fb.userId });
   res.json(updated);
 });
 
+// ════════════════════════════════════════════════════════════════════════
+// BROADCAST  (Massen-DM)
+// ════════════════════════════════════════════════════════════════════════
 botAdminRouter.get('/broadcast', ba, async (_req, res) => {
-  const recent = await prisma.auditLog.findMany({ where: { action: 'BOTADMIN_BROADCAST_SENT' }, orderBy: { createdAt: 'desc' }, take: 10, select: { id: true, details: true, createdAt: true } });
+  const recent = await prisma.auditLog.findMany({
+    where: { action: 'BOTADMIN_BROADCAST_SENT' }, orderBy: { createdAt: 'desc' }, take: 10,
+    select: { id: true, details: true, createdAt: true },
+  });
   res.json({ targets: ['ALL', 'MANUFACTURER', 'ADMIN', 'MODERATOR'], recent, maxRecipients: MAX_BROADCAST });
 });
 
@@ -324,14 +374,18 @@ botAdminRouter.post('/broadcast', ba, async (req, res) => {
   const dryRun = req.body?.dryRun === true;
   if (!['ALL', 'MANUFACTURER', 'ADMIN', 'MODERATOR'].includes(target)) { res.status(400).json({ error: 'Ungültige Zielgruppe.' }); return; }
   if (message.length < 1 || message.length > 1900) { res.status(400).json({ error: 'Nachricht 1..1900 Zeichen.' }); return; }
+
   const where: Record<string, unknown> = { status: 'ACTIVE' };
   if (target === 'MANUFACTURER') where.OR = [{ role: 'MANUFACTURER' }, { isManufacturer: true }];
   else if (target === 'ADMIN') where.role = 'ADMIN';
   else if (target === 'MODERATOR') where.role = 'MODERATOR';
+
   const users = await prisma.user.findMany({ where, select: { discordId: true }, take: MAX_BROADCAST });
   if (dryRun) { res.json({ dryRun: true, recipients: users.length, target }); return; }
+
   const client = tryGetDashboardClient();
   if (!client) { res.status(503).json({ error: 'Discord-Client nicht verfügbar.' }); return; }
+
   let sent = 0, failed = 0;
   for (const u of users) {
     try {
@@ -345,6 +399,9 @@ botAdminRouter.post('/broadcast', ba, async (req, res) => {
   res.json({ target, recipients: users.length, sent, failed });
 });
 
+// ════════════════════════════════════════════════════════════════════════
+// UPLOAD-STEUERUNG  (globaler Schalter)
+// ════════════════════════════════════════════════════════════════════════
 botAdminRouter.get('/upload', ba, async (_req, res) => {
   const [enabled, maxSize, allowedTypes] = await Promise.all([
     getBotConfig<boolean>('upload.enabled', true),
@@ -356,11 +413,18 @@ botAdminRouter.get('/upload', ba, async (_req, res) => {
 
 botAdminRouter.post('/upload/toggle', ba, async (req, res) => {
   const enable = req.body?.enable === true;
-  await prisma.botConfig.upsert({ where: { key: 'upload.enabled' }, update: { value: enable as never, updatedBy: actor(req) }, create: { key: 'upload.enabled', value: enable as never, category: 'upload', updatedBy: actor(req) } });
+  await prisma.botConfig.upsert({
+    where: { key: 'upload.enabled' },
+    update: { value: enable as never, updatedBy: actor(req) },
+    create: { key: 'upload.enabled', value: enable as never, category: 'upload', updatedBy: actor(req) },
+  });
   audit(req, 'BOTADMIN_UPLOAD_TOGGLE', { enabled: enable }, { category: 'CONFIG' });
   res.json({ enabled: enable });
 });
 
+// ════════════════════════════════════════════════════════════════════════
+// EXPORT
+// ════════════════════════════════════════════════════════════════════════
 botAdminRouter.get('/export', ba, async (_req, res) => {
   res.json({ types: ['packages', 'logs', 'users'] });
 });
@@ -368,6 +432,7 @@ botAdminRouter.get('/export', ba, async (_req, res) => {
 botAdminRouter.post('/export', ba, async (req, res) => {
   const type = String(req.body?.type ?? '');
   if (!['packages', 'logs', 'users'].includes(type)) { res.status(400).json({ error: 'type muss packages, logs oder users sein.' }); return; }
+
   let data: unknown[];
   if (type === 'packages') {
     const rows = await prisma.package.findMany({ orderBy: { createdAt: 'desc' }, take: MAX_EXPORT_ROWS, include: { user: { select: { discordId: true, username: true } } } });
@@ -381,6 +446,9 @@ botAdminRouter.post('/export', ba, async (req, res) => {
   res.json({ type, rows: data.length, data });
 });
 
+// ════════════════════════════════════════════════════════════════════════
+// VALIDIERUNG
+// ════════════════════════════════════════════════════════════════════════
 botAdminRouter.get('/validate', ba, async (req, res) => {
   const { page, pageSize, skip } = parsePage(req);
   const [pending, recent, total] = await Promise.all([
@@ -400,7 +468,9 @@ botAdminRouter.post('/validate', ba, async (req, res) => {
     const report = await validateFile(upload.filePath);
     const status = report.isValid ? 'VALID' : 'INVALID';
     await prisma.upload.update({ where: { id: upload.id }, data: { validationStatus: status, isValid: report.isValid } });
-    await prisma.validationResult.create({ data: { uploadId: upload.id, packageId: upload.packageId, isValid: report.isValid, errors: report.errors as never, warnings: report.warnings as never, suggestions: report.suggestions as never, validatedBy: actor(req) } });
+    await prisma.validationResult.create({
+      data: { uploadId: upload.id, packageId: upload.packageId, isValid: report.isValid, errors: report.errors as never, warnings: report.warnings as never, suggestions: report.suggestions as never, validatedBy: actor(req) },
+    });
     audit(req, 'BOTADMIN_VALIDATE', { uploadId: upload.id, isValid: report.isValid }, { category: 'UPLOAD' });
     res.json({ uploadId: upload.id, report });
   } catch (e) {
@@ -409,6 +479,9 @@ botAdminRouter.post('/validate', ba, async (req, res) => {
   }
 });
 
+// ════════════════════════════════════════════════════════════════════════
+// PAKETE
+// ════════════════════════════════════════════════════════════════════════
 botAdminRouter.get('/packages', ba, async (req, res) => {
   const { page, pageSize, skip } = parsePage(req);
   const status = typeof req.query.status === 'string' ? req.query.status.toUpperCase() : undefined;
@@ -424,7 +497,10 @@ botAdminRouter.get('/packages', ba, async (req, res) => {
 });
 
 botAdminRouter.get('/packages/:id', ba, async (req, res) => {
-  const pkg = await prisma.package.findUnique({ where: { id: String(req.params.id) }, include: { user: { select: { discordId: true, username: true } }, files: { select: { id: true, fileName: true, originalName: true, fileSize: true, validationStatus: true, isQuarantined: true, isDeleted: true } } } });
+  const pkg = await prisma.package.findUnique({
+    where: { id: String(req.params.id) },
+    include: { user: { select: { discordId: true, username: true } }, files: { select: { id: true, fileName: true, originalName: true, fileSize: true, validationStatus: true, isQuarantined: true, isDeleted: true } } },
+  });
   if (!pkg) { res.status(404).json({ error: 'Paket nicht gefunden.' }); return; }
   res.json({ ...pkg, totalSize: pkg.totalSize.toString(), files: pkg.files.map((f) => ({ ...f, fileSize: f.fileSize.toString() })) });
 });
@@ -447,15 +523,15 @@ botAdminRouter.post('/packages/:id/restore', ba, async (req, res) => {
   res.json({ ...updated, totalSize: updated.totalSize.toString() });
 });
 
+// Loeschen (Soft-Delete; ?hard=true entfernt DB-Datensatz endgueltig — UI verlangt Confirm)
 botAdminRouter.delete('/packages/:id', ba, async (req, res) => {
   const hard = req.query.hard === 'true';
   const pkg = await prisma.package.findUnique({ where: { id: String(req.params.id) } });
   if (!pkg) { res.status(404).json({ error: 'Paket nicht gefunden.' }); return; }
   if (hard) {
-    // Dieser Zweig wird im echten v2-Mount vom vorgeschalteten
-    // botAdminSafePackageDeleteRouter uebernommen. Er bleibt nur als defensive
-    // Legacy-Fallback-Semantik erhalten und entfernt deshalb nie Dateien direkt.
-    res.status(409).json({ error: 'Hard-Delete muss ueber den sicheren Delete-Pfad ausgefuehrt werden.' });
+    await prisma.package.delete({ where: { id: pkg.id } }); // Cascade entfernt Uploads
+    audit(req, 'BOTADMIN_PACKAGE_HARD_DELETE', { packageId: pkg.id, name: pkg.name }, { category: 'ADMIN' });
+    res.json({ deleted: true, hard: true });
     return;
   }
   await prisma.package.update({ where: { id: pkg.id }, data: { isDeleted: true, deletedAt: new Date(), deletedBy: actor(req), status: 'DELETED' } });
@@ -463,6 +539,9 @@ botAdminRouter.delete('/packages/:id', ba, async (req, res) => {
   res.json({ deleted: true, hard: false });
 });
 
+// ════════════════════════════════════════════════════════════════════════
+// NUTZER
+// ════════════════════════════════════════════════════════════════════════
 botAdminRouter.get('/users', ba, async (req, res) => {
   const { page, pageSize, skip } = parsePage(req);
   const filter = typeof req.query.filter === 'string' ? req.query.filter.toUpperCase() : 'ALL';
@@ -481,7 +560,10 @@ botAdminRouter.get('/users', ba, async (req, res) => {
 });
 
 botAdminRouter.get('/users/:id', ba, async (req, res) => {
-  const user = await prisma.user.findUnique({ where: { id: String(req.params.id) }, select: { id: true, discordId: true, username: true, role: true, status: true, isManufacturer: true, manufacturerApprovedAt: true, manufacturerApprovedBy: true, createdAt: true, updatedAt: true, _count: { select: { packages: true } } } });
+  const user = await prisma.user.findUnique({
+    where: { id: String(req.params.id) },
+    select: { id: true, discordId: true, username: true, role: true, status: true, isManufacturer: true, manufacturerApprovedAt: true, manufacturerApprovedBy: true, createdAt: true, updatedAt: true, _count: { select: { packages: true } } },
+  });
   if (!user) { res.status(404).json({ error: 'Nutzer nicht gefunden.' }); return; }
   res.json(user);
 });
@@ -502,12 +584,17 @@ botAdminRouter.post('/users/:id/manufacturer', ba, async (req, res) => {
   const user = await prisma.user.findUnique({ where: { id: String(req.params.id) } });
   if (!user) { res.status(404).json({ error: 'Nutzer nicht gefunden.' }); return; }
   if (!['APPROVE', 'DENY'].includes(decision)) { res.status(400).json({ error: 'decision muss APPROVE oder DENY sein.' }); return; }
-  const result = decision === 'APPROVE' ? await approveManufacturer(user.discordId, actor(req)) : await denyManufacturer(user.discordId, actor(req), note);
+  const result = decision === 'APPROVE'
+    ? await approveManufacturer(user.discordId, actor(req))
+    : await denyManufacturer(user.discordId, actor(req), note);
   if (!result.success) { res.status(400).json({ error: result.message }); return; }
   audit(req, 'BOTADMIN_USER_MANUFACTURER', { decision }, { category: 'REGISTRATION', targetUserId: user.id });
+  // Bei Approve enthaelt result ein Einmal-Passwort (OTP) — bewusst EINMALIG an den Admin
+  // zurueckgegeben. Kein dauerhaftes Secret.
   res.json({ success: true, message: result.message, otp: decision === 'APPROVE' ? (result as { otp?: string }).otp : undefined });
 });
 
+// Passwort-Reset — OTP wird EINMALIG zurueckgegeben (UI verlangt Confirm).
 botAdminRouter.post('/users/:id/reset-password', ba, async (req, res) => {
   const expiryMinutes = Math.min(1440, Math.max(5, parseInt(String(req.body?.expiryMinutes ?? 30), 10) || 30));
   const user = await prisma.user.findUnique({ where: { id: String(req.params.id) } });
@@ -521,6 +608,9 @@ botAdminRouter.post('/users/:id/reset-password', ba, async (req, res) => {
   res.json({ success: true, otp, expiresAt });
 });
 
+// ════════════════════════════════════════════════════════════════════════
+// TICKETS  (Bot-Support-Tickets)
+// ════════════════════════════════════════════════════════════════════════
 botAdminRouter.get('/tickets', ba, async (req, res) => {
   const { page, pageSize, skip } = parsePage(req);
   const status = typeof req.query.status === 'string' ? req.query.status.toUpperCase() : undefined;
@@ -549,6 +639,9 @@ botAdminRouter.post('/tickets/:id/close', ba, async (req, res) => {
   res.json({ success: true, message: result.message });
 });
 
+// ════════════════════════════════════════════════════════════════════════
+// SELFROLES  (guild-gebunden — guildId per Query/Body)
+// ════════════════════════════════════════════════════════════════════════
 botAdminRouter.get('/selfroles', ba, async (req, res) => {
   const guildId = reqGuildId(req, res); if (!guildId) return;
   const menus = await prisma.selfRoleMenu.findMany({ where: { guildId }, orderBy: { createdAt: 'desc' }, include: { options: { orderBy: { position: 'asc' } } } });
@@ -641,14 +734,27 @@ botAdminRouter.delete('/selfroles/:id', ba, async (req, res) => {
   res.json({ deleted: true });
 });
 
+// ════════════════════════════════════════════════════════════════════════
+// WISSENSBANK  (guild-gebunden — AI-Knowledge-Snippets + Persona/Brief)
+// ════════════════════════════════════════════════════════════════════════
 botAdminRouter.get('/knowledge', ba, async (req, res) => {
   const guildId = reqGuildId(req, res); if (!guildId) return;
   try {
     const [items, profile] = await Promise.all([
       listKnowledgeAdmin(guildId),
-      prisma.guildProfile.findUnique({ where: { guildId }, select: { aiPersonaOverride: true, aiBrief: true, aiBriefAt: true } }),
+      prisma.guildProfile.findUnique({
+        where: { guildId },
+        select: { aiPersonaOverride: true, aiBrief: true, aiBriefAt: true },
+      }),
     ]);
-    res.json({ items, persona: profile?.aiPersonaOverride ?? null, brief: profile?.aiBrief ?? null, briefAt: profile?.aiBriefAt ?? null, activeCount: items.filter((i) => i.isActive).length, maxSnippets: 50 });
+    res.json({
+      items,
+      persona: profile?.aiPersonaOverride ?? null,
+      brief: profile?.aiBrief ?? null,
+      briefAt: profile?.aiBriefAt ?? null,
+      activeCount: items.filter((i) => i.isActive).length,
+      maxSnippets: 50,
+    });
   } catch (e) {
     logger.error('botAdmin knowledge list', { err: (e as Error).message });
     res.status(500).json({ error: 'Wissensbank konnte nicht geladen werden.' });
@@ -736,9 +842,13 @@ botAdminRouter.post('/knowledge/brief/regenerate', ba, async (req, res) => {
   res.json({ brief });
 });
 
+// ════════════════════════════════════════════════════════════════════════
+// FEEDS  (guild-gebunden)
+// ════════════════════════════════════════════════════════════════════════
 botAdminRouter.get('/feeds', ba, async (req, res) => {
   const guildId = reqGuildId(req, res); if (!guildId) return;
   const feeds = await prisma.feed.findMany({ where: { guildId }, orderBy: { createdAt: 'desc' } });
+  // webhookSecret NIE ausgeben.
   res.json({ items: feeds.map(({ webhookSecret: _omit, ...rest }) => rest) });
 });
 
@@ -753,11 +863,18 @@ botAdminRouter.post('/feeds', ba, async (req, res) => {
   if (!['RSS', 'TWITCH', 'TWITTER', 'STEAM', 'NEWS', 'WEBHOOK', 'CUSTOM'].includes(feedType)) { res.status(400).json({ error: 'Ungültiger feedType.' }); return; }
   if (!SNOWFLAKE_RE.test(channelId)) { res.status(400).json({ error: 'Ungültige channelId.' }); return; }
   if (!url || url.length > 2000) { res.status(400).json({ error: 'Ungültige url.' }); return; }
+  // SSRF-Schutz (analog feeds.ts): URL-basierte Quellen duerfen nur http(s) und
+  // keine lokalen/privaten Hosts sein. Name-/ID-basierte Typen (TWITCH/STEAM)
+  // enthalten kein Schema und bleiben unberuehrt.
   if (url.includes('://')) {
     let parsed: URL;
     try { parsed = new URL(url); } catch { res.status(400).json({ error: 'Ungültige url.' }); return; }
-    if (!['http:', 'https:'].includes(parsed.protocol)) { res.status(400).json({ error: 'Nur http:// oder https:// URLs erlaubt.' }); return; }
-    if (isBlockedHost(parsed.hostname)) { res.status(400).json({ error: 'Lokale/private Hosts sind nicht erlaubt (SSRF-Schutz).' }); return; }
+    if (!['http:', 'https:'].includes(parsed.protocol)) {
+      res.status(400).json({ error: 'Nur http:// oder https:// URLs erlaubt.' }); return;
+    }
+    if (isBlockedHost(parsed.hostname)) {
+      res.status(400).json({ error: 'Lokale/private Hosts sind nicht erlaubt (SSRF-Schutz).' }); return;
+    }
   }
   const id = await createFeed(name, feedType, url, channelId, interval, actor(req), guildId);
   audit(req, 'BOTADMIN_FEED_CREATE', { feedId: id, feedType, channelId }, { category: 'FEED', channelId, guildId });
@@ -782,6 +899,9 @@ botAdminRouter.delete('/feeds/:id', ba, async (req, res) => {
   res.json({ deleted: true });
 });
 
+// ════════════════════════════════════════════════════════════════════════
+// ÜBERSETZUNGEN  (guild-gebunden)
+// ════════════════════════════════════════════════════════════════════════
 const LANGS = ['de', 'en', 'fr', 'ar', 'ko', 'es', 'it', 'pt', 'ru', 'tr'];
 
 botAdminRouter.get('/translate', ba, async (req, res) => {
@@ -801,7 +921,9 @@ botAdminRouter.post('/translate', ba, async (req, res) => {
   if (!SNOWFLAKE_RE.test(channelId)) { res.status(400).json({ error: 'Ungültige channelId.' }); return; }
   const translated = await translate(sourceText, targetLang);
   if (!translated) { res.status(502).json({ error: 'Übersetzung fehlgeschlagen (AI nicht verfügbar).' }); return; }
-  const post = await prisma.translatedPost.create({ data: { guildId, channelId, createdBy: actor(req), sourceText, sourceLang: 'auto', targetLang, translatedText: translated, customTitle, mode: 'now' } });
+  const post = await prisma.translatedPost.create({
+    data: { guildId, channelId, createdBy: actor(req), sourceText, sourceLang: 'auto', targetLang, translatedText: translated, customTitle, mode: 'now' },
+  });
   audit(req, 'BOTADMIN_TRANSLATE_CREATE', { postId: post.id, targetLang, channelId }, { category: 'AI', channelId, guildId });
   res.status(201).json(post);
 });
@@ -815,62 +937,99 @@ botAdminRouter.delete('/translate/:id', ba, async (req, res) => {
   res.json({ deleted: true });
 });
 
+// ════════════════════════════════════════════════════════════════════════
+// XP-SYSTEM  (XpConfig global; LevelRole guild-gebunden)
+// ════════════════════════════════════════════════════════════════════════
+async function getOrCreateXpConfig() {
+  const existing = await prisma.xpConfig.findFirst();
+  if (existing) return existing;
+  return prisma.xpConfig.create({ data: {} });
+}
+
+botAdminRouter.get('/xp', ba, async (req, res) => {
+  // levelRoles sind guild-gebunden; nur abrufen, wenn guildId mitgegeben (sonst leer).
+  const rawGid = typeof req.query.guildId === 'string' ? req.query.guildId : '';
+  const guildId = SNOWFLAKE_RE.test(rawGid) ? rawGid : null;
+  const [config, levelRoles] = await Promise.all([
+    getOrCreateXpConfig(),
+    guildId ? prisma.levelRole.findMany({ where: { guildId }, orderBy: { level: 'asc' } }) : Promise.resolve([]),
+  ]);
+  res.json({ config, levelRoles });
+});
+
+botAdminRouter.patch('/xp', ba, async (req, res) => {
+  const config = await getOrCreateXpConfig();
+  const data: Record<string, unknown> = {};
+  const numFields: Array<[string, number, number]> = [
+    ['messageXpMin', 0, 1000], ['messageXpMax', 0, 1000], ['voiceXpPerMinute', 0, 1000],
+    ['eventXpBonus', 0, 10000], ['xpCooldownSeconds', 0, 86400], ['maxLevel', 1, 1000],
+  ];
+  for (const [field, min, max] of numFields) {
+    if (req.body?.[field] !== undefined) {
+      const v = parseInt(String(req.body[field]), 10);
+      if (!Number.isInteger(v) || v < min || v > max) { res.status(400).json({ error: `${field} muss ${min}..${max} sein.` }); return; }
+      data[field] = v;
+    }
+  }
+  if (req.body?.levelMultiplier !== undefined) {
+    const v = Number(req.body.levelMultiplier);
+    if (!Number.isFinite(v) || v <= 0 || v > 100) { res.status(400).json({ error: 'levelMultiplier 0..100.' }); return; }
+    data.levelMultiplier = v;
+  }
+  if (req.body?.isActive !== undefined) data.isActive = req.body.isActive === true;
+  if (req.body?.maxLevelRoleId !== undefined) {
+    const r = req.body.maxLevelRoleId;
+    if (r !== null && !SNOWFLAKE_RE.test(String(r))) { res.status(400).json({ error: 'Ungültige maxLevelRoleId.' }); return; }
+    data.maxLevelRoleId = r === null ? null : String(r);
+  }
+  const updated = await prisma.xpConfig.update({ where: { id: config.id }, data });
+  audit(req, 'BOTADMIN_XP_UPDATE', { fields: Object.keys(data) }, { category: 'LEVEL' });
+  res.json(updated);
+});
+
+botAdminRouter.post('/xp/level-roles', ba, async (req, res) => {
+  const guildId = reqGuildId(req, res); if (!guildId) return;
+  const level = parseInt(String(req.body?.level ?? ''), 10);
+  const roleId = String(req.body?.roleId ?? '');
+  if (!Number.isInteger(level) || level < 1 || level > 1000) { res.status(400).json({ error: 'level 1..1000.' }); return; }
+  if (!SNOWFLAKE_RE.test(roleId)) { res.status(400).json({ error: 'Ungültige roleId.' }); return; }
+  try {
+    const lr = await prisma.levelRole.create({ data: { guildId, level, roleId } });
+    audit(req, 'BOTADMIN_XP_LEVELROLE_ADD', { level, roleId }, { category: 'LEVEL', guildId });
+    res.status(201).json(lr);
+  } catch (e) {
+    if ((e as { code?: string }).code === 'P2002') { res.status(409).json({ error: 'Für dieses Level existiert bereits eine Rolle.' }); return; }
+    throw e;
+  }
+});
+
+botAdminRouter.delete('/xp/level-roles/:id', ba, async (req, res) => {
+  const guildId = reqGuildId(req, res); if (!guildId) return;
+  await prisma.levelRole.deleteMany({ where: { id: String(req.params.id), guildId } });
+  audit(req, 'BOTADMIN_XP_LEVELROLE_REMOVE', { id: String(req.params.id) }, { category: 'LEVEL', guildId });
+  res.json({ deleted: true });
+});
+
+// ════════════════════════════════════════════════════════════════════════
+// GEFAHRENZONE
+// ════════════════════════════════════════════════════════════════════════
 botAdminRouter.get('/danger', ba, async (_req, res) => {
   const [softDeletedPackages, suspendedUsers, recentDangerActions] = await Promise.all([
     prisma.package.count({ where: { isDeleted: true } }),
     prisma.user.count({ where: { status: 'SUSPENDED' } }),
-    prisma.auditLog.findMany({ where: { action: { in: ['BOTADMIN_PACKAGE_HARD_DELETE', 'BOTADMIN_USER_RESET_PASSWORD', 'BOTADMIN_DANGER_PURGE_PACKAGES', 'BOTADMIN_BROADCAST_SENT'] } }, orderBy: { createdAt: 'desc' }, take: 20, select: { id: true, action: true, actorId: true, details: true, createdAt: true } }),
+    prisma.auditLog.findMany({
+      where: { action: { in: ['BOTADMIN_PACKAGE_HARD_DELETE', 'BOTADMIN_USER_RESET_PASSWORD', 'BOTADMIN_DANGER_PURGE_PACKAGES', 'BOTADMIN_BROADCAST_SENT'] } },
+      orderBy: { createdAt: 'desc' }, take: 20,
+      select: { id: true, action: true, actorId: true, details: true, createdAt: true },
+    }),
   ]);
   res.json({ softDeletedPackages, suspendedUsers, recentDangerActions });
 });
 
+// Endgueltiges Loeschen aller soft-geloeschten Pakete. Confirm "DELETE" erforderlich.
 botAdminRouter.post('/danger/purge-deleted-packages', ba, async (req, res) => {
   if (req.body?.confirm !== 'DELETE') { res.status(400).json({ error: 'Bestätigung "DELETE" erforderlich.' }); return; }
-
-  const packages = await prisma.package.findMany({
-    where: { isDeleted: true },
-    select: { id: true },
-    orderBy: { createdAt: 'asc' },
-  });
-  let purged = 0;
-  let filesRemoved = 0;
-  let filesAlreadyMissing = 0;
-
-  for (const pkg of packages) {
-    try {
-      const result = await hardDeletePackage(pkg.id);
-      purged += 1;
-      filesRemoved += result.filesRemoved;
-      filesAlreadyMissing += result.filesAlreadyMissing;
-    } catch (error) {
-      const status = error instanceof HardDeletePackageError ? error.status : 500;
-      audit(req, 'BOTADMIN_DANGER_PURGE_ABORTED', {
-        failedPackageId: pkg.id,
-        purged,
-        total: packages.length,
-        filesRemoved,
-        filesAlreadyMissing,
-        error: error instanceof Error ? error.message : String(error),
-      }, { category: 'ADMIN' });
-      res.status(status).json({
-        error: error instanceof HardDeletePackageError
-          ? error.message
-          : 'Purge abgebrochen: Paket konnte nicht sicher physisch entfernt werden.',
-        partial: purged > 0,
-        failedPackageId: pkg.id,
-        purged,
-        total: packages.length,
-        filesRemoved,
-        filesAlreadyMissing,
-      });
-      return;
-    }
-  }
-
-  audit(req, 'BOTADMIN_DANGER_PURGE_PACKAGES', {
-    count: purged,
-    filesRemoved,
-    filesAlreadyMissing,
-  }, { category: 'ADMIN' });
-  res.json({ purged, filesRemoved, filesAlreadyMissing });
+  const result = await prisma.package.deleteMany({ where: { isDeleted: true } });
+  audit(req, 'BOTADMIN_DANGER_PURGE_PACKAGES', { count: result.count }, { category: 'ADMIN' });
+  res.json({ purged: result.count });
 });
