@@ -39,8 +39,10 @@ import { devNitradoMirrorRouter } from './v2/devNitradoMirror';
 import { devIncidentRouter } from './v2/devIncident';
 import { devObservabilityRouter } from './v2/devObservability';
 import { devStubsRouter } from './v2/devStubs';
+import { devCommandCenterRouter } from './v2/devCommandCenter';
 import { auditRouter } from './v2/audit';
 import { botAdminRouter } from './v2/botAdmin';
+import { botAdminCommandCenterRouter } from './v2/botAdminCommandCenter';
 import { commandCatalogRouter } from './v2/commandCatalog';
 
 export const v2Router = Router();
@@ -82,9 +84,11 @@ v2Router.use('/dev/nitrado-mirror', requireGlobalDeveloperIdentity, devNitradoMi
 v2Router.use('/dev/incident', requireGlobalDeveloperIdentity, devIncidentRouter);
 v2Router.use('/dev/observability', requireGlobalDeveloperIdentity, devObservabilityRouter);
 v2Router.use('/dev/stubs', requireGlobalDeveloperIdentity, devStubsRouter);
+v2Router.use('/dev/command-center', requireGlobalDeveloperIdentity, devCommandCenterRouter);
 
 // Discord-/Dashboard-Paritaet: exakt derselbe Live-Katalog wie /help.
 v2Router.use('/bot-admin/command-catalog', requireGlobalBotAdminIdentity, commandCatalogRouter);
+v2Router.use('/bot-admin/command-center', requireGlobalBotAdminIdentity, botAdminCommandCenterRouter);
 
 // Bot-Admin: Shared Password = Step-up, NICHT Identitaet/Berechtigung.
 v2Router.use('/bot-admin', requireGlobalBotAdminIdentity, botAdminRouter);
