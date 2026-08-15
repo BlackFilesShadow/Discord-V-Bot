@@ -29,17 +29,43 @@ async function hasManagePermission(btn: ButtonInteraction): Promise<boolean> {
   }
 }
 
+function responseEmbed(
+  state: 'SUCCESS' | 'ERROR' | 'INFO',
+  title: string,
+  description: string,
+): EmbedBuilder {
+  const color = state === 'SUCCESS' ? Colors.Success : state === 'ERROR' ? Colors.Error : 0x5865F2;
+  return new EmbedBuilder()
+    .setColor(color)
+    .setTitle(state === 'INFO' ? title : statusTitle(state, title))
+    .setDescription(description)
+    .setTimestamp();
+}
+
+async function replyEphemeral(btn: ButtonInteraction, embed: EmbedBuilder): Promise<void> {
+  await btn.reply({ embeds: [embed], flags: MessageFlags.Ephemeral, allowedMentions: { parse: [] } });
+}
+
+async function followUpEphemeral(btn: ButtonInteraction, embed: EmbedBuilder): Promise<void> {
+  await btn.followUp({ embeds: [embed], flags: MessageFlags.Ephemeral, allowedMentions: { parse: [] } }).catch(() => null);
+}
+
 export async function handleWhitelistApprovalButton(btn: ButtonInteraction): Promise<void> {
   const isApprove = btn.customId.startsWith('wlreq:a:');
+  const isDeny = btn.customId.startsWith('wlreq:d:');
+  if (!isApprove && !isDeny) {
+    await replyEphemeral(btn, responseEmbed('ERROR', 'Ungueltige Aktion', 'Diese Whitelist-Aktion ist nicht gueltig.'));
+    return;
+  }
   const requestId = btn.customId.slice('wlreq:a:'.length);
 
   if (!(await hasManagePermission(btn))) {
-    await btn.reply({ content: 'Du hast keine Berechtigung fuer Whitelist-Entscheidungen.', flags: MessageFlags.Ephemeral });
+    await replyEphemeral(btn, responseEmbed('ERROR', 'Keine Berechtigung', 'Du hast keine Berechtigung fuer Whitelist-Entscheidungen.'));
     return;
   }
 
   if (!btn.guildId) {
-    await btn.reply({ content: 'Diese Aktion ist nur in einem Server moeglich.', flags: MessageFlags.Ephemeral });
+    await replyEphemeral(btn, responseEmbed('ERROR', 'Server erforderlich', 'Diese Aktion ist nur auf einem Discord-Server moeglich.'));
     return;
   }
 
@@ -47,44 +73,84 @@ export async function handleWhitelistApprovalButton(btn: ButtonInteraction): Pro
     where: { id: requestId, guildId: btn.guildId },
   });
   if (!reqRow) {
-    await btn.reply({ content: 'Anfrage nicht gefunden (vielleicht schon entfernt).', flags: MessageFlags.Ephemeral });
+    await replyEphemeral(btn, responseEmbed('ERROR', 'Anfrage nicht gefunden', 'Die Anfrage wurde entfernt oder existiert nicht mehr.'));
     return;
   }
 
   await btn.deferUpdate();
 
   try {
-    const cas = await prisma.whitelistRequest.updateMany({
-      where: { id: requestId, guildId: reqRow.guildId, status: 'PENDING' },
-      data: {
-        status: isApprove ? 'APPROVED' : 'DENIED',
-        decidedByDiscordId: btn.user.id, decidedAt: new Date(),
-      },
+    const decidedAt = new Date();
+    const claimed = await prisma.$transaction(async tx => {
+      const cas = await tx.whitelistRequest.updateMany({
+        where: { id: requestId, guildId: reqRow.guildId, status: 'PENDING' },
+        data: {
+          status: isApprove ? 'APPROVED' : 'DENIED',
+          decidedByDiscordId: btn.user.id,
+          decidedAt,
+        },
+      });
+      if (cas.count !== 1) return false;
+
+      if (isApprove) {
+        await tx.whitelistEntry.upsert({
+          where: {
+            guildId_nitradoConnId_gameId: {
+              guildId: reqRow.guildId,
+              nitradoConnId: reqRow.nitradoConnId,
+              gameId: reqRow.gameId,
+            },
+          },
+          update: {
+            source: 'REQUEST',
+            approvedByDiscordId: btn.user.id,
+            approvedAt: decidedAt,
+            syncState: 'LOCAL_ONLY',
+            lastSyncedAt: null,
+          },
+          create: {
+            guildId: reqRow.guildId,
+            nitradoConnId: reqRow.nitradoConnId,
+            gameId: reqRow.gameId,
+            source: 'REQUEST',
+            approvedByDiscordId: btn.user.id,
+          },
+        });
+        await tx.nitradoJob.create({
+          data: {
+            guildId: reqRow.guildId,
+            nitradoConnId: reqRow.nitradoConnId,
+            operation: 'WHITELIST_ADD',
+            payload: { gameId: reqRow.gameId },
+          },
+        });
+      }
+      return true;
     });
-    if (cas.count !== 1) {
-      await btn.followUp({ content: 'Diese Anfrage wurde bereits von jemand anderem bearbeitet.', flags: MessageFlags.Ephemeral }).catch(() => null);
+
+    if (!claimed) {
+      await followUpEphemeral(
+        btn,
+        responseEmbed('INFO', 'Anfrage bereits bearbeitet', 'Diese Anfrage wurde bereits von jemand anderem entschieden.'),
+      );
       await btn.message.edit({ components: [] }).catch(() => null);
       return;
     }
 
     if (isApprove) {
-      await prisma.whitelistEntry.upsert({
-        where: { guildId_nitradoConnId_gameId: { guildId: reqRow.guildId, nitradoConnId: reqRow.nitradoConnId, gameId: reqRow.gameId } },
-        update: {},
-        create: {
-          guildId: reqRow.guildId, nitradoConnId: reqRow.nitradoConnId, gameId: reqRow.gameId,
-          source: 'REQUEST', approvedByDiscordId: btn.user.id,
-        },
+      logAudit('WL_REQUEST_APPROVED', 'WHITELIST', {
+        guildId: reqRow.guildId,
+        requestId,
+        gameId: reqRow.gameId,
+        by: btn.user.id,
       });
-      await prisma.nitradoJob.create({
-        data: {
-          guildId: reqRow.guildId, nitradoConnId: reqRow.nitradoConnId,
-          operation: 'WHITELIST_ADD', payload: { gameId: reqRow.gameId },
-        },
-      });
-      logAudit('WL_REQUEST_APPROVED', 'WHITELIST', { guildId: reqRow.guildId, requestId, gameId: reqRow.gameId, by: btn.user.id });
     } else {
-      logAudit('WL_REQUEST_DENIED', 'WHITELIST', { guildId: reqRow.guildId, requestId, gameId: reqRow.gameId, by: btn.user.id });
+      logAudit('WL_REQUEST_DENIED', 'WHITELIST', {
+        guildId: reqRow.guildId,
+        requestId,
+        gameId: reqRow.gameId,
+        by: btn.user.id,
+      });
     }
 
     const finalEmbed = EmbedBuilder.from(btn.message.embeds[0] ?? new EmbedBuilder())
@@ -103,17 +169,35 @@ export async function handleWhitelistApprovalButton(btn: ButtonInteraction): Pro
         approved: isApprove,
       }),
       postDecisionLog({
-        guildId: reqRow.guildId, nitradoConnId: reqRow.nitradoConnId, approved: isApprove,
-        requesterDiscordId: reqRow.requesterDiscordId, gameId: reqRow.gameId,
+        guildId: reqRow.guildId,
+        nitradoConnId: reqRow.nitradoConnId,
+        approved: isApprove,
+        requesterDiscordId: reqRow.requesterDiscordId,
+        gameId: reqRow.gameId,
         decidedByDiscordId: btn.user.id,
       }),
     ]);
 
-    emitGuildEvent(reqRow.guildId, { type: 'whitelist.changed', payload: { guildId: reqRow.guildId, action: isApprove ? 'added' : 'decided', entryId: requestId } });
+    emitGuildEvent(reqRow.guildId, {
+      type: 'whitelist.changed',
+      payload: { guildId: reqRow.guildId, action: isApprove ? 'added' : 'decided', entryId: requestId },
+    });
 
-    await btn.followUp({ content: isApprove ? '✅ Antrag angenommen.' : '❌ Antrag abgelehnt.', flags: MessageFlags.Ephemeral }).catch(() => null);
+    await followUpEphemeral(
+      btn,
+      responseEmbed(
+        isApprove ? 'SUCCESS' : 'ERROR',
+        isApprove ? 'Antrag angenommen' : 'Antrag abgelehnt',
+        isApprove
+          ? 'Der Whitelist-Sync zu Nitrado wurde sicher eingereiht.'
+          : 'Die Whitelist-Anfrage wurde abgelehnt.',
+      ),
+    );
   } catch (e) {
     logger.error('Whitelist-Button: Fehler', e as Error);
-    await btn.followUp({ content: '❌ Fehler bei der Verarbeitung.', flags: MessageFlags.Ephemeral }).catch(() => null);
+    await followUpEphemeral(
+      btn,
+      responseEmbed('ERROR', 'Verarbeitung fehlgeschlagen', 'Die Anfrage wurde nicht vollstaendig verarbeitet. Bitte erneut versuchen.'),
+    );
   }
 }
