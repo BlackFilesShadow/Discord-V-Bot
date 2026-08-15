@@ -120,7 +120,6 @@ async function ensureChannelInGuild(channelId: string, guildId: string): Promise
     PermissionFlagsBits.ViewChannel,
     PermissionFlagsBits.SendMessages,
     PermissionFlagsBits.EmbedLinks,
-    PermissionFlagsBits.ReadMessageHistory,
   ]);
   return result.ok ? null : result.reason;
 }
@@ -218,18 +217,21 @@ killfeedRouter.post('/', requireGuildPermission('killfeed.manage'), async (req, 
       },
     });
     logAuditDb('GAMEPLAY_FEED_CREATED', 'KILLFEED', {
-      actorUserId: req.auth!.userId,
       guildId: scope.guildId,
-      details: { configId: created.id, kind, channelId: created.channelId, nitradoConnId: resolution.nitradoConnId },
+      actorDiscordId: scope.actorDiscordId,
+      kind,
+      nitradoConnId: resolution.nitradoConnId,
+      configId: created.id,
+      channelId: created.channelId,
     });
-    emitGuildEvent(scope.guildId, { type: 'killfeed.changed', payload: { guildId: scope.guildId, configId: created.id, kind } });
-    res.status(201).json({ id: created.id, kind });
+    emitGuildEvent(scope.guildId, 'gameplay-feed.updated', { kind, configId: created.id });
+    res.status(201).json(responseConfig(created));
   } catch (error) {
     if ((error as { code?: string }).code === 'P2002') {
-      res.status(409).json({ error: 'Feed fuer diesen Server, Typ und Channel existiert bereits.' });
+      res.status(409).json({ error: 'Fuer diesen Gameserver/Feed/Channel existiert bereits eine Konfiguration.' });
       return;
     }
-    res.status(500).json({ error: 'Feed konnte nicht angelegt werden.' });
+    throw error;
   }
 });
 
@@ -239,35 +241,33 @@ killfeedRouter.patch('/:id', requireGuildPermission('killfeed.manage'), async (r
   if (!kind) { res.status(400).json({ error: 'kind muss DEATH oder BUILD sein.' }); return; }
   const resolution = await resolveDashboardGameServer(scope.guildId, scope.actorDiscordId, req.query.slot);
   if (resolution.kind !== 'RESOLVED') { sendDashboardServerResolutionError(res, resolution); return; }
-  const id = String(req.params.id);
-  const parsed = validateBody(req.body as FeedBody, kind, true);
-  if (!parsed.ok) { res.status(400).json({ error: parsed.error }); return; }
 
   const existing = await prisma.gameplayFeedConfig.findFirst({
-    where: { id, guildId: scope.guildId, nitradoConnId: resolution.nitradoConnId, kind: kind as GameplayFeedKind },
+    where: { id: req.params.id, guildId: scope.guildId, nitradoConnId: resolution.nitradoConnId, kind: kind as GameplayFeedKind },
   });
-  if (!existing) { res.status(404).json({ error: 'Feed-Config nicht gefunden.' }); return; }
+  if (!existing) { res.status(404).json({ error: 'Gameplay-Feed-Konfiguration nicht gefunden.' }); return; }
 
-  if (typeof parsed.data.channelId === 'string' && parsed.data.channelId !== existing.channelId) {
-    const channelError = await ensureChannelInGuild(parsed.data.channelId, scope.guildId);
+  const parsed = validateBody(req.body as FeedBody, kind, true);
+  if (!parsed.ok) { res.status(400).json({ error: parsed.error }); return; }
+  const data = parsed.data;
+  if (data.channelId) {
+    const channelError = await ensureChannelInGuild(data.channelId as string, scope.guildId);
     if (channelError) { res.status(400).json({ error: channelError }); return; }
   }
 
-  try {
-    await prisma.gameplayFeedConfig.updateMany({
-      where: { id, guildId: scope.guildId, nitradoConnId: resolution.nitradoConnId, kind: kind as GameplayFeedKind },
-      data: parsed.data,
-    });
-    logAuditDb('GAMEPLAY_FEED_UPDATED', 'KILLFEED', {
-      actorUserId: req.auth!.userId,
-      guildId: scope.guildId,
-      details: { configId: id, kind, nitradoConnId: resolution.nitradoConnId, fields: Object.keys(parsed.data) },
-    });
-    emitGuildEvent(scope.guildId, { type: 'killfeed.changed', payload: { guildId: scope.guildId, configId: id, kind } });
-    res.json({ ok: true });
-  } catch {
-    res.status(500).json({ error: 'Update fehlgeschlagen.' });
-  }
+  const updated = await prisma.gameplayFeedConfig.update({
+    where: { id: existing.id },
+    data,
+  });
+  logAuditDb('GAMEPLAY_FEED_UPDATED', 'KILLFEED', {
+    guildId: scope.guildId,
+    actorDiscordId: scope.actorDiscordId,
+    kind,
+    nitradoConnId: resolution.nitradoConnId,
+    configId: updated.id,
+  });
+  emitGuildEvent(scope.guildId, 'gameplay-feed.updated', { kind, configId: updated.id });
+  res.json(responseConfig(updated));
 });
 
 killfeedRouter.delete('/:id', requireGuildPermission('killfeed.manage'), async (req, res) => {
@@ -276,67 +276,84 @@ killfeedRouter.delete('/:id', requireGuildPermission('killfeed.manage'), async (
   if (!kind) { res.status(400).json({ error: 'kind muss DEATH oder BUILD sein.' }); return; }
   const resolution = await resolveDashboardGameServer(scope.guildId, scope.actorDiscordId, req.query.slot);
   if (resolution.kind !== 'RESOLVED') { sendDashboardServerResolutionError(res, resolution); return; }
-  const id = String(req.params.id);
-  const result = await prisma.gameplayFeedConfig.deleteMany({
-    where: { id, guildId: scope.guildId, nitradoConnId: resolution.nitradoConnId, kind: kind as GameplayFeedKind },
+
+  const existing = await prisma.gameplayFeedConfig.findFirst({
+    where: { id: req.params.id, guildId: scope.guildId, nitradoConnId: resolution.nitradoConnId, kind: kind as GameplayFeedKind },
+    select: { id: true },
   });
-  if (result.count === 0) { res.status(404).json({ error: 'Nicht gefunden.' }); return; }
+  if (!existing) { res.status(404).json({ error: 'Gameplay-Feed-Konfiguration nicht gefunden.' }); return; }
+
+  await prisma.gameplayFeedConfig.delete({ where: { id: existing.id } });
   logAuditDb('GAMEPLAY_FEED_DELETED', 'KILLFEED', {
-    actorUserId: req.auth!.userId,
     guildId: scope.guildId,
-    details: { configId: id, kind, nitradoConnId: resolution.nitradoConnId },
+    actorDiscordId: scope.actorDiscordId,
+    kind,
+    nitradoConnId: resolution.nitradoConnId,
+    configId: existing.id,
   });
-  emitGuildEvent(scope.guildId, { type: 'killfeed.changed', payload: { guildId: scope.guildId, configId: id, kind } });
-  res.json({ ok: true });
+  emitGuildEvent(scope.guildId, 'gameplay-feed.updated', { kind, configId: existing.id });
+  res.status(204).end();
 });
 
 killfeedRouter.get('/:id/recent', requireGuildPermission('killfeed.view'), async (req, res) => {
   const scope = req.guildScope!;
   const resolution = await resolveDashboardGameServer(scope.guildId, scope.actorDiscordId, req.query.slot);
   if (resolution.kind !== 'RESOLVED') { sendDashboardServerResolutionError(res, resolution); return; }
-  const id = String(req.params.id);
   const config = await prisma.gameplayFeedConfig.findFirst({
-    where: { id, guildId: scope.guildId, nitradoConnId: resolution.nitradoConnId },
+    where: { id: req.params.id, guildId: scope.guildId, nitradoConnId: resolution.nitradoConnId },
+    select: { id: true, kind: true },
   });
-  if (!config) { res.status(404).json({ error: 'Nicht gefunden.' }); return; }
+  if (!config) { res.status(404).json({ error: 'Gameplay-Feed-Konfiguration nicht gefunden.' }); return; }
 
   const deliveries = await prisma.gameplayFeedDelivery.findMany({
     where: {
-      configId: id,
+      configId: config.id,
       guildId: scope.guildId,
       nitradoConnId: resolution.nitradoConnId,
       status: 'SENT',
     },
     orderBy: { sentAt: 'desc' },
     take: 50,
-    select: { admEventId: true, messageId: true, sentAt: true },
   });
   const eventIds = deliveries.map(delivery => delivery.admEventId);
-  const events = eventIds.length === 0 ? [] : await prisma.admEvent.findMany({
-    where: { id: { in: eventIds }, guildId: scope.guildId, nitradoConnId: resolution.nitradoConnId },
-  });
-  const byId = new Map(events.map(event => [event.id, event]));
-
+  const events = eventIds.length > 0
+    ? await prisma.admEvent.findMany({
+      where: { id: { in: eventIds }, guildId: scope.guildId, nitradoConnId: resolution.nitradoConnId },
+      select: {
+        id: true,
+        eventType: true,
+        occurredAt: true,
+        actorName: true,
+        targetName: true,
+        objectType: true,
+        toolOrWeapon: true,
+        distanceMeters: true,
+        actorPosition: true,
+        targetPosition: true,
+      },
+    })
+    : [];
+  const eventMap = new Map(events.map(event => [event.id, event]));
   res.json({
     kind: config.kind,
-    events: deliveries.flatMap(delivery => {
-      const event = byId.get(delivery.admEventId);
-      if (!event) return [];
-      return [{
-        id: event.id,
-        category: categoryForEvent(event.eventType),
-        eventType: event.eventType,
-        occurredAt: event.occurredAt?.toISOString() ?? null,
-        actorName: event.actorName,
-        targetName: event.targetName,
-        objectType: event.objectType,
-        toolOrWeapon: event.toolOrWeapon,
-        distanceMeters: event.distanceMeters,
-        actorPosition: event.actorPosition,
-        targetPosition: event.targetPosition,
+    items: deliveries.map(delivery => {
+      const event = eventMap.get(delivery.admEventId);
+      return {
+        deliveryId: delivery.id,
+        admEventId: delivery.admEventId,
         messageId: delivery.messageId,
         sentAt: delivery.sentAt?.toISOString() ?? null,
-      }];
+        eventType: event?.eventType ?? null,
+        category: event ? categoryForEvent(event.eventType) : null,
+        occurredAt: event?.occurredAt?.toISOString() ?? null,
+        actorName: event?.actorName ?? null,
+        targetName: event?.targetName ?? null,
+        objectType: event?.objectType ?? null,
+        toolOrWeapon: event?.toolOrWeapon ?? null,
+        distanceMeters: event?.distanceMeters ?? null,
+        actorPosition: event?.actorPosition ?? null,
+        targetPosition: event?.targetPosition ?? null,
+      };
     }),
   });
 });
