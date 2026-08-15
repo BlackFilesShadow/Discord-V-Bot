@@ -1,14 +1,6 @@
 /**
  * Bot-Admin-Login-Panel — kompakte Inline-Variante fuer die Topbar.
- *
- * Position: oben links NEBEN dem DEV-Login-Panel (eingebettet in Shell).
- * Verhalten:
- *   - Loading  → kleines "ADMIN …"-Pill
- *   - Inaktiv  → schmales Passwort-Input + Submit-Button (immer)
- *   - Aktiv    → "ADMIN ON"-Pill mit Restzeit + Logout-Icon
- *
- * Kein localStorage; Session wird serverseitig validiert
- * (POST /api/v2/bot-admin/login, Passwort = BOT_ADMIN_PASSWORD, Default "ASH").
+ * Kein localStorage; Session wird serverseitig validiert.
  */
 import { useState, type FormEvent } from 'react';
 import { useNavigate } from 'react-router-dom';
@@ -27,18 +19,17 @@ export function BotAdminLoginPanel() {
 
   if (!user) return null;
 
-  const onSubmit = async (e: FormEvent): Promise<void> => {
-    e.preventDefault();
+  const onSubmit = async (event: FormEvent): Promise<void> => {
+    event.preventDefault();
     if (!pw || busy) return;
     setBusy(true); setErr(null);
     try {
       await login(pw);
       setPw('');
       navigate('/bot-admin');
-    } catch (ex) {
-      // Passwortfeld bei fehlgeschlagenem Login leeren (kein Geheimnis im DOM).
+    } catch (error) {
       setPw('');
-      setErr(ex instanceof ApiError ? ex.message : 'Unbekannter Fehler');
+      setErr(error instanceof ApiError ? error.message : 'Unbekannter Fehler');
     } finally {
       setBusy(false);
     }
@@ -49,34 +40,20 @@ export function BotAdminLoginPanel() {
     try { await logout(); } finally { setBusy(false); }
   };
 
-  // ── Loading ───────────────────────────────────────────────────────────
   if (loading) {
     return (
-      <span
-        data-testid="botadmin-login-panel"
-        className="status-pill"
-        data-state="warn"
-        title="Bot-Admin-Status wird geprueft"
-      >
+      <span data-testid="botadmin-login-panel" className="status-pill" data-state="warn" title="Bot-Admin-Status wird geprueft">
         <Loader2 className="h-3 w-3 animate-spin" />
         ADMIN
       </span>
     );
   }
 
-  // ── Aktiv: kompakte Pille + Logout ────────────────────────────────────
   if (active) {
     const expLabel = expiresAt ? new Date(expiresAt).toLocaleTimeString() : 'Aktiv';
     return (
-      <span
-        data-testid="botadmin-login-panel"
-        className="inline-flex items-center gap-1"
-      >
-        <span
-          className="status-pill"
-          data-state="ok"
-          title={`Bot-Admin-Session aktiv bis ${expLabel}`}
-        >
+      <span data-testid="botadmin-login-panel" className="inline-flex items-center gap-1">
+        <span className="status-pill" data-state="ok" title={`Bot-Admin-Session aktiv bis ${expLabel}`}>
           <span className="relative inline-flex h-1.5 w-1.5">
             <span className="absolute inline-flex h-full w-full rounded-full bg-current opacity-60 animate-ping" />
             <span className="relative inline-flex h-1.5 w-1.5 rounded-full bg-current" />
@@ -89,9 +66,7 @@ export function BotAdminLoginPanel() {
           disabled={busy}
           title="Bot-Admin-Session beenden"
           aria-label="Bot-Admin-Session beenden"
-          className="inline-flex items-center justify-center h-7 w-7 rounded-md
-                     text-muted hover:text-white hover:bg-bg-elev focus-ring
-                     disabled:opacity-50"
+          className="inline-flex items-center justify-center h-7 w-7 rounded-md text-muted hover:text-white hover:bg-bg-elev focus-ring disabled:opacity-50"
         >
           <LogOut className="h-3.5 w-3.5" />
         </button>
@@ -99,7 +74,6 @@ export function BotAdminLoginPanel() {
     );
   }
 
-  // ── Inaktiv: kompaktes Passwort-Feld + Submit ─────────────────────────
   return (
     <form
       data-testid="botadmin-login-panel"
@@ -108,59 +82,43 @@ export function BotAdminLoginPanel() {
       className="relative flex w-full flex-wrap items-center gap-y-1 md:inline-flex md:flex-nowrap md:w-auto"
       aria-label="Bot-Admin-Login"
     >
-      {/* Dummy-Felder gegen Browser-Autofill. */}
       <input type="text" name="username" autoComplete="username" className="hidden" tabIndex={-1} aria-hidden />
       <div
         className={
-          'flex flex-1 min-w-0 items-center h-11 rounded-md border bg-black/40 ' +
-          'md:inline-flex md:w-auto md:h-8 ' +
-          'pl-2 pr-1 gap-1 transition-colors ' +
-          (err
-            ? 'border-danger/60 focus-within:border-danger'
-            : 'border-indigo-900/50 focus-within:border-indigo-500/80')
+          'flex flex-1 min-w-0 items-center h-11 rounded-md border bg-bg-elev/70 ' +
+          'md:inline-flex md:w-auto md:h-8 pl-2 pr-1 gap-1 transition-colors ' +
+          (err ? 'border-danger/60 focus-within:border-danger' : 'border-indigo-900/50 focus-within:border-indigo-500/80')
         }
       >
-        <KeyRound className="h-3.5 w-3.5 text-indigo-400/90 shrink-0" aria-hidden />
+        <KeyRound className="h-3.5 w-3.5 text-indigo-500/90 shrink-0" aria-hidden />
         <label htmlFor="botadmin-pw" className="sr-only">Bot-Admin Passwort</label>
         <input
           id="botadmin-pw"
           type="password"
           value={pw}
-          onChange={e => { setPw(e.target.value); if (err) setErr(null); }}
+          onChange={event => { setPw(event.target.value); if (err) setErr(null); }}
           disabled={busy}
           placeholder="Bot Admin Passwort"
           autoComplete="new-password"
           aria-invalid={err ? true : false}
           aria-describedby={err ? 'botadmin-pw-err' : undefined}
-          className="bg-transparent outline-none text-sm md:text-xs text-white placeholder:text-muted/70
-                     flex-1 w-full h-10 md:flex-none md:w-[170px] md:h-7"
+          className="bg-transparent outline-none text-sm md:text-xs text-white placeholder:text-muted/70 flex-1 w-full h-10 md:flex-none md:w-[170px] md:h-7"
         />
         <button
           type="submit"
           disabled={!pw || busy}
           title="Entsperren"
           aria-label="Bot-Admin entsperren"
-          className="inline-flex items-center justify-center h-9 w-9 md:h-6 md:w-6 rounded
-                     bg-gradient-to-br from-indigo-600 to-indigo-800
-                     hover:from-indigo-500 hover:to-indigo-700
-                     shadow-[0_0_10px_rgba(99,102,241,0.45)]
-                     disabled:opacity-40 disabled:cursor-not-allowed
-                     text-white focus-ring"
+          className="inline-flex items-center justify-center h-9 w-9 md:h-6 md:w-6 rounded bg-gradient-to-br from-indigo-600 to-indigo-800 hover:from-indigo-500 hover:to-indigo-700 shadow-[0_0_10px_rgba(99,102,241,0.45)] disabled:opacity-40 disabled:cursor-not-allowed text-[#fff] focus-ring"
         >
-          {busy
-            ? <Loader2 className="h-3.5 w-3.5 animate-spin" />
-            : <Check className="h-3.5 w-3.5" strokeWidth={3} />}
+          {busy ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Check className="h-3.5 w-3.5" strokeWidth={3} />}
         </button>
       </div>
       {err && (
         <div
           id="botadmin-pw-err"
           role="alert"
-          className="relative mt-1 w-full z-50 max-w-full
-                     md:absolute md:top-full md:left-0 md:mt-1 md:w-auto md:max-w-[260px]
-                     rounded-md border border-danger/60 bg-[#08081a]/95
-                     backdrop-blur px-2 py-1.5 text-[11px] text-danger
-                     shadow-[0_8px_24px_-6px_rgba(0,0,0,0.7)]"
+          className="relative mt-1 w-full z-50 max-w-full md:absolute md:top-full md:left-0 md:mt-1 md:w-auto md:max-w-[260px] rounded-md border border-danger/60 bg-bg-card/95 backdrop-blur px-2 py-1.5 text-[11px] text-danger shadow-[0_8px_24px_-6px_rgba(0,0,0,0.35)]"
         >
           <ShieldAlert className="inline h-3 w-3 mr-1 -mt-0.5" />
           {err}

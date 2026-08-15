@@ -8,6 +8,10 @@ import { recordPrismaLatency } from '../dashboard/services/observability';
  * Tuning-Strategie:
  * - Pool-Limit fest auf 10 gesetzt.
  * - Pool-Timeout/Idle-Verhalten explizit am pg-Adapter konfiguriert.
+ * - Interaktive Transaktionen haben bewusst feste Grenzen: max. 5s auf einen
+ *   Transaktions-Slot warten und max. 15s Laufzeit. Das ist lang genug fuer
+ *   die wenigen bewusst serialisierten Poll-/Reminder-Flows mit Discord-I/O,
+ *   aber weiterhin fail-closed statt unbegrenzt Locks zu halten.
  * - Unter Jest/Test darf ein ausschliesslich idle DB-Pool den Node-Prozess
  *   nicht kuenstlich am Leben halten (`allowExitOnIdle`). Production bleibt
  *   unveraendert und wird weiterhin ueber den geordneten Shutdown geschlossen.
@@ -43,6 +47,10 @@ const adapter = new PrismaPg({
 const prisma = new PrismaClient({
   adapter,
   log: process.env.NODE_ENV === 'development' ? ['query', 'info', 'warn', 'error'] : ['error'],
+  transactionOptions: {
+    maxWait: 5_000,
+    timeout: 15_000,
+  },
 }).$extends({
   query: {
     $allOperations: async ({ model, operation, args, query }) => {

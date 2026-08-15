@@ -9,6 +9,8 @@
  *   per-Connection Advisory-Lock im JobWorker die einzige Write-Grenze.
  * - Bereits PENDING/RUNNING vorhandene identische Jobs werden nicht dupliziert.
  * - Lokale Eintraege bekommen einen ehrlichen SYNCED/LOCAL_ONLY-Status.
+ * - PENDING_REMOVE bleibt lokal erhalten, bis ein frischer Remote-Read die
+ *   Entfernung bestaetigt. Erst dann wird der lokale Spiegel final geloescht.
  */
 
 import prisma from '../../database/prisma';
@@ -23,6 +25,11 @@ let timer: NodeJS.Timeout | null = null;
 let running = false;
 
 type PendingJob = { operation: string; payload: unknown };
+type LocalWhitelistEntry = {
+  id: string;
+  gameId: string;
+  syncState: 'LOCAL_ONLY' | 'SYNCED' | 'PENDING_REMOVE';
+};
 
 function payloadGameId(payload: unknown): string | null {
   if (!payload || typeof payload !== 'object' || Array.isArray(payload)) return null;
@@ -46,19 +53,40 @@ async function reconcileConnection(conn: {
   const api = new NitradoClient(token);
   const remoteEntries = await api.getWhitelist(conn.nitradoServerId);
   const remoteNames = remoteEntries.map((e) => e.identifier);
+  const remoteNorm = new Set(remoteNames.map((n) => n.trim().toLowerCase()));
 
   const local = await prisma.whitelistEntry.findMany({
     where: { guildId: conn.guildId, nitradoConnId: conn.id },
-    select: { id: true, gameId: true },
-  });
-  const localNames = local.map((e) => e.gameId);
+    select: { id: true, gameId: true, syncState: true },
+  }) as LocalWhitelistEntry[];
+
+  const desiredLocal = local.filter((entry) => entry.syncState !== 'PENDING_REMOVE');
+  const localNames = desiredLocal.map((e) => e.gameId);
   const diff = diffWhitelist(localNames, remoteNames);
-  const remoteNorm = new Set(remoteNames.map((n) => n.trim().toLowerCase()));
   const now = new Date();
+  let finalizedRemovals = 0;
 
   // Status ist eine Beobachtung des gerade gelesenen Remote-Zustands.
+  // PENDING_REMOVE ist dagegen eine lokale Absicht und darf niemals wieder zu
+  // LOCAL_ONLY/SYNCED umgeschrieben werden. Sobald der Name remote wirklich
+  // fehlt, ist die Entfernung bestaetigt und der lokale Spiegel darf weg.
   for (const entry of local) {
     const isRemote = remoteNorm.has(entry.gameId.trim().toLowerCase());
+    if (entry.syncState === 'PENDING_REMOVE') {
+      if (!isRemote) {
+        const deleted = await prisma.whitelistEntry.deleteMany({
+          where: {
+            id: entry.id,
+            guildId: conn.guildId,
+            nitradoConnId: conn.id,
+            syncState: 'PENDING_REMOVE',
+          },
+        });
+        finalizedRemovals += deleted.count;
+      }
+      continue;
+    }
+
     await prisma.whitelistEntry.updateMany({
       where: { id: entry.id, guildId: conn.guildId, nitradoConnId: conn.id },
       data: {
@@ -113,7 +141,7 @@ async function reconcileConnection(conn: {
     enqueued++;
   }
 
-  if (enqueued > 0 || diff.synced.length > 0) {
+  if (enqueued > 0 || diff.synced.length > 0 || finalizedRemovals > 0) {
     logAudit('WHITELIST_RECONCILED', 'WHITELIST', {
       guildId: conn.guildId,
       nitradoConnId: conn.id,
@@ -121,6 +149,7 @@ async function reconcileConnection(conn: {
       addQueued: diff.toAdd.length,
       removeQueued: diff.toRemove.length,
       newlyEnqueued: enqueued,
+      finalizedRemovals,
     });
   }
 }

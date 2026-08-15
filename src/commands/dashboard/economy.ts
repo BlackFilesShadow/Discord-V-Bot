@@ -1,7 +1,8 @@
 /**
- * Phase 3 — Economy + Link-Commands (12 Stueck).
+ * Phase 3 — Economy + Link-Commands.
  *
  * Alle Commands laufen ueber `withGuildScope` (Guild+Slot+Owner+Perms in einem Schritt).
+ * Bei mehreren aktiven Gameservern kann und muss der Slot explizit gewaehlt werden.
  * Geld-Werte: BigInt. Replies: ephemeral bei privaten Daten/Fehlern.
  */
 
@@ -14,16 +15,12 @@ import { withGuildScope } from '../middleware/withGuildScope';
 import {
   getAccountOrZero, recentTransactions, pay, adminPay, deposit, withdraw, transferBank, getConfig,
 } from '../../modules/economy/repository';
-import { createLinkChallenge, forceLink, unlinkUser, type LinkClient } from '../../modules/linking/linkService';
-import { config } from '../../config';
+import { createLinkChallenge, unlinkUser, type LinkClient } from '../../modules/linking/linkService';
 import { asUserDiscordId } from '../../types/scope';
 import type { GuildId, NitradoConnId } from '../../types/scope';
 import { logAudit } from '../../utils/logger';
 import { buildStatusEmbed, type EmbedStatus } from '../../utils/statusEmbed';
-
-const STEAM64 = /^7656\d{13}$/;
-const CHARNAME = /^[A-Za-z0-9 _.\-]{3,32}$/;
-function isValidGameId(s: string): boolean { return STEAM64.test(s) || CHARNAME.test(s); }
+import { MAX_GAME_SERVERS_PER_GUILD } from '../../modules/nitrado/gameServerScope';
 
 function fmt(n: bigint): string { return n.toLocaleString('de-DE'); }
 
@@ -42,6 +39,15 @@ const TX_LABELS: Record<string, string> = {
   INTEREST: 'Zinsen',
 };
 function txLabel(type: string): string { return TX_LABELS[type] ?? type; }
+
+function slotOption(builder: SlashCommandBuilder): SlashCommandBuilder {
+  return builder.addIntegerOption(o => o
+    .setName('slot')
+    .setDescription('Gameserver-Slot (bei mehreren Servern erforderlich)')
+    .setRequired(false)
+    .setMinValue(1)
+    .setMaxValue(MAX_GAME_SERVERS_PER_GUILD)) as SlashCommandBuilder;
+}
 
 // Footer ist an denselben Gameserver-Scope wie die Buchung gebunden.
 async function guildFooter(guildId: GuildId, nitradoConnId: NitradoConnId): Promise<string> {
@@ -73,13 +79,13 @@ async function statusReply(
 }
 
 // ============================================================
-// /link — startet den sicheren Ingame-Challenge-Flow im aktiven Slot
+// /link — startet den sicheren Ingame-Challenge-Flow im ausgewaehlten Slot
 // ============================================================
 export const linkCommand: Command = {
-  data: new SlashCommandBuilder()
+  data: slotOption(new SlashCommandBuilder()
     .setName('link')
-    .setDescription('Startet die sichere Verknüpfung mit deiner Spielfigur per Ingame-Code.'),
-  execute: withGuildScope({}, async (i, scope) => {
+    .setDescription('Startet die sichere Verknüpfung mit deiner Spielfigur per Ingame-Code.') as SlashCommandBuilder),
+  execute: withGuildScope({ acceptSlotOption: true }, async (i, scope) => {
     const { code, expiresAt } = await createLinkChallenge(
       prisma as unknown as LinkClient,
       { guildId: scope.guildId, nitradoConnId: scope.nitradoConnId! },
@@ -102,13 +108,13 @@ export const linkCommand: Command = {
 };
 
 // ============================================================
-// /unlink — entfernt eigene Bindung im aktiven Slot
+// /unlink — entfernt eigene Bindung im ausgewaehlten Slot
 // ============================================================
 export const unlinkCommand: Command = {
-  data: new SlashCommandBuilder()
+  data: slotOption(new SlashCommandBuilder()
     .setName('unlink')
-    .setDescription('Löscht deine Spielfigur-Verknüpfung im aktiven Server.'),
-  execute: withGuildScope({ requireSlotToggle: 'economyActive' }, async (i, scope) => {
+    .setDescription('Löscht deine Spielfigur-Verknüpfung im ausgewählten Server.') as SlashCommandBuilder),
+  execute: withGuildScope({ requireSlotToggle: 'economyActive', acceptSlotOption: true }, async (i, scope) => {
     const removed = await unlinkUser(prisma as unknown as LinkClient, { guildId: scope.guildId, nitradoConnId: scope.nitradoConnId! }, scope.actorDiscordId);
     if (!removed) { await statusReply(i, 'INFO', 'Keine Verknüpfung', { description: 'Du hast in diesem Server keine Verknüpfung.' }); return; }
     logAudit('LINK_DELETED', 'ECONOMY', { guildId: scope.guildId, slotId: scope.nitradoConnId, actor: scope.actorDiscordId });
@@ -120,8 +126,10 @@ export const unlinkCommand: Command = {
 // /balance — eigener Kontostand + letzte 5 Tx
 // ============================================================
 export const balanceCommand: Command = {
-  data: new SlashCommandBuilder().setName('balance').setDescription('Dein Kontostand und die letzten 5 Transaktionen.'),
-  execute: withGuildScope({ requireSlotToggle: 'economyActive' }, async (i, scope) => {
+  data: slotOption(new SlashCommandBuilder()
+    .setName('balance')
+    .setDescription('Dein Kontostand und die letzten 5 Transaktionen.') as SlashCommandBuilder),
+  execute: withGuildScope({ requireSlotToggle: 'economyActive', acceptSlotOption: true }, async (i, scope) => {
     const connId = scope.nitradoConnId!;
     const acc = await getAccountOrZero(scope.guildId, connId, scope.actorDiscordId);
     const cfg = await getConfig(scope.guildId, connId);
@@ -136,10 +144,10 @@ export const balanceCommand: Command = {
       .setTitle(`${cfg.emoji} Kontostand`)
       .setDescription(`Konto von **${i.user.username}**`)
       .addFields(
-        { name: '\uD83D\uDC5B Wallet', value: `**${fmt(acc.walletBalance)}** ${cfg.emoji}`, inline: true },
-        { name: '\uD83C\uDFE6 Bank', value: `**${fmt(acc.bankBalance)}** ${cfg.emoji}`, inline: true },
-        { name: '\u03A3 Gesamt', value: `**${fmt(total)}** ${cfg.emoji}`, inline: true },
-        { name: '\uD83D\uDCDC Letzte 5 Transaktionen', value: lines.slice(0, 1024), inline: false },
+        { name: '👛 Wallet', value: `**${fmt(acc.walletBalance)}** ${cfg.emoji}`, inline: true },
+        { name: '🏦 Bank', value: `**${fmt(acc.bankBalance)}** ${cfg.emoji}`, inline: true },
+        { name: 'Σ Gesamt', value: `**${fmt(total)}** ${cfg.emoji}`, inline: true },
+        { name: '📜 Letzte 5 Transaktionen', value: lines.slice(0, 1024), inline: false },
       )
       .setFooter({ text: await guildFooter(scope.guildId, connId) })
       .setTimestamp();
@@ -151,13 +159,13 @@ export const balanceCommand: Command = {
 // /pay — User → User (Wallet), immer innerhalb desselben Slots
 // ============================================================
 export const payCommand: Command = {
-  data: new SlashCommandBuilder()
+  data: slotOption(new SlashCommandBuilder()
     .setName('pay')
     .setDescription('Sende Coins aus deiner Wallet an einen anderen User.')
     .addUserOption(o => o.setName('user').setDescription('Empfänger').setRequired(true))
     .addIntegerOption(o => o.setName('betrag').setDescription('Betrag').setRequired(true).setMinValue(1).setMaxValue(1_000_000_000))
-    .addStringOption(o => o.setName('grund').setDescription('Grund (max 100)').setRequired(false).setMaxLength(100)) as SlashCommandBuilder,
-  execute: withGuildScope({ requireSlotToggle: 'economyActive' }, async (i, scope) => {
+    .addStringOption(o => o.setName('grund').setDescription('Grund (max 100)').setRequired(false).setMaxLength(100)) as SlashCommandBuilder),
+  execute: withGuildScope({ requireSlotToggle: 'economyActive', acceptSlotOption: true }, async (i, scope) => {
     const connId = scope.nitradoConnId!;
     const target = i.options.getUser('user', true);
     if (target.bot) { await statusReply(i, 'ERROR', 'Zahlung abgelehnt', { description: 'Die Zahlung konnte nicht durchgeführt werden.', fields: [{ name: '📝 Grund', value: 'Ein Bot kann keine Coins erhalten.' }] }); return; }
@@ -192,16 +200,16 @@ export const payCommand: Command = {
 };
 
 // ============================================================
-// /admin-pay — Admin-Korrektur im aktiven Slot
+// /admin-pay — Admin-Korrektur im ausgewaehlten Slot
 // ============================================================
 export const adminPayCommand: Command = {
-  data: new SlashCommandBuilder()
+  data: slotOption(new SlashCommandBuilder()
     .setName('admin-pay')
     .setDescription('Owner/Berechtigt: Korrigiere das Wallet eines Users (positiv oder negativ).')
     .addUserOption(o => o.setName('user').setDescription('Ziel-User').setRequired(true))
     .addIntegerOption(o => o.setName('betrag').setDescription('Delta (negativ = abziehen, ungleich 0)').setRequired(true).setMinValue(-1_000_000_000).setMaxValue(1_000_000_000))
-    .addStringOption(o => o.setName('grund').setDescription('Grund (3..200)').setRequired(true).setMinLength(3).setMaxLength(200)) as SlashCommandBuilder,
-  execute: withGuildScope({ requirePerm: 'economy.manage' }, async (i, scope) => {
+    .addStringOption(o => o.setName('grund').setDescription('Grund (3..200)').setRequired(true).setMinLength(3).setMaxLength(200)) as SlashCommandBuilder),
+  execute: withGuildScope({ requirePerm: 'economy.manage', acceptSlotOption: true }, async (i, scope) => {
     const connId = scope.nitradoConnId!;
     const target = i.options.getUser('user', true);
     if (target.bot) { await statusReply(i, 'ERROR', 'Aktion nicht erlaubt', { description: 'Die Aktion konnte nicht durchgeführt werden.', fields: [{ name: '📝 Grund', value: 'Ein Bot kann nicht begünstigt werden.' }] }); return; }
@@ -233,43 +241,25 @@ export const adminPayCommand: Command = {
   }),
 };
 
-// ============================================================
-// /grant — Force-Link (Owner ueberschreibt fremde Bindung)
-// ============================================================
-export const grantCommand: Command = {
-  data: new SlashCommandBuilder()
-    .setName('grant')
-    .setDescription('Owner/Berechtigt: Erzwingt eine Spielfigur-Verknüpfung.')
-    .addUserOption(o => o.setName('user').setDescription('Discord-User').setRequired(true))
-    .addStringOption(o => o.setName('id').setDescription('Steam64 oder Charname').setRequired(true).setMaxLength(64)) as SlashCommandBuilder,
-  execute: withGuildScope({ requirePerm: 'economy.manage' }, async (i, scope) => {
-    const target = i.options.getUser('user', true);
-    if (target.bot) { await statusReply(i, 'ERROR', 'Verknüpfung abgelehnt', { description: 'Die Verknüpfung konnte nicht erstellt werden.', fields: [{ name: '📝 Grund', value: 'Ein Bot kann nicht verknüpft werden.' }] }); return; }
-    const id = i.options.getString('id', true).trim();
-    if (!isValidGameId(id)) { await statusReply(i, 'ERROR', 'Verknüpfung abgelehnt', { description: 'Die ID ist ungültig.', fields: [{ name: '📝 Grund', value: 'Bitte Steam64 (17 Stellen) oder Charname (3–32 Zeichen) angeben.' }] }); return; }
-    const r = await forceLink(prisma as unknown as LinkClient, { guildId: scope.guildId, nitradoConnId: scope.nitradoConnId! }, asUserDiscordId(target.id), id, config.security.encryptionKey);
-    if (!r.ok) {
-      await statusReply(i, 'ERROR', 'Verknüpfung abgelehnt', { description: 'Die Verknüpfung konnte nicht erstellt werden.', fields: [{ name: '📝 Grund', value: 'Diese Spielidentität ist bereits mit einem anderen Discord-Account verknüpft.' }] });
-      return;
-    }
-    logAudit('LINK_FORCE_GRANTED', 'ECONOMY', { guildId: scope.guildId, slotId: scope.nitradoConnId, target: target.id, actor: scope.actorDiscordId });
-    await statusReply(i, 'SUCCESS', 'Verknüpfung erstellt', { description: 'Die Spielfigur wurde zugewiesen.', fields: [{ name: '👤 User', value: `<@${target.id}>` }, { name: '🎮 Spielfigur', value: `\`${id}\`` }] });
-  }),
-};
+// /grant wurde entfernt. Administrative Force-Link-Aktionen laufen ausschliesslich
+// ueber /force-link + /confirm-action, damit Slotbindung und Step-up-Bestaetigung
+// nicht durch einen parallelen Alias umgangen werden koennen.
 
 // ============================================================
-// /links — listet alle Bindungen im aktiven Slot
+// /links — listet alle Bindungen im ausgewaehlten Slot
 // ============================================================
 export const linksCommand: Command = {
-  data: new SlashCommandBuilder().setName('links').setDescription('Owner/Berechtigt: Listet alle Spielfigur-Verknüpfungen im aktiven Slot.'),
-  execute: withGuildScope({ requirePerm: 'economy.view' }, async (i, scope) => {
+  data: slotOption(new SlashCommandBuilder()
+    .setName('links')
+    .setDescription('Owner/Berechtigt: Listet alle Spielfigur-Verknüpfungen im ausgewählten Slot.') as SlashCommandBuilder),
+  execute: withGuildScope({ requirePerm: 'economy.view', acceptSlotOption: true }, async (i, scope) => {
     const connId = scope.nitradoConnId!;
     const rows = await prisma.gameIdentityLink.findMany({
       where: { guildId: scope.guildId, nitradoConnId: connId, status: 'VERIFIED' },
       orderBy: { verifiedAt: 'desc' },
       take: 50,
     });
-    if (rows.length === 0) { await statusReply(i, 'INFO', 'Verknüpfungen', { description: 'Im aktiven Slot gibt es noch keine verifizierten Verknüpfungen.' }); return; }
+    if (rows.length === 0) { await statusReply(i, 'INFO', 'Verknüpfungen', { description: 'Im ausgewählten Slot gibt es noch keine verifizierten Verknüpfungen.' }); return; }
     const lines = rows.map(r => `<@${r.userDiscordId}> • ✅ verifiziert`).join('\n');
     const e = new EmbedBuilder()
       .setColor(0xF1C40F)
@@ -285,11 +275,11 @@ export const linksCommand: Command = {
 // /deposit — Wallet → Bank
 // ============================================================
 export const depositCommand: Command = {
-  data: new SlashCommandBuilder()
+  data: slotOption(new SlashCommandBuilder()
     .setName('deposit')
     .setDescription('Bringt Coins von Wallet auf die Bank.')
-    .addIntegerOption(o => o.setName('betrag').setDescription('Betrag').setRequired(true).setMinValue(1).setMaxValue(1_000_000_000)) as SlashCommandBuilder,
-  execute: withGuildScope({ requireSlotToggle: 'economyActive' }, async (i, scope) => {
+    .addIntegerOption(o => o.setName('betrag').setDescription('Betrag').setRequired(true).setMinValue(1).setMaxValue(1_000_000_000)) as SlashCommandBuilder),
+  execute: withGuildScope({ requireSlotToggle: 'economyActive', acceptSlotOption: true }, async (i, scope) => {
     const connId = scope.nitradoConnId!;
     const amount = BigInt(i.options.getInteger('betrag', true));
     try { await deposit(scope.guildId, connId, scope.actorDiscordId, amount); }
@@ -311,11 +301,11 @@ export const depositCommand: Command = {
 // /withdraw — Bank → Wallet
 // ============================================================
 export const withdrawCommand: Command = {
-  data: new SlashCommandBuilder()
+  data: slotOption(new SlashCommandBuilder()
     .setName('withdraw')
     .setDescription('Hebt Coins von der Bank auf die Wallet ab.')
-    .addIntegerOption(o => o.setName('betrag').setDescription('Betrag').setRequired(true).setMinValue(1).setMaxValue(1_000_000_000)) as SlashCommandBuilder,
-  execute: withGuildScope({ requireSlotToggle: 'economyActive' }, async (i, scope) => {
+    .addIntegerOption(o => o.setName('betrag').setDescription('Betrag').setRequired(true).setMinValue(1).setMaxValue(1_000_000_000)) as SlashCommandBuilder),
+  execute: withGuildScope({ requireSlotToggle: 'economyActive', acceptSlotOption: true }, async (i, scope) => {
     const connId = scope.nitradoConnId!;
     const amount = BigInt(i.options.getInteger('betrag', true));
     try { await withdraw(scope.guildId, connId, scope.actorDiscordId, amount); }
@@ -337,12 +327,12 @@ export const withdrawCommand: Command = {
 // /transfer — Bank → Bank, konstruktiv innerhalb desselben Slots
 // ============================================================
 export const transferCommand: Command = {
-  data: new SlashCommandBuilder()
+  data: slotOption(new SlashCommandBuilder()
     .setName('transfer')
     .setDescription('Sende Coins von deiner Bank an die Bank eines anderen Users.')
     .addUserOption(o => o.setName('user').setDescription('Empfänger').setRequired(true))
-    .addIntegerOption(o => o.setName('betrag').setDescription('Betrag').setRequired(true).setMinValue(1).setMaxValue(1_000_000_000)) as SlashCommandBuilder,
-  execute: withGuildScope({ requireSlotToggle: 'economyActive' }, async (i, scope) => {
+    .addIntegerOption(o => o.setName('betrag').setDescription('Betrag').setRequired(true).setMinValue(1).setMaxValue(1_000_000_000)) as SlashCommandBuilder),
+  execute: withGuildScope({ requireSlotToggle: 'economyActive', acceptSlotOption: true }, async (i, scope) => {
     const connId = scope.nitradoConnId!;
     const target = i.options.getUser('user', true);
     if (target.bot) { await statusReply(i, 'ERROR', 'Überweisung abgelehnt', { footerText: 'V-Bot Bank', description: 'Die Überweisung konnte nicht durchgeführt werden.', fields: [{ name: '📝 Grund', value: 'Ein Bot kann keine Coins erhalten.' }] }); return; }
@@ -375,8 +365,10 @@ export const transferCommand: Command = {
 // /bank — Wallet/Bank/Zinssatz
 // ============================================================
 export const bankCommand: Command = {
-  data: new SlashCommandBuilder().setName('bank').setDescription('Zeigt Wallet, Bank und Gesamtguthaben.'),
-  execute: withGuildScope({ requireSlotToggle: 'economyActive' }, async (i, scope) => {
+  data: slotOption(new SlashCommandBuilder()
+    .setName('bank')
+    .setDescription('Zeigt Wallet, Bank und Gesamtguthaben.') as SlashCommandBuilder),
+  execute: withGuildScope({ requireSlotToggle: 'economyActive', acceptSlotOption: true }, async (i, scope) => {
     const connId = scope.nitradoConnId!;
     const acc = await getAccountOrZero(scope.guildId, connId, scope.actorDiscordId);
     const cfg = await getConfig(scope.guildId, connId);
@@ -387,9 +379,9 @@ export const bankCommand: Command = {
       .setTitle(`${cfg.emoji} Bankübersicht`)
       .setDescription(`Konto von **${i.user.username}**`)
       .addFields(
-        { name: '\uD83D\uDC5B Wallet', value: `**${fmt(acc.walletBalance)}** ${cfg.emoji}`, inline: true },
-        { name: '\uD83C\uDFE6 Bank', value: `**${fmt(acc.bankBalance)}** ${cfg.emoji}`, inline: true },
-        { name: '\u03A3 Gesamt', value: `**${fmt(total)}** ${cfg.emoji}`, inline: true },
+        { name: '👛 Wallet', value: `**${fmt(acc.walletBalance)}** ${cfg.emoji}`, inline: true },
+        { name: '🏦 Bank', value: `**${fmt(acc.bankBalance)}** ${cfg.emoji}`, inline: true },
+        { name: 'Σ Gesamt', value: `**${fmt(total)}** ${cfg.emoji}`, inline: true },
       )
       .setFooter({ text: await guildFooter(scope.guildId, connId) })
       .setTimestamp();

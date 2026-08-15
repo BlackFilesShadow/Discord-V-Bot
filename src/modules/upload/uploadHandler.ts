@@ -10,144 +10,114 @@ import { existsSync, mkdirSync } from 'fs';
 import crypto from 'crypto';
 
 /**
- * Upload-Handler (Sektion 2):
- * - Unbegrenzte Uploads pro Nutzer/GUID-Bereich
- * - Upload von beliebig vielen Dateien gleichzeitig als Paket
- * - Dateien (XML, JSON) bis 2 GB, Chunked-Upload
- * - Integritätsprüfung (Größe, Format, Hash, Validität)
- * - Validierungs-Feedback
+ * Upload-Handler.
+ *
+ * Produktions-Invarianten:
+ * - Uploadrechte gelten nur fuer kanonisch aktive Hersteller:
+ *   status=ACTIVE + isManufacturer=true + role=MANUFACTURER.
+ * - `processUpload` prueft selbst, dass packageId wirklich dem userId gehoert
+ *   und aktiv ist. Ein anderer Caller kann diese Mandantengrenze nicht umgehen.
+ * - Upload-DB-Zeile + Paketzaehler werden atomar committed.
+ * - Paket-Soft-Delete und individuelles Datei-Delete sind getrennte Lebenszyklen:
+ *   ein Paket wird ueber `Package.isDeleted` verborgen; bestehende Upload-
+ *   Flags werden dabei nicht veraendert. Dadurch kann Restore niemals bewusst
+ *   einzeln geloeschte Dateien wieder aktivieren.
  */
 
-/**
- * Stellt sicher, dass der GUID-basierte Upload-Bereich existiert.
- * Sektion 1: GUID-basierte Bereichserstellung, keine Namenskonflikte.
- */
 export function ensureUserUploadDir(userId: string): string {
   const userDir = path.join(config.upload.dir, userId);
-  if (!existsSync(userDir)) {
-    mkdirSync(userDir, { recursive: true });
-  }
+  if (!existsSync(userDir)) mkdirSync(userDir, { recursive: true, mode: 0o755 });
   return userDir;
 }
 
-/**
- * Prüft ob ein User Uploadrechte hat.
- * Sektion 1: Uploadrechte nur für eigenen GUID-Bereich.
- */
 export async function checkUploadPermission(userId: string): Promise<{ allowed: boolean; reason?: string }> {
-  const user = await prisma.user.findUnique({
-    where: { id: userId },
-  });
-
+  const user = await prisma.user.findUnique({ where: { id: userId } });
   if (!user) {
     logger.warn(`checkUploadPermission DENIED: user ${userId} nicht gefunden`);
     return { allowed: false, reason: 'User nicht gefunden.' };
   }
-
   if (user.status !== 'ACTIVE') {
     logger.warn(`checkUploadPermission DENIED: user ${user.discordId} status=${user.status}`);
     return { allowed: false, reason: `Account nicht aktiv (Status: \`${user.status}\`).` };
   }
-
-  if (!user.isManufacturer) {
+  if (!user.isManufacturer || user.role !== 'MANUFACTURER') {
     logger.warn(`checkUploadPermission DENIED: user ${user.discordId} role=${user.role} isManufacturer=${user.isManufacturer}`);
-    return { allowed: false, reason: `Keine Upload-Berechtigung. Upload ist ausschlie\u00dflich der Rolle **Hersteller** vorbehalten. Registriere dich mit \`/register manufacturer\`.` };
+    return {
+      allowed: false,
+      reason: 'Keine Upload-Berechtigung. Upload ist ausschliesslich vollstaendig verifizierten Herstellern vorbehalten. Registriere dich mit `/register manufacturer`.',
+    };
   }
-
   return { allowed: true };
 }
 
-/**
- * Erstellt oder findet ein Paket für den Upload.
- * Sektion 2: Paketname frei wählbar, GUID-gebunden, keine Namenskonflikte.
- */
 export async function getOrCreatePackage(userId: string, packageName: string, description?: string) {
+  const normalizedName = packageName.trim();
+  if (!normalizedName || normalizedName.length > 120) {
+    throw new Error('Paketname muss zwischen 1 und 120 Zeichen lang sein.');
+  }
 
-  // STRIKT: Wenn bereits ein AKTIVES Paket mit gleichem Namen existiert,
-  // wirf DuplicatePackageNameError. So bekommt der User eine klare Warnung
-  // und Dateien landen NICHT versehentlich im falschen Paket.
-  // Multi-File-Uploads innerhalb EINES /upload-Aufrufs muessen das Paket
-  // genau einmal vor der Schleife anlegen und danach nur noch processUpload
-  // mit der pkg.id verwenden.
   const existingActive = await prisma.package.findFirst({
-    where: {
-      userId,
-      isDeleted: false,
-      name: { equals: packageName, mode: 'insensitive' },
-    },
+    where: { userId, isDeleted: false, name: { equals: normalizedName, mode: 'insensitive' } },
   });
-  if (existingActive) {
-    throw new DuplicatePackageNameError(packageName);
-  }
+  if (existingActive) throw new DuplicatePackageNameError(normalizedName);
 
-  // Soft-deleted Eintrag mit gleichem Namen? -> reaktivieren statt neu anlegen,
-  // damit das @@unique([userId,name]) nicht verletzt wird. Der Slot ist frei,
-  // weil das alte Paket geloescht wurde.
   const existingSoftDeleted = await prisma.package.findFirst({
-    where: {
-      userId,
-      isDeleted: true,
-      name: { equals: packageName, mode: 'insensitive' },
-    },
+    where: { userId, isDeleted: true, name: { equals: normalizedName, mode: 'insensitive' } },
   });
+
   if (existingSoftDeleted) {
-    const restored = await prisma.package.update({
-      where: { id: existingSoftDeleted.id },
-      data: {
-        isDeleted: false,
-        deletedAt: null,
-        deletedBy: null,
-        status: 'ACTIVE',
-        description: description ?? existingSoftDeleted.description,
-        totalSize: BigInt(0),
-        fileCount: 0,
-      },
+    const restored = await prisma.$transaction(async tx => {
+      const oldFiles = await tx.upload.findMany({
+        where: { packageId: existingSoftDeleted.id, userId },
+        select: { filePath: true },
+      });
+      const changed = await tx.package.updateMany({
+        where: { id: existingSoftDeleted.id, userId, isDeleted: true },
+        data: {
+          isDeleted: false,
+          deletedAt: null,
+          deletedBy: null,
+          status: 'ACTIVE',
+          description: description ?? existingSoftDeleted.description,
+          totalSize: 0n,
+          fileCount: 0,
+        },
+      });
+      if (changed.count !== 1) throw new DuplicatePackageNameError(normalizedName);
+      await tx.upload.deleteMany({ where: { packageId: existingSoftDeleted.id, userId } });
+      const pkg = await tx.package.findUnique({ where: { id: existingSoftDeleted.id } });
+      if (!pkg) throw new Error('Paket-Restore konnte nicht bestaetigt werden.');
+      return { pkg, oldFilePaths: oldFiles.map(file => file.filePath) };
     });
-    await prisma.upload.deleteMany({ where: { packageId: restored.id } });
-    logAudit('PACKAGE_RESTORED_ON_UPLOAD', 'UPLOAD', { packageId: restored.id, userId, packageName });
-    return restored;
+
+    for (const filePath of restored.oldFilePaths) {
+      if (!isPathSafe(filePath)) continue;
+      try { await fs.unlink(filePath); } catch { /* best effort */ }
+    }
+    logAudit('PACKAGE_RESTORED_ON_UPLOAD', 'UPLOAD', {
+      packageId: restored.pkg.id,
+      userId,
+      packageName: normalizedName,
+    });
+    return restored.pkg;
   }
 
-  // Race-Condition: ein zeitgleicher zweiter /upload mit demselben Namen
-  // koennte den findFirst-Check umgehen. Der DB-seitige Partial-Unique-Index
-  // idx_pkg_user_lower_name_active (deploy/sql/002_*.sql) faengt das ab und
-  // liefert einen P2002-Fehler — wir werfen dann auch hier den Duplicate-Error
-  // statt das vorhandene Paket zurueckzugeben.
-  let pkg;
   try {
-    pkg = await prisma.package.create({
-      data: {
-        userId,
-        name: packageName,
-        description,
-      },
-    });
-  } catch (err: any) {
-    if (err?.code === 'P2002') {
-      throw new DuplicatePackageNameError(packageName);
-    }
+    const pkg = await prisma.package.create({ data: { userId, name: normalizedName, description } });
+    logAudit('PACKAGE_CREATED', 'UPLOAD', { packageId: pkg.id, userId, packageName: normalizedName });
+    return pkg;
+  } catch (err: unknown) {
+    if ((err as { code?: string })?.code === 'P2002') throw new DuplicatePackageNameError(normalizedName);
     throw err;
   }
-
-  logAudit('PACKAGE_CREATED', 'UPLOAD', {
-    packageId: pkg.id,
-    userId,
-    packageName,
-  });
-
-  return pkg;
 }
 
-/**
- * Verarbeitet einen Datei-Upload.
- * Sektion 2: Integritätsprüfung, Validierung, Metadaten.
- */
 export async function processUpload(
   userId: string,
   packageId: string,
   fileBuffer: Buffer,
   originalName: string,
-  mimeType: string
+  mimeType: string,
 ): Promise<{
   success: boolean;
   uploadId?: string;
@@ -155,263 +125,239 @@ export async function processUpload(
   message: string;
 }> {
   const ext = path.extname(originalName).toLowerCase();
-
-  // Dateityp prüfen
   if (!config.upload.allowedExtensions.includes(ext)) {
-    return {
-      success: false,
-      message: `Ungültiger Dateityp: ${ext}. Erlaubt: ${config.upload.allowedExtensions.join(', ')}`,
-    };
+    return { success: false, message: `Ungueltiger Dateityp: ${ext}. Erlaubt: ${config.upload.allowedExtensions.join(', ')}` };
   }
-
-  // Dateigröße prüfen (Sektion 2: bis 2 GB)
   if (fileBuffer.length > config.upload.maxFileSizeBytes) {
     return {
       success: false,
-      message: `Datei zu groß: ${formatBytes(fileBuffer.length)}. Maximum: ${formatBytes(config.upload.maxFileSizeBytes)}`,
+      message: `Datei zu gross: ${formatBytes(fileBuffer.length)}. Maximum: ${formatBytes(config.upload.maxFileSizeBytes)}`,
     };
   }
 
-  // SHA-256 Hash berechnen (Integritätsprüfung)
-  const fileHash = sha256Hash(fileBuffer);
-
-  // packageId & userId müssen UUID sein (verhindert Pfad-Injection)
   const uuidRe = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
   if (!uuidRe.test(userId) || !uuidRe.test(packageId)) {
-    return { success: false, message: 'Ungültige User- oder Paket-ID.' };
+    return { success: false, message: 'Ungueltige User- oder Paket-ID.' };
   }
 
-  // Dateiname generieren (sicher, keine Pfad-Traversal, keine Hidden-Files)
+  const ownedPackage = await prisma.package.findFirst({
+    where: { id: packageId, userId, isDeleted: false, status: 'ACTIVE' },
+    select: { id: true },
+  });
+  if (!ownedPackage) {
+    logAudit('UPLOAD_PACKAGE_SCOPE_DENIED', 'SECURITY', { userId, packageId });
+    return { success: false, message: 'Paket nicht gefunden oder gehoert nicht zu deinem Herstellerbereich.' };
+  }
+
+  const permission = await checkUploadPermission(userId);
+  if (!permission.allowed) return { success: false, message: permission.reason ?? 'Keine Upload-Berechtigung.' };
+
+  const fileHash = sha256Hash(fileBuffer);
   const safeFileName = `${crypto.randomBytes(8).toString('hex')}_${sanitizeFilename(originalName)}`;
   const userDir = ensureUserUploadDir(userId);
   const packageDir = path.join(userDir, packageId);
-
-  // Final-Path muss innerhalb der Upload-Root liegen
   const filePath = path.join(packageDir, safeFileName);
   if (!isPathSafe(filePath) || !isPathSafe(packageDir)) {
     logger.error(`Path-Traversal blockiert: ${filePath}`);
-    return { success: false, message: 'Sicherheitsprüfung fehlgeschlagen.' };
+    return { success: false, message: 'Sicherheitspruefung fehlgeschlagen.' };
   }
 
-  // Erst in Staging-Verzeichnis schreiben — Virenscan vor Aktivierung
   const stagingDir = path.join(config.upload.dir, '.staging');
-  if (!existsSync(stagingDir)) {
-    mkdirSync(stagingDir, { recursive: true, mode: 0o700 });
-  }
+  if (!existsSync(stagingDir)) mkdirSync(stagingDir, { recursive: true, mode: 0o700 });
   const stagingPath = path.join(stagingDir, `${crypto.randomBytes(16).toString('hex')}_${safeFileName}`);
   await fs.writeFile(stagingPath, fileBuffer, { mode: 0o600 });
 
-  // Virenscan VOR dem Move in den aktiven Bereich (Sektion 2)
-  const scanResult = await scanFile(stagingPath, userId);
-  if (!scanResult.clean) {
-    // Datei aus Staging in Quarantäne verschieben — nie aktiv gewesen
-    const quarantineDir = path.join(config.upload.dir, '.quarantine');
-    if (!existsSync(quarantineDir)) {
-      mkdirSync(quarantineDir, { recursive: true, mode: 0o700 });
-    }
-    const quarantinePath = path.join(quarantineDir, `${Date.now()}_${safeFileName}`);
-    try {
-      await fs.rename(stagingPath, quarantinePath);
-    } catch {
-      try { await fs.unlink(stagingPath); } catch { /* */ }
+  let movedToActive = false;
+  let dbCommitted = false;
+  try {
+    const scanResult = await scanFile(stagingPath, userId);
+    if (!scanResult.clean) {
+      const quarantineDir = path.join(config.upload.dir, '.quarantine');
+      if (!existsSync(quarantineDir)) mkdirSync(quarantineDir, { recursive: true, mode: 0o700 });
+      const quarantinePath = path.join(quarantineDir, `${Date.now()}_${safeFileName}`);
+      try { await fs.rename(stagingPath, quarantinePath); }
+      catch { try { await fs.unlink(stagingPath); } catch { /* best effort */ } }
+      logAudit('UPLOAD_QUARANTINED_VIRUS', 'SECURITY', {
+        userId, originalName, threats: scanResult.threats, engine: scanResult.engine,
+      });
+      return { success: false, message: `Datei "${originalName}" wurde als verdaechtig erkannt und in Quarantaene verschoben.` };
     }
 
-    logAudit('UPLOAD_QUARANTINED_VIRUS', 'SECURITY', {
+    if (!existsSync(packageDir)) mkdirSync(packageDir, { recursive: true, mode: 0o755 });
+    await fs.rename(stagingPath, filePath);
+    movedToActive = true;
+
+    const fileType = ext === '.xml' ? 'XML' : ext === '.json' ? 'JSON' : 'OTHER';
+    const upload = await prisma.$transaction(async tx => {
+      const row = await tx.upload.create({
+        data: {
+          userId,
+          packageId,
+          fileName: safeFileName,
+          originalName,
+          filePath,
+          fileSize: BigInt(fileBuffer.length),
+          mimeType,
+          fileHash,
+          fileType,
+          validationStatus: 'PENDING',
+        },
+      });
+      const packageChanged = await tx.package.updateMany({
+        where: { id: packageId, userId, isDeleted: false, status: 'ACTIVE' },
+        data: { totalSize: { increment: BigInt(fileBuffer.length) }, fileCount: { increment: 1 } },
+      });
+      if (packageChanged.count !== 1) {
+        throw new Error('Paket wurde waehrend des Uploads entfernt oder gehoert nicht mehr zum Hersteller.');
+      }
+      return row;
+    });
+    dbCommitted = true;
+
+    let validationReport: Awaited<ReturnType<typeof validateFile>> | undefined;
+    try {
+      validationReport = await validateFile(filePath);
+      const quarantined = !validationReport.isValid && validationReport.errors.length > 3;
+      await prisma.$transaction(async tx => {
+        await tx.upload.update({
+          where: { id: upload.id },
+          data: {
+            isValid: validationReport!.isValid,
+            isQuarantined: quarantined,
+            quarantineReason: quarantined ? 'Zu viele Validierungsfehler' : null,
+            validationStatus: quarantined ? 'QUARANTINED' : validationReport!.isValid ? 'VALID' : 'INVALID',
+          },
+        });
+        await tx.validationResult.create({
+          data: {
+            uploadId: upload.id,
+            packageId,
+            isValid: validationReport!.isValid,
+            errors: validationReport!.errors as any,
+            warnings: validationReport!.warnings as any,
+            suggestions: validationReport!.suggestions as any,
+            validatedBy: 'system',
+          },
+        });
+      });
+    } catch (error) {
+      logger.error('Validierungsfehler:', error);
+      await prisma.upload.update({
+        where: { id: upload.id },
+        data: { isValid: false, validationStatus: 'ERROR' },
+      }).catch(updateError => logger.error('Upload-Validierungsstatus konnte nicht auf ERROR gesetzt werden:', updateError));
+    }
+
+    logAudit('FILE_UPLOADED', 'UPLOAD', {
+      uploadId: upload.id,
       userId,
+      packageId,
       originalName,
-      threats: scanResult.threats,
-      engine: scanResult.engine,
+      fileSize: fileBuffer.length,
+      fileHash,
+      fileType,
+      isValid: validationReport?.isValid ?? false,
     });
 
     return {
-      success: false,
-      message: `Datei "${originalName}" wurde als verdächtig erkannt und in Quarantäne verschoben. Bedrohungen: ${scanResult.threats.join(', ')}`,
+      success: true,
+      uploadId: upload.id,
+      validation: validationReport,
+      message: validationReport?.isValid
+        ? `Datei "${originalName}" erfolgreich hochgeladen und validiert.`
+        : `Datei "${originalName}" wurde hochgeladen, ist aber nicht fuer die oeffentliche Verteilung freigegeben.`,
     };
-  }
-
-  // Scan ok — jetzt in aktiven Bereich verschieben
-  if (!existsSync(packageDir)) {
-    mkdirSync(packageDir, { recursive: true, mode: 0o755 });
-  }
-  await fs.rename(stagingPath, filePath);
-
-  // Dateityp bestimmen
-  const fileType = ext === '.xml' ? 'XML' : ext === '.json' ? 'JSON' : 'OTHER';
-
-  // Upload in DB speichern
-  const upload = await prisma.upload.create({
-    data: {
-      userId,
-      packageId,
-      fileName: safeFileName,
-      originalName,
-      filePath,
-      fileSize: BigInt(fileBuffer.length),
-      mimeType,
-      fileHash,
-      fileType,
-      validationStatus: 'PENDING',
-    },
-  });
-
-  // Paket-Statistiken aktualisieren
-  await prisma.package.update({
-    where: { id: packageId },
-    data: {
-      totalSize: { increment: BigInt(fileBuffer.length) },
-      fileCount: { increment: 1 },
-    },
-  });
-
-  // Validierung durchführen (Sektion 2: Hochmoderner XML- & JSON-Validator)
-  let validationReport;
-  try {
-    validationReport = await validateFile(filePath);
-
-    await prisma.upload.update({
-      where: { id: upload.id },
-      data: {
-        isValid: validationReport.isValid,
-        validationStatus: validationReport.isValid ? 'VALID' : 'INVALID',
-      },
-    });
-
-    // Validierungsergebnis speichern
-    await prisma.validationResult.create({
-      data: {
-        uploadId: upload.id,
-        packageId,
-        isValid: validationReport.isValid,
-        errors: validationReport.errors as any,
-        warnings: validationReport.warnings as any,
-        suggestions: validationReport.suggestions as any,
-        validatedBy: 'system',
-      },
-    });
-
-    // Bei Verdacht: Quarantäne (Sektion 2)
-    if (!validationReport.isValid && validationReport.errors.length > 3) {
-      await prisma.upload.update({
-        where: { id: upload.id },
-        data: {
-          isQuarantined: true,
-          quarantineReason: 'Zu viele Validierungsfehler',
-          validationStatus: 'QUARANTINED',
-        },
-      });
-    }
   } catch (error) {
-    logger.error('Validierungsfehler:', error);
-    await prisma.upload.update({
-      where: { id: upload.id },
-      data: { validationStatus: 'ERROR' },
-    });
+    // Nur vor einem erfolgreichen DB-Commit darf die aktive Datei ohne weitere
+    // DB-Kompensation entfernt werden. Nach Commit bleibt sie referenziert und
+    // wird ueber ihren Validierungsstatus fail-closed behandelt.
+    if (!dbCommitted) {
+      if (movedToActive) {
+        try { await fs.unlink(filePath); } catch { /* best effort */ }
+      } else {
+        try { await fs.unlink(stagingPath); } catch { /* best effort */ }
+      }
+    }
+    throw error;
   }
-
-  logAudit('FILE_UPLOADED', 'UPLOAD', {
-    uploadId: upload.id,
-    userId,
-    packageId,
-    originalName,
-    fileSize: fileBuffer.length,
-    fileHash,
-    fileType,
-    isValid: validationReport?.isValid,
-  });
-
-  return {
-    success: true,
-    uploadId: upload.id,
-    validation: validationReport,
-    message: `Datei "${originalName}" erfolgreich hochgeladen.`,
-  };
 }
 
-/**
- * Paket löschen (Soft-Delete, Restore möglich).
- * Sektion 2: Pakete können vom Nutzer/Admin gelöscht werden.
- */
 export async function deletePackage(packageId: string, deletedBy: string, hard: boolean = false) {
   if (hard) {
-    // Hard-Delete: Dateien und DB-Einträge entfernen
     const pkg = await prisma.package.findUnique({
       where: { id: packageId },
-      include: { files: true },
+      include: { files: { select: { filePath: true } } },
     });
+    if (!pkg) return;
 
-    if (pkg) {
-      // Dateien vom Filesystem löschen
-      for (const file of pkg.files) {
-        try {
-          await fs.unlink(file.filePath);
-        } catch { /* Datei existiert möglicherweise nicht mehr */ }
-      }
-
-      await prisma.package.delete({ where: { id: packageId } });
+    await prisma.package.delete({ where: { id: packageId } });
+    for (const file of pkg.files) {
+      if (!isPathSafe(file.filePath)) continue;
+      try { await fs.unlink(file.filePath); } catch { /* best effort */ }
     }
   } else {
-    // Soft-Delete
-    await prisma.package.update({
-      where: { id: packageId },
-      data: {
-        isDeleted: true,
-        deletedAt: new Date(),
-        deletedBy,
-        status: 'DELETED',
-      },
+    const now = new Date();
+    const changed = await prisma.package.updateMany({
+      where: { id: packageId, isDeleted: false },
+      data: { isDeleted: true, deletedAt: now, deletedBy, status: 'DELETED' },
     });
-
-    await prisma.upload.updateMany({
-      where: { packageId },
-      data: { isDeleted: true, deletedAt: new Date() },
-    });
+    if (changed.count !== 1) throw new Error('Paket nicht gefunden oder bereits geloescht.');
+    // Upload.isDeleted bleibt bewusst unangetastet. Der Package-Status sperrt
+    // den gesamten Download; individuelle Datei-Loeschungen bleiben erhalten.
   }
 
-  logAudit(hard ? 'PACKAGE_HARD_DELETED' : 'PACKAGE_SOFT_DELETED', 'UPLOAD', {
-    packageId,
-    deletedBy,
-  });
+  logAudit(hard ? 'PACKAGE_HARD_DELETED' : 'PACKAGE_SOFT_DELETED', 'UPLOAD', { packageId, deletedBy });
 }
 
-/**
- * Paket wiederherstellen (Sektion 2: Restore möglich).
- */
 export async function restorePackage(packageId: string) {
-  await prisma.package.update({
+  const pkg = await prisma.package.findUnique({
     where: { id: packageId },
-    data: {
-      isDeleted: false,
-      deletedAt: null,
-      deletedBy: null,
-      status: 'ACTIVE',
+    include: {
+      files: {
+        where: { isDeleted: true },
+        select: { id: true, filePath: true },
+      },
     },
   });
+  if (!pkg || !pkg.isDeleted) throw new Error('Geloeschtes Paket nicht gefunden.');
 
-  await prisma.upload.updateMany({
-    where: { packageId },
-    data: { isDeleted: false, deletedAt: null },
+  // Legacy-Kompatibilitaet: Aeltere Paket-Soft-Deletes setzten alle Uploads auf
+  // isDeleted=true. Nur physisch noch vorhandene, sichere Dateien duerfen beim
+  // Restore wieder aktiviert werden. Bewusst einzeln geloeschte Dateien sind
+  // physisch weg und bleiben damit geloescht.
+  const legacyRestorableIds = pkg.files
+    .filter(file => isPathSafe(file.filePath) && existsSync(file.filePath))
+    .map(file => file.id);
+
+  await prisma.$transaction(async tx => {
+    const changed = await tx.package.updateMany({
+      where: { id: packageId, isDeleted: true },
+      data: { isDeleted: false, deletedAt: null, deletedBy: null, status: 'ACTIVE' },
+    });
+    if (changed.count !== 1) throw new Error('Paket wurde bereits wiederhergestellt oder entfernt.');
+    if (legacyRestorableIds.length > 0) {
+      await tx.upload.updateMany({
+        where: { packageId, id: { in: legacyRestorableIds }, isDeleted: true },
+        data: { isDeleted: false, deletedAt: null },
+      });
+    }
   });
-
-  logAudit('PACKAGE_RESTORED', 'UPLOAD', { packageId });
+  logAudit('PACKAGE_RESTORED', 'UPLOAD', {
+    packageId,
+    legacyFilesRestored: legacyRestorableIds.length,
+  });
 }
 
-/**
- * Sanitize Dateiname (Sicherheit: keine Pfad-Traversal, keine Hidden-Files).
- */
 function sanitizeFilename(name: string): string {
   const cleaned = name
     .replace(/[^a-zA-Z0-9._-]/g, '_')
     .replace(/\.{2,}/g, '.')
-    .replace(/^\.+/, '_')           // keine führenden Punkte (.htaccess, .env)
-    .replace(/[._-]+$/, '')         // keine trailing dots/underscores
+    .replace(/^\.+/, '_')
+    .replace(/[._-]+$/, '')
     .substring(0, 200);
-  // Fallback falls leer nach Sanitize
   return cleaned || `file_${Date.now()}`;
 }
 
-/**
- * Prüft, ob ein Pfad sicher unterhalb der Upload-Root liegt.
- */
 function isPathSafe(targetPath: string): boolean {
   const resolved = path.resolve(targetPath);
   const root = path.resolve(config.upload.dir);
@@ -428,7 +374,7 @@ function formatBytes(bytes: number): string {
 
 export class DuplicatePackageNameError extends Error {
   constructor(name: string) {
-    super(`Du hast bereits ein Paket mit dem Namen "${name}". Bitte wähle einen anderen Namen.`);
+    super(`Du hast bereits ein Paket mit dem Namen "${name}". Bitte waehle einen anderen Namen.`);
     this.name = 'DuplicatePackageNameError';
   }
 }

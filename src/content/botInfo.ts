@@ -3,10 +3,7 @@ import { BOT_DEVELOPER } from '../modules/ai/botIdentity';
 
 /**
  * Kanonische, nutzerseitige Selbstbeschreibung von V-Bot Prime.
- *
- * `/stell-dich-vor` und der Mention-Responder verwenden dieselbe Quelle. So
- * koennen Funktionsumfang, Command-Architektur und Limits nicht getrennt
- * voneinander veralten.
+ * `/stell-dich-vor` und der Mention-Responder verwenden dieselbe Quelle.
  */
 export const BOT_PRODUCT_NAME = 'V-Bot Prime' as const;
 
@@ -19,16 +16,15 @@ export function buildBotAboutText(): string {
   return [
     `🤖 **${BOT_PRODUCT_NAME} – Community, DayZ & Automation in einem System**`,
     '',
-    `Ich bin **${BOT_PRODUCT_NAME}**, entwickelt von **${BOT_DEVELOPER}**. Ich verbinde Discord-Community-Funktionen, KI, Nitrado/DayZ-Verwaltung und ein Web-Dashboard in einem gemeinsamen System.`,
+    `Ich bin **${BOT_PRODUCT_NAME}**, entwickelt von **${BOT_DEVELOPER}**. Ich verbinde Discord-Community-Funktionen, DayZ/Nitrado-Verwaltung, Economy und ein geschuetztes Web-Dashboard in einem gemeinsamen System.`,
     '',
-    '🤖 **KI & Server-Kontext** – Multi-Provider-KI, Live-Recherche, RAG/Wissensbank und serverbezogener Kontext mit Schutz sensibler Bereiche.',
-    '🎮 **DayZ & Nitrado** – mehrere Gameserver pro Guild, Whitelist/Berechtigungen, Server-Banns mit zeitgesteuertem Ablauf sowie ADM-V2-/Gameplay-Feed-Infrastruktur.',
-    '💰 **Community-Systeme** – Economy/Bank, Casino, Fraktionen, XP/Level, Giveaways, Polls, Tickets, Appeals, Feedback und Moderation.',
-    `📦 **Hersteller-System** – XML/JSON-Pakete mit bis zu 10 Dateien pro /upload, aktuell max. ${uploadMiB} MiB je Datei laut Server-Konfiguration, Validierung und Quarantäne.`,
-    '🌐 **Dashboard** – Serververwaltung plus getrennte Bot-Admin- und DEV-Bereiche. Privilegierte Bot-Admin-/DEV-Werkzeuge werden dort verwaltet und nicht mehr als normale Discord-Slash-Commands angeboten.',
-    '🏭 **Discord-Ausnahme Hersteller** – Hersteller-Workflows bleiben gezielt als Slash-Commands verfügbar.',
+    '🎮 **DayZ & Nitrado** – mehrere Gameserver pro Guild mit sauber getrenntem Server-Scope, echte Remote-Whitelist-/Ban-Abgleiche und robuste Sync-Lebenszyklen.',
+    '🛡️ **Moderation & Community** – Moderation, Tickets, Appeals, Giveaways, Polls, Reminder, XP/Level und Guild-weite Fraktionen mit abgesicherten Race-/Fehlerpfaden.',
+    '💰 **Economy & Casino** – servergescopte Bank-/Wallet-Funktionen, sichere Spieler-Verknuepfung sowie Casino mit nachvollziehbaren, korrekt modellierten Spielregeln.',
+    `📦 **Hersteller-System** – XML/JSON-Pakete mit bis zu 10 Dateien pro /upload, aktuell max. ${uploadMiB} MiB je Datei; nur vollstaendig verifizierte Hersteller und VALID gepruefte Dateien werden freigegeben.`,
+    '🌐 **Dashboard** – Serververwaltung sowie getrennte Bot-Admin- und DEV-Bereiche. Privilegierte technische Werkzeuge werden dort verwaltet statt als normale oeffentliche Slash-Commands.',
     '',
-    'Mit `/help` siehst du den **aktuell für Discord freigegebenen Command-Katalog**. Bot-Admin- und DEV-Funktionen werden dort bewusst nicht als Slash-Commands offengelegt.',
+    'Mit `/help` siehst du den **oeffentlich freigegebenen Discord-Command-Katalog**. DEV-Funktionen und `/ai` bleiben in dieser Hilfe bewusst unsichtbar.',
   ].join('\n');
 }
 
@@ -37,43 +33,35 @@ export function buildBotFeaturesText(): string {
   return [
     `🛠️ **${BOT_PRODUCT_NAME} – aktueller Funktionsumfang**`,
     '',
-    '**🤖 KI & Wissen**',
-    '• Multi-Provider-Fallback über Groq, Cerebras, OpenRouter, Gemini und OpenAI',
-    '• Live-Web-Recherche für geeignete Faktfragen',
-    '• Server-/Nutzerkontext, Conversation-Memory und Schutz privater Admin-/Mod-/Log-Bereiche',
-    '• RAG/Wissensbank, Server-Persona und konfigurierbare AI-Trigger',
-    '',
     '**🎮 DayZ & Nitrado**',
     '• Mehrere Nitrado-Gameserver pro Discord-Guild mit getrenntem Server-Scope',
-    '• Whitelist-, Permission- und Verknüpfungsverwaltung',
-    '• Server-Banns inkl. zeitgesteuertem Ablauf und automatischer Remote-Entfernung',
-    '• ADM-V2-Live-Ingest und Postprocessing als kanonische Grundlage für Gameplay-Feeds, Sessions und Rewards',
-    '• Deathfeed-/Baufeed-Konfiguration und serverbezogene ADM-Diagnose im Dashboard',
+    '• Whitelist-Antrag, direkter Add/Remove und echte Remote-Liste mit serverbezogenem Lifecycle',
+    '• Server-Bans mit Remote-Abgleich, zeitgesteuertem Ablauf und getrennten Teilfehlern pro Server',
+    '• ADM-V2-Live-Ingest und Postprocessing fuer Gameplay-Feeds, Sessions und Rewards',
     '',
     '**💰 Economy & Community**',
-    '• Economy/Bank, Transfers und Zinsverarbeitung mit Gameserver-Scope',
-    '• Casino- und Fraktionsfunktionen',
-    '• XP-/Level-System, Levelrollen, Giveaways und Polls',
-    '• Tickets, Appeals, Feedback, Selfroles, Welcome und übersetzte Posts',
+    '• Economy/Bank, Transfers und Spieler-Verknuepfung mit Gameserver-Scope',
+    '• Casino mit korrektem Coinflip, Dice, Blackjack und Runden-Audit',
+    '• XP/Level, Giveaways, Polls, Reminder, Tickets, Appeals und Feedback',
+    '• Guild-weite Fraktionen mit Rollen-Synchronisierung',
     '',
     '**📦 Hersteller & Dateien**',
-    '• Hersteller-Antrag/Verifizierung und getrennte Paketbereiche',
-    `• /upload für bis zu 10 XML/JSON-Dateien in einem Paket; aktuell max. ${uploadMiB} MiB pro Datei laut Server-Konfiguration`,
-    '• /mypackages für die eigene Paketverwaltung',
-    '• Validierung, Integritätsprüfung, Quarantäne, Soft-Delete und Audit-Logging',
+    '• Hersteller-Antrag und OTP-Verifizierung',
+    `• /upload fuer bis zu 10 XML/JSON-Dateien; aktuell max. ${uploadMiB} MiB pro Datei`,
+    '• /mypackages fuer eigene Paketverwaltung mit atomaren Datei-/Statistik-Aenderungen',
+    '• Download nur aus aktiven Herstellerbereichen und nur fuer VALID gepruefte Dateien',
     '',
-    '**🛡️ Moderation, Sicherheit & Nachvollziehbarkeit**',
-    '• Bann, Kick, Mute, Warnungen, Auto-Mod und Case-/Appeal-Verarbeitung',
-    '• Rate-Limits, Audit-Logs, Security-Events und geschützte Exportwege',
-    '• Prometheus-Metriken optional und nur mit Bearer-Token aktiviert',
+    '**🛡️ Sicherheit & Nachvollziehbarkeit**',
+    '• Zentrale Permission-, RateLimit- und Step-up-Gates mit einheitlichen Status-Embeds',
+    '• Audit-Logs, Security-Events und geschuetzte Exportwege',
+    '• Poll-/Reminder-/Ticket-/Giveaway-Flows gegen parallele Doppelaktionen und falsche Erfolgszustaende gehaertet',
     '',
-    '**🌐 Dashboard statt privilegierter Slash-Commands**',
-    '• Serverbezogene Self-Service-Funktionen liegen im normalen Dashboard',
-    '• Bot-Admin-Werkzeuge liegen im geschützten Bot-Admin-Bereich',
-    '• DEV-Diagnostik und sensible technische Aktionen liegen im DEV-Bereich; sensible Mutationen/Exporte verlangen echte Re-Authentisierung per TOTP oder DEV-Passwort',
-    '• Hersteller-Funktionen sind die bewusste Ausnahme und bleiben in Discord',
+    '**🌐 Dashboard & sichtbare Commands**',
+    '• Normale Server-Self-Service-Funktionen bleiben in Discord und/oder Dashboard verfuegbar',
+    '• Bot-Admin- und DEV-Diagnostik liegen in geschuetzten Dashboard-Bereichen',
+    '• Hersteller-Funktionen bleiben bewusst als privilegierte Discord-Slash-Commands erhalten',
+    '• `/help` zeigt nur die oeffentlich freigegebene Command-Oberflaeche; DEV und `/ai` werden dort nicht angezeigt',
     '',
     `**Entwickler:** ${BOT_DEVELOPER}`,
-    'Tipp: `/help` wird aus der Live-Registry plus Migrations-/Deploy-Regeln aufgebaut und zeigt deshalb nur Commands, die Discord tatsächlich anbieten soll.',
   ].join('\n');
 }

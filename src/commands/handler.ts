@@ -13,7 +13,34 @@ class CommandCollisionError extends Error {
 }
 
 /**
- * Command-Handler: Lädt alle Slash-Commands atomar in eine neue Collection.
+ * Koordinierte oeffentliche Command-Namensmigration.
+ *
+ * Die Legacy-Implementierungen bleiben intern unveraendert, aber bereits beim
+ * atomaren Loader-Snapshot werden die Builder auf die kanonischen Namen
+ * umgestellt. Dadurch verwenden Runtime-Registry, Discord-Deploy, /help und
+ * Dashboard-Katalog ausnahmslos dieselben Namen und die alten Aliase werden
+ * nicht parallel registriert.
+ */
+export const PUBLIC_COMMAND_RENAMES: Readonly<Record<string, string>> = Object.freeze({
+  whitelist: 'whitelist-antrag',
+  'wl-add': 'whitelist-add',
+  'wl-remove': 'whitelist-remove',
+  'wl-list': 'whitelist',
+});
+
+export function canonicalDiscordCommandName(name: string): string {
+  return PUBLIC_COMMAND_RENAMES[name] ?? name;
+}
+
+function canonicalizeCommandName(command: Command): Command {
+  const current = command.data.name;
+  const canonical = canonicalDiscordCommandName(current);
+  if (canonical !== current) command.data.setName(canonical);
+  return command;
+}
+
+/**
+ * Command-Handler: Laedt alle Slash-Commands atomar in eine neue Collection.
  * Die aktive Runtime-Registry wird erst ersetzt, wenn der komplette Loader-
  * Durchlauf erfolgreich beendet ist. Im Standardmodus verwirft jeder
  * Modul-/Registryfehler den neuen Snapshot; nur COMMAND_LOADER_STRICT=false
@@ -25,7 +52,8 @@ export async function loadCommands(client: ExtendedClient): Promise<void> {
   let collisionCount = 0;
   const strict = process.env.COMMAND_LOADER_STRICT !== 'false';
 
-  const registerCommand = (cmd: Command, sourceFile: string): void => {
+  const registerCommand = (rawCommand: Command, sourceFile: string): void => {
+    const cmd = canonicalizeCommandName(rawCommand);
     const existing = commandSources.get(cmd.data.name);
     if (existing && existing !== sourceFile) {
       collisionCount++;
@@ -50,7 +78,7 @@ export async function loadCommands(client: ExtendedClient): Promise<void> {
 
   for (const dir of commandDirs) {
     if (!fs.existsSync(dir)) continue;
-    const files = fs.readdirSync(dir).filter(f => f.endsWith('.ts') || f.endsWith('.js'));
+    const files = fs.readdirSync(dir).filter(file => file.endsWith('.ts') || file.endsWith('.js'));
 
     for (const file of files) {
       const relSource = path.join(path.basename(dir), file);
@@ -70,8 +98,9 @@ export async function loadCommands(client: ExtendedClient): Promise<void> {
             if (key === 'default' || key === '__esModule') continue;
             const exported = source[key];
             if (exported?.data?.name && typeof exported.execute === 'function') {
-              registerCommand(exported as Command, relSource);
-              logger.info(`Command geladen: /${exported.data.name}`);
+              const command = exported as Command;
+              registerCommand(command, relSource);
+              logger.info(`Command geladen: /${command.data.name}`);
             }
           }
         }
@@ -92,7 +121,6 @@ export async function loadCommands(client: ExtendedClient): Promise<void> {
     logger.warn(`[Command-Collision] ${collisionCount} doppelte Command-Name(n) erkannt.`);
   }
 
-  // Atomarer Commit des neuen Loader-Snapshots.
   client.commands = nextCommands;
   client.commandSources = commandSources;
   client.commandCollisions = collisionCount;
@@ -102,7 +130,7 @@ export async function loadCommands(client: ExtendedClient): Promise<void> {
 /** Registriert alle geladenen Commands in genau einem Discord-Scope. */
 export async function deployCommands(client: ExtendedClient, token: string, clientId: string, guildId?: string): Promise<void> {
   const rest = new REST({ version: '10' }).setToken(token);
-  const commandData = client.commands.map(c => c.data.toJSON());
+  const commandData = client.commands.map(command => command.data.toJSON());
   try {
     if (guildId) {
       await rest.put(Routes.applicationGuildCommands(clientId, guildId), { body: commandData });
@@ -117,11 +145,6 @@ export async function deployCommands(client: ExtendedClient, token: string, clie
   }
 }
 
-/**
- * Teilt die geladenen Commands anhand des kanonischen Inventars auf.
- * `staysInDiscord` ist die entscheidende Deploy-Grenze; migrierte Commands
- * koennen dadurch auch bei versehentlichem Wiederladen nicht zurueckkehren.
- */
 export function splitCommandsByScope(client: ExtendedClient): {
   global: ReturnType<Command['data']['toJSON']>[];
   guild: ReturnType<Command['data']['toJSON']>[];
@@ -130,17 +153,17 @@ export function splitCommandsByScope(client: ExtendedClient): {
   const guildCmds: ReturnType<Command['data']['toJSON']>[] = [];
   for (const cmd of client.commands.values()) {
     const source = client.commandSources?.get(cmd.data.name) ?? undefined;
-    const cls = classifyCommand({
+    const classification = classifyCommand({
       name: cmd.data.name,
       source,
       adminOnly: cmd.adminOnly,
       devOnly: cmd.devOnly,
       manufacturerOnly: cmd.manufacturerOnly,
     });
-    if (!cls.staysInDiscord) continue;
+    if (!classification.staysInDiscord) continue;
 
     const json = cmd.data.toJSON();
-    if (cls.category === 'admin' || cls.category === 'dev') globalCmds.push(json);
+    if (classification.category === 'admin' || classification.category === 'dev') globalCmds.push(json);
     else guildCmds.push(json);
   }
   return { global: globalCmds, guild: guildCmds };
@@ -154,12 +177,6 @@ export interface ScopedDeployResult {
   failedGuildIds: string[];
 }
 
-/**
- * Registriert die Commands scope-getrennt. Globale Fehler werfen sofort;
- * einzelne Guild-Fehler werden vollstaendig erfasst und dem Caller als
- * unvollstaendiges Ergebnis zurueckgegeben, damit CLI/Dashboard nicht faelschlich
- * Erfolg melden koennen.
- */
 export async function deployCommandsScoped(
   client: ExtendedClient,
   token: string,
@@ -174,13 +191,13 @@ export async function deployCommandsScoped(
 
   let guildsOk = 0;
   const failedGuildIds: string[] = [];
-  for (const gid of guildIds) {
+  for (const guildId of guildIds) {
     try {
-      await rest.put(Routes.applicationGuildCommands(clientId, gid), { body: guildCmds });
+      await rest.put(Routes.applicationGuildCommands(clientId, guildId), { body: guildCmds });
       guildsOk++;
     } catch (error) {
-      failedGuildIds.push(gid);
-      logger.warn(`Guild-Deploy fuer ${gid} fehlgeschlagen:`, error as Error);
+      failedGuildIds.push(guildId);
+      logger.warn(`Guild-Deploy fuer ${guildId} fehlgeschlagen:`, error as Error);
     }
   }
   logger.info(`${guildCmds.length} guild-Commands auf ${guildsOk}/${guildIds.length} Guild(s) registriert.`);
@@ -193,7 +210,6 @@ export async function deployCommandsScoped(
   };
 }
 
-/** Registriert die guild-scoped Commands fuer genau eine Guild. */
 export async function deployGuildCommands(
   client: ExtendedClient,
   token: string,

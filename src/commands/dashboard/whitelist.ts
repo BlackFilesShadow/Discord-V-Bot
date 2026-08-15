@@ -31,9 +31,24 @@ const NAME_RE = /^[^\r\n\t]{1,64}$/;
 const LIST_PAGE_SIZE = 25;
 function isValidName(s: string): boolean { return NAME_RE.test(s) && s.length >= 1; }
 
-async function reply(i: ChatInputCommandInteraction, content: string, ephemeral = true): Promise<void> {
-  if (ephemeral) await i.reply({ content, flags: MessageFlags.Ephemeral, allowedMentions: { parse: [] } });
-  else await i.reply({ content, allowedMentions: { parse: [] } });
+type ReplyState = 'INFO' | 'SUCCESS' | 'ERROR';
+
+async function reply(
+  i: ChatInputCommandInteraction,
+  content: string,
+  ephemeral = true,
+  state: ReplyState = 'INFO',
+  title?: string,
+): Promise<void> {
+  const color = state === 'SUCCESS' ? 0x57F287 : state === 'ERROR' ? 0xED4245 : 0x5865F2;
+  const defaultTitle = state === 'SUCCESS' ? 'Erfolgreich' : state === 'ERROR' ? 'Aktion nicht moeglich' : 'Information';
+  const embed = new EmbedBuilder()
+    .setColor(color)
+    .setTitle(title ?? defaultTitle)
+    .setDescription(content)
+    .setTimestamp();
+  if (ephemeral) await i.reply({ embeds: [embed], flags: MessageFlags.Ephemeral, allowedMentions: { parse: [] } });
+  else await i.reply({ embeds: [embed], allowedMentions: { parse: [] } });
 }
 
 function safeLine(value: string | null | undefined, fallback = '—'): string {
@@ -70,7 +85,7 @@ export const whitelistCommand: Command = {
 
   execute: withGuildScope({ guildOnly: true }, async (i, scope) => {
     const id = i.options.getString('id', true).trim();
-    if (!isValidName(id)) { await reply(i, 'Ungueltiger Name (1-64 Zeichen).'); return; }
+    if (!isValidName(id)) { await reply(i, 'Ungueltiger Name (1-64 Zeichen).', true, 'ERROR'); return; }
 
     const target = await resolveSingleServer(i, scope.guildId);
     if (!target) return;
@@ -79,27 +94,33 @@ export const whitelistCommand: Command = {
       where: { guildId_nitradoConnId: { guildId: scope.guildId, nitradoConnId: target.id } },
     });
     if (!settings?.whitelistActive) {
-      await reply(i, `Das Whitelist-System ist fuer **${targetLabel(target)}** deaktiviert.`);
+      await reply(i, `Das Whitelist-System ist fuer **${targetLabel(target)}** deaktiviert.`, true, 'ERROR');
       return;
     }
     if (!settings.whitelistChannelId || !settings.whitelistRequestChannelId) {
-      await reply(i, 'Whitelist-System ist noch nicht vollstaendig eingerichtet. Bitte einen Admin um Konfiguration der Kanaele.');
+      await reply(i, 'Whitelist-System ist noch nicht vollstaendig eingerichtet. Bitte einen Admin um Konfiguration der Kanaele.', true, 'ERROR');
       return;
     }
     if (i.channelId !== settings.whitelistChannelId) {
-      await reply(i, `Whitelist-Anfragen sind fuer **${targetLabel(target)}** ausschliesslich in <#${settings.whitelistChannelId}> erlaubt.`);
+      await reply(i, `Whitelist-Anfragen sind fuer **${targetLabel(target)}** ausschliesslich in <#${settings.whitelistChannelId}> erlaubt.`, true, 'ERROR');
       return;
     }
 
     const existing = await prisma.whitelistEntry.findUnique({
       where: { guildId_nitradoConnId_gameId: { guildId: scope.guildId, nitradoConnId: target.id, gameId: id } },
     });
-    if (existing) { await reply(i, 'Dieser Spielername ist auf diesem Server bereits auf der Whitelist.'); return; }
+    if (existing) {
+      const message = existing.syncState === 'PENDING_REMOVE'
+        ? 'Dieser Spielername wird auf diesem Server gerade von der Whitelist entfernt. Bitte warte auf den Nitrado-Abgleich.'
+        : 'Dieser Spielername ist auf diesem Server bereits auf der Whitelist.';
+      await reply(i, message, true, 'ERROR');
+      return;
+    }
 
     const openSame = await prisma.whitelistRequest.findFirst({
       where: { guildId: scope.guildId, nitradoConnId: target.id, gameId: id, status: 'PENDING' },
     });
-    if (openSame) { await reply(i, 'Es gibt bereits eine offene Anfrage fuer diesen Spielernamen auf diesem Server.'); return; }
+    if (openSame) { await reply(i, 'Es gibt bereits eine offene Anfrage fuer diesen Spielernamen auf diesem Server.', true, 'ERROR'); return; }
 
     const MAX_REQUESTS_PER_USER = 8;
     const activeCount = await prisma.whitelistRequest.count({
@@ -111,7 +132,7 @@ export const whitelistCommand: Command = {
       },
     });
     if (activeCount >= MAX_REQUESTS_PER_USER) {
-      await reply(i, `Du hast auf diesem Server bereits ${activeCount} aktive Whitelist-Eintraege/Anfragen (Maximum: ${MAX_REQUESTS_PER_USER}).`);
+      await reply(i, `Du hast auf diesem Server bereits ${activeCount} aktive Whitelist-Eintraege/Anfragen (Maximum: ${MAX_REQUESTS_PER_USER}).`, true, 'ERROR');
       return;
     }
 
@@ -139,7 +160,7 @@ export const whitelistCommand: Command = {
 
     if (!messageId) {
       await prisma.whitelistRequest.delete({ where: { id: created.id, guildId: scope.guildId } }).catch(() => null);
-      await reply(i, 'Annahme-Kanal nicht erreichbar. Bitte einen Admin um Pruefung der Kanal-Konfiguration.');
+      await reply(i, 'Annahme-Kanal nicht erreichbar. Bitte einen Admin um Pruefung der Kanal-Konfiguration.', true, 'ERROR');
       return;
     }
 
@@ -178,12 +199,13 @@ export const wlAddCommand: Command = {
 
   execute: withGuildScope({ requirePerm: 'whitelist.manage', guildOnly: true }, async (i, scope) => {
     const id = i.options.getString('id', true).trim();
-    if (!isValidName(id)) { await reply(i, 'Ungueltiger Name (1-64 Zeichen).'); return; }
+    if (!isValidName(id)) { await reply(i, 'Ungueltiger Name (1-64 Zeichen).', true, 'ERROR'); return; }
 
     const targets = await resolveSelectedOrAllServers(i, scope.guildId);
     if (!targets) return;
 
     const results: string[] = [];
+    let failures = 0;
     for (const target of targets) {
       try {
         await prisma.$transaction(async tx => {
@@ -211,12 +233,19 @@ export const wlAddCommand: Command = {
         logAudit('WL_ADD', 'WHITELIST', { guildId: scope.guildId, slotId: target.id, slot: target.slot, alias: target.alias, actor: scope.actorDiscordId });
         results.push(`✅ **${targetLabel(target)}** — Add-Sync eingereiht.`);
       } catch (error) {
+        failures++;
         results.push(`❌ **${targetLabel(target)}** — ${safeLine(error instanceof Error ? error.message : String(error))}`);
       }
     }
 
     emitGuildEvent(scope.guildId, { type: 'whitelist.changed', payload: { guildId: scope.guildId, action: 'added' } });
-    await reply(i, `Whitelist-Add verarbeitet:\n${results.join('\n')}`);
+    await reply(
+      i,
+      results.join('\n'),
+      true,
+      failures === 0 ? 'SUCCESS' : failures === targets.length ? 'ERROR' : 'INFO',
+      'Whitelist-Add verarbeitet',
+    );
   }),
 };
 
@@ -234,17 +263,23 @@ export const wlRemoveCommand: Command = {
 
   execute: withGuildScope({ requirePerm: 'whitelist.manage', guildOnly: true }, async (i, scope) => {
     const id = i.options.getString('id', true).trim();
-    if (!isValidName(id)) { await reply(i, 'Ungueltiger Name (1-64 Zeichen).'); return; }
+    if (!isValidName(id)) { await reply(i, 'Ungueltiger Name (1-64 Zeichen).', true, 'ERROR'); return; }
 
     const targets = await resolveSelectedOrAllServers(i, scope.guildId);
     if (!targets) return;
 
     const results: string[] = [];
+    let failures = 0;
     for (const target of targets) {
       try {
         await prisma.$transaction(async tx => {
-          await tx.whitelistEntry.deleteMany({
+          // Lokalen Spiegel NICHT sofort loeschen. PENDING_REMOVE verhindert,
+          // dass ein Remote-Fehler lokal bereits als erfolgreicher Remove gilt.
+          // Der Whitelist-Reconciler loescht die Zeile erst nach einem frischen
+          // Nitrado-Read, der die Abwesenheit bestaetigt.
+          await tx.whitelistEntry.updateMany({
             where: { guildId: scope.guildId, nitradoConnId: target.id, gameId: id },
+            data: { syncState: 'PENDING_REMOVE', lastSyncedAt: null },
           });
           await tx.whitelistRequest.updateMany({
             where: {
@@ -262,14 +297,21 @@ export const wlRemoveCommand: Command = {
           });
         });
         logAudit('WL_REMOVE', 'WHITELIST', { guildId: scope.guildId, slotId: target.id, slot: target.slot, alias: target.alias, actor: scope.actorDiscordId });
-        results.push(`✅ **${targetLabel(target)}** — Remove-Sync eingereiht.`);
+        results.push(`✅ **${targetLabel(target)}** — Remove-Sync eingereiht; lokale Finalisierung erfolgt erst nach Nitrado-Bestaetigung.`);
       } catch (error) {
+        failures++;
         results.push(`❌ **${targetLabel(target)}** — ${safeLine(error instanceof Error ? error.message : String(error))}`);
       }
     }
 
-    emitGuildEvent(scope.guildId, { type: 'whitelist.changed', payload: { guildId: scope.guildId, action: 'removed' } });
-    await reply(i, `Whitelist-Remove verarbeitet:\n${results.join('\n')}`);
+    emitGuildEvent(scope.guildId, { type: 'whitelist.changed', payload: { guildId: scope.guildId, action: 'remove_pending' } });
+    await reply(
+      i,
+      results.join('\n'),
+      true,
+      failures === 0 ? 'SUCCESS' : failures === targets.length ? 'ERROR' : 'INFO',
+      'Whitelist-Remove verarbeitet',
+    );
   }),
 };
 
@@ -314,6 +356,7 @@ export const wlListCommand: Command = {
         }
       } catch (error) {
         embeds.push(new EmbedBuilder()
+          .setColor(0xED4245)
           .setTitle(`Whitelist • ${targetLabel(target)}`)
           .setDescription(`❌ Nitrado-Liste konnte nicht gelesen werden: ${safeLine(error instanceof Error ? error.message : String(error))}`)
           .setTimestamp());

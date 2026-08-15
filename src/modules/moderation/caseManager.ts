@@ -3,12 +3,7 @@ import { logger, logAudit } from '../../utils/logger';
 import { Guild, PermissionFlagsBits, type PermissionResolvable } from 'discord.js';
 import { postModLog } from './modLog';
 
-/**
- * Defense-in-depth: Welche Discord-Permission der Moderator MINDESTENS
- * besitzen muss, um die jeweilige Aktion auszuloesen. Wird zusaetzlich zu
- * Discords setDefaultMemberPermissions geprueft, falls der Manager je aus
- * einem anderen Kontext (Dashboard/API) aufgerufen wird.
- */
+/** Defense-in-depth: minimale Discord-Permission pro Moderationsaktion. */
 const REQUIRED_PERMISSION: Record<string, PermissionResolvable> = {
   KICK: PermissionFlagsBits.KickMembers,
   BAN: PermissionFlagsBits.BanMembers,
@@ -19,102 +14,98 @@ const REQUIRED_PERMISSION: Record<string, PermissionResolvable> = {
 };
 
 /**
- * Case-Manager (Sektion 4):
- * - Kick, Ban, Mute, Warn, Filter, Auto-Mod
- * - Eskalationsstufen, Audit-Log, Case-Management
- * - Appeal-System
- */
-
-/**
- * Erstellt einen Moderationsfall und führt die Aktion aus.
+ * Erstellt einen Moderationsfall und fuehrt die Discord-Aktion aus.
+ *
+ * Wichtige Invarianten:
+ * - Hierarchie + Permission werden serverseitig erneut geprueft.
+ * - Eskalation ist strikt auf die Origin-Guild begrenzt.
+ * - Ein fehlgeschlagener Discord-Sideeffect bleibt als Audit-Historie erhalten,
+ *   wird aber sofort `isActive=false`, damit Scheduler/Appeals ihn niemals als
+ *   noch aktive Sanktion behandeln.
  */
 export async function createModerationCase(params: {
   targetDiscordId: string;
   moderatorDiscordId: string;
   action: 'KICK' | 'BAN' | 'TEMP_BAN' | 'MUTE' | 'TEMP_MUTE' | 'WARN';
   reason: string;
-  duration?: number; // Minuten
+  duration?: number;
   guild: Guild;
 }): Promise<{ success: boolean; caseNumber?: number; message: string }> {
   const { targetDiscordId, moderatorDiscordId, action, reason, duration, guild } = params;
 
-  // Safety-Guards (Sektion 4)
   if (targetDiscordId === moderatorDiscordId) {
-    return { success: false, message: '❌ Du kannst dich nicht selbst moderieren.' };
+    return { success: false, message: 'Du kannst dich nicht selbst moderieren.' };
   }
   if (targetDiscordId === guild.client.user?.id) {
-    return { success: false, message: '❌ Der Bot kann nicht gegen sich selbst aktionieren.' };
+    return { success: false, message: 'Der Bot kann nicht gegen sich selbst aktionieren.' };
   }
 
-  // Hierarchie-Check: Moderator muss höhere Rolle haben als Target
   const targetMember = await guild.members.fetch(targetDiscordId).catch(() => null);
   const modMember = await guild.members.fetch(moderatorDiscordId).catch(() => null);
 
-  // Defense-in-depth: explizite Permission-Pruefung im Backend
-  // (Discord erzwingt setDefaultMemberPermissions bereits am Slash-Command,
-  // aber falls der Manager je via Dashboard/API/Eval aufgerufen wird,
-  // verhindern wir hier eine Privilege-Eskalation.)
   const requiredPerm = REQUIRED_PERMISSION[action];
   if (requiredPerm && guild.ownerId !== moderatorDiscordId) {
     if (!modMember) {
-      return { success: false, message: '❌ Moderator nicht im Server gefunden.' };
+      return { success: false, message: 'Moderator nicht im Server gefunden.' };
     }
     if (!modMember.permissions.has(requiredPerm)) {
       logger.warn(
         `Backend-Perm-Check abgelehnt: ${moderatorDiscordId} ohne ${String(requiredPerm)} fuer ${action} in ${guild.id}`,
       );
-      return { success: false, message: '❌ Du hast nicht die noetige Berechtigung fuer diese Aktion.' };
+      return { success: false, message: 'Du hast nicht die noetige Berechtigung fuer diese Aktion.' };
     }
   }
 
   if (targetMember && modMember && guild.ownerId !== moderatorDiscordId) {
     if (targetMember.roles.highest.position >= modMember.roles.highest.position) {
-      return { success: false, message: '❌ Ziel-Nutzer hat gleich hohe oder höhere Rolle.' };
+      return { success: false, message: 'Ziel-Nutzer hat eine gleich hohe oder hoehere Rolle.' };
     }
   }
-  // Bot-Hierarchie-Check
+
   const botMember = guild.members.me;
   if (targetMember && botMember && action !== 'WARN') {
     if (targetMember.roles.highest.position >= botMember.roles.highest.position) {
-      return { success: false, message: '❌ Bot-Rolle ist nicht hoch genug für diese Aktion.' };
+      return { success: false, message: 'Bot-Rolle ist nicht hoch genug fuer diese Aktion.' };
     }
   }
-  // Target nicht im Server (für KICK/MUTE relevant)
+
   if (!targetMember && (action === 'KICK' || action === 'MUTE' || action === 'TEMP_MUTE')) {
-    return { success: false, message: '❌ Nutzer ist nicht (mehr) auf dem Server.' };
+    return { success: false, message: 'Nutzer ist nicht mehr auf dem Server.' };
   }
 
-  // User-GUIDs auflösen
+  // Moderationscommands duerfen nicht davon abhaengen, dass ein separater
+  // Member-Sync den Moderator bereits in User angelegt hat.
+  const targetDiscordUser = targetMember?.user
+    ?? await guild.client.users.fetch(targetDiscordId).catch(() => null);
   const targetUser = await prisma.user.upsert({
     where: { discordId: targetDiscordId },
-    create: { discordId: targetDiscordId, username: 'Unknown' },
-    update: {},
+    create: { discordId: targetDiscordId, username: targetDiscordUser?.username ?? 'Unknown' },
+    update: targetDiscordUser?.username ? { username: targetDiscordUser.username } : {},
   });
 
-  const modUser = await prisma.user.findUnique({
+  const moderatorUsername = modMember?.user.username
+    ?? (await guild.client.users.fetch(moderatorDiscordId).catch(() => null))?.username
+    ?? 'Unknown';
+  const modUser = await prisma.user.upsert({
     where: { discordId: moderatorDiscordId },
+    create: { discordId: moderatorDiscordId, username: moderatorUsername },
+    update: moderatorUsername !== 'Unknown' ? { username: moderatorUsername } : {},
   });
 
-  if (!modUser) {
-    return { success: false, message: 'Moderator nicht in DB gefunden.' };
-  }
-
-  // Eskalationsstufe berechnen
+  // Ausschliesslich aktive Cases derselben Guild beeinflussen die Eskalation.
   const previousCases = await prisma.moderationCase.count({
-    where: { targetUserId: targetUser.id, isActive: true },
+    where: { guildId: guild.id, targetUserId: targetUser.id, isActive: true },
   });
   const escalationLevel = Math.min(previousCases, 5);
 
-  // Ablaufzeit berechnen
   let expiresAt: Date | null = null;
   if (duration && (action === 'TEMP_BAN' || action === 'TEMP_MUTE')) {
     expiresAt = new Date(Date.now() + duration * 60 * 1000);
   }
 
-  // Case in DB erstellen
   const modCase = await prisma.moderationCase.create({
     data: {
-      guildId: guild.id, // Guild-Trennung
+      guildId: guild.id,
       targetUserId: targetUser.id,
       moderatorId: modUser.id,
       action,
@@ -125,56 +116,66 @@ export async function createModerationCase(params: {
     },
   });
 
-  // Discord-Aktion ausführen
   try {
     const member = targetMember;
-
     switch (action) {
       case 'KICK':
         if (member) await member.kick(reason);
         break;
-
       case 'BAN':
         await guild.members.ban(targetDiscordId, { reason, deleteMessageSeconds: 604800 });
         break;
-
       case 'TEMP_BAN':
         await guild.members.ban(targetDiscordId, { reason });
-        // Automatische Entbannung wird durch Scheduler gehandelt
         break;
-
       case 'MUTE':
       case 'TEMP_MUTE':
         if (member) {
-          const muteMs = duration ? duration * 60 * 1000 : 28 * 24 * 60 * 60 * 1000; // Max 28 Tage
+          const muteMs = duration ? duration * 60 * 1000 : 28 * 24 * 60 * 60 * 1000;
           await member.timeout(muteMs, reason);
         }
         break;
-
       case 'WARN':
-        // Warnung per DM senden
         try {
-          const targetDiscordUser = await guild.client.users.fetch(targetDiscordId);
-          await targetDiscordUser.send(
+          const target = targetDiscordUser ?? await guild.client.users.fetch(targetDiscordId);
+          await target.send(
             `⚠️ **Verwarnung** auf **${guild.name}**\n` +
             `**Grund:** ${reason}\n` +
             `**Eskalationsstufe:** ${escalationLevel}\n` +
             `**Case-Nr:** #${modCase.caseNumber}\n\n` +
-            `Bei Einspruch: Verwende \`/appeal ${modCase.caseNumber}\``
+            `Bei Einspruch: Verwende \`/appeal case-id:${modCase.caseNumber}\`.`,
           );
-        } catch { /* DMs deaktiviert */ }
+        } catch { /* DMs deaktiviert: Warn-Case selbst bleibt gueltig. */ }
         break;
     }
   } catch (error) {
     logger.error(`Moderationsaktion ${action} fehlgeschlagen:`, error);
+    const failedAt = new Date();
+    await prisma.moderationCase.update({
+      where: { id: modCase.id },
+      data: {
+        isActive: false,
+        revokedAt: failedAt,
+        revokedBy: 'system:discord_action_failed',
+      },
+    }).catch(updateError => {
+      logger.error(`Fehlgeschlagenen Moderations-Case #${modCase.caseNumber} konnte nicht deaktiviert werden:`, updateError);
+    });
+    logAudit('MODERATION_ACTION_FAILED', 'MODERATION', {
+      caseNumber: modCase.caseNumber,
+      action,
+      targetUserId: targetUser.id,
+      moderatorId: modUser.id,
+      guildId: guild.id,
+      error: error instanceof Error ? error.message : String(error),
+    });
     return {
       success: false,
       caseNumber: modCase.caseNumber,
-      message: `Case erstellt (#${modCase.caseNumber}), aber Discord-Aktion fehlgeschlagen.`,
+      message: `Case #${modCase.caseNumber} wurde als fehlgeschlagener Versuch protokolliert; die Discord-Aktion wurde nicht aktiv.`,
     };
   }
 
-  // Audit-Log
   logAudit('MODERATION_ACTION', 'MODERATION', {
     caseNumber: modCase.caseNumber,
     action,
@@ -186,7 +187,6 @@ export async function createModerationCase(params: {
     guildId: guild.id,
   });
 
-  // Mod-Log (öffentlicher Channel) — best-effort, blockiert nichts
   await postModLog(guild, {
     action,
     caseNumber: modCase.caseNumber,
@@ -202,16 +202,13 @@ export async function createModerationCase(params: {
   return {
     success: true,
     caseNumber: modCase.caseNumber,
-    message: `Moderationsaktion ${action} ausgeführt. Case #${modCase.caseNumber} erstellt.`,
+    message: `Moderationsaktion ${action} ausgefuehrt. Case #${modCase.caseNumber} erstellt.`,
   };
 }
 
 /**
- * Appeal erstellen (Sektion 4: Appeal-System).
- *
- * @param expectedGuildId  Wenn gesetzt, wird geprüft, dass der Case zu dieser
- *                          Guild gehört. Verhindert Cross-Guild-Appeals (User
- *                          aus Guild A fügt Beschwerde gegen Case in Guild B ein).
+ * Appeal erstellen. Wenn expectedGuildId gesetzt ist, muss der Case aus genau
+ * dieser Guild stammen (Cross-Guild-Schutz).
  */
 export async function createAppeal(
   caseNumber: number,
@@ -223,60 +220,39 @@ export async function createAppeal(
     where: { caseNumber },
   });
 
-  if (!modCase) {
-    return { success: false, message: `Case #${caseNumber} nicht gefunden.` };
-  }
+  if (!modCase) return { success: false, message: `Case #${caseNumber} nicht gefunden.` };
 
-  // Cross-Guild-Schutz: Appeal nur in der Origin-Guild des Cases.
   if (expectedGuildId && modCase.guildId && modCase.guildId !== expectedGuildId) {
-    return {
-      success: false,
-      message: 'Dieser Case gehört zu einem anderen Server. Reiche den Appeal dort ein.',
-    };
+    return { success: false, message: 'Dieser Case gehoert zu einem anderen Server. Reiche den Appeal dort ein.' };
+  }
+  if (!modCase.isActive) {
+    return { success: false, message: 'Dieser Case ist nicht mehr aktiv und kann nicht angefochten werden.' };
   }
 
-  const user = await prisma.user.findUnique({
-    where: { discordId: userDiscordId },
-  });
+  const user = await prisma.user.findUnique({ where: { discordId: userDiscordId } });
+  if (!user) return { success: false, message: 'User nicht registriert.' };
+  if (modCase.targetUserId !== user.id) return { success: false, message: 'Du kannst nur eigene Cases anfechten.' };
 
-  if (!user) {
-    return { success: false, message: 'User nicht registriert.' };
-  }
-
-  // Prüfe ob User der Betroffene ist
-  if (modCase.targetUserId !== user.id) {
-    return { success: false, message: 'Du kannst nur eigene Cases anfechten.' };
-  }
-
-  // Prüfe ob bereits ein Appeal existiert
   const existingAppeal = await prisma.appeal.findFirst({
     where: { caseId: modCase.id, userId: user.id, status: 'PENDING' },
   });
-
   if (existingAppeal) {
-    return { success: false, message: 'Du hast bereits einen offenen Appeal für diesen Case.' };
+    return { success: false, message: 'Du hast bereits einen offenen Appeal fuer diesen Case.' };
   }
 
   await prisma.appeal.create({
-    data: {
-      caseId: modCase.id,
-      userId: user.id,
-      reason,
-    },
+    data: { caseId: modCase.id, userId: user.id, reason },
   });
 
   logAudit('APPEAL_CREATED', 'APPEAL', {
     caseNumber,
     userId: user.id,
+    guildId: modCase.guildId,
     reason,
   });
-
-  return { success: true, message: `Appeal für Case #${caseNumber} eingereicht. Ein Admin wird sich melden.` };
+  return { success: true, message: `Appeal fuer Case #${caseNumber} eingereicht. Ein Admin wird sich melden.` };
 }
 
-/**
- * Case-Lookup: Details zu einem Case abrufen.
- */
 export async function getCaseDetails(caseNumber: number, guildId?: string) {
   return prisma.moderationCase.findFirst({
     where: { caseNumber, ...(guildId ? { guildId } : {}) },
@@ -288,14 +264,9 @@ export async function getCaseDetails(caseNumber: number, guildId?: string) {
   });
 }
 
-/**
- * Cases für einen User abrufen. Wird `guildId` gesetzt, werden nur Cases
- * dieser Guild zurueckgegeben (Mandantentrennung).
- */
 export async function getUserCases(discordId: string, guildId?: string) {
   const user = await prisma.user.findUnique({ where: { discordId } });
   if (!user) return [];
-
   return prisma.moderationCase.findMany({
     where: { targetUserId: user.id, ...(guildId ? { guildId } : {}) },
     include: {
@@ -306,34 +277,26 @@ export async function getUserCases(discordId: string, guildId?: string) {
   });
 }
 
-/**
- * Abgelaufene Temp-Bans/Mutes aufheben (Scheduler).
- */
+/** Abgelaufene Temp-Bans/Mutes servergescopet aufheben. */
 export async function processExpiredCases(guild: Guild): Promise<number> {
   const expiredCases = await prisma.moderationCase.findMany({
     where: {
       isActive: true,
-      // Guild-Trennung: nur Cases dieser Guild aufheben. Verhindert, dass ein
-      // Temp-Ban/Mute aus Guild B faelschlich in Guild A revoked wird.
       guildId: guild.id,
       expiresAt: { lte: new Date() },
       action: { in: ['TEMP_BAN', 'TEMP_MUTE'] },
     },
-    include: {
-      targetUser: true,
-    },
+    include: { targetUser: true },
   });
 
   let processed = 0;
   for (const modCase of expiredCases) {
     try {
       if (modCase.action === 'TEMP_BAN') {
-        await guild.members.unban(modCase.targetUser.discordId, 'Temporärer Ban abgelaufen');
+        await guild.members.unban(modCase.targetUser.discordId, 'Temporaerer Ban abgelaufen');
       } else if (modCase.action === 'TEMP_MUTE') {
         const member = await guild.members.fetch(modCase.targetUser.discordId).catch(() => null);
-        if (member) {
-          await member.timeout(null, 'Temporärer Mute abgelaufen');
-        }
+        if (member) await member.timeout(null, 'Temporaerer Mute abgelaufen');
       }
 
       await prisma.moderationCase.update({
@@ -342,20 +305,19 @@ export async function processExpiredCases(guild: Guild): Promise<number> {
       });
 
       processed++;
-
       logAudit('MODERATION_EXPIRED', 'MODERATION', {
         caseNumber: modCase.caseNumber,
         action: modCase.action,
         targetUserId: modCase.targetUserId,
+        guildId: guild.id,
       });
 
-      // Mod-Log für automatische Aufhebung (best-effort)
       await postModLog(guild, {
         action: `${modCase.action}_EXPIRED`,
         caseNumber: modCase.caseNumber,
         targetUserId: modCase.targetUser.discordId,
         targetUsername: modCase.targetUser.username ?? undefined,
-        reason: 'Temporäre Mod-Aktion automatisch abgelaufen.',
+        reason: 'Temporaere Mod-Aktion automatisch abgelaufen.',
       });
     } catch (error) {
       logger.error(`Fehler beim Aufheben von Case #${modCase.caseNumber}:`, error);
