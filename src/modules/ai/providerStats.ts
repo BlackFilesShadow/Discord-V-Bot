@@ -4,12 +4,15 @@ import { logger } from '../../utils/logger';
 import { config } from '../../config';
 
 /**
- * Phase 10 (B3 Modell-Check): Provider-Health-Tracking + adaptive Reihenfolge.
+ * Provider-Health-Tracking + adaptive Reihenfolge.
  *
  * - recordCall(): nach jedem callAI-Versuch persistente Stats updaten
  * - getRankedProviders(): Reihenfolge nach Score statt fester Konfig-Reihenfolge
- * - getStats(): formatiert fuer /admin-aimodels
+ * - getStats(): formatiert fuer Bot-Admin/DEV-Dashboard-Diagnostik
  * - probeProvider(): aktiver Health-Check mit Mini-Prompt + Latenz
+ *
+ * Die fruehere Discord-Ausgabe ueber /admin-aimodels ist in das Dashboard
+ * migriert; dieses Modul ist weiterhin die kanonische Runtime-Datenquelle.
  */
 
 export type ProviderName = 'groq' | 'cerebras' | 'openrouter' | 'gemini' | 'openai';
@@ -52,16 +55,8 @@ interface CooldownState { until: number; consecutive: number; }
 const cooldowns = new Map<ProviderName, CooldownState>();
 const COOLDOWN_BASE_MS = 30_000;
 const COOLDOWN_MAX_MS = 300_000;
-// Auth-/Modell-Fehler (401/403/404) = kaputter Key/Model -> Provider fuer diese
-// Zeit KOMPLETT aus der Rotation nehmen, damit er nicht als „letzter Ueberlebender"
-// die Rotation vergiftet, waehrend gesunde Provider kurz rate-limited sind.
 const UNAVAILABLE_COOLDOWN_MS = 15 * 60_000;
 
-/**
- * Hydratisiert den In-Memory-Cache aus DB. Wird bei Boot einmalig + danach
- * alle 60s aufgerufen (siehe scheduleProviderCooldownSync), damit ein zweiter
- * Bot-Replica seine Cooldowns sieht.
- */
 export async function hydrateCooldownsFromDb(): Promise<void> {
   try {
     const rows = await prisma.aiProviderStat.findMany({
@@ -73,15 +68,13 @@ export async function hydrateCooldownsFromDb(): Promise<void> {
       if (!ALL_PROVIDERS.includes(r.provider as ProviderName)) continue;
       if (!r.cooldownUntil) continue;
       const until = r.cooldownUntil.getTime();
-      if (Date.now() >= until) continue; // expired
+      if (Date.now() >= until) continue;
       cooldowns.set(r.provider as ProviderName, {
         until,
         consecutive: r.cooldownStreak ?? 1,
       });
       seen.add(r.provider as ProviderName);
     }
-    // In-Memory-Eintraege, die nicht mehr in der DB sind, evtl. lokal expired:
-    // bei naechstem isOnCooldown()-Call werden sie ohnehin bereinigt.
     for (const [p] of cooldowns) {
       if (!seen.has(p) && cooldowns.get(p)!.until <= Date.now()) cooldowns.delete(p);
     }
@@ -102,9 +95,6 @@ export function markRateLimited(provider: ProviderName, retryAfterMs?: number): 
   const prev = cooldowns.get(provider);
   const consecutive = (prev?.consecutive ?? 0) + 1;
   const backoff = Math.min(COOLDOWN_BASE_MS * Math.pow(2, consecutive - 1), COOLDOWN_MAX_MS);
-  // Wenn der Provider ein Retry-After/Reset liefert, dieses (gedeckelt) nutzen —
-  // Free-Tier-Limits setzen sich oft in 1-2s zurueck, ein fixer 30s-Cooldown
-  // wuerde gesunde Provider unnoetig lange aus der Rotation nehmen.
   const ms = retryAfterMs && retryAfterMs > 0
     ? Math.min(Math.max(retryAfterMs, 1_000), COOLDOWN_MAX_MS)
     : backoff;
@@ -115,233 +105,199 @@ export function markRateLimited(provider: ProviderName, retryAfterMs?: number): 
   return ms;
 }
 
-/**
- * Provider wegen Auth-/Modell-Fehler (401/403/404) fuer laengere Zeit aus der
- * Rotation nehmen. Ein kaputter API-Key darf nicht als einziger „verfuegbarer"
- * Provider uebrig bleiben und alle Anfragen scheitern lassen.
- */
-export function markProviderUnavailable(provider: ProviderName, reason: string): void {
+export function markProviderUnavailable(provider: ProviderName, reason = 'auth_or_model_error'): void {
   const until = Date.now() + UNAVAILABLE_COOLDOWN_MS;
-  const consecutive = (cooldowns.get(provider)?.consecutive ?? 0) + 1;
-  cooldowns.set(provider, { until, consecutive });
-  logger.warn(`providerStats: ${provider} ${Math.round(UNAVAILABLE_COOLDOWN_MS / 60000)}min aus Rotation (${reason} — Key/Model pruefen)`);
-  persistCooldown(provider, until, reason, consecutive);
+  cooldowns.set(provider, { until, consecutive: 1 });
+  logger.warn(`providerStats: ${provider} ${Math.round(UNAVAILABLE_COOLDOWN_MS / 60_000)}min deaktiviert (${reason})`);
+  persistCooldown(provider, until, reason, 1);
 }
 
-/** Persistiert einen Cooldown (best-effort, create-on-missing). */
-function persistCooldown(provider: ProviderName, until: number, reason: string, streak: number): void {
-  void prisma.aiProviderStat.update({
+function persistCooldown(provider: ProviderName, untilMs: number, reason: string, consecutive: number): void {
+  void prisma.aiProviderStat.upsert({
     where: { provider },
-    data: { cooldownUntil: new Date(until), cooldownReason: reason, cooldownStreak: streak },
-  }).catch((e: unknown) => {
-    if ((e as { code?: string }).code === 'P2025') {
-      void prisma.aiProviderStat.create({
-        data: { provider, cooldownUntil: new Date(until), cooldownReason: reason, cooldownStreak: streak },
-      }).catch(() => { /* ignore secondary error */ });
-    }
-  });
+    create: {
+      provider,
+      successCount: 0,
+      failureCount: 0,
+      rateLimitCount: 0,
+      avgLatencyMs: 0,
+      lastError: reason,
+      cooldownUntil: new Date(untilMs),
+      cooldownStreak: consecutive,
+    },
+    update: {
+      lastError: reason,
+      cooldownUntil: new Date(untilMs),
+      cooldownStreak: consecutive,
+    },
+  }).catch((e: unknown) => logger.warn(`providerStats.persistCooldown ${provider}: ${(e as Error).message}`));
 }
 
-export function clearCooldown(provider: ProviderName): void {
-  if (!cooldowns.has(provider)) return;
-  cooldowns.delete(provider);
-  // Persistente Cooldown-Spur ebenfalls loeschen (best-effort).
-  void prisma.aiProviderStat.updateMany({
-    where: { provider, cooldownUntil: { not: null } },
-    data: { cooldownUntil: null, cooldownReason: null, cooldownStreak: 0 },
-  }).catch(() => { /* ignore */ });
-}
-
-export function isOnCooldown(provider: ProviderName): boolean {
+function isOnCooldown(provider: ProviderName): boolean {
   const c = cooldowns.get(provider);
   if (!c) return false;
   if (Date.now() >= c.until) {
     cooldowns.delete(provider);
+    void prisma.aiProviderStat.update({
+      where: { provider },
+      data: { cooldownUntil: null, cooldownStreak: 0 },
+    }).catch(() => {});
     return false;
   }
   return true;
 }
 
-export function getCooldownRemainingMs(provider: ProviderName): number {
-  const c = cooldowns.get(provider);
-  if (!c) return 0;
-  return Math.max(0, c.until - Date.now());
-}
-
-export function getAllCooldowns(): Array<{ provider: ProviderName; remainingMs: number; consecutive: number }> {
-  const out: Array<{ provider: ProviderName; remainingMs: number; consecutive: number }> = [];
+export function getAllCooldowns(): Partial<Record<ProviderName, { untilMs: number; remainingMs: number; consecutive: number }>> {
+  const out: Partial<Record<ProviderName, { untilMs: number; remainingMs: number; consecutive: number }>> = {};
   for (const p of ALL_PROVIDERS) {
     const c = cooldowns.get(p);
-    if (c && Date.now() < c.until) {
-      out.push({ provider: p, remainingMs: c.until - Date.now(), consecutive: c.consecutive });
-    }
+    if (c && c.until > Date.now()) out[p] = { untilMs: c.until, remainingMs: c.until - Date.now(), consecutive: c.consecutive };
   }
   return out;
 }
 
+export function clearCooldown(provider: ProviderName): void {
+  cooldowns.delete(provider);
+  void prisma.aiProviderStat.update({
+    where: { provider },
+    data: { cooldownUntil: null, cooldownStreak: 0, lastError: null },
+  }).catch(() => {});
+}
+
 export async function recordCall(
   provider: ProviderName,
-  outcome: 'success' | 'failure' | 'rateLimit',
+  result: 'success' | 'failure' | 'rateLimit',
   latencyMs: number,
   error?: string,
   opts?: { retryAfterMs?: number },
 ): Promise<void> {
-  // Phase 12: Bei Erfolg den eventuellen Cooldown clearen.
-  if (outcome === 'success') clearCooldown(provider);
-  // Bei 429: Cooldown-Backoff aktivieren (in-memory), ggf. mit Retry-After.
-  if (outcome === 'rateLimit') markRateLimited(provider, opts?.retryAfterMs);
   try {
-    const now = new Date();
-    const data: Record<string, unknown> = {};
-    if (outcome === 'success') {
-      data.successCount = { increment: 1 };
-      data.totalLatencyMs = { increment: BigInt(Math.max(0, Math.round(latencyMs))) };
-      data.lastSuccessAt = now;
-    } else if (outcome === 'rateLimit') {
-      data.rateLimitCount = { increment: 1 };
-      data.lastFailureAt = now;
-      data.lastError = (error || '429 Rate Limit').slice(0, 500);
-    } else {
-      data.failureCount = { increment: 1 };
-      data.lastFailureAt = now;
-      data.lastError = (error || 'unknown').slice(0, 500);
-    }
+    const existing = await prisma.aiProviderStat.findUnique({ where: { provider } });
+    const prevCalls = (existing?.successCount ?? 0) + (existing?.failureCount ?? 0) + (existing?.rateLimitCount ?? 0);
+    const nextAvg = prevCalls === 0
+      ? latencyMs
+      : Math.round(((existing?.avgLatencyMs ?? 0) * prevCalls + latencyMs) / (prevCalls + 1));
+
+    const data = result === 'success'
+      ? {
+        successCount: { increment: 1 },
+        avgLatencyMs: nextAvg,
+        lastSuccessAt: new Date(),
+        lastError: null,
+        cooldownUntil: null,
+        cooldownStreak: 0,
+      }
+      : result === 'rateLimit'
+        ? {
+          rateLimitCount: { increment: 1 },
+          avgLatencyMs: nextAvg,
+          lastFailureAt: new Date(),
+          lastError: error?.slice(0, 500) ?? '429',
+        }
+        : {
+          failureCount: { increment: 1 },
+          avgLatencyMs: nextAvg,
+          lastFailureAt: new Date(),
+          lastError: error?.slice(0, 500) ?? 'unknown',
+        };
+
     await prisma.aiProviderStat.upsert({
       where: { provider },
-      update: data,
       create: {
         provider,
-        successCount: outcome === 'success' ? 1 : 0,
-        failureCount: outcome === 'failure' ? 1 : 0,
-        rateLimitCount: outcome === 'rateLimit' ? 1 : 0,
-        totalLatencyMs: outcome === 'success' ? BigInt(Math.max(0, Math.round(latencyMs))) : BigInt(0),
-        lastSuccessAt: outcome === 'success' ? now : null,
-        lastFailureAt: outcome !== 'success' ? now : null,
-        lastError: outcome !== 'success' ? (error || '').slice(0, 500) : null,
+        successCount: result === 'success' ? 1 : 0,
+        failureCount: result === 'failure' ? 1 : 0,
+        rateLimitCount: result === 'rateLimit' ? 1 : 0,
+        avgLatencyMs: latencyMs,
+        lastSuccessAt: result === 'success' ? new Date() : null,
+        lastFailureAt: result !== 'success' ? new Date() : null,
+        lastError: result === 'success' ? null : error?.slice(0, 500) ?? null,
       },
+      update: data,
     });
+
+    if (result === 'rateLimit') markRateLimited(provider, opts?.retryAfterMs);
+    else if (result === 'success') clearCooldown(provider);
   } catch (e) {
-    logger.warn(`providerStats.recordCall fehlgeschlagen: ${String(e)}`);
+    logger.warn(`providerStats.recordCall(${provider}) fehlgeschlagen: ${(e as Error).message}`);
   }
 }
 
 export async function getStats(): Promise<ProviderStat[]> {
   const rows = await prisma.aiProviderStat.findMany();
-  const map = new Map<string, typeof rows[number]>();
-  for (const r of rows) map.set(r.provider, r);
-  return ALL_PROVIDERS.map((p) => {
-    const r = map.get(p);
+  return ALL_PROVIDERS.map(provider => {
+    const r = rows.find(x => x.provider === provider);
     const success = r?.successCount ?? 0;
-    const fail = r?.failureCount ?? 0;
+    const failure = r?.failureCount ?? 0;
     const rate = r?.rateLimitCount ?? 0;
-    const total = success + fail + rate;
-    const totalLatency = r ? Number(r.totalLatencyMs) : 0;
+    const total = success + failure + rate;
     return {
-      provider: p,
+      provider,
       successCount: success,
-      failureCount: fail,
+      failureCount: failure,
       rateLimitCount: rate,
-      avgLatencyMs: success > 0 ? Math.round(totalLatency / success) : 0,
-      successRate: total > 0 ? success / total : 0,
+      avgLatencyMs: r?.avgLatencyMs ?? 0,
+      successRate: total > 0 ? success / total : 0.5,
       lastSuccessAt: r?.lastSuccessAt ?? null,
       lastFailureAt: r?.lastFailureAt ?? null,
       lastError: r?.lastError ?? null,
-      configured: isConfigured(p),
+      configured: isConfigured(provider),
     };
   });
 }
 
-/**
- * Adaptive Reihenfolge: nur konfigurierte Provider, sortiert nach
- * Score = successRate * latencyBonus. Provider ohne Daten erhalten den
- * primaer-Konfig-Bonus, damit ein frischer Bot nicht gleich umsortiert.
- *
- * Formel:
- *   score = (success + 1) / (total + 2)         // Laplace-geglaettet
- *           * (1 / (1 + avgLatencyMs / 5000))   // schneller = besser, 5s neutral
- *           * (provider == primary ? 1.05 : 1)  // leichter Bias auf konfigurierten Primary
- */
 export async function getRankedProviders(): Promise<ProviderName[]> {
   const stats = await getStats();
-  const primary = config.ai.provider as ProviderName;
-  const scored = stats
-    .filter((s) => s.configured)
-    // Phase 12: Provider im Cooldown (429-Strafe) ueberspringen.
-    .filter((s) => !isOnCooldown(s.provider))
-    .map((s) => {
-      const total = s.successCount + s.failureCount + s.rateLimitCount;
-      const successScore = (s.successCount + 1) / (total + 2);
-      const latencyScore = 1 / (1 + (s.avgLatencyMs || 1500) / 5000);
-      const primaryBias = s.provider === primary ? 1.05 : 1;
-      const score = successScore * latencyScore * primaryBias;
-      return { provider: s.provider, score };
+  return stats
+    .filter(s => s.configured && !isOnCooldown(s.provider))
+    .sort((a, b) => {
+      const scoreA = a.successRate * 1000 - a.avgLatencyMs * 0.1;
+      const scoreB = b.successRate * 1000 - b.avgLatencyMs * 0.1;
+      return scoreB - scoreA;
     })
-    .sort((a, b) => b.score - a.score)
-    .map((x) => x.provider);
-  // Wenn ALLE konfigurierten Provider auf Cooldown sind: wenigstens einen
-  // konfigurierten Provider zurueckgeben (callAI versucht ihn dann; bekommt
-  // im Worst-Case wieder 429, ist aber besser als komplett 0 Provider).
-  // H12: Falls primary nicht konfiguriert ist, ersten beliebigen konfigurierten waehlen.
-  if (scored.length === 0) {
-    if (isConfigured(primary)) return [primary];
-    const anyConfigured = ALL_PROVIDERS.find((p) => isConfigured(p));
-    return anyConfigured ? [anyConfigured] : [];
-  }
-  return scored;
+    .map(s => s.provider);
 }
 
-/**
- * Aktiver Health-Check: schickt einen winzigen Prompt an einen Provider
- * und misst Latenz. Nutzt die gleichen Endpoints wie callAI.
- */
-export async function probeProvider(provider: ProviderName): Promise<{
-  ok: boolean;
-  latencyMs: number;
-  error?: string;
-  reply?: string;
-}> {
-  if (!isConfigured(provider)) {
-    return { ok: false, latencyMs: 0, error: 'Kein API-Key konfiguriert' };
-  }
+export async function probeProvider(provider: ProviderName): Promise<{ ok: boolean; latencyMs: number; error?: string }> {
   const t0 = Date.now();
   try {
-    let reply = '';
+    const cfg = config.ai;
+    let baseUrl: string;
+    let apiKey: string;
+    let model: string;
+    let headers: Record<string, string> = {};
+    let body: unknown;
+
     if (provider === 'gemini') {
-      // API-Key im Header (x-goog-api-key), NICHT als URL-Query — sonst landet
-      // das Secret in Proxy-/Access-Logs. Konsistent zu aiHandler.callGemini.
-      const url = `https://generativelanguage.googleapis.com/v1beta/models/${config.ai.geminiModel}:generateContent`;
-      const res = await axios.post(
-        url,
-        { contents: [{ role: 'user', parts: [{ text: 'ping' }] }], generationConfig: { maxOutputTokens: 5 } },
-        { headers: { 'Content-Type': 'application/json', 'x-goog-api-key': config.ai.geminiApiKey }, timeout: 10000 },
-      );
-      reply = res.data?.candidates?.[0]?.content?.parts?.[0]?.text || '';
+      if (!cfg.geminiApiKey) return { ok: false, latencyMs: 0, error: 'nicht konfiguriert' };
+      baseUrl = `https://generativelanguage.googleapis.com/v1beta/models/${cfg.geminiModel}:generateContent`;
+      apiKey = cfg.geminiApiKey;
+      model = cfg.geminiModel;
+      headers = { 'x-goog-api-key': apiKey, 'Content-Type': 'application/json' };
+      body = { contents: [{ role: 'user', parts: [{ text: 'ping' }] }], generationConfig: { maxOutputTokens: 8 } };
     } else {
-      const cfg: Record<ProviderName, { url: string; key: string; model: string } | null> = {
-        groq:       { url: 'https://api.groq.com/openai/v1', key: config.ai.groqApiKey, model: config.ai.groqModel },
-        cerebras:   { url: 'https://api.cerebras.ai/v1',     key: config.ai.cerebrasApiKey, model: config.ai.cerebrasModel },
-        openrouter: { url: 'https://openrouter.ai/api/v1',   key: config.ai.openrouterApiKey, model: config.ai.openrouterModel },
-        gemini:     null,
-        openai:     { url: 'https://api.openai.com/v1',      key: config.ai.openaiApiKey, model: config.ai.openaiModel },
+      const map: Record<Exclude<ProviderName, 'gemini'>, { url: string; key: string; model: string }> = {
+        groq: { url: 'https://api.groq.com/openai/v1/chat/completions', key: cfg.groqApiKey, model: cfg.groqModel },
+        cerebras: { url: 'https://api.cerebras.ai/v1/chat/completions', key: cfg.cerebrasApiKey, model: cfg.cerebrasModel },
+        openrouter: { url: 'https://openrouter.ai/api/v1/chat/completions', key: cfg.openrouterApiKey, model: cfg.openrouterModel },
+        openai: { url: 'https://api.openai.com/v1/chat/completions', key: cfg.openaiApiKey, model: cfg.openaiModel },
       };
-      const c = cfg[provider];
-      if (!c) return { ok: false, latencyMs: 0, error: 'Unbekannter Provider' };
-      const res = await axios.post(
-        `${c.url}/chat/completions`,
-        { model: c.model, messages: [{ role: 'user', content: 'ping' }], max_tokens: 5 },
-        {
-          headers: { Authorization: `Bearer ${c.key}`, 'Content-Type': 'application/json' },
-          timeout: 10000,
-        },
-      );
-      reply = res.data.choices?.[0]?.message?.content || '';
+      const p = map[provider];
+      if (!p.key) return { ok: false, latencyMs: 0, error: 'nicht konfiguriert' };
+      baseUrl = p.url; apiKey = p.key; model = p.model;
+      headers = { Authorization: `Bearer ${apiKey}`, 'Content-Type': 'application/json' };
+      body = { model, messages: [{ role: 'user', content: 'ping' }], max_tokens: 8, temperature: 0 };
     }
-    const latency = Date.now() - t0;
-    return { ok: true, latencyMs: latency, reply: reply.slice(0, 80) };
+
+    await axios.post(baseUrl, body, { headers, timeout: 10_000 });
+    const latencyMs = Date.now() - t0;
+    await recordCall(provider, 'success', latencyMs);
+    return { ok: true, latencyMs };
   } catch (e) {
-    const latency = Date.now() - t0;
-    const err = e as { response?: { status?: number }; message?: string };
-    const msg = err?.response?.status ? `HTTP ${err.response.status}` : (err?.message || String(e));
-    return { ok: false, latencyMs: latency, error: msg };
+    const latencyMs = Date.now() - t0;
+    const status = (e as { response?: { status?: number } })?.response?.status;
+    const error = `${status ?? ''} ${(e as Error).message}`.trim().slice(0, 300);
+    await recordCall(provider, status === 429 ? 'rateLimit' : 'failure', latencyMs, error);
+    return { ok: false, latencyMs, error };
   }
 }
