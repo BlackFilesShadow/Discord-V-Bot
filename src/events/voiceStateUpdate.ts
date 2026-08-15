@@ -112,8 +112,9 @@ const voiceStateUpdateEvent: BotEvent = {
           if (since < cooldownSeconds * 1000) return;
         }
 
-        // XP-Berechnung (konfigurierbar via xpConfig.voiceXpPerMinute)
-        const xpPerMinute = xpConfig?.voiceXpPerMinute ?? 2;
+        // XP-Berechnung. Der Nullish-Fallback muss dem Prisma-Default und der
+        // DEV-XP-Ansicht entsprechen: voiceXpPerMinute @default(5).
+        const xpPerMinute = xpConfig?.voiceXpPerMinute ?? 5;
         const multiplier = xpConfig?.levelMultiplier ?? 1.0;
         const xpGained = Math.min(Math.floor(durationMinutes * xpPerMinute * multiplier), 500);
 
