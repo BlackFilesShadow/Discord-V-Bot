@@ -11,8 +11,8 @@ describe('DEV command-center security wiring', () => {
   const secureExport = read('src/dashboard/routes/v2/devSecureExport.ts');
   const app = read('dashboard-ui/src/App.tsx');
 
-  it('setzt echte Step-Up-Pruefung vor Command Center, Incident und mutierende DEV-Stubs', () => {
-    expect(routes).toContain("'/dev/command-center', requireGlobalDeveloperIdentity, requireDev, redirectLegacyDevExports, guardDevCommandCenterInput, requireVerifiedDevMutationStepUp");
+  it('setzt Input-Guards und echte Step-Up-Pruefung vor Command Center, Incident und mutierende DEV-Stubs', () => {
+    expect(routes).toContain("'/dev/command-center', requireGlobalDeveloperIdentity, requireDev, redirectLegacyDevExports, guardDevCommandCenterInput, guardDevSecurityInput, requireVerifiedDevMutationStepUp");
     expect(routes).toContain("'/dev/incident', requireGlobalDeveloperIdentity, requireDev, requireVerifiedDevMutationStepUp");
     expect(routes).toContain("'/dev/stubs', requireGlobalDeveloperIdentity, requireDev, requireVerifiedDevMutationStepUp");
   });
