@@ -51,12 +51,21 @@ export async function guardDevXpMutationInput(req: Request, res: Response, next:
     }
   }
 
+  // Express 4 propagiert abgelehnte async-Middleware-Promises nicht automatisch.
+  // Den einzigen I/O-Schritt deshalb lokal fail-closed behandeln.
+  let current: { messageXpMin: number; messageXpMax: number } | null;
+  try {
+    current = await prisma.xpConfig.findUnique({
+      where: { id: match[1] },
+      select: { messageXpMin: true, messageXpMax: true },
+    });
+  } catch {
+    res.status(503).json({ error: 'XP-Konfiguration kann aktuell nicht sicher geprüft werden.' });
+    return;
+  }
+
   // Prisma-Wahrheit fuer eine noch nicht persistierte Config:
   // messageXpMin @default(15), messageXpMax @default(25).
-  const current = await prisma.xpConfig.findUnique({
-    where: { id: match[1] },
-    select: { messageXpMin: true, messageXpMax: true },
-  });
   const effectiveMin = parsed.messageXpMin ?? current?.messageXpMin ?? 15;
   const effectiveMax = parsed.messageXpMax ?? current?.messageXpMax ?? 25;
   if (effectiveMin > effectiveMax) {
