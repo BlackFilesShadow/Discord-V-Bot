@@ -20,17 +20,19 @@ jobs:
           cache-dependency-path: dashboard-ui/package-lock.json
       - name: Refresh lock with non-breaking audit fixes only
         working-directory: dashboard-ui
+        continue-on-error: true
         run: |
           npm ci
           npm audit fix --package-lock-only
-      - name: Report resulting production audit
+      - name: Capture resulting production audit JSON
         working-directory: dashboard-ui
-        continue-on-error: true
-        run: npm audit --omit=dev --audit-level=high
-      - name: Upload refreshed lock
+        run: npm audit --omit=dev --json > production-audit.json || true
+      - name: Upload refreshed lock and audit details
         if: always()
         uses: actions/upload-artifact@v5
         with:
           name: dashboard-package-lock-refreshed
-          path: dashboard-ui/package-lock.json
+          path: |
+            dashboard-ui/package-lock.json
+            dashboard-ui/production-audit.json
           retention-days: 1
