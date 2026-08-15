@@ -1,5 +1,3 @@
-// Prisma muss VOR dem Import des Commands gemockt werden,
-// damit der Command die Mock-Instanz erhaelt (kein echter DB-Call).
 jest.mock('../../../database/prisma', () => ({
   __esModule: true,
   default: {
@@ -35,54 +33,78 @@ jest.mock('../../../database/prisma', () => ({
   },
 }));
 
+jest.mock('../../../utils/logger', () => ({
+  logAudit: jest.fn(),
+  logger: { info: jest.fn(), warn: jest.fn(), error: jest.fn(), debug: jest.fn() },
+}));
+
 import leaderboardCommand from '../leaderboard';
 
 describe('Leaderboard Command', () => {
-  afterEach(() => {
-    // Feed-Intervalle aufraeumen, damit Jest sauber beendet
-    const gAny = globalThis as any;
-    if (gAny.leaderboardFeeds) {
-      for (const key of Object.keys(gAny.leaderboardFeeds)) {
-        clearInterval(gAny.leaderboardFeeds[key]);
-        delete gAny.leaderboardFeeds[key];
-      }
-    }
-  });
-
-  it('sollte ohne Fehler ausgeführt werden (einmalig)', async () => {
+  it('sollte ohne Fehler ausgefuehrt werden (einmalig)', async () => {
     const interaction: any = {
       deferReply: jest.fn().mockResolvedValue(undefined),
       options: {
-        getString: jest.fn().mockReturnValue('once'),
+        getString: jest.fn().mockImplementation((name: string) => name === 'modus' ? 'once' : null),
         getInteger: jest.fn().mockReturnValue(undefined),
       },
       editReply: jest.fn().mockResolvedValue(undefined),
+      reply: jest.fn().mockResolvedValue(undefined),
       user: { id: '123' },
       guildId: 'g1',
       channelId: 'test',
       channel: { send: jest.fn() },
     };
     await leaderboardCommand.execute(interaction);
-    expect(interaction.deferReply).toBeCalled();
-    expect(interaction.editReply).toBeCalled();
+    expect(interaction.deferReply).toHaveBeenCalled();
+    expect(interaction.editReply).toHaveBeenCalledWith(expect.objectContaining({ embeds: expect.any(Array) }));
   });
 
-  it('sollte den Feed-Modus starten', async () => {
+  it('startet den persistenten Feed nur mit ManageGuild', async () => {
     const interaction: any = {
       deferReply: jest.fn().mockResolvedValue(undefined),
       options: {
-        getString: jest.fn().mockReturnValue('feed'),
-        getInteger: jest.fn().mockReturnValue(1),
+        getString: jest.fn().mockImplementation((name: string) => name === 'modus' ? 'feed' : null),
+        getInteger: jest.fn().mockImplementation((name: string) => name === 'intervall' ? 1 : undefined),
       },
       editReply: jest.fn().mockResolvedValue(undefined),
+      reply: jest.fn().mockResolvedValue(undefined),
       guildId: 'g1',
       channelId: 'feedtest',
       channel: { send: jest.fn() },
+      client: { channels: { fetch: jest.fn() } },
       user: { id: '123' },
+      memberPermissions: { has: jest.fn().mockReturnValue(true) },
     };
+
     await leaderboardCommand.execute(interaction);
-    expect(interaction.editReply).toBeCalledWith(
-      expect.objectContaining({ content: expect.stringContaining('Feed') }),
-    );
+
+    expect(interaction.reply).not.toHaveBeenCalled();
+    expect(interaction.deferReply).toHaveBeenCalled();
+    expect(interaction.editReply).toHaveBeenCalledWith(expect.objectContaining({ embeds: expect.any(Array) }));
+    const embeds = interaction.editReply.mock.calls[0][0].embeds;
+    expect(embeds).toHaveLength(2);
+    expect(embeds[0].toJSON().title).toContain('Leaderboard-Feed aktiviert');
+  });
+
+  it('weist Feed-Verwaltung ohne ManageGuild als Embed ab und startet keinen Feed', async () => {
+    const interaction: any = {
+      deferReply: jest.fn().mockResolvedValue(undefined),
+      options: {
+        getString: jest.fn().mockImplementation((name: string) => name === 'modus' ? 'feed' : null),
+        getInteger: jest.fn().mockImplementation((name: string) => name === 'intervall' ? 1 : undefined),
+      },
+      editReply: jest.fn().mockResolvedValue(undefined),
+      reply: jest.fn().mockResolvedValue(undefined),
+      guildId: 'g1',
+      channelId: 'feedtest',
+      user: { id: '123' },
+      memberPermissions: { has: jest.fn().mockReturnValue(false) },
+    };
+
+    await leaderboardCommand.execute(interaction);
+
+    expect(interaction.deferReply).not.toHaveBeenCalled();
+    expect(interaction.reply).toHaveBeenCalledWith(expect.objectContaining({ embeds: expect.any(Array) }));
   });
 });
