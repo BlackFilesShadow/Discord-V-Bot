@@ -58,8 +58,17 @@ devCommandCenterRouter.get('/diagnostics', async (_req, res) => {
   const mem = process.memoryUsage();
   const t = Date.now();
   let dbOk = true;
-  try { await prisma.$queryRaw`SELECT 1`; } catch { dbOk = false; }
-  const [users, packages, uploads] = await Promise.all([prisma.user.count(), prisma.package.count(), prisma.upload.count()]);
+  let users: number | null = null;
+  let packages: number | null = null;
+  let uploads: number | null = null;
+  try {
+    await prisma.$queryRaw`SELECT 1`;
+    [users, packages, uploads] = await Promise.all([
+      prisma.user.count(), prisma.package.count(), prisma.upload.count(),
+    ]);
+  } catch {
+    dbOk = false;
+  }
   res.json({
     bot: {
       ready: !!client,
