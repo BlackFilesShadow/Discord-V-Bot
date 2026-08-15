@@ -62,6 +62,36 @@ async function validateChannelIds(guild: Guild, raw: unknown): Promise<boolean> 
 }
 
 /**
+ * Die aktuelle Command-Center-UI startet die optionalen ID-Felder leer. Ohne
+ * diese Kompatibilitaet wuerde schon eine Aenderung von z.B. messageXpMin
+ * gleichzeitig bestehende Allow-Lists und die Max-Level-Rolle loeschen.
+ *
+ * Explizites Leeren bleibt fuer API/kuenftige UI moeglich, aber nur ueber ein
+ * bewusst gesetztes Clear-Flag. Dadurch ist ein leeres Initialfeld niemals
+ * stillschweigend destruktiv.
+ */
+function preserveUneditedOptionalXpFields(req: Request): void {
+  if (!req.body || typeof req.body !== 'object') return;
+  const body = req.body as Record<string, unknown>;
+
+  if (body.maxLevelRoleId === null && body.clearMaxLevelRoleId !== true) {
+    delete body.maxLevelRoleId;
+  }
+  if (Array.isArray(body.allowedRoleIds) && body.allowedRoleIds.length === 0 && body.clearAllowedRoleIds !== true) {
+    delete body.allowedRoleIds;
+  }
+  if (Array.isArray(body.allowedChannelIds) && body.allowedChannelIds.length === 0 && body.clearAllowedChannelIds !== true) {
+    delete body.allowedChannelIds;
+  }
+
+  // Steuerflags gehoeren nicht in Prisma-Daten und werden nach der
+  // Kompatibilitaetsentscheidung immer entfernt.
+  delete body.clearMaxLevelRoleId;
+  delete body.clearAllowedRoleIds;
+  delete body.clearAllowedChannelIds;
+}
+
+/**
  * Stellt die Discord-Referenzintegritaet der aus `/xp-config` migrierten
  * Dashboard-Funktionen wieder her.
  *
@@ -92,6 +122,8 @@ export async function guardDevXpGuildObjects(req: Request, res: Response, next: 
 
   const method = req.method.toUpperCase();
   if (method === 'PATCH' && req.path === `/xp/${guildId}`) {
+    preserveUneditedOptionalXpFields(req);
+
     if (req.body?.maxLevelRoleId !== undefined && req.body.maxLevelRoleId !== null) {
       const roleId = String(req.body.maxLevelRoleId);
       if (!SNOWFLAKE.test(roleId) || !(await resolveRole(guild, roleId))) {
