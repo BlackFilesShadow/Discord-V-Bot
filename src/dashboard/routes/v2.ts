@@ -6,6 +6,7 @@
  * `idempotency`-Middleware gesichert (Haertung A1).
  */
 
+import '../expressAsyncErrors';
 import { Router } from 'express';
 import { requireAuth, requireDev, requireBotAdmin } from '../middleware/auth';
 import { idempotency } from '../middleware/idempotency';
