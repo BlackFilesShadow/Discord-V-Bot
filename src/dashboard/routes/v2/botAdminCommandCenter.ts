@@ -29,6 +29,7 @@ import {
   removeTrigger,
   clearTriggers,
   MAX_TRIGGERS_PER_GUILD,
+  GLOBAL_AI_TRIGGERS,
   type AiTrigger,
 } from '../../../modules/ai/triggers';
 import { saveRemoteMedia, deleteMediaIfLocal, MAX_MEDIA_BYTES, MEDIA_BASE_DIR } from '../../../modules/ai/mediaStorage';
@@ -297,7 +298,9 @@ function parseTrigger(req: Parameters<typeof requireBotAdmin>[0], media?: string
   const response = guild ? resolveCustomEmotes(rawResponse, guild) : rawResponse;
   const channelId = String(req.body?.channelId ?? '').trim() || undefined;
   if (channelId && !SNOWFLAKE.test(channelId)) return { ok: false, error: 'Ungültige channelId.' };
-  const cooldownSeconds = Math.min(3600, Math.max(0, Number(req.body?.cooldownSeconds) || 10));
+  const rawCooldown = req.body?.cooldownSeconds;
+  const cooldownSeconds = rawCooldown === undefined || rawCooldown === '' ? 10 : Number(rawCooldown);
+  if (!Number.isInteger(cooldownSeconds) || cooldownSeconds < 0 || cooldownSeconds > 3600) return { ok: false, error: 'Cooldown muss eine ganze Zahl zwischen 0 und 3600 sein.' };
   return { ok: true, guildId, trigger: { id, trigger: pattern, triggerType, responseMode, responseText: responseMode === 'text' ? response : undefined, aiPrompt: responseMode === 'ai' ? response : undefined, mediaUrl: media, channelId, cooldownSeconds, createdAt: new Date().toISOString(), createdBy: actor(req) } };
 }
 
@@ -311,7 +314,7 @@ botAdminCommandCenterRouter.post('/triggers', async (req, res) => {
   const guildId = guildIdFrom(req);
   if (!guildId) { res.status(400).json({ error: 'Gültige guildId erforderlich.' }); return; }
   const id = String(req.body?.id ?? '').toLowerCase().replace(/[^a-z0-9_-]/g, '').slice(0, 20);
-  const old = (await listTriggers(guildId)).find(t => t.id === id);
+  if (!id) { res.status(400).json({ error: 'Ungültige Trigger-ID.' }); return; }
   let media: string | undefined;
   const remoteUrl = typeof req.body?.mediaUrl === 'string' ? req.body.mediaUrl.trim() : '';
   if (remoteUrl) {
@@ -323,7 +326,6 @@ botAdminCommandCenterRouter.post('/triggers', async (req, res) => {
   if (!parsed.ok) { if (media) await deleteMediaIfLocal(media); res.status(400).json({ error: parsed.error }); return; }
   const result = await addTrigger(guildId, parsed.trigger);
   if (!result.ok) { if (media) await deleteMediaIfLocal(media); res.status(400).json({ error: result.message }); return; }
-  if (old?.mediaUrl && old.mediaUrl !== media) await deleteMediaIfLocal(old.mediaUrl);
   audit(req, 'BOTADMIN_AI_TRIGGER_UPSERT', 'AI', { guildId, triggerId: parsed.trigger.id, triggerType: parsed.trigger.triggerType, responseMode: parsed.trigger.responseMode });
   res.status(201).json({ ok: true, message: result.message });
 });
@@ -331,17 +333,17 @@ botAdminCommandCenterRouter.post('/triggers', async (req, res) => {
 botAdminCommandCenterRouter.post('/triggers/upload', upload.single('file'), async (req, res) => {
   const file = req.file;
   if (!file) { res.status(400).json({ error: 'Datei fehlt.' }); return; }
+  if (typeof req.body?.mediaUrl === 'string' && req.body.mediaUrl.trim()) { res.status(400).json({ error: 'Bitte entweder Datei ODER mediaUrl angeben, nicht beides.' }); return; }
   const guildId = guildIdFrom(req);
   if (!guildId) { res.status(400).json({ error: 'Gültige guildId erforderlich.' }); return; }
   const id = String(req.body?.id ?? '').toLowerCase().replace(/[^a-z0-9_-]/g, '').slice(0, 20);
-  const old = (await listTriggers(guildId)).find(t => t.id === id);
+  if (!id) { res.status(400).json({ error: 'Ungültige Trigger-ID.' }); return; }
   const saved = await saveBrowserMedia(file, guildId, id);
   if (!saved.ok) { res.status(400).json({ error: saved.error }); return; }
   const parsed = parseTrigger(req, saved.localPath);
   if (!parsed.ok) { await deleteMediaIfLocal(saved.localPath); res.status(400).json({ error: parsed.error }); return; }
   const result = await addTrigger(guildId, parsed.trigger);
   if (!result.ok) { await deleteMediaIfLocal(saved.localPath); res.status(400).json({ error: result.message }); return; }
-  if (old?.mediaUrl && old.mediaUrl !== saved.localPath) await deleteMediaIfLocal(old.mediaUrl);
   audit(req, 'BOTADMIN_AI_TRIGGER_UPSERT', 'AI', { guildId, triggerId: parsed.trigger.id, mediaUpload: true });
   res.status(201).json({ ok: true, message: result.message });
 });
@@ -363,10 +365,12 @@ botAdminCommandCenterRouter.post('/triggers/clear', async (req, res) => {
   if (!guildId) { res.status(400).json({ error: 'Gültige guildId erforderlich.' }); return; }
   if (req.body?.confirm !== 'CLEAR') { res.status(400).json({ error: 'Bestätigung CLEAR erforderlich.' }); return; }
   const all = await listTriggers(guildId);
+  const globalIds = new Set(GLOBAL_AI_TRIGGERS.map(t => t.id));
+  const guildOwned = all.filter(t => !globalIds.has(t.id));
   await clearTriggers(guildId, actor(req));
-  await Promise.all(all.map(t => deleteMediaIfLocal(t.mediaUrl)));
-  audit(req, 'BOTADMIN_AI_TRIGGER_CLEAR', 'AI', { guildId, count: all.length });
-  res.json({ ok: true, cleared: all.length });
+  await Promise.all(guildOwned.map(t => deleteMediaIfLocal(t.mediaUrl)));
+  audit(req, 'BOTADMIN_AI_TRIGGER_CLEAR', 'AI', { guildId, count: guildOwned.length });
+  res.json({ ok: true, cleared: guildOwned.length });
 });
 
 // ---------------------------------------------------------------------------
