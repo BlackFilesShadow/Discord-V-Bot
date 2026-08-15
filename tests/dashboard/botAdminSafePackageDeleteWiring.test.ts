@@ -10,8 +10,10 @@ describe('Bot-Admin hard-delete safety wiring', () => {
   const safeRoute = read('src/dashboard/routes/v2/botAdminSafePackageDelete.ts');
   const service = read('src/modules/packages/hardDeletePackage.ts');
 
-  it('mountet den Safe-Delete-Router vor dem bestehenden BotAdmin-Router', () => {
-    expect(routes).toContain("v2Router.use('/bot-admin', requireGlobalBotAdminIdentity, botAdminSafePackageDeleteRouter, botAdminRouter);");
+  it('mountet den Safe-Delete-Router vor Guild-Guard und bestehendem BotAdmin-Router', () => {
+    expect(routes).toContain(
+      "v2Router.use('/bot-admin', requireGlobalBotAdminIdentity, botAdminSafeValidationRouter, botAdminSafePackageDeleteRouter, guardBotAdminGuildReferences, botAdminRouter);",
+    );
   });
 
   it('uebernimmt nur den legacy hard=true Pfad und laesst Soft-Delete unveraendert weiterlaufen', () => {
