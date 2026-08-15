@@ -6,7 +6,6 @@ import { logger } from './utils/logger';
 import prisma from './database/prisma';
 import fs from 'fs';
 
-// Events importieren
 import readyEvent from './events/ready';
 import interactionCreateEvent from './events/interactionCreate';
 import guildMemberAddEvent from './events/guildMemberAdd';
@@ -16,7 +15,6 @@ import messageReactionAddEvent from './events/messageReactionAdd';
 import messageReactionRemoveEvent from './events/messageReactionRemove';
 import voiceStateUpdateEvent from './events/voiceStateUpdate';
 
-// Module importieren
 import { startGiveawayScheduler, stopGiveawayScheduler } from './modules/giveaway/giveawayManager';
 import { startFeedScheduler, stopFeedScheduler } from './modules/feeds/feedManager';
 import { startPollScheduler, stopPollScheduler } from './modules/polls/pollSystem';
@@ -28,25 +26,19 @@ import { acquireSingletonLock } from './utils/singleton';
 import { assertProductionEnv } from './utils/envValidation';
 import { startNitradoRuntime, type NitradoRuntimeHandle } from './modules/nitrado/runtime';
 import { startAiBackgroundLoops, stopAiBackgroundLoops } from './modules/ai/runtime';
+import { BOT_PRODUCT_NAME } from './content/botInfo';
 
-/**
- * Discord-V-Bot Haupteinstiegspunkt.
- * Sektion 5: Discord-Bot-Framework mit Sharding und Skalierung.
- */
+/** Haupteinstiegspunkt fuer V-Bot Prime. */
 async function main(): Promise<void> {
-  logger.info('Discord-V-Bot startet...');
+  logger.info(`${BOT_PRODUCT_NAME} startet...`);
 
-  // Production-Härtung: Default-/Platzhalter-Secrets und ungesicherten DEV-Bereich
-  // VOR jedem weiteren Schritt abfangen (bricht den Start in Production ab).
   assertProductionEnv();
 
-  // Upload-Verzeichnis erstellen
   if (!fs.existsSync(config.upload.dir)) {
     fs.mkdirSync(config.upload.dir, { recursive: true });
     logger.info(`Upload-Verzeichnis erstellt: ${config.upload.dir}`);
   }
 
-  // Datenbank-Verbindung prüfen
   try {
     await prisma.$connect();
     logger.info('Datenbankverbindung hergestellt.');
@@ -55,10 +47,8 @@ async function main(): Promise<void> {
     process.exit(1);
   }
 
-  // Singleton-Lock: Verhindert dass zwei Instanzen mit demselben Token laufen.
   await acquireSingletonLock();
 
-  // Client erstellen mit allen notwendigen Intents
   const client = new Client({
     intents: [
       GatewayIntentBits.Guilds,
@@ -81,11 +71,8 @@ async function main(): Promise<void> {
   }) as ExtendedClient;
 
   client.commands = new Collection();
-
-  // Commands laden
   await loadCommands(client);
 
-  // Events registrieren
   const events: BotEvent[] = [
     readyEvent,
     interactionCreateEvent,
@@ -107,10 +94,10 @@ async function main(): Promise<void> {
   }
 
   // Command-Registrierung scope-getrennt:
-  //  - GLOBAL:  Admin-, Dev- und Manufacturer-Commands (ueberall identisch).
-  //  - GUILD:   alle uebrigen "normalen" Commands pro Server (instant sichtbar).
-  // So ist jeder Command in GENAU einem Scope → keine Duplikate.
-  // Listener MUSS vor client.login registriert werden, sonst verpassen wir das Ready-Event.
+  //  - GLOBAL: nur bewusst in Discord erhaltene globale Spezialfunktionen,
+  //    insbesondere Hersteller/Hersteller-DEV.
+  //  - GUILD: normale Community-/Gameserver-Commands pro Server.
+  //  - Bot-Admin/DEV-Verwaltung: Dashboard-only und deshalb nicht registriert.
   client.once('clientReady', async () => {
     try {
       const guildIds = [...client.guilds.cache.keys()];
@@ -123,8 +110,8 @@ async function main(): Promise<void> {
     }
   });
 
-  // Wenn der Bot einem NEUEN Server beitritt: die "normalen" Commands guild-scoped
-  // registrieren. Admin/Dev/Manufacturer sind global bereits verfuegbar.
+  // Bei Beitritt zu einer neuen Guild werden nur die guild-scoped normalen
+  // Commands registriert; die erhaltenen globalen Spezialcommands existieren bereits.
   client.on('guildCreate', async (guild) => {
     try {
       const n = await deployGuildCommands(client, config.discord.token, config.discord.clientId, guild.id);
@@ -132,14 +119,12 @@ async function main(): Promise<void> {
     } catch (e) {
       logger.warn(`guildCreate Command-Deploy für ${guild.id} fehlgeschlagen:`, e as Error);
     }
-    // Phase 6: Stammdaten der neuen Guild persistieren
     try {
       const { syncGuild } = await import('./modules/ai/guildAwareness.js');
       await syncGuild(guild);
     } catch (e) {
       logger.warn(`GuildAwareness-Sync für ${guild.id} fehlgeschlagen:`, e as Error);
     }
-    // Phase 3-Final: DashboardGuildLink upserten + Owner-DM mit Dashboard-URL
     try {
       const { getOrCreate: getOrCreateLink } = await import('./modules/dashboard/repository.js');
       const { asGuildId, asUserDiscordId } = await import('./types/scope.js');
@@ -149,7 +134,7 @@ async function main(): Promise<void> {
       try {
         const owner = await guild.fetchOwner();
         await owner.send(
-          `Vielen Dank, dass du **V-Bot** zu **${guild.name}** hinzugefuegt hast!\n` +
+          `Vielen Dank, dass du **${BOT_PRODUCT_NAME}** zu **${guild.name}** hinzugefuegt hast!\n` +
           `Dashboard-Identifier: \`${link.alias5}\`\n` +
           `Direktlink: ${url}`,
         ).catch(() => undefined);
@@ -162,7 +147,6 @@ async function main(): Promise<void> {
     }
   });
 
-  // Bei Aenderungen an der Guild (Name, Owner, Beschreibung): Stammdaten aktualisieren
   client.on('guildUpdate', async (_oldGuild, newGuild) => {
     try {
       const { syncGuild } = await import('./modules/ai/guildAwareness.js');
@@ -172,12 +156,8 @@ async function main(): Promise<void> {
     }
   });
 
-  // Bot einloggen
   await client.login(config.discord.token);
 
-  // Web-Dashboard SOFORT nach Login starten, damit Healthcheck (/health) und
-  // /metrics frueh verfuegbar sind. Der Command-Sync (scoped, im clientReady)
-  // kann minutenlang dauern und darf den HTTP-Server nicht blockieren.
   let dashboardRuntime: Awaited<ReturnType<typeof startDashboard>> | null = null;
   try {
     dashboardRuntime = await startDashboard(client);
@@ -185,9 +165,6 @@ async function main(): Promise<void> {
     logger.error('Dashboard konnte nicht gestartet werden:', error);
   }
 
-  // Nitrado-nahe Worker/Scheduler als eine symmetrische Runtime-Grenze starten.
-  // Beim Shutdown stoppt sie erst alle Producer/Poller und draint danach den
-  // NitradoJobWorker, bevor Discord/Prisma geschlossen werden.
   let nitradoRuntime: NitradoRuntimeHandle | null = null;
   try {
     nitradoRuntime = startNitradoRuntime(client);
@@ -195,19 +172,12 @@ async function main(): Promise<void> {
     logger.warn('Nitrado-Worker-Init fehlgeschlagen:', e as Error);
   }
 
-  // Hinweis: Die Command-Registrierung (scoped: global + guild) erfolgt im
-  // clientReady-Listener oben, sobald der Guild-Cache verfuegbar ist.
-
-  // Allgemeine Scheduler starten. Jeder besitzt einen Stop-Hook und darf den
-  // Prozess nicht durch einen ref'd Timer kuenstlich offen halten.
   startGiveawayScheduler(client);
   startFeedScheduler(client);
   startPollScheduler(client);
   startRateLimitCleanup();
   startReminderScheduler(client);
 
-  // Moderation-Scheduler: Temp-Bans/Mutes alle 60s prüfen. Handle behalten,
-  // unref'en und beim Shutdown explizit stoppen.
   const moderationTimer = setInterval(async () => {
     try {
       for (const guild of client.guilds.cache.values()) {
@@ -220,11 +190,8 @@ async function main(): Promise<void> {
   }, 60_000);
   moderationTimer.unref?.();
 
-  logger.info('Discord-V-Bot vollständig gestartet.');
+  logger.info(`${BOT_PRODUCT_NAME} vollständig gestartet.`);
 
-  // Graceful Shutdown (NIT-010/F-013): erst alle Producer/Poller stoppen und
-  // Nitrado-Worker drainen, danach Discord, zuletzt Prisma. Guard gegen
-  // Doppelaufruf; Watchdog gegen Haenger.
   let shuttingDown = false;
   const shutdown = async (signal: string) => {
     if (shuttingDown) return;
@@ -236,15 +203,12 @@ async function main(): Promise<void> {
     }, 20_000);
     watchdog.unref?.();
 
-    // Dashboard zuerst als externen Producer schliessen: keine neuen HTTP-/
-    // Socket-Aktionen duerfen waehrend Worker-Drain/DB-Shutdown entstehen.
     try {
       if (dashboardRuntime) await dashboardRuntime.stop();
     } catch (e) {
       logger.warn('Dashboard-Runtime-Shutdown fehlgeschlagen:', e as Error);
     }
 
-    // Keine neuen allgemeinen/AI DB- oder Discord-Arbeiten mehr erzeugen.
     stopAiBackgroundLoops();
     clearInterval(moderationTimer);
     stopReminderScheduler();
@@ -262,7 +226,7 @@ async function main(): Promise<void> {
     await client.destroy();
     await prisma.$disconnect();
     clearTimeout(watchdog);
-    logger.info('Bot heruntergefahren.');
+    logger.info(`${BOT_PRODUCT_NAME} heruntergefahren.`);
     process.exit(0);
   };
 
