@@ -8,6 +8,7 @@ process.env.SESSION_SECRET ||= 'test-session-secret';
 const connectionFindMany = jest.fn();
 const whitelistFindMany = jest.fn();
 const whitelistUpdateMany = jest.fn(async () => ({ count: 1 }));
+const whitelistDeleteMany = jest.fn(async () => ({ count: 1 }));
 const jobFindMany = jest.fn();
 const jobCreate = jest.fn(async () => ({}));
 const getWhitelist = jest.fn();
@@ -16,7 +17,11 @@ jest.mock('../../src/database/prisma', () => ({
   __esModule: true,
   default: {
     nitradoConnection: { findMany: connectionFindMany },
-    whitelistEntry: { findMany: whitelistFindMany, updateMany: whitelistUpdateMany },
+    whitelistEntry: {
+      findMany: whitelistFindMany,
+      updateMany: whitelistUpdateMany,
+      deleteMany: whitelistDeleteMany,
+    },
     nitradoJob: { findMany: jobFindMany, create: jobCreate },
   },
 }));
@@ -53,13 +58,14 @@ beforeEach(() => {
   connectionFindMany.mockResolvedValue([conn]);
   whitelistFindMany.mockResolvedValue([]);
   whitelistUpdateMany.mockResolvedValue({ count: 1 });
+  whitelistDeleteMany.mockResolvedValue({ count: 1 });
   jobFindMany.mockResolvedValue([]);
   jobCreate.mockResolvedValue({});
   getWhitelist.mockResolvedValue([]);
 });
 
 it('markiert einen lokal+remote vorhandenen Eintrag als SYNCED ohne Job', async () => {
-  whitelistFindMany.mockResolvedValue([{ id: 'wl-1', gameId: 'Alice' }]);
+  whitelistFindMany.mockResolvedValue([{ id: 'wl-1', gameId: 'Alice', syncState: 'LOCAL_ONLY' }]);
   getWhitelist.mockResolvedValue([{ identifier: 'Alice' }]);
 
   await runWhitelistSyncOnce();
@@ -68,11 +74,12 @@ it('markiert einen lokal+remote vorhandenen Eintrag als SYNCED ohne Job', async 
     where: { id: 'wl-1', guildId: conn.guildId, nitradoConnId: conn.id },
     data: expect.objectContaining({ syncState: 'SYNCED' }),
   }));
+  expect(whitelistDeleteMany).not.toHaveBeenCalled();
   expect(jobCreate).not.toHaveBeenCalled();
 });
 
 it('queued genau einen ADD-Job wenn lokaler Eintrag remote fehlt', async () => {
-  whitelistFindMany.mockResolvedValue([{ id: 'wl-1', gameId: 'Alice' }]);
+  whitelistFindMany.mockResolvedValue([{ id: 'wl-1', gameId: 'Alice', syncState: 'LOCAL_ONLY' }]);
   getWhitelist.mockResolvedValue([]);
 
   await runWhitelistSyncOnce();
@@ -105,8 +112,45 @@ it('queued genau einen REMOVE-Job fuer einen remote-only Eintrag', async () => {
   });
 });
 
+it('haelt PENDING_REMOVE lokal solange der Name remote noch existiert und queued REMOVE statt ADD', async () => {
+  whitelistFindMany.mockResolvedValue([{ id: 'wl-1', gameId: 'Alice', syncState: 'PENDING_REMOVE' }]);
+  getWhitelist.mockResolvedValue([{ identifier: 'Alice' }]);
+
+  await runWhitelistSyncOnce();
+
+  expect(whitelistUpdateMany).not.toHaveBeenCalled();
+  expect(whitelistDeleteMany).not.toHaveBeenCalled();
+  expect(jobCreate).toHaveBeenCalledTimes(1);
+  expect(jobCreate).toHaveBeenCalledWith({
+    data: {
+      guildId: conn.guildId,
+      nitradoConnId: conn.id,
+      operation: 'WHITELIST_REMOVE',
+      payload: { gameId: 'Alice' },
+    },
+  });
+});
+
+it('finalisiert PENDING_REMOVE erst nachdem ein frischer Remote-Read die Entfernung bestaetigt', async () => {
+  whitelistFindMany.mockResolvedValue([{ id: 'wl-1', gameId: 'Alice', syncState: 'PENDING_REMOVE' }]);
+  getWhitelist.mockResolvedValue([]);
+
+  await runWhitelistSyncOnce();
+
+  expect(whitelistDeleteMany).toHaveBeenCalledWith({
+    where: {
+      id: 'wl-1',
+      guildId: conn.guildId,
+      nitradoConnId: conn.id,
+      syncState: 'PENDING_REMOVE',
+    },
+  });
+  expect(whitelistUpdateMany).not.toHaveBeenCalled();
+  expect(jobCreate).not.toHaveBeenCalled();
+});
+
 it('dupliziert keinen bereits PENDING/RUNNING identischen Job', async () => {
-  whitelistFindMany.mockResolvedValue([{ id: 'wl-1', gameId: 'Alice' }]);
+  whitelistFindMany.mockResolvedValue([{ id: 'wl-1', gameId: 'Alice', syncState: 'LOCAL_ONLY' }]);
   getWhitelist.mockResolvedValue([]);
   jobFindMany.mockResolvedValue([
     { operation: 'WHITELIST_ADD', payload: { gameId: 'Alice' } },
@@ -126,7 +170,7 @@ it('isoliert einen Connection-Fehler und verarbeitet weitere Connections', async
     .mockRejectedValueOnce(new Error('temporary remote error'))
     .mockResolvedValueOnce([{ identifier: 'Bob' }]);
   whitelistFindMany.mockImplementation(async ({ where }: { where: { nitradoConnId: string } }) => {
-    if (where.nitradoConnId === 'conn-2') return [{ id: 'wl-2', gameId: 'Bob' }];
+    if (where.nitradoConnId === 'conn-2') return [{ id: 'wl-2', gameId: 'Bob', syncState: 'LOCAL_ONLY' }];
     return [];
   });
 
