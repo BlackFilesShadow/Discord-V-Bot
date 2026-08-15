@@ -275,25 +275,31 @@ async function runPollSubcommand(sub: string, interaction: ChatInputCommandInter
             { name: '🗳️ Stimmen', value: `**${result.totalVotes}**`, inline: true },
           );
 
-        // Kritische sichtbare Abschlussmeldung muss gelingen, bevor die DB den
-        // Poll final auf ENDED setzt. Fehler => endPoll-Transaktion rollbackt.
+        // Die sichtbare Abschlussmeldung ist kritisch. Scheitert sie, darf die
+        // DB den Poll nicht als ENDED finalisieren.
         await interaction.editReply({ embeds: [embed] });
 
+        // Der Rollen-Ping ist zusaetzliche Benachrichtigung, nicht Teil der
+        // Poll-Wahrheit. Ein Discord-Fehler hier darf einen bereits sichtbar
+        // bestaetigten Abschluss nicht wieder auf ACTIVE zurueckrollen.
         if (poll.notifyRoleId && interaction.channel && 'send' in interaction.channel) {
           const sent = await safeSend(interaction.channel, {
             content: `<@&${poll.notifyRoleId}> 📊 Umfrage **${result.title}** wurde beendet!`,
             allowedMentions: { roles: [poll.notifyRoleId], parse: [] },
           });
-          if (!sent) throw new Error('Poll-Benachrichtigung konnte nicht zugestellt werden.');
+          if (!sent) {
+            logger.warn('Poll-Benachrichtigung konnte nicht zugestellt werden.', {
+              pollId,
+              roleId: poll.notifyRoleId,
+            });
+          }
         }
 
-        // Original-Poll-Nachricht ist eine UI-Spiegelung: geloeschte Nachricht
-        // darf den ansonsten erfolgreichen Abschluss nicht blockieren.
         if (poll.messageId && interaction.channel && 'messages' in interaction.channel) {
           try {
             const message = await (interaction.channel as any).messages.fetch(poll.messageId);
             await message.edit({ embeds: [embed], components: [] });
-          } catch { /* optional */ }
+          } catch { /* optionale UI-Spiegelung */ }
         }
       });
       break;
