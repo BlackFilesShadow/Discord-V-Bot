@@ -48,8 +48,6 @@ export async function createTicket(opts: {
     return { success: false, message: 'Als Bot-Owner kannst du kein Ticket an dich selbst stellen.' };
   }
 
-  // Die DM-Bridge kann User-Nachrichten nur dann eindeutig routen, wenn pro
-  // User maximal ein aktives Ticket existiert. Daher bewusst guilduebergreifend.
   const existing = await prisma.ticket.findFirst({
     where: { userDiscordId: opts.userDiscordId, status: { in: ['PENDING', 'OPEN'] } },
   });
@@ -112,8 +110,6 @@ export async function createTicket(opts: {
     return { success: false, message: 'Konnte den Owner nicht per DM erreichen. Bitte spaeter erneut versuchen.' };
   }
 
-  // Notice-ID ist Metadatenpflege, nicht Teil der Zustellung. Ein Fehler hier
-  // darf das bereits beim Owner liegende, funktionierende Ticket nicht kippen.
   await prisma.ticket.update({
     where: { id: ticket.id },
     data: { ownerNoticeMsgId: sentMessageId },
@@ -269,10 +265,6 @@ async function resolveOwnerTicketByReply(msg: Message, openTickets: Array<{ tick
   return openTickets.some(t => t.ticketNumber === number) ? number : null;
 }
 
-/**
- * DM-Bridge: leitet eine DM-Nachricht in ein eindeutig bestimmtes OPEN-Ticket.
- * Bei mehreren Owner-Tickets ist eine Discord-Reply-Referenz zwingend.
- */
 export async function handleTicketDm(msg: Message): Promise<boolean> {
   const userId = msg.author.id;
   const tickets = await prisma.ticket.findMany({
@@ -287,7 +279,7 @@ export async function handleTicketDm(msg: Message): Promise<boolean> {
 
   const asUser = tickets.filter(t => t.userDiscordId === userId);
   const asOwner = tickets.filter(t => t.ownerDiscordId === userId);
-  let ticket = asUser[0] ?? null;
+  let ticket: (typeof tickets)[number] | null = asUser[0] ?? null;
 
   if (!ticket && asOwner.length === 1) {
     ticket = asOwner[0];
