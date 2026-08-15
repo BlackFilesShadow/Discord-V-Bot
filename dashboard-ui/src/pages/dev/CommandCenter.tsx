@@ -8,7 +8,7 @@ import { Select } from '@/components/ui/Select';
 import { useToast } from '@/components/ui/Toast';
 
 const base = '/api/v2/dev/command-center';
-type Tab = 'diagnostics' | 'admins' | 'database' | 'config' | 'security' | 'exports' | 'xp' | 'commands';
+type Tab = 'diagnostics' | 'admins' | 'database' | 'config' | 'security' | 'xp' | 'commands';
 
 function errorText(e: unknown): string {
   return e instanceof ApiError ? e.message : (e as Error)?.message ?? 'Unbekannter Fehler';
@@ -24,16 +24,15 @@ export default function CommandCenter() {
   const [tab, setTab] = useState<Tab>('diagnostics');
   const tabs: Array<[Tab, string]> = [
     ['diagnostics', 'Diagnostik'], ['admins', 'Admins'], ['database', 'Datenbank'], ['config', 'Konfiguration'],
-    ['security', 'Security'], ['exports', 'Exporte'], ['xp', 'XP-Konfiguration'], ['commands', 'Command Registry'],
+    ['security', 'Security'], ['xp', 'XP-Konfiguration'], ['commands', 'Command Registry'],
   ];
   return <div className="space-y-4">
-    <Card glow><h1 className="text-lg font-semibold">DEV Command Center</h1><p className="text-sm text-muted mt-1">Dashboard-Ersatz aller ehemaligen DEV-Slash-Commands. Hersteller-Funktionen bleiben bewusst in Discord. Sensible Aktionen verlangen eine erneute serverseitige Authentisierung.</p><div className="flex flex-wrap gap-2 mt-4">{tabs.map(([key, label]) => <Button key={key} size="sm" variant={tab === key ? 'primary' : 'ghost'} onClick={() => setTab(key)}>{label}</Button>)}</div></Card>
+    <Card glow><h1 className="text-lg font-semibold">DEV Command Center</h1><p className="text-sm text-muted mt-1">Dashboard-Ersatz der ehemaligen DEV-Slash-Commands. Hersteller-Funktionen bleiben bewusst in Discord. Sensible Mutationen werden zentral serverseitig erneut authentisiert. Sensible Exporte besitzen einen getrennten, POST-only geschützten DEV-Bereich.</p><div className="flex flex-wrap gap-2 mt-4">{tabs.map(([key, label]) => <Button key={key} size="sm" variant={tab === key ? 'primary' : 'ghost'} onClick={() => setTab(key)}>{label}</Button>)}</div></Card>
     {tab === 'diagnostics' && <Diagnostics/>}
     {tab === 'admins' && <Admins/>}
     {tab === 'database' && <DatabaseTools/>}
     {tab === 'config' && <ConfigTools/>}
     {tab === 'security' && <SecurityTools/>}
-    {tab === 'exports' && <Exports/>}
     {tab === 'xp' && <XpTools/>}
     {tab === 'commands' && <CommandReload/>}
   </div>;
@@ -81,34 +80,6 @@ function SecurityTools() {
   const removeIp = useMutation({ mutationFn: () => api.del(`${base}/security/ip/${encodeURIComponent(ip)}`, { reason, reAuth }), onSuccess: () => { toast.success('IP entfernt'); void qc.invalidateQueries({ queryKey: [base, 'security'] }); }, onError: e => toast.error('Fehler', errorText(e)) });
   const resolve = useMutation({ mutationFn: () => api.post(`${base}/security/events/${eventId}/resolve`, { reason, reAuth }), onSuccess: () => { toast.success('Event gelöst'); void qc.invalidateQueries({ queryKey: [base, 'security'] }); }, onError: e => toast.error('Fehler', errorText(e)) });
   return <div className="space-y-4"><Card glow><h2 className="font-semibold mb-3">IP Black-/Whitelist & Event-Auflösung</h2><StepUp reason={reason} setReason={setReason} reAuth={reAuth} setReAuth={setReAuth}/><div className="grid gap-2 md:grid-cols-4"><Input value={ip} onChange={e => setIpValue(e.target.value)} placeholder="IPv4 / IPv6"/><Select value={listType} onChange={e => setListType(e.target.value)}><option value="BLACKLIST">BLACKLIST</option><option value="WHITELIST">WHITELIST</option></Select><Input value={listReason} onChange={e => setListReason(e.target.value)} placeholder="Listen-Begründung"/><Input value={hours} onChange={e => setHours(e.target.value)} type="number" placeholder="Stunden (0=permanent)"/></div><div className="flex gap-2 mt-2"><Button size="sm" onClick={() => setIpMutation.mutate()} disabled={!ip}>IP setzen</Button><Button size="sm" variant="danger" onClick={() => removeIp.mutate()} disabled={!ip}>IP entfernen</Button></div><div className="flex gap-2 mt-4"><Input value={eventId} onChange={e => setEventId(e.target.value)} placeholder="SecurityEvent-ID"/><Button size="sm" onClick={() => resolve.mutate()} disabled={!eventId}>Event als gelöst markieren</Button></div></Card><Card><JsonBlock value={q.data ?? {}}/></Card></div>;
-}
-
-function triggerDownload(blob: Blob, filename: string) {
-  const href = URL.createObjectURL(blob);
-  const a = document.createElement('a');
-  a.href = href;
-  a.download = filename;
-  a.rel = 'noopener';
-  document.body.appendChild(a);
-  a.click();
-  a.remove();
-  URL.revokeObjectURL(href);
-}
-
-function Exports() {
-  const toast = useToast();
-  const [discordId, setDiscordId] = useState(''); const [category, setCategory] = useState('ALL'); const [days, setDays] = useState('30');
-  const [reason, setReason] = useState('Sensibler Datenexport'); const [reAuth, setReAuth] = useState('');
-  const run = useMutation({
-    mutationFn: async (kind: 'packages' | 'user' | 'logs') => {
-      const path = kind === 'logs' ? `${base}/export/logs` : `${base}/export/${kind}/${encodeURIComponent(discordId)}`;
-      const body = kind === 'logs' ? { category, days: Number(days), reason, reAuth } : { reason, reAuth };
-      return api.downloadPost(path, body);
-    },
-    onSuccess: result => { triggerDownload(result.blob, result.filename); toast.success('Export erstellt'); },
-    onError: e => toast.error('Export fehlgeschlagen', errorText(e)),
-  });
-  return <Card glow><h2 className="font-semibold mb-3">Sensible Exporte</h2><p className="text-xs text-muted mb-3">Jeder Export läuft über die aktive DEV-Session, verlangt zusätzlich DEV-Passwort oder TOTP und wird auditiert. Die Antwort wird nicht gecacht.</p><StepUp reason={reason} setReason={setReason} reAuth={reAuth} setReAuth={setReAuth}/><div className="flex gap-2"><Input value={discordId} onChange={e => setDiscordId(e.target.value)} placeholder="Discord-ID"/><Button size="sm" onClick={() => run.mutate('packages')} disabled={!discordId || run.isPending}>Pakete</Button><Button size="sm" onClick={() => run.mutate('user')} disabled={!discordId || run.isPending}>GDPR User</Button></div><div className="flex gap-2 mt-3"><Select value={category} onChange={e => setCategory(e.target.value)} className="!w-auto">{['ALL','SECURITY','MODERATION','GDPR'].map(x => <option key={x} value={x}>{x}</option>)}</Select><Input value={days} onChange={e => setDays(e.target.value)} type="number" min={1} max={365}/><Button size="sm" onClick={() => run.mutate('logs')} loading={run.isPending}>Audit-Logs</Button></div></Card>;
 }
 
 interface GuildRow { id: string; name: string; botPresent: boolean }
