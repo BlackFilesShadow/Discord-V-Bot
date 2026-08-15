@@ -33,8 +33,9 @@ describe('Bot-Admin UI parity and mobile safety', () => {
   it('fordert echte CLEAR-/DELETE-Eingaben statt fest codierter Ein-Klick-Bestaetigung', () => {
     expect(source).toContain('confirm: clearConfirm');
     expect(source).toContain("disabled={clearConfirm !== 'CLEAR'}");
-    expect(source).toContain('confirm: deleteConfirm');
+    expect(source.match(/confirm: deleteConfirm/g)?.length).toBeGreaterThanOrEqual(3);
     expect(source).toContain("deleteConfirm !== 'DELETE'");
+    expect(source).toContain("api.del(`${center}/uploads/${uploadId}`, { confirm: deleteConfirm })");
     expect(source).not.toContain("confirm: 'CLEAR'");
     expect(source).not.toContain("confirm: 'DELETE'");
   });
