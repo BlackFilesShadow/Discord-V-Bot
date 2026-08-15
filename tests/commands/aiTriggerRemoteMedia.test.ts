@@ -170,8 +170,10 @@ describe('Bot-Admin AI trigger media and validation parity', () => {
     expect(response.status).toBe(201);
     expect(addTriggerMock).toHaveBeenCalledWith(
       GUILD_ID,
-      expect.objectContaining({ cooldownSeconds: 0, mediaUrl: undefined }),
+      expect.objectContaining({ cooldownSeconds: 0 }),
     );
+    const trigger = addTriggerMock.mock.calls[0][1] as Record<string, unknown>;
+    expect(trigger).not.toHaveProperty('mediaUrl');
   });
 
   it('rejects fractional cooldown values before remote media IO', async () => {
