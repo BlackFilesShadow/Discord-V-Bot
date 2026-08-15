@@ -10,9 +10,9 @@ describe('Bot-Admin hard-delete safety wiring', () => {
   const safeRoute = read('src/dashboard/routes/v2/botAdminSafePackageDelete.ts');
   const service = read('src/modules/packages/hardDeletePackage.ts');
 
-  it('mountet den Safe-Delete-Router vor Guild-Guard und bestehendem BotAdmin-Router', () => {
+  it('mountet XP-Retirement, Danger- und Safe-Delete-Router vor Guild-Guard und Legacy-Router', () => {
     expect(routes).toContain(
-      "v2Router.use('/bot-admin', requireGlobalBotAdminIdentity, botAdminSafeValidationRouter, botAdminSafePackageDeleteRouter, guardBotAdminGuildReferences, botAdminRouter);",
+      "v2Router.use('/bot-admin', requireGlobalBotAdminIdentity, botAdminXpRetirementRouter, botAdminDangerSafetyRouter, botAdminSafeValidationRouter, botAdminSafePackageDeleteRouter, guardBotAdminGuildReferences, botAdminRouter);",
     );
   });
 
@@ -20,6 +20,11 @@ describe('Bot-Admin hard-delete safety wiring', () => {
     expect(safeRoute).toContain("if (req.query.hard !== 'true')");
     expect(safeRoute).toContain('next();');
     expect(safeRoute).toContain('if (!pkg.isDeleted)');
+  });
+
+  it('revalidiert den Soft-Delete-Zustand im Service gegen Restore-Races', () => {
+    expect(safeRoute).toContain("hardDeletePackage(packageId, { requireSoftDeleted: true })");
+    expect(service).toContain('if (options.requireSoftDeleted && !pkg.isDeleted)');
   });
 
   it('validiert alle Pfade vor dem ersten unlink und loescht DB erst nach Filesystem-Cleanup', () => {
