@@ -9,37 +9,52 @@ import fs from 'fs';
 import crypto from 'crypto';
 
 /**
- * Baut ein Archiv (zip|tar) aus den uebergebenen Dateien und streamt es
- * direkt auf die Platte (kein vollstaendiges Puffern im RAM -> kein
- * Memory-Exhaustion-DoS). Es werden ausschliesslich Dateien innerhalb des
- * Upload-Root aufgenommen (Path-Traversal-Schutz). Gibt den Pfad der
- * temporaeren Archivdatei zurueck.
+ * Oeffentliche Download-Grenze:
+ * - Hersteller muss kanonisch verifiziert sein:
+ *   ACTIVE + isManufacturer=true + role=MANUFACTURER.
+ * - Paket muss ACTIVE und nicht geloescht sein.
+ * - Datei muss VALID, isValid=true, nicht geloescht und nicht quarantiniert sein.
+ *
+ * Diese Checks liegen bewusst im Service und nicht nur im Slash-Command, damit
+ * Dashboard, Suche oder kuenftige interne Caller keine schlechtere Freigabe-
+ * Semantik bekommen koennen.
  */
+
+function isPublicManufacturer(user: {
+  status: string;
+  isManufacturer: boolean;
+  role: string;
+}): boolean {
+  return user.status === 'ACTIVE' && user.isManufacturer && user.role === 'MANUFACTURER';
+}
+
+function publicFileWhere(fileType?: string): Record<string, unknown> {
+  return {
+    isDeleted: false,
+    isQuarantined: false,
+    isValid: true,
+    validationStatus: 'VALID',
+    ...(fileType ? { fileType: fileType.toUpperCase() } : {}),
+  };
+}
+
 async function buildPackageArchive(
   files: { filePath: string; originalName: string }[],
   format: 'zip' | 'tar',
 ): Promise<{ archivePath: string; includedCount: number }> {
   const ext = format === 'zip' ? 'zip' : 'tar.gz';
-  const archivePath = path.join(
-    os.tmpdir(),
-    `pkg-${crypto.randomBytes(8).toString('hex')}.${ext}`,
-  );
+  const archivePath = path.join(os.tmpdir(), `pkg-${crypto.randomBytes(8).toString('hex')}.${ext}`);
   const output = fs.createWriteStream(archivePath);
-  const archive =
-    format === 'zip'
-      ? archiver('zip', { zlib: { level: 9 } })
-      : archiver('tar', { gzip: true });
+  const archive = format === 'zip'
+    ? archiver('zip', { zlib: { level: 9 } })
+    : archiver('tar', { gzip: true });
 
   let includedCount = 0;
   archive.pipe(output);
 
   for (const file of files) {
-    // P0: Nur Dateien innerhalb des Upload-Root archivieren. Ein
-    // manipulierter DB-Pfad darf keine fremden Dateien einschleusen.
     if (!isInsideUploadRoot(file.filePath)) {
-      logger.error(
-        `Path traversal blocked beim Archivieren: ${file.filePath} ausserhalb Upload-Root.`,
-      );
+      logger.error(`Path traversal blocked beim Archivieren: ${file.filePath} ausserhalb Upload-Root.`);
       continue;
     }
     if (fs.existsSync(file.filePath)) {
@@ -48,91 +63,95 @@ async function buildPackageArchive(
     }
   }
 
-  // finalize() startet das Schreiben; wir warten auf das vollstaendige
-  // Flushen der WriteStream-Datei.
   const done = new Promise<void>((resolve, reject) => {
     output.on('close', resolve);
     output.on('error', reject);
     archive.on('error', reject);
   });
-  await archive.finalize();
-  await done;
-
-  return { archivePath, includedCount };
+  try {
+    await archive.finalize();
+    await done;
+    return { archivePath, includedCount };
+  } catch (error) {
+    fs.promises.unlink(archivePath).catch(() => undefined);
+    throw error;
+  }
 }
 
-/**
- * Download-Handler (Sektion 3):
- * - Download von Einzeldateien oder kompletten Paketen (ZIP, TAR)
- * - Download global für alle Nutzer
- * - Download-Tracking, Rate-Limit, Abuse-Detection
- */
+async function downloaderUserId(discordId?: string): Promise<string | null> {
+  if (!discordId) return null;
+  const user = await prisma.user.findUnique({
+    where: { discordId },
+    select: { id: true },
+  });
+  return user?.id ?? null;
+}
 
-/**
- * Einzeldatei-Download.
- */
+async function checkDownloadRateLimit(discordId?: string): Promise<boolean> {
+  if (!discordId) return true;
+  const rl = await checkRateLimit(discordId, 'download');
+  return rl.allowed;
+}
+
 export async function downloadSingleFile(
   uploadId: string,
-  downloaderDiscordId?: string
+  downloaderDiscordId?: string,
 ): Promise<{ success: boolean; filePath?: string; fileName?: string; message: string }> {
   const upload = await prisma.upload.findUnique({
     where: { id: uploadId },
-    include: { package: true },
+    include: {
+      package: {
+        include: {
+          user: {
+            select: { status: true, isManufacturer: true, role: true },
+          },
+        },
+      },
+    },
   });
 
-  if (!upload || upload.isDeleted) {
-    return { success: false, message: 'Datei nicht gefunden.' };
+  if (!upload || upload.isDeleted) return { success: false, message: 'Datei nicht gefunden.' };
+  if (upload.package.isDeleted || upload.package.status !== 'ACTIVE') {
+    return { success: false, message: 'Paket ist nicht oeffentlich verfuegbar.' };
   }
-
-  if (upload.package.isDeleted) {
-    return { success: false, message: 'Paket wurde gelöscht.' };
+  if (!isPublicManufacturer(upload.package.user)) {
+    return { success: false, message: 'Hersteller ist nicht mehr fuer oeffentliche Downloads freigegeben.' };
   }
-
-  if (upload.isQuarantined) {
-    return { success: false, message: 'Datei ist in Quarantäne.' };
+  if (upload.isQuarantined) return { success: false, message: 'Datei ist in Quarantaene.' };
+  if (!upload.isValid || upload.validationStatus !== 'VALID') {
+    return { success: false, message: 'Datei ist nicht erfolgreich validiert und deshalb nicht oeffentlich freigegeben.' };
   }
-
-  // Datei existiert auf Filesystem?
-  if (!fs.existsSync(upload.filePath)) {
-    return { success: false, message: 'Datei nicht mehr verfügbar.' };
-  }
-
-  // Sicherheitscheck: Pfad darf nicht außerhalb des Upload-Verzeichnisses liegen
+  if (!fs.existsSync(upload.filePath)) return { success: false, message: 'Datei nicht mehr verfuegbar.' };
   if (!isInsideUploadRoot(upload.filePath)) {
     logger.error(`Path traversal blocked: ${path.resolve(upload.filePath)} outside Upload-Root`);
     return { success: false, message: 'Dateizugriff verweigert.' };
   }
-
-  // Rate-Limit prüfen
-  if (downloaderDiscordId) {
-    const rl = await checkRateLimit(downloaderDiscordId, 'download');
-    if (!rl.allowed) {
-      return { success: false, message: 'Download Rate-Limit erreicht. Bitte warte.' };
-    }
+  if (!(await checkDownloadRateLimit(downloaderDiscordId))) {
+    return { success: false, message: 'Download Rate-Limit erreicht. Bitte warte.' };
   }
 
-  // Download-Tracking
-  let downloaderUserId: string | null = null;
-  if (downloaderDiscordId) {
-    const user = await prisma.user.findUnique({ where: { discordId: downloaderDiscordId } });
-    downloaderUserId = user?.id || null;
-  }
-
-  // Atomar: Download-Log + Counter (sonst Drift bei Teilfehler).
-  await prisma.$transaction([
-    prisma.download.create({
+  const userId = await downloaderUserId(downloaderDiscordId);
+  await prisma.$transaction(async tx => {
+    // Re-check direkt im Tracking-Commit: Paket darf zwischen Lookup und
+    // Auslieferung nicht geloescht worden sein.
+    const packageStillActive = await tx.package.findFirst({
+      where: { id: upload.packageId, isDeleted: false, status: 'ACTIVE' },
+      select: { id: true },
+    });
+    if (!packageStillActive) throw new Error('Paket wurde waehrend des Downloads deaktiviert.');
+    await tx.download.create({
       data: {
-        userId: downloaderUserId,
+        userId,
         packageId: upload.packageId,
         uploadId: upload.id,
         downloadType: 'SINGLE_FILE',
       },
-    }),
-    prisma.package.update({
+    });
+    await tx.package.update({
       where: { id: upload.packageId },
       data: { downloadCount: { increment: 1 } },
-    }),
-  ]);
+    });
+  });
 
   logAudit('FILE_DOWNLOADED', 'DOWNLOAD', {
     uploadId: upload.id,
@@ -148,200 +167,137 @@ export async function downloadSingleFile(
   };
 }
 
-/**
- * Paket-Download (alle Dateien als ZIP).
- * Sektion 3: Download von kompletten Paketen.
- */
+type ArchiveFormat = 'zip' | 'tar';
+
+async function downloadPackageArchive(
+  packageId: string,
+  format: ArchiveFormat,
+  downloaderDiscordId?: string,
+): Promise<{ success: boolean; filePath?: string; fileName?: string; message: string }> {
+  const pkg = await prisma.package.findUnique({
+    where: { id: packageId },
+    include: {
+      files: { where: publicFileWhere() as never },
+      user: { select: { status: true, isManufacturer: true, role: true } },
+    },
+  });
+
+  if (!pkg || pkg.isDeleted || pkg.status !== 'ACTIVE') {
+    return { success: false, message: 'Paket nicht gefunden oder nicht oeffentlich freigegeben.' };
+  }
+  if (!isPublicManufacturer(pkg.user)) {
+    return { success: false, message: 'Hersteller ist nicht mehr fuer oeffentliche Downloads freigegeben.' };
+  }
+  if (pkg.files.length === 0) {
+    return { success: false, message: 'Paket enthaelt keine erfolgreich validierten Dateien.' };
+  }
+  if (!(await checkDownloadRateLimit(downloaderDiscordId))) {
+    return { success: false, message: 'Download Rate-Limit erreicht. Bitte warte.' };
+  }
+
+  const { archivePath, includedCount } = await buildPackageArchive(pkg.files, format);
+  if (includedCount === 0) {
+    fs.promises.unlink(archivePath).catch(() => undefined);
+    return { success: false, message: 'Paket enthaelt keine verfuegbaren Dateien.' };
+  }
+
+  const userId = await downloaderUserId(downloaderDiscordId);
+  try {
+    await prisma.$transaction(async tx => {
+      const stillPublic = await tx.package.findFirst({
+        where: {
+          id: pkg.id,
+          isDeleted: false,
+          status: 'ACTIVE',
+          user: { status: 'ACTIVE', isManufacturer: true, role: 'MANUFACTURER' },
+        },
+        select: { id: true },
+      });
+      if (!stillPublic) throw new Error('Paket wurde waehrend des Downloads deaktiviert.');
+      await tx.download.create({
+        data: {
+          userId,
+          packageId: pkg.id,
+          downloadType: format === 'zip' ? 'PACKAGE_ZIP' : 'PACKAGE_TAR',
+        },
+      });
+      await tx.package.update({
+        where: { id: pkg.id },
+        data: { downloadCount: { increment: 1 } },
+      });
+    });
+  } catch (error) {
+    fs.promises.unlink(archivePath).catch(() => undefined);
+    throw error;
+  }
+
+  logAudit('PACKAGE_DOWNLOADED', 'DOWNLOAD', {
+    packageId: pkg.id,
+    downloaderId: downloaderDiscordId,
+    packageName: pkg.name,
+    fileCount: includedCount,
+    format: format.toUpperCase(),
+  });
+
+  return {
+    success: true,
+    filePath: archivePath,
+    fileName: format === 'zip' ? `${pkg.name}.zip` : `${pkg.name}.tar.gz`,
+    message: 'Download bereit.',
+  };
+}
+
 export async function downloadPackageAsZip(
   packageId: string,
-  downloaderDiscordId?: string
+  downloaderDiscordId?: string,
 ): Promise<{ success: boolean; filePath?: string; fileName?: string; message: string }> {
-  const pkg = await prisma.package.findUnique({
-    where: { id: packageId },
-    include: {
-      files: {
-        where: { isDeleted: false, isQuarantined: false },
-      },
-      user: true,
-    },
-  });
-
-  if (!pkg || pkg.isDeleted) {
-    return { success: false, message: 'Paket nicht gefunden.' };
-  }
-
-  if (pkg.files.length === 0) {
-    return { success: false, message: 'Paket enthält keine Dateien.' };
-  }
-
-  // Rate-Limit prüfen
-  if (downloaderDiscordId) {
-    const rl = await checkRateLimit(downloaderDiscordId, 'download');
-    if (!rl.allowed) {
-      return { success: false, message: 'Download Rate-Limit erreicht. Bitte warte.' };
-    }
-  }
-
-  // ZIP streamend auf Platte erstellen (Path-Traversal-Schutz + kein RAM-Buffer)
-  const { archivePath, includedCount } = await buildPackageArchive(pkg.files, 'zip');
-  if (includedCount === 0) {
-    fs.promises.unlink(archivePath).catch(() => undefined);
-    return { success: false, message: 'Paket enthält keine verfügbaren Dateien.' };
-  }
-
-  // Download-Tracking
-  let downloaderUserId: string | null = null;
-  if (downloaderDiscordId) {
-    const user = await prisma.user.findUnique({ where: { discordId: downloaderDiscordId } });
-    downloaderUserId = user?.id || null;
-  }
-
-  // Atomar: Download-Log + Counter (sonst Drift bei Teilfehler).
-  await prisma.$transaction([
-    prisma.download.create({
-      data: {
-        userId: downloaderUserId,
-        packageId: pkg.id,
-        downloadType: 'PACKAGE_ZIP',
-      },
-    }),
-    prisma.package.update({
-      where: { id: pkg.id },
-      data: { downloadCount: { increment: 1 } },
-    }),
-  ]);
-
-  logAudit('PACKAGE_DOWNLOADED', 'DOWNLOAD', {
-    packageId: pkg.id,
-    downloaderId: downloaderDiscordId,
-    packageName: pkg.name,
-    fileCount: includedCount,
-    format: 'ZIP',
-  });
-
-  return {
-    success: true,
-    filePath: archivePath,
-    fileName: `${pkg.name}.zip`,
-    message: 'Download bereit.',
-  };
+  return downloadPackageArchive(packageId, 'zip', downloaderDiscordId);
 }
 
-/**
- * Paket-Download als TAR-Archiv.
- * Sektion 3: Unterstützung für TAR-Format.
- */
 export async function downloadPackageAsTar(
   packageId: string,
-  downloaderDiscordId?: string
+  downloaderDiscordId?: string,
 ): Promise<{ success: boolean; filePath?: string; fileName?: string; message: string }> {
-  const pkg = await prisma.package.findUnique({
-    where: { id: packageId },
-    include: {
-      files: {
-        where: { isDeleted: false, isQuarantined: false },
-      },
-      user: true,
-    },
-  });
-
-  if (!pkg || pkg.isDeleted) {
-    return { success: false, message: 'Paket nicht gefunden.' };
-  }
-
-  if (pkg.files.length === 0) {
-    return { success: false, message: 'Paket enthält keine Dateien.' };
-  }
-
-  if (downloaderDiscordId) {
-    const rl = await checkRateLimit(downloaderDiscordId, 'download');
-    if (!rl.allowed) {
-      return { success: false, message: 'Download Rate-Limit erreicht. Bitte warte.' };
-    }
-  }
-
-  // TAR streamend auf Platte erstellen (Path-Traversal-Schutz + kein RAM-Buffer)
-  const { archivePath, includedCount } = await buildPackageArchive(pkg.files, 'tar');
-  if (includedCount === 0) {
-    fs.promises.unlink(archivePath).catch(() => undefined);
-    return { success: false, message: 'Paket enthält keine verfügbaren Dateien.' };
-  }
-
-  let downloaderUserId: string | null = null;
-  if (downloaderDiscordId) {
-    const user = await prisma.user.findUnique({ where: { discordId: downloaderDiscordId } });
-    downloaderUserId = user?.id || null;
-  }
-
-  // Atomar: Download-Log + Counter (sonst Drift bei Teilfehler).
-  await prisma.$transaction([
-    prisma.download.create({
-      data: {
-        userId: downloaderUserId,
-        packageId: pkg.id,
-        downloadType: 'PACKAGE_TAR',
-      },
-    }),
-    prisma.package.update({
-      where: { id: pkg.id },
-      data: { downloadCount: { increment: 1 } },
-    }),
-  ]);
-
-  logAudit('PACKAGE_DOWNLOADED', 'DOWNLOAD', {
-    packageId: pkg.id,
-    downloaderId: downloaderDiscordId,
-    packageName: pkg.name,
-    fileCount: includedCount,
-    format: 'TAR',
-  });
-
-  return {
-    success: true,
-    filePath: archivePath,
-    fileName: `${pkg.name}.tar.gz`,
-    message: 'Download bereit.',
-  };
+  return downloadPackageArchive(packageId, 'tar', downloaderDiscordId);
 }
 
-/**
- * Suche nach Paketen (Sektion 3: Suche nach Paketnamen, Dateityp oder Nutzer).
- */
 export async function searchPackages(query: string, options?: {
   fileType?: string;
   userId?: string;
   limit?: number;
   offset?: number;
 }) {
+  const fileFilter = publicFileWhere(options?.fileType);
   const where: any = {
     isDeleted: false,
+    status: 'ACTIVE',
+    user: {
+      status: 'ACTIVE',
+      isManufacturer: true,
+      role: 'MANUFACTURER',
+    },
+    files: { some: fileFilter },
     OR: [
       { name: { contains: query, mode: 'insensitive' } },
       { description: { contains: query, mode: 'insensitive' } },
       { user: { username: { contains: query, mode: 'insensitive' } } },
     ],
   };
+  if (options?.userId) where.userId = options.userId;
 
-  if (options?.fileType) {
-    where.files = {
-      some: { fileType: options.fileType.toUpperCase(), isDeleted: false },
-    };
-  }
-
-  if (options?.userId) {
-    where.userId = options.userId;
-  }
-
-  const packages = await prisma.package.findMany({
+  return prisma.package.findMany({
     where,
     include: {
       user: { select: { username: true, discordId: true } },
-      _count: { select: { files: true, downloads: true } },
+      _count: {
+        select: {
+          files: { where: fileFilter as never },
+          downloads: true,
+        },
+      },
     },
-    take: options?.limit || 20,
-    skip: options?.offset || 0,
+    take: Math.min(Math.max(options?.limit ?? 20, 1), 100),
+    skip: Math.max(options?.offset ?? 0, 0),
     orderBy: { downloadCount: 'desc' },
   });
-
-  return packages;
 }
