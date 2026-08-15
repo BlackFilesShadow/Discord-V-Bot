@@ -29,6 +29,7 @@ import DebugTools from './pages/dev/DebugTools';
 import AuditLogs from './pages/dev/AuditLogs';
 import CommandDiagnostics from './pages/dev/CommandDiagnostics';
 import CommandCenter from './pages/dev/CommandCenter';
+import SecureDevExport from './pages/dev/SecureDevExport';
 import Killfeed from './pages/dev/Killfeed';
 import PlayerTracking from './pages/dev/PlayerTracking';
 import RaidAnalysisTool from './pages/dev/RaidAnalysis';
@@ -103,6 +104,7 @@ export default function App() {
         <Route path="/dev" element={<Protected><Dev /></Protected>}>
           <Route index element={<Navigate to="bot-status" replace />} />
           <Route path="command-center" element={<CommandCenter />} />
+          <Route path="secure-export" element={<SecureDevExport />} />
           {DEV_TOOLS.map(t => {
             const Page = DEV_PAGES[t.slug];
             if (!Page) return null;
