@@ -160,23 +160,49 @@ jobs:
             dashboard-ui/package-lock.json
       - name: Install dependencies
         run: npm ci
-      - name: npm audit (critical blocking)
+      - name: Install dashboard-ui dependencies
+        working-directory: dashboard-ui
+        run: npm ci
+
+      - name: Root npm audit (critical blocking)
         run: npm audit --audit-level=critical
-      - name: npm audit (high - report only)
+      - name: Root npm audit (high - report only)
         run: npm audit --audit-level=high
         continue-on-error: true
-      - name: Generate SBOM (CycloneDX)
+
+      - name: Dashboard production audit (high blocking)
+        working-directory: dashboard-ui
+        run: npm audit --omit=dev --audit-level=high
+      - name: Dashboard full audit (critical blocking)
+        working-directory: dashboard-ui
+        run: npm audit --audit-level=critical
+      - name: Dashboard full audit (high - report only)
+        working-directory: dashboard-ui
+        run: npm audit --audit-level=high
+        continue-on-error: true
+
+      - name: Generate SBOMs (CycloneDX)
+        shell: bash
         run: |
           npx --yes @cyclonedx/cyclonedx-npm@latest \
             --output-format JSON \
             --output-file sbom.cyclonedx.json \
-            --omit dev || echo "SBOM-Generation fehlgeschlagen (non-blocking)"
-      - name: Upload SBOM artifact
+            --omit dev || echo "Backend-SBOM-Generation fehlgeschlagen (non-blocking)"
+          (
+            cd dashboard-ui
+            npx --yes @cyclonedx/cyclonedx-npm@latest \
+              --output-format JSON \
+              --output-file sbom.cyclonedx.json \
+              --omit dev
+          ) || echo "Dashboard-SBOM-Generation fehlgeschlagen (non-blocking)"
+      - name: Upload SBOM artifacts
         if: always()
         uses: actions/upload-artifact@v5
         with:
           name: sbom-cyclonedx
-          path: sbom.cyclonedx.json
+          path: |
+            sbom.cyclonedx.json
+            dashboard-ui/sbom.cyclonedx.json
           if-no-files-found: warn
 
   docker:
