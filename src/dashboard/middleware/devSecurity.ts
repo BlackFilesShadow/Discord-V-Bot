@@ -1,7 +1,7 @@
 /**
  * P0 — Enterprise Compliance Middleware fuer DEV-Endpoints.
  *
- * Liefert vier Bausteine, die als Stack hinter `requireDev` greifen:
+ * Liefert Sicherheitsbausteine, die als Stack hinter `requireDev` greifen:
  *   1. enforceDevMfa(userId)            — TwoFactorAuth.isEnabled erforderlich
  *                                         (mit Grace-Period via DEV_MFA_GRACE_PERIOD_END)
  *   2. enforceDevIpAllowlist(req)       — IpList(WHITELIST). Leer = fail-closed
@@ -11,14 +11,20 @@
  *   4. parseDevScope(scope)/getActiveDevSession(req)
  *                                       — Typisierter DevSession-Scope incl.
  *                                         optionalem guildIdRestrict.
+ *   5. verifyDevStepUp(req, input)      — echte Re-Authentisierung fuer sensible
+ *                                         DEV-Aktionen: TOTP wenn 2FA aktiv ist,
+ *                                         sonst DEV_PASSWORD-Reconfirm.
  *
  * Alle Funktionen sind side-effect-arm und ohne Express-Magic, damit sie
  * sowohl in Middleware-Stacks als auch in Socket-Auth-Pfaden wiederverwendbar
  * sind (siehe socket/dev.ts).
  */
 
+import crypto from 'node:crypto';
 import type { Request } from 'express';
 import prisma from '../../database/prisma';
+import { config } from '../../config';
+import { decrypt, verify2FAToken } from '../../utils/security';
 import { logger, logAudit } from '../../utils/logger';
 
 // ---------------------------------------------------------------------------
@@ -263,7 +269,7 @@ export async function getActiveDevSession(req: Request): Promise<ActiveDevSessio
 }
 
 // ---------------------------------------------------------------------------
-// 5) Step-Up-Re-Auth (P2-Vorbereitung — als Helper schon nutzbar)
+// 5) Step-Up-Re-Auth
 // ---------------------------------------------------------------------------
 
 export interface StepUpInput {
@@ -279,24 +285,78 @@ export interface StepUpResult {
 const STEP_UP_REASON_MIN = 6;
 const STEP_UP_REASON_MAX = 500;
 
-/**
- * Validiert ein Step-Up: erfordert
- *   - Reason (6..500 Zeichen)
- *   - Re-Auth-Token: TOTP wenn 2FA aktiv ist, sonst Passwort-Reconfirm
- *
- * Token-Validierung erfolgt verlagert in den Caller (auth.ts wraps
- * verify2FAToken) — diese Helper-Funktion validiert NUR Form/Pflichtfelder
- * und stellt eine konsistente API bereit.
- */
+/** Form-/Pflichtfeldvalidierung fuer Step-Up. */
 export function validateStepUpInput(input: StepUpInput): StepUpResult {
   const reason = (input.reason ?? '').trim();
   if (!reason) return { ok: false, error: 'reason_missing' };
-  if (reason.length < STEP_UP_REASON_MIN) return { ok: false, error: 'reason_too_short' };
-  if (reason.length > STEP_UP_REASON_MAX) return { ok: false, error: 'reason_too_short' };
+  if (reason.length < STEP_UP_REASON_MIN || reason.length > STEP_UP_REASON_MAX) {
+    return { ok: false, error: 'reason_too_short' };
+  }
   const reAuth = (input.reAuth ?? '').trim();
   if (!reAuth) return { ok: false, error: 'reauth_missing' };
   if (reAuth.length < 4) return { ok: false, error: 'reauth_invalid' };
   return { ok: true };
+}
+
+/**
+ * Verifiziert die Re-Authentisierung kryptografisch auf dem Server:
+ * - Hat der DEV-User aktive 2FA, ist ein gueltiger TOTP zwingend.
+ * - Ohne aktive 2FA muss das aktuelle DEV_PASSWORD erneut bestaetigt werden.
+ *
+ * Das Re-Auth-Geheimnis wird niemals geloggt oder in Audit-Details geschrieben.
+ */
+export async function verifyDevStepUp(req: Request, input: StepUpInput): Promise<StepUpResult> {
+  const shape = validateStepUpInput(input);
+  if (!shape.ok) return shape;
+  if (!req.auth?.userId) return { ok: false, error: 'reauth_invalid' };
+
+  const reAuth = String(input.reAuth ?? '').trim();
+  const tfa = await prisma.twoFactorAuth.findUnique({
+    where: { userId: req.auth.userId },
+    select: { isEnabled: true, secretEnc: true },
+  });
+
+  if (tfa?.isEnabled) {
+    if (!tfa.secretEnc) {
+      logger.error('[DEV] Step-Up kann nicht verifiziert werden: aktive 2FA ohne Secret.', { userId: req.auth.userId });
+      return { ok: false, error: 'no_credential' };
+    }
+    try {
+      const secret = decrypt(tfa.secretEnc, config.security.encryptionKey);
+      if (verify2FAToken(secret, reAuth)) return { ok: true };
+    } catch (e) {
+      logger.error('[DEV] Step-Up TOTP-Verifikation fehlgeschlagen.', {
+        userId: req.auth.userId,
+        err: (e as Error).message,
+      });
+      return { ok: false, error: 'no_credential' };
+    }
+    logAudit('DEV_STEP_UP_FAILED', 'SECURITY', {
+      userId: req.auth.userId,
+      discordId: req.auth.discordId,
+      ip: req.ip,
+      mode: 'totp',
+    });
+    return { ok: false, error: 'reauth_invalid' };
+  }
+
+  const expected = process.env.DEV_PASSWORD;
+  if (!expected) {
+    logger.error('[DEV] Step-Up kann nicht verifiziert werden: DEV_PASSWORD fehlt.', { userId: req.auth.userId });
+    return { ok: false, error: 'no_credential' };
+  }
+
+  const providedDigest = crypto.createHash('sha256').update(reAuth).digest();
+  const expectedDigest = crypto.createHash('sha256').update(expected).digest();
+  if (crypto.timingSafeEqual(providedDigest, expectedDigest)) return { ok: true };
+
+  logAudit('DEV_STEP_UP_FAILED', 'SECURITY', {
+    userId: req.auth.userId,
+    discordId: req.auth.discordId,
+    ip: req.ip,
+    mode: 'password',
+  });
+  return { ok: false, error: 'reauth_invalid' };
 }
 
 // ---------------------------------------------------------------------------
