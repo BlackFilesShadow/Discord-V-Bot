@@ -24,6 +24,10 @@ describe('current bot information surfaces', () => {
   const security = read('SECURITY.md');
   const architecture = read('docs/ARCHITECTURE.md');
   const performance = read('docs/PERFORMANCE.md');
+  const monitoring = read('docs/monitoring/README.md');
+  const alerts = read('docs/monitoring/prometheus-alerts.yml');
+  const contributing = read('CONTRIBUTING.md');
+  const packageJson = JSON.parse(read('package.json')) as { description?: string; scripts?: Record<string, string> };
 
   it('haelt entfernte Admin/DEV-Slash-Beispiele aus Bot-Antworten fern', () => {
     expect(aiCatalog).not.toContain("name: '/autorole");
@@ -88,5 +92,26 @@ describe('current bot information surfaces', () => {
     expect(performance).toContain('METRICS_ENABLED=true');
     expect(performance).toContain('METRICS_TOKEN');
     expect(performance).not.toContain('/translate-post');
+  });
+
+  it('haelt Monitoring-Doku und Alert-Labels synchron mit der Runtime', () => {
+    expect(monitoring).toContain('METRICS_ENABLED=true');
+    expect(monitoring).toContain('METRICS_TOKEN');
+    expect(monitoring).not.toContain('METRICS_BEARER_TOKEN');
+    expect(monitoring).toContain('`model`, `action`');
+    expect(alerts).toContain('by (le, model, action)');
+    expect(alerts).not.toContain('by (le, op)');
+  });
+
+  it('dokumentiert nur existierende npm-Skripte im Contributor-Workflow', () => {
+    expect(contributing).toContain('npm run ui:dev');
+    expect(contributing).toContain('npm run test:ci');
+    expect(contributing).toContain('npm run test:handles');
+    expect(contributing).not.toContain('npm run dev:dashboard');
+    for (const script of ['ui:dev', 'test:ci', 'test:handles', 'lint:all', 'build']) {
+      expect(packageJson.scripts?.[script]).toBeTruthy();
+    }
+    expect(packageJson.description).toContain('V-Bot Prime');
+    expect(packageJson.description).toContain('Bot-Admin-/DEV-Dashboard');
   });
 });
