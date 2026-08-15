@@ -1,6 +1,7 @@
 import fs from 'node:fs/promises';
 import prisma from '../../database/prisma';
-import { isInsideUploadRoot } from '../../utils/pathSafety';
+import { config } from '../../config';
+import { isInsideRoot, isInsideUploadRoot } from '../../utils/pathSafety';
 
 export interface HardDeletePackageResult {
   filesRemoved: number;
@@ -25,7 +26,8 @@ function errorCode(error: unknown): string | undefined {
  *
  * Reihenfolge ist absichtlich fail-closed:
  * 1. Paket + alle Dateipfade laden.
- * 2. ALLE Pfade validieren, bevor auch nur eine Datei geloescht wird.
+ * 2. ALLE Pfade zuerst lexikalisch UND danach ueber realpath gegen den realen
+ *    Upload-Root validieren. Das schliesst auch Symlink-/Junction-Escapes.
  * 3. Dateien entfernen; ENOENT ist idempotent/tolerierbar, andere I/O-Fehler
  *    brechen ab und lassen den DB-Datensatz fuer Diagnose/Retry bestehen.
  * 4. Erst wenn das Filesystem konsistent bereinigt ist, DB-Cascade ausfuehren.
@@ -45,13 +47,51 @@ export async function hardDeletePackage(packageId: string): Promise<HardDeletePa
     throw new HardDeletePackageError('Hard-Delete blockiert: Dateipfad liegt ausserhalb des Upload-Root.', 409);
   }
 
-  let filesRemoved = 0;
-  let filesAlreadyMissing = 0;
+  let realUploadRoot: string;
+  try {
+    realUploadRoot = await fs.realpath(config.upload.dir);
+  } catch (error) {
+    throw new HardDeletePackageError(
+      `Hard-Delete abgebrochen: Upload-Root konnte nicht aufgeloest werden (${errorCode(error) || 'I/O-Fehler'}).`,
+      500,
+    );
+  }
+
+  const missing = new Set<string>();
   for (const file of pkg.files) {
     try {
+      const realFile = await fs.realpath(file.filePath);
+      if (!isInsideRoot(realFile, realUploadRoot)) {
+        throw new HardDeletePackageError('Hard-Delete blockiert: realer Dateipfad verlaesst den Upload-Root.', 409);
+      }
+    } catch (error) {
+      if (error instanceof HardDeletePackageError) throw error;
+      if (errorCode(error) === 'ENOENT') {
+        missing.add(file.filePath);
+        continue;
+      }
+      throw new HardDeletePackageError(
+        `Hard-Delete abgebrochen: Dateipfad konnte nicht sicher aufgeloest werden (${errorCode(error) || 'I/O-Fehler'}).`,
+        500,
+      );
+    }
+  }
+
+  let filesRemoved = 0;
+  let filesAlreadyMissing = missing.size;
+  for (const file of pkg.files) {
+    if (missing.has(file.filePath)) continue;
+    try {
+      // Direkt vor dem Unlink erneut real aufloesen, um eine nach dem Preflight
+      // ausgetauschte Symlink-Kette moeglichst fail-closed zu erkennen.
+      const realFile = await fs.realpath(file.filePath);
+      if (!isInsideRoot(realFile, realUploadRoot)) {
+        throw new HardDeletePackageError('Hard-Delete blockiert: Dateipfad hat den Upload-Root nach Preflight verlassen.', 409);
+      }
       await fs.unlink(file.filePath);
       filesRemoved += 1;
     } catch (error) {
+      if (error instanceof HardDeletePackageError) throw error;
       if (errorCode(error) === 'ENOENT') {
         filesAlreadyMissing += 1;
         continue;
