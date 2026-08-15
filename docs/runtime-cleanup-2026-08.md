@@ -16,4 +16,5 @@
 - Der ADM-V2-Live-Ingest ist die einzige Nitrado-Dateiquelle und loest das Profilverzeichnis pro `NitradoConnection` auf.
 - Linking wird im inkrementellen V2-Ingest verifiziert.
 - Rewards und PlayerSessions werden vom ADM-V2-Postprocessor aus der kanonischen `AdmEvent`-Wahrheit verarbeitet.
-- `ADM_EVENT_PIPELINE_V2` steuert nur noch die oeffentliche Death-/Baufeed-Auslieferung, nicht mehr die ADM-Datenerfassung.
+- Der Gameplay-Feed-Worker laeuft zusammen mit der Nitrado-Runtime immer. Discord-Ausgaben entstehen ausschliesslich fuer explizit konfigurierte, aktive `GameplayFeedConfig`-Eintraege; ein zusaetzliches globales `ADM_EVENT_PIPELINE_V2`-Gate gibt es nicht mehr.
+- Die ungenutzte parallele Legacy-Killfeed-Runtime unter `src/modules/killfeed/` wurde entfernt. Produktive Death-/Baufeeds laufen ausschliesslich ueber `src/modules/gameplayFeeds/`.
