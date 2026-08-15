@@ -8,6 +8,7 @@ function read(rel: string): string {
 describe('Bot-Admin Command-Center Safety', () => {
   const routes = read('src/dashboard/routes/v2.ts');
   const safety = read('src/dashboard/routes/v2/botAdminCommandCenterSafety.ts');
+  const commandCenter = read('src/dashboard/routes/v2/botAdminCommandCenter.ts');
 
   it('mountet Safety vor dem Command-Center-Sammelrouter', () => {
     expect(routes).toContain(
@@ -30,5 +31,21 @@ describe('Bot-Admin Command-Center Safety', () => {
     expect(safety).toContain("'BOTADMIN_BULK_HARD_DELETE_ABORTED'");
     expect(safety).toContain('failedPackageId');
     expect(safety).toContain('partial:');
+  });
+
+  it('verbietet Schattenimplementierungen sicherheitskritischer Command-Center-Pfade', () => {
+    expect(commandCenter).not.toContain("get('/audit/export'");
+    expect(commandCenter).not.toContain("get('/triggers'");
+    expect(commandCenter).not.toContain("post('/triggers'");
+    expect(commandCenter).not.toContain("post('/triggers/upload'");
+    expect(commandCenter).not.toContain("post('/triggers/clear'");
+    expect(commandCenter).not.toContain("delete('/triggers/:id'");
+    expect(commandCenter).not.toContain("post('/validate/package/:id'");
+    expect(commandCenter).not.toContain("post('/validate/upload/:id'");
+    expect(commandCenter).not.toContain("delete('/uploads/:id'");
+    expect(commandCenter).not.toContain("delete('/packages/:id/hard'");
+    expect(commandCenter).not.toContain("post('/users/:id/packages/delete'");
+    expect(commandCenter).not.toContain('validateFile(');
+    expect(commandCenter).not.toContain('hardDeletePackage(');
   });
 });
