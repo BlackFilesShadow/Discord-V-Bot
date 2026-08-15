@@ -41,7 +41,10 @@ botAdminSafePackageDeleteRouter.delete('/packages/:id', async (req, res, next) =
   }
 
   try {
-    const result = await hardDeletePackage(packageId);
+    // Die Vorbedingung wird im Service erneut geprueft. So kann ein Paket,
+    // das zwischen Route-Check und Filesystem-Cleanup wiederhergestellt wurde,
+    // nicht durch ein TOCTOU-Race physisch geloescht werden.
+    const result = await hardDeletePackage(packageId, { requireSoftDeleted: true });
     const details = {
       packageId,
       packageName: pkg.name,
