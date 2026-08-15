@@ -1,20 +1,14 @@
 /**
  * Enterprise-Shell: Sticky-Glass-Header + optionale Sidebar + Main.
- *
- * Erweitert ggue. der vorherigen Shell um:
- *   - Density-Toggle (compact|cozy|comfortable)
- *   - Command-Palette-Trigger (Cmd+K Hint sichtbar)
- *   - Status-Pill (DEV-Session aktiv?) — nur fuer DEVELOPER sichtbar
- *   - A11y-Landmark "main"
- *
- * Sidebar bleibt ein flexibler Slot (gleicher API-Vertrag wie zuvor).
+ * Theme- und Density-Praeferenzen sind auf Desktop und Mobile erreichbar.
  */
 import { type ReactNode, useState, useEffect } from 'react';
 import { Link, useLocation } from 'react-router-dom';
 import {
-  ArrowLeft, LogOut, Menu, X, Command, Rows3, Rows2, Square,
+  ArrowLeft, LogOut, Menu, X, Command, Rows3, Rows2, Square, Sun, Moon,
 } from 'lucide-react';
 import { useAuth } from '@/lib/auth';
+import { useTheme } from '@/lib/theme';
 import { useDensity } from '@/lib/density';
 import { useDevSession } from '@/lib/devSession';
 import { useBotAdminSession } from '@/lib/botAdminSession';
@@ -34,34 +28,25 @@ interface ShellProps {
 
 export function Shell({ title, back, sidebar, children }: ShellProps) {
   const { user } = useAuth();
+  const { theme, toggleTheme } = useTheme();
   const { density, cycle } = useDensity();
-  // Erhoehte Bereiche (DEV / Bot-Admin) steuern Sichtbarkeit von DEV-Tools wie
-  // der Befehlspalette. Erst nach korrekter Passwort-Eingabe (active) sichtbar.
   const devActive = useDevSession().active;
   const botAdminActive = useBotAdminSession().active;
   const elevated = devActive || botAdminActive;
   const loc = useLocation();
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const [paletteOpen, setPaletteOpen] = useState(false);
-  // Login-Panels (DEV + Bot-Admin) sitzen auf Desktop inline im Header, auf
-  // Mobile in einer eigenen gestapelten Leiste darunter. Per matchMedia
-  // entscheiden wir, WO sie gerendert werden — so existiert immer nur EINE
-  // Instanz (keine doppelten input-IDs, kein Overlap im engen Header).
   const [isDesktop, setIsDesktop] = useState(
-    () =>
-      typeof window !== 'undefined' &&
+    () => typeof window !== 'undefined' &&
       typeof window.matchMedia === 'function' &&
       window.matchMedia('(min-width: 768px)').matches,
   );
+
   useEffect(() => {
     if (typeof window === 'undefined' || typeof window.matchMedia !== 'function') return;
     const mql = window.matchMedia('(min-width: 768px)');
     const onChange = (): void => setIsDesktop(mql.matches);
-    // Direkt beim Mount einmal synchronisieren (z. B. nach Hydration/Resize
-    // bevor das erste 'change'-Event feuert).
     onChange();
-    // Moderne API bevorzugen, aber Fallback auf das veraltete
-    // addListener/removeListener fuer aeltere Safari/WebView-Versionen.
     if (typeof mql.addEventListener === 'function') {
       mql.addEventListener('change', onChange);
       return () => mql.removeEventListener('change', onChange);
@@ -70,8 +55,10 @@ export function Shell({ title, back, sidebar, children }: ShellProps) {
     return () => mql.removeListener(onChange);
   }, []);
 
-  // Palette-Hotkey global (Inhalte respektieren ohnehin 3-Gate Auth).
-  useHotkey('mod+k', e => { e.preventDefault(); if (elevated) setPaletteOpen(o => !o); }, { allowInInputs: true });
+  useHotkey('mod+k', event => {
+    event.preventDefault();
+    if (elevated) setPaletteOpen(open => !open);
+  }, { allowInInputs: true });
   useHotkey('escape', () => setPaletteOpen(false), { allowInInputs: true });
 
   useEffect(() => { setSidebarOpen(false); }, [loc.pathname]);
@@ -91,16 +78,18 @@ export function Shell({ title, back, sidebar, children }: ShellProps) {
   }
 
   const DensityIcon = density === 'compact' ? Rows3 : density === 'cozy' ? Rows2 : Square;
+  const ThemeIcon = theme === 'dark' ? Sun : Moon;
+  const nextThemeLabel = theme === 'dark' ? 'Hell' : 'Dunkel';
 
   return (
     <div className="min-h-full flex flex-col">
-      <header className="sticky top-0 z-40 h-16 glass header-premium flex items-center justify-between px-4 sm:px-6">
+      <header className="sticky top-0 z-40 h-16 glass header-premium flex items-center justify-between px-3 sm:px-6">
         <div className="flex items-center gap-2 sm:gap-4 min-w-0">
           {sidebar && (
             <button
               type="button"
-              onClick={() => setSidebarOpen(o => !o)}
-              className="md:hidden inline-flex items-center justify-center h-9 w-9 rounded-md text-white hover:bg-bg-elev focus-ring"
+              onClick={() => setSidebarOpen(open => !open)}
+              className="md:hidden inline-flex items-center justify-center h-9 w-9 rounded-md text-white hover:bg-bg-elev focus-ring shrink-0"
               aria-label={sidebarOpen ? 'Menue schliessen' : 'Menue oeffnen'}
             >
               {sidebarOpen ? <X className="h-5 w-5" /> : <Menu className="h-5 w-5" />}
@@ -115,7 +104,7 @@ export function Shell({ title, back, sidebar, children }: ShellProps) {
               <span className="text-sm hidden sm:inline">Zurueck</span>
             </Link>
           )}
-          <Link to="/servers" className="flex items-center gap-2 focus-ring rounded-md px-1 group">
+          <Link to="/servers" className="flex items-center gap-2 focus-ring rounded-md px-1 group shrink-0" aria-label="V-Bot">
             <span className="relative inline-flex h-2.5 w-2.5">
               <span
                 className="absolute inline-flex h-full w-full rounded-full bg-accent opacity-60 group-hover:opacity-100"
@@ -129,17 +118,15 @@ export function Shell({ title, back, sidebar, children }: ShellProps) {
           <span className="text-white/85 text-sm font-medium truncate hidden sm:inline">{title}</span>
         </div>
 
-        <div className="flex items-center gap-1.5 sm:gap-2 text-sm">
-          {/* DEV/Bot-Admin-Login: nur auf Desktop inline im Header (Mobile-Bar
-              unten rendert sie stattdessen gestapelt). */}
+        <div className="flex items-center gap-0.5 sm:gap-2 text-sm shrink-0">
           {isDesktop && (
             <>
               <DevLoginPanel />
               <BotAdminLoginPanel />
             </>
           )}
+
           <Tooltip content={<span>Befehlspalette · <Kbd>{MOD_LABEL}</Kbd>+<Kbd>K</Kbd></span>}>
-            {/* DEV-Tool-Suche nur sichtbar, wenn DEV oder Bot-Admin freigeschaltet ist. */}
             {elevated ? (
               <button
                 type="button"
@@ -149,13 +136,22 @@ export function Shell({ title, back, sidebar, children }: ShellProps) {
               >
                 <Command className="h-3.5 w-3.5" />
                 <span className="hidden md:inline text-xs">Suchen</span>
-                <span className="hidden md:inline-flex items-center gap-0.5">
-                  <Kbd>{MOD_LABEL}</Kbd><Kbd>K</Kbd>
-                </span>
+                <span className="hidden md:inline-flex items-center gap-0.5"><Kbd>{MOD_LABEL}</Kbd><Kbd>K</Kbd></span>
               </button>
             ) : <span className="hidden" />}
           </Tooltip>
 
+          <Tooltip content={`Darstellung: ${theme === 'dark' ? 'Dunkel' : 'Hell'} · zu ${nextThemeLabel} wechseln`}>
+            <button
+              type="button"
+              onClick={toggleTheme}
+              className="inline-flex items-center justify-center h-9 w-9 rounded-md text-muted hover:text-white hover:bg-bg-elev focus-ring"
+              aria-label={`Darstellung auf ${nextThemeLabel} umschalten`}
+              data-testid="theme-toggle"
+            >
+              <ThemeIcon className="h-4 w-4" />
+            </button>
+          </Tooltip>
 
           <Tooltip content={`Dichte: ${density}`}>
             <button
@@ -187,15 +183,13 @@ export function Shell({ title, back, sidebar, children }: ShellProps) {
       </header>
 
       {(back || title) && (
-        <div className="sm:hidden border-b border-border px-4 py-2 text-sm">
+        <div className="sm:hidden border-b border-border px-4 py-2 text-sm bg-bg-card/35">
           <span className="text-white truncate">{title}</span>
         </div>
       )}
 
-      {/* Mobile-Login-Leiste: DEV- und Bot-Admin-Login gestapelt, volle Breite,
-          eigener Block unterhalb des Headers — kein Overlap mit Branding/Inhalt. */}
       {!isDesktop && user && (
-        <div className="md:hidden border-b border-border bg-bg-card/40 px-4 py-3 flex flex-col gap-3">
+        <div className="md:hidden border-b border-border bg-bg-card/55 px-4 py-3 flex flex-col gap-3">
           <DevLoginPanel />
           <BotAdminLoginPanel />
         </div>
@@ -205,7 +199,7 @@ export function Shell({ title, back, sidebar, children }: ShellProps) {
         {sidebar && (
           <>
             <aside
-              className="hidden md:block w-64 lg:w-72 border-r border-white/[0.06] bg-gradient-to-b from-bg-card/50 to-bg-card/20 backdrop-blur-md p-5 overflow-y-auto text-[15px]"
+              className="hidden md:block w-64 lg:w-72 border-r border-white/[0.06] bg-gradient-to-b from-bg-card/70 to-bg-card/35 backdrop-blur-md p-5 overflow-y-auto text-[15px]"
               aria-label="Navigation"
             >
               {sidebar}
@@ -218,7 +212,7 @@ export function Shell({ title, back, sidebar, children }: ShellProps) {
               >
                 <aside
                   className="absolute left-0 top-16 bottom-0 w-72 max-w-[85vw] glass border-r border-border p-4 overflow-y-auto"
-                  onClick={e => e.stopPropagation()}
+                  onClick={event => event.stopPropagation()}
                   role="dialog"
                   aria-label="Navigation"
                 >
