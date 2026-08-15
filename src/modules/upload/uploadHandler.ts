@@ -18,16 +18,15 @@ import crypto from 'crypto';
  * - `processUpload` prueft selbst, dass packageId wirklich dem userId gehoert
  *   und aktiv ist. Ein anderer Caller kann diese Mandantengrenze nicht umgehen.
  * - Upload-DB-Zeile + Paketzaehler werden atomar committed.
- * - Scheitert der DB-Commit nach dem File-Move, wird die neue Datei wieder
- *   entfernt. Es bleiben keine bewusst erzeugten Orphan-Dateien zurueck.
- * - Paket-Restore/Delete halten Paket- und Datei-Flags transaktional zusammen.
+ * - Paket-Soft-Delete und individuelles Datei-Delete sind getrennte Lebenszyklen:
+ *   ein Paket wird ueber `Package.isDeleted` verborgen; bestehende Upload-
+ *   Flags werden dabei nicht veraendert. Dadurch kann Restore niemals bewusst
+ *   einzeln geloeschte Dateien wieder aktivieren.
  */
 
 export function ensureUserUploadDir(userId: string): string {
   const userDir = path.join(config.upload.dir, userId);
-  if (!existsSync(userDir)) {
-    mkdirSync(userDir, { recursive: true, mode: 0o755 });
-  }
+  if (!existsSync(userDir)) mkdirSync(userDir, { recursive: true, mode: 0o755 });
   return userDir;
 }
 
@@ -58,20 +57,12 @@ export async function getOrCreatePackage(userId: string, packageName: string, de
   }
 
   const existingActive = await prisma.package.findFirst({
-    where: {
-      userId,
-      isDeleted: false,
-      name: { equals: normalizedName, mode: 'insensitive' },
-    },
+    where: { userId, isDeleted: false, name: { equals: normalizedName, mode: 'insensitive' } },
   });
   if (existingActive) throw new DuplicatePackageNameError(normalizedName);
 
   const existingSoftDeleted = await prisma.package.findFirst({
-    where: {
-      userId,
-      isDeleted: true,
-      name: { equals: normalizedName, mode: 'insensitive' },
-    },
+    where: { userId, isDeleted: true, name: { equals: normalizedName, mode: 'insensitive' } },
   });
 
   if (existingSoftDeleted) {
@@ -99,13 +90,10 @@ export async function getOrCreatePackage(userId: string, packageName: string, de
       return { pkg, oldFilePaths: oldFiles.map(file => file.filePath) };
     });
 
-    // Dateisystem erst nach DB-Commit bereinigen. Fehler erzeugen nur
-    // unreferenzierte Altdateien, niemals kaputte DB-Referenzen.
     for (const filePath of restored.oldFilePaths) {
       if (!isPathSafe(filePath)) continue;
       try { await fs.unlink(filePath); } catch { /* best effort */ }
     }
-
     logAudit('PACKAGE_RESTORED_ON_UPLOAD', 'UPLOAD', {
       packageId: restored.pkg.id,
       userId,
@@ -115,19 +103,11 @@ export async function getOrCreatePackage(userId: string, packageName: string, de
   }
 
   try {
-    const pkg = await prisma.package.create({
-      data: { userId, name: normalizedName, description },
-    });
-    logAudit('PACKAGE_CREATED', 'UPLOAD', {
-      packageId: pkg.id,
-      userId,
-      packageName: normalizedName,
-    });
+    const pkg = await prisma.package.create({ data: { userId, name: normalizedName, description } });
+    logAudit('PACKAGE_CREATED', 'UPLOAD', { packageId: pkg.id, userId, packageName: normalizedName });
     return pkg;
   } catch (err: unknown) {
-    if ((err as { code?: string })?.code === 'P2002') {
-      throw new DuplicatePackageNameError(normalizedName);
-    }
+    if ((err as { code?: string })?.code === 'P2002') throw new DuplicatePackageNameError(normalizedName);
     throw err;
   }
 }
@@ -146,10 +126,7 @@ export async function processUpload(
 }> {
   const ext = path.extname(originalName).toLowerCase();
   if (!config.upload.allowedExtensions.includes(ext)) {
-    return {
-      success: false,
-      message: `Ungueltiger Dateityp: ${ext}. Erlaubt: ${config.upload.allowedExtensions.join(', ')}`,
-    };
+    return { success: false, message: `Ungueltiger Dateityp: ${ext}. Erlaubt: ${config.upload.allowedExtensions.join(', ')}` };
   }
   if (fileBuffer.length > config.upload.maxFileSizeBytes) {
     return {
@@ -163,8 +140,6 @@ export async function processUpload(
     return { success: false, message: 'Ungueltige User- oder Paket-ID.' };
   }
 
-  // Service-seitige Ownership-Grenze. Nicht darauf vertrauen, dass jeder
-  // kuenftige Caller vorher richtig scoped.
   const ownedPackage = await prisma.package.findFirst({
     where: { id: packageId, userId, isDeleted: false, status: 'ACTIVE' },
     select: { id: true },
@@ -193,6 +168,7 @@ export async function processUpload(
   await fs.writeFile(stagingPath, fileBuffer, { mode: 0o600 });
 
   let movedToActive = false;
+  let dbCommitted = false;
   try {
     const scanResult = await scanFile(stagingPath, userId);
     if (!scanResult.clean) {
@@ -201,17 +177,10 @@ export async function processUpload(
       const quarantinePath = path.join(quarantineDir, `${Date.now()}_${safeFileName}`);
       try { await fs.rename(stagingPath, quarantinePath); }
       catch { try { await fs.unlink(stagingPath); } catch { /* best effort */ } }
-
       logAudit('UPLOAD_QUARANTINED_VIRUS', 'SECURITY', {
-        userId,
-        originalName,
-        threats: scanResult.threats,
-        engine: scanResult.engine,
+        userId, originalName, threats: scanResult.threats, engine: scanResult.engine,
       });
-      return {
-        success: false,
-        message: `Datei "${originalName}" wurde als verdaechtig erkannt und in Quarantaene verschoben.`,
-      };
+      return { success: false, message: `Datei "${originalName}" wurde als verdaechtig erkannt und in Quarantaene verschoben.` };
     }
 
     if (!existsSync(packageDir)) mkdirSync(packageDir, { recursive: true, mode: 0o755 });
@@ -236,16 +205,14 @@ export async function processUpload(
       });
       const packageChanged = await tx.package.updateMany({
         where: { id: packageId, userId, isDeleted: false, status: 'ACTIVE' },
-        data: {
-          totalSize: { increment: BigInt(fileBuffer.length) },
-          fileCount: { increment: 1 },
-        },
+        data: { totalSize: { increment: BigInt(fileBuffer.length) }, fileCount: { increment: 1 } },
       });
       if (packageChanged.count !== 1) {
         throw new Error('Paket wurde waehrend des Uploads entfernt oder gehoert nicht mehr zum Hersteller.');
       }
       return row;
     });
+    dbCommitted = true;
 
     let validationReport: Awaited<ReturnType<typeof validateFile>> | undefined;
     try {
@@ -258,9 +225,7 @@ export async function processUpload(
             isValid: validationReport!.isValid,
             isQuarantined: quarantined,
             quarantineReason: quarantined ? 'Zu viele Validierungsfehler' : null,
-            validationStatus: quarantined
-              ? 'QUARANTINED'
-              : validationReport!.isValid ? 'VALID' : 'INVALID',
+            validationStatus: quarantined ? 'QUARANTINED' : validationReport!.isValid ? 'VALID' : 'INVALID',
           },
         });
         await tx.validationResult.create({
@@ -303,13 +268,15 @@ export async function processUpload(
         : `Datei "${originalName}" wurde hochgeladen, ist aber nicht fuer die oeffentliche Verteilung freigegeben.`,
     };
   } catch (error) {
-    // Nur neue, noch nicht sicher referenzierte Datei entfernen. Falls der DB-
-    // Commit bereits erfolgreich war und erst die spaetere Validierung Fehler
-    // war, wird dieser Catch nicht erreicht, weil sie oben abgefangen wird.
-    if (movedToActive) {
-      try { await fs.unlink(filePath); } catch { /* best effort */ }
-    } else {
-      try { await fs.unlink(stagingPath); } catch { /* best effort */ }
+    // Nur vor einem erfolgreichen DB-Commit darf die aktive Datei ohne weitere
+    // DB-Kompensation entfernt werden. Nach Commit bleibt sie referenziert und
+    // wird ueber ihren Validierungsstatus fail-closed behandelt.
+    if (!dbCommitted) {
+      if (movedToActive) {
+        try { await fs.unlink(filePath); } catch { /* best effort */ }
+      } else {
+        try { await fs.unlink(stagingPath); } catch { /* best effort */ }
+      }
     }
     throw error;
   }
@@ -323,7 +290,6 @@ export async function deletePackage(packageId: string, deletedBy: string, hard: 
     });
     if (!pkg) return;
 
-    // DB zuerst finalisieren. Erst danach Filesystem best-effort bereinigen.
     await prisma.package.delete({ where: { id: packageId } });
     for (const file of pkg.files) {
       if (!isPathSafe(file.filePath)) continue;
@@ -331,48 +297,55 @@ export async function deletePackage(packageId: string, deletedBy: string, hard: 
     }
   } else {
     const now = new Date();
-    await prisma.$transaction(async tx => {
-      const changed = await tx.package.updateMany({
-        where: { id: packageId, isDeleted: false },
-        data: {
-          isDeleted: true,
-          deletedAt: now,
-          deletedBy,
-          status: 'DELETED',
-        },
-      });
-      if (changed.count !== 1) throw new Error('Paket nicht gefunden oder bereits geloescht.');
-      await tx.upload.updateMany({
-        where: { packageId, isDeleted: false },
-        data: { isDeleted: true, deletedAt: now },
-      });
+    const changed = await prisma.package.updateMany({
+      where: { id: packageId, isDeleted: false },
+      data: { isDeleted: true, deletedAt: now, deletedBy, status: 'DELETED' },
     });
+    if (changed.count !== 1) throw new Error('Paket nicht gefunden oder bereits geloescht.');
+    // Upload.isDeleted bleibt bewusst unangetastet. Der Package-Status sperrt
+    // den gesamten Download; individuelle Datei-Loeschungen bleiben erhalten.
   }
 
-  logAudit(hard ? 'PACKAGE_HARD_DELETED' : 'PACKAGE_SOFT_DELETED', 'UPLOAD', {
-    packageId,
-    deletedBy,
-  });
+  logAudit(hard ? 'PACKAGE_HARD_DELETED' : 'PACKAGE_SOFT_DELETED', 'UPLOAD', { packageId, deletedBy });
 }
 
 export async function restorePackage(packageId: string) {
+  const pkg = await prisma.package.findUnique({
+    where: { id: packageId },
+    include: {
+      files: {
+        where: { isDeleted: true },
+        select: { id: true, filePath: true },
+      },
+    },
+  });
+  if (!pkg || !pkg.isDeleted) throw new Error('Geloeschtes Paket nicht gefunden.');
+
+  // Legacy-Kompatibilitaet: Aeltere Paket-Soft-Deletes setzten alle Uploads auf
+  // isDeleted=true. Nur physisch noch vorhandene, sichere Dateien duerfen beim
+  // Restore wieder aktiviert werden. Bewusst einzeln geloeschte Dateien sind
+  // physisch weg und bleiben damit geloescht.
+  const legacyRestorableIds = pkg.files
+    .filter(file => isPathSafe(file.filePath) && existsSync(file.filePath))
+    .map(file => file.id);
+
   await prisma.$transaction(async tx => {
     const changed = await tx.package.updateMany({
       where: { id: packageId, isDeleted: true },
-      data: {
-        isDeleted: false,
-        deletedAt: null,
-        deletedBy: null,
-        status: 'ACTIVE',
-      },
+      data: { isDeleted: false, deletedAt: null, deletedBy: null, status: 'ACTIVE' },
     });
-    if (changed.count !== 1) throw new Error('Geloeschtes Paket nicht gefunden.');
-    await tx.upload.updateMany({
-      where: { packageId, isDeleted: true },
-      data: { isDeleted: false, deletedAt: null },
-    });
+    if (changed.count !== 1) throw new Error('Paket wurde bereits wiederhergestellt oder entfernt.');
+    if (legacyRestorableIds.length > 0) {
+      await tx.upload.updateMany({
+        where: { packageId, id: { in: legacyRestorableIds }, isDeleted: true },
+        data: { isDeleted: false, deletedAt: null },
+      });
+    }
   });
-  logAudit('PACKAGE_RESTORED', 'UPLOAD', { packageId });
+  logAudit('PACKAGE_RESTORED', 'UPLOAD', {
+    packageId,
+    legacyFilesRestored: legacyRestorableIds.length,
+  });
 }
 
 function sanitizeFilename(name: string): string {
