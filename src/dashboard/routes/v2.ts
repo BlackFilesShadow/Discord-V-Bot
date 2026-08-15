@@ -16,6 +16,7 @@ import { guardBotAdminCommandCenterInput, guardDevCommandCenterInput } from '../
 import { requireVerifiedDevMutationStepUp, redirectLegacyDevExports } from '../middleware/devStepUp';
 import { guardDevAdminTarget } from '../middleware/devAdminTargetGuard';
 import { guardDevXpGuildObjects } from '../middleware/devXpScopeGuard';
+import { guardBotAdminGuildReferences } from '../middleware/botAdminGuildReferenceGuard';
 
 import { guildsRouter } from './v2/guilds';
 import { dashboardRouter } from './v2/dashboard';
@@ -105,7 +106,7 @@ v2Router.use('/bot-admin/command-center/audit/export', requireGlobalBotAdminIden
 v2Router.use('/bot-admin/command-center/triggers', requireGlobalBotAdminIdentity, botAdminTriggersRouter);
 v2Router.use('/bot-admin/command-center', requireGlobalBotAdminIdentity, guardBotAdminCommandCenterInput, botAdminCommandCenterRouter);
 
-// Bot-Admin: globale Identitaet + aktive BotAdminSession. Safety-Overrides
-// muessen vor dem Legacy-Router laufen, damit bestehende UI-Pfade dieselben
-// Schutzschranken wie die migrierten Command-Center-Funktionen besitzen.
-v2Router.use('/bot-admin', requireGlobalBotAdminIdentity, botAdminSafeValidationRouter, botAdminSafePackageDeleteRouter, botAdminRouter);
+// Bot-Admin: globale Identitaet + aktive BotAdminSession. Safety-Overrides und
+// Guild-Referenzpruefung muessen vor dem Legacy-Router laufen, damit bestehende
+// UI-Pfade keine fremden Guild-/Channel-/Role-Snowflakes persistieren koennen.
+v2Router.use('/bot-admin', requireGlobalBotAdminIdentity, botAdminSafeValidationRouter, botAdminSafePackageDeleteRouter, guardBotAdminGuildReferences, botAdminRouter);
