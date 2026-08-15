@@ -14,11 +14,15 @@ import crypto from 'crypto';
  *   ACTIVE + isManufacturer=true + role=MANUFACTURER.
  * - Paket muss ACTIVE und nicht geloescht sein.
  * - Datei muss VALID, isValid=true, nicht geloescht und nicht quarantiniert sein.
- *
- * Diese Checks liegen bewusst im Service und nicht nur im Slash-Command, damit
- * Dashboard, Suche oder kuenftige interne Caller keine schlechtere Freigabe-
- * Semantik bekommen koennen.
  */
+
+export interface DownloadSingleFileOptions {
+  /**
+   * Nur fuer einen bereits einmal rate-limitierten serverseitigen Paket-Batch.
+   * Alle Sicherheits-, Freshness- und Tracking-Checks bleiben aktiv.
+   */
+  skipRateLimit?: boolean;
+}
 
 function isPublicManufacturer(user: {
   status: string;
@@ -51,7 +55,6 @@ async function buildPackageArchive(
 
   let includedCount = 0;
   archive.pipe(output);
-
   for (const file of files) {
     if (!isInsideUploadRoot(file.filePath)) {
       logger.error(`Path traversal blocked beim Archivieren: ${file.filePath} ausserhalb Upload-Root.`);
@@ -80,10 +83,7 @@ async function buildPackageArchive(
 
 async function downloaderUserId(discordId?: string): Promise<string | null> {
   if (!discordId) return null;
-  const user = await prisma.user.findUnique({
-    where: { discordId },
-    select: { id: true },
-  });
+  const user = await prisma.user.findUnique({ where: { discordId }, select: { id: true } });
   return user?.id ?? null;
 }
 
@@ -96,15 +96,14 @@ async function checkDownloadRateLimit(discordId?: string): Promise<boolean> {
 export async function downloadSingleFile(
   uploadId: string,
   downloaderDiscordId?: string,
+  options: DownloadSingleFileOptions = {},
 ): Promise<{ success: boolean; filePath?: string; fileName?: string; message: string }> {
   const upload = await prisma.upload.findUnique({
     where: { id: uploadId },
     include: {
       package: {
         include: {
-          user: {
-            select: { status: true, isManufacturer: true, role: true },
-          },
+          user: { select: { status: true, isManufacturer: true, role: true } },
         },
       },
     },
@@ -126,14 +125,12 @@ export async function downloadSingleFile(
     logger.error(`Path traversal blocked: ${path.resolve(upload.filePath)} outside Upload-Root`);
     return { success: false, message: 'Dateizugriff verweigert.' };
   }
-  if (!(await checkDownloadRateLimit(downloaderDiscordId))) {
+  if (!options.skipRateLimit && !(await checkDownloadRateLimit(downloaderDiscordId))) {
     return { success: false, message: 'Download Rate-Limit erreicht. Bitte warte.' };
   }
 
   const userId = await downloaderUserId(downloaderDiscordId);
   await prisma.$transaction(async tx => {
-    // Re-check direkt im Tracking-Commit: Paket darf zwischen Lookup und
-    // Auslieferung nicht geloescht worden sein.
     const packageStillActive = await tx.package.findFirst({
       where: { id: upload.packageId, isDeleted: false, status: 'ACTIVE' },
       select: { id: true },
@@ -158,7 +155,6 @@ export async function downloadSingleFile(
     downloaderId: downloaderDiscordId,
     fileName: upload.originalName,
   });
-
   return {
     success: true,
     filePath: upload.filePath,
@@ -238,7 +234,6 @@ async function downloadPackageArchive(
     fileCount: includedCount,
     format: format.toUpperCase(),
   });
-
   return {
     success: true,
     filePath: archivePath,
@@ -271,11 +266,7 @@ export async function searchPackages(query: string, options?: {
   const where: any = {
     isDeleted: false,
     status: 'ACTIVE',
-    user: {
-      status: 'ACTIVE',
-      isManufacturer: true,
-      role: 'MANUFACTURER',
-    },
+    user: { status: 'ACTIVE', isManufacturer: true, role: 'MANUFACTURER' },
     files: { some: fileFilter },
     OR: [
       { name: { contains: query, mode: 'insensitive' } },
