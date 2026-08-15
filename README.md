@@ -1,468 +1,138 @@
 # V-Bot Prime
 
-> **Der adaptive All-in-One Discord-Bot für Communities, die mehr wollen als „nur einen Bot“.**
-> Server-Awareness, KI-Konversation in Deutsch, Multi-Sprach-Posts, Auto-Moderation, XP-System, Hersteller-Uploads bis 25 MB — auf einem dedizierten Server, DSGVO-konform, mit eigener Persona.
+V-Bot Prime ist ein Discord-, Community- und DayZ/Nitrado-Bot mit Web-Dashboard. Die laufende Architektur trennt bewusst zwischen **Discord-Funktionen für Nutzer/Serverbetrieb** und **globaler Bot-Admin-/DEV-Verwaltung im Dashboard**.
 
----
+> **Entwickler:** `Void_Architect`
 
-## Warum V-Bot Prime?
+## Aktueller Funktionsstand
 
-Die meisten Discord-Bots sind Werkzeuge. **V-Bot Prime ist ein Operator.**
+### Discord
 
-Er kennt deinen Server, deine Mitglieder, deine Kanäle, deine Rollen — und antwortet so, als wäre er Teil deines Teams. Gelassen, präzise, mit subtilem Charakter. Kein generischer Chatbot-Ton, kein Werbe-Sprech, keine Romane.
+- AI-Konversation mit Multi-Provider-Fallback, Serverkontext und Live-Recherche für aktuelle Faktfragen.
+- Moderation, XP/Level, Giveaways, Polls, Tickets, Feedback und Erinnerungen.
+- Hersteller-Workflow mit Registrierung, OTP-Verifikation, `/upload` und `/mypackages`.
+- DayZ/Nitrado: mehrere Gameserver pro Guild, Whitelist, servergescoppte Berechtigungen und echte Nitrado-Server-Bans.
+- Zeitlich begrenzte `/server-ban`-Banns werden durch die Ban-Ablauf-Runtime automatisch remote entfernt; die Ablaufmeldung geht in den ursprünglichen Command-Kanal.
+- Economy, Bank, Zahlungen, Casino, Fraktionen und Spielidentitäts-Linking sind pro Guild/Gameserver-Slot getrennt.
 
-**Drei Prinzipien:**
-1. **Server-aware** — Der Bot weiß *wo* er spricht und *mit wem*. Antworten sind kontextuell, nicht generisch.
-2. **Sicher by Design** — GUID-getrennte Bereiche, sensible Kanäle/Rollen werden automatisch aus dem AI-Kontext gefiltert, Multi-Provider-Fallback, Audit-Log.
-3. **Adaptiv** — Antwortlänge passt sich der Frage an: Smalltalk → 1 Satz. Tutorial → mehrere Absätze.
+Der **aktuelle Discord-Command-Stand wird nicht als handgeschriebene Liste in dieser README gepflegt**. `/help` wird direkt aus der geladenen Command-Registry erzeugt und ist deshalb die Laufzeit-Wahrheitsquelle.
 
----
+### Hersteller-Ausnahme
 
-## Hauptfunktionen im Überblick
+Hersteller-Funktionen bleiben bewusst als Discord-Slash-Funktionen erhalten. Dazu gehören insbesondere `/upload`, `/mypackages` und die dafür notwendige Herstellerverwaltung. Der Standard für Uploads liegt aktuell bei **25 MiB pro Datei** und maximal **10 Dateien pro `/upload`-Aufruf**; das Größenlimit ist serverseitig über `MAX_FILE_SIZE_BYTES` konfigurierbar.
 
-### 🤖 KI-Konversation (Multi-Provider)
-- **5 Provider** im Hot-Failover: Cerebras → OpenRouter → Groq → Gemini → OpenAI
-- **Live-Web-Recherche** bei Faktfragen — kein veraltetes Trainingswissen bei Politik, Sport, Releases
-- **Konversations-Gedächtnis** pro Channel + User (24 h) — Pronomen-Auflösung, „wie eben besprochen"
-- **Adaptive Antwortlänge**: kurz / mittel / lang — automatisch passend zur Frage
-- **Anti-Wiederholung**: keine wortgleichen Antworten bei Folgefragen
-- **Eigene Persona pro Server** überschreibbar (Owner-Override)
-- **RAG**: pgvector-basierte semantische Suche in kuratierten Server-Fakten
+### Bot-Admin & DEV
 
-### 🌍 Multi-Sprach-Translate-Posts
-- **10 Sprachen** automatisch übersetzen und posten (DE, EN, FR, ES, IT, NL, PL, PT, RU, TR)
-- **Sofort posten**, **terminieren** (Datum + Uhrzeit) oder **wiederkehrend** (stündlich/täglich/wöchentlich/monatlich)
-- DST-korrekt (Europe/Berlin), runde Edge-Cases (29.02., DST-Wechsel) sauber behandelt
-- Pflicht-Titel, eigener Embed-Stil mit Server-Branding, Rollen-Pings
-- Bis zu 4000 Zeichen Originaltext
+Globale Bot-Admin- und DEV-Werkzeuge werden **nicht mehr als normale Discord-Slash-Commands** betrieben. Sie sind gezielt in zwei Dashboard-Bereiche aufgeteilt:
 
-### 📦 Hersteller-Upload-System
-- **Bis zu 25 MB pro Datei** (`.xml`/`.json`), beliebig viele Dateien pro Paket
-- **GUID-getrennte Bereiche** — keine Namenskollisionen, keine Querzugriffe
-- **Validierung** für XML, JSON inkl. Schema-Check, Strukturanalyse, Vorschläge
-- **Virenscanner-Integration** mit Quarantäne
-- **Soft-Delete + Restore**, Audit-Log, Rate-Limiting
-- **Multi-File-Upload** in einem Slash-Command, alles landet im selben Paket
-- **Klare Fehlermeldung** bei doppelten Paketnamen — keine versehentlichen Vermischungen
+- **Bot-Admin:** Support-/Betriebsverwaltung, Pakete, Validierung, Feedback, Wissensbasis, Broadcast, Nutzer, Tickets, Feeds, Übersetzungen, AI-Provider und Audit-/Statusfunktionen.
+- **DEV:** Diagnostik, Datenbankwerkzeuge, Security, Live-Konfiguration, XP-Konfiguration, sichere Exporte, Command-Registry und weitere technische/forensische Werkzeuge.
 
-### 🛡️ Auto-Moderation & Sicherheit
-- Anti-Spam, Anti-Raid, Toxicity-Detection
-- Auto-Mod mit Eskalationsstufen, Case-Management, Appeal-System
-- **Sensible Kanäle/Rollen** (Admin/Mod/Log/Audit/Ticket) werden aus AI-Kontext **automatisch gefiltert** — keine Leaks
-- **Pen-Test-Suite** (im Repo enthalten): SQL-Injection, XSS, Path-Traversal-Tests
-- Rate-Limiter pro User + global
-- DSGVO-konforme Datenverarbeitung, Audit-Logging, Export-Funktion
+Die einzige bewusst erhaltene DEV-Slash-Ausnahme ist die Herstellerfunktion `/dev-manufacturer`.
 
-### 📈 XP- & Level-System
-- Pro Guild getrennt, mit Anti-Cheat (Cooldowns, Channel-Filter)
-- Level-Up-Belohnungen (Rollen automatisch vergeben)
-- Konfigurierbare Level-Up-Nachrichten pro Server
-- Bestenlisten mit Pagination
+## DEV-Sicherheitsmodell
 
-### 🎉 Community-Features
-- **Giveaways** mit Auto-Reroll, Anti-Cheat
-- **Polls** mit Multi-Choice, Live-Updates
-- **Welcome-System** mit Embed-Begrüßungen (Text + Bild)
-- **Ticket-System** (kommend)
-- **Auto-Roles** für Self-Assignment
-- **Reaction-Roles**
+DEV-Zugriff ist mehrstufig:
 
-### 🌐 Web-Dashboard
-- Express-basiertes Backend mit React-SPA-Frontend (Vite + Tailwind)
-- API für Stats, Konfig, Audit-Log
-- Discord-OAuth + DB-Session (Postgres-backed, Cookie-Secure)
-- Strict Content-Security-Policy + Helmet-Header
-- Per-Endpoint-Rate-Limiting (Login/Webhooks/Uploads getrennt)
-- E2E-Smoke-Tests via Playwright (Chromium, dedizierter CI-Job)
+1. Discord-OAuth-Session.
+2. Kanonische globale Developer-Identität + aktuelle DB-Rolle.
+3. Aktive, nicht widerrufene `DevSession`.
+4. Optional: TOTP-MFA, wenn `DEV_REQUIRE_MFA=true` gesetzt ist.
+5. Optional: DEV-IP-Allowlist, wenn `DEV_REQUIRE_IP_ALLOWLIST=true` gesetzt ist.
+6. **Sensible Mutationen und Exporte verlangen zusätzlich eine echte serverseitige Step-Up-Re-Authentisierung.**
+   - Ist 2FA aktiv, muss ein gültiges TOTP verwendet werden.
+   - Ohne aktive 2FA wird `DEV_PASSWORD` erneut timing-sicher geprüft.
+   - Fehlversuche werden auditiert und nach wiederholten Fehlern temporär gesperrt.
+   - Das Re-Auth-Geheimnis wird nicht in URLs oder Audit-Details geschrieben.
 
----
+Sensible DEV-Exporte laufen ausschließlich über POST + Step-Up; alte GET-Exportpfade liefern keine Daten mehr direkt aus.
 
-## Production-Hardening (Ops & Performance)
+## DayZ / Nitrado Runtime
 
-| Bereich | Mechanik |
-|---|---|
-| **Response-Cache** | Redis (7-alpine, AOF, 256 MB LRU) für deterministische AI-Calls (Translate u. ä.); Memory-Fallback wenn `REDIS_URL` fehlt |
-| **Embedding-Cache** | L1 In-Memory + L2 Postgres (`EmbeddingCache`-Tabelle) — pgvector-Wiederverwendung über Restarts hinweg |
-| **Prisma-Pool** | Tuned `connection_limit`, `pool_timeout`, `statement_cache_size` über `DATABASE_URL`-Query-Params |
-| **Embed-Sanitization** | Discord-Embed-Felder werden zentral gekürzt/escaped (Title 256, Desc 4096, Field 1024) — kein 50035 mehr |
-| **Per-Command-Rate-Limit** | `cooldownMs` pro Slash-Command + globaler User-RL — Owner-Bypass bewusst entfernt für Spammable-Cmds |
-| **Audit-Trigger-Index** | pg_trgm-Index auf Audit-Volltextsuche (Migration `001_audit_trigram_index.sql`) |
-| **SBOM + Renovate** | CycloneDX-SBOM-Build im CI, Renovate-Bot für Dependencies, Critical-Audit blockiert Merge |
-| **Monitoring** | `/metrics` (Prometheus) — Request-Histogramme, AI-Provider-Stats, DB-Pool, Cache-Hit-Rate; Grafana-Skeleton + Alert-Rules in [docs/monitoring/](docs/monitoring/) |
-| **Backups** | Tägliches `pg_dump` + Verify-Restore via `deploy/backup-verify.sh` |
-| **Smoke-Tests** | `deploy/smoke.sh` nach jedem Deploy: Health, Discord-Login, DB-Reach |
+### ADM V2
 
-Details: [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) · [docs/PERFORMANCE.md](docs/PERFORMANCE.md) · [docs/monitoring/README.md](docs/monitoring/README.md)
+Der alte globale `NITRADO_ADM_DIR`-/Legacy-Watcher ist nicht mehr Bestandteil der Runtime. Die aktuelle Pipeline arbeitet pro Nitrado-Verbindung:
 
-### Reverse-Proxy & `trust proxy`
+- **ADM-V2-Live-Sync** liest die konfigurierte/erkannte ADM-Quelle je Gameserver.
+- Normalisierte Daten werden als kanonische `AdmEvent`s persistiert.
+- **ADM-V2-Postprocess** verarbeitet daraus Sessions, Rewards und weitere serverbezogene Folgeprozesse.
+- Gameplay-Feed-Ausgabe kann unabhängig von der kanonischen Erfassung geschaltet werden.
 
-Das Dashboard läuft typischerweise hinter einem Reverse-Proxy (Nginx/Caddy/Traefik),
-der TLS terminiert und `X-Forwarded-*`-Header setzt. Express muss diesen Hops
-vertrauen, sonst werden `secure`-Session-Cookies nicht gesetzt und der OAuth-Flow
-bricht ab.
+### Nitrado Jobs und Schutz
 
-- Standard: `app.set('trust proxy', 1)` — genau **ein** Proxy vor dem Container.
-- Anpassbar über `TRUST_PROXY`:
-  - Zahl (z. B. `2`) → Anzahl vertrauenswürdiger Proxy-Hops
-  - `true`/`false` → allen/keinem Proxy vertrauen
-  - CIDR/IP-Liste (kommagetrennt, z. B. `10.0.0.0/8,172.18.0.1`) → nur diese Proxys
+Remote-Mutationen laufen über servergescoppte, deduplizierte Jobs/Outbox-Pfade. Whitelist-, Ban- und andere Nitrado-Aktionen bleiben strikt an `guildId + nitradoConnId` gebunden.
 
-> Setze `TRUST_PROXY` nur so weit wie nötig — ein zu weit gefasster Wert erlaubt
-> IP-Spoofing über gefälschte `X-Forwarded-For`-Header.
+## AI
 
-### DEV-Bereich & Production-Guards
+- Provider: Groq, Cerebras, OpenRouter, Gemini und OpenAI.
+- Die Reihenfolge ist adaptiv anhand persistenter Provider-Statistiken; bei fehlenden Stats wird auf die konfigurierte Provider-Reihenfolge zurückgefallen.
+- Technische DayZ-Fragen werden mit verifiziertem DayZ-1.29-/Nitrado-Grounding abgesichert.
+- Server-/User-Kontext wird getrennt behandelt; sensible Kanäle/Rollen werden aus AI-Kontexten gefiltert.
+- Bot-Identität und Entwicklerangabe stammen aus einer kanonischen Quelle (`Void_Architect`).
 
-- In Production (`NODE_ENV=production`) bricht der Start ab, wenn ein Pflicht-Secret
-  noch einen `.env.example`-Platzhalter trägt (z. B. `changeme`,
-  `your_discord_bot_token_here`).
-- Der DEV-Bereich ist bewusst **nur passwortgeschützt** (`DEV_PASSWORD`). 2FA
-  (`DEV_REQUIRE_MFA`) und IP-Allowlist (`DEV_REQUIRE_IP_ALLOWLIST`) sind optionale
-  Opt-in-Features (Default AUS) und werden in Production **nicht** erzwungen.
-- DEV-Log-Uploads liegen privat unter `DEV_UPLOAD_DIR` (Standard `./private/dev-logs`)
-  und sind ausschließlich über den authentifizierten DEV-Endpoint lesbar — niemals
-  per `express.static`. Öffentlich ausgeliefert werden nur `uploads/factions` und
-  `uploads/media`.
+## Dashboard
 
-### Öffentliche Upload-Pfade & Upload-RAM
+- Backend: Express + Helmet + Session-Store in PostgreSQL.
+- Frontend: React + Vite + TailwindCSS.
+- Discord OAuth2, rollen-/scopebasierte Guild-Zugriffe sowie getrennte Bot-Admin-/DEV-Sessions.
+- REST `/api/v2`, Socket.IO für Live-Updates und Audit-/Security-Logging.
+- Bot-Admin- und DEV-Command-Center bilden die früheren globalen Admin-/DEV-Slash-Funktionen funktional im Web ab.
 
-- `/uploads/factions` und `/uploads/media` werden **bewusst öffentlich** per
-  `express.static` ausgeliefert (`index:false`, `dotfiles:'deny'`, `maxAge:1h`).
-  Grund: Discord lädt eingebettete Bilder (Faction-Flaggen/-Banner, Willkommens-
-  bilder) **serverseitig** über die öffentliche URL — ein Auth-Gate würde die
-  Embeds brechen. Es werden ausschließlich diese beiden bekannten Unterordner
-  freigegeben, niemals das gesamte `uploads/`-Verzeichnis. Alle anderen Bereiche
-  (`dev-logs`, Exporte) bleiben privat.
-- Uploads nutzen `multer.memoryStorage()` mit harten Limits: pro Request gilt eine
-  RAM-Obergrenze von `fileSize × files` (Factions/Welcome 1 Datei, DEV max. 5).
-  Zusätzlich begrenzen `fields`/`parts` die Multipart-Felder, und ein
-  Rate-Limiter (DEV: 30 Uploads / 10 min) deckelt die Frequenz. memoryStorage ist
-  nötig, weil Inhalte vor dem Schreiben auf Platte per Magic-Number-/MIME-Prüfung
-  validiert werden.
+## Sicherheit & Betrieb
 
-### Command-Runtime-Sicherheit
-
-Jede Interaktion durchläuft in `interactionCreate` eine feste Schutzkette:
-
-- **Rate-Limiting** (eigene Buckets, je User):
-  - global 30 Slash-Commands / 60s, zusätzlich 10 / 60s pro einzelnem Command
-  - Komponenten (Buttons/Modals/Select-Menus) 25 Aktionen / 30s — eigener Bucket,
-    greift **vor** jeder Komponenten-Dispatch-Logik gegen Klick-Spam
-  - pro Command optionaler Cooldown (Owner-Bypass)
-- **Permission-Gating** vor der Ausführung:
-  - `adminOnly` → DB-Rollencheck, `devOnly` → DEV-Passwort-Modal mit Lockout nach
-    Fehlversuchen, `manufacturerOnly` → aktiver Manufacturer-Status
-  - Owner/Guild-Owner-Bypass (außer Manufacturer-Gate)
-- **Timing-sichere Vergleiche** für das DEV-Passwort (`safeEqual`, kein Early-Exit).
-- **Audit-Logging + Prometheus-Metriken** für jede Ausführung; abgelaufene/duplizierte
-  Interaktionen (`10062`/`40060`) werden still verworfen.
-
-### Öffentliche Web-Transcripts
-
-Ticket-Transcripts sind unter `/transcripts/<uuid>` ohne Login erreichbar. Die URL
-basiert auf einer nicht erratbaren UUID (kein Enumerieren möglich) und enthält nur
-den Ticket-Verlauf. Wer die URL kennt, kann das Transcript lesen — entsprechend
-sollten Links nur an Berechtigte weitergegeben werden. Für strengere Anforderungen
-kann ein Reverse-Proxy zusätzlichen Auth-Schutz vor `/transcripts` legen.
-
----
-
-## Was V-Bot Prime besonders macht
-
-### Echte Server-Awareness, kein Copy-Paste-Bot
-Standard-Bots beantworten „Wer ist der Owner?" mit „Frag deinen Admin". V-Bot Prime weiß es. Er kennt:
-- Servername, Owner, Erstellungsdatum, Boost-Level, Verifizierungs-Stufe
-- Channel-Struktur (Text/Voice/Stage/Forum/News, gruppiert nach Kategorie)
-- Top-Rollen, Mitgliederzahl, Vanity-URL, AFK-Setup
-- Dein Profil: Nickname, Beitrittsdatum, Top-Rollen, Level/XP, Aktivität
-
-**Strikt getrennt:** Server-Daten nur bei Server-Fragen, eigene Profildaten nur bei „mein/ich"-Fragen, Wissensfragen ohne Vermischung.
-
-### Sensible Kanäle? Niemals geleakt.
-Zwei Schutzmechanismen kombinieren sich:
-- **Permission-Check**: Wenn `@everyone` keinen `View`-Zugriff hat → raus aus AI-Kontext
-- **Name-Heuristik**: `admin`, `mod`, `staff`, `intern`, `log`, `audit`, `ticket`, `dev`, `security`, `backup` und 20+ weitere Pattern werden gefiltert
-- Ganze Kategorien werden mitgefiltert
-- Auch managed Bot-Rollen werden aus Top-Rollen entfernt
-
-Wenn jemand fragt „Welche Admin-Channels gibt es?" → höfliche Verweigerung statt Leak.
-
-### Adaptive Persona
-- **Kurz** (1–2 Sätze): Smalltalk, Status, einfache Faktfragen
-- **Mittel** (3–8 Sätze): Erklärungen, How-To, Vergleiche
-- **Lang** (mehrere Absätze): Tutorials, technische Tiefe, explizit angefragte Details
-- Vorgaben wie „in einem Satz" oder „ausführlich" werden strikt befolgt
-- Keine Romane, keine künstliche Kürzung
-
-### Multi-Provider AI mit Cooldown-Schutz
-- Bei 429 (Rate-Limit) eines Providers → automatischer Failover zum nächsten
-- Cooldown wächst exponentiell: 30 s → 60 s → 120 s → max. 300 s
-- Provider-Health wird persistent getrackt, Reihenfolge passt sich an Erfolgsrate an
-- Statistik via `/admin-aimodels` einsehbar
-
-### DSGVO & Sicherheit
-- Datenverarbeitung in der EU (Hetzner DE)
-- Privacy-by-Design: nur das Nötigste wird gespeichert
-- Conversation-Memory: 24 h TTL, automatischer Cleanup
-- Vollständiges Audit-Log aller administrativen Aktionen
-- Export-Funktion für eigene Daten (DSGVO-Auskunft)
-- Penetration-Test-Suite im Repo (`tests/security/penetration.test.ts`)
-
----
+- PostgreSQL + Prisma, guild-/servergescoppte Datenmodelle.
+- AES-256-GCM für sensible gespeicherte Secrets.
+- OAuth2 State + PKCE, Session-Timeouts, Rate-Limits und SecurityEvents.
+- Audit-Logging für administrative und privilegierte Aktionen.
+- Private DEV-Logs/Exporte; öffentlich statisch ausgeliefert werden nur explizit freigegebene Medienpfade.
+- `/metrics` ist nur aktiv, wenn Metrics explizit aktiviert **und** ein ausreichend langer `METRICS_TOKEN` vorhanden ist. Der Deploy-Pfad kann bei aktivierten Metrics einen fehlenden Token sicher erzeugen, ohne ihn auszugeben.
+- Docker Compose, Healthchecks, Prisma `migrate deploy` + `migrate status`, Jest, Lint/TypeScript, Security Audit und Playwright-E2E in CI.
 
 ## Tech-Stack
 
-| Bereich | Stack |
+| Bereich | Technik |
 |---|---|
 | Sprache | TypeScript (strict) |
-| Discord-API | discord.js v14 |
-| Datenbank | PostgreSQL + Prisma ORM |
-| Vektor-Suche | pgvector |
-| AI-Provider | Cerebras, OpenRouter, Groq, Gemini, OpenAI |
-| Web-Backend | Express + Helmet + strict CSP |
-| Frontend | React + Vite + TailwindCSS |
-| Cache | Redis 7 (Response) + Postgres-L2 (Embeddings) |
-| Tests | Jest (Unit + Integration + Pen-Test) + Playwright (E2E) |
-| Monitoring | Prometheus `/metrics` + Grafana |
-| Hosting | Docker Compose auf dedicated Hetzner-Server |
-| CI/CD | GitHub Actions → SSH-Deploy mit Smoke-Tests, SBOM, Renovate |
+| Discord | discord.js v14 |
+| Datenbank | PostgreSQL + Prisma |
+| AI | Groq, Cerebras, OpenRouter, Gemini, OpenAI |
+| Dashboard | Express + React/Vite |
+| Cache | Redis + DB-/Memory-Fallbacks je Modul |
+| Tests | Jest + Playwright |
+| Monitoring | Health + optional Prometheus `/metrics` |
+| Deployment | Docker Compose + GitHub Actions |
 
----
+## Verzeichnisübersicht
 
-## Slash-Commands (Auswahl)
+- `src/commands/user/` — Nutzer-/Community-/Hersteller-Slash-Funktionen.
+- `src/commands/dashboard/` — Discord-Commands mit Guild/Gameserver-Scope (z. B. Economy, Whitelist, Server-Bans, Fraktionen); der Ordnername bedeutet **nicht**, dass diese nur im Web laufen.
+- `src/commands/developer/` — nur bewusst erhaltene Hersteller-DEV-Ausnahme.
+- `src/dashboard/routes/v2/` — Dashboard-APIs einschließlich Bot-Admin-/DEV-Command-Center.
+- `src/modules/nitrado/adm/` — aktuelle ADM-V2-Pipeline.
+- `src/modules/bans/` — Ban Registry, Outbox und Ablauf-Runtime.
+- `prisma/` — Schema und produktive Migrationen.
 
-### Für alle Mitglieder
-- `/ai ask` — Frage an die KI mit allen Kontext-Features
-- `/leaderboard` — XP-Bestenliste
-- `/level` — Eigenes Level abrufen
-- `/poll create` — Umfragen mit Multi-Choice
-- `/giveaway create` — Gewinnspiele aufsetzen
-- `/register manufacturer` — Hersteller-Antrag stellen
+## Wahrheit über Commands
 
-### Für Hersteller
-- `/upload` — Multi-File-Upload in eigenes Paket
-- `/list` — Eigene Pakete anzeigen
-- `/delete` — Paket löschen (Soft-Delete + Restore)
+Bei Änderungen gilt:
 
-### Für Admins
-- `/translate-post now|schedule|stuendlich|taeglich|woechentlich|monatlich` — Auto-Übersetzungs-Posts
-- `/feed` — RSS/Webhook-Feeds einrichten
-- Begrüßungs-System — über das Dashboard (Server → Willkommen)
-- `/xp-config` — XP-System pro Server anpassen
-- `/admin-stats` — Server-Statistiken
-- `/admin-audit` — Audit-Log einsehen
+1. Discord-Command-Definition ist die Laufzeitquelle.
+2. `/help` liest den tatsächlich geladenen Command-Katalog.
+3. Bot-Admin-/DEV-Funktionen werden im Dashboard dokumentiert, nicht als Slash-Commands.
+4. AI-Selbstauskünfte dürfen nur den aktuellen öffentlichen Command-Katalog verwenden.
+5. Hersteller-Funktionen bleiben die explizite Discord-Ausnahme.
 
-> Developer- und interne Admin-Commands werden gegenüber Nutzern nie erwähnt — auch nicht von der KI.
+## Weitere Dokumentation
 
----
+- `docs/ARCHITECTURE.md` — aktuelle Architektur und Datenflüsse.
+- `SECURITY.md` — aktuelles Sicherheitsmodell.
+- `docs/SERVER_GAMEPLAY_FEEDS.md` — Gameplay-/ADM-V2-Konzept.
+- `docs/runtime-cleanup-2026-08.md` — dokumentierter Legacy-Runtime-Cleanup.
+- `docs/monitoring/README.md` — Monitoring.
 
-## Berechtigungs-Tabelle (alle Commands)
+## Kontakt
 
-### Berechtigungs-Stufen
-| Stufe | Bedeutung | Wie erlangen? |
-|---|---|---|
-| 🟢 **Public** | Jeder Server-Member | automatisch |
-| 🔵 **Member-Berechtigung** | Discord-Permission nötig (z.B. `Kick Members`) | Server-Admin vergibt Rolle |
-| 🟡 **Hersteller** | DB-Flag `isManufacturer=true` | `/register manufacturer` → Admin-Approval → OTP-Verify |
-| 🟠 **Bot-Admin** | DB-Rolle `ADMIN` | `/dev-admin add` (durch Owner) **oder** Discord-Server-Owner automatisch |
-| 🔴 **Developer/Owner** | Discord-User-ID = `OWNER_ID` aus `.env` | hard-coded in Bot-Konfig |
+- Repository: `BlackFilesShadow/Discord-V-Bot`
+- Entwickler: **Void_Architect**
 
-> **Owner-Bypass:** Der Bot-Owner und Discord-Server-Owner umgehen `adminOnly`/`devOnly`-Checks automatisch (außer `manufacturerOnly` — das gilt strikt).
-> **Doppel-Layer:** Discord-seitig schützt `setDefaultMemberPermissions(...)` die Sichtbarkeit. Bot-seitig prüft der Handler erneut die DB-Rolle.
-
----
-
-### 🟢 Public-Commands (jeder darf)
-
-| Command | Beschreibung | Zusatz-Check |
-|---|---|---|
-| `/ping` | Latency-Test | — |
-| `/status` | Eigener Account-Status | — |
-| `/help` | Hilfe-Übersicht | — |
-| `/stell-dich-vor` | Bot-Selbstvorstellung | — |
-| `/level [user]` | Eigenes oder fremdes Level | — |
-| `/leaderboard` | XP-Bestenliste der Guild | — |
-| `/ai ask` | Frage an KI | Rate-Limit pro User |
-| `/ai sentiment` | Sentiment eines Texts | Rate-Limit |
-| `/ai toxicity` | Toxicity-Check | Rate-Limit |
-| `/ai translate` | Text übersetzen | Rate-Limit |
-| `/poll erstellen` | Umfrage starten | — |
-| `/poll abstimmen` | An Umfrage teilnehmen | — |
-| `/poll ergebnis` | Ergebnis ansehen | — |
-| `/poll beenden` | Eigene Umfrage beenden | nur Ersteller |
-| `/poll liste` | Aktive Umfragen | — |
-| `/giveaway start` | Giveaway starten | — |
-| `/giveaway enter` | Teilnehmen | — |
-| `/giveaway info` | Details ansehen | — |
-| `/giveaway end` | Eigenes Giveaway beenden | nur Ersteller |
-| `/giveaway list` | Aktive Giveaways | — |
-| `/erinnerung setzen` | Reminder setzen | — |
-| `/erinnerung liste` | Eigene Reminder | — |
-| `/erinnerung loeschen` | Reminder löschen | nur eigene |
-| `/search` | Pakete/Dateien suchen | — |
-| `/download` | Datei/Paket herunterladen | Rate-Limit |
-| `/feedback` | Feedback einreichen | — |
-| `/ticket open\|close\|status` | Support-Ticket | — |
-| `/register manufacturer` | Hersteller-Antrag stellen | 1× pro User |
-| `/register verify` | OTP einlösen | OTP gültig + nicht abgelaufen |
-| `/appeal` | Moderations-Entscheidung anfechten | hatte aktiven Case |
-
-### 🔵 Member-Berechtigungs-Commands (Discord-Permission nötig)
-
-| Command | Discord-Permission | Wirkung |
-|---|---|---|
-| `/kick` | `Kick Members` | User kicken |
-| `/ban` | `Ban Members` | User bannen (optional Dauer) |
-| `/mute` | `Moderate Members` | Timeout setzen |
-| `/warn` | `Moderate Members` | Verwarnung mit DB-Eintrag |
-
-### 🟡 Hersteller-Commands (DB-Flag `isManufacturer`)
-
-| Command | Beschreibung | Owner-Bypass? |
-|---|---|---|
-| `/upload` | Multi-File-Upload (bis 10 Dateien, 25 MB/Datei) | ❌ nein |
-| `/mypackages list` | Eigene Pakete listen | ❌ |
-| `/mypackages info` | Paket-Details | ❌ |
-| `/mypackages delete` | Paket Soft-Deleten | ❌ |
-| `/mypackages restore` | Soft-Deleted wiederherstellen | ❌ |
-| `/mypackages delete-file` | Einzelne Datei löschen (Dropdown) | ❌ |
-
-### 🟠 Bot-Admin-Commands (DB-Rolle `ADMIN`)
-
-Sichtbar mit Discord-Permission `Manage Guild` oder `Administrator` (je nach Command). Server-Owner ist automatisch Bot-Admin.
-
-#### Server-Konfiguration
-| Command | Beschreibung |
-|---|---|
-| `/admin-config anzeigen\|setzen\|loeschen` | Bot-Settings pro Server |
-| `/admin-stats` | Server-/Bot-Statistik |
-| `/admin-monitor` | Live-Monitoring-Dashboard |
-| `/xp-config rate\|levelrole\|xp-rolle-*\|xp-channel-*\|max-level\|max-rolle\|show` | XP-System konfigurieren |
-
-#### Content & Moderation
-| Command | Beschreibung |
-|---|---|
-| `/translate-post now\|schedule\|stuendlich\|taeglich\|woechentlich\|monatlich\|list\|delete` | Auto-Translate-Posts |
-| `/feed erstellen\|loeschen\|toggle\|abonnieren\|rolle-*\|webhook-*` | RSS/Webhook-Feeds (`Manage Channels`) |
-| `/ai-trigger add\|list\|remove\|clear` | KI-Trigger-Wörter |
-| `/admin-knowledge add\|remove\|persona` | Server-Wissensbasis (RAG) + Persona-Override |
-| `/admin-aimodels probe\|reset` | AI-Provider-Status testen/zurücksetzen |
-| `/admin-feedback liste\|zeigen\|status\|notiz\|channel` | Feedback-Inbox |
-| `/admin-security events\|blacklist\|whitelist\|ip-entfernen\|resolve` | Security-Events + IP-Listen |
-
-#### Hersteller- & Daten-Verwaltung
-| Command | Beschreibung |
-|---|---|
-| `/admin-list-pakete` | Alle Pakete (auch Soft-Deleted) |
-| `/admin-validate paket\|datei\|quarantaene` | Validierung erneut ausführen |
-| `/admin-delete paket\|datei\|restore\|bulk` | Paket/Datei löschen oder wiederherstellen |
-| `/admin-export pakete\|logs\|nutzer` | DSGVO-Export als JSON/ZIP |
-
-> **Ins Dashboard migriert (Spec §15):** `/admin-broadcast`, `/admin-appeals`,
-> `/admin-list-users`, `/admin-approve`, `/admin-deny`, `/admin-toggle-upload`,
-> `/admin-reset-password`, `/admin-tickets` und `/selfrole` wurden aus Discord
-> entfernt und sind jetzt im **Bot-Admin-Bereich** des Web-Dashboards verfügbar.
-
-#### Logging & Audit
-| Command | Beschreibung |
-|---|---|
-| `/admin-logs filter` | Bot-Logs filtern (Kategorie/Zeit) |
-| `/admin-audit suchen\|volltext\|compliance\|export` | Audit-Log durchsuchen |
-| `/admin-error-report schwere` | Letzte Errors gruppiert |
-
-### 🔴 Developer/Owner-Commands (Bot-Owner exklusiv)
-
-Sichtbar nur für Discord-`Administrator`. Bot-Handler prüft zusätzlich gegen `OWNER_ID` aus `.env`. **Niemals** in der KI-Selbstvorstellung erwähnt.
-
-| Command | Beschreibung | Risiko |
-|---|---|---|
-| `/dev-login` | Developer-Session starten | niedrig |
-| `/dev-admin add\|remove\|list` | Bot-Admins ernennen/entziehen | hoch (Rollen-Vergabe) |
-| `/dev-manufacturer remove\|list` | Hersteller komplett entfernen + alle Daten löschen | sehr hoch |
-| `/dev-reload scope` | Commands/Events live neu laden | mittel |
-| `/dev-db action\|query` | Direkte DB-Operationen | sehr hoch |
-| `/dev-eval check` | Code-Eval / Diagnostik | sehr hoch |
-
----
-
-### Berechtigungs-Logik (Pseudocode)
-
-```
-handleCommand(cmd, user):
-  if cmd.devOnly         → require(user.id === OWNER_ID)
-  if cmd.adminOnly       → require(user.id === OWNER_ID OR guildOwner OR DB.role === ADMIN)
-  if cmd.manufacturerOnly → require(DB.isManufacturer === true)   // KEIN Owner-Bypass
-  if cmd.cooldown        → check(rateLimit) // Owner umgeht
-  → execute
-```
-
-**Doppel-Schutz:** Discord-seitig blendet `setDefaultMemberPermissions` Commands aus, wenn die Member-Permission fehlt. Selbst wenn ein User den Command erraten würde — der Handler verweigert die Ausführung.
-
-
-
----
-
-## Vermarktungs-Argumente (Pitch-Material)
-
-**Für Server-Owner:**
-> „Ein Bot, der deinen Server wirklich kennt, deine Community-Kanäle nie verwechselt mit Mod-Channels, und in 10 Sprachen automatisch posten kann. DSGVO-konform, Hosting in Deutschland."
-
-**Für Manufacturer-Communities (Modding, Asset-Sharing):**
-> „25 MB pro Datei, beliebig viele Dateien pro Paket, GUID-isolierte Hersteller-Bereiche mit Validierung und Virenscanner. Schluss mit fragmentierten Drive-Links."
-
-**Für internationale Communities:**
-> „Schreib einmal auf Deutsch — V-Bot postet zeitversetzt in 10 Sprachen. Stündlich, täglich, wöchentlich, monatlich. DST-korrekt."
-
-**Für Tech-affine Server:**
-> „Multi-Provider AI mit automatischem Failover, RAG-basierte Wissensbasis, eigene Persona pro Server. Open für Custom-Module."
-
-**Für Community-Manager:**
-> „XP-System, Giveaways, Polls, Welcome, Auto-Mod, Audit-Log — in einem Bot. Kein Bot-Soup mehr."
-
----
-
-## Hosting & Verfügbarkeit
-
-- **Dedizierter Server in Deutschland** (Hetzner)
-- **Docker-Setup**, 24/7 Monitoring, Auto-Restart
-- **Backup-Strategie**: tägliche DB-Snapshots, Filesystem-Snapshots
-- **SLA-Bereitschaft**: > 99,5 % Uptime im laufenden Betrieb
-- **Sharding-Ready** für große Server-Verbünde
-
----
-
-## Einrichtung in 3 Schritten
-
-1. **Bot einladen** über den Invite-Link (mit minimalen Berechtigungen)
-2. **Server-Profil syncen** — passiert automatisch beim Join, Re-Sync via `/admin-stats refresh`
-3. **Persona/Brief setzen** (optional) — `/admin-config aibrief` und `/admin-config aipersona`
-
-Fertig. Der Bot ist sofort einsatzbereit.
-
----
-
-## Roadmap (Auszug)
-
-- 🔄 Voice-Awareness (Sprach-Channel-Aktivität in AI-Kontext)
-- 🔄 Ticket-System mit Auto-Routing
-- 🔄 Owner-Dashboard mit Live-Charts
-- 🔄 Webhook-API für externe Trigger
-- 🔄 Marketplace für Community-Module
-
----
-
-## Kontakt & Support
-
-- **Discord-Server**: V-Bot Zentrale (Invite auf Anfrage)
-- **Repository**: [github.com/BlackFilesShadow/Discord-V-Bot](https://github.com/BlackFilesShadow/Discord-V-Bot)
-- **Maintainer**: VoidArchitect
-
----
-
-## Lizenz & Nutzung
-
-Privates Projekt. Kommerzielle Nutzung und Custom-Hosting auf Anfrage.
-Self-Hosting möglich — Setup-Guide in [docs/INTERNAL_CHECKLIST.md](docs/INTERNAL_CHECKLIST.md).
-
----
-
-> **V-Bot Prime — kein Werkzeug, ein Operator.**
+Privates Projekt. Self-Hosting und Betrieb müssen mit eigenen Secrets, OAuth-Konfiguration, Datenbank und Nitrado-Zugängen eingerichtet werden.
