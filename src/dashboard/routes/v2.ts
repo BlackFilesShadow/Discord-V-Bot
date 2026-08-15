@@ -57,6 +57,7 @@ import { botAdminAuditExportRouter } from './v2/botAdminAuditExport';
 import { botAdminTriggersRouter } from './v2/botAdminTriggers';
 import { botAdminSafePackageDeleteRouter } from './v2/botAdminSafePackageDelete';
 import { botAdminSafeValidationRouter } from './v2/botAdminSafeValidation';
+import { botAdminXpRetirementRouter } from './v2/botAdminXpRetirement';
 import { commandCatalogRouter } from './v2/commandCatalog';
 
 export const v2Router = Router();
@@ -114,6 +115,7 @@ v2Router.use('/bot-admin/command-center/triggers', requireGlobalBotAdminIdentity
 v2Router.use('/bot-admin/command-center', requireGlobalBotAdminIdentity, guardBotAdminCommandCenterInput, botAdminCommandCenterSafetyRouter, botAdminCommandCenterRouter);
 
 // Bot-Admin: globale Identitaet + aktive BotAdminSession. Safety-Overrides und
-// Guild-Referenzpruefung muessen vor dem Legacy-Router laufen, damit bestehende
-// UI-Pfade keine fremden Guild-/Channel-/Role-Snowflakes persistieren koennen.
-v2Router.use('/bot-admin', requireGlobalBotAdminIdentity, botAdminSafeValidationRouter, botAdminSafePackageDeleteRouter, guardBotAdminGuildReferences, botAdminRouter);
+// Guild-Referenzpruefung muessen vor dem Legacy-Router laufen. Der alte XP-Pfad
+// wird zusaetzlich fail-closed abgefangen, weil die kanonische guild-gescoppte
+// XP-Konfiguration nach DEV migriert wurde.
+v2Router.use('/bot-admin', requireGlobalBotAdminIdentity, botAdminXpRetirementRouter, botAdminSafeValidationRouter, botAdminSafePackageDeleteRouter, guardBotAdminGuildReferences, botAdminRouter);
