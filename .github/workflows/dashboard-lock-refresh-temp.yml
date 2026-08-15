@@ -1,0 +1,32 @@
+name: TEMP Dashboard Lock Refresh
+
+on:
+  push:
+    branches: [fix/dashboard-ui-security-audit]
+
+permissions:
+  contents: read
+
+jobs:
+  refresh-lock:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v5
+        with:
+          node-version: '22'
+          cache: npm
+          cache-dependency-path: dashboard-ui/package-lock.json
+      - name: Refresh lock with non-breaking audit fixes only
+        working-directory: dashboard-ui
+        run: |
+          npm ci
+          npm audit fix --package-lock-only
+          npm audit --omit=dev --audit-level=high
+      - name: Upload refreshed lock
+        uses: actions/upload-artifact@v5
+        with:
+          name: dashboard-package-lock-refreshed
+          path: dashboard-ui/package-lock.json
+          retention-days: 1
