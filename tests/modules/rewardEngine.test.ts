@@ -1,6 +1,7 @@
 /**
- * RewardEngine-Regression: gleiche Kill-Zeile erzeugt nie zwei Auszahlungen und
- * ein Ereignis vor der Account-Verknuepfung wird dauerhaft uebersprungen.
+ * RewardEngine-Regression: gleiche Kill-Zeile erzeugt nie zwei Auszahlungen,
+ * Pre-Link-Ereignisse werden dauerhaft uebersprungen und deaktivierte Regeln
+ * koennen spaeter keine historischen Kills nachbezahlen.
  */
 import { decidePvpReward, runPvpRewardShadow, type RewardEngineClient } from '../../src/modules/nitrado/adm/rewardEngine';
 
@@ -13,20 +14,34 @@ describe('decidePvpReward', () => {
     expect(d.status).toBe('SKIPPED');
     expect(d.reasonCode).toBe('SKIPPED_INVALID_IDENTITY');
   });
+
   it('SKIPPED_ANTI_FARM bei Killer==Opfer', () => {
     const d = decidePvpReward({ id: 'e1', actorGameId: 'x', targetGameId: 'x', occurredAt: EVENT_AT }, 'u1', RULE);
     expect(d.reasonCode).toBe('SKIPPED_ANTI_FARM');
   });
+
+  it('SKIPPED_REWARD_DISABLED bei Betrag 0', () => {
+    const d = decidePvpReward(
+      { id: 'e1', actorGameId: 'v', targetGameId: 'k', occurredAt: EVENT_AT },
+      'user-123',
+      { rewardRuleId: 'pvp:default', baseAmount: 0n },
+    );
+    expect(d.status).toBe('SKIPPED');
+    expect(d.reasonCode).toBe('SKIPPED_REWARD_DISABLED');
+    expect(d.calculated.toString()).toBe('0');
+  });
+
   it('SKIPPED wenn Killer unverlinkt oder Ereignis vor dem Link liegt', () => {
     const d = decidePvpReward({ id: 'e1', actorGameId: 'v', targetGameId: 'k', occurredAt: EVENT_AT }, null, RULE);
     expect(d.status).toBe('SKIPPED');
     expect(d.reasonCode).toBe('SKIPPED_UNLINKED_OR_PRELINK_KILLER');
   });
+
   it('PENDING (WOULD_PAY) bei zum Eventzeitpunkt verlinktem Killer', () => {
     const d = decidePvpReward({ id: 'e1', actorGameId: 'v', targetGameId: 'k', occurredAt: EVENT_AT }, 'user-123', RULE);
     expect(d.status).toBe('PENDING');
     expect(d.userDiscordId).toBe('user-123');
-    expect(d.calculated).toBe(100n);
+    expect(d.calculated.toString()).toBe('100');
     expect(d.reasonCode).toBe('WOULD_PAY_SHADOW');
   });
 });
@@ -80,5 +95,27 @@ describe('runPvpRewardShadow — Idempotenz + Linkzeitpunkt', () => {
 
     const second = await runPvpRewardShadow(client, scope, RULE, resolve);
     expect(second.decided).toBe(0);
+  });
+
+  it('konsumiert deaktivierte Kills als SKIPPED ohne Identitaetsaufloesung', async () => {
+    const { client, rows } = makeClient([
+      { id: 'disabled', actorGameId: 'victim', targetGameId: 'killer', occurredAt: EVENT_AT },
+    ]);
+    const resolver = jest.fn(async () => 'user-1');
+
+    const result = await runPvpRewardShadow(
+      client,
+      scope,
+      { rewardRuleId: 'pvp:default', baseAmount: 0n },
+      resolver,
+    );
+
+    expect(result).toEqual({ decided: 1, wouldPay: 0, skipped: 1 });
+    expect(resolver).not.toHaveBeenCalled();
+    expect(rows[0]).toMatchObject({
+      status: 'SKIPPED',
+      calculated: 0n,
+      reasonCode: 'SKIPPED_REWARD_DISABLED',
+    });
   });
 });
