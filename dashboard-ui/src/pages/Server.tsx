@@ -12,7 +12,6 @@ import { Combobox, type ComboboxOption } from '@/components/ui/Combobox';
 import { useToast } from '@/components/ui/Toast';
 import { useGuildLiveUpdates } from '@/lib/useGuildLiveUpdates';
 import { useModalA11y } from '@/lib/useModalA11y';
-import { KillfeedTab } from '@/components/KillfeedTab';
 import { FactionsTab } from '@/components/FactionsTab';
 import { WelcomeTab } from '@/components/WelcomeTab';
 import { EmbedBuilderTab } from '@/components/EmbedBuilderTab';
@@ -158,7 +157,7 @@ export default function Server() {
               <p className="text-muted text-sm">{dash.data.slots.length} Slots &middot; {dash.data.grantsCount} delegierte Berechtigungen</p>
             </header>
 
-            {tab === 'nitrado' && guildId && <NitradoTab guildId={guildId} isOwner={isOwner} canManageKillfeed={isOwner || hasFullAccess || perms.includes('killfeed.manage')} slots={dash.data.slots} />}
+            {tab === 'nitrado' && guildId && <NitradoTab guildId={guildId} isOwner={isOwner} slots={dash.data.slots} />}
             {tab === 'aliases' && guildId && isOwner && <AliasesTab guildId={guildId} slots={dash.data.slots} />}
             {tab === 'permissions' && guildId && isOwner && <PermissionsTab guildId={guildId} />}
             {tab === 'tickets' && guildId && <TicketsTab guildId={guildId} canManage={hasFullAccess || perms.includes('tickets.manage')} />}
@@ -186,86 +185,49 @@ function statusColor(status: Slot['status']): string {
   return 'text-danger';
 }
 
-function NitradoTab({ guildId, isOwner, canManageKillfeed, slots }: { guildId: string; isOwner: boolean; canManageKillfeed: boolean; slots: Slot[] }) {
+function NitradoTab({ guildId, isOwner, slots }: { guildId: string; isOwner: boolean; slots: Slot[] }) {
   const qc = useQueryClient();
   const [showAdd, setShowAdd] = useState(false);
-  const [page, setPage] = useState<1 | 2>(() => isOwner ? 1 : 2);
 
   const remove = useMutation({
     mutationFn: (slot: number) => api.del(`/api/v2/guilds/${guildId}/nitrado/${slot}`),
     onSuccess: () => qc.invalidateQueries({ queryKey: ['dashboard', guildId] }),
   });
 
+  if (!isOwner) {
+    return (
+      <Card glow>
+        <CardHeader><CardTitle>Nicht erlaubt</CardTitle></CardHeader>
+        <p className="text-muted text-sm">Nur der Discord-Server-Owner kann Nitrado-Verbindungen und Slots verwalten.</p>
+      </Card>
+    );
+  }
+
   return (
     <div className="space-y-4">
-      <div className="flex flex-wrap gap-2 p-1 rounded-xl border border-border bg-bg-card/55" aria-label="Nitrado-Seiten">
-        <button
-          type="button"
-          onClick={() => setPage(1)}
-          disabled={!isOwner}
-          className={`flex-1 min-w-[180px] px-4 py-2.5 rounded-lg text-sm font-semibold transition-colors focus-ring disabled:opacity-40 disabled:cursor-not-allowed ${page === 1 ? 'bg-accent/15 text-accent border border-accent/30 shadow-glow-sm' : 'text-muted hover:text-white hover:bg-bg-elev border border-transparent'}`}
-          aria-current={page === 1 ? 'page' : undefined}
-        >
-          1 · Server &amp; Verbindung
-        </button>
-        <button
-          type="button"
-          onClick={() => setPage(2)}
-          disabled={!canManageKillfeed}
-          className={`flex-1 min-w-[180px] px-4 py-2.5 rounded-lg text-sm font-semibold transition-colors focus-ring disabled:opacity-40 disabled:cursor-not-allowed ${page === 2 ? 'bg-accent/15 text-accent border border-accent/30 shadow-glow-sm' : 'text-muted hover:text-white hover:bg-bg-elev border border-transparent'}`}
-          aria-current={page === 2 ? 'page' : undefined}
-        >
-          2 · Killfeed &amp; ADM
-        </button>
+      <div className="flex items-center justify-between gap-3 flex-wrap">
+        <div>
+          <h2 className="text-lg font-semibold text-white">Nitrado-Slots ({slots.length}/5)</h2>
+          <p className="text-xs text-muted mt-1">Page 1: Verbindung, Service-ID, Token und Gameserver-Slots. Killfeed & ADM liegen direkt im jeweiligen Slot unter Page 2.</p>
+        </div>
+        {slots.length < 5 && (
+          <Button onClick={() => setShowAdd(value => !value)} size="sm">
+            <Plus className="h-4 w-4 mr-1" /> {showAdd ? 'Abbrechen' : 'Slot hinzufuegen'}
+          </Button>
+        )}
       </div>
 
-      {page === 2 ? (
-        canManageKillfeed ? (
-          <KillfeedTab guildId={guildId} isOwner={canManageKillfeed} slots={slots} />
-        ) : (
-          <Card glow>
-            <CardHeader><CardTitle>Nicht erlaubt</CardTitle></CardHeader>
-            <p className="text-muted text-sm">Dir fehlt die Berechtigung <code>killfeed.manage</code> oder <code>dashboard.access</code>.</p>
-          </Card>
-        )
-      ) : isOwner ? (
-        <div className="space-y-4">
-          <div className="flex items-center justify-between gap-3 flex-wrap">
-            <div>
-              <h2 className="text-lg font-semibold text-white">Nitrado-Slots ({slots.length}/5)</h2>
-              <p className="text-xs text-muted mt-1">Verbindung, Service-ID, Token und Gameserver-Slots.</p>
-            </div>
-            {slots.length < 5 && (
-              <Button onClick={() => setShowAdd(s => !s)} size="sm">
-                <Plus className="h-4 w-4 mr-1" /> {showAdd ? 'Abbrechen' : 'Slot hinzufuegen'}
-              </Button>
-            )}
-          </div>
-
-          {showAdd && <AddSlotForm guildId={guildId} usedSlots={slots.map(s => s.slot)} onDone={() => setShowAdd(false)} />}
-
-          {slots.length === 0 && !showAdd && (
-            <Card>
-              <CardHeader><CardTitle>Noch keine Slots</CardTitle><CardDesc>Lege deinen ersten Nitrado-Slot an.</CardDesc></CardHeader>
-            </Card>
-          )}
-
-          <div className="grid gap-3">
-            {slots.map(s => (
-              <SlotRow key={s.id} guildId={guildId} slot={s} onDelete={() => {
-                if (confirm(`Slot ${s.slot} (${s.alias}) wirklich loeschen? Alle Daten werden geloescht.`)) {
-                  remove.mutate(s.slot);
-                }
-              }} />
-            ))}
-          </div>
-        </div>
-      ) : (
-        <Card glow>
-          <CardHeader><CardTitle>Nicht erlaubt</CardTitle></CardHeader>
-          <p className="text-muted text-sm">Nur der Discord-Server-Owner kann Nitrado-Verbindungen und Slots verwalten.</p>
-        </Card>
+      {showAdd && <AddSlotForm guildId={guildId} usedSlots={slots.map(row => row.slot)} onDone={() => setShowAdd(false)} />}
+      {slots.length === 0 && !showAdd && (
+        <Card><CardHeader><CardTitle>Noch keine Slots</CardTitle><CardDesc>Lege deinen ersten Nitrado-Slot an.</CardDesc></CardHeader></Card>
       )}
+      <div className="grid gap-3">
+        {slots.map(row => (
+          <SlotRow key={row.id} guildId={guildId} slot={row} onDelete={() => {
+            if (confirm(`Slot ${row.slot} (${row.alias}) wirklich loeschen? Alle Daten werden geloescht.`)) remove.mutate(row.slot);
+          }} />
+        ))}
+      </div>
     </div>
   );
 }

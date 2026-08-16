@@ -16,6 +16,13 @@ function optionalEnv(key: string, defaultValue: string = ''): string {
   return process.env[key] || defaultValue;
 }
 
+function resolveGeminiModel(): string {
+  const configured = optionalEnv('GEMINI_MODEL', 'gemini-3.6-flash').trim();
+  if (configured === 'gemini-2.0-flash' || configured === 'gemini-2.0-flash-001') return 'gemini-3.6-flash';
+  if (configured === 'gemini-2.0-flash-lite' || configured === 'gemini-2.0-flash-lite-001') return 'gemini-3.1-flash-lite';
+  return configured || 'gemini-3.6-flash';
+}
+
 const metricsToken = optionalEnv('METRICS_TOKEN', '').trim();
 const metricsRequested = optionalEnv('METRICS_ENABLED', 'false') === 'true';
 
@@ -83,7 +90,7 @@ export const config = {
     openrouterApiKey: optionalEnv('OPENROUTER_API_KEY'),
     openrouterModel: optionalEnv('OPENROUTER_MODEL', 'meta-llama/llama-3.3-70b-instruct:free'),
     geminiApiKey: optionalEnv('GEMINI_API_KEY'),
-    geminiModel: optionalEnv('GEMINI_MODEL', 'gemini-2.0-flash'),
+    geminiModel: resolveGeminiModel(),
     openaiApiKey: optionalEnv('OPENAI_API_KEY'),
     openaiModel: optionalEnv('OPENAI_MODEL', 'gpt-4'),
   },

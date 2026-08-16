@@ -387,8 +387,8 @@ async function snapshotRules(guild: Guild): Promise<string | null> {
       if (topic && topic.trim()) parts.push(`# ${ch.name}\n${topic.trim()}`);
 
       // Pinned Messages (max 5, je 800 Zeichen) – nur Text-Channels
-      if ('messages' in ch && typeof (ch as any).messages?.fetchPinned === 'function') {
-        const pins = await (ch as any).messages.fetchPinned().catch(() => null);
+      if ('messages' in ch && typeof (ch as any).messages?.fetchPins === 'function') {
+        const pins = await (ch as any).messages.fetchPins().catch(() => null);
         if (pins) {
           let i = 0;
           for (const m of pins.values()) {

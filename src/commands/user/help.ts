@@ -104,29 +104,20 @@ function entriesFor(entries: CommandCatalogEntry[], category: HelpCategory): Com
   return entries.filter(entry => categoryFor(entry).id === category);
 }
 
-function overviewEmbed(entries: CommandCatalogEntry[]): EmbedBuilder {
-  const embed = vEmbed(Colors.Primary)
-    .setTitle('V-Bot Prime · Command-Katalog')
+function overviewEmbed(_entries: CommandCatalogEntry[]): EmbedBuilder {
+  return vEmbed(Colors.Primary)
+    .setTitle('👋 Willkommen bei V-Bot Prime')
     .setDescription(
-      'Alle sichtbaren Discord-Funktionen sind nach Bereichen sortiert. ' +
-      '**Waehle unten eine Kategorie; danach hat jeder Command seine eigene Detailseite.**\n\n' +
-      '**DEV-Funktionen und `/ai` werden hier bewusst nicht angezeigt.**\n\n' +
-      `${Brand.divider}`,
-    );
-
-  for (const category of CATEGORIES) {
-    const commands = entries
-      .filter(entry => categoryFor(entry).id === category.id)
-      .map(entry => `\`/${entry.name}\``);
-    if (commands.length === 0) continue;
-    embed.addFields({
-      name: `${category.emoji} ${category.label} · ${commands.length}`,
-      value: `${category.description}\n${commands.join(' · ')}`.slice(0, 1024),
-      inline: false,
-    });
-  }
-
-  return embed.setFooter({ text: `${entries.length} sichtbare Funktionen · Kategorie waehlen · DEV & /ai bleiben unsichtbar` });
+      'Hier findest du die freigegebenen Funktionen von V-Bot – ohne eine lange Command-Wand.\n\n' +
+      '**So funktioniert die Hilfe:**\n' +
+      '1. Waehle unten zuerst einen Bereich aus.\n' +
+      '2. Auf der Funktionsseite bringt dich **▶️ Weiter** zur naechsten Funktion.\n' +
+      '3. Mit **◀️ Zurueck** gehst du wieder eine Funktion zurueck.\n' +
+      '4. Mit **📚 Katalog** kommst du jederzeit hierher zurueck.\n\n' +
+      `${Brand.divider}\n` +
+      '_DEV-Funktionen und `/ai` bleiben bewusst ausserhalb dieser Nutzer-Hilfe._',
+    )
+    .setFooter({ text: 'Bereich auswaehlen · dann mit ◀️ / ▶️ durch die Funktionen navigieren' });
 }
 
 function optionToken(option: JsonOption): string {
