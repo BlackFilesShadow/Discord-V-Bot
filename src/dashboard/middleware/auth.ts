@@ -168,9 +168,17 @@ export function requireGuildPermission(perm: PermissionScope) {
       }
     }
 
+    // Ein bereits serverseitig validierter Gameserver-Scope darf bei einer
+    // nachgelagerten Permission-Revalidierung nicht wieder auf null fallen.
+    // Bewusst nur fuer exakt dieselbe Guild + denselben Actor erhalten.
+    const preservedNitradoConnId = req.guildScope?.guildId === guildId
+      && req.guildScope.actorDiscordId === req.auth.discordId
+      ? req.guildScope.nitradoConnId
+      : null;
+
     const scope: GuildScope = {
       guildId,
-      nitradoConnId: null,
+      nitradoConnId: preservedNitradoConnId,
       actorDiscordId: req.auth.discordId,
       isOwner,
       permissions: permsSet,
