@@ -102,8 +102,8 @@ export type PlayerNameLinkResult =
       requiredSeconds?: number;
     };
 
-function isUniqueViolation(e: unknown): boolean {
-  return typeof e === 'object' && e !== null && (e as { code?: string }).code === 'P2002';
+function isUniqueViolation(error: unknown): boolean {
+  return typeof error === 'object' && error !== null && (error as { code?: string }).code === 'P2002';
 }
 
 function normalizePlayerName(value: string): string {
@@ -125,8 +125,8 @@ function sessionSeconds(session: PlayerSessionLinkRow, now: Date): number {
 
 /**
  * Loest einen exakten Spielernamen gegen die auf diesem Server beobachteten
- * Sessions auf. Mehrere unterschiedliche GUIDs fuer exakt denselben Namen
- * werden fail-closed als mehrdeutig behandelt.
+ * Sessions auf. Mehrere unterschiedliche GUIDs fuer exakt denselben Namen auf
+ * demselben Server werden fail-closed als mehrdeutig behandelt.
  */
 export async function resolvePlayerIdentityByName(
   client: SessionLinkClient,
@@ -175,6 +175,26 @@ async function conflictForHashes(
   });
 }
 
+/**
+ * Ein eingegebener Username darf innerhalb derselben Discord-Guild genau einem
+ * Discord-Account gehoeren. Die persistente Link-Tabelle speichert absichtlich
+ * keinen Klartext-GUID/Username; deshalb wird die Eindeutigkeit ueber alle in
+ * PlayerSession beobachteten GUIDs dieses exakten Namens hergestellt.
+ */
+async function playerNameHashesAcrossGuild(
+  client: SessionLinkClient,
+  scope: LinkScope,
+  playerName: string,
+  secret: string,
+): Promise<string[]> {
+  const sessions = await client.playerSession.findMany({
+    where: { guildId: scope.guildId, playerName },
+    orderBy: [{ connectedAt: 'desc' }, { createdAt: 'desc' }],
+    take: 5000,
+  });
+  return [...new Set(sessions.map(session => identityHash(session.gameId, secret)))];
+}
+
 async function persistVerifiedLink(
   client: SessionLinkClient,
   scope: LinkScope,
@@ -196,7 +216,7 @@ async function persistVerifiedLink(
   if (currentUserLink?.identityHash === hash) return { ok: true, alreadyLinked: true };
   if (currentUserLink) return { ok: false, reason: 'USER_ALREADY_LINKED' };
 
-  // Ein DayZ-Konto darf innerhalb derselben Discord-Guild nicht von zwei
+  // Eine DayZ-GUID darf innerhalb derselben Discord-Guild nicht von zwei
   // verschiedenen Discord-Accounts beansprucht werden, auch nicht auf
   // unterschiedlichen Nitrado-Slots.
   const identityOwner = await client.gameIdentityLink.findFirst({
@@ -258,11 +278,7 @@ async function linkResolvedIdentity(
     };
   }
 
-  // Exakter Spielername darf nur einem Discord-Account gehoeren. Da der Name
-  // nicht zusaetzlich im Link-Datensatz gespeichert wird, wird die Eindeutigkeit
-  // ueber alle GUIDs geprueft, die PlayerSession jemals unter diesem exakten
-  // Namen gesehen hat.
-  const nameHashes = resolved.knownGameIds.map(gameId => identityHash(gameId, secret));
+  const nameHashes = await playerNameHashesAcrossGuild(client, scope, resolved.playerName, secret);
   const nameOwner = await conflictForHashes(client, scope, userDiscordId, nameHashes);
   if (nameOwner) {
     return { ok: false, reason: 'PLAYER_NAME_TAKEN', playerName: resolved.playerName };
