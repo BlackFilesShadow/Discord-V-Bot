@@ -4,12 +4,16 @@ import prisma from '../../database/prisma';
 import { logger } from '../../utils/logger';
 import { getGuildProfile } from './guildAwareness';
 import { findRelevantKnowledge } from './guildKnowledge';
+import { resolveRuntimeKnowledgeScope } from './knowledgeScope';
 import { getMemberProfile } from './memberAwareness';
 import { sanitizeOwnerStylePreference, wrapUntrustedContext } from './untrustedContext';
 
 /**
  * Server-/User-Kontext fuer den AI-Prompt.
  *
+ * AI-10: RAG wird fail-closed auf guild-global + exakt einen eindeutig
+ * aufgeloesten Gameserver begrenzt. Bei mehreren Servern ohne eindeutige
+ * Frage-Zuordnung bleibt Retrieval global-only.
  * AI-9: Server, User und kuratiertes RAG werden an der Quelle getrennt, damit
  * jede Quelle ein eigenes Budget und eine eigene Prioritaet erhalten kann.
  * AI-6: Der rueckwaertskompatible Gesamt-Builder bleibt weiterhin vollstaendig
@@ -244,12 +248,14 @@ export async function buildServerUserContextBlocks(opts: ServerUserContextOption
 
   if (guild?.id && question) {
     try {
-      const snippets = await findRelevantKnowledge(guild.id, question, 3);
+      const scope = await resolveRuntimeKnowledgeScope(guild.id, question);
+      const snippets = await findRelevantKnowledge(guild.id, question, 3, scope?.id ?? null);
       if (snippets.length > 0) {
+        if (scope) ragLines.push(`- Gameserver-Scope: Slot ${scope.slot} (${scope.alias})`);
         for (const snippet of snippets) ragLines.push(`- [${snippet.label}] ${snippet.content.slice(0, 800)}`);
       }
     } catch (e) {
-      logger.warn('contextBuilder: findRelevantKnowledge fehlgeschlagen:', { e: String(e) });
+      logger.warn('contextBuilder: scoped findRelevantKnowledge fehlgeschlagen:', { guildId: guild.id, e: String(e) });
     }
   }
 
