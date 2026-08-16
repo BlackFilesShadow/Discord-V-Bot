@@ -29,6 +29,7 @@ import { nitradoRouter } from './v2/nitrado';
 import { admSourceRouter } from './v2/admSource';
 import { economyRouter } from './v2/economy';
 import { economyVirtualAccountsRouter } from './v2/economyVirtualAccounts';
+import { economyLotteryRouter } from './v2/economyLottery';
 import { economyScopeRouter } from './v2/economyScope';
 import { economyLinkRouter } from './v2/economyLink';
 import { whitelistRouter } from './v2/whitelist';
@@ -81,6 +82,7 @@ v2Router.use('/guilds/:guildId/factions', factionsRouter);
 
 v2Router.use('/guilds/:guildId/economy-scope', economyScopeRouter);
 v2Router.use('/guilds/:guildId/economy/virtual-accounts', requireSafeDashboardEconomyScope, economyVirtualAccountsRouter);
+v2Router.use('/guilds/:guildId/economy/lottery', requireSafeDashboardEconomyScope, economyLotteryRouter);
 v2Router.use('/guilds/:guildId/economy', requireSafeDashboardEconomyScope, economyRouter);
 v2Router.use('/guilds/:guildId/economy-links', economyLinkRouter);
 v2Router.use('/guilds/:guildId/casino', requireSafeDashboardEconomyScope, casinoRouter);

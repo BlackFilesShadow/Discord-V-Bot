@@ -16,6 +16,7 @@ import messageReactionRemoveEvent from './events/messageReactionRemove';
 import voiceStateUpdateEvent from './events/voiceStateUpdate';
 
 import { startGiveawayScheduler, stopGiveawayScheduler } from './modules/giveaway/giveawayManager';
+import { startLotteryScheduler, stopLotteryScheduler } from './modules/economy/lottery';
 import { startFeedScheduler, stopFeedScheduler } from './modules/feeds/feedManager';
 import { startPollScheduler, stopPollScheduler } from './modules/polls/pollSystem';
 import { startRateLimitCleanup, stopRateLimitCleanup } from './utils/rateLimiter';
@@ -193,6 +194,7 @@ async function main(): Promise<void> {
   }
 
   startGiveawayScheduler(client);
+  startLotteryScheduler(client);
   startFeedScheduler(client);
   startPollScheduler(client);
   startRateLimitCleanup();
@@ -236,6 +238,7 @@ async function main(): Promise<void> {
     stopPollScheduler();
     stopFeedScheduler();
     stopGiveawayScheduler();
+    stopLotteryScheduler();
 
     try {
       if (nitradoRuntime) await nitradoRuntime.stopAndDrain();
