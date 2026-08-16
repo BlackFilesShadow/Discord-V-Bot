@@ -5,6 +5,7 @@ import prisma from '../../database/prisma';
 import { liveSearch, looksFactQuestion, formatSearchResultsForPrompt } from './webSearch';
 import { asksAboutCommands, formatCatalogForPromptFocused } from './commandCatalog';
 import { recordCall, getRankedProviders, markProviderUnavailable, ProviderName } from './providerStats';
+import { inferAiTaskProfile, type AiTaskProfile } from './providerCapabilities';
 import { checkRateLimit } from '../../utils/rateLimiter';
 import { lookupNitradoHelp, looksLikeDayZFileQuestion, getDayZFileTruthBlock, isDayzTechnicalAdminQuestion, validateDayzTechnicalAnswer, buildDayzTechnicalFallback } from './nitradoHelp';
 import { redactText } from '../nitrado/mirror/redactor';
@@ -37,7 +38,7 @@ export interface AiResponse {
 }
 
 /**
- * Liefert den aktuellen Zeitstempel als deutscher String f\u00fcr System-Prompts.
+ * Liefert den aktuellen Zeitstempel als deutscher String für System-Prompts.
  * Damit kennt die AI immer Tag/Monat/Jahr/Uhrzeit.
  */
 export function getLiveTimeContext(): string {
@@ -66,12 +67,12 @@ export function getLiveTimeContext(): string {
   else if (hour >= 18 && hour < 22) daypart = 'Abend';
   const month = now.getMonth() + 1;
   let season = 'Winter';
-  if (month >= 3 && month <= 5) season = 'Fr\u00fchling';
+  if (month >= 3 && month <= 5) season = 'Frühling';
   else if (month >= 6 && month <= 8) season = 'Sommer';
   else if (month >= 9 && month <= 11) season = 'Herbst';
   return [
     'AUTORITATIVE ZEIT- UND DATUMSANGABEN (Europe/Berlin) - diese Werte sind FAKT, nutze sie direkt:',
-    `- Vollst\u00e4ndig: ${fmt.format(now)}`,
+    `- Vollständig: ${fmt.format(now)}`,
     `- Heutiges Datum: ${dateOnly}`,
     `- Wochentag: ${weekday}`,
     `- Aktuelle Uhrzeit: ${timeOnly} Uhr`,
@@ -85,7 +86,7 @@ export function getLiveTimeContext(): string {
     '- Gib JEDEN Wert (Wochentag, Datum, Uhrzeit, Monat, Jahr) HOECHSTENS EINMAL pro Antwort aus. Kein Teil darf doppelt vorkommen.',
     `- Vorzugsformat fuer kombinierte Fragen ("Tag/Datum/Uhrzeit/Jahr/Monat"): EIN Satz - z.B. "Heute ist ${weekday}, ${dateOnly}, ${timeOnly} Uhr." Punkt. KEIN nachgeschobenes "Jahr 2026, Monat April".`,
     '- Wenn Datum bereits den Monat und das Jahr enthaelt, sind Monat und Jahr damit beantwortet - NICHT noch einmal extra anfuegen.',
-    '- Vermeide Doppelungen wie "Fr\u00fchlingsabend, es ist Abend".',
+    '- Vermeide Doppelungen wie "Frühlingsabend, es ist Abend".',
   ].join('\n');
 }
 
@@ -246,18 +247,18 @@ export function buildSelfIntroductionInstructions(): string {
 export function getKnowledgeBoundary(): string {
   const year = new Date().getFullYear();
   return [
-    `WICHTIG \u2013 Wissensstand: Dein internes Trainingswissen endet vor ${year}.`,
+    `WICHTIG – Wissensstand: Dein internes Trainingswissen endet vor ${year}.`,
     '',
     'PRIORITAET DER QUELLEN (in dieser Reihenfolge nutzen):',
-    '1. AUTORITATIVE ZEIT- UND DATUMSANGABEN (oben im Prompt) \u2192 fuer ALLES rund um Datum, Uhrzeit, Wochentag, Tageszeit, Jahreszeit, Jahr.',
-    '2. AKTUELLE WEB-RECHERCHE (falls vorhanden) \u2192 fuer alle anderen zeitabhaengigen Fakten (Politik, Personen, Sport, Preise, Releases). Nutze sie SELBSTBEWUSST und KONKRET, erfinde nichts hinzu.',
-    '3. Stabiles Allgemeinwissen \u2192 Mathematik, Geographie, Geschichte vor 2023, Naturwissenschaft, Sprache, Programmierung, Kultur, Definitionen, Erklaerungen, Anleitungen.',
+    '1. AUTORITATIVE ZEIT- UND DATUMSANGABEN (oben im Prompt) → fuer ALLES rund um Datum, Uhrzeit, Wochentag, Tageszeit, Jahreszeit, Jahr.',
+    '2. AKTUELLE WEB-RECHERCHE (falls vorhanden) → fuer alle anderen zeitabhaengigen Fakten (Politik, Personen, Sport, Preise, Releases). Nutze sie SELBSTBEWUSST und KONKRET, erfinde nichts hinzu.',
+    '3. Stabiles Allgemeinwissen → Mathematik, Geographie, Geschichte vor 2023, Naturwissenschaft, Sprache, Programmierung, Kultur, Definitionen, Erklaerungen, Anleitungen.',
     '',
     'NUR wenn KEINE Web-Recherche vorhanden ist UND die Frage einen aktuellen Zustand verlangt, der sich seit deinem Trainingsende geaendert haben koennte (amtierende Politiker, juengste Wahlergebnisse, aktuelle Sportstandings, Tageskurse, Wetter, neueste Releases), darfst du keine konkrete Aussage als sicher praesentieren.',
     'In diesem Fall sage kurz: "Dazu habe ich gerade keine aktuellen Daten."',
     '',
     'STILREGELN:',
-    '- Verweigere NIEMALS die Antwort auf Datum, Uhrzeit, Wochentag, Tageszeit oder Jahreszeit \u2013 diese stehen IMMER im Zeit-Block oben.',
+    '- Verweigere NIEMALS die Antwort auf Datum, Uhrzeit, Wochentag, Tageszeit oder Jahreszeit – diese stehen IMMER im Zeit-Block oben.',
     '- Verweigere NIEMALS die Antwort auf Allgemeinwissen, Erklaerungen, Definitionen, Anleitungen, Meinungen oder Smalltalk.',
     '- Nenne KEINE Quellen in der Antwort. Sage NICHT "laut Wikipedia", "laut meinen Quellen", "meinen Recherchen zufolge" o.ae. Antworte einfach direkt mit dem Fakt, als waere es selbstverstaendliches Wissen.',
     '- Erwaehne deinen Wissensstand oder Trainingsende NICHT von dir aus. Nur wenn der Nutzer explizit fragt.',
@@ -455,7 +456,7 @@ export async function answerQuestion(
     if (err?.code === 'RATE_LIMIT' || /RATE_LIMIT|status code 429/.test(err?.message || '')) {
       return { success: false, error: 'RATE_LIMIT', rateLimitSource: 'provider' };
     }
-    return { success: false, error: 'AI nicht verf\u00fcgbar.' };
+    return { success: false, error: 'AI nicht verfügbar.' };
   }
 }
 
@@ -708,7 +709,8 @@ function parseRetryAfter(error: unknown): number {
 }
 
 export async function callAI(messages: { role: string; content: string }[]): Promise<string> {
-  const providers = await getProviderOrder();
+  const task = inferAiTaskProfile(messages);
+  const providers = await getProviderOrder(task);
 
   let redactedMessages: { role: string; content: string }[];
   try {
@@ -778,7 +780,7 @@ export async function callAI(messages: { role: string; content: string }[]): Pro
   let lastError: unknown = null;
   let allRateLimited = true;
   let anyAttempted = false;
-  logger.info(`callAI start, provider-Reihenfolge: ${providers.join(' -> ')}`);
+  logger.info(`callAI start, task=${task}, provider-Reihenfolge: ${providers.join(' -> ')}`);
   for (const provider of providers) {
     for (let attempt = 1; attempt <= 2; attempt++) {
       const t0 = Date.now();
@@ -834,9 +836,9 @@ export async function callAI(messages: { role: string; content: string }[]): Pro
   throw new Error(`Kein AI-Provider verfügbar${detail}`);
 }
 
-async function getProviderOrder(): Promise<('groq' | 'cerebras' | 'openrouter' | 'gemini' | 'openai')[]> {
+async function getProviderOrder(task: AiTaskProfile): Promise<('groq' | 'cerebras' | 'openrouter' | 'gemini' | 'openai')[]> {
   try {
-    const ranked = await getRankedProviders();
+    const ranked = await getRankedProviders(task);
     if (ranked.length > 0) return ranked;
   } catch (e) {
     logger.warn(`getProviderOrder: getRankedProviders fehlgeschlagen, Fallback Konfig: ${String(e)}`);
