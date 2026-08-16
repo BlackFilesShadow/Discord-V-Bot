@@ -42,13 +42,29 @@ const TECHNICAL_ADMIN_MARKERS = /\b(server|nitrado|config|konfig|settings?|einst
 const CHANGE_VERBS = /\b(aender|aendere|aendern|ander|andere|andern|änder|ändere|ändern|einstell|einstellen|setz|setzen|aktivier|aktivieren|deaktivier|deaktivieren|anpass|anpassen|konfigurier|konfigurieren|erhoeh|erhoehen|erhöh|erhöhen|verringer|verringern)\w*\b/i;
 const CONFIGURABLE_CONCEPTS = /\b(stamina|ausdauer|third.?person|crosshair|perspektive|base.?damage|container.?damage|schaden|damage|tag.?nacht|day.?night|nacht|night|wetter|weather|loot|spawn|respawn)\b/i;
 
+function explicitConfigFileToken(question: string): string | null {
+  return question.match(/\b[A-Za-z0-9_.-]+\.(?:xml|json|cfg|c)\b/i)?.[0] ?? null;
+}
+
+function hasDayzContext(question: string): boolean {
+  const q = fold(question);
+  return /\bdayz\b|\bcentral economy\b|\bce\b|\bserverdz\.cfg\b|\bmaxplayers\b|\bservertimeacceleration\b|\bservernighttimeacceleration\b|\benablecfggameplayfile\b/.test(q);
+}
+
+function isUnscopedForeignConfigFile(question: string): boolean {
+  const file = explicitConfigFileToken(question);
+  if (!file) return false;
+  if (hasDayzContext(question)) return false;
+  return !base.isKnownDayz129Identifier(file);
+}
+
 function isTechnicalAdminIntent(question: string): boolean {
   if (!question) return false;
   const q = fold(question);
-  const hasDayzContext = /\bdayz\b|\bcentral economy\b|\bce\b/.test(q);
-  const hasFileToken = /\b[A-Za-z0-9_.-]+\.(?:xml|json|cfg|c)\b/i.test(question);
-  if (hasFileToken) return true;
-  if (!hasDayzContext) return false;
+  const dayzContext = hasDayzContext(question);
+  const fileToken = explicitConfigFileToken(question);
+  if (fileToken) return dayzContext || base.isKnownDayz129Identifier(fileToken);
+  if (!dayzContext) return false;
   return TECHNICAL_ADMIN_MARKERS.test(q) || (CHANGE_VERBS.test(q) && CONFIGURABLE_CONCEPTS.test(q));
 }
 
@@ -129,6 +145,11 @@ export const searchTypes = v3.searchTypes;
 
 export function answer(question: string): DayzCatalogAnswer | null {
   if (!question) return null;
+
+  // Foreign config files must not be claimed by the DayZ catalog merely because
+  // they end in .xml/.json/.cfg/.c. Known DayZ files still work without the
+  // word "DayZ"; unknown files require explicit DayZ context.
+  if (isUnscopedForeignConfigFile(question)) return null;
 
   const explicit = explicitLookupIntent(question);
   const short = question.trim().split(/\s+/).filter(Boolean).length <= 6 && !hasDetailIntent(question);
