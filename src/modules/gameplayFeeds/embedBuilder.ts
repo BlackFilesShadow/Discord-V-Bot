@@ -71,7 +71,7 @@ export function buildGameplayFeedEmbed(
     // Void__Architect in Discord ohne sichtbare Backslashes erscheint.
     embed.addFields({ name: 'Opfer', value: safeName(view.actorName), inline: true });
     if (view.targetName) {
-      const label = view.category === 'PVP' ? 'Töter' : 'Ursache';
+      const label = view.category === 'PVP' ? 'Killer' : 'Ursache';
       embed.addFields({ name: label, value: safeName(view.targetName), inline: true });
     }
     if (view.toolOrWeapon) {
@@ -83,7 +83,7 @@ export function buildGameplayFeedEmbed(
     const victimPos = positionField(view.actorPosition);
     if (victimPos) embed.addFields({ name: 'Opfer-Position', value: victimPos, inline: true });
     const killerPos = positionField(view.targetPosition);
-    if (killerPos) embed.addFields({ name: 'Töter-Position', value: killerPos, inline: true });
+    if (killerPos) embed.addFields({ name: 'Killer-Position', value: killerPos, inline: true });
     return embed;
   }
 
