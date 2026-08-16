@@ -58,7 +58,8 @@ const CATEGORIES: readonly CategoryDefinition[] = [
     description: 'Wallet/Bank, Transfers, DayZ-Verknuepfung und Casino.',
     names: new Set([
       'balance', 'bank', 'pay', 'deposit', 'withdraw', 'transfer',
-      'link', 'unlink',
+      'link', 'unlink', 'links', 'link-info', 'link-panel',
+      'force-link', 'force-unlink', 'confirm-action',
       'slot', 'coinflip', 'dice', 'blackjack', 'casino-stats',
     ]),
   },
