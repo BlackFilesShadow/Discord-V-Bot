@@ -15,19 +15,32 @@ describe('AI provider capability registry', () => {
     expect(providerSupportsTask('groq', 'openai/gpt-oss-120b', 'structured')).toBe(true);
     expect(providerSupportsTask('groq', 'openai/gpt-oss-120b', 'reasoning')).toBe(true);
     expect(providerSupportsTask('groq', 'openai/gpt-oss-120b', 'tool')).toBe(true);
+    expect(providerSupportsTask('groq', 'openai/gpt-oss-120b', 'long_context')).toBe(true);
   });
 
   it('kennt die verifizierten GPT-OSS Capabilities bei Cerebras', () => {
     expect(providerSupportsTask('cerebras', 'gpt-oss-120b', 'structured')).toBe(true);
     expect(providerSupportsTask('cerebras', 'gpt-oss-120b', 'reasoning')).toBe(true);
     expect(providerSupportsTask('cerebras', 'gpt-oss-120b', 'long_context')).toBe(true);
+    expect(providerSupportsTask('cerebras', 'gpt-oss-120b', 'tool')).toBe(true);
     expect(taskAffinity('cerebras', 'gpt-oss-120b', 'fast')).toBeGreaterThan(1);
   });
 
-  it('kennt Gemini 3.6 Flash als structured/tool/long-context Provider', () => {
+  it('kennt Gemini 3.6 Flash als structured/tool/reasoning/long-context Provider', () => {
     expect(providerSupportsTask('gemini', 'gemini-3.6-flash', 'structured')).toBe(true);
     expect(providerSupportsTask('gemini', 'gemini-3.6-flash', 'tool')).toBe(true);
+    expect(providerSupportsTask('gemini', 'gemini-3.6-flash', 'reasoning')).toBe(true);
     expect(providerSupportsTask('gemini', 'gemini-3.6-flash', 'long_context')).toBe(true);
+  });
+
+  it('kennt GPT-5.6 Luna gemaess aktuellem Modellvertrag', () => {
+    const p = getProviderCapabilityProfile('openai', 'gpt-5.6-luna');
+    expect(p.knownModel).toBe(true);
+    expect(providerSupportsTask('openai', p.model, 'chat')).toBe(true);
+    expect(providerSupportsTask('openai', p.model, 'structured')).toBe(true);
+    expect(providerSupportsTask('openai', p.model, 'reasoning')).toBe(true);
+    expect(providerSupportsTask('openai', p.model, 'long_context')).toBe(true);
+    expect(providerSupportsTask('openai', p.model, 'tool')).toBe(true);
   });
 
   it('bleibt fuer unbekannte/custom Modelle fail-conservative', () => {
@@ -35,15 +48,9 @@ describe('AI provider capability registry', () => {
     expect(p.knownModel).toBe(false);
     expect(providerSupportsTask('openrouter', p.model, 'chat')).toBe(true);
     expect(providerSupportsTask('openrouter', p.model, 'structured')).toBe(false);
+    expect(providerSupportsTask('openrouter', p.model, 'reasoning')).toBe(false);
     expect(providerSupportsTask('openrouter', p.model, 'tool')).toBe(false);
     expect(providerSupportsTask('openrouter', p.model, 'long_context')).toBe(false);
-  });
-
-  it('ueberclaimt OpenAI Luna nicht ohne exakten Modellvertrag', () => {
-    expect(providerSupportsTask('openai', 'gpt-5.6-luna', 'chat')).toBe(true);
-    expect(providerSupportsTask('openai', 'gpt-5.6-luna', 'fast')).toBe(true);
-    expect(providerSupportsTask('openai', 'gpt-5.6-luna', 'structured')).toBe(false);
-    expect(providerSupportsTask('openai', 'gpt-5.6-luna', 'tool')).toBe(false);
   });
 });
 
@@ -80,16 +87,24 @@ describe('AI task classifier', () => {
     expect(inferAiTaskProfile([{ role: 'user', content: 'Hallo, wie geht es dir?' }])).toBe('chat');
   });
 
+  it('klassifiziert nur starke Systemsignale und nicht beliebige User-Woerter', () => {
+    expect(inferAiTaskProfile([
+      { role: 'system', content: 'Antworte normal und direkt.' },
+      { role: 'user', content: 'Ich erzaehle dir nur vom Wort reasoning und JSON schema.' },
+    ])).toBe('chat');
+  });
+
   it('providerStats nimmt einen Task entgegen und kombiniert Capability mit Health', () => {
     const source = fs.readFileSync(path.join(process.cwd(), 'src/modules/ai/providerStats.ts'), 'utf8');
     expect(source).toContain("getRankedProviders(task: AiTaskProfile = 'chat')");
     expect(source).toContain('providerSupportsTask');
     expect(source).toContain('taskAffinity');
+    expect(source).toContain('const pool = capable.length > 0 ? capable : candidates');
   });
 
-  it('aiHandler leitet den erkannten Task in das Provider-Ranking weiter', () => {
+  it('aiHandler klassifiziert zentral in callAI und leitet den Task ins Ranking weiter', () => {
     const source = fs.readFileSync(path.join(process.cwd(), 'src/modules/ai/aiHandler.ts'), 'utf8');
-    expect(source).toContain('inferAiTaskProfile(messages)');
+    expect(source).toContain('const task = inferAiTaskProfile(messages)');
     expect(source).toContain('getProviderOrder(task)');
     expect(source).toContain('getRankedProviders(task)');
   });
