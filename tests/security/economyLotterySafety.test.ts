@@ -63,6 +63,19 @@ describe('Economy-Lotterie — Production-Sicherheitsinvarianten', () => {
     expect(lottery).toContain("status: 'REFUNDED'");
   });
 
+  it('behandelt parallele identische Ticketkaeufe als Replay statt als neues Limit-Ereignis', () => {
+    expect(lottery).toContain('const purchaseReplay = await raw.$queryRawUnsafe');
+    expect(lottery).toContain("WHERE \"idempotencyKey\"=$1 LIMIT 1");
+    expect(lottery).toContain('return { firstPurchase: false };');
+  });
+
+  it('finalisiert Refunds nur bei wirklich leerem Pot und verhindert lokalen Scheduler-Overlap', () => {
+    expect(lottery).toContain("if (terminal.potBalance !== 0n) throw new Error('Refund-Runde kann mit Restguthaben im Pot nicht finalisiert werden.')");
+    expect(lottery).toContain('if (lotterySchedulerBusy) return;');
+    expect(lottery).toContain('finally {');
+    expect(lottery).toContain('lotterySchedulerBusy = false;');
+  });
+
   it('archiviert Auditdaten nie per Cascade/Delete', () => {
     expect(migration).not.toContain('ON DELETE CASCADE');
     expect(migration.match(/ON DELETE RESTRICT/g)?.length ?? 0).toBeGreaterThanOrEqual(3);

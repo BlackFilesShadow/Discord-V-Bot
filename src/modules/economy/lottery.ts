@@ -21,6 +21,7 @@ import { getConfig } from './repository';
 import { systemUserToVirtualAccount, systemVirtualAccountToUser } from './systemVirtualTransfers';
 
 let lotterySchedulerTimer: NodeJS.Timeout | null = null;
+let lotterySchedulerBusy = false;
 const LOTTERY_INTERVAL_MS = 5_000;
 const MAX_TOTAL_TICKETS = 1_000_000_000;
 const REFUND_BATCH = 50;
@@ -370,6 +371,16 @@ export async function buyLotteryTickets(args: {
       );
       const round = rounds[0];
       if (!round) throw new Error('Lotterie nicht gefunden.');
+      const purchaseReplay = await raw.$queryRawUnsafe<Array<{ userDiscordId: string; ticketCount: number; roundId: string }>>(
+        'SELECT "userDiscordId", "ticketCount", "roundId" FROM "LotteryPurchase" WHERE "idempotencyKey"=$1 LIMIT 1',
+        key,
+      );
+      if (purchaseReplay[0]) {
+        if (purchaseReplay[0].userDiscordId !== String(args.userDiscordId) || purchaseReplay[0].ticketCount !== args.quantity || purchaseReplay[0].roundId !== args.roundId) {
+          throw new Error('Kauf-Idempotency-Key wurde mit anderen Daten wiederverwendet.');
+        }
+        return { firstPurchase: false };
+      }
       if (round.status !== 'ACTIVE' || round.endsAt.getTime() <= Date.now()) throw new Error('Lotterie ist bereits geschlossen.');
       if (round.potAccountId !== initial.potAccountId || round.ticketPrice !== initial.ticketPrice) throw new Error('Lotterie-Konfiguration hat sich unerwartet veraendert.');
       const replayPurchases = await raw.$queryRawUnsafe<Array<{ roundId: string; guildId: string; nitradoConnId: string; userDiscordId: string; ticketCount: number; amount: bigint }>>(
@@ -537,6 +548,9 @@ async function processRefunds(round: LotteryRoundView): Promise<boolean> {
 
   const remaining = await prisma.lotteryEntry.count({ where: { roundId: round.id, refundedAt: null } });
   if (remaining > 0) return false;
+  const terminal = await fetchRoundViewById(round.id);
+  if (!terminal) throw new Error('Refund-Runde ist beim Finalisieren verschwunden.');
+  if (terminal.potBalance !== 0n) throw new Error('Refund-Runde kann mit Restguthaben im Pot nicht finalisiert werden.');
   const changed = await prisma.lotteryRound.updateMany({
     where: { id: round.id, status: 'REFUNDING' },
     data: { status: 'REFUNDED', activeScopeKey: null, settledAt: new Date() },
@@ -645,6 +659,8 @@ export async function handleLotteryBuyButton(interaction: ButtonInteraction): Pr
 export function startLotteryScheduler(client: Client): void {
   if (lotterySchedulerTimer) return;
   lotterySchedulerTimer = setInterval(async () => {
+    if (lotterySchedulerBusy) return;
+    lotterySchedulerBusy = true;
     try {
       const guildIds = [...client.guilds.cache.keys()];
       if (guildIds.length === 0) return;
@@ -667,6 +683,8 @@ export function startLotteryScheduler(client: Client): void {
       }
     } catch (error) {
       logger.error('Lotterie-Scheduler Fehler:', error as Error);
+    } finally {
+      lotterySchedulerBusy = false;
     }
   }, LOTTERY_INTERVAL_MS);
   lotterySchedulerTimer.unref?.();
@@ -677,4 +695,5 @@ export function stopLotteryScheduler(): void {
   if (!lotterySchedulerTimer) return;
   clearInterval(lotterySchedulerTimer);
   lotterySchedulerTimer = null;
+  lotterySchedulerBusy = false;
 }
