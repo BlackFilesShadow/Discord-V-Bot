@@ -80,11 +80,12 @@ const LINK_AT = new Date('2026-08-16T12:00:00.000Z');
 const NOW = new Date('2026-08-16T12:20:00.000Z');
 
 function session(overrides: Partial<UncreditedSession> = {}): UncreditedSession {
+  const has = (key: keyof UncreditedSession) => Object.prototype.hasOwnProperty.call(overrides, key);
   return {
     id: overrides.id ?? 's1',
     gameId: overrides.gameId ?? 'p1',
-    connectedAt: overrides.connectedAt ?? new Date('2026-08-16T12:00:00.000Z'),
-    disconnectedAt: overrides.disconnectedAt ?? new Date('2026-08-16T12:20:00.000Z'),
+    connectedAt: has('connectedAt') ? (overrides.connectedAt ?? null) : new Date('2026-08-16T12:00:00.000Z'),
+    disconnectedAt: has('disconnectedAt') ? (overrides.disconnectedAt ?? null) : new Date('2026-08-16T12:20:00.000Z'),
     status: overrides.status ?? 'CLOSED',
   };
 }
@@ -101,6 +102,30 @@ describe('eligiblePlaytimeBuckets', () => {
       disconnectedAt: new Date('2026-08-16T12:15:00.000Z'),
     }), LINK_AT, NOW)).toBe(1);
   });
+
+  it('laesst eine CLOSED-Session ohne Disconnect-Zeit nicht weiterlaufen', () => {
+    expect(eligiblePlaytimeBuckets(session({
+      connectedAt: LINK_AT,
+      disconnectedAt: null,
+      status: 'CLOSED',
+    }), LINK_AT, NOW)).toBe(0);
+  });
+
+  it('kappt eine zukuenftige Disconnect-Zeit auf now', () => {
+    expect(eligiblePlaytimeBuckets(session({
+      connectedAt: LINK_AT,
+      disconnectedAt: new Date('2026-08-16T13:00:00.000Z'),
+      status: 'CLOSED',
+    }), LINK_AT, new Date('2026-08-16T12:15:00.000Z'))).toBe(1);
+  });
+
+  it('OPEN verwendet now und ignoriert eine stale Disconnect-Zeit', () => {
+    expect(eligiblePlaytimeBuckets(session({
+      connectedAt: LINK_AT,
+      disconnectedAt: new Date('2026-08-16T12:05:00.000Z'),
+      status: 'OPEN',
+    }), LINK_AT, NOW)).toBe(2);
+  });
 });
 
 describe('bookPlaytimeRewards ohne Backpay', () => {
@@ -113,7 +138,8 @@ describe('bookPlaytimeRewards ohne Backpay', () => {
     ], { p1: { userDiscordId: 'u1', rewardEligibleFrom: LINK_AT } });
 
     const result = await bookPlaytimeRewards(client, SCOPE, { perBucketAmount: 100n, rewardTarget: 'WALLET', now: NOW }, resolve);
-    expect(result).toEqual({ credited: 0, total: 0n });
+    expect(result.credited).toBe(0);
+    expect(result.total.toString()).toBe('0');
     expect(accounts.get('g:n:u1')).toBeUndefined();
   });
 
@@ -127,8 +153,9 @@ describe('bookPlaytimeRewards ohne Backpay', () => {
     ], { p1: { userDiscordId: 'u1', rewardEligibleFrom: LINK_AT } });
 
     const result = await bookPlaytimeRewards(client, SCOPE, { perBucketAmount: 100n, rewardTarget: 'WALLET', now: NOW }, resolve);
-    expect(result).toEqual({ credited: 2, total: 200n });
-    expect(accounts.get('g:n:u1')!.walletBalance).toBe(200n);
+    expect(result.credited).toBe(2);
+    expect(result.total.toString()).toBe('200');
+    expect(accounts.get('g:n:u1')!.walletBalance.toString()).toBe('200');
   });
 
   it('zweiter Lauf derselben Link-Epoche zahlt keinen Bucket doppelt', async () => {
@@ -138,15 +165,61 @@ describe('bookPlaytimeRewards ohne Backpay', () => {
     );
     await bookPlaytimeRewards(client, SCOPE, { perBucketAmount: 100n, rewardTarget: 'WALLET', now: NOW }, resolve);
     const second = await bookPlaytimeRewards(client, SCOPE, { perBucketAmount: 100n, rewardTarget: 'WALLET', now: NOW }, resolve);
-    expect(second).toEqual({ credited: 0, total: 0n });
-    expect(accounts.get('g:n:u1')!.walletBalance).toBe(200n);
+    expect(second.credited).toBe(0);
+    expect(second.total.toString()).toBe('0');
+    expect(accounts.get('g:n:u1')!.walletBalance.toString()).toBe('200');
   });
 
-  it('unverlinkter Spieler bleibt ohne Auszahlung und ohne offene spaetere Nachzahlung', async () => {
+  it('unverlinkter Spieler bleibt ohne Auszahlung', async () => {
     const { client, accounts, resolve } = makeClient([session()], {});
     const result = await bookPlaytimeRewards(client, SCOPE, { perBucketAmount: 100n, rewardTarget: 'WALLET', now: NOW }, resolve);
-    expect(result).toEqual({ credited: 0, total: 0n });
+    expect(result.credited).toBe(0);
+    expect(result.total.toString()).toBe('0');
     expect(accounts.size).toBe(0);
+  });
+
+  it('konsumiert deaktivierte Zeit-Buckets und zahlt sie nach Aktivierung nicht nach', async () => {
+    const s = session({ connectedAt: LINK_AT, disconnectedAt: null, status: 'OPEN' });
+    const { client, accounts, progress, resolve } = makeClient(
+      [s],
+      { p1: { userDiscordId: 'u1', rewardEligibleFrom: LINK_AT } },
+    );
+
+    const disabled = await bookPlaytimeRewards(client, SCOPE, {
+      perBucketAmount: 100n,
+      rewardTarget: 'WALLET',
+      payoutEnabled: false,
+      now: NOW,
+    }, resolve);
+    expect(disabled.credited).toBe(0);
+    expect(disabled.total.toString()).toBe('0');
+    expect(accounts.size).toBe(0);
+    expect(progress.get(`s1:${LINK_AT.getTime()}`)).toBe(2);
+
+    const enabled = await bookPlaytimeRewards(client, SCOPE, {
+      perBucketAmount: 100n,
+      rewardTarget: 'WALLET',
+      payoutEnabled: true,
+      now: new Date('2026-08-16T12:30:00.000Z'),
+    }, resolve);
+    expect(enabled.credited).toBe(1);
+    expect(enabled.total.toString()).toBe('100');
+    expect(accounts.get('g:n:u1')!.walletBalance.toString()).toBe('100');
+  });
+
+  it('konsumiert auch Betrag-0-Buckets statt sie spaeter nachzuzahlen', async () => {
+    const s = session({ connectedAt: LINK_AT, disconnectedAt: null, status: 'OPEN' });
+    const { client, progress, resolve } = makeClient(
+      [s],
+      { p1: { userDiscordId: 'u1', rewardEligibleFrom: LINK_AT } },
+    );
+
+    await bookPlaytimeRewards(client, SCOPE, {
+      perBucketAmount: 0n,
+      rewardTarget: 'WALLET',
+      now: NOW,
+    }, resolve);
+    expect(progress.get(`s1:${LINK_AT.getTime()}`)).toBe(2);
   });
 
   it('eine neue Relink-Epoche beginnt mathematisch wieder bei deren Zeitpunkt', async () => {
@@ -165,7 +238,7 @@ describe('bookPlaytimeRewards ohne Backpay', () => {
       rewardTarget: 'WALLET',
       now: new Date('2026-08-16T12:10:00.000Z'),
     }, resolve);
-    expect(accounts.get('g:n:u1')!.walletBalance).toBe(100n);
+    expect(accounts.get('g:n:u1')!.walletBalance.toString()).toBe('100');
 
     links.p1 = { userDiscordId: 'u1', rewardEligibleFrom: new Date('2026-08-16T12:12:00.000Z') };
     await bookPlaytimeRewards(client, SCOPE, {
@@ -173,6 +246,6 @@ describe('bookPlaytimeRewards ohne Backpay', () => {
       rewardTarget: 'WALLET',
       now: new Date('2026-08-16T12:22:00.000Z'),
     }, resolve);
-    expect(accounts.get('g:n:u1')!.walletBalance).toBe(200n);
+    expect(accounts.get('g:n:u1')!.walletBalance.toString()).toBe('200');
   });
 });
