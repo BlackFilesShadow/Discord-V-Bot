@@ -23,11 +23,21 @@ describe('Bare-metal setup runtime consistency', () => {
     expect(setup).toContain('npm prune --omit=dev --no-audit --no-fund');
   });
 
-  it('erzeugt einen 32-Byte Encryption-Key und gibt private Runtime-Pfade frei', () => {
+  it('erzeugt starke lokale Secrets und gibt private Runtime-Pfade frei', () => {
     expect(setup).toContain('ENCRYPTION_KEY=$(openssl rand -hex 32)');
+    expect(setup).toContain('DEV_PASSWORD=$(openssl rand -hex 32)');
+    expect(setup).toContain('BOT_ADMIN_PASSWORD=$(openssl rand -hex 32)');
     expect(setup).toContain('"$BOT_DIR/private/dev-logs"');
     expect(setup).toContain('"$BOT_DIR/private/exports"');
     expect(setup).toContain('ReadWritePaths=${BOT_DIR}/uploads ${BOT_DIR}/logs ${BOT_DIR}/private');
+  });
+
+  it('behandelt bestehende DB-Rollen ohne bekannte .env fail-closed und loggt kein DB-Passwort', () => {
+    expect(setup).toContain("PostgreSQL-User '${DB_USER}' existiert bereits, aber ${ENV_FILE} fehlt");
+    expect(setup).toContain('DB_PASS=$(openssl rand -hex 32)');
+    expect(setup).toContain('DB_PASS=""');
+    expect(setup).not.toContain('${BLUE}DB-Passwort:${NC}');
+    expect(setup).not.toContain('DB-Passwort sicher notieren');
   });
 
   it('erzeugt neue Installationen mit den kanonischen aktuellen AI-Modellen', () => {
