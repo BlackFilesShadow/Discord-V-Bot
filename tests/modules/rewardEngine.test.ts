@@ -1,28 +1,29 @@
 /**
- * Phase 3, Schritt 4: Shadow-RewardEngine. Kernbeweis: dieselbe Kill-Zeile
- * erzeugt NIE zwei Auszahlungen (Unique admEventId+rewardRuleId).
+ * RewardEngine-Regression: gleiche Kill-Zeile erzeugt nie zwei Auszahlungen und
+ * ein Ereignis vor der Account-Verknuepfung wird dauerhaft uebersprungen.
  */
 import { decidePvpReward, runPvpRewardShadow, type RewardEngineClient } from '../../src/modules/nitrado/adm/rewardEngine';
 
 const RULE = { rewardRuleId: 'pvp:default', baseAmount: 100n };
+const EVENT_AT = new Date('2026-08-16T12:00:00.000Z');
 
 describe('decidePvpReward', () => {
   it('SKIPPED_INVALID_IDENTITY ohne Killer-ID', () => {
-    const d = decidePvpReward({ id: 'e1', actorGameId: 'victim', targetGameId: null }, null, RULE);
+    const d = decidePvpReward({ id: 'e1', actorGameId: 'victim', targetGameId: null, occurredAt: EVENT_AT }, null, RULE);
     expect(d.status).toBe('SKIPPED');
     expect(d.reasonCode).toBe('SKIPPED_INVALID_IDENTITY');
   });
   it('SKIPPED_ANTI_FARM bei Killer==Opfer', () => {
-    const d = decidePvpReward({ id: 'e1', actorGameId: 'x', targetGameId: 'x' }, 'u1', RULE);
+    const d = decidePvpReward({ id: 'e1', actorGameId: 'x', targetGameId: 'x', occurredAt: EVENT_AT }, 'u1', RULE);
     expect(d.reasonCode).toBe('SKIPPED_ANTI_FARM');
   });
-  it('SKIPPED_UNLINKED_KILLER wenn Killer nicht verlinkt', () => {
-    const d = decidePvpReward({ id: 'e1', actorGameId: 'v', targetGameId: 'k' }, null, RULE);
+  it('SKIPPED wenn Killer unverlinkt oder Ereignis vor dem Link liegt', () => {
+    const d = decidePvpReward({ id: 'e1', actorGameId: 'v', targetGameId: 'k', occurredAt: EVENT_AT }, null, RULE);
     expect(d.status).toBe('SKIPPED');
-    expect(d.reasonCode).toBe('SKIPPED_UNLINKED_KILLER');
+    expect(d.reasonCode).toBe('SKIPPED_UNLINKED_OR_PRELINK_KILLER');
   });
-  it('PENDING (WOULD_PAY) bei verlinktem Killer', () => {
-    const d = decidePvpReward({ id: 'e1', actorGameId: 'v', targetGameId: 'k' }, 'user-123', RULE);
+  it('PENDING (WOULD_PAY) bei zum Eventzeitpunkt verlinktem Killer', () => {
+    const d = decidePvpReward({ id: 'e1', actorGameId: 'v', targetGameId: 'k', occurredAt: EVENT_AT }, 'user-123', RULE);
     expect(d.status).toBe('PENDING');
     expect(d.userDiscordId).toBe('user-123');
     expect(d.calculated).toBe(100n);
@@ -30,9 +31,10 @@ describe('decidePvpReward', () => {
   });
 });
 
-describe('runPvpRewardShadow — Idempotenz', () => {
-  function makeClient(events: Array<{ id: string; actorGameId: string | null; targetGameId: string | null }>, links: Record<string, string>) {
+describe('runPvpRewardShadow — Idempotenz + Linkzeitpunkt', () => {
+  function makeClient(events: Array<{ id: string; actorGameId: string | null; targetGameId: string | null; occurredAt: Date | null }>) {
     const decided = new Set<string>();
+    const rows: Array<Record<string, unknown>> = [];
     const client: RewardEngineClient = {
       admEvent: { findMany: async () => events },
       rewardDecision: {
@@ -44,29 +46,39 @@ describe('runPvpRewardShadow — Idempotenz', () => {
             throw err;
           }
           decided.add(key);
+          rows.push(data);
           return {};
         },
       },
     };
-    return client;
+    return { client, rows };
   }
 
   const scope = { guildId: 'g1', nitradoConnId: 'c1' };
+  const linkAt = new Date('2026-08-16T12:00:00.000Z');
   const events = [
-    { id: 'e1', actorGameId: 'victim1', targetGameId: 'killer-linked' },
-    { id: 'e2', actorGameId: 'victim2', targetGameId: 'killer-unlinked' },
+    { id: 'before', actorGameId: 'victim1', targetGameId: 'killer', occurredAt: new Date('2026-08-16T11:59:59.000Z') },
+    { id: 'after', actorGameId: 'victim2', targetGameId: 'killer', occurredAt: new Date('2026-08-16T12:00:01.000Z') },
+    { id: 'unknown-time', actorGameId: 'victim3', targetGameId: 'killer', occurredAt: null },
   ];
-  const links: Record<string, string> = { 'killer-linked': 'user-1' };
-  const resolve = async (gameId: string): Promise<string | null> => links[gameId] ?? null;
+  const resolve = async (_gameId: string, occurredAt: Date | null): Promise<string | null> =>
+    occurredAt && occurredAt >= linkAt ? 'user-1' : null;
 
-  it('erster Lauf entscheidet alle, zweiter Lauf 0 (idempotent)', async () => {
-    const client = makeClient(events, links);
+  it('belohnt nur Ereignisse nach dem Link und entscheidet jeden Event nur einmal', async () => {
+    const { client, rows } = makeClient(events);
     const first = await runPvpRewardShadow(client, scope, RULE, resolve);
-    expect(first.decided).toBe(2);
-    expect(first.wouldPay).toBe(1);
-    expect(first.skipped).toBe(1);
+    expect(first).toEqual({ decided: 3, wouldPay: 1, skipped: 2 });
+    expect(rows.find(row => row.admEventId === 'before')).toMatchObject({
+      status: 'SKIPPED',
+      userDiscordId: null,
+      reasonCode: 'SKIPPED_UNLINKED_OR_PRELINK_KILLER',
+    });
+    expect(rows.find(row => row.admEventId === 'after')).toMatchObject({
+      status: 'PENDING',
+      userDiscordId: 'user-1',
+    });
 
     const second = await runPvpRewardShadow(client, scope, RULE, resolve);
-    expect(second.decided).toBe(0); // alle bereits entschieden -> keine Doppelauszahlung
+    expect(second.decided).toBe(0);
   });
 });
