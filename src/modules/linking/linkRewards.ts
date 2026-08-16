@@ -23,9 +23,10 @@ function isUniqueViolation(error: unknown): boolean {
 /**
  * Aktiviert die Reward-Epoche fuer eine verifizierte DayZ-Identitaet.
  *
- * `newLink=true` startet bei einer bereits bekannten Identitaet eine neue
- * Reward-Epoche. Die einmalige Startguthaben-Berechtigung wird dabei bewusst
- * NICHT wieder aktiviert: Unlink/Relink darf nie zum Claim-Mechanismus werden.
+ * Der Composite-Upsert macht den Link-Hook auch bei parallelen Retries
+ * race-safe. `newLink=true` startet fuer einen bereits bekannten Nutzer eine
+ * neue Reward-Epoche; die einmalige Startguthaben-Berechtigung wird dabei
+ * bewusst NICHT erneut aktiviert.
  */
 export async function activateLinkRewardState(
   scope: LinkRewardScope,
@@ -34,9 +35,9 @@ export async function activateLinkRewardState(
   secret: string,
   newLink: boolean,
   now: Date = new Date(),
-): Promise<void> {
+): Promise<Date> {
   const hash = identityHash(gameId, secret);
-  const current = await prisma.economyLinkRewardState.findUnique({
+  const row = await prisma.economyLinkRewardState.upsert({
     where: {
       guildId_nitradoConnId_userDiscordId: {
         guildId: scope.guildId,
@@ -44,26 +45,15 @@ export async function activateLinkRewardState(
         userDiscordId,
       },
     },
-    select: { id: true },
-  });
-
-  if (!current) {
-    await prisma.economyLinkRewardState.create({
-      data: {
-        guildId: scope.guildId,
-        nitradoConnId: scope.nitradoConnId,
-        userDiscordId,
-        identityHash: hash,
-        rewardEligibleFrom: now,
-        startBalanceEligible: true,
-      },
-    });
-    return;
-  }
-
-  await prisma.economyLinkRewardState.update({
-    where: { id: current.id },
-    data: newLink
+    create: {
+      guildId: scope.guildId,
+      nitradoConnId: scope.nitradoConnId,
+      userDiscordId,
+      identityHash: hash,
+      rewardEligibleFrom: now,
+      startBalanceEligible: true,
+    },
+    update: newLink
       ? {
           identityHash: hash,
           rewardEligibleFrom: now,
@@ -73,7 +63,9 @@ export async function activateLinkRewardState(
           identityHash: hash,
           unlinkedAt: null,
         },
+    select: { rewardEligibleFrom: true },
   });
+  return row.rewardEligibleFrom;
 }
 
 /** Unlink beendet sofort die Reward-Berechtigung, ohne Historie zu loeschen. */
@@ -146,6 +138,10 @@ export async function resolveRewardUserAt(
  * Die Berechtigung wird beim ersten modernen Link verbraucht — auch wenn
  * Economy oder Betrag zu diesem Zeitpunkt deaktiviert/0 sind. So gibt es keine
  * spaetere Retroaktivitaet durch Unlink/Relink oder eine Config-Aenderung.
+ *
+ * Zusaetzlich wird der Altbestand des frueheren Discord-Join-Systems erkannt:
+ * existiert bereits eine positive STARTBALANCE_JOIN-Transaktion, wird sie als
+ * historischer Claim uebernommen und niemals ein zweites Startguthaben gebucht.
  */
 export async function grantStartBalanceForLink(
   scope: LinkRewardScope,
@@ -178,6 +174,37 @@ export async function grantStartBalanceForLink(
 
   try {
     const granted = await prisma.$transaction(async tx => {
+      const legacyGrant = await tx.economyTransaction.findFirst({
+        where: {
+          guildId: scope.guildId,
+          nitradoConnId: scope.nitradoConnId,
+          userDiscordId,
+          type: 'STARTBALANCE_JOIN',
+          delta: { gt: 0n },
+        },
+        select: { createdAt: true, delta: true },
+        orderBy: { createdAt: 'asc' },
+      });
+
+      if (legacyGrant) {
+        await tx.economyLinkRewardState.updateMany({
+          where: {
+            guildId: scope.guildId,
+            nitradoConnId: scope.nitradoConnId,
+            userDiscordId,
+            unlinkedAt: null,
+            startBalanceEligible: true,
+            startBalanceGrantedAt: null,
+          },
+          data: {
+            startBalanceEligible: false,
+            startBalanceGrantedAt: legacyGrant.createdAt,
+            startBalanceGrantedAmount: legacyGrant.delta,
+          },
+        });
+        return false;
+      }
+
       const claim = await tx.economyLinkRewardState.updateMany({
         where: {
           guildId: scope.guildId,
