@@ -65,8 +65,10 @@ export async function getEconomyScopeMigrationState(
  * Economy. Solange Legacy-Daten nicht eindeutig zugeordnet sind, darf kein
  * Economy-/Casino-Pfad sie lesen oder mutieren.
  *
- * Bis alle Repository-Queries servergescopt sind, darf eine RESOLVED
- * Legacy-Economy ausserdem nur ueber ihren Primaerserver angesprochen werden.
+ * Eine RESOLVED Legacy-Economy bindet ausschliesslich die alten migrierten
+ * Zeilen an ihren Primaerserver. Alle heutigen Economy-/Casino-Repositories
+ * sind Guild+Gameserver-gescoppt; andere aktive Server duerfen deshalb mit
+ * eigenem, leerem Scope normal arbeiten und sehen niemals Legacy-Guthaben.
  */
 export async function assertEconomyScopeReady(
   guildId: GuildId,
@@ -77,11 +79,11 @@ export async function assertEconomyScopeReady(
   if (state.status !== 'RESOLVED' || !state.primaryNitradoConnId) {
     throw new EconomyMigrationRequiredError();
   }
-  if (state.primaryNitradoConnId !== nitradoConnId) {
-    throw new EconomyScopeMismatchError(
-      'Die vorhandene Legacy-Economy gehoert zum ausgewaehlten Primaerserver. Andere Server bleiben bis zur vollstaendigen serverbezogenen Kontoumstellung getrennt und ohne Zugriff auf Legacy-Guthaben.',
-    );
-  }
+  // RESOLVED bedeutet: alle alten NULL-gescopten Zeilen wurden exakt dem
+  // gespeicherten Primaerserver zugeordnet. Ein anderer Server ist danach ein
+  // eigener leerer Scope und darf sicher neue Economy-Daten anlegen.
+  if (state.primaryNitradoConnId === nitradoConnId) return;
+  return;
 }
 
 export interface ResolveLegacyEconomyResult {

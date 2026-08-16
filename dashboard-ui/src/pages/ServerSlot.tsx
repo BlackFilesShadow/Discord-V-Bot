@@ -14,6 +14,7 @@ import { useGuildLiveUpdates } from '@/lib/useGuildLiveUpdates';
 import { VirtualAccountsPanel } from '@/components/economy/VirtualAccountsPanel';
 import { LotteryPanel } from '@/components/economy/LotteryPanel';
 import { BlackMarketPanel } from '@/components/economy/BlackMarketPanel';
+import { EconomyScopePanel } from '@/components/economy/EconomyScopePanel';
 import { KillfeedTab } from '@/components/KillfeedTab';
 import { Settings, Shield, Coins, Link as LinkIcon, Trash2, Plus, Check, X, Banknote, Dice5, RefreshCw, Crosshair } from 'lucide-react';
 
@@ -226,6 +227,7 @@ export default function ServerSlot() {
             loading={economy.isLoading}
             onSave={patch => updateEconomy.mutate(patch)}
             pending={updateEconomy.isPending}
+            error={economy.isError ? (economy.error as Error).message : null}
           />
         )}
 
@@ -899,7 +901,7 @@ function EconomyOverview({ guildId, slot }: { guildId: string; slot: string }) {
 }
 
 function EconomyTab({
-  guildId, slot, data, loading, onSave, pending,
+  guildId, slot, data, loading, onSave, pending, error,
 }: {
   guildId: string;
   slot: string;
@@ -907,6 +909,7 @@ function EconomyTab({
   loading: boolean;
   onSave: (p: Partial<EconomyConfigState>) => void;
   pending: boolean;
+  error: string | null;
 }) {
   const channels = useQuery({
     queryKey: ['guild-channels', guildId],
@@ -918,10 +921,12 @@ function EconomyTab({
 
   return (
     <div className="space-y-6">
+      <EconomyScopePanel guildId={guildId} slot={slot} />
       <EconomyOverview guildId={guildId} slot={slot} />
       <Card>
         <CardHeader><CardTitle>Economy-Konfiguration</CardTitle></CardHeader>
         {loading && <p className="text-muted">Lade…</p>}
+        {error && <p className="text-danger text-sm">Economy-Konfiguration konnte nicht geladen werden: {error}</p>}
         {data && <EconomyForm value={data} onSave={onSave} pending={pending} />}
       </Card>
 

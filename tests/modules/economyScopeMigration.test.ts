@@ -68,7 +68,7 @@ describe('ECO-S03 Legacy-Economy Scope Migration', () => {
     await expect(assertEconomyScopeReady(guildId, connA)).rejects.toBeInstanceOf(EconomyMigrationRequiredError);
   });
 
-  it('blockiert Zugriff ueber einen anderen als den Legacy-Primaerserver', async () => {
+  it('laesst nach der Legacy-Aufloesung einen zweiten servergescoppten Economy-Scope zu', async () => {
     migrationFindUnique.mockResolvedValue({
       guildId,
       status: 'RESOLVED',
@@ -77,7 +77,7 @@ describe('ECO-S03 Legacy-Economy Scope Migration', () => {
       resolvedByDiscordId: actor,
       resolvedAt: new Date(),
     });
-    await expect(assertEconomyScopeReady(guildId, connB)).rejects.toBeInstanceOf(EconomyScopeMismatchError);
+    await expect(assertEconomyScopeReady(guildId, connB)).resolves.toBeUndefined();
   });
 
   it('verweigert eine Owner-Aufloesung auf einen fremden/inaktiven Slot', async () => {
