@@ -405,6 +405,7 @@ export async function answerQuestion(
     }
 
     const response = await callAI([
+      ...(dayzTechnical ? [{ role: 'system' as const, content: 'AI_TASK_PROFILE: reasoning' }] : []),
       { role: 'system', content: BOT_PERSONA },
       { role: 'system', content: getLiveTimeContext() },
       ...(wantKnowledgeBoundary ? [{ role: 'system' as const, content: getKnowledgeBoundary() }] : []),
