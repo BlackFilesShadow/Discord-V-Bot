@@ -71,6 +71,17 @@ describe('DayZ technical grounding preflight firewall', () => {
     expect(result?.answer).not.toContain('lootcategories.xml');
   });
 
+  it('does not hijack foreign config-file questions without DayZ context', () => {
+    expect(answerDayz129CatalogQuestion('Was macht die tsconfig.json?')).toBeNull();
+    expect(answerDayz129CatalogQuestion('Erklär mir pom.xml')).toBeNull();
+  });
+
+  it('still recognizes known DayZ files without requiring the word DayZ', () => {
+    const result = answerDayz129CatalogQuestion('Was macht die cfgweather.xml?');
+    expect(result?.topic).toBe('file');
+    expect(result?.answer).toContain('`cfgweather.xml`');
+  });
+
   it('does not hijack ordinary DayZ gameplay questions', () => {
     const result = answerDayz129CatalogQuestion('Wie funktioniert Blutverlust in DayZ?');
     expect(result).toBeNull();
