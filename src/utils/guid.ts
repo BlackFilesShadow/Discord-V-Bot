@@ -1,19 +1,21 @@
-import { v4 as uuidv4, validate as uuidValidate } from 'uuid';
-import crypto from 'crypto';
+import { randomBytes, randomUUID } from 'node:crypto';
+
+const UUID_V4_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 
 /**
- * Erzeugt eine kryptografisch sichere GUID (UUIDv4).
- * Sektion 1: Jeder Nutzer/Hersteller erhält eindeutige, kryptografisch sichere GUID.
+ * Erzeugt eine kryptografisch sichere GUID (UUIDv4) ohne zusaetzliche Runtime-Abhaengigkeit.
+ * Sektion 1: Jeder Nutzer/Hersteller erhaelt eindeutige, kryptografisch sichere GUID.
  */
 export function generateGuid(): string {
-  return uuidv4();
+  return randomUUID();
 }
 
 /**
- * Validiert ob ein String eine gueltige UUIDv4 ist.
+ * Validiert strikt eine UUIDv4. Andere UUID-Versionen sind fuer die interne
+ * GUID-Erzeugung bewusst nicht zugelassen.
  */
 export function isValidGuid(guid: string): boolean {
-  return uuidValidate(guid);
+  return UUID_V4_RE.test(guid);
 }
 
 /**
@@ -41,8 +43,8 @@ export function isValidBattleyeGuid(value: unknown): value is string {
 }
 
 /**
- * Erzeugt eine kryptografisch sichere zufällige ID (hex).
+ * Erzeugt eine kryptografisch sichere zufaellige ID (hex).
  */
 export function generateSecureId(length: number = 32): string {
-  return crypto.randomBytes(length).toString('hex');
+  return randomBytes(length).toString('hex');
 }
