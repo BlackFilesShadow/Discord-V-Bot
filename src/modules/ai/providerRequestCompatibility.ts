@@ -1,4 +1,5 @@
 import axios from 'axios';
+import { composePromptWithinBudget, getTotalPromptBudget, type PromptRole } from './promptBudget';
 
 const OPENAI_COMPATIBLE_HOSTS = new Set([
   'api.groq.com',
@@ -10,6 +11,16 @@ const OPENAI_COMPATIBLE_HOSTS = new Set([
 const GEMINI_MODELS_WITHOUT_LEGACY_SAMPLING = [
   'gemini-3.6-flash',
   'gemini-3.5-flash-lite',
+] as const;
+
+const HARD_SYSTEM_MARKERS = [
+  'AI_TASK_PROFILE:',
+  'Du bist V-Bot Prime',
+  'AUTORITATIVE ZEIT- UND DATUMSANGABEN',
+  'WICHTIG – Wissensstand:',
+  'DAYZ 1.29 – GEERDETE ERKLAERBASIS',
+  'DAYZ 1.29 – HARTE GROUNDING-REGELN',
+  'GEPRUEFTE DAYZ-ENGINE-/SERVER-KONFIGURATION:',
 ] as const;
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -30,19 +41,82 @@ function geminiModelFromPath(pathname: string): string | null {
   return match?.[1] ? decodeURIComponent(match[1]) : null;
 }
 
+function isMandatorySystemMessage(content: string, index: number): boolean {
+  if (index === 0) return true;
+  return HARD_SYSTEM_MARKERS.some((marker) => content.includes(marker));
+}
+
+function providerMessagePriority(role: string, content: string, index: number): number {
+  if (role !== 'system') return index;
+  if (content.includes('SECURITY-GRENZE FUER EXTERNE KONTEXTDATEN:')) return 90;
+  if (content.includes('NITRADO-BEDIENWEG (Hosting-Prozedur, nicht DayZ-Dateisemantik):')) return 85;
+  return 70;
+}
+
+function budgetOpenAiMessages(value: unknown): unknown {
+  if (!Array.isArray(value) || value.length === 0) return value;
+  if (!value.every((m) => isRecord(m) && typeof m.role === 'string' && typeof m.content === 'string')) return value;
+
+  const total = value.reduce((sum, raw) => sum + ((raw as Record<string, unknown>).content as string).length, 0);
+  if (total <= getTotalPromptBudget()) return value;
+
+  const lastIndex = value.length - 1;
+  return composePromptWithinBudget(value.map((raw, index) => {
+    const message = raw as Record<string, unknown>;
+    const role = message.role as string;
+    const content = message.content as string;
+    return {
+      role: (role === 'assistant' || role === 'system' ? role : 'user') as PromptRole,
+      content,
+      source: `provider-message-${index}`,
+      // Erste Systeminstruktion, harte Runtime-Regeln und aktuelle Userfrage
+      // bleiben Pflicht. Optionale Systemkontexte koennen nur als ganzer Block
+      // entfallen, niemals ohne ihre eigene Security-Grenze weiterleben.
+      required: (role === 'system' && isMandatorySystemMessage(content, index)) || index === lastIndex,
+      priority: providerMessagePriority(role, content, index),
+    };
+  }));
+}
+
+function budgetGeminiContents(value: unknown): unknown {
+  if (!Array.isArray(value) || value.length === 0) return value;
+  const entries = value.map((entry, index) => {
+    if (!isRecord(entry) || !Array.isArray(entry.parts)) return null;
+    const texts = entry.parts
+      .filter((part): part is Record<string, unknown> => isRecord(part) && typeof part.text === 'string')
+      .map((part) => part.text as string);
+    if (texts.length === 0) return null;
+    return { index, chars: texts.reduce((sum, text) => sum + text.length, 0) };
+  });
+  if (entries.some((entry) => entry === null)) return value;
+
+  const totalBudget = getTotalPromptBudget();
+  let total = (entries as Array<{ index: number; chars: number }>).reduce((sum, entry) => sum + entry.chars, 0);
+  if (total <= totalBudget) return value;
+
+  const lastIndex = value.length - 1;
+  const requiredLength = (entries as Array<{ index: number; chars: number }>)
+    .filter((entry) => entry.index === 0 || entry.index === lastIndex)
+    .reduce((sum, entry) => sum + entry.chars, 0);
+  if (requiredLength > totalBudget) {
+    throw new Error(`PROMPT_BUDGET_REQUIRED_OVERFLOW:${requiredLength}/${totalBudget}`);
+  }
+
+  const dropped = new Set<number>();
+  for (const entry of entries as Array<{ index: number; chars: number }>) {
+    if (total <= totalBudget) break;
+    if (entry.index === 0 || entry.index === lastIndex) continue;
+    dropped.add(entry.index);
+    total -= entry.chars;
+  }
+  if (total > totalBudget) throw new Error(`PROMPT_BUDGET_OVERFLOW:${total}/${totalBudget}`);
+  return value.filter((_entry, index) => !dropped.has(index));
+}
+
 /**
  * Normalisiert ausschliesslich bekannte V-Bot-AI-Provider-Requests.
- *
- * Hintergrund:
- * - mehrere OpenAI-kompatible Provider haben `max_tokens` inzwischen zugunsten
- *   von `max_completion_tokens` abgekuendigt;
- * - Groq akzeptiert die im alten V-Bot-Body gesetzten Presence-/Frequency-
- *   Penalties nicht als unterstuetzte Modellparameter;
- * - die aktuell von V-Bot verwendeten Gemini-3.x-Modelle verlangen das
- *   Entfernen der alten Sampling-Parameter temperature/top_p/top_k.
- *
- * Die Funktion ist absichtlich rein: keine Mutation des Eingabeobjekts und kein
- * Provider-Fallback/Retry. Routing bleibt Aufgabe von aiHandler/providerStats.
+ * Neben Request-Kompatibilitaet erzwingt AI-9 hier die letzte, providernahe
+ * Gesamtbudget-Grenze auf dem tatsaechlich versendeten Payload.
  */
 export function normalizeAiProviderRequest(
   requestUrl: string | undefined,
@@ -56,6 +130,7 @@ export function normalizeAiProviderRequest(
     && url.pathname.endsWith('/chat/completions')
   ) {
     const body: Record<string, unknown> = { ...data };
+    if (body.messages !== undefined) body.messages = budgetOpenAiMessages(body.messages);
 
     if (body.max_completion_tokens === undefined && body.max_tokens !== undefined) {
       body.max_completion_tokens = body.max_tokens;
@@ -63,25 +138,14 @@ export function normalizeAiProviderRequest(
     delete body.max_tokens;
 
     if (url.hostname === 'api.groq.com') {
-      // Groq dokumentiert diese beiden Felder weiterhin, aber derzeit als von
-      // keinem Modell unterstuetzt. Nicht mitsenden statt auf Ignore-Verhalten
-      // oder spaetere 400er zu vertrauen.
       delete body.presence_penalty;
       delete body.frequency_penalty;
-
-      // Groq empfiehlt temperature ODER top_p zu veraendern, nicht beide.
-      if (body.temperature !== undefined && body.top_p !== undefined) {
-        delete body.top_p;
-      }
+      if (body.temperature !== undefined && body.top_p !== undefined) delete body.top_p;
     }
 
     if (url.hostname === 'api.openai.com') {
       const model = typeof body.model === 'string' ? body.model : '';
       if (model.startsWith('gpt-5.6')) {
-        // GPT-5.6 ist ein Reasoning-Modell. Bis der spaetere task-spezifische
-        // Router reasoning.effort/Responses API gezielt benchmarkt, senden wir
-        // nur den kleinsten stabilen Chat-Completions-Parametersatz statt alte
-        // Sampling-Tuningwerte aus frueheren GPT-4-Defaults zu uebernehmen.
         delete body.temperature;
         delete body.top_p;
         delete body.presence_penalty;
@@ -97,11 +161,19 @@ export function normalizeAiProviderRequest(
     && url.pathname.endsWith(':generateContent')
   ) {
     const model = geminiModelFromPath(url.pathname);
-    if (!model || !(GEMINI_MODELS_WITHOUT_LEGACY_SAMPLING as readonly string[]).includes(model)) {
-      return data;
+    const isKnownModernModel = Boolean(
+      model && (GEMINI_MODELS_WITHOUT_LEGACY_SAMPLING as readonly string[]).includes(model),
+    );
+
+    if (!isKnownModernModel) {
+      if (data.contents === undefined) return data;
+      const boundedContents = budgetGeminiContents(data.contents);
+      if (boundedContents === data.contents) return data;
+      return { ...data, contents: boundedContents };
     }
 
     const body: Record<string, unknown> = { ...data };
+    if (body.contents !== undefined) body.contents = budgetGeminiContents(body.contents);
     if (!isRecord(body.generationConfig)) return body;
 
     const generationConfig: Record<string, unknown> = { ...body.generationConfig };
