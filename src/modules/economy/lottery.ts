@@ -183,6 +183,9 @@ export async function createLotteryEmbed(round: LotteryRoundView): Promise<Embed
     lines.push(`🎫 **Tickets:** ${round.totalTickets} · max. ${round.maxTicketsPerUser} pro User`);
     lines.push(`⏰ **Endet:** <t:${Math.floor(round.endsAt.getTime() / 1000)}:R>`);
     lines.push('', 'Mit dem Button kaufst du **1 Ticket aus deinem Wallet**. Mehrere Tickets kannst du mit `/lottery buy` kaufen.');
+  } else if (round.status === 'ACTIVE') {
+    lines.push('⏳ **Teilnahme beendet. Die Auswertung läuft.**');
+    lines.push('Neue Ticketkäufe sind geschlossen; Ziehung oder Refund wird automatisch verarbeitet.');
   } else if (round.status === 'DRAWING') {
     lines.push('🎲 **Ziehung läuft.** Die Runde ist fuer neue Kaeufe geschlossen.');
     lines.push(`💰 **Finaler Pot:** ${(round.finalPot ?? round.potBalance).toLocaleString('de-DE')} ${cfg.emoji}`);

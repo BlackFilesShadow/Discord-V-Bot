@@ -44,6 +44,7 @@ describe('Economy-Lotterie — Runtime/Dashboard Integration', () => {
     expect(lottery).toContain('Lotterie-Embed-Refresh nach Button-Kauf');
     expect(lottery).toContain('const potName = `Lotterie ${roundId}`;');
     expect(lottery).toContain('nameKey: potName.toLowerCase()');
+    expect(lottery).toContain('Teilnahme beendet. Die Auswertung läuft.');
     expect(index).toContain("import { startLotteryScheduler, stopLotteryScheduler } from './modules/economy/lottery';");
     expect(index).toContain('startLotteryScheduler(client);');
     expect(index).toContain('stopLotteryScheduler();');
