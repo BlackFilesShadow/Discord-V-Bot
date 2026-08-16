@@ -98,7 +98,7 @@ function scopeKey(guildId: GuildId, nitradoConnId: NitradoConnId): string {
 
 function makePurchaseKey(roundId: string, idempotencyKey: string): string {
   const key = idempotencyKey.normalize('NFKC').trim();
-  if (!key || key.length > 80 || !/^[A-Za-z0-9._:-]+$/.test(key)) throw new Error('Kauf-Idempotency-Key ungueltig.');
+  if (!key || key.length > 40 || !/^[A-Za-z0-9._:-]+$/.test(key)) throw new Error('Kauf-Idempotency-Key ungueltig.');
   return `lottery-purchase:${roundId}:${key}`;
 }
 
@@ -327,22 +327,26 @@ export async function buyLotteryTickets(args: {
 }): Promise<{ booked: boolean; ticketCount: number; totalPaid: bigint; refundedAt: Date | null; round: LotteryRoundView }> {
   if (!Number.isInteger(args.quantity) || args.quantity < 1 || args.quantity > 100) throw new Error('Pro Kauf sind 1..100 Tickets erlaubt.');
   const key = makePurchaseKey(args.roundId, args.idempotencyKey);
+  const initial = await fetchRoundViewById(args.roundId);
+  if (!initial || initial.guildId !== String(args.guildId) || initial.nitradoConnId !== String(args.nitradoConnId)) throw new Error('Lotterie nicht gefunden.');
+  const amount = initial.ticketPrice * BigInt(args.quantity);
   const existing = await prisma.lotteryPurchase.findUnique({ where: { idempotencyKey: key } });
   if (existing) {
-    if (existing.userDiscordId !== String(args.userDiscordId) || existing.ticketCount !== args.quantity || existing.roundId !== args.roundId) {
+    if (existing.userDiscordId !== String(args.userDiscordId)
+      || existing.ticketCount !== args.quantity
+      || existing.roundId !== args.roundId
+      || existing.guildId !== String(args.guildId)
+      || existing.nitradoConnId !== String(args.nitradoConnId)
+      || existing.amount !== amount) {
       throw new Error('Kauf-Idempotency-Key wurde mit anderen Daten wiederverwendet.');
     }
     const entry = await getLotteryEntry(args.roundId, args.userDiscordId);
-    const round = await fetchRoundViewById(args.roundId);
-    if (!entry || !round) throw new Error('Bestaetigter Lotteriekauf ist inkonsistent.');
-    return { booked: false, ...entry, round };
+    if (!entry) throw new Error('Bestaetigter Lotteriekauf ist inkonsistent.');
+    return { booked: false, ...entry, round: initial };
   }
 
-  const initial = await fetchRoundViewById(args.roundId);
-  if (!initial || initial.guildId !== String(args.guildId) || initial.nitradoConnId !== String(args.nitradoConnId)) throw new Error('Lotterie nicht gefunden.');
   const cfg = await getConfig(args.guildId, args.nitradoConnId);
   if (!cfg.enabled) throw new Error('Economy ist auf diesem Gameserver deaktiviert.');
-  const amount = initial.ticketPrice * BigInt(args.quantity);
 
   const transfer = await systemUserToVirtualAccount({
     idempotencyKey: key,
@@ -368,6 +372,21 @@ export async function buyLotteryTickets(args: {
       if (!round) throw new Error('Lotterie nicht gefunden.');
       if (round.status !== 'ACTIVE' || round.endsAt.getTime() <= Date.now()) throw new Error('Lotterie ist bereits geschlossen.');
       if (round.potAccountId !== initial.potAccountId || round.ticketPrice !== initial.ticketPrice) throw new Error('Lotterie-Konfiguration hat sich unerwartet veraendert.');
+      const replayPurchases = await raw.$queryRawUnsafe<Array<{ roundId: string; guildId: string; nitradoConnId: string; userDiscordId: string; ticketCount: number; amount: bigint }>>(
+        'SELECT "roundId", "guildId", "nitradoConnId", "userDiscordId", "ticketCount", "amount" FROM "LotteryPurchase" WHERE "idempotencyKey"=$1 LIMIT 1',
+        key,
+      );
+      const replay = replayPurchases[0];
+      if (replay) {
+        const same = replay.roundId === args.roundId
+          && replay.guildId === String(args.guildId)
+          && replay.nitradoConnId === String(args.nitradoConnId)
+          && replay.userDiscordId === String(args.userDiscordId)
+          && replay.ticketCount === args.quantity
+          && replay.amount === amount;
+        if (!same) throw new Error('Kauf-Idempotency-Key wurde mit anderen Daten wiederverwendet.');
+        return { firstPurchase: false, replay: true };
+      }
       const entries = await raw.$queryRawUnsafe<DbLotteryEntry[]>(
         'SELECT "id", "roundId", "guildId", "nitradoConnId", "userDiscordId", "ticketCount", "totalPaid", "refundedAt" FROM "LotteryEntry" WHERE "roundId"=$1 AND "userDiscordId"=$2 LIMIT 1',
         args.roundId, String(args.userDiscordId),
@@ -429,7 +448,8 @@ async function prepareSettlement(roundId: string): Promise<LotteryStatus | null>
     );
     const pot = pots[0];
     if (!pot || pot.kind !== 'LOTTERY_POT' || pot.status === 'ARCHIVED') throw new Error('Lotterie-Pot ist inkonsistent.');
-    if (totalTickets !== round.totalTickets || entries.length !== round.participantCount || pot.balance !== totalPaid) {
+    const entryScopeMismatch = entries.some(entry => entry.guildId !== round.guildId || entry.nitradoConnId !== round.nitradoConnId);
+    if (entryScopeMismatch || totalTickets !== round.totalTickets || entries.length !== round.participantCount || pot.balance !== totalPaid) {
       throw new Error(`Lotterie-Invariante verletzt: Tickets/Teilnehmer/Pot stimmen nicht ueberein (${roundId}).`);
     }
 
@@ -531,7 +551,7 @@ async function processRefunds(round: LotteryRoundView): Promise<boolean> {
 async function announceTerminalRound(client: Client, roundId: string): Promise<void> {
   const round = await fetchRoundViewById(roundId);
   if (!round || (round.status !== 'FINISHED' && round.status !== 'REFUNDED')) return;
-  await refreshLotteryMessage(client, roundId).catch(error => logger.warn(`Lotterie-Message-Update ${roundId}: ${(error as Error).message}`));
+  await refreshLotteryMessage(client, roundId);
   if (round.announcedAt) return;
   if (round.status === 'REFUNDED') {
     await prisma.lotteryRound.updateMany({ where: { id: round.id, status: 'REFUNDED', announcedAt: null }, data: { announcedAt: new Date() } });
