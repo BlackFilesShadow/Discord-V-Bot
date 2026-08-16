@@ -94,12 +94,13 @@ describe('AI task classifier', () => {
     ])).toBe('chat');
   });
 
-  it('providerStats nimmt einen Task entgegen und kombiniert Capability mit Health', () => {
+  it('providerStats kombiniert Capability mit Health und faellt bei Spezialtasks geschlossen aus', () => {
     const source = fs.readFileSync(path.join(process.cwd(), 'src/modules/ai/providerStats.ts'), 'utf8');
     expect(source).toContain("getRankedProviders(task: AiTaskProfile = 'chat')");
     expect(source).toContain('providerSupportsTask');
     expect(source).toContain('taskAffinity');
-    expect(source).toContain('const pool = capable.length > 0 ? capable : candidates');
+    expect(source).toContain('const scored = capable');
+    expect(source).not.toContain('capable.length > 0 ? capable : candidates');
   });
 
   it('aiHandler klassifiziert zentral in callAI und leitet den Task ins Ranking weiter', () => {
