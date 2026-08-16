@@ -16,7 +16,7 @@ export interface CommandClassification {
 }
 
 export const DASHBOARD_EXTRA = new Set<string>([
-  'giveaway', 'poll', 'ticket', 'factions', 'balance', 'bank', 'pay', 'transfer', 'virtual-account', 'lottery',
+  'giveaway', 'poll', 'ticket', 'factions', 'balance', 'bank', 'pay', 'transfer', 'virtual-account', 'lottery', 'black-market',
 ]);
 
 const ADMIN_EXTRA_NAMES = new Set<string>([
@@ -47,13 +47,13 @@ export const MOVED_TO_DASHBOARD = new Set<string>([
  * Loader-Normalisieren nicht mehr im Live-Inventar auftauchen.
  */
 export const SPEC_KEEP_COMMANDS = new Set<string>([
-  'ai', 'appeal', 'ban', 'kick', 'mute', 'warn', 'download', 'upload',
+  'ai', 'appeal', 'ban', 'kick', 'mute', 'warn', 'case', 'download', 'upload',
   'register', 'giveaway', 'help', 'leaderboard', 'level', 'poll',
   'search', 'ticket', 'balance', 'bank', 'blackjack', 'coinflip', 'deposit',
   'dice', 'factions', 'join', 'leave',
   'link', 'unlink', 'links', 'link-info', 'link-panel',
   'force-link', 'force-unlink', 'confirm-action',
-  'pay', 'slot', 'transfer', 'withdraw', 'virtual-account', 'lottery',
+  'pay', 'slot', 'transfer', 'withdraw', 'virtual-account', 'lottery', 'black-market',
   'whitelist-antrag', 'whitelist-add', 'whitelist-remove', 'whitelist',
   'perm-add', 'perm-remove', 'perms',
   'server-ban', 'server-unban', 'server-ban-list',
