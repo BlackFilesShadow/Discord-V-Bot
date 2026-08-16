@@ -22,7 +22,7 @@ import { startPollScheduler, stopPollScheduler } from './modules/polls/pollSyste
 import { startRateLimitCleanup, stopRateLimitCleanup } from './utils/rateLimiter';
 import { startReminderScheduler, stopReminderScheduler } from './modules/reminders/reminderScheduler';
 import { startDashboard } from './dashboard/server';
-import { processExpiredCases } from './modules/moderation/caseManager';
+import { processExpiredCasesSafely } from './modules/moderation/caseExpiry';
 import { acquireSingletonLock } from './utils/singleton';
 import { assertProductionEnv } from './utils/envValidation';
 import { startNitradoRuntime, type NitradoRuntimeHandle } from './modules/nitrado/runtime';
@@ -203,7 +203,7 @@ async function main(): Promise<void> {
   const moderationTimer = setInterval(async () => {
     try {
       for (const guild of client.guilds.cache.values()) {
-        const n = await processExpiredCases(guild);
+        const n = await processExpiredCasesSafely(guild);
         if (n > 0) logger.info(`Moderation: ${n} abgelaufene Cases aufgehoben (Guild ${guild.id}).`);
       }
     } catch (err) {
