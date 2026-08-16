@@ -95,14 +95,14 @@ describe('User -> virtuelles Konto', () => {
     expect(debit.slice(1, 5)).toEqual([String(G), String(C), String(U), 75n]);
 
     const entry = sqlCalls('INSERT INTO "EconomyVirtualAccountEntry"')[0];
-    expect(entry[2]).toBe('discord-virtual-pay:abc');
+    expect(entry[2]).toBe(`virtual:${G}:${C}:discord-virtual-pay:abc`);
     expect(entry[3]).toBe(String(G));
     expect(entry[4]).toBe(String(C));
     expect(entry[5]).toBe('virtual-1');
     expect(entry[6]).toBe(75n);
 
     const ledger = sqlCalls('INSERT INTO "EconomyLedgerEntry"')[0];
-    expect(ledger[2]).toBe('discord-virtual-pay:abc:user');
+    expect(ledger[2]).toBe(`virtual:${G}:${C}:discord-virtual-pay:abc:user`);
     expect(ledger[3]).toBe(String(G));
     expect(ledger[4]).toBe(String(C));
     expect(ledger[5]).toBe(String(U));

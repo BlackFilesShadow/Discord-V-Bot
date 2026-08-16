@@ -154,7 +154,10 @@ economyVirtualAccountsRouter.post('/:accountId/payout', requireGuildPermission('
   let amount: bigint;
   try { amount = parseAmount(body.amount); }
   catch (error) { res.status(400).json({ error: (error as Error).message }); return; }
-  const targetPocket: EconomyPocket = body.targetPocket === 'BANK' ? 'BANK' : body.targetPocket === 'WALLET' ? 'WALLET' : 'WALLET';
+  let targetPocket: EconomyPocket;
+  if (body.targetPocket === undefined || body.targetPocket === 'WALLET') targetPocket = 'WALLET';
+  else if (body.targetPocket === 'BANK') targetPocket = 'BANK';
+  else { res.status(400).json({ error: 'targetPocket muss WALLET oder BANK sein.' }); return; }
   if (body.reason !== undefined && (typeof body.reason !== 'string' || body.reason.trim().length < 3 || body.reason.length > 180)) {
     res.status(400).json({ error: 'reason muss 3..180 Zeichen enthalten.' }); return;
   }

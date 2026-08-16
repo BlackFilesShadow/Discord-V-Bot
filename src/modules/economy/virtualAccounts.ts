@@ -81,7 +81,7 @@ export interface VirtualAccountRawDb {
 }
 
 const VIRTUAL_ACCOUNT_NAME_MAX = 80;
-const IDEMPOTENCY_KEY_MAX = 160;
+const IDEMPOTENCY_KEY_MAX = 80;
 const REASON_MAX = 180;
 
 function db(): VirtualAccountRawDb {
@@ -122,6 +122,11 @@ function assertOperationKey(key: string): void {
   if (!key || key.length > IDEMPOTENCY_KEY_MAX || /[\r\n\t\u0000-\u001f\u007f]/.test(key)) {
     throw new Error('Idempotency-Key ungueltig.');
   }
+}
+
+function scopedOperationKey(guildId: GuildId, nitradoConnId: NitradoConnId, key: string): string {
+  assertOperationKey(key);
+  return `virtual:${guildId}:${nitradoConnId}:${key}`;
 }
 
 async function expireDueVirtualAccounts(
@@ -256,8 +261,12 @@ export async function createVirtualAccount(args: {
     if (!rows[0]) throw new Error('Virtuelles Konto konnte nicht erstellt werden.');
     return toVirtualAccount(rows[0]);
   } catch (error) {
-    const code = typeof error === 'object' && error !== null ? (error as { code?: string }).code : undefined;
-    if (code === '23505' || code === 'P2002') throw new Error('Ein virtuelles Konto mit diesem Namen existiert bereits auf diesem Gameserver.');
+    const candidate = typeof error === 'object' && error !== null
+      ? error as { code?: string; meta?: { code?: string } }
+      : {};
+    if (candidate.code === '23505' || candidate.code === 'P2002' || candidate.meta?.code === '23505') {
+      throw new Error('Ein virtuelles Konto mit diesem Namen existiert bereits auf diesem Gameserver.');
+    }
     throw error;
   }
 }
@@ -315,7 +324,7 @@ export async function transferUserToVirtualAccount(args: {
 }): Promise<{ booked: boolean; account: VirtualAccountRow }> {
   if (args.amount <= 0n) throw new Error('Betrag muss > 0 sein.');
   if (args.sourcePocket !== 'WALLET' && args.sourcePocket !== 'BANK') throw new Error('Quellkonto ungueltig.');
-  assertOperationKey(args.idempotencyKey);
+  const operationKey = scopedOperationKey(args.guildId, args.nitradoConnId, args.idempotencyKey);
   await assertEconomyScopeReady(args.guildId, args.nitradoConnId);
   const reason = normalizeReason(args.reason, 'Ueberweisung auf virtuelles Konto');
 
@@ -329,7 +338,7 @@ export async function transferUserToVirtualAccount(args: {
 
     const claimed = await raw.$executeRawUnsafe(
       'INSERT INTO "EconomyVirtualAccountEntry" ("id", "idempotencyKey", "guildId", "nitradoConnId", "virtualAccountId", "delta", "entryType", "sourcePocket", "actorDiscordId", "userDiscordId", "reason", "sourceRef", "createdAt") VALUES ($1,$2,$3,$4,$5,$6,\'USER_DEPOSIT\',$7,$8,$9,$10,$11,CURRENT_TIMESTAMP) ON CONFLICT ("idempotencyKey") DO NOTHING',
-      randomUUID(), args.idempotencyKey, String(args.guildId), String(args.nitradoConnId), args.virtualAccountId,
+      randomUUID(), operationKey, String(args.guildId), String(args.nitradoConnId), args.virtualAccountId,
       args.amount, args.sourcePocket, String(args.fromUserId), String(args.fromUserId), reason, `virtual-account:${args.virtualAccountId}`,
     );
     if (claimed !== 1) return { booked: false, account: toVirtualAccount(account) };
@@ -348,7 +357,7 @@ export async function transferUserToVirtualAccount(args: {
     if (!targetRows[0]) throw new Error('Virtuelles Konto konnte nicht aktualisiert werden.');
 
     await writeUserAudit(raw, {
-      idempotencyKey: args.idempotencyKey,
+      idempotencyKey: operationKey,
       guildId: args.guildId,
       nitradoConnId: args.nitradoConnId,
       userDiscordId: args.fromUserId,
@@ -376,7 +385,7 @@ export async function transferVirtualAccountToUser(args: {
 }): Promise<{ booked: boolean; account: VirtualAccountRow }> {
   if (args.amount <= 0n) throw new Error('Betrag muss > 0 sein.');
   if (args.targetPocket !== 'WALLET' && args.targetPocket !== 'BANK') throw new Error('Zielkonto ungueltig.');
-  assertOperationKey(args.idempotencyKey);
+  const operationKey = scopedOperationKey(args.guildId, args.nitradoConnId, args.idempotencyKey);
   await assertEconomyScopeReady(args.guildId, args.nitradoConnId);
   const reason = normalizeReason(args.reason, 'Auszahlung aus virtuellem Konto');
 
@@ -389,7 +398,7 @@ export async function transferVirtualAccountToUser(args: {
 
     const claimed = await raw.$executeRawUnsafe(
       'INSERT INTO "EconomyVirtualAccountEntry" ("id", "idempotencyKey", "guildId", "nitradoConnId", "virtualAccountId", "delta", "entryType", "sourcePocket", "actorDiscordId", "userDiscordId", "reason", "sourceRef", "createdAt") VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,CURRENT_TIMESTAMP) ON CONFLICT ("idempotencyKey") DO NOTHING',
-      randomUUID(), args.idempotencyKey, String(args.guildId), String(args.nitradoConnId), args.virtualAccountId,
+      randomUUID(), operationKey, String(args.guildId), String(args.nitradoConnId), args.virtualAccountId,
       -args.amount, args.entryType ?? 'PAYOUT', args.targetPocket, args.actorDiscordId ? String(args.actorDiscordId) : null,
       String(args.toUserId), reason, `virtual-account:${args.virtualAccountId}`,
     );
@@ -410,7 +419,7 @@ export async function transferVirtualAccountToUser(args: {
     if (userChanged !== 1) throw new Error('Zielkonto konnte nicht aktualisiert werden.');
 
     await writeUserAudit(raw, {
-      idempotencyKey: args.idempotencyKey,
+      idempotencyKey: operationKey,
       guildId: args.guildId,
       nitradoConnId: args.nitradoConnId,
       userDiscordId: args.toUserId,

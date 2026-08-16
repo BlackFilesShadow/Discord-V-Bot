@@ -70,6 +70,7 @@ describe('virtuelle Economy-Konten — Production-Invarianten', () => {
     const transactionCount = (service.match(/return prisma\.\$transaction\(async tx =>/g) ?? []).length;
     expect(transactionCount).toBeGreaterThanOrEqual(3);
     expect(service).toContain('ON CONFLICT ("idempotencyKey") DO NOTHING');
+    expect(service).toContain('return `virtual:${guildId}:${nitradoConnId}:${key}`;');
     expect(service).toContain('`${args.idempotencyKey}:user`');
     expect(service).toContain('`virtual-account:${args.virtualAccountId}`');
   });
