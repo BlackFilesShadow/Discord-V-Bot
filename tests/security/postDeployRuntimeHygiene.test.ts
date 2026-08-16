@@ -1,5 +1,5 @@
 import fs from 'node:fs';
-import path from 'path';
+import path from 'node:path';
 
 const root = process.cwd();
 const awareness = fs.readFileSync(path.join(root, 'src', 'modules', 'ai', 'guildAwareness.ts'), 'utf8');
