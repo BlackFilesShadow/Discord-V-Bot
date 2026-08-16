@@ -37,9 +37,9 @@ describe('virtuelle Economy-Konten — Production-Invarianten', () => {
     expect(migration).not.toMatch(/EconomyVirtualAccount_expiry_idx[\s\S]{0,180}WHERE\s+"expiresAt"/);
   });
 
-  it('mountet die REST-Oberflaeche vor dem allgemeinen Economy-Router und hinter dem Scope-Guard', () => {
-    const virtualMount = "v2Router.use('/guilds/:guildId/economy/virtual-accounts', requireSafeDashboardEconomyScope, economyVirtualAccountsRouter);";
-    const genericMount = "v2Router.use('/guilds/:guildId/economy', requireSafeDashboardEconomyScope, economyRouter);";
+  it('mountet die REST-Oberflaeche vor dem allgemeinen Economy-Router und hinter Domain-Auth plus Scope-Guard', () => {
+    const virtualMount = "v2Router.use('/guilds/:guildId/economy/virtual-accounts', requireEconomyDashboardAccess, requireSafeDashboardEconomyScope, economyVirtualAccountsRouter);";
+    const genericMount = "v2Router.use('/guilds/:guildId/economy', requireEconomyDashboardAccess, requireSafeDashboardEconomyScope, economyRouter);";
     expect(v2).toContain(virtualMount);
     expect(v2.indexOf(virtualMount)).toBeLessThan(v2.indexOf(genericMount));
     expect(routes).toContain("requireGuildPermission('economy.view')");
