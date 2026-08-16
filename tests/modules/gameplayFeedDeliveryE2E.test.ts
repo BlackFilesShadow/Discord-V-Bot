@@ -205,11 +205,11 @@ describe('produktive ADM -> Discord Gameplay-Feed-Kette', () => {
     expect(embed.title).toBe('💀 PvP-Kill');
     expect(embed.fields).toEqual(expect.arrayContaining([
       expect.objectContaining({ name: 'Opfer', value: 'Victim' }),
-      expect.objectContaining({ name: 'Töter', value: 'Killer' }),
+      expect.objectContaining({ name: 'Killer', value: 'Killer' }),
       expect.objectContaining({ name: 'Waffe', value: 'M4-A1' }),
       expect.objectContaining({ name: 'Distanz', value: '42.5 m' }),
       expect.objectContaining({ name: 'Opfer-Position', value: '[100,200,10](https://www.izurvive.com/#location=100;200;6)' }),
-      expect.objectContaining({ name: 'Töter-Position', value: '[110,210,10](https://www.izurvive.com/#location=110;210;6)' }),
+      expect.objectContaining({ name: 'Killer-Position', value: '[110,210,10](https://www.izurvive.com/#location=110;210;6)' }),
     ]));
     expect(embed.footer).toBeUndefined();
     expect(embed.timestamp).toBeUndefined();
