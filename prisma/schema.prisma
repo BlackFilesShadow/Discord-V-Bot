@@ -1794,6 +1794,67 @@ model EconomyAccount {
   @@index([guildId, nitradoConnId], map: "EconomyAccount_guildId_nitradoConnId_idx")
 }
 
+
+// Virtuelle/temporäre Economy-Konten (Etappe 6A).
+// Neue Konten sind ausnahmslos Guild+Gameserver-gescoppt. CUSTOM dient freien
+// Community-Kassen; LOTTERY_POT und MARKET_VENDOR werden von den Folgeetappen
+// auf derselben atomaren Infrastruktur verwendet.
+enum EconomyVirtualAccountKind {
+  CUSTOM
+  LOTTERY_POT
+  MARKET_VENDOR
+}
+
+enum EconomyVirtualAccountStatus {
+  ACTIVE
+  EXPIRED
+  ARCHIVED
+}
+
+model EconomyVirtualAccount {
+  id                    String                      @id @default(cuid())
+  guildId               String
+  nitradoConnId         String
+  kind                  EconomyVirtualAccountKind   @default(CUSTOM)
+  name                  String                      @db.VarChar(80)
+  nameKey               String                      @db.VarChar(80)
+  balance               BigInt                      @default(0)
+  status                EconomyVirtualAccountStatus @default(ACTIVE)
+  acceptUserTransfers   Boolean                     @default(true)
+  expiresAt             DateTime?
+  archivedAt            DateTime?
+  archivedByDiscordId   String?
+  createdByDiscordId    String
+  createdAt             DateTime                    @default(now())
+  updatedAt             DateTime                    @updatedAt
+  entries               EconomyVirtualAccountEntry[]
+
+  @@unique([guildId, nitradoConnId, nameKey], name: "guildServerNameKey", map: "EconomyVirtualAccount_guild_conn_name_key")
+  @@index([guildId, nitradoConnId, status], map: "EconomyVirtualAccount_guild_conn_status_idx")
+  @@index([guildId, nitradoConnId, expiresAt], map: "EconomyVirtualAccount_expiry_idx")
+  @@index([guildId, nitradoConnId, kind], map: "EconomyVirtualAccount_kind_idx")
+}
+
+model EconomyVirtualAccountEntry {
+  id                 String                @id @default(cuid())
+  idempotencyKey     String                @unique @db.VarChar(200)
+  guildId            String
+  nitradoConnId      String
+  virtualAccountId   String
+  virtualAccount     EconomyVirtualAccount @relation(fields: [virtualAccountId], references: [id], onDelete: Restrict)
+  delta              BigInt
+  entryType          String                @db.VarChar(40)
+  sourcePocket       String?               @db.VarChar(10)
+  actorDiscordId     String?
+  userDiscordId      String?
+  reason             String?               @db.VarChar(200)
+  sourceRef          String?               @db.VarChar(200)
+  createdAt          DateTime              @default(now())
+
+  @@index([guildId, nitradoConnId, virtualAccountId, createdAt], map: "EconomyVirtualAccountEntry_account_created_idx")
+  @@index([guildId, nitradoConnId, userDiscordId, createdAt], map: "EconomyVirtualAccountEntry_user_created_idx")
+}
+
 enum EconomyTxType {
   PAY
   ADMIN_PAY

@@ -11,6 +11,7 @@ import { Switch } from '@/components/ui/Switch';
 import { Select } from '@/components/ui/Select';
 import { EmojiPicker } from '@/components/ui/EmojiPicker';
 import { useGuildLiveUpdates } from '@/lib/useGuildLiveUpdates';
+import { VirtualAccountsPanel } from '@/components/economy/VirtualAccountsPanel';
 import { Settings, Shield, Coins, Link as LinkIcon, Trash2, Plus, Check, X, Banknote, Dice5, RefreshCw } from 'lucide-react';
 
 type Tab = 'settings' | 'whitelist' | 'economy' | 'links';
@@ -879,6 +880,8 @@ function EconomyTab({
           />
         </Card>
       )}
+
+      <VirtualAccountsPanel guildId={guildId} />
 
       <Card>
         <CardHeader><CardTitle><span className="inline-flex items-center gap-2"><Dice5 className="h-4 w-4" />Casino-Games</span></CardTitle></CardHeader>
