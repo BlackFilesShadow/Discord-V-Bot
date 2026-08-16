@@ -1,7 +1,7 @@
 import { useState } from 'react';
 import { Link, useParams } from 'react-router-dom';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
-import { Plus, Trash2, KeyRound, Server as ServerIcon, Shield, AlertTriangle, ChevronRight, Ticket, Settings2, Send, Power, Tag, Activity, Users, Crosshair, RotateCcw, Sparkles, Layers, ToggleLeft, Rss, Languages } from 'lucide-react';
+import { Plus, Trash2, KeyRound, Server as ServerIcon, Shield, AlertTriangle, ChevronRight, Ticket, Settings2, Send, Power, Tag, Activity, Users, RotateCcw, Sparkles, Layers, ToggleLeft, Rss, Languages } from 'lucide-react';
 import { api, ApiError } from '@/lib/api';
 import { Shell } from '@/components/Shell';
 import { Card, CardHeader, CardTitle, CardDesc } from '@/components/ui/Card';
@@ -20,7 +20,7 @@ import { ReactionEmbedsTab } from '@/components/ReactionEmbedsTab';
 import { FeedsTab } from '@/components/FeedsTab';
 import { TranslatedPostsTab } from '@/components/TranslatedPostsTab';
 
-type Tab = 'nitrado' | 'aliases' | 'permissions' | 'tickets' | 'factions' | 'killfeed' | 'welcome' | 'embeds' | 'reaction-embeds' | 'feeds' | 'translate' | 'audit';
+type Tab = 'nitrado' | 'aliases' | 'permissions' | 'tickets' | 'factions' | 'welcome' | 'embeds' | 'reaction-embeds' | 'feeds' | 'translate' | 'audit';
 
 interface TabDef {
   key: Tab;
@@ -35,7 +35,6 @@ const TABS: ReadonlyArray<TabDef> = [
   { key: 'permissions', label: 'Berechtigungen', icon: Shield, ownerOnly: true },
   { key: 'tickets', label: 'Tickets', icon: Ticket },
   { key: 'factions', label: 'Fraktionssystem', icon: Users },
-  { key: 'killfeed', label: 'Killfeed', icon: Crosshair },
   { key: 'welcome', label: 'Willkommen', icon: Sparkles },
   { key: 'embeds', label: 'Eingebettete Nachrichten', icon: Layers },
   { key: 'reaction-embeds', label: 'Reaktions Embeds', icon: ToggleLeft },
@@ -159,12 +158,11 @@ export default function Server() {
               <p className="text-muted text-sm">{dash.data.slots.length} Slots &middot; {dash.data.grantsCount} delegierte Berechtigungen</p>
             </header>
 
-            {tab === 'nitrado' && guildId && <NitradoTab guildId={guildId} isOwner={isOwner} slots={dash.data.slots} />}
+            {tab === 'nitrado' && guildId && <NitradoTab guildId={guildId} isOwner={isOwner} canManageKillfeed={isOwner || hasFullAccess || perms.includes('killfeed.manage')} slots={dash.data.slots} />}
             {tab === 'aliases' && guildId && isOwner && <AliasesTab guildId={guildId} slots={dash.data.slots} />}
             {tab === 'permissions' && guildId && isOwner && <PermissionsTab guildId={guildId} />}
             {tab === 'tickets' && guildId && <TicketsTab guildId={guildId} canManage={hasFullAccess || perms.includes('tickets.manage')} />}
             {tab === 'factions' && guildId && <FactionsTab guildId={guildId} slots={dash.data.slots} />}
-            {tab === 'killfeed' && guildId && <KillfeedTab guildId={guildId} isOwner={isOwner || hasFullAccess || perms.includes('killfeed.manage')} slots={dash.data.slots} />}
             {tab === 'welcome' && guildId && <WelcomeTab guildId={guildId} canManage={hasFullAccess || perms.includes('welcome.manage')} />}
             {tab === 'embeds' && guildId && <EmbedBuilderTab guildId={guildId} canManage={hasFullAccess || perms.includes('embeds.manage')} />}
             {tab === 'reaction-embeds' && guildId && <ReactionEmbedsTab guildId={guildId} canManage={hasFullAccess || perms.includes('reactionroles.manage')} />}
@@ -188,52 +186,86 @@ function statusColor(status: Slot['status']): string {
   return 'text-danger';
 }
 
-function NitradoTab({ guildId, isOwner, slots }: { guildId: string; isOwner: boolean; slots: Slot[] }) {
+function NitradoTab({ guildId, isOwner, canManageKillfeed, slots }: { guildId: string; isOwner: boolean; canManageKillfeed: boolean; slots: Slot[] }) {
   const qc = useQueryClient();
   const [showAdd, setShowAdd] = useState(false);
+  const [page, setPage] = useState<1 | 2>(() => isOwner ? 1 : 2);
 
   const remove = useMutation({
     mutationFn: (slot: number) => api.del(`/api/v2/guilds/${guildId}/nitrado/${slot}`),
     onSuccess: () => qc.invalidateQueries({ queryKey: ['dashboard', guildId] }),
   });
 
-  if (!isOwner) {
-    return (
-      <Card glow>
-        <CardHeader><CardTitle>Nicht erlaubt</CardTitle></CardHeader>
-        <p className="text-muted text-sm">Nur der Discord-Server-Owner kann Nitrado-Slots verwalten.</p>
-      </Card>
-    );
-  }
-
   return (
     <div className="space-y-4">
-      <div className="flex items-center justify-between">
-        <h2 className="text-lg font-semibold text-white">Nitrado-Slots ({slots.length}/5)</h2>
-        {slots.length < 5 && (
-          <Button onClick={() => setShowAdd(s => !s)} size="sm">
-            <Plus className="h-4 w-4 mr-1" /> {showAdd ? 'Abbrechen' : 'Slot hinzufuegen'}
-          </Button>
-        )}
+      <div className="flex flex-wrap gap-2 p-1 rounded-xl border border-border bg-bg-card/55" aria-label="Nitrado-Seiten">
+        <button
+          type="button"
+          onClick={() => setPage(1)}
+          disabled={!isOwner}
+          className={`flex-1 min-w-[180px] px-4 py-2.5 rounded-lg text-sm font-semibold transition-colors focus-ring disabled:opacity-40 disabled:cursor-not-allowed ${page === 1 ? 'bg-accent/15 text-accent border border-accent/30 shadow-glow-sm' : 'text-muted hover:text-white hover:bg-bg-elev border border-transparent'}`}
+          aria-current={page === 1 ? 'page' : undefined}
+        >
+          1 · Server &amp; Verbindung
+        </button>
+        <button
+          type="button"
+          onClick={() => setPage(2)}
+          disabled={!canManageKillfeed}
+          className={`flex-1 min-w-[180px] px-4 py-2.5 rounded-lg text-sm font-semibold transition-colors focus-ring disabled:opacity-40 disabled:cursor-not-allowed ${page === 2 ? 'bg-accent/15 text-accent border border-accent/30 shadow-glow-sm' : 'text-muted hover:text-white hover:bg-bg-elev border border-transparent'}`}
+          aria-current={page === 2 ? 'page' : undefined}
+        >
+          2 · Killfeed &amp; ADM
+        </button>
       </div>
 
-      {showAdd && <AddSlotForm guildId={guildId} usedSlots={slots.map(s => s.slot)} onDone={() => setShowAdd(false)} />}
+      {page === 2 ? (
+        canManageKillfeed ? (
+          <KillfeedTab guildId={guildId} isOwner={canManageKillfeed} slots={slots} />
+        ) : (
+          <Card glow>
+            <CardHeader><CardTitle>Nicht erlaubt</CardTitle></CardHeader>
+            <p className="text-muted text-sm">Dir fehlt die Berechtigung <code>killfeed.manage</code> oder <code>dashboard.access</code>.</p>
+          </Card>
+        )
+      ) : isOwner ? (
+        <div className="space-y-4">
+          <div className="flex items-center justify-between gap-3 flex-wrap">
+            <div>
+              <h2 className="text-lg font-semibold text-white">Nitrado-Slots ({slots.length}/5)</h2>
+              <p className="text-xs text-muted mt-1">Verbindung, Service-ID, Token und Gameserver-Slots.</p>
+            </div>
+            {slots.length < 5 && (
+              <Button onClick={() => setShowAdd(s => !s)} size="sm">
+                <Plus className="h-4 w-4 mr-1" /> {showAdd ? 'Abbrechen' : 'Slot hinzufuegen'}
+              </Button>
+            )}
+          </div>
 
-      {slots.length === 0 && !showAdd && (
-        <Card>
-          <CardHeader><CardTitle>Noch keine Slots</CardTitle><CardDesc>Lege deinen ersten Nitrado-Slot an.</CardDesc></CardHeader>
+          {showAdd && <AddSlotForm guildId={guildId} usedSlots={slots.map(s => s.slot)} onDone={() => setShowAdd(false)} />}
+
+          {slots.length === 0 && !showAdd && (
+            <Card>
+              <CardHeader><CardTitle>Noch keine Slots</CardTitle><CardDesc>Lege deinen ersten Nitrado-Slot an.</CardDesc></CardHeader>
+            </Card>
+          )}
+
+          <div className="grid gap-3">
+            {slots.map(s => (
+              <SlotRow key={s.id} guildId={guildId} slot={s} onDelete={() => {
+                if (confirm(`Slot ${s.slot} (${s.alias}) wirklich loeschen? Alle Daten werden geloescht.`)) {
+                  remove.mutate(s.slot);
+                }
+              }} />
+            ))}
+          </div>
+        </div>
+      ) : (
+        <Card glow>
+          <CardHeader><CardTitle>Nicht erlaubt</CardTitle></CardHeader>
+          <p className="text-muted text-sm">Nur der Discord-Server-Owner kann Nitrado-Verbindungen und Slots verwalten.</p>
         </Card>
       )}
-
-      <div className="grid gap-3">
-        {slots.map(s => (
-          <SlotRow key={s.id} guildId={guildId} slot={s} onDelete={() => {
-            if (confirm(`Slot ${s.slot} (${s.alias}) wirklich loeschen? Alle Daten werden geloescht.`)) {
-              remove.mutate(s.slot);
-            }
-          }} />
-        ))}
-      </div>
     </div>
   );
 }
