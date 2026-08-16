@@ -103,10 +103,12 @@ describe('AI task classifier', () => {
     expect(source).not.toContain('capable.length > 0 ? capable : candidates');
   });
 
-  it('aiHandler klassifiziert zentral in callAI und leitet den Task ins Ranking weiter', () => {
+  it('aiHandler klassifiziert zentral und haelt auch den Notfall-Fallback capability-safe', () => {
     const source = fs.readFileSync(path.join(process.cwd(), 'src/modules/ai/aiHandler.ts'), 'utf8');
     expect(source).toContain('const task = inferAiTaskProfile(messages)');
     expect(source).toContain('getProviderOrder(task)');
     expect(source).toContain('getRankedProviders(task)');
+    expect(source).toContain('providerSupportsTask(p, getConfiguredModel(p), task)');
+    expect(source).toContain('!isOnCooldown(p)');
   });
 });
