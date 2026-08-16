@@ -330,9 +330,9 @@ export async function buyMarketListing(args: {
       );
       if (stockUpdate !== 1) throw new Error('Bestand konnte nicht atomar reserviert werden.');
       await raw.$executeRawUnsafe(
-        'INSERT INTO "EconomyMarketPurchase" ("id","idempotencyKey","listingId","guildId","nitradoConnId","vendorAccountId","userDiscordId","quantity","unitPrice","amount","createdAt") VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,CURRENT_TIMESTAMP)',
+        'INSERT INTO "EconomyMarketPurchase" ("id","idempotencyKey","listingId","guildId","nitradoConnId","vendorAccountId","userDiscordId","sourcePocket","quantity","unitPrice","amount","createdAt") VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,CURRENT_TIMESTAMP)',
         randomUUID(), key, args.listingId, String(args.guildId), String(args.nitradoConnId), preflight.vendorAccountId,
-        String(args.userDiscordId), args.quantity, preflight.price, amount,
+        String(args.userDiscordId), sourcePocket, args.quantity, preflight.price, amount,
       );
       return true;
     },
