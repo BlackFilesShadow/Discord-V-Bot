@@ -2,10 +2,8 @@ import {
   ChannelType,
   EmbedBuilder,
   MessageFlags,
-  PermissionFlagsBits,
   SlashCommandBuilder,
   type ChatInputCommandInteraction,
-  type GuildTextBasedChannel,
 } from 'discord.js';
 import type { Command } from '../../types';
 import prisma from '../../database/prisma';
@@ -23,6 +21,7 @@ import {
   type PlayerNameLinkResult,
   type SessionLinkClient,
 } from '../../modules/linking/linkService';
+import { publishLinkingInfoEmbed } from '../../modules/linking/linkingChannel';
 import { buildStatusEmbed, type EmbedStatus } from '../../utils/statusEmbed';
 import { logAudit } from '../../utils/logger';
 
@@ -281,7 +280,7 @@ export const linkInfoCommand: Command = {
 export const linkPanelCommand: Command = {
   data: slotOption(new SlashCommandBuilder()
     .setName('link-panel')
-    .setDescription('Berechtigt: Sendet den Account-Verknüpfungs-Embed in einen Discord-Kanal.')
+    .setDescription('Berechtigt: Setzt den persistenten Verknüpfungs-Kanal und veröffentlicht die Anleitung.')
     .addChannelOption(option => option
       .setName('channel')
       .setDescription('Kanal für die Verknüpfungs-Anleitung')
@@ -289,54 +288,29 @@ export const linkPanelCommand: Command = {
       .addChannelTypes(ChannelType.GuildText, ChannelType.GuildAnnouncement)) as SlashCommandBuilder),
   execute: withGuildScope({ requirePerm: 'economy.manage', acceptSlotOption: true }, async (interaction, scope) => {
     const selectedChannel = interaction.options.getChannel('channel', true);
-    const fetchedChannel = await interaction.guild?.channels.fetch(selectedChannel.id).catch(() => null);
-    if (!fetchedChannel
-      || (fetchedChannel.type !== ChannelType.GuildText && fetchedChannel.type !== ChannelType.GuildAnnouncement)
-      || fetchedChannel.guildId !== scope.guildId) {
-      await statusReply(interaction, 'ERROR', 'Kanal nicht geeignet', 'Wähle einen Text- oder Ankündigungskanal dieses Discord-Servers.');
-      return;
-    }
-    const channel = fetchedChannel as GuildTextBasedChannel;
-    const me = interaction.guild?.members.me;
-    const permissions = me ? channel.permissionsFor(me) : null;
-    if (!permissions?.has(PermissionFlagsBits.ViewChannel)
-      || !permissions.has(PermissionFlagsBits.SendMessages)
-      || !permissions.has(PermissionFlagsBits.EmbedLinks)) {
-      await statusReply(interaction, 'ERROR', 'Bot-Berechtigungen fehlen', 'V-Bot benötigt im Zielkanal **Kanal ansehen**, **Nachrichten senden** und **Links einbetten**.');
+    const result = await publishLinkingInfoEmbed({
+      client: interaction.client,
+      guildId: scope.guildId,
+      nitradoConnId: scope.nitradoConnId!,
+      channelId: selectedChannel.id,
+    });
+    if (!result.ok) {
+      await statusReply(interaction, 'ERROR', 'Verknüpfungs-Kanal konnte nicht gesetzt werden', result.reason);
       return;
     }
 
-    const label = await serverLabel(scope.guildId, scope.nitradoConnId!);
-    const panel = new EmbedBuilder()
-      .setColor(0x5865F2)
-      .setTitle('🔗 Discord mit DayZ verbinden')
-      .setDescription(
-        `Verbinde deinen Discord-Account mit deinem Spieler auf **${label}**.\n\n`
-        + '**So funktioniert es:**\n'
-        + '1. Spiele zunächst mindestens **5 Minuten** auf dem DayZ-Server.\n'
-        + '2. Nutze `/link` und gib bei `id` deinen **exakten PSN-/Xbox-/DayZ-Spielernamen** ein.\n'
-        + '3. V-Bot prüft automatisch die bereits erfassten ADM-/Session-Daten und die dazugehörige DayZ-GUID.\n'
-        + '4. Ist die Mindestspielzeit erreicht und Name/GUID sind noch frei, wird dein Discord-Account automatisch verknüpft.\n\n'
-        + 'Danach können aktivierte Spielzeit- und Server-Rewards eindeutig deinem Discord-Account gutgeschrieben werden.',
-      )
-      .addFields({
-        name: 'Wichtig',
-        value: 'Ein Spielername bzw. eine DayZ-GUID kann nur einem Discord-Account gehören. Gib den Namen exakt so ein, wie er auf dem Server erkannt wird.',
-      });
-
-    try {
-      await channel.send({ embeds: [panel], allowedMentions: { parse: [] } });
-    } catch {
-      await statusReply(interaction, 'ERROR', 'Embed konnte nicht gesendet werden', 'Der Zielkanal konnte nicht beschrieben werden. Prüfe die Kanalberechtigungen des Bots.');
-      return;
-    }
-
-    logAudit('LINK_PANEL_POSTED', 'LINKING', {
+    logAudit('LINK_PANEL_CONFIGURED', 'LINKING', {
       guildId: scope.guildId,
       nitradoConnId: scope.nitradoConnId,
       actor: scope.actorDiscordId,
-      channelId: channel.id,
+      channelId: result.channelId,
+      messageId: result.messageId,
     });
-    await statusReply(interaction, 'SUCCESS', 'Verknüpfungs-Embed gesendet', `Die Anleitung wurde in <#${channel.id}> veröffentlicht.`);
+    await statusReply(
+      interaction,
+      'SUCCESS',
+      'Verknüpfungs-Kanal gespeichert',
+      `Die Anleitung ist in <#${result.channelId}> hinterlegt. Bei erneutem Setzen wird die bestehende Info-Nachricht aktualisiert; wurde sie gelöscht, erstellt V-Bot automatisch eine neue.`,
+    );
   }),
 };
