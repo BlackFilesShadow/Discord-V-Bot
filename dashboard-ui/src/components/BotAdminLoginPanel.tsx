@@ -66,7 +66,7 @@ export function BotAdminLoginPanel() {
           disabled={busy}
           title="Bot-Admin-Session beenden"
           aria-label="Bot-Admin-Session beenden"
-          className="inline-flex items-center justify-center h-7 w-7 rounded-md text-muted hover:text-white hover:bg-bg-elev focus-ring disabled:opacity-50"
+          className="inline-flex items-center justify-center h-11 w-11 md:h-7 md:w-7 rounded-md text-muted hover:text-white hover:bg-bg-elev focus-ring disabled:opacity-50"
         >
           <LogOut className="h-3.5 w-3.5" />
         </button>
@@ -109,7 +109,7 @@ export function BotAdminLoginPanel() {
           disabled={!pw || busy}
           title="Entsperren"
           aria-label="Bot-Admin entsperren"
-          className="inline-flex items-center justify-center h-9 w-9 md:h-6 md:w-6 rounded bg-gradient-to-br from-indigo-600 to-indigo-800 hover:from-indigo-500 hover:to-indigo-700 shadow-[0_0_10px_rgba(99,102,241,0.45)] disabled:opacity-40 disabled:cursor-not-allowed text-[#fff] focus-ring"
+          className="inline-flex items-center justify-center h-11 w-11 md:h-6 md:w-6 rounded bg-gradient-to-br from-indigo-600 to-indigo-800 hover:from-indigo-500 hover:to-indigo-700 shadow-[0_0_10px_rgba(99,102,241,0.45)] disabled:opacity-40 disabled:cursor-not-allowed text-[#fff] focus-ring"
         >
           {busy ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Check className="h-3.5 w-3.5" strokeWidth={3} />}
         </button>

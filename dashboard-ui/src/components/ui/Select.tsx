@@ -6,7 +6,7 @@ export function Select({ className, children, ...rest }: SelectHTMLAttributes<HT
     <select
       {...rest}
       className={twMerge(
-        'input-premium w-full rounded-lg text-white px-3.5 py-2.5 text-sm appearance-none cursor-pointer',
+        'input-premium w-full min-h-11 md:min-h-0 rounded-lg text-white px-3.5 py-2.5 text-sm appearance-none cursor-pointer',
         'focus:outline-none',
         'disabled:opacity-50 disabled:cursor-not-allowed',
         className,

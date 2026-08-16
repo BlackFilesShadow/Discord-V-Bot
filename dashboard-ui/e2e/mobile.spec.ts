@@ -6,6 +6,14 @@ async function stubAuth(page: import('@playwright/test').Page): Promise<void> {
   );
 }
 
+async function expectTouchTarget(locator: import('@playwright/test').Locator): Promise<void> {
+  await expect(locator).toBeVisible();
+  const box = await locator.boundingBox();
+  expect(box).not.toBeNull();
+  expect(box!.height).toBeGreaterThanOrEqual(44);
+  expect(box!.width).toBeGreaterThanOrEqual(44);
+}
+
 test.describe('Mobile Dashboard (Login-Smoke)', () => {
   test('rendert auf Pixel-5-Viewport ohne horizontalen Overflow', async ({ page }) => {
     await stubAuth(page);
@@ -21,11 +29,7 @@ test.describe('Mobile Dashboard (Login-Smoke)', () => {
     await page.setViewportSize({ width: 320, height: 720 });
     await page.goto('/');
     const cta = page.getByRole('button', { name: /Discord/i });
-    await expect(cta).toBeVisible();
-    const box = await cta.boundingBox();
-    expect(box).not.toBeNull();
-    expect(box!.height).toBeGreaterThanOrEqual(44);
-    expect(box!.width).toBeGreaterThanOrEqual(44);
+    await expectTouchTarget(cta);
     const overflow = await page.evaluate(() => document.documentElement.scrollWidth - document.documentElement.clientWidth);
     expect(overflow).toBeLessThanOrEqual(1);
   });
@@ -108,7 +112,7 @@ function overlaps(a: Rect, b: Rect): boolean {
 
 test.describe('Mobile Header/Login (authentifiziert, kein Overlap)', () => {
   for (const viewport of VIEWPORTS) {
-    test(`${viewport.name} (${viewport.width}x${viewport.height}): Branding/DEV/Bot-Admin/Theme bleiben nutzbar`, async ({ page }) => {
+    test(`${viewport.name} (${viewport.width}x${viewport.height}): Controls bleiben nutzbar und >=44px`, async ({ page }) => {
       await stubAuthenticated(page);
       await page.setViewportSize({ width: viewport.width, height: viewport.height });
       await page.goto('/servers');
@@ -117,27 +121,34 @@ test.describe('Mobile Header/Login (authentifiziert, kein Overlap)', () => {
       const devPanel = page.getByTestId('dev-login-panel');
       const adminPanel = page.getByTestId('botadmin-login-panel');
       const themeToggle = page.getByTestId('theme-toggle');
+      const densityToggle = page.getByRole('button', { name: /Dichte umschalten/i });
+      const logout = page.getByRole('button', { name: 'Logout' });
+      const devUnlock = page.getByRole('button', { name: 'DEV-Console entsperren' });
+      const adminUnlock = page.getByRole('button', { name: 'Bot-Admin entsperren' });
 
       await expect(branding).toBeVisible();
       await expect(devPanel).toBeVisible();
       await expect(adminPanel).toBeVisible();
-      await expect(themeToggle).toBeVisible();
+      await Promise.all([
+        expectTouchTarget(branding),
+        expectTouchTarget(themeToggle),
+        expectTouchTarget(densityToggle),
+        expectTouchTarget(logout),
+        expectTouchTarget(devUnlock),
+        expectTouchTarget(adminUnlock),
+      ]);
 
-      const [brandingBox, devBox, adminBox, themeBox] = await Promise.all([
+      const [brandingBox, devBox, adminBox] = await Promise.all([
         branding.boundingBox(),
         devPanel.boundingBox(),
         adminPanel.boundingBox(),
-        themeToggle.boundingBox(),
       ]);
       expect(brandingBox).not.toBeNull();
       expect(devBox).not.toBeNull();
       expect(adminBox).not.toBeNull();
-      expect(themeBox).not.toBeNull();
       expect(overlaps(brandingBox!, devBox!)).toBe(false);
       expect(overlaps(brandingBox!, adminBox!)).toBe(false);
       expect(overlaps(devBox!, adminBox!)).toBe(false);
-      expect(themeBox!.width).toBeGreaterThanOrEqual(36);
-      expect(themeBox!.height).toBeGreaterThanOrEqual(36);
 
       const overflow = await page.evaluate(() => document.documentElement.scrollWidth - document.documentElement.clientWidth);
       expect(overflow).toBeLessThanOrEqual(1);

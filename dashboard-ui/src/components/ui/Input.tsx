@@ -6,7 +6,7 @@ export function Input({ className, ...rest }: InputHTMLAttributes<HTMLInputEleme
     <input
       {...rest}
       className={twMerge(
-        'input-premium w-full rounded-lg text-white px-3.5 py-2.5 text-sm',
+        'input-premium w-full min-h-11 md:min-h-0 rounded-lg text-white px-3.5 py-2.5 text-sm',
         'placeholder:text-muted/80 focus:outline-none',
         'disabled:opacity-50 disabled:cursor-not-allowed',
         className,
