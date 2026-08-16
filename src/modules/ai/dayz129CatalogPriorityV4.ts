@@ -41,6 +41,13 @@ function exactAnswer(name: string): DayzCatalogAnswer {
 const TECHNICAL_ADMIN_MARKERS = /\b(server|nitrado|config|konfig|settings?|einstellung|datei|file|xml|json|cfg|mission|mod|parameter|feld|schalter|wert|central economy|ce|loot|spawn|event|wetter|weather|lifetime|restock|nominal|globals|types|events|basebuilding|bauen|build)\b/i;
 const CHANGE_VERBS = /\b(aender|aendere|aendern|ander|andere|andern|änder|ändere|ändern|einstell|einstellen|setz|setzen|aktivier|aktivieren|deaktivier|deaktivieren|anpass|anpassen|konfigurier|konfigurieren|erhoeh|erhoehen|erhöh|erhöhen|verringer|verringern)\w*\b/i;
 const CONFIGURABLE_CONCEPTS = /\b(stamina|ausdauer|third.?person|crosshair|perspektive|base.?damage|container.?damage|schaden|damage|tag.?nacht|day.?night|nacht|night|wetter|weather|loot|spawn|respawn)\b/i;
+const KNOWN_FILE_ALIASES = new Set([
+  'type.xml', 'types.xml',
+  'event.xml', 'events.xml',
+  'message.xml', 'messages.xml',
+  'global.xml', 'globals.xml',
+  'economy.xml',
+]);
 
 function explicitConfigFileToken(question: string): string | null {
   return question.match(/\b[A-Za-z0-9_.-]+\.(?:xml|json|cfg|c)\b/i)?.[0] ?? null;
@@ -53,10 +60,12 @@ function hasDayzContext(question: string): boolean {
 
 function isKnownDayzConfigFile(file: string): boolean {
   const normalized = fold(file).replace(/\\/g, '/');
+  const basename = normalized.split('/').pop() ?? normalized;
+  if (KNOWN_FILE_ALIASES.has(basename)) return true;
   return base.getDayz129Index().allRelativePaths.some((path) => {
     const candidate = fold(path).replace(/\\/g, '/');
-    const basename = candidate.split('/').pop() ?? candidate;
-    return normalized === candidate || normalized === basename;
+    const candidateBasename = candidate.split('/').pop() ?? candidate;
+    return normalized === candidate || basename === candidateBasename;
   });
 }
 
@@ -124,7 +133,7 @@ function directTechnicalAnswer(question: string): DayzCatalogAnswer | null {
     };
   }
 
-  if (/mods?\s+(installieren|laden)|workshop\s+mod|\-mod=|\-servermod=/.test(q)) {
+  if ((/\bmods?\b/.test(q) && /\b(?:installier\w*|lad\w*|workshop)\b/.test(q)) || /\-mod=|\-servermod=/.test(q)) {
     return {
       answer: 'DayZ-Mods werden serverseitig über Startparameter wie `-mod=` geladen. Konkrete Workshop-Pfade, Abhängigkeiten und zusätzliche Server-Parameter müssen aus der jeweiligen Mod-Dokumentation stammen; V-Bot rät sie nicht.',
       topic: 'file',
