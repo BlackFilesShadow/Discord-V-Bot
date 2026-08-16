@@ -9,6 +9,7 @@ model EconomyLinkRewardState {
   identityHash              String   @db.VarChar(64)
   rewardEligibleFrom        DateTime
   unlinkedAt                DateTime?
+  startBalanceEligible      Boolean  @default(true)
   startBalanceGrantedAt     DateTime?
   startBalanceGrantedAmount BigInt   @default(0)
   createdAt                 DateTime @default(now())
@@ -20,15 +21,15 @@ model EconomyLinkRewardState {
 }
 
 model PlaytimeRewardProgress {
-  id               String   @id @default(cuid())
-  sessionId        String
-  guildId          String
-  nitradoConnId    String
-  userDiscordId    String
-  rewardEpoch      DateTime
-  bucketsCredited  Int      @default(0)
-  createdAt        DateTime @default(now())
-  updatedAt        DateTime @updatedAt
+  id              String   @id @default(cuid())
+  sessionId       String
+  guildId         String
+  nitradoConnId   String
+  userDiscordId   String
+  rewardEpoch     DateTime
+  bucketsCredited Int      @default(0)
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
 
   @@unique([sessionId, rewardEpoch])
   @@index([guildId, nitradoConnId, userDiscordId])
