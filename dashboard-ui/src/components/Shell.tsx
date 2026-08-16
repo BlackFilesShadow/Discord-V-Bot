@@ -89,7 +89,7 @@ export function Shell({ title, back, sidebar, children }: ShellProps) {
             <button
               type="button"
               onClick={() => setSidebarOpen(open => !open)}
-              className="md:hidden inline-flex items-center justify-center h-9 w-9 rounded-md text-white hover:bg-bg-elev focus-ring shrink-0"
+              className="md:hidden inline-flex items-center justify-center h-11 w-11 rounded-md text-white hover:bg-bg-elev focus-ring shrink-0"
               aria-label={sidebarOpen ? 'Menue schliessen' : 'Menue oeffnen'}
             >
               {sidebarOpen ? <X className="h-5 w-5" /> : <Menu className="h-5 w-5" />}
@@ -98,13 +98,13 @@ export function Shell({ title, back, sidebar, children }: ShellProps) {
           {back && (
             <Link
               to={back}
-              className="text-muted hover:text-white inline-flex items-center gap-1 focus-ring rounded-md px-1"
+              className="text-muted hover:text-white inline-flex min-h-11 md:min-h-0 items-center gap-1 focus-ring rounded-md px-1"
             >
               <ArrowLeft className="h-4 w-4" />
               <span className="text-sm hidden sm:inline">Zurueck</span>
             </Link>
           )}
-          <Link to="/servers" className="flex items-center gap-2 focus-ring rounded-md px-1 group shrink-0" aria-label="V-Bot">
+          <Link to="/servers" className="flex min-h-11 md:min-h-0 items-center gap-2 focus-ring rounded-md px-1 group shrink-0" aria-label="V-Bot">
             <span className="relative inline-flex h-2.5 w-2.5">
               <span
                 className="absolute inline-flex h-full w-full rounded-full bg-accent opacity-60 group-hover:opacity-100"
@@ -131,7 +131,7 @@ export function Shell({ title, back, sidebar, children }: ShellProps) {
               <button
                 type="button"
                 onClick={() => setPaletteOpen(true)}
-                className="inline-flex items-center gap-2 h-9 pl-2.5 pr-2 rounded-md border border-white/[0.06] bg-white/[0.02] hover:bg-bg-elev/60 text-muted hover:text-white focus-ring"
+                className="inline-flex items-center gap-2 h-11 min-w-11 md:h-9 md:min-w-0 pl-2.5 pr-2 rounded-md border border-white/[0.06] bg-white/[0.02] hover:bg-bg-elev/60 text-muted hover:text-white focus-ring"
                 aria-label="Befehlspalette oeffnen"
               >
                 <Command className="h-3.5 w-3.5" />
@@ -145,7 +145,7 @@ export function Shell({ title, back, sidebar, children }: ShellProps) {
             <button
               type="button"
               onClick={toggleTheme}
-              className="theme-toggle-control inline-flex items-center justify-center sm:justify-start gap-1.5 h-9 min-w-9 sm:min-w-[92px] px-2 rounded-md text-muted hover:text-white focus-ring border border-border/60 bg-bg-elev/55"
+              className="theme-toggle-control inline-flex items-center justify-center sm:justify-start gap-1.5 h-11 min-w-11 md:h-9 md:min-w-[92px] px-2 rounded-md text-muted hover:text-white focus-ring border border-border/60 bg-bg-elev/55"
               aria-label={`Farbschema auf ${nextThemeLabel} umschalten`}
               data-testid="theme-toggle"
             >
@@ -158,7 +158,7 @@ export function Shell({ title, back, sidebar, children }: ShellProps) {
             <button
               type="button"
               onClick={cycle}
-              className="inline-flex items-center justify-center h-9 w-9 rounded-md text-muted hover:text-white hover:bg-bg-elev focus-ring"
+              className="inline-flex items-center justify-center h-11 w-11 md:h-9 md:w-9 rounded-md text-muted hover:text-white hover:bg-bg-elev focus-ring"
               aria-label={`Dichte umschalten (aktuell: ${density})`}
             >
               <DensityIcon className="h-4 w-4" />
@@ -173,7 +173,7 @@ export function Shell({ title, back, sidebar, children }: ShellProps) {
           <Tooltip content="Logout">
             <button
               onClick={logout}
-              className="text-muted hover:text-white inline-flex items-center justify-center h-9 w-9 rounded-md hover:bg-bg-elev focus-ring"
+              className="text-muted hover:text-white inline-flex items-center justify-center h-11 w-11 md:h-9 md:w-9 rounded-md hover:bg-bg-elev focus-ring"
               type="button"
               aria-label="Logout"
             >
