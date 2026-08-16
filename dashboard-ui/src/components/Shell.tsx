@@ -131,12 +131,12 @@ export function Shell({ title, back, sidebar, children }: ShellProps) {
               <button
                 type="button"
                 onClick={() => setPaletteOpen(true)}
-                className="inline-flex items-center gap-2 h-11 min-w-11 md:h-9 md:min-w-0 pl-2.5 pr-2 rounded-md border border-white/[0.06] bg-white/[0.02] hover:bg-bg-elev/60 text-muted hover:text-white focus-ring"
+                className="hidden md:inline-flex items-center gap-2 h-9 pl-2.5 pr-2 rounded-md border border-white/[0.06] bg-white/[0.02] hover:bg-bg-elev/60 text-muted hover:text-white focus-ring"
                 aria-label="Befehlspalette oeffnen"
               >
                 <Command className="h-3.5 w-3.5" />
-                <span className="hidden md:inline text-xs">Suchen</span>
-                <span className="hidden md:inline-flex items-center gap-0.5"><Kbd>{MOD_LABEL}</Kbd><Kbd>K</Kbd></span>
+                <span className="text-xs">Suchen</span>
+                <span className="inline-flex items-center gap-0.5"><Kbd>{MOD_LABEL}</Kbd><Kbd>K</Kbd></span>
               </button>
             ) : <span className="hidden" />}
           </Tooltip>
@@ -193,6 +193,17 @@ export function Shell({ title, back, sidebar, children }: ShellProps) {
         <div className="md:hidden border-b border-border bg-bg-card/55 px-4 py-3 flex flex-col gap-3">
           <DevLoginPanel />
           <BotAdminLoginPanel />
+          {elevated && (
+            <button
+              type="button"
+              onClick={() => setPaletteOpen(true)}
+              className="inline-flex min-h-11 w-full items-center justify-center gap-2 rounded-md border border-white/[0.06] bg-white/[0.02] text-muted hover:bg-bg-elev/60 hover:text-white focus-ring"
+              aria-label="Befehlspalette oeffnen"
+            >
+              <Command className="h-4 w-4" />
+              <span className="text-sm font-medium">Befehlspalette</span>
+            </button>
+          )}
         </div>
       )}
 
