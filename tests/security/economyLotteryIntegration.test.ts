@@ -50,9 +50,11 @@ describe('Economy-Lotterie — Runtime/Dashboard Integration', () => {
     expect(index).toContain('stopLotteryScheduler();');
   });
 
-  it('integriert die responsive Dashboard-Verwaltung in Economy', () => {
+  it('integriert die responsive und slotgescoppte Dashboard-Verwaltung in Economy', () => {
     expect(serverSlot).toContain("import { LotteryPanel } from '@/components/economy/LotteryPanel';");
-    expect(serverSlot).toContain('<LotteryPanel guildId={guildId} />');
+    expect(serverSlot).toContain('<LotteryPanel guildId={guildId} slot={slot} />');
+    expect(panel).toContain("{ guildId, slot }: { guildId: string; slot: string }");
+    expect(panel).toContain('lottery/current?${scope}');
     expect(panel).toContain('md:grid-cols-2');
     expect(panel).toContain('md:grid-cols-4');
     expect(panel).toContain('Lotterie starten');
