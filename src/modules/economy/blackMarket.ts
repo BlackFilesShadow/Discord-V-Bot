@@ -246,7 +246,8 @@ export async function restockMarketListing(args: {
 }
 
 async function existingPurchase(key: string): Promise<MarketPurchaseView | null> {
-  return prisma.economyMarketPurchase.findUnique({ where: { idempotencyKey: key } });
+  const row = await prisma.economyMarketPurchase.findUnique({ where: { idempotencyKey: key } });
+  return row ? { ...row, sourcePocket: row.sourcePocket as EconomyPocket } : null;
 }
 
 function assertPurchaseReplay(row: MarketPurchaseView, args: {
@@ -356,9 +357,10 @@ export async function listMarketPurchases(
 ): Promise<MarketPurchaseView[]> {
   await assertEconomyScopeReady(guildId, nitradoConnId);
   const safeLimit = Math.max(1, Math.min(200, Math.trunc(limit)));
-  return prisma.economyMarketPurchase.findMany({
+  const rows = await prisma.economyMarketPurchase.findMany({
     where: { guildId: String(guildId), nitradoConnId: String(nitradoConnId) },
     orderBy: { createdAt: 'desc' },
     take: safeLimit,
   });
+  return rows.map(row => ({ ...row, sourcePocket: row.sourcePocket as EconomyPocket }));
 }
