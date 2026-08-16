@@ -6,8 +6,6 @@ import { detectRaid } from '../utils/rateLimiter';
 import { getWelcomeConfig, renderWelcomeMessage, sendWelcomeMessages } from '../modules/welcome/welcomeManager';
 import { resolveCustomEmotes } from '../modules/ai/emoteResolver';
 import { syncMemberProfile } from '../modules/ai/memberAwareness';
-import { maybeGrantStartBalance } from '../modules/economy/repository';
-import { asGuildId, asNitradoConnId, asUserDiscordId } from '../types/scope';
 
 const recentJoins: Map<string, number[]> = new Map();
 
@@ -80,46 +78,9 @@ const guildMemberAddEvent: BotEvent = {
         }
       }
 
-      try {
-        // ECO-S03: Ein Discord-Join besitzt bei Multi-Server-Guilds keinen
-        // eindeutigen Gameserver-Kontext. Startguthaben darf deshalb NIEMALS
-        // auf mehrere Server kopiert oder per "kleinster Slot" geraten werden.
-        const usableServers = await prisma.nitradoConnection.findMany({
-          where: {
-            guildId: m.guild.id,
-            status: 'ACTIVE',
-            slot: { gte: 1, lte: 4 },
-            nitradoServerId: { not: null },
-          },
-          select: { id: true },
-          orderBy: [{ slot: 'asc' }, { id: 'asc' }],
-          take: 2,
-        });
-
-        if (usableServers.length === 1) {
-          const nitradoConnId = asNitradoConnId(usableServers[0].id);
-          const grantResult = await maybeGrantStartBalance(
-            asGuildId(m.guild.id),
-            nitradoConnId,
-            asUserDiscordId(m.user.id),
-          );
-          if (grantResult.granted) {
-            logAudit('ECON_STARTBALANCE_GRANTED', 'ECONOMY', {
-              guildId: m.guild.id,
-              nitradoConnId,
-              userDiscordId: m.user.id,
-              amount: grantResult.amount.toString(),
-            });
-          }
-        } else {
-          logger.info(
-            `Startguthaben fuer ${m.user.id} in ${m.guild.id} uebersprungen: `
-            + `${usableServers.length === 0 ? 'kein' : 'mehr als ein'} eindeutiger aktiver Gameserver.`,
-          );
-        }
-      } catch (econErr) {
-        logger.warn(`Startguthaben fuer ${m.user.id} in ${m.guild.id} fehlgeschlagen:`, econErr as Error);
-      }
+      // Economy-Startguthaben wird absichtlich NICHT beim Discord-Join vergeben.
+      // Es gehoert zur nachgewiesenen DayZ-Account-Verknuepfung und wird dort
+      // exakt einmal pro Guild+Gameserver+Discord-Account gebucht.
 
       logAudit('MEMBER_JOIN', 'SYSTEM', {
         userId: user.id,
@@ -139,9 +100,6 @@ const guildMemberAddEvent: BotEvent = {
             const userMention = `<@${m.user.id}>`;
             const memberCount = m.guild.memberCount;
 
-            // {user} und {mention} sind laut Dashboard beide echte Discord-
-            // Mentions. Der reale Join-Pfad muss deshalb dieselbe Mention wie
-            // der Dashboard-Testpfad an den Renderer uebergeben.
             const messageText = renderWelcomeMessage(wcfg.message, {
               user: userMention,
               mention: userMention,
