@@ -14,9 +14,9 @@ describe('Economy-Lotterie — Runtime/Dashboard Integration', () => {
   const serverSlot = read('dashboard-ui/src/pages/ServerSlot.tsx');
   const panel = read('dashboard-ui/src/components/economy/LotteryPanel.tsx');
 
-  it('mountet Lottery hinter dem kanonischen Gameserver-Scope und vor generischem Economy-Router', () => {
-    const lotteryMount = "v2Router.use('/guilds/:guildId/economy/lottery', requireSafeDashboardEconomyScope, economyLotteryRouter);";
-    const generic = "v2Router.use('/guilds/:guildId/economy', requireSafeDashboardEconomyScope, economyRouter);";
+  it('mountet Lottery hinter Domain-Auth und kanonischem Gameserver-Scope vor dem generischen Economy-Router', () => {
+    const lotteryMount = "v2Router.use('/guilds/:guildId/economy/lottery', requireEconomyDashboardAccess, requireSafeDashboardEconomyScope, economyLotteryRouter);";
+    const generic = "v2Router.use('/guilds/:guildId/economy', requireEconomyDashboardAccess, requireSafeDashboardEconomyScope, economyRouter);";
     expect(v2).toContain(lotteryMount);
     expect(v2.indexOf(lotteryMount)).toBeLessThan(v2.indexOf(generic));
     expect(route).toContain("requireGuildPermission('economy.view')");
