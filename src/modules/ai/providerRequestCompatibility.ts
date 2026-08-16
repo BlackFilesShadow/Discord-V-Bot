@@ -18,7 +18,6 @@ const HARD_SYSTEM_MARKERS = [
   'Du bist V-Bot Prime',
   'AUTORITATIVE ZEIT- UND DATUMSANGABEN',
   'WICHTIG – Wissensstand:',
-  'WICHTIG \u2013 Wissensstand:',
   'DAYZ 1.29 – GEERDETE ERKLAERBASIS',
   'DAYZ 1.29 – HARTE GROUNDING-REGELN',
   'GEPRUEFTE DAYZ-ENGINE-/SERVER-KONFIGURATION:',
@@ -161,13 +160,20 @@ export function normalizeAiProviderRequest(
     url.hostname === 'generativelanguage.googleapis.com'
     && url.pathname.endsWith(':generateContent')
   ) {
+    const model = geminiModelFromPath(url.pathname);
+    const isKnownModernModel = Boolean(
+      model && (GEMINI_MODELS_WITHOUT_LEGACY_SAMPLING as readonly string[]).includes(model),
+    );
+
+    if (!isKnownModernModel) {
+      if (data.contents === undefined) return data;
+      const boundedContents = budgetGeminiContents(data.contents);
+      if (boundedContents === data.contents) return data;
+      return { ...data, contents: boundedContents };
+    }
+
     const body: Record<string, unknown> = { ...data };
     if (body.contents !== undefined) body.contents = budgetGeminiContents(body.contents);
-
-    const model = geminiModelFromPath(url.pathname);
-    if (!model || !(GEMINI_MODELS_WITHOUT_LEGACY_SAMPLING as readonly string[]).includes(model)) {
-      return body;
-    }
     if (!isRecord(body.generationConfig)) return body;
 
     const generationConfig: Record<string, unknown> = { ...body.generationConfig };
