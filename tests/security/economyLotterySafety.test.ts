@@ -41,8 +41,9 @@ describe('Economy-Lotterie — Production-Sicherheitsinvarianten', () => {
 
   it('zieht den Gewinner kryptographisch sicher nur beim ACTIVE->DRAWING-Uebergang', () => {
     expect(lottery).toContain("import { randomInt, randomUUID } from 'node:crypto';");
+    expect(lottery).toContain("if (round.status !== 'ACTIVE' || round.endsAt.getTime() > Date.now()) return round.status;");
     expect(lottery).toContain('const drawIndex = randomInt(totalTickets);');
-    expect(lottery).toContain('"status"=\'DRAWING\'::"LotteryRoundStatus"');
+    expect(lottery).toContain(String.raw`\"status\"=\'DRAWING\'::\"LotteryRoundStatus\"`);
     expect(lottery).toContain('"winnerDiscordId"=$2');
     expect(lottery).toContain('"winningTicketNumber"=$3');
   });
