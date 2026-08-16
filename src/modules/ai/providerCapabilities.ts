@@ -84,13 +84,14 @@ export function taskAffinity(provider: ProviderName, model: string, task: AiTask
  * Only the FIRST system message is treated as the trusted task instruction.
  * Later system messages can contain server/RAG/web/user-derived context and must
  * never be able to steer provider selection. DayZ technical routing is supplied
- * explicitly by answerQuestion via its deterministic dayzTechnical preflight.
+ * explicitly by answerQuestion via the internal AI_TASK_PROFILE marker.
  */
 export function inferAiTaskProfile(messages: Array<{ role: string; content: string }>): AiTaskProfile {
   const chars = messages.reduce((sum, m) => sum + String(m.content || '').length, 0);
   if (chars >= 24_000) return 'long_context';
 
   const firstSystem = String(messages.find((m) => m.role === 'system')?.content || '').toLowerCase();
+  if (/^ai_task_profile:\s*reasoning\b/.test(firstSystem)) return 'reasoning';
   if (/ausschliesslich[^\n]{0,160}json|ausschließlich[^\n]{0,160}json|response[_ -]?format|json schema/.test(firstSystem)) {
     return 'structured';
   }
