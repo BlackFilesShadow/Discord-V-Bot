@@ -1,5 +1,5 @@
 import fs from 'node:fs';
-import path from 'node:path';
+import path from 'path';
 
 const root = process.cwd();
 const awareness = fs.readFileSync(path.join(root, 'src', 'modules', 'ai', 'guildAwareness.ts'), 'utf8');
@@ -42,7 +42,7 @@ describe('Post-deploy runtime hygiene', () => {
     expect(modelRegistry).toContain("groq: 'openai/gpt-oss-120b'");
     expect(modelRegistry).toContain("cerebras: 'gpt-oss-120b'");
     expect(modelRegistry).toContain("gemini: 'gemini-3.6-flash'");
-    expect(modelRegistry).toContain("openai: 'gpt-5.4-mini'");
+    expect(modelRegistry).toContain("openai: 'gpt-5.6-luna'");
     expect(modelRegistry).toContain("'llama-3.3-70b-versatile': AI_MODEL_DEFAULTS.groq");
     expect(modelRegistry).toContain("'gpt-4': AI_MODEL_DEFAULTS.openai");
 
