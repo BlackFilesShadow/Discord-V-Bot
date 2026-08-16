@@ -29,6 +29,7 @@ jest.mock('../../src/utils/logger', () => ({
   logAudit: jest.fn(),
 }));
 
+import { MessageFlags } from 'discord.js';
 import { handleSelfRoleButton } from '../../src/modules/selfrole/selfRoleMenu';
 
 function menuRow(assignMode: 'GIVE' | 'REMOVE' | 'TOGGLE') {
@@ -61,8 +62,8 @@ function makeInteraction(hasRole: boolean) {
 }
 
 function replyDescription(reply: jest.Mock): string {
-  const arg = reply.mock.calls[0][0] as { embeds: Array<{ data: { description?: string } }>; ephemeral?: boolean };
-  expect(arg.ephemeral).toBe(true);
+  const arg = reply.mock.calls[0][0] as { embeds: Array<{ data: { description?: string } }>; flags?: number };
+  expect(arg.flags).toBe(MessageFlags.Ephemeral);
   return arg.embeds[0].data.description ?? '';
 }
 
