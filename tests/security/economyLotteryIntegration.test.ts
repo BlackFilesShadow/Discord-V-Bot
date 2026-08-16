@@ -32,12 +32,18 @@ describe('Economy-Lotterie — Runtime/Dashboard Integration', () => {
     expect(command).not.toContain(".setName('start')");
     expect(command).not.toContain(".setName('end')");
     expect(command).toContain('idempotencyKey: `discord-slash:${interaction.id}`');
+    expect(command).toContain('await refreshLotteryMessage(interaction.client, round.id)');
+    expect(command).toContain('Lotterie-Embed-Refresh nach Slash-Kauf');
     expect(inventory).toContain("'lottery'");
   });
 
   it('verdrahtet Buttons zentral und startet/stoppt den Scheduler mit der Bot-Runtime', () => {
     expect(interaction).toContain("button.customId.startsWith('lottery_buy_')");
     expect(interaction).toContain('handleLotteryBuyButton');
+    const lottery = read('src/modules/economy/lottery.ts');
+    expect(lottery).toContain('Lotterie-Embed-Refresh nach Button-Kauf');
+    expect(lottery).toContain('const potName = `Lotterie ${roundId}`;');
+    expect(lottery).toContain('nameKey: potName.toLowerCase()');
     expect(index).toContain("import { startLotteryScheduler, stopLotteryScheduler } from './modules/economy/lottery';");
     expect(index).toContain('startLotteryScheduler(client);');
     expect(index).toContain('stopLotteryScheduler();');

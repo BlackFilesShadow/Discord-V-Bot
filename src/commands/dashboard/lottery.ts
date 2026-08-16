@@ -12,9 +12,10 @@ import {
   createLotteryEmbed,
   getCurrentLotteryRound,
   getLotteryEntry,
+  refreshLotteryMessage,
 } from '../../modules/economy/lottery';
 import { getConfig } from '../../modules/economy/repository';
-import { logAudit } from '../../utils/logger';
+import { logger, logAudit } from '../../utils/logger';
 
 function addSlotOption(builder: SlashCommandSubcommandBuilder): SlashCommandSubcommandBuilder {
   return builder.addIntegerOption(o => o
@@ -111,6 +112,9 @@ export const lotteryCommand: Command = {
           userDiscordId: scope.actorDiscordId,
           quantity,
           booked: result.booked,
+        });
+        await refreshLotteryMessage(interaction.client, round.id).catch(error => {
+          logger.warn(`Lotterie-Embed-Refresh nach Slash-Kauf ${round.id}: ${(error as Error).message}`);
         });
         await interaction.reply({
           content: result.booked

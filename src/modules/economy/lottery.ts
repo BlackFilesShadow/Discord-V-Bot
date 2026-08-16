@@ -252,6 +252,7 @@ export async function createLotteryRound(args: {
 
   const roundId = randomUUID();
   const potId = randomUUID();
+  const potName = `Lotterie ${roundId}`;
   const preview: LotteryRoundView = {
     id: roundId, guildId: String(args.guildId), nitradoConnId: String(args.nitradoConnId), potAccountId: potId,
     channelId: args.channelId, messageId: null, ticketPrice: args.ticketPrice,
@@ -275,8 +276,8 @@ export async function createLotteryRound(args: {
           guildId: String(args.guildId),
           nitradoConnId: String(args.nitradoConnId),
           kind: 'LOTTERY_POT',
-          name: `Lotterie ${roundId.slice(0, 8)}`,
-          nameKey: `lotterie-${roundId}`,
+          name: potName,
+          nameKey: potName.toLowerCase(),
           balance: 0n,
           status: 'ACTIVE',
           acceptUserTransfers: false,
@@ -635,7 +636,9 @@ export async function handleLotteryBuyButton(interaction: ButtonInteraction): Pr
       quantity,
       idempotencyKey: `discord-button:${interaction.id}`,
     });
-    await refreshLotteryMessage(interaction.client, roundId).catch(() => undefined);
+    await refreshLotteryMessage(interaction.client, roundId).catch(error => {
+      logger.warn(`Lotterie-Embed-Refresh nach Button-Kauf ${roundId}: ${(error as Error).message}`);
+    });
     await interaction.editReply({
       content: result.booked
         ? `✅ ${quantity} Ticket(s) gekauft. Du hast jetzt **${result.ticketCount}** Ticket(s).`
