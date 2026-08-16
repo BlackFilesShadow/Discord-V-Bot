@@ -113,6 +113,8 @@ export function LotteryPanel({ guildId, slot }: { guildId: string; slot: string 
       <p className="text-xs text-muted mb-4">
         Eine aktive Runde pro Gameserver. Der Pot ist ein gesperrtes LOTTERY_POT-Konto; Ziehung, Auszahlung und Refunds laufen idempotent über dieselbe Economy-Infrastruktur.
       </p>
+      {current.isError && <p className="text-danger text-sm mb-2">Aktuelle Lotterie konnte nicht geladen werden: {(current.error as Error).message}</p>}
+      {history.isError && <p className="text-danger text-sm mb-2">Lotterie-Historie konnte nicht geladen werden: {(history.error as Error).message}</p>}
 
       {active ? (
         <div className="rounded-lg border border-border/60 bg-bg-elev/40 p-3 mb-5">
@@ -152,7 +154,7 @@ export function LotteryPanel({ guildId, slot }: { guildId: string; slot: string 
             <label className="text-sm"><span className="text-muted">Mindestteilnehmer</span><Input value={form.minParticipants} onChange={e => setForm({ ...form, minParticipants: e.target.value.trim() })} inputMode="numeric" /></label>
             <label className="text-sm md:col-span-2"><span className="text-muted">Endzeit</span><Input type="datetime-local" value={form.endsAt} onChange={e => setForm({ ...form, endsAt: e.target.value })} /></label>
           </div>
-          <Button disabled={create.isPending || !formValid} onClick={() => { setMessage(null); create.mutate(); }}>
+          <Button disabled={create.isPending || current.isError || history.isError || !formValid} onClick={() => { setMessage(null); create.mutate(); }}>
             {create.isPending ? 'Starte…' : 'Lotterie starten'}
           </Button>
         </div>

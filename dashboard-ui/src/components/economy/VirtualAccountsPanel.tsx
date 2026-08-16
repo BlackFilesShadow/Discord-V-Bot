@@ -150,13 +150,13 @@ export function VirtualAccountsPanel({ guildId, slot }: { guildId: string; slot:
           </label>
         </div>
         <Switch checked={acceptUserTransfers} onChange={setAcceptUserTransfers} label="Direkte User-Ueberweisungen erlauben" />
-        <Button disabled={create.isPending || !nameValid || !expiryValid} onClick={() => { setMessage(null); create.mutate(); }}>
+        <Button disabled={create.isPending || accounts.isError || !nameValid || !expiryValid} onClick={() => { setMessage(null); create.mutate(); }}>
           {create.isPending ? 'Erstelle…' : 'Konto erstellen'}
         </Button>
       </div>
 
       {accounts.isLoading && <p className="text-muted text-sm">Lade Konten…</p>}
-      {accounts.isError && <p className="text-danger text-sm">Virtuelle Konten konnten nicht geladen werden.</p>}
+      {accounts.isError && <p className="text-danger text-sm">Virtuelle Konten konnten nicht geladen werden: {(accounts.error as Error).message}</p>}
       <div className="space-y-2">
         {rows.length === 0 && !accounts.isLoading && <p className="text-muted text-sm">Noch keine virtuellen Konten.</p>}
         {rows.map(account => (
@@ -194,6 +194,7 @@ export function VirtualAccountsPanel({ guildId, slot }: { guildId: string; slot:
             {auditAccountId === account.id && (
               <div className="mt-3 pt-3 border-t border-border/60">
                 {audit.isLoading && <p className="text-xs text-muted">Lade Audit…</p>}
+                {audit.isError && <p className="text-xs text-danger">Audit konnte nicht geladen werden: {(audit.error as Error).message}</p>}
                 {audit.data?.entries.length === 0 && <p className="text-xs text-muted">Noch keine Buchungen.</p>}
                 <div className="space-y-1 max-h-52 overflow-y-auto">
                   {audit.data?.entries.map(entry => (

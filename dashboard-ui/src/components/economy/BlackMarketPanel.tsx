@@ -154,7 +154,7 @@ export function BlackMarketPanel({ guildId, slot }: { guildId: string; slot: str
         <div className="rounded-lg border border-border/60 bg-bg/40 p-3 space-y-3">
           <p className="text-sm font-medium text-white">Haendler anlegen</p>
           <Input value={vendorName} onChange={e => setVendorName(e.target.value)} maxLength={80} placeholder="z. B. Nachtmarkt" />
-          <Button disabled={createVendor.isPending || vendorName.trim().length < 1} onClick={() => { setMessage(null); createVendor.mutate(); }}>
+          <Button disabled={createVendor.isPending || vendors.isError || listings.isError || vendorName.trim().length < 1} onClick={() => { setMessage(null); createVendor.mutate(); }}>
             {createVendor.isPending ? 'Erstelle…' : 'Haendler erstellen'}
           </Button>
           <div className="space-y-1 pt-2 border-t border-border/50">
@@ -164,7 +164,7 @@ export function BlackMarketPanel({ guildId, slot }: { guildId: string; slot: str
                 <span className="flex items-center gap-2"><Badge variant={vendor.status === 'ACTIVE' ? 'ok' : 'neutral'}>{vendor.status}</Badge><strong>{fmt(vendor.balance)}</strong></span>
               </div>
             ))}
-            {vendors.isError && <p className="text-danger text-xs">Haendler konnten nicht geladen werden.</p>}
+            {vendors.isError && <p className="text-danger text-xs">Haendler konnten nicht geladen werden: {(vendors.error as Error).message}</p>}
           </div>
         </div>
 
@@ -213,7 +213,7 @@ export function BlackMarketPanel({ guildId, slot }: { guildId: string; slot: str
               </div>
             );
           })}
-          {listings.isError && <p className="text-danger text-xs">Angebote konnten nicht geladen werden.</p>}
+          {listings.isError && <p className="text-danger text-xs">Angebote konnten nicht geladen werden: {(listings.error as Error).message}</p>}
           {(listings.data?.listings ?? []).length === 0 && !listings.isLoading && <p className="text-muted text-xs">Noch keine Angebote vorhanden.</p>}
         </div>
       </div>
@@ -228,7 +228,7 @@ export function BlackMarketPanel({ guildId, slot }: { guildId: string; slot: str
               <span className="text-muted/70">{new Date(purchase.createdAt).toLocaleString('de-DE')}</span>
             </div>
           ))}
-          {purchases.isError && <p className="text-danger text-xs">Kaufhistorie konnte nicht geladen werden oder dir fehlt economy.manage.</p>}
+          {purchases.isError && <p className="text-danger text-xs">Kaufhistorie konnte nicht geladen werden: {(purchases.error as Error).message}</p>}
         </div>
       </div>
 
