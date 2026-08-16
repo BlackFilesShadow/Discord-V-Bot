@@ -31,11 +31,12 @@ echo ""
 # ----- Konfiguration -----
 BOT_USER="discordbot"
 BOT_DIR="/opt/discord-v-bot"
+ENV_FILE="$BOT_DIR/.env"
 REPO_URL="https://github.com/BlackFilesShadow/Discord-V-Bot.git"
 NODE_VERSION="22"
 DB_NAME="discord_v_bot"
 DB_USER="discordbot"
-DB_PASS=$(openssl rand -hex 16)
+DB_PASS=""
 
 # ----- System-Updates -----
 info "System wird aktualisiert..."
@@ -76,12 +77,24 @@ systemctl start postgresql
 
 # ----- Datenbank einrichten -----
 info "Datenbank wird eingerichtet..."
-sudo -u postgres psql -tc "SELECT 1 FROM pg_roles WHERE rolname='${DB_USER}'" | grep -q 1 || \
+if sudo -u postgres psql -tAc "SELECT 1 FROM pg_roles WHERE rolname='${DB_USER}'" | grep -qx 1; then
+  # PostgreSQL gibt bestehende Passwort-Hashes absichtlich nicht wieder als
+  # Klartext aus. Ohne vorhandene .env koennen wir das bestehende Passwort daher
+  # nicht sicher rekonstruieren und duerfen keines erfinden.
+  if [[ ! -f "$ENV_FILE" ]]; then
+    err "PostgreSQL-User '${DB_USER}' existiert bereits, aber ${ENV_FILE} fehlt. Passwort kann nicht sicher rekonstruiert werden; Setup bricht fail-closed ab."
+  fi
+  log "Datenbank-User '${DB_USER}' bereits vorhanden"
+else
+  DB_PASS=$(openssl rand -hex 32)
   sudo -u postgres psql -c "CREATE USER ${DB_USER} WITH PASSWORD '${DB_PASS}';"
-sudo -u postgres psql -tc "SELECT 1 FROM pg_database WHERE datname='${DB_NAME}'" | grep -q 1 || \
+  log "Datenbank-User '${DB_USER}' neu erstellt"
+fi
+
+sudo -u postgres psql -tAc "SELECT 1 FROM pg_database WHERE datname='${DB_NAME}'" | grep -qx 1 || \
   sudo -u postgres psql -c "CREATE DATABASE ${DB_NAME} OWNER ${DB_USER};"
 sudo -u postgres psql -c "GRANT ALL PRIVILEGES ON DATABASE ${DB_NAME} TO ${DB_USER};"
-log "Datenbank '${DB_NAME}' erstellt (User: ${DB_USER})"
+log "Datenbank '${DB_NAME}' bereit"
 
 # ----- Bot-User erstellen -----
 if ! id "$BOT_USER" &>/dev/null; then
@@ -95,7 +108,7 @@ fi
 if [[ -d "$BOT_DIR" ]]; then
   warn "Verzeichnis ${BOT_DIR} existiert bereits — wird aktualisiert"
   cd "$BOT_DIR"
-  sudo -u "$BOT_USER" git pull origin main
+  sudo -u "$BOT_USER" git pull --ff-only origin main
 else
   info "Repository wird geklont..."
   git clone "$REPO_URL" "$BOT_DIR"
@@ -105,28 +118,48 @@ fi
 
 # ----- Abhängigkeiten installieren & Build -----
 cd "$BOT_DIR"
-info "npm-Pakete werden installiert..."
-sudo -u "$BOT_USER" npm ci --omit=dev
-log "npm-Pakete installiert"
+info "Build-Abhängigkeiten werden reproduzierbar installiert..."
+# Der Build benötigt TypeScript/Build-Tools aus den Root-devDependencies und
+# Vite/React aus dashboard-ui. Erst nach erfolgreichem Build werden Root-devDeps
+# wieder entfernt. Das entspricht dem Multi-Stage-Docker-Build.
+sudo -u "$BOT_USER" npm ci --no-audit --no-fund
+sudo -u "$BOT_USER" bash -c "cd '$BOT_DIR/dashboard-ui' && npm ci --no-audit --no-fund"
+log "Build-Abhängigkeiten installiert"
 
 info "Prisma Client wird generiert..."
 sudo -u "$BOT_USER" npx prisma generate
 log "Prisma Client generiert"
 
-info "TypeScript wird kompiliert..."
+info "Dashboard und TypeScript werden kompiliert..."
 sudo -u "$BOT_USER" npm run build
 log "Build erfolgreich"
 
+info "Runtime-Dependencies werden auf Production reduziert..."
+sudo -u "$BOT_USER" npm prune --omit=dev --no-audit --no-fund
+rm -rf "$BOT_DIR/dashboard-ui/node_modules"
+log "Production-Dependencies vorbereitet"
+
 # ----- Verzeichnisse erstellen -----
-sudo -u "$BOT_USER" mkdir -p "$BOT_DIR/uploads" "$BOT_DIR/logs"
-log "Upload- und Log-Verzeichnisse erstellt"
+sudo -u "$BOT_USER" mkdir -p \
+  "$BOT_DIR/uploads" \
+  "$BOT_DIR/logs" \
+  "$BOT_DIR/private" \
+  "$BOT_DIR/private/dev-logs" \
+  "$BOT_DIR/private/exports"
+log "Upload-, Private- und Log-Verzeichnisse erstellt"
 
 # ----- .env erstellen -----
-ENV_FILE="$BOT_DIR/.env"
 if [[ ! -f "$ENV_FILE" ]]; then
+  if [[ -z "$DB_PASS" ]]; then
+    err "Interner Setup-Fehler: Neue .env benoetigt ein frisch erzeugtes Datenbank-Passwort."
+  fi
+
   DATABASE_URL="postgresql://${DB_USER}:${DB_PASS}@localhost:5432/${DB_NAME}?schema=public"
   SESSION_SECRET=$(openssl rand -hex 32)
-  ENCRYPTION_KEY=$(openssl rand -hex 16)
+  # config.security.encryptionKey ist ein 32-Byte-Schluessel in Hexdarstellung.
+  ENCRYPTION_KEY=$(openssl rand -hex 32)
+  DEV_PASSWORD=$(openssl rand -hex 32)
+  BOT_ADMIN_PASSWORD=$(openssl rand -hex 32)
 
   cat > "$ENV_FILE" <<ENVEOF
 # =============================================
@@ -138,41 +171,66 @@ if [[ ! -f "$ENV_FILE" ]]; then
 DISCORD_TOKEN=HIER_DISCORD_TOKEN_EINTRAGEN
 DISCORD_CLIENT_ID=HIER_CLIENT_ID_EINTRAGEN
 DISCORD_CLIENT_SECRET=HIER_CLIENT_SECRET_EINTRAGEN
-DISCORD_GUILD_ID=HIER_GUILD_ID_EINTRAGEN
+DISCORD_GUILD_ID=
 BOT_OWNER_ID=HIER_DEINE_DISCORD_USER_ID
 
 # Datenbank
 DATABASE_URL=${DATABASE_URL}
 
-# Web-Dashboard (später)
+# Web-Dashboard
 DASHBOARD_PORT=3000
 DASHBOARD_URL=http://localhost:3000
 SESSION_SECRET=${SESSION_SECRET}
 OAUTH2_REDIRECT_URI=http://localhost:3000/auth/callback
+TRUST_PROXY=1
 
 # Sicherheit
 ADMIN_PASSWORD_HASH=
 TWO_FACTOR_ISSUER=Discord-V-Bot
 ENCRYPTION_KEY=${ENCRYPTION_KEY}
 
+# Developer/Bot-Admin Step-up-Secrets — zufaellig erzeugt, nicht ausgeben.
+DEV_PASSWORD=${DEV_PASSWORD}
+DEV_REQUIRE_MFA=false
+DEV_REQUIRE_IP_ALLOWLIST=false
+DEV_IP_ALLOWLIST=
+BOT_ADMIN_PASSWORD=${BOT_ADMIN_PASSWORD}
+
 # Upload-System
 UPLOAD_DIR=./uploads
-MAX_FILE_SIZE_BYTES=2147483648
+PRIVATE_UPLOAD_DIR=./private
+DEV_UPLOAD_DIR=./private/dev-logs
+EXPORT_DIR=./private/exports
+MAX_FILE_SIZE_BYTES=26214400
 ALLOWED_EXTENSIONS=.xml,.json
 
 # AI (mindestens einen Provider konfigurieren)
+# Diese Defaults entsprechen der kanonischen Runtime-Registry. Bekannte alte
+# Modell-IDs werden beim Start zusätzlich kontrolliert migriert.
 AI_PROVIDER=groq
 GROQ_API_KEY=
-GROQ_MODEL=llama-3.3-70b-versatile
+GROQ_MODEL=openai/gpt-oss-120b
+CEREBRAS_API_KEY=
+CEREBRAS_MODEL=gpt-oss-120b
+OPENROUTER_API_KEY=
+OPENROUTER_MODEL=meta-llama/llama-3.3-70b-instruct:free
 GEMINI_API_KEY=
-GEMINI_MODEL=gemini-2.0-flash
+GEMINI_MODEL=gemini-3.6-flash
 OPENAI_API_KEY=
-OPENAI_MODEL=gpt-4
+OPENAI_MODEL=gpt-5.6-luna
+
+# Nitrado-Schreibschutz: standardmaessig aktiv.
+NITRADO_WRITE_PROTECTION=true
 
 # Logging
 LOG_LEVEL=info
 LOG_DIR=./logs
 NODE_ENV=production
+
+# Monitoring: sicherer Default AUS.
+METRICS_ENABLED=false
+METRICS_TOKEN=
+ERROR_WEBHOOK_URL=
 
 # Rate Limiting
 RATE_LIMIT_WINDOW_MS=60000
@@ -181,17 +239,21 @@ ENVEOF
 
   chown "$BOT_USER":"$BOT_USER" "$ENV_FILE"
   chmod 600 "$ENV_FILE"
-  log ".env erstellt (bitte Discord-Token eintragen!)"
+  log ".env erstellt (Pflichtwerte muessen vor dem Start eingetragen werden)"
 else
   warn ".env existiert bereits — wird nicht überschrieben"
 fi
 
+# DB_PASS wird nach der .env-Erzeugung nicht mehr benoetigt und weder geloggt
+# noch in der Zusammenfassung ausgegeben.
+DB_PASS=""
+
 # ----- Datenbank-Migration -----
 info "Datenbank-Schema wird via Migrationen angewendet..."
 cd "$BOT_DIR"
-# F-009: kanonischer Migrationsweg (migrate deploy) statt db push. Frische
-# Installation -> leere DB -> Baseline wird angewendet.
-sudo -u "$BOT_USER" bash -c "cd $BOT_DIR && npx prisma migrate deploy"
+# Kanonischer Migrationsweg (migrate deploy) statt db push. Frische
+# Installation -> leere DB -> Baseline + Folgemigrationen werden angewendet.
+sudo -u "$BOT_USER" bash -c "cd '$BOT_DIR' && npx prisma migrate deploy"
 log "Datenbank-Schema angewendet"
 
 # ----- systemd Service -----
@@ -209,7 +271,7 @@ Type=simple
 User=${BOT_USER}
 Group=${BOT_USER}
 WorkingDirectory=${BOT_DIR}
-ExecStart=/usr/bin/node dist/index.js
+ExecStart=/usr/bin/node dist/src/index.js
 Restart=always
 RestartSec=10
 StartLimitBurst=5
@@ -219,7 +281,7 @@ StartLimitIntervalSec=60
 NoNewPrivileges=true
 ProtectSystem=strict
 ProtectHome=true
-ReadWritePaths=${BOT_DIR}/uploads ${BOT_DIR}/logs
+ReadWritePaths=${BOT_DIR}/uploads ${BOT_DIR}/logs ${BOT_DIR}/private
 PrivateTmp=true
 
 # Umgebung
@@ -265,7 +327,8 @@ ufw --force reset >/dev/null 2>&1
 ufw default deny incoming
 ufw default allow outgoing
 ufw allow ssh
-# Port 3000 bleibt geschlossen (Dashboard kommt später)
+# Port 3000 bleibt standardmaessig geschlossen. Bei Reverse-Proxy-Betrieb wird
+# nur der benoetigte Proxy-Port separat freigegeben.
 ufw --force enable
 log "Firewall aktiv (nur SSH erlaubt)"
 
@@ -290,14 +353,11 @@ echo ""
 echo -e "  ${BLUE}Bot-Verzeichnis:${NC}  ${BOT_DIR}"
 echo -e "  ${BLUE}Bot-User:${NC}         ${BOT_USER}"
 echo -e "  ${BLUE}Datenbank:${NC}        ${DB_NAME} (User: ${DB_USER})"
-echo -e "  ${BLUE}DB-Passwort:${NC}      ${DB_PASS}"
-echo -e "  ${BLUE}.env Datei:${NC}       ${BOT_DIR}/.env"
+echo -e "  ${BLUE}.env Datei:${NC}       ${BOT_DIR}/.env (chmod 600)"
 echo ""
 echo -e "${YELLOW}  NÄCHSTE SCHRITTE:${NC}"
-echo -e "  1. Discord-Token eintragen:  ${BLUE}sudo nano ${BOT_DIR}/.env${NC}"
-echo -e "  2. Bot starten:              ${BLUE}sudo systemctl start discord-v-bot${NC}"
+echo -e "  1. Pflichtwerte eintragen:   ${BLUE}sudo nano ${BOT_DIR}/.env${NC}"
+echo -e "  2. Bot als Service starten:  ${BLUE}sudo systemctl start discord-v-bot${NC}"
 echo -e "  3. Status prüfen:            ${BLUE}sudo systemctl status discord-v-bot${NC}"
 echo -e "  4. Logs ansehen:             ${BLUE}sudo journalctl -u discord-v-bot -f${NC}"
-echo ""
-echo -e "${YELLOW}  WICHTIG: DB-Passwort notieren! → ${DB_PASS}${NC}"
 echo ""
