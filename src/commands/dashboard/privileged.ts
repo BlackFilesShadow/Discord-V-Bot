@@ -27,6 +27,8 @@ import { config } from '../../config';
 import { logAudit } from '../../utils/logger';
 
 const ACTIONS = {
+  // ADD_MONEY bleibt nur fuer bereits vor dem Rollout erzeugte Pending-Actions
+  // lesbar. /add-money erzeugt ab jetzt keine Zweitfreigabe mehr.
   ADD_MONEY: 'ADD_MONEY',
   REMOVE_MONEY: 'REMOVE_MONEY',
   FORCE_LINK: 'FORCE_LINK',
@@ -100,7 +102,7 @@ function forceLinkFailure(result: Extract<PlayerNameLinkResult, { ok: false }>):
 export const addMoneyCommand: Command = {
   data: slotOption(new SlashCommandBuilder()
     .setName('add-money')
-    .setDescription('Berechtigt: Bereitet das Hinzufuegen von Wallet-Guthaben vor.')
+    .setDescription('Berechtigt: Fuegt Wallet-Guthaben sofort hinzu.')
     .addUserOption(o => o.setName('user').setDescription('Ziel-User').setRequired(true))
     .addIntegerOption(o => o.setName('betrag').setDescription('Betrag').setRequired(true).setMinValue(1).setMaxValue(1_000_000_000))
     .addStringOption(o => o.setName('grund').setDescription('Grund (3..200)').setRequired(true).setMinLength(3).setMaxLength(200)) as SlashCommandBuilder),
@@ -109,7 +111,22 @@ export const addMoneyCommand: Command = {
     if (target.bot) { await reply(i, 'Bots koennen kein Economy-Guthaben erhalten.'); return; }
     const amount = i.options.getInteger('betrag', true);
     const reason = i.options.getString('grund', true);
-    await queueAction(i, scope, ACTIONS.ADD_MONEY, { targetUserId: target.id, amount: String(amount), reason }, `+${amount.toLocaleString('de-DE')} Coins fuer <@${target.id}> sind vorbereitet.`);
+    await adminPay({
+      guildId: scope.guildId,
+      nitradoConnId: scope.nitradoConnId!,
+      targetUserId: asUserDiscordId(target.id),
+      delta: BigInt(amount),
+      reason,
+      actorDiscordId: scope.actorDiscordId,
+    });
+    logAudit('ECON_ADD_MONEY', 'ECONOMY', {
+      guildId: scope.guildId,
+      nitradoConnId: scope.nitradoConnId,
+      actor: scope.actorDiscordId,
+      target: target.id,
+      amount: String(amount),
+    });
+    await reply(i, `+${amount.toLocaleString('de-DE')} Coins wurden <@${target.id}> sofort gutgeschrieben.`);
   }),
 };
 
@@ -204,7 +221,7 @@ export const confirmActionCommand: Command = {
       logAudit(action.actionType === ACTIONS.ADD_MONEY ? 'ECON_ADD_MONEY' : 'ECON_REMOVE_MONEY', 'ECONOMY', {
         guildId: scope.guildId, nitradoConnId, actor: scope.actorDiscordId, target: targetUserId, amount: amount.toString(), actionId: id,
       });
-      await reply(i, action.actionType === ACTIONS.ADD_MONEY ? 'Guthaben wurde hinzugefuegt.' : 'Guthaben wurde abgezogen.');
+      await reply(i, action.actionType === ACTIONS.ADD_MONEY ? 'Legacy-Gutschrift wurde ausgefuehrt.' : 'Guthaben wurde abgezogen.');
       return;
     }
 
