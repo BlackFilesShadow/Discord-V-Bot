@@ -1,10 +1,10 @@
 const rewardStateFindUnique = jest.fn();
-const rewardStateCreate = jest.fn();
-const rewardStateUpdate = jest.fn();
+const rewardStateUpsert = jest.fn();
 const rewardStateUpdateMany = jest.fn();
 const gameLinkFindFirst = jest.fn();
 const settingsFindUnique = jest.fn();
 const economyConfigFindUnique = jest.fn();
+const legacyStartBalanceFindFirst = jest.fn();
 const ledgerCreate = jest.fn();
 const accountUpsert = jest.fn();
 const transactionCreate = jest.fn();
@@ -14,8 +14,7 @@ jest.mock('../../src/database/prisma', () => ({
   default: {
     economyLinkRewardState: {
       findUnique: rewardStateFindUnique,
-      create: rewardStateCreate,
-      update: rewardStateUpdate,
+      upsert: rewardStateUpsert,
       updateMany: rewardStateUpdateMany,
     },
     gameIdentityLink: { findFirst: gameLinkFindFirst },
@@ -25,7 +24,7 @@ jest.mock('../../src/database/prisma', () => ({
       economyLinkRewardState: { updateMany: rewardStateUpdateMany },
       economyLedgerEntry: { create: ledgerCreate },
       economyAccount: { upsert: accountUpsert },
-      economyTransaction: { create: transactionCreate },
+      economyTransaction: { findFirst: legacyStartBalanceFindFirst, create: transactionCreate },
     })),
   },
 }));
@@ -48,57 +47,69 @@ const LINK_AT = new Date('2026-08-16T12:00:00.000Z');
 beforeEach(() => {
   jest.clearAllMocks();
   rewardStateFindUnique.mockResolvedValue(null);
-  rewardStateCreate.mockResolvedValue({ id: 'state-1' });
-  rewardStateUpdate.mockResolvedValue({ id: 'state-1' });
+  rewardStateUpsert.mockResolvedValue({ rewardEligibleFrom: LINK_AT });
   rewardStateUpdateMany.mockResolvedValue({ count: 1 });
   gameLinkFindFirst.mockResolvedValue({ userDiscordId: USER });
   settingsFindUnique.mockResolvedValue({ economyActive: true });
   economyConfigFindUnique.mockResolvedValue({ startBalance: 5_000 });
+  legacyStartBalanceFindFirst.mockResolvedValue(null);
   ledgerCreate.mockResolvedValue({ id: 'ledger-1' });
   accountUpsert.mockResolvedValue({ id: 'account-1' });
   transactionCreate.mockResolvedValue({ id: 'tx-1' });
 });
 
 describe('EconomyLinkRewardState', () => {
-  it('legt fuer einen neuen Link den Reward-Cutoff auf den Linkzeitpunkt', async () => {
-    await activateLinkRewardState(SCOPE, USER, GAME_ID, SECRET, true, LINK_AT);
-    expect(rewardStateCreate).toHaveBeenCalledWith({
-      data: expect.objectContaining({
+  it('legt fuer einen neuen Link den Reward-Cutoff atomar per Upsert auf den Linkzeitpunkt', async () => {
+    const cutoff = await activateLinkRewardState(SCOPE, USER, GAME_ID, SECRET, true, LINK_AT);
+    expect(cutoff).toEqual(LINK_AT);
+    expect(rewardStateUpsert).toHaveBeenCalledTimes(1);
+    const args = rewardStateUpsert.mock.calls[0][0];
+    expect(args.where).toEqual({
+      guildId_nitradoConnId_userDiscordId: {
         guildId: SCOPE.guildId,
         nitradoConnId: SCOPE.nitradoConnId,
         userDiscordId: USER,
-        identityHash: identityHash(GAME_ID, SECRET),
-        rewardEligibleFrom: LINK_AT,
-        startBalanceEligible: true,
-      }),
+      },
+    });
+    expect(args.create).toMatchObject({
+      guildId: SCOPE.guildId,
+      nitradoConnId: SCOPE.nitradoConnId,
+      userDiscordId: USER,
+      identityHash: identityHash(GAME_ID, SECRET),
+      rewardEligibleFrom: LINK_AT,
+      startBalanceEligible: true,
+    });
+    expect(args.update).toMatchObject({
+      identityHash: identityHash(GAME_ID, SECRET),
+      rewardEligibleFrom: LINK_AT,
+      unlinkedAt: null,
     });
   });
 
   it('verschiebt bei idempotentem bereits-verlinkt Aufruf den Cutoff nicht', async () => {
-    rewardStateFindUnique.mockResolvedValue({ id: 'state-1' });
-    await activateLinkRewardState(SCOPE, USER, GAME_ID, SECRET, false, new Date('2026-08-16T13:00:00Z'));
-    expect(rewardStateUpdate).toHaveBeenCalledWith({
-      where: { id: 'state-1' },
-      data: {
-        identityHash: identityHash(GAME_ID, SECRET),
-        unlinkedAt: null,
-      },
+    rewardStateUpsert.mockResolvedValue({ rewardEligibleFrom: LINK_AT });
+    const retryAt = new Date('2026-08-16T13:00:00Z');
+    const cutoff = await activateLinkRewardState(SCOPE, USER, GAME_ID, SECRET, false, retryAt);
+    expect(cutoff).toEqual(LINK_AT);
+    const update = rewardStateUpsert.mock.calls[0][0].update;
+    expect(update).toEqual({
+      identityHash: identityHash(GAME_ID, SECRET),
+      unlinkedAt: null,
     });
+    expect(update).not.toHaveProperty('rewardEligibleFrom');
   });
 
   it('startet beim Relink eine neue Reward-Epoche, aktiviert Startguthaben aber nicht erneut', async () => {
-    rewardStateFindUnique.mockResolvedValue({ id: 'state-1' });
     const relinkAt = new Date('2026-08-16T14:00:00Z');
+    rewardStateUpsert.mockResolvedValue({ rewardEligibleFrom: relinkAt });
     await activateLinkRewardState(SCOPE, USER, GAME_ID, SECRET, true, relinkAt);
-    expect(rewardStateUpdate).toHaveBeenCalledWith({
-      where: { id: 'state-1' },
-      data: {
-        identityHash: identityHash(GAME_ID, SECRET),
-        rewardEligibleFrom: relinkAt,
-        unlinkedAt: null,
-      },
+    const update = rewardStateUpsert.mock.calls[0][0].update;
+    expect(update).toEqual({
+      identityHash: identityHash(GAME_ID, SECRET),
+      rewardEligibleFrom: relinkAt,
+      unlinkedAt: null,
     });
-    expect(rewardStateUpdate.mock.calls[0][0].data).not.toHaveProperty('startBalanceEligible');
+    expect(update).not.toHaveProperty('startBalanceEligible');
   });
 
   it('stoppt bei Unlink die aktive Reward-Epoche', async () => {
@@ -148,60 +159,72 @@ describe('EconomyLinkRewardState', () => {
 describe('Startguthaben bei Account-Verknuepfung', () => {
   it('bucht konfiguriertes Startguthaben atomar auch auf ein bestehendes Konto', async () => {
     const result = await grantStartBalanceForLink(SCOPE, USER, LINK_AT);
-    expect(result).toEqual({ granted: true, amount: 5_000n });
-    expect(rewardStateUpdateMany).toHaveBeenCalledWith(expect.objectContaining({
-      where: expect.objectContaining({ startBalanceEligible: true, startBalanceGrantedAt: null }),
-      data: expect.objectContaining({
-        startBalanceEligible: false,
-        startBalanceGrantedAt: LINK_AT,
-        startBalanceGrantedAmount: 5_000n,
-      }),
-    }));
-    expect(ledgerCreate).toHaveBeenCalledWith({
-      data: expect.objectContaining({
-        idempotencyKey: `startbalance:link:${SCOPE.guildId}:${SCOPE.nitradoConnId}:${USER}`,
-        walletDelta: 5_000n,
-        type: 'STARTBALANCE_JOIN',
-      }),
-    });
-    expect(accountUpsert).toHaveBeenCalledWith(expect.objectContaining({
-      update: expect.objectContaining({
-        walletBalance: { increment: 5_000n },
-        lifetimeEarned: { increment: 5_000n },
-      }),
-    }));
-    expect(transactionCreate).toHaveBeenCalledWith({
-      data: expect.objectContaining({
-        delta: 5_000n,
-        reason: 'Startguthaben bei Account-Verknuepfung',
-      }),
-    });
+    expect(result.granted).toBe(true);
+    expect(result.amount.toString()).toBe('5000');
+
+    const claim = rewardStateUpdateMany.mock.calls[0][0];
+    expect(claim.where).toEqual(expect.objectContaining({ startBalanceEligible: true, startBalanceGrantedAt: null }));
+    expect(claim.data.startBalanceEligible).toBe(false);
+    expect(claim.data.startBalanceGrantedAt).toEqual(LINK_AT);
+    expect(claim.data.startBalanceGrantedAmount.toString()).toBe('5000');
+
+    const ledger = ledgerCreate.mock.calls[0][0].data;
+    expect(ledger.idempotencyKey).toBe(`startbalance:link:${SCOPE.guildId}:${SCOPE.nitradoConnId}:${USER}`);
+    expect(ledger.walletDelta.toString()).toBe('5000');
+    expect(ledger.type).toBe('STARTBALANCE_JOIN');
+
+    const account = accountUpsert.mock.calls[0][0];
+    expect(account.update.walletBalance.increment.toString()).toBe('5000');
+    expect(account.update.lifetimeEarned.increment.toString()).toBe('5000');
+
+    const transaction = transactionCreate.mock.calls[0][0].data;
+    expect(transaction.delta.toString()).toBe('5000');
+    expect(transaction.reason).toBe('Startguthaben bei Account-Verknuepfung');
   });
 
-  it('vergibt bei bereits beanspruchtem/Legacy-Link kein neues Startguthaben', async () => {
+  it('vergibt bei bereits beanspruchtem Link kein neues Startguthaben', async () => {
     rewardStateUpdateMany.mockResolvedValue({ count: 0 });
     const result = await grantStartBalanceForLink(SCOPE, USER, LINK_AT);
-    expect(result).toEqual({ granted: false, amount: 0n });
+    expect(result.granted).toBe(false);
+    expect(result.amount.toString()).toBe('0');
     expect(ledgerCreate).not.toHaveBeenCalled();
     expect(accountUpsert).not.toHaveBeenCalled();
   });
 
+  it('uebernimmt ein frueheres Discord-Join-Startguthaben und zahlt niemals doppelt', async () => {
+    const legacyAt = new Date('2026-08-10T10:00:00.000Z');
+    legacyStartBalanceFindFirst.mockResolvedValue({ createdAt: legacyAt, delta: 5_000n });
+
+    const result = await grantStartBalanceForLink(SCOPE, USER, LINK_AT);
+    expect(result.granted).toBe(false);
+    expect(result.amount.toString()).toBe('0');
+    expect(ledgerCreate).not.toHaveBeenCalled();
+    expect(accountUpsert).not.toHaveBeenCalled();
+    expect(transactionCreate).not.toHaveBeenCalled();
+
+    const consume = rewardStateUpdateMany.mock.calls[0][0];
+    expect(consume.data.startBalanceEligible).toBe(false);
+    expect(consume.data.startBalanceGrantedAt).toEqual(legacyAt);
+    expect(consume.data.startBalanceGrantedAmount.toString()).toBe('5000');
+  });
+
   it('verbraucht die einmalige Eligibility auch wenn Betrag 0 oder Economy deaktiviert ist', async () => {
     economyConfigFindUnique.mockResolvedValueOnce({ startBalance: 0 });
-    await expect(grantStartBalanceForLink(SCOPE, USER, LINK_AT)).resolves.toEqual({ granted: false, amount: 0n });
-    expect(rewardStateUpdateMany).toHaveBeenCalledWith(expect.objectContaining({
-      data: { startBalanceEligible: false },
-    }));
+    const zero = await grantStartBalanceForLink(SCOPE, USER, LINK_AT);
+    expect(zero.granted).toBe(false);
+    expect(zero.amount.toString()).toBe('0');
+    expect(rewardStateUpdateMany.mock.calls[0][0].data).toEqual({ startBalanceEligible: false });
     expect(ledgerCreate).not.toHaveBeenCalled();
 
     jest.clearAllMocks();
     rewardStateUpdateMany.mockResolvedValue({ count: 1 });
     settingsFindUnique.mockResolvedValue({ economyActive: false });
     economyConfigFindUnique.mockResolvedValue({ startBalance: 5_000 });
-    await expect(grantStartBalanceForLink(SCOPE, USER, LINK_AT)).resolves.toEqual({ granted: false, amount: 0n });
-    expect(rewardStateUpdateMany).toHaveBeenCalledWith(expect.objectContaining({
-      data: { startBalanceEligible: false },
-    }));
+    legacyStartBalanceFindFirst.mockResolvedValue(null);
+    const disabled = await grantStartBalanceForLink(SCOPE, USER, LINK_AT);
+    expect(disabled.granted).toBe(false);
+    expect(disabled.amount.toString()).toBe('0');
+    expect(rewardStateUpdateMany.mock.calls[0][0].data).toEqual({ startBalanceEligible: false });
     expect(ledgerCreate).not.toHaveBeenCalled();
   });
 
@@ -209,6 +232,8 @@ describe('Startguthaben bei Account-Verknuepfung', () => {
     const unique = new Error('unique') as Error & { code: string };
     unique.code = 'P2002';
     ledgerCreate.mockRejectedValue(unique);
-    await expect(grantStartBalanceForLink(SCOPE, USER, LINK_AT)).resolves.toEqual({ granted: false, amount: 0n });
+    const result = await grantStartBalanceForLink(SCOPE, USER, LINK_AT);
+    expect(result.granted).toBe(false);
+    expect(result.amount.toString()).toBe('0');
   });
 });
