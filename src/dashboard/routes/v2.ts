@@ -13,6 +13,7 @@ import { idempotency } from '../middleware/idempotency';
 import { requireGlobalDeveloperIdentity } from '../middleware/globalDeveloperGate';
 import { requireGlobalBotAdminIdentity } from '../middleware/globalBotAdminGate';
 import { requireSafeDashboardEconomyScope } from '../middleware/economyScopeGuard';
+import { requireGuildAnyPermission } from '../middleware/guildDomainAccess';
 import { guardBotAdminCommandCenterInput, guardDevCommandCenterInput } from '../middleware/commandCenterInputGuard';
 import { requireVerifiedDevMutationStepUp, redirectLegacyDevExports } from '../middleware/devStepUp';
 import { guardDevAdminTarget } from '../middleware/devAdminTargetGuard';
@@ -69,6 +70,9 @@ import { commandCatalogRouter } from './v2/commandCatalog';
 
 export const v2Router = Router();
 
+const requireEconomyDashboardAccess = requireGuildAnyPermission('economy.view', 'economy.manage');
+const requireCasinoDashboardAccess = requireGuildAnyPermission('casino.view', 'casino.manage');
+
 v2Router.use(requireAuth);
 v2Router.use(idempotency);
 
@@ -82,12 +86,12 @@ v2Router.use('/guilds/:guildId/whitelist', whitelistRouter);
 v2Router.use('/guilds/:guildId/factions', factionsRouter);
 
 v2Router.use('/guilds/:guildId/economy-scope', economyScopeRouter);
-v2Router.use('/guilds/:guildId/economy/virtual-accounts', requireSafeDashboardEconomyScope, economyVirtualAccountsRouter);
-v2Router.use('/guilds/:guildId/economy/lottery', requireSafeDashboardEconomyScope, economyLotteryRouter);
-v2Router.use('/guilds/:guildId/economy/black-market', requireSafeDashboardEconomyScope, economyBlackMarketRouter);
-v2Router.use('/guilds/:guildId/economy', requireSafeDashboardEconomyScope, economyRouter);
+v2Router.use('/guilds/:guildId/economy/virtual-accounts', requireEconomyDashboardAccess, requireSafeDashboardEconomyScope, economyVirtualAccountsRouter);
+v2Router.use('/guilds/:guildId/economy/lottery', requireEconomyDashboardAccess, requireSafeDashboardEconomyScope, economyLotteryRouter);
+v2Router.use('/guilds/:guildId/economy/black-market', requireEconomyDashboardAccess, requireSafeDashboardEconomyScope, economyBlackMarketRouter);
+v2Router.use('/guilds/:guildId/economy', requireEconomyDashboardAccess, requireSafeDashboardEconomyScope, economyRouter);
 v2Router.use('/guilds/:guildId/economy-links', economyLinkRouter);
-v2Router.use('/guilds/:guildId/casino', requireSafeDashboardEconomyScope, casinoRouter);
+v2Router.use('/guilds/:guildId/casino', requireCasinoDashboardAccess, requireSafeDashboardEconomyScope, casinoRouter);
 
 v2Router.use('/guilds/:guildId/killfeed', killfeedRouter);
 v2Router.use('/guilds/:guildId/welcome', welcomeRouter);
