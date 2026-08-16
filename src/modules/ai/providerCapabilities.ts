@@ -79,22 +79,26 @@ export function taskAffinity(provider: ProviderName, model: string, task: AiTask
 }
 
 /**
- * Deterministic task classifier used by callAI. It deliberately detects only
- * strong signals; ambiguous prompts stay on `chat` instead of over-routing.
+ * Deterministic classifier for generic callAI callsites.
+ *
+ * Only the FIRST system message is treated as the trusted task instruction.
+ * Later system messages can contain server/RAG/web/user-derived context and must
+ * never be able to steer provider selection. DayZ technical routing is supplied
+ * explicitly by answerQuestion via its deterministic dayzTechnical preflight.
  */
 export function inferAiTaskProfile(messages: Array<{ role: string; content: string }>): AiTaskProfile {
-  const system = messages
-    .filter((m) => m.role === 'system')
-    .map((m) => String(m.content || ''))
-    .join('\n')
-    .toLowerCase();
   const chars = messages.reduce((sum, m) => sum + String(m.content || '').length, 0);
-
   if (chars >= 24_000) return 'long_context';
-  if (/ausschliesslich[^\n]{0,120}json|ausschließlich[^\n]{0,120}json|response[_ -]?format|json schema/.test(system)) {
+
+  const firstSystem = String(messages.find((m) => m.role === 'system')?.content || '').toLowerCase();
+  if (/ausschliesslich[^\n]{0,160}json|ausschließlich[^\n]{0,160}json|response[_ -]?format|json schema/.test(firstSystem)) {
     return 'structured';
   }
-  if (/übersetze|uebersetze|translation|translate/.test(system)) return 'fast';
-  if (/dayz|nitrado|technisch|analysiere den kontext|moderationshinweis|reasoning/.test(system)) return 'reasoning';
+  if (/^übersetze\b|^uebersetze\b|\btranslation task\b|\btranslate the following\b/.test(firstSystem)) {
+    return 'fast';
+  }
+  if (/analysiere den kontext|moderationshinweis|erfahrener discord-moderator|reasoning task/.test(firstSystem)) {
+    return 'reasoning';
+  }
   return 'chat';
 }
