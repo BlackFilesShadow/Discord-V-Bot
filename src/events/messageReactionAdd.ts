@@ -226,13 +226,21 @@ const messageReactionAddEvent: BotEvent = {
           });
 
           if (existingVotes.length > 0) {
-            // Bestehende Stimme(n) aus DB löschen
-            await prisma.pollVote.deleteMany({
-              where: { pollId: poll.id, userId: dbUser.id },
-            });
-            await prisma.poll.update({
-              where: { id: poll.id },
-              data: { totalVotes: { decrement: existingVotes.length } },
+            // Vote-Loeschung + Counter-Korrektur sind eine atomare, Guild-gescoppte Einheit.
+            // Wir dekrementieren ausschliesslich die tatsaechlich geloeschten DB-Zeilen,
+            // damit parallele Reaction-Events den Counter nicht unterlaufen lassen.
+            await prisma.$transaction(async tx => {
+              const deleted = await tx.pollVote.deleteMany({
+                where: { pollId: poll.id, userId: dbUser.id },
+              });
+              if (deleted.count === 0) return;
+              const updated = await tx.poll.updateMany({
+                where: { id: poll.id, guildId },
+                data: { totalVotes: { decrement: deleted.count } },
+              });
+              if (updated.count !== 1) {
+                throw new Error(`Scoped Poll-Counter-Update fehlgeschlagen: ${poll.id}/${guildId}`);
+              }
             });
 
             // Vorherige Emoji-Reaktionen des Users entfernen
