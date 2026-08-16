@@ -1,13 +1,22 @@
 /**
- * Spielidentitaets-Bindung (Discord <-> Spielidentitaet) pro Guild+Slot+User.
- * Vereinheitlicht auf GameIdentityLink (nur HMAC, kein Klartext-GUID).
+ * Spielidentitaets-Bindung (Discord <-> DayZ) pro Guild+Slot+User.
+ *
+ * Die DayZ-GUID bleibt in GameIdentityLink gehasht. Fuer Anzeige und Force-Link
+ * wird der exakte Spielername gegen die kanonischen PlayerSessions aufgeloest.
  */
 import { Router } from 'express';
 import { requireGuildPermission } from '../../middleware/auth';
 import prisma from '../../../database/prisma';
 import { asUserDiscordId } from '../../../types/scope';
 import { logAuditDb } from '../../../utils/logger';
-import { forceLink, unlinkUser, type LinkClient } from '../../../modules/linking/linkService';
+import {
+  forceLinkByPlayerName,
+  isValidPlayerName,
+  listVerifiedLinkDetails,
+  unlinkUser,
+  type LinkClient,
+  type SessionLinkClient,
+} from '../../../modules/linking/linkService';
 import { config } from '../../../config';
 import { resolveDashboardGameServer, sendDashboardServerResolutionError } from './serverScope';
 
@@ -18,16 +27,20 @@ economyLinkRouter.get('/', requireGuildPermission('economy.view'), async (req, r
   const resolution = await resolveDashboardGameServer(scope.guildId, scope.actorDiscordId, req.query.slot);
   if (resolution.kind !== 'RESOLVED') { sendDashboardServerResolutionError(res, resolution); return; }
   const connId = resolution.nitradoConnId;
-  const links = await prisma.gameIdentityLink.findMany({
-    where: { guildId: scope.guildId, nitradoConnId: connId, status: 'VERIFIED' },
-    orderBy: { verifiedAt: 'desc' },
-    take: 500,
-  });
+
+  const links = await listVerifiedLinkDetails(
+    prisma as unknown as SessionLinkClient,
+    { guildId: scope.guildId, nitradoConnId: connId },
+    config.security.encryptionKey,
+    500,
+  );
   res.json({
-    links: links.map(l => ({
-      userDiscordId: l.userDiscordId,
-      status: l.status,
-      verifiedAt: l.verifiedAt,
+    links: links.map(link => ({
+      userDiscordId: link.userDiscordId,
+      playerName: link.playerName,
+      gameId: link.gameId,
+      status: 'VERIFIED',
+      verifiedAt: link.verifiedAt,
     })),
   });
 });
@@ -49,13 +62,53 @@ economyLinkRouter.post('/grant', requireGuildPermission('economy.manage'), async
   const resolution = await resolveDashboardGameServer(scope.guildId, scope.actorDiscordId, req.query.slot);
   if (resolution.kind !== 'RESOLVED') { sendDashboardServerResolutionError(res, resolution); return; }
   const connId = resolution.nitradoConnId;
-  const { userDiscordId, gameId } = req.body ?? {};
+  const { userDiscordId } = req.body ?? {};
+  // gameId bleibt als Rueckwaertskompatibilitaets-Alias fuer die bestehende
+  // Dashboard-Oberflaeche erhalten, ist fachlich ab jetzt aber ein Spielername.
+  const playerName = typeof req.body?.playerName === 'string'
+    ? req.body.playerName.trim()
+    : typeof req.body?.gameId === 'string'
+      ? req.body.gameId.trim()
+      : '';
+
   let target;
   try { target = asUserDiscordId(userDiscordId); } catch { res.status(400).json({ error: 'userDiscordId ungueltig.' }); return; }
-  if (typeof gameId !== 'string' || gameId.length < 3 || gameId.length > 64) { res.status(400).json({ error: 'gameId 3..64 Zeichen.' }); return; }
+  if (!isValidPlayerName(playerName)) { res.status(400).json({ error: 'Spielername 1..64 Zeichen, keine Zeilenumbrueche.' }); return; }
 
-  const r = await forceLink(prisma as unknown as LinkClient, { guildId: scope.guildId, nitradoConnId: connId }, target, gameId, config.security.encryptionKey);
-  if (!r.ok) { res.status(409).json({ error: 'Spielidentitaet bereits mit anderem Account verknuepft.' }); return; }
-  logAuditDb('ECONOMY_LINK_GRANTED', 'ECONOMY', { actorUserId: req.auth!.userId, guildId: scope.guildId, details: { slotId: connId, target } });
-  res.status(201).json({ userDiscordId: target, status: 'VERIFIED' });
+  const result = await forceLinkByPlayerName(
+    prisma as unknown as SessionLinkClient,
+    { guildId: scope.guildId, nitradoConnId: connId },
+    target,
+    playerName,
+    config.security.encryptionKey,
+  );
+  if (!result.ok) {
+    if (result.reason === 'PLAYER_NOT_SEEN') {
+      res.status(404).json({ error: 'Spielername wurde auf diesem Gameserver noch nicht in den ADM-/Session-Daten erkannt.' });
+      return;
+    }
+    if (result.reason === 'AMBIGUOUS_PLAYER_NAME') {
+      res.status(409).json({ error: 'Spielername wurde mit mehreren DayZ-GUIDs beobachtet und ist nicht eindeutig.' });
+      return;
+    }
+    if (result.reason === 'USER_ALREADY_LINKED') {
+      res.status(409).json({ error: 'Discord-Account ist bereits mit einer anderen DayZ-Identitaet verknuepft.' });
+      return;
+    }
+    res.status(409).json({ error: 'Spielername bzw. DayZ-GUID ist bereits mit einem anderen Discord-Account verknuepft.' });
+    return;
+  }
+
+  logAuditDb('ECONOMY_LINK_GRANTED', 'ECONOMY', {
+    actorUserId: req.auth!.userId,
+    guildId: scope.guildId,
+    details: { slotId: connId, target, playerName: result.playerName },
+  });
+  res.status(201).json({
+    userDiscordId: target,
+    playerName: result.playerName,
+    gameId: result.gameId,
+    status: 'VERIFIED',
+    playedSeconds: result.playedSeconds,
+  });
 });
