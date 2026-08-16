@@ -28,27 +28,6 @@ export const PUBLIC_COMMAND_RENAMES: Readonly<Record<string, string>> = Object.f
   'wl-list': 'whitelist',
 });
 
-/**
- * Economy enthaelt aus historischen Gruenden noch die alten Link-Exports.
- * Seit dem Konsolen-Linking liegen /link, /unlink und /links kanonisch in
- * dashboard/linking.ts. Der Loader verwirft ausschliesslich diese drei alten
- * Export-Symbole, damit niemals zwei Implementierungen desselben Slash-Commands
- * parallel registriert werden.
- */
-const SUPERSEDED_COMMAND_EXPORTS = new Set([
-  'dashboard/economy#linkCommand',
-  'dashboard/economy#unlinkCommand',
-  'dashboard/economy#linksCommand',
-]);
-
-function normalizedSourceModule(sourceFile: string): string {
-  return sourceFile.replace(/\\/g, '/').replace(/\.(?:ts|js)$/i, '');
-}
-
-export function isSupersededCommandExport(sourceFile: string, exportName: string): boolean {
-  return SUPERSEDED_COMMAND_EXPORTS.has(`${normalizedSourceModule(sourceFile)}#${exportName}`);
-}
-
 export function canonicalDiscordCommandName(name: string): string {
   return PUBLIC_COMMAND_RENAMES[name] ?? name;
 }
@@ -117,10 +96,6 @@ export async function loadCommands(client: ExtendedClient): Promise<void> {
             : commandModule;
           for (const key of Object.keys(source)) {
             if (key === 'default' || key === '__esModule') continue;
-            if (isSupersededCommandExport(relSource, key)) {
-              logger.info(`Legacy-Command-Export ${normalizedSourceModule(relSource)}#${key} wird durch dashboard/linking ersetzt.`);
-              continue;
-            }
             const exported = source[key];
             if (exported?.data?.name && typeof exported.execute === 'function') {
               const command = exported as Command;
