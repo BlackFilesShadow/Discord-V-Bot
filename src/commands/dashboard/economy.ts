@@ -1,9 +1,11 @@
 /**
- * Phase 3 — Economy + Link-Commands.
+ * Phase 3 — Economy-Commands.
  *
  * Alle Commands laufen ueber `withGuildScope` (Guild+Slot+Owner+Perms in einem Schritt).
  * Bei mehreren aktiven Gameservern kann und muss der Slot explizit gewaehlt werden.
  * Geld-Werte: BigInt. Replies: ephemeral bei privaten Daten/Fehlern.
+ *
+ * Account-Verknuepfung liegt kanonisch in dashboard/linking.ts.
  */
 
 import {
@@ -15,7 +17,6 @@ import { withGuildScope } from '../middleware/withGuildScope';
 import {
   getAccountOrZero, recentTransactions, pay, adminPay, deposit, withdraw, transferBank, getConfig,
 } from '../../modules/economy/repository';
-import { createLinkChallenge, unlinkUser, type LinkClient } from '../../modules/linking/linkService';
 import { asUserDiscordId } from '../../types/scope';
 import type { GuildId, NitradoConnId } from '../../types/scope';
 import { logAudit } from '../../utils/logger';
@@ -77,50 +78,6 @@ async function statusReply(
   if (ephemeral) await i.reply({ embeds: [embed], flags: MessageFlags.Ephemeral, allowedMentions: { parse: [] } });
   else await i.reply({ embeds: [embed], allowedMentions: { parse: [] } });
 }
-
-// ============================================================
-// /link — startet den sicheren Ingame-Challenge-Flow im ausgewaehlten Slot
-// ============================================================
-export const linkCommand: Command = {
-  data: slotOption(new SlashCommandBuilder()
-    .setName('link')
-    .setDescription('Startet die sichere Verknüpfung mit deiner Spielfigur per Ingame-Code.') as SlashCommandBuilder),
-  execute: withGuildScope({ acceptSlotOption: true }, async (i, scope) => {
-    const { code, expiresAt } = await createLinkChallenge(
-      prisma as unknown as LinkClient,
-      { guildId: scope.guildId, nitradoConnId: scope.nitradoConnId! },
-      scope.actorDiscordId,
-    );
-    logAudit('LINK_CHALLENGE_CREATED', 'LINKING', {
-      guildId: scope.guildId,
-      slotId: scope.nitradoConnId,
-      actor: scope.actorDiscordId,
-      expiresAt: expiresAt.toISOString(),
-    });
-    await statusReply(i, 'SUCCESS', 'Verknüpfung gestartet', {
-      description: 'Schreibe den folgenden Code **im Spielchat auf dem ausgewählten DayZ-Server**. Erst die ADM-Erkennung verknüpft danach deine Spielidentität mit Discord.',
-      fields: [
-        { name: '🔐 Ingame-Code', value: `\`${code}\`` },
-        { name: '⏱️ Gültig', value: `<t:${Math.floor(expiresAt.getTime() / 1000)}:R>` },
-      ],
-    });
-  }),
-};
-
-// ============================================================
-// /unlink — entfernt eigene Bindung im ausgewaehlten Slot
-// ============================================================
-export const unlinkCommand: Command = {
-  data: slotOption(new SlashCommandBuilder()
-    .setName('unlink')
-    .setDescription('Löscht deine Spielfigur-Verknüpfung im ausgewählten Server.') as SlashCommandBuilder),
-  execute: withGuildScope({ requireSlotToggle: 'economyActive', acceptSlotOption: true }, async (i, scope) => {
-    const removed = await unlinkUser(prisma as unknown as LinkClient, { guildId: scope.guildId, nitradoConnId: scope.nitradoConnId! }, scope.actorDiscordId);
-    if (!removed) { await statusReply(i, 'INFO', 'Keine Verknüpfung', { description: 'Du hast in diesem Server keine Verknüpfung.' }); return; }
-    logAudit('LINK_DELETED', 'ECONOMY', { guildId: scope.guildId, slotId: scope.nitradoConnId, actor: scope.actorDiscordId });
-    await statusReply(i, 'SUCCESS', 'Verknüpfung entfernt', { description: 'Deine Spielfigur-Verknüpfung wurde entfernt.' });
-  }),
-};
 
 // ============================================================
 // /balance — eigener Kontostand + letzte 5 Tx
@@ -244,32 +201,6 @@ export const adminPayCommand: Command = {
 // /grant wurde entfernt. Administrative Force-Link-Aktionen laufen ausschliesslich
 // ueber /force-link + /confirm-action, damit Slotbindung und Step-up-Bestaetigung
 // nicht durch einen parallelen Alias umgangen werden koennen.
-
-// ============================================================
-// /links — listet alle Bindungen im ausgewaehlten Slot
-// ============================================================
-export const linksCommand: Command = {
-  data: slotOption(new SlashCommandBuilder()
-    .setName('links')
-    .setDescription('Owner/Berechtigt: Listet alle Spielfigur-Verknüpfungen im ausgewählten Slot.') as SlashCommandBuilder),
-  execute: withGuildScope({ requirePerm: 'economy.view', acceptSlotOption: true }, async (i, scope) => {
-    const connId = scope.nitradoConnId!;
-    const rows = await prisma.gameIdentityLink.findMany({
-      where: { guildId: scope.guildId, nitradoConnId: connId, status: 'VERIFIED' },
-      orderBy: { verifiedAt: 'desc' },
-      take: 50,
-    });
-    if (rows.length === 0) { await statusReply(i, 'INFO', 'Verknüpfungen', { description: 'Im ausgewählten Slot gibt es noch keine verifizierten Verknüpfungen.' }); return; }
-    const lines = rows.map(r => `<@${r.userDiscordId}> • ✅ verifiziert`).join('\n');
-    const e = new EmbedBuilder()
-      .setColor(0xF1C40F)
-      .setTitle(`🔗 Verknüpfungen (${rows.length})`)
-      .setDescription(lines.slice(0, 4000))
-      .setFooter({ text: await guildFooter(scope.guildId, connId) })
-      .setTimestamp();
-    await embedReply(i, e);
-  }),
-};
 
 // ============================================================
 // /deposit — Wallet → Bank
