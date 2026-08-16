@@ -30,8 +30,7 @@ CREATE UNIQUE INDEX "EconomyVirtualAccount_guild_conn_name_key"
 CREATE INDEX "EconomyVirtualAccount_guild_conn_status_idx"
     ON "EconomyVirtualAccount"("guildId", "nitradoConnId", "status");
 CREATE INDEX "EconomyVirtualAccount_expiry_idx"
-    ON "EconomyVirtualAccount"("guildId", "nitradoConnId", "expiresAt")
-    WHERE "expiresAt" IS NOT NULL;
+    ON "EconomyVirtualAccount"("guildId", "nitradoConnId", "expiresAt");
 CREATE INDEX "EconomyVirtualAccount_kind_idx"
     ON "EconomyVirtualAccount"("guildId", "nitradoConnId", "kind");
 
