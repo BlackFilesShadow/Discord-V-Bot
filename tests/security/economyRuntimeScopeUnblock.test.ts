@@ -13,8 +13,12 @@ describe('Economy runtime scope unblock', () => {
   const market = read('dashboard-ui/src/components/economy/BlackMarketPanel.tsx');
 
   it('blockiert nur unaufgeloeste Legacy-Economy und erlaubt danach getrennte Secondary-Scopes', () => {
-    expect(scope).toContain("if (state.status !== 'RESOLVED' || !state.primaryNitradoConnId)");
-    expect(scope).toContain('Ein anderer Server ist danach ein eigener leerer Scope');
+    const readyGuard = scope.slice(
+      scope.indexOf('export async function assertEconomyScopeReady'),
+      scope.indexOf('export interface ResolveLegacyEconomyResult'),
+    );
+    expect(readyGuard).toContain("if (state.status !== 'RESOLVED' || !state.primaryNitradoConnId)");
+    expect(readyGuard).not.toContain('throw new EconomyScopeMismatchError');
     expect(scope).not.toContain('Andere Server bleiben bis zur vollstaendigen serverbezogenen Kontoumstellung getrennt und ohne Zugriff');
   });
 
