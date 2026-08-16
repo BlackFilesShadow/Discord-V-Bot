@@ -107,16 +107,22 @@ const messageReactionRemoveEvent: BotEvent = {
         const dbUser = await prisma.user.findUnique({ where: { discordId: u.id } });
         if (!dbUser) return;
 
-        const deleted = await prisma.pollVote.deleteMany({
-          where: { pollId: poll.id, userId: dbUser.id, optionId: matchedOption.id },
-        });
-
-        if (deleted.count > 0) {
-          await prisma.poll.update({
-            where: { id: poll.id },
+        const deletedCount = await prisma.$transaction(async tx => {
+          const deleted = await tx.pollVote.deleteMany({
+            where: { pollId: poll.id, userId: dbUser.id, optionId: matchedOption.id },
+          });
+          if (deleted.count === 0) return 0;
+          const updated = await tx.poll.updateMany({
+            where: { id: poll.id, guildId },
             data: { totalVotes: { decrement: deleted.count } },
           });
+          if (updated.count !== 1) {
+            throw new Error(`Scoped Poll-Counter-Update fehlgeschlagen: ${poll.id}/${guildId}`);
+          }
+          return deleted.count;
+        });
 
+        if (deletedCount > 0) {
           logAudit('POLL_VOTE_REMOVED', 'POLL', {
             pollId: poll.id,
             userId: dbUser.id,
