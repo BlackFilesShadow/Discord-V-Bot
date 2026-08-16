@@ -1,0 +1,34 @@
+name: Apply economy runtime scope unblock
+on:
+  push:
+    branches: [fix/economy-runtime-scope-unblock]
+    paths: [.github/workflows/apply-economy-runtime-scope-unblock.yml]
+permissions:
+  contents: write
+jobs:
+  apply:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: fix/economy-runtime-scope-unblock
+          fetch-depth: 0
+      - run: python3 scripts/fix_economy_runtime_scope.py
+      - run: git diff --check
+      - shell: bash
+        run: |
+          set -euo pipefail
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add -- \
+            src/modules/economy/scopeMigration.ts \
+            tests/modules/economyScopeMigration.test.ts \
+            dashboard-ui/src/components/economy/EconomyScopePanel.tsx \
+            dashboard-ui/src/pages/ServerSlot.tsx \
+            dashboard-ui/src/components/economy/VirtualAccountsPanel.tsx \
+            dashboard-ui/src/components/economy/LotteryPanel.tsx \
+            dashboard-ui/src/components/economy/BlackMarketPanel.tsx \
+            tests/security/economyRuntimeScopeUnblock.test.ts
+          git rm -f --ignore-unmatch -- scripts/fix_economy_runtime_scope.py .github/workflows/apply-economy-runtime-scope-unblock.yml
+          git commit -m "Unblock resolved multi-server economy scopes"
+          git push origin HEAD:fix/economy-runtime-scope-unblock
