@@ -69,7 +69,7 @@ export function DevLoginPanel() {
           disabled={busy}
           title="DEV-Session beenden"
           aria-label="DEV-Session beenden"
-          className="inline-flex items-center justify-center h-7 w-7 rounded-md text-muted hover:text-white hover:bg-bg-elev focus-ring disabled:opacity-50"
+          className="inline-flex items-center justify-center h-11 w-11 md:h-7 md:w-7 rounded-md text-muted hover:text-white hover:bg-bg-elev focus-ring disabled:opacity-50"
         >
           <LogOut className="h-3.5 w-3.5" />
         </button>
@@ -115,7 +115,7 @@ export function DevLoginPanel() {
           disabled={!pw || busy}
           title="Entsperren"
           aria-label="DEV-Console entsperren"
-          className="inline-flex items-center justify-center h-9 w-9 md:h-6 md:w-6 rounded bg-gradient-to-br from-red-600 to-red-800 hover:from-red-500 hover:to-red-700 shadow-[0_0_10px_rgba(239,68,68,0.45)] disabled:opacity-40 disabled:cursor-not-allowed text-[#fff] focus-ring"
+          className="inline-flex items-center justify-center h-11 w-11 md:h-6 md:w-6 rounded bg-gradient-to-br from-red-600 to-red-800 hover:from-red-500 hover:to-red-700 shadow-[0_0_10px_rgba(239,68,68,0.45)] disabled:opacity-40 disabled:cursor-not-allowed text-[#fff] focus-ring"
         >
           {busy ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Check className="h-3.5 w-3.5" strokeWidth={3} />}
         </button>
