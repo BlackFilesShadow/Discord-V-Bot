@@ -114,19 +114,9 @@ describe('AI provider failure classification', () => {
 });
 
 describe('callAI circuit-breaker and fallback matrix', () => {
-  let timeoutSpy: jest.SpyInstance;
-
   beforeEach(() => {
     jest.clearAllMocks();
     getRankedProviders.mockResolvedValue(['groq', 'cerebras']);
-    timeoutSpy = jest.spyOn(global, 'setTimeout').mockImplementation(((handler: (...args: unknown[]) => void) => {
-      handler();
-      return 0 as unknown as NodeJS.Timeout;
-    }) as typeof setTimeout);
-  });
-
-  afterEach(() => {
-    timeoutSpy.mockRestore();
   });
 
   test.each([401, 403, 404])('HTTP %i sperrt Provider ohne Same-Provider-Retry und faellt weiter', async (status) => {
