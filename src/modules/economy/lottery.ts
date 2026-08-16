@@ -371,18 +371,6 @@ export async function buyLotteryTickets(args: {
       );
       const round = rounds[0];
       if (!round) throw new Error('Lotterie nicht gefunden.');
-      const purchaseReplay = await raw.$queryRawUnsafe<Array<{ userDiscordId: string; ticketCount: number; roundId: string }>>(
-        'SELECT "userDiscordId", "ticketCount", "roundId" FROM "LotteryPurchase" WHERE "idempotencyKey"=$1 LIMIT 1',
-        key,
-      );
-      if (purchaseReplay[0]) {
-        if (purchaseReplay[0].userDiscordId !== String(args.userDiscordId) || purchaseReplay[0].ticketCount !== args.quantity || purchaseReplay[0].roundId !== args.roundId) {
-          throw new Error('Kauf-Idempotency-Key wurde mit anderen Daten wiederverwendet.');
-        }
-        return { firstPurchase: false };
-      }
-      if (round.status !== 'ACTIVE' || round.endsAt.getTime() <= Date.now()) throw new Error('Lotterie ist bereits geschlossen.');
-      if (round.potAccountId !== initial.potAccountId || round.ticketPrice !== initial.ticketPrice) throw new Error('Lotterie-Konfiguration hat sich unerwartet veraendert.');
       const replayPurchases = await raw.$queryRawUnsafe<Array<{ roundId: string; guildId: string; nitradoConnId: string; userDiscordId: string; ticketCount: number; amount: bigint }>>(
         'SELECT "roundId", "guildId", "nitradoConnId", "userDiscordId", "ticketCount", "amount" FROM "LotteryPurchase" WHERE "idempotencyKey"=$1 LIMIT 1',
         key,
@@ -398,6 +386,8 @@ export async function buyLotteryTickets(args: {
         if (!same) throw new Error('Kauf-Idempotency-Key wurde mit anderen Daten wiederverwendet.');
         return { firstPurchase: false, replay: true };
       }
+      if (round.status !== 'ACTIVE' || round.endsAt.getTime() <= Date.now()) throw new Error('Lotterie ist bereits geschlossen.');
+      if (round.potAccountId !== initial.potAccountId || round.ticketPrice !== initial.ticketPrice) throw new Error('Lotterie-Konfiguration hat sich unerwartet veraendert.');
       const entries = await raw.$queryRawUnsafe<DbLotteryEntry[]>(
         'SELECT "id", "roundId", "guildId", "nitradoConnId", "userDiscordId", "ticketCount", "totalPaid", "refundedAt" FROM "LotteryEntry" WHERE "roundId"=$1 AND "userDiscordId"=$2 LIMIT 1',
         args.roundId, String(args.userDiscordId),
