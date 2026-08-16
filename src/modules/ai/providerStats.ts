@@ -2,12 +2,13 @@ import axios from 'axios';
 import prisma from '../../database/prisma';
 import { logger } from '../../utils/logger';
 import { config } from '../../config';
+import { providerSupportsTask, taskAffinity, type AiTaskProfile } from './providerCapabilities';
 
 /**
  * Provider-Health-Tracking + adaptive Reihenfolge.
  *
  * - recordCall(): nach jedem callAI-Versuch persistente Stats updaten
- * - getRankedProviders(): Reihenfolge nach Score statt fester Konfig-Reihenfolge
+ * - getRankedProviders(): Reihenfolge nach Capability + Health/Latency statt fester Konfig-Reihenfolge
  * - getStats(): formatiert fuer Bot-Admin/DEV-Dashboard-Diagnostik
  * - probeProvider(): aktiver Health-Check mit Mini-Prompt + Latenz
  *
@@ -39,6 +40,16 @@ function isConfigured(p: ProviderName): boolean {
     case 'openrouter': return Boolean(config.ai.openrouterApiKey);
     case 'gemini': return Boolean(config.ai.geminiApiKey);
     case 'openai': return Boolean(config.ai.openaiApiKey);
+  }
+}
+
+export function getConfiguredModel(p: ProviderName): string {
+  switch (p) {
+    case 'groq': return config.ai.groqModel;
+    case 'cerebras': return config.ai.cerebrasModel;
+    case 'openrouter': return config.ai.openrouterModel;
+    case 'gemini': return config.ai.geminiModel;
+    case 'openai': return config.ai.openaiModel;
   }
 }
 
@@ -223,26 +234,29 @@ export async function getStats(): Promise<ProviderStat[]> {
   });
 }
 
-export async function getRankedProviders(): Promise<ProviderName[]> {
+export async function getRankedProviders(task: AiTaskProfile = 'chat'): Promise<ProviderName[]> {
   const stats = await getStats();
   const primary = config.ai.provider as ProviderName;
-  const scored = stats
+  const candidates = stats
     .filter((s) => s.configured)
-    .filter((s) => !isOnCooldown(s.provider))
+    .filter((s) => !isOnCooldown(s.provider));
+
+  const capable = candidates.filter((s) => providerSupportsTask(s.provider, getConfiguredModel(s.provider), task));
+
+  const scored = capable
     .map((s) => {
       const total = s.successCount + s.failureCount + s.rateLimitCount;
       const successScore = (s.successCount + 1) / (total + 2);
       const latencyScore = 1 / (1 + (s.avgLatencyMs || 1500) / 5000);
       const primaryBias = s.provider === primary ? 1.05 : 1;
-      return { provider: s.provider, score: successScore * latencyScore * primaryBias };
+      const capabilityBias = taskAffinity(s.provider, getConfiguredModel(s.provider), task);
+      return { provider: s.provider, score: successScore * latencyScore * primaryBias * capabilityBias };
     })
     .sort((a, b) => b.score - a.score)
     .map((x) => x.provider);
-  if (scored.length === 0) {
-    if (isConfigured(primary)) return [primary];
-    const anyConfigured = ALL_PROVIDERS.find((p) => isConfigured(p));
-    return anyConfigured ? [anyConfigured] : [];
-  }
+
+  // Capability routing is fail-closed. A task may only be sent to a model whose
+  // configured model ID explicitly advertises that task capability.
   return scored;
 }
 

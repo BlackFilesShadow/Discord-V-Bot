@@ -4,7 +4,8 @@ import { logger } from '../../utils/logger';
 import prisma from '../../database/prisma';
 import { liveSearch, looksFactQuestion, formatSearchResultsForPrompt } from './webSearch';
 import { asksAboutCommands, formatCatalogForPromptFocused } from './commandCatalog';
-import { recordCall, getRankedProviders, markProviderUnavailable, ProviderName } from './providerStats';
+import { recordCall, getRankedProviders, getConfiguredModel, isOnCooldown, markProviderUnavailable, ProviderName } from './providerStats';
+import { inferAiTaskProfile, providerSupportsTask, type AiTaskProfile } from './providerCapabilities';
 import { checkRateLimit } from '../../utils/rateLimiter';
 import { lookupNitradoHelp, looksLikeDayZFileQuestion, getDayZFileTruthBlock, isDayzTechnicalAdminQuestion, validateDayzTechnicalAnswer, buildDayzTechnicalFallback } from './nitradoHelp';
 import { redactText } from '../nitrado/mirror/redactor';
@@ -404,6 +405,7 @@ export async function answerQuestion(
     }
 
     const response = await callAI([
+      ...(dayzTechnical ? [{ role: 'system' as const, content: 'AI_TASK_PROFILE: reasoning' }] : []),
       { role: 'system', content: BOT_PERSONA },
       { role: 'system', content: getLiveTimeContext() },
       ...(wantKnowledgeBoundary ? [{ role: 'system' as const, content: getKnowledgeBoundary() }] : []),
@@ -708,7 +710,8 @@ function parseRetryAfter(error: unknown): number {
 }
 
 export async function callAI(messages: { role: string; content: string }[]): Promise<string> {
-  const providers = await getProviderOrder();
+  const task = inferAiTaskProfile(messages);
+  const providers = await getProviderOrder(task);
 
   let redactedMessages: { role: string; content: string }[];
   try {
@@ -778,7 +781,7 @@ export async function callAI(messages: { role: string; content: string }[]): Pro
   let lastError: unknown = null;
   let allRateLimited = true;
   let anyAttempted = false;
-  logger.info(`callAI start, provider-Reihenfolge: ${providers.join(' -> ')}`);
+  logger.info(`callAI start, task=${task}, provider-Reihenfolge: ${providers.join(' -> ')}`);
   for (const provider of providers) {
     for (let attempt = 1; attempt <= 2; attempt++) {
       const t0 = Date.now();
@@ -834,12 +837,12 @@ export async function callAI(messages: { role: string; content: string }[]): Pro
   throw new Error(`Kein AI-Provider verfügbar${detail}`);
 }
 
-async function getProviderOrder(): Promise<('groq' | 'cerebras' | 'openrouter' | 'gemini' | 'openai')[]> {
+async function getProviderOrder(task: AiTaskProfile): Promise<('groq' | 'cerebras' | 'openrouter' | 'gemini' | 'openai')[]> {
   try {
-    const ranked = await getRankedProviders();
+    const ranked = await getRankedProviders(task);
     if (ranked.length > 0) return ranked;
   } catch (e) {
-    logger.warn(`getProviderOrder: getRankedProviders fehlgeschlagen, Fallback Konfig: ${String(e)}`);
+    logger.warn(`getProviderOrder: getRankedProviders fehlgeschlagen, Capability-Fallback: ${String(e)}`);
   }
   const all: ('groq' | 'cerebras' | 'openrouter' | 'gemini' | 'openai')[] = [
     'groq',
@@ -849,5 +852,6 @@ async function getProviderOrder(): Promise<('groq' | 'cerebras' | 'openrouter' |
     'openai',
   ];
   const primary = config.ai.provider;
-  return [primary, ...all.filter(p => p !== primary)];
+  return [primary, ...all.filter(p => p !== primary)]
+    .filter((p) => !isOnCooldown(p) && providerSupportsTask(p, getConfiguredModel(p), task));
 }
