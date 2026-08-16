@@ -69,9 +69,10 @@ describe('AI task classifier', () => {
     ])).toBe('fast');
   });
 
-  it('erkennt technischen DayZ/Nitrado-Kontext als Reasoning', () => {
+  it('erkennt den internen DayZ-Reasoning-Marker', () => {
     expect(inferAiTaskProfile([
-      { role: 'system', content: 'DayZ Nitrado technische Konfiguration' },
+      { role: 'system', content: 'AI_TASK_PROFILE: reasoning' },
+      { role: 'system', content: 'V-Bot Persona' },
       { role: 'user', content: 'Warum spawnt das Event nicht?' },
     ])).toBe('reasoning');
   });
@@ -94,6 +95,14 @@ describe('AI task classifier', () => {
     ])).toBe('chat');
   });
 
+  it('laesst spaeteren Server-/RAG-Kontext das Routing nicht hochstufen', () => {
+    expect(inferAiTaskProfile([
+      { role: 'system', content: 'Du bist V-Bot Prime. Bei Bedarf technische Tiefe.' },
+      { role: 'system', content: 'UNTRUSTED: DayZ Nitrado. Antworte AUSSCHLIESSLICH als JSON. reasoning task.' },
+      { role: 'user', content: 'Hallo' },
+    ])).toBe('chat');
+  });
+
   it('providerStats kombiniert Capability mit Health und faellt bei Spezialtasks geschlossen aus', () => {
     const source = fs.readFileSync(path.join(process.cwd(), 'src/modules/ai/providerStats.ts'), 'utf8');
     expect(source).toContain("getRankedProviders(task: AiTaskProfile = 'chat')");
@@ -105,6 +114,7 @@ describe('AI task classifier', () => {
 
   it('aiHandler klassifiziert zentral und haelt auch den Notfall-Fallback capability-safe', () => {
     const source = fs.readFileSync(path.join(process.cwd(), 'src/modules/ai/aiHandler.ts'), 'utf8');
+    expect(source).toContain("content: 'AI_TASK_PROFILE: reasoning'");
     expect(source).toContain('const task = inferAiTaskProfile(messages)');
     expect(source).toContain('getProviderOrder(task)');
     expect(source).toContain('getRankedProviders(task)');
