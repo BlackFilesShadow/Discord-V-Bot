@@ -144,9 +144,12 @@ function persistCooldown(provider: ProviderName, until: number, reason: string, 
   });
 }
 
-export function clearCooldown(provider: ProviderName, persist = true): void {
+function clearCooldownInMemory(provider: ProviderName): void {
   cooldowns.delete(provider);
-  if (!persist) return;
+}
+
+export function clearCooldown(provider: ProviderName): void {
+  clearCooldownInMemory(provider);
   void prisma.aiProviderStat.updateMany({
     where: { provider, cooldownUntil: { not: null } },
     data: { cooldownUntil: null, cooldownReason: null, cooldownStreak: 0 },
@@ -187,7 +190,7 @@ export async function recordCall(
   error?: string,
   opts?: { retryAfterMs?: number },
 ): Promise<void> {
-  if (outcome === 'success') clearCooldown(provider, false);
+  if (outcome === 'success') clearCooldownInMemory(provider);
   if (outcome === 'rateLimit') markRateLimited(provider, opts?.retryAfterMs);
   try {
     const now = new Date();
