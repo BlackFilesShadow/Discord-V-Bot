@@ -33,8 +33,10 @@ export const AI_MODEL_DEFAULTS: Readonly<Record<AiProviderName, string>> = Objec
   // Google: stabile GA-Variante.
   gemini: 'gemini-3.6-flash',
 
-  // OpenAI: moderner, Chat-Completions-kompatibler Default fuer den Fallback.
-  openai: 'gpt-5.4-mini',
+  // OpenAI: aktuelle GPT-5.6-Familie. Luna ist der moderne, kostensensitive
+  // High-Volume-Fallback; qualitaetsbasierte Terra/Sol-Auswahl folgt spaeter im
+  // task-spezifischen Provider-Router statt hier blind teuer zu werden.
+  openai: 'gpt-5.6-luna',
 });
 
 const LEGACY_MODEL_MIGRATIONS: Readonly<Record<AiProviderName, Readonly<Record<string, string>>>> = Object.freeze({
@@ -56,6 +58,7 @@ const LEGACY_MODEL_MIGRATIONS: Readonly<Record<AiProviderName, Readonly<Record<s
   }),
   openai: Object.freeze({
     'gpt-4': AI_MODEL_DEFAULTS.openai,
+    'gpt-5.4-mini': AI_MODEL_DEFAULTS.openai,
   }),
 });
 
