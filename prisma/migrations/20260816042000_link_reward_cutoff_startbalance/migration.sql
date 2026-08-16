@@ -83,3 +83,13 @@ WHERE g."status" = 'VERIFIED'
   AND g."identityHash" IS NOT NULL
   AND g."nitradoConnId" IS NOT NULL
 ON CONFLICT ("guildId", "nitradoConnId", "userDiscordId") DO NOTHING;
+
+-- Alle vor diesem Cutoff noch offenen ADM-Entscheidungen gehoeren zur alten
+-- Reward-Epoche. Sie duerfen nach der Migration nicht als Backpay in die neue
+-- linkbasierte Economy rutschen. Bereits PAID Entscheidungen bleiben unveraendert.
+UPDATE "RewardDecision"
+SET "status" = 'SKIPPED'::"RewardDecisionStatus",
+    "reasonCode" = 'SKIPPED_PRE_LINK_CUTOFF_MIGRATION',
+    "updatedAt" = CURRENT_TIMESTAMP
+WHERE "status" IN ('PENDING'::"RewardDecisionStatus", 'FAILED_RETRYABLE'::"RewardDecisionStatus")
+  AND "paid" = 0;
