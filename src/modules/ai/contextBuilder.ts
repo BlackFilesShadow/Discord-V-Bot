@@ -264,7 +264,7 @@ export async function buildServerUserContextBlocks(opts: ServerUserContextOption
 export async function buildServerUserContext(opts: ServerUserContextOptions): Promise<string | null> {
   const blocks = await buildServerUserContextBlocks(opts);
   if (!blocks.serverContext && !blocks.userContext && !blocks.ragContext) return null;
-  return wrapUntrustedContext(`AI_CONTEXT_BUNDLE_V2:\n${JSON.stringify(blocks)}`);
+  return wrapUntrustedContext(`AI_CONTEXT_BUNDLE_V2:\n${JSON.stringify(blocks)}`, 20_000);
 }
 
 function countChannelsByType(guild: Guild): {
