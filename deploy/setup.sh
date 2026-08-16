@@ -31,11 +31,12 @@ echo ""
 # ----- Konfiguration -----
 BOT_USER="discordbot"
 BOT_DIR="/opt/discord-v-bot"
+ENV_FILE="$BOT_DIR/.env"
 REPO_URL="https://github.com/BlackFilesShadow/Discord-V-Bot.git"
 NODE_VERSION="22"
 DB_NAME="discord_v_bot"
 DB_USER="discordbot"
-DB_PASS=$(openssl rand -hex 16)
+DB_PASS=""
 
 # ----- System-Updates -----
 info "System wird aktualisiert..."
@@ -76,12 +77,24 @@ systemctl start postgresql
 
 # ----- Datenbank einrichten -----
 info "Datenbank wird eingerichtet..."
-sudo -u postgres psql -tc "SELECT 1 FROM pg_roles WHERE rolname='${DB_USER}'" | grep -q 1 || \
+if sudo -u postgres psql -tAc "SELECT 1 FROM pg_roles WHERE rolname='${DB_USER}'" | grep -qx 1; then
+  # PostgreSQL gibt bestehende Passwort-Hashes absichtlich nicht wieder als
+  # Klartext aus. Ohne vorhandene .env koennen wir das bestehende Passwort daher
+  # nicht sicher rekonstruieren und duerfen keines erfinden.
+  if [[ ! -f "$ENV_FILE" ]]; then
+    err "PostgreSQL-User '${DB_USER}' existiert bereits, aber ${ENV_FILE} fehlt. Passwort kann nicht sicher rekonstruiert werden; Setup bricht fail-closed ab."
+  fi
+  log "Datenbank-User '${DB_USER}' bereits vorhanden"
+else
+  DB_PASS=$(openssl rand -hex 32)
   sudo -u postgres psql -c "CREATE USER ${DB_USER} WITH PASSWORD '${DB_PASS}';"
-sudo -u postgres psql -tc "SELECT 1 FROM pg_database WHERE datname='${DB_NAME}'" | grep -q 1 || \
+  log "Datenbank-User '${DB_USER}' neu erstellt"
+fi
+
+sudo -u postgres psql -tAc "SELECT 1 FROM pg_database WHERE datname='${DB_NAME}'" | grep -qx 1 || \
   sudo -u postgres psql -c "CREATE DATABASE ${DB_NAME} OWNER ${DB_USER};"
 sudo -u postgres psql -c "GRANT ALL PRIVILEGES ON DATABASE ${DB_NAME} TO ${DB_USER};"
-log "Datenbank '${DB_NAME}' erstellt (User: ${DB_USER})"
+log "Datenbank '${DB_NAME}' bereit"
 
 # ----- Bot-User erstellen -----
 if ! id "$BOT_USER" &>/dev/null; then
@@ -136,12 +149,17 @@ sudo -u "$BOT_USER" mkdir -p \
 log "Upload-, Private- und Log-Verzeichnisse erstellt"
 
 # ----- .env erstellen -----
-ENV_FILE="$BOT_DIR/.env"
 if [[ ! -f "$ENV_FILE" ]]; then
+  if [[ -z "$DB_PASS" ]]; then
+    err "Interner Setup-Fehler: Neue .env benoetigt ein frisch erzeugtes Datenbank-Passwort."
+  fi
+
   DATABASE_URL="postgresql://${DB_USER}:${DB_PASS}@localhost:5432/${DB_NAME}?schema=public"
   SESSION_SECRET=$(openssl rand -hex 32)
   # config.security.encryptionKey ist ein 32-Byte-Schluessel in Hexdarstellung.
   ENCRYPTION_KEY=$(openssl rand -hex 32)
+  DEV_PASSWORD=$(openssl rand -hex 32)
+  BOT_ADMIN_PASSWORD=$(openssl rand -hex 32)
 
   cat > "$ENV_FILE" <<ENVEOF
 # =============================================
@@ -153,7 +171,7 @@ if [[ ! -f "$ENV_FILE" ]]; then
 DISCORD_TOKEN=HIER_DISCORD_TOKEN_EINTRAGEN
 DISCORD_CLIENT_ID=HIER_CLIENT_ID_EINTRAGEN
 DISCORD_CLIENT_SECRET=HIER_CLIENT_SECRET_EINTRAGEN
-DISCORD_GUILD_ID=HIER_GUILD_ID_EINTRAGEN
+DISCORD_GUILD_ID=
 BOT_OWNER_ID=HIER_DEINE_DISCORD_USER_ID
 
 # Datenbank
@@ -170,6 +188,13 @@ TRUST_PROXY=1
 ADMIN_PASSWORD_HASH=
 TWO_FACTOR_ISSUER=Discord-V-Bot
 ENCRYPTION_KEY=${ENCRYPTION_KEY}
+
+# Developer/Bot-Admin Step-up-Secrets — zufaellig erzeugt, nicht ausgeben.
+DEV_PASSWORD=${DEV_PASSWORD}
+DEV_REQUIRE_MFA=false
+DEV_REQUIRE_IP_ALLOWLIST=false
+DEV_IP_ALLOWLIST=
+BOT_ADMIN_PASSWORD=${BOT_ADMIN_PASSWORD}
 
 # Upload-System
 UPLOAD_DIR=./uploads
@@ -214,10 +239,14 @@ ENVEOF
 
   chown "$BOT_USER":"$BOT_USER" "$ENV_FILE"
   chmod 600 "$ENV_FILE"
-  log ".env erstellt (bitte Pflichtwerte eintragen!)"
+  log ".env erstellt (Pflichtwerte muessen vor dem Start eingetragen werden)"
 else
   warn ".env existiert bereits — wird nicht überschrieben"
 fi
+
+# DB_PASS wird nach der .env-Erzeugung nicht mehr benoetigt und weder geloggt
+# noch in der Zusammenfassung ausgegeben.
+DB_PASS=""
 
 # ----- Datenbank-Migration -----
 info "Datenbank-Schema wird via Migrationen angewendet..."
@@ -324,15 +353,11 @@ echo ""
 echo -e "  ${BLUE}Bot-Verzeichnis:${NC}  ${BOT_DIR}"
 echo -e "  ${BLUE}Bot-User:${NC}         ${BOT_USER}"
 echo -e "  ${BLUE}Datenbank:${NC}        ${DB_NAME} (User: ${DB_USER})"
-echo -e "  ${BLUE}DB-Passwort:${NC}      ${DB_PASS}"
-echo -e "  ${BLUE}.env Datei:${NC}       ${BOT_DIR}/.env"
+echo -e "  ${BLUE}.env Datei:${NC}       ${BOT_DIR}/.env (chmod 600)"
 echo ""
 echo -e "${YELLOW}  NÄCHSTE SCHRITTE:${NC}"
-echo -e "  1. Pflichtwerte eintragen:    ${BLUE}sudo nano ${BOT_DIR}/.env${NC}"
-echo -e "  2. Konfiguration prüfen:      ${BLUE}cd ${BOT_DIR} && sudo -u ${BOT_USER} npm start${NC}"
-echo -e "  3. Bot als Service starten:   ${BLUE}sudo systemctl start discord-v-bot${NC}"
-echo -e "  4. Status prüfen:             ${BLUE}sudo systemctl status discord-v-bot${NC}"
-echo -e "  5. Logs ansehen:              ${BLUE}sudo journalctl -u discord-v-bot -f${NC}"
-echo ""
-echo -e "${YELLOW}  WICHTIG: DB-Passwort sicher notieren! → ${DB_PASS}${NC}"
+echo -e "  1. Pflichtwerte eintragen:   ${BLUE}sudo nano ${BOT_DIR}/.env${NC}"
+echo -e "  2. Bot als Service starten:  ${BLUE}sudo systemctl start discord-v-bot${NC}"
+echo -e "  3. Status prüfen:            ${BLUE}sudo systemctl status discord-v-bot${NC}"
+echo -e "  4. Logs ansehen:             ${BLUE}sudo journalctl -u discord-v-bot -f${NC}"
 echo ""
