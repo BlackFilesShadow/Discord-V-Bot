@@ -86,6 +86,21 @@ describe('EconomyLinkRewardState', () => {
     });
   });
 
+  it('startet beim Relink eine neue Reward-Epoche, aktiviert Startguthaben aber nicht erneut', async () => {
+    rewardStateFindUnique.mockResolvedValue({ id: 'state-1' });
+    const relinkAt = new Date('2026-08-16T14:00:00Z');
+    await activateLinkRewardState(SCOPE, USER, GAME_ID, SECRET, true, relinkAt);
+    expect(rewardStateUpdate).toHaveBeenCalledWith({
+      where: { id: 'state-1' },
+      data: {
+        identityHash: identityHash(GAME_ID, SECRET),
+        rewardEligibleFrom: relinkAt,
+        unlinkedAt: null,
+      },
+    });
+    expect(rewardStateUpdate.mock.calls[0][0].data).not.toHaveProperty('startBalanceEligible');
+  });
+
   it('stoppt bei Unlink die aktive Reward-Epoche', async () => {
     await deactivateLinkRewardState(SCOPE, USER, LINK_AT);
     expect(rewardStateUpdateMany).toHaveBeenCalledWith({
@@ -134,6 +149,14 @@ describe('Startguthaben bei Account-Verknuepfung', () => {
   it('bucht konfiguriertes Startguthaben atomar auch auf ein bestehendes Konto', async () => {
     const result = await grantStartBalanceForLink(SCOPE, USER, LINK_AT);
     expect(result).toEqual({ granted: true, amount: 5_000n });
+    expect(rewardStateUpdateMany).toHaveBeenCalledWith(expect.objectContaining({
+      where: expect.objectContaining({ startBalanceEligible: true, startBalanceGrantedAt: null }),
+      data: expect.objectContaining({
+        startBalanceEligible: false,
+        startBalanceGrantedAt: LINK_AT,
+        startBalanceGrantedAmount: 5_000n,
+      }),
+    }));
     expect(ledgerCreate).toHaveBeenCalledWith({
       data: expect.objectContaining({
         idempotencyKey: `startbalance:link:${SCOPE.guildId}:${SCOPE.nitradoConnId}:${USER}`,
@@ -163,14 +186,23 @@ describe('Startguthaben bei Account-Verknuepfung', () => {
     expect(accountUpsert).not.toHaveBeenCalled();
   });
 
-  it('vergibt bei Betrag 0 oder deaktivierter Economy nichts', async () => {
+  it('verbraucht die einmalige Eligibility auch wenn Betrag 0 oder Economy deaktiviert ist', async () => {
     economyConfigFindUnique.mockResolvedValueOnce({ startBalance: 0 });
     await expect(grantStartBalanceForLink(SCOPE, USER, LINK_AT)).resolves.toEqual({ granted: false, amount: 0n });
-    expect(rewardStateUpdateMany).not.toHaveBeenCalled();
+    expect(rewardStateUpdateMany).toHaveBeenCalledWith(expect.objectContaining({
+      data: { startBalanceEligible: false },
+    }));
+    expect(ledgerCreate).not.toHaveBeenCalled();
 
-    settingsFindUnique.mockResolvedValueOnce({ economyActive: false });
-    economyConfigFindUnique.mockResolvedValueOnce({ startBalance: 5_000 });
+    jest.clearAllMocks();
+    rewardStateUpdateMany.mockResolvedValue({ count: 1 });
+    settingsFindUnique.mockResolvedValue({ economyActive: false });
+    economyConfigFindUnique.mockResolvedValue({ startBalance: 5_000 });
     await expect(grantStartBalanceForLink(SCOPE, USER, LINK_AT)).resolves.toEqual({ granted: false, amount: 0n });
+    expect(rewardStateUpdateMany).toHaveBeenCalledWith(expect.objectContaining({
+      data: { startBalanceEligible: false },
+    }));
+    expect(ledgerCreate).not.toHaveBeenCalled();
   });
 
   it('faengt konkurrierende doppelte Ledger-Claims fail-safe ab', async () => {
