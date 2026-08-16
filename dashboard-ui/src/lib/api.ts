@@ -11,7 +11,7 @@ function extractError(data: unknown, status: number): { msg: string; code: strin
   return { msg: `HTTP ${status}`, code: null };
 }
 
-function uuid(): string {
+export function createIdempotencyKey(): string {
   if (typeof crypto !== 'undefined' && 'randomUUID' in crypto) return crypto.randomUUID();
   return Math.random().toString(36).slice(2) + Date.now().toString(36);
 }
@@ -59,13 +59,13 @@ async function request<T>(method: string, path: string, body?: unknown): Promise
   const headers: Record<string, string> = { Accept: 'application/json' };
   let payload: BodyInit | undefined;
   if (body !== undefined) { headers['Content-Type'] = 'application/json'; payload = JSON.stringify(body); }
-  if (method !== 'GET') headers['X-Idempotency-Key'] = uuid();
+  if (method !== 'GET') headers['X-Idempotency-Key'] = createIdempotencyKey();
   const scopedPath = withServerSlotScope(path);
   return decode<T>(await fetch(scopedPath, { method, headers, body: payload, credentials: 'include' }));
 }
 
 async function formRequest<T>(method: 'POST' | 'PUT' | 'PATCH', path: string, fd: FormData): Promise<T> {
-  const headers: Record<string, string> = { Accept: 'application/json', 'X-Idempotency-Key': uuid() };
+  const headers: Record<string, string> = { Accept: 'application/json', 'X-Idempotency-Key': createIdempotencyKey() };
   return decode<T>(await fetch(withServerSlotScope(path), { method, headers, body: fd, credentials: 'include' }));
 }
 
