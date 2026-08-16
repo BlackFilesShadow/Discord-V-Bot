@@ -37,7 +37,11 @@ export async function listKnowledgeGameservers(guildId: string): Promise<Knowled
     orderBy: [{ slot: 'asc' }, { id: 'asc' }],
   });
   return rows
-    .filter((r) => typeof r.nitradoServerId === 'string' && r.nitradoServerId.trim().length > 0)
+    .filter((r) => (
+      slotState(r.slot) === 'ACTIVE_SLOT'
+      && typeof r.nitradoServerId === 'string'
+      && r.nitradoServerId.trim().length > 0
+    ))
     .map(({ id, slot, alias, alias5 }) => ({ id, slot, alias, alias5 }));
 }
 
