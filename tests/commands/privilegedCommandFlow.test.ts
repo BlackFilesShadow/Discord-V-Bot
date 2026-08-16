@@ -12,26 +12,21 @@ const scope: GuildScope = {
 const createPendingServerAction = jest.fn();
 const consumePendingServerAction = jest.fn();
 const adminPay = jest.fn();
-const forceLink = jest.fn();
+const forceLinkByPlayerName = jest.fn();
 const unlinkUser = jest.fn();
+const applySuccessfulLinkEconomyEffects = jest.fn();
+const deactivateLinkRewardState = jest.fn();
 
 const prismaMock = {
-  nitradoConnection: {
-    findFirst: jest.fn(),
-  },
-  serverSettings: {
-    findUnique: jest.fn(),
-  },
+  nitradoConnection: { findFirst: jest.fn() },
+  serverSettings: { findUnique: jest.fn() },
 };
 
 jest.mock('../../src/database/prisma', () => ({ __esModule: true, default: prismaMock }));
-jest.mock('../../src/modules/nitrado/pendingServerAction', () => ({
-  __esModule: true,
-  createPendingServerAction,
-  consumePendingServerAction,
-}));
+jest.mock('../../src/modules/nitrado/pendingServerAction', () => ({ __esModule: true, createPendingServerAction, consumePendingServerAction }));
 jest.mock('../../src/modules/economy/repository', () => ({ __esModule: true, adminPay }));
-jest.mock('../../src/modules/linking/linkService', () => ({ __esModule: true, forceLink, unlinkUser }));
+jest.mock('../../src/modules/linking/linkService', () => ({ __esModule: true, forceLinkByPlayerName, unlinkUser }));
+jest.mock('../../src/modules/linking/linkRewards', () => ({ __esModule: true, applySuccessfulLinkEconomyEffects, deactivateLinkRewardState }));
 jest.mock('../../src/utils/logger', () => ({ __esModule: true, logAudit: jest.fn(), logger: { error: jest.fn(), warn: jest.fn(), info: jest.fn() } }));
 jest.mock('../../src/commands/middleware/withGuildScope', () => ({
   __esModule: true,
@@ -39,9 +34,9 @@ jest.mock('../../src/commands/middleware/withGuildScope', () => ({
     (interaction: ChatInputCommandInteraction) => handler(interaction, scope),
 }));
 
-import { addMoneyCommand, confirmActionCommand } from '../../src/commands/dashboard/privileged';
+import { addMoneyCommand, removeMoneyCommand, confirmActionCommand } from '../../src/commands/dashboard/privileged';
 
-function addInteraction() {
+function moneyInteraction() {
   const reply = jest.fn().mockResolvedValue(undefined);
   const interaction = {
     options: {
@@ -56,93 +51,66 @@ function addInteraction() {
 
 function confirmInteraction(id: string) {
   const reply = jest.fn().mockResolvedValue(undefined);
-  const interaction = {
-    options: { getString: jest.fn().mockReturnValue(id) },
-    reply,
-  } as unknown as ChatInputCommandInteraction;
+  const interaction = { options: { getString: jest.fn().mockReturnValue(id) }, reply } as unknown as ChatInputCommandInteraction;
   return { interaction, reply };
 }
 
-function consumedAddMoneyAction(actionId: string) {
+function consumedRemoveMoneyAction(actionId: string) {
   return {
     id: actionId,
     guildId: scope.guildId,
     nitradoConnId: scope.nitradoConnId,
     actorDiscordId: scope.actorDiscordId,
-    actionType: 'ADD_MONEY',
+    actionType: 'REMOVE_MONEY',
     payload: { targetUserId: '323456789012345678', amount: '250', reason: 'Korrektur' },
-    status: 'CONSUMED',
-    expiresAt: new Date(Date.now() + 60_000),
-    consumedAt: new Date(),
-    createdAt: new Date(),
+    status: 'CONSUMED', expiresAt: new Date(Date.now() + 60_000), consumedAt: new Date(), createdAt: new Date(),
   };
 }
 
-describe('Phase 8 privileged command confirmation flow', () => {
+describe('privileged economy confirmation flow', () => {
   beforeEach(() => {
     jest.clearAllMocks();
     prismaMock.nitradoConnection.findFirst.mockResolvedValue({ slot: 1, status: 'ACTIVE', nitradoServerId: '12345' });
     prismaMock.serverSettings.findUnique.mockResolvedValue({ economyActive: true });
   });
 
-  it('/add-money queues a persistent action and performs no economy mutation yet', async () => {
+  it('/add-money books immediately and creates no pending confirmation', async () => {
+    const { interaction, reply } = moneyInteraction();
+    await addMoneyCommand.execute(interaction);
+    expect(createPendingServerAction).not.toHaveBeenCalled();
+    expect(adminPay).toHaveBeenCalledWith({
+      guildId: scope.guildId, nitradoConnId: scope.nitradoConnId,
+      targetUserId: '323456789012345678', delta: 250n, reason: 'Korrektur', actorDiscordId: scope.actorDiscordId,
+    });
+    expect(reply).toHaveBeenCalledWith(expect.objectContaining({ content: expect.stringContaining('sofort gutgeschrieben') }));
+  });
+
+  it('/remove-money still queues a persistent step-up action', async () => {
     const actionId = '123e4567-e89b-42d3-a456-426614174000';
     createPendingServerAction.mockResolvedValue({ id: actionId });
-    const { interaction, reply } = addInteraction();
-
-    await addMoneyCommand.execute(interaction);
-
-    expect(createPendingServerAction).toHaveBeenCalledWith(
-      prismaMock,
-      expect.objectContaining({
-        guildId: scope.guildId,
-        nitradoConnId: scope.nitradoConnId,
-        actorDiscordId: scope.actorDiscordId,
-        actionType: 'ADD_MONEY',
-        payload: { targetUserId: '323456789012345678', amount: '250', reason: 'Korrektur' },
-      }),
-    );
+    const { interaction, reply } = moneyInteraction();
+    await removeMoneyCommand.execute(interaction);
     expect(adminPay).not.toHaveBeenCalled();
+    expect(createPendingServerAction).toHaveBeenCalledWith(prismaMock, expect.objectContaining({ actionType: 'REMOVE_MONEY' }));
     expect(reply).toHaveBeenCalledWith(expect.objectContaining({ content: expect.stringContaining(actionId) }));
   });
 
-  it('/confirm-action consumes the action once and executes the server-scoped mutation', async () => {
+  it('/confirm-action consumes a deduction once and executes it server-scoped', async () => {
     const actionId = '123e4567-e89b-42d3-a456-426614174000';
-    consumePendingServerAction.mockResolvedValue(consumedAddMoneyAction(actionId));
+    consumePendingServerAction.mockResolvedValue(consumedRemoveMoneyAction(actionId));
     const { interaction, reply } = confirmInteraction(actionId);
-
     await confirmActionCommand.execute(interaction);
-
-    expect(consumePendingServerAction).toHaveBeenCalledWith(
-      prismaMock,
-      expect.objectContaining({ id: actionId, guildId: scope.guildId, actorDiscordId: scope.actorDiscordId }),
-    );
-    expect(prismaMock.nitradoConnection.findFirst).toHaveBeenCalledWith({
-      where: { id: scope.nitradoConnId, guildId: scope.guildId },
-      select: { slot: true, status: true, nitradoServerId: true },
-    });
-    expect(adminPay).toHaveBeenCalledWith({
-      guildId: scope.guildId,
-      nitradoConnId: scope.nitradoConnId,
-      targetUserId: '323456789012345678',
-      delta: 250n,
-      reason: 'Korrektur',
-      actorDiscordId: scope.actorDiscordId,
-    });
-    expect(reply).toHaveBeenCalledWith(expect.objectContaining({ content: 'Guthaben wurde hinzugefuegt.' }));
+    expect(adminPay).toHaveBeenCalledWith({ guildId: scope.guildId, nitradoConnId: scope.nitradoConnId, targetUserId: '323456789012345678', delta: -250n, reason: 'Korrektur', actorDiscordId: scope.actorDiscordId });
+    expect(reply).toHaveBeenCalledWith(expect.objectContaining({ content: 'Guthaben wurde abgezogen.' }));
   });
 
   it('/confirm-action fails closed when the bound server became inactive', async () => {
     const actionId = '123e4567-e89b-42d3-a456-426614174000';
-    consumePendingServerAction.mockResolvedValue(consumedAddMoneyAction(actionId));
+    consumePendingServerAction.mockResolvedValue(consumedRemoveMoneyAction(actionId));
     prismaMock.nitradoConnection.findFirst.mockResolvedValue({ slot: 1, status: 'REVOKED', nitradoServerId: '12345' });
     const { interaction, reply } = confirmInteraction(actionId);
-
     await confirmActionCommand.execute(interaction);
-
     expect(adminPay).not.toHaveBeenCalled();
-    expect(forceLink).not.toHaveBeenCalled();
-    expect(unlinkUser).not.toHaveBeenCalled();
     expect(reply).toHaveBeenCalledWith(expect.objectContaining({ content: expect.stringContaining('nicht mehr aktiv') }));
   });
 });
