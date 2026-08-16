@@ -5,6 +5,7 @@ const root = process.cwd();
 const awareness = fs.readFileSync(path.join(root, 'src', 'modules', 'ai', 'guildAwareness.ts'), 'utf8');
 const feeds = fs.readFileSync(path.join(root, 'src', 'modules', 'feeds', 'feedManagerV2.ts'), 'utf8');
 const config = fs.readFileSync(path.join(root, 'src', 'config.ts'), 'utf8');
+const modelRegistry = fs.readFileSync(path.join(root, 'src', 'modules', 'ai', 'modelRegistry.ts'), 'utf8');
 const env = fs.readFileSync(path.join(root, '.env.example'), 'utf8');
 
 function sourceFiles(dir: string): string[] {
@@ -30,12 +31,24 @@ describe('Post-deploy runtime hygiene', () => {
     }
   });
 
-  it('migriert abgeschaltete Gemini-2.0-Defaults kontrolliert auf aktuelle Ersatzmodelle', () => {
-    expect(config).toContain('function resolveGeminiModel()');
-    expect(config).toContain("configured === 'gemini-2.0-flash'");
-    expect(config).toContain("return 'gemini-3.6-flash'");
-    expect(config).toContain("return 'gemini-3.1-flash-lite'");
-    expect(config).toContain('geminiModel: resolveGeminiModel()');
+  it('migriert abgeschaltete AI-Defaults zentral statt providerweise in config.ts', () => {
+    expect(config).toContain("import { parseAiProvider, resolveAiModel } from './modules/ai/modelRegistry'");
+    expect(config).toContain("groqModel: resolveAiModel('groq'");
+    expect(config).toContain("cerebrasModel: resolveAiModel('cerebras'");
+    expect(config).toContain("geminiModel: resolveAiModel('gemini'");
+    expect(config).toContain("openaiModel: resolveAiModel('openai'");
+    expect(config).not.toContain('function resolveGeminiModel()');
+
+    expect(modelRegistry).toContain("groq: 'openai/gpt-oss-120b'");
+    expect(modelRegistry).toContain("cerebras: 'gpt-oss-120b'");
+    expect(modelRegistry).toContain("gemini: 'gemini-3.6-flash'");
+    expect(modelRegistry).toContain("openai: 'gpt-5.4-mini'");
+    expect(modelRegistry).toContain("'llama-3.3-70b-versatile': AI_MODEL_DEFAULTS.groq");
+    expect(modelRegistry).toContain("'gpt-4': AI_MODEL_DEFAULTS.openai");
+
+    // .env.example bleibt fuer Gemini bereits auf dem produktiven GA-Default;
+    // die uebrigen Provider-Defaults werden in einer separaten Setup-/Doku-Etappe
+    // synchronisiert, weil dieses Testfile keine Deployment-Dateien veraendert.
     expect(env).toContain('GEMINI_MODEL=gemini-3.6-flash');
     expect(env).not.toContain('GEMINI_MODEL=gemini-2.0-flash');
   });
