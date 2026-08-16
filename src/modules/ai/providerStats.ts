@@ -242,9 +242,8 @@ export async function getRankedProviders(task: AiTaskProfile = 'chat'): Promise<
     .filter((s) => !isOnCooldown(s.provider));
 
   const capable = candidates.filter((s) => providerSupportsTask(s.provider, getConfiguredModel(s.provider), task));
-  const pool = capable.length > 0 ? capable : candidates;
 
-  const scored = pool
+  const scored = capable
     .map((s) => {
       const total = s.successCount + s.failureCount + s.rateLimitCount;
       const successScore = (s.successCount + 1) / (total + 2);
@@ -256,11 +255,8 @@ export async function getRankedProviders(task: AiTaskProfile = 'chat'): Promise<
     .sort((a, b) => b.score - a.score)
     .map((x) => x.provider);
 
-  if (scored.length === 0) {
-    if (isConfigured(primary) && !isOnCooldown(primary)) return [primary];
-    const anyConfigured = ALL_PROVIDERS.find((p) => isConfigured(p) && !isOnCooldown(p));
-    return anyConfigured ? [anyConfigured] : [];
-  }
+  // Capability routing is fail-closed. A task may only be sent to a model whose
+  // configured model ID explicitly advertises that task capability.
   return scored;
 }
 
