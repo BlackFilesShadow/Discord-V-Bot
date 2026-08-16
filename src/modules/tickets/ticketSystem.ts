@@ -14,6 +14,7 @@
  */
 
 import {
+  MessageFlags,
   ButtonBuilder,
   ButtonStyle,
   ActionRowBuilder,
@@ -626,24 +627,24 @@ export async function  purgeTemplateInstances(client: Client, templateId: string
 export async function handleOpenButton(btn: ButtonInteraction): Promise<void> {
   const templateId = btn.customId.split(':')[2];
   if (!templateId) {
-    await btn.reply({ content: 'Ungueltige Button-ID.', ephemeral: true });
+    await btn.reply({ content: 'Ungueltige Button-ID.', flags: MessageFlags.Ephemeral });
     return;
   }
   if (!btn.guild) {
-    await btn.reply({ content: 'Tickets nur in Servern.', ephemeral: true });
+    await btn.reply({ content: 'Tickets nur in Servern.', flags: MessageFlags.Ephemeral });
     return;
   }
 
   const t = await prisma.ticketTemplate.findUnique({ where: { id: templateId } });
   if (!t || !t.isActive || t.guildId !== btn.guild.id) {
-    await btn.reply({ content: 'Template nicht verfuegbar.', ephemeral: true });
+    await btn.reply({ content: 'Template nicht verfuegbar.', flags: MessageFlags.Ephemeral });
     return;
   }
 
   // G3: Per-User-Mutex — verhindert race bei Mehrfach-Klick.
   const lockKey = `${t.id}:${btn.user.id}`;
   if (openLocks.has(lockKey)) {
-    await btn.reply({ content: 'Ein Ticket-Open-Vorgang laeuft bereits. Bitte warten...', ephemeral: true }).catch(() => {});
+    await btn.reply({ content: 'Ein Ticket-Open-Vorgang laeuft bereits. Bitte warten...', flags: MessageFlags.Ephemeral }).catch(() => {});
     return;
   }
   let resolveLock: () => void = () => {};
@@ -658,7 +659,7 @@ export async function handleOpenButton(btn: ButtonInteraction): Promise<void> {
 
 async function openTicketLocked(btn: ButtonInteraction, t: Awaited<ReturnType<typeof prisma.ticketTemplate.findUniqueOrThrow>>): Promise<void> {
 
-  await btn.deferReply({ ephemeral: true });
+  await btn.deferReply({ flags: MessageFlags.Ephemeral });
 
   // F7: Vorab-Permission-Check fuer aussagekraeftige Fehlermeldung.
   const guild = btn.guild;
@@ -872,7 +873,7 @@ async function openTicketLocked(btn: ButtonInteraction, t: Awaited<ReturnType<ty
 export async function handleCloseButton(btn: ButtonInteraction): Promise<void> {
   const instanceId = btn.customId.split(':')[2];
   if (!instanceId) {
-    await btn.reply({ content: 'Ungueltige Button-ID.', ephemeral: true });
+    await btn.reply({ content: 'Ungueltige Button-ID.', flags: MessageFlags.Ephemeral });
     return;
   }
   // Mehrfach-Klick / Race-Schutz: pro Instance nur EIN aktiver Close-Vorgang.
@@ -880,7 +881,7 @@ export async function handleCloseButton(btn: ButtonInteraction): Promise<void> {
     await withInstanceLock(instanceId, () => closeTicketLocked(btn, instanceId));
   } catch (e) {
     if ((e as Error).message === 'BUSY') {
-      await btn.reply({ content: 'Schliess-Vorgang laeuft bereits.', ephemeral: true }).catch(() => {});
+      await btn.reply({ content: 'Schliess-Vorgang laeuft bereits.', flags: MessageFlags.Ephemeral }).catch(() => {});
       return;
     }
     throw e;
@@ -893,7 +894,7 @@ async function closeTicketLocked(btn: ButtonInteraction, instanceId: string): Pr
     include: { template: true },
   });
   if (!instance || instance.status !== 'OPEN') {
-    await btn.reply({ content: 'Ticket bereits geschlossen.', ephemeral: true });
+    await btn.reply({ content: 'Ticket bereits geschlossen.', flags: MessageFlags.Ephemeral });
     return;
   }
 
@@ -915,12 +916,12 @@ async function closeTicketLocked(btn: ButtonInteraction, instanceId: string): Pr
       content: btn.user.id === instance.openerDiscordId
         ? 'Du darfst dein eigenes Ticket nicht schliessen. Bitte warte auf einen Manager oder Server-Owner.'
         : 'Du darfst dieses Ticket nicht schliessen.',
-      ephemeral: true,
+      flags: MessageFlags.Ephemeral,
     });
     return;
   }
 
-  await btn.deferReply({ ephemeral: true });
+  await btn.deferReply({ flags: MessageFlags.Ephemeral });
 
   try {
     const channel = await btn.client.channels.fetch(instance.channelId).catch(() => null);
@@ -1095,7 +1096,7 @@ async function closeTicketLocked(btn: ButtonInteraction, instanceId: string): Pr
 export async function handleAddUserButton(btn: ButtonInteraction): Promise<void> {
   const instanceId = btn.customId.split(':')[2];
   if (!instanceId) {
-    await btn.reply({ content: 'Ungueltige Button-ID.', ephemeral: true });
+    await btn.reply({ content: 'Ungueltige Button-ID.', flags: MessageFlags.Ephemeral });
     return;
   }
   const instance = await prisma.ticketInstance.findUnique({
@@ -1103,11 +1104,11 @@ export async function handleAddUserButton(btn: ButtonInteraction): Promise<void>
     include: { template: true },
   });
   if (!instance || instance.status !== 'OPEN') {
-    await btn.reply({ content: 'Ticket nicht (mehr) offen.', ephemeral: true });
+    await btn.reply({ content: 'Ticket nicht (mehr) offen.', flags: MessageFlags.Ephemeral });
     return;
   }
   if (!btn.guild) {
-    await btn.reply({ content: 'Nur in Servern verfuegbar.', ephemeral: true });
+    await btn.reply({ content: 'Nur in Servern verfuegbar.', flags: MessageFlags.Ephemeral });
     return;
   }
 
@@ -1117,7 +1118,7 @@ export async function handleAddUserButton(btn: ButtonInteraction): Promise<void>
   if (!allowed) {
     await btn.reply({
       content: 'Du hast keine Berechtigung, Nutzer zu diesem Ticket hinzuzufuegen.',
-      ephemeral: true,
+      flags: MessageFlags.Ephemeral,
     });
     return;
   }
@@ -1131,7 +1132,7 @@ export async function handleAddUserButton(btn: ButtonInteraction): Promise<void>
   await btn.reply({
     content: 'Waehle den Nutzer aus, der zu diesem Ticket hinzugefuegt werden soll:',
     components: [new ActionRowBuilder<UserSelectMenuBuilder>().addComponents(select)],
-    ephemeral: true,
+    flags: MessageFlags.Ephemeral,
   });
 }
 
@@ -1142,7 +1143,7 @@ export async function handleAddUserButton(btn: ButtonInteraction): Promise<void>
 export async function handleAddUserSelect(select: UserSelectMenuInteraction): Promise<void> {
   const instanceId = select.customId.split(':')[2];
   if (!instanceId || !select.guild) {
-    await select.reply({ content: 'Ungueltige Select-ID.', ephemeral: true });
+    await select.reply({ content: 'Ungueltige Select-ID.', flags: MessageFlags.Ephemeral });
     return;
   }
   const instance = await prisma.ticketInstance.findUnique({
@@ -1150,7 +1151,7 @@ export async function handleAddUserSelect(select: UserSelectMenuInteraction): Pr
     include: { template: true },
   });
   if (!instance || instance.status !== 'OPEN') {
-    await select.reply({ content: 'Ticket nicht (mehr) offen.', ephemeral: true });
+    await select.reply({ content: 'Ticket nicht (mehr) offen.', flags: MessageFlags.Ephemeral });
     return;
   }
 
@@ -1159,17 +1160,17 @@ export async function handleAddUserSelect(select: UserSelectMenuInteraction): Pr
   const member = await select.guild.members.fetch(select.user.id).catch(() => null);
   const canAdd = canManageTicketForMember(member, instance, select.guild.ownerId);
   if (!canAdd) {
-    await select.reply({ content: 'Du hast keine Berechtigung mehr.', ephemeral: true });
+    await select.reply({ content: 'Du hast keine Berechtigung mehr.', flags: MessageFlags.Ephemeral });
     return;
   }
 
   const targetId = select.values[0];
   if (!targetId || !/^\d{17,20}$/.test(targetId)) {
-    await select.reply({ content: 'Kein gueltiger Nutzer ausgewaehlt.', ephemeral: true });
+    await select.reply({ content: 'Kein gueltiger Nutzer ausgewaehlt.', flags: MessageFlags.Ephemeral });
     return;
   }
 
-  await select.deferReply({ ephemeral: true });
+  await select.deferReply({ flags: MessageFlags.Ephemeral });
 
   // Target-User existiert in dieser Guild?
   const target = await select.guild.members.fetch(targetId).catch(() => null);
@@ -1277,7 +1278,7 @@ function canManageTicketForMember(
 export async function handleCloseReasonButton(btn: ButtonInteraction): Promise<void> {
   const instanceId = btn.customId.split(':')[2];
   if (!instanceId) {
-    await btn.reply({ content: 'Ungueltige Button-ID.', ephemeral: true });
+    await btn.reply({ content: 'Ungueltige Button-ID.', flags: MessageFlags.Ephemeral });
     return;
   }
   const inst = await prisma.ticketInstance.findUnique({
@@ -1285,16 +1286,16 @@ export async function handleCloseReasonButton(btn: ButtonInteraction): Promise<v
     include: { template: true },
   });
   if (!inst) {
-    await btn.reply({ content: 'Ticket nicht gefunden.', ephemeral: true });
+    await btn.reply({ content: 'Ticket nicht gefunden.', flags: MessageFlags.Ephemeral });
     return;
   }
   if (!btn.guild) {
-    await btn.reply({ content: 'Nur in Servern verfuegbar.', ephemeral: true });
+    await btn.reply({ content: 'Nur in Servern verfuegbar.', flags: MessageFlags.Ephemeral });
     return;
   }
   const member = await btn.guild.members.fetch(btn.user.id).catch(() => null);
   if (!canManageTicketForMember(member, inst, btn.guild.ownerId)) {
-    await btn.reply({ content: 'Du darfst den Grund dieses Tickets nicht bearbeiten.', ephemeral: true });
+    await btn.reply({ content: 'Du darfst den Grund dieses Tickets nicht bearbeiten.', flags: MessageFlags.Ephemeral });
     return;
   }
   const current = (inst as unknown as { closeReason?: string | null }).closeReason ?? '';
@@ -1315,7 +1316,7 @@ export async function handleCloseReasonButton(btn: ButtonInteraction): Promise<v
 export async function handleCloseReasonModal(modal: ModalSubmitInteraction): Promise<void> {
   const instanceId = modal.customId.split(':')[2];
   if (!instanceId) {
-    await modal.reply({ content: 'Ungueltige Modal-ID.', ephemeral: true });
+    await modal.reply({ content: 'Ungueltige Modal-ID.', flags: MessageFlags.Ephemeral });
     return;
   }
   const inst = await prisma.ticketInstance.findUnique({
@@ -1323,16 +1324,16 @@ export async function handleCloseReasonModal(modal: ModalSubmitInteraction): Pro
     include: { template: true },
   });
   if (!inst) {
-    await modal.reply({ content: 'Ticket nicht gefunden.', ephemeral: true });
+    await modal.reply({ content: 'Ticket nicht gefunden.', flags: MessageFlags.Ephemeral });
     return;
   }
   if (!modal.guild) {
-    await modal.reply({ content: 'Nur in Servern verfuegbar.', ephemeral: true });
+    await modal.reply({ content: 'Nur in Servern verfuegbar.', flags: MessageFlags.Ephemeral });
     return;
   }
   const member = await modal.guild.members.fetch(modal.user.id).catch(() => null);
   if (!canManageTicketForMember(member, inst, modal.guild.ownerId)) {
-    await modal.reply({ content: 'Du darfst den Grund dieses Tickets nicht bearbeiten.', ephemeral: true });
+    await modal.reply({ content: 'Du darfst den Grund dieses Tickets nicht bearbeiten.', flags: MessageFlags.Ephemeral });
     return;
   }
   const raw = modal.fields.getTextInputValue('reason').trim();
@@ -1430,6 +1431,6 @@ export async function handleCloseReasonModal(modal: ModalSubmitInteraction): Pro
     content: next === null
       ? `Grund entfernt.${embedPatched ? '' : ' (Embed konnte nicht aktualisiert werden.)'}`
       : `Grund aktualisiert.${embedPatched ? '' : ' (Embed konnte nicht aktualisiert werden.)'}`,
-    ephemeral: true,
+    flags: MessageFlags.Ephemeral,
   });
 }

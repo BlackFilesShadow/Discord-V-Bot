@@ -1,4 +1,5 @@
 import {
+  MessageFlags,
   SlashCommandBuilder,
   ChatInputCommandInteraction,
   ActionRowBuilder,
@@ -76,7 +77,7 @@ const pollCommand: Command = {
         .setDescription('Ein interner Fehler ist aufgetreten. Bitte versuche es erneut.');
       try {
         if (interaction.deferred || interaction.replied) await interaction.editReply({ embeds: [embed] });
-        else await interaction.reply({ embeds: [embed], ephemeral: true });
+        else await interaction.reply({ embeds: [embed], flags: MessageFlags.Ephemeral });
       } catch { /* Interaction nicht mehr nutzbar */ }
     }
   },
@@ -164,7 +165,7 @@ async function runPollSubcommand(sub: string, interaction: ChatInputCommandInter
     }
 
     case 'abstimmen': {
-      await interaction.deferReply({ ephemeral: true });
+      await interaction.deferReply({ flags: MessageFlags.Ephemeral });
       const pollId = interaction.options.getString('poll-id', true);
       const optionNum = interaction.options.getInteger('option', true);
       const dbUser = await prisma.user.findUnique({ where: { discordId: interaction.user.id } });
