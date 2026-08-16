@@ -58,12 +58,12 @@ describe('virtuelle Economy-Konten — Production-Invarianten', () => {
     expect(service).toContain('"expiresAt"<=CURRENT_TIMESTAMP');
   });
 
-  it('verdrahtet Discord-Idempotenz, Live-Inventar und Dashboard-Verwaltung', () => {
+  it('verdrahtet Discord-Idempotenz, Live-Inventar und slotgescoppte Dashboard-Verwaltung', () => {
     expect(command).toContain('idempotencyKey: `discord-virtual-pay:${i.id}`');
     expect(command).toContain(".setName('virtual-account')");
     expect(inventory).toContain("'virtual-account'");
     expect(serverSlot).toContain("import { VirtualAccountsPanel } from '@/components/economy/VirtualAccountsPanel';");
-    expect(serverSlot).toContain('<VirtualAccountsPanel guildId={guildId} />');
+    expect(serverSlot).toContain('<VirtualAccountsPanel guildId={guildId} slot={slot} />');
   });
 
   it('nutzt eine einzige atomare Transaktion je Geldbewegung und getrennte Idempotenz-Ledger', () => {
