@@ -1,0 +1,26 @@
+name: Harden black market
+on:
+  push:
+    branches: [feat/economy-black-market]
+    paths: [.github/workflows/harden-black-market.yml]
+permissions:
+  contents: write
+jobs:
+  harden:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: feat/economy-black-market
+          fetch-depth: 0
+      - run: python3 scripts/harden_black_market.py
+      - run: git diff --check
+      - shell: bash
+        run: |
+          set -euo pipefail
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add -- src/modules/economy/blackMarket.ts src/dashboard/routes/v2/economyBlackMarket.ts prisma/schema.prisma tests/security/economyBlackMarketSafety.test.ts
+          git rm -f --ignore-unmatch -- scripts/harden_black_market.py .github/workflows/harden-black-market.yml
+          git commit -m "Harden black market scope and idempotency"
+          git push origin HEAD:feat/economy-black-market
