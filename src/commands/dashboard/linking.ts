@@ -288,14 +288,17 @@ export const linkPanelCommand: Command = {
       .setRequired(true)
       .addChannelTypes(ChannelType.GuildText, ChannelType.GuildAnnouncement)) as SlashCommandBuilder),
   execute: withGuildScope({ requirePerm: 'economy.manage', acceptSlotOption: true }, async (interaction, scope) => {
-    const rawChannel = interaction.options.getChannel('channel', true);
-    if (!rawChannel.isTextBased() || rawChannel.isDMBased() || rawChannel.guildId !== scope.guildId) {
+    const selectedChannel = interaction.options.getChannel('channel', true);
+    const fetchedChannel = await interaction.guild?.channels.fetch(selectedChannel.id).catch(() => null);
+    if (!fetchedChannel
+      || (fetchedChannel.type !== ChannelType.GuildText && fetchedChannel.type !== ChannelType.GuildAnnouncement)
+      || fetchedChannel.guildId !== scope.guildId) {
       await statusReply(interaction, 'ERROR', 'Kanal nicht geeignet', 'Wähle einen Text- oder Ankündigungskanal dieses Discord-Servers.');
       return;
     }
-    const channel = rawChannel as GuildTextBasedChannel;
+    const channel = fetchedChannel as GuildTextBasedChannel;
     const me = interaction.guild?.members.me;
-    const permissions = me && 'permissionsFor' in channel ? channel.permissionsFor(me) : null;
+    const permissions = me ? channel.permissionsFor(me) : null;
     if (!permissions?.has(PermissionFlagsBits.ViewChannel)
       || !permissions.has(PermissionFlagsBits.SendMessages)
       || !permissions.has(PermissionFlagsBits.EmbedLinks)) {
