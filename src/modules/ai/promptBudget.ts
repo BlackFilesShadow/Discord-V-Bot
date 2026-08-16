@@ -55,6 +55,12 @@ interface ContextBundleV2 {
 
 const OUTER_UNTRUSTED_MARKER = 'UNTRUSTED_CONTEXT_DATA_JSON:\n';
 const CONTEXT_BUNDLE_MARKER = 'AI_CONTEXT_BUNDLE_V2:\n';
+const NITRADO_SECTION_MARKER = 'NITRADO-BEDIENWEG (Hosting-Prozedur, nicht DayZ-Dateisemantik):';
+const DAYZ_CONTEXT_MARKERS = [
+  'DAYZ 1.29 – GEERDETE ERKLAERBASIS',
+  'DAYZ 1.29 – HARTE GROUNDING-REGELN',
+  'GEPRUEFTE DAYZ-ENGINE-/SERVER-KONFIGURATION:',
+] as const;
 
 /**
  * Zeichen-Budgets pro Kontext-Art. Lazy ausgewertet, damit Tests ENV
@@ -138,6 +144,25 @@ function clampStructuredContextBundle(text: string): string | null {
   return wrapUntrustedContext(`${CONTEXT_BUNDLE_MARKER}${JSON.stringify(bounded)}`, 20_000);
 }
 
+function clampDayzNitradoContext(text: string): string {
+  const budgets = getPromptBudgets();
+  const hasDayz = DAYZ_CONTEXT_MARKERS.some((marker) => text.includes(marker));
+  const nitradoIndex = text.indexOf(NITRADO_SECTION_MARKER);
+
+  if (nitradoIndex >= 0) {
+    const beforeNitrado = text.slice(0, nitradoIndex).trim();
+    const nitradoAndRules = text.slice(nitradoIndex).trim();
+    const parts: string[] = [];
+    if (beforeNitrado) {
+      parts.push(truncateToLimit(beforeNitrado, hasDayz ? budgets.dayzContext : budgets.nitradoContext));
+    }
+    if (nitradoAndRules) parts.push(truncateToLimit(nitradoAndRules, budgets.nitradoContext));
+    return parts.join('\n\n');
+  }
+
+  return truncateToLimit(text, hasDayz ? budgets.dayzContext : budgets.nitradoContext);
+}
+
 /** Kappt einen einzelnen dynamischen Block exakt auf sein Quellen-Budget. */
 export function clampBlock(key: PromptBudgetKey, text: string | null | undefined): string | null {
   if (!text) return null;
@@ -145,6 +170,7 @@ export function clampBlock(key: PromptBudgetKey, text: string | null | undefined
     const structured = clampStructuredContextBundle(text);
     if (structured) return structured;
   }
+  if (key === 'nitradoContext') return clampDayzNitradoContext(text);
   return truncateToLimit(text, getPromptBudgets()[key]);
 }
 
