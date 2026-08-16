@@ -4,8 +4,8 @@ import { logger } from '../../utils/logger';
 import prisma from '../../database/prisma';
 import { liveSearch, looksFactQuestion, formatSearchResultsForPrompt } from './webSearch';
 import { asksAboutCommands, formatCatalogForPromptFocused } from './commandCatalog';
-import { recordCall, getRankedProviders, markProviderUnavailable, ProviderName } from './providerStats';
-import { inferAiTaskProfile, type AiTaskProfile } from './providerCapabilities';
+import { recordCall, getRankedProviders, getConfiguredModel, isOnCooldown, markProviderUnavailable, ProviderName } from './providerStats';
+import { inferAiTaskProfile, providerSupportsTask, type AiTaskProfile } from './providerCapabilities';
 import { checkRateLimit } from '../../utils/rateLimiter';
 import { lookupNitradoHelp, looksLikeDayZFileQuestion, getDayZFileTruthBlock, isDayzTechnicalAdminQuestion, validateDayzTechnicalAnswer, buildDayzTechnicalFallback } from './nitradoHelp';
 import { redactText } from '../nitrado/mirror/redactor';
@@ -841,7 +841,7 @@ async function getProviderOrder(task: AiTaskProfile): Promise<('groq' | 'cerebra
     const ranked = await getRankedProviders(task);
     if (ranked.length > 0) return ranked;
   } catch (e) {
-    logger.warn(`getProviderOrder: getRankedProviders fehlgeschlagen, Fallback Konfig: ${String(e)}`);
+    logger.warn(`getProviderOrder: getRankedProviders fehlgeschlagen, Capability-Fallback: ${String(e)}`);
   }
   const all: ('groq' | 'cerebras' | 'openrouter' | 'gemini' | 'openai')[] = [
     'groq',
@@ -851,5 +851,6 @@ async function getProviderOrder(task: AiTaskProfile): Promise<('groq' | 'cerebra
     'openai',
   ];
   const primary = config.ai.provider;
-  return [primary, ...all.filter(p => p !== primary)];
+  return [primary, ...all.filter(p => p !== primary)]
+    .filter((p) => !isOnCooldown(p) && providerSupportsTask(p, getConfiguredModel(p), task));
 }
