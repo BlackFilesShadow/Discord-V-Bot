@@ -29,6 +29,20 @@ describe('AI provider request compatibility', () => {
     expect(input).toHaveProperty('presence_penalty', 0.6);
   });
 
+  it('behaelt ein bereits modernes Tokenlimit und ueberschreibt es nicht mit max_tokens', () => {
+    const output = normalizeAiProviderRequest(
+      'https://api.groq.com/openai/v1/chat/completions',
+      {
+        model: 'openai/gpt-oss-120b',
+        max_completion_tokens: 777,
+        max_tokens: 1500,
+      },
+    ) as Record<string, unknown>;
+
+    expect(output.max_completion_tokens).toBe(777);
+    expect(output).not.toHaveProperty('max_tokens');
+  });
+
   it('behaelt bei Cerebras unterstuetzte Penalties und modernisiert nur das Tokenlimit', () => {
     const input = {
       model: 'gpt-oss-120b',
@@ -62,14 +76,20 @@ describe('AI provider request compatibility', () => {
       frequency_penalty: 0.2,
     };
 
-    expect(normalizeAiProviderRequest(
+    const output = normalizeAiProviderRequest(
       'https://openrouter.ai/api/v1/chat/completions',
       input,
-    )).toEqual({
-      ...input,
+    ) as Record<string, unknown>;
+
+    expect(output).toEqual({
+      model: input.model,
       max_completion_tokens: 900,
-      max_tokens: undefined,
+      temperature: 0.8,
+      top_p: 0.95,
+      presence_penalty: 0.3,
+      frequency_penalty: 0.2,
     });
+    expect(output).not.toHaveProperty('max_tokens');
   });
 
   it('sendet GPT-5.6 ueber Chat Completions konservativ ohne alte Sampling-/Penalty-Tuningwerte', () => {
@@ -93,7 +113,7 @@ describe('AI provider request compatibility', () => {
     });
   });
 
-  it('entfernt bei Gemini 3.x alte Sampling-Parameter und behaelt das Output-Limit', () => {
+  it('entfernt bei den bekannten modernen Gemini-Modellen alte Sampling-Parameter und behaelt das Output-Limit', () => {
     const input = {
       contents: [{ role: 'user', parts: [{ text: 'Hallo' }] }],
       generationConfig: {
@@ -118,9 +138,27 @@ describe('AI provider request compatibility', () => {
     expect(input.generationConfig.temperature).toBe(0.85);
   });
 
+  it('veraendert unbekannte oder explizite Gemini-Modelle nicht eigenmaechtig', () => {
+    const input = {
+      contents: [{ role: 'user', parts: [{ text: 'Hallo' }] }],
+      generationConfig: {
+        maxOutputTokens: 900,
+        temperature: 0.4,
+        topP: 0.8,
+        topK: 20,
+      },
+    };
+
+    expect(normalizeAiProviderRequest(
+      'https://generativelanguage.googleapis.com/v1beta/models/custom-enterprise-model:generateContent',
+      input,
+    )).toBe(input);
+  });
+
   it('laesst Nicht-AI-Requests und ungueltige URLs unangetastet', () => {
     const payload = { max_tokens: 123, foo: 'bar' };
     expect(normalizeAiProviderRequest('https://api.nitrado.net/services', payload)).toBe(payload);
+    expect(normalizeAiProviderRequest('https://discord.com/api/v10/gateway', payload)).toBe(payload);
     expect(normalizeAiProviderRequest('not-a-url', payload)).toBe(payload);
     expect(normalizeAiProviderRequest(undefined, payload)).toBe(payload);
   });
