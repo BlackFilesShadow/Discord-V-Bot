@@ -1,6 +1,7 @@
 import dotenv from 'dotenv';
 import path from 'path';
 import { resolveBotOwnerId } from './security/privilegedIdentity';
+import { parseAiProvider, resolveAiModel } from './modules/ai/modelRegistry';
 
 dotenv.config();
 
@@ -14,13 +15,6 @@ function requireEnv(key: string): string {
 
 function optionalEnv(key: string, defaultValue: string = ''): string {
   return process.env[key] || defaultValue;
-}
-
-function resolveGeminiModel(): string {
-  const configured = optionalEnv('GEMINI_MODEL', 'gemini-3.6-flash').trim();
-  if (configured === 'gemini-2.0-flash' || configured === 'gemini-2.0-flash-001') return 'gemini-3.6-flash';
-  if (configured === 'gemini-2.0-flash-lite' || configured === 'gemini-2.0-flash-lite-001') return 'gemini-3.1-flash-lite';
-  return configured || 'gemini-3.6-flash';
 }
 
 const metricsToken = optionalEnv('METRICS_TOKEN', '').trim();
@@ -76,23 +70,20 @@ export const config = {
   },
 
   // AI (Multi-Provider Fallback: Groq → Cerebras → OpenRouter → Gemini → OpenAI)
+  // Providernamen und Modell-Defaults werden zentral validiert/migriert, damit
+  // abgeschaltete Provider-Modelle nicht ueber alte .env-Werte wiederkehren.
   ai: {
-    provider: optionalEnv('AI_PROVIDER', 'groq') as
-      | 'groq'
-      | 'cerebras'
-      | 'openrouter'
-      | 'gemini'
-      | 'openai',
+    provider: parseAiProvider(optionalEnv('AI_PROVIDER', 'groq')),
     groqApiKey: optionalEnv('GROQ_API_KEY'),
-    groqModel: optionalEnv('GROQ_MODEL', 'llama-3.3-70b-versatile'),
+    groqModel: resolveAiModel('groq', optionalEnv('GROQ_MODEL')),
     cerebrasApiKey: optionalEnv('CEREBRAS_API_KEY'),
-    cerebrasModel: optionalEnv('CEREBRAS_MODEL', 'llama-3.3-70b'),
+    cerebrasModel: resolveAiModel('cerebras', optionalEnv('CEREBRAS_MODEL')),
     openrouterApiKey: optionalEnv('OPENROUTER_API_KEY'),
-    openrouterModel: optionalEnv('OPENROUTER_MODEL', 'meta-llama/llama-3.3-70b-instruct:free'),
+    openrouterModel: resolveAiModel('openrouter', optionalEnv('OPENROUTER_MODEL')),
     geminiApiKey: optionalEnv('GEMINI_API_KEY'),
-    geminiModel: resolveGeminiModel(),
+    geminiModel: resolveAiModel('gemini', optionalEnv('GEMINI_MODEL')),
     openaiApiKey: optionalEnv('OPENAI_API_KEY'),
-    openaiModel: optionalEnv('OPENAI_MODEL', 'gpt-4'),
+    openaiModel: resolveAiModel('openai', optionalEnv('OPENAI_MODEL')),
   },
 
   // Externe APIs
