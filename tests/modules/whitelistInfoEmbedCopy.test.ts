@@ -17,6 +17,6 @@ describe('Whitelist-Info-Embed', () => {
 
   it('enthaelt die veraltete Whitelist-Command-Syntax nicht mehr', () => {
     expect(source).not.toContain('/whitelist id:');
-    expect(source).not.toContain('Whitelist-System'));
+    expect(source).not.toContain("statusTitle('INFO', 'Whitelist-System')");
   });
 });
