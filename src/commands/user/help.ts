@@ -14,7 +14,7 @@ import type { Command, ExtendedClient } from '../../types';
 import { visibleCommandCatalog, type CommandCatalogEntry } from '../catalog';
 import { Colors, Brand, vEmbed } from '../../utils/embedDesign';
 
-type HelpCategory = 'overview' | 'moderation' | 'nitrado' | 'economy' | 'manufacturer' | 'community';
+type HelpCategory = 'overview' | 'moderation' | 'nitrado' | 'economy' | 'manufacturer' | 'community' | 'other';
 
 type JsonOption = {
   type: number;
@@ -38,7 +38,7 @@ const CATEGORIES: readonly CategoryDefinition[] = [
     label: 'Moderation',
     emoji: '🛡️',
     description: 'Discord-Moderation, Sanktionen und Einsprueche.',
-    names: new Set(['kick', 'ban', 'mute', 'warn', 'appeal']),
+    names: new Set(['kick', 'ban', 'mute', 'warn', 'appeal', 'case']),
   },
   {
     id: 'nitrado',
@@ -61,6 +61,7 @@ const CATEGORIES: readonly CategoryDefinition[] = [
       'link', 'unlink', 'links', 'link-info', 'link-panel',
       'force-link', 'force-unlink', 'confirm-action',
       'slot', 'coinflip', 'dice', 'blackjack', 'casino-stats',
+      'virtual-account', 'lottery', 'black-market',
     ]),
   },
   {
@@ -81,6 +82,13 @@ const CATEGORIES: readonly CategoryDefinition[] = [
       'fraktionen', 'factions', 'faction', 'join', 'leave',
     ]),
   },
+  {
+    id: 'other',
+    label: 'Weitere Funktionen',
+    emoji: '🧭',
+    description: 'Sichtbare Funktionen, die noch keinem festen Bereich zugeordnet sind.',
+    names: new Set(),
+  },
 ] as const;
 
 function truncate(value: string, max: number): string {
@@ -88,7 +96,7 @@ function truncate(value: string, max: number): string {
 }
 
 function categoryFor(entry: CommandCatalogEntry): CategoryDefinition {
-  return CATEGORIES.find(category => category.names.has(entry.name)) ?? CATEGORIES[CATEGORIES.length - 1];
+  return CATEGORIES.find(category => category.names.has(entry.name)) ?? CATEGORIES.find(category => category.id === 'other')!;
 }
 
 function entriesFor(entries: CommandCatalogEntry[], category: HelpCategory): CommandCatalogEntry[] {
@@ -315,6 +323,7 @@ const helpCommand: Command = {
         { name: 'Economy · Bank · Casino · Verknuepfung', value: 'economy' },
         { name: 'Hersteller', value: 'manufacturer' },
         { name: 'Community & Tools', value: 'community' },
+        { name: 'Weitere Funktionen', value: 'other' },
       )),
 
   execute: async (interaction: ChatInputCommandInteraction) => {
