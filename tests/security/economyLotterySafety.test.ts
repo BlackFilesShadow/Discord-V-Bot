@@ -89,6 +89,18 @@ describe('Economy-Lotterie — Production-Sicherheitsinvarianten', () => {
     expect(clean.indexOf('/[\\r\\n\\t\\u0000-\\u001f\\u007f]/')).toBeLessThan(clean.indexOf('.trim().replace'));
   });
 
+  it('priorisiert geldkritische Settlement-Runden vor Ergebnis-Ankuendigungen und verhindert Scheduler-Starvation', () => {
+    expect(lottery).toContain('const settlementRounds = await prisma.lotteryRound.findMany');
+    expect(lottery).toContain('const announcementRounds = await prisma.lotteryRound.findMany');
+    const settlementStart = lottery.indexOf('const settlementRounds');
+    const announcementStart = lottery.indexOf('const announcementRounds');
+    expect(settlementStart).toBeGreaterThan(-1);
+    expect(announcementStart).toBeGreaterThan(settlementStart);
+    const settlementBlock = lottery.slice(settlementStart, announcementStart);
+    expect(settlementBlock).toContain("{ status: { in: ['DRAWING', 'REFUNDING'] } }");
+    expect(settlementBlock).not.toContain("['FINISHED', 'REFUNDED']");
+  });
+
   it('verhindert endlose REFUNDED-Scheduler-Wiederholung durch announcedAt', () => {
     expect(lottery).toContain("if (round.status === 'REFUNDED')");
     expect(lottery).toContain("where: { id: round.id, status: 'REFUNDED', announcedAt: null }");

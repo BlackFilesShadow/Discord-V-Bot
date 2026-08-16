@@ -660,22 +660,39 @@ export function startLotteryScheduler(client: Client): void {
     try {
       const guildIds = [...client.guilds.cache.keys()];
       if (guildIds.length === 0) return;
-      const rounds = await prisma.lotteryRound.findMany({
+      // Geldkritische Settlement-Arbeit darf niemals hinter alten, nicht
+      // zustellbaren Ergebnis-Ankuendigungen verhungern. Deshalb werden beide
+      // Workloads getrennt begrenzt und Settlement-Runden immer zuerst verarbeitet.
+      const settlementRounds = await prisma.lotteryRound.findMany({
         where: {
           guildId: { in: guildIds },
           OR: [
             { status: 'ACTIVE', endsAt: { lte: new Date() } },
             { status: { in: ['DRAWING', 'REFUNDING'] } },
-            { status: { in: ['FINISHED', 'REFUNDED'] }, announcedAt: null },
           ],
         },
         select: { id: true },
         orderBy: { endsAt: 'asc' },
         take: 100,
       });
-      for (const round of rounds) {
+      for (const round of settlementRounds) {
         try { await settleLotteryRound(client, round.id); }
-        catch (error) { logger.error(`Lotterie-Scheduler ${round.id}:`, error as Error); }
+        catch (error) { logger.error(`Lotterie-Scheduler Settlement ${round.id}:`, error as Error); }
+      }
+
+      const announcementRounds = await prisma.lotteryRound.findMany({
+        where: {
+          guildId: { in: guildIds },
+          status: { in: ['FINISHED', 'REFUNDED'] },
+          announcedAt: null,
+        },
+        select: { id: true },
+        orderBy: { endsAt: 'asc' },
+        take: 100,
+      });
+      for (const round of announcementRounds) {
+        try { await settleLotteryRound(client, round.id); }
+        catch (error) { logger.error(`Lotterie-Scheduler Announcement ${round.id}:`, error as Error); }
       }
     } catch (error) {
       logger.error('Lotterie-Scheduler Fehler:', error as Error);
