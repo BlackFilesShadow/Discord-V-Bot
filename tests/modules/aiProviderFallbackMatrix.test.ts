@@ -55,15 +55,15 @@ jest.mock('../../src/modules/ai/promptBudget', () => ({
 }));
 jest.mock('../../src/modules/ai/dayz129Catalog', () => ({ answerDayz129CatalogQuestion: jest.fn(() => null) }));
 
-const recordCall = jest.fn();
-const getRankedProviders = jest.fn();
-const markProviderUnavailable = jest.fn();
+const mockRecordCall = jest.fn();
+const mockGetRankedProviders = jest.fn();
+const mockMarkProviderUnavailable = jest.fn();
 
 jest.mock('../../src/modules/ai/providerStats', () => ({
   __esModule: true,
-  recordCall: (...args: unknown[]) => recordCall(...args),
-  getRankedProviders: (...args: unknown[]) => getRankedProviders(...args),
-  markProviderUnavailable: (...args: unknown[]) => markProviderUnavailable(...args),
+  recordCall: (...args: unknown[]) => mockRecordCall(...args),
+  getRankedProviders: (...args: unknown[]) => mockGetRankedProviders(...args),
+  markProviderUnavailable: (...args: unknown[]) => mockMarkProviderUnavailable(...args),
   getConfiguredModel: jest.fn(() => 'known-model'),
   isOnCooldown: jest.fn(() => false),
 }));
@@ -116,7 +116,7 @@ describe('AI provider failure classification', () => {
 describe('callAI circuit-breaker and fallback matrix', () => {
   beforeEach(() => {
     jest.clearAllMocks();
-    getRankedProviders.mockResolvedValue(['groq', 'cerebras']);
+    mockGetRankedProviders.mockResolvedValue(['groq', 'cerebras']);
   });
 
   test.each([401, 403, 404])('HTTP %i sperrt Provider ohne Same-Provider-Retry und faellt weiter', async (status) => {
@@ -127,16 +127,16 @@ describe('callAI circuit-breaker and fallback matrix', () => {
     expect(post).toHaveBeenCalledTimes(2);
     expect(String(post.mock.calls[0][0])).toContain('api.groq.com');
     expect(String(post.mock.calls[1][0])).toContain('api.cerebras.ai');
-    expect(markProviderUnavailable).toHaveBeenCalledWith('groq', `http_${status}`);
-    expect(recordCall).toHaveBeenCalledWith('groq', 'failure', expect.any(Number), expect.any(String));
-    expect(recordCall).toHaveBeenCalledWith('cerebras', 'success', expect.any(Number));
+    expect(mockMarkProviderUnavailable).toHaveBeenCalledWith('groq', `http_${status}`);
+    expect(mockRecordCall).toHaveBeenCalledWith('groq', 'failure', expect.any(Number), expect.any(String));
+    expect(mockRecordCall).toHaveBeenCalledWith('cerebras', 'success', expect.any(Number));
   });
 
   it('behandelt 404 explizit wie Model-Removed/Endpoint-unavailable und probiert den Fallback', async () => {
     post.mockRejectedValueOnce(httpError(404)).mockResolvedValueOnce(ok('model-fallback'));
 
     await expect(callAI(messages)).resolves.toBe('model-fallback');
-    expect(markProviderUnavailable).toHaveBeenCalledWith('groq', 'http_404');
+    expect(mockMarkProviderUnavailable).toHaveBeenCalledWith('groq', 'http_404');
     expect(post).toHaveBeenCalledTimes(2);
   });
 
@@ -148,8 +148,8 @@ describe('callAI circuit-breaker and fallback matrix', () => {
     expect(post).toHaveBeenCalledTimes(2);
     expect(String(post.mock.calls[0][0])).toContain('api.groq.com');
     expect(String(post.mock.calls[1][0])).toContain('api.cerebras.ai');
-    expect(markProviderUnavailable).not.toHaveBeenCalled();
-    expect(recordCall).toHaveBeenCalledWith(
+    expect(mockMarkProviderUnavailable).not.toHaveBeenCalled();
+    expect(mockRecordCall).toHaveBeenCalledWith(
       'groq',
       'rateLimit',
       expect.any(Number),
@@ -163,8 +163,8 @@ describe('callAI circuit-breaker and fallback matrix', () => {
 
     await expect(callAI(messages)).rejects.toMatchObject({ code: 'RATE_LIMIT' });
     expect(post).toHaveBeenCalledTimes(2);
-    expect(recordCall).toHaveBeenCalledWith('groq', 'rateLimit', expect.any(Number), expect.any(String), { retryAfterMs: 0 });
-    expect(recordCall).toHaveBeenCalledWith('cerebras', 'rateLimit', expect.any(Number), expect.any(String), { retryAfterMs: 0 });
+    expect(mockRecordCall).toHaveBeenCalledWith('groq', 'rateLimit', expect.any(Number), expect.any(String), { retryAfterMs: 0 });
+    expect(mockRecordCall).toHaveBeenCalledWith('cerebras', 'rateLimit', expect.any(Number), expect.any(String), { retryAfterMs: 0 });
   });
 
   it('retried 503 genau einmal auf demselben Provider und akzeptiert danach Erfolg', async () => {
@@ -175,9 +175,9 @@ describe('callAI circuit-breaker and fallback matrix', () => {
     expect(post).toHaveBeenCalledTimes(2);
     expect(String(post.mock.calls[0][0])).toContain('api.groq.com');
     expect(String(post.mock.calls[1][0])).toContain('api.groq.com');
-    expect(markProviderUnavailable).not.toHaveBeenCalled();
-    expect(recordCall).toHaveBeenCalledWith('groq', 'success', expect.any(Number));
-    expect(recordCall).not.toHaveBeenCalledWith('groq', 'failure', expect.anything(), expect.anything());
+    expect(mockMarkProviderUnavailable).not.toHaveBeenCalled();
+    expect(mockRecordCall).toHaveBeenCalledWith('groq', 'success', expect.any(Number));
+    expect(mockRecordCall).not.toHaveBeenCalledWith('groq', 'failure', expect.anything(), expect.anything());
   });
 
   it('retried Timeout genau einmal und wechselt nach zweitem Fehler zum naechsten Provider', async () => {
@@ -192,8 +192,8 @@ describe('callAI circuit-breaker and fallback matrix', () => {
     expect(String(post.mock.calls[0][0])).toContain('api.groq.com');
     expect(String(post.mock.calls[1][0])).toContain('api.groq.com');
     expect(String(post.mock.calls[2][0])).toContain('api.cerebras.ai');
-    expect(recordCall).toHaveBeenCalledWith('groq', 'failure', expect.any(Number), 'timeout');
-    expect(recordCall).toHaveBeenCalledWith('cerebras', 'success', expect.any(Number));
+    expect(mockRecordCall).toHaveBeenCalledWith('groq', 'failure', expect.any(Number), 'timeout');
+    expect(mockRecordCall).toHaveBeenCalledWith('cerebras', 'success', expect.any(Number));
   });
 
   it('verwechselt gemischte 429 + 5xx Fehler niemals mit all-rate-limited', async () => {
