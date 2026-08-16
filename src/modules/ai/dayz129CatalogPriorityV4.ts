@@ -51,21 +51,34 @@ function hasDayzContext(question: string): boolean {
   return /\bdayz\b|\bcentral economy\b|\bce\b|\bserverdz\.cfg\b|\bmaxplayers\b|\bservertimeacceleration\b|\bservernighttimeacceleration\b|\benablecfggameplayfile\b/.test(q);
 }
 
+function isKnownDayzConfigFile(file: string): boolean {
+  const normalized = fold(file).replace(/\\/g, '/');
+  return base.getDayz129Index().allRelativePaths.some((path) => {
+    const candidate = fold(path).replace(/\\/g, '/');
+    const basename = candidate.split('/').pop() ?? candidate;
+    return normalized === candidate || normalized === basename;
+  });
+}
+
 function isUnscopedForeignConfigFile(question: string): boolean {
   const file = explicitConfigFileToken(question);
   if (!file) return false;
   if (hasDayzContext(question)) return false;
-  return !base.isKnownDayz129Identifier(file);
+  return !isKnownDayzConfigFile(file);
 }
 
 function isTechnicalAdminIntent(question: string): boolean {
   if (!question) return false;
   const q = fold(question);
-  const dayzContext = hasDayzContext(question);
-  const fileToken = explicitConfigFileToken(question);
-  if (fileToken) return dayzContext || base.isKnownDayz129Identifier(fileToken);
-  if (!dayzContext) return false;
-  return TECHNICAL_ADMIN_MARKERS.test(q) || (CHANGE_VERBS.test(q) && CONFIGURABLE_CONCEPTS.test(q));
+  if (!hasDayzContext(question)) return false;
+
+  // Questions that merely name a concrete config file are handled by the
+  // deterministic catalog (including unknown-file handling) below. The generic
+  // firewall is for change/tuning intent that would otherwise reach free text.
+  if (explicitConfigFileToken(question)) return false;
+
+  return CHANGE_VERBS.test(q)
+    && (TECHNICAL_ADMIN_MARKERS.test(q) || CONFIGURABLE_CONCEPTS.test(q));
 }
 
 function directTechnicalAnswer(question: string): DayzCatalogAnswer | null {
@@ -73,7 +86,7 @@ function directTechnicalAnswer(question: string): DayzCatalogAnswer | null {
 
   if (/\bmaxplayers\b|maximale\s+spieler|spieler(?:zahl|anzahl).*server/.test(q)) {
     return {
-      answer: '`maxPlayers` setzt in der DayZ-Serverkonfiguration die konfigurierte maximale Spielerzahl. Bei einem Hoster wie Nitrado kann das gebuchte Produkt zusätzlich eine harte Slot-Obergrenze setzen. Einen universellen Vanilla-Zahlenwert gebe ich dafür nicht aus.',
+      answer: '`maxPlayers` setzt in der DayZ-Serverkonfiguration die konfigurierte maximale Spielerzahl. Bei einem Hoster wie Nitrado kann das gebuchte Produkt zusätzlich eine harte Slot-Obergrenze setzen. Ich gebe dafür keinen universellen Vanilla-Zahlenwert aus.',
       topic: 'file',
       ids: ['dayz129:server:maxPlayers'],
     };
@@ -132,8 +145,6 @@ function directTechnicalAnswer(question: string): DayzCatalogAnswer | null {
 
 function failClosedTechnicalAnswer(question: string): DayzCatalogAnswer | null {
   if (!isTechnicalAdminIntent(question)) return null;
-  const direct = directTechnicalAnswer(question);
-  if (direct) return direct;
   return {
     answer: 'Dazu kann ich dir aktuell keinen ausreichend sicher belegten DayZ-1.29-Datei-, Feld- oder Parameternamen nennen. Nenne mir die konkrete Datei, die Karte und das genaue Ziel; dann prüfe ich den vorhandenen 1.29-Katalog gezielt. Ich rate keine Server-Einstellung.',
     topic: 'file',
@@ -167,12 +178,17 @@ export function answer(question: string): DayzCatalogAnswer | null {
     if (unique) return exactAnswer(unique);
   }
 
-  const existing = v3.answer(question);
-  if (existing) return existing;
+  // Known technical topics must win over fuzzy type/event matching. Otherwise
+  // strings such as "loot" or "serverTimeAcceleration" can be consumed by a
+  // weaker catalog match before the safety response is reached.
+  const direct = directTechnicalAnswer(question);
+  if (direct) return direct;
 
-  // Final preflight firewall: technical DayZ admin/config questions must never
-  // fall through to an ungrounded LLM answer. Known safe topics are answered
-  // deterministically above; everything else fails closed without inventing
-  // filenames, parameters or numeric defaults.
-  return failClosedTechnicalAnswer(question);
+  // Unsupported change/tuning intent fails closed before fuzzy event matching.
+  // Concrete file questions are deliberately excluded and stay on the normal
+  // deterministic file/unknown-file catalog path.
+  const guarded = failClosedTechnicalAnswer(question);
+  if (guarded) return guarded;
+
+  return v3.answer(question);
 }
