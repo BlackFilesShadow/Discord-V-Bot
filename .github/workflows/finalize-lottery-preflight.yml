@@ -27,3 +27,5 @@ jobs:
           git rm -f -- scripts/finalize_lottery_preflight.py scripts/move_lottery_replay_before_status.py .github/workflows/fix-lottery-replay-order.yml .github/workflows/finalize-lottery-preflight.yml
           git commit -m "Normalize lottery purchase replay preflight"
           git push origin HEAD:feat/economy-lottery
+
+# one-shot trigger
