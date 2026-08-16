@@ -2,18 +2,15 @@ import prisma from '../../database/prisma';
 import { logger } from '../../utils/logger';
 
 /**
- * Phase 14 / AI-3: Conversation Memory.
+ * AI-5: Conversation Memory mit explizitem Scope-Vertrag.
  *
- * Persistenz ist immer (guildId | DM-null) + userId + channelId gescoppt.
- * Discord-Channel-IDs sind zwar global eindeutige Snowflakes, die Datenebene
- * verlaesst sich fuer die Inhaltsabfrage aber bewusst NICHT allein darauf.
- * Dadurch koennen gemischte/fehlerhafte Rows niemals gemeinsam als Prompt-
- * History geladen oder gemeinsam geloescht werden.
+ * Jede produktive Operation bekommt den Guild-/DM-Scope vom Callsite:
+ * - Guild: guildId als Discord-Snowflake
+ * - DM: null
  *
- * Bestehende Call-Sites, die historisch nur (userId, channelId, limit) kennen,
- * bleiben kompatibel: Vor dem Inhalts-Read wird einmalig nur die guildId des
- * neuesten Turns dieses Kontexts aufgeloest und anschliessend exakt auf diesen
- * Scope gefiltert. Neue Call-Sites koennen den Scope explizit uebergeben.
+ * Es gibt bewusst KEINE Scope-Inferenz aus bereits gespeicherten Turns mehr.
+ * Damit kann weder ein alter noch ein fehlerhaft gemischter Datensatz bestimmen,
+ * welche History ein neuer Request lesen oder loeschen darf.
  *
  * - TTL: 24h. Aeltere Turns werden beim Read ausgeschlossen + periodisch geloescht.
  * - Cap: max 10 Turns (= 5 Wechsel) pro gescopptem Kontext.
@@ -32,35 +29,18 @@ export interface ConversationTurn {
   content: string;
 }
 
-async function resolveStoredScope(
-  userId: string,
-  channelId: string,
-  cutoff?: Date,
-): Promise<ConversationGuildScope | undefined> {
-  const latest = await prisma.aiConversationTurn.findFirst({
-    where: {
-      userId,
-      channelId,
-      ...(cutoff ? { createdAt: { gte: cutoff } } : {}),
-    },
-    orderBy: { createdAt: 'desc' },
-    select: { guildId: true },
-  });
-  return latest?.guildId ?? (latest ? null : undefined);
-}
-
 export async function recordTurn(
   userId: string,
   channelId: string,
   role: ConversationRole,
   content: string,
-  guildId?: ConversationGuildScope,
+  guildId: ConversationGuildScope,
 ): Promise<void> {
   const trimmed = (content || '').trim().slice(0, MAX_CONTENT_PER_TURN);
   if (trimmed.length === 0) return;
   try {
     await prisma.aiConversationTurn.create({
-      data: { userId, channelId, guildId: guildId ?? null, role, content: trimmed },
+      data: { userId, channelId, guildId, role, content: trimmed },
     });
   } catch (e) {
     logger.warn(`conversationMemory.recordTurn fehlgeschlagen: ${String(e)}`);
@@ -68,37 +48,21 @@ export async function recordTurn(
 }
 
 /**
- * Liest History nur aus EINEM Guild-/DM-Scope.
- *
- * Backward compatibility:
- *   getRecentTurns(userId, channelId, 6)
- * Neuer expliziter Scope:
- *   getRecentTurns(userId, channelId, guildId, 6)
- *   getRecentTurns(userId, channelId, null, 6) // DM
+ * Liest History ausschliesslich aus dem explizit angegebenen Guild-/DM-Scope.
  */
 export async function getRecentTurns(
   userId: string,
   channelId: string,
-  guildScopeOrLimit?: ConversationGuildScope | number,
-  explicitLimit = MAX_TURNS_PER_CONTEXT,
+  guildId: ConversationGuildScope,
+  limit = MAX_TURNS_PER_CONTEXT,
 ): Promise<ConversationTurn[]> {
   try {
     const cutoff = new Date(Date.now() - TTL_MS);
-    const legacyLimit = typeof guildScopeOrLimit === 'number' ? guildScopeOrLimit : undefined;
-    const limit = legacyLimit ?? explicitLimit;
-    const explicitScope = typeof guildScopeOrLimit === 'number' ? undefined : guildScopeOrLimit;
-    const guildId = explicitScope !== undefined
-      ? explicitScope
-      : await resolveStoredScope(userId, channelId, cutoff);
-
-    // Kein persistierter Kontext -> keine History. Niemals auf einen
-    // ungescoppten Inhalts-Read zurueckfallen.
-    if (guildId === undefined) return [];
-
+    const safeLimit = Math.max(1, Math.min(Number.isFinite(limit) ? Math.trunc(limit) : MAX_TURNS_PER_CONTEXT, MAX_TURNS_PER_CONTEXT));
     const rows = await prisma.aiConversationTurn.findMany({
       where: { userId, channelId, guildId, createdAt: { gte: cutoff } },
       orderBy: { createdAt: 'desc' },
-      take: limit,
+      take: safeLimit,
     });
     return rows.reverse().map((r) => ({ role: r.role as ConversationRole, content: r.content }));
   } catch (e) {
@@ -120,23 +84,16 @@ export async function cleanupOld(): Promise<number> {
 }
 
 /**
- * Loescht ebenfalls nur EINEN Guild-/DM-Scope. Wird kein Scope explizit
- * angegeben, wird der zuletzt persistierte Scope aufgeloest; ein ungescopptes
- * deleteMany ist absichtlich unmoeglich.
+ * Loescht ausschliesslich den explizit angegebenen Guild-/DM-Scope.
  */
 export async function clearConversation(
   userId: string,
   channelId: string,
-  guildId?: ConversationGuildScope,
+  guildId: ConversationGuildScope,
 ): Promise<number> {
   try {
-    const resolvedScope = guildId !== undefined
-      ? guildId
-      : await resolveStoredScope(userId, channelId);
-    if (resolvedScope === undefined) return 0;
-
     const r = await prisma.aiConversationTurn.deleteMany({
-      where: { userId, channelId, guildId: resolvedScope },
+      where: { userId, channelId, guildId },
     });
     return r.count;
   } catch (e) {

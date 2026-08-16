@@ -1,9 +1,11 @@
+import fs from 'node:fs';
+import path from 'node:path';
+
 jest.mock('../../src/database/prisma', () => ({
   __esModule: true,
   default: {
     aiConversationTurn: {
       create: jest.fn(),
-      findFirst: jest.fn(),
       findMany: jest.fn(),
       deleteMany: jest.fn(),
     },
@@ -26,7 +28,6 @@ import {
 
 const turns = prisma.aiConversationTurn as unknown as {
   create: jest.Mock;
-  findFirst: jest.Mock;
   findMany: jest.Mock;
   deleteMany: jest.Mock;
 };
@@ -47,7 +48,6 @@ describe('AI conversation memory scope firewall', () => {
 
     const result = await getRecentTurns('user-1', 'channel-1', 'guild-A', 8);
 
-    expect(turns.findFirst).not.toHaveBeenCalled();
     expect(turns.findMany).toHaveBeenCalledWith(expect.objectContaining({
       where: expect.objectContaining({
         userId: 'user-1',
@@ -65,7 +65,6 @@ describe('AI conversation memory scope firewall', () => {
   it('behandelt DMs als expliziten NULL-Guild-Scope', async () => {
     await getRecentTurns('user-1', 'dm-channel', null, 5);
 
-    expect(turns.findFirst).not.toHaveBeenCalled();
     expect(turns.findMany).toHaveBeenCalledWith(expect.objectContaining({
       where: expect.objectContaining({
         userId: 'user-1',
@@ -76,57 +75,40 @@ describe('AI conversation memory scope firewall', () => {
     }));
   });
 
-  it('loest Legacy-Callsites vor dem Inhalts-Read auf genau einen gespeicherten Scope auf', async () => {
-    turns.findFirst.mockResolvedValue({ guildId: 'guild-B' });
+  it('kann identische User/Channel-Werte zwischen Guild und DM niemals vermischen', async () => {
+    await getRecentTurns('user-shared', 'channel-shared', 'guild-A', 4);
+    await getRecentTurns('user-shared', 'channel-shared', 'guild-B', 4);
+    await getRecentTurns('user-shared', 'channel-shared', null, 4);
 
-    await getRecentTurns('user-2', 'channel-2');
-
-    expect(turns.findFirst).toHaveBeenCalledWith(expect.objectContaining({
-      where: expect.objectContaining({ userId: 'user-2', channelId: 'channel-2' }),
-      select: { guildId: true },
+    expect(turns.findMany).toHaveBeenNthCalledWith(1, expect.objectContaining({
+      where: expect.objectContaining({ guildId: 'guild-A' }),
     }));
-    expect(turns.findMany).toHaveBeenCalledWith(expect.objectContaining({
-      where: expect.objectContaining({
-        userId: 'user-2',
-        channelId: 'channel-2',
-        guildId: 'guild-B',
-      }),
+    expect(turns.findMany).toHaveBeenNthCalledWith(2, expect.objectContaining({
+      where: expect.objectContaining({ guildId: 'guild-B' }),
+    }));
+    expect(turns.findMany).toHaveBeenNthCalledWith(3, expect.objectContaining({
+      where: expect.objectContaining({ guildId: null }),
     }));
   });
 
-  it('erhaelt den historischen dritten numerischen Limit-Parameter ohne ungescoppten Inhalts-Read', async () => {
-    turns.findFirst.mockResolvedValue({ guildId: 'guild-C' });
-
-    await getRecentTurns('user-3', 'channel-3', 4);
-
-    expect(turns.findMany).toHaveBeenCalledWith(expect.objectContaining({
-      where: expect.objectContaining({ guildId: 'guild-C' }),
-      take: 4,
-    }));
-  });
-
-  it('faellt bei fehlendem persistierten Scope geschlossen aus statt alle Guilds zu lesen', async () => {
-    turns.findFirst.mockResolvedValue(null);
-
-    await expect(getRecentTurns('user-4', 'channel-4')).resolves.toEqual([]);
-    expect(turns.findMany).not.toHaveBeenCalled();
+  it('begrenzt Reads defensiv auf maximal 10 Turns', async () => {
+    await getRecentTurns('user-3', 'channel-3', 'guild-C', 999);
+    expect(turns.findMany).toHaveBeenCalledWith(expect.objectContaining({ take: 10 }));
   });
 
   it('loescht bei explizitem Scope niemals Memory einer anderen Guild', async () => {
     turns.deleteMany.mockResolvedValue({ count: 3 });
 
     await expect(clearConversation('user-5', 'channel-5', 'guild-A')).resolves.toBe(3);
-    expect(turns.findFirst).not.toHaveBeenCalled();
     expect(turns.deleteMany).toHaveBeenCalledWith({
       where: { userId: 'user-5', channelId: 'channel-5', guildId: 'guild-A' },
     });
   });
 
-  it('loest auch einen Legacy-Clear zuerst auf genau einen Scope auf', async () => {
-    turns.findFirst.mockResolvedValue({ guildId: null });
+  it('loescht DMs nur im expliziten NULL-Scope', async () => {
     turns.deleteMany.mockResolvedValue({ count: 2 });
 
-    await expect(clearConversation('user-6', 'dm-channel')).resolves.toBe(2);
+    await expect(clearConversation('user-6', 'dm-channel', null)).resolves.toBe(2);
     expect(turns.deleteMany).toHaveBeenCalledWith({
       where: { userId: 'user-6', channelId: 'dm-channel', guildId: null },
     });
@@ -154,5 +136,28 @@ describe('AI conversation memory scope firewall', () => {
         content: 'DM-Text',
       },
     });
+  });
+
+  it('enthaelt keinerlei Legacy-Scope-Inferenz mehr', () => {
+    const source = fs.readFileSync(
+      path.join(process.cwd(), 'src/modules/ai/conversationMemory.ts'),
+      'utf8',
+    );
+    expect(source).not.toContain('resolveStoredScope');
+    expect(source).not.toContain('findFirst(');
+    expect(source).not.toContain('guildScopeOrLimit');
+  });
+
+  it('uebergibt der produktive aiHandler beim Memory-Read immer den Guild-/DM-Scope', () => {
+    const source = fs.readFileSync(
+      path.join(process.cwd(), 'src/modules/ai/aiHandler.ts'),
+      'utf8',
+    );
+    expect(source).toContain(
+      'getRecentTurns(opts.userId!, opts.channelId!, opts.guildId ?? null)',
+    );
+    expect(source).not.toContain(
+      'getRecentTurns(opts.userId!, opts.channelId!)',
+    );
   });
 });

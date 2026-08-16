@@ -353,7 +353,7 @@ export async function answerQuestion(
     if (useMemory) {
       try {
         const { getRecentTurns } = await import('./conversationMemory.js');
-        memoryTurns = await getRecentTurns(opts.userId!, opts.channelId!);
+        memoryTurns = await getRecentTurns(opts.userId!, opts.channelId!, opts.guildId ?? null);
       } catch (e) {
         logger.warn(`conversationMemory laden fehlgeschlagen: ${String(e)}`);
       }
