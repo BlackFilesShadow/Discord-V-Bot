@@ -39,6 +39,8 @@ describe('Economy-Schwarzmarkt — Production-Sicherheitsinvarianten', () => {
   it('wehrt Idempotency-Payload-Mismatch ab und archiviert statt Kaufhistorie zu loeschen', () => {
     expect(market).toContain('Market-Idempotency-Key wurde mit anderen Kaufdaten wiederverwendet.');
     expect(market).toContain('archivedAt: new Date()');
+    expect(migration).toContain('EconomyMarketListing_vendor_scope_fkey');
+    expect(migration).toContain('EconomyMarketPurchase_listing_scope_fkey');
     expect(migration).toContain('ON DELETE RESTRICT');
     expect(migration).not.toContain('ON DELETE CASCADE');
   });
@@ -48,6 +50,7 @@ describe('Economy-Schwarzmarkt — Production-Sicherheitsinvarianten', () => {
     expect(migration).toContain('CHECK ("quantity" >= 1 AND "quantity" <= 1000)');
     expect(migration).toContain('CHECK ("amount" = "unitPrice" * "quantity")');
     expect(migration).toContain('CREATE UNIQUE INDEX "EconomyMarketPurchase_idempotency_key"');
+    expect(migration).toContain('EconomyMarketPurchase_source_pocket_check');
   });
 
   it('schuetzt Verwaltung mit economy.manage und Kauf/Lesen mit Economy-Scope', () => {

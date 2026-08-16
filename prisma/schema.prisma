@@ -1833,6 +1833,7 @@ model EconomyVirtualAccount {
   marketPurchases       EconomyMarketPurchase[] @relation("MarketVendorPurchases")
 
   @@unique([guildId, nitradoConnId, nameKey], name: "guildServerNameKey", map: "EconomyVirtualAccount_guild_conn_name_key")
+  @@unique([id, guildId, nitradoConnId], name: "idScope", map: "EconomyVirtualAccount_id_scope_key")
   @@index([guildId, nitradoConnId, status], map: "EconomyVirtualAccount_guild_conn_status_idx")
   @@index([guildId, nitradoConnId, expiresAt], map: "EconomyVirtualAccount_expiry_idx")
   @@index([guildId, nitradoConnId, kind], map: "EconomyVirtualAccount_kind_idx")
@@ -1940,7 +1941,7 @@ model EconomyMarketListing {
   guildId               String
   nitradoConnId         String
   vendorAccountId       String
-  vendorAccount         EconomyVirtualAccount @relation("MarketVendorListings", fields: [vendorAccountId], references: [id], onDelete: Restrict)
+  vendorAccount         EconomyVirtualAccount @relation("MarketVendorListings", fields: [vendorAccountId, guildId, nitradoConnId], references: [id, guildId, nitradoConnId], onDelete: Restrict)
   sku                   String                @db.VarChar(80)
   name                  String                @db.VarChar(120)
   description           String?               @db.VarChar(500)
@@ -1956,6 +1957,7 @@ model EconomyMarketListing {
   purchases             EconomyMarketPurchase[]
 
   @@unique([guildId, nitradoConnId, sku], name: "scopeSku", map: "EconomyMarketListing_scope_sku_key")
+  @@unique([id, guildId, nitradoConnId], name: "idScope", map: "EconomyMarketListing_id_scope_key")
   @@index([guildId, nitradoConnId, active], map: "EconomyMarketListing_scope_active_idx")
   @@index([vendorAccountId], map: "EconomyMarketListing_vendor_idx")
 }
@@ -1964,12 +1966,13 @@ model EconomyMarketPurchase {
   id               String                @id @default(cuid())
   idempotencyKey   String                @unique(map: "EconomyMarketPurchase_idempotency_key") @db.VarChar(200)
   listingId        String
-  listing          EconomyMarketListing  @relation(fields: [listingId], references: [id], onDelete: Restrict)
+  listing          EconomyMarketListing  @relation(fields: [listingId, guildId, nitradoConnId], references: [id, guildId, nitradoConnId], onDelete: Restrict)
   guildId          String
   nitradoConnId    String
   vendorAccountId  String
-  vendorAccount    EconomyVirtualAccount @relation("MarketVendorPurchases", fields: [vendorAccountId], references: [id], onDelete: Restrict)
+  vendorAccount    EconomyVirtualAccount @relation("MarketVendorPurchases", fields: [vendorAccountId, guildId, nitradoConnId], references: [id, guildId, nitradoConnId], onDelete: Restrict)
   userDiscordId    String
+  sourcePocket     String                @db.VarChar(10)
   quantity         Int
   unitPrice        BigInt
   amount           BigInt

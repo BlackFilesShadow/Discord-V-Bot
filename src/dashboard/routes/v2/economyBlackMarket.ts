@@ -34,7 +34,7 @@ function parseIntSafe(value: unknown, label: string): number {
 function operationKey(req: Req, prefix: string): string {
   const bodyKey = typeof req.body?.operationId === 'string' ? req.body.operationId : null;
   const raw = bodyKey ?? req.get('X-Idempotency-Key');
-  if (!raw || raw.length > 96 || !/^[A-Za-z0-9._:-]+$/.test(raw)) throw new Error('Idempotency-Key fehlt oder ist ungueltig.');
+  if (!raw || raw.length > 32 || !/^[A-Za-z0-9._:-]+$/.test(raw)) throw new Error('Idempotency-Key fehlt oder ist ungueltig.');
   return `${prefix}:${raw}`;
 }
 const listingJson = (row: Awaited<ReturnType<typeof listMarketListings>>[number]) => ({ ...row, price: row.price.toString() });
@@ -100,7 +100,8 @@ economyBlackMarketRouter.post('/listings/:listingId/purchase', requireGuildPermi
   try {
     const result = await buyMarketListing({
       guildId: scope.guildId, nitradoConnId: connId, listingId: String(req.params.listingId), userDiscordId: asUserDiscordId(scope.actorDiscordId),
-      quantity: parseIntSafe(req.body?.quantity ?? 1, 'quantity'), sourcePocket: req.body?.sourcePocket === 'BANK' ? 'BANK' : 'WALLET',
+      quantity: parseIntSafe(req.body?.quantity ?? 1, 'quantity'),
+      sourcePocket: req.body?.sourcePocket === undefined || req.body?.sourcePocket === 'WALLET' ? 'WALLET' : req.body?.sourcePocket === 'BANK' ? 'BANK' : (() => { throw new Error('sourcePocket muss WALLET oder BANK sein.'); })(),
       idempotencyKey: operationKey(req, 'dashboard'),
     });
     res.json({ booked: result.booked, purchase: purchaseJson(result.purchase), listing: listingJson(result.listing) });

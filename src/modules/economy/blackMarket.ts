@@ -47,6 +47,7 @@ export interface MarketPurchaseView {
   nitradoConnId: string;
   vendorAccountId: string;
   userDiscordId: string;
+  sourcePocket: EconomyPocket;
   quantity: number;
   unitPrice: bigint;
   amount: bigint;
@@ -71,7 +72,7 @@ function cleanSku(value: string): string {
 }
 
 function operationKey(listingId: string, external: string): string {
-  const key = cleanText(external, 96, 'Idempotency-Key');
+  const key = cleanText(external, 48, 'Idempotency-Key');
   if (!/^[A-Za-z0-9._:-]+$/.test(key)) throw new Error('Idempotency-Key enthaelt ungueltige Zeichen.');
   return `market:${listingId}:${key}`;
 }
@@ -250,16 +251,15 @@ async function existingPurchase(key: string): Promise<MarketPurchaseView | null>
 
 function assertPurchaseReplay(row: MarketPurchaseView, args: {
   listingId: string; guildId: GuildId; nitradoConnId: NitradoConnId; vendorAccountId: string;
-  userDiscordId: UserDiscordId; quantity: number; unitPrice: bigint; amount: bigint;
+  userDiscordId: UserDiscordId; sourcePocket: EconomyPocket; quantity: number;
 }): void {
   const same = row.listingId === args.listingId
     && row.guildId === String(args.guildId)
     && row.nitradoConnId === String(args.nitradoConnId)
     && row.vendorAccountId === args.vendorAccountId
     && row.userDiscordId === String(args.userDiscordId)
-    && row.quantity === args.quantity
-    && row.unitPrice === args.unitPrice
-    && row.amount === args.amount;
+    && row.sourcePocket === args.sourcePocket
+    && row.quantity === args.quantity;
   if (!same) throw new Error('Market-Idempotency-Key wurde mit anderen Kaufdaten wiederverwendet.');
 }
 
@@ -273,17 +273,21 @@ export async function buyMarketListing(args: {
   idempotencyKey: string;
 }): Promise<{ booked: boolean; purchase: MarketPurchaseView; listing: MarketListingView }> {
   if (!Number.isSafeInteger(args.quantity) || args.quantity < 1 || args.quantity > MAX_PER_PURCHASE) throw new Error(`Menge muss zwischen 1 und ${MAX_PER_PURCHASE} liegen.`);
+  const sourcePocket = args.sourcePocket ?? 'WALLET';
+  if (sourcePocket !== 'WALLET' && sourcePocket !== 'BANK') throw new Error('Quellkonto ungueltig.');
+  const key = operationKey(args.listingId, args.idempotencyKey);
+  const replay = await existingPurchase(key);
+  if (replay) {
+    assertPurchaseReplay(replay, { ...args, sourcePocket, vendorAccountId: replay.vendorAccountId });
+    const replayListing = await getMarketListing(args.guildId, args.nitradoConnId, args.listingId);
+    if (!replayListing) throw new Error('Bestaetigter Schwarzmarkt-Kauf ist inkonsistent.');
+    return { booked: false, purchase: replay, listing: replayListing };
+  }
   await assertEnabled(args.guildId, args.nitradoConnId);
   const initial = await getMarketListing(args.guildId, args.nitradoConnId, args.listingId);
   if (!initial || !initial.active || initial.archivedAt) throw new Error('Aktives Listing nicht gefunden.');
   if (args.quantity > initial.maxPerPurchase) throw new Error(`Pro Kauf sind maximal ${initial.maxPerPurchase} erlaubt.`);
   const amount = initial.price * BigInt(args.quantity);
-  const key = operationKey(args.listingId, args.idempotencyKey);
-  const replay = await existingPurchase(key);
-  if (replay) {
-    assertPurchaseReplay(replay, { ...args, vendorAccountId: initial.vendorAccountId, unitPrice: initial.price, amount });
-    return { booked: false, purchase: replay, listing: initial };
-  }
 
   const transfer = await systemUserToVirtualAccount({
     idempotencyKey: key,
@@ -291,7 +295,7 @@ export async function buyMarketListing(args: {
     nitradoConnId: args.nitradoConnId,
     virtualAccountId: initial.vendorAccountId,
     fromUserId: args.userDiscordId,
-    sourcePocket: args.sourcePocket ?? 'WALLET',
+    sourcePocket,
     amount,
     expectedKind: 'MARKET_VENDOR',
     economyTxType: 'MARKET_PURCHASE',
@@ -314,7 +318,7 @@ export async function buyMarketListing(args: {
         'SELECT * FROM "EconomyMarketPurchase" WHERE "idempotencyKey"=$1 LIMIT 1', key,
       );
       if (purchases[0]) {
-        assertPurchaseReplay(purchases[0], { ...args, vendorAccountId: listing.vendorAccountId, unitPrice: listing.price, amount });
+        assertPurchaseReplay(purchases[0], { ...args, sourcePocket, vendorAccountId: listing.vendorAccountId });
         return listing;
       }
       return listing;
@@ -337,7 +341,7 @@ export async function buyMarketListing(args: {
   const purchase = await existingPurchase(key);
   const listing = await getMarketListing(args.guildId, args.nitradoConnId, args.listingId);
   if (!purchase || !listing) throw new Error('Schwarzmarkt-Kauf konnte nicht vollstaendig gelesen werden.');
-  assertPurchaseReplay(purchase, { ...args, vendorAccountId: initial.vendorAccountId, unitPrice: initial.price, amount });
+  assertPurchaseReplay(purchase, { ...args, sourcePocket, vendorAccountId: purchase.vendorAccountId });
   logAudit('MARKET_PURCHASE', 'ECONOMY', {
     guildId: args.guildId, nitradoConnId: args.nitradoConnId, listingId: args.listingId,
     userDiscordId: args.userDiscordId, quantity: args.quantity, amount: amount.toString(), booked: transfer.booked,
