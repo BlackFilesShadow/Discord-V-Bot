@@ -3,8 +3,7 @@
  *
  * Datei-Download/Parsing gehoert ausschliesslich dem inkrementellen Live-Ingest.
  * Dieser Cron arbeitet nur noch auf der kanonischen AdmEvent-Source-of-Truth
- * und uebernimmt die fachlichen Nebenwirkungen des entfernten Legacy-Crons:
- * PvP-Rewards, PlayerSessions und Spielzeit-Rewards.
+ * und uebernimmt PvP-Rewards, PlayerSessions und Spielzeit-Rewards.
  */
 
 import prisma from '../../../database/prisma';
@@ -18,7 +17,7 @@ import { getSlotEconomyConfig, admRewardsActive, type SlotConfigClient } from '.
 import { bookPendingRewards, type RewardBookingClient } from '../../economy/rewardBooking';
 import { bookPlaytimeRewards, type PlaytimeBookingClient } from '../../economy/playtimeBooking';
 import { assertEconomyScopeReady } from '../../economy/scopeMigration';
-import { resolveVerifiedUser, type ResolveClient } from '../../linking/linkService';
+import { resolveRewardIdentity, resolveRewardUserAt } from '../../linking/linkRewards';
 
 const INTERVAL_MS = 60_000;
 let timer: NodeJS.Timeout | null = null;
@@ -32,8 +31,6 @@ interface ScopedConnection {
 async function processConnection(conn: ScopedConnection): Promise<void> {
   const scopeRef = { guildId: conn.guildId, nitradoConnId: conn.id };
 
-  // Session-Aggregation ist kein Geldpfad und darf auch dann weiterlaufen, wenn
-  // eine Legacy-Economy noch nicht eindeutig einem Server zugeordnet ist.
   try {
     await aggregatePlayerSessions(prisma as unknown as PlayerSessionClient, scopeRef);
   } catch (error) {
@@ -51,8 +48,13 @@ async function processConnection(conn: ScopedConnection): Promise<void> {
     const slotCfg = await getSlotEconomyConfig(prisma as unknown as SlotConfigClient, scopeRef);
     const active = admRewardsActive(slotCfg);
     const pvpRule = await getRewardRule(prisma as unknown as RewardRuleClient, scopeRef, 'pvp:default');
-    const resolveUser = (gameId: string) => resolveVerifiedUser(
-      prisma as unknown as ResolveClient,
+    const resolveUserAt = (gameId: string, occurredAt: Date | null) => resolveRewardUserAt(
+      scopeRef,
+      gameId,
+      occurredAt,
+      config.security.encryptionKey,
+    );
+    const resolvePlaytimeLink = (gameId: string) => resolveRewardIdentity(
       scopeRef,
       gameId,
       config.security.encryptionKey,
@@ -65,7 +67,7 @@ async function processConnection(conn: ScopedConnection): Promise<void> {
         rewardRuleId: 'pvp:default',
         baseAmount: active ? effectiveBaseAmount(pvpRule) : 0n,
       },
-      resolveUser,
+      resolveUserAt,
     );
 
     if (active && slotCfg) {
@@ -87,7 +89,7 @@ async function processConnection(conn: ScopedConnection): Promise<void> {
           perBucketAmount: effectiveBaseAmount(playtimeRule),
           rewardTarget: slotCfg.rewardTarget,
         },
-        resolveUser,
+        resolvePlaytimeLink,
       );
     }
   } catch (error) {
