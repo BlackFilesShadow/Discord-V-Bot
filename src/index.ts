@@ -27,6 +27,7 @@ import { acquireSingletonLock } from './utils/singleton';
 import { assertProductionEnv } from './utils/envValidation';
 import { startNitradoRuntime, type NitradoRuntimeHandle } from './modules/nitrado/runtime';
 import { startAiBackgroundLoops, stopAiBackgroundLoops } from './modules/ai/runtime';
+import { installAiProviderRequestCompatibility } from './modules/ai/providerRequestCompatibility';
 import { BOT_PRODUCT_NAME } from './content/botInfo';
 
 /** Haupteinstiegspunkt fuer V-Bot Prime. */
@@ -34,6 +35,7 @@ async function main(): Promise<void> {
   logger.info(`${BOT_PRODUCT_NAME} startet...`);
 
   assertProductionEnv();
+  installAiProviderRequestCompatibility();
 
   if (!fs.existsSync(config.upload.dir)) {
     fs.mkdirSync(config.upload.dir, { recursive: true });
