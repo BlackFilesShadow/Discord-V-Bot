@@ -7,6 +7,11 @@ const OPENAI_COMPATIBLE_HOSTS = new Set([
   'api.openai.com',
 ]);
 
+const GEMINI_MODELS_WITHOUT_LEGACY_SAMPLING = [
+  'gemini-3.6-flash',
+  'gemini-3.5-flash-lite',
+] as const;
+
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value);
 }
@@ -20,16 +25,21 @@ function parseUrl(rawUrl?: string): URL | null {
   }
 }
 
+function geminiModelFromPath(pathname: string): string | null {
+  const match = pathname.match(/\/models\/([^/:]+):generateContent$/);
+  return match?.[1] ? decodeURIComponent(match[1]) : null;
+}
+
 /**
  * Normalisiert ausschliesslich bekannte V-Bot-AI-Provider-Requests.
  *
  * Hintergrund:
  * - mehrere OpenAI-kompatible Provider haben `max_tokens` inzwischen zugunsten
- *   von `max_completion_tokens` abgekündigt;
+ *   von `max_completion_tokens` abgekuendigt;
  * - Groq akzeptiert die im alten V-Bot-Body gesetzten Presence-/Frequency-
  *   Penalties nicht als unterstuetzte Modellparameter;
- * - Gemini 3.6 Flash / 3.5 Flash-Lite verlangen das Entfernen der alten
- *   Sampling-Parameter temperature/top_p/top_k.
+ * - die aktuell von V-Bot verwendeten Gemini-3.x-Modelle verlangen das
+ *   Entfernen der alten Sampling-Parameter temperature/top_p/top_k.
  *
  * Die Funktion ist absichtlich rein: keine Mutation des Eingabeobjekts und kein
  * Provider-Fallback/Retry. Routing bleibt Aufgabe von aiHandler/providerStats.
@@ -86,6 +96,11 @@ export function normalizeAiProviderRequest(
     url.hostname === 'generativelanguage.googleapis.com'
     && url.pathname.endsWith(':generateContent')
   ) {
+    const model = geminiModelFromPath(url.pathname);
+    if (!model || !(GEMINI_MODELS_WITHOUT_LEGACY_SAMPLING as readonly string[]).includes(model)) {
+      return data;
+    }
+
     const body: Record<string, unknown> = { ...data };
     if (!isRecord(body.generationConfig)) return body;
 
@@ -104,7 +119,7 @@ let installed = false;
 
 /**
  * Installiert genau einen eng begrenzten Request-Normalizer auf der von V-Bot
- * verwendeten Axios-Instanz. Nicht-AI-URLs werden byte-/objektsemantisch
+ * verwendeten Axios-Instanz. Nicht-AI-URLs werden objektsemantisch
  * unveraendert weitergereicht.
  */
 export function installAiProviderRequestCompatibility(): void {
