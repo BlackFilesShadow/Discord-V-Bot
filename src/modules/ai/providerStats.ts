@@ -61,24 +61,40 @@ const UNAVAILABLE_COOLDOWN_MS = 15 * 60_000;
 
 export async function hydrateCooldownsFromDb(): Promise<void> {
   try {
+    const now = Date.now();
     const rows = await prisma.aiProviderStat.findMany({
       where: { cooldownUntil: { not: null } },
       select: { provider: true, cooldownUntil: true, cooldownStreak: true },
     });
     const seen = new Set<ProviderName>();
+    const expiredProviders: ProviderName[] = [];
     for (const r of rows) {
       if (!ALL_PROVIDERS.includes(r.provider as ProviderName)) continue;
       if (!r.cooldownUntil) continue;
+      const provider = r.provider as ProviderName;
       const until = r.cooldownUntil.getTime();
-      if (Date.now() >= until) continue;
-      cooldowns.set(r.provider as ProviderName, {
+      if (now >= until) {
+        expiredProviders.push(provider);
+        if ((cooldowns.get(provider)?.until ?? 0) <= now) cooldowns.delete(provider);
+        continue;
+      }
+      cooldowns.set(provider, {
         until,
         consecutive: r.cooldownStreak ?? 1,
       });
-      seen.add(r.provider as ProviderName);
+      seen.add(provider);
     }
-    for (const [p] of cooldowns) {
-      if (!seen.has(p) && cooldowns.get(p)!.until <= Date.now()) cooldowns.delete(p);
+    for (const [p, state] of cooldowns) {
+      if (!seen.has(p) && state.until <= now) cooldowns.delete(p);
+    }
+    if (expiredProviders.length > 0) {
+      await prisma.aiProviderStat.updateMany({
+        where: {
+          provider: { in: expiredProviders },
+          cooldownUntil: { lte: new Date(now) },
+        },
+        data: { cooldownUntil: null, cooldownReason: null, cooldownStreak: 0 },
+      });
     }
   } catch (e) {
     logger.warn(`providerStats.hydrateCooldownsFromDb: ${(e as Error).message}`);
@@ -128,9 +144,9 @@ function persistCooldown(provider: ProviderName, until: number, reason: string, 
   });
 }
 
-export function clearCooldown(provider: ProviderName): void {
-  if (!cooldowns.has(provider)) return;
+export function clearCooldown(provider: ProviderName, persist = true): void {
   cooldowns.delete(provider);
+  if (!persist) return;
   void prisma.aiProviderStat.updateMany({
     where: { provider, cooldownUntil: { not: null } },
     data: { cooldownUntil: null, cooldownReason: null, cooldownStreak: 0 },
@@ -171,7 +187,7 @@ export async function recordCall(
   error?: string,
   opts?: { retryAfterMs?: number },
 ): Promise<void> {
-  if (outcome === 'success') clearCooldown(provider);
+  if (outcome === 'success') clearCooldown(provider, false);
   if (outcome === 'rateLimit') markRateLimited(provider, opts?.retryAfterMs);
   try {
     const now = new Date();
@@ -180,6 +196,9 @@ export async function recordCall(
       data.successCount = { increment: 1 };
       data.totalLatencyMs = { increment: BigInt(Math.max(0, Math.round(latencyMs))) };
       data.lastSuccessAt = now;
+      data.cooldownUntil = null;
+      data.cooldownReason = null;
+      data.cooldownStreak = 0;
     } else if (outcome === 'rateLimit') {
       data.rateLimitCount = { increment: 1 };
       data.lastFailureAt = now;
