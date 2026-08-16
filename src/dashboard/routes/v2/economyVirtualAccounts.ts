@@ -63,9 +63,12 @@ function parseExpiry(value: unknown): Date | null {
 }
 
 function requestOperationKey(req: EconomyVirtualRequest, prefix: string): string {
-  const raw = req.get('X-Idempotency-Key');
-  const token = raw && raw.length <= 120 && /^[A-Za-z0-9._:-]+$/.test(raw) ? raw : randomUUID();
-  return `${prefix}:${token}`;
+  const bodyKey = typeof req.body?.operationId === 'string' ? req.body.operationId : null;
+  const raw = bodyKey ?? req.get('X-Idempotency-Key');
+  if (!raw || raw.length > 120 || !/^[A-Za-z0-9._:-]+$/.test(raw)) {
+    throw new Error('Idempotency-Key fehlt oder ist ungueltig.');
+  }
+  return `${prefix}:${raw}`;
 }
 
 economyVirtualAccountsRouter.get('/', requireGuildPermission('economy.view'), async (req, res) => {

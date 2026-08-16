@@ -50,6 +50,12 @@ beforeEach(() => {
   mockAssertEconomyScopeReady.mockResolvedValue(undefined);
   mockExecuteRaw.mockResolvedValue(1);
   mockQueryRaw.mockImplementation(async (sql: string, ...values: unknown[]) => {
+    if (sql.includes('FROM "EconomyVirtualAccountEntry" WHERE "idempotencyKey"')) return [{
+      id: 'entry-1', idempotencyKey: String(values[0]), guildId: String(G), nitradoConnId: String(C),
+      virtualAccountId: 'virtual-1', delta: 10n, entryType: 'USER_DEPOSIT', sourcePocket: 'WALLET',
+      actorDiscordId: String(U), userDiscordId: String(U), reason: 'Ueberweisung auf virtuelles Konto',
+      sourceRef: 'virtual-account:virtual-1', createdAt: new Date('2026-08-16T10:00:00Z'),
+    }];
     if (sql.startsWith('INSERT INTO "EconomyVirtualAccount"')) return [baseAccount(0n)];
     if (sql.startsWith('UPDATE "EconomyVirtualAccount"') && sql.includes('RETURNING')) {
       const amount = typeof values[3] === 'bigint' ? values[3] as bigint : 0n;
@@ -118,6 +124,25 @@ describe('User -> virtuelles Konto', () => {
     expect(result.booked).toBe(false);
     expect(sqlCalls('UPDATE "EconomyAccount"').filter(([sql]) => String(sql).includes('-$4'))).toHaveLength(0);
     expect(sqlCalls('INSERT INTO "EconomyLedgerEntry"')).toHaveLength(0);
+  });
+
+  it('weist denselben Idempotency-Key mit geaenderten Buchungsdaten hart zurueck', async () => {
+    mockExecuteRaw.mockImplementation(async (sql: string) => sql.startsWith('INSERT INTO "EconomyVirtualAccountEntry"') ? 0 : 1);
+    mockQueryRaw.mockImplementation(async (sql: string, ...values: unknown[]) => {
+      if (sql.includes('FROM "EconomyVirtualAccountEntry" WHERE "idempotencyKey"')) return [{
+        id: 'entry-1', idempotencyKey: String(values[0]), guildId: String(G), nitradoConnId: String(C),
+        virtualAccountId: 'virtual-1', delta: 11n, entryType: 'USER_DEPOSIT', sourcePocket: 'WALLET',
+        actorDiscordId: String(U), userDiscordId: String(U), reason: 'Ueberweisung auf virtuelles Konto',
+        sourceRef: 'virtual-account:virtual-1', createdAt: new Date('2026-08-16T10:00:00Z'),
+      }];
+      if (sql.includes('FROM "EconomyVirtualAccount"')) return [baseAccount()];
+      return [];
+    });
+    await expect(transferUserToVirtualAccount({
+      idempotencyKey: 'same-op', guildId: G, nitradoConnId: C,
+      fromUserId: U, virtualAccountId: 'virtual-1', amount: 10n, sourcePocket: 'WALLET',
+    })).rejects.toThrow('anderen Buchungsdaten');
+    expect(sqlCalls('UPDATE "EconomyAccount"').filter(([sql]) => String(sql).includes('-$4'))).toHaveLength(0);
   });
 
   it('bricht bei fehlender Deckung vor User-Ledger und virtueller Gutschrift ab', async () => {

@@ -1,7 +1,7 @@
 import { useMemo, useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { Archive, Banknote, History, Plus, RefreshCw, Send } from 'lucide-react';
-import { api } from '@/lib/api';
+import { api, createIdempotencyKey } from '@/lib/api';
 import { Badge } from '@/components/ui/Badge';
 import { Button } from '@/components/ui/Button';
 import { Card, CardHeader, CardTitle } from '@/components/ui/Card';
@@ -49,7 +49,12 @@ export function VirtualAccountsPanel({ guildId }: { guildId: string }) {
   const [acceptUserTransfers, setAcceptUserTransfers] = useState(true);
   const [auditAccountId, setAuditAccountId] = useState<string>('');
   const [payout, setPayout] = useState({ accountId: '', userDiscordId: '', amount: '', targetPocket: 'WALLET', reason: '' });
+  const [payoutOperationId, setPayoutOperationId] = useState(createIdempotencyKey);
   const [message, setMessage] = useState<{ ok: boolean; text: string } | null>(null);
+  const updatePayout = (patch: Partial<typeof payout>) => {
+    setPayout(current => ({ ...current, ...patch }));
+    setPayoutOperationId(createIdempotencyKey());
+  };
 
   const accounts = useQuery({
     queryKey: ['economy-virtual-accounts', guildId],
@@ -90,11 +95,13 @@ export function VirtualAccountsPanel({ guildId }: { guildId: string }) {
         amount: payout.amount.trim(),
         targetPocket: payout.targetPocket,
         reason: payout.reason.trim(),
+        operationId: payoutOperationId,
       },
     ),
     onSuccess: result => {
       setMessage({ ok: true, text: result.booked ? 'Auszahlung atomar gebucht.' : 'Diese Auszahlung war bereits verarbeitet.' });
       setPayout({ accountId: '', userDiscordId: '', amount: '', targetPocket: 'WALLET', reason: '' });
+      setPayoutOperationId(createIdempotencyKey());
       void qc.invalidateQueries({ queryKey: ['economy-virtual-accounts', guildId] });
       if (auditAccountId) void qc.invalidateQueries({ queryKey: ['economy-virtual-account-audit', guildId, auditAccountId] });
     },
@@ -210,22 +217,22 @@ export function VirtualAccountsPanel({ guildId }: { guildId: string }) {
         <div className="grid gap-3 md:grid-cols-2">
           <label className="text-sm">
             <span className="text-muted">Quellkonto</span>
-            <Select value={payout.accountId} onChange={e => setPayout({ ...payout, accountId: e.target.value })}>
+            <Select value={payout.accountId} onChange={e => updatePayout({ accountId: e.target.value })}>
               <option value="">— Konto waehlen —</option>
               {payoutAccounts.map(account => <option key={account.id} value={account.id}>{account.name} · {fmtBig(account.balance)}</option>)}
             </Select>
           </label>
           <label className="text-sm">
             <span className="text-muted">Discord-User-ID</span>
-            <Input value={payout.userDiscordId} onChange={e => setPayout({ ...payout, userDiscordId: e.target.value.trim() })} placeholder="17–20 Ziffern" />
+            <Input value={payout.userDiscordId} onChange={e => updatePayout({ userDiscordId: e.target.value.trim() })} placeholder="17–20 Ziffern" />
           </label>
           <label className="text-sm">
             <span className="text-muted">Betrag</span>
-            <Input value={payout.amount} onChange={e => setPayout({ ...payout, amount: e.target.value.trim() })} inputMode="numeric" />
+            <Input value={payout.amount} onChange={e => updatePayout({ amount: e.target.value.trim() })} inputMode="numeric" />
           </label>
           <label className="text-sm">
             <span className="text-muted">Ziel</span>
-            <Select value={payout.targetPocket} onChange={e => setPayout({ ...payout, targetPocket: e.target.value })}>
+            <Select value={payout.targetPocket} onChange={e => updatePayout({ targetPocket: e.target.value })}>
               <option value="WALLET">Wallet</option>
               <option value="BANK">Bank</option>
             </Select>
@@ -233,7 +240,7 @@ export function VirtualAccountsPanel({ guildId }: { guildId: string }) {
         </div>
         <label className="text-sm block">
           <span className="text-muted">Begruendung (3–180 Zeichen)</span>
-          <Input value={payout.reason} onChange={e => setPayout({ ...payout, reason: e.target.value })} maxLength={180} placeholder="z. B. Event beendet / Refund" />
+          <Input value={payout.reason} onChange={e => updatePayout({ reason: e.target.value })} maxLength={180} placeholder="z. B. Event beendet / Refund" />
         </label>
         <Button disabled={payoutMutation.isPending || !payoutValid} onClick={() => { setMessage(null); payoutMutation.mutate(); }}>
           {payoutMutation.isPending ? 'Buche…' : 'Auszahlung buchen'}

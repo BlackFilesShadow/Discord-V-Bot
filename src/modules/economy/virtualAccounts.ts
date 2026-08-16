@@ -104,6 +104,43 @@ function toVirtualEntry(row: DbVirtualEntryRow): VirtualAccountEntryRow {
   };
 }
 
+interface ReplayExpectation {
+  guildId: GuildId;
+  nitradoConnId: NitradoConnId;
+  virtualAccountId: string;
+  delta: bigint;
+  entryType: string;
+  sourcePocket: EconomyPocket | null;
+  actorDiscordId: string | null;
+  userDiscordId: string | null;
+  reason: string | null;
+  sourceRef: string | null;
+}
+
+async function assertReplayMatches(
+  raw: VirtualAccountRawDb,
+  idempotencyKey: string,
+  expected: ReplayExpectation,
+): Promise<void> {
+  const rows = await raw.$queryRawUnsafe<DbVirtualEntryRow[]>(
+    'SELECT "id", "idempotencyKey", "guildId", "nitradoConnId", "virtualAccountId", "delta", "entryType", "sourcePocket", "actorDiscordId", "userDiscordId", "reason", "sourceRef", "createdAt" FROM "EconomyVirtualAccountEntry" WHERE "idempotencyKey"=$1 LIMIT 1',
+    idempotencyKey,
+  );
+  const entry = rows[0];
+  const matches = !!entry
+    && entry.guildId === String(expected.guildId)
+    && entry.nitradoConnId === String(expected.nitradoConnId)
+    && entry.virtualAccountId === expected.virtualAccountId
+    && entry.delta === expected.delta
+    && entry.entryType === expected.entryType
+    && entry.sourcePocket === expected.sourcePocket
+    && entry.actorDiscordId === expected.actorDiscordId
+    && entry.userDiscordId === expected.userDiscordId
+    && entry.reason === expected.reason
+    && entry.sourceRef === expected.sourceRef;
+  if (!matches) throw new Error('Idempotency-Key wurde mit anderen Buchungsdaten wiederverwendet.');
+}
+
 export function normalizeVirtualAccountName(input: string): { name: string; nameKey: string } {
   const normalized = input.normalize('NFKC');
   if (/[\r\n\t\u0000-\u001f\u007f]/.test(normalized)) {
@@ -345,7 +382,15 @@ export async function transferUserToVirtualAccount(args: {
       randomUUID(), operationKey, String(args.guildId), String(args.nitradoConnId), args.virtualAccountId,
       args.amount, args.sourcePocket, String(args.fromUserId), String(args.fromUserId), reason, `virtual-account:${args.virtualAccountId}`,
     );
-    if (claimed !== 1) return { booked: false, account: toVirtualAccount(account) };
+    if (claimed !== 1) {
+      await assertReplayMatches(raw, operationKey, {
+        guildId: args.guildId, nitradoConnId: args.nitradoConnId, virtualAccountId: args.virtualAccountId,
+        delta: args.amount, entryType: 'USER_DEPOSIT', sourcePocket: args.sourcePocket,
+        actorDiscordId: String(args.fromUserId), userDiscordId: String(args.fromUserId), reason,
+        sourceRef: `virtual-account:${args.virtualAccountId}`,
+      });
+      return { booked: false, account: toVirtualAccount(account) };
+    }
 
     const column = args.sourcePocket === 'WALLET' ? 'walletBalance' : 'bankBalance';
     const sourceChanged = await raw.$executeRawUnsafe(
@@ -406,7 +451,15 @@ export async function transferVirtualAccountToUser(args: {
       -args.amount, args.entryType ?? 'PAYOUT', args.targetPocket, args.actorDiscordId ? String(args.actorDiscordId) : null,
       String(args.toUserId), reason, `virtual-account:${args.virtualAccountId}`,
     );
-    if (claimed !== 1) return { booked: false, account: toVirtualAccount(account) };
+    if (claimed !== 1) {
+      await assertReplayMatches(raw, operationKey, {
+        guildId: args.guildId, nitradoConnId: args.nitradoConnId, virtualAccountId: args.virtualAccountId,
+        delta: -args.amount, entryType: args.entryType ?? 'PAYOUT', sourcePocket: args.targetPocket,
+        actorDiscordId: args.actorDiscordId ? String(args.actorDiscordId) : null, userDiscordId: String(args.toUserId), reason,
+        sourceRef: `virtual-account:${args.virtualAccountId}`,
+      });
+      return { booked: false, account: toVirtualAccount(account) };
+    }
 
     const sourceRows = await raw.$queryRawUnsafe<DbVirtualAccountRow[]>(
       'UPDATE "EconomyVirtualAccount" SET "balance"="balance"-$4, "updatedAt"=CURRENT_TIMESTAMP WHERE "id"=$1 AND "guildId"=$2 AND "nitradoConnId"=$3 AND "balance">=$4 RETURNING "id", "guildId", "nitradoConnId", "kind"::text AS kind, "name", "nameKey", "balance", "status"::text AS status, "acceptUserTransfers", "expiresAt", "archivedAt", "archivedByDiscordId", "createdByDiscordId", "createdAt", "updatedAt"',
