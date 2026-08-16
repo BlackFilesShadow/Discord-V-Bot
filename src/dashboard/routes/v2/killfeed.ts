@@ -120,7 +120,6 @@ async function ensureChannelInGuild(channelId: string, guildId: string): Promise
     PermissionFlagsBits.ViewChannel,
     PermissionFlagsBits.SendMessages,
     PermissionFlagsBits.EmbedLinks,
-    PermissionFlagsBits.ReadMessageHistory,
   ]);
   return result.ok ? null : result.reason;
 }

@@ -3,9 +3,9 @@
  *
  * Source-of-Truth ist AdmEvent. Pro Config wird ein persistenter Scan-Cursor
  * gefuehrt, wodurch neue Events auch bei >200/1000 Historieneintraegen sicher
- * erreicht werden. Discord-Zustellungen besitzen Lease/Retry und werden nach
- * einem Crash anhand des Event-Markers in den letzten Channel-Nachrichten
- * reconciled, bevor erneut gepostet wird.
+ * erreicht werden. Discord-Zustellungen besitzen Lease/Retry und nutzen einen
+ * stabilen Discord-Nonce pro ADM-Event, damit Retries keine sichtbaren
+ * technischen Marker im Embed benoetigen.
  */
 
 import {
@@ -20,7 +20,7 @@ import prisma from '../../database/prisma';
 import { logger } from '../../utils/logger';
 import { tryGetDashboardClient } from '../../dashboard/clientRegistry';
 import { emitServerGameplayEvent } from '../../dashboard/socket/emitter';
-import { buildGameplayFeedEmbed, gameplayEventMarker } from './embedBuilder';
+import { buildGameplayFeedEmbed } from './embedBuilder';
 import {
   BUILD_EVENT_TYPES,
   DEATH_EVENT_TYPES,
@@ -35,6 +35,13 @@ const MAX_ATTEMPTS = 8;
 const SCAN_BATCH = 200;
 const MAX_SCAN_BATCHES_PER_TICK = 5;
 const DELIVERY_BATCH = 50;
+const DEATH_DEDUP_WINDOW_MS = 5_000;
+const SPECIFIC_DEATH_TYPES: AdmEventType[] = [
+  AdmEventType.PLAYER_KILLED,
+  AdmEventType.PLAYER_SUICIDE,
+  AdmEventType.NPC_KILL,
+  AdmEventType.VEHICLE_DEATH,
+];
 
 let timer: NodeJS.Timeout | null = null;
 let running = false;
@@ -52,8 +59,54 @@ function eventTypes(kind: GameplayFeedKind): AdmEventType[] {
   return (kind === GameplayFeedKind.DEATH ? [...DEATH_EVENT_TYPES] : [...BUILD_EVENT_TYPES]) as AdmEventType[];
 }
 
+function eventNonce(eventId: string): string {
+  // Discord erlaubt maximal 25 Zeichen. Prisma-CUIDs passen aktuell exakt in
+  // dieses Limit; der Slice haelt die Zustellung auch fuer andere ID-Formate sicher.
+  return eventId.slice(0, 25);
+}
+
+/**
+ * DayZ kann fuer denselben finalen Tod mehrere ADM-Zeilen schreiben, z.B.
+ * zuerst "committed suicide" und direkt danach ein generisches "died".
+ * Der spezifische Grund ist fuer den Feed wertvoller; PLAYER_DIED wird deshalb
+ * nur unterdrueckt, wenn fuer denselben Spieler/Ort im engen Zeitfenster bereits
+ * ein spezifischer finaler Todesgrund existiert. Das AdmEvent selbst bleibt als
+ * Rohdatenhistorie erhalten, nur die Discord-Zustellung wird dedupliziert.
+ */
+async function genericDeathHasSpecificCause(
+  config: GameplayFeedConfig,
+  event: GameplayAdmEvent,
+): Promise<boolean> {
+  if (event.eventType !== 'PLAYER_DIED') return false;
+  if (!event.actorGameId && !event.actorName) return false;
+
+  const anchor = event.occurredAt ?? event.createdAt;
+  const from = new Date(anchor.getTime() - DEATH_DEDUP_WINDOW_MS);
+  const to = new Date(anchor.getTime() + DEATH_DEDUP_WINDOW_MS);
+  const identity = event.actorGameId
+    ? { actorGameId: event.actorGameId }
+    : { actorName: event.actorName! };
+  const timeRange = event.occurredAt
+    ? { occurredAt: { gte: from, lte: to } }
+    : { createdAt: { gte: from, lte: to } };
+
+  const specific = await prisma.admEvent.findFirst({
+    where: {
+      guildId: config.guildId,
+      nitradoConnId: config.nitradoConnId,
+      eventType: { in: SPECIFIC_DEATH_TYPES },
+      ...identity,
+      ...timeRange,
+      ...(event.actorPosition ? { actorPosition: event.actorPosition } : {}),
+    },
+    select: { id: true },
+  });
+  return specific !== null;
+}
+
 async function createDeliveryIfNeeded(config: GameplayFeedConfig, event: GameplayAdmEvent): Promise<void> {
   if (!categoryAllowed(config.kind, config.categories, event.eventType)) return;
+  if (await genericDeathHasSpecificCause(config, event)) return;
   try {
     await prisma.gameplayFeedDelivery.create({
       data: {
@@ -125,24 +178,6 @@ async function enqueueNewEvents(config: GameplayFeedConfig): Promise<void> {
   }
 }
 
-async function findExistingDiscordMessage(
-  channel: GuildTextBasedChannel,
-  eventId: string,
-): Promise<string | null> {
-  try {
-    const messages = await channel.messages.fetch({ limit: 100 });
-    const marker = gameplayEventMarker(eventId);
-    for (const message of messages.values()) {
-      if (message.author.id !== channel.client.user.id) continue;
-      if (message.embeds.some(embed => embed.footer?.text?.includes(marker))) return message.id;
-    }
-  } catch {
-    // Der normale Send-Pfad darf nicht an einer best-effort Reconciliation
-    // scheitern. Die Route fordert ReadMessageHistory bereits bei Config an.
-  }
-  return null;
-}
-
 async function markSent(
   config: GameplayFeedConfig,
   delivery: GameplayFeedDelivery,
@@ -208,7 +243,6 @@ async function failDelivery(
 
 async function deliverOne(
   config: GameplayFeedConfig,
-  alias: string,
   delivery: GameplayFeedDelivery,
 ): Promise<void> {
   const claimed = await prisma.gameplayFeedDelivery.updateMany({
@@ -253,8 +287,6 @@ async function deliverOne(
     }) as GameplayAdmEvent | null;
     if (!event) throw new Error('ADM-Ereignis fuer Feed-Zustellung nicht mehr vorhanden');
     if (!categoryAllowed(config.kind, config.categories, event.eventType)) {
-      // Die Config wurde nach dem Enqueue geaendert. Das Ereignis wurde
-      // absichtlich nicht gepostet und darf in /recent nicht als SENT erscheinen.
       await prisma.gameplayFeedDelivery.updateMany({
         where: {
           id: delivery.id,
@@ -281,16 +313,6 @@ async function deliverOne(
     const textChannel = channel as GuildTextBasedChannel;
     if (textChannel.guildId !== config.guildId) throw new Error('Feed-Channel gehoert nicht zur Guild');
 
-    // Bei Retry zuerst nach einem bereits gesendeten Marker suchen. Das
-    // schliesst das Crash-Fenster "Discord send erfolgreich, DB-Commit fehlt".
-    if (delivery.attempts > 0 || delivery.lastError) {
-      const existingMessageId = await findExistingDiscordMessage(textChannel, event.id);
-      if (existingMessageId) {
-        await markSent(config, claimedDelivery, event, existingMessageId);
-        return;
-      }
-    }
-
     const view = deriveGameplayFeedView(event, {
       showActorCoords: config.showActorCoords,
       showTargetCoords: config.showTargetCoords,
@@ -300,8 +322,10 @@ async function deliverOne(
     if (!view) throw new Error(`Nicht unterstuetzter Gameplay-Eventtyp: ${event.eventType}`);
 
     const message = await textChannel.send({
-      embeds: [buildGameplayFeedEmbed(view, config.embedColor, alias)],
+      embeds: [buildGameplayFeedEmbed(view, config.embedColor)],
       allowedMentions: { parse: [] },
+      nonce: eventNonce(event.id),
+      enforceNonce: true,
     });
     await markSent(config, claimedDelivery, event, message.id);
 
@@ -355,7 +379,7 @@ async function processConfig(config: GameplayFeedConfig): Promise<void> {
       orderBy: [{ nextAttemptAt: 'asc' }, { createdAt: 'asc' }],
       take: DELIVERY_BATCH,
     });
-    for (const delivery of due) await deliverOne(config, connection.alias, delivery);
+    for (const delivery of due) await deliverOne(config, delivery);
     await prisma.gameplayFeedConfig.updateMany({
       where: { id: config.id, guildId: config.guildId, nitradoConnId: config.nitradoConnId },
       data: { lastPolledAt: new Date() },
@@ -375,7 +399,8 @@ export async function runGameplayFeedsOnce(): Promise<void> {
   running = true;
   try {
     // Globaler Recovery-Sweep; jede spaetere Zustellung ist wieder strikt an
-    // configId+guildId+nitradoConnId gebunden.
+    // configId+guildId+nitradoConnId gebunden. Der Discord-Nonce verhindert,
+    // dass ein Retry nach einem erfolgreichen Send einen sichtbaren Duplikatpost erzeugt.
     // eslint-disable-next-line local/no-unscoped-prisma-query -- globaler Lease-Recovery-Sweep
     await prisma.gameplayFeedDelivery.updateMany({
       where: {
@@ -387,7 +412,7 @@ export async function runGameplayFeedsOnce(): Promise<void> {
         attempts: { increment: 1 },
         nextAttemptAt: new Date(),
         leaseUntil: null,
-        lastError: 'Delivery lease expired; reconciliation required',
+        lastError: 'Delivery lease expired; retry with stable Discord nonce required',
       },
     });
 
