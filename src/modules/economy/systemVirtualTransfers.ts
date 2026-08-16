@@ -76,11 +76,11 @@ const MAX_ENTRY_TYPE_LENGTH = 40;
 const MAX_SOURCE_REF_LENGTH = 180;
 
 function cleanText(value: string, max: number, label: string): string {
-  const normalized = value.normalize('NFKC').trim().replace(/\s+/g, ' ');
-  if (!normalized || normalized.length > max || /[\r\n\t\u0000-\u001f\u007f]/.test(normalized)) {
-    throw new Error(`${label} ist ungueltig.`);
-  }
-  return normalized;
+  const normalized = value.normalize('NFKC');
+  if (/[\r\n\t\u0000-\u001f\u007f]/.test(normalized)) throw new Error(`${label} ist ungueltig.`);
+  const clean = normalized.trim().replace(/\s+/g, ' ');
+  if (!clean || clean.length > max) throw new Error(`${label} ist ungueltig.`);
+  return clean;
 }
 
 function operationKey(args: CommonSystemTransferArgs): string {

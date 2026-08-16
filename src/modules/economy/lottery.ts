@@ -532,7 +532,12 @@ async function announceTerminalRound(client: Client, roundId: string): Promise<v
   const round = await fetchRoundViewById(roundId);
   if (!round || (round.status !== 'FINISHED' && round.status !== 'REFUNDED')) return;
   await refreshLotteryMessage(client, roundId).catch(error => logger.warn(`Lotterie-Message-Update ${roundId}: ${(error as Error).message}`));
-  if (round.status !== 'FINISHED' || !round.winnerDiscordId || round.announcedAt) return;
+  if (round.announcedAt) return;
+  if (round.status === 'REFUNDED') {
+    await prisma.lotteryRound.updateMany({ where: { id: round.id, status: 'REFUNDED', announcedAt: null }, data: { announcedAt: new Date() } });
+    return;
+  }
+  if (!round.winnerDiscordId) throw new Error('FINISHED-Lotterie ohne Gewinner kann nicht angekündigt werden.');
 
   const channel = await client.channels.fetch(round.channelId).catch(() => null);
   if (!channel || !channel.isTextBased() || !('send' in channel)) throw new Error('Lotterie-Ergebnis-Channel nicht erreichbar.');
