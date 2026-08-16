@@ -31,11 +31,12 @@ describe('Moderation Case Administration — Production-Sicherheitsinvarianten',
     expect(admin).toContain('rollbackSucceeded: rollback.count === 1');
   });
 
-  it('prueft Berechtigung und Rollen-Hierarchie erneut im Backend', () => {
+  it('prueft Berechtigung und Rollen-Hierarchie erneut im Backend und vor sensiblen Reads', () => {
     expect(admin).toContain('moderator.permissions.has(permission)');
     expect(admin).toContain('target.roles.highest.position >= moderator.roles.highest.position');
     expect(admin).toContain('target.roles.highest.position >= bot.roles.highest.position');
     expect(command).toContain('.setDefaultMemberPermissions(PermissionFlagsBits.ModerateMembers)');
+    expect(command).toContain('interaction.memberPermissions?.has(PermissionFlagsBits.ModerateMembers)');
   });
 
   it('hebt BAN und MUTE real auf und behandelt Unknown Ban idempotent', () => {
