@@ -1,0 +1,26 @@
+name: Update help catalog
+on:
+  push:
+    branches: [feat/help-command-catalog]
+    paths: [.github/workflows/update-help-catalog.yml]
+permissions:
+  contents: write
+jobs:
+  apply:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: feat/help-command-catalog
+          fetch-depth: 0
+      - run: python3 scripts/update_help_catalog.py
+      - run: git diff --check
+      - shell: bash
+        run: |
+          set -euo pipefail
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add -- src/commands/user/help.ts src/commands/inventory.ts
+          git rm -f --ignore-unmatch -- scripts/update_help_catalog.py .github/workflows/update-help-catalog.yml
+          git commit -m "Synchronize help and command inventory"
+          git push origin HEAD:feat/help-command-catalog
