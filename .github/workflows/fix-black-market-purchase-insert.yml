@@ -1,0 +1,26 @@
+name: Fix black market purchase insert
+on:
+  push:
+    branches: [feat/economy-black-market]
+    paths: [.github/workflows/fix-black-market-purchase-insert.yml]
+permissions:
+  contents: write
+jobs:
+  fix:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: feat/economy-black-market
+          fetch-depth: 0
+      - run: python3 scripts/fix_black_market_purchase_source_pocket.py
+      - run: git diff --check
+      - shell: bash
+        run: |
+          set -euo pipefail
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add -- src/modules/economy/blackMarket.ts
+          git rm -f --ignore-unmatch -- scripts/fix_black_market_purchase_source_pocket.py .github/workflows/fix-black-market-purchase-insert.yml
+          git commit -m "Persist black market purchase source pocket"
+          git push origin HEAD:feat/economy-black-market
