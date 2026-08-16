@@ -8,9 +8,10 @@ import { MAX_GAME_SERVERS_PER_GUILD } from '../../modules/nitrado/gameServerScop
  * Serverseitige Dashboard-Scope-Grenze fuer Economy/Casino.
  *
  * - genau ein nutzbarer aktiver Gameserver => sichere Auto-Aufloesung;
- * - mehrere nutzbare Gameserver => `?nitradoConnId=<cuid>` ist Pflicht;
+ * - mehrere nutzbare Gameserver => `?nitradoConnId=<cuid>` ODER `?slot=N` ist Pflicht;
  * - expliziter Scope muss zur Guild gehoeren, ACTIVE sein, Slot 1..4 besitzen
  *   und eine gebundene Nitrado-Server-ID haben;
+ * - wenn beide Parameter gesetzt sind, muessen sie denselben Server meinen;
  * - Legacy-Migration wird danach nochmals fail-closed geprueft;
  * - der validierte Scope wird in req.guildScope.nitradoConnId geschrieben.
  */
@@ -43,8 +44,9 @@ export async function requireSafeDashboardEconomyScope(
     return;
   }
 
-  const rawRequested = typeof req.query.nitradoConnId === 'string' ? req.query.nitradoConnId : '';
-  let selected = connections.length === 1 ? connections[0] : null;
+  const rawRequested = typeof req.query.nitradoConnId === 'string' ? req.query.nitradoConnId.trim() : '';
+  const rawSlot = typeof req.query.slot === 'string' ? req.query.slot.trim() : '';
+  let selected = connections.length === 1 && !rawRequested && !rawSlot ? connections[0] : null;
 
   if (rawRequested) {
     let requested;
@@ -60,9 +62,27 @@ export async function requireSafeDashboardEconomyScope(
     }
   }
 
+  if (rawSlot) {
+    const slotNumber = Number(rawSlot);
+    if (!Number.isInteger(slotNumber) || slotNumber < 1 || slotNumber > MAX_GAME_SERVERS_PER_GUILD) {
+      res.status(400).json({ error: `slot muss zwischen 1 und ${MAX_GAME_SERVERS_PER_GUILD} liegen.`, code: 'INVALID_SERVER_SLOT' });
+      return;
+    }
+    const bySlot = connections.find(c => c.slot === slotNumber) ?? null;
+    if (!bySlot) {
+      res.status(404).json({ error: 'Der ausgewaehlte Slot ist in dieser Guild nicht aktiv/nutzbar.', code: 'SERVER_NOT_FOUND' });
+      return;
+    }
+    if (selected && selected.id !== bySlot.id) {
+      res.status(400).json({ error: 'nitradoConnId und slot verweisen auf unterschiedliche Gameserver.', code: 'SERVER_SCOPE_CONFLICT' });
+      return;
+    }
+    selected = bySlot;
+  }
+
   if (!selected) {
     res.status(409).json({
-      error: 'Mehrere Gameserver sind aktiv. Waehle einen Server explizit ueber nitradoConnId aus.',
+      error: 'Mehrere Gameserver sind aktiv. Waehle einen Server explizit ueber nitradoConnId oder slot aus.',
       code: 'SERVER_SCOPE_REQUIRED',
       servers: connections.map(c => ({ id: c.id, slot: c.slot, alias: c.alias })),
     });

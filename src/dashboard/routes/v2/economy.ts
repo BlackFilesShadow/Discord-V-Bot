@@ -2,12 +2,16 @@
  * Economy: Config + Accounts + Transactions — immer Guild+Gameserver-gescopt.
  * Der vorgeschaltete requireSafeDashboardEconomyScope setzt
  * req.guildScope.nitradoConnId nach Guild/Slot/Status-Pruefung.
+ *
+ * Kanonische Aktivierung ist ServerSettings.economyActive. Die historischen
+ * EconomyConfig.enabled/EconomySlotConfig.enabled werden kompatibel synchron
+ * gehalten, sind aber keine zweite Dashboard-Wahrheit mehr.
  */
 import { Router } from 'express';
 import prisma from '../../../database/prisma';
 import { requireGuildPermission } from '../../middleware/auth';
 import {
-  getConfig, upsertConfig, getAccountOrZero, recentTransactions, adminPay,
+  getConfig, getAccountOrZero, recentTransactions, adminPay,
 } from '../../../modules/economy/repository';
 import { asUserDiscordId } from '../../../types/scope';
 import { logAuditDb } from '../../../utils/logger';
@@ -26,24 +30,42 @@ function scoped(req: Parameters<Parameters<typeof economyRouter.get>[1]>[0]) {
   return { scope, connId: scope.nitradoConnId };
 }
 
-economyRouter.get('/config', requireGuildPermission('economy.view'), async (req, res) => {
-  const { scope, connId } = scoped(req);
-  const cfg = await getConfig(scope.guildId, connId);
-  res.json({
+async function economyEnabled(guildId: string, nitradoConnId: string): Promise<boolean> {
+  const settings = await prisma.serverSettings.findUnique({
+    where: { guildId_nitradoConnId: { guildId, nitradoConnId } },
+    select: { economyActive: true },
+  });
+  return settings?.economyActive ?? false;
+}
+
+function configPayload(connId: string, cfg: Awaited<ReturnType<typeof getConfig>>, enabled: boolean) {
+  return {
     nitradoConnId: connId,
     currencyName: cfg.currencyName,
     emoji: cfg.emoji,
-    enabled: cfg.enabled,
+    enabled,
     startBalance: cfg.startBalance,
     playtimeRewardPercent: cfg.playtimeRewardPercent,
     bankInterestPercent: cfg.bankInterestPercent,
     bankChannelId: cfg.bankChannelId,
-  });
+  };
+}
+
+economyRouter.get('/config', requireGuildPermission('economy.view'), async (req, res) => {
+  const { scope, connId } = scoped(req);
+  const [cfg, enabled] = await Promise.all([
+    getConfig(scope.guildId, connId),
+    economyEnabled(scope.guildId, connId),
+  ]);
+  res.json(configPayload(connId, cfg, enabled));
 });
 
 economyRouter.put('/config', requireGuildPermission('economy.manage'), async (req, res) => {
   const { scope, connId } = scoped(req);
   const b = req.body ?? {};
+  const current = await getConfig(scope.guildId, connId);
+  const currentEnabled = await economyEnabled(scope.guildId, connId);
+
   const patch: Record<string, unknown> = {};
   if (typeof b.currencyName === 'string' && b.currencyName.length >= 1 && b.currencyName.length <= 40) patch.currencyName = b.currencyName;
   if (typeof b.emoji === 'string' && b.emoji.length >= 1 && b.emoji.length <= 40) patch.emoji = b.emoji;
@@ -52,24 +74,67 @@ economyRouter.put('/config', requireGuildPermission('economy.manage'), async (re
   if (typeof b.playtimeRewardPercent === 'number' && Number.isInteger(b.playtimeRewardPercent) && b.playtimeRewardPercent >= 0 && b.playtimeRewardPercent <= 1000) patch.playtimeRewardPercent = b.playtimeRewardPercent;
   if (typeof b.bankInterestPercent === 'number' && Number.isInteger(b.bankInterestPercent) && b.bankInterestPercent >= 0 && b.bankInterestPercent <= 100) patch.bankInterestPercent = b.bankInterestPercent;
   if (b.bankChannelId === null || (typeof b.bankChannelId === 'string' && /^\d{17,20}$/.test(b.bankChannelId))) patch.bankChannelId = b.bankChannelId;
+  if (Object.keys(patch).length === 0) {
+    res.status(400).json({ error: 'Keine gueltigen Economy-Felder.' });
+    return;
+  }
 
-  const cfg = await upsertConfig(scope.guildId, connId, patch);
+  const merged = {
+    currencyName: (patch.currencyName as string | undefined) ?? current.currencyName,
+    emoji: (patch.emoji as string | undefined) ?? current.emoji,
+    enabled: (patch.enabled as boolean | undefined) ?? currentEnabled,
+    startBalance: (patch.startBalance as number | undefined) ?? current.startBalance,
+    playtimeRewardPercent: (patch.playtimeRewardPercent as number | undefined) ?? current.playtimeRewardPercent,
+    bankInterestPercent: (patch.bankInterestPercent as number | undefined) ?? current.bankInterestPercent,
+    bankChannelId: Object.prototype.hasOwnProperty.call(patch, 'bankChannelId')
+      ? (patch.bankChannelId as string | null)
+      : current.bankChannelId,
+  };
+
+  await prisma.$transaction(async tx => {
+    await tx.economyConfig.upsert({
+      where: { guildServer: { guildId: scope.guildId, nitradoConnId: connId } },
+      create: {
+        guildId: scope.guildId,
+        nitradoConnId: connId,
+        currencyName: merged.currencyName,
+        emoji: merged.emoji,
+        enabled: merged.enabled,
+        startBalance: merged.startBalance,
+        playtimeRewardPercent: merged.playtimeRewardPercent,
+        bankInterestPercent: merged.bankInterestPercent,
+        bankChannelId: merged.bankChannelId,
+      },
+      update: {
+        currencyName: merged.currencyName,
+        emoji: merged.emoji,
+        enabled: merged.enabled,
+        startBalance: merged.startBalance,
+        playtimeRewardPercent: merged.playtimeRewardPercent,
+        bankInterestPercent: merged.bankInterestPercent,
+        bankChannelId: merged.bankChannelId,
+      },
+    });
+    await tx.serverSettings.upsert({
+      where: { guildId_nitradoConnId: { guildId: scope.guildId, nitradoConnId: connId } },
+      create: { guildId: scope.guildId, nitradoConnId: connId, economyActive: merged.enabled },
+      update: { economyActive: merged.enabled },
+    });
+    await tx.economySlotConfig.upsert({
+      where: { guildId_nitradoConnId: { guildId: scope.guildId, nitradoConnId: connId } },
+      create: { guildId: scope.guildId, nitradoConnId: connId, enabled: merged.enabled },
+      update: { enabled: merged.enabled },
+    });
+  });
+
+  const cfg = await getConfig(scope.guildId, connId);
   logAuditDb('ECONOMY_CONFIG_UPDATED', 'ECONOMY', {
     actorUserId: req.auth!.userId,
     guildId: scope.guildId,
-    details: { nitradoConnId: connId, fields: Object.keys(patch) },
+    details: { nitradoConnId: connId, fields: Object.keys(patch), canonicalActivation: 'ServerSettings.economyActive' },
   });
   emitGuildEvent(scope.guildId, { type: 'settings.changed', payload: { guildId: scope.guildId, slotId: connId } });
-  res.json({
-    nitradoConnId: connId,
-    currencyName: cfg.currencyName,
-    emoji: cfg.emoji,
-    enabled: cfg.enabled,
-    startBalance: cfg.startBalance,
-    playtimeRewardPercent: cfg.playtimeRewardPercent,
-    bankInterestPercent: cfg.bankInterestPercent,
-    bankChannelId: cfg.bankChannelId,
-  });
+  res.json(configPayload(connId, cfg, merged.enabled));
 });
 
 economyRouter.get('/accounts/:userDiscordId', requireGuildPermission('economy.view'), async (req, res) => {
@@ -136,8 +201,9 @@ interface OverviewCasinoGame { type: string; enabled: boolean }
 economyRouter.get('/overview', requireGuildPermission('economy.view'), async (req, res) => {
   const { scope, connId } = scoped(req);
   const guildId = scope.guildId;
-  const [cfg, accountAggRows, linkCountRows, txCountRows, recentTx, casinoRounds, casinoGames] = await Promise.all([
+  const [cfg, enabled, accountAggRows, linkCountRows, txCountRows, recentTx, casinoRounds, casinoGames] = await Promise.all([
     getConfig(guildId, connId),
+    economyEnabled(guildId, connId),
     rawDb.$queryRawUnsafe<OverviewAggregate[]>(
       'SELECT COALESCE(SUM("walletBalance"),0) AS wallet, COALESCE(SUM("bankBalance"),0) AS bank, COUNT(*)::bigint AS count FROM "EconomyAccount" WHERE "guildId"=$1 AND "nitradoConnId"=$2',
       String(guildId), String(connId)),
@@ -174,7 +240,7 @@ economyRouter.get('/overview', requireGuildPermission('economy.view'), async (re
   res.json({
     nitradoConnId: connId,
     economy: {
-      enabled: cfg.enabled,
+      enabled,
       currencyName: cfg.currencyName,
       emoji: cfg.emoji,
       accounts: Number(accAgg.count),

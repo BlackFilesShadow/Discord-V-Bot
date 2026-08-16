@@ -16,6 +16,37 @@ function uuid(): string {
   return Math.random().toString(36).slice(2) + Date.now().toString(36);
 }
 
+/**
+ * ServerSlot ist bereits ein expliziter Gameserver-Kontext. Economy/Casino
+ * duerfen diesen Kontext nicht verlieren und bei Multi-Server-Guilds spaeter
+ * serverweit geraten. Darum traegt der zentrale Client fuer genau diese APIs
+ * den sichtbaren Slot als Query-Parameter mit, sofern der Aufrufer nicht schon
+ * selbst `slot` oder `nitradoConnId` gesetzt hat.
+ */
+function withServerSlotScope(path: string): string {
+  if (typeof window === 'undefined') return path;
+  const route = /^\/servers\/([^/]+)\/server\/(\d+)(?:\/|$)/.exec(window.location.pathname);
+  if (!route) return path;
+
+  const [, guildId, slot] = route;
+  if (!/^\d{17,20}$/.test(guildId) || !/^[1-5]$/.test(slot)) return path;
+
+  let url: URL;
+  try { url = new URL(path, window.location.origin); }
+  catch { return path; }
+
+  const economyPrefix = `/api/v2/guilds/${guildId}/economy`;
+  const casinoPrefix = `/api/v2/guilds/${guildId}/casino`;
+  if (!(url.pathname === economyPrefix || url.pathname.startsWith(`${economyPrefix}/`) ||
+        url.pathname === casinoPrefix || url.pathname.startsWith(`${casinoPrefix}/`))) {
+    return path;
+  }
+  if (!url.searchParams.has('slot') && !url.searchParams.has('nitradoConnId')) {
+    url.searchParams.set('slot', slot);
+  }
+  return `${url.pathname}${url.search}${url.hash}`;
+}
+
 async function decode<T>(res: Response): Promise<T> {
   const text = await res.text();
   let data: unknown = null;
@@ -29,12 +60,13 @@ async function request<T>(method: string, path: string, body?: unknown): Promise
   let payload: BodyInit | undefined;
   if (body !== undefined) { headers['Content-Type'] = 'application/json'; payload = JSON.stringify(body); }
   if (method !== 'GET') headers['X-Idempotency-Key'] = uuid();
-  return decode<T>(await fetch(path, { method, headers, body: payload, credentials: 'include' }));
+  const scopedPath = withServerSlotScope(path);
+  return decode<T>(await fetch(scopedPath, { method, headers, body: payload, credentials: 'include' }));
 }
 
 async function formRequest<T>(method: 'POST' | 'PUT' | 'PATCH', path: string, fd: FormData): Promise<T> {
   const headers: Record<string, string> = { Accept: 'application/json', 'X-Idempotency-Key': uuid() };
-  return decode<T>(await fetch(path, { method, headers, body: fd, credentials: 'include' }));
+  return decode<T>(await fetch(withServerSlotScope(path), { method, headers, body: fd, credentials: 'include' }));
 }
 
 async function uploadRequest<T>(path: string, file: File, fieldName = 'file'): Promise<T> {
