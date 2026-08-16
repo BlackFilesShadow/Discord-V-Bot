@@ -5,7 +5,7 @@
 import { type ReactNode, useState, useEffect } from 'react';
 import { Link, useLocation } from 'react-router-dom';
 import {
-  ArrowLeft, LogOut, Menu, X, Command, Rows3, Rows2, Square, Sun, Moon,
+  ArrowLeft, LogOut, Menu, X, Command, Rows3, Rows2, Square, Palette,
 } from 'lucide-react';
 import { useAuth } from '@/lib/auth';
 import { useTheme } from '@/lib/theme';
@@ -78,8 +78,8 @@ export function Shell({ title, back, sidebar, children }: ShellProps) {
   }
 
   const DensityIcon = density === 'compact' ? Rows3 : density === 'cozy' ? Rows2 : Square;
-  const ThemeIcon = theme === 'dark' ? Sun : Moon;
-  const nextThemeLabel = theme === 'dark' ? 'Hell' : 'Dunkel';
+  const themeLabel = theme === 'obsidian' ? 'Obsidian' : 'Ice';
+  const nextThemeLabel = theme === 'obsidian' ? 'Ice' : 'Obsidian';
 
   return (
     <div className="min-h-full flex flex-col">
@@ -110,7 +110,7 @@ export function Shell({ title, back, sidebar, children }: ShellProps) {
                 className="absolute inline-flex h-full w-full rounded-full bg-accent opacity-60 group-hover:opacity-100"
                 style={{ animation: 'pulse-ring 2s cubic-bezier(0,0,0.2,1) infinite' }}
               />
-              <span className="relative inline-flex h-2.5 w-2.5 rounded-full bg-gradient-to-br from-red-400 to-red-700 shadow-[0_0_8px_rgba(239,68,68,0.8)]" />
+              <span className="relative inline-flex h-2.5 w-2.5 rounded-full bg-accent shadow-[0_0_10px_rgba(var(--color-accent),0.65)]" />
             </span>
             <span className="v-logo font-extrabold text-xl tracking-tight">V-Bot</span>
           </Link>
@@ -141,15 +141,15 @@ export function Shell({ title, back, sidebar, children }: ShellProps) {
             ) : <span className="hidden" />}
           </Tooltip>
 
-          <Tooltip content={`Darstellung: ${theme === 'dark' ? 'Dunkel' : 'Hell'} · zu ${nextThemeLabel} wechseln`}>
+          <Tooltip content={`Farbschema: ${themeLabel} · zu ${nextThemeLabel} wechseln`}>
             <button
               type="button"
               onClick={toggleTheme}
               className="inline-flex items-center justify-center h-9 w-9 rounded-md text-muted hover:text-white hover:bg-bg-elev focus-ring"
-              aria-label={`Darstellung auf ${nextThemeLabel} umschalten`}
+              aria-label={`Farbschema auf ${nextThemeLabel} umschalten`}
               data-testid="theme-toggle"
             >
-              <ThemeIcon className="h-4 w-4" />
+              <Palette className="h-4 w-4" />
             </button>
           </Tooltip>
 
