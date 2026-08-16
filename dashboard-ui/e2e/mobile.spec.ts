@@ -30,14 +30,14 @@ test.describe('Mobile Dashboard (Login-Smoke)', () => {
     expect(overflow).toBeLessThanOrEqual(1);
   });
 
-  test('hat Viewport-Meta, Sprache und CSP-sicheren Dark-Default', async ({ page }) => {
+  test('hat Viewport-Meta, Sprache und CSP-sicheren Obsidian-Default', async ({ page }) => {
     await stubAuth(page);
     await page.goto('/');
     const viewport = await page.locator('meta[name="viewport"]').getAttribute('content');
     expect(viewport).toContain('width=device-width');
     const html = page.locator('html');
     await expect(html).toHaveAttribute('lang', 'de');
-    await expect(html).toHaveAttribute('data-theme', 'dark');
+    await expect(html).toHaveAttribute('data-theme', 'obsidian');
     await expect(html).toHaveClass(/dark/);
   });
 });
@@ -146,24 +146,31 @@ test.describe('Mobile Header/Login (authentifiziert, kein Overlap)', () => {
 });
 
 test.describe('Dashboard Theme', () => {
-  test('schaltet Hell/Dunkel und persistiert die Auswahl ueber Reload', async ({ page }) => {
+  test('schaltet Obsidian/Ice und persistiert nur in der aktuellen Tab-Sitzung', async ({ page, context }) => {
     await stubAuthenticated(page);
     await page.setViewportSize({ width: 390, height: 844 });
     await page.goto('/servers');
 
     const html = page.locator('html');
     const toggle = page.getByTestId('theme-toggle');
-    await expect(html).toHaveAttribute('data-theme', 'dark');
+    await expect(html).toHaveAttribute('data-theme', 'obsidian');
     await expect(html).toHaveClass(/dark/);
 
     await toggle.click();
-    await expect(html).toHaveAttribute('data-theme', 'light');
-    await expect(html).not.toHaveClass(/dark/);
-    expect(await page.evaluate(() => localStorage.getItem('ui.theme'))).toBe('light');
+    await expect(html).toHaveAttribute('data-theme', 'ice');
+    await expect(html).toHaveClass(/dark/);
+    expect(await page.evaluate(() => sessionStorage.getItem('ui.theme.session'))).toBe('ice');
+    expect(await page.evaluate(() => localStorage.getItem('ui.theme'))).toBeNull();
 
     await page.reload();
-    await expect(html).toHaveAttribute('data-theme', 'light');
+    await expect(html).toHaveAttribute('data-theme', 'ice');
     await expect(page.getByTestId('theme-toggle')).toBeVisible();
+
+    const freshPage = await context.newPage();
+    await stubAuthenticated(freshPage);
+    await freshPage.goto('/servers');
+    await expect(freshPage.locator('html')).toHaveAttribute('data-theme', 'obsidian');
+    await freshPage.close();
 
     const overflow = await page.evaluate(() => document.documentElement.scrollWidth - document.documentElement.clientWidth);
     expect(overflow).toBeLessThanOrEqual(1);
