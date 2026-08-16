@@ -34,19 +34,9 @@ replace_once(
 )
 replace_once(
     'src/modules/economy/lottery.ts',
-    "          name: `Lotterie ${roundId.slice(0, 8)}`,\n          nameKey: `lotterie-${roundId}`,,",
-    "          name: potName,\n          nameKey: potName.toLowerCase(),",
+    "          name: `Lotterie ${roundId.slice(0, 8)}`,\n          nameKey: `lotterie-${roundId}`,\n",
+    "          name: potName,\n          nameKey: potName.toLowerCase(),\n",
 )
-# tolerate correct marker without accidental double comma
-p = Path('src/modules/economy/lottery.ts')
-t = p.read_text(encoding='utf-8')
-old = "          name: `Lotterie ${roundId.slice(0, 8)}`,\n          nameKey: `lotterie-${roundId}`,\n"
-new = "          name: potName,\n          nameKey: potName.toLowerCase(),\n"
-if old in t:
-    p.write_text(t.replace(old, new, 1), encoding='utf-8')
-elif new not in t:
-    raise SystemExit('lottery pot name marker missing')
-
 replace_once(
     'src/modules/economy/lottery.ts',
     "    await refreshLotteryMessage(interaction.client, roundId).catch(() => undefined);",
