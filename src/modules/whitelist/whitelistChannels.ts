@@ -100,17 +100,20 @@ export async function ensureWhitelistInfoEmbed(guildId: string, nitradoConnId: s
   if (!ch) return { posted: false, updated: false };
 
   const embed = new EmbedBuilder()
-    .setTitle(statusTitle('INFO', 'Whitelist-System'))
+    .setTitle(statusTitle('INFO', 'Whitelist-Antrag'))
     .setColor(Colors.Info)
     .setDescription([
-      'So beantragst du den Zutritt zum Server:',
+      'Du möchtest Zugang zum Server? Stelle hier deinen Whitelist-Antrag.',
       '',
-      '`/whitelist id:<DEIN_INGAME_NAME>` — stellt eine Anfrage.',
+      '**So funktioniert es:**',
+      '1. Nutze `/whitelist-antrag` in diesem Kanal.',
+      '2. Trage bei `id` deinen **exakten Spielernamen** ein (1–64 Zeichen).',
+      '3. Sind mehrere aktive Server verbunden, wähle bei `slot` den gewünschten Server über seinen Alias aus. Bei nur einem aktiven Server ist keine Serverauswahl nötig.',
       '',
-      'Der Antrag wird **automatisch** an das zustaendige Server-Team weitergeleitet.',
-      'Du bekommst eine Benachrichtigung, sobald ueber deinen Antrag entschieden wurde.',
+      'Dein Antrag wird anschließend **automatisch** an das zuständige Server-Team zur Prüfung weitergeleitet.',
+      'Nach der Entscheidung wirst du über Annahme oder Ablehnung benachrichtigt.',
       '',
-      '**Wichtig:** Gib deinen exakten Spielernamen an (Gross-/Kleinschreibung beachten).',
+      '**Wichtig:** Der Spielername muss exakt so angegeben werden, wie er im Spiel angezeigt wird. Achte auf Groß-/Kleinschreibung und Sonderzeichen.',
     ].join('\n'))
     .setFooter({ text: 'V-Bot • Whitelist' })
     .setTimestamp(new Date());
