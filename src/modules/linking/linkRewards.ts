@@ -23,9 +23,9 @@ function isUniqueViolation(error: unknown): boolean {
 /**
  * Aktiviert die Reward-Epoche fuer eine verifizierte DayZ-Identitaet.
  *
- * `newLink=true` startet bewusst eine neue Epoche (erster Link oder Relink).
- * Ein idempotentes erneutes `/link` auf bereits derselben Identitaet darf den
- * Cutoff dagegen nicht nach vorne verschieben.
+ * `newLink=true` startet bei einer bereits bekannten Identitaet eine neue
+ * Reward-Epoche. Die einmalige Startguthaben-Berechtigung wird dabei bewusst
+ * NICHT wieder aktiviert: Unlink/Relink darf nie zum Claim-Mechanismus werden.
  */
 export async function activateLinkRewardState(
   scope: LinkRewardScope,
@@ -68,7 +68,6 @@ export async function activateLinkRewardState(
           identityHash: hash,
           rewardEligibleFrom: now,
           unlinkedAt: null,
-          startBalanceEligible: true,
         }
       : {
           identityHash: hash,
@@ -143,10 +142,10 @@ export async function resolveRewardUserAt(
 }
 
 /**
- * Startguthaben wird genau einmal pro Guild+Gameserver+Discord-Account und nur
- * bei einer echten neuen Link-Epoche vergeben. Ein bestehender EconomyAccount
- * verhindert die Gutschrift nicht; die Idempotenz liegt im Reward-State und
- * zusaetzlich im Ledger-Key.
+ * Startguthaben wird genau einmal pro Guild+Gameserver+Discord-Account bewertet.
+ * Die Berechtigung wird beim ersten modernen Link verbraucht — auch wenn
+ * Economy oder Betrag zu diesem Zeitpunkt deaktiviert/0 sind. So gibt es keine
+ * spaetere Retroaktivitaet durch Unlink/Relink oder eine Config-Aenderung.
  */
 export async function grantStartBalanceForLink(
   scope: LinkRewardScope,
@@ -175,7 +174,7 @@ export async function grantStartBalanceForLink(
   ]);
 
   const amount = BigInt(economyConfig?.startBalance ?? 0);
-  if (!settings?.economyActive || amount <= 0n) return { granted: false, amount: 0n };
+  const shouldPay = settings?.economyActive === true && amount > 0n;
 
   try {
     const granted = await prisma.$transaction(async tx => {
@@ -189,11 +188,14 @@ export async function grantStartBalanceForLink(
           startBalanceGrantedAt: null,
         },
         data: {
-          startBalanceGrantedAt: now,
-          startBalanceGrantedAmount: amount,
+          startBalanceEligible: false,
+          ...(shouldPay ? {
+            startBalanceGrantedAt: now,
+            startBalanceGrantedAmount: amount,
+          } : {}),
         },
       });
-      if (claim.count !== 1) return false;
+      if (claim.count !== 1 || !shouldPay) return false;
 
       const key = `startbalance:link:${scope.guildId}:${scope.nitradoConnId}:${userDiscordId}`;
       await tx.economyLedgerEntry.create({
@@ -253,7 +255,12 @@ export async function grantStartBalanceForLink(
   }
 }
 
-/** Aktivierung + optionale einmalige Startgutschrift als gemeinsamer Link-Hook. */
+/**
+ * Aktivierung + einmalige Startguthaben-Auswertung als gemeinsamer Link-Hook.
+ * Auch bei einem idempotenten Retry wird grantStartBalanceForLink aufgerufen:
+ * nur eine noch offene moderne Eligibility kann dann greifen; migrierte Alt-
+ * Links besitzen diese Eligibility absichtlich nicht.
+ */
 export async function applySuccessfulLinkEconomyEffects(args: {
   scope: LinkRewardScope;
   userDiscordId: string;
@@ -264,6 +271,5 @@ export async function applySuccessfulLinkEconomyEffects(args: {
 }): Promise<LinkStartBalanceResult> {
   const now = args.now ?? new Date();
   await activateLinkRewardState(args.scope, args.userDiscordId, args.gameId, args.secret, args.newLink, now);
-  if (!args.newLink) return { granted: false, amount: 0n };
   return grantStartBalanceForLink(args.scope, args.userDiscordId, now);
 }
