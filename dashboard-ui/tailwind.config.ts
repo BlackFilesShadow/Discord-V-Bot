@@ -4,9 +4,6 @@ export default {
   theme: {
     extend: {
       colors: {
-        // Bestehende Utility-Namen bleiben stabil; nur ihre Werte werden aus
-        // den Theme-Tokens gelesen. Dadurch braucht der Light-Mode keinen
-        // komponentenweisen Klassen-Fork.
         bg: {
           DEFAULT: 'rgb(var(--color-bg) / <alpha-value>)',
           card: 'rgb(var(--color-bg-card) / <alpha-value>)',
@@ -18,10 +15,10 @@ export default {
         muted: 'rgb(var(--color-muted) / <alpha-value>)',
         border: 'rgb(var(--color-border) / <alpha-value>)',
         accent: {
-          DEFAULT: '#dc2626',
-          hover: '#b91c1c',
-          glow: '#ef4444',
-          dim: '#7f1d1d',
+          DEFAULT: 'rgb(var(--color-accent) / <alpha-value>)',
+          hover: 'rgb(var(--color-accent-hover) / <alpha-value>)',
+          glow: 'rgb(var(--color-accent-glow) / <alpha-value>)',
+          dim: 'rgb(var(--color-accent-dim) / <alpha-value>)',
         },
         ok: '#10b981',
         warn: '#f59e0b',
@@ -55,9 +52,9 @@ export default {
         palette: '80',
       },
       boxShadow: {
-        glow: '0 0 60px rgba(220, 38, 38, 0.55)',
-        'glow-sm': '0 0 22px rgba(220, 38, 38, 0.45)',
-        'glow-lg': '0 0 120px rgba(220, 38, 38, 0.4)',
+        glow: '0 0 60px rgb(var(--color-accent) / 0.38)',
+        'glow-sm': '0 0 22px rgb(var(--color-accent) / 0.34)',
+        'glow-lg': '0 0 120px rgb(var(--color-accent) / 0.30)',
         card: '0 1px 0 rgba(255,255,255,0.04) inset, 0 8px 24px rgba(0,0,0,0.5)',
       },
       fontFamily: {
@@ -65,9 +62,9 @@ export default {
         mono: ['JetBrains Mono', 'ui-monospace', 'SFMono-Regular', 'monospace'],
       },
       backgroundImage: {
-        'accent-gradient': 'linear-gradient(135deg, #dc2626 0%, #7f1d1d 100%)',
-        'card-gradient': 'linear-gradient(180deg, rgba(220,38,38,0.04) 0%, rgba(0,0,0,0) 80%)',
-        'panel-grid': 'radial-gradient(circle at 50% 0%, rgba(220,38,38,0.08), transparent 60%)',
+        'accent-gradient': 'linear-gradient(135deg, rgb(var(--color-accent)) 0%, rgb(var(--color-accent-dim)) 100%)',
+        'card-gradient': 'linear-gradient(180deg, rgb(var(--color-accent) / 0.045) 0%, rgba(0,0,0,0) 80%)',
+        'panel-grid': 'radial-gradient(circle at 50% 0%, rgb(var(--color-accent) / 0.09), transparent 60%)',
       },
       keyframes: {
         'fade-in': {
@@ -75,8 +72,8 @@ export default {
           '100%': { opacity: '1', transform: 'translateY(0)' },
         },
         pulseGlow: {
-          '0%, 100%': { boxShadow: '0 0 18px rgba(220,38,38,0.45)' },
-          '50%': { boxShadow: '0 0 32px rgba(220,38,38,0.65)' },
+          '0%, 100%': { boxShadow: '0 0 18px rgb(var(--color-accent) / 0.34)' },
+          '50%': { boxShadow: '0 0 32px rgb(var(--color-accent) / 0.5)' },
         },
         shimmer: {
           '0%': { backgroundPosition: '-200% 0' },
