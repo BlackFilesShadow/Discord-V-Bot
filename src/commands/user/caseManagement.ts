@@ -84,6 +84,10 @@ const caseManagementCommand: Command = {
       await interaction.reply({ content: '❌ Dieser Command funktioniert nur auf einem Server.', flags: MessageFlags.Ephemeral });
       return;
     }
+    if (interaction.guild.ownerId !== interaction.user.id && !interaction.memberPermissions?.has(PermissionFlagsBits.ModerateMembers)) {
+      await interaction.reply({ content: '❌ Du hast nicht die noetige Berechtigung fuer Moderations-Cases.', flags: MessageFlags.Ephemeral });
+      return;
+    }
     await interaction.deferReply({ flags: MessageFlags.Ephemeral });
     const sub = interaction.options.getSubcommand();
 
