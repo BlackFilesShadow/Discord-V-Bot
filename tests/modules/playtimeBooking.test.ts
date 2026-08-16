@@ -1,18 +1,18 @@
-/**
- * Phase 5 / Phase 4 scope regression: produktive Spielzeit-Rewards bleiben
- * idempotent und schreiben ausschliesslich in den ausgewaehlten Gameserver.
- */
 import {
-  bookPlaytimeRewards, type PlaytimeBookingClient, type UncreditedSession,
+  bookPlaytimeRewards,
+  eligiblePlaytimeBuckets,
+  type PlaytimeBookingClient,
+  type RewardLinkResolution,
+  type UncreditedSession,
 } from '../../src/modules/economy/playtimeBooking';
 import type { LedgerTx } from '../../src/modules/economy/ledger';
 
 interface Account { walletBalance: bigint; bankBalance: bigint; lifetimeEarned: bigint; lifetimeSpent: bigint }
 
-function makeClient(sessions: UncreditedSession[], links: Record<string, string>) {
+function makeClient(sessions: UncreditedSession[], links: Record<string, RewardLinkResolution>) {
   const ledgerKeys = new Set<string>();
   const accounts = new Map<string, Account>();
-  const credited = new Map<string, number>();
+  const progress = new Map<string, number>();
 
   const client: PlaytimeBookingClient = {
     $transaction: async <T>(fn: (tx: LedgerTx) => Promise<T>): Promise<T> => {
@@ -21,7 +21,7 @@ function makeClient(sessions: UncreditedSession[], links: Record<string, string>
           create: async ({ data }) => {
             const key = data.idempotencyKey as string;
             if (ledgerKeys.has(key)) {
-              const e = new Error('u') as Error & { code: string };
+              const e = new Error('unique') as Error & { code: string };
               e.code = 'P2002';
               throw e;
             }
@@ -54,60 +54,125 @@ function makeClient(sessions: UncreditedSession[], links: Record<string, string>
       return fn(tx);
     },
     playerSession: {
-      findMany: async () => sessions.map((s) => ({ ...s, bucketsCredited: credited.get(s.id) ?? s.bucketsCredited })),
-      update: async ({ where, data }) => {
-        credited.set(where.id as string, data.bucketsCredited as number);
+      findMany: async () => sessions.map(session => ({ ...session })),
+    },
+    playtimeRewardProgress: {
+      findUnique: async (args: unknown) => {
+        const keyData = (args as { where: { sessionId_rewardEpoch: { sessionId: string; rewardEpoch: Date } } }).where.sessionId_rewardEpoch;
+        const key = `${keyData.sessionId}:${keyData.rewardEpoch.getTime()}`;
+        return progress.has(key) ? { bucketsCredited: progress.get(key)! } : null;
+      },
+      upsert: async ({ where, create, update }) => {
+        const keyData = where.sessionId_rewardEpoch as { sessionId: string; rewardEpoch: Date };
+        const key = `${keyData.sessionId}:${keyData.rewardEpoch.getTime()}`;
+        progress.set(key, Number((update.bucketsCredited ?? create.bucketsCredited) as number));
         return {};
       },
     },
   };
-  const resolve = async (gameId: string): Promise<string | null> => links[gameId] ?? null;
-  return { client, accounts, credited, resolve };
+
+  const resolve = async (gameId: string): Promise<RewardLinkResolution | null> => links[gameId] ?? null;
+  return { client, accounts, progress, resolve, ledgerKeys };
 }
 
 const SCOPE = { guildId: 'g', nitradoConnId: 'n' };
+const LINK_AT = new Date('2026-08-16T12:00:00.000Z');
+const NOW = new Date('2026-08-16T12:20:00.000Z');
 
-describe('bookPlaytimeRewards', () => {
-  it('bucht neue Buckets in den servergescoppten Account und hebt bucketsCredited an', async () => {
-    const { client, accounts, credited, resolve } = makeClient(
-      [{ id: 's1', gameId: 'p1', bucketsEarned: 3, bucketsCredited: 0 }],
-      { p1: 'u1' },
-    );
-    const r = await bookPlaytimeRewards(client, SCOPE, { perBucketAmount: 100n, rewardTarget: 'WALLET' }, resolve);
-    expect(r.credited).toBe(1);
-    expect(r.total).toBe(300n);
-    expect(accounts.get('g:n:u1')!.walletBalance).toBe(300n);
-    expect(credited.get('s1')).toBe(3);
+function session(overrides: Partial<UncreditedSession> = {}): UncreditedSession {
+  return {
+    id: overrides.id ?? 's1',
+    gameId: overrides.gameId ?? 'p1',
+    connectedAt: overrides.connectedAt ?? new Date('2026-08-16T12:00:00.000Z'),
+    disconnectedAt: overrides.disconnectedAt ?? new Date('2026-08-16T12:20:00.000Z'),
+    status: overrides.status ?? 'CLOSED',
+  };
+}
+
+describe('eligiblePlaytimeBuckets', () => {
+  it('zaehlt ausschliesslich volle 10-Minuten-Intervalle NACH dem Link', () => {
+    expect(eligiblePlaytimeBuckets(session({
+      connectedAt: new Date('2026-08-16T11:55:00.000Z'),
+      disconnectedAt: new Date('2026-08-16T12:05:00.000Z'),
+    }), LINK_AT, NOW)).toBe(0);
+
+    expect(eligiblePlaytimeBuckets(session({
+      connectedAt: new Date('2026-08-16T11:55:00.000Z'),
+      disconnectedAt: new Date('2026-08-16T12:15:00.000Z'),
+    }), LINK_AT, NOW)).toBe(1);
   });
+});
 
-  it('zweiter Lauf ohne neue Buckets zahlt nichts', async () => {
-    const { client, accounts, resolve } = makeClient(
-      [{ id: 's1', gameId: 'p1', bucketsEarned: 3, bucketsCredited: 0 }],
-      { p1: 'u1' },
-    );
-    await bookPlaytimeRewards(client, SCOPE, { perBucketAmount: 100n, rewardTarget: 'WALLET' }, resolve);
-    const r2 = await bookPlaytimeRewards(client, SCOPE, { perBucketAmount: 100n, rewardTarget: 'WALLET' }, resolve);
-    expect(r2.credited).toBe(0);
-    expect(accounts.get('g:n:u1')!.walletBalance).toBe(300n);
-  });
+describe('bookPlaytimeRewards ohne Backpay', () => {
+  it('zahlt eine komplett vor dem Link beendete Session niemals nachtraeglich', async () => {
+    const { client, accounts, resolve } = makeClient([
+      session({
+        connectedAt: new Date('2026-08-16T09:00:00.000Z'),
+        disconnectedAt: new Date('2026-08-16T11:00:00.000Z'),
+      }),
+    ], { p1: { userDiscordId: 'u1', rewardEligibleFrom: LINK_AT } });
 
-  it('unverlinkter Spieler wird uebersprungen', async () => {
-    const { client, accounts, credited, resolve } = makeClient(
-      [{ id: 's1', gameId: 'p1', bucketsEarned: 2, bucketsCredited: 0 }],
-      {},
-    );
-    const r = await bookPlaytimeRewards(client, SCOPE, { perBucketAmount: 100n, rewardTarget: 'WALLET' }, resolve);
-    expect(r.credited).toBe(0);
+    const result = await bookPlaytimeRewards(client, SCOPE, { perBucketAmount: 100n, rewardTarget: 'WALLET', now: NOW }, resolve);
+    expect(result).toEqual({ credited: 0, total: 0n });
     expect(accounts.get('g:n:u1')).toBeUndefined();
-    expect(credited.get('s1')).toBeUndefined();
   });
 
-  it('perBucketAmount 0 -> nichts', async () => {
-    const { client, resolve } = makeClient(
-      [{ id: 's1', gameId: 'p1', bucketsEarned: 5, bucketsCredited: 0 }],
-      { p1: 'u1' },
+  it('zahlt bei einer laufenden Session nur volle Zeit ab dem Link-Cutoff', async () => {
+    const { client, accounts, resolve } = makeClient([
+      session({
+        connectedAt: new Date('2026-08-16T11:55:00.000Z'),
+        disconnectedAt: null,
+        status: 'OPEN',
+      }),
+    ], { p1: { userDiscordId: 'u1', rewardEligibleFrom: LINK_AT } });
+
+    const result = await bookPlaytimeRewards(client, SCOPE, { perBucketAmount: 100n, rewardTarget: 'WALLET', now: NOW }, resolve);
+    expect(result).toEqual({ credited: 2, total: 200n });
+    expect(accounts.get('g:n:u1')!.walletBalance).toBe(200n);
+  });
+
+  it('zweiter Lauf derselben Link-Epoche zahlt keinen Bucket doppelt', async () => {
+    const { client, accounts, resolve } = makeClient(
+      [session()],
+      { p1: { userDiscordId: 'u1', rewardEligibleFrom: LINK_AT } },
     );
-    const r = await bookPlaytimeRewards(client, SCOPE, { perBucketAmount: 0n, rewardTarget: 'WALLET' }, resolve);
-    expect(r.credited).toBe(0);
+    await bookPlaytimeRewards(client, SCOPE, { perBucketAmount: 100n, rewardTarget: 'WALLET', now: NOW }, resolve);
+    const second = await bookPlaytimeRewards(client, SCOPE, { perBucketAmount: 100n, rewardTarget: 'WALLET', now: NOW }, resolve);
+    expect(second).toEqual({ credited: 0, total: 0n });
+    expect(accounts.get('g:n:u1')!.walletBalance).toBe(200n);
+  });
+
+  it('unverlinkter Spieler bleibt ohne Auszahlung und ohne offene spaetere Nachzahlung', async () => {
+    const { client, accounts, resolve } = makeClient([session()], {});
+    const result = await bookPlaytimeRewards(client, SCOPE, { perBucketAmount: 100n, rewardTarget: 'WALLET', now: NOW }, resolve);
+    expect(result).toEqual({ credited: 0, total: 0n });
+    expect(accounts.size).toBe(0);
+  });
+
+  it('eine neue Relink-Epoche beginnt mathematisch wieder bei deren Zeitpunkt', async () => {
+    const s = session({
+      connectedAt: new Date('2026-08-16T11:50:00.000Z'),
+      disconnectedAt: null,
+      status: 'OPEN',
+    });
+    const links: Record<string, RewardLinkResolution> = {
+      p1: { userDiscordId: 'u1', rewardEligibleFrom: LINK_AT },
+    };
+    const { client, accounts, resolve } = makeClient([s], links);
+
+    await bookPlaytimeRewards(client, SCOPE, {
+      perBucketAmount: 100n,
+      rewardTarget: 'WALLET',
+      now: new Date('2026-08-16T12:10:00.000Z'),
+    }, resolve);
+    expect(accounts.get('g:n:u1')!.walletBalance).toBe(100n);
+
+    links.p1 = { userDiscordId: 'u1', rewardEligibleFrom: new Date('2026-08-16T12:12:00.000Z') };
+    await bookPlaytimeRewards(client, SCOPE, {
+      perBucketAmount: 100n,
+      rewardTarget: 'WALLET',
+      now: new Date('2026-08-16T12:22:00.000Z'),
+    }, resolve);
+    expect(accounts.get('g:n:u1')!.walletBalance).toBe(200n);
   });
 });
