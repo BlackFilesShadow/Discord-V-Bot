@@ -28,11 +28,13 @@ describe('dashboard Obsidian/Ice production invariants', () => {
     expect(main).toContain("import './theme.css'");
   });
 
-  it('stellt den Palette-Toggle im gemeinsamen Desktop/Mobile-Header bereit', () => {
+  it('stellt den Palette-Toggle im gemeinsamen Desktop/Mobile-Header sichtbar bereit', () => {
     expect(shell).toContain('data-testid="theme-toggle"');
     expect(shell).toContain('onClick={toggleTheme}');
     expect(shell).toContain('Farbschema auf ${nextThemeLabel} umschalten');
     expect(shell).toContain("theme === 'obsidian' ? 'Obsidian' : 'Ice'");
+    expect(shell).toContain('theme-toggle-control');
+    expect(shell).toContain('{themeLabel}');
     expect(shell).not.toMatch(/hidden[^\n]*theme-toggle/i);
   });
 
@@ -44,5 +46,17 @@ describe('dashboard Obsidian/Ice production invariants', () => {
     expect(themeCss).toContain("html[data-theme='ice'] .input-premium");
     expect(themeCss).toContain("html[data-theme='ice'] .modal-dialog");
     expect(themeCss).not.toContain("html[data-theme='light']");
+  });
+
+  it('aendert das komplette Dashboard-Overlay sichtbar zwischen Obsidian und Ice', () => {
+    expect(shell).toContain('dashboard-shell');
+    expect(shell).toContain('dashboard-sidebar');
+    expect(shell).toContain('dashboard-main');
+    expect(themeCss).toContain("html[data-theme='obsidian'] .dashboard-sidebar");
+    expect(themeCss).toContain("html[data-theme='ice'] .dashboard-sidebar");
+    expect(themeCss).toContain("html[data-theme='obsidian'] .dashboard-main");
+    expect(themeCss).toContain("html[data-theme='ice'] .dashboard-main");
+    expect(themeCss).toContain('rgba(125,211,252,.28)');
+    expect(themeCss).toContain('rgba(210,43,58,.08)');
   });
 });
