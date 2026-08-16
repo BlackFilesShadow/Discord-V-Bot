@@ -32,14 +32,37 @@ describe('Konsolen-taugliche Account-Verknuepfung', () => {
     expect(option(linkCommand, 'platform')).toBeUndefined();
   });
 
-  it('stellt Unlink, Liste, GUID-Lookup und Kanal-Panel als eigene Funktionen bereit', () => {
+  it('stellt Unlink, Liste, GUID-Lookup und persistenten Kanal als eigene Funktionen bereit', () => {
     expect(unlinkCommand.data.name).toBe('unlink');
     expect(linksCommand.data.name).toBe('links');
     expect(linkInfoCommand.data.name).toBe('link-info');
     expect(linkPanelCommand.data.name).toBe('link-panel');
+    expect(String(linkPanelCommand.data.description)).toContain('persistenten');
     expect(option(linkInfoCommand, 'user')).toBeDefined();
     expect(option(linkInfoCommand, 'id')).toBeDefined();
     expect(option(linkPanelCommand, 'channel')).toEqual(expect.objectContaining({ required: true }));
+  });
+
+  it('persistiert den Link-Kanal und bietet dieselbe Konfiguration ueber die Dashboard-API an', () => {
+    const commandSource = fs.readFileSync(
+      path.resolve(__dirname, '../../src/commands/dashboard/linking.ts'),
+      'utf8',
+    );
+    const routeSource = fs.readFileSync(
+      path.resolve(__dirname, '../../src/dashboard/routes/v2/economyLink.ts'),
+      'utf8',
+    );
+    const prismaSource = fs.readFileSync(
+      path.resolve(__dirname, '../../prisma/linking-channel.prisma'),
+      'utf8',
+    );
+
+    expect(commandSource).toContain('publishLinkingInfoEmbed');
+    expect(routeSource).toContain("economyLinkRouter.get('/channel'");
+    expect(routeSource).toContain("economyLinkRouter.patch('/channel'");
+    expect(routeSource).toContain("economyLinkRouter.post('/channel/repost'");
+    expect(prismaSource).toContain('model LinkingChannelConfig');
+    expect(prismaSource).toContain('@@unique([guildId, nitradoConnId])');
   });
 
   it('Force-Link arbeitet mit einem Spielernamen; Force-Unlink bleibt Discord-zentriert', () => {
