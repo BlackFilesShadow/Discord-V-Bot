@@ -318,7 +318,7 @@ function FeedEditor({
 
           <div className="grid sm:grid-cols-2 gap-2 text-sm text-white">
             <label className="flex items-center gap-2"><input type="checkbox" checked={showActorCoords} onChange={e => setShowActorCoords(e.target.checked)} />{kind === 'DEATH' ? 'Opfer-Position' : 'Spieler-Position'}</label>
-            {kind === 'DEATH' && <label className="flex items-center gap-2"><input type="checkbox" checked={showTargetCoords} onChange={e => setShowTargetCoords(e.target.checked)} />Töter-Position</label>}
+            {kind === 'DEATH' && <label className="flex items-center gap-2"><input type="checkbox" checked={showTargetCoords} onChange={e => setShowTargetCoords(e.target.checked)} />Killer-Position</label>}
             <label className="flex items-center gap-2"><input type="checkbox" checked={showTool} onChange={e => setShowTool(e.target.checked)} />{kind === 'DEATH' ? 'Waffe / Ursache' : 'Werkzeug'}</label>
             {kind === 'DEATH' && <label className="flex items-center gap-2"><input type="checkbox" checked={showDistance} onChange={e => setShowDistance(e.target.checked)} />Distanz</label>}
             <label className="flex items-center gap-2"><input type="checkbox" checked={isActive} onChange={e => setIsActive(e.target.checked)} />Aktiv</label>
