@@ -1,3 +1,5 @@
+import { wrapUntrustedContext } from './untrustedContext';
+
 /**
  * Prompt-Budget-Manager (Spec §6.D / AI-9).
  *
@@ -45,6 +47,15 @@ export interface PromptMessage {
   content: string;
 }
 
+interface ContextBundleV2 {
+  serverContext?: string | null;
+  userContext?: string | null;
+  ragContext?: string | null;
+}
+
+const OUTER_UNTRUSTED_MARKER = 'UNTRUSTED_CONTEXT_DATA_JSON:\n';
+const CONTEXT_BUNDLE_MARKER = 'AI_CONTEXT_BUNDLE_V2:\n';
+
 /**
  * Zeichen-Budgets pro Kontext-Art. Lazy ausgewertet, damit Tests ENV
  * zur Laufzeit setzen koennen.
@@ -80,9 +91,60 @@ function truncateToLimit(text: string, limit: number): string {
   return `${cut.trimEnd()}${marker}`.slice(0, limit);
 }
 
+function parseContextBundleV2(text: string): { bundle: ContextBundleV2; channelHistory: string | null } | null {
+  const markerPos = text.indexOf(OUTER_UNTRUSTED_MARKER);
+  if (markerPos < 0) return null;
+  const afterMarker = text.slice(markerPos + OUTER_UNTRUSTED_MARKER.length);
+  const firstNewline = afterMarker.indexOf('\n');
+  const outerJson = (firstNewline >= 0 ? afterMarker.slice(0, firstNewline) : afterMarker).trim();
+  const tail = firstNewline >= 0 ? afterMarker.slice(firstNewline).trim() : '';
+  try {
+    const outer = JSON.parse(outerJson) as { context?: unknown };
+    if (typeof outer.context !== 'string' || !outer.context.startsWith(CONTEXT_BUNDLE_MARKER)) return null;
+    const inner = JSON.parse(outer.context.slice(CONTEXT_BUNDLE_MARKER.length)) as ContextBundleV2;
+    return { bundle: inner, channelHistory: tail || null };
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Legacy-Adapter fuer den bestehenden messageCreate -> answerQuestion(context)
+ * Vertrag. Der ContextBuilder liefert darin bereits getrennte Felder. Die hier
+ * angehaengte rohe Channel-History wird ebenfalls in den untrusted JSON-Block
+ * gezogen, statt hinter dem Security-Wrapper als Systemtext stehen zu bleiben.
+ */
+function clampStructuredContextBundle(text: string): string | null {
+  const parsed = parseContextBundleV2(text);
+  if (!parsed) return null;
+  const budgets = getPromptBudgets();
+  const bounded = {
+    serverContext: parsed.bundle.serverContext
+      ? truncateToLimit(parsed.bundle.serverContext, budgets.serverContext)
+      : null,
+    userContext: parsed.bundle.userContext
+      ? truncateToLimit(parsed.bundle.userContext, budgets.userContext)
+      : null,
+    ragContext: parsed.bundle.ragContext
+      ? truncateToLimit(parsed.bundle.ragContext, budgets.ragContext)
+      : null,
+    // Persistentes Conversation-Memory wird spaeter separat auf history gekappt.
+    // Der fluechtige Discord-Channel-Snapshot bekommt deshalb nur einen Teil
+    // desselben Budgets, damit beide Quellen gemeinsam kalkulierbar bleiben.
+    channelHistory: parsed.channelHistory
+      ? truncateToLimit(parsed.channelHistory, Math.min(1500, budgets.history))
+      : null,
+  };
+  return wrapUntrustedContext(`${CONTEXT_BUNDLE_MARKER}${JSON.stringify(bounded)}`, 20_000);
+}
+
 /** Kappt einen einzelnen dynamischen Block exakt auf sein Quellen-Budget. */
 export function clampBlock(key: PromptBudgetKey, text: string | null | undefined): string | null {
   if (!text) return null;
+  if (key === 'serverContext') {
+    const structured = clampStructuredContextBundle(text);
+    if (structured) return structured;
+  }
   return truncateToLimit(text, getPromptBudgets()[key]);
 }
 
