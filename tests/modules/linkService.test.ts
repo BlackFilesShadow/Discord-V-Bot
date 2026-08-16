@@ -84,7 +84,7 @@ function makeClient(initialLinks: StoredLink[] = [], sessions: PlayerSessionLink
         const current = links.get(key);
         const next = current
           ? { ...current, ...update } as StoredLink
-          : { ...create } as StoredLink;
+          : { ...create } as unknown as StoredLink;
 
         if (next.identityHash && next.status === 'VERIFIED') {
           const duplicate = [...links.values()].find(row =>
