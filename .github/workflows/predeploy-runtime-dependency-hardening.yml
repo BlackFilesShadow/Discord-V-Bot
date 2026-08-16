@@ -20,7 +20,9 @@ jobs:
         with:
           node-version: 22
           cache: npm
-          cache-dependency-path: package-lock.json
+          cache-dependency-path: |
+            package-lock.json
+            dashboard-ui/package-lock.json
       - name: Install current dependencies
         run: npm ci
       - name: Verify uuid runtime usage before removal
@@ -45,9 +47,12 @@ jobs:
           set -euo pipefail
           npm audit --omit=dev --json > /tmp/root-prod-audit.json || true
           node -e "const a=require('/tmp/root-prod-audit.json'); const v=a.metadata?.vulnerabilities||{}; console.log('production audit:',v); if ((v.total||0)!==0) process.exit(1)"
+      - name: Install dashboard dependencies
+        working-directory: dashboard-ui
+        run: npm ci
       - name: Verify lint and full production build
         run: |
-          npm run lint
+          npm run lint:all
           npm run build
       - name: Commit validated dependency hardening
         shell: bash
