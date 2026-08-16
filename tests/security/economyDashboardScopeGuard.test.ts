@@ -82,6 +82,38 @@ describe('Dashboard Economy Scope Guard', () => {
     expect(res.payload).toMatchObject({ code: 'SERVER_SCOPE_REQUIRED' });
   });
 
+  it('loest bei mehreren Servern den expliziten Slot sicher auf', async () => {
+    findMany.mockResolvedValue([
+      { id: CONN_ID, slot: 1, alias: 'Server 1' },
+      { id: CONN_ID_2, slot: 2, alias: 'Server 2' },
+    ]);
+    findUnique.mockResolvedValue(null);
+    const next = jest.fn();
+    const res = makeRes();
+    const req = makeReq({ slot: '2' });
+    await requireSafeDashboardEconomyScope(req as never, res as never, next);
+    expect(next).toHaveBeenCalledTimes(1);
+    expect(req.guildScope.nitradoConnId).toBe(CONN_ID_2);
+    expect(res.statusCode).toBe(200);
+  });
+
+  it('lehnt widerspruechliche nitradoConnId/slot-Kombinationen ab', async () => {
+    findMany.mockResolvedValue([
+      { id: CONN_ID, slot: 1, alias: 'Server 1' },
+      { id: CONN_ID_2, slot: 2, alias: 'Server 2' },
+    ]);
+    const next = jest.fn();
+    const res = makeRes();
+    await requireSafeDashboardEconomyScope(
+      makeReq({ nitradoConnId: CONN_ID, slot: '2' }) as never,
+      res as never,
+      next,
+    );
+    expect(next).not.toHaveBeenCalled();
+    expect(res.statusCode).toBe(400);
+    expect(res.payload).toMatchObject({ code: 'SERVER_SCOPE_CONFLICT' });
+  });
+
   it('erlaubt aufgeloeste Ein-Server-Legacy-Guilds', async () => {
     findUnique.mockResolvedValue({
       status: 'RESOLVED',
