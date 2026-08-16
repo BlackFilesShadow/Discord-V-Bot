@@ -42,7 +42,7 @@ describe('Economy-Lotterie — Production-Sicherheitsinvarianten', () => {
   it('zieht den Gewinner kryptographisch sicher nur beim ACTIVE->DRAWING-Uebergang', () => {
     expect(lottery).toContain("import { randomInt, randomUUID } from 'node:crypto';");
     expect(lottery).toContain('const drawIndex = randomInt(totalTickets);');
-    expect(lottery).toContain("SET \"status\"='DRAWING'::\"LotteryRoundStatus\"");
+    expect(lottery).toContain('"status"=\'DRAWING\'::"LotteryRoundStatus"');
     expect(lottery).toContain('"winnerDiscordId"=$2');
     expect(lottery).toContain('"winningTicketNumber"=$3');
   });
@@ -64,9 +64,9 @@ describe('Economy-Lotterie — Production-Sicherheitsinvarianten', () => {
   });
 
   it('behandelt parallele identische Ticketkaeufe als Replay statt als neues Limit-Ereignis', () => {
-    expect(lottery).toContain('const purchaseReplay = await raw.$queryRawUnsafe');
+    expect(lottery).toContain('const replayPurchases = await raw.$queryRawUnsafe');
     expect(lottery).toContain("WHERE \"idempotencyKey\"=$1 LIMIT 1");
-    expect(lottery).toContain('return { firstPurchase: false };');
+    expect(lottery).toContain('return { firstPurchase: false, replay: true };');
   });
 
   it('finalisiert Refunds nur bei wirklich leerem Pot und verhindert lokalen Scheduler-Overlap', () => {
