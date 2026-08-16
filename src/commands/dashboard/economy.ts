@@ -15,7 +15,7 @@ import type { Command } from '../../types';
 import prisma from '../../database/prisma';
 import { withGuildScope } from '../middleware/withGuildScope';
 import {
-  getAccountOrZero, recentTransactions, pay, adminPay, deposit, withdraw, transferBank, getConfig,
+  getAccountOrZero, pay, adminPay, deposit, withdraw, transferBank, getConfig,
 } from '../../modules/economy/repository';
 import { asUserDiscordId } from '../../types/scope';
 import type { GuildId, NitradoConnId } from '../../types/scope';
@@ -24,22 +24,6 @@ import { buildStatusEmbed, type EmbedStatus } from '../../utils/statusEmbed';
 import { MAX_GAME_SERVERS_PER_GUILD } from '../../modules/nitrado/gameServerScope';
 
 function fmt(n: bigint): string { return n.toLocaleString('de-DE'); }
-
-const TX_LABELS: Record<string, string> = {
-  PAY: 'Zahlung',
-  ADMIN_PAY: 'Admin-Zahlung',
-  DEPOSIT: 'Einzahlung',
-  WITHDRAW: 'Auszahlung',
-  TRANSFER: 'Überweisung',
-  CASINO_BET: 'Casino-Einsatz',
-  CASINO_PAYOUT: 'Casino-Auszahlung',
-  PLAYTIME_REWARD: 'Spielzeitbelohnung',
-  STARTBALANCE_JOIN: 'Startguthaben',
-  GRANT: 'Gutschrift',
-  FINE: 'Strafe',
-  INTEREST: 'Zinsen',
-};
-function txLabel(type: string): string { return TX_LABELS[type] ?? type; }
 
 function slotOption(builder: SlashCommandBuilder): SlashCommandBuilder {
   return builder.addIntegerOption(o => o
@@ -80,21 +64,17 @@ async function statusReply(
 }
 
 // ============================================================
-// /balance — eigener Kontostand + letzte 5 Tx
+// /balance — bewusst nur aktueller Kontostand; Transaktionen sind Admin/Audit-Daten.
 // ============================================================
 export const balanceCommand: Command = {
   data: slotOption(new SlashCommandBuilder()
     .setName('balance')
-    .setDescription('Dein Kontostand und die letzten 5 Transaktionen.') as SlashCommandBuilder),
+    .setDescription('Zeigt deinen aktuellen Wallet-, Bank- und Gesamtkontostand.') as SlashCommandBuilder),
   execute: withGuildScope({ requireSlotToggle: 'economyActive', acceptSlotOption: true }, async (i, scope) => {
     const connId = scope.nitradoConnId!;
     const acc = await getAccountOrZero(scope.guildId, connId, scope.actorDiscordId);
     const cfg = await getConfig(scope.guildId, connId);
-    const txs = await recentTransactions(scope.guildId, connId, scope.actorDiscordId, 5);
     const total = acc.walletBalance + acc.bankBalance;
-    const lines = txs.length === 0
-      ? '_keine Transaktionen_'
-      : txs.map(t => `\`${t.delta >= 0n ? '+' : ''}${fmt(t.delta)}\` ${cfg.emoji} ${txLabel(t.type)}${t.reason ? ` — ${t.reason}` : ''}`).join('\n');
     const e = new EmbedBuilder()
       .setColor(0xF1C40F)
       .setAuthor({ name: i.user.username, iconURL: i.user.displayAvatarURL() })
@@ -104,7 +84,6 @@ export const balanceCommand: Command = {
         { name: '👛 Wallet', value: `**${fmt(acc.walletBalance)}** ${cfg.emoji}`, inline: true },
         { name: '🏦 Bank', value: `**${fmt(acc.bankBalance)}** ${cfg.emoji}`, inline: true },
         { name: 'Σ Gesamt', value: `**${fmt(total)}** ${cfg.emoji}`, inline: true },
-        { name: '📜 Letzte 5 Transaktionen', value: lines.slice(0, 1024), inline: false },
       )
       .setFooter({ text: await guildFooter(scope.guildId, connId) })
       .setTimestamp();
@@ -157,21 +136,21 @@ export const payCommand: Command = {
 };
 
 // ============================================================
-// /admin-pay — Admin-Korrektur im ausgewaehlten Slot
+// /admin-pay — positive Admin-Gutschrift. Abziehen geht ausschliesslich ueber
+// /remove-money + /confirm-action, damit jede negative Admin-Buchung Step-up hat.
 // ============================================================
 export const adminPayCommand: Command = {
   data: slotOption(new SlashCommandBuilder()
     .setName('admin-pay')
-    .setDescription('Owner/Berechtigt: Korrigiere das Wallet eines Users (positiv oder negativ).')
+    .setDescription('Owner/Berechtigt: Fügt Wallet-Guthaben direkt hinzu.')
     .addUserOption(o => o.setName('user').setDescription('Ziel-User').setRequired(true))
-    .addIntegerOption(o => o.setName('betrag').setDescription('Delta (negativ = abziehen, ungleich 0)').setRequired(true).setMinValue(-1_000_000_000).setMaxValue(1_000_000_000))
+    .addIntegerOption(o => o.setName('betrag').setDescription('Positiver Betrag').setRequired(true).setMinValue(1).setMaxValue(1_000_000_000))
     .addStringOption(o => o.setName('grund').setDescription('Grund (3..200)').setRequired(true).setMinLength(3).setMaxLength(200)) as SlashCommandBuilder),
-  execute: withGuildScope({ requirePerm: 'economy.manage', acceptSlotOption: true }, async (i, scope) => {
+  execute: withGuildScope({ requirePerm: 'economy.manage', requireSlotToggle: 'economyActive', acceptSlotOption: true }, async (i, scope) => {
     const connId = scope.nitradoConnId!;
     const target = i.options.getUser('user', true);
     if (target.bot) { await statusReply(i, 'ERROR', 'Aktion nicht erlaubt', { description: 'Die Aktion konnte nicht durchgeführt werden.', fields: [{ name: '📝 Grund', value: 'Ein Bot kann nicht begünstigt werden.' }] }); return; }
     const delta = BigInt(i.options.getInteger('betrag', true));
-    if (delta === 0n) { await statusReply(i, 'ERROR', 'Ungültiger Betrag', { description: 'Die Aktion konnte nicht durchgeführt werden.', fields: [{ name: '📝 Grund', value: 'Der Betrag darf nicht 0 sein.' }] }); return; }
     const grund = i.options.getString('grund', true);
     try {
       await adminPay({
@@ -185,13 +164,12 @@ export const adminPayCommand: Command = {
     } catch (e) { await statusReply(i, 'ERROR', 'Aktion fehlgeschlagen', { description: 'Die Aktion konnte nicht durchgeführt werden.', fields: [{ name: '📝 Grund', value: (e as Error).message }] }); return; }
     logAudit('ECON_ADMIN_PAY', 'ECONOMY', { guildId: scope.guildId, nitradoConnId: connId, target: target.id, delta: delta.toString(), actor: scope.actorDiscordId });
     const cfg = await getConfig(scope.guildId, connId);
-    const abs = delta < 0n ? -delta : delta;
-    await statusReply(i, 'SUCCESS', delta > 0n ? 'Guthaben hinzugefügt' : 'Guthaben abgezogen', {
+    await statusReply(i, 'SUCCESS', 'Guthaben hinzugefügt', {
       footerText: 'V-Bot Economy • Administration',
       description: `Das Wallet von <@${target.id}> wurde angepasst.`,
       fields: [
         { name: '👤 Spieler', value: `<@${target.id}>` },
-        { name: delta > 0n ? '💰 Hinzugefügt' : '💰 Abgezogen', value: `${fmt(abs)} ${cfg.emoji}` },
+        { name: '💰 Hinzugefügt', value: `${fmt(delta)} ${cfg.emoji}` },
         { name: '📝 Grund', value: grund },
       ],
     });
