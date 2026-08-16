@@ -27,23 +27,14 @@ export function normalizeUntrustedText(value: unknown, maxChars: number): string
 }
 
 /**
- * Serialisiert ausschliesslich den Datenblock. AI-9 nutzt diese Form, wenn der
- * Security-Vertrag bereits einmal als eigener, verpflichtender Systemblock vor
- * allen externen Kontextquellen steht.
+ * JSON serialization makes boundaries deterministic: owner/channel/RAG text
+ * cannot close a pseudo-tag or append a new system section outside the value.
  */
-export function serializeUntrustedContextData(context: string, maxChars = 12_000): string {
+export function wrapUntrustedContext(context: string, maxChars = 12_000): string {
   const payload: UntrustedContextPayload = {
     context: normalizeUntrustedText(context, maxChars),
   };
-  return `UNTRUSTED_CONTEXT_DATA_JSON:\n${JSON.stringify(payload)}`;
-}
-
-/**
- * Rueckwaertskompatibler Komplett-Wrapper fuer Call-Sites ausserhalb des neuen
- * Budget-Composers. JSON serialization makes boundaries deterministic.
- */
-export function wrapUntrustedContext(context: string, maxChars = 12_000): string {
-  return `${UNTRUSTED_CONTEXT_POLICY}\n\n${serializeUntrustedContextData(context, maxChars)}`;
+  return `${UNTRUSTED_CONTEXT_POLICY}\n\nUNTRUSTED_CONTEXT_DATA_JSON:\n${JSON.stringify(payload)}`;
 }
 
 const FORBIDDEN_STYLE_CONTROL_RE = /(?:\bignore\b.*\b(?:previous|prior|system|instruction)|\b(?:system|developer|assistant)\s*(?:prompt|message|instruction)|\b(?:reveal|leak|expose|zeige|verrate|nenne)\b.*\b(?:secret|token|password|admin|private|hidden|channel|rolle|role|prompt)|\b(?:tool|function)\s*(?:call|aufruf|execute|run)|\b(?:permission|berechtigung|scope|guild|gameserver)\b.*\b(?:override|bypass|ignore|umgeh)|\bpretend\b.*\b(?:system|developer|admin)|\bact\s+as\b.*\b(?:system|developer|admin))/i;
