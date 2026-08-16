@@ -1,0 +1,35 @@
+name: Fix remaining Discord deprecations
+on:
+  push:
+    branches: [fix/postdeploy-dashboard-economy-help-killfeed]
+    paths: [.github/workflows/fix-remaining-discord-deprecations.yml]
+permissions:
+  contents: write
+jobs:
+  fix:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          ref: fix/postdeploy-dashboard-economy-help-killfeed
+          fetch-depth: 0
+      - run: python3 scripts/fix_remaining_discord_deprecations.py
+      - run: git diff --check
+      - shell: bash
+        run: |
+          set -euo pipefail
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add -- \
+            src/commands/about.ts \
+            src/commands/user/reminder.ts \
+            src/modules/selfrole/selfRoleMenu.ts \
+            src/commands/user/ai.ts \
+            src/commands/user/poll.ts \
+            src/commands/user/leaderboard.ts \
+            src/modules/tickets/ticketSystem.ts \
+            src/commands/user/giveaway.ts \
+            src/commands/dashboard/economy.ts
+          git rm -f --ignore-unmatch -- scripts/fix_remaining_discord_deprecations.py .github/workflows/fix-remaining-discord-deprecations.yml
+          git commit -m "Replace remaining deprecated Discord ephemeral options"
+          git push origin HEAD:fix/postdeploy-dashboard-economy-help-killfeed
