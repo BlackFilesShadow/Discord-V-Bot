@@ -114,8 +114,8 @@ describe('runPvpRewardShadow — Idempotenz + Linkzeitpunkt', () => {
     expect(resolver).not.toHaveBeenCalled();
     expect(rows[0]).toMatchObject({
       status: 'SKIPPED',
-      calculated: 0n,
       reasonCode: 'SKIPPED_REWARD_DISABLED',
     });
+    expect((rows[0].calculated as bigint).toString()).toBe('0');
   });
 });
