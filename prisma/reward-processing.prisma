@@ -1,0 +1,17 @@
+// Persistente High-Watermarks fuer langlaufende Reward-Streams.
+// Verhindert, dass feste Batch-Grenzen alte/neue ADM-Events oder Sessions
+// dauerhaft verhungern lassen. Cursor sind strikt Guild+Gameserver+Stream-scoped.
+
+model RewardProcessingCursor {
+  id             String   @id @default(cuid())
+  guildId        String
+  nitradoConnId  String
+  stream         String   @db.VarChar(64)
+  lastTimestamp  DateTime
+  lastEntityId   String   @default("")
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+
+  @@unique([guildId, nitradoConnId, stream])
+  @@index([guildId, nitradoConnId])
+}

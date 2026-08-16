@@ -4,14 +4,25 @@
  * Historische/unverlinkte Spielzeit wird niemals nachbezahlt. Fuer jede aktive
  * Link-Epoche wird die rewardfaehige Dauer exakt ab `rewardEligibleFrom`
  * berechnet. Vollstaendige 10-Minuten-Intervalle werden einzeln ueber stabile
- * Ledger-Keys gebucht. PlaytimeRewardProgress ist zugleich der High-Watermark:
- * auch Intervalle, die bei deaktivierten Rewards oder einem Betrag von 0
- * enden, werden konsumiert und koennen spaeter nicht als Backpay auftauchen.
+ * Ledger-Keys gebucht.
+ *
+ * OPEN-Sessions werden bei jedem Lauf vollstaendig ausgewertet (ein DayZ-Server
+ * hat nur eine begrenzte Zahl gleichzeitig verbundener Spieler). CLOSED-
+ * Sessions laufen ueber einen persistenten High-Watermark. Dadurch koennen
+ * auch nach sehr langer Laufzeit keine Sessions hinter einem 500er-Fenster
+ * dauerhaft verhungern.
  */
 
 import { bookLedgerEntry, type LedgerClient } from './ledger';
+import {
+  advanceRewardCursor,
+  afterCursorWhere,
+  getRewardCursor,
+  type RewardCursorClient,
+} from './rewardCursor';
 
 const REWARD_BUCKET_SECONDS = 600;
+const CLOSED_SESSION_STREAM = 'playtime:closed';
 
 export interface UncreditedSession {
   id: string;
@@ -19,13 +30,15 @@ export interface UncreditedSession {
   connectedAt: Date | null;
   disconnectedAt: Date | null;
   status: 'OPEN' | 'CLOSED';
+  createdAt: Date;
+  updatedAt: Date;
 }
 
 export interface PlaytimeRewardProgressRow {
   bucketsCredited: number;
 }
 
-export interface PlaytimeBookingClient extends LedgerClient {
+export interface PlaytimeBookingClient extends LedgerClient, RewardCursorClient {
   playerSession: {
     findMany: (args: unknown) => Promise<UncreditedSession[]>;
   };
@@ -47,11 +60,7 @@ export interface PlaytimeBookingScope {
   nitradoConnId: string;
 }
 
-/**
- * Anzahl vollstaendiger 10-Minuten-Intervalle in der aktuellen Link-Epoche.
- * OPEN benutzt ausschliesslich `now`; CLOSED benoetigt zwingend eine echte
- * Disconnect-Zeit. Eine Zukunftszeit darf niemals vorzeitig Geld erzeugen.
- */
+/** Anzahl vollstaendiger 10-Minuten-Intervalle in der aktuellen Link-Epoche. */
 export function eligiblePlaytimeBuckets(
   session: Pick<UncreditedSession, 'connectedAt' | 'disconnectedAt' | 'status'>,
   rewardEligibleFrom: Date,
@@ -108,6 +117,66 @@ async function persistProgress(
   });
 }
 
+async function processSession(
+  client: PlaytimeBookingClient,
+  scope: PlaytimeBookingScope,
+  session: UncreditedSession,
+  opts: { perBucketAmount: bigint; rewardTarget: 'WALLET' | 'BANK'; payoutEnabled: boolean; now: Date },
+  resolveRewardLink: ResolveRewardLinkFn,
+): Promise<{ credited: number; total: bigint }> {
+  const link = await resolveRewardLink(session.gameId);
+  if (!link) return { credited: 0, total: 0n };
+
+  const eligibleBuckets = eligiblePlaytimeBuckets(session, link.rewardEligibleFrom, opts.now);
+  if (eligibleBuckets <= 0) return { credited: 0, total: 0n };
+
+  const progress = await client.playtimeRewardProgress.findUnique({
+    where: {
+      sessionId_rewardEpoch: {
+        sessionId: session.id,
+        rewardEpoch: link.rewardEligibleFrom,
+      },
+    },
+    select: { bucketsCredited: true },
+  });
+  const alreadyProcessed = Math.max(0, progress?.bucketsCredited ?? 0);
+  if (eligibleBuckets <= alreadyProcessed) return { credited: 0, total: 0n };
+
+  if (!opts.payoutEnabled) {
+    await persistProgress(client, scope, session.id, link, eligibleBuckets);
+    return { credited: 0, total: 0n };
+  }
+
+  let credited = 0;
+  let total = 0n;
+  let highestProcessed = alreadyProcessed;
+  for (let bucket = alreadyProcessed + 1; bucket <= eligibleBuckets; bucket++) {
+    const amount = opts.perBucketAmount;
+    const walletDelta = opts.rewardTarget === 'BANK' ? 0n : amount;
+    const bankDelta = opts.rewardTarget === 'BANK' ? amount : 0n;
+    const result = await bookLedgerEntry(client, {
+      idempotencyKey: `playtime:${session.id}:${link.rewardEligibleFrom.getTime()}:${bucket}`,
+      guildId: scope.guildId,
+      nitradoConnId: scope.nitradoConnId,
+      userDiscordId: link.userDiscordId,
+      walletDelta,
+      bankDelta,
+      buckets: 1,
+      type: 'PLAYTIME_REWARD',
+      reason: 'Spielzeit-Belohnung nach Account-Verknuepfung',
+      sourceRef: session.id,
+    });
+    highestProcessed = bucket;
+    if (result.booked) {
+      credited++;
+      total += amount;
+    }
+  }
+
+  await persistProgress(client, scope, session.id, link, highestProcessed);
+  return { credited, total };
+}
+
 export async function bookPlaytimeRewards(
   client: PlaytimeBookingClient,
   scope: PlaytimeBookingScope,
@@ -115,6 +184,7 @@ export async function bookPlaytimeRewards(
     perBucketAmount: bigint;
     rewardTarget: 'WALLET' | 'BANK';
     limit?: number;
+    maxClosedPages?: number;
     now?: Date;
     payoutEnabled?: boolean;
   },
@@ -122,71 +192,70 @@ export async function bookPlaytimeRewards(
 ): Promise<{ credited: number; total: bigint }> {
   const now = opts.now ?? new Date();
   const payoutEnabled = opts.payoutEnabled !== false && opts.perBucketAmount > 0n;
+  const batchSize = Math.max(1, Math.min(2_000, Math.trunc(opts.limit ?? 500)));
+  const maxClosedPages = Math.max(1, Math.min(500, Math.trunc(opts.maxClosedPages ?? 50)));
+  let credited = 0;
+  let total = 0n;
 
-  const sessions = await client.playerSession.findMany({
+  // OPEN-Sessions muessen bei jedem Lauf erneut betrachtet werden, weil mit
+  // fortschreitender Zeit neue 10-Minuten-Buckets entstehen koennen.
+  const openSessions = await client.playerSession.findMany({
     where: {
       guildId: scope.guildId,
       nitradoConnId: scope.nitradoConnId,
+      status: 'OPEN',
       connectedAt: { not: null },
     },
-    orderBy: { updatedAt: 'desc' },
-    take: opts.limit ?? 500,
+    orderBy: [{ createdAt: 'asc' }, { id: 'asc' }],
   });
+  for (const session of openSessions) {
+    const result = await processSession(
+      client,
+      scope,
+      session,
+      { perBucketAmount: opts.perBucketAmount, rewardTarget: opts.rewardTarget, payoutEnabled, now },
+      resolveRewardLink,
+    );
+    credited += result.credited;
+    total += result.total;
+  }
 
-  let credited = 0;
-  let total = 0n;
-  for (const session of sessions) {
-    const link = await resolveRewardLink(session.gameId);
-    if (!link) continue;
-
-    const eligibleBuckets = eligiblePlaytimeBuckets(session, link.rewardEligibleFrom, now);
-    if (eligibleBuckets <= 0) continue;
-
-    const progress = await client.playtimeRewardProgress.findUnique({
+  // CLOSED-Sessions sind nach dem Disconnect unveraenderlich genug fuer einen
+  // persistenten updatedAt/id-Cursor. Ein spaeter korrigierter Datensatz bekommt
+  // ein neues updatedAt und wird dadurch erneut idempotent geprueft.
+  let cursor = await getRewardCursor(client, scope, CLOSED_SESSION_STREAM);
+  for (let page = 0; page < maxClosedPages; page++) {
+    const closedSessions = await client.playerSession.findMany({
       where: {
-        sessionId_rewardEpoch: {
-          sessionId: session.id,
-          rewardEpoch: link.rewardEligibleFrom,
-        },
-      },
-      select: { bucketsCredited: true },
-    });
-    const alreadyProcessed = Math.max(0, progress?.bucketsCredited ?? 0);
-    if (eligibleBuckets <= alreadyProcessed) continue;
-
-    // Ein deaktivierter Reward oder Betrag 0 darf keine spaetere Nachzahlung
-    // erzeugen. Die aktuell vollstaendigen Intervalle werden deshalb bewusst
-    // als verarbeitet markiert, ohne Ledger-/Account-Buchung.
-    if (!payoutEnabled) {
-      await persistProgress(client, scope, session.id, link, eligibleBuckets);
-      continue;
-    }
-
-    let highestProcessed = alreadyProcessed;
-    for (let bucket = alreadyProcessed + 1; bucket <= eligibleBuckets; bucket++) {
-      const amount = opts.perBucketAmount;
-      const walletDelta = opts.rewardTarget === 'BANK' ? 0n : amount;
-      const bankDelta = opts.rewardTarget === 'BANK' ? amount : 0n;
-      const result = await bookLedgerEntry(client, {
-        idempotencyKey: `playtime:${session.id}:${link.rewardEligibleFrom.getTime()}:${bucket}`,
         guildId: scope.guildId,
         nitradoConnId: scope.nitradoConnId,
-        userDiscordId: link.userDiscordId,
-        walletDelta,
-        bankDelta,
-        buckets: 1,
-        type: 'PLAYTIME_REWARD',
-        reason: 'Spielzeit-Belohnung nach Account-Verknuepfung',
-        sourceRef: session.id,
-      });
-      highestProcessed = bucket;
-      if (result.booked) {
-        credited++;
-        total += amount;
-      }
+        status: 'CLOSED',
+        connectedAt: { not: null },
+        ...afterCursorWhere(cursor, 'updatedAt'),
+      },
+      orderBy: [{ updatedAt: 'asc' }, { id: 'asc' }],
+      take: batchSize,
+    });
+    if (closedSessions.length === 0) break;
+
+    for (const session of closedSessions) {
+      const result = await processSession(
+        client,
+        scope,
+        session,
+        { perBucketAmount: opts.perBucketAmount, rewardTarget: opts.rewardTarget, payoutEnabled, now },
+        resolveRewardLink,
+      );
+      credited += result.credited;
+      total += result.total;
     }
 
-    await persistProgress(client, scope, session.id, link, highestProcessed);
+    const last = closedSessions[closedSessions.length - 1];
+    const next = { timestamp: last.updatedAt, entityId: last.id };
+    await advanceRewardCursor(client, scope, CLOSED_SESSION_STREAM, next);
+    cursor = next;
+    if (closedSessions.length < batchSize) break;
   }
+
   return { credited, total };
 }
