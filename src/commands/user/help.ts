@@ -239,7 +239,7 @@ function detailEmbed(
 }
 
 function emptyCategoryEmbed(category: Exclude<HelpCategory, 'overview'>): EmbedBuilder {
-  const definition = CATEGORIES.find(item => item.id === category) ?? CATEGORIES[CATEGORIES.length - 1];
+  const definition = CATEGORIES.find(item => item.id === category) ?? CATEGORIES.find(item => item.id === 'other')!;
   return vEmbed(Colors.Primary)
     .setTitle(`${definition.emoji} ${definition.label}`)
     .setDescription(`${definition.description}\n\n_Aktuell sind in diesem Bereich keine sichtbaren Commands verfuegbar._`)
