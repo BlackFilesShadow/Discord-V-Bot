@@ -1,0 +1,35 @@
+// Additive Economy/Linking-Modelle. Die grosse Hauptschema-Datei bleibt bewusst
+// unangetastet; Prisma 7 laedt alle *.prisma-Dateien in diesem Ordner.
+
+model EconomyLinkRewardState {
+  id                        String   @id @default(cuid())
+  guildId                   String
+  nitradoConnId             String
+  userDiscordId             String
+  identityHash              String   @db.VarChar(64)
+  rewardEligibleFrom        DateTime
+  unlinkedAt                DateTime?
+  startBalanceGrantedAt     DateTime?
+  startBalanceGrantedAmount BigInt   @default(0)
+  createdAt                 DateTime @default(now())
+  updatedAt                 DateTime @updatedAt
+
+  @@unique([guildId, nitradoConnId, userDiscordId])
+  @@index([guildId, nitradoConnId, identityHash])
+  @@index([guildId, nitradoConnId, unlinkedAt])
+}
+
+model PlaytimeRewardProgress {
+  id               String   @id @default(cuid())
+  sessionId        String
+  guildId          String
+  nitradoConnId    String
+  userDiscordId    String
+  rewardEpoch      DateTime
+  bucketsCredited  Int      @default(0)
+  createdAt        DateTime @default(now())
+  updatedAt        DateTime @updatedAt
+
+  @@unique([sessionId, rewardEpoch])
+  @@index([guildId, nitradoConnId, userDiscordId])
+}
