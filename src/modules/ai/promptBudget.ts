@@ -97,6 +97,31 @@ function truncateToLimit(text: string, limit: number): string {
   return `${cut.trimEnd()}${marker}`.slice(0, limit);
 }
 
+/**
+ * Grounding-Abschnitte behalten ihre kanonische Quellen-/Semantik-Kennung auch
+ * bei sehr kleinen Test- oder Betriebsbudgets. Der Body wird innerhalb des
+ * verbleibenden Teilbudgets gekappt; falls fuer den langen Standardmarker kein
+ * Platz mehr bleibt, zeigt ein kompakter […]-Marker die Kuerzung an.
+ */
+function truncateSectionPreservingHeader(text: string, header: string, limit: number): string {
+  if (text.length <= limit) return text;
+  if (limit <= 0) return '';
+  if (!text.startsWith(header) || header.length >= limit) return truncateToLimit(text, limit);
+
+  const body = text.slice(header.length).replace(/^\s+/, '');
+  const separator = body ? '\n' : '';
+  const available = limit - header.length - separator.length;
+  if (available <= 0) return header.slice(0, limit);
+  if (body.length <= available) return `${header}${separator}${body}`;
+
+  const compactMarker = '[…]';
+  if (available <= compactMarker.length) {
+    return `${header}${separator}${compactMarker.slice(0, available)}`.slice(0, limit);
+  }
+  const bodyLimit = available - compactMarker.length;
+  return `${header}${separator}${body.slice(0, bodyLimit).trimEnd()}${compactMarker}`.slice(0, limit);
+}
+
 function parseContextBundleV2(text: string): { bundle: ContextBundleV2; channelHistory: string | null } | null {
   const markerPos = text.indexOf(OUTER_UNTRUSTED_MARKER);
   if (markerPos < 0) return null;
@@ -154,12 +179,26 @@ function clampDayzNitradoContext(text: string): string {
     const nitradoAndRules = text.slice(nitradoIndex).trim();
     const parts: string[] = [];
     if (beforeNitrado) {
-      parts.push(truncateToLimit(beforeNitrado, hasDayz ? budgets.dayzContext : budgets.nitradoContext));
+      const dayzHeader = DAYZ_CONTEXT_MARKERS.find((marker) => beforeNitrado.startsWith(marker));
+      const limit = hasDayz ? budgets.dayzContext : budgets.nitradoContext;
+      parts.push(dayzHeader
+        ? truncateSectionPreservingHeader(beforeNitrado, dayzHeader, limit)
+        : truncateToLimit(beforeNitrado, limit));
     }
-    if (nitradoAndRules) parts.push(truncateToLimit(nitradoAndRules, budgets.nitradoContext));
+    if (nitradoAndRules) {
+      parts.push(truncateSectionPreservingHeader(
+        nitradoAndRules,
+        NITRADO_SECTION_MARKER,
+        budgets.nitradoContext,
+      ));
+    }
     return parts.join('\n\n');
   }
 
+  if (hasDayz) {
+    const dayzHeader = DAYZ_CONTEXT_MARKERS.find((marker) => text.startsWith(marker));
+    if (dayzHeader) return truncateSectionPreservingHeader(text, dayzHeader, budgets.dayzContext);
+  }
   return truncateToLimit(text, hasDayz ? budgets.dayzContext : budgets.nitradoContext);
 }
 
