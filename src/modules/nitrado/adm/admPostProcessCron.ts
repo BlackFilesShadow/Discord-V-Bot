@@ -13,7 +13,7 @@ import { asGuildId, asNitradoConnId } from '../../../types/scope';
 import { runPvpRewardShadow, type RewardEngineClient } from './rewardEngine';
 import { aggregatePlayerSessions, type PlayerSessionClient } from './playerSessionService';
 import { getRewardRule, effectiveBaseAmount, type RewardRuleClient } from '../../economy/rewardRules';
-import { getSlotEconomyConfig, admRewardsActive, type SlotConfigClient } from '../../economy/slotConfig';
+import { getSlotEconomyConfig, type SlotConfigClient } from '../../economy/slotConfig';
 import { bookPendingRewards, type RewardBookingClient } from '../../economy/rewardBooking';
 import { bookPlaytimeRewards, type PlaytimeBookingClient } from '../../economy/playtimeBooking';
 import { assertEconomyScopeReady } from '../../economy/scopeMigration';
@@ -45,9 +45,20 @@ async function processConnection(conn: ScopedConnection): Promise<void> {
   }
 
   try {
-    const slotCfg = await getSlotEconomyConfig(prisma as unknown as SlotConfigClient, scopeRef);
-    const active = admRewardsActive(slotCfg);
-    const pvpRule = await getRewardRule(prisma as unknown as RewardRuleClient, scopeRef, 'pvp:default');
+    const [slotCfg, settings, pvpRule, playtimeRule] = await Promise.all([
+      getSlotEconomyConfig(prisma as unknown as SlotConfigClient, scopeRef),
+      prisma.serverSettings.findUnique({
+        where: { guildId_nitradoConnId: { guildId: conn.guildId, nitradoConnId: conn.id } },
+        select: { economyActive: true },
+      }),
+      getRewardRule(prisma as unknown as RewardRuleClient, scopeRef, 'pvp:default'),
+      getRewardRule(prisma as unknown as RewardRuleClient, scopeRef, 'playtime:default'),
+    ]);
+
+    // Seit Etappe 1 ist ServerSettings.economyActive die kanonische Wahrheit.
+    // EconomySlotConfig.enabled ist nur noch ein Kompatibilitaets-Mirror und
+    // darf einen abweichenden Runtime-Zustand nicht eigenstaendig aktivieren.
+    const active = settings?.economyActive === true && slotCfg?.admRewardsEnabled === true;
     const resolveUserAt = (gameId: string, occurredAt: Date | null) => resolveRewardUserAt(
       scopeRef,
       gameId,
@@ -76,22 +87,21 @@ async function processConnection(conn: ScopedConnection): Promise<void> {
         scopeRef,
         { rewardTarget: slotCfg.rewardTarget },
       );
-
-      const playtimeRule = await getRewardRule(
-        prisma as unknown as RewardRuleClient,
-        scopeRef,
-        'playtime:default',
-      );
-      await bookPlaytimeRewards(
-        prisma as unknown as PlaytimeBookingClient,
-        scopeRef,
-        {
-          perBucketAmount: effectiveBaseAmount(playtimeRule),
-          rewardTarget: slotCfg.rewardTarget,
-        },
-        resolvePlaytimeLink,
-      );
     }
+
+    // Immer ausfuehren: bei deaktivierter Economy/Regel werden vollstaendige
+    // Zeit-Buckets nur als verarbeitet markiert. Damit koennen sie nach einer
+    // spaeteren Aktivierung niemals rueckwirkend ausgezahlt werden.
+    await bookPlaytimeRewards(
+      prisma as unknown as PlaytimeBookingClient,
+      scopeRef,
+      {
+        perBucketAmount: effectiveBaseAmount(playtimeRule),
+        rewardTarget: slotCfg?.rewardTarget ?? 'WALLET',
+        payoutEnabled: active,
+      },
+      resolvePlaytimeLink,
+    );
   } catch (error) {
     logger.warn(`ADM-Postprocess: Reward-Verarbeitung fehlgeschlagen fuer ${conn.id}: ${(error as Error).message}`);
   }
