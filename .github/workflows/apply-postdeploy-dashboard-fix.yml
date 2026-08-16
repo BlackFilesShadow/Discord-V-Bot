@@ -1,0 +1,38 @@
+name: Apply post-deploy dashboard fix
+on:
+  push:
+    branches: [fix/postdeploy-dashboard-economy-help-killfeed]
+    paths: [.github/workflows/apply-postdeploy-dashboard-fix.yml]
+permissions:
+  contents: write
+jobs:
+  apply:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          ref: fix/postdeploy-dashboard-economy-help-killfeed
+          fetch-depth: 0
+      - run: python3 scripts/apply_postdeploy_dashboard_fix.py
+      - run: git diff --check
+      - shell: bash
+        run: |
+          set -euo pipefail
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add -- \
+            dashboard-ui/src/pages/ServerSlot.tsx \
+            dashboard-ui/src/pages/Server.tsx \
+            dashboard-ui/src/components/Shell.tsx \
+            dashboard-ui/src/components/economy/VirtualAccountsPanel.tsx \
+            dashboard-ui/src/components/economy/LotteryPanel.tsx \
+            dashboard-ui/src/theme.css \
+            src/commands/user/help.ts \
+            src/modules/ai/guildAwareness.ts \
+            src/modules/feeds/feedManagerV2.ts \
+            src/config.ts \
+            .env.example
+          git add -- src/**/*.ts
+          git rm -f --ignore-unmatch -- scripts/apply_postdeploy_dashboard_fix.py .github/workflows/apply-postdeploy-dashboard-fix.yml
+          git commit -m "Fix post-deploy dashboard scope and runtime warnings"
+          git push origin HEAD:fix/postdeploy-dashboard-economy-help-killfeed
