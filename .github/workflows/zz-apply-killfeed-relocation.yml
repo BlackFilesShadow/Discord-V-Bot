@@ -1,0 +1,37 @@
+name: One-shot killfeed relocation
+
+on:
+  push:
+    branches:
+      - ui/nitrado-killfeed-page2
+
+permissions:
+  contents: write
+
+jobs:
+  patch:
+    if: github.actor != 'github-actions[bot]'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout feature branch
+        uses: actions/checkout@v4
+        with:
+          ref: ui/nitrado-killfeed-page2
+          fetch-depth: 0
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Apply exact Server.tsx transform
+        run: node scripts/applyKillfeedRelocation.cjs
+
+      - name: Commit transformed dashboard source
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add dashboard-ui/src/pages/Server.tsx
+          git diff --cached --quiet && exit 0
+          git commit -m "Move killfeed into Nitrado page 2"
+          git push
