@@ -38,10 +38,138 @@ function exactAnswer(name: string): DayzCatalogAnswer {
   };
 }
 
+const TECHNICAL_ADMIN_MARKERS = /\b(server|nitrado|config|konfig|settings?|einstellung|datei|file|xml|json|cfg|mission|mod|parameter|feld|schalter|wert|central economy|ce|loot|spawn|event|wetter|weather|lifetime|restock|nominal|globals|types|events|basebuilding|bauen|build)\b/i;
+const CHANGE_VERBS = /\b(aender|aendere|aendern|ander|andere|andern|änder|ändere|ändern|einstell|einstellen|setz|setzen|aktivier|aktivieren|deaktivier|deaktivieren|anpass|anpassen|konfigurier|konfigurieren|erhoeh|erhoehen|erhöh|erhöhen|verringer|verringern)\w*\b/i;
+const CONFIGURABLE_CONCEPTS = /\b(stamina|ausdauer|third.?person|crosshair|perspektive|base.?damage|container.?damage|schaden|damage|tag.?nacht|day.?night|nacht|night|wetter|weather|loot|spawn|respawn)\b/i;
+const KNOWN_FILE_ALIASES = new Set([
+  'type.xml', 'types.xml',
+  'event.xml', 'events.xml',
+  'message.xml', 'messages.xml',
+  'global.xml', 'globals.xml',
+  'economy.xml',
+]);
+
+function explicitConfigFileToken(question: string): string | null {
+  return question.match(/\b[A-Za-z0-9_.-]+\.(?:xml|json|cfg|c)\b/i)?.[0] ?? null;
+}
+
+function hasDayzContext(question: string): boolean {
+  const q = fold(question);
+  return /\bdayz\b|\bcentral economy\b|\bce\b|\bserverdz\.cfg\b|\bmaxplayers\b|\bservertimeacceleration\b|\bservernighttimeacceleration\b|\benablecfggameplayfile\b/.test(q);
+}
+
+function isKnownDayzConfigFile(file: string): boolean {
+  const normalized = fold(file).replace(/\\/g, '/');
+  const basename = normalized.split('/').pop() ?? normalized;
+  if (KNOWN_FILE_ALIASES.has(basename)) return true;
+  return base.getDayz129Index().allRelativePaths.some((path) => {
+    const candidate = fold(path).replace(/\\/g, '/');
+    const candidateBasename = candidate.split('/').pop() ?? candidate;
+    return normalized === candidate || basename === candidateBasename;
+  });
+}
+
+function isUnscopedForeignConfigFile(question: string): boolean {
+  const file = explicitConfigFileToken(question);
+  if (!file) return false;
+  if (hasDayzContext(question)) return false;
+  return !isKnownDayzConfigFile(file);
+}
+
+function isTechnicalAdminIntent(question: string): boolean {
+  if (!question) return false;
+  const q = fold(question);
+  if (!hasDayzContext(question)) return false;
+
+  // Questions that merely name a concrete config file are handled by the
+  // deterministic catalog (including unknown-file handling) below. The generic
+  // firewall is for change/tuning intent that would otherwise reach free text.
+  if (explicitConfigFileToken(question)) return false;
+
+  return CHANGE_VERBS.test(q)
+    && (TECHNICAL_ADMIN_MARKERS.test(q) || CONFIGURABLE_CONCEPTS.test(q));
+}
+
+function directTechnicalAnswer(question: string): DayzCatalogAnswer | null {
+  const q = fold(question);
+
+  if (/\bmaxplayers\b|maximale\s+spieler|spieler(?:zahl|anzahl).*server/.test(q)) {
+    return {
+      answer: '`maxPlayers` setzt in der DayZ-Serverkonfiguration die konfigurierte maximale Spielerzahl. Bei einem Hoster wie Nitrado kann das gebuchte Produkt zusätzlich eine harte Slot-Obergrenze setzen. Ich gebe dafür keinen universellen Vanilla-Zahlenwert aus.',
+      topic: 'file',
+      ids: ['dayz129:server:maxPlayers'],
+    };
+  }
+
+  if (/\bservertimeacceleration\b|\bservernighttimeacceleration\b|tag.?nacht|day.?night/.test(q)) {
+    return {
+      answer: '`serverTimeAcceleration` beschleunigt die Serverzeit. `serverNightTimeAcceleration` wirkt zusätzlich auf die Nachtphase. Konkrete Werte solltest du nach gewünschter Tages-/Nachtlänge wählen; V-Bot erfindet dafür keinen angeblichen Vanilla-Pflichtwert.',
+      topic: 'file',
+      ids: ['dayz129:server:time-acceleration'],
+    };
+  }
+
+  if (/bauen\s*\+|bauen plus|build[ -]?anywhere|basebuilding|bauplatzierung/.test(q)) {
+    return {
+      answer: [
+        'Für **Bauen+ / gelockerte Bauplatzierung** in Vanilla DayZ 1.29 nutzt du `cfggameplay.json`.',
+        '',
+        '1. Aktiviere die Gameplay-Datei in der gestarteten Server-Konfiguration mit `enableCfgGameplayFile = 1;`.',
+        '2. Bearbeite in der Mission `cfggameplay.json` -> `BaseBuildingData`.',
+        '3. Setze nur die Prüfungen auf `true`, die du gezielt deaktivieren bzw. lockern willst.',
+        '',
+        'Belegte Platzierungschecks sind unter anderem `disableIsCollidingBBoxCheck`, `disableIsCollidingPlayerCheck` und `disableIsPlacementPermittedCheck`; für den Bauvorgang existieren `disablePerformRoofCheck`, `disableIsCollidingCheck` und `disableDistanceCheck`.',
+      ].join('\n'),
+      topic: 'file',
+      ids: ['dayz129:file:cfggameplay.json', 'dayz129:server:enableCfgGameplayFile'],
+    };
+  }
+
+  if (/mission\s+(wechseln|aendern|ändern)|(?:karte|map)\s+wechseln|mission\s+template|class\s+missions/.test(q)) {
+    return {
+      answer: 'Die Mission wird in der DayZ-Serverkonfiguration im `class Missions`-Block über `template` gewählt. Die drei verifizierten 1.29-Missionen heißen `dayzOffline.chernarusplus`, `dayzOffline.enoch` und `dayzOffline.sakhal`. Missionsdateien und CE-Werte nicht blind zwischen den Karten kopieren.',
+      topic: 'file',
+      ids: ['dayz129:server:mission-template'],
+    };
+  }
+
+  if ((/\bmods?\b/.test(q) && /\b(?:installier\w*|lad\w*|workshop)\b/.test(q)) || /\-mod=|\-servermod=/.test(q)) {
+    return {
+      answer: 'DayZ-Mods werden serverseitig über Startparameter wie `-mod=` geladen. Konkrete Workshop-Pfade, Abhängigkeiten und zusätzliche Server-Parameter müssen aus der jeweiligen Mod-Dokumentation stammen; V-Bot rät sie nicht.',
+      topic: 'file',
+      ids: ['dayz129:server:mods'],
+    };
+  }
+
+  if (CHANGE_VERBS.test(q) && /\b(wetter|weather|regen|rain|schnee|snow)\b/.test(q)) {
+    return {
+      answer: 'Für das Missionswetter ist in den verifizierten DayZ-1.29-Datensätzen `cfgweather.xml` zuständig. Die konkreten Bereiche unterscheiden sich je Karte; nenne Chernarus, Livonia oder Sakhal und das gewünschte Wetterziel, dann kann V-Bot die belegte Datei gezielt erklären, ohne Werte zu erfinden.',
+      topic: 'file',
+      ids: ['dayz129:file:cfgweather.xml'],
+    };
+  }
+
+  return null;
+}
+
+function failClosedTechnicalAnswer(question: string): DayzCatalogAnswer | null {
+  if (!isTechnicalAdminIntent(question)) return null;
+  return {
+    answer: 'Dazu kann ich dir aktuell keinen ausreichend sicher belegten DayZ-1.29-Datei-, Feld- oder Parameternamen nennen. Nenne mir die konkrete Datei, die Karte und das genaue Ziel; dann prüfe ich den vorhandenen 1.29-Katalog gezielt. Ich rate keine Server-Einstellung.',
+    topic: 'file',
+    ids: ['dayz129:technical:grounding-required'],
+  };
+}
+
 export const searchTypes = v3.searchTypes;
 
 export function answer(question: string): DayzCatalogAnswer | null {
   if (!question) return null;
+
+  // Foreign config files must not be claimed by the DayZ catalog merely because
+  // they end in .xml/.json/.cfg/.c. Known DayZ files still work without the
+  // word "DayZ"; unknown files require explicit DayZ context.
+  if (isUnscopedForeignConfigFile(question)) return null;
 
   const explicit = explicitLookupIntent(question);
   const short = question.trim().split(/\s+/).filter(Boolean).length <= 6 && !hasDetailIntent(question);
@@ -58,6 +186,18 @@ export function answer(question: string): DayzCatalogAnswer | null {
     const unique = uniqueCaseInsensitiveMention(question);
     if (unique) return exactAnswer(unique);
   }
+
+  // Known technical topics must win over fuzzy type/event matching. Otherwise
+  // strings such as "loot" or "serverTimeAcceleration" can be consumed by a
+  // weaker catalog match before the safety response is reached.
+  const direct = directTechnicalAnswer(question);
+  if (direct) return direct;
+
+  // Unsupported change/tuning intent fails closed before fuzzy event matching.
+  // Concrete file questions are deliberately excluded and stay on the normal
+  // deterministic file/unknown-file catalog path.
+  const guarded = failClosedTechnicalAnswer(question);
+  if (guarded) return guarded;
 
   return v3.answer(question);
 }
