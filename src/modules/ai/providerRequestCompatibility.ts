@@ -34,6 +34,10 @@ function geminiModelFromPath(pathname: string): string | null {
 function budgetOpenAiMessages(value: unknown): unknown {
   if (!Array.isArray(value) || value.length === 0) return value;
   if (!value.every((m) => isRecord(m) && typeof m.role === 'string' && typeof m.content === 'string')) return value;
+
+  const total = value.reduce((sum, raw) => sum + ((raw as Record<string, unknown>).content as string).length, 0);
+  if (total <= getTotalPromptBudget()) return value;
+
   const lastIndex = value.length - 1;
   return composePromptWithinBudget(value.map((raw, index) => {
     const message = raw as Record<string, unknown>;
@@ -102,7 +106,7 @@ export function normalizeAiProviderRequest(
     && url.pathname.endsWith('/chat/completions')
   ) {
     const body: Record<string, unknown> = { ...data };
-    body.messages = budgetOpenAiMessages(body.messages);
+    if (body.messages !== undefined) body.messages = budgetOpenAiMessages(body.messages);
 
     if (body.max_completion_tokens === undefined && body.max_tokens !== undefined) {
       body.max_completion_tokens = body.max_tokens;
@@ -133,7 +137,7 @@ export function normalizeAiProviderRequest(
     && url.pathname.endsWith(':generateContent')
   ) {
     const body: Record<string, unknown> = { ...data };
-    body.contents = budgetGeminiContents(body.contents);
+    if (body.contents !== undefined) body.contents = budgetGeminiContents(body.contents);
 
     const model = geminiModelFromPath(url.pathname);
     if (!model || !(GEMINI_MODELS_WITHOUT_LEGACY_SAMPLING as readonly string[]).includes(model)) {
