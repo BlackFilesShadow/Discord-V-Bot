@@ -1,10 +1,11 @@
-export type AiProviderName = 'groq' | 'cerebras' | 'openrouter' | 'gemini' | 'openai';
+export const AI_PROVIDER_NAMES = ['groq', 'cerebras', 'openrouter', 'gemini', 'openai'] as const;
+export type AiProviderName = typeof AI_PROVIDER_NAMES[number];
 
 /**
  * Kanonische Modell-Defaults fuer V-Bot.
  *
  * Diese Werte liegen absichtlich an EINER Stelle. Provider-Modelle werden
- * regelmaessig abgekündigt; verstreute Defaults in Config/Setup/Tests haben in
+ * regelmaessig abgekuendigt; verstreute Defaults in Config/Setup/Tests haben in
  * der Vergangenheit dazu gefuehrt, dass neue Installationen mit bereits
  * abgeschalteten Modellen gestartet sind.
  *
@@ -57,6 +58,17 @@ const LEGACY_MODEL_MIGRATIONS: Readonly<Record<AiProviderName, Readonly<Record<s
     'gpt-4': AI_MODEL_DEFAULTS.openai,
   }),
 });
+
+export function parseAiProvider(configured?: string | null): AiProviderName {
+  const requested = (configured ?? '').trim().toLowerCase();
+  if (!requested) return 'groq';
+  if ((AI_PROVIDER_NAMES as readonly string[]).includes(requested)) {
+    return requested as AiProviderName;
+  }
+  throw new Error(
+    `Ungueltiger AI_PROVIDER "${configured}". Erlaubt: ${AI_PROVIDER_NAMES.join(', ')}`,
+  );
+}
 
 /**
  * Liefert fuer einen Provider ein produktionsfaehiges Default-Modell und
