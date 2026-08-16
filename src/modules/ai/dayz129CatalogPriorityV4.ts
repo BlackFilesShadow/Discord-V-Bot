@@ -38,6 +38,93 @@ function exactAnswer(name: string): DayzCatalogAnswer {
   };
 }
 
+const TECHNICAL_ADMIN_MARKERS = /\b(server|nitrado|config|konfig|settings?|einstellung|datei|file|xml|json|cfg|mission|mod|parameter|feld|schalter|wert|central economy|ce|loot|spawn|event|wetter|weather|lifetime|restock|nominal|globals|types|events|basebuilding|bauen|build)\b/i;
+const CHANGE_VERBS = /\b(aender|aendere|aendern|ander|andere|andern|änder|ändere|ändern|einstell|einstellen|setz|setzen|aktivier|aktivieren|deaktivier|deaktivieren|anpass|anpassen|konfigurier|konfigurieren|erhoeh|erhoehen|erhöh|erhöhen|verringer|verringern)\w*\b/i;
+const CONFIGURABLE_CONCEPTS = /\b(stamina|ausdauer|third.?person|crosshair|perspektive|base.?damage|container.?damage|schaden|damage|tag.?nacht|day.?night|nacht|night|wetter|weather|loot|spawn|respawn)\b/i;
+
+function isTechnicalAdminIntent(question: string): boolean {
+  if (!question) return false;
+  const q = fold(question);
+  const hasDayzContext = /\bdayz\b|\bcentral economy\b|\bce\b/.test(q);
+  const hasFileToken = /\b[A-Za-z0-9_.-]+\.(?:xml|json|cfg|c)\b/i.test(question);
+  if (hasFileToken) return true;
+  if (!hasDayzContext) return false;
+  return TECHNICAL_ADMIN_MARKERS.test(q) || (CHANGE_VERBS.test(q) && CONFIGURABLE_CONCEPTS.test(q));
+}
+
+function directTechnicalAnswer(question: string): DayzCatalogAnswer | null {
+  const q = fold(question);
+
+  if (/\bmaxplayers\b|maximale\s+spieler|spieler(?:zahl|anzahl).*server/.test(q)) {
+    return {
+      answer: '`maxPlayers` setzt in der DayZ-Serverkonfiguration die konfigurierte maximale Spielerzahl. Bei einem Hoster wie Nitrado kann das gebuchte Produkt zusätzlich eine harte Slot-Obergrenze setzen. Einen universellen Vanilla-Zahlenwert gebe ich dafür nicht aus.',
+      topic: 'file',
+      ids: ['dayz129:server:maxPlayers'],
+    };
+  }
+
+  if (/\bservertimeacceleration\b|\bservernighttimeacceleration\b|tag.?nacht|day.?night/.test(q)) {
+    return {
+      answer: '`serverTimeAcceleration` beschleunigt die Serverzeit. `serverNightTimeAcceleration` wirkt zusätzlich auf die Nachtphase. Konkrete Werte solltest du nach gewünschter Tages-/Nachtlänge wählen; V-Bot erfindet dafür keinen angeblichen Vanilla-Pflichtwert.',
+      topic: 'file',
+      ids: ['dayz129:server:time-acceleration'],
+    };
+  }
+
+  if (/bauen\s*\+|bauen plus|build[ -]?anywhere|basebuilding|bauplatzierung/.test(q)) {
+    return {
+      answer: [
+        'Für **Bauen+ / gelockerte Bauplatzierung** in Vanilla DayZ 1.29 nutzt du `cfggameplay.json`.',
+        '',
+        '1. Aktiviere die Gameplay-Datei in der gestarteten Server-Konfiguration mit `enableCfgGameplayFile = 1;`.',
+        '2. Bearbeite in der Mission `cfggameplay.json` -> `BaseBuildingData`.',
+        '3. Setze nur die Prüfungen auf `true`, die du gezielt deaktivieren bzw. lockern willst.',
+        '',
+        'Belegte Platzierungschecks sind unter anderem `disableIsCollidingBBoxCheck`, `disableIsCollidingPlayerCheck` und `disableIsPlacementPermittedCheck`; für den Bauvorgang existieren `disablePerformRoofCheck`, `disableIsCollidingCheck` und `disableDistanceCheck`.',
+      ].join('\n'),
+      topic: 'file',
+      ids: ['dayz129:file:cfggameplay.json', 'dayz129:server:enableCfgGameplayFile'],
+    };
+  }
+
+  if (/mission\s+(wechseln|aendern|ändern)|(?:karte|map)\s+wechseln|mission\s+template|class\s+missions/.test(q)) {
+    return {
+      answer: 'Die Mission wird in der DayZ-Serverkonfiguration im `class Missions`-Block über `template` gewählt. Die drei verifizierten 1.29-Missionen heißen `dayzOffline.chernarusplus`, `dayzOffline.enoch` und `dayzOffline.sakhal`. Missionsdateien und CE-Werte nicht blind zwischen den Karten kopieren.',
+      topic: 'file',
+      ids: ['dayz129:server:mission-template'],
+    };
+  }
+
+  if (/mods?\s+(installieren|laden)|workshop\s+mod|\-mod=|\-servermod=/.test(q)) {
+    return {
+      answer: 'DayZ-Mods werden serverseitig über Startparameter wie `-mod=` geladen. Konkrete Workshop-Pfade, Abhängigkeiten und zusätzliche Server-Parameter müssen aus der jeweiligen Mod-Dokumentation stammen; V-Bot rät sie nicht.',
+      topic: 'file',
+      ids: ['dayz129:server:mods'],
+    };
+  }
+
+  if (CHANGE_VERBS.test(q) && /\b(wetter|weather|regen|rain|schnee|snow)\b/.test(q)) {
+    return {
+      answer: 'Für das Missionswetter ist in den verifizierten DayZ-1.29-Datensätzen `cfgweather.xml` zuständig. Die konkreten Bereiche unterscheiden sich je Karte; nenne Chernarus, Livonia oder Sakhal und das gewünschte Wetterziel, dann kann V-Bot die belegte Datei gezielt erklären, ohne Werte zu erfinden.',
+      topic: 'file',
+      ids: ['dayz129:file:cfgweather.xml'],
+    };
+  }
+
+  return null;
+}
+
+function failClosedTechnicalAnswer(question: string): DayzCatalogAnswer | null {
+  if (!isTechnicalAdminIntent(question)) return null;
+  const direct = directTechnicalAnswer(question);
+  if (direct) return direct;
+  return {
+    answer: 'Dazu kann ich dir aktuell keinen ausreichend sicher belegten DayZ-1.29-Datei-, Feld- oder Parameternamen nennen. Nenne mir die konkrete Datei, die Karte und das genaue Ziel; dann prüfe ich den vorhandenen 1.29-Katalog gezielt. Ich rate keine Server-Einstellung.',
+    topic: 'file',
+    ids: ['dayz129:technical:grounding-required'],
+  };
+}
+
 export const searchTypes = v3.searchTypes;
 
 export function answer(question: string): DayzCatalogAnswer | null {
@@ -59,5 +146,12 @@ export function answer(question: string): DayzCatalogAnswer | null {
     if (unique) return exactAnswer(unique);
   }
 
-  return v3.answer(question);
+  const existing = v3.answer(question);
+  if (existing) return existing;
+
+  // Final preflight firewall: technical DayZ admin/config questions must never
+  // fall through to an ungrounded LLM answer. Known safe topics are answered
+  // deterministically above; everything else fails closed without inventing
+  // filenames, parameters or numeric defaults.
+  return failClosedTechnicalAnswer(question);
 }
