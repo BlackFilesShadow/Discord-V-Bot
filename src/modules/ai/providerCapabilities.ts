@@ -16,9 +16,9 @@ const caps = (...values: AiCapability[]): ReadonlySet<AiCapability> => new Set(v
 
 /**
  * Capabilities are intentionally conservative and only asserted for model IDs
- * we explicitly verified against current official provider documentation.
+ * explicitly verified against current official provider documentation.
  * Unknown/custom model IDs get chat-only behavior rather than guessed tools,
- * structured outputs or context limits.
+ * structured outputs, reasoning behavior, or context limits.
  */
 export function getProviderCapabilityProfile(provider: ProviderName, rawModel: string): ProviderCapabilityProfile {
   const model = String(rawModel || '').trim();
@@ -51,15 +51,11 @@ export function getProviderCapabilityProfile(provider: ProviderName, rawModel: s
     };
   }
 
-  // OpenAI Luna is kept conservative here: the current OpenAI platform
-  // documents it as a high-volume GPT-5.6 option, but model-specific capability
-  // metadata is not hard-coded beyond chat/fast until an exact model contract is
-  // available through the provider API/docs.
   if (provider === 'openai' && lower === 'gpt-5.6-luna') {
     return {
       provider, model,
-      capabilities: caps('chat', 'fast'),
-      affinity: { fast: 1.08 },
+      capabilities: caps('chat', 'fast', 'structured', 'reasoning', 'long_context', 'tool'),
+      affinity: { fast: 1.08, long_context: 1.16, structured: 1.06, reasoning: 1.04 },
       knownModel: true,
     };
   }
