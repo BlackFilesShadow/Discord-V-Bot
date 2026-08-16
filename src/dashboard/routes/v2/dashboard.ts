@@ -74,6 +74,7 @@ dashboardRouter.get('/server/:slot/settings', requireGuildPermission('whitelist.
     update: {},
   });
   res.json({
+    nitradoConnId: conn.id,
     whitelistActive: s.whitelistActive,
     economyActive: s.economyActive,
     permaOnly: conn.keepOnlineEnabled,
@@ -122,6 +123,23 @@ dashboardRouter.patch('/server/:slot/settings', requireGuildPermission('whitelis
       create: { guildId: scope.guildId, nitradoConnId: conn.id, ...data },
       update: data,
     });
+
+    // ServerSettings.economyActive ist die kanonische Aktivierung. Das alte
+    // EconomyConfig.enabled bleibt nur als Runtime-/Migrationskompatibilitaet
+    // synchron, damit bestehende Scheduler und alte Clients nicht abweichen.
+    if (typeof b.economyActive === 'boolean') {
+      await tx.economyConfig.upsert({
+        where: { guildServer: { guildId: scope.guildId, nitradoConnId: conn.id } },
+        create: { guildId: scope.guildId, nitradoConnId: conn.id, enabled: b.economyActive },
+        update: { enabled: b.economyActive },
+      });
+      await tx.economySlotConfig.upsert({
+        where: { guildId_nitradoConnId: { guildId: scope.guildId, nitradoConnId: conn.id } },
+        create: { guildId: scope.guildId, nitradoConnId: conn.id, enabled: b.economyActive },
+        update: { enabled: b.economyActive },
+      });
+    }
+
     if (typeof b.permaOnly === 'boolean') {
       await tx.nitradoConnection.updateMany({
         where: { id: conn.id, guildId: scope.guildId },
@@ -147,6 +165,7 @@ dashboardRouter.patch('/server/:slot/settings', requireGuildPermission('whitelis
   });
   emitGuildEvent(scope.guildId, { type: 'settings.changed', payload: { guildId: scope.guildId, slotId: conn.id } });
   res.json({
+    nitradoConnId: conn.id,
     whitelistActive: s.whitelistActive,
     economyActive: s.economyActive,
     permaOnly: keepOnlineEnabled,
