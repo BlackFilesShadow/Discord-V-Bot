@@ -12,6 +12,7 @@ CREATE TABLE "EconomyLinkRewardState" (
     "identityHash" VARCHAR(64) NOT NULL,
     "rewardEligibleFrom" TIMESTAMP(3) NOT NULL,
     "unlinkedAt" TIMESTAMP(3),
+    "startBalanceEligible" BOOLEAN NOT NULL DEFAULT true,
     "startBalanceGrantedAt" TIMESTAMP(3),
     "startBalanceGrantedAmount" BIGINT NOT NULL DEFAULT 0,
     "createdAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
@@ -45,12 +46,13 @@ CREATE INDEX "PlaytimeRewardProgress_guildId_nitradoConnId_userDiscordId_idx"
 ON "PlaytimeRewardProgress"("guildId", "nitradoConnId", "userDiscordId");
 
 -- Historische Links bleiben fuer Anzeige/Audit unveraendert in verifiedAt.
--- Nur der neue Reward-Cutoff startet jetzt. Bereits nach altem System erhaltenes
--- Startguthaben wird erkannt, damit Relink/Neulogin kein zweites erzeugt.
+-- Nur der neue Reward-Cutoff startet jetzt. Bestehende Links erhalten bewusst
+-- KEIN neues Startguthaben durch blosses erneutes /link. Bereits nach altem
+-- System erhaltenes Startguthaben wird fuer Audit/Anzeige mit uebernommen.
 INSERT INTO "EconomyLinkRewardState" (
     "id", "guildId", "nitradoConnId", "userDiscordId", "identityHash",
-    "rewardEligibleFrom", "unlinkedAt", "startBalanceGrantedAt",
-    "startBalanceGrantedAmount", "createdAt", "updatedAt"
+    "rewardEligibleFrom", "unlinkedAt", "startBalanceEligible",
+    "startBalanceGrantedAt", "startBalanceGrantedAmount", "createdAt", "updatedAt"
 )
 SELECT
     CONCAT('legacy_', md5(g."guildId" || ':' || g."nitradoConnId" || ':' || g."userDiscordId")),
@@ -60,6 +62,7 @@ SELECT
     g."identityHash",
     CURRENT_TIMESTAMP,
     NULL,
+    false,
     sb."createdAt",
     COALESCE(sb."delta", 0),
     CURRENT_TIMESTAMP,
