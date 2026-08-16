@@ -105,8 +105,12 @@ function toVirtualEntry(row: DbVirtualEntryRow): VirtualAccountEntryRow {
 }
 
 export function normalizeVirtualAccountName(input: string): { name: string; nameKey: string } {
-  const name = input.normalize('NFKC').trim().replace(/\s+/g, ' ');
-  if (name.length < 1 || name.length > VIRTUAL_ACCOUNT_NAME_MAX || /[\r\n\t\u0000-\u001f\u007f]/.test(name)) {
+  const normalized = input.normalize('NFKC');
+  if (/[\r\n\t\u0000-\u001f\u007f]/.test(normalized)) {
+    throw new Error(`Kontoname muss 1..${VIRTUAL_ACCOUNT_NAME_MAX} druckbare Zeichen enthalten.`);
+  }
+  const name = normalized.trim().replace(/\s+/g, ' ');
+  if (name.length < 1 || name.length > VIRTUAL_ACCOUNT_NAME_MAX) {
     throw new Error(`Kontoname muss 1..${VIRTUAL_ACCOUNT_NAME_MAX} druckbare Zeichen enthalten.`);
   }
   return { name, nameKey: name.toLowerCase() };

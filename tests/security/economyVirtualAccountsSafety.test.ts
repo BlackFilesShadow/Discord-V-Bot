@@ -15,10 +15,10 @@ describe('virtuelle Economy-Konten — Production-Invarianten', () => {
   const serverSlot = read('dashboard-ui/src/pages/ServerSlot.tsx');
 
   it('macht Guild + Gameserver fuer virtuelle Konten und deren Ledger zwingend', () => {
-    expect(schema).toMatch(/model EconomyVirtualAccount \{[\s\S]*?guildId\s+String[\s\S]*?nitradoConnId\s+String\b/);
-    expect(schema).toMatch(/model EconomyVirtualAccountEntry \{[\s\S]*?guildId\s+String[\s\S]*?nitradoConnId\s+String\b/);
-    expect(schema).not.toMatch(/model EconomyVirtualAccount \{[\s\S]*?nitradoConnId\s+String\?/);
-    expect(schema).not.toMatch(/model EconomyVirtualAccountEntry \{[\s\S]*?nitradoConnId\s+String\?/);
+    expect(schema).toMatch(/model EconomyVirtualAccount \{[^}]*?guildId\s+String[^}]*?nitradoConnId\s+String\b/s);
+    expect(schema).toMatch(/model EconomyVirtualAccountEntry \{[^}]*?guildId\s+String[^}]*?nitradoConnId\s+String\b/s);
+    expect(schema).not.toMatch(/model EconomyVirtualAccount \{[^}]*?nitradoConnId\s+String\?/s);
+    expect(schema).not.toMatch(/model EconomyVirtualAccountEntry \{[^}]*?nitradoConnId\s+String\?/s);
     expect(migration).toContain('"guildId" TEXT NOT NULL');
     expect(migration).toContain('"nitradoConnId" TEXT NOT NULL');
   });
