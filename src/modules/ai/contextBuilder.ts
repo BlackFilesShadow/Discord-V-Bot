@@ -263,9 +263,8 @@ export async function buildServerUserContextBlocks(opts: ServerUserContextOption
 /** Rueckwaertskompatibler Gesamtblock fuer bestehende/extern unbekannte Caller. */
 export async function buildServerUserContext(opts: ServerUserContextOptions): Promise<string | null> {
   const blocks = await buildServerUserContextBlocks(opts);
-  const raw = [blocks.serverContext, blocks.userContext, blocks.ragContext].filter(Boolean).join('\n\n');
-  if (!raw) return null;
-  return wrapUntrustedContext(`AKTUELLER GESPRAECHSKONTEXT:\n\n${raw}`);
+  if (!blocks.serverContext && !blocks.userContext && !blocks.ragContext) return null;
+  return wrapUntrustedContext(`AI_CONTEXT_BUNDLE_V2:\n${JSON.stringify(blocks)}`);
 }
 
 function countChannelsByType(guild: Guild): {
