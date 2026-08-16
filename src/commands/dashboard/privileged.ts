@@ -12,6 +12,10 @@ import {
   type PlayerNameLinkResult,
   type SessionLinkClient,
 } from '../../modules/linking/linkService';
+import {
+  applySuccessfulLinkEconomyEffects,
+  deactivateLinkRewardState,
+} from '../../modules/linking/linkRewards';
 import { asNitradoConnId, asUserDiscordId } from '../../types/scope';
 import { MAX_GAME_SERVERS_PER_GUILD } from '../../modules/nitrado/gameServerScope';
 import {
@@ -89,8 +93,6 @@ function forceLinkFailure(result: Extract<PlayerNameLinkResult, { ok: false }>):
     case 'USER_ALREADY_LINKED':
       return 'Der Ziel-Discord-Account ist auf diesem Gameserver bereits mit einer anderen DayZ-Identitaet verknuepft.';
     case 'PLAYTIME_TOO_SHORT':
-      // Force-Link umgeht die 5-Minuten-Grenze. Dieser Fall ist defensiv fuer
-      // zukuenftige Service-Aenderungen erhalten.
       return 'Die Spielzeit reicht fuer eine normale Verknuepfung noch nicht aus.';
   }
 }
@@ -132,24 +134,13 @@ export const forceLinkCommand: Command = {
     .setName('force-link')
     .setDescription('Berechtigt: Verknuepft einen Discord-User mit einem bereits erkannten DayZ-Spielernamen.')
     .addUserOption(o => o.setName('user').setDescription('Discord-User').setRequired(true))
-    .addStringOption(o => o
-      .setName('id')
-      .setDescription('Exakter PSN-/Xbox-/DayZ-Spielername')
-      .setRequired(true)
-      .setMinLength(1)
-      .setMaxLength(64)) as SlashCommandBuilder),
+    .addStringOption(o => o.setName('id').setDescription('Exakter PSN-/Xbox-/DayZ-Spielername').setRequired(true).setMinLength(1).setMaxLength(64)) as SlashCommandBuilder),
   execute: withGuildScope({ requirePerm: 'economy.manage', acceptSlotOption: true }, async (i, scope) => {
     const target = i.options.getUser('user', true);
     if (target.bot) { await reply(i, 'Bots koennen nicht mit Spielidentitaeten verknuepft werden.'); return; }
     const playerName = i.options.getString('id', true).trim();
     if (!isValidPlayerName(playerName)) { await reply(i, 'Ungueltiger Spielername. Erwartet werden 1–64 Zeichen ohne Zeilenumbrueche.'); return; }
-    await queueAction(
-      i,
-      scope,
-      ACTIONS.FORCE_LINK,
-      { targetUserId: target.id, playerName },
-      `Force-Link von <@${target.id}> mit **${playerName}** ist vorbereitet. Die DayZ-GUID wird beim Bestaetigen aus den Server-Sessions aufgeloest.`,
-    );
+    await queueAction(i, scope, ACTIONS.FORCE_LINK, { targetUserId: target.id, playerName }, `Force-Link von <@${target.id}> mit **${playerName}** ist vorbereitet. Die DayZ-GUID wird beim Bestaetigen aus den Server-Sessions aufgeloest.`);
   }),
 };
 
@@ -220,14 +211,22 @@ export const confirmActionCommand: Command = {
     if (action.actionType === ACTIONS.FORCE_LINK) {
       const playerName = payloadString(payload, 'playerName');
       if (!isValidPlayerName(playerName)) throw new Error('Pending-Action-Spielername ist ungueltig.');
+      const linkScope = { guildId: scope.guildId, nitradoConnId };
       const result = await forceLinkByPlayerName(
         prisma as unknown as SessionLinkClient,
-        { guildId: scope.guildId, nitradoConnId },
+        linkScope,
         targetUserId,
         playerName,
         config.security.encryptionKey,
       );
       if (!result.ok) { await reply(i, forceLinkFailure(result)); return; }
+      const startBalance = await applySuccessfulLinkEconomyEffects({
+        scope: linkScope,
+        userDiscordId: targetUserId,
+        gameId: result.gameId,
+        secret: config.security.encryptionKey,
+        newLink: !result.alreadyLinked,
+      });
       logAudit('LINK_FORCE_CREATED', 'LINKING', {
         guildId: scope.guildId,
         nitradoConnId,
@@ -235,13 +234,17 @@ export const confirmActionCommand: Command = {
         target: targetUserId,
         playerName: result.playerName,
         actionId: id,
+        startBalanceGranted: startBalance.granted,
+        startBalanceAmount: startBalance.amount.toString(),
       });
-      await reply(i, `Force-Link wurde ausgefuehrt: <@${targetUserId}> ↔ **${result.playerName}**.`);
+      await reply(i, `Force-Link wurde ausgefuehrt: <@${targetUserId}> ↔ **${result.playerName}**.${startBalance.granted ? ` Startguthaben: +${startBalance.amount.toLocaleString('de-DE')}.` : ''}`);
       return;
     }
 
     if (action.actionType === ACTIONS.FORCE_UNLINK) {
-      const removed = await unlinkUser(prisma as unknown as LinkClient, { guildId: scope.guildId, nitradoConnId }, targetUserId);
+      const linkScope = { guildId: scope.guildId, nitradoConnId };
+      const removed = await unlinkUser(prisma as unknown as LinkClient, linkScope, targetUserId);
+      if (removed) await deactivateLinkRewardState(linkScope, targetUserId);
       logAudit('LINK_FORCE_REMOVED', 'LINKING', { guildId: scope.guildId, nitradoConnId, actor: scope.actorDiscordId, target: targetUserId, removed, actionId: id });
       await reply(i, removed ? 'Force-Unlink wurde ausgefuehrt. Die aktive Identitaet ist wieder fuer eine korrekte Neuverknuepfung frei.' : 'Es existierte keine aktive Verknuepfung.');
       return;

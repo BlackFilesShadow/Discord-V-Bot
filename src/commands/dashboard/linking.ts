@@ -21,6 +21,10 @@ import {
   type PlayerNameLinkResult,
   type SessionLinkClient,
 } from '../../modules/linking/linkService';
+import {
+  applySuccessfulLinkEconomyEffects,
+  deactivateLinkRewardState,
+} from '../../modules/linking/linkRewards';
 import { publishLinkingInfoEmbed } from '../../modules/linking/linkingChannel';
 import { buildStatusEmbed, type EmbedStatus } from '../../utils/statusEmbed';
 import { logAudit } from '../../utils/logger';
@@ -136,9 +140,10 @@ export const linkCommand: Command = {
       return;
     }
 
+    const rewardScope = { guildId: scope.guildId, nitradoConnId: scope.nitradoConnId! };
     const result = await linkByPlayerName(
       prisma as unknown as SessionLinkClient,
-      { guildId: scope.guildId, nitradoConnId: scope.nitradoConnId! },
+      rewardScope,
       scope.actorDiscordId,
       playerName,
       config.security.encryptionKey,
@@ -150,13 +155,34 @@ export const linkCommand: Command = {
       return;
     }
 
+    const startBalance = await applySuccessfulLinkEconomyEffects({
+      scope: rewardScope,
+      userDiscordId: scope.actorDiscordId,
+      gameId: result.gameId,
+      secret: config.security.encryptionKey,
+      newLink: !result.alreadyLinked,
+    });
+
     logAudit(result.alreadyLinked ? 'LINK_ALREADY_VERIFIED' : 'LINK_SESSION_VERIFIED', 'LINKING', {
       guildId: scope.guildId,
       nitradoConnId: scope.nitradoConnId,
       actor: scope.actorDiscordId,
       playerName: result.playerName,
       playedSeconds: result.playedSeconds,
+      startBalanceGranted: startBalance.granted,
+      startBalanceAmount: startBalance.amount.toString(),
     });
+
+    const fields: { name: string; value: string; inline?: boolean }[] = [
+      { name: 'Spielername', value: result.playerName },
+      { name: 'Nachgewiesene Spielzeit', value: formatDuration(result.playedSeconds) },
+    ];
+    if (startBalance.granted) {
+      fields.push({ name: '🎁 Startguthaben', value: `+${startBalance.amount.toLocaleString('de-DE')}` });
+    }
+    if (!result.alreadyLinked) {
+      fields.push({ name: '⏱ Economy-Rewards', value: 'Aktiv ab jetzt. Frühere Spielzeit/Aktivitäten werden nicht nachträglich vergütet.' });
+    }
 
     await statusReply(
       interaction,
@@ -164,11 +190,8 @@ export const linkCommand: Command = {
       result.alreadyLinked ? 'Bereits verknüpft' : '✅ Verknüpfung erfolgreich',
       result.alreadyLinked
         ? `Dein Discord-Account ist bereits korrekt mit **${result.playerName}** verbunden.`
-        : `Dein Discord-Account wurde mit **${result.playerName}** verbunden. Zukünftige serverseitige Aktivitäten dieser DayZ-GUID können damit deinem Discord-Account und den aktivierten Economy-Rewards eindeutig zugeordnet werden.`,
-      [
-        { name: 'Spielername', value: result.playerName },
-        { name: 'Nachgewiesene Spielzeit', value: formatDuration(result.playedSeconds) },
-      ],
+        : `Dein Discord-Account wurde mit **${result.playerName}** verbunden. Neue serverseitige Aktivitäten dieser DayZ-GUID können ab diesem Zeitpunkt eindeutig deinem Discord-Account zugeordnet werden.`,
+      fields,
     );
   }),
 };
@@ -178,21 +201,23 @@ export const unlinkCommand: Command = {
     .setName('unlink')
     .setDescription('Entfernt deine aktive Discord ↔ DayZ-Verknüpfung auf diesem Gameserver.') as SlashCommandBuilder),
   execute: withGuildScope({ acceptSlotOption: true }, async (interaction, scope) => {
+    const rewardScope = { guildId: scope.guildId, nitradoConnId: scope.nitradoConnId! };
     const removed = await unlinkUser(
       prisma as unknown as LinkClient,
-      { guildId: scope.guildId, nitradoConnId: scope.nitradoConnId! },
+      rewardScope,
       scope.actorDiscordId,
     );
     if (!removed) {
       await statusReply(interaction, 'INFO', 'Keine aktive Verknüpfung', 'Für deinen Discord-Account existiert auf diesem Gameserver keine aktive Verknüpfung.');
       return;
     }
+    await deactivateLinkRewardState(rewardScope, scope.actorDiscordId);
     logAudit('LINK_DELETED', 'LINKING', {
       guildId: scope.guildId,
       nitradoConnId: scope.nitradoConnId,
       actor: scope.actorDiscordId,
     });
-    await statusReply(interaction, 'SUCCESS', 'Verknüpfung entfernt', 'Die aktive Zuordnung wurde entfernt. Historische Economy-/Auditdaten bleiben unverändert bestehen.');
+    await statusReply(interaction, 'SUCCESS', 'Verknüpfung entfernt', 'Die aktive Zuordnung wurde entfernt. Historische Economy-/Auditdaten bleiben unverändert bestehen; unverlinkte Spielzeit wird nicht vergütet.');
   }),
 };
 
@@ -230,10 +255,7 @@ export const linkInfoCommand: Command = {
   data: slotOption(new SlashCommandBuilder()
     .setName('link-info')
     .setDescription('Berechtigt: Prüft, welcher Discord-Account mit Name oder GUID verbunden ist.')
-    .addUserOption(option => option
-      .setName('user')
-      .setDescription('Discord-Account prüfen')
-      .setRequired(false))
+    .addUserOption(option => option.setName('user').setDescription('Discord-Account prüfen').setRequired(false))
     .addStringOption(option => option
       .setName('id')
       .setDescription('Exakter Spielername oder aktuelle DayZ-GUID')

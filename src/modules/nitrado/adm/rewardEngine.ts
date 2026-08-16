@@ -1,26 +1,23 @@
 /**
- * RewardEngine (Phase 3, Schritt 4) — Shadow/WOULD_PAY-Modus.
+ * RewardEngine — idempotente ADM-Reward-Entscheidungen.
  *
- * Leitet aus normalisierten AdmEvents idempotente RewardDecisions ab, OHNE Geld
- * zu buchen. Die Idempotenz kommt aus dem Unique-Key (admEventId + rewardRuleId):
- * dieselbe Kill-Zeile kann NIE zweimal eine Auszahlung erzeugen (Release-Blocker
- * gegen Mehrfach-Auszahlung).
- *
- * Status im Shadow:
- *   PENDING  -> "wuerde zahlen" (calculated gesetzt, paid=0, noch kein Ledger)
- *   SKIPPED  -> kein Reward (reasonCode erklaert warum)
- * Die Umstellung PENDING->PAID (echte Ledgerbuchung) erfolgt erst in Phase 5.
+ * Event-Rewards duerfen nur entstehen, wenn die DayZ-Identitaet zum Zeitpunkt
+ * des Ereignisses bereits mit Discord verknuepft war. Der Aufloeser erhaelt
+ * deshalb occurredAt mit; historische Events vor dem aktuellen Link-Cutoff
+ * werden dauerhaft SKIPPED statt spaeter nachbezahlt. Ebenso werden Events
+ * bei deaktivierter/0-Coin-Regel dauerhaft konsumiert und nie spaeter backpaid.
  */
 
 export interface ShadowRewardRule {
-  rewardRuleId: string; // z.B. 'pvp:default'
-  baseAmount: bigint;   // Flat pro zulaessigem Kill (Shadow-Platzhalter, echte Regeln = Phase 5)
+  rewardRuleId: string;
+  baseAmount: bigint;
 }
 
 export interface PvpAdmEvent {
   id: string;
-  actorGameId: string | null;  // Opfer
-  targetGameId: string | null; // Killer
+  actorGameId: string | null;
+  targetGameId: string | null;
+  occurredAt: Date | null;
 }
 
 export type RewardStatus = 'PENDING' | 'SKIPPED';
@@ -34,28 +31,23 @@ export interface RewardDecisionInput {
   reasonCode: string;
 }
 
-/**
- * Reine Entscheidung fuer EIN PvP-Kill-Event. Belohnt wird der Killer
- * (targetGameId). Kein verifizierter Link -> SKIPPED (aber Killfeed-Anzeige
- * bleibt davon unberuehrt, KILL-ECO-001).
- */
 export function decidePvpReward(
   event: PvpAdmEvent,
   killerUserDiscordId: string | null,
   rule: ShadowRewardRule,
 ): RewardDecisionInput {
-  const base = {
-    admEventId: event.id,
-    rewardRuleId: rule.rewardRuleId,
-  };
+  const base = { admEventId: event.id, rewardRuleId: rule.rewardRuleId };
   if (!event.targetGameId) {
     return { ...base, userDiscordId: null, status: 'SKIPPED', calculated: 0n, reasonCode: 'SKIPPED_INVALID_IDENTITY' };
   }
   if (event.actorGameId && event.actorGameId === event.targetGameId) {
     return { ...base, userDiscordId: null, status: 'SKIPPED', calculated: 0n, reasonCode: 'SKIPPED_ANTI_FARM' };
   }
+  if (rule.baseAmount <= 0n) {
+    return { ...base, userDiscordId: null, status: 'SKIPPED', calculated: 0n, reasonCode: 'SKIPPED_REWARD_DISABLED' };
+  }
   if (!killerUserDiscordId) {
-    return { ...base, userDiscordId: null, status: 'SKIPPED', calculated: rule.baseAmount, reasonCode: 'SKIPPED_UNLINKED_KILLER' };
+    return { ...base, userDiscordId: null, status: 'SKIPPED', calculated: rule.baseAmount, reasonCode: 'SKIPPED_UNLINKED_OR_PRELINK_KILLER' };
   }
   return { ...base, userDiscordId: killerUserDiscordId, status: 'PENDING', calculated: rule.baseAmount, reasonCode: 'WOULD_PAY_SHADOW' };
 }
@@ -65,33 +57,27 @@ export interface RewardEngineScope {
   nitradoConnId: string;
 }
 
-/** Prisma-Teilschnittstelle (fuer Testbarkeit ohne echten Client). */
 export interface RewardEngineClient {
   admEvent: {
-    findMany: (args: unknown) => Promise<Array<{ id: string; actorGameId: string | null; targetGameId: string | null }>>;
+    findMany: (args: unknown) => Promise<PvpAdmEvent[]>;
   };
   rewardDecision: {
     create: (args: { data: Record<string, unknown> }) => Promise<unknown>;
   };
 }
 
-/** Aufloesung Spiel-Identitaet -> Discord-User (verifizierte GameIdentityLink). */
-export type ResolveUserFn = (gameId: string) => Promise<string | null>;
+/** GUID + Ereigniszeit -> Discord nur wenn der Link zu diesem Zeitpunkt aktiv war. */
+export type ResolveUserAtFn = (gameId: string, occurredAt: Date | null) => Promise<string | null>;
 
 function isUniqueViolation(e: unknown): boolean {
   return typeof e === 'object' && e !== null && (e as { code?: string }).code === 'P2002';
 }
 
-/**
- * Verarbeitet PvP-Kill-Events im Shadow-Modus zu RewardDecisions. Idempotent:
- * bereits entschiedene Events (Unique admEventId+rewardRuleId) werden
- * uebersprungen. Bucht KEIN Geld.
- */
 export async function runPvpRewardShadow(
   client: RewardEngineClient,
   scope: RewardEngineScope,
   rule: ShadowRewardRule,
-  resolveUser: ResolveUserFn,
+  resolveUserAt: ResolveUserAtFn,
   limit = 500,
 ): Promise<{ decided: number; wouldPay: number; skipped: number }> {
   const events = await client.admEvent.findMany({
@@ -101,12 +87,14 @@ export async function runPvpRewardShadow(
   });
 
   let decided = 0, wouldPay = 0, skipped = 0;
-  for (const ev of events) {
-    let userDiscordId: string | null = null;
-    if (ev.targetGameId) {
-      userDiscordId = await resolveUser(ev.targetGameId);
-    }
-    const decision = decidePvpReward(ev, userDiscordId, rule);
+  for (const event of events) {
+    // Bei deaktivierter/0-Coin-Regel ist keine Identitaetsaufloesung noetig.
+    // Die Entscheidung wird trotzdem persistent SKIPPED, damit ein spaeteres
+    // Aktivieren der Regel keine historischen Kills nachbezahlt.
+    const userDiscordId = rule.baseAmount > 0n && event.targetGameId
+      ? await resolveUserAt(event.targetGameId, event.occurredAt)
+      : null;
+    const decision = decidePvpReward(event, userDiscordId, rule);
     try {
       await client.rewardDecision.create({
         data: {
@@ -124,7 +112,7 @@ export async function runPvpRewardShadow(
       decided++;
       if (decision.status === 'PENDING') wouldPay++; else skipped++;
     } catch (e) {
-      if (!isUniqueViolation(e)) throw e; // bereits entschieden -> idempotent ueberspringen
+      if (!isUniqueViolation(e)) throw e;
     }
   }
   return { decided, wouldPay, skipped };
