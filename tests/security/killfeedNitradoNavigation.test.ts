@@ -1,28 +1,35 @@
 import fs from 'node:fs';
 import path from 'node:path';
 
-const source = fs.readFileSync(
+const server = fs.readFileSync(
   path.join(process.cwd(), 'dashboard-ui', 'src', 'pages', 'Server.tsx'),
+  'utf8',
+);
+const slot = fs.readFileSync(
+  path.join(process.cwd(), 'dashboard-ui', 'src', 'pages', 'ServerSlot.tsx'),
   'utf8',
 );
 
 describe('Killfeed dashboard placement', () => {
-  it('entfernt den eigenstaendigen Killfeed-Haupttab', () => {
-    expect(source).not.toContain("| 'killfeed'");
-    expect(source).not.toContain("key: 'killfeed'");
-    expect(source).not.toContain("tab === 'killfeed'");
+  it('hat weiterhin keinen eigenstaendigen globalen Killfeed-Haupttab', () => {
+    expect(server).not.toContain("| 'killfeed'");
+    expect(server).not.toContain("key: 'killfeed'");
+    expect(server).not.toContain('<KillfeedTab ');
   });
 
-  it('rendert das bestehende Killfeed-Konstrukt ausschliesslich als Nitrado Page 2', () => {
-    expect(source).toContain('1 · Server &amp; Verbindung');
-    expect(source).toContain('2 · Killfeed &amp; ADM');
-    expect(source).toContain('<KillfeedTab guildId={guildId} isOwner={canManageKillfeed} slots={slots} />');
-    expect(source.match(/<KillfeedTab /g)?.length).toBe(1);
+  it('liegt im konkreten Gameserver-Slot direkt unter Page 2', () => {
+    expect(slot).toContain("type Tab = 'settings' | 'whitelist' | 'economy' | 'links' | 'killfeed'");
+    expect(slot).toContain('>Page 1</p>');
+    expect(slot).toContain('>Page 2</p>');
+    expect(slot).toContain("['killfeed', 'Killfeed & ADM', Crosshair]");
+    expect(slot).toContain('<KillfeedTab guildId={guildId} isOwner={true} slots={currentKillfeedSlots} />');
+    expect(slot.match(/<KillfeedTab /g)?.length).toBe(1);
   });
 
-  it('bewahrt die Killfeed-Berechtigung getrennt von der Owner-only Nitrado-Verwaltung', () => {
-    expect(source).toContain("canManageKillfeed={isOwner || hasFullAccess || perms.includes('killfeed.manage')}");
-    expect(source).toContain('disabled={!isOwner}');
-    expect(source).toContain('disabled={!canManageKillfeed}');
+  it('beschraenkt Page 2 auf den aktuell sichtbaren Slot und die kanonische Killfeed-Berechtigung', () => {
+    expect(slot).toContain("filter(row => String(row.slot) === slot)");
+    expect(slot).toContain("permissions.includes('killfeed.manage')");
+    expect(slot).toContain("permissions.includes('dashboard.access')");
+    expect(slot).toContain("queryKey: ['dashboard-slot-meta', guildId, slot]");
   });
 });

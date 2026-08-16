@@ -1,4 +1,5 @@
 import {
+  MessageFlags,
   SlashCommandBuilder,
   ChatInputCommandInteraction,
   ChannelType,
@@ -74,7 +75,7 @@ const reminderCommand: Command = {
       const msg = `❌ Fehler: ${String((e as Error)?.message ?? e).slice(0, 400)}`;
       try {
         if (interaction.deferred || interaction.replied) await interaction.editReply({ content: msg });
-        else await interaction.reply({ content: msg, ephemeral: true });
+        else await interaction.reply({ content: msg, flags: MessageFlags.Ephemeral });
       } catch { /* */ }
     }
   },
@@ -90,24 +91,24 @@ async function runSub(sub: string, interaction: ChatInputCommandInteraction): Pr
 
     const factor = UNITS[einheit];
     if (!factor) {
-      await interaction.reply({ content: '❌ Unbekannte Zeiteinheit.', ephemeral: true });
+      await interaction.reply({ content: '❌ Unbekannte Zeiteinheit.', flags: MessageFlags.Ephemeral });
       return;
     }
     const ms = dauer * factor;
     if (ms < MIN_DURATION_MS) {
-      await interaction.reply({ content: '❌ Mindestdauer: 5 Sekunden.', ephemeral: true });
+      await interaction.reply({ content: '❌ Mindestdauer: 5 Sekunden.', flags: MessageFlags.Ephemeral });
       return;
     }
     if (ms > MAX_DURATION_MS) {
-      await interaction.reply({ content: '❌ Maximaldauer: 1 Jahr.', ephemeral: true });
+      await interaction.reply({ content: '❌ Maximaldauer: 1 Jahr.', flags: MessageFlags.Ephemeral });
       return;
     }
     if (recurring && ms < MIN_RECURRENCE_MS) {
-      await interaction.reply({ content: '❌ Wiederkehrende Reminder: min. 1 Minute Abstand.', ephemeral: true });
+      await interaction.reply({ content: '❌ Wiederkehrende Reminder: min. 1 Minute Abstand.', flags: MessageFlags.Ephemeral });
       return;
     }
 
-    await interaction.deferReply({ ephemeral: true });
+    await interaction.deferReply({ flags: MessageFlags.Ephemeral });
 
     // Channel-Mode nur in Server-Text-Channels
     let channelId: string | null = null;
@@ -166,7 +167,7 @@ async function runSub(sub: string, interaction: ChatInputCommandInteraction): Pr
   }
 
   if (sub === 'liste') {
-    await interaction.deferReply({ ephemeral: true });
+    await interaction.deferReply({ flags: MessageFlags.Ephemeral });
     const list = await prisma.reminder.findMany({
       where: { userId: interaction.user.id, isActive: true },
       orderBy: { dueAt: 'asc' },
@@ -196,7 +197,7 @@ async function runSub(sub: string, interaction: ChatInputCommandInteraction): Pr
 
   if (sub === 'loeschen') {
     const id = interaction.options.getString('id', true);
-    await interaction.deferReply({ ephemeral: true });
+    await interaction.deferReply({ flags: MessageFlags.Ephemeral });
     const r = await prisma.reminder.findUnique({ where: { id } });
     if (!r || r.userId !== interaction.user.id) {
       await interaction.editReply({

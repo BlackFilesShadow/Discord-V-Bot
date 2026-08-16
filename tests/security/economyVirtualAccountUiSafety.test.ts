@@ -14,9 +14,11 @@ describe('virtuelle Konten — Surface-Sicherheit', () => {
     expect(panel).toContain('Nur Konten mit 0 Guthaben koennen archiviert werden.');
   });
 
-  it('Dashboard bietet kontrollierte Auszahlung und keine physische Loeschung', () => {
+  it('Dashboard bietet kontrollierte Auszahlung, expliziten Slot-Scope und keine physische Loeschung', () => {
     expect(panel).toContain('Kontrollierte Auszahlung / Refund');
-    expect(panel).toContain('/payout`');
+    expect(panel).toContain('/payout?${scope}');
+    expect(panel).toContain("const scope = `slot=${encodeURIComponent(slot)}`");
+    expect(panel).toContain("['economy-virtual-account-audit', guildId, slot, auditAccountId]");
     expect(panel).not.toMatch(/api\.del\([^\n]*virtual-accounts/);
   });
 

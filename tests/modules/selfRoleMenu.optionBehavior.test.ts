@@ -33,6 +33,7 @@ jest.mock('../../src/utils/logger', () => ({
   logAudit: jest.fn(),
 }));
 
+import { MessageFlags } from 'discord.js';
 import {
   buildMenuRows,
   handleSelfRoleButton,
@@ -85,8 +86,8 @@ describe('SelfRole pro Option', () => {
 
     expect(add).toHaveBeenCalledWith(ROLE, expect.any(String));
     expect(remove).not.toHaveBeenCalled();
-    const response = reply.mock.calls[0][0] as { embeds: Array<{ data: { description?: string } }>; ephemeral: boolean };
-    expect(response.ephemeral).toBe(true);
+    const response = reply.mock.calls[0][0] as { embeds: Array<{ data: { description?: string } }>; flags?: number };
+    expect(response.flags).toBe(MessageFlags.Ephemeral);
     expect(response.embeds[0].data.description).toContain('Hallo Tester');
     expect(response.embeds[0].data.description).toContain('erhalten');
   });
@@ -120,8 +121,8 @@ describe('SelfRole pro Option', () => {
     expect(add).toHaveBeenCalledWith(ROLE, expect.any(String));
     expect(deferUpdate).toHaveBeenCalledTimes(1);
     expect(editReply).toHaveBeenCalledWith(expect.objectContaining({ components: expect.any(Array) }));
-    const feedback = followUp.mock.calls[0][0] as { embeds?: unknown[]; ephemeral?: boolean };
-    expect(feedback.ephemeral).toBe(true);
+    const feedback = followUp.mock.calls[0][0] as { embeds?: unknown[]; flags?: number };
+    expect(feedback.flags).toBe(MessageFlags.Ephemeral);
     expect(feedback.embeds).toHaveLength(1);
   });
 

@@ -42,7 +42,8 @@ function statusVariant(status: VirtualAccount['status']): 'ok' | 'warn' | 'neutr
   return 'neutral';
 }
 
-export function VirtualAccountsPanel({ guildId }: { guildId: string }) {
+export function VirtualAccountsPanel({ guildId, slot }: { guildId: string; slot: string }) {
+  const scope = `slot=${encodeURIComponent(slot)}`;
   const qc = useQueryClient();
   const [name, setName] = useState('');
   const [expiresAt, setExpiresAt] = useState('');
@@ -57,13 +58,13 @@ export function VirtualAccountsPanel({ guildId }: { guildId: string }) {
   };
 
   const accounts = useQuery({
-    queryKey: ['economy-virtual-accounts', guildId],
-    queryFn: () => api.get<{ accounts: VirtualAccount[] }>(`/api/v2/guilds/${guildId}/economy/virtual-accounts?includeArchived=true`),
+    queryKey: ['economy-virtual-accounts', guildId, slot],
+    queryFn: () => api.get<{ accounts: VirtualAccount[] }>(`/api/v2/guilds/${guildId}/economy/virtual-accounts?${scope}&includeArchived=true`),
     retry: false,
   });
 
   const create = useMutation({
-    mutationFn: () => api.post<VirtualAccount>(`/api/v2/guilds/${guildId}/economy/virtual-accounts`, {
+    mutationFn: () => api.post<VirtualAccount>(`/api/v2/guilds/${guildId}/economy/virtual-accounts?${scope}`, {
       name: name.trim(),
       expiresAt: expiresAt ? new Date(expiresAt).toISOString() : null,
       acceptUserTransfers,
@@ -73,23 +74,23 @@ export function VirtualAccountsPanel({ guildId }: { guildId: string }) {
       setExpiresAt('');
       setAcceptUserTransfers(true);
       setMessage({ ok: true, text: `Konto „${account.name}“ erstellt.` });
-      void qc.invalidateQueries({ queryKey: ['economy-virtual-accounts', guildId] });
+      void qc.invalidateQueries({ queryKey: ['economy-virtual-accounts', guildId, slot] });
     },
     onError: (error: Error) => setMessage({ ok: false, text: error.message }),
   });
 
   const archive = useMutation({
-    mutationFn: (accountId: string) => api.post<VirtualAccount>(`/api/v2/guilds/${guildId}/economy/virtual-accounts/${accountId}/archive`, {}),
+    mutationFn: (accountId: string) => api.post<VirtualAccount>(`/api/v2/guilds/${guildId}/economy/virtual-accounts/${accountId}/archive?${scope}`, {}),
     onSuccess: account => {
       setMessage({ ok: true, text: `Konto „${account.name}“ archiviert.` });
-      void qc.invalidateQueries({ queryKey: ['economy-virtual-accounts', guildId] });
+      void qc.invalidateQueries({ queryKey: ['economy-virtual-accounts', guildId, slot] });
     },
     onError: (error: Error) => setMessage({ ok: false, text: error.message }),
   });
 
   const payoutMutation = useMutation({
     mutationFn: () => api.post<{ ok: boolean; booked: boolean; account: VirtualAccount }>(
-      `/api/v2/guilds/${guildId}/economy/virtual-accounts/${payout.accountId}/payout`,
+      `/api/v2/guilds/${guildId}/economy/virtual-accounts/${payout.accountId}/payout?${scope}`,
       {
         userDiscordId: payout.userDiscordId.trim(),
         amount: payout.amount.trim(),
@@ -102,15 +103,15 @@ export function VirtualAccountsPanel({ guildId }: { guildId: string }) {
       setMessage({ ok: true, text: result.booked ? 'Auszahlung atomar gebucht.' : 'Diese Auszahlung war bereits verarbeitet.' });
       setPayout({ accountId: '', userDiscordId: '', amount: '', targetPocket: 'WALLET', reason: '' });
       setPayoutOperationId(createIdempotencyKey());
-      void qc.invalidateQueries({ queryKey: ['economy-virtual-accounts', guildId] });
-      if (auditAccountId) void qc.invalidateQueries({ queryKey: ['economy-virtual-account-audit', guildId, auditAccountId] });
+      void qc.invalidateQueries({ queryKey: ['economy-virtual-accounts', guildId, slot] });
+      if (auditAccountId) void qc.invalidateQueries({ queryKey: ['economy-virtual-account-audit', guildId, slot, auditAccountId] });
     },
     onError: (error: Error) => setMessage({ ok: false, text: error.message }),
   });
 
   const audit = useQuery({
-    queryKey: ['economy-virtual-account-audit', guildId, auditAccountId],
-    queryFn: () => api.get<{ entries: VirtualEntry[] }>(`/api/v2/guilds/${guildId}/economy/virtual-accounts/${auditAccountId}/entries?limit=50`),
+    queryKey: ['economy-virtual-account-audit', guildId, slot, auditAccountId],
+    queryFn: () => api.get<{ entries: VirtualEntry[] }>(`/api/v2/guilds/${guildId}/economy/virtual-accounts/${auditAccountId}/entries?${scope}&limit=50`),
     enabled: auditAccountId.length > 0,
     retry: false,
   });

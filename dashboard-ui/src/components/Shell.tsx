@@ -82,7 +82,7 @@ export function Shell({ title, back, sidebar, children }: ShellProps) {
   const nextThemeLabel = theme === 'obsidian' ? 'Ice' : 'Obsidian';
 
   return (
-    <div className="min-h-full flex flex-col">
+    <div className="dashboard-shell min-h-full flex flex-col" data-dashboard-theme={theme}>
       <header className="sticky top-0 z-40 h-16 glass header-premium flex items-center justify-between px-3 sm:px-6">
         <div className="flex items-center gap-2 sm:gap-4 min-w-0">
           {sidebar && (
@@ -145,11 +145,12 @@ export function Shell({ title, back, sidebar, children }: ShellProps) {
             <button
               type="button"
               onClick={toggleTheme}
-              className="inline-flex items-center justify-center h-9 w-9 rounded-md text-muted hover:text-white hover:bg-bg-elev focus-ring"
+              className="theme-toggle-control inline-flex items-center justify-center sm:justify-start gap-1.5 h-9 min-w-9 sm:min-w-[92px] px-2 rounded-md text-muted hover:text-white focus-ring border border-border/60 bg-bg-elev/55"
               aria-label={`Farbschema auf ${nextThemeLabel} umschalten`}
               data-testid="theme-toggle"
             >
-              <Palette className="h-4 w-4" />
+              <Palette className="h-4 w-4 shrink-0" />
+              <span className="hidden sm:inline text-xs font-semibold">{themeLabel}</span>
             </button>
           </Tooltip>
 
@@ -199,7 +200,7 @@ export function Shell({ title, back, sidebar, children }: ShellProps) {
         {sidebar && (
           <>
             <aside
-              className="hidden md:block w-64 lg:w-72 border-r border-white/[0.06] bg-gradient-to-b from-bg-card/70 to-bg-card/35 backdrop-blur-md p-5 overflow-y-auto text-[15px]"
+              className="dashboard-sidebar hidden md:block w-64 lg:w-72 border-r border-border/60 backdrop-blur-md p-5 overflow-y-auto text-[15px]"
               aria-label="Navigation"
             >
               {sidebar}
@@ -222,7 +223,7 @@ export function Shell({ title, back, sidebar, children }: ShellProps) {
             )}
           </>
         )}
-        <main className="flex-1 overflow-y-auto p-4 sm:p-6" role="main">{children}</main>
+        <main className="dashboard-main flex-1 overflow-y-auto p-4 sm:p-6" role="main">{children}</main>
       </div>
 
       <CommandPalette open={paletteOpen} onClose={() => setPaletteOpen(false)} />

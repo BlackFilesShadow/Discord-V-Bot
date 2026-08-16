@@ -1,4 +1,5 @@
 import {
+  MessageFlags,
   ActionRowBuilder,
   ButtonBuilder,
   ButtonInteraction,
@@ -376,7 +377,7 @@ export async function handleSelfRoleButton(btn: ButtonInteraction): Promise<void
   const menuId = parts[1];
   const token = parts.slice(2).join('_');
   if (!btn.guild || !btn.member) {
-    await btn.reply({ embeds: [errorEmbed('Self-Role', 'Nur in Servern verfügbar.')], ephemeral: true });
+    await btn.reply({ embeds: [errorEmbed('Self-Role', 'Nur in Servern verfügbar.')], flags: MessageFlags.Ephemeral });
     return;
   }
 
@@ -384,27 +385,27 @@ export async function handleSelfRoleButton(btn: ButtonInteraction): Promise<void
   try { menu = await getMenuFull(menuId); }
   catch (e) {
     logger.warn('SelfRole: Menu-Load fehlgeschlagen', e as Error);
-    await btn.reply({ embeds: [errorEmbed('Self-Role', 'Menü konnte nicht geladen werden.')], ephemeral: true });
+    await btn.reply({ embeds: [errorEmbed('Self-Role', 'Menü konnte nicht geladen werden.')], flags: MessageFlags.Ephemeral });
     return;
   }
   if (!menu || !menu.isActive || menu.archived) {
-    await btn.reply({ embeds: [errorEmbed('Self-Role', 'Menü ist inaktiv oder nicht gefunden.')], ephemeral: true });
+    await btn.reply({ embeds: [errorEmbed('Self-Role', 'Menü ist inaktiv oder nicht gefunden.')], flags: MessageFlags.Ephemeral });
     return;
   }
   const opt = menu.options.find(o => o.id === token && o.isActive)
     ?? menu.options.find(o => o.roleId === token && o.isActive);
   if (!opt) {
-    await btn.reply({ embeds: [errorEmbed('Self-Role', 'Diese Rollen-Option existiert nicht mehr.')], ephemeral: true });
+    await btn.reply({ embeds: [errorEmbed('Self-Role', 'Diese Rollen-Option existiert nicht mehr.')], flags: MessageFlags.Ephemeral });
     return;
   }
 
   try {
     const out = await applyOption(btn.guild as Guild, btn.member as GuildMember, menu, opt);
-    await btn.reply({ embeds: [personalEmbed(btn.guild as Guild, menu, opt, btn.member as GuildMember, out)], ephemeral: true });
+    await btn.reply({ embeds: [personalEmbed(btn.guild as Guild, menu, opt, btn.member as GuildMember, out)], flags: MessageFlags.Ephemeral });
   } catch (e) {
     logger.error('SelfRole-Button fehlgeschlagen', e as Error);
     try {
-      await btn.reply({ embeds: [errorEmbed('Rollenaktion fehlgeschlagen', String((e as Error)?.message ?? e).slice(0, 200))], ephemeral: true });
+      await btn.reply({ embeds: [errorEmbed('Rollenaktion fehlgeschlagen', String((e as Error)?.message ?? e).slice(0, 200))], flags: MessageFlags.Ephemeral });
     } catch { /* already answered */ }
   }
 }
@@ -413,7 +414,7 @@ export async function handleSelfRoleSelect(sel: StringSelectMenuInteraction): Pr
   const menuId = sel.customId.slice('selfrole_sel_'.length);
   if (!menuId) return;
   if (!sel.guild || !sel.member) {
-    await sel.reply({ embeds: [errorEmbed('Self-Role', 'Nur in Servern verfügbar.')], ephemeral: true });
+    await sel.reply({ embeds: [errorEmbed('Self-Role', 'Nur in Servern verfügbar.')], flags: MessageFlags.Ephemeral });
     return;
   }
 
@@ -421,16 +422,16 @@ export async function handleSelfRoleSelect(sel: StringSelectMenuInteraction): Pr
   try { menu = await getMenuFull(menuId); }
   catch (e) {
     logger.warn('SelfRole: Menu-Load (Select) fehlgeschlagen', e as Error);
-    await sel.reply({ embeds: [errorEmbed('Self-Role', 'Menü konnte nicht geladen werden.')], ephemeral: true });
+    await sel.reply({ embeds: [errorEmbed('Self-Role', 'Menü konnte nicht geladen werden.')], flags: MessageFlags.Ephemeral });
     return;
   }
   if (!menu || !menu.isActive || menu.archived) {
-    await sel.reply({ embeds: [errorEmbed('Self-Role', 'Menü ist inaktiv oder nicht gefunden.')], ephemeral: true });
+    await sel.reply({ embeds: [errorEmbed('Self-Role', 'Menü ist inaktiv oder nicht gefunden.')], flags: MessageFlags.Ephemeral });
     return;
   }
   const opt = menu.options.find(o => o.isActive && o.id === sel.values[0]);
   if (!opt) {
-    await sel.reply({ embeds: [errorEmbed('Self-Role', 'Diese Rollen-Option existiert nicht mehr.')], ephemeral: true });
+    await sel.reply({ embeds: [errorEmbed('Self-Role', 'Diese Rollen-Option existiert nicht mehr.')], flags: MessageFlags.Ephemeral });
     return;
   }
 
@@ -440,12 +441,12 @@ export async function handleSelfRoleSelect(sel: StringSelectMenuInteraction): Pr
     const member = sel.member as GuildMember;
     const out = await applyOption(guild, member, menu, opt);
     await sel.editReply({ components: buildMenuRows(menu) });
-    await sel.followUp({ embeds: [personalEmbed(guild, menu, opt, member, out)], ephemeral: true });
+    await sel.followUp({ embeds: [personalEmbed(guild, menu, opt, member, out)], flags: MessageFlags.Ephemeral });
   } catch (e) {
     logger.error('SelfRole-Select fehlgeschlagen', e as Error);
     try {
       await sel.editReply({ components: buildMenuRows(menu) });
-      await sel.followUp({ embeds: [errorEmbed('Rollenaktion fehlgeschlagen', String((e as Error)?.message ?? e).slice(0, 200))], ephemeral: true });
+      await sel.followUp({ embeds: [errorEmbed('Rollenaktion fehlgeschlagen', String((e as Error)?.message ?? e).slice(0, 200))], flags: MessageFlags.Ephemeral });
     } catch { /* ignore */ }
   }
 }

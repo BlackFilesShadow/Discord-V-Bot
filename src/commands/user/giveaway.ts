@@ -1,4 +1,5 @@
 import {
+  MessageFlags,
   SlashCommandBuilder,
   ChatInputCommandInteraction,
   ActionRowBuilder,
@@ -187,7 +188,7 @@ async function handleStart(interaction: ChatInputCommandInteraction) {
 }
 
 async function handleEnter(interaction: ChatInputCommandInteraction) {
-  await interaction.deferReply({ ephemeral: true });
+  await interaction.deferReply({ flags: MessageFlags.Ephemeral });
 
   if (!interaction.guildId) {
     await interaction.editReply({ content: '❌ Dieser Befehl ist nur auf einem Server verfügbar.' });

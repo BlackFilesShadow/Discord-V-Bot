@@ -30,6 +30,11 @@ const feedTimers = new Map<string, NodeJS.Timeout>();
 const feedIntervals = new Map<string, number>();
 let feedRefreshTimer: NodeJS.Timeout | null = null;
 
+function isFeedConfigurationError(error: unknown): boolean {
+  const message = error instanceof Error ? error.message : String(error);
+  return /Twitch-Credentials fehlen|Ziel-Channel ist nicht erreichbar|Gespeicherte .*Quelle ist ungültig/i.test(message);
+}
+
 async function resolveMentionableRoles(guild: Guild, roleIds: string[], feedId: string): Promise<string[]> {
   const ids = (roleIds ?? []).filter((id) => /^\d{17,20}$/.test(id) && id !== guild.id);
   if (!ids.length) return [];
@@ -203,7 +208,11 @@ async function processFeed(client: Client, feedId: string, ignoreBackoff = false
     const count = previous + 1;
     const delayMs = Math.min(60_000 * 2 ** Math.min(count - 1, 5), 30 * 60_000);
     feedBackoff.set(feedId, { count, until: Date.now() + delayMs });
-    logger.error(`Feed-Verarbeitung fehlgeschlagen (${feedId}):`, error);
+    if (isFeedConfigurationError(error)) {
+      logger.warn(`Feed ${feedId}: Konfiguration unvollstaendig/ungueltig; Retry nach Backoff. ${error instanceof Error ? error.message : String(error)}`);
+    } else {
+      logger.error(`Feed-Verarbeitung fehlgeschlagen (${feedId}):`, error);
+    }
     if (propagateError) throw error;
   } finally {
     processingFeeds.delete(feedId);

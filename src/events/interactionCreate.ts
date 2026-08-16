@@ -1,4 +1,5 @@
 import {
+  MessageFlags,
   Events,
   Interaction,
   ModalBuilder,
@@ -138,7 +139,7 @@ const interactionCreateEvent: BotEvent = {
         try {
           await component.reply({
             embeds: [interactionNotice('warning', 'Zu viele Aktionen', 'Bitte einen Moment warten und versuche es dann erneut.')],
-            ephemeral: true,
+            flags: MessageFlags.Ephemeral,
           });
         } catch { /* Interaktion eventuell abgelaufen */ }
         return;
@@ -164,7 +165,7 @@ const interactionCreateEvent: BotEvent = {
         try {
           await modal.reply({
             embeds: [interactionNotice('info', 'Auswahl aktualisiert', 'Bitte den Button erneut klicken. Das alte Add-User-Modal wurde durch ein Auswahlmenue ersetzt.')],
-            ephemeral: true,
+            flags: MessageFlags.Ephemeral,
           });
         } catch { /* ignore */ }
         return;
@@ -304,7 +305,7 @@ const interactionCreateEvent: BotEvent = {
       try {
         await i.reply({
           embeds: [interactionNotice('warning', 'Command-Limit erreicht', 'Du verwendest gerade sehr viele Commands. Bitte einen Moment warten.')],
-          ephemeral: true,
+          flags: MessageFlags.Ephemeral,
         });
       } catch { /* Interaktion eventuell abgelaufen */ }
       return;
@@ -316,7 +317,7 @@ const interactionCreateEvent: BotEvent = {
       try {
         await i.reply({
           embeds: [interactionNotice('warning', 'Command-Limit erreicht', `\`/${i.commandName}\` wurde zu oft aufgerufen. Bitte einen Moment warten.`)],
-          ephemeral: true,
+          flags: MessageFlags.Ephemeral,
         });
       } catch { /* ignore */ }
       return;
@@ -330,7 +331,7 @@ const interactionCreateEvent: BotEvent = {
         try {
           await i.reply({
             embeds: [interactionNotice('info', 'Command noch im Cooldown', `Bitte noch **${cooldown.remainingSec}s** warten, bevor du \`/${i.commandName}\` erneut nutzt.`)],
-            ephemeral: true,
+            flags: MessageFlags.Ephemeral,
           });
         } catch { /* ignore */ }
         return;
@@ -348,7 +349,7 @@ const interactionCreateEvent: BotEvent = {
           logAudit('DEV_COMMAND_IDENTITY_DENIED', 'SECURITY', { userId, command: i.commandName });
           await i.reply({
             embeds: [interactionNotice('error', 'Developer-Zugriff verweigert', 'Keine globale Developer-Berechtigung.')],
-            ephemeral: true,
+            flags: MessageFlags.Ephemeral,
           });
           return;
         }
@@ -356,7 +357,7 @@ const interactionCreateEvent: BotEvent = {
         if (!config.developer.password) {
           await i.reply({
             embeds: [interactionNotice('error', 'Developer-Zugriff nicht verfuegbar', 'Das Developer-Passwort ist serverseitig nicht konfiguriert.')],
-            ephemeral: true,
+            flags: MessageFlags.Ephemeral,
           });
           return;
         }
@@ -366,7 +367,7 @@ const interactionCreateEvent: BotEvent = {
           const remainMin = Math.ceil((fails.lockedUntil - Date.now()) / 60_000);
           await i.reply({
             embeds: [interactionNotice('warning', 'Developer-Login gesperrt', `Zu viele Fehlversuche. Noch etwa **${remainMin} Min.** gesperrt.`)],
-            ephemeral: true,
+            flags: MessageFlags.Ephemeral,
           });
           logAudit('DEV_AUTH_BLOCKED_LOCKED', 'SECURITY', { userId, command: i.commandName, remainMin });
           return;
@@ -399,7 +400,7 @@ const interactionCreateEvent: BotEvent = {
         if (!(await hasAdminRole(userId))) {
           await i.reply({
             embeds: [interactionNotice('error', 'Keine Berechtigung', 'Du benoetigst eine Admin-Rolle fuer diesen Command.')],
-            ephemeral: true,
+            flags: MessageFlags.Ephemeral,
           });
           logAudit('ADMIN_COMMAND_DENIED', 'SECURITY', { userId, command: i.commandName, reason: 'Keine Admin-Rolle' });
           return;
@@ -409,7 +410,7 @@ const interactionCreateEvent: BotEvent = {
         if (!dbUser) {
           await i.reply({
             embeds: [interactionNotice('error', 'Hersteller-Zugriff verweigert', 'Du bist nicht registriert. Verwende `/register manufacturer`, um Hersteller zu werden.')],
-            ephemeral: true,
+            flags: MessageFlags.Ephemeral,
           });
           return;
         }
@@ -420,7 +421,7 @@ const interactionCreateEvent: BotEvent = {
         if (!dbUser.isManufacturer || dbUser.role !== 'MANUFACTURER') {
           await i.reply({
             embeds: [interactionNotice('error', 'Hersteller-Zugriff verweigert', 'Nur vollstaendig verifizierte Hersteller duerfen diesen Command nutzen.')],
-            ephemeral: true,
+            flags: MessageFlags.Ephemeral,
           });
           logAudit('MANUFACTURER_COMMAND_DENIED', 'SECURITY', {
             userId,
@@ -432,7 +433,7 @@ const interactionCreateEvent: BotEvent = {
         if (dbUser.status !== 'ACTIVE') {
           await i.reply({
             embeds: [interactionNotice('warning', 'Hersteller noch nicht aktiv', `Dein Account hat aktuell den Status \`${dbUser.status}\`. Schließe zuerst die Verifizierung ab.`)],
-            ephemeral: true,
+            flags: MessageFlags.Ephemeral,
           });
           return;
         }
@@ -443,7 +444,7 @@ const interactionCreateEvent: BotEvent = {
       if (!i.inGuild()) {
         await i.reply({
           embeds: [interactionNotice('error', 'Server-Kontext erforderlich', 'Dieser Command ist nur auf einem Discord-Server verfuegbar.')],
-          ephemeral: true,
+          flags: MessageFlags.Ephemeral,
         });
         return;
       }
@@ -451,7 +452,7 @@ const interactionCreateEvent: BotEvent = {
       if (missing.length > 0) {
         await i.reply({
           embeds: [interactionNotice('error', 'Server-Berechtigung fehlt', 'Dir fehlen die benoetigten Server-Berechtigungen fuer diesen Command.')],
-          ephemeral: true,
+          flags: MessageFlags.Ephemeral,
         });
         logAudit('COMMAND_PERMISSION_DENIED', 'SECURITY', {
           userId: i.user.id,
@@ -492,8 +493,8 @@ const interactionCreateEvent: BotEvent = {
 
       const embed = interactionNotice('error', 'Command fehlgeschlagen', 'Ein interner Fehler ist aufgetreten. Bitte versuche es erneut.');
       try {
-        if (i.replied || i.deferred) await i.followUp({ embeds: [embed], ephemeral: true });
-        else await i.reply({ embeds: [embed], ephemeral: true });
+        if (i.replied || i.deferred) await i.followUp({ embeds: [embed], flags: MessageFlags.Ephemeral });
+        else await i.reply({ embeds: [embed], flags: MessageFlags.Ephemeral });
       } catch (replyError: any) {
         logger.warn(`Konnte Fehler-Antwort nicht senden fuer ${i.commandName}: ${replyError?.message}`);
       }
@@ -509,13 +510,13 @@ async function handleDevPasswordModal(modal: ModalSubmitInteraction): Promise<vo
     pendingDevAuth.delete(modal.customId);
     await modal.reply({
       embeds: [interactionNotice('warning', 'Authentifizierung abgelaufen', 'Bitte starte den Developer-Command erneut.')],
-      ephemeral: true,
+      flags: MessageFlags.Ephemeral,
     });
     return;
   }
 
   if (pendingData.userId !== modal.user.id) {
-    await modal.reply({ embeds: [interactionNotice('error', 'Unbefugter Zugriff', 'Diese Authentifizierung gehoert zu einem anderen Benutzer.')], ephemeral: true });
+    await modal.reply({ embeds: [interactionNotice('error', 'Unbefugter Zugriff', 'Diese Authentifizierung gehoert zu einem anderen Benutzer.')], flags: MessageFlags.Ephemeral });
     return;
   }
 
@@ -523,7 +524,7 @@ async function handleDevPasswordModal(modal: ModalSubmitInteraction): Promise<vo
     pendingDevAuth.delete(modal.customId);
     await clearDevSession(modal.user.id).catch(() => undefined);
     logAudit('DEV_AUTH_IDENTITY_DENIED', 'SECURITY', { userId: modal.user.id, command: pendingData.commandName });
-    await modal.reply({ embeds: [interactionNotice('error', 'Developer-Zugriff verweigert', 'Keine globale Developer-Berechtigung.')], ephemeral: true });
+    await modal.reply({ embeds: [interactionNotice('error', 'Developer-Zugriff verweigert', 'Keine globale Developer-Berechtigung.')], flags: MessageFlags.Ephemeral });
     return;
   }
 
@@ -532,7 +533,7 @@ async function handleDevPasswordModal(modal: ModalSubmitInteraction): Promise<vo
     const remainMin = Math.ceil((fails.lockedUntil - Date.now()) / 60_000);
     await modal.reply({
       embeds: [interactionNotice('warning', 'Developer-Login gesperrt', `Zu viele Fehlversuche. Noch etwa **${remainMin} Min.** gesperrt.`)],
-      ephemeral: true,
+      flags: MessageFlags.Ephemeral,
     });
     return;
   }
@@ -547,7 +548,7 @@ async function handleDevPasswordModal(modal: ModalSubmitInteraction): Promise<vo
     });
     await modal.reply({
       embeds: [interactionNotice('error', 'Developer-Login nicht verfuegbar', 'Der Developer-Login ist serverseitig nicht konfiguriert.')],
-      ephemeral: true,
+      flags: MessageFlags.Ephemeral,
     });
     return;
   }
@@ -575,7 +576,7 @@ async function handleDevPasswordModal(modal: ModalSubmitInteraction): Promise<vo
     const message = current.lockedUntil > Date.now()
       ? `Zu viele Fehlversuche. Der Developer-Login ist fuer **${DEV_AUTH_LOCKOUT_MS / 60_000} Min.** gesperrt.`
       : `Das Developer-Passwort ist falsch. Noch **${remaining}** Versuche bis zur Sperre.`;
-    await modal.reply({ embeds: [interactionNotice('error', 'Authentifizierung fehlgeschlagen', message)], ephemeral: true });
+    await modal.reply({ embeds: [interactionNotice('error', 'Authentifizierung fehlgeschlagen', message)], flags: MessageFlags.Ephemeral });
     return;
   }
 
@@ -585,7 +586,7 @@ async function handleDevPasswordModal(modal: ModalSubmitInteraction): Promise<vo
   await setDevSession(modal.user.id, Date.now() + DEV_SESSION_MS);
   await modal.reply({
     embeds: [interactionNotice('success', 'Developer-Zugang freigeschaltet', `Der Zugang ist fuer **2 Stunden** aktiv. Verwende \`/${pendingData.commandName}\` jetzt erneut.`)],
-    ephemeral: true,
+    flags: MessageFlags.Ephemeral,
   });
 }
 
@@ -594,7 +595,7 @@ async function handleManufacturerButton(btn: ButtonInteraction): Promise<void> {
   const isOwner = userId === config.discord.ownerId;
   const isAdmin = isOwner || await hasAdminRole(userId);
   if (!isAdmin) {
-    await btn.reply({ embeds: [interactionNotice('error', 'Keine Berechtigung', 'Nur Admins koennen Hersteller-Anfragen bearbeiten.')], ephemeral: true });
+    await btn.reply({ embeds: [interactionNotice('error', 'Keine Berechtigung', 'Nur Admins koennen Hersteller-Anfragen bearbeiten.')], flags: MessageFlags.Ephemeral });
     return;
   }
 
@@ -616,7 +617,7 @@ async function handleManufacturerButton(btn: ButtonInteraction): Promise<void> {
         } catch { /* fallback unten */ }
         if (!edited) {
           try {
-            await btn.followUp({ embeds: [interactionNotice('warning', 'Anfrage bereits bearbeitet', result.message)], ephemeral: true });
+            await btn.followUp({ embeds: [interactionNotice('warning', 'Anfrage bereits bearbeitet', result.message)], flags: MessageFlags.Ephemeral });
           } catch { /* ignore */ }
         }
         return;
@@ -646,7 +647,7 @@ async function handleManufacturerButton(btn: ButtonInteraction): Promise<void> {
       if (!dmSent) {
         try {
           await btn.followUp({
-            ephemeral: true,
+            flags: MessageFlags.Ephemeral,
             embeds: [interactionNotice(
               'warning',
               'DM an Nutzer fehlgeschlagen',
@@ -678,7 +679,7 @@ async function handleManufacturerButton(btn: ButtonInteraction): Promise<void> {
       } catch { /* fallback unten */ }
       if (!edited) {
         try {
-          await btn.followUp({ embeds: [interactionNotice('warning', 'Anfrage bereits bearbeitet', result.message)], ephemeral: true });
+          await btn.followUp({ embeds: [interactionNotice('warning', 'Anfrage bereits bearbeitet', result.message)], flags: MessageFlags.Ephemeral });
         } catch { /* ignore */ }
       }
       return;
@@ -700,8 +701,8 @@ async function handleManufacturerButton(btn: ButtonInteraction): Promise<void> {
     try { await btn.editReply({ components: [] }); } catch { /* ignore */ }
     try {
       const embed = interactionNotice('error', 'Hersteller-Aktion fehlgeschlagen', 'Die Aktion konnte nicht abgeschlossen werden.');
-      if (btn.deferred || btn.replied) await btn.followUp({ embeds: [embed], ephemeral: true });
-      else await btn.reply({ embeds: [embed], ephemeral: true });
+      if (btn.deferred || btn.replied) await btn.followUp({ embeds: [embed], flags: MessageFlags.Ephemeral });
+      else await btn.reply({ embeds: [embed], flags: MessageFlags.Ephemeral });
     } catch { /* interaction unbrauchbar */ }
   }
 }
@@ -714,7 +715,7 @@ export default interactionCreateEvent;
  */
 export async function handlePollVoteButton(btn: ButtonInteraction): Promise<void> {
   try {
-    await btn.deferReply({ ephemeral: true });
+    await btn.deferReply({ flags: MessageFlags.Ephemeral });
     if (!btn.guildId) {
       await btn.editReply({ embeds: [interactionNotice('error', 'Server-Kontext erforderlich', 'Diese Aktion ist nur auf einem Server verfuegbar.')] });
       return;
@@ -773,7 +774,7 @@ export async function handlePollVoteButton(btn: ButtonInteraction): Promise<void
     try {
       const embed = interactionNotice('error', 'Abstimmung fehlgeschlagen', 'Die Aktion konnte nicht abgeschlossen werden.');
       if (btn.deferred) await btn.editReply({ embeds: [embed] });
-      else await btn.reply({ embeds: [embed], ephemeral: true });
+      else await btn.reply({ embeds: [embed], flags: MessageFlags.Ephemeral });
     } catch { /* ignore */ }
   }
 }
@@ -784,7 +785,7 @@ export async function handlePollVoteButton(btn: ButtonInteraction): Promise<void
  */
 export async function handleGiveawayEnterButton(btn: ButtonInteraction): Promise<void> {
   try {
-    await btn.deferReply({ ephemeral: true });
+    await btn.deferReply({ flags: MessageFlags.Ephemeral });
     if (!btn.guildId) {
       await btn.editReply({ embeds: [interactionNotice('error', 'Server-Kontext erforderlich', 'Diese Aktion ist nur auf einem Server verfuegbar.')] });
       return;
@@ -854,7 +855,7 @@ export async function handleGiveawayEnterButton(btn: ButtonInteraction): Promise
     try {
       const embed = interactionNotice('error', 'Giveaway-Aktion fehlgeschlagen', 'Die Aktion konnte nicht abgeschlossen werden.');
       if (btn.deferred) await btn.editReply({ embeds: [embed] });
-      else await btn.reply({ embeds: [embed], ephemeral: true });
+      else await btn.reply({ embeds: [embed], flags: MessageFlags.Ephemeral });
     } catch { /* ignore */ }
   }
 }
@@ -882,7 +883,7 @@ export async function handleTicketButton(btn: ButtonInteraction): Promise<void> 
     try {
       const embed = interactionNotice('error', 'Ticket-Aktion fehlgeschlagen', 'Die Ticket-Aktion konnte nicht abgeschlossen werden.');
       if (btn.deferred) await btn.editReply({ embeds: [embed] });
-      else await btn.reply({ embeds: [embed], ephemeral: true });
+      else await btn.reply({ embeds: [embed], flags: MessageFlags.Ephemeral });
     } catch { /* ignore */ }
   }
 }

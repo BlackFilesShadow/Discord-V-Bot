@@ -28,9 +28,21 @@ describe('production public command surfaces', () => {
   });
 
   it('macht DEV und /ai in der sichtbaren Hilfe explizit unsichtbar', () => {
-    expect(help).toContain('DEV-Funktionen und `/ai` werden hier bewusst nicht angezeigt');
+    expect(help).toContain('DEV-Funktionen und `/ai` bleiben bewusst ausserhalb dieser Nutzer-Hilfe');
     expect(help).toContain('visibleCommandCatalog');
     expect(help).not.toContain("names: new Set(['ai'");
+  });
+
+  it('startet mit Begruessung statt Command-Wand und erklaert Links/Rechts-Navigation', () => {
+    const start = help.indexOf('function overviewEmbed');
+    const end = help.indexOf('function optionToken', start);
+    const overview = help.slice(start, end);
+    expect(overview).toContain('Willkommen bei V-Bot Prime');
+    expect(overview).toContain('▶️ Weiter');
+    expect(overview).toContain('◀️ Zurueck');
+    expect(overview).toContain('📚 Katalog');
+    expect(overview).not.toContain('embed.addFields');
+    expect(overview).not.toContain('.map(entry =>');
   });
 
   it('enthaelt /ai und die Legacy-Whitelist-Namen nicht mehr im oeffentlichen AI-Command-Katalog', () => {

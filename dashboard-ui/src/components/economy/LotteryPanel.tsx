@@ -37,7 +37,8 @@ function statusVariant(status: LotteryRound['status']): 'ok' | 'warn' | 'neutral
   return 'neutral';
 }
 
-export function LotteryPanel({ guildId }: { guildId: string }) {
+export function LotteryPanel({ guildId, slot }: { guildId: string; slot: string }) {
+  const scope = `slot=${encodeURIComponent(slot)}`;
   const qc = useQueryClient();
   const [form, setForm] = useState({
     channelId: '',
@@ -49,24 +50,24 @@ export function LotteryPanel({ guildId }: { guildId: string }) {
   const [message, setMessage] = useState<{ ok: boolean; text: string } | null>(null);
 
   const current = useQuery({
-    queryKey: ['economy-lottery-current', guildId],
-    queryFn: () => api.get<{ round: LotteryRound | null }>(`/api/v2/guilds/${guildId}/economy/lottery/current`),
+    queryKey: ['economy-lottery-current', guildId, slot],
+    queryFn: () => api.get<{ round: LotteryRound | null }>(`/api/v2/guilds/${guildId}/economy/lottery/current?${scope}`),
     retry: false,
   });
   const history = useQuery({
-    queryKey: ['economy-lottery-history', guildId],
-    queryFn: () => api.get<{ rounds: LotteryRound[] }>(`/api/v2/guilds/${guildId}/economy/lottery/history?limit=10`),
+    queryKey: ['economy-lottery-history', guildId, slot],
+    queryFn: () => api.get<{ rounds: LotteryRound[] }>(`/api/v2/guilds/${guildId}/economy/lottery/history?${scope}&limit=10`),
     retry: false,
   });
 
   const invalidate = () => {
-    void qc.invalidateQueries({ queryKey: ['economy-lottery-current', guildId] });
-    void qc.invalidateQueries({ queryKey: ['economy-lottery-history', guildId] });
-    void qc.invalidateQueries({ queryKey: ['economy-virtual-accounts', guildId] });
+    void qc.invalidateQueries({ queryKey: ['economy-lottery-current', guildId, slot] });
+    void qc.invalidateQueries({ queryKey: ['economy-lottery-history', guildId, slot] });
+    void qc.invalidateQueries({ queryKey: ['economy-virtual-accounts', guildId, slot] });
   };
 
   const create = useMutation({
-    mutationFn: () => api.post<LotteryRound>(`/api/v2/guilds/${guildId}/economy/lottery/rounds`, {
+    mutationFn: () => api.post<LotteryRound>(`/api/v2/guilds/${guildId}/economy/lottery/rounds?${scope}`, {
       channelId: form.channelId.trim(),
       ticketPrice: form.ticketPrice.trim(),
       maxTicketsPerUser: Number(form.maxTicketsPerUser),
@@ -82,7 +83,7 @@ export function LotteryPanel({ guildId }: { guildId: string }) {
   });
 
   const endNow = useMutation({
-    mutationFn: (roundId: string) => api.post<LotteryRound>(`/api/v2/guilds/${guildId}/economy/lottery/${roundId}/end-now`, {}),
+    mutationFn: (roundId: string) => api.post<LotteryRound>(`/api/v2/guilds/${guildId}/economy/lottery/${roundId}/end-now?${scope}`, {}),
     onSuccess: round => {
       setMessage({ ok: true, text: `Runde ausgewertet: ${round.status}.` });
       invalidate();

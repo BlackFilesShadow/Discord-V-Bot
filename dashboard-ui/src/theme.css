@@ -25,18 +25,18 @@ html[data-theme='obsidian'] {
 
 html[data-theme='ice'] {
   color-scheme: dark;
-  --color-bg: 6 13 24;
-  --color-bg-card: 10 22 38;
-  --color-bg-elev: 16 34 54;
-  --color-bg-hover: 23 46 70;
-  --color-bg-subtle: 7 17 30;
-  --color-fg: 244 250 255;
-  --color-muted: 151 174 198;
-  --color-border: 42 67 91;
-  --color-accent: 56 189 248;
-  --color-accent-hover: 96 205 250;
-  --color-accent-glow: 125 211 252;
-  --color-accent-dim: 7 89 133;
+  --color-bg: 8 24 42;
+  --color-bg-card: 18 43 68;
+  --color-bg-elev: 29 61 92;
+  --color-bg-hover: 40 78 113;
+  --color-bg-subtle: 10 31 53;
+  --color-fg: 248 252 255;
+  --color-muted: 177 205 229;
+  --color-border: 73 112 146;
+  --color-accent: 125 211 252;
+  --color-accent-hover: 186 230 253;
+  --color-accent-glow: 224 242 254;
+  --color-accent-dim: 14 116 144;
 }
 
 html[data-theme='obsidian'],
@@ -250,4 +250,36 @@ html[data-theme='ice'] .modal-dialog {
   body::after {
     animation: none !important;
   }
+}
+
+
+/* Sichtbarer Shell-Wechsel: nicht nur einzelne Accent-Tokens, sondern das
+   komplette Dashboard-Overlay reagiert auf Obsidian/Ice. */
+html[data-theme='obsidian'] .dashboard-sidebar {
+  background: linear-gradient(180deg, rgba(15,19,25,.96), rgba(8,10,14,.88));
+  box-shadow: inset -1px 0 rgba(210,43,58,.08), 18px 0 48px -36px rgba(210,43,58,.42);
+}
+html[data-theme='obsidian'] .dashboard-main {
+  background: radial-gradient(ellipse at 88% 0%, rgba(210,43,58,.055), transparent 38%);
+}
+html[data-theme='ice'] .dashboard-sidebar {
+  background:
+    linear-gradient(180deg, rgba(23,54,83,.97), rgba(8,24,42,.93)),
+    radial-gradient(circle at 15% 8%, rgba(224,242,254,.12), transparent 28%);
+  border-right-color: rgba(125,211,252,.28);
+  box-shadow: inset -1px 0 rgba(224,242,254,.10), 20px 0 52px -36px rgba(56,189,248,.58);
+}
+html[data-theme='ice'] .dashboard-main {
+  background:
+    radial-gradient(ellipse at 86% 2%, rgba(186,230,253,.12), transparent 34%),
+    linear-gradient(145deg, rgba(29,61,92,.18), transparent 42%);
+}
+html[data-theme='obsidian'] .theme-toggle-control {
+  box-shadow: inset 0 0 0 1px rgba(210,43,58,.10), 0 0 20px -14px rgba(210,43,58,.75);
+}
+html[data-theme='ice'] .theme-toggle-control {
+  color: rgb(224 242 254);
+  border-color: rgba(125,211,252,.42);
+  background: linear-gradient(180deg, rgba(40,78,113,.86), rgba(18,43,68,.92));
+  box-shadow: inset 0 1px rgba(255,255,255,.10), 0 0 24px -12px rgba(125,211,252,.72);
 }

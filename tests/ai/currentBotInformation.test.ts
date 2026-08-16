@@ -91,9 +91,12 @@ describe('current bot information surfaces', () => {
     expect(botInfo).toContain('Hersteller');
   });
 
-  it('/help erklaert die aktuelle sichtbare Command-Trennung und nutzt Detailseiten', () => {
-    expect(help).toContain('V-Bot Prime · Command-Katalog');
-    expect(help).toContain('DEV-Funktionen und `/ai` werden hier bewusst nicht angezeigt');
+  it('/help startet kompakt, erklaert die Navigation und nutzt weiterhin Detailseiten', () => {
+    expect(help).toContain('Willkommen bei V-Bot Prime');
+    expect(help).toContain('DEV-Funktionen und `/ai` bleiben bewusst ausserhalb dieser Nutzer-Hilfe');
+    expect(help).toContain('▶️ Weiter');
+    expect(help).toContain('◀️ Zurueck');
+    expect(help).toContain('📚 Katalog');
     expect(help).toContain("id: 'manufacturer'");
     expect(help).toContain('Hersteller-Commands duerfen im Katalog auffindbar sein');
     expect(help).toContain('function detailEmbed(');

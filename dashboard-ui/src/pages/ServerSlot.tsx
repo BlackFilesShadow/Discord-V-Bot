@@ -13,9 +13,11 @@ import { EmojiPicker } from '@/components/ui/EmojiPicker';
 import { useGuildLiveUpdates } from '@/lib/useGuildLiveUpdates';
 import { VirtualAccountsPanel } from '@/components/economy/VirtualAccountsPanel';
 import { LotteryPanel } from '@/components/economy/LotteryPanel';
-import { Settings, Shield, Coins, Link as LinkIcon, Trash2, Plus, Check, X, Banknote, Dice5, RefreshCw } from 'lucide-react';
+import { BlackMarketPanel } from '@/components/economy/BlackMarketPanel';
+import { KillfeedTab } from '@/components/KillfeedTab';
+import { Settings, Shield, Coins, Link as LinkIcon, Trash2, Plus, Check, X, Banknote, Dice5, RefreshCw, Crosshair } from 'lucide-react';
 
-type Tab = 'settings' | 'whitelist' | 'economy' | 'links';
+type Tab = 'settings' | 'whitelist' | 'economy' | 'links' | 'killfeed';
 
 interface ServerSettingsState {
   whitelistActive: boolean;
@@ -34,6 +36,18 @@ interface EconomyConfigState {
 }
 
 interface ChannelOption { id: string; name: string; type: number; parentId: string | null; }
+
+interface SlotDashboardMeta {
+  isOwner: boolean;
+  permissions: string[];
+  slots: Array<{
+    id: string;
+    slot: number;
+    alias: string;
+    alias5: string;
+    status: 'ACTIVE' | 'EXPIRED' | 'REVOKED';
+  }>;
+}
 
 interface CasinoGameRow {
   type: 'SLOT' | 'COINFLIP' | 'DICE' | 'BLACKJACK';
@@ -61,7 +75,7 @@ export default function ServerSlot() {
   const qc = useQueryClient();
   const initialTab = ((): Tab => {
     const t = searchParams.get('tab');
-    if (t === 'settings' || t === 'whitelist' || t === 'economy' || t === 'links') return t;
+    if (t === 'settings' || t === 'whitelist' || t === 'economy' || t === 'links' || t === 'killfeed') return t;
     return 'settings';
   })();
   const [tab, setTab] = useState<Tab>(initialTab);
@@ -91,39 +105,64 @@ export default function ServerSlot() {
   });
 
   const economy = useQuery({
-    queryKey: ['economy', guildId],
-    queryFn: () => api.get<EconomyConfigState>(`/api/v2/guilds/${guildId}/economy/config`),
-    enabled: !!guildId,
+    queryKey: ['economy', guildId, slot],
+    queryFn: () => api.get<EconomyConfigState>(`/api/v2/guilds/${guildId}/economy/config?slot=${encodeURIComponent(slot!)}`),
+    enabled: !!guildId && !!slot,
+    retry: false,
   });
 
   const updateEconomy = useMutation({
     mutationFn: (patch: Partial<EconomyConfigState>) =>
-      api.put(`/api/v2/guilds/${guildId}/economy/config`, patch),
-    onSuccess: () => qc.invalidateQueries({ queryKey: ['economy', guildId] }),
+      api.put(`/api/v2/guilds/${guildId}/economy/config?slot=${encodeURIComponent(slot!)}`, patch),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['economy', guildId, slot] }),
   });
 
-  const tabs = [
+  const dashboardMeta = useQuery({
+    queryKey: ['dashboard-slot-meta', guildId, slot],
+    queryFn: () => api.get<SlotDashboardMeta>(`/api/v2/guilds/${guildId}/dashboard`),
+    enabled: !!guildId && !!slot,
+    retry: false,
+  });
+  const canManageKillfeed = Boolean(
+    dashboardMeta.data?.isOwner ||
+    dashboardMeta.data?.permissions.includes('dashboard.access') ||
+    dashboardMeta.data?.permissions.includes('killfeed.manage'),
+  );
+  const currentKillfeedSlots = (dashboardMeta.data?.slots ?? []).filter(row => String(row.slot) === slot);
+
+  const pageOneTabs = [
     ['settings', 'Settings', Settings],
     ['whitelist', 'Whitelist', Shield],
     ['economy', 'Economy', Coins],
     ['links', 'Economy-Links', LinkIcon],
   ] as const;
+  const pageTwoTabs = [
+    ['killfeed', 'Killfeed & ADM', Crosshair],
+  ] as const;
+  const tabs = [...pageOneTabs, ...pageTwoTabs] as const;
+
+  const sidebarButton = ([key, label, Icon]: (typeof tabs)[number]) => (
+    <button
+      key={key}
+      onClick={() => setTab(key)}
+      className={`w-full text-left px-3 py-2 rounded-md inline-flex items-center gap-2 transition-colors ${
+        tab === key ? 'bg-accent/20 text-accent border border-accent/25' : 'text-muted hover:bg-bg-elev hover:text-white border border-transparent'
+      }`}
+      type="button"
+    >
+      <Icon className="h-4 w-4" />
+      {label}
+    </button>
+  );
 
   const sidebar = (
-    <nav className="space-y-1 text-sm">
-      {tabs.map(([key, label, Icon]) => (
-        <button
-          key={key}
-          onClick={() => setTab(key)}
-          className={`w-full text-left px-3 py-2 rounded-md inline-flex items-center gap-2 transition-colors ${
-            tab === key ? 'bg-accent/20 text-accent' : 'text-muted hover:bg-bg-elev hover:text-white'
-          }`}
-          type="button"
-        >
-          <Icon className="h-4 w-4" />
-          {label}
-        </button>
-      ))}
+    <nav className="space-y-1 text-sm" aria-label="Slot-Funktionen">
+      <p className="px-3 pb-1 text-[10px] font-semibold uppercase tracking-[0.18em] text-muted/60">Page 1</p>
+      {pageOneTabs.map(sidebarButton)}
+      <div className="pt-4 mt-3 border-t border-border/60">
+        <p className="px-3 pb-1 text-[10px] font-semibold uppercase tracking-[0.18em] text-muted/60">Page 2</p>
+        {pageTwoTabs.map(sidebarButton)}
+      </div>
     </nav>
   );
 
@@ -182,6 +221,7 @@ export default function ServerSlot() {
         {tab === 'economy' && guildId && (
           <EconomyTab
             guildId={guildId}
+            slot={slot!}
             data={economy.data}
             loading={economy.isLoading}
             onSave={patch => updateEconomy.mutate(patch)}
@@ -191,6 +231,21 @@ export default function ServerSlot() {
 
         {tab === 'links' && guildId && slot && (
           <EconomyLinksPanel guildId={guildId} slot={slot} />
+        )}
+
+        {tab === 'killfeed' && guildId && slot && (
+          canManageKillfeed ? (
+            currentKillfeedSlots.length > 0 ? (
+              <KillfeedTab guildId={guildId} isOwner={true} slots={currentKillfeedSlots} />
+            ) : (
+              <Card><p className="text-muted text-sm">Dieser Slot ist nicht als Nitrado-Gameserver verfuegbar.</p></Card>
+            )
+          ) : (
+            <Card>
+              <CardHeader><CardTitle>Nicht erlaubt</CardTitle></CardHeader>
+              <p className="text-muted text-sm">Dir fehlt <code>killfeed.manage</code> oder <code>dashboard.access</code>.</p>
+            </Card>
+          )
         )}
       </div>
     </Shell>
@@ -731,10 +786,10 @@ function fmtBig(s: string): string {
 }
 
 // Wirtschaft-Status: ersetzt den frueheren Economy-`/status` Discord-Command.
-function EconomyOverview({ guildId }: { guildId: string }) {
+function EconomyOverview({ guildId, slot }: { guildId: string; slot: string }) {
   const q = useQuery({
-    queryKey: ['economy-overview', guildId],
-    queryFn: () => api.get<EconomyOverviewData>(`/api/v2/guilds/${guildId}/economy/overview`),
+    queryKey: ['economy-overview', guildId, slot],
+    queryFn: () => api.get<EconomyOverviewData>(`/api/v2/guilds/${guildId}/economy/overview?slot=${encodeURIComponent(slot)}`),
     retry: false,
   });
 
@@ -844,9 +899,10 @@ function EconomyOverview({ guildId }: { guildId: string }) {
 }
 
 function EconomyTab({
-  guildId, data, loading, onSave, pending,
+  guildId, slot, data, loading, onSave, pending,
 }: {
   guildId: string;
+  slot: string;
   data: EconomyConfigState | undefined;
   loading: boolean;
   onSave: (p: Partial<EconomyConfigState>) => void;
@@ -862,7 +918,7 @@ function EconomyTab({
 
   return (
     <div className="space-y-6">
-      <EconomyOverview guildId={guildId} />
+      <EconomyOverview guildId={guildId} slot={slot} />
       <Card>
         <CardHeader><CardTitle>Economy-Konfiguration</CardTitle></CardHeader>
         {loading && <p className="text-muted">Lade…</p>}
@@ -882,18 +938,20 @@ function EconomyTab({
         </Card>
       )}
 
-      <VirtualAccountsPanel guildId={guildId} />
+      <VirtualAccountsPanel guildId={guildId} slot={slot} />
 
-      <LotteryPanel guildId={guildId} />
+      <LotteryPanel guildId={guildId} slot={slot} />
+
+      <BlackMarketPanel guildId={guildId} slot={slot} />
 
       <Card>
         <CardHeader><CardTitle><span className="inline-flex items-center gap-2"><Dice5 className="h-4 w-4" />Casino-Games</span></CardTitle></CardHeader>
-        <CasinoTable guildId={guildId} />
+        <CasinoTable guildId={guildId} slot={slot} />
       </Card>
 
       <Card>
         <CardHeader><CardTitle>Admin-Auszahlung</CardTitle></CardHeader>
-        <AdminPayForm guildId={guildId} />
+        <AdminPayForm guildId={guildId} slot={slot} />
       </Card>
     </div>
   );
@@ -1010,23 +1068,23 @@ function BankForm({
 
 const CASINO_TYPES = ['SLOT', 'COINFLIP', 'DICE', 'BLACKJACK'] as const;
 
-function CasinoTable({ guildId }: { guildId: string }) {
+function CasinoTable({ guildId, slot }: { guildId: string; slot: string }) {
   const qc = useQueryClient();
   const games = useQuery({
-    queryKey: ['casino-games', guildId],
-    queryFn: () => api.get<{ games: CasinoGameRow[] }>(`/api/v2/guilds/${guildId}/casino/games`),
+    queryKey: ['casino-games', guildId, slot],
+    queryFn: () => api.get<{ games: CasinoGameRow[] }>(`/api/v2/guilds/${guildId}/casino/games?slot=${encodeURIComponent(slot)}`),
   });
   const stats = useQuery({
-    queryKey: ['casino-stats', guildId],
-    queryFn: () => api.get<{ stats: CasinoStatRow[] }>(`/api/v2/guilds/${guildId}/casino/stats`),
+    queryKey: ['casino-stats', guildId, slot],
+    queryFn: () => api.get<{ stats: CasinoStatRow[] }>(`/api/v2/guilds/${guildId}/casino/stats?slot=${encodeURIComponent(slot)}`),
   });
 
   const update = useMutation({
     mutationFn: (vars: { type: string; patch: Partial<CasinoGameRow> }) =>
-      api.put(`/api/v2/guilds/${guildId}/casino/games/${vars.type}`, vars.patch),
+      api.put(`/api/v2/guilds/${guildId}/casino/games/${vars.type}?slot=${encodeURIComponent(slot)}`, vars.patch),
     onSuccess: () => {
-      void qc.invalidateQueries({ queryKey: ['casino-games', guildId] });
-      void qc.invalidateQueries({ queryKey: ['casino-stats', guildId] });
+      void qc.invalidateQueries({ queryKey: ['casino-games', guildId, slot] });
+      void qc.invalidateQueries({ queryKey: ['casino-stats', guildId, slot] });
     },
   });
 
@@ -1139,14 +1197,14 @@ function CasinoRow({
 // Admin-Pay
 // ----------------------------------------------------------------------------
 
-function AdminPayForm({ guildId }: { guildId: string }) {
+function AdminPayForm({ guildId, slot }: { guildId: string; slot: string }) {
   const [userId, setUserId] = useState('');
   const [delta, setDelta] = useState('');
   const [reason, setReason] = useState('');
   const [msg, setMsg] = useState<{ ok: boolean; text: string } | null>(null);
 
   const pay = useMutation({
-    mutationFn: () => api.post(`/api/v2/guilds/${guildId}/economy/accounts/${userId}/admin-pay`, {
+    mutationFn: () => api.post(`/api/v2/guilds/${guildId}/economy/accounts/${userId}/admin-pay?slot=${encodeURIComponent(slot)}`, {
       delta, reason,
     }),
     onSuccess: () => {
