@@ -1,0 +1,13 @@
+model LinkingChannelConfig {
+  id            String   @id @default(cuid())
+  guildId       String
+  nitradoConnId String
+  channelId     String
+  infoMessageId String?
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  @@unique([guildId, nitradoConnId])
+  @@index([guildId, channelId])
+  @@index([nitradoConnId])
+}
