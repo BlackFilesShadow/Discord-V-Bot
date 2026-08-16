@@ -13,6 +13,17 @@ const GEMINI_MODELS_WITHOUT_LEGACY_SAMPLING = [
   'gemini-3.5-flash-lite',
 ] as const;
 
+const HARD_SYSTEM_MARKERS = [
+  'AI_TASK_PROFILE:',
+  'Du bist V-Bot Prime',
+  'AUTORITATIVE ZEIT- UND DATUMSANGABEN',
+  'WICHTIG – Wissensstand:',
+  'WICHTIG \u2013 Wissensstand:',
+  'DAYZ 1.29 – GEERDETE ERKLAERBASIS',
+  'DAYZ 1.29 – HARTE GROUNDING-REGELN',
+  'GEPRUEFTE DAYZ-ENGINE-/SERVER-KONFIGURATION:',
+] as const;
+
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value);
 }
@@ -31,6 +42,18 @@ function geminiModelFromPath(pathname: string): string | null {
   return match?.[1] ? decodeURIComponent(match[1]) : null;
 }
 
+function isMandatorySystemMessage(content: string, index: number): boolean {
+  if (index === 0) return true;
+  return HARD_SYSTEM_MARKERS.some((marker) => content.includes(marker));
+}
+
+function providerMessagePriority(role: string, content: string, index: number): number {
+  if (role !== 'system') return index;
+  if (content.includes('SECURITY-GRENZE FUER EXTERNE KONTEXTDATEN:')) return 90;
+  if (content.includes('NITRADO-BEDIENWEG (Hosting-Prozedur, nicht DayZ-Dateisemantik):')) return 85;
+  return 70;
+}
+
 function budgetOpenAiMessages(value: unknown): unknown {
   if (!Array.isArray(value) || value.length === 0) return value;
   if (!value.every((m) => isRecord(m) && typeof m.role === 'string' && typeof m.content === 'string')) return value;
@@ -42,14 +65,16 @@ function budgetOpenAiMessages(value: unknown): unknown {
   return composePromptWithinBudget(value.map((raw, index) => {
     const message = raw as Record<string, unknown>;
     const role = message.role as string;
+    const content = message.content as string;
     return {
       role: (role === 'assistant' || role === 'system' ? role : 'user') as PromptRole,
-      content: message.content as string,
+      content,
       source: `provider-message-${index}`,
-      // Alle Systemtexte sowie die aktuelle letzte Userfrage bleiben Pflicht.
-      required: role === 'system' || index === lastIndex,
-      // Bei History-Ueberlauf fallen die aeltesten Turns zuerst.
-      priority: index,
+      // Erste Systeminstruktion, harte Runtime-Regeln und aktuelle Userfrage
+      // bleiben Pflicht. Optionale Systemkontexte koennen nur als ganzer Block
+      // entfallen, niemals ohne ihre eigene Security-Grenze weiterleben.
+      required: (role === 'system' && isMandatorySystemMessage(content, index)) || index === lastIndex,
+      priority: providerMessagePriority(role, content, index),
     };
   }));
 }
