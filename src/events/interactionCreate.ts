@@ -220,6 +220,15 @@ const interactionCreateEvent: BotEvent = {
         await handleGiveawayEnterButton(button);
         return;
       }
+      if (button.customId.startsWith('lottery_buy_')) {
+        try {
+          const { handleLotteryBuyButton } = await import('../modules/economy/lottery.js');
+          await handleLotteryBuyButton(button);
+        } catch (error) {
+          logger.error('Lottery-Button-Handler-Fehler:', error as Error);
+        }
+        return;
+      }
       if (button.customId.startsWith('ticket_accept_') || button.customId.startsWith('ticket_deny_')) {
         await handleTicketButton(button);
         return;

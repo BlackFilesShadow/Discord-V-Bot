@@ -16,7 +16,7 @@ export interface CommandClassification {
 }
 
 export const DASHBOARD_EXTRA = new Set<string>([
-  'giveaway', 'poll', 'ticket', 'factions', 'balance', 'bank', 'pay', 'transfer', 'virtual-account',
+  'giveaway', 'poll', 'ticket', 'factions', 'balance', 'bank', 'pay', 'transfer', 'virtual-account', 'lottery',
 ]);
 
 const ADMIN_EXTRA_NAMES = new Set<string>([
@@ -53,7 +53,7 @@ export const SPEC_KEEP_COMMANDS = new Set<string>([
   'dice', 'factions', 'join', 'leave',
   'link', 'unlink', 'links', 'link-info', 'link-panel',
   'force-link', 'force-unlink', 'confirm-action',
-  'pay', 'slot', 'transfer', 'withdraw', 'virtual-account',
+  'pay', 'slot', 'transfer', 'withdraw', 'virtual-account', 'lottery',
   'whitelist-antrag', 'whitelist-add', 'whitelist-remove', 'whitelist',
   'perm-add', 'perm-remove', 'perms',
   'server-ban', 'server-unban', 'server-ban-list',

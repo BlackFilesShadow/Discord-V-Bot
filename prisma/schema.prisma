@@ -1828,6 +1828,7 @@ model EconomyVirtualAccount {
   createdAt             DateTime                    @default(now())
   updatedAt             DateTime                    @updatedAt
   entries               EconomyVirtualAccountEntry[]
+  lotteryRounds         LotteryRound[]
 
   @@unique([guildId, nitradoConnId, nameKey], name: "guildServerNameKey", map: "EconomyVirtualAccount_guild_conn_name_key")
   @@index([guildId, nitradoConnId, status], map: "EconomyVirtualAccount_guild_conn_status_idx")
@@ -1855,6 +1856,79 @@ model EconomyVirtualAccountEntry {
   @@index([guildId, nitradoConnId, userDiscordId, createdAt], map: "EconomyVirtualAccountEntry_user_created_idx")
 }
 
+enum LotteryRoundStatus {
+  ACTIVE
+  DRAWING
+  REFUNDING
+  FINISHED
+  REFUNDED
+}
+
+model LotteryRound {
+  id                    String             @id @default(cuid())
+  guildId               String
+  nitradoConnId         String
+  potAccountId          String
+  potAccount            EconomyVirtualAccount @relation(fields: [potAccountId], references: [id], onDelete: Restrict)
+  channelId             String
+  messageId             String?
+  ticketPrice           BigInt
+  maxTicketsPerUser     Int
+  minParticipants       Int
+  status                LotteryRoundStatus @default(ACTIVE)
+  activeScopeKey        String?            @unique(map: "LotteryRound_activeScopeKey_key") @db.VarChar(160)
+  endsAt                DateTime
+  winnerDiscordId       String?
+  winningTicketNumber   Int?
+  participantCount      Int                @default(0)
+  totalTickets          Int                @default(0)
+  finalPot              BigInt?
+  drawnAt               DateTime?
+  settledAt             DateTime?
+  announcedAt           DateTime?
+  createdByDiscordId    String
+  createdAt             DateTime           @default(now())
+  updatedAt             DateTime           @updatedAt
+  entries               LotteryEntry[]
+  purchases             LotteryPurchase[]
+
+  @@index([guildId, nitradoConnId, status, endsAt], map: "LotteryRound_scope_status_ends_idx")
+  @@index([guildId, nitradoConnId, createdAt], map: "LotteryRound_scope_created_idx")
+}
+
+model LotteryEntry {
+  id                String       @id @default(cuid())
+  roundId           String
+  round             LotteryRound @relation(fields: [roundId], references: [id], onDelete: Restrict)
+  guildId           String
+  nitradoConnId     String
+  userDiscordId     String
+  ticketCount       Int
+  totalPaid         BigInt
+  refundedAt        DateTime?
+  createdAt         DateTime     @default(now())
+  updatedAt         DateTime     @updatedAt
+
+  @@unique([roundId, userDiscordId], name: "roundUser", map: "LotteryEntry_round_user_key")
+  @@index([guildId, nitradoConnId, userDiscordId], map: "LotteryEntry_scope_user_idx")
+  @@index([roundId, refundedAt], map: "LotteryEntry_round_refund_idx")
+}
+
+model LotteryPurchase {
+  id              String       @id @default(cuid())
+  idempotencyKey  String       @unique(map: "LotteryPurchase_idempotencyKey_key") @db.VarChar(200)
+  roundId         String
+  round           LotteryRound @relation(fields: [roundId], references: [id], onDelete: Restrict)
+  guildId         String
+  nitradoConnId   String
+  userDiscordId   String
+  ticketCount     Int
+  amount          BigInt
+  createdAt       DateTime     @default(now())
+
+  @@index([roundId, userDiscordId, createdAt], map: "LotteryPurchase_round_user_created_idx")
+}
+
 enum EconomyTxType {
   PAY
   ADMIN_PAY
@@ -1868,6 +1942,9 @@ enum EconomyTxType {
   GRANT
   FINE
   INTEREST
+  LOTTERY_TICKET
+  LOTTERY_PAYOUT
+  LOTTERY_REFUND
 }
 
 // Audit-Trail jeder Balance-Aenderung. Atomar mit Account-Update.
