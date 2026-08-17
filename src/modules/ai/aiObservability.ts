@@ -8,7 +8,6 @@ import {
   aiRetrievalCounter,
   aiRetrievalDurationHistogram,
 } from '../../utils/metrics';
-import type { AiTaskProfile } from './providerCapabilities';
 import type { ProviderName } from './providerStats';
 import type {
   KnowledgeFreshness,
@@ -16,19 +15,8 @@ import type {
   KnowledgeTrustLevel,
 } from './knowledgeProvenance';
 
-export type AiProviderOutcome =
-  | 'success'
-  | 'failure'
-  | 'rate_limit'
-  | 'auth_or_model'
-  | 'transient_retry'
-  | 'unconfigured';
-
-export type AiFallbackReason =
-  | 'failure'
-  | 'rate_limit'
-  | 'auth_or_model'
-  | 'unconfigured';
+export type AiProviderOutcome = 'success' | 'failure' | 'rate_limit';
+export type AiFallbackReason = 'failure' | 'rate_limit';
 
 export type AiRetrievalStrategy =
   | 'rag_runtime'
@@ -55,14 +43,12 @@ export function safeAiModelLabel(model: string): string {
 export function recordAiProviderAttempt(input: {
   provider: ProviderName;
   model: string;
-  task: AiTaskProfile;
   outcome: AiProviderOutcome;
   latencyMs: number;
 }): void {
   const labels = {
     provider: input.provider,
     model: safeAiModelLabel(input.model),
-    task: input.task,
     outcome: input.outcome,
   };
   aiProviderAttemptsCounter.inc(labels);
@@ -71,14 +57,17 @@ export function recordAiProviderAttempt(input: {
   }
 }
 
+/**
+ * Wird nur fuer Call-Ergebnisse verwendet, bei denen callAI den aktuellen
+ * Provider verlaesst und mit dem naechsten Kandidaten fortfaehrt (oder die
+ * Kandidatenliste beendet). Kein erfundenes Ziel-Provider-Label.
+ */
 export function recordAiFallback(input: {
   fromProvider: ProviderName;
-  toProvider: ProviderName;
   reason: AiFallbackReason;
 }): void {
   aiFallbackCounter.inc({
     from_provider: input.fromProvider,
-    to_provider: input.toProvider,
     reason: input.reason,
   });
 }
@@ -95,7 +84,7 @@ export interface AiRetrievalObservation {
 }
 
 function observeCount(stage: 'all' | 'scoped' | 'fresh' | 'selected', value: number | undefined): void {
-  if (!Number.isFinite(value) || value === undefined) return;
+  if (value === undefined || !Number.isFinite(value)) return;
   aiRetrievalCandidatesHistogram.observe({ stage }, Math.max(0, Math.floor(value)));
 }
 
