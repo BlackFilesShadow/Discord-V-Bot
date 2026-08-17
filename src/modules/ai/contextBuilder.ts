@@ -1,11 +1,13 @@
 import type { Guild, GuildMember, User as DiscordUser, GuildBasedChannel } from 'discord.js';
 import { ChannelType, PermissionFlagsBits } from 'discord.js';
+import { config } from '../../config';
 import prisma from '../../database/prisma';
 import { logger } from '../../utils/logger';
 import { getGuildProfile } from './guildAwareness';
 import { findRelevantKnowledge } from './guildKnowledge';
 import { resolveRuntimeKnowledgeScope } from './knowledgeScope';
 import { getMemberProfile } from './memberAwareness';
+import { resolveVerifiedGameIdentityRecognition, type AiRecognitionClient } from './userRecognition';
 import { sanitizeOwnerStylePreference, wrapUntrustedContext } from './untrustedContext';
 import { looksLikeLiveServerKnowledgeQuestion } from './dayzKnowledgeBoundary';
 import {
@@ -27,6 +29,9 @@ import {
  * als untrusted Daten serialisiert.
  * AI-16: dieselben bereits gescoppten Retrieval-Treffer liefern parallel zum
  * untrusted Anzeige-Kontext einen nicht vom Nutzer faelschbaren Guard-Handle.
+ * AI-17: verifizierte Spielidentitaet wird nur bei Live-Mitgliedschaft und
+ * exakt demselben bereits aufgeloesten Guild/Gameserver-Scope angehaengt.
+ * Recognition bleibt Kontext und ist niemals eine Berechtigungsentscheidung.
  */
 export interface ServerUserContextOptions {
   guild?: Guild | null;
@@ -149,6 +154,10 @@ export async function buildServerUserContextBlocks(opts: ServerUserContextOption
   const discordUser = user ?? member?.user;
   if (discordUser) {
     userLines.push(`- Username: ${discordUser.username}`);
+    userLines.push(`- Discord-ID: ${discordUser.id}`);
+    if (member?.guild?.id === guild?.id && member.user.id === discordUser.id) {
+      userLines.push('- Live-Mitgliedschaft in dieser Guild: bestaetigt (Recognition, keine Berechtigung)');
+    }
     if (member?.nickname && member.nickname !== discordUser.username) {
       userLines.push(`- Server-Nickname: ${member.nickname}`);
     }
@@ -159,7 +168,7 @@ export async function buildServerUserContextBlocks(opts: ServerUserContextOption
         .sort((a, b) => b.position - a.position)
         .first(3)
         .map((r) => r.name);
-      if (topRoles.length > 0) userLines.push(`- Top-Rollen: ${topRoles.join(', ')}`);
+      if (topRoles.length > 0) userLines.push(`- Aktuelle Discord-Rollen (Kontext, keine Berechtigungsentscheidung): ${topRoles.join(', ')}`);
     }
 
     try {
@@ -168,7 +177,7 @@ export async function buildServerUserContextBlocks(opts: ServerUserContextOption
         select: { role: true, status: true, isManufacturer: true, createdAt: true },
       });
       if (dbUser) {
-        userLines.push(`- Bot-Rolle: ${dbUser.role}${dbUser.isManufacturer ? ' (Hersteller)' : ''}`);
+        userLines.push(`- Persistierte Bot-Profilrolle (Kontext, keine Berechtigung): ${dbUser.role}${dbUser.isManufacturer ? ' (Hersteller)' : ''}`);
         if (dbUser.status && dbUser.status !== 'ACTIVE') userLines.push(`- Status: ${dbUser.status}`);
         if (member?.guild?.id) {
           const userRow = await prisma.user.findUnique({ where: { discordId: discordUser.id }, select: { id: true } });
@@ -229,14 +238,18 @@ export async function buildServerUserContextBlocks(opts: ServerUserContextOption
           const since = new Intl.DateTimeFormat('de-DE', {
             day: '2-digit', month: '2-digit', year: 'numeric', timeZone: 'Europe/Berlin',
           }).format(mp.boostingSince);
-          userLines.push('', 'USER-AKTIVITAET (dieser Server):', `- Boostet diesen Server seit ${since}`);
+          userLines.push('', 'USER-AKTIVITAET (persistierte Historie dieser Guild; keine Berechtigungsquelle):', `- Boostet diesen Server seit ${since}`);
         }
         if (mp.timeoutUntil && mp.timeoutUntil.getTime() > Date.now()) {
-          if (!userLines.includes('USER-AKTIVITAET (dieser Server):')) userLines.push('', 'USER-AKTIVITAET (dieser Server):');
-          userLines.push(`- Aktuell im Timeout bis ${mp.timeoutUntil.toISOString().slice(0, 16).replace('T', ' ')} UTC`);
+          if (!userLines.some(line => line.startsWith('USER-AKTIVITAET (persistierte Historie'))) {
+            userLines.push('', 'USER-AKTIVITAET (persistierte Historie dieser Guild; keine Berechtigungsquelle):');
+          }
+          userLines.push(`- Zuletzt erfasster Timeout bis ${mp.timeoutUntil.toISOString().slice(0, 16).replace('T', ' ')} UTC`);
         }
         if (typeof mp.messageCount === 'number' && mp.messageCount > 0) {
-          if (!userLines.includes('USER-AKTIVITAET (dieser Server):')) userLines.push('', 'USER-AKTIVITAET (dieser Server):');
+          if (!userLines.some(line => line.startsWith('USER-AKTIVITAET (persistierte Historie'))) {
+            userLines.push('', 'USER-AKTIVITAET (persistierte Historie dieser Guild; keine Berechtigungsquelle):');
+          }
           userLines.push(`- Nachrichten auf diesem Server (seit Tracking): ${mp.messageCount}`);
         }
       }
@@ -261,6 +274,39 @@ export async function buildServerUserContextBlocks(opts: ServerUserContextOption
     try {
       const scope = await resolveRuntimeKnowledgeScope(guild.id, question);
       const liveIntent = looksLikeLiveServerKnowledgeQuestion(question);
+
+      // AI-17: A game identity is only meaningful for this request when the
+      // Discord member is live/current AND the same runtime scope is exact.
+      if (scope && member && discordUser
+        && member.guild.id === guild.id
+        && member.user.id === discordUser.id) {
+        try {
+          const recognition = await resolveVerifiedGameIdentityRecognition(
+            prisma as unknown as AiRecognitionClient,
+            {
+              guildId: guild.id,
+              nitradoConnId: scope.id,
+              userDiscordId: discordUser.id,
+              identitySecret: config.security.encryptionKey,
+            },
+          );
+          if (recognition) {
+            userLines.push('', 'VERIFIZIERTE SPIELER-ZUORDNUNG (Recognition, KEINE Berechtigungsentscheidung):');
+            userLines.push(`- Gameserver: Slot ${scope.slot} (${scope.alias})`);
+            userLines.push('- Link-Status: VERIFIED');
+            if (recognition.playerName) userLines.push(`- Spielername: ${recognition.playerName}`);
+            if (recognition.verifiedAt) userLines.push(`- Verifiziert seit: ${recognition.verifiedAt.toISOString()}`);
+          }
+        } catch (e) {
+          logger.warn('contextBuilder: AI-17 User Recognition fehlgeschlagen:', {
+            guildId: guild.id,
+            nitradoConnId: scope.id,
+            userDiscordId: discordUser.id,
+            e: String(e),
+          });
+        }
+      }
+
       const snippets = await findRelevantKnowledge(guild.id, question, scope ? 12 : 3, scope?.id ?? null);
       if (snippets.length > 0) {
         if (scope) ragLines.push(`- Gameserver-Scope: Slot ${scope.slot} (${scope.alias})`);
