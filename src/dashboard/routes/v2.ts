@@ -40,6 +40,7 @@ import { ticketsRouter } from './v2/tickets';
 import { casinoRouter } from './v2/casino';
 import { killfeedRouter } from './v2/killfeed';
 import { welcomeRouter } from './v2/welcome';
+import { goodbyeRouter } from './v2/goodbye';
 import { embedsRouter } from './v2/embeds';
 import { reactionEmbedsRouter } from './v2/reactionEmbeds';
 import { feedsRouter } from './v2/feeds';
@@ -96,6 +97,7 @@ v2Router.use('/guilds/:guildId/casino', requireCasinoDashboardAccess, requireSaf
 
 v2Router.use('/guilds/:guildId/killfeed', killfeedRouter);
 v2Router.use('/guilds/:guildId/welcome', welcomeRouter);
+v2Router.use('/guilds/:guildId/goodbye', goodbyeRouter);
 v2Router.use('/guilds/:guildId/embeds', embedsRouter);
 v2Router.use('/guilds/:guildId/reaction-embeds', reactionEmbedsRouter);
 v2Router.use('/guilds/:guildId/feeds', feedsRouter);

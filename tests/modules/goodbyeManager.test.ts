@@ -1,0 +1,149 @@
+const mockFindUnique = jest.fn();
+const mockUpsert = jest.fn().mockResolvedValue({});
+const mockGetMemberProfile = jest.fn();
+const mockSendWelcomeMessages = jest.fn().mockResolvedValue(undefined);
+
+jest.mock('../../src/database/prisma', () => ({
+  __esModule: true,
+  default: {
+    botConfig: {
+      findUnique: mockFindUnique,
+      upsert: mockUpsert,
+    },
+  },
+}));
+
+jest.mock('../../src/modules/ai/memberAwareness', () => ({
+  __esModule: true,
+  getMemberProfile: mockGetMemberProfile,
+}));
+
+jest.mock('../../src/modules/ai/emoteResolver', () => ({
+  __esModule: true,
+  resolveCustomEmotes: (value: string) => value,
+}));
+
+jest.mock('../../src/modules/ai/triggers', () => ({
+  __esModule: true,
+  renderTemplate: (template: string, vars: { user?: string }) => template.replace(/\{user\}/g, vars.user ?? ''),
+}));
+
+jest.mock('../../src/modules/welcome/welcomeManager', () => ({
+  __esModule: true,
+  sendWelcomeMessages: mockSendWelcomeMessages,
+}));
+
+import {
+  getGoodbyeConfig,
+  renderGoodbyeMessage,
+  resolveGoodbyeIdentity,
+  resolveLastKnownGoodbyeIdentity,
+  sendConfiguredGoodbye,
+  setGoodbyeConfig,
+} from '../../src/modules/welcome/goodbyeManager';
+
+beforeEach(() => {
+  jest.clearAllMocks();
+  mockUpsert.mockResolvedValue({});
+});
+
+describe('Goodbye-1 guild-scoped identity and delivery', () => {
+  it('stores and reads configuration under the exact guild key', async () => {
+    mockFindUnique.mockResolvedValue({
+      value: { enabled: true, channelId: '12345678901234567', message: 'Tschuess {user}' },
+    });
+
+    await getGoodbyeConfig('guild-a');
+    await setGoodbyeConfig(
+      'guild-b',
+      { enabled: true, channelId: '12345678901234567', message: 'Bye' },
+      'actor-1',
+    );
+
+    expect(mockFindUnique).toHaveBeenCalledWith({ where: { key: 'goodbye:guild-a' } });
+    expect(mockUpsert).toHaveBeenCalledWith(expect.objectContaining({
+      where: { key: 'goodbye:guild-b' },
+      create: expect.objectContaining({ key: 'goodbye:guild-b', category: 'welcome', updatedBy: 'actor-1' }),
+    }));
+  });
+
+  it('prefers the persisted last guild nickname and username over gateway fallback values', () => {
+    const identity = resolveGoodbyeIdentity(
+      { discordId: '111', username: 'GatewayName', nickname: 'GatewayNick' },
+      { username: 'StoredName', nickname: 'StoredNick' },
+    );
+
+    expect(identity).toEqual({
+      discordId: '111',
+      username: 'StoredName',
+      nickname: 'StoredNick',
+      displayName: 'StoredNick',
+      mention: '<@111>',
+    });
+  });
+
+  it('falls back deterministically when no persisted guild profile exists', () => {
+    const identity = resolveGoodbyeIdentity(
+      { discordId: '222', username: 'GatewayName', nickname: null },
+      null,
+    );
+
+    expect(identity.displayName).toBe('GatewayName');
+    expect(identity.nickname).toBeNull();
+    expect(identity.mention).toBe('<@222>');
+  });
+
+  it('loads the last known identity from exactly guildId + discordId', async () => {
+    mockGetMemberProfile.mockResolvedValue({ username: 'StoredName', nickname: 'StoredNick' });
+    const member = {
+      guild: { id: 'guild-a' },
+      user: { id: 'discord-1', username: 'GatewayName' },
+      nickname: 'GatewayNick',
+    } as any;
+
+    const identity = await resolveLastKnownGoodbyeIdentity(member);
+
+    expect(mockGetMemberProfile).toHaveBeenCalledWith('guild-a', 'discord-1');
+    expect(identity.displayName).toBe('StoredNick');
+  });
+
+  it('renders all identity placeholders from the chosen guild identity', () => {
+    const identity = resolveGoodbyeIdentity(
+      { discordId: '333', username: 'Fallback', nickname: null },
+      { username: 'StoredUser', nickname: 'StoredNick' },
+    );
+
+    const rendered = renderGoodbyeMessage(
+      '{user}|{username}|{nickname}|{mention}|{guild}|{count}|{member_count}',
+      { identity, guild: 'Guild A', memberCount: 42 },
+    );
+
+    expect(rendered).toBe('StoredNick|StoredUser|StoredNick|<@333>|Guild A|42|42');
+  });
+
+  it('sends a configured goodbye without enabling a Discord mention ping', async () => {
+    mockFindUnique.mockResolvedValue({
+      value: { enabled: true, channelId: '12345678901234567', message: 'Bye {user} {mention}' },
+    });
+    mockGetMemberProfile.mockResolvedValue({ username: 'StoredUser', nickname: 'StoredNick' });
+    const channel = { send: jest.fn() };
+    const member = {
+      guild: {
+        id: 'guild-a',
+        name: 'Guild A',
+        memberCount: 41,
+        channels: { fetch: jest.fn().mockResolvedValue({ ...channel, isTextBased: () => true, isDMBased: () => false }) },
+      },
+      user: { id: 'discord-1', username: 'GatewayName' },
+      nickname: 'GatewayNick',
+    } as any;
+
+    await expect(sendConfiguredGoodbye(member)).resolves.toBe('sent');
+    expect(mockGetMemberProfile).toHaveBeenCalledWith('guild-a', 'discord-1');
+    expect(mockSendWelcomeMessages).toHaveBeenCalledWith(
+      expect.anything(),
+      { text: 'Bye StoredNick <@discord-1>' },
+    );
+    expect(mockSendWelcomeMessages.mock.calls[0][1]).not.toHaveProperty('mentionUserId');
+  });
+});
