@@ -23,10 +23,10 @@ for cmd in node npx npm psql pg_dump pg_restore; do
   }
 done
 
-DB_HOST="$(node -e 'const u=new URL(process.env.DATABASE_URL); process.stdout.write(u.hostname)' <<<"")"
-DB_PORT="$(node -e 'const u=new URL(process.env.DATABASE_URL); process.stdout.write(u.port || "5432")' <<<"")"
-DB_USER="$(node -e 'const u=new URL(process.env.DATABASE_URL); process.stdout.write(decodeURIComponent(u.username))' <<<"")"
-DB_PASS="$(node -e 'const u=new URL(process.env.DATABASE_URL); process.stdout.write(decodeURIComponent(u.password))' <<<"")"
+DB_HOST="$(node -e 'const u=new URL(process.env.DATABASE_URL); process.stdout.write(u.hostname)')"
+DB_PORT="$(node -e 'const u=new URL(process.env.DATABASE_URL); process.stdout.write(u.port || "5432")')"
+DB_USER="$(node -e 'const u=new URL(process.env.DATABASE_URL); process.stdout.write(decodeURIComponent(u.username))')"
+DB_PASS="$(node -e 'const u=new URL(process.env.DATABASE_URL); process.stdout.write(decodeURIComponent(u.password))')"
 export PGPASSWORD="$DB_PASS"
 
 make_url() {
@@ -164,7 +164,7 @@ UPGRADE_MIGRATIONS="$(migration_count "$UPGRADE_DB")"
   echo "[DB-4] upgrade migration count differs from fresh DB: upgrade=$UPGRADE_MIGRATIONS fresh=$FRESH_MIGRATIONS" >&2
   exit 6
 }
-SENTINEL="$(db_psql "$UPGRADE_DB" -qAtc 'SELECT payload FROM "_DbLifecycleSentinel" WHERE id=''db4-upgrade-sentinel'';')"
+SENTINEL="$(db_psql "$UPGRADE_DB" -qAtc "SELECT payload FROM \"_DbLifecycleSentinel\" WHERE id='db4-upgrade-sentinel';")"
 [[ "$SENTINEL" == "preserve-me" ]] || {
   echo "[DB-4] upgrade sentinel was lost or modified" >&2
   exit 7
@@ -193,7 +193,7 @@ RESTORE_MIGRATIONS="$(migration_count "$RESTORE_DB")"
   echo "[DB-4] restored migration history differs: restore=$RESTORE_MIGRATIONS source=$UPGRADE_MIGRATIONS" >&2
   exit 9
 }
-RESTORED_SENTINEL="$(db_psql "$RESTORE_DB" -qAtc 'SELECT payload FROM "_DbLifecycleSentinel" WHERE id=''db4-upgrade-sentinel'';')"
+RESTORED_SENTINEL="$(db_psql "$RESTORE_DB" -qAtc "SELECT payload FROM \"_DbLifecycleSentinel\" WHERE id='db4-upgrade-sentinel';")"
 [[ "$RESTORED_SENTINEL" == "preserve-me" ]] || {
   echo "[DB-4] backup/restore lost the sentinel row" >&2
   exit 10
