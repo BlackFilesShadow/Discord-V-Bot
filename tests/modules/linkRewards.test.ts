@@ -8,6 +8,11 @@ const legacyStartBalanceFindFirst = jest.fn();
 const ledgerCreate = jest.fn();
 const accountUpsert = jest.fn();
 const transactionCreate = jest.fn();
+const completedLeaveReceipt = jest.fn();
+
+jest.mock('../../src/modules/moderation/leaveCleanupSaga', () => ({
+  hasCompletedLeaveCleanupReceipt: completedLeaveReceipt,
+}));
 
 jest.mock('../../src/database/prisma', () => ({
   __esModule: true,
@@ -46,6 +51,7 @@ const LINK_AT = new Date('2026-08-16T12:00:00.000Z');
 
 beforeEach(() => {
   jest.clearAllMocks();
+  completedLeaveReceipt.mockResolvedValue(false);
   rewardStateFindUnique.mockResolvedValue(null);
   rewardStateUpsert.mockResolvedValue({ rewardEligibleFrom: LINK_AT });
   rewardStateUpdateMany.mockResolvedValue({ count: 1 });
@@ -169,7 +175,9 @@ describe('Startguthaben bei Account-Verknuepfung', () => {
     expect(claim.data.startBalanceGrantedAmount.toString()).toBe('5000');
 
     const ledger = ledgerCreate.mock.calls[0][0].data;
-    expect(ledger.idempotencyKey).toBe(`startbalance:link:${SCOPE.guildId}:${SCOPE.nitradoConnId}:${USER}`);
+    expect(ledger.idempotencyKey).toMatch(/^startbalance:link:guild-1:conn-1:es1_[a-f0-9]{32}$/);
+    expect(ledger.idempotencyKey).not.toContain(USER);
+    expect(ledger.sourceRef).toMatch(/^es1_[a-f0-9]{32}$/);
     expect(ledger.walletDelta.toString()).toBe('5000');
     expect(ledger.type).toBe('STARTBALANCE_JOIN');
 
@@ -180,6 +188,29 @@ describe('Startguthaben bei Account-Verknuepfung', () => {
     const transaction = transactionCreate.mock.calls[0][0].data;
     expect(transaction.delta.toString()).toBe('5000');
     expect(transaction.reason).toBe('Startguthaben bei Account-Verknuepfung');
+  });
+
+  it('blockiert nach abgeschlossenem Leave-Cleanup jeden erneuten Startbonus und verbraucht die neue Eligibility', async () => {
+    completedLeaveReceipt.mockResolvedValue(true);
+
+    const result = await grantStartBalanceForLink(SCOPE, USER, LINK_AT);
+
+    expect(result).toEqual({ granted: false, amount: 0n });
+    expect(rewardStateUpdateMany).toHaveBeenCalledWith({
+      where: {
+        guildId: SCOPE.guildId,
+        nitradoConnId: SCOPE.nitradoConnId,
+        userDiscordId: USER,
+        unlinkedAt: null,
+        startBalanceEligible: true,
+        startBalanceGrantedAt: null,
+      },
+      data: { startBalanceEligible: false },
+    });
+    expect(settingsFindUnique).not.toHaveBeenCalled();
+    expect(economyConfigFindUnique).not.toHaveBeenCalled();
+    expect(ledgerCreate).not.toHaveBeenCalled();
+    expect(accountUpsert).not.toHaveBeenCalled();
   });
 
   it('vergibt bei bereits beanspruchtem Link kein neues Startguthaben', async () => {
@@ -217,6 +248,7 @@ describe('Startguthaben bei Account-Verknuepfung', () => {
     expect(ledgerCreate).not.toHaveBeenCalled();
 
     jest.clearAllMocks();
+    completedLeaveReceipt.mockResolvedValue(false);
     rewardStateUpdateMany.mockResolvedValue({ count: 1 });
     settingsFindUnique.mockResolvedValue({ economyActive: false });
     economyConfigFindUnique.mockResolvedValue({ startBalance: 5_000 });

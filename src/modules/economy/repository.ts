@@ -15,9 +15,12 @@
 
 import { randomUUID } from 'node:crypto';
 import prisma from '../../database/prisma';
+import { config } from '../../config';
 import type { GuildId, NitradoConnId, UserDiscordId } from '../../types/scope';
 import type { EconomyTxType, Prisma } from '@prisma/client';
+import { hasCompletedLeaveCleanupReceipt } from '../moderation/leaveCleanupSaga';
 import { assertEconomyScopeReady } from './scopeMigration';
+import { economySubjectKey } from './subjectKey';
 
 export interface EconomyConfigRow {
   guildId: GuildId;
@@ -232,7 +235,7 @@ export async function getAccountOrZero(
   };
 }
 
-/** Startguthaben exakt einmal pro (Guild+Server+User). */
+/** Startguthaben exakt einmal pro (Guild+Server+User), auch ueber Leave/Rejoin. */
 export async function maybeGrantStartBalance(
   guildId: GuildId,
   nitradoConnId: NitradoConnId,
@@ -240,7 +243,17 @@ export async function maybeGrantStartBalance(
 ): Promise<{ granted: boolean; amount: bigint }> {
   const cfg = await getConfig(guildId, nitradoConnId);
   if (!cfg.enabled || cfg.startBalance <= 0) return { granted: false, amount: 0n };
+
+  if (await hasCompletedLeaveCleanupReceipt(
+    String(guildId),
+    String(userDiscordId),
+    config.security.encryptionKey,
+  )) {
+    return { granted: false, amount: 0n };
+  }
+
   const amount = BigInt(cfg.startBalance);
+  const subjectKey = economySubjectKey(String(guildId), String(userDiscordId), config.security.encryptionKey);
 
   return prisma.$transaction(async tx => {
     const db = tx as unknown as RawDb;
@@ -249,10 +262,10 @@ export async function maybeGrantStartBalance(
       randomUUID(), String(guildId), String(nitradoConnId), String(userDiscordId), amount);
     if (inserted !== 1) return { granted: false, amount: 0n };
 
-    const key = `startbalance:${guildId}:${nitradoConnId}:${userDiscordId}`;
+    const key = `startbalance:${guildId}:${nitradoConnId}:${subjectKey}`;
     const ledgerCreated = await insertLedger(db, {
       idempotencyKey: key, guildId, nitradoConnId, userDiscordId,
-      walletDelta: amount, type: 'STARTBALANCE_JOIN', reason: 'Initial-Balance bei Server-Join',
+      walletDelta: amount, type: 'STARTBALANCE_JOIN', reason: 'Initial-Balance bei Server-Join', sourceRef: subjectKey,
     });
     if (!ledgerCreated) throw new Error('Startbalance-Idempotency-Key existiert bereits');
     await insertTransaction(db, {
@@ -335,6 +348,7 @@ export async function deposit(
 ): Promise<void> {
   if (amount <= 0n) throw new Error('Betrag muss > 0 sein');
   await assertEconomyScopeReady(guildId, nitradoConnId);
+  const subjectKey = economySubjectKey(String(guildId), String(userId), config.security.encryptionKey);
   await prisma.$transaction(async tx => {
     const db = tx as unknown as RawDb;
     const changed = await db.$executeRawUnsafe(
@@ -342,7 +356,7 @@ export async function deposit(
       String(guildId), String(nitradoConnId), String(userId), amount);
     if (changed !== 1) throw new Error('Wallet zu klein');
     await insertTransaction(db, { guildId, nitradoConnId, userDiscordId: userId, delta: 0n, type: 'DEPOSIT', reason: `Wallet -> Bank ${amount}`, actorDiscordId: userId });
-    await insertLedger(db, { idempotencyKey: `deposit:${guildId}:${nitradoConnId}:${userId}:${randomUUID()}`, guildId, nitradoConnId, userDiscordId: userId, walletDelta: -amount, bankDelta: amount, type: 'DEPOSIT', reason: 'Wallet -> Bank' });
+    await insertLedger(db, { idempotencyKey: `deposit:${guildId}:${nitradoConnId}:${subjectKey}:${randomUUID()}`, guildId, nitradoConnId, userDiscordId: userId, walletDelta: -amount, bankDelta: amount, type: 'DEPOSIT', reason: 'Wallet -> Bank', sourceRef: subjectKey });
   });
 }
 
@@ -354,6 +368,7 @@ export async function withdraw(
 ): Promise<void> {
   if (amount <= 0n) throw new Error('Betrag muss > 0 sein');
   await assertEconomyScopeReady(guildId, nitradoConnId);
+  const subjectKey = economySubjectKey(String(guildId), String(userId), config.security.encryptionKey);
   await prisma.$transaction(async tx => {
     const db = tx as unknown as RawDb;
     const changed = await db.$executeRawUnsafe(
@@ -361,7 +376,7 @@ export async function withdraw(
       String(guildId), String(nitradoConnId), String(userId), amount);
     if (changed !== 1) throw new Error('Bank zu klein');
     await insertTransaction(db, { guildId, nitradoConnId, userDiscordId: userId, delta: 0n, type: 'WITHDRAW', reason: `Bank -> Wallet ${amount}`, actorDiscordId: userId });
-    await insertLedger(db, { idempotencyKey: `withdraw:${guildId}:${nitradoConnId}:${userId}:${randomUUID()}`, guildId, nitradoConnId, userDiscordId: userId, walletDelta: amount, bankDelta: -amount, type: 'WITHDRAW', reason: 'Bank -> Wallet' });
+    await insertLedger(db, { idempotencyKey: `withdraw:${guildId}:${nitradoConnId}:${subjectKey}:${randomUUID()}`, guildId, nitradoConnId, userDiscordId: userId, walletDelta: amount, bankDelta: -amount, type: 'WITHDRAW', reason: 'Bank -> Wallet', sourceRef: subjectKey });
   });
 }
 

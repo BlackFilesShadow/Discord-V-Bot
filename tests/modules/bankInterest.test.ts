@@ -133,7 +133,7 @@ describe('runDailyInterestForServer — Tagesidempotenz und Scope', () => {
     expect(accounts.get('g:n1:u1')!.bankBalance).toBe(1050n);
   });
 
-  it('darf denselben Tag fuer einen zweiten Gameserver separat verbuchen', async () => {
+  it('darf denselben Tag fuer einen zweiten Gameserver separat verbuchen und speichert keine rohe Discord-ID im Ledger-Key', async () => {
     const { client, accounts, runs, ledgerKeys } = makeClient([
       { guildId: 'g', nitradoConnId: 'n1', userDiscordId: 'u1', bankBalance: 1000n },
       { guildId: 'g', nitradoConnId: 'n2', userDiscordId: 'u1', bankBalance: 2000n },
@@ -147,10 +147,11 @@ describe('runDailyInterestForServer — Tagesidempotenz und Scope', () => {
     expect(accounts.get('g:n1:u1')!.bankBalance).toBe(1050n);
     expect(accounts.get('g:n2:u1')!.bankBalance).toBe(2100n);
     expect(runs).toEqual(new Set(['g:n1:2026-08-01', 'g:n2:2026-08-01']));
-    expect(ledgerKeys).toEqual(new Set([
-      'interest:g:n1:2026-08-01:u1',
-      'interest:g:n2:2026-08-01:u1',
-    ]));
+    expect(ledgerKeys.size).toBe(2);
+    for (const key of ledgerKeys) {
+      expect(key).toMatch(/^interest:g:n[12]:2026-08-01:es1_[a-f0-9]{32}$/);
+      expect(key).not.toContain(':u1');
+    }
   });
 
   it('percent<=0 -> skipped', async () => {
