@@ -6,7 +6,7 @@ import { logger } from './utils/logger';
 import prisma from './database/prisma';
 import fs from 'fs';
 
-import readyEvent from './events/ready';
+import readyEvent, { stopReadyRuntime } from './events/ready';
 import interactionCreateEvent from './events/interactionCreate';
 import guildMemberAddEvent from './events/guildMemberAdd';
 import guildMemberRemoveEvent from './events/guildMemberRemove';
@@ -28,6 +28,7 @@ import { assertProductionEnv } from './utils/envValidation';
 import { startNitradoRuntime, type NitradoRuntimeHandle } from './modules/nitrado/runtime';
 import { startAiBackgroundLoops, stopAiBackgroundLoops } from './modules/ai/runtime';
 import { installAiProviderRequestCompatibility } from './modules/ai/providerRequestCompatibility';
+import { installDiscordLifecycleObservers, registerBotEventsSafely } from './runtime/discordRuntime';
 import { BOT_PRODUCT_NAME } from './content/botInfo';
 
 /** Haupteinstiegspunkt fuer V-Bot Prime. */
@@ -87,14 +88,11 @@ async function main(): Promise<void> {
     voiceStateUpdateEvent,
   ];
 
-  for (const event of events) {
-    if (event.once) {
-      client.once(event.name, (...args) => event.execute(...args));
-    } else {
-      client.on(event.name, (...args) => event.execute(...args));
-    }
-    logger.info(`Event registriert: ${event.name}${event.once ? ' (once)' : ''}`);
-  }
+  // Domain-Events werden exakt einmal registriert und jeder Handler ist gegen
+  // synchrone sowie asynchrone Exceptions gekapselt. Gateway-Reconnect bleibt
+  // alleinige Verantwortung von discord.js; wir beobachten den Lifecycle nur.
+  registerBotEventsSafely(client, events);
+  const discordLifecycle = installDiscordLifecycleObservers(client);
 
   // Command-Registrierung scope-getrennt:
   //  - GLOBAL: nur bewusst in Discord erhaltene globale Spezialfunktionen,
@@ -183,6 +181,9 @@ async function main(): Promise<void> {
     // Prozess ohne Dashboard waere daher funktional unvollstaendig und darf
     // nicht als produktionsbereit weiterlaufen.
     logger.error('Dashboard konnte nicht gestartet werden; Start wird abgebrochen:', error);
+    stopAiBackgroundLoops();
+    stopReadyRuntime();
+    discordLifecycle.stop();
     client.destroy();
     await prisma.$disconnect().catch(() => undefined);
     throw error;
@@ -233,6 +234,10 @@ async function main(): Promise<void> {
       logger.warn('Dashboard-Runtime-Shutdown fehlgeschlagen:', e as Error);
     }
 
+    // Alles, was an Discord-Ready/Gateway-Lifecycle gekoppelt ist, wird vor dem
+    // Client-Destroy symmetrisch gestoppt. Persistierte Konfiguration bleibt erhalten.
+    stopReadyRuntime();
+    discordLifecycle.stop();
     stopAiBackgroundLoops();
     clearInterval(moderationTimer);
     stopReminderScheduler();

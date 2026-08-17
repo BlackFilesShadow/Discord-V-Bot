@@ -47,6 +47,17 @@ export const wsLatencyGauge = new Gauge({
   registers: [metricsRegistry],
 });
 
+/**
+ * Discord-1: bewusst niedrig-kardinale Gateway-Lifecycle-Ereignisse.
+ * Shard-/Guild-/User-IDs werden niemals als Prometheus-Label verwendet.
+ */
+export const discordGatewayEventCounter = new Counter({
+  name: 'vbot_discord_gateway_events_total',
+  help: 'Discord Gateway Lifecycle- und Client-Ereignisse nach festem Ereignistyp',
+  labelNames: ['event'] as const,
+  registers: [metricsRegistry],
+});
+
 export const dbQueryHistogram = new Histogram({
   name: 'vbot_db_query_duration_seconds',
   help: 'Prisma-DB-Query-Dauer in Sekunden',

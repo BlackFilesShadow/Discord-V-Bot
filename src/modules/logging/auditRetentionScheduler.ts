@@ -22,6 +22,8 @@ const ONE_DAY_MS = 24 * 60 * 60 * 1000;
 const STARTUP_DELAY_MS = 60_000; // 1 min nach Boot, damit ready/restore zuerst durchlaufen
 
 let scheduled = false;
+let startupTimer: NodeJS.Timeout | null = null;
+let intervalTimer: NodeJS.Timeout | null = null;
 
 function getRetentionDays(): number {
   const raw = Number(process.env.AUDIT_LOG_RETENTION_DAYS ?? 90);
@@ -53,17 +55,31 @@ export async function runAuditLogRetentionOnce(): Promise<{ deleted: number; cut
   }
 }
 
-/**
- * Registriert den Daily-Run. Idempotent: mehrfache Aufrufe sind no-ops.
- */
+/** Registriert den Daily-Run. Idempotent: mehrfache Aufrufe sind no-ops. */
 export function startAuditLogRetentionScheduler(): void {
   if (scheduled) return;
   scheduled = true;
-  // Initial-Run mit Delay (nicht sofort, um Boot nicht zu belasten).
-  const initial = setTimeout(() => { void runAuditLogRetentionOnce(); }, STARTUP_DELAY_MS);
-  initial.unref?.();
-  // Daily.
-  const interval = setInterval(() => { void runAuditLogRetentionOnce(); }, ONE_DAY_MS);
-  interval.unref?.();
+
+  startupTimer = setTimeout(() => {
+    startupTimer = null;
+    void runAuditLogRetentionOnce();
+  }, STARTUP_DELAY_MS);
+  startupTimer.unref?.();
+
+  intervalTimer = setInterval(() => { void runAuditLogRetentionOnce(); }, ONE_DAY_MS);
+  intervalTimer.unref?.();
   logger.info(`auditLogRetention: Scheduler aktiv (retentionDays=${getRetentionDays()})`);
+}
+
+/** Stoppt Startup-Delay und Daily-Timer symmetrisch fuer geordneten Shutdown. */
+export function stopAuditLogRetentionScheduler(): void {
+  if (startupTimer) {
+    clearTimeout(startupTimer);
+    startupTimer = null;
+  }
+  if (intervalTimer) {
+    clearInterval(intervalTimer);
+    intervalTimer = null;
+  }
+  scheduled = false;
 }

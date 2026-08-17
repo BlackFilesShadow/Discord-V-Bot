@@ -138,7 +138,6 @@ export async function buildLeaderboardEmbed(
 }
 
 function startTimer(client: Client, feed: LeaderboardFeed): void {
-  // Vorherigen Timer ggf. ersetzen.
   const prev = activeTimers.get(feed.channelId);
   if (prev) clearInterval(prev);
 
@@ -146,7 +145,6 @@ function startTimer(client: Client, feed: LeaderboardFeed): void {
     try {
       const ch = await client.channels.fetch(feed.channelId).catch(() => null);
       if (!ch || !('send' in ch)) {
-        // Channel weg → Feed automatisch aufräumen.
         await deleteFeed(feed.channelId);
         return;
       }
@@ -170,4 +168,10 @@ export async function restoreAllFeeds(client: Client): Promise<void> {
   const feeds = await getAllFeeds();
   for (const f of feeds) startTimer(client, f);
   if (feeds.length > 0) logger.info(`Leaderboard-Feeds wiederhergestellt: ${feeds.length}`);
+}
+
+/** Stoppt ausschliesslich In-Memory-Timer; persistierte Feed-Konfiguration bleibt erhalten. */
+export function stopAllLeaderboardFeeds(): void {
+  for (const timer of activeTimers.values()) clearInterval(timer);
+  activeTimers.clear();
 }
