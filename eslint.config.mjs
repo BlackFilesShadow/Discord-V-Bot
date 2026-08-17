@@ -1,9 +1,6 @@
-// ESLint v9 Flat-Config (Paket 3 \u2013 DX).
-// Fokus: floating-promises, unused vars, security gotchas \u2013 ohne dass die
-// bestehenden 46 Commands zu hunderten neuen Warnings fuehren. Strict-Modus
-// (no-explicit-any, strict-boolean-expressions) wird bewusst NICHT aktiviert,
-// weil das im Bestand zu viel Noise erzeugt; wir starten konservativ und
-// koennen nach und nach verschaerfen.
+// ESLint v9 Flat-Config (Paket 3 – DX).
+// Fokus: floating-promises, unused vars, security gotchas – ohne dass die
+// bestehenden Commands zu hunderten neuen Warnings fuehren.
 
 import tseslint from '@typescript-eslint/eslint-plugin';
 import tsparser from '@typescript-eslint/parser';
@@ -12,7 +9,6 @@ import noUnscopedPrismaQuery from './eslint-rules/no-unscoped-prisma-query.js';
 const localRules = {
   rules: {
     'no-unscoped-prisma-query': noUnscopedPrismaQuery,
-    'no-unscoped-prisma-query-extra': noUnscopedPrismaQuery,
   },
 };
 
@@ -46,8 +42,6 @@ export default [
       'local': localRules,
     },
     rules: {
-      // Sicherheit / Stabilitaet \u2013 hier schlaegt ESLint die Bugs der Audit
-      // (silente Floating-Promises) tatsaechlich raus.
       '@typescript-eslint/no-floating-promises': ['error', { ignoreVoid: true }],
       '@typescript-eslint/no-misused-promises': ['error', { checksVoidReturn: false }],
       '@typescript-eslint/await-thenable': 'error',
@@ -56,13 +50,12 @@ export default [
         varsIgnorePattern: '^_',
         caughtErrorsIgnorePattern: '^_',
       }],
-      // Phase 3.5 Isolation-Doktrin: Cross-Guild-Leak-Schutz auf AST-Ebene.
-      // Tenant-kritische Models -> harter Fehler.
-      'local/no-unscoped-prisma-query': ['error', { set: 'strict' }],
-      // Weitere aus dem Schema abgeleitete guildId-Models -> Advisory-Warnung
-      // (F-005: drift-sicher, inkrementell zu auditieren).
-      'local/no-unscoped-prisma-query-extra': ['warn', { set: 'extras' }],
-      // Codequalitaet \u2013 erlaubt aber hinterlaesst gelben Hint
+      // DB-1 Scope-Matrix: ALLE aus schema.prisma abgeleiteten Models mit
+      // direktem guildId sind jetzt harter Mandantenschutz. Die fruehere
+      // strict/extras-Aufteilung mit Advisory-Warnungen ist damit beendet.
+      // Bewusste globale Aggregationen muessen lokal und begruendet disabled
+      // werden; stillschweigende Cross-Guild-Queries sind nicht mehr erlaubt.
+      'local/no-unscoped-prisma-query': ['error', { set: 'all' }],
       '@typescript-eslint/no-explicit-any': 'off',
       '@typescript-eslint/no-non-null-assertion': 'off',
       'no-empty': ['warn', { allowEmptyCatch: true }],
@@ -71,7 +64,6 @@ export default [
     },
   },
   {
-    // Tests duerfen lockerer sein, brauchen aber den TS-Parser.
     files: ['tests/**/*.ts', 'src/**/__tests__/**/*.ts', 'scripts/**/*.ts'],
     languageOptions: {
       parser: tsparser,
