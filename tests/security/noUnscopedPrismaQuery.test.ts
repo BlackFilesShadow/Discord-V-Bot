@@ -2,7 +2,8 @@
  * DB-1: Die no-unscoped-prisma-query-Regel leitet tenant-scoped Models aus
  * dem Schema ab. `set: all` ist der Produktionsvertrag: jedes Model mit
  * direktem guildId muss bei Reads/Updates/Deletes einen expliziten Guild-Scope
- * im where tragen. Die fruehere Extras-Advisory darf nicht zurueckkehren.
+ * im where tragen. Nicht statisch pruefbare dynamische Query-Argumente sind
+ * ebenfalls fail-closed.
  */
 import { RuleTester } from 'eslint';
 
@@ -28,8 +29,6 @@ tester.run('no-unscoped-prisma-query (DB-1)', rule, {
       errors: [{ messageId: 'missingGuildId' }],
     },
     {
-      // ticket gehoerte frueher nur zum Advisory-Extras-Set. DB-1 macht daraus
-      // einen CI-blockierenden Tenant-Verstoss.
       code: 'prisma.ticket.findMany({ where: {} });',
       options: [{ set: 'all' }],
       errors: [{ messageId: 'missingGuildId' }],
@@ -38,6 +37,11 @@ tester.run('no-unscoped-prisma-query (DB-1)', rule, {
       code: 'prisma.levelData.deleteMany({ where: { userId: u } });',
       options: [{ set: 'all' }],
       errors: [{ messageId: 'missingGuildId' }],
+    },
+    {
+      code: 'prisma.economyAccount.findMany(buildTenantArgs(g));',
+      options: [{ set: 'all' }],
+      errors: [{ messageId: 'dynamicArg' }],
     },
   ],
 });
