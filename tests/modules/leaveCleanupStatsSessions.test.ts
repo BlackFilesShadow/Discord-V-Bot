@@ -9,7 +9,7 @@ const transaction = jest.fn();
 const SECRET = 'leave-test-secret-0123456789abcdef';
 
 jest.mock('../../src/config', () => ({
-  config: { security: { encryptionKey: SECRET } },
+  config: { security: { encryptionKey: 'leave-test-secret-0123456789abcdef' } },
 }));
 
 const tx = {
