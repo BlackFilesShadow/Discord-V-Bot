@@ -25,12 +25,16 @@ describe('AI-10 knowledge gameserver scope architecture', () => {
     expect(source).not.toMatch(/return\s+options\[0\]\s*;/);
   });
 
-  it('filtert Scope vor dem Hybrid-Ranking und globalisiert keine Sidecar-Zeile', () => {
+  it('filtert Scope und abgelaufene Provenance vor dem Hybrid-Ranking', () => {
     const source = read('src/modules/ai/guildKnowledge.ts');
     const filterPos = source.indexOf('filterKnowledgeRowsForScope(all, scopeRows, nitradoConnId)');
-    const scorePos = source.indexOf('scoreKnowledge(scoped, question)');
+    const provenancePos = source.indexOf('getKnowledgeProvenanceMap(guildId, scoped)', filterPos);
+    const expiredPos = source.indexOf("freshness !== 'EXPIRED'", provenancePos);
+    const scorePos = source.indexOf('scoreKnowledge(eligible, question, provenanceMap)', expiredPos);
     expect(filterPos).toBeGreaterThan(-1);
-    expect(scorePos).toBeGreaterThan(filterPos);
+    expect(provenancePos).toBeGreaterThan(filterPos);
+    expect(expiredPos).toBeGreaterThan(provenancePos);
+    expect(scorePos).toBeGreaterThan(expiredPos);
     expect(source).toContain("scope.type === 'GAMESERVER'");
     expect(source).toContain('scopeSlot');
   });
