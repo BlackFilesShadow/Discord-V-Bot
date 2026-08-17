@@ -68,6 +68,7 @@ export interface DayzKnowledgeManifest {
 const SHA256_RE = /^[a-f0-9]{64}$/i;
 const REQUIRED_MAPS: readonly Dayz129Map[] = ['chernarus', 'livonia', 'sakhal'];
 const CANONICAL_SOURCE_TAG = 'USER_ZIPS_1.29.163451';
+const CANONICAL_USER_ZIP_PROVENANCE = 'three user-supplied DayZ 1.29.163451 ZIP datasets';
 
 function versionFamily(version: string): string {
   const match = version.match(/^(\d+\.\d+)/);
@@ -84,6 +85,19 @@ export function getDayz129CatalogPlatform(): DayzKnowledgePlatform {
   return 'UNKNOWN';
 }
 
+/**
+ * Historical generated indexes predate the explicit verification flag. They are
+ * accepted only when the flag is absent AND both immutable legacy provenance
+ * signals identify the exact user-supplied 1.29.163451 ZIP corpus. An explicit
+ * false is never upgraded and every other source stays fail-closed.
+ */
+export function isDayzUserManifestVerified(index: Dayz129Index): boolean {
+  if (index.verifiedAgainstUserManifest === true) return true;
+  if (index.verifiedAgainstUserManifest === false) return false;
+  return index.sourceTag === CANONICAL_SOURCE_TAG
+    && DAYZ129_PROVENANCE.valueAndStructureSource === CANONICAL_USER_ZIP_PROVENANCE;
+}
+
 export function validateDayzKnowledgeIndex(index: Dayz129Index): DayzKnowledgeValidationIssue[] {
   const issues: DayzKnowledgeValidationIssue[] = [];
   if (!index.version?.trim()) {
@@ -97,10 +111,10 @@ export function validateDayzKnowledgeIndex(index: Dayz129Index): DayzKnowledgeVa
       message: `DayZ-Source-Tag ${index.sourceTag} entspricht nicht ${CANONICAL_SOURCE_TAG}.`,
     });
   }
-  if (index.verifiedAgainstUserManifest !== true) {
+  if (!isDayzUserManifestVerified(index)) {
     issues.push({
       code: 'USER_MANIFEST_UNVERIFIED',
-      message: 'DayZ-Katalog ist nicht explizit gegen das Nutzer-Manifest verifiziert.',
+      message: 'DayZ-Katalog ist nicht gegen die kanonische Nutzer-ZIP-Provenance verifiziert.',
     });
   }
 
@@ -141,7 +155,7 @@ function canonicalManifestMaterial(index: Dayz129Index): string {
   const rows: string[] = [
     `version=${index.version}`,
     `sourceTag=${index.sourceTag}`,
-    `verifiedAgainstUserManifest=${index.verifiedAgainstUserManifest === true}`,
+    `verifiedAgainstUserManifest=${isDayzUserManifestVerified(index)}`,
     `valueAndStructureSource=${DAYZ129_PROVENANCE.valueAndStructureSource}`,
     `officialSemanticReference=${DAYZ129_PROVENANCE.officialSemanticReference}`,
     `sourceRule=${DAYZ129_PROVENANCE.rule}`,
@@ -187,7 +201,7 @@ export function getDayz129KnowledgeManifest(): DayzKnowledgeManifest {
     manifestSha256: computeDayzKnowledgeManifestSha256(index),
     fileCount: maps.reduce((sum, entry) => sum + entry.fileCount, 0),
     maps,
-    verifiedAgainstUserManifest: index.verifiedAgainstUserManifest === true,
+    verifiedAgainstUserManifest: isDayzUserManifestVerified(index),
     validity: issues.length === 0 ? 'VALID' : 'INVALID',
     issues,
   };
