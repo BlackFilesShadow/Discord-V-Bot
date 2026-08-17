@@ -98,15 +98,30 @@ function containsPhrase(question: string, phrase: string): boolean {
 }
 
 /**
+ * AI-13: Erkennt Fragen, die den realen Zustand des eigenen/aktuellen
+ * Gameservers meinen. Allgemeine DayZ-/Vanilla-Fragen duerfen dadurch nicht
+ * automatisch in einen Live-Server-Scope kippen, nur weil genau ein Server
+ * verbunden ist.
+ */
+export function looksLikeLiveServerKnowledgeQuestion(question: string): boolean {
+  const q = normalizeText(question);
+  if (!q) return false;
+  return /\b(?:bei uns|unser server|unser gameserver|mein server|mein gameserver|dieser server|dieser gameserver|aktueller server|aktueller gameserver|live server|live gameserver)\b/.test(q)
+    || /\b(?:auf|von|bei)\s+(?:unserem|meinem|diesem|dem aktuellen)\s+(?:dayz\s+)?(?:server|gameserver)\b/.test(q)
+    || /\b(?:wie|was|welche|welcher|welches|wieviel|wie viel)\b.*\b(?:bei uns|auf unserem|auf meinem|auf diesem)\b/.test(q);
+}
+
+/**
  * Runtime-Aufloesung fuer freien Discord-Chat.
  *
- * Reihenfolge:
- * 1. Explizites "slot N"/"server N"/"gameserver N" oder Alias/Alias5.
- * 2. Genau ein produktiv nutzbarer Gameserver -> automatisch.
- * 3. Mehrere/mehrdeutige Server -> null (= nur guild-globales Wissen).
+ * AI-13 Boundary:
+ * 1. Explizites "slot N"/"server N"/"gameserver N" oder Alias/Alias5 -> exakt dieser Live-Scope.
+ * 2. Genau ein produktiver Gameserver wird NUR bei klarer Live-Server-Intention automatisch gewaehlt.
+ * 3. Allgemeine DayZ-/Vanilla-Fragen bleiben guild-global.
+ * 4. Mehrere/mehrdeutige Server ohne eindeutige Auswahl -> guild-global.
  *
  * Es gibt bewusst KEIN implizites Slot-1-Fallback und niemals einen Mix aus
- * Wissen mehrerer Gameserver.
+ * allgemeinem Wissen und Wissen mehrerer Gameserver.
  */
 export async function resolveRuntimeKnowledgeScope(
   guildId: string,
@@ -131,7 +146,8 @@ export async function resolveRuntimeKnowledgeScope(
   if (explicitMatches.length === 1) return explicitMatches[0];
   if (explicitMatches.length > 1) return null;
 
-  return options.length === 1 ? options[0] : null;
+  if (options.length === 1 && looksLikeLiveServerKnowledgeQuestion(question)) return options[0];
+  return null;
 }
 
 export async function getKnowledgeScopeRows(
@@ -144,9 +160,14 @@ export async function getKnowledgeScopeRows(
 }
 
 /**
- * Filtert Kandidaten VOR dem Hybrid-Scoring. Das ist wichtig, weil sonst
- * serverfremde Snippets die Keyword-Normalisierung/Rangfolge beeinflussen
- * koennten, selbst wenn sie spaeter aus der Ausgabe entfernt werden.
+ * Filtert Kandidaten VOR dem Hybrid-Scoring.
+ *
+ * AI-13 macht die beiden Domains gegenseitig exklusiv:
+ * - null => ausschliesslich guild-globales/allgemeines Wissen
+ * - konkrete nitradoConnId => ausschliesslich Wissen exakt dieses Gameservers
+ *
+ * Dadurch kann ein globales/Vanilla-Snippet niemals das Ranking einer Live-
+ * Serverfrage beeinflussen und umgekehrt.
  */
 export function filterKnowledgeRowsForScope<T extends { id: string }>(
   rows: readonly T[],
@@ -156,8 +177,8 @@ export function filterKnowledgeRowsForScope<T extends { id: string }>(
   const byKnowledge = new Map(scopeRows.map((s) => [s.knowledgeId, s.nitradoConnId] as const));
   return rows.filter((row) => {
     const scopedTo = byKnowledge.get(row.id);
-    if (!scopedTo) return true; // keine Metadatenzeile = guild-global
-    return nitradoConnId !== null && scopedTo === nitradoConnId;
+    if (nitradoConnId === null) return !scopedTo;
+    return scopedTo === nitradoConnId;
   });
 }
 
