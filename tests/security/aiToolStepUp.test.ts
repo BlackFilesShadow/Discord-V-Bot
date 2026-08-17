@@ -50,8 +50,11 @@ describe('AI-18 one-shot step-up grants', () => {
     const service = new AiToolStepUpService(secret, () => 1_800_000_000_000);
     const token = service.issue({ binding: baseBinding, confirmedByUser: true, source: 'DISCORD_INTERACTION' });
     const [body, signature] = token.split('.');
+    const replacement = signature.endsWith('A') ? 'B' : 'A';
+    const tamperedSignature = `${signature.slice(0, -1)}${replacement}`;
+
     expect(service.verifyAndConsume(`${body}A.${signature}`, baseBinding)).toBe(false);
-    expect(service.verifyAndConsume(`${body}.${signature.slice(0, -1)}A`, baseBinding)).toBe(false);
+    expect(service.verifyAndConsume(`${body}.${tamperedSignature}`, baseBinding)).toBe(false);
     expect(service.verifyAndConsume(token, baseBinding)).toBe(true);
   });
 
