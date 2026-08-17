@@ -1,3 +1,9 @@
+const cleanupGuard = jest.fn();
+
+jest.mock('../../src/modules/moderation/leaveCleanupGuard', () => ({
+  assertNoOpenLeaveCleanupRequest: cleanupGuard,
+}));
+
 import {
   MIN_LINK_PLAYTIME_SECONDS,
   findVerifiedLinkDetails,
@@ -128,7 +134,26 @@ function makeClient(initialLinks: StoredLink[] = [], sessions: PlayerSessionLink
   return { client, links };
 }
 
+beforeEach(() => {
+  cleanupGuard.mockReset();
+  cleanupGuard.mockResolvedValue(undefined);
+});
+
 describe('Konsolen-Linking ueber PlayerSessions', () => {
+  it('blockiert Rejoin-Linking vor jeder Session-Aufloesung solange der Leave-Cleanup offen ist', async () => {
+    cleanupGuard.mockRejectedValue(new Error('Leave-Cleanup noch offen'));
+    const { client, links } = makeClient([], [
+      session({ gameId: 'guid-1', playerName: 'Void__Architect', durationSeconds: 600 }),
+    ]);
+    const sessionSpy = jest.spyOn(client.playerSession, 'findMany');
+
+    await expect(linkByPlayerName(client, SCOPE, 'discord-1', 'Void__Architect', SECRET, NOW))
+      .rejects.toThrow(/Leave-Cleanup/);
+    expect(cleanupGuard).toHaveBeenCalledWith(SCOPE.guildId, 'discord-1');
+    expect(sessionSpy).not.toHaveBeenCalled();
+    expect(links.size).toBe(0);
+  });
+
   it('lehnt einen unbekannten PSN-/Xbox-Namen ab', async () => {
     const { client } = makeClient();
     const result = await linkByPlayerName(client, SCOPE, 'discord-1', 'Void__Architect', SECRET, NOW);
@@ -231,12 +256,13 @@ describe('Konsolen-Linking ueber PlayerSessions', () => {
     expect(result).toEqual({ ok: false, reason: 'AMBIGUOUS_PLAYER_NAME', playerName: 'DuplicateName' });
   });
 
-  it('Force-Link umgeht nur die 5-Minuten-Grenze, nicht die Session-Aufloesung', async () => {
+  it('Force-Link umgeht nur die 5-Minuten-Grenze, nicht den Leave-Cleanup-Guard oder die Session-Aufloesung', async () => {
     const { client } = makeClient([], [
       session({ gameId: 'guid-1', playerName: 'Void__Architect', durationSeconds: 30 }),
     ]);
     const result = await forceLinkByPlayerName(client, SCOPE, 'discord-1', 'Void__Architect', SECRET, NOW);
     expect(result).toMatchObject({ ok: true, playerName: 'Void__Architect', gameId: 'guid-1', playedSeconds: 30 });
+    expect(cleanupGuard).toHaveBeenCalledWith(SCOPE.guildId, 'discord-1');
   });
 });
 
