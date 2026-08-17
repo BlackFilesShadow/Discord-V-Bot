@@ -42,6 +42,7 @@ describe('AI-12 DayZ Knowledge 2.0 manifest', () => {
     expect(manifest.version).toBe(index.version);
     expect(manifest.versionFamily).toMatch(/^1\.29(?:$|\.)/);
     expect(manifest.sourceTag).toBe('USER_ZIPS_1.29.163451');
+    expect(manifest.verifiedAgainstUserManifest).toBe(true);
     expect(manifest.validity).toBe('VALID');
     expect(manifest.fileCount).toBeGreaterThan(0);
     expect(manifest.maps.map((entry) => entry.map).sort()).toEqual(['chernarus', 'livonia', 'sakhal']);
@@ -77,6 +78,20 @@ describe('AI-12 DayZ Knowledge 2.0 manifest', () => {
     const issues = validateDayzKnowledgeIndex(index);
     expect(issues).toEqual(expect.arrayContaining([
       expect.objectContaining({ code: 'FILE_SHA256_INVALID', map: 'livonia', path: 'db/types.xml' }),
+    ]));
+  });
+
+  it('faellt bei abweichendem Source-Tag fail-closed aus', () => {
+    const issues = validateDayzKnowledgeIndex(fakeIndex({ sourceTag: 'PUBLIC_REPO_UNKNOWN' }));
+    expect(issues).toEqual(expect.arrayContaining([
+      expect.objectContaining({ code: 'SOURCE_TAG_UNEXPECTED' }),
+    ]));
+  });
+
+  it('akzeptiert keinen Katalog ohne explizite Nutzer-Manifest-Verifikation', () => {
+    const issues = validateDayzKnowledgeIndex(fakeIndex({ verifiedAgainstUserManifest: false }));
+    expect(issues).toEqual(expect.arrayContaining([
+      expect.objectContaining({ code: 'USER_MANIFEST_UNVERIFIED' }),
     ]));
   });
 
