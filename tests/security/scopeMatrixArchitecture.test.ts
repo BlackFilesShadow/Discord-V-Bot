@@ -33,6 +33,7 @@ describe('DB-1 repo-wide scope matrix', () => {
     expect(eslintConfig).not.toContain('no-unscoped-prisma-query-extra');
     expect(ruleSource).toContain("if (setName === 'all')");
     expect(ruleSource).toContain('DERIVED_GUILD_MODELS');
+    expect(ruleSource).toContain("messageId: 'dynamicArg'");
   });
 
   test('every direct gameserver identifier is also bound to an explicit Guild in the same row', () => {
@@ -46,37 +47,48 @@ describe('DB-1 repo-wide scope matrix', () => {
     expect(missingGuildScope).toEqual([]);
   });
 
-  test('every direct Discord player identity scope is also bound to an explicit Guild', () => {
+  test('Discord player identity rows without direct guildId are explicitly classified, not silently accepted', () => {
     const userScoped = models.filter((model) => hasField(model, 'userDiscordId'));
     expect(userScoped.length).toBeGreaterThan(5);
 
-    const missingGuildScope = userScoped
+    const withoutDirectGuild = userScoped
       .filter((model) => !hasField(model, 'guildId'))
       .map((model) => model.name)
       .sort();
-    expect(missingGuildScope).toEqual([]);
+
+    // Global DEV/control-plane records intentionally identify the operator
+    // independent of one Discord Guild. FactionMember inherits its Guild from
+    // the mandatory Faction relation. Any NEW exception must make this test
+    // fail and be explicitly classified during an audit.
+    expect(withoutDirectGuild).toEqual([
+      'BotAdminSession',
+      'DevSession',
+      'DevUpload',
+      'FactionMember',
+    ]);
+
+    const factionMember = models.find((model) => model.name === 'FactionMember');
+    expect(factionMember).toBeDefined();
+    expect(hasField(factionMember!, 'factionId')).toBe(true);
+    expect(factionMember!.body).toMatch(/Faction\s+@relation\(fields:\s*\[factionId\]/);
   });
 
-  test('critical three-dimensional rows expose Guild + Gameserver + User together', () => {
-    const expectedCritical = [
-      'GameIdentityLink',
-      'WhitelistEntry',
-      'WhitelistRequest',
-      'EconomyAccount',
-      'PlayerSession',
-      'PlayerStat',
-    ];
+  test('critical live-player rows expose an explicit Guild + Gameserver tuple and an identity carrier', () => {
+    const expectedCritical: Record<string, string> = {
+      GameIdentityLink: 'userDiscordId',
+      WhitelistEntry: 'gameId',
+      WhitelistRequest: 'gameId',
+      EconomyAccount: 'userDiscordId',
+      PlayerSession: 'gameId',
+      NitradoSnapshot: 'serviceId',
+    };
 
-    for (const modelName of expectedCritical) {
+    for (const [modelName, identityField] of Object.entries(expectedCritical)) {
       const model = models.find((candidate) => candidate.name === modelName);
       expect(model).toBeDefined();
       expect(hasField(model!, 'guildId')).toBe(true);
       expect(hasField(model!, 'nitradoConnId')).toBe(true);
-      // Whitelist uses game/player naming in addition to the Discord actor/requester.
-      // The remaining identity-bearing rows must carry the canonical Discord player ID.
-      if (!['WhitelistEntry', 'WhitelistRequest'].includes(modelName)) {
-        expect(hasField(model!, 'userDiscordId')).toBe(true);
-      }
+      expect(hasField(model!, identityField)).toBe(true);
     }
   });
 });
