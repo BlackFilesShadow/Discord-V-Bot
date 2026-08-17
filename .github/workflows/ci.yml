@@ -95,6 +95,17 @@ jobs:
         run: npx prisma migrate status
       - name: Run DB orphan/consistency scanner
         run: npm run db:consistency
+      - name: Ensure PostgreSQL client for lifecycle verification
+        shell: bash
+        run: |
+          if ! command -v psql >/dev/null 2>&1 || ! command -v pg_dump >/dev/null 2>&1 || ! command -v pg_restore >/dev/null 2>&1; then
+            sudo apt-get update -y
+            sudo apt-get install -y postgresql-client
+          fi
+          psql --version
+          pg_dump --version
+      - name: Verify fresh/upgrade/backup-restore database lifecycle
+        run: npm run db:lifecycle
       - name: Run tests (no forceExit; leaked handles fail)
         id: jest
         shell: bash
