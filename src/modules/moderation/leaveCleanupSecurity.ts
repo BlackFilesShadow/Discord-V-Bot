@@ -3,6 +3,10 @@ const SECRET_PATTERNS: RegExp[] = [
   /\b(?:authorization|api[-_ ]?key|token|secret|password)\b\s*[:=]\s*[^\s,;]+/gi,
 ];
 
+function escapeRegExp(value: string): string {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+}
+
 /**
  * Redigiert Fehler, bevor sie in persistente Leave-Cleanup-Metadaten gelangen.
  * Konkrete Game-/Remote-Identifier werden nur im RAM uebergeben und ersetzt.
@@ -14,7 +18,7 @@ export function sanitizeLeaveCleanupError(error: unknown, sensitiveValues: strin
   for (const sensitive of sensitiveValues) {
     const candidate = sensitive.trim();
     if (!candidate) continue;
-    value = value.split(candidate).join('[REDACTED]');
+    value = value.replace(new RegExp(escapeRegExp(candidate), 'gi'), '[REDACTED]');
   }
   for (const pattern of SECRET_PATTERNS) {
     value = value.replace(pattern, match => {
