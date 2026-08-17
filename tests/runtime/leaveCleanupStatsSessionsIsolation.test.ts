@@ -1,0 +1,67 @@
+import fs from 'node:fs';
+import path from 'node:path';
+
+const read = (relative: string) => fs.readFileSync(path.resolve(process.cwd(), relative), 'utf8');
+const removeSource = read('src/events/guildMemberRemove.ts');
+const indexSource = read('src/index.ts');
+const cleanupSource = read('src/modules/moderation/leaveCleanupStatsSessions.ts');
+const linkEconomySource = read('src/modules/moderation/leaveCleanupLinkEconomy.ts');
+
+describe('Leave-1D production isolation and reset invariants', () => {
+  it('keeps the incomplete stats/session step disconnected from guildMemberRemove and process startup', () => {
+    expect(removeSource).not.toContain('leaveCleanupStatsSessions');
+    expect(removeSource).not.toContain('runLeaveStatsSessionsCleanupStep');
+    expect(indexSource).not.toContain('runLeaveStatsSessionsCleanupStep');
+  });
+
+  it('does not let Leave-1C delete GameIdentityLink before a future orchestrator explicitly runs Leave-1D', () => {
+    expect(linkEconomySource).not.toContain('runLeaveStatsSessionsCleanupStep');
+    expect(linkEconomySource).not.toContain('leaveCleanupStatsSessions');
+    expect(cleanupSource).toContain('Muss spaeter VOR Leave-1C laufen');
+  });
+
+  it('blocks an OPEN session under locks before any PlayerSession identity mutation', () => {
+    const playerLock = cleanupSource.indexOf('LOCK TABLE \"PlayerSession\"');
+    const openRecheck = cleanupSource.indexOf('SELECT \"id\" FROM \"PlayerSession\"');
+    const sessionUpdate = cleanupSource.indexOf('UPDATE \"PlayerSession\"');
+    expect(playerLock).toBeGreaterThanOrEqual(0);
+    expect(openRecheck).toBeGreaterThan(playerLock);
+    expect(sessionUpdate).toBeGreaterThan(openRecheck);
+    expect(cleanupSource).toContain("'OPEN'::\"PlayerSessionStatus\"");
+    expect(cleanupSource).toContain("reason: 'ACTIVE_SESSION'");
+  });
+
+  it('preserves immutable session/event rows and reward watermarks', () => {
+    expect(cleanupSource).not.toContain('DELETE FROM \"PlayerSession\"');
+    expect(cleanupSource).not.toContain('DELETE FROM \"AdmEvent\"');
+    expect(cleanupSource).not.toContain('SET \"bucketsCredited\"');
+    expect(cleanupSource).not.toContain('SET \"bucketsEarned\"');
+    expect(cleanupSource).not.toContain('SET \"durationSeconds\"');
+  });
+
+  it('removes raw ADM identity while retaining the eventKey as a non-reversible technical tombstone', () => {
+    expect(cleanupSource).toContain("\"rawLine\"='[LEAVE_RESET] eventKey=' || \"eventKey\"");
+    expect(cleanupSource).toContain('\"actorName\"=CASE');
+    expect(cleanupSource).toContain('\"targetName\"=CASE');
+    expect(cleanupSource).toContain('\"actorGameId\"=CASE');
+    expect(cleanupSource).toContain('\"targetGameId\"=CASE');
+  });
+
+  it('resets Discord leaderboard/XP only through exact guild + Discord ownership', () => {
+    expect(cleanupSource).toContain('DELETE FROM \"LevelData\" d');
+    expect(cleanupSource).toContain('DELETE FROM \"XpRecord\" x');
+    expect(cleanupSource).toContain('d.\"guildId\"=$1');
+    expect(cleanupSource).toContain('x.\"guildId\"=$1');
+    expect(cleanupSource).toContain('u.\"discordId\"=$2');
+  });
+
+  it('never exposes a raw game identifier in the public cleanup result contract', () => {
+    const resultContract = cleanupSource.slice(
+      cleanupSource.indexOf('export interface LeaveStatsSessionsResult'),
+      cleanupSource.indexOf('interface SessionEvidence'),
+    );
+    expect(resultContract).not.toContain('rawGameId');
+    expect(resultContract).not.toContain('gameId: string');
+    expect(resultContract).not.toContain('playerName');
+  });
+});
