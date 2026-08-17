@@ -68,23 +68,23 @@ export const rateLimitedCounter = new Counter({
  */
 export const aiProviderAttemptsCounter = new Counter({
   name: 'vbot_ai_provider_attempts_total',
-  help: 'AI-Provider-Versuche nach Provider, Modell, Task und Ergebnis',
-  labelNames: ['provider', 'model', 'task', 'outcome'] as const,
+  help: 'Persistierte AI-Provider-Call-Ergebnisse nach Provider, Modell und Ergebnis',
+  labelNames: ['provider', 'model', 'outcome'] as const,
   registers: [metricsRegistry],
 });
 
 export const aiProviderLatencyHistogram = new Histogram({
   name: 'vbot_ai_provider_latency_seconds',
-  help: 'End-to-End-Latenz einzelner AI-Provider-Versuche in Sekunden',
-  labelNames: ['provider', 'model', 'task', 'outcome'] as const,
+  help: 'Gemessene Latenz persistierter AI-Provider-Call-Ergebnisse in Sekunden',
+  labelNames: ['provider', 'model', 'outcome'] as const,
   buckets: [0.05, 0.1, 0.25, 0.5, 1, 2, 5, 10, 20, 30],
   registers: [metricsRegistry],
 });
 
 export const aiFallbackCounter = new Counter({
   name: 'vbot_ai_provider_fallback_total',
-  help: 'Provider-Fallbacks mit begrenzter Ursachenkategorie',
-  labelNames: ['from_provider', 'to_provider', 'reason'] as const,
+  help: 'Provider-Ergebnisse, nach denen die Runtime den aktuellen Provider verlaesst',
+  labelNames: ['from_provider', 'reason'] as const,
   registers: [metricsRegistry],
 });
 
@@ -105,7 +105,7 @@ export const aiRetrievalDurationHistogram = new Histogram({
 
 export const aiRetrievalCandidatesHistogram = new Histogram({
   name: 'vbot_ai_retrieval_candidates',
-  help: 'Kandidatenanzahl je Retrieval-Stufe',
+  help: 'Kandidatenanzahl je Retrieval-Stufe, sofern der jeweilige Caller sie exakt kennt',
   labelNames: ['stage'] as const,
   buckets: [0, 1, 2, 3, 5, 10, 25, 50, 100, 250, 500],
   registers: [metricsRegistry],
