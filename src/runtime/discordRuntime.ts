@@ -1,15 +1,10 @@
+import type { EventEmitter } from 'node:events';
 import type { BotEvent } from '../types';
 import { logger } from '../utils/logger';
 import { discordGatewayEventCounter, errorCounter } from '../utils/metrics';
 
-export interface DiscordEventRegistrar {
-  on(event: string, listener: (...args: unknown[]) => void): unknown;
-  once(event: string, listener: (...args: unknown[]) => void): unknown;
-}
-
-export interface DiscordLifecycleRegistrar extends DiscordEventRegistrar {
-  off(event: string, listener: (...args: unknown[]) => void): unknown;
-}
+export type DiscordEventRegistrar = Pick<EventEmitter, 'on' | 'once' | 'off'>;
+export type DiscordLifecycleRegistrar = Pick<EventEmitter, 'on' | 'off'>;
 
 const eventRegistration = new WeakSet<object>();
 const lifecycleRegistration = new WeakMap<object, DiscordLifecycleHandle>();
@@ -18,36 +13,59 @@ function errorMessage(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
 }
 
-/**
- * Registriert Domain-Events exakt einmal pro Client und kapselt jede synchrone
- * sowie asynchrone Handler-Exception. Ein einzelnes Discord-Event darf niemals
- * als unhandled rejection aus dem EventEmitter entweichen.
- */
-export function registerBotEventsSafely(client: DiscordEventRegistrar, events: readonly BotEvent[]): void {
-  const key = client as object;
-  if (eventRegistration.has(key)) return;
-  eventRegistration.add(key);
-
+function assertUniqueEventNames(events: readonly BotEvent[]): void {
   const seen = new Set<string>();
   for (const event of events) {
     if (seen.has(event.name)) {
       throw new Error(`Discord-Event doppelt registriert: ${event.name}`);
     }
     seen.add(event.name);
+  }
+}
 
-    const listener = (...args: unknown[]) => {
-      void Promise.resolve()
-        .then(() => event.execute(...args))
-        .catch((error: unknown) => {
-          errorCounter.inc({ source: `discord_event_${event.name}` });
-          logger.error(`Discord-Event ${event.name} fehlgeschlagen:`, error as Error);
-        });
-    };
+interface ListenerSpec {
+  event: string;
+  listener: (...args: unknown[]) => void;
+}
 
-    if (event.once) client.once(event.name, listener);
-    else client.on(event.name, listener);
+/**
+ * Registriert Domain-Events exakt einmal pro Client und kapselt jede synchrone
+ * sowie asynchrone Handler-Exception. Ein einzelnes Discord-Event darf niemals
+ * als unhandled rejection aus dem EventEmitter entweichen.
+ *
+ * Die Event-Liste wird vor dem ersten Side-Effect validiert. Falls eine
+ * Registrierung unerwartet fehlschlaegt, werden bereits angehaengte Listener
+ * wieder entfernt und der Client bleibt fuer einen sauberen Retry registrierbar.
+ */
+export function registerBotEventsSafely(client: DiscordEventRegistrar, events: readonly BotEvent[]): void {
+  const key = client as object;
+  if (eventRegistration.has(key)) return;
 
-    logger.info(`Event registriert: ${event.name}${event.once ? ' (once)' : ''}`);
+  assertUniqueEventNames(events);
+
+  const attached: ListenerSpec[] = [];
+  try {
+    for (const event of events) {
+      const listener = (...args: unknown[]) => {
+        void Promise.resolve()
+          .then(() => event.execute(...args))
+          .catch((error: unknown) => {
+            errorCounter.inc({ source: `discord_event_${event.name}` });
+            logger.error(`Discord-Event ${event.name} fehlgeschlagen:`, error as Error);
+          });
+      };
+
+      if (event.once) client.once(event.name, listener);
+      else client.on(event.name, listener);
+      attached.push({ event: event.name, listener });
+
+      logger.info(`Event registriert: ${event.name}${event.once ? ' (once)' : ''}`);
+    }
+    eventRegistration.add(key);
+  } catch (error) {
+    for (const { event, listener } of attached) client.off(event, listener);
+    eventRegistration.delete(key);
+    throw error;
   }
 }
 
@@ -55,9 +73,13 @@ export interface DiscordLifecycleHandle {
   stop(): void;
 }
 
-interface ListenerSpec {
-  event: string;
-  listener: (...args: unknown[]) => void;
+function collectionSize(value: unknown): number {
+  if (Array.isArray(value)) return value.length;
+  if (value && typeof value === 'object') {
+    const size = (value as { size?: unknown }).size;
+    if (typeof size === 'number' && Number.isFinite(size) && size >= 0) return size;
+  }
+  return 0;
 }
 
 /**
@@ -102,8 +124,9 @@ export function installDiscordLifecycleObservers(client: DiscordLifecycleRegistr
 
   add('shardReady', (shardId, unavailableGuilds) => {
     discordGatewayEventCounter.inc({ event: 'shard_ready' });
-    const unavailable = Array.isArray(unavailableGuilds) ? unavailableGuilds.length : 0;
-    logger.info(`Discord Gateway bereit (shard=${String(shardId)}, unavailableGuilds=${unavailable}).`);
+    logger.info(
+      `Discord Gateway bereit (shard=${String(shardId)}, unavailableGuilds=${collectionSize(unavailableGuilds)}).`,
+    );
   });
 
   add('shardResume', (shardId, replayedEvents) => {
