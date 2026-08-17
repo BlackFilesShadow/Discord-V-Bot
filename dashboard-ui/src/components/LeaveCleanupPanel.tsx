@@ -1,0 +1,143 @@
+import { useEffect, useState } from 'react';
+import { useQuery, useQueryClient } from '@tanstack/react-query';
+import { DatabaseZap, Save, ShieldAlert } from 'lucide-react';
+import { api, ApiError } from '@/lib/api';
+import { Card, CardDesc, CardHeader, CardTitle } from '@/components/ui/Card';
+import { Button } from '@/components/ui/Button';
+import { Switch } from '@/components/ui/Switch';
+import { Badge } from '@/components/ui/Badge';
+import { useToast } from '@/components/ui/Toast';
+
+interface DashboardOwnerState {
+  isOwner: boolean;
+}
+
+interface LeaveCleanupConfigState {
+  configured: boolean;
+  deletePlayerDataOnLeave: boolean;
+}
+
+export function LeaveCleanupPanel({ guildId }: { guildId: string }) {
+  const qc = useQueryClient();
+  const toast = useToast();
+  const ownerQ = useQuery({
+    queryKey: ['dashboard', guildId],
+    queryFn: () => api.get<DashboardOwnerState>(`/api/v2/guilds/${guildId}/dashboard`),
+    enabled: !!guildId,
+  });
+  const isOwner = ownerQ.data?.isOwner === true;
+  const cfgQ = useQuery({
+    queryKey: ['leave-cleanup', guildId],
+    queryFn: () => api.get<LeaveCleanupConfigState>(`/api/v2/guilds/${guildId}/leave-cleanup/config`),
+    enabled: !!guildId && isOwner,
+  });
+
+  const [enabled, setEnabled] = useState(false);
+  const [busy, setBusy] = useState(false);
+
+  useEffect(() => {
+    if (cfgQ.data) setEnabled(cfgQ.data.deletePlayerDataOnLeave);
+  }, [cfgQ.data]);
+
+  if (!isOwner) return null;
+  if (cfgQ.isLoading) return <div className="h-40 rounded-xl skeleton" />;
+
+  const saved = cfgQ.data?.deletePlayerDataOnLeave ?? false;
+  const changed = enabled !== saved;
+
+  async function save() {
+    if (!changed) return;
+    if (enabled && !saved) {
+      const ok = confirm(
+        'Spielerdaten bei Austritt wirklich loeschen? Bei zukuenftigen Austritten werden Whitelist/Nitrado, Linking, Economy, Stats, XP und guild-spezifische Spielerdaten dauerhaft bereinigt. Der Vorgang laeuft persistent mit Retry/Recovery.',
+      );
+      if (!ok) return;
+    }
+
+    setBusy(true);
+    try {
+      await api.post(`/api/v2/guilds/${guildId}/leave-cleanup/config`, {
+        deletePlayerDataOnLeave: enabled,
+      });
+      await qc.invalidateQueries({ queryKey: ['leave-cleanup', guildId] });
+      toast.success(enabled ? 'Spielerdaten-Cleanup bei Austritt aktiviert.' : 'Neue Leave-Cleanups deaktiviert.');
+    } catch (error) {
+      setEnabled(saved);
+      toast.error(error instanceof ApiError ? error.message : 'Leave-Cleanup-Einstellung konnte nicht gespeichert werden.');
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  return (
+    <div className="space-y-4">
+      <div>
+        <h2 className="text-lg font-semibold text-white inline-flex items-center gap-2">
+          <DatabaseZap className="h-5 w-5 text-danger" /> Spielerdaten bei Austritt
+        </h2>
+        <p className="text-xs text-muted mt-0.5">
+          Owner-only Lebenszyklus-Schalter fuer den vollstaendigen, persistenten Leave-Reset.
+        </p>
+      </div>
+
+      <Card>
+        <CardHeader>
+          <div className="flex flex-wrap items-start justify-between gap-3">
+            <div className="min-w-0">
+              <CardTitle>Spielerdaten loeschen</CardTitle>
+              <CardDesc>Gilt pro Discord-Server und wird beim Guild-Austritt ausgewertet.</CardDesc>
+            </div>
+            <Badge variant={saved ? 'danger' : 'neutral'}>{saved ? 'EIN' : 'AUS'}</Badge>
+          </div>
+        </CardHeader>
+
+        <div className="space-y-4 mt-2">
+          <Switch
+            checked={enabled}
+            onChange={setEnabled}
+            label="Spielerdaten bei Austritt vollstaendig bereinigen"
+          />
+
+          <div className="rounded-lg border border-danger/35 bg-danger/5 p-3 sm:p-4">
+            <div className="flex items-start gap-2.5">
+              <ShieldAlert className="h-5 w-5 text-danger shrink-0 mt-0.5" />
+              <div className="min-w-0 text-xs text-muted space-y-2">
+                <p className="text-white/90 font-medium">Was bei EIN passiert</p>
+                <p>
+                  Der Austritt erzeugt einen persistenten Cleanup-Auftrag. Whitelist/Nitrado wird zuerst remote bestaetigt,
+                  danach werden Session-/ADM-Identitaet, Linking, Wallet/Bank/Reward-State, Stats/XP/Leaderboard und weitere
+                  guild-spezifische Spielerdaten bereinigt.
+                </p>
+                <p>
+                  Technische Anti-Replay-/Accounting-Beweise bleiben pseudonymisiert erhalten. Ein Rejoin beginnt mit frischem
+                  Spielerzustand; ein bereits verbrauchter Startbonus wird nicht erneut ausgezahlt.
+                </p>
+              </div>
+            </div>
+          </div>
+
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 text-xs text-muted">
+            <div className="rounded-lg border border-border/50 p-2.5">
+              <span className="text-white/90 block">AUS</span>
+              Ein Austritt startet keine Spieler-Datenloeschung.
+            </div>
+            <div className="rounded-lg border border-border/50 p-2.5">
+              <span className="text-white/90 block">EIN</span>
+              Durable Saga mit Checkpoints, Retry, Restart-Recovery und Dead-Letter.
+            </div>
+          </div>
+
+          <p className="text-[11px] text-muted">
+            Ausschalten verhindert neue Cleanup-Auftraege. Bereits persistent eingereihte Auftraege werden aus Konsistenzgruenden sicher zu Ende verarbeitet.
+          </p>
+        </div>
+      </Card>
+
+      <div className="flex flex-col sm:flex-row gap-2">
+        <Button onClick={save} disabled={busy || !changed} className="w-full sm:w-auto">
+          <Save className="h-4 w-4 mr-1" /> {busy ? 'Speichert…' : 'Einstellung speichern'}
+        </Button>
+      </div>
+    </div>
+  );
+}
