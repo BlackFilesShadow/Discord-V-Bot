@@ -60,8 +60,8 @@ describe('Leave-1E productive orchestration + toggle wiring', () => {
     expect(complete).toBeGreaterThan(guildData);
   });
 
-  it('blocks normal and force relinking centrally while the exact cleanup job is open', () => {
-    expect(guardSource).toContain("status: { in: ['PENDING', 'IN_PROGRESS'] }");
+  it('blocks normal and force relinking centrally while cleanup is active or dead-lettered', () => {
+    expect(guardSource).toContain("status: { in: ['PENDING', 'IN_PROGRESS', 'FAILED'] }");
     const normal = linkSource.indexOf('export async function linkByPlayerName');
     const force = linkSource.indexOf('export async function forceLinkByPlayerName');
     expect(linkSource.indexOf('assertNoOpenLeaveCleanupRequest', normal)).toBeGreaterThan(normal);
