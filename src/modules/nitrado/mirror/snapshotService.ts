@@ -84,7 +84,7 @@ export async function startSnapshot(opts: SnapshotOptions): Promise<{ snapshotId
 
 async function runSnapshot(
   snapshotId: string,
-  _guildId: string,
+  guildId: string,
   connId: string,
   serviceId: string,
   encryptedToken: string,
@@ -258,11 +258,12 @@ async function runSnapshot(
     status = 'FAILED';
     logger.error('[NitradoMirror] Snapshot fehlgeschlagen', e as Error);
   } finally {
+    const finishedAt = new Date();
     await prisma.nitradoSnapshot.update({
       where: { id: snapshotId },
       data: {
         status,
-        finishedAt: new Date(),
+        finishedAt,
         totalFiles,
         totalDirs,
         totalBytes,
@@ -277,6 +278,23 @@ async function runSnapshot(
       totalBytes: totalBytes.toString(), storedBytes: storedBytes.toString(),
       oversizeFiles, errorCount,
     });
+
+    // AI-14: Ein abgeschlossener Mirror-Snapshot ist die einzige Quelle fuer
+    // LIVE_SERVER-Knowledge. Indexfehler duerfen den Snapshot selbst nicht
+    // nachtraeglich auf FAILED setzen; der AI-Pfad bleibt stattdessen fail-closed.
+    if (status === 'OK' || status === 'PARTIAL') {
+      try {
+        const { indexNitradoSnapshotKnowledge } = await import('../../ai/liveServerKnowledgeIndex.js');
+        await indexNitradoSnapshotKnowledge({ snapshotId, guildId, nitradoConnId: connId });
+      } catch (e) {
+        logger.warn('[AI-14] Live-Server-Knowledge konnte nicht aktualisiert werden', {
+          snapshotId,
+          guildId,
+          nitradoConnId: connId,
+          e: String(e),
+        });
+      }
+    }
   }
 }
 
