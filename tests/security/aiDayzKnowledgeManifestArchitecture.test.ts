@@ -10,18 +10,26 @@ function read(rel: string): string {
 describe('AI-12 DayZ Knowledge 2.0 architecture', () => {
   it('bindet Version, Plattform, Quelle, Manifest-Hash und Gueltigkeit zentral', () => {
     const source = read('src/modules/ai/dayzKnowledgeManifest.ts');
-    expect(source).toContain("version: index.version");
-    expect(source).toContain("platform: getDayz129CatalogPlatform()");
-    expect(source).toContain("sourceTag: index.sourceTag");
+    expect(source).toContain('version: index.version');
+    expect(source).toContain('platform: getDayz129CatalogPlatform()');
+    expect(source).toContain('sourceTag: index.sourceTag');
     expect(source).toContain('manifestSha256: computeDayzKnowledgeManifestSha256(index)');
     expect(source).toContain("validity: issues.length === 0 ? 'VALID' : 'INVALID'");
-    expect(source).toContain('verifiedAgainstUserManifest: index.verifiedAgainstUserManifest === true');
+    expect(source).toContain('verifiedAgainstUserManifest: isDayzUserManifestVerified(index)');
   });
 
   it('erfindet fuer den eingebetteten ZIP-Katalog keine unbelegte Plattform', () => {
     const source = read('src/modules/ai/dayzKnowledgeManifest.ts');
     expect(source).toMatch(/function getDayz129CatalogPlatform[\s\S]*return 'UNKNOWN';/);
     expect(source).not.toMatch(/function getDayz129CatalogPlatform[\s\S]{0,200}return '(PC|XBOX|PLAYSTATION|CROSS_PLATFORM)';/);
+  });
+
+  it('akzeptiert historischen undefined-Status nur bei exakt kanonischer User-ZIP-Provenance', () => {
+    const source = read('src/modules/ai/dayzKnowledgeManifest.ts');
+    expect(source).toContain("if (index.verifiedAgainstUserManifest === true) return true;");
+    expect(source).toContain("if (index.verifiedAgainstUserManifest === false) return false;");
+    expect(source).toContain("index.sourceTag === CANONICAL_SOURCE_TAG");
+    expect(source).toContain('DAYZ129_PROVENANCE.valueAndStructureSource === CANONICAL_USER_ZIP_PROVENANCE');
   });
 
   it('bindet den Gesamt-Hash an Datei-SHA256 und Provenance', () => {
