@@ -1,6 +1,6 @@
 import type { DayzCatalogAnswer } from './dayz129CatalogBase';
 import { answer as answerGeneralDayz129Question, searchTypes } from './dayz129CatalogPriorityV4';
-import { looksLikeLiveServerKnowledgeQuestion } from './knowledgeScope';
+import { looksLikeLiveServerKnowledgeQuestion } from './dayzKnowledgeBoundary';
 
 export {
   DAYZ129_PROVENANCE,
