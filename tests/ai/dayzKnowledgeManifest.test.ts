@@ -88,7 +88,19 @@ describe('AI-12 DayZ Knowledge 2.0 manifest', () => {
     ]));
   });
 
-  it('akzeptiert keinen Katalog ohne explizite Nutzer-Manifest-Verifikation', () => {
+  it('akzeptiert den historischen undefined-Status nur fuer die kanonische User-ZIP-Provenance', () => {
+    const legacy = fakeIndex();
+    delete legacy.verifiedAgainstUserManifest;
+    expect(validateDayzKnowledgeIndex(legacy)).toEqual([]);
+
+    legacy.sourceTag = 'PUBLIC_REPO_UNKNOWN';
+    expect(validateDayzKnowledgeIndex(legacy)).toEqual(expect.arrayContaining([
+      expect.objectContaining({ code: 'SOURCE_TAG_UNEXPECTED' }),
+      expect.objectContaining({ code: 'USER_MANIFEST_UNVERIFIED' }),
+    ]));
+  });
+
+  it('akzeptiert keinen explizit unverifizierten Katalog', () => {
     const issues = validateDayzKnowledgeIndex(fakeIndex({ verifiedAgainstUserManifest: false }));
     expect(issues).toEqual(expect.arrayContaining([
       expect.objectContaining({ code: 'USER_MANIFEST_UNVERIFIED' }),
