@@ -30,8 +30,8 @@ interface ForeignKeyMetadataRow {
   parentSchema: string;
   parentTable: string;
   validated: boolean;
-  childColumns: string[];
-  parentColumns: string[];
+  childColumnsJson: string;
+  parentColumnsJson: string;
 }
 
 interface ScopedTableRow {
@@ -53,14 +53,14 @@ interface SemanticCheck {
 
 const FOREIGN_KEY_METADATA_SQL = `
 SELECT
-  con.conname AS "constraintName",
-  child_ns.nspname AS "childSchema",
-  child.relname AS "childTable",
-  parent_ns.nspname AS "parentSchema",
-  parent.relname AS "parentTable",
+  con.conname::text AS "constraintName",
+  child_ns.nspname::text AS "childSchema",
+  child.relname::text AS "childTable",
+  parent_ns.nspname::text AS "parentSchema",
+  parent.relname::text AS "parentTable",
   con.convalidated AS "validated",
-  array_agg(child_att.attname ORDER BY key_map.ordinality) AS "childColumns",
-  array_agg(parent_att.attname ORDER BY key_map.ordinality) AS "parentColumns"
+  json_agg(child_att.attname::text ORDER BY key_map.ordinality)::text AS "childColumnsJson",
+  json_agg(parent_att.attname::text ORDER BY key_map.ordinality)::text AS "parentColumnsJson"
 FROM pg_constraint con
 JOIN pg_class child ON child.oid = con.conrelid
 JOIN pg_namespace child_ns ON child_ns.oid = child.relnamespace
@@ -87,8 +87,8 @@ ORDER BY child.relname, con.conname;
 
 const GAMESERVER_TABLES_SQL = `
 SELECT
-  table_schema AS "tableSchema",
-  table_name AS "tableName"
+  table_schema::text AS "tableSchema",
+  table_name::text AS "tableName"
 FROM information_schema.columns
 WHERE table_schema = 'public'
   AND column_name IN ('guildId', 'nitradoConnId')
@@ -217,11 +217,17 @@ function qualifiedIdentifier(schema: string, table: string): string {
   return `${quoteIdentifier(schema)}.${quoteIdentifier(table)}`;
 }
 
-function normalizeColumns(value: unknown): string[] {
-  if (Array.isArray(value)) return value.map((entry) => String(entry));
-  if (typeof value !== 'string') return [];
-  if (!value.startsWith('{') || !value.endsWith('}')) return [value];
-  return value.slice(1, -1).split(',').filter(Boolean);
+function parseColumns(value: string, constraintName: string): string[] {
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(value);
+  } catch {
+    throw new Error(`Ungueltige FK-Spaltenmetadaten fuer ${constraintName}`);
+  }
+  if (!Array.isArray(parsed) || parsed.length === 0 || parsed.some((entry) => typeof entry !== 'string')) {
+    throw new Error(`Ungueltige FK-Spaltenmetadaten fuer ${constraintName}`);
+  }
+  return parsed as string[];
 }
 
 function countFromRows(rows: CountRow[]): number {
@@ -239,9 +245,9 @@ async function queryCount(client: ConsistencyQueryClient, sql: string): Promise<
 }
 
 function orphanCountSql(fk: ForeignKeyMetadataRow): string {
-  const childColumns = normalizeColumns(fk.childColumns);
-  const parentColumns = normalizeColumns(fk.parentColumns);
-  if (childColumns.length === 0 || childColumns.length !== parentColumns.length) {
+  const childColumns = parseColumns(fk.childColumnsJson, fk.constraintName);
+  const parentColumns = parseColumns(fk.parentColumnsJson, fk.constraintName);
+  if (childColumns.length !== parentColumns.length) {
     throw new Error(`Ungueltige FK-Metadaten fuer ${fk.constraintName}`);
   }
 
