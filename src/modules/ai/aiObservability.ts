@@ -31,6 +31,7 @@ export type AiFallbackReason =
   | 'unconfigured';
 
 export type AiRetrievalStrategy =
+  | 'rag_runtime'
   | 'scope_filter'
   | 'freshness_filter'
   | 'hybrid_semantic'
@@ -86,15 +87,16 @@ export interface AiRetrievalObservation {
   strategy: AiRetrievalStrategy;
   outcome: AiRetrievalOutcome;
   latencyMs: number;
-  totalCandidates: number;
-  scopedCandidates: number;
-  freshCandidates: number;
-  selected: number;
+  /** Optional because the high-level runtime caller only sees returned hits. */
+  totalCandidates?: number;
+  scopedCandidates?: number;
+  freshCandidates?: number;
+  selected?: number;
 }
 
-function nonNegativeCount(value: number): number {
-  if (!Number.isFinite(value)) return 0;
-  return Math.max(0, Math.floor(value));
+function observeCount(stage: 'all' | 'scoped' | 'fresh' | 'selected', value: number | undefined): void {
+  if (!Number.isFinite(value) || value === undefined) return;
+  aiRetrievalCandidatesHistogram.observe({ stage }, Math.max(0, Math.floor(value)));
 }
 
 export function recordAiRetrieval(input: AiRetrievalObservation): void {
@@ -103,10 +105,10 @@ export function recordAiRetrieval(input: AiRetrievalObservation): void {
   if (Number.isFinite(input.latencyMs) && input.latencyMs >= 0) {
     aiRetrievalDurationHistogram.observe(labels, input.latencyMs / 1000);
   }
-  aiRetrievalCandidatesHistogram.observe({ stage: 'all' }, nonNegativeCount(input.totalCandidates));
-  aiRetrievalCandidatesHistogram.observe({ stage: 'scoped' }, nonNegativeCount(input.scopedCandidates));
-  aiRetrievalCandidatesHistogram.observe({ stage: 'fresh' }, nonNegativeCount(input.freshCandidates));
-  aiRetrievalCandidatesHistogram.observe({ stage: 'selected' }, nonNegativeCount(input.selected));
+  observeCount('all', input.totalCandidates);
+  observeCount('scoped', input.scopedCandidates);
+  observeCount('fresh', input.freshCandidates);
+  observeCount('selected', input.selected);
 }
 
 export function recordAiKnowledgeSource(input: {
