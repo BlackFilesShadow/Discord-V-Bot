@@ -4,12 +4,15 @@
  * Zinsen werden pro Guild+Gameserver+Tag genau einmal gutgeschrieben.
  * Doppelte Absicherung:
  *  - BankInterestRun (guildServerRunDate) markiert den Tageslauf,
- *  - der Ledger-Key `interest:<guild>:<server>:<date>:<user>` verhindert je User
- *    eine Doppelbuchung (auch bei Teilabbruch + Retry).
+ *  - der Ledger-Key `interest:<guild>:<server>:<date>:<subject>` verhindert je
+ *    User eine Doppelbuchung, ohne die Discord-ID im unveraenderlichen Key zu
+ *    konservieren (auch bei Teilabbruch + Retry).
  * Standard bankInterestPercent=0 -> es passiert nichts (dormant).
  */
 
+import { config } from '../../config';
 import { bookLedgerEntry, type LedgerClient } from './ledger';
+import { economySubjectKey } from './subjectKey';
 
 /** Zinsbetrag (Abrundung) fuer ein Bankguthaben. Nie negativ. */
 export function computeInterest(bankBalance: bigint, percent: number): bigint {
@@ -83,8 +86,9 @@ export async function runDailyInterestForServer(
   for (const a of accounts) {
     const interest = computeInterest(a.bankBalance, args.percent);
     if (interest <= 0n) continue;
+    const subjectKey = economySubjectKey(args.guildId, a.userDiscordId, config.security.encryptionKey);
     const res = await bookLedgerEntry(client, {
-      idempotencyKey: `interest:${args.guildId}:${args.nitradoConnId}:${args.runDate}:${a.userDiscordId}`,
+      idempotencyKey: `interest:${args.guildId}:${args.nitradoConnId}:${args.runDate}:${subjectKey}`,
       guildId: args.guildId,
       nitradoConnId: args.nitradoConnId,
       userDiscordId: a.userDiscordId,
