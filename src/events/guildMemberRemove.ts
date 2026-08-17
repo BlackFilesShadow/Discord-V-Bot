@@ -3,6 +3,7 @@ import { BotEvent } from '../types';
 import { logger, logAudit } from '../utils/logger';
 import { markMemberLeft, syncMemberProfile } from '../modules/ai/memberAwareness';
 import { cleanupGuildMemberData } from '../modules/moderation/guildMemberCleanup';
+import { sendConfiguredGoodbye } from '../modules/welcome/goodbyeManager';
 
 /**
  * GuildMemberRemove-Event: Nutzer verlässt den Server.
@@ -21,12 +22,25 @@ const guildMemberRemoveEvent: BotEvent = {
       roles: m.roles.cache.map(r => r.name),
     });
 
-    // User-1: Vor dem Left-Marker wird der letzte vom Gateway gelieferte
-    // Guild-Zustand gesichert. Dadurch bleiben Rename/Nickname/Rollen fuer
-    // Goodbye/Audit als letzte bekannte Identitaet erhalten. Diese Historie
-    // ist weiterhin KEINE Berechtigungsquelle.
+    // User-1 / Goodbye-1: Zuerst den letzten Gateway-Zustand exakt fuer diese
+    // Guild persistieren, danach als verlassen markieren. Das Goodbye liest
+    // anschliessend genau dieses GuildMemberProfile und niemals Cross-Guild-
+    // Recognition- oder Authorization-Daten.
     await syncMemberProfile(m);
     await markMemberLeft(m.guild.id, m.user.id);
+
+    // Goodbye ist best-effort und darf einen nachgelagerten Cleanup niemals
+    // blockieren. Fehlende/ungueltige Channels werden sichtbar geloggt.
+    try {
+      const goodbyeResult = await sendConfiguredGoodbye(m);
+      if (goodbyeResult === 'sent') {
+        logger.info(`Goodbye gesendet: ${m.user.id}@${m.guild.id}`);
+      } else if (goodbyeResult === 'missing_channel') {
+        logger.warn(`Goodbye-Channel fehlt oder ist nicht sendbar: Guild ${m.guild.id}`);
+      }
+    } catch (goodbyeError) {
+      logger.error(`Goodbye-System Fehler fuer ${m.user.id}@${m.guild.id}:`, goodbyeError);
+    }
 
     // Guild-spezifischer Daten-Cleanup: Moderation + Aktivitaetsdaten dieser Guild
     // entfernen, damit DB nicht mit Karteileichen waechst. Hersteller-/Cross-Guild-
