@@ -1,6 +1,10 @@
 import prisma from '../../database/prisma';
 import { config } from '../../config';
 import { economySubjectKey } from '../economy/subjectKey';
+import {
+  assertNoOpenLeaveCleanupRequest,
+  hasOpenLeaveCleanupRequest,
+} from '../moderation/leaveCleanupGuard';
 import { hasCompletedLeaveCleanupReceipt } from '../moderation/leaveCleanupSaga';
 import { identityHash } from './identity';
 
@@ -39,6 +43,7 @@ export async function activateLinkRewardState(
   newLink: boolean,
   now: Date = new Date(),
 ): Promise<Date> {
+  await assertNoOpenLeaveCleanupRequest(scope.guildId, userDiscordId);
   const hash = identityHash(gameId, secret);
   const row = await prisma.economyLinkRewardState.upsert({
     where: {
@@ -146,6 +151,9 @@ export async function resolveRewardUserAt(
  * Schranke: Nach einem bewusst vollstaendigen Spielerreset darf ein Rejoin zwar
  * eine neue Reward-Epoche beginnen, aber niemals erneut Startkapital erzeugen.
  *
+ * Ein noch OFFENER Leave-Cleanup blockiert die Auszahlung ohne die Eligibility
+ * zu veraendern. Der laufende Reset bleibt alleiniger Besitzer des alten States.
+ *
  * Zusaetzlich wird der Altbestand des frueheren Discord-Join-Systems erkannt:
  * existiert bereits eine positive STARTBALANCE_JOIN-Transaktion, wird sie als
  * historischer Claim uebernommen und niemals ein zweites Startguthaben gebucht.
@@ -155,6 +163,10 @@ export async function grantStartBalanceForLink(
   userDiscordId: string,
   now: Date = new Date(),
 ): Promise<LinkStartBalanceResult> {
+  if (await hasOpenLeaveCleanupRequest(scope.guildId, userDiscordId)) {
+    return { granted: false, amount: 0n };
+  }
+
   const cleanupReceipt = await hasCompletedLeaveCleanupReceipt(
     scope.guildId,
     userDiscordId,
@@ -325,6 +337,7 @@ export async function applySuccessfulLinkEconomyEffects(args: {
   now?: Date;
 }): Promise<LinkStartBalanceResult> {
   const now = args.now ?? new Date();
+  await assertNoOpenLeaveCleanupRequest(args.scope.guildId, args.userDiscordId);
   await activateLinkRewardState(args.scope, args.userDiscordId, args.gameId, args.secret, args.newLink, now);
   return grantStartBalanceForLink(args.scope, args.userDiscordId, now);
 }
