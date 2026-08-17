@@ -70,6 +70,7 @@ describe('DayZ 1.29 complete grounded catalog', () => {
   test('never presents vanilla catalog values as current live-server values', () => {
     expect(answerDayz129CatalogQuestion('Welche Werte hat WoodenPlank auf unserem Server?')).toBeNull();
     expect(answerDayz129CatalogQuestion('Welchen nominal Wert haben wir bei uns fuer M4A1?')).toBeNull();
+    expect(answerDayz129CatalogQuestion('Welche Werte hat M4A1 auf Slot 2?')).toBeNull();
     expect(answerDayz129CatalogQuestion('Was bedeutet nominal in types.xml?')).not.toBeNull();
   });
 
