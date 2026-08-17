@@ -188,8 +188,6 @@ export function assessKnowledgeProvenance(
         : 0;
   const trustScore = TRUST_SCORE[value.trustLevel];
   const sourceQuality = 0.65 * trustScore + 0.35 * freshnessScore;
-  // Nur moderater Ranking-Einfluss: Relevanz bleibt primaer Semantik/Keyword,
-  // schlechte/stale Quellen koennen aber nicht exakt gleichwertig wirken.
   const qualityFactor = freshness === 'EXPIRED' ? 0 : 0.88 + 0.12 * sourceQuality;
   return {
     ...value,
@@ -234,31 +232,27 @@ export async function getKnowledgeProvenanceMap(
   const out = new Map<string, KnowledgeProvenanceMeta>();
   for (const row of rows) {
     const hit = storedMap.get(row.id);
-    if (!hit || !isSourceKind(hit.sourceKind) || !isTrustLevel(hit.trustLevel)) {
+    if (!hit) {
       out.set(row.id, legacyKnowledgeProvenance(row.createdAt, now));
       continue;
     }
-    out.set(row.id, assessKnowledgeProvenance({
+    const validated = validateKnowledgeProvenance({
       sourceKind: hit.sourceKind,
       trustLevel: hit.trustLevel,
       sourceRef: hit.sourceRef,
       sourceVersion: hit.sourceVersion,
       observedAt: hit.observedAt,
       validUntil: hit.validUntil,
-    }, now));
+    }, {
+      sourceKind: 'OWNER_CURATED',
+      trustLevel: 'CURATED',
+      observedAt: row.createdAt,
+    }, now);
+    if (!validated.ok) {
+      out.set(row.id, legacyKnowledgeProvenance(row.createdAt, now));
+      continue;
+    }
+    out.set(row.id, assessKnowledgeProvenance(validated.value, now));
   }
   return out;
-}
-
-export async function writeKnowledgeProvenance(
-  tx: Pick<typeof prisma, 'guildKnowledgeProvenance'>,
-  guildId: string,
-  knowledgeId: string,
-  value: NormalizedKnowledgeProvenance,
-): Promise<void> {
-  await tx.guildKnowledgeProvenance.upsert({
-    where: { knowledgeId },
-    create: { knowledgeId, guildId, ...value },
-    update: { guildId, ...value },
-  });
 }
