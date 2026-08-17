@@ -1,21 +1,21 @@
-const findUnique = jest.fn();
-const upsert = jest.fn().mockResolvedValue({});
-const getMemberProfile = jest.fn();
-const sendWelcomeMessages = jest.fn().mockResolvedValue(undefined);
+const mockFindUnique = jest.fn();
+const mockUpsert = jest.fn().mockResolvedValue({});
+const mockGetMemberProfile = jest.fn();
+const mockSendWelcomeMessages = jest.fn().mockResolvedValue(undefined);
 
 jest.mock('../../src/database/prisma', () => ({
   __esModule: true,
   default: {
     botConfig: {
-      findUnique,
-      upsert,
+      findUnique: mockFindUnique,
+      upsert: mockUpsert,
     },
   },
 }));
 
 jest.mock('../../src/modules/ai/memberAwareness', () => ({
   __esModule: true,
-  getMemberProfile,
+  getMemberProfile: mockGetMemberProfile,
 }));
 
 jest.mock('../../src/modules/ai/emoteResolver', () => ({
@@ -30,7 +30,7 @@ jest.mock('../../src/modules/ai/triggers', () => ({
 
 jest.mock('../../src/modules/welcome/welcomeManager', () => ({
   __esModule: true,
-  sendWelcomeMessages,
+  sendWelcomeMessages: mockSendWelcomeMessages,
 }));
 
 import {
@@ -44,12 +44,12 @@ import {
 
 beforeEach(() => {
   jest.clearAllMocks();
-  upsert.mockResolvedValue({});
+  mockUpsert.mockResolvedValue({});
 });
 
 describe('Goodbye-1 guild-scoped identity and delivery', () => {
   it('stores and reads configuration under the exact guild key', async () => {
-    findUnique.mockResolvedValue({
+    mockFindUnique.mockResolvedValue({
       value: { enabled: true, channelId: '12345678901234567', message: 'Tschuess {user}' },
     });
 
@@ -60,8 +60,8 @@ describe('Goodbye-1 guild-scoped identity and delivery', () => {
       'actor-1',
     );
 
-    expect(findUnique).toHaveBeenCalledWith({ where: { key: 'goodbye:guild-a' } });
-    expect(upsert).toHaveBeenCalledWith(expect.objectContaining({
+    expect(mockFindUnique).toHaveBeenCalledWith({ where: { key: 'goodbye:guild-a' } });
+    expect(mockUpsert).toHaveBeenCalledWith(expect.objectContaining({
       where: { key: 'goodbye:guild-b' },
       create: expect.objectContaining({ key: 'goodbye:guild-b', category: 'welcome', updatedBy: 'actor-1' }),
     }));
@@ -94,7 +94,7 @@ describe('Goodbye-1 guild-scoped identity and delivery', () => {
   });
 
   it('loads the last known identity from exactly guildId + discordId', async () => {
-    getMemberProfile.mockResolvedValue({ username: 'StoredName', nickname: 'StoredNick' });
+    mockGetMemberProfile.mockResolvedValue({ username: 'StoredName', nickname: 'StoredNick' });
     const member = {
       guild: { id: 'guild-a' },
       user: { id: 'discord-1', username: 'GatewayName' },
@@ -103,7 +103,7 @@ describe('Goodbye-1 guild-scoped identity and delivery', () => {
 
     const identity = await resolveLastKnownGoodbyeIdentity(member);
 
-    expect(getMemberProfile).toHaveBeenCalledWith('guild-a', 'discord-1');
+    expect(mockGetMemberProfile).toHaveBeenCalledWith('guild-a', 'discord-1');
     expect(identity.displayName).toBe('StoredNick');
   });
 
@@ -122,10 +122,10 @@ describe('Goodbye-1 guild-scoped identity and delivery', () => {
   });
 
   it('sends a configured goodbye without enabling a Discord mention ping', async () => {
-    findUnique.mockResolvedValue({
+    mockFindUnique.mockResolvedValue({
       value: { enabled: true, channelId: '12345678901234567', message: 'Bye {user} {mention}' },
     });
-    getMemberProfile.mockResolvedValue({ username: 'StoredUser', nickname: 'StoredNick' });
+    mockGetMemberProfile.mockResolvedValue({ username: 'StoredUser', nickname: 'StoredNick' });
     const channel = { send: jest.fn() };
     const member = {
       guild: {
@@ -139,11 +139,11 @@ describe('Goodbye-1 guild-scoped identity and delivery', () => {
     } as any;
 
     await expect(sendConfiguredGoodbye(member)).resolves.toBe('sent');
-    expect(getMemberProfile).toHaveBeenCalledWith('guild-a', 'discord-1');
-    expect(sendWelcomeMessages).toHaveBeenCalledWith(
+    expect(mockGetMemberProfile).toHaveBeenCalledWith('guild-a', 'discord-1');
+    expect(mockSendWelcomeMessages).toHaveBeenCalledWith(
       expect.anything(),
       { text: 'Bye StoredNick <@discord-1>' },
     );
-    expect(sendWelcomeMessages.mock.calls[0][1]).not.toHaveProperty('mentionUserId');
+    expect(mockSendWelcomeMessages.mock.calls[0][1]).not.toHaveProperty('mentionUserId');
   });
 });
