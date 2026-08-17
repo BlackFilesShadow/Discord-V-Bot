@@ -1,9 +1,10 @@
 /**
  * AI-13: Reine, DB-freie Klassifikation fuer die harte Wissensdomain-Grenze.
  *
- * GENERAL_DAYZ = Vanilla/Version/Dateisemantik/allgemeine Referenz.
- * LIVE_SERVER = reale Konfiguration bzw. aktueller Zustand eines konkreten
- * verbundenen Gameservers.
+ * GENERAL_DAYZ = Vanilla/Version/Dateisemantik/allgemeine Referenz und
+ * deterministische How-to-/Konfigurationsanleitungen.
+ * LIVE_SERVER = reale aktuelle Werte bzw. Zustand eines konkreten verbundenen
+ * Gameservers.
  */
 
 function normalizeBoundaryText(value: string): string {
@@ -16,10 +17,27 @@ function normalizeBoundaryText(value: string): string {
     .trim();
 }
 
+const MUTATION_HOW_TO_RE = /\b(?:installiere|installieren|erhohe|erhohen|reduziere|reduzieren|senke|senken|andere|andern|konfiguriere|konfigurieren|einrichten|richte|aktiviere|aktivieren|deaktiviere|deaktivieren|setze|setzen|fuge|hinzufugen|entferne|entfernen|bearbeite|bearbeiten|passe|anpassen)\b/;
+
+const EXPLICIT_SERVER_RE = /\b(?:bei uns|unser(?:em|er|e|en)?\s+(?:dayz\s+)?(?:server|gameserver)|mein(?:em|er|e|en)?\s+(?:dayz\s+)?(?:server|gameserver)|dies(?:em|er|e|en)?\s+(?:dayz\s+)?(?:server|gameserver)|(?:der\s+)?aktuelle(?:n|r|s)?\s+(?:dayz\s+)?(?:server|gameserver)|live\s+(?:server|gameserver))\b/;
+
+const CURRENT_STATE_RE = /\b(?:ist|sind|hat|haben|aktuell|derzeit|momentan|status|eingestellt|einstellung|einstellungen|konfiguration|config|wert|werte|nominal|min|max|lifetime|restock|restart|restartzeit|map|karte|mission)\b/;
+
+const POSSESSIVE_RUNTIME_RE = /\b(?:unser|unsere|unseren|unserem|meine|meinen|meinem)\s+(?:restart|restartzeit|einstellung|einstellungen|konfiguration|config|nominal|min|max|lifetime|restock|map|karte|mission|serverstatus|gameserverstatus)\b/;
+
+/**
+ * True bedeutet nicht "die Frage handelt irgendwie vom eigenen Server", sondern
+ * enger: Die Antwort benoetigt den tatsaechlichen aktuellen Serverzustand.
+ *
+ * Aenderungs-/How-to-Fragen wie "Wie installiere ich Mods auf meinem Server?"
+ * oder "Wie erhoehe ich den Loot?" bleiben GENERAL_DAYZ. So koennen die bereits
+ * geerdeten deterministischen Anleitungen greifen, ohne Vanilla-Werte als
+ * aktuellen Live-Zustand auszugeben.
+ */
 export function looksLikeLiveServerKnowledgeQuestion(question: string): boolean {
   const q = normalizeBoundaryText(question);
   if (!q) return false;
-  return /\b(?:bei uns|unser server|unser gameserver|mein server|mein gameserver|dieser server|dieser gameserver|aktueller server|aktueller gameserver|live server|live gameserver)\b/.test(q)
-    || /\b(?:auf|von|bei)\s+(?:unserem|meinem|diesem|dem aktuellen)\s+(?:dayz\s+)?(?:server|gameserver)\b/.test(q)
-    || /\b(?:wie|was|welche|welcher|welches|wieviel|wie viel)\b.*\b(?:bei uns|auf unserem|auf meinem|auf diesem)\b/.test(q);
+  if (MUTATION_HOW_TO_RE.test(q)) return false;
+  if (POSSESSIVE_RUNTIME_RE.test(q)) return true;
+  return EXPLICIT_SERVER_RE.test(q) && CURRENT_STATE_RE.test(q);
 }
