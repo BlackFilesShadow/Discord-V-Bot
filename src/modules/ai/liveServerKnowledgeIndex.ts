@@ -75,7 +75,8 @@ export async function indexNitradoSnapshotKnowledge(input: {
     },
     select: { id: true, finishedAt: true },
   });
-  if (!snapshot?.finishedAt) throw new Error('Snapshot ist nicht abgeschlossen oder nicht fuer Live-Knowledge geeignet.');
+  const observedAt = snapshot?.finishedAt ?? null;
+  if (!snapshot || !observedAt) throw new Error('Snapshot ist nicht abgeschlossen oder nicht fuer Live-Knowledge geeignet.');
 
   const rows = await prisma.nitradoSnapshotFile.findMany({
     where: {
@@ -110,7 +111,7 @@ export async function indexNitradoSnapshotKnowledge(input: {
     documents.push(...parsed);
   }
 
-  const validUntil = new Date(snapshot.finishedAt.getTime() + LIVE_SERVER_VALIDITY_DAYS * 86_400_000);
+  const validUntil = new Date(observedAt.getTime() + LIVE_SERVER_VALIDITY_DAYS * 86_400_000);
   const prefix = liveServerSourcePrefixForConnection(input.nitradoConnId);
 
   const replacedDocuments = await prisma.$transaction(async (tx) => {
@@ -121,25 +122,23 @@ export async function indexNitradoSnapshotKnowledge(input: {
     const scopedIds = scopedRows.map((row) => row.knowledgeId);
     let generatedIds: string[] = [];
     if (scopedIds.length > 0) {
-      const [systemRows, provenanceRows] = await Promise.all([
-        tx.guildKnowledge.findMany({
-          where: {
-            guildId: input.guildId,
-            createdBy: LIVE_SERVER_KNOWLEDGE_CREATED_BY,
-            id: { in: scopedIds },
-          },
-          select: { id: true },
-        }),
-        tx.guildKnowledgeProvenance.findMany({
-          where: {
-            guildId: input.guildId,
-            knowledgeId: { in: scopedIds },
-            sourceKind: 'LIVE_SERVER',
-            sourceRef: { startsWith: prefix },
-          },
-          select: { knowledgeId: true },
-        }),
-      ]);
+      const systemRows = await tx.guildKnowledge.findMany({
+        where: {
+          guildId: input.guildId,
+          createdBy: LIVE_SERVER_KNOWLEDGE_CREATED_BY,
+          id: { in: scopedIds },
+        },
+        select: { id: true },
+      });
+      const provenanceRows = await tx.guildKnowledgeProvenance.findMany({
+        where: {
+          guildId: input.guildId,
+          knowledgeId: { in: scopedIds },
+          sourceKind: 'LIVE_SERVER',
+          sourceRef: { startsWith: prefix },
+        },
+        select: { knowledgeId: true },
+      });
       const provenanceIds = new Set(provenanceRows.map((row) => row.knowledgeId));
       generatedIds = systemRows.map((row) => row.id).filter((id) => provenanceIds.has(id));
     }
@@ -181,7 +180,7 @@ export async function indexNitradoSnapshotKnowledge(input: {
           trustLevel: 'VERIFIED',
           sourceRef: sourceRef(input.nitradoConnId, document),
           sourceVersion: sourceVersion(input.snapshotId, document.sha256),
-          observedAt: snapshot.finishedAt,
+          observedAt,
           validUntil,
         },
       });
