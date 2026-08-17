@@ -27,21 +27,24 @@ function rawClient(value: unknown): RawClient {
 
 async function hasActiveLotteryObligation(raw: RawClient, guildId: string, userDiscordId: string): Promise<boolean> {
   const rows = await raw.$queryRawUnsafe<Array<{ exists: boolean }>>(
-    `SELECT EXISTS (
-      SELECT 1
-      FROM "LotteryEntry" e
-      JOIN "LotteryRound" r ON r."id" = e."roundId"
-      WHERE e."guildId"=$1
-        AND e."userDiscordId"=$2
-        AND r."guildId"=$1
-        AND r."status" IN ('ACTIVE'::"LotteryRoundStatus", 'DRAWING'::"LotteryRoundStatus", 'REFUNDING'::"LotteryRoundStatus")
-      UNION ALL
-      SELECT 1
-      FROM "LotteryRound" r
-      WHERE r."guildId"=$1
-        AND r."winnerDiscordId"=$2
-        AND r."status" IN ('ACTIVE'::"LotteryRoundStatus", 'DRAWING'::"LotteryRoundStatus", 'REFUNDING'::"LotteryRoundStatus")
-    ) AS exists`,
+    `SELECT (
+       EXISTS (
+         SELECT 1
+           FROM "LotteryEntry" e
+           JOIN "LotteryRound" r ON r."id" = e."roundId"
+          WHERE e."guildId"=$1
+            AND e."userDiscordId"=$2
+            AND r."guildId"=$1
+            AND r."status" IN ('ACTIVE'::"LotteryRoundStatus", 'DRAWING'::"LotteryRoundStatus", 'REFUNDING'::"LotteryRoundStatus")
+       )
+       OR EXISTS (
+         SELECT 1
+           FROM "LotteryRound" r
+          WHERE r."guildId"=$1
+            AND r."winnerDiscordId"=$2
+            AND r."status" IN ('ACTIVE'::"LotteryRoundStatus", 'DRAWING'::"LotteryRoundStatus", 'REFUNDING'::"LotteryRoundStatus")
+       )
+     ) AS exists`,
     guildId,
     userDiscordId,
   );
@@ -63,7 +66,6 @@ async function assertLedgerKeyMigrationSafe(
       WHERE old."guildId"=$1
         AND old."userDiscordId"=$2
         AND position($2 in old."idempotencyKey") > 0
-        AND (old."idempotencyKey" LIKE 'startbalance:%' OR old."idempotencyKey" LIKE 'interest:%')
       LIMIT 1`,
     guildId,
     userDiscordId,
@@ -108,12 +110,14 @@ async function pseudonymizeHistory(
     guildId, userDiscordId, subjectKey,
   );
 
+  // Jeder unveraenderliche Ledger-Key, der die rohe Discord-ID enthaelt, wird
+  // auf denselben stabilen Subject-Key migriert. Das umfasst neben Startbalance
+  // und Zinsen auch aeltere Deposit/Withdraw-Keyformate. Die Kollisionspruefung
+  // oben laeuft vor irgendeiner Mutation.
   rows += await raw.$executeRawUnsafe(
     `UPDATE "EconomyLedgerEntry"
         SET "idempotencyKey"=CASE
-              WHEN position($2 in "idempotencyKey") > 0
-               AND ("idempotencyKey" LIKE 'startbalance:%' OR "idempotencyKey" LIKE 'interest:%')
-              THEN replace("idempotencyKey", $2, $3)
+              WHEN position($2 in "idempotencyKey") > 0 THEN replace("idempotencyKey", $2, $3)
               ELSE "idempotencyKey"
             END,
             "userDiscordId"=$3,
