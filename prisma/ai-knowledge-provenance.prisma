@@ -1,0 +1,20 @@
+/// AI-11: Maschinenlesbare Herkunft, Vertrauen und Freshness fuer GuildKnowledge.
+/// Fehlende Sidecar-Zeile bleibt fuer Legacy-Daten rueckwaertskompatibel und
+/// wird im Service konservativ als OWNER_CURATED/CURATED behandelt.
+model GuildKnowledgeProvenance {
+  knowledgeId   String   @id
+  guildId       String
+  sourceKind    String
+  trustLevel    String
+  sourceRef     String?
+  sourceVersion String?
+  observedAt    DateTime
+  validUntil    DateTime?
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  @@index([guildId, sourceKind])
+  @@index([guildId, trustLevel])
+  @@index([validUntil])
+  @@index([observedAt])
+}
