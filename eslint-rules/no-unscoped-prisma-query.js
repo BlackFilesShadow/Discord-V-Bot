@@ -1,26 +1,19 @@
 /**
- * Custom-ESLint-Rule (Phase 3.5 Isolation-Doktrin):
- * Verbietet `prisma.<scopedModel>.findMany|findFirst|findUnique|update|...`
- * **ohne** `guildId` im `where:`. Verhindert vergessene Cross-Guild-Queries.
+ * DB-1 Tenant-Isolation-Rule.
  *
- * Heuristik (AST-basiert, ohne Type-Info):
- *   - Call-Expression auf `prisma.<MODEL>.<METHOD>(...)` oder `tx.<MODEL>.<METHOD>(...)`
- *   - MODEL muss in SCOPED_MODELS stehen
- *   - METHOD muss eine Query/Mutation sein
- *   - Erstes Argument muss ein Object-Literal sein, das eine `where`-Property
- *     mit `guildId`-Key enthaelt (rekursiv via AND/OR ist erlaubt).
+ * Verbietet `prisma.<scopedModel>.<query/mutation>()` ohne statisch belegbaren
+ * `guildId`-Scope im `where`. Fuer den Produktionsmodus `set: all` werden alle
+ * Models mit direktem guildId automatisch aus prisma/schema.prisma abgeleitet.
  *
- * Falsche Use-Cases (z.B. groupBy ohne where) werden bewusst gemeldet —
- * dafuer Inline-Disable mit `// eslint-disable-next-line no-unscoped-prisma-query`.
+ * Dynamische Argumentobjekte werden bewusst fail-closed gemeldet: Wenn der
+ * Linter den Scope nicht sehen kann, darf die Query nicht stillschweigend als
+ * sicher gelten. Bewusste globale Systemaggregation braucht einen lokalen,
+ * begruendeten eslint-disable an der exakten Zeile.
  */
 
 const fs = require('fs');
 const path = require('path');
 
-/**
- * Tenant-kritische Models: hier ist ein fehlendes `guildId` im where ein
- * harter Fehler (Cross-Guild-Leak in Economy/Nitrado/Whitelist/Killfeed/…).
- */
 const STRICT_MODELS = [
   'nitradoConnection', 'guildPermissionGrant', 'serverSettings', 'faction',
   'factionMember', 'whitelistEntry', 'whitelistRequest', 'economyConfig',
@@ -28,11 +21,6 @@ const STRICT_MODELS = [
   'casinoRound', 'idempotencyKey', 'nitradoJob', 'killfeedConfig', 'killfeedEvent',
 ];
 
-/**
- * Alle weiteren Models mit `guildId`-Feld werden aus prisma/schema.prisma
- * abgeleitet (F-005: keine manuelle Liste, kein Drift). Fuer diese greift die
- * Regel als Advisory-Warnung, bis jede Query auditiert ist.
- */
 function deriveGuildModels() {
   try {
     const schemaPath = path.resolve(__dirname, '..', 'prisma', 'schema.prisma');
@@ -65,7 +53,7 @@ function resolveModelSet(setName) {
     for (const m of DERIVED_GUILD_MODELS) all.add(m);
     return all;
   }
-  return strict; // default: strict
+  return strict;
 }
 
 const QUERY_METHODS = new Set([
@@ -81,11 +69,8 @@ function objectHasGuildIdKey(node) {
     if (prop.type !== 'Property' || prop.computed) continue;
     const keyName = prop.key.name ?? prop.key.value;
     if (keyName === 'guildId') return true;
-    // Composite-Unique-Key Prismas: `guildId_userDiscordId`, `guildId_slot`, ...
     if (typeof keyName === 'string' && keyName.startsWith('guildId_')) return true;
-    // Wert kann ein Object sein, das guildId enthaelt (verschachtelt fuer compound keys)
     if (prop.value && prop.value.type === 'ObjectExpression' && objectHasGuildIdKey(prop.value)) return true;
-    // Nested AND/OR — rekursiv pruefen
     if ((keyName === 'AND' || keyName === 'OR') && prop.value.type === 'ArrayExpression') {
       if (prop.value.elements.some(e => objectHasGuildIdKey(e))) return true;
     }
@@ -94,7 +79,6 @@ function objectHasGuildIdKey(node) {
 }
 
 function callTargetsScopedModel(callee, scopedModels) {
-  // callee = MemberExpression: prisma.<model>.<method>
   if (callee.type !== 'MemberExpression') return null;
   const method = callee.property.name;
   if (!QUERY_METHODS.has(method)) return null;
@@ -103,7 +87,6 @@ function callTargetsScopedModel(callee, scopedModels) {
   const modelName = modelExpr.property.name;
   if (!scopedModels.has(modelName)) return null;
   const root = modelExpr.object;
-  // Akzeptiere Identifier `prisma`, `tx`, `_tx`, `_prisma` (Transactions)
   if (root.type !== 'Identifier') return null;
   if (!/^_?(prisma|tx|trx)\b/i.test(root.name)) return null;
   return { modelName, method };
@@ -113,13 +96,15 @@ module.exports = {
   meta: {
     type: 'problem',
     docs: {
-      description: 'Verbietet Prisma-Queries auf scoped Models ohne guildId im where',
+      description: 'Verbietet Prisma-Queries auf Guild-scoped Models ohne statisch belegbaren guildId-Scope',
     },
     messages: {
       missingGuildId:
         'prisma.{{model}}.{{method}}() ohne `guildId` im where — Cross-Guild-Leak moeglich.',
       missingArg:
         'prisma.{{model}}.{{method}}() ohne Argument — Scope kann nicht geprueft werden.',
+      dynamicArg:
+        'prisma.{{model}}.{{method}}() nutzt dynamische Argumente — `guildId`-Scope ist statisch nicht belegbar.',
     },
     schema: [{
       type: 'object',
@@ -140,18 +125,16 @@ module.exports = {
           context.report({ node, messageId: 'missingArg', data: reportData });
           return;
         }
-        if (arg.type !== 'ObjectExpression') return; // dynamische Args — nicht statisch pruefbar
+        if (arg.type !== 'ObjectExpression') {
+          context.report({ node, messageId: 'dynamicArg', data: reportData });
+          return;
+        }
         const whereProp = arg.properties.find(
           p => p.type === 'Property' && !p.computed
             && (p.key.name === 'where' || p.key.value === 'where'),
         );
-        // create/createMany haben kein where — ueberspringen
         if (!whereProp) {
-          if (target.method.startsWith('find') || target.method === 'count' || target.method.startsWith('update')
-              || target.method.startsWith('delete') || target.method === 'aggregate' || target.method === 'groupBy') {
-            // diese Methoden brauchen where (oder es ist ein gewollter "alle" -> disable)
-            context.report({ node, messageId: 'missingGuildId', data: reportData });
-          }
+          context.report({ node, messageId: 'missingGuildId', data: reportData });
           return;
         }
         if (!objectHasGuildIdKey(whereProp.value)) {

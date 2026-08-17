@@ -1,7 +1,9 @@
 /**
- * F-005: Die no-unscoped-prisma-query-Regel leitet tenant-scoped Models aus
- * dem Schema ab und erzwingt guildId im where. Strict-Set = harter Fehler,
- * Extras-Set (aus Schema abgeleitet) = Advisory.
+ * DB-1: Die no-unscoped-prisma-query-Regel leitet tenant-scoped Models aus
+ * dem Schema ab. `set: all` ist der Produktionsvertrag: jedes Model mit
+ * direktem guildId muss bei Reads/Updates/Deletes einen expliziten Guild-Scope
+ * im where tragen. Nicht statisch pruefbare dynamische Query-Argumente sind
+ * ebenfalls fail-closed.
  */
 import { RuleTester } from 'eslint';
 
@@ -10,29 +12,36 @@ const rule = require('../../eslint-rules/no-unscoped-prisma-query.js');
 
 const tester = new RuleTester({ languageOptions: { ecmaVersion: 2022, sourceType: 'module' } });
 
-tester.run('no-unscoped-prisma-query (F-005)', rule, {
+tester.run('no-unscoped-prisma-query (DB-1)', rule, {
   valid: [
-    // strict Model mit guildId -> ok
-    { code: 'prisma.economyAccount.findMany({ where: { guildId: g } });', options: [{ set: 'strict' }] },
-    // Compound-Key mit guildId_* -> ok
-    { code: 'prisma.economyAccount.findUnique({ where: { guildId_userDiscordId: { guildId: g, userDiscordId: u } } });', options: [{ set: 'strict' }] },
-    // create hat kein where -> ok
-    { code: 'prisma.economyAccount.create({ data: { guildId: g } });', options: [{ set: 'strict' }] },
-    // ticket ist kein strict Model -> unter strict nicht geprueft
-    { code: 'prisma.ticket.findMany({ where: {} });', options: [{ set: 'strict' }] },
+    { code: 'prisma.economyAccount.findMany({ where: { guildId: g } });', options: [{ set: 'all' }] },
+    { code: 'prisma.economyAccount.findUnique({ where: { guildId_userDiscordId: { guildId: g, userDiscordId: u } } });', options: [{ set: 'all' }] },
+    { code: 'prisma.ticket.findMany({ where: { guildId: g } });', options: [{ set: 'all' }] },
+    { code: 'prisma.levelData.updateMany({ where: { AND: [{ guildId: g }, { level: 5 }] }, data: { level: 6 } });', options: [{ set: 'all' }] },
+    // create wird vom Rule-Contract separat ueber Service-/DB-Invarianten geprueft;
+    // diese Regel schuetzt query-/mutation where-Scope.
+    { code: 'prisma.economyAccount.create({ data: { guildId: g } });', options: [{ set: 'all' }] },
   ],
   invalid: [
-    // strict Model ohne guildId -> Fehler
     {
       code: 'prisma.economyAccount.findMany({ where: {} });',
-      options: [{ set: 'strict' }],
+      options: [{ set: 'all' }],
       errors: [{ messageId: 'missingGuildId' }],
     },
-    // ticket (aus Schema abgeleitet) -> unter extras geflaggt
     {
       code: 'prisma.ticket.findMany({ where: {} });',
-      options: [{ set: 'extras' }],
+      options: [{ set: 'all' }],
       errors: [{ messageId: 'missingGuildId' }],
+    },
+    {
+      code: 'prisma.levelData.deleteMany({ where: { userId: u } });',
+      options: [{ set: 'all' }],
+      errors: [{ messageId: 'missingGuildId' }],
+    },
+    {
+      code: 'prisma.economyAccount.findMany(buildTenantArgs(g));',
+      options: [{ set: 'all' }],
+      errors: [{ messageId: 'dynamicArg' }],
     },
   ],
 });
