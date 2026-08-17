@@ -89,7 +89,7 @@ test.describe('AI-10 Bot-Admin Knowledge Scope', () => {
     await expect(page.getByText('Global Regeln')).toBeVisible();
     await expect(page.getByText('Livonia Loot')).toBeVisible();
     await expect(page.getByText('Guild-global', { exact: true })).toBeVisible();
-    await expect(page.getByText(/Slot 2.*Livonia/)).toBeVisible();
+    await expect(page.locator('span').filter({ hasText: /^Slot 2 · Livonia$/ })).toBeVisible();
 
     const filter = page.getByRole('combobox', { name: 'Knowledge-Scope filtern' });
     await expect(filter.locator('option')).toHaveCount(4);
@@ -127,7 +127,9 @@ test.describe('AI-10 Bot-Admin Knowledge Scope', () => {
     for (const control of controls) {
       const box = await control.boundingBox();
       expect(box).not.toBeNull();
-      expect(box!.height).toBeGreaterThanOrEqual(44);
+      // Chromium kann 44 CSS-px bei Device-Scale als 43.9xx Bounding-Box
+      // reporten. Gerundet bleibt das reale Touch-Ziel exakt 44 CSS-px.
+      expect(Math.round(box!.height)).toBeGreaterThanOrEqual(44);
     }
     const overflow = await page.evaluate(() => document.documentElement.scrollWidth - document.documentElement.clientWidth);
     expect(overflow).toBeLessThanOrEqual(1);
