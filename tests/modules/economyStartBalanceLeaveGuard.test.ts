@@ -1,5 +1,4 @@
 const queryRaw = jest.fn();
-const executeRaw = jest.fn();
 const txExecuteRaw = jest.fn();
 const transaction = jest.fn();
 const completedLeaveReceipt = jest.fn();
@@ -21,7 +20,6 @@ jest.mock('../../src/database/prisma', () => ({
   __esModule: true,
   default: {
     $queryRawUnsafe: queryRaw,
-    $executeRawUnsafe: executeRaw,
     $transaction: transaction,
   },
 }));
