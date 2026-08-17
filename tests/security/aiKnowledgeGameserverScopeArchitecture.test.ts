@@ -21,8 +21,8 @@ describe('AI-10/AI-13 knowledge gameserver scope architecture', () => {
     expect(source).toContain("row.status !== 'ACTIVE'");
     expect(source).toContain("slotState(row.slot) !== 'ACTIVE_SLOT'");
     expect(source).toContain("!row.nitradoServerId?.trim()");
-    expect(source).toContain('options.length === 1 && looksLikeLiveServerKnowledgeQuestion(question)');
-    expect(source).not.toMatch(/return\s+options\[0\]\s*;/);
+    expect(source).toContain('if (options.length === 1 && looksLikeLiveServerKnowledgeQuestion(question)) return options[0];');
+    expect(source).not.toContain('return options.length === 1 ? options[0] : null;');
   });
 
   it('trennt globales und servergebundenes Knowledge bereits vor dem Hybrid-Ranking', () => {
@@ -44,13 +44,16 @@ describe('AI-10/AI-13 knowledge gameserver scope architecture', () => {
     expect(source).toContain('scopeSlot');
   });
 
-  it('blockiert den allgemeinen DayZ-1.29-Katalog bei Live-Server-Intention', () => {
+  it('blockiert den allgemeinen DayZ-1.29-Katalog nur bei echtem Live-Zustand', () => {
     const source = read('src/modules/ai/dayz129Catalog.ts');
+    const boundary = read('src/modules/ai/dayzKnowledgeBoundary.ts');
     const guardPos = source.indexOf('looksLikeLiveServerKnowledgeQuestion(question)');
     const answerPos = source.indexOf('answerGeneralDayz129Question(question)');
     expect(guardPos).toBeGreaterThan(-1);
     expect(answerPos).toBeGreaterThan(guardPos);
     expect(source).toContain('if (looksLikeLiveServerKnowledgeQuestion(question)) return null;');
+    expect(boundary).toContain('MUTATION_HOW_TO_RE');
+    expect(boundary).toContain('CURRENT_STATE_RE');
   });
 
   it('loescht servergebundenes Knowledge beim Gameserver-Delete statt es global werden zu lassen', () => {
