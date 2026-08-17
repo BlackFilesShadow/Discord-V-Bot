@@ -9,6 +9,7 @@ import {
 } from '../modules/logging/auditRetentionScheduler';
 import { hydrateCooldownsFromDb } from '../modules/ai/providerStats';
 import { startMemberSyncScheduler, stopMemberSyncScheduler } from '../modules/members/memberSyncScheduler';
+import { startLeaveCleanupWorker, stopLeaveCleanupWorker } from '../modules/moderation/leaveCleanupWorker';
 import { BOT_PRODUCT_NAME } from '../content/botInfo';
 
 let gaugeTimer: NodeJS.Timeout | null = null;
@@ -57,6 +58,7 @@ const readyEvent: BotEvent = {
     startAuditLogRetentionScheduler();
     startProviderCooldownSync();
     startMemberSyncScheduler(c);
+    await startLeaveCleanupWorker();
   },
 };
 
@@ -73,6 +75,7 @@ export function stopReadyRuntime(): void {
     clearInterval(providerCooldownTimer);
     providerCooldownTimer = null;
   }
+  stopLeaveCleanupWorker();
   stopMemberSyncScheduler();
   stopAuditLogRetentionScheduler();
   stopAllLeaderboardFeeds();
