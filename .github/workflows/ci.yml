@@ -93,6 +93,8 @@ jobs:
         run: npx prisma migrate deploy
       - name: Verify migration status (no pending/drift)
         run: npx prisma migrate status
+      - name: Run DB orphan/consistency scanner
+        run: npm run db:consistency
       - name: Run tests (no forceExit; leaked handles fail)
         id: jest
         shell: bash
