@@ -19,7 +19,9 @@ import { syncMemberProfile } from '../ai/memberAwareness';
  */
 
 let timer: NodeJS.Timeout | null = null;
+let startupTimer: NodeJS.Timeout | null = null;
 let running = false;
+let stopping = false;
 
 export interface MemberSyncStatus {
   running: boolean;
@@ -47,9 +49,9 @@ export function getMemberSyncStatus(): MemberSyncStatus {
   return { ...status, running };
 }
 
-const STARTUP_DELAY_MS = 60 * 1000; // 1 min nach ready, damit Cache/Logins fertig sind
-const GUILD_PAUSE_MS = 2 * 1000; // Pause zwischen Guilds
-const UPSERT_PAUSE_MS = 25; // kleine Pause zwischen einzelnen Upserts
+const STARTUP_DELAY_MS = 60 * 1000;
+const GUILD_PAUSE_MS = 2 * 1000;
+const UPSERT_PAUSE_MS = 25;
 
 function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
@@ -70,6 +72,7 @@ async function syncGuild(guild: Guild): Promise<GuildSyncStats> {
 
   const seen = new Set<string>();
   for (const member of members.values()) {
+    if (stopping) break;
     if (member.user.bot) continue;
     seen.add(member.id);
     await syncMemberProfile(member);
@@ -77,7 +80,8 @@ async function syncGuild(guild: Guild): Promise<GuildSyncStats> {
     if (UPSERT_PAUSE_MS > 0) await sleep(UPSERT_PAUSE_MS);
   }
 
-  // Karteileichen: in DB aktiv, aber nicht mehr in der Guild -> als verlassen markieren.
+  if (stopping) return stats;
+
   const active = await prisma.guildMemberProfile.findMany({
     where: { guildId: guild.id, isLeft: false },
     select: { discordId: true },
@@ -95,6 +99,7 @@ async function syncGuild(guild: Guild): Promise<GuildSyncStats> {
 }
 
 export async function runMemberSyncOnce(client: Client): Promise<void> {
+  if (stopping) return;
   if (running) {
     logger.warn('memberSync: vorheriger Lauf noch aktiv, ueberspringe.');
     return;
@@ -107,6 +112,7 @@ export async function runMemberSyncOnce(client: Client): Promise<void> {
   try {
     const guilds = [...client.guilds.cache.values()];
     for (const guild of guilds) {
+      if (stopping) break;
       try {
         const s = await syncGuild(guild);
         totalFetched += s.fetched;
@@ -115,7 +121,7 @@ export async function runMemberSyncOnce(client: Client): Promise<void> {
       } catch (e) {
         logger.warn(`memberSync: Guild ${guild.id} fehlgeschlagen: ${String(e)}`);
       }
-      if (GUILD_PAUSE_MS > 0) await sleep(GUILD_PAUSE_MS);
+      if (!stopping && GUILD_PAUSE_MS > 0) await sleep(GUILD_PAUSE_MS);
     }
     logger.info(
       `memberSync: fertig (${guilds.length} Guilds, ${totalFetched} gefetcht, ` +
@@ -142,13 +148,16 @@ export function startMemberSyncScheduler(client: Client): void {
     logger.info('memberSync: deaktiviert (MEMBER_SYNC_ENABLED=false).');
     return;
   }
-  if (timer) return;
+  if (timer || startupTimer) return;
+  stopping = false;
 
   const intervalMs = config.member.syncIntervalHours * 60 * 60 * 1000;
 
-  setTimeout(() => {
+  startupTimer = setTimeout(() => {
+    startupTimer = null;
     void runMemberSyncOnce(client).catch((e) => logger.error('memberSync-Startlauf-Fehler:', e as Error));
-  }, STARTUP_DELAY_MS).unref?.();
+  }, STARTUP_DELAY_MS);
+  startupTimer.unref?.();
 
   timer = setInterval(() => {
     void runMemberSyncOnce(client).catch((e) => logger.error('memberSync-Fehler:', e as Error));
@@ -159,6 +168,11 @@ export function startMemberSyncScheduler(client: Client): void {
 }
 
 export function stopMemberSyncScheduler(): void {
+  stopping = true;
+  if (startupTimer) {
+    clearTimeout(startupTimer);
+    startupTimer = null;
+  }
   if (timer) {
     clearInterval(timer);
     timer = null;
