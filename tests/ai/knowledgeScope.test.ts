@@ -15,6 +15,7 @@ import prisma from '../../src/database/prisma';
 import {
   filterKnowledgeRowsForScope,
   listKnowledgeGameservers,
+  looksLikeLiveServerKnowledgeQuestion,
   resolveRuntimeKnowledgeScope,
   setKnowledgeScope,
   validateKnowledgeScope,
@@ -35,22 +36,39 @@ const server = (id: string, slot: number, alias: string) => ({
   nitradoServerId: String(1000 + slot),
 });
 
-describe('AI-10 knowledge gameserver scope', () => {
+describe('AI-10/AI-13 knowledge gameserver scope', () => {
   beforeEach(() => jest.clearAllMocks());
 
-  it('filtert serverfremde Snippets VOR dem Ranking und behaelt globale', () => {
+  it('trennt allgemeines und Live-Server-Wissen VOR dem Ranking strikt', () => {
     const rows = [{ id: 'global' }, { id: 's1' }, { id: 's2' }];
     const scopes = [
       { knowledgeId: 's1', nitradoConnId: 'conn-1' },
       { knowledgeId: 's2', nitradoConnId: 'conn-2' },
     ];
-    expect(filterKnowledgeRowsForScope(rows, scopes, 'conn-1').map((r) => r.id)).toEqual(['global', 's1']);
+    expect(filterKnowledgeRowsForScope(rows, scopes, 'conn-1').map((r) => r.id)).toEqual(['s1']);
+    expect(filterKnowledgeRowsForScope(rows, scopes, 'conn-2').map((r) => r.id)).toEqual(['s2']);
     expect(filterKnowledgeRowsForScope(rows, scopes, null).map((r) => r.id)).toEqual(['global']);
   });
 
-  it('nimmt bei exakt einem produktiven Gameserver automatisch dessen Scope', async () => {
+  it('erkennt Live-Zustand, laesst allgemeine und How-to-DayZ-Fragen aber allgemein', () => {
+    expect(looksLikeLiveServerKnowledgeQuestion('Wie ist unser Server eingestellt?')).toBe(true);
+    expect(looksLikeLiveServerKnowledgeQuestion('Welchen nominal Wert haben wir bei uns?')).toBe(true);
+    expect(looksLikeLiveServerKnowledgeQuestion('Wie ist unser Restart?')).toBe(true);
+    expect(looksLikeLiveServerKnowledgeQuestion('Was bedeutet nominal in types.xml?')).toBe(false);
+    expect(looksLikeLiveServerKnowledgeQuestion('Wie funktioniert die Central Economy in DayZ?')).toBe(false);
+    expect(looksLikeLiveServerKnowledgeQuestion('Wie installiere ich Mods auf meinem DayZ Server?')).toBe(false);
+    expect(looksLikeLiveServerKnowledgeQuestion('Wie erhöhe ich den Loot auf meinem DayZ Server?')).toBe(false);
+  });
+
+  it('nimmt bei exakt einem produktiven Gameserver nur bei Live-Intention automatisch dessen Scope', async () => {
     mockedPrisma.nitradoConnection.findMany.mockResolvedValue([server('conn-1', 1, 'Chernarus')]);
     await expect(resolveRuntimeKnowledgeScope('guild-1', 'Wie ist unser Restart?')).resolves.toMatchObject({ id: 'conn-1' });
+  });
+
+  it('laesst allgemeine DayZ-Fragen auch bei genau einem Gameserver global-only', async () => {
+    mockedPrisma.nitradoConnection.findMany.mockResolvedValue([server('conn-1', 1, 'Chernarus')]);
+    await expect(resolveRuntimeKnowledgeScope('guild-1', 'Was bedeutet nominal in types.xml?')).resolves.toBeNull();
+    await expect(resolveRuntimeKnowledgeScope('guild-1', 'Wie installiere ich Mods auf meinem DayZ Server?')).resolves.toBeNull();
   });
 
   it('bleibt bei mehreren Gameservern ohne eindeutige Auswahl global-only', async () => {

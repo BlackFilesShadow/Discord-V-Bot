@@ -36,7 +36,7 @@ function knowledgeRow(id: string, label: string, content: string) {
   };
 }
 
-describe('AI-10/11 scoped + provenance-aware hybrid retrieval', () => {
+describe('AI-10/11/13 scoped + provenance-aware hybrid retrieval', () => {
   beforeEach(() => {
     jest.clearAllMocks();
     mockGetQueryEmbedding.mockResolvedValue(null);
@@ -52,9 +52,10 @@ describe('AI-10/11 scoped + provenance-aware hybrid retrieval', () => {
     ]);
   });
 
-  it('rankt bei Gameserver-Scope nur guild-global + exakt denselben Gameserver', async () => {
+  it('rankt bei Live-Gameserver-Scope ausschliesslich exakt diesen Gameserver', async () => {
     const result = await findRelevantKnowledge('guild-1', 'apple restart', 3, 'conn-1');
-    expect(result.map(row => row.id)).toEqual(expect.arrayContaining(['global', 'server-1']));
+    expect(result.map(row => row.id)).toEqual(['server-1']);
+    expect(result.map(row => row.id)).not.toContain('global');
     expect(result.map(row => row.id)).not.toContain('server-2');
   });
 
