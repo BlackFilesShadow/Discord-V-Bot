@@ -2,7 +2,7 @@ import { useMemo, useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { BookOpen, Download, Inbox, Loader2, RefreshCw, Trash2 } from 'lucide-react';
 import { api, ApiError } from '@/lib/api';
-import { Badge } from '@/components/ui/Badge';
+import { Badge, type BadgeVariant } from '@/components/ui/Badge';
 import { Button } from '@/components/ui/Button';
 import { Card, CardDesc, CardHeader, CardTitle } from '@/components/ui/Card';
 import { EmptyState } from '@/components/ui/EmptyState';
@@ -31,6 +31,21 @@ interface KnowledgeScope {
   alias5: string | null;
 }
 
+interface KnowledgeProvenance {
+  sourceKind: string;
+  trustLevel: string;
+  sourceRef: string | null;
+  sourceVersion: string | null;
+  observedAt: string;
+  validUntil: string | null;
+  sourceAgeDays: number;
+  freshness: 'FRESH' | 'AGING' | 'STALE' | 'EXPIRED';
+  trustScore: number;
+  freshnessScore: number;
+  qualityFactor: number;
+  legacyDefault: boolean;
+}
+
 interface KnowledgeRow {
   id: string;
   label: string;
@@ -43,11 +58,14 @@ interface KnowledgeRow {
   embeddingModel: string | null;
   embeddedAt: string | null;
   scope: KnowledgeScope;
+  provenance: KnowledgeProvenance;
 }
 
 interface KnowledgeData {
   items: KnowledgeRow[];
   gameservers: GameserverOption[];
+  sourceKinds: string[];
+  trustLevels: string[];
   persona: string | null;
   brief: string | null;
   briefAt: string | null;
@@ -55,11 +73,29 @@ interface KnowledgeData {
   maxSnippets: number;
 }
 
+interface KnowledgeEditorValue {
+  label: string;
+  content: string;
+  nitradoConnId: string | null;
+  sourceKind: string;
+  trustLevel: string;
+  sourceRef: string | null;
+  sourceVersion: string | null;
+  observedAt: string;
+  validUntil: string | null;
+}
+
 interface ExportItem {
   label: string;
   content: string;
   scopeType: 'GLOBAL' | 'GAMESERVER';
   scopeSlot: number | null;
+  sourceKind?: string;
+  trustLevel?: string;
+  sourceRef?: string | null;
+  sourceVersion?: string | null;
+  observedAt?: string;
+  validUntil?: string | null;
 }
 
 interface ExportPayload {
@@ -76,6 +112,27 @@ function scopeLabel(scope: KnowledgeScope): string {
   if (scope.type === 'GLOBAL') return 'Guild-global';
   const alias = scope.alias || scope.alias5;
   return `Slot ${scope.slot ?? '?'}${alias ? ` · ${alias}` : ''}`;
+}
+
+function freshnessVariant(value: KnowledgeProvenance['freshness']): BadgeVariant {
+  if (value === 'FRESH') return 'ok';
+  if (value === 'AGING') return 'info';
+  if (value === 'STALE') return 'warn';
+  return 'danger';
+}
+
+function toDateTimeLocal(value: string | null | undefined): string {
+  if (!value) return '';
+  const date = new Date(value);
+  if (!Number.isFinite(date.getTime())) return '';
+  const local = new Date(date.getTime() - date.getTimezoneOffset() * 60_000);
+  return local.toISOString().slice(0, 16);
+}
+
+function fromDateTimeLocal(value: string): string | null {
+  if (!value) return null;
+  const date = new Date(value);
+  return Number.isFinite(date.getTime()) ? date.toISOString() : null;
 }
 
 function queryUrl(path: string, guildId: string): string {
@@ -106,8 +163,7 @@ export function BotAdminKnowledgeScoped() {
   const invalidate = () => qc.invalidateQueries({ queryKey: [base, 'knowledge-v2', guildId] });
 
   const create = useMutation({
-    mutationFn: (body: { label: string; content: string; nitradoConnId: string | null }) =>
-      api.post(queryUrl(`${base}/knowledge`, guildId), body),
+    mutationFn: (body: KnowledgeEditorValue) => api.post(queryUrl(`${base}/knowledge`, guildId), body),
     onSuccess: () => {
       toast.success('Knowledge-Snippet erstellt.');
       setShowCreate(false);
@@ -117,7 +173,7 @@ export function BotAdminKnowledgeScoped() {
   });
 
   const update = useMutation({
-    mutationFn: (vars: { id: string; body: { label: string; content: string; nitradoConnId: string | null } }) =>
+    mutationFn: (vars: { id: string; body: KnowledgeEditorValue }) =>
       api.patch(queryUrl(`${base}/knowledge/${vars.id}`, guildId), vars.body),
     onSuccess: () => {
       toast.success('Knowledge-Snippet aktualisiert.');
@@ -211,7 +267,7 @@ export function BotAdminKnowledgeScoped() {
       <Card glow>
         <CardHeader>
           <CardTitle className="flex items-center gap-2"><BookOpen className="h-5 w-5" /> AI-Wissensbank 2.0</CardTitle>
-          <CardDesc>Guild-globales und gameserver-spezifisches RAG-Wissen. Serverfremde Snippets werden vor dem Hybrid-Ranking ausgeschlossen.</CardDesc>
+          <CardDesc>Guild-/Gameserver-Scope plus Quellenherkunft, Trust, Version und Freshness. Abgelaufene Quellen werden vor dem Retrieval ausgeschlossen.</CardDesc>
         </CardHeader>
 
         <div className="grid gap-3 md:grid-cols-[minmax(0,1fr)_minmax(0,1fr)_auto] items-end">
@@ -284,6 +340,8 @@ export function BotAdminKnowledgeScoped() {
             {showCreate && (
               <KnowledgeEditor
                 gameservers={data.gameservers}
+                sourceKinds={data.sourceKinds}
+                trustLevels={data.trustLevels}
                 loading={create.isPending}
                 submitLabel="Hinzufügen"
                 onSubmit={value => create.mutate(value)}
@@ -308,6 +366,8 @@ export function BotAdminKnowledgeScoped() {
                 <KnowledgeEditor
                   key={item.id}
                   gameservers={data.gameservers}
+                  sourceKinds={data.sourceKinds}
+                  trustLevels={data.trustLevels}
                   initial={item}
                   loading={update.isPending}
                   submitLabel="Speichern"
@@ -323,9 +383,18 @@ export function BotAdminKnowledgeScoped() {
                         <Badge variant={item.scope.type === 'GLOBAL' ? 'neutral' : 'info'}>{scopeLabel(item.scope)}</Badge>
                         <Badge variant={item.isActive ? 'ok' : 'neutral'}>{item.isActive ? 'aktiv' : 'inaktiv'}</Badge>
                         <Badge variant={item.hasEmbedding ? 'info' : 'warn'}>{item.hasEmbedding ? 'Embedding' : 'Keyword'}</Badge>
+                        <Badge variant={item.provenance.trustLevel === 'AUTHORITATIVE' ? 'ok' : item.provenance.trustLevel === 'UNVERIFIED' ? 'warn' : 'info'}>{item.provenance.trustLevel}</Badge>
+                        <Badge variant={freshnessVariant(item.provenance.freshness)}>{item.provenance.freshness}</Badge>
                       </div>
                       <p className="mt-2 text-sm text-muted whitespace-pre-wrap break-words">{item.content}</p>
-                      <p className="mt-2 text-[11px] text-muted">Aktualisiert: {new Date(item.updatedAt).toLocaleString('de-DE')}{item.embeddingModel ? ` · ${item.embeddingModel}` : ''}</p>
+                      <div className="mt-2 grid gap-1 text-[11px] text-muted sm:grid-cols-2">
+                        <span>Quelle: {item.provenance.sourceKind}{item.provenance.sourceVersion ? ` · v${item.provenance.sourceVersion}` : ''}</span>
+                        <span>Source-Age: {item.provenance.sourceAgeDays.toFixed(1)} Tage{item.provenance.legacyDefault ? ' · Legacy-Default' : ''}</span>
+                        {item.provenance.sourceRef && <span className="break-all">Referenz: {item.provenance.sourceRef}</span>}
+                        <span>Beobachtet: {new Date(item.provenance.observedAt).toLocaleString('de-DE')}</span>
+                        {item.provenance.validUntil && <span>Gültig bis: {new Date(item.provenance.validUntil).toLocaleString('de-DE')}</span>}
+                        <span>Aktualisiert: {new Date(item.updatedAt).toLocaleString('de-DE')}{item.embeddingModel ? ` · ${item.embeddingModel}` : ''}</span>
+                      </div>
                     </div>
                     <div className="grid grid-cols-2 gap-2 sm:flex sm:flex-wrap md:max-w-[310px] md:justify-end shrink-0">
                       <Button variant="secondary" onClick={() => { setEditId(item.id); setShowCreate(false); setShowImport(false); }}>Bearbeiten</Button>
@@ -356,6 +425,8 @@ export function BotAdminKnowledgeScoped() {
 
 function KnowledgeEditor({
   gameservers,
+  sourceKinds,
+  trustLevels,
   initial,
   loading,
   submitLabel,
@@ -363,15 +434,25 @@ function KnowledgeEditor({
   onCancel,
 }: {
   gameservers: GameserverOption[];
+  sourceKinds: string[];
+  trustLevels: string[];
   initial?: KnowledgeRow;
   loading: boolean;
   submitLabel: string;
-  onSubmit: (value: { label: string; content: string; nitradoConnId: string | null }) => void;
+  onSubmit: (value: KnowledgeEditorValue) => void;
   onCancel: () => void;
 }) {
   const [label, setLabel] = useState(initial?.label ?? '');
   const [content, setContent] = useState(initial?.content ?? '');
   const [nitradoConnId, setNitradoConnId] = useState(initial?.scope.nitradoConnId ?? '');
+  const [sourceKind, setSourceKind] = useState(initial?.provenance.sourceKind ?? 'OWNER_CURATED');
+  const [trustLevel, setTrustLevel] = useState(initial?.provenance.trustLevel ?? 'CURATED');
+  const [sourceRef, setSourceRef] = useState(initial?.provenance.sourceRef ?? '');
+  const [sourceVersion, setSourceVersion] = useState(initial?.provenance.sourceVersion ?? '');
+  const [observedAt, setObservedAt] = useState(toDateTimeLocal(initial?.provenance.observedAt ?? new Date().toISOString()));
+  const [validUntil, setValidUntil] = useState(toDateTimeLocal(initial?.provenance.validUntil));
+
+  const authoritativeNeedsRef = trustLevel === 'AUTHORITATIVE' && !sourceRef.trim();
 
   return (
     <div className="mb-4 space-y-3 rounded-lg border border-border bg-bg-elev p-4" data-testid="knowledge-scope-editor">
@@ -390,6 +471,41 @@ function KnowledgeEditor({
           </Select>
         </label>
       </div>
+
+      <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
+        <label className="space-y-1">
+          <span className="text-xs text-muted">Quellentyp</span>
+          <Select value={sourceKind} onChange={event => setSourceKind(event.target.value)} aria-label="Knowledge Quellentyp">
+            {sourceKinds.map(kind => <option key={kind} value={kind}>{kind}</option>)}
+          </Select>
+        </label>
+        <label className="space-y-1">
+          <span className="text-xs text-muted">Vertrauen</span>
+          <Select value={trustLevel} onChange={event => setTrustLevel(event.target.value)} aria-label="Knowledge Vertrauensstufe">
+            {trustLevels.map(level => <option key={level} value={level}>{level}</option>)}
+          </Select>
+        </label>
+        <label className="space-y-1">
+          <span className="text-xs text-muted">Source-Version</span>
+          <Input value={sourceVersion} onChange={event => setSourceVersion(event.target.value)} maxLength={100} placeholder="z. B. 1.29" />
+        </label>
+        <label className="space-y-1">
+          <span className="text-xs text-muted">Source-Referenz</span>
+          <Input value={sourceRef} onChange={event => setSourceRef(event.target.value)} maxLength={500} placeholder="URL, Dokument-ID oder Dataset" />
+        </label>
+      </div>
+
+      <div className="grid gap-3 md:grid-cols-2">
+        <label className="space-y-1">
+          <span className="text-xs text-muted">Beobachtet am</span>
+          <Input type="datetime-local" value={observedAt} onChange={event => setObservedAt(event.target.value)} aria-label="Knowledge beobachtet am" />
+        </label>
+        <label className="space-y-1">
+          <span className="text-xs text-muted">Gültig bis (optional)</span>
+          <Input type="datetime-local" value={validUntil} onChange={event => setValidUntil(event.target.value)} aria-label="Knowledge gültig bis" />
+        </label>
+      </div>
+
       <label className="block space-y-1">
         <span className="text-xs text-muted">Faktenblock</span>
         <textarea
@@ -401,9 +517,24 @@ function KnowledgeEditor({
           placeholder="Verifizierte Fakten für diesen Scope"
         />
       </label>
-      <p className="text-xs text-muted">Guild-global gilt für alle Gameserver dieser Guild. Ein Slot-Scope wird nur zusammen mit globalem Wissen für genau diesen Gameserver gerankt.</p>
+      <p className="text-xs text-muted">AUTHORITATIVE erfordert eine konkrete Source-Referenz. Abgelaufene Quellen werden vor dem Hybrid-Ranking entfernt; ältere Quellen werden über Source-Age/Freshness moderat abgewertet.</p>
+      {authoritativeNeedsRef && <p className="text-xs text-danger">AUTHORITATIVE benötigt eine Source-Referenz.</p>}
       <div className="flex flex-wrap gap-2">
-        <Button disabled={!label.trim() || !content.trim()} loading={loading} onClick={() => onSubmit({ label, content, nitradoConnId: nitradoConnId || null })}>{submitLabel}</Button>
+        <Button
+          disabled={!label.trim() || !content.trim() || !observedAt || authoritativeNeedsRef}
+          loading={loading}
+          onClick={() => onSubmit({
+            label,
+            content,
+            nitradoConnId: nitradoConnId || null,
+            sourceKind,
+            trustLevel,
+            sourceRef: sourceRef.trim() || null,
+            sourceVersion: sourceVersion.trim() || null,
+            observedAt: fromDateTimeLocal(observedAt) ?? new Date().toISOString(),
+            validUntil: fromDateTimeLocal(validUntil),
+          })}
+        >{submitLabel}</Button>
         <Button variant="ghost" onClick={onCancel}>Abbrechen</Button>
       </div>
     </div>
@@ -431,13 +562,13 @@ function KnowledgeImport({ loading, onSubmit, onCancel }: { loading: boolean; on
 
   return (
     <div className="mb-4 space-y-3 rounded-lg border border-border bg-bg-elev p-4">
-      <p className="text-xs text-muted">Portables Format: <code>scopeType</code> und <code>scopeSlot</code> werden beim Import gegen die aktuelle Guild validiert. Ungültige Slots werden übersprungen und niemals globalisiert.</p>
+      <p className="text-xs text-muted">Portables Format enthält Scope plus Source-/Trust-/Version-/Freshness-Metadaten. Fehlen Provenance-Felder, wird Import konservativ als IMPORTED/UNVERIFIED behandelt. Ungültige Slots oder Provenance werden übersprungen.</p>
       <textarea
         value={text}
         onChange={event => setText(event.target.value)}
         rows={7}
         className="input-premium min-h-36 w-full resize-y rounded-lg px-3.5 py-2.5 font-mono text-sm text-white placeholder:text-muted/80 focus:outline-none"
-        placeholder='{"items":[{"label":"...","content":"...","scopeType":"GAMESERVER","scopeSlot":1}]}'
+        placeholder='{"items":[{"label":"...","content":"...","scopeType":"GAMESERVER","scopeSlot":1,"sourceKind":"OFFICIAL_DOC","trustLevel":"AUTHORITATIVE","sourceRef":"..."}]}'
       />
       {error && <p className="text-xs text-danger">{error}</p>}
       <div className="flex flex-wrap gap-2">
