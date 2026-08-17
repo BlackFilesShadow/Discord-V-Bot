@@ -14,6 +14,8 @@ CREATE UNIQUE INDEX IF NOT EXISTS "EconomyVirtualAccount_id_scope_key"
   ON "EconomyVirtualAccount"("id", "guildId", "nitradoConnId");
 CREATE UNIQUE INDEX IF NOT EXISTS "LotteryRound_id_scope_key"
   ON "LotteryRound"("id", "guildId", "nitradoConnId");
+CREATE UNIQUE INDEX IF NOT EXISTS "CasinoGame_id_guild_key"
+  ON "CasinoGame"("id", "guildId");
 CREATE UNIQUE INDEX IF NOT EXISTS "CasinoGame_id_scope_key"
   ON "CasinoGame"("id", "guildId", "nitradoConnId");
 CREATE UNIQUE INDEX IF NOT EXISTS "TicketTemplate_id_guild_key"
@@ -107,14 +109,16 @@ BEGIN
     WHERE p."id" IS NULL OR p."guildId" <> c."guildId" OR p."nitradoConnId" <> c."nitradoConnId"
   ) THEN RAISE EXCEPTION 'DB-2 invariant violation: LotteryPurchase -> LotteryRound'; END IF;
 
-  -- Legacy-Casino-Zeilen duerfen NULL-Scope behalten. Sobald ein Scope gesetzt
-  -- ist, muss er aber exakt dem referenzierten Game entsprechen.
+  -- Legacy-Casino-Zeilen duerfen NULL-Gameserver-Scope behalten, die Guild muss
+  -- jedoch immer passen. Sobald ein Gameserver gesetzt ist, muss auch dieser
+  -- exakt dem referenzierten Game entsprechen.
   IF EXISTS (
     SELECT 1 FROM "CasinoRound" c
     LEFT JOIN "CasinoGame" p ON p."id" = c."gameId"
     WHERE p."id" IS NULL
-       OR (c."nitradoConnId" IS NOT NULL AND p."nitradoConnId" IS NOT NULL
-           AND (p."guildId" <> c."guildId" OR p."nitradoConnId" <> c."nitradoConnId"))
+       OR p."guildId" <> c."guildId"
+       OR (c."nitradoConnId" IS NOT NULL
+           AND (p."nitradoConnId" IS NULL OR p."nitradoConnId" <> c."nitradoConnId"))
   ) THEN RAISE EXCEPTION 'DB-2 invariant violation: CasinoRound -> CasinoGame'; END IF;
 
   IF EXISTS (
@@ -188,6 +192,9 @@ ALTER TABLE "LotteryPurchase" ADD CONSTRAINT "LotteryPurchase_round_scope_fkey"
   REFERENCES "LotteryRound"("id", "guildId", "nitradoConnId") ON DELETE RESTRICT ON UPDATE CASCADE;
 
 ALTER TABLE "CasinoRound" DROP CONSTRAINT IF EXISTS "CasinoRound_gameId_fkey";
+ALTER TABLE "CasinoRound" ADD CONSTRAINT "CasinoRound_game_guild_fkey"
+  FOREIGN KEY ("gameId", "guildId")
+  REFERENCES "CasinoGame"("id", "guildId") ON DELETE CASCADE ON UPDATE CASCADE;
 ALTER TABLE "CasinoRound" ADD CONSTRAINT "CasinoRound_game_scope_fkey"
   FOREIGN KEY ("gameId", "guildId", "nitradoConnId")
   REFERENCES "CasinoGame"("id", "guildId", "nitradoConnId") ON DELETE CASCADE ON UPDATE CASCADE;
