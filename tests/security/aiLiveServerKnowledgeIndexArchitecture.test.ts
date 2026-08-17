@@ -60,6 +60,15 @@ describe('AI-14 Nitrado snapshot -> normalized LIVE_SERVER knowledge architectur
     expect(block).toContain('guildKnowledgeProvenance.deleteMany');
     expect(block).toContain('guildKnowledge.deleteMany');
     expect(block).toContain('guildKnowledgeScope.deleteMany');
-    expect(block).toContain('nitradoSnapshot.deleteMany');
+
+    // Snapshots sind direkte Kinder der NitradoConnection und werden bereits
+    // auf DB-Ebene transaktional per FK-Cascade entfernt. Der Lifecycle-Test
+    // prueft den kanonischen Vertrag statt eine redundante deleteMany-Implementierung.
+    const schema = read('prisma/schema.prisma');
+    const snapshotStart = schema.indexOf('model NitradoSnapshot {');
+    const snapshotEnd = schema.indexOf('model NitradoSnapshotFile {', snapshotStart);
+    const snapshotBlock = schema.slice(snapshotStart, snapshotEnd);
+    expect(snapshotStart).toBeGreaterThanOrEqual(0);
+    expect(snapshotBlock).toContain('nitradoConn     NitradoConnection     @relation(fields: [nitradoConnId], references: [id], onDelete: Cascade)');
   });
 });
