@@ -122,7 +122,8 @@ function assertNoReservedModelFields(value: unknown, depth = 0): void {
 }
 
 function canonicalJson(value: unknown): string {
-  if (value === null || typeof value !== 'object') return JSON.stringify(value);
+  if (value === undefined) return 'null'; // JSON/model arguments cannot carry JS undefined; keep digest total.
+  if (value === null || typeof value !== 'object') return JSON.stringify(value) ?? 'null';
   if (Array.isArray(value)) return `[${value.map(canonicalJson).join(',')}]`;
   const record = value as Record<string, unknown>;
   return `{${Object.keys(record)
