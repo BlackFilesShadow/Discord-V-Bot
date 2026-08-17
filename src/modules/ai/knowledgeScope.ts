@@ -1,5 +1,8 @@
 import prisma from '../../database/prisma';
 import { MAX_GAME_SERVERS_PER_GUILD, slotState } from '../nitrado/gameServerScope';
+import { looksLikeLiveServerKnowledgeQuestion } from './dayzKnowledgeBoundary';
+
+export { looksLikeLiveServerKnowledgeQuestion } from './dayzKnowledgeBoundary';
 
 export interface KnowledgeGameserverOption {
   id: string;
@@ -95,20 +98,6 @@ function containsPhrase(question: string, phrase: string): boolean {
   const q = ` ${normalizeText(question)} `;
   const p = normalizeText(phrase);
   return p.length >= 4 && q.includes(` ${p} `);
-}
-
-/**
- * AI-13: Erkennt Fragen, die den realen Zustand des eigenen/aktuellen
- * Gameservers meinen. Allgemeine DayZ-/Vanilla-Fragen duerfen dadurch nicht
- * automatisch in einen Live-Server-Scope kippen, nur weil genau ein Server
- * verbunden ist.
- */
-export function looksLikeLiveServerKnowledgeQuestion(question: string): boolean {
-  const q = normalizeText(question);
-  if (!q) return false;
-  return /\b(?:bei uns|unser server|unser gameserver|mein server|mein gameserver|dieser server|dieser gameserver|aktueller server|aktueller gameserver|live server|live gameserver)\b/.test(q)
-    || /\b(?:auf|von|bei)\s+(?:unserem|meinem|diesem|dem aktuellen)\s+(?:dayz\s+)?(?:server|gameserver)\b/.test(q)
-    || /\b(?:wie|was|welche|welcher|welches|wieviel|wie viel)\b.*\b(?:bei uns|auf unserem|auf meinem|auf diesem)\b/.test(q);
 }
 
 /**
