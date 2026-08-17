@@ -73,6 +73,6 @@ describe('legacy maybeGrantStartBalance Leave guard', () => {
     expect(ledgerCall).toBeDefined();
     expect(String(ledgerCall![2])).toMatch(/^startbalance:12345678901234567:conn-1:es1_[a-f0-9]{32}$/);
     expect(String(ledgerCall![2])).not.toContain(String(USER));
-    expect(String(ledgerCall![11])).toMatch(/^es1_[a-f0-9]{32}$/);
+    expect(String(ledgerCall![10])).toMatch(/^es1_[a-f0-9]{32}$/);
   });
 });
