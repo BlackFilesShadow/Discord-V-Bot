@@ -12,6 +12,7 @@ import {
   detectToxicity,
   translateText,
 } from '../../modules/ai/aiHandler';
+import { buildServerUserContext } from '../../modules/ai/contextBuilder';
 import {
   getDeveloperIdentityAnswer,
   isDeveloperIdentityQuestion,
@@ -73,7 +74,21 @@ export const aiCommand: Command = {
           title = '🤖  AI-Antwort';
           body = getDeveloperIdentityAnswer();
         } else {
-          const r = await answerQuestion(q, { mode: 'oneshot' });
+          const guild = interaction.guild;
+          const context = guild
+            ? await buildServerUserContext({
+                guild,
+                channel: interaction.channel as any,
+                member: guild.members.cache.get(interaction.user.id) ?? null,
+                user: interaction.user,
+                question: q,
+              })
+            : null;
+          const r = await answerQuestion(q, {
+            mode: 'oneshot',
+            context: context ?? undefined,
+            guildId: interaction.guildId,
+          });
           title = '🤖  AI-Antwort';
           body = r.success ? r.result || '_(leer)_' : aiErr(r.error);
         }
