@@ -227,15 +227,33 @@ export function consumeHallucinationGuardReference(context: string | undefined):
   return { context: cleaned, guard: entry.bundle };
 }
 
+function containsNormalizedToken(haystack: string, token: string): boolean {
+  if (!token) return false;
+  let offset = 0;
+  while (offset <= haystack.length - token.length) {
+    const index = haystack.indexOf(token, offset);
+    if (index === -1) return false;
+    const before = index > 0 ? haystack[index - 1] : '';
+    const afterIndex = index + token.length;
+    const after = afterIndex < haystack.length ? haystack[afterIndex] : '';
+    const beforeIsWord = before !== '' && /[a-z0-9_]/.test(before);
+    const afterIsWord = after !== '' && /[a-z0-9_]/.test(after);
+    if (!beforeIsWord && !afterIsWord) return true;
+    offset = index + 1;
+  }
+  return false;
+}
+
 function factsRelevantToQuestion(question: string, guard: DayzHallucinationGuardBundle): LiveServerFact[] {
   const q = normalize(question);
+  const hasExplicitFieldHint = FIELD_HINT_RE.test(q);
   return guard.facts.filter((fact) => {
     const subject = normalize(fact.subject);
     const field = normalize(fact.field);
     const subjectHit = subject.length >= 3 && q.includes(subject);
     const leaf = normalize(fact.subject.split(/[.\[]/).filter(Boolean).pop() ?? fact.subject);
     const leafHit = leaf.length >= 4 && q.includes(leaf);
-    return (subjectHit || leafHit) && (q.includes(field) || !FIELD_HINT_RE.test(q));
+    return (subjectHit || leafHit) && (containsNormalizedToken(q, field) || !hasExplicitFieldHint);
   });
 }
 
