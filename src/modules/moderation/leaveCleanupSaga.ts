@@ -244,7 +244,7 @@ export async function recoverStaleLeaveCleanupRequests(
   let recovered = 0;
 
   for (;;) {
-    const rows = await prisma.dataDeletionRequest.findMany({
+    const rows: Array<{ id: string; details: unknown }> = await prisma.dataDeletionRequest.findMany({
       where: {
         userId: { startsWith: LEAVE_JOB_PREFIX },
         requestType: 'PARTIAL_DELETION',
