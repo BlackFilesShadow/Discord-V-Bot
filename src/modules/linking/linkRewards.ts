@@ -1,4 +1,7 @@
 import prisma from '../../database/prisma';
+import { config } from '../../config';
+import { economySubjectKey } from '../economy/subjectKey';
+import { hasCompletedLeaveCleanupReceipt } from '../moderation/leaveCleanupSaga';
 import { identityHash } from './identity';
 
 export interface LinkRewardScope {
@@ -139,6 +142,10 @@ export async function resolveRewardUserAt(
  * Economy oder Betrag zu diesem Zeitpunkt deaktiviert/0 sind. So gibt es keine
  * spaetere Retroaktivitaet durch Unlink/Relink oder eine Config-Aenderung.
  *
+ * Ein abgeschlossener Leave-Cleanup-Receipt ist eine dauerhafte Anti-Churn-
+ * Schranke: Nach einem bewusst vollstaendigen Spielerreset darf ein Rejoin zwar
+ * eine neue Reward-Epoche beginnen, aber niemals erneut Startkapital erzeugen.
+ *
  * Zusaetzlich wird der Altbestand des frueheren Discord-Join-Systems erkannt:
  * existiert bereits eine positive STARTBALANCE_JOIN-Transaktion, wird sie als
  * historischer Claim uebernommen und niemals ein zweites Startguthaben gebucht.
@@ -148,6 +155,26 @@ export async function grantStartBalanceForLink(
   userDiscordId: string,
   now: Date = new Date(),
 ): Promise<LinkStartBalanceResult> {
+  const cleanupReceipt = await hasCompletedLeaveCleanupReceipt(
+    scope.guildId,
+    userDiscordId,
+    config.security.encryptionKey,
+  );
+  if (cleanupReceipt) {
+    await prisma.economyLinkRewardState.updateMany({
+      where: {
+        guildId: scope.guildId,
+        nitradoConnId: scope.nitradoConnId,
+        userDiscordId,
+        unlinkedAt: null,
+        startBalanceEligible: true,
+        startBalanceGrantedAt: null,
+      },
+      data: { startBalanceEligible: false },
+    });
+    return { granted: false, amount: 0n };
+  }
+
   const [settings, economyConfig] = await Promise.all([
     prisma.serverSettings.findUnique({
       where: {
@@ -224,7 +251,8 @@ export async function grantStartBalanceForLink(
       });
       if (claim.count !== 1 || !shouldPay) return false;
 
-      const key = `startbalance:link:${scope.guildId}:${scope.nitradoConnId}:${userDiscordId}`;
+      const subjectKey = economySubjectKey(scope.guildId, userDiscordId, config.security.encryptionKey);
+      const key = `startbalance:link:${scope.guildId}:${scope.nitradoConnId}:${subjectKey}`;
       await tx.economyLedgerEntry.create({
         data: {
           idempotencyKey: key,
@@ -236,7 +264,7 @@ export async function grantStartBalanceForLink(
           type: 'STARTBALANCE_JOIN',
           reason: 'Startguthaben bei Account-Verknuepfung',
           buckets: 0,
-          sourceRef: userDiscordId,
+          sourceRef: subjectKey,
         },
       });
       await tx.economyAccount.upsert({
