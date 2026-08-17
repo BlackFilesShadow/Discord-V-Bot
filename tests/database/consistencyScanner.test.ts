@@ -20,8 +20,8 @@ describe('DB-3 database consistency scanner', () => {
           parentSchema: 'public',
           parentTable: 'Parent',
           validated: false,
-          childColumns: ['parentId'],
-          parentColumns: ['id'],
+          childColumnsJson: '["parentId"]',
+          parentColumnsJson: '["id"]',
         }];
       }
       if (sql.includes('information_schema.columns')) {
