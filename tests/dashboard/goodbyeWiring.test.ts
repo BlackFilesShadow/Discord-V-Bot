@@ -5,6 +5,7 @@ const read = (relative: string) => fs.readFileSync(path.resolve(process.cwd(), r
 
 const v2Source = read('src/dashboard/routes/v2.ts');
 const routeSource = read('src/dashboard/routes/v2/goodbye.ts');
+const emitterSource = read('src/dashboard/socket/emitter.ts');
 const wrapperSource = read('dashboard-ui/src/components/WelcomeTab.tsx');
 const panelSource = read('dashboard-ui/src/components/GoodbyePanel.tsx');
 
@@ -21,6 +22,11 @@ describe('Goodbye-1 dashboard wiring', () => {
     expect(routeSource).toContain('validateBotChannelAccess');
     expect(routeSource).toContain('PermissionFlagsBits.ViewChannel');
     expect(routeSource).toContain('PermissionFlagsBits.SendMessages');
+  });
+
+  it('registers goodbye.changed in the central typed guild socket contract', () => {
+    expect(routeSource).toContain("type: 'goodbye.changed'");
+    expect(emitterSource).toContain("| { type: 'goodbye.changed'; payload: { guildId: string } }");
   });
 
   it('keeps existing Welcome UI isolated and composes Goodbye beside it', () => {
