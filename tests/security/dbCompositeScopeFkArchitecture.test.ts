@@ -2,11 +2,30 @@ import fs from 'node:fs';
 import path from 'node:path';
 
 const repoRoot = path.resolve(__dirname, '../..');
-const migrationPath = path.join(
-  repoRoot,
-  'prisma/migrations/20260817135600_db2_composite_scope_fks/migration.sql',
-);
+const migrationName = '20260817135600_db2_composite_scope_fks';
+const migrationsRoot = path.join(repoRoot, 'prisma/migrations');
+const migrationPath = path.join(migrationsRoot, migrationName, 'migration.sql');
 const sql = fs.readFileSync(migrationPath, 'utf8');
+
+const protectedConstraints = [
+  'ServerSettings_nitrado_scope_fkey',
+  'Faction_nitrado_scope_fkey',
+  'FactionSystemConfig_nitrado_scope_fkey',
+  'WhitelistEntry_nitrado_scope_fkey',
+  'WhitelistRequest_nitrado_scope_fkey',
+  'NitradoJob_nitrado_scope_fkey',
+  'NitradoAdmCursor_nitrado_scope_fkey',
+  'NitradoSnapshot_nitrado_scope_fkey',
+  'KillfeedConfig_nitrado_scope_fkey',
+  'KillfeedEvent_nitrado_scope_fkey',
+  'EconomyVirtualAccountEntry_account_scope_fkey',
+  'LotteryRound_pot_scope_fkey',
+  'LotteryEntry_round_scope_fkey',
+  'LotteryPurchase_round_scope_fkey',
+  'CasinoRound_game_guild_fkey',
+  'CasinoRound_game_scope_fkey',
+  'TicketInstance_template_guild_fkey',
+];
 
 describe('DB-2 composite tenant foreign-key invariants', () => {
   test('fails closed on existing inconsistent data before changing foreign keys', () => {
@@ -94,6 +113,24 @@ describe('DB-2 composite tenant foreign-key invariants', () => {
       const keyPos = sql.indexOf(`"${key}"`);
       expect(keyPos).toBeGreaterThanOrEqual(0);
       expect(keyPos).toBeLessThan(firstFkAdd);
+    }
+  });
+
+  test('later migrations cannot silently drop the DB-2 scope boundary', () => {
+    const laterSql = fs.readdirSync(migrationsRoot, { withFileTypes: true })
+      .filter((entry) => entry.isDirectory() && entry.name > migrationName)
+      .sort((a, b) => a.name.localeCompare(b.name))
+      .map((entry) => {
+        const file = path.join(migrationsRoot, entry.name, 'migration.sql');
+        return fs.existsSync(file) ? fs.readFileSync(file, 'utf8') : '';
+      })
+      .join('\n');
+
+    for (const constraint of protectedConstraints) {
+      const escaped = constraint.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+      const drop = new RegExp(`DROP\\s+CONSTRAINT(?:\\s+IF\\s+EXISTS)?\\s+"${escaped}"`, 'i');
+      const reAdd = new RegExp(`ADD\\s+CONSTRAINT\\s+"${escaped}"`, 'i');
+      if (drop.test(laterSql)) expect(reAdd.test(laterSql)).toBe(true);
     }
   });
 });
