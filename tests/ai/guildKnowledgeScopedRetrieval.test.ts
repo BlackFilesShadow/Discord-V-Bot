@@ -9,19 +9,10 @@ jest.mock('../../src/modules/ai/embeddings', () => ({
 jest.mock('../../src/database/prisma', () => ({
   __esModule: true,
   default: {
-    guildKnowledge: {
-      findMany: jest.fn(),
-    },
-    guildKnowledgeScope: {
-      findMany: jest.fn(),
-    },
-    guildKnowledgeProvenance: {
-      findMany: jest.fn(),
-    },
-    nitradoConnection: {
-      findMany: jest.fn(),
-      findFirst: jest.fn(),
-    },
+    guildKnowledge: { findMany: jest.fn() },
+    guildKnowledgeScope: { findMany: jest.fn() },
+    guildKnowledgeProvenance: { findMany: jest.fn() },
+    nitradoConnection: { findMany: jest.fn(), findFirst: jest.fn() },
   },
 }));
 
@@ -41,11 +32,11 @@ function knowledgeRow(id: string, label: string, content: string) {
     content,
     embedding: null,
     embeddingModel: null,
-    createdAt: new Date('2026-08-17T00:00:00Z'),
+    createdAt: new Date('2026-08-16T20:00:00Z'),
   };
 }
 
-describe('AI-10 scoped hybrid retrieval', () => {
+describe('AI-10/11 scoped + provenance-aware hybrid retrieval', () => {
   beforeEach(() => {
     jest.clearAllMocks();
     mockGetQueryEmbedding.mockResolvedValue(null);
@@ -81,5 +72,65 @@ describe('AI-10 scoped hybrid retrieval', () => {
     expect(mockedPrisma.guildKnowledgeProvenance.findMany).toHaveBeenCalledWith(expect.objectContaining({
       where: { guildId: 'guild-xyz' },
     }));
+  });
+
+  it('schliesst EXPIRED Quellen vor dem Ranking aus, selbst wenn sie den staerksten Keyword-Treffer haben', async () => {
+    mockedPrisma.guildKnowledgeScope.findMany.mockResolvedValue([]);
+    mockedPrisma.guildKnowledge.findMany.mockResolvedValue([
+      knowledgeRow('valid', 'Restart', 'restart apple'),
+      knowledgeRow('expired', 'restart apple restart', 'restart apple apple apple'),
+    ]);
+    mockedPrisma.guildKnowledgeProvenance.findMany.mockResolvedValue([
+      {
+        knowledgeId: 'expired',
+        sourceKind: 'OFFICIAL_DOC',
+        trustLevel: 'AUTHORITATIVE',
+        sourceRef: 'official:expired',
+        sourceVersion: 'old',
+        observedAt: new Date('2026-08-01T00:00:00Z'),
+        validUntil: new Date('2026-08-16T22:00:00Z'),
+      },
+    ]);
+
+    const result = await findRelevantKnowledge('guild-1', 'restart apple', 3, null);
+    expect(result.map(row => row.id)).toEqual(['valid']);
+  });
+
+  it('bevorzugt bei gleicher fachlicher Relevanz die hoeher vertraute, gleich frische Quelle', async () => {
+    mockedPrisma.guildKnowledgeScope.findMany.mockResolvedValue([]);
+    mockedPrisma.guildKnowledge.findMany.mockResolvedValue([
+      knowledgeRow('low', 'Restart', 'restart apple'),
+      knowledgeRow('high', 'Restart', 'restart apple'),
+    ]);
+    const observedAt = new Date(Date.now() - 60 * 60_000);
+    mockedPrisma.guildKnowledgeProvenance.findMany.mockResolvedValue([
+      {
+        knowledgeId: 'low', sourceKind: 'IMPORTED', trustLevel: 'UNVERIFIED', sourceRef: null,
+        sourceVersion: null, observedAt, validUntil: null,
+      },
+      {
+        knowledgeId: 'high', sourceKind: 'OFFICIAL_DOC', trustLevel: 'AUTHORITATIVE', sourceRef: 'official:doc',
+        sourceVersion: 'v1', observedAt, validUntil: null,
+      },
+    ]);
+
+    const result = await findRelevantKnowledge('guild-1', 'restart apple', 2, null);
+    expect(result.map(row => row.id)).toEqual(['high', 'low']);
+    expect(result[0].provenance?.trustLevel).toBe('AUTHORITATIVE');
+  });
+
+  it('wertet korrupte persistierte AUTHORITATIVE-Metadaten ohne Source-Ref konservativ als Legacy/CURATED', async () => {
+    mockedPrisma.guildKnowledgeScope.findMany.mockResolvedValue([]);
+    mockedPrisma.guildKnowledge.findMany.mockResolvedValue([knowledgeRow('corrupt', 'Restart', 'restart apple')]);
+    mockedPrisma.guildKnowledgeProvenance.findMany.mockResolvedValue([
+      {
+        knowledgeId: 'corrupt', sourceKind: 'OFFICIAL_DOC', trustLevel: 'AUTHORITATIVE', sourceRef: null,
+        sourceVersion: 'v1', observedAt: new Date(), validUntil: null,
+      },
+    ]);
+
+    const result = await findRelevantKnowledge('guild-1', 'restart apple', 1, null);
+    expect(result[0].provenance?.trustLevel).toBe('CURATED');
+    expect(result[0].provenance?.legacyDefault).toBe(true);
   });
 });
