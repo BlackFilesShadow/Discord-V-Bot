@@ -366,10 +366,21 @@ export async function runLeaveWhitelistCleanupStep(
     if (result.state === 'WAITING') total.state = 'WAITING';
   }
 
-  // Request-History traegt die Discord-ID auch unabhaengig vom finalen Linknamen.
-  // Erst wenn ALLE Gameserver-Schritte remote bestaetigt DONE sind, wird diese
-  // personenbezogene lokale History guildweit entfernt.
   if (total.state === 'DONE') {
+    // Ein APPROVED Request, der nach allen verifizierten Links noch existiert,
+    // koennte remote einen Namen repraesentieren, dessen Eigentum nicht mehr
+    // kryptografisch ueber GUID->Session->Playername belegt werden kann.
+    // Deshalb niemals still History loeschen und DONE melden: fail closed.
+    const unresolvedApproved = await prisma.whitelistRequest.findFirst({
+      where: { guildId, requesterDiscordId: discordId, status: 'APPROVED' },
+      select: { id: true },
+    });
+    if (unresolvedApproved) {
+      throw new Error('Leave-Whitelist: APPROVED Whitelist-Request ohne verifizierbare Link-Zuordnung; manuelle Klaerung erforderlich.');
+    }
+
+    // Restliche PENDING/DENIED/CANCELLED Request-History ist rein lokal und
+    // darf jetzt guildweit entfernt werden.
     const deleted = await prisma.whitelistRequest.deleteMany({
       where: { guildId, requesterDiscordId: discordId },
     });
