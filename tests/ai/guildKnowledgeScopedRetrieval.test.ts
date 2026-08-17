@@ -15,6 +15,9 @@ jest.mock('../../src/database/prisma', () => ({
     guildKnowledgeScope: {
       findMany: jest.fn(),
     },
+    guildKnowledgeProvenance: {
+      findMany: jest.fn(),
+    },
     nitradoConnection: {
       findMany: jest.fn(),
       findFirst: jest.fn(),
@@ -28,6 +31,7 @@ import { findRelevantKnowledge } from '../../src/modules/ai/guildKnowledge';
 const mockedPrisma = prisma as unknown as {
   guildKnowledge: { findMany: jest.Mock };
   guildKnowledgeScope: { findMany: jest.Mock };
+  guildKnowledgeProvenance: { findMany: jest.Mock };
 };
 
 function knowledgeRow(id: string, label: string, content: string) {
@@ -45,12 +49,10 @@ describe('AI-10 scoped hybrid retrieval', () => {
   beforeEach(() => {
     jest.clearAllMocks();
     mockGetQueryEmbedding.mockResolvedValue(null);
+    mockedPrisma.guildKnowledgeProvenance.findMany.mockResolvedValue([]);
     mockedPrisma.guildKnowledge.findMany.mockResolvedValue([
       knowledgeRow('global', 'Allgemein', 'restart apple global'),
       knowledgeRow('server-1', 'Restart', 'apple restart fuer slot eins'),
-      // Absichtlich der staerkste Keyword-/Label-Treffer. Wenn Scope erst NACH
-      // dem Ranking greifen wuerde, koennte dieser fremde Server die Rangfolge
-      // bzw. Normalisierung beeinflussen.
       knowledgeRow('server-2', 'apple restart apple', 'apple apple apple fremder server'),
     ]);
     mockedPrisma.guildKnowledgeScope.findMany.mockResolvedValue([
@@ -70,11 +72,14 @@ describe('AI-10 scoped hybrid retrieval', () => {
     expect(result.map(row => row.id)).toEqual(['global']);
   });
 
-  it('fragt Scope-Metadaten fuer exakt dieselbe Guild ab', async () => {
+  it('fragt Scope- und Provenance-Metadaten fuer exakt dieselbe Guild ab', async () => {
     await findRelevantKnowledge('guild-xyz', 'apple restart', 3, 'conn-1');
     expect(mockedPrisma.guildKnowledgeScope.findMany).toHaveBeenCalledWith({
       where: { guildId: 'guild-xyz' },
       select: { knowledgeId: true, nitradoConnId: true },
     });
+    expect(mockedPrisma.guildKnowledgeProvenance.findMany).toHaveBeenCalledWith(expect.objectContaining({
+      where: { guildId: 'guild-xyz' },
+    }));
   });
 });
