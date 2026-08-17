@@ -19,24 +19,19 @@ export interface LeaveWhitelistStepResult {
   jobPayloadsScrubbed: number;
 }
 
-type LinkRow = {
-  nitradoConnId: string;
-  identityHash: string | null;
-};
-
+type LinkStepResult = Omit<LeaveWhitelistStepResult, 'links'>;
+type LinkRow = { nitradoConnId: string; identityHash: string | null };
 type ScopedJob = {
   id: string;
   operation: string;
   status: 'PENDING' | 'RUNNING' | 'DONE' | 'FAILED' | 'DEAD';
   payload: unknown;
 };
-
 type WhitelistEntryRow = {
   id: string;
   gameId: string;
   syncState: 'LOCAL_ONLY' | 'SYNCED' | 'PENDING_REMOVE';
 };
-
 type WhitelistRequestRow = {
   id: string;
   gameId: string;
@@ -56,6 +51,23 @@ function payloadGameId(payload: unknown): string | null {
 function sameTarget(job: ScopedJob, targetNames: Set<string>): boolean {
   const gameId = payloadGameId(job.payload);
   return gameId !== null && targetNames.has(norm(gameId));
+}
+
+function waitingResult(names: number, values: {
+  localMarked: number;
+  addJobsNeutralized: number;
+  removeJobsQueued: number;
+}): LinkStepResult {
+  return {
+    state: 'WAITING',
+    names,
+    localMarked: values.localMarked,
+    localDeleted: 0,
+    requestsDeleted: 0,
+    addJobsNeutralized: values.addJobsNeutralized,
+    removeJobsQueued: values.removeJobsQueued,
+    jobPayloadsScrubbed: 0,
+  };
 }
 
 async function trustedNamesForLink(
@@ -82,39 +94,55 @@ async function readRemoteWhitelist(args: {
   guildId: string;
   nitradoConnId: string;
   targetNames: Set<string>;
-}): Promise<{ identifiers: string[]; connectionActive: true }> {
+}): Promise<string[]> {
   const conn = await prisma.nitradoConnection.findFirst({
     where: { id: args.nitradoConnId, guildId: args.guildId },
     select: { id: true, encryptedToken: true, nitradoServerId: true, status: true },
   });
   if (!conn) throw new Error('Leave-Whitelist: Nitrado-Connection im Guild-Scope nicht gefunden.');
-  if (conn.status !== 'ACTIVE') throw new Error(`Leave-Whitelist: Nitrado-Connection ist ${conn.status}; Remote-Loeschung nicht bestaetigbar.`);
-  if (!conn.nitradoServerId) throw new Error('Leave-Whitelist: Nitrado-Service-ID fehlt; Remote-Loeschung nicht bestaetigbar.');
+  if (conn.status !== 'ACTIVE') {
+    throw new Error(`Leave-Whitelist: Nitrado-Connection ist ${conn.status}; Remote-Loeschung nicht bestaetigbar.`);
+  }
+  if (!conn.nitradoServerId) {
+    throw new Error('Leave-Whitelist: Nitrado-Service-ID fehlt; Remote-Loeschung nicht bestaetigbar.');
+  }
 
   let token = '';
   try {
     token = decrypt(conn.encryptedToken, config.security.encryptionKey);
     const remote = await new NitradoClient(token).getWhitelist(conn.nitradoServerId);
-    return { identifiers: remote.map(row => row.identifier).filter(Boolean), connectionActive: true };
+    return remote.map(row => row.identifier).filter(Boolean);
   } catch (error) {
     const sensitive = [token, ...args.targetNames].filter(Boolean);
     throw new Error(`Leave-Whitelist Remote-Read fehlgeschlagen: ${sanitizeLeaveCleanupError(error, sensitive)}`);
   }
 }
 
-async function processLink(
-  guildId: string,
-  discordId: string,
-  link: LinkRow,
-): Promise<Omit<LeaveWhitelistStepResult, 'links'>> {
+async function listWhitelistJobs(guildId: string, nitradoConnId: string): Promise<ScopedJob[]> {
+  return prisma.nitradoJob.findMany({
+    where: {
+      guildId,
+      nitradoConnId,
+      operation: { in: ['WHITELIST_ADD', 'WHITELIST_REMOVE'] },
+    },
+    select: { id: true, operation: true, status: true, payload: true },
+    orderBy: { createdAt: 'desc' },
+    take: 1000,
+  }) as Promise<ScopedJob[]>;
+}
+
+async function processLink(guildId: string, link: LinkRow): Promise<LinkStepResult> {
   if (!link.identityHash) throw new Error('Leave-Whitelist: VERIFIED Link ohne identityHash.');
 
+  // GameIdentityLink enthaelt den HMAC der GUID. Die Nitrado-Whitelist arbeitet
+  // dagegen mit Player-Namen. Darum wird zuerst eine Session gesucht, deren
+  // GUID exakt zum Link-HMAC passt; nur deren Namen sind Loeschziele.
   const trustedNames = await trustedNamesForLink(guildId, link.nitradoConnId, link.identityHash);
   if (trustedNames.size === 0) {
     throw new Error('Leave-Whitelist: verifizierte GUID kann nicht mehr sicher auf einen Spielernamen abgebildet werden.');
   }
 
-  const [localRows, requestRows, jobs, remote] = await Promise.all([
+  const [localRows, requestRows, jobs, remoteIdentifiers] = await Promise.all([
     prisma.whitelistEntry.findMany({
       where: { guildId, nitradoConnId: link.nitradoConnId },
       select: { id: true, gameId: true, syncState: true },
@@ -123,22 +151,13 @@ async function processLink(
       where: { guildId, nitradoConnId: link.nitradoConnId },
       select: { id: true, gameId: true, requesterDiscordId: true },
     }) as Promise<WhitelistRequestRow[]>,
-    prisma.nitradoJob.findMany({
-      where: {
-        guildId,
-        nitradoConnId: link.nitradoConnId,
-        operation: { in: ['WHITELIST_ADD', 'WHITELIST_REMOVE'] },
-      },
-      select: { id: true, operation: true, status: true, payload: true },
-      orderBy: { createdAt: 'desc' },
-      take: 1000,
-    }) as Promise<ScopedJob[]>,
+    listWhitelistJobs(guildId, link.nitradoConnId),
     readRemoteWhitelist({ guildId, nitradoConnId: link.nitradoConnId, targetNames: trustedNames }),
   ]);
 
   const matchingLocal = localRows.filter(row => trustedNames.has(norm(row.gameId)));
   const matchingRequests = requestRows.filter(row => trustedNames.has(norm(row.gameId)));
-  const matchingRemote = remote.identifiers.filter(name => trustedNames.has(norm(name)));
+  const matchingRemote = remoteIdentifiers.filter(name => trustedNames.has(norm(name)));
   const targetNames = new Set<string>(trustedNames);
   for (const row of matchingLocal) targetNames.add(norm(row.gameId));
   for (const row of matchingRequests) targetNames.add(norm(row.gameId));
@@ -193,10 +212,8 @@ async function processLink(
       addJobsNeutralized += neutralized.count;
     }
 
-    // Ein RUNNING ADD kann gerade den per-Connection-Lock halten. In diesem
-    // Zustand darf kein Remove eingeplant/finalisiert werden: beim naechsten
-    // Saga-Pass ist der Add entweder DONE oder wieder PENDING und kann dann
-    // sicher neutralisiert werden.
+    // Ein RUNNING ADD kann gerade den per-Connection-Lock halten. Erst beim
+    // naechsten Saga-Pass darf nach dessen Abschluss ein Remove entstehen.
     if (runningAdds.length === 0 && matchingRemote.length > 0 && activeRemoves.length === 0) {
       if (deadRemoves.length > 0) {
         throw new Error('Leave-Whitelist: vorheriger WHITELIST_REMOVE ist DEAD; manuelle Recovery erforderlich.');
@@ -215,37 +232,53 @@ async function processLink(
     }
   });
 
-  if (runningAdds.length > 0) {
-    return {
-      state: 'WAITING', links: undefined as never, names: trustedNames.size,
-      localMarked, localDeleted: 0, requestsDeleted: 0,
-      addJobsNeutralized, removeJobsQueued, jobPayloadsScrubbed: 0,
-    };
+  if (runningAdds.length > 0 || matchingRemote.length > 0) {
+    return waitingResult(trustedNames.size, { localMarked, addJobsNeutralized, removeJobsQueued });
   }
 
-  // Solange der Name beim frischen Remote-Read noch vorhanden ist, muss die
-  // Outbox den Remove erst erfolgreich ausfuehren. Lokal bleibt PENDING_REMOVE.
-  if (matchingRemote.length > 0) {
-    return {
-      state: 'WAITING', links: undefined as never, names: trustedNames.size,
-      localMarked, localDeleted: 0, requestsDeleted: 0,
-      addJobsNeutralized, removeJobsQueued, jobPayloadsScrubbed: 0,
-    };
+  // Remote ist im frischen Read bereits sauber. Vor dem lokalen Finalisieren
+  // Jobs NOCHMALS lesen: so wird ein Add/Remove erfasst, das zwischen dem ersten
+  // Snapshot und dem PENDING_REMOVE-Write entstanden ist.
+  const freshJobs = (await listWhitelistJobs(guildId, link.nitradoConnId))
+    .filter(job => sameTarget(job, targetNames));
+  if (freshJobs.some(job => job.status === 'RUNNING')) {
+    return waitingResult(trustedNames.size, { localMarked, addJobsNeutralized, removeJobsQueued });
   }
 
-  const runningRemoves = matchingJobs.filter(job => job.operation === 'WHITELIST_REMOVE' && job.status === 'RUNNING');
-  if (runningRemoves.length > 0) {
-    return {
-      state: 'WAITING', links: undefined as never, names: trustedNames.size,
-      localMarked, localDeleted: 0, requestsDeleted: 0,
-      addJobsNeutralized, removeJobsQueued, jobPayloadsScrubbed: 0,
-    };
-  }
-
+  const freshPendingAdds = freshJobs.filter(job => job.operation === 'WHITELIST_ADD' && job.status === 'PENDING');
   let localDeleted = 0;
   let requestsDeleted = 0;
   let jobPayloadsScrubbed = 0;
+
   await prisma.$transaction(async tx => {
+    if (freshPendingAdds.length > 0) {
+      const neutralized = await tx.nitradoJob.updateMany({
+        where: {
+          id: { in: freshPendingAdds.map(job => job.id) },
+          guildId,
+          nitradoConnId: link.nitradoConnId,
+          operation: 'WHITELIST_ADD',
+          status: 'PENDING',
+        },
+        data: { status: 'DONE', payload: {}, lastError: null, updatedAt: new Date() },
+      });
+      addJobsNeutralized += neutralized.count;
+    }
+
+    const pendingRemoves = freshJobs.filter(job => job.operation === 'WHITELIST_REMOVE' && job.status === 'PENDING');
+    if (pendingRemoves.length > 0) {
+      await tx.nitradoJob.updateMany({
+        where: {
+          id: { in: pendingRemoves.map(job => job.id) },
+          guildId,
+          nitradoConnId: link.nitradoConnId,
+          operation: 'WHITELIST_REMOVE',
+          status: 'PENDING',
+        },
+        data: { status: 'DONE', payload: {}, lastError: null, updatedAt: new Date() },
+      });
+    }
+
     if (matchingLocal.length > 0) {
       const deleted = await tx.whitelistEntry.deleteMany({
         where: {
@@ -269,7 +302,7 @@ async function processLink(
       requestsDeleted += deleted.count;
     }
 
-    const scrubCandidates = matchingJobs.filter(job => job.status !== 'RUNNING');
+    const scrubCandidates = freshJobs.filter(job => job.status !== 'RUNNING');
     if (scrubCandidates.length > 0) {
       const scrubbed = await tx.nitradoJob.updateMany({
         where: {
@@ -286,9 +319,14 @@ async function processLink(
   });
 
   return {
-    state: 'DONE', links: undefined as never, names: trustedNames.size,
-    localMarked, localDeleted, requestsDeleted,
-    addJobsNeutralized, removeJobsQueued, jobPayloadsScrubbed,
+    state: 'DONE',
+    names: trustedNames.size,
+    localMarked,
+    localDeleted,
+    requestsDeleted,
+    addJobsNeutralized,
+    removeJobsQueued,
+    jobPayloadsScrubbed,
   };
 }
 
@@ -312,9 +350,9 @@ export async function runLeaveWhitelistCleanupStep(
   };
 
   for (const link of links) {
-    let result: Omit<LeaveWhitelistStepResult, 'links'>;
+    let result: LinkStepResult;
     try {
-      result = await processLink(guildId, discordId, link);
+      result = await processLink(guildId, link);
     } catch (error) {
       throw new Error(sanitizeLeaveCleanupError(error));
     }
@@ -329,8 +367,8 @@ export async function runLeaveWhitelistCleanupStep(
   }
 
   // Request-History traegt die Discord-ID auch unabhaengig vom finalen Linknamen.
-  // Erst wenn ALLE Gameserver-Scope-Schritte remote bestaetigt DONE sind, darf
-  // diese personenbezogene lokale History guildweit entfernt werden.
+  // Erst wenn ALLE Gameserver-Schritte remote bestaetigt DONE sind, wird diese
+  // personenbezogene lokale History guildweit entfernt.
   if (total.state === 'DONE') {
     const deleted = await prisma.whitelistRequest.deleteMany({
       where: { guildId, requesterDiscordId: discordId },
