@@ -127,9 +127,6 @@ export async function sendConfiguredGoodbye(member: GuildMember): Promise<Goodby
   });
   const finalText = resolveCustomEmotes(rendered, member.guild);
 
-  await sendWelcomeMessages(channel, {
-    text: finalText,
-    deliveryLabel: 'Abschiedsnachricht',
-  });
+  await sendWelcomeMessages(channel, { text: finalText });
   return 'sent';
 }
