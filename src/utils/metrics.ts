@@ -62,6 +62,70 @@ export const rateLimitedCounter = new Counter({
   registers: [metricsRegistry],
 });
 
+/**
+ * AI-20: Nur bewusst niedrig-kardinale Labels. Niemals Discord-/Guild-IDs,
+ * Prompts, Antworten oder sourceRef als Prometheus-Label verwenden.
+ */
+export const aiProviderAttemptsCounter = new Counter({
+  name: 'vbot_ai_provider_attempts_total',
+  help: 'AI-Provider-Versuche nach Provider, Modell, Task und Ergebnis',
+  labelNames: ['provider', 'model', 'task', 'outcome'] as const,
+  registers: [metricsRegistry],
+});
+
+export const aiProviderLatencyHistogram = new Histogram({
+  name: 'vbot_ai_provider_latency_seconds',
+  help: 'End-to-End-Latenz einzelner AI-Provider-Versuche in Sekunden',
+  labelNames: ['provider', 'model', 'task', 'outcome'] as const,
+  buckets: [0.05, 0.1, 0.25, 0.5, 1, 2, 5, 10, 20, 30],
+  registers: [metricsRegistry],
+});
+
+export const aiFallbackCounter = new Counter({
+  name: 'vbot_ai_provider_fallback_total',
+  help: 'Provider-Fallbacks mit begrenzter Ursachenkategorie',
+  labelNames: ['from_provider', 'to_provider', 'reason'] as const,
+  registers: [metricsRegistry],
+});
+
+export const aiRetrievalCounter = new Counter({
+  name: 'vbot_ai_retrieval_total',
+  help: 'AI-Knowledge-Retrieval nach Strategie und Ergebnis',
+  labelNames: ['strategy', 'outcome'] as const,
+  registers: [metricsRegistry],
+});
+
+export const aiRetrievalDurationHistogram = new Histogram({
+  name: 'vbot_ai_retrieval_duration_seconds',
+  help: 'Dauer des AI-Knowledge-Retrievals',
+  labelNames: ['strategy', 'outcome'] as const,
+  buckets: [0.005, 0.01, 0.025, 0.05, 0.1, 0.25, 0.5, 1, 2, 5],
+  registers: [metricsRegistry],
+});
+
+export const aiRetrievalCandidatesHistogram = new Histogram({
+  name: 'vbot_ai_retrieval_candidates',
+  help: 'Kandidatenanzahl je Retrieval-Stufe',
+  labelNames: ['stage'] as const,
+  buckets: [0, 1, 2, 3, 5, 10, 25, 50, 100, 250, 500],
+  registers: [metricsRegistry],
+});
+
+export const aiKnowledgeSourceCounter = new Counter({
+  name: 'vbot_ai_knowledge_sources_total',
+  help: 'Tatsaechlich verwendete Knowledge-Quellen nach Typ, Trust, Freshness und Consumer',
+  labelNames: ['source_kind', 'trust_level', 'freshness', 'consumer'] as const,
+  registers: [metricsRegistry],
+});
+
+export const aiKnowledgeSourceAgeHistogram = new Histogram({
+  name: 'vbot_ai_knowledge_source_age_days',
+  help: 'Alter tatsaechlich verwendeter AI-Knowledge-Quellen in Tagen',
+  labelNames: ['source_kind', 'freshness', 'consumer'] as const,
+  buckets: [0, 0.01, 0.1, 1, 3, 7, 14, 30, 90, 180, 365, 730],
+  registers: [metricsRegistry],
+});
+
 /** Misst die Dauer eines async-Calls und schreibt sie in ein Histogramm. */
 export async function timed<T>(hist: Histogram<string>, labels: Record<string, string>, fn: () => Promise<T>): Promise<T> {
   const end = hist.startTimer(labels);
