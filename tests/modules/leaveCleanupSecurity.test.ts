@@ -1,13 +1,13 @@
 import { sanitizeLeaveCleanupError } from '../../src/modules/moderation/leaveCleanupSecurity';
 
 describe('Leave cleanup error redaction', () => {
-  it('removes concrete player identifiers and line breaks before persistence', () => {
+  it('removes concrete player identifiers case-insensitively and strips line breaks', () => {
     const result = sanitizeLeaveCleanupError(
-      new Error('Remote failed for TargetPlayer\nretry later'),
+      new Error('Remote failed for TARGETPLAYER\nretry later'),
       ['TargetPlayer'],
     );
     expect(result).toBe('Remote failed for [REDACTED] retry later');
-    expect(result).not.toContain('TargetPlayer');
+    expect(result).not.toMatch(/targetplayer/i);
     expect(result).not.toContain('\n');
   });
 
@@ -21,6 +21,11 @@ describe('Leave cleanup error redaction', () => {
     expect(result).not.toContain('raw-key');
     expect(result).not.toContain('raw-secret');
     expect(result).not.toContain('raw-password');
+  });
+
+  it('escapes regex metacharacters in supplied sensitive identifiers', () => {
+    expect(sanitizeLeaveCleanupError('player A+B[1] failed', ['A+B[1]']))
+      .toBe('player [REDACTED] failed');
   });
 
   it('caps persisted error text to 1000 characters', () => {
