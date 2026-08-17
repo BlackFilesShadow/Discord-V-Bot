@@ -1,4 +1,5 @@
 import { createHmac } from 'node:crypto';
+import { Prisma } from '@prisma/client';
 import prisma from '../../database/prisma';
 
 /**
@@ -74,6 +75,30 @@ function asDetails(value: unknown): LeaveCleanupDetails | null {
   };
 }
 
+/** Prisma-JSON darf keine `undefined`-Werte enthalten. */
+function detailsJson(details: LeaveCleanupDetails): Prisma.InputJsonObject {
+  return {
+    kind: details.kind,
+    guildId: details.guildId,
+    stage: details.stage,
+    attempts: details.attempts,
+    maxAttempts: details.maxAttempts,
+    ...(details.claimedAt ? { claimedAt: details.claimedAt } : {}),
+    ...(details.lastError ? { lastError: details.lastError } : {}),
+    ...(details.completedAt ? { completedAt: details.completedAt } : {}),
+  };
+}
+
+function withoutClaim(details: LeaveCleanupDetails): LeaveCleanupDetails {
+  const { claimedAt: _claimedAt, ...rest } = details;
+  return rest;
+}
+
+function withoutLastError(details: LeaveCleanupDetails): LeaveCleanupDetails {
+  const { lastError: _lastError, ...rest } = details;
+  return rest;
+}
+
 /** Deterministischer Job-Key nur waehrend der noch offenen Verarbeitung. */
 export function leaveCleanupJobKey(guildId: string, discordId: string): string {
   return `${LEAVE_JOB_PREFIX}${cleanSnowflake(guildId, 'guildId')}:${cleanSnowflake(discordId, 'discordId')}`;
@@ -95,9 +120,11 @@ export function leaveCleanupReceiptFingerprint(guildId: string, discordId: strin
 }
 
 /**
- * Enqueue ist race-safe auf Anwendungsebene: ein offener Request pro
- * Guild+Discord-ID wird wiederverwendet. Der eigentliche Leave-Event-Wiring-Pfad
- * folgt erst in einer spaeteren Etappe.
+ * Enqueue ist Multi-Process-race-safe: der transaction-scoped PostgreSQL-
+ * Advisory-Lock serialisiert exakt denselben Guild+User-Key. Erst unter diesem
+ * Lock wird auf einen bereits offenen Request geprueft und ggf. erstellt.
+ *
+ * Der eigentliche Leave-Event-Wiring-Pfad folgt erst in einer spaeteren Etappe.
  */
 export async function enqueueLeaveCleanupRequest(args: {
   guildId: string;
@@ -106,37 +133,44 @@ export async function enqueueLeaveCleanupRequest(args: {
   maxAttempts?: number;
 }): Promise<{ id: string; created: boolean }> {
   const now = args.now ?? new Date();
-  const key = leaveCleanupJobKey(args.guildId, args.discordId);
-  const existing = await prisma.dataDeletionRequest.findFirst({
-    where: {
-      userId: key,
-      requestType: 'PARTIAL_DELETION',
-      status: { in: ['PENDING', 'IN_PROGRESS'] },
-    },
-    select: { id: true },
-    orderBy: { createdAt: 'desc' },
-  });
-  if (existing) return { id: existing.id, created: false };
-
+  const guildId = cleanSnowflake(args.guildId, 'guildId');
+  const discordId = cleanSnowflake(args.discordId, 'discordId');
+  const key = leaveCleanupJobKey(guildId, discordId);
   const maxAttempts = Math.max(1, Math.min(32, Math.trunc(args.maxAttempts ?? LEAVE_CLEANUP_MAX_ATTEMPTS)));
-  const created = await prisma.dataDeletionRequest.create({
-    data: {
-      userId: key,
-      discordId: cleanSnowflake(args.discordId, 'discordId'),
-      requestType: 'PARTIAL_DELETION',
-      status: 'PENDING',
-      scheduledAt: now,
-      details: {
-        kind: LEAVE_CLEANUP_KIND,
-        guildId: cleanSnowflake(args.guildId, 'guildId'),
-        stage: 'QUEUED',
-        attempts: 0,
-        maxAttempts,
+
+  return prisma.$transaction(async tx => {
+    await tx.$executeRaw(Prisma.sql`SELECT pg_advisory_xact_lock(hashtextextended(${key}, 0))`);
+    const existing = await tx.dataDeletionRequest.findFirst({
+      where: {
+        userId: key,
+        requestType: 'PARTIAL_DELETION',
+        status: { in: ['PENDING', 'IN_PROGRESS'] },
       },
-    },
-    select: { id: true },
+      select: { id: true },
+      orderBy: { createdAt: 'desc' },
+    });
+    if (existing) return { id: existing.id, created: false };
+
+    const details: LeaveCleanupDetails = {
+      kind: LEAVE_CLEANUP_KIND,
+      guildId,
+      stage: 'QUEUED',
+      attempts: 0,
+      maxAttempts,
+    };
+    const created = await tx.dataDeletionRequest.create({
+      data: {
+        userId: key,
+        discordId,
+        requestType: 'PARTIAL_DELETION',
+        status: 'PENDING',
+        scheduledAt: now,
+        details: detailsJson(details),
+      },
+      select: { id: true },
+    });
+    return { id: created.id, created: true };
   });
-  return { id: created.id, created: true };
 }
 
 /**
@@ -157,22 +191,29 @@ export async function claimNextLeaveCleanupRequest(now: Date = new Date()): Prom
     if (!candidate) return null;
     const details = asDetails(candidate.details);
     if (!details) {
+      const invalidDetails: LeaveCleanupDetails = {
+        kind: LEAVE_CLEANUP_KIND,
+        guildId: 'invalid',
+        stage: 'DEAD',
+        attempts: 0,
+        maxAttempts: 1,
+        lastError: 'Ungueltige Leave-Cleanup-Metadaten.',
+      };
       await prisma.dataDeletionRequest.updateMany({
         where: { id: candidate.id, status: 'PENDING' },
-        data: { status: 'FAILED', details: { kind: LEAVE_CLEANUP_KIND, guildId: 'invalid', stage: 'DEAD', attempts: 0, maxAttempts: 1, lastError: 'Ungueltige Leave-Cleanup-Metadaten.' } },
+        data: { status: 'FAILED', details: detailsJson(invalidDetails) },
       });
       continue;
     }
 
     const claimedDetails: LeaveCleanupDetails = {
-      ...details,
+      ...withoutLastError(details),
       stage: 'RUNNING',
       claimedAt: now.toISOString(),
-      lastError: undefined,
     };
     const claim = await prisma.dataDeletionRequest.updateMany({
       where: { id: candidate.id, status: 'PENDING' },
-      data: { status: 'IN_PROGRESS', details: claimedDetails as unknown as object },
+      data: { status: 'IN_PROGRESS', details: detailsJson(claimedDetails) },
     });
     if (claim.count !== 1) continue;
     return {
@@ -205,12 +246,17 @@ export async function recoverStaleLeaveCleanupRequests(
     const details = asDetails(row.details);
     const claimedAt = details?.claimedAt ? Date.parse(details.claimedAt) : Number.NaN;
     if (!details || !Number.isFinite(claimedAt) || now.getTime() - claimedAt < staleMs) continue;
+    const recoveredDetails: LeaveCleanupDetails = {
+      ...withoutClaim(details),
+      stage: 'QUEUED',
+      lastError: 'Stale Claim nach Restart wieder freigegeben.',
+    };
     const result = await prisma.dataDeletionRequest.updateMany({
       where: { id: row.id, status: 'IN_PROGRESS' },
       data: {
         status: 'PENDING',
         scheduledAt: now,
-        details: { ...details, stage: 'QUEUED', claimedAt: undefined, lastError: 'Stale Claim nach Restart wieder freigegeben.' } as unknown as object,
+        details: detailsJson(recoveredDetails),
       },
     });
     recovered += result.count;
@@ -235,20 +281,19 @@ export async function retryOrDeadLetterLeaveCleanupRequest(
   const lastError = safeError(error);
   const dead = attempts >= details.maxAttempts;
   const nextDetails: LeaveCleanupDetails = {
-    ...details,
+    ...withoutClaim(details),
     attempts,
     stage: dead ? 'DEAD' : 'RETRY_WAIT',
-    claimedAt: undefined,
     lastError,
   };
   const result = await prisma.dataDeletionRequest.updateMany({
     where: { id: request.id, status: 'IN_PROGRESS' },
     data: dead
-      ? { status: 'FAILED', details: nextDetails as unknown as object }
+      ? { status: 'FAILED', details: detailsJson(nextDetails) }
       : {
           status: 'PENDING',
           scheduledAt: new Date(now.getTime() + leaveCleanupBackoffMs(attempts)),
-          details: nextDetails as unknown as object,
+          details: detailsJson(nextDetails),
         },
   });
   if (result.count !== 1) throw new Error('Leave-Cleanup Retry-CAS verloren.');
@@ -266,16 +311,15 @@ export async function completeLeaveCleanupRequest(
   now: Date = new Date(),
 ): Promise<string> {
   const details = asDetails(request.details);
-  if (!details || details.guildId !== cleanSnowflake(guildId, 'guildId')) {
+  const scopedGuildId = cleanSnowflake(guildId, 'guildId');
+  if (!details || details.guildId !== scopedGuildId) {
     throw new Error('Leave-Cleanup Guild-Scope stimmt nicht mit Request ueberein.');
   }
-  const fingerprint = leaveCleanupReceiptFingerprint(guildId, request.discordId, secret);
+  const fingerprint = leaveCleanupReceiptFingerprint(scopedGuildId, request.discordId, secret);
   const completedDetails: LeaveCleanupDetails = {
-    ...details,
+    ...withoutLastError(withoutClaim(details)),
     stage: 'COMPLETED',
-    claimedAt: undefined,
     completedAt: now.toISOString(),
-    lastError: undefined,
   };
   const result = await prisma.dataDeletionRequest.updateMany({
     where: { id: request.id, status: 'IN_PROGRESS', userId: request.userId },
@@ -284,7 +328,7 @@ export async function completeLeaveCleanupRequest(
       completedAt: now,
       userId: fingerprint,
       discordId: fingerprint,
-      details: completedDetails as unknown as object,
+      details: detailsJson(completedDetails),
     },
   });
   if (result.count !== 1) throw new Error('Leave-Cleanup Completion-CAS verloren.');
