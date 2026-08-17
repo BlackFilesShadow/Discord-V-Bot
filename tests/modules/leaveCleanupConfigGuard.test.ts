@@ -74,8 +74,8 @@ describe('Leave-1E guild-scoped config', () => {
   });
 });
 
-describe('Leave-1E open-cleanup relink guard', () => {
-  it('looks only for the exact guild+Discord durable job key and active states', async () => {
+describe('Leave-1E cleanup relink guard', () => {
+  it('looks only for the exact guild+Discord durable job key and blocks active plus dead-letter states', async () => {
     deletionFindFirst.mockResolvedValue({ id: 'job' });
 
     await expect(hasOpenLeaveCleanupRequest(GUILD_A, USER)).resolves.toBe(true);
@@ -83,20 +83,20 @@ describe('Leave-1E open-cleanup relink guard', () => {
       where: {
         userId: `leave-job:v1:${GUILD_A}:${USER}`,
         requestType: 'PARTIAL_DELETION',
-        status: { in: ['PENDING', 'IN_PROGRESS'] },
+        status: { in: ['PENDING', 'IN_PROGRESS', 'FAILED'] },
       },
       select: { id: true },
     });
   });
 
-  it('throws the dedicated safe retry message while cleanup is still open', async () => {
+  it('throws the dedicated safe retry message while cleanup is not successfully completed', async () => {
     deletionFindFirst.mockResolvedValue({ id: 'job' });
 
     await expect(assertNoOpenLeaveCleanupRequest(GUILD_A, USER)).rejects.toBeInstanceOf(LeaveCleanupPendingError);
-    await expect(assertNoOpenLeaveCleanupRequest(GUILD_A, USER)).rejects.toThrow(/noch abgeschlossen/);
+    await expect(assertNoOpenLeaveCleanupRequest(GUILD_A, USER)).rejects.toThrow(/nicht erfolgreich abgeschlossen/);
   });
 
-  it('allows relinking only after no PENDING/IN_PROGRESS job remains', async () => {
+  it('allows relinking only after no PENDING/IN_PROGRESS/FAILED raw job remains', async () => {
     deletionFindFirst.mockResolvedValue(null);
     await expect(assertNoOpenLeaveCleanupRequest(GUILD_A, USER)).resolves.toBeUndefined();
   });
