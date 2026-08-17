@@ -130,9 +130,8 @@ export async function deleteSlot(guildId: GuildId, slot: number): Promise<Nitrad
   });
   if (!row) return null;
 
-  // AI-10: servergebundenes Wissen darf nach Entfernen eines Gameservers nie
-  // zu guild-globalem Wissen werden. Deshalb echte Cascade-Semantik: erst die
-  // zugeordneten Knowledge-Zeilen + Sidecar-Metadaten, dann die Connection.
+  // AI-10/11: servergebundenes Wissen darf nach Entfernen eines Gameservers nie
+  // zu guild-globalem Wissen werden und keine Provenance-Orphans hinterlassen.
   const scopedKnowledge = await prisma.guildKnowledgeScope.findMany({
     where: { guildId, nitradoConnId: row.id },
     select: { knowledgeId: true },
@@ -141,7 +140,10 @@ export async function deleteSlot(guildId: GuildId, slot: number): Promise<Nitrad
 
   await prisma.$transaction([
     ...(knowledgeIds.length > 0
-      ? [prisma.guildKnowledge.deleteMany({ where: { guildId, id: { in: knowledgeIds } } })]
+      ? [
+          prisma.guildKnowledgeProvenance.deleteMany({ where: { guildId, knowledgeId: { in: knowledgeIds } } }),
+          prisma.guildKnowledge.deleteMany({ where: { guildId, id: { in: knowledgeIds } } }),
+        ]
       : []),
     prisma.guildKnowledgeScope.deleteMany({ where: { guildId, nitradoConnId: row.id } }),
     prisma.nitradoValidationHealth.deleteMany({ where: { guildId, nitradoConnId: row.id } }),

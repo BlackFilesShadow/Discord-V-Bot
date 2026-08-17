@@ -10,16 +10,25 @@ import {
   validateKnowledgeScope,
   type KnowledgeScopeMeta,
 } from './knowledgeScope';
+import {
+  getKnowledgeProvenanceMap,
+  legacyKnowledgeProvenance,
+  validateKnowledgeProvenance,
+  type KnowledgeProvenanceInput,
+  type KnowledgeProvenanceMeta,
+} from './knowledgeProvenance';
 
 /**
  * Phase 8: Per-Guild Knowledge-Snippets.
  * Phase 9: Semantische Retrieval ueber Embeddings (Cosine), Fallback Keyword-Match.
  * AI-10: Guild-/Gameserver-Metadatenfilter VOR dem Hybrid-Reranking.
+ * AI-11: Quellen-/Vertrauens-/Freshness-Metadaten mit Source-Age und Ablauf.
  *
  * Owner/Admin koennen kompakte Faktenbloecke hinterlegen, die der AI bei
  * passenden Anfragen mit in den Prompt fliessen. Token-Schutz: max 3 Snippets
  * pro Antwort. Fehlende Scope-Metadaten bedeuten rueckwaertskompatibel
- * guild-global; servergebundene Snippets werden nie zwischen Gameservern gemischt.
+ * guild-global; fehlende Provenance-Metadaten werden konservativ als
+ * OWNER_CURATED/CURATED behandelt.
  */
 
 const MAX_SNIPPETS_PER_PROMPT = 3;
@@ -31,6 +40,7 @@ export interface KnowledgeSnippet {
   id: string;
   label: string;
   content: string;
+  provenance?: KnowledgeProvenanceMeta;
 }
 
 function tokenize(s: string): Set<string> {
@@ -44,15 +54,7 @@ function tokenize(s: string): Set<string> {
   );
 }
 
-// Mindest-Cosine-Score, ab dem ein Snippet als relevant gilt. Empirisch:
-// Gemini text-embedding-004 liefert fuer wirklich verwandte Themen >0.55.
 const SEMANTIC_MIN_SCORE = 0.55;
-
-// Hybrid-Retrieval-Gewichte (Spec §6.C). Summe = 1.0.
-//   semantic    : Cosine-Aehnlichkeit Frage<->Snippet-Embedding (0..1)
-//   keyword     : normalisierter Token-Overlap-Score (0..1)
-//   label       : Bonus, wenn ein Frage-Token exakt im Label vorkommt (0/1)
-//   recency     : juengere Snippets leicht bevorzugt (0..1, exp. Abfall ueber 90d)
 const HYBRID_WEIGHTS = { semantic: 0.65, keyword: 0.2, label: 0.1, recency: 0.05 } as const;
 const HYBRID_MIN_SCORE = 0.12;
 const RECENCY_HALF_LIFE_DAYS = 90;
@@ -65,8 +67,10 @@ interface ScoredRow {
   keyword: number;
   labelBoost: number;
   recency: number;
+  baseHybrid: number;
   hybrid: number;
   hadEmbedding: boolean;
+  provenance: KnowledgeProvenanceMeta;
 }
 
 function keywordScore(label: string, content: string, qTokens: Set<string>): { raw: number; labelBoost: number } {
@@ -96,11 +100,14 @@ type KnowledgeRow = {
 
 /**
  * Kern-Scorer fuer Produktion und DEV-Retrieval-Debugger.
- * Caller MUESSEN Scope-Metadaten bereits vor diesem Schritt filtern.
+ * Caller MUESSEN Scope und EXPIRED-Provenance bereits vor diesem Schritt filtern.
+ * Trust/Freshness wirken bewusst nur moderat als Multiplikator; fachliche
+ * Relevanz bleibt primaer Semantik/Keyword/Label.
  */
 async function scoreKnowledge(
   rows: KnowledgeRow[],
   question: string,
+  provenanceMap: ReadonlyMap<string, KnowledgeProvenanceMeta>,
 ): Promise<{ scored: ScoredRow[]; usedSemantic: boolean; queryModel: string | null }> {
   const qTokens = tokenize(question);
   let maxKeywordRaw = 0;
@@ -131,11 +138,13 @@ async function scoreKnowledge(
     }
 
     const recency = recencyScore(row.createdAt);
-    const hybrid =
+    const baseHybrid =
       HYBRID_WEIGHTS.semantic * semantic +
       HYBRID_WEIGHTS.keyword * keyword +
       HYBRID_WEIGHTS.label * ks.labelBoost +
       HYBRID_WEIGHTS.recency * recency;
+    const provenance = provenanceMap.get(row.id) ?? legacyKnowledgeProvenance(row.createdAt);
+    const hybrid = baseHybrid * provenance.qualityFactor;
 
     return {
       id: row.id,
@@ -145,8 +154,10 @@ async function scoreKnowledge(
       keyword,
       labelBoost: ks.labelBoost,
       recency,
+      baseHybrid,
       hybrid,
       hadEmbedding,
+      provenance,
     };
   });
 
@@ -154,11 +165,6 @@ async function scoreKnowledge(
   return { scored, usedSemantic, queryModel: qEmb?.model ?? null };
 }
 
-/**
- * Liefert relevante Snippets fuer exakt einen Retrieval-Scope.
- * `nitradoConnId=null` bedeutet bewusst GLOBAL-ONLY; bei gesetztem Scope
- * werden guild-globale + exakt diesem Gameserver zugeordnete Snippets gerankt.
- */
 export async function findRelevantKnowledge(
   guildId: string,
   question: string,
@@ -176,12 +182,15 @@ export async function findRelevantKnowledge(
     ]);
     const scoped = filterKnowledgeRowsForScope(all, scopeRows, nitradoConnId);
     if (scoped.length === 0) return [];
+    const provenanceMap = await getKnowledgeProvenanceMap(guildId, scoped);
+    const eligible = scoped.filter((row) => provenanceMap.get(row.id)?.freshness !== 'EXPIRED');
+    if (eligible.length === 0) return [];
 
-    const { scored } = await scoreKnowledge(scoped, question);
+    const { scored } = await scoreKnowledge(eligible, question, provenanceMap);
     return scored
       .filter((s) => s.hybrid >= HYBRID_MIN_SCORE)
       .slice(0, limit)
-      .map((s) => ({ id: s.id, label: s.label, content: s.content }));
+      .map((s) => ({ id: s.id, label: s.label, content: s.content, provenance: s.provenance }));
   } catch (e) {
     logger.warn('findRelevantKnowledge fehlgeschlagen:', { guildId, nitradoConnId, e: String(e) });
     return [];
@@ -196,16 +205,26 @@ export interface RetrievalDebugSnippet {
   keyword: number;
   labelBoost: number;
   recency: number;
+  baseHybrid: number;
   hybrid: number;
   hadEmbedding: boolean;
   selected: boolean;
   reason: string;
+  sourceKind: string;
+  trustLevel: string;
+  freshness: string;
+  sourceAgeDays: number;
+  sourceVersion: string | null;
+  sourceRef: string | null;
+  validUntil: Date | null;
+  qualityFactor: number;
 }
 
 export interface RetrievalDebugResult {
   question: string;
   totalSnippets: number;
   totalScopedCandidates: number;
+  totalFreshCandidates: number;
   scopeNitradoConnId: string | null;
   usedSemantic: boolean;
   queryModel: string | null;
@@ -215,7 +234,6 @@ export interface RetrievalDebugResult {
   results: RetrievalDebugSnippet[];
 }
 
-/** Retrieval-Debugger mit identischem Scope-Filter + Scorer wie Produktion. */
 export async function debugRetrieval(
   guildId: string,
   question: string,
@@ -231,7 +249,9 @@ export async function debugRetrieval(
     getKnowledgeScopeRows(guildId),
   ]);
   const scoped = filterKnowledgeRowsForScope(all, scopeRows, nitradoConnId);
-  const { scored, usedSemantic, queryModel } = await scoreKnowledge(scoped, question);
+  const provenanceMap = await getKnowledgeProvenanceMap(guildId, scoped);
+  const eligible = scoped.filter((row) => provenanceMap.get(row.id)?.freshness !== 'EXPIRED');
+  const { scored, usedSemantic, queryModel } = await scoreKnowledge(eligible, question, provenanceMap);
   const results: RetrievalDebugSnippet[] = scored.map((s, idx) => {
     const passesScore = s.hybrid >= HYBRID_MIN_SCORE;
     const selected = passesScore && idx < limit;
@@ -250,16 +270,26 @@ export async function debugRetrieval(
       keyword: Number(s.keyword.toFixed(4)),
       labelBoost: s.labelBoost,
       recency: Number(s.recency.toFixed(4)),
+      baseHybrid: Number(s.baseHybrid.toFixed(4)),
       hybrid: Number(s.hybrid.toFixed(4)),
       hadEmbedding: s.hadEmbedding,
       selected,
       reason,
+      sourceKind: s.provenance.sourceKind,
+      trustLevel: s.provenance.trustLevel,
+      freshness: s.provenance.freshness,
+      sourceAgeDays: s.provenance.sourceAgeDays,
+      sourceVersion: s.provenance.sourceVersion,
+      sourceRef: s.provenance.sourceRef,
+      validUntil: s.provenance.validUntil,
+      qualityFactor: Number(s.provenance.qualityFactor.toFixed(4)),
     };
   });
   return {
     question,
     totalSnippets: all.length,
     totalScopedCandidates: scoped.length,
+    totalFreshCandidates: eligible.length,
     scopeNitradoConnId: nitradoConnId,
     usedSemantic,
     queryModel,
@@ -284,6 +314,7 @@ export async function addKnowledge(
   content: string,
   createdBy: string,
   nitradoConnId: string | null = null,
+  provenanceInput: KnowledgeProvenanceInput | null = null,
 ): Promise<{ ok: boolean; message: string; id?: string }> {
   const cleanLabel = label.trim().slice(0, MAX_LABEL_LEN);
   const cleanContent = content.trim().slice(0, MAX_CONTENT_LEN);
@@ -291,6 +322,11 @@ export async function addKnowledge(
 
   const scopeValidation = await validateKnowledgeScope(guildId, nitradoConnId);
   if (!scopeValidation.ok) return { ok: false, message: scopeValidation.message };
+  const provenanceValidation = validateKnowledgeProvenance(provenanceInput, {
+    sourceKind: 'OWNER_CURATED',
+    trustLevel: 'CURATED',
+  });
+  if (!provenanceValidation.ok) return { ok: false, message: provenanceValidation.message };
 
   const count = await prisma.guildKnowledge.count({ where: { guildId, isActive: true } });
   if (count >= MAX_SNIPPETS_PER_GUILD) {
@@ -311,6 +347,9 @@ export async function addKnowledge(
         data: { knowledgeId: created.id, guildId, nitradoConnId: scopeValidation.scope.nitradoConnId! },
       });
     }
+    await tx.guildKnowledgeProvenance.create({
+      data: { knowledgeId: created.id, guildId, ...provenanceValidation.value },
+    });
     return created;
   });
 
@@ -328,8 +367,6 @@ export async function removeKnowledge(guildId: string, id: string): Promise<{ ok
   return { ok: true, message: `Snippet ${id.slice(0, 8)} deaktiviert.` };
 }
 
-// ── Admin/Dashboard-CRUD (volle Metadaten, inkl. inaktive Snippets) ─────────
-
 export interface KnowledgeAdminRow {
   id: string;
   label: string;
@@ -342,20 +379,21 @@ export interface KnowledgeAdminRow {
   embeddingModel: string | null;
   embeddedAt: Date | null;
   scope: KnowledgeScopeMeta;
+  provenance: KnowledgeProvenanceMeta;
 }
 
-/** Vollstaendige Liste fuer das Dashboard – inklusive deaktivierter Snippets. */
 export async function listKnowledgeAdmin(guildId: string): Promise<KnowledgeAdminRow[]> {
-  const [rows, scopeMap] = await Promise.all([
-    prisma.guildKnowledge.findMany({
-      where: { guildId },
-      orderBy: [{ isActive: 'desc' }, { updatedAt: 'desc' }],
-      select: {
-        id: true, label: true, content: true, createdBy: true, isActive: true,
-        createdAt: true, updatedAt: true, embedding: true, embeddingModel: true, embeddedAt: true,
-      },
-    }),
+  const rows = await prisma.guildKnowledge.findMany({
+    where: { guildId },
+    orderBy: [{ isActive: 'desc' }, { updatedAt: 'desc' }],
+    select: {
+      id: true, label: true, content: true, createdBy: true, isActive: true,
+      createdAt: true, updatedAt: true, embedding: true, embeddingModel: true, embeddedAt: true,
+    },
+  });
+  const [scopeMap, provenanceMap] = await Promise.all([
     getKnowledgeAdminScopeMap(guildId),
+    getKnowledgeProvenanceMap(guildId, rows),
   ]);
   return rows.map((r) => ({
     id: r.id,
@@ -369,14 +407,19 @@ export async function listKnowledgeAdmin(guildId: string): Promise<KnowledgeAdmi
     embeddingModel: r.embeddingModel,
     embeddedAt: r.embeddedAt,
     scope: scopeMap.get(r.id) ?? globalKnowledgeScope(),
+    provenance: provenanceMap.get(r.id) ?? legacyKnowledgeProvenance(r.createdAt),
   }));
 }
 
-/** Snippet bearbeiten; Scope-Aenderung und Inhalt werden atomar persistiert. */
 export async function updateKnowledge(
   guildId: string,
   id: string,
-  patch: { label?: string; content?: string; nitradoConnId?: string | null },
+  patch: {
+    label?: string;
+    content?: string;
+    nitradoConnId?: string | null;
+    provenance?: KnowledgeProvenanceInput;
+  },
 ): Promise<{ ok: boolean; message: string }> {
   const row = await prisma.guildKnowledge.findUnique({ where: { id } });
   if (!row || row.guildId !== guildId) return { ok: false, message: 'Snippet nicht gefunden.' };
@@ -399,7 +442,22 @@ export async function updateKnowledge(
     scopeValidation = await validateKnowledgeScope(guildId, patch.nitradoConnId ?? null);
     if (!scopeValidation.ok) return { ok: false, message: scopeValidation.message };
   }
-  if (Object.keys(data).length === 0 && !scopeChange) return { ok: false, message: 'Keine Aenderungen uebergeben.' };
+
+  let provenanceValidation: ReturnType<typeof validateKnowledgeProvenance> | null = null;
+  if (patch.provenance !== undefined) {
+    const current = (await getKnowledgeProvenanceMap(guildId, [{ id, createdAt: row.createdAt }])).get(id)
+      ?? legacyKnowledgeProvenance(row.createdAt);
+    provenanceValidation = validateKnowledgeProvenance(patch.provenance, {
+      sourceKind: current.sourceKind,
+      trustLevel: current.trustLevel,
+      observedAt: current.observedAt,
+    });
+    if (!provenanceValidation.ok) return { ok: false, message: provenanceValidation.message };
+  }
+
+  if (Object.keys(data).length === 0 && !scopeChange && !provenanceValidation) {
+    return { ok: false, message: 'Keine Aenderungen uebergeben.' };
+  }
 
   await prisma.$transaction(async (tx) => {
     if (Object.keys(data).length > 0) await tx.guildKnowledge.update({ where: { id }, data });
@@ -414,6 +472,13 @@ export async function updateKnowledge(
         });
       }
     }
+    if (provenanceValidation?.ok) {
+      await tx.guildKnowledgeProvenance.upsert({
+        where: { knowledgeId: id },
+        create: { knowledgeId: id, guildId, ...provenanceValidation.value },
+        update: { guildId, ...provenanceValidation.value },
+      });
+    }
   });
 
   if (data.label !== undefined || data.content !== undefined) {
@@ -424,7 +489,6 @@ export async function updateKnowledge(
   return { ok: true, message: `Snippet ${id.slice(0, 8)} aktualisiert.` };
 }
 
-/** Snippet aktivieren/deaktivieren; veralteter Gameserver-Scope bleibt fail-closed. */
 export async function setKnowledgeActive(
   guildId: string,
   id: string,
@@ -441,6 +505,10 @@ export async function setKnowledgeActive(
       const scopeValidation = await validateKnowledgeScope(guildId, scopeRow.nitradoConnId);
       if (!scopeValidation.ok) return { ok: false, message: `Snippet-Scope ungueltig: ${scopeValidation.message}` };
     }
+    const provenance = (await getKnowledgeProvenanceMap(guildId, [{ id, createdAt: row.createdAt }])).get(id);
+    if (provenance?.freshness === 'EXPIRED') {
+      return { ok: false, message: 'Snippet-Quelle ist abgelaufen. Provenance vor Aktivierung aktualisieren.' };
+    }
     const count = await prisma.guildKnowledge.count({ where: { guildId, isActive: true } });
     if (!row.isActive && count >= MAX_SNIPPETS_PER_GUILD) {
       return { ok: false, message: `Limit erreicht (${MAX_SNIPPETS_PER_GUILD} aktive Snippets pro Guild).` };
@@ -450,7 +518,6 @@ export async function setKnowledgeActive(
   return { ok: true, message: active ? 'Snippet aktiviert.' : 'Snippet deaktiviert.' };
 }
 
-/** Embedding eines Snippets manuell neu berechnen (synchron, Status zurueckmelden). */
 export async function reembedKnowledge(guildId: string, id: string): Promise<{ ok: boolean; message: string }> {
   const row = await prisma.guildKnowledge.findUnique({ where: { id }, select: { guildId: true } });
   if (!row || row.guildId !== guildId) return { ok: false, message: 'Snippet nicht gefunden.' };
@@ -465,33 +532,56 @@ export interface KnowledgeExportItem {
   content: string;
   scopeType: 'GLOBAL' | 'GAMESERVER';
   scopeSlot: number | null;
+  sourceKind: string;
+  trustLevel: string;
+  sourceRef: string | null;
+  sourceVersion: string | null;
+  observedAt: string;
+  validUntil: string | null;
 }
 
-/** Alle aktiven Snippets als portables JSON; Gameserver werden ueber Slot exportiert. */
 export async function exportKnowledge(guildId: string): Promise<KnowledgeExportItem[]> {
-  const [rows, scopeMap] = await Promise.all([
-    prisma.guildKnowledge.findMany({
-      where: { guildId, isActive: true },
-      orderBy: { createdAt: 'asc' },
-      select: { id: true, label: true, content: true },
-    }),
+  const rows = await prisma.guildKnowledge.findMany({
+    where: { guildId, isActive: true },
+    orderBy: { createdAt: 'asc' },
+    select: { id: true, label: true, content: true, createdAt: true },
+  });
+  const [scopeMap, provenanceMap] = await Promise.all([
     getKnowledgeAdminScopeMap(guildId),
+    getKnowledgeProvenanceMap(guildId, rows),
   ]);
   return rows.map((r) => {
     const scope = scopeMap.get(r.id) ?? globalKnowledgeScope();
+    const provenance = provenanceMap.get(r.id) ?? legacyKnowledgeProvenance(r.createdAt);
     return {
       label: r.label,
       content: r.content,
       scopeType: scope.type,
       scopeSlot: scope.type === 'GAMESERVER' ? scope.slot : null,
+      sourceKind: provenance.sourceKind,
+      trustLevel: provenance.trustLevel,
+      sourceRef: provenance.sourceRef,
+      sourceVersion: provenance.sourceVersion,
+      observedAt: provenance.observedAt.toISOString(),
+      validUntil: provenance.validUntil?.toISOString() ?? null,
     };
   });
 }
 
-/** Mehrere Snippets gebuendelt importieren; ungueltige Server-Slots werden nie globalisiert. */
 export async function importKnowledge(
   guildId: string,
-  items: Array<{ label?: unknown; content?: unknown; scopeType?: unknown; scopeSlot?: unknown }>,
+  items: Array<{
+    label?: unknown;
+    content?: unknown;
+    scopeType?: unknown;
+    scopeSlot?: unknown;
+    sourceKind?: unknown;
+    trustLevel?: unknown;
+    sourceRef?: unknown;
+    sourceVersion?: unknown;
+    observedAt?: unknown;
+    validUntil?: unknown;
+  }>,
   createdBy: string,
 ): Promise<{ ok: boolean; message: string; added: number; skipped: number }> {
   const exists = await prisma.guildProfile.findUnique({ where: { guildId }, select: { guildId: true } });
@@ -517,11 +607,20 @@ export async function importKnowledge(
       nitradoConnId = selected.id;
     }
 
+    const provenanceValidation = validateKnowledgeProvenance(item, {
+      sourceKind: 'IMPORTED',
+      trustLevel: 'UNVERIFIED',
+    });
+    if (!provenanceValidation.ok) { skipped++; continue; }
+
     const row = await prisma.$transaction(async (tx) => {
       const created = await tx.guildKnowledge.create({ data: { guildId, label, content, createdBy } });
       if (nitradoConnId) {
         await tx.guildKnowledgeScope.create({ data: { knowledgeId: created.id, guildId, nitradoConnId } });
       }
+      await tx.guildKnowledgeProvenance.create({
+        data: { knowledgeId: created.id, guildId, ...provenanceValidation.value },
+      });
       return created;
     });
     active++;
@@ -546,11 +645,6 @@ export async function setPersonaOverride(
   return { ok: true, message: text ? 'Persona-Override gesetzt.' : 'Persona-Override entfernt.' };
 }
 
-/**
- * Erstellt einen kompakten Brief des Discord-Servers aus guild-globalen Daten.
- * Gameserver-spezifische Knowledge-Labels werden AI-10-konform NICHT in den
- * globalen Brief eingemischt.
- */
 export async function regenerateAiBrief(guildId: string): Promise<string | null> {
   const p = await prisma.guildProfile.findUnique({ where: { guildId } });
   if (!p) return null;
@@ -572,13 +666,17 @@ export async function regenerateAiBrief(guildId: string): Promise<string | null>
   const [knowledgeCandidates, scopeRows] = await Promise.all([
     prisma.guildKnowledge.findMany({
       where: { guildId, isActive: true },
-      select: { id: true, label: true },
+      select: { id: true, label: true, createdAt: true },
       orderBy: { createdAt: 'desc' },
       take: MAX_SNIPPETS_PER_GUILD,
     }),
     getKnowledgeScopeRows(guildId),
   ]);
-  const knowledgeRows = filterKnowledgeRowsForScope(knowledgeCandidates, scopeRows, null).slice(0, 20);
+  const globalCandidates = filterKnowledgeRowsForScope(knowledgeCandidates, scopeRows, null);
+  const provenanceMap = await getKnowledgeProvenanceMap(guildId, globalCandidates);
+  const knowledgeRows = globalCandidates
+    .filter((row) => provenanceMap.get(row.id)?.freshness !== 'EXPIRED')
+    .slice(0, 20);
   if (knowledgeRows.length > 0) {
     facts.push(`Hinterlegte globale Knowledge-Snippets (${knowledgeRows.length}): ${knowledgeRows.map((r) => r.label).join(', ')}`);
   }
