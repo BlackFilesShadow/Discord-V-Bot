@@ -1,0 +1,19 @@
+/// AI-10: Gameserver-Metadaten fuer kuratierte GuildKnowledge-Snippets.
+///
+/// Bewusst als additive Sidecar-Tabelle ohne Prisma-Relation modelliert:
+/// - `GuildKnowledge` bleibt rueckwaertskompatibel; fehlende Scope-Zeile = guild-global.
+/// - servergebundene Snippets tragen exakt eine kanonische `nitradoConnId`.
+/// - Cross-Guild-/Status-/Legacy-Pruefung erfolgt fail-closed im AI-Service.
+/// - Beim Loeschen eines Nitrado-Slots entfernt das Repository diese Zeilen
+///   explizit in derselben Transaktion, damit servergebundenes Wissen niemals
+///   stillschweigend zu globalem Wissen wird.
+model GuildKnowledgeScope {
+  knowledgeId   String   @id
+  guildId       String
+  nitradoConnId String
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  @@index([guildId, nitradoConnId])
+  @@index([nitradoConnId])
+}

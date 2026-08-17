@@ -130,9 +130,20 @@ export async function deleteSlot(guildId: GuildId, slot: number): Promise<Nitrad
   });
   if (!row) return null;
 
-  // Diagnosezustand und Connection gemeinsam entfernen. Kein unmodellierter
-  // DB-FK noetig; Prisma-Schema und physische DB bleiben drift-frei.
+  // AI-10: servergebundenes Wissen darf nach Entfernen eines Gameservers nie
+  // zu guild-globalem Wissen werden. Deshalb echte Cascade-Semantik: erst die
+  // zugeordneten Knowledge-Zeilen + Sidecar-Metadaten, dann die Connection.
+  const scopedKnowledge = await prisma.guildKnowledgeScope.findMany({
+    where: { guildId, nitradoConnId: row.id },
+    select: { knowledgeId: true },
+  });
+  const knowledgeIds = scopedKnowledge.map((entry) => entry.knowledgeId);
+
   await prisma.$transaction([
+    ...(knowledgeIds.length > 0
+      ? [prisma.guildKnowledge.deleteMany({ where: { guildId, id: { in: knowledgeIds } } })]
+      : []),
+    prisma.guildKnowledgeScope.deleteMany({ where: { guildId, nitradoConnId: row.id } }),
     prisma.nitradoValidationHealth.deleteMany({ where: { guildId, nitradoConnId: row.id } }),
     prisma.nitradoConnection.deleteMany({ where: { id: row.id, guildId } }),
   ]);

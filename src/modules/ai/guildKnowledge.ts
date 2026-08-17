@@ -1,15 +1,25 @@
 import prisma from '../../database/prisma';
 import { logger } from '../../utils/logger';
 import { cosineSimilarity, embedKnowledgeSnippet, getQueryEmbedding } from './embeddings';
+import {
+  filterKnowledgeRowsForScope,
+  getKnowledgeAdminScopeMap,
+  getKnowledgeScopeRows,
+  globalKnowledgeScope,
+  listKnowledgeGameservers,
+  validateKnowledgeScope,
+  type KnowledgeScopeMeta,
+} from './knowledgeScope';
 
 /**
  * Phase 8: Per-Guild Knowledge-Snippets.
  * Phase 9: Semantische Retrieval ueber Embeddings (Cosine), Fallback Keyword-Match.
+ * AI-10: Guild-/Gameserver-Metadatenfilter VOR dem Hybrid-Reranking.
  *
  * Owner/Admin koennen kompakte Faktenbloecke hinterlegen, die der AI bei
- * passenden Anfragen mit in den Prompt fliessen. Match laeuft ueber das
- * Label (Schluesselwort) – ist es im Frage-Text enthalten, wird der Snippet
- * eingespeist. Token-Schutz: max 3 Snippets pro Antwort.
+ * passenden Anfragen mit in den Prompt fliessen. Token-Schutz: max 3 Snippets
+ * pro Antwort. Fehlende Scope-Metadaten bedeuten rueckwaertskompatibel
+ * guild-global; servergebundene Snippets werden nie zwischen Gameservern gemischt.
  */
 
 const MAX_SNIPPETS_PER_PROMPT = 3;
@@ -44,7 +54,6 @@ const SEMANTIC_MIN_SCORE = 0.55;
 //   label       : Bonus, wenn ein Frage-Token exakt im Label vorkommt (0/1)
 //   recency     : juengere Snippets leicht bevorzugt (0..1, exp. Abfall ueber 90d)
 const HYBRID_WEIGHTS = { semantic: 0.65, keyword: 0.2, label: 0.1, recency: 0.05 } as const;
-// Mindest-Hybrid-Score, ab dem ein Snippet ueberhaupt in Betracht kommt.
 const HYBRID_MIN_SCORE = 0.12;
 const RECENCY_HALF_LIFE_DAYS = 90;
 
@@ -52,11 +61,11 @@ interface ScoredRow {
   id: string;
   label: string;
   content: string;
-  semantic: number;   // 0..1 (0 wenn kein Embedding)
-  keyword: number;    // 0..1 normalisiert
-  labelBoost: number; // 0 oder 1
-  recency: number;    // 0..1
-  hybrid: number;     // gewichtete Summe
+  semantic: number;
+  keyword: number;
+  labelBoost: number;
+  recency: number;
+  hybrid: number;
   hadEmbedding: boolean;
 }
 
@@ -73,7 +82,6 @@ function keywordScore(label: string, content: string, qTokens: Set<string>): { r
 function recencyScore(createdAt: Date): number {
   const ageDays = (Date.now() - createdAt.getTime()) / 86_400_000;
   if (ageDays <= 0) return 1;
-  // Exponentieller Abfall: nach RECENCY_HALF_LIFE_DAYS noch 0.5.
   return Math.pow(0.5, ageDays / RECENCY_HALF_LIFE_DAYS);
 }
 
@@ -87,16 +95,14 @@ type KnowledgeRow = {
 };
 
 /**
- * Kern-Scorer: berechnet fuer alle aktiven Snippets den Hybrid-Score.
- * Wird sowohl von findRelevantKnowledge (Produktion) als auch vom
- * Retrieval-Debugger (DEV) genutzt, damit beide identisch ranken.
+ * Kern-Scorer fuer Produktion und DEV-Retrieval-Debugger.
+ * Caller MUESSEN Scope-Metadaten bereits vor diesem Schritt filtern.
  */
 async function scoreKnowledge(
   rows: KnowledgeRow[],
   question: string,
 ): Promise<{ scored: ScoredRow[]; usedSemantic: boolean; queryModel: string | null }> {
   const qTokens = tokenize(question);
-  // Hoechster Roh-Keyword-Score zur Normalisierung (0..1).
   let maxKeywordRaw = 0;
   const keywordCache = new Map<string, { raw: number; labelBoost: number }>();
   for (const r of rows) {
@@ -120,8 +126,6 @@ async function scoreKnowledge(
       if (vec && vec.length === qEmb.vector.length) {
         hadEmbedding = true;
         const cos = cosineSimilarity(qEmb.vector, vec);
-        // Nur Cosine-Werte ueber der semantischen Mindestschwelle als Signal
-        // werten — sonst schiebt Hintergrundrauschen irrelevante Snippets hoch.
         semantic = cos >= SEMANTIC_MIN_SCORE ? cos : 0;
       }
     }
@@ -151,31 +155,35 @@ async function scoreKnowledge(
 }
 
 /**
- * Liefert bis zu N relevante Snippets per Hybrid-Score
- * (semantisch + Keyword + Label-Boost + Recency, Spec §6.C).
- * Faellt automatisch auf reines Keyword-Ranking zurueck, wenn keine
- * Embeddings verfuegbar sind (qEmb null oder Snippets ohne Vektor).
+ * Liefert relevante Snippets fuer exakt einen Retrieval-Scope.
+ * `nitradoConnId=null` bedeutet bewusst GLOBAL-ONLY; bei gesetztem Scope
+ * werden guild-globale + exakt diesem Gameserver zugeordnete Snippets gerankt.
  */
 export async function findRelevantKnowledge(
   guildId: string,
   question: string,
   limit = MAX_SNIPPETS_PER_PROMPT,
+  nitradoConnId: string | null = null,
 ): Promise<KnowledgeSnippet[]> {
   try {
-    const all = await prisma.guildKnowledge.findMany({
-      where: { guildId, isActive: true },
-      select: { id: true, label: true, content: true, embedding: true, embeddingModel: true, createdAt: true },
-      take: 200,
-    });
-    if (all.length === 0) return [];
+    const [all, scopeRows] = await Promise.all([
+      prisma.guildKnowledge.findMany({
+        where: { guildId, isActive: true },
+        select: { id: true, label: true, content: true, embedding: true, embeddingModel: true, createdAt: true },
+        take: 200,
+      }),
+      getKnowledgeScopeRows(guildId),
+    ]);
+    const scoped = filterKnowledgeRowsForScope(all, scopeRows, nitradoConnId);
+    if (scoped.length === 0) return [];
 
-    const { scored } = await scoreKnowledge(all, question);
+    const { scored } = await scoreKnowledge(scoped, question);
     return scored
       .filter((s) => s.hybrid >= HYBRID_MIN_SCORE)
       .slice(0, limit)
       .map((s) => ({ id: s.id, label: s.label, content: s.content }));
   } catch (e) {
-    logger.warn('findRelevantKnowledge fehlgeschlagen:', { guildId, e: String(e) });
+    logger.warn('findRelevantKnowledge fehlgeschlagen:', { guildId, nitradoConnId, e: String(e) });
     return [];
   }
 }
@@ -197,6 +205,8 @@ export interface RetrievalDebugSnippet {
 export interface RetrievalDebugResult {
   question: string;
   totalSnippets: number;
+  totalScopedCandidates: number;
+  scopeNitradoConnId: string | null;
   usedSemantic: boolean;
   queryModel: string | null;
   weights: typeof HYBRID_WEIGHTS;
@@ -205,22 +215,23 @@ export interface RetrievalDebugResult {
   results: RetrievalDebugSnippet[];
 }
 
-/**
- * Retrieval-Debugger (Spec §6.B): liefert fuer eine Testfrage alle Snippets
- * mit Einzel-Scores (Cosine, Keyword, Label, Recency, Hybrid) und der
- * Auswahl-Begruendung. Nur fuer den DEV-Bereich gedacht.
- */
+/** Retrieval-Debugger mit identischem Scope-Filter + Scorer wie Produktion. */
 export async function debugRetrieval(
   guildId: string,
   question: string,
   limit = MAX_SNIPPETS_PER_PROMPT,
+  nitradoConnId: string | null = null,
 ): Promise<RetrievalDebugResult> {
-  const all = await prisma.guildKnowledge.findMany({
-    where: { guildId, isActive: true },
-    select: { id: true, label: true, content: true, embedding: true, embeddingModel: true, createdAt: true },
-    take: 200,
-  });
-  const { scored, usedSemantic, queryModel } = await scoreKnowledge(all, question);
+  const [all, scopeRows] = await Promise.all([
+    prisma.guildKnowledge.findMany({
+      where: { guildId, isActive: true },
+      select: { id: true, label: true, content: true, embedding: true, embeddingModel: true, createdAt: true },
+      take: 200,
+    }),
+    getKnowledgeScopeRows(guildId),
+  ]);
+  const scoped = filterKnowledgeRowsForScope(all, scopeRows, nitradoConnId);
+  const { scored, usedSemantic, queryModel } = await scoreKnowledge(scoped, question);
   const results: RetrievalDebugSnippet[] = scored.map((s, idx) => {
     const passesScore = s.hybrid >= HYBRID_MIN_SCORE;
     const selected = passesScore && idx < limit;
@@ -248,6 +259,8 @@ export async function debugRetrieval(
   return {
     question,
     totalSnippets: all.length,
+    totalScopedCandidates: scoped.length,
+    scopeNitradoConnId: nitradoConnId,
     usedSemantic,
     queryModel,
     weights: HYBRID_WEIGHTS,
@@ -270,28 +283,37 @@ export async function addKnowledge(
   label: string,
   content: string,
   createdBy: string,
+  nitradoConnId: string | null = null,
 ): Promise<{ ok: boolean; message: string; id?: string }> {
   const cleanLabel = label.trim().slice(0, MAX_LABEL_LEN);
   const cleanContent = content.trim().slice(0, MAX_CONTENT_LEN);
   if (!cleanLabel || !cleanContent) return { ok: false, message: 'Label und Inhalt sind Pflicht.' };
 
+  const scopeValidation = await validateKnowledgeScope(guildId, nitradoConnId);
+  if (!scopeValidation.ok) return { ok: false, message: scopeValidation.message };
+
   const count = await prisma.guildKnowledge.count({ where: { guildId, isActive: true } });
   if (count >= MAX_SNIPPETS_PER_GUILD) {
-    return { ok: false, message: `Limit erreicht (${MAX_SNIPPETS_PER_GUILD} Snippets pro Server).` };
+    return { ok: false, message: `Limit erreicht (${MAX_SNIPPETS_PER_GUILD} Snippets pro Guild).` };
   }
 
-  // GuildProfile sicherstellen – sonst FK-Fehler.
   const exists = await prisma.guildProfile.findUnique({ where: { guildId }, select: { guildId: true } });
   if (!exists) {
     return { ok: false, message: 'Server-Profil noch nicht initialisiert. Bitte spaeter erneut versuchen.' };
   }
 
-  const row = await prisma.guildKnowledge.create({
-    data: { guildId, label: cleanLabel, content: cleanContent, createdBy },
+  const row = await prisma.$transaction(async (tx) => {
+    const created = await tx.guildKnowledge.create({
+      data: { guildId, label: cleanLabel, content: cleanContent, createdBy },
+    });
+    if (scopeValidation.scope.type === 'GAMESERVER') {
+      await tx.guildKnowledgeScope.create({
+        data: { knowledgeId: created.id, guildId, nitradoConnId: scopeValidation.scope.nitradoConnId! },
+      });
+    }
+    return created;
   });
 
-  // Phase 9: Embedding asynchron generieren (kein await blockiert die Response).
-  // Bei Fehlschlag (kein Provider) bleibt das Feld leer und Retrieval faellt auf Keyword zurueck.
   void embedKnowledgeSnippet(row.id).catch((e) => {
     logger.warn(`addKnowledge: Embedding fehlgeschlagen fuer ${row.id}: ${String(e)}`);
   });
@@ -319,18 +341,22 @@ export interface KnowledgeAdminRow {
   hasEmbedding: boolean;
   embeddingModel: string | null;
   embeddedAt: Date | null;
+  scope: KnowledgeScopeMeta;
 }
 
 /** Vollstaendige Liste fuer das Dashboard – inklusive deaktivierter Snippets. */
 export async function listKnowledgeAdmin(guildId: string): Promise<KnowledgeAdminRow[]> {
-  const rows = await prisma.guildKnowledge.findMany({
-    where: { guildId },
-    orderBy: [{ isActive: 'desc' }, { updatedAt: 'desc' }],
-    select: {
-      id: true, label: true, content: true, createdBy: true, isActive: true,
-      createdAt: true, updatedAt: true, embedding: true, embeddingModel: true, embeddedAt: true,
-    },
-  });
+  const [rows, scopeMap] = await Promise.all([
+    prisma.guildKnowledge.findMany({
+      where: { guildId },
+      orderBy: [{ isActive: 'desc' }, { updatedAt: 'desc' }],
+      select: {
+        id: true, label: true, content: true, createdBy: true, isActive: true,
+        createdAt: true, updatedAt: true, embedding: true, embeddingModel: true, embeddedAt: true,
+      },
+    }),
+    getKnowledgeAdminScopeMap(guildId),
+  ]);
   return rows.map((r) => ({
     id: r.id,
     label: r.label,
@@ -342,14 +368,15 @@ export async function listKnowledgeAdmin(guildId: string): Promise<KnowledgeAdmi
     hasEmbedding: !!r.embedding,
     embeddingModel: r.embeddingModel,
     embeddedAt: r.embeddedAt,
+    scope: scopeMap.get(r.id) ?? globalKnowledgeScope(),
   }));
 }
 
-/** Snippet bearbeiten (Label und/oder Inhalt). Loest bei Aenderung Re-Embedding aus. */
+/** Snippet bearbeiten; Scope-Aenderung und Inhalt werden atomar persistiert. */
 export async function updateKnowledge(
   guildId: string,
   id: string,
-  patch: { label?: string; content?: string },
+  patch: { label?: string; content?: string; nitradoConnId?: string | null },
 ): Promise<{ ok: boolean; message: string }> {
   const row = await prisma.guildKnowledge.findUnique({ where: { id } });
   if (!row || row.guildId !== guildId) return { ok: false, message: 'Snippet nicht gefunden.' };
@@ -365,17 +392,39 @@ export async function updateKnowledge(
     if (!cleanContent) return { ok: false, message: 'Inhalt darf nicht leer sein.' };
     data.content = cleanContent;
   }
-  if (Object.keys(data).length === 0) return { ok: false, message: 'Keine Aenderungen uebergeben.' };
 
-  await prisma.guildKnowledge.update({ where: { id }, data });
-  // Inhalt/Label haben sich geaendert -> Embedding neu berechnen (asynchron).
-  void embedKnowledgeSnippet(id).catch((e) => {
-    logger.warn(`updateKnowledge: Re-Embedding fehlgeschlagen fuer ${id}: ${String(e)}`);
+  const scopeChange = Object.prototype.hasOwnProperty.call(patch, 'nitradoConnId');
+  let scopeValidation: Awaited<ReturnType<typeof validateKnowledgeScope>> | null = null;
+  if (scopeChange) {
+    scopeValidation = await validateKnowledgeScope(guildId, patch.nitradoConnId ?? null);
+    if (!scopeValidation.ok) return { ok: false, message: scopeValidation.message };
+  }
+  if (Object.keys(data).length === 0 && !scopeChange) return { ok: false, message: 'Keine Aenderungen uebergeben.' };
+
+  await prisma.$transaction(async (tx) => {
+    if (Object.keys(data).length > 0) await tx.guildKnowledge.update({ where: { id }, data });
+    if (scopeChange && scopeValidation?.ok) {
+      if (scopeValidation.scope.type === 'GLOBAL') {
+        await tx.guildKnowledgeScope.deleteMany({ where: { knowledgeId: id, guildId } });
+      } else {
+        await tx.guildKnowledgeScope.upsert({
+          where: { knowledgeId: id },
+          create: { knowledgeId: id, guildId, nitradoConnId: scopeValidation.scope.nitradoConnId! },
+          update: { guildId, nitradoConnId: scopeValidation.scope.nitradoConnId! },
+        });
+      }
+    }
   });
+
+  if (data.label !== undefined || data.content !== undefined) {
+    void embedKnowledgeSnippet(id).catch((e) => {
+      logger.warn(`updateKnowledge: Re-Embedding fehlgeschlagen fuer ${id}: ${String(e)}`);
+    });
+  }
   return { ok: true, message: `Snippet ${id.slice(0, 8)} aktualisiert.` };
 }
 
-/** Snippet aktivieren/deaktivieren. */
+/** Snippet aktivieren/deaktivieren; veralteter Gameserver-Scope bleibt fail-closed. */
 export async function setKnowledgeActive(
   guildId: string,
   id: string,
@@ -384,9 +433,17 @@ export async function setKnowledgeActive(
   const row = await prisma.guildKnowledge.findUnique({ where: { id } });
   if (!row || row.guildId !== guildId) return { ok: false, message: 'Snippet nicht gefunden.' };
   if (active) {
+    const scopeRow = await prisma.guildKnowledgeScope.findFirst({
+      where: { knowledgeId: id, guildId },
+      select: { nitradoConnId: true },
+    });
+    if (scopeRow) {
+      const scopeValidation = await validateKnowledgeScope(guildId, scopeRow.nitradoConnId);
+      if (!scopeValidation.ok) return { ok: false, message: `Snippet-Scope ungueltig: ${scopeValidation.message}` };
+    }
     const count = await prisma.guildKnowledge.count({ where: { guildId, isActive: true } });
     if (!row.isActive && count >= MAX_SNIPPETS_PER_GUILD) {
-      return { ok: false, message: `Limit erreicht (${MAX_SNIPPETS_PER_GUILD} aktive Snippets pro Server).` };
+      return { ok: false, message: `Limit erreicht (${MAX_SNIPPETS_PER_GUILD} aktive Snippets pro Guild).` };
     }
   }
   await prisma.guildKnowledge.update({ where: { id }, data: { isActive: active } });
@@ -403,27 +460,44 @@ export async function reembedKnowledge(guildId: string, id: string): Promise<{ o
     : { ok: false, message: 'Kein Embedding-Provider verfuegbar – Snippet nutzt Keyword-Retrieval.' };
 }
 
-export interface KnowledgeExportItem { label: string; content: string }
-
-/** Alle aktiven Snippets einer Guild als portables JSON exportieren. */
-export async function exportKnowledge(guildId: string): Promise<KnowledgeExportItem[]> {
-  const rows = await prisma.guildKnowledge.findMany({
-    where: { guildId, isActive: true },
-    orderBy: { createdAt: 'asc' },
-    select: { label: true, content: true },
-  });
-  return rows.map((r) => ({ label: r.label, content: r.content }));
+export interface KnowledgeExportItem {
+  label: string;
+  content: string;
+  scopeType: 'GLOBAL' | 'GAMESERVER';
+  scopeSlot: number | null;
 }
 
-/** Mehrere Snippets gebuendelt importieren. Ueberspringt Ungueltige, respektiert das Limit. */
+/** Alle aktiven Snippets als portables JSON; Gameserver werden ueber Slot exportiert. */
+export async function exportKnowledge(guildId: string): Promise<KnowledgeExportItem[]> {
+  const [rows, scopeMap] = await Promise.all([
+    prisma.guildKnowledge.findMany({
+      where: { guildId, isActive: true },
+      orderBy: { createdAt: 'asc' },
+      select: { id: true, label: true, content: true },
+    }),
+    getKnowledgeAdminScopeMap(guildId),
+  ]);
+  return rows.map((r) => {
+    const scope = scopeMap.get(r.id) ?? globalKnowledgeScope();
+    return {
+      label: r.label,
+      content: r.content,
+      scopeType: scope.type,
+      scopeSlot: scope.type === 'GAMESERVER' ? scope.slot : null,
+    };
+  });
+}
+
+/** Mehrere Snippets gebuendelt importieren; ungueltige Server-Slots werden nie globalisiert. */
 export async function importKnowledge(
   guildId: string,
-  items: Array<{ label?: unknown; content?: unknown }>,
+  items: Array<{ label?: unknown; content?: unknown; scopeType?: unknown; scopeSlot?: unknown }>,
   createdBy: string,
 ): Promise<{ ok: boolean; message: string; added: number; skipped: number }> {
   const exists = await prisma.guildProfile.findUnique({ where: { guildId }, select: { guildId: true } });
   if (!exists) return { ok: false, message: 'Server-Profil noch nicht initialisiert.', added: 0, skipped: 0 };
 
+  const servers = await listKnowledgeGameservers(guildId);
   let active = await prisma.guildKnowledge.count({ where: { guildId, isActive: true } });
   let added = 0;
   let skipped = 0;
@@ -432,7 +506,24 @@ export async function importKnowledge(
     const label = typeof item.label === 'string' ? item.label.trim().slice(0, MAX_LABEL_LEN) : '';
     const content = typeof item.content === 'string' ? item.content.trim().slice(0, MAX_CONTENT_LEN) : '';
     if (!label || !content) { skipped++; continue; }
-    const row = await prisma.guildKnowledge.create({ data: { guildId, label, content, createdBy } });
+
+    const wantsGameserver = item.scopeType === 'GAMESERVER' || (item.scopeSlot !== undefined && item.scopeSlot !== null);
+    let nitradoConnId: string | null = null;
+    if (wantsGameserver) {
+      const parsedSlot = typeof item.scopeSlot === 'number' ? item.scopeSlot : Number(item.scopeSlot);
+      if (!Number.isInteger(parsedSlot)) { skipped++; continue; }
+      const selected = servers.find((s) => s.slot === parsedSlot);
+      if (!selected) { skipped++; continue; }
+      nitradoConnId = selected.id;
+    }
+
+    const row = await prisma.$transaction(async (tx) => {
+      const created = await tx.guildKnowledge.create({ data: { guildId, label, content, createdBy } });
+      if (nitradoConnId) {
+        await tx.guildKnowledgeScope.create({ data: { knowledgeId: created.id, guildId, nitradoConnId } });
+      }
+      return created;
+    });
     active++;
     added++;
     void embedKnowledgeSnippet(row.id).catch((e) => {
@@ -456,18 +547,14 @@ export async function setPersonaOverride(
 }
 
 /**
- * Erstellt einen kompakten Brief des Servers aus Stammdaten + Rules + Top-Channels.
- *
- * Phase 11: Bevorzugt LLM-generierte Zusammenfassung (callAI mit deterministischen
- * Server-Fakten als Eingabe). Bei Provider-Fehlern oder leerer Antwort faellt die
- * Funktion auf die deterministische Variante (Phase 8) zurueck. So bleibt das Feld
- * `aiBrief` immer gefuellt, ohne harte Abhaengigkeit von einem AI-Provider.
+ * Erstellt einen kompakten Brief des Discord-Servers aus guild-globalen Daten.
+ * Gameserver-spezifische Knowledge-Labels werden AI-10-konform NICHT in den
+ * globalen Brief eingemischt.
  */
 export async function regenerateAiBrief(guildId: string): Promise<string | null> {
   const p = await prisma.guildProfile.findUnique({ where: { guildId } });
   if (!p) return null;
 
-  // 1. Strukturierte Fakten zusammenstellen (gleiche Datenquellen wie Phase 8).
   const facts: string[] = [];
   facts.push(`Servername: "${p.name}"`);
   facts.push(`Mitglieder: ${p.memberCount}`);
@@ -481,17 +568,21 @@ export async function regenerateAiBrief(guildId: string): Promise<string | null>
     if (text.length > 0) facts.push(`Wichtige Text-Channels: ${text.join(', ')}`);
   }
   if (p.rulesText) facts.push(`Regelwerk-Auszug: ${p.rulesText.slice(0, 600)}`);
-  const knowledgeRows = await prisma.guildKnowledge.findMany({
-    where: { guildId, isActive: true },
-    select: { label: true },
-    orderBy: { createdAt: 'desc' },
-    take: 20,
-  });
+
+  const [knowledgeCandidates, scopeRows] = await Promise.all([
+    prisma.guildKnowledge.findMany({
+      where: { guildId, isActive: true },
+      select: { id: true, label: true },
+      orderBy: { createdAt: 'desc' },
+      take: MAX_SNIPPETS_PER_GUILD,
+    }),
+    getKnowledgeScopeRows(guildId),
+  ]);
+  const knowledgeRows = filterKnowledgeRowsForScope(knowledgeCandidates, scopeRows, null).slice(0, 20);
   if (knowledgeRows.length > 0) {
-    facts.push(`Hinterlegte Knowledge-Snippets (${knowledgeRows.length}): ${knowledgeRows.map((r) => r.label).join(', ')}`);
+    facts.push(`Hinterlegte globale Knowledge-Snippets (${knowledgeRows.length}): ${knowledgeRows.map((r) => r.label).join(', ')}`);
   }
 
-  // 2. Deterministische Variante als Fallback vorhalten.
   const deterministic = (() => {
     const lines: string[] = [];
     lines.push(`"${p.name}" ist ein Discord-Server mit ${p.memberCount} Mitgliedern.`);
@@ -507,11 +598,10 @@ export async function regenerateAiBrief(guildId: string): Promise<string | null>
       const firstSentence = p.rulesText.split(/[.!?]\s/).slice(0, 2).join('. ');
       if (firstSentence) lines.push(`Regelwerk-Kern: ${firstSentence.slice(0, 280)}.`);
     }
-    if (knowledgeRows.length > 0) lines.push(`Es sind ${knowledgeRows.length} kuratierte Knowledge-Snippets hinterlegt.`);
+    if (knowledgeRows.length > 0) lines.push(`Es sind ${knowledgeRows.length} globale kuratierte Knowledge-Snippets hinterlegt.`);
     return lines.join(' ').slice(0, 1500);
   })();
 
-  // 3. LLM-Brief versuchen (lazy import vermeidet Zyklus).
   let brief = deterministic;
   try {
     const { callAI } = await import('./aiHandler.js');

@@ -58,6 +58,7 @@ import { devXpViewRouter } from './v2/devXpView';
 import { devSecureExportRouter } from './v2/devSecureExport';
 import { auditRouter } from './v2/audit';
 import { botAdminRouter } from './v2/botAdmin';
+import { botAdminKnowledgeRouter } from './v2/botAdminKnowledge';
 import { botAdminCommandCenterRouter } from './v2/botAdminCommandCenter';
 import { botAdminCommandCenterSafetyRouter } from './v2/botAdminCommandCenterSafety';
 import { botAdminAuditExportRouter } from './v2/botAdminAuditExport';
@@ -119,6 +120,10 @@ v2Router.use('/dev/stubs', requireGlobalDeveloperIdentity, requireDev, requireVe
 v2Router.use('/dev/command-center', requireGlobalDeveloperIdentity, requireDev, redirectLegacyDevExports, guardDevCommandCenterInput, guardDevSecurityInput, requireVerifiedDevMutationStepUp, guardDevAdminTarget, guardDevXpMutationInput, guardDevXpGuildObjects, devCommandDeployRouter, devXpViewRouter, devCommandCenterRouter);
 v2Router.use('/dev/secure-export', requireGlobalDeveloperIdentity, requireDev, requireVerifiedDevMutationStepUp, devSecureExportRouter);
 
+// AI-10: kanonischer Knowledge-Router laeuft vor dem Legacy-Sammelrouter.
+// Dadurch bleiben bestehende URLs stabil, waehrend Guild-/Gameserver-Scope,
+// Import/Export und Audit durch eine isolierte fail-closed Route laufen.
+v2Router.use('/bot-admin/knowledge', requireGlobalBotAdminIdentity, requireBotAdmin, botAdminKnowledgeRouter);
 // Discord-/Dashboard-Paritaet: derselbe deploybare Live-Katalog wie /help;
 // auch reine Diagnose-Reads bleiben hinter aktiver BotAdminSession.
 v2Router.use('/bot-admin/command-catalog', requireGlobalBotAdminIdentity, requireBotAdmin, commandCatalogRouter);
