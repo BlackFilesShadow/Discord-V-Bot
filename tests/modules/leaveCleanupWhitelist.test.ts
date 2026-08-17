@@ -3,6 +3,7 @@ const mockPlayerSessionFindMany = jest.fn();
 const mockConnectionFindFirst = jest.fn();
 const mockWhitelistEntryFindMany = jest.fn();
 const mockWhitelistRequestFindMany = jest.fn();
+const mockWhitelistRequestFindFirst = jest.fn();
 const mockWhitelistRequestDeleteMany = jest.fn();
 const mockNitradoJobFindMany = jest.fn();
 const mockWhitelistEntryUpdateMany = jest.fn();
@@ -34,9 +35,7 @@ jest.mock('../../src/config', () => ({
   config: { security: { encryptionKey: 'leave-test-secret-0123456789abcdef' } },
 }));
 
-jest.mock('../../src/utils/security', () => ({
-  decrypt: mockDecrypt,
-}));
+jest.mock('../../src/utils/security', () => ({ decrypt: mockDecrypt }));
 
 jest.mock('../../src/modules/nitrado/nitradoClient', () => ({
   NitradoClient: jest.fn().mockImplementation(() => ({ getWhitelist: mockGetWhitelist })),
@@ -52,6 +51,7 @@ jest.mock('../../src/database/prisma', () => ({
     whitelistEntry: { findMany: mockWhitelistEntryFindMany },
     whitelistRequest: {
       findMany: mockWhitelistRequestFindMany,
+      findFirst: mockWhitelistRequestFindFirst,
       deleteMany: mockWhitelistRequestDeleteMany,
     },
     nitradoJob: { findMany: mockNitradoJobFindMany },
@@ -86,6 +86,7 @@ beforeEach(() => {
   mockConnectionFindFirst.mockResolvedValue(activeConnection());
   mockWhitelistEntryFindMany.mockResolvedValue([]);
   mockWhitelistRequestFindMany.mockResolvedValue([]);
+  mockWhitelistRequestFindFirst.mockResolvedValue(null);
   mockWhitelistRequestDeleteMany.mockResolvedValue({ count: 0 });
   mockNitradoJobFindMany.mockResolvedValue([]);
   mockWhitelistEntryUpdateMany.mockResolvedValue({ count: 1 });
@@ -115,19 +116,10 @@ describe('Leave-1B identity-safe whitelist cleanup', () => {
     expect(result.state).toBe('WAITING');
     expect(result.removeJobsQueued).toBe(1);
     expect(mockWhitelistEntryUpdateMany).toHaveBeenCalledWith(expect.objectContaining({
-      where: expect.objectContaining({
-        id: { in: ['target'] },
-        guildId: GUILD,
-        nitradoConnId: CONN,
-      }),
+      where: expect.objectContaining({ id: { in: ['target'] }, guildId: GUILD, nitradoConnId: CONN }),
     }));
     expect(mockNitradoJobCreate).toHaveBeenCalledWith({
-      data: {
-        guildId: GUILD,
-        nitradoConnId: CONN,
-        operation: 'WHITELIST_REMOVE',
-        payload: { gameId: 'TARGETPLAYER' },
-      },
+      data: { guildId: GUILD, nitradoConnId: CONN, operation: 'WHITELIST_REMOVE', payload: { gameId: 'TARGETPLAYER' } },
     });
   });
 
@@ -177,21 +169,14 @@ describe('Leave-1B identity-safe whitelist cleanup', () => {
     };
     mockWhitelistEntryFindMany.mockResolvedValue([{ id: 'target', gameId: 'TargetPlayer', syncState: 'PENDING_REMOVE' }]);
     mockWhitelistRequestFindMany.mockResolvedValue([{ id: 'request-1', gameId: 'TargetPlayer', requesterDiscordId: USER }]);
-    mockNitradoJobFindMany
-      .mockResolvedValueOnce([pendingRemove])
-      .mockResolvedValueOnce([pendingRemove]);
+    mockNitradoJobFindMany.mockResolvedValueOnce([pendingRemove]).mockResolvedValueOnce([pendingRemove]);
     mockGetWhitelist.mockResolvedValue([]);
 
     const result = await runLeaveWhitelistCleanupStep(GUILD, USER);
 
     expect(result.state).toBe('DONE');
     expect(mockWhitelistEntryDeleteMany).toHaveBeenCalledWith({
-      where: {
-        id: { in: ['target'] },
-        guildId: GUILD,
-        nitradoConnId: CONN,
-        syncState: 'PENDING_REMOVE',
-      },
+      where: { id: { in: ['target'] }, guildId: GUILD, nitradoConnId: CONN, syncState: 'PENDING_REMOVE' },
     });
     expect(mockTxWhitelistRequestDeleteMany).toHaveBeenCalledWith({
       where: { id: { in: ['request-1'] }, guildId: GUILD, nitradoConnId: CONN },
@@ -200,18 +185,14 @@ describe('Leave-1B identity-safe whitelist cleanup', () => {
       where: expect.objectContaining({ id: { in: ['remove-pending'] }, status: 'PENDING' }),
       data: expect.objectContaining({ status: 'DONE', payload: {} }),
     }));
-    expect(mockWhitelistRequestDeleteMany).toHaveBeenCalledWith({
-      where: { guildId: GUILD, requesterDiscordId: USER },
-    });
+    expect(mockWhitelistRequestDeleteMany).toHaveBeenCalledWith({ where: { guildId: GUILD, requesterDiscordId: USER } });
   });
 
   it('does not finalize while a fresh matching outbox job is running', async () => {
     mockWhitelistEntryFindMany.mockResolvedValue([{ id: 'target', gameId: 'TargetPlayer', syncState: 'PENDING_REMOVE' }]);
     mockNitradoJobFindMany
       .mockResolvedValueOnce([])
-      .mockResolvedValueOnce([
-        { id: 'fresh-running', operation: 'WHITELIST_REMOVE', status: 'RUNNING', payload: { gameId: 'TargetPlayer' } },
-      ]);
+      .mockResolvedValueOnce([{ id: 'fresh-running', operation: 'WHITELIST_REMOVE', status: 'RUNNING', payload: { gameId: 'TargetPlayer' } }]);
     mockGetWhitelist.mockResolvedValue([]);
 
     const result = await runLeaveWhitelistCleanupStep(GUILD, USER);
@@ -232,6 +213,21 @@ describe('Leave-1B identity-safe whitelist cleanup', () => {
     expect(mockWhitelistEntryDeleteMany).not.toHaveBeenCalled();
   });
 
+  it('redacts decrypted tokens and player names from remote errors', async () => {
+    mockGetWhitelist.mockRejectedValue(new Error('Bearer plain-nitrado-token failed for targetplayer token=plain-nitrado-token'));
+
+    let thrown: Error | null = null;
+    try {
+      await runLeaveWhitelistCleanupStep(GUILD, USER);
+    } catch (error) {
+      thrown = error as Error;
+    }
+    expect(thrown).not.toBeNull();
+    expect(thrown!.message).not.toContain('plain-nitrado-token');
+    expect(thrown!.message).not.toContain('targetplayer');
+    expect(thrown!.message).toContain('[REDACTED]');
+  });
+
   it('queries every player-owned source with exact guild and gameserver scope', async () => {
     await runLeaveWhitelistCleanupStep(GUILD, USER);
 
@@ -246,6 +242,14 @@ describe('Leave-1B identity-safe whitelist cleanup', () => {
     expect(OTHER_GUILD).not.toBe(GUILD);
   });
 
+  it('blocks DONE when an APPROVED request cannot be mapped through a verified link', async () => {
+    mockGameIdentityFindMany.mockResolvedValue([]);
+    mockWhitelistRequestFindFirst.mockResolvedValue({ id: 'approved-orphan' });
+
+    await expect(runLeaveWhitelistCleanupStep(GUILD, USER)).rejects.toThrow(/APPROVED Whitelist-Request/);
+    expect(mockWhitelistRequestDeleteMany).not.toHaveBeenCalled();
+  });
+
   it('removes requester history only after every linked gameserver reports DONE', async () => {
     mockGameIdentityFindMany.mockResolvedValue([
       { nitradoConnId: 'conn-a', identityHash: LINK_HASH },
@@ -255,13 +259,12 @@ describe('Leave-1B identity-safe whitelist cleanup', () => {
     mockConnectionFindFirst.mockImplementation(async ({ where }: { where: { id: string } }) => ({
       id: where.id, encryptedToken: 'enc', nitradoServerId: `service-${where.id}`, status: 'ACTIVE',
     }));
-    mockGetWhitelist
-      .mockResolvedValueOnce([])
-      .mockResolvedValueOnce([{ identifier: 'TargetPlayer' }]);
+    mockGetWhitelist.mockResolvedValueOnce([]).mockResolvedValueOnce([{ identifier: 'TargetPlayer' }]);
 
     const result = await runLeaveWhitelistCleanupStep(GUILD, USER);
 
     expect(result.state).toBe('WAITING');
     expect(mockWhitelistRequestDeleteMany).not.toHaveBeenCalled();
+    expect(mockWhitelistRequestFindFirst).not.toHaveBeenCalled();
   });
 });
