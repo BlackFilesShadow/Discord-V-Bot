@@ -178,9 +178,8 @@ test.describe('AI-10/11 Bot-Admin Knowledge Scope + Provenance', () => {
       page.getByRole('combobox', { name: 'Knowledge-Scope filtern' }),
       page.getByRole('combobox', { name: 'Knowledge Quellentyp' }),
       page.getByRole('combobox', { name: 'Knowledge Vertrauensstufe' }),
-      page.getByRole('knowledge', { name: 'dummy' }),
     ];
-    for (const control of controls.slice(0, -1)) {
+    for (const control of controls) {
       const box = await control.boundingBox();
       expect(box).not.toBeNull();
       expect(Math.round(box!.height)).toBeGreaterThanOrEqual(44);
