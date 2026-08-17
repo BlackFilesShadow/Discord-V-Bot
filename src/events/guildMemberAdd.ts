@@ -27,7 +27,9 @@ const guildMemberAddEvent: BotEvent = {
     }
 
     try {
-      void syncMemberProfile(m);
+      // User-1: Rejoin/Join muss das exakt guild-gescoppte Recognition-Profil
+      // deterministisch auf aktiv setzen, bevor nachgelagerte Join-Logik laeuft.
+      await syncMemberProfile(m);
 
       const user = await prisma.user.upsert({
         where: { discordId: m.user.id },

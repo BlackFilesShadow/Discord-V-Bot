@@ -10,6 +10,8 @@ import readyEvent, { stopReadyRuntime } from './events/ready';
 import interactionCreateEvent from './events/interactionCreate';
 import guildMemberAddEvent from './events/guildMemberAdd';
 import guildMemberRemoveEvent from './events/guildMemberRemove';
+import guildMemberUpdateEvent from './events/guildMemberUpdate';
+import userUpdateEvent from './events/userUpdate';
 import messageCreateEvent from './events/messageCreate';
 import messageReactionAddEvent from './events/messageReactionAdd';
 import messageReactionRemoveEvent from './events/messageReactionRemove';
@@ -82,6 +84,8 @@ async function main(): Promise<void> {
     interactionCreateEvent,
     guildMemberAddEvent,
     guildMemberRemoveEvent,
+    guildMemberUpdateEvent,
+    userUpdateEvent,
     messageCreateEvent,
     messageReactionAddEvent,
     messageReactionRemoveEvent,
