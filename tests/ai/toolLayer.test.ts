@@ -1,6 +1,5 @@
 import { z } from 'zod';
 import {
-  AiToolExecutionError,
   AiToolExecutor,
   digestAiToolArguments,
   type AiToolAuthorizationRequest,
@@ -29,10 +28,6 @@ function scope(overrides: Partial<GuildScope> = {}): GuildScope {
     permissions: new Set<PermissionScope>(['nitrado.view', 'nitrado.write', 'nitrado.danger']),
     ...overrides,
   };
-}
-
-function expectCode(error: unknown, code: string): boolean {
-  return error instanceof AiToolExecutionError && error.code === code;
 }
 
 describe('AI-18 tool execution boundary', () => {
@@ -82,7 +77,7 @@ describe('AI-18 tool execution boundary', () => {
     await expect(executor.execute(
       { name: 'nitrado.status', arguments: { nested: { guildId: '999999999999999999' } } },
       { actorDiscordId, guildId, nitradoConnId },
-    )).rejects.toSatisfy((error: unknown) => expectCode(error, 'UNTRUSTED_SCOPE_FIELD'));
+    )).rejects.toMatchObject({ code: 'UNTRUSTED_SCOPE_FIELD' });
     expect(handler).not.toHaveBeenCalled();
   });
 
@@ -103,12 +98,12 @@ describe('AI-18 tool execution boundary', () => {
     await expect(executor.execute(
       { name: 'nitrado.unknown', arguments: {} },
       { actorDiscordId, guildId, nitradoConnId },
-    )).rejects.toSatisfy((error: unknown) => expectCode(error, 'UNKNOWN_TOOL'));
+    )).rejects.toMatchObject({ code: 'UNKNOWN_TOOL' });
 
     await expect(executor.execute(
       { name: 'nitrado.status', arguments: { detail: 'yes' } },
       { actorDiscordId, guildId, nitradoConnId },
-    )).rejects.toSatisfy((error: unknown) => expectCode(error, 'INVALID_ARGUMENTS'));
+    )).rejects.toMatchObject({ code: 'INVALID_ARGUMENTS' });
 
     expect(authorize).not.toHaveBeenCalled();
     expect(handler).not.toHaveBeenCalled();
@@ -124,7 +119,7 @@ describe('AI-18 tool execution boundary', () => {
     await expect(actorMismatch.execute(
       { name: 'nitrado.status', arguments: {} },
       { actorDiscordId, guildId, nitradoConnId },
-    )).rejects.toSatisfy((error: unknown) => expectCode(error, 'AUTHORIZATION_DENIED'));
+    )).rejects.toMatchObject({ code: 'AUTHORIZATION_DENIED' });
 
     const serverMismatch = new AiToolExecutor(async () => scope({ nitradoConnId: asNitradoConnId(otherConnId) }));
     serverMismatch.register({
@@ -134,7 +129,7 @@ describe('AI-18 tool execution boundary', () => {
     await expect(serverMismatch.execute(
       { name: 'nitrado.status', arguments: {} },
       { actorDiscordId, guildId, nitradoConnId },
-    )).rejects.toSatisfy((error: unknown) => expectCode(error, 'AUTHORIZATION_DENIED'));
+    )).rejects.toMatchObject({ code: 'AUTHORIZATION_DENIED' });
 
     expect(handler).not.toHaveBeenCalled();
   });
@@ -152,7 +147,7 @@ describe('AI-18 tool execution boundary', () => {
     await expect(executor.execute(
       { name: 'nitrado.restart', arguments: { reason: 'maintenance' } },
       { actorDiscordId, guildId, nitradoConnId, stepUpToken: 'opaque' },
-    )).rejects.toSatisfy((error: unknown) => expectCode(error, 'AUTHORIZATION_DENIED'));
+    )).rejects.toMatchObject({ code: 'AUTHORIZATION_DENIED' });
     expect(handler).not.toHaveBeenCalled();
   });
 
@@ -172,7 +167,7 @@ describe('AI-18 tool execution boundary', () => {
     await expect(executor.execute(
       { name: risk === 'MUTATING' ? 'nitrado.restart' : 'nitrado.factory-reset', arguments: { reason: 'maintenance' } },
       { actorDiscordId, guildId, nitradoConnId },
-    )).rejects.toSatisfy((error: unknown) => expectCode(error, 'STEP_UP_REQUIRED'));
+    )).rejects.toMatchObject({ code: 'STEP_UP_REQUIRED' });
     expect(handler).not.toHaveBeenCalled();
   });
 
@@ -216,7 +211,7 @@ describe('AI-18 tool execution boundary', () => {
     await expect(executor.execute(
       { name: 'nitrado.restart', arguments: { reason: 'maintenance' } },
       { actorDiscordId, guildId, nitradoConnId, stepUpToken: 'wrong' },
-    )).rejects.toSatisfy((error: unknown) => expectCode(error, 'STEP_UP_INVALID'));
+    )).rejects.toMatchObject({ code: 'STEP_UP_INVALID' });
     expect(handler).not.toHaveBeenCalled();
   });
 
