@@ -17,8 +17,12 @@ function normalizeBoundaryText(value: string): string {
     .trim();
 }
 
-const MUTATION_HOW_TO_RE = /\b(?:installiere|installieren|erhohe|erhohen|reduziere|reduzieren|senke|senken|andern|konfiguriere|konfigurieren|einrichten|richte|aktiviere|aktivieren|deaktiviere|deaktivieren|setze|setzen|fuge|hinzufugen|entferne|entfernen|bearbeite|bearbeiten|passe|anpassen)\b/;
-const CHANGE_I_RE = /\b(?:wie\s+)?andere\s+ich\b/;
+// NFKD normalisiert echte Umlaute ("ändere" -> "andere"), aber nicht die in
+// Chats haeufige ASCII-Schreibweise ae/oe/ue. Beide Formen muessen als How-to
+// erkannt werden, sonst kann z. B. "Wie aendere ich die Map auf meinem Server?"
+// faelschlich als Anfrage nach dem aktuellen Live-Server-Zustand gelten.
+const MUTATION_HOW_TO_RE = /\b(?:installiere|installieren|erhohe|erhohen|erhoehe|erhoehen|reduziere|reduzieren|senke|senken|andern|aendere|aendern|konfiguriere|konfigurieren|einrichten|richte|aktiviere|aktivieren|deaktiviere|deaktivieren|setze|setzen|fuge|fuege|hinzufugen|hinzufuegen|entferne|entfernen|bearbeite|bearbeiten|passe|anpassen)\b/;
+const CHANGE_I_RE = /\b(?:wie\s+)?(?:andere|aendere)\s+ich\b/;
 
 const EXPLICIT_SERVER_RE = /\b(?:bei uns|unser(?:em|er|e|en)?\s+(?:dayz\s+)?(?:server|gameserver)|mein(?:em|er|e|en)?\s+(?:dayz\s+)?(?:server|gameserver)|dies(?:em|er|e|en)?\s+(?:dayz\s+)?(?:server|gameserver)|(?:der\s+)?aktuelle(?:n|r|s)?\s+(?:dayz\s+)?(?:server|gameserver)|live\s+(?:server|gameserver))\b/;
 const EXPLICIT_SLOT_RE = /\b(?:slot|server|gameserver)\s*[1-4]\b/;
