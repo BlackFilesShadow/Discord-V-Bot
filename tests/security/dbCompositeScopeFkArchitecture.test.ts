@@ -63,6 +63,10 @@ describe('DB-2 composite tenant foreign-key invariants', () => {
     );
     expect(scopedRoundFks).toHaveLength(2);
 
+    // Guild bleibt auch fuer kontrollierte Legacy-NULL-Server-Scope-Zeilen hart.
+    expect(sql).toMatch(
+      /FOREIGN KEY \("gameId", "guildId"\)\s+REFERENCES "CasinoGame"\("id", "guildId"\)/m,
+    );
     expect(sql).toMatch(
       /FOREIGN KEY \("gameId", "guildId", "nitradoConnId"\)\s+REFERENCES "CasinoGame"\("id", "guildId", "nitradoConnId"\)/m,
     );
@@ -80,6 +84,7 @@ describe('DB-2 composite tenant foreign-key invariants', () => {
       'NitradoConnection_id_guild_key',
       'EconomyVirtualAccount_id_scope_key',
       'LotteryRound_id_scope_key',
+      'CasinoGame_id_guild_key',
       'CasinoGame_id_scope_key',
       'TicketTemplate_id_guild_key',
     ];
