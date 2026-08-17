@@ -3,7 +3,7 @@ import path from 'path';
 
 const read = (relative: string): string => fs.readFileSync(path.join(process.cwd(), relative), 'utf8');
 
-describe('AI-10 knowledge gameserver scope architecture', () => {
+describe('AI-10/AI-13 knowledge gameserver scope architecture', () => {
   it('mountet den kanonischen Knowledge-Router vor dem Legacy-BotAdmin-Router', () => {
     const source = read('src/dashboard/routes/v2.ts');
     const canonical = source.indexOf("v2Router.use('/bot-admin/knowledge'");
@@ -21,11 +21,16 @@ describe('AI-10 knowledge gameserver scope architecture', () => {
     expect(source).toContain("row.status !== 'ACTIVE'");
     expect(source).toContain("slotState(row.slot) !== 'ACTIVE_SLOT'");
     expect(source).toContain("!row.nitradoServerId?.trim()");
-    expect(source).toContain('return options.length === 1 ? options[0] : null');
+    expect(source).toContain('options.length === 1 && looksLikeLiveServerKnowledgeQuestion(question)');
     expect(source).not.toMatch(/return\s+options\[0\]\s*;/);
   });
 
-  it('filtert Scope und abgelaufene Provenance vor dem Hybrid-Ranking', () => {
+  it('trennt globales und servergebundenes Knowledge bereits vor dem Hybrid-Ranking', () => {
+    const scope = read('src/modules/ai/knowledgeScope.ts');
+    expect(scope).toContain("if (nitradoConnId === null) return !scopedTo;");
+    expect(scope).toContain('return scopedTo === nitradoConnId;');
+    expect(scope).not.toContain('if (!scopedTo) return true;');
+
     const source = read('src/modules/ai/guildKnowledge.ts');
     const filterPos = source.indexOf('filterKnowledgeRowsForScope(all, scopeRows, nitradoConnId)');
     const provenancePos = source.indexOf('getKnowledgeProvenanceMap(guildId, scoped)', filterPos);
@@ -37,6 +42,15 @@ describe('AI-10 knowledge gameserver scope architecture', () => {
     expect(scorePos).toBeGreaterThan(expiredPos);
     expect(source).toContain("scope.type === 'GAMESERVER'");
     expect(source).toContain('scopeSlot');
+  });
+
+  it('blockiert den allgemeinen DayZ-1.29-Katalog bei Live-Server-Intention', () => {
+    const source = read('src/modules/ai/dayz129Catalog.ts');
+    const guardPos = source.indexOf('looksLikeLiveServerKnowledgeQuestion(question)');
+    const answerPos = source.indexOf('answerGeneralDayz129Question(question)');
+    expect(guardPos).toBeGreaterThan(-1);
+    expect(answerPos).toBeGreaterThan(guardPos);
+    expect(source).toContain('if (looksLikeLiveServerKnowledgeQuestion(question)) return null;');
   });
 
   it('loescht servergebundenes Knowledge beim Gameserver-Delete statt es global werden zu lassen', () => {
