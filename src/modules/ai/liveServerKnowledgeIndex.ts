@@ -1,6 +1,11 @@
 import prisma from '../../database/prisma';
 import { logger } from '../../utils/logger';
 import { readBlob } from '../nitrado/mirror/storage';
+import {
+  countDayzValidationIssues,
+  validateDayzKnowledgeSet,
+  type DayzConfigValidationResult,
+} from './dayzConfigValidation';
 import { validateKnowledgeScope } from './knowledgeScope';
 import {
   LIVE_SERVER_KNOWLEDGE_CREATED_BY,
@@ -11,10 +16,12 @@ import {
   chooseLiveServerKnowledgeFiles,
   parseLiveServerKnowledgeFile,
   type LiveServerKnowledgeFileInput,
+  type LiveServerKnowledgeKind,
   type ParsedLiveServerKnowledgeDocument,
 } from './liveServerKnowledgeParser';
 
 const MAX_SOURCE_BYTES = 8 * 1024 * 1024;
+const MAX_VALIDATION_ISSUES_PER_FILE = 200;
 
 export interface LiveServerKnowledgeIndexResult {
   snapshotId: string;
@@ -23,6 +30,9 @@ export interface LiveServerKnowledgeIndexResult {
   documents: number;
   replacedDocuments: number;
   skippedFiles: number;
+  validationErrors: number;
+  validationWarnings: number;
+  rejectedFiles: number;
 }
 
 type SnapshotTextFile = {
@@ -54,6 +64,47 @@ function sourceRef(nitradoConnId: string, document: ParsedLiveServerKnowledgeDoc
 
 function sourceVersion(snapshotId: string, sha256: string): string {
   return `${snapshotId}:${sha256}`.slice(0, 100);
+}
+
+function validationKind(fileName: string): LiveServerKnowledgeKind {
+  switch (fileName.toLowerCase()) {
+    case 'cfggameplay.json': return 'GAMEPLAY_JSON';
+    case 'types.xml': return 'TYPES_XML';
+    case 'events.xml': return 'EVENTS_XML';
+    case 'globals.xml': return 'GLOBALS_XML';
+    case 'cfgweather.xml': return 'WEATHER_XML';
+    case 'cfgspawnabletypes.xml': return 'SPAWNABLE_TYPES_XML';
+    default: return 'SERVER_CONFIG';
+  }
+}
+
+function validationDocument(
+  file: SnapshotTextFile & { content: string },
+  validation: DayzConfigValidationResult,
+): ParsedLiveServerKnowledgeDocument | null {
+  if (validation.issues.length === 0 || !file.sha256) return null;
+  const errors = validation.issues.filter((issue) => issue.severity === 'ERROR').length;
+  const warnings = validation.issues.filter((issue) => issue.severity === 'WARNING').length;
+  const status = validation.validForKnowledge ? 'VALID_WITH_WARNINGS' : 'INVALID';
+  const lines = [
+    `LIVE_SERVER VALIDATION ${validation.fileName}`,
+    'deterministic=true',
+    `status=${status}`,
+    `syntaxValid=${validation.syntaxValid}`,
+    `errors=${errors}`,
+    `warnings=${warnings}`,
+    ...validation.issues.slice(0, MAX_VALIDATION_ISSUES_PER_FILE).map((issue) =>
+      `issue severity=${issue.severity} | code=${issue.code} | path=${issue.path} | message=${issue.message}`,
+    ),
+  ];
+  return {
+    kind: validationKind(validation.fileName),
+    label: `Live Validation ${validation.fileName}`.slice(0, 60),
+    sourceKey: `validation/${validation.fileName}`,
+    sourceName: validation.fileName,
+    sha256: file.sha256,
+    content: lines.join('\n'),
+  };
 }
 
 export async function indexNitradoSnapshotKnowledge(input: {
@@ -100,14 +151,34 @@ export async function indexNitradoSnapshotKnowledge(input: {
   const hydrated = (await Promise.all(rows.map((row) => hydrateFile(row as SnapshotTextFile))))
     .filter((row): row is SnapshotTextFile & { content: string } => Boolean(row));
   const chosen = chooseLiveServerKnowledgeFiles(hydrated);
+
+  // AI-15: XML/JSON wird deterministisch validiert, bevor irgendein normalisierter
+  // Wert als VERIFIED LIVE_SERVER-Knowledge in den LLM/RAG-Pfad gelangen kann.
+  // Fehlerhafte Dateien liefern ausschliesslich einen deterministischen Diagnoseblock.
+  const validationResults = validateDayzKnowledgeSet(chosen.map((file) => ({
+    path: file.path,
+    name: file.name,
+    content: file.content,
+  })));
+  const validationTotals = countDayzValidationIssues(validationResults.values());
+
   const documents: ParsedLiveServerKnowledgeDocument[] = [];
+  let parsedFiles = 0;
   for (const file of chosen) {
+    const validation = validationResults.get(file.path);
+    if (validation) {
+      const report = validationDocument(file, validation);
+      if (report) documents.push(report);
+      if (!validation.validForKnowledge) continue;
+    }
+
     const parsed = parseLiveServerKnowledgeFile({
       path: file.path,
       name: file.name,
       sha256: file.sha256!,
       content: file.content,
     } satisfies LiveServerKnowledgeFileInput);
+    if (parsed.length > 0) parsedFiles += 1;
     documents.push(...parsed);
   }
 
@@ -191,11 +262,14 @@ export async function indexNitradoSnapshotKnowledge(input: {
   const result: LiveServerKnowledgeIndexResult = {
     snapshotId: input.snapshotId,
     nitradoConnId: input.nitradoConnId,
-    parsedFiles: chosen.length,
+    parsedFiles,
     documents: documents.length,
     replacedDocuments,
     skippedFiles: Math.max(0, rows.length - chosen.length),
+    validationErrors: validationTotals.errors,
+    validationWarnings: validationTotals.warnings,
+    rejectedFiles: validationTotals.rejectedFiles,
   };
-  logger.info('[AI-14] Live-Server-Knowledge indexiert', result);
+  logger.info('[AI-15] Live-Server-Knowledge deterministisch validiert und indexiert', result);
   return result;
 }
