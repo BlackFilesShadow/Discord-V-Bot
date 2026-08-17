@@ -22,10 +22,12 @@ describe('Leave-1E productive orchestration + toggle wiring', () => {
     expect(configSource).not.toContain("feature.");
   });
 
-  it('requires the real guild owner for both config read and write', () => {
+  it('requires the real guild owner and rejects malformed config bodies before persistence', () => {
     expect(routeSource).toContain("leaveCleanupRouter.get('/config', requireGuildOwner");
     expect(routeSource).toContain("leaveCleanupRouter.post('/config', requireGuildOwner");
-    expect(routeSource).toContain("typeof body.deletePlayerDataOnLeave !== 'boolean'");
+    expect(routeSource).toContain("if (!body || typeof body !== 'object' || Array.isArray(body)) return null;");
+    expect(routeSource).toContain("if (typeof value !== 'boolean') return null;");
+    expect(routeSource).toContain('const parsed = parseBody(req.body);');
     expect(v2Source).toContain("v2Router.use('/guilds/:guildId/leave-cleanup', leaveCleanupRouter);");
   });
 

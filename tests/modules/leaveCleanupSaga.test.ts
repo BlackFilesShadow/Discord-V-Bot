@@ -91,7 +91,26 @@ describe('Leave-1A/1E durable cleanup saga', () => {
     expect(mockTransaction).toHaveBeenCalledTimes(1);
     expect(mockExecuteRaw).toHaveBeenCalledTimes(1);
     expect(mockFindFirst).toHaveBeenCalledWith(expect.objectContaining({
-      where: expect.objectContaining({ userId: `leave-job:v1:${GUILD_A}:${USER}` }),
+      where: expect.objectContaining({
+        userId: `leave-job:v1:${GUILD_A}:${USER}`,
+        status: { in: ['PENDING', 'IN_PROGRESS', 'FAILED'] },
+      }),
+    }));
+    expect(mockCreate).not.toHaveBeenCalled();
+  });
+
+  it('does not create a parallel cleanup when the previous exact job is dead-lettered', async () => {
+    mockFindFirst.mockResolvedValueOnce({ id: 'dead-job' });
+
+    await expect(enqueueLeaveCleanupRequest({ guildId: GUILD_A, discordId: USER }))
+      .resolves.toEqual({ id: 'dead-job', created: false });
+
+    expect(mockFindFirst).toHaveBeenCalledWith(expect.objectContaining({
+      where: expect.objectContaining({
+        userId: `leave-job:v1:${GUILD_A}:${USER}`,
+        requestType: 'PARTIAL_DELETION',
+        status: { in: ['PENDING', 'IN_PROGRESS', 'FAILED'] },
+      }),
     }));
     expect(mockCreate).not.toHaveBeenCalled();
   });
@@ -141,6 +160,40 @@ describe('Leave-1A/1E durable cleanup saga', () => {
         details: expect.objectContaining({ step: 'WHITELIST', stage: 'RUNNING' }),
       }),
     }));
+  });
+
+  it('dead-letters a pending row whose raw job key does not match its persisted guild+discord scope', async () => {
+    const now = new Date('2026-08-17T18:00:00.000Z');
+    mockFindFirst.mockResolvedValueOnce({
+      id: 'job-corrupt',
+      userId: `leave-job:v1:${GUILD_B}:${USER}`,
+      discordId: USER,
+      status: 'PENDING',
+      scheduledAt: now,
+      details: {
+        kind: LEAVE_CLEANUP_KIND,
+        guildId: GUILD_A,
+        step: 'WHITELIST',
+        stage: 'QUEUED',
+        attempts: 0,
+        maxAttempts: 8,
+      },
+    });
+
+    await expect(claimNextLeaveCleanupRequest(now)).resolves.toBeNull();
+
+    expect(mockUpdateMany).toHaveBeenCalledWith({
+      where: { id: 'job-corrupt', status: 'PENDING' },
+      data: {
+        status: 'FAILED',
+        details: expect.objectContaining({
+          guildId: GUILD_A,
+          step: 'WHITELIST',
+          stage: 'DEAD',
+          lastError: expect.stringMatching(/Scope-Zuordnung/),
+        }),
+      },
+    });
   });
 
   it('persists successful substep transitions without changing retry attempts', async () => {
@@ -227,6 +280,49 @@ describe('Leave-1A/1E durable cleanup saga', () => {
     expect(mockUpdateMany.mock.calls[0][0].where).toEqual({ id: 'stale', status: 'IN_PROGRESS' });
     expect(mockUpdateMany.mock.calls[0][0].data.details).toMatchObject({ step: 'LINK_ECONOMY', stage: 'QUEUED' });
     expect(mockUpdateMany.mock.calls[0][0].data.details).not.toHaveProperty('claimedAt');
+  });
+
+  it('paginates restart recovery beyond 500 in-progress claims', async () => {
+    const now = new Date('2026-08-17T18:10:00.000Z');
+    const freshBatch = Array.from({ length: 500 }, (_, index) => ({
+      id: String(index).padStart(4, '0'),
+      details: {
+        kind: LEAVE_CLEANUP_KIND,
+        guildId: GUILD_A,
+        step: 'STATS_SESSIONS',
+        stage: 'RUNNING',
+        attempts: 1,
+        maxAttempts: 8,
+        claimedAt: '2026-08-17T18:09:30.000Z',
+      },
+    }));
+    mockFindMany
+      .mockResolvedValueOnce(freshBatch)
+      .mockResolvedValueOnce([
+        {
+          id: '0500',
+          details: {
+            kind: LEAVE_CLEANUP_KIND,
+            guildId: GUILD_A,
+            step: 'LINK_ECONOMY',
+            stage: 'RUNNING',
+            attempts: 1,
+            maxAttempts: 8,
+            claimedAt: '2026-08-17T18:00:00.000Z',
+          },
+        },
+      ]);
+
+    await expect(recoverStaleLeaveCleanupRequests(now, 60_000)).resolves.toBe(1);
+
+    expect(mockFindMany).toHaveBeenCalledTimes(2);
+    expect(mockFindMany.mock.calls[1][0]).toEqual(expect.objectContaining({
+      where: expect.objectContaining({ id: { gt: '0499' } }),
+      orderBy: { id: 'asc' },
+      take: 500,
+    }));
+    expect(mockUpdateMany).toHaveBeenCalledTimes(1);
+    expect(mockUpdateMany.mock.calls[0][0].where).toEqual({ id: '0500', status: 'IN_PROGRESS' });
   });
 
   it('uses bounded exponential backoff and transitions to retry without undefined JSON fields', async () => {

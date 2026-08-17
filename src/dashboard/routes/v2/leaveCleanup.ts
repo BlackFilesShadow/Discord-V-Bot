@@ -9,13 +9,11 @@ import {
 
 export const leaveCleanupRouter = Router({ mergeParams: true });
 
-interface LeaveCleanupBody {
-  deletePlayerDataOnLeave?: unknown;
-}
-
-function parseBody(body: LeaveCleanupBody): LeaveCleanupConfig | null {
-  if (typeof body.deletePlayerDataOnLeave !== 'boolean') return null;
-  return { deletePlayerDataOnLeave: body.deletePlayerDataOnLeave };
+function parseBody(body: unknown): LeaveCleanupConfig | null {
+  if (!body || typeof body !== 'object' || Array.isArray(body)) return null;
+  const value = (body as Record<string, unknown>).deletePlayerDataOnLeave;
+  if (typeof value !== 'boolean') return null;
+  return { deletePlayerDataOnLeave: value };
 }
 
 leaveCleanupRouter.get('/config', requireGuildOwner, async (req, res) => {
@@ -25,7 +23,7 @@ leaveCleanupRouter.get('/config', requireGuildOwner, async (req, res) => {
 
 leaveCleanupRouter.post('/config', requireGuildOwner, async (req, res) => {
   const scope = req.guildScope!;
-  const parsed = parseBody(req.body as LeaveCleanupBody);
+  const parsed = parseBody(req.body);
   if (!parsed) {
     res.status(400).json({ error: 'deletePlayerDataOnLeave muss boolean sein.' });
     return;

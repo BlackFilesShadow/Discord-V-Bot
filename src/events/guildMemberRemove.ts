@@ -25,11 +25,30 @@ const guildMemberRemoveEvent: BotEvent = {
       roles: m.roles.cache.map(r => r.name),
     });
 
+    // Den durable Leave-Barrier so frueh wie moeglich anlegen. Insbesondere darf
+    // ein langsamer Discord-Goodbye-Versand kein Rejoin-/Relink-Fenster oeffnen.
+    // AUS bedeutet weiterhin wirklich AUS: Dann wird kein Cleanup-Request erzeugt.
+    try {
+      const leaveCfg = await getLeaveCleanupConfig(m.guild.id);
+      if (leaveCfg.deletePlayerDataOnLeave) {
+        const queued = await enqueueLeaveCleanupRequest({
+          guildId: m.guild.id,
+          discordId: m.user.id,
+        });
+        logger.info(
+          `Leave-Cleanup ${queued.created ? 'eingequeued' : 'bereits vorhanden'}: ${m.user.id}@${m.guild.id}`,
+        );
+      }
+    } catch (cleanupError) {
+      logger.error(`Leave-Cleanup Enqueue/Config fehlgeschlagen: ${sanitizeLeaveCleanupError(cleanupError)}`);
+    }
+
     // Letzten Gateway-Zustand guildgenau persistieren und danach als verlassen
     // markieren. Das Profil bleibt fuer Goodbye/Recognition erhalten.
     await syncMemberProfile(m);
     await markMemberLeft(m.guild.id, m.user.id);
 
+    // Goodbye bleibt best-effort und liegt bewusst NACH dem durable Enqueue.
     try {
       const goodbyeResult = await sendConfiguredGoodbye(m);
       if (goodbyeResult === 'sent') {
@@ -39,24 +58,6 @@ const guildMemberRemoveEvent: BotEvent = {
       }
     } catch (goodbyeError) {
       logger.error(`Goodbye-System Fehler fuer ${m.user.id}@${m.guild.id}:`, goodbyeError);
-    }
-
-    // AUS bedeutet wirklich AUS: keine Level-/XP-/Moderations-/Economy-/Nitrado-
-    // Loeschung. EIN erzeugt nur einen durable Request; Remote- und DB-Side-
-    // Effects laufen in der checkpointed LeaveCleanup-Saga.
-    try {
-      const leaveCfg = await getLeaveCleanupConfig(m.guild.id);
-      if (leaveCfg.deletePlayerDataOnLeave) {
-        const queued = await enqueueLeaveCleanupRequest({
-          guildId: m.guild.id,
-          discordId: m.user.id,
-        });
-        logger.info(
-          `Leave-Cleanup ${queued.created ? 'eingequeued' : 'bereits offen'}: ${m.user.id}@${m.guild.id}`,
-        );
-      }
-    } catch (cleanupError) {
-      logger.error(`Leave-Cleanup Enqueue/Config fehlgeschlagen: ${sanitizeLeaveCleanupError(cleanupError)}`);
     }
 
     logger.info(`Nutzer verlassen: ${m.user.username} (${m.user.id})`);

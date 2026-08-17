@@ -7,6 +7,7 @@ import {
   claimNextLeaveCleanupRequest,
   completeLeaveCleanupRequest,
   deferLeaveCleanupRequest,
+  leaveCleanupJobKey,
   readLeaveCleanupDetails,
   recoverStaleLeaveCleanupRequests,
   retryOrDeadLetterLeaveCleanupRequest,
@@ -50,6 +51,19 @@ export async function processLeaveCleanupRequest(
       if (!details) throw new Error('Leave-Worker: ungueltige Request-Metadaten.');
       const guildId = details.guildId;
       const discordId = request.discordId;
+
+      if (request.status !== 'IN_PROGRESS') {
+        throw new Error('Leave-Worker: Request ist nicht IN_PROGRESS.');
+      }
+      let expectedJobKey = '';
+      try {
+        expectedJobKey = leaveCleanupJobKey(guildId, discordId);
+      } catch {
+        throw new Error('Leave-Worker: ungueltiger Guild/User-Scope im Request.');
+      }
+      if (request.userId !== expectedJobKey) {
+        throw new Error('Leave-Worker: persistenter Job-Key passt nicht zum Guild/User-Scope.');
+      }
 
       if (details.step === 'WHITELIST') {
         const result = await runLeaveWhitelistCleanupStep(guildId, discordId);

@@ -44,6 +44,7 @@ jest.mock('../../src/modules/moderation/leaveCleanupSaga', () => ({
   deferLeaveCleanupRequest: deferRequest,
   recoverStaleLeaveCleanupRequests: recoverStale,
   retryOrDeadLetterLeaveCleanupRequest: retryOrDead,
+  leaveCleanupJobKey: (guildId: string, discordId: string) => `leave-job:v1:${guildId}:${discordId}`,
   readLeaveCleanupDetails: (value: unknown) => value,
 }));
 
@@ -120,6 +121,21 @@ describe('Leave-1E durable worker', () => {
       GUILD,
       '0123456789abcdef0123456789abcdef',
     );
+  });
+
+  it('fails closed before every destructive step when the persisted job key does not match guild+discord scope', async () => {
+    const corrupted = {
+      ...request('WHITELIST'),
+      userId: `leave-job:v1:${GUILD}:99999999999999999`,
+    };
+
+    await expect(processLeaveCleanupRequest(corrupted)).rejects.toThrow(/Job-Key.*Guild\/User-Scope/);
+
+    expect(whitelistStep).not.toHaveBeenCalled();
+    expect(statsStep).not.toHaveBeenCalled();
+    expect(linkEconomyStep).not.toHaveBeenCalled();
+    expect(guildDataStep).not.toHaveBeenCalled();
+    expect(completeRequest).not.toHaveBeenCalled();
   });
 
   it('resumes directly at a persisted STATS_SESSIONS checkpoint after restart', async () => {

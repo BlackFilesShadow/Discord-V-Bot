@@ -124,6 +124,14 @@ export function leaveCleanupReceiptFingerprint(guildId: string, discordId: strin
   return `${RECEIPT_PREFIX}${digest}`;
 }
 
+function hasValidRawScope(userId: string, discordId: string, details: LeaveCleanupDetails): boolean {
+  try {
+    return userId === leaveCleanupJobKey(details.guildId, discordId);
+  } catch {
+    return false;
+  }
+}
+
 /** Multi-Process-race-safe Enqueue unter transaction-scoped Advisory-Lock. */
 export async function enqueueLeaveCleanupRequest(args: {
   guildId: string;
@@ -143,7 +151,7 @@ export async function enqueueLeaveCleanupRequest(args: {
       where: {
         userId: key,
         requestType: 'PARTIAL_DELETION',
-        status: { in: ['PENDING', 'IN_PROGRESS'] },
+        status: { in: ['PENDING', 'IN_PROGRESS', 'FAILED'] },
       },
       select: { id: true },
       orderBy: { createdAt: 'desc' },
@@ -187,15 +195,15 @@ export async function claimNextLeaveCleanupRequest(now: Date = new Date()): Prom
     });
     if (!candidate) return null;
     const details = readLeaveCleanupDetails(candidate.details);
-    if (!details) {
+    if (!details || !hasValidRawScope(candidate.userId, candidate.discordId, details)) {
       const invalidDetails: LeaveCleanupDetails = {
         kind: LEAVE_CLEANUP_KIND,
-        guildId: 'invalid',
-        step: 'WHITELIST',
+        guildId: details?.guildId ?? 'invalid',
+        step: details?.step ?? 'WHITELIST',
         stage: 'DEAD',
-        attempts: 0,
-        maxAttempts: 1,
-        lastError: 'Ungueltige Leave-Cleanup-Metadaten.',
+        attempts: details?.attempts ?? 0,
+        maxAttempts: details?.maxAttempts ?? 1,
+        lastError: 'Ungueltige Leave-Cleanup-Metadaten oder Scope-Zuordnung.',
       };
       await prisma.dataDeletionRequest.updateMany({
         where: { id: candidate.id, status: 'PENDING' },
@@ -231,34 +239,47 @@ export async function recoverStaleLeaveCleanupRequests(
   now: Date = new Date(),
   staleMs: number = LEAVE_CLEANUP_STALE_MS,
 ): Promise<number> {
-  const rows = await prisma.dataDeletionRequest.findMany({
-    where: {
-      userId: { startsWith: LEAVE_JOB_PREFIX },
-      requestType: 'PARTIAL_DELETION',
-      status: 'IN_PROGRESS',
-    },
-    take: 500,
-  });
+  const batchSize = 500;
+  let lastId: string | null = null;
   let recovered = 0;
-  for (const row of rows) {
-    const details = readLeaveCleanupDetails(row.details);
-    const claimedAt = details?.claimedAt ? Date.parse(details.claimedAt) : Number.NaN;
-    if (!details || !Number.isFinite(claimedAt) || now.getTime() - claimedAt < staleMs) continue;
-    const recoveredDetails: LeaveCleanupDetails = {
-      ...withoutClaim(details),
-      stage: 'QUEUED',
-      lastError: 'Stale Claim nach Restart wieder freigegeben.',
-    };
-    const result = await prisma.dataDeletionRequest.updateMany({
-      where: { id: row.id, status: 'IN_PROGRESS' },
-      data: {
-        status: 'PENDING',
-        scheduledAt: now,
-        details: detailsJson(recoveredDetails),
+
+  for (;;) {
+    const rows = await prisma.dataDeletionRequest.findMany({
+      where: {
+        userId: { startsWith: LEAVE_JOB_PREFIX },
+        requestType: 'PARTIAL_DELETION',
+        status: 'IN_PROGRESS',
+        ...(lastId ? { id: { gt: lastId } } : {}),
       },
+      orderBy: { id: 'asc' },
+      take: batchSize,
     });
-    recovered += result.count;
+    if (rows.length === 0) break;
+
+    for (const row of rows) {
+      const details = readLeaveCleanupDetails(row.details);
+      const claimedAt = details?.claimedAt ? Date.parse(details.claimedAt) : Number.NaN;
+      if (!details || !Number.isFinite(claimedAt) || now.getTime() - claimedAt < staleMs) continue;
+      const recoveredDetails: LeaveCleanupDetails = {
+        ...withoutClaim(details),
+        stage: 'QUEUED',
+        lastError: 'Stale Claim nach Restart wieder freigegeben.',
+      };
+      const result = await prisma.dataDeletionRequest.updateMany({
+        where: { id: row.id, status: 'IN_PROGRESS' },
+        data: {
+          status: 'PENDING',
+          scheduledAt: now,
+          details: detailsJson(recoveredDetails),
+        },
+      });
+      recovered += result.count;
+    }
+
+    lastId = rows[rows.length - 1]?.id ?? null;
+    if (rows.length < batchSize || !lastId) break;
   }
+
   return recovered;
 }
 

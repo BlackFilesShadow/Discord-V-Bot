@@ -8,18 +8,18 @@ const managerSource = read('src/modules/welcome/goodbyeManager.ts');
 const awarenessSource = read('src/modules/ai/memberAwareness.ts');
 
 describe('Goodbye-1 + Leave-1E leave lifecycle wiring', () => {
-  it('snapshots and marks the exact guild profile before goodbye and cleanup enqueue', () => {
+  it('persists the cleanup barrier before profile work and any goodbye network delivery', () => {
+    const configAt = removeSource.indexOf('await getLeaveCleanupConfig(m.guild.id);');
+    const enqueueAt = removeSource.indexOf('await enqueueLeaveCleanupRequest({');
     const syncAt = removeSource.indexOf('await syncMemberProfile(m);');
     const leftAt = removeSource.indexOf('await markMemberLeft(m.guild.id, m.user.id);');
     const goodbyeAt = removeSource.indexOf('await sendConfiguredGoodbye(m);');
-    const configAt = removeSource.indexOf('await getLeaveCleanupConfig(m.guild.id);');
-    const enqueueAt = removeSource.indexOf('await enqueueLeaveCleanupRequest({');
 
-    expect(syncAt).toBeGreaterThanOrEqual(0);
+    expect(configAt).toBeGreaterThanOrEqual(0);
+    expect(enqueueAt).toBeGreaterThan(configAt);
+    expect(syncAt).toBeGreaterThan(enqueueAt);
     expect(leftAt).toBeGreaterThan(syncAt);
     expect(goodbyeAt).toBeGreaterThan(leftAt);
-    expect(configAt).toBeGreaterThan(goodbyeAt);
-    expect(enqueueAt).toBeGreaterThan(configAt);
   });
 
   it('keeps goodbye best-effort and never performs destructive cleanup directly in the gateway event', () => {
