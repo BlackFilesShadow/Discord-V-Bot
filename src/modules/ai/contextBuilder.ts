@@ -10,6 +10,7 @@ import { getMemberProfile } from './memberAwareness';
 import { resolveVerifiedGameIdentityRecognition, type AiRecognitionClient } from './userRecognition';
 import { sanitizeOwnerStylePreference, wrapUntrustedContext } from './untrustedContext';
 import { looksLikeLiveServerKnowledgeQuestion } from './dayzKnowledgeBoundary';
+import { recordAiKnowledgeSource, recordAiRetrieval } from './aiObservability';
 import {
   attachHallucinationGuardReference,
   buildResolvedDayzHallucinationGuard,
@@ -32,6 +33,9 @@ import {
  * AI-17: verifizierte Spielidentitaet wird nur bei Live-Mitgliedschaft und
  * exakt demselben bereits aufgeloesten Guild/Gameserver-Scope angehaengt.
  * Recognition bleibt Kontext und ist niemals eine Berechtigungsentscheidung.
+ * AI-20: tatsaechlich genutzte Retrieval-Quellen werden nur mit kontrollierten
+ * Source/Trust/Freshness-Kategorien beobachtet; keine Guild-/User-/Promptdaten
+ * werden als Metrik-Labels exportiert.
  */
 export interface ServerUserContextOptions {
   guild?: Guild | null;
@@ -307,12 +311,52 @@ export async function buildServerUserContextBlocks(opts: ServerUserContextOption
         }
       }
 
-      const snippets = await findRelevantKnowledge(guild.id, question, scope ? 12 : 3, scope?.id ?? null);
-      if (snippets.length > 0) {
+      const retrievalStartedAt = Date.now();
+      let snippets: Awaited<ReturnType<typeof findRelevantKnowledge>>;
+      try {
+        snippets = await findRelevantKnowledge(guild.id, question, scope ? 12 : 3, scope?.id ?? null);
+        recordAiRetrieval({
+          strategy: 'rag_runtime',
+          outcome: snippets.length > 0 ? 'hit' : 'miss',
+          latencyMs: Date.now() - retrievalStartedAt,
+          selected: snippets.length,
+        });
+      } catch (e) {
+        recordAiRetrieval({
+          strategy: 'rag_runtime',
+          outcome: 'error',
+          latencyMs: Date.now() - retrievalStartedAt,
+        });
+        throw e;
+      }
+
+      const promptSnippets = snippets.slice(0, 3);
+      if (promptSnippets.length > 0) {
         if (scope) ragLines.push(`- Gameserver-Scope: Slot ${scope.slot} (${scope.alias})`);
-        for (const snippet of snippets.slice(0, 3)) ragLines.push(`- [${snippet.label}] ${snippet.content.slice(0, 800)}`);
+        for (const snippet of promptSnippets) {
+          ragLines.push(`- [${snippet.label}] ${snippet.content.slice(0, 800)}`);
+          if (snippet.provenance) {
+            recordAiKnowledgeSource({
+              sourceKind: snippet.provenance.sourceKind,
+              trustLevel: snippet.provenance.trustLevel,
+              freshness: snippet.provenance.freshness,
+              sourceAgeDays: snippet.provenance.sourceAgeDays,
+              consumer: 'rag',
+            });
+          }
+        }
       }
       if (scope && liveIntent) {
+        for (const snippet of snippets) {
+          if (!snippet.provenance) continue;
+          recordAiKnowledgeSource({
+            sourceKind: snippet.provenance.sourceKind,
+            trustLevel: snippet.provenance.trustLevel,
+            freshness: snippet.provenance.freshness,
+            sourceAgeDays: snippet.provenance.sourceAgeDays,
+            consumer: 'live_guard',
+          });
+        }
         hallucinationGuard = buildResolvedDayzHallucinationGuard({
           nitradoConnId: scope.id,
           slot: scope.slot,
