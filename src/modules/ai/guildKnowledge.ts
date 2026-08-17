@@ -17,24 +17,27 @@ import {
   type KnowledgeProvenanceInput,
   type KnowledgeProvenanceMeta,
 } from './knowledgeProvenance';
+import {
+  LIVE_SERVER_KNOWLEDGE_CREATED_BY,
+  LIVE_SERVER_MAX_PROJECTED_CHARS,
+  isLiveServerSourceRef,
+  isLiveServerSystemKnowledgeCreatedBy,
+} from './liveServerKnowledgeConstants';
 
 /**
  * Phase 8: Per-Guild Knowledge-Snippets.
  * Phase 9: Semantische Retrieval ueber Embeddings (Cosine), Fallback Keyword-Match.
  * AI-10: Guild-/Gameserver-Metadatenfilter VOR dem Hybrid-Reranking.
  * AI-11: Quellen-/Vertrauens-/Freshness-Metadaten mit Source-Age und Ablauf.
- *
- * Owner/Admin koennen kompakte Faktenbloecke hinterlegen, die der AI bei
- * passenden Anfragen mit in den Prompt fliessen. Token-Schutz: max 3 Snippets
- * pro Antwort. Fehlende Scope-Metadaten bedeuten rueckwaertskompatibel
- * guild-global; fehlende Provenance-Metadaten werden konservativ als
- * OWNER_CURATED/CURATED behandelt.
+ * AI-14: Nitrado-Snapshots werden als systemverwaltetes LIVE_SERVER-Knowledge
+ * in exakt dieselbe kanonische Retrieval-Pipeline eingespeist.
  */
 
 const MAX_SNIPPETS_PER_PROMPT = 3;
 const MAX_LABEL_LEN = 60;
 const MAX_CONTENT_LEN = 2000;
 const MAX_SNIPPETS_PER_GUILD = 50;
+const MAX_RETRIEVAL_CANDIDATES = 500;
 
 export interface KnowledgeSnippet {
   id: string;
@@ -52,6 +55,41 @@ function tokenize(s: string): Set<string> {
       .split(/\s+/)
       .filter((w) => w.length >= 3),
   );
+}
+
+function projectLiveServerContent(content: string, question: string): string {
+  if (content.length <= LIVE_SERVER_MAX_PROJECTED_CHARS) return content;
+  const lines = content.split(/\r?\n/).filter(Boolean);
+  if (lines.length <= 1) return content.slice(0, LIVE_SERVER_MAX_PROJECTED_CHARS);
+  const header = lines[0];
+  const qTokens = tokenize(question);
+  const scored = lines.slice(1).map((line, index) => {
+    const lineTokens = tokenize(line);
+    let score = 0;
+    for (const token of qTokens) if (lineTokens.has(token)) score += 1;
+    const normalizedQuestion = question.toLowerCase();
+    if (normalizedQuestion.includes(line.toLowerCase())) score += 4;
+    return { line, index, score };
+  });
+  const matched = scored
+    .filter((entry) => entry.score > 0)
+    .sort((a, b) => b.score - a.score || a.index - b.index)
+    .slice(0, 10);
+  const selected = matched.length > 0
+    ? matched.sort((a, b) => a.index - b.index).map((entry) => entry.line)
+    : lines.slice(1, 8);
+  return [header, ...selected].join('\n').slice(0, LIVE_SERVER_MAX_PROJECTED_CHARS);
+}
+
+function presentKnowledgeContent(
+  content: string,
+  provenance: KnowledgeProvenanceMeta,
+  question: string,
+): string {
+  if (provenance.sourceKind === 'LIVE_SERVER' && isLiveServerSourceRef(provenance.sourceRef)) {
+    return projectLiveServerContent(content, question);
+  }
+  return content;
 }
 
 const SEMANTIC_MIN_SCORE = 0.55;
@@ -176,7 +214,7 @@ export async function findRelevantKnowledge(
       prisma.guildKnowledge.findMany({
         where: { guildId, isActive: true },
         select: { id: true, label: true, content: true, embedding: true, embeddingModel: true, createdAt: true },
-        take: 200,
+        take: MAX_RETRIEVAL_CANDIDATES,
       }),
       getKnowledgeScopeRows(guildId),
     ]);
@@ -190,7 +228,12 @@ export async function findRelevantKnowledge(
     return scored
       .filter((s) => s.hybrid >= HYBRID_MIN_SCORE)
       .slice(0, limit)
-      .map((s) => ({ id: s.id, label: s.label, content: s.content, provenance: s.provenance }));
+      .map((s) => ({
+        id: s.id,
+        label: s.label,
+        content: presentKnowledgeContent(s.content, s.provenance, question),
+        provenance: s.provenance,
+      }));
   } catch (e) {
     logger.warn('findRelevantKnowledge fehlgeschlagen:', { guildId, nitradoConnId, e: String(e) });
     return [];
@@ -244,7 +287,7 @@ export async function debugRetrieval(
     prisma.guildKnowledge.findMany({
       where: { guildId, isActive: true },
       select: { id: true, label: true, content: true, embedding: true, embeddingModel: true, createdAt: true },
-      take: 200,
+      take: MAX_RETRIEVAL_CANDIDATES,
     }),
     getKnowledgeScopeRows(guildId),
   ]);
@@ -265,7 +308,7 @@ export async function debugRetrieval(
     return {
       id: s.id,
       label: s.label,
-      contentPreview: s.content.slice(0, 160),
+      contentPreview: presentKnowledgeContent(s.content, s.provenance, question).slice(0, 160),
       semantic: Number(s.semantic.toFixed(4)),
       keyword: Number(s.keyword.toFixed(4)),
       labelBoost: s.labelBoost,
@@ -302,7 +345,7 @@ export async function debugRetrieval(
 
 export async function listKnowledge(guildId: string): Promise<KnowledgeSnippet[]> {
   return prisma.guildKnowledge.findMany({
-    where: { guildId, isActive: true },
+    where: { guildId, isActive: true, createdBy: { not: LIVE_SERVER_KNOWLEDGE_CREATED_BY } },
     select: { id: true, label: true, content: true },
     orderBy: { createdAt: 'desc' },
   });
@@ -328,7 +371,9 @@ export async function addKnowledge(
   });
   if (!provenanceValidation.ok) return { ok: false, message: provenanceValidation.message };
 
-  const count = await prisma.guildKnowledge.count({ where: { guildId, isActive: true } });
+  const count = await prisma.guildKnowledge.count({
+    where: { guildId, isActive: true, createdBy: { not: LIVE_SERVER_KNOWLEDGE_CREATED_BY } },
+  });
   if (count >= MAX_SNIPPETS_PER_GUILD) {
     return { ok: false, message: `Limit erreicht (${MAX_SNIPPETS_PER_GUILD} Snippets pro Guild).` };
   }
@@ -363,6 +408,9 @@ export async function addKnowledge(
 export async function removeKnowledge(guildId: string, id: string): Promise<{ ok: boolean; message: string }> {
   const row = await prisma.guildKnowledge.findUnique({ where: { id } });
   if (!row || row.guildId !== guildId) return { ok: false, message: 'Snippet nicht gefunden.' };
+  if (isLiveServerSystemKnowledgeCreatedBy(row.createdBy)) {
+    return { ok: false, message: 'Live-Server-Knowledge wird automatisch durch Nitrado-Snapshots verwaltet.' };
+  }
   await prisma.guildKnowledge.update({ where: { id }, data: { isActive: false } });
   return { ok: true, message: `Snippet ${id.slice(0, 8)} deaktiviert.` };
 }
@@ -384,7 +432,7 @@ export interface KnowledgeAdminRow {
 
 export async function listKnowledgeAdmin(guildId: string): Promise<KnowledgeAdminRow[]> {
   const rows = await prisma.guildKnowledge.findMany({
-    where: { guildId },
+    where: { guildId, createdBy: { not: LIVE_SERVER_KNOWLEDGE_CREATED_BY } },
     orderBy: [{ isActive: 'desc' }, { updatedAt: 'desc' }],
     select: {
       id: true, label: true, content: true, createdBy: true, isActive: true,
@@ -423,6 +471,9 @@ export async function updateKnowledge(
 ): Promise<{ ok: boolean; message: string }> {
   const row = await prisma.guildKnowledge.findUnique({ where: { id } });
   if (!row || row.guildId !== guildId) return { ok: false, message: 'Snippet nicht gefunden.' };
+  if (isLiveServerSystemKnowledgeCreatedBy(row.createdBy)) {
+    return { ok: false, message: 'Live-Server-Knowledge wird automatisch durch Nitrado-Snapshots verwaltet.' };
+  }
 
   const data: { label?: string; content?: string } = {};
   if (patch.label !== undefined) {
@@ -496,6 +547,9 @@ export async function setKnowledgeActive(
 ): Promise<{ ok: boolean; message: string }> {
   const row = await prisma.guildKnowledge.findUnique({ where: { id } });
   if (!row || row.guildId !== guildId) return { ok: false, message: 'Snippet nicht gefunden.' };
+  if (isLiveServerSystemKnowledgeCreatedBy(row.createdBy)) {
+    return { ok: false, message: 'Live-Server-Knowledge wird automatisch durch Nitrado-Snapshots verwaltet.' };
+  }
   if (active) {
     const scopeRow = await prisma.guildKnowledgeScope.findFirst({
       where: { knowledgeId: id, guildId },
@@ -509,7 +563,9 @@ export async function setKnowledgeActive(
     if (provenance?.freshness === 'EXPIRED') {
       return { ok: false, message: 'Snippet-Quelle ist abgelaufen. Provenance vor Aktivierung aktualisieren.' };
     }
-    const count = await prisma.guildKnowledge.count({ where: { guildId, isActive: true } });
+    const count = await prisma.guildKnowledge.count({
+      where: { guildId, isActive: true, createdBy: { not: LIVE_SERVER_KNOWLEDGE_CREATED_BY } },
+    });
     if (!row.isActive && count >= MAX_SNIPPETS_PER_GUILD) {
       return { ok: false, message: `Limit erreicht (${MAX_SNIPPETS_PER_GUILD} aktive Snippets pro Guild).` };
     }
@@ -519,8 +575,11 @@ export async function setKnowledgeActive(
 }
 
 export async function reembedKnowledge(guildId: string, id: string): Promise<{ ok: boolean; message: string }> {
-  const row = await prisma.guildKnowledge.findUnique({ where: { id }, select: { guildId: true } });
+  const row = await prisma.guildKnowledge.findUnique({ where: { id }, select: { guildId: true, createdBy: true } });
   if (!row || row.guildId !== guildId) return { ok: false, message: 'Snippet nicht gefunden.' };
+  if (isLiveServerSystemKnowledgeCreatedBy(row.createdBy)) {
+    return { ok: false, message: 'Live-Server-Knowledge nutzt deterministisches Keyword-Retrieval und wird nicht manuell eingebettet.' };
+  }
   const ok = await embedKnowledgeSnippet(id);
   return ok
     ? { ok: true, message: 'Embedding neu berechnet.' }
@@ -542,7 +601,7 @@ export interface KnowledgeExportItem {
 
 export async function exportKnowledge(guildId: string): Promise<KnowledgeExportItem[]> {
   const rows = await prisma.guildKnowledge.findMany({
-    where: { guildId, isActive: true },
+    where: { guildId, isActive: true, createdBy: { not: LIVE_SERVER_KNOWLEDGE_CREATED_BY } },
     orderBy: { createdAt: 'asc' },
     select: { id: true, label: true, content: true, createdAt: true },
   });
@@ -588,7 +647,9 @@ export async function importKnowledge(
   if (!exists) return { ok: false, message: 'Server-Profil noch nicht initialisiert.', added: 0, skipped: 0 };
 
   const servers = await listKnowledgeGameservers(guildId);
-  let active = await prisma.guildKnowledge.count({ where: { guildId, isActive: true } });
+  let active = await prisma.guildKnowledge.count({
+    where: { guildId, isActive: true, createdBy: { not: LIVE_SERVER_KNOWLEDGE_CREATED_BY } },
+  });
   let added = 0;
   let skipped = 0;
   for (const item of items) {
@@ -665,7 +726,7 @@ export async function regenerateAiBrief(guildId: string): Promise<string | null>
 
   const [knowledgeCandidates, scopeRows] = await Promise.all([
     prisma.guildKnowledge.findMany({
-      where: { guildId, isActive: true },
+      where: { guildId, isActive: true, createdBy: { not: LIVE_SERVER_KNOWLEDGE_CREATED_BY } },
       select: { id: true, label: true, createdAt: true },
       orderBy: { createdAt: 'desc' },
       take: MAX_SNIPPETS_PER_GUILD,
