@@ -24,9 +24,12 @@ function key(guildId: string): string {
 export async function getLeaveCleanupConfig(guildId: string): Promise<LeaveCleanupConfigState> {
   const row = await prisma.botConfig.findUnique({ where: { key: key(guildId) } });
   if (!row) return { ...DEFAULT_CONFIG, configured: false };
-  const value = row.value as { deletePlayerDataOnLeave?: unknown };
+  const value = row.value && typeof row.value === 'object' && !Array.isArray(row.value)
+    ? row.value as { deletePlayerDataOnLeave?: unknown }
+    : {};
   return {
     configured: true,
+    // Malformed/legacy JSON faellt absichtlich auf AUS statt fail-open.
     deletePlayerDataOnLeave: value.deletePlayerDataOnLeave === true,
   };
 }
