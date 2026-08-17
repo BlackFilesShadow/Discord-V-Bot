@@ -1,7 +1,7 @@
 import { Events, GuildMember } from 'discord.js';
 import { BotEvent } from '../types';
 import { logger, logAudit } from '../utils/logger';
-import { markMemberLeft } from '../modules/ai/memberAwareness';
+import { markMemberLeft, syncMemberProfile } from '../modules/ai/memberAwareness';
 import { cleanupGuildMemberData } from '../modules/moderation/guildMemberCleanup';
 
 /**
@@ -21,12 +21,18 @@ const guildMemberRemoveEvent: BotEvent = {
       roles: m.roles.cache.map(r => r.name),
     });
 
-    // Phase 18: Member-Profil als verlassen markieren (best-effort).
-    void markMemberLeft(m.guild.id, m.user.id);
+    // User-1: Vor dem Left-Marker wird der letzte vom Gateway gelieferte
+    // Guild-Zustand gesichert. Dadurch bleiben Rename/Nickname/Rollen fuer
+    // Goodbye/Audit als letzte bekannte Identitaet erhalten. Diese Historie
+    // ist weiterhin KEINE Berechtigungsquelle.
+    await syncMemberProfile(m);
+    await markMemberLeft(m.guild.id, m.user.id);
 
     // Guild-spezifischer Daten-Cleanup: Moderation + Aktivitaetsdaten dieser Guild
     // entfernen, damit DB nicht mit Karteileichen waechst. Hersteller-/Cross-Guild-
     // Daten (Packages, Uploads, User-Stamm) bleiben erhalten.
+    // Der umfassende optionale Leave/Reset-Cleanup wird in der separaten
+    // LeaveCleanup-Etappe aus Tracker #73 auf einen Dashboard-Toggle umgestellt.
     cleanupGuildMemberData(m.guild.id, m.user.id)
       .then(res => {
         if (res.performed) {
