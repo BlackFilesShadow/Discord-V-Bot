@@ -24,6 +24,11 @@ export const botAdminKnowledgeRouter = Router();
 const SNOWFLAKE_RE = /^\d{17,20}$/;
 const PROVENANCE_KEYS = ['sourceKind', 'trustLevel', 'sourceRef', 'sourceVersion', 'observedAt', 'validUntil'] as const;
 
+type ParsedProvenance =
+  | { ok: true; present: false }
+  | { ok: true; present: true; value: KnowledgeProvenanceInput }
+  | { ok: false; message: string };
+
 function reqGuildId(req: Request, res: Response): string | null {
   const raw = req.query.guildId ?? (req.body as { guildId?: unknown } | undefined)?.guildId;
   const gid = typeof raw === 'string' ? raw : Array.isArray(raw) ? String(raw[0]) : '';
@@ -58,17 +63,31 @@ function parseNitradoConnId(value: unknown): { ok: true; value: string | null } 
   return { ok: true, value: id };
 }
 
-function provenanceInput(body: unknown): KnowledgeProvenanceInput | undefined {
-  if (!body || typeof body !== 'object') return undefined;
+/**
+ * Provenance ist absichtlich ein vollstaendiger atomarer Vertrag. Sobald ein
+ * Feld gesetzt wird, muessen alle sechs Felder vorhanden sein (optionale Werte
+ * explizit als null). So kann ein partieller PATCH niemals sourceRef/version/
+ * validUntil still loeschen.
+ */
+function parseProvenance(body: unknown): ParsedProvenance {
+  if (!body || typeof body !== 'object') return { ok: true, present: false };
   const record = body as Record<string, unknown>;
-  if (!PROVENANCE_KEYS.some((key) => Object.prototype.hasOwnProperty.call(record, key))) return undefined;
+  const present = PROVENANCE_KEYS.filter((key) => Object.prototype.hasOwnProperty.call(record, key));
+  if (present.length === 0) return { ok: true, present: false };
+  if (present.length !== PROVENANCE_KEYS.length) {
+    return { ok: false, message: 'Provenance muss vollstaendig uebergeben werden (sourceKind, trustLevel, sourceRef, sourceVersion, observedAt, validUntil).' };
+  }
   return {
-    sourceKind: record.sourceKind,
-    trustLevel: record.trustLevel,
-    sourceRef: record.sourceRef,
-    sourceVersion: record.sourceVersion,
-    observedAt: record.observedAt,
-    validUntil: record.validUntil,
+    ok: true,
+    present: true,
+    value: {
+      sourceKind: record.sourceKind,
+      trustLevel: record.trustLevel,
+      sourceRef: record.sourceRef,
+      sourceVersion: record.sourceVersion,
+      observedAt: record.observedAt,
+      validUntil: record.validUntil,
+    },
   };
 }
 
@@ -106,8 +125,10 @@ botAdminKnowledgeRouter.post('/', async (req, res) => {
   const content = typeof req.body?.content === 'string' ? req.body.content : '';
   const parsedScope = parseNitradoConnId(req.body?.nitradoConnId);
   if (!parsedScope.ok) { res.status(400).json({ error: parsedScope.message }); return; }
-  const provenance = provenanceInput(req.body);
-  const r = await addKnowledge(guildId, label, content, actor(req), parsedScope.value, provenance ?? null);
+  const parsedProvenance = parseProvenance(req.body);
+  if (!parsedProvenance.ok) { res.status(400).json({ error: parsedProvenance.message }); return; }
+  const provenance = parsedProvenance.present ? parsedProvenance.value : null;
+  const r = await addKnowledge(guildId, label, content, actor(req), parsedScope.value, provenance);
   if (!r.ok) { res.status(400).json({ error: r.message }); return; }
   audit(req, 'BOTADMIN_KNOWLEDGE_ADD', guildId, {
     id: r.id,
@@ -135,16 +156,17 @@ botAdminKnowledgeRouter.patch('/:id', async (req, res) => {
     if (!parsedScope.ok) { res.status(400).json({ error: parsedScope.message }); return; }
     patch.nitradoConnId = parsedScope.value;
   }
-  const provenance = provenanceInput(req.body);
-  if (provenance) patch.provenance = provenance;
+  const parsedProvenance = parseProvenance(req.body);
+  if (!parsedProvenance.ok) { res.status(400).json({ error: parsedProvenance.message }); return; }
+  if (parsedProvenance.present) patch.provenance = parsedProvenance.value;
   const r = await updateKnowledge(guildId, String(req.params.id), patch);
   if (!r.ok) { res.status(400).json({ error: r.message }); return; }
   audit(req, 'BOTADMIN_KNOWLEDGE_UPDATE', guildId, {
     id: String(req.params.id),
     fields: Object.keys(patch),
     nitradoConnId: patch.nitradoConnId,
-    sourceKind: provenance?.sourceKind,
-    trustLevel: provenance?.trustLevel,
+    sourceKind: parsedProvenance.present ? parsedProvenance.value.sourceKind : undefined,
+    trustLevel: parsedProvenance.present ? parsedProvenance.value.trustLevel : undefined,
   });
   res.json({ message: r.message });
 });
