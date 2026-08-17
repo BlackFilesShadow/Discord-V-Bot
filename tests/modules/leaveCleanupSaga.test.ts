@@ -2,10 +2,21 @@ const mockFindFirst = jest.fn();
 const mockFindMany = jest.fn();
 const mockCreate = jest.fn();
 const mockUpdateMany = jest.fn();
+const mockExecuteRaw = jest.fn().mockResolvedValue(1);
+const mockTransaction = jest.fn();
+
+const mockTx = {
+  $executeRaw: mockExecuteRaw,
+  dataDeletionRequest: {
+    findFirst: mockFindFirst,
+    create: mockCreate,
+  },
+};
 
 jest.mock('../../src/database/prisma', () => ({
   __esModule: true,
   default: {
+    $transaction: mockTransaction,
     dataDeletionRequest: {
       findFirst: mockFindFirst,
       findMany: mockFindMany,
@@ -38,6 +49,8 @@ beforeEach(() => {
   mockFindFirst.mockResolvedValue(null);
   mockFindMany.mockResolvedValue([]);
   mockUpdateMany.mockResolvedValue({ count: 1 });
+  mockExecuteRaw.mockResolvedValue(1);
+  mockTransaction.mockImplementation(async (callback: (tx: typeof mockTx) => unknown) => callback(mockTx));
 });
 
 describe('Leave-1A durable cleanup saga foundation', () => {
@@ -57,10 +70,15 @@ describe('Leave-1A durable cleanup saga foundation', () => {
     expect(() => leaveCleanupReceiptFingerprint(GUILD_A, USER, 'weak')).toThrow(/zu kurz/);
   });
 
-  it('reuses an already pending request instead of creating a duplicate', async () => {
+  it('serializes concurrent enqueue for the same guild+user through a transaction advisory lock', async () => {
     mockFindFirst.mockResolvedValueOnce({ id: 'existing' });
     await expect(enqueueLeaveCleanupRequest({ guildId: GUILD_A, discordId: USER }))
       .resolves.toEqual({ id: 'existing', created: false });
+    expect(mockTransaction).toHaveBeenCalledTimes(1);
+    expect(mockExecuteRaw).toHaveBeenCalledTimes(1);
+    expect(mockFindFirst).toHaveBeenCalledWith(expect.objectContaining({
+      where: expect.objectContaining({ userId: `leave-job:v1:${GUILD_A}:${USER}` }),
+    }));
     expect(mockCreate).not.toHaveBeenCalled();
   });
 
@@ -121,9 +139,10 @@ describe('Leave-1A durable cleanup saga foundation', () => {
     await expect(recoverStaleLeaveCleanupRequests(now, 60_000)).resolves.toBe(1);
     expect(mockUpdateMany).toHaveBeenCalledTimes(1);
     expect(mockUpdateMany.mock.calls[0][0].where).toEqual({ id: 'stale', status: 'IN_PROGRESS' });
+    expect(mockUpdateMany.mock.calls[0][0].data.details).not.toHaveProperty('claimedAt');
   });
 
-  it('uses bounded exponential backoff and transitions to retry', async () => {
+  it('uses bounded exponential backoff and transitions to retry without undefined JSON fields', async () => {
     expect(leaveCleanupBackoffMs(1)).toBe(5_000);
     expect(leaveCleanupBackoffMs(2)).toBe(10_000);
     expect(leaveCleanupBackoffMs(99)).toBe(60 * 60_000);
@@ -135,7 +154,7 @@ describe('Leave-1A durable cleanup saga foundation', () => {
       discordId: USER,
       status: 'IN_PROGRESS' as const,
       scheduledAt: now,
-      details: { kind: LEAVE_CLEANUP_KIND, guildId: GUILD_A, stage: 'RUNNING' as const, attempts: 0, maxAttempts: 3 },
+      details: { kind: LEAVE_CLEANUP_KIND, guildId: GUILD_A, stage: 'RUNNING' as const, attempts: 0, maxAttempts: 3, claimedAt: now.toISOString() },
     };
     await expect(retryOrDeadLetterLeaveCleanupRequest(request, new Error('temporary\nsecret-ish'), now)).resolves.toBe('RETRY');
     expect(mockUpdateMany).toHaveBeenCalledWith(expect.objectContaining({
@@ -146,6 +165,7 @@ describe('Leave-1A durable cleanup saga foundation', () => {
         details: expect.objectContaining({ attempts: 1, stage: 'RETRY_WAIT', lastError: 'temporary secret-ish' }),
       }),
     }));
+    expect(mockUpdateMany.mock.calls[0][0].data.details).not.toHaveProperty('claimedAt');
   });
 
   it('dead-letters at maxAttempts instead of retrying forever', async () => {
@@ -172,7 +192,7 @@ describe('Leave-1A durable cleanup saga foundation', () => {
       discordId: USER,
       status: 'IN_PROGRESS' as const,
       scheduledAt: now,
-      details: { kind: LEAVE_CLEANUP_KIND, guildId: GUILD_A, stage: 'RUNNING' as const, attempts: 1, maxAttempts: 8 },
+      details: { kind: LEAVE_CLEANUP_KIND, guildId: GUILD_A, stage: 'RUNNING' as const, attempts: 1, maxAttempts: 8, claimedAt: now.toISOString(), lastError: 'old' },
     };
     const fingerprint = await completeLeaveCleanupRequest(request, GUILD_A, SECRET, now);
     expect(fingerprint).not.toContain(USER);
@@ -186,6 +206,8 @@ describe('Leave-1A durable cleanup saga foundation', () => {
         details: expect.objectContaining({ stage: 'COMPLETED', completedAt: now.toISOString() }),
       }),
     }));
+    expect(mockUpdateMany.mock.calls[0][0].data.details).not.toHaveProperty('claimedAt');
+    expect(mockUpdateMany.mock.calls[0][0].data.details).not.toHaveProperty('lastError');
   });
 
   it('looks up completed anti-churn receipts only through the pseudonymous fingerprint', async () => {
