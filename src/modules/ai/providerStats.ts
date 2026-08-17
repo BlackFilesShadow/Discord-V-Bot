@@ -3,6 +3,7 @@ import prisma from '../../database/prisma';
 import { logger } from '../../utils/logger';
 import { config } from '../../config';
 import { providerSupportsTask, taskAffinity, type AiTaskProfile } from './providerCapabilities';
+import { recordAiFallback, recordAiProviderAttempt } from './aiObservability';
 
 /**
  * Provider-Health-Tracking + adaptive Reihenfolge.
@@ -190,6 +191,28 @@ export async function recordCall(
   error?: string,
   opts?: { retryAfterMs?: number },
 ): Promise<void> {
+  // AI-20: recordCall ist bereits die kanonische Stelle fuer abgeschlossene
+  // Provider-Call-Ergebnisse. Observability wird hier synchron und best-effort
+  // gespiegelt, bevor persistente Statistik geschrieben wird. Keine Prompts,
+  // User/Guild-IDs oder Fehlermeldungen gelangen in Metrik-Labels.
+  try {
+    const observedOutcome = outcome === 'rateLimit' ? 'rate_limit' : outcome;
+    recordAiProviderAttempt({
+      provider,
+      model: getConfiguredModel(provider),
+      outcome: observedOutcome,
+      latencyMs,
+    });
+    if (outcome !== 'success') {
+      recordAiFallback({
+        fromProvider: provider,
+        reason: outcome === 'rateLimit' ? 'rate_limit' : 'failure',
+      });
+    }
+  } catch (e) {
+    logger.warn(`providerStats.recordCall observability fehlgeschlagen: ${String(e)}`);
+  }
+
   if (outcome === 'success') clearCooldownInMemory(provider);
   if (outcome === 'rateLimit') markRateLimited(provider, opts?.retryAfterMs);
   try {
