@@ -197,48 +197,33 @@ async function pseudonymizeHistory(
   return { rows, rewardDecisionsSkipped };
 }
 
+function emptyWaiting(subjectKey: string, reason: LeaveLinkEconomyResult['reason']): LeaveLinkEconomyResult {
+  return {
+    state: 'WAITING',
+    reason,
+    subjectKey,
+    rewardDecisionsSkipped: 0,
+    accountsDeleted: 0,
+    linksDeleted: 0,
+    rewardStatesDeleted: 0,
+    historyRowsPseudonymized: 0,
+  };
+}
+
 /**
- * Leave-1C — interner, noch NICHT produktiv verdrahteter Saga-Schritt.
- *
- * Reihenfolge:
- * 1. Whitelist/Nitrado aus Leave-1B muss remote bestaetigt DONE sein.
- * 2. Offene Lottery-Verpflichtungen blockieren den Economy-Reset fail-closed.
- * 3. Offene Rewards werden SKIPPED und unveraenderliche Historie pseudonymisiert.
- * 4. Mutable Accounts, Reward-State und GameIdentityLink werden entfernt.
- *
- * PlayerSession und insbesondere bucketsCredited werden niemals zurueckgesetzt.
+ * Destruktiver 1C-Core NACH einem persistiert bestaetigten Leave-1B-Checkpoint.
+ * Dieser Pfad darf nur vom Leave-Orchestrator verwendet werden: Nach Leave-1D
+ * sind Session-GUIDs bereits pseudonymisiert und ein erneuter 1B-Namensabgleich
+ * waere absichtlich nicht mehr moeglich.
  */
-export async function runLeaveLinkEconomyCleanupStep(
+export async function runLeaveLinkEconomyAfterConfirmedWhitelistStep(
   guildId: string,
   userDiscordId: string,
 ): Promise<LeaveLinkEconomyResult> {
   const subjectKey = economySubjectKey(guildId, userDiscordId, config.security.encryptionKey);
-  const whitelist = await runLeaveWhitelistCleanupStep(guildId, userDiscordId);
-  if (whitelist.state !== 'DONE') {
-    return {
-      state: 'WAITING',
-      reason: 'WHITELIST_PENDING',
-      subjectKey,
-      rewardDecisionsSkipped: 0,
-      accountsDeleted: 0,
-      linksDeleted: 0,
-      rewardStatesDeleted: 0,
-      historyRowsPseudonymized: 0,
-    };
-  }
-
   const raw = rawClient(prisma);
   if (await hasActiveLotteryObligation(raw, guildId, userDiscordId)) {
-    return {
-      state: 'WAITING',
-      reason: 'ACTIVE_LOTTERY',
-      subjectKey,
-      rewardDecisionsSkipped: 0,
-      accountsDeleted: 0,
-      linksDeleted: 0,
-      rewardStatesDeleted: 0,
-      historyRowsPseudonymized: 0,
-    };
+    return emptyWaiting(subjectKey, 'ACTIVE_LOTTERY');
   }
 
   return prisma.$transaction(async tx => {
@@ -271,4 +256,18 @@ export async function runLeaveLinkEconomyCleanupStep(
       historyRowsPseudonymized: history.rows,
     };
   });
+}
+
+/**
+ * Leave-1C — standalone abgesicherter Wrapper fuer bestehende Call-Sites/Tests.
+ * Er prueft weiterhin zwingend Leave-1B vor dem destruktiven Core.
+ */
+export async function runLeaveLinkEconomyCleanupStep(
+  guildId: string,
+  userDiscordId: string,
+): Promise<LeaveLinkEconomyResult> {
+  const subjectKey = economySubjectKey(guildId, userDiscordId, config.security.encryptionKey);
+  const whitelist = await runLeaveWhitelistCleanupStep(guildId, userDiscordId);
+  if (whitelist.state !== 'DONE') return emptyWaiting(subjectKey, 'WHITELIST_PENDING');
+  return runLeaveLinkEconomyAfterConfirmedWhitelistStep(guildId, userDiscordId);
 }
