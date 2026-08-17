@@ -155,7 +155,7 @@ export async function buildServerUserContextBlocks(opts: ServerUserContextOption
   if (discordUser) {
     userLines.push(`- Username: ${discordUser.username}`);
     userLines.push(`- Discord-ID: ${discordUser.id}`);
-    if (member?.guild?.id === guild?.id && member.user.id === discordUser.id) {
+    if (member && member.guild.id === guild?.id && member.user.id === discordUser.id) {
       userLines.push('- Live-Mitgliedschaft in dieser Guild: bestaetigt (Recognition, keine Berechtigung)');
     }
     if (member?.nickname && member.nickname !== discordUser.username) {
