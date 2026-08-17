@@ -3,13 +3,13 @@ import { leaveCleanupJobKey } from './leaveCleanupSaga';
 
 /**
  * Bewusst eigener Fehler-Typ: Produktive Link-Einstiege muessen fail-closed
- * abbrechen, solange ein Leave-Reset fuer exakt dieselbe Guild+Discord-ID offen
- * ist. So kann ein schneller Rejoin keinen frischen Link erzeugen, den der
- * bereits laufende Cleanup spaeter wieder loeschen wuerde.
+ * abbrechen, solange ein Leave-Reset fuer exakt dieselbe Guild+Discord-ID nicht
+ * erfolgreich abgeschlossen ist. Dazu zaehlt auch ein FAILED/Dead-Letter-Job:
+ * Teilcleanup darf niemals mit frischem Rejoin-State vermischt werden.
  */
 export class LeaveCleanupPendingError extends Error {
   constructor() {
-    super('Dein vorheriger Austritts-Cleanup wird noch abgeschlossen. Bitte versuche die Verknuepfung danach erneut.');
+    super('Dein vorheriger Austritts-Cleanup ist noch nicht erfolgreich abgeschlossen. Bitte versuche die Verknuepfung spaeter erneut.');
     this.name = 'LeaveCleanupPendingError';
   }
 }
@@ -20,7 +20,7 @@ export async function hasOpenLeaveCleanupRequest(guildId: string, discordId: str
     where: {
       userId: jobKey,
       requestType: 'PARTIAL_DELETION',
-      status: { in: ['PENDING', 'IN_PROGRESS'] },
+      status: { in: ['PENDING', 'IN_PROGRESS', 'FAILED'] },
     },
     select: { id: true },
   });
