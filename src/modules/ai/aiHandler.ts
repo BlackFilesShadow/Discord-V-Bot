@@ -13,6 +13,13 @@ import { cached } from '../../utils/responseCache';
 import { clampBlock, clampHistory } from './promptBudget';
 import { classifyProviderHttpStatus, updateAllRateLimitedState } from './providerFailure';
 import { answerDayz129CatalogQuestion } from './dayz129Catalog';
+import {
+  buildHallucinationGuardFallback,
+  consumeHallucinationGuardReference,
+  formatHallucinationGuardPrompt,
+  preflightLiveServerQuestion,
+  validateLiveServerAnswer,
+} from './dayzHallucinationGuard';
 
 /**
  * AI-Integration (Sektion 4):
@@ -283,7 +290,17 @@ export async function answerQuestion(
       ? { context: optionsOrContext }
       : (optionsOrContext ?? {});
   const mode: AnswerMode = opts.mode ?? 'chat';
-  const context = opts.context;
+  const guardContext = consumeHallucinationGuardReference(opts.context);
+  const context = guardContext.context;
+  const hallucinationGuard = guardContext.guard;
+
+  if (mode !== 'welcome') {
+    const guardPreflight = preflightLiveServerQuestion(question, hallucinationGuard);
+    if (guardPreflight.handled && guardPreflight.response) {
+      logger.info('[AI-16] Live-Server-Frage deterministisch vor Provider beantwortet/blockiert');
+      return { success: true, result: redactText(guardPreflight.response) };
+    }
+  }
 
   if (mode !== 'welcome') {
     try {
@@ -412,6 +429,7 @@ export async function answerQuestion(
       ...(catalogBlock ? [{ role: 'system' as const, content: clampBlock('commandContext', catalogBlock)! }] : []),
       ...(introBlock ? [{ role: 'system' as const, content: introBlock }] : []),
       ...(liveBlock ? [{ role: 'system' as const, content: clampBlock('knowledge', liveBlock)! }] : []),
+      ...(hallucinationGuard ? [{ role: 'system' as const, content: clampBlock('nitradoContext', formatHallucinationGuardPrompt(hallucinationGuard))! }] : []),
       ...(context ? [{ role: 'system' as const, content: clampBlock('serverContext', context)! }] : []),
       ...clampHistory(memoryTurns).map((t) => ({ role: t.role, content: t.content })),
       ...(nitradoHelpBlock ? [{ role: 'system' as const, content: clampBlock('nitradoContext', nitradoHelpBlock)! }] : []),
@@ -426,6 +444,14 @@ export async function answerQuestion(
       if (!validation.valid) {
         logger.warn(`[DayZ-Grounding] LLM-Antwort blockiert: ${validation.violations.join('; ')}`);
         safeResponse = buildDayzTechnicalFallback(question, validation.violations);
+      }
+    }
+
+    if (hallucinationGuard && safeResponse) {
+      const guardValidation = validateLiveServerAnswer(question, safeResponse, hallucinationGuard);
+      if (!guardValidation.valid) {
+        logger.warn(`[AI-16] Halluzinationsschutz blockiert Live-Antwort: ${guardValidation.violations.join('; ')}`);
+        safeResponse = buildHallucinationGuardFallback(guardValidation.violations);
       }
     }
 
