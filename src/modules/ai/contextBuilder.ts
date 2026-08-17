@@ -312,23 +312,13 @@ export async function buildServerUserContextBlocks(opts: ServerUserContextOption
       }
 
       const retrievalStartedAt = Date.now();
-      let snippets: Awaited<ReturnType<typeof findRelevantKnowledge>>;
-      try {
-        snippets = await findRelevantKnowledge(guild.id, question, scope ? 12 : 3, scope?.id ?? null);
-        recordAiRetrieval({
-          strategy: 'rag_runtime',
-          outcome: snippets.length > 0 ? 'hit' : 'miss',
-          latencyMs: Date.now() - retrievalStartedAt,
-          selected: snippets.length,
-        });
-      } catch (e) {
-        recordAiRetrieval({
-          strategy: 'rag_runtime',
-          outcome: 'error',
-          latencyMs: Date.now() - retrievalStartedAt,
-        });
-        throw e;
-      }
+      const snippets = await findRelevantKnowledge(guild.id, question, scope ? 12 : 3, scope?.id ?? null);
+      recordAiRetrieval({
+        strategy: 'rag_runtime',
+        outcome: snippets.length > 0 ? 'hit' : 'miss',
+        latencyMs: Date.now() - retrievalStartedAt,
+        selected: snippets.length,
+      });
 
       const promptSnippets = snippets.slice(0, 3);
       if (promptSnippets.length > 0) {
