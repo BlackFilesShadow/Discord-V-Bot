@@ -6,6 +6,7 @@ const read = (relative: string) => fs.readFileSync(path.resolve(process.cwd(), r
 const addSource = read('src/events/guildMemberAdd.ts');
 const removeSource = read('src/events/guildMemberRemove.ts');
 const workerSource = read('src/modules/moderation/leaveCleanupWorker.ts');
+const sagaSource = read('src/modules/moderation/leaveCleanupSaga.ts');
 const rejoinSource = read('src/modules/moderation/leaveCleanupRejoin.ts');
 const awarenessSource = read('src/modules/ai/memberAwareness.ts');
 const messageSource = read('src/events/messageCreate.ts');
@@ -39,6 +40,20 @@ describe('Leave-1G rejoin fresh-state architecture gate', () => {
     expect(goodbye).toBeGreaterThan(secondEnqueue);
   });
 
+  it('keeps #104 periodic failover recovery and lease renewal in the combined worker/saga', () => {
+    expect(workerSource).toContain('const RECOVERY_INTERVAL_MS = 60_000;');
+    expect(workerSource).toContain('async function recoverStaleIfDue');
+    const recoveryAt = workerSource.indexOf('await recoverStaleIfDue();');
+    const pollAt = workerSource.indexOf('const request = await claimNextLeaveCleanupRequest();');
+    expect(recoveryAt).toBeGreaterThanOrEqual(0);
+    expect(pollAt).toBeGreaterThan(recoveryAt);
+
+    expect(sagaSource).toContain('function recoveryClaimFence(details: LeaveCleanupDetails)');
+    expect(sagaSource).toContain("{ details: { path: ['claimToken'], equals: details.claimToken } }");
+    expect(sagaSource).toContain("{ details: { path: ['claimedAt'], equals: details.claimedAt } }");
+    expect(sagaSource).toContain('claimedAt: now.toISOString()');
+  });
+
   it('finalizes the full fenced request after GUILD_DATA and rechecks it immediately before the completion receipt', () => {
     const guildCleanup = workerSource.indexOf('await cleanupGuildMemberData(guildId, discordId);');
     const firstFinalize = workerSource.indexOf('await finalizeLeaveRejoinState(request, guildId, discordId);', guildCleanup);
@@ -54,11 +69,13 @@ describe('Leave-1G rejoin fresh-state architecture gate', () => {
     expect(receipt).toBeGreaterThan(secondFinalize);
   });
 
-  it('locks the exact claim before rejoin mutation and keeps legacy claimedAt fencing', () => {
+  it('fences modern rejoin mutation by claimToken plus exact renewed claimedAt and keeps legacy claimedAt support', () => {
     expect(rejoinSource).toContain('readLeaveCleanupDetails(claimedRequest.details)');
-    expect(rejoinSource).toContain("const claimField = expectedDetails.claimToken ? 'claimToken' : 'claimedAt';");
-    expect(rejoinSource).toContain('expectedDetails.claimToken ?? expectedDetails.claimedAt');
-    expect(rejoinSource).toContain('jsonb_extract_path_text("details", $4)=$5');
+    expect(rejoinSource).toContain('const claimedAt = expectedDetails.claimedAt;');
+    expect(rejoinSource).toContain('const claimToken = expectedDetails.claimToken ?? null;');
+    expect(rejoinSource).toContain("jsonb_extract_path_text(\"details\", 'claimToken')=$4");
+    expect(rejoinSource).toContain("jsonb_extract_path_text(\"details\", 'claimedAt')=$5");
+    expect(rejoinSource).toContain("jsonb_extract_path_text(\"details\", 'claimedAt')=$4");
     expect(rejoinSource).toContain('FOR UPDATE');
     expect(rejoinSource).toContain("AND \"status\"='IN_PROGRESS'");
   });
@@ -125,18 +142,24 @@ describe('Leave-1G rejoin fresh-state architecture gate', () => {
     expect(recordAt).toBeGreaterThan(levelAt);
   });
 
-  it('fences central Event-XP through canonical User->Discord recognition before its first mutation', () => {
+  it('fences every user-specific XP manager write including reset before its first mutation', () => {
+    const helper = xpManagerSource.indexOf('async function assertXpSubjectWritable');
+    const helperGuard = xpManagerSource.indexOf('await assertNoOpenLeaveCleanupRequest(guildId, user.discordId);', helper);
     const grantStart = xpManagerSource.indexOf('export async function grantEventXp');
-    const userAt = xpManagerSource.indexOf('const user = await prisma.user.findUnique({', grantStart);
-    const guardAt = xpManagerSource.indexOf('await assertNoOpenLeaveCleanupRequest(guildId, user.discordId);', grantStart);
-    const levelAt = xpManagerSource.indexOf('const updated = await prisma.levelData.upsert({', grantStart);
-    const recordAt = xpManagerSource.indexOf('await prisma.xpRecord.create({', grantStart);
+    const grantGuard = xpManagerSource.indexOf("await assertXpSubjectWritable(userId, guildId, 'Event-XP');", grantStart);
+    const grantLevel = xpManagerSource.indexOf('const updated = await prisma.levelData.upsert({', grantStart);
+    const resetStart = xpManagerSource.indexOf('export async function resetUserXp');
+    const resetGuard = xpManagerSource.indexOf("await assertXpSubjectWritable(userId, guildId, 'XP-Reset');", resetStart);
+    const resetLevel = xpManagerSource.indexOf('const levelData = await prisma.levelData.findUnique({', resetStart);
+    const resetRecord = xpManagerSource.indexOf('await prisma.xpRecord.create({', resetStart);
 
-    expect(grantStart).toBeGreaterThanOrEqual(0);
-    expect(userAt).toBeGreaterThan(grantStart);
-    expect(guardAt).toBeGreaterThan(userAt);
-    expect(levelAt).toBeGreaterThan(guardAt);
-    expect(recordAt).toBeGreaterThan(levelAt);
+    expect(helper).toBeGreaterThanOrEqual(0);
+    expect(helperGuard).toBeGreaterThan(helper);
+    expect(grantGuard).toBeGreaterThan(grantStart);
+    expect(grantLevel).toBeGreaterThan(grantGuard);
+    expect(resetGuard).toBeGreaterThan(resetStart);
+    expect(resetLevel).toBeGreaterThan(resetGuard);
+    expect(resetRecord).toBeGreaterThan(resetLevel);
   });
 
   it('keeps anti-churn start balance protection in both modern and legacy award paths', () => {
