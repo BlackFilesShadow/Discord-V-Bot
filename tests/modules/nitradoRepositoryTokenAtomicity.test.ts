@@ -4,6 +4,8 @@ const connectionUpdateMany = jest.fn();
 const healthUpdateMany = jest.fn();
 const transaction = jest.fn();
 const encrypt = jest.fn();
+const acquireConfigLock = jest.fn();
+const releaseConfigLock = jest.fn();
 
 const tx = {
   nitradoConnection: { updateMany: connectionUpdateMany },
@@ -33,7 +35,12 @@ jest.mock('../../src/utils/security', () => ({
   decrypt: jest.fn(),
 }));
 
+jest.mock('../../src/modules/nitrado/configMutationLock', () => ({
+  tryAcquireNitradoConfigMutationLock: (...args: unknown[]) => acquireConfigLock(...args),
+}));
+
 import {
+  NitradoConnectionBusyError,
   NitradoSlotVersionConflictError,
   updateToken,
 } from '../../src/modules/nitrado/repository';
@@ -64,10 +71,12 @@ beforeEach(() => {
   transaction.mockImplementation(async (cb: (client: typeof tx) => unknown) => cb(tx));
   connectionFindUnique.mockResolvedValue({ id: CONN_ID });
   connectionFindFirst.mockResolvedValue(ROW);
+  releaseConfigLock.mockResolvedValue(undefined);
+  acquireConfigLock.mockResolvedValue({ release: releaseConfigLock });
 });
 
-describe('Nitrado-1A repository token rotation atomicity', () => {
-  it('persists token + both service mirrors reset under the exact validated id+updatedAt snapshot', async () => {
+describe('Nitrado-1A/1C repository token rotation atomicity', () => {
+  it('persists token + service reset only while holding the connection worker lock', async () => {
     await expect(updateToken(GUILD as never, 1, 'new-valid-token', {
       resetServiceId: true,
       expectedId: CONN_ID as never,
@@ -78,6 +87,7 @@ describe('Nitrado-1A repository token rotation atomicity', () => {
       updatedAt: NEW_VERSION,
     }));
 
+    expect(acquireConfigLock).toHaveBeenCalledWith(CONN_ID);
     expect(encrypt).toHaveBeenCalledWith('new-valid-token', 'test-encryption-key');
     expect(connectionUpdateMany).toHaveBeenCalledWith({
       where: { guildId: GUILD, slot: 1, id: CONN_ID, updatedAt: VERSION },
@@ -97,6 +107,22 @@ describe('Nitrado-1A repository token rotation atomicity', () => {
       where: { id: CONN_ID, guildId: GUILD, slot: 1 },
     });
     expect(transaction).toHaveBeenCalledTimes(1);
+    expect(releaseConfigLock).toHaveBeenCalledTimes(1);
+  });
+
+  it('fails closed without any DB mutation while a worker owns the connection lock', async () => {
+    acquireConfigLock.mockResolvedValue(null);
+
+    await expect(updateToken(GUILD as never, 1, 'new-valid-token', {
+      resetServiceId: true,
+      expectedId: CONN_ID as never,
+      expectedUpdatedAt: VERSION,
+    })).rejects.toBeInstanceOf(NitradoConnectionBusyError);
+
+    expect(transaction).not.toHaveBeenCalled();
+    expect(connectionUpdateMany).not.toHaveBeenCalled();
+    expect(healthUpdateMany).not.toHaveBeenCalled();
+    expect(releaseConfigLock).not.toHaveBeenCalled();
   });
 
   it('does not clear service mirrors when the new token still owns the service', async () => {
@@ -111,9 +137,10 @@ describe('Nitrado-1A repository token rotation atomicity', () => {
     const data = connectionUpdateMany.mock.calls[0][0].data;
     expect(data).not.toHaveProperty('nitradoServerId');
     expect(data).not.toHaveProperty('serviceId');
+    expect(releaseConfigLock).toHaveBeenCalledTimes(1);
   });
 
-  it('fails closed before the transaction if the slot was deleted and recreated under a different connection id', async () => {
+  it('fails closed before lock acquisition if the slot was deleted and recreated under another connection id', async () => {
     connectionFindUnique.mockResolvedValue({ id: OTHER_CONN_ID });
 
     await expect(updateToken(GUILD as never, 1, 'new-valid-token', {
@@ -122,12 +149,13 @@ describe('Nitrado-1A repository token rotation atomicity', () => {
       expectedUpdatedAt: VERSION,
     })).rejects.toBeInstanceOf(NitradoSlotVersionConflictError);
 
+    expect(acquireConfigLock).not.toHaveBeenCalled();
     expect(transaction).not.toHaveBeenCalled();
     expect(connectionUpdateMany).not.toHaveBeenCalled();
     expect(healthUpdateMany).not.toHaveBeenCalled();
   });
 
-  it('fails closed on a stale validated slot version and does not reset validation health', async () => {
+  it('fails closed on a stale validated slot version and still releases the connection lock', async () => {
     connectionUpdateMany.mockResolvedValue({ count: 0 });
 
     await expect(updateToken(GUILD as never, 1, 'new-valid-token', {
@@ -141,9 +169,10 @@ describe('Nitrado-1A repository token rotation atomicity', () => {
     }));
     expect(healthUpdateMany).not.toHaveBeenCalled();
     expect(connectionFindFirst).not.toHaveBeenCalled();
+    expect(releaseConfigLock).toHaveBeenCalledTimes(1);
   });
 
-  it('returns null without any token write when the slot disappeared before rotation', async () => {
+  it('returns null without lock or token write when the slot disappeared before rotation', async () => {
     connectionFindUnique.mockResolvedValue(null);
 
     await expect(updateToken(GUILD as never, 1, 'new-valid-token', {
@@ -152,6 +181,7 @@ describe('Nitrado-1A repository token rotation atomicity', () => {
       expectedUpdatedAt: VERSION,
     })).resolves.toBeNull();
 
+    expect(acquireConfigLock).not.toHaveBeenCalled();
     expect(connectionUpdateMany).not.toHaveBeenCalled();
     expect(transaction).not.toHaveBeenCalled();
   });

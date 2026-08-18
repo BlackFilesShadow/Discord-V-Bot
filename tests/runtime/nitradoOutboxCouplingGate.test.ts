@@ -109,8 +109,8 @@ describe('Nitrado-1A outbox + token/service coupling architecture gate', () => {
     expect(nitradoRepository).toContain('expectedId?: NitradoConnId;');
     expect(nitradoRepository).toContain('expectedUpdatedAt?: Date;');
     expect(nitradoRepository).toContain("if (options.expectedId && current.id !== options.expectedId)");
+    expect(nitradoRepository).toContain('const targetId = options.expectedId ?? asNitradoConnId(current.id);');
     expect(nitradoRepository).toContain('id: targetId');
-    expect(nitradoRepository).toContain("...(options.expectedId ? { id: options.expectedId } : {})");
     expect(nitradoRepository).toContain("...(options.expectedUpdatedAt ? { updatedAt: options.expectedUpdatedAt } : {})");
     expect(nitradoRepository).toContain('throw new NitradoSlotVersionConflictError();');
     expect(nitradoRepository).toContain('where: { id: targetId, guildId, slot }');

@@ -11,6 +11,7 @@ import { encrypt, decrypt } from '../../utils/security';
 import type { GuildId, NitradoConnId, UserDiscordId } from '../../types/scope';
 import { asNitradoConnId } from '../../types/scope';
 import type { NitradoConnectionStatus } from '@prisma/client';
+import { tryAcquireNitradoConfigMutationLock } from './configMutationLock';
 
 export interface NitradoConnectionRow {
   id: NitradoConnId;
@@ -29,6 +30,26 @@ export class NitradoSlotVersionConflictError extends Error {
   constructor() {
     super('Nitrado-Slot wurde waehrend der Validierung parallel geaendert.');
     this.name = 'NitradoSlotVersionConflictError';
+  }
+}
+
+export class NitradoConnectionBusyError extends Error {
+  constructor() {
+    super('Nitrado-Connection wird gerade von einem Remote-Job verwendet.');
+    this.name = 'NitradoConnectionBusyError';
+  }
+}
+
+async function withConfigMutationLock<T>(
+  nitradoConnId: NitradoConnId,
+  work: () => Promise<T>,
+): Promise<T> {
+  const lock = await tryAcquireNitradoConfigMutationLock(nitradoConnId);
+  if (!lock) throw new NitradoConnectionBusyError();
+  try {
+    return await work();
+  } finally {
+    await lock.release();
   }
 }
 
@@ -139,25 +160,37 @@ export async function deleteSlot(guildId: GuildId, slot: number): Promise<Nitrad
     select: { id: true },
   });
   if (!row) return null;
+  const targetId = asNitradoConnId(row.id);
 
-  const scopedKnowledge = await prisma.guildKnowledgeScope.findMany({
-    where: { guildId, nitradoConnId: row.id },
-    select: { knowledgeId: true },
+  return withConfigMutationLock(targetId, async () => {
+    // Delete+Recreate desselben Slot-Indexes darf von einer alten Delete-Anfrage
+    // niemals getroffen werden. Nach gewonnenem Lock deshalb exakt den zuvor
+    // gelesenen Connection-Datensatz erneut verifizieren.
+    const current = await prisma.nitradoConnection.findFirst({
+      where: { id: targetId, guildId, slot },
+      select: { id: true },
+    });
+    if (!current) return null;
+
+    const scopedKnowledge = await prisma.guildKnowledgeScope.findMany({
+      where: { guildId, nitradoConnId: targetId },
+      select: { knowledgeId: true },
+    });
+    const knowledgeIds = scopedKnowledge.map((entry) => entry.knowledgeId);
+
+    await prisma.$transaction([
+      ...(knowledgeIds.length > 0
+        ? [
+            prisma.guildKnowledgeProvenance.deleteMany({ where: { guildId, knowledgeId: { in: knowledgeIds } } }),
+            prisma.guildKnowledge.deleteMany({ where: { guildId, id: { in: knowledgeIds } } }),
+          ]
+        : []),
+      prisma.guildKnowledgeScope.deleteMany({ where: { guildId, nitradoConnId: targetId } }),
+      prisma.nitradoValidationHealth.deleteMany({ where: { guildId, nitradoConnId: targetId } }),
+      prisma.nitradoConnection.deleteMany({ where: { id: targetId, guildId, slot } }),
+    ]);
+    return targetId;
   });
-  const knowledgeIds = scopedKnowledge.map((entry) => entry.knowledgeId);
-
-  await prisma.$transaction([
-    ...(knowledgeIds.length > 0
-      ? [
-          prisma.guildKnowledgeProvenance.deleteMany({ where: { guildId, knowledgeId: { in: knowledgeIds } } }),
-          prisma.guildKnowledge.deleteMany({ where: { guildId, id: { in: knowledgeIds } } }),
-        ]
-      : []),
-    prisma.guildKnowledgeScope.deleteMany({ where: { guildId, nitradoConnId: row.id } }),
-    prisma.nitradoValidationHealth.deleteMany({ where: { guildId, nitradoConnId: row.id } }),
-    prisma.nitradoConnection.deleteMany({ where: { id: row.id, guildId } }),
-  ]);
-  return asNitradoConnId(row.id);
 }
 
 export async function setStatus(
@@ -198,6 +231,8 @@ export async function markValidated(
  * `expectedId + expectedUpdatedAt` bilden den exakt remote validierten
  * Slot-Snapshot. Damit kann weder eine parallele Aenderung noch Delete+Recreate
  * desselben Slot-Namens unbemerkt mit dem neuen Token vermischt werden.
+ * Zusaetzlich serialisiert derselbe Advisory-Key wie im NitradoJob-Worker den
+ * Commit gegen bereits laufende Remote-Jobs.
  */
 export async function updateToken(
   guildId: GuildId,
@@ -221,44 +256,46 @@ export async function updateToken(
   }
 
   const targetId = options.expectedId ?? asNitradoConnId(current.id);
-  const resetServiceId = options.resetServiceId === true;
-  const changed = await prisma.$transaction(async tx => {
-    const updated = await tx.nitradoConnection.updateMany({
-      where: {
-        guildId,
-        slot,
-        id: targetId,
-        ...(options.expectedUpdatedAt ? { updatedAt: options.expectedUpdatedAt } : {}),
-      },
-      data: {
-        encryptedToken,
-        status: 'ACTIVE',
-        lastErrorMessage: null,
-        ...(resetServiceId ? { nitradoServerId: null, serviceId: null } : {}),
-      },
-    });
-    if (updated.count !== 1) {
-      if (options.expectedId || options.expectedUpdatedAt) throw new NitradoSlotVersionConflictError();
-      return false;
-    }
+  return withConfigMutationLock(targetId, async () => {
+    const resetServiceId = options.resetServiceId === true;
+    const changed = await prisma.$transaction(async tx => {
+      const updated = await tx.nitradoConnection.updateMany({
+        where: {
+          guildId,
+          slot,
+          id: targetId,
+          ...(options.expectedUpdatedAt ? { updatedAt: options.expectedUpdatedAt } : {}),
+        },
+        data: {
+          encryptedToken,
+          status: 'ACTIVE',
+          lastErrorMessage: null,
+          ...(resetServiceId ? { nitradoServerId: null, serviceId: null } : {}),
+        },
+      });
+      if (updated.count !== 1) {
+        if (options.expectedId || options.expectedUpdatedAt) throw new NitradoSlotVersionConflictError();
+        return false;
+      }
 
-    await tx.nitradoValidationHealth.updateMany({
-      where: { guildId, nitradoConnId: targetId },
-      data: {
-        failureCount: 0,
-        lastErrorMessage: null,
-        lastFailureAt: null,
-        lastAlertAt: null,
-      },
+      await tx.nitradoValidationHealth.updateMany({
+        where: { guildId, nitradoConnId: targetId },
+        data: {
+          failureCount: 0,
+          lastErrorMessage: null,
+          lastFailureAt: null,
+          lastAlertAt: null,
+        },
+      });
+      return true;
     });
-    return true;
-  });
-  if (!changed) return null;
+    if (!changed) return null;
 
-  const row = await prisma.nitradoConnection.findFirst({
-    where: { id: targetId, guildId, slot },
+    const row = await prisma.nitradoConnection.findFirst({
+      where: { id: targetId, guildId, slot },
+    });
+    return row ? rowToConn(row) : null;
   });
-  return row ? rowToConn(row) : null;
 }
 
 /**
@@ -266,6 +303,7 @@ export async function updateToken(
  * `expectedId + expectedUpdatedAt` binden den Write an exakt den Slot-Snapshot,
  * dessen Token kurz zuvor fuer die Service-Zugehoerigkeitspruefung verwendet
  * wurde. Ein Delete+Recreate desselben Slot-Indexes verliert damit den CAS.
+ * Der Connection-Lock verhindert parallel laufende Worker-Remotezugriffe.
  */
 export async function updateServiceId(
   guildId: GuildId,
@@ -278,28 +316,37 @@ export async function updateServiceId(
     if (!/^\d{1,20}$/.test(trimmed)) throw new Error('Service-ID muss numerisch sein (1..20 Stellen)');
     nitradoServerId = trimmed;
   }
-  const updated = await prisma.nitradoConnection.updateMany({
-    where: {
-      guildId,
-      slot,
-      ...(options.expectedId ? { id: options.expectedId } : {}),
-      ...(options.expectedUpdatedAt ? { updatedAt: options.expectedUpdatedAt } : {}),
-    },
-    data: { nitradoServerId, serviceId: nitradoServerId },
-  });
-  if (updated.count === 0) {
-    if (options.expectedId || options.expectedUpdatedAt) throw new NitradoSlotVersionConflictError();
-    return null;
-  }
 
-  const row = options.expectedId
-    ? await prisma.nitradoConnection.findFirst({
-        where: { id: options.expectedId, guildId, slot },
-      })
-    : await prisma.nitradoConnection.findUnique({
-        where: { guildId_slot: { guildId, slot } },
-      });
-  return row ? rowToConn(row) : null;
+  const current = await prisma.nitradoConnection.findUnique({
+    where: { guildId_slot: { guildId, slot } },
+    select: { id: true },
+  });
+  if (!current) return null;
+  if (options.expectedId && current.id !== options.expectedId) {
+    throw new NitradoSlotVersionConflictError();
+  }
+  const targetId = options.expectedId ?? asNitradoConnId(current.id);
+
+  return withConfigMutationLock(targetId, async () => {
+    const updated = await prisma.nitradoConnection.updateMany({
+      where: {
+        guildId,
+        slot,
+        id: targetId,
+        ...(options.expectedUpdatedAt ? { updatedAt: options.expectedUpdatedAt } : {}),
+      },
+      data: { nitradoServerId, serviceId: nitradoServerId },
+    });
+    if (updated.count === 0) {
+      if (options.expectedId || options.expectedUpdatedAt) throw new NitradoSlotVersionConflictError();
+      return null;
+    }
+
+    const row = await prisma.nitradoConnection.findFirst({
+      where: { id: targetId, guildId, slot },
+    });
+    return row ? rowToConn(row) : null;
+  });
 }
 
 export async function updateAlias(
