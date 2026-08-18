@@ -44,14 +44,15 @@ describe('Nitrado-1M ADM binding freshness architecture gate', () => {
 
   it('fenced Side-Effects gegen exakten ACTIVE Token+Service+Binding-Snapshot', () => {
     const fence = source('src/modules/nitrado/adm/bindingFence.ts');
+    const withFresh = fence.slice(fence.indexOf('export async function withFreshAdmBinding'));
 
-    expect(fence).toContain('tryAcquireNitradoConfigMutationLock(snapshot.id)');
-    expect(fence).toContain("status: 'ACTIVE'");
-    expect(fence).toContain('encryptedToken: snapshot.encryptedToken');
-    expect(fence).toContain('nitradoServerId: snapshot.nitradoServerId');
-    expect(fence).toContain('binding.bindingVersion !== snapshot.bindingVersion');
-    expectOrdered(fence, 'binding.bindingVersion !== snapshot.bindingVersion', 'return await work();');
-    expectOrdered(fence, 'return await work();', 'await lock.release();');
+    expect(withFresh).toContain('tryAcquireNitradoConfigMutationLock(snapshot.id)');
+    expect(withFresh).toContain("status: 'ACTIVE'");
+    expect(withFresh).toContain('encryptedToken: snapshot.encryptedToken');
+    expect(withFresh).toContain('nitradoServerId: snapshot.nitradoServerId');
+    expect(withFresh).toContain('binding.bindingVersion !== snapshot.bindingVersion');
+    expectOrdered(withFresh, 'binding.bindingVersion !== snapshot.bindingVersion', 'return await work();');
+    expectOrdered(withFresh, 'return await work();', 'await lock.release();');
   });
 
   it('scannt Live-ADM nur per stabiler ID und fenced Cursor, Links und Source-Health', () => {
