@@ -5,9 +5,18 @@
  * AES-256-GCM verschluesselt und nur bis zum Jobabschluss benoetigt.
  * REMOVE braucht keinen Klartext: der Worker liest die Nitrado-Banlist live und
  * findet den passenden Identifier per HMAC gegen ServerBanEntry.identityHash.
+ *
+ * Nitrado-1A: Dedupe ist ueber einen DB-Advisory-xact-Lock pro
+ * Guild+Connection+Operation+Ban-ID cross-process atomar. Damit koennen zwei
+ * Bot-Instanzen nicht gleichzeitig denselben aktiven Ban-Outbox-Intent anlegen.
  */
 
 import { encrypt } from '../../utils/security';
+import {
+  withNitradoOutboxSubjectLock,
+  type NitradoOutboxClient,
+  type NitradoOutboxTxClient,
+} from '../nitrado/outboxLock';
 
 export type ServerBanJobOperation = 'SERVER_BAN_ADD' | 'SERVER_BAN_REMOVE';
 
@@ -21,12 +30,7 @@ export interface BanOutboxScope {
   nitradoConnId: string;
 }
 
-export interface BanOutboxClient {
-  nitradoJob: {
-    findMany: (args: unknown) => Promise<Array<{ payload: unknown }>>;
-    create: (args: unknown) => Promise<unknown>;
-  };
-}
+export type BanOutboxClient = NitradoOutboxClient;
 
 function asPayload(value: unknown): ServerBanJobPayload | null {
   if (!value || typeof value !== 'object') return null;
@@ -45,15 +49,15 @@ export function parseServerBanJobPayload(value: unknown): ServerBanJobPayload {
   return payload;
 }
 
-async function ensureJob(
-  client: BanOutboxClient,
+async function ensureJobInLock(
+  tx: NitradoOutboxTxClient,
   scope: BanOutboxScope,
   operation: ServerBanJobOperation,
   payload: ServerBanJobPayload,
 ): Promise<boolean> {
-  // Dedupe pro Ban-ID/Operation. Nur aktive Jobs blockieren einen neuen Job;
-  // DONE/DEAD bleiben Historie und duerfen einen Retry nicht verhindern.
-  const existing = await client.nitradoJob.findMany({
+  // Nur aktive Jobs blockieren einen neuen Job. DONE/DEAD bleiben Historie und
+  // duerfen einen spaeteren expliziten Retry/Reconcile nicht verhindern.
+  const existing = await tx.nitradoJob.findMany({
     where: {
       guildId: scope.guildId,
       nitradoConnId: scope.nitradoConnId,
@@ -61,11 +65,11 @@ async function ensureJob(
       status: { in: ['PENDING', 'RUNNING'] },
     },
     select: { payload: true },
-    take: 200,
+    take: 500,
   });
-  if (existing.some(j => asPayload(j.payload)?.banId === payload.banId)) return false;
+  if (existing.some(job => asPayload(job.payload)?.banId === payload.banId)) return false;
 
-  await client.nitradoJob.create({
+  await tx.nitradoJob.create({
     data: {
       guildId: scope.guildId,
       nitradoConnId: scope.nitradoConnId,
@@ -74,6 +78,27 @@ async function ensureJob(
     },
   });
   return true;
+}
+
+async function ensureJob(
+  client: BanOutboxClient,
+  scope: BanOutboxScope,
+  operation: ServerBanJobOperation,
+  payload: ServerBanJobPayload,
+): Promise<boolean> {
+  const banId = payload.banId.trim();
+  if (!banId) throw new Error('Leere Server-Ban-ID');
+  const lockSubject = [
+    'nitrado-ban-outbox:v1',
+    scope.guildId,
+    scope.nitradoConnId,
+    operation,
+    banId,
+  ].join(':');
+
+  return withNitradoOutboxSubjectLock(client, lockSubject, tx =>
+    ensureJobInLock(tx, scope, operation, payload),
+  );
 }
 
 /** Queued Remote-Ban; Klartext-Identifier wird nie in der Job-Payload gespeichert. */
