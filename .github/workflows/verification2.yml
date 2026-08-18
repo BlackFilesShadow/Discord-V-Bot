@@ -1,0 +1,172 @@
+name: Verification 2
+
+on:
+  pull_request:
+    branches: [main]
+
+env:
+  NODE_VERSION: '22'
+  NODE_OPTIONS: '--max-old-space-size=4096'
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: 'true'
+
+jobs:
+  lint-and-build-2:
+    name: Gate 2 · Lint & Build
+    runs-on: ubuntu-latest
+    env:
+      DATABASE_URL: postgresql://placeholder:placeholder@localhost:5432/placeholder
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v5
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: npm
+          cache-dependency-path: |
+            package-lock.json
+            dashboard-ui/package-lock.json
+      - run: npm ci
+      - working-directory: dashboard-ui
+        run: npm ci
+      - run: npx prisma generate
+      - run: npx prisma validate
+      - run: npm run lint:all
+      - run: npm run build
+
+  tests-2:
+    name: Gate 2 · Tests / DB Lifecycle
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: test
+          POSTGRES_PASSWORD: test
+          POSTGRES_DB: discord_v_bot_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+    env:
+      DATABASE_URL: postgresql://test:test@localhost:5432/discord_v_bot_test
+      DISCORD_TOKEN: test-token
+      DISCORD_CLIENT_ID: test-client-id
+      DISCORD_CLIENT_SECRET: test-secret
+      BOT_OWNER_ID: '123456789012345678'
+      ENCRYPTION_KEY: 0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef
+      SESSION_SECRET: test-session-secret
+      DASHBOARD_URL: http://localhost:3000
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v5
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: npm
+      - run: npm ci
+      - run: npx prisma generate
+      - run: npx prisma migrate deploy
+      - run: npx prisma migrate status
+      - run: npm run db:consistency
+      - name: Ensure PostgreSQL client
+        shell: bash
+        run: |
+          if ! command -v psql >/dev/null 2>&1 || ! command -v pg_dump >/dev/null 2>&1 || ! command -v pg_restore >/dev/null 2>&1; then
+            sudo apt-get update -y
+            sudo apt-get install -y postgresql-client
+          fi
+      - run: npm run db:lifecycle
+      - name: Run tests without leaked handles
+        shell: bash
+        run: |
+          set +e
+          timeout --signal=TERM --kill-after=30s 8m npm run test:ci 2>&1 | tee jest-ci-gate2.log
+          status=${PIPESTATUS[0]}
+          set -e
+          if [ "$status" -eq 124 ] || [ "$status" -eq 137 ]; then exit 1; fi
+          if grep -Eqi 'A worker process has failed to exit gracefully|Jest did not exit one second after the test run has completed' jest-ci-gate2.log; then exit 1; fi
+          [ "$status" -eq 0 ]
+      - if: always()
+        uses: actions/upload-artifact@v5
+        with:
+          name: jest-gate2-log
+          path: jest-ci-gate2.log
+          if-no-files-found: warn
+
+  security-2:
+    name: Gate 2 · Security / SBOM
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v5
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: npm
+          cache-dependency-path: |
+            package-lock.json
+            dashboard-ui/package-lock.json
+      - run: npm ci
+      - working-directory: dashboard-ui
+        run: npm ci
+      - run: npm audit --audit-level=critical
+      - run: npm audit --audit-level=high
+        continue-on-error: true
+      - working-directory: dashboard-ui
+        run: npm audit --omit=dev --audit-level=high
+      - working-directory: dashboard-ui
+        run: npm audit --audit-level=critical
+      - working-directory: dashboard-ui
+        run: npm audit --audit-level=high
+        continue-on-error: true
+      - name: Generate SBOMs
+        shell: bash
+        run: |
+          npx --yes @cyclonedx/cyclonedx-npm@latest --output-format JSON --output-file sbom.cyclonedx.json --omit dev
+          (cd dashboard-ui && npx --yes @cyclonedx/cyclonedx-npm@latest --output-format JSON --output-file sbom.cyclonedx.json --omit dev)
+      - if: always()
+        uses: actions/upload-artifact@v5
+        with:
+          name: sbom-gate2
+          path: |
+            sbom.cyclonedx.json
+            dashboard-ui/sbom.cyclonedx.json
+          if-no-files-found: warn
+
+  playwright-2:
+    name: Gate 2 · Playwright
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    defaults:
+      run:
+        working-directory: dashboard-ui
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v5
+        with:
+          node-version: '22'
+          cache: npm
+          cache-dependency-path: dashboard-ui/package-lock.json
+      - run: npm ci
+      - name: Get Playwright version
+        id: pw-version
+        run: echo "version=$(node -p \"require('@playwright/test/package.json').version\")" >> "$GITHUB_OUTPUT"
+      - uses: actions/cache@v4
+        id: pw-cache
+        with:
+          path: ~/.cache/ms-playwright
+          key: playwright-${{ runner.os }}-${{ steps.pw-version.outputs.version }}
+      - if: steps.pw-cache.outputs.cache-hit != 'true'
+        run: npx playwright install --with-deps chromium
+      - if: steps.pw-cache.outputs.cache-hit == 'true'
+        run: npx playwright install-deps chromium
+      - run: npm run e2e
+        env:
+          CI: 'true'
+      - if: failure()
+        uses: actions/upload-artifact@v5
+        with:
+          name: playwright-gate2-report
+          path: dashboard-ui/playwright-report/
+          retention-days: 7
