@@ -11,11 +11,20 @@ const whitelistUpdateMany = jest.fn(async () => ({ count: 1 }));
 const whitelistDeleteMany = jest.fn(async () => ({ count: 1 }));
 const jobFindMany = jest.fn();
 const jobCreate = jest.fn(async () => ({}));
+const queryRaw = jest.fn(async () => []);
+const transaction = jest.fn();
 const getWhitelist = jest.fn();
+
+const tx = {
+  $queryRawUnsafe: queryRaw,
+  nitradoJob: { findMany: jobFindMany, create: jobCreate },
+};
 
 jest.mock('../../src/database/prisma', () => ({
   __esModule: true,
   default: {
+    $queryRawUnsafe: queryRaw,
+    $transaction: transaction,
     nitradoConnection: { findMany: connectionFindMany },
     whitelistEntry: {
       findMany: whitelistFindMany,
@@ -55,12 +64,14 @@ const conn = {
 
 beforeEach(() => {
   jest.clearAllMocks();
+  transaction.mockImplementation(async (cb: (client: typeof tx) => unknown) => cb(tx));
   connectionFindMany.mockResolvedValue([conn]);
   whitelistFindMany.mockResolvedValue([]);
   whitelistUpdateMany.mockResolvedValue({ count: 1 });
   whitelistDeleteMany.mockResolvedValue({ count: 1 });
   jobFindMany.mockResolvedValue([]);
   jobCreate.mockResolvedValue({});
+  queryRaw.mockResolvedValue([]);
   getWhitelist.mockResolvedValue([]);
 });
 
@@ -76,14 +87,17 @@ it('markiert einen lokal+remote vorhandenen Eintrag als SYNCED ohne Job', async 
   }));
   expect(whitelistDeleteMany).not.toHaveBeenCalled();
   expect(jobCreate).not.toHaveBeenCalled();
+  expect(transaction).not.toHaveBeenCalled();
 });
 
-it('queued genau einen ADD-Job wenn lokaler Eintrag remote fehlt', async () => {
+it('queued genau einen ADD-Job unter dem cross-process Subject-Lock wenn lokal remote fehlt', async () => {
   whitelistFindMany.mockResolvedValue([{ id: 'wl-1', gameId: 'Alice', syncState: 'LOCAL_ONLY' }]);
   getWhitelist.mockResolvedValue([]);
 
   await runWhitelistSyncOnce();
 
+  expect(transaction).toHaveBeenCalledTimes(1);
+  expect(queryRaw).toHaveBeenCalledWith('SELECT pg_advisory_xact_lock($1, $2)', expect.any(Number), expect.any(Number));
   expect(jobCreate).toHaveBeenCalledTimes(1);
   expect(jobCreate).toHaveBeenCalledWith({
     data: {
@@ -149,7 +163,7 @@ it('finalisiert PENDING_REMOVE erst nachdem ein frischer Remote-Read die Entfern
   expect(jobCreate).not.toHaveBeenCalled();
 });
 
-it('dupliziert keinen bereits PENDING/RUNNING identischen Job', async () => {
+it('dupliziert keinen bereits PENDING/RUNNING identischen Job und benoetigt dann keinen zweiten DB-Lock', async () => {
   whitelistFindMany.mockResolvedValue([{ id: 'wl-1', gameId: 'Alice', syncState: 'LOCAL_ONLY' }]);
   getWhitelist.mockResolvedValue([]);
   jobFindMany.mockResolvedValue([
@@ -158,6 +172,8 @@ it('dupliziert keinen bereits PENDING/RUNNING identischen Job', async () => {
 
   await runWhitelistSyncOnce();
 
+  // Fast-path erkennt den Job bereits vor dem atomaren Helper.
+  expect(transaction).not.toHaveBeenCalled();
   expect(jobCreate).not.toHaveBeenCalled();
 });
 
