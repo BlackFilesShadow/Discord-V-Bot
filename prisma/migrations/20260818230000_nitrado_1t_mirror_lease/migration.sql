@@ -3,6 +3,7 @@ CREATE TABLE "NitradoMirrorLease" (
     "nitradoConnId" TEXT NOT NULL,
     "snapshotId" TEXT NOT NULL,
     "leaseToken" TEXT NOT NULL,
+    "bindingKey" TEXT NOT NULL,
     "heartbeatAt" TIMESTAMP(3) NOT NULL,
     "leaseExpiresAt" TIMESTAMP(3) NOT NULL,
     "createdAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
