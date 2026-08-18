@@ -156,6 +156,19 @@ describe('Nitrado-1F keep-online config/worker lock', () => {
     expect(releaseLock).toHaveBeenCalledTimes(1);
   });
 
+  it('fails closed instead of hanging when a resolved connection vanishes before exact re-read', async () => {
+    prismaMock.nitradoConnection.findFirst.mockResolvedValueOnce(null);
+
+    const res = await request(app())
+      .patch(`/api/v2/guilds/${GUILD}/dashboard/server/1/settings`)
+      .send({ permaOnly: false });
+
+    expect(res.status).toBe(409);
+    expect(res.body.code).toBe('NITRADO_SLOT_VERSION_CONFLICT');
+    expect(tryAcquireNitradoConfigMutationLock).not.toHaveBeenCalled();
+    expect(prismaMock.$transaction).not.toHaveBeenCalled();
+  });
+
   it('does not take the Nitrado connection lock for unrelated server-settings writes', async () => {
     const res = await request(app())
       .patch(`/api/v2/guilds/${GUILD}/dashboard/server/1/settings`)
