@@ -4,18 +4,23 @@ import path from 'node:path';
 const read = (relative: string) => fs.readFileSync(path.resolve(process.cwd(), relative), 'utf8');
 
 const removeSource = read('src/events/guildMemberRemove.ts');
-const indexSource = read('src/index.ts');
+const workerSource = read('src/modules/moderation/leaveCleanupWorker.ts');
 const whitelistSource = read('src/modules/moderation/leaveCleanupWhitelist.ts');
 
-describe('Leave-1B production isolation and write boundary', () => {
-  it('keeps the incomplete reset processor disconnected from guildMemberRemove', () => {
+describe('Leave-1B/1E production boundary and write safety', () => {
+  it('keeps whitelist/Nitrado side effects out of the Discord gateway event', () => {
     expect(removeSource).not.toContain('leaveCleanupWhitelist');
     expect(removeSource).not.toContain('runLeaveWhitelistCleanupStep');
+    expect(removeSource).toContain('enqueueLeaveCleanupRequest');
   });
 
-  it('does not start Leave cleanup from the process runtime yet', () => {
-    expect(indexSource).not.toContain('runLeaveWhitelistCleanupStep');
-    expect(indexSource).not.toContain('startLeaveCleanup');
+  it('runs whitelist as the first persisted worker substep before stats or economy', () => {
+    const whitelistAt = workerSource.indexOf('await runLeaveWhitelistCleanupStep(');
+    const statsAt = workerSource.indexOf('await runLeaveStatsSessionsCleanupStep(');
+    const economyAt = workerSource.indexOf('await runLeaveLinkEconomyAfterConfirmedWhitelistStep(');
+    expect(whitelistAt).toBeGreaterThanOrEqual(0);
+    expect(statsAt).toBeGreaterThan(whitelistAt);
+    expect(economyAt).toBeGreaterThan(statsAt);
   });
 
   it('uses Nitrado only for a fresh GET and routes every removal through NitradoJob', () => {

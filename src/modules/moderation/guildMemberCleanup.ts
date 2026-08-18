@@ -3,7 +3,7 @@ import { logger, logAudit } from '../../utils/logger';
 
 /**
  * Loescht alle GUILD-SPEZIFISCHEN Moderations- und Aktivitaetsdaten eines Users
- * fuer eine bestimmte Guild, wenn er diese verlaesst.
+ * fuer eine bestimmte Guild, wenn der optionale Leave-Cleanup aktiv ist.
  *
  * NICHT geloescht (cross-guild bzw. Hersteller-Daten):
  *  - User-Stammdaten
@@ -13,14 +13,10 @@ import { logger, logAudit } from '../../utils/logger';
  * Geloescht (Guild-Scope):
  *  - LevelData (userId, guildId)
  *  - XpRecord (userId, guildId)
- *  - ModerationCase (guildId, target=userId)  -> Appeals cascaden ueber FK
- *  - Reminder (userId, guildId)
+ *  - ModerationCase (guildId, target=userId) -> Appeals cascaden ueber FK
+ *  - Reminder (Discord-userId, guildId), auch wenn kein User-Stammsatz existiert
  *
  * Atomar via prisma.$transaction. Bei Fehler: nichts geloescht, Logeintrag.
- *
- * @param guildId  Discord-Guild-ID
- * @param discordId Discord-User-ID des verlassenden Members
- * @returns Statistik-Objekt mit Anzahl geloeschter Records pro Tabelle
  */
 export async function cleanupGuildMemberData(
   guildId: string,
@@ -34,34 +30,37 @@ export async function cleanupGuildMemberData(
   reminders: number;
 }> {
   const empty = { levelData: 0, xpRecords: 0, moderationCases: 0, reminders: 0 };
-
-  // 1. User in DB aufloesen. Wenn unbekannt -> nichts zu tun.
   const dbUser = await prisma.user.findUnique({
     where: { discordId },
     select: { id: true },
   });
-  if (!dbUser) {
-    return { performed: false, reason: 'user_not_in_db', ...empty };
-  }
 
   try {
-    const [levelDel, xpDel, casesDel, remDel] = await prisma.$transaction([
-      // LevelData ist per (userId, guildId) unique -> deleteMany ist sicher.
-      prisma.levelData.deleteMany({
-        where: { userId: dbUser.id, guildId },
-      }),
-      prisma.xpRecord.deleteMany({
-        where: { userId: dbUser.id, guildId },
-      }),
-      // Nur Faelle, in denen der Verlassende das ZIEL war. Faelle, in denen er
-      // selbst Moderator war, bleiben erhalten (Audit-Trail anderer User darf
-      // nicht durch sein Leave verschwinden).
-      prisma.moderationCase.deleteMany({
-        where: { guildId, targetUserId: dbUser.id },
-      }),
-      prisma.reminder.deleteMany({
+    // Reminder besitzt bewusst die rohe Discord-ID und keine User-FK. Deshalb
+    // muss dieser Guild-Scope auch ohne aufloesbaren User-Stammsatz bereinigt
+    // werden; sonst bliebe beim vollstaendigen Leave-Reset personenbezogene
+    // Scheduler-History zurueck.
+    if (!dbUser) {
+      const remDel = await prisma.reminder.deleteMany({
         where: { userId: discordId, guildId },
-      }),
+      });
+      logAudit('GUILD_MEMBER_DATA_CLEANUP', 'MODERATION', {
+        guildId,
+        discordId,
+        userId: null,
+        ...empty,
+        reminders: remDel.count,
+      });
+      return { performed: true, ...empty, reminders: remDel.count };
+    }
+
+    const [levelDel, xpDel, casesDel, remDel] = await prisma.$transaction([
+      prisma.levelData.deleteMany({ where: { userId: dbUser.id, guildId } }),
+      prisma.xpRecord.deleteMany({ where: { userId: dbUser.id, guildId } }),
+      // Nur Faelle, in denen der Verlassende das ZIEL war. Faelle, in denen er
+      // selbst Moderator war, bleiben als Audit-Trail anderer User erhalten.
+      prisma.moderationCase.deleteMany({ where: { guildId, targetUserId: dbUser.id } }),
+      prisma.reminder.deleteMany({ where: { userId: discordId, guildId } }),
     ]);
 
     logAudit('GUILD_MEMBER_DATA_CLEANUP', 'MODERATION', {

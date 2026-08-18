@@ -1,30 +1,22 @@
 import { createHmac } from 'node:crypto';
 import { Prisma } from '@prisma/client';
 import prisma from '../../database/prisma';
-
-/**
- * Leave-1A — interne, persistente Grundlage fuer den spaeteren Guild-Leave-Reset.
- *
- * WICHTIG: Diese Etappe wird absichtlich noch NICHT aus guildMemberRemove
- * aufgerufen. Erst wenn Whitelist/Nitrado, Linking, Economy und Stats als
- * vollstaendige Saga-Schritte implementiert und getestet sind, darf der
- * Dashboard-Toggle den Enqueue-Pfad freischalten.
- *
- * Die bestehende DataDeletionRequest-Tabelle ist die kanonische persistente
- * Deletion-Queue. Dadurch entsteht keine zweite konkurrierende Job-Infrastruktur.
- */
+import { sanitizeLeaveCleanupError } from './leaveCleanupSecurity';
 
 export const LEAVE_CLEANUP_KIND = 'GUILD_LEAVE_CLEANUP_V1' as const;
 export const LEAVE_CLEANUP_MAX_ATTEMPTS = 8;
 export const LEAVE_CLEANUP_STALE_MS = 5 * 60_000;
+export const LEAVE_CLEANUP_WAIT_MS = 30_000;
 const LEAVE_JOB_PREFIX = 'leave-job:v1:';
 const RECEIPT_PREFIX = 'leave-receipt:v1:';
 
 export type LeaveCleanupStage = 'QUEUED' | 'RUNNING' | 'RETRY_WAIT' | 'COMPLETED' | 'DEAD';
+export type LeaveCleanupStep = 'WHITELIST' | 'STATS_SESSIONS' | 'LINK_ECONOMY' | 'GUILD_DATA' | 'COMPLETE';
 
 export interface LeaveCleanupDetails {
   kind: typeof LEAVE_CLEANUP_KIND;
   guildId: string;
+  step: LeaveCleanupStep;
   stage: LeaveCleanupStage;
   attempts: number;
   maxAttempts: number;
@@ -42,6 +34,13 @@ export interface LeaveCleanupRequestLike {
   details: unknown;
 }
 
+const NEXT_STEP: Record<Exclude<LeaveCleanupStep, 'COMPLETE'>, LeaveCleanupStep> = {
+  WHITELIST: 'STATS_SESSIONS',
+  STATS_SESSIONS: 'LINK_ECONOMY',
+  LINK_ECONOMY: 'GUILD_DATA',
+  GUILD_DATA: 'COMPLETE',
+};
+
 function cleanSnowflake(value: string, label: string): string {
   const trimmed = value.trim();
   if (!/^\d{17,20}$/.test(trimmed)) throw new Error(`${label} muss eine Discord-Snowflake sein.`);
@@ -49,11 +48,14 @@ function cleanSnowflake(value: string, label: string): string {
 }
 
 function safeError(error: unknown): string {
-  const raw = error instanceof Error ? error.message : String(error);
-  return raw.replace(/[\r\n\t]+/g, ' ').slice(0, 1000);
+  return sanitizeLeaveCleanupError(error).slice(0, 1000);
 }
 
-function asDetails(value: unknown): LeaveCleanupDetails | null {
+/**
+ * Parser fuer persistierte Saga-Metadaten. Alte Leave-1A-Requests besitzen
+ * noch keinen `step`; diese werden absichtlich als WHITELIST fortgesetzt.
+ */
+export function readLeaveCleanupDetails(value: unknown): LeaveCleanupDetails | null {
   if (!value || typeof value !== 'object' || Array.isArray(value)) return null;
   const row = value as Partial<LeaveCleanupDetails>;
   if (row.kind !== LEAVE_CLEANUP_KIND || typeof row.guildId !== 'string') return null;
@@ -62,10 +64,13 @@ function asDetails(value: unknown): LeaveCleanupDetails | null {
     ? Number(row.maxAttempts)
     : LEAVE_CLEANUP_MAX_ATTEMPTS;
   const allowedStages: LeaveCleanupStage[] = ['QUEUED', 'RUNNING', 'RETRY_WAIT', 'COMPLETED', 'DEAD'];
+  const allowedSteps: LeaveCleanupStep[] = ['WHITELIST', 'STATS_SESSIONS', 'LINK_ECONOMY', 'GUILD_DATA', 'COMPLETE'];
   const stage = allowedStages.includes(row.stage as LeaveCleanupStage) ? row.stage as LeaveCleanupStage : 'QUEUED';
+  const step = allowedSteps.includes(row.step as LeaveCleanupStep) ? row.step as LeaveCleanupStep : 'WHITELIST';
   return {
     kind: LEAVE_CLEANUP_KIND,
     guildId: row.guildId,
+    step,
     stage,
     attempts,
     maxAttempts,
@@ -80,6 +85,7 @@ function detailsJson(details: LeaveCleanupDetails): Prisma.InputJsonObject {
   return {
     kind: details.kind,
     guildId: details.guildId,
+    step: details.step,
     stage: details.stage,
     attempts: details.attempts,
     maxAttempts: details.maxAttempts,
@@ -107,7 +113,6 @@ export function leaveCleanupJobKey(guildId: string, discordId: string): string {
 /**
  * Pseudonymer Abschlussbeleg. Nach erfolgreicher Komplettloeschung koennen die
  * rohen Discord-IDs im DeletionRequest durch diesen HMAC ersetzt werden.
- * Der Guild-Scope ist Bestandteil des HMAC und verhindert Cross-Guild-Linkage.
  */
 export function leaveCleanupReceiptFingerprint(guildId: string, discordId: string, secret: string): string {
   const scopeGuild = cleanSnowflake(guildId, 'guildId');
@@ -119,13 +124,15 @@ export function leaveCleanupReceiptFingerprint(guildId: string, discordId: strin
   return `${RECEIPT_PREFIX}${digest}`;
 }
 
-/**
- * Enqueue ist Multi-Process-race-safe: der transaction-scoped PostgreSQL-
- * Advisory-Lock serialisiert exakt denselben Guild+User-Key. Erst unter diesem
- * Lock wird auf einen bereits offenen Request geprueft und ggf. erstellt.
- *
- * Der eigentliche Leave-Event-Wiring-Pfad folgt erst in einer spaeteren Etappe.
- */
+function hasValidRawScope(userId: string, discordId: string, details: LeaveCleanupDetails): boolean {
+  try {
+    return userId === leaveCleanupJobKey(details.guildId, discordId);
+  } catch {
+    return false;
+  }
+}
+
+/** Multi-Process-race-safe Enqueue unter transaction-scoped Advisory-Lock. */
 export async function enqueueLeaveCleanupRequest(args: {
   guildId: string;
   discordId: string;
@@ -144,7 +151,7 @@ export async function enqueueLeaveCleanupRequest(args: {
       where: {
         userId: key,
         requestType: 'PARTIAL_DELETION',
-        status: { in: ['PENDING', 'IN_PROGRESS'] },
+        status: { in: ['PENDING', 'IN_PROGRESS', 'FAILED'] },
       },
       select: { id: true },
       orderBy: { createdAt: 'desc' },
@@ -154,6 +161,7 @@ export async function enqueueLeaveCleanupRequest(args: {
     const details: LeaveCleanupDetails = {
       kind: LEAVE_CLEANUP_KIND,
       guildId,
+      step: 'WHITELIST',
       stage: 'QUEUED',
       attempts: 0,
       maxAttempts,
@@ -173,10 +181,7 @@ export async function enqueueLeaveCleanupRequest(args: {
   });
 }
 
-/**
- * CAS-Claim: mehrere Worker duerfen denselben Kandidaten lesen, aber nur einer
- * darf PENDING -> IN_PROGRESS gewinnen.
- */
+/** CAS-Claim: mehrere Worker duerfen lesen, aber nur einer gewinnt. */
 export async function claimNextLeaveCleanupRequest(now: Date = new Date()): Promise<LeaveCleanupRequestLike | null> {
   for (let spin = 0; spin < 5; spin++) {
     const candidate = await prisma.dataDeletionRequest.findFirst({
@@ -189,15 +194,16 @@ export async function claimNextLeaveCleanupRequest(now: Date = new Date()): Prom
       orderBy: [{ scheduledAt: 'asc' }, { createdAt: 'asc' }],
     });
     if (!candidate) return null;
-    const details = asDetails(candidate.details);
-    if (!details) {
+    const details = readLeaveCleanupDetails(candidate.details);
+    if (!details || !hasValidRawScope(candidate.userId, candidate.discordId, details)) {
       const invalidDetails: LeaveCleanupDetails = {
         kind: LEAVE_CLEANUP_KIND,
-        guildId: 'invalid',
+        guildId: details?.guildId ?? 'invalid',
+        step: details?.step ?? 'WHITELIST',
         stage: 'DEAD',
-        attempts: 0,
-        maxAttempts: 1,
-        lastError: 'Ungueltige Leave-Cleanup-Metadaten.',
+        attempts: details?.attempts ?? 0,
+        maxAttempts: details?.maxAttempts ?? 1,
+        lastError: 'Ungueltige Leave-Cleanup-Metadaten oder Scope-Zuordnung.',
       };
       await prisma.dataDeletionRequest.updateMany({
         where: { id: candidate.id, status: 'PENDING' },
@@ -233,34 +239,47 @@ export async function recoverStaleLeaveCleanupRequests(
   now: Date = new Date(),
   staleMs: number = LEAVE_CLEANUP_STALE_MS,
 ): Promise<number> {
-  const rows = await prisma.dataDeletionRequest.findMany({
-    where: {
-      userId: { startsWith: LEAVE_JOB_PREFIX },
-      requestType: 'PARTIAL_DELETION',
-      status: 'IN_PROGRESS',
-    },
-    take: 500,
-  });
+  const batchSize = 500;
+  let lastId: string | null = null;
   let recovered = 0;
-  for (const row of rows) {
-    const details = asDetails(row.details);
-    const claimedAt = details?.claimedAt ? Date.parse(details.claimedAt) : Number.NaN;
-    if (!details || !Number.isFinite(claimedAt) || now.getTime() - claimedAt < staleMs) continue;
-    const recoveredDetails: LeaveCleanupDetails = {
-      ...withoutClaim(details),
-      stage: 'QUEUED',
-      lastError: 'Stale Claim nach Restart wieder freigegeben.',
-    };
-    const result = await prisma.dataDeletionRequest.updateMany({
-      where: { id: row.id, status: 'IN_PROGRESS' },
-      data: {
-        status: 'PENDING',
-        scheduledAt: now,
-        details: detailsJson(recoveredDetails),
+
+  for (;;) {
+    const rows: Array<{ id: string; details: unknown }> = await prisma.dataDeletionRequest.findMany({
+      where: {
+        userId: { startsWith: LEAVE_JOB_PREFIX },
+        requestType: 'PARTIAL_DELETION',
+        status: 'IN_PROGRESS',
+        ...(lastId ? { id: { gt: lastId } } : {}),
       },
+      orderBy: { id: 'asc' },
+      take: batchSize,
     });
-    recovered += result.count;
+    if (rows.length === 0) break;
+
+    for (const row of rows) {
+      const details = readLeaveCleanupDetails(row.details);
+      const claimedAt = details?.claimedAt ? Date.parse(details.claimedAt) : Number.NaN;
+      if (!details || !Number.isFinite(claimedAt) || now.getTime() - claimedAt < staleMs) continue;
+      const recoveredDetails: LeaveCleanupDetails = {
+        ...withoutClaim(details),
+        stage: 'QUEUED',
+        lastError: 'Stale Claim nach Restart wieder freigegeben.',
+      };
+      const result = await prisma.dataDeletionRequest.updateMany({
+        where: { id: row.id, status: 'IN_PROGRESS' },
+        data: {
+          status: 'PENDING',
+          scheduledAt: now,
+          details: detailsJson(recoveredDetails),
+        },
+      });
+      recovered += result.count;
+    }
+
+    lastId = rows[rows.length - 1]?.id ?? null;
+    if (rows.length < batchSize || !lastId) break;
   }
+
   return recovered;
 }
 
@@ -269,13 +288,69 @@ export function leaveCleanupBackoffMs(attempt: number): number {
   return Math.min(60 * 60_000, 5_000 * 2 ** Math.min(safeAttempt - 1, 10));
 }
 
-/** Retry/Dead-Letter-Transition nach einem fehlgeschlagenen Saga-Schritt. */
+/**
+ * Persistiert einen erfolgreich abgeschlossenen Substep. Der Request bleibt
+ * IN_PROGRESS; bei einem Crash konserviert die Stale-Recovery den neuen Step.
+ */
+export async function advanceLeaveCleanupStep(
+  request: LeaveCleanupRequestLike,
+  expectedStep: Exclude<LeaveCleanupStep, 'COMPLETE'>,
+): Promise<LeaveCleanupRequestLike> {
+  const details = readLeaveCleanupDetails(request.details);
+  if (!details || details.step !== expectedStep) {
+    throw new Error(`Leave-Cleanup Step-CAS ungueltig; erwartet ${expectedStep}.`);
+  }
+  const nextStep = NEXT_STEP[expectedStep];
+  const nextDetails: LeaveCleanupDetails = {
+    ...withoutLastError(details),
+    step: nextStep,
+    stage: 'RUNNING',
+  };
+  const result = await prisma.dataDeletionRequest.updateMany({
+    where: { id: request.id, status: 'IN_PROGRESS', userId: request.userId },
+    data: { details: detailsJson(nextDetails) },
+  });
+  if (result.count !== 1) throw new Error('Leave-Cleanup Step-CAS verloren.');
+  return { ...request, details: nextDetails };
+}
+
+/**
+ * Erwartbares WAITING (Remote-Whitelist, offene Session, aktive Lottery) wird
+ * ohne Retry-Verbrauch verschoben. So fuehren normale externe Wartezustaende
+ * niemals allein ins Dead-Letter.
+ */
+export async function deferLeaveCleanupRequest(
+  request: LeaveCleanupRequestLike,
+  reason: unknown,
+  now: Date = new Date(),
+  delayMs: number = LEAVE_CLEANUP_WAIT_MS,
+): Promise<void> {
+  const details = readLeaveCleanupDetails(request.details);
+  if (!details) throw new Error('Leave-Cleanup-Request hat ungueltige Metadaten.');
+  const safeDelay = Math.max(5_000, Math.min(60 * 60_000, Math.trunc(delayMs)));
+  const nextDetails: LeaveCleanupDetails = {
+    ...withoutClaim(details),
+    stage: 'RETRY_WAIT',
+    lastError: safeError(reason),
+  };
+  const result = await prisma.dataDeletionRequest.updateMany({
+    where: { id: request.id, status: 'IN_PROGRESS', userId: request.userId },
+    data: {
+      status: 'PENDING',
+      scheduledAt: new Date(now.getTime() + safeDelay),
+      details: detailsJson(nextDetails),
+    },
+  });
+  if (result.count !== 1) throw new Error('Leave-Cleanup Defer-CAS verloren.');
+}
+
+/** Retry/Dead-Letter nur fuer echte Fehler, nicht fuer normale WAITING-Zustaende. */
 export async function retryOrDeadLetterLeaveCleanupRequest(
   request: LeaveCleanupRequestLike,
   error: unknown,
   now: Date = new Date(),
 ): Promise<'RETRY' | 'DEAD'> {
-  const details = asDetails(request.details);
+  const details = readLeaveCleanupDetails(request.details);
   if (!details) throw new Error('Leave-Cleanup-Request hat ungueltige Metadaten.');
   const attempts = details.attempts + 1;
   const lastError = safeError(error);
@@ -301,8 +376,8 @@ export async function retryOrDeadLetterLeaveCleanupRequest(
 }
 
 /**
- * Abschluss anonymisiert die fuer die Verarbeitung benoetigte rohe Discord-ID.
- * Der pseudonyme Receipt bleibt fuer spaetere Anti-Churn-Pruefungen erhalten.
+ * Abschluss anonymisiert die rohe Discord-ID. Er ist nur nach persistiertem
+ * COMPLETE-Checkpoint erlaubt, damit kein Teilcleanup als Erfolg quittiert wird.
  */
 export async function completeLeaveCleanupRequest(
   request: LeaveCleanupRequestLike,
@@ -310,10 +385,13 @@ export async function completeLeaveCleanupRequest(
   secret: string,
   now: Date = new Date(),
 ): Promise<string> {
-  const details = asDetails(request.details);
+  const details = readLeaveCleanupDetails(request.details);
   const scopedGuildId = cleanSnowflake(guildId, 'guildId');
   if (!details || details.guildId !== scopedGuildId) {
     throw new Error('Leave-Cleanup Guild-Scope stimmt nicht mit Request ueberein.');
+  }
+  if (details.step !== 'COMPLETE') {
+    throw new Error(`Leave-Cleanup darf in Step ${details.step} nicht abgeschlossen werden.`);
   }
   const fingerprint = leaveCleanupReceiptFingerprint(scopedGuildId, request.discordId, secret);
   const completedDetails: LeaveCleanupDetails = {

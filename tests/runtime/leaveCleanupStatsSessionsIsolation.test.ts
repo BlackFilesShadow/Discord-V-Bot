@@ -3,21 +3,25 @@ import path from 'node:path';
 
 const read = (relative: string) => fs.readFileSync(path.resolve(process.cwd(), relative), 'utf8');
 const removeSource = read('src/events/guildMemberRemove.ts');
-const indexSource = read('src/index.ts');
+const workerSource = read('src/modules/moderation/leaveCleanupWorker.ts');
 const cleanupSource = read('src/modules/moderation/leaveCleanupStatsSessions.ts');
 const linkEconomySource = read('src/modules/moderation/leaveCleanupLinkEconomy.ts');
 
-describe('Leave-1D production isolation and reset invariants', () => {
-  it('keeps the incomplete stats/session step disconnected from guildMemberRemove and process startup', () => {
+describe('Leave-1D/1E production ordering and reset invariants', () => {
+  it('keeps stats/session mutations out of guildMemberRemove and runs them only in the worker', () => {
     expect(removeSource).not.toContain('leaveCleanupStatsSessions');
     expect(removeSource).not.toContain('runLeaveStatsSessionsCleanupStep');
-    expect(indexSource).not.toContain('runLeaveStatsSessionsCleanupStep');
+    expect(workerSource).toContain('runLeaveStatsSessionsCleanupStep');
   });
 
-  it('does not let Leave-1C delete GameIdentityLink before a future orchestrator explicitly runs Leave-1D', () => {
-    expect(linkEconomySource).not.toContain('runLeaveStatsSessionsCleanupStep');
-    expect(linkEconomySource).not.toContain('leaveCleanupStatsSessions');
-    expect(cleanupSource).toContain('Muss spaeter VOR Leave-1C laufen');
+  it('persists STATS completion before the orchestrator enters the post-whitelist Leave-1C core', () => {
+    const statsCall = workerSource.indexOf('await runLeaveStatsSessionsCleanupStep(');
+    const statsAdvance = workerSource.indexOf("advanceLeaveCleanupStep(request, 'STATS_SESSIONS')");
+    const economyCall = workerSource.indexOf('await runLeaveLinkEconomyAfterConfirmedWhitelistStep(');
+    expect(statsCall).toBeGreaterThanOrEqual(0);
+    expect(statsAdvance).toBeGreaterThan(statsCall);
+    expect(economyCall).toBeGreaterThan(statsAdvance);
+    expect(linkEconomySource).toContain('runLeaveLinkEconomyAfterConfirmedWhitelistStep');
   });
 
   it('blocks an OPEN session under locks before any PlayerSession identity mutation', () => {

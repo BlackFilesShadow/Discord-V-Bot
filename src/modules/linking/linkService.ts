@@ -13,6 +13,7 @@
  * der GUID muss nicht dauerhaft in GameIdentityLink gespeichert werden.
  */
 
+import { assertNoOpenLeaveCleanupRequest } from '../moderation/leaveCleanupGuard';
 import { identityHash } from './identity';
 
 export const MIN_LINK_PLAYTIME_SECONDS = 5 * 60;
@@ -307,6 +308,7 @@ export async function linkByPlayerName(
   secret: string,
   now: Date = new Date(),
 ): Promise<PlayerNameLinkResult> {
+  await assertNoOpenLeaveCleanupRequest(scope.guildId, userDiscordId);
   const resolved = await resolvePlayerIdentityByName(client, scope, playerName, now);
   if (!resolved) return { ok: false, reason: 'PLAYER_NOT_SEEN', playerName: normalizePlayerName(playerName) };
   if (resolved === 'AMBIGUOUS') return { ok: false, reason: 'AMBIGUOUS_PLAYER_NAME', playerName: normalizePlayerName(playerName) };
@@ -322,6 +324,7 @@ export async function forceLinkByPlayerName(
   secret: string,
   now: Date = new Date(),
 ): Promise<PlayerNameLinkResult> {
+  await assertNoOpenLeaveCleanupRequest(scope.guildId, userDiscordId);
   const resolved = await resolvePlayerIdentityByName(client, scope, playerName, now);
   if (!resolved) return { ok: false, reason: 'PLAYER_NOT_SEEN', playerName: normalizePlayerName(playerName) };
   if (resolved === 'AMBIGUOUS') return { ok: false, reason: 'AMBIGUOUS_PLAYER_NAME', playerName: normalizePlayerName(playerName) };

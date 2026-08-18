@@ -9,9 +9,16 @@ const ledgerCreate = jest.fn();
 const accountUpsert = jest.fn();
 const transactionCreate = jest.fn();
 const completedLeaveReceipt = jest.fn();
+const openLeaveCleanup = jest.fn();
+const assertNoOpenLeaveCleanup = jest.fn();
 
 jest.mock('../../src/modules/moderation/leaveCleanupSaga', () => ({
   hasCompletedLeaveCleanupReceipt: completedLeaveReceipt,
+}));
+
+jest.mock('../../src/modules/moderation/leaveCleanupGuard', () => ({
+  hasOpenLeaveCleanupRequest: openLeaveCleanup,
+  assertNoOpenLeaveCleanupRequest: assertNoOpenLeaveCleanup,
 }));
 
 jest.mock('../../src/database/prisma', () => ({
@@ -52,6 +59,8 @@ const LINK_AT = new Date('2026-08-16T12:00:00.000Z');
 beforeEach(() => {
   jest.clearAllMocks();
   completedLeaveReceipt.mockResolvedValue(false);
+  openLeaveCleanup.mockResolvedValue(false);
+  assertNoOpenLeaveCleanup.mockResolvedValue(undefined);
   rewardStateFindUnique.mockResolvedValue(null);
   rewardStateUpsert.mockResolvedValue({ rewardEligibleFrom: LINK_AT });
   rewardStateUpdateMany.mockResolvedValue({ count: 1 });
@@ -65,6 +74,15 @@ beforeEach(() => {
 });
 
 describe('EconomyLinkRewardState', () => {
+  it('blockiert eine neue Reward-Epoche fail-closed solange ein Leave-Cleanup offen ist', async () => {
+    assertNoOpenLeaveCleanup.mockRejectedValue(new Error('Leave-Cleanup offen'));
+
+    await expect(activateLinkRewardState(SCOPE, USER, GAME_ID, SECRET, true, LINK_AT))
+      .rejects.toThrow(/Leave-Cleanup/);
+    expect(assertNoOpenLeaveCleanup).toHaveBeenCalledWith(SCOPE.guildId, USER);
+    expect(rewardStateUpsert).not.toHaveBeenCalled();
+  });
+
   it('legt fuer einen neuen Link den Reward-Cutoff atomar per Upsert auf den Linkzeitpunkt', async () => {
     const cutoff = await activateLinkRewardState(SCOPE, USER, GAME_ID, SECRET, true, LINK_AT);
     expect(cutoff).toEqual(LINK_AT);
@@ -163,6 +181,18 @@ describe('EconomyLinkRewardState', () => {
 });
 
 describe('Startguthaben bei Account-Verknuepfung', () => {
+  it('zahlt waehrend eines offenen Leave-Cleanups nichts aus und mutiert keine Eligibility', async () => {
+    openLeaveCleanup.mockResolvedValue(true);
+
+    const result = await grantStartBalanceForLink(SCOPE, USER, LINK_AT);
+
+    expect(result).toEqual({ granted: false, amount: 0n });
+    expect(completedLeaveReceipt).not.toHaveBeenCalled();
+    expect(rewardStateUpdateMany).not.toHaveBeenCalled();
+    expect(settingsFindUnique).not.toHaveBeenCalled();
+    expect(ledgerCreate).not.toHaveBeenCalled();
+  });
+
   it('bucht konfiguriertes Startguthaben atomar auch auf ein bestehendes Konto', async () => {
     const result = await grantStartBalanceForLink(SCOPE, USER, LINK_AT);
     expect(result.granted).toBe(true);
@@ -249,6 +279,8 @@ describe('Startguthaben bei Account-Verknuepfung', () => {
 
     jest.clearAllMocks();
     completedLeaveReceipt.mockResolvedValue(false);
+    openLeaveCleanup.mockResolvedValue(false);
+    assertNoOpenLeaveCleanup.mockResolvedValue(undefined);
     rewardStateUpdateMany.mockResolvedValue({ count: 1 });
     settingsFindUnique.mockResolvedValue({ economyActive: false });
     economyConfigFindUnique.mockResolvedValue({ startBalance: 5_000 });
