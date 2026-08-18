@@ -1,4 +1,4 @@
-import { createHmac } from 'node:crypto';
+import { createHmac, randomUUID } from 'node:crypto';
 import { Prisma } from '@prisma/client';
 import prisma from '../../database/prisma';
 import { sanitizeLeaveCleanupError } from './leaveCleanupSecurity';
@@ -21,6 +21,7 @@ export interface LeaveCleanupDetails {
   attempts: number;
   maxAttempts: number;
   claimedAt?: string;
+  claimToken?: string;
   lastError?: string;
   completedAt?: string;
 }
@@ -75,6 +76,7 @@ export function readLeaveCleanupDetails(value: unknown): LeaveCleanupDetails | n
     attempts,
     maxAttempts,
     ...(typeof row.claimedAt === 'string' ? { claimedAt: row.claimedAt } : {}),
+    ...(typeof row.claimToken === 'string' ? { claimToken: row.claimToken } : {}),
     ...(typeof row.lastError === 'string' ? { lastError: row.lastError } : {}),
     ...(typeof row.completedAt === 'string' ? { completedAt: row.completedAt } : {}),
   };
@@ -90,19 +92,35 @@ function detailsJson(details: LeaveCleanupDetails): Prisma.InputJsonObject {
     attempts: details.attempts,
     maxAttempts: details.maxAttempts,
     ...(details.claimedAt ? { claimedAt: details.claimedAt } : {}),
+    ...(details.claimToken ? { claimToken: details.claimToken } : {}),
     ...(details.lastError ? { lastError: details.lastError } : {}),
     ...(details.completedAt ? { completedAt: details.completedAt } : {}),
   };
 }
 
 function withoutClaim(details: LeaveCleanupDetails): LeaveCleanupDetails {
-  const { claimedAt: _claimedAt, ...rest } = details;
+  const { claimedAt: _claimedAt, claimToken: _claimToken, ...rest } = details;
   return rest;
 }
 
 function withoutLastError(details: LeaveCleanupDetails): LeaveCleanupDetails {
   const { lastError: _lastError, ...rest } = details;
   return rest;
+}
+
+/**
+ * Fencing-CAS fuer einen aktiven Claim. Neue Claims tragen einen zufaelligen
+ * Token. Bereits vor Leave-1F laufende Legacy-Claims werden bis zum naechsten
+ * Reclaim sicher ueber ihren persistierten claimedAt-Wert gefenced.
+ */
+function claimFence(details: LeaveCleanupDetails): Prisma.DataDeletionRequestWhereInput {
+  if (details.claimToken) {
+    return { details: { path: ['claimToken'], equals: details.claimToken } };
+  }
+  if (details.claimedAt) {
+    return { details: { path: ['claimedAt'], equals: details.claimedAt } };
+  }
+  throw new Error('Leave-Cleanup Claim-Fence fehlt.');
 }
 
 /** Deterministischer Job-Key nur waehrend der noch offenen Verarbeitung. */
@@ -213,9 +231,10 @@ export async function claimNextLeaveCleanupRequest(now: Date = new Date()): Prom
     }
 
     const claimedDetails: LeaveCleanupDetails = {
-      ...withoutLastError(details),
+      ...withoutLastError(withoutClaim(details)),
       stage: 'RUNNING',
       claimedAt: now.toISOString(),
+      claimToken: randomUUID(),
     };
     const claim = await prisma.dataDeletionRequest.updateMany({
       where: { id: candidate.id, status: 'PENDING' },
@@ -266,7 +285,7 @@ export async function recoverStaleLeaveCleanupRequests(
         lastError: 'Stale Claim nach Restart wieder freigegeben.',
       };
       const result = await prisma.dataDeletionRequest.updateMany({
-        where: { id: row.id, status: 'IN_PROGRESS' },
+        where: { id: row.id, status: 'IN_PROGRESS', ...claimFence(details) },
         data: {
           status: 'PENDING',
           scheduledAt: now,
@@ -307,7 +326,7 @@ export async function advanceLeaveCleanupStep(
     stage: 'RUNNING',
   };
   const result = await prisma.dataDeletionRequest.updateMany({
-    where: { id: request.id, status: 'IN_PROGRESS', userId: request.userId },
+    where: { id: request.id, status: 'IN_PROGRESS', userId: request.userId, ...claimFence(details) },
     data: { details: detailsJson(nextDetails) },
   });
   if (result.count !== 1) throw new Error('Leave-Cleanup Step-CAS verloren.');
@@ -334,7 +353,7 @@ export async function deferLeaveCleanupRequest(
     lastError: safeError(reason),
   };
   const result = await prisma.dataDeletionRequest.updateMany({
-    where: { id: request.id, status: 'IN_PROGRESS', userId: request.userId },
+    where: { id: request.id, status: 'IN_PROGRESS', userId: request.userId, ...claimFence(details) },
     data: {
       status: 'PENDING',
       scheduledAt: new Date(now.getTime() + safeDelay),
@@ -362,7 +381,7 @@ export async function retryOrDeadLetterLeaveCleanupRequest(
     lastError,
   };
   const result = await prisma.dataDeletionRequest.updateMany({
-    where: { id: request.id, status: 'IN_PROGRESS' },
+    where: { id: request.id, status: 'IN_PROGRESS', userId: request.userId, ...claimFence(details) },
     data: dead
       ? { status: 'FAILED', details: detailsJson(nextDetails) }
       : {
@@ -400,7 +419,7 @@ export async function completeLeaveCleanupRequest(
     completedAt: now.toISOString(),
   };
   const result = await prisma.dataDeletionRequest.updateMany({
-    where: { id: request.id, status: 'IN_PROGRESS', userId: request.userId },
+    where: { id: request.id, status: 'IN_PROGRESS', userId: request.userId, ...claimFence(details) },
     data: {
       status: 'COMPLETED',
       completedAt: now,
