@@ -66,9 +66,9 @@ describe('Server-Ban Outbox', () => {
     expect(create).not.toHaveBeenCalled();
   });
 
-  it('blockiert automatische REMOVE-Neuanlage bei einem recent DEAD derselben Ban-ID', async () => {
+  it('blockiert automatische REMOVE-Neuanlage bei einem recent DEAD derselben Connection', async () => {
     const now = new Date('2026-08-18T16:00:00.000Z');
-    const { client, create, findMany, queryRaw } = makeClient([], [{ banId: 'ban-1' }]);
+    const { client, create, findMany, queryRaw } = makeClient([], [{}]);
 
     await expect(enqueueServerBanRemove(client, SCOPE, 'ban-1', { now })).resolves.toBe(false);
 
@@ -77,21 +77,23 @@ describe('Server-Ban Outbox', () => {
     const deadQuery = findMany.mock.calls[1][0] as {
       where: { status: string; updatedAt: { gte: Date } };
       select: { payload: boolean };
+      take: number;
     };
     expect(deadQuery.where.status).toBe('DEAD');
     expect(deadQuery.where.updatedAt.gte).toEqual(
       new Date(now.getTime() - SERVER_BAN_REMOVE_AUTO_DEAD_COOLDOWN_MS),
     );
     expect(deadQuery.select).toEqual({ payload: true });
+    expect(deadQuery.take).toBe(1);
     expect(create).not.toHaveBeenCalled();
   });
 
-  it('blockiert einen anderen Ban nicht durch einen recent DEAD-Nachbarn', async () => {
-    const { client, create } = makeClient([], [{ banId: 'ban-2' }]);
+  it('blockiert auch einen anderen Ban durch einen recent DEAD-REMOVE derselben Connection', async () => {
+    const { client, create } = makeClient([], [{ banId: 'anderer-ban' }]);
 
-    await expect(enqueueServerBanRemove(client, SCOPE, 'ban-1')).resolves.toBe(true);
+    await expect(enqueueServerBanRemove(client, SCOPE, 'ban-1')).resolves.toBe(false);
 
-    expect(create).toHaveBeenCalledTimes(1);
+    expect(create).not.toHaveBeenCalled();
   });
 
   it('erlaubt nach Ablauf des DEAD-Cooldowns wieder einen automatischen REMOVE', async () => {
@@ -106,7 +108,7 @@ describe('Server-Ban Outbox', () => {
   });
 
   it('laesst expliziten Bediener-Retry den DEAD-Cooldown umgehen, aber nicht aktive Dedupe-Jobs', async () => {
-    const manual = makeClient([], [{ banId: 'ban-1' }]);
+    const manual = makeClient([], [{}]);
     await expect(enqueueServerBanRemove(
       manual.client,
       SCOPE,
@@ -116,7 +118,7 @@ describe('Server-Ban Outbox', () => {
     expect(manual.findMany).toHaveBeenCalledTimes(1);
     expect(manual.create).toHaveBeenCalledTimes(1);
 
-    const active = makeClient([{ banId: 'ban-1' }], [{ banId: 'ban-1' }]);
+    const active = makeClient([{ banId: 'ban-1' }], [{}]);
     await expect(enqueueServerBanRemove(
       active.client,
       SCOPE,
