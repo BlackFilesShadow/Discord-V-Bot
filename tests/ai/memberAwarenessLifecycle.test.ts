@@ -111,6 +111,22 @@ describe('User-1 member awareness lifecycle', () => {
     });
   });
 
+  it('does not let an activity flush own isLeft/leftAt on an existing profile', async () => {
+    const m = member({ guildId: 'guild-activity', discordId: 'discord-activity' });
+    const now = jest.spyOn(Date, 'now').mockReturnValue(100_000);
+
+    await trackMemberActivity(m);
+    now.mockRestore();
+
+    expect(mockProfileUpsert).toHaveBeenCalledTimes(1);
+    const payload = mockProfileUpsert.mock.calls[0][0];
+    // A first-time create from a real guild message may initialise active state.
+    expect(payload.create).toEqual(expect.objectContaining({ isLeft: false, leftAt: null }));
+    // The update path must never revive a row that markMemberLeft already closed.
+    expect(payload.update).not.toHaveProperty('isLeft');
+    expect(payload.update).not.toHaveProperty('leftAt');
+  });
+
   it('does not carry unflushed pre-leave message deltas into a later rejoin phase', async () => {
     const m = member({ guildId: 'guild-delta', discordId: 'discord-delta' });
     const now = jest.spyOn(Date, 'now');
