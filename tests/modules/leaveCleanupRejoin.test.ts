@@ -69,9 +69,10 @@ describe('Leave-1G rejoin freshness finalizer', () => {
     expect(levelUpsert).not.toHaveBeenCalled();
   });
 
-  it('treats an old still-active profile as pre-leave state, not as a rejoin', async () => {
+  it('treats an old still-active profile as pre-leave state and restores the leave marker', async () => {
     profileFindUnique.mockResolvedValue({
       isLeft: false,
+      leftAt: null,
       joinedAt: new Date('2026-08-01T10:00:00.000Z'),
     });
 
@@ -82,15 +83,17 @@ describe('Leave-1G rejoin freshness finalizer', () => {
     expect(levelDeleteMany).toHaveBeenCalledWith({ where: { userId: 'internal-user', guildId: GUILD } });
     expect(profileUpdateMany).toHaveBeenCalledWith({
       where: { guildId: GUILD, discordId: USER },
-      data: { messageCount: 0 },
+      data: { messageCount: 0, isLeft: true, leftAt: CREATED },
     });
     expect(levelUpsert).not.toHaveBeenCalled();
   });
 
-  it('preserves last-known goodbye identity but clears historical message count and late residual XP while still left', async () => {
+  it('preserves last-known goodbye identity and an existing leftAt while clearing historical state', async () => {
+    const leftAt = new Date('2026-08-18T06:00:05.000Z');
     profileFindUnique.mockResolvedValue({
       isLeft: true,
-      joinedAt: new Date('2026-08-18T06:05:00.000Z'),
+      leftAt,
+      joinedAt: new Date('2026-08-01T10:00:00.000Z'),
     });
     xpDeleteMany.mockResolvedValue({ count: 2 });
     levelDeleteMany.mockResolvedValue({ count: 1 });
@@ -100,7 +103,7 @@ describe('Leave-1G rejoin freshness finalizer', () => {
     expect(result).toEqual({ rejoined: false, profile: 'RESET', levelBaseline: false });
     expect(profileUpdateMany).toHaveBeenCalledWith({
       where: { guildId: GUILD, discordId: USER },
-      data: { messageCount: 0 },
+      data: { messageCount: 0, isLeft: true, leftAt },
     });
     expect(levelUpsert).not.toHaveBeenCalled();
   });
@@ -118,7 +121,7 @@ describe('Leave-1G rejoin freshness finalizer', () => {
 
   it('recognizes only joinedAt after the leave request as a genuine rejoin and restores a fresh baseline', async () => {
     const joinedAt = new Date('2026-08-18T06:05:00.000Z');
-    profileFindUnique.mockResolvedValue({ isLeft: false, joinedAt });
+    profileFindUnique.mockResolvedValue({ isLeft: false, leftAt: null, joinedAt });
 
     const result = await finalizeLeaveRejoinState(REQUEST, GUILD, USER);
 
@@ -147,6 +150,7 @@ describe('Leave-1G rejoin freshness finalizer', () => {
   it('fails retryably if a concurrent second leave flips the active rejoin profile before reset CAS', async () => {
     profileFindUnique.mockResolvedValue({
       isLeft: false,
+      leftAt: null,
       joinedAt: new Date('2026-08-18T06:05:00.000Z'),
     });
     profileUpdateMany.mockResolvedValue({ count: 0 });
@@ -160,6 +164,7 @@ describe('Leave-1G rejoin freshness finalizer', () => {
   it('fails closed instead of inventing a baseline when an active rejoin has no User row', async () => {
     profileFindUnique.mockResolvedValue({
       isLeft: false,
+      leftAt: null,
       joinedAt: new Date('2026-08-18T06:05:00.000Z'),
     });
     userFindUnique.mockResolvedValue(null);
