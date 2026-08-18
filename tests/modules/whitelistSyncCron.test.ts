@@ -6,6 +6,7 @@ process.env.ENCRYPTION_KEY ||= '0'.repeat(64);
 process.env.SESSION_SECRET ||= 'test-session-secret';
 
 const connectionFindMany = jest.fn();
+const connectionFindFirst = jest.fn();
 const whitelistFindMany = jest.fn();
 const whitelistUpdateMany = jest.fn(async () => ({ count: 1 }));
 const whitelistDeleteMany = jest.fn(async () => ({ count: 1 }));
@@ -14,6 +15,9 @@ const jobCreate = jest.fn(async () => ({}));
 const queryRaw = jest.fn(async () => []);
 const transaction = jest.fn();
 const getWhitelist = jest.fn();
+const decryptMock = jest.fn((..._args: unknown[]) => 'decrypted-token');
+const acquireConnectionLock = jest.fn();
+const releaseConnectionLock = jest.fn(async () => undefined);
 
 const tx = {
   $queryRawUnsafe: queryRaw,
@@ -25,7 +29,7 @@ jest.mock('../../src/database/prisma', () => ({
   default: {
     $queryRawUnsafe: queryRaw,
     $transaction: transaction,
-    nitradoConnection: { findMany: connectionFindMany },
+    nitradoConnection: { findMany: connectionFindMany, findFirst: connectionFindFirst },
     whitelistEntry: {
       findMany: whitelistFindMany,
       updateMany: whitelistUpdateMany,
@@ -41,7 +45,7 @@ jest.mock('../../src/config', () => ({
 }));
 
 jest.mock('../../src/utils/security', () => ({
-  decrypt: jest.fn(() => 'decrypted-token'),
+  decrypt: (...args: unknown[]) => decryptMock(...args),
 }));
 
 jest.mock('../../src/utils/logger', () => ({
@@ -51,6 +55,10 @@ jest.mock('../../src/utils/logger', () => ({
 
 jest.mock('../../src/modules/nitrado/nitradoClient', () => ({
   NitradoClient: jest.fn().mockImplementation(() => ({ getWhitelist })),
+}));
+
+jest.mock('../../src/modules/nitrado/configMutationLock', () => ({
+  tryAcquireNitradoConfigMutationLock: (...args: unknown[]) => acquireConnectionLock(...args),
 }));
 
 import { runWhitelistSyncOnce } from '../../src/modules/whitelist/whitelistSyncCron';
@@ -66,6 +74,13 @@ beforeEach(() => {
   jest.clearAllMocks();
   transaction.mockImplementation(async (cb: (client: typeof tx) => unknown) => cb(tx));
   connectionFindMany.mockResolvedValue([conn]);
+  connectionFindFirst.mockImplementation(async ({ where }: { where: { id: string } }) => (
+    where.id === 'conn-2'
+      ? { ...conn, id: 'conn-2', nitradoServerId: '10428226' }
+      : conn
+  ));
+  acquireConnectionLock.mockImplementation(async () => ({ release: releaseConnectionLock }));
+  releaseConnectionLock.mockResolvedValue(undefined);
   whitelistFindMany.mockResolvedValue([]);
   whitelistUpdateMany.mockResolvedValue({ count: 1 });
   whitelistDeleteMany.mockResolvedValue({ count: 1 });
@@ -73,6 +88,7 @@ beforeEach(() => {
   jobCreate.mockResolvedValue({});
   queryRaw.mockResolvedValue([]);
   getWhitelist.mockResolvedValue([]);
+  decryptMock.mockReturnValue('decrypted-token');
 });
 
 it('markiert einen lokal+remote vorhandenen Eintrag als SYNCED ohne Job', async () => {
@@ -88,6 +104,7 @@ it('markiert einen lokal+remote vorhandenen Eintrag als SYNCED ohne Job', async 
   expect(whitelistDeleteMany).not.toHaveBeenCalled();
   expect(jobCreate).not.toHaveBeenCalled();
   expect(transaction).not.toHaveBeenCalled();
+  expect(releaseConnectionLock).toHaveBeenCalledTimes(1);
 });
 
 it('queued genau einen ADD-Job unter dem cross-process Subject-Lock wenn lokal remote fehlt', async () => {
@@ -172,15 +189,17 @@ it('dupliziert keinen bereits PENDING/RUNNING identischen Job und benoetigt dann
 
   await runWhitelistSyncOnce();
 
-  // Fast-path erkennt den Job bereits vor dem atomaren Helper.
+  // Fast-path erkennt den Job bereits vor dem atomaren Outbox-Helper. Der
+  // Connection-Lock bleibt davon unabhaengig bis zum Reconcile-Ende gehalten.
   expect(transaction).not.toHaveBeenCalled();
   expect(jobCreate).not.toHaveBeenCalled();
+  expect(releaseConnectionLock).toHaveBeenCalledTimes(1);
 });
 
 it('isoliert einen Connection-Fehler und verarbeitet weitere Connections', async () => {
   connectionFindMany.mockResolvedValue([
-    conn,
-    { ...conn, id: 'conn-2', nitradoServerId: '10428226' },
+    { id: conn.id, guildId: conn.guildId },
+    { id: 'conn-2', guildId: conn.guildId },
   ]);
   getWhitelist
     .mockRejectedValueOnce(new Error('temporary remote error'))
@@ -193,8 +212,102 @@ it('isoliert einen Connection-Fehler und verarbeitet weitere Connections', async
   await runWhitelistSyncOnce();
 
   expect(getWhitelist).toHaveBeenCalledTimes(2);
+  expect(releaseConnectionLock).toHaveBeenCalledTimes(2);
   expect(whitelistUpdateMany).toHaveBeenCalledWith(expect.objectContaining({
     where: { id: 'wl-2', guildId: conn.guildId, nitradoConnId: 'conn-2' },
     data: expect.objectContaining({ syncState: 'SYNCED' }),
   }));
+});
+
+describe('Nitrado-1N — Whitelist-Reconcile Connection-Fence', () => {
+  it('skippt fail-closed wenn Worker oder Konfigurationsmutation den Connection-Lock haelt', async () => {
+    acquireConnectionLock.mockResolvedValueOnce(null);
+
+    await runWhitelistSyncOnce();
+
+    expect(acquireConnectionLock).toHaveBeenCalledWith(conn.id);
+    expect(connectionFindFirst).not.toHaveBeenCalled();
+    expect(decryptMock).not.toHaveBeenCalled();
+    expect(getWhitelist).not.toHaveBeenCalled();
+    expect(whitelistFindMany).not.toHaveBeenCalled();
+    expect(jobCreate).not.toHaveBeenCalled();
+    expect(releaseConnectionLock).not.toHaveBeenCalled();
+  });
+
+  it('verwendet nach Lockgewinn ausschliesslich den frischen Token-/Service-Snapshot', async () => {
+    connectionFindMany.mockResolvedValue([{ id: conn.id, guildId: conn.guildId }]);
+    connectionFindFirst.mockResolvedValueOnce({
+      ...conn,
+      encryptedToken: 'fresh-ciphertext',
+      nitradoServerId: '99999999',
+    });
+
+    await runWhitelistSyncOnce();
+
+    expect(connectionFindFirst).toHaveBeenCalledWith({
+      where: {
+        id: conn.id,
+        guildId: conn.guildId,
+        status: 'ACTIVE',
+        nitradoServerId: { not: null },
+        serverSettings: { some: { whitelistActive: true } },
+      },
+      select: {
+        id: true,
+        guildId: true,
+        encryptedToken: true,
+        nitradoServerId: true,
+      },
+    });
+    expect(decryptMock).toHaveBeenCalledWith('fresh-ciphertext', '0'.repeat(64));
+    expect(getWhitelist).toHaveBeenCalledWith('99999999');
+    expect(getWhitelist).not.toHaveBeenCalledWith(conn.nitradoServerId);
+    expect(releaseConnectionLock).toHaveBeenCalledTimes(1);
+  });
+
+  it('behandelt Delete/Deactivate/Whitelist-Off zwischen Scan und Lock als sauberen No-op', async () => {
+    connectionFindFirst.mockResolvedValueOnce(null);
+
+    await runWhitelistSyncOnce();
+
+    expect(decryptMock).not.toHaveBeenCalled();
+    expect(getWhitelist).not.toHaveBeenCalled();
+    expect(whitelistFindMany).not.toHaveBeenCalled();
+    expect(jobCreate).not.toHaveBeenCalled();
+    expect(releaseConnectionLock).toHaveBeenCalledTimes(1);
+  });
+
+  it('gibt den Connection-Lock auch bei Remote-Fehler garantiert frei', async () => {
+    getWhitelist.mockRejectedValueOnce(new Error('temporary remote error'));
+
+    await runWhitelistSyncOnce();
+
+    expect(getWhitelist).toHaveBeenCalledTimes(1);
+    expect(releaseConnectionLock).toHaveBeenCalledTimes(1);
+  });
+
+  it('isoliert Lock-Infrastrukturfehler und laesst die naechste Connection weiterlaufen', async () => {
+    connectionFindMany.mockResolvedValue([
+      { id: conn.id, guildId: conn.guildId },
+      { id: 'conn-2', guildId: conn.guildId },
+    ]);
+    acquireConnectionLock
+      .mockRejectedValueOnce(new Error('pg unavailable'))
+      .mockResolvedValueOnce({ release: releaseConnectionLock });
+    getWhitelist.mockResolvedValueOnce([{ identifier: 'Bob' }]);
+    whitelistFindMany.mockImplementation(async ({ where }: { where: { nitradoConnId: string } }) => {
+      if (where.nitradoConnId === 'conn-2') return [{ id: 'wl-2', gameId: 'Bob', syncState: 'LOCAL_ONLY' }];
+      return [];
+    });
+
+    await runWhitelistSyncOnce();
+
+    expect(acquireConnectionLock).toHaveBeenCalledTimes(2);
+    expect(getWhitelist).toHaveBeenCalledTimes(1);
+    expect(getWhitelist).toHaveBeenCalledWith('10428226');
+    expect(releaseConnectionLock).toHaveBeenCalledTimes(1);
+    expect(whitelistUpdateMany).toHaveBeenCalledWith(expect.objectContaining({
+      where: { id: 'wl-2', guildId: conn.guildId, nitradoConnId: 'conn-2' },
+    }));
+  });
 });
