@@ -59,11 +59,11 @@ describe('Leave-1E productive orchestration + toggle wiring', () => {
   });
 
   it('orders every destructive worker step before the pseudonymous completion receipt', () => {
-    const whitelist = workerSource.indexOf('await runLeaveWhitelistCleanupStep(');
-    const stats = workerSource.indexOf('await runLeaveStatsSessionsCleanupStep(');
-    const economy = workerSource.indexOf('await runLeaveLinkEconomyAfterConfirmedWhitelistStep(');
-    const guildData = workerSource.indexOf('await cleanupGuildMemberData(');
-    const complete = workerSource.indexOf('await completeLeaveCleanupRequest(');
+    const whitelist = workerSource.indexOf("if (details.step === 'WHITELIST')");
+    const stats = workerSource.indexOf("if (details.step === 'STATS_SESSIONS')");
+    const economy = workerSource.indexOf("if (details.step === 'LINK_ECONOMY')");
+    const guildData = workerSource.indexOf("if (details.step === 'GUILD_DATA')");
+    const complete = workerSource.indexOf("if (details.step === 'COMPLETE')");
     expect(whitelist).toBeGreaterThanOrEqual(0);
     expect(stats).toBeGreaterThan(whitelist);
     expect(economy).toBeGreaterThan(stats);
