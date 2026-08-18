@@ -6,6 +6,10 @@
  * - Legacy `ServerSettings.permaOnly` ist NICHT mehr Source-of-Truth.
  * - Pro Connection wird hoechstens ein PENDING/RUNNING RESTART_IF_DOWN-Job
  *   erzeugt.
+ * - Ein frischer DEAD-Job nach echtem Worker-/Remote-Fehler blockiert neue
+ *   Auto-Start-Jobs fuer einen begrenzten Cooldown. Bewusste Cancellation beim
+ *   Deaktivieren von Keep-Online zaehlt nicht als Fehler und blockiert spaetere
+ *   Reaktivierung nicht.
  * - Der Check+Insert laeuft SERIALIZABLE, damit zwei Prozesse nicht beide
  *   denselben Job enqueuen koennen (NIT-009).
  * - Ob wirklich gestartet werden darf entscheidet der Worker anhand des
@@ -15,9 +19,11 @@
 import { Prisma } from '@prisma/client';
 import prisma from '../../database/prisma';
 import { logger } from '../../utils/logger';
+import { KEEP_ONLINE_DISABLED_JOB_REASON } from './keepOnlineJobs';
 
 const POLL_INTERVAL_MS = 3 * 60 * 1000;
 const INITIAL_DELAY_MS = 60_000;
+export const KEEP_ONLINE_DEAD_RETRY_COOLDOWN_MS = 60 * 60 * 1000;
 
 let timer: NodeJS.Timeout | null = null;
 let initialTimer: NodeJS.Timeout | null = null;
@@ -28,6 +34,7 @@ function isSerializationConflict(error: unknown): boolean {
 }
 
 async function enqueueIfMissing(slot: { id: string; guildId: string }): Promise<boolean> {
+  const deadCutoff = new Date(Date.now() - KEEP_ONLINE_DEAD_RETRY_COOLDOWN_MS);
   try {
     return await prisma.$transaction(async tx => {
       const existing = await tx.nitradoJob.findFirst({
@@ -35,7 +42,17 @@ async function enqueueIfMissing(slot: { id: string; guildId: string }): Promise<
           guildId: slot.guildId,
           nitradoConnId: slot.id,
           operation: 'RESTART_IF_DOWN',
-          status: { in: ['PENDING', 'RUNNING'] },
+          OR: [
+            { status: { in: ['PENDING', 'RUNNING'] } },
+            {
+              status: 'DEAD',
+              updatedAt: { gte: deadCutoff },
+              OR: [
+                { lastError: null },
+                { lastError: { not: KEEP_ONLINE_DISABLED_JOB_REASON } },
+              ],
+            },
+          ],
         },
         select: { id: true },
       });
