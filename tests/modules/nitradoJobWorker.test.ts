@@ -10,7 +10,7 @@ process.env.SESSION_SECRET ||= 'test-session-secret';
  * keinen Job dauerhaft auf RUNNING haengen lassen. Server-Ban-Jobs muessen
  * HMAC-geprueft, scope-sicher, race-sicher und payload-gescrubbt sein.
  */
-const updateManyMock = jest.fn(async () => ({ count: 1 }));
+const updateManyMock = jest.fn(async (_args?: unknown) => ({ count: 1 }));
 const jobFindManyMock = jest.fn(async () => [] as Array<{ id?: string; payload: unknown }>);
 const jobCreateMock = jest.fn(async () => ({}));
 const serverBanFindFirstMock = jest.fn();
