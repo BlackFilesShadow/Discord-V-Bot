@@ -59,10 +59,11 @@ describe('Leave-1G rejoin fresh-state architecture gate', () => {
     expect(rejoinSource).toContain('messageCount: 0');
   });
 
-  it('removes late residual Level/XP state without rejoin but creates only a zero-default baseline for a genuine rejoin', () => {
+  it('preserves last-known identity for goodbye while clearing historical counters and residual level state', () => {
     expect(rejoinSource).toContain('await tx.xpRecord.deleteMany({ where: { userId: user.id, guildId } });');
     expect(rejoinSource).toContain('await tx.levelData.deleteMany({ where: { userId: user.id, guildId } });');
-    expect(rejoinSource).toContain("profile: deletedProfile.count > 0 ? 'DELETED' : 'NONE'");
+    expect(rejoinSource).not.toContain('guildMemberProfile.deleteMany');
+    expect(rejoinSource).toContain('data: { messageCount: 0 }');
     expect(rejoinSource).toContain('await tx.levelData.upsert({');
     expect(rejoinSource).toContain('create: { userId: user.id, guildId }');
     expect(rejoinSource).toContain('update: {}');
