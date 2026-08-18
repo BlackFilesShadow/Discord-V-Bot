@@ -11,6 +11,9 @@ jobs:
     name: Playwright Smoke
     runs-on: ubuntu-latest
     timeout-minutes: 15
+    permissions:
+      contents: read
+      statuses: write
 
     defaults:
       run:
@@ -63,3 +66,29 @@ jobs:
           name: playwright-report
           path: dashboard-ui/playwright-report/
           retention-days: 7
+
+      - name: Publish main Playwright gate status
+        if: always() && github.ref == 'refs/heads/main'
+        working-directory: .
+        env:
+          GH_TOKEN: ${{ github.token }}
+          JOB_STATUS: ${{ job.status }}
+          TARGET_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          state=failure
+          description="main Playwright gate failed"
+          if [ "$JOB_STATUS" = "success" ]; then
+            state=success
+            description="main Playwright E2E passed"
+          fi
+          payload=$(printf '{"state":"%s","context":"vbot/main-playwright-gate","description":"%s","target_url":"%s"}' "$state" "$description" "$TARGET_URL")
+          curl --fail-with-body --silent --show-error \
+            -X POST \
+            -H "Authorization: Bearer $GH_TOKEN" \
+            -H "Accept: application/vnd.github+json" \
+            -H "X-GitHub-Api-Version: 2022-11-28" \
+            "${GITHUB_API_URL}/repos/${GITHUB_REPOSITORY}/statuses/${GITHUB_SHA}" \
+            --data "$payload"
+          [ "$state" = "success" ]
