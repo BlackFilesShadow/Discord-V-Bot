@@ -3,7 +3,7 @@ import { leaveCleanupJobKey } from './leaveCleanupSaga';
 
 export type LeaveRejoinFinalizationResult = {
   rejoined: boolean;
-  profile: 'NONE' | 'DELETED' | 'RESET';
+  profile: 'NONE' | 'RESET';
   levelBaseline: boolean;
 };
 
@@ -15,8 +15,13 @@ export type LeaveRejoinFinalizationResult = {
  * - guildMemberAdd setzt das Recognition-Profil auf den neuen joinedAt-Zeitpunkt.
  * - Alte Level-/XP-Daten duerfen nicht in die neue Mitgliedschaft hineinragen.
  * - Ein echter Rejoin bekommt nach dem destruktiven Cutoff wieder exakt eine
- *   frische LevelData-Baseline; ohne Rejoin wird das letzte Member-Profil nach
- *   dem bereits versendeten Goodbye entfernt.
+ *   frische LevelData-Baseline.
+ *
+ * Das GuildMemberProfile wird bewusst NICHT geloescht: Der Worker kann parallel
+ * zum noch laufenden Goodbye-Gateway-Event arbeiten. Die letzte bekannte
+ * Identitaet muss deshalb bis zum Goodbye sicher verfuegbar bleiben. Nur der
+ * historische messageCount wird fuer die neue/abgeschlossene Lifecycle-Epoche
+ * auf 0 gesetzt; Recognition-Daten bleiben nicht autoritativ fuer Permissions.
  *
  * Die Request-createdAt ist die Lifecycle-Grenze: Nur ein aktives Profil mit
  * joinedAt > createdAt kann ein Rejoin NACH diesem Leave sein. Dadurch wird ein
@@ -71,12 +76,19 @@ export async function finalizeLeaveRejoinState(
         await tx.xpRecord.deleteMany({ where: { userId: user.id, guildId } });
         await tx.levelData.deleteMany({ where: { userId: user.id, guildId } });
       }
-      const deletedProfile = await tx.guildMemberProfile.deleteMany({
-        where: { guildId, discordId },
-      });
+
+      let profileState: 'NONE' | 'RESET' = 'NONE';
+      if (profile) {
+        const resetProfile = await tx.guildMemberProfile.updateMany({
+          where: { guildId, discordId },
+          data: { messageCount: 0 },
+        });
+        if (resetProfile.count > 0) profileState = 'RESET';
+      }
+
       return {
         rejoined: false,
-        profile: deletedProfile.count > 0 ? 'DELETED' : 'NONE',
+        profile: profileState,
         levelBaseline: false,
       };
     }
