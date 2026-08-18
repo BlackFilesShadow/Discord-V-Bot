@@ -2,6 +2,7 @@ import { config } from '../../config';
 import { logger } from '../../utils/logger';
 import { cleanupGuildMemberData } from './guildMemberCleanup';
 import { runLeaveLinkEconomyAfterConfirmedWhitelistStep } from './leaveCleanupLinkEconomy';
+import { finalizeLeaveRejoinState } from './leaveCleanupRejoin';
 import {
   advanceLeaveCleanupStep,
   claimNextLeaveCleanupRequest,
@@ -100,11 +101,23 @@ export async function processLeaveCleanupRequest(
         if (!result.performed && result.reason === 'transaction_failed') {
           throw new Error('Leave-Worker: Guild-Daten-Cleanup fehlgeschlagen.');
         }
+
+        // Rejoin kann waehrend eines laufenden Remote-/DB-Cleanups eintreffen.
+        // Direkt nach dem letzten destruktiven Guild-Schritt wird deshalb die
+        // Lifecycle-Grenze neu bewertet: Altprofil entfernen oder frische
+        // Rejoin-Baseline herstellen. Fehler bleiben im GUILD_DATA-Checkpoint
+        // retrybar und koennen keinen halbfertigen COMPLETE-Receipt erzeugen.
+        await finalizeLeaveRejoinState(request.id, guildId, discordId);
+
         request = await advanceLeaveCleanupStep(request, 'GUILD_DATA');
         continue;
       }
 
       if (details.step === 'COMPLETE') {
+        // Zweiter finaler Recheck schliesst das Fenster fuer Rejoin -> erneuter
+        // Leave zwischen GUILD_DATA und COMPLETE. Der Request bleibt bis danach
+        // roh gescoppt/IN_PROGRESS und damit fuer alle Rejoin-Guards sichtbar.
+        await finalizeLeaveRejoinState(request.id, guildId, discordId);
         await completeLeaveCleanupRequest(request, guildId, config.security.encryptionKey);
         return 'COMPLETED';
       }
