@@ -9,13 +9,14 @@ const expiry = read('src/modules/bans/expiryRuntime.ts');
 const command = read('src/commands/dashboard/serverBan.ts');
 
 describe('Nitrado-1J automatic SERVER_BAN_REMOVE DEAD cooldown gate', () => {
-  it('checks active jobs and recent DEAD history under the same subject lock before create', () => {
+  it('checks active jobs and connection-wide recent DEAD history under the same subject lock before create', () => {
     const ensureInLock = outbox.indexOf('async function ensureJobInLock(');
     const activeQuery = outbox.indexOf("status: { in: ['PENDING', 'RUNNING'] }", ensureInLock);
     const deadQuery = outbox.indexOf("status: 'DEAD'", activeQuery);
     const deadAge = outbox.indexOf('updatedAt: { gte: new Date(now.getTime() - recentDeadCooldownMs) }', deadQuery);
-    const deadBanMatch = outbox.indexOf('recentDead.some(job => asPayload(job.payload)?.banId === payload.banId)', deadAge);
-    const create = outbox.indexOf('await tx.nitradoJob.create({', deadBanMatch);
+    const boundedDeadRead = outbox.indexOf('take: 1', deadAge);
+    const deadBlock = outbox.indexOf('if (recentDead.length > 0) return false;', boundedDeadRead);
+    const create = outbox.indexOf('await tx.nitradoJob.create({', deadBlock);
     const subjectLock = outbox.indexOf('return withNitradoOutboxSubjectLock(client, lockSubject, tx =>');
     const lockedEnsure = outbox.indexOf('ensureJobInLock(tx, scope, operation, payload, options)', subjectLock);
 
@@ -23,10 +24,22 @@ describe('Nitrado-1J automatic SERVER_BAN_REMOVE DEAD cooldown gate', () => {
     expect(activeQuery).toBeGreaterThan(ensureInLock);
     expect(deadQuery).toBeGreaterThan(activeQuery);
     expect(deadAge).toBeGreaterThan(deadQuery);
-    expect(deadBanMatch).toBeGreaterThan(deadAge);
-    expect(create).toBeGreaterThan(deadBanMatch);
+    expect(boundedDeadRead).toBeGreaterThan(deadAge);
+    expect(deadBlock).toBeGreaterThan(boundedDeadRead);
+    expect(create).toBeGreaterThan(deadBlock);
     expect(subjectLock).toBeGreaterThanOrEqual(0);
     expect(lockedEnsure).toBeGreaterThan(subjectLock);
+  });
+
+  it('does not depend on scrubbed DEAD payloads to enforce the cooldown', () => {
+    const deadQuery = outbox.indexOf("status: 'DEAD'");
+    const deadBlock = outbox.indexOf('if (recentDead.length > 0) return false;', deadQuery);
+    const create = outbox.indexOf('await tx.nitradoJob.create({', deadBlock);
+
+    expect(deadQuery).toBeGreaterThanOrEqual(0);
+    expect(deadBlock).toBeGreaterThan(deadQuery);
+    expect(create).toBeGreaterThan(deadBlock);
+    expect(outbox.slice(deadQuery, deadBlock)).not.toContain('banId === payload.banId');
   });
 
   it('keeps a bounded one-hour automatic cooldown and a named manual bypass', () => {
