@@ -15,6 +15,18 @@ const EXPECTED_MUTATORS = [
   'restart',
   'start',
 ] as const;
+
+// `restart()` is intentionally only a low-level client capability today: no
+// product feature dispatches it. If restart becomes a feature, it must first
+// get a persistent worker operation before this reviewed worker surface grows.
+const EXPECTED_WORKER_MUTATORS = [
+  'addToBanlist',
+  'addToWhitelist',
+  'removeFromBanlist',
+  'removeFromWhitelist',
+  'start',
+] as const;
+
 const MUTATING_HTTP_VERBS = new Set(['POST', 'PUT', 'PATCH', 'DELETE']);
 
 function walkTsFiles(dir: string): string[] {
@@ -239,7 +251,7 @@ describe('Nitrado-1G single remote mutation boundary', () => {
     expect(violations).toEqual([]);
   });
 
-  it('keeps every declared NitradoClient mutator represented in the canonical worker', () => {
-    expect([...workerMutatorCalls()].sort()).toEqual([...EXPECTED_MUTATORS].sort());
+  it('keeps the canonical worker mutation surface explicitly reviewed', () => {
+    expect([...workerMutatorCalls()].sort()).toEqual([...EXPECTED_WORKER_MUTATORS].sort());
   });
 });
