@@ -20,6 +20,11 @@ import { config } from '../../config';
 import { decrypt } from '../../utils/security';
 import { NitradoClient } from '../../modules/nitrado/nitradoClient';
 import {
+  enqueueWhitelistAdd,
+  enqueueWhitelistRemove,
+  type WhitelistOutboxClient,
+} from '../../modules/whitelist/whitelistOutbox';
+import {
   autocompleteServerAlias,
   resolveSelectedOrAllServers,
   resolveSingleServer,
@@ -226,9 +231,11 @@ export const wlAddCommand: Command = {
               lastSyncedAt: null,
             },
           });
-          await tx.nitradoJob.create({
-            data: { guildId: scope.guildId, nitradoConnId: target.id, operation: 'WHITELIST_ADD', payload: { gameId: id } },
-          });
+          await enqueueWhitelistAdd(
+            tx as unknown as WhitelistOutboxClient,
+            { guildId: scope.guildId, nitradoConnId: target.id },
+            id,
+          );
         });
         logAudit('WL_ADD', 'WHITELIST', { guildId: scope.guildId, slotId: target.id, slot: target.slot, alias: target.alias, actor: scope.actorDiscordId });
         results.push(`✅ **${targetLabel(target)}** — Add-Sync eingereiht.`);
@@ -292,9 +299,11 @@ export const wlRemoveCommand: Command = {
           });
           // Auch ohne lokale Zeile entfernen: Nitrado kann manuelle Eintraege
           // enthalten, die der lokale Spiegel noch nicht kennt.
-          await tx.nitradoJob.create({
-            data: { guildId: scope.guildId, nitradoConnId: target.id, operation: 'WHITELIST_REMOVE', payload: { gameId: id } },
-          });
+          await enqueueWhitelistRemove(
+            tx as unknown as WhitelistOutboxClient,
+            { guildId: scope.guildId, nitradoConnId: target.id },
+            id,
+          );
         });
         logAudit('WL_REMOVE', 'WHITELIST', { guildId: scope.guildId, slotId: target.id, slot: target.slot, alias: target.alias, actor: scope.actorDiscordId });
         results.push(`✅ **${targetLabel(target)}** — Remove-Sync eingereiht; lokale Finalisierung erfolgt erst nach Nitrado-Bestaetigung.`);
