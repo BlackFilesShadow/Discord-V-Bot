@@ -15,7 +15,7 @@ const jobCreate = jest.fn(async () => ({}));
 const queryRaw = jest.fn(async () => []);
 const transaction = jest.fn();
 const getWhitelist = jest.fn();
-const decryptMock = jest.fn(() => 'decrypted-token');
+const decryptMock = jest.fn((..._args: unknown[]) => 'decrypted-token');
 const acquireConnectionLock = jest.fn();
 const releaseConnectionLock = jest.fn(async () => undefined);
 
