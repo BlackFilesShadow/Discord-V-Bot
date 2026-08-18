@@ -43,17 +43,23 @@ jest.mock('../../src/modules/dashboard/repository', () => ({ getOrCreate: jest.f
 jest.mock('../../src/modules/nitrado/repository', () => ({ listSlots: jest.fn() }));
 jest.mock('../../src/modules/permissions/repository', () => ({ listGrants: jest.fn() }));
 jest.mock('../../src/modules/nitrado/keepOnlineJobs', () => ({
-  cancelPendingKeepOnlineJobs: (...args: unknown[]) => cancelPendingKeepOnlineJobs(...args),
+  cancelPendingKeepOnlineJobs: (client: unknown, scopeArg: unknown) => cancelPendingKeepOnlineJobs(client, scopeArg),
 }));
 jest.mock('../../src/modules/nitrado/configMutationLock', () => ({
-  tryAcquireNitradoConfigMutationLock: (...args: unknown[]) => tryAcquireNitradoConfigMutationLock(...args),
+  tryAcquireNitradoConfigMutationLock: (nitradoConnId: string) => tryAcquireNitradoConfigMutationLock(nitradoConnId),
 }));
 jest.mock('../../src/dashboard/routes/v2/serverScope', () => ({
-  resolveDashboardGameServer: (...args: unknown[]) => resolveDashboardGameServer(...args),
-  sendDashboardServerResolutionError: (...args: unknown[]) => sendDashboardServerResolutionError(...args),
+  resolveDashboardGameServer: (guildId: unknown, actorDiscordId: unknown, slotParam: unknown) =>
+    resolveDashboardGameServer(guildId, actorDiscordId, slotParam),
+  sendDashboardServerResolutionError: (res: unknown, resolution: unknown) =>
+    sendDashboardServerResolutionError(res, resolution),
 }));
-jest.mock('../../src/utils/logger', () => ({ logAuditDb: (...args: unknown[]) => logAuditDb(...args) }));
-jest.mock('../../src/dashboard/socket/emitter', () => ({ emitGuildEvent: (...args: unknown[]) => emitGuildEvent(...args) }));
+jest.mock('../../src/utils/logger', () => ({
+  logAuditDb: (action: unknown, category: unknown, options: unknown) => logAuditDb(action, category, options),
+}));
+jest.mock('../../src/dashboard/socket/emitter', () => ({
+  emitGuildEvent: (guildId: unknown, event: unknown) => emitGuildEvent(guildId, event),
+}));
 jest.mock('../../src/dashboard/middleware/auth', () => ({
   requireGuildPermission: () => (req: { auth?: unknown; guildScope?: unknown }, _res: unknown, next: () => void) => {
     req.auth = { userId: 'u1', discordId: ACTOR, role: 'USER' };
