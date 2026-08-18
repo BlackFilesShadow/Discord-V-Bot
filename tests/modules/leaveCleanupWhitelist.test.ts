@@ -1,6 +1,5 @@
 const mockGameIdentityFindMany = jest.fn();
 const mockPlayerSessionFindMany = jest.fn();
-const mockConnectionFindFirst = jest.fn();
 const mockWhitelistEntryFindMany = jest.fn();
 const mockWhitelistRequestFindMany = jest.fn();
 const mockWhitelistRequestFindFirst = jest.fn();
@@ -16,6 +15,8 @@ const mockQueryRaw = jest.fn();
 const mockTransaction = jest.fn();
 const mockGetWhitelist = jest.fn();
 const mockDecrypt = jest.fn();
+const mockReadCurrentBinding = jest.fn();
+const mockWithFreshBinding = jest.fn();
 
 const mockTx = {
   $queryRawUnsafe: mockQueryRaw,
@@ -44,13 +45,17 @@ jest.mock('../../src/modules/nitrado/nitradoClient', () => ({
   NitradoClient: jest.fn().mockImplementation(() => ({ getWhitelist: mockGetWhitelist })),
 }));
 
+jest.mock('../../src/modules/nitrado/adm/bindingFence', () => ({
+  readCurrentAdmBinding: (...args: unknown[]) => mockReadCurrentBinding(...args),
+  withFreshAdmBinding: (...args: unknown[]) => mockWithFreshBinding(...args),
+}));
+
 jest.mock('../../src/database/prisma', () => ({
   __esModule: true,
   default: {
     $transaction: mockTransaction,
     gameIdentityLink: { findMany: mockGameIdentityFindMany },
     playerSession: { findMany: mockPlayerSessionFindMany },
-    nitradoConnection: { findFirst: mockConnectionFindFirst },
     whitelistEntry: { findMany: mockWhitelistEntryFindMany },
     whitelistRequest: {
       findMany: mockWhitelistRequestFindMany,
@@ -72,12 +77,13 @@ const SECRET = 'leave-test-secret-0123456789abcdef';
 const GUID = 'DAYZ-GUID-001';
 const LINK_HASH = identityHash(GUID, SECRET);
 
-function activeConnection() {
+function bindingFor(connId = CONN) {
   return {
-    id: CONN,
-    encryptedToken: 'encrypted-token',
-    nitradoServerId: 'service-1',
-    status: 'ACTIVE',
+    id: connId,
+    guildId: GUILD,
+    encryptedToken: `encrypted-token-${connId}`,
+    nitradoServerId: `service-${connId}`,
+    bindingVersion: 4,
   };
 }
 
@@ -86,7 +92,8 @@ beforeEach(() => {
   mockTransaction.mockImplementation(async (callback: (tx: typeof mockTx) => unknown) => callback(mockTx));
   mockGameIdentityFindMany.mockResolvedValue([{ nitradoConnId: CONN, identityHash: LINK_HASH }]);
   mockPlayerSessionFindMany.mockResolvedValue([{ gameId: GUID, playerName: 'TargetPlayer' }]);
-  mockConnectionFindFirst.mockResolvedValue(activeConnection());
+  mockReadCurrentBinding.mockImplementation(async ({ id }: { id: string }) => bindingFor(id));
+  mockWithFreshBinding.mockImplementation(async (_binding: unknown, work: () => Promise<unknown>) => work());
   mockWhitelistEntryFindMany.mockResolvedValue([]);
   mockWhitelistRequestFindMany.mockResolvedValue([]);
   mockWhitelistRequestFindFirst.mockResolvedValue(null);
@@ -119,6 +126,8 @@ describe('Leave-1B identity-safe whitelist cleanup', () => {
 
     expect(result.state).toBe('WAITING');
     expect(result.removeJobsQueued).toBe(1);
+    expect(mockReadCurrentBinding).toHaveBeenCalledWith({ id: CONN, guildId: GUILD });
+    expect(mockWithFreshBinding).toHaveBeenCalledTimes(1);
     expect(mockWhitelistEntryUpdateMany).toHaveBeenCalledWith(expect.objectContaining({
       where: expect.objectContaining({ id: { in: ['target'] }, guildId: GUILD, nitradoConnId: CONN }),
     }));
@@ -132,7 +141,7 @@ describe('Leave-1B identity-safe whitelist cleanup', () => {
     mockPlayerSessionFindMany.mockResolvedValue([{ gameId: 'FOREIGN-GUID', playerName: 'TargetPlayer' }]);
 
     await expect(runLeaveWhitelistCleanupStep(GUILD, USER)).rejects.toThrow(/nicht mehr sicher/);
-    expect(mockConnectionFindFirst).not.toHaveBeenCalled();
+    expect(mockReadCurrentBinding).not.toHaveBeenCalled();
     expect(mockNitradoJobCreate).not.toHaveBeenCalled();
     expect(mockQueryRaw).not.toHaveBeenCalled();
   });
@@ -173,7 +182,7 @@ describe('Leave-1B identity-safe whitelist cleanup', () => {
     expect(mockNitradoJobCreate).toHaveBeenCalledTimes(1);
   });
 
-  it('finalizes local rows only after a fresh remote read confirms absence', async () => {
+  it('finalizes local rows only after a fresh remote read confirms absence and a second binding check stays fresh', async () => {
     const pendingRemove = {
       id: 'remove-pending', operation: 'WHITELIST_REMOVE', status: 'PENDING', payload: { gameId: 'TargetPlayer' },
     };
@@ -185,6 +194,7 @@ describe('Leave-1B identity-safe whitelist cleanup', () => {
     const result = await runLeaveWhitelistCleanupStep(GUILD, USER);
 
     expect(result.state).toBe('DONE');
+    expect(mockWithFreshBinding).toHaveBeenCalledTimes(2);
     expect(mockWhitelistEntryDeleteMany).toHaveBeenCalledWith({
       where: { id: { in: ['target'] }, guildId: GUILD, nitradoConnId: CONN, syncState: 'PENDING_REMOVE' },
     });
@@ -267,11 +277,37 @@ describe('Leave-1B identity-safe whitelist cleanup', () => {
       where: { guildId: GUILD, userDiscordId: USER, status: 'VERIFIED', identityHash: { not: null } },
     }));
     expect(mockPlayerSessionFindMany).toHaveBeenCalledWith(expect.objectContaining({ where: { guildId: GUILD, nitradoConnId: CONN } }));
-    expect(mockConnectionFindFirst).toHaveBeenCalledWith(expect.objectContaining({ where: { id: CONN, guildId: GUILD } }));
+    expect(mockReadCurrentBinding).toHaveBeenCalledWith({ id: CONN, guildId: GUILD });
     expect(mockWhitelistEntryFindMany).toHaveBeenCalledWith(expect.objectContaining({ where: { guildId: GUILD, nitradoConnId: CONN } }));
     expect(mockWhitelistRequestFindMany).toHaveBeenCalledWith(expect.objectContaining({ where: { guildId: GUILD, nitradoConnId: CONN } }));
     expect(mockNitradoJobFindMany).toHaveBeenCalledWith(expect.objectContaining({ where: expect.objectContaining({ guildId: GUILD, nitradoConnId: CONN }) }));
     expect(OTHER_GUILD).not.toBe(GUILD);
+  });
+
+  it('blocks the first local mutation phase when the remote binding becomes stale', async () => {
+    mockWhitelistEntryFindMany.mockResolvedValue([{ id: 'target', gameId: 'TargetPlayer', syncState: 'SYNCED' }]);
+    mockGetWhitelist.mockResolvedValue([{ identifier: 'TargetPlayer' }]);
+    mockWithFreshBinding.mockRejectedValueOnce(new Error('stale binding'));
+
+    await expect(runLeaveWhitelistCleanupStep(GUILD, USER)).rejects.toThrow(/stale binding/);
+
+    expect(mockWhitelistEntryUpdateMany).not.toHaveBeenCalled();
+    expect(mockWhitelistRequestUpdateMany).not.toHaveBeenCalled();
+    expect(mockNitradoJobCreate).not.toHaveBeenCalled();
+  });
+
+  it('blocks final local deletion when the binding changes after the first fenced phase', async () => {
+    mockWhitelistEntryFindMany.mockResolvedValue([{ id: 'target', gameId: 'TargetPlayer', syncState: 'PENDING_REMOVE' }]);
+    mockGetWhitelist.mockResolvedValue([]);
+    mockNitradoJobFindMany.mockResolvedValueOnce([]).mockResolvedValueOnce([]);
+    mockWithFreshBinding
+      .mockImplementationOnce(async (_binding: unknown, work: () => Promise<unknown>) => work())
+      .mockRejectedValueOnce(new Error('stale final binding'));
+
+    await expect(runLeaveWhitelistCleanupStep(GUILD, USER)).rejects.toThrow(/stale final binding/);
+
+    expect(mockWhitelistEntryDeleteMany).not.toHaveBeenCalled();
+    expect(mockTxWhitelistRequestDeleteMany).not.toHaveBeenCalled();
   });
 
   it('blocks DONE when an APPROVED request cannot be mapped through a verified link', async () => {
@@ -288,14 +324,13 @@ describe('Leave-1B identity-safe whitelist cleanup', () => {
       { nitradoConnId: 'conn-b', identityHash: LINK_HASH },
     ]);
     mockPlayerSessionFindMany.mockResolvedValue([{ gameId: GUID, playerName: 'TargetPlayer' }]);
-    mockConnectionFindFirst.mockImplementation(async ({ where }: { where: { id: string } }) => ({
-      id: where.id, encryptedToken: 'enc', nitradoServerId: `service-${where.id}`, status: 'ACTIVE',
-    }));
     mockGetWhitelist.mockResolvedValueOnce([]).mockResolvedValueOnce([{ identifier: 'TargetPlayer' }]);
 
     const result = await runLeaveWhitelistCleanupStep(GUILD, USER);
 
     expect(result.state).toBe('WAITING');
+    expect(mockReadCurrentBinding).toHaveBeenCalledWith({ id: 'conn-a', guildId: GUILD });
+    expect(mockReadCurrentBinding).toHaveBeenCalledWith({ id: 'conn-b', guildId: GUILD });
     expect(mockWhitelistRequestDeleteMany).not.toHaveBeenCalled();
     expect(mockWhitelistRequestFindFirst).not.toHaveBeenCalled();
   });
