@@ -78,6 +78,7 @@ function request(step: string, id = 'job-1') {
       stage: 'RUNNING',
       attempts: 0,
       maxAttempts: 8,
+      claimToken: 'claim-token-1',
     },
   };
 }
@@ -88,7 +89,7 @@ beforeEach(() => {
   statsStep.mockResolvedValue({ state: 'DONE' });
   linkEconomyStep.mockResolvedValue({ state: 'DONE' });
   guildDataStep.mockResolvedValue({ performed: true });
-  finalizeRejoin.mockResolvedValue({ rejoined: false, profile: 'DELETED', levelBaseline: false });
+  finalizeRejoin.mockResolvedValue({ rejoined: false, profile: 'RESET', levelBaseline: false });
   completeRequest.mockResolvedValue('receipt');
   deferRequest.mockResolvedValue(undefined);
   recoverStale.mockResolvedValue(0);
@@ -122,8 +123,24 @@ describe('Leave-1E/1G durable worker', () => {
     expect(advanceStep.mock.calls.map(call => call[1])).toEqual([
       'WHITELIST', 'STATS_SESSIONS', 'LINK_ECONOMY', 'GUILD_DATA',
     ]);
-    expect(finalizeRejoin).toHaveBeenNthCalledWith(1, 'job-1', GUILD, USER);
-    expect(finalizeRejoin).toHaveBeenNthCalledWith(2, 'job-1', GUILD, USER);
+    expect(finalizeRejoin).toHaveBeenNthCalledWith(
+      1,
+      expect.objectContaining({
+        id: 'job-1',
+        details: expect.objectContaining({ step: 'GUILD_DATA', claimToken: 'claim-token-1' }),
+      }),
+      GUILD,
+      USER,
+    );
+    expect(finalizeRejoin).toHaveBeenNthCalledWith(
+      2,
+      expect.objectContaining({
+        id: 'job-1',
+        details: expect.objectContaining({ step: 'COMPLETE', claimToken: 'claim-token-1' }),
+      }),
+      GUILD,
+      USER,
+    );
     expect(completeRequest).toHaveBeenCalledWith(
       expect.objectContaining({ details: expect.objectContaining({ step: 'COMPLETE' }) }),
       GUILD,
@@ -237,11 +254,12 @@ describe('Leave-1E/1G durable worker', () => {
   });
 
   it('rechecks rejoin state again immediately before COMPLETE receipt', async () => {
-    await expect(processLeaveCleanupRequest(request('COMPLETE'))).resolves.toBe('COMPLETED');
+    const current = request('COMPLETE');
+    await expect(processLeaveCleanupRequest(current)).resolves.toBe('COMPLETED');
 
     expect(guildDataStep).not.toHaveBeenCalled();
     expect(finalizeRejoin).toHaveBeenCalledTimes(1);
-    expect(finalizeRejoin).toHaveBeenCalledWith('job-1', GUILD, USER);
+    expect(finalizeRejoin).toHaveBeenCalledWith(current, GUILD, USER);
     expect(completeRequest).toHaveBeenCalledTimes(1);
   });
 
