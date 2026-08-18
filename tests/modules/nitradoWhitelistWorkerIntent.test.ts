@@ -11,6 +11,16 @@ const pgQuery = jest.fn();
 const pgConnect = jest.fn();
 const pgEnd = jest.fn();
 
+type TestClaim = { id: string; guildId: string; claimToken: string };
+const mockHeartbeatClaim = jest.fn(async (_claim: TestClaim) => true);
+const mockTransitionClaim = jest.fn(async (claim: TestClaim, data: Record<string, unknown>) => {
+  await jobUpdateMany({
+    where: { id: claim.id, guildId: claim.guildId, status: 'RUNNING' },
+    data,
+  });
+  return true;
+});
+
 jest.mock('pg', () => ({
   Client: jest.fn().mockImplementation(() => ({
     connect: pgConnect,
@@ -53,6 +63,14 @@ jest.mock('../../src/modules/nitrado/whitelistIntent', () => ({
   reconcileWhitelistRemoteIntent: reconcileIntent,
 }));
 
+jest.mock('../../src/modules/nitrado/jobLease', () => ({
+  NITRADO_JOB_HEARTBEAT_INTERVAL_MS: 60_000,
+  claimNitradoJob: jest.fn(),
+  heartbeatNitradoJobClaim: mockHeartbeatClaim,
+  recoverStaleNitradoJobClaims: jest.fn(async () => 0),
+  transitionClaimedNitradoJob: mockTransitionClaim,
+}));
+
 jest.mock('../../src/modules/bans/banRegistry', () => ({ isBanActive: jest.fn() }));
 jest.mock('../../src/modules/bans/banTarget', () => ({ matchesBanIdentifier: jest.fn() }));
 jest.mock('../../src/modules/bans/banOutbox', () => ({
@@ -72,6 +90,10 @@ import { executeJob } from '../../src/modules/nitrado/jobWorker';
 
 const GUILD = '123456789012345678';
 const CONN = 'c123456789012345678901234';
+
+function claim(id: string): TestClaim {
+  return { id, guildId: GUILD, claimToken: `claim:${id}` };
+}
 
 function job(operation: 'WHITELIST_ADD' | 'WHITELIST_REMOVE', gameId: unknown = 'PlayerOne') {
   return {
@@ -130,7 +152,7 @@ describe('Nitrado-1B worker whitelist intent reconciliation', () => {
       compensationQueued: true,
     });
 
-    await executeJob('job-WHITELIST_ADD');
+    await executeJob(claim('job-WHITELIST_ADD'));
 
     expect(reconcileIntent).toHaveBeenCalledWith('WHITELIST_ADD', GUILD, CONN, 'PlayerOne');
     expect(reconcileIntent).toHaveBeenCalledTimes(1);
@@ -158,7 +180,7 @@ describe('Nitrado-1B worker whitelist intent reconciliation', () => {
       compensationQueued: true,
     });
 
-    await executeJob('job-WHITELIST_REMOVE');
+    await executeJob(claim('job-WHITELIST_REMOVE'));
 
     expect(decrypt).not.toHaveBeenCalled();
     expect(removeFromWhitelist).not.toHaveBeenCalled();
@@ -173,13 +195,13 @@ describe('Nitrado-1B worker whitelist intent reconciliation', () => {
     jobFindUnique.mockResolvedValue(job('WHITELIST_ADD'));
     reconcileIntent.mockResolvedValue(currentAdd);
 
-    await executeJob('job-WHITELIST_ADD');
+    await executeJob(claim('job-WHITELIST_ADD'));
 
     expect(decrypt).toHaveBeenCalledWith('cipher', '0'.repeat(64));
     expect(addToWhitelist).toHaveBeenCalledWith('service-1', 'PlayerOne');
     expect(reconcileIntent).toHaveBeenCalledTimes(2);
     expect(jobUpdateMany).toHaveBeenCalledWith(expect.objectContaining({
-      where: { id: 'job-WHITELIST_ADD', guildId: GUILD },
+      where: { id: 'job-WHITELIST_ADD', guildId: GUILD, status: 'RUNNING' },
       data: expect.objectContaining({ status: 'DONE', lastError: null }),
     }));
   });
@@ -188,7 +210,7 @@ describe('Nitrado-1B worker whitelist intent reconciliation', () => {
     jobFindUnique.mockResolvedValue(job('WHITELIST_REMOVE', 'RemoteOnly'));
     reconcileIntent.mockResolvedValue(currentRemove);
 
-    await executeJob('job-WHITELIST_REMOVE');
+    await executeJob(claim('job-WHITELIST_REMOVE'));
 
     expect(removeFromWhitelist).toHaveBeenCalledWith('service-1', 'RemoteOnly');
     expect(reconcileIntent).toHaveBeenCalledTimes(2);
@@ -205,7 +227,7 @@ describe('Nitrado-1B worker whitelist intent reconciliation', () => {
         compensationQueued: true,
       });
 
-    await executeJob('job-WHITELIST_ADD');
+    await executeJob(claim('job-WHITELIST_ADD'));
 
     expect(addToWhitelist).toHaveBeenCalledWith('service-1', 'PlayerOne');
     expect(reconcileIntent).toHaveBeenCalledTimes(2);
@@ -230,7 +252,7 @@ describe('Nitrado-1B worker whitelist intent reconciliation', () => {
         compensationQueued: true,
       });
 
-    await executeJob('job-WHITELIST_REMOVE');
+    await executeJob(claim('job-WHITELIST_REMOVE'));
 
     expect(removeFromWhitelist).toHaveBeenCalledWith('service-1', 'PlayerOne');
     expect(reconcileIntent).toHaveBeenCalledTimes(2);
@@ -243,12 +265,12 @@ describe('Nitrado-1B worker whitelist intent reconciliation', () => {
     jobFindUnique.mockResolvedValue(job('WHITELIST_ADD'));
     reconcileIntent.mockRejectedValue(new Error('db temporarily unavailable'));
 
-    await executeJob('job-WHITELIST_ADD');
+    await executeJob(claim('job-WHITELIST_ADD'));
 
     expect(decrypt).not.toHaveBeenCalled();
     expect(addToWhitelist).not.toHaveBeenCalled();
     expect(jobUpdateMany).toHaveBeenCalledWith(expect.objectContaining({
-      where: { id: 'job-WHITELIST_ADD', guildId: GUILD },
+      where: { id: 'job-WHITELIST_ADD', guildId: GUILD, status: 'RUNNING' },
       data: expect.objectContaining({ status: 'PENDING', attempts: 2 }),
     }));
   });
@@ -256,13 +278,13 @@ describe('Nitrado-1B worker whitelist intent reconciliation', () => {
   it('dead-letters malformed whitelist payload before intent or token access', async () => {
     jobFindUnique.mockResolvedValue(job('WHITELIST_ADD', null));
 
-    await executeJob('job-WHITELIST_ADD');
+    await executeJob(claim('job-WHITELIST_ADD'));
 
     expect(reconcileIntent).not.toHaveBeenCalled();
     expect(decrypt).not.toHaveBeenCalled();
     expect(addToWhitelist).not.toHaveBeenCalled();
     expect(jobUpdateMany).toHaveBeenCalledWith(expect.objectContaining({
-      where: { id: 'job-WHITELIST_ADD', guildId: GUILD },
+      where: { id: 'job-WHITELIST_ADD', guildId: GUILD, status: 'RUNNING' },
       data: expect.objectContaining({ status: 'DEAD', attempts: 2, lastError: 'payload.gameId fehlt' }),
     }));
   });

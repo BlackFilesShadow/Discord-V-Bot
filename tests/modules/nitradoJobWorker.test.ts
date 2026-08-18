@@ -10,7 +10,7 @@ process.env.SESSION_SECRET ||= 'test-session-secret';
  * keinen Job dauerhaft auf RUNNING haengen lassen. Server-Ban-Jobs muessen
  * HMAC-geprueft, scope-sicher, race-sicher und payload-gescrubbt sein.
  */
-const updateManyMock = jest.fn(async () => ({ count: 1 }));
+const updateManyMock = jest.fn(async (_args?: unknown) => ({ count: 1 }));
 const jobFindManyMock = jest.fn(async () => [] as Array<{ id?: string; payload: unknown }>);
 const jobCreateMock = jest.fn(async () => ({}));
 const serverBanFindFirstMock = jest.fn();
@@ -18,9 +18,25 @@ const serverBanFindManyMock = jest.fn(async () => []);
 const serverBanUpdateManyMock = jest.fn(async () => ({ count: 1 }));
 const reconcileWhitelistIntentMock = jest.fn();
 const jobStore: Record<string, unknown> = {};
+
+type TestClaim = { id: string; guildId: string; claimToken: string };
+const mockHeartbeatClaim = jest.fn(async (_claim: TestClaim) => true);
+const mockTransitionClaim = jest.fn(async (claimValue: TestClaim, data: Record<string, unknown>) => {
+  await updateManyMock({
+    where: { id: claimValue.id, guildId: claimValue.guildId, status: 'RUNNING' },
+    data,
+  });
+  return true;
+});
+
 const prismaMock = {
   nitradoJob: {
-    findUnique: jest.fn(async ({ where }: { where: { id: string } }) => jobStore[where.id] ?? null),
+    findUnique: jest.fn(async ({ where }: { where: { id: string } }) => {
+      const row = jobStore[where.id];
+      return row && typeof row === 'object'
+        ? { ...(row as Record<string, unknown>), status: 'RUNNING' }
+        : null;
+    }),
     findMany: jobFindManyMock,
     create: jobCreateMock,
     updateMany: updateManyMock,
@@ -89,8 +105,20 @@ jest.mock('../../src/modules/nitrado/whitelistIntent', () => ({
   reconcileWhitelistRemoteIntent: (...args: unknown[]) => reconcileWhitelistIntentMock(...args),
 }));
 
+jest.mock('../../src/modules/nitrado/jobLease', () => ({
+  NITRADO_JOB_HEARTBEAT_INTERVAL_MS: 60_000,
+  claimNitradoJob: jest.fn(),
+  heartbeatNitradoJobClaim: mockHeartbeatClaim,
+  recoverStaleNitradoJobClaims: jest.fn(async () => 0),
+  transitionClaimedNitradoJob: mockTransitionClaim,
+}));
+
 import { executeJob, drainAndStopJobWorker, nitradoConnectionLockKeys } from '../../src/modules/nitrado/jobWorker';
 import { identityHash } from '../../src/modules/linking/identity';
+
+function claim(id: string): TestClaim {
+  return { id, guildId: 'g1', claimToken: `claim:${id}` };
+}
 
 function lastUpdateData(): Record<string, unknown> {
   const calls = updateManyMock.mock.calls as unknown as Array<[{ data: Record<string, unknown> }]>;
@@ -128,7 +156,7 @@ describe('NIT-004 — per-Connection Multi-Instance-Lock', () => {
     jobStore['locked'] = { id: 'locked', guildId: 'g1', nitradoConnId: 'conn-1', operation: 'WHITELIST_ADD', payload: { gameId: 'player1' }, attempts: 0, maxAttempts: 8 };
     pgQuery.mockImplementationOnce(async () => ({ rows: [{ locked: false }] }));
 
-    await executeJob('locked');
+    await executeJob(claim('locked'));
 
     expect(prismaMock.nitradoConnection.findFirst).not.toHaveBeenCalled();
     expect(addToWhitelist).not.toHaveBeenCalled();
@@ -141,7 +169,7 @@ describe('NIT-004 — per-Connection Multi-Instance-Lock', () => {
     decryptMock.mockReturnValue('decrypted-token');
     addToWhitelist.mockResolvedValue(undefined);
 
-    await executeJob('lock-release');
+    await executeJob(claim('lock-release'));
 
     expect(pgQuery.mock.calls.some(([sql]) => String(sql).includes('pg_try_advisory_lock'))).toBe(true);
     expect(pgQuery.mock.calls.some(([sql]) => String(sql).includes('pg_advisory_unlock'))).toBe(true);
@@ -154,14 +182,14 @@ describe('NIT-005/007 — Job-Fehler vor API-Aufruf', () => {
   it('markiert Job DEAD wenn die Token-Entschluesselung fehlschlaegt', async () => {
     jobStore['j1'] = { id: 'j1', guildId: 'g1', nitradoConnId: 'conn-1', operation: 'WHITELIST_ADD', payload: { gameId: 'x' }, attempts: 0, maxAttempts: 8 };
     decryptMock.mockImplementation(() => { throw new Error('bad key'); });
-    await executeJob('j1');
+    await executeJob(claim('j1'));
     expect(lastUpdateData().status).toBe('DEAD');
     expect(addToWhitelist).not.toHaveBeenCalled();
   });
 
   it('markiert unbekannte Operation sofort DEAD (kein Retry)', async () => {
     jobStore['j2'] = { id: 'j2', guildId: 'g1', nitradoConnId: 'conn-1', operation: 'FOO_BAR', payload: {}, attempts: 0, maxAttempts: 8 };
-    await executeJob('j2');
+    await executeJob(claim('j2'));
     const data = lastUpdateData();
     expect(data.status).toBe('DEAD');
     expect(data.attempts).toBe(1);
@@ -172,7 +200,7 @@ describe('NIT-005/007 — Job-Fehler vor API-Aufruf', () => {
     jobStore['j3'] = { id: 'j3', guildId: 'g1', nitradoConnId: 'conn-1', operation: 'WHITELIST_ADD', payload: { gameId: 'player1' }, attempts: 0, maxAttempts: 8 };
     decryptMock.mockReturnValue('decrypted-token');
     addToWhitelist.mockResolvedValue(undefined);
-    await executeJob('j3');
+    await executeJob(claim('j3'));
     expect(addToWhitelist).toHaveBeenCalledWith('123', 'player1');
     expect(reconcileWhitelistIntentMock).toHaveBeenCalledTimes(2);
     expect(lastUpdateData().status).toBe('DONE');
@@ -201,7 +229,7 @@ describe('Phase 7 — SERVER_BAN Outbox', () => {
       .mockResolvedValueOnce({ id: 'ban-1', identityHash: hash, active: true, expiresAt: null, appliedRemotely: false })
       .mockResolvedValueOnce({ active: true, expiresAt: null });
 
-    await executeJob('ban-add');
+    await executeJob(claim('ban-add'));
 
     expect(removeFromWhitelist).toHaveBeenCalledWith('123', rawIdentifier);
     expect(getBanlist).toHaveBeenCalledWith('123');
@@ -227,7 +255,7 @@ describe('Phase 7 — SERVER_BAN Outbox', () => {
       { id: 'other-wl-add', payload: { gameId: 'someone-else' } },
     ]);
 
-    await executeJob('ban-cancel-stale-wl');
+    await executeJob(claim('ban-cancel-stale-wl'));
 
     expect(updateManyMock).toHaveBeenCalledWith(expect.objectContaining({
       where: expect.objectContaining({ id: { in: ['stale-wl-add'] }, operation: 'WHITELIST_ADD', status: 'PENDING' }),
@@ -247,7 +275,7 @@ describe('Phase 7 — SERVER_BAN Outbox', () => {
     });
     removeFromWhitelist.mockRejectedValueOnce(new Error('whitelist write failed'));
 
-    await executeJob('ban-wl-fail');
+    await executeJob(claim('ban-wl-fail'));
 
     expect(getBanlist).not.toHaveBeenCalled();
     expect(addToBanlist).not.toHaveBeenCalled();
@@ -264,7 +292,7 @@ describe('Phase 7 — SERVER_BAN Outbox', () => {
       .mockResolvedValueOnce({ active: true, expiresAt: null });
     getBanlist.mockResolvedValue([{ identifier: rawIdentifier }]);
 
-    await executeJob('ban-add-existing');
+    await executeJob(claim('ban-add-existing'));
 
     expect(removeFromWhitelist).toHaveBeenCalledWith('123', rawIdentifier);
     expect(addToBanlist).not.toHaveBeenCalled();
@@ -281,7 +309,7 @@ describe('Phase 7 — SERVER_BAN Outbox', () => {
       id: 'ban-1', identityHash: identityHash('different-player', key), active: true, expiresAt: null, appliedRemotely: false,
     });
 
-    await executeJob('ban-bad-id');
+    await executeJob(claim('ban-bad-id'));
 
     expect(removeFromWhitelist).not.toHaveBeenCalled();
     expect(getBanlist).not.toHaveBeenCalled();
@@ -298,7 +326,7 @@ describe('Phase 7 — SERVER_BAN Outbox', () => {
       id: 'ban-1', identityHash: hash, active: false, expiresAt: null, appliedRemotely: false,
     });
 
-    await executeJob('ban-stale-add');
+    await executeJob(claim('ban-stale-add'));
 
     expect(removeFromWhitelist).not.toHaveBeenCalled();
     expect(getBanlist).not.toHaveBeenCalled();
@@ -316,7 +344,7 @@ describe('Phase 7 — SERVER_BAN Outbox', () => {
       .mockResolvedValueOnce({ active: false, expiresAt: null });
     getBanlist.mockResolvedValue([{ identifier: 'other' }, { identifier: rawIdentifier }]);
 
-    await executeJob('ban-remove');
+    await executeJob(claim('ban-remove'));
 
     expect(removeFromBanlist).toHaveBeenCalledWith('123', rawIdentifier);
     expect(serverBanUpdateManyMock).toHaveBeenCalledWith(expect.objectContaining({ data: { appliedRemotely: false } }));
@@ -333,7 +361,7 @@ describe('Phase 7 — SERVER_BAN Outbox', () => {
       .mockResolvedValueOnce({ active: false, expiresAt: null });
     getBanlist.mockResolvedValue([{ identifier: 'other' }]);
 
-    await executeJob('ban-remove-gone');
+    await executeJob(claim('ban-remove-gone'));
 
     expect(removeFromBanlist).not.toHaveBeenCalled();
     expect(serverBanUpdateManyMock).toHaveBeenCalledWith(expect.objectContaining({ data: { appliedRemotely: false } }));
@@ -349,7 +377,7 @@ describe('Phase 7 — SERVER_BAN Outbox', () => {
       id: 'ban-1', identityHash: hash, active: true, expiresAt: null, appliedRemotely: true,
     });
 
-    await executeJob('ban-stale-remove');
+    await executeJob(claim('ban-stale-remove'));
 
     expect(getBanlist).not.toHaveBeenCalled();
     expect(removeFromBanlist).not.toHaveBeenCalled();
@@ -367,7 +395,7 @@ describe('KEEP-004 — RESTART_IF_DOWN respektiert administrative Zustaende', ()
     getServiceStatus.mockResolvedValue('stopped');
     startService.mockResolvedValue(undefined);
 
-    await executeJob('restart-stopped');
+    await executeJob(claim('restart-stopped'));
 
     expect(getServiceStatus).toHaveBeenCalledWith('123');
     expect(startService).toHaveBeenCalledWith('123');
@@ -378,7 +406,7 @@ describe('KEEP-004 — RESTART_IF_DOWN respektiert administrative Zustaende', ()
     jobStore['restart-suspended'] = { id: 'restart-suspended', guildId: 'g1', nitradoConnId: 'conn-1', operation: 'RESTART_IF_DOWN', payload: {}, attempts: 0, maxAttempts: 8 };
     getServiceStatus.mockResolvedValue('suspended');
 
-    await executeJob('restart-suspended');
+    await executeJob(claim('restart-suspended'));
 
     expect(getServiceStatus).toHaveBeenCalledWith('123');
     expect(startService).not.toHaveBeenCalled();
@@ -391,7 +419,7 @@ describe('KEEP-004 — RESTART_IF_DOWN respektiert administrative Zustaende', ()
       id: 'conn-1', guildId: 'g1', encryptedToken: 'enc', nitradoServerId: '123', status: 'ACTIVE', keepOnlineEnabled: false,
     });
 
-    await executeJob('restart-disabled');
+    await executeJob(claim('restart-disabled'));
 
     expect(getServiceStatus).not.toHaveBeenCalled();
     expect(startService).not.toHaveBeenCalled();
@@ -409,7 +437,7 @@ describe('KEEP-004 — RESTART_IF_DOWN respektiert administrative Zustaende', ()
       });
     getServiceStatus.mockResolvedValue('stopped');
 
-    await executeJob('restart-disable-race');
+    await executeJob(claim('restart-disable-race'));
 
     expect(getServiceStatus).toHaveBeenCalledWith('123');
     expect(startService).not.toHaveBeenCalled();

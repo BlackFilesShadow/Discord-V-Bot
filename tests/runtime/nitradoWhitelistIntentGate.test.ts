@@ -46,23 +46,29 @@ describe('Nitrado-1B whitelist intent reconciliation architecture gate', () => {
     expect(remove).toBeGreaterThan(decrypt);
   });
 
-  it('reconciles again after both whitelist remote writes and before the generic DONE checkpoint', () => {
+  it('reconciles again after both whitelist remote writes and before the fenced generic DONE checkpoint', () => {
     const add = worker.indexOf('await client.addToWhitelist(conn.nitradoServerId, payload.gameId);');
-    const postAdd = worker.indexOf("await reconcileWhitelistRemoteIntent(\n            'WHITELIST_ADD'", add);
+    const postAdd = worker.indexOf("await reconcileWhitelistRemoteIntent(\n              'WHITELIST_ADD'", add);
     const remove = worker.indexOf('await client.removeFromWhitelist(conn.nitradoServerId, payload.gameId);');
-    const postRemove = worker.indexOf("await reconcileWhitelistRemoteIntent(\n            'WHITELIST_REMOVE'", remove);
-    const done = worker.indexOf('await prisma.nitradoJob.updateMany({', postRemove);
+    const postRemove = worker.indexOf("await reconcileWhitelistRemoteIntent(\n              'WHITELIST_REMOVE'", remove);
+    const done = worker.indexOf('const done = await transitionClaimedNitradoJob(claim, {', postRemove);
 
     expect(postAdd).toBeGreaterThan(add);
     expect(postRemove).toBeGreaterThan(remove);
     expect(done).toBeGreaterThan(postRemove);
   });
 
-  it('finishes superseded jobs as explicit DONE no-ops without persisting the player identifier again', () => {
-    expect(worker).toContain('async function finishSupersededWhitelistJob');
-    expect(worker).toContain("status: 'DONE', lastError: null");
-    expect(worker).toContain("logAudit('NITRADO_WHITELIST_JOB_SUPERSEDED'");
-    expect(worker).not.toContain("NITRADO_WHITELIST_JOB_SUPERSEDED', 'NITRADO', {\n    gameId");
+  it('finishes superseded jobs through the fenced DONE no-op without persisting the player identifier again', () => {
+    const start = worker.indexOf('async function finishSupersededWhitelistJob');
+    const end = worker.indexOf('export async function executeJob', start);
+    const finish = worker.slice(start, end);
+
+    expect(start).toBeGreaterThanOrEqual(0);
+    expect(finish).toContain('transitionClaimedNitradoJob(args.claim');
+    expect(finish).toContain("status: 'DONE'");
+    expect(finish).toContain('lastError: null');
+    expect(finish).toContain("logAudit('NITRADO_WHITELIST_JOB_SUPERSEDED'");
+    expect(finish).not.toContain('gameId:');
   });
 
   it('keeps remote-only REMOVE valid while stale ADD without a local active row is discarded', () => {

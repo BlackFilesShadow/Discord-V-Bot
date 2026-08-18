@@ -1,14 +1,12 @@
 /**
  * NitradoJob-Worker — Outbox-Pattern fuer Nitrado-API-Calls.
  *
- * Polling alle JOB_POLL_INTERVAL_MS. Pickt PENDING/RUNNING-Jobs deren
- * `nextRunAt <= now`. Jeder Job laeuft mit:
- *   - Status PENDING -> RUNNING
+ * Polling alle JOB_POLL_INTERVAL_MS. Pickt PENDING-Jobs deren `nextRunAt <= now`.
+ * Jeder Job laeuft mit:
+ *   - atomarem PENDING -> RUNNING + durable Claim-Lease
+ *   - Heartbeat waehrend der gesamten Ausfuehrung
  *   - Dispatch je `operation`
- *   - Bei Erfolg -> DONE
- *   - Bei Fehler:
- *       attempts++ ; if attempts >= maxAttempts -> DEAD
- *       sonst -> PENDING + nextRunAt = now + 30s * 2^attempts (Backoff bis ~1h)
+ *   - tokengefencetem DONE/DEAD/PENDING-Zustandswechsel
  *
  * Operationen:
  *   - WHITELIST_ADD      payload: { gameId }
@@ -20,9 +18,9 @@
  *   - RESTART_IF_DOWN    payload: {}
  *
  * Multi-instance: Jeder ausgefuehrte Job haelt zusaetzlich einen dedizierten
- * PostgreSQL-Advisory-Lock pro nitradoConnId. Damit koennen mehrere Worker
- * dieselbe Outbox pollen, aber niemals denselben Nitrado-Service parallel
- * bearbeiten.
+ * PostgreSQL-Advisory-Lock pro nitradoConnId. Die DB-Lease fenced den Besitz
+ * des einzelnen Jobs; der Connection-Lock serialisiert Remote-Mutationen pro
+ * Nitrado-Service.
  */
 
 import crypto from 'crypto';
@@ -42,11 +40,18 @@ import {
   parseServerBanJobPayload,
   type BanOutboxClient,
 } from '../bans/banOutbox';
+import {
+  NITRADO_JOB_HEARTBEAT_INTERVAL_MS,
+  claimNitradoJob,
+  heartbeatNitradoJobClaim,
+  recoverStaleNitradoJobClaims,
+  transitionClaimedNitradoJob,
+  type NitradoJobClaim,
+} from './jobLease';
 
 const JOB_POLL_INTERVAL_MS = 10_000;
 const MAX_PARALLEL = 4;
 const BACKOFF_BASE_SECONDS = 30;
-const STALE_RUNNING_MS = 5 * 60 * 1000; // RUNNING-Jobs ohne Update >5min werden recovered
 const CONN_LOCK_RETRY_MS = 1_000;
 // int4 namespace "NITR" fuer per-Connection Advisory Locks.
 const CONN_LOCK_NAMESPACE = 0x4e495452;
@@ -57,7 +62,7 @@ const DEAD_RETENTION_MS = 30 * 24 * 60 * 60 * 1000;
 const RETENTION_INTERVAL_MS = 60 * 60 * 1000;
 let lastRetentionAt = 0;
 
-// Temporäre oder manuell aufgehobene Remote-Banns werden mindestens 1x/min zur
+// Temporaere oder manuell aufgehobene Remote-Banns werden mindestens 1x/min zur
 // Removal-Outbox reconciled. REMOVE braucht keinen gespeicherten Klartext-ID.
 const BAN_RECONCILE_INTERVAL_MS = 60_000;
 let lastBanReconcileAt = 0;
@@ -94,6 +99,13 @@ class PermanentJobError extends Error {
   constructor(message: string) {
     super(message);
     this.name = 'PermanentJobError';
+  }
+}
+
+class LostJobClaimError extends Error {
+  constructor(jobId: string) {
+    super(`NitradoJob ${jobId}: Ausfuehrungs-Claim verloren.`);
+    this.name = 'LostJobClaimError';
   }
 }
 
@@ -142,15 +154,15 @@ async function tryAcquireConnectionLock(nitradoConnId: string): Promise<HeldConn
   };
 }
 
-async function requeueForConnectionLock(id: string, guildId: string): Promise<void> {
-  await prisma.nitradoJob.updateMany({
-    where: { id, guildId, status: 'RUNNING' },
-    data: {
-      status: 'PENDING',
-      nextRunAt: new Date(Date.now() + CONN_LOCK_RETRY_MS),
-      updatedAt: new Date(),
-    },
+async function requeueForConnectionLock(claim: NitradoJobClaim): Promise<void> {
+  const requeued = await transitionClaimedNitradoJob(claim, {
+    status: 'PENDING',
+    nextRunAt: new Date(Date.now() + CONN_LOCK_RETRY_MS),
+    updatedAt: new Date(),
   });
+  if (!requeued) {
+    logger.warn(`NitradoJob ${claim.id}: Connection-Lock-Requeue verworfen, Claim nicht mehr aktuell.`);
+  }
 }
 
 /**
@@ -189,439 +201,426 @@ async function reconcileRemoteBanRemovals(now: Date): Promise<void> {
 
 /**
  * Nitrado-1B: Ein Retry darf niemals seine historische Operation ueber den
- * aktuellen lokalen Whitelist-Sollzustand stellen. Die Pruefung laeuft NACH
- * dem per-Connection-Advisory-Lock und VOR Token/Remote-API-Arbeit.
- *
- * Superseded Jobs werden als erfolgreicher No-op DONE quittiert: die neue
- * Reconcile-Grenze hat davor bereits den aktuellen Gegen-Intent atomar in der
- * Outbox garantiert. Dabei wird kein Spielername zusaetzlich geloggt oder in
- * Audit-Metadaten kopiert.
+ * aktuellen lokalen Whitelist-Sollzustand stellen. Superseded Jobs werden erst
+ * NACH garantiertem Gegen-Intent tokengefencet DONE quittiert.
  */
 async function finishSupersededWhitelistJob(args: {
-  id: string;
-  guildId: string;
+  claim: NitradoJobClaim;
   operation: 'WHITELIST_ADD' | 'WHITELIST_REMOVE';
   desiredState: string;
   reason: string;
 }): Promise<void> {
-  await prisma.nitradoJob.updateMany({
-    where: { id: args.id, guildId: args.guildId, status: 'RUNNING' },
-    data: { status: 'DONE', lastError: null, updatedAt: new Date() },
+  const done = await transitionClaimedNitradoJob(args.claim, {
+    status: 'DONE',
+    lastError: null,
+    updatedAt: new Date(),
   });
+  if (!done) {
+    logger.warn(`NitradoJob ${args.claim.id}: superseded DONE verworfen, Claim nicht mehr aktuell.`);
+    return;
+  }
   logAudit('NITRADO_WHITELIST_JOB_SUPERSEDED', 'NITRADO', {
-    guildId: args.guildId,
-    jobId: args.id,
+    guildId: args.claim.guildId,
+    jobId: args.claim.id,
     operation: args.operation,
     desiredState: args.desiredState,
     reason: args.reason,
   });
-  emitGuildEvent(args.guildId, {
+  emitGuildEvent(args.claim.guildId, {
     type: 'nitrado.job.updated',
-    payload: { guildId: args.guildId, jobId: args.id, status: 'DONE' },
+    payload: { guildId: args.claim.guildId, jobId: args.claim.id, status: 'DONE' },
   });
 }
 
-export async function executeJob(jobId: string): Promise<void> {
-  // Hole Job + zugehoerige Connection getrennt — `NitradoJob` hat im Schema
-  // keine deklarierte Prisma-Relation zu `NitradoConnection` (nur die FK-Spalte
-  // `nitradoConnId`), daher ist `include: { nitradoConn }` zur Laufzeit ungueltig.
-  // eslint-disable-next-line local/no-unscoped-prisma-query -- Worker hat Job-ID aus eigenem PENDING->RUNNING-Claim, Scope ist im executeJob-Body durch Job.guildId gebunden.
-  const job = await prisma.nitradoJob.findUnique({ where: { id: jobId } });
-  if (!job) return;
+export async function executeJob(claim: NitradoJobClaim): Promise<void> {
+  let heartbeatTimer: NodeJS.Timeout | null = null;
+  let heartbeatChain: Promise<void> = Promise.resolve();
+  let claimLost = false;
 
-  let connectionLock: HeldConnectionLock | null;
-  try {
-    connectionLock = await tryAcquireConnectionLock(job.nitradoConnId);
-  } catch (error) {
-    logger.warn(`NitradoJob ${job.id}: Connection-Lock nicht verfuegbar (${String(error)}), requeue.`);
-    await requeueForConnectionLock(job.id, job.guildId);
-    return;
-  }
-
-  if (!connectionLock) {
-    // Eine andere Instanz bearbeitet denselben Nitrado-Service bereits.
-    await requeueForConnectionLock(job.id, job.guildId);
-    return;
-  }
-
-  try {
-    let conn: {
-      id: string;
-      guildId: string;
-      encryptedToken: string;
-      nitradoServerId: string | null;
-      status: string;
-      keepOnlineEnabled: boolean;
-    } | null = null;
+  const renewClaim = async (): Promise<boolean> => {
+    if (claimLost) return false;
     try {
-      conn = await prisma.nitradoConnection.findFirst({
-        where: { id: job.nitradoConnId, guildId: job.guildId },
-        select: {
-          id: true,
-          guildId: true,
-          encryptedToken: true,
-          nitradoServerId: true,
-          status: true,
-          keepOnlineEnabled: true,
-        },
+      const owned = await heartbeatNitradoJobClaim(claim);
+      if (!owned) claimLost = true;
+      return owned;
+    } catch (error) {
+      claimLost = true;
+      logger.warn(`NitradoJob ${claim.id}: Lease-Heartbeat fehlgeschlagen (${String(error)}).`);
+      return false;
+    }
+  };
+
+  const ensureClaimOwned = async (): Promise<void> => {
+    if (!(await renewClaim())) throw new LostJobClaimError(claim.id);
+  };
+
+  try {
+    if (!(await renewClaim())) return;
+    heartbeatTimer = setInterval(() => {
+      heartbeatChain = heartbeatChain.then(async () => {
+        await renewClaim();
       });
-    } catch (e) {
-      await failJob(
-        job.id,
-        job.guildId,
-        job.attempts,
-        job.maxAttempts,
-        `Connection-Lookup fehlgeschlagen: ${(e as Error).message}`,
-        true,
-        isServerBanOperation(job.operation),
-      );
+    }, NITRADO_JOB_HEARTBEAT_INTERVAL_MS);
+    heartbeatTimer.unref?.();
+
+    // eslint-disable-next-line local/no-unscoped-prisma-query -- Claim traegt Job-ID+Guild; die Lease wurde davor exakt fuer diesen Scope erneuert.
+    const job = await prisma.nitradoJob.findUnique({ where: { id: claim.id } });
+    if (!job || job.guildId !== claim.guildId || job.status !== 'RUNNING') return;
+
+    let connectionLock: HeldConnectionLock | null;
+    try {
+      connectionLock = await tryAcquireConnectionLock(job.nitradoConnId);
+    } catch (error) {
+      logger.warn(`NitradoJob ${job.id}: Connection-Lock nicht verfuegbar (${String(error)}), requeue.`);
+      await requeueForConnectionLock(claim);
       return;
     }
 
-    if (!conn || conn.status !== 'ACTIVE') {
-      await failJob(
-        job.id,
-        job.guildId,
-        job.attempts,
-        job.maxAttempts,
-        'Connection inaktiv oder geloescht',
-        true,
-        isServerBanOperation(job.operation),
-      );
+    if (!connectionLock) {
+      await requeueForConnectionLock(claim);
       return;
     }
 
-    const payload = (job.payload as JobPayload | null) ?? {};
-
-    // NIT-007: Unbekannte Operationen sind permanent ungueltig -> sofort DEAD,
-    // statt sie sinnlos maxAttempts-mal zu wiederholen.
-    if (!KNOWN_OPERATIONS.has(job.operation)) {
-      await failJob(job.id, job.guildId, job.attempts, job.maxAttempts, `Unbekannte Operation: ${job.operation}`, true);
-      return;
-    }
-
-    // Nitrado-1B: unter dem Connection-Lock vor jedem Whitelist-Remote-Write den
-    // aktuellen Sollzustand lesen und bei einem superseded Retry den Gegenjob
-    // sicherstellen. Erst danach darf der historische Job DONE werden.
-    if (job.operation === 'WHITELIST_ADD' || job.operation === 'WHITELIST_REMOVE') {
-      if (typeof payload.gameId !== 'string' || !payload.gameId.trim()) {
-        await failJob(job.id, job.guildId, job.attempts, job.maxAttempts, 'payload.gameId fehlt', true);
-        return;
-      }
-      let decision;
+    try {
+      let conn: {
+        id: string;
+        guildId: string;
+        encryptedToken: string;
+        nitradoServerId: string | null;
+        status: string;
+        keepOnlineEnabled: boolean;
+      } | null = null;
       try {
-        decision = await reconcileWhitelistRemoteIntent(
-          job.operation,
-          job.guildId,
-          conn.id,
-          payload.gameId,
-        );
-      } catch (error) {
+        conn = await prisma.nitradoConnection.findFirst({
+          where: { id: job.nitradoConnId, guildId: job.guildId },
+          select: {
+            id: true,
+            guildId: true,
+            encryptedToken: true,
+            nitradoServerId: true,
+            status: true,
+            keepOnlineEnabled: true,
+          },
+        });
+      } catch (e) {
         await failJob(
-          job.id,
-          job.guildId,
+          claim,
           job.attempts,
           job.maxAttempts,
-          `Whitelist-Intent-Reconcile fehlgeschlagen: ${(error as Error).message}`,
-          false,
+          `Connection-Lookup fehlgeschlagen: ${(e as Error).message}`,
+          true,
+          isServerBanOperation(job.operation),
         );
         return;
       }
-      if (!decision.execute) {
-        await finishSupersededWhitelistJob({
-          id: job.id,
-          guildId: job.guildId,
-          operation: job.operation,
-          desiredState: decision.desiredState,
-          reason: decision.reason,
-        });
+
+      if (!conn || conn.status !== 'ACTIVE') {
+        await failJob(
+          claim,
+          job.attempts,
+          job.maxAttempts,
+          'Connection inaktiv oder geloescht',
+          true,
+          isServerBanOperation(job.operation),
+        );
         return;
       }
-    }
 
-    // NIT-005: Token-Entschluesselung + Client-Konstruktion lagen frueher
-    // AUSSERHALB des Fehlerblocks -> ein korrupter Token liess den Job dauerhaft
-    // auf RUNNING haengen (nur alle 5min via Stale-Recovery, endlos). Jetzt
-    // deterministisch permanent DEAD.
-    let client: NitradoClient;
-    try {
-      const token = decrypt(conn.encryptedToken, config.security.encryptionKey);
-      client = new NitradoClient(token);
-    } catch (e) {
-      await failJob(
-        job.id,
-        job.guildId,
-        job.attempts,
-        job.maxAttempts,
-        `Token-Entschluesselung fehlgeschlagen: ${(e as Error).message}`,
-        true,
-        isServerBanOperation(job.operation),
-      );
-      return;
-    }
+      const payload = (job.payload as JobPayload | null) ?? {};
 
-    // Wird gesetzt, sobald ein echter Gameserver-Identifier nur im RAM vorliegt.
-    // Fehlertexte werden vor Persistenz/Logging dagegen redigiert.
-    let sensitiveIdentifier: string | null = null;
+      if (!KNOWN_OPERATIONS.has(job.operation)) {
+        await failJob(claim, job.attempts, job.maxAttempts, `Unbekannte Operation: ${job.operation}`, true);
+        return;
+      }
 
-    try {
-      switch (job.operation) {
-        case 'WHITELIST_ADD': {
-          if (!conn.nitradoServerId) throw new Error('Kein nitradoServerId fuer WHITELIST_ADD');
-          if (typeof payload.gameId !== 'string') throw new Error('payload.gameId fehlt');
-          await client.addToWhitelist(conn.nitradoServerId, payload.gameId);
-          // Der Sollzustand kann sich waehrend des HTTP-Calls geaendert haben.
-          // Post-Write-Reconcile erzeugt dann sofort den deduplizierten Gegenjob.
-          await reconcileWhitelistRemoteIntent(
-            'WHITELIST_ADD',
+      if (job.operation === 'WHITELIST_ADD' || job.operation === 'WHITELIST_REMOVE') {
+        if (typeof payload.gameId !== 'string' || !payload.gameId.trim()) {
+          await failJob(claim, job.attempts, job.maxAttempts, 'payload.gameId fehlt', true);
+          return;
+        }
+        let decision;
+        try {
+          decision = await reconcileWhitelistRemoteIntent(
+            job.operation,
             job.guildId,
             conn.id,
             payload.gameId,
           );
-          break;
-        }
-        case 'WHITELIST_REMOVE': {
-          if (!conn.nitradoServerId) throw new Error('Kein nitradoServerId fuer WHITELIST_REMOVE');
-          if (typeof payload.gameId !== 'string') throw new Error('payload.gameId fehlt');
-          await client.removeFromWhitelist(conn.nitradoServerId, payload.gameId);
-          await reconcileWhitelistRemoteIntent(
-            'WHITELIST_REMOVE',
-            job.guildId,
-            conn.id,
-            payload.gameId,
+        } catch (error) {
+          await failJob(
+            claim,
+            job.attempts,
+            job.maxAttempts,
+            `Whitelist-Intent-Reconcile fehlgeschlagen: ${(error as Error).message}`,
+            false,
           );
-          break;
+          return;
         }
-        case 'SERVER_BAN_ADD': {
-          if (!conn.nitradoServerId) throw new PermanentJobError('Kein nitradoServerId fuer SERVER_BAN_ADD');
-          const banPayload = parseServerBanJobPayload(payload);
-          if (!banPayload.encryptedIdentifier) {
-            throw new PermanentJobError('SERVER_BAN_ADD ohne verschluesselten Identifier');
-          }
-
-          const ban = await prisma.serverBanEntry.findFirst({
-            where: { id: banPayload.banId, guildId: job.guildId, nitradoConnId: conn.id },
-            select: { id: true, identityHash: true, active: true, expiresAt: true, appliedRemotely: true },
+        if (!decision.execute) {
+          await finishSupersededWhitelistJob({
+            claim,
+            operation: job.operation,
+            desiredState: decision.desiredState,
+            reason: decision.reason,
           });
-          if (!ban) throw new PermanentJobError('Server-Ban-Eintrag im Job-Scope nicht gefunden');
+          return;
+        }
+      }
 
-          // Stale Add: lokal inzwischen aufgehoben/abgelaufen -> niemals remote bannen.
-          if (!isBanActive(ban, new Date())) break;
-          if (ban.appliedRemotely) break;
+      let client: NitradoClient;
+      try {
+        const token = decrypt(conn.encryptedToken, config.security.encryptionKey);
+        client = new NitradoClient(token);
+      } catch (e) {
+        await failJob(
+          claim,
+          job.attempts,
+          job.maxAttempts,
+          `Token-Entschluesselung fehlgeschlagen: ${(e as Error).message}`,
+          true,
+          isServerBanOperation(job.operation),
+        );
+        return;
+      }
 
-          try {
-            sensitiveIdentifier = decrypt(banPayload.encryptedIdentifier, config.security.encryptionKey);
-          } catch {
-            throw new PermanentJobError('Server-Ban-Identifier konnte nicht entschluesselt werden');
+      let sensitiveIdentifier: string | null = null;
+
+      try {
+        switch (job.operation) {
+          case 'WHITELIST_ADD': {
+            if (!conn.nitradoServerId) throw new Error('Kein nitradoServerId fuer WHITELIST_ADD');
+            if (typeof payload.gameId !== 'string') throw new Error('payload.gameId fehlt');
+            await ensureClaimOwned();
+            await client.addToWhitelist(conn.nitradoServerId, payload.gameId);
+            await reconcileWhitelistRemoteIntent(
+              'WHITELIST_ADD',
+              job.guildId,
+              conn.id,
+              payload.gameId,
+            );
+            break;
           }
-          if (!matchesBanIdentifier(sensitiveIdentifier, ban.identityHash, config.security.encryptionKey)) {
-            throw new PermanentJobError('Server-Ban-Identifier passt nicht zur gespeicherten HMAC-Identitaet');
+          case 'WHITELIST_REMOVE': {
+            if (!conn.nitradoServerId) throw new Error('Kein nitradoServerId fuer WHITELIST_REMOVE');
+            if (typeof payload.gameId !== 'string') throw new Error('payload.gameId fehlt');
+            await ensureClaimOwned();
+            await client.removeFromWhitelist(conn.nitradoServerId, payload.gameId);
+            await reconcileWhitelistRemoteIntent(
+              'WHITELIST_REMOVE',
+              job.guildId,
+              conn.id,
+              payload.gameId,
+            );
+            break;
           }
+          case 'SERVER_BAN_ADD': {
+            if (!conn.nitradoServerId) throw new PermanentJobError('Kein nitradoServerId fuer SERVER_BAN_ADD');
+            const banPayload = parseServerBanJobPayload(payload);
+            if (!banPayload.encryptedIdentifier) {
+              throw new PermanentJobError('SERVER_BAN_ADD ohne verschluesselten Identifier');
+            }
 
-          // Unter demselben per-Connection-Advisory-Lock alle inzwischen wieder
-          // PENDING gewordenen alten WHITELIST_ADD-Jobs fuer exakt diesen Namen
-          // neutralisieren. Ein zuvor RUNNING gewesener Add-Job muss den Lock erst
-          // freigeben und ist zu diesem Zeitpunkt entweder DONE oder wieder PENDING.
-          const pendingWhitelistAdds = await prisma.nitradoJob.findMany({
-            where: {
-              guildId: job.guildId,
-              nitradoConnId: conn.id,
-              operation: 'WHITELIST_ADD',
-              status: 'PENDING',
-            },
-            select: { id: true, payload: true },
-            take: 200,
-          });
-          const staleWhitelistAddIds = pendingWhitelistAdds
-            .filter(candidate => {
-              const gameId = jobPayloadGameId(candidate.payload);
-              return gameId !== null && gameId.toLowerCase() === sensitiveIdentifier!.toLowerCase();
-            })
-            .map(candidate => candidate.id);
-          if (staleWhitelistAddIds.length > 0) {
-            await prisma.nitradoJob.updateMany({
+            const ban = await prisma.serverBanEntry.findFirst({
+              where: { id: banPayload.banId, guildId: job.guildId, nitradoConnId: conn.id },
+              select: { id: true, identityHash: true, active: true, expiresAt: true, appliedRemotely: true },
+            });
+            if (!ban) throw new PermanentJobError('Server-Ban-Eintrag im Job-Scope nicht gefunden');
+            if (!isBanActive(ban, new Date())) break;
+            if (ban.appliedRemotely) break;
+
+            try {
+              sensitiveIdentifier = decrypt(banPayload.encryptedIdentifier, config.security.encryptionKey);
+            } catch {
+              throw new PermanentJobError('Server-Ban-Identifier konnte nicht entschluesselt werden');
+            }
+            if (!matchesBanIdentifier(sensitiveIdentifier, ban.identityHash, config.security.encryptionKey)) {
+              throw new PermanentJobError('Server-Ban-Identifier passt nicht zur gespeicherten HMAC-Identitaet');
+            }
+
+            const pendingWhitelistAdds = await prisma.nitradoJob.findMany({
               where: {
-                id: { in: staleWhitelistAddIds },
                 guildId: job.guildId,
                 nitradoConnId: conn.id,
                 operation: 'WHITELIST_ADD',
                 status: 'PENDING',
               },
-              data: { status: 'DONE', payload: {}, lastError: null, updatedAt: new Date() },
+              select: { id: true, payload: true },
+              take: 200,
             });
-          }
+            const staleWhitelistAddIds = pendingWhitelistAdds
+              .filter(candidate => {
+                const gameId = jobPayloadGameId(candidate.payload);
+                return gameId !== null && gameId.toLowerCase() === sensitiveIdentifier!.toLowerCase();
+              })
+              .map(candidate => candidate.id);
+            if (staleWhitelistAddIds.length > 0) {
+              await prisma.nitradoJob.updateMany({
+                where: {
+                  id: { in: staleWhitelistAddIds },
+                  guildId: job.guildId,
+                  nitradoConnId: conn.id,
+                  operation: 'WHITELIST_ADD',
+                  status: 'PENDING',
+                },
+                data: { status: 'DONE', payload: {}, lastError: null, updatedAt: new Date() },
+              });
+            }
 
-          // Harte Remote-Reihenfolge innerhalb EINER serialisierten Worker-
-          // Ausfuehrung: zuerst Whitelist entfernen, erst danach Banlist setzen.
-          // Schlaegt die Whitelist-Mutation fehl, greift der normale Job-Retry und
-          // es wird in diesem Versuch KEIN Remote-Bann gesetzt.
-          await client.removeFromWhitelist(conn.nitradoServerId, sensitiveIdentifier);
+            await ensureClaimOwned();
+            await client.removeFromWhitelist(conn.nitradoServerId, sensitiveIdentifier);
 
-          // Idempotenz auch nach verlorener HTTP-Antwort: vor POST pruefen, ob
-          // derselbe HMAC bereits auf der Remote-Banlist existiert.
-          const before = await client.getBanlist(conn.nitradoServerId);
-          const alreadyRemote = before.some(e =>
-            matchesBanIdentifier(e.identifier, ban.identityHash, config.security.encryptionKey),
-          );
-          if (!alreadyRemote) {
-            await client.addToBanlist(conn.nitradoServerId, sensitiveIdentifier);
-          }
-
-          await prisma.serverBanEntry.updateMany({
-            where: { id: ban.id, guildId: job.guildId, nitradoConnId: conn.id },
-            data: { appliedRemotely: true },
-          });
-
-          // Race-Kompensation: falls waehrend des Remote-Calls lokal aufgehoben
-          // wurde, sofort einen Removal-Job nachziehen.
-          const after = await prisma.serverBanEntry.findFirst({
-            where: { id: ban.id, guildId: job.guildId, nitradoConnId: conn.id },
-            select: { active: true, expiresAt: true },
-          });
-          if (after && !isBanActive(after, new Date())) {
-            await enqueueServerBanRemove(
-              prisma as unknown as BanOutboxClient,
-              { guildId: job.guildId, nitradoConnId: conn.id },
-              ban.id,
+            const before = await client.getBanlist(conn.nitradoServerId);
+            const alreadyRemote = before.some(e =>
+              matchesBanIdentifier(e.identifier, ban.identityHash, config.security.encryptionKey),
             );
-          }
-          break;
-        }
-        case 'SERVER_BAN_REMOVE': {
-          if (!conn.nitradoServerId) throw new PermanentJobError('Kein nitradoServerId fuer SERVER_BAN_REMOVE');
-          const banPayload = parseServerBanJobPayload(payload);
-          const ban = await prisma.serverBanEntry.findFirst({
-            where: { id: banPayload.banId, guildId: job.guildId, nitradoConnId: conn.id },
-            select: { id: true, identityHash: true, active: true, expiresAt: true, appliedRemotely: true },
-          });
-          if (!ban) throw new PermanentJobError('Server-Ban-Eintrag im Job-Scope nicht gefunden');
+            if (!alreadyRemote) {
+              await ensureClaimOwned();
+              await client.addToBanlist(conn.nitradoServerId, sensitiveIdentifier);
+            }
 
-          // Stale Remove: lokal wieder aktiv -> niemals remote entbannen.
-          if (isBanActive(ban, new Date())) break;
-          if (!ban.appliedRemotely) break;
+            await prisma.serverBanEntry.updateMany({
+              where: { id: ban.id, guildId: job.guildId, nitradoConnId: conn.id },
+              data: { appliedRemotely: true },
+            });
 
-          // Kein reversibler Identifier in der DB: Remote-Liste lesen und jeden
-          // Identifier nur im RAM gegen den gespeicherten HMAC pruefen.
-          const remote = await client.getBanlist(conn.nitradoServerId);
-          const match = remote.find(e =>
-            matchesBanIdentifier(e.identifier, ban.identityHash, config.security.encryptionKey),
-          );
-          if (match) {
-            sensitiveIdentifier = match.identifier;
-            await client.removeFromBanlist(conn.nitradoServerId, sensitiveIdentifier);
-          }
-
-          // Kein Match bedeutet ebenfalls: Remote-Bann ist bereits weg.
-          await prisma.serverBanEntry.updateMany({
-            where: { id: ban.id, guildId: job.guildId, nitradoConnId: conn.id },
-            data: { appliedRemotely: false },
-          });
-
-          // Race-Kompensation: wurde waehrend des Remove-Calls lokal erneut
-          // gebannt, den gerade bekannten Identifier sofort wieder als ADD
-          // einreihen. Falls kein Remote-Match existierte, kann nur ein neuer
-          // /server-ban mit bekanntem Identifier das Add sicher ausloesen.
-          const after = await prisma.serverBanEntry.findFirst({
-            where: { id: ban.id, guildId: job.guildId, nitradoConnId: conn.id },
-            select: { active: true, expiresAt: true },
-          });
-          if (after && isBanActive(after, new Date()) && sensitiveIdentifier) {
-            await enqueueServerBanAdd(
-              prisma as unknown as BanOutboxClient,
-              { guildId: job.guildId, nitradoConnId: conn.id },
-              ban.id,
-              sensitiveIdentifier,
-              config.security.encryptionKey,
-            );
-          }
-          break;
-        }
-        case 'KEEPALIVE': {
-          const ok = await client.validateToken();
-          if (!ok) throw new Error('Token ungueltig');
-          break;
-        }
-        case 'DOWNLOAD_ADM': {
-          // Echte ADM-Verarbeitung laeuft im ADM-Sync-Cron. Hier nur Token-Check.
-          const ok = await client.validateToken();
-          if (!ok) throw new Error('Token ungueltig');
-          break;
-        }
-        case 'RESTART_IF_DOWN': {
-          if (!conn.nitradoServerId) throw new Error('Kein nitradoServerId fuer RESTART_IF_DOWN');
-
-          // KEEP: Ein bereits geclaimter Job darf nach einer Deaktivierung nicht
-          // mehr remote eingreifen. Erste Schranke vor jeder Status/API-Arbeit.
-          if (!conn.keepOnlineEnabled) {
-            logger.debug(`Keep-Online skip: fuer Connection ${conn.id} deaktiviert.`);
+            const after = await prisma.serverBanEntry.findFirst({
+              where: { id: ban.id, guildId: job.guildId, nitradoConnId: conn.id },
+              select: { active: true, expiresAt: true },
+            });
+            if (after && !isBanActive(after, new Date())) {
+              await enqueueServerBanRemove(
+                prisma as unknown as BanOutboxClient,
+                { guildId: job.guildId, nitradoConnId: conn.id },
+                ban.id,
+              );
+            }
             break;
           }
-
-          const status = await client.getServiceStatus(conn.nitradoServerId);
-          // KEEP-004: Nur einen explizit gestoppten Service starten. `suspended`
-          // ist ein administrativer Zustand und darf niemals automatisch umgangen werden.
-          if (status === 'stopped') {
-            // Disable-Race schliessen: Die Einstellung kann sich waehrend der
-            // Remote-Statusabfrage geaendert haben. Unmittelbar vor `start()`
-            // deshalb erneut die kanonische DB-Wahrheit lesen.
-            const freshKeepOnline = await prisma.nitradoConnection.findFirst({
-              where: { id: conn.id, guildId: job.guildId },
-              select: { keepOnlineEnabled: true },
+          case 'SERVER_BAN_REMOVE': {
+            if (!conn.nitradoServerId) throw new PermanentJobError('Kein nitradoServerId fuer SERVER_BAN_REMOVE');
+            const banPayload = parseServerBanJobPayload(payload);
+            const ban = await prisma.serverBanEntry.findFirst({
+              where: { id: banPayload.banId, guildId: job.guildId, nitradoConnId: conn.id },
+              select: { id: true, identityHash: true, active: true, expiresAt: true, appliedRemotely: true },
             });
-            if (!freshKeepOnline?.keepOnlineEnabled) {
-              logger.info(`Keep-Online: Auto-Start ${job.id} nach zwischenzeitlicher Deaktivierung verworfen.`);
+            if (!ban) throw new PermanentJobError('Server-Ban-Eintrag im Job-Scope nicht gefunden');
+            if (isBanActive(ban, new Date())) break;
+            if (!ban.appliedRemotely) break;
+
+            const remote = await client.getBanlist(conn.nitradoServerId);
+            const match = remote.find(e =>
+              matchesBanIdentifier(e.identifier, ban.identityHash, config.security.encryptionKey),
+            );
+            if (match) {
+              sensitiveIdentifier = match.identifier;
+              await ensureClaimOwned();
+              await client.removeFromBanlist(conn.nitradoServerId, sensitiveIdentifier);
+            }
+
+            await prisma.serverBanEntry.updateMany({
+              where: { id: ban.id, guildId: job.guildId, nitradoConnId: conn.id },
+              data: { appliedRemotely: false },
+            });
+
+            const after = await prisma.serverBanEntry.findFirst({
+              where: { id: ban.id, guildId: job.guildId, nitradoConnId: conn.id },
+              select: { active: true, expiresAt: true },
+            });
+            if (after && isBanActive(after, new Date()) && sensitiveIdentifier) {
+              await enqueueServerBanAdd(
+                prisma as unknown as BanOutboxClient,
+                { guildId: job.guildId, nitradoConnId: conn.id },
+                ban.id,
+                sensitiveIdentifier,
+                config.security.encryptionKey,
+              );
+            }
+            break;
+          }
+          case 'KEEPALIVE': {
+            const ok = await client.validateToken();
+            if (!ok) throw new Error('Token ungueltig');
+            break;
+          }
+          case 'DOWNLOAD_ADM': {
+            const ok = await client.validateToken();
+            if (!ok) throw new Error('Token ungueltig');
+            break;
+          }
+          case 'RESTART_IF_DOWN': {
+            if (!conn.nitradoServerId) throw new Error('Kein nitradoServerId fuer RESTART_IF_DOWN');
+            if (!conn.keepOnlineEnabled) {
+              logger.debug(`Keep-Online skip: fuer Connection ${conn.id} deaktiviert.`);
               break;
             }
 
-            await client.start(conn.nitradoServerId);
-            logAudit('NITRADO_AUTO_START', 'NITRADO', { guildId: job.guildId, jobId: job.id, details: { nitradoConnId: conn.id, statusBefore: status } });
-          } else {
-            logger.debug(`PermaOnly skip: server ${conn.nitradoServerId} status=${status}`);
-          }
-          break;
-        }
-        default:
-          throw new Error(`Unbekannte Operation: ${job.operation}`);
-      }
+            const status = await client.getServiceStatus(conn.nitradoServerId);
+            if (status === 'stopped') {
+              const freshKeepOnline = await prisma.nitradoConnection.findFirst({
+                where: { id: conn.id, guildId: job.guildId },
+                select: { keepOnlineEnabled: true },
+              });
+              if (!freshKeepOnline?.keepOnlineEnabled) {
+                logger.info(`Keep-Online: Auto-Start ${job.id} nach zwischenzeitlicher Deaktivierung verworfen.`);
+                break;
+              }
 
-      await prisma.nitradoJob.updateMany({
-        where: { id: job.id, guildId: job.guildId },
-        data: {
+              await ensureClaimOwned();
+              await client.start(conn.nitradoServerId);
+              logAudit('NITRADO_AUTO_START', 'NITRADO', { guildId: job.guildId, jobId: job.id, details: { nitradoConnId: conn.id, statusBefore: status } });
+            } else {
+              logger.debug(`PermaOnly skip: server ${conn.nitradoServerId} status=${status}`);
+            }
+            break;
+          }
+          default:
+            throw new Error(`Unbekannte Operation: ${job.operation}`);
+        }
+
+        const done = await transitionClaimedNitradoJob(claim, {
           status: 'DONE',
           lastError: null,
           updatedAt: new Date(),
           ...(isServerBanOperation(job.operation) ? { payload: {} } : {}),
-        },
-      });
-      logAudit('NITRADO_JOB_DONE', 'NITRADO', { guildId: job.guildId, jobId: job.id, operation: job.operation });
-      emitGuildEvent(job.guildId, { type: 'nitrado.job.updated', payload: { guildId: job.guildId, jobId: job.id, status: 'DONE' } });
-    } catch (e) {
-      const rawMsg = e instanceof Error ? e.message : String(e);
-      const msg = sensitiveIdentifier
-        ? rawMsg.split(sensitiveIdentifier).join('[REDACTED]')
-        : rawMsg;
-      const httpStatus = e instanceof NitradoApiError ? e.status : null;
-      // 4xx ausser 429 oder explizite Payload/Scope-Verstoesse = permanent.
-      const permanent = e instanceof PermanentJobError
-        || (httpStatus !== null && httpStatus >= 400 && httpStatus < 500 && httpStatus !== 429);
-      await failJob(
-        job.id,
-        job.guildId,
-        job.attempts,
-        job.maxAttempts,
-        msg,
-        permanent,
-        isServerBanOperation(job.operation),
-      );
+        });
+        if (!done) {
+          logger.warn(`NitradoJob ${job.id}: DONE verworfen, Claim nicht mehr aktuell.`);
+          return;
+        }
+        logAudit('NITRADO_JOB_DONE', 'NITRADO', { guildId: job.guildId, jobId: job.id, operation: job.operation });
+        emitGuildEvent(job.guildId, { type: 'nitrado.job.updated', payload: { guildId: job.guildId, jobId: job.id, status: 'DONE' } });
+      } catch (e) {
+        if (e instanceof LostJobClaimError) {
+          logger.warn(e.message);
+          return;
+        }
+        const rawMsg = e instanceof Error ? e.message : String(e);
+        const msg = sensitiveIdentifier
+          ? rawMsg.split(sensitiveIdentifier).join('[REDACTED]')
+          : rawMsg;
+        const httpStatus = e instanceof NitradoApiError ? e.status : null;
+        const permanent = e instanceof PermanentJobError
+          || (httpStatus !== null && httpStatus >= 400 && httpStatus < 500 && httpStatus !== 429);
+        await failJob(
+          claim,
+          job.attempts,
+          job.maxAttempts,
+          msg,
+          permanent,
+          isServerBanOperation(job.operation),
+        );
+      }
+    } finally {
+      await connectionLock.release();
     }
   } finally {
-    await connectionLock.release();
+    if (heartbeatTimer) clearInterval(heartbeatTimer);
+    await heartbeatChain.catch(() => undefined);
   }
 }
 
 async function failJob(
-  id: string,
-  guildId: string,
+  claim: NitradoJobClaim,
   attempts: number,
   maxAttempts: number,
   errorMsg: string,
@@ -631,27 +630,35 @@ async function failJob(
   const nextAttempts = attempts + 1;
   const dead = permanent || nextAttempts >= maxAttempts;
   if (dead) {
-    await prisma.nitradoJob.updateMany({
-      where: { id, guildId },
-      data: {
-        status: 'DEAD',
-        attempts: nextAttempts,
-        lastError: errorMsg.slice(0, 1000),
-        updatedAt: new Date(),
-        ...(scrubPayloadWhenDead ? { payload: {} } : {}),
-      },
+    const transitioned = await transitionClaimedNitradoJob(claim, {
+      status: 'DEAD',
+      attempts: nextAttempts,
+      lastError: errorMsg.slice(0, 1000),
+      updatedAt: new Date(),
+      ...(scrubPayloadWhenDead ? { payload: {} } : {}),
     });
-    logAudit('NITRADO_JOB_DEAD', 'NITRADO', { guildId, jobId: id, attempts: nextAttempts, error: errorMsg });
-    emitGuildEvent(guildId, { type: 'nitrado.job.updated', payload: { guildId, jobId: id, status: 'DEAD' } });
+    if (!transitioned) {
+      logger.warn(`NitradoJob ${claim.id}: DEAD verworfen, Claim nicht mehr aktuell.`);
+      return;
+    }
+    logAudit('NITRADO_JOB_DEAD', 'NITRADO', { guildId: claim.guildId, jobId: claim.id, attempts: nextAttempts, error: errorMsg });
+    emitGuildEvent(claim.guildId, { type: 'nitrado.job.updated', payload: { guildId: claim.guildId, jobId: claim.id, status: 'DEAD' } });
   } else {
     const backoffSec = BACKOFF_BASE_SECONDS * Math.pow(2, nextAttempts - 1);
     const nextRunAt = new Date(Date.now() + backoffSec * 1000);
-    await prisma.nitradoJob.updateMany({
-      where: { id, guildId },
-      data: { status: 'PENDING', attempts: nextAttempts, lastError: errorMsg.slice(0, 1000), nextRunAt, updatedAt: new Date() },
+    const transitioned = await transitionClaimedNitradoJob(claim, {
+      status: 'PENDING',
+      attempts: nextAttempts,
+      lastError: errorMsg.slice(0, 1000),
+      nextRunAt,
+      updatedAt: new Date(),
     });
-    logger.warn(`NitradoJob ${id} fehlgeschlagen (${nextAttempts}/${maxAttempts}), retry in ${backoffSec}s: ${errorMsg}`);
-    emitGuildEvent(guildId, { type: 'nitrado.job.updated', payload: { guildId, jobId: id, status: 'PENDING' } });
+    if (!transitioned) {
+      logger.warn(`NitradoJob ${claim.id}: Retry-Requeue verworfen, Claim nicht mehr aktuell.`);
+      return;
+    }
+    logger.warn(`NitradoJob ${claim.id} fehlgeschlagen (${nextAttempts}/${maxAttempts}), retry in ${backoffSec}s: ${errorMsg}`);
+    emitGuildEvent(claim.guildId, { type: 'nitrado.job.updated', payload: { guildId: claim.guildId, jobId: claim.id, status: 'PENDING' } });
   }
 }
 
@@ -659,23 +666,13 @@ async function pollOnce(): Promise<void> {
   if (running) return;
   running = true;
   try {
-    // Recovery: RUNNING-Jobs, die laenger als STALE_RUNNING_MS keine
-    // updatedAt-Aenderung mehr hatten, sind nach Crash/Deploy verwaist
-    // und werden wieder auf PENDING zurueckgesetzt.
-    const staleCutoff = new Date(Date.now() - STALE_RUNNING_MS);
-    // eslint-disable-next-line local/no-unscoped-prisma-query -- Recovery-Sweep ueber alle Guilds; betrifft nur eigene Job-Outbox.
-    const stale = await prisma.nitradoJob.updateMany({
-      where: { status: 'RUNNING', updatedAt: { lt: staleCutoff } },
-      data: { status: 'PENDING', updatedAt: new Date() },
-    });
-    if (stale.count > 0) {
-      logger.warn(`NitradoJob-Worker: ${stale.count} verwaiste RUNNING-Jobs auf PENDING zurueckgesetzt`);
+    const recovered = await recoverStaleNitradoJobClaims(new Date());
+    if (recovered > 0) {
+      logger.warn(`NitradoJob-Worker: ${recovered} verwaiste RUNNING-Claims auf PENDING zurueckgesetzt`);
     }
 
     await reconcileRemoteBanRemovals(new Date());
 
-    // NIT-008: Retention-Sweep (hoechstens 1x/Stunde). Alte abgeschlossene Jobs
-    // entfernen; DEAD laenger halten fuer Diagnose.
     if (Date.now() - lastRetentionAt > RETENTION_INTERVAL_MS) {
       lastRetentionAt = Date.now();
       const [doneDel, deadDel] = await Promise.all([
@@ -689,23 +686,15 @@ async function pollOnce(): Promise<void> {
       }
     }
 
-    // Atomar: PENDING -> RUNNING fuer max MAX_PARALLEL Jobs deren nextRunAt erreicht ist.
-    // WICHTIG: Pro nitradoConnId NUR ein Job parallel — Whitelist-Settings sind
-    // Read-Modify-Write auf einem geteilten String und MUESSEN serialisiert werden,
-    // sonst ueberschreiben sich konkurrente Updates gegenseitig (Datenverlust).
-    // Der zusaetzliche DB-Advisory-Lock in executeJob macht diese Garantie auch
-    // ueber mehrere Prozessinstanzen hinweg verbindlich.
-    // eslint-disable-next-line local/no-unscoped-prisma-query -- Worker scannt globale Outbox; Scope-Check erfolgt im executeJob.
+    // eslint-disable-next-line local/no-unscoped-prisma-query -- Worker scannt globale Outbox; Scope-Check erfolgt im Claim+executeJob.
     const candidates = await prisma.nitradoJob.findMany({
       where: { status: 'PENDING', nextRunAt: { lte: new Date() } },
       orderBy: { nextRunAt: 'asc' },
-      take: MAX_PARALLEL * 4, // genug Vorrat damit auch bei Conn-Konflikten MAX_PARALLEL erreicht wird
+      take: MAX_PARALLEL * 4,
       select: { id: true, guildId: true, nitradoConnId: true },
     });
     if (candidates.length === 0) return;
 
-    // Per-Conn-Serialisierung innerhalb dieser Poll-Iteration. Der Advisory-Lock
-    // in executeJob ist die zusaetzliche Instanzgrenze gegen Cross-Process-Races.
     // eslint-disable-next-line local/no-unscoped-prisma-query -- nur RUNNING-Connection-IDs ermitteln
     const runningConns = await prisma.nitradoJob.findMany({
       where: { status: 'RUNNING' },
@@ -721,17 +710,14 @@ async function pollOnce(): Promise<void> {
     }
     if (filtered.length === 0) return;
 
-    const claimed: Array<{ id: string; guildId: string }> = [];
+    const claimed: NitradoJobClaim[] = [];
     for (const c of filtered) {
-      const upd = await prisma.nitradoJob.updateMany({
-        where: { id: c.id, guildId: c.guildId, status: 'PENDING' },
-        data: { status: 'RUNNING', updatedAt: new Date() },
-      });
-      if (upd.count === 1) claimed.push({ id: c.id, guildId: c.guildId });
+      const claim = await claimNitradoJob({ id: c.id, guildId: c.guildId });
+      if (claim) claimed.push(claim);
     }
     if (claimed.length === 0) return;
 
-    await Promise.allSettled(claimed.map(c => executeJob(c.id)));
+    await Promise.allSettled(claimed.map(executeJob));
   } catch (e) {
     logger.error('NitradoJob-Worker pollOnce-Fehler:', e as Error);
   } finally {
@@ -743,8 +729,6 @@ export function startNitradoJobWorker(): void {
   if (timer) return;
   logger.info(`NitradoJob-Worker gestartet (Intervall ${JOB_POLL_INTERVAL_MS}ms, Parallel ${MAX_PARALLEL})`);
   timer = setInterval(() => { void pollOnce(); }, JOB_POLL_INTERVAL_MS);
-  // F-013/NIT-010: Der Poll-Timer darf einen ansonsten beendeten Prozess
-  // nicht kuenstlich am Leben halten; Shutdown wird ueber den expliziten Stop-Hook gesteuert.
   timer.unref?.();
 }
 
