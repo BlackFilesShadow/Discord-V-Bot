@@ -1,0 +1,21 @@
+// Nitrado-1I: DB-seitiger Besitznachweis fuer RUNNING-Outbox-Jobs.
+//
+// Die Lease liegt bewusst in einer separaten Tabelle statt Claim-Metadaten in
+// payload/lastError/updatedAt zu ueberladen. `jobId` ist genau eine Lease pro
+// NitradoJob; `claimToken` fenced alte Worker nach Reclaim. `heartbeatAt` ist
+// die Recovery-Wahrheit fuer aktive Ausfuehrungen.
+//
+// Keine Prisma-Relation zum Legacy-NitradoJob-Modell: die Migration legt den
+// echten FK mit ON DELETE CASCADE an, ohne die grosse Hauptschema-Datei zu
+// duplizieren oder anzufassen.
+model NitradoJobLease {
+  jobId       String   @id
+  guildId     String
+  claimToken  String   @unique
+  claimedAt   DateTime
+  heartbeatAt DateTime
+  createdAt   DateTime @default(now())
+
+  @@index([heartbeatAt])
+  @@index([guildId, heartbeatAt])
+}
