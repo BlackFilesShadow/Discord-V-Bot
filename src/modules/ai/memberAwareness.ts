@@ -69,16 +69,15 @@ export function clearPendingMemberActivity(guildId: string, discordId: string): 
 }
 
 /**
- * Throttled-Upsert nach jeder verarbeiteten Nachricht. Best-effort,
+ * Throttled Activity-Update nach jeder verarbeiteten Nachricht. Best-effort,
  * Fehler werden geloggt aber nicht weitergereicht.
  *
- * Lifecycle-Fencing: Ein Activity-Flush besitzt niemals die Autoritaet,
- * `isLeft/leftAt` einer bereits existierenden Zeile zu aendern. Sonst koennte
- * ein vor guildMemberRemove gestarteter asynchroner DB-Write den anschliessend
- * gesetzten Leave-Marker wieder auf aktiv drehen. Nur syncMemberProfile
- * (echtes Join/Update-Ereignis) und markMemberLeft besitzen diese Lifecycle-
- * Felder. Beim erstmaligen Create stammt der Member dagegen aus einem realen
- * Guild-Message-Event und startet deshalb korrekt als aktiv.
+ * Lifecycle-Fencing: Activity besitzt weder Create- noch Rejoin-Autoritaet.
+ * Nur syncMemberProfile (echtes Join/Update-Ereignis) darf ein Profil anlegen
+ * bzw. `isLeft/leftAt` auf aktiv setzen. Der Flush aktualisiert ausschliesslich
+ * eine bereits aktive Zeile (`isLeft=false`). Dadurch kann ein vor dem Leave
+ * gestarteter oder danach verspäteter Write weder den Leave-Marker noch die
+ * letzte bekannte Identitaet nachtraeglich verfälschen.
  */
 export async function trackMemberActivity(member: GuildMember): Promise<void> {
   const key = memberKey(member.guild.id, member.id);
@@ -87,30 +86,18 @@ export async function trackMemberActivity(member: GuildMember): Promise<void> {
   slot.count += 1;
   pending.set(key, slot);
   if (now - slot.lastFlushAt < FLUSH_INTERVAL_MS) return;
-  // Flush.
+
   const inc = slot.count;
   slot.count = 0;
   slot.lastFlushAt = now;
   try {
-    await prisma.guildMemberProfile.upsert({
-      where: { guildId_discordId: { guildId: member.guild.id, discordId: member.id } },
-      create: {
+    await prisma.guildMemberProfile.updateMany({
+      where: {
         guildId: member.guild.id,
         discordId: member.id,
-        username: member.user.username,
-        nickname: member.nickname ?? null,
-        joinedAt: member.joinedAt ?? null,
-        topRolesJson: topRoleNames(member) as any,
-        isBoosting: !!member.premiumSince,
-        boostingSince: member.premiumSince ?? null,
-        isPending: !!member.pending,
-        timeoutUntil: member.communicationDisabledUntil ?? null,
-        messageCount: inc,
-        lastSeenAt: new Date(),
         isLeft: false,
-        leftAt: null,
       },
-      update: {
+      data: {
         username: member.user.username,
         nickname: member.nickname ?? null,
         topRolesJson: topRoleNames(member) as any,
