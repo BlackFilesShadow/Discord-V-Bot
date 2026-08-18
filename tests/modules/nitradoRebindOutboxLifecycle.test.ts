@@ -24,8 +24,8 @@ function makeClient(runningSequence: Array<{ id: string } | null> = [null, null]
 }
 
 describe('Nitrado-1U service-rebind outbox lifecycle', () => {
-  it('takes the connection barrier before inspecting remote mutation jobs', async () => {
-    const { client, queryRaw, findFirst } = makeClient();
+  it('row-locks remote observations before taking connection barrier, then inspects remote jobs', async () => {
+    const { client, queryRaw, findFirst, updateWhitelist, updateBans } = makeClient();
 
     await prepareNitradoRemoteStateForServiceRebind(client, SCOPE);
 
@@ -34,22 +34,24 @@ describe('Nitrado-1U service-rebind outbox lifecycle', () => {
       expect.any(Number),
       expect.any(Number),
     );
+    expect(updateWhitelist.mock.invocationCallOrder[0]).toBeLessThan(queryRaw.mock.invocationCallOrder[0]);
+    expect(updateBans.mock.invocationCallOrder[0]).toBeLessThan(queryRaw.mock.invocationCallOrder[0]);
     expect(queryRaw.mock.invocationCallOrder[0]).toBeLessThan(findFirst.mock.invocationCallOrder[0]);
   });
 
-  it('fails closed without cleanup when a remote mutation is already RUNNING', async () => {
+  it('returns busy after observation resets when a mutation is RUNNING so caller can roll back whole transaction', async () => {
     const { client, updateJobs, updateWhitelist, updateBans } = makeClient([{ id: 'running-1' }]);
 
     await expect(prepareNitradoRemoteStateForServiceRebind(client, SCOPE)).resolves.toEqual({
       busy: true,
       cancelledJobs: 0,
-      whitelistReset: 0,
-      banRemoteStateReset: 0,
+      whitelistReset: 4,
+      banRemoteStateReset: 2,
     });
 
     expect(updateJobs).not.toHaveBeenCalled();
-    expect(updateWhitelist).not.toHaveBeenCalled();
-    expect(updateBans).not.toHaveBeenCalled();
+    expect(updateWhitelist).toHaveBeenCalledTimes(1);
+    expect(updateBans).toHaveBeenCalledTimes(1);
   });
 
   it('cancels only stale PENDING remote-state intents and preserves SERVER_BAN_ADD policy intent', async () => {
@@ -90,18 +92,18 @@ describe('Nitrado-1U service-rebind outbox lifecycle', () => {
     });
   });
 
-  it('detects a PENDING-to-RUNNING claim race after cleanup so caller can roll back the rebind transaction', async () => {
+  it('detects PENDING-to-RUNNING claim race after cleanup so caller rolls back all earlier changes', async () => {
     const { client, updateJobs, updateWhitelist, updateBans } = makeClient([null, { id: 'raced-1' }]);
 
     await expect(prepareNitradoRemoteStateForServiceRebind(client, SCOPE)).resolves.toEqual({
       busy: true,
       cancelledJobs: 3,
-      whitelistReset: 0,
-      banRemoteStateReset: 0,
+      whitelistReset: 4,
+      banRemoteStateReset: 2,
     });
 
     expect(updateJobs).toHaveBeenCalledTimes(1);
-    expect(updateWhitelist).not.toHaveBeenCalled();
-    expect(updateBans).not.toHaveBeenCalled();
+    expect(updateWhitelist).toHaveBeenCalledTimes(1);
+    expect(updateBans).toHaveBeenCalledTimes(1);
   });
 });
