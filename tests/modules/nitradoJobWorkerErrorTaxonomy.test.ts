@@ -51,7 +51,7 @@ jest.mock('pg', () => ({
   Client: jest.fn().mockImplementation(() => ({ connect: pgConnect, query: pgQuery, end: pgEnd })),
 }));
 
-const decryptMock = jest.fn(() => 'decrypted-token');
+const decryptMock = jest.fn((..._args: unknown[]) => 'decrypted-token');
 const addToWhitelist = jest.fn(async () => undefined);
 const removeFromWhitelist = jest.fn(async () => undefined);
 const getServiceStatus = jest.fn(async () => 'started');
