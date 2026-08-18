@@ -56,7 +56,9 @@ async function ensureJobInLock(
   payload: ServerBanJobPayload,
 ): Promise<boolean> {
   // Nur aktive Jobs blockieren einen neuen Job. DONE/DEAD bleiben Historie und
-  // duerfen einen spaeteren expliziten Retry/Reconcile nicht verhindern.
+  // duerfen einen spaeteren expliziten Retry/Reconcile nicht verhindern. Ohne
+  // `take`-Fenster werden auch bereits vorhandene Legacy-Outboxen vollstaendig
+  // in die atomare Deduplizierung einbezogen.
   const existing = await tx.nitradoJob.findMany({
     where: {
       guildId: scope.guildId,
@@ -65,7 +67,6 @@ async function ensureJobInLock(
       status: { in: ['PENDING', 'RUNNING'] },
     },
     select: { payload: true },
-    take: 500,
   });
   if (existing.some(job => asPayload(job.payload)?.banId === payload.banId)) return false;
 
