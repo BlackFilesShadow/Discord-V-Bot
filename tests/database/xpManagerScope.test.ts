@@ -9,8 +9,8 @@ process.env.SESSION_SECRET ||= 'test-session-secret';
  * P2-Regression (#11): grantEventXp muss die XP-Konfiguration GUILD-SCOPED
  * laden (xpConfig.id == guildId), nicht die erste aktive Config einer
  * beliebigen fremden Guild via findFirst({ isActive: true }).
- * Leave-1G: vor jeder Event-XP-Mutation muss zusaetzlich der exakt
- * Guild+Discord-gescoppte Leave-Cleanup-Barrier passieren.
+ * Leave-1G: alle user-spezifischen XP-Schreibpfade muessen zusaetzlich den
+ * exakt Guild+Discord-gescoppten Leave-Cleanup-Barrier passieren.
  */
 
 const leaveGuard = jest.fn();
@@ -19,6 +19,7 @@ const prismaMock = {
     findUnique: jest.fn().mockResolvedValue({ discordId: 'discord-1' }),
   },
   levelData: {
+    findUnique: jest.fn().mockResolvedValue({ xp: BigInt(100), level: 1 }),
     upsert: jest.fn().mockResolvedValue({ xp: BigInt(100), level: 0 }),
     update: jest.fn().mockResolvedValue({}),
   },
@@ -40,7 +41,7 @@ jest.mock('../../src/utils/logger', () => ({
   logAuditDb: jest.fn(),
 }));
 
-import { grantEventXp } from '../../src/modules/xp/xpManager';
+import { grantEventXp, resetUserXp } from '../../src/modules/xp/xpManager';
 
 const GUILD = 'guild-A';
 
@@ -48,6 +49,7 @@ beforeEach(() => {
   jest.clearAllMocks();
   leaveGuard.mockResolvedValue(undefined);
   prismaMock.user.findUnique.mockResolvedValue({ discordId: 'discord-1' });
+  prismaMock.levelData.findUnique.mockResolvedValue({ xp: BigInt(100), level: 1 });
   prismaMock.levelData.upsert.mockResolvedValue({ xp: BigInt(100), level: 0 });
   prismaMock.xpConfig.findUnique.mockResolvedValue({ id: GUILD, maxLevel: 20, isActive: true });
 });
@@ -92,7 +94,6 @@ describe('grantEventXp — guild-scoped XpConfig (P2 #11)', () => {
   });
 
   it('nutzt maxLevel der eigenen Guild als Cap', async () => {
-    // Sehr viel XP -> Level wuerde ohne Cap hoch; eigener maxLevel=5 begrenzt.
     prismaMock.levelData.upsert.mockResolvedValue({ xp: BigInt(10_000_000), level: 0 });
     prismaMock.xpConfig.findUnique.mockResolvedValue({ id: GUILD, maxLevel: 5, isActive: true });
     const r = await grantEventXp('user-1', GUILD, 100, 'POLL');
@@ -101,5 +102,32 @@ describe('grantEventXp — guild-scoped XpConfig (P2 #11)', () => {
     expect(prismaMock.levelData.update).toHaveBeenCalledWith(
       expect.objectContaining({ data: { level: 5 } }),
     );
+  });
+});
+
+describe('resetUserXp — Leave-1G player-state barrier', () => {
+  it('fences the exact subject before reading or mutating LevelData', async () => {
+    await expect(resetUserXp('user-1', GUILD, 'admin-1')).resolves.toBe(true);
+
+    expect(prismaMock.user.findUnique).toHaveBeenCalledWith({
+      where: { id: 'user-1' },
+      select: { discordId: true },
+    });
+    expect(leaveGuard).toHaveBeenCalledWith(GUILD, 'discord-1');
+    expect(leaveGuard.mock.invocationCallOrder[0]).toBeLessThan(prismaMock.levelData.findUnique.mock.invocationCallOrder[0]);
+    expect(prismaMock.xpRecord.create).toHaveBeenCalledWith(expect.objectContaining({
+      data: expect.objectContaining({ source: 'RESET', userId: 'user-1', guildId: GUILD }),
+    }));
+  });
+
+  it('cannot recreate an XP reset record while leave cleanup is open/failed', async () => {
+    leaveGuard.mockRejectedValue(new Error('Leave-Cleanup noch offen'));
+
+    await expect(resetUserXp('user-1', GUILD, 'admin-1'))
+      .rejects.toThrow(/Leave-Cleanup/);
+
+    expect(prismaMock.levelData.findUnique).not.toHaveBeenCalled();
+    expect(prismaMock.levelData.update).not.toHaveBeenCalled();
+    expect(prismaMock.xpRecord.create).not.toHaveBeenCalled();
   });
 });
