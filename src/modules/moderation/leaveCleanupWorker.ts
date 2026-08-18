@@ -19,9 +19,11 @@ import { runLeaveStatsSessionsCleanupStep } from './leaveCleanupStatsSessions';
 import { runLeaveWhitelistCleanupStep } from './leaveCleanupWhitelist';
 
 const POLL_INTERVAL_MS = 15_000;
+const RECOVERY_INTERVAL_MS = 60_000;
 const MAX_JOBS_PER_TICK = 10;
 let timer: NodeJS.Timeout | null = null;
 let running = false;
+let lastRecoveryAt = 0;
 
 export type LeaveCleanupWorkerResult = 'COMPLETED' | 'WAITING';
 
@@ -32,6 +34,23 @@ class LeaveCleanupProcessingError extends Error {
   ) {
     super(sanitizeLeaveCleanupError(originalError));
     this.name = 'LeaveCleanupProcessingError';
+  }
+}
+
+async function recoverStaleIfDue(now: Date = new Date()): Promise<number> {
+  const nowMs = now.getTime();
+  if (lastRecoveryAt > 0 && nowMs - lastRecoveryAt < RECOVERY_INTERVAL_MS) return 0;
+  lastRecoveryAt = nowMs;
+
+  try {
+    const recovered = await recoverStaleLeaveCleanupRequests(now);
+    if (recovered > 0) {
+      logger.warn(`Leave-Cleanup: ${recovered} stale Request(s) fuer Failover freigegeben.`);
+    }
+    return recovered;
+  } catch (error) {
+    logger.error(`Leave-Cleanup Stale-Recovery fehlgeschlagen: ${sanitizeLeaveCleanupError(error)}`);
+    return 0;
   }
 }
 
@@ -102,11 +121,11 @@ export async function processLeaveCleanupRequest(
           throw new Error('Leave-Worker: Guild-Daten-Cleanup fehlgeschlagen.');
         }
 
-        // Rejoin kann waehrend eines laufenden Remote-/DB-Cleanups eintreffen.
-        // Direkt nach dem letzten destruktiven Guild-Schritt wird deshalb die
-        // Lifecycle-Grenze neu bewertet: Altprofil entfernen oder frische
-        // Rejoin-Baseline herstellen. Fehler bleiben im GUILD_DATA-Checkpoint
-        // retrybar und koennen keinen halbfertigen COMPLETE-Receipt erzeugen.
+        // Rejoin kann waehrend des laufenden Remote-/DB-Cleanups eintreffen.
+        // Der Finalizer muss noch unter exakt dem aktiven Claim laufen; durch
+        // Leave-1G/#104 wurde dessen Lease bei jedem vorigen Checkpoint erneuert.
+        // Erst nach erfolgreicher Fresh-State-Pruefung darf GUILD_DATA auf
+        // COMPLETE avancieren und damit erneut claimedAt erneuern.
         await finalizeLeaveRejoinState(request, guildId, discordId);
 
         request = await advanceLeaveCleanupStep(request, 'GUILD_DATA');
@@ -114,9 +133,9 @@ export async function processLeaveCleanupRequest(
       }
 
       if (details.step === 'COMPLETE') {
-        // Zweiter finaler Recheck schliesst das Fenster fuer Rejoin -> erneuter
-        // Leave zwischen GUILD_DATA und COMPLETE. Der Request bleibt bis danach
-        // roh gescoppt/IN_PROGRESS und damit fuer alle Rejoin-Guards sichtbar.
+        // Zweiter finaler Recheck schliesst Rejoin -> erneuter Leave zwischen
+        // GUILD_DATA und COMPLETE. Der aktuelle COMPLETE-Request traegt bereits
+        // den durch advanceLeaveCleanupStep erneuerten Lease-Zeitpunkt.
         await finalizeLeaveRejoinState(request, guildId, discordId);
         await completeLeaveCleanupRequest(request, guildId, config.security.encryptionKey);
         return 'COMPLETED';
@@ -125,9 +144,9 @@ export async function processLeaveCleanupRequest(
 
     throw new Error('Leave-Worker: Substep-Guard ueberschritten.');
   } catch (error) {
-    // Entscheidend: `request` ist nach jedem erfolgreichen persistenten
-    // Checkpoint aktualisiert. Retry darf niemals mit dem initialen Step einen
-    // spaeteren DB-Checkpoint zurueckschreiben.
+    // `request` ist nach jedem erfolgreichen persistenten Checkpoint aktualisiert.
+    // Retry darf niemals mit dem initialen Step/Lease einen spaeteren DB-
+    // Checkpoint zurueckschreiben.
     throw new LeaveCleanupProcessingError(request, error);
   }
 }
@@ -138,6 +157,11 @@ export async function runLeaveCleanupWorkerOnce(): Promise<number> {
   running = true;
   let handled = 0;
   try {
+    // Nicht nur beim Prozessstart recovern: Eine bereits laufende zweite
+    // Instanz muss einen abgestorbenen Claim nach Ablauf der Lease uebernehmen
+    // koennen, ohne selbst neu gestartet werden zu muessen.
+    await recoverStaleIfDue();
+
     for (let i = 0; i < MAX_JOBS_PER_TICK; i++) {
       const request = await claimNextLeaveCleanupRequest();
       if (!request) break;
@@ -164,17 +188,13 @@ export async function runLeaveCleanupWorkerOnce(): Promise<number> {
 }
 
 /**
- * Startup-Recovery wird vor dem Timer ausgefuehrt. Die eigentliche Remote-
- * Verarbeitung wird nicht in den Prozessstart hinein blockierend awaited.
+ * Startup-Recovery wird vor dem Timer ausgefuehrt. Danach prueft jeder Worker-
+ * Tick dieselbe Recovery gedrosselt erneut, damit Multi-Instance-Failover auch
+ * ohne Neustart der ueberlebenden Instanz funktioniert.
  */
 export async function startLeaveCleanupWorker(): Promise<void> {
   if (timer) return;
-  try {
-    const recovered = await recoverStaleLeaveCleanupRequests();
-    if (recovered > 0) logger.warn(`Leave-Cleanup: ${recovered} stale Request(s) nach Restart freigegeben.`);
-  } catch (error) {
-    logger.error(`Leave-Cleanup Restart-Recovery fehlgeschlagen: ${sanitizeLeaveCleanupError(error)}`);
-  }
+  await recoverStaleIfDue();
 
   void runLeaveCleanupWorkerOnce().catch(error => {
     logger.error(`Leave-Cleanup initialer Worker-Tick fehlgeschlagen: ${sanitizeLeaveCleanupError(error)}`);
@@ -190,4 +210,5 @@ export async function startLeaveCleanupWorker(): Promise<void> {
 export function stopLeaveCleanupWorker(): void {
   if (timer) clearInterval(timer);
   timer = null;
+  lastRecoveryAt = 0;
 }
