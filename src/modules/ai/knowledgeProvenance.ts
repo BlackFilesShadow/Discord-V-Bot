@@ -225,22 +225,29 @@ function expireLiveServerMeta(meta: KnowledgeProvenanceMeta): KnowledgeProvenanc
   };
 }
 
-async function currentGeneratedLiveServerKnowledgeIds(
-  guildId: string,
-  stored: readonly {
-    knowledgeId: string;
-    sourceKind: string;
-    sourceRef: string | null;
-    sourceVersion: string | null;
-  }[],
-): Promise<Set<string>> {
-  const mirrorRows = stored
-    .map((row) => ({ row, nitradoConnId: row.sourceKind === 'LIVE_SERVER'
-      ? liveServerConnectionIdFromSourceRef(row.sourceRef)
-      : null }))
-    .filter((entry): entry is { row: typeof stored[number]; nitradoConnId: string } => Boolean(entry.nitradoConnId));
-  if (mirrorRows.length === 0) return new Set();
+interface StoredKnowledgeProvenanceRow {
+  knowledgeId: string;
+  sourceKind: string;
+  sourceRef: string | null;
+  sourceVersion: string | null;
+}
 
+function mirrorCandidateRows(stored: readonly StoredKnowledgeProvenanceRow[]) {
+  return stored
+    .map((row) => ({
+      row,
+      nitradoConnId: row.sourceKind === 'LIVE_SERVER'
+        ? liveServerConnectionIdFromSourceRef(row.sourceRef)
+        : null,
+    }))
+    .filter((entry): entry is { row: StoredKnowledgeProvenanceRow; nitradoConnId: string } => Boolean(entry.nitradoConnId));
+}
+
+async function generatedLiveServerKnowledgeIds(
+  guildId: string,
+  mirrorRows: readonly { row: StoredKnowledgeProvenanceRow; nitradoConnId: string }[],
+): Promise<Set<string>> {
+  if (mirrorRows.length === 0) return new Set();
   const candidateIds = [...new Set(mirrorRows.map((entry) => entry.row.knowledgeId))];
   const systemRows = await prisma.guildKnowledge.findMany({
     where: {
@@ -250,8 +257,15 @@ async function currentGeneratedLiveServerKnowledgeIds(
     },
     select: { id: true },
   });
-  const systemIds = new Set(systemRows.map((row) => row.id));
-  const generated = mirrorRows.filter((entry) => systemIds.has(entry.row.knowledgeId));
+  return new Set(systemRows.map((row) => row.id));
+}
+
+async function currentGeneratedLiveServerKnowledgeIds(
+  guildId: string,
+  mirrorRows: readonly { row: StoredKnowledgeProvenanceRow; nitradoConnId: string }[],
+  generatedIds: ReadonlySet<string>,
+): Promise<Set<string>> {
+  const generated = mirrorRows.filter((entry) => generatedIds.has(entry.row.knowledgeId));
   if (generated.length === 0) return new Set();
 
   const connIds = [...new Set(generated.map((entry) => entry.nitradoConnId))];
@@ -310,17 +324,13 @@ export async function getKnowledgeProvenanceMap(
   // dem Binding-Generation-Gate. Legacy/unversionierte, alte, inaktive oder
   // service-fremde Generationen werden vor dem Ranking als EXPIRED behandelt.
   // Owner-curated Knowledge bleibt von dieser Lifecycle-Regel unberuehrt.
-  const currentGeneratedLiveIds = await currentGeneratedLiveServerKnowledgeIds(guildId, stored);
-  const generatedMirrorIds = new Set((await prisma.guildKnowledge.findMany({
-    where: {
-      guildId,
-      id: { in: stored
-        .filter((row) => row.sourceKind === 'LIVE_SERVER' && liveServerConnectionIdFromSourceRef(row.sourceRef))
-        .map((row) => row.knowledgeId) },
-      createdBy: LIVE_SERVER_KNOWLEDGE_CREATED_BY,
-    },
-    select: { id: true },
-  })).map((row) => row.id));
+  const mirrorRows = mirrorCandidateRows(stored);
+  const generatedMirrorIds = await generatedLiveServerKnowledgeIds(guildId, mirrorRows);
+  const currentGeneratedLiveIds = await currentGeneratedLiveServerKnowledgeIds(
+    guildId,
+    mirrorRows,
+    generatedMirrorIds,
+  );
 
   const out = new Map<string, KnowledgeProvenanceMeta>();
   for (const row of rows) {
