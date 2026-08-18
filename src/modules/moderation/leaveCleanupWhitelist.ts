@@ -3,6 +3,7 @@ import { config } from '../../config';
 import { decrypt } from '../../utils/security';
 import { identityHash } from '../linking/identity';
 import { NitradoClient } from '../nitrado/nitradoClient';
+import { enqueueWhitelistRemove, type WhitelistOutboxClient } from '../whitelist/whitelistOutbox';
 import { sanitizeLeaveCleanupError } from './leaveCleanupSecurity';
 
 export type LeaveWhitelistStepState = 'DONE' | 'WAITING';
@@ -218,16 +219,18 @@ async function processLink(guildId: string, link: LinkRow): Promise<LinkStepResu
       if (deadRemoves.length > 0) {
         throw new Error('Leave-Whitelist: vorheriger WHITELIST_REMOVE ist DEAD; manuelle Recovery erforderlich.');
       }
-      for (const gameId of matchingRemote) {
-        await tx.nitradoJob.create({
-          data: {
-            guildId,
-            nitradoConnId: link.nitradoConnId,
-            operation: 'WHITELIST_REMOVE',
-            payload: { gameId },
-          },
-        });
-        removeJobsQueued++;
+
+      // Mehrere Subject-Locks werden innerhalb EINER Transaktion in stabiler
+      // Reihenfolge erworben. Damit koennen zwei Multi-Name-Cleanups keinen
+      // Lock-Order-Deadlock gegeneinander erzeugen.
+      const orderedRemote = [...matchingRemote].sort((a, b) => norm(a).localeCompare(norm(b), 'en-US'));
+      for (const gameId of orderedRemote) {
+        const created = await enqueueWhitelistRemove(
+          tx as unknown as WhitelistOutboxClient,
+          { guildId, nitradoConnId: link.nitradoConnId },
+          gameId,
+        );
+        if (created) removeJobsQueued++;
       }
     }
   });

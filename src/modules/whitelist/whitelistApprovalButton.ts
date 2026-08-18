@@ -12,6 +12,7 @@ import { logger, logAudit } from '../../utils/logger';
 import { emitGuildEvent } from '../../dashboard/socket/emitter';
 import { Colors, statusTitle } from '../../utils/embedDesign';
 import { notifyRequesterDecision, postDecisionLog } from './whitelistChannels';
+import { enqueueWhitelistAdd, type WhitelistOutboxClient } from './whitelistOutbox';
 
 async function hasManagePermission(btn: ButtonInteraction): Promise<boolean> {
   if (!btn.guild || !btn.guildId) return false;
@@ -116,14 +117,11 @@ export async function handleWhitelistApprovalButton(btn: ButtonInteraction): Pro
             approvedByDiscordId: btn.user.id,
           },
         });
-        await tx.nitradoJob.create({
-          data: {
-            guildId: reqRow.guildId,
-            nitradoConnId: reqRow.nitradoConnId,
-            operation: 'WHITELIST_ADD',
-            payload: { gameId: reqRow.gameId },
-          },
-        });
+        await enqueueWhitelistAdd(
+          tx as unknown as WhitelistOutboxClient,
+          { guildId: reqRow.guildId, nitradoConnId: reqRow.nitradoConnId },
+          reqRow.gameId,
+        );
       }
       return true;
     });

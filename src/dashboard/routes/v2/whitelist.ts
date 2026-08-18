@@ -15,6 +15,11 @@ import { asNitradoConnId } from '../../../types/scope';
 import type { GuildScope, NitradoConnId } from '../../../types/scope';
 import { ensureNitradoWriteAllowed } from '../../middleware/nitradoWriteGuard';
 import { resolveDashboardGameServer, sendDashboardServerResolutionError } from './serverScope';
+import {
+  enqueueWhitelistAdd,
+  enqueueWhitelistRemove,
+  type WhitelistOutboxClient,
+} from '../../../modules/whitelist/whitelistOutbox';
 
 export const whitelistRouter = Router({ mergeParams: true });
 
@@ -76,12 +81,11 @@ whitelistRouter.post('/', requireGuildPermission('whitelist.manage'), async (req
           approvedByDiscordId: scope.actorDiscordId,
         },
       });
-      await tx.nitradoJob.create({
-        data: {
-          guildId: scope.guildId, nitradoConnId: connId,
-          operation: 'WHITELIST_ADD', payload: { gameId },
-        },
-      });
+      await enqueueWhitelistAdd(
+        tx as unknown as WhitelistOutboxClient,
+        { guildId: scope.guildId, nitradoConnId: connId },
+        gameId,
+      );
     });
   } catch (e) {
     if ((e as { code?: string }).code === 'P2002') {
@@ -110,12 +114,11 @@ whitelistRouter.delete('/:gameId', requireGuildPermission('whitelist.manage'), a
       where: { guildId: scope.guildId, nitradoConnId: connId, gameId },
       data: { syncState: 'PENDING_REMOVE', lastSyncedAt: null },
     });
-    await tx.nitradoJob.create({
-      data: {
-        guildId: scope.guildId, nitradoConnId: connId,
-        operation: 'WHITELIST_REMOVE', payload: { gameId },
-      },
-    });
+    await enqueueWhitelistRemove(
+      tx as unknown as WhitelistOutboxClient,
+      { guildId: scope.guildId, nitradoConnId: connId },
+      gameId,
+    );
     await tx.whitelistRequest.updateMany({
       where: {
         guildId: scope.guildId,
@@ -195,14 +198,11 @@ whitelistRouter.post('/requests/:id/decision', requireGuildPermission('whitelist
           lastSyncedAt: null,
         },
       });
-      await tx.nitradoJob.create({
-        data: {
-          guildId: scope.guildId,
-          nitradoConnId: reqRow.nitradoConnId,
-          operation: 'WHITELIST_ADD',
-          payload: { gameId: reqRow.gameId },
-        },
-      });
+      await enqueueWhitelistAdd(
+        tx as unknown as WhitelistOutboxClient,
+        { guildId: scope.guildId, nitradoConnId: reqRow.nitradoConnId },
+        reqRow.gameId,
+      );
     }
     return true;
   });
@@ -331,24 +331,20 @@ whitelistRouter.post('/sync', requireGuildPermission('whitelist.manage'), async 
   }
   if (direction === 'push' || direction === 'merge') {
     for (const name of onlyLocal) {
-      await prisma.nitradoJob.create({
-        data: {
-          guildId: scope.guildId, nitradoConnId: connId,
-          operation: 'WHITELIST_ADD', payload: { gameId: name },
-        },
-      });
-      jobsCreated++;
+      if (await enqueueWhitelistAdd(
+        prisma as unknown as WhitelistOutboxClient,
+        { guildId: scope.guildId, nitradoConnId: connId },
+        name,
+      )) jobsCreated++;
     }
   }
   if (direction === 'push') {
     for (const name of onlyRemote) {
-      await prisma.nitradoJob.create({
-        data: {
-          guildId: scope.guildId, nitradoConnId: connId,
-          operation: 'WHITELIST_REMOVE', payload: { gameId: name },
-        },
-      });
-      jobsCreated++;
+      if (await enqueueWhitelistRemove(
+        prisma as unknown as WhitelistOutboxClient,
+        { guildId: scope.guildId, nitradoConnId: connId },
+        name,
+      )) jobsCreated++;
     }
   }
 

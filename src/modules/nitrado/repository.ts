@@ -22,6 +22,14 @@ export interface NitradoConnectionRow {
   status: NitradoConnectionStatus;
   addedBy: UserDiscordId;
   createdAt: Date;
+  updatedAt: Date;
+}
+
+export class NitradoSlotVersionConflictError extends Error {
+  constructor() {
+    super('Nitrado-Slot wurde waehrend der Validierung parallel geaendert.');
+    this.name = 'NitradoSlotVersionConflictError';
+  }
 }
 
 function rowToConn(r: {
@@ -34,6 +42,7 @@ function rowToConn(r: {
   status: NitradoConnectionStatus;
   addedByDiscordId: string;
   createdAt: Date;
+  updatedAt: Date;
 }): NitradoConnectionRow {
   return {
     id: r.id as NitradoConnId,
@@ -45,6 +54,7 @@ function rowToConn(r: {
     status: r.status,
     addedBy: r.addedByDiscordId as UserDiscordId,
     createdAt: r.createdAt,
+    updatedAt: r.updatedAt,
   };
 }
 
@@ -130,8 +140,6 @@ export async function deleteSlot(guildId: GuildId, slot: number): Promise<Nitrad
   });
   if (!row) return null;
 
-  // AI-10/11: servergebundenes Wissen darf nach Entfernen eines Gameservers nie
-  // zu guild-globalem Wissen werden und keine Provenance-Orphans hinterlassen.
   const scopedKnowledge = await prisma.guildKnowledgeScope.findMany({
     where: { guildId, nitradoConnId: row.id },
     select: { knowledgeId: true },
@@ -163,8 +171,6 @@ export async function setStatus(
   });
 }
 
-/** Markiert eine Verbindung nach erfolgreicher Token-Pruefung als ACTIVE,
- *  vermerkt den Validierungszeitpunkt und beginnt einen neuen Diagnose-Streak. */
 export async function markValidated(
   guildId: GuildId,
   id: NitradoConnId,
@@ -188,14 +194,20 @@ export async function markValidated(
 
 /**
  * Tauscht den verschluesselten Token eines existierenden Slots aus.
- * Setzt Status zurueck auf ACTIVE (z.B. wenn vorher EXPIRED war) und loescht
- * den vorherigen Validierungsfehler-Streak.
- * Caller MUSS den neuen Token vorher gegen die Nitrado-API validiert haben.
+ *
+ * `expectedId + expectedUpdatedAt` bilden den exakt remote validierten
+ * Slot-Snapshot. Damit kann weder eine parallele Aenderung noch Delete+Recreate
+ * desselben Slot-Namens unbemerkt mit dem neuen Token vermischt werden.
  */
 export async function updateToken(
   guildId: GuildId,
   slot: number,
   rawToken: string,
+  options: {
+    resetServiceId?: boolean;
+    expectedId?: NitradoConnId;
+    expectedUpdatedAt?: Date;
+  } = {},
 ): Promise<NitradoConnectionRow | null> {
   if (!rawToken || rawToken.length < 8) throw new Error('Token leer/zu kurz');
   const encryptedToken = encrypt(rawToken, config.security.encryptionKey);
@@ -204,37 +216,62 @@ export async function updateToken(
     select: { id: true },
   });
   if (!current) return null;
+  if (options.expectedId && current.id !== options.expectedId) {
+    throw new NitradoSlotVersionConflictError();
+  }
 
-  await prisma.$transaction([
-    prisma.nitradoConnection.updateMany({
-      where: { guildId, slot },
-      data: { encryptedToken, status: 'ACTIVE', lastErrorMessage: null },
-    }),
-    prisma.nitradoValidationHealth.updateMany({
-      where: { guildId, nitradoConnId: current.id },
+  const targetId = options.expectedId ?? asNitradoConnId(current.id);
+  const resetServiceId = options.resetServiceId === true;
+  const changed = await prisma.$transaction(async tx => {
+    const updated = await tx.nitradoConnection.updateMany({
+      where: {
+        guildId,
+        slot,
+        id: targetId,
+        ...(options.expectedUpdatedAt ? { updatedAt: options.expectedUpdatedAt } : {}),
+      },
+      data: {
+        encryptedToken,
+        status: 'ACTIVE',
+        lastErrorMessage: null,
+        ...(resetServiceId ? { nitradoServerId: null, serviceId: null } : {}),
+      },
+    });
+    if (updated.count !== 1) {
+      if (options.expectedId || options.expectedUpdatedAt) throw new NitradoSlotVersionConflictError();
+      return false;
+    }
+
+    await tx.nitradoValidationHealth.updateMany({
+      where: { guildId, nitradoConnId: targetId },
       data: {
         failureCount: 0,
         lastErrorMessage: null,
         lastFailureAt: null,
         lastAlertAt: null,
       },
-    }),
-  ]);
+    });
+    return true;
+  });
+  if (!changed) return null;
 
-  const row = await prisma.nitradoConnection.findUnique({
-    where: { guildId_slot: { guildId, slot } },
+  const row = await prisma.nitradoConnection.findFirst({
+    where: { id: targetId, guildId, slot },
   });
   return row ? rowToConn(row) : null;
 }
 
 /**
  * Aktualisiert die verknuepfte Nitrado-Service-ID (oder loescht sie via null).
- * Ohne Service-ID kann der Slot keine Whitelist-/ADM-Operationen ausfuehren.
+ * `expectedId + expectedUpdatedAt` binden den Write an exakt den Slot-Snapshot,
+ * dessen Token kurz zuvor fuer die Service-Zugehoerigkeitspruefung verwendet
+ * wurde. Ein Delete+Recreate desselben Slot-Indexes verliert damit den CAS.
  */
 export async function updateServiceId(
   guildId: GuildId,
   slot: number,
   nitradoServerId: string | null,
+  options: { expectedId?: NitradoConnId; expectedUpdatedAt?: Date } = {},
 ): Promise<NitradoConnectionRow | null> {
   if (nitradoServerId !== null) {
     const trimmed = nitradoServerId.trim();
@@ -242,22 +279,29 @@ export async function updateServiceId(
     nitradoServerId = trimmed;
   }
   const updated = await prisma.nitradoConnection.updateMany({
-    where: { guildId, slot },
-    // NIT-012: nitradoServerId ist kanonisch; serviceId wird gespiegelt, damit
-    // die beiden Felder nicht divergieren (Mirror/Dev lesen serviceId).
+    where: {
+      guildId,
+      slot,
+      ...(options.expectedId ? { id: options.expectedId } : {}),
+      ...(options.expectedUpdatedAt ? { updatedAt: options.expectedUpdatedAt } : {}),
+    },
     data: { nitradoServerId, serviceId: nitradoServerId },
   });
-  if (updated.count === 0) return null;
-  const row = await prisma.nitradoConnection.findUnique({
-    where: { guildId_slot: { guildId, slot } },
-  });
+  if (updated.count === 0) {
+    if (options.expectedId || options.expectedUpdatedAt) throw new NitradoSlotVersionConflictError();
+    return null;
+  }
+
+  const row = options.expectedId
+    ? await prisma.nitradoConnection.findFirst({
+        where: { id: options.expectedId, guildId, slot },
+      })
+    : await prisma.nitradoConnection.findUnique({
+        where: { guildId_slot: { guildId, slot } },
+      });
   return row ? rowToConn(row) : null;
 }
 
-/**
- * Aktualisiert nur das frei waehlbare Anzeige-Alias eines Slots.
- * `alias5` ist unveraenderlich (eindeutige System-Kennung).
- */
 export async function updateAlias(
   guildId: GuildId,
   slot: number,

@@ -1,5 +1,6 @@
 jest.mock('../../src/database/prisma', () => {
   const prisma: Record<string, any> = {
+    $queryRawUnsafe: jest.fn().mockResolvedValue([]),
     serverBanEntry: {
       findMany: jest.fn(),
       updateMany: jest.fn(),
@@ -47,6 +48,7 @@ const EXPIRES = new Date('2026-08-15T00:00:00.000Z');
 
 beforeEach(() => {
   jest.clearAllMocks();
+  db.$queryRawUnsafe.mockResolvedValue([]);
   db.nitradoJob.findMany.mockResolvedValue([]);
   db.nitradoJob.create.mockResolvedValue({});
   db.serverBanExpiryNotice.updateMany.mockResolvedValue({ count: 1 });
@@ -55,13 +57,19 @@ beforeEach(() => {
 });
 
 describe('timed server-ban expiry', () => {
-  it('reiht bei erreichtem Ablauf zuerst den Remote-Unban ein', async () => {
+  it('reiht bei erreichtem Ablauf zuerst den Remote-Unban unter DB-Outbox-Lock ein', async () => {
     db.serverBanEntry.findMany.mockResolvedValue([{
       id: 'ban-1', guildId: 'g1', nitradoConnId: 'n1', appliedRemotely: true,
     }]);
 
     await reconcileExpiredServerBansOnce(NOW);
 
+    expect(db.$transaction).toHaveBeenCalledTimes(1);
+    expect(db.$queryRawUnsafe).toHaveBeenCalledWith(
+      'SELECT pg_advisory_xact_lock($1, $2)',
+      expect.any(Number),
+      expect.any(Number),
+    );
     expect(db.nitradoJob.create).toHaveBeenCalledWith(expect.objectContaining({
       data: expect.objectContaining({
         guildId: 'g1',

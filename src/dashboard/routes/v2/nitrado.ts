@@ -8,16 +8,23 @@
  */
 import { Router, type Response } from 'express';
 import { requireGuildOwner } from '../../middleware/auth';
-import { listSlots, createSlot, deleteSlot, getSlot, getDecryptedToken, updateToken, updateAlias, updateServiceId } from '../../../modules/nitrado/repository';
+import {
+  listSlots,
+  createSlot,
+  deleteSlot,
+  getSlot,
+  getDecryptedToken,
+  updateToken,
+  updateAlias,
+  updateServiceId,
+  NitradoSlotVersionConflictError,
+} from '../../../modules/nitrado/repository';
 import { NitradoClient } from '../../../modules/nitrado/nitradoClient';
 import { asUserDiscordId, asNitradoConnId } from '../../../types/scope';
 import { logAuditDb, logger } from '../../../utils/logger';
 
 export const nitradoRouter = Router({ mergeParams: true });
 
-// Validiert den Token und schreibt bei Fehlschlag eine SPEZIFISCHE Meldung
-// (ungueltig vs. transient vs. Rate-Limit vs. Circuit) — nicht pauschal
-// "ungueltig", damit der Owner den echten Grund sieht. Liefert true bei VALID.
 async function validateTokenOrRespond(token: string, res: Response): Promise<boolean> {
   const r = await new NitradoClient(token).validateTokenDetailed();
   switch (r.kind) {
@@ -38,20 +45,10 @@ async function validateTokenOrRespond(token: string, res: Response): Promise<boo
   }
 }
 
-/** Trennt 400 (Validierung) von 502 (Nitrado-API) bei der Service-ID-Pruefung. */
 class ServiceValidationError extends Error {
   constructor(message: string, readonly status: 400 | 502) { super(message); }
 }
 
-/**
- * Validiert eine optionale Nitrado-Service-ID gegen den Token-Besitzer.
- * - leer/undefined/null  -> null (keine Verknuepfung)
- * - kein String          -> 400
- * - nicht numerisch      -> 400
- * - nicht im Account      -> 400 (verhindert Speichern fremder Service-IDs)
- * - Nitrado-API-Fehler    -> 502
- * Liefert den normalisierten (getrimmten) Wert zurueck. Der Token wird nie geloggt.
- */
 async function validateServiceIdForToken(token: string, nitradoServerId: unknown): Promise<string | null> {
   if (nitradoServerId === undefined || nitradoServerId === null) return null;
   if (typeof nitradoServerId !== 'string') throw new ServiceValidationError('nitradoServerId muss String sein.', 400);
@@ -69,6 +66,13 @@ async function validateServiceIdForToken(token: string, nitradoServerId: unknown
     throw new ServiceValidationError('Service-ID gehoert nicht zu diesem Token.', 400);
   }
   return trimmed;
+}
+
+function respondVersionConflict(res: Response): void {
+  res.status(409).json({
+    error: 'Nitrado-Slot wurde parallel geändert. Bitte aktuellen Stand neu laden und die Aktion erneut ausführen.',
+    code: 'NITRADO_SLOT_VERSION_CONFLICT',
+  });
 }
 
 nitradoRouter.get('/', requireGuildOwner, async (req, res) => {
@@ -99,11 +103,8 @@ nitradoRouter.post('/', requireGuildOwner, async (req, res) => {
   const existing = await getSlot(scope.guildId, slot);
   if (existing) { res.status(409).json({ error: `Slot ${slot} ist bereits belegt.` }); return; }
 
-  // Token vor dem Speichern validieren
   if (!(await validateTokenOrRespond(token, res))) return;
 
-  // Falls eine Service-ID mitgegeben wurde: gegen den Token-Account pruefen,
-  // damit keine fremde/falsche Service-ID gespeichert werden kann.
   let normalizedServiceId: string | null;
   try {
     normalizedServiceId = await validateServiceIdForToken(token, nitradoServerId);
@@ -112,33 +113,34 @@ nitradoRouter.post('/', requireGuildOwner, async (req, res) => {
     throw e;
   }
 
-  const created = await createSlot({
-    guildId: scope.guildId,
-    slot,
-    alias,
-    rawToken: token,
-    nitradoServerId: normalizedServiceId,
-    addedBy: asUserDiscordId(scope.actorDiscordId),
-  });
-  logAuditDb('NITRADO_SLOT_CREATED', 'NITRADO', {
-    actorUserId: req.auth!.userId, guildId: scope.guildId,
-    details: { slot, alias, alias5: created.alias5 },
-  });
-  res.status(201).json({
-    id: created.id,
-    slot: created.slot,
-    alias: created.alias,
-    alias5: created.alias5,
-    status: created.status,
-  });
+  try {
+    const created = await createSlot({
+      guildId: scope.guildId,
+      slot,
+      alias,
+      rawToken: token,
+      nitradoServerId: normalizedServiceId,
+      addedBy: asUserDiscordId(scope.actorDiscordId),
+    });
+    logAuditDb('NITRADO_SLOT_CREATED', 'NITRADO', {
+      actorUserId: req.auth!.userId, guildId: scope.guildId,
+      details: { slot, alias, alias5: created.alias5 },
+    });
+    res.status(201).json({
+      id: created.id,
+      slot: created.slot,
+      alias: created.alias,
+      alias5: created.alias5,
+      status: created.status,
+    });
+  } catch (e) {
+    if ((e as { code?: string }).code === 'P2002') {
+      res.status(409).json({ error: `Slot ${slot} ist bereits belegt.` }); return;
+    }
+    throw e;
+  }
 });
 
-/**
- * PATCH /:slot/token  body: { token: string }
- * Tauscht den Token eines bestehenden Slots aus (z.B. nach Token-Rotation
- * im Nitrado-Account). Validiert vorher gegen Nitrado-API.
- * Owner-only — niemals delegierbar.
- */
 nitradoRouter.patch('/:slot/token', requireGuildOwner, async (req, res) => {
   const scope = req.guildScope!;
   const slot = Number(String(req.params.slot));
@@ -152,26 +154,33 @@ nitradoRouter.patch('/:slot/token', requireGuildOwner, async (req, res) => {
   const client = new NitradoClient(token);
   if (!(await validateTokenOrRespond(token, res))) return;
 
-  // NIT-003: Nach Tokenrotation pruefen, ob die gespeicherte Service-ID noch zum
-  // NEUEN Token gehoert. Wenn nicht, wird sie entfernt (Owner muss neu
-  // auswaehlen) — kein stilles Weiterverwenden einer fremden/ungueltigen ID.
-  // Ein reiner Netzwerkfehler beim Service-Listing gilt NICHT als Mismatch.
   let serviceMismatch = false;
   if (existing.nitradoServerId) {
+    let services;
     try {
-      const services = await client.listServices();
-      serviceMismatch = !services.some((s) => String(s.id) === existing.nitradoServerId);
+      services = await client.listServices();
     } catch (e) {
       logger.warn(`NIT-003: Service-Recheck bei Tokenrotation fehlgeschlagen (Slot ${slot}): ${(e as Error).message}`);
+      res.status(502).json({
+        error: 'Token wurde nicht geändert: Die vorhandene Nitrado-Service-Zuordnung konnte mit dem neuen Token nicht verifiziert werden.',
+      });
+      return;
     }
+    serviceMismatch = !services.some((s) => String(s.id) === existing.nitradoServerId);
   }
 
-  const updated = await updateToken(scope.guildId, slot, token);
-  if (!updated) { res.status(500).json({ error: 'Update fehlgeschlagen.' }); return; }
-
-  if (serviceMismatch) {
-    await updateServiceId(scope.guildId, slot, null);
+  let updated;
+  try {
+    updated = await updateToken(scope.guildId, slot, token, {
+      resetServiceId: serviceMismatch,
+      expectedId: existing.id,
+      expectedUpdatedAt: existing.updatedAt,
+    });
+  } catch (e) {
+    if (e instanceof NitradoSlotVersionConflictError) { respondVersionConflict(res); return; }
+    throw e;
   }
+  if (!updated) { res.status(404).json({ error: 'Slot nicht gefunden.' }); return; }
 
   logAuditDb('NITRADO_SLOT_TOKEN_UPDATED', 'NITRADO', {
     actorUserId: req.auth!.userId, guildId: scope.guildId,
@@ -180,10 +189,6 @@ nitradoRouter.patch('/:slot/token', requireGuildOwner, async (req, res) => {
   res.json({ ok: true, slot: updated.slot, status: updated.status, serviceReset: serviceMismatch });
 });
 
-/**
- * PATCH /:slot/alias  body: { alias: string }
- * Aktualisiert nur den Anzeige-Namen eines Slots. Owner-only.
- */
 nitradoRouter.patch('/:slot/alias', requireGuildOwner, async (req, res) => {
   const scope = req.guildScope!;
   const slot = Number(String(req.params.slot));
@@ -206,15 +211,6 @@ nitradoRouter.patch('/:slot/alias', requireGuildOwner, async (req, res) => {
   res.json({ ok: true, slot: updated.slot, alias: updated.alias, alias5: updated.alias5 });
 });
 
-/**
- * PATCH /:slot/service  body: { nitradoServerId: string | null }
- *
- * Verknuepft den Slot mit einer konkreten Nitrado-Service-ID. Ohne diese
- * Verknuepfung koennen weder Whitelist-Jobs noch ADM-Sync ausgefuehrt werden
- * (Worker setzt entsprechende Jobs auf DEAD). Owner-only.
- *
- * `null` entfernt die Verknuepfung wieder.
- */
 nitradoRouter.patch('/:slot/service', requireGuildOwner, async (req, res) => {
   const scope = req.guildScope!;
   const slot = Number(String(req.params.slot));
@@ -226,7 +222,6 @@ nitradoRouter.patch('/:slot/service', requireGuildOwner, async (req, res) => {
   const existing = await getSlot(scope.guildId, slot);
   if (!existing) { res.status(404).json({ error: 'Slot nicht gefunden.' }); return; }
 
-  // Wenn gesetzt: gegen Nitrado-API pruefen, dass die Service-ID dem Token-Owner gehoert
   let normalized: string | null;
   if (nitradoServerId === null) {
     normalized = null;
@@ -243,8 +238,12 @@ nitradoRouter.patch('/:slot/service', requireGuildOwner, async (req, res) => {
 
   let updated;
   try {
-    updated = await updateServiceId(scope.guildId, slot, normalized);
+    updated = await updateServiceId(scope.guildId, slot, normalized, {
+      expectedId: existing.id,
+      expectedUpdatedAt: existing.updatedAt,
+    });
   } catch (e) {
+    if (e instanceof NitradoSlotVersionConflictError) { respondVersionConflict(res); return; }
     res.status(400).json({ error: (e as Error).message }); return;
   }
   if (!updated) { res.status(404).json({ error: 'Slot nicht gefunden.' }); return; }

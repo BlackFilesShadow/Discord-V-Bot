@@ -6,21 +6,27 @@ process.env.ENCRYPTION_KEY ||= '0'.repeat(64);
 process.env.SESSION_SECRET ||= 'test-session-secret';
 
 /**
- * P1-Sicherheits-Regression: Schreibende Whitelist-Aktionen erzeugen
- * NitradoJobs und muessen bei aktivem Schreibschutz Confirm + Reason verlangen.
- * Die lokalen Lifecycle-Aenderungen laufen atomar in derselben Transaktion.
+ * P1/Nitrado-1A Sicherheits-Regression: Schreibende Whitelist-Aktionen
+ * erzeugen NitradoJobs und muessen bei aktivem Schreibschutz Confirm + Reason
+ * verlangen. Fachlicher Lifecycle-Write + cross-process Outbox-Lock + Job
+ * bleiben atomar in derselben Transaktion.
  */
 
 const GID = '999999999999999999';
 const CONN_ID = 'caaaaaaaaaaaaaaaaaaaaaaaa';
 
+const jobFindMany = jest.fn().mockResolvedValue([]);
+const jobCreate = jest.fn().mockResolvedValue({});
+const queryRaw = jest.fn().mockResolvedValue([]);
+
 const txStub = {
+  $queryRawUnsafe: queryRaw,
   whitelistEntry: {
     create: jest.fn().mockResolvedValue({}),
     updateMany: jest.fn().mockResolvedValue({ count: 1 }),
     upsert: jest.fn().mockResolvedValue({}),
   },
-  nitradoJob: { create: jest.fn().mockResolvedValue({}) },
+  nitradoJob: { findMany: jobFindMany, create: jobCreate },
   whitelistRequest: { updateMany: jest.fn().mockResolvedValue({ count: 1 }) },
 };
 
@@ -33,7 +39,7 @@ const prismaMock = {
     findFirst: jest.fn().mockResolvedValue({ id: CONN_ID }),
   },
   whitelistEntry: { upsert: jest.fn().mockResolvedValue({}) },
-  nitradoJob: { create: jest.fn().mockResolvedValue({}) },
+  nitradoJob: { findMany: jobFindMany, create: jobCreate },
   whitelistRequest: {
     findFirst: jest.fn().mockResolvedValue({
       id: 'req-1', guildId: GID, nitradoConnId: CONN_ID, gameId: 'PlayerX',
@@ -121,7 +127,9 @@ beforeEach(() => {
   txStub.whitelistEntry.updateMany.mockResolvedValue({ count: 1 });
   txStub.whitelistEntry.create.mockResolvedValue({});
   txStub.whitelistEntry.upsert.mockResolvedValue({});
-  txStub.nitradoJob.create.mockResolvedValue({});
+  jobFindMany.mockResolvedValue([]);
+  jobCreate.mockResolvedValue({});
+  queryRaw.mockResolvedValue([]);
 });
 
 describe('Whitelist Write-Guard — Schreibschutz aktiv', () => {
@@ -139,11 +147,12 @@ describe('Whitelist Write-Guard — Schreibschutz aktiv', () => {
     expect(prismaMock.$transaction).not.toHaveBeenCalled();
   });
 
-  it('POST / mit confirm + reason -> 201, Job atomar erstellt', async () => {
+  it('POST / mit confirm + reason -> 201, Fachwrite + Lock + Job atomar', async () => {
     const r = await request(makeApp()).post(`${BASE}?slot=1`).send({ gameId: 'PlayerX', confirm: true, reason: 'Neuer Spieler' });
     expect(r.status).toBe(201);
     expect(prismaMock.$transaction).toHaveBeenCalledTimes(1);
-    expect(txStub.nitradoJob.create).toHaveBeenCalledWith(
+    expect(queryRaw).toHaveBeenCalledWith('SELECT pg_advisory_xact_lock($1, $2)', expect.any(Number), expect.any(Number));
+    expect(jobCreate).toHaveBeenCalledWith(
       expect.objectContaining({ data: expect.objectContaining({ operation: 'WHITELIST_ADD' }) }),
     );
   });
@@ -155,14 +164,15 @@ describe('Whitelist Write-Guard — Schreibschutz aktiv', () => {
     expect(prismaMock.$transaction).not.toHaveBeenCalled();
   });
 
-  it('DELETE /:gameId mit confirm + reason -> PENDING_REMOVE + Remove-Job atomar', async () => {
+  it('DELETE /:gameId mit confirm + reason -> PENDING_REMOVE + Lock + Remove-Job atomar', async () => {
     const r = await request(makeApp()).delete(`${BASE}/PlayerX?slot=1`).send({ confirm: true, reason: 'Entfernt' });
     expect(r.status).toBe(200);
     expect(prismaMock.$transaction).toHaveBeenCalledTimes(1);
     expect(txStub.whitelistEntry.updateMany).toHaveBeenCalledWith(expect.objectContaining({
       data: { syncState: 'PENDING_REMOVE', lastSyncedAt: null },
     }));
-    expect(txStub.nitradoJob.create).toHaveBeenCalledWith(
+    expect(queryRaw).toHaveBeenCalledTimes(1);
+    expect(jobCreate).toHaveBeenCalledWith(
       expect.objectContaining({ data: expect.objectContaining({ operation: 'WHITELIST_REMOVE' }) }),
     );
   });
@@ -174,20 +184,22 @@ describe('Whitelist Write-Guard — Schreibschutz aktiv', () => {
     expect(txStub.whitelistRequest.updateMany).not.toHaveBeenCalled();
   });
 
-  it('POST /requests/:id/decision approve mit confirm + reason -> CAS + Entry + Job in einer Transaktion', async () => {
+  it('POST /requests/:id/decision approve mit confirm + reason -> CAS + Entry + Lock + Job in einer Transaktion', async () => {
     const r = await request(makeApp()).post(`${BASE}/requests/req-1/decision?slot=1`).send({ approve: true, confirm: true, reason: 'Genehmigt' });
     expect(r.status).toBe(200);
     expect(txStub.whitelistRequest.updateMany).toHaveBeenCalledTimes(1);
     expect(txStub.whitelistEntry.upsert).toHaveBeenCalledTimes(1);
-    expect(txStub.nitradoJob.create).toHaveBeenCalledWith(
+    expect(queryRaw).toHaveBeenCalledTimes(1);
+    expect(jobCreate).toHaveBeenCalledWith(
       expect.objectContaining({ data: expect.objectContaining({ operation: 'WHITELIST_ADD' }) }),
     );
   });
 
-  it('POST /requests/:id/decision deny bleibt ungated und erzeugt keinen Nitrado-Job', async () => {
+  it('POST /requests/:id/decision deny bleibt ungated und erzeugt keinen Nitrado-Job/Lock', async () => {
     const r = await request(makeApp()).post(`${BASE}/requests/req-1/decision?slot=1`).send({ approve: false });
     expect(r.status).toBe(200);
     expect(txStub.whitelistRequest.updateMany).toHaveBeenCalledTimes(1);
-    expect(txStub.nitradoJob.create).not.toHaveBeenCalled();
+    expect(jobCreate).not.toHaveBeenCalled();
+    expect(queryRaw).not.toHaveBeenCalled();
   });
 });
