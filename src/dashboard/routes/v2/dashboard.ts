@@ -19,6 +19,10 @@ import prisma from '../../../database/prisma';
 import { logAuditDb } from '../../../utils/logger';
 import { emitGuildEvent } from '../../socket/emitter';
 import { cancelPendingKeepOnlineJobs, type KeepOnlineJobClient } from '../../../modules/nitrado/keepOnlineJobs';
+import {
+  tryAcquireNitradoConfigMutationLock,
+  type HeldNitradoConfigLock,
+} from '../../../modules/nitrado/configMutationLock';
 import { resolveDashboardGameServer, sendDashboardServerResolutionError } from './serverScope';
 
 export const dashboardRouter = Router({ mergeParams: true });
@@ -64,6 +68,20 @@ async function resolveSlotConn(
   return conn ? { id: resolution.nitradoConnId, keepOnlineEnabled: conn.keepOnlineEnabled } : null;
 }
 
+function respondKeepOnlineBusy(res: Response): void {
+  res.status(409).json({
+    error: 'Nitrado-Connection wird gerade von einem Server-Job verwendet. Bitte Keep-Online erneut setzen.',
+    code: 'NITRADO_CONNECTION_BUSY',
+  });
+}
+
+function respondKeepOnlineVersionConflict(res: Response): void {
+  res.status(409).json({
+    error: 'Der Gameserver-Slot wurde parallel geaendert. Bitte aktuellen Stand neu laden und Keep-Online erneut setzen.',
+    code: 'NITRADO_SLOT_VERSION_CONFLICT',
+  });
+}
+
 dashboardRouter.get('/server/:slot/settings', requireGuildPermission('whitelist.view'), async (req, res) => {
   const scope = req.guildScope!;
   const conn = await resolveSlotConn(scope, String(req.params.slot), res);
@@ -85,7 +103,8 @@ dashboardRouter.get('/server/:slot/settings', requireGuildPermission('whitelist.
 
 dashboardRouter.patch('/server/:slot/settings', requireGuildPermission('whitelist.manage'), async (req, res) => {
   const scope = req.guildScope!;
-  const conn = await resolveSlotConn(scope, String(req.params.slot), res);
+  const slotParam = String(req.params.slot);
+  const conn = await resolveSlotConn(scope, slotParam, res);
   if (!conn) return;
   const b = req.body ?? {};
   const data: Record<string, unknown> = {};
@@ -117,7 +136,7 @@ dashboardRouter.patch('/server/:slot/settings', requireGuildPermission('whitelis
     return;
   }
 
-  const s = await prisma.$transaction(async tx => {
+  const persistSettings = async () => prisma.$transaction(async tx => {
     const settings = await tx.serverSettings.upsert({
       where: { guildId_nitradoConnId: { guildId: scope.guildId, nitradoConnId: conn.id } },
       create: { guildId: scope.guildId, nitradoConnId: conn.id, ...data },
@@ -154,6 +173,39 @@ dashboardRouter.patch('/server/:slot/settings', requireGuildPermission('whitelis
     }
     return settings;
   });
+
+  let keepOnlineLock: HeldNitradoConfigLock | null = null;
+  if (typeof b.permaOnly === 'boolean') {
+    keepOnlineLock = await tryAcquireNitradoConfigMutationLock(conn.id);
+    if (!keepOnlineLock) {
+      respondKeepOnlineBusy(res);
+      return;
+    }
+  }
+
+  let s: Awaited<ReturnType<typeof persistSettings>>;
+  try {
+    if (keepOnlineLock) {
+      // Zwischen erster Slot-Aufloesung und gewonnenem Lock koennen Token/Service/
+      // Delete-Aenderungen bereits abgeschlossen worden sein. Unter dem Lock den
+      // kanonischen Scope erneut aufloesen und Delete->Recreate desselben Slot-
+      // Indexes fail-closed erkennen, bevor Keep-Online committed wird.
+      const freshConn = await resolveSlotConn(scope, slotParam, res);
+      if (!freshConn) return;
+      if (freshConn.id !== conn.id) {
+        respondKeepOnlineVersionConflict(res);
+        return;
+      }
+    }
+
+    // Der Connection-Lock bleibt ueber Keep-Online-Write + PENDING-Job-Cancel
+    // gehalten. Ein bereits laufender Worker besitzt denselben Lock und zwingt
+    // diesen Request deshalb vorher auf 409; ein wartender Worker liest nach
+    // Release den committed kanonischen Zustand neu.
+    s = await persistSettings();
+  } finally {
+    await keepOnlineLock?.release();
+  }
 
   logAuditDb('SERVER_SETTINGS_UPDATED', 'SERVER_SETTINGS', {
     actorUserId: req.auth!.userId,
