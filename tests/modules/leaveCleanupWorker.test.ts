@@ -2,6 +2,7 @@ const whitelistStep = jest.fn();
 const statsStep = jest.fn();
 const linkEconomyStep = jest.fn();
 const guildDataStep = jest.fn();
+const finalizeRejoin = jest.fn();
 const claimNext = jest.fn();
 const advanceStep = jest.fn();
 const completeRequest = jest.fn();
@@ -31,6 +32,10 @@ jest.mock('../../src/modules/moderation/leaveCleanupLinkEconomy', () => ({
 
 jest.mock('../../src/modules/moderation/guildMemberCleanup', () => ({
   cleanupGuildMemberData: guildDataStep,
+}));
+
+jest.mock('../../src/modules/moderation/leaveCleanupRejoin', () => ({
+  finalizeLeaveRejoinState: finalizeRejoin,
 }));
 
 jest.mock('../../src/modules/moderation/leaveCleanupSecurity', () => ({
@@ -83,6 +88,7 @@ beforeEach(() => {
   statsStep.mockResolvedValue({ state: 'DONE' });
   linkEconomyStep.mockResolvedValue({ state: 'DONE' });
   guildDataStep.mockResolvedValue({ performed: true });
+  finalizeRejoin.mockResolvedValue({ rejoined: false, profile: 'DELETED', levelBaseline: false });
   completeRequest.mockResolvedValue('receipt');
   deferRequest.mockResolvedValue(undefined);
   recoverStale.mockResolvedValue(0);
@@ -104,8 +110,8 @@ afterEach(() => {
   jest.useRealTimers();
 });
 
-describe('Leave-1E durable worker', () => {
-  it('runs the persisted substeps strictly WHITELIST -> STATS -> LINK_ECONOMY -> GUILD_DATA -> COMPLETE', async () => {
+describe('Leave-1E/1G durable worker', () => {
+  it('runs the persisted substeps strictly WHITELIST -> STATS -> LINK_ECONOMY -> GUILD_DATA -> REJOIN -> COMPLETE', async () => {
     const result = await processLeaveCleanupRequest(request('WHITELIST'));
 
     expect(result).toBe('COMPLETED');
@@ -116,6 +122,8 @@ describe('Leave-1E durable worker', () => {
     expect(advanceStep.mock.calls.map(call => call[1])).toEqual([
       'WHITELIST', 'STATS_SESSIONS', 'LINK_ECONOMY', 'GUILD_DATA',
     ]);
+    expect(finalizeRejoin).toHaveBeenNthCalledWith(1, 'job-1', GUILD, USER);
+    expect(finalizeRejoin).toHaveBeenNthCalledWith(2, 'job-1', GUILD, USER);
     expect(completeRequest).toHaveBeenCalledWith(
       expect.objectContaining({ details: expect.objectContaining({ step: 'COMPLETE' }) }),
       GUILD,
@@ -135,6 +143,7 @@ describe('Leave-1E durable worker', () => {
     expect(statsStep).not.toHaveBeenCalled();
     expect(linkEconomyStep).not.toHaveBeenCalled();
     expect(guildDataStep).not.toHaveBeenCalled();
+    expect(finalizeRejoin).not.toHaveBeenCalled();
     expect(completeRequest).not.toHaveBeenCalled();
   });
 
@@ -156,6 +165,7 @@ describe('Leave-1E durable worker', () => {
     expect(advanceStep).not.toHaveBeenCalled();
     expect(statsStep).not.toHaveBeenCalled();
     expect(linkEconomyStep).not.toHaveBeenCalled();
+    expect(finalizeRejoin).not.toHaveBeenCalled();
   });
 
   it('defers an OPEN target session at STATS_SESSIONS and keeps 1C untouched', async () => {
@@ -167,6 +177,7 @@ describe('Leave-1E durable worker', () => {
     expect(deferRequest).toHaveBeenCalledWith(current, 'ACTIVE_SESSION');
     expect(linkEconomyStep).not.toHaveBeenCalled();
     expect(guildDataStep).not.toHaveBeenCalled();
+    expect(finalizeRejoin).not.toHaveBeenCalled();
   });
 
   it('defers an active lottery without consuming the link/economy checkpoint', async () => {
@@ -177,6 +188,7 @@ describe('Leave-1E durable worker', () => {
 
     expect(deferRequest).toHaveBeenCalledWith(current, 'ACTIVE_LOTTERY');
     expect(guildDataStep).not.toHaveBeenCalled();
+    expect(finalizeRejoin).not.toHaveBeenCalled();
     expect(completeRequest).not.toHaveBeenCalled();
   });
 
@@ -194,7 +206,7 @@ describe('Leave-1E durable worker', () => {
     expect(retryOrDead.mock.calls[0][1]).toEqual(expect.objectContaining({ message: 'economy temporary' }));
   });
 
-  it('treats guild-data transaction failure as a real retryable error', async () => {
+  it('treats guild-data transaction failure as a real retryable error before rejoin finalization', async () => {
     guildDataStep.mockResolvedValue({ performed: false, reason: 'transaction_failed' });
     const current = request('GUILD_DATA');
     claimNext.mockResolvedValueOnce(current).mockResolvedValueOnce(null);
@@ -202,10 +214,35 @@ describe('Leave-1E durable worker', () => {
     await runLeaveCleanupWorkerOnce();
 
     expect(deferRequest).not.toHaveBeenCalled();
+    expect(finalizeRejoin).not.toHaveBeenCalled();
     expect(retryOrDead).toHaveBeenCalledWith(
       expect.objectContaining({ details: expect.objectContaining({ step: 'GUILD_DATA' }) }),
       expect.objectContaining({ message: expect.stringMatching(/Guild-Daten-Cleanup/) }),
     );
+  });
+
+  it('keeps GUILD_DATA retryable when rejoin finalization fails before the checkpoint advances', async () => {
+    finalizeRejoin.mockRejectedValueOnce(new Error('rejoin race'));
+    const current = request('GUILD_DATA');
+    claimNext.mockResolvedValueOnce(current).mockResolvedValueOnce(null);
+
+    await runLeaveCleanupWorkerOnce();
+
+    expect(guildDataStep).toHaveBeenCalledTimes(1);
+    expect(advanceStep).not.toHaveBeenCalled();
+    expect(retryOrDead).toHaveBeenCalledWith(
+      expect.objectContaining({ details: expect.objectContaining({ step: 'GUILD_DATA' }) }),
+      expect.objectContaining({ message: 'rejoin race' }),
+    );
+  });
+
+  it('rechecks rejoin state again immediately before COMPLETE receipt', async () => {
+    await expect(processLeaveCleanupRequest(request('COMPLETE'))).resolves.toBe('COMPLETED');
+
+    expect(guildDataStep).not.toHaveBeenCalled();
+    expect(finalizeRejoin).toHaveBeenCalledTimes(1);
+    expect(finalizeRejoin).toHaveBeenCalledWith('job-1', GUILD, USER);
+    expect(completeRequest).toHaveBeenCalledTimes(1);
   });
 
   it('performs stale recovery before starting the poll timer and can stop symmetrically', async () => {
