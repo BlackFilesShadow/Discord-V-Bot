@@ -7,6 +7,7 @@ const addSource = read('src/events/guildMemberAdd.ts');
 const removeSource = read('src/events/guildMemberRemove.ts');
 const workerSource = read('src/modules/moderation/leaveCleanupWorker.ts');
 const rejoinSource = read('src/modules/moderation/leaveCleanupRejoin.ts');
+const awarenessSource = read('src/modules/ai/memberAwareness.ts');
 const rewardSource = read('src/modules/linking/linkRewards.ts');
 const economySource = read('src/modules/economy/repository.ts');
 
@@ -59,14 +60,30 @@ describe('Leave-1G rejoin fresh-state architecture gate', () => {
     expect(rejoinSource).toContain('messageCount: 0');
   });
 
-  it('preserves last-known identity for goodbye while clearing historical counters and residual level state', () => {
+  it('preserves last-known identity for goodbye while normalizing stale leave state and residual level state', () => {
     expect(rejoinSource).toContain('await tx.xpRecord.deleteMany({ where: { userId: user.id, guildId } });');
     expect(rejoinSource).toContain('await tx.levelData.deleteMany({ where: { userId: user.id, guildId } });');
     expect(rejoinSource).not.toContain('guildMemberProfile.deleteMany');
-    expect(rejoinSource).toContain('data: { messageCount: 0 }');
+    expect(rejoinSource).toContain('messageCount: 0');
+    expect(rejoinSource).toContain('isLeft: true');
+    expect(rejoinSource).toContain('leftAt: profile.leftAt ?? request.createdAt');
     expect(rejoinSource).toContain('await tx.levelData.upsert({');
     expect(rejoinSource).toContain('create: { userId: user.id, guildId }');
     expect(rejoinSource).toContain('update: {}');
+  });
+
+  it('does not allow asynchronous message activity to revive an existing left profile', () => {
+    const activityStart = awarenessSource.indexOf('export async function trackMemberActivity');
+    const activityEnd = awarenessSource.indexOf('export async function syncMemberProfile', activityStart);
+    const activityFunction = awarenessSource.slice(activityStart, activityEnd);
+    const updateStart = activityFunction.indexOf('update: {');
+    const updatePayload = activityFunction.slice(updateStart);
+
+    expect(activityStart).toBeGreaterThanOrEqual(0);
+    expect(updateStart).toBeGreaterThanOrEqual(0);
+    expect(updatePayload).not.toContain('isLeft: false');
+    expect(updatePayload).not.toContain('leftAt: null');
+    expect(awarenessSource).toContain('data: { isLeft: true, leftAt: new Date(), lastSeenAt: new Date() }');
   });
 
   it('keeps anti-churn start balance protection in both modern and legacy award paths', () => {
