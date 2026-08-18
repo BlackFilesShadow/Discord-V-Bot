@@ -102,6 +102,16 @@ class PermanentJobError extends Error {
   }
 }
 
+function parsePermanentServerBanPayload(value: unknown) {
+  try {
+    return parseServerBanJobPayload(value);
+  } catch (error) {
+    throw new PermanentJobError(
+      error instanceof Error ? error.message : 'Ungueltige Server-Ban-Job-Payload',
+    );
+  }
+}
+
 class LostJobClaimError extends Error {
   constructor(jobId: string) {
     super(`NitradoJob ${jobId}: Ausfuehrungs-Claim verloren.`);
@@ -125,9 +135,9 @@ export function nitradoConnectionLockKeys(nitradoConnId: string): [number, numbe
 async function tryAcquireConnectionLock(nitradoConnId: string): Promise<HeldConnectionLock | null> {
   const [k1, k2] = nitradoConnectionLockKeys(nitradoConnId);
   const client = new PgClient({ connectionString: process.env.DATABASE_URL });
-  await client.connect();
 
   try {
+    await client.connect();
     const result = await client.query('SELECT pg_try_advisory_lock($1, $2) AS locked', [k1, k2]);
     if (result.rows?.[0]?.locked !== true) {
       await client.end();
@@ -271,8 +281,14 @@ export async function executeJob(claim: NitradoJobClaim): Promise<void> {
     try {
       connectionLock = await tryAcquireConnectionLock(job.nitradoConnId);
     } catch (error) {
-      logger.warn(`NitradoJob ${job.id}: Connection-Lock nicht verfuegbar (${String(error)}), requeue.`);
-      await requeueForConnectionLock(claim);
+      await failJob(
+        claim,
+        job.attempts,
+        job.maxAttempts,
+        `Connection-Lock-Infrastruktur fehlgeschlagen: ${error instanceof Error ? error.message : String(error)}`,
+        false,
+        isServerBanOperation(job.operation),
+      );
       return;
     }
 
@@ -308,7 +324,7 @@ export async function executeJob(claim: NitradoJobClaim): Promise<void> {
           job.attempts,
           job.maxAttempts,
           `Connection-Lookup fehlgeschlagen: ${(e as Error).message}`,
-          true,
+          false,
           isServerBanOperation(job.operation),
         );
         return;
@@ -388,8 +404,8 @@ export async function executeJob(claim: NitradoJobClaim): Promise<void> {
       try {
         switch (job.operation) {
           case 'WHITELIST_ADD': {
-            if (!conn.nitradoServerId) throw new Error('Kein nitradoServerId fuer WHITELIST_ADD');
-            if (typeof payload.gameId !== 'string') throw new Error('payload.gameId fehlt');
+            if (!conn.nitradoServerId) throw new PermanentJobError('Kein nitradoServerId fuer WHITELIST_ADD');
+            if (typeof payload.gameId !== 'string') throw new PermanentJobError('payload.gameId fehlt');
             await ensureClaimOwned();
             await client.addToWhitelist(conn.nitradoServerId, payload.gameId);
             await reconcileWhitelistRemoteIntent(
@@ -401,8 +417,8 @@ export async function executeJob(claim: NitradoJobClaim): Promise<void> {
             break;
           }
           case 'WHITELIST_REMOVE': {
-            if (!conn.nitradoServerId) throw new Error('Kein nitradoServerId fuer WHITELIST_REMOVE');
-            if (typeof payload.gameId !== 'string') throw new Error('payload.gameId fehlt');
+            if (!conn.nitradoServerId) throw new PermanentJobError('Kein nitradoServerId fuer WHITELIST_REMOVE');
+            if (typeof payload.gameId !== 'string') throw new PermanentJobError('payload.gameId fehlt');
             await ensureClaimOwned();
             await client.removeFromWhitelist(conn.nitradoServerId, payload.gameId);
             await reconcileWhitelistRemoteIntent(
@@ -415,7 +431,7 @@ export async function executeJob(claim: NitradoJobClaim): Promise<void> {
           }
           case 'SERVER_BAN_ADD': {
             if (!conn.nitradoServerId) throw new PermanentJobError('Kein nitradoServerId fuer SERVER_BAN_ADD');
-            const banPayload = parseServerBanJobPayload(payload);
+            const banPayload = parsePermanentServerBanPayload(payload);
             if (!banPayload.encryptedIdentifier) {
               throw new PermanentJobError('SERVER_BAN_ADD ohne verschluesselten Identifier');
             }
@@ -498,7 +514,7 @@ export async function executeJob(claim: NitradoJobClaim): Promise<void> {
           }
           case 'SERVER_BAN_REMOVE': {
             if (!conn.nitradoServerId) throw new PermanentJobError('Kein nitradoServerId fuer SERVER_BAN_REMOVE');
-            const banPayload = parseServerBanJobPayload(payload);
+            const banPayload = parsePermanentServerBanPayload(payload);
             const ban = await prisma.serverBanEntry.findFirst({
               where: { id: banPayload.banId, guildId: job.guildId, nitradoConnId: conn.id },
               select: { id: true, identityHash: true, active: true, expiresAt: true, appliedRemotely: true },
@@ -548,7 +564,7 @@ export async function executeJob(claim: NitradoJobClaim): Promise<void> {
             break;
           }
           case 'RESTART_IF_DOWN': {
-            if (!conn.nitradoServerId) throw new Error('Kein nitradoServerId fuer RESTART_IF_DOWN');
+            if (!conn.nitradoServerId) throw new PermanentJobError('Kein nitradoServerId fuer RESTART_IF_DOWN');
             if (!conn.keepOnlineEnabled) {
               logger.debug(`Keep-Online skip: fuer Connection ${conn.id} deaktiviert.`);
               break;
@@ -574,7 +590,7 @@ export async function executeJob(claim: NitradoJobClaim): Promise<void> {
             break;
           }
           default:
-            throw new Error(`Unbekannte Operation: ${job.operation}`);
+            throw new PermanentJobError(`Unbekannte Operation: ${job.operation}`);
         }
 
         const done = await transitionClaimedNitradoJob(claim, {
