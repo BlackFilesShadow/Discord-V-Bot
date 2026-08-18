@@ -4,6 +4,7 @@ import type { Command } from '../../types';
 import prisma from '../../database/prisma';
 import { withGuildScope } from '../middleware/withGuildScope';
 import { adminPay } from '../../modules/economy/repository';
+import { applyPendingAdminMoneyAction } from '../../modules/economy/pendingAdminMoney';
 import {
   forceLinkByPlayerName,
   isValidPlayerName,
@@ -19,12 +20,14 @@ import {
 import { asNitradoConnId, asUserDiscordId } from '../../types/scope';
 import { MAX_GAME_SERVERS_PER_GUILD } from '../../modules/nitrado/gameServerScope';
 import {
+  claimPendingServerAction,
+  completePendingServerAction,
   createPendingServerAction,
-  consumePendingServerAction,
+  releasePendingServerActionClaim,
   type PendingServerActionClient,
 } from '../../modules/nitrado/pendingServerAction';
 import { config } from '../../config';
-import { logAudit } from '../../utils/logger';
+import { logAudit, logger } from '../../utils/logger';
 
 const ACTIONS = {
   // ADD_MONEY bleibt nur fuer bereits vor dem Rollout erzeugte Pending-Actions
@@ -184,89 +187,152 @@ export const confirmActionCommand: Command = {
       return;
     }
 
-    const action = await consumePendingServerAction(prisma as unknown as PendingServerActionClient, {
+    const action = await claimPendingServerAction(prisma as unknown as PendingServerActionClient, {
       id,
       guildId: scope.guildId,
       actorDiscordId: scope.actorDiscordId,
     });
-    if (!action) { await reply(i, 'Diese Aktion existiert nicht, ist abgelaufen oder wurde bereits verbraucht.'); return; }
-
-    const nitradoConnId = asNitradoConnId(action.nitradoConnId);
-    const payload = payloadObject(action.payload);
-    const targetUserId = asUserDiscordId(payloadString(payload, 'targetUserId'));
-
-    const server = await prisma.nitradoConnection.findFirst({
-      where: { id: nitradoConnId, guildId: scope.guildId },
-      select: { slot: true, status: true, nitradoServerId: true },
-    });
-    if (!server || server.status !== 'ACTIVE' || !server.nitradoServerId || server.slot < 1 || server.slot > MAX_GAME_SERVERS_PER_GUILD) {
-      await reply(i, 'Der Gameserver dieser Pending-Action ist nicht mehr aktiv oder nicht mehr als gueltiger Slot 1–4 gebunden. Aktion wurde nicht ausgefuehrt.');
+    if (!action) {
+      await reply(i, 'Diese Aktion existiert nicht, ist abgelaufen, bereits abgeschlossen oder wird gerade verarbeitet.');
       return;
     }
 
-    if (action.actionType === ACTIONS.ADD_MONEY || action.actionType === ACTIONS.REMOVE_MONEY) {
-      const settings = await prisma.serverSettings.findUnique({
-        where: { guildId_nitradoConnId: { guildId: scope.guildId, nitradoConnId } },
-        select: { economyActive: true },
-      });
-      if (!settings?.economyActive) { await reply(i, 'Economy ist fuer den ausgewaehlten Gameserver deaktiviert. Aktion wurde nicht ausgefuehrt.'); return; }
-      const rawAmount = payloadString(payload, 'amount');
-      if (!/^\d+$/.test(rawAmount)) throw new Error('Pending-Action-Betrag ist ungueltig.');
-      const amount = BigInt(rawAmount);
-      if (amount <= 0n || amount > 1_000_000_000n) throw new Error('Pending-Action-Betrag ausserhalb des erlaubten Bereichs.');
-      const reason = payloadString(payload, 'reason');
-      if (reason.length < 3 || reason.length > 200) throw new Error('Pending-Action-Grund ist ungueltig.');
-      const delta = action.actionType === ACTIONS.ADD_MONEY ? amount : -amount;
-      await adminPay({ guildId: scope.guildId, nitradoConnId, targetUserId, delta, reason, actorDiscordId: scope.actorDiscordId });
-      logAudit(action.actionType === ACTIONS.ADD_MONEY ? 'ECON_ADD_MONEY' : 'ECON_REMOVE_MONEY', 'ECONOMY', {
-        guildId: scope.guildId, nitradoConnId, actor: scope.actorDiscordId, target: targetUserId, amount: amount.toString(), actionId: id,
-      });
-      await reply(i, action.actionType === ACTIONS.ADD_MONEY ? 'Legacy-Gutschrift wurde ausgefuehrt.' : 'Guthaben wurde abgezogen.');
-      return;
-    }
-
-    if (action.actionType === ACTIONS.FORCE_LINK) {
-      const playerName = payloadString(payload, 'playerName');
-      if (!isValidPlayerName(playerName)) throw new Error('Pending-Action-Spielername ist ungueltig.');
-      const linkScope = { guildId: scope.guildId, nitradoConnId };
-      const result = await forceLinkByPlayerName(
-        prisma as unknown as SessionLinkClient,
-        linkScope,
-        targetUserId,
-        playerName,
-        config.security.encryptionKey,
-      );
-      if (!result.ok) { await reply(i, forceLinkFailure(result)); return; }
-      const startBalance = await applySuccessfulLinkEconomyEffects({
-        scope: linkScope,
-        userDiscordId: targetUserId,
-        gameId: result.gameId,
-        secret: config.security.encryptionKey,
-        newLink: !result.alreadyLinked,
-      });
-      logAudit('LINK_FORCE_CREATED', 'LINKING', {
+    let finalized = false;
+    const finish = async (content: string): Promise<void> => {
+      const completed = await completePendingServerAction(prisma as unknown as PendingServerActionClient, {
+        id: action.id,
         guildId: scope.guildId,
-        nitradoConnId,
-        actor: scope.actorDiscordId,
-        target: targetUserId,
-        playerName: result.playerName,
-        actionId: id,
-        startBalanceGranted: startBalance.granted,
-        startBalanceAmount: startBalance.amount.toString(),
+        actorDiscordId: scope.actorDiscordId,
+        claimToken: action.claimToken,
       });
-      await reply(i, `Force-Link wurde ausgefuehrt: <@${targetUserId}> ↔ **${result.playerName}**.${startBalance.granted ? ` Startguthaben: +${startBalance.amount.toLocaleString('de-DE')}.` : ''}`);
-      return;
-    }
+      if (!completed) throw new Error('Pending-Action-Claim konnte nicht finalisiert werden.');
+      finalized = true;
+      await reply(i, content);
+    };
 
-    if (action.actionType === ACTIONS.FORCE_UNLINK) {
-      const linkScope = { guildId: scope.guildId, nitradoConnId };
-      const removed = await unlinkUser(prisma as unknown as LinkClient, linkScope, targetUserId);
-      if (removed) await deactivateLinkRewardState(linkScope, targetUserId);
-      logAudit('LINK_FORCE_REMOVED', 'LINKING', { guildId: scope.guildId, nitradoConnId, actor: scope.actorDiscordId, target: targetUserId, removed, actionId: id });
-      await reply(i, removed ? 'Force-Unlink wurde ausgefuehrt. Die aktive Identitaet ist wieder fuer eine korrekte Neuverknuepfung frei.' : 'Es existierte keine aktive Verknuepfung.');
-      return;
-    }
+    try {
+      const nitradoConnId = asNitradoConnId(action.nitradoConnId);
+      const payload = payloadObject(action.payload);
+      const targetUserId = asUserDiscordId(payloadString(payload, 'targetUserId'));
 
-    throw new Error(`Unbekannter Pending-Action-Typ: ${action.actionType}`);
+      const server = await prisma.nitradoConnection.findFirst({
+        where: { id: nitradoConnId, guildId: scope.guildId },
+        select: { slot: true, status: true, nitradoServerId: true },
+      });
+      if (!server || server.status !== 'ACTIVE' || !server.nitradoServerId || server.slot < 1 || server.slot > MAX_GAME_SERVERS_PER_GUILD) {
+        await finish('Der Gameserver dieser Pending-Action ist nicht mehr aktiv oder nicht mehr als gueltiger Slot 1–4 gebunden. Aktion wurde nicht ausgefuehrt.');
+        return;
+      }
+
+      if (action.actionType === ACTIONS.ADD_MONEY || action.actionType === ACTIONS.REMOVE_MONEY) {
+        const settings = await prisma.serverSettings.findUnique({
+          where: { guildId_nitradoConnId: { guildId: scope.guildId, nitradoConnId } },
+          select: { economyActive: true },
+        });
+        if (!settings?.economyActive) {
+          await finish('Economy ist fuer den ausgewaehlten Gameserver deaktiviert. Aktion wurde nicht ausgefuehrt.');
+          return;
+        }
+        const rawAmount = payloadString(payload, 'amount');
+        if (!/^\d+$/.test(rawAmount)) throw new Error('Pending-Action-Betrag ist ungueltig.');
+        const amount = BigInt(rawAmount);
+        if (amount <= 0n || amount > 1_000_000_000n) throw new Error('Pending-Action-Betrag ausserhalb des erlaubten Bereichs.');
+        const reason = payloadString(payload, 'reason');
+        if (reason.length < 3 || reason.length > 200) throw new Error('Pending-Action-Grund ist ungueltig.');
+        const delta = action.actionType === ACTIONS.ADD_MONEY ? amount : -amount;
+        const booking = await applyPendingAdminMoneyAction({
+          actionId: action.id,
+          guildId: scope.guildId,
+          nitradoConnId,
+          targetUserId,
+          delta,
+          reason,
+          actorDiscordId: scope.actorDiscordId,
+        });
+        logAudit(action.actionType === ACTIONS.ADD_MONEY ? 'ECON_ADD_MONEY' : 'ECON_REMOVE_MONEY', 'ECONOMY', {
+          guildId: scope.guildId,
+          nitradoConnId,
+          actor: scope.actorDiscordId,
+          target: targetUserId,
+          amount: amount.toString(),
+          actionId: id,
+          idempotentReplay: !booking.applied,
+        });
+        await finish(action.actionType === ACTIONS.ADD_MONEY ? 'Legacy-Gutschrift wurde ausgefuehrt.' : 'Guthaben wurde abgezogen.');
+        return;
+      }
+
+      if (action.actionType === ACTIONS.FORCE_LINK) {
+        const playerName = payloadString(payload, 'playerName');
+        if (!isValidPlayerName(playerName)) throw new Error('Pending-Action-Spielername ist ungueltig.');
+        const linkScope = { guildId: scope.guildId, nitradoConnId };
+        const result = await forceLinkByPlayerName(
+          prisma as unknown as SessionLinkClient,
+          linkScope,
+          targetUserId,
+          playerName,
+          config.security.encryptionKey,
+        );
+        if (!result.ok) {
+          await finish(forceLinkFailure(result));
+          return;
+        }
+        const startBalance = await applySuccessfulLinkEconomyEffects({
+          scope: linkScope,
+          userDiscordId: targetUserId,
+          gameId: result.gameId,
+          secret: config.security.encryptionKey,
+          newLink: !result.alreadyLinked,
+        });
+        logAudit('LINK_FORCE_CREATED', 'LINKING', {
+          guildId: scope.guildId,
+          nitradoConnId,
+          actor: scope.actorDiscordId,
+          target: targetUserId,
+          playerName: result.playerName,
+          actionId: id,
+          startBalanceGranted: startBalance.granted,
+          startBalanceAmount: startBalance.amount.toString(),
+          idempotentReplay: result.alreadyLinked,
+        });
+        await finish(`Force-Link wurde ausgefuehrt: <@${targetUserId}> ↔ **${result.playerName}**.${startBalance.granted ? ` Startguthaben: +${startBalance.amount.toLocaleString('de-DE')}.` : ''}`);
+        return;
+      }
+
+      if (action.actionType === ACTIONS.FORCE_UNLINK) {
+        const linkScope = { guildId: scope.guildId, nitradoConnId };
+        const removed = await unlinkUser(prisma as unknown as LinkClient, linkScope, targetUserId);
+        // Absichtlich auch bei removed=false: Ein Retry nach Crash zwischen
+        // Link-Unlink und Reward-Deaktivierung muss den halbfertigen Zustand heilen.
+        await deactivateLinkRewardState(linkScope, targetUserId);
+        logAudit('LINK_FORCE_REMOVED', 'LINKING', {
+          guildId: scope.guildId,
+          nitradoConnId,
+          actor: scope.actorDiscordId,
+          target: targetUserId,
+          removed,
+          actionId: id,
+          idempotentReplay: !removed,
+        });
+        await finish('Force-Unlink wurde verarbeitet. Die aktive Identitaet und ihre Reward-Berechtigung sind deaktiviert.');
+        return;
+      }
+
+      throw new Error(`Unbekannter Pending-Action-Typ: ${action.actionType}`);
+    } catch (error) {
+      if (!finalized) {
+        try {
+          await releasePendingServerActionClaim(prisma as unknown as PendingServerActionClient, {
+            id: action.id,
+            guildId: scope.guildId,
+            actorDiscordId: scope.actorDiscordId,
+            claimToken: action.claimToken,
+          });
+        } catch (releaseError) {
+          logger.error('Pending-Action-Claim konnte nach Fehler nicht freigegeben werden:', releaseError as Error);
+        }
+      }
+      throw error;
+    }
   }),
 };
