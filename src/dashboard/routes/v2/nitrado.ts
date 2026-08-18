@@ -48,8 +48,8 @@ class ServiceValidationError extends Error {
  * - leer/undefined/null  -> null (keine Verknuepfung)
  * - kein String          -> 400
  * - nicht numerisch      -> 400
- * - nicht im Account      -> 400 (verhindert Speichern fremder Service-IDs)
- * - Nitrado-API-Fehler    -> 502
+ * - nicht im Account     -> 400 (verhindert Speichern fremder Service-IDs)
+ * - Nitrado-API-Fehler   -> 502
  * Liefert den normalisierten (getrimmten) Wert zurueck. Der Token wird nie geloggt.
  */
 async function validateServiceIdForToken(token: string, nitradoServerId: unknown): Promise<string | null> {
@@ -112,25 +112,35 @@ nitradoRouter.post('/', requireGuildOwner, async (req, res) => {
     throw e;
   }
 
-  const created = await createSlot({
-    guildId: scope.guildId,
-    slot,
-    alias,
-    rawToken: token,
-    nitradoServerId: normalizedServiceId,
-    addedBy: asUserDiscordId(scope.actorDiscordId),
-  });
-  logAuditDb('NITRADO_SLOT_CREATED', 'NITRADO', {
-    actorUserId: req.auth!.userId, guildId: scope.guildId,
-    details: { slot, alias, alias5: created.alias5 },
-  });
-  res.status(201).json({
-    id: created.id,
-    slot: created.slot,
-    alias: created.alias,
-    alias5: created.alias5,
-    status: created.status,
-  });
+  try {
+    const created = await createSlot({
+      guildId: scope.guildId,
+      slot,
+      alias,
+      rawToken: token,
+      nitradoServerId: normalizedServiceId,
+      addedBy: asUserDiscordId(scope.actorDiscordId),
+    });
+    logAuditDb('NITRADO_SLOT_CREATED', 'NITRADO', {
+      actorUserId: req.auth!.userId, guildId: scope.guildId,
+      details: { slot, alias, alias5: created.alias5 },
+    });
+    res.status(201).json({
+      id: created.id,
+      slot: created.slot,
+      alias: created.alias,
+      alias5: created.alias5,
+      status: created.status,
+    });
+  } catch (e) {
+    // Der Vorab-Read ist nur UX. Die DB-Unique-Grenze bleibt fuer zwei exakt
+    // gleichzeitige Slot-Erstellungen autoritativ und wird als Konflikt statt
+    // als interner Fehler abgebildet.
+    if ((e as { code?: string }).code === 'P2002') {
+      res.status(409).json({ error: `Slot ${slot} ist bereits belegt.` }); return;
+    }
+    throw e;
+  }
 });
 
 /**
@@ -152,26 +162,27 @@ nitradoRouter.patch('/:slot/token', requireGuildOwner, async (req, res) => {
   const client = new NitradoClient(token);
   if (!(await validateTokenOrRespond(token, res))) return;
 
-  // NIT-003: Nach Tokenrotation pruefen, ob die gespeicherte Service-ID noch zum
-  // NEUEN Token gehoert. Wenn nicht, wird sie entfernt (Owner muss neu
-  // auswaehlen) — kein stilles Weiterverwenden einer fremden/ungueltigen ID.
-  // Ein reiner Netzwerkfehler beim Service-Listing gilt NICHT als Mismatch.
+  // Nitrado-1A / NIT-003: Eine bestehende Service-Kopplung muss gegen den
+  // NEUEN Token beweisbar sein, BEVOR der Token persistiert wird. Ein transienter
+  // Service-Read ist kein Beweis und darf daher nicht fail-open rotieren.
   let serviceMismatch = false;
   if (existing.nitradoServerId) {
+    let services;
     try {
-      const services = await client.listServices();
-      serviceMismatch = !services.some((s) => String(s.id) === existing.nitradoServerId);
+      services = await client.listServices();
     } catch (e) {
       logger.warn(`NIT-003: Service-Recheck bei Tokenrotation fehlgeschlagen (Slot ${slot}): ${(e as Error).message}`);
+      res.status(502).json({
+        error: 'Token wurde nicht geändert: Die vorhandene Nitrado-Service-Zuordnung konnte mit dem neuen Token nicht verifiziert werden.',
+      });
+      return;
     }
+    serviceMismatch = !services.some((s) => String(s.id) === existing.nitradoServerId);
   }
 
-  const updated = await updateToken(scope.guildId, slot, token);
+  // Token + ggf. nachgewiesener Service-Reset werden atomar persistiert.
+  const updated = await updateToken(scope.guildId, slot, token, { resetServiceId: serviceMismatch });
   if (!updated) { res.status(500).json({ error: 'Update fehlgeschlagen.' }); return; }
-
-  if (serviceMismatch) {
-    await updateServiceId(scope.guildId, slot, null);
-  }
 
   logAuditDb('NITRADO_SLOT_TOKEN_UPDATED', 'NITRADO', {
     actorUserId: req.auth!.userId, guildId: scope.guildId,
