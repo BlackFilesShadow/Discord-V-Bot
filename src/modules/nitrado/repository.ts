@@ -188,14 +188,20 @@ export async function markValidated(
 
 /**
  * Tauscht den verschluesselten Token eines existierenden Slots aus.
- * Setzt Status zurueck auf ACTIVE (z.B. wenn vorher EXPIRED war) und loescht
- * den vorherigen Validierungsfehler-Streak.
- * Caller MUSS den neuen Token vorher gegen die Nitrado-API validiert haben.
+ *
+ * `resetServiceId=true` wird fuer eine gegen den NEUEN Token nachweislich nicht
+ * mehr zugaengliche Service-ID verwendet. Tokenrotation und Service-Reset
+ * passieren dann in EINER DB-Transaktion; ein Fehler kann niemals ein neues
+ * Token mit der alten, ungueltigen Service-Kopplung zuruecklassen.
+ *
+ * Caller MUSS den neuen Token und — falls eine Service-ID existiert — deren
+ * Zugehoerigkeit vor diesem Write gegen die Nitrado-API validiert haben.
  */
 export async function updateToken(
   guildId: GuildId,
   slot: number,
   rawToken: string,
+  options: { resetServiceId?: boolean } = {},
 ): Promise<NitradoConnectionRow | null> {
   if (!rawToken || rawToken.length < 8) throw new Error('Token leer/zu kurz');
   const encryptedToken = encrypt(rawToken, config.security.encryptionKey);
@@ -205,10 +211,16 @@ export async function updateToken(
   });
   if (!current) return null;
 
+  const resetServiceId = options.resetServiceId === true;
   await prisma.$transaction([
     prisma.nitradoConnection.updateMany({
-      where: { guildId, slot },
-      data: { encryptedToken, status: 'ACTIVE', lastErrorMessage: null },
+      where: { guildId, slot, id: current.id },
+      data: {
+        encryptedToken,
+        status: 'ACTIVE',
+        lastErrorMessage: null,
+        ...(resetServiceId ? { nitradoServerId: null, serviceId: null } : {}),
+      },
     }),
     prisma.nitradoValidationHealth.updateMany({
       where: { guildId, nitradoConnId: current.id },
