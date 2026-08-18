@@ -31,6 +31,7 @@ jest.mock('../../src/modules/nitrado/adm/bindingFence', () => ({
 jest.mock('../../src/modules/nitrado/mirror/mirrorLease', () => ({
   __esModule: true,
   MIRROR_HEARTBEAT_MS: 30_000,
+  mirrorLeaseBindingKey: () => 'binding-key',
   acquireMirrorSnapshotLease: (...args: unknown[]) => acquireLease(...args),
   renewMirrorSnapshotLease: (...args: unknown[]) => renewLease(...args),
   finalizeMirrorSnapshotLease: (...args: unknown[]) => finalizeLease(...args),
@@ -76,7 +77,7 @@ describe('NIT-012 / Nitrado-1R/1T — canonical snapshot binding', () => {
     expect(res.snapshotId).toBe('snap-1');
     expect(readCurrentAdmBinding).toHaveBeenCalledWith({ id: 'c1', guildId: 'g1' });
     expect(acquireLease).toHaveBeenCalledWith({
-      guildId: 'g1', nitradoConnId: 'c1', serviceId: '123', triggeredBy: 'u1',
+      guildId: 'g1', nitradoConnId: 'c1', serviceId: '123', bindingKey: 'binding-key', triggeredBy: 'u1',
     });
     expect(withFreshAdmBinding).toHaveBeenCalledWith(BINDING, expect.any(Function));
     await new Promise((r) => setImmediate(r));
@@ -95,20 +96,16 @@ describe('NIT-012 / Nitrado-1R/1T — canonical snapshot binding', () => {
 
   it('fails closed when no ACTIVE canonical binding exists', async () => {
     readCurrentAdmBinding.mockResolvedValue(null);
-
     await expect(startSnapshot({ guildId: 'g1', nitradoConnId: 'c1', triggeredBy: 'u1' }))
       .rejects.toThrow(/nicht ACTIVE|kanonische Service-ID/);
-
     expect(acquireLease).not.toHaveBeenCalled();
     expect(readClientCtor).not.toHaveBeenCalled();
   });
 
   it('propagates binding infrastructure errors without creating a mirror lease', async () => {
     readCurrentAdmBinding.mockRejectedValue(new Error('binding lock failed'));
-
     await expect(startSnapshot({ guildId: 'g1', nitradoConnId: 'c1', triggeredBy: 'u1' }))
       .rejects.toThrow('binding lock failed');
-
     expect(acquireLease).not.toHaveBeenCalled();
   });
 });
