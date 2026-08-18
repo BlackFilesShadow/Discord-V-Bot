@@ -46,6 +46,7 @@ const GUILD_A = '12345678901234567';
 const GUILD_B = '22345678901234567';
 const USER = '32345678901234567';
 const SECRET = 'x'.repeat(32);
+const CLAIM_TOKEN = '11111111-1111-4111-8111-111111111111';
 
 beforeEach(() => {
   jest.clearAllMocks();
@@ -56,7 +57,7 @@ beforeEach(() => {
   mockTransaction.mockImplementation(async (callback: (tx: typeof mockTx) => unknown) => callback(mockTx));
 });
 
-describe('Leave-1A/1E durable cleanup saga', () => {
+describe('Leave-1A/1E/1F durable cleanup saga', () => {
   it('creates deterministic guild-scoped job keys and pseudonymous receipts', () => {
     expect(leaveCleanupJobKey(GUILD_A, USER)).toBe(`leave-job:v1:${GUILD_A}:${USER}`);
     const a1 = leaveCleanupReceiptFingerprint(GUILD_A, USER, SECRET);
@@ -73,7 +74,7 @@ describe('Leave-1A/1E durable cleanup saga', () => {
     expect(() => leaveCleanupReceiptFingerprint(GUILD_A, USER, 'weak')).toThrow(/zu kurz/);
   });
 
-  it('treats legacy Leave-1A rows without a step as WHITELIST for safe upgrade continuity', () => {
+  it('treats legacy Leave-1A rows without a step or claim token as WHITELIST for safe upgrade continuity', () => {
     const details = readLeaveCleanupDetails({
       kind: LEAVE_CLEANUP_KIND,
       guildId: GUILD_A,
@@ -82,6 +83,7 @@ describe('Leave-1A/1E durable cleanup saga', () => {
       maxAttempts: 8,
     });
     expect(details).toMatchObject({ step: 'WHITELIST', stage: 'QUEUED', attempts: 0 });
+    expect(details).not.toHaveProperty('claimToken');
   });
 
   it('serializes concurrent enqueue for the same guild+user through a transaction advisory lock', async () => {
@@ -139,7 +141,7 @@ describe('Leave-1A/1E durable cleanup saga', () => {
     }));
   });
 
-  it('claims pending work through a PENDING -> IN_PROGRESS CAS and upgrades legacy step metadata', async () => {
+  it('claims pending work with a fresh UUID fence and upgrades legacy step metadata', async () => {
     const now = new Date('2026-08-17T18:00:00.000Z');
     mockFindFirst.mockResolvedValueOnce({
       id: 'job-1',
@@ -151,13 +153,16 @@ describe('Leave-1A/1E durable cleanup saga', () => {
     });
 
     const claimed = await claimNextLeaveCleanupRequest(now);
+    const claimedDetails = readLeaveCleanupDetails(claimed?.details);
     expect(claimed?.status).toBe('IN_PROGRESS');
-    expect(readLeaveCleanupDetails(claimed?.details)?.step).toBe('WHITELIST');
+    expect(claimedDetails?.step).toBe('WHITELIST');
+    expect(claimedDetails?.claimedAt).toBe(now.toISOString());
+    expect(claimedDetails?.claimToken).toMatch(/^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i);
     expect(mockUpdateMany).toHaveBeenCalledWith(expect.objectContaining({
       where: { id: 'job-1', status: 'PENDING' },
       data: expect.objectContaining({
         status: 'IN_PROGRESS',
-        details: expect.objectContaining({ step: 'WHITELIST', stage: 'RUNNING' }),
+        details: expect.objectContaining({ step: 'WHITELIST', stage: 'RUNNING', claimToken: expect.any(String) }),
       }),
     }));
   });
@@ -196,7 +201,7 @@ describe('Leave-1A/1E durable cleanup saga', () => {
     });
   });
 
-  it('persists successful substep transitions without changing retry attempts', async () => {
+  it('persists successful substep transitions only for the active claim fence', async () => {
     const now = new Date('2026-08-17T18:00:00.000Z');
     const request = {
       id: 'job-step',
@@ -212,6 +217,7 @@ describe('Leave-1A/1E durable cleanup saga', () => {
         attempts: 2,
         maxAttempts: 8,
         claimedAt: now.toISOString(),
+        claimToken: CLAIM_TOKEN,
       },
     };
 
@@ -220,14 +226,51 @@ describe('Leave-1A/1E durable cleanup saga', () => {
       step: 'STATS_SESSIONS',
       stage: 'RUNNING',
       attempts: 2,
+      claimToken: CLAIM_TOKEN,
     });
     expect(mockUpdateMany).toHaveBeenCalledWith(expect.objectContaining({
-      where: { id: 'job-step', status: 'IN_PROGRESS', userId: request.userId },
-      data: { details: expect.objectContaining({ step: 'STATS_SESSIONS', attempts: 2 }) },
+      where: {
+        id: 'job-step',
+        status: 'IN_PROGRESS',
+        userId: request.userId,
+        details: { path: ['claimToken'], equals: CLAIM_TOKEN },
+      },
+      data: { details: expect.objectContaining({ step: 'STATS_SESSIONS', attempts: 2, claimToken: CLAIM_TOKEN }) },
     }));
   });
 
-  it('defers normal WAITING without consuming a retry attempt or losing the checkpoint', async () => {
+  it('rejects a stale worker that lost its claim fence instead of regressing a newer checkpoint', async () => {
+    const now = new Date('2026-08-17T18:00:00.000Z');
+    const staleRequest = {
+      id: 'job-stale-writer',
+      userId: `leave-job:v1:${GUILD_A}:${USER}`,
+      discordId: USER,
+      status: 'IN_PROGRESS' as const,
+      scheduledAt: now,
+      details: {
+        kind: LEAVE_CLEANUP_KIND,
+        guildId: GUILD_A,
+        step: 'STATS_SESSIONS' as const,
+        stage: 'RUNNING' as const,
+        attempts: 0,
+        maxAttempts: 8,
+        claimedAt: now.toISOString(),
+        claimToken: CLAIM_TOKEN,
+      },
+    };
+    mockUpdateMany.mockResolvedValueOnce({ count: 0 });
+
+    await expect(advanceLeaveCleanupStep(staleRequest, 'STATS_SESSIONS')).rejects.toThrow(/Step-CAS verloren/);
+    expect(mockUpdateMany).toHaveBeenCalledWith(expect.objectContaining({
+      where: expect.objectContaining({
+        id: 'job-stale-writer',
+        status: 'IN_PROGRESS',
+        details: { path: ['claimToken'], equals: CLAIM_TOKEN },
+      }),
+    }));
+  });
+
+  it('defers normal WAITING without consuming attempts and removes the released claim lease', async () => {
     const now = new Date('2026-08-17T18:00:00.000Z');
     const request = {
       id: 'job-wait',
@@ -243,12 +286,18 @@ describe('Leave-1A/1E durable cleanup saga', () => {
         attempts: 3,
         maxAttempts: 8,
         claimedAt: now.toISOString(),
+        claimToken: CLAIM_TOKEN,
       },
     };
 
     await deferLeaveCleanupRequest(request, 'ACTIVE_SESSION', now, 30_000);
     expect(mockUpdateMany).toHaveBeenCalledWith(expect.objectContaining({
-      where: { id: 'job-wait', status: 'IN_PROGRESS', userId: request.userId },
+      where: {
+        id: 'job-wait',
+        status: 'IN_PROGRESS',
+        userId: request.userId,
+        details: { path: ['claimToken'], equals: CLAIM_TOKEN },
+      },
       data: expect.objectContaining({
         status: 'PENDING',
         scheduledAt: new Date('2026-08-17T18:00:30.000Z'),
@@ -261,28 +310,34 @@ describe('Leave-1A/1E durable cleanup saga', () => {
       }),
     }));
     expect(mockUpdateMany.mock.calls[0][0].data.details).not.toHaveProperty('claimedAt');
+    expect(mockUpdateMany.mock.calls[0][0].data.details).not.toHaveProperty('claimToken');
   });
 
-  it('recovers only stale in-progress claims after a restart and preserves their step', async () => {
+  it('recovers only the exact stale claim token and preserves its checkpoint', async () => {
     const now = new Date('2026-08-17T18:10:00.000Z');
     mockFindMany.mockResolvedValueOnce([
       {
         id: 'stale',
-        details: { kind: LEAVE_CLEANUP_KIND, guildId: GUILD_A, step: 'LINK_ECONOMY', stage: 'RUNNING', attempts: 1, maxAttempts: 8, claimedAt: '2026-08-17T18:00:00.000Z' },
+        details: { kind: LEAVE_CLEANUP_KIND, guildId: GUILD_A, step: 'LINK_ECONOMY', stage: 'RUNNING', attempts: 1, maxAttempts: 8, claimedAt: '2026-08-17T18:00:00.000Z', claimToken: CLAIM_TOKEN },
       },
       {
         id: 'fresh',
-        details: { kind: LEAVE_CLEANUP_KIND, guildId: GUILD_A, step: 'STATS_SESSIONS', stage: 'RUNNING', attempts: 1, maxAttempts: 8, claimedAt: '2026-08-17T18:09:30.000Z' },
+        details: { kind: LEAVE_CLEANUP_KIND, guildId: GUILD_A, step: 'STATS_SESSIONS', stage: 'RUNNING', attempts: 1, maxAttempts: 8, claimedAt: '2026-08-17T18:09:30.000Z', claimToken: '22222222-2222-4222-8222-222222222222' },
       },
     ]);
     await expect(recoverStaleLeaveCleanupRequests(now, 60_000)).resolves.toBe(1);
     expect(mockUpdateMany).toHaveBeenCalledTimes(1);
-    expect(mockUpdateMany.mock.calls[0][0].where).toEqual({ id: 'stale', status: 'IN_PROGRESS' });
+    expect(mockUpdateMany.mock.calls[0][0].where).toEqual({
+      id: 'stale',
+      status: 'IN_PROGRESS',
+      details: { path: ['claimToken'], equals: CLAIM_TOKEN },
+    });
     expect(mockUpdateMany.mock.calls[0][0].data.details).toMatchObject({ step: 'LINK_ECONOMY', stage: 'QUEUED' });
     expect(mockUpdateMany.mock.calls[0][0].data.details).not.toHaveProperty('claimedAt');
+    expect(mockUpdateMany.mock.calls[0][0].data.details).not.toHaveProperty('claimToken');
   });
 
-  it('paginates restart recovery beyond 500 in-progress claims', async () => {
+  it('paginates restart recovery beyond 500 and fences a legacy claim by claimedAt', async () => {
     const now = new Date('2026-08-17T18:10:00.000Z');
     const freshBatch = Array.from({ length: 500 }, (_, index) => ({
       id: String(index).padStart(4, '0'),
@@ -322,10 +377,14 @@ describe('Leave-1A/1E durable cleanup saga', () => {
       take: 500,
     }));
     expect(mockUpdateMany).toHaveBeenCalledTimes(1);
-    expect(mockUpdateMany.mock.calls[0][0].where).toEqual({ id: '0500', status: 'IN_PROGRESS' });
+    expect(mockUpdateMany.mock.calls[0][0].where).toEqual({
+      id: '0500',
+      status: 'IN_PROGRESS',
+      details: { path: ['claimedAt'], equals: '2026-08-17T18:00:00.000Z' },
+    });
   });
 
-  it('uses bounded exponential backoff and transitions to retry without undefined JSON fields', async () => {
+  it('uses bounded exponential backoff and fences retry persistence to the active claim', async () => {
     expect(leaveCleanupBackoffMs(1)).toBe(5_000);
     expect(leaveCleanupBackoffMs(2)).toBe(10_000);
     expect(leaveCleanupBackoffMs(99)).toBe(60 * 60_000);
@@ -337,11 +396,16 @@ describe('Leave-1A/1E durable cleanup saga', () => {
       discordId: USER,
       status: 'IN_PROGRESS' as const,
       scheduledAt: now,
-      details: { kind: LEAVE_CLEANUP_KIND, guildId: GUILD_A, step: 'LINK_ECONOMY' as const, stage: 'RUNNING' as const, attempts: 0, maxAttempts: 3, claimedAt: now.toISOString() },
+      details: { kind: LEAVE_CLEANUP_KIND, guildId: GUILD_A, step: 'LINK_ECONOMY' as const, stage: 'RUNNING' as const, attempts: 0, maxAttempts: 3, claimedAt: now.toISOString(), claimToken: CLAIM_TOKEN },
     };
     await expect(retryOrDeadLetterLeaveCleanupRequest(request, new Error('temporary\nsecret-ish'), now)).resolves.toBe('RETRY');
     expect(mockUpdateMany).toHaveBeenCalledWith(expect.objectContaining({
-      where: { id: 'job-r', status: 'IN_PROGRESS' },
+      where: {
+        id: 'job-r',
+        status: 'IN_PROGRESS',
+        userId: request.userId,
+        details: { path: ['claimToken'], equals: CLAIM_TOKEN },
+      },
       data: expect.objectContaining({
         status: 'PENDING',
         scheduledAt: new Date('2026-08-17T18:00:05.000Z'),
@@ -349,9 +413,10 @@ describe('Leave-1A/1E durable cleanup saga', () => {
       }),
     }));
     expect(mockUpdateMany.mock.calls[0][0].data.details).not.toHaveProperty('claimedAt');
+    expect(mockUpdateMany.mock.calls[0][0].data.details).not.toHaveProperty('claimToken');
   });
 
-  it('dead-letters at maxAttempts instead of retrying forever', async () => {
+  it('dead-letters at maxAttempts only through the active claim fence', async () => {
     const now = new Date('2026-08-17T18:00:00.000Z');
     const request = {
       id: 'job-d',
@@ -359,10 +424,11 @@ describe('Leave-1A/1E durable cleanup saga', () => {
       discordId: USER,
       status: 'IN_PROGRESS' as const,
       scheduledAt: now,
-      details: { kind: LEAVE_CLEANUP_KIND, guildId: GUILD_A, step: 'GUILD_DATA' as const, stage: 'RUNNING' as const, attempts: 2, maxAttempts: 3 },
+      details: { kind: LEAVE_CLEANUP_KIND, guildId: GUILD_A, step: 'GUILD_DATA' as const, stage: 'RUNNING' as const, attempts: 2, maxAttempts: 3, claimedAt: now.toISOString(), claimToken: CLAIM_TOKEN },
     };
     await expect(retryOrDeadLetterLeaveCleanupRequest(request, 'fatal', now)).resolves.toBe('DEAD');
     expect(mockUpdateMany).toHaveBeenCalledWith(expect.objectContaining({
+      where: expect.objectContaining({ details: { path: ['claimToken'], equals: CLAIM_TOKEN } }),
       data: expect.objectContaining({ status: 'FAILED', details: expect.objectContaining({ step: 'GUILD_DATA', attempts: 3, stage: 'DEAD' }) }),
     }));
   });
@@ -381,7 +447,7 @@ describe('Leave-1A/1E durable cleanup saga', () => {
     expect(mockUpdateMany).not.toHaveBeenCalled();
   });
 
-  it('anonymizes raw processing ids only after the saga reaches COMPLETE', async () => {
+  it('anonymizes raw processing ids only after COMPLETE and only through the active claim fence', async () => {
     const now = new Date('2026-08-17T18:00:00.000Z');
     const request = {
       id: 'job-c',
@@ -389,12 +455,17 @@ describe('Leave-1A/1E durable cleanup saga', () => {
       discordId: USER,
       status: 'IN_PROGRESS' as const,
       scheduledAt: now,
-      details: { kind: LEAVE_CLEANUP_KIND, guildId: GUILD_A, step: 'COMPLETE' as const, stage: 'RUNNING' as const, attempts: 1, maxAttempts: 8, claimedAt: now.toISOString(), lastError: 'old' },
+      details: { kind: LEAVE_CLEANUP_KIND, guildId: GUILD_A, step: 'COMPLETE' as const, stage: 'RUNNING' as const, attempts: 1, maxAttempts: 8, claimedAt: now.toISOString(), claimToken: CLAIM_TOKEN, lastError: 'old' },
     };
     const fingerprint = await completeLeaveCleanupRequest(request, GUILD_A, SECRET, now);
     expect(fingerprint).not.toContain(USER);
     expect(mockUpdateMany).toHaveBeenCalledWith(expect.objectContaining({
-      where: { id: 'job-c', status: 'IN_PROGRESS', userId: request.userId },
+      where: {
+        id: 'job-c',
+        status: 'IN_PROGRESS',
+        userId: request.userId,
+        details: { path: ['claimToken'], equals: CLAIM_TOKEN },
+      },
       data: expect.objectContaining({
         status: 'COMPLETED',
         completedAt: now,
@@ -404,6 +475,7 @@ describe('Leave-1A/1E durable cleanup saga', () => {
       }),
     }));
     expect(mockUpdateMany.mock.calls[0][0].data.details).not.toHaveProperty('claimedAt');
+    expect(mockUpdateMany.mock.calls[0][0].data.details).not.toHaveProperty('claimToken');
     expect(mockUpdateMany.mock.calls[0][0].data.details).not.toHaveProperty('lastError');
   });
 
