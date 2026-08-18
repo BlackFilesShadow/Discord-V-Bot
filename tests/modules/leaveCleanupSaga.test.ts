@@ -48,6 +48,13 @@ const USER = '32345678901234567';
 const SECRET = 'x'.repeat(32);
 const CLAIM_TOKEN = '11111111-1111-4111-8111-111111111111';
 
+const claimFenceWhere = (claimedAt: string) => ({
+  AND: [
+    { details: { path: ['claimToken'], equals: CLAIM_TOKEN } },
+    { details: { path: ['claimedAt'], equals: claimedAt } },
+  ],
+});
+
 beforeEach(() => {
   jest.clearAllMocks();
   mockFindFirst.mockResolvedValue(null);
@@ -235,7 +242,7 @@ describe('Leave-1A/1E/1F/1G durable cleanup saga', () => {
         id: 'job-step',
         status: 'IN_PROGRESS',
         userId: request.userId,
-        details: { path: ['claimToken'], equals: CLAIM_TOKEN },
+        ...claimFenceWhere(now.toISOString()),
       },
       data: { details: expect.objectContaining({
         step: 'STATS_SESSIONS',
@@ -272,7 +279,7 @@ describe('Leave-1A/1E/1F/1G durable cleanup saga', () => {
       where: expect.objectContaining({
         id: 'job-stale-writer',
         status: 'IN_PROGRESS',
-        details: { path: ['claimToken'], equals: CLAIM_TOKEN },
+        ...claimFenceWhere(now.toISOString()),
       }),
     }));
   });
@@ -303,7 +310,7 @@ describe('Leave-1A/1E/1F/1G durable cleanup saga', () => {
         id: 'job-wait',
         status: 'IN_PROGRESS',
         userId: request.userId,
-        details: { path: ['claimToken'], equals: CLAIM_TOKEN },
+        ...claimFenceWhere(now.toISOString()),
       },
       data: expect.objectContaining({
         status: 'PENDING',
@@ -447,7 +454,7 @@ describe('Leave-1A/1E/1F/1G durable cleanup saga', () => {
         id: 'job-r',
         status: 'IN_PROGRESS',
         userId: request.userId,
-        details: { path: ['claimToken'], equals: CLAIM_TOKEN },
+        ...claimFenceWhere(now.toISOString()),
       },
       data: expect.objectContaining({
         status: 'PENDING',
@@ -471,7 +478,12 @@ describe('Leave-1A/1E/1F/1G durable cleanup saga', () => {
     };
     await expect(retryOrDeadLetterLeaveCleanupRequest(request, 'fatal', now)).resolves.toBe('DEAD');
     expect(mockUpdateMany).toHaveBeenCalledWith(expect.objectContaining({
-      where: expect.objectContaining({ details: { path: ['claimToken'], equals: CLAIM_TOKEN } }),
+      where: expect.objectContaining({
+        id: 'job-d',
+        status: 'IN_PROGRESS',
+        userId: request.userId,
+        ...claimFenceWhere(now.toISOString()),
+      }),
       data: expect.objectContaining({ status: 'FAILED', details: expect.objectContaining({ step: 'GUILD_DATA', attempts: 3, stage: 'DEAD' }) }),
     }));
   });
@@ -507,7 +519,7 @@ describe('Leave-1A/1E/1F/1G durable cleanup saga', () => {
         id: 'job-c',
         status: 'IN_PROGRESS',
         userId: request.userId,
-        details: { path: ['claimToken'], equals: CLAIM_TOKEN },
+        ...claimFenceWhere(now.toISOString()),
       },
       data: expect.objectContaining({
         status: 'COMPLETED',
