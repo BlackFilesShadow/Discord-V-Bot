@@ -31,6 +31,34 @@ export class NitradoApiError extends Error {
   }
 }
 
+/**
+ * Retrybare HTTP-Fehler im 4xx-Bereich duerfen vom Worker nicht wie normale
+ * Clientfehler sofort permanent DEAD gesetzt werden. Die separate Klasse
+ * behaelt Status + Endpoint fuer Diagnose, ist aber bewusst KEIN
+ * `NitradoApiError`, weil der bestehende Worker NitradoApiError-4xx (ausser
+ * 429) als permanent klassifiziert.
+ */
+export class NitradoRetryableApiError extends Error {
+  constructor(
+    message: string,
+    public readonly status: number,
+    public readonly endpoint: string,
+  ) {
+    super(message);
+    this.name = 'NitradoRetryableApiError';
+  }
+}
+
+/** Zentrale HTTP-Retry-Taxonomie fuer Nitrado-Remotezugriffe. */
+export function isRetryableNitradoHttpStatus(status: number): boolean {
+  return status === 408
+    || status === 409
+    || status === 423
+    || status === 425
+    || status === 429
+    || status >= 500;
+}
+
 export interface NitradoService {
   id: number;
   type: string;
@@ -197,18 +225,29 @@ export class NitradoClient {
           await sleep(500 * Math.pow(2, attempt - 1));
           continue;
         }
-        throw new NitradoApiError(
-          typeof res.data === 'object' && res.data?.message ? res.data.message : `HTTP ${res.status}`,
-          res.status,
-          path,
-        );
+
+        const message = typeof res.data === 'object' && res.data?.message
+          ? res.data.message
+          : `HTTP ${res.status}`;
+        if (isRetryableNitradoHttpStatus(res.status) && res.status < 500) {
+          // 408/409/423/425 werden bewusst vom persistenten Job-Backoff
+          // wiederholt statt als permanente 4xx-Fehler DEAD gesetzt.
+          if (res.status === 408) breaker.recordFailure();
+          throw new NitradoRetryableApiError(message, res.status, path);
+        }
+        throw new NitradoApiError(message, res.status, path);
       } catch (e) {
-        if (e instanceof NitradoApiError) throw e;
+        if (e instanceof NitradoApiError || e instanceof NitradoRetryableApiError) throw e;
         if (e instanceof NitradoCircuitOpenError) throw e;
         lastErr = e instanceof Error ? e : new Error(String(e));
         breaker.recordFailure();
-        if (attempt < 3 && (e as AxiosError).code !== 'ECONNABORTED') {
-          await sleep(500 * Math.pow(2, attempt - 1));
+        if (attempt < 3) {
+          // Auch ECONNABORTED/Timeout wird explizit erneut versucht. Ein kurzer
+          // Delay verhindert einen unmittelbaren Request-Sturm bei Timeouts.
+          const delayMs = (e as AxiosError).code === 'ECONNABORTED'
+            ? 250
+            : 500 * Math.pow(2, attempt - 1);
+          await sleep(delayMs);
           continue;
         }
       }
@@ -216,8 +255,33 @@ export class NitradoClient {
     throw new NitradoApiError(lastErr?.message ?? 'Unbekannt', null, path);
   }
 
+  /**
+   * Worker-orientierte Probe: Erfolg liefert true; alle Fehler behalten ihre
+   * Retry-/Permanent-Semantik als Exception. `validateTokenDetailed()` bleibt
+   * der nicht-werfende Dashboard-/Diagnose-Vertrag.
+   */
   async validateToken(): Promise<boolean> {
-    return (await this.validateTokenDetailed()).kind === 'VALID';
+    const result = await this.validateTokenDetailed();
+    switch (result.kind) {
+      case 'VALID':
+        return true;
+      case 'INVALID':
+        // `valid:false` ohne HTTP-Status ist semantisch ebenfalls ein dauerhaft
+        // ungueltiger Token; 401 macht diese Tatsache fuer den Worker explizit.
+        throw new NitradoApiError('Nitrado-Token ungueltig', result.status ?? 401, '/token');
+      case 'RATE_LIMITED':
+        throw new NitradoApiError('Nitrado-Rate-Limit bei Token-Pruefung', 429, '/token');
+      case 'CIRCUIT_OPEN':
+        throw new NitradoCircuitOpenError(0);
+      case 'TRANSIENT_FAILURE':
+        if (result.status !== undefined
+          && isRetryableNitradoHttpStatus(result.status)
+          && result.status < 500
+          && result.status !== 429) {
+          throw new NitradoRetryableApiError(result.message, result.status, '/token');
+        }
+        throw new NitradoApiError(result.message, result.status ?? null, '/token');
+    }
   }
 
   async validateTokenDetailed(): Promise<TokenValidationResult> {
@@ -226,6 +290,9 @@ export class NitradoClient {
       return res.data?.token?.valid === false ? { kind: 'INVALID', status: null } : { kind: 'VALID' };
     } catch (e) {
       if (e instanceof NitradoCircuitOpenError) return { kind: 'CIRCUIT_OPEN' };
+      if (e instanceof NitradoRetryableApiError) {
+        return { kind: 'TRANSIENT_FAILURE', status: e.status, message: e.message };
+      }
       if (e instanceof NitradoApiError) {
         if (e.status === 401 || e.status === 403) return { kind: 'INVALID', status: e.status };
         if (e.status === 429) return { kind: 'RATE_LIMITED' };
@@ -398,7 +465,12 @@ export class NitradoClient {
       data: { gameserver?: { status?: string; query?: { server_state?: string } } };
     }>('GET', `/services/${serviceId}/gameservers`);
     const gameserver = res.data?.gameserver;
-    return (gameserver?.query?.server_state || gameserver?.status || 'unknown').toLowerCase();
+    const state = (gameserver?.query?.server_state || gameserver?.status || 'unknown').toLowerCase();
+    // `query.server_state=offline` ist der tatsaechliche Down-State, auch wenn
+    // `gameserver.status` als Sollzustand weiterhin "started" meldet. Der
+    // Worker startet nur `stopped`; daher normalisieren wir ausschliesslich
+    // diesen echten Offline-Fall auf den bestehenden sicheren Start-State.
+    return state === 'offline' ? 'stopped' : state;
   }
 
   async start(serviceId: string, message?: string): Promise<void> {
