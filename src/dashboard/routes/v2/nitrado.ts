@@ -173,6 +173,7 @@ nitradoRouter.patch('/:slot/token', requireGuildOwner, async (req, res) => {
   try {
     updated = await updateToken(scope.guildId, slot, token, {
       resetServiceId: serviceMismatch,
+      expectedId: existing.id,
       expectedUpdatedAt: existing.updatedAt,
     });
   } catch (e) {
@@ -238,6 +239,7 @@ nitradoRouter.patch('/:slot/service', requireGuildOwner, async (req, res) => {
   let updated;
   try {
     updated = await updateServiceId(scope.guildId, slot, normalized, {
+      expectedId: existing.id,
       expectedUpdatedAt: existing.updatedAt,
     });
   } catch (e) {
