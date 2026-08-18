@@ -1,6 +1,5 @@
 import {
   withNitradoOutboxConnectionLock,
-  type NitradoOutboxClient,
   type NitradoOutboxTxClient,
 } from './outboxLock';
 
@@ -40,26 +39,62 @@ export interface NitradoRebindLifecycleResult {
 /**
  * Nitrado-1U: Bereitet lokale Remote-Wahrheit atomar auf einen echten
  * Service-Rebind vor. Der Aufrufer MUSS bereits den kanonischen per-Connection
- * Config-Lock halten und diese Funktion innerhalb derselben DB-Transaktion wie
- * die Service-/Binding-Aenderung aufrufen.
+ * Config-Lock halten und `client` MUSS der TransactionClient derselben
+ * Service-/Binding-Aenderung sein.
  *
- * Die zusaetzliche Connection-weite Outbox-xact-Barriere serialisiert gegen
- * parallele Whitelist-/Ban-Enqueues. Ein bereits RUNNING Remote-Mutationsjob
- * blockiert den Rebind komplett: wir veraendern niemals die Service-Bindung
- * unter einem bereits geclaimten Worker. PENDING Intents, deren Bedeutung nur
- * aus dem alten Remote-Zustand stammt, werden terminalisiert. SERVER_BAN_ADD
- * bleibt erhalten, weil er einen lokalen aktiven Ban-Sollzustand darstellt und
- * den verschluesselten Identifier fuer eine sichere Anwendung am neuen Service
- * noch besitzt.
+ * Lock-Reihenfolge gegen produktive Fachtransaktionen:
+ * 1. lokale Whitelist-/Ban-Beobachtungszeilen werden innerhalb der bereits
+ *    laufenden Rebind-Transaktion aktualisiert und damit row-gelockt;
+ * 2. erst DANACH wird die Connection-weite Outbox-xact-Barriere genommen;
+ * 3. dann werden aktive Jobs geprueft und stale PENDING-Intents bereinigt.
+ *
+ * Diese Reihenfolge verhindert einen Zyklus "Fachzeile -> Outbox-Lock" gegen
+ * "Outbox-Lock -> Fachzeile", weil normale Whitelist-/Ban-Writer ihre lokale
+ * Fachzeile vor dem Enqueue schreiben. Ein konkurrierender Writer commitet also
+ * entweder komplett vor unserer Barriere oder wartet auf unsere Fachzeilen bis
+ * nach dem Rebind. Jeder busy-Rueckgabewert fuehrt im Repository zu einem Throw
+ * und rollt damit auch die vorgezogenen Beobachtungs-Updates atomar zurueck.
+ *
+ * SERVER_BAN_ADD bleibt als PENDING-Policy-Intent erhalten, weil er einen lokal
+ * aktiven Ban-Sollzustand repraesentiert und noch den verschluesselten Identifier
+ * besitzt. Remote-REMOVE-/Whitelist-Intents werden dagegen aus dem alten
+ * Service-Namespace nicht blind in einen neuen Service uebernommen.
  */
 export async function prepareNitradoRemoteStateForServiceRebind(
-  client: NitradoOutboxClient,
+  client: NitradoOutboxTxClient,
   scope: { guildId: string; nitradoConnId: string },
 ): Promise<NitradoRebindLifecycleResult> {
-  return withNitradoOutboxConnectionLock(client, scope, async txBase => {
-    const tx = txBase as RebindLifecycleClient;
+  const tx = client as RebindLifecycleClient;
 
-    const running = await tx.nitradoJob.findFirst({
+  // Diese Beobachtungen gehoeren zum alten Service und werden vor der
+  // Outbox-Barriere invalidiert. Da der Aufrufer dieselbe DB-Transaktion haelt,
+  // werden sie bei einem spaeteren busy/Claim-Race zusammen mit dem Rebind
+  // zurueckgerollt.
+  const whitelist = await tx.whitelistEntry.updateMany({
+    where: {
+      guildId: scope.guildId,
+      nitradoConnId: scope.nitradoConnId,
+      syncState: { not: 'PENDING_REMOVE' },
+    },
+    data: {
+      syncState: 'LOCAL_ONLY',
+      lastSyncedAt: null,
+    },
+  });
+
+  const bans = await tx.serverBanEntry.updateMany({
+    where: {
+      guildId: scope.guildId,
+      nitradoConnId: scope.nitradoConnId,
+      appliedRemotely: true,
+    },
+    data: { appliedRemotely: false },
+  });
+
+  return withNitradoOutboxConnectionLock(client, scope, async txBase => {
+    const lockedTx = txBase as RebindLifecycleClient;
+
+    const running = await lockedTx.nitradoJob.findFirst({
       where: {
         guildId: scope.guildId,
         nitradoConnId: scope.nitradoConnId,
@@ -72,12 +107,12 @@ export async function prepareNitradoRemoteStateForServiceRebind(
       return {
         busy: true,
         cancelledJobs: 0,
-        whitelistReset: 0,
-        banRemoteStateReset: 0,
+        whitelistReset: whitelist.count,
+        banRemoteStateReset: bans.count,
       };
     }
 
-    const cancelled = await tx.nitradoJob.updateMany({
+    const cancelled = await lockedTx.nitradoJob.updateMany({
       where: {
         guildId: scope.guildId,
         nitradoConnId: scope.nitradoConnId,
@@ -92,12 +127,10 @@ export async function prepareNitradoRemoteStateForServiceRebind(
       },
     });
 
-    // Ein erneuter Blick nach dem PENDING-Update schliesst den Claim-Race:
-    // gewinnt ein Worker PENDING->RUNNING unmittelbar vor unserem Update, ist
-    // der Rebind weiterhin busy und die gesamte aufrufende Transaktion rollt
-    // zurueck. Gewinnt unser UPDATE zuerst, kann der spaetere Claim nicht mehr
-    // auf PENDING matchen.
-    const racedRunning = await tx.nitradoJob.findFirst({
+    // Claim-Race: gewinnt ein Worker PENDING->RUNNING unmittelbar vor unserem
+    // UPDATE, matcht das UPDATE diesen Job nicht. Der zweite Check macht den
+    // gesamten Rebind daraufhin busy; Repository-Throw rollt alles zurueck.
+    const racedRunning = await lockedTx.nitradoJob.findFirst({
       where: {
         guildId: scope.guildId,
         nitradoConnId: scope.nitradoConnId,
@@ -110,34 +143,10 @@ export async function prepareNitradoRemoteStateForServiceRebind(
       return {
         busy: true,
         cancelledJobs: cancelled.count,
-        whitelistReset: 0,
-        banRemoteStateReset: 0,
+        whitelistReset: whitelist.count,
+        banRemoteStateReset: bans.count,
       };
     }
-
-    const whitelist = await tx.whitelistEntry.updateMany({
-      where: {
-        guildId: scope.guildId,
-        nitradoConnId: scope.nitradoConnId,
-        syncState: { not: 'PENDING_REMOVE' },
-      },
-      data: {
-        syncState: 'LOCAL_ONLY',
-        lastSyncedAt: null,
-      },
-    });
-
-    // `appliedRemotely` ist eine Beobachtung des alten Nitrado-Service und darf
-    // niemals in den neuen Service-Namespace uebernommen werden. Der lokale Ban
-    // selbst bleibt erhalten; nur die Remote-Bestaetigung wird invalidiert.
-    const bans = await tx.serverBanEntry.updateMany({
-      where: {
-        guildId: scope.guildId,
-        nitradoConnId: scope.nitradoConnId,
-        appliedRemotely: true,
-      },
-      data: { appliedRemotely: false },
-    });
 
     return {
       busy: false,
