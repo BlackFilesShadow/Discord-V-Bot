@@ -63,6 +63,7 @@ import {
 const GUILD = '12345678901234567';
 const USER = '22345678901234567';
 const JOB_KEY = `leave-job:v1:${GUILD}:${USER}`;
+const INITIAL_LEASE = '2026-08-18T06:00:00.000Z';
 
 function request(step: string, id = 'job-1') {
   return {
@@ -79,6 +80,7 @@ function request(step: string, id = 'job-1') {
       attempts: 0,
       maxAttempts: 8,
       claimToken: 'claim-token-1',
+      claimedAt: INITIAL_LEASE,
     },
   };
 }
@@ -102,7 +104,20 @@ beforeEach(() => {
       LINK_ECONOMY: 'GUILD_DATA',
       GUILD_DATA: 'COMPLETE',
     };
-    return { ...current, details: { ...current.details, step: next[expected] } };
+    const lease: Record<string, string> = {
+      WHITELIST: '2026-08-18T06:00:01.000Z',
+      STATS_SESSIONS: '2026-08-18T06:00:02.000Z',
+      LINK_ECONOMY: '2026-08-18T06:00:03.000Z',
+      GUILD_DATA: '2026-08-18T06:00:04.000Z',
+    };
+    return {
+      ...current,
+      details: {
+        ...current.details,
+        step: next[expected],
+        claimedAt: lease[expected],
+      },
+    };
   });
 });
 
@@ -112,7 +127,7 @@ afterEach(() => {
 });
 
 describe('Leave-1E/1G durable worker', () => {
-  it('runs the persisted substeps strictly WHITELIST -> STATS -> LINK_ECONOMY -> GUILD_DATA -> REJOIN -> COMPLETE', async () => {
+  it('runs strict substeps and gives each rejoin finalizer the currently renewed claim lease', async () => {
     const result = await processLeaveCleanupRequest(request('WHITELIST'));
 
     expect(result).toBe('COMPLETED');
@@ -127,7 +142,11 @@ describe('Leave-1E/1G durable worker', () => {
       1,
       expect.objectContaining({
         id: 'job-1',
-        details: expect.objectContaining({ step: 'GUILD_DATA', claimToken: 'claim-token-1' }),
+        details: expect.objectContaining({
+          step: 'GUILD_DATA',
+          claimToken: 'claim-token-1',
+          claimedAt: '2026-08-18T06:00:03.000Z',
+        }),
       }),
       GUILD,
       USER,
@@ -136,13 +155,22 @@ describe('Leave-1E/1G durable worker', () => {
       2,
       expect.objectContaining({
         id: 'job-1',
-        details: expect.objectContaining({ step: 'COMPLETE', claimToken: 'claim-token-1' }),
+        details: expect.objectContaining({
+          step: 'COMPLETE',
+          claimToken: 'claim-token-1',
+          claimedAt: '2026-08-18T06:00:04.000Z',
+        }),
       }),
       GUILD,
       USER,
     );
     expect(completeRequest).toHaveBeenCalledWith(
-      expect.objectContaining({ details: expect.objectContaining({ step: 'COMPLETE' }) }),
+      expect.objectContaining({
+        details: expect.objectContaining({
+          step: 'COMPLETE',
+          claimedAt: '2026-08-18T06:00:04.000Z',
+        }),
+      }),
       GUILD,
       '0123456789abcdef0123456789abcdef',
     );
@@ -220,6 +248,7 @@ describe('Leave-1E/1G durable worker', () => {
     expect(retryOrDead).toHaveBeenCalledTimes(1);
     const retried = retryOrDead.mock.calls[0][0];
     expect(retried.details.step).toBe('LINK_ECONOMY');
+    expect(retried.details.claimedAt).toBe('2026-08-18T06:00:02.000Z');
     expect(retryOrDead.mock.calls[0][1]).toEqual(expect.objectContaining({ message: 'economy temporary' }));
   });
 
@@ -248,12 +277,14 @@ describe('Leave-1E/1G durable worker', () => {
     expect(guildDataStep).toHaveBeenCalledTimes(1);
     expect(advanceStep).not.toHaveBeenCalled();
     expect(retryOrDead).toHaveBeenCalledWith(
-      expect.objectContaining({ details: expect.objectContaining({ step: 'GUILD_DATA' }) }),
+      expect.objectContaining({
+        details: expect.objectContaining({ step: 'GUILD_DATA', claimedAt: INITIAL_LEASE }),
+      }),
       expect.objectContaining({ message: 'rejoin race' }),
     );
   });
 
-  it('rechecks rejoin state again immediately before COMPLETE receipt', async () => {
+  it('rechecks rejoin state again immediately before COMPLETE receipt with the current lease snapshot', async () => {
     const current = request('COMPLETE');
     await expect(processLeaveCleanupRequest(current)).resolves.toBe('COMPLETED');
 
@@ -272,6 +303,6 @@ describe('Leave-1E/1G durable worker', () => {
 
     stopLeaveCleanupWorker();
     jest.advanceTimersByTime(60_000);
-    expect(claimNext).toHaveBeenCalledTimes(1); // nur initialer Tick, kein Timer-Tick nach stop
+    expect(claimNext).toHaveBeenCalledTimes(1); // initialer Tick; Recovery im Tick wird gedrosselt
   });
 });
