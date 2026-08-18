@@ -28,9 +28,11 @@ const guildMemberRemoveEvent: BotEvent = {
     // Den durable Leave-Barrier so frueh wie moeglich anlegen. Insbesondere darf
     // ein langsamer Discord-Goodbye-Versand kein Rejoin-/Relink-Fenster oeffnen.
     // AUS bedeutet weiterhin wirklich AUS: Dann wird kein Cleanup-Request erzeugt.
+    let cleanupEnabled = false;
     try {
       const leaveCfg = await getLeaveCleanupConfig(m.guild.id);
-      if (leaveCfg.deletePlayerDataOnLeave) {
+      cleanupEnabled = leaveCfg.deletePlayerDataOnLeave;
+      if (cleanupEnabled) {
         const queued = await enqueueLeaveCleanupRequest({
           guildId: m.guild.id,
           discordId: m.user.id,
@@ -44,9 +46,29 @@ const guildMemberRemoveEvent: BotEvent = {
     }
 
     // Letzten Gateway-Zustand guildgenau persistieren und danach als verlassen
-    // markieren. Das Profil bleibt fuer Goodbye/Recognition erhalten.
+    // markieren. Das Profil bleibt bis zum Worker-Finalizer fuer Goodbye/
+    // Rejoin-Erkennung erhalten.
     await syncMemberProfile(m);
     await markMemberLeft(m.guild.id, m.user.id);
+
+    // Leave-1G: Ein Rejoin kann waehrend eines alten Cleanups erfolgen und der
+    // Nutzer direkt wieder austreten. Falls der erste Job zwischen dem fruehen
+    // Enqueue und markMemberLeft bereits COMPLETE wurde, muss dieser zweite
+    // Leave einen neuen Job erhalten. Ist der erste Job noch offen, dedupliziert
+    // enqueueLeaveCleanupRequest denselben Guild+User-Key race-sicher.
+    if (cleanupEnabled) {
+      try {
+        const confirmed = await enqueueLeaveCleanupRequest({
+          guildId: m.guild.id,
+          discordId: m.user.id,
+        });
+        if (confirmed.created) {
+          logger.warn(`Leave-Cleanup nach Left-Marker erneut eingequeued: ${m.user.id}@${m.guild.id}`);
+        }
+      } catch (cleanupError) {
+        logger.error(`Leave-Cleanup Post-Left-Enqueue fehlgeschlagen: ${sanitizeLeaveCleanupError(cleanupError)}`);
+      }
+    }
 
     // Goodbye bleibt best-effort und liegt bewusst NACH dem durable Enqueue.
     try {
