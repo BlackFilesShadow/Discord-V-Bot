@@ -4,6 +4,7 @@ const whitelistStep = jest.fn();
 const statsStep = jest.fn();
 const linkEconomyStep = jest.fn();
 const guildDataStep = jest.fn();
+const finalizeRejoin = jest.fn();
 const advanceStep = jest.fn();
 const completeRequest = jest.fn();
 const deferRequest = jest.fn();
@@ -34,6 +35,10 @@ jest.mock('../../src/modules/moderation/guildMemberCleanup', () => ({
   cleanupGuildMemberData: guildDataStep,
 }));
 
+jest.mock('../../src/modules/moderation/leaveCleanupRejoin', () => ({
+  finalizeLeaveRejoinState: finalizeRejoin,
+}));
+
 jest.mock('../../src/modules/moderation/leaveCleanupSecurity', () => ({
   sanitizeLeaveCleanupError: (error: unknown) => error instanceof Error ? error.message : String(error),
 }));
@@ -61,6 +66,7 @@ beforeEach(() => {
   stopLeaveCleanupWorker();
   recoverStale.mockResolvedValue(0);
   claimNext.mockResolvedValue(null);
+  finalizeRejoin.mockResolvedValue({ rejoined: false, profile: 'NONE', levelBaseline: false });
 });
 
 afterEach(() => {
@@ -89,5 +95,6 @@ describe('Leave-1G multi-instance failover recovery', () => {
 
     expect(claimNext).toHaveBeenCalledTimes(1);
     expect(errorLog).toHaveBeenCalledWith(expect.stringMatching(/Stale-Recovery fehlgeschlagen/));
+    expect(finalizeRejoin).not.toHaveBeenCalled();
   });
 });
