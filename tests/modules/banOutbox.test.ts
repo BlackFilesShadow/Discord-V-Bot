@@ -1,4 +1,5 @@
 import {
+  SERVER_BAN_REMOVE_AUTO_DEAD_COOLDOWN_MS,
   enqueueServerBanAdd,
   enqueueServerBanRemove,
   parseServerBanJobPayload,
@@ -9,9 +10,13 @@ import { decrypt } from '../../src/utils/security';
 const KEY = '0'.repeat(64);
 const SCOPE = { guildId: 'guild-a', nitradoConnId: 'conn-a' };
 
-function makeClient(existingPayloads: unknown[] = []) {
+function makeClient(activePayloads: unknown[] = [], recentDeadPayloads: unknown[] = []) {
   const create = jest.fn(async (_args: unknown) => ({}));
-  const findMany = jest.fn(async (_args: unknown) => existingPayloads.map(payload => ({ payload })));
+  const findMany = jest.fn(async (args: unknown) => {
+    const where = (args as { where?: { status?: unknown } })?.where;
+    const payloads = where?.status === 'DEAD' ? recentDeadPayloads : activePayloads;
+    return payloads.map(payload => ({ payload }));
+  });
   const queryRaw = jest.fn(async (_query: string, ..._values: unknown[]) => []);
   const client = {
     $queryRawUnsafe: queryRaw,
@@ -59,6 +64,67 @@ describe('Server-Ban Outbox', () => {
     expect(queryRaw).toHaveBeenCalledTimes(1);
     expect(findMany).toHaveBeenCalledTimes(1);
     expect(create).not.toHaveBeenCalled();
+  });
+
+  it('blockiert automatische REMOVE-Neuanlage bei einem recent DEAD derselben Ban-ID', async () => {
+    const now = new Date('2026-08-18T16:00:00.000Z');
+    const { client, create, findMany, queryRaw } = makeClient([], [{ banId: 'ban-1' }]);
+
+    await expect(enqueueServerBanRemove(client, SCOPE, 'ban-1', { now })).resolves.toBe(false);
+
+    expect(queryRaw).toHaveBeenCalledTimes(1);
+    expect(findMany).toHaveBeenCalledTimes(2);
+    const deadQuery = findMany.mock.calls[1][0] as {
+      where: { status: string; updatedAt: { gte: Date } };
+      select: { payload: boolean };
+    };
+    expect(deadQuery.where.status).toBe('DEAD');
+    expect(deadQuery.where.updatedAt.gte).toEqual(
+      new Date(now.getTime() - SERVER_BAN_REMOVE_AUTO_DEAD_COOLDOWN_MS),
+    );
+    expect(deadQuery.select).toEqual({ payload: true });
+    expect(create).not.toHaveBeenCalled();
+  });
+
+  it('blockiert einen anderen Ban nicht durch einen recent DEAD-Nachbarn', async () => {
+    const { client, create } = makeClient([], [{ banId: 'ban-2' }]);
+
+    await expect(enqueueServerBanRemove(client, SCOPE, 'ban-1')).resolves.toBe(true);
+
+    expect(create).toHaveBeenCalledTimes(1);
+  });
+
+  it('erlaubt nach Ablauf des DEAD-Cooldowns wieder einen automatischen REMOVE', async () => {
+    // Die DB-Query liefert nur DEAD-Jobs >= Cooldown-Grenze; ein aelterer DEAD
+    // erscheint deshalb nicht in `recentDeadPayloads`.
+    const { client, create, findMany } = makeClient([], []);
+
+    await expect(enqueueServerBanRemove(client, SCOPE, 'ban-1')).resolves.toBe(true);
+
+    expect(findMany).toHaveBeenCalledTimes(2);
+    expect(create).toHaveBeenCalledTimes(1);
+  });
+
+  it('laesst expliziten Bediener-Retry den DEAD-Cooldown umgehen, aber nicht aktive Dedupe-Jobs', async () => {
+    const manual = makeClient([], [{ banId: 'ban-1' }]);
+    await expect(enqueueServerBanRemove(
+      manual.client,
+      SCOPE,
+      'ban-1',
+      { bypassRecentDeadCooldown: true },
+    )).resolves.toBe(true);
+    expect(manual.findMany).toHaveBeenCalledTimes(1);
+    expect(manual.create).toHaveBeenCalledTimes(1);
+
+    const active = makeClient([{ banId: 'ban-1' }], [{ banId: 'ban-1' }]);
+    await expect(enqueueServerBanRemove(
+      active.client,
+      SCOPE,
+      'ban-1',
+      { bypassRecentDeadCooldown: true },
+    )).resolves.toBe(false);
+    expect(active.findMany).toHaveBeenCalledTimes(1);
+    expect(active.create).not.toHaveBeenCalled();
   });
 
   it('verwendet fuer verschiedene Ban-IDs verschiedene Advisory-Lock-Keys', async () => {
