@@ -1,10 +1,10 @@
 /**
  * Keep-Online-Statusmaschine (Phase 7, KEEP).
  *
- * Reine Entscheidungslogik: WANN ein gestoppter Server automatisch gestartet
- * werden soll. Zentrale Sicherheitsregel: ein `suspended` (gesperrter) Server
- * wird NIEMALS automatisch gestartet. Ist Keep-Online deaktiviert, wird nie
- * gestartet.
+ * Reine Entscheidungslogik: WANN ein gestoppter oder tatsaechlich offline
+ * befindlicher Server automatisch gestartet werden soll. Zentrale
+ * Sicherheitsregel: ein `suspended` (gesperrter) Server wird NIEMALS
+ * automatisch gestartet. Ist Keep-Online deaktiviert, wird nie gestartet.
  *
  * Die reale Ausfuehrung ist inzwischen produktiv verdrahtet:
  * `permaOnlyCron` enqueued deduplizierte `RESTART_IF_DOWN`-Jobs und der
@@ -13,12 +13,12 @@
  * Entscheidungsfunktion und ist nicht selbst fuer HTTP-I/O verantwortlich.
  */
 
-export type ServerRunState = 'started' | 'stopped' | 'suspended' | 'restarting' | 'unknown';
+export type ServerRunState = 'started' | 'stopped' | 'offline' | 'suspended' | 'restarting' | 'unknown';
 export type KeepOnlineAction = 'START' | 'NONE';
 
 export function decideKeepOnlineAction(args: { enabled: boolean; state: ServerRunState }): KeepOnlineAction {
   if (!args.enabled) return 'NONE';
-  return args.state === 'stopped' ? 'START' : 'NONE';
+  return args.state === 'stopped' || args.state === 'offline' ? 'START' : 'NONE';
 }
 
 export interface KeepOnlineSlot {
