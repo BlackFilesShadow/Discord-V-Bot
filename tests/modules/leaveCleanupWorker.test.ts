@@ -3,6 +3,7 @@ const statsStep = jest.fn();
 const linkEconomyStep = jest.fn();
 const guildDataStep = jest.fn();
 const finalizeRejoin = jest.fn();
+const renewLease = jest.fn();
 const claimNext = jest.fn();
 const advanceStep = jest.fn();
 const completeRequest = jest.fn();
@@ -36,6 +37,10 @@ jest.mock('../../src/modules/moderation/guildMemberCleanup', () => ({
 
 jest.mock('../../src/modules/moderation/leaveCleanupRejoin', () => ({
   finalizeLeaveRejoinState: finalizeRejoin,
+}));
+
+jest.mock('../../src/modules/moderation/leaveCleanupLease', () => ({
+  renewLeaveCleanupClaimLease: renewLease,
 }));
 
 jest.mock('../../src/modules/moderation/leaveCleanupSecurity', () => ({
@@ -85,6 +90,17 @@ function request(step: string, id = 'job-1') {
   };
 }
 
+function renewBy100Ms(current: ReturnType<typeof request>) {
+  const claimedAt = String(current.details.claimedAt ?? INITIAL_LEASE);
+  return {
+    ...current,
+    details: {
+      ...current.details,
+      claimedAt: new Date(Date.parse(claimedAt) + 100).toISOString(),
+    },
+  };
+}
+
 beforeEach(() => {
   jest.clearAllMocks();
   whitelistStep.mockResolvedValue({ state: 'DONE' });
@@ -92,6 +108,7 @@ beforeEach(() => {
   linkEconomyStep.mockResolvedValue({ state: 'DONE' });
   guildDataStep.mockResolvedValue({ performed: true });
   finalizeRejoin.mockResolvedValue({ rejoined: false, profile: 'RESET', levelBaseline: false });
+  renewLease.mockImplementation(async (current: ReturnType<typeof request>) => renewBy100Ms(current));
   completeRequest.mockResolvedValue('receipt');
   deferRequest.mockResolvedValue(undefined);
   recoverStale.mockResolvedValue(0);
@@ -127,7 +144,7 @@ afterEach(() => {
 });
 
 describe('Leave-1E/1G durable worker', () => {
-  it('runs strict substeps and gives each rejoin finalizer the currently renewed claim lease', async () => {
+  it('heartbeats every destructive step and gives rejoin finalizers only the newest lease snapshot', async () => {
     const result = await processLeaveCleanupRequest(request('WHITELIST'));
 
     expect(result).toBe('COMPLETED');
@@ -138,6 +155,8 @@ describe('Leave-1E/1G durable worker', () => {
     expect(advanceStep.mock.calls.map(call => call[1])).toEqual([
       'WHITELIST', 'STATS_SESSIONS', 'LINK_ECONOMY', 'GUILD_DATA',
     ]);
+    // 2 Renewals je destruktivem Step + 1 vor COMPLETE.
+    expect(renewLease).toHaveBeenCalledTimes(9);
     expect(finalizeRejoin).toHaveBeenNthCalledWith(
       1,
       expect.objectContaining({
@@ -145,7 +164,7 @@ describe('Leave-1E/1G durable worker', () => {
         details: expect.objectContaining({
           step: 'GUILD_DATA',
           claimToken: 'claim-token-1',
-          claimedAt: '2026-08-18T06:00:03.000Z',
+          claimedAt: '2026-08-18T06:00:03.200Z',
         }),
       }),
       GUILD,
@@ -158,7 +177,7 @@ describe('Leave-1E/1G durable worker', () => {
         details: expect.objectContaining({
           step: 'COMPLETE',
           claimToken: 'claim-token-1',
-          claimedAt: '2026-08-18T06:00:04.000Z',
+          claimedAt: '2026-08-18T06:00:04.100Z',
         }),
       }),
       GUILD,
@@ -168,7 +187,7 @@ describe('Leave-1E/1G durable worker', () => {
       expect.objectContaining({
         details: expect.objectContaining({
           step: 'COMPLETE',
-          claimedAt: '2026-08-18T06:00:04.000Z',
+          claimedAt: '2026-08-18T06:00:04.100Z',
         }),
       }),
       GUILD,
@@ -184,6 +203,7 @@ describe('Leave-1E/1G durable worker', () => {
 
     await expect(processLeaveCleanupRequest(corrupted)).rejects.toThrow(/Job-Key.*Guild\/User-Scope/);
 
+    expect(renewLease).not.toHaveBeenCalled();
     expect(whitelistStep).not.toHaveBeenCalled();
     expect(statsStep).not.toHaveBeenCalled();
     expect(linkEconomyStep).not.toHaveBeenCalled();
@@ -200,13 +220,17 @@ describe('Leave-1E/1G durable worker', () => {
     expect(linkEconomyStep).toHaveBeenCalledTimes(1);
   });
 
-  it('defers whitelist WAITING without running any later destructive step', async () => {
+  it('defers whitelist WAITING only after a final ownership renewal and runs no later destructive step', async () => {
     whitelistStep.mockResolvedValue({ state: 'WAITING' });
     const current = request('WHITELIST');
 
     await expect(processLeaveCleanupRequest(current)).resolves.toBe('WAITING');
 
-    expect(deferRequest).toHaveBeenCalledWith(current, 'WHITELIST_PENDING');
+    expect(renewLease).toHaveBeenCalledTimes(2);
+    expect(deferRequest).toHaveBeenCalledWith(
+      expect.objectContaining({ details: expect.objectContaining({ claimedAt: '2026-08-18T06:00:00.200Z' }) }),
+      'WHITELIST_PENDING',
+    );
     expect(advanceStep).not.toHaveBeenCalled();
     expect(statsStep).not.toHaveBeenCalled();
     expect(linkEconomyStep).not.toHaveBeenCalled();
@@ -219,7 +243,10 @@ describe('Leave-1E/1G durable worker', () => {
 
     await expect(processLeaveCleanupRequest(current)).resolves.toBe('WAITING');
 
-    expect(deferRequest).toHaveBeenCalledWith(current, 'ACTIVE_SESSION');
+    expect(deferRequest).toHaveBeenCalledWith(
+      expect.objectContaining({ details: expect.objectContaining({ claimedAt: '2026-08-18T06:00:00.200Z' }) }),
+      'ACTIVE_SESSION',
+    );
     expect(linkEconomyStep).not.toHaveBeenCalled();
     expect(guildDataStep).not.toHaveBeenCalled();
     expect(finalizeRejoin).not.toHaveBeenCalled();
@@ -231,13 +258,16 @@ describe('Leave-1E/1G durable worker', () => {
 
     await expect(processLeaveCleanupRequest(current)).resolves.toBe('WAITING');
 
-    expect(deferRequest).toHaveBeenCalledWith(current, 'ACTIVE_LOTTERY');
+    expect(deferRequest).toHaveBeenCalledWith(
+      expect.objectContaining({ details: expect.objectContaining({ claimedAt: '2026-08-18T06:00:00.200Z' }) }),
+      'ACTIVE_LOTTERY',
+    );
     expect(guildDataStep).not.toHaveBeenCalled();
     expect(finalizeRejoin).not.toHaveBeenCalled();
     expect(completeRequest).not.toHaveBeenCalled();
   });
 
-  it('retries with the latest persisted checkpoint instead of the initial request after a later substep fails', async () => {
+  it('retries with the latest heartbeat/checkpoint lease instead of the initial request after a later substep fails', async () => {
     linkEconomyStep.mockRejectedValue(new Error('economy temporary'));
     const initial = request('WHITELIST');
     claimNext.mockResolvedValueOnce(initial).mockResolvedValueOnce(null);
@@ -248,11 +278,12 @@ describe('Leave-1E/1G durable worker', () => {
     expect(retryOrDead).toHaveBeenCalledTimes(1);
     const retried = retryOrDead.mock.calls[0][0];
     expect(retried.details.step).toBe('LINK_ECONOMY');
-    expect(retried.details.claimedAt).toBe('2026-08-18T06:00:02.000Z');
+    // LINK_ECONOMY wurde vor dem Side-Effect bereits von 02.000 -> 02.100 erneuert.
+    expect(retried.details.claimedAt).toBe('2026-08-18T06:00:02.100Z');
     expect(retryOrDead.mock.calls[0][1]).toEqual(expect.objectContaining({ message: 'economy temporary' }));
   });
 
-  it('treats guild-data transaction failure as a real retryable error before rejoin finalization', async () => {
+  it('treats guild-data transaction failure as a real retryable error after the final ownership renewal', async () => {
     guildDataStep.mockResolvedValue({ performed: false, reason: 'transaction_failed' });
     const current = request('GUILD_DATA');
     claimNext.mockResolvedValueOnce(current).mockResolvedValueOnce(null);
@@ -262,12 +293,14 @@ describe('Leave-1E/1G durable worker', () => {
     expect(deferRequest).not.toHaveBeenCalled();
     expect(finalizeRejoin).not.toHaveBeenCalled();
     expect(retryOrDead).toHaveBeenCalledWith(
-      expect.objectContaining({ details: expect.objectContaining({ step: 'GUILD_DATA' }) }),
+      expect.objectContaining({
+        details: expect.objectContaining({ step: 'GUILD_DATA', claimedAt: '2026-08-18T06:00:00.200Z' }),
+      }),
       expect.objectContaining({ message: expect.stringMatching(/Guild-Daten-Cleanup/) }),
     );
   });
 
-  it('keeps GUILD_DATA retryable when rejoin finalization fails before the checkpoint advances', async () => {
+  it('keeps GUILD_DATA retryable when rejoin finalization fails after the heartbeat-protected step', async () => {
     finalizeRejoin.mockRejectedValueOnce(new Error('rejoin race'));
     const current = request('GUILD_DATA');
     claimNext.mockResolvedValueOnce(current).mockResolvedValueOnce(null);
@@ -278,19 +311,41 @@ describe('Leave-1E/1G durable worker', () => {
     expect(advanceStep).not.toHaveBeenCalled();
     expect(retryOrDead).toHaveBeenCalledWith(
       expect.objectContaining({
-        details: expect.objectContaining({ step: 'GUILD_DATA', claimedAt: INITIAL_LEASE }),
+        details: expect.objectContaining({ step: 'GUILD_DATA', claimedAt: '2026-08-18T06:00:00.200Z' }),
       }),
       expect.objectContaining({ message: 'rejoin race' }),
     );
   });
 
-  it('rechecks rejoin state again immediately before COMPLETE receipt with the current lease snapshot', async () => {
+  it('does not finalize or advance when ownership is lost in the post-step heartbeat CAS', async () => {
+    renewLease
+      .mockImplementationOnce(async (current: ReturnType<typeof request>) => renewBy100Ms(current))
+      .mockRejectedValueOnce(new Error('Lease-CAS verloren'));
+    const current = request('GUILD_DATA');
+    claimNext.mockResolvedValueOnce(current).mockResolvedValueOnce(null);
+
+    await expect(runLeaveCleanupWorkerOnce()).resolves.toBe(1);
+
+    expect(guildDataStep).toHaveBeenCalledTimes(1);
+    expect(finalizeRejoin).not.toHaveBeenCalled();
+    expect(advanceStep).not.toHaveBeenCalled();
+    expect(retryOrDead).toHaveBeenCalledWith(
+      expect.objectContaining({ details: expect.objectContaining({ claimedAt: '2026-08-18T06:00:00.100Z' }) }),
+      expect.objectContaining({ message: 'Lease-CAS verloren' }),
+    );
+  });
+
+  it('rechecks rejoin state immediately before COMPLETE with a freshly renewed lease snapshot', async () => {
     const current = request('COMPLETE');
     await expect(processLeaveCleanupRequest(current)).resolves.toBe('COMPLETED');
 
     expect(guildDataStep).not.toHaveBeenCalled();
-    expect(finalizeRejoin).toHaveBeenCalledTimes(1);
-    expect(finalizeRejoin).toHaveBeenCalledWith(current, GUILD, USER);
+    expect(renewLease).toHaveBeenCalledTimes(1);
+    expect(finalizeRejoin).toHaveBeenCalledWith(
+      expect.objectContaining({ details: expect.objectContaining({ claimedAt: '2026-08-18T06:00:00.100Z' }) }),
+      GUILD,
+      USER,
+    );
     expect(completeRequest).toHaveBeenCalledTimes(1);
   });
 
