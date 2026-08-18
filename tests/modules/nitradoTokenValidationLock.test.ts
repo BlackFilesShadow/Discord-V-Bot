@@ -12,7 +12,7 @@ const validateTokenDetailed = jest.fn();
 const markValidated = jest.fn();
 const setStatus = jest.fn();
 const recordValidationFailure = jest.fn();
-const acquireLock = jest.fn();
+const acquireLock = jest.fn(async (_nitradoConnId: string) => null as { release: () => Promise<void> } | null);
 const releaseLock = jest.fn();
 const warn = jest.fn();
 const debug = jest.fn();
@@ -52,7 +52,7 @@ jest.mock('../../src/modules/nitrado/validationHealth', () => ({
 }));
 
 jest.mock('../../src/modules/nitrado/configMutationLock', () => ({
-  tryAcquireNitradoConfigMutationLock: (...args: unknown[]) => acquireLock(...args),
+  tryAcquireNitradoConfigMutationLock: (nitradoConnId: string) => acquireLock(nitradoConnId),
 }));
 
 jest.mock('../../src/utils/logger', () => ({
