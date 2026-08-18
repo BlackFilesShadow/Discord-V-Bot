@@ -4,7 +4,7 @@ import prisma from '../../../database/prisma';
 export const MIRROR_LEASE_MS = 5 * 60_000;
 export const MIRROR_HEARTBEAT_MS = 30_000;
 const LEASE_ACQUIRE_ATTEMPTS = 3;
-const RECOVERY_ERROR = 'Nitrado-Mirror nach abgelaufener Lease als verwaist beendet.';
+const RECOVERY_ERROR = 'Nitrado-Mirror-Lease abgelaufen oder Binding wurde ersetzt.';
 
 export class NitradoMirrorLeaseLostError extends Error {
   constructor() {
@@ -25,6 +25,24 @@ export interface MirrorLeaseMutationClient {
   };
 }
 
+export function mirrorLeaseBindingKey(input: {
+  encryptedToken: string;
+  nitradoServerId: string;
+  bindingVersion: number;
+}): string {
+  if (!Number.isSafeInteger(input.bindingVersion) || input.bindingVersion < 0) {
+    throw new Error('Ungueltige Mirror-Binding-Version.');
+  }
+  return crypto
+    .createHash('sha256')
+    .update(input.encryptedToken)
+    .update('\0')
+    .update(input.nitradoServerId)
+    .update('\0')
+    .update(String(input.bindingVersion))
+    .digest('hex');
+}
+
 function retryableTransactionError(error: unknown): boolean {
   const code = (error as { code?: unknown } | null)?.code;
   return code === 'P2002' || code === 'P2034';
@@ -34,16 +52,11 @@ function leaseUntil(now: Date): Date {
   return new Date(now.getTime() + MIRROR_LEASE_MS);
 }
 
-/**
- * Persistente per-Connection Singleflight-Grenze. Die Serializable-Transaktion
- * stellt sicher, dass zwei parallele Erst-Trigger nicht zwei aktive Snapshots
- * etablieren koennen. Ein kollidierender Create/Serialization-Fehler wird
- * bounded erneut gelesen; der Verlierer verwendet danach die Gewinner-Lease.
- */
 export async function acquireMirrorSnapshotLease(input: {
   guildId: string;
   nitradoConnId: string;
   serviceId: string;
+  bindingKey: string;
   triggeredBy: string;
 }): Promise<MirrorLeaseAcquisition> {
   for (let attempt = 1; attempt <= LEASE_ACQUIRE_ATTEMPTS; attempt += 1) {
@@ -67,15 +80,17 @@ export async function acquireMirrorSnapshotLease(input: {
             select: { id: true, status: true },
           });
 
-          // Die Lease bleibt absichtlich auch waehrend der terminalen Snapshot-
-          // Finalisierung + LIVE_SERVER-Indexierung aktiv. Solange sie gueltig
-          // ist, darf kein zweiter Lauf derselben Connection starten.
-          if (snapshot && existing.leaseExpiresAt.getTime() > now.getTime()) {
+          // Nur exakt dieselbe Token-/Service-/Binding-Generation darf einen
+          // aktiven Lauf wiederverwenden. Tokenrotation oder Service-Rebind
+          // fenced den alten Lauf sofort aus, auch wenn seine Zeit-Lease noch lebt.
+          if (
+            snapshot
+            && existing.bindingKey === input.bindingKey
+            && existing.leaseExpiresAt.getTime() > now.getTime()
+          ) {
             return { snapshotId: snapshot.id, leaseToken: null, reused: true };
           }
 
-          // Crash-/Restart-Recovery: Nur der noch RUNNING markierte alte Lauf
-          // wird terminalisiert. Bereits fertige Snapshots werden nie umgeschrieben.
           if (snapshot?.status === 'RUNNING') {
             await tx.nitradoSnapshot.updateMany({
               where: {
@@ -117,6 +132,7 @@ export async function acquireMirrorSnapshotLease(input: {
             nitradoConnId: input.nitradoConnId,
             snapshotId: snapshot.id,
             leaseToken,
+            bindingKey: input.bindingKey,
             heartbeatAt: now,
             leaseExpiresAt: leaseUntil(now),
           },
@@ -131,7 +147,6 @@ export async function acquireMirrorSnapshotLease(input: {
   throw new Error('Nitrado-Mirror-Lease konnte nicht erworben werden.');
 }
 
-/** Erneuert nur eine noch gueltige, exakt tokengebundene Lease. */
 export async function renewMirrorSnapshotLease(input: {
   guildId: string;
   nitradoConnId: string;
@@ -142,10 +157,9 @@ export async function renewMirrorSnapshotLease(input: {
 }
 
 /**
- * Frischt die Lease auf einem beliebigen Prisma-Client auf. Innerhalb einer
- * Transaktion ist dies bewusst ein UPDATE: PostgreSQL haelt dadurch den Row-Lock
- * bis zum Commit. Eine parallele Recovery kann die Lease nicht ersetzen, waehrend
- * LIVE_SERVER-Wissen fuer diesen Snapshot committed wird.
+ * Das UPDATE dient zugleich als Freshness-CAS und als Row-Lock bis zum Ende der
+ * umgebenden Transaktion. Eine parallele Recovery kann dadurch einen laufenden
+ * LIVE_SERVER-Knowledge-Commit nicht ueberholen.
  */
 export async function refreshMirrorLeaseForCommit(
   client: MirrorLeaseMutationClient,
@@ -173,11 +187,6 @@ export async function refreshMirrorLeaseForCommit(
   if (updated.count !== 1) throw new NitradoMirrorLeaseLostError();
 }
 
-/**
- * Terminalisiert einen Snapshot nur, solange dieser Prozess die exakte,
- * unexpired Lease noch besitzt. Die Lease bleibt danach absichtlich bestehen,
- * bis die nachgelagerte LIVE_SERVER-Indexierung fertig oder verworfen ist.
- */
 export async function finalizeMirrorSnapshotLease(input: {
   guildId: string;
   nitradoConnId: string;
@@ -200,7 +209,6 @@ export async function finalizeMirrorSnapshotLease(input: {
       throw error;
     }
 
-    const finishedAt = new Date();
     const updated = await tx.nitradoSnapshot.updateMany({
       where: {
         id: input.snapshotId,
@@ -210,7 +218,7 @@ export async function finalizeMirrorSnapshotLease(input: {
       },
       data: {
         status: input.status,
-        finishedAt,
+        finishedAt: new Date(),
         totalFiles: input.totalFiles,
         totalDirs: input.totalDirs,
         totalBytes: input.totalBytes,
@@ -224,7 +232,6 @@ export async function finalizeMirrorSnapshotLease(input: {
   });
 }
 
-/** Gibt ausschliesslich die exakt tokengebundene Lease frei. */
 export async function releaseMirrorSnapshotLease(input: {
   guildId: string;
   nitradoConnId: string;
