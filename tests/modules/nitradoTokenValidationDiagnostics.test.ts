@@ -8,12 +8,14 @@ process.env.SESSION_SECRET ||= 'test-session-secret';
 process.env.DASHBOARD_URL ||= 'http://localhost:3000';
 
 const connectionUpdateMany = jest.fn(async () => ({ count: 1 }));
+const connectionFindFirst = jest.fn();
 jest.mock('../../src/database/prisma', () => ({
   __esModule: true,
   default: {
     nitradoConnection: {
       updateMany: connectionUpdateMany,
       findMany: jest.fn(async () => []),
+      findFirst: connectionFindFirst,
     },
   },
 }));
@@ -46,6 +48,12 @@ jest.mock('../../src/modules/nitrado/nitradoClient', () => ({
   NitradoClient: jest.fn().mockImplementation(() => ({ validateTokenDetailed })),
 }));
 
+const releaseConfigLock = jest.fn(async () => undefined);
+const acquireConfigLock = jest.fn(async (_nitradoConnId: string) => ({ release: releaseConfigLock }));
+jest.mock('../../src/modules/nitrado/configMutationLock', () => ({
+  tryAcquireNitradoConfigMutationLock: (nitradoConnId: string) => acquireConfigLock(nitradoConnId),
+}));
+
 import type { Client } from 'discord.js';
 import { validateConnectionTokenOnce } from '../../src/modules/nitrado/tokenValidationCron';
 
@@ -72,6 +80,8 @@ const conn = {
 
 beforeEach(() => {
   jest.clearAllMocks();
+  acquireConfigLock.mockResolvedValue({ release: releaseConfigLock });
+  connectionFindFirst.mockResolvedValue(conn);
   decryptMock.mockReturnValue('token-1234');
   recordValidationFailure.mockResolvedValue({
     failureCount: 1,
@@ -83,6 +93,7 @@ beforeEach(() => {
 describe('NIT-001 token validation diagnostics', () => {
   it('VALID reaktiviert/resettet und erzeugt keinen Fehlerstreak', async () => {
     validateTokenDetailed.mockResolvedValue({ kind: 'VALID' });
+    connectionFindFirst.mockResolvedValue({ ...conn, status: 'EXPIRED' });
 
     await validateConnectionTokenOnce(discord, { ...conn, status: 'EXPIRED' });
 
@@ -90,6 +101,7 @@ describe('NIT-001 token validation diagnostics', () => {
     expect(recordValidationFailure).not.toHaveBeenCalled();
     expect(setStatus).not.toHaveBeenCalled();
     expect(send).not.toHaveBeenCalled();
+    expect(releaseConfigLock).toHaveBeenCalledTimes(1);
   });
 
   it('transienter Fehler bleibt ACTIVE und warnt vor Schwelle nicht', async () => {
@@ -144,6 +156,7 @@ describe('NIT-001 token validation diagnostics', () => {
 
   it('bereits EXPIRED erzeugt bei erneut INVALID keine weitere Ablauf-DM', async () => {
     validateTokenDetailed.mockResolvedValue({ kind: 'INVALID', status: 401 });
+    connectionFindFirst.mockResolvedValue({ ...conn, status: 'EXPIRED' });
 
     await validateConnectionTokenOnce(discord, { ...conn, status: 'EXPIRED' });
 
