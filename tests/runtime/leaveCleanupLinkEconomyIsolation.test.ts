@@ -18,7 +18,7 @@ describe('Leave-1C/1E production ordering and reset invariants', () => {
     expect(workerSource).toContain('runLeaveLinkEconomyAfterConfirmedWhitelistStep');
     expect(workerSource).not.toContain('runLeaveLinkEconomyCleanupStep');
     const statsAdvance = workerSource.indexOf("advanceLeaveCleanupStep(request, 'STATS_SESSIONS')");
-    const economyCall = workerSource.indexOf('runLeaveLinkEconomyAfterConfirmedWhitelistStep');
+    const economyCall = workerSource.indexOf('await runLeaveLinkEconomyAfterConfirmedWhitelistStep(');
     expect(statsAdvance).toBeGreaterThanOrEqual(0);
     expect(economyCall).toBeGreaterThan(statsAdvance);
   });
@@ -30,7 +30,7 @@ describe('Leave-1C/1E production ordering and reset invariants', () => {
     expect(core).toBeGreaterThanOrEqual(0);
     expect(wrapper).toBeGreaterThan(core);
     expect(whitelistCall).toBeGreaterThan(wrapper);
-    expect(cleanupSource).toContain("reason: 'WHITELIST_PENDING'");
+    expect(cleanupSource).toContain("emptyWaiting(subjectKey, 'WHITELIST_PENDING')");
   });
 
   it('never resets or deletes PlayerSession anti-replay watermarks', () => {
@@ -41,11 +41,11 @@ describe('Leave-1C/1E production ordering and reset invariants', () => {
   });
 
   it('blocks active lottery obligations before mutable account deletion', () => {
-    const lotteryGate = cleanupSource.indexOf('hasActiveLotteryObligation');
+    const lotteryGate = cleanupSource.indexOf('if (await hasActiveLotteryObligation(');
     const accountDelete = cleanupSource.indexOf('DELETE FROM "EconomyAccount"');
     expect(lotteryGate).toBeGreaterThanOrEqual(0);
     expect(accountDelete).toBeGreaterThan(lotteryGate);
-    expect(cleanupSource).toContain("reason: 'ACTIVE_LOTTERY'");
+    expect(cleanupSource).toContain("emptyWaiting(subjectKey, 'ACTIVE_LOTTERY')");
   });
 
   it('pseudonymizes immutable history but deletes mutable account/link state only within guild+user scope', () => {
