@@ -42,7 +42,6 @@ async function ensureWhitelistJobInLock(
       status: { in: ['PENDING', 'RUNNING'] },
     },
     select: { payload: true },
-    take: 500,
   });
   if (existing.some(job => sameGameId(job.payload, normalizedGameId))) return false;
 
@@ -60,7 +59,9 @@ async function ensureWhitelistJobInLock(
 /**
  * Atomare Deduplizierung pro Guild + Nitrado-Connection + Operation + Name.
  * DONE/DEAD blockieren absichtlich keinen neuen Job; nur ein bereits aktiver
- * PENDING/RUNNING-Intent verhindert ein Duplikat.
+ * PENDING/RUNNING-Intent verhindert ein Duplikat. Der aktive Bestand wird ohne
+ * kuenstliches `take`-Fenster geprueft, damit auch Legacy-Outboxen vollstaendig
+ * in die neue atomare Grenze einbezogen werden.
  */
 export async function enqueueWhitelistJob(
   client: WhitelistOutboxClient,
