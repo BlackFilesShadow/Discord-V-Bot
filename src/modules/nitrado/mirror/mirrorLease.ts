@@ -19,6 +19,12 @@ export interface MirrorLeaseAcquisition {
   reused: boolean;
 }
 
+export interface MirrorLeaseMutationClient {
+  nitradoMirrorLease: {
+    updateMany(args: unknown): Promise<{ count: number }>;
+  };
+}
+
 function retryableTransactionError(error: unknown): boolean {
   const code = (error as { code?: unknown } | null)?.code;
   return code === 'P2002' || code === 'P2034';
@@ -60,10 +66,11 @@ export async function acquireMirrorSnapshotLease(input: {
             },
             select: { id: true, status: true },
           });
-          if (
-            snapshot?.status === 'RUNNING'
-            && existing.leaseExpiresAt.getTime() > now.getTime()
-          ) {
+
+          // Die Lease bleibt absichtlich auch waehrend der terminalen Snapshot-
+          // Finalisierung + LIVE_SERVER-Indexierung aktiv. Solange sie gueltig
+          // ist, darf kein zweiter Lauf derselben Connection starten.
+          if (snapshot && existing.leaseExpiresAt.getTime() > now.getTime()) {
             return { snapshotId: snapshot.id, leaseToken: null, reused: true };
           }
 
@@ -131,8 +138,26 @@ export async function renewMirrorSnapshotLease(input: {
   snapshotId: string;
   leaseToken: string;
 }): Promise<void> {
+  await refreshMirrorLeaseForCommit(prisma as unknown as MirrorLeaseMutationClient, input);
+}
+
+/**
+ * Frischt die Lease auf einem beliebigen Prisma-Client auf. Innerhalb einer
+ * Transaktion ist dies bewusst ein UPDATE: PostgreSQL haelt dadurch den Row-Lock
+ * bis zum Commit. Eine parallele Recovery kann die Lease nicht ersetzen, waehrend
+ * LIVE_SERVER-Wissen fuer diesen Snapshot committed wird.
+ */
+export async function refreshMirrorLeaseForCommit(
+  client: MirrorLeaseMutationClient,
+  input: {
+    guildId: string;
+    nitradoConnId: string;
+    snapshotId: string;
+    leaseToken: string;
+  },
+): Promise<void> {
   const now = new Date();
-  const updated = await prisma.nitradoMirrorLease.updateMany({
+  const updated = await client.nitradoMirrorLease.updateMany({
     where: {
       guildId: input.guildId,
       nitradoConnId: input.nitradoConnId,
@@ -149,9 +174,9 @@ export async function renewMirrorSnapshotLease(input: {
 }
 
 /**
- * Terminalisiert einen Snapshot nur, solange dieser Prozess die exakte Lease
- * noch besitzt. Ein nach Recovery weiterlaufender alter Prozess kann dadurch
- * weder FAILED -> OK umschreiben noch spaeter LIVE_SERVER-Wissen indexieren.
+ * Terminalisiert einen Snapshot nur, solange dieser Prozess die exakte,
+ * unexpired Lease noch besitzt. Die Lease bleibt danach absichtlich bestehen,
+ * bis die nachgelagerte LIVE_SERVER-Indexierung fertig oder verworfen ist.
  */
 export async function finalizeMirrorSnapshotLease(input: {
   guildId: string;
@@ -168,16 +193,12 @@ export async function finalizeMirrorSnapshotLease(input: {
   lastError: string | null;
 }): Promise<boolean> {
   return prisma.$transaction(async (tx) => {
-    const lease = await tx.nitradoMirrorLease.findFirst({
-      where: {
-        guildId: input.guildId,
-        nitradoConnId: input.nitradoConnId,
-        snapshotId: input.snapshotId,
-        leaseToken: input.leaseToken,
-      },
-      select: { leaseToken: true },
-    });
-    if (!lease) return false;
+    try {
+      await refreshMirrorLeaseForCommit(tx as unknown as MirrorLeaseMutationClient, input);
+    } catch (error) {
+      if (error instanceof NitradoMirrorLeaseLostError) return false;
+      throw error;
+    }
 
     const finishedAt = new Date();
     const updated = await tx.nitradoSnapshot.updateMany({
@@ -199,16 +220,24 @@ export async function finalizeMirrorSnapshotLease(input: {
         lastError: input.lastError,
       },
     });
-    if (updated.count !== 1) return false;
-
-    const released = await tx.nitradoMirrorLease.deleteMany({
-      where: {
-        guildId: input.guildId,
-        nitradoConnId: input.nitradoConnId,
-        snapshotId: input.snapshotId,
-        leaseToken: input.leaseToken,
-      },
-    });
-    return released.count === 1;
+    return updated.count === 1;
   });
+}
+
+/** Gibt ausschliesslich die exakt tokengebundene Lease frei. */
+export async function releaseMirrorSnapshotLease(input: {
+  guildId: string;
+  nitradoConnId: string;
+  snapshotId: string;
+  leaseToken: string;
+}): Promise<boolean> {
+  const released = await prisma.nitradoMirrorLease.deleteMany({
+    where: {
+      guildId: input.guildId,
+      nitradoConnId: input.nitradoConnId,
+      snapshotId: input.snapshotId,
+      leaseToken: input.leaseToken,
+    },
+  });
+  return released.count === 1;
 }
