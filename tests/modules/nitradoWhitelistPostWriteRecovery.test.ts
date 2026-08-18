@@ -8,6 +8,16 @@ const pgQuery = jest.fn();
 const pgConnect = jest.fn();
 const pgEnd = jest.fn();
 
+type TestClaim = { id: string; guildId: string; claimToken: string };
+const mockHeartbeatClaim = jest.fn(async (_claim: TestClaim) => true);
+const mockTransitionClaim = jest.fn(async (claim: TestClaim, data: Record<string, unknown>) => {
+  await jobUpdateMany({
+    where: { id: claim.id, guildId: claim.guildId, status: 'RUNNING' },
+    data,
+  });
+  return true;
+});
+
 jest.mock('pg', () => ({
   Client: jest.fn().mockImplementation(() => ({
     connect: pgConnect,
@@ -47,6 +57,14 @@ jest.mock('../../src/modules/nitrado/whitelistIntent', () => ({
   reconcileWhitelistRemoteIntent: reconcileIntent,
 }));
 
+jest.mock('../../src/modules/nitrado/jobLease', () => ({
+  NITRADO_JOB_HEARTBEAT_INTERVAL_MS: 60_000,
+  claimNitradoJob: jest.fn(),
+  heartbeatNitradoJobClaim: mockHeartbeatClaim,
+  recoverStaleNitradoJobClaims: jest.fn(async () => 0),
+  transitionClaimedNitradoJob: mockTransitionClaim,
+}));
+
 jest.mock('../../src/modules/bans/banRegistry', () => ({ isBanActive: jest.fn() }));
 jest.mock('../../src/modules/bans/banTarget', () => ({ matchesBanIdentifier: jest.fn() }));
 jest.mock('../../src/modules/bans/banOutbox', () => ({
@@ -64,6 +82,7 @@ import { executeJob } from '../../src/modules/nitrado/jobWorker';
 
 const GUILD = '123456789012345678';
 const CONN = 'c123456789012345678901234';
+const CLAIM: TestClaim = { id: 'job-add', guildId: GUILD, claimToken: 'claim:job-add' };
 
 beforeEach(() => {
   jest.clearAllMocks();
@@ -106,12 +125,12 @@ describe('Nitrado-1B post-write crash recovery', () => {
       })
       .mockRejectedValueOnce(new Error('post-write db unavailable'));
 
-    await executeJob('job-add');
+    await executeJob(CLAIM);
 
     expect(addToWhitelist).toHaveBeenCalledWith('service-1', 'PlayerOne');
     expect(reconcileIntent).toHaveBeenCalledTimes(2);
     expect(jobUpdateMany).toHaveBeenCalledWith(expect.objectContaining({
-      where: { id: 'job-add', guildId: GUILD },
+      where: { id: 'job-add', guildId: GUILD, status: 'RUNNING' },
       data: expect.objectContaining({
         status: 'PENDING',
         attempts: 1,
