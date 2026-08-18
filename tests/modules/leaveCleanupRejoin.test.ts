@@ -36,6 +36,7 @@ const GUILD = '12345678901234567';
 const USER = '22345678901234567';
 const REQUEST = 'leave-request-1';
 const CREATED = new Date('2026-08-18T06:00:00.000Z');
+const CLAIMED_AT = '2026-08-18T06:01:00.000Z';
 const JOB_KEY = `leave-job:v1:${GUILD}:${USER}`;
 
 function claimedRequest(details: Record<string, unknown> = {}) {
@@ -53,6 +54,7 @@ function claimedRequest(details: Record<string, unknown> = {}) {
       attempts: 0,
       maxAttempts: 8,
       claimToken: 'claim-a',
+      claimedAt: CLAIMED_AT,
       ...details,
     },
   };
@@ -71,21 +73,39 @@ beforeEach(() => {
 });
 
 describe('Leave-1G rejoin freshness finalizer', () => {
-  it('locks and fences the exact active claim before touching player state', async () => {
+  it('locks and fences modern claims by token plus the exact renewed lease before touching player state', async () => {
     claimQuery.mockResolvedValue([]);
     const current = claimedRequest();
 
     await expect(finalizeLeaveRejoinState(current, GUILD, USER))
-      .rejects.toThrow(/aktiver Claim\/Scope/);
+      .rejects.toThrow(/aktiver Claim\/Lease-Snapshot/);
 
     expect(claimQuery).toHaveBeenCalledTimes(1);
     const call = claimQuery.mock.calls[0];
     expect(String(call[0])).toContain('FOR UPDATE');
-    expect(String(call[0])).toContain('jsonb_extract_path_text("details", $4)=$5');
-    expect(call.slice(1)).toEqual([REQUEST, JOB_KEY, USER, 'claimToken', 'claim-a']);
+    expect(String(call[0])).toContain("jsonb_extract_path_text(\"details\", 'claimToken')=$4");
+    expect(String(call[0])).toContain("jsonb_extract_path_text(\"details\", 'claimedAt')=$5");
+    expect(call.slice(1)).toEqual([REQUEST, JOB_KEY, USER, 'claim-a', CLAIMED_AT]);
     expect(profileFindUnique).not.toHaveBeenCalled();
     expect(userFindUnique).not.toHaveBeenCalled();
     expect(levelUpsert).not.toHaveBeenCalled();
+  });
+
+  it('invalidates an old modern lease snapshot even when the claim token is unchanged', async () => {
+    claimQuery.mockResolvedValue([]);
+    const oldSnapshot = claimedRequest({ claimedAt: '2026-08-18T06:00:10.000Z' });
+
+    await expect(finalizeLeaveRejoinState(oldSnapshot, GUILD, USER))
+      .rejects.toThrow(/Claim\/Lease-Snapshot/);
+
+    expect(claimQuery.mock.calls[0].slice(1)).toEqual([
+      REQUEST,
+      JOB_KEY,
+      USER,
+      'claim-a',
+      '2026-08-18T06:00:10.000Z',
+    ]);
+    expect(profileFindUnique).not.toHaveBeenCalled();
   });
 
   it('rejects a corrupted in-memory request scope before opening the transaction', async () => {
@@ -98,8 +118,8 @@ describe('Leave-1G rejoin freshness finalizer', () => {
     expect(claimQuery).not.toHaveBeenCalled();
   });
 
-  it('supports pre-1F legacy claims through the persisted claimedAt fence', async () => {
-    const current = claimedRequest({ claimToken: undefined, claimedAt: '2026-08-18T06:01:00.000Z' });
+  it('supports pre-1F legacy claims through the exact persisted claimedAt fence', async () => {
+    const current = claimedRequest({ claimToken: undefined, claimedAt: CLAIMED_AT });
 
     await expect(finalizeLeaveRejoinState(current, GUILD, USER)).resolves.toEqual({
       rejoined: false,
@@ -108,15 +128,16 @@ describe('Leave-1G rejoin freshness finalizer', () => {
     });
 
     const call = claimQuery.mock.calls[0];
-    expect(call[4]).toBe('claimedAt');
-    expect(call[5]).toBe('2026-08-18T06:01:00.000Z');
+    expect(String(call[0])).toContain("jsonb_extract_path_text(\"details\", 'claimedAt')=$4");
+    expect(String(call[0])).not.toContain("'claimToken'");
+    expect(call.slice(1)).toEqual([REQUEST, JOB_KEY, USER, CLAIMED_AT]);
   });
 
-  it('fails before any mutation when neither claimToken nor claimedAt is available', async () => {
-    const current = claimedRequest({ claimToken: undefined });
+  it('fails before any mutation when the claimedAt lease is missing', async () => {
+    const current = claimedRequest({ claimedAt: undefined });
 
     await expect(finalizeLeaveRejoinState(current, GUILD, USER))
-      .rejects.toThrow(/Claim-Fence fehlt/);
+      .rejects.toThrow(/Claim-Lease fehlt/);
 
     expect(transaction).not.toHaveBeenCalled();
     expect(profileFindUnique).not.toHaveBeenCalled();
