@@ -9,6 +9,11 @@
  * Nitrado-1A: Dedupe ist ueber einen DB-Advisory-xact-Lock pro
  * Guild+Connection+Operation+Ban-ID cross-process atomar. Damit koennen zwei
  * Bot-Instanzen nicht gleichzeitig denselben aktiven Ban-Outbox-Intent anlegen.
+ *
+ * Nitrado-1J: automatische SERVER_BAN_REMOVE-Reconciler respektieren zusaetzlich
+ * einen Recent-DEAD-Cooldown. Der Check liegt unter demselben Subject-Lock wie
+ * Dedupe+Create, sodass parallele Scheduler den Cooldown nicht umgehen koennen.
+ * Explizite Bedieneraktionen duerfen den Cooldown bewusst umgehen.
  */
 
 import { encrypt } from '../../utils/security';
@@ -30,7 +35,16 @@ export interface BanOutboxScope {
   nitradoConnId: string;
 }
 
+export interface ServerBanRemoveEnqueueOptions {
+  /** Nur fuer eine explizite Bedieneraktion wie /server-unban verwenden. */
+  bypassRecentDeadCooldown?: boolean;
+  /** Test-/Scheduler-Zeitpunkt; Produktion verwendet standardmaessig jetzt. */
+  now?: Date;
+}
+
 export type BanOutboxClient = NitradoOutboxClient;
+
+export const SERVER_BAN_REMOVE_AUTO_DEAD_COOLDOWN_MS = 60 * 60 * 1000;
 
 function asPayload(value: unknown): ServerBanJobPayload | null {
   if (!value || typeof value !== 'object') return null;
@@ -54,11 +68,10 @@ async function ensureJobInLock(
   scope: BanOutboxScope,
   operation: ServerBanJobOperation,
   payload: ServerBanJobPayload,
+  options: { recentDeadCooldownMs?: number; now?: Date } = {},
 ): Promise<boolean> {
-  // Nur aktive Jobs blockieren einen neuen Job. DONE/DEAD bleiben Historie und
-  // duerfen einen spaeteren expliziten Retry/Reconcile nicht verhindern. Ohne
-  // `take`-Fenster werden auch bereits vorhandene Legacy-Outboxen vollstaendig
-  // in die atomare Deduplizierung einbezogen.
+  // Aktive Jobs blockieren immer. Ohne `take`-Fenster werden auch vorhandene
+  // Legacy-Outboxen vollstaendig in die atomare Deduplizierung einbezogen.
   const existing = await tx.nitradoJob.findMany({
     where: {
       guildId: scope.guildId,
@@ -69,6 +82,22 @@ async function ensureJobInLock(
     select: { payload: true },
   });
   if (existing.some(job => asPayload(job.payload)?.banId === payload.banId)) return false;
+
+  const recentDeadCooldownMs = options.recentDeadCooldownMs ?? 0;
+  if (recentDeadCooldownMs > 0) {
+    const now = options.now ?? new Date();
+    const recentDead = await tx.nitradoJob.findMany({
+      where: {
+        guildId: scope.guildId,
+        nitradoConnId: scope.nitradoConnId,
+        operation,
+        status: 'DEAD',
+        updatedAt: { gte: new Date(now.getTime() - recentDeadCooldownMs) },
+      },
+      select: { payload: true },
+    });
+    if (recentDead.some(job => asPayload(job.payload)?.banId === payload.banId)) return false;
+  }
 
   await tx.nitradoJob.create({
     data: {
@@ -86,6 +115,7 @@ async function ensureJob(
   scope: BanOutboxScope,
   operation: ServerBanJobOperation,
   payload: ServerBanJobPayload,
+  options: { recentDeadCooldownMs?: number; now?: Date } = {},
 ): Promise<boolean> {
   const banId = payload.banId.trim();
   if (!banId) throw new Error('Leere Server-Ban-ID');
@@ -98,7 +128,7 @@ async function ensureJob(
   ].join(':');
 
   return withNitradoOutboxSubjectLock(client, lockSubject, tx =>
-    ensureJobInLock(tx, scope, operation, payload),
+    ensureJobInLock(tx, scope, operation, payload, options),
   );
 }
 
@@ -118,11 +148,29 @@ export async function enqueueServerBanAdd(
   });
 }
 
-/** Queued Remote-Unban; Identifier wird spaeter aus der Remote-Banlist aufgeloest. */
+/**
+ * Queued Remote-Unban; Identifier wird spaeter aus der Remote-Banlist
+ * aufgeloest. Automatische Scheduler respektieren standardmaessig einen
+ * Recent-DEAD-Cooldown, damit permanente Remote-/Konfigurationsfehler keinen
+ * endlosen Job-Neuanlage-Sturm erzeugen. Explizite Bedieneraktionen koennen den
+ * Cooldown mit `bypassRecentDeadCooldown` bewusst umgehen.
+ */
 export async function enqueueServerBanRemove(
   client: BanOutboxClient,
   scope: BanOutboxScope,
   banId: string,
+  options: ServerBanRemoveEnqueueOptions = {},
 ): Promise<boolean> {
-  return ensureJob(client, scope, 'SERVER_BAN_REMOVE', { banId });
+  return ensureJob(
+    client,
+    scope,
+    'SERVER_BAN_REMOVE',
+    { banId },
+    {
+      recentDeadCooldownMs: options.bypassRecentDeadCooldown
+        ? 0
+        : SERVER_BAN_REMOVE_AUTO_DEAD_COOLDOWN_MS,
+      now: options.now,
+    },
+  );
 }
