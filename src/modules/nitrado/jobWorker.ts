@@ -32,6 +32,7 @@ import { logger, logAudit } from '../../utils/logger';
 import { config } from '../../config';
 import { decrypt } from '../../utils/security';
 import { NitradoClient, NitradoApiError } from './nitradoClient';
+import { decideWhitelistRemoteIntent } from './whitelistIntent';
 import { emitGuildEvent } from '../../dashboard/socket/emitter';
 import { isBanActive } from '../bans/banRegistry';
 import { matchesBanIdentifier } from '../bans/banTarget';
@@ -186,6 +187,40 @@ async function reconcileRemoteBanRemovals(now: Date): Promise<void> {
   }
 }
 
+/**
+ * Nitrado-1B: Ein Retry darf niemals seine historische Operation ueber den
+ * aktuellen lokalen Whitelist-Sollzustand stellen. Die Pruefung laeuft NACH
+ * dem per-Connection-Advisory-Lock und VOR Token/Remote-API-Arbeit.
+ *
+ * Superseded Jobs werden als erfolgreicher No-op DONE quittiert: sie sind nicht
+ * technisch fehlgeschlagen, sondern durch eine neuere Nutzer-/Reconcile-
+ * Entscheidung obsolet geworden. Dabei wird kein Spielername zusaetzlich
+ * geloggt oder in Audit-Metadaten kopiert.
+ */
+async function finishSupersededWhitelistJob(args: {
+  id: string;
+  guildId: string;
+  operation: 'WHITELIST_ADD' | 'WHITELIST_REMOVE';
+  desiredState: string;
+  reason: string;
+}): Promise<void> {
+  await prisma.nitradoJob.updateMany({
+    where: { id: args.id, guildId: args.guildId, status: 'RUNNING' },
+    data: { status: 'DONE', lastError: null, updatedAt: new Date() },
+  });
+  logAudit('NITRADO_WHITELIST_JOB_SUPERSEDED', 'NITRADO', {
+    guildId: args.guildId,
+    jobId: args.id,
+    operation: args.operation,
+    desiredState: args.desiredState,
+    reason: args.reason,
+  });
+  emitGuildEvent(args.guildId, {
+    type: 'nitrado.job.updated',
+    payload: { guildId: args.guildId, jobId: args.id, status: 'DONE' },
+  });
+}
+
 export async function executeJob(jobId: string): Promise<void> {
   // Hole Job + zugehoerige Connection getrennt — `NitradoJob` hat im Schema
   // keine deklarierte Prisma-Relation zu `NitradoConnection` (nur die FK-Spalte
@@ -263,6 +298,46 @@ export async function executeJob(jobId: string): Promise<void> {
     if (!KNOWN_OPERATIONS.has(job.operation)) {
       await failJob(job.id, job.guildId, job.attempts, job.maxAttempts, `Unbekannte Operation: ${job.operation}`, true);
       return;
+    }
+
+    // Nitrado-1B: Whitelist-Retry-Reihenfolge wird durch die aktuelle lokale
+    // Source-of-Truth aufgeloest. Diese Pruefung liegt unter dem Connection-Lock
+    // und bewusst VOR Token-Entschluesselung/Remote-API. Ein bereits obsoleter
+    // Job wird daher auch bei spaeter kaputtem Token nicht faelschlich DEAD.
+    if (job.operation === 'WHITELIST_ADD' || job.operation === 'WHITELIST_REMOVE') {
+      if (typeof payload.gameId !== 'string' || !payload.gameId.trim()) {
+        await failJob(job.id, job.guildId, job.attempts, job.maxAttempts, 'payload.gameId fehlt', true);
+        return;
+      }
+      let decision;
+      try {
+        decision = await decideWhitelistRemoteIntent(
+          job.operation,
+          job.guildId,
+          conn.id,
+          payload.gameId,
+        );
+      } catch (error) {
+        await failJob(
+          job.id,
+          job.guildId,
+          job.attempts,
+          job.maxAttempts,
+          `Whitelist-Intent-Lookup fehlgeschlagen: ${(error as Error).message}`,
+          false,
+        );
+        return;
+      }
+      if (!decision.execute) {
+        await finishSupersededWhitelistJob({
+          id: job.id,
+          guildId: job.guildId,
+          operation: job.operation,
+          desiredState: decision.desiredState,
+          reason: decision.reason,
+        });
+        return;
+      }
     }
 
     // NIT-005: Token-Entschluesselung + Client-Konstruktion lagen frueher
