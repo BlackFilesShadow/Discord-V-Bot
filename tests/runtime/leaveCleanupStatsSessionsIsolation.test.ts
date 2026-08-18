@@ -15,9 +15,9 @@ describe('Leave-1D/1E production ordering and reset invariants', () => {
   });
 
   it('persists STATS completion before the orchestrator enters the post-whitelist Leave-1C core', () => {
-    const statsCall = workerSource.indexOf('runLeaveStatsSessionsCleanupStep');
+    const statsCall = workerSource.indexOf('await runLeaveStatsSessionsCleanupStep(');
     const statsAdvance = workerSource.indexOf("advanceLeaveCleanupStep(request, 'STATS_SESSIONS')");
-    const economyCall = workerSource.indexOf('runLeaveLinkEconomyAfterConfirmedWhitelistStep');
+    const economyCall = workerSource.indexOf('await runLeaveLinkEconomyAfterConfirmedWhitelistStep(');
     expect(statsCall).toBeGreaterThanOrEqual(0);
     expect(statsAdvance).toBeGreaterThan(statsCall);
     expect(economyCall).toBeGreaterThan(statsAdvance);
