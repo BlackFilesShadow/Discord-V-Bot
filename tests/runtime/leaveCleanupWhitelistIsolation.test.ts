@@ -15,9 +15,9 @@ describe('Leave-1B/1E production boundary and write safety', () => {
   });
 
   it('runs whitelist as the first persisted worker substep before stats or economy', () => {
-    const whitelistAt = workerSource.indexOf('await runLeaveWhitelistCleanupStep(');
-    const statsAt = workerSource.indexOf('await runLeaveStatsSessionsCleanupStep(');
-    const economyAt = workerSource.indexOf('await runLeaveLinkEconomyAfterConfirmedWhitelistStep(');
+    const whitelistAt = workerSource.indexOf("if (details.step === 'WHITELIST')");
+    const statsAt = workerSource.indexOf("if (details.step === 'STATS_SESSIONS')");
+    const economyAt = workerSource.indexOf("if (details.step === 'LINK_ECONOMY')");
     expect(whitelistAt).toBeGreaterThanOrEqual(0);
     expect(statsAt).toBeGreaterThan(whitelistAt);
     expect(economyAt).toBeGreaterThan(statsAt);
