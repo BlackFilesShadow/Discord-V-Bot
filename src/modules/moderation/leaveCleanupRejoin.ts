@@ -29,9 +29,9 @@ export type LeaveRejoinFinalizationResult = {
  *
  * Das GuildMemberProfile wird bewusst NICHT geloescht: Der Worker kann parallel
  * zum noch laufenden Goodbye-Gateway-Event arbeiten. Die letzte bekannte
- * Identitaet muss deshalb bis zum Goodbye sicher verfuegbar bleiben. Nur der
- * historische messageCount wird fuer die neue/abgeschlossene Lifecycle-Epoche
- * auf 0 gesetzt; Recognition-Daten bleiben nicht autoritativ fuer Permissions.
+ * Identitaet muss deshalb fuer Goodbye sicher verfuegbar bleiben. Lifecycle-
+ * Normalisierung wird per CAS auf den exakt gelesenen Profilzustand geschrieben;
+ * ein parallel eintreffender echter Rejoin wird niemals ueberschrieben.
  *
  * Die Request-createdAt ist die Lifecycle-Grenze: Nur ein aktives Profil mit
  * joinedAt > createdAt kann ein Rejoin NACH diesem Leave sein. Dadurch wird ein
@@ -106,9 +106,9 @@ export async function finalizeLeaveRejoinState(
       && profile.joinedAt.getTime() > request.createdAt.getTime();
 
     if (!rejoined) {
-      // Zweiter Freshness-Cutoff direkt vor COMPLETE. Das faengt auch Writes ab,
-      // die zwischen dem normalen GUILD_DATA-Schritt und diesem Finalizer noch
-      // eingetroffen sind, solange keine neue Mitgliedschaft nachgewiesen ist.
+      // Zweiter Freshness-Cutoff direkt vor COMPLETE. XP-Schreibpfade sind
+      // waehrend eines offenen Cleanup-Barriers gesperrt; diese Deletes raeumen
+      // zusaetzlich spaete, bereits gestartete Writes aus der alten Epoche auf.
       if (user) {
         await tx.xpRecord.deleteMany({ where: { userId: user.id, guildId } });
         await tx.levelData.deleteMany({ where: { userId: user.id, guildId } });
@@ -116,19 +116,28 @@ export async function finalizeLeaveRejoinState(
 
       let profileState: 'NONE' | 'RESET' = 'NONE';
       if (profile) {
-        // Ein alter/staler Activity-Write oder eine alte Replica darf den Leave-
-        // Marker nicht auf aktiv zurueckdrehen. Die Identitaetsfelder bleiben
-        // fuer Goodbye erhalten; nur Lifecycle + historischer Counter werden
-        // auf den abgeschlossenen Leave-Zustand normalisiert.
+        // CAS auf den exakt gelesenen Lifecycle-Zustand. Wenn guildMemberAdd oder
+        // ein anderer echter Member-Sync zwischen Read und Write joinedAt/isLeft/
+        // leftAt aendert, darf dieser alte Snapshot den Rejoin nicht wieder auf
+        // LEFT setzen. Retry liest danach den neuen Zustand und erkennt Rejoin.
         const resetProfile = await tx.guildMemberProfile.updateMany({
-          where: { guildId, discordId },
+          where: {
+            guildId,
+            discordId,
+            isLeft: profile.isLeft,
+            joinedAt: profile.joinedAt,
+            leftAt: profile.leftAt,
+          },
           data: {
             messageCount: 0,
             isLeft: true,
             leftAt: profile.leftAt ?? request.createdAt,
           },
         });
-        if (resetProfile.count > 0) profileState = 'RESET';
+        if (resetProfile.count !== 1) {
+          throw new Error('Leave-Rejoin-Finalizer: Profil-CAS verloren.');
+        }
+        profileState = 'RESET';
       }
 
       return {
