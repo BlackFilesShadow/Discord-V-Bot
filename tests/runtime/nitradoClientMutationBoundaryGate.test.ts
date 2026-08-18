@@ -44,39 +44,75 @@ function moduleIsNitradoClient(specifier: string): boolean {
   return /(?:^|\/)nitradoClient(?:\.js)?$/.test(specifier);
 }
 
+interface ClientMethodInfo {
+  isPrivate: boolean;
+  directlyMutates: boolean;
+  callees: Set<string>;
+}
+
+/**
+ * Leitet den Mutationsvertrag aus der NitradoClient-Implementierung selbst ab.
+ * Direkte POST/PUT/PATCH/DELETE-Aufrufe markieren eine Methode als mutierend;
+ * danach wird die Eigenschaft transitiv ueber `this.foo()` weitergereicht.
+ * Dadurch werden auch Whitelist/Ban erkannt, obwohl sie ueber
+ * mutateGeneralList -> setSetting -> request('POST', ...) laufen.
+ */
 function mutatingClientMethods(): string[] {
   const source = parse(CLIENT_FILE);
-  const found = new Set<string>();
-
   const classNode = source.statements.find(
     (statement): statement is ts.ClassDeclaration =>
       ts.isClassDeclaration(statement) && statement.name?.text === 'NitradoClient',
   );
   if (!classNode) throw new Error('NitradoClient class declaration fehlt.');
 
+  const methods = new Map<string, ClientMethodInfo>();
   for (const member of classNode.members) {
     if (!ts.isMethodDeclaration(member) || !member.body || !member.name || !ts.isIdentifier(member.name)) continue;
-    const isPrivate = member.modifiers?.some(modifier => modifier.kind === ts.SyntaxKind.PrivateKeyword) ?? false;
-    if (isPrivate) continue;
+    const info: ClientMethodInfo = {
+      isPrivate: member.modifiers?.some(modifier => modifier.kind === ts.SyntaxKind.PrivateKeyword) ?? false,
+      directlyMutates: false,
+      callees: new Set<string>(),
+    };
 
-    let mutates = false;
     const visit = (node: ts.Node): void => {
-      if (ts.isCallExpression(node)
-        && ts.isPropertyAccessExpression(node.expression)
-        && node.expression.name.text === 'request'
-        && node.arguments.length >= 2) {
-        const verb = node.arguments[1];
-        if (ts.isStringLiteralLike(verb) && MUTATING_HTTP_VERBS.has(verb.text.toUpperCase())) {
-          mutates = true;
+      if (ts.isCallExpression(node) && ts.isPropertyAccessExpression(node.expression)) {
+        const target = node.expression.expression;
+        const method = node.expression.name.text;
+        if (target.kind === ts.SyntaxKind.ThisKeyword) {
+          if (method === 'request' && node.arguments.length >= 1) {
+            const verb = node.arguments[0];
+            if (ts.isStringLiteralLike(verb) && MUTATING_HTTP_VERBS.has(verb.text.toUpperCase())) {
+              info.directlyMutates = true;
+            }
+          } else {
+            info.callees.add(method);
+          }
         }
       }
       ts.forEachChild(node, visit);
     };
     visit(member.body);
-    if (mutates) found.add(member.name.text);
+    methods.set(member.name.text, info);
   }
 
-  return [...found].sort();
+  const mutating = new Set<string>(
+    [...methods.entries()].filter(([, info]) => info.directlyMutates).map(([name]) => name),
+  );
+  let changed = true;
+  while (changed) {
+    changed = false;
+    for (const [name, info] of methods) {
+      if (mutating.has(name)) continue;
+      if ([...info.callees].some(callee => mutating.has(callee))) {
+        mutating.add(name);
+        changed = true;
+      }
+    }
+  }
+
+  return [...mutating]
+    .filter(name => methods.get(name)?.isPrivate === false)
+    .sort();
 }
 
 interface ClientUsage {
@@ -151,6 +187,8 @@ function mutationViolations(mutators: ReadonlySet<string>): string[] {
           return;
         }
 
+        // Whitelist/Ban-Methodennamen sind Nitrado-spezifisch und werden auch
+        // bei Interface-Injektion ohne direkten Klassenimport verboten.
         let directRemoteMutation = uniqueRemoteMethods.has(method);
         if (!directRemoteMutation && usage.hasClientImport) {
           const target = node.expression.expression;
@@ -191,7 +229,7 @@ function workerMutatorCalls(): Set<string> {
 }
 
 describe('Nitrado-1G single remote mutation boundary', () => {
-  it('derives the complete public mutating NitradoClient contract from HTTP verbs', () => {
+  it('derives the complete public mutating NitradoClient contract transitively from HTTP verbs', () => {
     expect(mutatingClientMethods()).toEqual([...EXPECTED_MUTATORS].sort());
   });
 
