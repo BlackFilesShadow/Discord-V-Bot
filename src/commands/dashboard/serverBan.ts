@@ -34,6 +34,10 @@ import { decrypt, encrypt } from '../../utils/security';
 import { logAudit } from '../../utils/logger';
 import { NitradoClient } from '../../modules/nitrado/nitradoClient';
 import {
+  readCurrentAdmBinding,
+  withFreshAdmBinding,
+} from '../../modules/nitrado/adm/bindingFence';
+import {
   autocompleteServerAlias,
   resolveSelectedOrAllServers,
   targetLabel,
@@ -280,14 +284,23 @@ export const serverUnbanCommand: Command = {
     for (const target of targets) {
       const label = targetLabel(target);
       try {
-        // Remote-Read ist hier Teil der Zustandsentscheidung: appliedRemotely
-        // darf nur aufgrund einer echten Beobachtung true werden.
-        const remoteRows = await clientForTarget(target).getBanlist(target.nitradoServerId);
+        // Nitrado-1Q: Der Alias-Snapshot aus der Command-Aufloesung ist nur
+        // Zielauswahl. Token + Service werden unter dem kanonischen kurzen
+        // Connection-Lock frisch gelesen. Remote-I/O findet ohne Lock statt.
+        const binding = await readCurrentAdmBinding({ id: target.id, guildId: scope.guildId });
+        if (!binding) {
+          throw new Error('Nitrado-Bindung ist nicht mehr ACTIVE oder besitzt keine Service-ID.');
+        }
+        const token = decrypt(binding.encryptedToken, config.security.encryptionKey);
+        const remoteRows = await new NitradoClient(token).getBanlist(binding.nitradoServerId);
         const existsRemotely = remoteRows.some(row =>
           matchesBanIdentifier(row.identifier, identityHash, config.security.encryptionKey),
         );
 
-        const result = await prisma.$transaction(async tx => {
+        // Erst wenn exakt dieselbe ACTIVE Token-/Service-/Binding-Version noch
+        // gueltig ist, darf die Remote-Beobachtung lokalen Ban-Zustand oder eine
+        // Remove-Outbox beeinflussen. Der DB-Commit liegt dabei unter dem Lock.
+        const result = await withFreshAdmBinding(binding, () => prisma.$transaction(async tx => {
           const row = await tx.serverBanEntry.upsert({
             where: {
               guildId_nitradoConnId_identityHash: {
@@ -339,7 +352,7 @@ export const serverUnbanCommand: Command = {
               )
             : false;
           return { banId: row.id, existsRemotely, queued };
-        });
+        }));
 
         logAudit('SERVER_BAN_LIFT', 'MODERATION', {
           guildId: scope.guildId,

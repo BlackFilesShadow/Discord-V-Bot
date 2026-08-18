@@ -3,6 +3,8 @@ var mockScope: any;
 var mockTargets: any[];
 var mockOrder: string[];
 var mockRemoteBanRows: Array<{ identifier: string }>;
+var mockReadCurrentBinding: jest.Mock;
+var mockWithFreshBinding: jest.Mock;
 
 jest.mock('../../src/database/prisma', () => ({
   __esModule: true,
@@ -46,6 +48,11 @@ jest.mock('../../src/modules/nitrado/nitradoClient', () => ({
   NitradoClient: jest.fn().mockImplementation(() => ({
     getBanlist: async () => mockRemoteBanRows,
   })),
+}));
+
+jest.mock('../../src/modules/nitrado/adm/bindingFence', () => ({
+  readCurrentAdmBinding: (...args: unknown[]) => mockReadCurrentBinding(...args),
+  withFreshAdmBinding: (...args: unknown[]) => mockWithFreshBinding(...args),
 }));
 
 jest.mock('../../src/config', () => ({
@@ -95,6 +102,14 @@ describe('server-ban/server-unban execution', () => {
       nitradoServerId: 'srv-a',
       encryptedToken: 'enc-token',
     }];
+    mockReadCurrentBinding = jest.fn(async () => ({
+      id: 'conn-a',
+      guildId: 'guild-1',
+      encryptedToken: 'enc-token-fresh',
+      nitradoServerId: 'srv-a',
+      bindingVersion: 3,
+    }));
+    mockWithFreshBinding = jest.fn(async (_snapshot: unknown, work: () => Promise<unknown>) => work());
     mockTx = {
       whitelistEntry: {
         updateMany: jest.fn(async () => {
@@ -169,12 +184,14 @@ describe('server-ban/server-unban execution', () => {
     expect(mockOrder.at(-1)).toBe('enqueue-ban');
   });
 
-  it('queued Remote-Unban nur nachdem der echte Nitrado-Read den Identifier bestaetigt', async () => {
+  it('queued Remote-Unban nur nachdem derselbe frische Token-/Service-Snapshot bestaetigt wurde', async () => {
     mockRemoteBanRows = [{ identifier: 'Player-123' }];
     const interaction = interactionFor('unban');
 
     await serverUnbanCommand.execute(interaction);
 
+    expect(mockReadCurrentBinding).toHaveBeenCalledWith({ id: 'conn-a', guildId: 'guild-1' });
+    expect(mockWithFreshBinding).toHaveBeenCalledTimes(1);
     expect(mockOrder).toEqual(['upsert-unban-anchor', 'enqueue-unban']);
     expect(mockTx.serverBanEntry.upsert).toHaveBeenCalledWith(expect.objectContaining({
       update: expect.objectContaining({ active: false, appliedRemotely: true }),
@@ -196,5 +213,20 @@ describe('server-ban/server-unban execution', () => {
     expect(mockTx.serverBanEntry.upsert).toHaveBeenCalledWith(expect.objectContaining({
       update: expect.objectContaining({ active: false, appliedRemotely: false }),
     }));
+  });
+
+  it('verwirft einen Remote-Unban-Snapshot vollstaendig wenn die Bindung vor dem DB-Commit stale wird', async () => {
+    mockRemoteBanRows = [{ identifier: 'Player-123' }];
+    mockWithFreshBinding.mockRejectedValueOnce(new Error('stale binding'));
+    const interaction = interactionFor('unban');
+
+    await serverUnbanCommand.execute(interaction);
+
+    expect(mockReadCurrentBinding).toHaveBeenCalledTimes(1);
+    expect(mockWithFreshBinding).toHaveBeenCalledTimes(1);
+    expect(mockTx.serverBanEntry.upsert).not.toHaveBeenCalled();
+    expect(mockTx.serverBanExpiryNotice.updateMany).not.toHaveBeenCalled();
+    expect(mockOrder).not.toContain('enqueue-unban');
+    expect(interaction.reply).toHaveBeenCalledWith(expect.objectContaining({ embeds: expect.any(Array) }));
   });
 });
