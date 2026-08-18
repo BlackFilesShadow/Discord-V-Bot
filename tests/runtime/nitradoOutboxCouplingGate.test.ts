@@ -103,13 +103,19 @@ describe('Nitrado-1A outbox + token/service coupling architecture gate', () => {
     expect(nitradoRoute).not.toContain('if (serviceMismatch) {\n    await updateServiceId');
   });
 
-  it('version-fences token and service writes to exactly the remotely validated slot snapshot', () => {
+  it('version-fences token and service writes to the exact remotely validated connection id + updatedAt snapshot', () => {
     expect(nitradoRepository).toContain('updatedAt: Date;');
     expect(nitradoRepository).toContain('export class NitradoSlotVersionConflictError extends Error');
-    expect(nitradoRepository).toContain('expectedUpdatedAt?: Date');
+    expect(nitradoRepository).toContain('expectedId?: NitradoConnId;');
+    expect(nitradoRepository).toContain('expectedUpdatedAt?: Date;');
+    expect(nitradoRepository).toContain("if (options.expectedId && current.id !== options.expectedId)");
+    expect(nitradoRepository).toContain('id: targetId');
+    expect(nitradoRepository).toContain("...(options.expectedId ? { id: options.expectedId } : {})");
     expect(nitradoRepository).toContain("...(options.expectedUpdatedAt ? { updatedAt: options.expectedUpdatedAt } : {})");
     expect(nitradoRepository).toContain('throw new NitradoSlotVersionConflictError();');
+    expect(nitradoRepository).toContain('where: { id: targetId, guildId, slot }');
 
+    expect(nitradoRoute).toContain('expectedId: existing.id');
     expect(nitradoRoute).toContain('expectedUpdatedAt: existing.updatedAt');
     expect(nitradoRoute).toContain("code: 'NITRADO_SLOT_VERSION_CONFLICT'");
     expect(nitradoRoute).toContain('updated = await updateToken(scope.guildId, slot, token, {');
