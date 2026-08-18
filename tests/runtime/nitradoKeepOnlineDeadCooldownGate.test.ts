@@ -20,14 +20,15 @@ describe('Nitrado-1H keep-online DEAD retry cooldown gate', () => {
     expect(source).toContain('updatedAt: { gte: deadCutoff }');
   });
 
-  it('does not treat deliberate keep-online disable cancellation as a retry failure', () => {
+  it('exempts only deliberate keep-online disable cancellation from the retry failure cooldown', () => {
     const cronSource = compact(fs.readFileSync(CRON_FILE, 'utf8'));
     const jobsSource = compact(fs.readFileSync(JOBS_FILE, 'utf8'));
 
     expect(jobsSource).toContain("export const KEEP_ONLINE_DISABLED_JOB_REASON = 'Keep-Online deaktiviert; geplanter Auto-Start verworfen.'");
     expect(jobsSource).toContain('lastError: KEEP_ONLINE_DISABLED_JOB_REASON');
     expect(cronSource).toContain("import { KEEP_ONLINE_DISABLED_JOB_REASON } from './keepOnlineJobs'");
-    expect(cronSource).toContain('NOT: { lastError: KEEP_ONLINE_DISABLED_JOB_REASON }');
+    expect(cronSource).toContain('{ lastError: null }');
+    expect(cronSource).toContain('{ lastError: { not: KEEP_ONLINE_DISABLED_JOB_REASON } }');
   });
 
   it('checks active/recent-dead blockers before creating the next bounded job', () => {
@@ -39,6 +40,7 @@ describe('Nitrado-1H keep-online DEAD retry cooldown gate', () => {
     expect(create).toBeGreaterThan(blockerRead);
     expect(source.slice(blockerRead, create)).toContain("operation: 'RESTART_IF_DOWN'");
     expect(source.slice(blockerRead, create)).toContain("status: 'DEAD'");
+    expect(source.slice(blockerRead, create)).toContain('updatedAt: { gte: deadCutoff }');
     expect(source.slice(create)).toContain('maxAttempts: 3');
   });
 });
