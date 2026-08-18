@@ -7,17 +7,19 @@ describe('AI-14 Nitrado snapshot -> normalized LIVE_SERVER knowledge architectur
   test('snapshot completion invokes exactly the canonical AI-14 indexer without changing mirror failure semantics', () => {
     const source = read('src/modules/nitrado/mirror/snapshotService.ts');
     expect(source).toContain("await import('../../ai/liveServerKnowledgeIndex.js')");
-    expect(source).toContain('indexNitradoSnapshotKnowledge({ snapshotId, guildId, nitradoConnId: connId })');
+    expect(source).toContain('indexNitradoSnapshotKnowledge({ snapshotId, guildId, nitradoConnId: connId, binding })');
     expect(source).toContain("if (status === 'OK' || status === 'PARTIAL')");
     expect(source).toContain("logger.warn('[AI-14] Live-Server-Knowledge konnte nicht aktualisiert werden'");
     expect(source).not.toContain("status = 'FAILED';\n        logger.warn('[AI-14]");
   });
 
-  test('indexer validates exact guild+gameserver+snapshot and writes scope+provenance atomically', () => {
+  test('indexer validates exact guild+gameserver+snapshot and writes scope+provenance atomically under the original binding fence', () => {
     const source = read('src/modules/ai/liveServerKnowledgeIndex.ts');
     expect(source).toContain('validateKnowledgeScope(input.guildId, input.nitradoConnId)');
     expect(source).toContain("status: { in: ['OK', 'PARTIAL'] }");
     expect(source).toContain('nitradoConnId: input.nitradoConnId');
+    expect(source).toContain('snapshot.serviceId !== input.binding.nitradoServerId');
+    expect(source).toContain('withFreshAdmBinding(input.binding');
     expect(source).toContain("sourceKind: 'LIVE_SERVER'");
     expect(source).toContain("trustLevel: 'VERIFIED'");
     expect(source).toContain('validUntil');
