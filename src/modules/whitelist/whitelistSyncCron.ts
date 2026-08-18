@@ -9,6 +9,11 @@
  *   per-Connection Advisory-Lock im JobWorker die einzige Write-Grenze.
  * - Nitrado-1A: Identische aktive Jobs werden zusaetzlich cross-process unter
  *   einem DB-xact-Lock dedupliziert; der lokale `queued`-Set ist nur Fast-Path.
+ * - Nitrado-1N: Auch der Remote-Read/Reconcile selbst laeuft unter demselben
+ *   per-Connection Advisory-Lock wie Worker und Token/Service/Delete. Nach
+ *   Lockgewinn wird der kanonische Connection-Snapshot frisch gelesen. Damit
+ *   kann ein alter Token/Service-Snapshot niemals Jobs fuer ein inzwischen
+ *   anderes Remote-Ziel erzeugen.
  * - Lokale Eintraege bekommen einen ehrlichen SYNCED/LOCAL_ONLY-Status.
  * - PENDING_REMOVE bleibt lokal erhalten, bis ein frischer Remote-Read die
  *   Entfernung bestaetigt. Erst dann wird der lokale Spiegel final geloescht.
@@ -19,6 +24,7 @@ import { config } from '../../config';
 import { decrypt } from '../../utils/security';
 import { logger, logAudit } from '../../utils/logger';
 import { NitradoClient } from '../nitrado/nitradoClient';
+import { tryAcquireNitradoConfigMutationLock } from '../nitrado/configMutationLock';
 import { diffWhitelist } from './whitelistSync';
 import {
   enqueueWhitelistAdd,
@@ -36,6 +42,12 @@ type LocalWhitelistEntry = {
   gameId: string;
   syncState: 'LOCAL_ONLY' | 'SYNCED' | 'PENDING_REMOVE';
 };
+type WhitelistSyncConnection = {
+  id: string;
+  guildId: string;
+  encryptedToken: string;
+  nitradoServerId: string | null;
+};
 
 function payloadGameId(payload: unknown): string | null {
   if (!payload || typeof payload !== 'object' || Array.isArray(payload)) return null;
@@ -47,12 +59,11 @@ function jobKey(operation: string, gameId: string): string {
   return `${operation}:${gameId.trim().toLowerCase()}`;
 }
 
-async function reconcileConnection(conn: {
-  id: string;
-  guildId: string;
-  encryptedToken: string;
-  nitradoServerId: string | null;
-}): Promise<void> {
+/**
+ * Aufrufer haelt fuer die gesamte Funktion den kanonischen NITR-Connection-
+ * Lock. `conn` ist bereits NACH Lockgewinn frisch aus der DB gelesen.
+ */
+async function reconcileLockedConnection(conn: WhitelistSyncConnection): Promise<void> {
   if (!conn.nitradoServerId) return;
 
   const token = decrypt(conn.encryptedToken, config.security.encryptionKey);
@@ -149,12 +160,51 @@ async function reconcileConnection(conn: {
   }
 }
 
+/**
+ * Nitrado-1N: Der aeußere Scheduler-Snapshot dient nur zur Kandidatenfindung.
+ * Bevor Token/Service oder Remote-Zustand benutzt werden, wird derselbe
+ * Connection-Lock wie im Worker gewonnen und danach der kanonische Snapshot
+ * fuer exakt id+guild erneut gelesen. Busy bedeutet bewusst skip bis zum
+ * naechsten Poll; Lock-/DB-/Remote-Fehler werden vom aeusseren Loop isoliert.
+ */
+async function reconcileConnection(candidate: { id: string; guildId: string }): Promise<void> {
+  const lock = await tryAcquireNitradoConfigMutationLock(candidate.id);
+  if (!lock) {
+    logger.debug(`Whitelist-Reconciliation fuer ${candidate.id} uebersprungen: Connection ist gerade busy.`);
+    return;
+  }
+
+  try {
+    const fresh = await prisma.nitradoConnection.findFirst({
+      where: {
+        id: candidate.id,
+        guildId: candidate.guildId,
+        status: 'ACTIVE',
+        nitradoServerId: { not: null },
+        serverSettings: { some: { whitelistActive: true } },
+      },
+      select: {
+        id: true,
+        guildId: true,
+        encryptedToken: true,
+        nitradoServerId: true,
+      },
+    });
+    if (!fresh) return;
+
+    await reconcileLockedConnection(fresh);
+  } finally {
+    await lock.release();
+  }
+}
+
 export async function runWhitelistSyncOnce(): Promise<void> {
   if (running) return;
   running = true;
   try {
-    // Globaler Scheduler iteriert bewusst alle Guilds, jede Folgeoperation ist
-    // danach strikt auf guildId+nitradoConnId gebunden.
+    // Globaler Scheduler iteriert bewusst alle Guilds. Dieser Scan ist nur
+    // Kandidatenfindung; Token und Service-ID werden erst nach Lockgewinn frisch
+    // gelesen und niemals aus diesem potentiell veralteten Snapshot benutzt.
     // eslint-disable-next-line local/no-unscoped-prisma-query -- globaler Scheduler, Scope wird pro Connection gebunden
     const conns = await prisma.nitradoConnection.findMany({
       where: {
@@ -165,8 +215,6 @@ export async function runWhitelistSyncOnce(): Promise<void> {
       select: {
         id: true,
         guildId: true,
-        encryptedToken: true,
-        nitradoServerId: true,
       },
     });
 
