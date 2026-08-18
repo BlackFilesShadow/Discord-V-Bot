@@ -45,7 +45,7 @@ jest.mock('../../src/config', () => ({
 }));
 
 jest.mock('../../src/utils/security', () => ({
-  decrypt: (...args: unknown[]) => decryptMock(...args),
+  decrypt: (ciphertext: string, key: string) => decryptMock(ciphertext, key),
 }));
 
 jest.mock('../../src/utils/logger', () => ({
@@ -58,7 +58,7 @@ jest.mock('../../src/modules/nitrado/nitradoClient', () => ({
 }));
 
 jest.mock('../../src/modules/nitrado/configMutationLock', () => ({
-  tryAcquireNitradoConfigMutationLock: (...args: unknown[]) => acquireConnectionLock(...args),
+  tryAcquireNitradoConfigMutationLock: (nitradoConnId: string) => acquireConnectionLock(nitradoConnId),
 }));
 
 import { runWhitelistSyncOnce } from '../../src/modules/whitelist/whitelistSyncCron';
