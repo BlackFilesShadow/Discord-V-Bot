@@ -25,6 +25,7 @@ import {
   acquireMirrorSnapshotLease,
   finalizeMirrorSnapshotLease,
   MIRROR_HEARTBEAT_MS,
+  releaseMirrorSnapshotLease,
   renewMirrorSnapshotLease,
 } from './mirrorLease';
 import {
@@ -64,15 +65,9 @@ const ROOTS = ['/']; // Nitrado liefert ab Server-Root rekursiv durchgehbar
  * und startet keinen zweiten Remote-Lauf.
  */
 export async function startSnapshot(opts: SnapshotOptions): Promise<{ snapshotId: string }> {
-  // Nitrado-1R: Token, kanonische Service-ID und Binding-Version werden unter
-  // der gemeinsamen kurzen Config-Lock-Grenze gelesen. Das lange Remote-I/O
-  // laeuft danach weiterhin ohne Advisory-Lock.
   const binding = await readCurrentAdmBinding({ id: opts.nitradoConnId, guildId: opts.guildId });
   if (!binding) throw new Error('NitradoConnection ist nicht ACTIVE oder hat keine kanonische Service-ID.');
 
-  // Nitrado-1T: Persistente Singleflight-Grenze + Crash-Recovery. Ein aktiver
-  // Lauf wird wiederverwendet; eine abgelaufene Lease terminalisiert einen
-  // verwaisten RUNNING-Snapshot und etabliert genau einen Ersatzlauf.
   const lease = await acquireMirrorSnapshotLease({
     guildId: opts.guildId,
     nitradoConnId: opts.nitradoConnId,
@@ -86,7 +81,7 @@ export async function startSnapshot(opts: SnapshotOptions): Promise<{ snapshotId
   try {
     await withFreshAdmBinding(binding, async () => undefined);
   } catch (error) {
-    await finalizeMirrorSnapshotLease({
+    const finalized = await finalizeMirrorSnapshotLease({
       guildId: binding.guildId,
       nitradoConnId: binding.id,
       snapshotId: lease.snapshotId,
@@ -100,11 +95,17 @@ export async function startSnapshot(opts: SnapshotOptions): Promise<{ snapshotId
       errorCount: 1,
       lastError: `Binding vor Mirror-Start stale: ${(error as Error).message}`,
     });
+    if (finalized) {
+      await releaseMirrorSnapshotLease({
+        guildId: binding.guildId,
+        nitradoConnId: binding.id,
+        snapshotId: lease.snapshotId,
+        leaseToken: lease.leaseToken,
+      });
+    }
     throw error;
   }
 
-  // Hintergrund-Lauf — wir warten nicht. Lease-Token und originaler Binding-
-  // Snapshot werden bis zur atomaren Finalisierung/AI-Indexierung mitgefuehrt.
   void runSnapshot(lease.snapshotId, binding, lease.leaseToken)
     .catch(err => {
       logger.error('[NitradoMirror] Snapshot abgebrochen', err as Error);
@@ -149,7 +150,6 @@ async function runSnapshot(
   try {
     await heartbeat(true);
 
-    // 1. Service-Meta + Gameserver-Settings (komplett, ein Call)
     const [serviceMeta, gameserver] = await Promise.all([
       client.getServiceMeta(serviceId).catch(e => { errorCount++; lastError = String((e as Error).message); return null; }),
       client.getGameserver(serviceId).catch(e => { errorCount++; lastError = String((e as Error).message); return null; }),
@@ -164,7 +164,6 @@ async function runSnapshot(
       },
     });
 
-    // 2. Verzeichnisbaum rekursiv durchwandern (BFS, sequenziell zum Schonen der API)
     const queue: string[] = [...ROOTS];
     const seenDirs = new Set<string>();
 
@@ -194,7 +193,6 @@ async function runSnapshot(
         continue;
       }
 
-      // Verzeichnis selbst eintragen (für Browser)
       try {
         await prisma.nitradoSnapshotFile.create({
           data: {
@@ -216,7 +214,6 @@ async function runSnapshot(
           continue;
         }
 
-        // Datei
         totalFiles++;
         totalBytes += BigInt(entry.size);
 
@@ -238,19 +235,41 @@ async function runSnapshot(
           continue;
         }
 
+        let buf: Buffer;
         try {
-          const buf = await client.downloadFile(serviceId, fullPath, MAX_FILE_BYTES);
-          await heartbeat();
+          buf = await client.downloadFile(serviceId, fullPath, MAX_FILE_BYTES);
+        } catch (e) {
+          errorCount++;
+          lastError = `download ${fullPath}: ${(e as Error).message}`;
+          logger.warn('[NitradoMirror] download fehlgeschlagen', { fullPath, err: (e as Error).message });
+          await prisma.nitradoSnapshotFile.create({
+            data: {
+              snapshotId,
+              path: fullPath,
+              name: entry.name,
+              parentDir: dir,
+              isDir: false,
+              sizeBytes: BigInt(entry.size),
+              modifiedAt: entry.modified_at ? new Date(entry.modified_at * 1000) : null,
+              mimeGuess: guessMimeByExt(entry.name),
+              errorMsg: lastError,
+            },
+          });
+          continue;
+        }
+
+        // Lease-Verlust ist kein Downloadfehler und darf deshalb niemals vom
+        // Datei-Errorpfad geschluckt werden.
+        await heartbeat();
+
+        try {
           const hash = sha256(buf);
           const text = looksLikeText(buf);
           const mime = guessMimeByExt(entry.name);
           let storedPath: string | null = null;
           let inlineText: string | null = null;
 
-          if (text && buf.length <= INLINE_TEXT_BYTES) {
-            inlineText = buf.toString('utf8');
-          }
-          // immer auch als Blob ablegen (lückenlose Kopie, egal ob Text oder Binär)
+          if (text && buf.length <= INLINE_TEXT_BYTES) inlineText = buf.toString('utf8');
           storedPath = await storeBlob(connId, hash, buf);
           storedBytes += BigInt(buf.length);
 
@@ -272,8 +291,8 @@ async function runSnapshot(
           });
         } catch (e) {
           errorCount++;
-          lastError = `download ${fullPath}: ${(e as Error).message}`;
-          logger.warn('[NitradoMirror] download fehlgeschlagen', { fullPath, err: (e as Error).message });
+          lastError = `persist ${fullPath}: ${(e as Error).message}`;
+          logger.warn('[NitradoMirror] Datei konnte lokal nicht persistiert werden', { fullPath, err: (e as Error).message });
           await prisma.nitradoSnapshotFile.create({
             data: {
               snapshotId,
@@ -289,12 +308,9 @@ async function runSnapshot(
           });
         }
 
-        // sanftes Throttling — 50ms zwischen Files
         await new Promise(r => setTimeout(r, 50));
       }
 
-      // Zwischenstand persistieren (alle 100 Verzeichnisse), aber niemals einen
-      // bereits durch Recovery terminalisierten Snapshot wieder anfassen.
       if (totalDirs % 100 === 0) {
         await prisma.nitradoSnapshot.updateMany({
           where: { id: snapshotId, guildId, nitradoConnId: connId, status: 'RUNNING' },
@@ -310,9 +326,6 @@ async function runSnapshot(
     status = 'FAILED';
     logger.error('[NitradoMirror] Snapshot fehlgeschlagen', e as Error);
   } finally {
-    // Nitrado-1T: Finalisierung ist Lease-CAS. Nur der aktuelle Lease-Inhaber
-    // darf RUNNING terminalisieren. Ein alter, nach Recovery weiterlaufender
-    // Prozess erhaelt false und darf danach insbesondere nicht indexieren.
     const finalized = await finalizeMirrorSnapshotLease({
       guildId,
       nitradoConnId: connId,
@@ -346,22 +359,38 @@ async function runSnapshot(
       oversizeFiles, errorCount,
     });
 
-    // AI-14/1R/1T: Ein abgeschlossener Mirror-Snapshot darf LIVE_SERVER-Knowledge
-    // nur erzeugen, wenn er die aktuelle Mirror-Lease erfolgreich finalisiert hat
-    // UND exakt die am Start verwendete Token-/Service-/Binding-Generation noch
-    // kanonisch ist. Der Indexer prueft die Binding-Seite erneut vor dem Commit.
-    if (status === 'OK' || status === 'PARTIAL') {
-      try {
-        const { indexNitradoSnapshotKnowledge } = await import('../../ai/liveServerKnowledgeIndex.js');
-        await indexNitradoSnapshotKnowledge({ snapshotId, guildId, nitradoConnId: connId, binding });
-      } catch (e) {
-        logger.warn('[AI-14] Live-Server-Knowledge konnte nicht aktualisiert werden', {
-          snapshotId,
-          guildId,
-          nitradoConnId: connId,
-          e: String(e),
-        });
+    try {
+      if (status === 'OK' || status === 'PARTIAL') {
+        try {
+          const { indexNitradoSnapshotKnowledge } = await import('../../ai/liveServerKnowledgeIndex.js');
+          await indexNitradoSnapshotKnowledge({
+            snapshotId,
+            guildId,
+            nitradoConnId: connId,
+            binding,
+            mirrorLeaseToken: leaseToken,
+          });
+        } catch (e) {
+          logger.warn('[AI-14] Live-Server-Knowledge konnte nicht aktualisiert werden', {
+            snapshotId,
+            guildId,
+            nitradoConnId: connId,
+            e: String(e),
+          });
+        }
       }
+    } finally {
+      // Singleflight endet erst nach dem geordneten Knowledge-Commit. Dadurch
+      // kann kein neuer Snapshot denselben Generation-Stand ueberholen.
+      await releaseMirrorSnapshotLease({
+        guildId,
+        nitradoConnId: connId,
+        snapshotId,
+        leaseToken,
+      }).catch((error) => {
+        logger.warn('[NitradoMirror] Lease-Release fehlgeschlagen', { snapshotId, e: String(error) });
+        return false;
+      });
     }
   }
 }
