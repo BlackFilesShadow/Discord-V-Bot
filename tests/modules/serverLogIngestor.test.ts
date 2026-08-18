@@ -85,10 +85,13 @@ describe('serverLogIngestor — atomare Persistierung', () => {
   function makeClient() {
     const seen = new Set<string>();
     const calls = { createMany: 0, upsert: 0 };
+    let lastRows: unknown[] = [];
+    let lastCursorArgs: unknown = null;
     const client: AdmPersistClient = {
       admEvent: {
         createMany: async ({ data, skipDuplicates }) => {
           calls.createMany++;
+          lastRows = data;
           let count = 0;
           for (const row of data as Array<{ eventKey: string }>) {
             if (skipDuplicates && seen.has(row.eventKey)) continue;
@@ -98,23 +101,66 @@ describe('serverLogIngestor — atomare Persistierung', () => {
           return { count };
         },
       },
-      admSourceCursor: { upsert: async () => { calls.upsert++; return {}; } },
+      admSourceCursor: {
+        upsert: async (args) => {
+          calls.upsert++;
+          lastCursorArgs = args;
+          return {};
+        },
+      },
       $transaction: async (fn) => fn(client),
     };
-    return { client, calls };
+    return {
+      client,
+      calls,
+      get lastRows() { return lastRows; },
+      get lastCursorArgs() { return lastCursorArgs; },
+    };
   }
 
   it('zweifache Persistierung derselben Events fuegt nur einmal ein (Idempotenz)', async () => {
     const content = fixture('vanilla_pc.ADM');
     const res: IngestResult = ingestFullFile(content, 0, { fileName: 'vanilla_pc.ADM' });
-    const { client, calls } = makeClient();
+    const holder = makeClient();
     const scope = { guildId: 'g1', nitradoConnId: 'c1' };
     const meta = { fileIdentity: 'fid', fileName: 'vanilla_pc.ADM', lastModifiedAt: 1, fileSize: 999 };
 
-    const r1 = await persistAdmEvents(client, scope, meta, res, 'fp');
-    const r2 = await persistAdmEvents(client, scope, meta, res, 'fp');
+    const r1 = await persistAdmEvents(holder.client, scope, meta, res, 'fp');
+    const r2 = await persistAdmEvents(holder.client, scope, meta, res, 'fp');
     expect(r1.inserted).toBe(10);
     expect(r2.inserted).toBe(0);
-    expect(calls.upsert).toBe(2); // Cursor immer aktualisiert
+    expect(holder.calls.upsert).toBe(2); // Cursor immer aktualisiert
+  });
+
+  it('trennt namespaceten Event-Source-Key vom echten Cursor-Dateinamen', async () => {
+    const content = 'AdminLog started on 2026-07-01 at 18:00:00\n18:00:12 | Player "Alpha"(id=1) is connected\n';
+    const res = ingestFullFile(content, 0, { fileName: 'DayZServer.ADM' });
+    const holder = makeClient();
+    const sourceIdentity = 'adm-binding:2:DayZServer.ADM';
+
+    await persistAdmEvents(
+      holder.client,
+      { guildId: 'g1', nitradoConnId: 'c1' },
+      {
+        fileIdentity: sourceIdentity,
+        fileName: 'DayZServer.ADM',
+        sourceFile: sourceIdentity,
+        lastModifiedAt: 1,
+        fileSize: Buffer.byteLength(content, 'utf8'),
+      },
+      res,
+      'fp',
+    );
+
+    expect(holder.lastRows).toEqual(expect.arrayContaining([
+      expect.objectContaining({ sourceFile: sourceIdentity }),
+    ]));
+    expect(holder.lastCursorArgs).toEqual(expect.objectContaining({
+      create: expect.objectContaining({
+        fileIdentity: sourceIdentity,
+        fileName: 'DayZServer.ADM',
+      }),
+      update: expect.objectContaining({ fileName: 'DayZServer.ADM' }),
+    }));
   });
 });

@@ -110,6 +110,12 @@ export interface AdmEventScope {
 export interface AdmSourceMeta {
   fileIdentity: string;
   fileName: string;
+  /**
+   * Optionaler persistierter Event-Source-Key. Standard bleibt der echte
+   * Dateiname; der Live-Pfad kann fuer spaetere Service-Bindings einen
+   * namespaceten Wert verwenden, ohne Cursor-Diagnosefelder zu veraendern.
+   */
+  sourceFile?: string;
   lastModifiedAt: number;
   fileSize: number;
 }
@@ -131,7 +137,7 @@ export async function persistAdmEvents(
     eventKey: computeEventKey(scope.guildId, scope.nitradoConnId, meta.fileIdentity, event.byteStart, event.rawLine),
     guildId: scope.guildId,
     nitradoConnId: scope.nitradoConnId,
-    sourceFile: meta.fileName,
+    sourceFile: meta.sourceFile ?? meta.fileName,
     sourceByteStart: BigInt(event.byteStart),
     sourceByteEnd: BigInt(event.byteEnd),
     occurredAt: event.occurredAt,

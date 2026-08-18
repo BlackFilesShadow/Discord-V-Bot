@@ -19,7 +19,7 @@ jest.mock('../../src/utils/security', () => ({
 }));
 
 jest.mock('../../src/utils/logger', () => ({
-  logger: { info: jest.fn(), warn: jest.fn(), error: jest.fn() },
+  logger: { info: jest.fn(), debug: jest.fn(), warn: jest.fn(), error: jest.fn() },
   logAudit: jest.fn(),
 }));
 
@@ -40,14 +40,14 @@ const findConnections = prisma.nitradoConnection.findMany as jest.Mock;
 describe('ADM V2 single-source discovery', () => {
   beforeEach(() => jest.clearAllMocks());
 
-  it('fragt alle aktiven gebundenen Nitrado-Connections ab statt nur Feed-Configs', async () => {
+  it('scannt nur stabile IDs; Token und Service duerfen nicht aus dem globalen Sweep stammen', async () => {
     findConnections.mockResolvedValue([]);
 
     await runAdmLiveSyncOnce();
 
     expect(findConnections).toHaveBeenCalledWith({
       where: { status: 'ACTIVE', nitradoServerId: { not: null } },
-      select: { id: true, guildId: true, encryptedToken: true, nitradoServerId: true },
+      select: { id: true, guildId: true },
     });
   });
 });
