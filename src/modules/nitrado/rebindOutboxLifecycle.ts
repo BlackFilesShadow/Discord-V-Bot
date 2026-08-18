@@ -64,7 +64,11 @@ export async function prepareNitradoRemoteStateForServiceRebind(
   client: NitradoOutboxTxClient,
   scope: { guildId: string; nitradoConnId: string },
 ): Promise<NitradoRebindLifecycleResult> {
-  const tx = client as RebindLifecycleClient;
+  // Prisma-TransactionClients besitzen die zusaetzlichen Fachmodelle zur
+  // Laufzeit. Die bewusst zweistufige Assertion macht diese Adapter-Grenze fuer
+  // TypeScript explizit, ohne die generische Outbox-Schnittstelle kuenstlich um
+  // Whitelist-/Ban-Modelle zu verbreitern.
+  const tx = client as unknown as RebindLifecycleClient;
 
   // Diese Beobachtungen gehoeren zum alten Service und werden vor der
   // Outbox-Barriere invalidiert. Da der Aufrufer dieselbe DB-Transaktion haelt,
@@ -92,7 +96,7 @@ export async function prepareNitradoRemoteStateForServiceRebind(
   });
 
   return withNitradoOutboxConnectionLock(client, scope, async txBase => {
-    const lockedTx = txBase as RebindLifecycleClient;
+    const lockedTx = txBase as unknown as RebindLifecycleClient;
 
     const running = await lockedTx.nitradoJob.findFirst({
       where: {
