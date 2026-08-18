@@ -1,3 +1,8 @@
+import {
+  deleteGeneratedLiveServerKnowledge,
+  type LiveServerKnowledgeLifecycleClient,
+} from '../../ai/liveServerKnowledgeLifecycle';
+
 export interface AdmBindingScope {
   guildId: string;
   nitradoConnId: string;
@@ -10,7 +15,7 @@ export interface AdmBindingStateRow {
   currentServiceId: string | null;
 }
 
-export interface AdmBindingStateClient {
+export interface AdmBindingStateClient extends LiveServerKnowledgeLifecycleClient {
   nitradoAdmBindingState: {
     findUnique(args: unknown): Promise<AdmBindingStateRow | null>;
     create(args: unknown): Promise<AdmBindingStateRow>;
@@ -26,6 +31,8 @@ export interface AdmBindingStateClient {
  * Backward compatibility:
  * - der erste Zustand startet immer auf Version 0
  * - nur ein tatsaechlicher Service-Wechsel erhoeht die Version
+ * - vor einem echten Service-Wechsel wird systemgeneriertes LIVE_SERVER-Wissen
+ *   fuer die alte Generation fail-closed entfernt
  */
 export async function syncAdmBindingState(
   client: AdmBindingStateClient,
@@ -50,6 +57,12 @@ export async function syncAdmBindingState(
     });
   }
   if (existing.currentServiceId === currentServiceId) return existing;
+
+  // Nitrado-1S: stale Mirrorwissen darf eine erfolgreiche Service-Umbindung
+  // niemals ueberleben. In Repository-Mutationen ist `client` derselbe Prisma-
+  // TransactionClient wie der anschliessende Binding-Update; im read-only
+  // Repair-Pfad bleibt die Reihenfolge fail-closed (Wissen weg vor Generation).
+  await deleteGeneratedLiveServerKnowledge(client, scope.guildId, scope.nitradoConnId);
 
   return client.nitradoAdmBindingState.update({
     where: key,

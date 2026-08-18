@@ -16,6 +16,7 @@ function functionBody(source: string, startAnchor: string, endAnchor: string): s
 describe('Nitrado-1R mirror -> LIVE_SERVER binding fence', () => {
   const snapshotService = read('src/modules/nitrado/mirror/snapshotService.ts');
   const liveIndex = read('src/modules/ai/liveServerKnowledgeIndex.ts');
+  const constants = read('src/modules/ai/liveServerKnowledgeConstants.ts');
 
   it('captures mirror token/service/generation only through the canonical ACTIVE binding fence', () => {
     const start = functionBody(snapshotService, 'export async function startSnapshot', 'async function runSnapshot');
@@ -47,7 +48,7 @@ describe('Nitrado-1R mirror -> LIVE_SERVER binding fence', () => {
     const fileRead = body.indexOf('prisma.nitradoSnapshotFile.findMany');
     const fence = body.indexOf('withFreshAdmBinding(input.binding');
     const transaction = body.indexOf('prisma.$transaction', fence);
-    const firstDelete = body.indexOf('tx.guildKnowledgeProvenance.deleteMany', transaction);
+    const replacement = body.indexOf('deleteGeneratedLiveServerKnowledge(', transaction);
     const firstCreate = body.indexOf('tx.guildKnowledge.create', transaction);
 
     expect(identity).toBeGreaterThanOrEqual(0);
@@ -56,13 +57,13 @@ describe('Nitrado-1R mirror -> LIVE_SERVER binding fence', () => {
     expect(fileRead).toBeGreaterThan(serviceCheck);
     expect(fence).toBeGreaterThan(fileRead);
     expect(transaction).toBeGreaterThan(fence);
-    expect(firstDelete).toBeGreaterThan(transaction);
-    expect(firstCreate).toBeGreaterThan(transaction);
+    expect(replacement).toBeGreaterThan(transaction);
+    expect(firstCreate).toBeGreaterThan(replacement);
   });
 
   it('version-stamps generated LIVE_SERVER provenance so later lifecycle gates can fail closed by generation', () => {
-    expect(liveIndex).toContain('function sourceVersion(bindingVersion: number, snapshotId: string, sha256: string)');
-    expect(liveIndex).toContain('`b${bindingVersion}:${snapshotId}:${sha256}`');
-    expect(liveIndex).toContain('sourceVersion(input.binding.bindingVersion, input.snapshotId, document.sha256)');
+    expect(constants).toContain('export function liveServerSourceVersion(bindingVersion: number, snapshotId: string, sha256: string)');
+    expect(constants).toContain('const prefix = `b${bindingVersion}:${snapshot}:`;');
+    expect(liveIndex).toContain('liveServerSourceVersion(input.binding.bindingVersion, input.snapshotId, document.sha256)');
   });
 });

@@ -7,6 +7,12 @@ const bindingFindUnique = jest.fn();
 const bindingCreate = jest.fn();
 const bindingUpdate = jest.fn();
 const profileUpdateMany = jest.fn();
+const scopeFindMany = jest.fn();
+const scopeDeleteMany = jest.fn();
+const provenanceFindMany = jest.fn();
+const provenanceDeleteMany = jest.fn();
+const knowledgeFindMany = jest.fn();
+const knowledgeDeleteMany = jest.fn();
 const transaction = jest.fn();
 const encrypt = jest.fn();
 const acquireConfigLock = jest.fn();
@@ -21,6 +27,9 @@ const tx = {
     update: bindingUpdate,
   },
   nitradoAdmProfileConfig: { updateMany: profileUpdateMany },
+  guildKnowledgeScope: { findMany: scopeFindMany, deleteMany: scopeDeleteMany },
+  guildKnowledgeProvenance: { findMany: provenanceFindMany, deleteMany: provenanceDeleteMany },
+  guildKnowledge: { findMany: knowledgeFindMany, deleteMany: knowledgeDeleteMany },
 };
 
 jest.mock('../../src/database/prisma', () => ({
@@ -38,6 +47,9 @@ jest.mock('../../src/database/prisma', () => ({
       update: bindingUpdate,
     },
     nitradoAdmProfileConfig: { updateMany: profileUpdateMany },
+    guildKnowledgeScope: { findMany: scopeFindMany, deleteMany: scopeDeleteMany },
+    guildKnowledgeProvenance: { findMany: provenanceFindMany, deleteMany: provenanceDeleteMany },
+    guildKnowledge: { findMany: knowledgeFindMany, deleteMany: knowledgeDeleteMany },
     $transaction: transaction,
   },
 }));
@@ -100,6 +112,12 @@ beforeEach(() => {
     currentServiceId: null,
   });
   profileUpdateMany.mockResolvedValue({ count: 1 });
+  scopeFindMany.mockResolvedValue([]);
+  scopeDeleteMany.mockResolvedValue({ count: 0 });
+  provenanceFindMany.mockResolvedValue([]);
+  provenanceDeleteMany.mockResolvedValue({ count: 0 });
+  knowledgeFindMany.mockResolvedValue([]);
+  knowledgeDeleteMany.mockResolvedValue({ count: 0 });
   transaction.mockImplementation(async (cb: (client: typeof tx) => unknown) => cb(tx));
   connectionFindUnique.mockResolvedValue({ id: CONN_ID });
   connectionFindFirst.mockResolvedValue(ROW);
@@ -107,8 +125,12 @@ beforeEach(() => {
   acquireConfigLock.mockResolvedValue({ release: releaseConfigLock });
 });
 
-describe('Nitrado-1A/1C/1M repository token rotation atomicity', () => {
-  it('persists token + service reset + ADM binding rollover under the connection lock', async () => {
+describe('Nitrado-1A/1C/1M/1S repository token rotation atomicity', () => {
+  it('persists token + service reset + LIVE_SERVER purge + ADM binding rollover under the connection lock', async () => {
+    scopeFindMany.mockResolvedValueOnce([{ knowledgeId: 'mirror-1' }]);
+    knowledgeFindMany.mockResolvedValueOnce([{ id: 'mirror-1' }]);
+    provenanceFindMany.mockResolvedValueOnce([{ knowledgeId: 'mirror-1' }]);
+
     await expect(updateToken(GUILD as never, 1, 'new-valid-token', {
       resetServiceId: true,
       expectedId: CONN_ID as never,
@@ -133,6 +155,16 @@ describe('Nitrado-1A/1C/1M repository token rotation atomicity', () => {
         lastErrorMessage: null,
         nitradoServerId: null,
         serviceId: null,
+      },
+    });
+    expect(provenanceDeleteMany).toHaveBeenCalledWith({
+      where: { guildId: GUILD, knowledgeId: { in: ['mirror-1'] } },
+    });
+    expect(knowledgeDeleteMany).toHaveBeenCalledWith({
+      where: {
+        guildId: GUILD,
+        id: { in: ['mirror-1'] },
+        createdBy: 'SYSTEM:AI14_NITRADO_SNAPSHOT',
       },
     });
     expect(bindingUpdate).toHaveBeenCalledWith(expect.objectContaining({
@@ -168,7 +200,7 @@ describe('Nitrado-1A/1C/1M repository token rotation atomicity', () => {
     expect(releaseConfigLock).not.toHaveBeenCalled();
   });
 
-  it('does not roll ADM binding when the new token still owns the service', async () => {
+  it('does not roll ADM binding or purge LIVE_SERVER knowledge when the new token still owns the service', async () => {
     connectionFindFirst.mockResolvedValue({ ...ROW, nitradoServerId: '12345' });
 
     await updateToken(GUILD as never, 1, 'new-valid-token', {
@@ -183,6 +215,9 @@ describe('Nitrado-1A/1C/1M repository token rotation atomicity', () => {
     expect(bindingFindUnique).not.toHaveBeenCalled();
     expect(bindingUpdate).not.toHaveBeenCalled();
     expect(profileUpdateMany).not.toHaveBeenCalled();
+    expect(scopeFindMany).not.toHaveBeenCalled();
+    expect(provenanceDeleteMany).not.toHaveBeenCalled();
+    expect(knowledgeDeleteMany).not.toHaveBeenCalled();
     expect(releaseConfigLock).toHaveBeenCalledTimes(1);
   });
 
