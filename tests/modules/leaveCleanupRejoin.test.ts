@@ -122,11 +122,12 @@ describe('Leave-1G rejoin freshness finalizer', () => {
     expect(profileFindUnique).not.toHaveBeenCalled();
   });
 
-  it('treats an old still-active profile as pre-leave state and restores the leave marker', async () => {
+  it('treats an old still-active profile as pre-leave state and restores the leave marker through exact snapshot CAS', async () => {
+    const joinedAt = new Date('2026-08-01T10:00:00.000Z');
     profileFindUnique.mockResolvedValue({
       isLeft: false,
       leftAt: null,
-      joinedAt: new Date('2026-08-01T10:00:00.000Z'),
+      joinedAt,
     });
 
     const result = await finalizeLeaveRejoinState(claimedRequest(), GUILD, USER);
@@ -135,7 +136,13 @@ describe('Leave-1G rejoin freshness finalizer', () => {
     expect(xpDeleteMany).toHaveBeenCalledWith({ where: { userId: 'internal-user', guildId: GUILD } });
     expect(levelDeleteMany).toHaveBeenCalledWith({ where: { userId: 'internal-user', guildId: GUILD } });
     expect(profileUpdateMany).toHaveBeenCalledWith({
-      where: { guildId: GUILD, discordId: USER },
+      where: {
+        guildId: GUILD,
+        discordId: USER,
+        isLeft: false,
+        joinedAt,
+        leftAt: null,
+      },
       data: { messageCount: 0, isLeft: true, leftAt: CREATED },
     });
     expect(levelUpsert).not.toHaveBeenCalled();
@@ -143,10 +150,11 @@ describe('Leave-1G rejoin freshness finalizer', () => {
 
   it('preserves last-known goodbye identity and an existing leftAt while clearing historical state', async () => {
     const leftAt = new Date('2026-08-18T06:00:05.000Z');
+    const joinedAt = new Date('2026-08-01T10:00:00.000Z');
     profileFindUnique.mockResolvedValue({
       isLeft: true,
       leftAt,
-      joinedAt: new Date('2026-08-01T10:00:00.000Z'),
+      joinedAt,
     });
     xpDeleteMany.mockResolvedValue({ count: 2 });
     levelDeleteMany.mockResolvedValue({ count: 1 });
@@ -155,9 +163,30 @@ describe('Leave-1G rejoin freshness finalizer', () => {
 
     expect(result).toEqual({ rejoined: false, profile: 'RESET', levelBaseline: false });
     expect(profileUpdateMany).toHaveBeenCalledWith({
-      where: { guildId: GUILD, discordId: USER },
+      where: {
+        guildId: GUILD,
+        discordId: USER,
+        isLeft: true,
+        joinedAt,
+        leftAt,
+      },
       data: { messageCount: 0, isLeft: true, leftAt },
     });
+    expect(levelUpsert).not.toHaveBeenCalled();
+  });
+
+  it('retries instead of overwriting a concurrent rejoin that changes the previously read profile snapshot', async () => {
+    const joinedAt = new Date('2026-08-01T10:00:00.000Z');
+    profileFindUnique.mockResolvedValue({
+      isLeft: true,
+      leftAt: new Date('2026-08-18T06:00:05.000Z'),
+      joinedAt,
+    });
+    profileUpdateMany.mockResolvedValue({ count: 0 });
+
+    await expect(finalizeLeaveRejoinState(claimedRequest(), GUILD, USER))
+      .rejects.toThrow(/Profil-CAS verloren/);
+
     expect(levelUpsert).not.toHaveBeenCalled();
   });
 
