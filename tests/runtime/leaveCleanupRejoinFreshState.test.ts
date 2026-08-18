@@ -36,12 +36,12 @@ describe('Leave-1G rejoin fresh-state architecture gate', () => {
     expect(goodbye).toBeGreaterThan(secondEnqueue);
   });
 
-  it('finalizes rejoin state after GUILD_DATA and rechecks it immediately before the completion receipt', () => {
+  it('finalizes the full fenced request after GUILD_DATA and rechecks it immediately before the completion receipt', () => {
     const guildCleanup = workerSource.indexOf('await cleanupGuildMemberData(guildId, discordId);');
-    const firstFinalize = workerSource.indexOf('await finalizeLeaveRejoinState(request.id, guildId, discordId);', guildCleanup);
+    const firstFinalize = workerSource.indexOf('await finalizeLeaveRejoinState(request, guildId, discordId);', guildCleanup);
     const advance = workerSource.indexOf("await advanceLeaveCleanupStep(request, 'GUILD_DATA');", firstFinalize);
     const completeBranch = workerSource.indexOf("if (details.step === 'COMPLETE')");
-    const secondFinalize = workerSource.indexOf('await finalizeLeaveRejoinState(request.id, guildId, discordId);', completeBranch);
+    const secondFinalize = workerSource.indexOf('await finalizeLeaveRejoinState(request, guildId, discordId);', completeBranch);
     const receipt = workerSource.indexOf('await completeLeaveCleanupRequest(', secondFinalize);
 
     expect(guildCleanup).toBeGreaterThanOrEqual(0);
@@ -51,9 +51,17 @@ describe('Leave-1G rejoin fresh-state architecture gate', () => {
     expect(receipt).toBeGreaterThan(secondFinalize);
   });
 
+  it('locks the exact claim before rejoin mutation and keeps legacy claimedAt fencing', () => {
+    expect(rejoinSource).toContain('readLeaveCleanupDetails(claimedRequest.details)');
+    expect(rejoinSource).toContain("const claimField = expectedDetails.claimToken ? 'claimToken' : 'claimedAt';");
+    expect(rejoinSource).toContain('expectedDetails.claimToken ?? expectedDetails.claimedAt');
+    expect(rejoinSource).toContain('jsonb_extract_path_text("details", $4)=$5');
+    expect(rejoinSource).toContain('FOR UPDATE');
+    expect(rejoinSource).toContain("AND \"status\"='IN_PROGRESS'");
+  });
+
   it('uses request.createdAt plus current GuildMemberProfile state as the rejoin lifecycle boundary', () => {
-    expect(rejoinSource).toContain("status: 'IN_PROGRESS'");
-    expect(rejoinSource).toContain('select: { createdAt: true }');
+    expect(rejoinSource).toContain('SELECT "createdAt"');
     expect(rejoinSource).toContain('profile.isLeft === false');
     expect(rejoinSource).toContain('profile.joinedAt.getTime() > request.createdAt.getTime()');
     expect(rejoinSource).toContain('joinedAt: { gt: request.createdAt }');
