@@ -109,26 +109,14 @@ function withoutLastError(details: LeaveCleanupDetails): LeaveCleanupDetails {
 }
 
 /**
- * Fencing-CAS fuer einen aktiven Claim. Neue Claims tragen einen zufaelligen
- * Token. Bereits vor Leave-1F laufende Legacy-Claims werden bis zum naechsten
- * Reclaim sicher ueber ihren persistierten claimedAt-Wert gefenced.
+ * Fencing-CAS fuer jeden aktiven Claim-Write.
+ *
+ * Moderne Claims werden immer auf Claim-Token UND exakt den Lease-Zeitstempel
+ * gefenced. Ein In-Memory-Snapshot ist damit unmittelbar ungueltig, sobald ein
+ * Heartbeat/Checkpoint claimedAt erneuert hat. Bereits vor Leave-1F laufende
+ * Legacy-Claims ohne Token bleiben ueber claimedAt kompatibel.
  */
 function claimFence(details: LeaveCleanupDetails): Prisma.DataDeletionRequestWhereInput {
-  if (details.claimToken) {
-    return { details: { path: ['claimToken'], equals: details.claimToken } };
-  }
-  if (details.claimedAt) {
-    return { details: { path: ['claimedAt'], equals: details.claimedAt } };
-  }
-  throw new Error('Leave-Cleanup Claim-Fence fehlt.');
-}
-
-/**
- * Recovery braucht neben dem stabilen Claim-Token auch exakt den gelesenen
- * Lease-Zeitstempel. Sonst koennte ein alter Recovery-Snapshot eine gerade
- * durch einen erfolgreichen Checkpoint erneuerte Lease dennoch zurueckholen.
- */
-function recoveryClaimFence(details: LeaveCleanupDetails): Prisma.DataDeletionRequestWhereInput {
   if (details.claimToken) {
     if (!details.claimedAt) throw new Error('Leave-Cleanup Claim-Zeitstempel fehlt.');
     return {
@@ -138,6 +126,14 @@ function recoveryClaimFence(details: LeaveCleanupDetails): Prisma.DataDeletionRe
       ],
     };
   }
+  if (details.claimedAt) {
+    return { details: { path: ['claimedAt'], equals: details.claimedAt } };
+  }
+  throw new Error('Leave-Cleanup Claim-Fence fehlt.');
+}
+
+/** Recovery verwendet exakt denselben Snapshot-Fence wie alle anderen Writes. */
+function recoveryClaimFence(details: LeaveCleanupDetails): Prisma.DataDeletionRequestWhereInput {
   return claimFence(details);
 }
 
@@ -327,9 +323,9 @@ export function leaveCleanupBackoffMs(attempt: number): number {
 
 /**
  * Persistiert einen erfolgreich abgeschlossenen Substep und erneuert zugleich
- * den Lease-Zeitstempel. Der Claim-Token bleibt stabil, aber Recovery darf den
- * Request danach erst wieder relativ zu diesem neuen Fortschrittszeitpunkt als
- * stale betrachten.
+ * den Lease-Zeitstempel strikt monoton. Ein sehr schneller Checkpoint darf den
+ * zuvor durch Heartbeat kuenstlich um 1ms vorgezogenen Lease niemals wieder
+ * zuruecksetzen.
  */
 export async function advanceLeaveCleanupStep(
   request: LeaveCleanupRequestLike,
@@ -340,15 +336,21 @@ export async function advanceLeaveCleanupStep(
   if (!details || details.step !== expectedStep) {
     throw new Error(`Leave-Cleanup Step-CAS ungueltig; erwartet ${expectedStep}.`);
   }
+  const fence = claimFence(details);
+  const previousClaimedAt = details.claimedAt ? Date.parse(details.claimedAt) : Number.NaN;
+  if (!Number.isFinite(previousClaimedAt)) {
+    throw new Error('Leave-Cleanup Claim-Zeitstempel ist ungueltig.');
+  }
+  const nextClaimedAt = new Date(Math.max(now.getTime(), previousClaimedAt + 1)).toISOString();
   const nextStep = NEXT_STEP[expectedStep];
   const nextDetails: LeaveCleanupDetails = {
     ...withoutLastError(details),
     step: nextStep,
     stage: 'RUNNING',
-    claimedAt: now.toISOString(),
+    claimedAt: nextClaimedAt,
   };
   const result = await prisma.dataDeletionRequest.updateMany({
-    where: { id: request.id, status: 'IN_PROGRESS', userId: request.userId, ...claimFence(details) },
+    where: { id: request.id, status: 'IN_PROGRESS', userId: request.userId, ...fence },
     data: { details: detailsJson(nextDetails) },
   });
   if (result.count !== 1) throw new Error('Leave-Cleanup Step-CAS verloren.');

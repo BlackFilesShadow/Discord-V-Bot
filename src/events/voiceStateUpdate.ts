@@ -4,6 +4,7 @@ import { logger, logAudit } from '../utils/logger';
 import { BotEvent } from '../types';
 import { calculateLevel } from '../modules/xp/xpManager';
 import { getLevelUpMessage } from '../modules/xp/levelMessages';
+import { hasOpenLeaveCleanupRequest } from '../modules/moderation/leaveCleanupGuard';
 
 /**
  * Voice-XP-Tracking (Sektion 8):
@@ -65,6 +66,13 @@ const voiceStateUpdateEvent: BotEvent = {
       if (!guildId) return;
 
       try {
+        // Leave-1G: Voice-Disconnect kann zeitgleich mit guildMemberRemove
+        // eintreffen. Solange fuer exakt Guild+Discord ein Cleanup offen oder
+        // FAILED ist, darf dieser spaete Voice-Abschluss keine neue XP-Epoche
+        // erzeugen. Ein Guard-DB-Fehler faellt in den Catch und ist damit
+        // ebenfalls fail-closed fuer XP.
+        if (await hasOpenLeaveCleanupRequest(guildId, userId)) return;
+
         // BUGFIX: Vorher findUnique → User ohne DB-Eintrag bekamen kein
         // Voice-XP. Jetzt: upsert stellt sicher, dass jeder aktive Voice-
         // Teilnehmer in der DB existiert. Konsistent zu Message-XP.

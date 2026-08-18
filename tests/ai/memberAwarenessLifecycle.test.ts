@@ -111,24 +111,58 @@ describe('User-1 member awareness lifecycle', () => {
     });
   });
 
-  it('does not carry unflushed pre-leave message deltas into a later rejoin phase', async () => {
+  it('lets activity update only an already-active exact guild profile and never creates/revives lifecycle state', async () => {
+    const m = member({ guildId: 'guild-activity', discordId: 'discord-activity' });
+    const now = jest.spyOn(Date, 'now').mockReturnValue(100_000);
+
+    await trackMemberActivity(m);
+    now.mockRestore();
+
+    expect(mockProfileUpsert).not.toHaveBeenCalled();
+    expect(mockProfileUpdateMany).toHaveBeenCalledWith({
+      where: {
+        guildId: 'guild-activity',
+        discordId: 'discord-activity',
+        isLeft: false,
+      },
+      data: expect.objectContaining({
+        messageCount: { increment: 1 },
+        username: 'Void',
+      }),
+    });
+    const payload = mockProfileUpdateMany.mock.calls[0][0];
+    expect(payload.data).not.toHaveProperty('isLeft');
+    expect(payload.data).not.toHaveProperty('leftAt');
+    expect(payload.data).not.toHaveProperty('joinedAt');
+  });
+
+  it('does not carry unflushed pre-leave message deltas into a later runtime phase', async () => {
     const m = member({ guildId: 'guild-delta', discordId: 'discord-delta' });
     const now = jest.spyOn(Date, 'now');
 
     now.mockReturnValue(100_000);
-    await trackMemberActivity(m); // first delta is flushed immediately
+    await trackMemberActivity(m); // erster Delta-Flush
     now.mockReturnValue(100_001);
-    await trackMemberActivity(m); // one delta remains pending
+    await trackMemberActivity(m); // ein Delta bleibt pending
 
     await markMemberLeft('guild-delta', 'discord-delta');
 
     now.mockReturnValue(200_000);
-    await trackMemberActivity(m); // rejoin/runtime phase: only one new delta may flush
+    await trackMemberActivity(m); // nach clearPending nur exakt ein neuer Delta
     now.mockRestore();
 
-    expect(mockProfileUpsert).toHaveBeenCalledTimes(2);
-    expect(mockProfileUpsert.mock.calls[1][0]).toEqual(expect.objectContaining({
-      update: expect.objectContaining({ messageCount: { increment: 1 } }),
+    expect(mockProfileUpdateMany).toHaveBeenCalledTimes(3);
+    expect(mockProfileUpdateMany.mock.calls[0][0]).toEqual(expect.objectContaining({
+      where: expect.objectContaining({ guildId: 'guild-delta', discordId: 'discord-delta', isLeft: false }),
+      data: expect.objectContaining({ messageCount: { increment: 1 } }),
+    }));
+    expect(mockProfileUpdateMany.mock.calls[1][0]).toEqual(expect.objectContaining({
+      where: { guildId: 'guild-delta', discordId: 'discord-delta', isLeft: false },
+      data: expect.objectContaining({ isLeft: true }),
+    }));
+    expect(mockProfileUpdateMany.mock.calls[2][0]).toEqual(expect.objectContaining({
+      where: expect.objectContaining({ guildId: 'guild-delta', discordId: 'discord-delta', isLeft: false }),
+      data: expect.objectContaining({ messageCount: { increment: 1 } }),
     }));
   });
 });

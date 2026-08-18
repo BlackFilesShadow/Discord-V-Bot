@@ -18,7 +18,7 @@ describe('Leave-1C/1E production ordering and reset invariants', () => {
     expect(workerSource).toContain('runLeaveLinkEconomyAfterConfirmedWhitelistStep');
     expect(workerSource).not.toContain('runLeaveLinkEconomyCleanupStep');
     const statsAdvance = workerSource.indexOf("advanceLeaveCleanupStep(request, 'STATS_SESSIONS')");
-    const economyCall = workerSource.indexOf('await runLeaveLinkEconomyAfterConfirmedWhitelistStep(');
+    const economyCall = workerSource.indexOf('() => runLeaveLinkEconomyAfterConfirmedWhitelistStep(');
     expect(statsAdvance).toBeGreaterThanOrEqual(0);
     expect(economyCall).toBeGreaterThan(statsAdvance);
   });

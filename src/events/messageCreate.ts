@@ -7,6 +7,7 @@ import { answerQuestion } from '../modules/ai/aiHandler';
 import { enrichDayz129FollowUp } from '../modules/ai/dayz129Catalog';
 import { buildServerUserContext } from '../modules/ai/contextBuilder';
 import { trackMemberActivity } from '../modules/ai/memberAwareness';
+import { hasOpenLeaveCleanupRequest } from '../modules/moderation/leaveCleanupGuard';
 import { listTriggers, findMatchingTrigger, isOnCooldown, renderTemplate } from '../modules/ai/triggers';
 import { resolveCustomEmotes } from '../modules/ai/emoteResolver';
 import { getLevelUpMessage, getMaxLevelRewardMessage } from '../modules/xp/levelMessages.js';
@@ -523,6 +524,11 @@ const messageCreateEvent: BotEvent = {
     // ===== SEKTION 8: XP-VERGABE (guild-getrennt) =====
     try {
       if (!msg.guildId) return;
+
+      // Leave-1G: Nach einem Rejoin darf Message-XP erst nach vollstaendigem
+      // Abschluss des vorherigen Leave-Cleanups wieder eine neue XP-Epoche
+      // schreiben. Bei Guard-DB-Fehler faellt der Catch fail-closed aus.
+      if (await hasOpenLeaveCleanupRequest(msg.guildId, msg.author.id)) return;
 
       const user = await prisma.user.upsert({
         where: { discordId: msg.author.id },

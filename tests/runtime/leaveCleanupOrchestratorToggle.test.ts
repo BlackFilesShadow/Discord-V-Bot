@@ -31,13 +31,22 @@ describe('Leave-1E productive orchestration + toggle wiring', () => {
     expect(v2Source).toContain("v2Router.use('/guilds/:guildId/leave-cleanup', leaveCleanupRouter);");
   });
 
-  it('makes OFF a true no-delete path and ON only a durable enqueue in guildMemberRemove', () => {
+  it('makes OFF a true no-delete path and ON only durable enqueue barriers in guildMemberRemove', () => {
     const configAt = eventSource.indexOf('await getLeaveCleanupConfig(');
-    const enabledAt = eventSource.indexOf('if (leaveCfg.deletePlayerDataOnLeave)');
-    const enqueueAt = eventSource.indexOf('await enqueueLeaveCleanupRequest(');
+    const assignmentAt = eventSource.indexOf('cleanupEnabled = leaveCfg.deletePlayerDataOnLeave;');
+    const firstEnabledAt = eventSource.indexOf('if (cleanupEnabled)', assignmentAt);
+    const firstEnqueueAt = eventSource.indexOf('await enqueueLeaveCleanupRequest(', firstEnabledAt);
+    const markLeftAt = eventSource.indexOf('await markMemberLeft(m.guild.id, m.user.id);');
+    const secondEnabledAt = eventSource.indexOf('if (cleanupEnabled)', markLeftAt);
+    const secondEnqueueAt = eventSource.indexOf('await enqueueLeaveCleanupRequest(', secondEnabledAt);
+
     expect(configAt).toBeGreaterThanOrEqual(0);
-    expect(enabledAt).toBeGreaterThan(configAt);
-    expect(enqueueAt).toBeGreaterThan(enabledAt);
+    expect(assignmentAt).toBeGreaterThan(configAt);
+    expect(firstEnabledAt).toBeGreaterThan(assignmentAt);
+    expect(firstEnqueueAt).toBeGreaterThan(firstEnabledAt);
+    expect(markLeftAt).toBeGreaterThan(firstEnqueueAt);
+    expect(secondEnabledAt).toBeGreaterThan(markLeftAt);
+    expect(secondEnqueueAt).toBeGreaterThan(secondEnabledAt);
     expect(eventSource).not.toContain('cleanupGuildMemberData');
     expect(eventSource).not.toContain('runLeaveWhitelistCleanupStep');
   });
@@ -50,11 +59,11 @@ describe('Leave-1E productive orchestration + toggle wiring', () => {
   });
 
   it('orders every destructive worker step before the pseudonymous completion receipt', () => {
-    const whitelist = workerSource.indexOf('await runLeaveWhitelistCleanupStep(');
-    const stats = workerSource.indexOf('await runLeaveStatsSessionsCleanupStep(');
-    const economy = workerSource.indexOf('await runLeaveLinkEconomyAfterConfirmedWhitelistStep(');
-    const guildData = workerSource.indexOf('await cleanupGuildMemberData(');
-    const complete = workerSource.indexOf('await completeLeaveCleanupRequest(');
+    const whitelist = workerSource.indexOf("if (details.step === 'WHITELIST')");
+    const stats = workerSource.indexOf("if (details.step === 'STATS_SESSIONS')");
+    const economy = workerSource.indexOf("if (details.step === 'LINK_ECONOMY')");
+    const guildData = workerSource.indexOf("if (details.step === 'GUILD_DATA')");
+    const complete = workerSource.indexOf("if (details.step === 'COMPLETE')");
     expect(whitelist).toBeGreaterThanOrEqual(0);
     expect(stats).toBeGreaterThan(whitelist);
     expect(economy).toBeGreaterThan(stats);

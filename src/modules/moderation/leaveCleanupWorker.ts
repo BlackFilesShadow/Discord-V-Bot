@@ -1,7 +1,9 @@
 import { config } from '../../config';
 import { logger } from '../../utils/logger';
 import { cleanupGuildMemberData } from './guildMemberCleanup';
+import { renewLeaveCleanupClaimLease } from './leaveCleanupLease';
 import { runLeaveLinkEconomyAfterConfirmedWhitelistStep } from './leaveCleanupLinkEconomy';
+import { finalizeLeaveRejoinState } from './leaveCleanupRejoin';
 import {
   advanceLeaveCleanupStep,
   claimNextLeaveCleanupRequest,
@@ -19,6 +21,7 @@ import { runLeaveWhitelistCleanupStep } from './leaveCleanupWhitelist';
 
 const POLL_INTERVAL_MS = 15_000;
 const RECOVERY_INTERVAL_MS = 60_000;
+const LEASE_HEARTBEAT_INTERVAL_MS = 60_000;
 const MAX_JOBS_PER_TICK = 10;
 let timer: NodeJS.Timeout | null = null;
 let running = false;
@@ -54,6 +57,62 @@ async function recoverStaleIfDue(now: Date = new Date()): Promise<number> {
 }
 
 /**
+ * Haelt den Claim waehrend eines potenziell langen destruktiven Substeps aktiv.
+ *
+ * - vor dem Step: sofortige CAS-Erneuerung
+ * - waehrenddessen: Heartbeat alle 60s (deutlich unter 5-Min-Stale-Grenze)
+ * - nach dem Step: laufenden Heartbeat abwarten und Claim erneut CAS-pruefen
+ *
+ * Jede erfolgreiche Erneuerung wird dem aufrufenden Worker sofort als neuer
+ * Request-Snapshot zurueckgegeben. Damit verwenden nachfolgende Defer/Retry/
+ * Advance/Finalizer niemals ein altes claimedAt. Verliert der Worker den Claim,
+ * bleibt der Step ohne weiteren Checkpoint retrybar/fail-closed.
+ */
+async function runWithLeaseHeartbeat<T>(
+  initialRequest: LeaveCleanupRequestLike,
+  guildId: string,
+  discordId: string,
+  onLease: (request: LeaveCleanupRequestLike) => void,
+  operation: () => Promise<T>,
+): Promise<T> {
+  let currentRequest = await renewLeaveCleanupClaimLease(initialRequest, guildId, discordId);
+  onLease(currentRequest);
+
+  let heartbeatError: unknown = null;
+  let heartbeatChain: Promise<void> = Promise.resolve();
+  const heartbeat = setInterval(() => {
+    heartbeatChain = heartbeatChain.then(async () => {
+      if (heartbeatError) return;
+      try {
+        currentRequest = await renewLeaveCleanupClaimLease(currentRequest, guildId, discordId);
+        onLease(currentRequest);
+      } catch (error) {
+        heartbeatError = error;
+      }
+    });
+  }, LEASE_HEARTBEAT_INTERVAL_MS);
+  heartbeat.unref?.();
+
+  try {
+    const result = await operation();
+    clearInterval(heartbeat);
+    await heartbeatChain;
+    if (heartbeatError) throw heartbeatError;
+
+    // Finaler Ownership-Check direkt nach dem Side-Effect. Das schliesst auch
+    // kurze Schritte, bei denen der periodische Timer noch nicht feuern musste.
+    currentRequest = await renewLeaveCleanupClaimLease(currentRequest, guildId, discordId);
+    onLease(currentRequest);
+    return result;
+  } catch (error) {
+    clearInterval(heartbeat);
+    await heartbeatChain;
+    if (heartbeatError) throw heartbeatError;
+    throw error;
+  }
+}
+
+/**
  * Fuehrt genau einen persistent geclaimten Request entlang seiner gespeicherten
  * Substep-Position fort. Jeder irreversible Schritt wird VOR dem naechsten
  * Destruktiv-Schritt persistiert, wodurch Restart-Recovery nie wieder bei einer
@@ -85,7 +144,13 @@ export async function processLeaveCleanupRequest(
       }
 
       if (details.step === 'WHITELIST') {
-        const result = await runLeaveWhitelistCleanupStep(guildId, discordId);
+        const result = await runWithLeaseHeartbeat(
+          request,
+          guildId,
+          discordId,
+          renewed => { request = renewed; },
+          () => runLeaveWhitelistCleanupStep(guildId, discordId),
+        );
         if (result.state !== 'DONE') {
           await deferLeaveCleanupRequest(request, 'WHITELIST_PENDING');
           return 'WAITING';
@@ -95,7 +160,13 @@ export async function processLeaveCleanupRequest(
       }
 
       if (details.step === 'STATS_SESSIONS') {
-        const result = await runLeaveStatsSessionsCleanupStep(guildId, discordId);
+        const result = await runWithLeaseHeartbeat(
+          request,
+          guildId,
+          discordId,
+          renewed => { request = renewed; },
+          () => runLeaveStatsSessionsCleanupStep(guildId, discordId),
+        );
         if (result.state !== 'DONE') {
           await deferLeaveCleanupRequest(request, result.reason ?? 'ACTIVE_SESSION');
           return 'WAITING';
@@ -105,7 +176,13 @@ export async function processLeaveCleanupRequest(
       }
 
       if (details.step === 'LINK_ECONOMY') {
-        const result = await runLeaveLinkEconomyAfterConfirmedWhitelistStep(guildId, discordId);
+        const result = await runWithLeaseHeartbeat(
+          request,
+          guildId,
+          discordId,
+          renewed => { request = renewed; },
+          () => runLeaveLinkEconomyAfterConfirmedWhitelistStep(guildId, discordId),
+        );
         if (result.state !== 'DONE') {
           await deferLeaveCleanupRequest(request, result.reason ?? 'ACTIVE_LOTTERY');
           return 'WAITING';
@@ -115,15 +192,32 @@ export async function processLeaveCleanupRequest(
       }
 
       if (details.step === 'GUILD_DATA') {
-        const result = await cleanupGuildMemberData(guildId, discordId);
+        const result = await runWithLeaseHeartbeat(
+          request,
+          guildId,
+          discordId,
+          renewed => { request = renewed; },
+          () => cleanupGuildMemberData(guildId, discordId),
+        );
         if (!result.performed && result.reason === 'transaction_failed') {
           throw new Error('Leave-Worker: Guild-Daten-Cleanup fehlgeschlagen.');
         }
+
+        // Rejoin kann waehrend des laufenden Remote-/DB-Cleanups eintreffen.
+        // Der Heartbeat hat den Claim bis unmittelbar nach GUILD_DATA aktiv
+        // gehalten. Der Finalizer prueft danach denselben Token+Lease-Snapshot
+        // unter FOR UPDATE, bevor Fresh-State mutiert wird.
+        await finalizeLeaveRejoinState(request, guildId, discordId);
+
         request = await advanceLeaveCleanupStep(request, 'GUILD_DATA');
         continue;
       }
 
       if (details.step === 'COMPLETE') {
+        // Auch ein direkt nach Restart geladener COMPLETE-Claim wird vor dem
+        // finalen Rejoin-Check noch einmal auf aktive Ownership erneuert.
+        request = await renewLeaveCleanupClaimLease(request, guildId, discordId);
+        await finalizeLeaveRejoinState(request, guildId, discordId);
         await completeLeaveCleanupRequest(request, guildId, config.security.encryptionKey);
         return 'COMPLETED';
       }
@@ -131,9 +225,9 @@ export async function processLeaveCleanupRequest(
 
     throw new Error('Leave-Worker: Substep-Guard ueberschritten.');
   } catch (error) {
-    // Entscheidend: `request` ist nach jedem erfolgreichen persistenten
-    // Checkpoint aktualisiert. Retry darf niemals mit dem initialen Step einen
-    // spaeteren DB-Checkpoint zurueckschreiben.
+    // `request` wird bei jedem Heartbeat und jedem erfolgreichen persistenten
+    // Checkpoint aktualisiert. Retry darf niemals mit einem alten Lease-/Step-
+    // Snapshot einen spaeteren Zustand zurueckschreiben.
     throw new LeaveCleanupProcessingError(request, error);
   }
 }

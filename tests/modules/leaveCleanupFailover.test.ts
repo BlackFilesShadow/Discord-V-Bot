@@ -4,6 +4,8 @@ const whitelistStep = jest.fn();
 const statsStep = jest.fn();
 const linkEconomyStep = jest.fn();
 const guildDataStep = jest.fn();
+const finalizeRejoin = jest.fn();
+const renewLease = jest.fn();
 const advanceStep = jest.fn();
 const completeRequest = jest.fn();
 const deferRequest = jest.fn();
@@ -34,6 +36,14 @@ jest.mock('../../src/modules/moderation/guildMemberCleanup', () => ({
   cleanupGuildMemberData: guildDataStep,
 }));
 
+jest.mock('../../src/modules/moderation/leaveCleanupRejoin', () => ({
+  finalizeLeaveRejoinState: finalizeRejoin,
+}));
+
+jest.mock('../../src/modules/moderation/leaveCleanupLease', () => ({
+  renewLeaveCleanupClaimLease: renewLease,
+}));
+
 jest.mock('../../src/modules/moderation/leaveCleanupSecurity', () => ({
   sanitizeLeaveCleanupError: (error: unknown) => error instanceof Error ? error.message : String(error),
 }));
@@ -61,6 +71,8 @@ beforeEach(() => {
   stopLeaveCleanupWorker();
   recoverStale.mockResolvedValue(0);
   claimNext.mockResolvedValue(null);
+  renewLease.mockImplementation(async (request: unknown) => request);
+  finalizeRejoin.mockResolvedValue({ rejoined: false, profile: 'NONE', levelBaseline: false });
 });
 
 afterEach(() => {
@@ -80,6 +92,7 @@ describe('Leave-1G multi-instance failover recovery', () => {
     jest.advanceTimersByTime(1);
     await expect(runLeaveCleanupWorkerOnce()).resolves.toBe(0);
     expect(recoverStale).toHaveBeenCalledTimes(2);
+    expect(renewLease).not.toHaveBeenCalled();
   });
 
   it('keeps normal pending-job polling available when a maintenance recovery attempt fails', async () => {
@@ -89,5 +102,7 @@ describe('Leave-1G multi-instance failover recovery', () => {
 
     expect(claimNext).toHaveBeenCalledTimes(1);
     expect(errorLog).toHaveBeenCalledWith(expect.stringMatching(/Stale-Recovery fehlgeschlagen/));
+    expect(finalizeRejoin).not.toHaveBeenCalled();
+    expect(renewLease).not.toHaveBeenCalled();
   });
 });

@@ -6,6 +6,7 @@ import { detectRaid } from '../utils/rateLimiter';
 import { getWelcomeConfig, renderWelcomeMessage, sendWelcomeMessages } from '../modules/welcome/welcomeManager';
 import { resolveCustomEmotes } from '../modules/ai/emoteResolver';
 import { syncMemberProfile } from '../modules/ai/memberAwareness';
+import { hasOpenLeaveCleanupRequest } from '../modules/moderation/leaveCleanupGuard';
 
 const recentJoins: Map<string, number[]> = new Map();
 
@@ -29,6 +30,7 @@ const guildMemberAddEvent: BotEvent = {
     try {
       // User-1: Rejoin/Join muss das exakt guild-gescoppte Recognition-Profil
       // deterministisch auf aktiv setzen, bevor nachgelagerte Join-Logik laeuft.
+      // Leave-1G nutzt den neuen joinedAt-Zeitpunkt als durable Rejoin-Evidenz.
       await syncMemberProfile(m);
 
       const user = await prisma.user.upsert({
@@ -44,11 +46,27 @@ const guildMemberAddEvent: BotEvent = {
         },
       });
 
-      await prisma.levelData.upsert({
-        where: { userId_guildId: { userId: user.id, guildId: m.guild.id } },
-        create: { userId: user.id, guildId: m.guild.id },
-        update: {},
-      });
+      // Ein Rejoin darf keine neue Level-/Leaderboard-Epoche anlegen, solange
+      // der vorherige Leave-Cleanup noch PENDING/IN_PROGRESS/FAILED ist. Der
+      // Worker stellt nach dem letzten destruktiven Cutoff eine frische Baseline
+      // her. Guard-Fehler sind fail-closed fuer Player-State, ohne Welcome/
+      // AutoRoles fuer die aktuelle Discord-Mitgliedschaft zu blockieren.
+      let leaveCleanupOpen = true;
+      try {
+        leaveCleanupOpen = await hasOpenLeaveCleanupRequest(m.guild.id, m.user.id);
+      } catch (guardError) {
+        logger.error(`Rejoin Leave-Cleanup-Guard fehlgeschlagen: ${String(guardError)}`);
+      }
+
+      if (!leaveCleanupOpen) {
+        await prisma.levelData.upsert({
+          where: { userId_guildId: { userId: user.id, guildId: m.guild.id } },
+          create: { userId: user.id, guildId: m.guild.id },
+          update: {},
+        });
+      } else {
+        logger.info(`Rejoin-Level-Baseline bis Leave-Cleanup-Abschluss gesperrt: ${m.user.id}@${m.guild.id}`);
+      }
 
       await prisma.gdprConsent.upsert({
         where: { userId: user.id },

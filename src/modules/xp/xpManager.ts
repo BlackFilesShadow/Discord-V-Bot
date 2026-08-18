@@ -1,5 +1,6 @@
 import prisma from '../../database/prisma';
 import { logAudit } from '../../utils/logger';
+import { assertNoOpenLeaveCleanupRequest } from '../moderation/leaveCleanupGuard';
 
 /**
  * XP-Manager (Sektion 8):
@@ -9,8 +10,35 @@ import { logAudit } from '../../utils/logger';
  */
 
 /**
+ * Kanonische Bruecke von interner User-ID zur Discord-ID fuer alle
+ * personenbezogenen XP-Schreibpfade. Ein offener oder DEAD/FAILED Leave-
+ * Cleanup sperrt die Mutation fail-closed, damit nach dem Fresh-State-Cutoff
+ * keine neue XP-/Record-Epoche vor dem Completion-Receipt entstehen kann.
+ */
+async function assertXpSubjectWritable(
+  userId: string,
+  guildId: string,
+  operation: string,
+): Promise<void> {
+  const user = await prisma.user.findUnique({
+    where: { id: userId },
+    select: { discordId: true },
+  });
+  if (!user?.discordId) {
+    throw new Error(`${operation}: User-Stammsatz/Discord-ID fehlt.`);
+  }
+  await assertNoOpenLeaveCleanupRequest(guildId, user.discordId);
+}
+
+/**
  * Event-XP vergeben (pro Guild getrennt).
  * Sektion 8: XP für Event-Teilnahme.
+ *
+ * Leave-1G: Event-XP darf keine neue Level-/XP-Epoche erzeugen, solange der
+ * vorherige Leave-Cleanup fuer exakt dieselbe Guild+Discord-ID offen oder
+ * dead-lettered ist. Der Call bekommt historisch die interne User-ID; deshalb
+ * wird die kanonische Discord-ID unmittelbar vor der ersten Mutation erneut
+ * aus dem User-Stammsatz aufgeloest und danach zentral gefencet.
  */
 export async function grantEventXp(
   userId: string,
@@ -19,6 +47,8 @@ export async function grantEventXp(
   eventType: string,
   eventId?: string,
 ): Promise<{ newXp: number; leveledUp: boolean; newLevel?: number }> {
+  await assertXpSubjectWritable(userId, guildId, 'Event-XP');
+
   const updated = await prisma.levelData.upsert({
     where: { userId_guildId: { userId, guildId } },
     create: {
@@ -34,7 +64,6 @@ export async function grantEventXp(
     },
   });
 
-  // XP-Record erstellen
   await prisma.xpRecord.create({
     data: {
       userId,
@@ -45,11 +74,10 @@ export async function grantEventXp(
     },
   });
 
-  // Level-Up prüfen
   const currentXp = Number(updated.xp);
   // Guild-spezifische XP-Konfiguration (id == guildId, Konvention wie
   // messageCreate/voiceStateUpdate). NICHT findFirst({isActive:true}) — das
-  // liefert die erste aktive Config einer beliebigen (fremden) Guild und
+  // liefert die erste aktive Config einer beliebigen fremden Guild und
   // wendet deren maxLevel falsch an.
   const xpConfigCap = await prisma.xpConfig.findUnique({ where: { id: guildId } });
   const maxLevel = xpConfigCap?.maxLevel ?? 20;
@@ -87,6 +115,10 @@ export async function grantEventXp(
 /**
  * XP eines Users in einer Guild zurücksetzen.
  * Sektion 8: XP-Reset.
+ *
+ * Auch ein Reset ist ein personenbezogener Schreibpfad, weil er einen neuen
+ * XpRecord erzeugt. Er muss deshalb denselben Leave-Barrier passieren wie
+ * Event-/Message-/Voice-XP.
  */
 export async function resetUserXp(
   userId: string,
@@ -94,6 +126,8 @@ export async function resetUserXp(
   resetBy: string,
   reason: string = 'Manual reset',
 ): Promise<boolean> {
+  await assertXpSubjectWritable(userId, guildId, 'XP-Reset');
+
   const levelData = await prisma.levelData.findUnique({
     where: { userId_guildId: { userId, guildId } },
   });
@@ -137,6 +171,9 @@ export async function resetUserXp(
 
 /**
  * Massen-XP-Reset für eine Guild (z.B. für Saison-Events).
+ * Dieser Pfad erzeugt keine neuen personenbezogenen Zeilen; er aktualisiert
+ * ausschliesslich bereits existierende LevelData und kann deshalb keine nach
+ * dem Leave geloeschte Identitaet wiederherstellen.
  */
 export async function resetAllXp(
   guildId: string,
