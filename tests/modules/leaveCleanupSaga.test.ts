@@ -57,7 +57,7 @@ beforeEach(() => {
   mockTransaction.mockImplementation(async (callback: (tx: typeof mockTx) => unknown) => callback(mockTx));
 });
 
-describe('Leave-1A/1E/1F durable cleanup saga', () => {
+describe('Leave-1A/1E/1F/1G durable cleanup saga', () => {
   it('creates deterministic guild-scoped job keys and pseudonymous receipts', () => {
     expect(leaveCleanupJobKey(GUILD_A, USER)).toBe(`leave-job:v1:${GUILD_A}:${USER}`);
     const a1 = leaveCleanupReceiptFingerprint(GUILD_A, USER, SECRET);
@@ -201,8 +201,9 @@ describe('Leave-1A/1E/1F durable cleanup saga', () => {
     });
   });
 
-  it('persists successful substep transitions only for the active claim fence', async () => {
+  it('persists successful substep transitions only for the active claim fence and renews the lease timestamp', async () => {
     const now = new Date('2026-08-17T18:00:00.000Z');
+    const renewedAt = new Date('2026-08-17T18:02:00.000Z');
     const request = {
       id: 'job-step',
       userId: `leave-job:v1:${GUILD_A}:${USER}`,
@@ -221,11 +222,12 @@ describe('Leave-1A/1E/1F durable cleanup saga', () => {
       },
     };
 
-    const next = await advanceLeaveCleanupStep(request, 'WHITELIST');
+    const next = await advanceLeaveCleanupStep(request, 'WHITELIST', renewedAt);
     expect(readLeaveCleanupDetails(next.details)).toMatchObject({
       step: 'STATS_SESSIONS',
       stage: 'RUNNING',
       attempts: 2,
+      claimedAt: renewedAt.toISOString(),
       claimToken: CLAIM_TOKEN,
     });
     expect(mockUpdateMany).toHaveBeenCalledWith(expect.objectContaining({
@@ -235,7 +237,12 @@ describe('Leave-1A/1E/1F durable cleanup saga', () => {
         userId: request.userId,
         details: { path: ['claimToken'], equals: CLAIM_TOKEN },
       },
-      data: { details: expect.objectContaining({ step: 'STATS_SESSIONS', attempts: 2, claimToken: CLAIM_TOKEN }) },
+      data: { details: expect.objectContaining({
+        step: 'STATS_SESSIONS',
+        attempts: 2,
+        claimedAt: renewedAt.toISOString(),
+        claimToken: CLAIM_TOKEN,
+      }) },
     }));
   });
 
@@ -313,12 +320,13 @@ describe('Leave-1A/1E/1F durable cleanup saga', () => {
     expect(mockUpdateMany.mock.calls[0][0].data.details).not.toHaveProperty('claimToken');
   });
 
-  it('recovers only the exact stale claim token and preserves its checkpoint', async () => {
+  it('recovers only the exact stale claim token plus lease timestamp and preserves its checkpoint', async () => {
     const now = new Date('2026-08-17T18:10:00.000Z');
+    const staleClaimedAt = '2026-08-17T18:00:00.000Z';
     mockFindMany.mockResolvedValueOnce([
       {
         id: 'stale',
-        details: { kind: LEAVE_CLEANUP_KIND, guildId: GUILD_A, step: 'LINK_ECONOMY', stage: 'RUNNING', attempts: 1, maxAttempts: 8, claimedAt: '2026-08-17T18:00:00.000Z', claimToken: CLAIM_TOKEN },
+        details: { kind: LEAVE_CLEANUP_KIND, guildId: GUILD_A, step: 'LINK_ECONOMY', stage: 'RUNNING', attempts: 1, maxAttempts: 8, claimedAt: staleClaimedAt, claimToken: CLAIM_TOKEN },
       },
       {
         id: 'fresh',
@@ -330,11 +338,46 @@ describe('Leave-1A/1E/1F durable cleanup saga', () => {
     expect(mockUpdateMany.mock.calls[0][0].where).toEqual({
       id: 'stale',
       status: 'IN_PROGRESS',
-      details: { path: ['claimToken'], equals: CLAIM_TOKEN },
+      AND: [
+        { details: { path: ['claimToken'], equals: CLAIM_TOKEN } },
+        { details: { path: ['claimedAt'], equals: staleClaimedAt } },
+      ],
     });
     expect(mockUpdateMany.mock.calls[0][0].data.details).toMatchObject({ step: 'LINK_ECONOMY', stage: 'QUEUED' });
     expect(mockUpdateMany.mock.calls[0][0].data.details).not.toHaveProperty('claimedAt');
     expect(mockUpdateMany.mock.calls[0][0].data.details).not.toHaveProperty('claimToken');
+  });
+
+  it('does not recover an old snapshot once the same claim token has renewed its lease timestamp', async () => {
+    const now = new Date('2026-08-17T18:10:00.000Z');
+    mockFindMany.mockResolvedValueOnce([
+      {
+        id: 'renewed-concurrently',
+        details: {
+          kind: LEAVE_CLEANUP_KIND,
+          guildId: GUILD_A,
+          step: 'STATS_SESSIONS',
+          stage: 'RUNNING',
+          attempts: 0,
+          maxAttempts: 8,
+          claimedAt: '2026-08-17T18:00:00.000Z',
+          claimToken: CLAIM_TOKEN,
+        },
+      },
+    ]);
+    // Simuliert: zwischen Read und Recovery-CAS hat der aktive Worker denselben
+    // Token mit einem neuen claimedAt persistiert. Der alte Snapshot verliert.
+    mockUpdateMany.mockResolvedValueOnce({ count: 0 });
+
+    await expect(recoverStaleLeaveCleanupRequests(now, 60_000)).resolves.toBe(0);
+    expect(mockUpdateMany.mock.calls[0][0].where).toEqual({
+      id: 'renewed-concurrently',
+      status: 'IN_PROGRESS',
+      AND: [
+        { details: { path: ['claimToken'], equals: CLAIM_TOKEN } },
+        { details: { path: ['claimedAt'], equals: '2026-08-17T18:00:00.000Z' } },
+      ],
+    });
   });
 
   it('paginates restart recovery beyond 500 and fences a legacy claim by claimedAt', async () => {

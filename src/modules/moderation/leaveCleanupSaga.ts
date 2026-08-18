@@ -123,6 +123,24 @@ function claimFence(details: LeaveCleanupDetails): Prisma.DataDeletionRequestWhe
   throw new Error('Leave-Cleanup Claim-Fence fehlt.');
 }
 
+/**
+ * Recovery braucht neben dem stabilen Claim-Token auch exakt den gelesenen
+ * Lease-Zeitstempel. Sonst koennte ein alter Recovery-Snapshot eine gerade
+ * durch einen erfolgreichen Checkpoint erneuerte Lease dennoch zurueckholen.
+ */
+function recoveryClaimFence(details: LeaveCleanupDetails): Prisma.DataDeletionRequestWhereInput {
+  if (details.claimToken) {
+    if (!details.claimedAt) throw new Error('Leave-Cleanup Claim-Zeitstempel fehlt.');
+    return {
+      AND: [
+        { details: { path: ['claimToken'], equals: details.claimToken } },
+        { details: { path: ['claimedAt'], equals: details.claimedAt } },
+      ],
+    };
+  }
+  return claimFence(details);
+}
+
 /** Deterministischer Job-Key nur waehrend der noch offenen Verarbeitung. */
 export function leaveCleanupJobKey(guildId: string, discordId: string): string {
   return `${LEAVE_JOB_PREFIX}${cleanSnowflake(guildId, 'guildId')}:${cleanSnowflake(discordId, 'discordId')}`;
@@ -253,7 +271,7 @@ export async function claimNextLeaveCleanupRequest(now: Date = new Date()): Prom
   return null;
 }
 
-/** Restart-Recovery fuer vor Prozessabbruch haengengebliebene Claims. */
+/** Restart-/Failover-Recovery fuer abgestorbene Claims. */
 export async function recoverStaleLeaveCleanupRequests(
   now: Date = new Date(),
   staleMs: number = LEAVE_CLEANUP_STALE_MS,
@@ -282,10 +300,10 @@ export async function recoverStaleLeaveCleanupRequests(
       const recoveredDetails: LeaveCleanupDetails = {
         ...withoutClaim(details),
         stage: 'QUEUED',
-        lastError: 'Stale Claim nach Restart wieder freigegeben.',
+        lastError: 'Stale Claim nach Restart/Failover wieder freigegeben.',
       };
       const result = await prisma.dataDeletionRequest.updateMany({
-        where: { id: row.id, status: 'IN_PROGRESS', ...claimFence(details) },
+        where: { id: row.id, status: 'IN_PROGRESS', ...recoveryClaimFence(details) },
         data: {
           status: 'PENDING',
           scheduledAt: now,
@@ -308,12 +326,15 @@ export function leaveCleanupBackoffMs(attempt: number): number {
 }
 
 /**
- * Persistiert einen erfolgreich abgeschlossenen Substep. Der Request bleibt
- * IN_PROGRESS; bei einem Crash konserviert die Stale-Recovery den neuen Step.
+ * Persistiert einen erfolgreich abgeschlossenen Substep und erneuert zugleich
+ * den Lease-Zeitstempel. Der Claim-Token bleibt stabil, aber Recovery darf den
+ * Request danach erst wieder relativ zu diesem neuen Fortschrittszeitpunkt als
+ * stale betrachten.
  */
 export async function advanceLeaveCleanupStep(
   request: LeaveCleanupRequestLike,
   expectedStep: Exclude<LeaveCleanupStep, 'COMPLETE'>,
+  now: Date = new Date(),
 ): Promise<LeaveCleanupRequestLike> {
   const details = readLeaveCleanupDetails(request.details);
   if (!details || details.step !== expectedStep) {
@@ -324,6 +345,7 @@ export async function advanceLeaveCleanupStep(
     ...withoutLastError(details),
     step: nextStep,
     stage: 'RUNNING',
+    claimedAt: now.toISOString(),
   };
   const result = await prisma.dataDeletionRequest.updateMany({
     where: { id: request.id, status: 'IN_PROGRESS', userId: request.userId, ...claimFence(details) },

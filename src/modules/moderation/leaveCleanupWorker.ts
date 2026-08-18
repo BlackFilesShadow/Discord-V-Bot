@@ -18,9 +18,11 @@ import { runLeaveStatsSessionsCleanupStep } from './leaveCleanupStatsSessions';
 import { runLeaveWhitelistCleanupStep } from './leaveCleanupWhitelist';
 
 const POLL_INTERVAL_MS = 15_000;
+const RECOVERY_INTERVAL_MS = 60_000;
 const MAX_JOBS_PER_TICK = 10;
 let timer: NodeJS.Timeout | null = null;
 let running = false;
+let lastRecoveryAt = 0;
 
 export type LeaveCleanupWorkerResult = 'COMPLETED' | 'WAITING';
 
@@ -31,6 +33,23 @@ class LeaveCleanupProcessingError extends Error {
   ) {
     super(sanitizeLeaveCleanupError(originalError));
     this.name = 'LeaveCleanupProcessingError';
+  }
+}
+
+async function recoverStaleIfDue(now: Date = new Date()): Promise<number> {
+  const nowMs = now.getTime();
+  if (lastRecoveryAt > 0 && nowMs - lastRecoveryAt < RECOVERY_INTERVAL_MS) return 0;
+  lastRecoveryAt = nowMs;
+
+  try {
+    const recovered = await recoverStaleLeaveCleanupRequests(now);
+    if (recovered > 0) {
+      logger.warn(`Leave-Cleanup: ${recovered} stale Request(s) fuer Failover freigegeben.`);
+    }
+    return recovered;
+  } catch (error) {
+    logger.error(`Leave-Cleanup Stale-Recovery fehlgeschlagen: ${sanitizeLeaveCleanupError(error)}`);
+    return 0;
   }
 }
 
@@ -125,6 +144,11 @@ export async function runLeaveCleanupWorkerOnce(): Promise<number> {
   running = true;
   let handled = 0;
   try {
+    // Nicht nur beim Prozessstart recovern: Eine bereits laufende zweite
+    // Instanz muss einen abgestorbenen Claim nach Ablauf der Lease uebernehmen
+    // koennen, ohne selbst neu gestartet werden zu muessen.
+    await recoverStaleIfDue();
+
     for (let i = 0; i < MAX_JOBS_PER_TICK; i++) {
       const request = await claimNextLeaveCleanupRequest();
       if (!request) break;
@@ -151,17 +175,13 @@ export async function runLeaveCleanupWorkerOnce(): Promise<number> {
 }
 
 /**
- * Startup-Recovery wird vor dem Timer ausgefuehrt. Die eigentliche Remote-
- * Verarbeitung wird nicht in den Prozessstart hinein blockierend awaited.
+ * Startup-Recovery wird vor dem Timer ausgefuehrt. Danach prueft jeder Worker-
+ * Tick dieselbe Recovery gedrosselt erneut, damit Multi-Instance-Failover auch
+ * ohne Neustart der ueberlebenden Instanz funktioniert.
  */
 export async function startLeaveCleanupWorker(): Promise<void> {
   if (timer) return;
-  try {
-    const recovered = await recoverStaleLeaveCleanupRequests();
-    if (recovered > 0) logger.warn(`Leave-Cleanup: ${recovered} stale Request(s) nach Restart freigegeben.`);
-  } catch (error) {
-    logger.error(`Leave-Cleanup Restart-Recovery fehlgeschlagen: ${sanitizeLeaveCleanupError(error)}`);
-  }
+  await recoverStaleIfDue();
 
   void runLeaveCleanupWorkerOnce().catch(error => {
     logger.error(`Leave-Cleanup initialer Worker-Tick fehlgeschlagen: ${sanitizeLeaveCleanupError(error)}`);
@@ -177,4 +197,5 @@ export async function startLeaveCleanupWorker(): Promise<void> {
 export function stopLeaveCleanupWorker(): void {
   if (timer) clearInterval(timer);
   timer = null;
+  lastRecoveryAt = 0;
 }
