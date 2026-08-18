@@ -15,6 +15,10 @@ import prisma from '../../../database/prisma';
 import { config } from '../../../config';
 import { decrypt } from '../../../utils/security';
 import { logger } from '../../../utils/logger';
+import {
+  readCurrentAdmBinding,
+  type AdmBindingSnapshot,
+} from '../adm/bindingFence';
 import { NitradoReadClient, type FileEntry } from './readClient';
 import {
   MAX_FILE_BYTES,
@@ -52,29 +56,28 @@ const ROOTS = ['/']; // Nitrado liefert ab Server-Root rekursiv durchgehbar
  * sofort die snapshotId zurück.
  */
 export async function startSnapshot(opts: SnapshotOptions): Promise<{ snapshotId: string }> {
-  const conn = await prisma.nitradoConnection.findFirst({
-    where: { id: opts.nitradoConnId, guildId: opts.guildId },
-    select: { id: true, encryptedToken: true, serviceId: true, nitradoServerId: true, status: true, guildId: true },
-  });
-  if (!conn) throw new Error('NitradoConnection nicht gefunden.');
-  // NIT-012: serviceId ist das Mirror-Feld, nitradoServerId das kanonische —
-  // Fallback, solange Altbestand noch nicht gespiegelt ist.
-  const serviceId = conn.serviceId ?? conn.nitradoServerId;
-  if (!serviceId) throw new Error('NitradoConnection hat keine Service-ID hinterlegt.');
+  // Nitrado-1R: Der Mirror darf weder das historische `serviceId`-Spiegelfeld
+  // noch einen ungeschuetzten Connection-Snapshot als Remote-Ziel verwenden.
+  // Token, kanonische Service-ID und Binding-Version werden deshalb unter der
+  // gemeinsamen kurzen Config-Lock-Grenze gelesen. Das lange Remote-I/O laeuft
+  // danach weiterhin ohne Advisory-Lock.
+  const binding = await readCurrentAdmBinding({ id: opts.nitradoConnId, guildId: opts.guildId });
+  if (!binding) throw new Error('NitradoConnection ist nicht ACTIVE oder hat keine kanonische Service-ID.');
 
   const snap = await prisma.nitradoSnapshot.create({
     data: {
       guildId: opts.guildId,
       nitradoConnId: opts.nitradoConnId,
-      serviceId,
+      serviceId: binding.nitradoServerId,
       status: 'RUNNING',
       triggeredBy: opts.triggeredBy,
     },
     select: { id: true },
   });
 
-  // Hintergrund-Lauf — wir warten nicht.
-  void runSnapshot(snap.id, conn.guildId, opts.nitradoConnId, serviceId, conn.encryptedToken)
+  // Hintergrund-Lauf — wir warten nicht. Der originale Binding-Snapshot wird
+  // bis zur AI-Indexierung mitgefuehrt; ein Rebind/Tokenwechsel macht ihn stale.
+  void runSnapshot(snap.id, binding)
     .catch(err => {
       logger.error('[NitradoMirror] Snapshot abgebrochen', err as Error);
     });
@@ -84,12 +87,12 @@ export async function startSnapshot(opts: SnapshotOptions): Promise<{ snapshotId
 
 async function runSnapshot(
   snapshotId: string,
-  guildId: string,
-  connId: string,
-  serviceId: string,
-  encryptedToken: string,
+  binding: AdmBindingSnapshot,
 ): Promise<void> {
-  const token = decrypt(encryptedToken, config.security.encryptionKey);
+  const guildId = binding.guildId;
+  const connId = binding.id;
+  const serviceId = binding.nitradoServerId;
+  const token = decrypt(binding.encryptedToken, config.security.encryptionKey);
   const client = new NitradoReadClient(token);
 
   let totalFiles = 0;
@@ -279,13 +282,14 @@ async function runSnapshot(
       oversizeFiles, errorCount,
     });
 
-    // AI-14: Ein abgeschlossener Mirror-Snapshot ist die einzige Quelle fuer
-    // LIVE_SERVER-Knowledge. Indexfehler duerfen den Snapshot selbst nicht
-    // nachtraeglich auf FAILED setzen; der AI-Pfad bleibt stattdessen fail-closed.
+    // AI-14/1R: Ein abgeschlossener Mirror-Snapshot darf LIVE_SERVER-Knowledge
+    // nur erzeugen, wenn exakt die am Start verwendete Token-/Service-/Binding-
+    // Generation weiterhin kanonisch ist. Der Indexer revalidiert dies direkt
+    // vor seinem lokalen Austausch-Commit unter der gemeinsamen Config-Lock-Grenze.
     if (status === 'OK' || status === 'PARTIAL') {
       try {
         const { indexNitradoSnapshotKnowledge } = await import('../../ai/liveServerKnowledgeIndex.js');
-        await indexNitradoSnapshotKnowledge({ snapshotId, guildId, nitradoConnId: connId });
+        await indexNitradoSnapshotKnowledge({ snapshotId, guildId, nitradoConnId: connId, binding });
       } catch (e) {
         logger.warn('[AI-14] Live-Server-Knowledge konnte nicht aktualisiert werden', {
           snapshotId,
