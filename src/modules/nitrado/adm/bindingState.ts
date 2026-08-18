@@ -24,6 +24,15 @@ export interface AdmBindingStateClient extends LiveServerKnowledgeLifecycleClien
   };
 }
 
+function bindingKey(scope: AdmBindingScope) {
+  return {
+    guildId_nitradoConnId: {
+      guildId: scope.guildId,
+      nitradoConnId: scope.nitradoConnId,
+    },
+  };
+}
+
 /**
  * Synchronisiert den persistenten ADM-Namespace mit der aktuell gebundenen
  * Nitrado-Service-ID. Muss unter dem per-Connection Config-Lock laufen.
@@ -39,12 +48,7 @@ export async function syncAdmBindingState(
   scope: AdmBindingScope,
   currentServiceId: string | null,
 ): Promise<AdmBindingStateRow> {
-  const key = {
-    guildId_nitradoConnId: {
-      guildId: scope.guildId,
-      nitradoConnId: scope.nitradoConnId,
-    },
-  };
+  const key = bindingKey(scope);
   const existing = await client.nitradoAdmBindingState.findUnique({ where: key });
   if (!existing) {
     return client.nitradoAdmBindingState.create({
@@ -58,11 +62,48 @@ export async function syncAdmBindingState(
   }
   if (existing.currentServiceId === currentServiceId) return existing;
 
-  // Nitrado-1S: stale Mirrorwissen darf eine erfolgreiche Service-Umbindung
-  // niemals ueberleben. In Repository-Mutationen ist `client` derselbe Prisma-
-  // TransactionClient wie der anschliessende Binding-Update; im read-only
-  // Repair-Pfad bleibt die Reihenfolge fail-closed (Wissen weg vor Generation).
   await deleteGeneratedLiveServerKnowledge(client, scope.guildId, scope.nitradoConnId);
+
+  return client.nitradoAdmBindingState.update({
+    where: key,
+    data: {
+      currentServiceId,
+      bindingVersion: { increment: 1 },
+    },
+  });
+}
+
+/**
+ * Nitrado-1U: ACTIVE ist nicht nur ein Anzeige-Status, sondern Teil der
+ * Remote-Binding-Lebensdauer. ACTIVE -> non-ACTIVE -> ACTIVE mit identischem
+ * Token/Service darf deshalb niemals eine alte Remote-Beobachtung oder altes
+ * LIVE_SERVER-Wissen wieder gueltig machen.
+ *
+ * Der Caller muss wie bei syncAdmBindingState den Connection-Config-Lock halten
+ * und diese Mutation im selben DB-Commit wie die Statusaenderung ausfuehren.
+ * Ein fehlender Legacy-State beginnt fuer diese echte Lifecycle-Grenze bewusst
+ * bei Generation 1 statt 0.
+ */
+export async function advanceAdmBindingLifecycleGeneration(
+  client: AdmBindingStateClient,
+  scope: AdmBindingScope,
+  currentServiceId: string | null,
+): Promise<AdmBindingStateRow> {
+  const key = bindingKey(scope);
+  const existing = await client.nitradoAdmBindingState.findUnique({ where: key });
+
+  await deleteGeneratedLiveServerKnowledge(client, scope.guildId, scope.nitradoConnId);
+
+  if (!existing) {
+    return client.nitradoAdmBindingState.create({
+      data: {
+        guildId: scope.guildId,
+        nitradoConnId: scope.nitradoConnId,
+        bindingVersion: 1,
+        currentServiceId,
+      },
+    });
+  }
 
   return client.nitradoAdmBindingState.update({
     where: key,
@@ -82,7 +123,7 @@ export function admBindingFileIdentityPrefix(bindingVersion: number): string | n
 
 /**
  * Existing version-0 cursors/events keep their historical file identity.
- * Every later service binding gets a disjoint source namespace.
+ * Every later service/lifecycle binding gets a disjoint source namespace.
  */
 export function admBindingFileIdentity(bindingVersion: number, fileName: string): string {
   const prefix = admBindingFileIdentityPrefix(bindingVersion);
