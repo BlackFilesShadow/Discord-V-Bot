@@ -17,9 +17,16 @@ import { decrypt } from '../../../utils/security';
 import { logger } from '../../../utils/logger';
 import {
   readCurrentAdmBinding,
+  withFreshAdmBinding,
   type AdmBindingSnapshot,
 } from '../adm/bindingFence';
 import { NitradoReadClient, type FileEntry } from './readClient';
+import {
+  acquireMirrorSnapshotLease,
+  finalizeMirrorSnapshotLease,
+  MIRROR_HEARTBEAT_MS,
+  renewMirrorSnapshotLease,
+} from './mirrorLease';
 import {
   MAX_FILE_BYTES,
   INLINE_TEXT_BYTES,
@@ -52,42 +59,64 @@ interface SnapshotOptions {
 const ROOTS = ['/']; // Nitrado liefert ab Server-Root rekursiv durchgehbar
 
 /**
- * Startet einen Voll-Snapshot. Läuft asynchron im Hintergrund; gibt
- * sofort die snapshotId zurück.
+ * Startet einen Voll-Snapshot. Pro Guild+Connection darf nur eine persistente
+ * Mirror-Lease aktiv sein. Ein paralleler Trigger erhaelt dieselbe snapshotId
+ * und startet keinen zweiten Remote-Lauf.
  */
 export async function startSnapshot(opts: SnapshotOptions): Promise<{ snapshotId: string }> {
-  // Nitrado-1R: Der Mirror darf weder das historische `serviceId`-Spiegelfeld
-  // noch einen ungeschuetzten Connection-Snapshot als Remote-Ziel verwenden.
-  // Token, kanonische Service-ID und Binding-Version werden deshalb unter der
-  // gemeinsamen kurzen Config-Lock-Grenze gelesen. Das lange Remote-I/O laeuft
-  // danach weiterhin ohne Advisory-Lock.
+  // Nitrado-1R: Token, kanonische Service-ID und Binding-Version werden unter
+  // der gemeinsamen kurzen Config-Lock-Grenze gelesen. Das lange Remote-I/O
+  // laeuft danach weiterhin ohne Advisory-Lock.
   const binding = await readCurrentAdmBinding({ id: opts.nitradoConnId, guildId: opts.guildId });
   if (!binding) throw new Error('NitradoConnection ist nicht ACTIVE oder hat keine kanonische Service-ID.');
 
-  const snap = await prisma.nitradoSnapshot.create({
-    data: {
-      guildId: opts.guildId,
-      nitradoConnId: opts.nitradoConnId,
-      serviceId: binding.nitradoServerId,
-      status: 'RUNNING',
-      triggeredBy: opts.triggeredBy,
-    },
-    select: { id: true },
+  // Nitrado-1T: Persistente Singleflight-Grenze + Crash-Recovery. Ein aktiver
+  // Lauf wird wiederverwendet; eine abgelaufene Lease terminalisiert einen
+  // verwaisten RUNNING-Snapshot und etabliert genau einen Ersatzlauf.
+  const lease = await acquireMirrorSnapshotLease({
+    guildId: opts.guildId,
+    nitradoConnId: opts.nitradoConnId,
+    serviceId: binding.nitradoServerId,
+    triggeredBy: opts.triggeredBy,
   });
+  if (lease.reused || !lease.leaseToken) return { snapshotId: lease.snapshotId };
 
-  // Hintergrund-Lauf — wir warten nicht. Der originale Binding-Snapshot wird
-  // bis zur AI-Indexierung mitgefuehrt; ein Rebind/Tokenwechsel macht ihn stale.
-  void runSnapshot(snap.id, binding)
+  // Zwischen Binding-Snapshot und Lease-Erwerb kann eine Owner-Mutation liegen.
+  // Vor dem ersten Remote-Read wird deshalb noch einmal exakt revalidiert.
+  try {
+    await withFreshAdmBinding(binding, async () => undefined);
+  } catch (error) {
+    await finalizeMirrorSnapshotLease({
+      guildId: binding.guildId,
+      nitradoConnId: binding.id,
+      snapshotId: lease.snapshotId,
+      leaseToken: lease.leaseToken,
+      status: 'FAILED',
+      totalFiles: 0,
+      totalDirs: 0,
+      totalBytes: 0n,
+      storedBytes: 0n,
+      oversizeFiles: 0,
+      errorCount: 1,
+      lastError: `Binding vor Mirror-Start stale: ${(error as Error).message}`,
+    });
+    throw error;
+  }
+
+  // Hintergrund-Lauf — wir warten nicht. Lease-Token und originaler Binding-
+  // Snapshot werden bis zur atomaren Finalisierung/AI-Indexierung mitgefuehrt.
+  void runSnapshot(lease.snapshotId, binding, lease.leaseToken)
     .catch(err => {
       logger.error('[NitradoMirror] Snapshot abgebrochen', err as Error);
     });
 
-  return { snapshotId: snap.id };
+  return { snapshotId: lease.snapshotId };
 }
 
 async function runSnapshot(
   snapshotId: string,
   binding: AdmBindingSnapshot,
+  leaseToken: string,
 ): Promise<void> {
   const guildId = binding.guildId;
   const connId = binding.id;
@@ -103,16 +132,32 @@ async function runSnapshot(
   let errorCount = 0;
   let lastError: string | null = null;
   let status: 'OK' | 'PARTIAL' | 'FAILED' = 'OK';
+  let lastHeartbeatAt = 0;
+
+  const heartbeat = async (force = false): Promise<void> => {
+    const now = Date.now();
+    if (!force && now - lastHeartbeatAt < MIRROR_HEARTBEAT_MS) return;
+    await renewMirrorSnapshotLease({
+      guildId,
+      nitradoConnId: connId,
+      snapshotId,
+      leaseToken,
+    });
+    lastHeartbeatAt = now;
+  };
 
   try {
+    await heartbeat(true);
+
     // 1. Service-Meta + Gameserver-Settings (komplett, ein Call)
     const [serviceMeta, gameserver] = await Promise.all([
       client.getServiceMeta(serviceId).catch(e => { errorCount++; lastError = String((e as Error).message); return null; }),
       client.getGameserver(serviceId).catch(e => { errorCount++; lastError = String((e as Error).message); return null; }),
     ]);
+    await heartbeat();
 
-    await prisma.nitradoSnapshot.update({
-      where: { id: snapshotId },
+    await prisma.nitradoSnapshot.updateMany({
+      where: { id: snapshotId, guildId, nitradoConnId: connId, status: 'RUNNING' },
       data: {
         serviceMetaJson: (serviceMeta ?? undefined) as unknown as object,
         settingsJson: (gameserver ?? undefined) as unknown as object,
@@ -124,6 +169,7 @@ async function runSnapshot(
     const seenDirs = new Set<string>();
 
     while (queue.length > 0) {
+      await heartbeat();
       const dir = queue.shift()!;
       if (seenDirs.has(dir)) continue;
       seenDirs.add(dir);
@@ -163,6 +209,7 @@ async function runSnapshot(
       } catch { /* unique violation moeglich falls /, ignorieren */ }
 
       for (const entry of entries) {
+        await heartbeat();
         const fullPath = entry.path;
         if (entry.type === 'dir') {
           queue.push(fullPath);
@@ -193,6 +240,7 @@ async function runSnapshot(
 
         try {
           const buf = await client.downloadFile(serviceId, fullPath, MAX_FILE_BYTES);
+          await heartbeat();
           const hash = sha256(buf);
           const text = looksLikeText(buf);
           const mime = guessMimeByExt(entry.name);
@@ -245,10 +293,11 @@ async function runSnapshot(
         await new Promise(r => setTimeout(r, 50));
       }
 
-      // Zwischenstand persistieren (alle 100 Verzeichnisse)
+      // Zwischenstand persistieren (alle 100 Verzeichnisse), aber niemals einen
+      // bereits durch Recovery terminalisierten Snapshot wieder anfassen.
       if (totalDirs % 100 === 0) {
-        await prisma.nitradoSnapshot.update({
-          where: { id: snapshotId },
+        await prisma.nitradoSnapshot.updateMany({
+          where: { id: snapshotId, guildId, nitradoConnId: connId, status: 'RUNNING' },
           data: { totalFiles, totalDirs, totalBytes, storedBytes, oversizeFiles, errorCount, lastError },
         });
       }
@@ -261,31 +310,46 @@ async function runSnapshot(
     status = 'FAILED';
     logger.error('[NitradoMirror] Snapshot fehlgeschlagen', e as Error);
   } finally {
-    const finishedAt = new Date();
-    await prisma.nitradoSnapshot.update({
-      where: { id: snapshotId },
-      data: {
-        status,
-        finishedAt,
-        totalFiles,
-        totalDirs,
-        totalBytes,
-        storedBytes,
-        oversizeFiles,
-        errorCount,
-        lastError,
-      },
+    // Nitrado-1T: Finalisierung ist Lease-CAS. Nur der aktuelle Lease-Inhaber
+    // darf RUNNING terminalisieren. Ein alter, nach Recovery weiterlaufender
+    // Prozess erhaelt false und darf danach insbesondere nicht indexieren.
+    const finalized = await finalizeMirrorSnapshotLease({
+      guildId,
+      nitradoConnId: connId,
+      snapshotId,
+      leaseToken,
+      status,
+      totalFiles,
+      totalDirs,
+      totalBytes,
+      storedBytes,
+      oversizeFiles,
+      errorCount,
+      lastError,
+    }).catch((error) => {
+      logger.error('[NitradoMirror] Lease-Finalisierung fehlgeschlagen', error as Error);
+      return false;
     });
+
+    if (!finalized) {
+      logger.warn('[NitradoMirror] Staler/ersetzter Snapshot verwirft finale Side-Effects', {
+        snapshotId,
+        guildId,
+        nitradoConnId: connId,
+      });
+      return;
+    }
+
     logger.info('[NitradoMirror] Snapshot fertig', {
       snapshotId, status, totalFiles, totalDirs,
       totalBytes: totalBytes.toString(), storedBytes: storedBytes.toString(),
       oversizeFiles, errorCount,
     });
 
-    // AI-14/1R: Ein abgeschlossener Mirror-Snapshot darf LIVE_SERVER-Knowledge
-    // nur erzeugen, wenn exakt die am Start verwendete Token-/Service-/Binding-
-    // Generation weiterhin kanonisch ist. Der Indexer revalidiert dies direkt
-    // vor seinem lokalen Austausch-Commit unter der gemeinsamen Config-Lock-Grenze.
+    // AI-14/1R/1T: Ein abgeschlossener Mirror-Snapshot darf LIVE_SERVER-Knowledge
+    // nur erzeugen, wenn er die aktuelle Mirror-Lease erfolgreich finalisiert hat
+    // UND exakt die am Start verwendete Token-/Service-/Binding-Generation noch
+    // kanonisch ist. Der Indexer prueft die Binding-Seite erneut vor dem Commit.
     if (status === 'OK' || status === 'PARTIAL') {
       try {
         const { indexNitradoSnapshotKnowledge } = await import('../../ai/liveServerKnowledgeIndex.js');
