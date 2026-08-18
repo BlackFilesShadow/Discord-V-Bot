@@ -7,6 +7,7 @@ const addSource = read('src/events/guildMemberAdd.ts');
 const removeSource = read('src/events/guildMemberRemove.ts');
 const workerSource = read('src/modules/moderation/leaveCleanupWorker.ts');
 const sagaSource = read('src/modules/moderation/leaveCleanupSaga.ts');
+const leaseSource = read('src/modules/moderation/leaveCleanupLease.ts');
 const rejoinSource = read('src/modules/moderation/leaveCleanupRejoin.ts');
 const awarenessSource = read('src/modules/ai/memberAwareness.ts');
 const messageSource = read('src/events/messageCreate.ts');
@@ -40,7 +41,7 @@ describe('Leave-1G rejoin fresh-state architecture gate', () => {
     expect(goodbye).toBeGreaterThan(secondEnqueue);
   });
 
-  it('keeps #104 periodic failover recovery and lease renewal in the combined worker/saga', () => {
+  it('keeps #104 periodic failover recovery and checkpoint lease renewal in the combined worker/saga', () => {
     expect(workerSource).toContain('const RECOVERY_INTERVAL_MS = 60_000;');
     expect(workerSource).toContain('async function recoverStaleIfDue');
     const recoveryAt = workerSource.indexOf('await recoverStaleIfDue();');
@@ -54,8 +55,26 @@ describe('Leave-1G rejoin fresh-state architecture gate', () => {
     expect(sagaSource).toContain('claimedAt: now.toISOString()');
   });
 
+  it('heartbeats every potentially long destructive substep well inside the stale-recovery window', () => {
+    expect(workerSource).toContain('const LEASE_HEARTBEAT_INTERVAL_MS = 60_000;');
+    expect(workerSource).toContain('async function runWithLeaseHeartbeat');
+    expect(workerSource).toContain('currentRequest = await renewLeaveCleanupClaimLease(initialRequest, guildId, discordId);');
+    expect(workerSource).toContain('currentRequest = await renewLeaveCleanupClaimLease(currentRequest, guildId, discordId);');
+    expect(workerSource).toContain('() => runLeaveWhitelistCleanupStep(guildId, discordId)');
+    expect(workerSource).toContain('() => runLeaveStatsSessionsCleanupStep(guildId, discordId)');
+    expect(workerSource).toContain('() => runLeaveLinkEconomyAfterConfirmedWhitelistStep(guildId, discordId)');
+    expect(workerSource).toContain('() => cleanupGuildMemberData(guildId, discordId)');
+    expect(workerSource).toContain('request = await renewLeaveCleanupClaimLease(request, guildId, discordId);');
+
+    expect(leaseSource).toContain("jsonb_extract_path_text(\"details\", 'claimToken')=$4");
+    expect(leaseSource).toContain("jsonb_extract_path_text(\"details\", 'claimedAt')=$5");
+    expect(leaseSource).toContain("jsonb_extract_path_text(\"details\", 'claimedAt')=$4");
+    expect(leaseSource).toContain('const nextMs = Math.max(now.getTime(), oldMs + 1);');
+    expect(leaseSource).toContain("throw new Error('Leave-Cleanup Lease-CAS verloren.')");
+  });
+
   it('finalizes the full fenced request after GUILD_DATA and rechecks it immediately before the completion receipt', () => {
-    const guildCleanup = workerSource.indexOf('await cleanupGuildMemberData(guildId, discordId);');
+    const guildCleanup = workerSource.indexOf('() => cleanupGuildMemberData(guildId, discordId)');
     const firstFinalize = workerSource.indexOf('await finalizeLeaveRejoinState(request, guildId, discordId);', guildCleanup);
     const advance = workerSource.indexOf("await advanceLeaveCleanupStep(request, 'GUILD_DATA');", firstFinalize);
     const completeBranch = workerSource.indexOf("if (details.step === 'COMPLETE')");
