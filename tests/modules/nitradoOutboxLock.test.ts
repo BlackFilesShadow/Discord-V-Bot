@@ -41,9 +41,10 @@ describe('Nitrado-1A outbox subject lock', () => {
       $queryRawUnsafe: queryRaw,
       nitradoJob: { findMany: jest.fn(), create: jest.fn() },
     } as unknown as NitradoOutboxTxClient;
+    const rootQueryRaw = jest.fn();
     const transaction = jest.fn(async (cb: (arg: NitradoOutboxTxClient) => Promise<unknown>) => cb(tx));
     const root = {
-      $queryRawUnsafe: jest.fn(),
+      $queryRawUnsafe: rootQueryRaw,
       $transaction: transaction,
       nitradoJob: { findMany: jest.fn(), create: jest.fn() },
     } as unknown as NitradoOutboxClient;
@@ -55,6 +56,6 @@ describe('Nitrado-1A outbox subject lock', () => {
 
     expect(transaction).toHaveBeenCalledTimes(1);
     expect(queryRaw).toHaveBeenCalledTimes(1);
-    expect((root as { $queryRawUnsafe: jest.Mock }).$queryRawUnsafe).not.toHaveBeenCalled();
+    expect(rootQueryRaw).not.toHaveBeenCalled();
   });
 });
