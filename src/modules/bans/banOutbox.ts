@@ -11,9 +11,11 @@
  * Bot-Instanzen nicht gleichzeitig denselben aktiven Ban-Outbox-Intent anlegen.
  *
  * Nitrado-1J: automatische SERVER_BAN_REMOVE-Reconciler respektieren zusaetzlich
- * einen Recent-DEAD-Cooldown. Der Check liegt unter demselben Subject-Lock wie
- * Dedupe+Create, sodass parallele Scheduler den Cooldown nicht umgehen koennen.
- * Explizite Bedieneraktionen duerfen den Cooldown bewusst umgehen.
+ * einen Connection-weiten Recent-DEAD-Cooldown. DEAD Server-Ban-Jobs scrubben
+ * ihre Payload absichtlich; der Cooldown darf deshalb nicht von der Ban-ID in
+ * einer historischen Payload abhaengen. Der Check liegt unter demselben
+ * Subject-Lock wie Dedupe+Create. Explizite Bedieneraktionen duerfen den
+ * Cooldown bewusst umgehen.
  */
 
 import { encrypt } from '../../utils/security';
@@ -95,8 +97,9 @@ async function ensureJobInLock(
         updatedAt: { gte: new Date(now.getTime() - recentDeadCooldownMs) },
       },
       select: { payload: true },
+      take: 1,
     });
-    if (recentDead.some(job => asPayload(job.payload)?.banId === payload.banId)) return false;
+    if (recentDead.length > 0) return false;
   }
 
   await tx.nitradoJob.create({
@@ -151,9 +154,10 @@ export async function enqueueServerBanAdd(
 /**
  * Queued Remote-Unban; Identifier wird spaeter aus der Remote-Banlist
  * aufgeloest. Automatische Scheduler respektieren standardmaessig einen
- * Recent-DEAD-Cooldown, damit permanente Remote-/Konfigurationsfehler keinen
- * endlosen Job-Neuanlage-Sturm erzeugen. Explizite Bedieneraktionen koennen den
- * Cooldown mit `bypassRecentDeadCooldown` bewusst umgehen.
+ * Connection-weiten Recent-DEAD-Cooldown, damit permanente Remote-/
+ * Konfigurationsfehler keinen endlosen Job-Neuanlage-Sturm erzeugen.
+ * Explizite Bedieneraktionen koennen den Cooldown mit
+ * `bypassRecentDeadCooldown` bewusst umgehen.
  */
 export async function enqueueServerBanRemove(
   client: BanOutboxClient,
