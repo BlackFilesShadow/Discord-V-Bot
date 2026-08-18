@@ -14,13 +14,14 @@ process.env.SESSION_SECRET ||= 'test-session-secret';
  */
 const GID = '999999999999999999';
 const ACTOR = '888888888888888888';
+const CONN_ID = 'c123456789012345678901234';
 const VERSION = new Date('2026-08-18T09:00:00.000Z');
 
 const getSlotMock = jest.fn(async (..._a: unknown[]) => null as unknown);
 const getDecryptedTokenMock = jest.fn(async (..._a: unknown[]) => 'old-token');
 const updateTokenMock = jest.fn(async (..._a: unknown[]) => ({ slot: 1, alias5: 'ABCDE', status: 'ACTIVE' }));
 const updateServiceIdMock = jest.fn(async (..._a: unknown[]) => ({ slot: 1, alias5: 'ABCDE', nitradoServerId: '123' }));
-const createSlotMock = jest.fn(async (..._a: unknown[]) => ({ id: 'conn-1', slot: 1, alias: 'A', alias5: 'ABCDE', status: 'ACTIVE' }));
+const createSlotMock = jest.fn(async (..._a: unknown[]) => ({ id: CONN_ID, slot: 1, alias: 'A', alias5: 'ABCDE', status: 'ACTIVE' }));
 const mockVersionConflictError = class NitradoSlotVersionConflictError extends Error {};
 
 jest.mock('../../src/modules/nitrado/repository', () => ({
@@ -79,14 +80,14 @@ beforeEach(() => {
   jest.clearAllMocks();
   validateTokenMock.mockResolvedValue(true);
   getDecryptedTokenMock.mockResolvedValue('old-token');
-  createSlotMock.mockResolvedValue({ id: 'conn-1', slot: 1, alias: 'A', alias5: 'ABCDE', status: 'ACTIVE' });
+  createSlotMock.mockResolvedValue({ id: CONN_ID, slot: 1, alias: 'A', alias5: 'ABCDE', status: 'ACTIVE' });
   updateTokenMock.mockResolvedValue({ slot: 1, alias5: 'ABCDE', status: 'ACTIVE' });
   updateServiceIdMock.mockResolvedValue({ slot: 1, alias5: 'ABCDE', nitradoServerId: '123' });
 });
 
 describe('NIT-003 — Service-ID-Recheck bei Tokenrotation', () => {
   it('resetet die Service-ID atomar mit der Tokenrotation, wenn sie nicht zum neuen Token gehoert', async () => {
-    getSlotMock.mockResolvedValue({ id: 'conn-1', nitradoServerId: '123', alias5: 'ABCDE', updatedAt: VERSION });
+    getSlotMock.mockResolvedValue({ id: CONN_ID, nitradoServerId: '123', alias5: 'ABCDE', updatedAt: VERSION });
     listServicesMock.mockResolvedValue([{ id: 999 }, { id: 888 }]);
 
     const res = await request(makeApp()).patch(TOKEN_URL).send({ token: TOKEN });
@@ -101,7 +102,7 @@ describe('NIT-003 — Service-ID-Recheck bei Tokenrotation', () => {
   });
 
   it('behaelt die Service-ID, wenn sie zum neuen Token gehoert', async () => {
-    getSlotMock.mockResolvedValue({ id: 'conn-1', nitradoServerId: '123', alias5: 'ABCDE', updatedAt: VERSION });
+    getSlotMock.mockResolvedValue({ id: CONN_ID, nitradoServerId: '123', alias5: 'ABCDE', updatedAt: VERSION });
     listServicesMock.mockResolvedValue([{ id: 123 }, { id: 456 }]);
 
     const res = await request(makeApp()).patch(TOKEN_URL).send({ token: TOKEN });
@@ -115,7 +116,7 @@ describe('NIT-003 — Service-ID-Recheck bei Tokenrotation', () => {
   });
 
   it('bricht bei technischem Service-Recheck fail-closed ab und persistiert den neuen Token nicht', async () => {
-    getSlotMock.mockResolvedValue({ id: 'conn-1', nitradoServerId: '123', alias5: 'ABCDE', updatedAt: VERSION });
+    getSlotMock.mockResolvedValue({ id: CONN_ID, nitradoServerId: '123', alias5: 'ABCDE', updatedAt: VERSION });
     listServicesMock.mockRejectedValue(new Error('network'));
 
     const res = await request(makeApp()).patch(TOKEN_URL).send({ token: TOKEN });
@@ -126,7 +127,7 @@ describe('NIT-003 — Service-ID-Recheck bei Tokenrotation', () => {
   });
 
   it('rotiert ohne Service-Recheck, wenn der Slot nicht an eine Service-ID gebunden ist', async () => {
-    getSlotMock.mockResolvedValue({ id: 'conn-1', nitradoServerId: null, alias5: 'ABCDE', updatedAt: VERSION });
+    getSlotMock.mockResolvedValue({ id: CONN_ID, nitradoServerId: null, alias5: 'ABCDE', updatedAt: VERSION });
 
     const res = await request(makeApp()).patch(TOKEN_URL).send({ token: TOKEN });
 
@@ -139,7 +140,7 @@ describe('NIT-003 — Service-ID-Recheck bei Tokenrotation', () => {
   });
 
   it('liefert 409 wenn der Slot nach Remote-Validierung parallel geaendert wurde', async () => {
-    getSlotMock.mockResolvedValue({ id: 'conn-1', nitradoServerId: '123', alias5: 'ABCDE', updatedAt: VERSION });
+    getSlotMock.mockResolvedValue({ id: CONN_ID, nitradoServerId: '123', alias5: 'ABCDE', updatedAt: VERSION });
     listServicesMock.mockResolvedValue([{ id: 123 }]);
     updateTokenMock.mockRejectedValue(new mockVersionConflictError());
 
@@ -152,18 +153,18 @@ describe('NIT-003 — Service-ID-Recheck bei Tokenrotation', () => {
 
 describe('Nitrado service-binding version fence', () => {
   it('bindet den Service-Write an denselben Slot-Snapshot dessen Token validiert wurde', async () => {
-    getSlotMock.mockResolvedValue({ id: 'conn-1', nitradoServerId: null, alias5: 'ABCDE', updatedAt: VERSION });
+    getSlotMock.mockResolvedValue({ id: CONN_ID, nitradoServerId: null, alias5: 'ABCDE', updatedAt: VERSION });
     listServicesMock.mockResolvedValue([{ id: 123 }]);
 
     const res = await request(makeApp()).patch(SERVICE_URL).send({ nitradoServerId: '123' });
 
     expect(res.status).toBe(200);
-    expect(getDecryptedTokenMock).toHaveBeenCalledWith(GID, 'conn-1');
+    expect(getDecryptedTokenMock).toHaveBeenCalledWith(GID, CONN_ID);
     expect(updateServiceIdMock).toHaveBeenCalledWith(GID, 1, '123', { expectedUpdatedAt: VERSION });
   });
 
   it('liefert auch beim Service-Write 409 wenn Token/Alias/Slot inzwischen geaendert wurde', async () => {
-    getSlotMock.mockResolvedValue({ id: 'conn-1', nitradoServerId: null, alias5: 'ABCDE', updatedAt: VERSION });
+    getSlotMock.mockResolvedValue({ id: CONN_ID, nitradoServerId: null, alias5: 'ABCDE', updatedAt: VERSION });
     listServicesMock.mockResolvedValue([{ id: 123 }]);
     updateServiceIdMock.mockRejectedValue(new mockVersionConflictError());
 
