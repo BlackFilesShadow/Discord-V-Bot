@@ -4,6 +4,10 @@ import {
   withFreshAdmBinding,
   type AdmBindingSnapshot,
 } from '../nitrado/adm/bindingFence';
+import {
+  refreshMirrorLeaseForCommit,
+  type MirrorLeaseMutationClient,
+} from '../nitrado/mirror/mirrorLease';
 import { readBlob } from '../nitrado/mirror/storage';
 import {
   countDayzValidationIssues,
@@ -117,6 +121,7 @@ export async function indexNitradoSnapshotKnowledge(input: {
   guildId: string;
   nitradoConnId: string;
   binding: AdmBindingSnapshot;
+  mirrorLeaseToken: string;
 }): Promise<LiveServerKnowledgeIndexResult> {
   // Nitrado-1R: Ein Caller darf niemals einen Snapshot/Scope mit einem fremden
   // oder spaeter zusammengesetzten Binding-Snapshot kombinieren.
@@ -199,10 +204,20 @@ export async function indexNitradoSnapshotKnowledge(input: {
 
   const validUntil = new Date(observedAt.getTime() + LIVE_SERVER_VALIDITY_DAYS * 86_400_000);
 
-  // Die komplette lokale Austausch-Transaktion liegt unter der finalen
-  // Token-/Service-/Binding-Freshness-Grenze. Ein X->Y->X-ABA-Servicewechsel
-  // verliert wegen bindingVersion ebenso wie ein Tokenwechsel den Fence.
+  // 1R + 1T: Der lokale Austausch liegt zugleich unter der exakten ADM-Binding-
+  // Grenze und unter der persistenten Mirror-Lease. refreshMirrorLeaseForCommit
+  // fuehrt ein UPDATE im selben Prisma-TransactionClient aus; PostgreSQL haelt
+  // den Lease-Row-Lock bis zum Knowledge-Commit. Eine Recovery kann deshalb nie
+  // einen neueren Snapshot etablieren und danach vom alten Snapshot ueberschrieben
+  // werden.
   const replacedDocuments = await withFreshAdmBinding(input.binding, () => prisma.$transaction(async (tx) => {
+    await refreshMirrorLeaseForCommit(tx as unknown as MirrorLeaseMutationClient, {
+      guildId: input.guildId,
+      nitradoConnId: input.nitradoConnId,
+      snapshotId: input.snapshotId,
+      leaseToken: input.mirrorLeaseToken,
+    });
+
     const replaced = await deleteGeneratedLiveServerKnowledge(
       tx as unknown as LiveServerKnowledgeLifecycleClient,
       input.guildId,
