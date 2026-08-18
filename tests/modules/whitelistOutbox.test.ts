@@ -6,9 +6,16 @@ import {
 
 const SCOPE = { guildId: 'guild-a', nitradoConnId: 'conn-a' };
 
-function makeClient(existingPayloads: unknown[] = []) {
+type ExistingJob = { operation: 'WHITELIST_ADD' | 'WHITELIST_REMOVE'; payload: unknown };
+
+function makeClient(existingJobs: ExistingJob[] = []) {
   const create = jest.fn(async (_args: unknown) => ({}));
-  const findMany = jest.fn(async (_args: unknown) => existingPayloads.map(payload => ({ payload })));
+  const findMany = jest.fn(async (args: unknown) => {
+    const operation = (args as { where?: { operation?: string } })?.where?.operation;
+    return existingJobs
+      .filter(job => !operation || job.operation === operation)
+      .map(job => ({ payload: job.payload }));
+  });
   const queryRaw = jest.fn(async (_query: string, ..._values: unknown[]) => []);
   const client = {
     $queryRawUnsafe: queryRaw,
@@ -39,8 +46,10 @@ describe('Nitrado-1A Whitelist-Outbox', () => {
     });
   });
 
-  it('dedupliziert Namen case-insensitiv und trim-bewusst', async () => {
-    const { client, create } = makeClient([{ gameId: ' PLAYER ONE ' }]);
+  it('dedupliziert Namen case-insensitiv und trim-bewusst innerhalb derselben Operation', async () => {
+    const { client, create } = makeClient([
+      { operation: 'WHITELIST_ADD', payload: { gameId: ' PLAYER ONE ' } },
+    ]);
 
     await expect(enqueueWhitelistAdd(client, SCOPE, 'player one')).resolves.toBe(false);
 
@@ -48,10 +57,15 @@ describe('Nitrado-1A Whitelist-Outbox', () => {
   });
 
   it('trennt ADD und REMOVE als unterschiedliche Intents', async () => {
-    const add = makeClient([{ gameId: 'Player One' }]);
+    const remove = makeClient([
+      { operation: 'WHITELIST_ADD', payload: { gameId: 'Player One' } },
+    ]);
 
-    await expect(enqueueWhitelistRemove(add.client, SCOPE, 'Player One')).resolves.toBe(true);
-    expect(add.create).toHaveBeenCalledWith(expect.objectContaining({
+    await expect(enqueueWhitelistRemove(remove.client, SCOPE, 'Player One')).resolves.toBe(true);
+    expect(remove.findMany).toHaveBeenCalledWith(expect.objectContaining({
+      where: expect.objectContaining({ operation: 'WHITELIST_REMOVE' }),
+    }));
+    expect(remove.create).toHaveBeenCalledWith(expect.objectContaining({
       data: expect.objectContaining({ operation: 'WHITELIST_REMOVE' }),
     }));
   });
