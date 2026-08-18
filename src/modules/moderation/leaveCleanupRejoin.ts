@@ -54,6 +54,7 @@ export async function finalizeLeaveRejoinState(
       where: { guildId_discordId: { guildId, discordId } },
       select: {
         isLeft: true,
+        leftAt: true,
         joinedAt: true,
       },
     });
@@ -79,9 +80,17 @@ export async function finalizeLeaveRejoinState(
 
       let profileState: 'NONE' | 'RESET' = 'NONE';
       if (profile) {
+        // Ein alter/staler Activity-Write oder eine alte Replica darf den Leave-
+        // Marker nicht auf aktiv zurueckdrehen. Die Identitaetsfelder bleiben
+        // fuer Goodbye erhalten; nur Lifecycle + historischer Counter werden
+        // auf den abgeschlossenen Leave-Zustand normalisiert.
         const resetProfile = await tx.guildMemberProfile.updateMany({
           where: { guildId, discordId },
-          data: { messageCount: 0 },
+          data: {
+            messageCount: 0,
+            isLeft: true,
+            leftAt: profile.leftAt ?? request.createdAt,
+          },
         });
         if (resetProfile.count > 0) profileState = 'RESET';
       }
