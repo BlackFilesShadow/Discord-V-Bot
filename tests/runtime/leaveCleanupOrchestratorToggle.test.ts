@@ -32,9 +32,9 @@ describe('Leave-1E productive orchestration + toggle wiring', () => {
   });
 
   it('makes OFF a true no-delete path and ON only a durable enqueue in guildMemberRemove', () => {
-    const configAt = eventSource.indexOf('getLeaveCleanupConfig');
+    const configAt = eventSource.indexOf('await getLeaveCleanupConfig(');
     const enabledAt = eventSource.indexOf('if (leaveCfg.deletePlayerDataOnLeave)');
-    const enqueueAt = eventSource.indexOf('enqueueLeaveCleanupRequest');
+    const enqueueAt = eventSource.indexOf('await enqueueLeaveCleanupRequest(');
     expect(configAt).toBeGreaterThanOrEqual(0);
     expect(enabledAt).toBeGreaterThan(configAt);
     expect(enqueueAt).toBeGreaterThan(enabledAt);
@@ -50,11 +50,11 @@ describe('Leave-1E productive orchestration + toggle wiring', () => {
   });
 
   it('orders every destructive worker step before the pseudonymous completion receipt', () => {
-    const whitelist = workerSource.indexOf('runLeaveWhitelistCleanupStep');
-    const stats = workerSource.indexOf('runLeaveStatsSessionsCleanupStep');
-    const economy = workerSource.indexOf('runLeaveLinkEconomyAfterConfirmedWhitelistStep');
-    const guildData = workerSource.indexOf('cleanupGuildMemberData');
-    const complete = workerSource.indexOf('completeLeaveCleanupRequest');
+    const whitelist = workerSource.indexOf('await runLeaveWhitelistCleanupStep(');
+    const stats = workerSource.indexOf('await runLeaveStatsSessionsCleanupStep(');
+    const economy = workerSource.indexOf('await runLeaveLinkEconomyAfterConfirmedWhitelistStep(');
+    const guildData = workerSource.indexOf('await cleanupGuildMemberData(');
+    const complete = workerSource.indexOf('await completeLeaveCleanupRequest(');
     expect(whitelist).toBeGreaterThanOrEqual(0);
     expect(stats).toBeGreaterThan(whitelist);
     expect(economy).toBeGreaterThan(stats);
