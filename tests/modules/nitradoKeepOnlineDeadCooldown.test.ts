@@ -84,18 +84,25 @@ describe('Nitrado-1H — Keep-Online DEAD retry cooldown', () => {
         {
           status: 'DEAD',
           updatedAt: { gte: expectedCutoff },
-          NOT: { lastError: KEEP_ONLINE_DISABLED_JOB_REASON },
+          OR: [
+            { lastError: null },
+            { lastError: { not: KEEP_ONLINE_DISABLED_JOB_REASON } },
+          ],
         },
       ],
     });
   });
 
-  it('nimmt bewusst beim Deaktivieren verworfene DEAD-Jobs vom Failure-Cooldown aus', async () => {
+  it('nimmt ausschliesslich bewusst beim Deaktivieren verworfene DEAD-Jobs vom Failure-Cooldown aus', async () => {
     await runKeepOnlinePollOnce();
 
-    expect(firstBlockerQuery().where.OR[1]).toMatchObject({
+    expect(firstBlockerQuery().where.OR[1]).toEqual({
       status: 'DEAD',
-      NOT: { lastError: KEEP_ONLINE_DISABLED_JOB_REASON },
+      updatedAt: { gte: new Date(NOW.getTime() - KEEP_ONLINE_DEAD_RETRY_COOLDOWN_MS) },
+      OR: [
+        { lastError: null },
+        { lastError: { not: KEEP_ONLINE_DISABLED_JOB_REASON } },
+      ],
     });
   });
 
