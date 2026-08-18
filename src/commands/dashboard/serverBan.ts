@@ -335,6 +335,7 @@ export const serverUnbanCommand: Command = {
                 tx as unknown as BanOutboxClient,
                 { guildId: scope.guildId, nitradoConnId: target.id },
                 row.id,
+                { bypassRecentDeadCooldown: true },
               )
             : false;
           return { banId: row.id, existsRemotely, queued };
