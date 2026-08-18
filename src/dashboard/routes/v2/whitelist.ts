@@ -7,11 +7,16 @@ import { Router } from 'express';
 import type { Response } from 'express';
 import { requireGuildPermission } from '../../middleware/auth';
 import prisma from '../../../database/prisma';
+import { config } from '../../../config';
+import { decrypt } from '../../../utils/security';
 import { logAuditDb, logger } from '../../../utils/logger';
 import { emitGuildEvent } from '../../socket/emitter';
-import { getDecryptedToken } from '../../../modules/nitrado/repository';
 import { NitradoClient } from '../../../modules/nitrado/nitradoClient';
-import { asNitradoConnId } from '../../../types/scope';
+import {
+  isAdmBindingFenceError,
+  readCurrentAdmBinding,
+  withFreshAdmBinding,
+} from '../../../modules/nitrado/adm/bindingFence';
 import type { GuildScope, NitradoConnId } from '../../../types/scope';
 import { ensureNitradoWriteAllowed } from '../../middleware/nitradoWriteGuard';
 import { resolveDashboardGameServer, sendDashboardServerResolutionError } from './serverScope';
@@ -247,18 +252,24 @@ whitelistRouter.post('/sync', requireGuildPermission('whitelist.manage'), async 
     ? req.body.direction as 'pull' | 'push' | 'merge'
     : 'merge';
 
-  const conn = await prisma.nitradoConnection.findFirst({
-    where: { id: connId, guildId: scope.guildId },
-    select: { id: true, nitradoServerId: true, status: true },
-  });
-  if (!conn) { res.status(404).json({ error: 'Slot nicht gefunden.' }); return; }
-  if (!conn.nitradoServerId) { res.status(400).json({ error: 'Slot hat keine Nitrado-Service-ID.' }); return; }
-  if (conn.status !== 'ACTIVE') { res.status(400).json({ error: `Slot ist ${conn.status}.` }); return; }
+  // Nitrado-1Q: Token + Service werden als kurzer, versionierter Snapshot unter
+  // dem Config-Lock gelesen. Der Lock wird vor dem Nitrado-HTTP-Read wieder
+  // freigegeben und unmittelbar vor Preview/Apply erneut validiert.
+  let binding;
+  try {
+    binding = await readCurrentAdmBinding({ id: connId, guildId: scope.guildId });
+  } catch (e) {
+    logger.warn(`Whitelist-Sync: Binding-Snapshot fehlgeschlagen: ${(e as Error).message}`);
+    res.status(409).json({ error: 'Nitrado-Verbindung wird gerade geändert. Bitte Sync erneut starten.' }); return;
+  }
+  if (!binding) {
+    res.status(400).json({ error: 'Slot ist nicht ACTIVE oder hat keine Nitrado-Service-ID.' }); return;
+  }
 
   let nitradoList: string[];
   try {
-    const token = await getDecryptedToken(scope.guildId, asNitradoConnId(conn.id));
-    const remote = await new NitradoClient(token).getWhitelist(conn.nitradoServerId);
+    const token = decrypt(binding.encryptedToken, config.security.encryptionKey);
+    const remote = await new NitradoClient(token).getWhitelist(binding.nitradoServerId);
     nitradoList = remote.map(r => r.identifier);
   } catch (e) {
     logger.error('Whitelist-Sync: Nitrado-Read fehlgeschlagen', e as Error);
@@ -294,58 +305,75 @@ whitelistRouter.post('/sync', requireGuildPermission('whitelist.manage'), async 
     pendingRemove,
   };
 
-  if (mode === 'preview') { res.json({ ok: true, preview: true, diff }); return; }
+  if (mode === 'preview') {
+    try {
+      await withFreshAdmBinding(binding, async () => undefined);
+    } catch (e) {
+      if (!isAdmBindingFenceError(e)) throw e;
+      res.status(409).json({ error: 'Nitrado-Zuordnung hat sich während des Sync-Reads geändert. Bitte neu laden.' }); return;
+    }
+    res.json({ ok: true, preview: true, diff }); return;
+  }
 
   if ((direction === 'push' || direction === 'merge') && onlyLocal.length + (direction === 'push' ? onlyRemote.length : 0) > 0) {
     if (!ensureNitradoWriteAllowed(req, res, { action: 'NITRADO_WHITELIST_SYNC_PUSH', danger: false })) return;
   }
 
   let dbInserted = 0, dbDeleted = 0, jobsCreated = 0;
-
-  if (direction === 'pull' || direction === 'merge') {
-    for (const name of onlyRemote) {
-      try {
-        await prisma.whitelistEntry.create({
-          data: {
-            guildId: scope.guildId, nitradoConnId: connId, gameId: name,
-            source: 'IMPORT', approvedByDiscordId: scope.actorDiscordId,
-          },
-        });
-        dbInserted++;
-      } catch (e) {
-        if ((e as { code?: string }).code !== 'P2002') throw e;
+  try {
+    await withFreshAdmBinding(binding, async () => {
+      // Alle lokalen Auswirkungen des Remote-Snapshots laufen unter derselben
+      // revalidierten Binding-Grenze. Ein paralleler Rebind kann daher weder
+      // DB-Zeilen noch Outbox-Intents aus einem alten Server-Snapshot erzeugen.
+      if (direction === 'pull' || direction === 'merge') {
+        for (const name of onlyRemote) {
+          try {
+            await prisma.whitelistEntry.create({
+              data: {
+                guildId: scope.guildId, nitradoConnId: connId, gameId: name,
+                source: 'IMPORT', approvedByDiscordId: scope.actorDiscordId,
+              },
+            });
+            dbInserted++;
+          } catch (e) {
+            if ((e as { code?: string }).code !== 'P2002') throw e;
+          }
+        }
       }
-    }
-  }
-  if (direction === 'pull') {
-    if (onlyLocal.length > 0) {
-      const r = await prisma.whitelistEntry.deleteMany({
-        where: { guildId: scope.guildId, nitradoConnId: connId, gameId: { in: onlyLocal } },
-      });
-      dbDeleted = r.count;
-      await prisma.whitelistRequest.updateMany({
-        where: { guildId: scope.guildId, nitradoConnId: connId, gameId: { in: onlyLocal }, status: 'APPROVED' },
-        data: { status: 'CANCELLED' },
-      });
-    }
-  }
-  if (direction === 'push' || direction === 'merge') {
-    for (const name of onlyLocal) {
-      if (await enqueueWhitelistAdd(
-        prisma as unknown as WhitelistOutboxClient,
-        { guildId: scope.guildId, nitradoConnId: connId },
-        name,
-      )) jobsCreated++;
-    }
-  }
-  if (direction === 'push') {
-    for (const name of onlyRemote) {
-      if (await enqueueWhitelistRemove(
-        prisma as unknown as WhitelistOutboxClient,
-        { guildId: scope.guildId, nitradoConnId: connId },
-        name,
-      )) jobsCreated++;
-    }
+      if (direction === 'pull') {
+        if (onlyLocal.length > 0) {
+          const r = await prisma.whitelistEntry.deleteMany({
+            where: { guildId: scope.guildId, nitradoConnId: connId, gameId: { in: onlyLocal } },
+          });
+          dbDeleted = r.count;
+          await prisma.whitelistRequest.updateMany({
+            where: { guildId: scope.guildId, nitradoConnId: connId, gameId: { in: onlyLocal }, status: 'APPROVED' },
+            data: { status: 'CANCELLED' },
+          });
+        }
+      }
+      if (direction === 'push' || direction === 'merge') {
+        for (const name of onlyLocal) {
+          if (await enqueueWhitelistAdd(
+            prisma as unknown as WhitelistOutboxClient,
+            { guildId: scope.guildId, nitradoConnId: connId },
+            name,
+          )) jobsCreated++;
+        }
+      }
+      if (direction === 'push') {
+        for (const name of onlyRemote) {
+          if (await enqueueWhitelistRemove(
+            prisma as unknown as WhitelistOutboxClient,
+            { guildId: scope.guildId, nitradoConnId: connId },
+            name,
+          )) jobsCreated++;
+        }
+      }
+    });
+  } catch (e) {
+    if (!isAdmBindingFenceError(e)) throw e;
+    res.status(409).json({ error: 'Nitrado-Zuordnung hat sich während des Sync-Reads geändert. Es wurden keine Sync-Aktionen aus dem alten Snapshot übernommen.' }); return;
   }
 
   logAuditDb('WHITELIST_SYNC', 'WHITELIST', {
