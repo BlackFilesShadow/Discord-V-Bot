@@ -7,7 +7,8 @@
  * - Mutationen gehen NICHT direkt an Nitrado, sondern in die bestehende
  *   NitradoJob-Outbox. Damit bleiben Retry, Serialisierung und der
  *   per-Connection Advisory-Lock im JobWorker die einzige Write-Grenze.
- * - Bereits PENDING/RUNNING vorhandene identische Jobs werden nicht dupliziert.
+ * - Nitrado-1A: Identische aktive Jobs werden zusaetzlich cross-process unter
+ *   einem DB-xact-Lock dedupliziert; der lokale `queued`-Set ist nur Fast-Path.
  * - Lokale Eintraege bekommen einen ehrlichen SYNCED/LOCAL_ONLY-Status.
  * - PENDING_REMOVE bleibt lokal erhalten, bis ein frischer Remote-Read die
  *   Entfernung bestaetigt. Erst dann wird der lokale Spiegel final geloescht.
@@ -19,6 +20,11 @@ import { decrypt } from '../../utils/security';
 import { logger, logAudit } from '../../utils/logger';
 import { NitradoClient } from '../nitrado/nitradoClient';
 import { diffWhitelist } from './whitelistSync';
+import {
+  enqueueWhitelistAdd,
+  enqueueWhitelistRemove,
+  type WhitelistOutboxClient,
+} from './whitelistOutbox';
 
 const SYNC_INTERVAL_MS = 5 * 60 * 1000;
 let timer: NodeJS.Timeout | null = null;
@@ -111,34 +117,23 @@ async function reconcileConnection(conn: {
     if (gameId) queued.add(jobKey(job.operation, gameId));
   }
 
+  const outbox = prisma as unknown as WhitelistOutboxClient;
   let enqueued = 0;
   for (const gameId of diff.toAdd) {
     const key = jobKey('WHITELIST_ADD', gameId);
     if (queued.has(key)) continue;
-    await prisma.nitradoJob.create({
-      data: {
-        guildId: conn.guildId,
-        nitradoConnId: conn.id,
-        operation: 'WHITELIST_ADD',
-        payload: { gameId },
-      },
-    });
+    if (await enqueueWhitelistAdd(outbox, { guildId: conn.guildId, nitradoConnId: conn.id }, gameId)) {
+      enqueued++;
+    }
     queued.add(key);
-    enqueued++;
   }
   for (const gameId of diff.toRemove) {
     const key = jobKey('WHITELIST_REMOVE', gameId);
     if (queued.has(key)) continue;
-    await prisma.nitradoJob.create({
-      data: {
-        guildId: conn.guildId,
-        nitradoConnId: conn.id,
-        operation: 'WHITELIST_REMOVE',
-        payload: { gameId },
-      },
-    });
+    if (await enqueueWhitelistRemove(outbox, { guildId: conn.guildId, nitradoConnId: conn.id }, gameId)) {
+      enqueued++;
+    }
     queued.add(key);
-    enqueued++;
   }
 
   if (enqueued > 0 || diff.synced.length > 0 || finalizedRemovals > 0) {
