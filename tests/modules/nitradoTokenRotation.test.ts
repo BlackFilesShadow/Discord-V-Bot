@@ -10,7 +10,7 @@ process.env.SESSION_SECRET ||= 'test-session-secret';
  * - bestehende Service-ID wird gegen den NEUEN Token geprueft
  * - nachgewiesener Mismatch -> Token + Service-Reset atomar
  * - technischer Service-Recheck-Fehler -> Rotation fail-closed, kein DB-Write
- * - Token/Service-Write ist an den zuvor validierten updatedAt-Snapshot gebunden
+ * - Token/Service-Write ist an den zuvor validierten id+updatedAt-Snapshot gebunden
  */
 const GID = '999999999999999999';
 const ACTOR = '888888888888888888';
@@ -96,6 +96,7 @@ describe('NIT-003 — Service-ID-Recheck bei Tokenrotation', () => {
     expect(res.body.serviceReset).toBe(true);
     expect(updateTokenMock).toHaveBeenCalledWith(GID, 1, TOKEN, {
       resetServiceId: true,
+      expectedId: CONN_ID,
       expectedUpdatedAt: VERSION,
     });
     expect(updateServiceIdMock).not.toHaveBeenCalled();
@@ -111,6 +112,7 @@ describe('NIT-003 — Service-ID-Recheck bei Tokenrotation', () => {
     expect(res.body.serviceReset).toBe(false);
     expect(updateTokenMock).toHaveBeenCalledWith(GID, 1, TOKEN, {
       resetServiceId: false,
+      expectedId: CONN_ID,
       expectedUpdatedAt: VERSION,
     });
   });
@@ -135,6 +137,7 @@ describe('NIT-003 — Service-ID-Recheck bei Tokenrotation', () => {
     expect(listServicesMock).not.toHaveBeenCalled();
     expect(updateTokenMock).toHaveBeenCalledWith(GID, 1, TOKEN, {
       resetServiceId: false,
+      expectedId: CONN_ID,
       expectedUpdatedAt: VERSION,
     });
   });
@@ -160,7 +163,10 @@ describe('Nitrado service-binding version fence', () => {
 
     expect(res.status).toBe(200);
     expect(getDecryptedTokenMock).toHaveBeenCalledWith(GID, CONN_ID);
-    expect(updateServiceIdMock).toHaveBeenCalledWith(GID, 1, '123', { expectedUpdatedAt: VERSION });
+    expect(updateServiceIdMock).toHaveBeenCalledWith(GID, 1, '123', {
+      expectedId: CONN_ID,
+      expectedUpdatedAt: VERSION,
+    });
   });
 
   it('liefert auch beim Service-Write 409 wenn Token/Alias/Slot inzwischen geaendert wurde', async () => {
