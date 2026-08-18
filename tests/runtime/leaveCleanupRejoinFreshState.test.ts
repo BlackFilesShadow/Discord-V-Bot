@@ -8,6 +8,9 @@ const removeSource = read('src/events/guildMemberRemove.ts');
 const workerSource = read('src/modules/moderation/leaveCleanupWorker.ts');
 const rejoinSource = read('src/modules/moderation/leaveCleanupRejoin.ts');
 const awarenessSource = read('src/modules/ai/memberAwareness.ts');
+const messageSource = read('src/events/messageCreate.ts');
+const voiceSource = read('src/events/voiceStateUpdate.ts');
+const xpManagerSource = read('src/modules/xp/xpManager.ts');
 const rewardSource = read('src/modules/linking/linkRewards.ts');
 const economySource = read('src/modules/economy/repository.ts');
 
@@ -68,30 +71,72 @@ describe('Leave-1G rejoin fresh-state architecture gate', () => {
     expect(rejoinSource).toContain('messageCount: 0');
   });
 
-  it('preserves last-known identity for goodbye while normalizing stale leave state and residual level state', () => {
+  it('preserves goodbye identity and CAS-fences stale profile normalization against a concurrent real rejoin', () => {
     expect(rejoinSource).toContain('await tx.xpRecord.deleteMany({ where: { userId: user.id, guildId } });');
     expect(rejoinSource).toContain('await tx.levelData.deleteMany({ where: { userId: user.id, guildId } });');
     expect(rejoinSource).not.toContain('guildMemberProfile.deleteMany');
-    expect(rejoinSource).toContain('messageCount: 0');
-    expect(rejoinSource).toContain('isLeft: true');
+    expect(rejoinSource).toContain('isLeft: profile.isLeft');
+    expect(rejoinSource).toContain('joinedAt: profile.joinedAt');
+    expect(rejoinSource).toContain('leftAt: profile.leftAt');
+    expect(rejoinSource).toContain("throw new Error('Leave-Rejoin-Finalizer: Profil-CAS verloren.')");
     expect(rejoinSource).toContain('leftAt: profile.leftAt ?? request.createdAt');
     expect(rejoinSource).toContain('await tx.levelData.upsert({');
     expect(rejoinSource).toContain('create: { userId: user.id, guildId }');
     expect(rejoinSource).toContain('update: {}');
   });
 
-  it('does not allow asynchronous message activity to revive an existing left profile', () => {
+  it('allows activity writes only against an already active profile and never creates or revives lifecycle state', () => {
     const activityStart = awarenessSource.indexOf('export async function trackMemberActivity');
     const activityEnd = awarenessSource.indexOf('export async function syncMemberProfile', activityStart);
     const activityFunction = awarenessSource.slice(activityStart, activityEnd);
-    const updateStart = activityFunction.indexOf('update: {');
-    const updatePayload = activityFunction.slice(updateStart);
 
     expect(activityStart).toBeGreaterThanOrEqual(0);
-    expect(updateStart).toBeGreaterThanOrEqual(0);
-    expect(updatePayload).not.toContain('isLeft: false');
-    expect(updatePayload).not.toContain('leftAt: null');
+    expect(activityFunction).toContain('await prisma.guildMemberProfile.updateMany({');
+    expect(activityFunction).toContain('isLeft: false');
+    expect(activityFunction).not.toContain('guildMemberProfile.upsert');
+    expect(activityFunction).not.toContain('leftAt: null');
+    expect(activityFunction).not.toContain('joinedAt: member.joinedAt');
     expect(awarenessSource).toContain('data: { isLeft: true, leftAt: new Date(), lastSeenAt: new Date() }');
+  });
+
+  it('blocks direct Message-XP before User/Level/Record mutations while a leave cleanup is open', () => {
+    const section = messageSource.indexOf('// ===== SEKTION 8: XP-VERGABE');
+    const guardAt = messageSource.indexOf('await hasOpenLeaveCleanupRequest(msg.guildId, msg.author.id)', section);
+    const userAt = messageSource.indexOf('const user = await prisma.user.upsert({', section);
+    const levelAt = messageSource.indexOf('const updated = await prisma.levelData.upsert({', section);
+    const recordAt = messageSource.indexOf('await prisma.xpRecord.create({', section);
+
+    expect(section).toBeGreaterThanOrEqual(0);
+    expect(guardAt).toBeGreaterThan(section);
+    expect(userAt).toBeGreaterThan(guardAt);
+    expect(levelAt).toBeGreaterThan(userAt);
+    expect(recordAt).toBeGreaterThan(levelAt);
+  });
+
+  it('blocks direct Voice-XP before User/Level/Record mutations while a leave cleanup is open', () => {
+    const guardAt = voiceSource.indexOf('await hasOpenLeaveCleanupRequest(guildId, userId)');
+    const userAt = voiceSource.indexOf('const dbUser = await prisma.user.upsert({');
+    const levelAt = voiceSource.indexOf('const levelData = await prisma.levelData.upsert({');
+    const recordAt = voiceSource.indexOf('await prisma.xpRecord.create({');
+
+    expect(guardAt).toBeGreaterThanOrEqual(0);
+    expect(userAt).toBeGreaterThan(guardAt);
+    expect(levelAt).toBeGreaterThan(userAt);
+    expect(recordAt).toBeGreaterThan(levelAt);
+  });
+
+  it('fences central Event-XP through canonical User->Discord recognition before its first mutation', () => {
+    const grantStart = xpManagerSource.indexOf('export async function grantEventXp');
+    const userAt = xpManagerSource.indexOf('const user = await prisma.user.findUnique({', grantStart);
+    const guardAt = xpManagerSource.indexOf('await assertNoOpenLeaveCleanupRequest(guildId, user.discordId);', grantStart);
+    const levelAt = xpManagerSource.indexOf('const updated = await prisma.levelData.upsert({', grantStart);
+    const recordAt = xpManagerSource.indexOf('await prisma.xpRecord.create({', grantStart);
+
+    expect(grantStart).toBeGreaterThanOrEqual(0);
+    expect(userAt).toBeGreaterThan(grantStart);
+    expect(guardAt).toBeGreaterThan(userAt);
+    expect(levelAt).toBeGreaterThan(guardAt);
+    expect(recordAt).toBeGreaterThan(levelAt);
   });
 
   it('keeps anti-churn start balance protection in both modern and legacy award paths', () => {
