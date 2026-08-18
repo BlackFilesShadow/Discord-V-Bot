@@ -22,6 +22,14 @@ export interface NitradoConnectionRow {
   status: NitradoConnectionStatus;
   addedBy: UserDiscordId;
   createdAt: Date;
+  updatedAt: Date;
+}
+
+export class NitradoSlotVersionConflictError extends Error {
+  constructor() {
+    super('Nitrado-Slot wurde waehrend der Validierung parallel geaendert.');
+    this.name = 'NitradoSlotVersionConflictError';
+  }
 }
 
 function rowToConn(r: {
@@ -34,6 +42,7 @@ function rowToConn(r: {
   status: NitradoConnectionStatus;
   addedByDiscordId: string;
   createdAt: Date;
+  updatedAt: Date;
 }): NitradoConnectionRow {
   return {
     id: r.id as NitradoConnId,
@@ -45,6 +54,7 @@ function rowToConn(r: {
     status: r.status,
     addedBy: r.addedByDiscordId as UserDiscordId,
     createdAt: r.createdAt,
+    updatedAt: r.updatedAt,
   };
 }
 
@@ -189,19 +199,17 @@ export async function markValidated(
 /**
  * Tauscht den verschluesselten Token eines existierenden Slots aus.
  *
- * `resetServiceId=true` wird fuer eine gegen den NEUEN Token nachweislich nicht
- * mehr zugaengliche Service-ID verwendet. Tokenrotation und Service-Reset
- * passieren dann in EINER DB-Transaktion; ein Fehler kann niemals ein neues
- * Token mit der alten, ungueltigen Service-Kopplung zuruecklassen.
- *
- * Caller MUSS den neuen Token und — falls eine Service-ID existiert — deren
- * Zugehoerigkeit vor diesem Write gegen die Nitrado-API validiert haben.
+ * `expectedUpdatedAt` ist die optimistische Version des Slots, der VOR dem
+ * Remote-Service-Recheck gelesen wurde. Token + ggf. Service-Reset werden nur
+ * geschrieben, wenn dieser exakt validierte Snapshot noch aktuell ist.
+ * Dadurch kann eine parallele Owner-Aenderung niemals unbemerkt mit einem
+ * inzwischen anders validierten Token/Service-Paar vermischt werden.
  */
 export async function updateToken(
   guildId: GuildId,
   slot: number,
   rawToken: string,
-  options: { resetServiceId?: boolean } = {},
+  options: { resetServiceId?: boolean; expectedUpdatedAt?: Date } = {},
 ): Promise<NitradoConnectionRow | null> {
   if (!rawToken || rawToken.length < 8) throw new Error('Token leer/zu kurz');
   const encryptedToken = encrypt(rawToken, config.security.encryptionKey);
@@ -212,17 +220,27 @@ export async function updateToken(
   if (!current) return null;
 
   const resetServiceId = options.resetServiceId === true;
-  await prisma.$transaction([
-    prisma.nitradoConnection.updateMany({
-      where: { guildId, slot, id: current.id },
+  const changed = await prisma.$transaction(async tx => {
+    const updated = await tx.nitradoConnection.updateMany({
+      where: {
+        guildId,
+        slot,
+        id: current.id,
+        ...(options.expectedUpdatedAt ? { updatedAt: options.expectedUpdatedAt } : {}),
+      },
       data: {
         encryptedToken,
         status: 'ACTIVE',
         lastErrorMessage: null,
         ...(resetServiceId ? { nitradoServerId: null, serviceId: null } : {}),
       },
-    }),
-    prisma.nitradoValidationHealth.updateMany({
+    });
+    if (updated.count !== 1) {
+      if (options.expectedUpdatedAt) throw new NitradoSlotVersionConflictError();
+      return false;
+    }
+
+    await tx.nitradoValidationHealth.updateMany({
       where: { guildId, nitradoConnId: current.id },
       data: {
         failureCount: 0,
@@ -230,8 +248,10 @@ export async function updateToken(
         lastFailureAt: null,
         lastAlertAt: null,
       },
-    }),
-  ]);
+    });
+    return true;
+  });
+  if (!changed) return null;
 
   const row = await prisma.nitradoConnection.findUnique({
     where: { guildId_slot: { guildId, slot } },
@@ -241,12 +261,14 @@ export async function updateToken(
 
 /**
  * Aktualisiert die verknuepfte Nitrado-Service-ID (oder loescht sie via null).
- * Ohne Service-ID kann der Slot keine Whitelist-/ADM-Operationen ausfuehren.
+ * `expectedUpdatedAt` bindet den Write an exakt den Slot-Snapshot, dessen Token
+ * kurz zuvor fuer die Service-Zugehoerigkeitspruefung verwendet wurde.
  */
 export async function updateServiceId(
   guildId: GuildId,
   slot: number,
   nitradoServerId: string | null,
+  options: { expectedUpdatedAt?: Date } = {},
 ): Promise<NitradoConnectionRow | null> {
   if (nitradoServerId !== null) {
     const trimmed = nitradoServerId.trim();
@@ -254,12 +276,19 @@ export async function updateServiceId(
     nitradoServerId = trimmed;
   }
   const updated = await prisma.nitradoConnection.updateMany({
-    where: { guildId, slot },
+    where: {
+      guildId,
+      slot,
+      ...(options.expectedUpdatedAt ? { updatedAt: options.expectedUpdatedAt } : {}),
+    },
     // NIT-012: nitradoServerId ist kanonisch; serviceId wird gespiegelt, damit
     // die beiden Felder nicht divergieren (Mirror/Dev lesen serviceId).
     data: { nitradoServerId, serviceId: nitradoServerId },
   });
-  if (updated.count === 0) return null;
+  if (updated.count === 0) {
+    if (options.expectedUpdatedAt) throw new NitradoSlotVersionConflictError();
+    return null;
+  }
   const row = await prisma.nitradoConnection.findUnique({
     where: { guildId_slot: { guildId, slot } },
   });
