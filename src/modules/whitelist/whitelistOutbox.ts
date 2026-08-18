@@ -1,4 +1,5 @@
 import {
+  withNitradoOutboxConnectionLock,
   withNitradoOutboxSubjectLock,
   type NitradoOutboxClient,
   type NitradoOutboxTxClient,
@@ -59,9 +60,10 @@ async function ensureWhitelistJobInLock(
 /**
  * Atomare Deduplizierung pro Guild + Nitrado-Connection + Operation + Name.
  * DONE/DEAD blockieren absichtlich keinen neuen Job; nur ein bereits aktiver
- * PENDING/RUNNING-Intent verhindert ein Duplikat. Der aktive Bestand wird ohne
- * kuenstliches `take`-Fenster geprueft, damit auch Legacy-Outboxen vollstaendig
- * in die neue atomare Grenze einbezogen werden.
+ * PENDING/RUNNING-Intent verhindert ein Duplikat. Nitrado-1U legt davor eine
+ * Connection-weite xact-Barriere, damit ein paralleler Service-Rebind entweder
+ * diesen Enqueue vollstaendig vor seinem Cleanup sieht oder der Enqueue erst
+ * nach dem abgeschlossenen Rebind committen kann.
  */
 export async function enqueueWhitelistJob(
   client: WhitelistOutboxClient,
@@ -80,8 +82,10 @@ export async function enqueueWhitelistJob(
     normalizedGameId,
   ].join(':');
 
-  return withNitradoOutboxSubjectLock(client, lockSubject, tx =>
-    ensureWhitelistJobInLock(tx, scope, operation, gameId, normalizedGameId),
+  return withNitradoOutboxConnectionLock(client, scope, tx =>
+    withNitradoOutboxSubjectLock(tx, lockSubject, lockedTx =>
+      ensureWhitelistJobInLock(lockedTx, scope, operation, gameId, normalizedGameId),
+    ),
   );
 }
 
