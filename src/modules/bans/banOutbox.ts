@@ -16,10 +16,15 @@
  * einer historischen Payload abhaengen. Der Check liegt unter demselben
  * Subject-Lock wie Dedupe+Create. Explizite Bedieneraktionen duerfen den
  * Cooldown bewusst umgehen.
+ *
+ * Nitrado-1U: Jeder Ban-Enqueue nimmt zusaetzlich eine Connection-weite
+ * DB-xact-Barriere. Service-Rebind und Outbox-Neuanlage koennen dadurch nicht
+ * aneinander vorbeicommitten.
  */
 
 import { encrypt } from '../../utils/security';
 import {
+  withNitradoOutboxConnectionLock,
   withNitradoOutboxSubjectLock,
   type NitradoOutboxClient,
   type NitradoOutboxTxClient,
@@ -130,8 +135,10 @@ async function ensureJob(
     banId,
   ].join(':');
 
-  return withNitradoOutboxSubjectLock(client, lockSubject, tx =>
-    ensureJobInLock(tx, scope, operation, payload, options),
+  return withNitradoOutboxConnectionLock(client, scope, tx =>
+    withNitradoOutboxSubjectLock(tx, lockSubject, lockedTx =>
+      ensureJobInLock(lockedTx, scope, operation, payload, options),
+    ),
   );
 }
 
