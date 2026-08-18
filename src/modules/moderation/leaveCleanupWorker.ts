@@ -107,7 +107,7 @@ export async function processLeaveCleanupRequest(
         // Lifecycle-Grenze neu bewertet: Altprofil entfernen oder frische
         // Rejoin-Baseline herstellen. Fehler bleiben im GUILD_DATA-Checkpoint
         // retrybar und koennen keinen halbfertigen COMPLETE-Receipt erzeugen.
-        await finalizeLeaveRejoinState(request.id, guildId, discordId);
+        await finalizeLeaveRejoinState(request, guildId, discordId);
 
         request = await advanceLeaveCleanupStep(request, 'GUILD_DATA');
         continue;
@@ -117,7 +117,7 @@ export async function processLeaveCleanupRequest(
         // Zweiter finaler Recheck schliesst das Fenster fuer Rejoin -> erneuter
         // Leave zwischen GUILD_DATA und COMPLETE. Der Request bleibt bis danach
         // roh gescoppt/IN_PROGRESS und damit fuer alle Rejoin-Guards sichtbar.
-        await finalizeLeaveRejoinState(request.id, guildId, discordId);
+        await finalizeLeaveRejoinState(request, guildId, discordId);
         await completeLeaveCleanupRequest(request, guildId, config.security.encryptionKey);
         return 'COMPLETED';
       }
