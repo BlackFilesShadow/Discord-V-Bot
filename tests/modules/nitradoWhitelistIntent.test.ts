@@ -1,4 +1,6 @@
 const whitelistFindMany = jest.fn();
+const enqueueWhitelistAdd = jest.fn();
+const enqueueWhitelistRemove = jest.fn();
 
 jest.mock('../../src/database/prisma', () => ({
   __esModule: true,
@@ -7,9 +9,15 @@ jest.mock('../../src/database/prisma', () => ({
   },
 }));
 
+jest.mock('../../src/modules/whitelist/whitelistOutbox', () => ({
+  enqueueWhitelistAdd,
+  enqueueWhitelistRemove,
+}));
+
 import {
   decideWhitelistRemoteIntent,
   readWhitelistDesiredState,
+  reconcileWhitelistRemoteIntent,
 } from '../../src/modules/nitrado/whitelistIntent';
 
 const GUILD = '123456789012345678';
@@ -18,6 +26,8 @@ const CONN = 'c123456789012345678901234';
 beforeEach(() => {
   jest.clearAllMocks();
   whitelistFindMany.mockResolvedValue([]);
+  enqueueWhitelistAdd.mockResolvedValue(true);
+  enqueueWhitelistRemove.mockResolvedValue(true);
 });
 
 describe('Nitrado-1B whitelist source-of-truth intent', () => {
@@ -96,6 +106,75 @@ describe('Nitrado-1B whitelist source-of-truth intent', () => {
     whitelistFindMany.mockResolvedValueOnce([]);
     await expect(decideWhitelistRemoteIntent('WHITELIST_REMOVE', GUILD, CONN, 'RemoteOnly'))
       .resolves.toEqual({ execute: true, desiredState: 'UNTRACKED', reason: 'CURRENT_INTENT' });
+  });
+
+  it('queues a REMOVE compensation before a superseded ADD can be treated as complete', async () => {
+    whitelistFindMany.mockResolvedValue([
+      { gameId: 'PlayerOne', syncState: 'PENDING_REMOVE' },
+    ]);
+
+    await expect(reconcileWhitelistRemoteIntent('WHITELIST_ADD', GUILD, CONN, 'PlayerOne'))
+      .resolves.toEqual({
+        execute: false,
+        desiredState: 'PENDING_REMOVE',
+        reason: 'SUPERSEDED_BY_REMOVE',
+        compensationQueued: true,
+      });
+
+    expect(enqueueWhitelistRemove).toHaveBeenCalledWith(
+      expect.anything(),
+      { guildId: GUILD, nitradoConnId: CONN },
+      'PlayerOne',
+    );
+    expect(enqueueWhitelistAdd).not.toHaveBeenCalled();
+  });
+
+  it('queues an ADD compensation before a superseded REMOVE can be treated as complete', async () => {
+    whitelistFindMany.mockResolvedValue([
+      { gameId: 'PlayerOne', syncState: 'SYNCED' },
+    ]);
+
+    await expect(reconcileWhitelistRemoteIntent('WHITELIST_REMOVE', GUILD, CONN, 'PlayerOne'))
+      .resolves.toEqual({
+        execute: false,
+        desiredState: 'PRESENT',
+        reason: 'SUPERSEDED_BY_PRESENT',
+        compensationQueued: true,
+      });
+
+    expect(enqueueWhitelistAdd).toHaveBeenCalledWith(
+      expect.anything(),
+      { guildId: GUILD, nitradoConnId: CONN },
+      'PlayerOne',
+    );
+    expect(enqueueWhitelistRemove).not.toHaveBeenCalled();
+  });
+
+  it('does not enqueue compensation while the historical operation is still current', async () => {
+    whitelistFindMany.mockResolvedValue([
+      { gameId: 'PlayerOne', syncState: 'SYNCED' },
+    ]);
+
+    await expect(reconcileWhitelistRemoteIntent('WHITELIST_ADD', GUILD, CONN, 'PlayerOne'))
+      .resolves.toEqual({
+        execute: true,
+        desiredState: 'PRESENT',
+        reason: 'CURRENT_INTENT',
+        compensationQueued: false,
+      });
+
+    expect(enqueueWhitelistAdd).not.toHaveBeenCalled();
+    expect(enqueueWhitelistRemove).not.toHaveBeenCalled();
+  });
+
+  it('propagates compensation-outbox failures so the worker retries instead of falsely marking DONE', async () => {
+    whitelistFindMany.mockResolvedValue([
+      { gameId: 'PlayerOne', syncState: 'PENDING_REMOVE' },
+    ]);
+    enqueueWhitelistRemove.mockRejectedValue(new Error('outbox unavailable'));
+
+    await expect(reconcileWhitelistRemoteIntent('WHITELIST_ADD', GUILD, CONN, 'PlayerOne'))
+      .rejects.toThrow('outbox unavailable');
   });
 
   it('fails before DB access for an empty identifier', async () => {
