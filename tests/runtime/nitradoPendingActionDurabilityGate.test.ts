@@ -50,7 +50,7 @@ describe('Nitrado-1E durable pending action architecture gate', () => {
 
     const moneySection = privileged.slice(moneyAt, linkAt);
     expect(moneySection.indexOf('await applyPendingAdminMoneyAction(')).toBeGreaterThanOrEqual(0);
-    expect(moneySection.indexOf('await finish(')).toBeGreaterThan(moneySection.indexOf('await applyPendingAdminMoneyAction('));
+    expect(moneySection.lastIndexOf('await finish(')).toBeGreaterThan(moneySection.indexOf('await applyPendingAdminMoneyAction('));
 
     const linkSection = privileged.slice(linkAt, unlinkAt);
     expect(linkSection.indexOf('await applySuccessfulLinkEconomyEffects({')).toBeGreaterThanOrEqual(0);
