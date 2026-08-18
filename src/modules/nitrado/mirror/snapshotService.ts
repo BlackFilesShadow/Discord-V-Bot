@@ -25,6 +25,7 @@ import {
   acquireMirrorSnapshotLease,
   finalizeMirrorSnapshotLease,
   MIRROR_HEARTBEAT_MS,
+  mirrorLeaseBindingKey,
   releaseMirrorSnapshotLease,
   renewMirrorSnapshotLease,
 } from './mirrorLease';
@@ -57,13 +58,8 @@ interface SnapshotOptions {
   triggeredBy: string;
 }
 
-const ROOTS = ['/']; // Nitrado liefert ab Server-Root rekursiv durchgehbar
+const ROOTS = ['/'];
 
-/**
- * Startet einen Voll-Snapshot. Pro Guild+Connection darf nur eine persistente
- * Mirror-Lease aktiv sein. Ein paralleler Trigger erhaelt dieselbe snapshotId
- * und startet keinen zweiten Remote-Lauf.
- */
 export async function startSnapshot(opts: SnapshotOptions): Promise<{ snapshotId: string }> {
   const binding = await readCurrentAdmBinding({ id: opts.nitradoConnId, guildId: opts.guildId });
   if (!binding) throw new Error('NitradoConnection ist nicht ACTIVE oder hat keine kanonische Service-ID.');
@@ -72,12 +68,11 @@ export async function startSnapshot(opts: SnapshotOptions): Promise<{ snapshotId
     guildId: opts.guildId,
     nitradoConnId: opts.nitradoConnId,
     serviceId: binding.nitradoServerId,
+    bindingKey: mirrorLeaseBindingKey(binding),
     triggeredBy: opts.triggeredBy,
   });
   if (lease.reused || !lease.leaseToken) return { snapshotId: lease.snapshotId };
 
-  // Zwischen Binding-Snapshot und Lease-Erwerb kann eine Owner-Mutation liegen.
-  // Vor dem ersten Remote-Read wird deshalb noch einmal exakt revalidiert.
   try {
     await withFreshAdmBinding(binding, async () => undefined);
   } catch (error) {
@@ -204,7 +199,7 @@ async function runSnapshot(
           },
         });
         totalDirs++;
-      } catch { /* unique violation moeglich falls /, ignorieren */ }
+      } catch { /* duplicate directory row can be ignored */ }
 
       for (const entry of entries) {
         await heartbeat();
@@ -258,8 +253,6 @@ async function runSnapshot(
           continue;
         }
 
-        // Lease-Verlust ist kein Downloadfehler und darf deshalb niemals vom
-        // Datei-Errorpfad geschluckt werden.
         await heartbeat();
 
         try {
@@ -380,8 +373,6 @@ async function runSnapshot(
         }
       }
     } finally {
-      // Singleflight endet erst nach dem geordneten Knowledge-Commit. Dadurch
-      // kann kein neuer Snapshot denselben Generation-Stand ueberholen.
       await releaseMirrorSnapshotLease({
         guildId,
         nitradoConnId: connId,
