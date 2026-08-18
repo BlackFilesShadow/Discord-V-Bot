@@ -1,5 +1,9 @@
 import prisma from '../../database/prisma';
-import { leaveCleanupJobKey } from './leaveCleanupSaga';
+import {
+  leaveCleanupJobKey,
+  readLeaveCleanupDetails,
+  type LeaveCleanupRequestLike,
+} from './leaveCleanupSaga';
 
 export type LeaveRejoinFinalizationResult = {
   rejoined: boolean;
@@ -17,6 +21,12 @@ export type LeaveRejoinFinalizationResult = {
  * - Ein echter Rejoin bekommt nach dem destruktiven Cutoff wieder exakt eine
  *   frische LevelData-Baseline.
  *
+ * Leave-1F-Invariante: Der Finalizer darf nur unter dem Claim mutieren, den der
+ * aufrufende Worker wirklich besitzt. Der Request wird deshalb innerhalb
+ * derselben DB-Transaktion mit claimToken (Legacy: claimedAt) und FOR UPDATE
+ * gefenced. Ein stale Worker kann nach einem Reclaim keinerlei Profil-/XP-/
+ * Level-Mutation mehr ausfuehren.
+ *
  * Das GuildMemberProfile wird bewusst NICHT geloescht: Der Worker kann parallel
  * zum noch laufenden Goodbye-Gateway-Event arbeiten. Die letzte bekannte
  * Identitaet muss deshalb bis zum Goodbye sicher verfuegbar bleiben. Nur der
@@ -29,25 +39,51 @@ export type LeaveRejoinFinalizationResult = {
  * interpretiert.
  */
 export async function finalizeLeaveRejoinState(
-  requestId: string,
+  claimedRequest: LeaveCleanupRequestLike,
   guildId: string,
   discordId: string,
 ): Promise<LeaveRejoinFinalizationResult> {
   const expectedJobKey = leaveCleanupJobKey(guildId, discordId);
+  const expectedDetails = readLeaveCleanupDetails(claimedRequest.details);
+  if (
+    !expectedDetails
+    || expectedDetails.guildId !== guildId
+    || claimedRequest.status !== 'IN_PROGRESS'
+    || claimedRequest.userId !== expectedJobKey
+    || claimedRequest.discordId !== discordId
+  ) {
+    throw new Error('Leave-Rejoin-Finalizer: geclaimter Request/Scope ist ungueltig.');
+  }
+
+  const claimField = expectedDetails.claimToken ? 'claimToken' : 'claimedAt';
+  const claimValue = expectedDetails.claimToken ?? expectedDetails.claimedAt;
+  if (!claimValue) {
+    throw new Error('Leave-Rejoin-Finalizer: Claim-Fence fehlt.');
+  }
 
   return prisma.$transaction(async tx => {
-    const request = await tx.dataDeletionRequest.findFirst({
-      where: {
-        id: requestId,
-        userId: expectedJobKey,
-        discordId,
-        requestType: 'PARTIAL_DELETION',
-        status: 'IN_PROGRESS',
-      },
-      select: { createdAt: true },
-    });
+    // FOR UPDATE serialisiert den Finalizer mit stale recovery/reclaim. Das
+    // JSON-Fence muss zum aufrufenden Worker-Claim passen; sonst bleibt der
+    // gesamte Fresh-State-Schritt ohne Mutation retrybar/fail-closed.
+    const activeClaims = await tx.$queryRawUnsafe<Array<{ createdAt: Date }>>(
+      `SELECT "createdAt"
+         FROM "DataDeletionRequest"
+        WHERE "id"=$1
+          AND "userId"=$2
+          AND "discordId"=$3
+          AND "requestType"='PARTIAL_DELETION'
+          AND "status"='IN_PROGRESS'
+          AND jsonb_extract_path_text("details", $4)=$5
+        FOR UPDATE`,
+      claimedRequest.id,
+      expectedJobKey,
+      discordId,
+      claimField,
+      claimValue,
+    );
+    const request = activeClaims[0];
     if (!request) {
-      throw new Error('Leave-Rejoin-Finalizer: aktiver Request/Scope nicht mehr gueltig.');
+      throw new Error('Leave-Rejoin-Finalizer: aktiver Claim/Scope nicht mehr gueltig.');
     }
 
     const profile = await tx.guildMemberProfile.findUnique({
