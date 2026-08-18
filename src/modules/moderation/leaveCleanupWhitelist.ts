@@ -3,6 +3,11 @@ import { config } from '../../config';
 import { decrypt } from '../../utils/security';
 import { identityHash } from '../linking/identity';
 import { NitradoClient } from '../nitrado/nitradoClient';
+import {
+  readCurrentAdmBinding,
+  withFreshAdmBinding,
+  type AdmBindingSnapshot,
+} from '../nitrado/adm/bindingFence';
 import { enqueueWhitelistRemove, type WhitelistOutboxClient } from '../whitelist/whitelistOutbox';
 import { sanitizeLeaveCleanupError } from './leaveCleanupSecurity';
 
@@ -37,6 +42,11 @@ type WhitelistRequestRow = {
   id: string;
   gameId: string;
   requesterDiscordId: string;
+};
+
+type RemoteWhitelistRead = {
+  binding: AdmBindingSnapshot;
+  identifiers: string[];
 };
 
 function norm(value: string): string {
@@ -95,24 +105,22 @@ async function readRemoteWhitelist(args: {
   guildId: string;
   nitradoConnId: string;
   targetNames: Set<string>;
-}): Promise<string[]> {
-  const conn = await prisma.nitradoConnection.findFirst({
-    where: { id: args.nitradoConnId, guildId: args.guildId },
-    select: { id: true, encryptedToken: true, nitradoServerId: true, status: true },
-  });
-  if (!conn) throw new Error('Leave-Whitelist: Nitrado-Connection im Guild-Scope nicht gefunden.');
-  if (conn.status !== 'ACTIVE') {
-    throw new Error(`Leave-Whitelist: Nitrado-Connection ist ${conn.status}; Remote-Loeschung nicht bestaetigbar.`);
-  }
-  if (!conn.nitradoServerId) {
-    throw new Error('Leave-Whitelist: Nitrado-Service-ID fehlt; Remote-Loeschung nicht bestaetigbar.');
-  }
-
+}): Promise<RemoteWhitelistRead> {
   let token = '';
   try {
-    token = decrypt(conn.encryptedToken, config.security.encryptionKey);
-    const remote = await new NitradoClient(token).getWhitelist(conn.nitradoServerId);
-    return remote.map(row => row.identifier).filter(Boolean);
+    // Nitrado-1Q: Remote-Reads duerfen keinen ungeschuetzten Token-/Service-
+    // Snapshot aus der DB tragen. Der Binding-Snapshot wird kurz unter dem
+    // kanonischen Connection-Lock gelesen und danach fuer HTTP wieder geloest.
+    const binding = await readCurrentAdmBinding({ id: args.nitradoConnId, guildId: args.guildId });
+    if (!binding) {
+      throw new Error('Leave-Whitelist: Nitrado-Connection ist nicht ACTIVE oder besitzt keine Service-ID.');
+    }
+    token = decrypt(binding.encryptedToken, config.security.encryptionKey);
+    const remote = await new NitradoClient(token).getWhitelist(binding.nitradoServerId);
+    return {
+      binding,
+      identifiers: remote.map(row => row.identifier).filter(Boolean),
+    };
   } catch (error) {
     const sensitive = [token, ...args.targetNames].filter(Boolean);
     throw new Error(`Leave-Whitelist Remote-Read fehlgeschlagen: ${sanitizeLeaveCleanupError(error, sensitive)}`);
@@ -143,7 +151,7 @@ async function processLink(guildId: string, link: LinkRow): Promise<LinkStepResu
     throw new Error('Leave-Whitelist: verifizierte GUID kann nicht mehr sicher auf einen Spielernamen abgebildet werden.');
   }
 
-  const [localRows, requestRows, jobs, remoteIdentifiers] = await Promise.all([
+  const [localRows, requestRows, jobs, remoteRead] = await Promise.all([
     prisma.whitelistEntry.findMany({
       where: { guildId, nitradoConnId: link.nitradoConnId },
       select: { id: true, gameId: true, syncState: true },
@@ -155,6 +163,8 @@ async function processLink(guildId: string, link: LinkRow): Promise<LinkStepResu
     listWhitelistJobs(guildId, link.nitradoConnId),
     readRemoteWhitelist({ guildId, nitradoConnId: link.nitradoConnId, targetNames: trustedNames }),
   ]);
+  const binding = remoteRead.binding;
+  const remoteIdentifiers = remoteRead.identifiers;
 
   const matchingLocal = localRows.filter(row => trustedNames.has(norm(row.gameId)));
   const matchingRequests = requestRows.filter(row => trustedNames.has(norm(row.gameId)));
@@ -174,7 +184,9 @@ async function processLink(guildId: string, link: LinkRow): Promise<LinkStepResu
   let addJobsNeutralized = 0;
   let removeJobsQueued = 0;
 
-  await prisma.$transaction(async tx => {
+  // Der Remote-Snapshot darf lokale Whitelist-Absicht und Outbox nur
+  // beeinflussen, solange exakt dieselbe Token-/Service-/Binding-Version gilt.
+  await withFreshAdmBinding(binding, () => prisma.$transaction(async tx => {
     if (matchingLocal.length > 0) {
       const marked = await tx.whitelistEntry.updateMany({
         where: {
@@ -233,7 +245,7 @@ async function processLink(guildId: string, link: LinkRow): Promise<LinkStepResu
         if (created) removeJobsQueued++;
       }
     }
-  });
+  }));
 
   if (runningAdds.length > 0 || matchingRemote.length > 0) {
     return waitingResult(trustedNames.size, { localMarked, addJobsNeutralized, removeJobsQueued });
@@ -253,7 +265,9 @@ async function processLink(guildId: string, link: LinkRow): Promise<LinkStepResu
   let requestsDeleted = 0;
   let jobPayloadsScrubbed = 0;
 
-  await prisma.$transaction(async tx => {
+  // Zweite Freshness-Grenze: auch zwischen erstem Intent-Commit, erneutem
+  // Job-Snapshot und finaler lokaler Loeschung kann ein Service-Rebind liegen.
+  await withFreshAdmBinding(binding, () => prisma.$transaction(async tx => {
     if (freshPendingAdds.length > 0) {
       const neutralized = await tx.nitradoJob.updateMany({
         where: {
@@ -319,7 +333,7 @@ async function processLink(guildId: string, link: LinkRow): Promise<LinkStepResu
       });
       jobPayloadsScrubbed += scrubbed.count;
     }
-  });
+  }));
 
   return {
     state: 'DONE',
