@@ -47,7 +47,10 @@ async function enqueueIfMissing(slot: { id: string; guildId: string }): Promise<
             {
               status: 'DEAD',
               updatedAt: { gte: deadCutoff },
-              NOT: { lastError: KEEP_ONLINE_DISABLED_JOB_REASON },
+              OR: [
+                { lastError: null },
+                { lastError: { not: KEEP_ONLINE_DISABLED_JOB_REASON } },
+              ],
             },
           ],
         },
