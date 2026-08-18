@@ -1,5 +1,6 @@
 import prisma from '../../database/prisma';
 import { logAudit } from '../../utils/logger';
+import { assertNoOpenLeaveCleanupRequest } from '../moderation/leaveCleanupGuard';
 
 /**
  * XP-Manager (Sektion 8):
@@ -11,6 +12,12 @@ import { logAudit } from '../../utils/logger';
 /**
  * Event-XP vergeben (pro Guild getrennt).
  * Sektion 8: XP für Event-Teilnahme.
+ *
+ * Leave-1G: Event-XP darf keine neue Level-/XP-Epoche erzeugen, solange der
+ * vorherige Leave-Cleanup fuer exakt dieselbe Guild+Discord-ID offen oder
+ * dead-lettered ist. Der Call bekommt historisch die interne User-ID; deshalb
+ * wird die kanonische Discord-ID unmittelbar vor der ersten Mutation erneut
+ * aus dem User-Stammsatz aufgeloest und danach zentral gefencet.
  */
 export async function grantEventXp(
   userId: string,
@@ -19,6 +26,15 @@ export async function grantEventXp(
   eventType: string,
   eventId?: string,
 ): Promise<{ newXp: number; leveledUp: boolean; newLevel?: number }> {
+  const user = await prisma.user.findUnique({
+    where: { id: userId },
+    select: { discordId: true },
+  });
+  if (!user?.discordId) {
+    throw new Error('Event-XP: User-Stammsatz/Discord-ID fehlt.');
+  }
+  await assertNoOpenLeaveCleanupRequest(guildId, user.discordId);
+
   const updated = await prisma.levelData.upsert({
     where: { userId_guildId: { userId, guildId } },
     create: {
@@ -34,7 +50,6 @@ export async function grantEventXp(
     },
   });
 
-  // XP-Record erstellen
   await prisma.xpRecord.create({
     data: {
       userId,
@@ -45,11 +60,10 @@ export async function grantEventXp(
     },
   });
 
-  // Level-Up prüfen
   const currentXp = Number(updated.xp);
   // Guild-spezifische XP-Konfiguration (id == guildId, Konvention wie
   // messageCreate/voiceStateUpdate). NICHT findFirst({isActive:true}) — das
-  // liefert die erste aktive Config einer beliebigen (fremden) Guild und
+  // liefert die erste aktive Config einer beliebigen fremden Guild und
   // wendet deren maxLevel falsch an.
   const xpConfigCap = await prisma.xpConfig.findUnique({ where: { id: guildId } });
   const maxLevel = xpConfigCap?.maxLevel ?? 20;
