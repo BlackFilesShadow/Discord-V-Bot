@@ -6,6 +6,7 @@ const read = (relative: string) => fs.readFileSync(path.resolve(process.cwd(), r
 const removeSource = read('src/events/guildMemberRemove.ts');
 const workerSource = read('src/modules/moderation/leaveCleanupWorker.ts');
 const whitelistSource = read('src/modules/moderation/leaveCleanupWhitelist.ts');
+const outboxSource = read('src/modules/whitelist/whitelistOutbox.ts');
 
 describe('Leave-1B/1E production boundary and write safety', () => {
   it('keeps whitelist/Nitrado side effects out of the Discord gateway event', () => {
@@ -23,11 +24,13 @@ describe('Leave-1B/1E production boundary and write safety', () => {
     expect(economyAt).toBeGreaterThan(statsAt);
   });
 
-  it('uses Nitrado only for a fresh GET and routes every removal through NitradoJob', () => {
+  it('uses Nitrado only for a fresh GET and routes every removal through the atomic whitelist outbox', () => {
     expect(whitelistSource).toContain('.getWhitelist(');
     expect(whitelistSource).not.toContain('.removeFromWhitelist(');
-    expect(whitelistSource).toContain("operation: 'WHITELIST_REMOVE'");
-    expect(whitelistSource).toContain('tx.nitradoJob.create');
+    expect(whitelistSource).toContain('enqueueWhitelistRemove(');
+    expect(whitelistSource).not.toContain('tx.nitradoJob.create');
+    expect(outboxSource).toContain("return enqueueWhitelistJob(client, scope, 'WHITELIST_REMOVE', gameId);");
+    expect(outboxSource).toContain('withNitradoOutboxSubjectLock(client, lockSubject');
   });
 
   it('derives whitelist names from a session GUID that matches the verified link HMAC', () => {
