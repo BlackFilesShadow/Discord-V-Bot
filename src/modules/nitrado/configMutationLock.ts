@@ -22,15 +22,19 @@ export function nitradoConfigMutationLockKeys(nitradoConnId: string): [number, n
  * Der NitradoJob-Worker verwendet denselben PostgreSQL-Key pro Connection. Damit
  * koennen Token, Service-ID und Slot-Loeschung niemals waehrend eines laufenden
  * Remote-Jobs committed werden. `null` bedeutet: Connection ist gerade busy.
+ *
+ * Nitrado-1P: Bereits `connect()` gehoert zur Cleanup-Grenze. Ein Fehler beim
+ * PostgreSQL-Verbindungsaufbau darf deshalb keinen PgClient ausserhalb des
+ * zentralen end()-Cleanup-Pfads liegen lassen.
  */
 export async function tryAcquireNitradoConfigMutationLock(
   nitradoConnId: string,
 ): Promise<HeldNitradoConfigLock | null> {
   const [k1, k2] = nitradoConfigMutationLockKeys(nitradoConnId);
   const client = new PgClient({ connectionString: process.env.DATABASE_URL });
-  await client.connect();
 
   try {
+    await client.connect();
     const result = await client.query('SELECT pg_try_advisory_lock($1, $2) AS locked', [k1, k2]);
     if (result.rows?.[0]?.locked !== true) {
       await client.end();

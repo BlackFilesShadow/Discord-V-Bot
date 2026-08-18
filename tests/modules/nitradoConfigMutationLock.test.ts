@@ -25,7 +25,7 @@ beforeEach(() => {
   pgEnd.mockResolvedValue(undefined);
 });
 
-describe('Nitrado-1C config mutation connection lock', () => {
+describe('Nitrado-1C/1P config mutation connection lock', () => {
   it('derives deterministic per-connection lock keys in the NITR namespace', () => {
     const a = nitradoConfigMutationLockKeys('conn-1');
     const b = nitradoConfigMutationLockKeys('conn-1');
@@ -46,6 +46,33 @@ describe('Nitrado-1C config mutation connection lock', () => {
       'SELECT pg_try_advisory_lock($1, $2) AS locked',
       nitradoConfigMutationLockKeys('conn-1'),
     );
+    expect(pgEnd).toHaveBeenCalledTimes(1);
+  });
+
+  it('closes the pg client and propagates when connect itself fails', async () => {
+    pgConnect.mockRejectedValueOnce(new Error('database unavailable'));
+
+    await expect(tryAcquireNitradoConfigMutationLock('conn-1')).rejects.toThrow('database unavailable');
+
+    expect(pgQuery).not.toHaveBeenCalled();
+    expect(pgEnd).toHaveBeenCalledTimes(1);
+  });
+
+  it('closes the pg client and propagates when the advisory-lock query fails', async () => {
+    pgQuery.mockRejectedValueOnce(new Error('lock query failed'));
+
+    await expect(tryAcquireNitradoConfigMutationLock('conn-1')).rejects.toThrow('lock query failed');
+
+    expect(pgConnect).toHaveBeenCalledTimes(1);
+    expect(pgEnd).toHaveBeenCalledTimes(1);
+  });
+
+  it('does not mask the original infrastructure error when cleanup end also fails', async () => {
+    pgConnect.mockRejectedValueOnce(new Error('database unavailable'));
+    pgEnd.mockRejectedValueOnce(new Error('cleanup failed'));
+
+    await expect(tryAcquireNitradoConfigMutationLock('conn-1')).rejects.toThrow('database unavailable');
+
     expect(pgEnd).toHaveBeenCalledTimes(1);
   });
 
