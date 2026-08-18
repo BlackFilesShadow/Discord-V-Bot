@@ -49,9 +49,9 @@ jest.mock('../../src/modules/nitrado/nitradoClient', () => ({
 }));
 
 const releaseConfigLock = jest.fn(async () => undefined);
-const acquireConfigLock = jest.fn(async () => ({ release: releaseConfigLock }));
+const acquireConfigLock = jest.fn(async (_nitradoConnId: string) => ({ release: releaseConfigLock }));
 jest.mock('../../src/modules/nitrado/configMutationLock', () => ({
-  tryAcquireNitradoConfigMutationLock: (...args: unknown[]) => acquireConfigLock(...args),
+  tryAcquireNitradoConfigMutationLock: (nitradoConnId: string) => acquireConfigLock(nitradoConnId),
 }));
 
 import type { Client } from 'discord.js';
