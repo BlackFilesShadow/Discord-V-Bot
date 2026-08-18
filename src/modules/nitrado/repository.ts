@@ -12,6 +12,7 @@ import type { GuildId, NitradoConnId, UserDiscordId } from '../../types/scope';
 import { asNitradoConnId } from '../../types/scope';
 import type { NitradoConnectionStatus } from '@prisma/client';
 import { tryAcquireNitradoConfigMutationLock } from './configMutationLock';
+import { syncAdmBindingState, type AdmBindingStateClient } from './adm/bindingState';
 
 export interface NitradoConnectionRow {
   id: NitradoConnId;
@@ -139,17 +140,25 @@ export async function createSlot(args: {
   if (!args.alias || args.alias.length < 1 || args.alias.length > 40) throw new Error('Alias 1..40 Zeichen');
   const encryptedToken = encrypt(args.rawToken, config.security.encryptionKey);
   const alias5 = await uniqueAlias5();
-  const row = await prisma.nitradoConnection.create({
-    data: {
-      guildId: args.guildId,
-      slot: args.slot,
-      alias: args.alias,
-      alias5,
-      encryptedToken,
-      nitradoServerId: args.nitradoServerId,
-      addedByDiscordId: args.addedBy,
-      status: 'ACTIVE',
-    },
+  const row = await prisma.$transaction(async tx => {
+    const created = await tx.nitradoConnection.create({
+      data: {
+        guildId: args.guildId,
+        slot: args.slot,
+        alias: args.alias,
+        alias5,
+        encryptedToken,
+        nitradoServerId: args.nitradoServerId,
+        addedByDiscordId: args.addedBy,
+        status: 'ACTIVE',
+      },
+    });
+    await syncAdmBindingState(
+      tx as unknown as AdmBindingStateClient,
+      { guildId: args.guildId, nitradoConnId: created.id },
+      args.nitradoServerId,
+    );
+    return created;
   });
   return rowToConn(row);
 }
@@ -187,6 +196,7 @@ export async function deleteSlot(guildId: GuildId, slot: number): Promise<Nitrad
         : []),
       prisma.guildKnowledgeScope.deleteMany({ where: { guildId, nitradoConnId: targetId } }),
       prisma.nitradoValidationHealth.deleteMany({ where: { guildId, nitradoConnId: targetId } }),
+      prisma.nitradoAdmBindingState.deleteMany({ where: { guildId, nitradoConnId: targetId } }),
       prisma.nitradoConnection.deleteMany({ where: { id: targetId, guildId, slot } }),
     ]);
     return targetId;
@@ -259,13 +269,30 @@ export async function updateToken(
   return withConfigMutationLock(targetId, async () => {
     const resetServiceId = options.resetServiceId === true;
     const changed = await prisma.$transaction(async tx => {
+      const exactWhere = {
+        guildId,
+        slot,
+        id: targetId,
+        ...(options.expectedUpdatedAt ? { updatedAt: options.expectedUpdatedAt } : {}),
+      };
+      const before = await tx.nitradoConnection.findFirst({
+        where: exactWhere,
+        select: { nitradoServerId: true },
+      });
+      if (!before) {
+        if (options.expectedId || options.expectedUpdatedAt) throw new NitradoSlotVersionConflictError();
+        return false;
+      }
+      if (resetServiceId) {
+        await syncAdmBindingState(
+          tx as unknown as AdmBindingStateClient,
+          { guildId, nitradoConnId: targetId },
+          before.nitradoServerId,
+        );
+      }
+
       const updated = await tx.nitradoConnection.updateMany({
-        where: {
-          guildId,
-          slot,
-          id: targetId,
-          ...(options.expectedUpdatedAt ? { updatedAt: options.expectedUpdatedAt } : {}),
-        },
+        where: exactWhere,
         data: {
           encryptedToken,
           status: 'ACTIVE',
@@ -276,6 +303,20 @@ export async function updateToken(
       if (updated.count !== 1) {
         if (options.expectedId || options.expectedUpdatedAt) throw new NitradoSlotVersionConflictError();
         return false;
+      }
+
+      if (resetServiceId) {
+        await syncAdmBindingState(
+          tx as unknown as AdmBindingStateClient,
+          { guildId, nitradoConnId: targetId },
+          null,
+        );
+        if (before.nitradoServerId !== null) {
+          await tx.nitradoAdmProfileConfig.updateMany({
+            where: { guildId, nitradoConnId: targetId },
+            data: { lastVerifiedAt: null, lastError: null },
+          });
+        }
       }
 
       await tx.nitradoValidationHealth.updateMany({
@@ -328,19 +369,51 @@ export async function updateServiceId(
   const targetId = options.expectedId ?? asNitradoConnId(current.id);
 
   return withConfigMutationLock(targetId, async () => {
-    const updated = await prisma.nitradoConnection.updateMany({
-      where: {
+    const changed = await prisma.$transaction(async tx => {
+      const exactWhere = {
         guildId,
         slot,
         id: targetId,
         ...(options.expectedUpdatedAt ? { updatedAt: options.expectedUpdatedAt } : {}),
-      },
-      data: { nitradoServerId, serviceId: nitradoServerId },
+      };
+      const before = await tx.nitradoConnection.findFirst({
+        where: exactWhere,
+        select: { nitradoServerId: true },
+      });
+      if (!before) {
+        if (options.expectedId || options.expectedUpdatedAt) throw new NitradoSlotVersionConflictError();
+        return false;
+      }
+
+      await syncAdmBindingState(
+        tx as unknown as AdmBindingStateClient,
+        { guildId, nitradoConnId: targetId },
+        before.nitradoServerId,
+      );
+
+      const updated = await tx.nitradoConnection.updateMany({
+        where: exactWhere,
+        data: { nitradoServerId, serviceId: nitradoServerId },
+      });
+      if (updated.count !== 1) {
+        if (options.expectedId || options.expectedUpdatedAt) throw new NitradoSlotVersionConflictError();
+        return false;
+      }
+
+      await syncAdmBindingState(
+        tx as unknown as AdmBindingStateClient,
+        { guildId, nitradoConnId: targetId },
+        nitradoServerId,
+      );
+      if (before.nitradoServerId !== nitradoServerId) {
+        await tx.nitradoAdmProfileConfig.updateMany({
+          where: { guildId, nitradoConnId: targetId },
+          data: { lastVerifiedAt: null, lastError: null },
+        });
+      }
+      return true;
     });
-    if (updated.count === 0) {
-      if (options.expectedId || options.expectedUpdatedAt) throw new NitradoSlotVersionConflictError();
-      return null;
-    }
+    if (!changed) return null;
 
     const row = await prisma.nitradoConnection.findFirst({
       where: { id: targetId, guildId, slot },

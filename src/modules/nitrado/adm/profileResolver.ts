@@ -15,6 +15,15 @@ export interface ResolvedAdmProfile {
   source: string;
 }
 
+export type AdmProfileWriteFence = <T>(work: () => Promise<T>) => Promise<T>;
+
+async function runProfileWrite<T>(
+  writeFence: AdmProfileWriteFence | undefined,
+  work: () => Promise<T>,
+): Promise<T> {
+  return writeFence ? writeFence(work) : work();
+}
+
 function cleanRemoteDir(value: string): string | null {
   const raw = value.trim().replace(/\\/g, '/').replace(/\/+$/g, '');
   if (!raw || raw.includes('..') || /[\r\n\0]/.test(raw)) return null;
@@ -64,8 +73,9 @@ async function persistResolved(
   profileDir: string,
   source: string,
   timeZone: string | null,
+  writeFence?: AdmProfileWriteFence,
 ): Promise<ResolvedAdmProfile> {
-  const row = await prisma.nitradoAdmProfileConfig.upsert({
+  const row = await runProfileWrite(writeFence, () => prisma.nitradoAdmProfileConfig.upsert({
     where: {
       guildId_nitradoConnId: { guildId: scope.guildId, nitradoConnId: scope.id },
     },
@@ -85,15 +95,19 @@ async function persistResolved(
       lastVerifiedAt: new Date(),
       lastError: null,
     },
-  });
+  }));
   return { profileDir: row.profileDir, timeZone: row.timeZone, source: row.source };
 }
 
-export async function recordAdmSourceError(scope: { id: string; guildId: string }, message: string | null): Promise<void> {
-  await prisma.nitradoAdmProfileConfig.updateMany({
+export async function recordAdmSourceError(
+  scope: { id: string; guildId: string },
+  message: string | null,
+  writeFence?: AdmProfileWriteFence,
+): Promise<void> {
+  await runProfileWrite(writeFence, () => prisma.nitradoAdmProfileConfig.updateMany({
     where: { guildId: scope.guildId, nitradoConnId: scope.id },
     data: { lastError: message },
-  });
+  }));
 }
 
 /**
@@ -106,6 +120,7 @@ export async function recordAdmSourceError(scope: { id: string; guildId: string 
 export async function resolveAdmProfile(
   scope: AdmConnectionScope,
   client: NitradoClient,
+  writeFence?: AdmProfileWriteFence,
 ): Promise<ResolvedAdmProfile> {
   const existing = await prisma.nitradoAdmProfileConfig.findUnique({
     where: { guildId_nitradoConnId: { guildId: scope.guildId, nitradoConnId: scope.id } },
@@ -121,17 +136,17 @@ export async function resolveAdmProfile(
         return { profileDir: configured, timeZone: existing.timeZone, source: existing.source };
       }
       if (configured && await dirWorks(client, scope.nitradoServerId, configured)) {
-        await prisma.nitradoAdmProfileConfig.updateMany({
+        await runProfileWrite(writeFence, () => prisma.nitradoAdmProfileConfig.updateMany({
           where: { id: existing.id, guildId: scope.guildId, nitradoConnId: scope.id },
           data: { profileDir: configured, lastVerifiedAt: new Date(), lastError: null },
-        });
+        }));
         return { profileDir: configured, timeZone: existing.timeZone, source: existing.source };
       }
       const message = 'Manuell konfiguriertes ADM-Verzeichnis ist bei Nitrado nicht erreichbar.';
-      await prisma.nitradoAdmProfileConfig.updateMany({
+      await runProfileWrite(writeFence, () => prisma.nitradoAdmProfileConfig.updateMany({
         where: { id: existing.id, guildId: scope.guildId, nitradoConnId: scope.id },
         data: { lastError: message },
-      });
+      }));
       throw new Error(message);
     }
 
@@ -139,10 +154,10 @@ export async function resolveAdmProfile(
     // cachen. Genau das passiert z.B. bei DayZ PS, wenn /logs existiert, die
     // echten DayZServer_*.ADM-Dateien aber unter <gamePath>/config liegen.
     if (configured && await admDirHasFiles(client, scope.nitradoServerId, configured)) {
-      await prisma.nitradoAdmProfileConfig.updateMany({
+      await runProfileWrite(writeFence, () => prisma.nitradoAdmProfileConfig.updateMany({
         where: { id: existing.id, guildId: scope.guildId, nitradoConnId: scope.id },
         data: { profileDir: configured, lastVerifiedAt: new Date(), lastError: null },
-      });
+      }));
       return { profileDir: configured, timeZone: existing.timeZone, source: existing.source };
     }
   }
@@ -173,7 +188,7 @@ export async function resolveAdmProfile(
       const entries = await client.listAdmFiles(scope.nitradoServerId, candidate);
       if (!firstExisting) firstExisting = candidate;
       if (entries.length > 0) {
-        return persistResolved(scope, candidate, 'AUTO', existing?.timeZone ?? null);
+        return persistResolved(scope, candidate, 'AUTO', existing?.timeZone ?? null, writeFence);
       }
     } catch {
       // Try next known DayZ layout.
@@ -195,7 +210,7 @@ export async function resolveAdmProfile(
         if (slash <= 0) continue;
         const dir = normalized.slice(0, slash);
         if (await dirWorks(client, scope.nitradoServerId, dir)) {
-          return persistResolved(scope, dir, 'AUTO_SEARCH', existing?.timeZone ?? null);
+          return persistResolved(scope, dir, 'AUTO_SEARCH', existing?.timeZone ?? null, writeFence);
         }
       }
     } catch {
@@ -207,15 +222,15 @@ export async function resolveAdmProfile(
   // existiert. Dieses bleibt als Ausgangspunkt erhalten und kann spaeter erneut
   // entdeckt werden; AUTO wird bei jedem Poll auf echte ADM-Dateien geprueft.
   if (firstExisting) {
-    return persistResolved(scope, firstExisting, 'AUTO', existing?.timeZone ?? null);
+    return persistResolved(scope, firstExisting, 'AUTO', existing?.timeZone ?? null, writeFence);
   }
 
   const message = 'ADM-Verzeichnis konnte auf diesem Nitrado-Gameserver nicht automatisch gefunden werden.';
   if (existing) {
-    await prisma.nitradoAdmProfileConfig.updateMany({
+    await runProfileWrite(writeFence, () => prisma.nitradoAdmProfileConfig.updateMany({
       where: { id: existing.id, guildId: scope.guildId, nitradoConnId: scope.id },
       data: { lastError: message },
-    });
+    }));
   }
   throw new Error(message);
 }
@@ -225,6 +240,7 @@ export async function setManualAdmProfile(
   client: NitradoClient,
   profileDir: string,
   timeZone: string | null,
+  writeFence?: AdmProfileWriteFence,
 ): Promise<ResolvedAdmProfile> {
   const dir = cleanRemoteDir(profileDir);
   if (!dir) throw new Error('Ungueltiges ADM-Verzeichnis.');
@@ -232,5 +248,5 @@ export async function setManualAdmProfile(
   if (!(await dirWorks(client, scope.nitradoServerId, dir))) {
     throw new Error('ADM-Verzeichnis ist bei Nitrado nicht erreichbar.');
   }
-  return persistResolved(scope, dir, 'MANUAL', timeZone);
+  return persistResolved(scope, dir, 'MANUAL', timeZone, writeFence);
 }
