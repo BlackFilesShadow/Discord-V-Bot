@@ -1,23 +1,30 @@
-// Phase 4 / SCOPE-003: kurzlebige, servergescopte One-Shot-Aktionen.
+// Phase 4 / SCOPE-003 + Nitrado-1E: kurzlebige, servergescopte Step-Up-Aktionen.
+//
+// PENDING bedeutet noch nicht bestaetigt und unterliegt expiresAt.
+// RUNNING bedeutet bereits bestaetigt; claimToken/claimedAt bilden einen
+// lease-basierten Ausfuehrungs-Claim. Dadurch geht eine bestaetigte Aktion bei
+// Prozessabbruch nicht verloren und kann nach Lease-Ablauf erneut geclaimt
+// werden. CONSUMED wird erst NACH erfolgreicher/terminaler Verarbeitung gesetzt.
 //
 // Bewusst ohne Prisma-Relation zu NitradoConnection, damit das additive
 // Multi-File-Schema die grosse Legacy-Hauptschema-Datei nicht anfassen muss.
 // Die Migration legt den echten FK mit ON DELETE CASCADE an.
-// Der Service setzt die ID explizit via crypto.randomUUID(); uuid() ist ein
-// zweiter sicherer Default fuer direkte Prisma-Nutzung.
 model PendingServerAction {
-  id              String   @id @default(uuid())
+  id              String    @id @default(uuid())
   guildId         String
   nitradoConnId   String
   actorDiscordId  String
-  actionType      String   @db.VarChar(64)
+  actionType      String    @db.VarChar(64)
   payload         Json
-  status          String   @default("PENDING") @db.VarChar(16)
+  status          String    @default("PENDING") @db.VarChar(16)
   expiresAt       DateTime
+  claimToken      String?
+  claimedAt       DateTime?
   consumedAt      DateTime?
-  createdAt       DateTime @default(now())
+  createdAt       DateTime  @default(now())
 
   @@index([guildId, actorDiscordId, status, expiresAt])
   @@index([guildId, nitradoConnId, status, expiresAt])
+  @@index([status, claimedAt])
   @@index([expiresAt])
 }
