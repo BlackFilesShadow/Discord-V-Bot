@@ -8,6 +8,13 @@
  * `NitradoConnection.keepOnlineEnabled` geprueft.
  */
 
+/**
+ * Expliziter Terminalgrund fuer bewusst verworfene Auto-Start-Jobs.
+ * Solche Jobs sind kein Remote-/Worker-Fehler und duerfen deshalb beim spaeteren
+ * Reaktivieren von Keep-Online keinen Failure-Cooldown ausloesen.
+ */
+export const KEEP_ONLINE_DISABLED_JOB_REASON = 'Keep-Online deaktiviert; geplanter Auto-Start verworfen.';
+
 export interface KeepOnlineJobClient {
   nitradoJob: {
     updateMany: (args: {
@@ -36,7 +43,7 @@ export async function cancelPendingKeepOnlineJobs(
     },
     data: {
       status: 'DEAD',
-      lastError: 'Keep-Online deaktiviert; geplanter Auto-Start verworfen.',
+      lastError: KEEP_ONLINE_DISABLED_JOB_REASON,
       updatedAt: now,
     },
   });
