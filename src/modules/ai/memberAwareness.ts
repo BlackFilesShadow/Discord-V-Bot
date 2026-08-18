@@ -71,6 +71,14 @@ export function clearPendingMemberActivity(guildId: string, discordId: string): 
 /**
  * Throttled-Upsert nach jeder verarbeiteten Nachricht. Best-effort,
  * Fehler werden geloggt aber nicht weitergereicht.
+ *
+ * Lifecycle-Fencing: Ein Activity-Flush besitzt niemals die Autoritaet,
+ * `isLeft/leftAt` einer bereits existierenden Zeile zu aendern. Sonst koennte
+ * ein vor guildMemberRemove gestarteter asynchroner DB-Write den anschliessend
+ * gesetzten Leave-Marker wieder auf aktiv drehen. Nur syncMemberProfile
+ * (echtes Join/Update-Ereignis) und markMemberLeft besitzen diese Lifecycle-
+ * Felder. Beim erstmaligen Create stammt der Member dagegen aus einem realen
+ * Guild-Message-Event und startet deshalb korrekt als aktiv.
  */
 export async function trackMemberActivity(member: GuildMember): Promise<void> {
   const key = memberKey(member.guild.id, member.id);
@@ -112,8 +120,6 @@ export async function trackMemberActivity(member: GuildMember): Promise<void> {
         timeoutUntil: member.communicationDisabledUntil ?? null,
         messageCount: { increment: inc },
         lastSeenAt: new Date(),
-        isLeft: false,
-        leftAt: null,
       },
     });
   } catch (e) {
