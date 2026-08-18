@@ -1,5 +1,9 @@
 import prisma from '../../database/prisma';
 import { logger } from '../../utils/logger';
+import {
+  withFreshAdmBinding,
+  type AdmBindingSnapshot,
+} from '../nitrado/adm/bindingFence';
 import { readBlob } from '../nitrado/mirror/storage';
 import {
   countDayzValidationIssues,
@@ -62,8 +66,8 @@ function sourceRef(nitradoConnId: string, document: ParsedLiveServerKnowledgeDoc
   return `${liveServerSourcePrefixForConnection(nitradoConnId)}${encodeURIComponent(document.sourceKey)}`.slice(0, 500);
 }
 
-function sourceVersion(snapshotId: string, sha256: string): string {
-  return `${snapshotId}:${sha256}`.slice(0, 100);
+function sourceVersion(bindingVersion: number, snapshotId: string, sha256: string): string {
+  return `b${bindingVersion}:${snapshotId}:${sha256}`.slice(0, 100);
 }
 
 function validationKind(fileName: string): LiveServerKnowledgeKind {
@@ -111,7 +115,14 @@ export async function indexNitradoSnapshotKnowledge(input: {
   snapshotId: string;
   guildId: string;
   nitradoConnId: string;
+  binding: AdmBindingSnapshot;
 }): Promise<LiveServerKnowledgeIndexResult> {
+  // Nitrado-1R: Ein Caller darf niemals einen Snapshot/Scope mit einem fremden
+  // oder spaeter zusammengesetzten Binding-Snapshot kombinieren.
+  if (input.binding.id !== input.nitradoConnId || input.binding.guildId !== input.guildId) {
+    throw new Error('Live-Server-Knowledge Binding stimmt nicht mit Guild/Gameserver-Scope ueberein.');
+  }
+
   const scope = await validateKnowledgeScope(input.guildId, input.nitradoConnId);
   if (!scope.ok || scope.scope.type !== 'GAMESERVER') {
     throw new Error(scope.ok ? 'Live-Server-Knowledge erfordert Gameserver-Scope.' : scope.message);
@@ -124,10 +135,13 @@ export async function indexNitradoSnapshotKnowledge(input: {
       nitradoConnId: input.nitradoConnId,
       status: { in: ['OK', 'PARTIAL'] },
     },
-    select: { id: true, finishedAt: true },
+    select: { id: true, serviceId: true, finishedAt: true },
   });
   const observedAt = snapshot?.finishedAt ?? null;
   if (!snapshot || !observedAt) throw new Error('Snapshot ist nicht abgeschlossen oder nicht fuer Live-Knowledge geeignet.');
+  if (snapshot.serviceId !== input.binding.nitradoServerId) {
+    throw new Error('Snapshot gehoert nicht zur erwarteten Nitrado-Service-Bindung.');
+  }
 
   const rows = await prisma.nitradoSnapshotFile.findMany({
     where: {
@@ -185,7 +199,10 @@ export async function indexNitradoSnapshotKnowledge(input: {
   const validUntil = new Date(observedAt.getTime() + LIVE_SERVER_VALIDITY_DAYS * 86_400_000);
   const prefix = liveServerSourcePrefixForConnection(input.nitradoConnId);
 
-  const replacedDocuments = await prisma.$transaction(async (tx) => {
+  // Die komplette lokale Austausch-Transaktion liegt unter der finalen
+  // Token-/Service-/Binding-Freshness-Grenze. Ein X->Y->X-ABA-Servicewechsel
+  // verliert wegen bindingVersion ebenso wie ein Tokenwechsel den Fence.
+  const replacedDocuments = await withFreshAdmBinding(input.binding, () => prisma.$transaction(async (tx) => {
     const scopedRows = await tx.guildKnowledgeScope.findMany({
       where: { guildId: input.guildId, nitradoConnId: input.nitradoConnId },
       select: { knowledgeId: true },
@@ -250,14 +267,14 @@ export async function indexNitradoSnapshotKnowledge(input: {
           sourceKind: 'LIVE_SERVER',
           trustLevel: 'VERIFIED',
           sourceRef: sourceRef(input.nitradoConnId, document),
-          sourceVersion: sourceVersion(input.snapshotId, document.sha256),
+          sourceVersion: sourceVersion(input.binding.bindingVersion, input.snapshotId, document.sha256),
           observedAt,
           validUntil,
         },
       });
     }
     return generatedIds.length;
-  });
+  }));
 
   const result: LiveServerKnowledgeIndexResult = {
     snapshotId: input.snapshotId,
