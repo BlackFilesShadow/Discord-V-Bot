@@ -1,4 +1,9 @@
 import prisma from '../../database/prisma';
+import {
+  enqueueWhitelistAdd,
+  enqueueWhitelistRemove,
+  type WhitelistOutboxClient,
+} from '../whitelist/whitelistOutbox';
 
 export type WhitelistJobOperation = 'WHITELIST_ADD' | 'WHITELIST_REMOVE';
 export type WhitelistDesiredState = 'PRESENT' | 'PENDING_REMOVE' | 'UNTRACKED';
@@ -9,12 +14,16 @@ export interface WhitelistIntentDecision {
   reason: 'CURRENT_INTENT' | 'SUPERSEDED_BY_REMOVE' | 'SUPERSEDED_BY_PRESENT';
 }
 
+export interface WhitelistIntentReconciliation extends WhitelistIntentDecision {
+  compensationQueued: boolean;
+}
+
 function norm(value: string): string {
   return value.trim().toLocaleLowerCase('en-US');
 }
 
 /**
- * Liest unmittelbar vor einem Remote-Whitelist-Write die aktuelle lokale
+ * Liest unmittelbar vor oder nach einem Remote-Whitelist-Write die aktuelle
  * Source-of-Truth fuer exakt Guild + Gameserver + Spielernamen.
  *
  * Mehrere case-variierte Legacy-Zeilen werden konservativ zusammengefuehrt:
@@ -49,11 +58,11 @@ export async function readWhitelistDesiredState(
  *
  * ADD:
  *   PRESENT        -> ausfuehren
- *   PENDING_REMOVE -> stale/superseded, no-op DONE
- *   UNTRACKED      -> stale/superseded, no-op DONE
+ *   PENDING_REMOVE -> stale/superseded
+ *   UNTRACKED      -> stale/superseded
  *
  * REMOVE:
- *   PRESENT        -> stale/superseded, no-op DONE
+ *   PRESENT        -> stale/superseded
  *   PENDING_REMOVE -> ausfuehren
  *   UNTRACKED      -> ausfuehren (bewusst: remote-only Remove bleibt moeglich)
  */
@@ -74,4 +83,36 @@ export async function decideWhitelistRemoteIntent(
   return desiredState === 'PRESENT'
     ? { execute: false, desiredState, reason: 'SUPERSEDED_BY_PRESENT' }
     : { execute: true, desiredState, reason: 'CURRENT_INTENT' };
+}
+
+/**
+ * Nitrado-1B Recovery-Grenze.
+ *
+ * Ist der historische Job inzwischen superseded, reicht ein lokales DONE nicht:
+ * ein frueherer Versuch kann den Remote-Write bereits erfolgreich ausgefuehrt
+ * und danach vor dem DONE-Checkpoint gecrasht haben. Deshalb wird unter der
+ * atomaren Nitrado-1A-Outbox-Grenze zuerst der aktuelle Gegen-Intent garantiert.
+ *
+ * Dieselbe Funktion wird nach einem erfolgreichen Remote-Write erneut benutzt.
+ * Aendert sich der lokale Sollzustand waehrend des HTTP-Calls, entsteht dadurch
+ * sofort ein deduplizierter Kompensationsjob.
+ */
+export async function reconcileWhitelistRemoteIntent(
+  operation: WhitelistJobOperation,
+  guildId: string,
+  nitradoConnId: string,
+  gameId: string,
+): Promise<WhitelistIntentReconciliation> {
+  const decision = await decideWhitelistRemoteIntent(operation, guildId, nitradoConnId, gameId);
+  if (decision.execute) {
+    return { ...decision, compensationQueued: false };
+  }
+
+  const scope = { guildId, nitradoConnId };
+  const outbox = prisma as unknown as WhitelistOutboxClient;
+  const compensationQueued = operation === 'WHITELIST_ADD'
+    ? await enqueueWhitelistRemove(outbox, scope, gameId)
+    : await enqueueWhitelistAdd(outbox, scope, gameId);
+
+  return { ...decision, compensationQueued };
 }

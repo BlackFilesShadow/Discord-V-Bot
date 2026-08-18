@@ -1,7 +1,7 @@
 const jobFindUnique = jest.fn();
 const jobUpdateMany = jest.fn();
 const connectionFindFirst = jest.fn();
-const decideIntent = jest.fn();
+const reconcileIntent = jest.fn();
 const decrypt = jest.fn();
 const addToWhitelist = jest.fn();
 const removeFromWhitelist = jest.fn();
@@ -50,7 +50,7 @@ jest.mock('../../src/modules/nitrado/nitradoClient', () => ({
 }));
 
 jest.mock('../../src/modules/nitrado/whitelistIntent', () => ({
-  decideWhitelistRemoteIntent: decideIntent,
+  reconcileWhitelistRemoteIntent: reconcileIntent,
 }));
 
 jest.mock('../../src/modules/bans/banRegistry', () => ({ isBanActive: jest.fn() }));
@@ -86,6 +86,19 @@ function job(operation: 'WHITELIST_ADD' | 'WHITELIST_REMOVE', gameId: unknown = 
   };
 }
 
+const currentAdd = {
+  execute: true,
+  desiredState: 'PRESENT',
+  reason: 'CURRENT_INTENT',
+  compensationQueued: false,
+};
+const currentRemove = {
+  execute: true,
+  desiredState: 'UNTRACKED',
+  reason: 'CURRENT_INTENT',
+  compensationQueued: false,
+};
+
 beforeEach(() => {
   jest.clearAllMocks();
   pgConnect.mockResolvedValue(undefined);
@@ -108,17 +121,19 @@ beforeEach(() => {
 });
 
 describe('Nitrado-1B worker whitelist intent reconciliation', () => {
-  it('turns an old ADD retry into DONE without token/API work after a newer remove intent', async () => {
+  it('turns an old ADD retry into DONE only after a newer remove compensation is guaranteed', async () => {
     jobFindUnique.mockResolvedValue(job('WHITELIST_ADD'));
-    decideIntent.mockResolvedValue({
+    reconcileIntent.mockResolvedValue({
       execute: false,
       desiredState: 'PENDING_REMOVE',
       reason: 'SUPERSEDED_BY_REMOVE',
+      compensationQueued: true,
     });
 
     await executeJob('job-WHITELIST_ADD');
 
-    expect(decideIntent).toHaveBeenCalledWith('WHITELIST_ADD', GUILD, CONN, 'PlayerOne');
+    expect(reconcileIntent).toHaveBeenCalledWith('WHITELIST_ADD', GUILD, CONN, 'PlayerOne');
+    expect(reconcileIntent).toHaveBeenCalledTimes(1);
     expect(decrypt).not.toHaveBeenCalled();
     expect(addToWhitelist).not.toHaveBeenCalled();
     expect(removeFromWhitelist).not.toHaveBeenCalled();
@@ -134,50 +149,99 @@ describe('Nitrado-1B worker whitelist intent reconciliation', () => {
     }));
   });
 
-  it('turns an old REMOVE retry into DONE after a newer re-add made PRESENT authoritative', async () => {
+  it('turns an old REMOVE retry into DONE only after a newer ADD compensation is guaranteed', async () => {
     jobFindUnique.mockResolvedValue(job('WHITELIST_REMOVE'));
-    decideIntent.mockResolvedValue({
+    reconcileIntent.mockResolvedValue({
       execute: false,
       desiredState: 'PRESENT',
       reason: 'SUPERSEDED_BY_PRESENT',
+      compensationQueued: true,
     });
 
     await executeJob('job-WHITELIST_REMOVE');
 
     expect(decrypt).not.toHaveBeenCalled();
     expect(removeFromWhitelist).not.toHaveBeenCalled();
+    expect(reconcileIntent).toHaveBeenCalledTimes(1);
     expect(jobUpdateMany).toHaveBeenCalledWith(expect.objectContaining({
       where: { id: 'job-WHITELIST_REMOVE', guildId: GUILD, status: 'RUNNING' },
       data: expect.objectContaining({ status: 'DONE' }),
     }));
   });
 
-  it('executes current ADD intent and finishes through the normal DONE path', async () => {
+  it('executes current ADD and rechecks intent after the remote write before DONE', async () => {
     jobFindUnique.mockResolvedValue(job('WHITELIST_ADD'));
-    decideIntent.mockResolvedValue({ execute: true, desiredState: 'PRESENT', reason: 'CURRENT_INTENT' });
+    reconcileIntent.mockResolvedValue(currentAdd);
 
     await executeJob('job-WHITELIST_ADD');
 
     expect(decrypt).toHaveBeenCalledWith('cipher', '0'.repeat(64));
     expect(addToWhitelist).toHaveBeenCalledWith('service-1', 'PlayerOne');
+    expect(reconcileIntent).toHaveBeenCalledTimes(2);
     expect(jobUpdateMany).toHaveBeenCalledWith(expect.objectContaining({
       where: { id: 'job-WHITELIST_ADD', guildId: GUILD },
       data: expect.objectContaining({ status: 'DONE', lastError: null }),
     }));
   });
 
-  it('keeps remote-only REMOVE executable when no local row exists', async () => {
+  it('keeps remote-only REMOVE executable and rechecks it after the remote write', async () => {
     jobFindUnique.mockResolvedValue(job('WHITELIST_REMOVE', 'RemoteOnly'));
-    decideIntent.mockResolvedValue({ execute: true, desiredState: 'UNTRACKED', reason: 'CURRENT_INTENT' });
+    reconcileIntent.mockResolvedValue(currentRemove);
 
     await executeJob('job-WHITELIST_REMOVE');
 
     expect(removeFromWhitelist).toHaveBeenCalledWith('service-1', 'RemoteOnly');
+    expect(reconcileIntent).toHaveBeenCalledTimes(2);
   });
 
-  it('treats an intent lookup failure as retryable and performs no token/API work', async () => {
+  it('queues REMOVE compensation if local intent flips during an ADD HTTP call', async () => {
     jobFindUnique.mockResolvedValue(job('WHITELIST_ADD'));
-    decideIntent.mockRejectedValue(new Error('db temporarily unavailable'));
+    reconcileIntent
+      .mockResolvedValueOnce(currentAdd)
+      .mockResolvedValueOnce({
+        execute: false,
+        desiredState: 'PENDING_REMOVE',
+        reason: 'SUPERSEDED_BY_REMOVE',
+        compensationQueued: true,
+      });
+
+    await executeJob('job-WHITELIST_ADD');
+
+    expect(addToWhitelist).toHaveBeenCalledWith('service-1', 'PlayerOne');
+    expect(reconcileIntent).toHaveBeenCalledTimes(2);
+    expect(jobUpdateMany).toHaveBeenCalledWith(expect.objectContaining({
+      data: expect.objectContaining({ status: 'DONE' }),
+    }));
+  });
+
+  it('queues ADD compensation if local intent flips during a REMOVE HTTP call', async () => {
+    jobFindUnique.mockResolvedValue(job('WHITELIST_REMOVE'));
+    reconcileIntent
+      .mockResolvedValueOnce({
+        execute: true,
+        desiredState: 'PENDING_REMOVE',
+        reason: 'CURRENT_INTENT',
+        compensationQueued: false,
+      })
+      .mockResolvedValueOnce({
+        execute: false,
+        desiredState: 'PRESENT',
+        reason: 'SUPERSEDED_BY_PRESENT',
+        compensationQueued: true,
+      });
+
+    await executeJob('job-WHITELIST_REMOVE');
+
+    expect(removeFromWhitelist).toHaveBeenCalledWith('service-1', 'PlayerOne');
+    expect(reconcileIntent).toHaveBeenCalledTimes(2);
+    expect(jobUpdateMany).toHaveBeenCalledWith(expect.objectContaining({
+      data: expect.objectContaining({ status: 'DONE' }),
+    }));
+  });
+
+  it('treats a pre-write intent reconciliation failure as retryable and performs no token/API work', async () => {
+    jobFindUnique.mockResolvedValue(job('WHITELIST_ADD'));
+    reconcileIntent.mockRejectedValue(new Error('db temporarily unavailable'));
 
     await executeJob('job-WHITELIST_ADD');
 
@@ -194,7 +258,7 @@ describe('Nitrado-1B worker whitelist intent reconciliation', () => {
 
     await executeJob('job-WHITELIST_ADD');
 
-    expect(decideIntent).not.toHaveBeenCalled();
+    expect(reconcileIntent).not.toHaveBeenCalled();
     expect(decrypt).not.toHaveBeenCalled();
     expect(addToWhitelist).not.toHaveBeenCalled();
     expect(jobUpdateMany).toHaveBeenCalledWith(expect.objectContaining({

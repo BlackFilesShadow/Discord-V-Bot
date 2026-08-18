@@ -32,7 +32,7 @@ import { logger, logAudit } from '../../utils/logger';
 import { config } from '../../config';
 import { decrypt } from '../../utils/security';
 import { NitradoClient, NitradoApiError } from './nitradoClient';
-import { decideWhitelistRemoteIntent } from './whitelistIntent';
+import { reconcileWhitelistRemoteIntent } from './whitelistIntent';
 import { emitGuildEvent } from '../../dashboard/socket/emitter';
 import { isBanActive } from '../bans/banRegistry';
 import { matchesBanIdentifier } from '../bans/banTarget';
@@ -192,10 +192,10 @@ async function reconcileRemoteBanRemovals(now: Date): Promise<void> {
  * aktuellen lokalen Whitelist-Sollzustand stellen. Die Pruefung laeuft NACH
  * dem per-Connection-Advisory-Lock und VOR Token/Remote-API-Arbeit.
  *
- * Superseded Jobs werden als erfolgreicher No-op DONE quittiert: sie sind nicht
- * technisch fehlgeschlagen, sondern durch eine neuere Nutzer-/Reconcile-
- * Entscheidung obsolet geworden. Dabei wird kein Spielername zusaetzlich
- * geloggt oder in Audit-Metadaten kopiert.
+ * Superseded Jobs werden als erfolgreicher No-op DONE quittiert: die neue
+ * Reconcile-Grenze hat davor bereits den aktuellen Gegen-Intent atomar in der
+ * Outbox garantiert. Dabei wird kein Spielername zusaetzlich geloggt oder in
+ * Audit-Metadaten kopiert.
  */
 async function finishSupersededWhitelistJob(args: {
   id: string;
@@ -300,10 +300,9 @@ export async function executeJob(jobId: string): Promise<void> {
       return;
     }
 
-    // Nitrado-1B: Whitelist-Retry-Reihenfolge wird durch die aktuelle lokale
-    // Source-of-Truth aufgeloest. Diese Pruefung liegt unter dem Connection-Lock
-    // und bewusst VOR Token-Entschluesselung/Remote-API. Ein bereits obsoleter
-    // Job wird daher auch bei spaeter kaputtem Token nicht faelschlich DEAD.
+    // Nitrado-1B: unter dem Connection-Lock vor jedem Whitelist-Remote-Write den
+    // aktuellen Sollzustand lesen und bei einem superseded Retry den Gegenjob
+    // sicherstellen. Erst danach darf der historische Job DONE werden.
     if (job.operation === 'WHITELIST_ADD' || job.operation === 'WHITELIST_REMOVE') {
       if (typeof payload.gameId !== 'string' || !payload.gameId.trim()) {
         await failJob(job.id, job.guildId, job.attempts, job.maxAttempts, 'payload.gameId fehlt', true);
@@ -311,7 +310,7 @@ export async function executeJob(jobId: string): Promise<void> {
       }
       let decision;
       try {
-        decision = await decideWhitelistRemoteIntent(
+        decision = await reconcileWhitelistRemoteIntent(
           job.operation,
           job.guildId,
           conn.id,
@@ -323,7 +322,7 @@ export async function executeJob(jobId: string): Promise<void> {
           job.guildId,
           job.attempts,
           job.maxAttempts,
-          `Whitelist-Intent-Lookup fehlgeschlagen: ${(error as Error).message}`,
+          `Whitelist-Intent-Reconcile fehlgeschlagen: ${(error as Error).message}`,
           false,
         );
         return;
@@ -371,12 +370,26 @@ export async function executeJob(jobId: string): Promise<void> {
           if (!conn.nitradoServerId) throw new Error('Kein nitradoServerId fuer WHITELIST_ADD');
           if (typeof payload.gameId !== 'string') throw new Error('payload.gameId fehlt');
           await client.addToWhitelist(conn.nitradoServerId, payload.gameId);
+          // Der Sollzustand kann sich waehrend des HTTP-Calls geaendert haben.
+          // Post-Write-Reconcile erzeugt dann sofort den deduplizierten Gegenjob.
+          await reconcileWhitelistRemoteIntent(
+            'WHITELIST_ADD',
+            job.guildId,
+            conn.id,
+            payload.gameId,
+          );
           break;
         }
         case 'WHITELIST_REMOVE': {
           if (!conn.nitradoServerId) throw new Error('Kein nitradoServerId fuer WHITELIST_REMOVE');
           if (typeof payload.gameId !== 'string') throw new Error('payload.gameId fehlt');
           await client.removeFromWhitelist(conn.nitradoServerId, payload.gameId);
+          await reconcileWhitelistRemoteIntent(
+            'WHITELIST_REMOVE',
+            job.guildId,
+            conn.id,
+            payload.gameId,
+          );
           break;
         }
         case 'SERVER_BAN_ADD': {

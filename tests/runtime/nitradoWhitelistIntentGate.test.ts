@@ -17,18 +17,45 @@ describe('Nitrado-1B whitelist intent reconciliation architecture gate', () => {
     expect(intent).toContain("reason: 'SUPERSEDED_BY_PRESENT'");
   });
 
+  it('guarantees the opposite 1A outbox intent before a superseded job can finish', () => {
+    expect(intent).toContain('export async function reconcileWhitelistRemoteIntent(');
+    expect(intent).toContain("operation === 'WHITELIST_ADD'");
+    expect(intent).toContain('await enqueueWhitelistRemove(outbox, scope, gameId)');
+    expect(intent).toContain('await enqueueWhitelistAdd(outbox, scope, gameId)');
+    expect(intent).toContain('compensationQueued');
+
+    const reconcile = worker.indexOf('decision = await reconcileWhitelistRemoteIntent(');
+    const superseded = worker.indexOf('if (!decision.execute) {', reconcile);
+    const done = worker.indexOf('await finishSupersededWhitelistJob({', superseded);
+    expect(reconcile).toBeGreaterThanOrEqual(0);
+    expect(superseded).toBeGreaterThan(reconcile);
+    expect(done).toBeGreaterThan(superseded);
+  });
+
   it('checks whitelist intent after the per-connection lock but before token decryption and remote mutation', () => {
     const lock = worker.indexOf('connectionLock = await tryAcquireConnectionLock(job.nitradoConnId);');
-    const intentCheck = worker.indexOf('decision = await decideWhitelistRemoteIntent(');
+    const preReconcile = worker.indexOf('decision = await reconcileWhitelistRemoteIntent(');
     const decrypt = worker.indexOf('const token = decrypt(conn.encryptedToken, config.security.encryptionKey);');
     const add = worker.indexOf('await client.addToWhitelist(conn.nitradoServerId, payload.gameId);');
     const remove = worker.indexOf('await client.removeFromWhitelist(conn.nitradoServerId, payload.gameId);');
 
     expect(lock).toBeGreaterThanOrEqual(0);
-    expect(intentCheck).toBeGreaterThan(lock);
-    expect(decrypt).toBeGreaterThan(intentCheck);
+    expect(preReconcile).toBeGreaterThan(lock);
+    expect(decrypt).toBeGreaterThan(preReconcile);
     expect(add).toBeGreaterThan(decrypt);
     expect(remove).toBeGreaterThan(decrypt);
+  });
+
+  it('reconciles again after both whitelist remote writes and before the generic DONE checkpoint', () => {
+    const add = worker.indexOf('await client.addToWhitelist(conn.nitradoServerId, payload.gameId);');
+    const postAdd = worker.indexOf("await reconcileWhitelistRemoteIntent(\n            'WHITELIST_ADD'", add);
+    const remove = worker.indexOf('await client.removeFromWhitelist(conn.nitradoServerId, payload.gameId);');
+    const postRemove = worker.indexOf("await reconcileWhitelistRemoteIntent(\n            'WHITELIST_REMOVE'", remove);
+    const done = worker.indexOf('await prisma.nitradoJob.updateMany({', postRemove);
+
+    expect(postAdd).toBeGreaterThan(add);
+    expect(postRemove).toBeGreaterThan(remove);
+    expect(done).toBeGreaterThan(postRemove);
   });
 
   it('finishes superseded jobs as explicit DONE no-ops without persisting the player identifier again', () => {
@@ -36,8 +63,6 @@ describe('Nitrado-1B whitelist intent reconciliation architecture gate', () => {
     expect(worker).toContain("status: 'DONE', lastError: null");
     expect(worker).toContain("logAudit('NITRADO_WHITELIST_JOB_SUPERSEDED'");
     expect(worker).not.toContain("NITRADO_WHITELIST_JOB_SUPERSEDED', 'NITRADO', {\n    gameId");
-    expect(worker).toContain('if (!decision.execute) {');
-    expect(worker).toContain('await finishSupersededWhitelistJob({');
   });
 
   it('keeps remote-only REMOVE valid while stale ADD without a local active row is discarded', () => {

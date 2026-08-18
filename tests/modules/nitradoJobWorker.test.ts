@@ -16,6 +16,7 @@ const jobCreateMock = jest.fn(async () => ({}));
 const serverBanFindFirstMock = jest.fn();
 const serverBanFindManyMock = jest.fn(async () => []);
 const serverBanUpdateManyMock = jest.fn(async () => ({ count: 1 }));
+const reconcileWhitelistIntentMock = jest.fn();
 const jobStore: Record<string, unknown> = {};
 const prismaMock = {
   nitradoJob: {
@@ -84,6 +85,10 @@ jest.mock('../../src/modules/nitrado/nitradoClient', () => ({
   NitradoApiError: class NitradoApiError extends Error { status: number | null = null; },
 }));
 
+jest.mock('../../src/modules/nitrado/whitelistIntent', () => ({
+  reconcileWhitelistRemoteIntent: (...args: unknown[]) => reconcileWhitelistIntentMock(...args),
+}));
+
 import { executeJob, drainAndStopJobWorker, nitradoConnectionLockKeys } from '../../src/modules/nitrado/jobWorker';
 import { identityHash } from '../../src/modules/linking/identity';
 
@@ -102,6 +107,9 @@ beforeEach(() => {
   prismaMock.nitradoConnection.findFirst.mockImplementation(async () => ({
     id: 'conn-1', guildId: 'g1', encryptedToken: 'enc', nitradoServerId: '123', status: 'ACTIVE', keepOnlineEnabled: true,
   }));
+  reconcileWhitelistIntentMock.mockImplementation(async (operation: string) => operation === 'WHITELIST_REMOVE'
+    ? { execute: true, desiredState: 'UNTRACKED', reason: 'CURRENT_INTENT', compensationQueued: false }
+    : { execute: true, desiredState: 'PRESENT', reason: 'CURRENT_INTENT', compensationQueued: false });
   serverBanFindFirstMock.mockReset();
   serverBanFindManyMock.mockResolvedValue([]);
   serverBanUpdateManyMock.mockResolvedValue({ count: 1 });
@@ -166,6 +174,7 @@ describe('NIT-005/007 — Job-Fehler vor API-Aufruf', () => {
     addToWhitelist.mockResolvedValue(undefined);
     await executeJob('j3');
     expect(addToWhitelist).toHaveBeenCalledWith('123', 'player1');
+    expect(reconcileWhitelistIntentMock).toHaveBeenCalledTimes(2);
     expect(lastUpdateData().status).toBe('DONE');
   });
 });
