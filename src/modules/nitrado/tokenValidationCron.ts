@@ -8,6 +8,8 @@
  *   Connection-Status zu veraendern.
  * - Nach drei Fehlern in Folge wird genau eine Owner-Warnung pro Streak
  *   beansprucht; eine erfolgreiche Validierung resetten den Streak.
+ * - Nitrado-1D: Validierung + Status/Health-Write laufen unter demselben
+ *   per-Connection-Advisory-Lock wie Worker und Konfigurationsmutationen.
  *
  * Scheduler-Lifecycle: Initial-Timeout und Intervall sind explizit stoppbar
  * und via unref() kein Grund, einen ansonsten beendeten Prozess festzuhalten.
@@ -22,6 +24,7 @@ import { NitradoClient, type TokenValidationResult } from './nitradoClient';
 import { setStatus, markValidated } from './repository';
 import { recordValidationFailure, sanitizeValidationError } from './validationHealth';
 import { asGuildId, asNitradoConnId } from '../../types/scope';
+import { tryAcquireNitradoConfigMutationLock } from './configMutationLock';
 
 const VALIDATION_INTERVAL_MS = 24 * 60 * 60 * 1000; // taeglich
 const INITIAL_VALIDATION_DELAY_MS = 5 * 60 * 1000;
@@ -92,6 +95,8 @@ async function persistFailure(
     const health = await recordValidationFailure(guildId, connId, safeMessage);
     // Bestehendes Connection-Feld weiterhin als schnellen Diagnose-Snapshot
     // spiegeln; die Streak-/Alert-Wahrheit liegt in NitradoValidationHealth.
+    // Nitrado-1D: Aufrufer haelt dabei den Connection-Lock, damit dieser Write
+    // niemals einen inzwischen rotierten Token-Snapshot verunreinigt.
     await prisma.nitradoConnection.updateMany({
       where: { id: conn.id, guildId: conn.guildId },
       data: { lastErrorMessage: health.safeMessage },
@@ -125,9 +130,11 @@ function resultDiagnostic(result: Exclude<TokenValidationResult, { kind: 'VALID'
   }
 }
 
-/** Einzelpruefung ist exportiert, damit Failure-/Recovery-Semantik ohne Timer
- *  deterministisch regressionsgetestet werden kann. */
-export async function validateConnectionTokenOnce(
+/**
+ * Fuehrt die eigentliche Token-Pruefung aus. Der Aufrufer MUSS fuer die gesamte
+ * Lebensdauer dieser Funktion den per-Connection-Advisory-Lock halten.
+ */
+async function validateLockedConnectionTokenOnce(
   discord: Client,
   conn: TokenValidationConnection,
 ): Promise<void> {
@@ -153,7 +160,6 @@ export async function validateConnectionTokenOnce(
   }
 
   if (result.kind === 'VALID') {
-    // Auto-Recovery: ACTIVE + Validierungszeitpunkt + Diagnose-Streak reset.
     await markValidated(asGuildId(conn.guildId), asNitradoConnId(conn.id));
     if (conn.status !== 'ACTIVE') {
       logAudit('NITRADO_TOKEN_REACTIVATED', 'NITRADO', {
@@ -172,8 +178,6 @@ export async function validateConnectionTokenOnce(
     return;
   }
 
-  // INVALID wird ebenfalls diagnostiziert, besitzt aber bereits seinen eigenen
-  // sofortigen Owner-Hinweis. Deshalb kein zusaetzlicher "3 Fehler"-Alert.
   await persistFailure(discord, conn, resultDiagnostic(result), false);
 
   // Bereits EXPIRED -> keine erneute spezifische DM-Flut.
@@ -188,10 +192,78 @@ export async function validateConnectionTokenOnce(
   await notifyOwnerExpired(discord, conn);
 }
 
+/**
+ * Einzelpruefung ist exportiert, damit Lock-/Snapshot-/Failure-Semantik ohne
+ * Timer deterministisch regressionsgetestet werden kann.
+ *
+ * Nitrado-1D:
+ * 1. denselben Connection-Lock wie Worker/Token-/Service-Mutation gewinnen,
+ * 2. DANACH den aktuellen DB-Snapshot neu lesen,
+ * 3. genau diesen Snapshot remote validieren und Status/Health schreiben.
+ *
+ * Busy/Lock-/Snapshot-Infrastrukturfehler sind keine Token-Fehler und erhoehen
+ * deshalb den Validation-Health-Streak nicht.
+ */
+export async function validateConnectionTokenOnce(
+  discord: Client,
+  conn: TokenValidationConnection,
+): Promise<void> {
+  let lock;
+  try {
+    lock = await tryAcquireNitradoConfigMutationLock(conn.id);
+  } catch (error) {
+    logger.warn(`Token-Validation-Lock fuer ${conn.id} nicht verfuegbar: ${sanitizeValidationError(error)}`);
+    return;
+  }
+
+  if (!lock) {
+    logger.debug(`Token-Validation fuer ${conn.id} uebersprungen: Connection ist gerade busy.`);
+    return;
+  }
+
+  try {
+    let fresh: TokenValidationConnection | null;
+    try {
+      fresh = await prisma.nitradoConnection.findFirst({
+        where: {
+          id: conn.id,
+          guildId: conn.guildId,
+          status: { in: ['ACTIVE', 'EXPIRED'] },
+        },
+        select: {
+          id: true,
+          guildId: true,
+          alias: true,
+          alias5: true,
+          status: true,
+          encryptedToken: true,
+        },
+      });
+    } catch (error) {
+      logger.warn(`Token-Validation-Snapshot fuer ${conn.id} konnte nicht neu gelesen werden: ${sanitizeValidationError(error)}`);
+      return;
+    }
+
+    if (!fresh) return;
+
+    try {
+      await validateLockedConnectionTokenOnce(discord, fresh);
+    } catch (error) {
+      const safe = sanitizeValidationError(error);
+      logger.warn(`Token-Validation fuer ${fresh.id} fehlgeschlagen: ${safe}`);
+      await persistFailure(discord, fresh, `UNEXPECTED_VALIDATION_ERROR: ${safe}`, true);
+    }
+  } finally {
+    await lock.release();
+  }
+}
+
 async function pollOnce(discord: Client): Promise<void> {
   if (running) return;
   running = true;
   try {
+    // Dieser Scan ist nur Kandidatenfindung. validateConnectionTokenOnce liest
+    // nach gewonnenem Connection-Lock den kanonischen Snapshot erneut.
     // eslint-disable-next-line local/no-unscoped-prisma-query -- Cron iteriert alle Guilds; Scope-Operationen sind in validateConnectionTokenOnce pro Guild gebunden.
     const conns = await prisma.nitradoConnection.findMany({
       where: { status: { in: ['ACTIVE', 'EXPIRED'] } },
@@ -201,11 +273,9 @@ async function pollOnce(discord: Client): Promise<void> {
       try {
         await validateConnectionTokenOnce(discord, c);
       } catch (error) {
-        // Letzte Isolation: auch ein unerwarteter Fehler einer Connection darf
-        // den Rest des taeglichen Laufs nicht verhindern.
-        const safe = sanitizeValidationError(error);
-        logger.warn(`Token-Validation fuer ${c.id} fehlgeschlagen: ${safe}`);
-        await persistFailure(discord, c, `UNEXPECTED_VALIDATION_ERROR: ${safe}`, true);
+        // Reine letzte Prozessisolation. Hier bewusst KEIN persistFailure mit
+        // dem alten Scan-Snapshot: das wuerde den 1D-Snapshot-Fence umgehen.
+        logger.warn(`Token-Validation-Isolation fuer ${c.id}: ${sanitizeValidationError(error)}`);
       }
     }
     if (conns.length > 0) {
