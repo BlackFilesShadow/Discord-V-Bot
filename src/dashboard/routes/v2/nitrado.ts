@@ -18,6 +18,7 @@ import {
   updateAlias,
   updateServiceId,
   NitradoSlotVersionConflictError,
+  NitradoConnectionBusyError,
 } from '../../../modules/nitrado/repository';
 import { NitradoClient } from '../../../modules/nitrado/nitradoClient';
 import { asUserDiscordId, asNitradoConnId } from '../../../types/scope';
@@ -72,6 +73,13 @@ function respondVersionConflict(res: Response): void {
   res.status(409).json({
     error: 'Nitrado-Slot wurde parallel geändert. Bitte aktuellen Stand neu laden und die Aktion erneut ausführen.',
     code: 'NITRADO_SLOT_VERSION_CONFLICT',
+  });
+}
+
+function respondConnectionBusy(res: Response): void {
+  res.status(409).json({
+    error: 'Nitrado-Connection wird gerade von einem Server-Job verwendet. Bitte Aktion erneut ausführen.',
+    code: 'NITRADO_CONNECTION_BUSY',
   });
 }
 
@@ -177,6 +185,7 @@ nitradoRouter.patch('/:slot/token', requireGuildOwner, async (req, res) => {
       expectedUpdatedAt: existing.updatedAt,
     });
   } catch (e) {
+    if (e instanceof NitradoConnectionBusyError) { respondConnectionBusy(res); return; }
     if (e instanceof NitradoSlotVersionConflictError) { respondVersionConflict(res); return; }
     throw e;
   }
@@ -243,6 +252,7 @@ nitradoRouter.patch('/:slot/service', requireGuildOwner, async (req, res) => {
       expectedUpdatedAt: existing.updatedAt,
     });
   } catch (e) {
+    if (e instanceof NitradoConnectionBusyError) { respondConnectionBusy(res); return; }
     if (e instanceof NitradoSlotVersionConflictError) { respondVersionConflict(res); return; }
     res.status(400).json({ error: (e as Error).message }); return;
   }
@@ -259,7 +269,13 @@ nitradoRouter.delete('/:slot', requireGuildOwner, async (req, res) => {
   const scope = req.guildScope!;
   const slot = Number(String(req.params.slot));
   if (!Number.isInteger(slot) || slot < 1 || slot > 5) { res.status(400).json({ error: 'slot 1..5' }); return; }
-  const id = await deleteSlot(scope.guildId, slot);
+  let id;
+  try {
+    id = await deleteSlot(scope.guildId, slot);
+  } catch (e) {
+    if (e instanceof NitradoConnectionBusyError) { respondConnectionBusy(res); return; }
+    throw e;
+  }
   if (!id) { res.status(404).json({ error: 'Slot nicht gefunden.' }); return; }
   logAuditDb('NITRADO_SLOT_DELETED', 'NITRADO', { actorUserId: req.auth!.userId, guildId: scope.guildId, details: { slot, id } });
   res.json({ ok: true, deletedId: id });
