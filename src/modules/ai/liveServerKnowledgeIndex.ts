@@ -15,7 +15,12 @@ import {
   LIVE_SERVER_KNOWLEDGE_CREATED_BY,
   LIVE_SERVER_VALIDITY_DAYS,
   liveServerSourcePrefixForConnection,
+  liveServerSourceVersion,
 } from './liveServerKnowledgeConstants';
+import {
+  deleteGeneratedLiveServerKnowledge,
+  type LiveServerKnowledgeLifecycleClient,
+} from './liveServerKnowledgeLifecycle';
 import {
   chooseLiveServerKnowledgeFiles,
   parseLiveServerKnowledgeFile,
@@ -64,10 +69,6 @@ async function hydrateFile(file: SnapshotTextFile): Promise<(SnapshotTextFile & 
 
 function sourceRef(nitradoConnId: string, document: ParsedLiveServerKnowledgeDocument): string {
   return `${liveServerSourcePrefixForConnection(nitradoConnId)}${encodeURIComponent(document.sourceKey)}`.slice(0, 500);
-}
-
-function sourceVersion(bindingVersion: number, snapshotId: string, sha256: string): string {
-  return `b${bindingVersion}:${snapshotId}:${sha256}`.slice(0, 100);
 }
 
 function validationKind(fileName: string): LiveServerKnowledgeKind {
@@ -197,51 +198,16 @@ export async function indexNitradoSnapshotKnowledge(input: {
   }
 
   const validUntil = new Date(observedAt.getTime() + LIVE_SERVER_VALIDITY_DAYS * 86_400_000);
-  const prefix = liveServerSourcePrefixForConnection(input.nitradoConnId);
 
   // Die komplette lokale Austausch-Transaktion liegt unter der finalen
   // Token-/Service-/Binding-Freshness-Grenze. Ein X->Y->X-ABA-Servicewechsel
   // verliert wegen bindingVersion ebenso wie ein Tokenwechsel den Fence.
   const replacedDocuments = await withFreshAdmBinding(input.binding, () => prisma.$transaction(async (tx) => {
-    const scopedRows = await tx.guildKnowledgeScope.findMany({
-      where: { guildId: input.guildId, nitradoConnId: input.nitradoConnId },
-      select: { knowledgeId: true },
-    });
-    const scopedIds = scopedRows.map((row) => row.knowledgeId);
-    let generatedIds: string[] = [];
-    if (scopedIds.length > 0) {
-      const systemRows = await tx.guildKnowledge.findMany({
-        where: {
-          guildId: input.guildId,
-          createdBy: LIVE_SERVER_KNOWLEDGE_CREATED_BY,
-          id: { in: scopedIds },
-        },
-        select: { id: true },
-      });
-      const provenanceRows = await tx.guildKnowledgeProvenance.findMany({
-        where: {
-          guildId: input.guildId,
-          knowledgeId: { in: scopedIds },
-          sourceKind: 'LIVE_SERVER',
-          sourceRef: { startsWith: prefix },
-        },
-        select: { knowledgeId: true },
-      });
-      const provenanceIds = new Set(provenanceRows.map((row) => row.knowledgeId));
-      generatedIds = systemRows.map((row) => row.id).filter((id) => provenanceIds.has(id));
-    }
-
-    if (generatedIds.length > 0) {
-      await tx.guildKnowledgeProvenance.deleteMany({
-        where: { guildId: input.guildId, knowledgeId: { in: generatedIds } },
-      });
-      await tx.guildKnowledgeScope.deleteMany({
-        where: { guildId: input.guildId, knowledgeId: { in: generatedIds } },
-      });
-      await tx.guildKnowledge.deleteMany({
-        where: { guildId: input.guildId, id: { in: generatedIds }, createdBy: LIVE_SERVER_KNOWLEDGE_CREATED_BY },
-      });
-    }
+    const replaced = await deleteGeneratedLiveServerKnowledge(
+      tx as unknown as LiveServerKnowledgeLifecycleClient,
+      input.guildId,
+      input.nitradoConnId,
+    );
 
     for (const document of documents) {
       const created = await tx.guildKnowledge.create({
@@ -267,13 +233,13 @@ export async function indexNitradoSnapshotKnowledge(input: {
           sourceKind: 'LIVE_SERVER',
           trustLevel: 'VERIFIED',
           sourceRef: sourceRef(input.nitradoConnId, document),
-          sourceVersion: sourceVersion(input.binding.bindingVersion, input.snapshotId, document.sha256),
+          sourceVersion: liveServerSourceVersion(input.binding.bindingVersion, input.snapshotId, document.sha256),
           observedAt,
           validUntil,
         },
       });
     }
-    return generatedIds.length;
+    return replaced;
   }));
 
   const result: LiveServerKnowledgeIndexResult = {

@@ -3,7 +3,9 @@ const connectionFindFirst = jest.fn();
 const connectionUpdateMany = jest.fn();
 const scopeFindMany = jest.fn();
 const scopeDeleteMany = jest.fn();
+const provenanceFindMany = jest.fn();
 const provenanceDeleteMany = jest.fn();
+const knowledgeFindMany = jest.fn();
 const knowledgeDeleteMany = jest.fn();
 const healthDeleteMany = jest.fn();
 const connectionDeleteMany = jest.fn();
@@ -28,6 +30,9 @@ const mockTx = {
     deleteMany: bindingDeleteMany,
   },
   nitradoAdmProfileConfig: { updateMany: profileUpdateMany },
+  guildKnowledgeScope: { findMany: scopeFindMany, deleteMany: scopeDeleteMany },
+  guildKnowledgeProvenance: { findMany: provenanceFindMany, deleteMany: provenanceDeleteMany },
+  guildKnowledge: { findMany: knowledgeFindMany, deleteMany: knowledgeDeleteMany },
 };
 
 jest.mock('../../src/database/prisma', () => ({
@@ -40,8 +45,8 @@ jest.mock('../../src/database/prisma', () => ({
       deleteMany: connectionDeleteMany,
     },
     guildKnowledgeScope: { findMany: scopeFindMany, deleteMany: scopeDeleteMany },
-    guildKnowledgeProvenance: { deleteMany: provenanceDeleteMany },
-    guildKnowledge: { deleteMany: knowledgeDeleteMany },
+    guildKnowledgeProvenance: { findMany: provenanceFindMany, deleteMany: provenanceDeleteMany },
+    guildKnowledge: { findMany: knowledgeFindMany, deleteMany: knowledgeDeleteMany },
     nitradoValidationHealth: { deleteMany: healthDeleteMany },
     nitradoAdmBindingState: {
       findUnique: bindingFindUnique,
@@ -93,7 +98,9 @@ beforeEach(() => {
   connectionUpdateMany.mockResolvedValue({ count: 1 });
   scopeFindMany.mockResolvedValue([]);
   scopeDeleteMany.mockReturnValue(Promise.resolve({ count: 0 }));
+  provenanceFindMany.mockResolvedValue([]);
   provenanceDeleteMany.mockReturnValue(Promise.resolve({ count: 0 }));
+  knowledgeFindMany.mockResolvedValue([]);
   knowledgeDeleteMany.mockReturnValue(Promise.resolve({ count: 0 }));
   healthDeleteMany.mockReturnValue(Promise.resolve({ count: 0 }));
   connectionDeleteMany.mockReturnValue(Promise.resolve({ count: 1 }));
@@ -122,8 +129,12 @@ beforeEach(() => {
   acquireConfigLock.mockResolvedValue({ release: releaseConfigLock });
 });
 
-describe('Nitrado-1C/1M repository config/worker serialization', () => {
-  it('updates service id only under the connection lock and advances the ADM binding', async () => {
+describe('Nitrado-1C/1M/1S repository config/worker serialization', () => {
+  it('updates service id only under the connection lock, purges stale mirror knowledge and advances the ADM binding', async () => {
+    scopeFindMany.mockResolvedValueOnce([{ knowledgeId: 'mirror-1' }, { knowledgeId: 'owner-1' }]);
+    knowledgeFindMany.mockResolvedValueOnce([{ id: 'mirror-1' }]);
+    provenanceFindMany.mockResolvedValueOnce([{ knowledgeId: 'mirror-1' }]);
+
     await expect(updateServiceId(GUILD as never, 1, '456', {
       expectedId: CONN as never,
       expectedUpdatedAt: VERSION,
@@ -133,6 +144,19 @@ describe('Nitrado-1C/1M repository config/worker serialization', () => {
     expect(connectionUpdateMany).toHaveBeenCalledWith({
       where: { guildId: GUILD, slot: 1, id: CONN, updatedAt: VERSION },
       data: { nitradoServerId: '456', serviceId: '456' },
+    });
+    expect(provenanceDeleteMany).toHaveBeenCalledWith({
+      where: { guildId: GUILD, knowledgeId: { in: ['mirror-1'] } },
+    });
+    expect(scopeDeleteMany).toHaveBeenCalledWith({
+      where: { guildId: GUILD, knowledgeId: { in: ['mirror-1'] } },
+    });
+    expect(knowledgeDeleteMany).toHaveBeenCalledWith({
+      where: {
+        guildId: GUILD,
+        id: { in: ['mirror-1'] },
+        createdBy: 'SYSTEM:AI14_NITRADO_SNAPSHOT',
+      },
     });
     expect(bindingUpdate).toHaveBeenCalledWith(expect.objectContaining({
       data: { currentServiceId: '456', bindingVersion: { increment: 1 } },
@@ -144,7 +168,7 @@ describe('Nitrado-1C/1M repository config/worker serialization', () => {
     expect(releaseConfigLock).toHaveBeenCalledTimes(1);
   });
 
-  it('does not advance the ADM binding when the service id stays identical', async () => {
+  it('does not advance the ADM binding or purge knowledge when the service id stays identical', async () => {
     await updateServiceId(GUILD as never, 1, '123', {
       expectedId: CONN as never,
       expectedUpdatedAt: VERSION,
@@ -152,6 +176,8 @@ describe('Nitrado-1C/1M repository config/worker serialization', () => {
 
     expect(bindingUpdate).not.toHaveBeenCalled();
     expect(profileUpdateMany).not.toHaveBeenCalled();
+    expect(provenanceDeleteMany).not.toHaveBeenCalled();
+    expect(knowledgeDeleteMany).not.toHaveBeenCalled();
   });
 
   it('does not write service id when a worker already owns the connection lock', async () => {

@@ -1,4 +1,9 @@
 import prisma from '../../database/prisma';
+import {
+  LIVE_SERVER_KNOWLEDGE_CREATED_BY,
+  liveServerBindingVersionFromSourceVersion,
+  liveServerConnectionIdFromSourceRef,
+} from './liveServerKnowledgeConstants';
 
 export const KNOWLEDGE_SOURCE_KINDS = [
   'OWNER_CURATED',
@@ -211,6 +216,77 @@ export function legacyKnowledgeProvenance(createdAt: Date, now = new Date()): Kn
   }, now, true);
 }
 
+function expireLiveServerMeta(meta: KnowledgeProvenanceMeta): KnowledgeProvenanceMeta {
+  return {
+    ...meta,
+    freshness: 'EXPIRED',
+    freshnessScore: 0,
+    qualityFactor: 0,
+  };
+}
+
+async function currentGeneratedLiveServerKnowledgeIds(
+  guildId: string,
+  stored: readonly {
+    knowledgeId: string;
+    sourceKind: string;
+    sourceRef: string | null;
+    sourceVersion: string | null;
+  }[],
+): Promise<Set<string>> {
+  const mirrorRows = stored
+    .map((row) => ({ row, nitradoConnId: row.sourceKind === 'LIVE_SERVER'
+      ? liveServerConnectionIdFromSourceRef(row.sourceRef)
+      : null }))
+    .filter((entry): entry is { row: typeof stored[number]; nitradoConnId: string } => Boolean(entry.nitradoConnId));
+  if (mirrorRows.length === 0) return new Set();
+
+  const candidateIds = [...new Set(mirrorRows.map((entry) => entry.row.knowledgeId))];
+  const systemRows = await prisma.guildKnowledge.findMany({
+    where: {
+      guildId,
+      id: { in: candidateIds },
+      createdBy: LIVE_SERVER_KNOWLEDGE_CREATED_BY,
+    },
+    select: { id: true },
+  });
+  const systemIds = new Set(systemRows.map((row) => row.id));
+  const generated = mirrorRows.filter((entry) => systemIds.has(entry.row.knowledgeId));
+  if (generated.length === 0) return new Set();
+
+  const connIds = [...new Set(generated.map((entry) => entry.nitradoConnId))];
+  const [connections, bindings] = await Promise.all([
+    prisma.nitradoConnection.findMany({
+      where: { guildId, id: { in: connIds } },
+      select: { id: true, status: true, nitradoServerId: true },
+    }),
+    prisma.nitradoAdmBindingState.findMany({
+      where: { guildId, nitradoConnId: { in: connIds } },
+      select: { nitradoConnId: true, bindingVersion: true, currentServiceId: true },
+    }),
+  ]);
+  const connMap = new Map(connections.map((row) => [row.id, row] as const));
+  const bindingMap = new Map(bindings.map((row) => [row.nitradoConnId, row] as const));
+  const current = new Set<string>();
+
+  for (const entry of generated) {
+    const conn = connMap.get(entry.nitradoConnId);
+    const binding = bindingMap.get(entry.nitradoConnId);
+    const sourceBindingVersion = liveServerBindingVersionFromSourceVersion(entry.row.sourceVersion);
+    if (
+      conn?.status === 'ACTIVE'
+      && Boolean(conn.nitradoServerId)
+      && binding
+      && binding.currentServiceId === conn.nitradoServerId
+      && sourceBindingVersion !== null
+      && sourceBindingVersion === binding.bindingVersion
+    ) {
+      current.add(entry.row.knowledgeId);
+    }
+  }
+  return current;
+}
+
 export async function getKnowledgeProvenanceMap(
   guildId: string,
   rows: readonly { id: string; createdAt: Date }[],
@@ -229,6 +305,23 @@ export async function getKnowledgeProvenanceMap(
     },
   });
   const storedMap = new Map(stored.map((row) => [row.knowledgeId, row] as const));
+
+  // Nitrado-1S: Nur vom Mirror systemgenerierte LIVE_SERVER-Zeilen unterliegen
+  // dem Binding-Generation-Gate. Legacy/unversionierte, alte, inaktive oder
+  // service-fremde Generationen werden vor dem Ranking als EXPIRED behandelt.
+  // Owner-curated Knowledge bleibt von dieser Lifecycle-Regel unberuehrt.
+  const currentGeneratedLiveIds = await currentGeneratedLiveServerKnowledgeIds(guildId, stored);
+  const generatedMirrorIds = new Set((await prisma.guildKnowledge.findMany({
+    where: {
+      guildId,
+      id: { in: stored
+        .filter((row) => row.sourceKind === 'LIVE_SERVER' && liveServerConnectionIdFromSourceRef(row.sourceRef))
+        .map((row) => row.knowledgeId) },
+      createdBy: LIVE_SERVER_KNOWLEDGE_CREATED_BY,
+    },
+    select: { id: true },
+  })).map((row) => row.id));
+
   const out = new Map<string, KnowledgeProvenanceMeta>();
   for (const row of rows) {
     const hit = storedMap.get(row.id);
@@ -252,7 +345,12 @@ export async function getKnowledgeProvenanceMap(
       out.set(row.id, legacyKnowledgeProvenance(row.createdAt, now));
       continue;
     }
-    out.set(row.id, assessKnowledgeProvenance(validated.value, now));
+    const assessed = assessKnowledgeProvenance(validated.value, now);
+    if (generatedMirrorIds.has(row.id) && !currentGeneratedLiveIds.has(row.id)) {
+      out.set(row.id, expireLiveServerMeta(assessed));
+      continue;
+    }
+    out.set(row.id, assessed);
   }
   return out;
 }
