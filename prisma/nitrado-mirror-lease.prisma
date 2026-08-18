@@ -1,0 +1,19 @@
+/// Nitrado-1T: persistente Singleflight-/Recovery-Lease fuer READ-ONLY-Mirror-Snapshots.
+/// Eine Lease gehoert exakt zu Guild + NitradoConnection und wird durch einen
+/// zufaelligen Token sowie einen nicht-reversiblen Binding-Fingerprint gegen
+/// alte Prozesse, Tokenrotation und Service-Rebind gefenced.
+model NitradoMirrorLease {
+  guildId        String
+  nitradoConnId  String
+  snapshotId     String
+  leaseToken     String
+  bindingKey     String
+  heartbeatAt    DateTime
+  leaseExpiresAt DateTime
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+
+  @@id([guildId, nitradoConnId])
+  @@index([snapshotId])
+  @@index([leaseExpiresAt])
+}

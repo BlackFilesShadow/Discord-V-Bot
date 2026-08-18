@@ -1,6 +1,7 @@
 const mockValidateKnowledgeScope = jest.fn();
 const mockReadBlob = jest.fn();
 const mockWithFreshAdmBinding = jest.fn();
+const mockRefreshMirrorLeaseForCommit = jest.fn();
 
 jest.mock('../../src/modules/ai/knowledgeScope', () => ({
   validateKnowledgeScope: (...args: unknown[]) => mockValidateKnowledgeScope(...args),
@@ -12,6 +13,10 @@ jest.mock('../../src/modules/nitrado/mirror/storage', () => ({
 
 jest.mock('../../src/modules/nitrado/adm/bindingFence', () => ({
   withFreshAdmBinding: (...args: unknown[]) => mockWithFreshAdmBinding(...args),
+}));
+
+jest.mock('../../src/modules/nitrado/mirror/mirrorLease', () => ({
+  refreshMirrorLeaseForCommit: (...args: unknown[]) => mockRefreshMirrorLeaseForCommit(...args),
 }));
 
 const tx = {
@@ -54,10 +59,11 @@ function indexInput(overrides: Partial<typeof BINDING> = {}) {
     guildId: binding.guildId,
     nitradoConnId: binding.id,
     binding,
+    mirrorLeaseToken: 'lease-1',
   };
 }
 
-describe('AI-14 / Nitrado-1R live-server snapshot knowledge index', () => {
+describe('AI-14 / Nitrado-1R/1T live-server snapshot knowledge index', () => {
   beforeEach(() => {
     jest.clearAllMocks();
     mockValidateKnowledgeScope.mockResolvedValue({
@@ -65,6 +71,7 @@ describe('AI-14 / Nitrado-1R live-server snapshot knowledge index', () => {
       scope: { type: 'GAMESERVER', nitradoConnId: 'conn-1', slot: 1, alias: 'Main', alias5: 'ABCDE' },
     });
     mockWithFreshAdmBinding.mockImplementation(async (_binding: unknown, work: () => Promise<unknown>) => work());
+    mockRefreshMirrorLeaseForCommit.mockResolvedValue(undefined);
     mockedPrisma.nitradoSnapshot.findFirst.mockResolvedValue({
       id: 'snap-1',
       serviceId: '123',
@@ -120,16 +127,20 @@ describe('AI-14 / Nitrado-1R live-server snapshot knowledge index', () => {
       guildId: 'guild-1',
       nitradoConnId: 'conn-1',
       binding: { ...BINDING, id: 'conn-2' },
+      mirrorLeaseToken: 'lease-1',
     })).rejects.toThrow(/Binding stimmt nicht/);
 
     expect(mockValidateKnowledgeScope).not.toHaveBeenCalled();
     expect(mockedPrisma.nitradoSnapshot.findFirst).not.toHaveBeenCalled();
   });
 
-  test('atomically replaces only system-owned live rows for the same connection under the final binding fence', async () => {
+  test('atomically replaces only system-owned live rows under binding and mirror-lease fences', async () => {
     const result = await indexNitradoSnapshotKnowledge(indexInput());
     expect(result.replacedDocuments).toBe(1);
     expect(mockWithFreshAdmBinding).toHaveBeenCalledWith(BINDING, expect.any(Function));
+    expect(mockRefreshMirrorLeaseForCommit).toHaveBeenCalledWith(tx, {
+      guildId: 'guild-1', nitradoConnId: 'conn-1', snapshotId: 'snap-1', leaseToken: 'lease-1',
+    });
     expect(tx.guildKnowledge.findMany).toHaveBeenCalledWith(expect.objectContaining({
       where: expect.objectContaining({
         guildId: 'guild-1',
@@ -137,9 +148,14 @@ describe('AI-14 / Nitrado-1R live-server snapshot knowledge index', () => {
         id: { in: ['old-system', 'owner-row'] },
       }),
     }));
-    expect(tx.guildKnowledge.deleteMany).toHaveBeenCalledWith({
-      where: { guildId: 'guild-1', id: { in: ['old-system'] }, createdBy: LIVE_SERVER_KNOWLEDGE_CREATED_BY },
-    });
+  });
+
+  test('lost mirror lease blocks every local knowledge side-effect', async () => {
+    mockRefreshMirrorLeaseForCommit.mockRejectedValueOnce(new Error('lost lease'));
+    await expect(indexNitradoSnapshotKnowledge(indexInput())).rejects.toThrow('lost lease');
+    expect(tx.guildKnowledge.deleteMany).not.toHaveBeenCalled();
+    expect(tx.guildKnowledge.create).not.toHaveBeenCalled();
+    expect(tx.guildKnowledgeProvenance.create).not.toHaveBeenCalled();
   });
 
   test('stale token/service/binding generation blocks every local knowledge side-effect', async () => {
