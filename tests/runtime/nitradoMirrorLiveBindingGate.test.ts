@@ -13,7 +13,7 @@ function functionBody(source: string, startAnchor: string, endAnchor: string): s
   return source.slice(start, end);
 }
 
-describe('Nitrado-1R mirror -> LIVE_SERVER binding fence', () => {
+describe('Nitrado-1R/1T mirror -> LIVE_SERVER binding fence', () => {
   const snapshotService = read('src/modules/nitrado/mirror/snapshotService.ts');
   const liveIndex = read('src/modules/ai/liveServerKnowledgeIndex.ts');
   const constants = read('src/modules/ai/liveServerKnowledgeConstants.ts');
@@ -23,21 +23,23 @@ describe('Nitrado-1R mirror -> LIVE_SERVER binding fence', () => {
 
     expect(start).toContain('readCurrentAdmBinding({ id: opts.nitradoConnId, guildId: opts.guildId })');
     expect(start).toContain('serviceId: binding.nitradoServerId');
-    expect(start).toContain('void runSnapshot(snap.id, binding)');
+    expect(start).toContain('withFreshAdmBinding(binding');
+    expect(start).toContain('void runSnapshot(lease.snapshotId, binding, lease.leaseToken)');
     expect(start).not.toContain('serviceId ??');
     expect(start).not.toContain('nitradoConnection.findFirst');
   });
 
-  it('carries the exact original binding through remote I/O into the only live-index call', () => {
+  it('carries the exact original binding and mirror lease through remote I/O into the only live-index call', () => {
     const run = functionBody(snapshotService, 'async function runSnapshot', 'function parentOf');
 
     expect(run).toContain('binding: AdmBindingSnapshot');
+    expect(run).toContain('leaseToken: string');
     expect(run).toContain('const serviceId = binding.nitradoServerId');
     expect(run).toContain('decrypt(binding.encryptedToken');
-    expect(run).toContain('indexNitradoSnapshotKnowledge({ snapshotId, guildId, nitradoConnId: connId, binding })');
+    expect(run).toContain('mirrorLeaseToken: leaseToken');
   });
 
-  it('requires snapshot service identity before parsing and the full binding fence before local replacement', () => {
+  it('requires service identity, mirror lease and full binding fence before local replacement', () => {
     const start = liveIndex.indexOf('export async function indexNitradoSnapshotKnowledge');
     expect(start).toBeGreaterThanOrEqual(0);
     const body = liveIndex.slice(start);
@@ -48,6 +50,7 @@ describe('Nitrado-1R mirror -> LIVE_SERVER binding fence', () => {
     const fileRead = body.indexOf('prisma.nitradoSnapshotFile.findMany');
     const fence = body.indexOf('withFreshAdmBinding(input.binding');
     const transaction = body.indexOf('prisma.$transaction', fence);
+    const mirrorFence = body.indexOf('refreshMirrorLeaseForCommit(', transaction);
     const replacement = body.indexOf('deleteGeneratedLiveServerKnowledge(', transaction);
     const firstCreate = body.indexOf('tx.guildKnowledge.create', transaction);
 
@@ -57,7 +60,8 @@ describe('Nitrado-1R mirror -> LIVE_SERVER binding fence', () => {
     expect(fileRead).toBeGreaterThan(serviceCheck);
     expect(fence).toBeGreaterThan(fileRead);
     expect(transaction).toBeGreaterThan(fence);
-    expect(replacement).toBeGreaterThan(transaction);
+    expect(mirrorFence).toBeGreaterThan(transaction);
+    expect(replacement).toBeGreaterThan(mirrorFence);
     expect(firstCreate).toBeGreaterThan(replacement);
   });
 
