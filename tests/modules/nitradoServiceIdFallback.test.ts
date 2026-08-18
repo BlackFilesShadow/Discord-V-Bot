@@ -6,54 +6,93 @@ process.env.ENCRYPTION_KEY ||= '0'.repeat(64);
 process.env.SESSION_SECRET ||= 'test-session-secret';
 
 /**
- * NIT-012: NitradoConnection.serviceId (Mirror) und nitradoServerId (kanonisch)
- * bezeichnen dieselbe Service-ID. Der Snapshot fiel frueher aus, wenn nur
- * nitradoServerId gesetzt war. Jetzt greift serviceId ?? nitradoServerId.
+ * NIT-012/1R: Das historische `serviceId`-Mirrorfeld darf nicht mehr selbst
+ * bestimmen, welchen Server ein neuer Snapshot liest. Der Startpfad verwendet
+ * ausschliesslich den kanonischen, versionierten ACTIVE-Binding-Snapshot.
  */
-let connRow: Record<string, unknown> | null = null;
 const createMock = jest.fn(async () => ({ id: 'snap-1' }));
+const updateMock = jest.fn(async () => ({}));
+const snapshotFileCreate = jest.fn(async () => ({}));
+const readCurrentAdmBinding = jest.fn();
+const readClientCtor = jest.fn();
+
 const prismaMock = {
-  nitradoConnection: { findFirst: jest.fn(async () => connRow) },
   nitradoSnapshot: {
     create: createMock,
-    update: jest.fn(async () => ({})),
+    update: updateMock,
   },
+  nitradoSnapshotFile: { create: snapshotFileCreate },
 };
+
 jest.mock('../../src/database/prisma', () => ({ __esModule: true, default: prismaMock }));
 jest.mock('../../src/utils/logger', () => ({ __esModule: true, logger: { error: jest.fn(), warn: jest.fn(), info: jest.fn(), debug: jest.fn() } }));
 jest.mock('../../src/utils/security', () => ({ __esModule: true, decrypt: () => 'decrypted-token' }));
+jest.mock('../../src/modules/nitrado/adm/bindingFence', () => ({
+  __esModule: true,
+  readCurrentAdmBinding: (...args: unknown[]) => readCurrentAdmBinding(...args),
+}));
 jest.mock('../../src/modules/nitrado/mirror/readClient', () => ({
   __esModule: true,
-  NitradoReadClient: jest.fn().mockImplementation(() => ({
-    listDir: jest.fn().mockResolvedValue([]),
-    getServiceMeta: jest.fn().mockResolvedValue(null),
-    getGameserver: jest.fn().mockResolvedValue(null),
-  })),
+  NitradoReadClient: jest.fn().mockImplementation((...args: unknown[]) => {
+    readClientCtor(...args);
+    return {
+      listDir: jest.fn().mockResolvedValue([]),
+      getServiceMeta: jest.fn().mockResolvedValue(null),
+      getGameserver: jest.fn().mockResolvedValue(null),
+      downloadFile: jest.fn().mockResolvedValue(Buffer.alloc(0)),
+    };
+  }),
 }));
 
 import { startSnapshot } from '../../src/modules/nitrado/mirror/snapshotService';
 
-beforeEach(() => { jest.clearAllMocks(); });
+const BINDING = {
+  id: 'c1',
+  guildId: 'g1',
+  encryptedToken: 'enc',
+  nitradoServerId: '123',
+  bindingVersion: 7,
+};
 
-describe('NIT-012 — Snapshot Service-ID Fallback', () => {
-  it('nutzt nitradoServerId, wenn serviceId (noch) null ist', async () => {
-    connRow = { id: 'c1', encryptedToken: 'enc', serviceId: null, nitradoServerId: '123', status: 'OK', guildId: 'g1' };
+beforeEach(() => {
+  jest.clearAllMocks();
+  readCurrentAdmBinding.mockResolvedValue(BINDING);
+});
+
+describe('NIT-012 / Nitrado-1R — canonical snapshot binding', () => {
+  it('liest den kanonischen ACTIVE-Binding-Snapshot und persistiert exakt dessen Service-ID', async () => {
     const res = await startSnapshot({ guildId: 'g1', nitradoConnId: 'c1', triggeredBy: 'u1' });
+
     expect(res.snapshotId).toBe('snap-1');
-    expect(createMock).toHaveBeenCalledWith(expect.objectContaining({ data: expect.objectContaining({ serviceId: '123' }) }));
+    expect(readCurrentAdmBinding).toHaveBeenCalledWith({ id: 'c1', guildId: 'g1' });
+    expect(createMock).toHaveBeenCalledWith(expect.objectContaining({
+      data: expect.objectContaining({
+        guildId: 'g1',
+        nitradoConnId: 'c1',
+        serviceId: '123',
+        status: 'RUNNING',
+      }),
+    }));
     await new Promise((r) => setImmediate(r));
+    expect(readClientCtor).toHaveBeenCalledWith('decrypted-token');
   });
 
-  it('bevorzugt eine explizit gesetzte serviceId', async () => {
-    connRow = { id: 'c1', encryptedToken: 'enc', serviceId: '456', nitradoServerId: '123', status: 'OK', guildId: 'g1' };
-    await startSnapshot({ guildId: 'g1', nitradoConnId: 'c1', triggeredBy: 'u1' });
-    expect(createMock).toHaveBeenCalledWith(expect.objectContaining({ data: expect.objectContaining({ serviceId: '456' }) }));
-    await new Promise((r) => setImmediate(r));
-  });
+  it('failt geschlossen, wenn kein ACTIVE kanonisches Binding existiert', async () => {
+    readCurrentAdmBinding.mockResolvedValue(null);
 
-  it('wirft, wenn weder serviceId noch nitradoServerId gesetzt ist', async () => {
-    connRow = { id: 'c1', encryptedToken: 'enc', serviceId: null, nitradoServerId: null, status: 'OK', guildId: 'g1' };
     await expect(startSnapshot({ guildId: 'g1', nitradoConnId: 'c1', triggeredBy: 'u1' }))
-      .rejects.toThrow(/Service-ID/);
+      .rejects.toThrow(/nicht ACTIVE|kanonische Service-ID/);
+
+    expect(createMock).not.toHaveBeenCalled();
+    expect(readClientCtor).not.toHaveBeenCalled();
+  });
+
+  it('propagiert Lock-/Binding-Infrastrukturfehler ohne Snapshot-Teilzustand', async () => {
+    readCurrentAdmBinding.mockRejectedValue(new Error('binding lock failed'));
+
+    await expect(startSnapshot({ guildId: 'g1', nitradoConnId: 'c1', triggeredBy: 'u1' }))
+      .rejects.toThrow('binding lock failed');
+
+    expect(createMock).not.toHaveBeenCalled();
   });
 });
