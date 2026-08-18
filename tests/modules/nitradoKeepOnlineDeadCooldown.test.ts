@@ -33,6 +33,20 @@ import { KEEP_ONLINE_DISABLED_JOB_REASON } from '../../src/modules/nitrado/keepO
 
 const NOW = new Date('2026-08-18T14:30:00.000Z');
 
+interface BlockerQuery {
+  where: {
+    guildId: string;
+    nitradoConnId: string;
+    operation: string;
+    OR: Array<Record<string, unknown>>;
+  };
+}
+
+function firstBlockerQuery(): BlockerQuery {
+  const calls = jobFindFirstMock.mock.calls as unknown as Array<[BlockerQuery]>;
+  return calls[0][0];
+}
+
 beforeEach(() => {
   jest.useFakeTimers();
   jest.setSystemTime(NOW);
@@ -58,14 +72,7 @@ describe('Nitrado-1H — Keep-Online DEAD retry cooldown', () => {
     expect(jobCreateMock).not.toHaveBeenCalled();
     expect(jobFindFirstMock).toHaveBeenCalledTimes(1);
 
-    const call = jobFindFirstMock.mock.calls[0][0] as {
-      where: {
-        guildId: string;
-        nitradoConnId: string;
-        operation: string;
-        OR: Array<Record<string, unknown>>;
-      };
-    };
+    const call = firstBlockerQuery();
     const expectedCutoff = new Date(NOW.getTime() - KEEP_ONLINE_DEAD_RETRY_COOLDOWN_MS);
 
     expect(call.where).toEqual({
@@ -86,10 +93,7 @@ describe('Nitrado-1H — Keep-Online DEAD retry cooldown', () => {
   it('nimmt bewusst beim Deaktivieren verworfene DEAD-Jobs vom Failure-Cooldown aus', async () => {
     await runKeepOnlinePollOnce();
 
-    const query = jobFindFirstMock.mock.calls[0][0] as {
-      where: { OR: Array<Record<string, unknown>> };
-    };
-    expect(query.where.OR[1]).toMatchObject({
+    expect(firstBlockerQuery().where.OR[1]).toMatchObject({
       status: 'DEAD',
       NOT: { lastError: KEEP_ONLINE_DISABLED_JOB_REASON },
     });
