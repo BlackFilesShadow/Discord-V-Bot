@@ -1,6 +1,5 @@
 const requestFindFirst = jest.fn();
 const profileFindUnique = jest.fn();
-const profileDeleteMany = jest.fn();
 const profileUpdateMany = jest.fn();
 const userFindUnique = jest.fn();
 const xpDeleteMany = jest.fn();
@@ -12,7 +11,6 @@ const tx = {
   dataDeletionRequest: { findFirst: requestFindFirst },
   guildMemberProfile: {
     findUnique: profileFindUnique,
-    deleteMany: profileDeleteMany,
     updateMany: profileUpdateMany,
   },
   user: { findUnique: userFindUnique },
@@ -44,7 +42,6 @@ beforeEach(() => {
   requestFindFirst.mockResolvedValue({ createdAt: CREATED });
   userFindUnique.mockResolvedValue({ id: 'internal-user' });
   profileFindUnique.mockResolvedValue(null);
-  profileDeleteMany.mockResolvedValue({ count: 0 });
   profileUpdateMany.mockResolvedValue({ count: 1 });
   xpDeleteMany.mockResolvedValue({ count: 0 });
   levelDeleteMany.mockResolvedValue({ count: 0 });
@@ -77,30 +74,46 @@ describe('Leave-1G rejoin freshness finalizer', () => {
       isLeft: false,
       joinedAt: new Date('2026-08-01T10:00:00.000Z'),
     });
-    profileDeleteMany.mockResolvedValue({ count: 1 });
 
     const result = await finalizeLeaveRejoinState(REQUEST, GUILD, USER);
 
-    expect(result).toEqual({ rejoined: false, profile: 'DELETED', levelBaseline: false });
+    expect(result).toEqual({ rejoined: false, profile: 'RESET', levelBaseline: false });
     expect(xpDeleteMany).toHaveBeenCalledWith({ where: { userId: 'internal-user', guildId: GUILD } });
     expect(levelDeleteMany).toHaveBeenCalledWith({ where: { userId: 'internal-user', guildId: GUILD } });
-    expect(profileDeleteMany).toHaveBeenCalledWith({ where: { guildId: GUILD, discordId: USER } });
+    expect(profileUpdateMany).toHaveBeenCalledWith({
+      where: { guildId: GUILD, discordId: USER },
+      data: { messageCount: 0 },
+    });
     expect(levelUpsert).not.toHaveBeenCalled();
   });
 
-  it('removes last-known profile and late residual XP when the user is still left', async () => {
+  it('preserves last-known goodbye identity but clears historical message count and late residual XP while still left', async () => {
     profileFindUnique.mockResolvedValue({
       isLeft: true,
       joinedAt: new Date('2026-08-18T06:05:00.000Z'),
     });
-    profileDeleteMany.mockResolvedValue({ count: 1 });
     xpDeleteMany.mockResolvedValue({ count: 2 });
     levelDeleteMany.mockResolvedValue({ count: 1 });
 
     const result = await finalizeLeaveRejoinState(REQUEST, GUILD, USER);
 
-    expect(result).toEqual({ rejoined: false, profile: 'DELETED', levelBaseline: false });
+    expect(result).toEqual({ rejoined: false, profile: 'RESET', levelBaseline: false });
+    expect(profileUpdateMany).toHaveBeenCalledWith({
+      where: { guildId: GUILD, discordId: USER },
+      data: { messageCount: 0 },
+    });
     expect(levelUpsert).not.toHaveBeenCalled();
+  });
+
+  it('returns NONE when no member profile exists and still removes late residual level state', async () => {
+    profileFindUnique.mockResolvedValue(null);
+
+    const result = await finalizeLeaveRejoinState(REQUEST, GUILD, USER);
+
+    expect(result).toEqual({ rejoined: false, profile: 'NONE', levelBaseline: false });
+    expect(xpDeleteMany).toHaveBeenCalledTimes(1);
+    expect(levelDeleteMany).toHaveBeenCalledTimes(1);
+    expect(profileUpdateMany).not.toHaveBeenCalled();
   });
 
   it('recognizes only joinedAt after the leave request as a genuine rejoin and restores a fresh baseline', async () => {
@@ -129,7 +142,6 @@ describe('Leave-1G rejoin freshness finalizer', () => {
     });
     expect(xpDeleteMany).not.toHaveBeenCalled();
     expect(levelDeleteMany).not.toHaveBeenCalled();
-    expect(profileDeleteMany).not.toHaveBeenCalled();
   });
 
   it('fails retryably if a concurrent second leave flips the active rejoin profile before reset CAS', async () => {
