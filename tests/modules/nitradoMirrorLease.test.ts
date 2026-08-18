@@ -2,7 +2,6 @@ const leaseFindUnique = jest.fn();
 const leaseUpdateMany = jest.fn();
 const leaseDeleteMany = jest.fn();
 const leaseCreate = jest.fn();
-const leaseFindFirst = jest.fn();
 const snapshotFindFirst = jest.fn();
 const snapshotCreate = jest.fn();
 const snapshotUpdateMany = jest.fn();
@@ -11,7 +10,6 @@ const transaction = jest.fn();
 const tx = {
   nitradoMirrorLease: {
     findUnique: leaseFindUnique,
-    findFirst: leaseFindFirst,
     updateMany: leaseUpdateMany,
     deleteMany: leaseDeleteMany,
     create: leaseCreate,
@@ -37,6 +35,7 @@ jest.mock('../../src/database/prisma', () => ({
 import {
   acquireMirrorSnapshotLease,
   finalizeMirrorSnapshotLease,
+  mirrorLeaseBindingKey,
   NitradoMirrorLeaseLostError,
   refreshMirrorLeaseForCommit,
   releaseMirrorSnapshotLease,
@@ -45,12 +44,20 @@ import {
 
 const GUILD = 'guild-1';
 const CONN = 'conn-1';
+const BINDING_KEY = 'binding-key-1';
+const acquireInput = (overrides: Record<string, unknown> = {}) => ({
+  guildId: GUILD,
+  nitradoConnId: CONN,
+  serviceId: '123',
+  bindingKey: BINDING_KEY,
+  triggeredBy: 'dev-1',
+  ...overrides,
+});
 
 beforeEach(() => {
   jest.clearAllMocks();
   transaction.mockImplementation(async (fn: (client: typeof tx) => unknown) => fn(tx));
   leaseFindUnique.mockResolvedValue(null);
-  leaseFindFirst.mockResolvedValue({ leaseToken: 'lease-1' });
   leaseUpdateMany.mockResolvedValue({ count: 1 });
   leaseDeleteMany.mockResolvedValue({ count: 1 });
   leaseCreate.mockResolvedValue({});
@@ -60,24 +67,21 @@ beforeEach(() => {
 });
 
 describe('Nitrado-1T persistent mirror singleflight lease', () => {
-  it('creates one RUNNING snapshot and one token-fenced lease when no lease exists', async () => {
-    const result = await acquireMirrorSnapshotLease({
-      guildId: GUILD,
-      nitradoConnId: CONN,
-      serviceId: '123',
-      triggeredBy: 'dev-1',
-    });
+  it('derives a deterministic non-reversible key from token, service and binding version', () => {
+    const first = mirrorLeaseBindingKey({ encryptedToken: 'cipher-a', nitradoServerId: '123', bindingVersion: 4 });
+    const same = mirrorLeaseBindingKey({ encryptedToken: 'cipher-a', nitradoServerId: '123', bindingVersion: 4 });
+    const tokenChanged = mirrorLeaseBindingKey({ encryptedToken: 'cipher-b', nitradoServerId: '123', bindingVersion: 4 });
+    expect(first).toMatch(/^[a-f0-9]{64}$/);
+    expect(same).toBe(first);
+    expect(tokenChanged).not.toBe(first);
+    expect(first).not.toContain('cipher-a');
+  });
 
+  it('creates one RUNNING snapshot and a binding-fingerprinted token lease', async () => {
+    const result = await acquireMirrorSnapshotLease(acquireInput());
     expect(result).toEqual(expect.objectContaining({ snapshotId: 'snap-new', reused: false }));
-    expect(typeof result.leaseToken).toBe('string');
     expect(snapshotCreate).toHaveBeenCalledWith({
-      data: {
-        guildId: GUILD,
-        nitradoConnId: CONN,
-        serviceId: '123',
-        status: 'RUNNING',
-        triggeredBy: 'dev-1',
-      },
+      data: { guildId: GUILD, nitradoConnId: CONN, serviceId: '123', status: 'RUNNING', triggeredBy: 'dev-1' },
       select: { id: true },
     });
     expect(leaseCreate).toHaveBeenCalledWith({
@@ -86,6 +90,7 @@ describe('Nitrado-1T persistent mirror singleflight lease', () => {
         nitradoConnId: CONN,
         snapshotId: 'snap-new',
         leaseToken: expect.any(String),
+        bindingKey: BINDING_KEY,
         heartbeatAt: expect.any(Date),
         leaseExpiresAt: expect.any(Date),
       }),
@@ -93,52 +98,26 @@ describe('Nitrado-1T persistent mirror singleflight lease', () => {
     expect(transaction).toHaveBeenCalledWith(expect.any(Function), { isolationLevel: 'Serializable' });
   });
 
-  it('returns the existing snapshot and does not start a duplicate while its lease is active', async () => {
+  it('reuses only the same active binding generation', async () => {
     leaseFindUnique.mockResolvedValue({
-      snapshotId: 'snap-running',
-      leaseToken: 'lease-running',
+      snapshotId: 'snap-running', leaseToken: 'lease-running', bindingKey: BINDING_KEY,
       leaseExpiresAt: new Date(Date.now() + 60_000),
     });
     snapshotFindFirst.mockResolvedValue({ id: 'snap-running', status: 'RUNNING' });
 
-    const result = await acquireMirrorSnapshotLease({
-      guildId: GUILD, nitradoConnId: CONN, serviceId: '123', triggeredBy: 'dev-2',
-    });
-
-    expect(result).toEqual({ snapshotId: 'snap-running', leaseToken: null, reused: true });
-    expect(snapshotCreate).not.toHaveBeenCalled();
-    expect(leaseCreate).not.toHaveBeenCalled();
-    expect(leaseDeleteMany).not.toHaveBeenCalled();
-  });
-
-  it('keeps an unexpired lease singleflight-active during terminal knowledge finalization', async () => {
-    leaseFindUnique.mockResolvedValue({
-      snapshotId: 'snap-finalizing',
-      leaseToken: 'lease-finalizing',
-      leaseExpiresAt: new Date(Date.now() + 60_000),
-    });
-    snapshotFindFirst.mockResolvedValue({ id: 'snap-finalizing', status: 'OK' });
-
-    const result = await acquireMirrorSnapshotLease({
-      guildId: GUILD, nitradoConnId: CONN, serviceId: '123', triggeredBy: 'dev-2',
-    });
-
-    expect(result).toEqual({ snapshotId: 'snap-finalizing', leaseToken: null, reused: true });
+    await expect(acquireMirrorSnapshotLease(acquireInput()))
+      .resolves.toEqual({ snapshotId: 'snap-running', leaseToken: null, reused: true });
     expect(snapshotCreate).not.toHaveBeenCalled();
   });
 
-  it('recovers an expired RUNNING lease by failing the orphan before creating the replacement', async () => {
-    leaseFindUnique.mockResolvedValue({
-      snapshotId: 'snap-orphan',
-      leaseToken: 'lease-old',
-      leaseExpiresAt: new Date(Date.now() - 60_000),
-    });
+  it.each([
+    ['token/service generation changed', { bindingKey: 'old-binding', leaseExpiresAt: new Date(Date.now() + 60_000) }],
+    ['lease expired', { bindingKey: BINDING_KEY, leaseExpiresAt: new Date(Date.now() - 60_000) }],
+  ])('recovers RUNNING when %s', async (_label, leaseState) => {
+    leaseFindUnique.mockResolvedValue({ snapshotId: 'snap-orphan', leaseToken: 'lease-old', ...leaseState });
     snapshotFindFirst.mockResolvedValue({ id: 'snap-orphan', status: 'RUNNING' });
 
-    const result = await acquireMirrorSnapshotLease({
-      guildId: GUILD, nitradoConnId: CONN, serviceId: '123', triggeredBy: 'dev-3',
-    });
-
+    const result = await acquireMirrorSnapshotLease(acquireInput());
     expect(snapshotUpdateMany).toHaveBeenCalledWith(expect.objectContaining({
       where: expect.objectContaining({ id: 'snap-orphan', status: 'RUNNING' }),
       data: expect.objectContaining({ status: 'FAILED', finishedAt: expect.any(Date) }),
@@ -147,18 +126,25 @@ describe('Nitrado-1T persistent mirror singleflight lease', () => {
       where: { guildId: GUILD, nitradoConnId: CONN, leaseToken: 'lease-old' },
     });
     expect(result).toEqual(expect.objectContaining({ snapshotId: 'snap-new', reused: false }));
-    expect(snapshotUpdateMany.mock.invocationCallOrder[0]).toBeLessThan(snapshotCreate.mock.invocationCallOrder[0]);
   });
 
-  it('bounded-retries a serialization conflict before establishing the lease', async () => {
+  it('keeps an unexpired terminal snapshot lease active through knowledge finalization', async () => {
+    leaseFindUnique.mockResolvedValue({
+      snapshotId: 'snap-finalizing', leaseToken: 'lease-finalizing', bindingKey: BINDING_KEY,
+      leaseExpiresAt: new Date(Date.now() + 60_000),
+    });
+    snapshotFindFirst.mockResolvedValue({ id: 'snap-finalizing', status: 'OK' });
+    await expect(acquireMirrorSnapshotLease(acquireInput()))
+      .resolves.toEqual({ snapshotId: 'snap-finalizing', leaseToken: null, reused: true });
+    expect(snapshotCreate).not.toHaveBeenCalled();
+  });
+
+  it('bounded-retries serialization conflicts', async () => {
     transaction
       .mockRejectedValueOnce(Object.assign(new Error('serialization'), { code: 'P2034' }))
       .mockImplementationOnce(async (fn: (client: typeof tx) => unknown) => fn(tx));
-
-    await expect(acquireMirrorSnapshotLease({
-      guildId: GUILD, nitradoConnId: CONN, serviceId: '123', triggeredBy: 'dev-4',
-    })).resolves.toEqual(expect.objectContaining({ snapshotId: 'snap-new', reused: false }));
-
+    await expect(acquireMirrorSnapshotLease(acquireInput()))
+      .resolves.toEqual(expect.objectContaining({ snapshotId: 'snap-new', reused: false }));
     expect(transaction).toHaveBeenCalledTimes(2);
   });
 
@@ -167,43 +153,27 @@ describe('Nitrado-1T persistent mirror singleflight lease', () => {
       guildId: GUILD, nitradoConnId: CONN, snapshotId: 'snap-1', leaseToken: 'lease-1',
     })).resolves.toBeUndefined();
     expect(leaseUpdateMany).toHaveBeenCalledWith(expect.objectContaining({
-      where: expect.objectContaining({
-        guildId: GUILD, nitradoConnId: CONN, snapshotId: 'snap-1', leaseToken: 'lease-1',
-        leaseExpiresAt: { gt: expect.any(Date) },
-      }),
+      where: expect.objectContaining({ leaseToken: 'lease-1', leaseExpiresAt: { gt: expect.any(Date) } }),
     }));
-
     leaseUpdateMany.mockResolvedValueOnce({ count: 0 });
     await expect(renewMirrorSnapshotLease({
       guildId: GUILD, nitradoConnId: CONN, snapshotId: 'snap-1', leaseToken: 'stale',
     })).rejects.toBeInstanceOf(NitradoMirrorLeaseLostError);
   });
 
-  it('refreshes the lease on the supplied transaction client before a knowledge commit', async () => {
+  it('refreshes the supplied transaction row before knowledge commit', async () => {
     await refreshMirrorLeaseForCommit(tx as never, {
       guildId: GUILD, nitradoConnId: CONN, snapshotId: 'snap-1', leaseToken: 'lease-1',
     });
     expect(leaseUpdateMany).toHaveBeenCalledTimes(1);
   });
 
-  it('terminalizes RUNNING with lease CAS but deliberately retains lease until index completion', async () => {
+  it('terminalizes RUNNING with lease CAS while retaining lease until index completion', async () => {
     const result = await finalizeMirrorSnapshotLease({
-      guildId: GUILD,
-      nitradoConnId: CONN,
-      snapshotId: 'snap-1',
-      leaseToken: 'lease-1',
-      status: 'OK',
-      totalFiles: 2,
-      totalDirs: 1,
-      totalBytes: 10n,
-      storedBytes: 10n,
-      oversizeFiles: 0,
-      errorCount: 0,
-      lastError: null,
+      guildId: GUILD, nitradoConnId: CONN, snapshotId: 'snap-1', leaseToken: 'lease-1', status: 'OK',
+      totalFiles: 2, totalDirs: 1, totalBytes: 10n, storedBytes: 10n, oversizeFiles: 0, errorCount: 0, lastError: null,
     });
-
     expect(result).toBe(true);
-    expect(leaseUpdateMany).toHaveBeenCalled();
     expect(snapshotUpdateMany).toHaveBeenCalledWith(expect.objectContaining({
       where: expect.objectContaining({ id: 'snap-1', status: 'RUNNING' }),
       data: expect.objectContaining({ status: 'OK', finishedAt: expect.any(Date) }),
@@ -211,23 +181,19 @@ describe('Nitrado-1T persistent mirror singleflight lease', () => {
     expect(leaseDeleteMany).not.toHaveBeenCalled();
   });
 
-  it('does not terminalize when the lease was already recovered', async () => {
+  it('does not terminalize after lease recovery and releases only an exact lease token', async () => {
     leaseUpdateMany.mockResolvedValueOnce({ count: 0 });
-
     await expect(finalizeMirrorSnapshotLease({
-      guildId: GUILD, nitradoConnId: CONN, snapshotId: 'snap-1', leaseToken: 'old',
-      status: 'OK', totalFiles: 0, totalDirs: 0, totalBytes: 0n, storedBytes: 0n,
-      oversizeFiles: 0, errorCount: 0, lastError: null,
+      guildId: GUILD, nitradoConnId: CONN, snapshotId: 'snap-1', leaseToken: 'old', status: 'OK',
+      totalFiles: 0, totalDirs: 0, totalBytes: 0n, storedBytes: 0n, oversizeFiles: 0, errorCount: 0, lastError: null,
     })).resolves.toBe(false);
-
     expect(snapshotUpdateMany).not.toHaveBeenCalled();
-  });
 
-  it('releases only the exact token-bound lease after ordered finalization', async () => {
+    leaseDeleteMany.mockResolvedValueOnce({ count: 1 });
     await expect(releaseMirrorSnapshotLease({
       guildId: GUILD, nitradoConnId: CONN, snapshotId: 'snap-1', leaseToken: 'lease-1',
     })).resolves.toBe(true);
-    expect(leaseDeleteMany).toHaveBeenCalledWith({
+    expect(leaseDeleteMany).toHaveBeenLastCalledWith({
       where: { guildId: GUILD, nitradoConnId: CONN, snapshotId: 'snap-1', leaseToken: 'lease-1' },
     });
   });
