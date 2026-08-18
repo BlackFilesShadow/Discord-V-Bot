@@ -65,7 +65,11 @@ async function resolveSlotConn(
     where: { id: resolution.nitradoConnId, guildId: scope.guildId },
     select: { id: true, keepOnlineEnabled: true },
   });
-  return conn ? { id: resolution.nitradoConnId, keepOnlineEnabled: conn.keepOnlineEnabled } : null;
+  if (!conn) {
+    respondKeepOnlineVersionConflict(res);
+    return null;
+  }
+  return { id: resolution.nitradoConnId, keepOnlineEnabled: conn.keepOnlineEnabled };
 }
 
 function respondKeepOnlineBusy(res: Response): void {
