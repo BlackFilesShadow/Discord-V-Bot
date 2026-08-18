@@ -151,7 +151,10 @@ jobs:
       - run: npm ci
       - name: Get Playwright version
         id: pw-version
-        run: echo "version=$(node -p \"require('@playwright/test/package.json').version\")" >> "$GITHUB_OUTPUT"
+        shell: bash
+        run: |
+          PW_VERSION=$(node -p "require('@playwright/test/package.json').version")
+          echo "version=$PW_VERSION" >> "$GITHUB_OUTPUT"
       - uses: actions/cache@v4
         id: pw-cache
         with:
