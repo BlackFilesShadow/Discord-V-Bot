@@ -14,3 +14,11 @@ CREATE TABLE "NitradoMirrorLease" (
 
 CREATE INDEX "NitradoMirrorLease_snapshotId_idx" ON "NitradoMirrorLease"("snapshotId");
 CREATE INDEX "NitradoMirrorLease_leaseExpiresAt_idx" ON "NitradoMirrorLease"("leaseExpiresAt");
+
+-- Operational sidecar: DB-level cascade prevents an orphan lease when an owner
+-- deletes a NitradoConnection while a mirror process is still alive. The old
+-- process loses its next heartbeat/final CAS and therefore cannot side-effect.
+ALTER TABLE "NitradoMirrorLease"
+ADD CONSTRAINT "NitradoMirrorLease_nitradoConnId_fkey"
+FOREIGN KEY ("nitradoConnId") REFERENCES "NitradoConnection"("id")
+ON DELETE CASCADE ON UPDATE CASCADE;
