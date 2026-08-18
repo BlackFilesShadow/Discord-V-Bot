@@ -58,10 +58,11 @@ function makeClient() {
           createdAt: new Date('2026-08-14T11:00:00.000Z'),
         };
         rows.set(row.id, row);
-        return row;
+        return { ...row };
       },
       async findFirst({ where }) {
-        return [...rows.values()].find(row => matchesWhere(row, where)) ?? null;
+        const row = [...rows.values()].find(candidate => matchesWhere(candidate, where));
+        return row ? { ...row } : null;
       },
       async updateMany({ where, data }) {
         let count = 0;
