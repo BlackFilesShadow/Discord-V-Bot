@@ -8,6 +8,7 @@ describe('Economy-Schwarzmarkt — Production-Sicherheitsinvarianten', () => {
   const market = read('src/modules/economy/blackMarket.ts');
   const migration = read('prisma/migrations/20260816143000_economy_black_market/migration.sql');
   const route = read('src/dashboard/routes/v2/economyBlackMarket.ts');
+  const apiClient = read('dashboard-ui/src/lib/api.ts');
   const schema = read('prisma/schema.prisma');
 
   it('ist strikt Guild+Gameserver-gescoppt und nutzt MARKET_VENDOR statt Nebenwaehrung', () => {
@@ -43,6 +44,16 @@ describe('Economy-Schwarzmarkt — Production-Sicherheitsinvarianten', () => {
     expect(migration).toContain('EconomyMarketPurchase_listing_scope_fkey');
     expect(migration).toContain('ON DELETE RESTRICT');
     expect(migration).not.toContain('ON DELETE CASCADE');
+  });
+
+  it('akzeptiert den retry-stabilen Dashboard-UUID-Key ohne die Domain-Grenze zu erweitern', () => {
+    expect(apiClient).toContain("crypto.randomUUID()");
+    expect(apiClient).toContain("headers['X-Idempotency-Key'] = lease.key");
+    expect(route).toContain('const candidate = raw ? `${prefix}:${raw}` : null;');
+    expect(route).toContain('candidate.length > 48');
+    expect(route).not.toContain('raw.length > 32');
+    expect(market).toContain("cleanText(external, 48, 'Idempotency-Key')");
+    expect(route).toContain("idempotencyKey: operationKey(req, 'dashboard')");
   });
 
   it('erzwingt fachliche DB-Grenzen fuer Preis, Menge und Betrag', () => {
