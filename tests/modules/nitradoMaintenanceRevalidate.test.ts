@@ -34,10 +34,12 @@ jest.mock('../../src/modules/nitrado/configMutationLock', () => ({
 
 import { revalidateConnectionMaintenanceOnce } from '../../src/modules/nitrado/maintenanceRevalidate';
 
-const CANDIDATE = { id: 'conn-1', guildId: 'guild-1' };
+const GUILD_ID = '123456789012345678';
+const CONN_ID = 'c123456789012345678901234';
+const CANDIDATE = { id: CONN_ID, guildId: GUILD_ID };
 const FRESH = {
-  id: 'conn-1',
-  guildId: 'guild-1',
+  id: CONN_ID,
+  guildId: GUILD_ID,
   slot: 2,
   alias: 'Main',
   status: 'EXPIRED',
@@ -60,7 +62,7 @@ describe('Nitrado-1Y maintenance revalidation freshness', () => {
     mockTryLock.mockResolvedValueOnce(null);
 
     await expect(revalidateConnectionMaintenanceOnce(CANDIDATE)).resolves.toEqual({
-      kind: 'BUSY', id: 'conn-1', guildId: 'guild-1',
+      kind: 'BUSY', id: CONN_ID, guildId: GUILD_ID,
     });
 
     expect(mockFindFirst).not.toHaveBeenCalled();
@@ -72,11 +74,11 @@ describe('Nitrado-1Y maintenance revalidation freshness', () => {
   it('reads the exact current Guild+Connection snapshot only after lock and reactivates through repository', async () => {
     const result = await revalidateConnectionMaintenanceOnce(CANDIDATE);
 
-    expect(mockTryLock).toHaveBeenCalledWith('conn-1');
+    expect(mockTryLock).toHaveBeenCalledWith(CONN_ID);
     expect(mockFindFirst).toHaveBeenCalledWith({
       where: {
-        id: 'conn-1',
-        guildId: 'guild-1',
+        id: CONN_ID,
+        guildId: GUILD_ID,
         status: { in: ['ACTIVE', 'EXPIRED'] },
       },
       select: {
@@ -90,10 +92,10 @@ describe('Nitrado-1Y maintenance revalidation freshness', () => {
     });
     expect(mockDecrypt).toHaveBeenCalledWith('cipher-current', '0'.repeat(64));
     expect(mockValidateTokenDetailed).toHaveBeenCalledTimes(1);
-    expect(mockMarkValidated).toHaveBeenCalledWith('guild-1', 'conn-1');
+    expect(mockMarkValidated).toHaveBeenCalledWith(GUILD_ID, CONN_ID);
     expect(mockSetStatus).not.toHaveBeenCalled();
     expect(mockRelease).toHaveBeenCalledTimes(1);
-    expect(result).toMatchObject({ kind: 'VALID', id: 'conn-1', guildId: 'guild-1', previousStatus: 'EXPIRED' });
+    expect(result).toMatchObject({ kind: 'VALID', id: CONN_ID, guildId: GUILD_ID, previousStatus: 'EXPIRED' });
   });
 
   it('marks only the freshly scoped connection EXPIRED on an actual INVALID result', async () => {
@@ -103,7 +105,7 @@ describe('Nitrado-1Y maintenance revalidation freshness', () => {
       kind: 'INVALID', status: 401, previousStatus: 'EXPIRED',
     });
 
-    expect(mockSetStatus).toHaveBeenCalledWith('guild-1', 'conn-1', 'EXPIRED');
+    expect(mockSetStatus).toHaveBeenCalledWith(GUILD_ID, CONN_ID, 'EXPIRED');
     expect(mockMarkValidated).not.toHaveBeenCalled();
     expect(mockRelease).toHaveBeenCalledTimes(1);
   });
@@ -128,7 +130,7 @@ describe('Nitrado-1Y maintenance revalidation freshness', () => {
     mockFindFirst.mockResolvedValueOnce(null);
 
     await expect(revalidateConnectionMaintenanceOnce(CANDIDATE)).resolves.toEqual({
-      kind: 'MISSING', id: 'conn-1', guildId: 'guild-1',
+      kind: 'MISSING', id: CONN_ID, guildId: GUILD_ID,
     });
 
     expect(mockDecrypt).not.toHaveBeenCalled();
