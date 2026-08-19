@@ -108,6 +108,7 @@ test.describe('Server-Aliase authenticated owner contract', () => {
 
     const input = page.getByPlaceholder('Anzeigename').first();
     await expect(input).toHaveValue('Chernarus');
+    await expect(input).toHaveAttribute('maxlength', '40');
     await expect(page.getByText('CH001', { exact: true })).toBeVisible();
 
     await input.fill('  Neue Welt  ');
@@ -118,7 +119,7 @@ test.describe('Server-Aliase authenticated owner contract', () => {
     expect(writes.patchBody()).toEqual({ alias: 'Neue Welt' });
     expect(writes.patchBody()).not.toHaveProperty('alias5');
 
-    await expect(page.getByText('Alias gespeichert.')).toBeVisible();
+    await expect(page.getByText('Alias gespeichert.').first()).toBeVisible();
     await expect(page.getByText('CH001', { exact: true })).toBeVisible();
   });
 
@@ -127,6 +128,7 @@ test.describe('Server-Aliase authenticated owner contract', () => {
     await openAliases(page);
 
     const input = page.getByPlaceholder('Anzeigename').first();
+    await expect(input).toHaveAttribute('maxlength', '40');
     await input.fill('   ');
 
     const save = page.getByRole('button', { name: 'Speichern' }).first();
@@ -143,7 +145,7 @@ test.describe('Server-Aliase authenticated owner contract', () => {
     await page.getByRole('button', { name: 'Speichern' }).first().click();
 
     await expect.poll(writes.patchCount).toBe(1);
-    await expect(page.getByText('Alias-Konflikt. Bitte erneut versuchen.')).toBeVisible();
+    await expect(page.getByText('Alias-Konflikt. Bitte erneut versuchen.').first()).toBeVisible();
     await expect(page.getByText('Alias gespeichert.')).toHaveCount(0);
   });
 
