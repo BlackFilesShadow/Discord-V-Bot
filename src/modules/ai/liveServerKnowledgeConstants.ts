@@ -15,3 +15,32 @@ export function isLiveServerSystemKnowledgeCreatedBy(createdBy: string | null | 
 export function isLiveServerSourceRef(sourceRef: string | null | undefined): boolean {
   return typeof sourceRef === 'string' && sourceRef.startsWith(LIVE_SERVER_SOURCE_PREFIX);
 }
+
+/**
+ * Extrahiert die persistierte Nitrado-Connection-ID aus einer systemgenerierten
+ * LIVE_SERVER-sourceRef. Fremde/defekte Referenzen werden strikt abgewiesen.
+ */
+export function liveServerConnectionIdFromSourceRef(sourceRef: string | null | undefined): string | null {
+  if (!isLiveServerSourceRef(sourceRef)) return null;
+  const raw = sourceRef.slice(LIVE_SERVER_SOURCE_PREFIX.length).split('/', 1)[0];
+  if (!raw) return null;
+  try {
+    const decoded = decodeURIComponent(raw).trim();
+    return decoded.length > 0 ? decoded : null;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Nitrado-1R stampft die ADM-Binding-Generation als `b<generation>:` in jede
+ * LIVE_SERVER-sourceVersion. Unversionierte Legacy-Zeilen und kaputte Werte
+ * sind fuer binding-sensitive Retrieval-Zwecke absichtlich ungueltig.
+ */
+export function liveServerBindingVersionFromSourceVersion(sourceVersion: string | null | undefined): number | null {
+  if (typeof sourceVersion !== 'string') return null;
+  const match = /^b([0-9]+):/.exec(sourceVersion);
+  if (!match) return null;
+  const version = Number(match[1]);
+  return Number.isSafeInteger(version) && version >= 0 ? version : null;
+}
