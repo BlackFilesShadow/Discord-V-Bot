@@ -12,7 +12,7 @@
  * - Download-/Seek-Tokens werden niemals geloggt.
  */
 
-import axios, { type AxiosError, type AxiosInstance, type AxiosRequestConfig } from 'axios';
+import axios, { type AxiosInstance, type AxiosRequestConfig } from 'axios';
 import { logger } from '../../utils/logger';
 import { getNitradoBreaker, opClassForMethod, NitradoCircuitOpenError } from './circuitBreaker';
 
@@ -197,7 +197,6 @@ export class NitradoClient {
           continue;
         }
         if (res.status >= 500) {
-          // Auch der terminale 5xx-Versuch ist ein echter Circuit-Failure.
           breaker.recordFailure();
           if (attempt < 3) {
             await sleep(500 * Math.pow(2, attempt - 1));
@@ -222,8 +221,7 @@ export class NitradoClient {
       } catch (e) {
         if (e instanceof NitradoApiError) throw e;
         if (e instanceof NitradoCircuitOpenError) throw e;
-        const transportError = e as AxiosError;
-        lastErr = transportError instanceof Error ? transportError : new Error(String(e));
+        lastErr = e instanceof Error ? e : new Error(String(e));
         breaker.recordFailure();
         if (attempt < 3) {
           await sleep(500 * Math.pow(2, attempt - 1));
