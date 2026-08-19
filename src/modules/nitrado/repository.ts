@@ -13,6 +13,8 @@ import { asNitradoConnId } from '../../types/scope';
 import type { NitradoConnectionStatus } from '@prisma/client';
 import { tryAcquireNitradoConfigMutationLock } from './configMutationLock';
 import { syncAdmBindingState, type AdmBindingStateClient } from './adm/bindingState';
+import { prepareNitradoRemoteStateForServiceRebind } from './rebindOutboxLifecycle';
+import type { NitradoOutboxClient } from './outboxLock';
 
 export interface NitradoConnectionRow {
   id: NitradoConnId;
@@ -283,6 +285,15 @@ export async function updateToken(
         if (options.expectedId || options.expectedUpdatedAt) throw new NitradoSlotVersionConflictError();
         return false;
       }
+
+      if (resetServiceId && before.nitradoServerId !== null) {
+        const lifecycle = await prepareNitradoRemoteStateForServiceRebind(
+          tx as unknown as NitradoOutboxClient,
+          { guildId, nitradoConnId: targetId },
+        );
+        if (lifecycle.busy) throw new NitradoConnectionBusyError();
+      }
+
       if (resetServiceId) {
         await syncAdmBindingState(
           tx as unknown as AdmBindingStateClient,
@@ -383,6 +394,14 @@ export async function updateServiceId(
       if (!before) {
         if (options.expectedId || options.expectedUpdatedAt) throw new NitradoSlotVersionConflictError();
         return false;
+      }
+
+      if (before.nitradoServerId !== nitradoServerId) {
+        const lifecycle = await prepareNitradoRemoteStateForServiceRebind(
+          tx as unknown as NitradoOutboxClient,
+          { guildId, nitradoConnId: targetId },
+        );
+        if (lifecycle.busy) throw new NitradoConnectionBusyError();
       }
 
       await syncAdmBindingState(

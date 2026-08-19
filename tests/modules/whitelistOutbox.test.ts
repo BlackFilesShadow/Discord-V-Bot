@@ -24,18 +24,20 @@ function makeClient(existingJobs: ExistingJob[] = []) {
   return { client, create, findMany, queryRaw };
 }
 
-describe('Nitrado-1A Whitelist-Outbox', () => {
-  it('legt ADD unter einem DB-xact-lock an', async () => {
+describe('Nitrado-1A/1U Whitelist-Outbox', () => {
+  it('legt ADD erst unter Connection- und danach Subject-xact-lock an', async () => {
     const { client, create, queryRaw } = makeClient();
 
     await expect(enqueueWhitelistAdd(client, SCOPE, 'Player One')).resolves.toBe(true);
 
-    expect(queryRaw).toHaveBeenCalledWith(
-      'SELECT pg_advisory_xact_lock($1, $2)',
-      expect.any(Number),
-      expect.any(Number),
-    );
-    expect(queryRaw.mock.invocationCallOrder[0]).toBeLessThan(create.mock.invocationCallOrder[0]);
+    expect(queryRaw).toHaveBeenCalledTimes(2);
+    for (const call of queryRaw.mock.calls) {
+      expect(call[0]).toBe('SELECT pg_advisory_xact_lock($1, $2)');
+      expect(call[1]).toEqual(expect.any(Number));
+      expect(call[2]).toEqual(expect.any(Number));
+    }
+    expect(queryRaw.mock.invocationCallOrder[0]).toBeLessThan(queryRaw.mock.invocationCallOrder[1]);
+    expect(queryRaw.mock.invocationCallOrder[1]).toBeLessThan(create.mock.invocationCallOrder[0]);
     expect(create).toHaveBeenCalledWith({
       data: {
         guildId: 'guild-a',
@@ -70,7 +72,7 @@ describe('Nitrado-1A Whitelist-Outbox', () => {
     }));
   });
 
-  it('verwendet fuer andere Guild/Connection/Operation/Names getrennte Locks', async () => {
+  it('teilt die Connection-Barriere pro Connection, aber trennt Subject-Locks nach Operation/Name', async () => {
     const a = makeClient();
     const b = makeClient();
     const c = makeClient();
@@ -79,8 +81,11 @@ describe('Nitrado-1A Whitelist-Outbox', () => {
     await enqueueWhitelistAdd(b.client, { ...SCOPE, nitradoConnId: 'conn-b' }, 'Player One');
     await enqueueWhitelistRemove(c.client, SCOPE, 'Player One');
 
+    // Erster Lock = Connection-Barriere.
     expect(a.queryRaw.mock.calls[0].slice(1)).not.toEqual(b.queryRaw.mock.calls[0].slice(1));
-    expect(a.queryRaw.mock.calls[0].slice(1)).not.toEqual(c.queryRaw.mock.calls[0].slice(1));
+    expect(a.queryRaw.mock.calls[0].slice(1)).toEqual(c.queryRaw.mock.calls[0].slice(1));
+    // Zweiter Lock = konkreter Subject-Key.
+    expect(a.queryRaw.mock.calls[1].slice(1)).not.toEqual(c.queryRaw.mock.calls[1].slice(1));
   });
 
   it('lehnt leere Identifier ab, bevor ein DB-Lock oder Job entsteht', async () => {

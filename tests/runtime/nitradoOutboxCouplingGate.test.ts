@@ -4,6 +4,7 @@ import path from 'node:path';
 const read = (relative: string) => fs.readFileSync(path.resolve(process.cwd(), relative), 'utf8');
 
 const outboxLock = read('src/modules/nitrado/outboxLock.ts');
+const rebindLifecycle = read('src/modules/nitrado/rebindOutboxLifecycle.ts');
 const whitelistOutbox = read('src/modules/whitelist/whitelistOutbox.ts');
 const banOutbox = read('src/modules/bans/banOutbox.ts');
 const dashboardWhitelist = read('src/dashboard/routes/v2/whitelist.ts');
@@ -15,24 +16,38 @@ const nitradoRoute = read('src/dashboard/routes/v2/nitrado.ts');
 const nitradoRepository = read('src/modules/nitrado/repository.ts');
 const jobWorker = read('src/modules/nitrado/jobWorker.ts');
 
-describe('Nitrado-1A outbox + token/service coupling architecture gate', () => {
-  it('uses hashed PostgreSQL transaction advisory locks as the cross-process outbox boundary', () => {
+describe('Nitrado-1A/1U outbox + token/service coupling architecture gate', () => {
+  it('uses hashed PostgreSQL transaction advisory locks for subject and connection boundaries', () => {
     expect(outboxLock).toContain("createHash('sha256')");
     expect(outboxLock).toContain("'SELECT pg_advisory_xact_lock($1, $2)'");
     expect(outboxLock).toContain("'$transaction' in client");
+    expect(outboxLock).toContain('export async function withNitradoOutboxConnectionLock');
+    expect(outboxLock).toContain("'nitrado-outbox-connection:v1'");
+    expect(outboxLock).toContain('return client.$transaction(tx => lockedInTransaction(tx, subject, work));');
     expect(outboxLock).toContain('return client.$transaction(tx => lockedInTransaction(tx, subjectKey, work));');
   });
 
-  it('centralizes whitelist ADD/REMOVE creation under the outbox subject lock without an active-job scan cap', () => {
-    expect(whitelistOutbox).toContain('withNitradoOutboxSubjectLock(client, lockSubject');
+  it('centralizes whitelist ADD/REMOVE under connection barrier then subject lock without active-job scan cap', () => {
+    const helper = whitelistOutbox.indexOf('async function ensureWhitelistJobInLock(');
+    const create = whitelistOutbox.indexOf('await tx.nitradoJob.create({', helper);
+    const connectionLock = whitelistOutbox.indexOf('withNitradoOutboxConnectionLock(client, scope, tx =>');
+    const subjectLock = whitelistOutbox.indexOf('withNitradoOutboxSubjectLock(tx, lockSubject', connectionLock);
+    const ensureCall = whitelistOutbox.indexOf(
+      'ensureWhitelistJobInLock(lockedTx, scope, operation, gameId, normalizedGameId)',
+      subjectLock,
+    );
+    expect(helper).toBeGreaterThanOrEqual(0);
+    expect(create).toBeGreaterThan(helper);
+    expect(connectionLock).toBeGreaterThanOrEqual(0);
+    expect(subjectLock).toBeGreaterThan(connectionLock);
+    expect(ensureCall).toBeGreaterThan(subjectLock);
     expect(whitelistOutbox).toContain("status: { in: ['PENDING', 'RUNNING'] }");
-    expect(whitelistOutbox).toContain('await tx.nitradoJob.create({');
     expect(whitelistOutbox).toContain("return enqueueWhitelistJob(client, scope, 'WHITELIST_ADD', gameId);");
     expect(whitelistOutbox).toContain("return enqueueWhitelistJob(client, scope, 'WHITELIST_REMOVE', gameId);");
     expect(whitelistOutbox).not.toContain('take: 500');
   });
 
-  it('forbids direct whitelist NitradoJob.create calls from every productive writer outside the helper', () => {
+  it('forbids direct whitelist NitradoJob.create calls from productive writers outside helper', () => {
     const writers = [dashboardWhitelist, slashWhitelist, approvalButton, syncCron, leaveWhitelist];
     for (const source of writers) {
       expect(source).not.toContain('nitradoJob.create({');
@@ -47,7 +62,7 @@ describe('Nitrado-1A outbox + token/service coupling architecture gate', () => {
     expect(leaveWhitelist).toContain('enqueueWhitelistRemove(');
   });
 
-  it('keeps local whitelist lifecycle writes and outbox enqueue in the same Prisma transaction', () => {
+  it('keeps local whitelist lifecycle writes and outbox enqueue in same Prisma transaction', () => {
     const postTx = dashboardWhitelist.indexOf('await prisma.$transaction(async tx => {');
     const postEntry = dashboardWhitelist.indexOf('await tx.whitelistEntry.create({', postTx);
     const postOutbox = dashboardWhitelist.indexOf('await enqueueWhitelistAdd(', postEntry);
@@ -63,15 +78,18 @@ describe('Nitrado-1A outbox + token/service coupling architecture gate', () => {
     expect(removeOutbox).toBeGreaterThan(pendingRemove);
   });
 
-  it('keeps server-ban ADD/REMOVE dedupe under the same cross-process outbox lock without an active-job scan cap', () => {
-    expect(banOutbox).toContain('withNitradoOutboxSubjectLock(client, lockSubject');
+  it('keeps server-ban ADD/REMOVE dedupe under connection barrier then subject lock', () => {
+    const connectionLock = banOutbox.indexOf('withNitradoOutboxConnectionLock(client, scope, tx =>');
+    const subjectLock = banOutbox.indexOf('withNitradoOutboxSubjectLock(tx, lockSubject', connectionLock);
+    expect(connectionLock).toBeGreaterThanOrEqual(0);
+    expect(subjectLock).toBeGreaterThan(connectionLock);
     expect(banOutbox).toContain("status: { in: ['PENDING', 'RUNNING'] }");
     expect(banOutbox).toContain("'SERVER_BAN_ADD'");
     expect(banOutbox).toContain("'SERVER_BAN_REMOVE'");
     expect(banOutbox).not.toContain('take: 500');
   });
 
-  it('fails token rotation closed when an existing service cannot be verified against the new token', () => {
+  it('fails token rotation closed when existing service cannot be verified against new token', () => {
     const rotation = nitradoRoute.indexOf("nitradoRouter.patch('/:slot/token'");
     const serviceRead = nitradoRoute.indexOf('services = await client.listServices();', rotation);
     const failureResponse = nitradoRoute.indexOf("res.status(502).json({", serviceRead);
@@ -86,24 +104,54 @@ describe('Nitrado-1A outbox + token/service coupling architecture gate', () => {
     expect(nitradoRoute).toContain('Token wurde nicht geändert: Die vorhandene Nitrado-Service-Zuordnung konnte mit dem neuen Token nicht verifiziert werden.');
   });
 
-  it('persists a proven token/service mismatch atomically and clears both service mirrors', () => {
+  it('persists proven token/service mismatch atomically and clears both service mirrors', () => {
     const updateToken = nitradoRepository.indexOf('export async function updateToken(');
     const transaction = nitradoRepository.indexOf('await prisma.$transaction(async tx => {', updateToken);
-    const tokenUpdate = nitradoRepository.indexOf('await tx.nitradoConnection.updateMany({', transaction);
+    const rebindFence = nitradoRepository.indexOf('prepareNitradoRemoteStateForServiceRebind(', transaction);
+    const tokenUpdate = nitradoRepository.indexOf('await tx.nitradoConnection.updateMany({', rebindFence);
     const serviceResetA = nitradoRepository.indexOf('nitradoServerId: null', tokenUpdate);
     const serviceResetB = nitradoRepository.indexOf('serviceId: null', serviceResetA);
     const healthReset = nitradoRepository.indexOf('await tx.nitradoValidationHealth.updateMany({', tokenUpdate);
 
     expect(updateToken).toBeGreaterThanOrEqual(0);
     expect(transaction).toBeGreaterThan(updateToken);
-    expect(tokenUpdate).toBeGreaterThan(transaction);
+    expect(rebindFence).toBeGreaterThan(transaction);
+    expect(tokenUpdate).toBeGreaterThan(rebindFence);
     expect(serviceResetA).toBeGreaterThan(tokenUpdate);
     expect(serviceResetB).toBeGreaterThan(serviceResetA);
     expect(healthReset).toBeGreaterThan(tokenUpdate);
     expect(nitradoRoute).not.toContain('if (serviceMismatch) {\n    await updateServiceId');
   });
 
-  it('version-fences token and service writes to the exact remotely validated connection id + updatedAt snapshot', () => {
+  it('makes actual service change pass remote-state lifecycle before connection/binding mutation', () => {
+    const updateService = nitradoRepository.indexOf('export async function updateServiceId(');
+    const before = nitradoRepository.indexOf('const before = await tx.nitradoConnection.findFirst({', updateService);
+    const changed = nitradoRepository.indexOf('if (before.nitradoServerId !== nitradoServerId) {', before);
+    const lifecycle = nitradoRepository.indexOf('prepareNitradoRemoteStateForServiceRebind(', changed);
+    const busy = nitradoRepository.indexOf('if (lifecycle.busy) throw new NitradoConnectionBusyError();', lifecycle);
+    const connectionWrite = nitradoRepository.indexOf('await tx.nitradoConnection.updateMany({', busy);
+    expect(updateService).toBeGreaterThanOrEqual(0);
+    expect(before).toBeGreaterThan(updateService);
+    expect(changed).toBeGreaterThan(before);
+    expect(lifecycle).toBeGreaterThan(changed);
+    expect(busy).toBeGreaterThan(lifecycle);
+    expect(connectionWrite).toBeGreaterThan(busy);
+  });
+
+  it('rebind lifecycle serializes enqueue, blocks RUNNING mutations, cancels stale remove intents and resets observations', () => {
+    expect(rebindLifecycle).toContain('withNitradoOutboxConnectionLock(client, scope');
+    expect(rebindLifecycle).toContain("status: 'RUNNING'");
+    expect(rebindLifecycle).toContain("'WHITELIST_ADD'");
+    expect(rebindLifecycle).toContain("'WHITELIST_REMOVE'");
+    expect(rebindLifecycle).toContain("'SERVER_BAN_ADD'");
+    expect(rebindLifecycle).toContain("'SERVER_BAN_REMOVE'");
+    expect(rebindLifecycle).toContain("operation: { in: [...CANCEL_ON_REBIND_OPERATIONS] }");
+    expect(rebindLifecycle).toContain("syncState: 'LOCAL_ONLY'");
+    expect(rebindLifecycle).toContain('appliedRemotely: false');
+    expect(rebindLifecycle).toContain('const racedRunning = await lockedTx.nitradoJob.findFirst({');
+  });
+
+  it('version-fences token and service writes to exact remotely validated connection id + updatedAt snapshot', () => {
     expect(nitradoRepository).toContain('updatedAt: Date;');
     expect(nitradoRepository).toContain('export class NitradoSlotVersionConflictError extends Error');
     expect(nitradoRepository).toContain('expectedId?: NitradoConnId;');
@@ -122,7 +170,7 @@ describe('Nitrado-1A outbox + token/service coupling architecture gate', () => {
     expect(nitradoRoute).toContain('updated = await updateServiceId(scope.guildId, slot, normalized, {');
   });
 
-  it('keeps raw remote whitelist/ban mutators only in the serialized Nitrado job worker', () => {
+  it('keeps raw remote whitelist/ban mutators only in serialized Nitrado job worker', () => {
     expect(jobWorker).toContain('await client.addToWhitelist(conn.nitradoServerId, payload.gameId);');
     expect(jobWorker).toContain('await client.removeFromWhitelist(conn.nitradoServerId, payload.gameId);');
     expect(jobWorker).toContain('await client.addToBanlist(conn.nitradoServerId, sensitiveIdentifier);');

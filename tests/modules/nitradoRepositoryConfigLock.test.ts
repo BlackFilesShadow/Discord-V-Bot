@@ -17,6 +17,7 @@ const profileUpdateMany = jest.fn();
 const transaction = jest.fn();
 const acquireConfigLock = jest.fn();
 const releaseConfigLock = jest.fn();
+const prepareRebindLifecycle = jest.fn();
 
 const mockTx = {
   nitradoConnection: {
@@ -69,6 +70,10 @@ jest.mock('../../src/modules/nitrado/configMutationLock', () => ({
   tryAcquireNitradoConfigMutationLock: (...args: unknown[]) => acquireConfigLock(...args),
 }));
 
+jest.mock('../../src/modules/nitrado/rebindOutboxLifecycle', () => ({
+  prepareNitradoRemoteStateForServiceRebind: (...args: unknown[]) => prepareRebindLifecycle(...args),
+}));
+
 import {
   deleteSlot,
   NitradoConnectionBusyError,
@@ -93,6 +98,12 @@ const ROW = {
 
 beforeEach(() => {
   jest.clearAllMocks();
+  prepareRebindLifecycle.mockResolvedValue({
+    busy: false,
+    cancelledJobs: 0,
+    whitelistReset: 0,
+    banRemoteStateReset: 0,
+  });
   connectionFindUnique.mockResolvedValue({ id: CONN });
   connectionFindFirst.mockResolvedValue(ROW);
   connectionUpdateMany.mockResolvedValue({ count: 1 });
@@ -129,8 +140,8 @@ beforeEach(() => {
   acquireConfigLock.mockResolvedValue({ release: releaseConfigLock });
 });
 
-describe('Nitrado-1C/1M/1S repository config/worker serialization', () => {
-  it('updates service id only under the connection lock, purges stale mirror knowledge and advances the ADM binding', async () => {
+describe('Nitrado-1C/1M/1S/1U repository config/worker serialization', () => {
+  it('updates service id only after remote-state rebind barrier, purges stale mirror knowledge and advances binding', async () => {
     scopeFindMany.mockResolvedValueOnce([{ knowledgeId: 'mirror-1' }, { knowledgeId: 'owner-1' }]);
     knowledgeFindMany.mockResolvedValueOnce([{ id: 'mirror-1' }]);
     provenanceFindMany.mockResolvedValueOnce([{ knowledgeId: 'mirror-1' }]);
@@ -141,6 +152,8 @@ describe('Nitrado-1C/1M/1S repository config/worker serialization', () => {
     })).resolves.toEqual(expect.objectContaining({ id: CONN }));
 
     expect(acquireConfigLock).toHaveBeenCalledWith(CONN);
+    expect(prepareRebindLifecycle).toHaveBeenCalledWith(mockTx, { guildId: GUILD, nitradoConnId: CONN });
+    expect(prepareRebindLifecycle.mock.invocationCallOrder[0]).toBeLessThan(connectionUpdateMany.mock.invocationCallOrder[0]);
     expect(connectionUpdateMany).toHaveBeenCalledWith({
       where: { guildId: GUILD, slot: 1, id: CONN, updatedAt: VERSION },
       data: { nitradoServerId: '456', serviceId: '456' },
@@ -168,12 +181,31 @@ describe('Nitrado-1C/1M/1S repository config/worker serialization', () => {
     expect(releaseConfigLock).toHaveBeenCalledTimes(1);
   });
 
-  it('does not advance the ADM binding or purge knowledge when the service id stays identical', async () => {
+  it('fails closed before service mutation when a claimed remote mutation is still RUNNING', async () => {
+    prepareRebindLifecycle.mockResolvedValueOnce({
+      busy: true,
+      cancelledJobs: 0,
+      whitelistReset: 0,
+      banRemoteStateReset: 0,
+    });
+
+    await expect(updateServiceId(GUILD as never, 1, '456', {
+      expectedId: CONN as never,
+      expectedUpdatedAt: VERSION,
+    })).rejects.toBeInstanceOf(NitradoConnectionBusyError);
+
+    expect(connectionUpdateMany).not.toHaveBeenCalled();
+    expect(bindingUpdate).not.toHaveBeenCalled();
+    expect(releaseConfigLock).toHaveBeenCalledTimes(1);
+  });
+
+  it('does not run rebind lifecycle, advance binding or purge knowledge when service id stays identical', async () => {
     await updateServiceId(GUILD as never, 1, '123', {
       expectedId: CONN as never,
       expectedUpdatedAt: VERSION,
     });
 
+    expect(prepareRebindLifecycle).not.toHaveBeenCalled();
     expect(bindingUpdate).not.toHaveBeenCalled();
     expect(profileUpdateMany).not.toHaveBeenCalled();
     expect(provenanceDeleteMany).not.toHaveBeenCalled();

@@ -26,17 +26,19 @@ function makeClient(activePayloads: unknown[] = [], recentDeadPayloads: unknown[
 }
 
 describe('Server-Ban Outbox', () => {
-  it('speichert ADD-Identifier nur verschluesselt und sperrt den Subject-Key vorher', async () => {
+  it('speichert ADD-Identifier nur verschluesselt und nimmt Connection- vor Subject-Lock', async () => {
     const { client, create, queryRaw } = makeClient();
     const raw = '76561198000000000';
 
     await expect(enqueueServerBanAdd(client, SCOPE, 'ban-1', raw, KEY)).resolves.toBe(true);
-    expect(queryRaw).toHaveBeenCalledWith(
-      'SELECT pg_advisory_xact_lock($1, $2)',
-      expect.any(Number),
-      expect.any(Number),
-    );
-    expect(queryRaw.mock.invocationCallOrder[0]).toBeLessThan(create.mock.invocationCallOrder[0]);
+    expect(queryRaw).toHaveBeenCalledTimes(2);
+    for (const call of queryRaw.mock.calls) {
+      expect(call[0]).toBe('SELECT pg_advisory_xact_lock($1, $2)');
+      expect(call[1]).toEqual(expect.any(Number));
+      expect(call[2]).toEqual(expect.any(Number));
+    }
+    expect(queryRaw.mock.invocationCallOrder[0]).toBeLessThan(queryRaw.mock.invocationCallOrder[1]);
+    expect(queryRaw.mock.invocationCallOrder[1]).toBeLessThan(create.mock.invocationCallOrder[0]);
 
     const args = create.mock.calls[0][0] as { data: { operation: string; payload: unknown } };
     expect(args.data.operation).toBe('SERVER_BAN_ADD');
@@ -56,12 +58,12 @@ describe('Server-Ban Outbox', () => {
     expect(args.data.payload).toEqual({ banId: 'ban-1' });
   });
 
-  it('dedupliziert aktive Jobs derselben Operation+Ban-ID unter dem DB-Lock', async () => {
+  it('dedupliziert aktive Jobs derselben Operation+Ban-ID unter beiden DB-Locks', async () => {
     const { client, create, findMany, queryRaw } = makeClient([{ banId: 'ban-1' }]);
 
     await expect(enqueueServerBanRemove(client, SCOPE, 'ban-1')).resolves.toBe(false);
 
-    expect(queryRaw).toHaveBeenCalledTimes(1);
+    expect(queryRaw).toHaveBeenCalledTimes(2);
     expect(findMany).toHaveBeenCalledTimes(1);
     expect(create).not.toHaveBeenCalled();
   });
@@ -72,7 +74,7 @@ describe('Server-Ban Outbox', () => {
 
     await expect(enqueueServerBanRemove(client, SCOPE, 'ban-1', { now })).resolves.toBe(false);
 
-    expect(queryRaw).toHaveBeenCalledTimes(1);
+    expect(queryRaw).toHaveBeenCalledTimes(2);
     expect(findMany).toHaveBeenCalledTimes(2);
     const deadQuery = findMany.mock.calls[1][0] as {
       where: { status: string; updatedAt: { gte: Date } };
@@ -97,8 +99,6 @@ describe('Server-Ban Outbox', () => {
   });
 
   it('erlaubt nach Ablauf des DEAD-Cooldowns wieder einen automatischen REMOVE', async () => {
-    // Die DB-Query liefert nur DEAD-Jobs >= Cooldown-Grenze; ein aelterer DEAD
-    // erscheint deshalb nicht in `recentDeadPayloads`.
     const { client, create, findMany } = makeClient([], []);
 
     await expect(enqueueServerBanRemove(client, SCOPE, 'ban-1')).resolves.toBe(true);
@@ -129,14 +129,15 @@ describe('Server-Ban Outbox', () => {
     expect(active.create).not.toHaveBeenCalled();
   });
 
-  it('verwendet fuer verschiedene Ban-IDs verschiedene Advisory-Lock-Keys', async () => {
+  it('teilt die Connection-Barriere, aber trennt Ban-Subjects nach Ban-ID', async () => {
     const a = makeClient();
     const b = makeClient();
 
     await enqueueServerBanRemove(a.client, SCOPE, 'ban-1');
     await enqueueServerBanRemove(b.client, SCOPE, 'ban-2');
 
-    expect(a.queryRaw.mock.calls[0].slice(1)).not.toEqual(b.queryRaw.mock.calls[0].slice(1));
+    expect(a.queryRaw.mock.calls[0].slice(1)).toEqual(b.queryRaw.mock.calls[0].slice(1));
+    expect(a.queryRaw.mock.calls[1].slice(1)).not.toEqual(b.queryRaw.mock.calls[1].slice(1));
   });
 
   it('lehnt ungueltige Payloads ab', () => {

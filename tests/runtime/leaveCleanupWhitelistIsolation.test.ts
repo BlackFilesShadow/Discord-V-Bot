@@ -24,13 +24,14 @@ describe('Leave-1B/1E production boundary and write safety', () => {
     expect(economyAt).toBeGreaterThan(statsAt);
   });
 
-  it('uses Nitrado only for a fresh GET and routes every removal through the atomic whitelist outbox', () => {
+  it('uses Nitrado only for a fresh GET and routes every removal through connection + subject locked whitelist outbox', () => {
     expect(whitelistSource).toContain('.getWhitelist(');
     expect(whitelistSource).not.toContain('.removeFromWhitelist(');
     expect(whitelistSource).toContain('enqueueWhitelistRemove(');
     expect(whitelistSource).not.toContain('tx.nitradoJob.create');
     expect(outboxSource).toContain("return enqueueWhitelistJob(client, scope, 'WHITELIST_REMOVE', gameId);");
-    expect(outboxSource).toContain('withNitradoOutboxSubjectLock(client, lockSubject');
+    expect(outboxSource).toContain('withNitradoOutboxConnectionLock(client, scope, tx =>');
+    expect(outboxSource).toContain('withNitradoOutboxSubjectLock(tx, lockSubject');
   });
 
   it('derives whitelist names from a session GUID that matches the verified link HMAC', () => {
