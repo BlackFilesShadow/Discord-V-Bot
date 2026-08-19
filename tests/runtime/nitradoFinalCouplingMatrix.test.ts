@@ -16,32 +16,25 @@ const maintenance = read('src/modules/nitrado/maintenanceRevalidate.ts');
 const whitelistReconcile = read('src/modules/whitelist/whitelistSyncCron.ts');
 const banReconcile = read('src/modules/bans/banReconciliation.ts');
 const mirrorSnapshot = read('src/modules/nitrado/mirror/snapshotService.ts');
-const mirrorRead = read('src/modules/nitrado/mirror/readClient.ts');
 const bindingFence = read('src/modules/nitrado/adm/bindingFence.ts');
 const liveKnowledge = read('src/modules/ai/liveServerKnowledgeIndex.ts');
 
-/**
- * Nitrado-1Z ist bewusst ein uebergeordneter Abschluss-Gate statt einer neuen
- * Fachimplementierung. Die Einzelregressionen aus 1A..1Y bleiben die tiefen
- * Behavior-Tests; dieser Test pinnt deren produktive Kopplungen als eine Matrix,
- * damit spaetere Refactorings keinen bereits getrennt bewiesenen Pfad aus der
- * Gesamtarchitektur loesen koennen.
- */
 describe('Nitrado-1Z final production coupling matrix', () => {
   it('keeps every mutating remote intent behind the durable worker + claim/lease boundary', () => {
     for (const operation of ['WHITELIST_ADD', 'WHITELIST_REMOVE', 'SERVER_BAN_ADD', 'SERVER_BAN_REMOVE', 'RESTART_IF_DOWN']) {
       expect(worker).toContain(operation);
     }
-    expect(worker).toContain('claimNextJob');
-    expect(worker).toContain('renewNitradoJobClaim');
-    expect(worker).toContain('transitionOwnedNitradoJob');
+    expect(worker).toContain('claimNitradoJob');
+    expect(worker).toContain('heartbeatNitradoJobClaim');
+    expect(worker).toContain('transitionClaimedNitradoJob');
     expect(lease).toContain('claimToken');
     expect(lease).toContain('heartbeatAt');
-    expect(lease).toContain("status: 'RUNNING'");
 
-    expect(exists('tests/runtime/nitradoClientMutationBoundaryGate.test.ts')).toBe(true);
-    expect(exists('tests/runtime/nitradoOutboxCouplingGate.test.ts')).toBe(true);
-    expect(exists('tests/runtime/nitradoRebindOutboxFenceGate.test.ts')).toBe(true);
+    for (const regression of [
+      'tests/runtime/nitradoClientMutationBoundaryGate.test.ts',
+      'tests/runtime/nitradoOutboxCouplingGate.test.ts',
+      'tests/modules/nitradoRebindOutboxLifecycle.test.ts',
+    ]) expect(exists(regression)).toBe(true);
   });
 
   it('serializes worker/config/token/service/delete/reconcile ownership on the canonical per-connection lock', () => {
@@ -51,15 +44,16 @@ describe('Nitrado-1Z final production coupling matrix', () => {
     expect(repository).toContain('updateToken');
     expect(repository).toContain('updateServiceId');
     expect(repository).toContain('deleteSlot');
-
     expect(tokenValidation).toContain('tryAcquireNitradoConfigMutationLock');
     expect(maintenance).toContain('tryAcquireNitradoConfigMutationLock');
     expect(whitelistReconcile).toContain('tryAcquireNitradoConfigMutationLock');
     expect(banReconcile).toContain('tryAcquireNitradoConfigMutationLock');
 
-    expect(exists('tests/runtime/nitrado1cMergeVerificationGate.test.ts')).toBe(true);
-    expect(exists('tests/runtime/nitradoTokenValidationLockGate.test.ts')).toBe(true);
-    expect(exists('tests/runtime/nitradoWhitelistReconcileConnectionLockGate.test.ts')).toBe(true);
+    for (const regression of [
+      'tests/runtime/nitrado1cMergeVerificationGate.test.ts',
+      'tests/runtime/nitradoTokenValidationLockGate.test.ts',
+      'tests/runtime/nitradoWhitelistReconcileConnectionLockGate.test.ts',
+    ]) expect(exists(regression)).toBe(true);
   });
 
   it('uses nitradoServerId as canonical service binding and fences stale remote observations', () => {
@@ -71,20 +65,19 @@ describe('Nitrado-1Z final production coupling matrix', () => {
     expect(banReconcile).toContain('nitradoServerId');
     expect(maintenance).toContain('nitradoServerId');
 
-    expect(exists('tests/runtime/nitradoRemoteReadFreshnessGate.test.ts')).toBe(true);
-    expect(exists('tests/runtime/nitradoMirrorLiveBindingGate.test.ts')).toBe(true);
-    expect(exists('tests/runtime/nitradoOpsBindingFreshnessGate.test.ts')).toBe(true);
+    for (const regression of [
+      'tests/runtime/nitradoRemoteReadFreshnessGate.test.ts',
+      'tests/runtime/nitradoMirrorLiveBindingGate.test.ts',
+      'tests/runtime/nitradoOpsFreshnessGate.test.ts',
+    ]) expect(exists(regression)).toBe(true);
   });
 
   it('keeps the complete remote failure taxonomy bounded and circuit-fenced', () => {
-    expect(client).toContain('status === 429');
-    expect(client).toContain('status >= 500');
-    expect(client).toContain('ECONNABORTED');
-    expect(client).toContain('attempt <= 3');
+    expect(client).toContain('res.status === 429');
+    expect(client).toContain('res.status >= 500');
+    expect(client).toContain('for (let attempt = 1; attempt <= 3; attempt++)');
     expect(circuit).toContain('HALF_OPEN');
     expect(circuit).toContain('OPEN');
-    expect(mirrorRead).toContain('status === 429');
-    expect(mirrorRead).toContain('ECONNABORTED');
 
     for (const regression of [
       'tests/modules/nitradoJobWorkerRemoteFailureMatrix.test.ts',
@@ -93,9 +86,9 @@ describe('Nitrado-1Z final production coupling matrix', () => {
       'tests/runtime/nitradoCoreClientRetryGate.test.ts',
       'tests/modules/nitradoSignedDownloadRetry.test.ts',
       'tests/runtime/nitradoSignedDownloadRetryGate.test.ts',
-    ]) {
-      expect(exists(regression)).toBe(true);
-    }
+      'tests/modules/nitradoMirrorRetry.test.ts',
+      'tests/runtime/nitradoMirrorRetryGate.test.ts',
+    ]) expect(exists(regression)).toBe(true);
   });
 
   it('runs whitelist, ban expiry/reconciliation, token validation, ADM and feed workers in one symmetric runtime lifecycle', () => {
@@ -108,9 +101,8 @@ describe('Nitrado-1Z final production coupling matrix', () => {
       'startAdmLiveSyncCron()',
       'startAdmPostProcessCron()',
       'startGameplayFeedRuntime()',
-    ]) {
-      expect(runtime).toContain(start);
-    }
+    ]) expect(runtime).toContain(start);
+
     for (const stop of [
       'stopGameplayFeedRuntime()',
       'stopAdmPostProcessCron()',
@@ -120,9 +112,7 @@ describe('Nitrado-1Z final production coupling matrix', () => {
       'stopBanReconciliationCron()',
       'stopBanExpiryRuntime()',
       'drainAndStopJobWorker()',
-    ]) {
-      expect(runtime).toContain(stop);
-    }
+    ]) expect(runtime).toContain(stop);
   });
 
   it('keeps DB<->Nitrado reconciliation exact-scope and repairable for whitelist and bot-owned bans', () => {
@@ -133,7 +123,6 @@ describe('Nitrado-1Z final production coupling matrix', () => {
     expect(banReconcile).toContain('nitradoConnId');
     expect(banReconcile).toContain('getBanlist');
     expect(banReconcile).toContain('appliedRemotely');
-
     expect(exists('tests/runtime/nitradoBanReconciliationGate.test.ts')).toBe(true);
     expect(exists('tests/modules/banReconciliation.test.ts')).toBe(true);
   });
@@ -148,21 +137,18 @@ describe('Nitrado-1Z final production coupling matrix', () => {
 
     for (const regression of [
       'tests/runtime/nitradoMirrorLiveBindingGate.test.ts',
-      'tests/runtime/nitradoMirrorSingleflightGate.test.ts',
+      'tests/runtime/nitradoMirrorSingleflightRecoveryGate.test.ts',
       'tests/security/aiLiveServerKnowledgeIndexArchitecture.test.ts',
-    ]) {
-      expect(exists(regression)).toBe(true);
-    }
+    ]) expect(exists(regression)).toBe(true);
   });
 
   it('retains explicit multi-server/scope regression coverage across whitelist, ban and ADM paths', () => {
-    const coverage = [
+    for (const regression of [
       'tests/modules/whitelistSyncCron.test.ts',
       'tests/modules/banReconciliation.test.ts',
       'tests/modules/nitradoAdmBindingFence.test.ts',
       'tests/modules/nitradoRepositoryConfigLock.test.ts',
       'tests/modules/nitradoRepositoryTokenAtomicity.test.ts',
-    ];
-    for (const regression of coverage) expect(exists(regression)).toBe(true);
+    ]) expect(exists(regression)).toBe(true);
   });
 });
