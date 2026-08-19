@@ -31,7 +31,7 @@ describe('Dashboard-1V permission membership/data-integrity/race architecture', 
 
   test('HTTP, Socket and Slashcommands consume the same canonical resolver', () => {
     for (const source of [authSource, socketSource, commandScopeSource]) {
-      expect(source).toContain("resolveDelegatedPermissionContext");
+      expect(source).toContain('resolveDelegatedPermissionContext');
       expect(source).toContain('await resolveDelegatedPermissionContext');
     }
     expect(authSource).not.toContain('prisma.guildPermissionGrant.findUnique({\n        where: { guildId_userDiscordId');
@@ -52,12 +52,26 @@ describe('Dashboard-1V permission membership/data-integrity/race architecture', 
     const leaveDelete = leaveSource.indexOf('prisma.guildPermissionGrant.deleteMany');
     const cleanupConfig = leaveSource.indexOf('await getLeaveCleanupConfig');
     const joinDelete = joinSource.indexOf('prisma.guildPermissionGrant.deleteMany');
+    const joinCleanupCatch = joinSource.indexOf('Stale Direct-Grant-Cleanup beim Join fehlgeschlagen');
     const joinProfile = joinSource.indexOf('await syncMemberProfile(m)');
 
     expect(leaveDelete).toBeGreaterThanOrEqual(0);
     expect(leaveDelete).toBeLessThan(cleanupConfig);
     expect(joinDelete).toBeGreaterThanOrEqual(0);
-    expect(joinDelete).toBeLessThan(joinProfile);
+    expect(joinCleanupCatch).toBeGreaterThan(joinDelete);
+    expect(joinProfile).toBeGreaterThan(joinCleanupCatch);
+  });
+
+  test('rejoin cleanup failure is best-effort and cannot become a join-lifecycle blocker', () => {
+    const nestedCleanupStart = joinSource.indexOf('try {\n        const staleGrant');
+    const nestedCleanupCatch = joinSource.indexOf('catch (permissionError)');
+    const syncProfile = joinSource.indexOf('await syncMemberProfile(m)');
+    const outerCatch = joinSource.indexOf('catch (error)');
+
+    expect(nestedCleanupStart).toBeGreaterThanOrEqual(0);
+    expect(nestedCleanupCatch).toBeGreaterThan(nestedCleanupStart);
+    expect(syncProfile).toBeGreaterThan(nestedCleanupCatch);
+    expect(outerCatch).toBeGreaterThan(syncProfile);
   });
 
   test('grant creation validates current user/role targets while stale revoke/purge remains possible', () => {
