@@ -141,7 +141,7 @@ function makeClient(
     },
   };
 
-  const leaveFenceQuery = jest.fn(async () => []);
+  const leaveFenceQuery = jest.fn(async (_query: string, ..._values: unknown[]) => []);
   const deletionRequestFindFirst = jest.fn(async (args: unknown) => {
     const where = (args as { where: Record<string, any> }).where;
     if (typeof where.status === 'object' && Array.isArray(where.status?.in)) {
@@ -162,7 +162,10 @@ function makeClient(
       },
     },
     $transaction: async work => work({
-      $queryRawUnsafe: leaveFenceQuery,
+      $queryRawUnsafe: async <T = unknown>(query: string, ...values: unknown[]): Promise<T> => {
+        await leaveFenceQuery(query, ...values);
+        return [] as unknown as T;
+      },
       dataDeletionRequest: { findFirst: deletionRequestFindFirst },
       gameIdentityLink,
     }),
