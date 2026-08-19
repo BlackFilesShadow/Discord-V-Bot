@@ -84,26 +84,34 @@ describe('Dashboard-1V permission membership/data-integrity/race architecture', 
     expect(outerCatch).toBeGreaterThan(syncProfile);
   });
 
-  test('grant creation validates current user/role targets while stale revoke/purge remains possible', () => {
+  test('grant creation validates current user/role targets and passes the trusted membership epoch', () => {
     const userPut = permissionRouteSource.indexOf("permissionsRouter.put('/:userDiscordId/:scope'");
     const memberCheck = permissionRouteSource.indexOf('await resolveCurrentMember', userPut);
+    const joinedAtCheck = permissionRouteSource.indexOf('!targetMember.member.joinedAt', userPut);
     const setUser = permissionRouteSource.indexOf('await setGrantScope', userPut);
     const rolePut = permissionRouteSource.indexOf("permissionsRouter.put('/roles/:roleId/:scope'");
     const roleCheck = permissionRouteSource.indexOf('await resolveAssignableRole', rolePut);
     const setRole = permissionRouteSource.indexOf('await setRoleGrantScope', rolePut);
 
     expect(memberCheck).toBeGreaterThan(userPut);
-    expect(setUser).toBeGreaterThan(memberCheck);
+    expect(joinedAtCheck).toBeGreaterThan(memberCheck);
+    expect(setUser).toBeGreaterThan(joinedAtCheck);
+    expect(permissionRouteSource.slice(setUser, setUser + 400)).toContain('targetMember.member.joinedAt');
     expect(roleCheck).toBeGreaterThan(rolePut);
     expect(setRole).toBeGreaterThan(roleCheck);
     expect(permissionRouteSource).toContain('Ziel-User ist kein aktuelles Mitglied dieser Guild.');
     expect(permissionRouteSource).toContain('Managed/@everyone-Rollen sind nicht delegierbar.');
   });
 
-  test('permission mutations use SERIALIZABLE retry and remove empty grant rows', () => {
+  test('permission mutations use SERIALIZABLE retry, epoch fencing and remove empty grant rows', () => {
     expect(repositorySource).toContain('Prisma.TransactionIsolationLevel.Serializable');
     expect(repositorySource).toContain("code === 'P2034' || code === 'P2002'");
     expect(repositorySource).toContain('serializablePermissionMutation');
+    expect(repositorySource).toContain('membershipJoinedAt: Date | null = null');
+    expect(repositorySource).toContain('enabled && !membershipJoinedAt');
+    expect(repositorySource).toContain('directGrantBelongsToMembership(existing.updatedAt, membershipJoinedAt)');
+    expect(repositorySource).toContain('existingIsCurrentMembership ? sanitizeScopes(existing?.permissions) : []');
+    expect(repositorySource).toContain('!enabled && (!membershipJoinedAt || !existingIsCurrentMembership)');
     expect(repositorySource).toContain('tx.guildPermissionGrant.deleteMany');
     expect(repositorySource).toContain('tx.guildPermissionRoleGrant.deleteMany');
 
@@ -115,9 +123,11 @@ describe('Dashboard-1V permission membership/data-integrity/race architecture', 
     expect(roleWrite).toBeGreaterThan(roleRead);
   });
 
-  test('Slashcommands no longer carry a second transaction implementation', () => {
+  test('Slashcommands use the shared repository and propagate live joinedAt for direct grant intent', () => {
     expect(commandPermissionsSource).toContain("from '../../modules/permissions/repository'");
     expect(commandPermissionsSource).toContain('await setGrantScope');
+    expect(commandPermissionsSource).toContain('member.joinedAt');
+    expect(commandPermissionsSource).toContain('member?.joinedAt ?? null');
     expect(commandPermissionsSource).not.toContain('Prisma.TransactionIsolationLevel.Serializable');
     expect(commandPermissionsSource).not.toContain('serializableGrantMutation');
   });
