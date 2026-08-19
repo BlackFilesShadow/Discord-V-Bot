@@ -4,15 +4,11 @@
  * Rooms:
  *  - `g:<guildId>`: guild-weite Konfig-/UI-Aenderungen
  *  - `gs:<guildId>:<nitradoConnId>`: Gameplay eines EXAKTEN Gameservers
- *
- * Der Server-Room ist absichtlich enger als der Guild-Room. Live-Gameplay ist
- * Killfeed-Daten und verlangt Owner oder killfeed.view/manage bzw. den bewusst
- * delegierbaren dashboard.access-Allzugriff. Ein beliebiger anderer Guild-Scope
- * reicht NICHT.
  */
 
 import type { Server as IOServer, Socket } from 'socket.io';
 import prisma from '../../database/prisma';
+import { resolveGuildPermissionAccess } from '../../modules/permissions/access';
 import { logger } from '../../utils/logger';
 import { tryGetDashboardClient } from '../clientRegistry';
 import type { SocketSessionShape } from './index';
@@ -50,39 +46,13 @@ async function resolveGuildAccess(guildId: string, userDiscordId: string): Promi
   const client = tryGetDashboardClient();
   const guild = client?.guilds.cache.get(guildId);
   if (!guild) return { allowed: false, isOwner: false, permissions: [] };
-  const isOwner = guild.ownerId === userDiscordId;
-  if (isOwner) return { allowed: true, isOwner: true, permissions: [] };
 
-  const permissions = new Set<string>();
-  const userGrant = await prisma.guildPermissionGrant.findUnique({
-    where: { guildId_userDiscordId: { guildId, userDiscordId } },
-    select: { permissions: true },
-  });
-  if (userGrant && Array.isArray(userGrant.permissions)) {
-    for (const permission of userGrant.permissions) {
-      if (typeof permission === 'string') permissions.add(permission);
-    }
-  }
-
-  const member = guild.members.cache.get(userDiscordId)
-    ?? await guild.members.fetch(userDiscordId).catch(() => null);
-  if (member) {
-    const roleIds = [...member.roles.cache.keys()];
-    if (roleIds.length > 0) {
-      const roleGrants = await prisma.guildPermissionRoleGrant.findMany({
-        where: { guildId, roleDiscordId: { in: roleIds } },
-        select: { permissions: true },
-      });
-      for (const grant of roleGrants) {
-        if (!Array.isArray(grant.permissions)) continue;
-        for (const permission of grant.permissions) {
-          if (typeof permission === 'string') permissions.add(permission);
-        }
-      }
-    }
-  }
-
-  return { allowed: permissions.size > 0, isOwner: false, permissions: [...permissions] };
+  const access = await resolveGuildPermissionAccess(guild, userDiscordId);
+  return {
+    allowed: access.allowed,
+    isOwner: access.isOwner,
+    permissions: [...access.permissions],
+  };
 }
 
 function sessionFor(socket: Socket): SocketSessionShape {
@@ -146,9 +116,6 @@ export function registerGuildNamespace(io: IOServer): void {
           return;
         }
 
-        // Fail-closed: nur ein aktuell aktiver, gebundener Slot 1..4 darf einen
-        // Live-Gameserver-Room besitzen. Legacy-Slot 5 und fremde Guilds fallen
-        // konstruktiv durch diese Abfrage.
         const conn = await prisma.nitradoConnection.findFirst({
           where: {
             id: connId,
