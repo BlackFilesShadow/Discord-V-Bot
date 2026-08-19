@@ -40,10 +40,8 @@ describe('Dashboard-1V permission integrity architecture', () => {
       'src/dashboard/socket/guild.ts',
       'src/dashboard/routes/v2/guilds.ts',
     ]) {
-      const source = read(file);
-      expect(source).toContain('resolveGuildPermissionAccess');
+      expect(read(file)).toContain('resolveGuildPermissionAccess');
     }
-
     expect(read('src/dashboard/middleware/auth.ts')).not.toContain('guildPermissionGrant.findUnique');
     expect(read('src/commands/middleware/withGuildScope.ts')).not.toContain('guildPermissionGrant.findUnique');
     expect(read('src/dashboard/socket/guild.ts')).not.toContain('guildPermissionGrant.findUnique');
@@ -53,11 +51,10 @@ describe('Dashboard-1V permission integrity architecture', () => {
     const repository = read('src/modules/permissions/repository.ts');
     const command = read('src/commands/dashboard/permissions.ts');
     const engine = read('src/modules/permissions/mutationService.ts');
-
     expect(repository).toContain('mutatePermissionGrant');
     expect(command).toContain('mutatePermissionGrant');
     expect(engine).toContain('pg_advisory_xact_lock');
-    expect(engine).toContain("targetKind: PermissionGrantTargetKind");
+    expect(engine).toContain('targetKind: PermissionGrantTargetKind');
   });
 
   test('grant entry points validate current Discord targets fail-closed', () => {
@@ -68,11 +65,10 @@ describe('Dashboard-1V permission integrity architecture', () => {
     expect(command).toContain('resolveDelegableUserTarget');
   });
 
-  test('last-scope revoke deletes the row instead of persisting an empty grant', () => {
+  test('last-scope revoke deletes both user and role rows', () => {
     const engine = read('src/modules/permissions/mutationService.ts');
-    expect(engine).toContain("if (next.length === 0)");
-    expect(engine).toContain('guildPermissionGrant.delete');
-    expect(engine).toContain('guildPermissionRoleGrant.delete');
-    expect(engine).not.toContain('permissions: []');
+    expect((engine.match(/if \(next\.length === 0\)/g) ?? []).length).toBe(2);
+    expect(engine).toContain('guildPermissionGrant.delete({ where })');
+    expect(engine).toContain('guildPermissionRoleGrant.delete({ where })');
   });
 });
