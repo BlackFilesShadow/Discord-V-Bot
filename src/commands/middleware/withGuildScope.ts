@@ -2,19 +2,6 @@
  * `withGuildScope` — Wrapper fuer Slash-Command-Handler, der
  * **garantiert** einen vollstaendig validierten `GuildScope` an den
  * inneren Handler durchreicht.
- *
- * Garantien:
- *  1. interaction.guildId existiert (sonst ephemeral Status-Embed).
- *  2. Gameserver-Scope wird NIE durch eine implizite "kleinster Slot"-Regel
- *     geraten: genau ein aktiver Slot darf automatisch aufgeloest werden;
- *     mehrere aktive Slots verlangen eine explizite Auswahl.
- *  3. Legacy-Slots > MAX_GAME_SERVERS_PER_GUILD werden fail-closed abgewiesen.
- *  4. Owner-Status + Permissions-Set ist aufgeloest.
- *  5. Falls `requirePerm` gesetzt: scoped Command-Permission validiert.
- *  6. Economy/Casino-Pfade greifen waehrend der Legacy-Migration fail-closed
- *     nur auf den ausdruecklich aufgeloesten Primaerserver zu.
- *  7. Unerwartete interne Exceptions werden geloggt/auditiert, aber nicht mit
- *     technischen Details an Discord-Benutzer geleakt.
  */
 
 import type { ChatInputCommandInteraction, InteractionReplyOptions } from 'discord.js';
@@ -22,6 +9,7 @@ import { MessageFlags } from 'discord.js';
 import prisma from '../../database/prisma';
 import { asGuildId, asUserDiscordId, asNitradoConnId, hasCommandPermission } from '../../types/scope';
 import type { GuildScope, NitradoConnId, PermissionScope } from '../../types/scope';
+import { resolveGuildPermissionAccess } from '../../modules/permissions/access';
 import {
   MAX_GAME_SERVERS_PER_GUILD,
   resolveOrPromptGameServerScope,
@@ -41,25 +29,12 @@ export type ScopedHandler = (
 ) => Promise<void>;
 
 export interface WithGuildScopeOptions {
-  /** Scope-Permission, die der Caller braucht. Owner umgeht alles. */
   requirePerm?: PermissionScope;
-  /** Falls true, wird KEIN Nitrado-Slot aufgeloest (Guild-only Cmd, z.B. /perms). */
   guildOnly?: boolean;
-  /**
-   * Falls true, akzeptiert die `slot`-Slash-Option als explizite Auswahl
-   * (1..MAX_GAME_SERVERS_PER_GUILD). Ohne Auswahl wird nur dann automatisch
-   * aufgeloest, wenn exakt ein nutzbarer aktiver Server existiert.
-   */
   acceptSlotOption?: boolean;
-  /** Wenn gesetzt: prueft ob das Toggle in `ServerSettings` (per Slot) `true` ist. */
   requireSlotToggle?: 'whitelistActive' | 'economyActive';
 }
 
-/**
- * Link/Unlink/Force-Link lesen keine Wallet-/Bank-/Casino-Daten. Sie muessen
- * auch waehrend einer Legacy-Economy-Migration funktionieren, damit Identitaet
- * nicht an einem Wirtschaftsmigrationszustand haengt.
- */
 const ECONOMY_GUARD_EXEMPT_COMMANDS = new Set(['link', 'unlink', 'force-link', 'force-unlink']);
 
 function requiresLegacyEconomyGuard(commandName: string, opts: WithGuildScopeOptions): boolean {
@@ -198,36 +173,25 @@ export function withGuildScope(opts: WithGuildScopeOptions, handler: ScopedHandl
     }
 
     const guild = interaction.guild;
-    const isOwner = !!guild && guild.ownerId === actorId;
+    if (!guild) {
+      await statusReply(interaction, 'ERROR', 'Server nicht aufloesbar', 'Der Discord-Server konnte nicht sicher aufgeloest werden.');
+      return;
+    }
 
-    const permsSet = new Set<PermissionScope>();
-    if (!isOwner) {
-      try {
-        const grant = await prisma.guildPermissionGrant.findUnique({
-          where: { guildId_userDiscordId: { guildId, userDiscordId: actorId } },
-        });
-        const list = Array.isArray(grant?.permissions) ? (grant!.permissions as string[]) : [];
-        for (const s of list) permsSet.add(s as PermissionScope);
-      } catch (e) {
-        logger.error('GuildPermissionGrant-Lookup fehlgeschlagen:', e as Error);
-      }
-      try {
-        const member = guild?.members.cache.get(actorId)
-          ?? (guild ? await guild.members.fetch(actorId).catch(() => null) : null);
-        const roleIds = member ? Array.from(member.roles.cache.keys()) : [];
-        if (roleIds.length > 0) {
-          const roleGrants = await prisma.guildPermissionRoleGrant.findMany({
-            where: { guildId, roleDiscordId: { in: roleIds } },
-            select: { permissions: true },
-          });
-          for (const r of roleGrants) {
-            const arr = Array.isArray(r.permissions) ? (r.permissions as string[]) : [];
-            for (const s of arr) permsSet.add(s as PermissionScope);
-          }
-        }
-      } catch (e) {
-        logger.warn('GuildPermissionRoleGrant-Lookup fehlgeschlagen:', e as Error);
-      }
+    let access;
+    try {
+      access = await resolveGuildPermissionAccess(guild, actorId);
+    } catch (e) {
+      logger.error('Guild-Permission-Aufloesung fehlgeschlagen:', e as Error);
+      await statusReply(interaction, 'ERROR', 'Berechtigungen nicht aufloesbar', 'Die Server-Berechtigungen konnten nicht sicher geprueft werden.');
+      return;
+    }
+    if (!access.isMember) {
+      logAudit('CMD_STALE_MEMBER_DENIED', 'SECURITY', {
+        guildId, actorId, command: interaction.commandName,
+      });
+      await statusReply(interaction, 'ERROR', 'Keine Server-Mitgliedschaft', 'Deine aktuelle Mitgliedschaft auf diesem Server konnte nicht bestaetigt werden.');
+      return;
     }
 
     let nitradoConnId: NitradoConnId | null = null;
@@ -245,8 +209,8 @@ export function withGuildScope(opts: WithGuildScopeOptions, handler: ScopedHandl
       guildId,
       nitradoConnId,
       actorDiscordId: actorId,
-      isOwner,
-      permissions: permsSet,
+      isOwner: access.isOwner,
+      permissions: access.permissions,
     };
 
     if (opts.requirePerm && !hasCommandPermission(scope, opts.requirePerm)) {
@@ -328,7 +292,6 @@ export function withGuildScope(opts: WithGuildScopeOptions, handler: ScopedHandl
   };
 }
 
-/** Embed-Schutz gegen fremden Guild-Scope. */
 export function assertGuildScope(data: { guildId: string }, expectedGuildId: string): void {
   if (data.guildId !== expectedGuildId) {
     throw new Error(`Scope-Verstoss: Daten gehoeren zu ${data.guildId}, Kontext ist ${expectedGuildId}.`);
