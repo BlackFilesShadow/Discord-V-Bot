@@ -70,6 +70,7 @@ export function VirtualAccountsPanel({ guildId, slot }: { guildId: string; slot:
   const [acceptUserTransfers, setAcceptUserTransfers] = useState(true);
   const [auditAccountId, setAuditAccountId] = useState<string>('');
   const [memberQuery, setMemberQuery] = useState('');
+  const [selectedMember, setSelectedMember] = useState<ComboboxOption | null>(null);
   const [payout, setPayout] = useState({ accountId: '', userDiscordId: '', amount: '', targetPocket: 'WALLET', reason: '' });
   const [payoutOperationId, setPayoutOperationId] = useState(createIdempotencyKey);
   const [message, setMessage] = useState<{ ok: boolean; text: string } | null>(null);
@@ -103,15 +104,24 @@ export function VirtualAccountsPanel({ guildId, slot }: { guildId: string; slot:
     placeholderData: previous => previous,
     retry: false,
   });
-  const memberOptions: ComboboxOption[] = (members.data?.members ?? []).map(member => ({
-    id: member.id,
-    label: member.displayName || member.username,
-    hint: member.id,
-    avatar: member.avatar
-      ? `https://cdn.discordapp.com/avatars/${member.id}/${member.avatar}.png?size=64`
-      : `https://cdn.discordapp.com/embed/avatars/${(BigInt(member.id) >> 22n) % 6n}.png`,
-    disabled: member.bot,
-  }));
+  const memberOptions = useMemo<ComboboxOption[]>(() => {
+    const options = (members.data?.members ?? []).map(member => ({
+      id: member.id,
+      label: member.displayName || member.username,
+      hint: member.id,
+      avatar: member.avatar
+        ? `https://cdn.discordapp.com/avatars/${member.id}/${member.avatar}.png?size=64`
+        : `https://cdn.discordapp.com/embed/avatars/${(BigInt(member.id) >> 22n) % 6n}.png`,
+      disabled: member.bot,
+    }));
+    // Server-side searches replace the option list. Keep the already selected
+    // human visible until it is explicitly cleared or the payout succeeds;
+    // otherwise the stable ID could remain booked while the picker looks empty.
+    if (selectedMember && !options.some(option => option.id === selectedMember.id)) {
+      options.unshift(selectedMember);
+    }
+    return options;
+  }, [members.data?.members, selectedMember]);
 
   const create = useMutation({
     mutationFn: () => api.post<VirtualAccount>(`/api/v2/guilds/${guildId}/economy/virtual-accounts?${scope}`, {
@@ -157,6 +167,7 @@ export function VirtualAccountsPanel({ guildId, slot }: { guildId: string; slot:
       setMessage({ ok: true, text: result.booked ? 'Auszahlung atomar gebucht.' : 'Diese Auszahlung war bereits verarbeitet.' });
       setPayout({ accountId: '', userDiscordId: '', amount: '', targetPocket: 'WALLET', reason: '' });
       setMemberQuery('');
+      setSelectedMember(null);
       setPayoutOperationId(createIdempotencyKey());
       void qc.invalidateQueries({ queryKey: ['economy-virtual-accounts', guildId, slot] });
       if (auditAccountId) void qc.invalidateQueries({ queryKey: ['economy-virtual-account-audit', guildId, slot, auditAccountId] });
@@ -305,7 +316,10 @@ export function VirtualAccountsPanel({ guildId, slot }: { guildId: string; slot:
             <span className="text-muted">Discord-Mitglied</span>
             <Combobox
               value={payout.userDiscordId || null}
-              onChange={id => updatePayout({ userDiscordId: id ?? '' })}
+              onChange={(id, option) => {
+                updatePayout({ userDiscordId: id ?? '' });
+                setSelectedMember(option);
+              }}
               options={memberOptions}
               onSearch={setMemberQuery}
               loading={members.isFetching}
