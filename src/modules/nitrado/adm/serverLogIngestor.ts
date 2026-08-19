@@ -120,10 +120,53 @@ export interface AdmSourceMeta {
   fileSize: number;
 }
 
+interface AdmCursorState {
+  lastModifiedAt: number;
+  lastKnownSize: bigint;
+  processedByteOffset: bigint;
+  trailingPartialLine: string | null;
+  contentFingerprint: string | null;
+}
+
 export interface AdmPersistClient {
   admEvent: { createMany: (args: { data: unknown[]; skipDuplicates?: boolean }) => Promise<{ count: number }> };
-  admSourceCursor: { upsert: (args: unknown) => Promise<unknown> };
+  admSourceCursor: {
+    findUnique: (args: unknown) => Promise<AdmCursorState | null>;
+    upsert: (args: unknown) => Promise<unknown>;
+  };
+  $queryRawUnsafe: <T = unknown>(query: string, ...values: unknown[]) => Promise<T>;
   $transaction: <T>(fn: (tx: AdmPersistClient) => Promise<T>) => Promise<T>;
+}
+
+function admPersistLockKey(scope: AdmEventScope, fileIdentity: string): string {
+  return `adm-persist:${scope.guildId}:${scope.nitradoConnId}:${fileIdentity}`;
+}
+
+function shouldAcceptCursorSnapshot(
+  current: AdmCursorState | null,
+  meta: AdmSourceMeta,
+  result: IngestResult,
+): boolean {
+  if (!current) return true;
+
+  const incomingSize = BigInt(meta.fileSize);
+  const incomingOffset = BigInt(result.newOffset);
+  const confirmedReset = result.wasReset
+    || (
+      meta.lastModifiedAt > current.lastModifiedAt
+      && incomingSize < current.lastKnownSize
+      && incomingOffset <= incomingSize
+    );
+  if (confirmedReset) return true;
+
+  // Ein langsamer Replica-Snapshot darf einen bereits frischeren Dateistand
+  // niemals zurueckschreiben. Bei gleicher mtime gilt kleinere Datei/Offset
+  // ebenfalls als stale; groessere Datei bei gleichem Offset kann dagegen eine
+  // neue unvollstaendige Schlusszeile repraesentieren und bleibt zulaessig.
+  if (meta.lastModifiedAt < current.lastModifiedAt) return false;
+  if (meta.lastModifiedAt === current.lastModifiedAt && incomingSize < current.lastKnownSize) return false;
+  if (incomingOffset < current.processedByteOffset) return false;
+  return true;
 }
 
 export async function persistAdmEvents(
@@ -157,42 +200,65 @@ export async function persistAdmEvents(
   }));
 
   return client.$transaction(async (tx) => {
+    // DB-weite Commit-Grenze pro Guild+Gameserver+ADM-Datei. Remote-I/O bleibt
+    // ausserhalb dieses Locks; nur Event-Dedup + Cursor-Wahrheit werden zwischen
+    // mehreren Bot-Replikas serialisiert.
+    await tx.$queryRawUnsafe(
+      'SELECT pg_advisory_xact_lock(hashtextextended($1, 0))',
+      admPersistLockKey(scope, meta.fileIdentity),
+    );
+
+    const cursorWhere = {
+      guildId_nitradoConnId_fileIdentity: {
+        guildId: scope.guildId,
+        nitradoConnId: scope.nitradoConnId,
+        fileIdentity: meta.fileIdentity,
+      },
+    };
+    const current = await tx.admSourceCursor.findUnique({
+      where: cursorWhere,
+      select: {
+        lastModifiedAt: true,
+        lastKnownSize: true,
+        processedByteOffset: true,
+        trailingPartialLine: true,
+        contentFingerprint: true,
+      },
+    });
+
     let inserted = 0;
     if (rows.length > 0) {
       const created = await tx.admEvent.createMany({ data: rows, skipDuplicates: true });
       inserted = created.count;
     }
-    await tx.admSourceCursor.upsert({
-      where: {
-        guildId_nitradoConnId_fileIdentity: {
+
+    if (shouldAcceptCursorSnapshot(current, meta, result)) {
+      await tx.admSourceCursor.upsert({
+        where: cursorWhere,
+        create: {
           guildId: scope.guildId,
           nitradoConnId: scope.nitradoConnId,
           fileIdentity: meta.fileIdentity,
+          fileName: meta.fileName,
+          lastModifiedAt: meta.lastModifiedAt,
+          lastKnownSize: BigInt(meta.fileSize),
+          processedByteOffset: BigInt(result.newOffset),
+          trailingPartialLine: result.trailingPartial || null,
+          contentFingerprint,
+          lastSuccessAt: new Date(),
         },
-      },
-      create: {
-        guildId: scope.guildId,
-        nitradoConnId: scope.nitradoConnId,
-        fileIdentity: meta.fileIdentity,
-        fileName: meta.fileName,
-        lastModifiedAt: meta.lastModifiedAt,
-        lastKnownSize: BigInt(meta.fileSize),
-        processedByteOffset: BigInt(result.newOffset),
-        trailingPartialLine: result.trailingPartial || null,
-        contentFingerprint,
-        lastSuccessAt: new Date(),
-      },
-      update: {
-        fileName: meta.fileName,
-        lastModifiedAt: meta.lastModifiedAt,
-        lastKnownSize: BigInt(meta.fileSize),
-        processedByteOffset: BigInt(result.newOffset),
-        trailingPartialLine: result.trailingPartial || null,
-        contentFingerprint,
-        lastSuccessAt: new Date(),
-        lastError: null,
-      },
-    });
+        update: {
+          fileName: meta.fileName,
+          lastModifiedAt: meta.lastModifiedAt,
+          lastKnownSize: BigInt(meta.fileSize),
+          processedByteOffset: BigInt(result.newOffset),
+          trailingPartialLine: result.trailingPartial || null,
+          contentFingerprint,
+          lastSuccessAt: new Date(),
+          lastError: null,
+        },
+      });
+    }
     return { inserted };
   });
 }
