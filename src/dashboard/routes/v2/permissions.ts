@@ -11,6 +11,7 @@ import { requireGuildOwner } from '../../middleware/auth';
 import {
   listGrants, setGrantScope, deleteGrant,
   listRoleGrants, setRoleGrantScope, deleteRoleGrant,
+  PermissionMembershipEpochConflictError,
 } from '../../../modules/permissions/repository';
 import { asUserDiscordId, NON_DELEGABLE_SCOPES, PERMISSION_SCOPES } from '../../../types/scope';
 import type { PermissionScope } from '../../../types/scope';
@@ -101,6 +102,15 @@ function parseScope(raw: string): PermissionScope | null {
 
 const SNOWFLAKE_RE = /^\d{17,20}$/;
 
+function respondMembershipEpochConflict(res: Parameters<Parameters<typeof permissionsRouter.put>[1]>[1], error: unknown): boolean {
+  if (!(error instanceof PermissionMembershipEpochConflictError)) return false;
+  res.status(409).json({
+    error: 'Die Discord-Mitgliedschaft hat sich waehrend der Permission-Aktion geaendert. Bitte Ansicht aktualisieren und erneut versuchen.',
+    code: error.code,
+  });
+  return true;
+}
+
 async function resolveCurrentMember(guildId: string, userDiscordId: string) {
   const client = tryGetDashboardClient();
   const guild = client?.guilds.cache.get(guildId) ?? null;
@@ -185,17 +195,22 @@ permissionsRouter.put('/:userDiscordId/:scope', requireGuildOwner, async (req, r
   if (targetMember.member.user.bot) { res.status(400).json({ error: 'Bots koennen keine delegierten Guild-Permissions erhalten.' }); return; }
   if (targetMember.guild.ownerId === target) { res.status(400).json({ error: 'Der Guild-Owner benoetigt keinen delegierten Grant.' }); return; }
 
-  const out = await setGrantScope(
-    scope.guildId,
-    target,
-    perm,
-    true,
-    asUserDiscordId(scope.actorDiscordId),
-    targetMember.member.joinedAt,
-  );
-  logAuditDb('PERM_GRANTED', 'ADMIN', { actorUserId: req.auth!.userId, guildId: scope.guildId, details: { target, perm } });
-  emitGuildEvent(scope.guildId, { type: 'permissions.updated', payload: { guildId: scope.guildId, userDiscordId: target } });
-  res.json({ permissions: out.permissions });
+  try {
+    const out = await setGrantScope(
+      scope.guildId,
+      target,
+      perm,
+      true,
+      asUserDiscordId(scope.actorDiscordId),
+      targetMember.member.joinedAt,
+    );
+    logAuditDb('PERM_GRANTED', 'ADMIN', { actorUserId: req.auth!.userId, guildId: scope.guildId, details: { target, perm } });
+    emitGuildEvent(scope.guildId, { type: 'permissions.updated', payload: { guildId: scope.guildId, userDiscordId: target } });
+    res.json({ permissions: out.permissions });
+  } catch (error) {
+    if (respondMembershipEpochConflict(res, error)) return;
+    throw error;
+  }
 });
 
 permissionsRouter.delete('/:userDiscordId/:scope', requireGuildOwner, async (req, res) => {
@@ -205,22 +220,27 @@ permissionsRouter.delete('/:userDiscordId/:scope', requireGuildOwner, async (req
   const perm = parseScope(String(req.params.scope));
   if (!perm) { res.status(400).json({ error: 'Unbekannter Scope.' }); return; }
 
-  // Revoke bleibt auch fuer ausgetretene/stale Ziele moeglich. Ist die aktuelle
-  // Mitgliedschaft aber vorhanden, wird ihre joinedAt-Epoche mitgegeben, damit
-  // ein alter Grant beim Teil-Revoke nicht versehentlich frisch reaktiviert wird.
+  // Revoke bleibt fuer Legacy-/ausgetretene Ziele bereinigbar. Sobald eine
+  // bereits generationierte neuere Zeile existiert, verhindert das Repository
+  // jedoch destruktive ABA-Writes und liefert einen sichtbaren 409-Conflict.
   const targetMember = await resolveCurrentMember(scope.guildId, target);
   const membershipJoinedAt = targetMember.kind === 'member' ? targetMember.member.joinedAt : null;
-  const out = await setGrantScope(
-    scope.guildId,
-    target,
-    perm,
-    false,
-    asUserDiscordId(scope.actorDiscordId),
-    membershipJoinedAt,
-  );
-  logAuditDb('PERM_REVOKED', 'ADMIN', { actorUserId: req.auth!.userId, guildId: scope.guildId, details: { target, perm } });
-  emitGuildEvent(scope.guildId, { type: 'permissions.updated', payload: { guildId: scope.guildId, userDiscordId: target } });
-  res.json({ permissions: out.permissions });
+  try {
+    const out = await setGrantScope(
+      scope.guildId,
+      target,
+      perm,
+      false,
+      asUserDiscordId(scope.actorDiscordId),
+      membershipJoinedAt,
+    );
+    logAuditDb('PERM_REVOKED', 'ADMIN', { actorUserId: req.auth!.userId, guildId: scope.guildId, details: { target, perm } });
+    emitGuildEvent(scope.guildId, { type: 'permissions.updated', payload: { guildId: scope.guildId, userDiscordId: target } });
+    res.json({ permissions: out.permissions });
+  } catch (error) {
+    if (respondMembershipEpochConflict(res, error)) return;
+    throw error;
+  }
 });
 
 permissionsRouter.delete('/:userDiscordId', requireGuildOwner, async (req, res) => {
