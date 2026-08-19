@@ -9,13 +9,13 @@
 import { Router, type Response } from 'express';
 import { requireGuildOwner } from '../../middleware/auth';
 import {
-  listGrants, setGrantScope, deleteGrant,
+  listGrants, setGrantScope, deleteGrant, deleteGrantForMembershipEpoch,
   listRoleGrants, setRoleGrantScope, deleteRoleGrant,
   PermissionMembershipEpochConflictError,
 } from '../../../modules/permissions/repository';
 import { asUserDiscordId, NON_DELEGABLE_SCOPES, PERMISSION_SCOPES } from '../../../types/scope';
 import type { PermissionScope } from '../../../types/scope';
-import { logAuditDb } from '../../../utils/logger';
+import { logAuditDb, logger } from '../../../utils/logger';
 import { emitGuildEvent } from '../../socket/emitter';
 import { tryGetDashboardClient } from '../../clientRegistry';
 
@@ -121,6 +121,41 @@ async function resolveCurrentMember(guildId: string, userDiscordId: string) {
   return { kind: 'member' as const, guild, member };
 }
 
+/**
+ * Zweite, erzwungen frische Discord-Pruefung NACH dem DB-Commit. Sie schliesst
+ * das verbleibende ABA-Fenster zwischen erster Member-Validierung und Commit:
+ * ein Request aus Mitgliedschaft A darf nach Leave+Rejoin B weder als Erfolg
+ * gemeldet werden noch eine wirkungslose A-Generation als Orphan hinterlassen.
+ */
+async function membershipEpochStillCurrent(
+  guildId: string,
+  userDiscordId: string,
+  expectedJoinedAt: Date,
+): Promise<boolean> {
+  const client = tryGetDashboardClient();
+  const guild = client?.guilds.cache.get(guildId) ?? null;
+  if (!guild) return false;
+  const member = await guild.members.fetch({ user: userDiscordId, force: true }).catch(() => null);
+  return !!member?.joinedAt && member.joinedAt.getTime() === expectedJoinedAt.getTime();
+}
+
+async function compensateStaleMembershipGeneration(
+  guildId: ReturnType<typeof import('../../../types/scope').asGuildId>,
+  userDiscordId: ReturnType<typeof asUserDiscordId>,
+  expectedJoinedAt: Date,
+): Promise<void> {
+  try {
+    await deleteGrantForMembershipEpoch(guildId, userDiscordId, expectedJoinedAt);
+  } catch (error) {
+    // Authorization bleibt trotzdem sicher: der kanonische Resolver akzeptiert
+    // die alte Generation nicht. Der Fehler bleibt aber operativ sichtbar.
+    logger.error(
+      `Permission-Epoch-Kompensation fehlgeschlagen (${userDiscordId}@${guildId}):`,
+      error,
+    );
+  }
+}
+
 async function resolveAssignableRole(guildId: string, roleId: string) {
   const client = tryGetDashboardClient();
   const guild = client?.guilds.cache.get(guildId) ?? null;
@@ -195,6 +230,7 @@ permissionsRouter.put('/:userDiscordId/:scope', requireGuildOwner, async (req, r
   if (targetMember.member.user.bot) { res.status(400).json({ error: 'Bots koennen keine delegierten Guild-Permissions erhalten.' }); return; }
   if (targetMember.guild.ownerId === target) { res.status(400).json({ error: 'Der Guild-Owner benoetigt keinen delegierten Grant.' }); return; }
 
+  const expectedJoinedAt = targetMember.member.joinedAt;
   try {
     const out = await setGrantScope(
       scope.guildId,
@@ -202,8 +238,14 @@ permissionsRouter.put('/:userDiscordId/:scope', requireGuildOwner, async (req, r
       perm,
       true,
       asUserDiscordId(scope.actorDiscordId),
-      targetMember.member.joinedAt,
+      expectedJoinedAt,
     );
+
+    if (!(await membershipEpochStillCurrent(scope.guildId, target, expectedJoinedAt))) {
+      await compensateStaleMembershipGeneration(scope.guildId, target, expectedJoinedAt);
+      throw new PermissionMembershipEpochConflictError();
+    }
+
     logAuditDb('PERM_GRANTED', 'ADMIN', { actorUserId: req.auth!.userId, guildId: scope.guildId, details: { target, perm } });
     emitGuildEvent(scope.guildId, { type: 'permissions.updated', payload: { guildId: scope.guildId, userDiscordId: target } });
     res.json({ permissions: out.permissions });
@@ -234,6 +276,12 @@ permissionsRouter.delete('/:userDiscordId/:scope', requireGuildOwner, async (req
       asUserDiscordId(scope.actorDiscordId),
       membershipJoinedAt,
     );
+
+    if (membershipJoinedAt && !(await membershipEpochStillCurrent(scope.guildId, target, membershipJoinedAt))) {
+      await compensateStaleMembershipGeneration(scope.guildId, target, membershipJoinedAt);
+      throw new PermissionMembershipEpochConflictError();
+    }
+
     logAuditDb('PERM_REVOKED', 'ADMIN', { actorUserId: req.auth!.userId, guildId: scope.guildId, details: { target, perm } });
     emitGuildEvent(scope.guildId, { type: 'permissions.updated', payload: { guildId: scope.guildId, userDiscordId: target } });
     res.json({ permissions: out.permissions });
