@@ -123,14 +123,15 @@ async function validateDiscordReferences(req: Request): Promise<ValidationFailur
 }
 
 /**
- * Baut FactionSystemConfig race-sicher auf und validiert Discord-Referenzen
- * erst NACH authorisiertem Guild-Scope. Die eigentliche Route prueft danach
- * weiterhin ihr exaktes factions.view/factions.manage-Recht.
+ * Validiert Discord-Referenzen erst NACH authorisiertem Guild-Scope. Der
+ * Preflight ist absichtlich frei von Faction-SystemConfig-Schreibzugriffen:
+ * insbesondere ein Viewer-GET /system-config darf niemals lazy-init/upsert
+ * ausloesen. Die Route prueft weiterhin ihr exaktes view/manage-Recht und
+ * verantwortet mutierende Config-Semantik selbst.
  */
 export async function factionApiPreflight(req: Request, res: Response, next: NextFunction): Promise<void> {
   try {
-    const scope = req.guildScope;
-    if (!scope) {
+    if (!req.guildScope) {
       res.status(403).json({ error: 'Guild-Scope fehlt.' });
       return;
     }
@@ -139,15 +140,6 @@ export async function factionApiPreflight(req: Request, res: Response, next: Nex
     if (validation) {
       res.status(validation.status).json({ error: validation.error });
       return;
-    }
-
-    const routePath = normalizedPath(req);
-    if (routePath === '/system-config' && (req.method === 'GET' || req.method === 'PUT')) {
-      await prisma.factionSystemConfig.upsert({
-        where: { guildId: scope.guildId },
-        create: { guildId: scope.guildId },
-        update: {},
-      });
     }
 
     next();
