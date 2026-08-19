@@ -49,7 +49,13 @@ export async function idempotency(req: Request, res: Response, next: NextFunctio
   } catch {
     // Claim existiert bereits -> gecachtes Ergebnis, laufende Verarbeitung
     // oder verwaister Claim.
-    let existing: { status: string; responseStatus: number | null; responseBody: unknown; createdAt: Date; expiresAt: Date } | null = null;
+    let existing: {
+      status: 'PROCESSING' | 'DONE';
+      responseStatus: number | null;
+      responseBody: unknown;
+      createdAt: Date;
+      expiresAt: Date;
+    } | null = null;
     try {
       // eslint-disable-next-line local/no-unscoped-prisma-query -- global, siehe oben
       existing = await prisma.idempotencyKey.findUnique({ where: { hash } });
@@ -69,13 +75,31 @@ export async function idempotency(req: Request, res: Response, next: NextFunctio
       res.status(409).json({ error: 'Anfrage wird bereits verarbeitet.' });
       return;
     }
-    // Verwaister PROCESSING-Claim oder abgelaufener DONE-Eintrag -> uebernehmen.
+
+    // Verwaister PROCESSING-Claim oder abgelaufener DONE-Eintrag -> atomar per
+    // Compare-and-Swap uebernehmen. Status + createdAt bilden die beobachtete
+    // Version. Hat ein paralleler Recovery-Request sie bereits geaendert,
+    // bekommt nur dieser erste Request Besitz; alle weiteren erhalten 409.
     try {
       // eslint-disable-next-line local/no-unscoped-prisma-query -- global, siehe oben
-      await prisma.idempotencyKey.update({
-        where: { hash },
-        data: { status: 'PROCESSING', responseBody: undefined, responseStatus: null, createdAt: new Date(now), expiresAt: new Date(now + TTL_MS) },
+      const takeover = await prisma.idempotencyKey.updateMany({
+        where: {
+          hash,
+          status: existing.status,
+          createdAt: existing.createdAt,
+        },
+        data: {
+          status: 'PROCESSING',
+          responseBody: undefined,
+          responseStatus: null,
+          createdAt: new Date(now),
+          expiresAt: new Date(now + TTL_MS),
+        },
       });
+      if (takeover.count !== 1) {
+        res.status(409).json({ error: 'Anfrage wird bereits verarbeitet.' });
+        return;
+      }
       owns = true;
     } catch {
       res.status(409).json({ error: 'Anfrage wird bereits verarbeitet.' });

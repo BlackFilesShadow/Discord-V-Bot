@@ -16,6 +16,89 @@ export function createIdempotencyKey(): string {
   return Math.random().toString(36).slice(2) + Date.now().toString(36);
 }
 
+const PENDING_IDEMPOTENCY_PREFIX = 'vbot:pending-idempotency:';
+const pendingMutationKeys = new Map<string, string>();
+const pendingMutationKeyLoads = new Map<string, Promise<MutationIdempotencyLease>>();
+
+interface MutationIdempotencyLease {
+  signature: string;
+  key: string;
+  storageKey: string | null;
+}
+
+function sessionStorageSafe(): Storage | null {
+  try {
+    if (typeof window === 'undefined') return null;
+    return window.sessionStorage ?? null;
+  } catch {
+    return null;
+  }
+}
+
+async function mutationStorageKey(signature: string): Promise<string | null> {
+  try {
+    if (typeof crypto === 'undefined' || !crypto.subtle) return null;
+    const bytes = new TextEncoder().encode(signature);
+    const digest = await crypto.subtle.digest('SHA-256', bytes);
+    const hex = Array.from(new Uint8Array(digest), byte => byte.toString(16).padStart(2, '0')).join('');
+    return `${PENDING_IDEMPOTENCY_PREFIX}${hex}`;
+  } catch {
+    return null;
+  }
+}
+
+function validStoredIdempotencyKey(value: string | null): value is string {
+  return value !== null && value.trim().length >= 8 && value.trim().length <= 128;
+}
+
+/**
+ * Ein logisch identischer, noch nicht bestaetigter JSON-Mutationsrequest behält
+ * denselben Idempotency-Key. Der Request-Inhalt selbst wird niemals persistiert:
+ * sessionStorage sieht nur einen SHA-256-Fingerprint und den zufaelligen Key.
+ */
+async function acquireMutationIdempotencyKey(signature: string): Promise<MutationIdempotencyLease> {
+  const memoryKey = pendingMutationKeys.get(signature);
+  if (memoryKey) {
+    return { signature, key: memoryKey, storageKey: await mutationStorageKey(signature) };
+  }
+
+  const loading = pendingMutationKeyLoads.get(signature);
+  if (loading) return loading;
+
+  const promise = (async (): Promise<MutationIdempotencyLease> => {
+    const storageKey = await mutationStorageKey(signature);
+    const storage = sessionStorageSafe();
+    let stored: string | null = null;
+    if (storageKey && storage) {
+      try { stored = storage.getItem(storageKey); } catch { /* storage optional */ }
+    }
+    const key = validStoredIdempotencyKey(stored) ? stored.trim() : createIdempotencyKey();
+    pendingMutationKeys.set(signature, key);
+    if (storageKey && storage && stored !== key) {
+      try { storage.setItem(storageKey, key); } catch { /* storage optional */ }
+    }
+    return { signature, key, storageKey };
+  })();
+
+  pendingMutationKeyLoads.set(signature, promise);
+  try {
+    return await promise;
+  } finally {
+    pendingMutationKeyLoads.delete(signature);
+  }
+}
+
+function releaseMutationIdempotencyKey(lease: MutationIdempotencyLease): void {
+  if (pendingMutationKeys.get(lease.signature) === lease.key) {
+    pendingMutationKeys.delete(lease.signature);
+  }
+  const storage = sessionStorageSafe();
+  if (!lease.storageKey || !storage) return;
+  try {
+    if (storage.getItem(lease.storageKey) === lease.key) storage.removeItem(lease.storageKey);
+  } catch { /* storage optional */ }
+}
+
 /**
  * ServerSlot ist bereits ein expliziter Gameserver-Kontext. Economy/Casino
  * duerfen diesen Kontext nicht verlieren und bei Multi-Server-Guilds spaeter
@@ -59,12 +142,24 @@ async function request<T>(method: string, path: string, body?: unknown): Promise
   const headers: Record<string, string> = { Accept: 'application/json' };
   let payload: BodyInit | undefined;
   if (body !== undefined) { headers['Content-Type'] = 'application/json'; payload = JSON.stringify(body); }
-  if (method !== 'GET') headers['X-Idempotency-Key'] = createIdempotencyKey();
   const scopedPath = withServerSlotScope(path);
-  return decode<T>(await fetch(scopedPath, { method, headers, body: payload, credentials: 'include' }));
+  let lease: MutationIdempotencyLease | null = null;
+  if (method !== 'GET') {
+    const signature = `${method}\n${scopedPath}\n${typeof payload === 'string' ? payload : ''}`;
+    lease = await acquireMutationIdempotencyKey(signature);
+    headers['X-Idempotency-Key'] = lease.key;
+  }
+
+  // Nur ein bestaetigter 2xx-Decode gibt den Pending-Key frei. Bei Netzfehler,
+  // 409 oder unbekanntem Serverergebnis bleibt derselbe Key fuer den Retry erhalten.
+  const result = await decode<T>(await fetch(scopedPath, { method, headers, body: payload, credentials: 'include' }));
+  if (lease) releaseMutationIdempotencyKey(lease);
+  return result;
 }
 
 async function formRequest<T>(method: 'POST' | 'PUT' | 'PATCH', path: string, fd: FormData): Promise<T> {
+  // FormData/Uploads haben keinen stabilen serialisierten Payload-Fingerprint und
+  // bleiben deshalb bewusst bei einem frischen Key pro Aufruf.
   const headers: Record<string, string> = { Accept: 'application/json', 'X-Idempotency-Key': createIdempotencyKey() };
   return decode<T>(await fetch(withServerSlotScope(path), { method, headers, body: fd, credentials: 'include' }));
 }
