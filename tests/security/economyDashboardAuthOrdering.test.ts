@@ -13,11 +13,12 @@ const mockRoleFindMany = jest.fn();
 const mockMigrationFindUnique = jest.fn();
 const mockNitradoFindMany = jest.fn();
 const mockMember = { roles: { cache: new Map<string, unknown>() } };
+let currentMember: typeof mockMember | null = mockMember;
 const mockGuild = {
   ownerId: '999999999999999999',
   members: {
-    cache: { get: jest.fn(() => mockMember) },
-    fetch: jest.fn(async () => mockMember),
+    cache: { get: jest.fn(() => currentMember) },
+    fetch: jest.fn(async () => currentMember),
   },
 };
 
@@ -63,6 +64,8 @@ function makeRes() {
 describe('Economy dashboard auth -> gameserver scope ordering', () => {
   beforeEach(() => {
     jest.clearAllMocks();
+    currentMember = mockMember;
+    mockPermissionFindUnique.mockResolvedValue(null);
     mockRoleFindMany.mockResolvedValue([]);
     mockMigrationFindUnique.mockResolvedValue(null);
     mockNitradoFindMany.mockResolvedValue([{ id: CONN_ID, slot: 1, alias: 'Server 1' }]);
@@ -101,6 +104,42 @@ describe('Economy dashboard auth -> gameserver scope ordering', () => {
     expect(next).not.toHaveBeenCalled();
     expect(res.statusCode).toBe(403);
     expect(mockNitradoFindMany).not.toHaveBeenCalled();
+  });
+
+  it('stale Direct-Grant authorisiert nach Guild-Austritt weder Domain- noch exakten REST-Zugriff', async () => {
+    currentMember = null;
+    mockPermissionFindUnique.mockResolvedValue({ permissions: ['economy.view'] });
+
+    const domainReq = makeReq();
+    const domainRes = makeRes();
+    const domainNext = jest.fn();
+    await requireGuildAnyPermission('economy.view', 'economy.manage')(domainReq, domainRes, domainNext);
+
+    expect(domainNext).not.toHaveBeenCalled();
+    expect(domainRes.statusCode).toBe(403);
+    expect(mockPermissionFindUnique).not.toHaveBeenCalled();
+    expect(mockNitradoFindMany).not.toHaveBeenCalled();
+
+    const exactReq = makeReq();
+    const exactRes = makeRes();
+    const exactNext = jest.fn();
+    await requireGuildPermission('economy.view')(exactReq, exactRes, exactNext);
+
+    expect(exactNext).not.toHaveBeenCalled();
+    expect(exactRes.statusCode).toBe(403);
+    expect(mockPermissionFindUnique).not.toHaveBeenCalled();
+  });
+
+  it('korrupte/non-delegable DB-Scopes reichen Nicht-Ownern nicht fuer Guild-Zugriff', async () => {
+    mockPermissionFindUnique.mockResolvedValue({ permissions: ['permissions.manage', 'dev.console'] });
+    const req = makeReq();
+    const res = makeRes();
+    const next = jest.fn();
+
+    await requireGuildAnyPermission('economy.view', 'economy.manage')(req, res, next);
+
+    expect(next).not.toHaveBeenCalled();
+    expect(res.statusCode).toBe(403);
   });
 
   it('montiert Economy und Casino immer mit Domain-Auth vor dem Gameserver-Scope-Guard', () => {
