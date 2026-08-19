@@ -181,7 +181,7 @@ devStatusRouter.get('/adm', async (req, res) => {
     // eslint-disable-next-line local/no-unscoped-prisma-query -- DEV-globaler Status-View; optional guild-restricted.
     const conns = await prisma.nitradoConnection.findMany({
       where: { status: 'ACTIVE', ...(restrict ? { guildId: restrict } : {}) },
-      select: { id: true, guildId: true, slot: true, alias: true, alias5: true, nitradoServerId: true, serviceId: true },
+      select: { id: true, guildId: true, slot: true, alias: true, alias5: true, nitradoServerId: true },
       orderBy: [{ guildId: 'asc' }, { slot: 'asc' }],
     });
     if (conns.length === 0) return [];
@@ -230,7 +230,9 @@ devStatusRouter.get('/adm', async (req, res) => {
         slot: c.slot,
         alias: c.alias,
         alias5: c.alias5,
-        serviceId: c.serviceId ?? c.nitradoServerId ?? null,
+        // API-Feldname bleibt fuer DEV-UI-Kompatibilitaet stabil; Wert kommt
+        // ausschliesslich aus der kanonischen Nitrado-Service-Bindung.
+        serviceId: c.nitradoServerId ?? null,
         admLinked: !!c.nitradoServerId,
         source: profile ? {
           profileDir: profile.profileDir,
@@ -273,7 +275,7 @@ devStatusRouter.get('/nitrado-protection', async (req, res) => {
     // eslint-disable-next-line local/no-unscoped-prisma-query -- DEV-globaler Worker-View; optional guild-restricted.
     const conns = await prisma.nitradoConnection.findMany({
       where: { ...(restrict ? { guildId: restrict } : {}) },
-      select: { id: true, guildId: true, slot: true, status: true, nitradoServerId: true, serviceId: true, lastValidatedAt: true },
+      select: { id: true, guildId: true, slot: true, status: true, nitradoServerId: true, lastValidatedAt: true },
       orderBy: [{ guildId: 'asc' }, { slot: 'asc' }],
     });
     const linked = conns.filter(c => !!c.nitradoServerId).length;
@@ -286,7 +288,7 @@ devStatusRouter.get('/nitrado-protection', async (req, res) => {
         guildId: c.guildId,
         slot: c.slot,
         status: c.status,
-        serviceId: c.serviceId ?? c.nitradoServerId ?? null,
+        serviceId: c.nitradoServerId ?? null,
         serviceLinked: !!c.nitradoServerId,
         lastValidatedAt: c.lastValidatedAt,
       })),
