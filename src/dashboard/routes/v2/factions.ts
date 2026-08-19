@@ -248,24 +248,6 @@ async function refreshList(guildId: string, actorUserId: string, action: string)
 }
 
 /**
- * Holt die Faction-System-Konfiguration einer Guild.
- * Falls keine vorhanden, wird ein leerer Datensatz angelegt (lazy-init).
- */
-async function getOrCreateConfig(guildId: string) {
-   
-  let cfg = await prisma.factionSystemConfig.findUnique({
-    where: { guildId },
-  });
-  if (!cfg) {
-     
-    cfg = await prisma.factionSystemConfig.create({
-      data: { guildId },
-    });
-  }
-  return cfg;
-}
-
-/**
  * Effektiver Embed-Channel: faction.embedChannelId override SystemConfig.factionChannelId.
  */
 async function effectiveEmbedChannel(faction: { embedChannelId: string | null; guildId: string }): Promise<string | null> {
@@ -708,16 +690,20 @@ factionsRouter.delete('/:id/members/:userDiscordId', requireGuildPermission('fac
 });
 
 // ============================================================================
-// System-Config (pro Slot): zentraler Sammel-Channel + Liste
+// System-Config (Guild-weit): zentraler Sammel-Channel + Liste
 // ============================================================================
 
 factionsRouter.get('/system-config', requireGuildPermission('factions.view'), async (req, res) => {
   const scope = req.guildScope!;
-  const cfg = await getOrCreateConfig(scope.guildId);
+  // Strikter Read-only-Vertrag: ein Viewer-GET darf nie lazy-init/create/upsert
+  // ausloesen. Eine nie konfigurierte Guild erhaelt kanonische Defaults.
+  const cfg = await prisma.factionSystemConfig.findUnique({
+    where: { guildId: scope.guildId },
+  });
   res.json({
-    factionChannelId: cfg.factionChannelId,
-    listMessageId: cfg.listMessageId,
-    updatedAt: cfg.updatedAt.toISOString(),
+    factionChannelId: cfg?.factionChannelId ?? null,
+    listMessageId: cfg?.listMessageId ?? null,
+    updatedAt: cfg ? cfg.updatedAt.toISOString() : null,
   });
 });
 
@@ -734,12 +720,15 @@ factionsRouter.put('/system-config', requireGuildPermission('factions.manage'), 
     if (err) { res.status(400).json({ error: err }); return; }
   }
 
-  const cfg = await getOrCreateConfig(scope.guildId);
-  const channelChanged = cfg.factionChannelId !== newChId;
+  const before = await prisma.factionSystemConfig.findUnique({
+    where: { guildId: scope.guildId },
+  });
+  const oldChannelId = before?.factionChannelId ?? null;
+  const channelChanged = oldChannelId !== newChId;
 
   // Bei Channel-Wechsel: alte Uebersicht + alle Faction-Embeds entfernen, die den
   // System-Channel als Fallback nutzten (faction.embedChannelId IS NULL).
-  if (channelChanged && cfg.factionChannelId) {
+  if (channelChanged && oldChannelId) {
     const client = tryGetDashboardClient();
     if (client) {
       await unpostFactionList(client, scope.guildId).catch(() => {});
@@ -753,10 +742,20 @@ factionsRouter.put('/system-config', requireGuildPermission('factions.manage'), 
     }
   }
 
-   
-  const updated = await prisma.factionSystemConfig.update({
-    where: { id: cfg.id },
-    data: { factionChannelId: newChId, ...(channelChanged ? { listMessageId: null } : {}) },
+  // First-write und Update teilen dieselbe atomare DB-Operation. Damit gibt es
+  // keinen findUnique->create-P2002-Race mehr; die vorgelagerte per-Guild
+  // Advisory-Lock-Barriere serialisiert zusaetzlich parallele Dashboard-Mutationen.
+  const updated = await prisma.factionSystemConfig.upsert({
+    where: { guildId: scope.guildId },
+    create: {
+      guildId: scope.guildId,
+      factionChannelId: newChId,
+      listMessageId: null,
+    },
+    update: {
+      factionChannelId: newChId,
+      ...(channelChanged ? { listMessageId: null } : {}),
+    },
   });
   logAuditDb('FACTION_SYSTEM_CONFIG_UPDATED', 'FACTION', {
     actorUserId: req.auth!.userId, guildId: scope.guildId,
