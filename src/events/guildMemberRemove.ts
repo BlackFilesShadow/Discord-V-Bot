@@ -1,5 +1,6 @@
 import { Events, GuildMember } from 'discord.js';
 import { BotEvent } from '../types';
+import prisma from '../database/prisma';
 import { logger, logAudit } from '../utils/logger';
 import { markMemberLeft, syncMemberProfile } from '../modules/ai/memberAwareness';
 import { getLeaveCleanupConfig } from '../modules/moderation/leaveCleanupConfig';
@@ -11,6 +12,10 @@ import { sendConfiguredGoodbye } from '../modules/welcome/goodbyeManager';
  * GuildMemberRemove-Event: Nutzer verlaesst den Server.
  * Destruktiver Spieler-Cleanup ist guild-spezifisch opt-in und wird niemals
  * direkt im Gateway-Event ausgefuehrt, sondern nur persistent eingequeued.
+ *
+ * Authorization-State ist davon getrennt: direkte Guild-Permissions werden
+ * IMMER beim Austritt entfernt. Ein ausgestiegener User darf keinen Grant fuer
+ * einen spaeteren Rejoin konservieren, auch wenn Spieler-Daten-Cleanup AUS ist.
  */
 const guildMemberRemoveEvent: BotEvent = {
   name: Events.GuildMemberRemove,
@@ -24,6 +29,24 @@ const guildMemberRemoveEvent: BotEvent = {
       joinedAt: m.joinedAt?.toISOString(),
       roles: m.roles.cache.map(r => r.name),
     });
+
+    // Permission-Revoke ist KEIN optionaler Player-Data-Cleanup, sondern eine
+    // Authorization-Invariante. REST/Socket pruefen Mitgliedschaft zusaetzlich
+    // fail-closed, falls dieser best-effort DB-Cut temporaer fehlschlaegt.
+    try {
+      const revoked = await prisma.guildPermissionGrant.deleteMany({
+        where: { guildId: m.guild.id, userDiscordId: m.user.id },
+      });
+      if (revoked.count > 0) {
+        logAudit('PERM_GRANT_REVOKED_ON_LEAVE', 'SECURITY', {
+          guildId: m.guild.id,
+          discordId: m.user.id,
+          count: revoked.count,
+        });
+      }
+    } catch (permissionError) {
+      logger.error(`Direct-Grant-Revoke beim Leave fehlgeschlagen (${m.user.id}@${m.guild.id}):`, permissionError);
+    }
 
     // Den durable Leave-Barrier so frueh wie moeglich anlegen. Insbesondere darf
     // ein langsamer Discord-Goodbye-Versand kein Rejoin-/Relink-Fenster oeffnen.
