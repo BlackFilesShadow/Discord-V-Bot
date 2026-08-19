@@ -89,7 +89,10 @@ export async function setGrantScope(
   grantedBy: UserDiscordId,
   membershipJoinedAt: Date | null = null,
 ): Promise<PermissionGrantRow> {
-  if (NON_DELEGABLE_SCOPES.has(scope)) {
+  // Owner-only/non-delegable Scopes duerfen niemals neu gesetzt werden. Ein
+  // expliziter Revoke bleibt dagegen erlaubt, damit historisch korrupte Zeilen
+  // fail-safe bereinigt werden koennen statt beim DELETE als 500 zu enden.
+  if (enabled && NON_DELEGABLE_SCOPES.has(scope)) {
     throw new Error(`Scope ${scope} ist nicht delegierbar (Owner-only).`);
   }
   if (enabled && !membershipJoinedAt) {
@@ -197,7 +200,7 @@ export async function setRoleGrantScope(
   enabled: boolean,
   grantedBy: UserDiscordId,
 ): Promise<PermissionRoleGrantRow> {
-  if (NON_DELEGABLE_SCOPES.has(scope)) {
+  if (enabled && NON_DELEGABLE_SCOPES.has(scope)) {
     throw new Error(`Scope ${scope} ist nicht delegierbar (Owner-only).`);
   }
 
