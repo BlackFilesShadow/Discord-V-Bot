@@ -34,8 +34,11 @@ function parseIntSafe(value: unknown, label: string): number {
 function operationKey(req: Req, prefix: string): string {
   const bodyKey = typeof req.body?.operationId === 'string' ? req.body.operationId : null;
   const raw = bodyKey ?? req.get('X-Idempotency-Key');
-  if (!raw || raw.length > 32 || !/^[A-Za-z0-9._:-]+$/.test(raw)) throw new Error('Idempotency-Key fehlt oder ist ungueltig.');
-  return `${prefix}:${raw}`;
+  const candidate = raw ? `${prefix}:${raw}` : null;
+  if (!raw || !candidate || candidate.length > 48 || !/^[A-Za-z0-9._:-]+$/.test(raw)) {
+    throw new Error('Idempotency-Key fehlt oder ist ungueltig.');
+  }
+  return candidate;
 }
 const listingJson = (row: Awaited<ReturnType<typeof listMarketListings>>[number]) => ({ ...row, price: row.price.toString() });
 const purchaseJson = (row: Awaited<ReturnType<typeof listMarketPurchases>>[number]) => ({ ...row, unitPrice: row.unitPrice.toString(), amount: row.amount.toString() });
