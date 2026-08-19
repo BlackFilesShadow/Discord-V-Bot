@@ -101,6 +101,27 @@ function parseScope(raw: string): PermissionScope | null {
 
 const SNOWFLAKE_RE = /^\d{17,20}$/;
 
+async function resolveCurrentMember(guildId: string, userDiscordId: string) {
+  const client = tryGetDashboardClient();
+  const guild = client?.guilds.cache.get(guildId) ?? null;
+  if (!guild) return { kind: 'unavailable' as const };
+  const member = guild.members.cache.get(userDiscordId)
+    ?? await guild.members.fetch(userDiscordId).catch(() => null);
+  if (!member) return { kind: 'missing' as const, guild };
+  return { kind: 'member' as const, guild, member };
+}
+
+async function resolveAssignableRole(guildId: string, roleId: string) {
+  const client = tryGetDashboardClient();
+  const guild = client?.guilds.cache.get(guildId) ?? null;
+  if (!guild) return { kind: 'unavailable' as const };
+  const role = guild.roles.cache.get(roleId)
+    ?? await guild.roles.fetch(roleId).catch(() => null);
+  if (!role) return { kind: 'missing' as const };
+  if (role.id === guild.id || role.managed) return { kind: 'invalid' as const };
+  return { kind: 'role' as const, role };
+}
+
 // ── Role-based grants (registered BEFORE the user catch-all routes!) ──────
 
 permissionsRouter.put('/roles/:roleId/:scope', requireGuildOwner, async (req, res) => {
@@ -111,6 +132,12 @@ permissionsRouter.put('/roles/:roleId/:scope', requireGuildOwner, async (req, re
   const perm = parseScope(String(req.params.scope));
   if (!perm) { res.status(400).json({ error: 'Unbekannter Scope.' }); return; }
   if (NON_DELEGABLE_SCOPES.has(perm)) { res.status(403).json({ error: 'Scope nicht delegierbar.' }); return; }
+
+  const targetRole = await resolveAssignableRole(scope.guildId, roleId);
+  if (targetRole.kind === 'unavailable') { res.status(503).json({ error: 'Guild/Rollen konnten nicht sicher validiert werden.' }); return; }
+  if (targetRole.kind === 'missing') { res.status(404).json({ error: 'Rolle existiert nicht in dieser Guild.' }); return; }
+  if (targetRole.kind === 'invalid') { res.status(403).json({ error: 'Managed/@everyone-Rollen sind nicht delegierbar.' }); return; }
+
   const out = await setRoleGrantScope(scope.guildId, roleId, perm, true, asUserDiscordId(scope.actorDiscordId));
   logAuditDb('PERM_ROLE_GRANTED', 'ADMIN', { actorUserId: req.auth!.userId, guildId: scope.guildId, details: { roleId, perm } });
   emitGuildEvent(scope.guildId, { type: 'permissions.updated', payload: { guildId: scope.guildId, roleDiscordId: roleId } });
@@ -150,6 +177,13 @@ permissionsRouter.put('/:userDiscordId/:scope', requireGuildOwner, async (req, r
   const perm = parseScope(String(req.params.scope));
   if (!perm) { res.status(400).json({ error: 'Unbekannter Scope.' }); return; }
   if (NON_DELEGABLE_SCOPES.has(perm)) { res.status(403).json({ error: 'Scope nicht delegierbar.' }); return; }
+
+  const targetMember = await resolveCurrentMember(scope.guildId, target);
+  if (targetMember.kind === 'unavailable') { res.status(503).json({ error: 'Guild/Mitgliedschaft konnte nicht sicher validiert werden.' }); return; }
+  if (targetMember.kind === 'missing') { res.status(404).json({ error: 'Ziel-User ist kein aktuelles Mitglied dieser Guild.' }); return; }
+  if (targetMember.member.user.bot) { res.status(400).json({ error: 'Bots koennen keine delegierten Guild-Permissions erhalten.' }); return; }
+  if (targetMember.guild.ownerId === target) { res.status(400).json({ error: 'Der Guild-Owner benoetigt keinen delegierten Grant.' }); return; }
+
   const out = await setGrantScope(scope.guildId, target, perm, true, asUserDiscordId(scope.actorDiscordId));
   logAuditDb('PERM_GRANTED', 'ADMIN', { actorUserId: req.auth!.userId, guildId: scope.guildId, details: { target, perm } });
   emitGuildEvent(scope.guildId, { type: 'permissions.updated', payload: { guildId: scope.guildId, userDiscordId: target } });
