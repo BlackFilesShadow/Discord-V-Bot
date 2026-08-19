@@ -203,7 +203,8 @@ test.describe('Lottery authenticated dashboard contract', () => {
     await page.goto(`/servers/${GUILD_ID}/server/${SLOT}?tab=economy`);
 
     await expect(page.getByText('Neue Runde starten')).toBeVisible();
-    const channel = page.getByLabel('Discord-Channel', { exact: true });
+    const channel = page.getByRole('combobox', { name: 'Discord-Channel', exact: true });
+    await expect(channel).toBeVisible();
     await expect(channel.locator('option')).toHaveCount(3); // Placeholder + Text + Announcement; Category/Forum ausgeschlossen.
     await channel.selectOption(TEXT_CHANNEL_ID);
 
@@ -248,7 +249,9 @@ test.describe('Lottery authenticated dashboard contract', () => {
     await stubLottery(page, { canManage: true, active: false, createError: true });
     await page.goto(`/servers/${GUILD_ID}/server/${SLOT}?tab=economy`);
 
-    await page.getByLabel('Discord-Channel', { exact: true }).selectOption(TEXT_CHANNEL_ID);
+    const channel = page.getByRole('combobox', { name: 'Discord-Channel', exact: true });
+    await expect(channel).toBeVisible();
+    await channel.selectOption(TEXT_CHANNEL_ID);
     await page.getByLabel('Ticketpreis').fill('250');
     await page.getByLabel('Endzeit (1 Minute bis 30 Tage)').fill(await browserLocalDateTime(page, 2 * 60 * 60 * 1000));
     await page.getByRole('button', { name: 'Lotterie starten', exact: true }).click();
