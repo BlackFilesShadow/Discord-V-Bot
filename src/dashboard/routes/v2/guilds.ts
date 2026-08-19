@@ -10,7 +10,7 @@
  *
  *   "Manage Guild"-Rechte aus Discord allein reichen NICHT, weil sie
  *   in unserem Modell nichts bedeuten. Veraltete DB-Grants nach einem
- *   Guild-Austritt duerfen die Guild ebenfalls nicht sichtbar machen.
+ *   Guild-Austritt/Rejoin duerfen die Guild ebenfalls nicht sichtbar machen.
  *
  * Quellen:
  *  1) Discord OAuth /users/@me/guilds — Owner-Flag pro Guild.
@@ -24,8 +24,8 @@ import rateLimit from 'express-rate-limit';
 import axios from 'axios';
 import { tryGetDashboardClient, getDashboardClient } from '../../clientRegistry';
 import { getOrCreate, get as getDashLink } from '../../../modules/dashboard/repository';
-import { asGuildId, asUserDiscordId, NON_DELEGABLE_SCOPES, PERMISSION_SCOPES } from '../../../types/scope';
-import type { PermissionScope } from '../../../types/scope';
+import { asGuildId, asUserDiscordId } from '../../../types/scope';
+import { directGrantBelongsToMembership, hasDelegablePermission } from '../../../modules/permissions/access';
 import { ensureDiscordAccessToken } from '../auth';
 import { requireGuildAccess } from '../../middleware/auth';
 import { config } from '../../../config';
@@ -40,15 +40,6 @@ interface DiscordUserGuild {
   icon: string | null;
   owner: boolean;
   permissions: string;
-}
-
-const VALID_DELEGABLE_SCOPES = new Set<PermissionScope>(
-  PERMISSION_SCOPES.filter(scope => !NON_DELEGABLE_SCOPES.has(scope)),
-);
-
-function hasDelegableScope(raw: unknown): boolean {
-  if (!Array.isArray(raw)) return false;
-  return raw.some(value => typeof value === 'string' && VALID_DELEGABLE_SCOPES.has(value as PermissionScope));
 }
 
 function buildInviteUrl(guildId: string): string {
@@ -94,10 +85,12 @@ guildsRouter.get('/', async (req, res) => {
   // eslint-disable-next-line local/no-unscoped-prisma-query
   const grants = await prisma.guildPermissionGrant.findMany({
     where: { userDiscordId: req.auth.discordId },
-    select: { guildId: true, permissions: true },
+    select: { guildId: true, permissions: true, updatedAt: true },
   });
-  const directGrantGuildIds = new Set(
-    grants.filter(grant => hasDelegableScope(grant.permissions)).map(grant => grant.guildId),
+  const directGrantsByGuild = new Map(
+    grants
+      .filter(grant => hasDelegablePermission(grant.permissions))
+      .map(grant => [grant.guildId, grant] as const),
   );
 
   // Bewusst global fuer die Guild-Auswahlliste: wir suchen zunaechst nur
@@ -108,7 +101,7 @@ guildsRouter.get('/', async (req, res) => {
   });
   const grantsByGuild = new Map<string, Set<string>>();
   for (const roleGrant of allRoleGrants) {
-    if (!hasDelegableScope(roleGrant.permissions)) continue;
+    if (!hasDelegablePermission(roleGrant.permissions)) continue;
     let roles = grantsByGuild.get(roleGrant.guildId);
     if (!roles) {
       roles = new Set();
@@ -118,7 +111,7 @@ guildsRouter.get('/', async (req, res) => {
   }
 
   const candidateGuildIds = new Set<string>([
-    ...directGrantGuildIds,
+    ...directGrantsByGuild.keys(),
     ...grantsByGuild.keys(),
   ]);
   const grantedGuildIds = new Set<string>();
@@ -130,7 +123,11 @@ guildsRouter.get('/', async (req, res) => {
       ?? await guild.members.fetch(req.auth.discordId).catch(() => null);
     if (!member) continue;
 
-    if (directGrantGuildIds.has(guildId)) {
+    // Direct-Grants sind an die Mitgliedschaftsepoche gebunden. Ein alter Grant
+    // aus einer vorigen Mitgliedschaft darf nach Rejoin nicht wieder sichtbar
+    // werden, selbst wenn ein best-effort Cleanup zuvor ausgefallen ist.
+    const directGrant = directGrantsByGuild.get(guildId);
+    if (directGrant && directGrantBelongsToMembership(directGrant.updatedAt, member.joinedAt)) {
       grantedGuildIds.add(guildId);
       continue;
     }
