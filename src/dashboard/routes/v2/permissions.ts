@@ -6,7 +6,7 @@
  * DELETE /:userDiscordId/:scope         setzt scope=false
  * DELETE /:userDiscordId                loescht alle Grants des Users
  */
-import { Router } from 'express';
+import { Router, type Response } from 'express';
 import { requireGuildOwner } from '../../middleware/auth';
 import {
   listGrants, setGrantScope, deleteGrant,
@@ -102,7 +102,7 @@ function parseScope(raw: string): PermissionScope | null {
 
 const SNOWFLAKE_RE = /^\d{17,20}$/;
 
-function respondMembershipEpochConflict(res: Parameters<Parameters<typeof permissionsRouter.put>[1]>[1], error: unknown): boolean {
+function respondMembershipEpochConflict(res: Response, error: unknown): boolean {
   if (!(error instanceof PermissionMembershipEpochConflictError)) return false;
   res.status(409).json({
     error: 'Die Discord-Mitgliedschaft hat sich waehrend der Permission-Aktion geaendert. Bitte Ansicht aktualisieren und erneut versuchen.',
