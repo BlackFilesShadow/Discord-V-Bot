@@ -105,7 +105,7 @@ test.describe('Server aliases authenticated contract', () => {
 
     await expect.poll(() => state.mutations[0]?.path).toBe(`/api/v2/guilds/${GUILD_ID}/nitrado/1/alias`);
     expect(state.mutations[0]?.body).toEqual({ alias: 'Chernarus PvE' });
-    await expect(page.getByText('Alias gespeichert.')).toBeVisible();
+    await expect(page.getByRole('main').getByText('Alias gespeichert.', { exact: true })).toBeVisible();
     await expect(page.getByText('CH001', { exact: true })).toBeVisible();
   });
 
@@ -130,8 +130,8 @@ test.describe('Server aliases authenticated contract', () => {
     await firstSaveButton(page).click();
 
     await expect.poll(() => state.mutations.length).toBe(1);
-    await expect(page.getByText('Alias konnte nicht gespeichert werden.')).toBeVisible();
-    await expect(page.getByText('Alias gespeichert.')).toHaveCount(0);
+    await expect(page.getByRole('main').getByText('Alias konnte nicht gespeichert werden.', { exact: true })).toBeVisible();
+    await expect(page.getByRole('main').getByText('Alias gespeichert.', { exact: true })).toHaveCount(0);
   });
 
   test('nicht-aktiver Slot zeigt seinen Status ohne die Alias-Funktion zu verlieren', async ({ page }) => {
