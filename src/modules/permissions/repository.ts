@@ -196,6 +196,32 @@ export async function deleteGrant(
   });
 }
 
+/**
+ * Entfernt exakt die Direct-Grant-Generation, die zu `membershipJoinedAt`
+ * gehoert. Wird nach einer Mutation als ABA-Kompensation verwendet, wenn Discord
+ * unmittelbar danach eine andere Mitgliedschaftsepoche meldet. Eine inzwischen
+ * von einem neueren Request geschriebene Generation wird niemals geloescht.
+ */
+export async function deleteGrantForMembershipEpoch(
+  guildId: GuildId,
+  userDiscordId: UserDiscordId,
+  membershipJoinedAt: Date,
+): Promise<boolean> {
+  return serializablePermissionMutation(async tx => {
+    const existing = await tx.guildPermissionGrant.findUnique({
+      where: { guildId_userDiscordId: { guildId, userDiscordId } },
+      select: { permissions: true },
+    });
+    const storedEpoch = directGrantMembershipEpoch(existing?.permissions);
+    if (!storedEpoch || storedEpoch.getTime() !== membershipJoinedAt.getTime()) return false;
+
+    const removed = await tx.guildPermissionGrant.deleteMany({
+      where: { guildId, userDiscordId },
+    });
+    return removed.count > 0;
+  });
+}
+
 // ────────────────────────────────────────────────────────────────────────────
 // Role-based grants (parallel zu user-grants).
 // ────────────────────────────────────────────────────────────────────────────
