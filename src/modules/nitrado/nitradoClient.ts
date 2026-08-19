@@ -12,7 +12,7 @@
  * - Download-/Seek-Tokens werden niemals geloggt.
  */
 
-import axios, { AxiosError, type AxiosInstance, type AxiosRequestConfig } from 'axios';
+import axios, { type AxiosInstance, type AxiosRequestConfig } from 'axios';
 import { logger } from '../../utils/logger';
 import { getNitradoBreaker, opClassForMethod, NitradoCircuitOpenError } from './circuitBreaker';
 
@@ -192,10 +192,17 @@ export class NitradoClient {
           await sleep(parseRetryAfterMs(res.headers['retry-after']));
           continue;
         }
-        if (res.status >= 500 && attempt < 3) {
+        if (res.status >= 500) {
           breaker.recordFailure();
-          await sleep(500 * Math.pow(2, attempt - 1));
-          continue;
+          if (attempt < 3) {
+            await sleep(500 * Math.pow(2, attempt - 1));
+            continue;
+          }
+          throw new NitradoApiError(
+            typeof res.data === 'object' && res.data?.message ? res.data.message : `HTTP ${res.status}`,
+            res.status,
+            path,
+          );
         }
         throw new NitradoApiError(
           typeof res.data === 'object' && res.data?.message ? res.data.message : `HTTP ${res.status}`,
@@ -207,7 +214,7 @@ export class NitradoClient {
         if (e instanceof NitradoCircuitOpenError) throw e;
         lastErr = e instanceof Error ? e : new Error(String(e));
         breaker.recordFailure();
-        if (attempt < 3 && (e as AxiosError).code !== 'ECONNABORTED') {
+        if (attempt < 3) {
           await sleep(500 * Math.pow(2, attempt - 1));
           continue;
         }
