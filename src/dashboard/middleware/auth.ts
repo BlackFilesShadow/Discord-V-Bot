@@ -16,6 +16,7 @@ import prisma from '../../database/prisma';
 import { getDashboardClient } from '../clientRegistry';
 import { asGuildId, asUserDiscordId, hasPermission as scopeHas } from '../../types/scope';
 import type { GuildId, UserDiscordId, PermissionScope, GuildScope } from '../../types/scope';
+import { resolveGuildPermissionAccess } from '../../modules/permissions/access';
 import { logAudit, logger } from '../../utils/logger';
 import { enforceDevMfa, enforceDevIpAllowlist, parseDevScope, type DevSessionScope } from './devSecurity';
 import { maybeAutoExtendDevSession } from '../services/devSessionLifecycle';
@@ -66,7 +67,6 @@ export function requireAuth(req: Request, res: Response, next: NextFunction): vo
     res.status(401).json({ error: 'Nicht angemeldet.' });
     return;
   }
-  // 2FA-Erzwingung fuer privilegierte Rollen
   if (s.requires2FA && !s.twoFactorVerified) {
     res.status(403).json({ error: '2FA-Verifizierung ausstehend.' });
     return;
@@ -107,7 +107,6 @@ export async function requireGuildOwner(req: Request, res: Response, next: NextF
     res.status(403).json({ error: 'Nur der Server-Owner darf das.' });
     return;
   }
-  // Pre-fill scope (kein nitradoConnId hier — nur Owner-Ebene)
   req.guildScope = {
     guildId,
     nitradoConnId: null,
@@ -118,10 +117,7 @@ export async function requireGuildOwner(req: Request, res: Response, next: NextF
   next();
 }
 
-/**
- * Owner ODER scoped Grant fuer `perm`. Setzt `req.guildScope` mit
- * isOwner-Flag + Permissions-Set.
- */
+/** Owner ODER aktuelles Guild-Mitglied mit passendem sanitizten Scope. */
 export function requireGuildPermission(perm: PermissionScope) {
   return async (req: Request, res: Response, next: NextFunction): Promise<void> => {
     if (!req.auth) { res.status(401).json({ error: 'Nicht angemeldet.' }); return; }
@@ -135,42 +131,7 @@ export function requireGuildPermission(perm: PermissionScope) {
       return;
     }
 
-    const isOwner = guild.ownerId === req.auth.discordId;
-    let permsSet: Set<PermissionScope> = new Set();
-    if (!isOwner) {
-      // 1) User-spezifische Grants
-      const grant = await prisma.guildPermissionGrant.findUnique({
-        where: { guildId_userDiscordId: { guildId, userDiscordId: req.auth.discordId } },
-      });
-      const list = Array.isArray(grant?.permissions) ? (grant!.permissions as string[]) : [];
-      permsSet = new Set(list as PermissionScope[]);
-
-      // 2) Role-Grants: alle Rollen des Users in dieser Guild zu einer Vereinigung mergen.
-      try {
-        const member = guild.members.cache.get(req.auth.discordId)
-          ?? await guild.members.fetch(req.auth.discordId).catch(() => null);
-        const roleIds = member ? Array.from(member.roles.cache.keys()) : [];
-        if (roleIds.length > 0) {
-          const roleGrants = await prisma.guildPermissionRoleGrant.findMany({
-            where: { guildId, roleDiscordId: { in: roleIds } },
-          });
-          for (const r of roleGrants) {
-            const arr = Array.isArray(r.permissions) ? (r.permissions as string[]) : [];
-            for (const s of arr) permsSet.add(s as PermissionScope);
-          }
-        }
-      } catch (e) {
-        // Member-Fetch kann fehlschlagen (User nicht mehr in Guild). Dann gibt's keine Role-Grants.
-        logAudit('GUILD_MEMBER_FETCH_FAILED', 'SECURITY', {
-          userId: req.auth.userId, discordId: req.auth.discordId, guildId,
-          err: (e as Error).message,
-        });
-      }
-    }
-
-    // Ein bereits serverseitig validierter Gameserver-Scope darf bei einer
-    // nachgelagerten Permission-Revalidierung nicht wieder auf null fallen.
-    // Bewusst nur fuer exakt dieselbe Guild + denselben Actor erhalten.
+    const access = await resolveGuildPermissionAccess(guild, req.auth.discordId);
     const preservedNitradoConnId = req.guildScope?.guildId === guildId
       && req.guildScope.actorDiscordId === req.auth.discordId
       ? req.guildScope.nitradoConnId
@@ -180,13 +141,14 @@ export function requireGuildPermission(perm: PermissionScope) {
       guildId,
       nitradoConnId: preservedNitradoConnId,
       actorDiscordId: req.auth.discordId,
-      isOwner,
-      permissions: permsSet,
+      isOwner: access.isOwner,
+      permissions: access.permissions,
     };
 
-    if (!scopeHas(scope, perm)) {
+    if (!access.isMember || !scopeHas(scope, perm)) {
       logAudit('GUILD_PERM_DENIED', 'SECURITY', {
         userId: req.auth.userId, discordId: req.auth.discordId, guildId, perm,
+        member: access.isMember,
       });
       res.status(403).json({ error: `Permission fehlt: ${perm}` });
       return;
@@ -197,13 +159,9 @@ export function requireGuildPermission(perm: PermissionScope) {
 }
 
 /**
- * Owner ODER `dashboard.access`-Vollzugriff ODER irgendein anderer (delegierbarer)
- * Scope in dieser Guild. Genutzt fuer guild-weite Read-Hilfsrouten (Channels,
- * Rollen, Mitglieder-Suche fuer Konfig-Modals) sowie fuer gemeinsame
- * Konfigurations-Endpunkte, die mehrere Module bedienen.
- *
- * Strikt pro Guild — Grants aus anderen Guilds zaehlen NIE. NON_DELEGABLE-Scopes
- * werden hier ebenfalls nicht akzeptiert (sind Owner-only-hardcoded an Routen).
+ * Owner ODER aktuelles Guild-Mitglied mit mindestens einem delegierbaren Scope.
+ * Roh gespeicherte unbekannte/Owner-only Scopes und stale Direct-Grants sind
+ * durch die kanonische Aufloesung konstruktiv ausgeschlossen.
  */
 export async function requireGuildAccess(req: Request, res: Response, next: NextFunction): Promise<void> {
   if (!req.auth) { res.status(401).json({ error: 'Nicht angemeldet.' }); return; }
@@ -217,44 +175,11 @@ export async function requireGuildAccess(req: Request, res: Response, next: Next
     return;
   }
 
-  const isOwner = guild.ownerId === req.auth.discordId;
-  const permsSet: Set<PermissionScope> = new Set();
-  if (!isOwner) {
-    const grant = await prisma.guildPermissionGrant.findUnique({
-      where: { guildId_userDiscordId: { guildId, userDiscordId: req.auth.discordId } },
-    });
-    const list = Array.isArray(grant?.permissions) ? (grant!.permissions as string[]) : [];
-    for (const s of list) permsSet.add(s as PermissionScope);
-
-    try {
-      const member = guild.members.cache.get(req.auth.discordId)
-        ?? await guild.members.fetch(req.auth.discordId).catch(() => null);
-      const roleIds = member ? Array.from(member.roles.cache.keys()) : [];
-      if (roleIds.length > 0) {
-        const roleGrants = await prisma.guildPermissionRoleGrant.findMany({
-          where: { guildId, roleDiscordId: { in: roleIds } },
-        });
-        for (const r of roleGrants) {
-          const arr = Array.isArray(r.permissions) ? (r.permissions as string[]) : [];
-          for (const s of arr) permsSet.add(s as PermissionScope);
-        }
-      }
-    } catch (e) {
-      logAudit('GUILD_MEMBER_FETCH_FAILED', 'SECURITY', {
-        userId: req.auth.userId, discordId: req.auth.discordId, guildId,
-        err: (e as Error).message,
-      });
-    }
-  }
-
-  // Zugriff: Owner, dashboard.access, oder mind. EIN beliebiger delegierbarer Scope.
-  // (NON_DELEGABLE_SCOPES tauchen in DB-Grants nicht auf — durch Routen-Layer blockiert.)
-  const accessGranted = isOwner
-    || permsSet.has('dashboard.access')
-    || permsSet.size > 0;
-  if (!accessGranted) {
+  const access = await resolveGuildPermissionAccess(guild, req.auth.discordId);
+  if (!access.allowed) {
     logAudit('GUILD_ACCESS_DENIED', 'SECURITY', {
       userId: req.auth.userId, discordId: req.auth.discordId, guildId,
+      member: access.isMember,
     });
     res.status(403).json({ error: 'Kein Zugriff auf diese Guild.' });
     return;
@@ -264,8 +189,8 @@ export async function requireGuildAccess(req: Request, res: Response, next: Next
     guildId,
     nitradoConnId: null,
     actorDiscordId: req.auth.discordId,
-    isOwner,
-    permissions: permsSet,
+    isOwner: access.isOwner,
+    permissions: access.permissions,
   };
   next();
 }
@@ -299,8 +224,6 @@ export async function requireDev(req: Request, res: Response, next: NextFunction
     return;
   }
 
-  // P1: Auto-Extension bei Activity (idle-extend, hard-capped via createdAt + MAX_LIFETIME).
-  // Non-blocking-friendly: failure or no-op extensions don't change request flow.
   let effectiveExpiresAt = session.expiresAt;
   try {
     const ext = await maybeAutoExtendDevSession({
@@ -314,12 +237,6 @@ export async function requireDev(req: Request, res: Response, next: NextFunction
     });
   }
 
-  // MFA — OPTIONALE Extra-Sicherung (standardmaessig AUS).
-  //
-  // Neue Doktrin: Ein korrektes DEV_PASSWORD + aktive, nicht-revokte,
-  // nicht-abgelaufene DevSession ist ausreichend fuer DEV-Zugriff. 2FA wird
-  // NUR erzwungen, wenn `DEV_REQUIRE_MFA=true` explizit gesetzt ist.
-  // Ohne diese Variable (oder mit jedem anderen Wert) blockiert 2FA nicht.
   const mfaRequired = process.env.DEV_REQUIRE_MFA === 'true';
   if (!mfaRequired && !warnedAboutDisabledDevMfa) {
     warnedAboutDisabledDevMfa = true;
@@ -346,11 +263,6 @@ export async function requireDev(req: Request, res: Response, next: NextFunction
     });
   }
 
-  // IP-Allowlist — OPTIONALE Extra-Sicherung (standardmaessig AUS).
-  //
-  // Analog zu MFA: Die IP-Allowlist blockiert NUR, wenn
-  // `DEV_REQUIRE_IP_ALLOWLIST=true` explizit gesetzt ist. Ohne diese Variable
-  // erscheint keine "IP nicht in DEV-Allowlist"-Meldung.
   const ipRequired = process.env.DEV_REQUIRE_IP_ALLOWLIST === 'true';
   if (!ipRequired && !warnedAboutDisabledDevIp) {
     warnedAboutDisabledDevIp = true;
