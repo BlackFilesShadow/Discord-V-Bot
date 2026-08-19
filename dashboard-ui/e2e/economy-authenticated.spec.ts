@@ -38,7 +38,15 @@ async function stubAuthenticatedEconomy(page: Page, opts: { purchaseError?: bool
     if (path === `/api/v2/guilds/${GUILD_ID}/economy/config`) {
       if (method === 'PUT') {
         configWrite = req.postDataJSON() as Record<string, unknown>;
-        await json(route, { ok: true });
+        await json(route, {
+          enabled: configWrite.enabled ?? true,
+          currencyName: configWrite.currencyName ?? 'Maeuse',
+          emoji: configWrite.emoji ?? '🐭',
+          startBalance: configWrite.startBalance ?? 500,
+          playtimeRewardPercent: configWrite.playtimeRewardPercent ?? 2,
+          bankInterestPercent: configWrite.bankInterestPercent ?? 3,
+          bankChannelId: configWrite.bankChannelId ?? null,
+        });
       } else {
         await json(route, {
           enabled: true,
