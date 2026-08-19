@@ -3,44 +3,49 @@ import path from 'node:path';
 
 const read = (relative: string) => fs.readFileSync(path.resolve(process.cwd(), relative), 'utf8');
 
+const accessSource = read('src/modules/permissions/access.ts');
 const authSource = read('src/dashboard/middleware/auth.ts');
 const guildListSource = read('src/dashboard/routes/v2/guilds.ts');
 const permissionRouteSource = read('src/dashboard/routes/v2/permissions.ts');
 const repositorySource = read('src/modules/permissions/repository.ts');
 const socketSource = read('src/dashboard/socket/guild.ts');
+const commandScopeSource = read('src/commands/middleware/withGuildScope.ts');
+const commandPermissionsSource = read('src/commands/dashboard/permissions.ts');
 const leaveSource = read('src/events/guildMemberRemove.ts');
 const joinSource = read('src/events/guildMemberAdd.ts');
 
 describe('Dashboard-1V permission membership/data-integrity/race architecture', () => {
-  test('REST permission guards resolve current membership before reading delegated grants', () => {
-    const exact = authSource.indexOf("export function requireGuildPermission");
-    const access = authSource.indexOf("export async function requireGuildAccess");
-    const exactMember = authSource.indexOf('await guild.members.fetch(req.auth.discordId)', exact);
-    const exactGrant = authSource.indexOf('prisma.guildPermissionGrant.findUnique', exact);
-    const accessMember = authSource.indexOf('await guild.members.fetch(req.auth.discordId)', access);
-    const accessGrant = authSource.indexOf('prisma.guildPermissionGrant.findUnique', access);
+  test('one canonical delegated resolver checks current membership before any grant read', () => {
+    const resolver = accessSource.indexOf('export async function resolveDelegatedPermissionContext');
+    const member = accessSource.indexOf('await guild.members.fetch(userDiscordId)', resolver);
+    const directGrant = accessSource.indexOf('prisma.guildPermissionGrant.findUnique', resolver);
+    const roleGrant = accessSource.indexOf('prisma.guildPermissionRoleGrant.findMany', resolver);
 
-    expect(exactMember).toBeGreaterThan(exact);
-    expect(exactGrant).toBeGreaterThan(exactMember);
-    expect(accessMember).toBeGreaterThan(access);
-    expect(accessGrant).toBeGreaterThan(accessMember);
-    expect(authSource).toContain("VALID_DELEGABLE_SCOPES");
-    expect(authSource).toContain("GUILD_MEMBERSHIP_REQUIRED");
+    expect(resolver).toBeGreaterThanOrEqual(0);
+    expect(member).toBeGreaterThan(resolver);
+    expect(directGrant).toBeGreaterThan(member);
+    expect(roleGrant).toBeGreaterThan(member);
+    expect(accessSource).toContain('NON_DELEGABLE_SCOPES');
+    expect(accessSource).toContain('VALID_DELEGABLE_SCOPES');
   });
 
-  test('guild list and socket never treat a stale DB grant as membership evidence', () => {
+  test('HTTP, Socket and Slashcommands consume the same canonical resolver', () => {
+    for (const source of [authSource, socketSource, commandScopeSource]) {
+      expect(source).toContain("resolveDelegatedPermissionContext");
+      expect(source).toContain('await resolveDelegatedPermissionContext');
+    }
+    expect(authSource).not.toContain('prisma.guildPermissionGrant.findUnique({\n        where: { guildId_userDiscordId');
+    expect(socketSource).not.toContain('prisma.guildPermissionGrant.findUnique');
+    expect(commandScopeSource).not.toContain('prisma.guildPermissionGrant.findUnique');
+  });
+
+  test('guild list never treats a stale direct DB grant as membership evidence', () => {
     const candidates = guildListSource.indexOf('for (const guildId of candidateGuildIds)');
     const member = guildListSource.indexOf('await guild.members.fetch(req.auth.discordId)', candidates);
     const directAllow = guildListSource.indexOf('if (directGrantGuildIds.has(guildId))', candidates);
     expect(candidates).toBeGreaterThanOrEqual(0);
     expect(member).toBeGreaterThan(candidates);
     expect(directAllow).toBeGreaterThan(member);
-
-    const resolver = socketSource.indexOf('export async function resolveGuildAccess');
-    const socketMember = socketSource.indexOf('await guild.members.fetch(userDiscordId)', resolver);
-    const socketGrant = socketSource.indexOf('prisma.guildPermissionGrant.findUnique', resolver);
-    expect(socketMember).toBeGreaterThan(resolver);
-    expect(socketGrant).toBeGreaterThan(socketMember);
   });
 
   test('direct grants are revoked at leave and defensively cleared before a rejoin can reactivate them', () => {
@@ -84,5 +89,12 @@ describe('Dashboard-1V permission membership/data-integrity/race architecture', 
     const roleWrite = repositorySource.indexOf('tx.guildPermissionRoleGrant.upsert');
     expect(directWrite).toBeGreaterThan(directRead);
     expect(roleWrite).toBeGreaterThan(roleRead);
+  });
+
+  test('Slashcommands no longer carry a second transaction implementation', () => {
+    expect(commandPermissionsSource).toContain("from '../../modules/permissions/repository'");
+    expect(commandPermissionsSource).toContain('await setGrantScope');
+    expect(commandPermissionsSource).not.toContain('Prisma.TransactionIsolationLevel.Serializable');
+    expect(commandPermissionsSource).not.toContain('serializableGrantMutation');
   });
 });
