@@ -95,8 +95,8 @@ test.describe('Authenticated Killfeed & ADM', () => {
     await expect(page.getByRole('heading', { name: 'Nitrado Gameplay-Feeds' })).toBeVisible();
     await expect(page.getByRole('heading', { name: '#killfeed' })).toBeVisible();
 
-    const row = page.getByRole('heading', { name: '#killfeed' }).locator('xpath=ancestor::div[contains(@class,"flex")][1]').locator('xpath=..');
-    await row.getByRole('button').first().click();
+    const configCard = page.getByRole('heading', { name: '#killfeed' }).locator('xpath=ancestor::div[.//button][1]');
+    await configCard.getByRole('button').first().click();
     await expect.poll(() => find(mutations, 'PATCH', `/api/v2/guilds/${GUILD_ID}/killfeed/${CONFIG_ID}`)).toBeTruthy();
     expect(find(mutations, 'PATCH', `/api/v2/guilds/${GUILD_ID}/killfeed/${CONFIG_ID}`)).toMatchObject({
       query: `?slot=${SLOT}&kind=DEATH`,
@@ -131,7 +131,6 @@ test.describe('Authenticated Killfeed & ADM', () => {
     expect(edit).toMatchObject({ query: `?slot=${SLOT}&kind=DEATH`, body: expect.objectContaining({ embedColor: '#112233' }) });
 
     page.once('dialog', dialog => void dialog.accept());
-    const configCard = page.getByRole('heading', { name: '#killfeed' }).locator('xpath=ancestor::div[contains(@class,"flex")][1]').locator('xpath=..');
     await configCard.getByRole('button').last().click();
     await expect.poll(() => find(mutations, 'DELETE', `/api/v2/guilds/${GUILD_ID}/killfeed/${CONFIG_ID}`)).toBeTruthy();
     expect(find(mutations, 'DELETE', `/api/v2/guilds/${GUILD_ID}/killfeed/${CONFIG_ID}`)?.query).toBe(`?slot=${SLOT}&kind=DEATH`);
