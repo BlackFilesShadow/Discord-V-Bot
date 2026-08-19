@@ -11,6 +11,7 @@ const repositorySource = read('src/modules/permissions/repository.ts');
 const socketSource = read('src/dashboard/socket/guild.ts');
 const commandScopeSource = read('src/commands/middleware/withGuildScope.ts');
 const commandPermissionsSource = read('src/commands/dashboard/permissions.ts');
+const whitelistButtonSource = read('src/modules/whitelist/whitelistApprovalButton.ts');
 const leaveSource = read('src/events/guildMemberRemove.ts');
 const joinSource = read('src/events/guildMemberAdd.ts');
 
@@ -39,8 +40,8 @@ describe('Dashboard-1V permission membership/data-integrity/race architecture', 
     expect(accessSource).toContain('select: { permissions: true, updatedAt: true }');
   });
 
-  test('HTTP, Socket, Slashcommands and guild visibility consume the canonical resolver', () => {
-    for (const source of [authSource, socketSource, commandScopeSource, guildListSource]) {
+  test('all interactive authorization surfaces consume the canonical delegated resolver', () => {
+    for (const source of [authSource, socketSource, commandScopeSource, guildListSource, whitelistButtonSource]) {
       expect(source).toContain('resolveDelegatedPermissionContext');
       expect(source).toContain('await resolveDelegatedPermissionContext');
     }
@@ -48,6 +49,9 @@ describe('Dashboard-1V permission membership/data-integrity/race architecture', 
     expect(socketSource).not.toContain('prisma.guildPermissionGrant.findUnique');
     expect(commandScopeSource).not.toContain('prisma.guildPermissionGrant.findUnique');
     expect(guildListSource).toContain('if (!delegated.member || delegated.permissions.size === 0) continue;');
+    expect(whitelistButtonSource).not.toContain('prisma.guildPermissionGrant.findUnique');
+    expect(whitelistButtonSource).not.toContain('PermissionFlagsBits.ManageGuild');
+    expect(whitelistButtonSource).toContain("delegated.permissions.has('whitelist.manage')");
   });
 
   test('direct grants are revoked at leave and rejoin cleanup deletes only pre-join updatedAt rows', () => {
@@ -120,10 +124,10 @@ describe('Dashboard-1V permission membership/data-integrity/race architecture', 
     expect(roleWrite).toBeGreaterThan(roleRead);
   });
 
-  test('membership-generation conflicts surface as 409 instead of stale overwrite or 500', () => {
+  test('membership-generation conflicts surface as 409 instead of stale overwrite or generic 500', () => {
     expect(permissionRouteSource).toContain('PermissionMembershipEpochConflictError');
     expect(permissionRouteSource).toContain('res.status(409).json');
-    expect(permissionRouteSource).toContain('PERMISSION_MEMBERSHIP_EPOCH_CONFLICT');
+    expect(permissionRouteSource).toContain('code: error.code');
     expect(commandPermissionsSource).toContain('PermissionMembershipEpochConflictError');
     expect(commandPermissionsSource).toContain('Mitgliedschaft hat sich geaendert');
   });
