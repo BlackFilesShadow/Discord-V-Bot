@@ -241,7 +241,7 @@ describe('Konsolen-Linking ueber PlayerSessions', () => {
     });
     expect(leaveFenceQuery).toHaveBeenCalledWith(
       'SELECT pg_advisory_xact_lock(hashtextextended($1, 0))',
-      `leave-cleanup:${SCOPE.guildId}:${USER_1}`,
+      `leave-job:v1:${SCOPE.guildId}:${USER_1}`,
     );
     expect(deletionRequestFindFirst).toHaveBeenCalledTimes(2);
     expect(links.get(`conn-1:${USER_1}`)).toMatchObject({
