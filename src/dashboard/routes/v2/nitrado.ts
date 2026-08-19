@@ -20,11 +20,70 @@ import {
   NitradoSlotVersionConflictError,
   NitradoConnectionBusyError,
 } from '../../../modules/nitrado/repository';
-import { NitradoClient } from '../../../modules/nitrado/nitradoClient';
+import { NitradoApiError, NitradoClient } from '../../../modules/nitrado/nitradoClient';
+import { NitradoCircuitOpenError } from '../../../modules/nitrado/circuitBreaker';
 import { asUserDiscordId, asNitradoConnId } from '../../../types/scope';
 import { logAuditDb, logger } from '../../../utils/logger';
 
 export const nitradoRouter = Router({ mergeParams: true });
+
+type NitradoUpstreamHttpStatus = 429 | 502 | 503;
+type NitradoUpstreamCode =
+  | 'NITRADO_RATE_LIMIT'
+  | 'NITRADO_CIRCUIT_OPEN'
+  | 'NITRADO_TOKEN_INVALID'
+  | 'NITRADO_UPSTREAM_ERROR';
+
+interface NitradoUpstreamFailure {
+  status: NitradoUpstreamHttpStatus;
+  code: NitradoUpstreamCode;
+  message: string;
+}
+
+/**
+ * Dashboard/API-Vertrag fuer bereits authentifizierte V-Bot-Aufrufe.
+ * 401/403 von Nitrado duerfen hier NICHT als HTTP-401 an den Browser gehen,
+ * sonst koennte ein abgelaufener Gameserver-Token wie eine abgelaufene
+ * Dashboard-Session behandelt werden.
+ */
+function classifyNitradoUpstreamFailure(error: unknown): NitradoUpstreamFailure {
+  if (error instanceof NitradoCircuitOpenError) {
+    return {
+      status: 503,
+      code: 'NITRADO_CIRCUIT_OPEN',
+      message: 'Nitrado-API voruebergehend gesperrt (Circuit offen) — bitte erneut versuchen.',
+    };
+  }
+  if (error instanceof NitradoApiError) {
+    if (error.status === 429) {
+      return {
+        status: 429,
+        code: 'NITRADO_RATE_LIMIT',
+        message: 'Nitrado-Rate-Limit erreicht — bitte spaeter erneut versuchen.',
+      };
+    }
+    if (error.status === 401 || error.status === 403) {
+      return {
+        status: 502,
+        code: 'NITRADO_TOKEN_INVALID',
+        message: 'Der gespeicherte Nitrado-Token wurde von Nitrado abgelehnt.',
+      };
+    }
+  }
+  return {
+    status: 502,
+    code: 'NITRADO_UPSTREAM_ERROR',
+    message: 'Nitrado-API ist derzeit nicht zuverlaessig erreichbar.',
+  };
+}
+
+function respondNitradoUpstreamFailure(res: Response, error: unknown, prefix?: string): void {
+  const failure = classifyNitradoUpstreamFailure(error);
+  res.status(failure.status).json({
+    error: prefix ? `${prefix}: ${failure.message}` : failure.message,
+    code: failure.code,
+  });
+}
 
 async function validateTokenOrRespond(token: string, res: Response): Promise<boolean> {
   const r = await new NitradoClient(token).validateTokenDetailed();
@@ -32,22 +91,37 @@ async function validateTokenOrRespond(token: string, res: Response): Promise<boo
     case 'VALID':
       return true;
     case 'INVALID':
-      res.status(400).json({ error: 'Nitrado-Token ungültig (von Nitrado abgelehnt). Token vollständig kopiert? Benötigte Scopes: rootserver, service, user_info.' });
+      res.status(400).json({
+        error: 'Nitrado-Token ungültig (von Nitrado abgelehnt). Token vollständig kopiert? Benötigte Scopes: rootserver, service, user_info.',
+        code: 'NITRADO_TOKEN_INVALID',
+      });
       return false;
     case 'RATE_LIMITED':
-      res.status(429).json({ error: 'Nitrado-Rate-Limit erreicht — bitte in ~1 Minute erneut versuchen.' });
+      res.status(429).json({ error: 'Nitrado-Rate-Limit erreicht — bitte in ~1 Minute erneut versuchen.', code: 'NITRADO_RATE_LIMIT' });
       return false;
     case 'CIRCUIT_OPEN':
-      res.status(503).json({ error: 'Nitrado-API vorübergehend gesperrt (zu viele Fehler zuvor) — bitte in ~1 Minute erneut versuchen.' });
+      res.status(503).json({
+        error: 'Nitrado-API vorübergehend gesperrt (zu viele Fehler zuvor) — bitte in ~1 Minute erneut versuchen.',
+        code: 'NITRADO_CIRCUIT_OPEN',
+      });
       return false;
     default:
-      res.status(502).json({ error: `Nitrado-API nicht erreichbar${'message' in r && r.message ? ` (${r.message})` : ''} — bitte erneut versuchen.` });
+      res.status(502).json({
+        error: `Nitrado-API nicht erreichbar${'message' in r && r.message ? ` (${r.message})` : ''} — bitte erneut versuchen.`,
+        code: 'NITRADO_UPSTREAM_ERROR',
+      });
       return false;
   }
 }
 
 class ServiceValidationError extends Error {
-  constructor(message: string, readonly status: 400 | 502) { super(message); }
+  constructor(
+    message: string,
+    readonly status: 400 | NitradoUpstreamHttpStatus,
+    readonly code?: NitradoUpstreamCode,
+  ) {
+    super(message);
+  }
 }
 
 async function validateServiceIdForToken(token: string, nitradoServerId: unknown): Promise<string | null> {
@@ -59,14 +133,22 @@ async function validateServiceIdForToken(token: string, nitradoServerId: unknown
   let services;
   try {
     services = await new NitradoClient(token).listServices();
-  } catch (e) {
-    logger.error('Nitrado-Service-Check:', e as Error);
-    throw new ServiceValidationError('Nitrado-API-Fehler bei Service-Pruefung.', 502);
+  } catch (error) {
+    logger.warn(`Nitrado-Service-Check fehlgeschlagen: ${(error as Error).message}`);
+    const failure = classifyNitradoUpstreamFailure(error);
+    throw new ServiceValidationError(failure.message, failure.status, failure.code);
   }
   if (!services.some(s => String(s.id) === trimmed)) {
     throw new ServiceValidationError('Service-ID gehoert nicht zu diesem Token.', 400);
   }
   return trimmed;
+}
+
+function respondServiceValidationError(res: Response, error: ServiceValidationError): void {
+  res.status(error.status).json({
+    error: error.message,
+    ...(error.code ? { code: error.code } : {}),
+  });
 }
 
 function respondVersionConflict(res: Response): void {
@@ -117,7 +199,7 @@ nitradoRouter.post('/', requireGuildOwner, async (req, res) => {
   try {
     normalizedServiceId = await validateServiceIdForToken(token, nitradoServerId);
   } catch (e) {
-    if (e instanceof ServiceValidationError) { res.status(e.status).json({ error: e.message }); return; }
+    if (e instanceof ServiceValidationError) { respondServiceValidationError(res, e); return; }
     throw e;
   }
 
@@ -167,11 +249,9 @@ nitradoRouter.patch('/:slot/token', requireGuildOwner, async (req, res) => {
     let services;
     try {
       services = await client.listServices();
-    } catch (e) {
-      logger.warn(`NIT-003: Service-Recheck bei Tokenrotation fehlgeschlagen (Slot ${slot}): ${(e as Error).message}`);
-      res.status(502).json({
-        error: 'Token wurde nicht geändert: Die vorhandene Nitrado-Service-Zuordnung konnte mit dem neuen Token nicht verifiziert werden.',
-      });
+    } catch (error) {
+      logger.warn(`NIT-003: Service-Recheck bei Tokenrotation fehlgeschlagen (Slot ${slot}): ${(error as Error).message}`);
+      respondNitradoUpstreamFailure(res, error, 'Token wurde nicht geändert');
       return;
     }
     serviceMismatch = !services.some((s) => String(s.id) === existing.nitradoServerId);
@@ -239,9 +319,10 @@ nitradoRouter.patch('/:slot/service', requireGuildOwner, async (req, res) => {
       const token = await getDecryptedToken(scope.guildId, asNitradoConnId(existing.id));
       normalized = await validateServiceIdForToken(token, nitradoServerId);
     } catch (e) {
-      if (e instanceof ServiceValidationError) { res.status(e.status).json({ error: e.message }); return; }
+      if (e instanceof ServiceValidationError) { respondServiceValidationError(res, e); return; }
       logger.error('Nitrado-Service-Check:', e as Error);
-      res.status(502).json({ error: 'Nitrado-API-Fehler bei Service-Pruefung.' }); return;
+      respondNitradoUpstreamFailure(res, e);
+      return;
     }
   }
 
@@ -291,8 +372,8 @@ nitradoRouter.get('/:slot/services', requireGuildOwner, async (req, res) => {
     const token = await getDecryptedToken(scope.guildId, asNitradoConnId(conn.id));
     const services = await new NitradoClient(token).listServices();
     res.json({ services });
-  } catch (e) {
-    logger.error('Nitrado-Services-Fetch:', e as Error);
-    res.status(502).json({ error: 'Nitrado-API-Fehler.' });
+  } catch (error) {
+    logger.warn(`Nitrado-Services-Fetch fehlgeschlagen (Slot ${slot}): ${(error as Error).message}`);
+    respondNitradoUpstreamFailure(res, error);
   }
 });
