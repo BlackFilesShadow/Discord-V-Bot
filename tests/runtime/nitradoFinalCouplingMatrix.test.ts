@@ -21,15 +21,12 @@ const liveKnowledge = read('src/modules/ai/liveServerKnowledgeIndex.ts');
 
 describe('Nitrado-1Z final production coupling matrix', () => {
   it('keeps every mutating remote intent behind the durable worker + claim/lease boundary', () => {
-    for (const operation of ['WHITELIST_ADD', 'WHITELIST_REMOVE', 'SERVER_BAN_ADD', 'SERVER_BAN_REMOVE', 'RESTART_IF_DOWN']) {
-      expect(worker).toContain(operation);
-    }
+    for (const operation of ['WHITELIST_ADD', 'WHITELIST_REMOVE', 'SERVER_BAN_ADD', 'SERVER_BAN_REMOVE', 'RESTART_IF_DOWN']) expect(worker).toContain(operation);
     expect(worker).toContain('claimNitradoJob');
     expect(worker).toContain('heartbeatNitradoJobClaim');
     expect(worker).toContain('transitionClaimedNitradoJob');
     expect(lease).toContain('claimToken');
     expect(lease).toContain('heartbeatAt');
-
     for (const regression of [
       'tests/runtime/nitradoClientMutationBoundaryGate.test.ts',
       'tests/runtime/nitradoOutboxCouplingGate.test.ts',
@@ -48,7 +45,6 @@ describe('Nitrado-1Z final production coupling matrix', () => {
     expect(maintenance).toContain('tryAcquireNitradoConfigMutationLock');
     expect(whitelistReconcile).toContain('tryAcquireNitradoConfigMutationLock');
     expect(banReconcile).toContain('tryAcquireNitradoConfigMutationLock');
-
     for (const regression of [
       'tests/runtime/nitrado1cMergeVerificationGate.test.ts',
       'tests/runtime/nitradoTokenValidationLockGate.test.ts',
@@ -64,7 +60,6 @@ describe('Nitrado-1Z final production coupling matrix', () => {
     expect(whitelistReconcile).toContain('nitradoServerId');
     expect(banReconcile).toContain('nitradoServerId');
     expect(maintenance).toContain('nitradoServerId');
-
     for (const regression of [
       'tests/runtime/nitradoRemoteReadFreshnessGate.test.ts',
       'tests/runtime/nitradoMirrorLiveBindingGate.test.ts',
@@ -78,7 +73,6 @@ describe('Nitrado-1Z final production coupling matrix', () => {
     expect(client).toContain('for (let attempt = 1; attempt <= 3; attempt++)');
     expect(circuit).toContain('HALF_OPEN');
     expect(circuit).toContain('OPEN');
-
     for (const regression of [
       'tests/modules/nitradoJobWorkerRemoteFailureMatrix.test.ts',
       'tests/runtime/nitradoRemoteFailureMatrixGate.test.ts',
@@ -93,25 +87,14 @@ describe('Nitrado-1Z final production coupling matrix', () => {
 
   it('runs whitelist, ban expiry/reconciliation, token validation, ADM and feed workers in one symmetric runtime lifecycle', () => {
     for (const start of [
-      'startNitradoJobWorker()',
-      'startBanExpiryRuntime()',
-      'startBanReconciliationCron()',
-      'startTokenValidationCron(client)',
-      'startWhitelistSyncCron()',
-      'startAdmLiveSyncCron()',
-      'startAdmPostProcessCron()',
-      'startGameplayFeedRuntime()',
+      'startNitradoJobWorker()', 'startBanExpiryRuntime()', 'startBanReconciliationCron()',
+      'startTokenValidationCron(client)', 'startWhitelistSyncCron()', 'startAdmLiveSyncCron()',
+      'startAdmPostProcessCron()', 'startGameplayFeedRuntime()',
     ]) expect(runtime).toContain(start);
-
     for (const stop of [
-      'stopGameplayFeedRuntime()',
-      'stopAdmPostProcessCron()',
-      'stopAdmLiveSyncCron()',
-      'stopWhitelistSyncCron()',
-      'stopTokenValidationCron()',
-      'stopBanReconciliationCron()',
-      'stopBanExpiryRuntime()',
-      'drainAndStopJobWorker()',
+      'stopGameplayFeedRuntime()', 'stopAdmPostProcessCron()', 'stopAdmLiveSyncCron()',
+      'stopWhitelistSyncCron()', 'stopTokenValidationCron()', 'stopBanReconciliationCron()',
+      'stopBanExpiryRuntime()', 'drainAndStopJobWorker()',
     ]) expect(runtime).toContain(stop);
   });
 
@@ -129,12 +112,12 @@ describe('Nitrado-1Z final production coupling matrix', () => {
 
   it('keeps mirror -> validated LIVE_SERVER knowledge singleflight, restart-safe and rebind fail-closed', () => {
     expect(mirrorSnapshot).toContain('readCurrentAdmBinding');
-    expect(mirrorSnapshot).toContain('acquireMirrorLease');
-    expect(mirrorSnapshot).toContain('heartbeatMirrorLease');
+    expect(mirrorSnapshot).toContain('acquireMirrorSnapshotLease');
+    expect(mirrorSnapshot).toContain('renewMirrorSnapshotLease');
+    expect(mirrorSnapshot).toContain('finalizeMirrorSnapshotLease');
     expect(mirrorSnapshot).toContain('indexNitradoSnapshotKnowledge');
     expect(liveKnowledge).toContain('withFreshAdmBinding');
     expect(liveKnowledge).toContain('bindingVersion');
-
     for (const regression of [
       'tests/runtime/nitradoMirrorLiveBindingGate.test.ts',
       'tests/runtime/nitradoMirrorSingleflightRecoveryGate.test.ts',
