@@ -21,12 +21,6 @@ import { tryGetDashboardClient } from '../../clientRegistry';
 
 export const permissionsRouter = Router({ mergeParams: true });
 
-/**
- * Reichert User-Grants mit Username/DisplayName/Avatar aus dem Discord-Cache
- * an. Faellt auf den nackten Snowflake zurueck, wenn der Bot den User nicht
- * sieht (z.B. Member nicht mehr im Server). Avatar = Hash oder null;
- * Frontend baut die CDN-URL daraus.
- */
 async function enrichGrants(
   guildId: string,
   grants: Array<{ userDiscordId: string; permissions: string[]; grantedBy: string; updatedAt: Date }>,
@@ -104,8 +98,6 @@ function currentGuild(guildId: string) {
   return tryGetDashboardClient()?.guilds.cache.get(guildId) ?? null;
 }
 
-// ── Role-based grants (registered BEFORE the user catch-all routes!) ──────
-
 permissionsRouter.put('/roles/:roleId/:scope', requireGuildOwner, async (req, res) => {
   const scope = req.guildScope!;
   const roleId = String(req.params.roleId);
@@ -120,7 +112,8 @@ permissionsRouter.put('/roles/:roleId/:scope', requireGuildOwner, async (req, re
   const role = await resolveDelegableRoleTarget(guild, roleId);
   if (!role) { res.status(400).json({ error: 'Rolle existiert nicht in dieser Guild oder ist managed/nicht delegierbar.' }); return; }
 
-  const out = await setRoleGrantScope(scope.guildId, roleId, perm, true, asUserDiscordId(scope.actorDiscordId));
+  const actor = asUserDiscordId(scope.actorDiscordId);
+  const out = await setRoleGrantScope(scope.guildId, roleId, perm, true, actor);
   logAuditDb('PERM_ROLE_GRANTED', 'ADMIN', { actorUserId: req.auth!.userId, guildId: scope.guildId, details: { roleId, perm } });
   emitGuildEvent(scope.guildId, { type: 'permissions.updated', payload: { guildId: scope.guildId, roleDiscordId: roleId } });
   res.json({ permissions: out.permissions });
@@ -133,7 +126,8 @@ permissionsRouter.delete('/roles/:roleId/:scope', requireGuildOwner, async (req,
   if (roleId === scope.guildId) { res.status(403).json({ error: '@everyone-Rolle ist nicht delegierbar.' }); return; }
   const perm = parseScope(String(req.params.scope));
   if (!perm) { res.status(400).json({ error: 'Unbekannter Scope.' }); return; }
-  const out = await setRoleGrantScope(scope.guildId, roleId, perm, false, asUserDiscordId(scope.actorDiscordId));
+  const actor = asUserDiscordId(scope.actorDiscordId);
+  const out = await setRoleGrantScope(scope.guildId, roleId, perm, false, actor);
   logAuditDb('PERM_ROLE_REVOKED', 'ADMIN', { actorUserId: req.auth!.userId, guildId: scope.guildId, details: { roleId, perm } });
   emitGuildEvent(scope.guildId, { type: 'permissions.updated', payload: { guildId: scope.guildId, roleDiscordId: roleId } });
   res.json({ permissions: out.permissions });
@@ -144,13 +138,12 @@ permissionsRouter.delete('/roles/:roleId', requireGuildOwner, async (req, res) =
   const roleId = String(req.params.roleId);
   if (!SNOWFLAKE_RE.test(roleId)) { res.status(400).json({ error: 'roleId ungueltig.' }); return; }
   if (roleId === scope.guildId) { res.status(403).json({ error: '@everyone-Rolle ist nicht delegierbar.' }); return; }
-  await deleteRoleGrant(scope.guildId, roleId);
+  const actor = asUserDiscordId(scope.actorDiscordId);
+  await deleteRoleGrant(scope.guildId, roleId, actor);
   logAuditDb('PERM_ROLE_PURGED', 'ADMIN', { actorUserId: req.auth!.userId, guildId: scope.guildId, details: { roleId } });
   emitGuildEvent(scope.guildId, { type: 'permissions.updated', payload: { guildId: scope.guildId, roleDiscordId: roleId } });
   res.json({ ok: true });
 });
-
-// ── User-based grants ─────────────────────────────────────────────────────
 
 permissionsRouter.put('/:userDiscordId/:scope', requireGuildOwner, async (req, res) => {
   const scope = req.guildScope!;
@@ -165,7 +158,8 @@ permissionsRouter.put('/:userDiscordId/:scope', requireGuildOwner, async (req, r
   const member = await resolveDelegableUserTarget(guild, target);
   if (!member) { res.status(400).json({ error: 'User ist kein aktuelles Nicht-Bot-Mitglied dieser Guild.' }); return; }
 
-  const out = await setGrantScope(scope.guildId, target, perm, true, asUserDiscordId(scope.actorDiscordId));
+  const actor = asUserDiscordId(scope.actorDiscordId);
+  const out = await setGrantScope(scope.guildId, target, perm, true, actor);
   logAuditDb('PERM_GRANTED', 'ADMIN', { actorUserId: req.auth!.userId, guildId: scope.guildId, details: { target, perm } });
   emitGuildEvent(scope.guildId, { type: 'permissions.updated', payload: { guildId: scope.guildId, userDiscordId: target } });
   res.json({ permissions: out.permissions });
@@ -177,7 +171,8 @@ permissionsRouter.delete('/:userDiscordId/:scope', requireGuildOwner, async (req
   try { target = asUserDiscordId(String(req.params.userDiscordId)); } catch { res.status(400).json({ error: 'userDiscordId ungueltig.' }); return; }
   const perm = parseScope(String(req.params.scope));
   if (!perm) { res.status(400).json({ error: 'Unbekannter Scope.' }); return; }
-  const out = await setGrantScope(scope.guildId, target, perm, false, asUserDiscordId(scope.actorDiscordId));
+  const actor = asUserDiscordId(scope.actorDiscordId);
+  const out = await setGrantScope(scope.guildId, target, perm, false, actor);
   logAuditDb('PERM_REVOKED', 'ADMIN', { actorUserId: req.auth!.userId, guildId: scope.guildId, details: { target, perm } });
   emitGuildEvent(scope.guildId, { type: 'permissions.updated', payload: { guildId: scope.guildId, userDiscordId: target } });
   res.json({ permissions: out.permissions });
@@ -187,7 +182,8 @@ permissionsRouter.delete('/:userDiscordId', requireGuildOwner, async (req, res) 
   const scope = req.guildScope!;
   let target;
   try { target = asUserDiscordId(String(req.params.userDiscordId)); } catch { res.status(400).json({ error: 'userDiscordId ungueltig.' }); return; }
-  await deleteGrant(scope.guildId, target);
+  const actor = asUserDiscordId(scope.actorDiscordId);
+  await deleteGrant(scope.guildId, target, actor);
   logAuditDb('PERM_USER_PURGED', 'ADMIN', { actorUserId: req.auth!.userId, guildId: scope.guildId, details: { target } });
   emitGuildEvent(scope.guildId, { type: 'permissions.updated', payload: { guildId: scope.guildId, userDiscordId: target } });
   res.json({ ok: true });
