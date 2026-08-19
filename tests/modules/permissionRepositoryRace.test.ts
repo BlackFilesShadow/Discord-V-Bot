@@ -167,6 +167,37 @@ describe('permission repository serializable race handling', () => {
     expect(transaction).not.toHaveBeenCalled();
   });
 
+  test('non-delegable direct scopes stay blocked for grants but can be fail-safe removed from legacy rows', async () => {
+    await expect(setGrantScope(GUILD_ID, USER_ID, 'permissions.manage', true, ACTOR_ID, JOINED_AT))
+      .rejects.toThrow('nicht delegierbar');
+    expect(transaction).not.toHaveBeenCalled();
+
+    directFindUnique.mockResolvedValue({
+      permissions: ['economy.view', 'permissions.manage'],
+      updatedAt: CURRENT_AT,
+    });
+    directUpsert.mockResolvedValue({
+      userDiscordId: USER_ID,
+      permissions: ['economy.view'],
+      grantedByDiscordId: ACTOR_ID,
+      updatedAt: CURRENT_AT,
+    });
+
+    const cleaned = await setGrantScope(
+      GUILD_ID,
+      USER_ID,
+      'permissions.manage',
+      false,
+      ACTOR_ID,
+      JOINED_AT,
+    );
+
+    expect(directUpsert).toHaveBeenCalledWith(expect.objectContaining({
+      update: expect.objectContaining({ permissions: ['economy.view'] }),
+    }));
+    expect(cleaned.permissions).toEqual(['economy.view']);
+  });
+
   test('revoking the final current direct scope deletes the empty grant row instead of persisting []', async () => {
     directFindUnique.mockResolvedValue({ permissions: ['economy.view'], updatedAt: CURRENT_AT });
 
@@ -200,5 +231,26 @@ describe('permission repository serializable race handling', () => {
     const revoked = await setRoleGrantScope(GUILD_ID, ROLE_ID, 'tickets.manage', false, ACTOR_ID);
     expect(roleDeleteMany).toHaveBeenCalledWith({ where: { guildId: GUILD_ID, roleDiscordId: ROLE_ID } });
     expect(revoked.permissions).toEqual([]);
+  });
+
+  test('non-delegable role scopes stay blocked for grants but legacy values are removed on revoke', async () => {
+    await expect(setRoleGrantScope(GUILD_ID, ROLE_ID, 'permissions.manage', true, ACTOR_ID))
+      .rejects.toThrow('nicht delegierbar');
+    expect(transaction).not.toHaveBeenCalled();
+
+    roleFindUnique.mockResolvedValue({ permissions: ['tickets.manage', 'permissions.manage'] });
+    roleUpsert.mockResolvedValue({
+      roleDiscordId: ROLE_ID,
+      permissions: ['tickets.manage'],
+      grantedByDiscordId: ACTOR_ID,
+      updatedAt: CURRENT_AT,
+    });
+
+    const cleaned = await setRoleGrantScope(GUILD_ID, ROLE_ID, 'permissions.manage', false, ACTOR_ID);
+
+    expect(roleUpsert).toHaveBeenCalledWith(expect.objectContaining({
+      update: expect.objectContaining({ permissions: ['tickets.manage'] }),
+    }));
+    expect(cleaned.permissions).toEqual(['tickets.manage']);
   });
 });
