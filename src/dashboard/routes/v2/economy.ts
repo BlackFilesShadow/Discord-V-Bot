@@ -11,8 +11,9 @@ import { Router } from 'express';
 import prisma from '../../../database/prisma';
 import { requireGuildPermission } from '../../middleware/auth';
 import {
-  getConfig, getAccountOrZero, recentTransactions, adminPay,
+  getConfig, getAccountOrZero, recentTransactions,
 } from '../../../modules/economy/repository';
+import { applyDashboardAdminPay } from '../../../modules/economy/dashboardAdminPay';
 import { asUserDiscordId } from '../../../types/scope';
 import { logAuditDb } from '../../../utils/logger';
 import { emitGuildEvent } from '../../socket/emitter';
@@ -171,9 +172,15 @@ economyRouter.post('/accounts/:userDiscordId/admin-pay', requireGuildPermission(
     return;
   }
   if (typeof reason !== 'string' || reason.length < 3 || reason.length > 200) { res.status(400).json({ error: 'reason 3..200 Zeichen.' }); return; }
+  const httpIdempotencyKey = req.header('x-idempotency-key');
+  if (!httpIdempotencyKey || httpIdempotencyKey.trim().length < 8 || httpIdempotencyKey.trim().length > 128) {
+    res.status(400).json({ error: 'X-Idempotency-Key 8..128 Zeichen ist fuer Admin-Auszahlungen erforderlich.' });
+    return;
+  }
 
   try {
-    await adminPay({
+    const result = await applyDashboardAdminPay({
+      httpIdempotencyKey,
       guildId: scope.guildId,
       nitradoConnId: connId,
       targetUserId: target,
@@ -181,12 +188,14 @@ economyRouter.post('/accounts/:userDiscordId/admin-pay', requireGuildPermission(
       reason,
       actorDiscordId: asUserDiscordId(scope.actorDiscordId),
     });
-    logAuditDb('ECONOMY_ADMIN_PAY', 'ECONOMY', {
-      actorUserId: req.auth!.userId,
-      guildId: scope.guildId,
-      details: { nitradoConnId: connId, target, delta: bigDelta.toString(), reason },
-    });
-    res.json({ ok: true, nitradoConnId: connId });
+    if (result.applied) {
+      logAuditDb('ECONOMY_ADMIN_PAY', 'ECONOMY', {
+        actorUserId: req.auth!.userId,
+        guildId: scope.guildId,
+        details: { nitradoConnId: connId, target, delta: bigDelta.toString(), reason },
+      });
+    }
+    res.json({ ok: true, applied: result.applied, nitradoConnId: connId });
   } catch (e) {
     res.status(400).json({ error: (e as Error).message });
   }
