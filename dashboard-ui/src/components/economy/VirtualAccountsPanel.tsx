@@ -13,6 +13,8 @@ interface VirtualAccount {
   id: string;
   kind: 'CUSTOM' | 'LOTTERY_POT' | 'MARKET_VENDOR';
   name: string;
+  description: string | null;
+  channelId: string | null;
   balance: string;
   status: 'ACTIVE' | 'EXPIRED' | 'ARCHIVED';
   acceptUserTransfers: boolean;
@@ -32,6 +34,13 @@ interface VirtualEntry {
   createdAt: string;
 }
 
+interface DiscordChannel {
+  id: string;
+  name: string;
+  type: number;
+  parentId: string | null;
+}
+
 function fmtBig(value: string): string {
   try { return BigInt(value).toLocaleString('de-DE'); } catch { return value; }
 }
@@ -46,6 +55,8 @@ export function VirtualAccountsPanel({ guildId, slot }: { guildId: string; slot:
   const scope = `slot=${encodeURIComponent(slot)}`;
   const qc = useQueryClient();
   const [name, setName] = useState('');
+  const [description, setDescription] = useState('');
+  const [channelId, setChannelId] = useState('');
   const [expiresAt, setExpiresAt] = useState('');
   const [acceptUserTransfers, setAcceptUserTransfers] = useState(true);
   const [auditAccountId, setAuditAccountId] = useState<string>('');
@@ -63,14 +74,29 @@ export function VirtualAccountsPanel({ guildId, slot }: { guildId: string; slot:
     retry: false,
   });
 
+  const channels = useQuery({
+    queryKey: ['guild-channels', guildId],
+    queryFn: () => api.get<{ channels: DiscordChannel[] }>(`/api/v2/guilds/${guildId}/channels`),
+    retry: false,
+  });
+  const textChannels = useMemo(
+    () => (channels.data?.channels ?? []).filter(channel => channel.type === 0 || channel.type === 5),
+    [channels.data],
+  );
+  const channelNames = useMemo(() => new Map(textChannels.map(channel => [channel.id, channel.name] as const)), [textChannels]);
+
   const create = useMutation({
     mutationFn: () => api.post<VirtualAccount>(`/api/v2/guilds/${guildId}/economy/virtual-accounts?${scope}`, {
       name: name.trim(),
+      description: description.trim() || null,
+      channelId: channelId || null,
       expiresAt: expiresAt ? new Date(expiresAt).toISOString() : null,
       acceptUserTransfers,
     }),
     onSuccess: account => {
       setName('');
+      setDescription('');
+      setChannelId('');
       setExpiresAt('');
       setAcceptUserTransfers(true);
       setMessage({ ok: true, text: `Konto „${account.name}“ erstellt.` });
@@ -119,6 +145,7 @@ export function VirtualAccountsPanel({ guildId, slot }: { guildId: string; slot:
   const rows = accounts.data?.accounts ?? [];
   const payoutAccounts = useMemo(() => rows.filter(a => a.status !== 'ARCHIVED' && BigInt(a.balance) > 0n), [rows]);
   const nameValid = name.trim().length >= 1 && name.trim().length <= 80;
+  const descriptionValid = description.length <= 280;
   const expiryValid = !expiresAt || Number.isFinite(new Date(expiresAt).getTime()) && new Date(expiresAt).getTime() > Date.now();
   const payoutValid = payout.accountId.length > 0 && /^\d{17,20}$/.test(payout.userDiscordId) && /^\d+$/.test(payout.amount) && BigInt(payout.amount || '0') > 0n && payout.reason.trim().length >= 3 && payout.reason.trim().length <= 180;
 
@@ -134,7 +161,7 @@ export function VirtualAccountsPanel({ guildId, slot }: { guildId: string; slot:
       </CardHeader>
 
       <p className="text-xs text-muted mb-4">
-        Servergebundene Zwischenkonten fuer Community-Zwecke. Lotterie-Pot und Schwarzmarkt-Haendler bauen spaeter auf derselben atomaren Kontotechnik auf.
+        Servergebundene Zwischenkonten fuer Community-Zwecke. Jedes CUSTOM-Konto besitzt eine kanonische UUID, optional eine Beschreibung und einen validierten Discord-Zielchannel.
       </p>
 
       <div className="rounded-lg border border-border/60 bg-bg/40 p-3 space-y-3 mb-5">
@@ -145,12 +172,31 @@ export function VirtualAccountsPanel({ guildId, slot }: { guildId: string; slot:
             <Input value={name} onChange={e => setName(e.target.value)} maxLength={80} placeholder="z. B. Eventkasse" />
           </label>
           <label className="text-sm">
+            <span className="text-muted">Discord-Channel (optional)</span>
+            <Select value={channelId} onChange={e => setChannelId(e.target.value)} disabled={channels.isLoading || channels.isError}>
+              <option value="">— kein Channel —</option>
+              {textChannels.map(channel => <option key={channel.id} value={channel.id}>#{channel.name}</option>)}
+            </Select>
+            {channels.isError && <span className="text-danger text-[11px]">Channels konnten nicht geladen werden.</span>}
+          </label>
+          <label className="text-sm md:col-span-2">
+            <span className="text-muted">Beschreibung (optional, max. 280 Zeichen)</span>
+            <textarea
+              value={description}
+              onChange={e => setDescription(e.target.value)}
+              maxLength={280}
+              rows={3}
+              className="mt-1 w-full rounded-md border border-border bg-bg-elev px-3 py-2 text-sm text-white outline-none focus:border-primary"
+              placeholder="Wofuer wird dieses Konto verwendet?"
+            />
+          </label>
+          <label className="text-sm">
             <span className="text-muted">Ablauf (optional)</span>
             <Input type="datetime-local" value={expiresAt} onChange={e => setExpiresAt(e.target.value)} />
           </label>
         </div>
         <Switch checked={acceptUserTransfers} onChange={setAcceptUserTransfers} label="Direkte User-Ueberweisungen erlauben" />
-        <Button disabled={create.isPending || accounts.isError || !nameValid || !expiryValid} onClick={() => { setMessage(null); create.mutate(); }}>
+        <Button disabled={create.isPending || accounts.isError || !nameValid || !descriptionValid || !expiryValid || channels.isError} onClick={() => { setMessage(null); create.mutate(); }}>
           {create.isPending ? 'Erstelle…' : 'Konto erstellen'}
         </Button>
       </div>
@@ -168,10 +214,12 @@ export function VirtualAccountsPanel({ guildId, slot }: { guildId: string; slot:
                   <Badge variant={statusVariant(account.status)}>{account.status}</Badge>
                   <Badge variant="neutral">{account.kind}</Badge>
                 </div>
+                {account.description && <p className="text-xs text-muted mt-1 whitespace-pre-wrap">{account.description}</p>}
                 <p className="text-lg font-semibold mt-1">{fmtBig(account.balance)}</p>
                 <p className="text-[11px] text-muted mt-1">
                   User-Einzahlungen: {account.acceptUserTransfers && account.status === 'ACTIVE' ? 'offen' : 'gesperrt'}
                   {' · '}{account.expiresAt ? `Ablauf ${new Date(account.expiresAt).toLocaleString('de-DE')}` : 'ohne Ablauf'}
+                  {account.channelId ? ` · Channel #${channelNames.get(account.channelId) ?? account.channelId}` : ' · kein Channel'}
                 </p>
               </div>
               <div className="flex flex-wrap gap-2">

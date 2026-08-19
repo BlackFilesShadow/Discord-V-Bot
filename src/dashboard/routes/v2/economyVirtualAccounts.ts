@@ -1,8 +1,8 @@
 import { Router } from 'express';
 import { requireGuildPermission } from '../../middleware/auth';
+import { tryGetDashboardClient } from '../../clientRegistry';
 import {
   archiveVirtualAccount,
-  createVirtualAccount,
   getVirtualAccountById,
   listVirtualAccountEntries,
   listVirtualAccounts,
@@ -11,6 +11,14 @@ import {
   type VirtualAccountEntryRow,
   type VirtualAccountRow,
 } from '../../../modules/economy/virtualAccounts';
+import {
+  createCustomVirtualAccountWithMetadata,
+  getVirtualAccountMetadata,
+  getVirtualAccountMetadataMap,
+  normalizeVirtualAccountChannelId,
+  normalizeVirtualAccountDescription,
+  type VirtualAccountMetadata,
+} from '../../../modules/economy/virtualAccountMetadata';
 import { asUserDiscordId } from '../../../types/scope';
 import { logAuditDb } from '../../../utils/logger';
 
@@ -25,12 +33,14 @@ function scoped(req: EconomyVirtualRequest) {
   return { scope, connId: scope.nitradoConnId };
 }
 
-function serializeAccount(account: VirtualAccountRow) {
+function serializeAccount(account: VirtualAccountRow, metadata: VirtualAccountMetadata | null = null) {
   return {
     ...account,
     guildId: String(account.guildId),
     nitradoConnId: String(account.nitradoConnId),
     balance: account.balance.toString(),
+    description: metadata?.description ?? null,
+    channelId: metadata?.channelId ?? null,
   };
 }
 
@@ -70,11 +80,32 @@ function requestOperationKey(req: EconomyVirtualRequest, prefix: string): string
   return `${prefix}:${raw}`;
 }
 
+async function validateGuildTextChannel(guildId: string, rawChannelId: unknown): Promise<string | null> {
+  const channelId = normalizeVirtualAccountChannelId(rawChannelId);
+  if (!channelId) return null;
+  const client = tryGetDashboardClient();
+  if (!client) throw new Error('Bot nicht bereit; Channel konnte nicht validiert werden.');
+  const guild = client.guilds.cache.get(guildId);
+  if (!guild) throw new Error('Bot nicht in Guild; Channel konnte nicht validiert werden.');
+  const channel = guild.channels.cache.get(channelId) ?? await guild.channels.fetch(channelId).catch(() => null);
+  if (!channel || channel.guildId !== guildId || (channel.type !== 0 && channel.type !== 5)) {
+    throw new Error('Channel muss ein Text- oder Ankuendigungs-Channel dieser Guild sein.');
+  }
+  return channelId;
+}
+
+async function metadataFor(account: VirtualAccountRow): Promise<VirtualAccountMetadata | null> {
+  return getVirtualAccountMetadata(account.guildId, account.nitradoConnId, account.id);
+}
+
 economyVirtualAccountsRouter.get('/', requireGuildPermission('economy.view'), async (req, res) => {
   const { scope, connId } = scoped(req);
   const includeArchived = req.query.includeArchived === 'true';
-  const accounts = await listVirtualAccounts(scope.guildId, connId, includeArchived);
-  res.json({ nitradoConnId: connId, accounts: accounts.map(serializeAccount) });
+  const [accounts, metadata] = await Promise.all([
+    listVirtualAccounts(scope.guildId, connId, includeArchived),
+    getVirtualAccountMetadataMap(scope.guildId, connId),
+  ]);
+  res.json({ nitradoConnId: connId, accounts: accounts.map(account => serializeAccount(account, metadata.get(account.id) ?? null)) });
 });
 
 economyVirtualAccountsRouter.post('/', requireGuildPermission('economy.manage'), async (req, res) => {
@@ -85,14 +116,22 @@ economyVirtualAccountsRouter.post('/', requireGuildPermission('economy.manage'),
     res.status(400).json({ error: 'acceptUserTransfers muss boolean sein.' }); return;
   }
   let expiresAt: Date | null;
-  try { expiresAt = parseExpiry(body.expiresAt); }
-  catch (error) { res.status(400).json({ error: (error as Error).message }); return; }
+  let description: string | null;
+  let channelId: string | null;
   try {
-    const account = await createVirtualAccount({
+    expiresAt = parseExpiry(body.expiresAt);
+    description = normalizeVirtualAccountDescription(body.description);
+    channelId = await validateGuildTextChannel(String(scope.guildId), body.channelId);
+  } catch (error) {
+    res.status(400).json({ error: (error as Error).message }); return;
+  }
+  try {
+    const created = await createCustomVirtualAccountWithMetadata({
       guildId: scope.guildId,
       nitradoConnId: connId,
       name: body.name,
-      kind: 'CUSTOM',
+      description,
+      channelId,
       expiresAt,
       acceptUserTransfers: body.acceptUserTransfers ?? true,
       createdByDiscordId: asUserDiscordId(scope.actorDiscordId),
@@ -100,9 +139,17 @@ economyVirtualAccountsRouter.post('/', requireGuildPermission('economy.manage'),
     logAuditDb('ECONOMY_VIRTUAL_ACCOUNT_CREATED', 'ECONOMY', {
       actorUserId: req.auth!.userId,
       guildId: scope.guildId,
-      details: { nitradoConnId: connId, accountId: account.id, name: account.name, expiresAt, acceptUserTransfers: account.acceptUserTransfers },
+      details: {
+        nitradoConnId: connId,
+        accountId: created.account.id,
+        name: created.account.name,
+        channelId,
+        hasDescription: Boolean(description),
+        expiresAt,
+        acceptUserTransfers: created.account.acceptUserTransfers,
+      },
     });
-    res.status(201).json(serializeAccount(account));
+    res.status(201).json(serializeAccount(created.account, created.metadata));
   } catch (error) {
     res.status(400).json({ error: (error as Error).message });
   }
@@ -112,7 +159,7 @@ economyVirtualAccountsRouter.get('/:accountId', requireGuildPermission('economy.
   const { scope, connId } = scoped(req);
   const account = await getVirtualAccountById(scope.guildId, connId, String(req.params.accountId));
   if (!account) { res.status(404).json({ error: 'Virtuelles Konto nicht gefunden.' }); return; }
-  res.json(serializeAccount(account));
+  res.json(serializeAccount(account, await metadataFor(account)));
 });
 
 economyVirtualAccountsRouter.get('/:accountId/entries', requireGuildPermission('economy.view'), async (req, res) => {
@@ -141,7 +188,7 @@ economyVirtualAccountsRouter.post('/:accountId/archive', requireGuildPermission(
       guildId: scope.guildId,
       details: { nitradoConnId: connId, accountId: account.id, name: account.name },
     });
-    res.json(serializeAccount(account));
+    res.json(serializeAccount(account, await metadataFor(account)));
   } catch (error) {
     res.status(400).json({ error: (error as Error).message });
   }
@@ -188,7 +235,7 @@ economyVirtualAccountsRouter.post('/:accountId/payout', requireGuildPermission('
         booked: result.booked,
       },
     });
-    res.json({ ok: true, booked: result.booked, account: serializeAccount(result.account) });
+    res.json({ ok: true, booked: result.booked, account: serializeAccount(result.account, await metadataFor(result.account)) });
   } catch (error) {
     res.status(400).json({ error: (error as Error).message });
   }
