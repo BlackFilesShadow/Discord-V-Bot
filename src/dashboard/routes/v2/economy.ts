@@ -19,7 +19,6 @@ import { emitGuildEvent } from '../../socket/emitter';
 
 export const economyRouter = Router({ mergeParams: true });
 const ECONOMY_DELTA_MAX = 1_000_000_000_000_000n;
-const ECONOMY_DELTA_MIN = -ECONOMY_DELTA_MAX;
 
 type RawDb = { $queryRawUnsafe<T = unknown>(query: string, ...values: unknown[]): Promise<T> };
 const rawDb = prisma as unknown as RawDb;
@@ -166,27 +165,47 @@ economyRouter.post('/accounts/:userDiscordId/admin-pay', requireGuildPermission(
   try { bigDelta = BigInt(delta as string | number); }
   catch { res.status(400).json({ error: 'delta nicht parsebar.' }); return; }
   if (bigDelta === 0n) { res.status(400).json({ error: 'delta darf nicht 0 sein.' }); return; }
-  if (bigDelta > ECONOMY_DELTA_MAX || bigDelta < ECONOMY_DELTA_MIN) {
-    res.status(400).json({ error: `delta ausserhalb des erlaubten Bereichs (±${ECONOMY_DELTA_MAX.toString()}).` });
+  if (bigDelta < 0n) {
+    res.status(409).json({
+      error: 'Negative Admin-Korrekturen erfordern den bestaetigten Step-up-Pfad: /remove-money und danach /confirm-action.',
+      code: 'ECONOMY_STEP_UP_REQUIRED',
+    });
+    return;
+  }
+  if (bigDelta > ECONOMY_DELTA_MAX) {
+    res.status(400).json({ error: `delta ausserhalb des erlaubten Bereichs (max ${ECONOMY_DELTA_MAX.toString()}).` });
     return;
   }
   if (typeof reason !== 'string' || reason.length < 3 || reason.length > 200) { res.status(400).json({ error: 'reason 3..200 Zeichen.' }); return; }
 
+  const operationId = String(req.get('X-Idempotency-Key') ?? '').trim();
+  if (!/^[A-Za-z0-9._:-]{8,128}$/.test(operationId)) {
+    res.status(400).json({ error: 'X-Idempotency-Key fuer Admin-Pay fehlt oder ist ungueltig.' });
+    return;
+  }
+
   try {
-    await adminPay({
+    const booking = await adminPay({
       guildId: scope.guildId,
       nitradoConnId: connId,
       targetUserId: target,
       delta: bigDelta,
       reason,
       actorDiscordId: asUserDiscordId(scope.actorDiscordId),
+      operationId,
     });
     logAuditDb('ECONOMY_ADMIN_PAY', 'ECONOMY', {
       actorUserId: req.auth!.userId,
       guildId: scope.guildId,
-      details: { nitradoConnId: connId, target, delta: bigDelta.toString(), reason },
+      details: {
+        nitradoConnId: connId,
+        target,
+        delta: bigDelta.toString(),
+        reason,
+        idempotentReplay: !booking.applied,
+      },
     });
-    res.json({ ok: true, nitradoConnId: connId });
+    res.json({ ok: true, applied: booking.applied, nitradoConnId: connId });
   } catch (e) {
     res.status(400).json({ error: (e as Error).message });
   }
