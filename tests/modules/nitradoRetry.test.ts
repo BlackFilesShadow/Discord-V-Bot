@@ -72,7 +72,7 @@ describe('F-011 — Nitrado 429', () => {
 });
 
 describe('Nitrado-1V — canonical transport/timeout retry', () => {
-  it('retryt einen ECONNABORTED-Timeout und kann danach erfolgreich lesen', async () => {
+  it('retryt einen ECONNABORTED-Timeout bei GET und kann danach erfolgreich lesen', async () => {
     jest.useFakeTimers();
     try {
       requestMock
@@ -90,7 +90,7 @@ describe('Nitrado-1V — canonical transport/timeout retry', () => {
     }
   });
 
-  it('begrenzt dauerhafte ECONNABORTED-Timeouts auf drei Versuche und erhaelt status=null', async () => {
+  it('begrenzt dauerhafte GET-ECONNABORTED-Timeouts auf drei Versuche und erhaelt status=null', async () => {
     jest.useFakeTimers();
     try {
       requestMock.mockRejectedValue(Object.assign(new Error('timeout'), { code: 'ECONNABORTED' }));
@@ -110,5 +110,26 @@ describe('Nitrado-1V — canonical transport/timeout retry', () => {
     } finally {
       jest.useRealTimers();
     }
+  });
+
+  it('replayt einen ambigen POST-Timeout nicht sofort innerhalb desselben Client-Aufrufs', async () => {
+    requestMock
+      .mockResolvedValueOnce({
+        status: 200,
+        headers: {},
+        data: { data: { gameserver: { settings: { general: { whitelist: '' } } } } },
+      })
+      .mockRejectedValueOnce(Object.assign(new Error('write timeout'), { code: 'ECONNABORTED' }));
+
+    const client = new NitradoClient('token-1234');
+    await expect(client.addToWhitelist('123', 'player-1')).rejects.toMatchObject({
+      name: 'NitradoApiError',
+      status: null,
+      endpoint: '/services/123/gameservers/settings',
+      message: 'write timeout',
+    });
+
+    expect(requestMock).toHaveBeenCalledTimes(2);
+    expect(requestMock.mock.calls[1][0]).toEqual(expect.objectContaining({ method: 'POST' }));
   });
 });
