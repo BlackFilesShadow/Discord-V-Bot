@@ -696,6 +696,8 @@ function ChannelPicker({
 
 interface EconomyLink {
   userDiscordId: string;
+  playerName: string;
+  gameId: string;
   status: string;
   verifiedAt: string | null;
 }
@@ -703,7 +705,7 @@ interface EconomyLink {
 function EconomyLinksPanel({ guildId, slot }: { guildId: string; slot: string }) {
   const qc = useQueryClient();
   const qs = `?slot=${slot}`;
-  const [grant, setGrant] = useState({ user: '', gameId: '' });
+  const [grant, setGrant] = useState({ user: '', playerName: '' });
 
   const list = useQuery({
     queryKey: ['economy-links', guildId, slot],
@@ -712,10 +714,11 @@ function EconomyLinksPanel({ guildId, slot }: { guildId: string; slot: string })
 
   const force = useMutation({
     mutationFn: (b: typeof grant) => api.post(`/api/v2/guilds/${guildId}/economy-links/grant${qs}`, {
-      userDiscordId: b.user, gameId: b.gameId,
+      userDiscordId: b.user,
+      playerName: b.playerName,
     }),
     onSuccess: () => {
-      setGrant({ user: '', gameId: '' });
+      setGrant({ user: '', playerName: '' });
       void qc.invalidateQueries({ queryKey: ['economy-links', guildId, slot] });
     },
   });
@@ -732,11 +735,19 @@ function EconomyLinksPanel({ guildId, slot }: { guildId: string; slot: string })
       <div className="space-y-1 mb-4">
         {list.data?.links.length === 0 && <p className="text-muted text-sm">Keine Links.</p>}
         {list.data?.links.map(l => (
-          <div key={l.userDiscordId} className="flex items-center justify-between bg-bg-elev rounded-md px-3 py-1.5 border border-border text-sm">
-            <div className="font-mono">
-              <span className="text-white">{l.userDiscordId}</span>
-              <span className="text-muted mx-2">↔</span>
-              <span className="text-accent">✅ verifiziert</span>
+          <div key={l.userDiscordId} className="flex items-start justify-between gap-3 bg-bg-elev rounded-md px-3 py-2 border border-border text-sm">
+            <div className="min-w-0">
+              <div className="flex flex-wrap items-center gap-x-2 gap-y-1 font-mono">
+                <span className="text-white break-all">{l.userDiscordId}</span>
+                <span className="text-muted">↔</span>
+                <span className="text-accent">✅ verifiziert</span>
+              </div>
+              <p className="mt-1 text-xs text-muted break-all">
+                Spielername: <span className="font-mono text-white">{l.playerName}</span>
+              </p>
+              <p className="mt-0.5 text-xs text-muted break-all">
+                DayZ-GUID: <span className="font-mono text-white">{l.gameId}</span>
+              </p>
             </div>
             <Button size="sm" variant="danger" onClick={() => unlink.mutate(l.userDiscordId)}>
               <Trash2 className="h-3 w-3" />
@@ -746,17 +757,20 @@ function EconomyLinksPanel({ guildId, slot }: { guildId: string; slot: string })
       </div>
 
       <div className="border-t border-border pt-4 space-y-2">
-        <p className="text-sm text-white/80">Force-Link (ueberschreibt bestehenden)</p>
+        <p className="text-sm text-white/80">Force-Link per erkanntem Spielernamen (ueberschreibt bestehenden)</p>
         <div className="grid gap-2 md:grid-cols-[1fr,1fr,auto]">
           <Input placeholder="Discord-ID" value={grant.user} onChange={e => setGrant({ ...grant, user: e.target.value.trim() })} maxLength={20} />
-          <Input placeholder="Game-ID" value={grant.gameId} onChange={e => setGrant({ ...grant, gameId: e.target.value.trim() })} maxLength={64} />
+          <Input placeholder="Spielername" value={grant.playerName} onChange={e => setGrant({ ...grant, playerName: e.target.value })} maxLength={64} />
           <Button
-            disabled={!SNOWFLAKE_RE.test(grant.user) || grant.gameId.length < 3 || force.isPending}
-            onClick={() => force.mutate(grant)}
+            disabled={!SNOWFLAKE_RE.test(grant.user) || !NAME_RE.test(grant.playerName.trim()) || force.isPending}
+            onClick={() => force.mutate({ ...grant, playerName: grant.playerName.trim() })}
           >
             {force.isPending ? 'Setze…' : 'Setzen'}
           </Button>
         </div>
+        <p className="text-[11px] text-muted">
+          Die DayZ-GUID wird serverseitig aus den ADM-/Session-Daten zum exakten Spielernamen aufgeloest und nicht manuell eingegeben.
+        </p>
         {force.error && <p className="text-red-400 text-xs">{(force.error as Error).message}</p>}
       </div>
     </Card>
