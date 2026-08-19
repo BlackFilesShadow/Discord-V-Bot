@@ -13,7 +13,14 @@
  * der GUID muss nicht dauerhaft in GameIdentityLink gespeichert werden.
  */
 
-import { assertNoOpenLeaveCleanupRequest } from '../moderation/leaveCleanupGuard';
+import {
+  assertNoOpenLeaveCleanupRequest,
+  LeaveCleanupPendingError,
+} from '../moderation/leaveCleanupGuard';
+import {
+  leaveCleanupJobKey,
+  leaveCleanupReceiptFingerprint,
+} from '../moderation/leaveCleanupSaga';
 import { identityHash } from './identity';
 
 export const MIN_LINK_PLAYTIME_SECONDS = 5 * 60;
@@ -56,6 +63,14 @@ export interface VerifiedLinkRow extends GameIdentityRow {
   verifiedAt?: Date | null;
 }
 
+interface LinkPersistenceTx {
+  $queryRawUnsafe<T = unknown>(query: string, ...values: unknown[]): Promise<T>;
+  dataDeletionRequest: {
+    findFirst(args: unknown): Promise<{ id: string; completedAt?: Date | null } | null>;
+  };
+  gameIdentityLink: LinkClient['gameIdentityLink'];
+}
+
 export interface SessionLinkClient extends LinkClient {
   gameIdentityLink: LinkClient['gameIdentityLink'] & {
     findMany: (args: unknown) => Promise<VerifiedLinkRow[]>;
@@ -63,6 +78,12 @@ export interface SessionLinkClient extends LinkClient {
   playerSession: {
     findMany: (args: unknown) => Promise<PlayerSessionLinkRow[]>;
   };
+  /**
+   * Nur Link-Mutationen benoetigen die Transaktion. Read-only Resolver/Listen
+   * duerfen weiterhin mit einem schmalen Test-/Projection-Client arbeiten.
+   * Fehlt sie bei einer Persistierung, wird fail-closed abgebrochen.
+   */
+  $transaction?: <T>(work: (tx: LinkPersistenceTx) => Promise<T>) => Promise<T>;
 }
 
 export interface ResolvedPlayerIdentity {
@@ -205,55 +226,101 @@ async function persistVerifiedLink(
   now: Date,
 ): Promise<{ ok: true; alreadyLinked: boolean } | { ok: false; reason: 'IDENTITY_TAKEN' | 'USER_ALREADY_LINKED' }> {
   const hash = identityHash(gameId, secret);
-
-  const currentUserLink = await client.gameIdentityLink.findFirst({
-    where: {
-      guildId: scope.guildId,
-      nitradoConnId: scope.nitradoConnId,
-      userDiscordId,
-      status: 'VERIFIED',
-    },
-  });
-  if (currentUserLink?.identityHash === hash) return { ok: true, alreadyLinked: true };
-  if (currentUserLink) return { ok: false, reason: 'USER_ALREADY_LINKED' };
-
-  // Eine DayZ-GUID darf innerhalb derselben Discord-Guild nicht von zwei
-  // verschiedenen Discord-Accounts beansprucht werden, auch nicht auf
-  // unterschiedlichen Nitrado-Slots.
-  const identityOwner = await client.gameIdentityLink.findFirst({
-    where: { guildId: scope.guildId, identityHash: hash, status: 'VERIFIED', NOT: { userDiscordId } },
-  });
-  if (identityOwner) return { ok: false, reason: 'IDENTITY_TAKEN' };
+  if (!client.$transaction) {
+    throw new Error('Verifizierte Link-Persistierung erfordert eine transaktionale Leave-Fence.');
+  }
 
   try {
-    await client.gameIdentityLink.upsert({
-      where: {
-        guildId_nitradoConnId_userDiscordId: {
+    return await client.$transaction(async tx => {
+      // Leave-1I: Derselbe Guild+Discord-Advisory-Key wie beim durable Enqueue
+      // serialisiert den letzten Link-Commit gegen einen parallel beginnenden
+      // Leave-Cleanup. Der schnelle Guard am API-/Command-Einstieg reicht nicht,
+      // weil Leave zwischen Session-Aufloesung und Persistierung starten kann.
+      const leaveKey = leaveCleanupJobKey(scope.guildId, userDiscordId);
+      await tx.$queryRawUnsafe(
+        'SELECT pg_advisory_xact_lock(hashtextextended($1, 0))',
+        leaveKey,
+      );
+      const openLeave = await tx.dataDeletionRequest.findFirst({
+        where: {
+          userId: leaveKey,
+          requestType: 'PARTIAL_DELETION',
+          status: { in: ['PENDING', 'IN_PROGRESS', 'FAILED'] },
+        },
+        select: { id: true },
+      });
+      if (openLeave) throw new LeaveCleanupPendingError();
+
+      // Ein Cleanup kann nach dem schnellen Guard gestartet und sogar komplett
+      // beendet werden, bevor diese Transaktion den Lock gewinnt. Dann existiert
+      // kein roher OPEN-Job mehr. Der pseudonyme Receipt + completedAt bildet
+      // deshalb die Generation-Fence: nur ein Linkversuch, dessen eigener
+      // Verifikationszeitpunkt NACH dem letzten Completion-Cutoff liegt, darf
+      // wieder State erzeugen. Legitimer Rejoin nach altem Cleanup bleibt offen.
+      const fingerprint = leaveCleanupReceiptFingerprint(scope.guildId, userDiscordId, secret);
+      const completedLeave = await tx.dataDeletionRequest.findFirst({
+        where: {
+          userId: fingerprint,
+          discordId: fingerprint,
+          requestType: 'PARTIAL_DELETION',
+          status: 'COMPLETED',
+        },
+        select: { id: true, completedAt: true },
+        orderBy: { completedAt: 'desc' },
+      });
+      if (completedLeave && (!completedLeave.completedAt || now <= completedLeave.completedAt)) {
+        throw new LeaveCleanupPendingError();
+      }
+
+      // Konflikte werden unter derselben finalen Fence erneut gelesen. Dadurch
+      // ist nicht nur der Leave-Race, sondern auch der User/GUID-Zustand direkt
+      // vor dem Upsert aktuell. Der DB-Unique-Constraint bleibt letzte Schranke
+      // fuer parallel konkurrierende Identitaets-Claims.
+      const currentUserLink = await tx.gameIdentityLink.findFirst({
+        where: {
           guildId: scope.guildId,
           nitradoConnId: scope.nitradoConnId,
           userDiscordId,
+          status: 'VERIFIED',
         },
-      },
-      create: {
-        guildId: scope.guildId,
-        nitradoConnId: scope.nitradoConnId,
-        userDiscordId,
-        identityHash: hash,
-        status: 'VERIFIED',
-        verifiedAt: now,
-        challengeCode: null,
-        challengeExpiresAt: null,
-      },
-      update: {
-        identityHash: hash,
-        status: 'VERIFIED',
-        verifiedAt: now,
-        unlinkedAt: null,
-        challengeCode: null,
-        challengeExpiresAt: null,
-      },
+      });
+      if (currentUserLink?.identityHash === hash) return { ok: true, alreadyLinked: true } as const;
+      if (currentUserLink) return { ok: false, reason: 'USER_ALREADY_LINKED' } as const;
+
+      const identityOwner = await tx.gameIdentityLink.findFirst({
+        where: { guildId: scope.guildId, identityHash: hash, status: 'VERIFIED', NOT: { userDiscordId } },
+      });
+      if (identityOwner) return { ok: false, reason: 'IDENTITY_TAKEN' } as const;
+
+      await tx.gameIdentityLink.upsert({
+        where: {
+          guildId_nitradoConnId_userDiscordId: {
+            guildId: scope.guildId,
+            nitradoConnId: scope.nitradoConnId,
+            userDiscordId,
+          },
+        },
+        create: {
+          guildId: scope.guildId,
+          nitradoConnId: scope.nitradoConnId,
+          userDiscordId,
+          identityHash: hash,
+          status: 'VERIFIED',
+          verifiedAt: now,
+          challengeCode: null,
+          challengeExpiresAt: null,
+        },
+        update: {
+          identityHash: hash,
+          status: 'VERIFIED',
+          verifiedAt: now,
+          unlinkedAt: null,
+          challengeCode: null,
+          challengeExpiresAt: null,
+        },
+      });
+      return { ok: true, alreadyLinked: false } as const;
     });
-    return { ok: true, alreadyLinked: false };
   } catch (error) {
     if (isUniqueViolation(error)) return { ok: false, reason: 'IDENTITY_TAKEN' };
     throw error;

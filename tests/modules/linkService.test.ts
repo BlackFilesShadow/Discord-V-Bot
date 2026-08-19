@@ -2,6 +2,12 @@ const cleanupGuard = jest.fn();
 
 jest.mock('../../src/modules/moderation/leaveCleanupGuard', () => ({
   assertNoOpenLeaveCleanupRequest: cleanupGuard,
+  LeaveCleanupPendingError: class LeaveCleanupPendingError extends Error {
+    constructor() {
+      super('Leave-Cleanup noch nicht sicher abgeschlossen');
+      this.name = 'LeaveCleanupPendingError';
+    }
+  },
 }));
 
 import {
@@ -18,8 +24,11 @@ import {
 } from '../../src/modules/linking/linkService';
 import { identityHash } from '../../src/modules/linking/identity';
 
-const SECRET = 'sekret';
-const SCOPE = { guildId: 'guild-1', nitradoConnId: 'conn-1' };
+const SECRET = '0123456789abcdef0123456789abcdef';
+const SCOPE = { guildId: '123456789012345678', nitradoConnId: 'conn-1' };
+const USER_1 = '223456789012345678';
+const USER_OWNER = '323456789012345678';
+const USER_OTHER = '423456789012345678';
 const NOW = new Date('2026-08-16T01:00:00.000Z');
 
 interface StoredLink extends GameIdentityRow {
@@ -27,6 +36,11 @@ interface StoredLink extends GameIdentityRow {
   nitradoConnId: string;
   verifiedAt?: Date | null;
   unlinkedAt?: Date | null;
+}
+
+interface LeaveState {
+  open?: boolean;
+  completedAt?: Date | null;
 }
 
 function session(
@@ -45,7 +59,11 @@ function session(
   };
 }
 
-function makeClient(initialLinks: StoredLink[] = [], sessions: PlayerSessionLinkRow[] = []) {
+function makeClient(
+  initialLinks: StoredLink[] = [],
+  sessions: PlayerSessionLinkRow[] = [],
+  leaveState: LeaveState = {},
+) {
   const links = new Map<string, StoredLink>();
   for (const row of initialLinks) links.set(`${row.nitradoConnId}:${row.userDiscordId}`, { ...row });
 
@@ -70,68 +88,90 @@ function makeClient(initialLinks: StoredLink[] = [], sessions: PlayerSessionLink
     return true;
   }
 
-  const client: SessionLinkClient = {
-    gameIdentityLink: {
-      findFirst: async (args: unknown) => {
-        const where = (args as { where: Record<string, any> }).where;
-        return [...links.values()].find(row => linkMatches(row, where)) ?? null;
-      },
-      findMany: async (args: unknown) => {
-        const where = (args as { where: Record<string, any> }).where;
-        return [...links.values()].filter(row => linkMatches(row, where));
-      },
-      upsert: async ({ where, create, update }) => {
-        const keyData = where.guildId_nitradoConnId_userDiscordId as {
-          guildId: string;
-          nitradoConnId: string;
-          userDiscordId: string;
-        };
-        const key = `${keyData.nitradoConnId}:${keyData.userDiscordId}`;
-        const current = links.get(key);
-        const next = current
-          ? { ...current, ...update } as StoredLink
-          : { ...create } as unknown as StoredLink;
-
-        if (next.identityHash && next.status === 'VERIFIED') {
-          const duplicate = [...links.values()].find(row =>
-            row.guildId === next.guildId
-            && row.nitradoConnId === next.nitradoConnId
-            && row.userDiscordId !== next.userDiscordId
-            && row.status === 'VERIFIED'
-            && row.identityHash === next.identityHash,
-          );
-          if (duplicate) {
-            const error = new Error('unique') as Error & { code: string };
-            error.code = 'P2002';
-            throw error;
-          }
-        }
-        links.set(key, next);
-        return next;
-      },
-      updateMany: async ({ where, data }) => {
-        let count = 0;
-        for (const [key, row] of links) {
-          const typedWhere = where as Record<string, any>;
-          if (typedWhere.guildId && row.guildId !== typedWhere.guildId) continue;
-          if (typedWhere.nitradoConnId && row.nitradoConnId !== typedWhere.nitradoConnId) continue;
-          if (typedWhere.userDiscordId && row.userDiscordId !== typedWhere.userDiscordId) continue;
-          if (typedWhere.status?.in && !typedWhere.status.in.includes(row.status)) continue;
-          links.set(key, { ...row, ...data } as StoredLink);
-          count++;
-        }
-        return { count };
-      },
+  const gameIdentityLink = {
+    findFirst: async (args: unknown) => {
+      const where = (args as { where: Record<string, any> }).where;
+      return [...links.values()].find(row => linkMatches(row, where)) ?? null;
     },
+    findMany: async (args: unknown) => {
+      const where = (args as { where: Record<string, any> }).where;
+      return [...links.values()].filter(row => linkMatches(row, where));
+    },
+    upsert: async ({ where, create, update }: { where: Record<string, unknown>; create: Record<string, unknown>; update: Record<string, unknown> }) => {
+      const keyData = where.guildId_nitradoConnId_userDiscordId as {
+        guildId: string;
+        nitradoConnId: string;
+        userDiscordId: string;
+      };
+      const key = `${keyData.nitradoConnId}:${keyData.userDiscordId}`;
+      const current = links.get(key);
+      const next = current
+        ? { ...current, ...update } as StoredLink
+        : { ...create } as unknown as StoredLink;
+
+      if (next.identityHash && next.status === 'VERIFIED') {
+        const duplicate = [...links.values()].find(row =>
+          row.guildId === next.guildId
+          && row.nitradoConnId === next.nitradoConnId
+          && row.userDiscordId !== next.userDiscordId
+          && row.status === 'VERIFIED'
+          && row.identityHash === next.identityHash,
+        );
+        if (duplicate) {
+          const error = new Error('unique') as Error & { code: string };
+          error.code = 'P2002';
+          throw error;
+        }
+      }
+      links.set(key, next);
+      return next;
+    },
+    updateMany: async ({ where, data }: { where: Record<string, unknown>; data: Record<string, unknown> }) => {
+      let count = 0;
+      for (const [key, row] of links) {
+        const typedWhere = where as Record<string, any>;
+        if (typedWhere.guildId && row.guildId !== typedWhere.guildId) continue;
+        if (typedWhere.nitradoConnId && row.nitradoConnId !== typedWhere.nitradoConnId) continue;
+        if (typedWhere.userDiscordId && row.userDiscordId !== typedWhere.userDiscordId) continue;
+        if (typedWhere.status?.in && !typedWhere.status.in.includes(row.status)) continue;
+        links.set(key, { ...row, ...data } as StoredLink);
+        count++;
+      }
+      return { count };
+    },
+  };
+
+  const leaveFenceQuery = jest.fn(async (_query: string, ..._values: unknown[]) => []);
+  const deletionRequestFindFirst = jest.fn(async (args: unknown) => {
+    const where = (args as { where: Record<string, any> }).where;
+    if (typeof where.status === 'object' && Array.isArray(where.status?.in)) {
+      return leaveState.open ? { id: 'leave-open' } : null;
+    }
+    if (where.status === 'COMPLETED' && leaveState.completedAt !== undefined) {
+      return { id: 'leave-completed', completedAt: leaveState.completedAt };
+    }
+    return null;
+  });
+
+  const client: SessionLinkClient = {
+    gameIdentityLink,
     playerSession: {
       findMany: async (args: unknown) => {
         const where = (args as { where: Record<string, any> }).where;
         return sessions.filter(row => sessionMatches(row, where));
       },
     },
+    $transaction: async work => work({
+      $queryRawUnsafe: async <T = unknown>(query: string, ...values: unknown[]): Promise<T> => {
+        await leaveFenceQuery(query, ...values);
+        return [] as unknown as T;
+      },
+      dataDeletionRequest: { findFirst: deletionRequestFindFirst },
+      gameIdentityLink,
+    }),
   };
 
-  return { client, links };
+  return { client, links, leaveFenceQuery, deletionRequestFindFirst };
 }
 
 beforeEach(() => {
@@ -147,16 +187,16 @@ describe('Konsolen-Linking ueber PlayerSessions', () => {
     ]);
     const sessionSpy = jest.spyOn(client.playerSession, 'findMany');
 
-    await expect(linkByPlayerName(client, SCOPE, 'discord-1', 'Void__Architect', SECRET, NOW))
+    await expect(linkByPlayerName(client, SCOPE, USER_1, 'Void__Architect', SECRET, NOW))
       .rejects.toThrow(/Leave-Cleanup/);
-    expect(cleanupGuard).toHaveBeenCalledWith(SCOPE.guildId, 'discord-1');
+    expect(cleanupGuard).toHaveBeenCalledWith(SCOPE.guildId, USER_1);
     expect(sessionSpy).not.toHaveBeenCalled();
     expect(links.size).toBe(0);
   });
 
   it('lehnt einen unbekannten PSN-/Xbox-Namen ab', async () => {
     const { client } = makeClient();
-    const result = await linkByPlayerName(client, SCOPE, 'discord-1', 'Void__Architect', SECRET, NOW);
+    const result = await linkByPlayerName(client, SCOPE, USER_1, 'Void__Architect', SECRET, NOW);
     expect(result).toEqual({ ok: false, reason: 'PLAYER_NOT_SEEN', playerName: 'Void__Architect' });
   });
 
@@ -164,7 +204,7 @@ describe('Konsolen-Linking ueber PlayerSessions', () => {
     const { client } = makeClient([], [
       session({ gameId: 'guid-1', playerName: 'Void__Architect', durationSeconds: 240 }),
     ]);
-    const result = await linkByPlayerName(client, SCOPE, 'discord-1', 'Void__Architect', SECRET, NOW);
+    const result = await linkByPlayerName(client, SCOPE, USER_1, 'Void__Architect', SECRET, NOW);
     expect(result).toEqual({
       ok: false,
       reason: 'PLAYTIME_TOO_SHORT',
@@ -185,16 +225,16 @@ describe('Konsolen-Linking ueber PlayerSessions', () => {
         status: 'OPEN',
       }),
     ]);
-    const result = await linkByPlayerName(client, SCOPE, 'discord-1', 'Void__Architect', SECRET, NOW);
+    const result = await linkByPlayerName(client, SCOPE, USER_1, 'Void__Architect', SECRET, NOW);
     expect(result.ok).toBe(true);
     if (result.ok) expect(result.playedSeconds).toBe(330);
   });
 
-  it('verknuepft nach mindestens 5 Minuten den Discord-Account mit dem GUID-Hash', async () => {
-    const { client, links } = makeClient([], [
+  it('verknuepft nach mindestens 5 Minuten den Discord-Account mit dem GUID-Hash unter derselben Leave-Fence', async () => {
+    const { client, links, leaveFenceQuery, deletionRequestFindFirst } = makeClient([], [
       session({ gameId: 'guid-1', playerName: 'Void__Architect', durationSeconds: 301 }),
     ]);
-    const result = await linkByPlayerName(client, SCOPE, 'discord-1', 'Void__Architect', SECRET, NOW);
+    const result = await linkByPlayerName(client, SCOPE, USER_1, 'Void__Architect', SECRET, NOW);
     expect(result).toMatchObject({
       ok: true,
       alreadyLinked: false,
@@ -202,12 +242,50 @@ describe('Konsolen-Linking ueber PlayerSessions', () => {
       gameId: 'guid-1',
       playedSeconds: 301,
     });
-    expect(links.get('conn-1:discord-1')).toMatchObject({
+    expect(leaveFenceQuery).toHaveBeenCalledWith(
+      'SELECT pg_advisory_xact_lock(hashtextextended($1, 0))',
+      `leave-job:v1:${SCOPE.guildId}:${USER_1}`,
+    );
+    expect(deletionRequestFindFirst).toHaveBeenCalledTimes(2);
+    expect(links.get(`conn-1:${USER_1}`)).toMatchObject({
       identityHash: identityHash('guid-1', SECRET),
       status: 'VERIFIED',
+      verifiedAt: NOW,
       challengeCode: null,
       challengeExpiresAt: null,
     });
+  });
+
+  it('faengt ein Leave ab, das nach dem schnellen Guard aber vor dem finalen Link-Commit eingequeued wurde', async () => {
+    const { client, links } = makeClient([], [
+      session({ gameId: 'guid-1', playerName: 'Void__Architect', durationSeconds: 600 }),
+    ], { open: true });
+
+    await expect(linkByPlayerName(client, SCOPE, USER_1, 'Void__Architect', SECRET, NOW))
+      .rejects.toThrow(/Leave-Cleanup/);
+    expect(links.size).toBe(0);
+  });
+
+  it('faengt einen Cleanup ab, der nach Operationsstart bereits vollendet wurde und keinen OPEN-Job mehr besitzt', async () => {
+    const completedAt = new Date(NOW.getTime() + 1_000);
+    const { client, links } = makeClient([], [
+      session({ gameId: 'guid-1', playerName: 'Void__Architect', durationSeconds: 600 }),
+    ], { completedAt });
+
+    await expect(linkByPlayerName(client, SCOPE, USER_1, 'Void__Architect', SECRET, NOW))
+      .rejects.toThrow(/Leave-Cleanup/);
+    expect(links.size).toBe(0);
+  });
+
+  it('erlaubt einen legitimen frischen Rejoin nach einem bereits vorher abgeschlossenen Cleanup', async () => {
+    const completedAt = new Date(NOW.getTime() - 1_000);
+    const { client, links } = makeClient([], [
+      session({ gameId: 'guid-1', playerName: 'Void__Architect', durationSeconds: 600 }),
+    ], { completedAt });
+
+    await expect(linkByPlayerName(client, SCOPE, USER_1, 'Void__Architect', SECRET, NOW))
+      .resolves.toMatchObject({ ok: true, alreadyLinked: false });
+    expect(links.get(`conn-1:${USER_1}`)?.verifiedAt).toEqual(NOW);
   });
 
   it('erlaubt denselben Namen/GUID nicht fuer einen zweiten Discord-Account', async () => {
@@ -216,7 +294,7 @@ describe('Konsolen-Linking ueber PlayerSessions', () => {
       {
         guildId: SCOPE.guildId,
         nitradoConnId: SCOPE.nitradoConnId,
-        userDiscordId: 'discord-owner',
+        userDiscordId: USER_OWNER,
         identityHash: hash,
         status: 'VERIFIED',
         challengeCode: null,
@@ -225,7 +303,7 @@ describe('Konsolen-Linking ueber PlayerSessions', () => {
       },
     ], [session({ gameId: 'guid-1', playerName: 'Void__Architect', durationSeconds: 600 })]);
 
-    const result = await linkByPlayerName(client, SCOPE, 'discord-other', 'Void__Architect', SECRET, NOW);
+    const result = await linkByPlayerName(client, SCOPE, USER_OTHER, 'Void__Architect', SECRET, NOW);
     expect(result).toEqual({ ok: false, reason: 'PLAYER_NAME_TAKEN', playerName: 'Void__Architect' });
   });
 
@@ -234,7 +312,7 @@ describe('Konsolen-Linking ueber PlayerSessions', () => {
       {
         guildId: SCOPE.guildId,
         nitradoConnId: SCOPE.nitradoConnId,
-        userDiscordId: 'discord-1',
+        userDiscordId: USER_1,
         identityHash: identityHash('guid-old', SECRET),
         status: 'VERIFIED',
         challengeCode: null,
@@ -243,7 +321,7 @@ describe('Konsolen-Linking ueber PlayerSessions', () => {
       },
     ], [session({ gameId: 'guid-new', playerName: 'PlayerTwo', durationSeconds: 600 })]);
 
-    const result = await linkByPlayerName(client, SCOPE, 'discord-1', 'PlayerTwo', SECRET, NOW);
+    const result = await linkByPlayerName(client, SCOPE, USER_1, 'PlayerTwo', SECRET, NOW);
     expect(result).toEqual({ ok: false, reason: 'USER_ALREADY_LINKED', playerName: 'PlayerTwo' });
   });
 
@@ -252,7 +330,7 @@ describe('Konsolen-Linking ueber PlayerSessions', () => {
       session({ gameId: 'guid-1', playerName: 'DuplicateName' }),
       session({ gameId: 'guid-2', playerName: 'DuplicateName' }),
     ]);
-    const result = await linkByPlayerName(client, SCOPE, 'discord-1', 'DuplicateName', SECRET, NOW);
+    const result = await linkByPlayerName(client, SCOPE, USER_1, 'DuplicateName', SECRET, NOW);
     expect(result).toEqual({ ok: false, reason: 'AMBIGUOUS_PLAYER_NAME', playerName: 'DuplicateName' });
   });
 
@@ -260,9 +338,9 @@ describe('Konsolen-Linking ueber PlayerSessions', () => {
     const { client } = makeClient([], [
       session({ gameId: 'guid-1', playerName: 'Void__Architect', durationSeconds: 30 }),
     ]);
-    const result = await forceLinkByPlayerName(client, SCOPE, 'discord-1', 'Void__Architect', SECRET, NOW);
+    const result = await forceLinkByPlayerName(client, SCOPE, USER_1, 'Void__Architect', SECRET, NOW);
     expect(result).toMatchObject({ ok: true, playerName: 'Void__Architect', gameId: 'guid-1', playedSeconds: 30 });
-    expect(cleanupGuard).toHaveBeenCalledWith(SCOPE.guildId, 'discord-1');
+    expect(cleanupGuard).toHaveBeenCalledWith(SCOPE.guildId, USER_1);
   });
 });
 
@@ -272,7 +350,7 @@ describe('Unlink, Reward-Aufloesung und GUID-Listen', () => {
       {
         guildId: SCOPE.guildId,
         nitradoConnId: SCOPE.nitradoConnId,
-        userDiscordId: 'discord-1',
+        userDiscordId: USER_1,
         identityHash: identityHash('guid-1', SECRET),
         status: 'VERIFIED',
         challengeCode: null,
@@ -280,8 +358,8 @@ describe('Unlink, Reward-Aufloesung und GUID-Listen', () => {
         verifiedAt: NOW,
       },
     ]);
-    expect(await unlinkUser(client, SCOPE, 'discord-1', NOW)).toBe(true);
-    expect(links.get('conn-1:discord-1')).toMatchObject({ status: 'UNLINKED', identityHash: null });
+    expect(await unlinkUser(client, SCOPE, USER_1, NOW)).toBe(true);
+    expect(links.get(`conn-1:${USER_1}`)).toMatchObject({ status: 'UNLINKED', identityHash: null });
   });
 
   it('resolveVerifiedUser bleibt die Economy-Bruecke GUID -> Discord', async () => {
@@ -289,7 +367,7 @@ describe('Unlink, Reward-Aufloesung und GUID-Listen', () => {
       {
         guildId: SCOPE.guildId,
         nitradoConnId: SCOPE.nitradoConnId,
-        userDiscordId: 'discord-1',
+        userDiscordId: USER_1,
         identityHash: identityHash('guid-1', SECRET),
         status: 'VERIFIED',
         challengeCode: null,
@@ -297,7 +375,7 @@ describe('Unlink, Reward-Aufloesung und GUID-Listen', () => {
         verifiedAt: NOW,
       },
     ]);
-    expect(await resolveVerifiedUser(client, SCOPE, 'guid-1', SECRET)).toBe('discord-1');
+    expect(await resolveVerifiedUser(client, SCOPE, 'guid-1', SECRET)).toBe(USER_1);
     expect(await resolveVerifiedUser(client, SCOPE, 'guid-other', SECRET)).toBeNull();
   });
 
@@ -306,7 +384,7 @@ describe('Unlink, Reward-Aufloesung und GUID-Listen', () => {
       {
         guildId: SCOPE.guildId,
         nitradoConnId: SCOPE.nitradoConnId,
-        userDiscordId: 'discord-1',
+        userDiscordId: USER_1,
         identityHash: identityHash('guid-1', SECRET),
         status: 'VERIFIED',
         challengeCode: null,
@@ -317,7 +395,7 @@ describe('Unlink, Reward-Aufloesung und GUID-Listen', () => {
 
     expect(await listVerifiedLinkDetails(client, SCOPE, SECRET)).toEqual([
       {
-        userDiscordId: 'discord-1',
+        userDiscordId: USER_1,
         playerName: 'Void__Architect',
         gameId: 'guid-1',
         verifiedAt: NOW,
