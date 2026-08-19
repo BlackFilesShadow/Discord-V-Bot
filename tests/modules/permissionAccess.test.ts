@@ -116,12 +116,18 @@ describe('canonical delegated permission access', () => {
     expect([...result.permissions]).toEqual(['whitelist.view']);
   });
 
-  test('membership marker helper requires exactly one canonical ISO marker', () => {
+  test('membership marker helper requires exactly one canonical ISO marker and malformed marker state never falls back to updatedAt', () => {
     const marker = membershipEpochMarker(JOINED_AT);
+    const duplicateMarkers = [marker, marker, 'economy.view'];
+    const malformedMarker = ['__vbot_membership_joined_at:not-a-date', 'economy.view'];
+    const freshUpdatedAt = new Date(JOINED_AT.getTime() + 60_000);
+
     expect(marker).toBe('__vbot_membership_joined_at:2026-08-20T00:00:00.000Z');
     expect(directGrantMembershipEpoch([marker, 'economy.view'])?.getTime()).toBe(JOINED_AT.getTime());
-    expect(directGrantMembershipEpoch([marker, marker, 'economy.view'])).toBeNull();
-    expect(directGrantMembershipEpoch(['__vbot_membership_joined_at:not-a-date', 'economy.view'])).toBeNull();
+    expect(directGrantMembershipEpoch(duplicateMarkers)).toBeNull();
+    expect(directGrantMembershipEpoch(malformedMarker)).toBeNull();
+    expect(directGrantBelongsToMembership(duplicateMarkers, freshUpdatedAt, JOINED_AT)).toBe(false);
+    expect(directGrantBelongsToMembership(malformedMarker, freshUpdatedAt, JOINED_AT)).toBe(false);
   });
 
   test('explicit membership epoch must exactly match current joinedAt', () => {
