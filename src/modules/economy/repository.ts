@@ -67,6 +67,16 @@ interface ConfigDbRow {
   bankChannelId: string | null;
 }
 
+interface AdminPayLedgerRow {
+  guildId: string;
+  nitradoConnId: string;
+  userDiscordId: string;
+  walletDelta: bigint;
+  type: string;
+  reason: string | null;
+  sourceRef: string | null;
+}
+
 type RawDb = {
   $queryRawUnsafe<T = unknown>(query: string, ...values: unknown[]): Promise<T>;
   $executeRawUnsafe(query: string, ...values: unknown[]): Promise<number>;
@@ -309,6 +319,14 @@ export async function pay(args: {
   });
 }
 
+function cleanAdminPayOperationId(value: string): string {
+  const operationId = value.trim();
+  if (!/^[A-Za-z0-9._:-]{8,128}$/.test(operationId)) {
+    throw new Error('Admin-Pay operationId ist ungueltig.');
+  }
+  return operationId;
+}
+
 export async function adminPay(args: {
   guildId: GuildId;
   nitradoConnId: NitradoConnId;
@@ -316,27 +334,65 @@ export async function adminPay(args: {
   delta: bigint;
   reason: string;
   actorDiscordId: UserDiscordId;
-}): Promise<void> {
-  if (args.delta === 0n) throw new Error('Delta darf nicht 0 sein');
+  operationId: string;
+}): Promise<{ applied: boolean }> {
+  if (args.delta <= 0n) {
+    throw new Error('Direkte Admin-Gutschrift muss > 0 sein; Abbuchungen erfordern den bestaetigten Remove-Money-Step-up.');
+  }
+  const reason = args.reason.trim();
+  if (reason.length < 3 || reason.length > 200) throw new Error('Admin-Pay-Grund muss 3..200 Zeichen lang sein.');
+  const operationId = cleanAdminPayOperationId(args.operationId);
   await assertEconomyScopeReady(args.guildId, args.nitradoConnId);
 
-  await prisma.$transaction(async tx => {
+  const actorSubject = economySubjectKey(String(args.guildId), String(args.actorDiscordId), config.security.encryptionKey);
+  const idempotencyKey = `admin-pay:${args.guildId}:${args.nitradoConnId}:${actorSubject}:${operationId}`;
+  const sourceRef = `admin-pay:${operationId}`;
+
+  return prisma.$transaction(async tx => {
     const db = tx as unknown as RawDb;
-    if (args.delta < 0n) {
-      const amount = -args.delta;
-      const changed = await db.$executeRawUnsafe(
-        'UPDATE "EconomyAccount" SET "walletBalance"="walletBalance"-$4, "lifetimeSpent"="lifetimeSpent"+$4, "updatedAt"=CURRENT_TIMESTAMP WHERE "guildId"=$1 AND "nitradoConnId"=$2 AND "userDiscordId"=$3 AND "walletBalance">=$4',
-        String(args.guildId), String(args.nitradoConnId), String(args.targetUserId), amount);
-      if (changed !== 1) throw new Error('Empfaenger hat zu wenig Guthaben fuer negatives Delta');
-    } else {
-      await ensureAccount(db, args.guildId, args.nitradoConnId, args.targetUserId);
-      const changed = await db.$executeRawUnsafe(
-        'UPDATE "EconomyAccount" SET "walletBalance"="walletBalance"+$4, "lifetimeEarned"="lifetimeEarned"+$4, "updatedAt"=CURRENT_TIMESTAMP WHERE "guildId"=$1 AND "nitradoConnId"=$2 AND "userDiscordId"=$3',
-        String(args.guildId), String(args.nitradoConnId), String(args.targetUserId), args.delta);
-      if (changed !== 1) throw new Error('Zielkonto konnte nicht aktualisiert werden');
+    const claimed = await insertLedger(db, {
+      idempotencyKey,
+      guildId: args.guildId,
+      nitradoConnId: args.nitradoConnId,
+      userDiscordId: args.targetUserId,
+      walletDelta: args.delta,
+      type: 'ADMIN_PAY',
+      reason,
+      sourceRef,
+    });
+
+    if (!claimed) {
+      const existing = await queryOne<AdminPayLedgerRow>(db,
+        'SELECT "guildId", "nitradoConnId", "userDiscordId", "walletDelta", "type"::text AS type, "reason", "sourceRef" FROM "EconomyLedgerEntry" WHERE "idempotencyKey"=$1 LIMIT 1',
+        idempotencyKey);
+      const samePayload = existing
+        && existing.guildId === String(args.guildId)
+        && existing.nitradoConnId === String(args.nitradoConnId)
+        && existing.userDiscordId === String(args.targetUserId)
+        && existing.walletDelta === args.delta
+        && existing.type === 'ADMIN_PAY'
+        && existing.reason === reason
+        && existing.sourceRef === sourceRef;
+      if (!samePayload) throw new Error('Admin-Pay operationId wurde bereits mit abweichenden Buchungsdaten verwendet.');
+      return { applied: false };
     }
-    await insertTransaction(db, { guildId: args.guildId, nitradoConnId: args.nitradoConnId, userDiscordId: args.targetUserId, delta: args.delta, type: 'ADMIN_PAY', reason: args.reason, actorDiscordId: args.actorDiscordId });
-    await insertLedger(db, { idempotencyKey: `admin-pay:${args.nitradoConnId}:${randomUUID()}`, guildId: args.guildId, nitradoConnId: args.nitradoConnId, userDiscordId: args.targetUserId, walletDelta: args.delta, type: 'ADMIN_PAY', reason: args.reason });
+
+    await ensureAccount(db, args.guildId, args.nitradoConnId, args.targetUserId);
+    const changed = await db.$executeRawUnsafe(
+      'UPDATE "EconomyAccount" SET "walletBalance"="walletBalance"+$4, "lifetimeEarned"="lifetimeEarned"+$4, "updatedAt"=CURRENT_TIMESTAMP WHERE "guildId"=$1 AND "nitradoConnId"=$2 AND "userDiscordId"=$3',
+      String(args.guildId), String(args.nitradoConnId), String(args.targetUserId), args.delta);
+    if (changed !== 1) throw new Error('Zielkonto konnte nicht aktualisiert werden');
+
+    await insertTransaction(db, {
+      guildId: args.guildId,
+      nitradoConnId: args.nitradoConnId,
+      userDiscordId: args.targetUserId,
+      delta: args.delta,
+      type: 'ADMIN_PAY',
+      reason,
+      actorDiscordId: args.actorDiscordId,
+    });
+    return { applied: true };
   });
 }
 
