@@ -10,13 +10,25 @@ import prisma from '../../src/database/prisma';
 import { resolveGuildPermissionAccess } from '../../src/modules/permissions/access';
 
 const db = prisma as any;
-const USER = '223456789012345678';
 const OWNER = '123456789012345678';
+const USER = '223456789012345678';
+const GUILD = '323456789012345678';
+const ROLE_A = '423456789012345678';
+const ROLE_B = '523456789012345678';
+const MANAGED_ROLE = '623456789012345678';
+
+function role(id: string, managed = false): any {
+  return { id, managed };
+}
+
+function memberWithRoles(...roles: any[]): any {
+  return { roles: { cache: new Map(roles.map(r => [r.id, r])) } };
+}
 
 function guildStub(options: { member?: any; ownerId?: string } = {}): any {
   const member = options.member;
   return {
-    id: '323456789012345678',
+    id: GUILD,
     ownerId: options.ownerId ?? OWNER,
     members: {
       cache: new Map(member ? [[USER, member]] : []),
@@ -46,7 +58,7 @@ describe('canonical guild permission access', () => {
   });
 
   test('unknown and non-delegable stored scopes never authorize a non-owner', async () => {
-    const member = { roles: { cache: new Map([['423456789012345678', {}]]) } };
+    const member = memberWithRoles(role(ROLE_A));
     const guild = guildStub({ member });
     db.guildPermissionGrant.findUnique.mockResolvedValue({
       permissions: ['permissions.manage', 'dev.console', 'unknown.scope'],
@@ -61,7 +73,7 @@ describe('canonical guild permission access', () => {
   });
 
   test('known direct and current-role scopes are unioned and sanitized', async () => {
-    const member = { roles: { cache: new Map([['423456789012345678', {}], ['523456789012345678', {}]]) } };
+    const member = memberWithRoles(role(GUILD), role(ROLE_A), role(ROLE_B), role(MANAGED_ROLE, true));
     const guild = guildStub({ member });
     db.guildPermissionGrant.findUnique.mockResolvedValue({
       permissions: ['dashboard.view', 'permissions.manage', 'dashboard.view'],
@@ -76,8 +88,27 @@ describe('canonical guild permission access', () => {
     expect(access).toMatchObject({ isOwner: false, isMember: true, allowed: true });
     expect([...access.permissions].sort()).toEqual(['dashboard.view', 'economy.view']);
     expect(db.guildPermissionRoleGrant.findMany).toHaveBeenCalledWith(expect.objectContaining({
-      where: expect.objectContaining({ guildId: guild.id, roleDiscordId: { in: expect.arrayContaining(['423456789012345678', '523456789012345678']) } }),
+      where: expect.objectContaining({
+        guildId: guild.id,
+        roleDiscordId: { in: [ROLE_A, ROLE_B] },
+      }),
     }));
+  });
+
+  test('@everyone and managed role grants can never authorize through legacy rows', async () => {
+    const member = memberWithRoles(role(GUILD), role(MANAGED_ROLE, true));
+    const guild = guildStub({ member });
+    db.guildPermissionGrant.findUnique.mockResolvedValue({ permissions: [] });
+    db.guildPermissionRoleGrant.findMany.mockResolvedValue([
+      { permissions: ['dashboard.access'] },
+    ]);
+
+    const access = await resolveGuildPermissionAccess(guild, USER);
+
+    expect(access.isMember).toBe(true);
+    expect(access.allowed).toBe(false);
+    expect([...access.permissions]).toEqual([]);
+    expect(db.guildPermissionRoleGrant.findMany).not.toHaveBeenCalled();
   });
 
   test('owner remains authorized without delegated rows', async () => {
