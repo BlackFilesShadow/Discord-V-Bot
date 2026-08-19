@@ -7,17 +7,18 @@ const client = fs.readFileSync(
 );
 
 describe('Nitrado-1V canonical client timeout/retry architecture gate', () => {
-  it('retryt Transportfehler inklusive ECONNABORTED bounded', () => {
+  it('retryt GET-Timeouts bounded, replayt ambige WRITE-Timeouts aber nicht sofort', () => {
     const request = client.indexOf('private async request<T>(');
     const catchBlock = client.indexOf('lastErr = e instanceof Error ? e : new Error(String(e));', request);
-    const boundedRetry = client.indexOf('if (attempt < 3) {', catchBlock);
+    const policy = client.indexOf("const retryableTransport = method === 'GET' || (e as AxiosError).code !== 'ECONNABORTED';", catchBlock);
+    const boundedRetry = client.indexOf('if (attempt < 3 && retryableTransport) {', policy);
     const backoff = client.indexOf('await sleep(500 * Math.pow(2, attempt - 1));', boundedRetry);
 
     expect(request).toBeGreaterThanOrEqual(0);
     expect(catchBlock).toBeGreaterThan(request);
-    expect(boundedRetry).toBeGreaterThan(catchBlock);
+    expect(policy).toBeGreaterThan(catchBlock);
+    expect(boundedRetry).toBeGreaterThan(policy);
     expect(backoff).toBeGreaterThan(boundedRetry);
-    expect(client).not.toContain("code !== 'ECONNABORTED'");
   });
 
   it('haertet den signierten Download-/Seek-Hop fuer 429, 5xx und Transportfehler', () => {
