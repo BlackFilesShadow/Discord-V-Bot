@@ -132,7 +132,6 @@ test.describe('Economy authenticated E2E', () => {
     await page.goto(`/servers/${GUILD_ID}/server/${SLOT}?tab=economy`);
 
     await expect(page.getByText('Wirtschaft-Status')).toBeVisible();
-    await expect(page.getByText('12').first()).toBeVisible();
     await expect(page.getByText(/12\.500/)).toBeVisible();
     await expect(page.getByText('Economy-Konfiguration')).toBeVisible();
     await expect(page.getByText('Schwarzmarkt')).toBeVisible();
@@ -149,7 +148,7 @@ test.describe('Economy authenticated E2E', () => {
     await page.getByPlaceholder('17–20 Ziffern').fill(OTHER_USER);
     await page.getByPlaceholder('z. B. 5000 oder -200').fill('250');
     await page.getByText('Begruendung (3–200 Zeichen)').locator('..').locator('input').fill('E2E Admin-Korrektur');
-    await page.getByRole('button', { name: /Buchen/ }).click();
+    await page.getByRole('button', { name: 'Buchung ausfuehren', exact: true }).click();
     await expect.poll(writes.adminPayWrite).not.toBeNull();
     expect(writes.adminPayWrite()).toEqual({ delta: '250', reason: 'E2E Admin-Korrektur' });
     await expect(page.getByText(`Gebucht: 250 fuer ${OTHER_USER}`)).toBeVisible();
