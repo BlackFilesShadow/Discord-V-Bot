@@ -36,13 +36,13 @@ describe('Nitrado signed file reads', () => {
       headers: {},
       data: { data: { token: { url: 'https://download.example/file', token: 'signed-secret' } } },
     });
-    getMock.mockResolvedValueOnce({ data: 'abc' });
+    getMock.mockResolvedValueOnce({ status: 200, headers: {}, data: 'abc' });
     const client = new NitradoClient('token-1234');
 
     await expect(client.downloadFile('123', '/logs/live.ADM')).resolves.toBe('abc');
     expect(getMock).toHaveBeenCalledWith(
       'https://download.example/file',
-      expect.objectContaining({ params: { token: 'signed-secret' } }),
+      expect.objectContaining({ params: { token: 'signed-secret' }, validateStatus: expect.any(Function) }),
     );
   });
 
@@ -52,7 +52,7 @@ describe('Nitrado signed file reads', () => {
       headers: {},
       data: { data: { token: { url: 'https://download.example/seek', token: 'seek-secret' } } },
     });
-    getMock.mockResolvedValueOnce({ data: 'new-bytes' });
+    getMock.mockResolvedValueOnce({ status: 200, headers: {}, data: 'new-bytes' });
     const client = new NitradoClient('token-1234');
 
     await expect(client.downloadFileRange('123', '/logs/live.ADM', 4096, 8192)).resolves.toBe('new-bytes');
@@ -63,7 +63,7 @@ describe('Nitrado signed file reads', () => {
     }));
     expect(getMock).toHaveBeenCalledWith(
       'https://download.example/seek',
-      expect.objectContaining({ params: { token: 'seek-secret' } }),
+      expect.objectContaining({ params: { token: 'seek-secret' }, validateStatus: expect.any(Function) }),
     );
   });
 
