@@ -4,8 +4,7 @@
  * Invarianten:
  * - ausschliesslich Guild-Owner duerfen User-Grants veraendern/einsehen;
  * - NON_DELEGABLE_SCOPES werden weder Autocomplete noch freier Eingabe akzeptiert;
- * - Read/Modify/Write auf dem JSON-Permissionsarray laeuft SERIALIZABLE mit
- *   Retry, damit parallele Grants/Revokes keinen Lost-Update erzeugen;
+ * - Dashboard und Slashcommands nutzen EXAKT dasselbe serialisierte Repository;
  * - /perms listet alle Grants ueber mehrere Embeds statt still nach 50 zu enden.
  */
 
@@ -16,9 +15,7 @@ import {
   EmbedBuilder,
   MessageFlags,
 } from 'discord.js';
-import { Prisma } from '@prisma/client';
 import type { Command } from '../../types';
-import prisma from '../../database/prisma';
 import { withGuildScope } from '../middleware/withGuildScope';
 import {
   PERMISSION_SCOPES,
@@ -26,6 +23,7 @@ import {
   asUserDiscordId,
 } from '../../types/scope';
 import type { PermissionScope } from '../../types/scope';
+import { getGrant, listGrants, setGrantScope } from '../../modules/permissions/repository';
 import { logAudit } from '../../utils/logger';
 import { emitGuildEvent } from '../../dashboard/socket/emitter';
 import { buildStatusEmbed, type EmbedStatus } from '../../utils/statusEmbed';
@@ -58,24 +56,6 @@ async function autocompletePermissionScope(interaction: AutocompleteInteraction)
   await interaction.respond(matches);
 }
 
-async function serializableGrantMutation<T>(
-  operation: (tx: Prisma.TransactionClient) => Promise<T>,
-): Promise<T> {
-  const maxAttempts = 4;
-  for (let attempt = 1; attempt <= maxAttempts; attempt++) {
-    try {
-      return await prisma.$transaction(operation, {
-        isolationLevel: Prisma.TransactionIsolationLevel.Serializable,
-      });
-    } catch (error) {
-      const code = (error as { code?: string }).code;
-      const retryable = code === 'P2034' || code === 'P2002';
-      if (!retryable || attempt === maxAttempts) throw error;
-    }
-  }
-  throw new Error('Permission-Transaktion konnte nicht abgeschlossen werden.');
-}
-
 export const permAddCommand: Command = {
   data: new SlashCommandBuilder()
     .setName('perm-add')
@@ -93,6 +73,17 @@ export const permAddCommand: Command = {
       await statusReply(interaction, 'ERROR', 'Bot nicht erlaubt', 'Bots koennen keine delegierbaren Guild-Permissions erhalten.');
       return;
     }
+    if (target.id === scope.actorDiscordId) {
+      await statusReply(interaction, 'INFO', 'Owner braucht keinen Grant', 'Der Server-Owner besitzt bereits alle Guild-Berechtigungen.');
+      return;
+    }
+    const member = interaction.guild?.members.cache.get(target.id)
+      ?? await interaction.guild?.members.fetch(target.id).catch(() => null);
+    if (!member) {
+      await statusReply(interaction, 'ERROR', 'Mitglied erforderlich', 'Der Ziel-User ist kein aktuelles Mitglied dieses Discord-Servers.');
+      return;
+    }
+
     const rawPerm = interaction.options.getString('scope', true).trim();
     if (!isDelegablePermissionScope(rawPerm)) {
       await statusReply(interaction, 'ERROR', 'Permission nicht delegierbar', 'Waehle eine bekannte delegierbare Permission aus dem Autocomplete.');
@@ -100,35 +91,13 @@ export const permAddCommand: Command = {
     }
     const perm = rawPerm;
     const targetId = asUserDiscordId(target.id);
-
-    const result = await serializableGrantMutation(async tx => {
-      const existing = await tx.guildPermissionGrant.findUnique({
-        where: { guildId_userDiscordId: { guildId: scope.guildId, userDiscordId: targetId } },
-      });
-      const current = Array.isArray(existing?.permissions) ? (existing!.permissions as string[]) : [];
-      const set = new Set<string>(current.filter(value => !NON_DELEGABLE_SCOPES.has(value as PermissionScope)));
-      if (set.has(perm)) return 'already' as const;
-      set.add(perm);
-      const permissions = [...set].sort();
-
-      await tx.guildPermissionGrant.upsert({
-        where: { guildId_userDiscordId: { guildId: scope.guildId, userDiscordId: targetId } },
-        create: {
-          guildId: scope.guildId,
-          userDiscordId: targetId,
-          permissions,
-          grantedByDiscordId: scope.actorDiscordId,
-        },
-        update: { permissions, grantedByDiscordId: scope.actorDiscordId },
-      });
-      return 'changed' as const;
-    });
-
-    if (result === 'already') {
+    const before = await getGrant(scope.guildId, targetId);
+    if (before?.permissions.includes(perm)) {
       await statusReply(interaction, 'INFO', 'Permission bereits vorhanden', `<@${target.id}> besitzt \`${perm}\` bereits.`);
       return;
     }
 
+    await setGrantScope(scope.guildId, targetId, perm, true, scope.actorDiscordId);
     logAudit('PERM_GRANTED', 'SECURITY', {
       guildId: scope.guildId,
       target: target.id,
@@ -163,42 +132,17 @@ export const permRemoveCommand: Command = {
     }
     const perm = rawPerm;
     const targetId = asUserDiscordId(target.id);
-
-    const result = await serializableGrantMutation(async tx => {
-      const existing = await tx.guildPermissionGrant.findUnique({
-        where: { guildId_userDiscordId: { guildId: scope.guildId, userDiscordId: targetId } },
-      });
-      if (!existing) return 'no-grant' as const;
-
-      const current = Array.isArray(existing.permissions) ? (existing.permissions as string[]) : [];
-      const hadPermission = current.includes(perm);
-      if (!hadPermission) return 'missing' as const;
-      const filtered = current
-        .filter(value => value !== perm && !NON_DELEGABLE_SCOPES.has(value as PermissionScope))
-        .sort();
-
-      if (filtered.length === 0) {
-        await tx.guildPermissionGrant.delete({
-          where: { guildId_userDiscordId: { guildId: scope.guildId, userDiscordId: targetId } },
-        });
-      } else {
-        await tx.guildPermissionGrant.update({
-          where: { guildId_userDiscordId: { guildId: scope.guildId, userDiscordId: targetId } },
-          data: { permissions: filtered, grantedByDiscordId: scope.actorDiscordId },
-        });
-      }
-      return 'changed' as const;
-    });
-
-    if (result === 'no-grant') {
+    const before = await getGrant(scope.guildId, targetId);
+    if (!before) {
       await statusReply(interaction, 'INFO', 'Keine Permissions', `<@${target.id}> besitzt keinen User-Permission-Grant.`);
       return;
     }
-    if (result === 'missing') {
+    if (!before.permissions.includes(perm)) {
       await statusReply(interaction, 'INFO', 'Permission nicht vorhanden', `<@${target.id}> besitzt \`${perm}\` nicht.`);
       return;
     }
 
+    await setGrantScope(scope.guildId, targetId, perm, false, scope.actorDiscordId);
     logAudit('PERM_REVOKED', 'SECURITY', {
       guildId: scope.guildId,
       target: target.id,
@@ -223,10 +167,8 @@ export const permsCommand: Command = {
       return;
     }
 
-    const rows = await prisma.guildPermissionGrant.findMany({
-      where: { guildId: scope.guildId },
-      orderBy: { updatedAt: 'desc' },
-    });
+    const rows = (await listGrants(scope.guildId))
+      .sort((a, b) => b.updatedAt.getTime() - a.updatedAt.getTime());
     if (rows.length === 0) {
       await statusReply(interaction, 'INFO', 'Keine Grants', 'In diesem Discord-Server existieren keine User-Permission-Grants.');
       return;
@@ -243,11 +185,11 @@ export const permsCommand: Command = {
         .setDescription(`**${rows.length}** User-Grant(s) auf diesem Server`)
         .setTimestamp();
       for (const row of page) {
-        const permissions = Array.isArray(row.permissions) ? (row.permissions as string[]) : [];
-        const delegable = permissions.filter(value => !NON_DELEGABLE_SCOPES.has(value as PermissionScope));
         embed.addFields({
           name: `User ${row.userDiscordId}`,
-          value: delegable.length > 0 ? delegable.map(value => `\`${value}\``).join(' ').slice(0, 1024) : '_keine delegierbaren Permissions_',
+          value: row.permissions.length > 0
+            ? row.permissions.map(value => `\`${value}\``).join(' ').slice(0, 1024)
+            : '_keine delegierbaren Permissions_',
           inline: false,
         });
       }
