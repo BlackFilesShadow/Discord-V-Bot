@@ -156,6 +156,15 @@ interface SignedFileToken {
   token?: string;
 }
 
+function axiosStatus(error: unknown): number | null {
+  const status = (error as AxiosError)?.response?.status;
+  return typeof status === 'number' && Number.isFinite(status) ? status : null;
+}
+
+function axiosRetryAfter(error: unknown): unknown {
+  return (error as AxiosError)?.response?.headers?.['retry-after'];
+}
+
 export class NitradoClient {
   private readonly http: AxiosInstance;
 
@@ -207,7 +216,10 @@ export class NitradoClient {
         if (e instanceof NitradoCircuitOpenError) throw e;
         lastErr = e instanceof Error ? e : new Error(String(e));
         breaker.recordFailure();
-        if (attempt < 3 && (e as AxiosError).code !== 'ECONNABORTED') {
+        // Nitrado-1V: Timeout (ECONNABORTED) ist genau wie andere Transportfehler
+        // transient. Ein einzelner 15s-Timeout darf weder READ noch WRITE sofort
+        // terminalisieren; alle Transportfehler bleiben auf drei Versuche begrenzt.
+        if (attempt < 3) {
           await sleep(500 * Math.pow(2, attempt - 1));
           continue;
         }
@@ -344,14 +356,49 @@ export class NitradoClient {
 
   private async fetchSignedText(meta: SignedFileToken, maxBytes: number): Promise<string> {
     if (!meta.url) throw new NitradoApiError('Keine Download-URL', null, 'file_server');
-    const res = await axios.get<string>(meta.url, {
-      responseType: 'text',
-      timeout: 30_000,
-      params: meta.token ? { token: meta.token } : undefined,
-      maxContentLength: maxBytes,
-      maxBodyLength: maxBytes,
-    });
-    return res.data;
+
+    let lastErr: Error | null = null;
+    for (let attempt = 1; attempt <= 3; attempt++) {
+      try {
+        const res = await axios.get<string>(meta.url, {
+          responseType: 'text',
+          timeout: 30_000,
+          params: meta.token ? { token: meta.token } : undefined,
+          maxContentLength: maxBytes,
+          maxBodyLength: maxBytes,
+        });
+        return res.data;
+      } catch (e) {
+        const status = axiosStatus(e);
+        lastErr = e instanceof Error ? e : new Error(String(e));
+
+        if (status === 429) {
+          if (attempt >= 3) {
+            throw new NitradoApiError('Signed Download Rate-Limit (429) nach mehreren Versuchen', 429, 'file_server');
+          }
+          await sleep(parseRetryAfterMs(axiosRetryAfter(e)));
+          continue;
+        }
+
+        if (status !== null) {
+          if (status >= 500 && attempt < 3) {
+            await sleep(500 * Math.pow(2, attempt - 1));
+            continue;
+          }
+          throw new NitradoApiError(lastErr.message || `HTTP ${status}`, status, 'file_server');
+        }
+
+        // Signierte Downloads/Seek-Hops sind ein eigener HTTP-Hop. Auch hier
+        // duerfen Timeout/Transportfehler nicht nach dem ersten Versuch die
+        // ADM-/Mirror-Verarbeitung abbrechen; die Retry-Grenze bleibt bounded.
+        if (attempt < 3) {
+          await sleep(500 * Math.pow(2, attempt - 1));
+          continue;
+        }
+      }
+    }
+
+    throw new NitradoApiError(lastErr?.message ?? 'Signed Download fehlgeschlagen', null, 'file_server');
   }
 
   async downloadFile(serviceId: string, fullPath: string): Promise<string> {
