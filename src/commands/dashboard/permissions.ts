@@ -7,6 +7,7 @@
  * - Dashboard und Slashcommands nutzen EXAKT dasselbe serialisierte Repository;
  * - auch idempotente Command-Intents laufen durch die serialisierte Mutation,
  *   damit ein paralleler Gegen-Request nicht zwischen Vorab-Read und Return gewinnt;
+ * - Direct-Grants werden an die live validierte Mitgliedschaftsepoche gebunden;
  * - /perms listet alle Grants ueber mehrere Embeds statt still nach 50 zu enden.
  */
 
@@ -85,6 +86,15 @@ export const permAddCommand: Command = {
       await statusReply(interaction, 'ERROR', 'Mitglied erforderlich', 'Der Ziel-User ist kein aktuelles Mitglied dieses Discord-Servers.');
       return;
     }
+    if (!member.joinedAt) {
+      await statusReply(
+        interaction,
+        'ERROR',
+        'Mitgliedschaft nicht sicher bestimmbar',
+        'Die aktuelle Beitritts-Epoche des Ziel-Users konnte nicht sicher bestimmt werden. Bitte spaeter erneut versuchen.',
+      );
+      return;
+    }
 
     const rawPerm = interaction.options.getString('scope', true).trim();
     if (!isDelegablePermissionScope(rawPerm)) {
@@ -96,8 +106,16 @@ export const permAddCommand: Command = {
     const before = await getGrant(scope.guildId, targetId);
 
     // Immer serialisiert sicherstellen, selbst wenn der Vorab-Read bereits true
-    // sagt. Sonst koennte ein paralleler Revoke nach diesem Read gewinnen.
-    await setGrantScope(scope.guildId, targetId, perm, true, scope.actorDiscordId);
+    // sagt. Die live validierte joinedAt-Epoche verhindert zugleich, dass ein
+    // Grant aus einer frueheren Mitgliedschaft als Ausgangsbasis wiederbelebt wird.
+    await setGrantScope(
+      scope.guildId,
+      targetId,
+      perm,
+      true,
+      scope.actorDiscordId,
+      member.joinedAt,
+    );
     if (before?.permissions.includes(perm)) {
       await statusReply(interaction, 'INFO', 'Permission bereits vorhanden', `<@${target.id}> besitzt \`${perm}\`; der Zustand wurde bestaetigt.`);
       return;
@@ -138,10 +156,21 @@ export const permRemoveCommand: Command = {
     const perm = rawPerm;
     const targetId = asUserDiscordId(target.id);
     const before = await getGrant(scope.guildId, targetId);
+    const member = interaction.guild?.members.cache.get(target.id)
+      ?? await interaction.guild?.members.fetch(target.id).catch(() => null);
 
-    // Auch ein scheinbarer No-op wird im Repository serialisiert. Damit bedeutet
-    // der abgeschlossene Command deterministisch: dieser Scope ist danach AUS.
-    await setGrantScope(scope.guildId, targetId, perm, false, scope.actorDiscordId);
+    // Auch ein scheinbarer No-op wird im Repository serialisiert. Bei einem
+    // aktuellen Mitglied wird dessen Epoche mitgegeben, damit nur der gewollte
+    // Scope entfernt wird. Ohne aktuellen Member-Beweis wird fail-closed die
+    // komplette stale Direct-Grant-Zeile geloescht.
+    await setGrantScope(
+      scope.guildId,
+      targetId,
+      perm,
+      false,
+      scope.actorDiscordId,
+      member?.joinedAt ?? null,
+    );
     if (!before) {
       await statusReply(interaction, 'INFO', 'Keine Permissions', `<@${target.id}> besitzt keinen User-Permission-Grant; der Zustand wurde bestaetigt.`);
       return;
