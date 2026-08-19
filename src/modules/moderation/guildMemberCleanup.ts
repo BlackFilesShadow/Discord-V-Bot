@@ -61,10 +61,20 @@ export async function cleanupGuildMemberData(
         select: { id: true },
       });
 
-      // Alle Faction-IDs werden innerhalb derselben Transaktion und strikt fuer
-      // diese Guild gelesen. FactionMember besitzt selbst keine guildId-Spalte.
+      // FactionMember besitzt selbst keine guildId-Spalte. Deshalb werden nur
+      // Fraktionen dieser Guild geladen, in denen der User Mitglied oder in
+      // einem aktuellen Leitungsfeld eingetragen ist. Das ist zugleich die
+      // exakte Menge fuer den spaeteren best-effort Embed-Refresh.
       const factions = await tx.faction.findMany({
-        where: { guildId },
+        where: {
+          guildId,
+          OR: [
+            { leaderDiscordId: discordId },
+            { deputyDiscordId: discordId },
+            { treasurerDiscordId: discordId },
+            { members: { some: { userDiscordId: discordId } } },
+          ],
+        },
         select: { id: true },
         orderBy: { id: 'asc' },
       });
@@ -154,7 +164,7 @@ export async function cleanupGuildMemberData(
     // atomaren DB-Cut muessen nur noch die persistenten Faction-Embeds/Listen den
     // neuen Zustand spiegeln. Das ist bewusst best-effort: Discord-Ausfall darf
     // einen bereits erfolgreichen Datenschutz-/Security-Cleanup nie zurueckrollen.
-    if (result.factionMemberships > 0 || result.factionLeadershipRefs > 0) {
+    if (result.affectedFactionIds.length > 0) {
       const client = tryGetDashboardClient();
       if (client) {
         for (const factionId of result.affectedFactionIds) {
