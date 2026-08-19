@@ -29,34 +29,28 @@ describe('Dashboard-1V permission membership/data-integrity/race architecture', 
     expect(accessSource).toContain('VALID_DELEGABLE_SCOPES');
   });
 
-  test('direct grants are additionally fenced to the current Discord membership epoch', () => {
-    expect(accessSource).toContain('export function directGrantBelongsToMembership');
+  test('direct grants carry a durable membership-generation marker with a legacy-only fallback', () => {
+    expect(accessSource).toContain("MEMBERSHIP_EPOCH_PREFIX = '__vbot_membership_joined_at:'");
+    expect(accessSource).toContain('export function directGrantMembershipEpoch');
+    expect(accessSource).toContain('export function storedDirectPermissions');
+    expect(accessSource).toContain('explicitEpoch.getTime() === memberJoinedAt.getTime()');
     expect(accessSource).toContain('grantUpdatedAt.getTime() >= memberJoinedAt.getTime()');
-    expect(accessSource).toContain('directGrantBelongsToMembership(directGrant?.updatedAt, member.joinedAt)');
+    expect(accessSource).toContain('directGrant?.permissions');
     expect(accessSource).toContain('select: { permissions: true, updatedAt: true }');
   });
 
-  test('HTTP, Socket and Slashcommands consume the same canonical resolver', () => {
-    for (const source of [authSource, socketSource, commandScopeSource]) {
+  test('HTTP, Socket, Slashcommands and guild visibility consume the canonical resolver', () => {
+    for (const source of [authSource, socketSource, commandScopeSource, guildListSource]) {
       expect(source).toContain('resolveDelegatedPermissionContext');
       expect(source).toContain('await resolveDelegatedPermissionContext');
     }
     expect(authSource).not.toContain('prisma.guildPermissionGrant.findUnique({\n        where: { guildId_userDiscordId');
     expect(socketSource).not.toContain('prisma.guildPermissionGrant.findUnique');
     expect(commandScopeSource).not.toContain('prisma.guildPermissionGrant.findUnique');
+    expect(guildListSource).toContain('if (!delegated.member || delegated.permissions.size === 0) continue;');
   });
 
-  test('guild list requires live membership and the same current-epoch direct-grant fence', () => {
-    const candidates = guildListSource.indexOf('for (const guildId of candidateGuildIds)');
-    const member = guildListSource.indexOf('await guild.members.fetch(req.auth.discordId)', candidates);
-    const directCheck = guildListSource.indexOf('directGrantBelongsToMembership(directGrant.updatedAt, member.joinedAt)', candidates);
-    expect(candidates).toBeGreaterThanOrEqual(0);
-    expect(member).toBeGreaterThan(candidates);
-    expect(directCheck).toBeGreaterThan(member);
-    expect(guildListSource).toContain('select: { guildId: true, permissions: true, updatedAt: true }');
-  });
-
-  test('direct grants are revoked at leave and rejoin cleanup deletes only pre-join epochs', () => {
+  test('direct grants are revoked at leave and rejoin cleanup deletes only pre-join updatedAt rows', () => {
     const leaveDelete = leaveSource.indexOf('prisma.guildPermissionGrant.deleteMany');
     const cleanupConfig = leaveSource.indexOf('await getLeaveCleanupConfig');
     const joinDelete = joinSource.indexOf('prisma.guildPermissionGrant.deleteMany');
@@ -96,22 +90,25 @@ describe('Dashboard-1V permission membership/data-integrity/race architecture', 
     expect(memberCheck).toBeGreaterThan(userPut);
     expect(joinedAtCheck).toBeGreaterThan(memberCheck);
     expect(setUser).toBeGreaterThan(joinedAtCheck);
-    expect(permissionRouteSource.slice(setUser, setUser + 400)).toContain('targetMember.member.joinedAt');
+    expect(permissionRouteSource.slice(setUser, setUser + 500)).toContain('targetMember.member.joinedAt');
     expect(roleCheck).toBeGreaterThan(rolePut);
     expect(setRole).toBeGreaterThan(roleCheck);
     expect(permissionRouteSource).toContain('Ziel-User ist kein aktuelles Mitglied dieser Guild.');
     expect(permissionRouteSource).toContain('Managed/@everyone-Rollen sind nicht delegierbar.');
   });
 
-  test('permission mutations use SERIALIZABLE retry, epoch fencing and remove empty grant rows', () => {
+  test('permission mutations use SERIALIZABLE retry, generation fencing and remove empty grant rows', () => {
     expect(repositorySource).toContain('Prisma.TransactionIsolationLevel.Serializable');
     expect(repositorySource).toContain("code === 'P2034' || code === 'P2002'");
     expect(repositorySource).toContain('serializablePermissionMutation');
     expect(repositorySource).toContain('membershipJoinedAt: Date | null = null');
     expect(repositorySource).toContain('enabled && !membershipJoinedAt');
-    expect(repositorySource).toContain('directGrantBelongsToMembership(existing.updatedAt, membershipJoinedAt)');
+    expect(repositorySource).toContain('directGrantMembershipEpoch(existing?.permissions)');
+    expect(repositorySource).toContain('storedEpoch.getTime() > membershipJoinedAt.getTime()');
+    expect(repositorySource).toContain('throw new PermissionMembershipEpochConflictError()');
+    expect(repositorySource).toContain('directGrantBelongsToMembership(existing.permissions, existing.updatedAt, membershipJoinedAt)');
     expect(repositorySource).toContain('existingIsCurrentMembership ? sanitizeScopes(existing?.permissions) : []');
-    expect(repositorySource).toContain('!enabled && (!membershipJoinedAt || !existingIsCurrentMembership)');
+    expect(repositorySource).toContain('storedDirectPermissions(next, epoch)');
     expect(repositorySource).toContain('tx.guildPermissionGrant.deleteMany');
     expect(repositorySource).toContain('tx.guildPermissionRoleGrant.deleteMany');
 
@@ -121,6 +118,14 @@ describe('Dashboard-1V permission membership/data-integrity/race architecture', 
     const roleWrite = repositorySource.indexOf('tx.guildPermissionRoleGrant.upsert');
     expect(directWrite).toBeGreaterThan(directRead);
     expect(roleWrite).toBeGreaterThan(roleRead);
+  });
+
+  test('membership-generation conflicts surface as 409 instead of stale overwrite or 500', () => {
+    expect(permissionRouteSource).toContain('PermissionMembershipEpochConflictError');
+    expect(permissionRouteSource).toContain('res.status(409).json');
+    expect(permissionRouteSource).toContain('PERMISSION_MEMBERSHIP_EPOCH_CONFLICT');
+    expect(commandPermissionsSource).toContain('PermissionMembershipEpochConflictError');
+    expect(commandPermissionsSource).toContain('Mitgliedschaft hat sich geaendert');
   });
 
   test('non-delegable scopes are grant-blocked but revoke remains a cleanup path', () => {
