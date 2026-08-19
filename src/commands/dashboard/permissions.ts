@@ -26,6 +26,7 @@ import {
 } from '../../types/scope';
 import type { PermissionScope } from '../../types/scope';
 import {
+  deleteGrantForMembershipEpoch,
   listGrants,
   setGrantScope,
   PermissionMembershipEpochConflictError,
@@ -65,6 +66,40 @@ async function membershipConflictReply(
     'Die Discord-Mitgliedschaft des Ziel-Users hat sich waehrend der Aktion geaendert. Bitte den Befehl mit dem aktuellen Mitglied erneut ausfuehren.',
   );
   return true;
+}
+
+/** Erzwingt nach dem DB-Commit einen frischen Discord-Member-Lookup. */
+async function membershipEpochStillCurrent(
+  interaction: ChatInputCommandInteraction,
+  targetDiscordId: string,
+  expectedJoinedAt: Date,
+): Promise<boolean> {
+  if (!interaction.guild) return false;
+  const member = await interaction.guild.members
+    .fetch({ user: targetDiscordId, force: true })
+    .catch(() => null);
+  return !!member?.joinedAt && member.joinedAt.getTime() === expectedJoinedAt.getTime();
+}
+
+async function compensateStaleMembershipGeneration(
+  interaction: ChatInputCommandInteraction,
+  guildId: Parameters<typeof deleteGrantForMembershipEpoch>[0],
+  targetId: Parameters<typeof deleteGrantForMembershipEpoch>[1],
+  expectedJoinedAt: Date,
+): Promise<void> {
+  try {
+    await deleteGrantForMembershipEpoch(guildId, targetId, expectedJoinedAt);
+  } catch (error) {
+    // Die alte Generation bleibt authorizer-seitig wirkungslos; der Cleanup-
+    // Fehler wird fuer Operations/Audit sichtbar statt verschluckt.
+    logAudit('PERM_EPOCH_COMPENSATION_FAILED', 'SECURITY', {
+      guildId,
+      target: targetId,
+      actor: interaction.user.id,
+      expectedJoinedAt: expectedJoinedAt.toISOString(),
+      error: error instanceof Error ? error.message : String(error),
+    });
+  }
 }
 
 async function autocompletePermissionScope(interaction: AutocompleteInteraction): Promise<void> {
@@ -120,6 +155,7 @@ export const permAddCommand: Command = {
     }
     const perm = rawPerm;
     const targetId = asUserDiscordId(target.id);
+    const expectedJoinedAt = member.joinedAt;
 
     try {
       await setGrantScope(
@@ -128,8 +164,13 @@ export const permAddCommand: Command = {
         perm,
         true,
         scope.actorDiscordId,
-        member.joinedAt,
+        expectedJoinedAt,
       );
+
+      if (!(await membershipEpochStillCurrent(interaction, target.id, expectedJoinedAt))) {
+        await compensateStaleMembershipGeneration(interaction, scope.guildId, targetId, expectedJoinedAt);
+        throw new PermissionMembershipEpochConflictError();
+      }
     } catch (error) {
       if (await membershipConflictReply(interaction, error)) return;
       throw error;
@@ -176,6 +217,7 @@ export const permRemoveCommand: Command = {
     const targetId = asUserDiscordId(target.id);
     const member = interaction.guild?.members.cache.get(target.id)
       ?? await interaction.guild?.members.fetch(target.id).catch(() => null);
+    const expectedJoinedAt = member?.joinedAt ?? null;
 
     try {
       await setGrantScope(
@@ -184,8 +226,13 @@ export const permRemoveCommand: Command = {
         perm,
         false,
         scope.actorDiscordId,
-        member?.joinedAt ?? null,
+        expectedJoinedAt,
       );
+
+      if (expectedJoinedAt && !(await membershipEpochStillCurrent(interaction, target.id, expectedJoinedAt))) {
+        await compensateStaleMembershipGeneration(interaction, scope.guildId, targetId, expectedJoinedAt);
+        throw new PermissionMembershipEpochConflictError();
+      }
     } catch (error) {
       if (await membershipConflictReply(interaction, error)) return;
       throw error;
