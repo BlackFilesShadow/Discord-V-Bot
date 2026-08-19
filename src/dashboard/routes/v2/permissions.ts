@@ -12,6 +12,7 @@ import {
   listGrants, setGrantScope, deleteGrant,
   listRoleGrants, setRoleGrantScope, deleteRoleGrant,
 } from '../../../modules/permissions/repository';
+import { resolveDelegableRoleTarget, resolveDelegableUserTarget } from '../../../modules/permissions/targetValidation';
 import { asUserDiscordId, NON_DELEGABLE_SCOPES, PERMISSION_SCOPES } from '../../../types/scope';
 import type { PermissionScope } from '../../../types/scope';
 import { logAuditDb } from '../../../utils/logger';
@@ -46,7 +47,6 @@ async function enrichGrants(
     let avatar: string | null = null;
     if (guild) {
       try {
-        // Cache zuerst, dann Fetch (best-effort, swallow errors).
         const member = guild.members.cache.get(g.userDiscordId)
           ?? await guild.members.fetch(g.userDiscordId).catch(() => null);
         if (member) {
@@ -54,7 +54,6 @@ async function enrichGrants(
           displayName = member.displayName ?? member.user.globalName ?? member.user.username;
           avatar = member.user.avatar ?? null;
         } else {
-          // Member nicht mehr in Guild: zumindest User-Objekt versuchen.
           const user = client?.users.cache.get(g.userDiscordId)
             ?? await client?.users.fetch(g.userDiscordId).catch(() => null);
           if (user) {
@@ -63,7 +62,7 @@ async function enrichGrants(
             avatar = user.avatar ?? null;
           }
         }
-      } catch { /* swallow — Frontend zeigt fallback */ }
+      } catch { /* owner can still see/purge the stale raw ID */ }
     }
     return {
       userDiscordId: g.userDiscordId,
@@ -101,6 +100,10 @@ function parseScope(raw: string): PermissionScope | null {
 
 const SNOWFLAKE_RE = /^\d{17,20}$/;
 
+function currentGuild(guildId: string) {
+  return tryGetDashboardClient()?.guilds.cache.get(guildId) ?? null;
+}
+
 // ── Role-based grants (registered BEFORE the user catch-all routes!) ──────
 
 permissionsRouter.put('/roles/:roleId/:scope', requireGuildOwner, async (req, res) => {
@@ -111,6 +114,12 @@ permissionsRouter.put('/roles/:roleId/:scope', requireGuildOwner, async (req, re
   const perm = parseScope(String(req.params.scope));
   if (!perm) { res.status(400).json({ error: 'Unbekannter Scope.' }); return; }
   if (NON_DELEGABLE_SCOPES.has(perm)) { res.status(403).json({ error: 'Scope nicht delegierbar.' }); return; }
+
+  const guild = currentGuild(scope.guildId);
+  if (!guild) { res.status(503).json({ error: 'Guild derzeit nicht sicher aufloesbar.' }); return; }
+  const role = await resolveDelegableRoleTarget(guild, roleId);
+  if (!role) { res.status(400).json({ error: 'Rolle existiert nicht in dieser Guild oder ist managed/nicht delegierbar.' }); return; }
+
   const out = await setRoleGrantScope(scope.guildId, roleId, perm, true, asUserDiscordId(scope.actorDiscordId));
   logAuditDb('PERM_ROLE_GRANTED', 'ADMIN', { actorUserId: req.auth!.userId, guildId: scope.guildId, details: { roleId, perm } });
   emitGuildEvent(scope.guildId, { type: 'permissions.updated', payload: { guildId: scope.guildId, roleDiscordId: roleId } });
@@ -150,6 +159,12 @@ permissionsRouter.put('/:userDiscordId/:scope', requireGuildOwner, async (req, r
   const perm = parseScope(String(req.params.scope));
   if (!perm) { res.status(400).json({ error: 'Unbekannter Scope.' }); return; }
   if (NON_DELEGABLE_SCOPES.has(perm)) { res.status(403).json({ error: 'Scope nicht delegierbar.' }); return; }
+
+  const guild = currentGuild(scope.guildId);
+  if (!guild) { res.status(503).json({ error: 'Guild derzeit nicht sicher aufloesbar.' }); return; }
+  const member = await resolveDelegableUserTarget(guild, target);
+  if (!member) { res.status(400).json({ error: 'User ist kein aktuelles Nicht-Bot-Mitglied dieser Guild.' }); return; }
+
   const out = await setGrantScope(scope.guildId, target, perm, true, asUserDiscordId(scope.actorDiscordId));
   logAuditDb('PERM_GRANTED', 'ADMIN', { actorUserId: req.auth!.userId, guildId: scope.guildId, details: { target, perm } });
   emitGuildEvent(scope.guildId, { type: 'permissions.updated', payload: { guildId: scope.guildId, userDiscordId: target } });
