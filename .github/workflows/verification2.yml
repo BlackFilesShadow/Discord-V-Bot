@@ -160,10 +160,30 @@ jobs:
         with:
           path: ~/.cache/ms-playwright
           key: playwright-${{ runner.os }}-${{ steps.pw-version.outputs.version }}
-      - if: steps.pw-cache.outputs.cache-hit != 'true'
-        run: npx playwright install --with-deps chromium
-      - if: steps.pw-cache.outputs.cache-hit == 'true'
-        run: npx playwright install-deps chromium
+      - name: Harden Ubuntu APT mirror for Playwright
+        working-directory: .
+        shell: bash
+        run: |
+          set -euo pipefail
+          for file in /etc/apt/sources.list /etc/apt/sources.list.d/ubuntu.sources; do
+            if [ -f "$file" ]; then
+              sudo sed -i \
+                -e 's|http://azure.archive.ubuntu.com/ubuntu|https://archive.ubuntu.com/ubuntu|g' \
+                -e 's|https://azure.archive.ubuntu.com/ubuntu|https://archive.ubuntu.com/ubuntu|g' \
+                "$file"
+            fi
+          done
+          sudo tee /etc/apt/apt.conf.d/99-vbot-network >/dev/null <<'EOF'
+          Acquire::Retries "5";
+          Acquire::http::Timeout "20";
+          Acquire::https::Timeout "20";
+          EOF
+          sudo rm -rf /var/lib/apt/lists/*
+      - name: Install Playwright system deps
+        run: timeout --signal=TERM --kill-after=30s 5m npx playwright install-deps chromium
+      - name: Install Playwright browser (cache miss)
+        if: steps.pw-cache.outputs.cache-hit != 'true'
+        run: npx playwright install chromium
       - run: npm run e2e
         env:
           CI: 'true'
