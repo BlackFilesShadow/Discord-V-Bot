@@ -22,6 +22,7 @@ import { MessageFlags } from 'discord.js';
 import prisma from '../../database/prisma';
 import { asGuildId, asUserDiscordId, asNitradoConnId, hasCommandPermission } from '../../types/scope';
 import type { GuildScope, NitradoConnId, PermissionScope } from '../../types/scope';
+import { resolveDelegatedPermissionContext } from '../../modules/permissions/access';
 import {
   MAX_GAME_SERVERS_PER_GUILD,
   resolveOrPromptGameServerScope,
@@ -55,11 +56,6 @@ export interface WithGuildScopeOptions {
   requireSlotToggle?: 'whitelistActive' | 'economyActive';
 }
 
-/**
- * Link/Unlink/Force-Link lesen keine Wallet-/Bank-/Casino-Daten. Sie muessen
- * auch waehrend einer Legacy-Economy-Migration funktionieren, damit Identitaet
- * nicht an einem Wirtschaftsmigrationszustand haengt.
- */
 const ECONOMY_GUARD_EXEMPT_COMMANDS = new Set(['link', 'unlink', 'force-link', 'force-unlink']);
 
 function requiresLegacyEconomyGuard(commandName: string, opts: WithGuildScopeOptions): boolean {
@@ -198,36 +194,25 @@ export function withGuildScope(opts: WithGuildScopeOptions, handler: ScopedHandl
     }
 
     const guild = interaction.guild;
-    const isOwner = !!guild && guild.ownerId === actorId;
+    if (!guild) {
+      await statusReply(interaction, 'ERROR', 'Server nicht aufloesbar', 'Der aktuelle Discord-Server konnte nicht sicher aufgeloest werden.');
+      return;
+    }
+    const isOwner = guild.ownerId === actorId;
 
-    const permsSet = new Set<PermissionScope>();
+    let permsSet = new Set<PermissionScope>();
     if (!isOwner) {
-      try {
-        const grant = await prisma.guildPermissionGrant.findUnique({
-          where: { guildId_userDiscordId: { guildId, userDiscordId: actorId } },
+      const delegated = await resolveDelegatedPermissionContext(guild, actorId);
+      if (!delegated.member) {
+        logAudit('CMD_GUILD_MEMBERSHIP_REQUIRED', 'SECURITY', {
+          guildId,
+          actorId,
+          command: interaction.commandName,
         });
-        const list = Array.isArray(grant?.permissions) ? (grant!.permissions as string[]) : [];
-        for (const s of list) permsSet.add(s as PermissionScope);
-      } catch (e) {
-        logger.error('GuildPermissionGrant-Lookup fehlgeschlagen:', e as Error);
+        await statusReply(interaction, 'ERROR', 'Keine Berechtigung', 'Du bist kein aktuelles Mitglied dieses Servers.');
+        return;
       }
-      try {
-        const member = guild?.members.cache.get(actorId)
-          ?? (guild ? await guild.members.fetch(actorId).catch(() => null) : null);
-        const roleIds = member ? Array.from(member.roles.cache.keys()) : [];
-        if (roleIds.length > 0) {
-          const roleGrants = await prisma.guildPermissionRoleGrant.findMany({
-            where: { guildId, roleDiscordId: { in: roleIds } },
-            select: { permissions: true },
-          });
-          for (const r of roleGrants) {
-            const arr = Array.isArray(r.permissions) ? (r.permissions as string[]) : [];
-            for (const s of arr) permsSet.add(s as PermissionScope);
-          }
-        }
-      } catch (e) {
-        logger.warn('GuildPermissionRoleGrant-Lookup fehlgeschlagen:', e as Error);
-      }
+      permsSet = delegated.permissions;
     }
 
     let nitradoConnId: NitradoConnId | null = null;
