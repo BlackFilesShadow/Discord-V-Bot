@@ -133,6 +133,9 @@ async function resolvePayoutTargetByUserGuid(guildId: string, rawUserId: unknown
   });
   if (!user || user.status !== 'ACTIVE') throw new Error('Auszahlungsziel ist nicht aktiv oder nicht vorhanden.');
 
+  // Die Mutation darf einer erratenen/leaked globalen User-GUID niemals blind
+  // vertrauen: direkt vor der Buchung muss der zugehoerige Discord-Account noch
+  // Mitglied genau dieser Guild und ein menschlicher Account sein.
   const client = tryGetDashboardClient();
   if (!client) throw new Error('Bot nicht bereit; Auszahlungsziel konnte nicht validiert werden.');
   const guild = client.guilds.cache.get(guildId);
@@ -201,6 +204,11 @@ economyVirtualAccountsRouter.post('/', requireGuildPermission('economy.manage'),
   }
 });
 
+/**
+ * Economy-1K: Discord-Autocomplete mit interner User-GUID als kanonischem Wert.
+ * Nur aktive, im V-Bot registrierte Menschen aus exakt dieser Discord-Guild
+ * werden angeboten. Discord-Snowflakes bleiben reine Anzeige-/Aufloesungsdaten.
+ */
 economyVirtualAccountsRouter.get('/members', payoutMemberSearchLimiter, requireGuildPermission('economy.view'), async (req, res) => {
   const { scope } = scoped(req);
   const client = tryGetDashboardClient();
