@@ -8,8 +8,8 @@ const worker = read('src/modules/nitrado/jobWorker.ts');
 const expiry = read('src/modules/bans/expiryRuntime.ts');
 const command = read('src/commands/dashboard/serverBan.ts');
 
-describe('Nitrado-1J automatic SERVER_BAN_REMOVE DEAD cooldown gate', () => {
-  it('checks active jobs and connection-wide recent DEAD history under the same subject lock before create', () => {
+describe('Nitrado-1J/1U automatic SERVER_BAN_REMOVE DEAD cooldown gate', () => {
+  it('checks active jobs and connection-wide recent DEAD history under connection + subject locks before create', () => {
     const ensureInLock = outbox.indexOf('async function ensureJobInLock(');
     const activeQuery = outbox.indexOf("status: { in: ['PENDING', 'RUNNING'] }", ensureInLock);
     const deadQuery = outbox.indexOf("status: 'DEAD'", activeQuery);
@@ -17,8 +17,9 @@ describe('Nitrado-1J automatic SERVER_BAN_REMOVE DEAD cooldown gate', () => {
     const boundedDeadRead = outbox.indexOf('take: 1', deadAge);
     const deadBlock = outbox.indexOf('if (recentDead.length > 0) return false;', boundedDeadRead);
     const create = outbox.indexOf('await tx.nitradoJob.create({', deadBlock);
-    const subjectLock = outbox.indexOf('return withNitradoOutboxSubjectLock(client, lockSubject, tx =>');
-    const lockedEnsure = outbox.indexOf('ensureJobInLock(tx, scope, operation, payload, options)', subjectLock);
+    const connectionLock = outbox.indexOf('withNitradoOutboxConnectionLock(client, scope, tx =>');
+    const subjectLock = outbox.indexOf('withNitradoOutboxSubjectLock(tx, lockSubject', connectionLock);
+    const lockedEnsure = outbox.indexOf('ensureJobInLock(lockedTx, scope, operation, payload, options)', subjectLock);
 
     expect(ensureInLock).toBeGreaterThanOrEqual(0);
     expect(activeQuery).toBeGreaterThan(ensureInLock);
@@ -27,7 +28,8 @@ describe('Nitrado-1J automatic SERVER_BAN_REMOVE DEAD cooldown gate', () => {
     expect(boundedDeadRead).toBeGreaterThan(deadAge);
     expect(deadBlock).toBeGreaterThan(boundedDeadRead);
     expect(create).toBeGreaterThan(deadBlock);
-    expect(subjectLock).toBeGreaterThanOrEqual(0);
+    expect(connectionLock).toBeGreaterThanOrEqual(0);
+    expect(subjectLock).toBeGreaterThan(connectionLock);
     expect(lockedEnsure).toBeGreaterThan(subjectLock);
   });
 
