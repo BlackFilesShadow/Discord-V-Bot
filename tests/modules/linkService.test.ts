@@ -25,7 +25,10 @@ import {
 import { identityHash } from '../../src/modules/linking/identity';
 
 const SECRET = 'sekret';
-const SCOPE = { guildId: 'guild-1', nitradoConnId: 'conn-1' };
+const SCOPE = { guildId: '123456789012345678', nitradoConnId: 'conn-1' };
+const USER_1 = '223456789012345678';
+const USER_OWNER = '323456789012345678';
+const USER_OTHER = '423456789012345678';
 const NOW = new Date('2026-08-16T01:00:00.000Z');
 
 interface StoredLink extends GameIdentityRow {
@@ -181,16 +184,16 @@ describe('Konsolen-Linking ueber PlayerSessions', () => {
     ]);
     const sessionSpy = jest.spyOn(client.playerSession, 'findMany');
 
-    await expect(linkByPlayerName(client, SCOPE, 'discord-1', 'Void__Architect', SECRET, NOW))
+    await expect(linkByPlayerName(client, SCOPE, USER_1, 'Void__Architect', SECRET, NOW))
       .rejects.toThrow(/Leave-Cleanup/);
-    expect(cleanupGuard).toHaveBeenCalledWith(SCOPE.guildId, 'discord-1');
+    expect(cleanupGuard).toHaveBeenCalledWith(SCOPE.guildId, USER_1);
     expect(sessionSpy).not.toHaveBeenCalled();
     expect(links.size).toBe(0);
   });
 
   it('lehnt einen unbekannten PSN-/Xbox-Namen ab', async () => {
     const { client } = makeClient();
-    const result = await linkByPlayerName(client, SCOPE, 'discord-1', 'Void__Architect', SECRET, NOW);
+    const result = await linkByPlayerName(client, SCOPE, USER_1, 'Void__Architect', SECRET, NOW);
     expect(result).toEqual({ ok: false, reason: 'PLAYER_NOT_SEEN', playerName: 'Void__Architect' });
   });
 
@@ -198,7 +201,7 @@ describe('Konsolen-Linking ueber PlayerSessions', () => {
     const { client } = makeClient([], [
       session({ gameId: 'guid-1', playerName: 'Void__Architect', durationSeconds: 240 }),
     ]);
-    const result = await linkByPlayerName(client, SCOPE, 'discord-1', 'Void__Architect', SECRET, NOW);
+    const result = await linkByPlayerName(client, SCOPE, USER_1, 'Void__Architect', SECRET, NOW);
     expect(result).toEqual({
       ok: false,
       reason: 'PLAYTIME_TOO_SHORT',
@@ -219,7 +222,7 @@ describe('Konsolen-Linking ueber PlayerSessions', () => {
         status: 'OPEN',
       }),
     ]);
-    const result = await linkByPlayerName(client, SCOPE, 'discord-1', 'Void__Architect', SECRET, NOW);
+    const result = await linkByPlayerName(client, SCOPE, USER_1, 'Void__Architect', SECRET, NOW);
     expect(result.ok).toBe(true);
     if (result.ok) expect(result.playedSeconds).toBe(330);
   });
@@ -228,7 +231,7 @@ describe('Konsolen-Linking ueber PlayerSessions', () => {
     const { client, links, leaveFenceQuery, deletionRequestFindFirst } = makeClient([], [
       session({ gameId: 'guid-1', playerName: 'Void__Architect', durationSeconds: 301 }),
     ]);
-    const result = await linkByPlayerName(client, SCOPE, 'discord-1', 'Void__Architect', SECRET, NOW);
+    const result = await linkByPlayerName(client, SCOPE, USER_1, 'Void__Architect', SECRET, NOW);
     expect(result).toMatchObject({
       ok: true,
       alreadyLinked: false,
@@ -238,10 +241,10 @@ describe('Konsolen-Linking ueber PlayerSessions', () => {
     });
     expect(leaveFenceQuery).toHaveBeenCalledWith(
       'SELECT pg_advisory_xact_lock(hashtextextended($1, 0))',
-      `leave-cleanup:${SCOPE.guildId}:discord-1`,
+      `leave-cleanup:${SCOPE.guildId}:${USER_1}`,
     );
     expect(deletionRequestFindFirst).toHaveBeenCalledTimes(2);
-    expect(links.get('conn-1:discord-1')).toMatchObject({
+    expect(links.get(`conn-1:${USER_1}`)).toMatchObject({
       identityHash: identityHash('guid-1', SECRET),
       status: 'VERIFIED',
       verifiedAt: NOW,
@@ -255,7 +258,7 @@ describe('Konsolen-Linking ueber PlayerSessions', () => {
       session({ gameId: 'guid-1', playerName: 'Void__Architect', durationSeconds: 600 }),
     ], { open: true });
 
-    await expect(linkByPlayerName(client, SCOPE, 'discord-1', 'Void__Architect', SECRET, NOW))
+    await expect(linkByPlayerName(client, SCOPE, USER_1, 'Void__Architect', SECRET, NOW))
       .rejects.toThrow(/Leave-Cleanup/);
     expect(links.size).toBe(0);
   });
@@ -266,7 +269,7 @@ describe('Konsolen-Linking ueber PlayerSessions', () => {
       session({ gameId: 'guid-1', playerName: 'Void__Architect', durationSeconds: 600 }),
     ], { completedAt });
 
-    await expect(linkByPlayerName(client, SCOPE, 'discord-1', 'Void__Architect', SECRET, NOW))
+    await expect(linkByPlayerName(client, SCOPE, USER_1, 'Void__Architect', SECRET, NOW))
       .rejects.toThrow(/Leave-Cleanup/);
     expect(links.size).toBe(0);
   });
@@ -277,9 +280,9 @@ describe('Konsolen-Linking ueber PlayerSessions', () => {
       session({ gameId: 'guid-1', playerName: 'Void__Architect', durationSeconds: 600 }),
     ], { completedAt });
 
-    await expect(linkByPlayerName(client, SCOPE, 'discord-1', 'Void__Architect', SECRET, NOW))
+    await expect(linkByPlayerName(client, SCOPE, USER_1, 'Void__Architect', SECRET, NOW))
       .resolves.toMatchObject({ ok: true, alreadyLinked: false });
-    expect(links.get('conn-1:discord-1')?.verifiedAt).toEqual(NOW);
+    expect(links.get(`conn-1:${USER_1}`)?.verifiedAt).toEqual(NOW);
   });
 
   it('erlaubt denselben Namen/GUID nicht fuer einen zweiten Discord-Account', async () => {
@@ -288,7 +291,7 @@ describe('Konsolen-Linking ueber PlayerSessions', () => {
       {
         guildId: SCOPE.guildId,
         nitradoConnId: SCOPE.nitradoConnId,
-        userDiscordId: 'discord-owner',
+        userDiscordId: USER_OWNER,
         identityHash: hash,
         status: 'VERIFIED',
         challengeCode: null,
@@ -297,7 +300,7 @@ describe('Konsolen-Linking ueber PlayerSessions', () => {
       },
     ], [session({ gameId: 'guid-1', playerName: 'Void__Architect', durationSeconds: 600 })]);
 
-    const result = await linkByPlayerName(client, SCOPE, 'discord-other', 'Void__Architect', SECRET, NOW);
+    const result = await linkByPlayerName(client, SCOPE, USER_OTHER, 'Void__Architect', SECRET, NOW);
     expect(result).toEqual({ ok: false, reason: 'PLAYER_NAME_TAKEN', playerName: 'Void__Architect' });
   });
 
@@ -306,7 +309,7 @@ describe('Konsolen-Linking ueber PlayerSessions', () => {
       {
         guildId: SCOPE.guildId,
         nitradoConnId: SCOPE.nitradoConnId,
-        userDiscordId: 'discord-1',
+        userDiscordId: USER_1,
         identityHash: identityHash('guid-old', SECRET),
         status: 'VERIFIED',
         challengeCode: null,
@@ -315,7 +318,7 @@ describe('Konsolen-Linking ueber PlayerSessions', () => {
       },
     ], [session({ gameId: 'guid-new', playerName: 'PlayerTwo', durationSeconds: 600 })]);
 
-    const result = await linkByPlayerName(client, SCOPE, 'discord-1', 'PlayerTwo', SECRET, NOW);
+    const result = await linkByPlayerName(client, SCOPE, USER_1, 'PlayerTwo', SECRET, NOW);
     expect(result).toEqual({ ok: false, reason: 'USER_ALREADY_LINKED', playerName: 'PlayerTwo' });
   });
 
@@ -324,7 +327,7 @@ describe('Konsolen-Linking ueber PlayerSessions', () => {
       session({ gameId: 'guid-1', playerName: 'DuplicateName' }),
       session({ gameId: 'guid-2', playerName: 'DuplicateName' }),
     ]);
-    const result = await linkByPlayerName(client, SCOPE, 'discord-1', 'DuplicateName', SECRET, NOW);
+    const result = await linkByPlayerName(client, SCOPE, USER_1, 'DuplicateName', SECRET, NOW);
     expect(result).toEqual({ ok: false, reason: 'AMBIGUOUS_PLAYER_NAME', playerName: 'DuplicateName' });
   });
 
@@ -332,9 +335,9 @@ describe('Konsolen-Linking ueber PlayerSessions', () => {
     const { client } = makeClient([], [
       session({ gameId: 'guid-1', playerName: 'Void__Architect', durationSeconds: 30 }),
     ]);
-    const result = await forceLinkByPlayerName(client, SCOPE, 'discord-1', 'Void__Architect', SECRET, NOW);
+    const result = await forceLinkByPlayerName(client, SCOPE, USER_1, 'Void__Architect', SECRET, NOW);
     expect(result).toMatchObject({ ok: true, playerName: 'Void__Architect', gameId: 'guid-1', playedSeconds: 30 });
-    expect(cleanupGuard).toHaveBeenCalledWith(SCOPE.guildId, 'discord-1');
+    expect(cleanupGuard).toHaveBeenCalledWith(SCOPE.guildId, USER_1);
   });
 });
 
@@ -344,7 +347,7 @@ describe('Unlink, Reward-Aufloesung und GUID-Listen', () => {
       {
         guildId: SCOPE.guildId,
         nitradoConnId: SCOPE.nitradoConnId,
-        userDiscordId: 'discord-1',
+        userDiscordId: USER_1,
         identityHash: identityHash('guid-1', SECRET),
         status: 'VERIFIED',
         challengeCode: null,
@@ -352,8 +355,8 @@ describe('Unlink, Reward-Aufloesung und GUID-Listen', () => {
         verifiedAt: NOW,
       },
     ]);
-    expect(await unlinkUser(client, SCOPE, 'discord-1', NOW)).toBe(true);
-    expect(links.get('conn-1:discord-1')).toMatchObject({ status: 'UNLINKED', identityHash: null });
+    expect(await unlinkUser(client, SCOPE, USER_1, NOW)).toBe(true);
+    expect(links.get(`conn-1:${USER_1}`)).toMatchObject({ status: 'UNLINKED', identityHash: null });
   });
 
   it('resolveVerifiedUser bleibt die Economy-Bruecke GUID -> Discord', async () => {
@@ -361,7 +364,7 @@ describe('Unlink, Reward-Aufloesung und GUID-Listen', () => {
       {
         guildId: SCOPE.guildId,
         nitradoConnId: SCOPE.nitradoConnId,
-        userDiscordId: 'discord-1',
+        userDiscordId: USER_1,
         identityHash: identityHash('guid-1', SECRET),
         status: 'VERIFIED',
         challengeCode: null,
@@ -369,7 +372,7 @@ describe('Unlink, Reward-Aufloesung und GUID-Listen', () => {
         verifiedAt: NOW,
       },
     ]);
-    expect(await resolveVerifiedUser(client, SCOPE, 'guid-1', SECRET)).toBe('discord-1');
+    expect(await resolveVerifiedUser(client, SCOPE, 'guid-1', SECRET)).toBe(USER_1);
     expect(await resolveVerifiedUser(client, SCOPE, 'guid-other', SECRET)).toBeNull();
   });
 
@@ -378,7 +381,7 @@ describe('Unlink, Reward-Aufloesung und GUID-Listen', () => {
       {
         guildId: SCOPE.guildId,
         nitradoConnId: SCOPE.nitradoConnId,
-        userDiscordId: 'discord-1',
+        userDiscordId: USER_1,
         identityHash: identityHash('guid-1', SECRET),
         status: 'VERIFIED',
         challengeCode: null,
@@ -389,7 +392,7 @@ describe('Unlink, Reward-Aufloesung und GUID-Listen', () => {
 
     expect(await listVerifiedLinkDetails(client, SCOPE, SECRET)).toEqual([
       {
-        userDiscordId: 'discord-1',
+        userDiscordId: USER_1,
         playerName: 'Void__Architect',
         gameId: 'guid-1',
         verifiedAt: NOW,
