@@ -15,7 +15,14 @@ jest.mock('../../src/database/prisma', () => {
     nitradoJob: { findMany: jest.fn(), create: jest.fn() },
   };
   prisma.$transaction = jest.fn(async (arg: any) => {
-    if (typeof arg === 'function') return arg(prisma);
+    if (typeof arg === 'function') {
+      // Prisma.TransactionClient besitzt selbst kein $transaction. Der Test-Stub
+      // bildet diese Runtime-Grenze explizit nach, damit verschachtelte Lock-Helper
+      // nicht faelschlich eine zweite Root-Transaktion vortaeuschen.
+      const tx = { ...prisma };
+      delete tx.$transaction;
+      return arg(tx);
+    }
     return Promise.all(arg);
   });
   return { __esModule: true, default: prisma };
