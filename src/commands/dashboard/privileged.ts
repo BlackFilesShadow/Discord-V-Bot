@@ -121,6 +121,7 @@ export const addMoneyCommand: Command = {
       delta: BigInt(amount),
       reason,
       actorDiscordId: scope.actorDiscordId,
+      operationId: `discord:${i.id}`,
     });
     logAudit('ECON_ADD_MONEY', 'ECONOMY', {
       guildId: scope.guildId,
