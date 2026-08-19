@@ -13,6 +13,8 @@
 
 import type { Server as IOServer, Socket } from 'socket.io';
 import prisma from '../../database/prisma';
+import { NON_DELEGABLE_SCOPES, PERMISSION_SCOPES } from '../../types/scope';
+import type { PermissionScope } from '../../types/scope';
 import { logger } from '../../utils/logger';
 import { tryGetDashboardClient } from '../clientRegistry';
 import type { SocketSessionShape } from './index';
@@ -24,6 +26,18 @@ interface JoinPayload {
 
 interface JoinServerPayload extends JoinPayload {
   nitradoConnId?: unknown;
+}
+
+const VALID_DELEGABLE_SCOPES = new Set<PermissionScope>(
+  PERMISSION_SCOPES.filter(scope => !NON_DELEGABLE_SCOPES.has(scope)),
+);
+
+function addDelegablePermissions(target: Set<string>, raw: unknown): void {
+  if (!Array.isArray(raw)) return;
+  for (const value of raw) {
+    if (typeof value !== 'string') continue;
+    if (VALID_DELEGABLE_SCOPES.has(value as PermissionScope)) target.add(value);
+  }
 }
 
 function isSnowflake(s: unknown): s is string {
@@ -40,47 +54,45 @@ export function serverFeedPermissionAllows(isOwner: boolean, permissions: readon
   return set.has('killfeed.view') || set.has('killfeed.manage') || set.has('dashboard.access');
 }
 
-interface GuildAccessResult {
+export interface GuildAccessResult {
   allowed: boolean;
   isOwner: boolean;
   permissions: string[];
 }
 
-async function resolveGuildAccess(guildId: string, userDiscordId: string): Promise<GuildAccessResult> {
+/**
+ * Socket-Authorization muss dieselbe Membership-Wahrheit wie REST verwenden.
+ * Ein alter Direct-Grant in PostgreSQL reicht fuer einen ausgetretenen User
+ * niemals zum Room-Join. Erst aktuelle Discord-Mitgliedschaft, dann Grants.
+ */
+export async function resolveGuildAccess(guildId: string, userDiscordId: string): Promise<GuildAccessResult> {
   const client = tryGetDashboardClient();
   const guild = client?.guilds.cache.get(guildId);
   if (!guild) return { allowed: false, isOwner: false, permissions: [] };
   const isOwner = guild.ownerId === userDiscordId;
   if (isOwner) return { allowed: true, isOwner: true, permissions: [] };
 
-  const permissions = new Set<string>();
-  const userGrant = await prisma.guildPermissionGrant.findUnique({
-    where: { guildId_userDiscordId: { guildId, userDiscordId } },
-    select: { permissions: true },
-  });
-  if (userGrant && Array.isArray(userGrant.permissions)) {
-    for (const permission of userGrant.permissions) {
-      if (typeof permission === 'string') permissions.add(permission);
-    }
-  }
-
   const member = guild.members.cache.get(userDiscordId)
     ?? await guild.members.fetch(userDiscordId).catch(() => null);
-  if (member) {
-    const roleIds = [...member.roles.cache.keys()];
-    if (roleIds.length > 0) {
-      const roleGrants = await prisma.guildPermissionRoleGrant.findMany({
-        where: { guildId, roleDiscordId: { in: roleIds } },
-        select: { permissions: true },
-      });
-      for (const grant of roleGrants) {
-        if (!Array.isArray(grant.permissions)) continue;
-        for (const permission of grant.permissions) {
-          if (typeof permission === 'string') permissions.add(permission);
-        }
-      }
-    }
-  }
+  if (!member) return { allowed: false, isOwner: false, permissions: [] };
+
+  const roleIds = [...member.roles.cache.keys()];
+  const [userGrant, roleGrants] = await Promise.all([
+    prisma.guildPermissionGrant.findUnique({
+      where: { guildId_userDiscordId: { guildId, userDiscordId } },
+      select: { permissions: true },
+    }),
+    roleIds.length > 0
+      ? prisma.guildPermissionRoleGrant.findMany({
+          where: { guildId, roleDiscordId: { in: roleIds } },
+          select: { permissions: true },
+        })
+      : Promise.resolve([]),
+  ]);
+
+  const permissions = new Set<string>();
+  addDelegablePermissions(permissions, userGrant?.permissions);
+  for (const grant of roleGrants) addDelegablePermissions(permissions, grant.permissions);
 
   return { allowed: permissions.size > 0, isOwner: false, permissions: [...permissions] };
 }
