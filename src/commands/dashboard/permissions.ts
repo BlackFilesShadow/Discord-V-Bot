@@ -5,8 +5,7 @@
  * - ausschliesslich Guild-Owner duerfen User-Grants veraendern/einsehen;
  * - NON_DELEGABLE_SCOPES werden weder Autocomplete noch freier Eingabe akzeptiert;
  * - Dashboard und Slashcommands nutzen EXAKT dasselbe serialisierte Repository;
- * - auch idempotente Command-Intents laufen durch die serialisierte Mutation,
- *   damit ein paralleler Gegen-Request nicht zwischen Vorab-Read und Return gewinnt;
+ * - auch idempotente Command-Intents laufen durch die serialisierte Mutation;
  * - Direct-Grants werden an die live validierte Mitgliedschaftsepoche gebunden;
  * - /perms listet alle Grants ueber mehrere Embeds statt still nach 50 zu enden.
  */
@@ -26,7 +25,11 @@ import {
   asUserDiscordId,
 } from '../../types/scope';
 import type { PermissionScope } from '../../types/scope';
-import { getGrant, listGrants, setGrantScope } from '../../modules/permissions/repository';
+import {
+  listGrants,
+  setGrantScope,
+  PermissionMembershipEpochConflictError,
+} from '../../modules/permissions/repository';
 import { logAudit } from '../../utils/logger';
 import { emitGuildEvent } from '../../dashboard/socket/emitter';
 import { buildStatusEmbed, type EmbedStatus } from '../../utils/statusEmbed';
@@ -48,6 +51,20 @@ async function statusReply(
     flags: MessageFlags.Ephemeral,
     allowedMentions: { parse: [] },
   });
+}
+
+async function membershipConflictReply(
+  interaction: ChatInputCommandInteraction,
+  error: unknown,
+): Promise<boolean> {
+  if (!(error instanceof PermissionMembershipEpochConflictError)) return false;
+  await statusReply(
+    interaction,
+    'ERROR',
+    'Mitgliedschaft hat sich geaendert',
+    'Die Discord-Mitgliedschaft des Ziel-Users hat sich waehrend der Aktion geaendert. Bitte den Befehl mit dem aktuellen Mitglied erneut ausfuehren.',
+  );
+  return true;
 }
 
 async function autocompletePermissionScope(interaction: AutocompleteInteraction): Promise<void> {
@@ -103,22 +120,19 @@ export const permAddCommand: Command = {
     }
     const perm = rawPerm;
     const targetId = asUserDiscordId(target.id);
-    const before = await getGrant(scope.guildId, targetId);
 
-    // Immer serialisiert sicherstellen, selbst wenn der Vorab-Read bereits true
-    // sagt. Die live validierte joinedAt-Epoche verhindert zugleich, dass ein
-    // Grant aus einer frueheren Mitgliedschaft als Ausgangsbasis wiederbelebt wird.
-    await setGrantScope(
-      scope.guildId,
-      targetId,
-      perm,
-      true,
-      scope.actorDiscordId,
-      member.joinedAt,
-    );
-    if (before?.permissions.includes(perm)) {
-      await statusReply(interaction, 'INFO', 'Permission bereits vorhanden', `<@${target.id}> besitzt \`${perm}\`; der Zustand wurde bestaetigt.`);
-      return;
+    try {
+      await setGrantScope(
+        scope.guildId,
+        targetId,
+        perm,
+        true,
+        scope.actorDiscordId,
+        member.joinedAt,
+      );
+    } catch (error) {
+      if (await membershipConflictReply(interaction, error)) return;
+      throw error;
     }
 
     logAudit('PERM_GRANTED', 'SECURITY', {
@@ -131,7 +145,12 @@ export const permAddCommand: Command = {
       type: 'permissions.updated',
       payload: { guildId: scope.guildId, userDiscordId: target.id },
     });
-    await statusReply(interaction, 'SUCCESS', 'Permission vergeben', `\`${perm}\` wurde <@${target.id}> fuer diesen Discord-Server vergeben.`);
+    await statusReply(
+      interaction,
+      'SUCCESS',
+      'Permission gesetzt',
+      `\`${perm}\` ist fuer <@${target.id}> in der aktuellen Mitgliedschaft aktiv.`,
+    );
   }),
 };
 
@@ -155,29 +174,21 @@ export const permRemoveCommand: Command = {
     }
     const perm = rawPerm;
     const targetId = asUserDiscordId(target.id);
-    const before = await getGrant(scope.guildId, targetId);
     const member = interaction.guild?.members.cache.get(target.id)
       ?? await interaction.guild?.members.fetch(target.id).catch(() => null);
 
-    // Auch ein scheinbarer No-op wird im Repository serialisiert. Bei einem
-    // aktuellen Mitglied wird dessen Epoche mitgegeben, damit nur der gewollte
-    // Scope entfernt wird. Ohne aktuellen Member-Beweis wird fail-closed die
-    // komplette stale Direct-Grant-Zeile geloescht.
-    await setGrantScope(
-      scope.guildId,
-      targetId,
-      perm,
-      false,
-      scope.actorDiscordId,
-      member?.joinedAt ?? null,
-    );
-    if (!before) {
-      await statusReply(interaction, 'INFO', 'Keine Permissions', `<@${target.id}> besitzt keinen User-Permission-Grant; der Zustand wurde bestaetigt.`);
-      return;
-    }
-    if (!before.permissions.includes(perm)) {
-      await statusReply(interaction, 'INFO', 'Permission nicht vorhanden', `<@${target.id}> besitzt \`${perm}\` nicht; der Zustand wurde bestaetigt.`);
-      return;
+    try {
+      await setGrantScope(
+        scope.guildId,
+        targetId,
+        perm,
+        false,
+        scope.actorDiscordId,
+        member?.joinedAt ?? null,
+      );
+    } catch (error) {
+      if (await membershipConflictReply(interaction, error)) return;
+      throw error;
     }
 
     logAudit('PERM_REVOKED', 'SECURITY', {
@@ -190,7 +201,12 @@ export const permRemoveCommand: Command = {
       type: 'permissions.updated',
       payload: { guildId: scope.guildId, userDiscordId: target.id },
     });
-    await statusReply(interaction, 'SUCCESS', 'Permission entzogen', `\`${perm}\` wurde <@${target.id}> fuer diesen Discord-Server entzogen.`);
+    await statusReply(
+      interaction,
+      'SUCCESS',
+      'Permission entzogen',
+      `\`${perm}\` ist fuer <@${target.id}> nicht mehr aktiv.`,
+    );
   }),
 };
 
