@@ -1,0 +1,9 @@
+/// Persistenter, ausschliesslich verschluesselter Gameserver-Identifier fuer
+/// bot-eigene Server-Bans. Er ermoeglicht DB<->Nitrado-Reconciliation nach
+/// externem Drift oder Service-Rebind, ohne Klartext im Ban-Datensatz zu halten.
+model ServerBanRemoteIdentity {
+  banId         String   @id
+  identifierEnc String   @db.Text
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+}

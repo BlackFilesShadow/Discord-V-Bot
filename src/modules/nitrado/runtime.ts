@@ -12,6 +12,7 @@ import { startWhitelistSyncCron, stopWhitelistSyncCron } from '../whitelist/whit
 import { startGameplayFeedRuntime, stopGameplayFeedRuntime } from '../gameplayFeeds/runtime';
 import { startBankInterestCron, stopBankInterestCron } from '../economy/interestCron';
 import { startBanExpiryRuntime, stopBanExpiryRuntime } from '../bans/expiryRuntime';
+import { startBanReconciliationCron, stopBanReconciliationCron } from '../bans/banReconciliation';
 
 export interface NitradoRuntimeHandle {
   stopAndDrain(): Promise<void>;
@@ -20,6 +21,7 @@ export interface NitradoRuntimeHandle {
 export function startNitradoRuntime(client: Client): NitradoRuntimeHandle {
   startNitradoJobWorker();
   startBanExpiryRuntime();
+  startBanReconciliationCron();
   startTokenValidationCron(client);
   startPermaOnlyCron();
   startWhitelistSyncCron();
@@ -49,6 +51,7 @@ export function startNitradoRuntime(client: Client): NitradoRuntimeHandle {
       stopWhitelistSyncCron();
       stopPermaOnlyCron();
       stopTokenValidationCron();
+      stopBanReconciliationCron();
       stopBanExpiryRuntime();
       await drainAndStopJobWorker();
     },

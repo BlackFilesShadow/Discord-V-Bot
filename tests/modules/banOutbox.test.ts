@@ -1,4 +1,5 @@
 import {
+  SERVER_BAN_ADD_AUTO_DEAD_COOLDOWN_MS,
   SERVER_BAN_REMOVE_AUTO_DEAD_COOLDOWN_MS,
   enqueueServerBanAdd,
   enqueueServerBanRemove,
@@ -12,6 +13,7 @@ const SCOPE = { guildId: 'guild-a', nitradoConnId: 'conn-a' };
 
 function makeClient(activePayloads: unknown[] = [], recentDeadPayloads: unknown[] = []) {
   const create = jest.fn(async (_args: unknown) => ({}));
+  const identityUpsert = jest.fn(async (_args: unknown) => ({}));
   const findMany = jest.fn(async (args: unknown) => {
     const where = (args as { where?: { status?: unknown } })?.where;
     const payloads = where?.status === 'DEAD' ? recentDeadPayloads : activePayloads;
@@ -21,13 +23,14 @@ function makeClient(activePayloads: unknown[] = [], recentDeadPayloads: unknown[
   const client = {
     $queryRawUnsafe: queryRaw,
     nitradoJob: { findMany, create },
-  } as BanOutboxClient;
-  return { client, findMany, create, queryRaw };
+    serverBanRemoteIdentity: { upsert: identityUpsert },
+  } as unknown as BanOutboxClient;
+  return { client, findMany, create, queryRaw, identityUpsert };
 }
 
 describe('Server-Ban Outbox', () => {
   it('speichert ADD-Identifier nur verschluesselt und nimmt Connection- vor Subject-Lock', async () => {
-    const { client, create, queryRaw } = makeClient();
+    const { client, create, queryRaw, identityUpsert } = makeClient();
     const raw = '76561198000000000';
 
     await expect(enqueueServerBanAdd(client, SCOPE, 'ban-1', raw, KEY)).resolves.toBe(true);
@@ -38,7 +41,8 @@ describe('Server-Ban Outbox', () => {
       expect(call[2]).toEqual(expect.any(Number));
     }
     expect(queryRaw.mock.invocationCallOrder[0]).toBeLessThan(queryRaw.mock.invocationCallOrder[1]);
-    expect(queryRaw.mock.invocationCallOrder[1]).toBeLessThan(create.mock.invocationCallOrder[0]);
+    expect(queryRaw.mock.invocationCallOrder[1]).toBeLessThan(identityUpsert.mock.invocationCallOrder[0]);
+    expect(identityUpsert.mock.invocationCallOrder[0]).toBeLessThan(create.mock.invocationCallOrder[0]);
 
     const args = create.mock.calls[0][0] as { data: { operation: string; payload: unknown } };
     expect(args.data.operation).toBe('SERVER_BAN_ADD');
@@ -47,15 +51,38 @@ describe('Server-Ban Outbox', () => {
     expect(payload.encryptedIdentifier).toBeDefined();
     expect(payload.encryptedIdentifier).not.toContain(raw);
     expect(decrypt(payload.encryptedIdentifier!, KEY)).toBe(raw);
+
+    const persisted = identityUpsert.mock.calls[0][0] as {
+      where: { banId: string };
+      create: { banId: string; identifierEnc: string };
+      update: { identifierEnc: string };
+    };
+    expect(persisted.where).toEqual({ banId: 'ban-1' });
+    expect(persisted.create.banId).toBe('ban-1');
+    expect(persisted.create.identifierEnc).toBe(payload.encryptedIdentifier);
+    expect(persisted.update.identifierEnc).toBe(payload.encryptedIdentifier);
+    expect(decrypt(persisted.create.identifierEnc, KEY)).toBe(raw);
   });
 
-  it('REMOVE persistiert nur die Ban-ID', async () => {
-    const { client, create } = makeClient();
+  it('aktualisiert die verschluesselte Reconciliation-Identitaet auch bei aktiv dedupliziertem ADD', async () => {
+    const { client, create, identityUpsert } = makeClient([{ banId: 'ban-1' }]);
+
+    await expect(enqueueServerBanAdd(client, SCOPE, 'ban-1', 'PlayerOne', KEY)).resolves.toBe(false);
+
+    expect(identityUpsert).toHaveBeenCalledTimes(1);
+    expect(create).not.toHaveBeenCalled();
+    const args = identityUpsert.mock.calls[0][0] as { create: { identifierEnc: string } };
+    expect(decrypt(args.create.identifierEnc, KEY)).toBe('PlayerOne');
+  });
+
+  it('REMOVE persistiert nur die Ban-ID und keinen Reconciliation-Identifier', async () => {
+    const { client, create, identityUpsert } = makeClient();
 
     await expect(enqueueServerBanRemove(client, SCOPE, 'ban-1')).resolves.toBe(true);
     const args = create.mock.calls[0][0] as { data: { operation: string; payload: unknown } };
     expect(args.data.operation).toBe('SERVER_BAN_REMOVE');
     expect(args.data.payload).toEqual({ banId: 'ban-1' });
+    expect(identityUpsert).not.toHaveBeenCalled();
   });
 
   it('dedupliziert aktive Jobs derselben Operation+Ban-ID unter beiden DB-Locks', async () => {
@@ -65,6 +92,32 @@ describe('Server-Ban Outbox', () => {
 
     expect(queryRaw).toHaveBeenCalledTimes(2);
     expect(findMany).toHaveBeenCalledTimes(1);
+    expect(create).not.toHaveBeenCalled();
+  });
+
+  it('blockiert automatische ADD-Reparatur bei recent DEAD, behaelt aber den verschluesselten Repair-Identifier', async () => {
+    const now = new Date('2026-08-19T03:00:00.000Z');
+    const { client, create, findMany, identityUpsert } = makeClient([], [{}]);
+
+    await expect(enqueueServerBanAdd(
+      client,
+      SCOPE,
+      'ban-1',
+      'PlayerOne',
+      KEY,
+      { recentDeadCooldownMs: SERVER_BAN_ADD_AUTO_DEAD_COOLDOWN_MS, now },
+    )).resolves.toBe(false);
+
+    expect(identityUpsert).toHaveBeenCalledTimes(1);
+    expect(findMany).toHaveBeenCalledTimes(2);
+    const deadQuery = findMany.mock.calls[1][0] as {
+      where: { operation: string; status: string; updatedAt: { gte: Date } };
+    };
+    expect(deadQuery.where.operation).toBe('SERVER_BAN_ADD');
+    expect(deadQuery.where.status).toBe('DEAD');
+    expect(deadQuery.where.updatedAt.gte).toEqual(
+      new Date(now.getTime() - SERVER_BAN_ADD_AUTO_DEAD_COOLDOWN_MS),
+    );
     expect(create).not.toHaveBeenCalled();
   });
 
@@ -107,7 +160,7 @@ describe('Server-Ban Outbox', () => {
     expect(create).toHaveBeenCalledTimes(1);
   });
 
-  it('laesst expliziten Bediener-Retry den DEAD-Cooldown umgehen, aber nicht aktive Dedupe-Jobs', async () => {
+  it('laesst expliziten Bediener-Retry den REMOVE-DEAD-Cooldown umgehen, aber nicht aktive Dedupe-Jobs', async () => {
     const manual = makeClient([], [{}]);
     await expect(enqueueServerBanRemove(
       manual.client,
