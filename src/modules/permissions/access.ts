@@ -38,11 +38,15 @@ export function membershipEpochMarker(joinedAt: Date): string {
   return `${MEMBERSHIP_EPOCH_PREFIX}${joinedAt.toISOString()}`;
 }
 
-export function directGrantMembershipEpoch(raw: unknown): Date | null {
-  if (!Array.isArray(raw)) return null;
-  const markers = raw.filter(
+function membershipEpochMarkers(raw: unknown): string[] {
+  if (!Array.isArray(raw)) return [];
+  return raw.filter(
     (value): value is string => typeof value === 'string' && value.startsWith(MEMBERSHIP_EPOCH_PREFIX),
   );
+}
+
+export function directGrantMembershipEpoch(raw: unknown): Date | null {
+  const markers = membershipEpochMarkers(raw);
   // Mehrere Marker oder ein kaputter Marker sind absichtlich fail-closed.
   if (markers.length !== 1) return null;
   const timestamp = markers[0].slice(MEMBERSHIP_EPOCH_PREFIX.length);
@@ -66,9 +70,11 @@ export interface DelegatedPermissionContext {
  *
  * Neue/normalisierte Zeilen enthalten einen expliziten Marker und muessen
  * exakt mit `member.joinedAt` uebereinstimmen. Fuer bestehende Legacy-Zeilen
- * ohne Marker bleibt einmalig der konservative updatedAt>=joinedAt-Fallback,
- * damit gueltige Bestandsgrants nicht beim Deploy pauschal verschwinden. Jede
- * spaetere Mutation normalisiert die Zeile und schreibt den Marker.
+ * OHNE irgendeinen Marker bleibt einmalig der konservative
+ * updatedAt>=joinedAt-Fallback, damit gueltige Bestandsgrants nicht beim Deploy
+ * pauschal verschwinden. Sobald ein Marker vorhanden ist, sind mehrere oder
+ * kaputte Marker strikt fail-closed und duerfen niemals in den Legacy-Fallback
+ * fallen. Jede spaetere gueltige Mutation normalisiert die Zeile.
  */
 export function directGrantBelongsToMembership(
   rawPermissions: unknown,
@@ -76,8 +82,15 @@ export function directGrantBelongsToMembership(
   memberJoinedAt: Date | null | undefined,
 ): boolean {
   if (!memberJoinedAt) return false;
-  const explicitEpoch = directGrantMembershipEpoch(rawPermissions);
-  if (explicitEpoch) return explicitEpoch.getTime() === memberJoinedAt.getTime();
+
+  const markers = membershipEpochMarkers(rawPermissions);
+  if (markers.length > 0) {
+    const explicitEpoch = directGrantMembershipEpoch(rawPermissions);
+    return !!explicitEpoch && explicitEpoch.getTime() === memberJoinedAt.getTime();
+  }
+
+  // Ausschliesslich echte Legacy-Zeilen ohne Marker erhalten den einmaligen
+  // updatedAt-Fallback. Marker-Korruption wird oben bereits fail-closed beendet.
   if (!grantUpdatedAt) return false;
   return grantUpdatedAt.getTime() >= memberJoinedAt.getTime();
 }
