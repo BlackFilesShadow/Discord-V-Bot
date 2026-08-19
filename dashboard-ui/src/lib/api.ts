@@ -47,6 +47,55 @@ function withServerSlotScope(path: string): string {
   return `${url.pathname}${url.search}${url.hash}`;
 }
 
+const ADMIN_PAY_RETAINED_KEY_STORAGE = 'vbot:admin-pay-idempotency:v1';
+
+interface RetainedAdminPayKey {
+  fingerprint: string;
+  key: string;
+}
+
+function isAdminPayMutation(method: string, scopedPath: string): boolean {
+  if (method !== 'POST') return false;
+  let pathname = scopedPath;
+  try { pathname = new URL(scopedPath, 'https://dashboard.local').pathname; }
+  catch { /* relative path fallback */ }
+  return /^\/api\/v2\/guilds\/\d{17,20}\/economy\/accounts\/\d{17,20}\/admin-pay$/.test(pathname);
+}
+
+function readRetainedAdminPayKey(): RetainedAdminPayKey | null {
+  if (typeof sessionStorage === 'undefined') return null;
+  try {
+    const raw = sessionStorage.getItem(ADMIN_PAY_RETAINED_KEY_STORAGE);
+    if (!raw) return null;
+    const parsed = JSON.parse(raw) as Partial<RetainedAdminPayKey>;
+    if (typeof parsed.fingerprint !== 'string' || typeof parsed.key !== 'string') return null;
+    return { fingerprint: parsed.fingerprint, key: parsed.key };
+  } catch { return null; }
+}
+
+function retainAdminPayKey(method: string, scopedPath: string, body: unknown): RetainedAdminPayKey {
+  const fingerprint = `${method}:${scopedPath}:${JSON.stringify(body ?? null)}`;
+  const existing = readRetainedAdminPayKey();
+  if (existing?.fingerprint === fingerprint) return existing;
+
+  const next = { fingerprint, key: createIdempotencyKey() };
+  if (typeof sessionStorage !== 'undefined') {
+    try { sessionStorage.setItem(ADMIN_PAY_RETAINED_KEY_STORAGE, JSON.stringify(next)); }
+    catch { /* Private-/Storage-Mode: Request bleibt weiterhin einmalig idempotent. */ }
+  }
+  return next;
+}
+
+function clearRetainedAdminPayKey(retained: RetainedAdminPayKey): void {
+  if (typeof sessionStorage === 'undefined') return;
+  try {
+    const current = readRetainedAdminPayKey();
+    if (current?.fingerprint === retained.fingerprint && current.key === retained.key) {
+      sessionStorage.removeItem(ADMIN_PAY_RETAINED_KEY_STORAGE);
+    }
+  } catch { /* best-effort client cleanup */ }
+}
+
 async function decode<T>(res: Response): Promise<T> {
   const text = await res.text();
   let data: unknown = null;
@@ -59,9 +108,20 @@ async function request<T>(method: string, path: string, body?: unknown): Promise
   const headers: Record<string, string> = { Accept: 'application/json' };
   let payload: BodyInit | undefined;
   if (body !== undefined) { headers['Content-Type'] = 'application/json'; payload = JSON.stringify(body); }
-  if (method !== 'GET') headers['X-Idempotency-Key'] = createIdempotencyKey();
   const scopedPath = withServerSlotScope(path);
-  return decode<T>(await fetch(scopedPath, { method, headers, body: payload, credentials: 'include' }));
+  let retainedAdminPay: RetainedAdminPayKey | null = null;
+  if (method !== 'GET') {
+    if (isAdminPayMutation(method, scopedPath)) {
+      retainedAdminPay = retainAdminPayKey(method, scopedPath, body);
+      headers['X-Idempotency-Key'] = retainedAdminPay.key;
+    } else {
+      headers['X-Idempotency-Key'] = createIdempotencyKey();
+    }
+  }
+
+  const result = await decode<T>(await fetch(scopedPath, { method, headers, body: payload, credentials: 'include' }));
+  if (retainedAdminPay) clearRetainedAdminPayKey(retainedAdminPay);
+  return result;
 }
 
 async function formRequest<T>(method: 'POST' | 'PUT' | 'PATCH', path: string, fd: FormData): Promise<T> {
