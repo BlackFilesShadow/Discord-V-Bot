@@ -118,6 +118,10 @@ export const virtualAccountCommand: Command = {
     }
 
     if (sub === 'pay') {
+      if (account.kind !== 'CUSTOM') {
+        await replyError(i, 'Systemkonto geschützt', 'Lotterie- und Markt-Systemkonten koennen nur durch ihre jeweilige Fachfunktion Geld bewegen.');
+        return;
+      }
       if (account.status !== 'ACTIVE') {
         await replyError(i, 'Ueberweisung abgelehnt', 'Dieses virtuelle Konto ist nicht mehr aktiv.');
         return;
