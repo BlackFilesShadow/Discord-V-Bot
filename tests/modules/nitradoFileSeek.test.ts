@@ -97,28 +97,23 @@ describe('Nitrado signed file reads', () => {
   });
 
   it('erhaelt 429 am signierten Hop nach drei Versuchen und respektiert Retry-After', async () => {
-    jest.useFakeTimers();
-    try {
-      requestMock.mockResolvedValueOnce({
-        status: 200,
-        headers: {},
-        data: { data: { token: { url: 'https://download.example/file', token: 'signed-secret' } } },
-      });
-      const rateLimited = Object.assign(new Error('rate limited'), {
-        response: { status: 429, headers: { 'retry-after': '0' } },
-      });
-      getMock.mockRejectedValue(rateLimited);
+    requestMock.mockResolvedValueOnce({
+      status: 200,
+      headers: {},
+      data: { data: { token: { url: 'https://download.example/file', token: 'signed-secret' } } },
+    });
+    const rateLimited = Object.assign(new Error('rate limited'), {
+      response: { status: 429, headers: { 'retry-after': '0' } },
+    });
+    getMock.mockRejectedValue(rateLimited);
 
-      const client = new NitradoClient('token-1234');
-      await expect(client.downloadFile('123', '/logs/live.ADM')).rejects.toMatchObject({
-        name: 'NitradoApiError',
-        status: 429,
-        endpoint: 'file_server',
-      });
-      expect(getMock).toHaveBeenCalledTimes(3);
-    } finally {
-      jest.useRealTimers();
-    }
+    const client = new NitradoClient('token-1234');
+    await expect(client.downloadFile('123', '/logs/live.ADM')).rejects.toMatchObject({
+      name: 'NitradoApiError',
+      status: 429,
+      endpoint: 'file_server',
+    });
+    expect(getMock).toHaveBeenCalledTimes(3);
   });
 
   it('retryt 5xx am signierten Hop und bricht permanente 4xx sofort ab', async () => {
