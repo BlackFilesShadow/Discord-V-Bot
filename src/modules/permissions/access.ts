@@ -18,6 +18,8 @@ export interface GuildPermissionAccess {
  * is proven. This keeps stale rows after a leave fail-closed even when optional
  * destructive leave-cleanup is disabled. Only known delegable scopes are ever
  * returned; malformed/unknown/owner-only values in legacy rows cannot authorize.
+ * Role grants are restricted to the member's current, non-managed roles and
+ * explicitly exclude @everyone so legacy/corrupt rows cannot become global grants.
  */
 export async function resolveGuildPermissionAccess(
   guild: Guild,
@@ -46,7 +48,9 @@ export async function resolveGuildPermissionAccess(
     };
   }
 
-  const roleIds = [...member.roles.cache.keys()];
+  const roleIds = [...member.roles.cache.values()]
+    .filter(role => role.id !== guild.id && !role.managed)
+    .map(role => role.id);
   const [directGrant, roleGrants] = await Promise.all([
     prisma.guildPermissionGrant.findUnique({
       where: { guildId_userDiscordId: { guildId: guild.id, userDiscordId } },
