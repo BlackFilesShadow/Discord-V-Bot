@@ -67,11 +67,11 @@ function baseFaction(): FactionRow {
   };
 }
 
-async function stubFactions(page: Page, opts: { canManage: boolean; republishError?: boolean }) {
+async function stubFactions(page: Page, opts: { canManage: boolean; republishError?: boolean; emptySystemConfig?: boolean }) {
   const mutations: Mutation[] = [];
   const manageLookupPaths: string[] = [];
   let factions: FactionRow[] = [baseFaction()];
-  let factionChannelId: string | null = CHANNEL_A;
+  let factionChannelId: string | null = opts.emptySystemConfig ? null : CHANNEL_A;
 
   await page.route('**/api/me', route => json(route, {
     user: { discordId: USER_ID, username: opts.canManage ? 'factions-admin' : 'factions-viewer', avatar: null, role: 'ADMIN' },
@@ -104,7 +104,11 @@ async function stubFactions(page: Page, opts: { canManage: boolean; republishErr
     const base = `/api/v2/guilds/${GUILD_ID}/factions`;
     if (path === base && method === 'GET') return json(route, { factions });
     if (path === `${base}/system-config` && method === 'GET') {
-      return json(route, { factionChannelId, listMessageId: 'list-message-1', updatedAt: new Date().toISOString() });
+      return json(route, {
+        factionChannelId,
+        listMessageId: opts.emptySystemConfig ? null : 'list-message-1',
+        updatedAt: opts.emptySystemConfig ? null : new Date().toISOString(),
+      });
     }
 
     if (path === `${base}/lookups/channels` && method === 'GET') {
@@ -246,11 +250,12 @@ async function noPageOverflow(page: Page): Promise<void> {
 }
 
 test.describe('Factions authenticated dashboard contract', () => {
-  test('factions.view bleibt read-only und ruft keine manage-only Lookups oder Mutationen auf', async ({ page }) => {
-    const state = await stubFactions(page, { canManage: false });
+  test('factions.view bleibt read-only und akzeptiert nie initialisierte System-Config', async ({ page }) => {
+    const state = await stubFactions(page, { canManage: false, emptySystemConfig: true });
     await openFactions(page);
 
     await expect(page.getByText(/Nur-Lesezugriff/)).toBeVisible();
+    await expect(page.getByText('Kein Sammel-Channel konfiguriert.')).toBeVisible();
     await expect(page.getByText('Alpha', { exact: true })).toBeVisible();
     await expect(page.getByText('Alpha Member', { exact: true })).toBeVisible();
     await expect(page.getByText('Neue Fraktion')).toHaveCount(0);
