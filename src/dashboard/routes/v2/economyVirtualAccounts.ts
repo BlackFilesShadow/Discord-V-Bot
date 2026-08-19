@@ -1,4 +1,5 @@
 import { Router } from 'express';
+import rateLimit from 'express-rate-limit';
 import { requireGuildPermission } from '../../middleware/auth';
 import { tryGetDashboardClient } from '../../clientRegistry';
 import {
@@ -21,11 +22,22 @@ import {
 } from '../../../modules/economy/virtualAccountMetadata';
 import { asUserDiscordId } from '../../../types/scope';
 import { logAuditDb } from '../../../utils/logger';
+import prisma from '../../../database/prisma';
 
 export const economyVirtualAccountsRouter = Router({ mergeParams: true });
 const MAX_AMOUNT = 1_000_000_000_000_000n;
+const USER_GUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 
 type EconomyVirtualRequest = Parameters<Parameters<typeof economyVirtualAccountsRouter.get>[1]>[0];
+
+const payoutMemberSearchLimiter = rateLimit({
+  windowMs: 60 * 1000,
+  max: 30,
+  standardHeaders: true,
+  legacyHeaders: false,
+  keyGenerator: (req) => req.auth?.discordId ?? req.ip ?? 'anon',
+  message: { error: 'Zu viele Member-Suchen. Bitte kurz warten.' },
+});
 
 function scoped(req: EconomyVirtualRequest) {
   const scope = req.guildScope!;
@@ -98,6 +110,30 @@ async function metadataFor(account: VirtualAccountRow): Promise<VirtualAccountMe
   return getVirtualAccountMetadata(account.guildId, account.nitradoConnId, account.id);
 }
 
+async function resolvePayoutTargetByUserGuid(guildId: string, rawUserId: unknown) {
+  const userId = typeof rawUserId === 'string' ? rawUserId.trim() : '';
+  if (!USER_GUID_RE.test(userId)) throw new Error('User-GUID ungueltig.');
+
+  const user = await prisma.user.findUnique({
+    where: { id: userId },
+    select: { discordId: true, status: true },
+  });
+  if (!user || user.status !== 'ACTIVE') throw new Error('Auszahlungsziel ist nicht aktiv oder nicht vorhanden.');
+
+  // Die mutation darf einer erratenen/leaked globalen User-GUID niemals blind
+  // vertrauen: direkt vor der Buchung muss der zugehoerige Discord-Account noch
+  // Mitglied genau dieser Guild und ein menschlicher Account sein.
+  const client = tryGetDashboardClient();
+  if (!client) throw new Error('Bot nicht bereit; Auszahlungsziel konnte nicht validiert werden.');
+  const guild = client.guilds.cache.get(guildId);
+  if (!guild) throw new Error('Bot nicht in Guild; Auszahlungsziel konnte nicht validiert werden.');
+  const member = guild.members.cache.get(user.discordId)
+    ?? await guild.members.fetch(user.discordId).catch(() => null);
+  if (!member || member.user.bot) throw new Error('Auszahlungsziel ist kein aktives menschliches Mitglied dieser Guild.');
+
+  return asUserDiscordId(user.discordId);
+}
+
 economyVirtualAccountsRouter.get('/', requireGuildPermission('economy.view'), async (req, res) => {
   const { scope, connId } = scoped(req);
   const includeArchived = req.query.includeArchived === 'true';
@@ -155,6 +191,57 @@ economyVirtualAccountsRouter.post('/', requireGuildPermission('economy.manage'),
   }
 });
 
+/**
+ * Economy-1K: Discord-Autocomplete mit interner User-GUID als kanonischem Wert.
+ * Nur aktive, im V-Bot registrierte Menschen aus exakt dieser Discord-Guild
+ * werden angeboten. Discord-Snowflakes bleiben reine Anzeige-/Aufloesungsdaten.
+ */
+economyVirtualAccountsRouter.get('/members', payoutMemberSearchLimiter, requireGuildPermission('economy.view'), async (req, res) => {
+  const { scope } = scoped(req);
+  const client = tryGetDashboardClient();
+  if (!client) { res.status(503).json({ error: 'Bot nicht bereit.' }); return; }
+  const guild = client.guilds.cache.get(String(scope.guildId));
+  if (!guild) { res.status(404).json({ error: 'Bot nicht in Guild.' }); return; }
+
+  const rawQ = typeof req.query.q === 'string' ? req.query.q.trim() : '';
+  const rawLimit = Number.parseInt(String(req.query.limit ?? '20'), 10);
+  const limit = Math.min(Math.max(Number.isFinite(rawLimit) ? rawLimit : 20, 1), 25);
+  const q = rawQ.slice(0, 64).replace(/[\u0000-\u001f]/g, '');
+
+  try {
+    const fetched = q.length > 0
+      ? await guild.members.search({ query: q, limit })
+      : guild.members.cache.first(limit);
+    const members = Array.from(fetched.values?.() ?? fetched).filter(member => !member.user.bot);
+    const discordIds = members.map(member => member.id);
+    const users = discordIds.length > 0
+      ? await prisma.user.findMany({
+          where: { discordId: { in: discordIds }, status: 'ACTIVE' },
+          select: { id: true, discordId: true },
+        })
+      : [];
+    const guidByDiscord = new Map(users.map(user => [user.discordId, user.id] as const));
+
+    res.json({
+      members: members
+        .map(member => {
+          const userId = guidByDiscord.get(member.id);
+          if (!userId) return null;
+          return {
+            id: userId,
+            discordId: member.id,
+            username: member.user.username,
+            displayName: member.displayName ?? member.user.globalName ?? member.user.username,
+            avatar: member.user.avatar ?? null,
+          };
+        })
+        .filter((member): member is NonNullable<typeof member> => member !== null),
+    });
+  } catch (error) {
+    res.status(502).json({ error: 'Discord-Member-Search fehlgeschlagen.', detail: (error as Error).message });
+  }
+});
+
 economyVirtualAccountsRouter.get('/:accountId', requireGuildPermission('economy.view'), async (req, res) => {
   const { scope, connId } = scoped(req);
   const account = await getVirtualAccountById(scope.guildId, connId, String(req.params.accountId));
@@ -198,8 +285,8 @@ economyVirtualAccountsRouter.post('/:accountId/payout', requireGuildPermission('
   const { scope, connId } = scoped(req);
   const body = req.body ?? {};
   let targetUserId;
-  try { targetUserId = asUserDiscordId(String(body.userDiscordId ?? '')); }
-  catch { res.status(400).json({ error: 'userDiscordId ungueltig.' }); return; }
+  try { targetUserId = await resolvePayoutTargetByUserGuid(String(scope.guildId), body.userId); }
+  catch (error) { res.status(400).json({ error: (error as Error).message }); return; }
   let amount: bigint;
   try { amount = parseAmount(body.amount); }
   catch (error) { res.status(400).json({ error: (error as Error).message }); return; }
@@ -229,6 +316,7 @@ economyVirtualAccountsRouter.post('/:accountId/payout', requireGuildPermission('
       details: {
         nitradoConnId: connId,
         accountId: req.params.accountId,
+        targetUserGuid: body.userId,
         targetUserId,
         amount: amount.toString(),
         targetPocket,
