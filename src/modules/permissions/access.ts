@@ -33,6 +33,24 @@ export interface DelegatedPermissionContext {
 }
 
 /**
+ * Ein Direct-Grant gehoert zur aktuellen Discord-Mitgliedschaftsepoche nur,
+ * wenn er nicht vor deren joinedAt erzeugt/zuletzt bestaetigt wurde.
+ *
+ * Das ist die durable Defense-in-depth hinter dem Leave-Delete: Selbst falls
+ * der Cleanup beim Austritt/Rejoin wegen eines DB-Fehlers ausfaellt oder der
+ * Prozess danach neu startet, kann ein Grant aus einer frueheren Mitgliedschaft
+ * beim Rejoin nicht wieder aktiv werden. Fehlendes joinedAt => Direct-Grants
+ * fail-closed; aktuelle Role-Grants koennen weiterhin aus der Live-Rolle gelten.
+ */
+export function directGrantBelongsToMembership(
+  grantUpdatedAt: Date | null | undefined,
+  memberJoinedAt: Date | null | undefined,
+): boolean {
+  if (!grantUpdatedAt || !memberJoinedAt) return false;
+  return grantUpdatedAt.getTime() >= memberJoinedAt.getTime();
+}
+
+/**
  * Kanonische Nicht-Owner-Aufloesung fuer HTTP, Socket und Discord-Commands.
  * Reihenfolge ist Security-relevant: zuerst aktuelle Guild-Mitgliedschaft,
  * erst danach Direct-/Role-Grants. Ein stale DB-Grant kann daher niemals eine
@@ -50,7 +68,7 @@ export async function resolveDelegatedPermissionContext(
   const [directGrant, roleGrants] = await Promise.all([
     prisma.guildPermissionGrant.findUnique({
       where: { guildId_userDiscordId: { guildId: guild.id, userDiscordId } },
-      select: { permissions: true },
+      select: { permissions: true, updatedAt: true },
     }),
     roleIds.length > 0
       ? prisma.guildPermissionRoleGrant.findMany({
@@ -60,7 +78,9 @@ export async function resolveDelegatedPermissionContext(
       : Promise.resolve([]),
   ]);
 
-  const permissions = delegatedPermissionSet(directGrant?.permissions);
+  const permissions = directGrantBelongsToMembership(directGrant?.updatedAt, member.joinedAt)
+    ? delegatedPermissionSet(directGrant?.permissions)
+    : new Set<PermissionScope>();
   for (const roleGrant of roleGrants) {
     for (const scope of delegatedPermissionSet(roleGrant.permissions)) permissions.add(scope);
   }
