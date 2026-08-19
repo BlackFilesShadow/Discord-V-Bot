@@ -81,23 +81,13 @@ export async function setGrantScope(
       where: { guildId_userDiscordId: { guildId, userDiscordId } },
     });
     const current = new Set<PermissionScope>(sanitizeScopes(existing?.permissions));
-    const alreadyInRequestedState = current.has(scope) === enabled;
-    if (alreadyInRequestedState && existing) {
-      return {
-        userDiscordId: existing.userDiscordId as UserDiscordId,
-        permissions: Array.from(current).sort(),
-        grantedBy: existing.grantedByDiscordId as UserDiscordId,
-        updatedAt: existing.updatedAt,
-      };
-    }
-    if (alreadyInRequestedState && !existing) {
-      return { userDiscordId, permissions: [], grantedBy, updatedAt: new Date() };
-    }
-
     if (enabled) current.add(scope);
     else current.delete(scope);
     const next = Array.from(current).sort();
 
+    // Jede Mutation normalisiert die komplette Zeile. Dadurch verschwinden
+    // leere oder historisch korrupte/non-delegable Werte beim naechsten Write,
+    // statt trotz fail-closed Authorizer dauerhaft als Stale-Daten zu bleiben.
     if (next.length === 0) {
       await tx.guildPermissionGrant.deleteMany({
         where: { guildId, userDiscordId },
@@ -180,19 +170,6 @@ export async function setRoleGrantScope(
       where: { guildId_roleDiscordId: { guildId, roleDiscordId } },
     });
     const current = new Set<PermissionScope>(sanitizeScopes(existing?.permissions));
-    const alreadyInRequestedState = current.has(scope) === enabled;
-    if (alreadyInRequestedState && existing) {
-      return {
-        roleDiscordId: existing.roleDiscordId,
-        permissions: Array.from(current).sort(),
-        grantedBy: existing.grantedByDiscordId as UserDiscordId,
-        updatedAt: existing.updatedAt,
-      };
-    }
-    if (alreadyInRequestedState && !existing) {
-      return { roleDiscordId, permissions: [], grantedBy, updatedAt: new Date() };
-    }
-
     if (enabled) current.add(scope);
     else current.delete(scope);
     const next = Array.from(current).sort();
@@ -212,7 +189,8 @@ export async function setRoleGrantScope(
     const row = await tx.guildPermissionRoleGrant.upsert({
       where: { guildId_roleDiscordId: { guildId, roleDiscordId } },
       create: {
-        guildId, roleDiscordId,
+        guildId,
+        roleDiscordId,
         permissions: next,
         grantedByDiscordId: grantedBy,
       },
