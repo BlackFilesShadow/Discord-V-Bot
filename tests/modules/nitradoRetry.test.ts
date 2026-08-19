@@ -70,3 +70,45 @@ describe('F-011 — Nitrado 429', () => {
     expect(requestMock).toHaveBeenCalledTimes(2);
   });
 });
+
+describe('Nitrado-1V — canonical transport/timeout retry', () => {
+  it('retryt einen ECONNABORTED-Timeout und kann danach erfolgreich lesen', async () => {
+    jest.useFakeTimers();
+    try {
+      requestMock
+        .mockRejectedValueOnce(Object.assign(new Error('timeout'), { code: 'ECONNABORTED' }))
+        .mockResolvedValueOnce({ status: 200, headers: {}, data: { data: { services: [] } } });
+
+      const client = new NitradoClient('token-1234');
+      const pending = client.listServices();
+      await jest.advanceTimersByTimeAsync(500);
+
+      await expect(pending).resolves.toEqual([]);
+      expect(requestMock).toHaveBeenCalledTimes(2);
+    } finally {
+      jest.useRealTimers();
+    }
+  });
+
+  it('begrenzt dauerhafte ECONNABORTED-Timeouts auf drei Versuche und erhaelt status=null', async () => {
+    jest.useFakeTimers();
+    try {
+      requestMock.mockRejectedValue(Object.assign(new Error('timeout'), { code: 'ECONNABORTED' }));
+      const client = new NitradoClient('token-1234');
+      const pending = client.listServices();
+
+      await jest.advanceTimersByTimeAsync(500);
+      await jest.advanceTimersByTimeAsync(1000);
+
+      await expect(pending).rejects.toMatchObject({
+        name: 'NitradoApiError',
+        status: null,
+        endpoint: '/services',
+        message: 'timeout',
+      });
+      expect(requestMock).toHaveBeenCalledTimes(3);
+    } finally {
+      jest.useRealTimers();
+    }
+  });
+});
