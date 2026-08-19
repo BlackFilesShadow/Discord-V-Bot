@@ -503,15 +503,20 @@ export function ReactionEmbedsTab({ guildId, canManage }: { guildId: string; can
               <div key={m.id} className={`flex items-center justify-between gap-2 rounded-md border px-3 py-2 ${editingId === m.id ? 'border-brand' : 'border-border'}`}>
                 <button className="flex-1 text-left" onClick={() => startEdit(m)}>
                   <div className="flex items-center gap-2">
-                    <span className="truncate font-medium text-white">{m.title}</span>
+                    <span className="text-white text-sm font-medium">{m.title}</span>
                     <Badge>{m.componentType}</Badge>
                     {m.archived && <Badge variant="neutral">Archiviert</Badge>}
-                    {m.isPosted ? <Badge variant="ok">Gepostet</Badge> : m.isDraft ? <Badge variant="warn">Entwurf</Badge> : null}
+                    {m.isPosted && !m.archived && <Badge variant="ok">Gepostet</Badge>}
                   </div>
-                  <div className="mt-0.5 truncate text-xs text-muted">
-                    {m.title || m.description || 'Kein Titel'}
-                  </div>
+                  <div className="text-muted text-xs mt-0.5">#{channelNames[m.channelId] ?? m.channelId} · {m.options.length} Option(en)</div>
                 </button>
+                <div className="flex items-center gap-1">
+                  {m.isPosted && <Button size="sm" variant="ghost" title="Nachricht aktualisieren" onClick={() => sync(m.id)} disabled={busy}><RotateCcw size={15} /></Button>}
+                  <Button size="sm" variant="ghost" title={m.archived ? 'Reaktivieren' : 'Archivieren'} onClick={() => toggleArchive(m)} disabled={busy}>
+                    {m.archived ? <ArchiveRestore size={15} /> : <Archive size={15} />}
+                  </Button>
+                  <Button size="sm" variant="ghost" title="Löschen" onClick={() => remove(m.id)} disabled={busy}><Trash2 size={15} /></Button>
+                </div>
               </div>
             ))}
           </div>
