@@ -79,9 +79,6 @@ export async function assertEconomyScopeReady(
   if (state.status !== 'RESOLVED' || !state.primaryNitradoConnId) {
     throw new EconomyMigrationRequiredError();
   }
-  // RESOLVED bedeutet: alle alten NULL-gescopten Zeilen wurden exakt dem
-  // gespeicherten Primaerserver zugeordnet. Ein anderer Server ist danach ein
-  // eigener leerer Scope und darf sicher neue Economy-Daten anlegen.
   if (state.primaryNitradoConnId === nitradoConnId) return;
   return;
 }
@@ -92,6 +89,15 @@ export interface ResolveLegacyEconomyResult {
   updatedRows: number;
 }
 
+type LockedMigrationRow = {
+  guildId: string;
+  status: string;
+  primaryNitradoConnId: string | null;
+  detectedActiveServerCount: number;
+  resolvedByDiscordId: string | null;
+  resolvedAt: Date | null;
+};
+
 /**
  * Owner-gesteuerte ECO-S03-Aufloesung.
  *
@@ -99,6 +105,11 @@ export interface ResolveLegacyEconomyResult {
  * ausgewaehlten Server verschoben. Es gibt keinerlei INSERT/COPY von Guthaben.
  * Wiederholung mit demselben Server ist idempotent; ein spaeteres stilles
  * Umschwenken auf einen anderen Server wird verweigert.
+ *
+ * Kritisch: Der Migrationszustand wird innerhalb derselben Serializable-
+ * Transaktion per FOR UPDATE neu gelesen. Ein Request darf deshalb niemals
+ * einen vor Transaktionsstart gelesenen MIGRATION_REQUIRED-Snapshot benutzen,
+ * nachdem ein anderer Request bereits auf einen anderen Server aufgeloest hat.
  */
 export async function resolveLegacyEconomyPrimaryServer(args: {
   guildId: GuildId;
@@ -134,12 +145,30 @@ export async function resolveLegacyEconomyPrimaryServer(args: {
     };
   }
 
-  const updatedRows = await prisma.$transaction(async tx => {
+  const result = await prisma.$transaction(async tx => {
     const guildId = String(args.guildId);
     const connId = String(args.primaryNitradoConnId);
-    let changed = 0;
 
-    // Gebundene Parameter, keine dynamischen Nutzereingaben in SQL-Identifiers.
+    const lockedRows = await tx.$queryRawUnsafe<LockedMigrationRow[]>(
+      'SELECT "guildId", "status", "primaryNitradoConnId", "detectedActiveServerCount", "resolvedByDiscordId", "resolvedAt" FROM "EconomyScopeMigration" WHERE "guildId" = $1 FOR UPDATE',
+      guildId,
+    );
+    const locked = lockedRows[0];
+    if (!locked) {
+      throw new Error('Fuer diese Guild ist keine Legacy-Economy-Migration erforderlich.');
+    }
+
+    if (locked.status === 'RESOLVED' && locked.primaryNitradoConnId) {
+      if (locked.primaryNitradoConnId !== connId) {
+        throw new EconomyScopeMismatchError('Die Legacy-Economy wurde bereits einem anderen Primaerserver zugeordnet.');
+      }
+      return { alreadyResolved: true, updatedRows: 0 };
+    }
+    if (locked.status !== 'MIGRATION_REQUIRED' || locked.primaryNitradoConnId) {
+      throw new EconomyMigrationRequiredError('Der Legacy-Economy-Migrationszustand ist inkonsistent und wurde fail-closed blockiert.');
+    }
+
+    let changed = 0;
     changed += await tx.$executeRawUnsafe(
       'UPDATE "EconomyConfig" SET "nitradoConnId" = $1 WHERE "guildId" = $2 AND "nitradoConnId" IS NULL',
       connId, guildId,
@@ -182,19 +211,21 @@ export async function resolveLegacyEconomyPrimaryServer(args: {
         resolvedAt: new Date(),
       },
     });
-    return changed;
+    return { alreadyResolved: false, updatedRows: changed };
   }, { isolationLevel: 'Serializable' });
 
-  logAudit('ECONOMY_SCOPE_MIGRATION_RESOLVED', 'ECONOMY', {
-    guildId: args.guildId,
-    nitradoConnId: args.primaryNitradoConnId,
-    actorDiscordId: args.actorDiscordId,
-    updatedRows,
-  });
+  if (!result.alreadyResolved) {
+    logAudit('ECONOMY_SCOPE_MIGRATION_RESOLVED', 'ECONOMY', {
+      guildId: args.guildId,
+      nitradoConnId: args.primaryNitradoConnId,
+      actorDiscordId: args.actorDiscordId,
+      updatedRows: result.updatedRows,
+    });
+  }
 
   return {
-    alreadyResolved: false,
+    alreadyResolved: result.alreadyResolved,
     primaryNitradoConnId: args.primaryNitradoConnId,
-    updatedRows,
+    updatedRows: result.updatedRows,
   };
 }
