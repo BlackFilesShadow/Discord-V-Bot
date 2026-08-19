@@ -28,12 +28,19 @@ describe('Nitrado-1A/1U outbox + token/service coupling architecture gate', () =
   });
 
   it('centralizes whitelist ADD/REMOVE under connection barrier then subject lock without active-job scan cap', () => {
+    const helper = whitelistOutbox.indexOf('async function ensureWhitelistJobInLock(');
+    const create = whitelistOutbox.indexOf('await tx.nitradoJob.create({', helper);
     const connectionLock = whitelistOutbox.indexOf('withNitradoOutboxConnectionLock(client, scope, tx =>');
     const subjectLock = whitelistOutbox.indexOf('withNitradoOutboxSubjectLock(tx, lockSubject', connectionLock);
-    const create = whitelistOutbox.indexOf('await tx.nitradoJob.create({');
+    const ensureCall = whitelistOutbox.indexOf(
+      'ensureWhitelistJobInLock(lockedTx, scope, operation, gameId, normalizedGameId)',
+      subjectLock,
+    );
+    expect(helper).toBeGreaterThanOrEqual(0);
+    expect(create).toBeGreaterThan(helper);
     expect(connectionLock).toBeGreaterThanOrEqual(0);
     expect(subjectLock).toBeGreaterThan(connectionLock);
-    expect(create).toBeGreaterThan(subjectLock);
+    expect(ensureCall).toBeGreaterThan(subjectLock);
     expect(whitelistOutbox).toContain("status: { in: ['PENDING', 'RUNNING'] }");
     expect(whitelistOutbox).toContain("return enqueueWhitelistJob(client, scope, 'WHITELIST_ADD', gameId);");
     expect(whitelistOutbox).toContain("return enqueueWhitelistJob(client, scope, 'WHITELIST_REMOVE', gameId);");
@@ -141,7 +148,7 @@ describe('Nitrado-1A/1U outbox + token/service coupling architecture gate', () =
     expect(rebindLifecycle).toContain("operation: { in: [...CANCEL_ON_REBIND_OPERATIONS] }");
     expect(rebindLifecycle).toContain("syncState: 'LOCAL_ONLY'");
     expect(rebindLifecycle).toContain('appliedRemotely: false');
-    expect(rebindLifecycle).toContain('const racedRunning = await tx.nitradoJob.findFirst({');
+    expect(rebindLifecycle).toContain('const racedRunning = await lockedTx.nitradoJob.findFirst({');
   });
 
   it('version-fences token and service writes to exact remotely validated connection id + updatedAt snapshot', () => {
