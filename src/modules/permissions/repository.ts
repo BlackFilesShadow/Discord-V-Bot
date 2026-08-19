@@ -2,25 +2,20 @@
  * Permissions-Repository — Subuser-Grants pro Guild.
  *
  * SCOPE-PFLICHT: jede Funktion verlangt `guildId` als ersten Parameter.
+ * Schreibzugriffe laufen ausnahmslos ueber die kanonische, cross-process
+ * serialisierte Permission-Mutationsengine.
  */
 
 import prisma from '../../database/prisma';
 import type { GuildId, UserDiscordId, PermissionScope } from '../../types/scope';
-import { NON_DELEGABLE_SCOPES, PERMISSION_SCOPES } from '../../types/scope';
+import { mutatePermissionGrant } from './mutationService';
+import { sanitizeDelegablePermissionScopes } from './policy';
 
 export interface PermissionGrantRow {
   userDiscordId: UserDiscordId;
   permissions: PermissionScope[];
   grantedBy: UserDiscordId;
   updatedAt: Date;
-}
-
-function sanitizeScopes(raw: unknown): PermissionScope[] {
-  if (!Array.isArray(raw)) return [];
-  const valid = new Set<string>(PERMISSION_SCOPES as readonly string[]);
-  return raw
-    .filter((s): s is string => typeof s === 'string' && valid.has(s))
-    .filter(s => !NON_DELEGABLE_SCOPES.has(s as PermissionScope)) as PermissionScope[];
 }
 
 export async function getGrant(
@@ -33,7 +28,7 @@ export async function getGrant(
   if (!row) return null;
   return {
     userDiscordId: row.userDiscordId as UserDiscordId,
-    permissions: sanitizeScopes(row.permissions),
+    permissions: sanitizeDelegablePermissionScopes(row.permissions),
     grantedBy: row.grantedByDiscordId as UserDiscordId,
     updatedAt: row.updatedAt,
   };
@@ -43,7 +38,7 @@ export async function listGrants(guildId: GuildId): Promise<PermissionGrantRow[]
   const rows = await prisma.guildPermissionGrant.findMany({ where: { guildId } });
   return rows.map(r => ({
     userDiscordId: r.userDiscordId as UserDiscordId,
-    permissions: sanitizeScopes(r.permissions),
+    permissions: sanitizeDelegablePermissionScopes(r.permissions),
     grantedBy: r.grantedByDiscordId as UserDiscordId,
     updatedAt: r.updatedAt,
   }));
@@ -56,33 +51,22 @@ export async function setGrantScope(
   enabled: boolean,
   grantedBy: UserDiscordId,
 ): Promise<PermissionGrantRow> {
-  if (NON_DELEGABLE_SCOPES.has(scope)) {
-    throw new Error(`Scope ${scope} ist nicht delegierbar (Owner-only).`);
-  }
-  const existing = await getGrant(guildId, userDiscordId);
-  const current = new Set<PermissionScope>(existing?.permissions ?? []);
-  if (enabled) current.add(scope);
-  else current.delete(scope);
-  const next = Array.from(current);
-
-  const row = await prisma.guildPermissionGrant.upsert({
+  const result = await mutatePermissionGrant({
+    guildId,
+    targetKind: 'USER',
+    targetId: userDiscordId,
+    action: enabled ? 'GRANT' : 'REVOKE',
+    permission: scope,
+    grantedBy,
+  });
+  const row = await prisma.guildPermissionGrant.findUnique({
     where: { guildId_userDiscordId: { guildId, userDiscordId } },
-    create: {
-      guildId,
-      userDiscordId,
-      permissions: next,
-      grantedByDiscordId: grantedBy,
-    },
-    update: {
-      permissions: next,
-      grantedByDiscordId: grantedBy,
-    },
   });
   return {
-    userDiscordId: row.userDiscordId as UserDiscordId,
-    permissions: sanitizeScopes(row.permissions),
-    grantedBy: row.grantedByDiscordId as UserDiscordId,
-    updatedAt: row.updatedAt,
+    userDiscordId,
+    permissions: result.permissions,
+    grantedBy: row?.grantedByDiscordId as UserDiscordId ?? grantedBy,
+    updatedAt: row?.updatedAt ?? new Date(),
   };
 }
 
@@ -90,8 +74,12 @@ export async function deleteGrant(
   guildId: GuildId,
   userDiscordId: UserDiscordId,
 ): Promise<void> {
-  await prisma.guildPermissionGrant.deleteMany({
-    where: { guildId, userDiscordId },
+  await mutatePermissionGrant({
+    guildId,
+    targetKind: 'USER',
+    targetId: userDiscordId,
+    action: 'PURGE',
+    grantedBy: userDiscordId,
   });
 }
 
@@ -110,7 +98,7 @@ export async function listRoleGrants(guildId: GuildId): Promise<PermissionRoleGr
   const rows = await prisma.guildPermissionRoleGrant.findMany({ where: { guildId } });
   return rows.map(r => ({
     roleDiscordId: r.roleDiscordId,
-    permissions: sanitizeScopes(r.permissions),
+    permissions: sanitizeDelegablePermissionScopes(r.permissions),
     grantedBy: r.grantedByDiscordId as UserDiscordId,
     updatedAt: r.updatedAt,
   }));
@@ -123,39 +111,33 @@ export async function setRoleGrantScope(
   enabled: boolean,
   grantedBy: UserDiscordId,
 ): Promise<PermissionRoleGrantRow> {
-  if (NON_DELEGABLE_SCOPES.has(scope)) {
-    throw new Error(`Scope ${scope} ist nicht delegierbar (Owner-only).`);
-  }
-  const existing = await prisma.guildPermissionRoleGrant.findUnique({
-    where: { guildId_roleDiscordId: { guildId, roleDiscordId } },
+  const result = await mutatePermissionGrant({
+    guildId,
+    targetKind: 'ROLE',
+    targetId: roleDiscordId,
+    action: enabled ? 'GRANT' : 'REVOKE',
+    permission: scope,
+    grantedBy,
   });
-  const current = new Set<PermissionScope>(sanitizeScopes(existing?.permissions));
-  if (enabled) current.add(scope);
-  else current.delete(scope);
-  const next = Array.from(current);
-
-  const row = await prisma.guildPermissionRoleGrant.upsert({
+  const row = await prisma.guildPermissionRoleGrant.findUnique({
     where: { guildId_roleDiscordId: { guildId, roleDiscordId } },
-    create: {
-      guildId, roleDiscordId,
-      permissions: next,
-      grantedByDiscordId: grantedBy,
-    },
-    update: {
-      permissions: next,
-      grantedByDiscordId: grantedBy,
-    },
   });
   return {
-    roleDiscordId: row.roleDiscordId,
-    permissions: sanitizeScopes(row.permissions),
-    grantedBy: row.grantedByDiscordId as UserDiscordId,
-    updatedAt: row.updatedAt,
+    roleDiscordId,
+    permissions: result.permissions,
+    grantedBy: row?.grantedByDiscordId as UserDiscordId ?? grantedBy,
+    updatedAt: row?.updatedAt ?? new Date(),
   };
 }
 
 export async function deleteRoleGrant(guildId: GuildId, roleDiscordId: string): Promise<void> {
-  await prisma.guildPermissionRoleGrant.deleteMany({ where: { guildId, roleDiscordId } });
+  await mutatePermissionGrant({
+    guildId,
+    targetKind: 'ROLE',
+    targetId: roleDiscordId,
+    action: 'PURGE',
+    grantedBy: '' as UserDiscordId,
+  });
 }
 
 /**
@@ -172,7 +154,7 @@ export async function getEffectiveRoleScopes(
   });
   const out = new Set<PermissionScope>();
   for (const row of rows) {
-    for (const s of sanitizeScopes(row.permissions)) out.add(s);
+    for (const s of sanitizeDelegablePermissionScopes(row.permissions)) out.add(s);
   }
   return out;
 }
