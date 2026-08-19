@@ -226,39 +226,44 @@ export async function persistAdmEvents(
       },
     });
 
+    // Die Freshness-Entscheidung muss VOR jedem Event-Write fallen. Sonst
+    // koennte eine langsame Replika zwar den Cursor nicht mehr zuruecksetzen,
+    // aber alte/rotierte Zeilen unter neuen eventKeys trotzdem persistieren.
+    if (!shouldAcceptCursorSnapshot(current, meta, result)) {
+      return { inserted: 0 };
+    }
+
     let inserted = 0;
     if (rows.length > 0) {
       const created = await tx.admEvent.createMany({ data: rows, skipDuplicates: true });
       inserted = created.count;
     }
 
-    if (shouldAcceptCursorSnapshot(current, meta, result)) {
-      await tx.admSourceCursor.upsert({
-        where: cursorWhere,
-        create: {
-          guildId: scope.guildId,
-          nitradoConnId: scope.nitradoConnId,
-          fileIdentity: meta.fileIdentity,
-          fileName: meta.fileName,
-          lastModifiedAt: meta.lastModifiedAt,
-          lastKnownSize: BigInt(meta.fileSize),
-          processedByteOffset: BigInt(result.newOffset),
-          trailingPartialLine: result.trailingPartial || null,
-          contentFingerprint,
-          lastSuccessAt: new Date(),
-        },
-        update: {
-          fileName: meta.fileName,
-          lastModifiedAt: meta.lastModifiedAt,
-          lastKnownSize: BigInt(meta.fileSize),
-          processedByteOffset: BigInt(result.newOffset),
-          trailingPartialLine: result.trailingPartial || null,
-          contentFingerprint,
-          lastSuccessAt: new Date(),
-          lastError: null,
-        },
-      });
-    }
+    await tx.admSourceCursor.upsert({
+      where: cursorWhere,
+      create: {
+        guildId: scope.guildId,
+        nitradoConnId: scope.nitradoConnId,
+        fileIdentity: meta.fileIdentity,
+        fileName: meta.fileName,
+        lastModifiedAt: meta.lastModifiedAt,
+        lastKnownSize: BigInt(meta.fileSize),
+        processedByteOffset: BigInt(result.newOffset),
+        trailingPartialLine: result.trailingPartial || null,
+        contentFingerprint,
+        lastSuccessAt: new Date(),
+      },
+      update: {
+        fileName: meta.fileName,
+        lastModifiedAt: meta.lastModifiedAt,
+        lastKnownSize: BigInt(meta.fileSize),
+        processedByteOffset: BigInt(result.newOffset),
+        trailingPartialLine: result.trailingPartial || null,
+        contentFingerprint,
+        lastSuccessAt: new Date(),
+        lastError: null,
+      },
+    });
     return { inserted };
   });
 }
