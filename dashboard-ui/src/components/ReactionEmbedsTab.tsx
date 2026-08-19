@@ -131,6 +131,64 @@ function optionToForm(o: ApiOption): OptionForm {
   };
 }
 
+function ViewerMenuCard({ menu }: { menu: ApiMenu }) {
+  const activeOptions = menu.options.filter(option => option.isActive);
+  return (
+    <Card>
+      <CardHeader>
+        <div className="flex flex-wrap items-start justify-between gap-2">
+          <div className="min-w-0">
+            <CardTitle className="break-words">{menu.title}</CardTitle>
+            {menu.description && <CardDesc className="mt-1 whitespace-pre-wrap break-words">{menu.description}</CardDesc>}
+          </div>
+          <div className="flex flex-wrap gap-1.5">
+            <Badge>{menu.componentType}</Badge>
+            {menu.archived ? <Badge variant="neutral">Archiviert</Badge> : menu.isPosted ? <Badge variant="ok">Gepostet</Badge> : <Badge variant="warn">Entwurf</Badge>}
+          </div>
+        </div>
+      </CardHeader>
+
+      <div className="space-y-3 text-sm">
+        <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 text-xs">
+          <div className="rounded-lg border border-border/60 bg-bg-elev/40 p-3 min-w-0">
+            <p className="text-muted mb-1">Ziel-Channel</p>
+            <p className="text-white break-all">{menu.channelId}</p>
+          </div>
+          <div className="rounded-lg border border-border/60 bg-bg-elev/40 p-3 min-w-0">
+            <p className="text-muted mb-1">Auswahl / Verhalten</p>
+            <p className="text-white break-words">{menu.mode} · {menu.assignMode}</p>
+          </div>
+        </div>
+
+        <div className="rounded-lg border border-border/60 bg-bg/60 p-3 min-w-0">
+          <p className="text-xs text-muted mb-2">Aktive Rollen-Optionen ({activeOptions.length})</p>
+          {activeOptions.length === 0 ? (
+            <p className="text-sm text-muted">Keine aktiven Optionen.</p>
+          ) : (
+            <div className="space-y-2">
+              {activeOptions.map(option => {
+                const roleIds = Array.isArray(option.roleIds) && option.roleIds.length > 0
+                  ? option.roleIds
+                  : (option.roleId ? [option.roleId] : []);
+                return (
+                  <div key={option.id} className="rounded-md border border-border/50 bg-bg-elev/30 p-2.5 min-w-0">
+                    <p className="text-white break-words">
+                      {option.emoji ? `${option.emoji} ` : ''}{option.label || 'Unbenannte Option'}
+                    </p>
+                    <p className="text-[11px] text-muted mt-1 break-all">
+                      Rollen: {roleIds.length > 0 ? roleIds.join(', ') : '—'}
+                    </p>
+                  </div>
+                );
+              })}
+            </div>
+          )}
+        </div>
+      </div>
+    </Card>
+  );
+}
+
 export function ReactionEmbedsTab({ guildId, canManage }: { guildId: string; canManage: boolean }) {
   const qc = useQueryClient();
   const toast = useToast();
@@ -138,18 +196,23 @@ export function ReactionEmbedsTab({ guildId, canManage }: { guildId: string; can
   const listQ = useQuery({
     queryKey: ['reaction-embeds', guildId],
     queryFn: () => api.get<{ menus: ApiMenu[] }>(`/api/v2/guilds/${guildId}/reaction-embeds`),
+    enabled: !!guildId,
+    retry: false,
   });
   const channelsQ = useQuery({
     queryKey: ['guild-channels', guildId],
     queryFn: () => api.get<{ channels: DiscordChannel[] }>(`/api/v2/guilds/${guildId}/channels`),
+    enabled: !!guildId && canManage,
   });
   const rolesQ = useQuery({
     queryKey: ['guild-roles', guildId],
     queryFn: () => api.get<{ roles: DiscordRole[] }>(`/api/v2/guilds/${guildId}/roles`),
+    enabled: !!guildId && canManage,
   });
   const embedsQ = useQuery({
     queryKey: ['embeds', guildId],
     queryFn: () => api.get<{ embeds: ApiEmbedLite[] }>(`/api/v2/guilds/${guildId}/embeds`),
+    enabled: !!guildId && canManage,
   });
 
   const [editingId, setEditingId] = useState<string | null>(null);
@@ -366,13 +429,41 @@ export function ReactionEmbedsTab({ guildId, canManage }: { guildId: string; can
   }
 
   if (!canManage) {
+    if (listQ.isLoading) return <div className="h-40 rounded-xl skeleton" />;
+    if (listQ.isError) {
+      return (
+        <Card>
+          <CardHeader>
+            <CardTitle>Nicht erlaubt</CardTitle>
+            <CardDesc>Die Reaktions-Embeds konnten nicht gelesen werden.</CardDesc>
+          </CardHeader>
+          <p className="text-danger text-xs break-words">{(listQ.error as Error).message}</p>
+        </Card>
+      );
+    }
+
     return (
-      <Card>
-        <CardHeader>
-          <CardTitle>Reaktions Embeds</CardTitle>
-          <CardDesc>Du hast keine Berechtigung, Reaktionsrollen zu verwalten (benötigt <code>reactionroles.manage</code>).</CardDesc>
-        </CardHeader>
-      </Card>
+      <div className="space-y-4">
+        <div>
+          <h2 className="text-lg font-semibold text-white inline-flex items-center gap-2">
+            <ToggleLeft size={18} className="text-accent" /> Reaktions Embeds
+          </h2>
+          <p className="text-xs text-muted mt-1">
+            Nur-Lesezugriff: Menüs und Rollen-Zuordnungen sind sichtbar, Änderungen benötigen <code>reactionroles.manage</code>.
+          </p>
+        </div>
+
+        {menus.length === 0 ? (
+          <Card>
+            <CardHeader><CardTitle>Keine Reaktions-Embeds</CardTitle></CardHeader>
+            <CardDesc>Für diesen Discord-Server sind aktuell keine Rollen-Menüs konfiguriert.</CardDesc>
+          </Card>
+        ) : (
+          <div className="space-y-3">
+            {menus.map(menu => <ViewerMenuCard key={menu.id} menu={menu} />)}
+          </div>
+        )}
+      </div>
     );
   }
 
