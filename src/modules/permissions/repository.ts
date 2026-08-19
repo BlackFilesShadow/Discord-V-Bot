@@ -4,6 +4,7 @@
  * SCOPE-PFLICHT: jede Funktion verlangt `guildId` als ersten Parameter.
  */
 
+import { Prisma } from '@prisma/client';
 import prisma from '../../database/prisma';
 import type { GuildId, UserDiscordId, PermissionScope } from '../../types/scope';
 import { NON_DELEGABLE_SCOPES, PERMISSION_SCOPES } from '../../types/scope';
@@ -21,6 +22,24 @@ function sanitizeScopes(raw: unknown): PermissionScope[] {
   return raw
     .filter((s): s is string => typeof s === 'string' && valid.has(s))
     .filter(s => !NON_DELEGABLE_SCOPES.has(s as PermissionScope)) as PermissionScope[];
+}
+
+async function serializablePermissionMutation<T>(
+  operation: (tx: Prisma.TransactionClient) => Promise<T>,
+): Promise<T> {
+  const maxAttempts = 4;
+  for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
+    try {
+      return await prisma.$transaction(operation, {
+        isolationLevel: Prisma.TransactionIsolationLevel.Serializable,
+      });
+    } catch (error) {
+      const code = (error as { code?: string }).code;
+      const retryable = code === 'P2034' || code === 'P2002';
+      if (!retryable || attempt === maxAttempts) throw error;
+    }
+  }
+  throw new Error('Permission-Transaktion konnte nicht abgeschlossen werden.');
 }
 
 export async function getGrant(
@@ -59,39 +78,60 @@ export async function setGrantScope(
   if (NON_DELEGABLE_SCOPES.has(scope)) {
     throw new Error(`Scope ${scope} ist nicht delegierbar (Owner-only).`);
   }
-  const existing = await getGrant(guildId, userDiscordId);
-  const current = new Set<PermissionScope>(existing?.permissions ?? []);
-  if (enabled) current.add(scope);
-  else current.delete(scope);
-  const next = Array.from(current);
 
-  const row = await prisma.guildPermissionGrant.upsert({
-    where: { guildId_userDiscordId: { guildId, userDiscordId } },
-    create: {
-      guildId,
-      userDiscordId,
-      permissions: next,
-      grantedByDiscordId: grantedBy,
-    },
-    update: {
-      permissions: next,
-      grantedByDiscordId: grantedBy,
-    },
+  return serializablePermissionMutation(async tx => {
+    const existing = await tx.guildPermissionGrant.findUnique({
+      where: { guildId_userDiscordId: { guildId, userDiscordId } },
+    });
+    const current = new Set<PermissionScope>(sanitizeScopes(existing?.permissions));
+    if (enabled) current.add(scope);
+    else current.delete(scope);
+    const next = Array.from(current).sort();
+
+    if (next.length === 0) {
+      if (existing) {
+        await tx.guildPermissionGrant.deleteMany({
+          where: { guildId, userDiscordId },
+        });
+      }
+      return {
+        userDiscordId,
+        permissions: [],
+        grantedBy,
+        updatedAt: new Date(),
+      };
+    }
+
+    const row = await tx.guildPermissionGrant.upsert({
+      where: { guildId_userDiscordId: { guildId, userDiscordId } },
+      create: {
+        guildId,
+        userDiscordId,
+        permissions: next,
+        grantedByDiscordId: grantedBy,
+      },
+      update: {
+        permissions: next,
+        grantedByDiscordId: grantedBy,
+      },
+    });
+    return {
+      userDiscordId: row.userDiscordId as UserDiscordId,
+      permissions: sanitizeScopes(row.permissions),
+      grantedBy: row.grantedByDiscordId as UserDiscordId,
+      updatedAt: row.updatedAt,
+    };
   });
-  return {
-    userDiscordId: row.userDiscordId as UserDiscordId,
-    permissions: sanitizeScopes(row.permissions),
-    grantedBy: row.grantedByDiscordId as UserDiscordId,
-    updatedAt: row.updatedAt,
-  };
 }
 
 export async function deleteGrant(
   guildId: GuildId,
   userDiscordId: UserDiscordId,
 ): Promise<void> {
-  await prisma.guildPermissionGrant.deleteMany({
-    where: { guildId, userDiscordId },
+  await serializablePermissionMutation(async tx => {
+    await tx.guildPermissionGrant.deleteMany({
+      where: { guildId, userDiscordId },
+    });
   });
 }
 
@@ -126,36 +166,55 @@ export async function setRoleGrantScope(
   if (NON_DELEGABLE_SCOPES.has(scope)) {
     throw new Error(`Scope ${scope} ist nicht delegierbar (Owner-only).`);
   }
-  const existing = await prisma.guildPermissionRoleGrant.findUnique({
-    where: { guildId_roleDiscordId: { guildId, roleDiscordId } },
-  });
-  const current = new Set<PermissionScope>(sanitizeScopes(existing?.permissions));
-  if (enabled) current.add(scope);
-  else current.delete(scope);
-  const next = Array.from(current);
 
-  const row = await prisma.guildPermissionRoleGrant.upsert({
-    where: { guildId_roleDiscordId: { guildId, roleDiscordId } },
-    create: {
-      guildId, roleDiscordId,
-      permissions: next,
-      grantedByDiscordId: grantedBy,
-    },
-    update: {
-      permissions: next,
-      grantedByDiscordId: grantedBy,
-    },
+  return serializablePermissionMutation(async tx => {
+    const existing = await tx.guildPermissionRoleGrant.findUnique({
+      where: { guildId_roleDiscordId: { guildId, roleDiscordId } },
+    });
+    const current = new Set<PermissionScope>(sanitizeScopes(existing?.permissions));
+    if (enabled) current.add(scope);
+    else current.delete(scope);
+    const next = Array.from(current).sort();
+
+    if (next.length === 0) {
+      if (existing) {
+        await tx.guildPermissionRoleGrant.deleteMany({
+          where: { guildId, roleDiscordId },
+        });
+      }
+      return {
+        roleDiscordId,
+        permissions: [],
+        grantedBy,
+        updatedAt: new Date(),
+      };
+    }
+
+    const row = await tx.guildPermissionRoleGrant.upsert({
+      where: { guildId_roleDiscordId: { guildId, roleDiscordId } },
+      create: {
+        guildId, roleDiscordId,
+        permissions: next,
+        grantedByDiscordId: grantedBy,
+      },
+      update: {
+        permissions: next,
+        grantedByDiscordId: grantedBy,
+      },
+    });
+    return {
+      roleDiscordId: row.roleDiscordId,
+      permissions: sanitizeScopes(row.permissions),
+      grantedBy: row.grantedByDiscordId as UserDiscordId,
+      updatedAt: row.updatedAt,
+    };
   });
-  return {
-    roleDiscordId: row.roleDiscordId,
-    permissions: sanitizeScopes(row.permissions),
-    grantedBy: row.grantedByDiscordId as UserDiscordId,
-    updatedAt: row.updatedAt,
-  };
 }
 
 export async function deleteRoleGrant(guildId: GuildId, roleDiscordId: string): Promise<void> {
-  await prisma.guildPermissionRoleGrant.deleteMany({ where: { guildId, roleDiscordId } });
+  await serializablePermissionMutation(async tx => {
+    await tx.guildPermissionRoleGrant.deleteMany({ where: { guildId, roleDiscordId } });
+  });
 }
 
 /**
