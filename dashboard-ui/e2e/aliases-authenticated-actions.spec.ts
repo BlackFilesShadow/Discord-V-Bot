@@ -73,6 +73,14 @@ async function openAliases(page: Page): Promise<void> {
   await page.getByRole('button', { name: 'Server-Aliase', exact: true }).click();
 }
 
+function firstAliasInput(page: Page) {
+  return page.getByRole('textbox', { name: 'Anzeigename', exact: true }).first();
+}
+
+function firstSaveButton(page: Page) {
+  return page.getByRole('button', { name: 'Speichern', exact: true }).first();
+}
+
 async function noPageOverflow(page: Page): Promise<void> {
   const overflow = await page.evaluate(() => document.documentElement.scrollWidth - document.documentElement.clientWidth);
   expect(overflow).toBeLessThanOrEqual(1);
@@ -90,10 +98,10 @@ test.describe('Server aliases authenticated contract', () => {
     await openAliases(page);
 
     await expect(page.getByText('CH001', { exact: true })).toBeVisible();
-    const input = page.getByDisplayValue('Chernarus');
+    const input = firstAliasInput(page);
+    await expect(input).toHaveValue('Chernarus');
     await input.fill('  Chernarus PvE  ');
-    const row = input.locator('xpath=ancestor::*[contains(@class,"rounded")][1]');
-    await row.getByRole('button', { name: 'Speichern', exact: true }).click();
+    await firstSaveButton(page).click();
 
     await expect.poll(() => state.mutations[0]?.path).toBe(`/api/v2/guilds/${GUILD_ID}/nitrado/1/alias`);
     expect(state.mutations[0]?.body).toEqual({ alias: 'Chernarus PvE' });
@@ -105,10 +113,10 @@ test.describe('Server aliases authenticated contract', () => {
     const state = await stubAliases(page, true);
     await openAliases(page);
 
-    const input = page.getByDisplayValue('Chernarus');
+    const input = firstAliasInput(page);
+    await expect(input).toHaveValue('Chernarus');
     await input.fill('   ');
-    const row = input.locator('xpath=ancestor::*[contains(@class,"rounded")][1]');
-    await expect(row.getByRole('button', { name: 'Speichern', exact: true })).toBeDisabled();
+    await expect(firstSaveButton(page)).toBeDisabled();
     expect(state.mutations).toEqual([]);
   });
 
@@ -116,10 +124,10 @@ test.describe('Server aliases authenticated contract', () => {
     const state = await stubAliases(page, true, true);
     await openAliases(page);
 
-    const input = page.getByDisplayValue('Chernarus');
+    const input = firstAliasInput(page);
+    await expect(input).toHaveValue('Chernarus');
     await input.fill('Fehler Alias');
-    const row = input.locator('xpath=ancestor::*[contains(@class,"rounded")][1]');
-    await row.getByRole('button', { name: 'Speichern', exact: true }).click();
+    await firstSaveButton(page).click();
 
     await expect.poll(() => state.mutations.length).toBe(1);
     await expect(page.getByText('Alias konnte nicht gespeichert werden.')).toBeVisible();
@@ -131,7 +139,8 @@ test.describe('Server aliases authenticated contract', () => {
     await openAliases(page);
 
     await expect(page.getByText('Slot-Status: EXPIRED')).toBeVisible();
-    await expect(page.getByDisplayValue('Livonia')).toBeVisible();
+    const inputs = page.getByRole('textbox', { name: 'Anzeigename', exact: true });
+    await expect(inputs.nth(1)).toHaveValue('Livonia');
   });
 
   for (const width of [320, 360, 375, 390, 430]) {
@@ -139,7 +148,7 @@ test.describe('Server aliases authenticated contract', () => {
       await page.setViewportSize({ width, height: 900 });
       await stubAliases(page, true);
       await openAliases(page);
-      await expect(page.getByDisplayValue('Chernarus')).toBeVisible();
+      await expect(firstAliasInput(page)).toHaveValue('Chernarus');
       await expect(page.getByText('CH001', { exact: true })).toBeVisible();
       await noPageOverflow(page);
     });
