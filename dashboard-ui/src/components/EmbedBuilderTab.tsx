@@ -382,7 +382,7 @@ export function EmbedBuilderTab({ guildId, canManage }: { guildId: string; canMa
     set('fields', [...form.fields, { name: '', value: '', inline: false }]);
   }
   function updateField(i: number, patch: Partial<EmbedField>) {
-    set('fields', form.fields.map((f, idx) => (idx === i ? { ...f, ...patch } : f));
+    set('fields', form.fields.map((f, idx) => (idx === i ? { ...f, ...patch } : f)));
   }
   function removeField(i: number) {
     set('fields', form.fields.filter((_, idx) => idx !== i));
