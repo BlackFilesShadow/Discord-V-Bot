@@ -34,8 +34,14 @@ describe('virtuelle Konten — Retry- und Replay-Sicherheit', () => {
     expect(panel).toContain(onErrorLine);
   });
 
-  it('nutzt denselben zentralen Generator auch fuer normale Dashboard-Mutationsheader', () => {
+  it('nutzt den zentralen Generator fuer neue Dashboard-Mutationskeys und behaelt Pending-Keys fuer sichere Retries', () => {
     expect(api).toContain('export function createIdempotencyKey(): string');
-    expect(api).toContain("headers['X-Idempotency-Key'] = createIdempotencyKey();");
+    expect(api).toContain('const key = validStoredIdempotencyKey(stored) ? stored.trim() : createIdempotencyKey();');
+    expect(api).toContain('lease = await acquireMutationIdempotencyKey(signature);');
+    expect(api).toContain("headers['X-Idempotency-Key'] = lease.key;");
+    const decode = api.indexOf('const result = await decode<T>(await fetch(');
+    const release = api.indexOf('if (lease) releaseMutationIdempotencyKey(lease);', decode);
+    expect(decode).toBeGreaterThanOrEqual(0);
+    expect(release).toBeGreaterThan(decode);
   });
 });
