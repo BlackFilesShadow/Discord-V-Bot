@@ -57,12 +57,14 @@ export async function getGrant(
 
 export async function listGrants(guildId: GuildId): Promise<PermissionGrantRow[]> {
   const rows = await prisma.guildPermissionGrant.findMany({ where: { guildId } });
-  return rows.map(r => ({
-    userDiscordId: r.userDiscordId as UserDiscordId,
-    permissions: sanitizeScopes(r.permissions),
-    grantedBy: r.grantedByDiscordId as UserDiscordId,
-    updatedAt: r.updatedAt,
-  }));
+  return rows
+    .map(r => ({
+      userDiscordId: r.userDiscordId as UserDiscordId,
+      permissions: sanitizeScopes(r.permissions),
+      grantedBy: r.grantedByDiscordId as UserDiscordId,
+      updatedAt: r.updatedAt,
+    }))
+    .filter(row => row.permissions.length > 0);
 }
 
 export async function setGrantScope(
@@ -146,12 +148,14 @@ export interface PermissionRoleGrantRow {
 
 export async function listRoleGrants(guildId: GuildId): Promise<PermissionRoleGrantRow[]> {
   const rows = await prisma.guildPermissionRoleGrant.findMany({ where: { guildId } });
-  return rows.map(r => ({
-    roleDiscordId: r.roleDiscordId,
-    permissions: sanitizeScopes(r.permissions),
-    grantedBy: r.grantedByDiscordId as UserDiscordId,
-    updatedAt: r.updatedAt,
-  }));
+  return rows
+    .map(r => ({
+      roleDiscordId: r.roleDiscordId,
+      permissions: sanitizeScopes(r.permissions),
+      grantedBy: r.grantedByDiscordId as UserDiscordId,
+      updatedAt: r.updatedAt,
+    }))
+    .filter(row => row.permissions.length > 0);
 }
 
 export async function setRoleGrantScope(
