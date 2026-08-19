@@ -10,8 +10,8 @@
  *   CLOSED       -> normaler Betrieb. Fehler werden gezaehlt.
  *   OPEN         -> Calls werden ohne HTTP-Versuch sofort mit
  *                   NitradoCircuitOpenError abgewiesen.
- *   HALF_OPEN    -> nach `cooldownMs` einen Probe-Call zulassen. Erfolg ->
- *                   CLOSED; Fehler -> OPEN.
+ *   HALF_OPEN    -> nach `cooldownMs` exakt einen Probe-Call zulassen. Erfolg ->
+ *                   CLOSED; Fehler -> OPEN. Parallele Calls bleiben geblockt.
  *
  * Implementierung:
  *   - in-memory, pro Prozess (kein Multi-Replica-Sharing — Nitrado-Outage
@@ -46,6 +46,8 @@ const DEFAULTS: BreakerOpts = {
   cooldownMaxMs: 300_000,
 };
 
+const HALF_OPEN_PROBE_RETRY_MS = 1_000;
+
 class NitradoCircuitBreaker {
   private state: State = 'CLOSED';
   private failureTimestamps: number[] = [];
@@ -59,21 +61,25 @@ class NitradoCircuitBreaker {
 
   /**
    * Wirft `NitradoCircuitOpenError` wenn der Breaker offen ist.
-   * Sollte VOR jedem HTTP-Aufruf in nitradoClient.request() gerufen werden.
+   * Sollte VOR jedem HTTP-Versuch in nitradoClient.request() gerufen werden.
    */
   preflight(): void {
     if (this.state === 'CLOSED') return;
     if (this.state === 'OPEN') {
       const elapsed = Date.now() - this.openedAt;
       if (elapsed >= this.currentCooldown) {
-        // Probe-Window: HALF_OPEN. Naechster Call ist der Probe-Call.
+        // Exakt dieser Caller besitzt den HALF_OPEN-Probe-Slot. Solange er
+        // weder recordSuccess() noch recordFailure() meldet, bleiben alle
+        // parallelen Requests fail-fast geblockt.
         this.state = 'HALF_OPEN';
-        logger.info('NitradoCircuitBreaker: -> HALF_OPEN (probe call allowed)');
+        logger.info('NitradoCircuitBreaker: -> HALF_OPEN (single probe call allowed)');
         return;
       }
       throw new NitradoCircuitOpenError(this.currentCooldown - elapsed);
     }
-    // HALF_OPEN: ein Call ist erlaubt; recordSuccess()/recordFailure() schliesst/oeffnet wieder.
+
+    // HALF_OPEN bedeutet: der eine Probe-Call ist bereits in-flight.
+    throw new NitradoCircuitOpenError(HALF_OPEN_PROBE_RETRY_MS);
   }
 
   recordSuccess(): void {

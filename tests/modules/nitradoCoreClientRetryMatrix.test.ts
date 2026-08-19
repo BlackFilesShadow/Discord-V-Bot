@@ -53,6 +53,7 @@ describe('Nitrado-1V core client transient failure matrix', () => {
     await expect(client.listServices()).resolves.toEqual([]);
 
     expect(mockRequest).toHaveBeenCalledTimes(2);
+    expect(mockBreaker.preflight).toHaveBeenCalledTimes(2);
     expect(mockBreaker.recordFailure).toHaveBeenCalledTimes(1);
     expect(mockBreaker.recordSuccess).toHaveBeenCalledTimes(1);
   });
@@ -69,6 +70,7 @@ describe('Nitrado-1V core client transient failure matrix', () => {
     });
 
     expect(mockRequest).toHaveBeenCalledTimes(3);
+    expect(mockBreaker.preflight).toHaveBeenCalledTimes(3);
     expect(mockBreaker.recordFailure).toHaveBeenCalledTimes(3);
     expect(mockBreaker.recordSuccess).not.toHaveBeenCalled();
   });
@@ -89,11 +91,12 @@ describe('Nitrado-1V core client transient failure matrix', () => {
     });
 
     expect(mockRequest).toHaveBeenCalledTimes(3);
+    expect(mockBreaker.preflight).toHaveBeenCalledTimes(3);
     expect(mockBreaker.recordFailure).toHaveBeenCalledTimes(3);
     expect(mockBreaker.recordSuccess).not.toHaveBeenCalled();
   });
 
-  it('keeps permanent non-429 4xx fail-fast and outside breaker failure accounting', async () => {
+  it('keeps permanent non-429 4xx fail-fast, outside failure accounting, and closes a probe slot', async () => {
     mockRequest.mockResolvedValue({ status: 404, headers: {}, data: { message: 'not found' } });
 
     const client = new NitradoClient('token-1234');
@@ -104,6 +107,8 @@ describe('Nitrado-1V core client transient failure matrix', () => {
     });
 
     expect(mockRequest).toHaveBeenCalledTimes(1);
+    expect(mockBreaker.preflight).toHaveBeenCalledTimes(1);
     expect(mockBreaker.recordFailure).not.toHaveBeenCalled();
+    expect(mockBreaker.recordSuccess).toHaveBeenCalledTimes(1);
   });
 });
