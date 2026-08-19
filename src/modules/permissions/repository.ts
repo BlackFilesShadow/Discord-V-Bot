@@ -8,13 +8,27 @@ import { Prisma } from '@prisma/client';
 import prisma from '../../database/prisma';
 import type { GuildId, UserDiscordId, PermissionScope } from '../../types/scope';
 import { NON_DELEGABLE_SCOPES } from '../../types/scope';
-import { delegatedPermissionSet, directGrantBelongsToMembership } from './access';
+import {
+  delegatedPermissionSet,
+  directGrantBelongsToMembership,
+  directGrantMembershipEpoch,
+  storedDirectPermissions,
+} from './access';
 
 export interface PermissionGrantRow {
   userDiscordId: UserDiscordId;
   permissions: PermissionScope[];
   grantedBy: UserDiscordId;
   updatedAt: Date;
+}
+
+export class PermissionMembershipEpochConflictError extends Error {
+  readonly code = 'PERMISSION_MEMBERSHIP_EPOCH_CONFLICT';
+
+  constructor() {
+    super('Die Discord-Mitgliedschaft hat sich waehrend der Permission-Aktion geaendert.');
+    this.name = 'PermissionMembershipEpochConflictError';
+  }
 }
 
 function sanitizeScopes(raw: unknown): PermissionScope[] {
@@ -70,16 +84,12 @@ export async function listGrants(guildId: GuildId): Promise<PermissionGrantRow[]
 /**
  * Setzt einen User-Scope innerhalb einer SERIALIZABLE-Transaktion.
  *
- * `membershipJoinedAt` ist fuer Aktivierungen Pflicht und beschreibt die durch
- * Discord live validierte aktuelle Mitgliedschaft. Eine vorhandene Grant-Zeile
- * aus einer aelteren Mitgliedschaft wird niemals als Ausgangsbasis verwendet:
- * beim Grant startet sie leer, beim Revoke wird sie komplett entfernt. Damit
- * kann eine einzelne frische Mutation nach Rejoin keine alten Scopes ungewollt
- * wieder auf `updatedAt=now` heben und reaktivieren.
- *
- * Bei Revoke ohne aktuell beweisbare Mitgliedschaft wird die ganze Direct-Grant-
- * Zeile entfernt. Das ist fail-closed und verhindert, dass ein Cleanup-Request
- * auf einem ausgetretenen User verbleibende alte Scopes frisch timestamped.
+ * Neue/normalisierte Direct-Grants tragen im JSON-Permissionsarray einen
+ * internen Membership-Epoch-Marker. Das verhindert einen ABA-Race, bei dem ein
+ * Request aus Mitgliedschaft A erst nach Leave+Rejoin in Mitgliedschaft B
+ * committed und dadurch einen frischen Grant aus B ueberschreiben/reaktivieren
+ * koennte. Eine bereits neuere Epoche gewinnt immer und der alte Request endet
+ * sichtbar als Conflict statt Daten zu verlieren.
  */
 export async function setGrantScope(
   guildId: GuildId,
@@ -104,14 +114,26 @@ export async function setGrantScope(
       where: { guildId_userDiscordId: { guildId, userDiscordId } },
     });
 
-    const existingIsCurrentMembership = !!existing
-      && directGrantBelongsToMembership(existing.updatedAt, membershipJoinedAt);
+    const storedEpoch = directGrantMembershipEpoch(existing?.permissions);
+    if (storedEpoch && membershipJoinedAt && storedEpoch.getTime() > membershipJoinedAt.getTime()) {
+      // Ein Request aus einer aelteren Mitgliedschaft darf niemals eine bereits
+      // persistierte neuere Mitgliedschaftsepoche ueberschreiben oder loeschen.
+      throw new PermissionMembershipEpochConflictError();
+    }
+    if (storedEpoch && !membershipJoinedAt) {
+      // Fehlender Live-Member-Beweis ist fuer eine bereits generationierte Zeile
+      // kein Grund fuer destruktives Loeschen: koennte ein temporaerer Discord-
+      // Fetchfehler sein. Voll-Purge bleibt ueber deleteGrant explizit moeglich.
+      throw new PermissionMembershipEpochConflictError();
+    }
 
-    // Ohne aktuelle Mitgliedschaft oder bei einer alten Mitgliedschaftsepoche
-    // darf ein Revoke niemals die Rest-Scopes durch einen frischen updatedAt-
-    // Write reaktivieren. Alte/ungeklaerte Direct-Grants werden vollstaendig
-    // entfernt; der Owner kann nach sauberer Mitgliedschaft neu delegieren.
-    if (!enabled && (!membershipJoinedAt || !existingIsCurrentMembership)) {
+    const existingIsCurrentMembership = !!existing
+      && directGrantBelongsToMembership(existing.permissions, existing.updatedAt, membershipJoinedAt);
+
+    // Bei einem Revoke auf einer eindeutig aelteren/Legacy-Epoche wird die alte
+    // Zeile komplett entfernt. So kann ein Teil-Revoke alte Rest-Scopes nicht
+    // durch einen frischen updatedAt-Write wieder aktivieren.
+    if (!enabled && !existingIsCurrentMembership) {
       await tx.guildPermissionGrant.deleteMany({ where: { guildId, userDiscordId } });
       return { userDiscordId, permissions: [], grantedBy, updatedAt: new Date() };
     }
@@ -137,16 +159,20 @@ export async function setGrantScope(
       };
     }
 
+    // enabled=true hat oben membershipJoinedAt erzwungen; fuer current revoke
+    // ist existingIsCurrentMembership nur mit membershipJoinedAt=true moeglich.
+    const epoch = membershipJoinedAt!;
+    const persistedPermissions = storedDirectPermissions(next, epoch);
     const row = await tx.guildPermissionGrant.upsert({
       where: { guildId_userDiscordId: { guildId, userDiscordId } },
       create: {
         guildId,
         userDiscordId,
-        permissions: next,
+        permissions: persistedPermissions,
         grantedByDiscordId: grantedBy,
       },
       update: {
-        permissions: next,
+        permissions: persistedPermissions,
         grantedByDiscordId: grantedBy,
       },
     });
