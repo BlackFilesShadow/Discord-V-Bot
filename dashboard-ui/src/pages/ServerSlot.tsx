@@ -116,8 +116,12 @@ export default function ServerSlot() {
 
   const updateEconomy = useMutation({
     mutationFn: (patch: Partial<EconomyConfigState>) =>
-      api.put(`/api/v2/guilds/${guildId}/economy/config?slot=${encodeURIComponent(slot!)}`, patch),
-    onSuccess: () => qc.invalidateQueries({ queryKey: ['economy', guildId, slot] }),
+      api.put<EconomyConfigState>(`/api/v2/guilds/${guildId}/economy/config?slot=${encodeURIComponent(slot!)}`, patch),
+    onSuccess: saved => {
+      qc.setQueryData(['economy', guildId, slot], saved);
+      void qc.invalidateQueries({ queryKey: ['economy', guildId, slot] });
+      void qc.invalidateQueries({ queryKey: ['settings', guildId, slot] });
+    },
   });
 
   const dashboardMeta = useQuery({
@@ -230,6 +234,7 @@ export default function ServerSlot() {
             onSave={patch => updateEconomy.mutate(patch)}
             pending={updateEconomy.isPending}
             error={economy.isError ? (economy.error as Error).message : null}
+            saveError={updateEconomy.isError ? (updateEconomy.error as Error).message : null}
           />
         )}
 
@@ -917,7 +922,7 @@ function EconomyOverview({ guildId, slot }: { guildId: string; slot: string }) {
 }
 
 function EconomyTab({
-  guildId, slot, data, loading, onSave, pending, error,
+  guildId, slot, data, loading, onSave, pending, error, saveError,
 }: {
   guildId: string;
   slot: string;
@@ -926,6 +931,7 @@ function EconomyTab({
   onSave: (p: Partial<EconomyConfigState>) => void;
   pending: boolean;
   error: string | null;
+  saveError: string | null;
 }) {
   const channels = useQuery({
     queryKey: ['guild-channels', guildId],
@@ -939,6 +945,9 @@ function EconomyTab({
     <div className="space-y-6">
       <EconomyScopePanel guildId={guildId} slot={slot} />
       <EconomyOverview guildId={guildId} slot={slot} />
+      {saveError && (
+        <Card><p className="text-danger text-sm">Economy-/Bank-Konfiguration konnte nicht gespeichert werden: {saveError}</p></Card>
+      )}
       <Card>
         <CardHeader><CardTitle>Economy-Konfiguration</CardTitle></CardHeader>
         {loading && <p className="text-muted">Lade…</p>}
@@ -982,6 +991,24 @@ function EconomyForm({
   value, onSave, pending,
 }: { value: EconomyConfigState; onSave: (p: Partial<EconomyConfigState>) => void; pending: boolean }) {
   const [draft, setDraft] = useState(value);
+  useEffect(() => {
+    setDraft({
+      enabled: value.enabled,
+      currencyName: value.currencyName,
+      emoji: value.emoji,
+      startBalance: value.startBalance,
+      playtimeRewardPercent: value.playtimeRewardPercent,
+      bankInterestPercent: value.bankInterestPercent,
+      bankChannelId: value.bankChannelId,
+    });
+  }, [value.enabled, value.currencyName, value.emoji, value.startBalance, value.playtimeRewardPercent, value.bankInterestPercent, value.bankChannelId]);
+
+  const configValid =
+    draft.currencyName.length >= 1 && draft.currencyName.length <= 40 &&
+    draft.emoji.length >= 1 && draft.emoji.length <= 40 &&
+    Number.isInteger(draft.startBalance) && draft.startBalance >= 0 && draft.startBalance <= 1_000_000_000 &&
+    Number.isInteger(draft.playtimeRewardPercent) && draft.playtimeRewardPercent >= 0 && draft.playtimeRewardPercent <= 1000;
+
   return (
     <div className="space-y-4">
       <Switch
@@ -1001,15 +1028,15 @@ function EconomyForm({
         <label className="text-sm">
           <span className="text-muted">Startguthaben (neue Members)</span>
           <Input
-            type="number" min={0} value={draft.startBalance}
-            onChange={e => setDraft({ ...draft, startBalance: Math.max(0, Number(e.target.value) || 0) })}
+            type="number" min={0} max={1000000000} value={draft.startBalance}
+            onChange={e => setDraft({ ...draft, startBalance: Math.max(0, Math.min(1_000_000_000, Math.floor(Number(e.target.value) || 0))) })}
           />
         </label>
         <label className="text-sm">
           <span className="text-muted">Spielzeit-Belohnung %/min</span>
           <Input
             type="number" min={0} max={1000} value={draft.playtimeRewardPercent}
-            onChange={e => setDraft({ ...draft, playtimeRewardPercent: Math.max(0, Math.min(1000, Number(e.target.value) || 0)) })}
+            onChange={e => setDraft({ ...draft, playtimeRewardPercent: Math.max(0, Math.min(1000, Math.floor(Number(e.target.value) || 0))) })}
           />
         </label>
       </div>
@@ -1019,7 +1046,7 @@ function EconomyForm({
         emoji: draft.emoji,
         startBalance: draft.startBalance,
         playtimeRewardPercent: draft.playtimeRewardPercent,
-      })} disabled={pending}>
+      })} disabled={pending || !configValid}>
         {pending ? 'Speichere…' : 'Update'}
       </Button>
     </div>
@@ -1041,6 +1068,10 @@ function BankForm({
 }) {
   const [bankChannelId, setBankChannelId] = useState<string>(value.bankChannelId ?? '');
   const [interest, setInterest] = useState<number>(value.bankInterestPercent);
+  useEffect(() => {
+    setBankChannelId(value.bankChannelId ?? '');
+    setInterest(value.bankInterestPercent);
+  }, [value.bankChannelId, value.bankInterestPercent]);
   const textChannels = channels.filter(c => c.type === 0 || c.type === 5);
 
   return (
