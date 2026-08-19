@@ -105,7 +105,7 @@ export function VirtualAccountsPanel({ guildId, slot }: { guildId: string; slot:
     retry: false,
   });
   const memberOptions = useMemo<ComboboxOption[]>(() => {
-    const options = (members.data?.members ?? []).map(member => ({
+    const options: ComboboxOption[] = (members.data?.members ?? []).map(member => ({
       id: member.id,
       label: member.displayName || member.username,
       hint: member.id,
@@ -182,7 +182,7 @@ export function VirtualAccountsPanel({ guildId, slot }: { guildId: string; slot:
     retry: false,
   });
 
-  const rows = accounts.data?.accounts ?? [];
+  const rows = useMemo(() => accounts.data?.accounts ?? [], [accounts.data?.accounts]);
   const payoutAccounts = useMemo(() => rows.filter(a => a.status !== 'ARCHIVED' && BigInt(a.balance) > 0n), [rows]);
   const nameValid = name.trim().length >= 1 && name.trim().length <= 80;
   const descriptionValid = description.length <= 280;
