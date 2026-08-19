@@ -6,10 +6,10 @@ process.env.ENCRYPTION_KEY ||= '0'.repeat(64);
 process.env.SESSION_SECRET ||= 'test-session-secret';
 
 /**
- * P1/Nitrado-1A Sicherheits-Regression: Schreibende Whitelist-Aktionen
+ * P1/Nitrado-1A/1U Sicherheits-Regression: Schreibende Whitelist-Aktionen
  * erzeugen NitradoJobs und muessen bei aktivem Schreibschutz Confirm + Reason
- * verlangen. Fachlicher Lifecycle-Write + cross-process Outbox-Lock + Job
- * bleiben atomar in derselben Transaktion.
+ * verlangen. Fachlicher Lifecycle-Write + Connection-Barriere + Subject-Lock +
+ * Job bleiben atomar in derselben Transaktion.
  */
 
 const GID = '999999999999999999';
@@ -147,10 +147,11 @@ describe('Whitelist Write-Guard — Schreibschutz aktiv', () => {
     expect(prismaMock.$transaction).not.toHaveBeenCalled();
   });
 
-  it('POST / mit confirm + reason -> 201, Fachwrite + Lock + Job atomar', async () => {
+  it('POST / mit confirm + reason -> 201, Fachwrite + beide Outbox-Locks + Job atomar', async () => {
     const r = await request(makeApp()).post(`${BASE}?slot=1`).send({ gameId: 'PlayerX', confirm: true, reason: 'Neuer Spieler' });
     expect(r.status).toBe(201);
     expect(prismaMock.$transaction).toHaveBeenCalledTimes(1);
+    expect(queryRaw).toHaveBeenCalledTimes(2);
     expect(queryRaw).toHaveBeenCalledWith('SELECT pg_advisory_xact_lock($1, $2)', expect.any(Number), expect.any(Number));
     expect(jobCreate).toHaveBeenCalledWith(
       expect.objectContaining({ data: expect.objectContaining({ operation: 'WHITELIST_ADD' }) }),
@@ -164,14 +165,14 @@ describe('Whitelist Write-Guard — Schreibschutz aktiv', () => {
     expect(prismaMock.$transaction).not.toHaveBeenCalled();
   });
 
-  it('DELETE /:gameId mit confirm + reason -> PENDING_REMOVE + Lock + Remove-Job atomar', async () => {
+  it('DELETE /:gameId mit confirm + reason -> PENDING_REMOVE + beide Locks + Remove-Job atomar', async () => {
     const r = await request(makeApp()).delete(`${BASE}/PlayerX?slot=1`).send({ confirm: true, reason: 'Entfernt' });
     expect(r.status).toBe(200);
     expect(prismaMock.$transaction).toHaveBeenCalledTimes(1);
     expect(txStub.whitelistEntry.updateMany).toHaveBeenCalledWith(expect.objectContaining({
       data: { syncState: 'PENDING_REMOVE', lastSyncedAt: null },
     }));
-    expect(queryRaw).toHaveBeenCalledTimes(1);
+    expect(queryRaw).toHaveBeenCalledTimes(2);
     expect(jobCreate).toHaveBeenCalledWith(
       expect.objectContaining({ data: expect.objectContaining({ operation: 'WHITELIST_REMOVE' }) }),
     );
@@ -184,12 +185,12 @@ describe('Whitelist Write-Guard — Schreibschutz aktiv', () => {
     expect(txStub.whitelistRequest.updateMany).not.toHaveBeenCalled();
   });
 
-  it('POST /requests/:id/decision approve mit confirm + reason -> CAS + Entry + Lock + Job in einer Transaktion', async () => {
+  it('POST /requests/:id/decision approve mit confirm + reason -> CAS + Entry + beide Locks + Job in einer Transaktion', async () => {
     const r = await request(makeApp()).post(`${BASE}/requests/req-1/decision?slot=1`).send({ approve: true, confirm: true, reason: 'Genehmigt' });
     expect(r.status).toBe(200);
     expect(txStub.whitelistRequest.updateMany).toHaveBeenCalledTimes(1);
     expect(txStub.whitelistEntry.upsert).toHaveBeenCalledTimes(1);
-    expect(queryRaw).toHaveBeenCalledTimes(1);
+    expect(queryRaw).toHaveBeenCalledTimes(2);
     expect(jobCreate).toHaveBeenCalledWith(
       expect.objectContaining({ data: expect.objectContaining({ operation: 'WHITELIST_ADD' }) }),
     );
