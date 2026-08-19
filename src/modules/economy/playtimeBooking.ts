@@ -6,20 +6,26 @@
  * berechnet. Vollstaendige 10-Minuten-Intervalle werden einzeln ueber stabile
  * Ledger-Keys gebucht.
  *
- * OPEN-Sessions werden bei jedem Lauf vollstaendig ausgewertet (ein DayZ-Server
- * hat nur eine begrenzte Zahl gleichzeitig verbundener Spieler). CLOSED-
- * Sessions laufen ueber einen persistenten High-Watermark. Dadurch koennen
- * auch nach sehr langer Laufzeit keine Sessions hinter einem 500er-Fenster
- * dauerhaft verhungern.
+ * NIT/Economy-Haertung: Link-Snapshot, Leave-Lifecycle, Ledger-Buckets und
+ * PlaytimeRewardProgress werden pro Session in einer gemeinsamen Transaktion
+ * gefenced. Der transaction-scoped User-Advisory-Key ist derselbe wie beim
+ * Leave-Enqueue; der Reward-State wird zusaetzlich `FOR UPDATE` auf exakte
+ * Identity+Reward-Epoche revalidiert. So kann ein stale Worker nach Leave,
+ * Unlink oder Relink weder Geld noch rohen Progress neu erzeugen.
+ *
+ * OPEN-Sessions werden bei jedem Lauf vollstaendig ausgewertet. CLOSED-Sessions
+ * laufen ueber einen persistenten High-Watermark, damit grosse Backlogs nicht
+ * hinter einem festen Batch-Fenster verhungern.
  */
 
-import { bookLedgerEntry, type LedgerClient } from './ledger';
+import { bookLedgerEntryInTx, type LedgerClient, type LedgerTx } from './ledger';
 import {
   advanceRewardCursor,
   afterCursorWhere,
   getRewardCursor,
   type RewardCursorClient,
 } from './rewardCursor';
+import { leaveCleanupJobKey } from '../moderation/leaveCleanupSaga';
 
 const REWARD_BUCKET_SECONDS = 600;
 const CLOSED_SESSION_STREAM = 'playtime:closed';
@@ -38,9 +44,29 @@ export interface PlaytimeRewardProgressRow {
   bucketsCredited: number;
 }
 
-export interface PlaytimeBookingClient extends LedgerClient, RewardCursorClient {
-  playerSession: {
-    findMany: (args: unknown) => Promise<UncreditedSession[]>;
+interface ExistingPlaytimeLedgerRow {
+  id: string;
+  guildId: string;
+  nitradoConnId: string;
+  userDiscordId: string;
+  type: string;
+  buckets: number;
+  sourceRef: string | null;
+}
+
+interface LockedRewardStateRow {
+  identityHash: string;
+  rewardEligibleFrom: Date;
+  unlinkedAt: Date | null;
+}
+
+interface PlaytimeBookingTx extends LedgerTx {
+  $queryRawUnsafe: <T = unknown>(query: string, ...values: unknown[]) => Promise<T>;
+  dataDeletionRequest: {
+    findFirst: (args: unknown) => Promise<{ id: string } | null>;
+  };
+  economyLedgerEntry: LedgerTx['economyLedgerEntry'] & {
+    findUnique: (args: unknown) => Promise<ExistingPlaytimeLedgerRow | null>;
   };
   playtimeRewardProgress: {
     findUnique: (args: unknown) => Promise<PlaytimeRewardProgressRow | null>;
@@ -48,9 +74,16 @@ export interface PlaytimeBookingClient extends LedgerClient, RewardCursorClient 
   };
 }
 
+export interface PlaytimeBookingClient extends LedgerClient, RewardCursorClient {
+  playerSession: {
+    findMany: (args: unknown) => Promise<UncreditedSession[]>;
+  };
+}
+
 export interface RewardLinkResolution {
   userDiscordId: string;
   rewardEligibleFrom: Date;
+  identityHash: string;
 }
 
 export type ResolveRewardLinkFn = (gameId: string) => Promise<RewardLinkResolution | null>;
@@ -88,14 +121,27 @@ export function eligiblePlaytimeBuckets(
   return Math.floor((endMs - startMs) / 1000 / REWARD_BUCKET_SECONDS);
 }
 
+function assertMatchingHistoricalBucket(
+  row: ExistingPlaytimeLedgerRow,
+  expected: { guildId: string; nitradoConnId: string; userDiscordId: string; sourceRef: string },
+): void {
+  const matches = row.guildId === expected.guildId
+    && row.nitradoConnId === expected.nitradoConnId
+    && row.userDiscordId === expected.userDiscordId
+    && row.type === 'PLAYTIME_REWARD'
+    && row.buckets === 1
+    && row.sourceRef === expected.sourceRef;
+  if (!matches) throw new Error(`Playtime-Ledger-Recovery fuer ${expected.sourceRef} ist inkonsistent.`);
+}
+
 async function persistProgress(
-  client: PlaytimeBookingClient,
+  tx: PlaytimeBookingTx,
   scope: PlaytimeBookingScope,
   sessionId: string,
   link: RewardLinkResolution,
   bucketsCredited: number,
 ): Promise<void> {
-  await client.playtimeRewardProgress.upsert({
+  await tx.playtimeRewardProgress.upsert({
     where: {
       sessionId_rewardEpoch: {
         sessionId,
@@ -130,51 +176,118 @@ async function processSession(
   const eligibleBuckets = eligiblePlaytimeBuckets(session, link.rewardEligibleFrom, opts.now);
   if (eligibleBuckets <= 0) return { credited: 0, total: 0n };
 
-  const progress = await client.playtimeRewardProgress.findUnique({
-    where: {
-      sessionId_rewardEpoch: {
-        sessionId: session.id,
-        rewardEpoch: link.rewardEligibleFrom,
+  return client.$transaction(async (rawTx) => {
+    const tx = rawTx as PlaytimeBookingTx;
+    const leaveKey = leaveCleanupJobKey(scope.guildId, link.userDiscordId);
+
+    // Serialisiert gegen Leave-Enqueue. Ein bereits enqueueter Reset blockiert
+    // jede weitere Money-/Progress-Mutation; ein spaeterer Enqueue wartet bis
+    // diese Transaktion committed und kann den gerade geschriebenen State dann
+    // in derselben Leave-Saga wieder entfernen/pseudonymisieren.
+    await tx.$queryRawUnsafe(
+      'SELECT pg_advisory_xact_lock(hashtextextended($1, 0))',
+      leaveKey,
+    );
+    const pendingLeave = await tx.dataDeletionRequest.findFirst({
+      where: {
+        userId: leaveKey,
+        requestType: 'PARTIAL_DELETION',
+        status: { in: ['PENDING', 'IN_PROGRESS', 'FAILED'] },
       },
-    },
-    select: { bucketsCredited: true },
-  });
-  const alreadyProcessed = Math.max(0, progress?.bucketsCredited ?? 0);
-  if (eligibleBuckets <= alreadyProcessed) return { credited: 0, total: 0n };
-
-  if (!opts.payoutEnabled) {
-    await persistProgress(client, scope, session.id, link, eligibleBuckets);
-    return { credited: 0, total: 0n };
-  }
-
-  let credited = 0;
-  let total = 0n;
-  let highestProcessed = alreadyProcessed;
-  for (let bucket = alreadyProcessed + 1; bucket <= eligibleBuckets; bucket++) {
-    const amount = opts.perBucketAmount;
-    const walletDelta = opts.rewardTarget === 'BANK' ? 0n : amount;
-    const bankDelta = opts.rewardTarget === 'BANK' ? amount : 0n;
-    const result = await bookLedgerEntry(client, {
-      idempotencyKey: `playtime:${session.id}:${link.rewardEligibleFrom.getTime()}:${bucket}`,
-      guildId: scope.guildId,
-      nitradoConnId: scope.nitradoConnId,
-      userDiscordId: link.userDiscordId,
-      walletDelta,
-      bankDelta,
-      buckets: 1,
-      type: 'PLAYTIME_REWARD',
-      reason: 'Spielzeit-Belohnung nach Account-Verknuepfung',
-      sourceRef: session.id,
+      select: { id: true },
     });
-    highestProcessed = bucket;
-    if (result.booked) {
+    if (pendingLeave) return { credited: 0, total: 0n };
+
+    // Row-Lock serialisiert gleichzeitig mit Unlink/Relink/Delete desselben
+    // Reward-State. Exakte Identity + Epoch verhindern stale Rejoin-Snapshots.
+    const stateRows = await tx.$queryRawUnsafe<LockedRewardStateRow[]>(
+      `SELECT "identityHash", "rewardEligibleFrom", "unlinkedAt"
+         FROM "EconomyLinkRewardState"
+        WHERE "guildId"=$1 AND "nitradoConnId"=$2 AND "userDiscordId"=$3
+        FOR UPDATE`,
+      scope.guildId,
+      scope.nitradoConnId,
+      link.userDiscordId,
+    );
+    const current = stateRows[0];
+    if (!current
+      || current.unlinkedAt !== null
+      || current.identityHash !== link.identityHash
+      || current.rewardEligibleFrom.getTime() !== link.rewardEligibleFrom.getTime()) {
+      return { credited: 0, total: 0n };
+    }
+
+    const progress = await tx.playtimeRewardProgress.findUnique({
+      where: {
+        sessionId_rewardEpoch: {
+          sessionId: session.id,
+          rewardEpoch: link.rewardEligibleFrom,
+        },
+      },
+      select: { bucketsCredited: true },
+    });
+    const alreadyProcessed = Math.max(0, progress?.bucketsCredited ?? 0);
+    if (eligibleBuckets <= alreadyProcessed) return { credited: 0, total: 0n };
+
+    if (!opts.payoutEnabled) {
+      await persistProgress(tx, scope, session.id, link, eligibleBuckets);
+      return { credited: 0, total: 0n };
+    }
+
+    let credited = 0;
+    let total = 0n;
+    for (let bucket = alreadyProcessed + 1; bucket <= eligibleBuckets; bucket++) {
+      const amount = opts.perBucketAmount;
+      const walletDelta = opts.rewardTarget === 'BANK' ? 0n : amount;
+      const bankDelta = opts.rewardTarget === 'BANK' ? amount : 0n;
+      const key = `playtime:${session.id}:${link.rewardEligibleFrom.getTime()}:${bucket}`;
+      const existing = await tx.economyLedgerEntry.findUnique({
+        where: { idempotencyKey: key },
+        select: {
+          id: true,
+          guildId: true,
+          nitradoConnId: true,
+          userDiscordId: true,
+          type: true,
+          buckets: true,
+          sourceRef: true,
+        },
+      });
+      if (existing) {
+        // Betrag/Ziel koennen sich spaeter konfigurationsbedingt aendern. Ein
+        // historisch bereits gebuchter Bucket bleibt trotzdem verbraucht; nur
+        // Scope/User/Typ/Quelle muessen exakt zur stabilen Bucket-ID passen.
+        assertMatchingHistoricalBucket(existing, {
+          guildId: scope.guildId,
+          nitradoConnId: scope.nitradoConnId,
+          userDiscordId: link.userDiscordId,
+          sourceRef: session.id,
+        });
+        continue;
+      }
+
+      await bookLedgerEntryInTx(tx, {
+        idempotencyKey: key,
+        guildId: scope.guildId,
+        nitradoConnId: scope.nitradoConnId,
+        userDiscordId: link.userDiscordId,
+        walletDelta,
+        bankDelta,
+        buckets: 1,
+        type: 'PLAYTIME_REWARD',
+        reason: 'Spielzeit-Belohnung nach Account-Verknuepfung',
+        sourceRef: session.id,
+      });
       credited++;
       total += amount;
     }
-  }
 
-  await persistProgress(client, scope, session.id, link, highestProcessed);
-  return { credited, total };
+    // Unter demselben User-Lock wurde der aktuelle Progress NACH jeder
+    // konkurrierenden Transaktion neu gelesen. Der absolute Wert kann daher
+    // nicht mehr durch einen langsameren, aelteren Worker zurueckgesetzt werden.
+    await persistProgress(tx, scope, session.id, link, eligibleBuckets);
+    return { credited, total };
+  });
 }
 
 export async function bookPlaytimeRewards(
@@ -197,8 +310,6 @@ export async function bookPlaytimeRewards(
   let credited = 0;
   let total = 0n;
 
-  // OPEN-Sessions muessen bei jedem Lauf erneut betrachtet werden, weil mit
-  // fortschreitender Zeit neue 10-Minuten-Buckets entstehen koennen.
   const openSessions = await client.playerSession.findMany({
     where: {
       guildId: scope.guildId,
@@ -220,9 +331,6 @@ export async function bookPlaytimeRewards(
     total += result.total;
   }
 
-  // CLOSED-Sessions sind nach dem Disconnect unveraenderlich genug fuer einen
-  // persistenten updatedAt/id-Cursor. Ein spaeter korrigierter Datensatz bekommt
-  // ein neues updatedAt und wird dadurch erneut idempotent geprueft.
   let cursor = await getRewardCursor(client, scope, CLOSED_SESSION_STREAM);
   for (let page = 0; page < maxClosedPages; page++) {
     const closedSessions = await client.playerSession.findMany({
