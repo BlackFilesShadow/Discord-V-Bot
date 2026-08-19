@@ -5,6 +5,8 @@
  * - ausschliesslich Guild-Owner duerfen User-Grants veraendern/einsehen;
  * - NON_DELEGABLE_SCOPES werden weder Autocomplete noch freier Eingabe akzeptiert;
  * - Dashboard und Slashcommands nutzen EXAKT dasselbe serialisierte Repository;
+ * - auch idempotente Command-Intents laufen durch die serialisierte Mutation,
+ *   damit ein paralleler Gegen-Request nicht zwischen Vorab-Read und Return gewinnt;
  * - /perms listet alle Grants ueber mehrere Embeds statt still nach 50 zu enden.
  */
 
@@ -92,12 +94,15 @@ export const permAddCommand: Command = {
     const perm = rawPerm;
     const targetId = asUserDiscordId(target.id);
     const before = await getGrant(scope.guildId, targetId);
+
+    // Immer serialisiert sicherstellen, selbst wenn der Vorab-Read bereits true
+    // sagt. Sonst koennte ein paralleler Revoke nach diesem Read gewinnen.
+    await setGrantScope(scope.guildId, targetId, perm, true, scope.actorDiscordId);
     if (before?.permissions.includes(perm)) {
-      await statusReply(interaction, 'INFO', 'Permission bereits vorhanden', `<@${target.id}> besitzt \`${perm}\` bereits.`);
+      await statusReply(interaction, 'INFO', 'Permission bereits vorhanden', `<@${target.id}> besitzt \`${perm}\`; der Zustand wurde bestaetigt.`);
       return;
     }
 
-    await setGrantScope(scope.guildId, targetId, perm, true, scope.actorDiscordId);
     logAudit('PERM_GRANTED', 'SECURITY', {
       guildId: scope.guildId,
       target: target.id,
@@ -133,16 +138,19 @@ export const permRemoveCommand: Command = {
     const perm = rawPerm;
     const targetId = asUserDiscordId(target.id);
     const before = await getGrant(scope.guildId, targetId);
+
+    // Auch ein scheinbarer No-op wird im Repository serialisiert. Damit bedeutet
+    // der abgeschlossene Command deterministisch: dieser Scope ist danach AUS.
+    await setGrantScope(scope.guildId, targetId, perm, false, scope.actorDiscordId);
     if (!before) {
-      await statusReply(interaction, 'INFO', 'Keine Permissions', `<@${target.id}> besitzt keinen User-Permission-Grant.`);
+      await statusReply(interaction, 'INFO', 'Keine Permissions', `<@${target.id}> besitzt keinen User-Permission-Grant; der Zustand wurde bestaetigt.`);
       return;
     }
     if (!before.permissions.includes(perm)) {
-      await statusReply(interaction, 'INFO', 'Permission nicht vorhanden', `<@${target.id}> besitzt \`${perm}\` nicht.`);
+      await statusReply(interaction, 'INFO', 'Permission nicht vorhanden', `<@${target.id}> besitzt \`${perm}\` nicht; der Zustand wurde bestaetigt.`);
       return;
     }
 
-    await setGrantScope(scope.guildId, targetId, perm, false, scope.actorDiscordId);
     logAudit('PERM_REVOKED', 'SECURITY', {
       guildId: scope.guildId,
       target: target.id,
