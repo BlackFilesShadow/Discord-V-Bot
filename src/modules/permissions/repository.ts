@@ -73,19 +73,16 @@ export async function setGrantScope(
 export async function deleteGrant(
   guildId: GuildId,
   userDiscordId: UserDiscordId,
+  grantedBy: UserDiscordId,
 ): Promise<void> {
   await mutatePermissionGrant({
     guildId,
     targetKind: 'USER',
     targetId: userDiscordId,
     action: 'PURGE',
-    grantedBy: userDiscordId,
+    grantedBy,
   });
 }
-
-// ────────────────────────────────────────────────────────────────────────────
-// Role-based grants (parallel zu user-grants).
-// ────────────────────────────────────────────────────────────────────────────
 
 export interface PermissionRoleGrantRow {
   roleDiscordId: string;
@@ -130,13 +127,17 @@ export async function setRoleGrantScope(
   };
 }
 
-export async function deleteRoleGrant(guildId: GuildId, roleDiscordId: string): Promise<void> {
+export async function deleteRoleGrant(
+  guildId: GuildId,
+  roleDiscordId: string,
+  grantedBy: UserDiscordId,
+): Promise<void> {
   await mutatePermissionGrant({
     guildId,
     targetKind: 'ROLE',
     targetId: roleDiscordId,
     action: 'PURGE',
-    grantedBy: '' as UserDiscordId,
+    grantedBy,
   });
 }
 
