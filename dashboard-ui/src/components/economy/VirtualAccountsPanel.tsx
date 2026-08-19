@@ -5,6 +5,7 @@ import { api, createIdempotencyKey } from '@/lib/api';
 import { Badge } from '@/components/ui/Badge';
 import { Button } from '@/components/ui/Button';
 import { Card, CardHeader, CardTitle } from '@/components/ui/Card';
+import { Combobox, type ComboboxOption } from '@/components/ui/Combobox';
 import { Input } from '@/components/ui/Input';
 import { Select } from '@/components/ui/Select';
 import { Switch } from '@/components/ui/Switch';
@@ -41,6 +42,14 @@ interface DiscordChannel {
   parentId: string | null;
 }
 
+interface MemberOption {
+  id: string;
+  username: string;
+  displayName: string;
+  avatar: string | null;
+  bot: boolean;
+}
+
 function fmtBig(value: string): string {
   try { return BigInt(value).toLocaleString('de-DE'); } catch { return value; }
 }
@@ -60,6 +69,7 @@ export function VirtualAccountsPanel({ guildId, slot }: { guildId: string; slot:
   const [expiresAt, setExpiresAt] = useState('');
   const [acceptUserTransfers, setAcceptUserTransfers] = useState(true);
   const [auditAccountId, setAuditAccountId] = useState<string>('');
+  const [memberQuery, setMemberQuery] = useState('');
   const [payout, setPayout] = useState({ accountId: '', userDiscordId: '', amount: '', targetPocket: 'WALLET', reason: '' });
   const [payoutOperationId, setPayoutOperationId] = useState(createIdempotencyKey);
   const [message, setMessage] = useState<{ ok: boolean; text: string } | null>(null);
@@ -84,6 +94,24 @@ export function VirtualAccountsPanel({ guildId, slot }: { guildId: string; slot:
     [channels.data],
   );
   const channelNames = useMemo(() => new Map(textChannels.map(channel => [channel.id, channel.name] as const)), [textChannels]);
+
+  const members = useQuery({
+    queryKey: ['guild-members', guildId, memberQuery],
+    queryFn: () => api.get<{ members: MemberOption[] }>(
+      `/api/v2/guilds/${guildId}/members?limit=20${memberQuery ? `&q=${encodeURIComponent(memberQuery)}` : ''}`,
+    ),
+    placeholderData: previous => previous,
+    retry: false,
+  });
+  const memberOptions: ComboboxOption[] = (members.data?.members ?? []).map(member => ({
+    id: member.id,
+    label: member.displayName || member.username,
+    hint: member.id,
+    avatar: member.avatar
+      ? `https://cdn.discordapp.com/avatars/${member.id}/${member.avatar}.png?size=64`
+      : `https://cdn.discordapp.com/embed/avatars/${(BigInt(member.id) >> 22n) % 6n}.png`,
+    disabled: member.bot,
+  }));
 
   const create = useMutation({
     mutationFn: () => api.post<VirtualAccount>(`/api/v2/guilds/${guildId}/economy/virtual-accounts?${scope}`, {
@@ -118,7 +146,7 @@ export function VirtualAccountsPanel({ guildId, slot }: { guildId: string; slot:
     mutationFn: () => api.post<{ ok: boolean; booked: boolean; account: VirtualAccount }>(
       `/api/v2/guilds/${guildId}/economy/virtual-accounts/${payout.accountId}/payout?${scope}`,
       {
-        userDiscordId: payout.userDiscordId.trim(),
+        userDiscordId: payout.userDiscordId,
         amount: payout.amount.trim(),
         targetPocket: payout.targetPocket,
         reason: payout.reason.trim(),
@@ -128,6 +156,7 @@ export function VirtualAccountsPanel({ guildId, slot }: { guildId: string; slot:
     onSuccess: result => {
       setMessage({ ok: true, text: result.booked ? 'Auszahlung atomar gebucht.' : 'Diese Auszahlung war bereits verarbeitet.' });
       setPayout({ accountId: '', userDiscordId: '', amount: '', targetPocket: 'WALLET', reason: '' });
+      setMemberQuery('');
       setPayoutOperationId(createIdempotencyKey());
       void qc.invalidateQueries({ queryKey: ['economy-virtual-accounts', guildId, slot] });
       if (auditAccountId) void qc.invalidateQueries({ queryKey: ['economy-virtual-account-audit', guildId, slot, auditAccountId] });
@@ -263,7 +292,7 @@ export function VirtualAccountsPanel({ guildId, slot }: { guildId: string; slot:
 
       <div className="mt-5 pt-4 border-t border-border space-y-3">
         <p className="text-sm font-medium text-white inline-flex items-center gap-1.5"><Send className="h-3.5 w-3.5" />Kontrollierte Auszahlung / Refund</p>
-        <p className="text-xs text-muted">Auch abgelaufene Konten koennen geleert werden. Archivieren ist erst bei exakt 0 Guthaben moeglich.</p>
+        <p className="text-xs text-muted">Auch abgelaufene Konten koennen geleert werden. Der Empfaenger wird als Discord-Mitglied gesucht; intern wird ausschliesslich seine stabile Discord-ID gebucht.</p>
         <div className="grid gap-3 md:grid-cols-2">
           <label className="text-sm">
             <span className="text-muted">Quellkonto</span>
@@ -272,10 +301,18 @@ export function VirtualAccountsPanel({ guildId, slot }: { guildId: string; slot:
               {payoutAccounts.map(account => <option key={account.id} value={account.id}>{account.name} · {fmtBig(account.balance)}</option>)}
             </Select>
           </label>
-          <label className="text-sm">
-            <span className="text-muted">Discord-User-ID</span>
-            <Input value={payout.userDiscordId} onChange={e => updatePayout({ userDiscordId: e.target.value.trim() })} placeholder="17–20 Ziffern" />
-          </label>
+          <div className="text-sm">
+            <span className="text-muted">Discord-Mitglied</span>
+            <Combobox
+              value={payout.userDiscordId || null}
+              onChange={id => updatePayout({ userDiscordId: id ?? '' })}
+              options={memberOptions}
+              onSearch={setMemberQuery}
+              loading={members.isFetching}
+              placeholder="Mitglied suchen..."
+              emptyText={memberQuery ? 'Keine Treffer.' : 'Tippe einen Namen...'}
+            />
+          </div>
           <label className="text-sm">
             <span className="text-muted">Betrag</span>
             <Input value={payout.amount} onChange={e => updatePayout({ amount: e.target.value.trim() })} inputMode="numeric" />
