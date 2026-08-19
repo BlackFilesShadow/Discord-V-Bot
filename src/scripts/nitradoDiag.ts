@@ -1,15 +1,60 @@
 /**
  * Diagnose: ermittelt fuer aktive Nitrado-Verbindungen die Server-Stammdaten und
  * sucht das ADM-Verzeichnis (wo die .ADM-Logs liegen). Gibt NIE den Token aus.
- * Ausfuehrung im Container:  node dist/src/scripts/nitradoDiag.js
+ * Ausfuehrung im Container: node dist/src/scripts/nitradoDiag.js
+ *
+ * Nitrado-1Y: `nitradoServerId` ist die einzige kanonische Remote-Service-ID.
+ * Der globale Scan ist nur Kandidatenfindung; Token + Service werden unter dem
+ * gleichen kurzen Connection-Lock wie Runtime-Mutationen frisch gelesen.
  */
 import prisma from '../database/prisma';
 import { config } from '../config';
 import { decrypt } from '../utils/security';
 import { NitradoClient } from '../modules/nitrado/nitradoClient';
+import { tryAcquireNitradoConfigMutationLock } from '../modules/nitrado/configMutationLock';
 
 // Kandidaten-Unterordner fuer DayZ-Profile/Configs (Plattformen), relativ zum Spielpfad.
 const CANDIDATE_SUBDIRS = ['', 'config', 'profiles', 'dayzxb', 'dayzps', 'dayzstandalone'];
+
+interface DiagSnapshot {
+  id: string;
+  guildId: string;
+  alias: string;
+  nitradoServerId: string;
+  encryptedToken: string;
+}
+
+async function readDiagSnapshot(candidate: { id: string; guildId: string }): Promise<DiagSnapshot | null | 'BUSY'> {
+  const lock = await tryAcquireNitradoConfigMutationLock(candidate.id);
+  if (!lock) return 'BUSY';
+  try {
+    const conn = await prisma.nitradoConnection.findFirst({
+      where: {
+        id: candidate.id,
+        guildId: candidate.guildId,
+        status: 'ACTIVE',
+        nitradoServerId: { not: null },
+      },
+      select: {
+        id: true,
+        guildId: true,
+        alias: true,
+        nitradoServerId: true,
+        encryptedToken: true,
+      },
+    });
+    if (!conn?.nitradoServerId) return null;
+    return {
+      id: conn.id,
+      guildId: conn.guildId,
+      alias: conn.alias,
+      nitradoServerId: conn.nitradoServerId,
+      encryptedToken: conn.encryptedToken,
+    };
+  } finally {
+    await lock.release();
+  }
+}
 
 async function findAdmDir(client: NitradoClient, serviceId: string, basePath: string): Promise<string | null> {
   const bases = new Set<string>();
@@ -23,7 +68,6 @@ async function findAdmDir(client: NitradoClient, serviceId: string, basePath: st
       const subdirs = entries.filter(e => e.type === 'dir').map(e => e.name);
       console.log(`  dir ${dir}: ${entries.length} Eintraege, ${adm.length} .ADM, subdirs=[${subdirs.join(', ')}]`);
       if (adm.length > 0) return dir;
-      // Eine Ebene tiefer in gefundene Unterordner schauen.
       for (const sd of subdirs) {
         const deep = `${dir.replace(/\/$/, '')}/${sd}`;
         try {
@@ -31,7 +75,7 @@ async function findAdmDir(client: NitradoClient, serviceId: string, basePath: st
           const dadm = de.filter(e => e.type === 'file' && e.name.toLowerCase().endsWith('.adm'));
           console.log(`    dir ${deep}: ${de.length} Eintraege, ${dadm.length} .ADM`);
           if (dadm.length > 0) return deep;
-        } catch { /* ignore */ }
+        } catch { /* Diagnose ist best-effort pro Unterordner. */ }
       }
     } catch (e) {
       console.log(`  dir ${dir}: FEHLER ${(e as Error).message}`);
@@ -41,19 +85,35 @@ async function findAdmDir(client: NitradoClient, serviceId: string, basePath: st
 }
 
 async function main(): Promise<void> {
-  // eslint-disable-next-line local/no-unscoped-prisma-query -- Diagnose ueber alle Guilds; nur Lesevorgaenge.
-  const conns = await prisma.nitradoConnection.findMany({
+  // eslint-disable-next-line local/no-unscoped-prisma-query -- globaler read-only Kandidatenscan; jeder Kandidat wird danach frisch per Guild+Connection unter Lock gelesen.
+  const candidates = await prisma.nitradoConnection.findMany({
     where: { status: 'ACTIVE' },
-    select: { id: true, guildId: true, alias: true, nitradoServerId: true, serviceId: true, encryptedToken: true },
+    select: { id: true, guildId: true },
+    orderBy: [{ guildId: 'asc' }, { slot: 'asc' }],
   });
-  console.log(`[diag] ${conns.length} aktive Verbindung(en)`);
+  console.log(`[diag] ${candidates.length} aktive Verbindung(en)`);
 
-  for (const c of conns) {
-    const svc = c.serviceId ?? c.nitradoServerId;
-    console.log(`\n=== ${c.alias} (guild ${c.guildId}, service ${svc}) ===`);
-    if (!svc) { console.log('  keine Service-ID'); continue; }
+  for (const candidate of candidates) {
+    let snapshot: DiagSnapshot | null | 'BUSY';
+    try {
+      snapshot = await readDiagSnapshot(candidate);
+    } catch (error) {
+      console.log(`\n=== ${candidate.id} ===\n  SNAPSHOT-FEHLER ${(error as Error).message}`);
+      continue;
+    }
+    if (snapshot === 'BUSY') {
+      console.log(`\n=== ${candidate.id} ===\n  BUSY -> uebersprungen`);
+      continue;
+    }
+    if (!snapshot) {
+      console.log(`\n=== ${candidate.id} ===\n  nicht mehr ACTIVE oder keine kanonische Service-ID`);
+      continue;
+    }
+
+    const svc = snapshot.nitradoServerId;
+    console.log(`\n=== ${snapshot.alias} (guild ${snapshot.guildId}, service ${svc}) ===`);
     let token: string;
-    try { token = decrypt(c.encryptedToken, config.security.encryptionKey); }
+    try { token = decrypt(snapshot.encryptedToken, config.security.encryptionKey); }
     catch { console.log('  DECRYPT-FEHLER'); continue; }
     const client = new NitradoClient(token);
 

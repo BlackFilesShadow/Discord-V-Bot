@@ -42,15 +42,23 @@ devNitradoMirrorRouter.get('/connections', async (_req, res) => {
   try {
     // DEV-only: requireDev (Bot-Owner) ist auf Router-Ebene aktiv. Cross-Guild-Listing ist hier explizit gewollt,
     // damit die DEV-UI alle Connections fuer Snapshot-Trigger anzeigen kann.
+    // Nitrado-1Y: Legacy `serviceId` wird weder gelesen noch als Wahrheit
+    // ausgegeben; fuer bestehende DEV-UI-Clients bleibt nur der API-Alias
+    // `serviceId`, dessen Wert aus `nitradoServerId` stammt.
     // eslint-disable-next-line local/no-unscoped-prisma-query
     const rows = await prisma.nitradoConnection.findMany({
       orderBy: [{ guildId: 'asc' }, { slot: 'asc' }],
       select: {
         id: true, guildId: true, slot: true, alias: true, alias5: true,
-        nitradoServerId: true, serviceId: true, status: true, lastValidatedAt: true,
+        nitradoServerId: true, status: true, lastValidatedAt: true,
       },
     });
-    res.json({ connections: rows });
+    res.json({
+      connections: rows.map(row => ({
+        ...row,
+        serviceId: row.nitradoServerId ?? null,
+      })),
+    });
   } catch (e) {
     logger.error('[DEV-Mirror] connections', e as Error);
     res.status(500).json({ error: 'Laden fehlgeschlagen.' });
