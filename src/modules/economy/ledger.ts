@@ -53,6 +53,62 @@ function isUniqueViolation(e: unknown): boolean {
 }
 
 /**
+ * Transaktionsinterne Variante fuer fachliche State-Machines, die Claim + Geld
+ * in EINER gemeinsamen DB-Transaktion committen muessen. Der Caller besitzt die
+ * Idempotenz-/Recovery-Entscheidung; ein Unique-Konflikt wird hier absichtlich
+ * nicht geschluckt, weil PostgreSQL die laufende Transaktion danach als failed
+ * markiert.
+ */
+export async function bookLedgerEntryInTx(
+  tx: LedgerTx,
+  input: LedgerEntryInput,
+): Promise<{ entryId: string }> {
+  const walletDelta = input.walletDelta ?? 0n;
+  const bankDelta = input.bankDelta ?? 0n;
+  const { earned, spent } = computeLifetimeDeltas(walletDelta, bankDelta);
+
+  const entry = await tx.economyLedgerEntry.create({
+    data: {
+      idempotencyKey: input.idempotencyKey,
+      guildId: input.guildId,
+      nitradoConnId: input.nitradoConnId,
+      userDiscordId: input.userDiscordId,
+      walletDelta,
+      bankDelta,
+      type: input.type,
+      reason: input.reason ?? null,
+      buckets: input.buckets ?? 0,
+      sourceRef: input.sourceRef ?? null,
+    },
+  });
+  await tx.economyAccount.upsert({
+    where: {
+      guildServerUser: {
+        guildId: input.guildId,
+        nitradoConnId: input.nitradoConnId,
+        userDiscordId: input.userDiscordId,
+      },
+    },
+    create: {
+      guildId: input.guildId,
+      nitradoConnId: input.nitradoConnId,
+      userDiscordId: input.userDiscordId,
+      walletBalance: walletDelta,
+      bankBalance: bankDelta,
+      lifetimeEarned: earned,
+      lifetimeSpent: spent,
+    },
+    update: {
+      walletBalance: { increment: walletDelta },
+      bankBalance: { increment: bankDelta },
+      lifetimeEarned: { increment: earned },
+      lifetimeSpent: { increment: spent },
+    },
+  });
+  return { entryId: entry.id };
+}
+
+/**
  * Bucht einen Ledger-Eintrag idempotent. Existiert der idempotencyKey bereits,
  * wird NICHTS veraendert und `{ booked: false }` zurueckgegeben. Andernfalls
  * werden Eintrag + exakt derselbe servergescoppte Account in EINER Transaktion
@@ -62,53 +118,9 @@ export async function bookLedgerEntry(
   client: LedgerClient,
   input: LedgerEntryInput,
 ): Promise<{ booked: boolean; entryId?: string }> {
-  const walletDelta = input.walletDelta ?? 0n;
-  const bankDelta = input.bankDelta ?? 0n;
-  const { earned, spent } = computeLifetimeDeltas(walletDelta, bankDelta);
-
   try {
-    const entryId = await client.$transaction(async (tx) => {
-      const entry = await tx.economyLedgerEntry.create({
-        data: {
-          idempotencyKey: input.idempotencyKey,
-          guildId: input.guildId,
-          nitradoConnId: input.nitradoConnId,
-          userDiscordId: input.userDiscordId,
-          walletDelta,
-          bankDelta,
-          type: input.type,
-          reason: input.reason ?? null,
-          buckets: input.buckets ?? 0,
-          sourceRef: input.sourceRef ?? null,
-        },
-      });
-      await tx.economyAccount.upsert({
-        where: {
-          guildServerUser: {
-            guildId: input.guildId,
-            nitradoConnId: input.nitradoConnId,
-            userDiscordId: input.userDiscordId,
-          },
-        },
-        create: {
-          guildId: input.guildId,
-          nitradoConnId: input.nitradoConnId,
-          userDiscordId: input.userDiscordId,
-          walletBalance: walletDelta,
-          bankBalance: bankDelta,
-          lifetimeEarned: earned,
-          lifetimeSpent: spent,
-        },
-        update: {
-          walletBalance: { increment: walletDelta },
-          bankBalance: { increment: bankDelta },
-          lifetimeEarned: { increment: earned },
-          lifetimeSpent: { increment: spent },
-        },
-      });
-      return entry.id;
-    });
-    return { booked: true, entryId };
+    const result = await client.$transaction((tx) => bookLedgerEntryInTx(tx, input));
+    return { booked: true, entryId: result.entryId };
   } catch (e) {
     if (isUniqueViolation(e)) return { booked: false }; // bereits gebucht -> idempotent
     throw e;
