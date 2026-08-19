@@ -12,7 +12,7 @@
  * - Download-/Seek-Tokens werden niemals geloggt.
  */
 
-import axios, { AxiosError, type AxiosInstance, type AxiosRequestConfig } from 'axios';
+import axios, { type AxiosError, type AxiosInstance, type AxiosRequestConfig } from 'axios';
 import { logger } from '../../utils/logger';
 import { getNitradoBreaker, opClassForMethod, NitradoCircuitOpenError } from './circuitBreaker';
 
@@ -222,7 +222,8 @@ export class NitradoClient {
       } catch (e) {
         if (e instanceof NitradoApiError) throw e;
         if (e instanceof NitradoCircuitOpenError) throw e;
-        lastErr = e instanceof Error ? e : new Error(String(e));
+        const transportError = e as AxiosError;
+        lastErr = transportError instanceof Error ? transportError : new Error(String(e));
         breaker.recordFailure();
         if (attempt < 3) {
           await sleep(500 * Math.pow(2, attempt - 1));
@@ -260,8 +261,7 @@ export class NitradoClient {
 
   private async getGeneralSetting(serviceId: string, key: string): Promise<string> {
     const res = await this.request<{
-      data: { gameserver?: { settings?: { general?: Record<string, unknown> } } };
-    }>('GET', `/services/${serviceId}/gameservers`);
+      data: { gameserver?: { settings?: { general?: Record<string, unknown> } } }>('GET', `/services/${serviceId}/gameservers`);
     const value = res.data?.gameserver?.settings?.general?.[key];
     if (typeof value !== 'string') return '';
     if (value === 'true' || value === 'false') return '';
