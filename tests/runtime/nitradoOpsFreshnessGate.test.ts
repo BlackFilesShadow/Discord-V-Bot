@@ -51,4 +51,18 @@ describe('Nitrado-1Y Ops freshness architecture', () => {
     expect(source).not.toContain('serviceId ??');
     expect(source).toContain('const svc = snapshot.nitradoServerId;');
   });
+
+  it('DEV status surfaces never prefer or read the legacy serviceId field', () => {
+    const status = read('src/dashboard/routes/v2/devStatus.ts');
+    const mirror = read('src/dashboard/routes/v2/devNitradoMirror.ts');
+
+    for (const source of [status, mirror]) {
+      expect(source).not.toContain('serviceId: true');
+      expect(source).not.toContain('serviceId ??');
+      expect(source).not.toContain('c.serviceId');
+      expect(source).not.toContain('row.serviceId');
+    }
+    expect(status).toContain('serviceId: c.nitradoServerId ?? null');
+    expect(mirror).toContain('serviceId: row.nitradoServerId ?? null');
+  });
 });
