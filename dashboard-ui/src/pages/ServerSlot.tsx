@@ -53,7 +53,8 @@ interface SlotDashboardMeta {
 interface CasinoGameRow {
   type: 'SLOT' | 'COINFLIP' | 'DICE' | 'BLACKJACK';
   enabled: boolean;
-  winChancePct: number;
+  winChancePct: number | null;
+  fixedOdds: string | null;
   payoutMult: number;
   minBet: string;
   maxBet: string;
@@ -62,6 +63,7 @@ interface CasinoGameRow {
 interface CasinoStatRow {
   type: 'SLOT' | 'COINFLIP' | 'DICE' | 'BLACKJACK';
   wins: number;
+  draws: number;
   losses: number;
   bet: string;
   payout: string;
@@ -1099,7 +1101,7 @@ function CasinoTable({ guildId, slot }: { guildId: string; slot: string }) {
   });
 
   const update = useMutation({
-    mutationFn: (vars: { type: string; patch: Partial<CasinoGameRow> }) =>
+    mutationFn: (vars: { type: CasinoGameRow['type']; patch: Partial<CasinoGameRow> }) =>
       api.put(`/api/v2/guilds/${guildId}/casino/games/${vars.type}?slot=${encodeURIComponent(slot)}`, vars.patch),
     onSuccess: () => {
       void qc.invalidateQueries({ queryKey: ['casino-games', guildId, slot] });
@@ -1107,43 +1109,60 @@ function CasinoTable({ guildId, slot }: { guildId: string; slot: string }) {
     },
   });
 
-  const byType = new Map<string, CasinoGameRow>();
+  const byType = new Map<CasinoGameRow['type'], CasinoGameRow>();
   for (const g of games.data?.games ?? []) byType.set(g.type, g);
-  const statsByType = new Map<string, CasinoStatRow>();
+  const statsByType = new Map<CasinoStatRow['type'], CasinoStatRow>();
   for (const s of stats.data?.stats ?? []) statsByType.set(s.type, s);
 
   return (
     <div className="space-y-3">
       {games.isLoading && <p className="text-muted text-sm">Lade…</p>}
       {games.isError && <p className="text-danger text-sm">Casino-Daten nicht verfuegbar.</p>}
-      <div className="overflow-x-auto">
-        <table className="w-full text-sm">
-          <thead className="text-xs text-muted">
-            <tr>
-              <th className="text-left py-2">Game</th>
-              <th className="text-left py-2">Aktiv</th>
-              <th className="text-left py-2">Win %</th>
-              <th className="text-left py-2">Payout x</th>
-              <th className="text-left py-2">Min</th>
-              <th className="text-left py-2">Max</th>
-              <th className="text-left py-2">W/L</th>
-              <th />
-            </tr>
-          </thead>
-          <tbody>
-            {CASINO_TYPES.map(type => (
-              <CasinoRow
-                key={type}
-                type={type}
-                game={byType.get(type) ?? null}
-                stat={statsByType.get(type) ?? null}
-                onSave={patch => update.mutate({ type, patch })}
-                pending={update.isPending}
-              />
-            ))}
-          </tbody>
-        </table>
-      </div>
+      {update.isError && (
+        <p className="text-danger text-sm">Casino-Konfiguration konnte nicht gespeichert werden: {(update.error as Error).message}</p>
+      )}
+      {games.data && (
+        <div className="overflow-x-auto">
+          <table className="w-full text-sm">
+            <thead className="text-xs text-muted">
+              <tr>
+                <th className="text-left py-2">Game</th>
+                <th className="text-left py-2">Aktiv</th>
+                <th className="text-left py-2">Win % / Regel</th>
+                <th className="text-left py-2">Payout x</th>
+                <th className="text-left py-2">Min</th>
+                <th className="text-left py-2">Max</th>
+                <th className="text-left py-2">W/D/L</th>
+                <th />
+              </tr>
+            </thead>
+            <tbody>
+              {CASINO_TYPES.map(type => {
+                const game = byType.get(type) ?? null;
+                const gameKey = [
+                  type,
+                  game?.enabled ?? 'new',
+                  game?.winChancePct ?? 'fixed',
+                  game?.fixedOdds ?? '',
+                  game?.payoutMult ?? 2,
+                  game?.minBet ?? '1',
+                  game?.maxBet ?? '1000',
+                ].join(':');
+                return (
+                  <CasinoRow
+                    key={gameKey}
+                    type={type}
+                    game={game}
+                    stat={statsByType.get(type) ?? null}
+                    onSave={patch => update.mutate({ type, patch })}
+                    pending={update.isPending}
+                  />
+                );
+              })}
+            </tbody>
+          </table>
+        </div>
+      )}
     </div>
   );
 }
@@ -1151,23 +1170,31 @@ function CasinoTable({ guildId, slot }: { guildId: string; slot: string }) {
 function CasinoRow({
   type, game, stat, onSave, pending,
 }: {
-  type: string;
+  type: CasinoGameRow['type'];
   game: CasinoGameRow | null;
   stat: CasinoStatRow | null;
   onSave: (p: Partial<CasinoGameRow>) => void;
   pending: boolean;
 }) {
+  const fixedOdds = game?.fixedOdds ?? (type === 'COINFLIP' ? '50/50' : type === 'DICE' ? '1/6' : type === 'BLACKJACK' ? 'Kartenlogik' : null);
   const [draft, setDraft] = useState<CasinoGameRow>({
-    type: type as CasinoGameRow['type'],
+    type,
     enabled: game?.enabled ?? false,
-    winChancePct: game?.winChancePct ?? 50,
+    winChancePct: type === 'SLOT' ? (game?.winChancePct ?? 50) : null,
+    fixedOdds,
     payoutMult: game?.payoutMult ?? 2,
     minBet: game?.minBet ?? '1',
     maxBet: game?.maxBet ?? '1000',
   });
-  const wl = stat ? `${stat.wins} / ${stat.losses}` : '— / —';
+  const wl = stat ? `${stat.wins} / ${stat.draws} / ${stat.losses}` : '— / — / —';
+  const winChanceValid = type !== 'SLOT' || (
+    typeof draft.winChancePct === 'number' &&
+    Number.isInteger(draft.winChancePct) &&
+    draft.winChancePct >= 1 &&
+    draft.winChancePct <= 99
+  );
   const isValid =
-    draft.winChancePct >= 1 && draft.winChancePct <= 99 &&
+    winChanceValid &&
     draft.payoutMult >= 1 && draft.payoutMult <= 100 &&
     /^\d+$/.test(draft.minBet) && /^\d+$/.test(draft.maxBet) &&
     BigInt(draft.minBet) >= 1n && BigInt(draft.maxBet) >= BigInt(draft.minBet);
@@ -1179,10 +1206,18 @@ function CasinoRow({
         <Switch checked={draft.enabled} onChange={v => setDraft({ ...draft, enabled: v })} />
       </td>
       <td className="py-2 pr-2">
-        <Input type="number" min={1} max={99} value={draft.winChancePct}
-          onChange={e => setDraft({ ...draft, winChancePct: Math.max(1, Math.min(99, Math.floor(Number(e.target.value) || 0))) })}
-          className="w-20"
-        />
+        {type === 'SLOT' ? (
+          <Input
+            type="number"
+            min={1}
+            max={99}
+            value={draft.winChancePct ?? 50}
+            onChange={e => setDraft({ ...draft, winChancePct: Math.max(1, Math.min(99, Math.floor(Number(e.target.value) || 0))) })}
+            className="w-20"
+          />
+        ) : (
+          <span className="inline-flex min-h-10 items-center text-xs text-muted whitespace-nowrap">{fixedOdds ?? 'feste Regel'}</span>
+        )}
       </td>
       <td className="py-2 pr-2">
         <Input type="number" min={1} max={100} step="0.1" value={draft.payoutMult}
@@ -1196,15 +1231,18 @@ function CasinoRow({
       <td className="py-2 pr-2">
         <Input value={draft.maxBet} onChange={e => setDraft({ ...draft, maxBet: e.target.value.trim() })} className="w-28" />
       </td>
-      <td className="py-2 pr-2 text-muted">{wl}</td>
+      <td className="py-2 pr-2 text-muted whitespace-nowrap">{wl}</td>
       <td className="py-2">
-        <Button size="sm" disabled={pending || !isValid} onClick={() => onSave({
-          enabled: draft.enabled,
-          winChancePct: draft.winChancePct,
-          payoutMult: draft.payoutMult,
-          minBet: draft.minBet,
-          maxBet: draft.maxBet,
-        })}>
+        <Button size="sm" disabled={pending || !isValid} onClick={() => {
+          const patch: Partial<CasinoGameRow> = {
+            enabled: draft.enabled,
+            payoutMult: draft.payoutMult,
+            minBet: draft.minBet,
+            maxBet: draft.maxBet,
+          };
+          if (type === 'SLOT') patch.winChancePct = draft.winChancePct;
+          onSave(patch);
+        }}>
           {pending ? '…' : 'Speichern'}
         </Button>
       </td>
