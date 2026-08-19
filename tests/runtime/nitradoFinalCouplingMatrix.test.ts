@@ -52,14 +52,16 @@ describe('Nitrado-1Z final production coupling matrix', () => {
     ]) expect(exists(regression)).toBe(true);
   });
 
-  it('uses nitradoServerId as canonical service binding and fences stale remote observations', () => {
+  it('uses nitradoServerId as canonical service binding and fences stale service-aware remote observations', () => {
     expect(repository).toContain('syncAdmBindingState');
     expect(bindingFence).toContain('bindingVersion');
     expect(bindingFence).toContain('nitradoServerId');
     expect(bindingFence).toContain('encryptedToken');
     expect(whitelistReconcile).toContain('nitradoServerId');
     expect(banReconcile).toContain('nitradoServerId');
-    expect(maintenance).toContain('nitradoServerId');
+    // Maintenance revalidation is token-only by design; it has no remote
+    // service observation to bind. Its freshness invariant is the shared
+    // per-connection lock asserted in the preceding matrix row.
     for (const regression of [
       'tests/runtime/nitradoRemoteReadFreshnessGate.test.ts',
       'tests/runtime/nitradoMirrorLiveBindingGate.test.ts',
