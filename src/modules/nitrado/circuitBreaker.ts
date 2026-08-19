@@ -33,10 +33,10 @@ export class NitradoCircuitOpenError extends Error {
 type State = 'CLOSED' | 'OPEN' | 'HALF_OPEN';
 
 interface BreakerOpts {
-  failureThreshold: number;
-  rollingWindowMs: number;
-  cooldownMs: number;
-  cooldownMaxMs: number;
+  failureThreshold: number;     // Fehler in Window -> OPEN
+  rollingWindowMs: number;      // Window-Groesse fuer Failure-Count
+  cooldownMs: number;           // Basisdauer im OPEN-Zustand
+  cooldownMaxMs: number;        // Cap fuer exponentiellen Backoff
 }
 
 const DEFAULTS: BreakerOpts = {
@@ -52,18 +52,25 @@ class NitradoCircuitBreaker {
   private state: State = 'CLOSED';
   private failureTimestamps: number[] = [];
   private openedAt = 0;
-  private openStreak = 0;
+  private openStreak = 0; // wieviele Mal hintereinander OPEN -> exp. Backoff
   private currentCooldown: number;
 
   constructor(private readonly opts: BreakerOpts = DEFAULTS) {
     this.currentCooldown = this.opts.cooldownMs;
   }
 
+  /**
+   * Wirft `NitradoCircuitOpenError` wenn der Breaker offen ist.
+   * Sollte VOR jedem HTTP-Versuch in nitradoClient.request() gerufen werden.
+   */
   preflight(): void {
     if (this.state === 'CLOSED') return;
     if (this.state === 'OPEN') {
       const elapsed = Date.now() - this.openedAt;
       if (elapsed >= this.currentCooldown) {
+        // Exakt dieser Caller besitzt den HALF_OPEN-Probe-Slot. Solange er
+        // weder recordSuccess() noch recordFailure() meldet, bleiben alle
+        // parallelen Requests fail-fast geblockt.
         this.state = 'HALF_OPEN';
         logger.info('NitradoCircuitBreaker: -> HALF_OPEN (single probe call allowed)');
         return;
@@ -71,6 +78,7 @@ class NitradoCircuitBreaker {
       throw new NitradoCircuitOpenError(this.currentCooldown - elapsed);
     }
 
+    // HALF_OPEN bedeutet: der eine Probe-Call ist bereits in-flight.
     throw new NitradoCircuitOpenError(HALF_OPEN_PROBE_RETRY_MS);
   }
 
@@ -84,9 +92,14 @@ class NitradoCircuitBreaker {
     this.currentCooldown = this.opts.cooldownMs;
   }
 
+  /**
+   * Rufe das nur fuer "echte" Server-Fehler (5xx, Timeouts, 429). 4xx<>429
+   * sind Client-Fehler und sollen NICHT den Circuit kippen.
+   */
   recordFailure(): void {
     const now = Date.now();
     this.failureTimestamps.push(now);
+    // Sliding window
     const cutoff = now - this.opts.rollingWindowMs;
     this.failureTimestamps = this.failureTimestamps.filter(t => t >= cutoff);
 
@@ -111,6 +124,7 @@ class NitradoCircuitBreaker {
     logger.warn(`NitradoCircuitBreaker: -> OPEN (${this.openStreak}x in a row, cooldown ${Math.round(this.currentCooldown / 1000)}s)`);
   }
 
+  /** Read-only Status fuer /admin oder Dashboard-Diagnostik. */
   getStatus(): { state: State; failures: number; openStreak: number; cooldownRemainingMs: number } {
     let cooldownRemainingMs = 0;
     if (this.state === 'OPEN') {
@@ -124,6 +138,7 @@ class NitradoCircuitBreaker {
     };
   }
 
+  /** Test-Helper: zurueck auf CLOSED. */
   reset(): void {
     this.state = 'CLOSED';
     this.failureTimestamps.length = 0;
@@ -133,6 +148,10 @@ class NitradoCircuitBreaker {
   }
 }
 
+// NIT-002: Statt eines einzigen globalen Breakers je Operationsklasse (READ/
+// WRITE) ein eigener Breaker. So blockiert ein Ausfall/Rate-Limit der
+// Schreibpfade (Settings/Restart) nicht die Lesepfade (Status/Token/Whitelist-
+// Read) und umgekehrt. Bewusst NUR zwei Breaker (bounded), nicht pro Connection.
 export type NitradoOpClass = 'READ' | 'WRITE';
 
 const breakers: Record<NitradoOpClass, NitradoCircuitBreaker> = {
@@ -157,4 +176,5 @@ export function resetAllNitradoBreakers(): void {
   breakers.WRITE.reset();
 }
 
+// Legacy-Alias (Diagnose/Bestandstests) — zeigt auf den READ-Breaker.
 export const nitradoBreaker = breakers.READ;
