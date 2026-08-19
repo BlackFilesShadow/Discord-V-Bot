@@ -110,6 +110,19 @@ async function metadataFor(account: VirtualAccountRow): Promise<VirtualAccountMe
   return getVirtualAccountMetadata(account.guildId, account.nitradoConnId, account.id);
 }
 
+async function requireCustomAccount(
+  guildId: Parameters<typeof getVirtualAccountById>[0],
+  nitradoConnId: Parameters<typeof getVirtualAccountById>[1],
+  accountId: string,
+): Promise<VirtualAccountRow> {
+  const account = await getVirtualAccountById(guildId, nitradoConnId, accountId);
+  if (!account) throw new Error('Virtuelles Konto nicht gefunden.');
+  if (account.kind !== 'CUSTOM') {
+    throw new Error('Systemkonten werden ausschliesslich durch ihre Fachfunktion verwaltet.');
+  }
+  return account;
+}
+
 async function resolvePayoutTargetByUserGuid(guildId: string, rawUserId: unknown) {
   const userId = typeof rawUserId === 'string' ? rawUserId.trim() : '';
   if (!USER_GUID_RE.test(userId)) throw new Error('User-GUID ungueltig.');
@@ -120,9 +133,6 @@ async function resolvePayoutTargetByUserGuid(guildId: string, rawUserId: unknown
   });
   if (!user || user.status !== 'ACTIVE') throw new Error('Auszahlungsziel ist nicht aktiv oder nicht vorhanden.');
 
-  // Die mutation darf einer erratenen/leaked globalen User-GUID niemals blind
-  // vertrauen: direkt vor der Buchung muss der zugehoerige Discord-Account noch
-  // Mitglied genau dieser Guild und ein menschlicher Account sein.
   const client = tryGetDashboardClient();
   if (!client) throw new Error('Bot nicht bereit; Auszahlungsziel konnte nicht validiert werden.');
   const guild = client.guilds.cache.get(guildId);
@@ -191,11 +201,6 @@ economyVirtualAccountsRouter.post('/', requireGuildPermission('economy.manage'),
   }
 });
 
-/**
- * Economy-1K: Discord-Autocomplete mit interner User-GUID als kanonischem Wert.
- * Nur aktive, im V-Bot registrierte Menschen aus exakt dieser Discord-Guild
- * werden angeboten. Discord-Snowflakes bleiben reine Anzeige-/Aufloesungsdaten.
- */
 economyVirtualAccountsRouter.get('/members', payoutMemberSearchLimiter, requireGuildPermission('economy.view'), async (req, res) => {
   const { scope } = scoped(req);
   const client = tryGetDashboardClient();
@@ -264,6 +269,7 @@ economyVirtualAccountsRouter.get('/:accountId/entries', requireGuildPermission('
 economyVirtualAccountsRouter.post('/:accountId/archive', requireGuildPermission('economy.manage'), async (req, res) => {
   const { scope, connId } = scoped(req);
   try {
+    await requireCustomAccount(scope.guildId, connId, String(req.params.accountId));
     const account = await archiveVirtualAccount({
       guildId: scope.guildId,
       nitradoConnId: connId,
@@ -284,6 +290,8 @@ economyVirtualAccountsRouter.post('/:accountId/archive', requireGuildPermission(
 economyVirtualAccountsRouter.post('/:accountId/payout', requireGuildPermission('economy.manage'), async (req, res) => {
   const { scope, connId } = scoped(req);
   const body = req.body ?? {};
+  try { await requireCustomAccount(scope.guildId, connId, String(req.params.accountId)); }
+  catch (error) { res.status(400).json({ error: (error as Error).message }); return; }
   let targetUserId;
   try { targetUserId = await resolvePayoutTargetByUserGuid(String(scope.guildId), body.userId); }
   catch (error) { res.status(400).json({ error: (error as Error).message }); return; }
