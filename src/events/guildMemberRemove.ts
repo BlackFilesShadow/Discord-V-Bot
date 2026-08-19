@@ -1,6 +1,7 @@
 import { Events, GuildMember } from 'discord.js';
 import { BotEvent } from '../types';
 import prisma from '../database/prisma';
+import { directGrantBelongsToMembership } from '../modules/permissions/access';
 import { logger, logAudit } from '../utils/logger';
 import { markMemberLeft, syncMemberProfile } from '../modules/ai/memberAwareness';
 import { getLeaveCleanupConfig } from '../modules/moderation/leaveCleanupConfig';
@@ -14,8 +15,10 @@ import { sendConfiguredGoodbye } from '../modules/welcome/goodbyeManager';
  * direkt im Gateway-Event ausgefuehrt, sondern nur persistent eingequeued.
  *
  * Authorization-State ist davon getrennt: direkte Guild-Permissions werden
- * IMMER beim Austritt entfernt. Ein ausgestiegener User darf keinen Grant fuer
- * einen spaeteren Rejoin konservieren, auch wenn Spieler-Daten-Cleanup AUS ist.
+ * beim Austritt best-effort entfernt, ABER nur wenn die persistierte Grant-
+ * Generation noch exakt zur gerade verlassenen Discord-Mitgliedschaft gehoert.
+ * Ein verspaetetes Leave-Event darf einen bereits nach Rejoin neu vergebenen
+ * Grant niemals wieder loeschen.
  */
 const guildMemberRemoveEvent: BotEvent = {
   name: Events.GuildMemberRemove,
@@ -30,19 +33,60 @@ const guildMemberRemoveEvent: BotEvent = {
       roles: m.roles.cache.map(r => r.name),
     });
 
-    // Permission-Revoke ist KEIN optionaler Player-Data-Cleanup, sondern eine
-    // Authorization-Invariante. REST/Socket pruefen Mitgliedschaft zusaetzlich
-    // fail-closed, falls dieser best-effort DB-Cut temporaer fehlschlaegt.
+    // Permission-Revoke ist KEIN optionaler Player-Data-Cleanup. Die eigentliche
+    // Authorization bleibt zusaetzlich ueber Live-Membership fail-closed.
+    //
+    // Race-/ABA-Schutz:
+    // 1) aktuellen Direct-Grant lesen;
+    // 2) nur dann als "dieser Leave" akzeptieren, wenn seine Membership-Epoche
+    //    zu m.joinedAt gehoert;
+    // 3) Delete per id+updatedAt als CAS. Wird zwischen Read und Delete ein
+    //    frischer Rejoin-Grant geschrieben, ist count=0 und der neue Grant lebt.
     try {
-      const revoked = await prisma.guildPermissionGrant.deleteMany({
-        where: { guildId: m.guild.id, userDiscordId: m.user.id },
-      });
-      if (revoked.count > 0) {
-        logAudit('PERM_GRANT_REVOKED_ON_LEAVE', 'SECURITY', {
-          guildId: m.guild.id,
-          discordId: m.user.id,
-          count: revoked.count,
+      if (m.joinedAt) {
+        const existingGrant = await prisma.guildPermissionGrant.findUnique({
+          where: {
+            guildId_userDiscordId: {
+              guildId: m.guild.id,
+              userDiscordId: m.user.id,
+            },
+          },
+          select: {
+            id: true,
+            permissions: true,
+            updatedAt: true,
+          },
         });
+
+        if (existingGrant && directGrantBelongsToMembership(
+          existingGrant.permissions,
+          existingGrant.updatedAt,
+          m.joinedAt,
+        )) {
+          const revoked = await prisma.guildPermissionGrant.deleteMany({
+            where: {
+              id: existingGrant.id,
+              guildId: m.guild.id,
+              userDiscordId: m.user.id,
+              updatedAt: existingGrant.updatedAt,
+            },
+          });
+          if (revoked.count > 0) {
+            logAudit('PERM_GRANT_REVOKED_ON_LEAVE', 'SECURITY', {
+              guildId: m.guild.id,
+              discordId: m.user.id,
+              membershipJoinedAt: m.joinedAt.toISOString(),
+              count: revoked.count,
+            });
+          } else {
+            logger.info(`Direct-Grant-Revoke beim Leave durch CAS uebersprungen (Grant inzwischen geaendert): ${m.user.id}@${m.guild.id}`);
+          }
+        }
+      } else {
+        // Ohne joinedAt kann dieses Event keiner Membership-Generation sicher
+        // zugeordnet werden. Nicht destruktiv raten; Authorizer bleiben trotzdem
+        // fail-closed und der Rejoin-Pfad bereinigt alte Generationen separat.
+        logger.warn(`Direct-Grant-Revoke beim Leave uebersprungen: joinedAt fehlt (${m.user.id}@${m.guild.id}).`);
       }
     } catch (permissionError) {
       logger.error(`Direct-Grant-Revoke beim Leave fehlgeschlagen (${m.user.id}@${m.guild.id}):`, permissionError);
