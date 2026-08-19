@@ -11,15 +11,40 @@ const transactionCreate = jest.fn();
 const completedLeaveReceipt = jest.fn();
 const openLeaveCleanup = jest.fn();
 const assertNoOpenLeaveCleanup = jest.fn();
+const leaveFenceQuery = jest.fn();
+const deletionRequestFindFirst = jest.fn();
+
+class MockLeaveCleanupPendingError extends Error {
+  constructor() {
+    super('Leave-Cleanup offen');
+    this.name = 'LeaveCleanupPendingError';
+  }
+}
 
 jest.mock('../../src/modules/moderation/leaveCleanupSaga', () => ({
-  hasCompletedLeaveCleanupReceipt: completedLeaveReceipt,
+  hasCompletedLeaveCleanupReceipt: (...args: unknown[]) => completedLeaveReceipt(...args),
+  leaveCleanupJobKey: (guildId: string, discordId: string) => `leave-job:v1:${guildId}:${discordId}`,
+  leaveCleanupReceiptFingerprint: (guildId: string, discordId: string) => `leave-receipt:v1:${guildId}:${discordId}`,
 }));
 
 jest.mock('../../src/modules/moderation/leaveCleanupGuard', () => ({
-  hasOpenLeaveCleanupRequest: openLeaveCleanup,
-  assertNoOpenLeaveCleanupRequest: assertNoOpenLeaveCleanup,
+  hasOpenLeaveCleanupRequest: (...args: unknown[]) => openLeaveCleanup(...args),
+  assertNoOpenLeaveCleanupRequest: (...args: unknown[]) => assertNoOpenLeaveCleanup(...args),
+  LeaveCleanupPendingError: MockLeaveCleanupPendingError,
 }));
+
+const tx = {
+  $queryRawUnsafe: leaveFenceQuery,
+  dataDeletionRequest: { findFirst: deletionRequestFindFirst },
+  gameIdentityLink: { findFirst: gameLinkFindFirst },
+  economyLinkRewardState: {
+    upsert: rewardStateUpsert,
+    updateMany: rewardStateUpdateMany,
+  },
+  economyLedgerEntry: { create: ledgerCreate },
+  economyAccount: { upsert: accountUpsert },
+  economyTransaction: { findFirst: legacyStartBalanceFindFirst, create: transactionCreate },
+};
 
 jest.mock('../../src/database/prisma', () => ({
   __esModule: true,
@@ -32,12 +57,7 @@ jest.mock('../../src/database/prisma', () => ({
     gameIdentityLink: { findFirst: gameLinkFindFirst },
     serverSettings: { findUnique: settingsFindUnique },
     economyConfig: { findUnique: economyConfigFindUnique },
-    $transaction: jest.fn(async (fn: (tx: unknown) => Promise<unknown>) => fn({
-      economyLinkRewardState: { updateMany: rewardStateUpdateMany },
-      economyLedgerEntry: { create: ledgerCreate },
-      economyAccount: { upsert: accountUpsert },
-      economyTransaction: { findFirst: legacyStartBalanceFindFirst, create: transactionCreate },
-    })),
+    $transaction: jest.fn(async (fn: (client: typeof tx) => Promise<unknown>) => fn(tx)),
   },
 }));
 
@@ -61,10 +81,12 @@ beforeEach(() => {
   completedLeaveReceipt.mockResolvedValue(false);
   openLeaveCleanup.mockResolvedValue(false);
   assertNoOpenLeaveCleanup.mockResolvedValue(undefined);
+  leaveFenceQuery.mockResolvedValue([]);
+  deletionRequestFindFirst.mockResolvedValue(null);
   rewardStateFindUnique.mockResolvedValue(null);
   rewardStateUpsert.mockResolvedValue({ rewardEligibleFrom: LINK_AT });
   rewardStateUpdateMany.mockResolvedValue({ count: 1 });
-  gameLinkFindFirst.mockResolvedValue({ userDiscordId: USER });
+  gameLinkFindFirst.mockResolvedValue({ userDiscordId: USER, verifiedAt: LINK_AT });
   settingsFindUnique.mockResolvedValue({ economyActive: true });
   economyConfigFindUnique.mockResolvedValue({ startBalance: 5_000 });
   legacyStartBalanceFindFirst.mockResolvedValue(null);
@@ -80,7 +102,90 @@ describe('EconomyLinkRewardState', () => {
     await expect(activateLinkRewardState(SCOPE, USER, GAME_ID, SECRET, true, LINK_AT))
       .rejects.toThrow(/Leave-Cleanup/);
     expect(assertNoOpenLeaveCleanup).toHaveBeenCalledWith(SCOPE.guildId, USER);
+    expect(leaveFenceQuery).not.toHaveBeenCalled();
     expect(rewardStateUpsert).not.toHaveBeenCalled();
+  });
+
+  it('serialisiert finalen Link-Generationscheck und Reward-State-Upsert mit demselben Leave-Enqueue-Advisory-Key', async () => {
+    await activateLinkRewardState(SCOPE, USER, GAME_ID, SECRET, true, LINK_AT);
+
+    expect(leaveFenceQuery).toHaveBeenCalledWith(
+      'SELECT pg_advisory_xact_lock(hashtextextended($1, 0))',
+      `leave-job:v1:${SCOPE.guildId}:${USER}`,
+    );
+    expect(deletionRequestFindFirst).toHaveBeenCalledWith({
+      where: {
+        userId: `leave-job:v1:${SCOPE.guildId}:${USER}`,
+        requestType: 'PARTIAL_DELETION',
+        status: { in: ['PENDING', 'IN_PROGRESS', 'FAILED'] },
+      },
+      select: { id: true },
+    });
+    expect(gameLinkFindFirst).toHaveBeenCalledWith({
+      where: {
+        guildId: SCOPE.guildId,
+        nitradoConnId: SCOPE.nitradoConnId,
+        userDiscordId: USER,
+        identityHash: identityHash(GAME_ID, SECRET),
+        status: 'VERIFIED',
+      },
+      select: { verifiedAt: true },
+    });
+    expect(deletionRequestFindFirst).toHaveBeenCalledWith({
+      where: {
+        userId: `leave-receipt:v1:${SCOPE.guildId}:${USER}`,
+        discordId: `leave-receipt:v1:${SCOPE.guildId}:${USER}`,
+        requestType: 'PARTIAL_DELETION',
+        status: 'COMPLETED',
+      },
+      select: { id: true, completedAt: true },
+      orderBy: { completedAt: 'desc' },
+    });
+    expect(leaveFenceQuery.mock.invocationCallOrder[0]).toBeLessThan(deletionRequestFindFirst.mock.invocationCallOrder[0]);
+    expect(gameLinkFindFirst.mock.invocationCallOrder[0]).toBeLessThan(rewardStateUpsert.mock.invocationCallOrder[0]);
+    expect(deletionRequestFindFirst.mock.invocationCallOrder[1]).toBeLessThan(rewardStateUpsert.mock.invocationCallOrder[0]);
+  });
+
+  it('faengt ein Leave ab, das nach dem schnellen Guard aber vor dem Upsert eingequeued wurde', async () => {
+    deletionRequestFindFirst.mockResolvedValueOnce({ id: 'leave-raced' });
+
+    await expect(activateLinkRewardState(SCOPE, USER, GAME_ID, SECRET, true, LINK_AT))
+      .rejects.toBeInstanceOf(MockLeaveCleanupPendingError);
+
+    expect(assertNoOpenLeaveCleanup).toHaveBeenCalledTimes(1);
+    expect(leaveFenceQuery).toHaveBeenCalledTimes(1);
+    expect(rewardStateUpsert).not.toHaveBeenCalled();
+  });
+
+  it('erzeugt nach einem inzwischen vollendeten Cleanup keinen Reward-State fuer einen geloeschten Link', async () => {
+    deletionRequestFindFirst.mockResolvedValueOnce(null);
+    gameLinkFindFirst.mockResolvedValueOnce(null);
+
+    await expect(activateLinkRewardState(SCOPE, USER, GAME_ID, SECRET, true, LINK_AT))
+      .rejects.toBeInstanceOf(MockLeaveCleanupPendingError);
+    expect(rewardStateUpsert).not.toHaveBeenCalled();
+  });
+
+  it('blockiert eine alte Link-Generation wenn der letzte Cleanup danach abgeschlossen wurde', async () => {
+    const completedAt = new Date('2026-08-16T12:00:01.000Z');
+    deletionRequestFindFirst
+      .mockResolvedValueOnce(null)
+      .mockResolvedValueOnce({ id: 'completed-after-link', completedAt });
+
+    await expect(activateLinkRewardState(SCOPE, USER, GAME_ID, SECRET, true, LINK_AT))
+      .rejects.toBeInstanceOf(MockLeaveCleanupPendingError);
+    expect(rewardStateUpsert).not.toHaveBeenCalled();
+  });
+
+  it('erlaubt einen frisch verifizierten Rejoin nach einem aelteren abgeschlossenen Cleanup', async () => {
+    const completedAt = new Date('2026-08-16T11:59:59.000Z');
+    deletionRequestFindFirst
+      .mockResolvedValueOnce(null)
+      .mockResolvedValueOnce({ id: 'completed-before-link', completedAt });
+
+    await expect(activateLinkRewardState(SCOPE, USER, GAME_ID, SECRET, true, LINK_AT))
+      .resolves.toEqual(LINK_AT);
+    expect(rewardStateUpsert).toHaveBeenCalledTimes(1);
   });
 
   it('legt fuer einen neuen Link den Reward-Cutoff atomar per Upsert auf den Linkzeitpunkt', async () => {
@@ -126,6 +231,7 @@ describe('EconomyLinkRewardState', () => {
   it('startet beim Relink eine neue Reward-Epoche, aktiviert Startguthaben aber nicht erneut', async () => {
     const relinkAt = new Date('2026-08-16T14:00:00Z');
     rewardStateUpsert.mockResolvedValue({ rewardEligibleFrom: relinkAt });
+    gameLinkFindFirst.mockResolvedValue({ userDiscordId: USER, verifiedAt: relinkAt });
     await activateLinkRewardState(SCOPE, USER, GAME_ID, SECRET, true, relinkAt);
     const update = rewardStateUpsert.mock.calls[0][0].update;
     expect(update).toEqual({
@@ -188,9 +294,47 @@ describe('Startguthaben bei Account-Verknuepfung', () => {
 
     expect(result).toEqual({ granted: false, amount: 0n });
     expect(completedLeaveReceipt).not.toHaveBeenCalled();
+    expect(leaveFenceQuery).not.toHaveBeenCalled();
     expect(rewardStateUpdateMany).not.toHaveBeenCalled();
     expect(settingsFindUnique).not.toHaveBeenCalled();
     expect(ledgerCreate).not.toHaveBeenCalled();
+  });
+
+  it('blockiert auch ein Leave, das zwischen Fast-Path und Startbonus-Transaktion eingequeued wurde', async () => {
+    deletionRequestFindFirst.mockResolvedValueOnce({ id: 'leave-raced' });
+
+    const result = await grantStartBalanceForLink(SCOPE, USER, LINK_AT);
+
+    expect(result).toEqual({ granted: false, amount: 0n });
+    expect(leaveFenceQuery).toHaveBeenCalledTimes(1);
+    expect(rewardStateUpdateMany).not.toHaveBeenCalled();
+    expect(legacyStartBalanceFindFirst).not.toHaveBeenCalled();
+    expect(ledgerCreate).not.toHaveBeenCalled();
+    expect(accountUpsert).not.toHaveBeenCalled();
+  });
+
+  it('blockiert einen Cleanup, der zwischen Fast-Path und Lock bereits vollendet wurde, und verbraucht Eligibility', async () => {
+    deletionRequestFindFirst
+      .mockResolvedValueOnce(null)
+      .mockResolvedValueOnce({ id: 'completed-raced' });
+
+    const result = await grantStartBalanceForLink(SCOPE, USER, LINK_AT);
+
+    expect(result).toEqual({ granted: false, amount: 0n });
+    expect(rewardStateUpdateMany).toHaveBeenCalledWith({
+      where: {
+        guildId: SCOPE.guildId,
+        nitradoConnId: SCOPE.nitradoConnId,
+        userDiscordId: USER,
+        unlinkedAt: null,
+        startBalanceEligible: true,
+        startBalanceGrantedAt: null,
+      },
+      data: { startBalanceEligible: false },
+    });
+    expect(legacyStartBalanceFindFirst).not.toHaveBeenCalled();
+    expect(ledgerCreate).not.toHaveBeenCalled();
+    expect(accountUpsert).not.toHaveBeenCalled();
   });
 
   it('bucht konfiguriertes Startguthaben atomar auch auf ein bestehendes Konto', async () => {
@@ -198,6 +342,10 @@ describe('Startguthaben bei Account-Verknuepfung', () => {
     expect(result.granted).toBe(true);
     expect(result.amount.toString()).toBe('5000');
 
+    expect(leaveFenceQuery).toHaveBeenCalledWith(
+      'SELECT pg_advisory_xact_lock(hashtextextended($1, 0))',
+      `leave-job:v1:${SCOPE.guildId}:${USER}`,
+    );
     const claim = rewardStateUpdateMany.mock.calls[0][0];
     expect(claim.where).toEqual(expect.objectContaining({ startBalanceEligible: true, startBalanceGrantedAt: null }));
     expect(claim.data.startBalanceEligible).toBe(false);
@@ -281,7 +429,10 @@ describe('Startguthaben bei Account-Verknuepfung', () => {
     completedLeaveReceipt.mockResolvedValue(false);
     openLeaveCleanup.mockResolvedValue(false);
     assertNoOpenLeaveCleanup.mockResolvedValue(undefined);
+    leaveFenceQuery.mockResolvedValue([]);
+    deletionRequestFindFirst.mockResolvedValue(null);
     rewardStateUpdateMany.mockResolvedValue({ count: 1 });
+    gameLinkFindFirst.mockResolvedValue({ userDiscordId: USER, verifiedAt: LINK_AT });
     settingsFindUnique.mockResolvedValue({ economyActive: false });
     economyConfigFindUnique.mockResolvedValue({ startBalance: 5_000 });
     legacyStartBalanceFindFirst.mockResolvedValue(null);

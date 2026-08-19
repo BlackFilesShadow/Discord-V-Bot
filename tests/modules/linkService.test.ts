@@ -2,6 +2,12 @@ const cleanupGuard = jest.fn();
 
 jest.mock('../../src/modules/moderation/leaveCleanupGuard', () => ({
   assertNoOpenLeaveCleanupRequest: cleanupGuard,
+  LeaveCleanupPendingError: class LeaveCleanupPendingError extends Error {
+    constructor() {
+      super('Leave-Cleanup noch nicht sicher abgeschlossen');
+      this.name = 'LeaveCleanupPendingError';
+    }
+  },
 }));
 
 import {
@@ -29,6 +35,11 @@ interface StoredLink extends GameIdentityRow {
   unlinkedAt?: Date | null;
 }
 
+interface LeaveState {
+  open?: boolean;
+  completedAt?: Date | null;
+}
+
 function session(
   overrides: Partial<PlayerSessionLinkRow> & Pick<PlayerSessionLinkRow, 'gameId' | 'playerName'>,
 ): PlayerSessionLinkRow {
@@ -45,7 +56,11 @@ function session(
   };
 }
 
-function makeClient(initialLinks: StoredLink[] = [], sessions: PlayerSessionLinkRow[] = []) {
+function makeClient(
+  initialLinks: StoredLink[] = [],
+  sessions: PlayerSessionLinkRow[] = [],
+  leaveState: LeaveState = {},
+) {
   const links = new Map<string, StoredLink>();
   for (const row of initialLinks) links.set(`${row.nitradoConnId}:${row.userDiscordId}`, { ...row });
 
@@ -70,68 +85,87 @@ function makeClient(initialLinks: StoredLink[] = [], sessions: PlayerSessionLink
     return true;
   }
 
-  const client: SessionLinkClient = {
-    gameIdentityLink: {
-      findFirst: async (args: unknown) => {
-        const where = (args as { where: Record<string, any> }).where;
-        return [...links.values()].find(row => linkMatches(row, where)) ?? null;
-      },
-      findMany: async (args: unknown) => {
-        const where = (args as { where: Record<string, any> }).where;
-        return [...links.values()].filter(row => linkMatches(row, where));
-      },
-      upsert: async ({ where, create, update }) => {
-        const keyData = where.guildId_nitradoConnId_userDiscordId as {
-          guildId: string;
-          nitradoConnId: string;
-          userDiscordId: string;
-        };
-        const key = `${keyData.nitradoConnId}:${keyData.userDiscordId}`;
-        const current = links.get(key);
-        const next = current
-          ? { ...current, ...update } as StoredLink
-          : { ...create } as unknown as StoredLink;
-
-        if (next.identityHash && next.status === 'VERIFIED') {
-          const duplicate = [...links.values()].find(row =>
-            row.guildId === next.guildId
-            && row.nitradoConnId === next.nitradoConnId
-            && row.userDiscordId !== next.userDiscordId
-            && row.status === 'VERIFIED'
-            && row.identityHash === next.identityHash,
-          );
-          if (duplicate) {
-            const error = new Error('unique') as Error & { code: string };
-            error.code = 'P2002';
-            throw error;
-          }
-        }
-        links.set(key, next);
-        return next;
-      },
-      updateMany: async ({ where, data }) => {
-        let count = 0;
-        for (const [key, row] of links) {
-          const typedWhere = where as Record<string, any>;
-          if (typedWhere.guildId && row.guildId !== typedWhere.guildId) continue;
-          if (typedWhere.nitradoConnId && row.nitradoConnId !== typedWhere.nitradoConnId) continue;
-          if (typedWhere.userDiscordId && row.userDiscordId !== typedWhere.userDiscordId) continue;
-          if (typedWhere.status?.in && !typedWhere.status.in.includes(row.status)) continue;
-          links.set(key, { ...row, ...data } as StoredLink);
-          count++;
-        }
-        return { count };
-      },
+  const gameIdentityLink = {
+    findFirst: async (args: unknown) => {
+      const where = (args as { where: Record<string, any> }).where;
+      return [...links.values()].find(row => linkMatches(row, where)) ?? null;
     },
+    findMany: async (args: unknown) => {
+      const where = (args as { where: Record<string, any> }).where;
+      return [...links.values()].filter(row => linkMatches(row, where));
+    },
+    upsert: async ({ where, create, update }: { where: Record<string, unknown>; create: Record<string, unknown>; update: Record<string, unknown> }) => {
+      const keyData = where.guildId_nitradoConnId_userDiscordId as {
+        guildId: string;
+        nitradoConnId: string;
+        userDiscordId: string;
+      };
+      const key = `${keyData.nitradoConnId}:${keyData.userDiscordId}`;
+      const current = links.get(key);
+      const next = current
+        ? { ...current, ...update } as StoredLink
+        : { ...create } as unknown as StoredLink;
+
+      if (next.identityHash && next.status === 'VERIFIED') {
+        const duplicate = [...links.values()].find(row =>
+          row.guildId === next.guildId
+          && row.nitradoConnId === next.nitradoConnId
+          && row.userDiscordId !== next.userDiscordId
+          && row.status === 'VERIFIED'
+          && row.identityHash === next.identityHash,
+        );
+        if (duplicate) {
+          const error = new Error('unique') as Error & { code: string };
+          error.code = 'P2002';
+          throw error;
+        }
+      }
+      links.set(key, next);
+      return next;
+    },
+    updateMany: async ({ where, data }: { where: Record<string, unknown>; data: Record<string, unknown> }) => {
+      let count = 0;
+      for (const [key, row] of links) {
+        const typedWhere = where as Record<string, any>;
+        if (typedWhere.guildId && row.guildId !== typedWhere.guildId) continue;
+        if (typedWhere.nitradoConnId && row.nitradoConnId !== typedWhere.nitradoConnId) continue;
+        if (typedWhere.userDiscordId && row.userDiscordId !== typedWhere.userDiscordId) continue;
+        if (typedWhere.status?.in && !typedWhere.status.in.includes(row.status)) continue;
+        links.set(key, { ...row, ...data } as StoredLink);
+        count++;
+      }
+      return { count };
+    },
+  };
+
+  const leaveFenceQuery = jest.fn(async () => []);
+  const deletionRequestFindFirst = jest.fn(async (args: unknown) => {
+    const where = (args as { where: Record<string, any> }).where;
+    if (typeof where.status === 'object' && Array.isArray(where.status?.in)) {
+      return leaveState.open ? { id: 'leave-open' } : null;
+    }
+    if (where.status === 'COMPLETED' && leaveState.completedAt !== undefined) {
+      return { id: 'leave-completed', completedAt: leaveState.completedAt };
+    }
+    return null;
+  });
+
+  const client: SessionLinkClient = {
+    gameIdentityLink,
     playerSession: {
       findMany: async (args: unknown) => {
         const where = (args as { where: Record<string, any> }).where;
         return sessions.filter(row => sessionMatches(row, where));
       },
     },
+    $transaction: async work => work({
+      $queryRawUnsafe: leaveFenceQuery,
+      dataDeletionRequest: { findFirst: deletionRequestFindFirst },
+      gameIdentityLink,
+    }),
   };
 
-  return { client, links };
+  return { client, links, leaveFenceQuery, deletionRequestFindFirst };
 }
 
 beforeEach(() => {
@@ -190,8 +224,8 @@ describe('Konsolen-Linking ueber PlayerSessions', () => {
     if (result.ok) expect(result.playedSeconds).toBe(330);
   });
 
-  it('verknuepft nach mindestens 5 Minuten den Discord-Account mit dem GUID-Hash', async () => {
-    const { client, links } = makeClient([], [
+  it('verknuepft nach mindestens 5 Minuten den Discord-Account mit dem GUID-Hash unter derselben Leave-Fence', async () => {
+    const { client, links, leaveFenceQuery, deletionRequestFindFirst } = makeClient([], [
       session({ gameId: 'guid-1', playerName: 'Void__Architect', durationSeconds: 301 }),
     ]);
     const result = await linkByPlayerName(client, SCOPE, 'discord-1', 'Void__Architect', SECRET, NOW);
@@ -202,12 +236,50 @@ describe('Konsolen-Linking ueber PlayerSessions', () => {
       gameId: 'guid-1',
       playedSeconds: 301,
     });
+    expect(leaveFenceQuery).toHaveBeenCalledWith(
+      'SELECT pg_advisory_xact_lock(hashtextextended($1, 0))',
+      `leave-cleanup:${SCOPE.guildId}:discord-1`,
+    );
+    expect(deletionRequestFindFirst).toHaveBeenCalledTimes(2);
     expect(links.get('conn-1:discord-1')).toMatchObject({
       identityHash: identityHash('guid-1', SECRET),
       status: 'VERIFIED',
+      verifiedAt: NOW,
       challengeCode: null,
       challengeExpiresAt: null,
     });
+  });
+
+  it('faengt ein Leave ab, das nach dem schnellen Guard aber vor dem finalen Link-Commit eingequeued wurde', async () => {
+    const { client, links } = makeClient([], [
+      session({ gameId: 'guid-1', playerName: 'Void__Architect', durationSeconds: 600 }),
+    ], { open: true });
+
+    await expect(linkByPlayerName(client, SCOPE, 'discord-1', 'Void__Architect', SECRET, NOW))
+      .rejects.toThrow(/Leave-Cleanup/);
+    expect(links.size).toBe(0);
+  });
+
+  it('faengt einen Cleanup ab, der nach Operationsstart bereits vollendet wurde und keinen OPEN-Job mehr besitzt', async () => {
+    const completedAt = new Date(NOW.getTime() + 1_000);
+    const { client, links } = makeClient([], [
+      session({ gameId: 'guid-1', playerName: 'Void__Architect', durationSeconds: 600 }),
+    ], { completedAt });
+
+    await expect(linkByPlayerName(client, SCOPE, 'discord-1', 'Void__Architect', SECRET, NOW))
+      .rejects.toThrow(/Leave-Cleanup/);
+    expect(links.size).toBe(0);
+  });
+
+  it('erlaubt einen legitimen frischen Rejoin nach einem bereits vorher abgeschlossenen Cleanup', async () => {
+    const completedAt = new Date(NOW.getTime() - 1_000);
+    const { client, links } = makeClient([], [
+      session({ gameId: 'guid-1', playerName: 'Void__Architect', durationSeconds: 600 }),
+    ], { completedAt });
+
+    await expect(linkByPlayerName(client, SCOPE, 'discord-1', 'Void__Architect', SECRET, NOW))
+      .resolves.toMatchObject({ ok: true, alreadyLinked: false });
+    expect(links.get('conn-1:discord-1')?.verifiedAt).toEqual(NOW);
   });
 
   it('erlaubt denselben Namen/GUID nicht fuer einen zweiten Discord-Account', async () => {
