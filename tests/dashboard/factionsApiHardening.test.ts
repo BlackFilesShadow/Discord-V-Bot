@@ -82,15 +82,18 @@ beforeEach(() => {
 });
 
 describe('Faction API preflight validation', () => {
-  it('initialisiert system-config atomar per upsert', async () => {
+  it('bleibt bei Viewer-GET /system-config strikt schreibfrei', async () => {
     const app = scopedApp(factionApiPreflight, (_req, res) => res.json({ ok: true }));
     const res = await request(app).get('/factions/system-config');
     expect(res.status).toBe(200);
-    expect(configUpsertMock).toHaveBeenCalledWith({
-      where: { guildId: GID },
-      create: { guildId: GID },
-      update: {},
-    });
+    expect(configUpsertMock).not.toHaveBeenCalled();
+  });
+
+  it('ueberlaesst auch PUT-SystemConfig-Schreiben der mutierenden Route statt dem Preflight', async () => {
+    const app = scopedApp(factionApiPreflight, (_req, res) => res.json({ ok: true }));
+    const res = await request(app).put('/factions/system-config').send({ factionChannelId: null });
+    expect(res.status).toBe(200);
+    expect(configUpsertMock).not.toHaveBeenCalled();
   });
 
   it('lehnt explizit ungueltige Member-Rollen mit 400 ab statt MEMBER-Fallback', async () => {

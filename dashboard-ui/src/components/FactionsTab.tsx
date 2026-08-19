@@ -285,7 +285,7 @@ function MemberCombobox({ guildId, value, onChange, placeholder, allowClear = tr
 interface FactionSystemConfigDto {
   factionChannelId: string | null;
   listMessageId: string | null;
-  updatedAt: string;
+  updatedAt: string | null;
 }
 
 function FactionSystemConfigCard({ guildId, canManage }: { guildId: string; canManage: boolean }) {
