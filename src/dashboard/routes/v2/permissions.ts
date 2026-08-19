@@ -181,10 +181,18 @@ permissionsRouter.put('/:userDiscordId/:scope', requireGuildOwner, async (req, r
   const targetMember = await resolveCurrentMember(scope.guildId, target);
   if (targetMember.kind === 'unavailable') { res.status(503).json({ error: 'Guild/Mitgliedschaft konnte nicht sicher validiert werden.' }); return; }
   if (targetMember.kind === 'missing') { res.status(404).json({ error: 'Ziel-User ist kein aktuelles Mitglied dieser Guild.' }); return; }
+  if (!targetMember.member.joinedAt) { res.status(409).json({ error: 'Aktuelle Mitgliedschaftsepoche konnte nicht sicher bestimmt werden.' }); return; }
   if (targetMember.member.user.bot) { res.status(400).json({ error: 'Bots koennen keine delegierten Guild-Permissions erhalten.' }); return; }
   if (targetMember.guild.ownerId === target) { res.status(400).json({ error: 'Der Guild-Owner benoetigt keinen delegierten Grant.' }); return; }
 
-  const out = await setGrantScope(scope.guildId, target, perm, true, asUserDiscordId(scope.actorDiscordId));
+  const out = await setGrantScope(
+    scope.guildId,
+    target,
+    perm,
+    true,
+    asUserDiscordId(scope.actorDiscordId),
+    targetMember.member.joinedAt,
+  );
   logAuditDb('PERM_GRANTED', 'ADMIN', { actorUserId: req.auth!.userId, guildId: scope.guildId, details: { target, perm } });
   emitGuildEvent(scope.guildId, { type: 'permissions.updated', payload: { guildId: scope.guildId, userDiscordId: target } });
   res.json({ permissions: out.permissions });
@@ -196,7 +204,20 @@ permissionsRouter.delete('/:userDiscordId/:scope', requireGuildOwner, async (req
   try { target = asUserDiscordId(String(req.params.userDiscordId)); } catch { res.status(400).json({ error: 'userDiscordId ungueltig.' }); return; }
   const perm = parseScope(String(req.params.scope));
   if (!perm) { res.status(400).json({ error: 'Unbekannter Scope.' }); return; }
-  const out = await setGrantScope(scope.guildId, target, perm, false, asUserDiscordId(scope.actorDiscordId));
+
+  // Revoke bleibt auch fuer ausgetretene/stale Ziele moeglich. Ist die aktuelle
+  // Mitgliedschaft aber vorhanden, wird ihre joinedAt-Epoche mitgegeben, damit
+  // ein alter Grant beim Teil-Revoke nicht versehentlich frisch reaktiviert wird.
+  const targetMember = await resolveCurrentMember(scope.guildId, target);
+  const membershipJoinedAt = targetMember.kind === 'member' ? targetMember.member.joinedAt : null;
+  const out = await setGrantScope(
+    scope.guildId,
+    target,
+    perm,
+    false,
+    asUserDiscordId(scope.actorDiscordId),
+    membershipJoinedAt,
+  );
   logAuditDb('PERM_REVOKED', 'ADMIN', { actorUserId: req.auth!.userId, guildId: scope.guildId, details: { target, perm } });
   emitGuildEvent(scope.guildId, { type: 'permissions.updated', payload: { guildId: scope.guildId, userDiscordId: target } });
   res.json({ permissions: out.permissions });
