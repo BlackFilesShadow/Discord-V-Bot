@@ -131,6 +131,7 @@ describe('Leave-1B identity-safe whitelist cleanup', () => {
     expect(mockWhitelistEntryUpdateMany).toHaveBeenCalledWith(expect.objectContaining({
       where: expect.objectContaining({ id: { in: ['target'] }, guildId: GUILD, nitradoConnId: CONN }),
     }));
+    expect(mockQueryRaw).toHaveBeenCalledTimes(2);
     expect(mockQueryRaw).toHaveBeenCalledWith('SELECT pg_advisory_xact_lock($1, $2)', expect.any(Number), expect.any(Number));
     expect(mockNitradoJobCreate).toHaveBeenCalledWith({
       data: { guildId: GUILD, nitradoConnId: CONN, operation: 'WHITELIST_REMOVE', payload: { gameId: 'TARGETPLAYER' } },
@@ -178,7 +179,7 @@ describe('Leave-1B identity-safe whitelist cleanup', () => {
       where: expect.objectContaining({ id: { in: ['add-pending'] }, status: 'PENDING' }),
       data: expect.objectContaining({ status: 'DONE', payload: {} }),
     }));
-    expect(mockQueryRaw).toHaveBeenCalledTimes(1);
+    expect(mockQueryRaw).toHaveBeenCalledTimes(2);
     expect(mockNitradoJobCreate).toHaveBeenCalledTimes(1);
   });
 
