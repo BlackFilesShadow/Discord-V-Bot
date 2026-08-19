@@ -1,0 +1,228 @@
+import { test, expect, type Page, type Route } from '@playwright/test';
+
+const GUILD_ID = '123456789012345678';
+const USER_ID = '437718598876268545';
+const MEMBER_DISCORD_ID = '223456789012345678';
+const MEMBER_GUID = '11111111-1111-4111-8111-111111111111';
+const SLOT = '1';
+const ZERO_ACCOUNT = 'acct-zero';
+const FUNDED_ACCOUNT = 'acct-funded';
+
+interface Mutation {
+  method: string;
+  path: string;
+  query: string;
+  body: Record<string, unknown> | null;
+}
+
+async function json(route: Route, body: unknown, status = 200): Promise<void> {
+  await route.fulfill({ status, contentType: 'application/json', body: JSON.stringify(body) });
+}
+
+function account(id: string, name: string, balance: string) {
+  return {
+    id,
+    kind: 'CUSTOM',
+    name,
+    description: id === FUNDED_ACCOUNT ? 'Eventtopf' : null,
+    channelId: null,
+    balance,
+    status: 'ACTIVE',
+    acceptUserTransfers: true,
+    expiresAt: null,
+    archivedAt: null,
+    createdAt: '2026-08-19T10:00:00.000Z',
+  };
+}
+
+async function stubEconomy(page: Page, opts: { payoutError?: boolean } = {}) {
+  const mutations: Mutation[] = [];
+
+  await page.route('**/api/me', route => json(route, {
+    user: { discordId: USER_ID, username: 'virtual-admin', avatar: null, role: 'ADMIN' },
+  }));
+  await page.route('**/auth/status', route => json(route, {
+    authenticated: true,
+    user: { discordId: USER_ID, username: 'virtual-admin', avatar: null, role: 'ADMIN' },
+  }));
+
+  await page.route('**/api/v2/**', async route => {
+    const req = route.request();
+    const url = new URL(req.url());
+    const path = url.pathname;
+    const method = req.method();
+
+    if (path === '/api/v2/dev/status') return json(route, { active: false, eligible: false, expiresAt: null });
+    if (path === '/api/v2/bot-admin/status') return json(route, { active: false, expiresAt: null });
+    if (path === `/api/v2/guilds/${GUILD_ID}/dashboard`) return json(route, {
+      guildId: GUILD_ID,
+      alias5: 'CHAOS',
+      isOwner: true,
+      permissions: ['dashboard.access', 'economy.manage', 'casino.manage'],
+      slots: [{ id: 'conn-virtual-1', slot: 1, alias: 'Chernarus', alias5: 'VA001', status: 'ACTIVE' }],
+      grantsCount: 0,
+    });
+    if (path === `/api/v2/guilds/${GUILD_ID}/dashboard/server/${SLOT}/settings`) {
+      return json(route, { whitelistActive: true, economyActive: true, permaOnly: false });
+    }
+    if (path === `/api/v2/guilds/${GUILD_ID}/economy/config`) return json(route, {
+      enabled: true,
+      currencyName: 'Maeuse',
+      emoji: '🐭',
+      startBalance: 500,
+      playtimeRewardPercent: 2,
+      bankInterestPercent: 3,
+      bankChannelId: null,
+    });
+    if (path === `/api/v2/guilds/${GUILD_ID}/economy-scope/status`) return json(route, {
+      required: false,
+      state: { status: 'RESOLVED', primaryNitradoConnId: 'conn-virtual-1', detectedActiveServerCount: 1, resolvedAt: '2026-08-19T10:00:00.000Z' },
+      servers: [],
+    });
+    if (path === `/api/v2/guilds/${GUILD_ID}/economy/overview`) return json(route, {
+      economy: { enabled: true, currencyName: 'Maeuse', emoji: '🐭', accounts: 2, links: 0, transactions: 0 },
+      bank: { totalWallet: '0', totalBank: '0', interestPercent: 3, bankChannelId: null },
+      casino: { gamesConfigured: 0, gamesEnabled: 0, rounds: 0, totalBet: '0', totalPayout: '0', houseEdge: '0', stats: [] },
+      recentTransactions: [],
+      coupling: { sharedCurrency: true, sharedBalance: true, directlyBooked: true, sharedModels: [], casinoStatsMovable: false, raceConditionsGuarded: true, centralTransactionService: 'ledger' },
+    });
+    if (path === `/api/v2/guilds/${GUILD_ID}/channels`) return json(route, {
+      channels: [{ id: '123456789012345679', name: 'events', type: 0, parentId: null }],
+    });
+
+    if (path === `/api/v2/guilds/${GUILD_ID}/economy/virtual-accounts/members` && method === 'GET') return json(route, {
+      members: [{ id: MEMBER_GUID, discordId: MEMBER_DISCORD_ID, username: 'alice', displayName: 'Alice', avatar: null }],
+    });
+    if (path === `/api/v2/guilds/${GUILD_ID}/economy/virtual-accounts` && method === 'GET') return json(route, {
+      accounts: [account(ZERO_ACCOUNT, 'Leere Kasse', '0'), account(FUNDED_ACCOUNT, 'Eventkasse', '5000')],
+    });
+    if (path === `/api/v2/guilds/${GUILD_ID}/economy/virtual-accounts` && method === 'POST') {
+      const body = req.postDataJSON() as Record<string, unknown>;
+      mutations.push({ method, path, query: url.search, body });
+      return json(route, { ...account('acct-created', String(body.name), '0'), description: body.description, channelId: body.channelId }, 201);
+    }
+    if (path === `/api/v2/guilds/${GUILD_ID}/economy/virtual-accounts/${ZERO_ACCOUNT}/entries` && method === 'GET') return json(route, {
+      entries: [{ id: 'entry-1', delta: '250', entryType: 'ADMIN', sourcePocket: null, actorDiscordId: USER_ID, userDiscordId: null, reason: 'Audit Test', createdAt: '2026-08-19T10:05:00.000Z' }],
+    });
+    if (path === `/api/v2/guilds/${GUILD_ID}/economy/virtual-accounts/${ZERO_ACCOUNT}/archive` && method === 'POST') {
+      mutations.push({ method, path, query: url.search, body: {} });
+      return json(route, { ...account(ZERO_ACCOUNT, 'Leere Kasse', '0'), status: 'ARCHIVED', archivedAt: '2026-08-19T10:10:00.000Z' });
+    }
+    if (path === `/api/v2/guilds/${GUILD_ID}/economy/virtual-accounts/${FUNDED_ACCOUNT}/payout` && method === 'POST') {
+      const body = req.postDataJSON() as Record<string, unknown>;
+      mutations.push({ method, path, query: url.search, body });
+      if (opts.payoutError) return json(route, { error: 'PAYOUT_TARGET_STALE' }, 400);
+      return json(route, { ok: true, booked: true, account: { ...account(FUNDED_ACCOUNT, 'Eventkasse', '4750') } });
+    }
+
+    if (path === `/api/v2/guilds/${GUILD_ID}/economy/lottery/current`) return json(route, { round: null });
+    if (path === `/api/v2/guilds/${GUILD_ID}/economy/lottery/history`) return json(route, { rounds: [] });
+    if (path === `/api/v2/guilds/${GUILD_ID}/economy/black-market/vendors`) return json(route, { vendors: [] });
+    if (path === `/api/v2/guilds/${GUILD_ID}/economy/black-market/listings`) return json(route, { listings: [] });
+    if (path === `/api/v2/guilds/${GUILD_ID}/economy/black-market/purchases`) return json(route, { purchases: [] });
+    if (path === `/api/v2/guilds/${GUILD_ID}/casino/games`) return json(route, { games: [] });
+    if (path === `/api/v2/guilds/${GUILD_ID}/casino/stats`) return json(route, { stats: [] });
+
+    return json(route, {});
+  });
+
+  return mutations;
+}
+
+function mutation(mutations: Mutation[], path: string) {
+  return mutations.find(row => row.path === path);
+}
+
+async function gotoVirtualAccounts(page: Page): Promise<void> {
+  await page.goto(`/servers/${GUILD_ID}/server/${SLOT}?tab=economy`);
+  await expect(page.getByRole('heading', { name: 'Virtuelle Konten' })).toBeVisible();
+}
+
+async function selectMember(page: Page): Promise<void> {
+  await page.getByRole('button', { name: /Mitglied suchen/ }).click();
+  await expect(page.getByRole('option', { name: /Alice/ })).toBeVisible();
+  await page.getByRole('option', { name: /Alice/ }).click();
+}
+
+async function noOverflow(page: Page): Promise<void> {
+  const overflow = await page.evaluate(() => document.documentElement.scrollWidth - document.documentElement.clientWidth);
+  expect(overflow).toBeLessThanOrEqual(1);
+}
+
+test.describe('Authenticated virtual-account actions', () => {
+  test('Create, Audit und Archive bleiben exakt Guild+Slot-gescoped', async ({ page }) => {
+    const mutations = await stubEconomy(page);
+    await gotoVirtualAccounts(page);
+
+    await page.getByPlaceholder('z. B. Eventkasse').fill('Turnierkasse');
+    await page.getByPlaceholder('Wofuer wird dieses Konto verwendet?').fill('Gewinne fuer das Turnier');
+    await page.getByText('Discord-Channel (optional)').locator('..').locator('select').selectOption('123456789012345679');
+    await page.getByRole('button', { name: 'Konto erstellen' }).click();
+
+    await expect.poll(() => mutation(mutations, `/api/v2/guilds/${GUILD_ID}/economy/virtual-accounts`)).toBeTruthy();
+    expect(mutation(mutations, `/api/v2/guilds/${GUILD_ID}/economy/virtual-accounts`)).toMatchObject({
+      method: 'POST',
+      query: `?slot=${SLOT}`,
+      body: {
+        name: 'Turnierkasse',
+        description: 'Gewinne fuer das Turnier',
+        channelId: '123456789012345679',
+        expiresAt: null,
+        acceptUserTransfers: true,
+      },
+    });
+    await expect(page.getByText(/Konto „Turnierkasse“ erstellt/)).toBeVisible();
+
+    const zeroRow = page.getByText('Leere Kasse', { exact: true }).locator('xpath=ancestor::div[contains(@class,"rounded-lg")][1]');
+    await zeroRow.getByRole('button', { name: 'Audit' }).click();
+    await expect(page.getByText(/Audit Test/)).toBeVisible();
+
+    await zeroRow.getByRole('button', { name: 'Archivieren' }).click();
+    await expect.poll(() => mutation(mutations, `/api/v2/guilds/${GUILD_ID}/economy/virtual-accounts/${ZERO_ACCOUNT}/archive`)).toBeTruthy();
+    expect(mutation(mutations, `/api/v2/guilds/${GUILD_ID}/economy/virtual-accounts/${ZERO_ACCOUNT}/archive`)?.query).toBe(`?slot=${SLOT}`);
+  });
+
+  test('Payout nutzt kanonische User-GUID, Pocket, Idempotency und exakten Slot-Scope', async ({ page }) => {
+    const mutations = await stubEconomy(page);
+    await gotoVirtualAccounts(page);
+
+    await page.getByText('Quellkonto').locator('..').locator('select').selectOption(FUNDED_ACCOUNT);
+    await selectMember(page);
+    await page.getByText('Betrag', { exact: true }).locator('..').locator('input').fill('250');
+    await page.getByText('Ziel', { exact: true }).locator('..').locator('select').selectOption('BANK');
+    await page.getByPlaceholder('z. B. Event beendet / Refund').fill('Turnier Refund');
+    await page.getByRole('button', { name: 'Auszahlung buchen' }).click();
+
+    const path = `/api/v2/guilds/${GUILD_ID}/economy/virtual-accounts/${FUNDED_ACCOUNT}/payout`;
+    await expect.poll(() => mutation(mutations, path)).toBeTruthy();
+    const write = mutation(mutations, path)!;
+    expect(write.query).toBe(`?slot=${SLOT}`);
+    expect(write.body).toMatchObject({ userId: MEMBER_GUID, amount: '250', targetPocket: 'BANK', reason: 'Turnier Refund' });
+    expect(String(write.body?.operationId ?? '')).toMatch(/^[A-Za-z0-9._:-]+$/);
+    await expect(page.getByText('Auszahlung atomar gebucht.')).toBeVisible();
+  });
+
+  test('Payout-Backendfehler bleibt sichtbar und wird nicht als Erfolg behandelt', async ({ page }) => {
+    await stubEconomy(page, { payoutError: true });
+    await gotoVirtualAccounts(page);
+
+    await page.getByText('Quellkonto').locator('..').locator('select').selectOption(FUNDED_ACCOUNT);
+    await selectMember(page);
+    await page.getByText('Betrag', { exact: true }).locator('..').locator('input').fill('250');
+    await page.getByPlaceholder('z. B. Event beendet / Refund').fill('Turnier Refund');
+    await page.getByRole('button', { name: 'Auszahlung buchen' }).click();
+
+    await expect(page.getByText(/PAYOUT_TARGET_STALE/)).toBeVisible();
+    await expect(page.getByText('Auszahlung atomar gebucht.')).toHaveCount(0);
+  });
+});
+
+for (const width of [320, 360, 375, 390, 430] as const) {
+  test(`${width}px virtuelle Konten bleiben ohne Seiten-Overflow`, async ({ page }) => {
+    await stubEconomy(page);
+    await page.setViewportSize({ width, height: 900 });
+    await gotoVirtualAccounts(page);
+    await expect(page.getByText('Kontrollierte Auszahlung / Refund')).toBeVisible();
+    await noOverflow(page);
+  });
+}
