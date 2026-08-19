@@ -18,6 +18,7 @@ import { bookPendingRewards, type RewardBookingClient } from '../../economy/rewa
 import { bookPlaytimeRewards, type PlaytimeBookingClient } from '../../economy/playtimeBooking';
 import { assertEconomyScopeReady } from '../../economy/scopeMigration';
 import { resolveRewardIdentity, resolveRewardUserAt } from '../../linking/linkRewards';
+import { identityHash } from '../../linking/identity';
 
 const INTERVAL_MS = 60_000;
 let timer: NodeJS.Timeout | null = null;
@@ -65,11 +66,17 @@ async function processConnection(conn: ScopedConnection): Promise<void> {
       occurredAt,
       config.security.encryptionKey,
     );
-    const resolvePlaytimeLink = (gameId: string) => resolveRewardIdentity(
-      scopeRef,
-      gameId,
-      config.security.encryptionKey,
-    );
+    const resolvePlaytimeLink = async (gameId: string) => {
+      const link = await resolveRewardIdentity(
+        scopeRef,
+        gameId,
+        config.security.encryptionKey,
+      );
+      return link ? {
+        ...link,
+        identityHash: identityHash(gameId, config.security.encryptionKey),
+      } : null;
+    };
 
     await runPvpRewardShadow(
       prisma as unknown as RewardEngineClient,
