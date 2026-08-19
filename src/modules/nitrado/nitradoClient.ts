@@ -12,7 +12,7 @@
  * - Download-/Seek-Tokens werden niemals geloggt.
  */
 
-import axios, { type AxiosInstance, type AxiosRequestConfig } from 'axios';
+import axios, { type AxiosError, type AxiosInstance, type AxiosRequestConfig } from 'axios';
 import { logger } from '../../utils/logger';
 import { getNitradoBreaker, opClassForMethod, NitradoCircuitOpenError } from './circuitBreaker';
 
@@ -154,6 +154,15 @@ export function parseNitradoBanlistData(data: unknown): NitradoBanlistEntry[] {
 interface SignedFileToken {
   url: string;
   token?: string;
+}
+
+function axiosStatus(error: unknown): number | null {
+  const status = (error as AxiosError)?.response?.status;
+  return typeof status === 'number' && Number.isFinite(status) ? status : null;
+}
+
+function axiosRetryAfter(error: unknown): unknown {
+  return (error as AxiosError)?.response?.headers?.['retry-after'];
 }
 
 export class NitradoClient {
@@ -360,14 +369,49 @@ export class NitradoClient {
 
   private async fetchSignedText(meta: SignedFileToken, maxBytes: number): Promise<string> {
     if (!meta.url) throw new NitradoApiError('Keine Download-URL', null, 'file_server');
-    const res = await axios.get<string>(meta.url, {
-      responseType: 'text',
-      timeout: 30_000,
-      params: meta.token ? { token: meta.token } : undefined,
-      maxContentLength: maxBytes,
-      maxBodyLength: maxBytes,
-    });
-    return res.data;
+
+    let lastErr: Error | null = null;
+    for (let attempt = 1; attempt <= 3; attempt++) {
+      try {
+        const res = await axios.get<string>(meta.url, {
+          responseType: 'text',
+          timeout: 30_000,
+          params: meta.token ? { token: meta.token } : undefined,
+          maxContentLength: maxBytes,
+          maxBodyLength: maxBytes,
+        });
+        return res.data;
+      } catch (e) {
+        const status = axiosStatus(e);
+        lastErr = e instanceof Error ? e : new Error(String(e));
+
+        if (status === 429) {
+          if (attempt >= 3) {
+            throw new NitradoApiError('Signed Download Rate-Limit (429) nach mehreren Versuchen', 429, 'file_server');
+          }
+          await sleep(parseRetryAfterMs(axiosRetryAfter(e)));
+          continue;
+        }
+
+        if (status !== null) {
+          if (status >= 500 && attempt < 3) {
+            await sleep(500 * Math.pow(2, attempt - 1));
+            continue;
+          }
+          throw new NitradoApiError(lastErr.message || `HTTP ${status}`, status, 'file_server');
+        }
+
+        // Der signierte FileServer-Hop ist vom API-Hop getrennt und braucht eine
+        // eigene bounded Transport-/Timeout-Recovery. Bytes werden nur gelesen;
+        // daher ist ein Replay dieses GET-Hops sicher.
+        if (attempt < 3) {
+          await sleep(500 * Math.pow(2, attempt - 1));
+          continue;
+        }
+      }
+    }
+
+    throw new NitradoApiError(lastErr?.message ?? 'Signed Download fehlgeschlagen', null, 'file_server');
   }
 
   async downloadFile(serviceId: string, fullPath: string): Promise<string> {
