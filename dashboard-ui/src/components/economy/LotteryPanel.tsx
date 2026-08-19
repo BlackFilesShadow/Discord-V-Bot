@@ -6,6 +6,7 @@ import { Badge } from '@/components/ui/Badge';
 import { Button } from '@/components/ui/Button';
 import { Card, CardHeader, CardTitle } from '@/components/ui/Card';
 import { Input } from '@/components/ui/Input';
+import { Select } from '@/components/ui/Select';
 
 interface LotteryRound {
   id: string;
@@ -25,6 +26,22 @@ interface LotteryRound {
   potBalance: string;
   createdAt: string;
 }
+
+interface DashboardMeta {
+  isOwner: boolean;
+  permissions: string[];
+}
+
+interface ChannelOption {
+  id: string;
+  name: string;
+  type: number;
+  parentId: string | null;
+}
+
+const MAX_TICKET_PRICE = 1_000_000_000_000n;
+const MIN_END_DELAY_MS = 60_000;
+const MAX_END_DELAY_MS = 30 * 24 * 60 * 60 * 1000;
 
 function fmt(value: string | null): string {
   if (value === null) return '—';
@@ -49,6 +66,24 @@ export function LotteryPanel({ guildId, slot }: { guildId: string; slot: string 
   });
   const [message, setMessage] = useState<{ ok: boolean; text: string } | null>(null);
 
+  // Derselbe Query-Key wie ServerSlot: keine zweite Berechtigungswahrheit.
+  const dashboardMeta = useQuery({
+    queryKey: ['dashboard-slot-meta', guildId, slot],
+    queryFn: () => api.get<DashboardMeta>(`/api/v2/guilds/${guildId}/dashboard`),
+    retry: false,
+  });
+  const canManage = Boolean(
+    dashboardMeta.data?.isOwner || dashboardMeta.data?.permissions.includes('economy.manage'),
+  );
+
+  const channels = useQuery({
+    queryKey: ['guild-channels', guildId],
+    queryFn: () => api.get<{ channels: ChannelOption[] }>(`/api/v2/guilds/${guildId}/channels`),
+    enabled: canManage,
+    retry: false,
+  });
+  const textChannels = (channels.data?.channels ?? []).filter(channel => channel.type === 0 || channel.type === 5);
+
   const current = useQuery({
     queryKey: ['economy-lottery-current', guildId, slot],
     queryFn: () => api.get<{ round: LotteryRound | null }>(`/api/v2/guilds/${guildId}/economy/lottery/current?${scope}`),
@@ -64,11 +99,12 @@ export function LotteryPanel({ guildId, slot }: { guildId: string; slot: string 
     void qc.invalidateQueries({ queryKey: ['economy-lottery-current', guildId, slot] });
     void qc.invalidateQueries({ queryKey: ['economy-lottery-history', guildId, slot] });
     void qc.invalidateQueries({ queryKey: ['economy-virtual-accounts', guildId, slot] });
+    void qc.invalidateQueries({ queryKey: ['economy-overview', guildId, slot] });
   };
 
   const create = useMutation({
     mutationFn: () => api.post<LotteryRound>(`/api/v2/guilds/${guildId}/economy/lottery/rounds?${scope}`, {
-      channelId: form.channelId.trim(),
+      channelId: form.channelId,
       ticketPrice: form.ticketPrice.trim(),
       maxTicketsPerUser: Number(form.maxTicketsPerUser),
       minParticipants: Number(form.minParticipants),
@@ -79,7 +115,7 @@ export function LotteryPanel({ guildId, slot }: { guildId: string; slot: string 
       setForm({ channelId: '', ticketPrice: '', maxTicketsPerUser: '10', minParticipants: '2', endsAt: '' });
       invalidate();
     },
-    onError: (error: Error) => setMessage({ ok: false, text: error.message }),
+    onError: (error: Error) => setMessage({ ok: false, text: `Lotterie konnte nicht gestartet werden: ${error.message}` }),
   });
 
   const endNow = useMutation({
@@ -88,16 +124,21 @@ export function LotteryPanel({ guildId, slot }: { guildId: string; slot: string 
       setMessage({ ok: true, text: `Runde ausgewertet: ${round.status}.` });
       invalidate();
     },
-    onError: (error: Error) => setMessage({ ok: false, text: error.message }),
+    onError: (error: Error) => setMessage({ ok: false, text: `Lotterie konnte nicht beendet werden: ${error.message}` }),
   });
 
   const active = current.data?.round ?? null;
-  const futureTime = form.endsAt ? new Date(form.endsAt).getTime() > Date.now() : false;
-  const formValid = /^\d{17,20}$/.test(form.channelId.trim())
-    && /^\d+$/.test(form.ticketPrice) && BigInt(form.ticketPrice || '0') > 0n
+  const endsAtMs = form.endsAt ? new Date(form.endsAt).getTime() : Number.NaN;
+  const endDelayMs = endsAtMs - Date.now();
+  const channelValid = textChannels.some(channel => channel.id === form.channelId);
+  const ticketValid = /^\d+$/.test(form.ticketPrice)
+    && BigInt(form.ticketPrice || '0') >= 1n
+    && BigInt(form.ticketPrice || '0') <= MAX_TICKET_PRICE;
+  const formValid = channelValid
+    && ticketValid
     && Number.isInteger(Number(form.maxTicketsPerUser)) && Number(form.maxTicketsPerUser) >= 1 && Number(form.maxTicketsPerUser) <= 10_000
     && Number.isInteger(Number(form.minParticipants)) && Number(form.minParticipants) >= 2 && Number(form.minParticipants) <= 100_000
-    && futureTime;
+    && Number.isFinite(endsAtMs) && endDelayMs >= MIN_END_DELAY_MS && endDelayMs <= MAX_END_DELAY_MS;
 
   return (
     <Card>
@@ -133,7 +174,7 @@ export function LotteryPanel({ guildId, slot }: { guildId: string; slot: string 
                 <div className="col-span-2"><span className="text-muted block">Channel</span><strong>{active.channelId}</strong></div>
               </div>
             </div>
-            {active.status === 'ACTIVE' && (
+            {active.status === 'ACTIVE' && canManage && (
               <Button variant="danger" size="sm" disabled={endNow.isPending} onClick={() => { setMessage(null); endNow.mutate(active.id); }}>
                 {endNow.isPending ? 'Werte aus…' : 'Jetzt beenden'}
               </Button>
@@ -144,17 +185,26 @@ export function LotteryPanel({ guildId, slot }: { guildId: string; slot: string 
         <p className="text-sm text-muted mb-5">Keine aktive oder noch zu verarbeitende Runde.</p>
       )}
 
-      {!active && (
+      {!active && canManage && (
         <div className="rounded-lg border border-border/60 bg-bg/40 p-3 space-y-3 mb-5">
           <p className="text-sm font-medium text-white">Neue Runde starten</p>
+          {channels.isError && (
+            <p className="text-danger text-xs">Discord-Channels konnten nicht geladen werden. Eine neue Runde kann deshalb nicht sicher gestartet werden.</p>
+          )}
           <div className="grid gap-3 md:grid-cols-2">
-            <label className="text-sm"><span className="text-muted">Discord-Channel-ID</span><Input value={form.channelId} onChange={e => setForm({ ...form, channelId: e.target.value.trim() })} inputMode="numeric" /></label>
+            <label className="text-sm">
+              <span className="text-muted">Discord-Channel</span>
+              <Select value={form.channelId} onChange={e => setForm({ ...form, channelId: e.target.value })} disabled={channels.isLoading || channels.isError}>
+                <option value="">— Channel waehlen —</option>
+                {textChannels.map(channel => <option key={channel.id} value={channel.id}>#{channel.name}</option>)}
+              </Select>
+            </label>
             <label className="text-sm"><span className="text-muted">Ticketpreis</span><Input value={form.ticketPrice} onChange={e => setForm({ ...form, ticketPrice: e.target.value.trim() })} inputMode="numeric" /></label>
             <label className="text-sm"><span className="text-muted">Max. Tickets pro User</span><Input value={form.maxTicketsPerUser} onChange={e => setForm({ ...form, maxTicketsPerUser: e.target.value.trim() })} inputMode="numeric" /></label>
             <label className="text-sm"><span className="text-muted">Mindestteilnehmer</span><Input value={form.minParticipants} onChange={e => setForm({ ...form, minParticipants: e.target.value.trim() })} inputMode="numeric" /></label>
-            <label className="text-sm md:col-span-2"><span className="text-muted">Endzeit</span><Input type="datetime-local" value={form.endsAt} onChange={e => setForm({ ...form, endsAt: e.target.value })} /></label>
+            <label className="text-sm md:col-span-2"><span className="text-muted">Endzeit (1 Minute bis 30 Tage)</span><Input type="datetime-local" value={form.endsAt} onChange={e => setForm({ ...form, endsAt: e.target.value })} /></label>
           </div>
-          <Button disabled={create.isPending || current.isError || history.isError || !formValid} onClick={() => { setMessage(null); create.mutate(); }}>
+          <Button disabled={create.isPending || current.isError || history.isError || channels.isLoading || channels.isError || !formValid} onClick={() => { setMessage(null); create.mutate(); }}>
             {create.isPending ? 'Starte…' : 'Lotterie starten'}
           </Button>
         </div>

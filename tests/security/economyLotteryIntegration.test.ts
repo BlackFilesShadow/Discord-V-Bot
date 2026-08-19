@@ -60,4 +60,17 @@ describe('Economy-Lotterie — Runtime/Dashboard Integration', () => {
     expect(panel).toContain('Lotterie starten');
     expect(panel).toContain('Jetzt beenden');
   });
+
+  it('spiegelt economy.manage und die Domain-Grenzen fail-closed in der UI', () => {
+    expect(panel).toContain("queryKey: ['dashboard-slot-meta', guildId, slot]");
+    expect(panel).toContain("permissions.includes('economy.manage')");
+    expect(panel).toContain("active.status === 'ACTIVE' && canManage");
+    expect(panel).toContain('!active && canManage');
+    expect(panel).toContain('const MAX_TICKET_PRICE = 1_000_000_000_000n;');
+    expect(panel).toContain('const MIN_END_DELAY_MS = 60_000;');
+    expect(panel).toContain('const MAX_END_DELAY_MS = 30 * 24 * 60 * 60 * 1000;');
+    expect(panel).toContain("channel.type === 0 || channel.type === 5");
+    expect(panel).toContain('channelValid');
+    expect(panel).toContain('ticketValid');
+  });
 });
