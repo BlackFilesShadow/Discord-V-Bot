@@ -196,7 +196,12 @@ describe('Faction Prisma race status boundary', () => {
     const app = express();
     app.use((_req, _res, next) => next({ code }));
     app.use(factionApiErrorBoundary);
-    app.use((_err, _req, res, _next) => res.status(500).json({ error: 'fallback' }));
+    app.use((
+      _err: unknown,
+      _req: express.Request,
+      res: express.Response,
+      _next: express.NextFunction,
+    ) => res.status(500).json({ error: 'fallback' }));
     return app;
   }
 
