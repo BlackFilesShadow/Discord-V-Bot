@@ -19,9 +19,17 @@ describe('Economy-1K virtual account member autocomplete gate', () => {
     expect(panel).toContain('id: member.id');
     expect(panel).toContain('label: member.displayName || member.username');
     expect(panel).toContain('hint: member.id');
-    expect(panel).toContain("onChange={id => updatePayout({ userDiscordId: id ?? '' })}");
+    expect(panel).toContain("updatePayout({ userDiscordId: id ?? '' });");
+    expect(panel).toContain('setSelectedMember(option);');
     expect(panel).toContain('userDiscordId: payout.userDiscordId');
     expect(route).toContain("targetUserId = asUserDiscordId(String(body.userDiscordId ?? ''))");
+  });
+
+  it('keeps an already selected human visible when server-side search results are replaced', () => {
+    expect(panel).toContain('const [selectedMember, setSelectedMember] = useState<ComboboxOption | null>(null);');
+    expect(panel).toContain('if (selectedMember && !options.some(option => option.id === selectedMember.id))');
+    expect(panel).toContain('options.unshift(selectedMember);');
+    expect(panel).toContain('setSelectedMember(null);');
   });
 
   it('keeps member lookup guild-scoped, rate-limited and rejects bots in the picker', () => {
