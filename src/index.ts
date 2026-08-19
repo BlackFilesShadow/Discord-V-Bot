@@ -11,6 +11,7 @@ import interactionCreateEvent from './events/interactionCreate';
 import guildMemberAddEvent from './events/guildMemberAdd';
 import guildMemberRemoveEvent from './events/guildMemberRemove';
 import guildMemberUpdateEvent from './events/guildMemberUpdate';
+import guildRoleDeleteEvent from './events/guildRoleDelete';
 import userUpdateEvent from './events/userUpdate';
 import messageCreateEvent from './events/messageCreate';
 import messageReactionAddEvent from './events/messageReactionAdd';
@@ -85,6 +86,7 @@ async function main(): Promise<void> {
     guildMemberAddEvent,
     guildMemberRemoveEvent,
     guildMemberUpdateEvent,
+    guildRoleDeleteEvent,
     userUpdateEvent,
     messageCreateEvent,
     messageReactionAddEvent,
