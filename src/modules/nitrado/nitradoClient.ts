@@ -12,7 +12,7 @@
  * - Download-/Seek-Tokens werden niemals geloggt.
  */
 
-import axios, { type AxiosInstance, type AxiosRequestConfig } from 'axios';
+import axios, { type AxiosError, type AxiosInstance, type AxiosRequestConfig } from 'axios';
 import { logger } from '../../utils/logger';
 import { getNitradoBreaker, opClassForMethod, NitradoCircuitOpenError } from './circuitBreaker';
 
@@ -174,10 +174,14 @@ export class NitradoClient {
 
   private async request<T>(method: 'GET' | 'POST' | 'DELETE', path: string, opts: AxiosRequestConfig = {}): Promise<T> {
     const breaker = getNitradoBreaker(opClassForMethod(method));
-    breaker.preflight();
 
     let lastErr: Error | null = null;
     for (let attempt = 1; attempt <= 3; attempt++) {
+      // Nitrado-1V: Preflight vor JEDEM echten HTTP-Versuch. Wenn ein Failure
+      // waehrend Retry 1 den Circuit oeffnet oder ein HALF_OPEN-Probe fehlschlaegt,
+      // darf derselbe logische Request nicht noch weitere Remote-Versuche senden.
+      breaker.preflight();
+
       try {
         const res = await this.http.request({ method, url: path, ...opts });
         if (res.status >= 200 && res.status < 300) {
@@ -193,6 +197,7 @@ export class NitradoClient {
           continue;
         }
         if (res.status >= 500) {
+          // Auch der terminale 5xx-Versuch ist ein echter Circuit-Failure.
           breaker.recordFailure();
           if (attempt < 3) {
             await sleep(500 * Math.pow(2, attempt - 1));
@@ -204,6 +209,11 @@ export class NitradoClient {
             path,
           );
         }
+
+        // Nicht-retrybare 4xx<>429 beweisen, dass Nitrado erreichbar ist. Das
+        // schliesst insbesondere einen HALF_OPEN-Probe-Slot sauber, ohne den
+        // fachlichen Clientfehler in einen Circuit-Failure umzudeuten.
+        breaker.recordSuccess();
         throw new NitradoApiError(
           typeof res.data === 'object' && res.data?.message ? res.data.message : `HTTP ${res.status}`,
           res.status,
@@ -212,7 +222,8 @@ export class NitradoClient {
       } catch (e) {
         if (e instanceof NitradoApiError) throw e;
         if (e instanceof NitradoCircuitOpenError) throw e;
-        lastErr = e instanceof Error ? e : new Error(String(e));
+        const transportError = e as AxiosError;
+        lastErr = transportError instanceof Error ? transportError : new Error(String(e));
         breaker.recordFailure();
         if (attempt < 3) {
           await sleep(500 * Math.pow(2, attempt - 1));
