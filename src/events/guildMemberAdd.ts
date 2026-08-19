@@ -33,20 +33,31 @@ const guildMemberAddEvent: BotEvent = {
       // entfernt bereits GuildMemberRemove diese Zeile; dieser Cut schliesst
       // Event-/DB-Ausfallfenster beim naechsten Join.
       //
-      // Wichtig: Dieser DB-Cut ist Cleanup, nicht die primaere Auth-Barriere.
-      // Schlaegt er temporaer fehl, pruefen REST/Socket/Commands weiterhin die
-      // aktuelle Mitgliedschaft fail-closed. Deshalb darf ein Cleanup-Fehler den
-      // restlichen Join-Lifecycle (Recognition, AutoRoles, Welcome) NICHT stoppen.
+      // Wichtig: Nur Grants, deren updatedAt VOR dem aktuellen Discord-joinedAt
+      // liegt, werden entfernt. Ein Owner kann damit nach dem Rejoin bereits
+      // bewusst einen frischen Grant vergeben, ohne dass ein spaeter laufender
+      // Cleanup denselben neuen Grant wieder loescht (Rejoin-Lost-Update).
+      // Fehlendes joinedAt => Cleanup auslassen; der Authorizer bleibt trotzdem
+      // fail-closed fuer Direct-Grants ohne aktuelle Mitgliedschaftsepoche.
       try {
-        const staleGrant = await prisma.guildPermissionGrant.deleteMany({
-          where: { guildId: m.guild.id, userDiscordId: m.user.id },
-        });
-        if (staleGrant.count > 0) {
-          logAudit('STALE_PERM_GRANT_CLEARED_ON_JOIN', 'SECURITY', {
-            guildId: m.guild.id,
-            discordId: m.user.id,
-            count: staleGrant.count,
+        if (m.joinedAt) {
+          const staleGrant = await prisma.guildPermissionGrant.deleteMany({
+            where: {
+              guildId: m.guild.id,
+              userDiscordId: m.user.id,
+              updatedAt: { lt: m.joinedAt },
+            },
           });
+          if (staleGrant.count > 0) {
+            logAudit('STALE_PERM_GRANT_CLEARED_ON_JOIN', 'SECURITY', {
+              guildId: m.guild.id,
+              discordId: m.user.id,
+              joinedAt: m.joinedAt.toISOString(),
+              count: staleGrant.count,
+            });
+          }
+        } else {
+          logger.warn(`Stale Direct-Grant-Cleanup beim Join uebersprungen: joinedAt fehlt (${m.user.id}@${m.guild.id}).`);
         }
       } catch (permissionError) {
         logger.error(`Stale Direct-Grant-Cleanup beim Join fehlgeschlagen (${m.user.id}@${m.guild.id}):`, permissionError);
