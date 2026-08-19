@@ -12,7 +12,10 @@ jest.mock('../../src/database/prisma', () => ({
 import {
   delegatedPermissionSet,
   directGrantBelongsToMembership,
+  directGrantMembershipEpoch,
+  membershipEpochMarker,
   resolveDelegatedPermissionContext,
+  storedDirectPermissions,
 } from '../../src/modules/permissions/access';
 
 const GUILD_ID = '123456789012345678';
@@ -48,10 +51,10 @@ describe('canonical delegated permission access', () => {
     expect(roleFindMany).not.toHaveBeenCalled();
   });
 
-  test('combines a current-epoch direct grant and current-role grants only after membership is proven', async () => {
+  test('combines an explicit current-epoch direct grant and current-role grants only after membership is proven', async () => {
     const member = { joinedAt: JOINED_AT, roles: { cache: new Map<string, unknown>([[ROLE_ID, {}]]) } };
     directFindUnique.mockResolvedValue({
-      permissions: ['economy.view'],
+      permissions: storedDirectPermissions(['economy.view'], JOINED_AT),
       updatedAt: new Date('2026-08-20T00:00:01.000Z'),
     });
     roleFindMany.mockResolvedValue([{ permissions: ['whitelist.view'] }]);
@@ -70,11 +73,14 @@ describe('canonical delegated permission access', () => {
     });
   });
 
-  test('old direct grant is ignored after rejoin even if cleanup row still exists', async () => {
+  test('explicit old membership marker wins over a fresh updatedAt and is ignored after rejoin', async () => {
     const member = { joinedAt: JOINED_AT, roles: { cache: new Map<string, unknown>([[ROLE_ID, {}]]) } };
+    const OLD_JOIN = new Date('2026-08-19T20:00:00.000Z');
     directFindUnique.mockResolvedValue({
-      permissions: ['economy.view'],
-      updatedAt: new Date('2026-08-19T23:59:59.000Z'),
+      permissions: storedDirectPermissions(['economy.view'], OLD_JOIN),
+      // Simuliert einen spaeten/stalen Write: updatedAt allein darf die alte
+      // Mitgliedschaft nach Einfuehrung des Markers nicht reaktivieren.
+      updatedAt: new Date('2026-08-20T00:00:05.000Z'),
     });
     roleFindMany.mockResolvedValue([{ permissions: ['whitelist.view'] }]);
 
@@ -84,9 +90,25 @@ describe('canonical delegated permission access', () => {
     expect(result.permissions.has('economy.view')).toBe(false);
   });
 
+  test('legacy direct grant without marker uses conservative updatedAt fallback once', () => {
+    expect(directGrantBelongsToMembership(
+      ['economy.view'],
+      new Date(JOINED_AT.getTime() + 1),
+      JOINED_AT,
+    )).toBe(true);
+    expect(directGrantBelongsToMembership(
+      ['economy.view'],
+      new Date(JOINED_AT.getTime() - 1),
+      JOINED_AT,
+    )).toBe(false);
+  });
+
   test('missing joinedAt fails direct grants closed while live role grants still work', async () => {
     const member = { joinedAt: null, roles: { cache: new Map<string, unknown>([[ROLE_ID, {}]]) } };
-    directFindUnique.mockResolvedValue({ permissions: ['economy.view'], updatedAt: new Date() });
+    directFindUnique.mockResolvedValue({
+      permissions: storedDirectPermissions(['economy.view'], JOINED_AT),
+      updatedAt: new Date(),
+    });
     roleFindMany.mockResolvedValue([{ permissions: ['whitelist.view'] }]);
 
     const result = await resolveDelegatedPermissionContext(guildWith(member), USER_ID);
@@ -94,15 +116,26 @@ describe('canonical delegated permission access', () => {
     expect([...result.permissions]).toEqual(['whitelist.view']);
   });
 
-  test('membership epoch helper is inclusive for a grant written at joinedAt and rejects pre-join state', () => {
-    expect(directGrantBelongsToMembership(new Date(JOINED_AT), JOINED_AT)).toBe(true);
-    expect(directGrantBelongsToMembership(new Date(JOINED_AT.getTime() + 1), JOINED_AT)).toBe(true);
-    expect(directGrantBelongsToMembership(new Date(JOINED_AT.getTime() - 1), JOINED_AT)).toBe(false);
-    expect(directGrantBelongsToMembership(new Date(), null)).toBe(false);
+  test('membership marker helper requires exactly one canonical ISO marker', () => {
+    const marker = membershipEpochMarker(JOINED_AT);
+    expect(marker).toBe('__vbot_membership_joined_at:2026-08-20T00:00:00.000Z');
+    expect(directGrantMembershipEpoch([marker, 'economy.view'])?.getTime()).toBe(JOINED_AT.getTime());
+    expect(directGrantMembershipEpoch([marker, marker, 'economy.view'])).toBeNull();
+    expect(directGrantMembershipEpoch(['__vbot_membership_joined_at:not-a-date', 'economy.view'])).toBeNull();
   });
 
-  test('drops unknown and non-delegable legacy values fail-closed', () => {
+  test('explicit membership epoch must exactly match current joinedAt', () => {
+    const current = storedDirectPermissions(['economy.view'], JOINED_AT);
+    const older = storedDirectPermissions(['economy.view'], new Date(JOINED_AT.getTime() - 1000));
+
+    expect(directGrantBelongsToMembership(current, new Date(), JOINED_AT)).toBe(true);
+    expect(directGrantBelongsToMembership(older, new Date(JOINED_AT.getTime() + 5000), JOINED_AT)).toBe(false);
+    expect(directGrantBelongsToMembership(current, new Date(), null)).toBe(false);
+  });
+
+  test('drops unknown, non-delegable and internal marker values fail-closed', () => {
     const scopes = delegatedPermissionSet([
+      membershipEpochMarker(JOINED_AT),
       'economy.view',
       'permissions.manage',
       'nitrado.manage',
