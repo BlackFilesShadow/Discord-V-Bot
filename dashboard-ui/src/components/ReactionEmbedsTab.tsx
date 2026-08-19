@@ -277,7 +277,7 @@ export function ReactionEmbedsTab({ guildId, canManage }: { guildId: string; can
     }));
   }
   function removeRoleFromOption(idx: number, roleId: string) {
-    setOptions(o => o.map((it, i) => (i === idx ? { ...it, roleIds: it.roleIds.filter(r => r !== roleId) } : it));
+    setOptions(o => o.map((it, i) => (i === idx ? { ...it, roleIds: it.roleIds.filter(r => r !== roleId) } : it)));
   }
   function removeOption(idx: number) { setOptions(o => o.filter((_, i) => i !== idx)); }
   function moveOption(idx: number, dir: -1 | 1) {
