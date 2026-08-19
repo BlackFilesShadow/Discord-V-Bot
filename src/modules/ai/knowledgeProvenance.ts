@@ -1,4 +1,8 @@
 import prisma from '../../database/prisma';
+import {
+  liveServerBindingVersionFromSourceVersion,
+  liveServerConnectionIdFromSourceRef,
+} from './liveServerKnowledgeConstants';
 
 export const KNOWLEDGE_SOURCE_KINDS = [
   'OWNER_CURATED',
@@ -211,6 +215,58 @@ export function legacyKnowledgeProvenance(createdAt: Date, now = new Date()): Kn
   }, now, true);
 }
 
+function expireBindingStaleLiveServer(meta: KnowledgeProvenanceMeta): KnowledgeProvenanceMeta {
+  return {
+    ...meta,
+    freshness: 'EXPIRED',
+    freshnessScore: 0,
+    qualityFactor: 0,
+  };
+}
+
+async function currentLiveServerBindingVersions(
+  guildId: string,
+  stored: readonly { sourceKind: string; sourceRef: string | null }[],
+): Promise<Map<string, number>> {
+  const ids = Array.from(new Set(
+    stored
+      .filter((row) => row.sourceKind === 'LIVE_SERVER')
+      .map((row) => liveServerConnectionIdFromSourceRef(row.sourceRef))
+      .filter((id): id is string => Boolean(id)),
+  ));
+  if (ids.length === 0) return new Map();
+
+  const [connections, bindings] = await Promise.all([
+    prisma.nitradoConnection.findMany({
+      where: {
+        guildId,
+        id: { in: ids },
+        status: 'ACTIVE',
+        nitradoServerId: { not: null },
+      },
+      select: { id: true, nitradoServerId: true },
+    }),
+    prisma.nitradoAdmBindingState.findMany({
+      where: { guildId, nitradoConnId: { in: ids } },
+      select: { nitradoConnId: true, bindingVersion: true, currentServiceId: true },
+    }),
+  ]);
+
+  const connectionService = new Map(
+    connections
+      .filter((row) => typeof row.nitradoServerId === 'string' && row.nitradoServerId.trim().length > 0)
+      .map((row) => [row.id, row.nitradoServerId!] as const),
+  );
+  const out = new Map<string, number>();
+  for (const binding of bindings) {
+    const serviceId = connectionService.get(binding.nitradoConnId);
+    if (!serviceId || binding.currentServiceId !== serviceId) continue;
+    if (!Number.isSafeInteger(binding.bindingVersion) || binding.bindingVersion < 0) continue;
+    out.set(binding.nitradoConnId, binding.bindingVersion);
+  }
+  return out;
+}
+
 export async function getKnowledgeProvenanceMap(
   guildId: string,
   rows: readonly { id: string; createdAt: Date }[],
@@ -228,6 +284,7 @@ export async function getKnowledgeProvenanceMap(
       validUntil: true,
     },
   });
+  const bindingVersions = await currentLiveServerBindingVersions(guildId, stored);
   const storedMap = new Map(stored.map((row) => [row.knowledgeId, row] as const));
   const out = new Map<string, KnowledgeProvenanceMeta>();
   for (const row of rows) {
@@ -252,7 +309,22 @@ export async function getKnowledgeProvenanceMap(
       out.set(row.id, legacyKnowledgeProvenance(row.createdAt, now));
       continue;
     }
-    out.set(row.id, assessKnowledgeProvenance(validated.value, now));
+
+    let meta = assessKnowledgeProvenance(validated.value, now);
+    if (meta.sourceKind === 'LIVE_SERVER') {
+      const connId = liveServerConnectionIdFromSourceRef(meta.sourceRef);
+      const sourceBindingVersion = liveServerBindingVersionFromSourceVersion(meta.sourceVersion);
+      const currentBindingVersion = connId ? bindingVersions.get(connId) : undefined;
+      if (
+        !connId
+        || sourceBindingVersion === null
+        || currentBindingVersion === undefined
+        || sourceBindingVersion !== currentBindingVersion
+      ) {
+        meta = expireBindingStaleLiveServer(meta);
+      }
+    }
+    out.set(row.id, meta);
   }
   return out;
 }
