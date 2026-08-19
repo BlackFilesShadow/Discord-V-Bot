@@ -261,7 +261,8 @@ export class NitradoClient {
 
   private async getGeneralSetting(serviceId: string, key: string): Promise<string> {
     const res = await this.request<{
-      data: { gameserver?: { settings?: { general?: Record<string, unknown> } } }>('GET', `/services/${serviceId}/gameservers`);
+      data: { gameserver?: { settings?: { general?: Record<string, unknown> } } };
+    }>('GET', `/services/${serviceId}/gameservers`);
     const value = res.data?.gameserver?.settings?.general?.[key];
     if (typeof value !== 'string') return '';
     if (value === 'true' || value === 'false') return '';
