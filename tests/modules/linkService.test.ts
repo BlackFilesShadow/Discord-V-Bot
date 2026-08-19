@@ -24,7 +24,7 @@ import {
 } from '../../src/modules/linking/linkService';
 import { identityHash } from '../../src/modules/linking/identity';
 
-const SECRET = 'sekret';
+const SECRET = '0123456789abcdef0123456789abcdef';
 const SCOPE = { guildId: '123456789012345678', nitradoConnId: 'conn-1' };
 const USER_1 = '223456789012345678';
 const USER_OWNER = '323456789012345678';
