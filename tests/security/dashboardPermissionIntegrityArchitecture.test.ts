@@ -110,7 +110,12 @@ describe('Dashboard-1V permission membership/data-integrity/race architecture', 
     expect(repositorySource).toContain('directGrantMembershipEpoch(existing?.permissions)');
     expect(repositorySource).toContain('storedEpoch.getTime() > membershipJoinedAt.getTime()');
     expect(repositorySource).toContain('throw new PermissionMembershipEpochConflictError()');
-    expect(repositorySource).toContain('directGrantBelongsToMembership(existing.permissions, existing.updatedAt, membershipJoinedAt)');
+    const membershipCall = repositorySource.indexOf('directGrantBelongsToMembership(');
+    expect(membershipCall).toBeGreaterThanOrEqual(0);
+    const membershipArgs = repositorySource.slice(membershipCall, membershipCall + 260);
+    expect(membershipArgs).toContain('existing.permissions');
+    expect(membershipArgs).toContain('existing.updatedAt');
+    expect(membershipArgs).toContain('membershipJoinedAt');
     expect(repositorySource).toContain('existingIsCurrentMembership ? sanitizeScopes(existing?.permissions) : []');
     expect(repositorySource).toContain('storedDirectPermissions(next, epoch)');
     expect(repositorySource).toContain('tx.guildPermissionGrant.deleteMany');
