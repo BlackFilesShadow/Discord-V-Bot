@@ -35,6 +35,9 @@ const GUILD_ID = asGuildId('123456789012345678');
 const USER_ID = asUserDiscordId('111111111111111111');
 const ACTOR_ID = asUserDiscordId('999999999999999999');
 const ROLE_ID = '222222222222222222';
+const JOINED_AT = new Date('2026-08-19T19:00:00.000Z');
+const CURRENT_AT = new Date('2026-08-19T20:00:00.000Z');
+const STALE_AT = new Date('2026-08-19T18:00:00.000Z');
 
 beforeEach(() => {
   jest.clearAllMocks();
@@ -46,19 +49,26 @@ beforeEach(() => {
 });
 
 describe('permission repository serializable race handling', () => {
-  test('retries a serialization conflict and keeps both existing and newly granted scopes', async () => {
+  test('retries a serialization conflict and keeps scopes from the current membership epoch', async () => {
     transaction
       .mockRejectedValueOnce(Object.assign(new Error('serialization conflict'), { code: 'P2034' }))
       .mockImplementationOnce(async (operation: (client: typeof tx) => Promise<unknown>) => operation(tx));
-    directFindUnique.mockResolvedValue({ permissions: ['economy.view'] });
+    directFindUnique.mockResolvedValue({ permissions: ['economy.view'], updatedAt: CURRENT_AT });
     directUpsert.mockResolvedValue({
       userDiscordId: USER_ID,
       permissions: ['economy.view', 'whitelist.view'],
       grantedByDiscordId: ACTOR_ID,
-      updatedAt: new Date('2026-08-19T20:00:00.000Z'),
+      updatedAt: CURRENT_AT,
     });
 
-    const result = await setGrantScope(GUILD_ID, USER_ID, 'whitelist.view', true, ACTOR_ID);
+    const result = await setGrantScope(
+      GUILD_ID,
+      USER_ID,
+      'whitelist.view',
+      true,
+      ACTOR_ID,
+      JOINED_AT,
+    );
 
     expect(transaction).toHaveBeenCalledTimes(2);
     expect(directUpsert).toHaveBeenCalledWith(expect.objectContaining({
@@ -76,19 +86,98 @@ describe('permission repository serializable race handling', () => {
       userDiscordId: USER_ID,
       permissions: ['economy.view'],
       grantedByDiscordId: ACTOR_ID,
-      updatedAt: new Date('2026-08-19T20:00:00.000Z'),
+      updatedAt: CURRENT_AT,
     });
 
-    await expect(setGrantScope(GUILD_ID, USER_ID, 'economy.view', true, ACTOR_ID)).resolves.toMatchObject({
-      permissions: ['economy.view'],
-    });
+    await expect(setGrantScope(
+      GUILD_ID,
+      USER_ID,
+      'economy.view',
+      true,
+      ACTOR_ID,
+      JOINED_AT,
+    )).resolves.toMatchObject({ permissions: ['economy.view'] });
     expect(transaction).toHaveBeenCalledTimes(2);
   });
 
-  test('revoking the final direct scope deletes the empty grant row instead of persisting []', async () => {
-    directFindUnique.mockResolvedValue({ permissions: ['economy.view'] });
+  test('grant after rejoin never resurrects scopes from an older membership epoch', async () => {
+    directFindUnique.mockResolvedValue({
+      permissions: ['economy.view'],
+      updatedAt: STALE_AT,
+    });
+    directUpsert.mockResolvedValue({
+      userDiscordId: USER_ID,
+      permissions: ['whitelist.view'],
+      grantedByDiscordId: ACTOR_ID,
+      updatedAt: CURRENT_AT,
+    });
 
-    const result = await setGrantScope(GUILD_ID, USER_ID, 'economy.view', false, ACTOR_ID);
+    const result = await setGrantScope(
+      GUILD_ID,
+      USER_ID,
+      'whitelist.view',
+      true,
+      ACTOR_ID,
+      JOINED_AT,
+    );
+
+    expect(directUpsert).toHaveBeenCalledWith(expect.objectContaining({
+      create: expect.objectContaining({ permissions: ['whitelist.view'] }),
+      update: expect.objectContaining({ permissions: ['whitelist.view'] }),
+    }));
+    expect(result.permissions).toEqual(['whitelist.view']);
+  });
+
+  test('partial revoke of a stale pre-rejoin row deletes the whole stale grant instead of refreshing remaining scopes', async () => {
+    directFindUnique.mockResolvedValue({
+      permissions: ['economy.view', 'whitelist.view'],
+      updatedAt: STALE_AT,
+    });
+
+    const result = await setGrantScope(
+      GUILD_ID,
+      USER_ID,
+      'whitelist.view',
+      false,
+      ACTOR_ID,
+      JOINED_AT,
+    );
+
+    expect(directDeleteMany).toHaveBeenCalledWith({ where: { guildId: GUILD_ID, userDiscordId: USER_ID } });
+    expect(directUpsert).not.toHaveBeenCalled();
+    expect(result.permissions).toEqual([]);
+  });
+
+  test('revoke without current membership evidence purges the direct row fail-closed', async () => {
+    directFindUnique.mockResolvedValue({
+      permissions: ['economy.view', 'whitelist.view'],
+      updatedAt: CURRENT_AT,
+    });
+
+    const result = await setGrantScope(GUILD_ID, USER_ID, 'economy.view', false, ACTOR_ID, null);
+
+    expect(directDeleteMany).toHaveBeenCalledWith({ where: { guildId: GUILD_ID, userDiscordId: USER_ID } });
+    expect(directUpsert).not.toHaveBeenCalled();
+    expect(result.permissions).toEqual([]);
+  });
+
+  test('grant without a trusted current membership epoch fails before any transaction', async () => {
+    await expect(setGrantScope(GUILD_ID, USER_ID, 'economy.view', true, ACTOR_ID, null))
+      .rejects.toThrow('Aktuelle Guild-Mitgliedschaft');
+    expect(transaction).not.toHaveBeenCalled();
+  });
+
+  test('revoking the final current direct scope deletes the empty grant row instead of persisting []', async () => {
+    directFindUnique.mockResolvedValue({ permissions: ['economy.view'], updatedAt: CURRENT_AT });
+
+    const result = await setGrantScope(
+      GUILD_ID,
+      USER_ID,
+      'economy.view',
+      false,
+      ACTOR_ID,
+      JOINED_AT,
+    );
 
     expect(directDeleteMany).toHaveBeenCalledWith({ where: { guildId: GUILD_ID, userDiscordId: USER_ID } });
     expect(directUpsert).not.toHaveBeenCalled();
@@ -101,7 +190,7 @@ describe('permission repository serializable race handling', () => {
       roleDiscordId: ROLE_ID,
       permissions: ['factions.view', 'tickets.manage'],
       grantedByDiscordId: ACTOR_ID,
-      updatedAt: new Date('2026-08-19T20:00:00.000Z'),
+      updatedAt: CURRENT_AT,
     });
 
     const granted = await setRoleGrantScope(GUILD_ID, ROLE_ID, 'tickets.manage', true, ACTOR_ID);
