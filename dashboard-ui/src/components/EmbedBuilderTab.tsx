@@ -139,6 +139,49 @@ function buildPayload(f: EmbedForm, isDraft: boolean): Record<string, unknown> {
   };
 }
 
+function EmbedViewerCard({ embed }: { embed: ApiEmbed }) {
+  return (
+    <Card>
+      <CardHeader>
+        <div className="flex flex-wrap items-start justify-between gap-2">
+          <div className="min-w-0">
+            <CardTitle className="break-words">{embed.name}</CardTitle>
+            <CardDesc className="mt-1 break-words">{embed.title || 'Ohne Embed-Titel'}</CardDesc>
+          </div>
+          <div className="flex flex-wrap gap-1.5">
+            {embed.isTemplate && <Badge variant="info">Vorlage</Badge>}
+            {embed.isPosted ? <Badge variant="ok">Gepostet</Badge> : embed.isDraft ? <Badge variant="warn">Entwurf</Badge> : <Badge variant="neutral">Gespeichert</Badge>}
+          </div>
+        </div>
+      </CardHeader>
+      <div className="space-y-3 min-w-0">
+        {embed.content && (
+          <div className="rounded-lg border border-border/60 bg-bg-elev/40 p-3">
+            <p className="text-xs text-muted mb-1">Nachrichtentext</p>
+            <p className="text-sm text-white/90 whitespace-pre-wrap break-words">{embed.content}</p>
+          </div>
+        )}
+        {embed.description && (
+          <div className="rounded-lg border border-border/60 bg-bg/60 p-3">
+            <p className="text-xs text-muted mb-1">Beschreibung</p>
+            <p className="text-sm text-white/90 whitespace-pre-wrap break-words">{embed.description}</p>
+          </div>
+        )}
+        <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 text-xs">
+          <div className="rounded-lg border border-border/50 p-2.5 min-w-0">
+            <span className="text-muted block mb-1">Ziel-Channel</span>
+            <span className="text-white break-all">{embed.channelId ?? '—'}</span>
+          </div>
+          <div className="rounded-lg border border-border/50 p-2.5 min-w-0">
+            <span className="text-muted block mb-1">Felder / Medien</span>
+            <span className="text-white break-words">{embed.fields.length} Feld(er) · {embed.imageUrl || embed.thumbnailUrl ? 'Bild vorhanden' : 'Kein Bild'}</span>
+          </div>
+        </div>
+      </div>
+    </Card>
+  );
+}
+
 export function EmbedBuilderTab({ guildId, canManage }: { guildId: string; canManage: boolean }) {
   const qc = useQueryClient();
   const toast = useToast();
@@ -147,6 +190,7 @@ export function EmbedBuilderTab({ guildId, canManage }: { guildId: string; canMa
     queryKey: ['embeds', guildId],
     queryFn: () => api.get<{ embeds: ApiEmbed[] }>(`/api/v2/guilds/${guildId}/embeds`),
     enabled: !!guildId,
+    retry: false,
   });
   const channelsQ = useQuery({
     queryKey: ['guild-channels', guildId],
@@ -352,11 +396,29 @@ export function EmbedBuilderTab({ guildId, canManage }: { guildId: string; canMa
   }
 
   if (!canManage) {
+    if (listQ.isLoading) return <div className="h-40 rounded-xl skeleton" />;
+    if (listQ.isError) {
+      return (
+        <Card>
+          <CardHeader><Layers className="h-5 w-5 text-accent" /><CardTitle>Nicht erlaubt</CardTitle></CardHeader>
+          <CardDesc>Die eingebetteten Nachrichten konnten nicht gelesen werden.</CardDesc>
+          <p className="text-danger text-xs mt-2 break-words">{(listQ.error as Error).message}</p>
+        </Card>
+      );
+    }
+    const embeds = listQ.data?.embeds ?? [];
     return (
-      <Card>
-        <CardHeader><Layers className="h-5 w-5 text-accent" /><CardTitle>Eingebettete Nachrichten</CardTitle></CardHeader>
-        <CardDesc>Du hast keine Berechtigung, Embeds zu verwalten (benötigt <code>embeds.manage</code>).</CardDesc>
-      </Card>
+      <div className="space-y-4">
+        <div>
+          <h2 className="text-lg font-semibold text-white inline-flex items-center gap-2"><Layers className="h-5 w-5 text-accent" /> Eingebettete Nachrichten</h2>
+          <p className="text-xs text-muted mt-1">Nur-Lesezugriff: gespeicherte Embeds sind sichtbar, Änderungen benötigen <code>embeds.manage</code>.</p>
+        </div>
+        {embeds.length === 0 ? (
+          <Card><CardHeader><CardTitle>Keine Embeds</CardTitle></CardHeader><CardDesc>Für diesen Discord-Server sind aktuell keine eingebetteten Nachrichten gespeichert.</CardDesc></Card>
+        ) : (
+          <div className="space-y-3">{embeds.map(embed => <EmbedViewerCard key={embed.id} embed={embed} />)}</div>
+        )}
+      </div>
     );
   }
 
@@ -376,6 +438,7 @@ export function EmbedBuilderTab({ guildId, canManage }: { guildId: string; canMa
         </CardHeader>
 
         {listQ.isLoading && <div className="h-16 rounded-xl skeleton" />}
+        {listQ.isError && <p className="text-danger text-sm break-words">{(listQ.error as Error).message}</p>}
         {listQ.data && listQ.data.embeds.length === 0 && (
           <p className="text-muted text-sm">Noch keine Embeds. Lege den ersten mit „Neuer Embed“ an.</p>
         )}
