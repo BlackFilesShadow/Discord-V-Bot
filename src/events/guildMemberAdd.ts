@@ -28,6 +28,21 @@ const guildMemberAddEvent: BotEvent = {
     }
 
     try {
+      // Defense in depth fuer Rejoins: Direct-Grants gehoeren zur vorherigen
+      // Mitgliedschaftsepoche und werden nicht still reaktiviert. Normalerweise
+      // entfernt bereits GuildMemberRemove diese Zeile; dieser Cut schliesst
+      // Event-/DB-Ausfallfenster beim naechsten Join.
+      const staleGrant = await prisma.guildPermissionGrant.deleteMany({
+        where: { guildId: m.guild.id, userDiscordId: m.user.id },
+      });
+      if (staleGrant.count > 0) {
+        logAudit('STALE_PERM_GRANT_CLEARED_ON_JOIN', 'SECURITY', {
+          guildId: m.guild.id,
+          discordId: m.user.id,
+          count: staleGrant.count,
+        });
+      }
+
       // User-1: Rejoin/Join muss das exakt guild-gescoppte Recognition-Profil
       // deterministisch auf aktiv setzen, bevor nachgelagerte Join-Logik laeuft.
       // Leave-1G nutzt den neuen joinedAt-Zeitpunkt als durable Rejoin-Evidenz.
