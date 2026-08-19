@@ -14,6 +14,7 @@ import { requireGlobalDeveloperIdentity } from '../middleware/globalDeveloperGat
 import { requireGlobalBotAdminIdentity } from '../middleware/globalBotAdminGate';
 import { requireSafeDashboardEconomyScope } from '../middleware/economyScopeGuard';
 import { requireGuildAnyPermission } from '../middleware/guildDomainAccess';
+import { factionApiErrorBoundary, factionApiPreflight, factionMutationSerialization } from '../middleware/factionApiHardening';
 import { guardBotAdminCommandCenterInput, guardDevCommandCenterInput } from '../middleware/commandCenterInputGuard';
 import { requireVerifiedDevMutationStepUp, redirectLegacyDevExports } from '../middleware/devStepUp';
 import { guardDevAdminTarget } from '../middleware/devAdminTargetGuard';
@@ -75,6 +76,7 @@ export const v2Router = Router();
 
 const requireEconomyDashboardAccess = requireGuildAnyPermission('economy.view', 'economy.manage');
 const requireCasinoDashboardAccess = requireGuildAnyPermission('casino.view', 'casino.manage');
+const requireFactionsDashboardAccess = requireGuildAnyPermission('factions.view', 'factions.manage');
 
 v2Router.use(requireAuth);
 v2Router.use(idempotency);
@@ -86,7 +88,8 @@ v2Router.use('/guilds/:guildId/nitrado', nitradoRouter);
 v2Router.use('/guilds/:guildId/adm-source', admSourceRouter);
 v2Router.use('/guilds/:guildId/tickets', ticketsRouter);
 v2Router.use('/guilds/:guildId/whitelist', whitelistRouter);
-v2Router.use('/guilds/:guildId/factions', factionsRouter);
+v2Router.use('/guilds/:guildId/factions', requireFactionsDashboardAccess, factionApiPreflight, factionMutationSerialization, factionsRouter);
+v2Router.use('/guilds/:guildId/factions', factionApiErrorBoundary);
 
 v2Router.use('/guilds/:guildId/economy-scope', economyScopeRouter);
 v2Router.use('/guilds/:guildId/economy/virtual-accounts', requireEconomyDashboardAccess, requireSafeDashboardEconomyScope, economyVirtualAccountsRouter);
