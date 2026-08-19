@@ -123,6 +123,13 @@ describe('Dashboard-1V permission membership/data-integrity/race architecture', 
     expect(roleWrite).toBeGreaterThan(roleRead);
   });
 
+  test('non-delegable scopes are grant-blocked but revoke remains a cleanup path', () => {
+    expect(repositorySource).toContain('if (enabled && NON_DELEGABLE_SCOPES.has(scope))');
+    expect(repositorySource).not.toContain('if (NON_DELEGABLE_SCOPES.has(scope)) {\n    throw new Error(`Scope ${scope} ist nicht delegierbar');
+    expect(permissionRouteSource).toContain("permissionsRouter.delete('/:userDiscordId/:scope'");
+    expect(permissionRouteSource).toContain("permissionsRouter.delete('/roles/:roleId/:scope'");
+  });
+
   test('Slashcommands use the shared repository and propagate live joinedAt for direct grant intent', () => {
     expect(commandPermissionsSource).toContain("from '../../modules/permissions/repository'");
     expect(commandPermissionsSource).toContain('await setGrantScope');
