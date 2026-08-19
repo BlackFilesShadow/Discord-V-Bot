@@ -5,26 +5,27 @@
  * Sichtbarkeitsregel (strikt):
  *   Eine Guild wird AUSSCHLIESSLICH gelistet, wenn
  *     a) der eingeloggte User Discord-Owner der Guild ist, ODER
- *     b) der User einen GuildPermissionGrant (>=1 Scope) in unserer DB
- *        fuer diese Guild hat (z.B. vom Owner delegiert).
+ *     b) der User aktuell Mitglied der Guild ist UND einen gueltigen
+ *        delegierbaren User-/Role-Grant fuer diese Guild besitzt.
  *
  *   "Manage Guild"-Rechte aus Discord allein reichen NICHT, weil sie
- *   in unserem Modell nichts bedeuten.
+ *   in unserem Modell nichts bedeuten. Veraltete DB-Grants nach einem
+ *   Guild-Austritt duerfen die Guild ebenfalls nicht sichtbar machen.
  *
  * Quellen:
  *  1) Discord OAuth /users/@me/guilds — Owner-Flag pro Guild.
- *  2) DB GuildPermissionGrant — explizit delegierte Rechte.
- *  3) Bot-Cache — markiert botPresent + memberCount.
+ *  2) DB GuildPermissionGrant / GuildPermissionRoleGrant — delegierte Rechte.
+ *  3) Bot-Cache/Member-Fetch — aktuelle Mitgliedschaft + memberCount.
  *
- * Guilds OHNE Bot werden nur gelistet, wenn der User Owner ist
- * (Grants koennen ohne Bot-Praesenz nicht entstanden sein).
+ * Guilds OHNE Bot werden nur gelistet, wenn der User Owner ist.
  */
 import { Router } from 'express';
 import rateLimit from 'express-rate-limit';
 import axios from 'axios';
 import { tryGetDashboardClient, getDashboardClient } from '../../clientRegistry';
 import { getOrCreate, get as getDashLink } from '../../../modules/dashboard/repository';
-import { asGuildId, asUserDiscordId } from '../../../types/scope';
+import { asGuildId, asUserDiscordId, NON_DELEGABLE_SCOPES, PERMISSION_SCOPES } from '../../../types/scope';
+import type { PermissionScope } from '../../../types/scope';
 import { ensureDiscordAccessToken } from '../auth';
 import { requireGuildAccess } from '../../middleware/auth';
 import { config } from '../../../config';
@@ -39,6 +40,15 @@ interface DiscordUserGuild {
   icon: string | null;
   owner: boolean;
   permissions: string;
+}
+
+const VALID_DELEGABLE_SCOPES = new Set<PermissionScope>(
+  PERMISSION_SCOPES.filter(scope => !NON_DELEGABLE_SCOPES.has(scope)),
+);
+
+function hasDelegableScope(raw: unknown): boolean {
+  if (!Array.isArray(raw)) return false;
+  return raw.some(value => typeof value === 'string' && VALID_DELEGABLE_SCOPES.has(value as PermissionScope));
 }
 
 function buildInviteUrl(guildId: string): string {
@@ -78,53 +88,64 @@ guildsRouter.get('/', async (req, res) => {
     }
   }
 
-  // Schritt 2: Grants des Users aus DB (botPresent impliziert)
-  // BEWUSST GLOBAL: User-View zeigt alle Guilds, in denen er Permissions hat.
-  // Es gibt keinen guildId-Filter, weil wir genau die Liste DER guildIds suchen.
+  // Schritt 2: Direct-/Role-Grant-Kandidaten aus der DB sammeln. Die DB ist
+  // allein KEIN Mitgliedschaftsnachweis; jeder Nicht-Owner-Kandidat wird unten
+  // gegen den aktuellen Discord-Memberzustand fail-closed revalidiert.
   // eslint-disable-next-line local/no-unscoped-prisma-query
   const grants = await prisma.guildPermissionGrant.findMany({
     where: { userDiscordId: req.auth.discordId },
     select: { guildId: true, permissions: true },
   });
-  const grantedGuildIds = new Set(
-    grants
-      .filter(g => Array.isArray(g.permissions) && (g.permissions as string[]).length > 0)
-      .map(g => g.guildId),
+  const directGrantGuildIds = new Set(
+    grants.filter(grant => hasDelegableScope(grant.permissions)).map(grant => grant.guildId),
   );
 
-  // Schritt 2b: Role-basierte Grants. Eine Guild ist auch dann sichtbar, wenn der
-  // User dort eine Rolle traegt, der mindestens 1 Scope zugewiesen wurde
-  // (z. B. `dashboard.access` fuer eine Supporter-Rolle).
-  //
-  // Performance: EINE DB-Query holt alle (guildId, roleDiscordId)-Tupel mit Grants;
-  // anschliessend nur die Guilds pruefen, in denen ueberhaupt Role-Grants existieren
-  // (typisch < 5). Member wird primaer aus dem Cache geholt — Discord-API-Fetch nur
-  // dann, wenn fuer diese Guild Grants existieren UND der User dort nicht gecached ist.
+  // Bewusst global fuer die Guild-Auswahlliste: wir suchen zunaechst nur
+  // potentielle Guilds mit Role-Grants und pruefen danach Mitgliedschaft+Rollen.
+  // eslint-disable-next-line local/no-unscoped-prisma-query
   const allRoleGrants = await prisma.guildPermissionRoleGrant.findMany({
     select: { guildId: true, roleDiscordId: true, permissions: true },
   });
   const grantsByGuild = new Map<string, Set<string>>();
-  for (const rg of allRoleGrants) {
-    if (!Array.isArray(rg.permissions) || (rg.permissions as string[]).length === 0) continue;
-    let s = grantsByGuild.get(rg.guildId);
-    if (!s) { s = new Set(); grantsByGuild.set(rg.guildId, s); }
-    s.add(rg.roleDiscordId);
-  }
-  for (const [gId, grantedRoleIds] of grantsByGuild.entries()) {
-    if (grantedGuildIds.has(gId)) continue;
-    const cached = client.guilds.cache.get(gId);
-    if (!cached) continue;
-    const member = cached.members.cache.get(req.auth.discordId)
-      ?? await cached.members.fetch(req.auth.discordId).catch(() => null);
-    if (!member) continue;
-    let hit = false;
-    for (const rid of member.roles.cache.keys()) {
-      if (grantedRoleIds.has(rid)) { hit = true; break; }
+  for (const roleGrant of allRoleGrants) {
+    if (!hasDelegableScope(roleGrant.permissions)) continue;
+    let roles = grantsByGuild.get(roleGrant.guildId);
+    if (!roles) {
+      roles = new Set();
+      grantsByGuild.set(roleGrant.guildId, roles);
     }
-    if (hit) grantedGuildIds.add(gId);
+    roles.add(roleGrant.roleDiscordId);
   }
 
-  // Schritt 3: nur Owner ODER granted -> mergen
+  const candidateGuildIds = new Set<string>([
+    ...directGrantGuildIds,
+    ...grantsByGuild.keys(),
+  ]);
+  const grantedGuildIds = new Set<string>();
+
+  for (const guildId of candidateGuildIds) {
+    const guild = client.guilds.cache.get(guildId);
+    if (!guild) continue;
+    const member = guild.members.cache.get(req.auth.discordId)
+      ?? await guild.members.fetch(req.auth.discordId).catch(() => null);
+    if (!member) continue;
+
+    if (directGrantGuildIds.has(guildId)) {
+      grantedGuildIds.add(guildId);
+      continue;
+    }
+
+    const grantedRoleIds = grantsByGuild.get(guildId);
+    if (!grantedRoleIds) continue;
+    for (const roleId of member.roles.cache.keys()) {
+      if (grantedRoleIds.has(roleId)) {
+        grantedGuildIds.add(guildId);
+        break;
+      }
+    }
+  }
+
+  // Schritt 3: nur Owner ODER aktuell Mitglied+granted -> mergen
   const botGuildIds = new Set(client.guilds.cache.keys());
   const merged = new Map<string, {
     id: string; name: string; iconUrl: string | null; memberCount: number | null;
@@ -157,7 +178,7 @@ guildsRouter.get('/', async (req, res) => {
     });
   }
 
-  // 3b) Granted-Guilds (Bot muss da sein, sonst gibt's keinen Grant)
+  // 3b) Delegierte Guilds: Bot + aktuelle Mitgliedschaft wurden oben bestaetigt.
   for (const guildId of grantedGuildIds) {
     if (merged.has(guildId)) continue; // bereits als Owner drin
     const cached = client.guilds.cache.get(guildId);
@@ -213,7 +234,7 @@ guildsRouter.post('/:guildId/activate', async (req, res) => {
 
 /**
  * Liefert Text-Channels und Categories einer Guild fuer Dashboard-Selects.
- * Owner-only (Channel-IDs sind sensibel).
+ * Delegierter Zugriff wird durch requireGuildAccess guild- und membergescoppt.
  */
 guildsRouter.get('/:guildId/channels', requireGuildAccess, async (req, res) => {
   const client = tryGetDashboardClient();
@@ -252,13 +273,12 @@ guildsRouter.get('/:guildId/roles', requireGuildAccess, async (req, res) => {
 
 /**
  * Liefert bis zu 25 Mitglieder einer Guild fuer Autocomplete.
- * Owner-only (User-IDs sind sensibel).
  *
  * Query:
  *   ?q=<prefix>     Discord-API-Member-Search (Prefix). Ohne `q`: Cache-Top.
  *   ?limit=<1..25>  optionales Limit (default 25, max 25 von Discord).
  */
-// Schützt vor Discord-API-Quote-Verbrauch durch Rapid-Fire-Autocomplete.
+// Schuetzt vor Discord-API-Quote-Verbrauch durch Rapid-Fire-Autocomplete.
 const memberSearchLimiter = rateLimit({
   windowMs: 60 * 1000,
   max: 30, // 30 Suchanfragen pro Minute pro User/IP
