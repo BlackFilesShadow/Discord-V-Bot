@@ -216,10 +216,12 @@ export class NitradoClient {
         if (e instanceof NitradoCircuitOpenError) throw e;
         lastErr = e instanceof Error ? e : new Error(String(e));
         breaker.recordFailure();
-        // Nitrado-1V: Timeout (ECONNABORTED) ist genau wie andere Transportfehler
-        // transient. Ein einzelner 15s-Timeout darf weder READ noch WRITE sofort
-        // terminalisieren; alle Transportfehler bleiben auf drei Versuche begrenzt.
-        if (attempt < 3) {
+        // Nitrado-1V: READ-Timeouts sind sicher bounded retrybar. Bei einem
+        // WRITE-Timeout ist dagegen unklar, ob Nitrado den Request bereits
+        // angewendet hat; dieser Fall bleibt beim durable Worker/Caller, der
+        // vor einem spaeteren Retry den Remote-/Sollzustand erneut prueft.
+        const retryableTransport = method === 'GET' || (e as AxiosError).code !== 'ECONNABORTED';
+        if (attempt < 3 && retryableTransport) {
           await sleep(500 * Math.pow(2, attempt - 1));
           continue;
         }
