@@ -78,6 +78,40 @@ function feedToForm(f: ApiFeed): FeedForm {
   };
 }
 
+function FeedViewerCard({ feed }: { feed: ApiFeed }) {
+  const Icon = FEED_META[feed.feedType].icon;
+  return (
+    <Card>
+      <CardHeader>
+        <div className="flex flex-wrap items-start justify-between gap-2">
+          <div className="min-w-0">
+            <CardTitle className="flex items-center gap-2 break-words"><Icon size={16} className="text-accent shrink-0" />{feed.name || FEED_META[feed.feedType].label}</CardTitle>
+            <CardDesc className="mt-1 break-all">{feed.feedType === 'WEBHOOK' ? 'Eingehender Webhook' : feed.url}</CardDesc>
+          </div>
+          <div className="flex flex-wrap gap-1.5">
+            <Badge>{FEED_META[feed.feedType].label}</Badge>
+            {feed.isActive ? <Badge variant="ok">Aktiv</Badge> : <Badge variant="neutral">Pausiert</Badge>}
+          </div>
+        </div>
+      </CardHeader>
+      <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 text-xs">
+        <div className="rounded-lg border border-border/50 p-2.5 min-w-0">
+          <span className="text-muted block mb-1">Ziel-Channel</span>
+          <span className="text-white break-all">{feed.channelId}</span>
+        </div>
+        <div className="rounded-lg border border-border/50 p-2.5 min-w-0">
+          <span className="text-muted block mb-1">Intervall / Rollen-Ping</span>
+          <span className="text-white break-words">{feed.interval}s · {feed.mentionRoles.length} Rolle(n)</span>
+        </div>
+        <div className="rounded-lg border border-border/50 p-2.5 min-w-0 sm:col-span-2">
+          <span className="text-muted block mb-1">Letzte Prüfung</span>
+          <span className="text-white break-words">{feed.lastChecked ? new Date(feed.lastChecked).toLocaleString('de-DE') : 'Noch nicht geprüft'}</span>
+        </div>
+      </div>
+    </Card>
+  );
+}
+
 export function FeedsTab({ guildId, canManage }: { guildId: string; canManage: boolean }) {
   const qc = useQueryClient();
   const toast = useToast();
@@ -85,14 +119,18 @@ export function FeedsTab({ guildId, canManage }: { guildId: string; canManage: b
   const listQ = useQuery({
     queryKey: ['feeds', guildId],
     queryFn: () => api.get<{ feeds: ApiFeed[] }>(`/api/v2/guilds/${guildId}/feeds`),
+    enabled: !!guildId,
+    retry: false,
   });
   const channelsQ = useQuery({
     queryKey: ['guild-channels', guildId],
     queryFn: () => api.get<{ channels: DiscordChannel[] }>(`/api/v2/guilds/${guildId}/channels`),
+    enabled: !!guildId && canManage,
   });
   const rolesQ = useQuery({
     queryKey: ['guild-roles', guildId],
     queryFn: () => api.get<{ roles: DiscordRole[] }>(`/api/v2/guilds/${guildId}/roles`),
+    enabled: !!guildId && canManage,
   });
 
   const [editingId, setEditingId] = useState<string | null>(null);
@@ -259,13 +297,28 @@ export function FeedsTab({ guildId, canManage }: { guildId: string; canManage: b
   }
 
   if (!canManage) {
+    if (listQ.isLoading) return <div className="h-40 rounded-xl skeleton" />;
+    if (listQ.isError) {
+      return (
+        <Card>
+          <CardHeader><CardTitle>Nicht erlaubt</CardTitle></CardHeader>
+          <CardDesc>Die Feeds konnten nicht gelesen werden.</CardDesc>
+          <p className="text-danger text-xs mt-2 break-words">{(listQ.error as Error).message}</p>
+        </Card>
+      );
+    }
     return (
-      <Card>
-        <CardHeader>
-          <CardTitle>Feeds</CardTitle>
-          <CardDesc>Du hast keine Berechtigung, Feeds zu verwalten (benötigt <code>feeds.manage</code>).</CardDesc>
-        </CardHeader>
-      </Card>
+      <div className="space-y-4">
+        <div>
+          <h2 className="text-lg font-semibold text-white inline-flex items-center gap-2"><Rss size={18} className="text-accent" /> Feeds</h2>
+          <p className="text-xs text-muted mt-1">Nur-Lesezugriff: Feed-Konfigurationen sind sichtbar, Änderungen und Zugangsdaten benötigen <code>feeds.manage</code>.</p>
+        </div>
+        {feeds.length === 0 ? (
+          <Card><CardHeader><CardTitle>Keine Feeds</CardTitle></CardHeader><CardDesc>Für diesen Discord-Server sind aktuell keine Feeds konfiguriert.</CardDesc></Card>
+        ) : (
+          <div className="space-y-3">{feeds.map(feed => <FeedViewerCard key={feed.id} feed={feed} />)}</div>
+        )}
+      </div>
     );
   }
 
@@ -285,7 +338,8 @@ export function FeedsTab({ guildId, canManage }: { guildId: string; canManage: b
         </CardHeader>
         <div className="px-4 pb-4 space-y-2">
           {listQ.isLoading && <p className="text-muted text-sm">Lade…</p>}
-          {feeds.length === 0 && !listQ.isLoading && <p className="text-muted text-sm">Noch keine Feeds.</p>}
+          {listQ.isError && <p className="text-danger text-sm break-words">{(listQ.error as Error).message}</p>}
+          {feeds.length === 0 && !listQ.isLoading && !listQ.isError && <p className="text-muted text-sm">Noch keine Feeds.</p>}
           {feeds.map(f => {
             const Icon = FEED_META[f.feedType].icon;
             return (
