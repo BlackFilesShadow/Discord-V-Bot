@@ -27,14 +27,18 @@ beforeEach(() => { jest.clearAllMocks(); });
 describe('NIT-011 — Download-Groessenlimit', () => {
   it('setzt maxContentLength/maxBodyLength beim signed-URL-Download', async () => {
     requestMock.mockResolvedValue({ status: 200, headers: {}, data: { data: { token: { url: 'https://dl.example/f.adm' } } } });
-    getMock.mockResolvedValue({ data: 'log-content' });
+    getMock.mockResolvedValue({ status: 200, headers: {}, data: 'log-content' });
     const client = new NitradoClient('token-1234');
     const content = await client.downloadFile('123', '/dir/f.adm');
     expect(content).toBe('log-content');
     const cap = 50 * 1024 * 1024;
     expect(getMock).toHaveBeenCalledWith(
       'https://dl.example/f.adm',
-      expect.objectContaining({ maxContentLength: cap, maxBodyLength: cap }),
+      expect.objectContaining({
+        maxContentLength: cap,
+        maxBodyLength: cap,
+        validateStatus: expect.any(Function),
+      }),
     );
   });
 });

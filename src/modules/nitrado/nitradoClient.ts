@@ -358,16 +358,56 @@ export class NitradoClient {
     };
   }
 
-  private async fetchSignedText(meta: SignedFileToken, maxBytes: number): Promise<string> {
-    if (!meta.url) throw new NitradoApiError('Keine Download-URL', null, 'file_server');
-    const res = await axios.get<string>(meta.url, {
-      responseType: 'text',
-      timeout: 30_000,
-      params: meta.token ? { token: meta.token } : undefined,
-      maxContentLength: maxBytes,
-      maxBodyLength: maxBytes,
-    });
-    return res.data;
+  /**
+   * Zweiter Hop der Nitrado-Dateikette: die vom API-Hop gelieferte signierte
+   * Download-URL. Dieser Host ist nicht zwingend `api.nitrado.net` und soll
+   * deshalb den globalen READ-Circuit nicht oeffnen. Er bekommt aber dieselbe
+   * bounded 429/5xx/Transport-Taxonomie wie der read-only Mirror, damit ADM-
+   * Live-Sync bei transienten CDN/FileServer-Fehlern nicht nach einem Versuch
+   * abbricht und Statuscodes nicht als rohe Axios-Fehler verloren gehen.
+   */
+  private async fetchSignedText(meta: SignedFileToken, maxBytes: number, fullPath: string): Promise<string> {
+    if (!meta.url) throw new NitradoApiError('Keine Download-URL', null, fullPath);
+
+    let lastErr: Error | null = null;
+    for (let attempt = 1; attempt <= 3; attempt++) {
+      try {
+        const res = await axios.get<string>(meta.url, {
+          responseType: 'text',
+          timeout: 30_000,
+          params: meta.token ? { token: meta.token } : undefined,
+          maxContentLength: maxBytes,
+          maxBodyLength: maxBytes,
+          validateStatus: () => true,
+        });
+
+        if (res.status >= 200 && res.status < 300) return res.data;
+
+        if (res.status === 429) {
+          if (attempt >= 3) {
+            throw new NitradoApiError('Download Rate-Limit (429) nach mehreren Versuchen', 429, fullPath);
+          }
+          await sleep(parseRetryAfterMs(res.headers['retry-after']));
+          continue;
+        }
+
+        if (res.status >= 500 && attempt < 3) {
+          await sleep(500 * Math.pow(2, attempt - 1));
+          continue;
+        }
+
+        throw new NitradoApiError(`Download HTTP ${res.status}`, res.status, fullPath);
+      } catch (e) {
+        if (e instanceof NitradoApiError) throw e;
+        lastErr = e instanceof Error ? e : new Error(String(e));
+        if (attempt < 3) {
+          await sleep(500 * Math.pow(2, attempt - 1));
+          continue;
+        }
+      }
+    }
+
+    throw new NitradoApiError(lastErr?.message ?? 'Download fehlgeschlagen', null, fullPath);
   }
 
   async downloadFile(serviceId: string, fullPath: string): Promise<string> {
@@ -378,7 +418,7 @@ export class NitradoClient {
     );
     const token = meta.data?.token;
     if (!token?.url) throw new NitradoApiError('Keine Download-URL', null, fullPath);
-    return this.fetchSignedText(token, MAX_DOWNLOAD_BYTES);
+    return this.fetchSignedText(token, MAX_DOWNLOAD_BYTES, fullPath);
   }
 
   /**
@@ -399,7 +439,7 @@ export class NitradoClient {
     );
     const token = meta.data?.token;
     if (!token?.url) throw new NitradoApiError('Keine Seek-URL', null, fullPath);
-    return this.fetchSignedText(token, Math.min(length + 4096, MAX_SEEK_BYTES));
+    return this.fetchSignedText(token, Math.min(length + 4096, MAX_SEEK_BYTES), fullPath);
   }
 
   async restart(serviceId: string, message?: string): Promise<void> {
