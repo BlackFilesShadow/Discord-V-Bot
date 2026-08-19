@@ -8,7 +8,7 @@ import { Prisma } from '@prisma/client';
 import prisma from '../../database/prisma';
 import type { GuildId, UserDiscordId, PermissionScope } from '../../types/scope';
 import { NON_DELEGABLE_SCOPES } from '../../types/scope';
-import { delegatedPermissionSet } from './access';
+import { delegatedPermissionSet, directGrantBelongsToMembership } from './access';
 
 export interface PermissionGrantRow {
   userDiscordId: UserDiscordId;
@@ -67,29 +67,61 @@ export async function listGrants(guildId: GuildId): Promise<PermissionGrantRow[]
     .filter(row => row.permissions.length > 0);
 }
 
+/**
+ * Setzt einen User-Scope innerhalb einer SERIALIZABLE-Transaktion.
+ *
+ * `membershipJoinedAt` ist fuer Aktivierungen Pflicht und beschreibt die durch
+ * Discord live validierte aktuelle Mitgliedschaft. Eine vorhandene Grant-Zeile
+ * aus einer aelteren Mitgliedschaft wird niemals als Ausgangsbasis verwendet:
+ * beim Grant startet sie leer, beim Revoke wird sie komplett entfernt. Damit
+ * kann eine einzelne frische Mutation nach Rejoin keine alten Scopes ungewollt
+ * wieder auf `updatedAt=now` heben und reaktivieren.
+ *
+ * Bei Revoke ohne aktuell beweisbare Mitgliedschaft wird die ganze Direct-Grant-
+ * Zeile entfernt. Das ist fail-closed und verhindert, dass ein Cleanup-Request
+ * auf einem ausgetretenen User verbleibende alte Scopes frisch timestamped.
+ */
 export async function setGrantScope(
   guildId: GuildId,
   userDiscordId: UserDiscordId,
   scope: PermissionScope,
   enabled: boolean,
   grantedBy: UserDiscordId,
+  membershipJoinedAt: Date | null = null,
 ): Promise<PermissionGrantRow> {
   if (NON_DELEGABLE_SCOPES.has(scope)) {
     throw new Error(`Scope ${scope} ist nicht delegierbar (Owner-only).`);
+  }
+  if (enabled && !membershipJoinedAt) {
+    throw new Error('Aktuelle Guild-Mitgliedschaft ist fuer Permission-Grant erforderlich.');
   }
 
   return serializablePermissionMutation(async tx => {
     const existing = await tx.guildPermissionGrant.findUnique({
       where: { guildId_userDiscordId: { guildId, userDiscordId } },
     });
-    const current = new Set<PermissionScope>(sanitizeScopes(existing?.permissions));
+
+    const existingIsCurrentMembership = !!existing
+      && directGrantBelongsToMembership(existing.updatedAt, membershipJoinedAt);
+
+    // Ohne aktuelle Mitgliedschaft oder bei einer alten Mitgliedschaftsepoche
+    // darf ein Revoke niemals die Rest-Scopes durch einen frischen updatedAt-
+    // Write reaktivieren. Alte/ungeklaerte Direct-Grants werden vollstaendig
+    // entfernt; der Owner kann nach sauberer Mitgliedschaft neu delegieren.
+    if (!enabled && (!membershipJoinedAt || !existingIsCurrentMembership)) {
+      await tx.guildPermissionGrant.deleteMany({ where: { guildId, userDiscordId } });
+      return { userDiscordId, permissions: [], grantedBy, updatedAt: new Date() };
+    }
+
+    const current = new Set<PermissionScope>(
+      existingIsCurrentMembership ? sanitizeScopes(existing?.permissions) : [],
+    );
     if (enabled) current.add(scope);
     else current.delete(scope);
     const next = Array.from(current).sort();
 
     // Jede Mutation normalisiert die komplette Zeile. Dadurch verschwinden
-    // leere oder historisch korrupte/non-delegable Werte beim naechsten Write,
-    // statt trotz fail-closed Authorizer dauerhaft als Stale-Daten zu bleiben.
+    // leere oder historisch korrupte/non-delegable Werte beim naechsten Write.
     if (next.length === 0) {
       await tx.guildPermissionGrant.deleteMany({
         where: { guildId, userDiscordId },
