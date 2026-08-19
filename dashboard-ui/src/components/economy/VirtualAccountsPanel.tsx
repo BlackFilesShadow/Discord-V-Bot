@@ -44,11 +44,13 @@ interface DiscordChannel {
 
 interface MemberOption {
   id: string;
+  discordId: string;
   username: string;
   displayName: string;
   avatar: string | null;
-  bot: boolean;
 }
+
+const USER_GUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 
 function fmtBig(value: string): string {
   try { return BigInt(value).toLocaleString('de-DE'); } catch { return value; }
@@ -71,7 +73,7 @@ export function VirtualAccountsPanel({ guildId, slot }: { guildId: string; slot:
   const [auditAccountId, setAuditAccountId] = useState<string>('');
   const [memberQuery, setMemberQuery] = useState('');
   const [selectedMember, setSelectedMember] = useState<ComboboxOption | null>(null);
-  const [payout, setPayout] = useState({ accountId: '', userDiscordId: '', amount: '', targetPocket: 'WALLET', reason: '' });
+  const [payout, setPayout] = useState({ accountId: '', userId: '', amount: '', targetPocket: 'WALLET', reason: '' });
   const [payoutOperationId, setPayoutOperationId] = useState(createIdempotencyKey);
   const [message, setMessage] = useState<{ ok: boolean; text: string } | null>(null);
   const updatePayout = (patch: Partial<typeof payout>) => {
@@ -97,9 +99,9 @@ export function VirtualAccountsPanel({ guildId, slot }: { guildId: string; slot:
   const channelNames = useMemo(() => new Map(textChannels.map(channel => [channel.id, channel.name] as const)), [textChannels]);
 
   const members = useQuery({
-    queryKey: ['guild-members', guildId, memberQuery],
+    queryKey: ['economy-virtual-payout-members', guildId, slot, memberQuery],
     queryFn: () => api.get<{ members: MemberOption[] }>(
-      `/api/v2/guilds/${guildId}/members?limit=20${memberQuery ? `&q=${encodeURIComponent(memberQuery)}` : ''}`,
+      `/api/v2/guilds/${guildId}/economy/virtual-accounts/members?${scope}&limit=20${memberQuery ? `&q=${encodeURIComponent(memberQuery)}` : ''}`,
     ),
     placeholderData: previous => previous,
     retry: false,
@@ -108,15 +110,14 @@ export function VirtualAccountsPanel({ guildId, slot }: { guildId: string; slot:
     const options: ComboboxOption[] = (members.data?.members ?? []).map(member => ({
       id: member.id,
       label: member.displayName || member.username,
-      hint: member.id,
+      hint: `Discord ${member.discordId}`,
       avatar: member.avatar
-        ? `https://cdn.discordapp.com/avatars/${member.id}/${member.avatar}.png?size=64`
-        : `https://cdn.discordapp.com/embed/avatars/${(BigInt(member.id) >> 22n) % 6n}.png`,
-      disabled: member.bot,
+        ? `https://cdn.discordapp.com/avatars/${member.discordId}/${member.avatar}.png?size=64`
+        : `https://cdn.discordapp.com/embed/avatars/${(BigInt(member.discordId) >> 22n) % 6n}.png`,
     }));
     // Server-side searches replace the option list. Keep the already selected
     // human visible until it is explicitly cleared or the payout succeeds;
-    // otherwise the stable ID could remain booked while the picker looks empty.
+    // otherwise the canonical User-GUID could remain booked while the picker looks empty.
     if (selectedMember && !options.some(option => option.id === selectedMember.id)) {
       options.unshift(selectedMember);
     }
@@ -156,7 +157,7 @@ export function VirtualAccountsPanel({ guildId, slot }: { guildId: string; slot:
     mutationFn: () => api.post<{ ok: boolean; booked: boolean; account: VirtualAccount }>(
       `/api/v2/guilds/${guildId}/economy/virtual-accounts/${payout.accountId}/payout?${scope}`,
       {
-        userDiscordId: payout.userDiscordId,
+        userId: payout.userId,
         amount: payout.amount.trim(),
         targetPocket: payout.targetPocket,
         reason: payout.reason.trim(),
@@ -165,7 +166,7 @@ export function VirtualAccountsPanel({ guildId, slot }: { guildId: string; slot:
     ),
     onSuccess: result => {
       setMessage({ ok: true, text: result.booked ? 'Auszahlung atomar gebucht.' : 'Diese Auszahlung war bereits verarbeitet.' });
-      setPayout({ accountId: '', userDiscordId: '', amount: '', targetPocket: 'WALLET', reason: '' });
+      setPayout({ accountId: '', userId: '', amount: '', targetPocket: 'WALLET', reason: '' });
       setMemberQuery('');
       setSelectedMember(null);
       setPayoutOperationId(createIdempotencyKey());
@@ -187,7 +188,7 @@ export function VirtualAccountsPanel({ guildId, slot }: { guildId: string; slot:
   const nameValid = name.trim().length >= 1 && name.trim().length <= 80;
   const descriptionValid = description.length <= 280;
   const expiryValid = !expiresAt || Number.isFinite(new Date(expiresAt).getTime()) && new Date(expiresAt).getTime() > Date.now();
-  const payoutValid = payout.accountId.length > 0 && /^\d{17,20}$/.test(payout.userDiscordId) && /^\d+$/.test(payout.amount) && BigInt(payout.amount || '0') > 0n && payout.reason.trim().length >= 3 && payout.reason.trim().length <= 180;
+  const payoutValid = payout.accountId.length > 0 && USER_GUID_RE.test(payout.userId) && /^\d+$/.test(payout.amount) && BigInt(payout.amount || '0') > 0n && payout.reason.trim().length >= 3 && payout.reason.trim().length <= 180;
 
   return (
     <Card>
@@ -303,7 +304,7 @@ export function VirtualAccountsPanel({ guildId, slot }: { guildId: string; slot:
 
       <div className="mt-5 pt-4 border-t border-border space-y-3">
         <p className="text-sm font-medium text-white inline-flex items-center gap-1.5"><Send className="h-3.5 w-3.5" />Kontrollierte Auszahlung / Refund</p>
-        <p className="text-xs text-muted">Auch abgelaufene Konten koennen geleert werden. Der Empfaenger wird als Discord-Mitglied gesucht; intern wird ausschliesslich seine stabile Discord-ID gebucht.</p>
+        <p className="text-xs text-muted">Auch abgelaufene Konten koennen geleert werden. Der Empfaenger wird als Discord-Mitglied gesucht; intern wird ausschliesslich seine V-Bot User-GUID uebertragen und serverseitig erneut gegen die Guild aufgeloest.</p>
         <div className="grid gap-3 md:grid-cols-2">
           <label className="text-sm">
             <span className="text-muted">Quellkonto</span>
@@ -315,16 +316,16 @@ export function VirtualAccountsPanel({ guildId, slot }: { guildId: string; slot:
           <div className="text-sm">
             <span className="text-muted">Discord-Mitglied</span>
             <Combobox
-              value={payout.userDiscordId || null}
+              value={payout.userId || null}
               onChange={(id, option) => {
-                updatePayout({ userDiscordId: id ?? '' });
+                updatePayout({ userId: id ?? '' });
                 setSelectedMember(option);
               }}
               options={memberOptions}
               onSearch={setMemberQuery}
               loading={members.isFetching}
               placeholder="Mitglied suchen..."
-              emptyText={memberQuery ? 'Keine Treffer.' : 'Tippe einen Namen...'}
+              emptyText={memberQuery ? 'Keine registrierten Treffer.' : 'Tippe einen Namen...'}
             />
           </div>
           <label className="text-sm">
