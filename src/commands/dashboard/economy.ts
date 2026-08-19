@@ -151,7 +151,7 @@ export const adminPayCommand: Command = {
     }
 
     try {
-      await adminPay({ guildId: scope.guildId, nitradoConnId: connId, targetUserId: asUserDiscordId(target.id), delta, reason: grund, actorDiscordId: scope.actorDiscordId });
+      await adminPay({ guildId: scope.guildId, nitradoConnId: connId, targetUserId: asUserDiscordId(target.id), delta, reason: grund, actorDiscordId: scope.actorDiscordId, operationId: `discord:${i.id}` });
     } catch (e) { await statusReply(i, 'ERROR', 'Aktion fehlgeschlagen', { description: 'Die Aktion konnte nicht durchgeführt werden.', fields: [{ name: '📝 Grund', value: (e as Error).message }] }); return; }
     logAudit('ECON_ADMIN_PAY', 'ECONOMY', { guildId: scope.guildId, nitradoConnId: connId, target: target.id, delta: delta.toString(), actor: scope.actorDiscordId });
     const cfg = await getConfig(scope.guildId, connId);
