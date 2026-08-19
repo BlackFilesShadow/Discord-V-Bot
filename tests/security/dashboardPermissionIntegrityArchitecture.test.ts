@@ -29,6 +29,13 @@ describe('Dashboard-1V permission membership/data-integrity/race architecture', 
     expect(accessSource).toContain('VALID_DELEGABLE_SCOPES');
   });
 
+  test('direct grants are additionally fenced to the current Discord membership epoch', () => {
+    expect(accessSource).toContain('export function directGrantBelongsToMembership');
+    expect(accessSource).toContain('grantUpdatedAt.getTime() >= memberJoinedAt.getTime()');
+    expect(accessSource).toContain('directGrantBelongsToMembership(directGrant?.updatedAt, member.joinedAt)');
+    expect(accessSource).toContain('select: { permissions: true, updatedAt: true }');
+  });
+
   test('HTTP, Socket and Slashcommands consume the same canonical resolver', () => {
     for (const source of [authSource, socketSource, commandScopeSource]) {
       expect(source).toContain('resolveDelegatedPermissionContext');
@@ -39,31 +46,34 @@ describe('Dashboard-1V permission membership/data-integrity/race architecture', 
     expect(commandScopeSource).not.toContain('prisma.guildPermissionGrant.findUnique');
   });
 
-  test('guild list never treats a stale direct DB grant as membership evidence', () => {
+  test('guild list requires live membership and the same current-epoch direct-grant fence', () => {
     const candidates = guildListSource.indexOf('for (const guildId of candidateGuildIds)');
     const member = guildListSource.indexOf('await guild.members.fetch(req.auth.discordId)', candidates);
-    const directAllow = guildListSource.indexOf('if (directGrantGuildIds.has(guildId))', candidates);
+    const directCheck = guildListSource.indexOf('directGrantBelongsToMembership(directGrant.updatedAt, member.joinedAt)', candidates);
     expect(candidates).toBeGreaterThanOrEqual(0);
     expect(member).toBeGreaterThan(candidates);
-    expect(directAllow).toBeGreaterThan(member);
+    expect(directCheck).toBeGreaterThan(member);
+    expect(guildListSource).toContain('select: { guildId: true, permissions: true, updatedAt: true }');
   });
 
-  test('direct grants are revoked at leave and defensively cleared before a rejoin can reactivate them', () => {
+  test('direct grants are revoked at leave and rejoin cleanup deletes only pre-join epochs', () => {
     const leaveDelete = leaveSource.indexOf('prisma.guildPermissionGrant.deleteMany');
     const cleanupConfig = leaveSource.indexOf('await getLeaveCleanupConfig');
     const joinDelete = joinSource.indexOf('prisma.guildPermissionGrant.deleteMany');
+    const epochFence = joinSource.indexOf('updatedAt: { lt: m.joinedAt }', joinDelete);
     const joinCleanupCatch = joinSource.indexOf('Stale Direct-Grant-Cleanup beim Join fehlgeschlagen');
     const joinProfile = joinSource.indexOf('await syncMemberProfile(m)');
 
     expect(leaveDelete).toBeGreaterThanOrEqual(0);
     expect(leaveDelete).toBeLessThan(cleanupConfig);
     expect(joinDelete).toBeGreaterThanOrEqual(0);
-    expect(joinCleanupCatch).toBeGreaterThan(joinDelete);
+    expect(epochFence).toBeGreaterThan(joinDelete);
+    expect(joinCleanupCatch).toBeGreaterThan(epochFence);
     expect(joinProfile).toBeGreaterThan(joinCleanupCatch);
   });
 
   test('rejoin cleanup failure is best-effort and cannot become a join-lifecycle blocker', () => {
-    const nestedCleanupStart = joinSource.indexOf('try {\n        const staleGrant');
+    const nestedCleanupStart = joinSource.indexOf('try {\n        if (m.joinedAt)');
     const nestedCleanupCatch = joinSource.indexOf('catch (permissionError)');
     const syncProfile = joinSource.indexOf('await syncMemberProfile(m)');
     const outerCatch = joinSource.indexOf('catch (error)');
