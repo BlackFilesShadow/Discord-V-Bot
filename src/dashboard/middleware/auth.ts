@@ -14,14 +14,9 @@
 import type { Request, Response, NextFunction } from 'express';
 import prisma from '../../database/prisma';
 import { getDashboardClient } from '../clientRegistry';
-import {
-  asGuildId,
-  asUserDiscordId,
-  hasPermission as scopeHas,
-  NON_DELEGABLE_SCOPES,
-  PERMISSION_SCOPES,
-} from '../../types/scope';
+import { asGuildId, asUserDiscordId, hasPermission as scopeHas } from '../../types/scope';
 import type { GuildId, UserDiscordId, PermissionScope, GuildScope } from '../../types/scope';
+import { resolveDelegatedPermissionContext } from '../../modules/permissions/access';
 import { logAudit, logger } from '../../utils/logger';
 import { enforceDevMfa, enforceDevIpAllowlist, parseDevScope, type DevSessionScope } from './devSecurity';
 import { maybeAutoExtendDevSession } from '../services/devSessionLifecycle';
@@ -60,21 +55,6 @@ interface SessionShape {
   role?: string;
   requires2FA?: boolean;
   twoFactorVerified?: boolean;
-}
-
-const VALID_DELEGABLE_SCOPES = new Set<PermissionScope>(
-  PERMISSION_SCOPES.filter(scope => !NON_DELEGABLE_SCOPES.has(scope)),
-);
-
-function delegatedPermissionSet(raw: unknown): Set<PermissionScope> {
-  if (!Array.isArray(raw)) return new Set();
-  const out = new Set<PermissionScope>();
-  for (const value of raw) {
-    if (typeof value !== 'string') continue;
-    const scope = value as PermissionScope;
-    if (VALID_DELEGABLE_SCOPES.has(scope)) out.add(scope);
-  }
-  return out;
 }
 
 function getSession(req: Request): SessionShape {
@@ -144,8 +124,8 @@ export async function requireGuildOwner(req: Request, res: Response, next: NextF
  * isOwner-Flag + Permissions-Set.
  *
  * Security-Invariante: Ein DB-Grant ist nur zusammen mit einer AKTUELLEN
- * Discord-Mitgliedschaft gueltig. Verlaesst ein User die Guild, duerfen weder
- * Direct- noch Role-Grants aus alten DB-Zeilen weiter authorisieren.
+ * Discord-Mitgliedschaft gueltig. HTTP, Socket und Commands nutzen dieselbe
+ * kanonische Nicht-Owner-Aufloesung aus modules/permissions/access.
  */
 export function requireGuildPermission(perm: PermissionScope) {
   return async (req: Request, res: Response, next: NextFunction): Promise<void> => {
@@ -163,9 +143,8 @@ export function requireGuildPermission(perm: PermissionScope) {
     const isOwner = guild.ownerId === req.auth.discordId;
     let permsSet: Set<PermissionScope> = new Set();
     if (!isOwner) {
-      const member = guild.members.cache.get(req.auth.discordId)
-        ?? await guild.members.fetch(req.auth.discordId).catch(() => null);
-      if (!member) {
+      const delegated = await resolveDelegatedPermissionContext(guild, req.auth.discordId);
+      if (!delegated.member) {
         logAudit('GUILD_MEMBERSHIP_REQUIRED', 'SECURITY', {
           userId: req.auth.userId,
           discordId: req.auth.discordId,
@@ -175,25 +154,7 @@ export function requireGuildPermission(perm: PermissionScope) {
         res.status(403).json({ error: 'Kein Zugriff auf diese Guild.' });
         return;
       }
-
-      const roleIds = Array.from(member.roles.cache.keys());
-      const [grant, roleGrants] = await Promise.all([
-        prisma.guildPermissionGrant.findUnique({
-          where: { guildId_userDiscordId: { guildId, userDiscordId: req.auth.discordId } },
-          select: { permissions: true },
-        }),
-        roleIds.length > 0
-          ? prisma.guildPermissionRoleGrant.findMany({
-              where: { guildId, roleDiscordId: { in: roleIds } },
-              select: { permissions: true },
-            })
-          : Promise.resolve([]),
-      ]);
-
-      permsSet = delegatedPermissionSet(grant?.permissions);
-      for (const roleGrant of roleGrants) {
-        for (const scope of delegatedPermissionSet(roleGrant.permissions)) permsSet.add(scope);
-      }
+      permsSet = delegated.permissions;
     }
 
     // Ein bereits serverseitig validierter Gameserver-Scope darf bei einer
@@ -247,11 +208,10 @@ export async function requireGuildAccess(req: Request, res: Response, next: Next
   }
 
   const isOwner = guild.ownerId === req.auth.discordId;
-  const permsSet: Set<PermissionScope> = new Set();
+  let permsSet: Set<PermissionScope> = new Set();
   if (!isOwner) {
-    const member = guild.members.cache.get(req.auth.discordId)
-      ?? await guild.members.fetch(req.auth.discordId).catch(() => null);
-    if (!member) {
+    const delegated = await resolveDelegatedPermissionContext(guild, req.auth.discordId);
+    if (!delegated.member) {
       logAudit('GUILD_MEMBERSHIP_REQUIRED', 'SECURITY', {
         userId: req.auth.userId,
         discordId: req.auth.discordId,
@@ -260,25 +220,7 @@ export async function requireGuildAccess(req: Request, res: Response, next: Next
       res.status(403).json({ error: 'Kein Zugriff auf diese Guild.' });
       return;
     }
-
-    const roleIds = Array.from(member.roles.cache.keys());
-    const [grant, roleGrants] = await Promise.all([
-      prisma.guildPermissionGrant.findUnique({
-        where: { guildId_userDiscordId: { guildId, userDiscordId: req.auth.discordId } },
-        select: { permissions: true },
-      }),
-      roleIds.length > 0
-        ? prisma.guildPermissionRoleGrant.findMany({
-            where: { guildId, roleDiscordId: { in: roleIds } },
-            select: { permissions: true },
-          })
-        : Promise.resolve([]),
-    ]);
-
-    for (const scope of delegatedPermissionSet(grant?.permissions)) permsSet.add(scope);
-    for (const roleGrant of roleGrants) {
-      for (const scope of delegatedPermissionSet(roleGrant.permissions)) permsSet.add(scope);
-    }
+    permsSet = delegated.permissions;
   }
 
   // Zugriff: Owner, dashboard.access, oder mind. EIN gueltiger delegierbarer Scope.
