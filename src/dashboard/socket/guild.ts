@@ -13,8 +13,7 @@
 
 import type { Server as IOServer, Socket } from 'socket.io';
 import prisma from '../../database/prisma';
-import { NON_DELEGABLE_SCOPES, PERMISSION_SCOPES } from '../../types/scope';
-import type { PermissionScope } from '../../types/scope';
+import { resolveDelegatedPermissionContext } from '../../modules/permissions/access';
 import { logger } from '../../utils/logger';
 import { tryGetDashboardClient } from '../clientRegistry';
 import type { SocketSessionShape } from './index';
@@ -26,18 +25,6 @@ interface JoinPayload {
 
 interface JoinServerPayload extends JoinPayload {
   nitradoConnId?: unknown;
-}
-
-const VALID_DELEGABLE_SCOPES = new Set<PermissionScope>(
-  PERMISSION_SCOPES.filter(scope => !NON_DELEGABLE_SCOPES.has(scope)),
-);
-
-function addDelegablePermissions(target: Set<string>, raw: unknown): void {
-  if (!Array.isArray(raw)) return;
-  for (const value of raw) {
-    if (typeof value !== 'string') continue;
-    if (VALID_DELEGABLE_SCOPES.has(value as PermissionScope)) target.add(value);
-  }
 }
 
 function isSnowflake(s: unknown): s is string {
@@ -60,11 +47,7 @@ export interface GuildAccessResult {
   permissions: string[];
 }
 
-/**
- * Socket-Authorization muss dieselbe Membership-Wahrheit wie REST verwenden.
- * Ein alter Direct-Grant in PostgreSQL reicht fuer einen ausgetretenen User
- * niemals zum Room-Join. Erst aktuelle Discord-Mitgliedschaft, dann Grants.
- */
+/** Socket und HTTP teilen dieselbe aktuelle Member-/Grant-Wahrheit. */
 export async function resolveGuildAccess(guildId: string, userDiscordId: string): Promise<GuildAccessResult> {
   const client = tryGetDashboardClient();
   const guild = client?.guilds.cache.get(guildId);
@@ -72,29 +55,13 @@ export async function resolveGuildAccess(guildId: string, userDiscordId: string)
   const isOwner = guild.ownerId === userDiscordId;
   if (isOwner) return { allowed: true, isOwner: true, permissions: [] };
 
-  const member = guild.members.cache.get(userDiscordId)
-    ?? await guild.members.fetch(userDiscordId).catch(() => null);
-  if (!member) return { allowed: false, isOwner: false, permissions: [] };
-
-  const roleIds = [...member.roles.cache.keys()];
-  const [userGrant, roleGrants] = await Promise.all([
-    prisma.guildPermissionGrant.findUnique({
-      where: { guildId_userDiscordId: { guildId, userDiscordId } },
-      select: { permissions: true },
-    }),
-    roleIds.length > 0
-      ? prisma.guildPermissionRoleGrant.findMany({
-          where: { guildId, roleDiscordId: { in: roleIds } },
-          select: { permissions: true },
-        })
-      : Promise.resolve([]),
-  ]);
-
-  const permissions = new Set<string>();
-  addDelegablePermissions(permissions, userGrant?.permissions);
-  for (const grant of roleGrants) addDelegablePermissions(permissions, grant.permissions);
-
-  return { allowed: permissions.size > 0, isOwner: false, permissions: [...permissions] };
+  const delegated = await resolveDelegatedPermissionContext(guild, userDiscordId);
+  if (!delegated.member) return { allowed: false, isOwner: false, permissions: [] };
+  return {
+    allowed: delegated.permissions.size > 0,
+    isOwner: false,
+    permissions: [...delegated.permissions],
+  };
 }
 
 function sessionFor(socket: Socket): SocketSessionShape {
@@ -158,9 +125,6 @@ export function registerGuildNamespace(io: IOServer): void {
           return;
         }
 
-        // Fail-closed: nur ein aktuell aktiver, gebundener Slot 1..4 darf einen
-        // Live-Gameserver-Room besitzen. Legacy-Slot 5 und fremde Guilds fallen
-        // konstruktiv durch diese Abfrage.
         const conn = await prisma.nitradoConnection.findFirst({
           where: {
             id: connId,
