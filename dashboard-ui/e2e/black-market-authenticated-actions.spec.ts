@@ -227,7 +227,7 @@ test.describe('Black Market authenticated action contract', () => {
     expect(purchase.body).toEqual({ quantity: 2, sourcePocket: 'BANK' });
     expect(purchase.idempotencyKey).toBeTruthy();
     expect(purchase.idempotencyKey).toMatch(/^[A-Za-z0-9._:-]+$/);
-    expect(`dashboard:${purchase.idempotencyKey}`).toHaveLengthLessThanOrEqual(48);
+    expect(`dashboard:${purchase.idempotencyKey}`.length).toBeLessThanOrEqual(48);
     await expect(page.getByText('Kauf gebucht: 2× fuer 5.000.')).toBeVisible();
   });
 
