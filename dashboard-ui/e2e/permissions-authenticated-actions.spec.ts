@@ -170,6 +170,7 @@ test.describe('Permissions authenticated owner contract', () => {
   test('Owner kann User- und Role-Grants guild-gescoped vergeben und einzeln entziehen', async ({ page }) => {
     const state = await stubPermissions(page);
     await openPermissions(page);
+    const base = `/api/v2/guilds/${GUILD_ID}`;
 
     await page.getByRole('button', { name: 'Mitglied suchen...' }).click();
     await page.getByRole('option', { name: /Alice/ }).click();
@@ -177,11 +178,8 @@ test.describe('Permissions authenticated owner contract', () => {
     await page.getByRole('button', { name: 'Erteilen' }).click();
 
     await expect(page.getByText('Alice', { exact: true })).toBeVisible();
-    await expect(page.getByText('economy.view', { exact: true })).toBeVisible();
-    expect(state.writes).toContainEqual({
-      method: 'PUT',
-      path: `${`/api/v2/guilds/${GUILD_ID}`}/permissions/${MEMBER_ID}/economy.view`,
-    });
+    await expect(page.getByRole('button', { name: /Berechtigung economy.view von Alice entziehen/ })).toBeVisible();
+    expect(state.writes).toContainEqual({ method: 'PUT', path: `${base}/permissions/${MEMBER_ID}/economy.view` });
 
     await page.getByRole('button', { name: 'Rolle' }).click();
     await page.getByRole('button', { name: 'Rolle waehlen...' }).click();
@@ -190,23 +188,18 @@ test.describe('Permissions authenticated owner contract', () => {
     await page.getByRole('button', { name: 'Erteilen' }).click();
 
     await expect(page.getByText('@Moderation', { exact: true })).toBeVisible();
-    await expect(page.getByText('whitelist.view', { exact: true })).toBeVisible();
-    expect(state.writes).toContainEqual({
-      method: 'PUT',
-      path: `${`/api/v2/guilds/${GUILD_ID}`}/permissions/roles/${ROLE_ID}/whitelist.view`,
-    });
+    await expect(page.getByRole('button', { name: /Berechtigung whitelist.view von Rolle @Moderation entziehen/ })).toBeVisible();
+    expect(state.writes).toContainEqual({ method: 'PUT', path: `${base}/permissions/roles/${ROLE_ID}/whitelist.view` });
 
     await page.getByRole('button', { name: /Berechtigung economy.view von Alice entziehen/ }).click();
     await expect(page.getByText('Noch keine delegierten Mitglieder-Rechte.')).toBeVisible();
-    expect(state.writes).toContainEqual({
-      method: 'DELETE',
-      path: `${`/api/v2/guilds/${GUILD_ID}`}/permissions/${MEMBER_ID}/economy.view`,
-    });
+    expect(state.writes).toContainEqual({ method: 'DELETE', path: `${base}/permissions/${MEMBER_ID}/economy.view` });
   });
 
   test('Owner kann komplette User- und Role-Grants purgen', async ({ page }) => {
     const state = await stubPermissions(page);
     await openPermissions(page);
+    const base = `/api/v2/guilds/${GUILD_ID}`;
 
     await page.getByRole('button', { name: 'Mitglied suchen...' }).click();
     await page.getByRole('option', { name: /Alice/ }).click();
@@ -228,13 +221,14 @@ test.describe('Permissions authenticated owner contract', () => {
     await roleCard.getByRole('button', { name: 'Alle entziehen' }).click();
     await expect(page.getByText('Noch keine Rollen-basierten Rechte.')).toBeVisible();
 
-    expect(state.writes).toContainEqual({ method: 'DELETE', path: `${`/api/v2/guilds/${GUILD_ID}`}/permissions/${MEMBER_ID}` });
-    expect(state.writes).toContainEqual({ method: 'DELETE', path: `${`/api/v2/guilds/${GUILD_ID}`}/permissions/roles/${ROLE_ID}` });
+    expect(state.writes).toContainEqual({ method: 'DELETE', path: `${base}/permissions/${MEMBER_ID}` });
+    expect(state.writes).toContainEqual({ method: 'DELETE', path: `${base}/permissions/roles/${ROLE_ID}` });
   });
 
   test('Backend-Konflikt bleibt sichtbar und wird nicht als Erfolg maskiert', async ({ page }) => {
     const state = await stubPermissions(page, { failGrant: true });
     await openPermissions(page);
+    const base = `/api/v2/guilds/${GUILD_ID}`;
 
     await page.getByRole('button', { name: 'Mitglied suchen...' }).click();
     await page.getByRole('option', { name: /Alice/ }).click();
@@ -242,8 +236,9 @@ test.describe('Permissions authenticated owner contract', () => {
     await page.getByRole('button', { name: 'Erteilen' }).click();
 
     await expect(page.getByText('Permission-Konflikt. Bitte erneut versuchen.').first()).toBeVisible();
-    await expect(page.getByText('economy.view', { exact: true })).toHaveCount(0);
-    expect(state.writes).toContainEqual({ method: 'PUT', path: `${`/api/v2/guilds/${GUILD_ID}`}/permissions/${MEMBER_ID}/economy.view` });
+    await expect(page.getByText('Mitglieder (0)', { exact: true })).toBeVisible();
+    await expect(page.getByRole('button', { name: /Berechtigung economy.view von Alice entziehen/ })).toHaveCount(0);
+    expect(state.writes).toContainEqual({ method: 'PUT', path: `${base}/permissions/${MEMBER_ID}/economy.view` });
   });
 
   test('Nicht-Owner sieht den Owner-only Permission-Tab nicht und ruft Permission-API nicht auf', async ({ page }) => {
