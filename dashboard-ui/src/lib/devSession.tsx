@@ -2,16 +2,17 @@
  * Client-seitiger DEV-Session-State.
  *
  * - Speichert NICHTS im localStorage (Spec 3: keine Persistenz ueber Tab hinaus).
- * - sessionStorage wird nur als optimistischer Hint genutzt; die echte
- *   Wahrheit kommt vom Server via GET /api/v2/dev/status (Spec 3:
- *   serverseitige Sessionpruefung).
- * - Beim Window-Schliessen leert der Browser sessionStorage automatisch;
- *   serverseitig ist die DevSession ohnehin zeit- und revoke-gesteuert.
+ * - sessionStorage ist ausschliesslich ein UX-Hinweis und niemals Autoritaet.
+ *   `active` startet nach jedem Provider-Mount fail-closed mit `false`; die
+ *   Wahrheit kommt vom Server via GET /api/v2/dev/status.
+ * - Jeder Statusfehler invalidiert den lokalen DEV-State. Damit kann ein alter
+ *   Tab-/Identitaets-Hinweis weder bei Account-Wechsel noch bei Backend-/Netz-
+ *   Fehlern privilegierte UI freischalten.
  * - Polling alle 30s + bei Window-Focus, damit ablaufende/widerrufene
  *   Sessions zeitnah erkannt werden.
  */
 import { createContext, useCallback, useContext, useEffect, useState, type ReactNode } from 'react';
-import { api, ApiError } from './api';
+import { api } from './api';
 
 const SS_HINT = 'devSession.optimistic';
 
@@ -38,9 +39,6 @@ const Ctx = createContext<DevSessionState>({
   refresh: async () => { /* noop */ },
 });
 
-function readHint(): boolean {
-  try { return sessionStorage.getItem(SS_HINT) === '1'; } catch { return false; }
-}
 function writeHint(v: boolean): void {
   try {
     if (v) sessionStorage.setItem(SS_HINT, '1');
@@ -49,10 +47,19 @@ function writeHint(v: boolean): void {
 }
 
 export function DevSessionProvider({ children }: { children: ReactNode }) {
-  const [active, setActive] = useState<boolean>(readHint());
+  // Never bootstrap privilege from browser storage. A previous identity in the
+  // same tab may have left the hint behind; only /dev/status can activate DEV.
+  const [active, setActive] = useState<boolean>(false);
   const [eligible, setEligible] = useState<boolean>(false);
   const [expiresAt, setExpiresAt] = useState<string | null>(null);
   const [loading, setLoading] = useState<boolean>(true);
+
+  const clearLocalDevState = useCallback((): void => {
+    setActive(false);
+    setEligible(false);
+    setExpiresAt(null);
+    writeHint(false);
+  }, []);
 
   const refresh = useCallback(async (): Promise<void> => {
     try {
@@ -61,16 +68,14 @@ export function DevSessionProvider({ children }: { children: ReactNode }) {
       setEligible(s.eligible);
       setExpiresAt(s.expiresAt);
       writeHint(s.active);
-    } catch (e) {
-      // 401 = nicht eingeloggt — DevSession trivialerweise inaktiv.
-      if (e instanceof ApiError && e.status === 401) {
-        setActive(false); setEligible(false); setExpiresAt(null);
-        writeHint(false);
-      }
+    } catch {
+      // Fail-closed on every transport/auth/server failure. Keeping a previous
+      // `active=true` value here would create a stale identity/lifecycle window.
+      clearLocalDevState();
     } finally {
       setLoading(false);
     }
-  }, []);
+  }, [clearLocalDevState]);
 
   const login = useCallback(async (password: string): Promise<void> => {
     const r = await api.post<{ ok: true; expiresAt: string }>('/api/v2/dev/login', { password });
@@ -81,11 +86,9 @@ export function DevSessionProvider({ children }: { children: ReactNode }) {
   }, []);
 
   const logout = useCallback(async (): Promise<void> => {
-    try { await api.post('/api/v2/dev/logout'); } catch { /* ignore */ }
-    setActive(false);
-    setExpiresAt(null);
-    writeHint(false);
-  }, []);
+    try { await api.post('/api/v2/dev/logout'); } catch { /* local revoke still fail-closed */ }
+    clearLocalDevState();
+  }, [clearLocalDevState]);
 
   useEffect(() => {
     void refresh();
