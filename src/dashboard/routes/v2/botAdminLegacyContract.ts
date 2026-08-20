@@ -127,6 +127,18 @@ function requiredEnumBody(field: string, allowed: readonly string[]): RequestHan
   };
 }
 
+function requiredExactEnumBody(field: string, allowed: readonly string[]): RequestHandler {
+  const allowedSet = new Set(allowed);
+  return (req, res, next) => {
+    const value = req.body && typeof req.body === 'object' ? req.body[field] : undefined;
+    if (typeof value !== 'string' || !allowedSet.has(value)) {
+      reject(res, `${field} ist ungueltig.`);
+      return;
+    }
+    next();
+  };
+}
+
 function requiredTrimmedStringBody(field: string, min: number, max: number): RequestHandler {
   return (req, res, next) => {
     const value = req.body && typeof req.body === 'object' ? req.body[field] : undefined;
@@ -215,10 +227,12 @@ botAdminLegacyContractRouter.post(
   requiredTrimmedStringBody('message', 1, 1900),
   optionalBooleanBody('dryRun'),
 );
+// Export is the one legacy enum that is intentionally lowercase and is not
+// normalized downstream. Keep the adapter aligned with that exact contract.
 botAdminLegacyContractRouter.post(
   '/export',
   requireBotAdmin,
-  requiredEnumBody('type', ['PACKAGES', 'LOGS', 'USERS']),
+  requiredExactEnumBody('type', ['packages', 'logs', 'users']),
 );
 botAdminLegacyContractRouter.post(
   '/packages/:id/status',
