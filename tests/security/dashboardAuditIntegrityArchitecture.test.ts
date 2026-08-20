@@ -36,7 +36,7 @@ describe('Dashboard-1W audit architecture', () => {
     expect(uiSource).toContain("{ key: 'audit', label: 'Audit-Log', icon: Activity, ownerOnly: true }");
     expect(uiSource).toContain("tab === 'audit' && guildId && isOwner && <AuditTab guildId={guildId} />");
     expect(uiSource).toContain('useInfiniteQuery');
-    expect(uiSource).toContain('getNextPageParam: lastPage => lastPage.nextCursor ?? undefined');
+    expect(uiSource).toContain('getNextPageParam: (lastPage) => lastPage.nextCursor ?? undefined');
     expect(uiSource).toContain("queryKey: ['audit', guildId, category, appliedAction]");
     expect(uiSource).not.toContain('const [pages, setPages]');
     expect(uiSource).not.toContain("qs.set('before', cursor)");
