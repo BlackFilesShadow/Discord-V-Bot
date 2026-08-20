@@ -4,8 +4,7 @@
  */
 
 import {
-  EmbedBuilder, MessageFlags,
-  PermissionFlagsBits, type ButtonInteraction,
+  EmbedBuilder, MessageFlags, type ButtonInteraction,
 } from 'discord.js';
 import prisma from '../../database/prisma';
 import { logger, logAudit } from '../../utils/logger';
@@ -13,19 +12,22 @@ import { emitGuildEvent } from '../../dashboard/socket/emitter';
 import { Colors, statusTitle } from '../../utils/embedDesign';
 import { notifyRequesterDecision, postDecisionLog } from './whitelistChannels';
 import { enqueueWhitelistAdd, type WhitelistOutboxClient } from './whitelistOutbox';
+import { resolveDelegatedPermissionContext } from '../permissions/access';
 
+/**
+ * Whitelist-Entscheidungen folgen exakt demselben Guild-Permission-Modell wie
+ * Dashboard, Socket und Slashcommands. Discord-ManageGuild allein ist bewusst
+ * KEINE implizite V-Bot-Berechtigung. Direct-Grants werden dadurch automatisch
+ * an die aktuelle Mitgliedschaftsepoche gebunden und Role-Grants mit aufgeloest.
+ */
 async function hasManagePermission(btn: ButtonInteraction): Promise<boolean> {
   if (!btn.guild || !btn.guildId) return false;
   if (btn.guild.ownerId === btn.user.id) return true;
-  if (btn.memberPermissions?.has(PermissionFlagsBits.ManageGuild)) return true;
   try {
-    const grant = await prisma.guildPermissionGrant.findUnique({
-      where: { guildId_userDiscordId: { guildId: btn.guildId, userDiscordId: btn.user.id } },
-    });
-    const list = Array.isArray(grant?.permissions) ? (grant!.permissions as string[]) : [];
-    return list.includes('whitelist.manage');
+    const delegated = await resolveDelegatedPermissionContext(btn.guild, btn.user.id);
+    return !!delegated.member && delegated.permissions.has('whitelist.manage');
   } catch (e) {
-    logger.warn(`WL-Btn: Permission-Lookup fehlgeschlagen: ${(e as Error).message}`);
+    logger.warn(`WL-Btn: Permission-Aufloesung fehlgeschlagen: ${(e as Error).message}`);
     return false;
   }
 }

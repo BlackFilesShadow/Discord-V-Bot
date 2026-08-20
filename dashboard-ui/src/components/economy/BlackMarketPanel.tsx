@@ -230,17 +230,17 @@ export function BlackMarketPanel({ guildId, slot }: { guildId: string; slot: str
 
           <div className="rounded-lg border border-border/60 bg-bg/40 p-3 space-y-3">
             <p className="text-sm font-medium text-white inline-flex items-center gap-1.5"><PackagePlus className="h-3.5 w-3.5" />Angebot anlegen</p>
-            <Select value={listing.vendorAccountId} onChange={e => setListing({ ...listing, vendorAccountId: e.target.value })}>
+            <Select value={listing.vendorAccountId} onChange={e => setListing(current => ({ ...current, vendorAccountId: e.target.value }))}>
               <option value="">— Haendler waehlen —</option>
               {activeVendors.map(v => <option key={v.id} value={v.id}>{v.name}</option>)}
             </Select>
             <div className="grid gap-2 sm:grid-cols-2">
-              <Input value={listing.sku} onChange={e => setListing({ ...listing, sku: e.target.value })} maxLength={80} placeholder="SKU" />
-              <Input value={listing.name} onChange={e => setListing({ ...listing, name: e.target.value })} maxLength={120} placeholder="Produktname" />
-              <Input value={listing.price} onChange={e => setListing({ ...listing, price: e.target.value.trim() })} inputMode="numeric" placeholder="Preis" />
-              <Input value={listing.stock} onChange={e => setListing({ ...listing, stock: e.target.value.trim() })} inputMode="numeric" placeholder="Bestand" />
-              <Input value={listing.maxPerPurchase} onChange={e => setListing({ ...listing, maxPerPurchase: e.target.value.trim() })} inputMode="numeric" placeholder="Max. pro Kauf" />
-              <Input value={listing.description} onChange={e => setListing({ ...listing, description: e.target.value })} maxLength={500} placeholder="Beschreibung (optional)" />
+              <Input value={listing.sku} onChange={e => setListing(current => ({ ...current, sku: e.target.value }))} maxLength={80} placeholder="SKU" />
+              <Input value={listing.name} onChange={e => setListing(current => ({ ...current, name: e.target.value }))} maxLength={120} placeholder="Produktname" />
+              <Input value={listing.price} onChange={e => setListing(current => ({ ...current, price: e.target.value.trim() }))} inputMode="numeric" placeholder="Preis" />
+              <Input value={listing.stock} onChange={e => setListing(current => ({ ...current, stock: e.target.value.trim() }))} inputMode="numeric" placeholder="Bestand" />
+              <Input value={listing.maxPerPurchase} onChange={e => setListing(current => ({ ...current, maxPerPurchase: e.target.value.trim() }))} inputMode="numeric" placeholder="Max. pro Kauf" />
+              <Input value={listing.description} onChange={e => setListing(current => ({ ...current, description: e.target.value }))} maxLength={500} placeholder="Beschreibung (optional)" />
             </div>
             <Button disabled={createListing.isPending || !listingValid} onClick={() => { setMessage(null); createListing.mutate(); }}>
               {createListing.isPending ? 'Erstelle…' : 'Angebot erstellen'}

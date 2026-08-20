@@ -28,6 +28,41 @@ const guildMemberAddEvent: BotEvent = {
     }
 
     try {
+      // Defense in depth fuer Rejoins: Direct-Grants gehoeren zur vorherigen
+      // Mitgliedschaftsepoche und werden nicht still reaktiviert. Normalerweise
+      // entfernt bereits GuildMemberRemove diese Zeile; dieser Cut schliesst
+      // Event-/DB-Ausfallfenster beim naechsten Join.
+      //
+      // Wichtig: Nur Grants, deren updatedAt VOR dem aktuellen Discord-joinedAt
+      // liegt, werden entfernt. Ein Owner kann damit nach dem Rejoin bereits
+      // bewusst einen frischen Grant vergeben, ohne dass ein spaeter laufender
+      // Cleanup denselben neuen Grant wieder loescht (Rejoin-Lost-Update).
+      // Fehlendes joinedAt => Cleanup auslassen; der Authorizer bleibt trotzdem
+      // fail-closed fuer Direct-Grants ohne aktuelle Mitgliedschaftsepoche.
+      try {
+        if (m.joinedAt) {
+          const staleGrant = await prisma.guildPermissionGrant.deleteMany({
+            where: {
+              guildId: m.guild.id,
+              userDiscordId: m.user.id,
+              updatedAt: { lt: m.joinedAt },
+            },
+          });
+          if (staleGrant.count > 0) {
+            logAudit('STALE_PERM_GRANT_CLEARED_ON_JOIN', 'SECURITY', {
+              guildId: m.guild.id,
+              discordId: m.user.id,
+              joinedAt: m.joinedAt.toISOString(),
+              count: staleGrant.count,
+            });
+          }
+        } else {
+          logger.warn(`Stale Direct-Grant-Cleanup beim Join uebersprungen: joinedAt fehlt (${m.user.id}@${m.guild.id}).`);
+        }
+      } catch (permissionError) {
+        logger.error(`Stale Direct-Grant-Cleanup beim Join fehlgeschlagen (${m.user.id}@${m.guild.id}):`, permissionError);
+      }
+
       // User-1: Rejoin/Join muss das exakt guild-gescoppte Recognition-Profil
       // deterministisch auf aktiv setzen, bevor nachgelagerte Join-Logik laeuft.
       // Leave-1G nutzt den neuen joinedAt-Zeitpunkt als durable Rejoin-Evidenz.
