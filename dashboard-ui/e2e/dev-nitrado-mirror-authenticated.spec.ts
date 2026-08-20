@@ -202,6 +202,52 @@ test('Snapshot-Trigger sendet Reason und Re-Auth erst nach Step-Up-Bestaetigung'
   await expect(page.getByText(/Snapshot snapshot_/)).toBeVisible();
 });
 
+test('spaete Snapshot-Antwort einer alten Connection kann die neue Auswahl nicht ueberschreiben', async ({ page }) => {
+  await stubActiveDev(page);
+  const secondConnId = 'conn_2';
+  const secondGuildId = '222222222222222222';
+  let firstRequestStarted = false;
+
+  await page.route('**/api/v2/dev/nitrado-mirror/connections', route => json(route, {
+    connections: [
+      { id: CONN_ID, guildId: GUILD_ID, slot: 1, alias: 'first', alias5: 'server1', serviceId: '12345678', status: 'ACTIVE' },
+      { id: secondConnId, guildId: secondGuildId, slot: 2, alias: 'second', alias5: 'server2', serviceId: '87654321', status: 'ACTIVE' },
+    ],
+    scope: { global: true },
+  }));
+  await page.route('**/api/v2/dev/nitrado-mirror/snapshots?*', async route => {
+    const connId = new URL(route.request().url()).searchParams.get('connId');
+    if (connId === CONN_ID) {
+      firstRequestStarted = true;
+      await new Promise(resolve => setTimeout(resolve, 250));
+      await json(route, {
+        snapshots: [{
+          id: 'stale_snapshot', startedAt: '2026-08-20T18:00:00.000Z', finishedAt: '2026-08-20T18:01:00.000Z',
+          status: 'OK', totalFiles: 111, totalDirs: 1, totalBytes: '111', storedBytes: '111', oversizeFiles: 0, errorCount: 0,
+        }],
+      });
+      return;
+    }
+    await json(route, {
+      snapshots: [{
+        id: 'current_snapshot', startedAt: '2026-08-20T19:00:00.000Z', finishedAt: '2026-08-20T19:01:00.000Z',
+        status: 'OK', totalFiles: 222, totalDirs: 2, totalBytes: '222', storedBytes: '222', oversizeFiles: 0, errorCount: 0,
+      }],
+    });
+  });
+
+  await page.goto('/dev/nitrado-mirror');
+  const connection = page.getByRole('combobox', { name: 'Nitrado-Connection' });
+  await connection.selectOption(CONN_ID);
+  await expect.poll(() => firstRequestStarted).toBe(true);
+  await connection.selectOption(secondConnId);
+
+  await expect(page.getByText('222', { exact: true })).toBeVisible();
+  await page.waitForTimeout(350);
+  await expect(page.getByText('111', { exact: true })).toHaveCount(0);
+  await expect(page.getByText('222', { exact: true })).toBeVisible();
+});
+
 test('Scope-/Backendfehler verwirft Connection-Daten sichtbar', async ({ page }) => {
   await stubActiveDev(page);
   await page.route('**/api/v2/dev/nitrado-mirror/connections', route => json(route, {
