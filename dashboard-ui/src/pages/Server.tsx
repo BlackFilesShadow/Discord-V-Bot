@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import { Link, useParams } from 'react-router-dom';
-import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
+import { useQuery, useMutation, useQueryClient, useInfiniteQuery } from '@tanstack/react-query';
 import { Plus, Trash2, KeyRound, Server as ServerIcon, Shield, AlertTriangle, ChevronRight, Ticket, Settings2, Send, Power, Tag, Activity, Users, RotateCcw, Sparkles, Layers, ToggleLeft, Rss, Languages } from 'lucide-react';
 import { api, ApiError } from '@/lib/api';
 import { Shell } from '@/components/Shell';
@@ -39,7 +39,7 @@ const TABS: ReadonlyArray<TabDef> = [
   { key: 'reaction-embeds', label: 'Reaktions Embeds', icon: ToggleLeft },
   { key: 'feeds', label: 'Feeds', icon: Rss },
   { key: 'translate', label: 'Übersetzungen', icon: Languages },
-  { key: 'audit', label: 'Audit-Log', icon: Activity },
+  { key: 'audit', label: 'Audit-Log', icon: Activity, ownerOnly: true },
 ];
 
 interface Slot {
@@ -167,7 +167,7 @@ export default function Server() {
             {tab === 'reaction-embeds' && guildId && <ReactionEmbedsTab guildId={guildId} canManage={hasFullAccess || perms.includes('reactionroles.manage')} />}
             {tab === 'feeds' && guildId && <FeedsTab guildId={guildId} canManage={hasFullAccess || perms.includes('feeds.manage')} />}
             {tab === 'translate' && guildId && <TranslatedPostsTab guildId={guildId} canManage={hasFullAccess || perms.includes('translate.manage')} />}
-            {tab === 'audit' && guildId && (isOwner || hasFullAccess) && <AuditTab guildId={guildId} />}
+            {tab === 'audit' && guildId && isOwner && <AuditTab guildId={guildId} />}
           </>
         )}
       </div>
@@ -1642,6 +1642,7 @@ interface AuditPage {
   entries: AuditEntry[];
   limit: number;
   hasMore: boolean;
+  nextCursor: string | null;
 }
 
 interface AuditCategoriesResp {
@@ -1650,9 +1651,8 @@ interface AuditCategoriesResp {
 
 function AuditTab({ guildId }: { guildId: string }) {
   const [category, setCategory] = useState<string>('');
-  const [actionFilter, setActionFilter] = useState<string>('');
-  const [pages, setPages] = useState<AuditEntry[]>([]);
-  const [cursor, setCursor] = useState<string | undefined>(undefined);
+  const [actionInput, setActionInput] = useState<string>('');
+  const [appliedAction, setAppliedAction] = useState<string>('');
   const [open, setOpen] = useState<Record<string, boolean>>({});
 
   const cats = useQuery({
@@ -1660,26 +1660,30 @@ function AuditTab({ guildId }: { guildId: string }) {
     queryFn: () => api.get<AuditCategoriesResp>(`/api/v2/guilds/${guildId}/audit/categories`),
   });
 
-  const qs = new URLSearchParams();
-  qs.set('limit', '50');
-  if (category) qs.set('category', category);
-  if (actionFilter.trim()) qs.set('action', actionFilter.trim());
-  if (cursor) qs.set('before', cursor);
-  const qsKey = qs.toString();
-
-  const list = useQuery({
-    queryKey: ['audit', guildId, qsKey],
-    queryFn: async () => {
-      const data = await api.get<AuditPage>(`/api/v2/guilds/${guildId}/audit?${qsKey}`);
-      setPages(prev => cursor ? [...prev, ...data.entries] : data.entries);
-      return data;
+  const list = useInfiniteQuery({
+    queryKey: ['audit', guildId, category, appliedAction],
+    initialPageParam: null as string | null,
+    queryFn: ({ pageParam }) => {
+      const qs = new URLSearchParams();
+      qs.set('limit', '50');
+      if (category) qs.set('category', category);
+      if (appliedAction) qs.set('action', appliedAction);
+      if (pageParam) qs.set('cursor', pageParam);
+      return api.get<AuditPage>(`/api/v2/guilds/${guildId}/audit?${qs.toString()}`);
     },
+    getNextPageParam: lastPage => lastPage.nextCursor ?? undefined,
   });
 
-  function resetAndReload() {
-    setCursor(undefined);
-    setPages([]);
-    list.refetch();
+  const entries = list.data?.pages.flatMap(page => page.entries) ?? [];
+
+  function applySearch() {
+    const next = actionInput.trim();
+    setOpen({});
+    if (next === appliedAction) {
+      void list.refetch();
+    } else {
+      setAppliedAction(next);
+    }
   }
 
   return (
@@ -1692,56 +1696,72 @@ function AuditTab({ guildId }: { guildId: string }) {
         <div className="grid sm:grid-cols-3 gap-3 mt-3">
           <div>
             <label className="block text-xs text-muted mb-1">Kategorie</label>
-            <Select value={category} onChange={e => { setCategory(e.target.value); setCursor(undefined); setPages([]); }}>
+            <Select
+              aria-label="Audit-Kategorie"
+              value={category}
+              onChange={e => { setCategory(e.target.value); setOpen({}); }}
+            >
               <option value="">Alle</option>
               {cats.data?.categories.map(c => (
                 <option key={c.category} value={c.category}>{c.category} ({c.count})</option>
               ))}
             </Select>
+            {cats.isError && (
+              <p className="text-danger text-xs mt-1">Kategorien konnten nicht geladen werden: {(cats.error as ApiError).message}</p>
+            )}
           </div>
           <div className="sm:col-span-2">
             <label className="block text-xs text-muted mb-1">Aktion enthaelt</label>
-            <div className="flex gap-2">
-              <Input value={actionFilter} onChange={e => setActionFilter(e.target.value)} placeholder="z.B. TICKET_TEMPLATE_" />
-              <Button onClick={resetAndReload} disabled={list.isFetching}>Suchen</Button>
-            </div>
+            <form
+              className="flex flex-col sm:flex-row gap-2"
+              onSubmit={e => { e.preventDefault(); applySearch(); }}
+            >
+              <Input
+                aria-label="Audit-Aktion"
+                value={actionInput}
+                onChange={e => setActionInput(e.target.value)}
+                maxLength={120}
+                placeholder="z.B. TICKET_TEMPLATE_"
+              />
+              <Button type="submit" disabled={list.isFetching && !list.isFetchingNextPage}>Suchen</Button>
+            </form>
           </div>
         </div>
       </Card>
 
-      {list.isLoading && pages.length === 0 && <div className="h-24 rounded-xl skeleton" />}
+      {list.isLoading && entries.length === 0 && <div className="h-24 rounded-xl skeleton" />}
       {list.isError && (
         <Card>
           <p className="text-danger text-sm">Fehler: {(list.error as ApiError).message}</p>
         </Card>
       )}
 
-      {pages.length === 0 && !list.isLoading && (
+      {entries.length === 0 && !list.isLoading && !list.isError && (
         <Card><p className="text-muted text-sm">Keine Eintraege.</p></Card>
       )}
 
-      {pages.length > 0 && (
+      {entries.length > 0 && (
         <Card>
           <ul className="divide-y divide-border">
-            {pages.map(e => {
+            {entries.map(e => {
               const expanded = !!open[e.id];
               const date = new Date(e.createdAt);
               return (
-                <li key={e.id} className="py-2">
+                <li key={e.id} className="py-2 min-w-0">
                   <button
                     type="button"
-                    onClick={() => setOpen(o => ({ ...o, [e.id]: !o[e.id] }))}
-                    className="w-full text-left flex items-start gap-3 hover:bg-bg-elev/40 rounded px-2 py-1 focus-ring"
+                    onClick={() => setOpen(current => ({ ...current, [e.id]: !current[e.id] }))}
+                    className="w-full min-w-0 text-left grid grid-cols-1 sm:grid-cols-[8rem_auto_minmax(0,1fr)_auto] gap-2 sm:gap-3 items-start hover:bg-bg-elev/40 rounded px-2 py-1 focus-ring"
                   >
-                    <span className="text-xs text-muted shrink-0 w-32 tabular-nums">{date.toLocaleString()}</span>
-                    <span className="text-xs px-1.5 py-0.5 rounded bg-accent/15 text-accent shrink-0">{e.category}</span>
-                    <span className="font-medium text-white text-sm flex-1 truncate">{e.action}</span>
-                    <span className="text-xs text-muted truncate max-w-[12rem]">
+                    <span className="text-xs text-muted tabular-nums">{date.toLocaleString()}</span>
+                    <span className="text-xs px-1.5 py-0.5 rounded bg-accent/15 text-accent w-fit">{e.category}</span>
+                    <span className="font-medium text-white text-sm min-w-0 break-words sm:truncate">{e.action}</span>
+                    <span className="text-xs text-muted min-w-0 break-words sm:truncate sm:max-w-[12rem]">
                       {e.actor?.username ?? e.actor?.discordId ?? '—'}
                     </span>
                   </button>
                   {expanded && (
-                    <pre className="ml-2 mt-2 p-2 rounded bg-bg/60 border border-border text-xs text-muted overflow-x-auto">
+                    <pre className="mt-2 p-2 max-w-full rounded bg-bg/60 border border-border text-xs text-muted overflow-x-auto whitespace-pre-wrap break-words">
 {JSON.stringify({ actor: e.actor, target: e.target, channelId: e.channelId, details: e.details }, null, 2)}
                     </pre>
                   )}
@@ -1749,15 +1769,12 @@ function AuditTab({ guildId }: { guildId: string }) {
               );
             })}
           </ul>
-          {list.data?.hasMore && (
+          {list.hasNextPage && (
             <div className="mt-3 flex justify-center">
               <Button
-                onClick={() => {
-                  const last = pages[pages.length - 1];
-                  if (last) setCursor(last.createdAt);
-                }}
-                disabled={list.isFetching}
-                loading={list.isFetching}
+                onClick={() => { void list.fetchNextPage(); }}
+                disabled={list.isFetchingNextPage}
+                loading={list.isFetchingNextPage}
               >
                 Mehr laden
               </Button>
@@ -1772,4 +1789,3 @@ function AuditTab({ guildId }: { guildId: string }) {
 // ============================================================================
 // (Fraktionssystem-Verwaltung wurde nach components/FactionsTab.tsx ausgelagert.)
 // ============================================================================
-

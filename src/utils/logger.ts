@@ -3,6 +3,7 @@ import DailyRotateFile from 'winston-daily-rotate-file';
 import path from 'path';
 import fs from 'fs';
 import { Writable } from 'node:stream';
+import { redactAuditDetails } from './auditRedaction';
 
 const LOG_DIR = process.env.LOG_DIR || './logs';
 const IS_TEST_RUNTIME = process.env.NODE_ENV === 'test' || Boolean(process.env.JEST_WORKER_ID);
@@ -261,7 +262,7 @@ async function persistAuditRow(
       action,
       // Cast: Migration `20260502120000_add_audit_categories_v2` erweitert das Enum.
       category: category as never,
-      details: (meta.details ?? null) as never,
+      details: redactAuditDetails(meta.details ?? null) as never,
       channelId: meta.channelId ?? null,
       guildId: meta.guildId ?? null,
       ipAddress: meta.ip ?? null,
