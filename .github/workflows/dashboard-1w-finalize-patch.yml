@@ -1,0 +1,61 @@
+name: Dashboard-1W Final Source Patch
+
+on:
+  push:
+    branches: [fix/dashboard-1w-audit-log-contract]
+    paths: [.github/workflows/dashboard-1w-finalize-patch.yml]
+
+permissions:
+  contents: write
+
+jobs:
+  patch:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          ref: fix/dashboard-1w-audit-log-contract
+          fetch-depth: 0
+      - name: Finalize Audit UI and remove helper
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 <<'PY'
+          from pathlib import Path
+
+          server_path = Path('dashboard-ui/src/pages/Server.tsx')
+          server = server_path.read_text()
+
+          old_button = '<Button type="submit" disabled={list.isFetching && !list.isFetchingNextPage}>Suchen</Button>'
+          new_button = '<Button type="submit" disabled={list.isFetching}>Suchen</Button>'
+          if old_button in server:
+            server = server.replace(old_button, new_button, 1)
+          elif new_button not in server:
+            raise SystemExit('Audit search button anchor missing')
+
+          error_anchor = '''      {list.isError && (
+        <Card>
+          <p className="text-danger text-sm">Fehler: {(list.error as ApiError).message}</p>
+        </Card>
+      )}
+'''
+          next_error = '''      {list.isFetchNextPageError && !list.isError && (
+        <Card>
+          <p className="text-danger text-sm">Fehler beim Nachladen: {(list.error as ApiError).message}</p>
+        </Card>
+      )}
+'''
+          if 'Fehler beim Nachladen:' not in server:
+            if error_anchor not in server:
+              raise SystemExit('Audit error anchor missing')
+            server = server.replace(error_anchor, error_anchor + next_error, 1)
+
+          server_path.write_text(server)
+          PY
+
+          rm -f .github/workflows/dashboard-1w-finalize-patch.yml
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add dashboard-ui/src/pages/Server.tsx .github/workflows/dashboard-1w-finalize-patch.yml
+          git commit -m "Dashboard-1W: finalize Audit UI error contract"
+          git push origin HEAD:fix/dashboard-1w-audit-log-contract
