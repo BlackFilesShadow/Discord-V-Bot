@@ -7,6 +7,7 @@ const routeSource = read('src/dashboard/routes/v2/audit.ts');
 const contractSource = read('src/dashboard/routes/v2/auditContract.ts');
 const uiSource = read('dashboard-ui/src/pages/Server.tsx');
 const loggerSource = read('src/utils/logger.ts');
+const redactionSource = read('src/utils/auditRedaction.ts');
 const schemaSource = read('prisma/schema.prisma');
 const migrationSource = read('prisma/migrations/20260820060000_audit_log_cursor_indexes/migration.sql');
 
@@ -36,7 +37,9 @@ describe('Dashboard-1W audit architecture', () => {
     expect(uiSource).toContain("{ key: 'audit', label: 'Audit-Log', icon: Activity, ownerOnly: true }");
     expect(uiSource).toContain("tab === 'audit' && guildId && isOwner && <AuditTab guildId={guildId} />");
     expect(uiSource).toContain('useInfiniteQuery');
-    expect(uiSource).toContain('getNextPageParam: (lastPage) => lastPage.nextCursor ?? undefined');
+    expect(uiSource).toMatch(
+      /getNextPageParam:\s*\(?lastPage\)?\s*=>\s*lastPage\.nextCursor\s*\?\?\s*undefined/,
+    );
     expect(uiSource).toContain("queryKey: ['audit', guildId, category, appliedAction]");
     expect(uiSource).not.toContain('const [pages, setPages]');
     expect(uiSource).not.toContain("qs.set('before', cursor)");
@@ -46,6 +49,10 @@ describe('Dashboard-1W audit architecture', () => {
     expect(routeSource).toContain('details: redactAuditDetails(r.details)');
     expect(loggerSource).toContain("from './auditRedaction'");
     expect(loggerSource).toContain('details: redactAuditDetails(meta.details ?? null) as never');
+    expect(redactionSource).toContain('.replace(AUTH_HEADER_RE');
+    expect(redactionSource.indexOf('.replace(AUTH_HEADER_RE')).toBeLessThan(
+      redactionSource.indexOf('return redactText(secretRedacted)'),
+    );
   });
 
   test('schema and migration carry guild-scoped cursor/category indexes', () => {
