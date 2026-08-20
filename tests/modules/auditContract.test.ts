@@ -98,4 +98,14 @@ describe('Dashboard-1W audit detail redaction', () => {
       { cookie: AUDIT_REDACTED_VALUE },
     ]);
   });
+
+  test('redacts authorization/cookie headers and JWT-looking free text', () => {
+    const jwt = 'eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiIxMjM0NTY3ODkwIn0.signature12345';
+    expect(redactAuditDetails('Authorization: Basic QWxhZGRpbjpvcGVuIHNlc2FtZQ=='))
+      .toBe(`Authorization: Basic ${AUDIT_REDACTED_VALUE}`);
+    expect(redactAuditDetails('Cookie: session=raw-cookie; theme=dark'))
+      .toBe(`Cookie: ${AUDIT_REDACTED_VALUE}`);
+    expect(redactAuditDetails(`jwt=${jwt}`)).not.toContain(jwt);
+    expect(redactAuditDetails(`raw ${jwt}`)).toBe(`raw ${AUDIT_REDACTED_VALUE}`);
+  });
 });
