@@ -781,6 +781,8 @@ model AuditLog {
   @@index([action])
   @@index([category])
   @@index([createdAt])
+  @@index([guildId, createdAt, id])
+  @@index([guildId, category, createdAt, id])
 }
 
 enum AuditCategory {

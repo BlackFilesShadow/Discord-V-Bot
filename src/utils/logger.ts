@@ -3,6 +3,7 @@ import DailyRotateFile from 'winston-daily-rotate-file';
 import path from 'path';
 import fs from 'fs';
 import { Writable } from 'node:stream';
+import { redactAuditDetails } from './auditRedaction';
 
 const LOG_DIR = process.env.LOG_DIR || './logs';
 const IS_TEST_RUNTIME = process.env.NODE_ENV === 'test' || Boolean(process.env.JEST_WORKER_ID);
@@ -172,10 +173,10 @@ function redactSecrets(input: Record<string, unknown>): Record<string, unknown> 
   for (const [k, v] of Object.entries(input)) {
     if (SECRET_KEY_RE.test(k)) {
       out[k] = '[REDACTED]';
-    } else if (v && typeof v === 'object' && !Array.isArray(v) && !(v instanceof Date)) {
-      out[k] = redactSecrets(v as Record<string, unknown>);
     } else {
-      out[k] = v;
+      // Gleiche rekursive/free-text Policy wie DB-Persistenz und Dashboard-Read.
+      // Arrays und verschachtelte Strings koennen den Audit-Dateipfad nicht umgehen.
+      out[k] = redactAuditDetails(v, k);
     }
   }
   return out;
@@ -261,7 +262,7 @@ async function persistAuditRow(
       action,
       // Cast: Migration `20260502120000_add_audit_categories_v2` erweitert das Enum.
       category: category as never,
-      details: (meta.details ?? null) as never,
+      details: redactAuditDetails(meta.details ?? null) as never,
       channelId: meta.channelId ?? null,
       guildId: meta.guildId ?? null,
       ipAddress: meta.ip ?? null,
