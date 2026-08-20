@@ -7,9 +7,12 @@
  *   kann niemals DEV-UI oder Tool-Reads freischalten.
  * - Polling alle 30s + bei Window-Focus, damit ablaufende/widerrufene
  *   Sessions zeitnah erkannt werden.
+ * - Sobald der Server die DEV-Session nicht mehr bestaetigt, wird der
+ *   privilegierte Socket als Defense-in-Depth sofort lokal getrennt.
  */
 import { createContext, useCallback, useContext, useEffect, useState, type ReactNode } from 'react';
 import { api } from './api';
+import { disconnectDevSocket } from './socket';
 
 const LEGACY_SS_HINT = 'devSession.optimistic';
 
@@ -54,11 +57,13 @@ export function DevSessionProvider({ children }: { children: ReactNode }) {
       setActive(s.active);
       setEligible(s.eligible);
       setExpiresAt(s.expiresAt);
+      if (!s.active || !s.eligible) disconnectDevSocket();
       clearLegacyHint();
     } catch {
       // Privilegierte UI muss bei jeder fehlgeschlagenen Server-Bestaetigung
       // fail-closed werden. 403/5xx und Netzfehler lassen keinen stale Active-
-      // Zustand weiterleben.
+      // Zustand oder offenen DEV-Socket weiterleben.
+      disconnectDevSocket();
       setActive(false);
       setEligible(false);
       setExpiresAt(null);
@@ -77,6 +82,9 @@ export function DevSessionProvider({ children }: { children: ReactNode }) {
   }, []);
 
   const logout = useCallback(async (): Promise<void> => {
+    // Lokal zuerst trennen. Selbst wenn das HTTP-Logout kurzzeitig nicht
+    // erreichbar ist, empfaengt dieser Browser keine weiteren DEV-Live-Logs.
+    disconnectDevSocket();
     try { await api.post('/api/v2/dev/logout'); } catch { /* ignore */ }
     setActive(false);
     setExpiresAt(null);

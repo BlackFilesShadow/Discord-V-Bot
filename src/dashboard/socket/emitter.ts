@@ -8,6 +8,7 @@
  */
 
 import type { Server as IOServer } from 'socket.io';
+import { redactAuditDetails } from '../../utils/auditRedaction';
 
 let io: IOServer | null = null;
 
@@ -54,11 +55,6 @@ export type GuildEvent =
   | { type: 'feed.changed'; payload: { guildId: string; feedId?: string } }
   | { type: 'translatedPost.changed'; payload: { guildId: string; postId?: string } };
 
-/**
- * Kanonisches, transportsicheres Gameplay-Event fuer den Server-internen Feed.
- * `eventId` ist optional, weil der alte Killfeed vor AdmEvent-V2 eigene IDs
- * verwendet. Der Scope ist dagegen IMMER vollstaendig.
- */
 export interface ServerGameplayEventPayload {
   guildId: string;
   nitradoConnId: string;
@@ -78,17 +74,11 @@ export function serverRoomName(guildId: string, nitradoConnId: string): string {
   return `gs:${guildId}:${nitradoConnId}`;
 }
 
-/** Sendet ein guild-weites UI-Event. */
 export function emitGuildEvent(guildId: string, event: GuildEvent): void {
   if (!io) return;
   io.of('/guild').to(`g:${guildId}`).emit(event.type, event.payload);
 }
 
-/**
- * Sendet Gameplay nur an Clients, die explizit genau diesem Gameserver-Room
- * beigetreten sind. Kein Fallback auf den Guild-Room: fail-closed gegen
- * versehentliche Cross-Server-Datenvermischung.
- */
 export function emitServerGameplayEvent(event: ServerGameplayEventPayload): void {
   if (!io) return;
   io.of('/guild')
@@ -103,8 +93,70 @@ export interface DevLogLine {
   meta?: Record<string, unknown>;
 }
 
-/** Pusht eine Log-Zeile in den /dev-Namespace. */
+const DEV_LOG_MAX_DEPTH = 8;
+const DEV_LOG_TRUNCATED = '[TRUNCATED]';
+const DEV_LOG_CIRCULAR = '[CIRCULAR]';
+const DEV_LOG_UNSUPPORTED = '[UNSUPPORTED]';
+const DEV_LOG_LEVELS = new Set(['error', 'warn', 'info', 'http', 'debug', 'verbose', 'silly']);
+
+function normalizeDevLogValue(value: unknown, seen: WeakSet<object>, depth: number): unknown {
+  if (depth > DEV_LOG_MAX_DEPTH) return DEV_LOG_TRUNCATED;
+  if (value === null || value === undefined) return value;
+  if (typeof value === 'string' || typeof value === 'number' || typeof value === 'boolean') return value;
+  if (typeof value === 'bigint') return value.toString();
+  if (typeof value === 'symbol' || typeof value === 'function') return DEV_LOG_UNSUPPORTED;
+  if (value instanceof Date) return value.toISOString();
+  if (value instanceof Error) {
+    return normalizeDevLogValue({ name: value.name, message: value.message, stack: value.stack }, seen, depth + 1);
+  }
+  if (typeof value !== 'object') return DEV_LOG_UNSUPPORTED;
+  if (seen.has(value)) return DEV_LOG_CIRCULAR;
+
+  seen.add(value);
+  try {
+    if (Array.isArray(value)) {
+      return value.map(item => normalizeDevLogValue(item, seen, depth + 1));
+    }
+    let entries: Array<[string, unknown]>;
+    try {
+      entries = Object.entries(value as Record<string, unknown>);
+    } catch {
+      return DEV_LOG_TRUNCATED;
+    }
+    const out: Record<string, unknown> = {};
+    for (const [key, child] of entries) {
+      try {
+        out[key] = normalizeDevLogValue(child, seen, depth + 1);
+      } catch {
+        out[key] = DEV_LOG_TRUNCATED;
+      }
+    }
+    return out;
+  } finally {
+    seen.delete(value);
+  }
+}
+
+export function sanitizeDevLogLine(line: DevLogLine): DevLogLine {
+  const normalized = normalizeDevLogValue(
+    { level: line.level, message: line.message, meta: line.meta },
+    new WeakSet<object>(),
+    0,
+  ) as { level?: unknown; message?: unknown; meta?: unknown };
+  const redacted = redactAuditDetails(normalized) as { level?: unknown; message?: unknown; meta?: unknown };
+  const candidateLevel = typeof redacted.level === 'string' ? redacted.level : 'info';
+
+  return {
+    ts: Number.isFinite(line.ts) ? line.ts : Date.now(),
+    level: DEV_LOG_LEVELS.has(candidateLevel) ? candidateLevel : 'info',
+    message: typeof redacted.message === 'string' ? redacted.message : '[REDACTED]',
+    meta: redacted.meta && typeof redacted.meta === 'object' && !Array.isArray(redacted.meta)
+      ? redacted.meta as Record<string, unknown>
+      : undefined,
+  };
+}
+
 export function emitDevLog(line: DevLogLine): void {
   if (!io) return;
-  io.of('/dev').emit('log', line);
+  io.of('/dev').emit('log', sanitizeDevLogLine(line));
 }

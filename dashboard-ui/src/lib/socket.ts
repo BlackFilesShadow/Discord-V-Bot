@@ -17,6 +17,13 @@ export function getDevSocket(): Socket {
   return devSocket;
 }
 
+export function disconnectDevSocket(): void {
+  if (!devSocket) return;
+  devSocket.removeAllListeners();
+  devSocket.disconnect();
+  devSocket = null;
+}
+
 export function joinGuildRoom(guildId: string): void {
   const s = getGuildSocket();
   s.emit('join', { guildId });
