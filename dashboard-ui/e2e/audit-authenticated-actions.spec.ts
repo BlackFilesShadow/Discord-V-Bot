@@ -14,6 +14,7 @@ async function json(route: Route, body: unknown, status = 200): Promise<void> {
 
 interface AuditStubOptions {
   owner?: boolean;
+  page2Error?: boolean;
 }
 
 async function stubAudit(page: Page, options: AuditStubOptions = {}) {
@@ -66,6 +67,7 @@ async function stubAudit(page: Page, options: AuditStubOptions = {}) {
         return json(route, { error: 'Audit backend unavailable' }, 503);
       }
       if (url.searchParams.get('cursor') === NEXT_CURSOR) {
+        if (options.page2Error) return json(route, { error: 'Audit page unavailable' }, 503);
         return json(route, {
           entries: [{
             id: THIRD_ID,
@@ -178,6 +180,17 @@ test.describe('Audit authenticated Owner contract', () => {
     await page.getByLabel('Audit-Aktion').fill('FAIL');
     await page.getByRole('button', { name: 'Suchen' }).click();
     await expect(page.getByText('Fehler: Audit backend unavailable')).toBeVisible();
+  });
+
+  test('Fehler beim Nachladen bleibt sichtbar und vorhandene Seite bleibt erhalten', async ({ page }) => {
+    await stubAudit(page, { page2Error: true });
+    await openAudit(page);
+
+    await page.getByRole('button', { name: 'Mehr laden' }).click();
+    await expect(page.getByText('Fehler beim Nachladen: Audit page unavailable')).toBeVisible();
+    await expect(page.getByText('PERM_GRANTED', { exact: true })).toBeVisible();
+    await expect(page.getByText('PERM_ROLE_GRANTED', { exact: true })).toBeVisible();
+    await expect(page.getByText('ROLE_REVOKED', { exact: true })).toHaveCount(0);
   });
 
   test('Nicht-Owner mit dashboard.access sieht keinen Audit-Tab und ruft keine Audit-API auf', async ({ page }) => {
