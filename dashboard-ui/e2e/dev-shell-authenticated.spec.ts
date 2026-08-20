@@ -127,6 +127,14 @@ for (const width of VIEWPORTS) {
     await pin.click();
     expect(page.url()).toBe(beforePin);
 
+    const pinnedList = nav.getByRole('list', { name: 'Angepinnte DEV Tools' });
+    const pinnedLink = pinnedList.getByRole('link', { name: 'Live Bot Status', exact: true });
+    const unpin = pinnedList.getByRole('button', { name: 'Live Bot Status entpinnen' });
+    await Promise.all([expectTouchTarget(pinnedLink), expectTouchTarget(unpin)]);
+    await unpin.click();
+    await expect(pinnedList).toHaveCount(0);
+    expect(page.url()).toBe(beforePin);
+
     await search.fill('bot');
     const clear = nav.getByRole('button', { name: 'Suche leeren' });
     await expectTouchTarget(clear);

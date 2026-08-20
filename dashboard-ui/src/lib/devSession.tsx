@@ -1,19 +1,17 @@
 /**
  * Client-seitiger DEV-Session-State.
  *
- * - Speichert NICHTS im localStorage (Spec 3: keine Persistenz ueber Tab hinaus).
- * - sessionStorage wird nur als optimistischer Hint genutzt; die echte
- *   Wahrheit kommt vom Server via GET /api/v2/dev/status (Spec 3:
- *   serverseitige Sessionpruefung).
- * - Beim Window-Schliessen leert der Browser sessionStorage automatisch;
- *   serverseitig ist die DevSession ohnehin zeit- und revoke-gesteuert.
+ * - Speichert keinen privilegierten Active-State in localStorage/sessionStorage.
+ * - Die Wahrheit kommt ausschliesslich vom Server via GET /api/v2/dev/status.
+ * - Ein historischer `devSession.optimistic`-Hint wird nur noch bereinigt und
+ *   kann niemals DEV-UI oder Tool-Reads freischalten.
  * - Polling alle 30s + bei Window-Focus, damit ablaufende/widerrufene
  *   Sessions zeitnah erkannt werden.
  */
 import { createContext, useCallback, useContext, useEffect, useState, type ReactNode } from 'react';
 import { api } from './api';
 
-const SS_HINT = 'devSession.optimistic';
+const LEGACY_SS_HINT = 'devSession.optimistic';
 
 interface DevStatus {
   active: boolean;
@@ -38,18 +36,14 @@ const Ctx = createContext<DevSessionState>({
   refresh: async () => { /* noop */ },
 });
 
-function readHint(): boolean {
-  try { return sessionStorage.getItem(SS_HINT) === '1'; } catch { return false; }
-}
-function writeHint(v: boolean): void {
-  try {
-    if (v) sessionStorage.setItem(SS_HINT, '1');
-    else sessionStorage.removeItem(SS_HINT);
-  } catch { /* ignore */ }
+function clearLegacyHint(): void {
+  try { sessionStorage.removeItem(LEGACY_SS_HINT); } catch { /* ignore */ }
 }
 
 export function DevSessionProvider({ children }: { children: ReactNode }) {
-  const [active, setActive] = useState<boolean>(readHint());
+  // Privilegierter Zustand startet immer fail-closed. Auch ein alter Browser-Hint
+  // darf vor der ersten Server-Antwort niemals als aktive Session gelten.
+  const [active, setActive] = useState<boolean>(false);
   const [eligible, setEligible] = useState<boolean>(false);
   const [expiresAt, setExpiresAt] = useState<string | null>(null);
   const [loading, setLoading] = useState<boolean>(true);
@@ -60,15 +54,15 @@ export function DevSessionProvider({ children }: { children: ReactNode }) {
       setActive(s.active);
       setEligible(s.eligible);
       setExpiresAt(s.expiresAt);
-      writeHint(s.active);
+      clearLegacyHint();
     } catch {
       // Privilegierte UI muss bei jeder fehlgeschlagenen Server-Bestaetigung
-      // fail-closed werden. Ein optimistischer Hint darf weder bei 403/5xx noch
-      // bei einem Netzfehler als bestaetigte DEV-Session weiterleben.
+      // fail-closed werden. 403/5xx und Netzfehler lassen keinen stale Active-
+      // Zustand weiterleben.
       setActive(false);
       setEligible(false);
       setExpiresAt(null);
-      writeHint(false);
+      clearLegacyHint();
     } finally {
       setLoading(false);
     }
@@ -79,17 +73,18 @@ export function DevSessionProvider({ children }: { children: ReactNode }) {
     setActive(true);
     setEligible(true);
     setExpiresAt(r.expiresAt);
-    writeHint(true);
+    clearLegacyHint();
   }, []);
 
   const logout = useCallback(async (): Promise<void> => {
     try { await api.post('/api/v2/dev/logout'); } catch { /* ignore */ }
     setActive(false);
     setExpiresAt(null);
-    writeHint(false);
+    clearLegacyHint();
   }, []);
 
   useEffect(() => {
+    clearLegacyHint();
     void refresh();
     const id = window.setInterval(() => { void refresh(); }, 30_000);
     const onFocus = (): void => { void refresh(); };
