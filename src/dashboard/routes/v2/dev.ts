@@ -147,6 +147,7 @@ devRouter.post('/login', loginLimiter, async (req, res) => {
   }
 
   if (!isGlobalDeveloperEligible(String(req.auth.discordId), currentRole)) {
+    await revokeActiveDevSessions(String(req.auth.discordId));
     logAudit('DEV_LOGIN_NOT_ELIGIBLE', 'SECURITY', {
       userId: req.auth.userId,
       discordId: req.auth.discordId,
@@ -239,8 +240,9 @@ devRouter.post('/logout', async (req, res) => {
 
 devRouter.get('/status', async (req, res) => {
   if (!req.auth) { res.status(401).json({ error: 'Nicht angemeldet.' }); return; }
-  // Frische DB-Rolle ist zwingend; fehlt der DB-User, wird eine eventuell noch
-  // aktive DEV-Session widerrufen und die Berechtigung fail-closed verneint.
+  // Frische DB-Rolle ist zwingend; fehlt der DB-User oder geht die globale
+  // DEV-Identitaet verloren, wird eine aktive Step-up-Session widerrufen. Eine
+  // spaetere Rollenwiederherstellung darf nie eine alte DEV-Session reaktivieren.
   const dbUser = await prisma.user.findUnique({
     where: { id: req.auth.userId },
     select: { role: true },
@@ -256,6 +258,7 @@ devRouter.get('/status', async (req, res) => {
     req.auth.role = currentRole;
   }
   if (!isGlobalDeveloperEligible(String(req.auth.discordId), currentRole)) {
+    await revokeActiveDevSessions(String(req.auth.discordId));
     res.json({ active: false, eligible: false });
     return;
   }
