@@ -86,6 +86,7 @@ describe('Dashboard-1V permission membership/data-integrity/race architecture', 
     const userPut = permissionRouteSource.indexOf("permissionsRouter.put('/:userDiscordId/:scope'");
     const memberCheck = permissionRouteSource.indexOf('await resolveCurrentMember', userPut);
     const joinedAtCheck = permissionRouteSource.indexOf('!targetMember.member.joinedAt', userPut);
+    const epochCapture = permissionRouteSource.indexOf('const expectedJoinedAt = targetMember.member.joinedAt;', userPut);
     const setUser = permissionRouteSource.indexOf('await setGrantScope', userPut);
     const rolePut = permissionRouteSource.indexOf("permissionsRouter.put('/roles/:roleId/:scope'");
     const roleCheck = permissionRouteSource.indexOf('await resolveAssignableRole', rolePut);
@@ -93,8 +94,10 @@ describe('Dashboard-1V permission membership/data-integrity/race architecture', 
 
     expect(memberCheck).toBeGreaterThan(userPut);
     expect(joinedAtCheck).toBeGreaterThan(memberCheck);
-    expect(setUser).toBeGreaterThan(joinedAtCheck);
-    expect(permissionRouteSource.slice(setUser, setUser + 500)).toContain('targetMember.member.joinedAt');
+    expect(epochCapture).toBeGreaterThan(joinedAtCheck);
+    expect(setUser).toBeGreaterThan(epochCapture);
+    expect(permissionRouteSource.slice(setUser, setUser + 500)).toContain('expectedJoinedAt');
+    expect(permissionRouteSource).toContain('membershipEpochStillCurrent(scope.guildId, target, expectedJoinedAt)');
     expect(roleCheck).toBeGreaterThan(rolePut);
     expect(setRole).toBeGreaterThan(roleCheck);
     expect(permissionRouteSource).toContain('Ziel-User ist kein aktuelles Mitglied dieser Guild.');
