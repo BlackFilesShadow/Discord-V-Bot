@@ -4,6 +4,7 @@ import { requireDev } from '../../middleware/auth';
 import { tryGetDashboardClient } from '../../clientRegistry';
 import { logger } from '../../../utils/logger';
 import { redactAuditDetails } from '../../../utils/auditRedaction';
+import { rejectGlobalOnlyForRestrictedSession } from './devDiagnosticScope';
 
 export const devDiagnosticsContractRouter = Router();
 
@@ -81,6 +82,17 @@ devDiagnosticsContractRouter.use((req, res, next) => {
   next();
 });
 
+// Diese Legacy-Pass-Through-Endpunkte liefern ausschliesslich globale Runtime-
+// Daten. requireDev muss vor dem Scope-Guard laufen, damit kein ungepruefter
+// Session-Hint als Autoritaet dient. Bei globaler DevSession faellt die Route
+// unveraendert in den bestehenden devStatusRouter durch.
+for (const path of ['/system', '/ai-providers'] as const) {
+  devDiagnosticsContractRouter.get(path, requireDev, (req, res, next) => {
+    if (rejectGlobalOnlyForRestrictedSession(req, res)) return;
+    next();
+  });
+}
+
 interface TimedResult<T> {
   value: T | null;
   ms: number;
@@ -99,7 +111,9 @@ async function timed<T>(fn: () => Promise<T>): Promise<TimedResult<T>> {
 // Kanonischer DB-Diagnosevertrag: Teilausfaelle werden sichtbar als degraded
 // markiert. Insbesondere darf eine fehlgeschlagene Migration-Abfrage niemals
 // still wie "0 Migrationen" aussehen.
-devDiagnosticsContractRouter.get('/database', requireDev, async (_req, res) => {
+devDiagnosticsContractRouter.get('/database', requireDev, async (req, res) => {
+  if (rejectGlobalOnlyForRestrictedSession(req, res)) return;
+
   const ping = await timed(async () => {
     const rows = await prisma.$queryRawUnsafe<Array<{ ok: number }>>('SELECT 1 AS ok');
     return rows[0]?.ok === 1;
@@ -161,7 +175,9 @@ devDiagnosticsContractRouter.get('/database', requireDev, async (_req, res) => {
 // Offline/noch nicht gebundener Discord-Client liefert denselben vollstaendigen
 // Shape wie der Online-Pfad. Die UI darf bei einem Diagnosefehler nicht durch
 // fehlende Arrays/Objekte selbst crashen.
-devDiagnosticsContractRouter.get('/discord', requireDev, (_req, res) => {
+devDiagnosticsContractRouter.get('/discord', requireDev, (req, res) => {
+  if (rejectGlobalOnlyForRestrictedSession(req, res)) return;
+
   const client = tryGetDashboardClient();
   if (!client) {
     res.json({

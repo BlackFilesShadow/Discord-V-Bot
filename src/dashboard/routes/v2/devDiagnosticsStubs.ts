@@ -3,6 +3,7 @@ import prisma from '../../../database/prisma';
 import { errorCounter } from '../../../utils/metrics';
 import { queryLogRing } from '../../services/observability';
 import { redactAuditDetails } from '../../../utils/auditRedaction';
+import { rejectGlobalOnlyForRestrictedSession } from './devDiagnosticScope';
 
 export const devDiagnosticsStubsRouter = Router();
 
@@ -21,16 +22,6 @@ function redactSerializedMeta(meta: string | undefined): string | undefined {
   }
 }
 
-function rejectGlobalOnlyForRestrictedSession(req: import('express').Request, res: import('express').Response): boolean {
-  const restrict = req.devSession?.scope.guildIdRestrict ?? null;
-  if (!restrict) return false;
-  res.status(403).json({
-    error: 'Diese globale DEV-Diagnose ist in einer Guild-beschraenkten Session gesperrt.',
-    code: 'DEV_SCOPE_RESTRICTED',
-  });
-  return true;
-}
-
 function maskIp(ip: string | null): string | null {
   if (!ip) return ip;
   if (ip.includes('.')) {
@@ -43,6 +34,21 @@ function maskIp(ip: string | null): string | null {
   }
   return 'x';
 }
+
+// Die folgenden Legacy-Stubs lesen bzw. mutieren ausschliesslich globale
+// Prozess-/Runtime-Daten. Dieser Adapter ist im v2-Mount bereits hinter
+// requireDev + verifiziertem Step-Up, daher ist req.devSession hier die
+// serverseitig validierte Autoritaet. Bei globaler Session faellt die Anfrage
+// unveraendert in devStubsRouter durch.
+devDiagnosticsStubsRouter.use((req, res, next) => {
+  const path = req.path;
+  const globalOnly = path === '/server-stats'
+    || path === '/commands'
+    || path === '/debug'
+    || path.startsWith('/debug/');
+  if (globalOnly && rejectGlobalOnlyForRestrictedSession(req, res)) return;
+  next();
+});
 
 // Globale Log-Ring-Daten lassen sich nicht verlaesslich einer Guild zuordnen.
 // In einer guildIdRestrict-Session werden sie deshalb fail-closed verweigert.
@@ -172,9 +178,7 @@ devDiagnosticsStubsRouter.get('/security', async (req, res) => {
     bruteForceLast24h,
     loginFailLast24h,
     eventsByType: eventsByType.map(row => ({
-      eventType: row.eventType,
-      severity: row.severity,
-      count: row._count._all,
+      eventType: row.eventType, severity: row.severity, count: row._count._all,
     })),
     recentEvents: recentEvents.map(row => ({
       ...row,
