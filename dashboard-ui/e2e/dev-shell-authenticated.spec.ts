@@ -53,6 +53,12 @@ async function expectTouchTarget(locator: import('@playwright/test').Locator): P
   expect(box!.width).toBeGreaterThanOrEqual(44);
 }
 
+async function expectDevLocked(page: Page): Promise<void> {
+  await expect(
+    page.getByRole('main').getByText('DEV-Session erforderlich', { exact: true }),
+  ).toBeVisible();
+}
+
 test('normaler USER sieht keine DEV-Login-Affordance und lädt bei Direktzugriff kein DEV-Tool', async ({ page }) => {
   const stub = await stubDevShell(page, { user: NORMAL_USER, active: false });
   await page.goto('/dev');
@@ -66,7 +72,7 @@ test('DEVELOPER ohne bestätigte Session bleibt vor allen Tool-Reads gesperrt', 
   const stub = await stubDevShell(page, { active: false });
   await page.goto('/dev');
 
-  await expect(page.getByText('DEV-Session erforderlich')).toBeVisible();
+  await expectDevLocked(page);
   await expect(page.getByTestId('dev-login-panel')).toBeVisible();
   await expect.poll(stub.snapshotReads).toBe(0);
 });
@@ -76,7 +82,7 @@ test('staler optimistic Hint plus Status-503 fällt fail-closed zurück und lös
   const stub = await stubDevShell(page, { active: true, status: 503 });
   await page.goto('/dev');
 
-  await expect(page.getByText('DEV-Session erforderlich')).toBeVisible();
+  await expectDevLocked(page);
   await expect.poll(stub.snapshotReads).toBe(0);
   expect(await page.evaluate(() => sessionStorage.getItem('devSession.optimistic'))).toBeNull();
 });
@@ -90,7 +96,7 @@ test('bestätigte DEV-Session öffnet den Index, lädt das Tool und Logout sperr
   await expect.poll(stub.snapshotReads).toBeGreaterThan(0);
 
   await page.getByRole('button', { name: 'DEV-Logout' }).click();
-  await expect(page.getByText('DEV-Session erforderlich')).toBeVisible();
+  await expectDevLocked(page);
 });
 
 const VIEWPORTS = [320, 360, 375, 390, 430] as const;
