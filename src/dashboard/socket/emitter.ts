@@ -8,6 +8,7 @@
  */
 
 import type { Server as IOServer } from 'socket.io';
+import { redactAuditDetails } from '../../utils/auditRedaction';
 
 let io: IOServer | null = null;
 
@@ -103,8 +104,72 @@ export interface DevLogLine {
   meta?: Record<string, unknown>;
 }
 
-/** Pusht eine Log-Zeile in den /dev-Namespace. */
+const DEV_LOG_MAX_DEPTH = 8;
+const DEV_LOG_TRUNCATED = '[TRUNCATED]';
+const DEV_LOG_CIRCULAR = '[CIRCULAR]';
+
+/**
+ * Normalisiert beliebige Winston-Metadaten auf eine endliche JSON-Struktur.
+ * Dadurch koennen Error-/BigInt-/zyklische Werte den Security-Redactor oder
+ * den Socket-Broadcast nicht aushebeln bzw. durch Exceptions umgehen.
+ */
+function normalizeDevLogValue(value: unknown, seen: WeakSet<object>, depth: number): unknown {
+  if (depth > DEV_LOG_MAX_DEPTH) return DEV_LOG_TRUNCATED;
+  if (value === null || value === undefined) return value;
+  if (typeof value === 'string' || typeof value === 'number' || typeof value === 'boolean') return value;
+  if (typeof value === 'bigint') return value.toString();
+  if (typeof value === 'symbol' || typeof value === 'function') return String(value);
+  if (value instanceof Date) return value.toISOString();
+  if (value instanceof Error) {
+    return normalizeDevLogValue({ name: value.name, message: value.message, stack: value.stack }, seen, depth + 1);
+  }
+  if (typeof value !== 'object') return String(value);
+  if (seen.has(value)) return DEV_LOG_CIRCULAR;
+
+  seen.add(value);
+  try {
+    if (Array.isArray(value)) {
+      return value.map(item => normalizeDevLogValue(item, seen, depth + 1));
+    }
+    const out: Record<string, unknown> = {};
+    for (const [key, child] of Object.entries(value as Record<string, unknown>)) {
+      try {
+        out[key] = normalizeDevLogValue(child, seen, depth + 1);
+      } catch {
+        out[key] = DEV_LOG_TRUNCATED;
+      }
+    }
+    return out;
+  } finally {
+    seen.delete(value);
+  }
+}
+
+/**
+ * Kanonische fail-closed Redaction fuer den DEV-Live-Transport.
+ * Dieselbe Policy wie Audit/DB-Reads schuetzt freie Texte UND verschachtelte
+ * Metadaten, bevor irgendetwas den privilegierten Socket-Namespace verlaesst.
+ */
+export function sanitizeDevLogLine(line: DevLogLine): DevLogLine {
+  const normalized = normalizeDevLogValue(
+    { message: line.message, meta: line.meta },
+    new WeakSet<object>(),
+    0,
+  ) as { message?: unknown; meta?: unknown };
+  const redacted = redactAuditDetails(normalized) as { message?: unknown; meta?: unknown };
+
+  return {
+    ts: Number.isFinite(line.ts) ? line.ts : Date.now(),
+    level: typeof line.level === 'string' ? line.level.slice(0, 32) : 'info',
+    message: typeof redacted.message === 'string' ? redacted.message : '[REDACTED]',
+    meta: redacted.meta && typeof redacted.meta === 'object' && !Array.isArray(redacted.meta)
+      ? redacted.meta as Record<string, unknown>
+      : undefined,
+  };
+}
+
+/** Pusht ausschliesslich redigierte Log-Zeilen in den /dev-Namespace. */
 export function emitDevLog(line: DevLogLine): void {
   if (!io) return;
-  io.of('/dev').emit('log', line);
+  io.of('/dev').emit('log', sanitizeDevLogLine(line));
 }
