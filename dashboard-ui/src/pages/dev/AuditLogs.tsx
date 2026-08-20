@@ -2,7 +2,7 @@
  * Audit Logs — Dashboard-2E hardened global DEV audit search.
  * Backend: GET /api/v2/dev/observability/audit/search
  */
-import { useEffect, useState, useCallback } from 'react';
+import { useEffect, useRef, useState, useCallback } from 'react';
 import { AlertTriangle, ScrollText, Search, RefreshCw } from 'lucide-react';
 import { api } from '@/lib/api';
 import { useToast } from '@/lib/toast';
@@ -34,6 +34,12 @@ interface SearchResp {
   nextCursor: string | null;
 }
 
+interface AppliedFilters {
+  q: string;
+  category: string;
+  guildId: string;
+}
+
 const CATEGORIES = ['', 'AUTH', 'SECURITY', 'ADMIN', 'SYSTEM', 'CONFIG', 'GDPR', 'AI',
   'TICKET', 'NITRADO', 'ECONOMY', 'CASINO', 'DASHBOARD', 'WHITELIST', 'FACTION',
   'MODERATION', 'GIVEAWAY', 'LEVEL', 'ROLE', 'POLL', 'UPLOAD', 'DOWNLOAD',
@@ -46,19 +52,30 @@ export default function Page(): JSX.Element {
   const [data, setData] = useState<SearchResp | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const appliedFilters = useRef<AppliedFilters>({ q: '', category: '', guildId: '' });
+  const requestSeq = useRef(0);
   const toast = useToast();
 
   const search = useCallback(async (cursor?: string, append = false) => {
+    const requestId = ++requestSeq.current;
+    const filters = append
+      ? appliedFilters.current
+      : { q: q.trim(), category, guildId: guildId.trim() };
+
+    if (!append) appliedFilters.current = filters;
     setLoading(true);
     setError(null);
+
     try {
       const params = new URLSearchParams({ limit: '50' });
-      if (q.trim()) params.set('q', q.trim());
-      if (category) params.set('category', category);
-      if (guildId.trim()) params.set('guildId', guildId.trim());
+      if (filters.q) params.set('q', filters.q);
+      if (filters.category) params.set('category', filters.category);
+      if (filters.guildId) params.set('guildId', filters.guildId);
       if (cursor) params.set('cursor', cursor);
 
       const next = await api.get<SearchResp>(`/api/v2/dev/observability/audit/search?${params.toString()}`);
+      if (requestId !== requestSeq.current) return;
+
       setData(prev => append && prev
         ? {
             ...next,
@@ -66,6 +83,7 @@ export default function Page(): JSX.Element {
           }
         : next);
     } catch (e) {
+      if (requestId !== requestSeq.current) return;
       const message = (e as Error).message;
       // Privilegierte Audit-Snapshots werden nach einem Fehler nicht stale
       // weiter angezeigt. Das entspricht useDevStatus auf den Diagnose-Seiten.
@@ -73,7 +91,7 @@ export default function Page(): JSX.Element {
       setError(message);
       toast.push({ variant: 'danger', title: 'Suche fehlgeschlagen', desc: message });
     } finally {
-      setLoading(false);
+      if (requestId === requestSeq.current) setLoading(false);
     }
   }, [q, category, guildId, toast]);
 

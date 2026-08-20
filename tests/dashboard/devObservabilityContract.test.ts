@@ -121,12 +121,12 @@ describe('Dashboard-2E DEV observability contract', () => {
     expect(response.body.buckets).toEqual([{ key: 'User:findMany', count: 1 }]);
   });
 
-  it('redigiert Live-Log message und meta vor der Response', async () => {
+  it('redigiert Live-Log message und serialisierte meta vor der Response', async () => {
     mockQueryLogRing.mockReturnValue([{
       ts: 123,
       level: 'error',
       message: 'Authorization: Bearer very.secret.token',
-      meta: 'token=super-secret cookie=session-cookie',
+      meta: JSON.stringify({ token: 'super-secret', cookie: 'session-cookie', nested: { password: 'pw-123' } }),
     }]);
 
     const response = await request(appFor()).get('/api/v2/dev/observability/logs?n=20');
@@ -137,6 +137,7 @@ describe('Dashboard-2E DEV observability contract', () => {
     expect(serialized).not.toContain('very.secret.token');
     expect(serialized).not.toContain('super-secret');
     expect(serialized).not.toContain('session-cookie');
+    expect(serialized).not.toContain('pw-123');
   });
 
   it.each([

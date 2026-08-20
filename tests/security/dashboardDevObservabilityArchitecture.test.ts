@@ -23,7 +23,8 @@ describe('Dashboard-2E DEV observability architecture', () => {
   test('redigiert Live-Logs und Audit-Details vor Ausgabe', () => {
     expect(router).toContain("import { redactAuditDetails } from '../../../utils/auditRedaction';");
     expect(router).toContain('message: redactDiagnosticText(entry.message)');
-    expect(router).toContain("meta: entry.meta === undefined ? undefined : redactDiagnosticText(entry.meta)");
+    expect(router).toContain('meta: redactSerializedMeta(entry.meta)');
+    expect(router).toContain('JSON.stringify(redactAuditDetails(JSON.parse(meta)))');
     expect(router).toContain('details: redactAuditDetails(r.details)');
   });
 
@@ -44,10 +45,12 @@ describe('Dashboard-2E DEV observability architecture', () => {
     expect(auditUi).toContain('min-h-11');
   });
 
-  test('Audit-UI besitzt echte Cursor-Pagination', () => {
+  test('Audit-UI besitzt race-sichere echte Cursor-Pagination', () => {
     expect(auditUi).toContain('nextCursor: string | null');
     expect(auditUi).toContain("params.set('cursor', cursor)");
     expect(auditUi).toContain('entries: [...prev.entries, ...next.entries]');
+    expect(auditUi).toContain('appliedFilters.current');
+    expect(auditUi).toContain('requestId !== requestSeq.current');
     expect(auditUi).toContain('Mehr laden');
   });
 });

@@ -81,6 +81,15 @@ function redactDiagnosticText(value: unknown): string {
   return typeof redacted === 'string' ? redacted : String(redacted ?? '');
 }
 
+function redactSerializedMeta(meta: string | undefined): string | undefined {
+  if (!meta) return meta;
+  try {
+    return JSON.stringify(redactAuditDetails(JSON.parse(meta)));
+  } catch {
+    return redactDiagnosticText(meta);
+  }
+}
+
 devObservabilityRouter.get('/metrics/prisma', (_req, res) => {
   res.json({ buckets: getPrismaSnapshot(), generatedAt: new Date().toISOString() });
 });
@@ -102,7 +111,7 @@ devObservabilityRouter.get('/logs', (req, res) => {
     const entries = queryLogRing({ level, q, sinceTs: since, limit }).map(entry => ({
       ...entry,
       message: redactDiagnosticText(entry.message),
-      meta: entry.meta === undefined ? undefined : redactDiagnosticText(entry.meta),
+      meta: redactSerializedMeta(entry.meta),
     }));
     res.json({ entries, count: entries.length });
   } catch (error) {
