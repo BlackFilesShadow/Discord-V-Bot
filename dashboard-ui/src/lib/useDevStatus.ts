@@ -21,9 +21,9 @@ export function useDevStatus<T>(path: string, intervalMs = 10_000): PolledStatus
   // Backoff bei 429 / 5xx, damit das Polling sich selbst heilt statt
   // den Rate-Limit weiter zu fluten.
   const [backoffMs, setBackoffMs] = useState(0);
-  // Hard-Stop bei strukturellen Auth-Fehlern (401, 403 mit DEV_MFA_REQUIRED
-  // oder DEV_LOGIN_REQUIRED). Polling laeuft sonst gegen die Wand und
-  // erzeugt Toast-Spam + Server-Last.
+  // Hard-Stop bei Auth-/Scope-Verlust. Privilegierte Diagnose-Daten duerfen
+  // nach einer serverseitigen Ablehnung nicht als stale Snapshot sichtbar
+  // bleiben, selbst wenn der globale DEV-Status-Poll erst spaeter reagiert.
   const [stopped, setStopped] = useState(false);
 
   useEffect(() => {
@@ -43,7 +43,17 @@ export function useDevStatus<T>(path: string, intervalMs = 10_000): PolledStatus
         setError(e instanceof ApiError ? e.message : 'Fehler.');
         if (e instanceof ApiError) {
           const code = e.code ?? '';
-          if (e.status === 401 || code === 'DEV_LOGIN_REQUIRED' || code === 'DEV_MFA_REQUIRED' || code === 'DEV_IP_DENIED') {
+          const structuralDeny = e.status === 401
+            || e.status === 403
+            || code === 'DEV_LOGIN_REQUIRED'
+            || code === 'DEV_MFA_REQUIRED'
+            || code === 'DEV_IP_DENIED'
+            || code === 'DEV_IDENTITY_REQUIRED'
+            || code === 'DEV_SCOPE_RESTRICTED';
+          if (structuralDeny) {
+            setData(null);
+            setLastFetchedAt(null);
+            setBackoffMs(0);
             setStopped(true);
             return;
           }
