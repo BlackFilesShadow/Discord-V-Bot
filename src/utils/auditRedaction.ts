@@ -6,7 +6,10 @@ const AUTH_HEADER_RE = /\b(Authorization)\s*[:=]\s*(Bearer|Basic|Token)\s+[A-Za-
 const COOKIE_HEADER_RE = /\b(Cookie|Set-Cookie)\s*:\s*[^\r\n]+/gi;
 const BEARER_RE = /\b(Bearer)\s+[A-Za-z0-9._~+/=-]+/gi;
 const JWT_RE = /\beyJ[A-Za-z0-9_-]{5,}\.[A-Za-z0-9_-]{5,}\.[A-Za-z0-9_-]{5,}\b/g;
-const LABELED_SECRET_RE = /\b(token|secret|password|passwd|api[-_]?key|authorization|cookie|session|client[-_]?secret|refresh[-_]?token|access[-_]?token)\b\s*[:=]\s*(?:"[^"]*"|'[^']*'|[^\s,;]+)/gi;
+// Authorization/Cookie besitzen eigene strukturwahrende Header-Regeln oben.
+// Sie duerfen hier nicht ein zweites Mal als generisches Label gematcht werden,
+// sonst wuerde z. B. "Authorization: Basic [REDACTED]" erneut zerlegt.
+const LABELED_SECRET_RE = /\b(token|secret|password|passwd|api[-_]?key|session|client[-_]?secret|refresh[-_]?token|access[-_]?token)\b\s*[:=]\s*(?:"[^"]*"|'[^']*'|[^\s,;]+)/gi;
 
 function isAuditSecretKey(key: string): boolean {
   return AUDIT_SECRET_KEY_RE.test(key) || isSensitiveKey(key);
