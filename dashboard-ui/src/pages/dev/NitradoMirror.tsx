@@ -6,7 +6,7 @@
  * privilegierte DEV-Aktion mit Step-Up.
  */
 
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { Database, Play, RefreshCw, FolderOpen, FileText, AlertTriangle } from 'lucide-react';
 import { api, ApiError } from '@/lib/api';
 import { Card, CardHeader, CardTitle, CardDesc } from '@/components/ui/Card';
@@ -82,6 +82,15 @@ export default function NitradoMirror() {
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const [stepUpOpen, setStepUpOpen] = useState(false);
+  const snapshotRequestSeq = useRef(0);
+  const browseRequestSeq = useRef(0);
+  const fileRequestSeq = useRef(0);
+
+  const invalidateDerivedReads = () => {
+    snapshotRequestSeq.current += 1;
+    browseRequestSeq.current += 1;
+    fileRequestSeq.current += 1;
+  };
 
   useEffect(() => {
     api.get<{ connections: Conn[] }>('/api/v2/dev/nitrado-mirror/connections')
@@ -91,12 +100,15 @@ export default function NitradoMirror() {
         setError(null);
       })
       .catch(e => {
+        invalidateDerivedReads();
         setConns([]);
         setConnId('');
         setGuildId('');
         setConnsLoaded(true);
         setError(errorMessage(e, 'Connections-Laden fehlgeschlagen.'));
       });
+    // invalidateDerivedReads only mutates refs and is intentionally stable for this one-shot load.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   const selectedConn = useMemo(() => conns.find(c => c.id === connId), [conns, connId]);
@@ -131,12 +143,15 @@ export default function NitradoMirror() {
 
   const reloadSnaps = () => {
     if (!guildId || !connId) return;
+    const requestSeq = ++snapshotRequestSeq.current;
     api.get<{ snapshots: Snap[] }>(`/api/v2/dev/nitrado-mirror/snapshots?guildId=${guildId}&connId=${connId}`)
       .then(r => {
+        if (requestSeq !== snapshotRequestSeq.current) return;
         setSnaps(r.snapshots);
         setError(null);
       })
       .catch(e => {
+        if (requestSeq !== snapshotRequestSeq.current) return;
         setSnaps([]);
         setError(errorMessage(e, 'Snapshot-Liste konnte nicht geladen werden.'));
       });
@@ -168,6 +183,8 @@ export default function NitradoMirror() {
   }, [activeSnap, guildId]);
 
   const browse = (snapId: string, path: string) => {
+    const requestSeq = ++browseRequestSeq.current;
+    fileRequestSeq.current += 1;
     setBrowseSnapId(snapId);
     setDir(path);
     setEntries([]);
@@ -176,21 +193,30 @@ export default function NitradoMirror() {
     setFileMeta(null);
     setError(null);
     api.get<{ entries: Entry[] }>(`/api/v2/dev/nitrado-mirror/${snapId}/files?guildId=${guildId}&dir=${encodeURIComponent(path)}`)
-      .then(r => setEntries(r.entries))
+      .then(r => {
+        if (requestSeq !== browseRequestSeq.current) return;
+        setEntries(r.entries);
+      })
       .catch(e => {
+        if (requestSeq !== browseRequestSeq.current) return;
         setEntries([]);
         setError(errorMessage(e, 'Listing fehlgeschlagen.'));
       });
   };
 
   const openFile = (snapId: string, entry: Entry) => {
+    const requestSeq = ++fileRequestSeq.current;
     setFilePath(entry.path);
     setFileMeta(entry);
     setFileText(null);
     setError(null);
     api.get<{ meta: Entry; text: string | null; oversize: boolean }>(`/api/v2/dev/nitrado-mirror/${snapId}/file?guildId=${guildId}&path=${encodeURIComponent(entry.path)}`)
-      .then(r => setFileText(r.text ?? '(Binaer oder zu gross — kein Inline-Preview)'))
+      .then(r => {
+        if (requestSeq !== fileRequestSeq.current) return;
+        setFileText(r.text ?? '(Binaer oder zu gross — kein Inline-Preview)');
+      })
       .catch(e => {
+        if (requestSeq !== fileRequestSeq.current) return;
         setFilePath(null);
         setFileMeta(null);
         setFileText(null);
@@ -234,7 +260,10 @@ export default function NitradoMirror() {
           <select
             aria-label="Nitrado-Connection"
             value={connId}
-            onChange={e => setConnId(e.target.value)}
+            onChange={e => {
+              invalidateDerivedReads();
+              setConnId(e.target.value);
+            }}
             className="min-h-11 w-full min-w-0 bg-base text-text border border-border/40 rounded px-3 py-2 text-xs"
           >
             <option value="">— Nitrado-Connection waehlen —</option>
