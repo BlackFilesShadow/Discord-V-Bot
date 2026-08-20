@@ -27,6 +27,19 @@ async function json(route: Route, body: unknown, status = 200): Promise<void> {
 
 async function stubWhitelistDashboard(page: Page, options: StubOptions = {}) {
   const mutations: CapturedMutation[] = [];
+  let whitelistChannels: {
+    infoChannelId: string | null;
+    requestChannelId: string | null;
+    approveLogChannelId: string | null;
+    denyLogChannelId: string | null;
+    infoMessageId: string | null;
+  } = {
+    infoChannelId: null,
+    requestChannelId: null,
+    approveLogChannelId: null,
+    denyLogChannelId: null,
+    infoMessageId: null,
+  };
 
   await page.route('**/api/me', route => json(route, {
     user: { discordId: USER_ID, username: 'whitelist-e2e', avatar: null, role: 'DEVELOPER' },
@@ -96,13 +109,7 @@ async function stubWhitelistDashboard(page: Page, options: StubOptions = {}) {
       return;
     }
     if (path === `/api/v2/guilds/${GUILD_ID}/whitelist/channels` && method === 'GET') {
-      await json(route, {
-        infoChannelId: null,
-        requestChannelId: null,
-        approveLogChannelId: null,
-        denyLogChannelId: null,
-        infoMessageId: null,
-      });
+      await json(route, whitelistChannels);
       return;
     }
     if (path === `/api/v2/guilds/${GUILD_ID}/whitelist` && method === 'GET') {
@@ -169,13 +176,11 @@ async function stubWhitelistDashboard(page: Page, options: StubOptions = {}) {
       return;
     }
     if (path === `/api/v2/guilds/${GUILD_ID}/whitelist/channels` && method === 'PUT') {
+      const body = req.postDataJSON() as Omit<typeof whitelistChannels, 'infoMessageId'>;
+      whitelistChannels = { ...body, infoMessageId: 'message-1' };
       await json(route, {
         ok: true,
-        infoChannelId: INFO_CHANNEL,
-        requestChannelId: REQUEST_CHANNEL,
-        approveLogChannelId: APPROVE_CHANNEL,
-        denyLogChannelId: DENY_CHANNEL,
-        infoMessageId: 'message-1',
+        ...whitelistChannels,
         infoResult: { posted: true, updated: false, messageId: 'message-1' },
       });
       return;

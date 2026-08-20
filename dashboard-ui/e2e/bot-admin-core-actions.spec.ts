@@ -36,7 +36,7 @@ test('Appeal-Entscheidung sendet den exakten Intent und schließt erst nach Erfo
   });
 
   await page.goto('/bot-admin');
-  await page.getByRole('button', { name: 'Appeals' }).click();
+  await page.getByRole('button', { name: 'Appeals', exact: true }).click();
   await page.getByRole('button', { name: 'Entscheiden' }).click();
   await page.getByRole('combobox').last().selectOption('DENIED');
   await page.getByPlaceholder('Notiz (optional)').fill('Begründet abgelehnt');
@@ -58,7 +58,7 @@ test('Appeal-Backendfehler bleibt sichtbar und schließt den Entscheidungsdialog
   await page.route(`**/api/v2/bot-admin/appeals/${APPEAL_ID}/decision`, route => json(route, { error: 'Conflict' }, 409));
 
   await page.goto('/bot-admin');
-  await page.getByRole('button', { name: 'Appeals' }).click();
+  await page.getByRole('button', { name: 'Appeals', exact: true }).click();
   await page.getByRole('button', { name: 'Entscheiden' }).click();
   await page.getByRole('button', { name: 'Bestätigen' }).click();
 
@@ -78,7 +78,7 @@ test('Feedback-Update sendet Status und Admin-Notiz exakt', async ({ page }) => 
   });
 
   await page.goto('/bot-admin');
-  await page.getByRole('button', { name: 'Feedback' }).click();
+  await page.getByRole('button', { name: 'Feedback', exact: true }).click();
   await page.getByRole('button', { name: 'Bearbeiten' }).click();
   await page.getByRole('combobox').last().selectOption('RESOLVED');
   await page.getByPlaceholder('Admin-Notiz').fill('Behoben');

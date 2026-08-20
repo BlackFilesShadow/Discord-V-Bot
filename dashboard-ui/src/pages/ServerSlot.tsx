@@ -563,11 +563,12 @@ function WhitelistChannelsCard({ guildId, slot }: { guildId: string; slot: strin
     approveLogChannelId: null, denyLogChannelId: null,
     infoMessageId: null,
   });
+  const [draftDirty, setDraftDirty] = useState(false);
   const [msg, setMsg] = useState<{ ok: boolean; text: string } | null>(null);
 
   useEffect(() => {
-    if (cfg.data) setDraft(cfg.data);
-  }, [cfg.data]);
+    if (cfg.data && !draftDirty) setDraft(cfg.data);
+  }, [cfg.data, draftDirty]);
 
   const save = useMutation({
     mutationFn: (body: Omit<WhitelistChannelsState, 'infoMessageId'>) =>
@@ -578,6 +579,8 @@ function WhitelistChannelsCard({ guildId, slot }: { guildId: string; slot: strin
       const parts = ['Gespeichert.'];
       if (res.infoResult?.posted) parts.push('Info-Embed neu gepostet.');
       else if (res.infoResult?.updated) parts.push('Info-Embed aktualisiert.');
+      setDraft(res);
+      setDraftDirty(false);
       setMsg({ ok: true, text: parts.join(' ') });
       void qc.invalidateQueries({ queryKey: ['whitelist-channels', guildId, slot] });
     },
@@ -596,7 +599,12 @@ function WhitelistChannelsCard({ guildId, slot }: { guildId: string; slot: strin
   });
 
   const channelsForbidden = channels.isError;
+  const channelControlsDisabled = channelsForbidden || cfg.isFetching || cfg.isError;
   const opts = (channels.data?.channels ?? []).filter(c => c.type === 0 || c.type === 5); // Text + Announcement
+  const updateDraft = (patch: Partial<WhitelistChannelsState>) => {
+    setDraftDirty(true);
+    setDraft(prev => ({ ...prev, ...patch }));
+  };
 
   return (
     <Card>
@@ -606,43 +614,49 @@ function WhitelistChannelsCard({ guildId, slot }: { guildId: string; slot: strin
           Channel-Liste nicht verfuegbar (nur Owner kann Kanaele waehlen).
         </p>
       )}
+      {cfg.isLoading && (
+        <p className="text-xs text-muted mb-3">Whitelist-Kanal-Konfiguration wird geladen…</p>
+      )}
+      {cfg.isError && (
+        <p className="text-xs text-danger mb-3">Whitelist-Kanal-Konfiguration konnte nicht geladen werden.</p>
+      )}
       <div className="space-y-4">
         <ChannelPicker
           label="Info-Kanal (1× Command-Erklaerung als Embed)"
           help="Sobald ein Kanal gewaehlt wird, postet der Bot dort automatisch genau ein Embed mit der /whitelist-Anleitung. Wechselst du den Kanal, wird das Embed neu gepostet."
           value={draft.infoChannelId}
-          onChange={v => setDraft({ ...draft, infoChannelId: v })}
+          onChange={v => updateDraft({ infoChannelId: v })}
           options={opts}
-          forbidden={channelsForbidden}
+          forbidden={channelControlsDisabled}
         />
         <ChannelPicker
           label="Whitelist-Annahme-Kanal (Approval mit Buttons)"
           help="Hier landen Anfragen als Embed mit Annehmen/Ablehnen-Buttons. Nur Mitglieder mit 'Server verwalten' koennen entscheiden."
           value={draft.requestChannelId}
-          onChange={v => setDraft({ ...draft, requestChannelId: v })}
+          onChange={v => updateDraft({ requestChannelId: v })}
           options={opts}
-          forbidden={channelsForbidden}
+          forbidden={channelControlsDisabled}
         />
         <ChannelPicker
           label="Log-Kanal: ANGENOMMEN"
           help="Jede Annahme wird strikt nur in diesem Kanal protokolliert (mit Antragsteller, Spielername, Admin)."
           value={draft.approveLogChannelId}
-          onChange={v => setDraft({ ...draft, approveLogChannelId: v })}
+          onChange={v => updateDraft({ approveLogChannelId: v })}
           options={opts}
-          forbidden={channelsForbidden}
+          forbidden={channelControlsDisabled}
         />
         <ChannelPicker
           label="Log-Kanal: ABGELEHNT"
           help="Jede Ablehnung wird strikt nur in diesem Kanal protokolliert."
           value={draft.denyLogChannelId}
-          onChange={v => setDraft({ ...draft, denyLogChannelId: v })}
+          onChange={v => updateDraft({ denyLogChannelId: v })}
           options={opts}
-          forbidden={channelsForbidden}
+          forbidden={channelControlsDisabled}
         />
 
         <div className="flex flex-wrap gap-2">
           <Button
-            disabled={save.isPending || channelsForbidden}
+            disabled={save.isPending || channelControlsDisabled}
             onClick={() => { setMsg(null); save.mutate({
               infoChannelId: draft.infoChannelId,
               requestChannelId: draft.requestChannelId,
@@ -654,7 +668,7 @@ function WhitelistChannelsCard({ guildId, slot }: { guildId: string; slot: strin
           </Button>
           <Button
             variant="ghost"
-            disabled={repost.isPending || !draft.infoChannelId}
+            disabled={repost.isPending || channelControlsDisabled || !draft.infoChannelId}
             onClick={() => { setMsg(null); repost.mutate(); }}
           >
             Info-Embed neu posten
