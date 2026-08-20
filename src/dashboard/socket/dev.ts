@@ -9,6 +9,8 @@
  * Bestehende Sockets werden serverseitig fortlaufend revalidiert. Logout,
  * Force-Revoke, Ablauf oder Rollenentzug beendet den Stream fail-closed auch
  * dann, wenn der Browser seinen HTTP-Status noch nicht erneut gepollt hat.
+ * Ein Rollen-/Identitaetsverlust widerruft dabei die noch aktive Step-up-Session,
+ * damit eine spaetere Rollenwiederherstellung keine alte DEV-Session reaktiviert.
  *
  * Events:
  *  -> 'log'        redigierte Live-Log-Zeile (winston-Tap, gepuffert).
@@ -52,7 +54,10 @@ async function isDevSocketAccessCurrent(socket: Socket): Promise<boolean> {
     where: { id: data.devUserId },
     select: { role: true },
   });
-  if (!dbUser || !isGlobalDeveloperEligible(data.devUserDiscordId, dbUser.role)) return false;
+  if (!dbUser || !isGlobalDeveloperEligible(data.devUserDiscordId, dbUser.role)) {
+    await revokeActiveSessionsFailClosed(data.devUserDiscordId);
+    return false;
+  }
 
   const dev = await prisma.devSession.findFirst({
     where: {
@@ -162,7 +167,7 @@ export function registerDevNamespace(io: IOServer): void {
   // Heartbeat broadcast (laeuft solange Prozess lebt). Nur Sockets, die den
   // fortlaufenden Auth-Sweep ueberlebt haben, bleiben im Namespace.
   setInterval(() => {
-    if (ns.sockets.size === 0) return; // sparen wenn keiner zuhoert
+    if (ns.sockets.size === 0) return;
     const client = tryGetDashboardClient();
     const mem = process.memoryUsage();
     ns.emit('heartbeat', {

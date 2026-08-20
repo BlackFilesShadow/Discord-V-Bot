@@ -122,7 +122,7 @@ describe('DEV socket authorization lifecycle', () => {
     }));
   });
 
-  it('trennt einen bereits verbundenen Socket beim spaeteren Rollenentzug fail-closed', async () => {
+  it('trennt beim spaeteren Rollenentzug und widerruft die Step-up-Session gegen spaetere Wiederbelebung', async () => {
     mockUserFindUnique.mockResolvedValue({ role: 'USER' });
     const { ns } = setupNamespace();
     const socket = makeSocket();
@@ -136,9 +136,14 @@ describe('DEV socket authorization lifecycle', () => {
     jest.advanceTimersByTime(1_000);
     await Promise.resolve();
     await Promise.resolve();
+    await Promise.resolve();
 
     expect(socket.disconnect).toHaveBeenCalledWith(true);
     expect(mockDevSessionFindFirst).not.toHaveBeenCalled();
+    expect(mockDevSessionUpdateMany).toHaveBeenCalledWith(expect.objectContaining({
+      where: expect.objectContaining({ userDiscordId: 'owner-discord', revokedAt: null }),
+      data: expect.objectContaining({ revokedAt: expect.any(Date) }),
+    }));
   });
 
   it('trennt bei widerrufener/abgelaufener exakt gebundener Session und akzeptiert keine Ersatz-Session', async () => {
