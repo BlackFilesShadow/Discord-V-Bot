@@ -158,6 +158,13 @@ describe('Dashboard-1X/1Y mutation body contract', () => {
     expect(r.status).toBe(204);
   });
 
+  it('keeps the legacy export type contract exact-lowercase', async () => {
+    const upper = await request(app()).post(`${BASE}/export`).send({ type: 'USERS' });
+    const lower = await request(app()).post(`${BASE}/export`).send({ type: 'users' });
+    expect(upper.status).toBe(400);
+    expect(lower.status).toBe(204);
+  });
+
   it.each([
     { path: `/appeals/${APPEAL_ID}/decision`, body: { decision: 'DENIED', note: 'x'.repeat(1001) }, method: 'post', field: 'note' },
     { path: `/feedback/${FEEDBACK_ID}`, body: { status: 'RESOLVED', adminNote: 'x'.repeat(2001) }, method: 'patch', field: 'adminNote' },
