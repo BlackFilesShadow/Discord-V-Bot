@@ -1,7 +1,7 @@
 import express from 'express';
 import request from 'supertest';
 
-const knowledge = {
+const knowledgeMock = {
   addKnowledge: jest.fn(),
   exportKnowledge: jest.fn(),
   importKnowledge: jest.fn(),
@@ -14,7 +14,7 @@ const knowledge = {
   updateKnowledge: jest.fn(),
 };
 
-jest.mock('../../src/modules/ai/guildKnowledge', () => knowledge);
+jest.mock('../../src/modules/ai/guildKnowledge', () => knowledgeMock);
 jest.mock('../../src/modules/ai/knowledgeScope', () => ({ listKnowledgeGameservers: jest.fn().mockResolvedValue([]) }));
 jest.mock('../../src/database/prisma', () => ({
   __esModule: true,
@@ -48,7 +48,7 @@ function app() {
 
 beforeEach(() => {
   jest.clearAllMocks();
-  knowledge.setKnowledgeActive.mockResolvedValue({ ok: true, message: 'ok' });
+  knowledgeMock.setKnowledgeActive.mockResolvedValue({ ok: true, message: 'ok' });
 });
 
 describe('Dashboard-1X canonical knowledge toggle contract', () => {
@@ -59,7 +59,7 @@ describe('Dashboard-1X canonical knowledge toggle contract', () => {
 
     expect(r.status).toBe(400);
     expect(r.body.error).toMatch(/true oder false/);
-    expect(knowledge.setKnowledgeActive).not.toHaveBeenCalled();
+    expect(knowledgeMock.setKnowledgeActive).not.toHaveBeenCalled();
   });
 
   it.each([true, false])('preserves exact boolean active=%s', async active => {
@@ -68,6 +68,6 @@ describe('Dashboard-1X canonical knowledge toggle contract', () => {
       .send({ active });
 
     expect(r.status).toBe(200);
-    expect(knowledge.setKnowledgeActive).toHaveBeenCalledWith(GID, ID, active);
+    expect(knowledgeMock.setKnowledgeActive).toHaveBeenCalledWith(GID, ID, active);
   });
 });
