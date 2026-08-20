@@ -1,0 +1,259 @@
+name: Dashboard-1W Large File Patch
+
+on:
+  push:
+    branches: [fix/dashboard-1w-audit-log-contract]
+    paths: [.github/workflows/dashboard-1w-selfpatch.yml]
+
+permissions:
+  contents: write
+
+jobs:
+  patch:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          ref: fix/dashboard-1w-audit-log-contract
+          fetch-depth: 0
+
+      - name: Apply audited large-file changes
+        shell: bash
+        run: |
+          python3 <<'PY'
+          from pathlib import Path
+
+          server_path = Path('dashboard-ui/src/pages/Server.tsx')
+          server = server_path.read_text()
+          server = server.replace(
+              "import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';",
+              "import { useQuery, useMutation, useQueryClient, useInfiniteQuery } from '@tanstack/react-query';",
+          )
+          server = server.replace(
+              "  { key: 'audit', label: 'Audit-Log', icon: Activity },",
+              "  { key: 'audit', label: 'Audit-Log', icon: Activity, ownerOnly: true },",
+          )
+          server = server.replace(
+              "            {tab === 'audit' && guildId && (isOwner || hasFullAccess) && <AuditTab guildId={guildId} />}",
+              "            {tab === 'audit' && guildId && isOwner && <AuditTab guildId={guildId} />}",
+          )
+
+          marker = "// ============================================================================\n// Audit-Log (Owner-only)\n// ============================================================================\n"
+          if marker not in server:
+              raise SystemExit('Audit section marker missing')
+          prefix = server.split(marker, 1)[0]
+          audit_section = r'''// ============================================================================
+          // Audit-Log (Owner-only)
+          // ============================================================================
+
+          interface AuditEntry {
+            id: string;
+            action: string;
+            category: string;
+            createdAt: string;
+            actor: { discordId: string; username: string | null } | null;
+            target: { discordId: string; username: string | null } | null;
+            channelId: string | null;
+            details: unknown;
+          }
+
+          interface AuditPage {
+            entries: AuditEntry[];
+            limit: number;
+            hasMore: boolean;
+            nextCursor: string | null;
+          }
+
+          interface AuditCategoriesResp {
+            categories: { category: string; count: number }[];
+          }
+
+          function AuditTab({ guildId }: { guildId: string }) {
+            const [category, setCategory] = useState<string>('');
+            const [actionInput, setActionInput] = useState<string>('');
+            const [appliedAction, setAppliedAction] = useState<string>('');
+            const [open, setOpen] = useState<Record<string, boolean>>({});
+
+            const cats = useQuery({
+              queryKey: ['audit-cats', guildId],
+              queryFn: () => api.get<AuditCategoriesResp>(`/api/v2/guilds/${guildId}/audit/categories`),
+            });
+
+            const list = useInfiniteQuery({
+              queryKey: ['audit', guildId, category, appliedAction],
+              initialPageParam: null as string | null,
+              queryFn: ({ pageParam }) => {
+                const qs = new URLSearchParams();
+                qs.set('limit', '50');
+                if (category) qs.set('category', category);
+                if (appliedAction) qs.set('action', appliedAction);
+                if (pageParam) qs.set('cursor', pageParam);
+                return api.get<AuditPage>(`/api/v2/guilds/${guildId}/audit?${qs.toString()}`);
+              },
+              getNextPageParam: lastPage => lastPage.nextCursor ?? undefined,
+            });
+
+            const entries = list.data?.pages.flatMap(page => page.entries) ?? [];
+
+            function applySearch() {
+              const next = actionInput.trim();
+              setOpen({});
+              if (next === appliedAction) {
+                void list.refetch();
+              } else {
+                setAppliedAction(next);
+              }
+            }
+
+            return (
+              <div className="space-y-4">
+                <Card>
+                  <CardHeader>
+                    <CardTitle>Audit-Log</CardTitle>
+                    <CardDesc>Letzte Aktionen in diesem Server (nur fuer Owner sichtbar).</CardDesc>
+                  </CardHeader>
+                  <div className="grid sm:grid-cols-3 gap-3 mt-3">
+                    <div>
+                      <label className="block text-xs text-muted mb-1">Kategorie</label>
+                      <Select
+                        aria-label="Audit-Kategorie"
+                        value={category}
+                        onChange={e => { setCategory(e.target.value); setOpen({}); }}
+                      >
+                        <option value="">Alle</option>
+                        {cats.data?.categories.map(c => (
+                          <option key={c.category} value={c.category}>{c.category} ({c.count})</option>
+                        ))}
+                      </Select>
+                      {cats.isError && (
+                        <p className="text-danger text-xs mt-1">Kategorien konnten nicht geladen werden: {(cats.error as ApiError).message}</p>
+                      )}
+                    </div>
+                    <div className="sm:col-span-2">
+                      <label className="block text-xs text-muted mb-1">Aktion enthaelt</label>
+                      <form
+                        className="flex flex-col sm:flex-row gap-2"
+                        onSubmit={e => { e.preventDefault(); applySearch(); }}
+                      >
+                        <Input
+                          aria-label="Audit-Aktion"
+                          value={actionInput}
+                          onChange={e => setActionInput(e.target.value)}
+                          maxLength={120}
+                          placeholder="z.B. TICKET_TEMPLATE_"
+                        />
+                        <Button type="submit" disabled={list.isFetching && !list.isFetchingNextPage}>Suchen</Button>
+                      </form>
+                    </div>
+                  </div>
+                </Card>
+
+                {list.isLoading && entries.length === 0 && <div className="h-24 rounded-xl skeleton" />}
+                {list.isError && (
+                  <Card>
+                    <p className="text-danger text-sm">Fehler: {(list.error as ApiError).message}</p>
+                  </Card>
+                )}
+
+                {entries.length === 0 && !list.isLoading && !list.isError && (
+                  <Card><p className="text-muted text-sm">Keine Eintraege.</p></Card>
+                )}
+
+                {entries.length > 0 && (
+                  <Card>
+                    <ul className="divide-y divide-border">
+                      {entries.map(e => {
+                        const expanded = !!open[e.id];
+                        const date = new Date(e.createdAt);
+                        return (
+                          <li key={e.id} className="py-2 min-w-0">
+                            <button
+                              type="button"
+                              onClick={() => setOpen(current => ({ ...current, [e.id]: !current[e.id] }))}
+                              className="w-full min-w-0 text-left grid grid-cols-1 sm:grid-cols-[8rem_auto_minmax(0,1fr)_auto] gap-2 sm:gap-3 items-start hover:bg-bg-elev/40 rounded px-2 py-1 focus-ring"
+                            >
+                              <span className="text-xs text-muted tabular-nums">{date.toLocaleString()}</span>
+                              <span className="text-xs px-1.5 py-0.5 rounded bg-accent/15 text-accent w-fit">{e.category}</span>
+                              <span className="font-medium text-white text-sm min-w-0 break-words sm:truncate">{e.action}</span>
+                              <span className="text-xs text-muted min-w-0 break-words sm:truncate sm:max-w-[12rem]">
+                                {e.actor?.username ?? e.actor?.discordId ?? '—'}
+                              </span>
+                            </button>
+                            {expanded && (
+                              <pre className="mt-2 p-2 max-w-full rounded bg-bg/60 border border-border text-xs text-muted overflow-x-auto whitespace-pre-wrap break-words">
+          {JSON.stringify({ actor: e.actor, target: e.target, channelId: e.channelId, details: e.details }, null, 2)}
+                              </pre>
+                            )}
+                          </li>
+                        );
+                      })}
+                    </ul>
+                    {list.hasNextPage && (
+                      <div className="mt-3 flex justify-center">
+                        <Button
+                          onClick={() => { void list.fetchNextPage(); }}
+                          disabled={list.isFetchingNextPage}
+                          loading={list.isFetchingNextPage}
+                        >
+                          Mehr laden
+                        </Button>
+                      </div>
+                    )}
+                  </Card>
+                )}
+              </div>
+            );
+          }
+
+          // ============================================================================
+          // (Fraktionssystem-Verwaltung wurde nach components/FactionsTab.tsx ausgelagert.)
+          // ============================================================================
+          '''
+          # Dedent the literal, which is indented only to keep this workflow readable.
+          import textwrap
+          server_path.write_text(prefix + textwrap.dedent(audit_section))
+
+          logger_path = Path('src/utils/logger.ts')
+          logger = logger_path.read_text()
+          import_line = "import { redactAuditDetails } from './auditRedaction';\n"
+          if import_line not in logger:
+              anchor = "import { Writable } from 'node:stream';\n"
+              if anchor not in logger:
+                  raise SystemExit('logger import anchor missing')
+              logger = logger.replace(anchor, anchor + import_line, 1)
+          old_details = "      details: (meta.details ?? null) as never,"
+          new_details = "      details: redactAuditDetails(meta.details ?? null) as never,"
+          if old_details not in logger and new_details not in logger:
+              raise SystemExit('logger details anchor missing')
+          logger = logger.replace(old_details, new_details, 1)
+          logger_path.write_text(logger)
+
+          schema_path = Path('prisma/schema.prisma')
+          schema = schema_path.read_text()
+          start = schema.index('model AuditLog {')
+          end = schema.index('\n}\n\nenum AuditCategory', start)
+          block = schema[start:end]
+          index1 = '  @@index([guildId, createdAt, id])'
+          index2 = '  @@index([guildId, category, createdAt, id])'
+          if index1 not in block:
+              anchor = '  @@index([createdAt])'
+              if anchor not in block:
+                  raise SystemExit('AuditLog createdAt index anchor missing')
+              block = block.replace(anchor, anchor + '\n' + index1 + '\n' + index2, 1)
+              schema = schema[:start] + block + schema[end:]
+          schema_path.write_text(schema)
+          PY
+
+      - name: Commit patched production files
+        shell: bash
+        run: |
+          set -euo pipefail
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add dashboard-ui/src/pages/Server.tsx src/utils/logger.ts prisma/schema.prisma
+          if git diff --cached --quiet; then
+            echo "No patch changes required"
+            exit 0
+          fi
+          git commit -m "Dashboard-1W: align audit UI persistence and indexes"
+          git push origin HEAD:fix/dashboard-1w-audit-log-contract
