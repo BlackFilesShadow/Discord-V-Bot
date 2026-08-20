@@ -13,6 +13,7 @@ import { PinnedToolsProvider } from './lib/pinnedTools';
 import { RecentActionsProvider } from './lib/recentActions';
 import './index.css';
 import './theme.css';
+import './botAdmin.mobile.css';
 
 const qc = new QueryClient({
   defaultOptions: { queries: { retry: 1, refetchOnWindowFocus: false, staleTime: 30_000 } },
