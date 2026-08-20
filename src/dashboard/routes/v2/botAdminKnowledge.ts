@@ -203,7 +203,7 @@ botAdminKnowledgeRouter.delete('/:id', async (req, res) => {
 botAdminKnowledgeRouter.get('/export', async (req, res) => {
   const guildId = reqGuildId(req, res); if (!guildId) return;
   const items = await exportKnowledge(guildId);
-  audit(req, 'BOTADMIN_KNOWLEDGE_EXPORT', guildId, { count: items.length }, { category: 'ADMIN', guildId });
+  audit(req, 'BOTADMIN_KNOWLEDGE_EXPORT', guildId, { count: items.length });
   res.json({ guildId, exportedAt: new Date().toISOString(), items });
 });
 
