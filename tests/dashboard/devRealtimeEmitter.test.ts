@@ -8,29 +8,29 @@ import {
 describe('DEV realtime log transport', () => {
   afterEach(() => setIo(null));
 
-  it('redigiert Secrets in Freitext und verschachtelten Metadaten vor dem Broadcast', () => {
+  it('redigiert sensible Werte in Freitext und verschachtelten Metadaten vor dem Broadcast', () => {
     const safe = sanitizeDevLogLine({
       ts: 123,
       level: 'info',
-      message: 'Authorization: Bearer live-secret-token',
+      message: 'Authorization: Bearer example-marker',
       meta: {
-        password: 'super-secret-password',
+        password: 'pw-marker',
         nested: {
-          token: 'abc123',
-          note: 'access_token=another-secret',
+          token: 'token-marker',
+          note: 'access_token=value-marker',
         },
       },
     });
 
     const serialized = JSON.stringify(safe);
-    expect(serialized).not.toContain('live-secret-token');
-    expect(serialized).not.toContain('super-secret-password');
-    expect(serialized).not.toContain('abc123');
-    expect(serialized).not.toContain('another-secret');
+    expect(serialized).not.toContain('example-marker');
+    expect(serialized).not.toContain('pw-marker');
+    expect(serialized).not.toContain('token-marker');
+    expect(serialized).not.toContain('value-marker');
     expect(serialized).toContain('[REDACTED]');
   });
 
-  it('bleibt bei zyklischen/BigInt-Metadaten serialisierbar und fail-closed', () => {
+  it('bleibt bei zyklischen und BigInt-Metadaten serialisierbar und fail-closed', () => {
     const cyclic: Record<string, unknown> = { count: 12n };
     cyclic.self = cyclic;
 
@@ -46,6 +46,27 @@ describe('DEV realtime log transport', () => {
     expect(JSON.stringify(safe)).toContain('12');
   });
 
+  it('laesst weder unbekannte Level noch werfende Getter den Transport umgehen', () => {
+    const hostile: Record<string, unknown> = {};
+    Object.defineProperty(hostile, 'field', {
+      enumerable: true,
+      get: () => { throw new Error('getter-marker'); },
+    });
+
+    const safe = sanitizeDevLogLine({
+      ts: 654,
+      level: 'unknown-level-marker',
+      message: 'safe message',
+      meta: { hostile },
+    });
+
+    const serialized = JSON.stringify(safe);
+    expect(safe.level).toBe('info');
+    expect(serialized).not.toContain('unknown-level-marker');
+    expect(serialized).not.toContain('getter-marker');
+    expect(serialized).toContain('[TRUNCATED]');
+  });
+
   it('emittiert niemals die rohe Log-Zeile', () => {
     const emit = jest.fn();
     const of = jest.fn(() => ({ emit }));
@@ -54,15 +75,15 @@ describe('DEV realtime log transport', () => {
     emitDevLog({
       ts: 789,
       level: 'warn',
-      message: 'password=do-not-leak',
-      meta: { authorization: 'Bearer also-do-not-leak' },
+      message: 'password=broadcast-marker',
+      meta: { authorization: 'Bearer auth-marker' },
     });
 
     expect(of).toHaveBeenCalledWith('/dev');
     expect(emit).toHaveBeenCalledTimes(1);
     const [, payload] = emit.mock.calls[0] as [string, unknown];
     const serialized = JSON.stringify(payload);
-    expect(serialized).not.toContain('do-not-leak');
-    expect(serialized).not.toContain('also-do-not-leak');
+    expect(serialized).not.toContain('broadcast-marker');
+    expect(serialized).not.toContain('auth-marker');
   });
 });
