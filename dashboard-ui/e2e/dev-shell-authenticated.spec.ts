@@ -52,8 +52,11 @@ async function expectTouchTarget(locator: import('@playwright/test').Locator): P
   await expect(locator).toBeVisible();
   const box = await locator.boundingBox();
   expect(box).not.toBeNull();
-  expect(box!.height).toBeGreaterThanOrEqual(44);
-  expect(box!.width).toBeGreaterThanOrEqual(44);
+  // Chromium can expose a computed 44 CSS-px target as 43.99998... because
+  // of device-scale floating point conversion. This tolerance still rejects
+  // any materially sub-44px control while avoiding a false negative at 44px.
+  expect(box!.height).toBeGreaterThanOrEqual(43.99);
+  expect(box!.width).toBeGreaterThanOrEqual(43.99);
 }
 
 async function expectDevLocked(page: Page): Promise<void> {
@@ -66,6 +69,19 @@ async function expectNoDevAccess(page: Page): Promise<void> {
   await expect(
     page.getByRole('main').getByText('Kein Zugriff', { exact: true }),
   ).toBeVisible();
+}
+
+async function visibleDevNavigation(page: Page) {
+  const menu = page.getByRole('button', { name: 'Menue oeffnen' });
+  if (await menu.isVisible()) {
+    await menu.click();
+    const dialog = page.getByRole('dialog', { name: 'Navigation' });
+    await expect(dialog).toBeVisible();
+    return dialog.getByRole('navigation', { name: 'DEV Tools' });
+  }
+  const nav = page.getByRole('navigation', { name: 'DEV Tools' });
+  await expect(nav).toBeVisible();
+  return nav;
 }
 
 test('normaler USER sieht keine DEV-Login-Affordance und lädt bei Direktzugriff kein DEV-Tool', async ({ page }) => {
@@ -114,7 +130,8 @@ test('bestätigte DEV-Session öffnet den Index, lädt das Tool und Logout sperr
   await expect(page.getByText('online', { exact: true })).toBeVisible();
   await expect.poll(stub.snapshotReads).toBeGreaterThan(0);
 
-  await page.getByRole('button', { name: 'DEV-Logout' }).click();
+  const nav = await visibleDevNavigation(page);
+  await nav.getByRole('button', { name: 'DEV-Logout' }).click();
   await expectDevLocked(page);
 });
 
@@ -127,10 +144,7 @@ for (const width of VIEWPORTS) {
     await page.goto('/dev');
     await expect(page).toHaveURL(/\/dev\/bot-status$/);
 
-    await page.getByRole('button', { name: 'Menue oeffnen' }).click();
-    const dialog = page.getByRole('dialog', { name: 'Navigation' });
-    const nav = dialog.getByRole('navigation', { name: 'DEV Tools' });
-    await expect(nav).toBeVisible();
+    const nav = await visibleDevNavigation(page);
 
     const commandCenter = nav.getByRole('link', { name: 'DEV Command Center', exact: true });
     const secureExport = nav.getByRole('link', { name: 'Sichere Exporte', exact: true });
