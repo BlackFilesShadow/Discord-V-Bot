@@ -173,10 +173,10 @@ function redactSecrets(input: Record<string, unknown>): Record<string, unknown> 
   for (const [k, v] of Object.entries(input)) {
     if (SECRET_KEY_RE.test(k)) {
       out[k] = '[REDACTED]';
-    } else if (v && typeof v === 'object' && !Array.isArray(v) && !(v instanceof Date)) {
-      out[k] = redactSecrets(v as Record<string, unknown>);
     } else {
-      out[k] = v;
+      // Gleiche rekursive/free-text Policy wie DB-Persistenz und Dashboard-Read.
+      // Arrays und verschachtelte Strings koennen den Audit-Dateipfad nicht umgehen.
+      out[k] = redactAuditDetails(v, k);
     }
   }
   return out;
