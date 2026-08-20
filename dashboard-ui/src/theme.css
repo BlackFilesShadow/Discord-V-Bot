@@ -237,11 +237,14 @@ html[data-theme='ice'] .modal-dialog {
     border-radius: 0.85rem;
   }
 
+  /* Mobile controls must keep a true 44px minimum hit area. 42px here had
+     higher specificity than Tailwind's min-h-11 utilities for native inputs
+     and caused real sub-44px touch targets in the authenticated mobile matrix. */
   button,
   [role='button'],
   select,
   input:not([type='checkbox']):not([type='radio']) {
-    min-height: 42px;
+    min-height: 44px;
   }
 }
 

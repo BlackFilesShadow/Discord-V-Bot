@@ -1,22 +1,8 @@
 /**
- * Observability Console — P3.
- *
- * Vereint vier Live-Snapshots fuer DEVELOPER:
- *   - Prisma-Latenz (p50/p95/p99 + ErrorRate je model:action)
- *   - AI-Calls (p50/p95/p99 + ErrorRate je provider:action)
- *   - Live-Logs (Ring-Buffer mit Filter level/q/since)
- *   - Backup-Status (Verzeichnis-Snapshot)
- *
- * Backend:
- *   GET /api/v2/dev/observability/metrics/prisma
- *   GET /api/v2/dev/observability/metrics/ai
- *   GET /api/v2/dev/observability/logs?level=&q=&since=&n=
- *   GET /api/v2/dev/observability/backup/status
- *
- * Polling: alle 10s. Logs zusaetzlich live nachladbar via "Refresh".
+ * Observability Console — Dashboard-2E hardened UI.
  */
 import { useMemo, useState } from 'react';
-import { Activity, Brain, Database, HardDrive, RefreshCw, Search } from 'lucide-react';
+import { Activity, AlertTriangle, Brain, Database, HardDrive, RefreshCw, Search } from 'lucide-react';
 import { useDevStatus } from '@/lib/useDevStatus';
 import { Card, CardHeader, CardTitle, CardDesc } from '@/components/ui/Card';
 import { Button } from '@/components/ui/Button';
@@ -107,6 +93,15 @@ function ErrorRateBadge({ rate }: { rate: number }): JSX.Element {
   return <Badge variant="danger">{pct}%</Badge>;
 }
 
+function QueryError({ message }: { message: string }): JSX.Element {
+  return (
+    <div role="alert" className="flex min-w-0 gap-2 text-sm text-danger">
+      <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0" />
+      <span className="break-words">{message}</span>
+    </div>
+  );
+}
+
 export default function Observability(): JSX.Element {
   const [logLevel, setLogLevel] = useState('');
   const [logQ, setLogQ] = useState('');
@@ -134,7 +129,7 @@ export default function Observability(): JSX.Element {
   };
 
   const prismaCols: Column<PrismaBucket>[] = useMemo(() => [
-    { id: 'key', header: 'model:action', cell: (r: PrismaBucket) => <span className="font-mono">{r.key}</span> },
+    { id: 'key', header: 'model:action', cell: (r: PrismaBucket) => <span className="font-mono break-all">{r.key}</span> },
     { id: 'count', header: 'count', numeric: true, cell: (r: PrismaBucket) => r.count },
     { id: 'p50', header: 'p50', numeric: true, cell: (r: PrismaBucket) => fmtMs(r.p50) },
     { id: 'p95', header: 'p95', numeric: true, cell: (r: PrismaBucket) => fmtMs(r.p95) },
@@ -143,8 +138,8 @@ export default function Observability(): JSX.Element {
   ], []);
 
   const aiCols: Column<AiBucket>[] = useMemo(() => [
-    { id: 'provider', header: 'provider', cell: (r: AiBucket) => <span className="font-mono">{r.provider}</span> },
-    { id: 'action', header: 'action', cell: (r: AiBucket) => <span className="font-mono">{r.action}</span> },
+    { id: 'provider', header: 'provider', cell: (r: AiBucket) => <span className="font-mono break-all">{r.provider}</span> },
+    { id: 'action', header: 'action', cell: (r: AiBucket) => <span className="font-mono break-all">{r.action}</span> },
     { id: 'count', header: 'count', numeric: true, cell: (r: AiBucket) => r.count },
     { id: 'p50', header: 'p50', numeric: true, cell: (r: AiBucket) => fmtMs(r.p50) },
     { id: 'p95', header: 'p95', numeric: true, cell: (r: AiBucket) => fmtMs(r.p95) },
@@ -153,20 +148,20 @@ export default function Observability(): JSX.Element {
   ], []);
 
   const backupCols: Column<BackupEntry>[] = useMemo(() => [
-    { id: 'name', header: 'Name', cell: (r: BackupEntry) => <span className="font-mono">{r.name}</span> },
+    { id: 'name', header: 'Name', cell: (r: BackupEntry) => <span className="font-mono break-all">{r.name}</span> },
     { id: 'files', header: 'Dateien', numeric: true, cell: (r: BackupEntry) => r.files },
     { id: 'bytes', header: 'Groesse', numeric: true, cell: (r: BackupEntry) => fmtBytes(r.bytes) },
     { id: 'age', header: 'Alter', numeric: true, cell: (r: BackupEntry) => fmtAge(r.ageMs) },
   ], []);
 
   return (
-    <div className="space-y-6">
+    <div className="space-y-6 min-w-0">
       <SectionHeader
         title="Observability"
         desc="Prisma-Latenz, AI-Tracing, Live-Logs und Backup-Status (P3)."
         icon={<Activity className="h-5 w-5" />}
         actions={
-          <Button variant="ghost" onClick={() => void reload()} disabled={loading}>
+          <Button variant="ghost" onClick={reload} disabled={loading}>
             <RefreshCw className="h-4 w-4 mr-1" /> Refresh
           </Button>
         }
@@ -177,10 +172,11 @@ export default function Observability(): JSX.Element {
           <CardTitle><Database className="h-4 w-4 inline mr-2" />Prisma-Latenz</CardTitle>
           <CardDesc>Letzte 500 Samples pro model:action.</CardDesc>
         </CardHeader>
-        <div className="p-4">
-          {!prisma ? <Skeleton className="h-32" />
-            : prisma.length === 0 ? <EmptyState title="Noch keine Queries gemessen" />
-              : <DataTable rows={prisma} columns={prismaCols} rowKey={r => r.key} />}
+        <div className="p-4 min-w-0">
+          {prismaQ.error ? <QueryError message={prismaQ.error} />
+            : !prisma ? <Skeleton className="h-32" />
+              : prisma.length === 0 ? <EmptyState title="Noch keine Queries gemessen" />
+                : <DataTable rows={prisma} columns={prismaCols} rowKey={r => r.key} />}
         </div>
       </Card>
 
@@ -189,10 +185,11 @@ export default function Observability(): JSX.Element {
           <CardTitle><Brain className="h-4 w-4 inline mr-2" />AI-Calls</CardTitle>
           <CardDesc>Latenz + Erfolgsrate aller getraceten AI-Aufrufe.</CardDesc>
         </CardHeader>
-        <div className="p-4">
-          {!ai ? <Skeleton className="h-32" />
-            : ai.length === 0 ? <EmptyState title="Noch keine AI-Aufrufe" desc="Wrappe Calls mit traceAiCall()." />
-              : <DataTable rows={ai} columns={aiCols} rowKey={r => `${r.provider}:${r.action}`} />}
+        <div className="p-4 min-w-0">
+          {aiQ.error ? <QueryError message={aiQ.error} />
+            : !ai ? <Skeleton className="h-32" />
+              : ai.length === 0 ? <EmptyState title="Noch keine AI-Aufrufe" desc="Wrappe Calls mit traceAiCall()." />
+                : <DataTable rows={ai} columns={aiCols} rowKey={r => `${r.provider}:${r.action}`} />}
         </div>
       </Card>
 
@@ -201,12 +198,13 @@ export default function Observability(): JSX.Element {
           <CardTitle><Search className="h-4 w-4 inline mr-2" />Live-Logs</CardTitle>
           <CardDesc>In-Memory-Ring der letzten 1000 Eintraege, Filter case-insensitive.</CardDesc>
         </CardHeader>
-        <div className="p-4 space-y-3">
-          <div className="flex flex-wrap gap-2">
+        <div className="p-4 space-y-3 min-w-0">
+          <div className="flex flex-wrap gap-2 min-w-0">
             <select
+              aria-label="Log-Level"
               value={logLevel}
               onChange={e => setLogLevel(e.target.value)}
-              className="rounded border border-zinc-700 bg-zinc-900 px-2 py-1 text-sm"
+              className="min-h-11 rounded border border-zinc-700 bg-zinc-900 px-3 py-2 text-sm"
             >
               <option value="">alle Level</option>
               <option value="error">error</option>
@@ -215,32 +213,34 @@ export default function Observability(): JSX.Element {
               <option value="debug">debug</option>
             </select>
             <input
+              aria-label="Live-Logs durchsuchen"
               type="text"
               value={logQ}
               onChange={e => setLogQ(e.target.value)}
               placeholder="Substring-Suche (message + meta)"
-              className="flex-1 min-w-[200px] rounded border border-zinc-700 bg-zinc-900 px-2 py-1 text-sm"
+              className="min-h-11 min-w-[200px] flex-1 rounded border border-zinc-700 bg-zinc-900 px-3 py-2 text-sm"
             />
           </div>
-          {!logs ? <Skeleton className="h-48" />
-            : logs.length === 0 ? <EmptyState title="Keine Treffer" />
-              : (
-                <div className="max-h-96 overflow-auto rounded border border-zinc-800 bg-zinc-950 font-mono text-xs">
-                  {logs.map((l, i) => (
-                    <div key={i} className="border-b border-zinc-900 px-2 py-1">
-                      <span className="text-zinc-500">{new Date(l.ts).toISOString().slice(11, 23)} </span>
-                      <span className={
-                        l.level === 'error' ? 'text-red-400'
-                          : l.level === 'warn' ? 'text-amber-400'
-                            : l.level === 'info' ? 'text-emerald-400'
-                              : 'text-zinc-400'
-                      }>{l.level.padEnd(5)} </span>
-                      <span className="text-zinc-200">{l.message}</span>
-                      {l.meta && <span className="text-zinc-500"> {l.meta}</span>}
-                    </div>
-                  ))}
-                </div>
-              )}
+          {logsQ.error ? <QueryError message={logsQ.error} />
+            : !logs ? <Skeleton className="h-48" />
+              : logs.length === 0 ? <EmptyState title="Keine Treffer" />
+                : (
+                  <div className="max-h-96 overflow-auto rounded border border-zinc-800 bg-zinc-950 font-mono text-xs">
+                    {logs.map((l, i) => (
+                      <div key={`${l.ts}:${i}`} className="border-b border-zinc-900 px-2 py-1 whitespace-pre-wrap break-words">
+                        <span className="text-zinc-500">{new Date(l.ts).toISOString().slice(11, 23)} </span>
+                        <span className={
+                          l.level === 'error' ? 'text-red-400'
+                            : l.level === 'warn' ? 'text-amber-400'
+                              : l.level === 'info' ? 'text-emerald-400'
+                                : 'text-zinc-400'
+                        }>{l.level.padEnd(5)} </span>
+                        <span className="text-zinc-200">{l.message}</span>
+                        {l.meta && <span className="text-zinc-500"> {l.meta}</span>}
+                      </div>
+                    ))}
+                  </div>
+                )}
         </div>
       </Card>
 
@@ -249,18 +249,19 @@ export default function Observability(): JSX.Element {
           <CardTitle><HardDrive className="h-4 w-4 inline mr-2" />Backup-Status</CardTitle>
           <CardDesc>Verzeichnis-Snapshot (sortiert nach mtime).</CardDesc>
         </CardHeader>
-        <div className="p-4">
-          {!backup ? <Skeleton className="h-32" />
-            : !backup.exists ? <EmptyState title="Backup-Verzeichnis fehlt" desc={backup.dir} />
-              : backup.count === 0 ? <EmptyState title="Noch keine Backups" desc={backup.dir} />
-                : (
-                  <>
-                    <div className="mb-3 text-sm text-zinc-400">
-                      <span className="font-mono">{backup.dir}</span> · {backup.count} Backups · {fmtBytes(backup.totalBytes)} gesamt
-                    </div>
-                    <DataTable rows={backup.entries} columns={backupCols} rowKey={r => r.name} />
-                  </>
-                )}
+        <div className="p-4 min-w-0">
+          {backupQ.error ? <QueryError message={backupQ.error} />
+            : !backup ? <Skeleton className="h-32" />
+              : !backup.exists ? <EmptyState title="Backup-Verzeichnis fehlt" desc={backup.dir} />
+                : backup.count === 0 ? <EmptyState title="Noch keine Backups" desc={backup.dir} />
+                  : (
+                    <>
+                      <div className="mb-3 text-sm text-zinc-400 break-all">
+                        <span className="font-mono">{backup.dir}</span> · {backup.count} Backups · {fmtBytes(backup.totalBytes)} gesamt
+                      </div>
+                      <DataTable rows={backup.entries} columns={backupCols} rowKey={r => r.name} />
+                    </>
+                  )}
         </div>
       </Card>
     </div>
