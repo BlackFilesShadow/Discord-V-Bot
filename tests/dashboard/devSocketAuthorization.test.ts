@@ -133,10 +133,10 @@ describe('DEV socket authorization lifecycle', () => {
     };
     ns.sockets.set(socket.id, socket);
 
-    jest.advanceTimersByTime(1_000);
-    await Promise.resolve();
-    await Promise.resolve();
-    await Promise.resolve();
+    // Der Auth-Sweep ist absichtlich async (DB-Role -> Session-Revoke -> Disconnect).
+    // Die async Fake-Timer-API wartet auf diese Promise-Kette und testet damit
+    // den tatsächlichen Lifecycle statt auf eine zufällige Microtask-Anzahl.
+    await jest.advanceTimersByTimeAsync(1_000);
 
     expect(socket.disconnect).toHaveBeenCalledWith(true);
     expect(mockDevSessionFindFirst).not.toHaveBeenCalled();
@@ -158,10 +158,7 @@ describe('DEV socket authorization lifecycle', () => {
     };
     ns.sockets.set(socket.id, socket);
 
-    jest.advanceTimersByTime(1_000);
-    await Promise.resolve();
-    await Promise.resolve();
-    await Promise.resolve();
+    await jest.advanceTimersByTimeAsync(1_000);
 
     expect(mockDevSessionFindFirst).toHaveBeenCalledWith(expect.objectContaining({
       where: expect.objectContaining({ id: 'old-session', userDiscordId: 'owner-discord', revokedAt: null }),
