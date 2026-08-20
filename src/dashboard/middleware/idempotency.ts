@@ -16,6 +16,7 @@ import type { Request, Response, NextFunction } from 'express';
 import crypto from 'crypto';
 import prisma from '../../database/prisma';
 import { logger } from '../../utils/logger';
+import { enforceDevMutationRequestIntegrity } from './devRequestIntegrity';
 
 const TTL_MS = 60 * 60 * 1000;
 // Ein PROCESSING-Claim aelter als dies gilt als verwaist (Crash) und darf
@@ -27,6 +28,11 @@ function hashBody(body: unknown): string {
 }
 
 export async function idempotency(req: Request, res: Response, next: NextFunction): Promise<void> {
+  // Dashboard-2A: DEV-Mutationen werden vor jedem Idempotency-Fast-Path
+  // same-origin validiert. So koennen auch Requests ohne Key oder Replay-Hits
+  // die CSRF-/Origin-Grenze nicht umgehen.
+  if (!enforceDevMutationRequestIntegrity(req, res)) return;
+
   const key = req.header('x-idempotency-key');
   if (!key || !req.auth) { next(); return; }
   const trimmed = key.trim();
