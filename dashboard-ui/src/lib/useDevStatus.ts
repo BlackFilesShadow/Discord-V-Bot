@@ -40,6 +40,11 @@ export function useDevStatus<T>(path: string, intervalMs = 10_000): PolledStatus
       })
       .catch(e => {
         if (cancelled) return;
+        // Diagnose-Snapshots sind privilegiert und zeitbezogen. Nach jedem
+        // fehlgeschlagenen Read wird der bisherige Snapshot verworfen, damit
+        // die UI einen Fehler nicht als weiterhin aktuellen Zustand verkauft.
+        setData(null);
+        setLastFetchedAt(null);
         setError(e instanceof ApiError ? e.message : 'Fehler.');
         if (e instanceof ApiError) {
           const code = e.code ?? '';
@@ -51,8 +56,6 @@ export function useDevStatus<T>(path: string, intervalMs = 10_000): PolledStatus
             || code === 'DEV_IDENTITY_REQUIRED'
             || code === 'DEV_SCOPE_RESTRICTED';
           if (structuralDeny) {
-            setData(null);
-            setLastFetchedAt(null);
             setBackoffMs(0);
             setStopped(true);
             return;
