@@ -2,13 +2,18 @@ import { isSensitiveKey, redactText, redactValue } from '../modules/nitrado/mirr
 
 const AUDIT_SECRET_KEY_RE = /(token|secret|password|passwd|api[-_]?key|authorization|bearer|cookie|session|otp|2fa|nonce|client[-_]?secret|encryption[-_]?key|refresh[-_]?token|access[-_]?token)/i;
 const REDACTED = '[REDACTED]';
-const AUTH_HEADER_RE = /\b(Authorization)\s*[:=]\s*(Bearer|Basic|Token)\s+[A-Za-z0-9._~+/=-]+/gi;
+// Authorization darf kein unbekanntes/custom Scheme durchlassen. Bekannte
+// Schemes bleiben fuer Diagnosezwecke sichtbar, der komplette Credential-Rest
+// der Zeile wird aber immer entfernt.
+const AUTH_HEADER_RE = /\b(Authorization)\s*[:=]\s*([^\r\n]+)/gi;
 const COOKIE_HEADER_RE = /\b(Cookie|Set-Cookie)\s*:\s*[^\r\n]+/gi;
 const BEARER_RE = /\b(Bearer)\s+[A-Za-z0-9._~+/=-]+/gi;
 const JWT_RE = /\beyJ[A-Za-z0-9_-]{5,}\.[A-Za-z0-9_-]{5,}\.[A-Za-z0-9_-]{5,}\b/g;
 // Authorization/Cookie besitzen eigene strukturwahrende Header-Regeln oben.
-// Sie duerfen hier nicht ein zweites Mal als generisches Label gematcht werden.
-const LABELED_SECRET_RE = /\b(token|secret|password|passwd|api[-_]?key|session|client[-_]?secret|refresh[-_]?token|access[-_]?token)\b\s*[:=]\s*(?:"[^"]*"|'[^']*'|[^\s,;]+)/gi;
+// Weitere sicherheits-/Nitrado-sensitive Freitext-Labels werden fail-closed
+// maskiert, damit auch Legacy-Details ausserhalb eines JSON-Key-Kontexts sicher
+// bleiben.
+const LABELED_SECRET_RE = /\b(token|secret|password|passwd|api[-_]?key|session|client[-_]?secret|refresh[-_]?token|access[-_]?token|serviceId|service_id|nitradoServerId|hostname|serverName|servername|whitelist|priority|admins?|banlist|bans|rconPassword)\b\s*[:=]\s*(?:"[^"]*"|'[^']*'|[^\s,;]+)/gi;
 
 function isAuditSecretKey(key: string): boolean {
   return AUDIT_SECRET_KEY_RE.test(key) || isSensitiveKey(key);
@@ -19,7 +24,10 @@ function redactAuditText(input: string): string {
   // Sonst kann z. B. ein Base64-Basic-Credential zuerst als GUID maskiert
   // werden und die Authorization-Regel erkennt den Header danach nicht mehr.
   const secretRedacted = input
-    .replace(AUTH_HEADER_RE, (_match, header: string, scheme: string) => `${header}: ${scheme} ${REDACTED}`)
+    .replace(AUTH_HEADER_RE, (_match, header: string, rawValue: string) => {
+      const scheme = rawValue.trim().match(/^(Bearer|Basic|Token)\b/i)?.[1];
+      return scheme ? `${header}: ${scheme} ${REDACTED}` : `${header}: ${REDACTED}`;
+    })
     .replace(COOKIE_HEADER_RE, (_match, header: string) => `${header}: ${REDACTED}`)
     .replace(BEARER_RE, (_match, prefix: string) => `${prefix} ${REDACTED}`)
     .replace(JWT_RE, REDACTED)
