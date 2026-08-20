@@ -7,8 +7,7 @@ const COOKIE_HEADER_RE = /\b(Cookie|Set-Cookie)\s*:\s*[^\r\n]+/gi;
 const BEARER_RE = /\b(Bearer)\s+[A-Za-z0-9._~+/=-]+/gi;
 const JWT_RE = /\beyJ[A-Za-z0-9_-]{5,}\.[A-Za-z0-9_-]{5,}\.[A-Za-z0-9_-]{5,}\b/g;
 // Authorization/Cookie besitzen eigene strukturwahrende Header-Regeln oben.
-// Sie duerfen hier nicht ein zweites Mal als generisches Label gematcht werden,
-// sonst wuerde z. B. "Authorization: Basic [REDACTED]" erneut zerlegt.
+// Sie duerfen hier nicht ein zweites Mal als generisches Label gematcht werden.
 const LABELED_SECRET_RE = /\b(token|secret|password|passwd|api[-_]?key|session|client[-_]?secret|refresh[-_]?token|access[-_]?token)\b\s*[:=]\s*(?:"[^"]*"|'[^']*'|[^\s,;]+)/gi;
 
 function isAuditSecretKey(key: string): boolean {
@@ -16,12 +15,17 @@ function isAuditSecretKey(key: string): boolean {
 }
 
 function redactAuditText(input: string): string {
-  return redactText(input)
+  // Secret-Syntax muss vor der generischen DayZ-/Identifier-Redaction laufen.
+  // Sonst kann z. B. ein Base64-Basic-Credential zuerst als GUID maskiert
+  // werden und die Authorization-Regel erkennt den Header danach nicht mehr.
+  const secretRedacted = input
     .replace(AUTH_HEADER_RE, (_match, header: string, scheme: string) => `${header}: ${scheme} ${REDACTED}`)
     .replace(COOKIE_HEADER_RE, (_match, header: string) => `${header}: ${REDACTED}`)
     .replace(BEARER_RE, (_match, prefix: string) => `${prefix} ${REDACTED}`)
     .replace(JWT_RE, REDACTED)
     .replace(LABELED_SECRET_RE, (_match, label: string) => `${label}=${REDACTED}`);
+
+  return redactText(secretRedacted);
 }
 
 /**
