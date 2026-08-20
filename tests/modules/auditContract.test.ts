@@ -61,7 +61,7 @@ describe('Dashboard-1W audit query contract', () => {
       '2026-08-20T03:00:00.123Z',
       'v0.abc',
       'v1.!not-base64!',
-      'v1.e30', // {}
+      'v1.e30',
       `v1.${Buffer.from(JSON.stringify({ t: '2026-08-20T03:00:00.123Z', id: 'not-a-uuid' })).toString('base64url')}`,
       `v1.${Buffer.from(JSON.stringify({ t: '2026-08-20T03:00:00Z', id: ID })).toString('base64url')}`,
       `v1.${Buffer.from(JSON.stringify({ t: '2026-08-20T03:00:00.123Z', id: ID, extra: true })).toString('base64url')}`,
@@ -103,9 +103,17 @@ describe('Dashboard-1W audit detail redaction', () => {
     const jwt = 'eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiIxMjM0NTY3ODkwIn0.signature12345';
     expect(redactAuditDetails('Authorization: Basic QWxhZGRpbjpvcGVuIHNlc2FtZQ=='))
       .toBe(`Authorization: Basic ${AUDIT_REDACTED_VALUE}`);
+    expect(redactAuditDetails('Authorization: Digest username="admin", response="raw-secret"'))
+      .toBe(`Authorization: ${AUDIT_REDACTED_VALUE}`);
     expect(redactAuditDetails('Cookie: session=raw-cookie; theme=dark'))
       .toBe(`Cookie: ${AUDIT_REDACTED_VALUE}`);
     expect(redactAuditDetails(`jwt=${jwt}`)).not.toContain(jwt);
     expect(redactAuditDetails(`raw ${jwt}`)).toBe(`raw ${AUDIT_REDACTED_VALUE}`);
+  });
+
+  test('redacts Nitrado-sensitive labels even in legacy free text', () => {
+    expect(redactAuditDetails('serviceId=12345678')).toBe(`serviceId=${AUDIT_REDACTED_VALUE}`);
+    expect(redactAuditDetails('nitradoServerId: 9876543')).toBe(`nitradoServerId=${AUDIT_REDACTED_VALUE}`);
+    expect(redactAuditDetails('whitelist=76561198000000000')).toBe(`whitelist=${AUDIT_REDACTED_VALUE}`);
   });
 });
