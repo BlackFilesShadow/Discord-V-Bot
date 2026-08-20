@@ -4,6 +4,7 @@ const DEV_USER = { discordId: '123456789012345678', username: 'dev-mirror', avat
 const GUILD_ID = '111111111111111111';
 const CONN_ID = 'conn_1';
 const SNAPSHOT_ID = 'snapshot_1';
+const TRIGGERED_SNAPSHOT_ID = 'snapshot_new';
 
 async function json(route: Route, body: unknown, status = 200): Promise<void> {
   await route.fulfill({ status, contentType: 'application/json', body: JSON.stringify(body) });
@@ -115,11 +116,11 @@ async function stubMirror(page: Page): Promise<MirrorControls> {
   await page.route('**/api/v2/dev/nitrado-mirror/trigger', async route => {
     const body = route.request().postDataJSON() as Record<string, unknown>;
     triggerBodies.push(body);
-    await json(route, { snapshotId: 'snapshot_new' }, 202);
+    await json(route, { snapshotId: TRIGGERED_SNAPSHOT_ID }, 202);
   });
 
-  await page.route('**/api/v2/dev/nitrado-mirror/progress/snapshot_new?*', route => json(route, {
-    id: 'snapshot_new',
+  await page.route(`**/api/v2/dev/nitrado-mirror/progress/${TRIGGERED_SNAPSHOT_ID}?*`, route => json(route, {
+    id: TRIGGERED_SNAPSHOT_ID,
     status: 'OK',
     totalFiles: 14,
     totalDirs: 4,
@@ -199,7 +200,9 @@ test('Snapshot-Trigger sendet Reason und Re-Auth erst nach Step-Up-Bestaetigung'
     reason: 'manual mirror audit capture',
     reAuth: '123456',
   });
-  await expect(page.getByText(/Snapshot snapshot_/)).toBeVisible();
+  await expect(page.getByRole('heading', {
+    name: `Snapshot ${TRIGGERED_SNAPSHOT_ID.slice(0, 8)} · OK`,
+  })).toBeVisible();
 });
 
 test('spaete Snapshot-Antwort einer alten Connection kann die neue Auswahl nicht ueberschreiben', async ({ page }) => {
