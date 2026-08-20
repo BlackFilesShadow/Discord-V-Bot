@@ -61,7 +61,7 @@ jest.mock('../../src/modules/nitrado/mirror/queryApi', () => ({
 }));
 
 jest.mock('../../src/utils/logger', () => ({
-  logger: { error: jest.fn() },
+  logger: { error: jest.fn(), warn: jest.fn(), info: jest.fn(), debug: jest.fn() },
   logAuditDb: jest.fn(),
   logAudit: jest.fn(),
 }));
