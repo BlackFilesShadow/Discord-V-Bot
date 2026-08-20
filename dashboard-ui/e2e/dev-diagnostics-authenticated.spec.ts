@@ -119,20 +119,20 @@ for (const width of VIEWPORTS) {
     await page.setViewportSize({ width, height: 900 });
 
     await page.goto('/dev/database-status');
-    await expect(page.getByText('Datenbank Status', { exact: true })).toBeVisible();
+    await expect(page.getByRole('heading', { name: 'Datenbank Status', exact: true })).toBeVisible();
     await expectTouchTarget(page.getByRole('button', { name: 'Aktualisieren' }));
     await expectNoPageOverflow(page);
 
     await page.goto('/dev/discord-status');
-    await expect(page.getByText('Discord API Status', { exact: true })).toBeVisible();
+    await expect(page.getByRole('heading', { name: 'Discord API Status', exact: true })).toBeVisible();
     await expect(page.getByText('Discord-Client nicht gebunden.', { exact: true })).toBeVisible();
     await expect(page.getByText('Offline', { exact: true })).toBeVisible();
     await expectTouchTarget(page.getByRole('button', { name: 'Aktualisieren' }));
     await expectNoPageOverflow(page);
 
     await page.goto('/dev/nitrado-status');
-    await expect(page.getByText('Nitrado API Status', { exact: true })).toBeVisible();
-    await expect(page.getByText('ADM-V2 Status', { exact: true })).toBeVisible();
+    await expect(page.getByRole('heading', { name: 'Nitrado API Status', exact: true })).toBeVisible();
+    await expect(page.getByRole('heading', { name: 'ADM-V2 Status', exact: true })).toBeVisible();
     await expectTouchTarget(page.getByRole('button', { name: 'Aktualisieren' }));
     await expectNoPageOverflow(page);
   });
