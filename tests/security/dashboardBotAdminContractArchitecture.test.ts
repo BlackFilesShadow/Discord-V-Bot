@@ -35,7 +35,7 @@ describe('Dashboard-1X/1Y Bot-Admin contract architecture', () => {
     expect(contractSource).toContain("requiredEnumBody('decision', ['APPROVED', 'DENIED', 'ESCALATED'])");
     expect(contractSource).toContain("requiredEnumBody('status', ['OPEN', 'IN_REVIEW', 'RESOLVED', 'WONTFIX'])");
     expect(contractSource).toContain("requiredEnumBody('target', ['ALL', 'MANUFACTURER', 'ADMIN', 'MODERATOR'])");
-    expect(contractSource).toContain("requiredEnumBody('type', ['PACKAGES', 'LOGS', 'USERS'])");
+    expect(contractSource).toContain("requiredExactEnumBody('type', ['packages', 'logs', 'users'])");
     expect(contractSource).toContain("requiredEnumBody('status', ['ACTIVE', 'QUARANTINED'])");
     expect(contractSource).toContain("requiredEnumBody('decision', ['APPROVE', 'DENY'])");
   });
