@@ -51,10 +51,12 @@ import { devRouter } from './v2/dev';
 import { devUploadsRouter } from './v2/devUploads';
 import { devAnalyticsRouter } from './v2/devAnalytics';
 import { devStatusRouter } from './v2/devStatus';
+import { devDiagnosticsContractRouter } from './v2/devDiagnosticsContract';
 import { devNitradoMirrorRouter } from './v2/devNitradoMirror';
 import { devIncidentRouter } from './v2/devIncident';
 import { devObservabilityRouter } from './v2/devObservability';
 import { devStubsRouter } from './v2/devStubs';
+import { devDiagnosticsStubsRouter } from './v2/devDiagnosticsStubs';
 import { devCommandCenterRouter } from './v2/devCommandCenter';
 import { devCommandDeployRouter } from './v2/devCommandDeploy';
 import { devXpViewRouter } from './v2/devXpView';
@@ -120,11 +122,17 @@ v2Router.use('/dev', devRouter);
 
 v2Router.use('/dev/uploads', requireGlobalDeveloperIdentity, devUploadsRouter);
 v2Router.use('/dev/analytics', requireGlobalDeveloperIdentity, devAnalyticsRouter);
-v2Router.use('/dev/status', requireGlobalDeveloperIdentity, devStatusRouter);
+// Dashboard-2C: der kanonische Diagnose-/Redaction-/Scope-Vertrag liegt vor
+// dem Legacy-Statusrouter. Nicht ueberschriebene Endpunkte fallen kompatibel
+// zum bestehenden Router durch und werden dort weiter durch requireDev geschuetzt.
+v2Router.use('/dev/status', requireGlobalDeveloperIdentity, devDiagnosticsContractRouter, devStatusRouter);
 v2Router.use('/dev/nitrado-mirror', requireGlobalDeveloperIdentity, devNitradoMirrorRouter);
 v2Router.use('/dev/incident', requireGlobalDeveloperIdentity, requireDev, requireVerifiedDevMutationStepUp, devIncidentRouter);
 v2Router.use('/dev/observability', requireGlobalDeveloperIdentity, devObservabilityRouter);
-v2Router.use('/dev/stubs', requireGlobalDeveloperIdentity, requireDev, requireVerifiedDevMutationStepUp, devStubsRouter);
+// GlobalIdentity + aktive DevSession + Step-Up-Middleware bleiben vor beiden
+// Stub-Routern identisch. 2C schliesst davor Scope-/Redaction-Luecken der
+// Diagnose-GETs, ohne Debug-/Command-Funktionen umzubauen.
+v2Router.use('/dev/stubs', requireGlobalDeveloperIdentity, requireDev, requireVerifiedDevMutationStepUp, devDiagnosticsStubsRouter, devStubsRouter);
 v2Router.use('/dev/command-center', requireGlobalDeveloperIdentity, requireDev, redirectLegacyDevExports, guardDevCommandCenterInput, guardDevSecurityInput, requireVerifiedDevMutationStepUp, guardDevAdminTarget, guardDevXpMutationInput, guardDevXpGuildObjects, devCommandDeployRouter, devXpViewRouter, devCommandCenterRouter);
 v2Router.use('/dev/secure-export', requireGlobalDeveloperIdentity, requireDev, requireVerifiedDevMutationStepUp, devSecureExportRouter);
 
