@@ -9,17 +9,21 @@ const devSessionSource = read('dashboard-ui/src/lib/devSession.tsx');
 const pinnedSource = read('dashboard-ui/src/components/dev/PinnedToolsRow.tsx');
 
 describe('Dashboard-2A DEV shell architecture', () => {
-  test('DEV password affordance is only rendered for authenticated DEVELOPER accounts', () => {
+  test('DEV password affordance requires role and server-confirmed GlobalDeveloperIdentity', () => {
     expect(devPanelSource).toContain("if (!user || user.role !== 'DEVELOPER') return null;");
+    expect(devPanelSource).toContain('const { active, eligible, loading, login, logout, expiresAt } = useDevSession();');
+    expect(devPanelSource).toContain('if (!eligible) return null;');
   });
 
-  test('server status is confirmed before active DEV tools can render', () => {
+  test('server identity/status is confirmed before active DEV tools can render', () => {
     const loadingGate = devPageSource.indexOf('if (dev.loading)');
+    const eligibleGate = devPageSource.indexOf('if (!dev.eligible)');
     const activeGate = devPageSource.indexOf('if (!dev.active)');
     const outlet = devPageSource.indexOf('<Outlet />');
 
     expect(loadingGate).toBeGreaterThan(-1);
-    expect(activeGate).toBeGreaterThan(loadingGate);
+    expect(eligibleGate).toBeGreaterThan(loadingGate);
+    expect(activeGate).toBeGreaterThan(eligibleGate);
     expect(outlet).toBeGreaterThan(activeGate);
   });
 

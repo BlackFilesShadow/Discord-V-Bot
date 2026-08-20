@@ -1,6 +1,7 @@
 import { test, expect, type Page, type Route } from '@playwright/test';
 
 const DEV_USER = { discordId: '123456789012345678', username: 'dev-test', avatar: null, role: 'DEVELOPER' };
+const FOREIGN_DEV_USER = { discordId: '323456789012345678', username: 'foreign-dev', avatar: null, role: 'DEVELOPER' };
 const NORMAL_USER = { discordId: '223456789012345678', username: 'user-test', avatar: null, role: 'USER' };
 
 async function json(route: Route, body: unknown, status = 200): Promise<void> {
@@ -8,15 +9,17 @@ async function json(route: Route, body: unknown, status = 200): Promise<void> {
 }
 
 interface DevStubOptions {
-  user?: typeof DEV_USER | typeof NORMAL_USER;
+  user?: typeof DEV_USER | typeof FOREIGN_DEV_USER | typeof NORMAL_USER;
   status?: number;
   active?: boolean;
+  eligible?: boolean;
 }
 
 async function stubDevShell(page: Page, options: DevStubOptions = {}): Promise<{ snapshotReads: () => number }> {
   const user = options.user ?? DEV_USER;
   const status = options.status ?? 200;
   const active = options.active ?? false;
+  const eligible = options.eligible ?? (user.discordId === DEV_USER.discordId && user.role === 'DEVELOPER');
   let snapshotReads = 0;
 
   await page.route('**/api/me', route => json(route, { user }));
@@ -25,9 +28,9 @@ async function stubDevShell(page: Page, options: DevStubOptions = {}): Promise<{
   await page.route('**/api/v2/dev/status', route => {
     if (status !== 200) return json(route, { error: 'DEV-Status nicht verfügbar.' }, status);
     return json(route, {
-      active,
-      eligible: user.role === 'DEVELOPER',
-      expiresAt: active ? '2026-08-20T12:00:00.000Z' : null,
+      active: active && eligible,
+      eligible,
+      expiresAt: active && eligible ? '2026-08-20T12:00:00.000Z' : null,
     });
   });
   await page.route('**/api/v2/dev/snapshot', route => {
@@ -59,17 +62,32 @@ async function expectDevLocked(page: Page): Promise<void> {
   ).toBeVisible();
 }
 
+async function expectNoDevAccess(page: Page): Promise<void> {
+  await expect(
+    page.getByRole('main').getByText('Kein Zugriff', { exact: true }),
+  ).toBeVisible();
+}
+
 test('normaler USER sieht keine DEV-Login-Affordance und lädt bei Direktzugriff kein DEV-Tool', async ({ page }) => {
   const stub = await stubDevShell(page, { user: NORMAL_USER, active: false });
   await page.goto('/dev');
 
-  await expect(page.getByText('Kein Zugriff')).toBeVisible();
+  await expectNoDevAccess(page);
   await expect(page.getByTestId('dev-login-panel')).toHaveCount(0);
   await expect.poll(stub.snapshotReads).toBe(0);
 });
 
-test('DEVELOPER ohne bestätigte Session bleibt vor allen Tool-Reads gesperrt', async ({ page }) => {
-  const stub = await stubDevShell(page, { active: false });
+test('fremdes DEVELOPER-Konto ohne GlobalDeveloperIdentity sieht keinen Passwort-Step-up', async ({ page }) => {
+  const stub = await stubDevShell(page, { user: FOREIGN_DEV_USER, active: false, eligible: false });
+  await page.goto('/dev');
+
+  await expectNoDevAccess(page);
+  await expect(page.getByTestId('dev-login-panel')).toHaveCount(0);
+  await expect.poll(stub.snapshotReads).toBe(0);
+});
+
+test('berechtigter DEVELOPER ohne bestätigte Session bleibt vor allen Tool-Reads gesperrt', async ({ page }) => {
+  const stub = await stubDevShell(page, { active: false, eligible: true });
   await page.goto('/dev');
 
   await expectDevLocked(page);
@@ -79,16 +97,17 @@ test('DEVELOPER ohne bestätigte Session bleibt vor allen Tool-Reads gesperrt', 
 
 test('staler optimistic Hint plus Status-503 fällt fail-closed zurück und löst keinen Snapshot aus', async ({ page }) => {
   await page.addInitScript(() => sessionStorage.setItem('devSession.optimistic', '1'));
-  const stub = await stubDevShell(page, { active: true, status: 503 });
+  const stub = await stubDevShell(page, { active: true, eligible: true, status: 503 });
   await page.goto('/dev');
 
-  await expectDevLocked(page);
+  await expectNoDevAccess(page);
+  await expect(page.getByTestId('dev-login-panel')).toHaveCount(0);
   await expect.poll(stub.snapshotReads).toBe(0);
   expect(await page.evaluate(() => sessionStorage.getItem('devSession.optimistic'))).toBeNull();
 });
 
 test('bestätigte DEV-Session öffnet den Index, lädt das Tool und Logout sperrt die Shell wieder', async ({ page }) => {
-  const stub = await stubDevShell(page, { active: true });
+  const stub = await stubDevShell(page, { active: true, eligible: true });
   await page.goto('/dev');
 
   await expect(page).toHaveURL(/\/dev\/bot-status$/);
@@ -103,7 +122,7 @@ const VIEWPORTS = [320, 360, 375, 390, 430] as const;
 
 for (const width of VIEWPORTS) {
   test(`DEV-Sidebar bleibt bei ${width}px touch-tauglich, semantisch getrennt und overflow-frei`, async ({ page }) => {
-    await stubDevShell(page, { active: true });
+    await stubDevShell(page, { active: true, eligible: true });
     await page.setViewportSize({ width, height: 900 });
     await page.goto('/dev');
     await expect(page).toHaveURL(/\/dev\/bot-status$/);

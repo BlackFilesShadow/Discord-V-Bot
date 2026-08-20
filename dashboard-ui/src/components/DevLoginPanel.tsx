@@ -10,7 +10,7 @@ import { ApiError } from '@/lib/api';
 
 export function DevLoginPanel() {
   const { user } = useAuth();
-  const { active, loading, login, logout, expiresAt } = useDevSession();
+  const { active, eligible, loading, login, logout, expiresAt } = useDevSession();
   const [pw, setPw] = useState('');
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState<string | null>(null);
@@ -54,6 +54,11 @@ export function DevLoginPanel() {
       </span>
     );
   }
+
+  // Ein DEVELOPER-Rollenlabel allein reicht nicht: Die serverseitig bestätigte
+  // GlobalDeveloperIdentity (kanonische Discord-ID + aktuelle DB-Rolle) ist
+  // Voraussetzung dafür, dass überhaupt ein Passwort-Step-up angeboten wird.
+  if (!eligible) return null;
 
   if (active) {
     const expLabel = expiresAt ? new Date(expiresAt).toLocaleTimeString() : 'Aktiv';

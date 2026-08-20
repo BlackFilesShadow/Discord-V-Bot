@@ -35,13 +35,23 @@ export default function DevLayout() {
     );
   }
 
-  // Der sessionStorage-Hinweis ist ausschliesslich optimistisch. Bevor die
-  // serverseitige /dev/status-Wahrheit feststeht, darf kein DEV-Tool gerendert
-  // und damit auch kein privilegierter Tool-Read angestossen werden.
+  // Bevor die serverseitige /dev/status-Wahrheit feststeht, darf kein DEV-Tool
+  // gerendert und damit auch kein privilegierter Tool-Read angestossen werden.
   if (dev.loading) {
     return (
       <Shell title="Dev-Konsole" back="/servers">
-        <Card glow className="max-w-md mx-auto"><CardHeader><CardTitle><Lock className="h-4 w-4 inline mr-1" /> DEV-Status wird geprueft</CardTitle><CardDesc>Die serverseitige DEV-Session wird bestaetigt.</CardDesc></CardHeader></Card>
+        <Card glow className="max-w-md mx-auto"><CardHeader><CardTitle><Lock className="h-4 w-4 inline mr-1" /> DEV-Status wird geprueft</CardTitle><CardDesc>Die serverseitige DEV-Identitaet und Session werden bestaetigt.</CardDesc></CardHeader></Card>
+      </Shell>
+    );
+  }
+
+  // Die Rolle allein ist nicht die globale DEV-Identitaet. Erst das serverseitig
+  // bestaetigte `eligible` (kanonische Discord-ID + aktuelle DB-Rolle) darf den
+  // Passwort-Step-up bzw. die geschuetzte Shell erreichbar machen.
+  if (!dev.eligible) {
+    return (
+      <Shell title="Dev-Konsole" back="/servers">
+        <Card glow className="max-w-md mx-auto"><CardHeader><CardTitle><AlertTriangle className="h-4 w-4 inline mr-1 text-danger" /> Kein Zugriff</CardTitle><CardDesc>Die globale DEV-Berechtigung wurde serverseitig nicht bestaetigt.</CardDesc></CardHeader></Card>
       </Shell>
     );
   }
