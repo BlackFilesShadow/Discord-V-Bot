@@ -1,0 +1,58 @@
+name: Dashboard-1W Audit Pagination UI Fix
+
+on:
+  push:
+    branches: [fix/dashboard-1w-audit-log-contract]
+    paths: [.github/workflows/dashboard-1w-ui-fix.yml]
+
+permissions:
+  contents: write
+
+jobs:
+  patch:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          ref: fix/dashboard-1w-audit-log-contract
+          fetch-depth: 0
+      - name: Apply pagination error state fix
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 <<'PY'
+          from pathlib import Path
+          p = Path('dashboard-ui/src/pages/Server.tsx')
+          s = p.read_text()
+          old_button = '<Button type="submit" disabled={list.isFetching && !list.isFetchingNextPage}>Suchen</Button>'
+          new_button = '<Button type="submit" disabled={list.isFetching}>Suchen</Button>'
+          if old_button not in s:
+            raise SystemExit('search button anchor missing')
+          s = s.replace(old_button, new_button, 1)
+          old = '''      {list.isError && (
+        <Card>
+          <p className="text-danger text-sm">Fehler: {(list.error as ApiError).message}</p>
+        </Card>
+      )}
+'''
+          new = '''      {list.isError && !list.isFetchNextPageError && (
+        <Card>
+          <p className="text-danger text-sm">Fehler: {(list.error as ApiError).message}</p>
+        </Card>
+      )}
+      {list.isFetchNextPageError && (
+        <Card>
+          <p className="text-danger text-sm">Fehler beim Nachladen: {(list.error as ApiError).message}</p>
+        </Card>
+      )}
+'''
+          if old not in s:
+            raise SystemExit('error state anchor missing')
+          p.write_text(s.replace(old, new, 1))
+          PY
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add dashboard-ui/src/pages/Server.tsx
+          git diff --cached --check
+          git commit -m "Dashboard-1W: expose next-page audit errors safely"
+          git push origin HEAD:fix/dashboard-1w-audit-log-contract
