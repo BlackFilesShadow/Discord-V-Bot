@@ -170,7 +170,7 @@ for (const width of VIEWPORTS) {
     await page.getByRole('button', { name: 'Browse' }).click();
     await expect(page.getByText(/very-long-config-name/)).toBeVisible();
     await expectTouchTarget(page.getByRole('button', { name: 'ansehen' }));
-    await expectTouchTarget(page.getByRole('button', { name: 'oeffnen' }));
+    await expectTouchTarget(page.getByRole('button', { name: 'oeffnen', exact: true }));
     await expectNoPageOverflow(page);
 
     await page.getByRole('button', { name: 'ansehen' }).click();
@@ -189,7 +189,7 @@ test('Snapshot-Trigger sendet Reason und Re-Auth erst nach Step-Up-Bestaetigung'
 
   await expect(page.getByText('Nitrado-Snapshot starten', { exact: true })).toBeVisible();
   await page.getByPlaceholder(/Provider-Ausfall/).fill('manual mirror audit capture');
-  await page.locator('input[type="password"]').fill('123456');
+  await page.getByPlaceholder('••••••••', { exact: true }).fill('123456');
   await page.getByRole('button', { name: /Bestaetigen/ }).click();
 
   await expect.poll(() => controls.triggerBodies.length).toBe(1);
