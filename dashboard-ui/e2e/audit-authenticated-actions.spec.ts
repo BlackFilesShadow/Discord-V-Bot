@@ -187,7 +187,7 @@ test.describe('Audit authenticated Owner contract', () => {
     await openAudit(page);
 
     await page.getByRole('button', { name: 'Mehr laden' }).click();
-    await expect(page.getByText('Fehler beim Nachladen: Audit page unavailable')).toBeVisible();
+    await expect(page.getByText('Fehler: Audit page unavailable')).toBeVisible();
     await expect(page.getByText('PERM_GRANTED', { exact: true })).toBeVisible();
     await expect(page.getByText('PERM_ROLE_GRANTED', { exact: true })).toBeVisible();
     await expect(page.getByText('ROLE_REVOKED', { exact: true })).toHaveCount(0);
