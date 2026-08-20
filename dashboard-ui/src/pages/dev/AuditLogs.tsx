@@ -1,10 +1,9 @@
 /**
- * Audit Logs — P4.
- * Globale Volltext-Suche im AuditLog (pg_trgm-Index).
+ * Audit Logs — Dashboard-2E hardened global DEV audit search.
  * Backend: GET /api/v2/dev/observability/audit/search
  */
 import { useEffect, useState, useCallback } from 'react';
-import { ScrollText, Search, RefreshCw } from 'lucide-react';
+import { AlertTriangle, ScrollText, Search, RefreshCw } from 'lucide-react';
 import { api } from '@/lib/api';
 import { useToast } from '@/lib/toast';
 import { Card, CardHeader, CardTitle, CardDesc } from '@/components/ui/Card';
@@ -16,14 +15,24 @@ import { SectionHeader } from '@/components/ui/SectionHeader';
 import { DataTable, type Column } from '@/components/ui/Table';
 
 interface AuditEntry {
-  id: string; action: string; category: string; guildId: string | null;
+  id: string;
+  action: string;
+  category: string;
+  guildId: string | null;
   createdAt: string;
   actor: { discordId: string; username: string } | null;
   target: { discordId: string; username: string } | null;
-  channelId: string | null; ipAddress: string | null;
+  channelId: string | null;
+  ipAddress: string | null;
   details: unknown;
 }
-interface SearchResp { entries: AuditEntry[]; limit: number; hasMore: boolean }
+
+interface SearchResp {
+  entries: AuditEntry[];
+  limit: number;
+  hasMore: boolean;
+  nextCursor: string | null;
+}
 
 const CATEGORIES = ['', 'AUTH', 'SECURITY', 'ADMIN', 'SYSTEM', 'CONFIG', 'GDPR', 'AI',
   'TICKET', 'NITRADO', 'ECONOMY', 'CASINO', 'DASHBOARD', 'WHITELIST', 'FACTION',
@@ -36,56 +45,90 @@ export default function Page(): JSX.Element {
   const [guildId, setGuildId] = useState('');
   const [data, setData] = useState<SearchResp | null>(null);
   const [loading, setLoading] = useState(false);
+  const [error, setError] = useState<string | null>(null);
   const toast = useToast();
 
-  const search = useCallback(async () => {
+  const search = useCallback(async (cursor?: string, append = false) => {
     setLoading(true);
+    setError(null);
     try {
       const params = new URLSearchParams({ limit: '50' });
       if (q.trim()) params.set('q', q.trim());
       if (category) params.set('category', category);
       if (guildId.trim()) params.set('guildId', guildId.trim());
-      setData(await api.get<SearchResp>(`/api/v2/dev/observability/audit/search?${params.toString()}`));
+      if (cursor) params.set('cursor', cursor);
+
+      const next = await api.get<SearchResp>(`/api/v2/dev/observability/audit/search?${params.toString()}`);
+      setData(prev => append && prev
+        ? {
+            ...next,
+            entries: [...prev.entries, ...next.entries],
+          }
+        : next);
     } catch (e) {
-      toast.push({ variant: 'danger', title: 'Suche fehlgeschlagen', desc: (e as Error).message });
-    } finally { setLoading(false); }
+      const message = (e as Error).message;
+      // Privilegierte Audit-Snapshots werden nach einem Fehler nicht stale
+      // weiter angezeigt. Das entspricht useDevStatus auf den Diagnose-Seiten.
+      setData(null);
+      setError(message);
+      toast.push({ variant: 'danger', title: 'Suche fehlgeschlagen', desc: message });
+    } finally {
+      setLoading(false);
+    }
   }, [q, category, guildId, toast]);
 
-  useEffect(() => { void search(); /* initial */ // eslint-disable-next-line react-hooks/exhaustive-deps
+  useEffect(() => {
+    void search(); // initial
+    // Die Initialsuche soll nur beim Mount laufen; Filter werden bewusst erst
+    // durch Suchen/Enter angewendet.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   const cols: Column<AuditEntry>[] = [
     { id: 'when', header: 'Zeit', cell: r => <span className="text-xs">{new Date(r.createdAt).toLocaleString()}</span> },
     { id: 'cat', header: 'Cat', cell: r => <Badge variant="info">{r.category}</Badge> },
-    { id: 'a', header: 'Action', cell: r => <span className="font-mono text-xs">{r.action}</span> },
-    { id: 'actor', header: 'Actor', cell: r => r.actor ? <span className="text-xs">{r.actor.username}</span> : '-' },
-    { id: 'guild', header: 'Guild', cell: r => <span className="font-mono text-[10px]">{r.guildId ?? '-'}</span> },
-    { id: 'ip', header: 'IP', cell: r => <span className="font-mono text-[10px]">{r.ipAddress ?? '-'}</span> },
+    { id: 'a', header: 'Action', cell: r => <span className="font-mono text-xs break-all">{r.action}</span> },
+    { id: 'actor', header: 'Actor', cell: r => r.actor ? <span className="text-xs break-words">{r.actor.username}</span> : '-' },
+    { id: 'guild', header: 'Guild', cell: r => <span className="font-mono text-[10px] break-all">{r.guildId ?? '-'}</span> },
+    { id: 'ip', header: 'IP', cell: r => <span className="font-mono text-[10px] break-all">{r.ipAddress ?? '-'}</span> },
   ];
 
   return (
-    <div className="space-y-6">
+    <div className="space-y-6 min-w-0">
       <SectionHeader
         title="Audit Logs"
-        desc="Volltextsuche ueber alle AuditLog-Eintraege (pg_trgm)."
+        desc="Globale DEV-Suche ueber AuditLog-Eintraege. Pagination ist verlustfrei ueber createdAt + id."
         icon={<ScrollText className="h-5 w-5" />}
       />
+
       <Card>
-        <CardHeader><CardTitle>Filter</CardTitle><CardDesc>q ist case-insensitiv auf action.</CardDesc></CardHeader>
-        <div className="flex flex-wrap gap-2">
+        <CardHeader>
+          <CardTitle>Filter</CardTitle>
+          <CardDesc>q sucht case-insensitiv in action (min. 2 Zeichen).</CardDesc>
+        </CardHeader>
+        <div className="flex flex-wrap gap-2 min-w-0">
           <input
-            value={q} onChange={e => setQ(e.target.value)}
+            aria-label="Audit-Suche"
+            value={q}
+            onChange={e => setQ(e.target.value)}
             placeholder="Substring (min. 2)"
-            className="flex-1 min-w-[200px] rounded border border-zinc-700 bg-zinc-900 px-2 py-1 text-sm"
+            className="min-h-11 min-w-[200px] flex-1 rounded border border-zinc-700 bg-zinc-900 px-3 py-2 text-sm"
             onKeyDown={e => { if (e.key === 'Enter') void search(); }}
           />
-          <select value={category} onChange={e => setCategory(e.target.value)} className="rounded border border-zinc-700 bg-zinc-900 px-2 py-1 text-sm">
+          <select
+            aria-label="Audit-Kategorie"
+            value={category}
+            onChange={e => setCategory(e.target.value)}
+            className="min-h-11 rounded border border-zinc-700 bg-zinc-900 px-3 py-2 text-sm"
+          >
             {CATEGORIES.map(c => <option key={c} value={c}>{c || 'alle Kategorien'}</option>)}
           </select>
           <input
-            value={guildId} onChange={e => setGuildId(e.target.value)}
+            aria-label="Guild-ID"
+            value={guildId}
+            onChange={e => setGuildId(e.target.value)}
             placeholder="GuildId (optional)"
-            className="rounded border border-zinc-700 bg-zinc-900 px-2 py-1 text-sm font-mono"
+            className="min-h-11 min-w-[200px] rounded border border-zinc-700 bg-zinc-900 px-3 py-2 text-sm font-mono"
           />
           <Button onClick={() => void search()} disabled={loading}>
             <Search className="h-4 w-4 mr-1" /> Suchen
@@ -95,11 +138,37 @@ export default function Page(): JSX.Element {
           </Button>
         </div>
       </Card>
+
+      {error && (
+        <Card>
+          <div role="alert" className="flex min-w-0 gap-2 text-sm text-danger">
+            <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0" />
+            <span className="break-words">{error}</span>
+          </div>
+        </Card>
+      )}
+
       <Card>
-        <CardHeader><CardTitle>Treffer</CardTitle><CardDesc>{data ? `${data.entries.length} Treffer (limit ${data.limit}${data.hasMore ? ', mehr verfuegbar' : ''})` : ''}</CardDesc></CardHeader>
-        {!data ? <Skeleton className="h-32" />
-          : data.entries.length === 0 ? <EmptyState title="Keine Treffer" />
-            : <DataTable rows={data.entries} columns={cols} rowKey={r => r.id} />}
+        <CardHeader>
+          <CardTitle>Treffer</CardTitle>
+          <CardDesc>{data ? `${data.entries.length} geladen (Seitenlimit ${data.limit}${data.hasMore ? ', mehr verfuegbar' : ''})` : ''}</CardDesc>
+        </CardHeader>
+        {!data && loading ? <Skeleton className="h-32" />
+          : !data ? <EmptyState title="Keine Audit-Daten geladen" />
+            : data.entries.length === 0 ? <EmptyState title="Keine Treffer" />
+              : <DataTable rows={data.entries} columns={cols} rowKey={r => r.id} />}
+
+        {data?.hasMore && data.nextCursor && (
+          <div className="mt-3 flex justify-center">
+            <Button
+              variant="ghost"
+              onClick={() => void search(data.nextCursor ?? undefined, true)}
+              disabled={loading}
+            >
+              Mehr laden
+            </Button>
+          </div>
+        )}
       </Card>
     </div>
   );
