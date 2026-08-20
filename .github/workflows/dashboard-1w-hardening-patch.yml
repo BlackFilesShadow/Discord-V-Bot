@@ -1,0 +1,89 @@
+name: Dashboard-1W Final Hardening Patch
+
+on:
+  push:
+    branches: [fix/dashboard-1w-audit-log-contract]
+    paths: [.github/workflows/dashboard-1w-hardening-patch.yml]
+
+permissions:
+  contents: write
+
+jobs:
+  patch:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          ref: fix/dashboard-1w-audit-log-contract
+          fetch-depth: 0
+      - name: Apply final hardening
+        shell: bash
+        run: |
+          python3 <<'PY'
+          from pathlib import Path
+
+          logger_path = Path('src/utils/logger.ts')
+          logger = logger_path.read_text()
+          old = '''function redactSecrets(input: Record<string, unknown>): Record<string, unknown> {
+            const out: Record<string, unknown> = {};
+            for (const [k, v] of Object.entries(input)) {
+              if (SECRET_KEY_RE.test(k)) {
+                out[k] = '[REDACTED]';
+              } else if (v && typeof v === 'object' && !Array.isArray(v) && !(v instanceof Date)) {
+                out[k] = redactSecrets(v as Record<string, unknown>);
+              } else {
+                out[k] = v;
+              }
+            }
+            return out;
+          }'''
+          # Source is not indented; normalize literal before matching.
+          import textwrap
+          old = textwrap.dedent(old)
+          new = '''function redactSecrets(input: Record<string, unknown>): Record<string, unknown> {
+            const out: Record<string, unknown> = {};
+            for (const [k, v] of Object.entries(input)) {
+              if (SECRET_KEY_RE.test(k)) {
+                out[k] = '[REDACTED]';
+              } else {
+                // Reuse the same recursive/free-text policy as DB persistence and
+                // dashboard reads. Arrays and top-level-ish nested strings can no
+                // longer bypass the append-only audit file redaction path.
+                out[k] = redactAuditDetails(v, k);
+              }
+            }
+            return out;
+          }'''
+          new = textwrap.dedent(new)
+          if old not in logger:
+            raise SystemExit('logger redactSecrets block not found')
+          logger_path.write_text(logger.replace(old, new, 1))
+
+          server_path = Path('dashboard-ui/src/pages/Server.tsx')
+          server = server_path.read_text()
+          server = server.replace(
+              '<Button type="submit" disabled={list.isFetching && !list.isFetchingNextPage}>Suchen</Button>',
+              '<Button type="submit" disabled={list.isFetching}>Suchen</Button>',
+              1,
+          )
+          error_anchor = '''      {list.isError && (
+            <Card>
+              <p className="text-danger text-sm">Fehler: {(list.error as ApiError).message}</p>
+            </Card>
+          )}
+'''
+          extra = error_anchor + '''      {list.isFetchNextPageError && !list.isError && (
+            <Card>
+              <p className="text-danger text-sm">Fehler beim Nachladen: {(list.error as ApiError).message}</p>
+            </Card>
+          )}
+'''
+          if error_anchor not in server:
+            raise SystemExit('Audit list error anchor not found')
+          server_path.write_text(server.replace(error_anchor, extra, 1))
+          PY
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add src/utils/logger.ts dashboard-ui/src/pages/Server.tsx
+          git commit -m "Dashboard-1W: unify audit redaction and pagination errors"
+          git push origin HEAD:fix/dashboard-1w-audit-log-contract
