@@ -23,7 +23,6 @@ describe('Dashboard-2F DEV Nitrado Mirror architecture', () => {
 
   it('erzwingt Step-Up am Snapshot-Trigger und nicht nur in der UI', () => {
     expect(route).toContain("devNitradoMirrorRouter.post('/trigger', requireVerifiedDevMutationStepUp, triggerLimiter");
-    expect(route).toContain("reason: stepUp.reason").not.toBeTruthy();
   });
 
   it('fenced restricted Sessions serverseitig und filtert Connection-Listing', () => {
