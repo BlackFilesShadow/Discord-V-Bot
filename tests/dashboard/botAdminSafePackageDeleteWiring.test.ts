@@ -10,9 +10,9 @@ describe('Bot-Admin hard-delete safety wiring', () => {
   const safeRoute = read('src/dashboard/routes/v2/botAdminSafePackageDelete.ts');
   const service = read('src/modules/packages/hardDeletePackage.ts');
 
-  it('mountet XP-Retirement, Danger- und Safe-Delete-Router vor Guild-Guard und Legacy-Router', () => {
+  it('mountet XP-Retirement, Danger- und Safe-Delete-Router vor Guild-Guard, Contract-Adapter und Legacy-Router', () => {
     expect(routes).toContain(
-      "v2Router.use('/bot-admin', requireGlobalBotAdminIdentity, botAdminXpRetirementRouter, botAdminDangerSafetyRouter, botAdminSafeValidationRouter, botAdminSafePackageDeleteRouter, guardBotAdminGuildReferences, botAdminRouter);",
+      "v2Router.use('/bot-admin', requireGlobalBotAdminIdentity, botAdminXpRetirementRouter, botAdminDangerSafetyRouter, botAdminSafeValidationRouter, botAdminSafePackageDeleteRouter, guardBotAdminGuildReferences, botAdminLegacyContractRouter, botAdminRouter);",
     );
   });
 

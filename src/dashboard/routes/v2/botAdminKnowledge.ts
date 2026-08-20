@@ -173,7 +173,11 @@ botAdminKnowledgeRouter.patch('/:id', async (req, res) => {
 
 botAdminKnowledgeRouter.post('/:id/toggle', async (req, res) => {
   const guildId = reqGuildId(req, res); if (!guildId) return;
-  const active = req.body?.active === true;
+  if (!req.body || typeof req.body !== 'object' || typeof req.body.active !== 'boolean') {
+    res.status(400).json({ error: 'active muss true oder false sein.' });
+    return;
+  }
+  const active = req.body.active;
   const r = await setKnowledgeActive(guildId, String(req.params.id), active);
   if (!r.ok) { res.status(400).json({ error: r.message }); return; }
   audit(req, 'BOTADMIN_KNOWLEDGE_TOGGLE', guildId, { id: String(req.params.id), active });

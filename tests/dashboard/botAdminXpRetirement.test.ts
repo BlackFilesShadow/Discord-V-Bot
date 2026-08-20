@@ -37,7 +37,7 @@ describe('retired BotAdmin XP surface', () => {
 
   it('mountet den Retirement-Guard vor allen Legacy-BotAdmin-Safety-/Business-Routern', () => {
     const routes = fs.readFileSync(path.resolve(process.cwd(), 'src/dashboard/routes/v2.ts'), 'utf8');
-    const mount = routes.indexOf("v2Router.use('/bot-admin', requireGlobalBotAdminIdentity, botAdminXpRetirementRouter, botAdminDangerSafetyRouter, botAdminSafeValidationRouter, botAdminSafePackageDeleteRouter, guardBotAdminGuildReferences, botAdminRouter);");
+    const mount = routes.indexOf("v2Router.use('/bot-admin', requireGlobalBotAdminIdentity, botAdminXpRetirementRouter, botAdminDangerSafetyRouter, botAdminSafeValidationRouter, botAdminSafePackageDeleteRouter, guardBotAdminGuildReferences, botAdminLegacyContractRouter, botAdminRouter);");
     expect(mount).toBeGreaterThanOrEqual(0);
   });
 

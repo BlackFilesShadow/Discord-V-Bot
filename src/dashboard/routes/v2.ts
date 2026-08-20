@@ -61,6 +61,7 @@ import { devXpViewRouter } from './v2/devXpView';
 import { devSecureExportRouter } from './v2/devSecureExport';
 import { auditRouter } from './v2/audit';
 import { botAdminRouter } from './v2/botAdmin';
+import { botAdminLegacyContractRouter } from './v2/botAdminLegacyContract';
 import { botAdminKnowledgeRouter } from './v2/botAdminKnowledge';
 import { botAdminCommandCenterRouter } from './v2/botAdminCommandCenter';
 import { botAdminCommandCenterSafetyRouter } from './v2/botAdminCommandCenterSafety';
@@ -143,8 +144,10 @@ v2Router.use('/bot-admin/command-center', requireGlobalBotAdminIdentity, guardBo
 // Bot-Admin: globale Identitaet + aktive BotAdminSession. Safety-Overrides und
 // Guild-Referenzpruefung muessen vor dem Legacy-Router laufen. XP wird fail-
 // closed in DEV umgeleitet; Danger-Purge und physische Paketloeschung laufen
-// ausschliesslich ueber ihre kanonischen Filesystem-Safety-Services.
-v2Router.use('/bot-admin', requireGlobalBotAdminIdentity, botAdminXpRetirementRouter, botAdminDangerSafetyRouter, botAdminSafeValidationRouter, botAdminSafePackageDeleteRouter, guardBotAdminGuildReferences, botAdminRouter);
+// ausschliesslich ueber ihre kanonischen Filesystem-Safety-Services. Der
+// Legacy-Contract-Adapter erzwingt zusaetzlich strikte Query-/Body-Semantik,
+// bevor die historischen Handler ihre Business-Logik ausfuehren.
+v2Router.use('/bot-admin', requireGlobalBotAdminIdentity, botAdminXpRetirementRouter, botAdminDangerSafetyRouter, botAdminSafeValidationRouter, botAdminSafePackageDeleteRouter, guardBotAdminGuildReferences, botAdminLegacyContractRouter, botAdminRouter);
 
 // Letzte v2-Error-Grenze: normale Fehler gehen an den globalen Dashboard-
 // Handler; bei bereits begonnenen Streams wird die partielle Verbindung beendet.

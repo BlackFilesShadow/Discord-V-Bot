@@ -1,0 +1,9 @@
+/* Dashboard-1X: Bot-Admin subnavigation uses raw buttons instead of the shared
+   Button primitive. Keep every mobile navigation action at WCAG-friendly touch
+   size without changing desktop density. */
+@media (max-width: 767px) {
+  nav[aria-label='Bot-Admin-Bereiche'] > button {
+    min-height: 44px;
+    touch-action: manipulation;
+  }
+}
