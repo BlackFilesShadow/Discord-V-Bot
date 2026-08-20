@@ -7,7 +7,7 @@
  * Re-Implementiert die Funktionalitaet, die bisher direkt in Dev.tsx lebte.
  */
 import { useEffect, useRef, useState } from 'react';
-import { Activity, Pause, Play, Search, Trash2 } from 'lucide-react';
+import { Activity, AlertTriangle, Pause, Play, RefreshCw, Search, Trash2 } from 'lucide-react';
 import { useDevStatus } from '@/lib/useDevStatus';
 import { Card, CardHeader, CardTitle, CardDesc } from '@/components/ui/Card';
 import { Button } from '@/components/ui/Button';
@@ -49,6 +49,29 @@ function fmtLogTime(ts: number): string {
   if (Number.isNaN(d.getTime())) return '--:--:--';
   return d.toISOString().slice(11, 19);
 }
+function isFiniteNonNegative(value: unknown): value is number {
+  return typeof value === 'number' && Number.isFinite(value) && value >= 0;
+}
+function asSnapshot(value: unknown): Snapshot | null {
+  if (!value || typeof value !== 'object') return null;
+  const row = value as Record<string, unknown>;
+  const memory = row.memory;
+  if (typeof row.botReady !== 'boolean') return null;
+  if (!isFiniteNonNegative(row.uptimeSec) || !isFiniteNonNegative(row.guildCount)) return null;
+  if (!Number.isInteger(row.guildCount)) return null;
+  if (typeof row.nodeVersion !== 'string' || row.nodeVersion.length === 0) return null;
+  if (!memory || typeof memory !== 'object') return null;
+  const m = memory as Record<string, unknown>;
+  if (!isFiniteNonNegative(m.rss) || !isFiniteNonNegative(m.heapUsed) || !isFiniteNonNegative(m.heapTotal)) return null;
+  if (m.heapUsed > m.heapTotal) return null;
+  return {
+    botReady: row.botReady,
+    uptimeSec: row.uptimeSec,
+    guildCount: row.guildCount,
+    memory: { rss: m.rss, heapUsed: m.heapUsed, heapTotal: m.heapTotal },
+    nodeVersion: row.nodeVersion,
+  };
+}
 function asLogLine(value: unknown): LogLine | null {
   if (!value || typeof value !== 'object') return null;
   const row = value as Record<string, unknown>;
@@ -59,7 +82,10 @@ function asLogLine(value: unknown): LogLine | null {
 }
 
 export default function LiveBotStatus() {
-  const { data: snap } = useDevStatus<Snapshot>('/api/v2/dev/snapshot', 5000);
+  const { data: rawSnap, loading, error, reload, lastFetchedAt } = useDevStatus<unknown>('/api/v2/dev/snapshot', 5000);
+  const snap = asSnapshot(rawSnap);
+  const contractError = rawSnap !== null && snap === null ? 'Ungültige Snapshot-Antwort. Diagnosewerte wurden verworfen.' : null;
+  const visibleError = error ?? contractError;
   const [logs, setLogs] = useState<LogLine[]>([]);
   const [paused, setPaused] = useState(false);
   const [filter, setFilter] = useState<Set<LogLine['level']>>(new Set(LEVELS));
@@ -103,8 +129,31 @@ export default function LiveBotStatus() {
 
   return (
     <div className="space-y-6">
-      <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
-        <StatCard label="Bot" value={snap?.botReady ? 'online' : 'offline'} accent={snap?.botReady ? 'ok' : 'danger'} />
+      <div className="flex flex-wrap items-center gap-2">
+        <Button variant="ghost" size="sm" onClick={reload} disabled={loading} className="min-h-11 sm:min-h-0">
+          <RefreshCw className={`h-3.5 w-3.5 ${loading ? 'animate-spin' : ''}`} />
+          <span className="ml-1">Aktualisieren</span>
+        </Button>
+        {lastFetchedAt && (
+          <span className="text-[11px] text-muted">Letzter erfolgreicher Stand: {lastFetchedAt.toLocaleTimeString()}</span>
+        )}
+      </div>
+
+      {visibleError && (
+        <Card>
+          <div role="alert" className="text-xs text-danger flex gap-2">
+            <AlertTriangle className="h-3.5 w-3.5 mt-0.5 shrink-0" />
+            <span>{visibleError}</span>
+          </div>
+        </Card>
+      )}
+
+      <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4" aria-busy={loading ? 'true' : 'false'}>
+        <StatCard
+          label="Bot"
+          value={snap ? (snap.botReady ? 'online' : 'offline') : (loading ? 'lädt…' : 'unbekannt')}
+          accent={snap ? (snap.botReady ? 'ok' : 'danger') : undefined}
+        />
         <StatCard label="Guilds" value={snap ? String(snap.guildCount) : '–'} />
         <StatCard label="Uptime" value={snap ? fmtUptime(snap.uptimeSec) : '–'} />
         <StatCard label="Heap" value={snap ? fmtMB(snap.memory.heapUsed) : '–'} />
@@ -122,7 +171,8 @@ export default function LiveBotStatus() {
               key={l}
               onClick={() => toggleLevel(l)}
               type="button"
-              className={`text-xs px-2.5 py-1 rounded-full font-mono transition-colors focus-ring ${
+              aria-pressed={filter.has(l)}
+              className={`text-xs min-h-11 min-w-11 sm:min-h-0 sm:min-w-0 px-2.5 py-1 rounded-full font-mono transition-colors focus-ring ${
                 filter.has(l)
                   ? `bg-bg-elev ${levelColor(l)} border border-current/40`
                   : 'bg-transparent text-muted/40 border border-border'
@@ -133,30 +183,36 @@ export default function LiveBotStatus() {
           ))}
           <div className="relative flex-1 min-w-[180px]">
             <Search className="h-3.5 w-3.5 absolute left-2 top-1/2 -translate-y-1/2 text-muted" />
-            <Input value={search} onChange={e => setSearch(e.target.value)} placeholder="Suche…" className="pl-7 h-8 text-xs" />
+            <Input
+              value={search}
+              onChange={e => setSearch(e.target.value)}
+              aria-label="Live-Logs durchsuchen"
+              placeholder="Suche…"
+              className="pl-7 h-11 sm:h-8 text-xs"
+            />
           </div>
-          <Button size="sm" variant="ghost" onClick={() => setPaused(p => !p)}>
+          <Button size="sm" variant="ghost" onClick={() => setPaused(p => !p)} className="min-h-11 sm:min-h-0">
             {paused ? <Play className="h-3.5 w-3.5" /> : <Pause className="h-3.5 w-3.5" />}
             <span className="ml-1">{paused ? 'Fortsetzen' : 'Pause'}</span>
           </Button>
-          <Button size="sm" variant="ghost" onClick={() => setLogs([])}>
+          <Button size="sm" variant="ghost" onClick={() => setLogs([])} className="min-h-11 sm:min-h-0">
             <Trash2 className="h-3.5 w-3.5" /> <span className="ml-1">Leeren</span>
           </Button>
         </div>
 
         <div
           ref={scrollRef}
-          className="h-[480px] overflow-y-auto bg-black/60 border border-border rounded-md font-mono text-xs"
+          className="h-[480px] max-w-full overflow-x-hidden overflow-y-auto bg-black/60 border border-border rounded-md font-mono text-xs"
         >
           {filtered.length === 0 ? (
             <p className="text-muted p-4">Keine Logs.</p>
           ) : (
             <ul className="divide-y divide-border/40">
               {filtered.map((l, i) => (
-                <li key={`${l.ts}-${i}`} className="px-3 py-1 hover:bg-bg-hover/30 flex gap-3">
+                <li key={`${l.ts}-${i}`} className="px-3 py-1 hover:bg-bg-hover/30 flex gap-3 min-w-0">
                   <span className={`shrink-0 w-12 ${levelColor(l.level)}`}>{l.level}</span>
                   <span className="shrink-0 text-muted/60">{fmtLogTime(l.ts)}</span>
-                  <span className="text-white break-all whitespace-pre-wrap">{l.message}</span>
+                  <span className="text-white break-all whitespace-pre-wrap min-w-0">{l.message}</span>
                 </li>
               ))}
             </ul>
