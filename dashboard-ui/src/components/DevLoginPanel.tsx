@@ -10,13 +10,16 @@ import { ApiError } from '@/lib/api';
 
 export function DevLoginPanel() {
   const { user } = useAuth();
-  const { active, loading, login, logout, expiresAt } = useDevSession();
+  const { active, eligible, loading, login, logout, expiresAt } = useDevSession();
   const [pw, setPw] = useState('');
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState<string | null>(null);
   const [errCode, setErrCode] = useState<string | null>(null);
 
-  if (!user) return null;
+  // Das Passwort ist nur Step-up. Die privilegierte Identitaet entsteht niemals
+  // durch die sichtbare Login-Box; UI-seitig wird sie deshalb nur fuer bereits
+  // authentifizierte DEVELOPER-Konten angeboten. Das Backend bleibt Autoritaet.
+  if (!user || user.role !== 'DEVELOPER') return null;
 
   const onSubmit = async (event: FormEvent): Promise<void> => {
     event.preventDefault();
@@ -51,6 +54,11 @@ export function DevLoginPanel() {
       </span>
     );
   }
+
+  // Ein DEVELOPER-Rollenlabel allein reicht nicht: Die serverseitig bestätigte
+  // GlobalDeveloperIdentity (kanonische Discord-ID + aktuelle DB-Rolle) ist
+  // Voraussetzung dafür, dass überhaupt ein Passwort-Step-up angeboten wird.
+  if (!eligible) return null;
 
   if (active) {
     const expLabel = expiresAt ? new Date(expiresAt).toLocaleTimeString() : 'Aktiv';
