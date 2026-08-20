@@ -40,6 +40,11 @@ export function useDevStatus<T>(path: string, intervalMs = 10_000): PolledStatus
       })
       .catch(e => {
         if (cancelled) return;
+        // Diagnosewerte duerfen bei Auth-, Transport- oder Backendfehlern nicht
+        // weiter wie ein aktueller Live-Snapshot aussehen. Der Zeitpunkt des
+        // letzten Erfolgs bleibt separat erhalten, die sichtbaren Daten werden
+        // jedoch fail-closed invalidiert.
+        setData(null);
         setError(e instanceof ApiError ? e.message : 'Fehler.');
         if (e instanceof ApiError) {
           const code = e.code ?? '';
