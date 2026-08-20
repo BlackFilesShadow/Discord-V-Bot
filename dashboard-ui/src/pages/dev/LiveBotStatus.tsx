@@ -23,12 +23,13 @@ interface Snapshot {
 }
 
 interface LogLine {
+  ts: number;
   level: 'error' | 'warn' | 'info' | 'http' | 'debug' | 'verbose' | 'silly';
   message: string;
-  timestamp?: string;
 }
 
 const LEVELS: ReadonlyArray<LogLine['level']> = ['error', 'warn', 'info', 'debug'];
+const ALL_LOG_LEVELS = new Set<LogLine['level']>(['error', 'warn', 'info', 'http', 'debug', 'verbose', 'silly']);
 
 function levelColor(l: LogLine['level']): string {
   if (l === 'error') return 'text-danger';
@@ -41,6 +42,20 @@ function fmtUptime(s: number): string {
   const h = Math.floor(s / 3600);
   const m = Math.floor((s % 3600) / 60);
   return h > 0 ? `${h}h ${m}m` : `${m}m`;
+}
+function fmtLogTime(ts: number): string {
+  if (!Number.isFinite(ts)) return '--:--:--';
+  const d = new Date(ts);
+  if (Number.isNaN(d.getTime())) return '--:--:--';
+  return d.toISOString().slice(11, 19);
+}
+function asLogLine(value: unknown): LogLine | null {
+  if (!value || typeof value !== 'object') return null;
+  const row = value as Record<string, unknown>;
+  if (typeof row.ts !== 'number' || !Number.isFinite(row.ts)) return null;
+  if (typeof row.message !== 'string') return null;
+  if (typeof row.level !== 'string' || !ALL_LOG_LEVELS.has(row.level as LogLine['level'])) return null;
+  return { ts: row.ts, level: row.level as LogLine['level'], message: row.message };
 }
 
 export default function LiveBotStatus() {
@@ -55,8 +70,10 @@ export default function LiveBotStatus() {
 
   useEffect(() => {
     const s = getDevSocket();
-    const onLog = (line: LogLine): void => {
+    const onLog = (raw: unknown): void => {
       if (pausedRef.current) return;
+      const line = asLogLine(raw);
+      if (!line) return;
       setLogs(prev => {
         const next = [...prev, line];
         return next.length > 500 ? next.slice(-500) : next;
@@ -136,9 +153,9 @@ export default function LiveBotStatus() {
           ) : (
             <ul className="divide-y divide-border/40">
               {filtered.map((l, i) => (
-                <li key={i} className="px-3 py-1 hover:bg-bg-hover/30 flex gap-3">
+                <li key={`${l.ts}-${i}`} className="px-3 py-1 hover:bg-bg-hover/30 flex gap-3">
                   <span className={`shrink-0 w-12 ${levelColor(l.level)}`}>{l.level}</span>
-                  {l.timestamp && <span className="shrink-0 text-muted/60">{l.timestamp.slice(11, 19)}</span>}
+                  <span className="shrink-0 text-muted/60">{fmtLogTime(l.ts)}</span>
                   <span className="text-white break-all whitespace-pre-wrap">{l.message}</span>
                 </li>
               ))}
