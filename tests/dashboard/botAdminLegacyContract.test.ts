@@ -30,12 +30,15 @@ function app() {
 
 const BASE = '/api/v2/bot-admin';
 const USER_ID = '11111111-1111-4111-8111-111111111111';
+const PACKAGE_ID = '22222222-2222-4222-8222-222222222222';
+const APPEAL_ID = '33333333-3333-4333-8333-333333333333';
+const FEEDBACK_ID = '44444444-4444-4444-8444-444444444444';
 
 beforeEach(() => {
   session.active = true;
 });
 
-describe('Dashboard-1X strict pagination/filter contract', () => {
+describe('Dashboard-1X/1Y strict pagination/filter/search contract', () => {
   it.each([
     '/appeals?page=1foo',
     '/feedback?page=0',
@@ -60,18 +63,36 @@ describe('Dashboard-1X strict pagination/filter contract', () => {
   });
 
   it.each([
+    '/packages?q=alpha&q=beta',
+    '/users?q=alpha&q=beta',
+  ])('rejects repeated search parameters instead of silently widening: %s', async path => {
+    const r = await request(app()).get(`${BASE}${path}`);
+    expect(r.status).toBe(400);
+    expect(r.body.error).toMatch(/genau einmal/);
+  });
+
+  it.each([
+    `/packages?q=${'x'.repeat(201)}`,
+    `/users?q=${'x'.repeat(201)}`,
+  ])('rejects unbounded search parameters: %s', async path => {
+    const r = await request(app()).get(`${BASE}${path}`);
+    expect(r.status).toBe(400);
+    expect(r.body.error).toMatch(/maximal 200/);
+  });
+
+  it.each([
     '/appeals?page=1&pageSize=100&status=pending',
     '/feedback?status=resolved',
-    '/packages?status=active',
+    '/packages?status=active&q=alpha',
     '/tickets?status=closed',
-    '/users?filter=manufacturer',
+    '/users?filter=manufacturer&q=123456',
   ])('allows canonical values and falls through: %s', async path => {
     const r = await request(app()).get(`${BASE}${path}`);
     expect(r.status).toBe(204);
   });
 });
 
-describe('Dashboard-1X mutation body contract', () => {
+describe('Dashboard-1X/1Y mutation body contract', () => {
   it.each([
     { path: '/upload/toggle', body: {} },
     { path: '/upload/toggle', body: { enable: 'true' } },
@@ -106,18 +127,97 @@ describe('Dashboard-1X mutation body contract', () => {
     expect(r.status).toBe(204);
   });
 
+  it.each([
+    { path: `/appeals/${APPEAL_ID}/decision`, method: 'post', body: { decision: ['APPROVED'] } },
+    { path: `/feedback/${FEEDBACK_ID}`, method: 'patch', body: { status: ['RESOLVED'] } },
+    { path: '/broadcast', method: 'post', body: { target: ['ALL'], message: 'Test' } },
+    { path: '/export', method: 'post', body: { type: ['users'] } },
+    { path: `/packages/${PACKAGE_ID}/status`, method: 'post', body: { status: ['ACTIVE'] } },
+    { path: `/users/${USER_ID}/manufacturer`, method: 'post', body: { decision: ['APPROVE'] } },
+  ])('rejects coercible non-string enum payloads: $method $path', async ({ path, method, body }) => {
+    const agent = request(app());
+    const r = method === 'patch'
+      ? await agent.patch(`${BASE}${path}`).send(body)
+      : await agent.post(`${BASE}${path}`).send(body);
+    expect(r.status).toBe(400);
+    expect(r.body.error).toMatch(/ungueltig/);
+  });
+
+  it.each([
+    { path: `/appeals/${APPEAL_ID}/decision`, method: 'post', body: { decision: 'approved', note: 'ok' } },
+    { path: `/feedback/${FEEDBACK_ID}`, method: 'patch', body: { status: 'resolved', adminNote: null } },
+    { path: '/broadcast', method: 'post', body: { target: 'all', message: 'Test', dryRun: false } },
+    { path: '/export', method: 'post', body: { type: 'users' } },
+    { path: `/packages/${PACKAGE_ID}/status`, method: 'post', body: { status: 'active' } },
+    { path: `/users/${USER_ID}/manufacturer`, method: 'post', body: { decision: 'approve', note: 'ok' } },
+  ])('accepts canonical string enum payloads: $method $path', async ({ path, method, body }) => {
+    const agent = request(app());
+    const r = method === 'patch'
+      ? await agent.patch(`${BASE}${path}`).send(body)
+      : await agent.post(`${BASE}${path}`).send(body);
+    expect(r.status).toBe(204);
+  });
+
+  it('keeps the legacy export type contract exact-lowercase', async () => {
+    const upper = await request(app()).post(`${BASE}/export`).send({ type: 'USERS' });
+    const lower = await request(app()).post(`${BASE}/export`).send({ type: 'users' });
+    expect(upper.status).toBe(400);
+    expect(lower.status).toBe(204);
+  });
+
+  it.each([
+    { path: `/appeals/${APPEAL_ID}/decision`, body: { decision: 'DENIED', note: 'x'.repeat(1001) }, method: 'post', field: 'note' },
+    { path: `/feedback/${FEEDBACK_ID}`, body: { status: 'RESOLVED', adminNote: 'x'.repeat(2001) }, method: 'patch', field: 'adminNote' },
+    { path: `/users/${USER_ID}/toggle-upload`, body: { enable: false, reason: 'x'.repeat(501) }, method: 'post', field: 'reason' },
+    { path: `/users/${USER_ID}/manufacturer`, body: { decision: 'DENY', note: 'x'.repeat(501) }, method: 'post', field: 'note' },
+  ])('rejects overlong operator text instead of silently truncating: $field', async ({ path, body, method, field }) => {
+    const agent = request(app());
+    const r = method === 'patch'
+      ? await agent.patch(`${BASE}${path}`).send(body)
+      : await agent.post(`${BASE}${path}`).send(body);
+    expect(r.status).toBe(400);
+    expect(r.body.error).toContain(field);
+    expect(r.body.error).toMatch(/maximal/);
+  });
+
+  it.each([
+    {},
+    { hard: 'true' },
+    { hard: 'false' },
+  ])('accepts unambiguous package delete hard query %#', async query => {
+    const r = await request(app()).delete(`${BASE}/packages/${PACKAGE_ID}`).query(query);
+    expect(r.status).toBe(204);
+  });
+
+  it.each([
+    '?hard=True',
+    '?hard=1',
+    '?hard=true&hard=false',
+  ])('rejects ambiguous package delete hard query: %s', async query => {
+    const r = await request(app()).delete(`${BASE}/packages/${PACKAGE_ID}${query}`);
+    expect(r.status).toBe(400);
+    expect(r.body.error).toMatch(/true oder false/);
+  });
+
   it('rejects malformed optional broadcast dryRun', async () => {
-    const bad = await request(app()).post(`${BASE}/broadcast`).send({ dryRun: 'false' });
-    const omitted = await request(app()).post(`${BASE}/broadcast`).send({});
-    const exact = await request(app()).post(`${BASE}/broadcast`).send({ dryRun: false });
+    const bad = await request(app()).post(`${BASE}/broadcast`).send({ target: 'ALL', message: 'Test', dryRun: 'false' });
+    const omitted = await request(app()).post(`${BASE}/broadcast`).send({ target: 'ALL', message: 'Test' });
+    const exact = await request(app()).post(`${BASE}/broadcast`).send({ target: 'ALL', message: 'Test', dryRun: false });
     expect(bad.status).toBe(400);
     expect(omitted.status).toBe(204);
     expect(exact.status).toBe(204);
   });
 
+  it('rejects blank/oversized broadcast message before legacy coercion', async () => {
+    const blank = await request(app()).post(`${BASE}/broadcast`).send({ target: 'ALL', message: '   ' });
+    const huge = await request(app()).post(`${BASE}/broadcast`).send({ target: 'ALL', message: 'x'.repeat(1901) });
+    expect(blank.status).toBe(400);
+    expect(huge.status).toBe(400);
+  });
+
   it('authenticates before revealing validation errors', async () => {
     session.active = false;
-    const r = await request(app()).post(`${BASE}/upload/toggle`).send({ enable: 'true' });
+    const r = await request(app()).post(`${BASE}/broadcast`).send({ target: ['ALL'], message: 123, dryRun: 'true' });
     expect(r.status).toBe(403);
   });
 });
