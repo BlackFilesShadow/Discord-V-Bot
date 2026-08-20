@@ -16,7 +16,10 @@ export function DevLoginPanel() {
   const [err, setErr] = useState<string | null>(null);
   const [errCode, setErrCode] = useState<string | null>(null);
 
-  if (!user) return null;
+  // Das Passwort ist nur Step-up. Die privilegierte Identitaet entsteht niemals
+  // durch die sichtbare Login-Box; UI-seitig wird sie deshalb nur fuer bereits
+  // authentifizierte DEVELOPER-Konten angeboten. Das Backend bleibt Autoritaet.
+  if (!user || user.role !== 'DEVELOPER') return null;
 
   const onSubmit = async (event: FormEvent): Promise<void> => {
     event.preventDefault();

@@ -11,7 +11,7 @@
  *   Sessions zeitnah erkannt werden.
  */
 import { createContext, useCallback, useContext, useEffect, useState, type ReactNode } from 'react';
-import { api, ApiError } from './api';
+import { api } from './api';
 
 const SS_HINT = 'devSession.optimistic';
 
@@ -61,12 +61,14 @@ export function DevSessionProvider({ children }: { children: ReactNode }) {
       setEligible(s.eligible);
       setExpiresAt(s.expiresAt);
       writeHint(s.active);
-    } catch (e) {
-      // 401 = nicht eingeloggt — DevSession trivialerweise inaktiv.
-      if (e instanceof ApiError && e.status === 401) {
-        setActive(false); setEligible(false); setExpiresAt(null);
-        writeHint(false);
-      }
+    } catch {
+      // Privilegierte UI muss bei jeder fehlgeschlagenen Server-Bestaetigung
+      // fail-closed werden. Ein optimistischer Hint darf weder bei 403/5xx noch
+      // bei einem Netzfehler als bestaetigte DEV-Session weiterleben.
+      setActive(false);
+      setEligible(false);
+      setExpiresAt(null);
+      writeHint(false);
     } finally {
       setLoading(false);
     }
