@@ -1,4 +1,3 @@
-/* eslint-disable local/no-unscoped-prisma-query -- Stage 64: intentional cross-tenant system/admin surface (authZ outside Prisma where). */
 import { Client, Collection, GatewayIntentBits, Partials } from 'discord.js';
 import { ExtendedClient, BotEvent } from './types';
 import { config } from './config';
@@ -109,10 +108,10 @@ async function main(): Promise<void> {
   client.once('clientReady', async () => {
     try {
       const guildIds = [...client.guilds.cache.keys()];
-      logger.info(`Command-Sync (scoped) startet fÃ¼r ${guildIds.length} Guild(s)...`);
+      logger.info(`Command-Sync (scoped) startet für ${guildIds.length} Guild(s)...`);
       const res = await deployCommandsScoped(client, config.discord.token, config.discord.clientId, guildIds);
       if (res.guildsFailed > 0) {
-        logger.error(`Command-Sync unvollstÃ¤ndig: ${res.globalCount} global, ${res.guildCount} guild-scoped; ${res.guildsOk}/${guildIds.length} Guild(s) erfolgreich.`, {
+        logger.error(`Command-Sync unvollständig: ${res.globalCount} global, ${res.guildCount} guild-scoped; ${res.guildsOk}/${guildIds.length} Guild(s) erfolgreich.`, {
           failedGuildIds: res.failedGuildIds,
         });
       } else {
@@ -139,13 +138,13 @@ async function main(): Promise<void> {
       const n = await deployGuildCommands(client, config.discord.token, config.discord.clientId, guild.id);
       logger.info(`Bot beigetreten zu ${guild.name} (${guild.id}) â€“ ${n} Guild-Commands registriert`);
     } catch (e) {
-      logger.warn(`guildCreate Command-Deploy fÃ¼r ${guild.id} fehlgeschlagen:`, e as Error);
+      logger.warn(`guildCreate Command-Deploy für ${guild.id} fehlgeschlagen:`, e as Error);
     }
     try {
       const { syncGuild } = await import('./modules/ai/guildAwareness.js');
       await syncGuild(guild);
     } catch (e) {
-      logger.warn(`GuildAwareness-Sync fÃ¼r ${guild.id} fehlgeschlagen:`, e as Error);
+      logger.warn(`GuildAwareness-Sync für ${guild.id} fehlgeschlagen:`, e as Error);
     }
     try {
       const { getOrCreate: getOrCreateLink } = await import('./modules/dashboard/repository.js');
@@ -174,7 +173,7 @@ async function main(): Promise<void> {
       const { syncGuild } = await import('./modules/ai/guildAwareness.js');
       await syncGuild(newGuild);
     } catch (e) {
-      logger.warn(`GuildAwareness-Update fÃ¼r ${newGuild.id} fehlgeschlagen:`, e as Error);
+      logger.warn(`GuildAwareness-Update für ${newGuild.id} fehlgeschlagen:`, e as Error);
     }
   });
 
@@ -222,7 +221,7 @@ async function main(): Promise<void> {
   }, 60_000);
   moderationTimer.unref?.();
 
-  logger.info(`${BOT_PRODUCT_NAME} vollstÃ¤ndig gestartet.`);
+  logger.info(`${BOT_PRODUCT_NAME} vollständig gestartet.`);
 
   let shuttingDown = false;
   const shutdown = async (signal: string) => {

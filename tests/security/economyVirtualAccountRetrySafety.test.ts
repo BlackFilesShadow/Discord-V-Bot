@@ -39,7 +39,8 @@ describe('virtuelle Konten — Retry- und Replay-Sicherheit', () => {
     expect(api).toContain('const key = validStoredIdempotencyKey(stored) ? stored.trim() : createIdempotencyKey();');
     expect(api).toContain('lease = await acquireMutationIdempotencyKey(signature);');
     expect(api).toContain("headers['X-Idempotency-Key'] = lease.key;");
-    const decode = api.indexOf('const result = await decode<T>(await fetch(');
+    // Timeout-aware transport; pending key released only after successful decode.
+    const decode = api.indexOf('const result = await decode<T>(await fetchWithTimeout(');
     const release = api.indexOf('if (lease) releaseMutationIdempotencyKey(lease);', decode);
     expect(decode).toBeGreaterThanOrEqual(0);
     expect(release).toBeGreaterThan(decode);

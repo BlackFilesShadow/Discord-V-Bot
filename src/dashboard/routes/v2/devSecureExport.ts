@@ -64,7 +64,7 @@ async function writeChunk(res: Response, chunk: string): Promise<boolean> {
 /** Sensibler Paketexport. Step-Up wird am Mount-Punkt vor dieser Route geprueft. */
 devSecureExportRouter.post('/packages/:discordId', async (req, res) => {
   const discordId = String(req.params.discordId ?? '').trim();
-  if (!SNOWFLAKE.test(discordId)) { res.status(400).json({ error: 'UngÃ¼ltige Discord-ID.' }); return; }
+  if (!SNOWFLAKE.test(discordId)) { res.status(400).json({ error: 'Ungültige Discord-ID.' }); return; }
   const user = await prisma.user.findUnique({ where: { discordId } });
   if (!user) { res.status(404).json({ error: 'User nicht in der Datenbank.' }); return; }
   const packages = await prisma.package.findMany({ where: { userId: user.id }, include: { files: true } });
@@ -78,7 +78,7 @@ devSecureExportRouter.post('/packages/:discordId', async (req, res) => {
 /** Sensibler GDPR-Userexport. */
 devSecureExportRouter.post('/user/:discordId', async (req, res) => {
   const discordId = String(req.params.discordId ?? '').trim();
-  if (!SNOWFLAKE.test(discordId)) { res.status(400).json({ error: 'UngÃ¼ltige Discord-ID.' }); return; }
+  if (!SNOWFLAKE.test(discordId)) { res.status(400).json({ error: 'Ungültige Discord-ID.' }); return; }
   const user = await prisma.user.findUnique({
     where: { discordId },
     include: {
@@ -109,7 +109,7 @@ devSecureExportRouter.post('/user/:discordId', async (req, res) => {
  */
 devSecureExportRouter.post('/logs', async (req, res) => {
   const category = String(req.body?.category ?? 'ALL').toUpperCase();
-  if (!ALLOWED_AUDIT_CATEGORIES.has(category)) { res.status(400).json({ error: 'UngÃ¼ltige Audit-Kategorie.' }); return; }
+  if (!ALLOWED_AUDIT_CATEGORIES.has(category)) { res.status(400).json({ error: 'Ungültige Audit-Kategorie.' }); return; }
   const rawDays = Number(req.body?.days ?? 30);
   if (!Number.isInteger(rawDays) || rawDays < 1 || rawDays > 365) { res.status(400).json({ error: 'days muss 1..365 sein.' }); return; }
   const since = new Date(Date.now() - rawDays * 86_400_000);

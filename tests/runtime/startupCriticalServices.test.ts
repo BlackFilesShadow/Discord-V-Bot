@@ -7,7 +7,7 @@ describe('production startup critical-service invariants', () => {
   it('bricht den Prozessstart ab wenn das dashboard-only Admin/DEV-System nicht starten kann', () => {
     const start = source.indexOf('dashboardRuntime = await startDashboard(client)');
     const catchStart = source.indexOf("logger.error('Dashboard konnte nicht gestartet werden; Start wird abgebrochen:'", start);
-    const destroy = source.indexOf('client.destroy();', catchStart);
+    const destroy = source.indexOf('await client.destroy();', catchStart);
     const disconnect = source.indexOf('await prisma.$disconnect().catch(() => undefined);', catchStart);
     const rethrow = source.indexOf('throw error;', catchStart);
     const complete = source.indexOf('vollständig gestartet');
