@@ -1,0 +1,29 @@
+{
+  "schemaVersion": 1,
+  "stage": 31,
+  "basedOnMainSha": "4c5ed65a8e0ffc89a5e8f1aadbd5eb9a64bca699",
+  "viewport": { "width": 320, "height": 568, "name": "iPhone SE class" },
+  "scope": "Full mobile matrix at exactly 320px: navigation, CRUD/actions surfaces, dialogs, tables, forms, touch targets, overflow, loading/error/success, permission states for production-reachable dashboard shells.",
+  "contracts": {
+    "noHorizontalOverflow": "documentElement.scrollWidth - clientWidth <= 1",
+    "touchTargetMin": "Primary header/login controls >= 44x44 CSS px",
+    "authRoutes": "/servers, guild overview, slot settings remain usable",
+    "login": "Discord CTA reachable at 320",
+    "evidence": "Playwright mobile.spec.ts + dashboard-authenticated-page-matrix 320px + bot-admin-mobile-contract"
+  },
+  "checks": [
+    { "id": "login-320", "e2e": "mobile.spec.ts Login-CTA 320px + viewport matrix", "status": "verified" },
+    { "id": "header-controls-320", "e2e": "mobile.spec.ts authentifiziert Controls >=44px no overlap", "status": "verified" },
+    { "id": "servers-guild-slot-320", "e2e": "dashboard-authenticated-page-matrix 320px routes", "status": "verified" },
+    { "id": "bot-admin-320", "e2e": "bot-admin-mobile-contract.spec.ts", "status": "verified" },
+    { "id": "overflow-gate-320", "e2e": "expectNoHorizontalOverflow / scrollWidth checks", "status": "verified" }
+  ],
+  "surfaces": [
+    { "id": "login", "route": "/login", "status": "verified" },
+    { "id": "servers", "route": "/servers", "status": "verified" },
+    { "id": "guild", "route": "/servers/:guildId", "status": "verified" },
+    { "id": "slot-settings", "route": "/servers/:guildId/server/:slot?tab=settings", "status": "verified" },
+    { "id": "bot-admin", "route": "/bot-admin", "status": "verified" },
+    { "id": "shell-header", "route": "Shell chrome", "status": "verified" }
+  ]
+}
