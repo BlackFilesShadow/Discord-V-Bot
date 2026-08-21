@@ -30,8 +30,8 @@ export const devIncidentRouter = Router();
 /**
  * Stage 27 action-coupling gate.
  *
- * Repository-wide coupling audit on the Stage-26 verified main found no
- * production consumer of `isIncidentActive(...)`. `cache.flush` and
+ * Repository-wide coupling audit on the Stage-26 verified main found
+ * no production consumer of `isIncidentActive(...)`. `cache.flush` and
  * `backup.trigger` likewise only wrote audit/idempotency state and did not
  * execute the UI-advertised cache/backup effects. Advertising these controls
  * as operational would therefore create a false-success emergency console.

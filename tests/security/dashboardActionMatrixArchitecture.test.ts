@@ -19,12 +19,44 @@ interface ActionSurface {
   evidence: string[];
 }
 
+interface ActionRow {
+  id: string;
+  surface: string;
+  sourceUi: string;
+  visibleName: string;
+  permission: string;
+  authN: string;
+  authZ: string;
+  scope: string;
+  request: string;
+  httpMethod: string;
+  route: string;
+  payload: string;
+  validation: string;
+  stepUpReAuth: string;
+  idempotency: string;
+  doubleClick: string;
+  race: string;
+  retry: string;
+  timeout: string;
+  statusCodes: string;
+  realSideEffect: string;
+  audit: string;
+  successState: string;
+  errorState: string;
+  mobile: string;
+  tests: string;
+  residualRisk: string;
+  status: string;
+}
+
 interface ActionMatrix {
   schemaVersion: number;
   stage: number;
   basedOnMainSha: string;
   contracts: Record<string, string>;
   surfaces: ActionSurface[];
+  actions: ActionRow[];
 }
 
 const crud = JSON.parse(read('docs/dashboard-crud-matrix.json')) as CrudMatrix;
@@ -93,5 +125,39 @@ describe('Stage 27 dashboard action matrix architecture', () => {
     expect(incidentRoute).toContain("bad(res, 503, 'incident_action_not_operational')");
     expect(incidentUi).toContain('const operationalActions = state?.operationalActions ?? [];');
     expect(incidentUi).toContain('Incident-Aktionen nicht freigegeben');
+  });
+
+  it('inventories concrete operational actions with Stage-27 Pflichtfelder and surface coverage', () => {
+    expect(Array.isArray(actions.actions)).toBe(true);
+    expect(actions.actions.length).toBeGreaterThanOrEqual(9);
+
+    const required: Array<keyof ActionRow> = [
+      'id', 'surface', 'sourceUi', 'visibleName', 'permission', 'authN', 'authZ', 'scope',
+      'request', 'httpMethod', 'route', 'payload', 'validation', 'stepUpReAuth', 'idempotency',
+      'doubleClick', 'race', 'retry', 'timeout', 'statusCodes', 'realSideEffect', 'audit',
+      'successState', 'errorState', 'mobile', 'tests', 'residualRisk', 'status',
+    ];
+
+    const surfaceSet = new Set(actions.surfaces.map(row => row.surface));
+    const actionSurfaces = new Set<string>();
+    const ids = new Set<string>();
+
+    for (const row of actions.actions) {
+      for (const key of required) {
+        expect(String(row[key] ?? '').trim()).not.toBe('');
+      }
+      expect(surfaceSet.has(row.surface)).toBe(true);
+      expect(ids.has(row.id)).toBe(false);
+      ids.add(row.id);
+      actionSurfaces.add(row.surface);
+    }
+
+    expect(sorted([...actionSurfaces])).toEqual(sorted([...surfaceSet]));
+
+    const incidentActions = actions.actions.filter(row => row.surface === 'dev-incident-response');
+    expect(incidentActions.length).toBeGreaterThanOrEqual(4);
+    expect(incidentActions.every(row => row.status === 'fail-closed-unavailable')).toBe(true);
+    expect(incidentActions.some(row => row.id.includes('cache.flush'))).toBe(true);
+    expect(incidentActions.some(row => row.id.includes('backup.trigger'))).toBe(true);
   });
 });
