@@ -235,7 +235,7 @@ test.describe('Nitrado authenticated owner CRUD contract', () => {
 
   test('Nicht-Owner bleibt fail-closed und erreicht keine Mutation', async ({ page }) => {
     const stub = await stubNitradoDashboard(page, { isOwner: false, initialSlots: [existingSlot()] });
-    await openNitrado(page);
+    await page.goto(`/servers/${GUILD_ID}`);
 
     await expect(page.getByRole('heading', { name: 'Nicht erlaubt' })).toBeVisible();
     await expect(page.getByRole('button', { name: 'Slot hinzufuegen' })).toHaveCount(0);
