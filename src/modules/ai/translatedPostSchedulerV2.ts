@@ -118,7 +118,7 @@ async function sendPost(client: Client, post: { id: string; guildId: string; cha
         await prisma.translatedPost.update({ where: { id: post.id }, data: { imageUrl: migratedRef } });
       } catch (error) {
         // Die neue Datei darf erst als aktiv gelten, wenn die DB-Referenz
-        // erfolgreich umgestellt wurde. Bei DB-Fehler sofort zurÃ¼ckrollen.
+        // erfolgreich umgestellt wurde. Bei DB-Fehler sofort zurückrollen.
         await removeTranslatedPostImage(migratedRef);
         throw error;
       }

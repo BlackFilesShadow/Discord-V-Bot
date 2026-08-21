@@ -10,7 +10,7 @@ import os from 'os';
 /**
  * Dashboard Testumgebung (Sektion 7):
  * - Systemstatus & Health-Checks
- * - DB-KonnektivitÃ¤t
+ * - DB-Konnektivität
  * - Validierungs-Tests
  * - Feature-Toggle Steuerung
  * - Diagnose-Endpoints
@@ -83,7 +83,7 @@ testRouter.post('/validate', async (req: Request, res: Response) => {
     return res.status(400).json({ error: 'content und fileType erforderlich.' });
   }
 
-  // TemporÃ¤re Datei fÃ¼r Validierung
+  // Temporäre Datei für Validierung
   const tmpDir = os.tmpdir();
   const tmpFile = path.join(tmpDir, `test_${Date.now()}.${fileType}`);
 
@@ -117,7 +117,7 @@ testRouter.get('/db-stats', async (_req: Request, res: Response) => {
       timestamp: new Date().toISOString(),
     });
   } catch (_error) {
-    res.status(500).json({ error: 'DB-Statistiken nicht verfÃ¼gbar.' });
+    res.status(500).json({ error: 'DB-Statistiken nicht verfügbar.' });
   }
 });
 
@@ -164,7 +164,7 @@ testRouter.get('/env', (_req: Request, res: Response) => {
 });
 
 /**
- * POST /test/echo â€“ Echo-Endpoint fÃ¼r API-Tests
+ * POST /test/echo â€“ Echo-Endpoint für API-Tests
  */
 testRouter.post('/echo', (req: Request, res: Response) => {
   res.json({

@@ -50,7 +50,8 @@ describe('DEV command-center security wiring', () => {
   });
 
   it('hat eine geschuetzte Dashboard-Seite fuer die erneute Export-Authentisierung', () => {
-    expect(app).toContain("import SecureDevExport from './pages/dev/SecureDevExport';");
+    // Stage 56+: route is code-split; page must remain reachable under /dev/secure-export.
+    expect(app).toContain("lazyPage(() => import('./pages/dev/SecureDevExport'))");
     expect(app).toContain('<Route path="secure-export" element={<SecureDevExport />} />');
   });
 });
