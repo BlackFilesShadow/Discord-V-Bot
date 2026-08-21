@@ -1,3 +1,4 @@
+import { lazy, Suspense, type ComponentType } from 'react';
 import { Routes, Route, Navigate } from 'react-router-dom';
 import { useAuth } from './lib/auth';
 import Login from './pages/Login';
@@ -6,41 +7,6 @@ import Server from './pages/Server';
 import ServerSlot from './pages/ServerSlot';
 import Dev, { DEV_TOOLS } from './pages/Dev';
 import BotAdmin from './pages/BotAdmin';
-import LiveBotStatus from './pages/dev/LiveBotStatus';
-import DashboardStatus from './pages/dev/DashboardStatus';
-import DatabaseStatus from './pages/dev/DatabaseStatus';
-import NitradoStatus from './pages/dev/NitradoStatus';
-import NitradoProtection from './pages/dev/NitradoProtection';
-import MemberDetection from './pages/dev/MemberDetection';
-import DiscordStatus from './pages/dev/DiscordStatus';
-import SystemHealth from './pages/dev/SystemHealth';
-import ErrorMonitoring from './pages/dev/ErrorMonitoring';
-import LiveSyncStatus from './pages/dev/LiveSyncStatus';
-import BackupStatus from './pages/dev/BackupStatus';
-import SecurityStatus from './pages/dev/SecurityStatus';
-import ActiveSessions from './pages/dev/ActiveSessions';
-import IncidentResponse from './pages/dev/IncidentResponse';
-import Observability from './pages/dev/Observability';
-import AdmAnalysis from './pages/dev/AdmAnalysis';
-import RptAnalysis from './pages/dev/RptAnalysis';
-import XmlValidator from './pages/dev/XmlValidator';
-import JsonValidator from './pages/dev/JsonValidator';
-import DebugTools from './pages/dev/DebugTools';
-import AuditLogs from './pages/dev/AuditLogs';
-import CommandDiagnostics from './pages/dev/CommandDiagnostics';
-import CommandCenter from './pages/dev/CommandCenter';
-import SecureDevExport from './pages/dev/SecureDevExport';
-import Killfeed from './pages/dev/Killfeed';
-import PlayerTracking from './pages/dev/PlayerTracking';
-import RaidAnalysisTool from './pages/dev/RaidAnalysis';
-import BaseProximity from './pages/dev/BaseProximity';
-import MovementHeatmap from './pages/dev/MovementHeatmap';
-import SuspiciousActivity from './pages/dev/SuspiciousActivity';
-import FactionActivity from './pages/dev/FactionActivity';
-import VehicleTracking from './pages/dev/VehicleTracking';
-import AiProviderStats from './pages/dev/AiProviderStats';
-import AiContextDebugger from './pages/dev/AiContextDebugger';
-import NitradoMirror from './pages/dev/NitradoMirror';
 import { Toaster } from './components/ui/Toast';
 
 function Protected({ children }: { children: JSX.Element }) {
@@ -50,41 +16,60 @@ function Protected({ children }: { children: JSX.Element }) {
   return children;
 }
 
-const DEV_PAGES: Record<string, () => JSX.Element> = {
-  'bot-status': LiveBotStatus,
-  'dashboard-status': DashboardStatus,
-  'database-status': DatabaseStatus,
-  'nitrado-status': NitradoStatus,
-  'nitrado-protection': NitradoProtection,
-  'member-detection': MemberDetection,
-  'discord-status': DiscordStatus,
-  'system-health': SystemHealth,
-  'error-monitoring': ErrorMonitoring,
-  'live-sync': LiveSyncStatus,
-  'backup-status': BackupStatus,
-  'security-status': SecurityStatus,
-  'active-sessions': ActiveSessions,
-  'incident-response': IncidentResponse,
-  'observability': Observability,
-  'adm-analysis': AdmAnalysis,
-  'rpt-analysis': RptAnalysis,
-  'xml-validator': XmlValidator,
-  'json-validator': JsonValidator,
-  'debug-tools': DebugTools,
-  'audit-logs': AuditLogs,
-  'command-diag': CommandDiagnostics,
-  'killfeed': Killfeed,
-  'player-tracking': PlayerTracking,
-  'raid-analysis': RaidAnalysisTool,
-  'base-proximity': BaseProximity,
-  'movement-heatmap': MovementHeatmap,
-  'suspicious': SuspiciousActivity,
-  'faction-activity': FactionActivity,
-  'vehicle-tracking': VehicleTracking,
-  'ai-providers': AiProviderStats,
-  'ai-context-debugger': AiContextDebugger,
-  'nitrado-mirror': NitradoMirror,
+function LazyFallback() {
+  return <div className="grid place-items-center h-full text-muted p-6">Lade Modul…</div>;
+}
+
+function lazyPage(loader: () => Promise<{ default: ComponentType }>) {
+  const Comp = lazy(loader);
+  return function LazyRoute() {
+    return (
+      <Suspense fallback={<LazyFallback />}>
+        <Comp />
+      </Suspense>
+    );
+  };
+}
+
+// Stage 56: code-split DEV tools so the main shell does not eagerly pull every diagnostic page.
+const DEV_PAGES: Record<string, ComponentType> = {
+  'bot-status': lazyPage(() => import('./pages/dev/LiveBotStatus')),
+  'dashboard-status': lazyPage(() => import('./pages/dev/DashboardStatus')),
+  'database-status': lazyPage(() => import('./pages/dev/DatabaseStatus')),
+  'nitrado-status': lazyPage(() => import('./pages/dev/NitradoStatus')),
+  'nitrado-protection': lazyPage(() => import('./pages/dev/NitradoProtection')),
+  'member-detection': lazyPage(() => import('./pages/dev/MemberDetection')),
+  'discord-status': lazyPage(() => import('./pages/dev/DiscordStatus')),
+  'system-health': lazyPage(() => import('./pages/dev/SystemHealth')),
+  'error-monitoring': lazyPage(() => import('./pages/dev/ErrorMonitoring')),
+  'live-sync': lazyPage(() => import('./pages/dev/LiveSyncStatus')),
+  'backup-status': lazyPage(() => import('./pages/dev/BackupStatus')),
+  'security-status': lazyPage(() => import('./pages/dev/SecurityStatus')),
+  'active-sessions': lazyPage(() => import('./pages/dev/ActiveSessions')),
+  'incident-response': lazyPage(() => import('./pages/dev/IncidentResponse')),
+  'observability': lazyPage(() => import('./pages/dev/Observability')),
+  'adm-analysis': lazyPage(() => import('./pages/dev/AdmAnalysis')),
+  'rpt-analysis': lazyPage(() => import('./pages/dev/RptAnalysis')),
+  'xml-validator': lazyPage(() => import('./pages/dev/XmlValidator')),
+  'json-validator': lazyPage(() => import('./pages/dev/JsonValidator')),
+  'debug-tools': lazyPage(() => import('./pages/dev/DebugTools')),
+  'audit-logs': lazyPage(() => import('./pages/dev/AuditLogs')),
+  'command-diag': lazyPage(() => import('./pages/dev/CommandDiagnostics')),
+  'killfeed': lazyPage(() => import('./pages/dev/Killfeed')),
+  'player-tracking': lazyPage(() => import('./pages/dev/PlayerTracking')),
+  'raid-analysis': lazyPage(() => import('./pages/dev/RaidAnalysis')),
+  'base-proximity': lazyPage(() => import('./pages/dev/BaseProximity')),
+  'movement-heatmap': lazyPage(() => import('./pages/dev/MovementHeatmap')),
+  'suspicious': lazyPage(() => import('./pages/dev/SuspiciousActivity')),
+  'faction-activity': lazyPage(() => import('./pages/dev/FactionActivity')),
+  'vehicle-tracking': lazyPage(() => import('./pages/dev/VehicleTracking')),
+  'ai-providers': lazyPage(() => import('./pages/dev/AiProviderStats')),
+  'ai-context-debugger': lazyPage(() => import('./pages/dev/AiContextDebugger')),
+  'nitrado-mirror': lazyPage(() => import('./pages/dev/NitradoMirror')),
 };
+
+const CommandCenter = lazyPage(() => import('./pages/dev/CommandCenter'));
+const SecureDevExport = lazyPage(() => import('./pages/dev/SecureDevExport'));
 
 const _missing = DEV_TOOLS.filter(t => !DEV_PAGES[t.slug]).map(t => t.slug);
 if (_missing.length > 0) {
