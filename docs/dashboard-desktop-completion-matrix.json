@@ -1,0 +1,101 @@
+{
+  "schemaVersion": 1,
+  "stage": 30,
+  "basedOnMainSha": "9ff08c6d60c77b42f9a02cd588e62b6b2524edf1",
+  "scope": "Desktop completion matrix for all production-reachable authenticated dashboard surfaces: navigation, layout, CRUD/actions regression hooks, loading/empty/error/success, dialogs/forms/tables, overflow, basic a11y, authenticated E2E evidence.",
+  "desktopViewport": { "width": 1280, "height": 800 },
+  "contracts": {
+    "authShell": "Protected routes require session; unauthenticated users Navigate to /login.",
+    "noOverflow": "Primary authenticated pages must not horizontal-overflow at desktop width.",
+    "e2eEvidence": "Each surface maps to at least one authenticated Playwright spec or is explicitly classified as DEV catalog-only with shell coverage.",
+    "a11yBasics": "Interactive controls expose accessible names (role/button/link); lang=de on html.",
+    "errorVisible": "Failures use ApiError/toast/inline danger — Stage 29 taxonomy.",
+    "stageBoundary": "Deep mobile-only viewports are Stages 31-35; desktop gate freezes 1280 baseline."
+  },
+  "surfaces": [
+    {
+      "id": "login",
+      "route": "/login",
+      "navigation": "public entry",
+      "layout": "centered CTA",
+      "states": "loading via auth; error via Discord OAuth return",
+      "e2e": "dashboard-ui/e2e/login.spec.ts; dashboard-ui/e2e/mobile.spec.ts",
+      "status": "verified"
+    },
+    {
+      "id": "servers-list",
+      "route": "/servers",
+      "navigation": "default post-login",
+      "layout": "Shell + guild cards",
+      "states": "empty guilds; loading; manage CTA",
+      "e2e": "dashboard-ui/e2e/dashboard-authenticated-page-matrix.spec.ts",
+      "status": "verified"
+    },
+    {
+      "id": "guild-overview",
+      "route": "/servers/:guildId",
+      "navigation": "from servers list",
+      "layout": "tabs + nitrado slots",
+      "states": "owner/non-owner; empty slots",
+      "e2e": "dashboard-ui/e2e/dashboard-authenticated-page-matrix.spec.ts; server-nitrado-authenticated-actions.spec.ts",
+      "status": "verified"
+    },
+    {
+      "id": "guild-slot",
+      "route": "/servers/:guildId/server/:slot",
+      "navigation": "slot card",
+      "layout": "tabbed ServerSlot",
+      "states": "settings/economy/whitelist/killfeed/etc tabs",
+      "e2e": "dashboard-authenticated-page-matrix; economy-*; whitelist-*; killfeed-*; casino-*; factions-*; tickets-*; welcome-goodbye-*; settings-*; permissions-*; lottery-*; virtual-accounts-*; black-market-*; feeds-*; embed-*; reaction-*; translated-posts-*; server-aliases-*",
+      "status": "verified"
+    },
+    {
+      "id": "bot-admin",
+      "route": "/bot-admin",
+      "navigation": "Shell unlock panel",
+      "layout": "BotAdmin sections",
+      "states": "locked/unlocked; danger zone",
+      "e2e": "bot-admin-core-actions.spec.ts; bot-admin-knowledge-scope.spec.ts; bot-admin-mobile-contract.spec.ts",
+      "status": "verified"
+    },
+    {
+      "id": "dev-shell",
+      "route": "/dev/*",
+      "navigation": "DEV unlock + sidebar catalog",
+      "layout": "Dev shell + outlet",
+      "states": "session lock; tool routes from DEV_TOOLS",
+      "e2e": "dev-shell-authenticated.spec.ts; dev-observability-*; dev-sensitive-actions-*; dev-command-center-*; dev-nitrado-mirror-*; dev-diagnostics-*; dev-upload-crud-*",
+      "status": "verified"
+    }
+  ],
+  "desktopChecks": [
+    {
+      "id": "desktop-page-matrix-overflow",
+      "description": "Authenticated core routes render markers without horizontal overflow at default Playwright viewport",
+      "evidence": "dashboard-ui/e2e/dashboard-authenticated-page-matrix.spec.ts",
+      "status": "verified"
+    },
+    {
+      "id": "desktop-1280-core-routes",
+      "description": "Explicit 1280x800 pass for /servers, guild, slot settings",
+      "evidence": "dashboard-ui/e2e/dashboard-authenticated-page-matrix.spec.ts describe Desktop 1280 completion",
+      "status": "fixed-stage-30"
+    },
+    {
+      "id": "app-route-table-complete",
+      "description": "App.tsx registers login, servers, guild, slot, bot-admin, dev tree; catch-all to /servers",
+      "evidence": "dashboard-ui/src/App.tsx",
+      "status": "verified"
+    },
+    {
+      "id": "dev-tools-page-mapping",
+      "description": "Every DEV_TOOLS slug has DEV_PAGES mapping (console.error gate on missing)",
+      "evidence": "dashboard-ui/src/App.tsx DEV_PAGES + DEV_TOOLS",
+      "status": "verified"
+    }
+  ],
+  "residualRisks": [
+    "Not every Bot-Admin sub-panel has a dedicated desktop screenshot audit; covered by bot-admin-core + architecture inventories from Stages 26-29.",
+    "Full WCAG audit deferred beyond basic names/lang/touch — acceptable for Stage 30 scope."
+  ]
+}
