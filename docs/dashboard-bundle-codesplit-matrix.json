@@ -1,0 +1,11 @@
+{
+  "schemaVersion": 1,
+  "stage": 56,
+  "basedOnMainSha": "45caf9cd",
+  "scope": "Dashboard bundle >500kB / code splitting.",
+  "contracts": {
+    "lazyDev": "DEV_PAGES use React.lazy",
+    "manualChunks": "vite config may define vendor splits",
+    "measure": "vite build reports chunk sizes"
+  }
+}
