@@ -35,7 +35,10 @@ import express from 'express';
 import session from 'express-session';
 import request from 'supertest';
 import { requireAuth } from '../../src/dashboard/middleware/auth';
-import { devIncidentRouter } from '../../src/dashboard/routes/v2/devIncident';
+import {
+  devIncidentRouter,
+  OPERATIONAL_INCIDENT_ACTIONS,
+} from '../../src/dashboard/routes/v2/devIncident';
 import {
   __resetIncidentStateForTests,
   isIncidentActive,
@@ -93,7 +96,16 @@ afterAll(() => {
 });
 
 describe('Stage 27 DEV incident action contract', () => {
-  it('rejects wrong re-auth before incident state changes', async () => {
+  it('advertises only actions with proven production side effects', async () => {
+    expect(OPERATIONAL_INCIDENT_ACTIONS).toEqual([]);
+
+    const response = await request(appFor()).get('/api/v2/dev/incident/state');
+    expect(response.status).toBe(200);
+    expect(response.body.ok).toBe(true);
+    expect(response.body.operationalActions).toEqual([]);
+  });
+
+  it('rejects wrong re-auth before any incident action decision or state change', async () => {
     const response = await request(appFor())
       .post('/api/v2/dev/incident/activate')
       .send(activateBody('wrong-password'));
@@ -104,37 +116,28 @@ describe('Stage 27 DEV incident action contract', () => {
     expect(isIncidentActive('kill.ai')).toBe(false);
   });
 
-  it('accepts valid DEV password and changes the intended incident state', async () => {
+  it('fails closed after valid DEV re-auth when a toggle has no runtime consumer', async () => {
     const response = await request(appFor())
       .post('/api/v2/dev/incident/activate')
       .send(activateBody('dev-password-123'));
 
-    expect(response.status).toBe(200);
-    expect(response.body.ok).toBe(true);
-    expect(response.body.state.action).toBe('kill.ai');
-    expect(isIncidentActive('kill.ai')).toBe(true);
-  });
-
-  it('requires verified re-auth for deactivation too', async () => {
-    await request(appFor())
-      .post('/api/v2/dev/incident/activate')
-      .send(activateBody('dev-password-123'));
-
-    const rejected = await request(appFor())
-      .post('/api/v2/dev/incident/deactivate')
-      .send({ action: 'kill.ai', reason: 'Stage 27 reject bad reauth', reAuth: 'wrong-password' });
-    expect(rejected.status).toBe(403);
-    expect(isIncidentActive('kill.ai')).toBe(true);
-
-    const accepted = await request(appFor())
-      .post('/api/v2/dev/incident/deactivate')
-      .send({ action: 'kill.ai', reason: 'Stage 27 valid deactivation', reAuth: 'dev-password-123' });
-    expect(accepted.status).toBe(200);
+    expect(response.status).toBe(503);
+    expect(response.body).toEqual({ ok: false, error: 'incident_action_not_operational' });
     expect(isIncidentActive('kill.ai')).toBe(false);
   });
 
-  it('requires verified re-auth before one-shot acceptance', async () => {
-    const rejected = await request(appFor())
+  it('fails closed for deactivation of an action that is not operationally exposed', async () => {
+    const response = await request(appFor())
+      .post('/api/v2/dev/incident/deactivate')
+      .send({ action: 'kill.ai', reason: 'Stage 27 valid deactivation', reAuth: 'dev-password-123' });
+
+    expect(response.status).toBe(503);
+    expect(response.body).toEqual({ ok: false, error: 'incident_action_not_operational' });
+    expect(isIncidentActive('kill.ai')).toBe(false);
+  });
+
+  it('rejects wrong re-auth before one-shot availability is disclosed', async () => {
+    const response = await request(appFor())
       .post('/api/v2/dev/incident/oneshot')
       .send({
         action: 'cache.flush',
@@ -142,17 +145,25 @@ describe('Stage 27 DEV incident action contract', () => {
         reAuth: 'wrong-password',
         idempotencyKey: 'stage27-oneshot-reject-0001',
       });
-    expect(rejected.status).toBe(403);
 
-    const accepted = await request(appFor())
-      .post('/api/v2/dev/incident/oneshot')
-      .send({
-        action: 'cache.flush',
-        reason: 'Stage 27 valid one shot reauth',
-        reAuth: 'dev-password-123',
-        idempotencyKey: 'stage27-oneshot-valid-0001',
-      });
-    expect(accepted.status).toBe(200);
-    expect(accepted.body.ok).toBe(true);
+    expect(response.status).toBe(403);
+    expect(response.body.error).toBe('reauth_invalid');
   });
+
+  it.each(['cache.flush', 'backup.trigger'] as const)(
+    'fails closed for %s because no production side effect is wired',
+    async action => {
+      const response = await request(appFor())
+        .post('/api/v2/dev/incident/oneshot')
+        .send({
+          action,
+          reason: `Stage 27 unavailable ${action}`,
+          reAuth: 'dev-password-123',
+          idempotencyKey: `stage27-${action.replace('.', '-')}-0001`,
+        });
+
+      expect(response.status).toBe(503);
+      expect(response.body).toEqual({ ok: false, error: 'incident_action_not_operational' });
+    },
+  );
 });
