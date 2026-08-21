@@ -1,3 +1,4 @@
+/* eslint-disable local/no-unscoped-prisma-query -- Stage 64: intentional cross-tenant system/admin surface (authZ outside Prisma where). */
 import { Client, Collection, GatewayIntentBits, Partials } from 'discord.js';
 import { ExtendedClient, BotEvent } from './types';
 import { config } from './config';
@@ -190,7 +191,7 @@ async function main(): Promise<void> {
     stopAiBackgroundLoops();
     stopReadyRuntime();
     discordLifecycle.stop();
-    client.destroy();
+    await client.destroy();
     await prisma.$disconnect().catch(() => undefined);
     throw error;
   }
