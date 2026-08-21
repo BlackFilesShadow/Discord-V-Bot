@@ -1,0 +1,11 @@
+{
+  "schemaVersion": 1,
+  "stage": 49,
+  "basedOnMainSha": "c6472086",
+  "scope": "Memory-leak audit: listeners/timers/caches for bot, dashboard, workers.",
+  "contracts": {
+    "noUnboundedMaps": "global caches must have TTL or max size",
+    "timers": "intervals cleared on shutdown paths where registered",
+    "harness": "Stage 46 baseline can be re-run for before/after"
+  }
+}
