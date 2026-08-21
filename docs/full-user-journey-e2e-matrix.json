@@ -1,0 +1,20 @@
+{
+  "schemaVersion": 1,
+  "stage": 58,
+  "basedOnMainSha": "45caf9cd",
+  "scope": "Full user journey E2E inventory: Join → rules → link → whitelist → economy → AI → DayZ → leave → cleanup → rejoin.",
+  "contracts": {
+    "e2eEvidence": "existing authenticated playwright specs cover dashboard segments; full Discord join lifecycle requires live infra at Gate/Stage 67",
+    "local": "matrix maps journey steps to available specs/tests"
+  },
+  "steps": [
+    { "id": "join", "coverage": "bot modules + live Gate" },
+    { "id": "recognition-rules", "coverage": "ai/userRecognition tests" },
+    { "id": "link", "coverage": "economy link scope tests" },
+    { "id": "whitelist", "coverage": "whitelist e2e + crossGuild" },
+    { "id": "economy", "coverage": "economy authenticated e2e" },
+    { "id": "ai", "coverage": "ai unit tests" },
+    { "id": "dayz-live", "coverage": "liveServerKnowledge tests" },
+    { "id": "leave-cleanup-rejoin", "coverage": "membership fail-closed Stage 37/40" }
+  ]
+}
