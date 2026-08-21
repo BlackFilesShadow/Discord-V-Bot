@@ -17,7 +17,6 @@ interface Write {
 async function stubDevSensitive(page: Page) {
   const writes: Write[] = [];
   let sessionActive = true;
-  let maintenanceActive = false;
 
   await page.route('**/api/me', route => json(route, { user: DEV_USER }));
   await page.route('**/auth/status', route => json(route, { authenticated: true, user: DEV_USER }));
@@ -63,13 +62,8 @@ async function stubDevSensitive(page: Page) {
     if (path === '/api/v2/dev/incident/state' && method === 'GET') {
       await json(route, {
         ok: true,
-        toggles: maintenanceActive ? [{
-          action: 'maintenance', active: true,
-          activatedAt: '2026-08-21T10:00:00.000Z',
-          expiresAt: '2026-08-21T11:00:00.000Z',
-          reason: 'Stage 26 incident test',
-          byUserId: 'u1', byDiscordId: DEV_USER.discordId,
-        }] : [],
+        toggles: [],
+        operationalActions: [],
         limits: {
           'kill.ai': { maxDurationMs: 3_600_000, defaultMs: 900_000, kind: 'toggle' },
           'kill.automod': { maxDurationMs: 3_600_000, defaultMs: 900_000, kind: 'toggle' },
@@ -82,10 +76,9 @@ async function stubDevSensitive(page: Page) {
       });
       return;
     }
-    if (path === '/api/v2/dev/incident/activate' && method === 'POST') {
+    if (path.startsWith('/api/v2/dev/incident/') && method === 'POST') {
       record();
-      maintenanceActive = true;
-      await json(route, { ok: true });
+      await json(route, { ok: false, error: 'incident_action_not_operational' }, 503);
       return;
     }
 
@@ -157,24 +150,15 @@ test('Active Sessions Force-Revoke ist Step-Up geschützt und target-gescoped', 
   await expect(page.getByText('Keine aktiven Sessions', { exact: true })).toBeVisible();
 });
 
-test('Incident Wartungsmodus nutzt Step-Up plus doppelte Idempotenz-Sicherung', async ({ page }) => {
+test('Incident Response bietet ohne nachgewiesene Runtime-Kopplung keine falschen Aktionsbuttons an', async ({ page }) => {
   const stub = await stubDevSensitive(page);
   await page.goto('/dev/incident-response');
   await expect(page.getByRole('heading', { name: 'Incident Response', exact: true })).toBeVisible();
-
-  await page.getByRole('button', { name: 'Aktivieren' }).last().click();
-  await expect(page.getByRole('dialog')).toContainText('Wartungsmodus');
-  await fillStepUp(page, 'Stage 26 maintenance');
-
-  await expect.poll(() => stub.writes().length).toBe(1);
-  const write = stub.writes()[0];
-  expectWrite(write, 'POST', '/api/v2/dev/incident/activate');
-  expect(write.body).toEqual(expect.objectContaining({
-    action: 'maintenance',
-    reason: 'Stage 26 maintenance',
-    reAuth: '123456',
-  }));
-  expect((write.body as { idempotencyKey?: string }).idempotencyKey).toBeTruthy();
+  await expect(page.getByText('Incident-Aktionen nicht freigegeben', { exact: true })).toBeVisible();
+  await expect(page.getByText(/fail-closed deaktiviert/)).toBeVisible();
+  await expect(page.getByRole('button', { name: 'Aktivieren' })).toHaveCount(0);
+  await expect(page.getByRole('button', { name: 'Ausfuehren' })).toHaveCount(0);
+  expect(stub.writes()).toHaveLength(0);
 });
 
 test('Heap-Snapshot ist Step-Up geschützt und API-idempotent', async ({ page }) => {
