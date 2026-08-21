@@ -205,10 +205,52 @@ function audit(
   });
 }
 
-function parsePage(req: Request): { page: number; pageSize: number; skip: number } {
-  const page = Math.max(1, parseInt(String(req.query.page ?? '1'), 10) || 1);
-  const pageSize = Math.min(MAX_PAGE_SIZE, Math.max(1, parseInt(String(req.query.pageSize ?? '25'), 10) || 25));
+/** Deterministic newest-first order for offset pages (createdAt ties broken by id). */
+const STABLE_CREATED_DESC = [{ createdAt: 'desc' as const }, { id: 'desc' as const }];
+
+/**
+ * Stage 28: strict page/pageSize validation + stable offset metadata.
+ * Rejects non-integer / non-positive query values fail-closed (400) instead of
+ * silently coercing garbage into page 1.
+ */
+function parsePageOrReject(req: Request, res: Response): { page: number; pageSize: number; skip: number } | null {
+  const rawPage = req.query.page;
+  const rawSize = req.query.pageSize;
+  if (rawPage !== undefined && !(typeof rawPage === 'string' && /^\d+$/.test(rawPage))) {
+    res.status(400).json({ error: 'page muss eine positive Ganzzahl sein.' });
+    return null;
+  }
+  if (rawSize !== undefined && !(typeof rawSize === 'string' && /^\d+$/.test(rawSize))) {
+    res.status(400).json({ error: 'pageSize muss eine positive Ganzzahl sein.' });
+    return null;
+  }
+  const pageNum = rawPage === undefined ? 1 : Number.parseInt(rawPage, 10);
+  const sizeNum = rawSize === undefined ? 25 : Number.parseInt(rawSize, 10);
+  if (!Number.isInteger(pageNum) || pageNum < 1) {
+    res.status(400).json({ error: 'page muss >= 1 sein.' });
+    return null;
+  }
+  if (!Number.isInteger(sizeNum) || sizeNum < 1) {
+    res.status(400).json({ error: 'pageSize muss >= 1 sein.' });
+    return null;
+  }
+  const page = pageNum;
+  const pageSize = Math.min(MAX_PAGE_SIZE, sizeNum);
   return { page, pageSize, skip: (page - 1) * pageSize };
+}
+
+function offsetPageMeta(page: number, pageSize: number, total: number): {
+  page: number;
+  pageSize: number;
+  total: number;
+  hasMore: boolean;
+} {
+  return {
+    page,
+    pageSize,
+    total,
+    hasMore: page * pageSize < total,
+  };
 }
 
 /** Guild-ID aus Query oder Body lesen + validieren. Sendet 400 + return null bei Fehler. */
@@ -245,17 +287,17 @@ botAdminRouter.get('/overview', ba, async (_req, res) => {
     const [recentBroadcasts, recentExports, recentAdminActions, criticalWarnings] = await Promise.all([
       prisma.auditLog.findMany({
         where: { action: 'BOTADMIN_BROADCAST_SENT' },
-        orderBy: { createdAt: 'desc' }, take: 5,
+        orderBy: STABLE_CREATED_DESC, take: 5,
         select: { id: true, action: true, details: true, createdAt: true },
       }),
       prisma.auditLog.findMany({
         where: { action: { startsWith: 'BOTADMIN_EXPORT_' } },
-        orderBy: { createdAt: 'desc' }, take: 5,
+        orderBy: STABLE_CREATED_DESC, take: 5,
         select: { id: true, action: true, details: true, createdAt: true },
       }),
       prisma.auditLog.findMany({
         where: { category: 'ADMIN' },
-        orderBy: { createdAt: 'desc' }, take: 10,
+        orderBy: STABLE_CREATED_DESC, take: 10,
         select: { id: true, action: true, actorId: true, details: true, createdAt: true },
       }),
       prisma.securityEvent.count({
@@ -278,18 +320,20 @@ botAdminRouter.get('/overview', ba, async (_req, res) => {
 // APPEALS
 // ════════════════════════════════════════════════════════════════════════
 botAdminRouter.get('/appeals', ba, async (req, res) => {
-  const { page, pageSize, skip } = parsePage(req);
+  const pageSpec = parsePageOrReject(req, res);
+  if (!pageSpec) return;
+  const { page, pageSize, skip } = pageSpec;
   const status = typeof req.query.status === 'string' ? req.query.status.toUpperCase() : undefined;
   const where = status && ['PENDING', 'APPROVED', 'DENIED', 'ESCALATED'].includes(status)
     ? { status: status as 'PENDING' | 'APPROVED' | 'DENIED' | 'ESCALATED' } : {};
   const [items, total] = await Promise.all([
     prisma.appeal.findMany({
-      where, orderBy: { createdAt: 'desc' }, skip, take: pageSize,
+      where, orderBy: STABLE_CREATED_DESC, skip, take: pageSize,
       include: { user: { select: { id: true, discordId: true, username: true } }, case: { select: { id: true, reason: true, action: true } } },
     }),
     prisma.appeal.count({ where }),
   ]);
-  res.json({ items, total, page, pageSize });
+  res.json({ items, ...offsetPageMeta(page, pageSize, total) });
 });
 
 botAdminRouter.get('/appeals/:id', ba, async (req, res) => {
@@ -326,15 +370,17 @@ botAdminRouter.post('/appeals/:id/decision', ba, async (req, res) => {
 // FEEDBACK
 // ════════════════════════════════════════════════════════════════════════
 botAdminRouter.get('/feedback', ba, async (req, res) => {
-  const { page, pageSize, skip } = parsePage(req);
+  const pageSpec = parsePageOrReject(req, res);
+  if (!pageSpec) return;
+  const { page, pageSize, skip } = pageSpec;
   const status = typeof req.query.status === 'string' ? req.query.status.toUpperCase() : undefined;
   const where = status && ['OPEN', 'IN_REVIEW', 'RESOLVED', 'WONTFIX'].includes(status)
     ? { status: status as 'OPEN' | 'IN_REVIEW' | 'RESOLVED' | 'WONTFIX' } : {};
   const [items, total] = await Promise.all([
-    prisma.feedback.findMany({ where, orderBy: { createdAt: 'desc' }, skip, take: pageSize }),
+    prisma.feedback.findMany({ where, orderBy: STABLE_CREATED_DESC, skip, take: pageSize }),
     prisma.feedback.count({ where }),
   ]);
-  res.json({ items, total, page, pageSize });
+  res.json({ items, ...offsetPageMeta(page, pageSize, total) });
 });
 
 botAdminRouter.get('/feedback/:id', ba, async (req, res) => {
@@ -362,7 +408,7 @@ botAdminRouter.patch('/feedback/:id', ba, async (req, res) => {
 // ════════════════════════════════════════════════════════════════════════
 botAdminRouter.get('/broadcast', ba, async (_req, res) => {
   const recent = await prisma.auditLog.findMany({
-    where: { action: 'BOTADMIN_BROADCAST_SENT' }, orderBy: { createdAt: 'desc' }, take: 10,
+    where: { action: 'BOTADMIN_BROADCAST_SENT' }, orderBy: STABLE_CREATED_DESC, take: 10,
     select: { id: true, details: true, createdAt: true },
   });
   res.json({ targets: ['ALL', 'MANUFACTURER', 'ADMIN', 'MODERATOR'], recent, maxRecipients: MAX_BROADCAST });
@@ -435,12 +481,12 @@ botAdminRouter.post('/export', ba, async (req, res) => {
 
   let data: unknown[];
   if (type === 'packages') {
-    const rows = await prisma.package.findMany({ orderBy: { createdAt: 'desc' }, take: MAX_EXPORT_ROWS, include: { user: { select: { discordId: true, username: true } } } });
+    const rows = await prisma.package.findMany({ orderBy: STABLE_CREATED_DESC, take: MAX_EXPORT_ROWS, include: { user: { select: { discordId: true, username: true } } } });
     data = rows.map((p) => ({ id: p.id, name: p.name, status: p.status, totalSize: p.totalSize.toString(), fileCount: p.fileCount, downloadCount: p.downloadCount, owner: p.user.username, createdAt: p.createdAt }));
   } else if (type === 'logs') {
-    data = await prisma.auditLog.findMany({ orderBy: { createdAt: 'desc' }, take: MAX_EXPORT_ROWS, select: { id: true, action: true, category: true, actorId: true, targetId: true, guildId: true, createdAt: true } });
+    data = await prisma.auditLog.findMany({ orderBy: STABLE_CREATED_DESC, take: MAX_EXPORT_ROWS, select: { id: true, action: true, category: true, actorId: true, targetId: true, guildId: true, createdAt: true } });
   } else {
-    data = await prisma.user.findMany({ orderBy: { createdAt: 'desc' }, take: MAX_EXPORT_ROWS, select: { id: true, discordId: true, username: true, role: true, status: true, isManufacturer: true, createdAt: true } });
+    data = await prisma.user.findMany({ orderBy: STABLE_CREATED_DESC, take: MAX_EXPORT_ROWS, select: { id: true, discordId: true, username: true, role: true, status: true, isManufacturer: true, createdAt: true } });
   }
   audit(req, `BOTADMIN_EXPORT_${type.toUpperCase()}`, { type, rows: data.length }, { category: type === 'users' ? 'GDPR' : 'ADMIN' });
   res.json({ type, rows: data.length, data });
@@ -450,13 +496,15 @@ botAdminRouter.post('/export', ba, async (req, res) => {
 // VALIDIERUNG
 // ════════════════════════════════════════════════════════════════════════
 botAdminRouter.get('/validate', ba, async (req, res) => {
-  const { page, pageSize, skip } = parsePage(req);
+  const pageSpec = parsePageOrReject(req, res);
+  if (!pageSpec) return;
+  const { page, pageSize, skip } = pageSpec;
   const [pending, recent, total] = await Promise.all([
     prisma.upload.count({ where: { validationStatus: 'PENDING', isDeleted: false } }),
-    prisma.validationResult.findMany({ orderBy: { createdAt: 'desc' }, skip, take: pageSize, include: { upload: { select: { fileName: true, originalName: true } } } }),
+    prisma.validationResult.findMany({ orderBy: STABLE_CREATED_DESC, skip, take: pageSize, include: { upload: { select: { fileName: true, originalName: true } } } }),
     prisma.validationResult.count(),
   ]);
-  res.json({ pendingUploads: pending, items: recent, total, page, pageSize });
+  res.json({ pendingUploads: pending, items: recent, ...offsetPageMeta(page, pageSize, total) });
 });
 
 botAdminRouter.post('/validate', ba, async (req, res) => {
@@ -483,17 +531,19 @@ botAdminRouter.post('/validate', ba, async (req, res) => {
 // PAKETE
 // ════════════════════════════════════════════════════════════════════════
 botAdminRouter.get('/packages', ba, async (req, res) => {
-  const { page, pageSize, skip } = parsePage(req);
+  const pageSpec = parsePageOrReject(req, res);
+  if (!pageSpec) return;
+  const { page, pageSize, skip } = pageSpec;
   const status = typeof req.query.status === 'string' ? req.query.status.toUpperCase() : undefined;
   const q = typeof req.query.q === 'string' ? req.query.q.trim() : '';
   const where: Record<string, unknown> = {};
   if (status && ['ACTIVE', 'QUARANTINED', 'DELETED', 'VALIDATING'].includes(status)) where.status = status;
   if (q) where.name = { contains: q, mode: 'insensitive' };
   const [items, total] = await Promise.all([
-    prisma.package.findMany({ where, orderBy: { createdAt: 'desc' }, skip, take: pageSize, include: { user: { select: { discordId: true, username: true } } } }),
+    prisma.package.findMany({ where, orderBy: STABLE_CREATED_DESC, skip, take: pageSize, include: { user: { select: { discordId: true, username: true } } } }),
     prisma.package.count({ where }),
   ]);
-  res.json({ items: items.map((p) => ({ ...p, totalSize: p.totalSize.toString() })), total, page, pageSize });
+  res.json({ items: items.map((p) => ({ ...p, totalSize: p.totalSize.toString() })), ...offsetPageMeta(page, pageSize, total) });
 });
 
 botAdminRouter.get('/packages/:id', ba, async (req, res) => {
@@ -543,7 +593,9 @@ botAdminRouter.delete('/packages/:id', ba, async (req, res) => {
 // NUTZER
 // ════════════════════════════════════════════════════════════════════════
 botAdminRouter.get('/users', ba, async (req, res) => {
-  const { page, pageSize, skip } = parsePage(req);
+  const pageSpec = parsePageOrReject(req, res);
+  if (!pageSpec) return;
+  const { page, pageSize, skip } = pageSpec;
   const filter = typeof req.query.filter === 'string' ? req.query.filter.toUpperCase() : 'ALL';
   const q = typeof req.query.q === 'string' ? req.query.q.trim() : '';
   const where: Record<string, unknown> = {};
@@ -553,10 +605,10 @@ botAdminRouter.get('/users', ba, async (req, res) => {
   else if (filter === 'PENDING_VERIFICATION') where.status = 'PENDING_VERIFICATION';
   if (q) where.AND = [{ OR: [{ username: { contains: q, mode: 'insensitive' } }, { discordId: { contains: q } }] }];
   const [items, total] = await Promise.all([
-    prisma.user.findMany({ where, orderBy: { createdAt: 'desc' }, skip, take: pageSize, select: { id: true, discordId: true, username: true, role: true, status: true, isManufacturer: true, createdAt: true } }),
+    prisma.user.findMany({ where, orderBy: STABLE_CREATED_DESC, skip, take: pageSize, select: { id: true, discordId: true, username: true, role: true, status: true, isManufacturer: true, createdAt: true } }),
     prisma.user.count({ where }),
   ]);
-  res.json({ items, total, page, pageSize });
+  res.json({ items, ...offsetPageMeta(page, pageSize, total) });
 });
 
 botAdminRouter.get('/users/:id', ba, async (req, res) => {
@@ -612,14 +664,16 @@ botAdminRouter.post('/users/:id/reset-password', ba, async (req, res) => {
 // TICKETS  (Bot-Support-Tickets)
 // ════════════════════════════════════════════════════════════════════════
 botAdminRouter.get('/tickets', ba, async (req, res) => {
-  const { page, pageSize, skip } = parsePage(req);
+  const pageSpec = parsePageOrReject(req, res);
+  if (!pageSpec) return;
+  const { page, pageSize, skip } = pageSpec;
   const status = typeof req.query.status === 'string' ? req.query.status.toUpperCase() : undefined;
   const where = status && ['PENDING', 'OPEN', 'DENIED', 'CLOSED'].includes(status) ? { status: status as 'PENDING' | 'OPEN' | 'DENIED' | 'CLOSED' } : {};
   const [items, total] = await Promise.all([
-    prisma.ticket.findMany({ where, orderBy: { createdAt: 'desc' }, skip, take: pageSize, select: { id: true, ticketNumber: true, userDiscordId: true, username: true, subject: true, status: true, createdAt: true, closedAt: true } }),
+    prisma.ticket.findMany({ where, orderBy: STABLE_CREATED_DESC, skip, take: pageSize, select: { id: true, ticketNumber: true, userDiscordId: true, username: true, subject: true, status: true, createdAt: true, closedAt: true } }),
     prisma.ticket.count({ where }),
   ]);
-  res.json({ items, total, page, pageSize });
+  res.json({ items, ...offsetPageMeta(page, pageSize, total) });
 });
 
 botAdminRouter.get('/tickets/:id', ba, async (req, res) => {
@@ -644,7 +698,7 @@ botAdminRouter.post('/tickets/:id/close', ba, async (req, res) => {
 // ════════════════════════════════════════════════════════════════════════
 botAdminRouter.get('/selfroles', ba, async (req, res) => {
   const guildId = reqGuildId(req, res); if (!guildId) return;
-  const menus = await prisma.selfRoleMenu.findMany({ where: { guildId }, orderBy: { createdAt: 'desc' }, include: { options: { orderBy: { position: 'asc' } } } });
+  const menus = await prisma.selfRoleMenu.findMany({ where: { guildId }, orderBy: STABLE_CREATED_DESC, include: { options: { orderBy: { position: 'asc' } } } });
   res.json({ items: menus });
 });
 
@@ -847,7 +901,7 @@ botAdminRouter.post('/knowledge/brief/regenerate', ba, async (req, res) => {
 // ════════════════════════════════════════════════════════════════════════
 botAdminRouter.get('/feeds', ba, async (req, res) => {
   const guildId = reqGuildId(req, res); if (!guildId) return;
-  const feeds = await prisma.feed.findMany({ where: { guildId }, orderBy: { createdAt: 'desc' } });
+  const feeds = await prisma.feed.findMany({ where: { guildId }, orderBy: STABLE_CREATED_DESC });
   // webhookSecret NIE ausgeben.
   res.json({ items: feeds.map(({ webhookSecret: _omit, ...rest }) => rest) });
 });
@@ -906,8 +960,14 @@ const LANGS = ['de', 'en', 'fr', 'ar', 'ko', 'es', 'it', 'pt', 'ru', 'tr'];
 
 botAdminRouter.get('/translate', ba, async (req, res) => {
   const guildId = reqGuildId(req, res); if (!guildId) return;
-  const posts = await prisma.translatedPost.findMany({ where: { guildId }, orderBy: { createdAt: 'desc' }, take: 50 });
-  res.json({ items: posts, languages: LANGS });
+  const limit = 50;
+  const posts = await prisma.translatedPost.findMany({
+    where: { guildId },
+    orderBy: STABLE_CREATED_DESC,
+    take: limit + 1,
+  });
+  const hasMore = posts.length > limit;
+  res.json({ items: posts.slice(0, limit), limit, hasMore, languages: LANGS });
 });
 
 botAdminRouter.post('/translate', ba, async (req, res) => {
@@ -1019,7 +1079,7 @@ botAdminRouter.get('/danger', ba, async (_req, res) => {
     prisma.user.count({ where: { status: 'SUSPENDED' } }),
     prisma.auditLog.findMany({
       where: { action: { in: ['BOTADMIN_PACKAGE_HARD_DELETE', 'BOTADMIN_USER_RESET_PASSWORD', 'BOTADMIN_DANGER_PURGE_PACKAGES', 'BOTADMIN_BROADCAST_SENT'] } },
-      orderBy: { createdAt: 'desc' }, take: 20,
+      orderBy: STABLE_CREATED_DESC, take: 20,
       select: { id: true, action: true, actorId: true, details: true, createdAt: true },
     }),
   ]);

@@ -270,13 +270,20 @@ ticketsRouter.get('/', requireGuildPermission('tickets.manage'), async (req, res
 
 ticketsRouter.get('/instances', requireGuildPermission('tickets.manage'), async (req, res) => {
   const scope = req.guildScope!;
-  const instances = await prisma.ticketInstance.findMany({
+  // Stage 28: hard-cap window uses limit+1 probe + stable openedAt+id order so
+  // equal timestamps never silently skip/duplicate within the window.
+  const limit = 100;
+  const rows = await prisma.ticketInstance.findMany({
     where: { guildId: scope.guildId },
-    orderBy: { openedAt: 'desc' },
-    take: 100,
+    orderBy: [{ openedAt: 'desc' }, { id: 'desc' }],
+    take: limit + 1,
     include: { template: { select: { label: true, slot: true } } },
   });
+  const hasMore = rows.length > limit;
+  const instances = rows.slice(0, limit);
   res.json({
+    limit,
+    hasMore,
     instances: instances.map(i => ({
       id: i.id,
       ticketNumber: (i as unknown as { ticketNumber?: number }).ticketNumber ?? null,
