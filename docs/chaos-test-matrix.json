@@ -1,0 +1,11 @@
+{
+  "schemaVersion": 1,
+  "stage": 59,
+  "basedOnMainSha": "45caf9cd",
+  "scope": "Chaos test matrix: DB/Redis/Nitrado/AI/Discord/network failures — recovery, idempotency, no double effects.",
+  "contracts": {
+    "idempotency": "Stage 38 store fail-closed",
+    "providerErrors": "routes map provider failures to non-2xx",
+    "localHarness": "scripts/chaos-smoke.mjs documents injectable fault flags"
+  }
+}
