@@ -1,0 +1,141 @@
+﻿{
+    "numPassedTests":  2834,
+    "numPassedTestSuites":  427,
+    "numTotalTests":  2850,
+    "numFailedTests":  16,
+    "success":  false,
+    "numFailedTestSuites":  11,
+    "numTotalTestSuites":  438,
+    "failed":  [
+                   {
+                       "suite":  "C:\\Users\\Andre\\Documents\\Discord-V-Bot\\tests\\security\\interactionDispatcherProduction.test.ts",
+                       "numFailing":  null,
+                       "failures":  [
+                                        {
+                                            "test":  "interactionCreate production invariants nutzt fuer Poll-Buttons ausschliesslich die kanonische atomare Toggle-Schicht",
+                                            "msg":  "Error: expect(received).toBeGreaterThan(expected)\n\nExpected: \u003e 29670\nReceived:   -1\n    at section (C:\\Users\\Andre\\Documents\\Discord-V-Bot\\tests\\security\\interactionDispatcherProduction.test.ts:10:17)\n    at Object.\u003canonymous\u003e (C:\\Users\\Andre\\Documents\\Discord-V-Bot\\tests\\security\\interactionDispatcherProduction.test.ts:17:24)\n    at Promise.then.completed (C:\\Users\\Andre\\Documents\\Discord-V-Bot\\n"
+                                        }
+                                    ]
+                   },
+                   {
+                       "suite":  "C:\\Users\\Andre\\Documents\\Discord-V-Bot\\tests\\security\\dashboardPermissionIntegrityArchitecture.test.ts",
+                       "numFailing":  null,
+                       "failures":  [
+                                        {
+                                            "test":  "Dashboard-1V permission membership/data-integrity/race architecture rejoin cleanup failure is best-effort and cannot become a join-lifecycle blocker",
+                                            "msg":  "Error: expect(received).toBeGreaterThanOrEqual(expected)\n\nExpected: \u003e= 0\nReceived:    -1\n    at Object.\u003canonymous\u003e (C:\\Users\\Andre\\Documents\\Discord-V-Bot\\tests\\security\\dashboardPermissionIntegrityArchitecture.test.ts:79:32)\n    at Promise.then.completed (C:\\Users\\Andre\\Documents\\Discord-V-Bot\\node_modules\\jest-circus\\build\\utils.js:298:28)\n    at new Promise (\u003canonymous\u003e)\n    at callAsyncCircusF"
+                                        }
+                                    ]
+                   },
+                   {
+                       "suite":  "C:\\Users\\Andre\\Documents\\Discord-V-Bot\\tests\\runtime\\nitradoConfigLockConnectCleanupGate.test.ts",
+                       "numFailing":  null,
+                       "failures":  [
+                                        {
+                                            "test":  "Nitrado-1P config-lock connect cleanup gate behaelt den normalen Busy-Pfad und den idempotenten Release-Vertrag unveraendert",
+                                            "msg":  "Error: expect(received).toContain(expected) // indexOf\n\nExpected substring: \"await client.end();\n      return null;\"\nReceived string:    \"import crypto from \u0027crypto\u0027;Â·\nimport { Client as PgClient } from \u0027pg\u0027;Â·\nimport { logger } from \u0027../../utils/logger\u0027;Â·Â·Â·\n// MUSS exakt dem Namespace des NitradoJob-Workers entsprechen. Ein Runtime-Â·\n// Architekturtest vergleicht beide Key-Ableitungen, damit"
+                                        }
+                                    ]
+                   },
+                   {
+                       "suite":  "C:\\Users\\Andre\\Documents\\Discord-V-Bot\\tests\\security\\idempotencyMigrationRepair.test.ts",
+                       "numFailing":  null,
+                       "failures":  [
+                                        {
+                                            "test":  "F-004/F-009 â€” legacy IdempotencyKey baseline repair repairs the legacy shape without losing completed rows",
+                                            "msg":  "AggregateError: \n    at internalConnectMultiple (node:net:1134:18)\n    at afterConnectMultiple (node:net:1715:7)"
+                                        },
+                                        {
+                                            "test":  "F-004/F-009 â€” legacy IdempotencyKey baseline repair is idempotent and permits PROCESSING without response data",
+                                            "msg":  "AggregateError: \n    at internalConnectMultiple (node:net:1134:18)\n    at afterConnectMultiple (node:net:1715:7)"
+                                        }
+                                    ]
+                   },
+                   {
+                       "suite":  "C:\\Users\\Andre\\Documents\\Discord-V-Bot\\tests\\runtime\\nitradoWhitelistIntentGate.test.ts",
+                       "numFailing":  null,
+                       "failures":  [
+                                        {
+                                            "test":  "Nitrado-1B whitelist intent reconciliation architecture gate reconciles again after both whitelist remote writes and before the fenced generic DONE checkpoint",
+                                            "msg":  "Error: expect(received).toBeGreaterThan(expected)\n\nExpected: \u003e 13526\nReceived:   -1\n    at Object.\u003canonymous\u003e (C:\\Users\\Andre\\Documents\\Discord-V-Bot\\tests\\runtime\\nitradoWhitelistIntentGate.test.ts:56:21)\n    at Promise.then.completed (C:\\Users\\Andre\\Documents\\Discord-V-Bot\\node_modules\\jest-circus\\build\\utils.js:298:28)\n    at new Promise (\u003canonymous\u003e)\n    at callAsyncCircusFn (C:\\Users\\Andre\\Do"
+                                        }
+                                    ]
+                   },
+                   {
+                       "suite":  "C:\\Users\\Andre\\Documents\\Discord-V-Bot\\tests\\runtime\\nitradoTokenValidationLockGate.test.ts",
+                       "numFailing":  null,
+                       "failures":  [
+                                        {
+                                            "test":  "Nitrado-1D token validation lock/snapshot architecture gate treats busy/lock/snapshot failures as infrastructure and releases every acquired lock",
+                                            "msg":  "Error: expect(received).toContain(expected) // indexOf\n\nExpected substring: \"finally {\n    await lock.release();\n  }\"\nReceived string:    \"export async function validateConnectionTokenOnce(Â·\n  discord: Client,Â·\n  conn: TokenValidationConnection,Â·\n): Promise\u003cvoid\u003e {Â·\n  let lock;Â·\n  try {Â·\n    lock = await tryAcquireNitradoConfigMutationLock(conn.id);Â·\n  } catch (error) {Â·\n    logger.warn(`T"
+                                        }
+                                    ]
+                   },
+                   {
+                       "suite":  "C:\\Users\\Andre\\Documents\\Discord-V-Bot\\tests\\deploy\\metricsBootstrap.test.ts",
+                       "numFailing":  null,
+                       "failures":  [
+                                        {
+                                            "test":  "deploy metrics token bootstrap veraendert eine bewusst deaktivierte Metrics-Konfiguration nicht",
+                                            "msg":  "Error: expect(received).toBe(expected) // Object.is equality\n\nExpected: 0\nReceived: 1\n    at Object.\u003canonymous\u003e (C:\\Users\\Andre\\Documents\\Discord-V-Bot\\tests\\deploy\\metricsBootstrap.test.ts:24:27)\n    at Promise.then.completed (C:\\Users\\Andre\\Documents\\Discord-V-Bot\\node_modules\\jest-circus\\build\\utils.js:298:28)\n    at new Promise (\u003canonymous\u003e)\n    at callAsyncCircusFn (C:\\Users\\Andre\\Documents\\D"
+                                        },
+                                        {
+                                            "test":  "deploy metrics token bootstrap behaelt einen bereits ausreichend langen Token unveraendert",
+                                            "msg":  "Error: expect(received).toBe(expected) // Object.is equality\n\nExpected: 0\nReceived: 1\n    at Object.\u003canonymous\u003e (C:\\Users\\Andre\\Documents\\Discord-V-Bot\\tests\\deploy\\metricsBootstrap.test.ts:32:27)\n    at Promise.then.completed (C:\\Users\\Andre\\Documents\\Discord-V-Bot\\node_modules\\jest-circus\\build\\utils.js:298:28)\n    at new Promise (\u003canonymous\u003e)\n    at callAsyncCircusFn (C:\\Users\\Andre\\Documents\\D"
+                                        },
+                                        {
+                                            "test":  "deploy metrics token bootstrap erzeugt bei explizit aktivierten Metrics genau einmal ein starkes Secret ohne es zu loggen",
+                                            "msg":  "Error: expect(received).toBe(expected) // Object.is equality\n\nExpected: 0\nReceived: 1\n    at Object.\u003canonymous\u003e (C:\\Users\\Andre\\Documents\\Discord-V-Bot\\tests\\deploy\\metricsBootstrap.test.ts:41:26)\n    at Promise.then.completed (C:\\Users\\Andre\\Documents\\Discord-V-Bot\\node_modules\\jest-circus\\build\\utils.js:298:28)\n    at new Promise (\u003canonymous\u003e)\n    at callAsyncCircusFn (C:\\Users\\Andre\\Documents\\D"
+                                        }
+                                    ]
+                   },
+                   {
+                       "suite":  "C:\\Users\\Andre\\Documents\\Discord-V-Bot\\tests\\runtime\\leaveRejoinLifecycleGate.test.ts",
+                       "numFailing":  null,
+                       "failures":  [
+                                        {
+                                            "test":  "Leave/Rejoin production lifecycle gate serialisiert Reward-Epoche und Startbonus gegen denselben Leave-Enqueue-Key",
+                                            "msg":  "Error: expect(received).toBeGreaterThan(expected)\n\nExpected: \u003e 10062\nReceived:   -1\n    at functionSlice (C:\\Users\\Andre\\Documents\\Discord-V-Bot\\tests\\runtime\\leaveRejoinLifecycleGate.test.ts:12:14)\n    at Object.\u003canonymous\u003e (C:\\Users\\Andre\\Documents\\Discord-V-Bot\\tests\\runtime\\leaveRejoinLifecycleGate.test.ts:90:19)\n    at Promise.then.completed (C:\\Users\\Andre\\Documents\\Discord-V-Bot\\node_module"
+                                        }
+                                    ]
+                   },
+                   {
+                       "suite":  "C:\\Users\\Andre\\Documents\\Discord-V-Bot\\tests\\runtime\\nitradoAdmBindingFenceGate.test.ts",
+                       "numFailing":  null,
+                       "failures":  [
+                                        {
+                                            "test":  "Nitrado-1M ADM binding freshness architecture gate backfillt bestehende Connections auf legacy-kompatibler Binding-Version 0",
+                                            "msg":  "Error: expect(received).toContain(expected) // indexOf\n\nExpected substring: \"SELECT\n    \\\"guildId\\\", \\\"id\\\", 0, \\\"nitradoServerId\\\"\"\nReceived string:    \"-- Nitrado-1M: preserve the ADM cursor/event namespace across token changes,Â·\n-- but advance it whenever a Connection is rebound to a different Nitrado service.Â·\nCREATE TABLE \\\"NitradoAdmBindingState\\\" (Â·\n    \\\"guildId\\\" TEXT NOT NULL,Â·\n    \\"
+                                        },
+                                        {
+                                            "test":  "Nitrado-1M ADM binding freshness architecture gate scannt Live-ADM nur per stabiler ID und fenced Cursor, Links und Source-Health",
+                                            "msg":  "Error: expect(received).toContain(expected) // indexOf\n\nExpected substring: \"await withFreshAdmBinding(conn, async () =\u003e {\n      await persistAdmEvents(\"\nReceived string:    \"/**Â·\n * Kanonischer Live-ADM-Ingest fuer alle aktiven Nitrado-Gameserver.Â·\n *Â·\n * Nitrados file_server/seek liest nur neue Bytes nach AdmSourceCursor. DieserÂ·\n * Pfad ist damit die einzige Datei-Quelle fuer Death/Baufeed,"
+                                        }
+                                    ]
+                   },
+                   {
+                       "suite":  "C:\\Users\\Andre\\Documents\\Discord-V-Bot\\tests\\security\\nitradoValidationHealthIntegration.test.ts",
+                       "numFailing":  null,
+                       "failures":  [
+                                        {
+                                            "test":  "NIT-001 PostgreSQL integration inkrementiert parallel atomar und vergibt genau einen Alert-Claim pro Streak",
+                                            "msg":  "PrismaClientKnownRequestError: \nInvalid `prisma.nitradoValidationHealth.deleteMany()` invocation in\nC:\\Users\\Andre\\Documents\\Discord-V-Bot\\tests\\security\\nitradoValidationHealthIntegration.test.ts:21:42\n\n  18 \n  19 describeDb(\u0027NIT-001 PostgreSQL integration\u0027, () =\u003e {\n  20   beforeEach(async () =\u003e {\nâ†’ 21     await prisma.nitradoValidationHealth.deleteMany(\n\n    at zr.handleRequestError (C:\\Users\\"
+                                        }
+                                    ]
+                   },
+                   {
+                       "suite":  "C:\\Users\\Andre\\Documents\\Discord-V-Bot\\tests\\security\\economyTwoServerIsolationIntegration.test.ts",
+                       "numFailing":  null,
+                       "failures":  [
+                                        {
+                                            "test":  "Phase 4 Economy PostgreSQL two-server isolation haelt Konten, Config und Pay derselben Discord-User physisch pro Gameserver getrennt",
+                                            "msg":  "PrismaClientKnownRequestError: \nInvalid `prisma.bankInterestRun.deleteMany()` invocation in\nC:\\Users\\Andre\\Documents\\Discord-V-Bot\\tests\\security\\economyTwoServerIsolationIntegration.test.ts:33:32\n\n  30 const connB = asNitradoConnId(\u0027c222222222222222222222222\u0027);\n  31 \n  32 async function cleanup(): Promise\u003cvoid\u003e {\nâ†’ 33   await prisma.bankInterestRun.deleteMany(\n\n    at zr.handleRequestError (C:\\"
+                                        },
+                                        {
+                                            "test":  "Phase 4 Economy PostgreSQL two-server isolation verwendet echte Prisma-Compound-Keys fuer Ledger und Bankzinsen pro Gameserver",
+                                            "msg":  "PrismaClientKnownRequestError: \nInvalid `prisma.bankInterestRun.deleteMany()` invocation in\nC:\\Users\\Andre\\Documents\\Discord-V-Bot\\tests\\security\\economyTwoServerIsolationIntegration.test.ts:33:32\n\n  30 const connB = asNitradoConnId(\u0027c222222222222222222222222\u0027);\n  31 \n  32 async function cleanup(): Promise\u003cvoid\u003e {\nâ†’ 33   await prisma.bankInterestRun.deleteMany(\n\n    at zr.handleRequestError (C:\\"
+                                        }
+                                    ]
+                   }
+               ]
+}

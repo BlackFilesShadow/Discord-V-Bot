@@ -1,0 +1,132 @@
+{
+  "auditStep": 2,
+  "freezeSha": "48bbcfface38068bc71ad7bcc5c1dd87616da514",
+  "findings": [
+    {
+      "id": "F-S2-01",
+      "severity": "HIGH",
+      "stagesIndicative": ["AI-18", "1-22", "36-45"],
+      "title": "AI tool layer not production-wired",
+      "observation": "AiToolExecutor and AiToolStepUpService exist with solid unit/architecture tests, but no src/** import constructs/registers/executes tools outside toolLayer.ts itself. aiHandler does not call the executor.",
+      "paths": [
+        "src/modules/ai/toolLayer.ts",
+        "src/security/aiToolStepUp.ts",
+        "src/modules/ai/aiHandler.ts",
+        "tests/ai/toolLayer.test.ts",
+        "tests/security/aiToolLayerArchitecture.test.ts"
+      ],
+      "impact": "Masterplan AI tool side-effect boundary is library-only; product cannot exercise authorized tools end-to-end. Risk of false VERIFIED if stages accept tests as runtime proof.",
+      "repro": "rg -n \"AiToolExecutor|from ['\\\"].*toolLayer\" src tests — only toolLayer + tests hit.",
+      "fixNeed": "Trusted integration layer registering tools + wiring from interaction/dashboard confirmation; regression e2e that mutating tool without step-up never hits handler.",
+      "evidenceLevel": "runtime_code"
+    },
+    {
+      "id": "F-S2-02",
+      "severity": "MEDIUM",
+      "stagesIndicative": ["39-45", "DEV"],
+      "title": "Dev IP allowlist fail-open when empty",
+      "observation": "auth middleware documents empty IpList(WHITELIST) as fail-open for DEV.",
+      "paths": ["src/dashboard/middleware/auth.ts"],
+      "impact": "Misconfigured prod DEV access may rely only on password/session without network restriction.",
+      "repro": "Read requireDev IP allowlist comments/behavior with empty env list.",
+      "fixNeed": "Fail-closed default in production or explicit audited exception + config checklist.",
+      "evidenceLevel": "runtime_code"
+    },
+    {
+      "id": "F-S2-03",
+      "severity": "MEDIUM",
+      "stagesIndicative": ["Nitrado", "60-66"],
+      "title": "Nitrado runtime init is warn-only",
+      "observation": "index.ts catches startNitradoRuntime errors and continues; dashboard failure aborts process.",
+      "paths": ["src/index.ts", "src/modules/nitrado/runtime.ts"],
+      "impact": "Process can appear healthy while whitelist/ban/ADM/job consumers never start → silent side-effect loss.",
+      "repro": "Force startNitradoRuntime throw; observe bot continues after warn.",
+      "fixNeed": "Fail-fast or readiness degradation signal when nitrado runtime down; health/ready coupling.",
+      "evidenceLevel": "runtime_code"
+    },
+    {
+      "id": "F-S2-04",
+      "severity": "MEDIUM",
+      "stagesIndicative": ["AI", "1-22"],
+      "title": "AI background loops best-effort",
+      "observation": "startAiBackgroundLoops logs warnings for guild awareness, embeddings, conversation memory, translated posts without failing boot.",
+      "paths": ["src/modules/ai/runtime.ts", "src/index.ts"],
+      "impact": "RAG/translate/awareness may be off without operator-facing hard fail.",
+      "fixNeed": "Metrics + readiness flags for AI subsystem health; document acceptable degradation.",
+      "evidenceLevel": "runtime_code"
+    },
+    {
+      "id": "F-S2-05",
+      "severity": "LOW",
+      "stagesIndicative": ["27-35", "53-57"],
+      "title": "Orphan EnterpriseStub component",
+      "observation": "dashboard-ui EnterpriseStub has no import sites.",
+      "paths": ["dashboard-ui/src/components/dev/EnterpriseStub.tsx"],
+      "impact": "Dead code; low security impact.",
+      "fixNeed": "Remove or wire; dead-code gate.",
+      "evidenceLevel": "runtime_code"
+    },
+    {
+      "id": "F-S2-06",
+      "severity": "LOW",
+      "stagesIndicative": ["27-35"],
+      "title": "Residual _ToolStub while catalog all ready",
+      "observation": "devToolsCatalog marks every tool status ready; _ToolStub.tsx remains.",
+      "paths": [
+        "dashboard-ui/src/pages/dev/_ToolStub.tsx",
+        "dashboard-ui/src/lib/devToolsCatalog.ts"
+      ],
+      "impact": "UI metadata may overclaim readiness for analysis tools until per-page audit.",
+      "fixNeed": "Per-slug backend verification in dashboard stages; align catalog status.",
+      "evidenceLevel": "runtime_code"
+    },
+    {
+      "id": "F-S2-07",
+      "severity": "MEDIUM",
+      "stagesIndicative": ["36-45", "58"],
+      "title": "/test admin surface mounted in production server",
+      "observation": "testRouter at /test allows ADMIN/DEVELOPER session to read cross-tenant db-stats and mutate feature toggles; intentional Stage-64 eslint exception for unscoped prisma.",
+      "paths": ["src/dashboard/routes/test.ts", "src/dashboard/server.ts"],
+      "impact": "Broad diagnostic/mutation API if role compromised; not guild-scoped.",
+      "fixNeed": "Confirm prod exposure policy; tighten to bot-admin/dev session parity or disable in production.",
+      "evidenceLevel": "runtime_code"
+    },
+    {
+      "id": "F-S2-08",
+      "severity": "INFO",
+      "stagesIndicative": ["27-35"],
+      "title": "devStubs routes are mounted live diagnostics",
+      "observation": "Named stubs but mounted behind GlobalDev+DevSession+step-up; not orphan routes.",
+      "paths": [
+        "src/dashboard/routes/v2/devStubs.ts",
+        "src/dashboard/routes/v2/devDiagnosticsStubs.ts",
+        "src/dashboard/routes/v2.ts"
+      ],
+      "impact": "Naming confusion only unless handlers fake data — content audit later.",
+      "fixNeed": "None unless data faked; rename optional.",
+      "evidenceLevel": "runtime_code"
+    },
+    {
+      "id": "F-S2-09",
+      "severity": "MEDIUM",
+      "stagesIndicative": ["27-35", "58"],
+      "title": "DEV tools catalog ready ≠ verified product",
+      "observation": "All DEV_TOOLS entries use status ready without this step validating ADM analysis backends.",
+      "paths": ["dashboard-ui/src/lib/devToolsCatalog.ts"],
+      "impact": "Risk of stage greenwashing from UI labels.",
+      "fixNeed": "Stage matrix must require API+DB evidence per tool.",
+      "evidenceLevel": "runtime_code"
+    },
+    {
+      "id": "F-S2-10",
+      "severity": "INFO",
+      "stagesIndicative": ["CI", "60-66"],
+      "title": "CI Test job couples DB lifecycle to jest",
+      "observation": "ci.yml runs migrate deploy/status, db:consistency, db:lifecycle before tests with Postgres service and secrets env — local test:ci often lacks this.",
+      "paths": [".github/workflows/ci.yml"],
+      "impact": "Supports root-cause for F-PRE-01 local vs CI divergence (env/matrix), not proof tests are perfect.",
+      "fixNeed": "Document required local env parity or composite npm script mirroring CI.",
+      "evidenceLevel": "runtime_code"
+    }
+  ]
+}
