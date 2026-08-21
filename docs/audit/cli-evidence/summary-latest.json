@@ -1,0 +1,129 @@
+{
+  "generatedAt": "2026-08-21T23:45:00+02:00",
+  "step": 5,
+  "freezeShaExpected": "48bbcfface38068bc71ad7bcc5c1dd87616da514",
+  "headSha": "48bbcfface38068bc71ad7bcc5c1dd87616da514",
+  "shaMatch": true,
+  "branch": "main",
+  "originMainMatch": true,
+  "env": {
+    "node": "v24.13.0",
+    "npm": "11.9.0",
+    "os": "Windows",
+    "coreAutocrlf": "true",
+    "gitattributes": null,
+    "postgresPort5432": false,
+    "hasDotEnv": false,
+    "bashDefault": "WindowsApps WSL stub (no distro) → exit 1",
+    "gitBash": "C:\\Program Files\\Git\\bin\\bash.exe works (exit 0 on ensure-metrics-token.sh)"
+  },
+  "localCli": {
+    "prismaGenerate": { "ok": true, "exitCode": 0 },
+    "prismaValidate": { "ok": true, "exitCode": 0 },
+    "lintAll": { "ok": true, "exitCode": 0, "notes": "0 errors, 13 dashboard-ui warnings" },
+    "build": { "ok": true, "exitCode": 0, "notes": "Vite index chunk ~775kB; bundle>500kB warning path still relevant for stage 56" },
+    "dbConsistency": {
+      "ok": false,
+      "exitCode": 3,
+      "classification": "env_gated",
+      "error": "Invalid prisma.$queryRawUnsafe() invocation — no reachable PostgreSQL (localhost:5432 closed)",
+      "ciContrast": "CI Tests job runs migrate deploy + db:consistency SUCCESS against postgres:16 service"
+    },
+    "dbLifecycle": {
+      "ok": false,
+      "classification": "env_gated_platform",
+      "notes": "bash script deploy/db-lifecycle-verify.sh; requires postgres client + DB; not executed successfully on this Windows host without service"
+    },
+    "rootAuditCritical": { "ok": true, "exitCode": 0, "critical": 0 },
+    "rootAuditHigh": {
+      "ok": false,
+      "exitCode": 1,
+      "high": 3,
+      "package": "deepmerge-ts <8.0.0 via prisma/@prisma/config",
+      "advisory": "GHSA-ggr8-5vv4-36mx",
+      "fixNote": "npm audit fix --force would install prisma@6.12.0 (breaking vs pinned ^7.8.0)",
+      "ciPolicy": "critical blocking; high report-only (continue-on-error)"
+    },
+    "rootAuditOmitDevHigh": {
+      "ok": false,
+      "exitCode": 1,
+      "notes": "Same deepmerge-ts chain — appears in production dependency tree via prisma CLI package"
+    },
+    "dashboardAuditProdHigh": { "ok": true, "exitCode": 0, "high": 0 },
+    "dashboardAuditCritical": { "ok": true, "exitCode": 0, "critical": 0 },
+    "dashboardAuditFullHighReport": {
+      "notes": "Full (with dev) shows esbuild<=0.24.2 moderate via vite + 1 high in dev tree; prod omit=dev clean"
+    }
+  },
+  "jest": {
+    "withoutFullCiEnv": {
+      "command": "npx jest --coverage --maxWorkers=4 --testTimeout=60000 --ci --json --outputFile=docs/audit/cli-evidence/jest-results-latest.json",
+      "envPartial": ["DATABASE_URL", "DISCORD_TOKEN", "DISCORD_CLIENT_ID"],
+      "numFailedTestSuites": 23,
+      "numPassedTestSuites": 415,
+      "numTotalTestSuites": 438,
+      "numFailedTests": 16,
+      "numPassedTests": 2758,
+      "numTotalTests": 2774,
+      "timeSec": 13.729,
+      "artifact": "docs/audit/cli-evidence/jest-results-latest.json"
+    },
+    "withFullCiEnvNoPostgres": {
+      "command": "npx jest --coverage=false --maxWorkers=4 --testTimeout=60000 --ci --json --outputFile=docs/audit/cli-evidence/jest-results-ci-env.json",
+      "env": {
+        "DATABASE_URL": "postgresql://test:test@localhost:5432/discord_v_bot_test",
+        "DISCORD_TOKEN": "test-token",
+        "DISCORD_CLIENT_ID": "test-client-id",
+        "DISCORD_CLIENT_SECRET": "test-secret",
+        "BOT_OWNER_ID": "123456789012345678",
+        "ENCRYPTION_KEY": "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
+        "SESSION_SECRET": "test-session-secret",
+        "DASHBOARD_URL": "http://localhost:3000"
+      },
+      "numFailedTestSuites": 11,
+      "numPassedTestSuites": 427,
+      "numTotalTestSuites": 438,
+      "numFailedTests": 16,
+      "numPassedTests": 2834,
+      "numTotalTests": 2850,
+      "timeSec": 10.902,
+      "artifact": "docs/audit/cli-evidence/jest-results-ci-env.json",
+      "failedDetail": "docs/audit/cli-evidence/failed-tests-ci-env.json",
+      "deltaVsPartialEnv": "12 suites recovered once ENCRYPTION_KEY + full requireEnv set (config.ts loaders)"
+    }
+  },
+  "githubSameSha": {
+    "ciRunId": 32525882200,
+    "ciUrl": "https://github.com/BlackFilesShadow/Discord-V-Bot/actions/runs/32525882200",
+    "ciConclusion": "success",
+    "ciHeadSha": "48bbcfface38068bc71ad7bcc5c1dd87616da514",
+    "ciJobs": {
+      "Security Audit": "success",
+      "Lint & Build": "success",
+      "Tests": "success",
+      "Docker Build": "success",
+      "Publish Main CI Gate Status": "success"
+    },
+    "ciSkippedNonRequired": ["Diagnose open handles (only on jest leak failure)"],
+    "e2eRunId": 32525882181,
+    "e2eUrl": "https://github.com/BlackFilesShadow/Discord-V-Bot/actions/runs/32525882181",
+    "e2eConclusion": "success",
+    "e2eHeadSha": "48bbcfface38068bc71ad7bcc5c1dd87616da514",
+    "e2eJobs": { "Playwright Smoke": "success" },
+    "e2eSkippedNonFailure": ["Install Playwright browser (cache miss)", "Upload Playwright report on failure"],
+    "artifact": ["docs/audit/cli-evidence/gh-ci-32525882200.json", "docs/audit/cli-evidence/gh-e2e-32525882181.json"]
+  },
+  "divergenceFinding": {
+    "id": "F-S5-01",
+    "summary": "Local test:ci red vs CI Tests green on identical SHA 48bbcffa",
+    "rootCauses": [
+      "Windows core.autocrlf=true → CRLF working tree; architecture/runtime string gates assert LF-only substrings → false FAIL locally, PASS on Ubuntu CI",
+      "No local PostgreSQL on :5432 → integration + db:consistency fail; CI provides postgres:16 service + migrate deploy",
+      "Partial local env missing ENCRYPTION_KEY/DISCORD_CLIENT_SECRET → suite load failures via src/config.ts requireEnv",
+      "metricsBootstrap spawns bare 'bash' → WindowsApps WSL stub without distro (status 1); Git Bash would work; CI Linux bash OK"
+    ]
+  },
+  "reusableRunner": "docs/audit/run-cli-verification.ps1",
+  "allLocalGatesGreen": false,
+  "productionReadyImplication": "NO — local full parity not achieved; high CVEs open; architecture gates not CRLF-safe; GH green is necessary but not sufficient alone per fail-closed audit"
+}

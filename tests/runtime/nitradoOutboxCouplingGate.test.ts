@@ -1,7 +1,8 @@
 import fs from 'node:fs';
+import { normalizeSourceNewlines } from '../helpers/sourceText';
 import path from 'node:path';
 
-const read = (relative: string) => fs.readFileSync(path.resolve(process.cwd(), relative), 'utf8');
+const read = (relative: string) => normalizeSourceNewlines(fs.readFileSync(path.resolve(process.cwd(), relative), 'utf8'));
 
 const outboxLock = read('src/modules/nitrado/outboxLock.ts');
 const rebindLifecycle = read('src/modules/nitrado/rebindOutboxLifecycle.ts');

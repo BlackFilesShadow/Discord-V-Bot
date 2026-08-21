@@ -1,0 +1,108 @@
+{
+  "schemaVersion": 1,
+  "artifact": "masterplan-audit-findings-step3",
+  "step": 3,
+  "freezeSha": "48bbcfface38068bc71ad7bcc5c1dd87616da514",
+  "generatedAt": "2026-08-21T23:30:00Z",
+  "findings": [
+    {
+      "id": "F-S3-01",
+      "severity": "MEDIUM",
+      "stages": [2],
+      "title": "Ops-1 bare-metal claim not re-proven at freeze SHA",
+      "observation": "Dockerfile (node:22-alpine multi-stage) and deploy/*.sh (setup, bot, backup, smoke, update) exist on main, but Step 3 did not execute bare-metal install/smoke against freeze SHA. Issue #73 Ops-1 is [x] historically only.",
+      "impact": "Cannot promote stage 2 to VERIFIED; Ops completeness deferred to stages 46-52/66.",
+      "evidence": ["Dockerfile", "deploy/", "docker-compose.yml"],
+      "fixNeed": "Run documented bare-metal/docker smoke on freeze SHA and attach logs; or accept PARTIAL until deploy stage.",
+      "regressionTestNeed": "Optional deploy smoke gate in CI with pinned script checksums."
+    },
+    {
+      "id": "F-S3-02",
+      "severity": "HIGH",
+      "stages": [6, 23, 24, 25, 26, 27],
+      "title": "Mobile touch CSS exists but full authenticated mobile matrix incomplete",
+      "observation": "index.css/theme.css enforce min 44px on coarse pointer; stage-23 inventory reports mobile verified=28, partial=1, shell-only=28. Issue #73 HOCH Desktop+320-430 authenticated matrix remains unchecked.",
+      "impact": "Stage 6 cannot be VERIFIED; dashboard 23-26 cannot claim full mobile product proof.",
+      "evidence": ["dashboard-ui/src/index.css", "docs/dashboard-surface-inventory.json mobile statuses", ".issue73-body.txt unchecked HOCH Dashboard"],
+      "fixNeed": "Authenticated E2E mobile matrix for remaining shell-only surfaces; update inventory mobile statuses.",
+      "regressionTestNeed": "Playwright authenticated mobile suites beyond architecture gates."
+    },
+    {
+      "id": "F-S3-03",
+      "severity": "MEDIUM",
+      "stages": [16],
+      "title": "Live-server knowledge index failure is warn-only after mirror snapshot",
+      "observation": "snapshotService calls indexNitradoSnapshotKnowledge in try/catch and only logs warn on failure; mirror still succeeds. Couples with AI background best-effort posture (F-S2-04).",
+      "impact": "Operators may believe LIVE_SERVER knowledge is fresh when indexing silently failed.",
+      "evidence": ["src/modules/nitrado/mirror/snapshotService.ts:355-373"],
+      "fixNeed": "Surface index failure to metrics/alerts and/or snapshot status field; optional fail-closed policy for LIVE knowledge freshness.",
+      "regressionTestNeed": "Integration test asserting metric/audit when index throws after OK snapshot."
+    },
+    {
+      "id": "F-S3-04",
+      "severity": "HIGH",
+      "stages": [20],
+      "title": "AI-18 tool layer not production-wired (Issue #73 overclaim)",
+      "observation": "AiToolExecutor/register/execute and AiToolStepUpService exist with strong unit tests, but no production importer registers tools or invokes executor. Confirms F-S2-01. Issue #73 AI-18 is [x].",
+      "impact": "Stage 20 FAILED. Claimed hardened tool side-effect path is library-only.",
+      "evidence": ["src/modules/ai/toolLayer.ts", "src/security/aiToolStepUp.ts", "tests/ai/toolLayer.test.ts", "grep: no prod AiToolExecutor usage outside toolLayer"],
+      "fixNeed": "Wire executor into AI runtime with explicit tool catalog OR reopen #73 AI-18 and document out-of-scope until wired.",
+      "regressionTestNeed": "Architecture gate: fail if toolLayer exports unused and #73 claims ready; or integration test that production bootstrap registers >=1 tool."
+    },
+    {
+      "id": "F-S3-05",
+      "severity": "LOW",
+      "stages": [21],
+      "title": "Golden DayZ eval is offline unit suite, not live LLM E2E",
+      "observation": "runGoldenDayzEvaluation exercises boundary/validation/preflight/answer-validation cases without calling providers. Acceptable for regression gate; does not prove live model quality.",
+      "impact": "No status demotion if contract is offline gate; do not market as live benchmark.",
+      "evidence": ["src/modules/ai/dayzEvaluation.ts", "tests/ai/dayzGoldenEvaluation.test.ts"],
+      "fixNeed": "None for VERIFIED offline contract; optional separate live eval stage later.",
+      "regressionTestNeed": "Keep dayzGoldenEvaluation in CI."
+    },
+    {
+      "id": "F-S3-06",
+      "severity": "HIGH",
+      "stages": [23, 24, 26],
+      "title": "Dashboard matrix docs pinned to stale SHAs vs freeze 48bbcffa",
+      "observation": "surface inventory inventoriedMainSha=b98e2cf...; button matrix inventoriedMainSha=3daf103...; crud basedOnMainSha=d71b21e... and architecture test hard-expects that SHA. Freeze HEAD is 48bbcfface38068bc71ad7bcc5c1dd87616da514.",
+      "impact": "Matrix docs/tests prove historical inventory consistency, not current HEAD surface completeness. PARTIAL for 23/24/26.",
+      "evidence": ["docs/dashboard-surface-inventory.json", "docs/dashboard-button-matrix.json", "docs/dashboard-crud-matrix.json", "tests/security/dashboardCrudMatrixArchitecture.test.ts"],
+      "fixNeed": "Re-inventory at freeze SHA; update docs SHAs; relax hard-pin to freeze-aware check or regenerate in CI.",
+      "regressionTestNeed": "Gate: inventoriedMainSha must equal process env FREEZE_SHA or current HEAD."
+    },
+    {
+      "id": "F-S3-07",
+      "severity": "HIGH",
+      "stages": [23],
+      "title": "Stage 23 inventory self-reports large partial/shell-only debt",
+      "observation": "57 surfaces: tests verified=28 partial=29; mobile verified=28 shell-only=28 partial=1. Architecture gate only ensures inventory shape + App route id set, not product E2E green for each surface.",
+      "impact": "Cannot VERIFIED stage 23 despite #73 [x] and PR #194 claims.",
+      "evidence": ["docs/dashboard-surface-inventory.json aggregates", "tests/security/dashboardSurfaceInventoryArchitecture.test.ts"],
+      "fixNeed": "Close partial/shell-only via authenticated E2E (stages 27-35) then refresh inventory statuses at freeze SHA.",
+      "regressionTestNeed": "Optional threshold: max shell-only count."
+    },
+    {
+      "id": "F-S3-08",
+      "severity": "MEDIUM",
+      "stages": [24, 25, 26],
+      "title": "Dashboard button/switch/CRUD proofs are architecture/static, not mutation E2E",
+      "observation": "Gates walk App.tsx import graph / AST / JSON contracts. Issue #73 leaves Dashboard buttons/switches/CRUD and authenticated action matrices unchecked. Aligns with F-PRE-06.",
+      "impact": "Stages 24-26 PARTIAL; product AuthZ/IDOR/race proof deferred to 27-38.",
+      "evidence": ["tests/security/dashboardButtonMatrixArchitecture.test.ts", "tests/security/dashboardSwitchMatrixArchitecture.test.ts", "tests/security/dashboardCrudMatrixArchitecture.test.ts"],
+      "fixNeed": "Authenticated action matrices with fail-closed negative cases (later steps).",
+      "regressionTestNeed": "Keep architecture gates; add E2E without weakening assertions."
+    },
+    {
+      "id": "F-S3-09",
+      "severity": "INFO",
+      "stages": [1, 3, 4, 5, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 21, 22],
+      "title": "Stages 1-22 numbering is audit-constructed from Issue #73 AI/Ops/Mobile labels",
+      "observation": "Not historic PR Stage N/67 IDs. Mapping documented in step1; Step 3 statuses apply to audit IDs only.",
+      "impact": "Do not equate audit stage number with PR title Stage N/67 for N<=22.",
+      "evidence": ["docs/audit/masterplan-audit-baseline-step1.md mappingNotes"],
+      "fixNeed": "None",
+      "regressionTestNeed": "None"
+    }
+  ]
+}

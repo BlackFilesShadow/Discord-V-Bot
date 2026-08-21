@@ -1,9 +1,10 @@
 import fs from 'fs';
+import { normalizeSourceNewlines } from '../helpers/sourceText';
 import path from 'path';
 
 const ROOT = path.join(__dirname, '..', '..');
 function source(file: string): string {
-  return fs.readFileSync(path.join(ROOT, file), 'utf8');
+  return normalizeSourceNewlines(fs.readFileSync(path.join(ROOT, file), 'utf8'));
 }
 
 function expectOrdered(text: string, first: string, second: string): void {

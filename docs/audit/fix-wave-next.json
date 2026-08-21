@@ -1,0 +1,67 @@
+{
+  "generatedAt": "2026-08-21T22:24:35.9139662Z",
+  "baseSha": "48bbcfface38068bc71ad7bcc5c1dd87616da514",
+  "waves": [
+    {
+      "name": "wave-a-tool-eol-ci",
+      "status": "implemented_local",
+      "findings": [
+        "F-S3-04",
+        "F-S5-01",
+        "F-S5-04",
+        "F-S5-06",
+        "F-S5-07"
+      ]
+    },
+    {
+      "name": "wave-b-docker-db-parity",
+      "status": "blocked_no_docker",
+      "findings": [
+        "F-S5-02",
+        "F-S5-05"
+      ]
+    },
+    {
+      "name": "wave-c-deps-sbom",
+      "status": "exception_documented",
+      "findings": [
+        "F-S5-03",
+        "F-S4-05"
+      ]
+    },
+    {
+      "name": "wave-d-e2e-api-mobile",
+      "status": "todo",
+      "findings": [
+        "F-S4-01",
+        "F-S4-02",
+        "F-S4-03"
+      ]
+    },
+    {
+      "name": "wave-e-perf-chaos-journey",
+      "status": "todo",
+      "findings": [
+        "F-S4-06",
+        "F-S4-10",
+        "F-S4-11"
+      ]
+    },
+    {
+      "name": "wave-f-release-gates",
+      "status": "todo",
+      "findings": [
+        "F-S4-12",
+        "F-S4-13",
+        "F-S4-14"
+      ]
+    },
+    {
+      "name": "wave-g-prod",
+      "status": "blocked",
+      "findings": [
+        "F-S4-15"
+      ]
+    }
+  ]
+}

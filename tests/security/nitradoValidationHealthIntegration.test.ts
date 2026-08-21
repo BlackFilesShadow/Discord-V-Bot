@@ -12,7 +12,7 @@ import {
 } from '../../src/modules/nitrado/validationHealth';
 import { asGuildId, asNitradoConnId } from '../../src/types/scope';
 
-const describeDb = process.env.DATABASE_URL ? describe : describe.skip;
+import { describeDb } from '../helpers/dbIntegration';
 const guildId = asGuildId('923456789012345678');
 const connId = asNitradoConnId('c923456789012345678901234');
 

@@ -11,7 +11,10 @@ describe('DB-4 fresh/upgrade/backup-restore production contract', () => {
   };
 
   test('fresh and upgrade paths use production Prisma migrate deploy/status plus DB-3 consistency scan', () => {
-    expect(packageJson.scripts?.['db:lifecycle']).toBe('bash deploy/db-lifecycle-verify.sh');
+    const lifecycleScript = String(packageJson.scripts?.['db:lifecycle'] || '');
+    // Windows-safe resolver still must invoke the same shell contract.
+    expect(lifecycleScript).toContain('deploy/db-lifecycle-verify.sh');
+    expect(lifecycleScript.includes('resolve-bash') || lifecycleScript.startsWith('bash ')).toBe(true);
     expect(lifecycle).toContain('npx prisma migrate deploy');
     expect(lifecycle).toContain('npx prisma migrate status');
     expect(lifecycle).toContain('migrate deploy --config');

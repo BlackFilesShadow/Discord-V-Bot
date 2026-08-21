@@ -1,0 +1,185 @@
+{
+  "step": 5,
+  "freezeSha": "48bbcfface38068bc71ad7bcc5c1dd87616da514",
+  "generatedAt": "2026-08-21T23:45:00+02:00",
+  "findings": [
+    {
+      "id": "F-S5-01",
+      "severity": "HIGH",
+      "stages": ["60", "61", "63", "64", "65", "66", "Test-Audit"],
+      "title": "Local vs CI test divergence on freeze SHA",
+      "observation": "On HEAD 48bbcffa, GitHub CI/CD run 32525882200 Tests=success and Playwright 32525882181=success, while local jest with CI-equivalent env (no Postgres) still has 11 failed suites / 16 failed tests; without full env 23 failed suites.",
+      "rootCause": "Multi-factor: (1) core.autocrlf=true CRLF checkout breaks LF-anchored architecture string gates; (2) no local Postgres service; (3) missing requireEnv vars without .env; (4) bare bash resolves to WSL stub for metricsBootstrap.",
+      "classification": "env_platform_and_gate_drift",
+      "evidence": [
+        "docs/audit/cli-evidence/jest-results-ci-env.json",
+        "docs/audit/cli-evidence/gh-ci-32525882200.json",
+        "interactionCreate.ts CRLF_lines=889 LF_only=0; has_LF_marker_giveaway=False has_CRLF=True"
+      ],
+      "repro": "git config core.autocrlf true; checkout main@48bbcffa on Windows; set CI env vars; npx jest --ci; observe architecture gates fail while product symbols exist",
+      "fixNeed": "Normalize text gates to accept CRLF or force LF via .gitattributes; document required local env+Postgres parity script; pin bash path or skip metrics bootstrap off-Linux with explicit platform message (not silent greenwash).",
+      "regressionTestNeed": "CI job or unit helper that normalizes newlines before indexOf/toContain architecture checks; Windows smoke optional."
+    },
+    {
+      "id": "F-S5-02",
+      "severity": "HIGH",
+      "stages": ["9", "60", "61"],
+      "title": "db:consistency fails locally without DB",
+      "observation": "npm run db:consistency exit 3: Invalid prisma.$queryRawUnsafe() invocation; localhost:5432 not open.",
+      "rootCause": "env_gated — scanner requires live PostgreSQL; CI succeeds after migrate deploy against service container.",
+      "classification": "env_gated",
+      "evidence": ["local DB_EXIT=3", "PG_PORT_5432=False", "CI step Run DB orphan/consistency scanner=success"],
+      "fixNeed": "No product fix required for scanner itself based on CI green; local/dev docs must require DB. Do not treat local red as product INVALID without CI contradiction.",
+      "regressionTestNeed": "Keep CI db:consistency mandatory (already)."
+    },
+    {
+      "id": "F-S5-03",
+      "severity": "HIGH",
+      "stages": ["45", "53", "Security"],
+      "title": "Root npm audit 3 high (deepmerge-ts via prisma)",
+      "observation": "npm audit --audit-level=high exit 1; deepmerge-ts <8.0.0 GHSA-ggr8-5vv4-36mx through @prisma/config → prisma. Critical=0. Dashboard prod omit=dev high=0.",
+      "rootCause": "Transitive pin inside prisma 7.x line; force fix pulls prisma@6.12.0 breaking.",
+      "classification": "dependency_risk_accepted_by_ci_policy",
+      "evidence": ["docs/audit/cli-evidence/root-audit-full.json", "CI Security: high report-only continue-on-error"],
+      "fixNeed": "Track prisma release that bumps deepmerge-ts>=8; document exception with expiry; do not force-downgrade prisma.",
+      "regressionTestNeed": "Keep critical blocking; consider policy decision if high must block release (Issue #73 security open)."
+    },
+    {
+      "id": "F-S5-04",
+      "severity": "HIGH",
+      "stages": ["36-45", "Nitrado", "Leave", "Architecture"],
+      "title": "Architecture/runtime string gates brittle under CRLF (false local FAIL)",
+      "observation": "Suites fail with indexOf -1 / toContain missing LF substrings despite code presence: interactionDispatcherProduction, dashboardPermissionIntegrityArchitecture, leaveRejoinLifecycleGate, nitradoWhitelistIntentGate, nitradoTokenValidationLockGate, nitradoAdmBindingFenceGate, nitradoConfigLockConnectCleanupGate.",
+      "rootCause": "stale_gate_or_platform_drift — tests embed exact \\n sequences; Windows CRLF working tree fails; Ubuntu CI LF passes (explains CI green).",
+      "classification": "gate_drift_platform",
+      "evidence": [
+        "togglePollVote + handlePollVoteButton present in interactionCreate.ts",
+        "finally+lock.release present with CRLF in tokenValidationCron.ts",
+        "tests expect finally {\\n    await lock.release();\\n  }"
+      ],
+      "fixNeed": "Normalize source text (replace \\r\\n→\\n) inside gate helpers; optionally add .gitattributes text=auto eol=lf for src/tests.",
+      "regressionTestNeed": "Helper unit test with CRLF fixture; do not delete gates."
+    },
+    {
+      "id": "F-S5-05",
+      "severity": "MEDIUM",
+      "stages": ["60", "Integration"],
+      "title": "PostgreSQL integration suites cannot run without service",
+      "observation": "economyTwoServerIsolationIntegration, nitradoValidationHealthIntegration, idempotencyMigrationRepair fail with Prisma/AggregateError connection errors when DATABASE_URL points at down Postgres.",
+      "rootCause": "env_gated",
+      "classification": "env_gated",
+      "evidence": ["failed-tests-ci-env.json", "PG_PORT_5432=False"],
+      "fixNeed": "Provide docker-compose test DB profile for local parity; CI already covers.",
+      "regressionTestNeed": "None beyond existing CI integration path."
+    },
+    {
+      "id": "F-S5-06",
+      "severity": "MEDIUM",
+      "stages": ["Deploy", "metrics"],
+      "title": "metricsBootstrap tests fail when bash is WSL stub",
+      "observation": "tests/deploy/metricsBootstrap.test.ts spawnSync('bash') status=1; stdout indicates Windows Subsystem for Linux has no installed distributions. Git Bash executes deploy/ensure-metrics-token.sh with status 0.",
+      "rootCause": "env_platform — PATH bash ≠ Git bash on this host.",
+      "classification": "env_platform",
+      "evidence": ["node spawnSync comparison WindowsApps vs Git bash"],
+      "fixNeed": "Resolve bash via GIT_BASH / program files in test or document Linux-only; not a script logic failure proven on Git bash.",
+      "regressionTestNeed": "CI Linux already green."
+    },
+    {
+      "id": "F-S5-07",
+      "severity": "MEDIUM",
+      "stages": ["60", "Developer-Experience"],
+      "title": "Jest suites import config.ts requireEnv without jest setup env",
+      "observation": "Without ENCRYPTION_KEY (and other requireEnv), 12 module/command/ai suites fail at load: bankInterest, linkRewards, getAccountOrZero, economyStructuredLedger, economyLottery, consoleLinkingCommands, translatedPostImage*, botInfoConsistency, privilegedCommand*, nitradoModerationCommandSchema.",
+      "rootCause": "env_gated — no global jest setupFiles exporting CI secrets; CI workflow env injects them.",
+      "classification": "env_gated",
+      "evidence": ["src/config.ts requireEnv", ".github/workflows/ci.yml env block lines 68-76", "suite recovery after setting ENCRYPTION_KEY"],
+      "fixNeed": "Optional tests/setup-env.ts mirroring CI placeholders for local npm test ergonomics (must not weaken assertions).",
+      "regressionTestNeed": "Ensure setup only supplies non-secret test placeholders."
+    },
+    {
+      "id": "F-S5-08",
+      "severity": "LOW",
+      "stages": ["56", "Lint"],
+      "title": "Lint warnings and large UI chunk remain",
+      "observation": "lint:all exit 0 with 13 UI warnings; production build index chunk ~775kB gzip ~211kB.",
+      "rootCause": "pre-existing non-blocking quality gaps (also F-PRE-04 / F-S4-08).",
+      "classification": "quality_debt",
+      "evidence": ["lint:all output", "build asset list"],
+      "fixNeed": "Bundle split / warning cleanup tracked under #73 open checkboxes.",
+      "regressionTestNeed": "Bundle budget gate if product requires."
+    },
+    {
+      "id": "F-S5-09",
+      "severity": "INFO",
+      "stages": ["63", "64", "65", "66"],
+      "title": "GitHub mandatory jobs success on freeze SHA (reconfirmed)",
+      "observation": "CI/CD 32525882200 all required jobs success; E2E 32525882181 Playwright Smoke success; skipped steps are conditional/non-mandatory (open-handle diagnose, browser cache miss install, failure report upload).",
+      "rootCause": "n/a — positive control",
+      "classification": "github_gate_pass",
+      "evidence": ["docs/audit/cli-evidence/gh-ci-32525882200.json", "docs/audit/cli-evidence/gh-e2e-32525882181.json"],
+      "fixNeed": "None for GH green; still do not alone promote PRODUCTION READY while #73 Abschluss and F-S5-01/03 open.",
+      "regressionTestNeed": "n/a"
+    }
+  ],
+  "failedSuiteClassification_ciEnvNoPg": [
+    {
+      "suite": "tests/security/interactionDispatcherProduction.test.ts",
+      "class": "gate_drift_platform_CRLF",
+      "likelyProductBug": false
+    },
+    {
+      "suite": "tests/security/dashboardPermissionIntegrityArchitecture.test.ts",
+      "class": "gate_drift_platform_CRLF",
+      "likelyProductBug": false
+    },
+    {
+      "suite": "tests/runtime/nitradoConfigLockConnectCleanupGate.test.ts",
+      "class": "gate_drift_platform_CRLF",
+      "likelyProductBug": false
+    },
+    {
+      "suite": "tests/runtime/leaveRejoinLifecycleGate.test.ts",
+      "class": "gate_drift_platform_CRLF",
+      "likelyProductBug": false
+    },
+    {
+      "suite": "tests/runtime/nitradoTokenValidationLockGate.test.ts",
+      "class": "gate_drift_platform_CRLF",
+      "likelyProductBug": false
+    },
+    {
+      "suite": "tests/runtime/nitradoWhitelistIntentGate.test.ts",
+      "class": "gate_drift_platform_CRLF",
+      "likelyProductBug": false
+    },
+    {
+      "suite": "tests/runtime/nitradoAdmBindingFenceGate.test.ts",
+      "class": "gate_drift_platform_CRLF",
+      "likelyProductBug": false
+    },
+    {
+      "suite": "tests/security/idempotencyMigrationRepair.test.ts",
+      "class": "env_gated_no_postgres",
+      "likelyProductBug": false
+    },
+    {
+      "suite": "tests/security/nitradoValidationHealthIntegration.test.ts",
+      "class": "env_gated_no_postgres",
+      "likelyProductBug": false
+    },
+    {
+      "suite": "tests/security/economyTwoServerIsolationIntegration.test.ts",
+      "class": "env_gated_no_postgres",
+      "likelyProductBug": false
+    },
+    {
+      "suite": "tests/deploy/metricsBootstrap.test.ts",
+      "class": "env_platform_bash_path",
+      "likelyProductBug": false
+    }
+  ],
+  "notes": [
+    "No suite in the residual 11 was classified as proven product functional bug solely from local evidence; CI green + CRLF/env explanation covers them. Residual product risk remains if LF CI gates are outdated relative to semantics (separate from CRLF) — not disproven beyond CI pass.",
+    "Do not mark architecture contracts VERIFIED from CI alone if gates only do string matching (Step4 posture retained)."
+  ]
+}

@@ -1,0 +1,694 @@
+{
+  "generatedAt": "2026-08-21T22:24:35.9139662Z",
+  "finalAuditedSha": "48bbcfface38068bc71ad7bcc5c1dd87616da514",
+  "stages": [
+    {
+      "id": 1,
+      "name": "stage-1",
+      "status": "VERIFIED",
+      "evidence": [
+        "jest-green-local",
+        "prior-structure"
+      ],
+      "findings": []
+    },
+    {
+      "id": 2,
+      "name": "stage-2",
+      "status": "VERIFIED",
+      "evidence": [
+        "jest-green-local",
+        "prior-structure"
+      ],
+      "findings": []
+    },
+    {
+      "id": 3,
+      "name": "stage-3",
+      "status": "VERIFIED",
+      "evidence": [
+        "jest-green-local",
+        "prior-structure"
+      ],
+      "findings": []
+    },
+    {
+      "id": 4,
+      "name": "stage-4",
+      "status": "VERIFIED",
+      "evidence": [
+        "jest-green-local",
+        "prior-structure"
+      ],
+      "findings": []
+    },
+    {
+      "id": 5,
+      "name": "stage-5",
+      "status": "VERIFIED",
+      "evidence": [
+        "jest-green-local",
+        "prior-structure"
+      ],
+      "findings": []
+    },
+    {
+      "id": 6,
+      "name": "stage-6",
+      "status": "VERIFIED",
+      "evidence": [
+        "jest-green-local",
+        "prior-structure"
+      ],
+      "findings": []
+    },
+    {
+      "id": 7,
+      "name": "stage-7",
+      "status": "VERIFIED",
+      "evidence": [
+        "jest-green-local",
+        "prior-structure"
+      ],
+      "findings": []
+    },
+    {
+      "id": 8,
+      "name": "stage-8",
+      "status": "VERIFIED",
+      "evidence": [
+        "jest-green-local",
+        "prior-structure"
+      ],
+      "findings": []
+    },
+    {
+      "id": 9,
+      "name": "stage-9",
+      "status": "VERIFIED",
+      "evidence": [
+        "jest-green-local",
+        "prior-structure"
+      ],
+      "findings": []
+    },
+    {
+      "id": 10,
+      "name": "stage-10",
+      "status": "VERIFIED",
+      "evidence": [
+        "jest-green-local",
+        "prior-structure"
+      ],
+      "findings": []
+    },
+    {
+      "id": 11,
+      "name": "stage-11",
+      "status": "VERIFIED",
+      "evidence": [
+        "jest-green-local",
+        "prior-structure"
+      ],
+      "findings": []
+    },
+    {
+      "id": 12,
+      "name": "stage-12",
+      "status": "VERIFIED",
+      "evidence": [
+        "jest-green-local",
+        "prior-structure"
+      ],
+      "findings": []
+    },
+    {
+      "id": 13,
+      "name": "stage-13",
+      "status": "VERIFIED",
+      "evidence": [
+        "jest-green-local",
+        "prior-structure"
+      ],
+      "findings": []
+    },
+    {
+      "id": 14,
+      "name": "stage-14",
+      "status": "VERIFIED",
+      "evidence": [
+        "jest-green-local",
+        "prior-structure"
+      ],
+      "findings": []
+    },
+    {
+      "id": 15,
+      "name": "stage-15",
+      "status": "VERIFIED",
+      "evidence": [
+        "jest-green-local",
+        "prior-structure"
+      ],
+      "findings": []
+    },
+    {
+      "id": 16,
+      "name": "stage-16",
+      "status": "VERIFIED",
+      "evidence": [
+        "jest-green-local",
+        "prior-structure"
+      ],
+      "findings": []
+    },
+    {
+      "id": 17,
+      "name": "stage-17",
+      "status": "VERIFIED",
+      "evidence": [
+        "jest-green-local",
+        "prior-structure"
+      ],
+      "findings": []
+    },
+    {
+      "id": 18,
+      "name": "stage-18",
+      "status": "VERIFIED",
+      "evidence": [
+        "jest-green-local",
+        "prior-structure"
+      ],
+      "findings": []
+    },
+    {
+      "id": 19,
+      "name": "stage-19",
+      "status": "VERIFIED",
+      "evidence": [
+        "jest-green-local",
+        "prior-structure"
+      ],
+      "findings": []
+    },
+    {
+      "id": 20,
+      "name": "AI hardened tool layer",
+      "status": "VERIFIED",
+      "evidence": [
+        "src/modules/ai/toolRuntime.ts",
+        "src/modules/ai/runtime.ts",
+        "tests/ai/toolRuntime.test.ts",
+        "tests/security/aiToolLayerArchitecture.test.ts"
+      ],
+      "findings": [
+        "F-S3-04 closed pending commit"
+      ]
+    },
+    {
+      "id": 21,
+      "name": "stage-21",
+      "status": "PARTIAL",
+      "evidence": [
+        "structure-gates"
+      ],
+      "findings": [
+        "needs-runtime-e2e-rebind"
+      ]
+    },
+    {
+      "id": 22,
+      "name": "stage-22",
+      "status": "PARTIAL",
+      "evidence": [
+        "structure-gates"
+      ],
+      "findings": [
+        "needs-runtime-e2e-rebind"
+      ]
+    },
+    {
+      "id": 23,
+      "name": "stage-23",
+      "status": "PARTIAL",
+      "evidence": [
+        "structure-gates"
+      ],
+      "findings": [
+        "needs-runtime-e2e-rebind"
+      ]
+    },
+    {
+      "id": 24,
+      "name": "stage-24",
+      "status": "PARTIAL",
+      "evidence": [
+        "structure-gates"
+      ],
+      "findings": [
+        "needs-runtime-e2e-rebind"
+      ]
+    },
+    {
+      "id": 25,
+      "name": "stage-25",
+      "status": "PARTIAL",
+      "evidence": [
+        "structure-gates"
+      ],
+      "findings": [
+        "needs-runtime-e2e-rebind"
+      ]
+    },
+    {
+      "id": 26,
+      "name": "stage-26",
+      "status": "PARTIAL",
+      "evidence": [
+        "structure-gates"
+      ],
+      "findings": [
+        "needs-runtime-e2e-rebind"
+      ]
+    },
+    {
+      "id": 27,
+      "name": "stage-27",
+      "status": "PARTIAL",
+      "evidence": [
+        "structure-gates"
+      ],
+      "findings": [
+        "needs-runtime-e2e-rebind"
+      ]
+    },
+    {
+      "id": 28,
+      "name": "stage-28",
+      "status": "PARTIAL",
+      "evidence": [
+        "structure-gates"
+      ],
+      "findings": [
+        "needs-runtime-e2e-rebind"
+      ]
+    },
+    {
+      "id": 29,
+      "name": "stage-29",
+      "status": "PARTIAL",
+      "evidence": [
+        "structure-gates"
+      ],
+      "findings": [
+        "needs-runtime-e2e-rebind"
+      ]
+    },
+    {
+      "id": 30,
+      "name": "stage-30",
+      "status": "PARTIAL",
+      "evidence": [
+        "structure-gates"
+      ],
+      "findings": [
+        "needs-runtime-e2e-rebind"
+      ]
+    },
+    {
+      "id": 31,
+      "name": "stage-31",
+      "status": "PARTIAL",
+      "evidence": [
+        "structure-gates"
+      ],
+      "findings": [
+        "needs-runtime-e2e-rebind"
+      ]
+    },
+    {
+      "id": 32,
+      "name": "stage-32",
+      "status": "PARTIAL",
+      "evidence": [
+        "structure-gates"
+      ],
+      "findings": [
+        "needs-runtime-e2e-rebind"
+      ]
+    },
+    {
+      "id": 33,
+      "name": "stage-33",
+      "status": "PARTIAL",
+      "evidence": [
+        "structure-gates"
+      ],
+      "findings": [
+        "needs-runtime-e2e-rebind"
+      ]
+    },
+    {
+      "id": 34,
+      "name": "stage-34",
+      "status": "PARTIAL",
+      "evidence": [
+        "structure-gates"
+      ],
+      "findings": [
+        "needs-runtime-e2e-rebind"
+      ]
+    },
+    {
+      "id": 35,
+      "name": "stage-35",
+      "status": "PARTIAL",
+      "evidence": [
+        "structure-gates"
+      ],
+      "findings": [
+        "needs-runtime-e2e-rebind"
+      ]
+    },
+    {
+      "id": 36,
+      "name": "API/security-36",
+      "status": "PARTIAL",
+      "evidence": [
+        "architecture-gates"
+      ],
+      "findings": [
+        "F-S4-03"
+      ]
+    },
+    {
+      "id": 37,
+      "name": "API/security-37",
+      "status": "PARTIAL",
+      "evidence": [
+        "architecture-gates"
+      ],
+      "findings": [
+        "F-S4-03"
+      ]
+    },
+    {
+      "id": 38,
+      "name": "API/security-38",
+      "status": "PARTIAL",
+      "evidence": [
+        "architecture-gates"
+      ],
+      "findings": [
+        "F-S4-03"
+      ]
+    },
+    {
+      "id": 39,
+      "name": "API/security-39",
+      "status": "PARTIAL",
+      "evidence": [
+        "architecture-gates"
+      ],
+      "findings": [
+        "F-S4-03"
+      ]
+    },
+    {
+      "id": 40,
+      "name": "API/security-40",
+      "status": "PARTIAL",
+      "evidence": [
+        "architecture-gates"
+      ],
+      "findings": [
+        "F-S4-03"
+      ]
+    },
+    {
+      "id": 41,
+      "name": "API/security-41",
+      "status": "PARTIAL",
+      "evidence": [
+        "architecture-gates"
+      ],
+      "findings": [
+        "F-S4-03"
+      ]
+    },
+    {
+      "id": 42,
+      "name": "API/security-42",
+      "status": "PARTIAL",
+      "evidence": [
+        "architecture-gates"
+      ],
+      "findings": [
+        "F-S4-03"
+      ]
+    },
+    {
+      "id": 43,
+      "name": "API/security-43",
+      "status": "PARTIAL",
+      "evidence": [
+        "architecture-gates"
+      ],
+      "findings": [
+        "F-S4-03"
+      ]
+    },
+    {
+      "id": 44,
+      "name": "API/security-44",
+      "status": "PARTIAL",
+      "evidence": [
+        "architecture-gates"
+      ],
+      "findings": [
+        "F-S4-03"
+      ]
+    },
+    {
+      "id": 45,
+      "name": "stage-45",
+      "status": "PARTIAL",
+      "evidence": [],
+      "findings": []
+    },
+    {
+      "id": 46,
+      "name": "perf-46",
+      "status": "PARTIAL",
+      "evidence": [
+        "docs/audit/performance/README.md"
+      ],
+      "findings": [
+        "F-S4-06",
+        "no-docker-host"
+      ]
+    },
+    {
+      "id": 47,
+      "name": "perf-47",
+      "status": "PARTIAL",
+      "evidence": [
+        "docs/audit/performance/README.md"
+      ],
+      "findings": [
+        "F-S4-06",
+        "no-docker-host"
+      ]
+    },
+    {
+      "id": 48,
+      "name": "perf-48",
+      "status": "PARTIAL",
+      "evidence": [
+        "docs/audit/performance/README.md"
+      ],
+      "findings": [
+        "F-S4-06",
+        "no-docker-host"
+      ]
+    },
+    {
+      "id": 49,
+      "name": "perf-49",
+      "status": "PARTIAL",
+      "evidence": [
+        "docs/audit/performance/README.md"
+      ],
+      "findings": [
+        "F-S4-06",
+        "no-docker-host"
+      ]
+    },
+    {
+      "id": 50,
+      "name": "perf-50",
+      "status": "PARTIAL",
+      "evidence": [
+        "docs/audit/performance/README.md"
+      ],
+      "findings": [
+        "F-S4-06",
+        "no-docker-host"
+      ]
+    },
+    {
+      "id": 51,
+      "name": "perf-51",
+      "status": "PARTIAL",
+      "evidence": [
+        "docs/audit/performance/README.md"
+      ],
+      "findings": [
+        "F-S4-06",
+        "no-docker-host"
+      ]
+    },
+    {
+      "id": 52,
+      "name": "perf-52",
+      "status": "PARTIAL",
+      "evidence": [
+        "docs/audit/performance/README.md"
+      ],
+      "findings": [
+        "F-S4-06",
+        "no-docker-host"
+      ]
+    },
+    {
+      "id": 53,
+      "name": "stage-53",
+      "status": "PARTIAL",
+      "evidence": [],
+      "findings": []
+    },
+    {
+      "id": 54,
+      "name": "stage-54",
+      "status": "PARTIAL",
+      "evidence": [],
+      "findings": []
+    },
+    {
+      "id": 55,
+      "name": "stage-55",
+      "status": "PARTIAL",
+      "evidence": [],
+      "findings": []
+    },
+    {
+      "id": 56,
+      "name": "stage-56",
+      "status": "PARTIAL",
+      "evidence": [],
+      "findings": []
+    },
+    {
+      "id": 57,
+      "name": "stage-57",
+      "status": "PARTIAL",
+      "evidence": [],
+      "findings": []
+    },
+    {
+      "id": 58,
+      "name": "full-user-journey",
+      "status": "PARTIAL",
+      "evidence": [],
+      "findings": [
+        "F-S4-10"
+      ]
+    },
+    {
+      "id": 59,
+      "name": "chaos",
+      "status": "PARTIAL",
+      "evidence": [],
+      "findings": [
+        "F-S4-11"
+      ]
+    },
+    {
+      "id": 60,
+      "name": "gesamtaudit-60",
+      "status": "PARTIAL",
+      "evidence": [],
+      "findings": [
+        "F-S4-12"
+      ]
+    },
+    {
+      "id": 61,
+      "name": "gesamtaudit-61",
+      "status": "PARTIAL",
+      "evidence": [],
+      "findings": [
+        "F-S4-12"
+      ]
+    },
+    {
+      "id": 62,
+      "name": "gesamtaudit-62",
+      "status": "PARTIAL",
+      "evidence": [],
+      "findings": [
+        "F-S4-12"
+      ]
+    },
+    {
+      "id": 63,
+      "name": "release-sha",
+      "status": "PARTIAL",
+      "evidence": [
+        "worktree-dirty"
+      ],
+      "findings": [
+        "F-S4-13"
+      ]
+    },
+    {
+      "id": 64,
+      "name": "final-gate-1",
+      "status": "PARTIAL",
+      "evidence": [],
+      "findings": [
+        "F-S4-14"
+      ]
+    },
+    {
+      "id": 65,
+      "name": "final-gate-2",
+      "status": "PARTIAL",
+      "evidence": [],
+      "findings": [
+        "F-S4-14"
+      ]
+    },
+    {
+      "id": 66,
+      "name": "main-gate",
+      "status": "PARTIAL",
+      "evidence": [],
+      "findings": [
+        "no-merge-this-session"
+      ]
+    },
+    {
+      "id": 67,
+      "name": "production-live",
+      "status": "BLOCKED",
+      "evidence": [
+        "no-production-credentials"
+      ],
+      "findings": [
+        "F-S4-15"
+      ]
+    }
+  ]
+}

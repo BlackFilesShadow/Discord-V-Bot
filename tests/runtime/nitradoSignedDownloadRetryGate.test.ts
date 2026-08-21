@@ -1,10 +1,11 @@
 import fs from 'node:fs';
+import { normalizeSourceNewlines } from '../helpers/sourceText';
 import path from 'node:path';
 
-const source = fs.readFileSync(
+const source = normalizeSourceNewlines(fs.readFileSync(
   path.resolve(process.cwd(), 'src/modules/nitrado/nitradoClient.ts'),
   'utf8',
-);
+));
 
 function expectOrdered(body: string, anchors: string[]): void {
   let previous = -1;

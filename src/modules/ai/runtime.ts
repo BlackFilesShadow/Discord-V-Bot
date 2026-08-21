@@ -14,6 +14,7 @@ import { logger } from '../../utils/logger';
 import { stopContentSyncLoop } from './guildAwareness';
 import { stopConversationCleanupLoop } from './conversationMemory';
 import { stopTranslatedPostScheduler } from './translatedPostScheduler';
+import { getProductionAiToolExecutor, listProductionAiToolNames } from './toolRuntime';
 
 let started = false;
 
@@ -21,6 +22,11 @@ export async function startAiBackgroundLoops(client: Client): Promise<void> {
   if (started) return;
 
   try {
+    // AI-18: fail-closed production tool registry must be live before chat loops.
+    // No destructive tools are registered; LLM proposals only execute via toolRuntime.
+    const toolExecutor = getProductionAiToolExecutor();
+    logger.info(`[AI-18] Tool layer wired (${listProductionAiToolNames().join(', ') || 'none'}); describe=${toolExecutor.describe().length}`);
+
     const { bootstrapGuildAwareness, startContentSyncLoop } = await import('./guildAwareness.js');
     await bootstrapGuildAwareness(client);
     startContentSyncLoop(client);

@@ -1,8 +1,9 @@
 import fs from 'node:fs';
+import { normalizeSourceNewlines } from '../helpers/sourceText';
 import path from 'node:path';
 import { execSync } from 'node:child_process';
 
-const read = (relative: string) => fs.readFileSync(path.resolve(process.cwd(), relative), 'utf8');
+const read = (relative: string) => normalizeSourceNewlines(fs.readFileSync(path.resolve(process.cwd(), relative), 'utf8'));
 
 const matrix = JSON.parse(read('docs/git-history-secret-hygiene-matrix.json')) as {
   stage: number;

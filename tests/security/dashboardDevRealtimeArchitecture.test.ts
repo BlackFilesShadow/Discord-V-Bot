@@ -1,7 +1,8 @@
 import fs from 'node:fs';
+import { normalizeSourceNewlines } from '../helpers/sourceText';
 import path from 'node:path';
 
-const read = (relative: string) => fs.readFileSync(path.resolve(process.cwd(), relative), 'utf8');
+const read = (relative: string) => normalizeSourceNewlines(fs.readFileSync(path.resolve(process.cwd(), relative), 'utf8'));
 
 const devRouteSource = read('src/dashboard/routes/v2/dev.ts');
 const devSocketSource = read('src/dashboard/socket/dev.ts');

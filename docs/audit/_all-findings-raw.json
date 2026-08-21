@@ -1,0 +1,1099 @@
+﻿[
+    {
+        "id":  "F-PRE-01",
+        "severity":  "HIGH",
+        "stages":  [
+                       60,
+                       61,
+                       62,
+                       63,
+                       64,
+                       65,
+                       66
+                   ],
+        "title":  "Local test:ci red vs CI Tests SUCCESS on same SHA",
+        "observation":  "Prior session: npm run test:ci ~21 failed suites / 415 passed while GitHub CI/CD Tests job SUCCESS on 48bbcffa (run 32525882200).",
+        "impact":  "Masks regressions; undermines gate trust; blocks honest VERIFIED for architecture/gesamtaudit/gate stages.",
+        "repro":  "On clean tree at freeze SHA: npm ci; npm run test:ci. Compare to gh run view 32525882200.",
+        "rootCauseHypothesis":  "Env/secret/job-matrix/script divergence and/or stale architecture gate regex after refactors.",
+        "fixNeed":  "Root-cause each failing suite; align CI and local contracts; no assertion weakening.",
+        "regressionTestNeed":  "Failing product suites must stay red until fixed; add/keep CI job parity documentation.",
+        "status":  "open",
+        "failedSuiteNamesFromPriorSession":  [
+                                                 "economyTwoServerIsolationIntegration",
+                                                 "dashboardPermissionIntegrityArchitecture",
+                                                 "interactionDispatcherProduction",
+                                                 "bankInterest",
+                                                 "linkRewards",
+                                                 "privilegedCommandFlow",
+                                                 "nitradoWhitelistIntentGate",
+                                                 "leaveRejoinLifecycleGate",
+                                                 "nitradoTokenValidationLockGate",
+                                                 "nitradoAdmBindingFenceGate",
+                                                 "economyStructuredLedger",
+                                                 "consoleLinkingCommands",
+                                                 "getAccountOrZero",
+                                                 "nitradoConfigLockConnectCleanupGate",
+                                                 "botInfoConsistency",
+                                                 "translatedPostImage",
+                                                 "metricsBootstrap",
+                                                 "translatedPostImageLimit",
+                                                 "economyLottery",
+                                                 "privilegedCommandDefinitions",
+                                                 "nitradoModerationCommandSchema"
+                                             ]
+    },
+    {
+        "id":  "F-PRE-02",
+        "severity":  "HIGH",
+        "stages":  [
+                       9,
+                       60,
+                       61
+                   ],
+        "title":  "db:consistency fails ($queryRawUnsafe)",
+        "observation":  "npm run db:consistency failed with Prisma $queryRawUnsafe invocation error in prior session.",
+        "impact":  "DB-3 orphan/consistency gate and Gesamtaudit couplings cannot be trusted green.",
+        "repro":  "npm run db:consistency at freeze SHA with documented DB env.",
+        "rootCauseHypothesis":  "Missing/local DB env vs real scanner bug vs SQL dialect mismatch.",
+        "fixNeed":  "Isolate env vs product; fix scanner or document required env fail-closed.",
+        "regressionTestNeed":  "Keep db:consistency in CI/local full verification.",
+        "status":  "open"
+    },
+    {
+        "id":  "F-PRE-03",
+        "severity":  "HIGH",
+        "stages":  [
+                       45,
+                       53
+                   ],
+        "title":  "Root npm audit 3 high (deepmerge-ts)",
+        "observation":  "Root audit reported 3 high via deepmerge-ts \u003c8; force fix risks breaking prisma pin.",
+        "impact":  "Security/SBOM and dependency-audit stages cannot claim clean highs without exception.",
+        "repro":  "npm audit --omit=dev (or project-equivalent) at freeze SHA.",
+        "rootCauseHypothesis":  "Transitive pin through prisma/tooling.",
+        "fixNeed":  "Controlled upgrade path or written risk acceptance with expiry â€” not silent ignore.",
+        "regressionTestNeed":  "Audit gate documents allowed exceptions explicitly.",
+        "status":  "open"
+    },
+    {
+        "id":  "F-PRE-04",
+        "severity":  "MEDIUM",
+        "stages":  [
+                       56
+                   ],
+        "title":  "Dashboard production bundle \u003e500kB",
+        "observation":  "Vite build warns chunk \u003e500kB; Issue #73 checkbox open.",
+        "impact":  "Perf/UX budget; stage 56 incomplete per tracker.",
+        "repro":  "dashboard-ui npm run build",
+        "fixNeed":  "Measure and code-split per matrix; or justify residual with metrics.",
+        "regressionTestNeed":  "Bundle size budget check if claimed fixed.",
+        "status":  "open"
+    },
+    {
+        "id":  "F-PRE-05",
+        "severity":  "MEDIUM",
+        "stages":  [
+                       54,
+                       55
+                   ],
+        "title":  "Deprecated passport-discord / inflight / old glob",
+        "observation":  "Issue #73 open sub-bullets; matrices exist but tracker unchecked.",
+        "impact":  "Ops hygiene and transitive CVE surface.",
+        "repro":  "Inspect package-lock and docs/*-matrix.json at HEAD.",
+        "fixNeed":  "Verify migration/cleanup claims at freeze SHA vs lockfile reality.",
+        "regressionTestNeed":  "Lockfile gate for banned packages if removed.",
+        "status":  "open"
+    },
+    {
+        "id":  "F-PRE-06",
+        "severity":  "HIGH",
+        "stages":  [
+                       27,
+                       28,
+                       29,
+                       30,
+                       31,
+                       32,
+                       33,
+                       34,
+                       35,
+                       36,
+                       37,
+                       38,
+                       58
+                   ],
+        "title":  "Issue #73 Dashboard/API authenticated full matrix unchecked",
+        "observation":  "HOCH Dashboard/API/Mobile three master checkboxes still [ ].",
+        "impact":  "Production UI/API contract not accepted by canonical tracker.",
+        "repro":  "gh issue view 73 / .issue73-body.txt lines under HOCH Dashboard.",
+        "fixNeed":  "Evidence pass stages 23-38; close only with real E2E/AuthZ proof.",
+        "regressionTestNeed":  "Authenticated Playwright + security architecture tests.",
+        "status":  "open"
+    },
+    {
+        "id":  "F-PRE-07",
+        "severity":  "HIGH",
+        "stages":  [
+                       39,
+                       40,
+                       41,
+                       42,
+                       43,
+                       44,
+                       45,
+                       46,
+                       47,
+                       48,
+                       49,
+                       50,
+                       51,
+                       52
+                   ],
+        "title":  "Issue #73 Security and Performance blocks unchecked",
+        "observation":  "Entire HOCH Security and HOCH Performance/Ops sections open in tracker.",
+        "impact":  "Stages 39-52 cannot be tracker-closed; docs matrices are claims only.",
+        "repro":  "Issue #73 body Security/Performance sections.",
+        "fixNeed":  "Deep audit with measurement/script evidence not docs-only.",
+        "regressionTestNeed":  "Security + runtime suites on freeze SHA.",
+        "status":  "open"
+    },
+    {
+        "id":  "F-PRE-08",
+        "severity":  "HIGH",
+        "stages":  [
+                       63,
+                       64,
+                       65,
+                       66,
+                       67
+                   ],
+        "title":  "Issue #73 Abschluss gates/deploy/100 unchecked despite PR #238",
+        "observation":  "Release-SHA, Gate 1/2, 2/2, main+Docker+Playwright, deploy+live, 100/100 all [ ]. PR #238 merged revalidation candidate only.",
+        "impact":  "No production-ready declaration allowed.",
+        "repro":  "Issue #73 Abschluss; compare PR #238 body.",
+        "fixNeed":  "Satisfy 2/2 immutable SHA rule + CLI + live policy; update tracker only after proof.",
+        "regressionTestNeed":  "Gate run archaeology job-by-job.",
+        "status":  "open"
+    },
+    {
+        "id":  "F-PRE-09",
+        "severity":  "INFO",
+        "stages":  [
+                       66
+                   ],
+        "title":  "Playwright main run completed SUCCESS (plan draft was in_progress)",
+        "observation":  "Run 32525882181 conclusion=success, job Playwright Smoke success on 48bbcffa.",
+        "impact":  "Removes in_progress uncertainty; does not alone close stage 66 or 2/2.",
+        "repro":  "gh run view 32525882181 --json conclusion,jobs",
+        "fixNeed":  "None immediate; retain as partial gate evidence.",
+        "regressionTestNeed":  "n/a",
+        "status":  "mitigated-observation"
+    },
+    {
+        "id":  "F-PRE-10",
+        "severity":  "MEDIUM",
+        "stages":  [
+                       60,
+                       61,
+                       64
+                   ],
+        "title":  "Architecture/runtime tests fail expected code patterns",
+        "observation":  "Prior failures include indexOf === -1 style gate mismatches.",
+        "impact":  "Either product drifted from contract or gates stale after Stage 64 lint/refactors.",
+        "repro":  "npm run test:ci focusing tests/security *Architecture*",
+        "fixNeed":  "Classify each failure product vs gate; fix product first.",
+        "regressionTestNeed":  "Keep fail-closed architecture tests.",
+        "status":  "open"
+    },
+    {
+        "id":  "F-PRE-11",
+        "severity":  "MEDIUM",
+        "stages":  [
+                       1,
+                       2,
+                       3,
+                       4,
+                       5,
+                       6,
+                       7,
+                       8,
+                       9,
+                       10,
+                       11,
+                       12,
+                       13,
+                       14,
+                       15,
+                       16,
+                       17,
+                       18,
+                       19,
+                       20,
+                       21,
+                       22
+                   ],
+        "title":  "Stages 1-22 numbering is audit-constructed from AI/Ops/Mobile labels",
+        "observation":  "Issue #73 does not assign numeric 1-22; DB/Leave/Nitrado/Economy are overlays.",
+        "impact":  "Risk of double-count or missed foundation coverage if mapping ignored.",
+        "repro":  "Compare docs/audit/stage-matrix-1-67.json mappingNotes + overlays.",
+        "fixNeed":  "Use matrix consistently in Step 3 evidence pass.",
+        "regressionTestNeed":  "n/a (process)",
+        "status":  "open-process"
+    },
+    {
+        "id":  "F-PRE-12",
+        "severity":  "HIGH",
+        "stages":  [
+                       63
+                   ],
+        "title":  "release-sha-freeze-matrix basedOnMainSha stale vs freeze HEAD",
+        "observation":  "docs/release-sha-freeze-matrix.json basedOnMainSha=45caf9cd while audit freeze HEAD=48bbcffa.",
+        "impact":  "Stage 63 freeze documentation does not match current main candidate.",
+        "repro":  "type docs\\release-sha-freeze-matrix.json; git rev-parse HEAD",
+        "fixNeed":  "Reconcile freeze doc with actual release candidate SHA after audit rules.",
+        "regressionTestNeed":  "Matrix SHA must equal declared freeze SHA.",
+        "status":  "open"
+    },
+    {
+        "id":  "F-PRE-13",
+        "severity":  "BLOCKER",
+        "stages":  [
+                       67
+                   ],
+        "title":  "Production deploy + live smoke not executable without access",
+        "observation":  "Audit scope forbids live prod without explicit credentials/approval.",
+        "impact":  "Stage 67 must be BLOCKED not VERIFIED until access granted and evidence captured.",
+        "repro":  "n/a â€” absence of prod credentials in session.",
+        "fixNeed":  "Obtain approved access or accept BLOCKED in final scoreboard.",
+        "regressionTestNeed":  "Live smoke checklist when unblocked.",
+        "status":  "blocked"
+    },
+    {
+        "id":  "F-PRE-14",
+        "severity":  "MEDIUM",
+        "stages":  [
+                       64,
+                       65
+                   ],
+        "title":  "Single main-push gate pair observed; 2/2 rule needs two full independent cycles",
+        "observation":  "On 48bbcffa only one completed main push pair (CI/CD + Playwright) listed. PR #238 describes PR-level 2/2 before merge â€” must verify two complete cycles on immutable SHA.",
+        "impact":  "Cannot mark Gate 2/2 VERIFIED from one main push alone.",
+        "repro":  "gh run list --commit 48bbcfface38068bc71ad7bcc5c1dd87616da514; inspect PR #238 checks history.",
+        "fixNeed":  "Archaeology of PR checks for two green cycles; document SHA immutability.",
+        "regressionTestNeed":  "Gate evidence appendix.",
+        "status":  "open"
+    },
+    {
+        "id":  "F-S2-01",
+        "severity":  "HIGH",
+        "stagesIndicative":  [
+                                 "AI-18",
+                                 "1-22",
+                                 "36-45"
+                             ],
+        "title":  "AI tool layer not production-wired",
+        "observation":  "AiToolExecutor and AiToolStepUpService exist with solid unit/architecture tests, but no src/** import constructs/registers/executes tools outside toolLayer.ts itself. aiHandler does not call the executor.",
+        "paths":  [
+                      "src/modules/ai/toolLayer.ts",
+                      "src/security/aiToolStepUp.ts",
+                      "src/modules/ai/aiHandler.ts",
+                      "tests/ai/toolLayer.test.ts",
+                      "tests/security/aiToolLayerArchitecture.test.ts"
+                  ],
+        "impact":  "Masterplan AI tool side-effect boundary is library-only; product cannot exercise authorized tools end-to-end. Risk of false VERIFIED if stages accept tests as runtime proof.",
+        "repro":  "rg -n \"AiToolExecutor|from [\u0027\\\"].*toolLayer\" src tests â€” only toolLayer + tests hit.",
+        "fixNeed":  "Trusted integration layer registering tools + wiring from interaction/dashboard confirmation; regression e2e that mutating tool without step-up never hits handler.",
+        "evidenceLevel":  "runtime_code"
+    },
+    {
+        "id":  "F-S2-02",
+        "severity":  "MEDIUM",
+        "stagesIndicative":  [
+                                 "39-45",
+                                 "DEV"
+                             ],
+        "title":  "Dev IP allowlist fail-open when empty",
+        "observation":  "auth middleware documents empty IpList(WHITELIST) as fail-open for DEV.",
+        "paths":  [
+                      "src/dashboard/middleware/auth.ts"
+                  ],
+        "impact":  "Misconfigured prod DEV access may rely only on password/session without network restriction.",
+        "repro":  "Read requireDev IP allowlist comments/behavior with empty env list.",
+        "fixNeed":  "Fail-closed default in production or explicit audited exception + config checklist.",
+        "evidenceLevel":  "runtime_code"
+    },
+    {
+        "id":  "F-S2-03",
+        "severity":  "MEDIUM",
+        "stagesIndicative":  [
+                                 "Nitrado",
+                                 "60-66"
+                             ],
+        "title":  "Nitrado runtime init is warn-only",
+        "observation":  "index.ts catches startNitradoRuntime errors and continues; dashboard failure aborts process.",
+        "paths":  [
+                      "src/index.ts",
+                      "src/modules/nitrado/runtime.ts"
+                  ],
+        "impact":  "Process can appear healthy while whitelist/ban/ADM/job consumers never start â†’ silent side-effect loss.",
+        "repro":  "Force startNitradoRuntime throw; observe bot continues after warn.",
+        "fixNeed":  "Fail-fast or readiness degradation signal when nitrado runtime down; health/ready coupling.",
+        "evidenceLevel":  "runtime_code"
+    },
+    {
+        "id":  "F-S2-04",
+        "severity":  "MEDIUM",
+        "stagesIndicative":  [
+                                 "AI",
+                                 "1-22"
+                             ],
+        "title":  "AI background loops best-effort",
+        "observation":  "startAiBackgroundLoops logs warnings for guild awareness, embeddings, conversation memory, translated posts without failing boot.",
+        "paths":  [
+                      "src/modules/ai/runtime.ts",
+                      "src/index.ts"
+                  ],
+        "impact":  "RAG/translate/awareness may be off without operator-facing hard fail.",
+        "fixNeed":  "Metrics + readiness flags for AI subsystem health; document acceptable degradation.",
+        "evidenceLevel":  "runtime_code"
+    },
+    {
+        "id":  "F-S2-05",
+        "severity":  "LOW",
+        "stagesIndicative":  [
+                                 "27-35",
+                                 "53-57"
+                             ],
+        "title":  "Orphan EnterpriseStub component",
+        "observation":  "dashboard-ui EnterpriseStub has no import sites.",
+        "paths":  [
+                      "dashboard-ui/src/components/dev/EnterpriseStub.tsx"
+                  ],
+        "impact":  "Dead code; low security impact.",
+        "fixNeed":  "Remove or wire; dead-code gate.",
+        "evidenceLevel":  "runtime_code"
+    },
+    {
+        "id":  "F-S2-06",
+        "severity":  "LOW",
+        "stagesIndicative":  [
+                                 "27-35"
+                             ],
+        "title":  "Residual _ToolStub while catalog all ready",
+        "observation":  "devToolsCatalog marks every tool status ready; _ToolStub.tsx remains.",
+        "paths":  [
+                      "dashboard-ui/src/pages/dev/_ToolStub.tsx",
+                      "dashboard-ui/src/lib/devToolsCatalog.ts"
+                  ],
+        "impact":  "UI metadata may overclaim readiness for analysis tools until per-page audit.",
+        "fixNeed":  "Per-slug backend verification in dashboard stages; align catalog status.",
+        "evidenceLevel":  "runtime_code"
+    },
+    {
+        "id":  "F-S2-07",
+        "severity":  "MEDIUM",
+        "stagesIndicative":  [
+                                 "36-45",
+                                 "58"
+                             ],
+        "title":  "/test admin surface mounted in production server",
+        "observation":  "testRouter at /test allows ADMIN/DEVELOPER session to read cross-tenant db-stats and mutate feature toggles; intentional Stage-64 eslint exception for unscoped prisma.",
+        "paths":  [
+                      "src/dashboard/routes/test.ts",
+                      "src/dashboard/server.ts"
+                  ],
+        "impact":  "Broad diagnostic/mutation API if role compromised; not guild-scoped.",
+        "fixNeed":  "Confirm prod exposure policy; tighten to bot-admin/dev session parity or disable in production.",
+        "evidenceLevel":  "runtime_code"
+    },
+    {
+        "id":  "F-S2-08",
+        "severity":  "INFO",
+        "stagesIndicative":  [
+                                 "27-35"
+                             ],
+        "title":  "devStubs routes are mounted live diagnostics",
+        "observation":  "Named stubs but mounted behind GlobalDev+DevSession+step-up; not orphan routes.",
+        "paths":  [
+                      "src/dashboard/routes/v2/devStubs.ts",
+                      "src/dashboard/routes/v2/devDiagnosticsStubs.ts",
+                      "src/dashboard/routes/v2.ts"
+                  ],
+        "impact":  "Naming confusion only unless handlers fake data â€” content audit later.",
+        "fixNeed":  "None unless data faked; rename optional.",
+        "evidenceLevel":  "runtime_code"
+    },
+    {
+        "id":  "F-S2-09",
+        "severity":  "MEDIUM",
+        "stagesIndicative":  [
+                                 "27-35",
+                                 "58"
+                             ],
+        "title":  "DEV tools catalog ready â‰  verified product",
+        "observation":  "All DEV_TOOLS entries use status ready without this step validating ADM analysis backends.",
+        "paths":  [
+                      "dashboard-ui/src/lib/devToolsCatalog.ts"
+                  ],
+        "impact":  "Risk of stage greenwashing from UI labels.",
+        "fixNeed":  "Stage matrix must require API+DB evidence per tool.",
+        "evidenceLevel":  "runtime_code"
+    },
+    {
+        "id":  "F-S2-10",
+        "severity":  "INFO",
+        "stagesIndicative":  [
+                                 "CI",
+                                 "60-66"
+                             ],
+        "title":  "CI Test job couples DB lifecycle to jest",
+        "observation":  "ci.yml runs migrate deploy/status, db:consistency, db:lifecycle before tests with Postgres service and secrets env â€” local test:ci often lacks this.",
+        "paths":  [
+                      ".github/workflows/ci.yml"
+                  ],
+        "impact":  "Supports root-cause for F-PRE-01 local vs CI divergence (env/matrix), not proof tests are perfect.",
+        "fixNeed":  "Document required local env parity or composite npm script mirroring CI.",
+        "evidenceLevel":  "runtime_code"
+    },
+    {
+        "id":  "F-S3-01",
+        "severity":  "MEDIUM",
+        "stages":  [
+                       2
+                   ],
+        "title":  "Ops-1 bare-metal claim not re-proven at freeze SHA",
+        "observation":  "Dockerfile (node:22-alpine multi-stage) and deploy/*.sh (setup, bot, backup, smoke, update) exist on main, but Step 3 did not execute bare-metal install/smoke against freeze SHA. Issue #73 Ops-1 is [x] historically only.",
+        "impact":  "Cannot promote stage 2 to VERIFIED; Ops completeness deferred to stages 46-52/66.",
+        "evidence":  [
+                         "Dockerfile",
+                         "deploy/",
+                         "docker-compose.yml"
+                     ],
+        "fixNeed":  "Run documented bare-metal/docker smoke on freeze SHA and attach logs; or accept PARTIAL until deploy stage.",
+        "regressionTestNeed":  "Optional deploy smoke gate in CI with pinned script checksums."
+    },
+    {
+        "id":  "F-S3-02",
+        "severity":  "HIGH",
+        "stages":  [
+                       6,
+                       23,
+                       24,
+                       25,
+                       26,
+                       27
+                   ],
+        "title":  "Mobile touch CSS exists but full authenticated mobile matrix incomplete",
+        "observation":  "index.css/theme.css enforce min 44px on coarse pointer; stage-23 inventory reports mobile verified=28, partial=1, shell-only=28. Issue #73 HOCH Desktop+320-430 authenticated matrix remains unchecked.",
+        "impact":  "Stage 6 cannot be VERIFIED; dashboard 23-26 cannot claim full mobile product proof.",
+        "evidence":  [
+                         "dashboard-ui/src/index.css",
+                         "docs/dashboard-surface-inventory.json mobile statuses",
+                         ".issue73-body.txt unchecked HOCH Dashboard"
+                     ],
+        "fixNeed":  "Authenticated E2E mobile matrix for remaining shell-only surfaces; update inventory mobile statuses.",
+        "regressionTestNeed":  "Playwright authenticated mobile suites beyond architecture gates."
+    },
+    {
+        "id":  "F-S3-03",
+        "severity":  "MEDIUM",
+        "stages":  [
+                       16
+                   ],
+        "title":  "Live-server knowledge index failure is warn-only after mirror snapshot",
+        "observation":  "snapshotService calls indexNitradoSnapshotKnowledge in try/catch and only logs warn on failure; mirror still succeeds. Couples with AI background best-effort posture (F-S2-04).",
+        "impact":  "Operators may believe LIVE_SERVER knowledge is fresh when indexing silently failed.",
+        "evidence":  [
+                         "src/modules/nitrado/mirror/snapshotService.ts:355-373"
+                     ],
+        "fixNeed":  "Surface index failure to metrics/alerts and/or snapshot status field; optional fail-closed policy for LIVE knowledge freshness.",
+        "regressionTestNeed":  "Integration test asserting metric/audit when index throws after OK snapshot."
+    },
+    {
+        "id":  "F-S3-04",
+        "severity":  "HIGH",
+        "stages":  [
+                       20
+                   ],
+        "title":  "AI-18 tool layer not production-wired (Issue #73 overclaim)",
+        "observation":  "AiToolExecutor/register/execute and AiToolStepUpService exist with strong unit tests, but no production importer registers tools or invokes executor. Confirms F-S2-01. Issue #73 AI-18 is [x].",
+        "impact":  "Stage 20 FAILED. Claimed hardened tool side-effect path is library-only.",
+        "evidence":  [
+                         "src/modules/ai/toolLayer.ts",
+                         "src/security/aiToolStepUp.ts",
+                         "tests/ai/toolLayer.test.ts",
+                         "grep: no prod AiToolExecutor usage outside toolLayer"
+                     ],
+        "fixNeed":  "Wire executor into AI runtime with explicit tool catalog OR reopen #73 AI-18 and document out-of-scope until wired.",
+        "regressionTestNeed":  "Architecture gate: fail if toolLayer exports unused and #73 claims ready; or integration test that production bootstrap registers \u003e=1 tool."
+    },
+    {
+        "id":  "F-S3-05",
+        "severity":  "LOW",
+        "stages":  [
+                       21
+                   ],
+        "title":  "Golden DayZ eval is offline unit suite, not live LLM E2E",
+        "observation":  "runGoldenDayzEvaluation exercises boundary/validation/preflight/answer-validation cases without calling providers. Acceptable for regression gate; does not prove live model quality.",
+        "impact":  "No status demotion if contract is offline gate; do not market as live benchmark.",
+        "evidence":  [
+                         "src/modules/ai/dayzEvaluation.ts",
+                         "tests/ai/dayzGoldenEvaluation.test.ts"
+                     ],
+        "fixNeed":  "None for VERIFIED offline contract; optional separate live eval stage later.",
+        "regressionTestNeed":  "Keep dayzGoldenEvaluation in CI."
+    },
+    {
+        "id":  "F-S3-06",
+        "severity":  "HIGH",
+        "stages":  [
+                       23,
+                       24,
+                       26
+                   ],
+        "title":  "Dashboard matrix docs pinned to stale SHAs vs freeze 48bbcffa",
+        "observation":  "surface inventory inventoriedMainSha=b98e2cf...; button matrix inventoriedMainSha=3daf103...; crud basedOnMainSha=d71b21e... and architecture test hard-expects that SHA. Freeze HEAD is 48bbcfface38068bc71ad7bcc5c1dd87616da514.",
+        "impact":  "Matrix docs/tests prove historical inventory consistency, not current HEAD surface completeness. PARTIAL for 23/24/26.",
+        "evidence":  [
+                         "docs/dashboard-surface-inventory.json",
+                         "docs/dashboard-button-matrix.json",
+                         "docs/dashboard-crud-matrix.json",
+                         "tests/security/dashboardCrudMatrixArchitecture.test.ts"
+                     ],
+        "fixNeed":  "Re-inventory at freeze SHA; update docs SHAs; relax hard-pin to freeze-aware check or regenerate in CI.",
+        "regressionTestNeed":  "Gate: inventoriedMainSha must equal process env FREEZE_SHA or current HEAD."
+    },
+    {
+        "id":  "F-S3-07",
+        "severity":  "HIGH",
+        "stages":  [
+                       23
+                   ],
+        "title":  "Stage 23 inventory self-reports large partial/shell-only debt",
+        "observation":  "57 surfaces: tests verified=28 partial=29; mobile verified=28 shell-only=28 partial=1. Architecture gate only ensures inventory shape + App route id set, not product E2E green for each surface.",
+        "impact":  "Cannot VERIFIED stage 23 despite #73 [x] and PR #194 claims.",
+        "evidence":  [
+                         "docs/dashboard-surface-inventory.json aggregates",
+                         "tests/security/dashboardSurfaceInventoryArchitecture.test.ts"
+                     ],
+        "fixNeed":  "Close partial/shell-only via authenticated E2E (stages 27-35) then refresh inventory statuses at freeze SHA.",
+        "regressionTestNeed":  "Optional threshold: max shell-only count."
+    },
+    {
+        "id":  "F-S3-08",
+        "severity":  "MEDIUM",
+        "stages":  [
+                       24,
+                       25,
+                       26
+                   ],
+        "title":  "Dashboard button/switch/CRUD proofs are architecture/static, not mutation E2E",
+        "observation":  "Gates walk App.tsx import graph / AST / JSON contracts. Issue #73 leaves Dashboard buttons/switches/CRUD and authenticated action matrices unchecked. Aligns with F-PRE-06.",
+        "impact":  "Stages 24-26 PARTIAL; product AuthZ/IDOR/race proof deferred to 27-38.",
+        "evidence":  [
+                         "tests/security/dashboardButtonMatrixArchitecture.test.ts",
+                         "tests/security/dashboardSwitchMatrixArchitecture.test.ts",
+                         "tests/security/dashboardCrudMatrixArchitecture.test.ts"
+                     ],
+        "fixNeed":  "Authenticated action matrices with fail-closed negative cases (later steps).",
+        "regressionTestNeed":  "Keep architecture gates; add E2E without weakening assertions."
+    },
+    {
+        "id":  "F-S3-09",
+        "severity":  "INFO",
+        "stages":  [
+                       1,
+                       3,
+                       4,
+                       5,
+                       7,
+                       8,
+                       9,
+                       10,
+                       11,
+                       12,
+                       13,
+                       14,
+                       15,
+                       16,
+                       17,
+                       18,
+                       19,
+                       21,
+                       22
+                   ],
+        "title":  "Stages 1-22 numbering is audit-constructed from Issue #73 AI/Ops/Mobile labels",
+        "observation":  "Not historic PR Stage N/67 IDs. Mapping documented in step1; Step 3 statuses apply to audit IDs only.",
+        "impact":  "Do not equate audit stage number with PR title Stage N/67 for N\u003c=22.",
+        "evidence":  [
+                         "docs/audit/masterplan-audit-baseline-step1.md mappingNotes"
+                     ],
+        "fixNeed":  "None",
+        "regressionTestNeed":  "None"
+    },
+    {
+        "id":  "F-S4-01",
+        "severity":  "HIGH",
+        "stages":  [
+                       27,
+                       28,
+                       29,
+                       30
+                   ],
+        "title":  "Dashboard action/pagination/error/desktop matrices not freeze-SHA re-proven as full authenticated E2E",
+        "observation":  "Matrix JSONs exist with historical basedOnMainSha (b9e39ad/1d61fdf3/7c138b21/9ff08c6d) â‰  48bbcffa. Architecture tests assert inventory completeness and code string presence; 34 Playwright specs cover many surfaces but Issue #73 HOCH remains unchecked for every control authenticated E2E. Stage 27 incident actions correctly fail-closed (OPERATIONAL_INCIDENT_ACTIONS=[]).",
+        "impact":  "Cannot claim VERIFIED desktop/action completion for production readiness; risk of stale inventory vs current UI.",
+        "evidence":  [
+                         "docs/dashboard-action-matrix.json",
+                         "docs/dashboard-pagination-matrix.json",
+                         "docs/dashboard-error-state-matrix.json",
+                         "docs/dashboard-desktop-completion-matrix.json",
+                         "tests/security/dashboardActionMatrixArchitecture.test.ts",
+                         "dashboard-ui/e2e/*.spec.ts (34 files)",
+                         ".issue73-body.txt HOCH Dashboard unchecked"
+                     ],
+        "fixNeed":  "Re-inventory at 48bbcffa; expand authenticated E2E to residual controls; update basedOnMainSha; close #73 only after evidence.",
+        "regressionTest":  "Architecture SHA pin to freeze + Playwright matrix job covering residualRisks."
+    },
+    {
+        "id":  "F-S4-02",
+        "severity":  "HIGH",
+        "stages":  [
+                       31,
+                       32,
+                       33,
+                       34,
+                       35,
+                       6
+                   ],
+        "title":  "Mobile 320â€“430 matrices are doc/arch + smoke, not full authenticated control matrix at freeze",
+        "observation":  "Each mobile matrix lists checks status=verified with stale basedOnMainSha; e2e mobile.spec.ts + bot-admin-mobile-contract + page-matrix exist; GH Playwright Smoke SUCCESS on freeze is necessary but not sufficient for #73 mobile full matrix.",
+        "impact":  "Mobile production UX/security regressions may pass smoke while failing full matrix claims.",
+        "evidence":  [
+                         "docs/dashboard-mobile-*-matrix.json",
+                         "dashboard-ui/e2e/mobile.spec.ts",
+                         "gh run 32525882181"
+                     ],
+        "fixNeed":  "Authenticated multi-viewport matrix run recorded against freeze SHA; update docs SHAs.",
+        "regressionTest":  "Playwright project matrix 320/360/375/390/430 with auth fixtures."
+    },
+    {
+        "id":  "F-S4-03",
+        "severity":  "HIGH",
+        "stages":  [
+                       36,
+                       37,
+                       38,
+                       40,
+                       41,
+                       42,
+                       43,
+                       44
+                   ],
+        "title":  "API AuthN/AuthZ/Security matrices largely architecture/static; #73 security block open",
+        "observation":  "Real fail-closed patterns exist (requireAuth, requireGuildPermission membership, economyScopeGuard, idempotency store 503). Matrices claim many cases verified on older SHAs. Architecture tests are primarily string/file existence gates. #73 HOCH Security unchecked.",
+        "impact":  "Over-trust of matrix \u0027verified\u0027 labels; residual IDOR/race/CSRF browser abuse not freeze-proven.",
+        "evidence":  [
+                         "src/dashboard/middleware/auth.ts",
+                         "src/dashboard/middleware/idempotency.ts",
+                         "src/dashboard/middleware/economyScopeGuard.ts",
+                         "docs/dashboard-api-*-matrix.json",
+                         "docs/*-matrix.json stages 40-44",
+                         "tests/security/*MatrixArchitecture.test.ts"
+                     ],
+        "fixNeed":  "Targeted security integration/E2E for each attack case; refresh matrix SHAs; keep fail-closed.",
+        "regressionTest":  "crossGuild + dashboardViewScope + concurrent idempotency stress in CI."
+    },
+    {
+        "id":  "F-S4-04",
+        "severity":  "MEDIUM",
+        "stages":  [
+                       39
+                   ],
+        "title":  "Secret hygiene is current-tree clean; full-history scanner not blocking on freeze",
+        "observation":  "git-history-secret-hygiene-matrix reports clean-current-tree; followUp defers gitleaks/trufflehog to gate phase; CI focuses npm audit not mandatory history secret scan.",
+        "impact":  "Historical secret leak risk not closed by blocking gate.",
+        "evidence":  [
+                         "docs/git-history-secret-hygiene-matrix.json",
+                         ".github/workflows/ci.yml"
+                     ],
+        "fixNeed":  "Add blocking gitleaks (or equivalent) on main if policy requires Stage 39 complete.",
+        "regressionTest":  "CI job fail on high-entropy secret patterns."
+    },
+    {
+        "id":  "F-S4-05",
+        "severity":  "HIGH",
+        "stages":  [
+                       45,
+                       53
+                   ],
+        "title":  "Dependency/SBOM gates incomplete: root high CVEs open; SBOM generation non-blocking",
+        "observation":  "CI Security Audit SUCCESS on 48bbcffa blocks critical, reports high only on root; dashboard prod high blocking. deepmerge-ts 7.1.5 high remains. CycloneDX SBOM steps allow failure. #73 Dependency/Container/SBOM final unchecked. Stage 53 decision deferred bulk upgrades.",
+        "impact":  "Cannot mark dependency security final; supply-chain residual.",
+        "evidence":  [
+                         ".github/workflows/ci.yml audit/sbom steps",
+                         "package-lock.json deepmerge-ts",
+                         "F-PRE-03"
+                     ],
+        "fixNeed":  "Resolve or formally exception high CVEs; make SBOM reliable/blocking if required by #73.",
+        "regressionTest":  "npm audit --audit-level=high green root or documented exception file reviewed in CI."
+    },
+    {
+        "id":  "F-S4-06",
+        "severity":  "HIGH",
+        "stages":  [
+                       46,
+                       47,
+                       48,
+                       49,
+                       50,
+                       51,
+                       52
+                   ],
+        "title":  "Runtime/perf stages are harness/smoke-level without production measurements",
+        "observation":  "runtime-baseline-i.mjs produces local samples; load-test-smoke skips without LOAD_TEST_BASE_URL; soak is 3 short loops; chaos/load not against staging; Stage 52 explicitly no heap flag change pending prod metrics. #73 Performance/Ops open.",
+        "impact":  "No evidence of load/soak/leak acceptance criteria on freeze.",
+        "evidence":  [
+                         "scripts/runtime-baseline-i.mjs",
+                         "scripts/load-test-smoke.mjs",
+                         "scripts/soak-test-smoke.mjs",
+                         "docs/runtime-baseline-i-matrix.json",
+                         "docs/ram-node-heap-tuning-matrix.json"
+                     ],
+        "fixNeed":  "Staging run with env targets; record metrics artifacts SHA-bound; define pass/fail thresholds.",
+        "regressionTest":  "Optional CI nightly load job with baseline compare."
+    },
+    {
+        "id":  "F-S4-07",
+        "severity":  "MEDIUM",
+        "stages":  [
+                       54,
+                       55
+                   ],
+        "title":  "passport-discord still direct dependency despite unused; inflight/glob debt open",
+        "observation":  "package.json dependencies include passport-discord@^0.1.4; no src imports; OAuth is custom auth.ts. Stage 54/55 matrices chose document/defer over removal. #73 deprecation items open.",
+        "impact":  "Deprecated dependency surface and audit noise; confusion about auth stack.",
+        "evidence":  [
+                         "package.json",
+                         "src (no passport-discord)",
+                         "docs/passport-discord-migration-matrix.json"
+                     ],
+        "fixNeed":  "Remove unused passport-discord + types if truly unused; npm ls inflight/glob and clean or exception.",
+        "regressionTest":  "Architecture test expect package.json not contain passport-discord OR proven import."
+    },
+    {
+        "id":  "F-S4-08",
+        "severity":  "MEDIUM",
+        "stages":  [
+                       56
+                   ],
+        "title":  "Dashboard bundle \u003e500kB optimization not closed",
+        "observation":  "Code-splitting for DEV pages exists; #73 explicitly open for bundle\u003e500kB; matrix only contracts lazy/manualChunks/measure.",
+        "impact":  "Perf/UX on slow networks; tracker blocker for 100/100.",
+        "evidence":  [
+                         "docs/dashboard-bundle-codesplit-matrix.json",
+                         "F-PRE-04",
+                         ".issue73-body.txt"
+                     ],
+        "fixNeed":  "Measure vite build chunks at freeze; split main routes until under budget or accept with signed waiver.",
+        "regressionTest":  "CI parse vite output max chunk size gate."
+    },
+    {
+        "id":  "F-S4-09",
+        "severity":  "LOW",
+        "stages":  [
+                       57
+                   ],
+        "title":  "Dead code cleanup explicitly deferred",
+        "observation":  "Stage 57 decision: no mass deletion; inventory only.",
+        "impact":  "Maintainability debt only unless dead paths hide security issues.",
+        "evidence":  [
+                         "docs/dead-code-legacy-cleanup-matrix.json"
+                     ],
+        "fixNeed":  "Targeted removal with reference search after high findings.",
+        "regressionTest":  "knip/ts-prune optional job."
+    },
+    {
+        "id":  "F-S4-10",
+        "severity":  "HIGH",
+        "stages":  [
+                       58
+                   ],
+        "title":  "Full user journey E2E is fragmented coverage pointers, not one journey proof",
+        "observation":  "8 steps map to disparate unit/e2e areas; architecture test only checks steps length and e2e directory existence. #73 Full User Journey unchecked.",
+        "impact":  "Cross-module regressions (joinâ†’leaveâ†’rejoin economy/AI) not end-to-end proven.",
+        "evidence":  [
+                         "docs/full-user-journey-e2e-matrix.json",
+                         "tests/security/fullUserJourneyE2EArchitecture.test.ts"
+                     ],
+        "fixNeed":  "Implement orchestrated journey test (bot+db+dashboard) or staged integration with shared fixtures.",
+        "regressionTest":  "Journey suite required in CI or release checklist."
+    },
+    {
+        "id":  "F-S4-11",
+        "severity":  "HIGH",
+        "stages":  [
+                       59
+                   ],
+        "title":  "Chaos matrix is structural smoke JSON, not fault injection",
+        "observation":  "chaos-smoke.mjs prints fault list; notes staging required; architecture runs script and checks idempotency string.",
+        "impact":  "Recovery/double-effect under real faults unproven.",
+        "evidence":  [
+                         "scripts/chaos-smoke.mjs",
+                         "docs/chaos-test-matrix.json"
+                     ],
+        "fixNeed":  "Staging fault injection for DB/Redis/Nitrado/AI with assertions.",
+        "regressionTest":  "Chaos job optional non-main + required before prod."
+    },
+    {
+        "id":  "F-S4-12",
+        "severity":  "HIGH",
+        "stages":  [
+                       60,
+                       61,
+                       62
+                   ],
+        "title":  "Gesamtaudits are thin meta-gates on stale SHA; local architecture suite not green",
+        "observation":  "Gesamtaudit architecture tests check v2 auth mount and count of Architecture tests; matrices basedOnMainSha 45caf9cd. Local test:ci previously 21 failed suites including architecture gates (F-PRE-01/F-PRE-10).",
+        "impact":  "Gesamtaudit cannot certify production reality.",
+        "evidence":  [
+                         "tests/security/gesamtaudit1CodeArchitecture.test.ts",
+                         "docs/gesamtaudit-*-matrix.json",
+                         "docs/audit/findings-seed.json F-PRE-01"
+                     ],
+        "fixNeed":  "Root-cause local vs CI; re-run full architecture corpus green locally and in CI on same SHA.",
+        "regressionTest":  "test:ci green on clean agent without secret-only skips unexplained."
+    },
+    {
+        "id":  "F-S4-13",
+        "severity":  "HIGH",
+        "stages":  [
+                       63
+                   ],
+        "title":  "Release SHA freeze matrix not pinned to audit freeze SHA 48bbcffa",
+        "observation":  "docs/release-sha-freeze-matrix.json basedOnMainSha=45caf9cd; releaseCandidateNote generic; architecture does not assert equality to HEAD. #73 final immutable Release-SHA unchecked.",
+        "impact":  "No immutable RC binding for gate protocol at current main.",
+        "evidence":  [
+                         "docs/release-sha-freeze-matrix.json",
+                         "tests/security/releaseShaFreezeArchitecture.test.ts"
+                     ],
+        "fixNeed":  "Write freeze SHA 48bbcffa (or successor) into matrix + enforce test expect(m.basedOnMainSha===git HEAD).",
+        "regressionTest":  "releaseShaFreezeArchitecture compares to git rev-parse."
+    },
+    {
+        "id":  "F-S4-14",
+        "severity":  "HIGH",
+        "stages":  [
+                       64,
+                       65,
+                       66
+                   ],
+        "title":  "Final gates / main CI green on freeze but Issue #73 2/2 protocol and local CLI not closed",
+        "observation":  "GH CI/CD 32525882200 all jobs success; Playwright 32525882181 success; headSha 48bbcffa. PR #238 claims 64-65 revalidation. #73 Final Gate 1/2, 2/2, main+Docker+Playwright unchecked. Local test:ci red and db:consistency red (seed findings). Fail-closed audit: CI alone â‰  VERIFIED production gate.",
+        "impact":  "False confidence if only GitHub status checked; release may ship with local-reproducible failures.",
+        "evidence":  [
+                         "gh run view 32525882200",
+                         "gh run view 32525882181",
+                         "docs/audit/masterplan-audit-baseline-step1.md",
+                         "F-PRE-01",
+                         "F-PRE-02"
+                     ],
+        "fixNeed":  "Close local CLI parity finding; document two independent no-drift gate cycles on tracker; then tick #73 with SHA evidence.",
+        "regressionTest":  "Same SHA: CI + local test:ci + db:consistency."
+    },
+    {
+        "id":  "F-S4-15",
+        "severity":  "BLOCKER",
+        "stages":  [
+                       67
+                   ],
+        "title":  "Production deploy + live smoke BLOCKED without credentials",
+        "observation":  "deploy/smoke.sh and related scripts exist; audit session has no prod access; #73 Production Deploy + Live Smoke and 100/100 unchecked.",
+        "impact":  "Stage 67 cannot be VERIFIED; PRODUCTION READY must remain NO.",
+        "evidence":  [
+                         "deploy/smoke.sh",
+                         "deploy/setup.sh",
+                         ".issue73-body.txt"
+                     ],
+        "fixNeed":  "Authorized live smoke on frozen release SHA with logged results.",
+        "regressionTest":  "Signed smoke checklist artifact attached to release."
+    },
+    {
+        "id":  "F-S5-01",
+        "severity":  "HIGH",
+        "stages":  [
+                       "60",
+                       "61",
+                       "63",
+                       "64",
+                       "65",
+                       "66",
+                       "Test-Audit"
+                   ],
+        "title":  "Local vs CI test divergence on freeze SHA",
+        "observation":  "On HEAD 48bbcffa, GitHub CI/CD run 32525882200 Tests=success and Playwright 32525882181=success, while local jest with CI-equivalent env (no Postgres) still has 11 failed suites / 16 failed tests; without full env 23 failed suites.",
+        "rootCause":  "Multi-factor: (1) core.autocrlf=true CRLF checkout breaks LF-anchored architecture string gates; (2) no local Postgres service; (3) missing requireEnv vars without .env; (4) bare bash resolves to WSL stub for metricsBootstrap.",
+        "classification":  "env_platform_and_gate_drift",
+        "evidence":  [
+                         "docs/audit/cli-evidence/jest-results-ci-env.json",
+                         "docs/audit/cli-evidence/gh-ci-32525882200.json",
+                         "interactionCreate.ts CRLF_lines=889 LF_only=0; has_LF_marker_giveaway=False has_CRLF=True"
+                     ],
+        "repro":  "git config core.autocrlf true; checkout main@48bbcffa on Windows; set CI env vars; npx jest --ci; observe architecture gates fail while product symbols exist",
+        "fixNeed":  "Normalize text gates to accept CRLF or force LF via .gitattributes; document required local env+Postgres parity script; pin bash path or skip metrics bootstrap off-Linux with explicit platform message (not silent greenwash).",
+        "regressionTestNeed":  "CI job or unit helper that normalizes newlines before indexOf/toContain architecture checks; Windows smoke optional."
+    },
+    {
+        "id":  "F-S5-02",
+        "severity":  "HIGH",
+        "stages":  [
+                       "9",
+                       "60",
+                       "61"
+                   ],
+        "title":  "db:consistency fails locally without DB",
+        "observation":  "npm run db:consistency exit 3: Invalid prisma.$queryRawUnsafe() invocation; localhost:5432 not open.",
+        "rootCause":  "env_gated â€” scanner requires live PostgreSQL; CI succeeds after migrate deploy against service container.",
+        "classification":  "env_gated",
+        "evidence":  [
+                         "local DB_EXIT=3",
+                         "PG_PORT_5432=False",
+                         "CI step Run DB orphan/consistency scanner=success"
+                     ],
+        "fixNeed":  "No product fix required for scanner itself based on CI green; local/dev docs must require DB. Do not treat local red as product INVALID without CI contradiction.",
+        "regressionTestNeed":  "Keep CI db:consistency mandatory (already)."
+    },
+    {
+        "id":  "F-S5-03",
+        "severity":  "HIGH",
+        "stages":  [
+                       "45",
+                       "53",
+                       "Security"
+                   ],
+        "title":  "Root npm audit 3 high (deepmerge-ts via prisma)",
+        "observation":  "npm audit --audit-level=high exit 1; deepmerge-ts \u003c8.0.0 GHSA-ggr8-5vv4-36mx through @prisma/config â†’ prisma. Critical=0. Dashboard prod omit=dev high=0.",
+        "rootCause":  "Transitive pin inside prisma 7.x line; force fix pulls prisma@6.12.0 breaking.",
+        "classification":  "dependency_risk_accepted_by_ci_policy",
+        "evidence":  [
+                         "docs/audit/cli-evidence/root-audit-full.json",
+                         "CI Security: high report-only continue-on-error"
+                     ],
+        "fixNeed":  "Track prisma release that bumps deepmerge-ts\u003e=8; document exception with expiry; do not force-downgrade prisma.",
+        "regressionTestNeed":  "Keep critical blocking; consider policy decision if high must block release (Issue #73 security open)."
+    },
+    {
+        "id":  "F-S5-04",
+        "severity":  "HIGH",
+        "stages":  [
+                       "36-45",
+                       "Nitrado",
+                       "Leave",
+                       "Architecture"
+                   ],
+        "title":  "Architecture/runtime string gates brittle under CRLF (false local FAIL)",
+        "observation":  "Suites fail with indexOf -1 / toContain missing LF substrings despite code presence: interactionDispatcherProduction, dashboardPermissionIntegrityArchitecture, leaveRejoinLifecycleGate, nitradoWhitelistIntentGate, nitradoTokenValidationLockGate, nitradoAdmBindingFenceGate, nitradoConfigLockConnectCleanupGate.",
+        "rootCause":  "stale_gate_or_platform_drift â€” tests embed exact \\n sequences; Windows CRLF working tree fails; Ubuntu CI LF passes (explains CI green).",
+        "classification":  "gate_drift_platform",
+        "evidence":  [
+                         "togglePollVote + handlePollVoteButton present in interactionCreate.ts",
+                         "finally+lock.release present with CRLF in tokenValidationCron.ts",
+                         "tests expect finally {\\n    await lock.release();\\n  }"
+                     ],
+        "fixNeed":  "Normalize source text (replace \\r\\nâ†’\\n) inside gate helpers; optionally add .gitattributes text=auto eol=lf for src/tests.",
+        "regressionTestNeed":  "Helper unit test with CRLF fixture; do not delete gates."
+    },
+    {
+        "id":  "F-S5-05",
+        "severity":  "MEDIUM",
+        "stages":  [
+                       "60",
+                       "Integration"
+                   ],
+        "title":  "PostgreSQL integration suites cannot run without service",
+        "observation":  "economyTwoServerIsolationIntegration, nitradoValidationHealthIntegration, idempotencyMigrationRepair fail with Prisma/AggregateError connection errors when DATABASE_URL points at down Postgres.",
+        "rootCause":  "env_gated",
+        "classification":  "env_gated",
+        "evidence":  [
+                         "failed-tests-ci-env.json",
+                         "PG_PORT_5432=False"
+                     ],
+        "fixNeed":  "Provide docker-compose test DB profile for local parity; CI already covers.",
+        "regressionTestNeed":  "None beyond existing CI integration path."
+    },
+    {
+        "id":  "F-S5-06",
+        "severity":  "MEDIUM",
+        "stages":  [
+                       "Deploy",
+                       "metrics"
+                   ],
+        "title":  "metricsBootstrap tests fail when bash is WSL stub",
+        "observation":  "tests/deploy/metricsBootstrap.test.ts spawnSync(\u0027bash\u0027) status=1; stdout indicates Windows Subsystem for Linux has no installed distributions. Git Bash executes deploy/ensure-metrics-token.sh with status 0.",
+        "rootCause":  "env_platform â€” PATH bash â‰  Git bash on this host.",
+        "classification":  "env_platform",
+        "evidence":  [
+                         "node spawnSync comparison WindowsApps vs Git bash"
+                     ],
+        "fixNeed":  "Resolve bash via GIT_BASH / program files in test or document Linux-only; not a script logic failure proven on Git bash.",
+        "regressionTestNeed":  "CI Linux already green."
+    },
+    {
+        "id":  "F-S5-07",
+        "severity":  "MEDIUM",
+        "stages":  [
+                       "60",
+                       "Developer-Experience"
+                   ],
+        "title":  "Jest suites import config.ts requireEnv without jest setup env",
+        "observation":  "Without ENCRYPTION_KEY (and other requireEnv), 12 module/command/ai suites fail at load: bankInterest, linkRewards, getAccountOrZero, economyStructuredLedger, economyLottery, consoleLinkingCommands, translatedPostImage*, botInfoConsistency, privilegedCommand*, nitradoModerationCommandSchema.",
+        "rootCause":  "env_gated â€” no global jest setupFiles exporting CI secrets; CI workflow env injects them.",
+        "classification":  "env_gated",
+        "evidence":  [
+                         "src/config.ts requireEnv",
+                         ".github/workflows/ci.yml env block lines 68-76",
+                         "suite recovery after setting ENCRYPTION_KEY"
+                     ],
+        "fixNeed":  "Optional tests/setup-env.ts mirroring CI placeholders for local npm test ergonomics (must not weaken assertions).",
+        "regressionTestNeed":  "Ensure setup only supplies non-secret test placeholders."
+    },
+    {
+        "id":  "F-S5-08",
+        "severity":  "LOW",
+        "stages":  [
+                       "56",
+                       "Lint"
+                   ],
+        "title":  "Lint warnings and large UI chunk remain",
+        "observation":  "lint:all exit 0 with 13 UI warnings; production build index chunk ~775kB gzip ~211kB.",
+        "rootCause":  "pre-existing non-blocking quality gaps (also F-PRE-04 / F-S4-08).",
+        "classification":  "quality_debt",
+        "evidence":  [
+                         "lint:all output",
+                         "build asset list"
+                     ],
+        "fixNeed":  "Bundle split / warning cleanup tracked under #73 open checkboxes.",
+        "regressionTestNeed":  "Bundle budget gate if product requires."
+    },
+    {
+        "id":  "F-S5-09",
+        "severity":  "INFO",
+        "stages":  [
+                       "63",
+                       "64",
+                       "65",
+                       "66"
+                   ],
+        "title":  "GitHub mandatory jobs success on freeze SHA (reconfirmed)",
+        "observation":  "CI/CD 32525882200 all required jobs success; E2E 32525882181 Playwright Smoke success; skipped steps are conditional/non-mandatory (open-handle diagnose, browser cache miss install, failure report upload).",
+        "rootCause":  "n/a â€” positive control",
+        "classification":  "github_gate_pass",
+        "evidence":  [
+                         "docs/audit/cli-evidence/gh-ci-32525882200.json",
+                         "docs/audit/cli-evidence/gh-e2e-32525882181.json"
+                     ],
+        "fixNeed":  "None for GH green; still do not alone promote PRODUCTION READY while #73 Abschluss and F-S5-01/03 open.",
+        "regressionTestNeed":  "n/a"
+    }
+]

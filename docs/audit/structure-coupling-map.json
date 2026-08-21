@@ -1,0 +1,460 @@
+{
+  "auditStep": 2,
+  "freezeSha": "48bbcfface38068bc71ad7bcc5c1dd87616da514",
+  "freezeShaShort": "48bbcffa",
+  "generatedAt": "2026-08-21T23:17:00",
+  "evidenceNote": "Runtime mounts and import graphs confirmed in source at freeze SHA. Items marked evidenceLevel=test_only or docs_only are not production-wired proofs.",
+  "topLevel": {
+    "src": {
+      "entry": ["src/index.ts", "src/shard.ts", "src/config.ts"],
+      "commands": "src/commands/**",
+      "events": [
+        "src/events/ready.ts",
+        "src/events/interactionCreate.ts",
+        "src/events/guildMemberAdd.ts",
+        "src/events/guildMemberRemove.ts",
+        "src/events/guildMemberUpdate.ts",
+        "src/events/guildRoleDelete.ts",
+        "src/events/userUpdate.ts",
+        "src/events/messageCreate.ts",
+        "src/events/messageReactionAdd.ts",
+        "src/events/messageReactionRemove.ts",
+        "src/events/voiceStateUpdate.ts"
+      ],
+      "modulesApproxFileCounts": {
+        "ai": 63,
+        "nitrado": 37,
+        "economy": 18,
+        "moderation": 15,
+        "feeds": 8,
+        "whitelist": 5,
+        "bans": 5,
+        "linking": 5,
+        "gameplayFeeds": 3
+      },
+      "dashboard": "src/dashboard/**",
+      "database": "src/database/prisma.ts",
+      "security": ["src/security/aiToolStepUp.ts"],
+      "runtime": "src/runtime/discordRuntime.ts"
+    },
+    "dashboardUi": {
+      "pages": "dashboard-ui/src/pages/**",
+      "components": "dashboard-ui/src/components/**",
+      "lib": "dashboard-ui/src/lib/**"
+    },
+    "prisma": {
+      "schema": "prisma/schema.prisma",
+      "fragments": "prisma/*.prisma",
+      "migrations": "prisma/migrations/**",
+      "legacyMigrations": "prisma/migrations_legacy/**"
+    },
+    "tests": [
+      "tests/ai",
+      "tests/commands",
+      "tests/dashboard",
+      "tests/database",
+      "tests/deploy",
+      "tests/e2e-live",
+      "tests/modules",
+      "tests/runtime",
+      "tests/security",
+      "tests/utils"
+    ],
+    "deploy": "deploy/**",
+    "workflows": [
+      ".github/workflows/ci.yml",
+      ".github/workflows/e2e.yml",
+      ".github/workflows/final-dependency-hardening.yml",
+      ".github/workflows/verification2.yml"
+    ],
+    "scripts": [
+      "scripts/chaos-smoke.mjs",
+      "scripts/load-test-smoke.mjs",
+      "scripts/soak-test-smoke.mjs",
+      "scripts/runtime-baseline-i.mjs",
+      "scripts/runtime-baseline-ii-check.mjs"
+    ]
+  },
+  "httpMounts": {
+    "source": "src/dashboard/server.ts",
+    "evidenceLevel": "runtime_code",
+    "routes": [
+      { "mount": "/auth", "router": "src/dashboard/routes/auth.ts", "auth": "oauth_session_2fa" },
+      { "mount": "/webhooks", "router": "src/dashboard/routes/webhooks.ts", "auth": "hmac_no_session" },
+      { "mount": "/api/health", "router": "src/dashboard/routes/discordHealth.ts", "auth": "special_before_api" },
+      { "mount": "/api", "router": "src/dashboard/routes/api.ts", "auth": "session_requireAuth", "endpoints": ["GET /me"] },
+      { "mount": "/api/v2", "router": "src/dashboard/routes/v2.ts", "auth": "requireAuth+idempotency_global" },
+      { "mount": "/test", "router": "src/dashboard/routes/test.ts", "auth": "session+role_ADMIN_or_DEVELOPER" },
+      { "mount": "/transcripts", "router": "src/dashboard/routes/transcripts.ts", "auth": "public_uuid" },
+      { "mount": "/health", "auth": "open_liveness" },
+      { "mount": "/health/ready", "auth": "db+session_ready" },
+      { "mount": "/metrics", "auth": "bearer_METRICS_TOKEN_optional" }
+    ]
+  },
+  "v2Mounts": {
+    "source": "src/dashboard/routes/v2.ts",
+    "evidenceLevel": "runtime_code",
+    "globalMiddleware": ["requireAuth", "idempotency"],
+    "guildScoped": [
+      { "path": "/guilds", "file": "v2/guilds.ts" },
+      { "path": "/guilds/:guildId/dashboard", "file": "v2/dashboard.ts" },
+      { "path": "/guilds/:guildId/permissions", "file": "v2/permissions.ts" },
+      { "path": "/guilds/:guildId/nitrado", "file": "v2/nitrado.ts" },
+      { "path": "/guilds/:guildId/adm-source", "file": "v2/admSource.ts" },
+      { "path": "/guilds/:guildId/tickets", "file": "v2/tickets.ts" },
+      { "path": "/guilds/:guildId/whitelist", "file": "v2/whitelist.ts" },
+      { "path": "/guilds/:guildId/factions", "file": "v2/factions.ts", "extra": ["requireGuildAnyPermission factions", "factionApiPreflight", "factionMutationSerialization"] },
+      { "path": "/guilds/:guildId/economy-scope", "file": "v2/economyScope.ts" },
+      { "path": "/guilds/:guildId/economy", "file": "v2/economy.ts", "extra": ["economy.view|manage", "requireSafeDashboardEconomyScope"] },
+      { "path": "/guilds/:guildId/economy/virtual-accounts", "file": "v2/economyVirtualAccounts.ts", "extra": ["economy scope guard"] },
+      { "path": "/guilds/:guildId/economy/lottery", "file": "v2/economyLottery.ts", "extra": ["economy scope guard"] },
+      { "path": "/guilds/:guildId/economy/black-market", "file": "v2/economyBlackMarket.ts", "extra": ["economy scope guard"] },
+      { "path": "/guilds/:guildId/economy-links", "file": "v2/economyLink.ts" },
+      { "path": "/guilds/:guildId/casino", "file": "v2/casino.ts", "extra": ["casino perms", "economy scope guard"] },
+      { "path": "/guilds/:guildId/killfeed", "file": "v2/killfeed.ts" },
+      { "path": "/guilds/:guildId/welcome", "file": "v2/welcome.ts" },
+      { "path": "/guilds/:guildId/goodbye", "file": "v2/goodbye.ts" },
+      { "path": "/guilds/:guildId/leave-cleanup", "file": "v2/leaveCleanup.ts" },
+      { "path": "/guilds/:guildId/embeds", "file": "v2/embeds.ts" },
+      { "path": "/guilds/:guildId/reaction-embeds", "file": "v2/reactionEmbeds.ts" },
+      { "path": "/guilds/:guildId/feeds", "file": "v2/feeds.ts" },
+      { "path": "/guilds/:guildId/translated-posts", "file": "v2/translatedPosts.ts" },
+      { "path": "/guilds/:guildId/audit", "file": "v2/audit.ts" }
+    ],
+    "dev": [
+      { "path": "/dev", "file": "v2/dev.ts", "extra": ["requireGlobalDeveloperIdentity variants"] },
+      { "path": "/dev/status", "file": "v2/devDiagnosticsContract.ts+devStatus.ts" },
+      { "path": "/dev/stubs", "file": "v2/devDiagnosticsStubs.ts+devStubs.ts", "extra": ["requireDev", "stepUp"] },
+      { "path": "/dev/command-center", "file": "v2/devCommand*+devXp*", "extra": ["stepUp", "input guards"] },
+      { "path": "/dev/nitrado-mirror", "file": "v2/devNitradoMirror.ts" },
+      { "path": "/dev/incident", "file": "v2/devIncident.ts", "extra": ["stepUp"] },
+      { "path": "/dev/observability", "file": "v2/devObservability.ts" },
+      { "path": "/dev/secure-export", "file": "v2/devSecureExport.ts", "extra": ["stepUp"] }
+    ],
+    "botAdmin": [
+      { "path": "/bot-admin/knowledge", "file": "v2/botAdminKnowledge.ts" },
+      { "path": "/bot-admin/command-catalog", "file": "v2/commandCatalog.ts" },
+      { "path": "/bot-admin/command-center", "file": "v2/botAdminCommandCenter*.ts" },
+      { "path": "/bot-admin", "file": "v2/botAdmin.ts+safety routers", "extra": ["global bot admin", "danger safety", "legacy contract"] }
+    ]
+  },
+  "middleware": {
+    "dir": "src/dashboard/middleware",
+    "files": [
+      "auth.ts",
+      "idempotency.ts",
+      "guildDomainAccess.ts",
+      "economyScopeGuard.ts",
+      "nitradoWriteGuard.ts",
+      "globalDeveloperGate.ts",
+      "globalBotAdminGate.ts",
+      "devStepUp.ts",
+      "devSecurity.ts",
+      "devSecurityInputGuard.ts",
+      "commandCenterInputGuard.ts",
+      "botAdminGuildReferenceGuard.ts",
+      "factionApiHardening.ts",
+      "v2AsyncErrorBoundary.ts",
+      "devAdminTargetGuard.ts",
+      "devXpMutationInputGuard.ts",
+      "devXpScopeGuard.ts"
+    ]
+  },
+  "bootstrap": {
+    "evidenceLevel": "runtime_code",
+    "indexStarts": [
+      "startDashboard",
+      "startNitradoRuntime",
+      "startGiveawayScheduler",
+      "startLotteryScheduler",
+      "startFeedScheduler",
+      "startPollScheduler",
+      "startRateLimitCleanup",
+      "startReminderScheduler",
+      "processExpiredCasesSafely interval",
+      "startAiBackgroundLoops on clientReady"
+    ],
+    "readyStarts": [
+      "restoreAllFeeds",
+      "startAuditLogRetentionScheduler",
+      "startProviderCooldownSync",
+      "startMemberSyncScheduler",
+      "startLeaveCleanupWorker"
+    ],
+    "nitradoRuntimeStarts": [
+      "startNitradoJobWorker",
+      "startBanExpiryRuntime",
+      "startBanReconciliationCron",
+      "startTokenValidationCron",
+      "startPermaOnlyCron",
+      "startWhitelistSyncCron",
+      "startAdmLiveSyncCron",
+      "startAdmPostProcessCron",
+      "startGameplayFeedRuntime",
+      "startBankInterestCron"
+    ],
+    "dashboardFailFast": true,
+    "nitradoInitFailMode": "warn_continue",
+    "aiBackgroundFailMode": "best_effort_warn"
+  },
+  "chains": {
+    "leaveRejoin": {
+      "evidenceLevel": "runtime_code",
+      "producers": [
+        "src/events/guildMemberRemove.ts#enqueueLeaveCleanupRequest",
+        "src/dashboard/routes/v2/leaveCleanup.ts",
+        "dashboard-ui/src/components/LeaveCleanupPanel.tsx"
+      ],
+      "config": "src/modules/moderation/leaveCleanupConfig.ts",
+      "saga": "src/modules/moderation/leaveCleanupSaga.ts",
+      "worker": "src/modules/moderation/leaveCleanupWorker.ts",
+      "steps": ["WHITELIST", "STATS_SESSIONS", "LINK_ECONOMY", "GUILD_DATA", "COMPLETE"],
+      "stepModules": {
+        "WHITELIST": "src/modules/moderation/leaveCleanupWhitelist.ts",
+        "STATS_SESSIONS": "src/modules/moderation/leaveCleanupStatsSessions.ts",
+        "LINK_ECONOMY": "src/modules/moderation/leaveCleanupLinkEconomy.ts",
+        "GUILD_DATA": "src/modules/moderation/guildMemberCleanup.ts"
+      },
+      "rejoinGuard": [
+        "src/events/guildMemberAdd.ts#hasOpenLeaveCleanupRequest",
+        "src/modules/moderation/leaveCleanupGuard.ts",
+        "src/modules/moderation/leaveCleanupRejoin.ts"
+      ],
+      "permissionCas": [
+        "src/events/guildMemberRemove.ts#guildPermissionGrant CAS",
+        "src/events/guildMemberAdd.ts#stale grant delete"
+      ],
+      "startedFrom": "src/events/ready.ts#startLeaveCleanupWorker"
+    },
+    "nitradoWhitelistBan": {
+      "evidenceLevel": "runtime_code",
+      "jobOperations": [
+        "WHITELIST_ADD",
+        "WHITELIST_REMOVE",
+        "SERVER_BAN_ADD",
+        "SERVER_BAN_REMOVE",
+        "KEEPALIVE",
+        "DOWNLOAD_ADM",
+        "RESTART_IF_DOWN"
+      ],
+      "jobWorker": "src/modules/nitrado/jobWorker.ts",
+      "jobLease": "src/modules/nitrado/jobLease.ts",
+      "client": "src/modules/nitrado/nitradoClient.ts",
+      "whitelistIntent": "src/modules/nitrado/whitelistIntent.ts",
+      "whitelistProducers": [
+        "src/modules/whitelist/whitelistOutbox.ts",
+        "src/modules/whitelist/whitelistApprovalButton.ts",
+        "src/dashboard/routes/v2/whitelist.ts",
+        "src/commands/dashboard/whitelist.ts"
+      ],
+      "whitelistReconcile": "src/modules/whitelist/whitelistSyncCron.ts",
+      "banProducers": [
+        "src/modules/bans/banOutbox.ts",
+        "src/commands/dashboard/serverBan.ts"
+      ],
+      "banConsumers": [
+        "src/modules/bans/banReconciliation.ts",
+        "src/modules/bans/expiryRuntime.ts",
+        "src/modules/nitrado/jobWorker.ts"
+      ],
+      "pendingServerAction": {
+        "module": "src/modules/nitrado/pendingServerAction.ts",
+        "producers": [
+          "src/commands/dashboard/privileged.ts",
+          "src/commands/dashboard/economy.ts"
+        ],
+        "note": "Separate lease table from NitradoJob operation enum"
+      },
+      "adm": {
+        "dir": "src/modules/nitrado/adm",
+        "liveCron": "admLiveSyncCron",
+        "postProcess": "admPostProcessCron",
+        "feeds": "src/modules/gameplayFeeds/runtime.ts"
+      },
+      "runtime": "src/modules/nitrado/runtime.ts"
+    },
+    "economy": {
+      "evidenceLevel": "runtime_code",
+      "ledger": "src/modules/economy/ledger.ts",
+      "scopeKey": ["guildId", "nitradoConnId", "userDiscordId"],
+      "modules": [
+        "src/modules/economy/rewardBooking.ts",
+        "src/modules/economy/playtimeBooking.ts",
+        "src/modules/economy/interestCron.ts",
+        "src/modules/economy/bankInterest.ts",
+        "src/modules/economy/lottery.ts",
+        "src/modules/economy/blackMarket.ts",
+        "src/modules/economy/virtualAccounts.ts",
+        "src/modules/economy/pendingAdminMoney.ts",
+        "src/modules/linking/linkRewards.ts"
+      ],
+      "api": [
+        "src/dashboard/routes/v2/economy.ts",
+        "src/dashboard/routes/v2/economyScope.ts",
+        "src/dashboard/routes/v2/economyLottery.ts",
+        "src/dashboard/routes/v2/economyBlackMarket.ts",
+        "src/dashboard/routes/v2/economyVirtualAccounts.ts",
+        "src/dashboard/routes/v2/economyLink.ts",
+        "src/dashboard/routes/v2/casino.ts"
+      ],
+      "commands": "src/commands/dashboard/economy.ts etc",
+      "ui": ["dashboard-ui/src/pages/ServerSlot.tsx"],
+      "interestStartedFrom": "src/modules/nitrado/runtime.ts#startBankInterestCron",
+      "lotteryStartedFrom": "src/index.ts#startLotteryScheduler"
+    },
+    "ai": {
+      "evidenceLevel": "runtime_code_partial",
+      "handler": "src/modules/ai/aiHandler.ts",
+      "context": "src/modules/ai/contextBuilder.ts",
+      "retrieval": "src/modules/ai/guildKnowledge.ts",
+      "embeddings": "src/modules/ai/embeddings.ts",
+      "scopeProvenance": [
+        "src/modules/ai/knowledgeScope.ts",
+        "src/modules/ai/knowledgeProvenance.ts"
+      ],
+      "runtime": "src/modules/ai/runtime.ts",
+      "toolLayer": {
+        "file": "src/modules/ai/toolLayer.ts",
+        "stepUp": "src/security/aiToolStepUp.ts",
+        "productionWiring": "NONE",
+        "consumers": ["tests/ai/toolLayer.test.ts", "tests/security/aiToolLayerArchitecture.test.ts"],
+        "evidenceLevel": "test_only"
+      },
+      "background": [
+        "guildAwareness",
+        "embeddings backfill",
+        "conversationMemory cleanup",
+        "translatedPostScheduler"
+      ]
+    },
+    "uiToApiExamples": {
+      "evidenceLevel": "runtime_code",
+      "serverPage": {
+        "ui": "dashboard-ui/src/pages/Server.tsx",
+        "api": "GET /api/v2/guilds/:guildId/dashboard",
+        "tabs": [
+          "nitrado",
+          "aliases",
+          "permissions",
+          "tickets",
+          "factions",
+          "welcome",
+          "embeds",
+          "reaction-embeds",
+          "feeds",
+          "translate",
+          "audit"
+        ]
+      },
+      "apiHelper": "dashboard-ui/src/lib/api.ts",
+      "devCatalog": "dashboard-ui/src/lib/devToolsCatalog.ts"
+    }
+  },
+  "workers": [
+    { "name": "leaveCleanupWorker", "start": "ready.ts", "store": "postgres_saga" },
+    { "name": "nitradoJobWorker", "start": "nitrado/runtime", "store": "NitradoJob+lease" },
+    { "name": "whitelistSyncCron", "start": "nitrado/runtime", "store": "postgres+remote" },
+    { "name": "banExpiryRuntime", "start": "nitrado/runtime", "store": "postgres+outbox" },
+    { "name": "banReconciliationCron", "start": "nitrado/runtime", "store": "postgres+outbox" },
+    { "name": "tokenValidationCron", "start": "nitrado/runtime", "store": "postgres" },
+    { "name": "permaOnlyCron", "start": "nitrado/runtime", "store": "postgres+remote" },
+    { "name": "admLiveSyncCron", "start": "nitrado/runtime", "store": "postgres+files" },
+    { "name": "admPostProcessCron", "start": "nitrado/runtime", "store": "postgres" },
+    { "name": "gameplayFeedRuntime", "start": "nitrado/runtime", "store": "postgres+discord" },
+    { "name": "bankInterestCron", "start": "nitrado/runtime", "store": "economy ledger" },
+    { "name": "lotteryScheduler", "start": "index.ts", "store": "postgres" },
+    { "name": "giveawayScheduler", "start": "index.ts", "store": "postgres" },
+    { "name": "feedScheduler", "start": "index.ts", "store": "postgres" },
+    { "name": "pollScheduler", "start": "index.ts", "store": "postgres" },
+    { "name": "reminderScheduler", "start": "index.ts", "store": "postgres" },
+    { "name": "memberSyncScheduler", "start": "ready.ts", "store": "postgres" },
+    { "name": "auditRetentionScheduler", "start": "ready.ts", "store": "postgres" },
+    { "name": "aiBackgroundLoops", "start": "index clientReady", "store": "postgres+providers" },
+    { "name": "caseExpiryInterval", "start": "index.ts", "store": "postgres" }
+  ],
+  "messageBrokers": {
+    "bull_bullmq_redis": false,
+    "pattern": "postgres_outbox_and_inprocess_timers"
+  },
+  "suspects": [
+    {
+      "id": "F-S2-01",
+      "kind": "integration_gap",
+      "severity": "HIGH",
+      "summary": "AiToolExecutor not wired in production src",
+      "paths": ["src/modules/ai/toolLayer.ts", "src/security/aiToolStepUp.ts", "tests/ai/toolLayer.test.ts"]
+    },
+    {
+      "id": "F-S2-02",
+      "kind": "fail_open",
+      "severity": "MEDIUM",
+      "summary": "Dev IP allowlist empty = fail-open",
+      "paths": ["src/dashboard/middleware/auth.ts"]
+    },
+    {
+      "id": "F-S2-03",
+      "kind": "soft_fail",
+      "severity": "MEDIUM",
+      "summary": "startNitradoRuntime failure is warn-only",
+      "paths": ["src/index.ts"]
+    },
+    {
+      "id": "F-S2-04",
+      "kind": "soft_fail",
+      "severity": "MEDIUM",
+      "summary": "AI background subsystems best-effort",
+      "paths": ["src/modules/ai/runtime.ts", "src/index.ts"]
+    },
+    {
+      "id": "F-S2-05",
+      "kind": "orphan_ui",
+      "severity": "LOW",
+      "summary": "EnterpriseStub has zero importers",
+      "paths": ["dashboard-ui/src/components/dev/EnterpriseStub.tsx"]
+    },
+    {
+      "id": "F-S2-06",
+      "kind": "residual_stub",
+      "severity": "LOW",
+      "summary": "_ToolStub still present while catalog all ready",
+      "paths": ["dashboard-ui/src/pages/dev/_ToolStub.tsx", "dashboard-ui/src/lib/devToolsCatalog.ts"]
+    },
+    {
+      "id": "F-S2-07",
+      "kind": "broad_admin_surface",
+      "severity": "MEDIUM",
+      "summary": "/test router mounted with role-only cross-tenant ops",
+      "paths": ["src/dashboard/routes/test.ts", "src/dashboard/server.ts"]
+    },
+    {
+      "id": "F-S2-09",
+      "kind": "catalog_vs_proof",
+      "severity": "MEDIUM",
+      "summary": "All DEV tools marked ready in catalog without this step verifying each backend",
+      "paths": ["dashboard-ui/src/lib/devToolsCatalog.ts"]
+    }
+  ],
+  "confirmedNotOrphan": [
+    "All v2 routers imported in v2.ts are mounted",
+    "Whitelist/ban outbox ops match jobWorker KNOWN_OPERATIONS",
+    "Leave enqueue has leaveCleanupWorker consumer",
+    "Dashboard required for process start",
+    "No Bull/Redis queue without consumer (no Bull at all)"
+  ],
+  "uiPages": {
+    "guild": ["Login", "Servers", "Server", "ServerSlot", "BotAdmin", "Dev"],
+    "devToolsCatalogStatus": "all_ready_metadata",
+    "orphanComponents": ["dashboard-ui/src/components/dev/EnterpriseStub.tsx"]
+  },
+  "ciTestJobIncludes": {
+    "source": ".github/workflows/ci.yml",
+    "steps": [
+      "prisma migrate deploy",
+      "prisma migrate status",
+      "npm run db:consistency",
+      "npm run db:lifecycle",
+      "jest test:ci path"
+    ],
+    "note": "Local test:ci without same Postgres service/env explains part of F-PRE-01 divergence"
+  }
+}

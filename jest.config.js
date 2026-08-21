@@ -3,6 +3,8 @@ module.exports = {
   testEnvironment: 'node',
   roots: ['<rootDir>/src', '<rootDir>/tests'],
   testMatch: ['**/*.test.ts'],
+  // Local/CI env parity (non-secret placeholders only).
+  setupFiles: ['<rootDir>/tests/setupEnv.ts'],
   // Live-E2E-Suite ist opt-in (siehe tests/e2e-live/README.md) und darf den
   // normalen Jest-Run sowie CI nie betreten — sie braucht echten Bot-Token,
   // Live-DB und Test-Guild.

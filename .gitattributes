@@ -1,0 +1,45 @@
+# Repository-wide EOL policy: deterministic LF for text (local ↔ CI parity).
+* text=auto eol=lf
+
+# Explicit text types
+*.ts text eol=lf
+*.tsx text eol=lf
+*.js text eol=lf
+*.mjs text eol=lf
+*.cjs text eol=lf
+*.json text eol=lf
+*.md text eol=lf
+*.yml text eol=lf
+*.yaml text eol=lf
+*.css text eol=lf
+*.html text eol=lf
+*.sh text eol=lf
+*.sql text eol=lf
+*.prisma text eol=lf
+*.csv text eol=lf
+*.env text eol=lf
+*.txt text eol=lf
+*.xml text eol=lf
+*.svg text eol=lf
+
+# Windows scripts may keep CRLF when needed
+*.bat text eol=crlf
+*.cmd text eol=crlf
+*.ps1 text eol=crlf
+
+# Binary
+*.png binary
+*.jpg binary
+*.jpeg binary
+*.gif binary
+*.webp binary
+*.ico binary
+*.woff binary
+*.woff2 binary
+*.ttf binary
+*.eot binary
+*.zip binary
+*.gz binary
+*.7z binary
+*.pdf binary
+*.node binary
