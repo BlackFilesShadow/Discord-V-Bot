@@ -104,7 +104,8 @@ nitradoRouter.post('/', requireGuildOwner, async (req, res) => {
   const scope = req.guildScope!;
   const { slot, alias, token, nitradoServerId } = req.body ?? {};
   if (typeof slot !== 'number' || slot < 1 || slot > 5) { res.status(400).json({ error: 'slot 1..5' }); return; }
-  if (typeof alias !== 'string' || alias.length < 1 || alias.length > 40) { res.status(400).json({ error: 'alias 1..40' }); return; }
+  const normalizedAlias = typeof alias === 'string' ? alias.trim() : '';
+  if (typeof alias !== 'string' || normalizedAlias.length < 1 || normalizedAlias.length > 40) { res.status(400).json({ error: 'alias 1..40' }); return; }
   if (typeof token !== 'string' || token.length < 16) { res.status(400).json({ error: 'token zu kurz' }); return; }
   if (nitradoServerId !== undefined && typeof nitradoServerId !== 'string') { res.status(400).json({ error: 'nitradoServerId muss String sein.' }); return; }
 
@@ -125,14 +126,14 @@ nitradoRouter.post('/', requireGuildOwner, async (req, res) => {
     const created = await createSlot({
       guildId: scope.guildId,
       slot,
-      alias,
+      alias: normalizedAlias,
       rawToken: token,
       nitradoServerId: normalizedServiceId,
       addedBy: asUserDiscordId(scope.actorDiscordId),
     });
     logAuditDb('NITRADO_SLOT_CREATED', 'NITRADO', {
       actorUserId: req.auth!.userId, guildId: scope.guildId,
-      details: { slot, alias, alias5: created.alias5 },
+      details: { slot, alias: normalizedAlias, alias5: created.alias5 },
     });
     res.status(201).json({
       id: created.id,
