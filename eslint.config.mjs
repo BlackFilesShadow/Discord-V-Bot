@@ -64,6 +64,25 @@ export default [
     },
   },
   {
+    // Stage 65: these global/admin/system modules intentionally cross tenant
+    // boundaries after authZ or operate on system-wide data. Stage 64 originally
+    // documented that fact with file-local disables; the UTF-8 repair restores
+    // their pre-corruption source blobs, so the same narrow exception lives here.
+    files: [
+      'src/dashboard/routes/v2/botAdmin.ts',
+      'src/dashboard/routes/v2/botAdminCommandCenter.ts',
+      'src/dashboard/routes/v2/devCommandCenter.ts',
+      'src/dashboard/routes/v2/devSecureExport.ts',
+      'src/modules/ai/translatedPostSchedulerV2.ts',
+      'src/modules/logging/analyticsManager.ts',
+      'src/modules/logging/auditRetentionScheduler.ts',
+      'src/modules/reminders/reminderScheduler.ts',
+    ],
+    rules: {
+      'local/no-unscoped-prisma-query': 'off',
+    },
+  },
+  {
     files: ['tests/**/*.ts', 'src/**/__tests__/**/*.ts', 'scripts/**/*.ts'],
     languageOptions: {
       parser: tsparser,
