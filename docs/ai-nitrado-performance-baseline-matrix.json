@@ -1,0 +1,11 @@
+{
+  "schemaVersion": 1,
+  "stage": 48,
+  "basedOnMainSha": "c6472086",
+  "scope": "AI & Nitrado performance baseline: latency hooks, timeout/retry/fallback contracts, rate limits, no scope softening via cache.",
+  "contracts": {
+    "aiTimeouts": "provider clients must define timeouts",
+    "nitrado": "API client retries bounded",
+    "scope": "cache must not bypass guild/slot scope"
+  }
+}
