@@ -32,12 +32,6 @@ async function stubDevUpload(page: Page, initialUpload = false) {
 
   await page.route('**/api/me', route => json(route, { user: DEV_USER }));
   await page.route('**/auth/status', route => json(route, { authenticated: true, user: DEV_USER }));
-  await page.route('**/api/v2/bot-admin/status', route => json(route, { active: false, expiresAt: null }));
-  await page.route('**/api/v2/dev/status', route => json(route, {
-    active: true,
-    eligible: true,
-    expiresAt: '2026-08-21T18:00:00.000Z',
-  }));
 
   await page.route('**/api/v2/**', async route => {
     const req = route.request();
@@ -45,6 +39,14 @@ async function stubDevUpload(page: Page, initialUpload = false) {
     const path = url.pathname;
     const method = req.method();
 
+    if (path === '/api/v2/bot-admin/status') {
+      await json(route, { active: false, expiresAt: null });
+      return;
+    }
+    if (path === '/api/v2/dev/status') {
+      await json(route, { active: true, eligible: true, expiresAt: '2026-08-21T18:00:00.000Z' });
+      return;
+    }
     if (path === '/api/v2/dev/uploads' && method === 'GET') {
       await json(route, { uploads: exists ? [record] : [] });
       return;
