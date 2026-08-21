@@ -74,6 +74,19 @@ beforeEach(() => {
 });
 
 describe('Nitrado dashboard create CRUD contract', () => {
+  it('rejects fractional slots before lookup, token validation, or persistence', async () => {
+    const res = await request(app())
+      .post(`/api/v2/guilds/${GUILD}/nitrado`)
+      .send({ slot: 1.5, alias: 'Chernarus', token: 'a'.repeat(40) });
+
+    expect(res.status).toBe(400);
+    expect(res.body.error).toBe('slot 1..5');
+    expect(getSlot).not.toHaveBeenCalled();
+    expect(validateTokenDetailed).not.toHaveBeenCalled();
+    expect(createSlot).not.toHaveBeenCalled();
+    expect(logAuditDb).not.toHaveBeenCalled();
+  });
+
   it('rejects a whitespace-only alias before token validation or persistence', async () => {
     const res = await request(app())
       .post(`/api/v2/guilds/${GUILD}/nitrado`)
