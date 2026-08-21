@@ -1,46 +1,46 @@
 {
-  "generatedAt": "2026-08-21T22:24:35.9139662Z",
-  "finalAuditedSha": "48bbcfface38068bc71ad7bcc5c1dd87616da514",
+  "generatedAt": "2026-08-21T23:12:35.288Z",
+  "finalAuditedSha": "cf9d8e2530686ba8cef2063f6d5c726485a67f81",
   "findings": [
     {
       "id": "F-S3-04",
       "severity": "HIGH",
-      "status": "CLOSED_PENDING_COMMIT",
+      "status": "CLOSED",
       "rootCause": "AiToolExecutor library without production consumer",
       "fix": "toolRuntime + runtime wire + tests"
     },
     {
       "id": "F-S2-01",
       "severity": "HIGH",
-      "status": "CLOSED_PENDING_COMMIT",
+      "status": "CLOSED",
       "rootCause": "same as F-S3-04",
       "fix": "superseded"
     },
     {
       "id": "F-S5-01",
       "severity": "HIGH",
-      "status": "CLOSED_PENDING_COMMIT",
+      "status": "CLOSED",
       "rootCause": "Windows CRLF autocrlf",
       "fix": ".gitattributes LF"
     },
     {
       "id": "F-S5-04",
       "severity": "MEDIUM",
-      "status": "CLOSED_PENDING_COMMIT",
+      "status": "CLOSED",
       "rootCause": "LF substring gates",
       "fix": "normalizeSourceNewlines"
     },
     {
       "id": "F-S5-06",
       "severity": "MEDIUM",
-      "status": "CLOSED_PENDING_COMMIT",
+      "status": "CLOSED",
       "rootCause": "WSL bash stub",
       "fix": "scripts/resolve-bash.js"
     },
     {
       "id": "F-S5-07",
       "severity": "MEDIUM",
-      "status": "CLOSED_PENDING_COMMIT",
+      "status": "CLOSED",
       "rootCause": "missing local CI env",
       "fix": "tests/setupEnv.ts"
     },
@@ -82,16 +82,16 @@
     {
       "id": "F-S4-01",
       "severity": "HIGH",
-      "status": "OPEN",
+      "status": "PARTIAL_CLOSED_UI_RUNTIME",
       "rootCause": "auth E2E incomplete",
-      "fix": null
+      "fix": "stage-27-35-runtime-matrix + ServerSlot error/success toasts; residual live OAuth"
     },
     {
       "id": "F-S4-02",
       "severity": "HIGH",
-      "status": "OPEN",
+      "status": "PARTIAL_CLOSED_UI_RUNTIME",
       "rootCause": "mobile auth E2E incomplete",
-      "fix": null
+      "fix": "stage-27-35-runtime-matrix + ServerSlot error/success toasts; residual live OAuth"
     },
     {
       "id": "F-S4-03",

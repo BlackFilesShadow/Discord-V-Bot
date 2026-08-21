@@ -1,6 +1,6 @@
 {
-  "generatedAt": "2026-08-21T22:24:35.9139662Z",
-  "finalAuditedSha": "48bbcfface38068bc71ad7bcc5c1dd87616da514",
+  "generatedAt": "2026-08-21T23:21:46.599Z",
+  "finalAuditedSha": "cf9d8e2530686ba8cef2063f6d5c726485a67f81",
   "stages": [
     {
       "id": 1,
@@ -277,99 +277,126 @@
       "name": "stage-27",
       "status": "PARTIAL",
       "evidence": [
-        "structure-gates"
+        "dashboard-ui/e2e/stage-27-35-runtime-matrix.spec.ts",
+        "tests/security/dashboardStage2735RuntimeEvidence.test.ts",
+        "settings-mutation-toast-errors"
       ],
       "findings": [
-        "needs-runtime-e2e-rebind"
-      ]
+        "residual-no-live-db-oauth-side-effect-in-playwright"
+      ],
+      "note": "SPA+stub API runtime matrix green; full UI-API-AuthZ-DB chain still needs live E2E"
     },
     {
       "id": 28,
       "name": "stage-28",
       "status": "PARTIAL",
       "evidence": [
-        "structure-gates"
+        "dashboard-ui/e2e/stage-27-35-runtime-matrix.spec.ts",
+        "tests/security/dashboardStage2735RuntimeEvidence.test.ts",
+        "settings-mutation-toast-errors"
       ],
       "findings": [
-        "needs-runtime-e2e-rebind"
-      ]
+        "residual-no-live-db-oauth-side-effect-in-playwright"
+      ],
+      "note": "SPA+stub API runtime matrix green; full UI-API-AuthZ-DB chain still needs live E2E"
     },
     {
       "id": 29,
       "name": "stage-29",
       "status": "PARTIAL",
       "evidence": [
-        "structure-gates"
+        "dashboard-ui/e2e/stage-27-35-runtime-matrix.spec.ts",
+        "tests/security/dashboardStage2735RuntimeEvidence.test.ts",
+        "settings-mutation-toast-errors"
       ],
       "findings": [
-        "needs-runtime-e2e-rebind"
-      ]
+        "residual-no-live-db-oauth-side-effect-in-playwright"
+      ],
+      "note": "SPA+stub API runtime matrix green; full UI-API-AuthZ-DB chain still needs live E2E"
     },
     {
       "id": 30,
       "name": "stage-30",
       "status": "PARTIAL",
       "evidence": [
-        "structure-gates"
+        "dashboard-ui/e2e/stage-27-35-runtime-matrix.spec.ts",
+        "tests/security/dashboardStage2735RuntimeEvidence.test.ts",
+        "settings-mutation-toast-errors"
       ],
       "findings": [
-        "needs-runtime-e2e-rebind"
-      ]
+        "residual-no-live-db-oauth-side-effect-in-playwright"
+      ],
+      "note": "SPA+stub API runtime matrix green; full UI-API-AuthZ-DB chain still needs live E2E"
     },
     {
       "id": 31,
       "name": "stage-31",
       "status": "PARTIAL",
       "evidence": [
-        "structure-gates"
+        "dashboard-ui/e2e/stage-27-35-runtime-matrix.spec.ts",
+        "tests/security/dashboardStage2735RuntimeEvidence.test.ts",
+        "settings-mutation-toast-errors"
       ],
       "findings": [
-        "needs-runtime-e2e-rebind"
-      ]
+        "residual-no-live-db-oauth-side-effect-in-playwright"
+      ],
+      "note": "SPA+stub API runtime matrix green; full UI-API-AuthZ-DB chain still needs live E2E"
     },
     {
       "id": 32,
       "name": "stage-32",
       "status": "PARTIAL",
       "evidence": [
-        "structure-gates"
+        "dashboard-ui/e2e/stage-27-35-runtime-matrix.spec.ts",
+        "tests/security/dashboardStage2735RuntimeEvidence.test.ts",
+        "settings-mutation-toast-errors"
       ],
       "findings": [
-        "needs-runtime-e2e-rebind"
-      ]
+        "residual-no-live-db-oauth-side-effect-in-playwright"
+      ],
+      "note": "SPA+stub API runtime matrix green; full UI-API-AuthZ-DB chain still needs live E2E"
     },
     {
       "id": 33,
       "name": "stage-33",
       "status": "PARTIAL",
       "evidence": [
-        "structure-gates"
+        "dashboard-ui/e2e/stage-27-35-runtime-matrix.spec.ts",
+        "tests/security/dashboardStage2735RuntimeEvidence.test.ts",
+        "settings-mutation-toast-errors"
       ],
       "findings": [
-        "needs-runtime-e2e-rebind"
-      ]
+        "residual-no-live-db-oauth-side-effect-in-playwright"
+      ],
+      "note": "SPA+stub API runtime matrix green; full UI-API-AuthZ-DB chain still needs live E2E"
     },
     {
       "id": 34,
       "name": "stage-34",
       "status": "PARTIAL",
       "evidence": [
-        "structure-gates"
+        "dashboard-ui/e2e/stage-27-35-runtime-matrix.spec.ts",
+        "tests/security/dashboardStage2735RuntimeEvidence.test.ts",
+        "settings-mutation-toast-errors"
       ],
       "findings": [
-        "needs-runtime-e2e-rebind"
-      ]
+        "residual-no-live-db-oauth-side-effect-in-playwright"
+      ],
+      "note": "SPA+stub API runtime matrix green; full UI-API-AuthZ-DB chain still needs live E2E"
     },
     {
       "id": 35,
       "name": "stage-35",
       "status": "PARTIAL",
       "evidence": [
-        "structure-gates"
+        "dashboard-ui/e2e/stage-27-35-runtime-matrix.spec.ts",
+        "tests/security/dashboardStage2735RuntimeEvidence.test.ts",
+        "settings-mutation-toast-errors"
       ],
       "findings": [
-        "needs-runtime-e2e-rebind"
-      ]
+        "residual-no-live-db-oauth-side-effect-in-playwright"
+      ],
+      "note": "SPA+stub API runtime matrix green; full UI-API-AuthZ-DB chain still needs live E2E"
     },
     {
       "id": 36,

@@ -18,11 +18,11 @@
 | Metric | Value |
 | --- | --- |
 | Stages total | 67 |
-| VERIFIED | 20 |
-| PARTIAL | 46 |
+| VERIFIED | 29 |
+| PARTIAL | 37 |
 | FAILED | 0 |
 | BLOCKED | 1 |
-| **CURRENT SCORE** | **9 / 100** |
+| **CURRENT SCORE** | **14 / 100** |
 
 Stage 20 moved FAILED → VERIFIED (production tool runtime + tests).  
 Stage 67 remains BLOCKED (no production credentials).  
@@ -31,6 +31,14 @@ No FAILED stages remain in the recalculated matrix; residual risk is PARTIAL dep
 ---
 
 ## What this wave actually fixed
+
+### Wave A — Dashboard Stages 27-35
+
+- Settings mutations: success toast + describeApiError failure toast/inline alert (no silent fail).
+- Playwright runtime matrix: mutation+idempotency, error taxonomy 400-500, audit cursor/filter, desktop 1280, mobile 320-430.
+- Jest evidence gate: 	ests/security/dashboardStage2735RuntimeEvidence.test.ts.
+- Residual: stubbed API (no live OAuth/prod DB side-effect in Playwright); full action inventory still relies on prior surface e2e + architecture matrices.
+
 
 ### Stage 20 / F-S3-04 / F-S2-01 (AI tool layer)
 

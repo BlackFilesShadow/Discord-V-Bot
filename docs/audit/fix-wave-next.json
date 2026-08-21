@@ -1,7 +1,16 @@
 {
-  "generatedAt": "2026-08-21T22:24:35.9139662Z",
-  "baseSha": "48bbcfface38068bc71ad7bcc5c1dd87616da514",
+  "generatedAt": "2026-08-21T23:12:35.289Z",
+  "baseSha": "cf9d8e2530686ba8cef2063f6d5c726485a67f81",
   "waves": [
+    {
+      "name": "wave-a-dashboard-27-35",
+      "status": "implemented_pending_ci",
+      "findings": [
+        "F-S4-01",
+        "F-S4-02"
+      ],
+      "sha_base": "cf9d8e2530686ba8cef2063f6d5c726485a67f81"
+    },
     {
       "name": "wave-a-tool-eol-ci",
       "status": "implemented_local",
@@ -31,10 +40,8 @@
     },
     {
       "name": "wave-d-e2e-api-mobile",
-      "status": "todo",
+      "status": "in_progress_dashboard_done_api_open",
       "findings": [
-        "F-S4-01",
-        "F-S4-02",
         "F-S4-03"
       ]
     },
