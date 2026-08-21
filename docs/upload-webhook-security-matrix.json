@@ -1,0 +1,15 @@
+{
+  "schemaVersion": 1,
+  "stage": 44,
+  "basedOnMainSha": "2076eee1",
+  "scope": "Upload type/size/path/storage; webhook signature/replay via raw body HMAC.",
+  "contracts": {
+    "static": "only factions/media public",
+    "private": "dev uploads not static",
+    "webhook": "rawBody HMAC verified"
+  },
+  "cases": [
+    { "id": "static-not-private", "status": "verified" },
+    { "id": "webhook-rawbody", "status": "verified" }
+  ]
+}
