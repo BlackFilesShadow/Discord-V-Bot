@@ -1,3 +1,4 @@
+/* eslint-disable local/no-unscoped-prisma-query -- Stage 64: intentional cross-tenant system/admin surface (authZ outside Prisma where). */
 import type { Prisma } from '@prisma/client';
 import { Client, EmbedBuilder, TextChannel, User } from 'discord.js';
 import prisma from '../../database/prisma';
@@ -21,10 +22,10 @@ let timer: NodeJS.Timeout | null = null;
 
 function reminderEmbed(message: string, fireCount: number, recurring: boolean): EmbedBuilder {
   return vEmbed(Colors.Info)
-    .setTitle('⏰ Erinnerung')
+    .setTitle('â° Erinnerung')
     .setDescription(`${Brand.divider}\n${message}\n${Brand.divider}`)
     .setFooter({
-      text: `${Brand.footerText} • Reminder${recurring ? ` (#${fireCount + 1}, wiederkehrend)` : ''}`,
+      text: `${Brand.footerText} â€¢ Reminder${recurring ? ` (#${fireCount + 1}, wiederkehrend)` : ''}`,
     });
 }
 

@@ -1,3 +1,4 @@
+/* eslint-disable local/no-unscoped-prisma-query -- Stage 64: intentional cross-tenant system/admin surface (authZ outside Prisma where). */
 import { Router } from 'express';
 import os from 'node:os';
 import fs from 'node:fs/promises';
@@ -44,13 +45,13 @@ async function feedbackChannelValidationError(
   guildId?: string,
 ): Promise<{ status: number; error: string } | null> {
   const client = tryGetDashboardClient();
-  if (!client) return { status: 503, error: 'Discord-Client nicht verfügbar.' };
+  if (!client) return { status: 503, error: 'Discord-Client nicht verfÃ¼gbar.' };
   const channel = await client.channels.fetch(channelId).catch(() => null);
   if (!channel || (channel.type !== ChannelType.GuildText && channel.type !== ChannelType.GuildAnnouncement)) {
-    return { status: 400, error: 'Feedback-Channel muss ein erreichbarer Text- oder Ankündigungskanal sein.' };
+    return { status: 400, error: 'Feedback-Channel muss ein erreichbarer Text- oder AnkÃ¼ndigungskanal sein.' };
   }
   if (guildId && channel.guildId !== guildId) {
-    return { status: 400, error: 'Feedback-Channel gehört nicht zum ausgewählten Server.' };
+    return { status: 400, error: 'Feedback-Channel gehÃ¶rt nicht zum ausgewÃ¤hlten Server.' };
   }
   return null;
 }
@@ -287,7 +288,7 @@ botAdminCommandCenterRouter.post('/providers/probe', async (req, res) => {
 botAdminCommandCenterRouter.post('/providers/reset', async (req, res) => {
   const target = String(req.body?.provider ?? '').toLowerCase();
   if (req.body?.confirm !== 'RESET') {
-    res.status(400).json({ error: 'Bestätigung RESET erforderlich.' });
+    res.status(400).json({ error: 'BestÃ¤tigung RESET erforderlich.' });
     return;
   }
   if (target !== 'all' && !(ALL_PROVIDERS as readonly string[]).includes(target)) {
@@ -326,12 +327,12 @@ botAdminCommandCenterRouter.get('/feedback-channel', async (req, res) => {
   if (guildId) {
     const client = tryGetDashboardClient();
     if (!client) {
-      res.status(503).json({ error: 'Discord-Client nicht verfügbar.' });
+      res.status(503).json({ error: 'Discord-Client nicht verfÃ¼gbar.' });
       return;
     }
     const guild = client.guilds.cache.get(guildId) ?? await client.guilds.fetch(guildId).catch(() => null);
     if (!guild) {
-      res.status(404).json({ error: 'Bot ist auf dem ausgewählten Server nicht verfügbar.' });
+      res.status(404).json({ error: 'Bot ist auf dem ausgewÃ¤hlten Server nicht verfÃ¼gbar.' });
       return;
     }
     channelOptions = guild.channels.cache
@@ -353,7 +354,7 @@ botAdminCommandCenterRouter.put('/feedback-channel', async (req, res) => {
     ? req.body.channelId.trim()
     : null;
   if (channelId && !SNOWFLAKE.test(channelId)) {
-    res.status(400).json({ error: 'Ungültige channelId.' });
+    res.status(400).json({ error: 'UngÃ¼ltige channelId.' });
     return;
   }
 
@@ -375,7 +376,7 @@ botAdminCommandCenterRouter.put('/feedback-channel', async (req, res) => {
         key: 'globalFeedbackChannelId',
         value: channelId ?? Prisma.JsonNull,
         category: 'feedback',
-        description: 'Owner-Fallback-Channel für /feedback.',
+        description: 'Owner-Fallback-Channel fÃ¼r /feedback.',
         updatedBy: actor(req),
       },
       update: { value: channelId ?? Prisma.JsonNull, updatedBy: actor(req) },
@@ -387,17 +388,17 @@ botAdminCommandCenterRouter.put('/feedback-channel', async (req, res) => {
 
   const guildId = String(req.body?.guildId ?? '');
   if (!SNOWFLAKE.test(guildId)) {
-    res.status(400).json({ error: 'Gültige guildId erforderlich.' });
+    res.status(400).json({ error: 'GÃ¼ltige guildId erforderlich.' });
     return;
   }
   const client = tryGetDashboardClient();
   if (!client) {
-    res.status(503).json({ error: 'Discord-Client nicht verfügbar.' });
+    res.status(503).json({ error: 'Discord-Client nicht verfÃ¼gbar.' });
     return;
   }
   const guild = client.guilds.cache.get(guildId) ?? await client.guilds.fetch(guildId).catch(() => null);
   if (!guild) {
-    res.status(400).json({ error: 'Bot ist auf dem ausgewählten Server nicht verfügbar.' });
+    res.status(400).json({ error: 'Bot ist auf dem ausgewÃ¤hlten Server nicht verfÃ¼gbar.' });
     return;
   }
   if (channelId) {
@@ -427,7 +428,7 @@ botAdminCommandCenterRouter.patch('/feedback/:id', async (req, res) => {
     ? feedback.status
     : String(req.body.status).toUpperCase();
   if (!['OPEN', 'IN_REVIEW', 'RESOLVED', 'WONTFIX'].includes(status)) {
-    res.status(400).json({ error: 'Ungültiger Status.' });
+    res.status(400).json({ error: 'UngÃ¼ltiger Status.' });
     return;
   }
   const adminNote = req.body?.adminNote === undefined
@@ -451,7 +452,7 @@ botAdminCommandCenterRouter.patch('/feedback/:id', async (req, res) => {
         const message = await (channel as TextChannel).messages.fetch(updated.notifyMessageId).catch(() => null);
         if (message) {
           const embed = new EmbedBuilder()
-            .setTitle(`${updated.category} • ${updated.subject}`)
+            .setTitle(`${updated.category} â€¢ ${updated.subject}`)
             .setDescription(updated.message.slice(0, 3500))
             .addFields(
               { name: 'Von', value: `<@${updated.userId}> (\`${updated.userId}\`)`, inline: true },

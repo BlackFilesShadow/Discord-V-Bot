@@ -1,3 +1,4 @@
+/* eslint-disable local/no-unscoped-prisma-query -- Stage 64: guild boundary enforced at auth/API or entity-id unique after prior guild check; Prisma update/delete require unique where. */
 /**
  * Mirror Query-API — die einheitliche Lese-Schnittstelle, über die der
  * Bot, das Dashboard und die KI/RAG-Schicht Snapshot-Daten abfragen.

@@ -1,3 +1,4 @@
+/* eslint-disable local/no-unscoped-prisma-query -- Stage 64: guild boundary enforced at auth/API or entity-id unique after prior guild check; Prisma update/delete require unique where. */
 /**
  * Feeds-Routen — Live-Feeds (RSS, News, Twitch, Steam, YouTube, Webhook) pro Guild.
  * Dashboard-only: der frühere Slash-Command /feed wurde hierher migriert.

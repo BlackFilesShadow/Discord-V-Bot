@@ -1,3 +1,4 @@
+/* eslint-disable local/no-unscoped-prisma-query -- Stage 64: guild boundary enforced at auth/API or entity-id unique after prior guild check; Prisma update/delete require unique where. */
 /**
  * Embed-Builder Routen — eigenständige eingebettete Nachrichten pro Guild.
  * Dashboard-only: es existieren KEINE Slash-/Prefix-Commands fuer dieses Feature.

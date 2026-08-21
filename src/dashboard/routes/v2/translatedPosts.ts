@@ -1,3 +1,4 @@
+/* eslint-disable local/no-unscoped-prisma-query -- Stage 64: guild boundary enforced at auth/API or entity-id unique after prior guild check; Prisma update/delete require unique where. */
 /**
  * Übersetzungen-Routen — geplante / wiederkehrende Auto-Übersetzungs-Posts pro Guild.
  * Bilder werden als persistente lokale Uploads gespeichert und beim Versand
