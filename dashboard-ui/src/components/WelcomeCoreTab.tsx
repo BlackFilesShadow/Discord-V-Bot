@@ -487,7 +487,12 @@ export function WelcomeTab({ guildId, canManage }: { guildId: string; canManage:
                         {a.expiresAt ? ` · befristet bis ${new Date(a.expiresAt).toLocaleDateString('de-DE')}` : ''}
                       </p>
                     </div>
-                    <Switch checked={a.isActive} onChange={() => toggleAutorole(a)} disabled={roleBusy !== null} />
+                    <Switch
+                      checked={a.isActive}
+                      onChange={() => toggleAutorole(a)}
+                      disabled={roleBusy !== null}
+                      ariaLabel={`Auto-Rolle @${a.roleName} ${a.isActive ? 'deaktivieren' : 'aktivieren'}`}
+                    />
                     <Button type="button" variant="ghost" onClick={() => removeAutorole(a)} disabled={roleBusy !== null} className="px-2" title="Entfernen">
                       <X className="h-4 w-4" />
                     </Button>
