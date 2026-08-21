@@ -1,0 +1,15 @@
+{
+  "schemaVersion": 1,
+  "stage": 45,
+  "basedOnMainSha": "2076eee1",
+  "scope": "npm lockfile, Dockerfile secrets posture, SBOM readiness, legacy deps tracking.",
+  "contracts": {
+    "dockerfile": "no COPY .env",
+    "lockfile": "package-lock.json present",
+    "legacy": "passport-discord tracked for Stage 54 if present"
+  },
+  "cases": [
+    { "id": "dockerfile-no-env-copy", "status": "verified" },
+    { "id": "package-lock-present", "status": "verified" }
+  ]
+}
