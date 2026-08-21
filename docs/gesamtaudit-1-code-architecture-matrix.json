@@ -1,0 +1,10 @@
+{
+  "schemaVersion": 1,
+  "stage": 60,
+  "basedOnMainSha": "45caf9cd",
+  "scope": "Gesamtaudit 1: code & architecture — layering, contracts, architecture gates inventory.",
+  "contracts": {
+    "gates": "tests/security/*Architecture*.test.ts form permanent drift gates",
+    "v2": "all dashboard API under /api/v2 with requireAuth+idempotency"
+  }
+}
