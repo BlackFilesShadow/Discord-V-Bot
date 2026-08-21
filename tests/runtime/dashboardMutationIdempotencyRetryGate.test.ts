@@ -25,10 +25,12 @@ describe('Economy-1L dashboard mutation idempotency retry architecture', () => {
     expect(clientSource).toContain('lease = await acquireMutationIdempotencyKey(signature)');
     expect(clientSource).toContain("headers['X-Idempotency-Key'] = lease.key");
 
-    const decode = clientSource.indexOf('const result = await decode<T>(await fetch(');
+    const decode = clientSource.indexOf('const result = await decode<T>(await fetchWithTimeout(');
     const release = clientSource.indexOf('if (lease) releaseMutationIdempotencyKey(lease);', decode);
     expect(decode).toBeGreaterThanOrEqual(0);
     expect(release).toBeGreaterThan(decode);
+    // Transport failures must not release the pending key (retry keeps same key).
+    expect(clientSource).toContain('throw classifyTransportError(err)');
   });
 
   it('keeps FormData outside the stable JSON fingerprint contract', () => {

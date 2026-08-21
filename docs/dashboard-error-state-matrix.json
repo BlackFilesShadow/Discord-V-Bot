@@ -1,0 +1,154 @@
+{
+  "schemaVersion": 1,
+  "stage": 29,
+  "basedOnMainSha": "7c138b21ce5b9363c7138a5b43e8c575d85c4a73",
+  "scope": "Dashboard API/UI error taxonomy: HTTP status classes, transport failures, retry semantics, and fail-closed rendering without masked success.",
+  "contracts": {
+    "httpErrorBody": "Non-2xx JSON responses expose string error (+ optional code). Client throws ApiError; never treats as success.",
+    "transport": "fetch failures map to ApiError kind offline|timeout|network with status 0 and stable codes; pending mutation idempotency keys are retained.",
+    "timeout": "Central client enforces API_REQUEST_TIMEOUT_MS via AbortController; abort surfaces as REQUEST_TIMEOUT.",
+    "retry": "retryable=true only for offline/timeout/network/429/5xx; 400/401/403/404/409 are not auto-retry classes.",
+    "serverBoundary": "Express final error handler never sends 2xx; headersSent short-circuit; 5xx body is generic INTERNAL_ERROR without stack leak.",
+    "ui": "Surfaces must show toast or inline alert on failure; clearing privileged snapshots on error is preferred over stale success data.",
+    "noMask": "Partial provider failures and 503 unavailable actions remain non-success (see Stage 27 incident fail-closed)."
+  },
+  "statusClasses": [
+    {
+      "id": "http-400",
+      "class": "400",
+      "meaning": "Validation / bad query or body",
+      "clientBehavior": "ApiError http; describeApiError title Ungueltige Anfrage; not retryable",
+      "uiExpectation": "visible field or toast error; no optimistic commit",
+      "examples": "audit before cursor, bot-admin page=abc, missing guildId",
+      "status": "verified"
+    },
+    {
+      "id": "http-401",
+      "class": "401",
+      "meaning": "Unauthenticated / expired session",
+      "clientBehavior": "ApiError; session shells lock or redirect",
+      "uiExpectation": "login required; no privileged data retained as success",
+      "examples": "requireAuth, DEV session missing",
+      "status": "verified"
+    },
+    {
+      "id": "http-403",
+      "class": "403",
+      "meaning": "Authenticated but forbidden / scope deny",
+      "clientBehavior": "ApiError; not retryable",
+      "uiExpectation": "permission error visible; fail-closed",
+      "examples": "guild permission, bot-admin gate, DEV restrict",
+      "status": "verified"
+    },
+    {
+      "id": "http-404",
+      "class": "404",
+      "meaning": "Missing resource",
+      "clientBehavior": "ApiError; not retryable",
+      "uiExpectation": "not-found empty/error state",
+      "examples": "package id, appeal id",
+      "status": "verified"
+    },
+    {
+      "id": "http-409",
+      "class": "409",
+      "meaning": "Conflict / idempotency / already active",
+      "clientBehavior": "ApiError; mutation key may remain until success path rules apply",
+      "uiExpectation": "conflict message; no double-success claim",
+      "examples": "unique constraint, incident already_active, idempotency replay mismatch",
+      "status": "verified"
+    },
+    {
+      "id": "http-429",
+      "class": "429",
+      "meaning": "Rate limited",
+      "clientBehavior": "retryable; DEV polling backs off",
+      "uiExpectation": "toast/dedup; backoff not tight loop",
+      "examples": "useDevStatus backoff, heap snapshot limiter",
+      "status": "verified"
+    },
+    {
+      "id": "http-5xx",
+      "class": "5xx",
+      "meaning": "Server / provider failure",
+      "clientBehavior": "retryable; decode throws; server boundary returns INTERNAL_ERROR for uncaught",
+      "uiExpectation": "Serverfehler visible; never 200 with error payload",
+      "examples": "global error handler, translate 502, incident 503 unavailable",
+      "status": "verified"
+    },
+    {
+      "id": "transport-offline",
+      "class": "offline",
+      "meaning": "navigator.onLine false or equivalent",
+      "clientBehavior": "ApiError kind offline code NETWORK_OFFLINE status 0",
+      "uiExpectation": "Offline title via describeApiError",
+      "examples": "classifyTransportError",
+      "status": "fixed-stage-29"
+    },
+    {
+      "id": "transport-timeout",
+      "class": "timeout",
+      "meaning": "AbortController budget exceeded",
+      "clientBehavior": "ApiError kind timeout code REQUEST_TIMEOUT; idempotency key retained",
+      "uiExpectation": "Zeitueberschreitung; safe manual retry",
+      "examples": "fetchWithTimeout",
+      "status": "fixed-stage-29"
+    },
+    {
+      "id": "transport-network",
+      "class": "network",
+      "meaning": "Failed to fetch / connection reset",
+      "clientBehavior": "ApiError kind network code NETWORK_ERROR",
+      "uiExpectation": "Netzwerkfehler; no success",
+      "examples": "classifyTransportError failed to fetch",
+      "status": "fixed-stage-29"
+    },
+    {
+      "id": "provider-partial",
+      "class": "provider-failure",
+      "meaning": "Downstream Discord/Nitrado/AI failure mapped to 4xx/5xx by route",
+      "clientBehavior": "HTTP path; must not synthesize empty-success lists for unknown remote shapes",
+      "uiExpectation": "route-specific error string",
+      "examples": "NitradoApiError matrices, AI translate 502",
+      "status": "verified-existing"
+    }
+  ],
+  "surfaces": [
+    {
+      "id": "api-client",
+      "path": "dashboard-ui/src/lib/api.ts",
+      "role": "central fetch + ApiError + timeout + transport taxonomy + idempotency lease",
+      "status": "fixed-stage-29"
+    },
+    {
+      "id": "express-final-handler",
+      "path": "src/dashboard/server.ts",
+      "role": "uncaught error JSON fail-closed non-2xx",
+      "status": "fixed-stage-29"
+    },
+    {
+      "id": "dev-status-polling",
+      "path": "dashboard-ui/src/lib/useDevStatus.ts",
+      "role": "401/403 structural deny; 429/5xx backoff",
+      "status": "verified-existing"
+    },
+    {
+      "id": "dev-audit-logs-ui",
+      "path": "dashboard-ui/src/pages/dev/AuditLogs.tsx",
+      "role": "clears data on error; toast; describeApiError titles",
+      "status": "fixed-stage-29"
+    },
+    {
+      "id": "toast-dedup",
+      "path": "dashboard-ui/src/lib/toast.tsx",
+      "role": "dedupe identical danger toasts under polling storms",
+      "status": "verified-existing"
+    }
+  ],
+  "invariants": [
+    "No success UI without 2xx decode",
+    "No release of mutation idempotency key on transport failure",
+    "No stack traces in client JSON from final handler",
+    "Missing scope remains fail-closed 403/400 at route layer (Stage 37 deepens IDOR)"
+  ]
+}

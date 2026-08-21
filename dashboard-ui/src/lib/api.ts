@@ -1,7 +1,33 @@
 /** Schmaler Dashboard-API-Client mit Cookie-Session + Idempotency-Key. */
+
+/** Stage 29: transport vs HTTP taxonomy for fail-closed UI rendering. */
+export type ApiErrorKind = 'http' | 'offline' | 'timeout' | 'network' | 'abort';
+
 export class ApiError extends Error {
-  constructor(message: string, public readonly status: number, public readonly code: string | null = null, public readonly body: unknown = null) { super(message); }
+  readonly kind: ApiErrorKind;
+
+  constructor(
+    message: string,
+    public readonly status: number,
+    public readonly code: string | null = null,
+    public readonly body: unknown = null,
+    kind: ApiErrorKind = 'http',
+  ) {
+    super(message);
+    this.name = 'ApiError';
+    this.kind = kind;
+  }
+
+  /** True when a safe manual retry may be offered (never auto-mask as success). */
+  get retryable(): boolean {
+    if (this.kind === 'timeout' || this.kind === 'network' || this.kind === 'offline') return true;
+    if (this.status === 429 || this.status >= 500) return true;
+    return false;
+  }
 }
+
+/** Default per-request budget; long exports/uploads should use dedicated clients. */
+export const API_REQUEST_TIMEOUT_MS = 30_000;
 
 function extractError(data: unknown, status: number): { msg: string; code: string | null } {
   if (data && typeof data === 'object') {
@@ -9,6 +35,78 @@ function extractError(data: unknown, status: number): { msg: string; code: strin
     return { msg: typeof obj.error === 'string' ? obj.error : `HTTP ${status}`, code: typeof obj.code === 'string' ? obj.code : null };
   }
   return { msg: `HTTP ${status}`, code: null };
+}
+
+function isAbortError(err: unknown): boolean {
+  if (!err || typeof err !== 'object') return false;
+  const name = String((err as { name?: unknown }).name ?? '');
+  return name === 'AbortError' || name === 'TimeoutError';
+}
+
+/**
+ * Maps browser/network failures to structured ApiError codes so UI never treats
+ * transport loss as a silent success or generic untyped throw.
+ */
+export function classifyTransportError(err: unknown): ApiError {
+  if (err instanceof ApiError) return err;
+  if (typeof navigator !== 'undefined' && navigator.onLine === false) {
+    return new ApiError('Keine Netzwerkverbindung (offline).', 0, 'NETWORK_OFFLINE', null, 'offline');
+  }
+  if (isAbortError(err)) {
+    return new ApiError('Anfrage abgebrochen oder Zeitueberschreitung.', 0, 'REQUEST_TIMEOUT', null, 'timeout');
+  }
+  const msg = err instanceof Error ? err.message : String(err ?? 'network error');
+  const lower = msg.toLowerCase();
+  if (lower.includes('failed to fetch') || lower.includes('networkerror') || lower.includes('load failed') || lower.includes('econnreset')) {
+    return new ApiError('Netzwerkfehler — Verbindung unterbrochen.', 0, 'NETWORK_ERROR', null, 'network');
+  }
+  return new ApiError(msg || 'Netzwerkfehler.', 0, 'NETWORK_ERROR', null, 'network');
+}
+
+/** Stable UI copy for toasts/inline alerts without inventing success. */
+export function describeApiError(err: unknown): {
+  title: string;
+  desc: string;
+  status: number;
+  code: string | null;
+  kind: ApiErrorKind | 'unknown';
+  retryable: boolean;
+} {
+  if (err instanceof ApiError) {
+    if (err.kind === 'offline') {
+      return { title: 'Offline', desc: err.message, status: 0, code: err.code, kind: err.kind, retryable: true };
+    }
+    if (err.kind === 'timeout') {
+      return { title: 'Zeitueberschreitung', desc: err.message, status: 0, code: err.code, kind: err.kind, retryable: true };
+    }
+    if (err.kind === 'network') {
+      return { title: 'Netzwerkfehler', desc: err.message, status: 0, code: err.code, kind: err.kind, retryable: true };
+    }
+    if (err.status === 401) {
+      return { title: 'Nicht angemeldet', desc: err.message, status: 401, code: err.code, kind: 'http', retryable: false };
+    }
+    if (err.status === 403) {
+      return { title: 'Keine Berechtigung', desc: err.message, status: 403, code: err.code, kind: 'http', retryable: false };
+    }
+    if (err.status === 404) {
+      return { title: 'Nicht gefunden', desc: err.message, status: 404, code: err.code, kind: 'http', retryable: false };
+    }
+    if (err.status === 409) {
+      return { title: 'Konflikt', desc: err.message, status: 409, code: err.code, kind: 'http', retryable: false };
+    }
+    if (err.status === 429) {
+      return { title: 'Zu viele Anfragen', desc: err.message, status: 429, code: err.code, kind: 'http', retryable: true };
+    }
+    if (err.status >= 500) {
+      return { title: 'Serverfehler', desc: err.message, status: err.status, code: err.code, kind: 'http', retryable: true };
+    }
+    if (err.status === 400) {
+      return { title: 'Ungueltige Anfrage', desc: err.message, status: 400, code: err.code, kind: 'http', retryable: false };
+    }
+    return { title: 'Fehler', desc: err.message, status: err.status, code: err.code, kind: err.kind, retryable: err.retryable };
+  }
+  const message = err instanceof Error ? err.message : 'Unbekannter Fehler';
+  return { title: 'Fehler', desc: message, status: 0, code: null, kind: 'unknown', retryable: false };
 }
 
 export function createIdempotencyKey(): string {
@@ -138,6 +236,25 @@ async function decode<T>(res: Response): Promise<T> {
   return data as T;
 }
 
+async function fetchWithTimeout(path: string, init: RequestInit, timeoutMs = API_REQUEST_TIMEOUT_MS): Promise<Response> {
+  const controller = new AbortController();
+  const external = init.signal;
+  const onExternalAbort = (): void => controller.abort();
+  if (external) {
+    if (external.aborted) controller.abort();
+    else external.addEventListener('abort', onExternalAbort, { once: true });
+  }
+  const timer = setTimeout(() => controller.abort(), timeoutMs);
+  try {
+    return await fetch(path, { ...init, signal: controller.signal });
+  } catch (err) {
+    throw classifyTransportError(err);
+  } finally {
+    clearTimeout(timer);
+    if (external) external.removeEventListener('abort', onExternalAbort);
+  }
+}
+
 async function request<T>(method: string, path: string, body?: unknown): Promise<T> {
   const headers: Record<string, string> = { Accept: 'application/json' };
   let payload: BodyInit | undefined;
@@ -152,7 +269,7 @@ async function request<T>(method: string, path: string, body?: unknown): Promise
 
   // Nur ein bestaetigter 2xx-Decode gibt den Pending-Key frei. Bei Netzfehler,
   // 409 oder unbekanntem Serverergebnis bleibt derselbe Key fuer den Retry erhalten.
-  const result = await decode<T>(await fetch(scopedPath, { method, headers, body: payload, credentials: 'include' }));
+  const result = await decode<T>(await fetchWithTimeout(scopedPath, { method, headers, body: payload, credentials: 'include' }));
   if (lease) releaseMutationIdempotencyKey(lease);
   return result;
 }
@@ -161,7 +278,7 @@ async function formRequest<T>(method: 'POST' | 'PUT' | 'PATCH', path: string, fd
   // FormData/Uploads haben keinen stabilen serialisierten Payload-Fingerprint und
   // bleiben deshalb bewusst bei einem frischen Key pro Aufruf.
   const headers: Record<string, string> = { Accept: 'application/json', 'X-Idempotency-Key': createIdempotencyKey() };
-  return decode<T>(await fetch(withServerSlotScope(path), { method, headers, body: fd, credentials: 'include' }));
+  return decode<T>(await fetchWithTimeout(withServerSlotScope(path), { method, headers, body: fd, credentials: 'include' }));
 }
 
 async function uploadRequest<T>(path: string, file: File, fieldName = 'file'): Promise<T> {

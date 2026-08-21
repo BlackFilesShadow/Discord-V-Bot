@@ -327,13 +327,28 @@ export async function startDashboard(client?: Client): Promise<DashboardRuntimeH
     logger.info('Dashboard-Frontend nicht gebuildet (src/dashboard/public fehlt) - nur API verfuegbar.');
   }
 
-  // Error Handler
+  // Error Handler — Stage 29: never mask failures as 2xx; fail-closed JSON body.
   app.use((err: Error, _req: express.Request, res: express.Response, _next: express.NextFunction) => {
     logger.error('Dashboard-Fehler:', err);
     // Push an Error-Sink (Discord-Webhook, falls konfiguriert)
     // Lazy-Import vermeidet Zirkel-Abhängigkeiten beim Boot.
     import('../utils/errorSink.js').then(m => m.reportError(err, { source: 'dashboard' })).catch(() => { /* */ });
-    res.status(500).json({ error: 'Interner Serverfehler' });
+    if (res.headersSent) return;
+    const errStatus = (err as unknown as { status?: unknown }).status;
+    const status = typeof errStatus === 'number'
+      && Number.isInteger(errStatus)
+      && errStatus >= 400
+      && errStatus < 600
+      ? errStatus
+      : 500;
+    // Do not leak stack/internal details to the client.
+    const clientMessage = status >= 500
+      ? 'Interner Serverfehler'
+      : (typeof err.message === 'string' && err.message.trim() ? err.message.trim().slice(0, 300) : 'Anfrage fehlgeschlagen');
+    res.status(status).json({
+      error: clientMessage,
+      code: status >= 500 ? 'INTERNAL_ERROR' : 'REQUEST_ERROR',
+    });
   });
 
   const httpServer = http.createServer(app);
