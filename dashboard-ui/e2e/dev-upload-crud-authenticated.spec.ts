@@ -164,8 +164,10 @@ for (const viewport of VIEWPORTS) {
     await page.setViewportSize(viewport);
     await openUploadMode(page);
 
-    await expect(page.getByText('types.xml', { exact: true })).toBeVisible();
+    const existingUpload = page.getByText('types.xml', { exact: true });
+    await expect(existingUpload).toBeVisible();
     await expect(page.getByRole('button', { name: 'Loeschen' })).toBeVisible();
+    await existingUpload.click();
     await expect(page.getByRole('button', { name: 'Validieren' })).toBeEnabled();
     await expectNoHorizontalOverflow(page);
   });
