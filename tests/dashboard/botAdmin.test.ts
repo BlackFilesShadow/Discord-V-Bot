@@ -407,5 +407,13 @@ describe('Bot-Admin — Validierung & Listen', () => {
     expect(r.status).toBe(200);
     expect(r.body).toHaveProperty('items');
     expect(r.body).toHaveProperty('total');
+    expect(r.body).toHaveProperty('hasMore');
+    expect(r.body.page).toBe(1);
+  });
+
+  it('GET /appeals rejects non-integer page fail-closed', async () => {
+    const r = await request(makeApp()).get(`${BASE}/appeals`).query({ page: 'abc' });
+    expect(r.status).toBe(400);
+    expect(String(r.body.error)).toMatch(/page/i);
   });
 });

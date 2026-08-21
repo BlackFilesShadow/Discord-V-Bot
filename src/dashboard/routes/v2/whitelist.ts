@@ -50,13 +50,19 @@ whitelistRouter.get('/', requireGuildPermission('whitelist.view'), async (req, r
   const scope = req.guildScope!;
   const connId = await activeSlotId(scope, req.query.slot, res);
   if (!connId) return;
+  // Stage 28: hard-cap with limit+1 probe; stable approvedAt + gameId order.
+  const limit = 1000;
   const rows = await prisma.whitelistEntry.findMany({
     where: { guildId: scope.guildId, nitradoConnId: connId },
-    orderBy: { approvedAt: 'desc' },
-    take: 1000,
+    orderBy: [{ approvedAt: 'desc' }, { gameId: 'asc' }],
+    take: limit + 1,
   });
+  const hasMore = rows.length > limit;
+  const visible = rows.slice(0, limit);
   res.json({
-    entries: rows.map(r => ({
+    limit,
+    hasMore,
+    entries: visible.map(r => ({
       gameId: r.gameId,
       approvedBy: r.approvedByDiscordId,
       source: r.source,
