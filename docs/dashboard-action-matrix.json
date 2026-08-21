@@ -1,0 +1,95 @@
+{
+  "schemaVersion": 1,
+  "stage": 27,
+  "basedOnMainSha": "b9e39adca4511150e33fd257a50e099abde95a0f",
+  "scope": "All dashboard surfaces explicitly classified as operationalActions by the Stage-26 CRUD matrix. Stage 27 verifies real effect, permission/scope, verified step-up where sensitive, retry/idempotency behavior, and visible success/error evidence without reclassifying ordinary CRUD.",
+  "contracts": {
+    "authScope": "Every remote operational action inherits authenticated v2 routing plus the surface-specific DEV/global/guild scope. Cross-scope access must fail closed.",
+    "stepUp": "Sensitive DEV mutations require server-verified DEV step-up; shape-only reason/reAuth validation is not sufficient.",
+    "idempotency": "JSON mutations use the central dashboard API X-Idempotency-Key and v2 idempotency middleware. Action-local keys may add domain replay protection but never replace the central request claim.",
+    "effect": "A success response is allowed only when the advertised production side effect is actually coupled. Audit/state-only placeholders are not operational effects.",
+    "resultError": "UI must expose bounded pending state plus visible success/error; unavailable operations are hidden or rejected fail-closed instead of reporting false success."
+  },
+  "surfaces": [
+    {
+      "surface": "dev-shell",
+      "status": "verified",
+      "actionFamily": "DEV session entry/logout and shell-local operational navigation",
+      "authScope": "GlobalDeveloperIdentity plus server-confirmed DEV session; unauthorized and stale client hints fail closed",
+      "stepUp": "DEV session establishment owns its authentication contract; privileged child actions apply their own verified step-up",
+      "idempotency": "Session/logout semantics are bounded by server session lifecycle; no dashboard-data CRUD is claimed",
+      "effect": "Logout revokes/locks the DEV shell; local pin/search actions remain client-only",
+      "evidence": [
+        "dashboard-ui/e2e/dev-shell-authenticated.spec.ts",
+        "tests/security/dashboardDevShellArchitecture.test.ts"
+      ]
+    },
+    {
+      "surface": "dev-incident-response",
+      "status": "fail-closed-unavailable",
+      "actionFamily": "kill.ai, kill.automod, kill.translation, provider.force, maintenance, cache.flush, backup.trigger",
+      "authScope": "GlobalDeveloperIdentity plus requireDev; mutations additionally require cryptographically verified DEV step-up",
+      "stepUp": "requireVerifiedDevMutationStepUp before every activate/deactivate/oneshot handler",
+      "idempotency": "Central v2 X-Idempotency-Key plus the legacy domain replay key; unavailable actions cannot reach side effects",
+      "effect": "Repository-wide audit found no production consumer of isIncidentActive and no real cache.flush/backup.trigger side effect. Backend therefore exposes an empty operational allowlist and returns 503 for these actions; UI renders no action buttons.",
+      "evidence": [
+        "tests/dashboard/devIncidentContract.test.ts",
+        "tests/security/dashboardIncidentActionArchitecture.test.ts",
+        "dashboard-ui/e2e/dev-sensitive-actions-authenticated.spec.ts"
+      ]
+    },
+    {
+      "surface": "dev-audit-logs",
+      "status": "verified-read-operational",
+      "actionFamily": "audit/observability query, refresh and export navigation",
+      "authScope": "GlobalDeveloperIdentity/DEV diagnostic scope with redaction and restricted-session fail-closed behavior",
+      "stepUp": "Sensitive exports are delegated to the separately verified secure-export surface",
+      "idempotency": "Read/refresh operations do not mutate production state",
+      "effect": "Returns redacted observability/audit data; no write side effect is claimed by read controls",
+      "evidence": [
+        "dashboard-ui/e2e/dev-observability-authenticated.spec.ts",
+        "tests/dashboard/devObservabilityContract.test.ts"
+      ]
+    },
+    {
+      "surface": "dev-nitrado-mirror",
+      "status": "verified",
+      "actionFamily": "trigger Nitrado mirror snapshot and inspect snapshot progress/content",
+      "authScope": "GlobalDeveloperIdentity plus requireDev; trigger verifies guild restriction and connection ownership",
+      "stepUp": "Snapshot trigger uses requireVerifiedDevMutationStepUp",
+      "idempotency": "Central v2 X-Idempotency-Key guards retryable POST; trigger also has a bounded per-actor rate limit",
+      "effect": "startSnapshot creates the real mirror snapshot workflow and responds 202 with snapshotId; failures are visible and audited",
+      "evidence": [
+        "dashboard-ui/e2e/dev-nitrado-mirror-authenticated.spec.ts",
+        "tests/dashboard/devNitradoMirrorContract.test.ts",
+        "tests/security/dashboardNitradoMirrorArchitecture.test.ts"
+      ]
+    },
+    {
+      "surface": "dev-debug-tools",
+      "status": "verified",
+      "actionFamily": "create V8 heap snapshot",
+      "authScope": "GlobalDeveloperIdentity plus requireDev; global-only diagnostic scope fails closed for restricted DEV sessions",
+      "stepUp": "v2 mount requires cryptographically verified DEV step-up before the stub router",
+      "idempotency": "Central v2 X-Idempotency-Key guards POST retry; endpoint is additionally rate-limited for self-DoS protection",
+      "effect": "v8.writeHeapSnapshot writes a real bounded-path snapshot; failure returns 500 and success is audited",
+      "evidence": [
+        "dashboard-ui/e2e/dev-sensitive-actions-authenticated.spec.ts",
+        "tests/dashboard/devDiagnosticsStubs.test.ts"
+      ]
+    },
+    {
+      "surface": "dev-secure-export",
+      "status": "verified",
+      "actionFamily": "protected DEV export download",
+      "authScope": "GlobalDeveloperIdentity plus requireDev and scoped export contract",
+      "stepUp": "v2 mount requires cryptographically verified DEV step-up",
+      "idempotency": "Raw POST explicitly carries X-Idempotency-Key because streaming/download transport bypasses the JSON client",
+      "effect": "Produces a real bounded export response/download; non-success responses remain visible and do not masquerade as exports",
+      "evidence": [
+        "dashboard-ui/e2e/dev-sensitive-actions-authenticated.spec.ts",
+        "tests/dashboard/devSecureExportFlow.test.ts"
+      ]
+    }
+  ]
+}
