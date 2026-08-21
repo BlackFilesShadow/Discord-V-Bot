@@ -1,0 +1,10 @@
+{
+  "schemaVersion": 1,
+  "stage": 50,
+  "basedOnMainSha": "c6472086",
+  "scope": "Load test harness definition for API/dashboard paths (local synthetic).",
+  "contracts": {
+    "harness": "scripts/load-test-smoke.mjs concurrent fetch against optional BASE_URL",
+    "default": "Without BASE_URL exits 0 with skipped=true"
+  }
+}
