@@ -1250,7 +1250,7 @@ function CasinoRow({
     <tr className="border-t border-border">
       <td className="py-2 pr-2 font-medium">{type}</td>
       <td className="py-2 pr-2">
-        <Switch checked={draft.enabled} onChange={v => setDraft({ ...draft, enabled: v })} />
+        <Switch checked={draft.enabled} onChange={v => setDraft({ ...draft, enabled: v })} ariaLabel={`Casino ${type} aktiv`} />
       </td>
       <td className="py-2 pr-2">
         {type === 'SLOT' ? (
