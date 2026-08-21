@@ -1,9 +1,9 @@
 /**
  * P2 — Incident-Response-Konsole.
  *
- * Bietet Toggle-Karten (Kill-Switches, Provider-Force, Maintenance) und
- * One-Shot-Aktionen (Cache-Flush, Backup-Trigger). Jede Aktion oeffnet
- * StepUpModal (Reason + Re-Auth) und sendet einen idempotency-key mit.
+ * Bietet nur Incident-Aktionen an, die das Backend explizit als operational
+ * ausweist. Ein Audit-/In-Memory-State ohne realen Runtime-Side-Effect darf
+ * niemals als funktionierende Notfallsteuerung dargestellt werden.
  *
  * Backend:
  *   GET  /api/v2/dev/incident/state
@@ -46,6 +46,7 @@ interface StateResponse {
   ok: boolean;
   toggles: ToggleState[];
   limits: Record<IncidentAction, LimitConfig>;
+  operationalActions?: IncidentAction[];
 }
 
 interface ActionMeta {
@@ -96,8 +97,15 @@ export default function IncidentResponse() {
   const [busy, setBusy] = useState(false);
   const toast = useToast();
 
+  // Fail closed for older/partial responses too: absence of an explicit backend
+  // operational allowlist means that no emergency control may be rendered.
+  const operationalActions = state?.operationalActions ?? [];
+  const operationalToggleMeta = TOGGLE_META.filter(meta => operationalActions.includes(meta.action));
+  const operationalOneShotMeta = ONESHOT_META.filter(meta => operationalActions.includes(meta.action));
+  const operationalToggles = state?.toggles.filter(toggle => operationalActions.includes(toggle.action)) ?? [];
+
   const isActive = (action: IncidentAction): ToggleState | undefined =>
-    state?.toggles.find(t => t.action === action);
+    operationalToggles.find(t => t.action === action);
 
   const requestActivate = (meta: ActionMeta): void => {
     const limit = state?.limits[meta.action];
@@ -169,7 +177,7 @@ export default function IncidentResponse() {
     <div className="space-y-gutter">
       <SectionHeader
         title="Incident Response"
-        desc="Notfall-Steuerung: Kill-Switches, Wartungsmodus, Cache- & Backup-Trigger (P2)."
+        desc="Notfall-Steuerung zeigt nur nachweislich an produktive Runtime-Wirkungen gekoppelte Aktionen."
         actions={(
           <Button size="sm" variant="ghost" onClick={() => void reload()} disabled={loading}>
             <RefreshCw className="h-4 w-4 mr-1" /> Aktualisieren
@@ -177,85 +185,109 @@ export default function IncidentResponse() {
         )}
       />
 
-      <Card>
-        <CardHeader>
-          <CardTitle><AlertOctagon className="h-4 w-4 inline mr-1 text-warn" /> Aktive Vorfaelle</CardTitle>
-          <CardDesc>Alle Toggles laufen automatisch nach Limit aus. Manuelle Deaktivierung ist jederzeit moeglich.</CardDesc>
-        </CardHeader>
-        {loading && state === null ? (
-          <div className="space-y-2 px-4 pb-4"><Skeleton className="h-8" /><Skeleton className="h-8" /></div>
-        ) : (state?.toggles.length ?? 0) === 0 ? (
-          <div className="px-4 pb-4 text-sm text-muted">Aktuell keine aktiven Notfall-Toggles.</div>
-        ) : (
-          <ul className="px-4 pb-4 space-y-2">
-            {state?.toggles.map(t => {
-              const meta = TOGGLE_META.find(m => m.action === t.action);
-              return (
-                <li key={t.action} className="flex items-center gap-3 rounded-md border border-warn/30 bg-warn/5 p-3">
-                  <Badge variant="warn" pulse><Clock className="h-3 w-3 inline mr-1" />{fmtRemaining(t.expiresAt)}</Badge>
-                  <div className="flex-1 min-w-0">
-                    <div className="font-medium">{meta?.title ?? t.action}</div>
-                    <div className="text-xs text-muted truncate">Aktiviert {new Date(t.activatedAt).toLocaleString()} · Reason: {t.reason}</div>
-                  </div>
-                  {meta && (
-                    <Button size="sm" variant="outline" onClick={() => requestDeactivate(meta, t)}>
-                      Aufheben
-                    </Button>
-                  )}
-                </li>
-              );
-            })}
-          </ul>
-        )}
-      </Card>
+      {loading && state === null ? (
+        <Card>
+          <div className="space-y-2 p-4"><Skeleton className="h-8" /><Skeleton className="h-8" /></div>
+        </Card>
+      ) : operationalActions.length === 0 ? (
+        <Card>
+          <CardHeader>
+            <CardTitle><AlertOctagon className="h-4 w-4 inline mr-1 text-warn" /> Incident-Aktionen nicht freigegeben</CardTitle>
+            <CardDesc>
+              Die vorhandenen Incident-Definitionen besitzen aktuell keinen durchgaengig verifizierten Produktions-Side-Effect.
+              Sie bleiben deshalb fail-closed deaktiviert, statt einen erfolgreichen Notfalleingriff vorzutäuschen.
+            </CardDesc>
+          </CardHeader>
+        </Card>
+      ) : (
+        <>
+          <Card>
+            <CardHeader>
+              <CardTitle><AlertOctagon className="h-4 w-4 inline mr-1 text-warn" /> Aktive Vorfaelle</CardTitle>
+              <CardDesc>Alle freigegebenen Toggles laufen automatisch nach Limit aus. Manuelle Deaktivierung ist jederzeit moeglich.</CardDesc>
+            </CardHeader>
+            {operationalToggles.length === 0 ? (
+              <div className="px-4 pb-4 text-sm text-muted">Aktuell keine aktiven Notfall-Toggles.</div>
+            ) : (
+              <ul className="px-4 pb-4 space-y-2">
+                {operationalToggles.map(t => {
+                  const meta = operationalToggleMeta.find(m => m.action === t.action);
+                  return (
+                    <li key={t.action} className="flex items-center gap-3 rounded-md border border-warn/30 bg-warn/5 p-3">
+                      <Badge variant="warn" pulse><Clock className="h-3 w-3 inline mr-1" />{fmtRemaining(t.expiresAt)}</Badge>
+                      <div className="flex-1 min-w-0">
+                        <div className="font-medium">{meta?.title ?? t.action}</div>
+                        <div className="text-xs text-muted truncate">Aktiviert {new Date(t.activatedAt).toLocaleString()} · Reason: {t.reason}</div>
+                      </div>
+                      {meta && (
+                        <Button size="sm" variant="outline" onClick={() => requestDeactivate(meta, t)}>
+                          Aufheben
+                        </Button>
+                      )}
+                    </li>
+                  );
+                })}
+              </ul>
+            )}
+          </Card>
 
-      <SectionHeader title="Kill-Switches & Modes" />
-      <div className="grid gap-gutter md:grid-cols-2">
-        {TOGGLE_META.map(meta => {
-          const Icon = meta.icon;
-          const active = isActive(meta.action);
-          return (
-            <Card key={meta.action}>
-              <CardHeader>
-                <CardTitle><Icon className="h-4 w-4 inline mr-1" />{meta.title}</CardTitle>
-                <CardDesc>{meta.description}</CardDesc>
-              </CardHeader>
-              <div className="px-4 pb-4 flex items-center justify-between gap-3">
-                <Badge variant={active ? 'warn' : 'neutral'}>
-                  {active ? `aktiv · ${fmtRemaining(active.expiresAt)}` : 'inaktiv'}
-                </Badge>
-                {active ? (
-                  <Button size="sm" variant="outline" onClick={() => requestDeactivate(meta, active)}>Aufheben</Button>
-                ) : (
-                  <Button size="sm" variant={meta.severity === 'danger' ? 'danger' : 'primary'} onClick={() => requestActivate(meta)}>
-                    Aktivieren
-                  </Button>
-                )}
+          {operationalToggleMeta.length > 0 && (
+            <>
+              <SectionHeader title="Kill-Switches & Modes" />
+              <div className="grid gap-gutter md:grid-cols-2">
+                {operationalToggleMeta.map(meta => {
+                  const Icon = meta.icon;
+                  const active = isActive(meta.action);
+                  return (
+                    <Card key={meta.action}>
+                      <CardHeader>
+                        <CardTitle><Icon className="h-4 w-4 inline mr-1" />{meta.title}</CardTitle>
+                        <CardDesc>{meta.description}</CardDesc>
+                      </CardHeader>
+                      <div className="px-4 pb-4 flex items-center justify-between gap-3">
+                        <Badge variant={active ? 'warn' : 'neutral'}>
+                          {active ? `aktiv · ${fmtRemaining(active.expiresAt)}` : 'inaktiv'}
+                        </Badge>
+                        {active ? (
+                          <Button size="sm" variant="outline" onClick={() => requestDeactivate(meta, active)}>Aufheben</Button>
+                        ) : (
+                          <Button size="sm" variant={meta.severity === 'danger' ? 'danger' : 'primary'} onClick={() => requestActivate(meta)}>
+                            Aktivieren
+                          </Button>
+                        )}
+                      </div>
+                    </Card>
+                  );
+                })}
               </div>
-            </Card>
-          );
-        })}
-      </div>
+            </>
+          )}
 
-      <SectionHeader title="One-Shot-Aktionen" />
-      <div className="grid gap-gutter md:grid-cols-2">
-        {ONESHOT_META.map(meta => {
-          const Icon = meta.icon;
-          return (
-            <Card key={meta.action}>
-              <CardHeader>
-                <CardTitle><Icon className="h-4 w-4 inline mr-1" />{meta.title}</CardTitle>
-                <CardDesc>{meta.description}</CardDesc>
-              </CardHeader>
-              <div className="px-4 pb-4 flex items-center justify-end">
-                <Button size="sm" variant="primary" onClick={() => requestOneShot(meta)}>
-                  <Database className="h-4 w-4 mr-1" /> Ausfuehren
-                </Button>
+          {operationalOneShotMeta.length > 0 && (
+            <>
+              <SectionHeader title="One-Shot-Aktionen" />
+              <div className="grid gap-gutter md:grid-cols-2">
+                {operationalOneShotMeta.map(meta => {
+                  const Icon = meta.icon;
+                  return (
+                    <Card key={meta.action}>
+                      <CardHeader>
+                        <CardTitle><Icon className="h-4 w-4 inline mr-1" />{meta.title}</CardTitle>
+                        <CardDesc>{meta.description}</CardDesc>
+                      </CardHeader>
+                      <div className="px-4 pb-4 flex items-center justify-end">
+                        <Button size="sm" variant="primary" onClick={() => requestOneShot(meta)}>
+                          <Database className="h-4 w-4 mr-1" /> Ausfuehren
+                        </Button>
+                      </div>
+                    </Card>
+                  );
+                })}
               </div>
-            </Card>
-          );
-        })}
-      </div>
+            </>
+          )}
+        </>
+      )}
 
       <StepUpModal
         open={!!pending}
