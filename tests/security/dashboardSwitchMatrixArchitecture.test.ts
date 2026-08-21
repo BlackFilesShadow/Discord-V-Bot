@@ -101,14 +101,18 @@ function switches(): SwitchSource[] {
   return result.sort((a, b) => `${a.file}#${a.component}`.localeCompare(`${b.file}#${b.component}`));
 }
 
+function requireContractValue(value: string | null, message: string): void {
+  if (!value) throw new Error(message);
+}
+
 describe('stage 25 dashboard switch matrix architecture', () => {
   test('inventories every reachable Switch and requires an explicit state contract', () => {
     const inventory = switches();
     expect(inventory.length).toBeGreaterThan(0);
     for (const entry of inventory) {
-      expect(entry.checked, `${entry.file}#${entry.component} missing checked`).toBeTruthy();
-      expect(entry.onChange, `${entry.file}#${entry.component} missing onChange`).toBeTruthy();
-      expect(entry.label || entry.ariaLabel, `${entry.file}#${entry.component} missing accessible name`).toBeTruthy();
+      requireContractValue(entry.checked, `${entry.file}#${entry.component} missing checked`);
+      requireContractValue(entry.onChange, `${entry.file}#${entry.component} missing onChange`);
+      requireContractValue(entry.label || entry.ariaLabel, `${entry.file}#${entry.component} missing accessible name`);
     }
   });
 
