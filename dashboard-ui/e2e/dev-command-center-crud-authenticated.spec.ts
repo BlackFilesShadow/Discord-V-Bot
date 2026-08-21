@@ -230,7 +230,7 @@ test('Command Center XP CRUD bleibt Guild+Level-gescoped', async ({ page }) => {
   expectMutation(stub.writes()[0], 'PATCH', `/api/v2/dev/command-center/xp/${GUILD_ID}`);
   expect(stub.writes()[0].body).toEqual(expect.objectContaining({ messageXpMin: 12, reason: 'XP Konfiguration', reAuth: '123456' }));
 
-  await page.getByPlaceholder('Level').fill('25');
+  await page.getByPlaceholder('Level', { exact: true }).fill('25');
   const levelRoleSelect = page.locator('select').filter({ has: page.locator('option[value="role-1"]') }).last();
   await levelRoleSelect.selectOption('role-1');
   await page.getByRole('button', { name: 'Level-Rolle setzen' }).click();
