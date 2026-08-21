@@ -1,0 +1,67 @@
+{
+  "schemaVersion": 1,
+  "stage": 26,
+  "basedOnMainSha": "d71b21e495da5d309d5776df9d545bce42b0ba8d",
+  "scope": "Explicit classification of dashboard data mutations after stages 23-25. Persistent CRUD, ephemeral CRUD and operational mutation-shaped actions are separated so POST is never treated as synonymous with Create.",
+  "contracts": {
+    "persistentCrud": "Create/read/update/delete or equivalent durable configuration/state changes. Must be scoped, authorized, validated, idempotent where retryable, error-visible and browser-covered.",
+    "ephemeralCrud": "Create/read/delete of bounded temporary/session data. Same auth/scope/error guarantees; lifecycle semantics are explicit.",
+    "operationalAction": "Mutation-shaped command or protected export that does not represent ordinary persisted dashboard CRUD. Still requires auth, step-up where sensitive, idempotency when retryable and browser evidence.",
+    "readOnly": "Any inventory surface not classified below is read-only or local-navigation/state for stage 26. A newly mutation-shaped action must fail the architecture test until explicitly classified."
+  },
+  "persistentCrud": [
+    { "surface": "servers-list", "ops": ["R", "U"], "evidence": ["dashboard-ui/e2e/dashboard-authenticated-page-matrix.spec.ts"] },
+    { "surface": "server-nitrado", "ops": ["C", "R", "U", "D"], "evidence": ["dashboard-ui/e2e/server-nitrado-authenticated-actions.spec.ts", "tests/modules/nitradoCreateRoute.test.ts"] },
+    { "surface": "server-aliases", "ops": ["R", "U"], "evidence": ["dashboard-ui/e2e/server-aliases-authenticated-actions.spec.ts"] },
+    { "surface": "server-permissions", "ops": ["C", "R", "D"], "evidence": ["dashboard-ui/e2e/permissions-authenticated-actions.spec.ts"] },
+    { "surface": "server-tickets", "ops": ["R", "U"], "evidence": ["dashboard-ui/e2e/tickets-authenticated-actions.spec.ts"] },
+    { "surface": "server-factions", "ops": ["C", "R", "U", "D"], "evidence": ["dashboard-ui/e2e/factions-authenticated-actions.spec.ts", "tests/dashboard/factionsApiHardening.test.ts"] },
+    { "surface": "server-welcome", "ops": ["R", "U"], "evidence": ["dashboard-ui/e2e/welcome-goodbye-authenticated-actions.spec.ts"] },
+    { "surface": "server-embeds", "ops": ["C", "R", "U", "D"], "evidence": ["dashboard-ui/e2e/embed-builder-authenticated-viewer.spec.ts", "tests/dashboard/embeds.test.ts"] },
+    { "surface": "server-reaction-embeds", "ops": ["C", "R", "U", "D"], "evidence": ["dashboard-ui/e2e/reaction-embeds-authenticated-viewer.spec.ts", "tests/dashboard/reactionEmbeds.test.ts"] },
+    { "surface": "server-feeds", "ops": ["C", "R", "U", "D"], "evidence": ["dashboard-ui/e2e/feeds-authenticated-viewer.spec.ts", "tests/dashboard/feeds.test.ts"] },
+    { "surface": "server-translate", "ops": ["C", "R", "U", "D"], "evidence": ["dashboard-ui/e2e/translated-posts-authenticated-viewer.spec.ts", "tests/dashboard/translatedPosts.test.ts"] },
+    { "surface": "slot-settings", "ops": ["R", "U"], "evidence": ["dashboard-ui/e2e/settings-authenticated-actions.spec.ts"] },
+    { "surface": "slot-whitelist", "ops": ["C", "R", "U", "D"], "evidence": ["dashboard-ui/e2e/whitelist-authenticated-actions.spec.ts", "tests/security/whitelistWriteGuard.test.ts"] },
+    { "surface": "slot-economy", "ops": ["C", "R", "U", "D"], "evidence": ["dashboard-ui/e2e/economy-authenticated.spec.ts", "dashboard-ui/e2e/economy-config-bank-authenticated.spec.ts"] },
+    { "surface": "slot-links", "ops": ["C", "R", "D"], "evidence": ["dashboard-ui/e2e/economy-links-authenticated.spec.ts", "tests/security/economyLinkServerScope.test.ts"] },
+    { "surface": "slot-killfeed", "ops": ["R", "U"], "evidence": ["dashboard-ui/e2e/killfeed-authenticated.spec.ts"] },
+    { "surface": "bot-admin-admin", "ops": ["C", "R", "U", "D"], "evidence": ["dashboard-ui/e2e/bot-admin-core-actions.spec.ts", "tests/dashboard/botAdmin.test.ts"] },
+    { "surface": "bot-admin-knowledge", "ops": ["C", "R", "U", "D"], "evidence": ["dashboard-ui/e2e/bot-admin-knowledge-scope.spec.ts"] },
+    { "surface": "bot-admin-commands", "ops": ["C", "R", "U", "D"], "evidence": ["dashboard-ui/e2e/bot-admin-core-actions.spec.ts", "tests/dashboard/botAdminCommandCenterSafety.test.ts"] },
+    { "surface": "dev-command-center", "ops": ["C", "R", "U", "D"], "evidence": ["dashboard-ui/e2e/dev-command-center-crud-authenticated.spec.ts", "tests/dashboard/commandCenterInputGuard.test.ts"] }
+  ],
+  "ephemeralCrud": [
+    { "surface": "dev-active-sessions", "ops": ["R", "D"], "evidence": ["dashboard-ui/e2e/dev-sensitive-actions-authenticated.spec.ts", "tests/security/devSessionLifecycle.test.ts"] },
+    { "surface": "dev-xml-validator", "ops": ["C", "R", "D"], "evidence": ["dashboard-ui/e2e/dev-upload-crud-authenticated.spec.ts", "tests/dashboard/devDayzValidator.test.ts"] },
+    { "surface": "dev-json-validator", "ops": ["C", "R", "D"], "evidence": ["dashboard-ui/e2e/dev-upload-crud-authenticated.spec.ts", "tests/dashboard/devDayzValidator.test.ts"] },
+    { "surface": "dev-adm-analysis", "ops": ["C", "R", "D"], "evidence": ["dashboard-ui/e2e/dev-upload-crud-authenticated.spec.ts", "tests/dashboard/devDayzValidator.test.ts"] },
+    { "surface": "dev-rpt-analysis", "ops": ["C", "R", "D"], "evidence": ["dashboard-ui/e2e/dev-upload-crud-authenticated.spec.ts", "tests/dashboard/devDayzValidator.test.ts"] },
+    { "surface": "dev-killfeed", "ops": ["C", "R", "D"], "evidence": ["dashboard-ui/e2e/dev-upload-crud-authenticated.spec.ts", "tests/dashboard/devDayzValidator.test.ts"] },
+    { "surface": "dev-player-tracking", "ops": ["C", "R", "D"], "evidence": ["dashboard-ui/e2e/dev-upload-crud-authenticated.spec.ts", "tests/dashboard/devDayzValidator.test.ts"] },
+    { "surface": "dev-raid-analysis", "ops": ["C", "R", "D"], "evidence": ["dashboard-ui/e2e/dev-upload-crud-authenticated.spec.ts", "tests/dashboard/devDayzValidator.test.ts"] },
+    { "surface": "dev-base-proximity", "ops": ["C", "R", "D"], "evidence": ["dashboard-ui/e2e/dev-upload-crud-authenticated.spec.ts", "tests/dashboard/devDayzValidator.test.ts"] },
+    { "surface": "dev-movement-heatmap", "ops": ["C", "R", "D"], "evidence": ["dashboard-ui/e2e/dev-upload-crud-authenticated.spec.ts", "tests/dashboard/devDayzValidator.test.ts"] },
+    { "surface": "dev-suspicious", "ops": ["C", "R", "D"], "evidence": ["dashboard-ui/e2e/dev-upload-crud-authenticated.spec.ts", "tests/dashboard/devDayzValidator.test.ts"] },
+    { "surface": "dev-faction-activity", "ops": ["C", "R", "D"], "evidence": ["dashboard-ui/e2e/dev-upload-crud-authenticated.spec.ts", "tests/dashboard/devDayzValidator.test.ts"] },
+    { "surface": "dev-vehicle-tracking", "ops": ["C", "R", "D"], "evidence": ["dashboard-ui/e2e/dev-upload-crud-authenticated.spec.ts", "tests/dashboard/devDayzValidator.test.ts"] }
+  ],
+  "operationalActions": [
+    { "surface": "dev-shell", "evidence": ["dashboard-ui/e2e/dev-shell-authenticated.spec.ts"] },
+    { "surface": "dev-incident-response", "evidence": ["dashboard-ui/e2e/dev-sensitive-actions-authenticated.spec.ts", "tests/security/incidentResponse.test.ts"] },
+    { "surface": "dev-audit-logs", "evidence": ["dashboard-ui/e2e/dev-observability-authenticated.spec.ts", "tests/dashboard/devObservabilityContract.test.ts"] },
+    { "surface": "dev-nitrado-mirror", "evidence": ["dashboard-ui/e2e/dev-nitrado-mirror-authenticated.spec.ts", "tests/dashboard/devNitradoMirrorContract.test.ts"] },
+    { "surface": "dev-debug-tools", "evidence": ["dashboard-ui/e2e/dev-sensitive-actions-authenticated.spec.ts", "tests/dashboard/devDiagnosticsStubs.test.ts"] },
+    { "surface": "dev-secure-export", "evidence": ["dashboard-ui/e2e/dev-sensitive-actions-authenticated.spec.ts", "tests/dashboard/devSecureExportFlow.test.ts"] }
+  ],
+  "transportExceptions": [
+    {
+      "file": "dashboard-ui/src/components/Shell.tsx",
+      "reason": "Session logout, not dashboard data CRUD; direct fetch intentionally avoids the JSON data client while retaining credentials."
+    },
+    {
+      "file": "dashboard-ui/src/pages/dev/SecureDevExport.tsx",
+      "reason": "Streaming/download response requires raw fetch; POST explicitly sends credentials, Content-Type and X-Idempotency-Key."
+    }
+  ]
+}
