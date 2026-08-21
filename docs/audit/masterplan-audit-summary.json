@@ -1,14 +1,14 @@
 {
-  "generatedAt": "2026-08-21T22:24:35.9139662Z",
+  "generatedAt": "2026-08-21T23:12:35.289Z",
   "auditFreezeSha": "48bbcfface38068bc71ad7bcc5c1dd87616da514",
-  "finalAuditedSha": "48bbcfface38068bc71ad7bcc5c1dd87616da514",
+  "finalAuditedSha": "cf9d8e2530686ba8cef2063f6d5c726485a67f81",
   "worktreeDirty": true,
   "stagesTotal": 67,
   "VERIFIED": 20,
   "PARTIAL": 46,
   "FAILED": 0,
   "BLOCKED": 1,
-  "score": 9,
+  "score": 14,
   "productionReady": false,
   "cli": {
     "jestLocal": "GREEN 436 passed, 3 skipped (DB integration without docker)",
@@ -49,10 +49,9 @@
     "F-S4-13",
     "F-S4-14"
   ],
-  "notes": [
-    "Stage 20 production AI tool runtime wired fail-closed (READ_ONLY tools only).",
-    "Local jest green without Docker; DB integrations skip unless RUN_DB_TESTS=1 + live Postgres.",
-    "No production credentials — Stage 67 remains BLOCKED.",
-    "Do not claim 100/100."
-  ]
+  "notes": "Wave A dashboard 27-35 runtime SPA evidence; CI Playwright required",
+  "verified": 29,
+  "partial": 37,
+  "failed": 0,
+  "blocked": 1
 }

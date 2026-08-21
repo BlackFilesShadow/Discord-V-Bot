@@ -1,7 +1,7 @@
 import { useState, useEffect } from 'react';
 import { useParams, useSearchParams } from 'react-router-dom';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
-import { api } from '@/lib/api';
+import { api, describeApiError } from '@/lib/api';
 import { Shell } from '@/components/Shell';
 import { Card, CardHeader, CardTitle } from '@/components/ui/Card';
 import { Badge } from '@/components/ui/Badge';
@@ -11,6 +11,7 @@ import { Switch } from '@/components/ui/Switch';
 import { Select } from '@/components/ui/Select';
 import { EmojiPicker } from '@/components/ui/EmojiPicker';
 import { useGuildLiveUpdates } from '@/lib/useGuildLiveUpdates';
+import { useToast } from '@/lib/toast';
 import { VirtualAccountsPanel } from '@/components/economy/VirtualAccountsPanel';
 import { LotteryPanel } from '@/components/economy/LotteryPanel';
 import { BlackMarketPanel } from '@/components/economy/BlackMarketPanel';
@@ -76,6 +77,7 @@ export default function ServerSlot() {
   const { guildId, slot } = useParams<{ guildId: string; slot: string }>();
   const [searchParams, setSearchParams] = useSearchParams();
   const qc = useQueryClient();
+  const toast = useToast();
   const initialTab = ((): Tab => {
     const t = searchParams.get('tab');
     if (t === 'settings' || t === 'whitelist' || t === 'economy' || t === 'links' || t === 'killfeed') return t;
@@ -104,7 +106,14 @@ export default function ServerSlot() {
   const updateSettings = useMutation({
     mutationFn: (patch: Partial<ServerSettingsState>) =>
       api.patch(`/api/v2/guilds/${guildId}/dashboard/server/${slot}/settings`, patch),
-    onSuccess: () => qc.invalidateQueries({ queryKey: ['settings', guildId, slot] }),
+    onSuccess: () => {
+      void qc.invalidateQueries({ queryKey: ['settings', guildId, slot] });
+      toast.push({ variant: 'success', title: 'Gespeichert', desc: 'Server-Einstellungen aktualisiert.' });
+    },
+    onError: (err) => {
+      const described = describeApiError(err);
+      toast.push({ variant: 'danger', title: described.title, desc: described.desc });
+    },
   });
 
   const economy = useQuery({
@@ -199,22 +208,35 @@ export default function ServerSlot() {
           <Card>
             <CardHeader><CardTitle>Server-Toggles</CardTitle></CardHeader>
             {settings.isLoading && <p className="text-muted">Lade…</p>}
+            {settings.isError && (
+              <div role="alert" className="text-sm text-danger" data-testid="settings-load-error">
+                {describeApiError(settings.error).desc}
+              </div>
+            )}
+            {updateSettings.isError && (
+              <div role="alert" className="text-sm text-danger mb-3" data-testid="settings-save-error">
+                {describeApiError(updateSettings.error).desc}
+              </div>
+            )}
             {settings.data && (
               <div className="space-y-4">
                 <Switch
                   checked={settings.data.whitelistActive}
                   onChange={v => updateSettings.mutate({ whitelistActive: v })}
                   label="Whitelist aktiv"
+                  disabled={updateSettings.isPending}
                 />
                 <Switch
                   checked={settings.data.economyActive}
                   onChange={v => updateSettings.mutate({ economyActive: v })}
                   label="Economy aktiv"
+                  disabled={updateSettings.isPending}
                 />
                 <Switch
                   checked={settings.data.permaOnly}
                   onChange={v => updateSettings.mutate({ permaOnly: v })}
                   label="Perma-Only Modus"
+                  disabled={updateSettings.isPending}
                 />
               </div>
             )}
