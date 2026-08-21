@@ -1,0 +1,18 @@
+{
+  "schemaVersion": 1,
+  "stage": 43,
+  "basedOnMainSha": "2076eee1",
+  "scope": "Session fixation/rotation/expiry/logout/revoke, OAuth state/callback/redirect, cookie flags, cross-user isolation.",
+  "contracts": {
+    "oauth": "state/nonce/PKCE + session.save before redirect",
+    "revoke": "SESSION_REVOKED destroys cookie",
+    "logout": "isActive false + destroy",
+    "cookies": "httpOnly + sameSite lax + secure in production"
+  },
+  "cases": [
+    { "id": "oauth-state", "status": "verified" },
+    { "id": "session-save", "status": "verified" },
+    { "id": "logout-revoke", "status": "verified" },
+    { "id": "api-revoked-session", "status": "verified" }
+  ]
+}
