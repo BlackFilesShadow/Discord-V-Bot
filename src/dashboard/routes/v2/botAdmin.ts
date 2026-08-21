@@ -1,5 +1,6 @@
+/* eslint-disable local/no-unscoped-prisma-query -- Stage 64: intentional cross-tenant system/admin surface (authZ outside Prisma where). */
 /**
- * Bot-Admin-Bereich (Dashboard) — GLOBALER, passwortgeschuetzter Support-Bereich.
+ * Bot-Admin-Bereich (Dashboard) â€” GLOBALER, passwortgeschuetzter Support-Bereich.
  *
  * Analog zum DEV-Bereich, aber als eigene "Bot Admin"-Berechtigung:
  *   - Zugang ueber Passwort-Login (BOT_ADMIN_PASSWORD, Default "ASH").
@@ -59,12 +60,12 @@ const MAX_BROADCAST = 1000;
 const MAX_EXPORT_ROWS = 5000;
 const SESSION_TTL_MS = 60 * 60 * 1000; // 1h
 
-// ── Login-Gate (Middleware-Shortcut) ─────────────────────────────────────
+// â”€â”€ Login-Gate (Middleware-Shortcut) â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 const ba = requireBotAdmin;
 
-// ════════════════════════════════════════════════════════════════════════
+// â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
 // AUTH: Passwort-Login -> BotAdminSession
-// ════════════════════════════════════════════════════════════════════════
+// â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
 
 // Brute-Force-Tracking (in-memory, pro userDiscordId+IP).
 const MAX_FAILS = 5;
@@ -99,13 +100,13 @@ function resolveBotAdminPassword(): string | null {
   if (process.env.NODE_ENV === 'production') {
     if (!warnedAboutMissingProdPassword) {
       warnedAboutMissingProdPassword = true;
-      logger.error('[BOTADMIN] BOT_ADMIN_PASSWORD nicht gesetzt in Produktion — Login fail-closed deaktiviert. Bitte BOT_ADMIN_PASSWORD setzen.');
+      logger.error('[BOTADMIN] BOT_ADMIN_PASSWORD nicht gesetzt in Produktion â€” Login fail-closed deaktiviert. Bitte BOT_ADMIN_PASSWORD setzen.');
     }
     return null;
   }
   if (!warnedAboutDefaultPassword) {
     warnedAboutDefaultPassword = true;
-    logger.warn('[BOTADMIN] BOT_ADMIN_PASSWORD nicht gesetzt — Default-Passwort "ASH" aktiv (nur Entwicklung). Fuer Produktion BOT_ADMIN_PASSWORD setzen.');
+    logger.warn('[BOTADMIN] BOT_ADMIN_PASSWORD nicht gesetzt â€” Default-Passwort "ASH" aktiv (nur Entwicklung). Fuer Produktion BOT_ADMIN_PASSWORD setzen.');
   }
   return 'ASH';
 }
@@ -187,7 +188,7 @@ botAdminRouter.get('/guilds', ba, (_req, res) => {
   res.json({ items });
 });
 
-// ── Helfer ────────────────────────────────────────────────────────────────
+// â”€â”€ Helfer â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 function audit(
   req: Request,
   action: string,
@@ -268,9 +269,9 @@ async function getBotConfig<T>(key: string, fallback: T): Promise<T> {
   return row ? (row.value as unknown as T) : fallback;
 }
 
-// ════════════════════════════════════════════════════════════════════════
-// ÜBERSICHT
-// ════════════════════════════════════════════════════════════════════════
+// â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
+// ÃœBERSICHT
+// â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
 botAdminRouter.get('/overview', ba, async (_req, res) => {
   try {
     const since = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000);
@@ -312,13 +313,13 @@ botAdminRouter.get('/overview', ba, async (_req, res) => {
     });
   } catch (e) {
     logger.error('botAdmin overview', { err: (e as Error).message });
-    res.status(500).json({ error: 'Übersicht konnte nicht geladen werden.' });
+    res.status(500).json({ error: 'Ãœbersicht konnte nicht geladen werden.' });
   }
 });
 
-// ════════════════════════════════════════════════════════════════════════
+// â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
 // APPEALS
-// ════════════════════════════════════════════════════════════════════════
+// â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
 botAdminRouter.get('/appeals', ba, async (req, res) => {
   const pageSpec = parsePageOrReject(req, res);
   if (!pageSpec) return;
@@ -366,9 +367,9 @@ botAdminRouter.post('/appeals/:id/decision', ba, async (req, res) => {
   res.json(updated);
 });
 
-// ════════════════════════════════════════════════════════════════════════
+// â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
 // FEEDBACK
-// ════════════════════════════════════════════════════════════════════════
+// â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
 botAdminRouter.get('/feedback', ba, async (req, res) => {
   const pageSpec = parsePageOrReject(req, res);
   if (!pageSpec) return;
@@ -392,7 +393,7 @@ botAdminRouter.get('/feedback/:id', ba, async (req, res) => {
 botAdminRouter.patch('/feedback/:id', ba, async (req, res) => {
   const status = String(req.body?.status ?? '').toUpperCase();
   const adminNote = typeof req.body?.adminNote === 'string' ? req.body.adminNote.slice(0, 2000) : null;
-  if (!['OPEN', 'IN_REVIEW', 'RESOLVED', 'WONTFIX'].includes(status)) { res.status(400).json({ error: 'Ungültiger status.' }); return; }
+  if (!['OPEN', 'IN_REVIEW', 'RESOLVED', 'WONTFIX'].includes(status)) { res.status(400).json({ error: 'UngÃ¼ltiger status.' }); return; }
   const fb = await prisma.feedback.findUnique({ where: { id: String(req.params.id) } });
   if (!fb) { res.status(404).json({ error: 'Feedback nicht gefunden.' }); return; }
   const updated = await prisma.feedback.update({
@@ -403,9 +404,9 @@ botAdminRouter.patch('/feedback/:id', ba, async (req, res) => {
   res.json(updated);
 });
 
-// ════════════════════════════════════════════════════════════════════════
+// â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
 // BROADCAST  (Massen-DM)
-// ════════════════════════════════════════════════════════════════════════
+// â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
 botAdminRouter.get('/broadcast', ba, async (_req, res) => {
   const recent = await prisma.auditLog.findMany({
     where: { action: 'BOTADMIN_BROADCAST_SENT' }, orderBy: STABLE_CREATED_DESC, take: 10,
@@ -418,7 +419,7 @@ botAdminRouter.post('/broadcast', ba, async (req, res) => {
   const target = String(req.body?.target ?? '').toUpperCase();
   const message = typeof req.body?.message === 'string' ? req.body.message.trim() : '';
   const dryRun = req.body?.dryRun === true;
-  if (!['ALL', 'MANUFACTURER', 'ADMIN', 'MODERATOR'].includes(target)) { res.status(400).json({ error: 'Ungültige Zielgruppe.' }); return; }
+  if (!['ALL', 'MANUFACTURER', 'ADMIN', 'MODERATOR'].includes(target)) { res.status(400).json({ error: 'UngÃ¼ltige Zielgruppe.' }); return; }
   if (message.length < 1 || message.length > 1900) { res.status(400).json({ error: 'Nachricht 1..1900 Zeichen.' }); return; }
 
   const where: Record<string, unknown> = { status: 'ACTIVE' };
@@ -430,7 +431,7 @@ botAdminRouter.post('/broadcast', ba, async (req, res) => {
   if (dryRun) { res.json({ dryRun: true, recipients: users.length, target }); return; }
 
   const client = tryGetDashboardClient();
-  if (!client) { res.status(503).json({ error: 'Discord-Client nicht verfügbar.' }); return; }
+  if (!client) { res.status(503).json({ error: 'Discord-Client nicht verfÃ¼gbar.' }); return; }
 
   let sent = 0, failed = 0;
   for (const u of users) {
@@ -445,9 +446,9 @@ botAdminRouter.post('/broadcast', ba, async (req, res) => {
   res.json({ target, recipients: users.length, sent, failed });
 });
 
-// ════════════════════════════════════════════════════════════════════════
+// â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
 // UPLOAD-STEUERUNG  (globaler Schalter)
-// ════════════════════════════════════════════════════════════════════════
+// â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
 botAdminRouter.get('/upload', ba, async (_req, res) => {
   const [enabled, maxSize, allowedTypes] = await Promise.all([
     getBotConfig<boolean>('upload.enabled', true),
@@ -468,9 +469,9 @@ botAdminRouter.post('/upload/toggle', ba, async (req, res) => {
   res.json({ enabled: enable });
 });
 
-// ════════════════════════════════════════════════════════════════════════
+// â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
 // EXPORT
-// ════════════════════════════════════════════════════════════════════════
+// â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
 botAdminRouter.get('/export', ba, async (_req, res) => {
   res.json({ types: ['packages', 'logs', 'users'] });
 });
@@ -492,9 +493,9 @@ botAdminRouter.post('/export', ba, async (req, res) => {
   res.json({ type, rows: data.length, data });
 });
 
-// ════════════════════════════════════════════════════════════════════════
+// â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
 // VALIDIERUNG
-// ════════════════════════════════════════════════════════════════════════
+// â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
 botAdminRouter.get('/validate', ba, async (req, res) => {
   const pageSpec = parsePageOrReject(req, res);
   if (!pageSpec) return;
@@ -527,9 +528,9 @@ botAdminRouter.post('/validate', ba, async (req, res) => {
   }
 });
 
-// ════════════════════════════════════════════════════════════════════════
+// â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
 // PAKETE
-// ════════════════════════════════════════════════════════════════════════
+// â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
 botAdminRouter.get('/packages', ba, async (req, res) => {
   const pageSpec = parsePageOrReject(req, res);
   if (!pageSpec) return;
@@ -573,7 +574,7 @@ botAdminRouter.post('/packages/:id/restore', ba, async (req, res) => {
   res.json({ ...updated, totalSize: updated.totalSize.toString() });
 });
 
-// Loeschen (Soft-Delete; ?hard=true entfernt DB-Datensatz endgueltig — UI verlangt Confirm)
+// Loeschen (Soft-Delete; ?hard=true entfernt DB-Datensatz endgueltig â€” UI verlangt Confirm)
 botAdminRouter.delete('/packages/:id', ba, async (req, res) => {
   const hard = req.query.hard === 'true';
   const pkg = await prisma.package.findUnique({ where: { id: String(req.params.id) } });
@@ -589,9 +590,9 @@ botAdminRouter.delete('/packages/:id', ba, async (req, res) => {
   res.json({ deleted: true, hard: false });
 });
 
-// ════════════════════════════════════════════════════════════════════════
+// â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
 // NUTZER
-// ════════════════════════════════════════════════════════════════════════
+// â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
 botAdminRouter.get('/users', ba, async (req, res) => {
   const pageSpec = parsePageOrReject(req, res);
   if (!pageSpec) return;
@@ -641,12 +642,12 @@ botAdminRouter.post('/users/:id/manufacturer', ba, async (req, res) => {
     : await denyManufacturer(user.discordId, actor(req), note);
   if (!result.success) { res.status(400).json({ error: result.message }); return; }
   audit(req, 'BOTADMIN_USER_MANUFACTURER', { decision }, { category: 'REGISTRATION', targetUserId: user.id });
-  // Bei Approve enthaelt result ein Einmal-Passwort (OTP) — bewusst EINMALIG an den Admin
+  // Bei Approve enthaelt result ein Einmal-Passwort (OTP) â€” bewusst EINMALIG an den Admin
   // zurueckgegeben. Kein dauerhaftes Secret.
   res.json({ success: true, message: result.message, otp: decision === 'APPROVE' ? (result as { otp?: string }).otp : undefined });
 });
 
-// Passwort-Reset — OTP wird EINMALIG zurueckgegeben (UI verlangt Confirm).
+// Passwort-Reset â€” OTP wird EINMALIG zurueckgegeben (UI verlangt Confirm).
 botAdminRouter.post('/users/:id/reset-password', ba, async (req, res) => {
   const expiryMinutes = Math.min(1440, Math.max(5, parseInt(String(req.body?.expiryMinutes ?? 30), 10) || 30));
   const user = await prisma.user.findUnique({ where: { id: String(req.params.id) } });
@@ -660,9 +661,9 @@ botAdminRouter.post('/users/:id/reset-password', ba, async (req, res) => {
   res.json({ success: true, otp, expiresAt });
 });
 
-// ════════════════════════════════════════════════════════════════════════
+// â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
 // TICKETS  (Bot-Support-Tickets)
-// ════════════════════════════════════════════════════════════════════════
+// â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
 botAdminRouter.get('/tickets', ba, async (req, res) => {
   const pageSpec = parsePageOrReject(req, res);
   if (!pageSpec) return;
@@ -686,16 +687,16 @@ botAdminRouter.post('/tickets/:id/close', ba, async (req, res) => {
   const ticket = await prisma.ticket.findUnique({ where: { id: String(req.params.id) } });
   if (!ticket) { res.status(404).json({ error: 'Ticket nicht gefunden.' }); return; }
   const client = tryGetDashboardClient();
-  if (!client) { res.status(503).json({ error: 'Discord-Client nicht verfügbar.' }); return; }
+  if (!client) { res.status(503).json({ error: 'Discord-Client nicht verfÃ¼gbar.' }); return; }
   const result = await closeTicket(ticket.id, actor(req), client);
   if (!result.success) { res.status(400).json({ error: result.message }); return; }
   audit(req, 'BOTADMIN_TICKET_CLOSE', { ticketId: ticket.id, ticketNumber: ticket.ticketNumber }, { category: 'TICKET' });
   res.json({ success: true, message: result.message });
 });
 
-// ════════════════════════════════════════════════════════════════════════
-// SELFROLES  (guild-gebunden — guildId per Query/Body)
-// ════════════════════════════════════════════════════════════════════════
+// â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
+// SELFROLES  (guild-gebunden â€” guildId per Query/Body)
+// â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
 botAdminRouter.get('/selfroles', ba, async (req, res) => {
   const guildId = reqGuildId(req, res); if (!guildId) return;
   const menus = await prisma.selfRoleMenu.findMany({ where: { guildId }, orderBy: STABLE_CREATED_DESC, include: { options: { orderBy: { position: 'asc' } } } });
@@ -708,7 +709,7 @@ botAdminRouter.post('/selfroles', ba, async (req, res) => {
   const title = typeof req.body?.title === 'string' ? req.body.title.trim() : '';
   const description = typeof req.body?.description === 'string' ? req.body.description.slice(0, 2000) : null;
   const mode = req.body?.mode === 'SINGLE' ? 'SINGLE' : 'MULTI';
-  if (!SNOWFLAKE_RE.test(channelId)) { res.status(400).json({ error: 'Ungültige channelId.' }); return; }
+  if (!SNOWFLAKE_RE.test(channelId)) { res.status(400).json({ error: 'UngÃ¼ltige channelId.' }); return; }
   if (title.length < 1 || title.length > 120) { res.status(400).json({ error: 'title 1..120 Zeichen.' }); return; }
   const menu = await prisma.selfRoleMenu.create({ data: { guildId, channelId, title, description, mode, createdBy: actor(req) } });
   audit(req, 'BOTADMIN_SELFROLE_CREATE', { menuId: menu.id, channelId }, { category: 'ROLE', channelId, guildId });
@@ -718,12 +719,12 @@ botAdminRouter.post('/selfroles', ba, async (req, res) => {
 botAdminRouter.post('/selfroles/:id/options', ba, async (req, res) => {
   const guildId = reqGuildId(req, res); if (!guildId) return;
   const menu = await prisma.selfRoleMenu.findFirst({ where: { id: String(req.params.id), guildId } });
-  if (!menu) { res.status(404).json({ error: 'Menü nicht gefunden.' }); return; }
+  if (!menu) { res.status(404).json({ error: 'MenÃ¼ nicht gefunden.' }); return; }
   const roleId = String(req.body?.roleId ?? '');
   const label = typeof req.body?.label === 'string' ? req.body.label.trim() : '';
   const emoji = typeof req.body?.emoji === 'string' ? req.body.emoji.slice(0, 64) : null;
   const description = typeof req.body?.description === 'string' ? req.body.description.slice(0, 100) : null;
-  if (!SNOWFLAKE_RE.test(roleId)) { res.status(400).json({ error: 'Ungültige roleId.' }); return; }
+  if (!SNOWFLAKE_RE.test(roleId)) { res.status(400).json({ error: 'UngÃ¼ltige roleId.' }); return; }
   if (roleId === guildId) { res.status(400).json({ error: '@everyone kann nicht als Selfrole verwendet werden.' }); return; }
   if (label.length < 1 || label.length > 80) { res.status(400).json({ error: 'label 1..80 Zeichen.' }); return; }
   const client = tryGetDashboardClient();
@@ -741,7 +742,7 @@ botAdminRouter.post('/selfroles/:id/options', ba, async (req, res) => {
     audit(req, 'BOTADMIN_SELFROLE_OPTION_ADD', { menuId: menu.id, roleId }, { category: 'ROLE', guildId });
     res.status(201).json(opt);
   } catch (e) {
-    if ((e as { code?: string }).code === 'P2002') { res.status(409).json({ error: 'Diese Rolle ist bereits im Menü.' }); return; }
+    if ((e as { code?: string }).code === 'P2002') { res.status(409).json({ error: 'Diese Rolle ist bereits im MenÃ¼.' }); return; }
     throw e;
   }
 });
@@ -749,7 +750,7 @@ botAdminRouter.post('/selfroles/:id/options', ba, async (req, res) => {
 botAdminRouter.delete('/selfroles/:id/options/:optId', ba, async (req, res) => {
   const guildId = reqGuildId(req, res); if (!guildId) return;
   const menu = await prisma.selfRoleMenu.findFirst({ where: { id: String(req.params.id), guildId } });
-  if (!menu) { res.status(404).json({ error: 'Menü nicht gefunden.' }); return; }
+  if (!menu) { res.status(404).json({ error: 'MenÃ¼ nicht gefunden.' }); return; }
   await prisma.selfRoleOption.deleteMany({ where: { id: String(req.params.optId), menuId: menu.id } });
   audit(req, 'BOTADMIN_SELFROLE_OPTION_REMOVE', { menuId: menu.id, optionId: String(req.params.optId) }, { category: 'ROLE', guildId });
   res.json({ deleted: true });
@@ -758,9 +759,9 @@ botAdminRouter.delete('/selfroles/:id/options/:optId', ba, async (req, res) => {
 botAdminRouter.post('/selfroles/:id/post', ba, async (req, res) => {
   const guildId = reqGuildId(req, res); if (!guildId) return;
   const menuRow = await prisma.selfRoleMenu.findFirst({ where: { id: String(req.params.id), guildId } });
-  if (!menuRow) { res.status(404).json({ error: 'Menü nicht gefunden.' }); return; }
+  if (!menuRow) { res.status(404).json({ error: 'MenÃ¼ nicht gefunden.' }); return; }
   const full = await getMenuFull(menuRow.id);
-  if (!full || full.options.length === 0) { res.status(400).json({ error: 'Menü hat keine Optionen.' }); return; }
+  if (!full || full.options.length === 0) { res.status(400).json({ error: 'MenÃ¼ hat keine Optionen.' }); return; }
   const client = tryGetDashboardClient();
   const guild = client?.guilds.cache.get(guildId);
   const channel = guild?.channels.cache.get(menuRow.channelId);
@@ -773,7 +774,7 @@ botAdminRouter.post('/selfroles/:id/post', ba, async (req, res) => {
 botAdminRouter.post('/selfroles/:id/toggle', ba, async (req, res) => {
   const guildId = reqGuildId(req, res); if (!guildId) return;
   const menu = await prisma.selfRoleMenu.findFirst({ where: { id: String(req.params.id), guildId } });
-  if (!menu) { res.status(404).json({ error: 'Menü nicht gefunden.' }); return; }
+  if (!menu) { res.status(404).json({ error: 'MenÃ¼ nicht gefunden.' }); return; }
   const updated = await prisma.selfRoleMenu.update({ where: { id: menu.id }, data: { isActive: !menu.isActive } });
   audit(req, 'BOTADMIN_SELFROLE_TOGGLE', { menuId: menu.id, isActive: updated.isActive }, { category: 'ROLE', guildId });
   res.json({ id: updated.id, isActive: updated.isActive });
@@ -782,15 +783,15 @@ botAdminRouter.post('/selfroles/:id/toggle', ba, async (req, res) => {
 botAdminRouter.delete('/selfroles/:id', ba, async (req, res) => {
   const guildId = reqGuildId(req, res); if (!guildId) return;
   const menu = await prisma.selfRoleMenu.findFirst({ where: { id: String(req.params.id), guildId } });
-  if (!menu) { res.status(404).json({ error: 'Menü nicht gefunden.' }); return; }
+  if (!menu) { res.status(404).json({ error: 'MenÃ¼ nicht gefunden.' }); return; }
   await prisma.selfRoleMenu.delete({ where: { id: menu.id } });
   audit(req, 'BOTADMIN_SELFROLE_DELETE', { menuId: menu.id }, { category: 'ROLE', guildId });
   res.json({ deleted: true });
 });
 
-// ════════════════════════════════════════════════════════════════════════
-// WISSENSBANK  (guild-gebunden — AI-Knowledge-Snippets + Persona/Brief)
-// ════════════════════════════════════════════════════════════════════════
+// â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
+// WISSENSBANK  (guild-gebunden â€” AI-Knowledge-Snippets + Persona/Brief)
+// â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
 botAdminRouter.get('/knowledge', ba, async (req, res) => {
   const guildId = reqGuildId(req, res); if (!guildId) return;
   try {
@@ -896,9 +897,9 @@ botAdminRouter.post('/knowledge/brief/regenerate', ba, async (req, res) => {
   res.json({ brief });
 });
 
-// ════════════════════════════════════════════════════════════════════════
+// â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
 // FEEDS  (guild-gebunden)
-// ════════════════════════════════════════════════════════════════════════
+// â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
 botAdminRouter.get('/feeds', ba, async (req, res) => {
   const guildId = reqGuildId(req, res); if (!guildId) return;
   const feeds = await prisma.feed.findMany({ where: { guildId }, orderBy: STABLE_CREATED_DESC });
@@ -914,15 +915,15 @@ botAdminRouter.post('/feeds', ba, async (req, res) => {
   const channelId = String(req.body?.channelId ?? '');
   const interval = Math.min(86400, Math.max(60, parseInt(String(req.body?.interval ?? 300), 10) || 300));
   if (name.length < 1 || name.length > 100) { res.status(400).json({ error: 'name 1..100 Zeichen.' }); return; }
-  if (!['RSS', 'TWITCH', 'TWITTER', 'STEAM', 'NEWS', 'WEBHOOK', 'CUSTOM'].includes(feedType)) { res.status(400).json({ error: 'Ungültiger feedType.' }); return; }
-  if (!SNOWFLAKE_RE.test(channelId)) { res.status(400).json({ error: 'Ungültige channelId.' }); return; }
-  if (!url || url.length > 2000) { res.status(400).json({ error: 'Ungültige url.' }); return; }
+  if (!['RSS', 'TWITCH', 'TWITTER', 'STEAM', 'NEWS', 'WEBHOOK', 'CUSTOM'].includes(feedType)) { res.status(400).json({ error: 'UngÃ¼ltiger feedType.' }); return; }
+  if (!SNOWFLAKE_RE.test(channelId)) { res.status(400).json({ error: 'UngÃ¼ltige channelId.' }); return; }
+  if (!url || url.length > 2000) { res.status(400).json({ error: 'UngÃ¼ltige url.' }); return; }
   // SSRF-Schutz (analog feeds.ts): URL-basierte Quellen duerfen nur http(s) und
   // keine lokalen/privaten Hosts sein. Name-/ID-basierte Typen (TWITCH/STEAM)
   // enthalten kein Schema und bleiben unberuehrt.
   if (url.includes('://')) {
     let parsed: URL;
-    try { parsed = new URL(url); } catch { res.status(400).json({ error: 'Ungültige url.' }); return; }
+    try { parsed = new URL(url); } catch { res.status(400).json({ error: 'UngÃ¼ltige url.' }); return; }
     if (!['http:', 'https:'].includes(parsed.protocol)) {
       res.status(400).json({ error: 'Nur http:// oder https:// URLs erlaubt.' }); return;
     }
@@ -953,9 +954,9 @@ botAdminRouter.delete('/feeds/:id', ba, async (req, res) => {
   res.json({ deleted: true });
 });
 
-// ════════════════════════════════════════════════════════════════════════
-// ÜBERSETZUNGEN  (guild-gebunden)
-// ════════════════════════════════════════════════════════════════════════
+// â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
+// ÃœBERSETZUNGEN  (guild-gebunden)
+// â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
 const LANGS = ['de', 'en', 'fr', 'ar', 'ko', 'es', 'it', 'pt', 'ru', 'tr'];
 
 botAdminRouter.get('/translate', ba, async (req, res) => {
@@ -977,10 +978,10 @@ botAdminRouter.post('/translate', ba, async (req, res) => {
   const channelId = String(req.body?.channelId ?? '');
   const customTitle = typeof req.body?.customTitle === 'string' ? req.body.customTitle.slice(0, 200) : null;
   if (sourceText.length < 1 || sourceText.length > 4000) { res.status(400).json({ error: 'sourceText 1..4000 Zeichen.' }); return; }
-  if (!LANGS.includes(targetLang)) { res.status(400).json({ error: 'Ungültige Zielsprache.' }); return; }
-  if (!SNOWFLAKE_RE.test(channelId)) { res.status(400).json({ error: 'Ungültige channelId.' }); return; }
+  if (!LANGS.includes(targetLang)) { res.status(400).json({ error: 'UngÃ¼ltige Zielsprache.' }); return; }
+  if (!SNOWFLAKE_RE.test(channelId)) { res.status(400).json({ error: 'UngÃ¼ltige channelId.' }); return; }
   const translated = await translate(sourceText, targetLang);
-  if (!translated) { res.status(502).json({ error: 'Übersetzung fehlgeschlagen (AI nicht verfügbar).' }); return; }
+  if (!translated) { res.status(502).json({ error: 'Ãœbersetzung fehlgeschlagen (AI nicht verfÃ¼gbar).' }); return; }
   const post = await prisma.translatedPost.create({
     data: { guildId, channelId, createdBy: actor(req), sourceText, sourceLang: 'auto', targetLang, translatedText: translated, customTitle, mode: 'now' },
   });
@@ -997,9 +998,9 @@ botAdminRouter.delete('/translate/:id', ba, async (req, res) => {
   res.json({ deleted: true });
 });
 
-// ════════════════════════════════════════════════════════════════════════
+// â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
 // XP-SYSTEM  (XpConfig global; LevelRole guild-gebunden)
-// ════════════════════════════════════════════════════════════════════════
+// â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
 async function getOrCreateXpConfig() {
   const existing = await prisma.xpConfig.findFirst();
   if (existing) return existing;
@@ -1039,7 +1040,7 @@ botAdminRouter.patch('/xp', ba, async (req, res) => {
   if (req.body?.isActive !== undefined) data.isActive = req.body.isActive === true;
   if (req.body?.maxLevelRoleId !== undefined) {
     const r = req.body.maxLevelRoleId;
-    if (r !== null && !SNOWFLAKE_RE.test(String(r))) { res.status(400).json({ error: 'Ungültige maxLevelRoleId.' }); return; }
+    if (r !== null && !SNOWFLAKE_RE.test(String(r))) { res.status(400).json({ error: 'UngÃ¼ltige maxLevelRoleId.' }); return; }
     data.maxLevelRoleId = r === null ? null : String(r);
   }
   const updated = await prisma.xpConfig.update({ where: { id: config.id }, data });
@@ -1052,13 +1053,13 @@ botAdminRouter.post('/xp/level-roles', ba, async (req, res) => {
   const level = parseInt(String(req.body?.level ?? ''), 10);
   const roleId = String(req.body?.roleId ?? '');
   if (!Number.isInteger(level) || level < 1 || level > 1000) { res.status(400).json({ error: 'level 1..1000.' }); return; }
-  if (!SNOWFLAKE_RE.test(roleId)) { res.status(400).json({ error: 'Ungültige roleId.' }); return; }
+  if (!SNOWFLAKE_RE.test(roleId)) { res.status(400).json({ error: 'UngÃ¼ltige roleId.' }); return; }
   try {
     const lr = await prisma.levelRole.create({ data: { guildId, level, roleId } });
     audit(req, 'BOTADMIN_XP_LEVELROLE_ADD', { level, roleId }, { category: 'LEVEL', guildId });
     res.status(201).json(lr);
   } catch (e) {
-    if ((e as { code?: string }).code === 'P2002') { res.status(409).json({ error: 'Für dieses Level existiert bereits eine Rolle.' }); return; }
+    if ((e as { code?: string }).code === 'P2002') { res.status(409).json({ error: 'FÃ¼r dieses Level existiert bereits eine Rolle.' }); return; }
     throw e;
   }
 });
@@ -1070,9 +1071,9 @@ botAdminRouter.delete('/xp/level-roles/:id', ba, async (req, res) => {
   res.json({ deleted: true });
 });
 
-// ════════════════════════════════════════════════════════════════════════
+// â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
 // GEFAHRENZONE
-// ════════════════════════════════════════════════════════════════════════
+// â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
 botAdminRouter.get('/danger', ba, async (_req, res) => {
   const [softDeletedPackages, suspendedUsers, recentDangerActions] = await Promise.all([
     prisma.package.count({ where: { isDeleted: true } }),
@@ -1088,7 +1089,7 @@ botAdminRouter.get('/danger', ba, async (_req, res) => {
 
 // Endgueltiges Loeschen aller soft-geloeschten Pakete. Confirm "DELETE" erforderlich.
 botAdminRouter.post('/danger/purge-deleted-packages', ba, async (req, res) => {
-  if (req.body?.confirm !== 'DELETE') { res.status(400).json({ error: 'Bestätigung "DELETE" erforderlich.' }); return; }
+  if (req.body?.confirm !== 'DELETE') { res.status(400).json({ error: 'BestÃ¤tigung "DELETE" erforderlich.' }); return; }
   const result = await prisma.package.deleteMany({ where: { isDeleted: true } });
   audit(req, 'BOTADMIN_DANGER_PURGE_PACKAGES', { count: result.count }, { category: 'ADMIN' });
   res.json({ purged: result.count });

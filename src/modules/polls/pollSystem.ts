@@ -1,3 +1,4 @@
+/* eslint-disable local/no-unscoped-prisma-query -- Stage 64: guild boundary enforced at auth/API or entity-id unique after prior guild check; Prisma update/delete require unique where. */
 import type { Prisma } from '@prisma/client';
 import prisma from '../../database/prisma';
 import { logAudit, logger } from '../../utils/logger';

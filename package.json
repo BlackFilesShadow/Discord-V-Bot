@@ -13,7 +13,7 @@
     "start": "node dist/src/index.js",
     "dev": "ts-node src/index.ts",
     "dev:watch": "nodemon --exec ts-node src/index.ts",
-    "lint": "eslint src/**/*.ts tests/**/*.ts",
+    "lint": "eslint \"src/**/*.ts\" \"tests/**/*.ts\"",
     "lint:ui": "cd dashboard-ui && npm run lint",
     "lint:all": "npm run lint && npm run lint:ui",
     "test": "jest --coverage",

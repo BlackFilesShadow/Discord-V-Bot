@@ -1,3 +1,4 @@
+/* eslint-disable local/no-unscoped-prisma-query -- Stage 64: intentional cross-tenant system/admin surface (authZ outside Prisma where). */
 import { Router, type Response } from 'express';
 import { requireBotAdmin } from '../../middleware/auth';
 import prisma from '../../../database/prisma';

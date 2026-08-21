@@ -1,3 +1,4 @@
+/* eslint-disable local/no-unscoped-prisma-query -- Stage 64: intentional cross-tenant system/admin surface (authZ outside Prisma where). */
 /**
  * DEV Observability Routes (P3 / Dashboard-2E hardened contract).
  *

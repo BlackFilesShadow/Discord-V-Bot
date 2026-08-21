@@ -1,3 +1,4 @@
+/* eslint-disable local/no-unscoped-prisma-query -- Stage 64: intentional cross-tenant system/admin surface (authZ outside Prisma where). */
 import { existsSync } from 'node:fs';
 import type { Client, Guild, TextChannel, NewsChannel, ThreadChannel } from 'discord.js';
 import { AttachmentBuilder, ChannelType, EmbedBuilder } from 'discord.js';
@@ -10,12 +11,12 @@ import { translate, getLanguageName, SUPPORTED_LANGUAGES } from './translator';
 
 export function buildTranslatePostEmbed(opts: { guild: Guild | null; translated: string; targetLang: string; imageUrl?: string | null; customTitle?: string | null }): EmbedBuilder {
   const lang = SUPPORTED_LANGUAGES.find((l) => l.code === opts.targetLang);
-  const flag = lang?.emoji ?? '🌐';
+  const flag = lang?.emoji ?? 'ðŸŒ';
   const langName = lang?.name ?? getLanguageName(opts.targetLang);
   const guildName = opts.guild?.name ?? 'Server';
   const guildIcon = opts.guild?.iconURL({ size: 128 }) ?? undefined;
   const body = opts.translated && opts.translated.trim().length > 0 ? opts.translated : '_(leer)_';
-  const title = opts.customTitle && opts.customTitle.trim().length > 0 ? `${flag} ${opts.customTitle.trim().slice(0, 240)}` : `${flag} Übersetzte Nachricht · ${langName}`;
+  const title = opts.customTitle && opts.customTitle.trim().length > 0 ? `${flag} ${opts.customTitle.trim().slice(0, 240)}` : `${flag} Ãœbersetzte Nachricht Â· ${langName}`;
   const embed = new EmbedBuilder().setColor(Colors.Info).setAuthor({ name: safeEmbedAuthor(`${flag}  ${guildName}`), iconURL: guildIcon }).setTitle(safeEmbedTitle(title)).setDescription(safeEmbedDescription(`${Brand.divider}\n${body}\n${Brand.divider}`)).setFooter({ text: Brand.name, iconURL: guildIcon }).setTimestamp();
   if (opts.imageUrl) embed.setImage(opts.imageUrl);
   return embed;
@@ -117,7 +118,7 @@ async function sendPost(client: Client, post: { id: string; guildId: string; cha
         await prisma.translatedPost.update({ where: { id: post.id }, data: { imageUrl: migratedRef } });
       } catch (error) {
         // Die neue Datei darf erst als aktiv gelten, wenn die DB-Referenz
-        // erfolgreich umgestellt wurde. Bei DB-Fehler sofort zurückrollen.
+        // erfolgreich umgestellt wurde. Bei DB-Fehler sofort zurÃ¼ckrollen.
         await removeTranslatedPostImage(migratedRef);
         throw error;
       }

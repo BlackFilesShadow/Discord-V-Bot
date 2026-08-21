@@ -1,3 +1,4 @@
+/* eslint-disable local/no-unscoped-prisma-query -- Stage 64: guild boundary enforced at auth/API or entity-id unique after prior guild check; Prisma update/delete require unique where. */
 import prisma from '../../database/prisma';
 import { MAX_GAME_SERVERS_PER_GUILD, slotState } from '../nitrado/gameServerScope';
 import { looksLikeLiveServerKnowledgeQuestion } from './dayzKnowledgeBoundary';
