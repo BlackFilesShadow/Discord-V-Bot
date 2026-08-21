@@ -1,0 +1,10 @@
+{
+  "schemaVersion": 1,
+  "stage": 51,
+  "basedOnMainSha": "c6472086",
+  "scope": "Soak test harness: repeated baseline samples for drift detection.",
+  "contracts": {
+    "harness": "scripts/soak-test-smoke.mjs loops Stage 46 baseline N times",
+    "default": "short local loop"
+  }
+}
