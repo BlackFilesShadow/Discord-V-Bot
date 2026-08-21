@@ -1,10 +1,11 @@
 import fs from 'node:fs';
+import { normalizeSourceNewlines } from '../helpers/sourceText';
 import path from 'node:path';
 
-const source = fs.readFileSync(
+const source = normalizeSourceNewlines(fs.readFileSync(
   path.resolve(process.cwd(), 'src/modules/nitrado/configMutationLock.ts'),
   'utf8',
-);
+));
 
 describe('Nitrado-1P config-lock connect cleanup gate', () => {
   it('haelt connect und advisory-lock query gemeinsam innerhalb derselben Cleanup-try-Grenze', () => {

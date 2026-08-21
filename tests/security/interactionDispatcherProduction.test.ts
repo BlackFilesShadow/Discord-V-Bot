@@ -1,7 +1,8 @@
 import fs from 'node:fs';
+import { normalizeSourceNewlines } from '../helpers/sourceText';
 import path from 'node:path';
 
-const source = fs.readFileSync(path.join(process.cwd(), 'src', 'events', 'interactionCreate.ts'), 'utf8');
+const source = normalizeSourceNewlines(fs.readFileSync(path.join(process.cwd(), 'src', 'events', 'interactionCreate.ts'), 'utf8'));
 
 function section(start: string, end?: string): string {
   const startAt = source.indexOf(start);

@@ -1,7 +1,8 @@
 import fs from 'node:fs';
+import { normalizeSourceNewlines } from '../helpers/sourceText';
 import path from 'node:path';
 
-const read = (relative: string) => fs.readFileSync(path.resolve(process.cwd(), relative), 'utf8');
+const read = (relative: string) => normalizeSourceNewlines(fs.readFileSync(path.resolve(process.cwd(), relative), 'utf8'));
 
 const accessSource = read('src/modules/permissions/access.ts');
 const authSource = read('src/dashboard/middleware/auth.ts');

@@ -1,7 +1,8 @@
 import fs from 'node:fs';
+import { normalizeSourceNewlines } from '../helpers/sourceText';
 import path from 'node:path';
 
-const read = (relative: string): string => fs.readFileSync(path.resolve(process.cwd(), relative), 'utf8');
+const read = (relative: string): string => normalizeSourceNewlines(fs.readFileSync(path.resolve(process.cwd(), relative), 'utf8'));
 
 describe('Nitrado-1X ban reconciliation architecture', () => {
   it('freshens connection state under the canonical lock before reconciliation', () => {

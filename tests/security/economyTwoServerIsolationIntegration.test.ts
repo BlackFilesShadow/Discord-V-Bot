@@ -20,7 +20,7 @@ import {
   asUserDiscordId,
 } from '../../src/types/scope';
 
-const describeDb = process.env.DATABASE_URL ? describe : describe.skip;
+import { describeDb } from '../helpers/dbIntegration';
 
 const guildId = asGuildId('823456789012345678');
 const ownerId = asUserDiscordId('823456789012345679');

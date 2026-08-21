@@ -2,6 +2,11 @@ import { mkdtempSync, readFileSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { spawnSync } from 'node:child_process';
+// CommonJS helper (scripts/resolve-bash.js) — avoid WSL stub bash on Windows.
+// eslint-disable-next-line @typescript-eslint/no-require-imports
+const { resolveBash } = require('../../scripts/resolve-bash') as {
+  resolveBash: () => string | null;
+};
 
 const SCRIPT = path.resolve(process.cwd(), 'deploy/ensure-metrics-token.sh');
 
@@ -9,7 +14,11 @@ function run(envText: string) {
   const dir = mkdtempSync(path.join(tmpdir(), 'vbot-metrics-'));
   const envFile = path.join(dir, '.env');
   writeFileSync(envFile, envText, { mode: 0o600 });
-  const result = spawnSync('bash', [SCRIPT, envFile], { encoding: 'utf8' });
+  const bash = resolveBash();
+  if (!bash) {
+    throw new Error('No usable bash found (install Git Bash or set GIT_BASH).');
+  }
+  const result = spawnSync(bash, [SCRIPT, envFile], { encoding: 'utf8' });
   return {
     ...result,
     env: readFileSync(envFile, 'utf8'),

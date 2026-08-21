@@ -1,7 +1,8 @@
 import fs from 'node:fs';
+import { normalizeSourceNewlines } from '../helpers/sourceText';
 import path from 'node:path';
 
-const read = (relative: string) => fs.readFileSync(path.resolve(process.cwd(), relative), 'utf8');
+const read = (relative: string) => normalizeSourceNewlines(fs.readFileSync(path.resolve(process.cwd(), relative), 'utf8'));
 
 describe('Dashboard-1V deleted Discord role cleanup', () => {
   test('GuildRoleDelete removes only the exact Guild+Role permission grant best-effort', () => {

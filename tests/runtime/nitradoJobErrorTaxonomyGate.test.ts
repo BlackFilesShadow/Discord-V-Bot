@@ -1,10 +1,11 @@
 import fs from 'node:fs';
+import { normalizeSourceNewlines } from '../helpers/sourceText';
 import path from 'node:path';
 
-const worker = fs.readFileSync(
+const worker = normalizeSourceNewlines(fs.readFileSync(
   path.resolve(process.cwd(), 'src/modules/nitrado/jobWorker.ts'),
   'utf8',
-);
+));
 
 describe('Nitrado-1K worker error taxonomy gate', () => {
   it('haelt connect+lock-query gemeinsam im Cleanup-try', () => {

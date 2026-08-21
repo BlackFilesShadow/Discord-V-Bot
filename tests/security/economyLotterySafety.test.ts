@@ -1,8 +1,9 @@
 import fs from 'node:fs';
+import { normalizeSourceNewlines } from '../helpers/sourceText';
 import path from 'node:path';
 
 const ROOT = path.join(__dirname, '..', '..');
-const read = (rel: string) => fs.readFileSync(path.join(ROOT, rel), 'utf8');
+const read = (rel: string) => normalizeSourceNewlines(fs.readFileSync(path.join(ROOT, rel), 'utf8'));
 
 describe('Economy-Lotterie — Production-Sicherheitsinvarianten', () => {
   const migration = read('prisma/migrations/20260816133000_economy_lottery/migration.sql');

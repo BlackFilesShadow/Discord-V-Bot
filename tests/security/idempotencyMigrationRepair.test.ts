@@ -2,10 +2,11 @@ import fs from 'fs';
 import path from 'path';
 import { Client } from 'pg';
 
-const databaseUrl = process.env.DATABASE_URL;
-const describeWithDatabase = databaseUrl ? describe : describe.skip;
+import { describeDb } from '../helpers/dbIntegration';
 
-describeWithDatabase('F-004/F-009 — legacy IdempotencyKey baseline repair', () => {
+const databaseUrl = process.env.DATABASE_URL;
+
+describeDb('F-004/F-009 — legacy IdempotencyKey baseline repair', () => {
   let client: Client;
   const schema = `idem_repair_${process.pid}_${Date.now()}`;
   const quotedSchema = `"${schema.replace(/"/g, '""')}"`;

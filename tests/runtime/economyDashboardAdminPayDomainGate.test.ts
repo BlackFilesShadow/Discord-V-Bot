@@ -1,8 +1,9 @@
 import fs from 'node:fs';
+import { normalizeSourceNewlines } from '../helpers/sourceText';
 import path from 'node:path';
 
 function read(relative: string): string {
-  return fs.readFileSync(path.resolve(process.cwd(), relative), 'utf8');
+  return normalizeSourceNewlines(fs.readFileSync(path.resolve(process.cwd(), relative), 'utf8'));
 }
 
 const api = read('dashboard-ui/src/lib/api.ts');

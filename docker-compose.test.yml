@@ -1,0 +1,19 @@
+# Local CI-parity PostgreSQL (host port 5433 to avoid clashing with dev compose).
+services:
+  postgres-test:
+    image: pgvector/pgvector:pg16
+    container_name: discord-v-bot-postgres-test
+    restart: "no"
+    ports:
+      - "5433:5432"
+    environment:
+      POSTGRES_DB: discord_v_bot_test
+      POSTGRES_USER: discordbot
+      POSTGRES_PASSWORD: testpass_ci_only
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U discordbot -d discord_v_bot_test"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+    tmpfs:
+      - /var/lib/postgresql/data

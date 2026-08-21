@@ -1,8 +1,9 @@
 import fs from 'node:fs';
+import { normalizeSourceNewlines } from '../helpers/sourceText';
 import path from 'node:path';
 
 function source(file: string): string {
-  return fs.readFileSync(path.join(process.cwd(), file), 'utf8');
+  return normalizeSourceNewlines(fs.readFileSync(path.join(process.cwd(), file), 'utf8'));
 }
 
 function functionSlice(text: string, start: string, end: string): string {

@@ -1,7 +1,8 @@
 import fs from 'node:fs';
+import { normalizeSourceNewlines } from '../helpers/sourceText';
 import path from 'node:path';
 
-const read = (relative: string): string => fs.readFileSync(path.resolve(process.cwd(), relative), 'utf8');
+const read = (relative: string): string => normalizeSourceNewlines(fs.readFileSync(path.resolve(process.cwd(), relative), 'utf8'));
 const panel = read('dashboard-ui/src/components/economy/VirtualAccountsPanel.tsx');
 const route = read('src/dashboard/routes/v2/economyVirtualAccounts.ts');
 

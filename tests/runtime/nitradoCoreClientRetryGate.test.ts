@@ -1,10 +1,11 @@
 import fs from 'node:fs';
+import { normalizeSourceNewlines } from '../helpers/sourceText';
 import path from 'node:path';
 
-const source = fs.readFileSync(
+const source = normalizeSourceNewlines(fs.readFileSync(
   path.resolve(process.cwd(), 'src/modules/nitrado/nitradoClient.ts'),
   'utf8',
-);
+));
 
 describe('Nitrado-1V core client retry architecture gate', () => {
   it('counts terminal 5xx failures before deciding whether another retry exists', () => {
