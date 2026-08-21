@@ -1,0 +1,88 @@
+{
+  "schemaVersion": 1,
+  "stage": 36,
+  "basedOnMainSha": "ebee0666e9130e3e7fea9fb6035aeebf42041e1b",
+  "scope": "API authentication matrix: session cookie, OAuth login/callback, auth middleware, unauthenticated/expired/revoked sessions, login/logout/status consistency between UI and API.",
+  "contracts": {
+    "v2Mount": "v2Router.use(requireAuth) applies to every /api/v2 route before domain routers.",
+    "requireAuth": "Missing userId/discordId => 401. Pending 2FA => 403. When sessionToken present, Prisma Session must be active, unexpired, and user-bound else 401 SESSION_REVOKED + cookie destroyed.",
+    "oauth": "Discord-only OAuth with state/nonce/PKCE; session.save before redirects.",
+    "logout": "Deactivates Prisma Session.isActive, clears tokenCache, destroys express-session.",
+    "status": "/auth/status returns authenticated false when DB session inactive/expired (UI source of truth).",
+    "apiMe": "/api/me behind requireAuth — unauthenticated 401.",
+    "publicExceptions": "/auth/login|callback|status|logout paths; health/metrics/webhooks outside v2.",
+    "storeFailure": "Session DB lookup failure => 503 SESSION_STORE_UNAVAILABLE fail-closed (no anonymous elevation)."
+  },
+  "cases": [
+    {
+      "id": "unauthenticated-v2",
+      "scenario": "No session cookie on /api/v2/*",
+      "expected": "401 Nicht angemeldet",
+      "evidence": "v2Router.use(requireAuth); tests/dashboard/api.test.ts",
+      "status": "verified"
+    },
+    {
+      "id": "unauthenticated-api-me",
+      "scenario": "GET /api/me without auth",
+      "expected": "401",
+      "evidence": "tests/dashboard/api.test.ts Auth-Middleware",
+      "status": "verified"
+    },
+    {
+      "id": "oauth-login-start",
+      "scenario": "GET /auth/login",
+      "expected": "Redirect Discord with state/PKCE stored in session",
+      "evidence": "src/dashboard/routes/auth.ts",
+      "status": "verified"
+    },
+    {
+      "id": "oauth-callback",
+      "scenario": "GET /auth/callback",
+      "expected": "Validate state; create user/session; session.save before redirect",
+      "evidence": "src/dashboard/routes/auth.ts",
+      "status": "verified"
+    },
+    {
+      "id": "session-status-false",
+      "scenario": "Inactive/expired Prisma session",
+      "expected": "/auth/status authenticated:false",
+      "evidence": "auth.ts /status",
+      "status": "verified"
+    },
+    {
+      "id": "session-revoked-api",
+      "scenario": "Cookie still has userId but Prisma session revoked/expired",
+      "expected": "requireAuth 401 SESSION_REVOKED and destroy cookie",
+      "evidence": "middleware/auth.ts requireAuth Stage 36",
+      "status": "fixed-stage-36"
+    },
+    {
+      "id": "logout",
+      "scenario": "POST /auth/logout",
+      "expected": "isActive=false + session.destroy",
+      "evidence": "auth.ts logout",
+      "status": "verified"
+    },
+    {
+      "id": "2fa-pending",
+      "scenario": "requires2FA without twoFactorVerified",
+      "expected": "403 2FA-Verifizierung ausstehend",
+      "evidence": "requireAuth",
+      "status": "verified"
+    },
+    {
+      "id": "session-store-down",
+      "scenario": "Prisma session lookup throws",
+      "expected": "503 SESSION_STORE_UNAVAILABLE",
+      "evidence": "requireAuth catch",
+      "status": "fixed-stage-36"
+    },
+    {
+      "id": "ui-api-consistency",
+      "scenario": "Frontend api client credentials include + Protected Navigate login",
+      "expected": "401 surfaces as ApiError; Protected uses /api/me",
+      "evidence": "dashboard-ui api.ts + App Protected",
+      "status": "verified"
+    }
+  ]
+}
