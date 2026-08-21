@@ -61,8 +61,7 @@
       "effect": "startSnapshot creates the real mirror snapshot workflow and responds 202 with snapshotId; failures are visible and audited",
       "evidence": [
         "dashboard-ui/e2e/dev-nitrado-mirror-authenticated.spec.ts",
-        "tests/dashboard/devNitradoMirrorContract.test.ts",
-        "tests/security/dashboardNitradoMirrorArchitecture.test.ts"
+        "tests/dashboard/devNitradoMirrorContract.test.ts"
       ]
     },
     {
@@ -75,7 +74,8 @@
       "effect": "v8.writeHeapSnapshot writes a real bounded-path snapshot; failure returns 500 and success is audited",
       "evidence": [
         "dashboard-ui/e2e/dev-sensitive-actions-authenticated.spec.ts",
-        "tests/dashboard/devDiagnosticsStubs.test.ts"
+        "tests/dashboard/devDiagnosticsStubs.test.ts",
+        "tests/security/dashboardDevDiagnosticsArchitecture.test.ts"
       ]
     },
     {
