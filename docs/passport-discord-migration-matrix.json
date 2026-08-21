@@ -1,0 +1,12 @@
+{
+  "schemaVersion": 1,
+  "stage": 54,
+  "basedOnMainSha": "45caf9cd",
+  "scope": "passport-discord@0.1.4 replacement evaluation.",
+  "finding": "Dashboard OAuth is implemented in src/dashboard/routes/auth.ts with custom Discord OAuth (state/PKCE), not passport-discord runtime path.",
+  "decision": "No runtime migration required if package absent or unused; if present as unused transitive/direct dep, document for removal without auth rewrite.",
+  "contracts": {
+    "authPath": "custom OAuth routes remain canonical",
+    "regression": "login/callback/logout/session gates from Stages 36/43"
+  }
+}
