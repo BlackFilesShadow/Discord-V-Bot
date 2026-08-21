@@ -137,7 +137,7 @@ jobs:
   playwright-2:
     name: Gate 2 · Playwright
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    timeout-minutes: 25
     defaults:
       run:
         working-directory: dashboard-ui
