@@ -159,3 +159,18 @@ test.describe('Authenticated mobile viewport matrix', () => {
     }
   }
 });
+
+/** Stage 30: desktop completion baseline (1280x800). */
+test.describe('Desktop 1280 completion', () => {
+  const desktop = { width: 1280, height: 800 } as const;
+  for (const route of AUTHENTICATED_ROUTES) {
+    test(`desktop ${route.path} marker + no horizontal overflow`, async ({ page }) => {
+      await stubAuthenticatedDashboard(page);
+      await page.setViewportSize(desktop);
+      await page.goto(route.path);
+      await expect(page.getByText(route.marker, { exact: false }).first()).toBeVisible();
+      await expectNoHorizontalOverflow(page);
+      await expect(page.locator('html')).toHaveAttribute('lang', 'de');
+    });
+  }
+});
