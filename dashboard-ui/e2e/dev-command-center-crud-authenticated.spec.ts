@@ -22,12 +22,6 @@ async function stubCommandCenter(page: Page) {
 
   await page.route('**/api/me', route => json(route, { user: DEV_USER }));
   await page.route('**/auth/status', route => json(route, { authenticated: true, user: DEV_USER }));
-  await page.route('**/api/v2/bot-admin/status', route => json(route, { active: false, expiresAt: null }));
-  await page.route('**/api/v2/dev/status', route => json(route, {
-    active: true,
-    eligible: true,
-    expiresAt: '2026-08-21T18:00:00.000Z',
-  }));
 
   await page.route('**/api/v2/**', async route => {
     const req = route.request();
@@ -39,6 +33,14 @@ async function stubCommandCenter(page: Page) {
       writes.push({ method, path, body, idempotencyKey: req.headers()['x-idempotency-key'] });
     };
 
+    if (path === '/api/v2/bot-admin/status') {
+      await json(route, { active: false, expiresAt: null });
+      return;
+    }
+    if (path === '/api/v2/dev/status') {
+      await json(route, { active: true, eligible: true, expiresAt: '2026-08-21T18:00:00.000Z' });
+      return;
+    }
     if (path === '/api/v2/dev/command-center/diagnostics' && method === 'GET') {
       await json(route, { ok: true, database: 'up', cache: 'up' });
       return;
@@ -229,7 +231,7 @@ test('Command Center XP CRUD bleibt Guild+Level-gescoped', async ({ page }) => {
   expect(stub.writes()[0].body).toEqual(expect.objectContaining({ messageXpMin: 12, reason: 'XP Konfiguration', reAuth: '123456' }));
 
   await page.getByPlaceholder('Level').fill('25');
-  const levelRoleSelect = page.getByRole('combobox').filter({ has: page.locator('option[value="role-1"]') });
+  const levelRoleSelect = page.locator('select').filter({ has: page.locator('option[value="role-1"]') }).last();
   await levelRoleSelect.selectOption('role-1');
   await page.getByRole('button', { name: 'Level-Rolle setzen' }).click();
   await expect.poll(() => stub.writes().length).toBe(2);
