@@ -92,7 +92,7 @@ async function stubDevUpload(page: Page, initialUpload = false) {
 
 async function openUploadMode(page: Page): Promise<void> {
   await page.goto('/dev/xml-validator');
-  await expect(page.getByText('XML Validator', { exact: true }).first()).toBeVisible();
+  await expect(page.getByRole('heading', { name: 'XML Validator', exact: true })).toBeVisible();
   await page.getByRole('button', { name: 'Upload waehlen' }).click();
   await expect(page.getByText('XML-Upload', { exact: true })).toBeVisible();
 }
