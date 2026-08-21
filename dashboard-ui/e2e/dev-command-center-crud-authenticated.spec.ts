@@ -136,7 +136,7 @@ async function stubCommandCenter(page: Page) {
 
 async function openCommandCenter(page: Page): Promise<void> {
   await page.goto('/dev/command-center');
-  await expect(page.getByText('DEV Command Center', { exact: true })).toBeVisible();
+  await expect(page.getByRole('heading', { name: 'DEV Command Center', exact: true })).toBeVisible();
 }
 
 function expectMutation(write: Write, method: string, path: string): void {
