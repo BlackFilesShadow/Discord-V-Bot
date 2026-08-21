@@ -10,7 +10,7 @@ import os from 'os';
 /**
  * Dashboard Testumgebung (Sektion 7):
  * - Systemstatus & Health-Checks
- * - DB-KonnektivitÃ¤t
+ * - DB-Konnektivität
  * - Validierungs-Tests
  * - Feature-Toggle Steuerung
  * - Diagnose-Endpoints
@@ -33,7 +33,7 @@ testRouter.use(async (req: Request, res: Response, next) => {
 });
 
 /**
- * GET /test/health â€“ System-Health-Check
+ * GET /test/health – System-Health-Check
  */
 testRouter.get('/health', async (_req: Request, res: Response) => {
   const checks: Record<string, { status: string; latency?: number; details?: string }> = {};
@@ -75,7 +75,7 @@ testRouter.get('/health', async (_req: Request, res: Response) => {
 });
 
 /**
- * POST /test/validate â€“ Datei-Validierung testen
+ * POST /test/validate – Datei-Validierung testen
  */
 testRouter.post('/validate', async (req: Request, res: Response) => {
   const { content, fileType } = req.body;
@@ -83,7 +83,7 @@ testRouter.post('/validate', async (req: Request, res: Response) => {
     return res.status(400).json({ error: 'content und fileType erforderlich.' });
   }
 
-  // TemporÃ¤re Datei fÃ¼r Validierung
+  // Temporäre Datei für Validierung
   const tmpDir = os.tmpdir();
   const tmpFile = path.join(tmpDir, `test_${Date.now()}.${fileType}`);
 
@@ -99,7 +99,7 @@ testRouter.post('/validate', async (req: Request, res: Response) => {
 });
 
 /**
- * GET /test/db-stats â€“ Datenbank-Statistiken
+ * GET /test/db-stats – Datenbank-Statistiken
  */
 testRouter.get('/db-stats', async (_req: Request, res: Response) => {
   try {
@@ -117,12 +117,12 @@ testRouter.get('/db-stats', async (_req: Request, res: Response) => {
       timestamp: new Date().toISOString(),
     });
   } catch (_error) {
-    res.status(500).json({ error: 'DB-Statistiken nicht verfÃ¼gbar.' });
+    res.status(500).json({ error: 'DB-Statistiken nicht verfügbar.' });
   }
 });
 
 /**
- * GET /test/features â€“ Alle Feature-Toggles abrufen
+ * GET /test/features – Alle Feature-Toggles abrufen
  */
 testRouter.get('/features', async (_req: Request, res: Response) => {
   const toggles = await getAllFeatureToggles();
@@ -130,7 +130,7 @@ testRouter.get('/features', async (_req: Request, res: Response) => {
 });
 
 /**
- * PUT /test/features/:key â€“ Feature-Toggle setzen
+ * PUT /test/features/:key – Feature-Toggle setzen
  */
 testRouter.put('/features/:key', async (req: Request, res: Response) => {
   const key = String(req.params.key);
@@ -146,7 +146,7 @@ testRouter.put('/features/:key', async (req: Request, res: Response) => {
 });
 
 /**
- * GET /test/env â€“ Environment-Info (sichere Teilmenge)
+ * GET /test/env – Environment-Info (sichere Teilmenge)
  */
 testRouter.get('/env', (_req: Request, res: Response) => {
   res.json({
@@ -164,7 +164,7 @@ testRouter.get('/env', (_req: Request, res: Response) => {
 });
 
 /**
- * POST /test/echo â€“ Echo-Endpoint fÃ¼r API-Tests
+ * POST /test/echo – Echo-Endpoint für API-Tests
  */
 testRouter.post('/echo', (req: Request, res: Response) => {
   res.json({
