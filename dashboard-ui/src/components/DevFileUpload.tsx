@@ -58,18 +58,20 @@ export function DevFileUpload({ kind, selectedId, onSelect, accept }: DevFileUpl
   const currentKind = useRef(kind);
   currentKind.current = kind;
 
-  const reload = useCallback(async () => {
+  const reload = useCallback(async (): Promise<DevUploadRecord[] | null> => {
     const requestSeq = ++reloadSeq.current;
     readPendingSeq.current = requestSeq;
     setLoading(true);
     setError(null);
     try {
       const r = await api.get<{ uploads: DevUploadRecord[] }>(`/api/v2/dev/uploads?kind=${kind}`);
-      if (requestSeq !== reloadSeq.current) return;
+      if (requestSeq !== reloadSeq.current) return null;
       setUploads(r.uploads);
+      return r.uploads;
     } catch (e) {
-      if (requestSeq !== reloadSeq.current) return;
+      if (requestSeq !== reloadSeq.current) return null;
       setError(e instanceof ApiError ? e.message : 'Laden fehlgeschlagen.');
+      return null;
     } finally {
       if (requestSeq === reloadSeq.current) {
         readPendingSeq.current = null;
@@ -78,7 +80,7 @@ export function DevFileUpload({ kind, selectedId, onSelect, accept }: DevFileUpl
     }
   }, [kind]);
 
-  useEffect(() => { reload(); }, [reload]);
+  useEffect(() => { void reload(); }, [reload]);
 
   const handleFiles = useCallback(async (files: FileList | null) => {
     if (!files || files.length === 0) return;
@@ -95,11 +97,13 @@ export function DevFileUpload({ kind, selectedId, onSelect, accept }: DevFileUpl
       const r = await api.uploadForm<UploadResult>('/api/v2/dev/uploads', fd);
       if (currentKind.current !== operationKind) return;
       setUploadResults(r.results);
-      await reload();
-      // Erstes erfolgreiches Upload auto-selektieren
+      const freshUploads = await reload();
+      if (currentKind.current !== operationKind) return;
+      // Erstes erfolgreiches Upload auto-selektieren. Den Record bewusst aus
+      // dem gerade neu geladenen Snapshot nehmen, nicht aus einem stale Closure-State.
       const firstOk = r.results.find(x => x.ok && x.id);
       if (firstOk?.id) {
-        const rec = uploads.find(u => u.id === firstOk.id) ?? null;
+        const rec = freshUploads?.find(u => u.id === firstOk.id) ?? null;
         onSelect?.(firstOk.id, rec);
       }
     } catch (e) {
@@ -109,7 +113,7 @@ export function DevFileUpload({ kind, selectedId, onSelect, accept }: DevFileUpl
       if (readPendingSeq.current === null) setLoading(false);
       if (inputRef.current) inputRef.current.value = '';
     }
-  }, [kind, onSelect, reload, uploads]);
+  }, [kind, onSelect, reload]);
 
   const handleDelete = useCallback(async (id: string) => {
     if (!confirm('Upload wirklich loeschen?')) return;
@@ -147,7 +151,7 @@ export function DevFileUpload({ kind, selectedId, onSelect, accept }: DevFileUpl
           onChange={e => handleFiles(e.target.files)}
           className="block text-xs file:mr-3 file:rounded-md file:border-0 file:bg-accent/20 file:px-3 file:py-1.5 file:text-accent file:hover:bg-accent/30"
         />
-        <Button variant="ghost" size="sm" onClick={reload} disabled={loading}>
+        <Button variant="ghost" size="sm" onClick={() => { void reload(); }} disabled={loading}>
           <RefreshCw className={`h-3.5 w-3.5 mr-1 ${loading ? 'animate-spin' : ''}`} /> Aktualisieren
         </Button>
       </div>
