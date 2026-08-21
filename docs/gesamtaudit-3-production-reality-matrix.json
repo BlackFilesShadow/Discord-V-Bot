@@ -1,0 +1,12 @@
+{
+  "schemaVersion": 1,
+  "stage": 62,
+  "basedOnMainSha": "45caf9cd",
+  "scope": "Gesamtaudit 3: production reality — config, deploy, secrets, observability, backups readiness.",
+  "contracts": {
+    "envExample": "documents required secrets as placeholders",
+    "docker": "Dockerfile + compose present",
+    "deploy": "deploy/ scripts present",
+    "metrics": "METRICS_ENABLED default false"
+  }
+}
