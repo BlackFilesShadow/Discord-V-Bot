@@ -1,0 +1,11 @@
+{
+  "schemaVersion": 1,
+  "stage": 55,
+  "basedOnMainSha": "45caf9cd",
+  "scope": "inflight@1.0.6 / legacy glob provenance cleanup evaluation.",
+  "decision": "No blind npm overrides. Document tree via npm ls at Gate phase; Stage 55 freezes no-override policy unless direct runtime consumer proven.",
+  "contracts": {
+    "noOverrideWithoutProof": "package.json overrides for inflight/glob require Stage note",
+    "lockfile": "retain lock until controlled update stage"
+  }
+}
