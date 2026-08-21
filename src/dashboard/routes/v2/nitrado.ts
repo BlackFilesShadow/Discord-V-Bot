@@ -103,7 +103,7 @@ nitradoRouter.get('/', requireGuildOwner, async (req, res) => {
 nitradoRouter.post('/', requireGuildOwner, async (req, res) => {
   const scope = req.guildScope!;
   const { slot, alias, token, nitradoServerId } = req.body ?? {};
-  if (typeof slot !== 'number' || slot < 1 || slot > 5) { res.status(400).json({ error: 'slot 1..5' }); return; }
+  if (typeof slot !== 'number' || !Number.isInteger(slot) || slot < 1 || slot > 5) { res.status(400).json({ error: 'slot 1..5' }); return; }
   const normalizedAlias = typeof alias === 'string' ? alias.trim() : '';
   if (typeof alias !== 'string' || normalizedAlias.length < 1 || normalizedAlias.length > 40) { res.status(400).json({ error: 'alias 1..40' }); return; }
   if (typeof token !== 'string' || token.length < 16) { res.status(400).json({ error: 'token zu kurz' }); return; }
