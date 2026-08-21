@@ -1,0 +1,16 @@
+{
+  "schemaVersion": 1,
+  "stage": 42,
+  "basedOnMainSha": "2076eee1",
+  "scope": "SSRF, injection, path traversal on upload/download/export/snapshot.",
+  "contracts": {
+    "ssrf": "URL validators block private hosts",
+    "sql": "Prisma parameterized queries",
+    "path": "Upload/export/snapshot paths bounded"
+  },
+  "cases": [
+    { "id": "feed-ssrf-block", "status": "verified" },
+    { "id": "heap-path-bound", "status": "verified" },
+    { "id": "static-upload-subset", "status": "verified" }
+  ]
+}
