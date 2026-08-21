@@ -1,0 +1,29 @@
+{
+  "schemaVersion": 1,
+  "stage": 38,
+  "basedOnMainSha": "ea25af9b",
+  "scope": "API validation, race/ABA/lost-update, status taxonomy, and idempotency for dashboard mutations and relevant reads.",
+  "contracts": {
+    "idempotencyHeader": "X-Idempotency-Key 8..128; hash binds userId+method+url+key+bodyHash",
+    "parallel": "Second in-flight same hash => 409 processing",
+    "replayDone": "DONE claim within TTL returns cached status/body without re-run",
+    "non2xx": "Non-2xx releases claim for safe retry",
+    "staleProcessing": "PROCESSING older than 2m CAS takeover",
+    "storeDown": "Lookup failure => 503 IDEMPOTENCY_STORE_UNAVAILABLE fail-closed",
+    "clientRetry": "UI reuses pending key until 2xx decode (Stage 29)",
+    "validation": "Route-level integer/enum/string limits; bot-admin page strict integers Stage 28",
+    "raceDomain": "Domain CAS (whitelist updateMany, economy ledger keys) complements HTTP idempotency"
+  },
+  "cases": [
+    { "id": "key-length", "expected": "400 if key <8 or >128", "status": "verified" },
+    { "id": "body-mismatch-same-key", "expected": "different bodyHash => different claim; no cross-body replay", "status": "verified" },
+    { "id": "route-mismatch-same-key", "expected": "path in hash prevents cross-route replay", "status": "verified" },
+    { "id": "parallel-double", "expected": "409 while PROCESSING", "status": "verified" },
+    { "id": "success-replay", "expected": "cached 2xx", "status": "verified" },
+    { "id": "error-retry", "expected": "claim deleted; retry allowed", "status": "verified" },
+    { "id": "crash-stale", "expected": "CAS takeover once", "status": "verified" },
+    { "id": "store-unavailable", "expected": "503 fail-closed", "status": "fixed-stage-38" },
+    { "id": "validation-page", "expected": "bot-admin non-int page 400", "status": "verified-stage-28" },
+    { "id": "economy-ledger", "expected": "domain idempotency keys prevent double pay", "status": "verified" }
+  ]
+}

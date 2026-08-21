@@ -60,9 +60,10 @@ export async function idempotency(req: Request, res: Response, next: NextFunctio
       // eslint-disable-next-line local/no-unscoped-prisma-query -- global, siehe oben
       existing = await prisma.idempotencyKey.findUnique({ where: { hash } });
     } catch (e) {
-      // DB-Lookup gescheitert -> fail-open, damit legitime Requests nicht haengen.
+      // Stage 38: fail-closed — never execute a mutation twice when the claim
+      // store is unavailable (no silent double side effects).
       logger.warn('Idempotency-Lookup-Fehler:', (e as Error).message);
-      next();
+      res.status(503).json({ error: 'Idempotency-Store nicht erreichbar.', code: 'IDEMPOTENCY_STORE_UNAVAILABLE' });
       return;
     }
     if (!existing) { next(); return; }
