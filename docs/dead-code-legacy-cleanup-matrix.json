@@ -1,0 +1,11 @@
+{
+  "schemaVersion": 1,
+  "stage": 57,
+  "basedOnMainSha": "45caf9cd",
+  "scope": "Dead code / legacy cleanup only with proof — no speculative deletes.",
+  "decision": "No mass deletion in Stage 57. Inventory architecture gates remain; removals deferred to findings with zero dynamic references.",
+  "contracts": {
+    "proofRequired": "dynamic imports, commands, workers, flags must be checked",
+    "noRegression": "prefer keep over guess"
+  }
+}
