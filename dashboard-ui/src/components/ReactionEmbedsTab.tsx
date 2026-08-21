@@ -597,7 +597,12 @@ export function ReactionEmbedsTab({ guildId, canManage }: { guildId: string; can
                           <button type="button" className="text-muted hover:text-white disabled:opacity-30" onClick={() => moveOption(idx, 1)} disabled={idx === options.length - 1} aria-label={`Option ${idx + 1} nach unten verschieben`}><ArrowDown size={13} /></button>
                         </div>
                         <Input value={o.label} maxLength={80} onChange={e => patchOption(idx, { label: e.target.value })} placeholder="Button-Name (frei wählbar)" className="flex-1" />
-                        <Switch checked={o.isActive} onChange={v => patchOption(idx, { isActive: v })} />
+                        <Switch
+                          checked={o.isActive}
+                          onChange={v => patchOption(idx, { isActive: v })}
+                          ariaLabel={`Option ${idx + 1} aktiv`}
+                          disabled={busy}
+                        />
                         <button type="button" className="text-muted hover:text-red-400" onClick={() => removeOption(idx)} aria-label={`Option ${idx + 1} entfernen`}><Trash2 size={15} /></button>
                       </div>
 
