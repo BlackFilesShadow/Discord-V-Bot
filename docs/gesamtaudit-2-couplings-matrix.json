@@ -1,0 +1,11 @@
+{
+  "schemaVersion": 1,
+  "stage": 61,
+  "basedOnMainSha": "45caf9cd",
+  "scope": "Gesamtaudit 2: cross-system couplings Discord↔DB↔Nitrado↔Economy↔AI↔Dashboard↔Workers↔Leave/Rejoin.",
+  "contracts": {
+    "scope": "guildId+nitradoConnId on live player rows",
+    "leave": "membership required for grants",
+    "incident": "no fake side effects (Stage 27)"
+  }
+}
