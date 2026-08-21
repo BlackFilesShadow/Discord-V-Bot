@@ -75,8 +75,8 @@ export function ToastProvider({ children }: { children: ReactNode }) {
 }
 
 export function useToast(): Pick<Ctx, 'push' | 'dismiss'> {
-  const c = useContext(Context);
-  return { push: c.push, dismiss: c.dismiss };
+  const { push, dismiss } = useContext(Context);
+  return useMemo(() => ({ push, dismiss }), [push, dismiss]);
 }
 
 function ToastViewport() {
