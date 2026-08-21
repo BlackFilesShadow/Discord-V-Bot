@@ -4,7 +4,7 @@
  */
 import { useEffect, useRef, useState, useCallback } from 'react';
 import { AlertTriangle, ScrollText, Search, RefreshCw } from 'lucide-react';
-import { api } from '@/lib/api';
+import { api, describeApiError } from '@/lib/api';
 import { useToast } from '@/lib/toast';
 import { Card, CardHeader, CardTitle, CardDesc } from '@/components/ui/Card';
 import { Button } from '@/components/ui/Button';
@@ -84,12 +84,12 @@ export default function Page(): JSX.Element {
         : next);
     } catch (e) {
       if (requestId !== requestSeq.current) return;
-      const message = (e as Error).message;
+      const described = describeApiError(e);
       // Privilegierte Audit-Snapshots werden nach einem Fehler nicht stale
       // weiter angezeigt. Das entspricht useDevStatus auf den Diagnose-Seiten.
       setData(null);
-      setError(message);
-      toast.push({ variant: 'danger', title: 'Suche fehlgeschlagen', desc: message });
+      setError(described.desc);
+      toast.push({ variant: 'danger', title: described.title, desc: described.desc });
     } finally {
       if (requestId === requestSeq.current) setLoading(false);
     }
