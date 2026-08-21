@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react';
+import { useMemo, useRef, useState } from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { Languages, Plus, Save, Trash2, Power, X, Clock, Repeat, Zap } from 'lucide-react';
 import { api, ApiError } from '@/lib/api';
@@ -201,6 +201,7 @@ export function TranslatedPostsTab({ guildId, canManage }: { guildId: string; ca
   const [creating, setCreating] = useState(false);
   const [form, setForm] = useState<Form>(blank());
   const [busy, setBusy] = useState(false);
+  const busyLock = useRef(false);
 
   const posts = postsQ.data?.posts ?? [];
   const languages = langQ.data?.languages ?? [];
@@ -227,10 +228,12 @@ export function TranslatedPostsTab({ guildId, canManage }: { guildId: string; ca
     return fd;
   };
   const save = async () => {
+    if (busyLock.current) return;
     if (!/^\d{17,20}$/.test(form.channelId)) return toast.error('Bitte einen Ziel-Channel wählen.');
     if (!form.customTitle.trim()) return toast.error('Titel ist erforderlich.');
     if (!form.sourceText.trim()) return toast.error('Text ist erforderlich.');
     if (form.mode === 'once' && !form.scheduledAt) return toast.error('Bitte einen Zeitpunkt wählen.');
+    busyLock.current = true;
     setBusy(true);
     try {
       const saved = editingId
@@ -243,18 +246,41 @@ export function TranslatedPostsTab({ guildId, canManage }: { guildId: string; ca
     } catch (e) {
       toast.error(e instanceof ApiError ? e.message : 'Speichern fehlgeschlagen.');
     } finally {
+      busyLock.current = false;
       setBusy(false);
     }
   };
   const remove = async (p: Post) => {
     if (!confirm('Diese Übersetzung wirklich löschen?')) return;
-    await api.del(`/api/v2/guilds/${guildId}/translated-posts/${p.id}`);
-    await qc.invalidateQueries({ queryKey: ['translated-posts', guildId] });
-    if (editingId === p.id) reset();
+    if (busyLock.current) return;
+    busyLock.current = true;
+    setBusy(true);
+    try {
+      await api.del(`/api/v2/guilds/${guildId}/translated-posts/${p.id}`);
+      await qc.invalidateQueries({ queryKey: ['translated-posts', guildId] });
+      if (editingId === p.id) reset();
+      toast.success('Übersetzung gelöscht.');
+    } catch (e) {
+      toast.error(e instanceof ApiError ? e.message : 'Löschen fehlgeschlagen.');
+    } finally {
+      busyLock.current = false;
+      setBusy(false);
+    }
   };
   const toggle = async (p: Post) => {
-    await api.post(`/api/v2/guilds/${guildId}/translated-posts/${p.id}/toggle`, { isActive: !p.isActive });
-    await qc.invalidateQueries({ queryKey: ['translated-posts', guildId] });
+    if (busyLock.current) return;
+    busyLock.current = true;
+    setBusy(true);
+    try {
+      await api.post(`/api/v2/guilds/${guildId}/translated-posts/${p.id}/toggle`, { isActive: !p.isActive });
+      await qc.invalidateQueries({ queryKey: ['translated-posts', guildId] });
+      toast.success(p.isActive ? 'Übersetzung deaktiviert.' : 'Übersetzung aktiviert.');
+    } catch (e) {
+      toast.error(e instanceof ApiError ? e.message : 'Statusänderung fehlgeschlagen.');
+    } finally {
+      busyLock.current = false;
+      setBusy(false);
+    }
   };
 
   if (!canManage) {
@@ -304,8 +330,8 @@ export function TranslatedPostsTab({ guildId, canManage }: { guildId: string; ca
                   <div className="text-xs text-muted break-all">#{channelNames[p.channelId] ?? p.channelId}</div>
                 </button>
                 <div className="flex gap-1 shrink-0">
-                  {p.mode !== 'now' && <Button size="sm" variant="ghost" onClick={() => toggle(p)}><Power size={15}/></Button>}
-                  <Button size="sm" variant="ghost" onClick={() => remove(p)}><Trash2 size={15}/></Button>
+                  {p.mode !== 'now' && <Button size="sm" variant="ghost" onClick={() => toggle(p)} disabled={busy} aria-label={`Übersetzung ${p.customTitle} ${p.isActive ? 'deaktivieren' : 'aktivieren'}`}><Power size={15}/></Button>}
+                  <Button size="sm" variant="ghost" onClick={() => remove(p)} disabled={busy} aria-label={`Übersetzung ${p.customTitle} löschen`}><Trash2 size={15}/></Button>
                 </div>
               </div>
             );
@@ -316,7 +342,7 @@ export function TranslatedPostsTab({ guildId, canManage }: { guildId: string; ca
       {(creating || editingId) && (
         <Card>
           <CardHeader>
-            <div className="flex justify-between gap-2"><CardTitle>{editingId ? 'Übersetzung bearbeiten' : 'Neue Übersetzung'}</CardTitle><Button size="sm" variant="ghost" onClick={reset}><X size={16}/></Button></div>
+            <div className="flex justify-between gap-2"><CardTitle>{editingId ? 'Übersetzung bearbeiten' : 'Neue Übersetzung'}</CardTitle><Button size="sm" variant="ghost" onClick={reset} disabled={busy} aria-label="Übersetzungseditor schließen"><X size={16}/></Button></div>
           </CardHeader>
           <div className="px-4 pb-4 space-y-3">
             <Field label="Titel"><Input value={form.customTitle} onChange={e => patch({ customTitle: e.target.value })}/></Field>

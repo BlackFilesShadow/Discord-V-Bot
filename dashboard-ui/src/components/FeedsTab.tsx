@@ -372,7 +372,7 @@ export function FeedsTab({ guildId, canManage }: { guildId: string; canManage: b
           <CardHeader>
             <div className="flex items-center justify-between w-full">
               <CardTitle>{editingId ? 'Feed bearbeiten' : 'Neuer Feed'}</CardTitle>
-              <Button size="sm" variant="ghost" onClick={reset}><X size={16} /></Button>
+              <Button size="sm" variant="ghost" onClick={reset} aria-label="Feed-Editor schließen"><X size={16} /></Button>
             </div>
           </CardHeader>
           <div className="px-4 pb-4 space-y-3">

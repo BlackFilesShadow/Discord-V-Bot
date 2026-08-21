@@ -33,7 +33,7 @@ export default function Servers() {
   // DEV-Konsole erst nach korrekter DEV-Passwort-Eingabe sichtbar (active).
   const devActive = useDevSession().active;
 
-  const { data, isLoading, isError, error, refetch } = useQuery({
+  const { data, isLoading, isFetching, isError, error, refetch } = useQuery({
     queryKey: ['guilds'],
     queryFn: () => api.get<{ guilds: Guild[] }>('/api/v2/guilds'),
     staleTime: 30_000,
@@ -47,7 +47,7 @@ export default function Servers() {
             <h1 className="text-2xl sm:text-3xl font-bold text-white">Deine Server</h1>
             <p className="text-muted text-sm mt-1">Server, auf denen du Owner bist oder &quot;Server verwalten&quot;-Rechte hast.</p>
           </div>
-          <Button onClick={() => refetch()} variant="outline" size="sm">Aktualisieren</Button>
+          <Button onClick={() => refetch()} variant="outline" size="sm" loading={isFetching}>Aktualisieren</Button>
         </div>
 
         {isLoading && (
@@ -62,7 +62,7 @@ export default function Servers() {
           <Card glow>
             <p className="text-danger font-medium">Fehler beim Laden.</p>
             <p className="text-muted text-sm mt-1">{(error as Error).message}</p>
-            <Button onClick={() => refetch()} className="mt-4" size="sm">Erneut versuchen</Button>
+            <Button onClick={() => refetch()} className="mt-4" size="sm" loading={isFetching}>Erneut versuchen</Button>
           </Card>
         )}
 

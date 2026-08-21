@@ -527,7 +527,7 @@ export function ReactionEmbedsTab({ guildId, canManage }: { guildId: string; can
             <CardHeader>
               <div className="flex items-center justify-between">
                 <CardTitle>{editingId ? 'Menü bearbeiten' : 'Neues Menü'}</CardTitle>
-                <Button size="sm" variant="ghost" onClick={resetEditor}><X size={16} /></Button>
+                <Button size="sm" variant="ghost" onClick={resetEditor} aria-label="Reaction-Embed-Editor schließen"><X size={16} /></Button>
               </div>
             </CardHeader>
             <div className="px-4 pb-4 space-y-3">
@@ -593,12 +593,12 @@ export function ReactionEmbedsTab({ guildId, canManage }: { guildId: string; can
                     <div key={o.id ?? `new-${idx}`} className="rounded-md border border-border p-2 space-y-2">
                       <div className="flex items-center gap-2">
                         <div className="flex flex-col gap-0.5">
-                          <button className="text-muted hover:text-white disabled:opacity-30" onClick={() => moveOption(idx, -1)} disabled={idx === 0}><ArrowUp size={13} /></button>
-                          <button className="text-muted hover:text-white disabled:opacity-30" onClick={() => moveOption(idx, 1)} disabled={idx === options.length - 1}><ArrowDown size={13} /></button>
+                          <button type="button" className="text-muted hover:text-white disabled:opacity-30" onClick={() => moveOption(idx, -1)} disabled={idx === 0} aria-label={`Option ${idx + 1} nach oben verschieben`}><ArrowUp size={13} /></button>
+                          <button type="button" className="text-muted hover:text-white disabled:opacity-30" onClick={() => moveOption(idx, 1)} disabled={idx === options.length - 1} aria-label={`Option ${idx + 1} nach unten verschieben`}><ArrowDown size={13} /></button>
                         </div>
                         <Input value={o.label} maxLength={80} onChange={e => patchOption(idx, { label: e.target.value })} placeholder="Button-Name (frei wählbar)" className="flex-1" />
                         <Switch checked={o.isActive} onChange={v => patchOption(idx, { isActive: v })} />
-                        <button className="text-muted hover:text-red-400" onClick={() => removeOption(idx)}><Trash2 size={15} /></button>
+                        <button type="button" className="text-muted hover:text-red-400" onClick={() => removeOption(idx)} aria-label={`Option ${idx + 1} entfernen`}><Trash2 size={15} /></button>
                       </div>
 
                       <div className="grid grid-cols-2 gap-2">
@@ -629,7 +629,7 @@ export function ReactionEmbedsTab({ guildId, canManage }: { guildId: string; can
                             {o.roleIds.map(rid => (
                               <span key={rid} className="inline-flex items-center gap-1 rounded bg-bg-elev border border-border px-2 py-0.5 text-xs text-white">
                                 {roleName(rid)}
-                                <button className="text-muted hover:text-red-400" onClick={() => removeRoleFromOption(idx, rid)}><X size={12} /></button>
+                                <button type="button" className="text-muted hover:text-red-400" onClick={() => removeRoleFromOption(idx, rid)} aria-label={`Rolle ${roleName(rid)} aus Option ${idx + 1} entfernen`}><X size={12} /></button>
                               </span>
                             ))}
                           </div>

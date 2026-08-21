@@ -542,6 +542,7 @@ function FactionsPanel({ guildId, canManage }: { guildId: string; canManage: boo
                       size="sm"
                       variant="danger"
                       onClick={() => { if (confirm(`Fraktion "${f.name}" wirklich loeschen?`)) remove.mutate(f.id); }}
+                      loading={remove.isPending}
                       aria-label={`Fraktion ${f.name} loeschen`}
                       title="Fraktion loeschen"
                     >
@@ -640,6 +641,7 @@ function FactionsPanel({ guildId, canManage }: { guildId: string; canManage: boo
                       cancelEdit();
                     }
                   }}
+                  loading={remove.isPending}
                 >
                   <Trash2 className="h-3 w-3 mr-1" />Fraktion löschen
                 </Button>

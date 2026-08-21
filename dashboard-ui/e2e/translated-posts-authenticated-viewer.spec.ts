@@ -136,7 +136,7 @@ test.describe('Translated posts authenticated viewer contract', () => {
     await openTranslations(page);
 
     await expect(page.getByRole('button', { name: 'Neu', exact: true })).toBeVisible();
-    await page.getByRole('button', { name: /Server-News/ }).click();
+    await page.getByRole('button', { name: 'Server-News Englisch → Deutsch #news', exact: true }).click();
     await expect(page.getByRole('heading', { name: 'Übersetzung bearbeiten' })).toBeVisible();
     await expect(page.getByRole('button', { name: 'Speichern', exact: true })).toBeVisible();
     await expect.poll(() => state.manageLookups).toEqual(expect.arrayContaining([

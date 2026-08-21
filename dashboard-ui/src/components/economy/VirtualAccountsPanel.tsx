@@ -195,7 +195,7 @@ export function VirtualAccountsPanel({ guildId, slot }: { guildId: string; slot:
       <CardHeader>
         <div className="flex items-center justify-between gap-2">
           <CardTitle><span className="inline-flex items-center gap-2"><Banknote className="h-4 w-4" />Virtuelle Konten</span></CardTitle>
-          <Button variant="ghost" size="sm" onClick={() => accounts.refetch()} disabled={accounts.isFetching}>
+          <Button variant="ghost" size="sm" onClick={() => accounts.refetch()} disabled={accounts.isFetching} aria-label="Virtuelle Konten aktualisieren">
             <RefreshCw className={`h-3.5 w-3.5 ${accounts.isFetching ? 'animate-spin' : ''}`} />
           </Button>
         </div>

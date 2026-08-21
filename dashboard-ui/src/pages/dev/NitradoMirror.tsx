@@ -81,6 +81,9 @@ export default function NitradoMirror() {
   const [fileMeta, setFileMeta] = useState<Entry | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
+  const [snapshotsLoading, setSnapshotsLoading] = useState(false);
+  const [browseLoading, setBrowseLoading] = useState(false);
+  const [fileLoading, setFileLoading] = useState(false);
   const [stepUpOpen, setStepUpOpen] = useState(false);
   const snapshotRequestSeq = useRef(0);
   const browseRequestSeq = useRef(0);
@@ -90,6 +93,9 @@ export default function NitradoMirror() {
     snapshotRequestSeq.current += 1;
     browseRequestSeq.current += 1;
     fileRequestSeq.current += 1;
+    setSnapshotsLoading(false);
+    setBrowseLoading(false);
+    setFileLoading(false);
   };
 
   useEffect(() => {
@@ -107,8 +113,7 @@ export default function NitradoMirror() {
         setConnsLoaded(true);
         setError(errorMessage(e, 'Connections-Laden fehlgeschlagen.'));
       });
-    // invalidateDerivedReads only mutates refs and is intentionally stable for this one-shot load.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
+    // Connection discovery runs once; invalidation uses stable state setters and refs only.
   }, []);
 
   const selectedConn = useMemo(() => conns.find(c => c.id === connId), [conns, connId]);
@@ -144,6 +149,7 @@ export default function NitradoMirror() {
   const reloadSnaps = () => {
     if (!guildId || !connId) return;
     const requestSeq = ++snapshotRequestSeq.current;
+    setSnapshotsLoading(true);
     api.get<{ snapshots: Snap[] }>(`/api/v2/dev/nitrado-mirror/snapshots?guildId=${guildId}&connId=${connId}`)
       .then(r => {
         if (requestSeq !== snapshotRequestSeq.current) return;
@@ -154,6 +160,9 @@ export default function NitradoMirror() {
         if (requestSeq !== snapshotRequestSeq.current) return;
         setSnaps([]);
         setError(errorMessage(e, 'Snapshot-Liste konnte nicht geladen werden.'));
+      })
+      .finally(() => {
+        if (requestSeq === snapshotRequestSeq.current) setSnapshotsLoading(false);
       });
   };
   useEffect(reloadSnaps, [guildId, connId]);
@@ -184,7 +193,9 @@ export default function NitradoMirror() {
 
   const browse = (snapId: string, path: string) => {
     const requestSeq = ++browseRequestSeq.current;
+    setBrowseLoading(true);
     fileRequestSeq.current += 1;
+    setFileLoading(false);
     setBrowseSnapId(snapId);
     setDir(path);
     setEntries([]);
@@ -201,11 +212,15 @@ export default function NitradoMirror() {
         if (requestSeq !== browseRequestSeq.current) return;
         setEntries([]);
         setError(errorMessage(e, 'Listing fehlgeschlagen.'));
+      })
+      .finally(() => {
+        if (requestSeq === browseRequestSeq.current) setBrowseLoading(false);
       });
   };
 
   const openFile = (snapId: string, entry: Entry) => {
     const requestSeq = ++fileRequestSeq.current;
+    setFileLoading(true);
     setFilePath(entry.path);
     setFileMeta(entry);
     setFileText(null);
@@ -221,6 +236,9 @@ export default function NitradoMirror() {
         setFileMeta(null);
         setFileText(null);
         setError(errorMessage(e, 'Datei-Lesen fehlgeschlagen.'));
+      })
+      .finally(() => {
+        if (requestSeq === fileRequestSeq.current) setFileLoading(false);
       });
   };
 
@@ -329,7 +347,7 @@ export default function NitradoMirror() {
                     <td className="text-right">{fmtBytes(s.totalBytes)}</td>
                     <td className="text-right">{s.errorCount}</td>
                     <td className="text-right">
-                      <Button size="sm" onClick={() => browse(s.id, '/')}>
+                      <Button size="sm" onClick={() => browse(s.id, '/')} loading={browseLoading && browseSnapId === s.id} disabled={browseLoading}>
                         <FolderOpen className="h-3.5 w-3.5 mr-1" /> Browse
                       </Button>
                     </td>
@@ -339,7 +357,7 @@ export default function NitradoMirror() {
             </table>
           </div>
           <div className="mt-2">
-            <Button size="sm" onClick={reloadSnaps}><RefreshCw className="h-3.5 w-3.5 mr-1" /> Aktualisieren</Button>
+            <Button size="sm" onClick={reloadSnaps} loading={snapshotsLoading}><RefreshCw className="h-3.5 w-3.5 mr-1" /> Aktualisieren</Button>
           </div>
         </Card>
       )}
@@ -351,7 +369,7 @@ export default function NitradoMirror() {
             <CardDesc>{entries.length} Eintraege</CardDesc>
           </CardHeader>
           {dir !== '/' && (
-            <Button size="sm" onClick={() => {
+            <Button size="sm" loading={browseLoading} onClick={() => {
               const parent = dir.replace(/\/$/, '').split('/').slice(0, -1).join('/') || '/';
               if (browseSnapId) browse(browseSnapId, parent);
             }}>
@@ -366,11 +384,11 @@ export default function NitradoMirror() {
                 </span>
                 <span className="text-muted shrink-0">{entry.isDir ? '' : fmtBytes(entry.sizeBytes)}</span>
                 {entry.isDir ? (
-                  <Button size="sm" onClick={() => {
+                  <Button size="sm" loading={browseLoading} disabled={browseLoading} onClick={() => {
                     if (browseSnapId) browse(browseSnapId, entry.path);
                   }}>oeffnen</Button>
                 ) : (
-                  <Button size="sm" onClick={() => {
+                  <Button size="sm" loading={fileLoading} disabled={fileLoading} onClick={() => {
                     if (browseSnapId) openFile(browseSnapId, entry);
                   }}>ansehen</Button>
                 )}

@@ -402,7 +402,7 @@ function WhitelistPanel({ guildId, slot }: { guildId: string; slot: string }) {
                 <span className="font-mono text-white">{e.gameId}</span>
                 <span className="text-muted text-xs ml-3">{e.source} · {new Date(e.approvedAt).toLocaleString()}</span>
               </div>
-              <Button size="sm" variant="danger" onClick={() => remove.mutate(e.gameId)}>
+              <Button size="sm" variant="danger" onClick={() => remove.mutate(e.gameId)} loading={remove.isPending} aria-label={`Whitelist-Eintrag ${e.gameId} entfernen`}>
                 <Trash2 className="h-3 w-3" />
               </Button>
             </div>
@@ -517,6 +517,7 @@ function WhitelistPanel({ guildId, slot }: { guildId: string; slot: string }) {
                 <Button
                   size="sm"
                   disabled={decide.isPending}
+                  aria-label={`Whitelist-Anfrage ${r.gameId} genehmigen`}
                   onClick={() => decide.mutate({ id: r.id, approve: true, reason: reasonById[r.id] || undefined })}
                 >
                   <Check className="h-3 w-3" />
@@ -525,6 +526,7 @@ function WhitelistPanel({ guildId, slot }: { guildId: string; slot: string }) {
                   size="sm"
                   variant="danger"
                   disabled={decide.isPending}
+                  aria-label={`Whitelist-Anfrage ${r.gameId} ablehnen`}
                   onClick={() => decide.mutate({ id: r.id, approve: false, reason: reasonById[r.id] || undefined })}
                 >
                   <X className="h-3 w-3" />
@@ -770,7 +772,7 @@ function EconomyLinksPanel({ guildId, slot }: { guildId: string; slot: string })
                 DayZ-GUID: <span className="font-mono text-white">{l.gameId}</span>
               </p>
             </div>
-            <Button size="sm" variant="danger" onClick={() => unlink.mutate(l.userDiscordId)}>
+            <Button size="sm" variant="danger" onClick={() => unlink.mutate(l.userDiscordId)} loading={unlink.isPending} aria-label={`Economy-Link ${l.userDiscordId} entfernen`}>
               <Trash2 className="h-3 w-3" />
             </Button>
           </div>
@@ -841,7 +843,7 @@ function EconomyOverview({ guildId, slot }: { guildId: string; slot: string }) {
           <CardTitle><span className="inline-flex items-center gap-2"><Coins className="h-4 w-4" />Wirtschaft-Status</span></CardTitle>
           <div className="flex items-center gap-2">
             <Badge variant={d.economy.enabled ? 'ok' : 'neutral'}>{d.economy.enabled ? 'Aktiv' : 'Inaktiv'}</Badge>
-            <Button variant="ghost" size="sm" onClick={() => q.refetch()} disabled={q.isFetching}>
+            <Button variant="ghost" size="sm" onClick={() => q.refetch()} disabled={q.isFetching} aria-label="Wirtschaft-Status aktualisieren">
               <RefreshCw className={`h-3.5 w-3.5 ${q.isFetching ? 'animate-spin' : ''}`} />
             </Button>
           </div>

@@ -74,7 +74,7 @@ export default function Page(): JSX.Element {
         actions={
           <>
             <Button variant="ghost" onClick={() => void reload()} disabled={loading}><RefreshCw className="h-4 w-4 mr-1" />Refresh</Button>
-            <Button variant="danger" onClick={triggerSnapshot}><Camera className="h-4 w-4 mr-1" />Heap-Snapshot</Button>
+            <Button variant="danger" onClick={triggerSnapshot} disabled={busy || stepUp !== null}><Camera className="h-4 w-4 mr-1" />Heap-Snapshot</Button>
           </>
         }
       />
