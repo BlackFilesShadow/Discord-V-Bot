@@ -1,0 +1,11 @@
+{
+  "schemaVersion": 1,
+  "stage": 52,
+  "basedOnMainSha": "c6472086",
+  "scope": "RAM/Node heap tuning only from measured baselines — no blanket heap increase.",
+  "contracts": {
+    "noBlindIncrease": "Dockerfile/compose must not set arbitrary huge --max-old-space-size without documented measurement",
+    "docs": "Tuning notes reference Stage 46-51 harnesses"
+  },
+  "decision": "No production heap flag change in Stage 52; defaults retained pending Gate-phase production metrics."
+}
