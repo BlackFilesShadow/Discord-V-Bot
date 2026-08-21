@@ -1,0 +1,28 @@
+{
+  "schemaVersion": 1,
+  "stage": 34,
+  "basedOnMainSha": "1e92c2a1006dd74b6bd648f90555732d753fc387",
+  "viewport": { "width": 390, "height": 844, "name": "iPhone 14" },
+  "scope": "Full mobile matrix at exactly 390px for production-reachable dashboard shells: navigation, CRUD/actions, dialogs, tables, forms, touch targets, overflow, loading/error/success, permission states.",
+  "contracts": {
+    "noHorizontalOverflow": "documentElement.scrollWidth - clientWidth <= 1",
+    "touchTargetMin": "Primary header/login controls >= 44x44 CSS px",
+    "authRoutes": "/servers, guild overview, slot settings remain usable",
+    "evidence": "Playwright mobile.spec.ts + dashboard-authenticated-page-matrix 390px + bot-admin-mobile-contract"
+  },
+  "checks": [
+    { "id": "login-390", "e2e": "mobile.spec.ts viewport matrix 390", "status": "verified" },
+    { "id": "header-controls-390", "e2e": "mobile.spec.ts authenticated controls", "status": "verified" },
+    { "id": "servers-guild-slot-390", "e2e": "dashboard-authenticated-page-matrix 390px", "status": "verified" },
+    { "id": "bot-admin-390", "e2e": "bot-admin-mobile-contract.spec.ts", "status": "verified" },
+    { "id": "overflow-gate-390", "e2e": "scrollWidth checks", "status": "verified" }
+  ],
+  "surfaces": [
+    { "id": "login", "route": "/login", "status": "verified" },
+    { "id": "servers", "route": "/servers", "status": "verified" },
+    { "id": "guild", "route": "/servers/:guildId", "status": "verified" },
+    { "id": "slot-settings", "route": "/servers/:guildId/server/:slot?tab=settings", "status": "verified" },
+    { "id": "bot-admin", "route": "/bot-admin", "status": "verified" },
+    { "id": "shell-header", "route": "Shell chrome", "status": "verified" }
+  ]
+}
