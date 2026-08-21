@@ -1,0 +1,23 @@
+{
+  "schemaVersion": 1,
+  "stage": 40,
+  "basedOnMainSha": "2076eee1",
+  "scope": "Owner/Admin/DEV/User role grants, membership, leave/rejoin, stale grants, privilege escalation, permission cache, fail-closed.",
+  "contracts": {
+    "owner": "guild.ownerId match grants full owner path",
+    "grants": "guildPermissionGrant only with live Discord membership",
+    "staleGrant": "leave => membership null => 403",
+    "dev": "User.role DEVELOPER + DevSession; password is step-up not identity",
+    "botAdmin": "global bot-admin identity + session",
+    "noFrontendAuthZ": "UI never sole authorization"
+  },
+  "cases": [
+    { "id": "owner-ok", "status": "verified" },
+    { "id": "grant-member-ok", "status": "verified" },
+    { "id": "grant-after-leave", "status": "verified" },
+    { "id": "user-no-grant", "status": "verified" },
+    { "id": "dev-without-session", "status": "verified" },
+    { "id": "bot-admin-without-session", "status": "verified" },
+    { "id": "privilege-escalation-body-role", "status": "verified" }
+  ]
+}
