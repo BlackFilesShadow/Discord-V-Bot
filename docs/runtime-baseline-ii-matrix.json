@@ -1,0 +1,12 @@
+{
+  "schemaVersion": 1,
+  "stage": 47,
+  "basedOnMainSha": "c6472086",
+  "scope": "Runtime Baseline II: DB pool, queries, Redis, cache, worker queues, backpressure, retry, dead-letter.",
+  "contracts": {
+    "prisma": "single prisma client module",
+    "redis": "REDIS_URL optional cache path",
+    "workers": "nitrado jobs / queue processors have retry + failed status",
+    "harness": "scripts/runtime-baseline-ii-check.mjs verifies config surface without live infra"
+  }
+}
