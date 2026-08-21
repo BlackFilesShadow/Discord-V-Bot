@@ -1,13 +1,12 @@
-/* eslint-disable local/no-unscoped-prisma-query -- Stage 64: intentional cross-tenant system/admin surface (authZ outside Prisma where). */
 import prisma from '../../database/prisma';
 import { logger, logAudit } from '../../utils/logger';
 
 /**
  * Logging & Analytics Modul (Sektion 11):
  * - Detaillierte Logs aller Aktionen (Join/Leave, Nachrichten, Moderation, Giveaways, Rollen, Votes)
- * - Statistiken und Auswertungen fÃ¼r Admins und Entwickler
- * - Exportfunktionen, Filter, Alerting bei AuffÃ¤lligkeiten
- * - Zugriff nur fÃ¼r Developer/Admins, DSGVO-konform
+ * - Statistiken und Auswertungen für Admins und Entwickler
+ * - Exportfunktionen, Filter, Alerting bei Auffälligkeiten
+ * - Zugriff nur für Developer/Admins, DSGVO-konform
  */
 
 /**
@@ -73,7 +72,7 @@ export async function createSecurityEvent(
 }
 
 /**
- * Holt Statistiken fÃ¼r den Developer-Bereich.
+ * Holt Statistiken für den Developer-Bereich.
  */
 export async function getAnalytics(days: number = 30): Promise<{
   userStats: { total: number; new: number; manufacturers: number; banned: number };
@@ -143,14 +142,14 @@ export async function getAnalytics(days: number = 30): Promise<{
     bySeverity[s.severity] = s._count.id;
   }
 
-  // AktivitÃ¤tsstatistiken aus Audit-Logs
+  // Aktivitätsstatistiken aus Audit-Logs
   const [logins, commands, messages] = await Promise.all([
     prisma.auditLog.count({ where: { category: 'AUTH', createdAt: { gte: since } } }),
     prisma.auditLog.count({ where: { category: 'SYSTEM', action: { contains: 'COMMAND' }, createdAt: { gte: since } } }),
     prisma.auditLog.count({ where: { category: 'SYSTEM', action: { contains: 'MESSAGE' }, createdAt: { gte: since } } }),
   ]);
 
-  // PaketgrÃ¶ÃŸe aggregieren
+  // Paketgröße aggregieren
   const totalSizeResult = await prisma.package.aggregate({
     _sum: { totalSize: true },
   });
@@ -167,17 +166,17 @@ export async function getAnalytics(days: number = 30): Promise<{
 }
 
 /**
- * PrÃ¼ft auf AuffÃ¤lligkeiten und gibt Alerts zurÃ¼ck.
+ * Prüft auf Auffälligkeiten und gibt Alerts zurück.
  */
 export async function checkAlerts(): Promise<string[]> {
   const alerts: string[] = [];
 
-  // Hohe Anzahl ungelÃ¶ster Security-Events
+  // Hohe Anzahl ungelöster Security-Events
   const unresolvedCritical = await prisma.securityEvent.count({
     where: { isResolved: false, severity: 'CRITICAL' },
   });
   if (unresolvedCritical > 0) {
-    alerts.push(`ðŸ”´ ${unresolvedCritical} ungelÃ¶ste kritische Security-Events`);
+    alerts.push(`🔴 ${unresolvedCritical} ungelöste kritische Security-Events`);
   }
 
   // Viele Loginversuche in kurzer Zeit
@@ -188,21 +187,21 @@ export async function checkAlerts(): Promise<string[]> {
     },
   });
   if (recentLoginFailures > 10) {
-    alerts.push(`ðŸŸ  ${recentLoginFailures} Login-Fehlversuche in der letzten Stunde`);
+    alerts.push(`🟠 ${recentLoginFailures} Login-Fehlversuche in der letzten Stunde`);
   }
 
-  // Pakete in QuarantÃ¤ne
+  // Pakete in Quarantäne
   const quarantined = await prisma.package.count({ where: { status: 'QUARANTINED' } });
   if (quarantined > 0) {
-    alerts.push(`ðŸŸ¡ ${quarantined} Pakete in QuarantÃ¤ne`);
+    alerts.push(`🟡 ${quarantined} Pakete in Quarantäne`);
   }
 
-  // Ausstehende GDPR-LÃ¶schantrÃ¤ge
+  // Ausstehende GDPR-Löschanträge
   const pendingDeletions = await prisma.dataDeletionRequest.count({
     where: { status: 'PENDING' },
   });
   if (pendingDeletions > 0) {
-    alerts.push(`ðŸŸ¡ ${pendingDeletions} ausstehende DSGVO-LÃ¶schantrÃ¤ge`);
+    alerts.push(`🟡 ${pendingDeletions} ausstehende DSGVO-Löschanträge`);
   }
 
   // Ausstehende Appeals
@@ -210,14 +209,14 @@ export async function checkAlerts(): Promise<string[]> {
     where: { status: 'PENDING' },
   });
   if (pendingAppeals > 5) {
-    alerts.push(`ðŸŸ¡ ${pendingAppeals} ausstehende Moderations-Appeals`);
+    alerts.push(`🟡 ${pendingAppeals} ausstehende Moderations-Appeals`);
   }
 
   return alerts;
 }
 
 /**
- * DSGVO-konforme DatenlÃ¶schung.
+ * DSGVO-konforme Datenlöschung.
  */
 export async function processDataDeletionRequest(requestId: string): Promise<boolean> {
   const request = await prisma.dataDeletionRequest.findUnique({
@@ -246,12 +245,12 @@ export async function processDataDeletionRequest(requestId: string): Promise<boo
 
     switch (request.requestType) {
       case 'FULL_DELETION':
-        // Alle Daten lÃ¶schen
+        // Alle Daten löschen
         await prisma.user.delete({ where: { id: user.id } });
         break;
 
       case 'PARTIAL_DELETION':
-        // Nur persÃ¶nliche Daten anonymisieren
+        // Nur persönliche Daten anonymisieren
         await prisma.user.update({
           where: { id: user.id },
           data: {
@@ -274,7 +273,7 @@ export async function processDataDeletionRequest(requestId: string): Promise<boo
         break;
 
       case 'DATA_EXPORT':
-        // Export wird Ã¼ber admin-export Command abgewickelt
+        // Export wird über admin-export Command abgewickelt
         break;
     }
 
@@ -293,7 +292,7 @@ export async function processDataDeletionRequest(requestId: string): Promise<boo
       where: { id: requestId },
       data: { status: 'FAILED', details: { error: String(error) } as any },
     });
-    logger.error('GDPR-LÃ¶schung fehlgeschlagen:', error);
+    logger.error('GDPR-Löschung fehlgeschlagen:', error);
     return false;
   }
 }

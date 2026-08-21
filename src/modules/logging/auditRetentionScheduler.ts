@@ -1,4 +1,3 @@
-/* eslint-disable local/no-unscoped-prisma-query -- Stage 64: intentional cross-tenant system/admin surface (authZ outside Prisma where). */
 /**
  * Audit-Log-Retention-Scheduler.
  *
@@ -13,7 +12,7 @@
  *
  * Sicherheit:
  *   - Loescht NUR isImmutable=false (immutable Eintraege bleiben unangetastet).
- *   - Batched per `deleteMany` mit `lt`-Cutoff â€” keine Pagination noetig
+ *   - Batched per `deleteMany` mit `lt`-Cutoff — keine Pagination noetig
  *     (Postgres handled das transaktional).
  */
 import prisma from '../../database/prisma';
