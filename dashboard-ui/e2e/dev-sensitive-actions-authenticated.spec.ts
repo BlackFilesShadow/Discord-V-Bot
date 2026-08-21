@@ -145,7 +145,7 @@ function expectWrite(write: Write, method: string, path: string): void {
 test('Active Sessions Force-Revoke ist Step-Up geschützt und target-gescoped', async ({ page }) => {
   const stub = await stubDevSensitive(page);
   await page.goto('/dev/active-sessions');
-  await expect(page.getByText('Aktive DEV-Sessions', { exact: true })).toBeVisible();
+  await expect(page.getByRole('heading', { name: 'Aktive DEV-Sessions', exact: true })).toBeVisible();
 
   await page.getByRole('button', { name: 'Force-Revoke' }).click();
   await fillStepUp(page, 'Stage 26 session revoke');
@@ -160,7 +160,7 @@ test('Active Sessions Force-Revoke ist Step-Up geschützt und target-gescoped', 
 test('Incident Wartungsmodus nutzt Step-Up plus doppelte Idempotenz-Sicherung', async ({ page }) => {
   const stub = await stubDevSensitive(page);
   await page.goto('/dev/incident-response');
-  await expect(page.getByText('Incident Response', { exact: true })).toBeVisible();
+  await expect(page.getByRole('heading', { name: 'Incident Response', exact: true })).toBeVisible();
 
   await page.getByRole('button', { name: 'Aktivieren' }).last().click();
   await expect(page.getByRole('dialog')).toContainText('Wartungsmodus');
@@ -180,7 +180,7 @@ test('Incident Wartungsmodus nutzt Step-Up plus doppelte Idempotenz-Sicherung', 
 test('Heap-Snapshot ist Step-Up geschützt und API-idempotent', async ({ page }) => {
   const stub = await stubDevSensitive(page);
   await page.goto('/dev/debug-tools');
-  await expect(page.getByText('Debug Tools', { exact: true })).toBeVisible();
+  await expect(page.getByRole('heading', { name: 'Debug Tools', exact: true })).toBeVisible();
 
   await page.getByRole('button', { name: 'Heap-Snapshot' }).click();
   await fillStepUp(page, 'Stage 26 heap snapshot');
