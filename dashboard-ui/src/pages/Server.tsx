@@ -187,11 +187,13 @@ function statusColor(status: Slot['status']): string {
 
 function NitradoTab({ guildId, isOwner, slots }: { guildId: string; isOwner: boolean; slots: Slot[] }) {
   const qc = useQueryClient();
+  const toast = useToast();
   const [showAdd, setShowAdd] = useState(false);
 
   const remove = useMutation({
     mutationFn: (slot: number) => api.del(`/api/v2/guilds/${guildId}/nitrado/${slot}`),
-    onSuccess: () => qc.invalidateQueries({ queryKey: ['dashboard', guildId] }),
+    onSuccess: () => { toast.success('Nitrado-Slot gelöscht.'); qc.invalidateQueries({ queryKey: ['dashboard', guildId] }); },
+    onError: error => toast.error(error instanceof ApiError ? error.message : 'Nitrado-Slot konnte nicht gelöscht werden.'),
   });
 
   if (!isOwner) {
@@ -223,7 +225,7 @@ function NitradoTab({ guildId, isOwner, slots }: { guildId: string; isOwner: boo
       )}
       <div className="grid gap-3">
         {slots.map(row => (
-          <SlotRow key={row.id} guildId={guildId} slot={row} onDelete={() => {
+          <SlotRow key={row.id} guildId={guildId} slot={row} deleting={remove.isPending} onDelete={() => {
             if (confirm(`Slot ${row.slot} (${row.alias}) wirklich loeschen? Alle Daten werden geloescht.`)) remove.mutate(row.slot);
           }} />
         ))}
@@ -232,7 +234,7 @@ function NitradoTab({ guildId, isOwner, slots }: { guildId: string; isOwner: boo
   );
 }
 
-function SlotRow({ guildId, slot, onDelete }: { guildId: string; slot: Slot; onDelete: () => void }) {
+function SlotRow({ guildId, slot, deleting, onDelete }: { guildId: string; slot: Slot; deleting: boolean; onDelete: () => void }) {
   const [showToken, setShowToken] = useState(false);
   const [showService, setShowService] = useState(false);
   const noService = !slot.nitradoServerId;
@@ -268,13 +270,13 @@ function SlotRow({ guildId, slot, onDelete }: { guildId: string; slot: Slot; onD
               Konfigurieren <ChevronRight className="h-3.5 w-3.5 ml-1" />
             </Button>
           </Link>
-          <Button size="sm" variant={noService ? 'primary' : 'ghost'} onClick={() => setShowService(s => !s)} title="Nitrado-Service verknuepfen">
+          <Button size="sm" variant={noService ? 'primary' : 'ghost'} onClick={() => setShowService(s => !s)} title="Nitrado-Service verknuepfen" aria-label={`Nitrado-Service für Slot ${slot.slot} verknüpfen`}>
             <ServerIcon className="h-3.5 w-3.5" />
           </Button>
-          <Button size="sm" variant="ghost" onClick={() => setShowToken(t => !t)} title="Token rotieren">
+          <Button size="sm" variant="ghost" onClick={() => setShowToken(t => !t)} title="Token rotieren" aria-label={`Token für Slot ${slot.slot} rotieren`}>
             <KeyRound className="h-3.5 w-3.5" />
           </Button>
-          <Button size="sm" variant="danger" onClick={onDelete}>
+          <Button size="sm" variant="danger" onClick={onDelete} loading={deleting} aria-label={`Nitrado-Slot ${slot.slot} löschen`}>
             <Trash2 className="h-3.5 w-3.5" />
           </Button>
         </div>

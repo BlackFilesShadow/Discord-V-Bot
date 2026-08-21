@@ -82,7 +82,7 @@ function Audit({ center }: { center: string }) {
         <Input value={q} onChange={e => setQ(e.target.value)} placeholder="Volltext"/>
         <Input value={days} onChange={e => setDays(e.target.value)} type="number" min={1} max={365}/>
       </div>
-      <div className="mt-3 flex flex-wrap gap-2"><Button size="sm" onClick={() => logs.refetch()}>Suchen</Button><Button size="sm" variant="ghost" onClick={() => { window.location.href = `${center}/audit/export?days=${encodeURIComponent(days)}`; }}>JSON exportieren</Button></div>
+      <div className="mt-3 flex flex-wrap gap-2"><Button size="sm" onClick={() => logs.refetch()} loading={logs.isFetching}>Suchen</Button><Button size="sm" variant="ghost" onClick={() => { window.location.href = `${center}/audit/export?days=${encodeURIComponent(days)}`; }}>JSON exportieren</Button></div>
       <div className="mt-3">{logs.isError ? <p className="text-danger">{msg(logs.error)}</p> : <Json value={logs.data ?? {}} />}</div>
     </Card>
     <Card><h2 className="font-semibold mb-3">Compliance</h2>{compliance.isError ? <p className="text-danger">{msg(compliance.error)}</p> : <Json value={compliance.data ?? {}} />}</Card>
@@ -195,7 +195,7 @@ function Triggers({ center, guildId }: { center: string; guildId: string }) {
           <Button size="sm" variant="danger" onClick={() => clear.mutate()} loading={clear.isPending} disabled={clearConfirm !== 'CLEAR'}>Alle löschen</Button>
         </div>
       </div>
-      <div className="space-y-2 mt-3">{(list.data?.items ?? []).map(trigger => <div key={trigger.id} className="border border-border rounded-md p-3"><div className="flex flex-col gap-2 sm:flex-row sm:items-start sm:justify-between"><div className="min-w-0"><b>{trigger.id}</b> <Badge>{trigger.triggerType}</Badge> <Badge>{trigger.responseMode}</Badge><div className="text-xs text-muted mt-1 break-words">{trigger.trigger} · CD {trigger.cooldownSeconds ?? 10}s{trigger.mediaUrl ? ' · Media' : ''}</div></div><Button size="sm" variant="danger" onClick={() => del.mutate(trigger.id)} loading={del.isPending}><Trash2 className="h-4 w-4"/></Button></div></div>)}</div>
+      <div className="space-y-2 mt-3">{(list.data?.items ?? []).map(trigger => <div key={trigger.id} className="border border-border rounded-md p-3"><div className="flex flex-col gap-2 sm:flex-row sm:items-start sm:justify-between"><div className="min-w-0"><b>{trigger.id}</b> <Badge>{trigger.triggerType}</Badge> <Badge>{trigger.responseMode}</Badge><div className="text-xs text-muted mt-1 break-words">{trigger.trigger} · CD {trigger.cooldownSeconds ?? 10}s{trigger.mediaUrl ? ' · Media' : ''}</div></div><Button size="sm" variant="danger" onClick={() => del.mutate(trigger.id)} loading={del.isPending} aria-label={`Trigger ${trigger.id} löschen`}><Trash2 className="h-4 w-4"/></Button></div></div>)}</div>
     </Card>
   </div>;
 }
@@ -242,14 +242,14 @@ function Feedback({ center, guildId }: { center: string; guildId: string }) {
       <h2 className="font-semibold mb-3">Feedback-Channel-Konfiguration</h2>
       <p className="text-xs text-muted mb-2 break-all">Aktuell global: {cfg.data?.globalChannelId ?? '–'} · Guild: {cfg.data?.guildChannelId ?? '–'}</p>
       <div className="grid gap-2 md:grid-cols-2">
-        <div className="flex flex-col gap-2 sm:flex-row"><Input value={globalChannel} onChange={e => setGlobalChannel(e.target.value)} placeholder="Global Channel-ID / leer deaktiviert"/><Button size="sm" onClick={() => save.mutate('global')}>Global setzen</Button></div>
+        <div className="flex flex-col gap-2 sm:flex-row"><Input value={globalChannel} onChange={e => setGlobalChannel(e.target.value)} placeholder="Global Channel-ID / leer deaktiviert"/><Button size="sm" onClick={() => save.mutate('global')} loading={save.isPending}>Global setzen</Button></div>
         <div className="flex flex-col gap-2 sm:flex-row">
           <Select value={guildChannel} onChange={e => setGuildChannel(e.target.value)} disabled={!guildId || cfg.isLoading || cfg.isError}>
             <option value="">Guild-Feedback deaktivieren</option>
             {currentGuildChannelMissing && <option value={guildChannel}>Aktuell gespeichert: {guildChannel} (nicht erreichbar)</option>}
             {options.map(channel => <option key={channel.id} value={channel.id}>{channel.name}</option>)}
           </Select>
-          <Button size="sm" onClick={() => save.mutate('guild')} disabled={!guildId || cfg.isLoading || cfg.isError}>Guild setzen</Button>
+          <Button size="sm" onClick={() => save.mutate('guild')} loading={save.isPending} disabled={!guildId || cfg.isLoading || cfg.isError}>Guild setzen</Button>
         </div>
       </div>
       <p className="text-[11px] text-muted mt-2">Der globale Fallback ist Bot-Owner-only. Für die ausgewählte Guild werden nur erreichbare Text-/Ankündigungskanäle angeboten.</p>
@@ -257,7 +257,7 @@ function Feedback({ center, guildId }: { center: string; guildId: string }) {
     <Card>
       <h2 className="font-semibold mb-3">Feedback-Status / Admin-Notiz</h2>
       <div className="grid gap-2 md:grid-cols-3"><Input value={feedbackId} onChange={e => setFeedbackId(e.target.value)} placeholder="Feedback-ID"/><Select value={status} onChange={e => setStatus(e.target.value)}>{['OPEN','IN_REVIEW','RESOLVED','WONTFIX'].map(x => <option key={x}>{x}</option>)}</Select><Input value={note} onChange={e => setNote(e.target.value)} placeholder="Admin-Notiz"/></div>
-      <Button size="sm" className="mt-2" onClick={() => patch.mutate()} disabled={!feedbackId}>Speichern + Notify aktualisieren</Button>
+      <Button size="sm" className="mt-2" onClick={() => patch.mutate()} loading={patch.isPending} disabled={!feedbackId}>Speichern + Notify aktualisieren</Button>
     </Card>
   </div>;
 }

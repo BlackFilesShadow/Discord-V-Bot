@@ -251,6 +251,54 @@ test('spaete Snapshot-Antwort einer alten Connection kann die neue Auswahl nicht
   await expect(page.getByText('222', { exact: true })).toBeVisible();
 });
 
+test('Connection-Wechsel waehrend Browse gibt Loading frei und verwirft die alte Antwort', async ({ page }) => {
+  await stubActiveDev(page);
+  const secondConnId = 'conn_browse_2';
+  const secondGuildId = '222222222222222222';
+  let staleBrowseStarted = false;
+
+  await page.route('**/api/v2/dev/nitrado-mirror/connections', route => json(route, {
+    connections: [
+      { id: CONN_ID, guildId: GUILD_ID, slot: 1, alias: 'first', alias5: 'server1', serviceId: '12345678', status: 'ACTIVE' },
+      { id: secondConnId, guildId: secondGuildId, slot: 2, alias: 'second', alias5: 'server2', serviceId: '87654321', status: 'ACTIVE' },
+    ],
+    scope: { global: true },
+  }));
+  await page.route('**/api/v2/dev/nitrado-mirror/snapshots?*', route => {
+    const connId = new URL(route.request().url()).searchParams.get('connId');
+    const current = connId === secondConnId;
+    return json(route, { snapshots: [{
+      id: current ? 'current_browse_snapshot' : 'stale_browse_snapshot',
+      startedAt: current ? '2026-08-20T19:00:00.000Z' : '2026-08-20T18:00:00.000Z',
+      finishedAt: '2026-08-20T19:01:00.000Z', status: 'OK', totalFiles: current ? 222 : 111,
+      totalDirs: 1, totalBytes: current ? '222' : '111', storedBytes: current ? '222' : '111', oversizeFiles: 0, errorCount: 0,
+    }] });
+  });
+  await page.route('**/api/v2/dev/nitrado-mirror/*/files?*', async route => {
+    if (route.request().url().includes('stale_browse_snapshot')) {
+      staleBrowseStarted = true;
+      await new Promise(resolve => setTimeout(resolve, 250));
+      return json(route, { entries: [{ id: 'stale', name: 'stale.txt', path: '/stale.txt', isDir: false, sizeBytes: 1 }] });
+    }
+    return json(route, { entries: [{ id: 'current', name: 'current.txt', path: '/current.txt', isDir: false, sizeBytes: 2 }] });
+  });
+
+  await page.goto('/dev/nitrado-mirror');
+  const connection = page.getByRole('combobox', { name: 'Nitrado-Connection' });
+  await connection.selectOption(CONN_ID);
+  await page.getByRole('button', { name: 'Browse' }).click();
+  await expect.poll(() => staleBrowseStarted).toBe(true);
+  await connection.selectOption(secondConnId);
+
+  const currentBrowse = page.getByRole('button', { name: 'Browse' });
+  await expect(currentBrowse).toBeEnabled();
+  await currentBrowse.click();
+  await expect(page.getByText(/current\.txt/)).toBeVisible();
+  await page.waitForTimeout(350);
+  await expect(page.getByText(/stale\.txt/)).toHaveCount(0);
+  await expect(page.getByText(/current\.txt/)).toBeVisible();
+});
+
 test('Scope-/Backendfehler verwirft Connection-Daten sichtbar', async ({ page }) => {
   await stubActiveDev(page);
   await page.route('**/api/v2/dev/nitrado-mirror/connections', route => json(route, {

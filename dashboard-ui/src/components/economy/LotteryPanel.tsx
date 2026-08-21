@@ -145,7 +145,7 @@ export function LotteryPanel({ guildId, slot }: { guildId: string; slot: string 
       <CardHeader>
         <div className="flex items-center justify-between gap-2">
           <CardTitle><span className="inline-flex items-center gap-2"><Dices className="h-4 w-4" />Lotterie</span></CardTitle>
-          <Button variant="ghost" size="sm" onClick={() => { void current.refetch(); void history.refetch(); }} disabled={current.isFetching || history.isFetching}>
+          <Button variant="ghost" size="sm" onClick={() => { void current.refetch(); void history.refetch(); }} disabled={current.isFetching || history.isFetching} aria-label="Lotterie aktualisieren">
             <RefreshCw className={`h-3.5 w-3.5 ${current.isFetching || history.isFetching ? 'animate-spin' : ''}`} />
           </Button>
         </div>

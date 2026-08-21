@@ -199,6 +199,7 @@ export function BlackMarketPanel({ guildId, slot }: { guildId: string; slot: str
               if (canManage) { void vendors.refetch(); void purchases.refetch(); }
             }}
             disabled={listings.isFetching || (canManage && (vendors.isFetching || purchases.isFetching))}
+            aria-label="Schwarzmarkt aktualisieren"
           >
             <RefreshCw className={`h-3.5 w-3.5 ${listings.isFetching || (canManage && (vendors.isFetching || purchases.isFetching)) ? 'animate-spin' : ''}`} />
           </Button>

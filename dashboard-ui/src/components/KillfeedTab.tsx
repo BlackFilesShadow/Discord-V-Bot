@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useRef, useState } from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { Crosshair, Hammer, Plus, Power, Trash2 } from 'lucide-react';
 import { api, ApiError } from '@/lib/api';
@@ -66,6 +66,8 @@ export function KillfeedTab({ guildId, isOwner, slots }: { guildId: string; isOw
   const [kind, setKind] = useState<FeedKind>('DEATH');
   const [activeSlot, setActiveSlot] = useState<number>(slots.find(s => s.status === 'ACTIVE')?.slot ?? slots[0]?.slot ?? 1);
   const [editing, setEditing] = useState<GameplayFeedConfig | 'new' | null>(null);
+  const [pendingAction, setPendingAction] = useState<string | null>(null);
+  const actionLock = useRef(false);
 
   const query = useQuery({
     queryKey: ['gameplay-feeds', guildId, activeSlot, kind],
@@ -183,13 +185,22 @@ export function KillfeedTab({ guildId, isOwner, slots }: { guildId: string; isOw
                 <Button
                   size="sm"
                   variant="ghost"
+                  loading={pendingAction === `toggle:${config.id}`}
+                  disabled={pendingAction !== null}
+                  aria-label={`${title} ${config.isActive ? 'deaktivieren' : 'aktivieren'}`}
                   onClick={async () => {
+                    if (actionLock.current) return;
+                    actionLock.current = true;
+                    setPendingAction(`toggle:${config.id}`);
                     try {
                       await api.patch(`/api/v2/guilds/${guildId}/killfeed/${config.id}?slot=${activeSlot}&kind=${kind}`, { isActive: !config.isActive });
                       toast.success(config.isActive ? `${title} deaktiviert.` : `${title} aktiviert.`);
                       invalidate();
                     } catch (error) {
                       toast.error(error instanceof ApiError ? error.message : 'Umschalten fehlgeschlagen.');
+                    } finally {
+                      actionLock.current = false;
+                      setPendingAction(null);
                     }
                   }}
                 ><Power className="h-3.5 w-3.5" /></Button>
@@ -197,14 +208,23 @@ export function KillfeedTab({ guildId, isOwner, slots }: { guildId: string; isOw
                 <Button
                   size="sm"
                   variant="danger"
+                  loading={pendingAction === `delete:${config.id}`}
+                  disabled={pendingAction !== null}
+                  aria-label={`${title} für ${channelName(config.channelId)} löschen`}
                   onClick={async () => {
                     if (!confirm(`${title} in #${channelName(config.channelId)} wirklich löschen?`)) return;
+                    if (actionLock.current) return;
+                    actionLock.current = true;
+                    setPendingAction(`delete:${config.id}`);
                     try {
                       await api.del(`/api/v2/guilds/${guildId}/killfeed/${config.id}?slot=${activeSlot}&kind=${kind}`);
                       toast.success(`${title} gelöscht.`);
                       invalidate();
                     } catch (error) {
                       toast.error(error instanceof ApiError ? error.message : 'Löschen fehlgeschlagen.');
+                    } finally {
+                      actionLock.current = false;
+                      setPendingAction(null);
                     }
                   }}
                 ><Trash2 className="h-3.5 w-3.5" /></Button>

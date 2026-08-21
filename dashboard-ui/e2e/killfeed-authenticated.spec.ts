@@ -32,7 +32,7 @@ function feed(overrides: Record<string, unknown> = {}) {
   };
 }
 
-async function stub(page: Page, opts: { saveFailure?: boolean; listFailure?: boolean } = {}) {
+async function stub(page: Page, opts: { saveFailure?: boolean; listFailure?: boolean; actionDelayMs?: number } = {}) {
   const mutations: Mutation[] = [];
   await page.route('**/api/me', route => json(route, { user: { discordId: USER_ID, username: 'killfeed-e2e', avatar: null, role: 'DEVELOPER' } }));
   await page.route('**/auth/status', route => json(route, { authenticated: true, user: { discordId: USER_ID, username: 'killfeed-e2e', avatar: null, role: 'DEVELOPER' } }));
@@ -70,6 +70,7 @@ async function stub(page: Page, opts: { saveFailure?: boolean; listFailure?: boo
       return opts.saveFailure ? json(route, { error: 'FEED_SAVE_FAILED' }, 409) : json(route, feed({ id: 'feed-new' }), 201);
     }
     if (path === `/api/v2/guilds/${GUILD_ID}/killfeed/${CONFIG_ID}` && method === 'PATCH') {
+      if (opts.actionDelayMs) await new Promise(resolve => setTimeout(resolve, opts.actionDelayMs));
       return opts.saveFailure ? json(route, { error: 'FEED_SAVE_FAILED' }, 409) : json(route, feed());
     }
     if (path === `/api/v2/guilds/${GUILD_ID}/killfeed/${CONFIG_ID}` && method === 'DELETE') return json(route, { ok: true, deleted: 1 });
@@ -149,6 +150,19 @@ test.describe('Authenticated Killfeed & ADM', () => {
     await dialog.getByLabel('Discord-Channel').selectOption(CHANNEL_ID);
     await dialog.getByRole('button', { name: 'Speichern' }).click();
     await expect(dialog.getByText(/FEED_SAVE_FAILED/)).toBeVisible();
+  });
+
+  test('synchroner Doppel-Klick erzeugt nur eine Toggle-Mutation', async ({ page }) => {
+    const mutations = await stub(page, { actionDelayMs: 200 });
+    await page.goto(`/servers/${GUILD_ID}/server/${SLOT}?tab=killfeed`);
+
+    const toggle = page.getByRole('button', { name: 'Deathfeed deaktivieren' });
+    await toggle.evaluate((button: HTMLButtonElement) => { button.click(); button.click(); });
+
+    await expect.poll(() => mutations.filter(row => (
+      row.method === 'PATCH' && row.path === `/api/v2/guilds/${GUILD_ID}/killfeed/${CONFIG_ID}`
+    )).length).toBe(1);
+    await expect(toggle).toBeEnabled();
   });
 
   test('503-Listenfehler wird als echter Fehlerzustand angezeigt', async ({ page }) => {

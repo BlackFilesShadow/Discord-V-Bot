@@ -581,9 +581,9 @@ function PackagesSection({ base, canManage, canDanger }: { base: string; canMana
               </div>
               {canManage && (
                 <div className="flex gap-1 shrink-0 flex-wrap justify-end">
-                  {p.status !== 'ACTIVE' && !p.isDeleted && <Button size="sm" variant="secondary" onClick={() => setStatusM.mutate({ id: p.id, status: 'ACTIVE' })}>Freigeben</Button>}
-                  {p.status !== 'QUARANTINED' && !p.isDeleted && <Button size="sm" variant="ghost" onClick={() => setStatusM.mutate({ id: p.id, status: 'QUARANTINED' })}>Quarantäne</Button>}
-                  {p.isDeleted && <Button size="sm" variant="secondary" onClick={() => restore.mutate(p.id)}>Wiederherstellen</Button>}
+                  {p.status !== 'ACTIVE' && !p.isDeleted && <Button size="sm" variant="secondary" onClick={() => setStatusM.mutate({ id: p.id, status: 'ACTIVE' })} loading={setStatusM.isPending}>Freigeben</Button>}
+                  {p.status !== 'QUARANTINED' && !p.isDeleted && <Button size="sm" variant="ghost" onClick={() => setStatusM.mutate({ id: p.id, status: 'QUARANTINED' })} loading={setStatusM.isPending}>Quarantäne</Button>}
+                  {p.isDeleted && <Button size="sm" variant="secondary" onClick={() => restore.mutate(p.id)} loading={restore.isPending}>Wiederherstellen</Button>}
                   {canDanger && <Button size="sm" variant="danger" onClick={() => setDel(p)} aria-label="Löschen"><Trash2 className="h-4 w-4" /></Button>}
                 </div>
               )}
@@ -644,9 +644,9 @@ function UsersSection({ base, canManage, canDanger }: { base: string; canManage:
               </div>
               {canManage && (
                 <div className="flex gap-1 shrink-0 flex-wrap justify-end">
-                  <Button size="sm" variant={u.status === 'SUSPENDED' ? 'secondary' : 'ghost'} onClick={() => toggleUpload.mutate({ id: u.id, enable: u.status === 'SUSPENDED' })}>{u.status === 'SUSPENDED' ? 'Entsperren' : 'Sperren'}</Button>
-                  {!u.isManufacturer && <Button size="sm" variant="ghost" onClick={() => manufacturer.mutate({ id: u.id, decision: 'APPROVE' })}>Hersteller +</Button>}
-                  {!u.isManufacturer && <Button size="sm" variant="ghost" onClick={() => manufacturer.mutate({ id: u.id, decision: 'DENY' })}>Ablehnen</Button>}
+                  <Button size="sm" variant={u.status === 'SUSPENDED' ? 'secondary' : 'ghost'} onClick={() => toggleUpload.mutate({ id: u.id, enable: u.status === 'SUSPENDED' })} loading={toggleUpload.isPending}>{u.status === 'SUSPENDED' ? 'Entsperren' : 'Sperren'}</Button>
+                  {!u.isManufacturer && <Button size="sm" variant="ghost" onClick={() => manufacturer.mutate({ id: u.id, decision: 'APPROVE' })} loading={manufacturer.isPending}>Hersteller +</Button>}
+                  {!u.isManufacturer && <Button size="sm" variant="ghost" onClick={() => manufacturer.mutate({ id: u.id, decision: 'DENY' })} loading={manufacturer.isPending}>Ablehnen</Button>}
                   {canDanger && <Button size="sm" variant="danger" onClick={() => setReset(u)} aria-label="Passwort zurücksetzen"><KeyRound className="h-4 w-4" /></Button>}
                 </div>
               )}
@@ -717,7 +717,7 @@ function TicketsSection({ base, canManage }: { base: string; canManage: boolean 
                 </div>
                 <p className="text-xs text-muted mt-0.5">{t.username} · {new Date(t.createdAt).toLocaleString('de-DE')}</p>
               </div>
-              {canManage && (t.status === 'OPEN' || t.status === 'PENDING') && <Button size="sm" variant="secondary" onClick={() => close.mutate(t.id)}>Schließen</Button>}
+              {canManage && (t.status === 'OPEN' || t.status === 'PENDING') && <Button size="sm" variant="secondary" onClick={() => close.mutate(t.id)} loading={close.isPending}>Schließen</Button>}
             </div>
           </Card>
         ))}
@@ -767,7 +767,7 @@ function SelfrolesSection({ base, guildId, canManage }: { base: string; guildId:
                   {m.options.map(o => (
                     <span key={o.id} className="inline-flex items-center gap-1 text-xs bg-bg-elev border border-border rounded px-2 py-0.5 text-muted">
                       {o.label}
-                      {canManage && <button type="button" onClick={() => delOpt.mutate({ id: m.id, optId: o.id })} className="hover:text-danger"><X className="h-3 w-3" /></button>}
+                      {canManage && <button type="button" onClick={() => delOpt.mutate({ id: m.id, optId: o.id })} disabled={delOpt.isPending} aria-label={`Selfrole-Option ${o.label} entfernen`} className="hover:text-danger disabled:opacity-50"><X className="h-3 w-3" /></button>}
                     </span>
                   ))}
                 </div>
@@ -775,8 +775,8 @@ function SelfrolesSection({ base, guildId, canManage }: { base: string; guildId:
               {canManage && (
                 <div className="flex flex-col gap-1 shrink-0">
                   <Button size="sm" variant="secondary" onClick={() => post.mutate(m.id)} loading={post.isPending}>Posten</Button>
-                  <Button size="sm" variant="ghost" onClick={() => toggle.mutate(m.id)}>{m.isActive ? 'Deaktivieren' : 'Aktivieren'}</Button>
-                  <Button size="sm" variant="danger" onClick={() => del.mutate(m.id)}><Trash2 className="h-4 w-4" /></Button>
+                  <Button size="sm" variant="ghost" onClick={() => toggle.mutate(m.id)} loading={toggle.isPending}>{m.isActive ? 'Deaktivieren' : 'Aktivieren'}</Button>
+                  <Button size="sm" variant="danger" onClick={() => del.mutate(m.id)} loading={del.isPending} aria-label={`Selfrole-Menü ${m.title} löschen`}><Trash2 className="h-4 w-4" /></Button>
                 </div>
               )}
             </div>
@@ -851,8 +851,8 @@ function FeedsSection({ base, guildId, canManage }: { base: string; guildId: str
               </div>
               {canManage && (
                 <div className="flex gap-1 shrink-0">
-                  <Button size="sm" variant="ghost" onClick={() => toggle.mutate(f.id)}>{f.isActive ? 'Aus' : 'An'}</Button>
-                  <Button size="sm" variant="danger" onClick={() => del.mutate(f.id)}><Trash2 className="h-4 w-4" /></Button>
+                  <Button size="sm" variant="ghost" onClick={() => toggle.mutate(f.id)} loading={toggle.isPending}>{f.isActive ? 'Aus' : 'An'}</Button>
+                  <Button size="sm" variant="danger" onClick={() => del.mutate(f.id)} loading={del.isPending} aria-label={`Feed ${f.name} löschen`}><Trash2 className="h-4 w-4" /></Button>
                 </div>
               )}
             </div>
@@ -940,7 +940,7 @@ function KnowledgeSection({ base, guildId, canManage }: { base: string; guildId:
         <SectionHeader title="Wissensbank" desc="AI-Wissen pro Server (früher /admin-config knowledge)" onRefresh={() => q.refetch()} loading={q.isFetching}
           action={canManage ? (
             <div className="flex gap-2">
-              <Button size="sm" variant="ghost" onClick={exportJson} disabled={!data || data.items.length === 0}><Download className="h-4 w-4" /></Button>
+              <Button size="sm" variant="ghost" onClick={exportJson} disabled={!data || data.items.length === 0} aria-label="Wissensbank als JSON exportieren"><Download className="h-4 w-4" /></Button>
               <Button size="sm" variant="secondary" onClick={() => { setShowImport(s => !s); setShowCreate(false); }}>{showImport ? 'Abbrechen' : 'Import'}</Button>
               <Button size="sm" onClick={() => { setShowCreate(s => !s); setShowImport(false); }}>{showCreate ? 'Abbrechen' : 'Neu'}</Button>
             </div>
@@ -970,9 +970,9 @@ function KnowledgeSection({ base, guildId, canManage }: { base: string; guildId:
                 {canManage && (
                   <div className="flex flex-col gap-1 shrink-0">
                     <Button size="sm" variant="secondary" onClick={() => { setEditId(k.id); setShowCreate(false); }}>Bearbeiten</Button>
-                    <Button size="sm" variant="ghost" onClick={() => toggle.mutate({ id: k.id, active: !k.isActive })}>{k.isActive ? 'Deaktivieren' : 'Aktivieren'}</Button>
+                    <Button size="sm" variant="ghost" onClick={() => toggle.mutate({ id: k.id, active: !k.isActive })} loading={toggle.isPending}>{k.isActive ? 'Deaktivieren' : 'Aktivieren'}</Button>
                     <Button size="sm" variant="ghost" onClick={() => reembed.mutate(k.id)} loading={reembed.isPending}>Re-Embed</Button>
-                    <Button size="sm" variant="danger" onClick={() => del.mutate(k.id)}><Trash2 className="h-4 w-4" /></Button>
+                    <Button size="sm" variant="danger" onClick={() => del.mutate(k.id)} loading={del.isPending} aria-label={`Wissenseintrag ${k.label} deaktivieren`}><Trash2 className="h-4 w-4" /></Button>
                   </div>
                 )}
               </div>
@@ -1075,7 +1075,7 @@ function KnowledgePersonaForm({ persona, canManage, onSave, saving }: { persona:
       {canManage && (
         <div className="flex gap-2">
           <Button size="sm" loading={saving} onClick={() => onSave(text.trim() ? text : null)}>Speichern</Button>
-          {persona && <Button size="sm" variant="ghost" onClick={() => { setText(''); onSave(null); }}>Entfernen</Button>}
+          {persona && <Button size="sm" variant="ghost" onClick={() => { setText(''); onSave(null); }} loading={saving}>Entfernen</Button>}
         </div>
       )}
     </div>
@@ -1111,7 +1111,7 @@ function TranslateSection({ base, guildId, canManage }: { base: string; guildId:
                 <div className="flex items-center gap-2"><Badge variant="info">{t.targetLang.toUpperCase()}</Badge><span className="font-semibold text-white truncate">{t.customTitle ?? 'Übersetzung'}</span></div>
                 <p className="text-sm text-muted mt-1 line-clamp-2">{t.translatedText}</p>
               </div>
-              {canManage && <Button size="sm" variant="danger" onClick={() => del.mutate(t.id)}><Trash2 className="h-4 w-4" /></Button>}
+              {canManage && <Button size="sm" variant="danger" onClick={() => del.mutate(t.id)} loading={del.isPending} aria-label={`Übersetzung ${t.customTitle ?? t.id} löschen`}><Trash2 className="h-4 w-4" /></Button>}
             </div>
           </Card>
         ))}

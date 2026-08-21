@@ -398,9 +398,9 @@ export function BotAdminKnowledgeScoped() {
                     </div>
                     <div className="grid grid-cols-2 gap-2 sm:flex sm:flex-wrap md:max-w-[310px] md:justify-end shrink-0">
                       <Button variant="secondary" onClick={() => { setEditId(item.id); setShowCreate(false); setShowImport(false); }}>Bearbeiten</Button>
-                      <Button variant="ghost" onClick={() => toggle.mutate({ id: item.id, active: !item.isActive })}>{item.isActive ? 'Deaktivieren' : 'Aktivieren'}</Button>
+                      <Button variant="ghost" onClick={() => toggle.mutate({ id: item.id, active: !item.isActive })} loading={toggle.isPending}>{item.isActive ? 'Deaktivieren' : 'Aktivieren'}</Button>
                       <Button variant="ghost" onClick={() => reembed.mutate(item.id)} loading={reembed.isPending}>Re-Embed</Button>
-                      <Button variant="danger" onClick={() => remove.mutate(item.id)} aria-label={`${item.label} deaktivieren`}><Trash2 className="h-4 w-4" />Deaktivieren</Button>
+                      <Button variant="danger" onClick={() => remove.mutate(item.id)} loading={remove.isPending} aria-label={`${item.label} deaktivieren`}><Trash2 className="h-4 w-4" />Deaktivieren</Button>
                     </div>
                   </div>
                 </Card>
@@ -620,7 +620,7 @@ function PersonaAndBrief({
         />
         <div className="flex flex-wrap gap-2">
           <Button loading={saving} onClick={() => onSave(text.trim() ? text.trim() : null)}>Persona speichern</Button>
-          {persona && <Button variant="ghost" onClick={() => { setText(''); onSave(null); }}>Persona entfernen</Button>}
+          {persona && <Button variant="ghost" onClick={() => { setText(''); onSave(null); }} loading={saving}>Persona entfernen</Button>}
         </div>
         <div className="border-t border-border pt-4">
           <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
