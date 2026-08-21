@@ -1,0 +1,11 @@
+{
+  "schemaVersion": 1,
+  "stage": 53,
+  "basedOnMainSha": "45caf9cd",
+  "scope": "Dependency audit and controlled updates — no blind upgrades.",
+  "decision": "No bulk dependency upgrades in Stage 53. Lockfile retained; security follow-ups tracked for Gate phase and Stages 54-55.",
+  "contracts": {
+    "lockfile": "package-lock.json is source of truth",
+    "noBlind": "Do not bump majors without Stage-scoped regression"
+  }
+}
