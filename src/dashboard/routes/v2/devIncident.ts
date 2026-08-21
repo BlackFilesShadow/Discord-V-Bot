@@ -3,7 +3,7 @@
  *
  * Alle Routen:
  *   - hinter requireDev (Role + DevSession + MFA + IP)
- *   - validieren Step-Up-Body via validateStepUpInput  (Reason + Re-Auth)
+ *   - Mutationen zusaetzlich hinter kryptografisch verifiziertem DEV-Step-Up
  *   - audit-loggen via incidentResponse-Service
  *
  * Endpoints:
@@ -14,7 +14,7 @@
  */
 import { Router } from 'express';
 import { requireDev } from '../../middleware/auth';
-import { validateStepUpInput } from '../../middleware/devSecurity';
+import { requireVerifiedDevMutationStepUp } from '../../middleware/devStepUp';
 import {
   activateIncident, deactivateIncident, fireOneShotIncident,
   getIncidentSnapshot, INCIDENT_LIMITS,
@@ -33,7 +33,7 @@ devIncidentRouter.get('/state', requireDev, (_req, res) => {
   res.json({ ok: true, ...snap });
 });
 
-devIncidentRouter.post('/activate', requireDev, (req, res) => {
+devIncidentRouter.post('/activate', requireDev, requireVerifiedDevMutationStepUp, (req, res) => {
   if (!req.auth) { bad(res, 401, 'unauthenticated'); return; }
   const body = (req.body ?? {}) as {
     action?: string; durationMs?: number; reason?: string; reAuth?: string;
@@ -41,9 +41,6 @@ devIncidentRouter.post('/activate', requireDev, (req, res) => {
   };
   const action = String(body.action ?? '') as IncidentAction;
   if (!(action in INCIDENT_LIMITS)) { bad(res, 400, 'unknown_action'); return; }
-
-  const stepUp = validateStepUpInput({ reason: body.reason, reAuth: body.reAuth });
-  if (!stepUp.ok) { bad(res, 400, stepUp.error ?? 'step_up_invalid'); return; }
 
   const idempotencyKey = String(body.idempotencyKey ?? '').trim();
   if (idempotencyKey.length < 8) { bad(res, 400, 'idempotency_key_too_short'); return; }
@@ -63,13 +60,11 @@ devIncidentRouter.post('/activate', requireDev, (req, res) => {
   res.json({ ok: true, state: r.state });
 });
 
-devIncidentRouter.post('/deactivate', requireDev, (req, res) => {
+devIncidentRouter.post('/deactivate', requireDev, requireVerifiedDevMutationStepUp, (req, res) => {
   if (!req.auth) { bad(res, 401, 'unauthenticated'); return; }
   const body = (req.body ?? {}) as { action?: string; reason?: string; reAuth?: string };
   const action = String(body.action ?? '') as IncidentAction;
   if (!(action in INCIDENT_LIMITS)) { bad(res, 400, 'unknown_action'); return; }
-  const stepUp = validateStepUpInput({ reason: body.reason, reAuth: body.reAuth });
-  if (!stepUp.ok) { bad(res, 400, stepUp.error ?? 'step_up_invalid'); return; }
 
   const r = deactivateIncident({
     action, reason: String(body.reason ?? ''),
@@ -83,7 +78,7 @@ devIncidentRouter.post('/deactivate', requireDev, (req, res) => {
   res.json({ ok: true });
 });
 
-devIncidentRouter.post('/oneshot', requireDev, (req, res) => {
+devIncidentRouter.post('/oneshot', requireDev, requireVerifiedDevMutationStepUp, (req, res) => {
   if (!req.auth) { bad(res, 401, 'unauthenticated'); return; }
   const body = (req.body ?? {}) as {
     action?: string; reason?: string; reAuth?: string; idempotencyKey?: string;
@@ -92,8 +87,6 @@ devIncidentRouter.post('/oneshot', requireDev, (req, res) => {
   const action = String(body.action ?? '') as IncidentAction;
   if (!(action in INCIDENT_LIMITS)) { bad(res, 400, 'unknown_action'); return; }
 
-  const stepUp = validateStepUpInput({ reason: body.reason, reAuth: body.reAuth });
-  if (!stepUp.ok) { bad(res, 400, stepUp.error ?? 'step_up_invalid'); return; }
   const idempotencyKey = String(body.idempotencyKey ?? '').trim();
   if (idempotencyKey.length < 8) { bad(res, 400, 'idempotency_key_too_short'); return; }
 
