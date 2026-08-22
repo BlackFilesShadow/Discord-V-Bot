@@ -5,10 +5,17 @@ import fs from 'node:fs';
 import path from 'node:path';
 
 const root = process.cwd();
-const sampleCount = Math.max(5, Number(process.env.RUNTIME_SERIES_SAMPLES ?? 12));
-const sampleMs = Math.max(50, Number(process.env.RUNTIME_SERIES_SAMPLE_MS ?? 750));
-const settleMs = Math.max(0, Number(process.env.RUNTIME_SERIES_SETTLE_MS ?? 50));
-const allocationMb = Math.max(1, Number(process.env.RUNTIME_SERIES_ALLOC_MB ?? 8));
+
+function boundedNumberEnv(name, fallback, min, max) {
+  const parsed = Number(process.env[name] ?? fallback);
+  if (!Number.isFinite(parsed)) throw new Error(`${name} must be a finite number`);
+  return Math.min(max, Math.max(min, Math.floor(parsed)));
+}
+
+const sampleCount = boundedNumberEnv('RUNTIME_SERIES_SAMPLES', 12, 5, 120);
+const sampleMs = boundedNumberEnv('RUNTIME_SERIES_SAMPLE_MS', 750, 50, 60_000);
+const settleMs = boundedNumberEnv('RUNTIME_SERIES_SETTLE_MS', 50, 0, 10_000);
+const allocationMb = boundedNumberEnv('RUNTIME_SERIES_ALLOC_MB', 8, 1, 128);
 const writeArtifacts = process.env.WRITE_PERF_ARTIFACTS !== '0';
 
 function exactSha() {
@@ -29,6 +36,8 @@ function activeResources() {
     byType,
     requests: process._getActiveRequests?.()?.length ?? 0,
     handlesLegacy: process._getActiveHandles?.()?.length ?? 0,
+    listeners: ['warning', 'uncaughtException', 'unhandledRejection']
+      .reduce((sum, event) => sum + process.listenerCount(event), 0),
   };
 }
 
@@ -48,7 +57,11 @@ function linearSlope(values) {
 const gcEvents = [];
 const gcObserver = new PerformanceObserver((list) => {
   for (const entry of list.getEntries()) {
-    gcEvents.push({ kind: entry.kind, durationMs: +entry.duration.toFixed(3) });
+    const detail = entry.detail && typeof entry.detail === 'object' ? entry.detail : {};
+    gcEvents.push({
+      kind: Number.isInteger(detail.kind) ? detail.kind : null,
+      durationMs: +entry.duration.toFixed(3),
+    });
   }
 });
 try {
@@ -71,11 +84,12 @@ async function oneSample(index) {
 
   // Allocate and release deterministic short-lived buffers to exercise recovery.
   let transient = Array.from({ length: allocationMb }, () => Buffer.alloc(1024 * 1024, index % 251));
-  let spin = 0;
-  const until = Date.now() + sampleMs;
-  while (Date.now() < until) {
-    spin = Math.sqrt(spin + 1) + 1;
-    if (Math.floor(spin) % 5000 === 0) await new Promise((resolve) => setImmediate(resolve));
+  let checksum = 0;
+  const until = performance.now() + sampleMs;
+  while (performance.now() < until) {
+    const sliceUntil = Math.min(until, performance.now() + 5);
+    while (performance.now() < sliceUntil) checksum = Math.sqrt(checksum + 1) + 1;
+    await new Promise((resolve) => setImmediate(resolve));
   }
   transient = null;
 
@@ -101,6 +115,7 @@ async function oneSample(index) {
     heapDeltaMb: toMb(after.heapUsed - before.heapUsed),
     cpuUserMs: +(cpu.user / 1000).toFixed(2),
     cpuSystemMs: +(cpu.system / 1000).toFixed(2),
+    workloadChecksum: +checksum.toFixed(3),
     eventLoopDelayMsP50: toMs(eventLoop.percentile(50)),
     eventLoopDelayMsP99: toMs(eventLoop.percentile(99)),
     eventLoopDelayMsMax: toMs(eventLoop.max),
@@ -118,7 +133,7 @@ gcObserver.disconnect();
 const rss = samples.map((s) => s.rssMb);
 const heap = samples.map((s) => s.heapUsedMb);
 const handles = samples.map((s) => s.resources.count);
-const listeners = samples.map(() => process.listenerCount('warning') + process.listenerCount('uncaughtException') + process.listenerCount('unhandledRejection'));
+const listeners = samples.map((sample) => sample.resources.listeners);
 const gcDurations = gcEvents.map((event) => event.durationMs).sort((a, b) => a - b);
 const percentile = (values, p) => values.length ? values[Math.min(values.length - 1, Math.floor((p / 100) * values.length))] : null;
 
