@@ -1,25 +1,32 @@
 {
-  "schemaVersion": 1,
+  "schemaVersion": 2,
   "stage": 42,
-  "basedOnMainSha": "9690db5ce22b4191d6ae184e6f7737fee23ea06e",
-  "scope": "SSRF, injection, path traversal on upload/download/export/snapshot.",
+  "basedOnMainSha": "3f8f281fb25d5e2dae1b1e933fde056b315b1d95",
+  "scope": "SSRF, SQL/command injection surface, path traversal on upload/download/export/snapshot.",
   "contracts": {
-    "ssrf": "URL validators block private hosts",
-    "sql": "Prisma parameterized queries",
-    "path": "Upload/export/snapshot paths bounded"
+    "ssrf": "URL validators block private hosts/metadata",
+    "sql": "Prisma parameterized queries; $queryRawUnsafe/$executeRawUnsafe first-arg must not embed untrusted ${}; values via $1..; pocket columns only via walletBalance/bankBalance allowlist",
+    "command": "no child_process dynamic shell construction in src/",
+    "path": "Upload/export/snapshot paths bounded via pathSafety"
   },
   "cases": [
-    {
-      "id": "feed-ssrf-block",
-      "status": "runtime-verified"
-    },
-    {
-      "id": "heap-path-bound",
-      "status": "runtime-verified"
-    },
-    {
-      "id": "static-upload-subset",
-      "status": "runtime-verified"
-    }
+    { "id": "feed-ssrf-block", "status": "runtime-verified" },
+    { "id": "heap-path-bound", "status": "runtime-verified" },
+    { "id": "static-upload-subset", "status": "runtime-verified" },
+    { "id": "raw-sql-no-untrusted-interpolation", "status": "runtime-verified" },
+    { "id": "no-dynamic-shell-exec", "status": "runtime-verified" },
+    { "id": "mime-magic-byte-validation", "status": "runtime-verified" }
+  ],
+  "evidence": {
+    "ssrfTests": [
+      "tests/security/mediaStorageSsrf.test.ts",
+      "tests/security/translatedPostRemoteImageSsrf.test.ts",
+      "tests/security/waveFPerfChaosJourneyRuntime.test.ts"
+    ],
+    "sqlSurface": "tests/security/sqlCommandInjectionSurfaceRuntime.test.ts",
+    "path": "src/utils/pathSafety.ts"
+  },
+  "residual": [
+    "Live external SSRF against production network egress not exercised in CI (staging/Stage 67)"
   ]
 }
