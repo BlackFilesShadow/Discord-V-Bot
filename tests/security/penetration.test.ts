@@ -39,6 +39,11 @@ jest.mock('../../src/database/prisma', () => ({
       delete: jest.fn().mockResolvedValue({}),
     },
     session: {
+      findUnique: jest.fn().mockImplementation(async ({ where }: { where: { token: string } }) => ({
+        isActive: true,
+        expiresAt: new Date('2099-01-01T00:00:00.000Z'),
+        userId: where.token.replace(/^token:/, ''),
+      })),
       findMany: jest.fn().mockResolvedValue([]),
       delete: jest.fn().mockResolvedValue({}),
     },
@@ -84,7 +89,11 @@ function createSecureApp(sessionData?: Record<string, unknown>) {
 
   if (sessionData) {
     app.use((req, _res, next) => {
-      Object.assign(req.session, sessionData);
+      const userId = typeof sessionData.userId === 'string' ? sessionData.userId : 'test';
+      Object.assign(req.session, {
+        discordId: ['123456789', '012345678'].join(''),
+        sessionToken: `token:${userId}`,
+      }, sessionData);
       next();
     });
   }

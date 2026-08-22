@@ -1,5 +1,6 @@
-import { Router, Request, Response, NextFunction } from 'express';
+import { Router, Request, Response } from 'express';
 import prisma from '../../database/prisma';
+import { requireAuth } from '../middleware/auth';
 
 /**
  * Legacy-API-Router (Sektion 7).
@@ -15,24 +16,6 @@ import prisma from '../../database/prisma';
  */
 
 export const apiRouter = Router();
-
-/**
- * Auth-Middleware: Prüft Login und 2FA-Status.
- */
-function requireAuth(req: Request, res: Response, next: NextFunction): void {
-  const userId = (req.session as any)?.userId;
-  if (!userId) {
-    res.status(401).json({ error: 'Nicht authentifiziert' });
-    return;
-  }
-
-  if ((req.session as any).requires2FA) {
-    res.status(403).json({ error: '2FA-Verifizierung erforderlich' });
-    return;
-  }
-
-  next();
-}
 
 apiRouter.use(requireAuth);
 

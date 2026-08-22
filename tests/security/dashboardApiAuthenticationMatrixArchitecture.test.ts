@@ -11,8 +11,10 @@ const matrix = JSON.parse(read('docs/dashboard-api-authentication-matrix.json'))
 const authMw = read('src/dashboard/middleware/auth.ts');
 const v2 = read('src/dashboard/routes/v2.ts');
 const authRoutes = read('src/dashboard/routes/auth.ts');
+const apiRoutes = read('src/dashboard/routes/api.ts');
 const apiTest = read('tests/dashboard/api.test.ts');
 const authGateTest = read('tests/dashboard/requireAuthSessionGate.test.ts');
+const httpDbIntegration = read('tests/security/dashboardSecurityHttpDbIntegration.test.ts');
 
 describe('Stage 36 API authentication matrix', () => {
   it('inventories auth cases', () => {
@@ -44,10 +46,14 @@ describe('Stage 36 API authentication matrix', () => {
     expect(authMw).toContain('!dbSession.isActive');
     expect(authMw).toContain('dbSession.userId !== s.userId');
     expect(authMw).toContain('req.session.destroy');
+    expect(apiRoutes).toContain("import { requireAuth } from '../middleware/auth'");
+    expect(apiRoutes).not.toContain('function requireAuth(');
 
     expect(authGateTest).toContain('rejects legacy cookie without persistent sessionToken');
     expect(authGateTest).toContain('rejects session token bound to another user');
     expect(authGateTest).toContain('fails closed when prisma session lookup errors');
+    expect(httpDbIntegration).toContain('revocation authoritative for /auth/status and /api/me');
+    expect(httpDbIntegration).toContain('prisma.session.update');
   });
 
   it('keeps OAuth logout/status contracts and unauthenticated API tests', () => {
@@ -56,6 +62,7 @@ describe('Stage 36 API authentication matrix', () => {
     expect(authRoutes).toContain("authRouter.get('/status'");
     expect(authRoutes).toContain('isActive: false');
     expect(authRoutes).toContain('authenticated: false');
+    expect(authRoutes).toContain('dbSession.userId !== cookieUserId');
     expect(apiTest).toContain('unauthentifizierte Anfragen ablehnen (401)');
   });
 });
