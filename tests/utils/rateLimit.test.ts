@@ -2,9 +2,13 @@ import {
   checkGlobalRateLimit,
   checkPerCommandRateLimit,
   checkComponentRateLimit,
+  __getRateLimitBucketStats,
   __resetRateLimits,
+  RATE_LIMIT_BUCKET_MAX_ENTRIES,
   RATE_LIMIT_GLOBAL_MAX,
+  RATE_LIMIT_GLOBAL_WINDOW_MS,
   RATE_LIMIT_PER_COMMAND_MAX,
+  RATE_LIMIT_PER_COMMAND_WINDOW_MS,
   RATE_LIMIT_COMPONENT_MAX,
   RATE_LIMIT_COMPONENT_WINDOW_MS,
 } from '../../src/utils/rateLimit';
@@ -69,7 +73,6 @@ describe('rateLimit', () => {
 
   it('global und per-command sind unabhängige Buckets', () => {
     const t = 3_000_000;
-    // Per-Command erschöpft, global noch frei
     for (let i = 0; i < RATE_LIMIT_PER_COMMAND_MAX; i++) {
       checkPerCommandRateLimit('u1', 'ai', t);
     }
@@ -106,14 +109,56 @@ describe('rateLimit', () => {
 
     it('ist unabhängig vom Command-Budget (eigener Bucket)', () => {
       const t = 5_000_000;
-      // Komponenten-Budget erschöpfen
       for (let i = 0; i < RATE_LIMIT_COMPONENT_MAX; i++) {
         checkComponentRateLimit('u1', t);
       }
       expect(checkComponentRateLimit('u1', t)).toBe(false);
-      // Command-Budgets bleiben unberührt
       expect(checkGlobalRateLimit('u1', t)).toBe(true);
       expect(checkPerCommandRateLimit('u1', 'ai', t)).toBe(true);
+    });
+  });
+
+  describe('Stage 49 memory bounds', () => {
+    it('begrenzt alle drei in-memory Maps auch bei hoher eindeutiger Key-Kardinalität', () => {
+      const t = 10_000_000;
+      for (let i = 0; i < RATE_LIMIT_BUCKET_MAX_ENTRIES + 250; i++) {
+        checkGlobalRateLimit(`g-${i}`, t);
+        checkPerCommandRateLimit(`p-${i}`, `cmd-${i}`, t);
+        checkComponentRateLimit(`c-${i}`, t);
+      }
+
+      expect(__getRateLimitBucketStats()).toEqual({
+        global: RATE_LIMIT_BUCKET_MAX_ENTRIES,
+        perCommand: RATE_LIMIT_BUCKET_MAX_ENTRIES,
+        component: RATE_LIMIT_BUCKET_MAX_ENTRIES,
+      });
+    });
+
+    it('entfernt abgelaufene Buckets vor einer Eviction aktiver Buckets', () => {
+      const t = 20_000_000;
+      for (let i = 0; i < RATE_LIMIT_BUCKET_MAX_ENTRIES; i++) {
+        checkGlobalRateLimit(`old-${i}`, t);
+      }
+
+      const nextWindow = t + RATE_LIMIT_GLOBAL_WINDOW_MS + 1;
+      expect(checkGlobalRateLimit('fresh', nextWindow)).toBe(true);
+      expect(__getRateLimitBucketStats().global).toBe(1);
+    });
+
+    it('bereinigt per-command und component nach ihren jeweils eigenen Windows', () => {
+      const t = 30_000_000;
+      for (let i = 0; i < RATE_LIMIT_BUCKET_MAX_ENTRIES; i++) {
+        checkPerCommandRateLimit(`p-${i}`, 'same', t);
+        checkComponentRateLimit(`c-${i}`, t);
+      }
+
+      expect(checkPerCommandRateLimit('p-fresh', 'same', t + RATE_LIMIT_PER_COMMAND_WINDOW_MS + 1)).toBe(true);
+      expect(checkComponentRateLimit('c-fresh', t + RATE_LIMIT_COMPONENT_WINDOW_MS + 1)).toBe(true);
+      expect(__getRateLimitBucketStats()).toEqual({
+        global: 0,
+        perCommand: 1,
+        component: 1,
+      });
     });
   });
 });
