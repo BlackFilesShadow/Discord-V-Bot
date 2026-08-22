@@ -10,6 +10,7 @@ process.env.DEV_REQUIRE_IP_ALLOWLIST = 'false';
 
 const mockDevSessionFindFirst = jest.fn();
 const mockDevSessionUpdateMany = jest.fn().mockResolvedValue({ count: 0 });
+const mockSessionFindUnique = jest.fn();
 const mockTwoFactorFindUnique = jest.fn();
 const mockConnectionFindMany = jest.fn();
 const mockConnectionFindFirst = jest.fn();
@@ -25,6 +26,7 @@ const mockGetFile = jest.fn();
 jest.mock('../../src/database/prisma', () => ({
   __esModule: true,
   default: {
+    session: { findUnique: (...args: unknown[]) => mockSessionFindUnique(...args) },
     devSession: {
       findFirst: (...args: unknown[]) => mockDevSessionFindFirst(...args),
       updateMany: (...args: unknown[]) => mockDevSessionUpdateMany(...args),
@@ -72,6 +74,7 @@ const RESTRICTED_GUILD = '111111111111111111';
 const OTHER_GUILD = '222222222222222222';
 const CONN_ID = 'conn_123';
 const SNAPSHOT_ID = 'snapshot_123';
+const SESSION_TOKEN = 'stage36-dev-nitrado-mirror-session-token';
 
 function activeSession(scope: Record<string, unknown> = {}) {
   const now = Date.now();
@@ -85,6 +88,11 @@ function activeSession(scope: Record<string, unknown> = {}) {
 }
 
 function appFor(scope: Record<string, unknown> = {}) {
+  mockSessionFindUnique.mockResolvedValue({
+    isActive: true,
+    expiresAt: new Date(Date.now() + 60 * 60 * 1000),
+    userId: 'u1',
+  });
   mockDevSessionFindFirst.mockResolvedValue(activeSession(scope));
   const app = express();
   app.use(express.json());
@@ -94,6 +102,7 @@ function appFor(scope: Record<string, unknown> = {}) {
       userId: 'u1',
       discordId: DEV_DISCORD_ID,
       role: 'DEVELOPER',
+      sessionToken: SESSION_TOKEN,
     });
     next();
   });
