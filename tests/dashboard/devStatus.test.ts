@@ -18,10 +18,12 @@ process.env.SESSION_SECRET ||= 'test-session-secret';
 process.env.ENCRYPTION_KEY ||= 'test-encryption-key-0123456789abcdef';
 
 const mockDevSessionFindFirst = jest.fn();
+const mockSessionFindUnique = jest.fn();
 
 jest.mock('../../src/database/prisma', () => ({
   __esModule: true,
   default: {
+    session: { findUnique: (...a: unknown[]) => mockSessionFindUnique(...a) },
     devSession: { findFirst: (...a: unknown[]) => mockDevSessionFindFirst(...a) },
     twoFactorAuth: { findUnique: jest.fn().mockResolvedValue({ isEnabled: true }) },
     ipList: { count: jest.fn().mockResolvedValue(1), findFirst: jest.fn().mockResolvedValue({ id: 'allow1' }) },
@@ -78,16 +80,25 @@ import request from 'supertest';
 import { devStatusRouter } from '../../src/dashboard/routes/v2/devStatus';
 import { requireAuth } from '../../src/dashboard/middleware/auth';
 
+const SESSION_TOKEN = 'stage36-dev-status-session-token';
+
 function makeApp(sessionData?: Record<string, unknown>) {
   const app = express();
   app.use(express.json());
   app.use(session({ secret: 't', resave: false, saveUninitialized: true }));
   if (sessionData) {
-    app.use((req, _res, next) => { Object.assign(req.session, sessionData); next(); });
+    mockSessionFindUnique.mockResolvedValue({
+      isActive: true,
+      expiresAt: new Date(Date.now() + 60 * 60 * 1000),
+      userId: String(sessionData.userId ?? 'u1'),
+    });
+    app.use((req, _res, next) => {
+      Object.assign(req.session, sessionData, { sessionToken: SESSION_TOKEN });
+      next();
+    });
   }
   app.use('/api/v2', requireAuth);
   app.use('/api/v2/dev/status', devStatusRouter);
-  // Surfaced 500-Stack fuer Test-Diagnose.
   app.use((err: Error, _req: express.Request, res: express.Response, _n: express.NextFunction) => {
     console.error('[TEST 500]', err.message, err.stack);
     res.status(500).json({ error: err.message });
@@ -95,7 +106,10 @@ function makeApp(sessionData?: Record<string, unknown>) {
   return app;
 }
 
-beforeEach(() => mockDevSessionFindFirst.mockReset());
+beforeEach(() => {
+  mockDevSessionFindFirst.mockReset();
+  mockSessionFindUnique.mockReset();
+});
 
 describe('/api/v2/dev/status — Auth-Gates (Defense-in-depth)', () => {
   it('Gate 1: kein Login -> 401', async () => {
@@ -141,7 +155,6 @@ describe('/api/v2/dev/status — Endpunkte', () => {
     expect(r.body).toHaveProperty('sizePretty', '12 MB');
     expect(r.body).toHaveProperty('migrationsApplied', 42);
     expect(r.body.topTables[0]).toMatchObject({ name: 'AuditLog', liveRows: 5000, deadRows: 123 });
-    // Pen: KEINE Secrets im Output
     const dump = JSON.stringify(r.body);
     expect(dump).not.toMatch(/postgres:\/\//i);
     expect(dump).not.toMatch(/password/i);
@@ -167,7 +180,6 @@ describe('/api/v2/dev/status — Endpunkte', () => {
     expect(r.body.process.pid).toBe(process.pid);
     expect(r.body.process.memory.rss).toBeGreaterThan(0);
     expect(r.body.host.cpuCount).toBeGreaterThan(0);
-    // Pen: KEINE Tokens / Env-Variablen
     const dump = JSON.stringify(r.body);
     expect(dump).not.toMatch(/DISCORD_TOKEN/i);
     expect(dump).not.toMatch(/SESSION_SECRET/i);
@@ -177,11 +189,8 @@ describe('/api/v2/dev/status — Endpunkte', () => {
     const r = await request(devApp()).get('/api/v2/dev/status/ai-providers');
     expect(r.status).toBe(200);
     expect(r.body.providers).toHaveLength(2);
-    // groq: 100/(100+50+5)=0.6452 -> >30% failure -> error
-    // cerebras: configured=false -> kein no_calls (uebersprungen)
     const reasons = r.body.anomalies.map((a: { reason: string }) => a.reason);
     expect(reasons).toContain('high_failure_rate');
-    // Pen: KEINE API-Keys
     const dump = JSON.stringify(r.body);
     expect(dump).not.toMatch(/sk-[A-Za-z0-9]/);
     expect(dump).not.toMatch(/api[_-]?key/i);
