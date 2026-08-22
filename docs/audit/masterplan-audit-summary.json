@@ -1,57 +1,15 @@
-{
-  "generatedAt": "2026-08-21T23:12:35.289Z",
-  "auditFreezeSha": "48bbcfface38068bc71ad7bcc5c1dd87616da514",
-  "finalAuditedSha": "cf9d8e2530686ba8cef2063f6d5c726485a67f81",
-  "worktreeDirty": true,
-  "stagesTotal": 67,
-  "VERIFIED": 20,
-  "PARTIAL": 46,
-  "FAILED": 0,
-  "BLOCKED": 1,
-  "score": 14,
-  "productionReady": false,
-  "cli": {
-    "jestLocal": "GREEN 436 passed, 3 skipped (DB integration without docker)",
-    "prisma": "not re-run full generate in this wave",
-    "docker": "NOT AVAILABLE on agent host",
-    "npmAuditHigh": "3 HIGH deepmerge-ts via prisma — exception documented",
-    "sbom": "not enforced blocking in this wave",
-    "finalGate1": "NOT RUN",
-    "finalGate2": "NOT RUN",
-    "productionDeploy": "BLOCKED",
-    "liveSmoke": "BLOCKED"
-  },
-  "closedFindingsThisWave": [
-    "F-S3-04",
-    "F-S2-01",
-    "F-S5-01",
-    "F-S5-04",
-    "F-S5-06",
-    "F-S5-07"
-  ],
-  "mitigatedFindings": [
-    "F-S5-02",
-    "F-S5-05"
-  ],
-  "openBlocker": [
-    "F-S4-15"
-  ],
-  "openHigh": [
-    "F-S5-03",
-    "F-S4-05",
-    "F-S4-01",
-    "F-S4-02",
-    "F-S4-03",
-    "F-S4-06",
-    "F-S4-10",
-    "F-S4-11",
-    "F-S4-12",
-    "F-S4-13",
-    "F-S4-14"
-  ],
-  "notes": "Wave A dashboard 27-35 runtime SPA evidence; CI Playwright required",
-  "verified": 29,
-  "partial": 37,
-  "failed": 0,
-  "blocked": 1
+﻿{
+    "generatedAt":  "2026-08-22T13:48:03.1232201Z",
+    "finalAuditedSha":  "39c9c5c7d237a5ca0d64dcd496fc7319e31a2049",
+    "stagesTotal":  67,
+    "VERIFIED":  39,
+    "PARTIAL":  27,
+    "FAILED":  0,
+    "BLOCKED":  null,
+    "score":  58.2,
+    "productionReady":  false,
+    "openBlocker":  [
+                        "F-S4-15"
+                    ],
+    "notes":  "Wave D trivy complete; perf evidence 39c9c5c7; Stage 67 blocked without prod credentials"
 }

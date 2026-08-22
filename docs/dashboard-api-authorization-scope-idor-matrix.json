@@ -1,96 +1,116 @@
-{
-  "schemaVersion": 1,
-  "stage": 37,
-  "basedOnMainSha": "eb32f0089a90502d0c26a371249df993a845634a",
-  "scope": "API authorization / scope / IDOR matrix: guild, gameserver/slot, user, owner/admin/DEV/bot-admin, grants, cross-scope attacks, missing scope fail-closed.",
-  "contracts": {
-    "missingGuildParam": "Invalid/missing :guildId => 400 before data access.",
-    "botNotPresent": "Guild not in bot cache => 404 BOT_NOT_PRESENT (no existence oracle via grants alone).",
-    "nonMember": "Non-owner without Discord membership => 403 even if stale grant rows exist.",
-    "permissionDeny": "Missing PermissionScope => 403 Permission fehlt.",
-    "queryBinding": "Guild-scoped Prisma reads/writes must include guildId from req.guildScope, never attacker-controlled body guild alone.",
-    "slotBinding": "Economy/casino/whitelist bind nitradoConnId via activeSlotId/scope guards; cross-slot denied.",
-    "devGlobal": "DEV routes use GlobalDeveloperIdentity + DevSession; restricted guildIdRestrict fail-closed.",
-    "botAdminGlobal": "Bot-admin uses GlobalBotAdminIdentity + BotAdminSession; guild-bound ops require reqGuildId validation.",
-    "dbMatrix": "Prisma models with nitradoConnId also carry guildId; eslint no-unscoped-prisma-query set=all."
-  },
-  "attackCases": [
-    {
-      "id": "cross-guild-param",
-      "attack": "Authenticated user calls /guilds/{otherGuildId}/...",
-      "expected": "403 membership/perm or 404 bot not present",
-      "evidence": "requireGuildPermission; tests/dashboard/requireGuildPermissionIdorGate.test.ts; dashboardViewScope.test.ts",
-      "status": "runtime-verified"
-    },
-    {
-      "id": "stale-grant-after-leave",
-      "attack": "DB grant remains after leaving guild",
-      "expected": "403 membership required via resolveDelegatedPermissionContext",
-      "evidence": "requireGuildPermissionIdorGate.test.ts non-member DENY; auth.ts membership check",
-      "status": "runtime-verified"
-    },
-    {
-      "id": "cross-slot-economy",
-      "attack": "slot query points to another guild connection",
-      "expected": "fail-closed scope guard",
-      "evidence": "economyScopeGuard; dashboardEconomySlotScope.test.ts",
-      "status": "verified"
-    },
-    {
-      "id": "whitelist-idor-id",
-      "attack": "Approve whitelist request id from another guild",
-      "expected": "findUnique/updateMany include guildId",
-      "evidence": "tests/security/crossGuild.test.ts",
-      "status": "verified"
-    },
-    {
-      "id": "ticket-instance-list",
-      "attack": "List tickets without guild bind",
-      "expected": "where guildId: scope.guildId",
-      "evidence": "tickets.ts instances",
-      "status": "verified"
-    },
-    {
-      "id": "audit-cursor-tamper",
-      "attack": "Cursor from guild A on guild B path",
-      "expected": "where always scope.guildId; cursor only createdAt/id",
-      "evidence": "audit.ts + audit integrity architecture",
-      "status": "verified"
-    },
-    {
-      "id": "dev-restrict-guild",
-      "attack": "Restricted DevSession accesses other guild diagnostics",
-      "expected": "rejectOutsideRestrictedGuild fail-closed",
-      "evidence": "devGlobalScopeFirewall; dashboardDevGlobalScopeArchitecture",
-      "status": "verified"
-    },
-    {
-      "id": "bot-admin-guild-ref",
-      "attack": "Bot-admin mutation with foreign guildId",
-      "expected": "guardBotAdminGuildReferences + reqGuildId snowflake validation",
-      "evidence": "botAdminGuildReferenceGuard; botAdmin.ts reqGuildId",
-      "status": "verified"
-    },
-    {
-      "id": "missing-scope-prisma",
-      "attack": "Introduce unscoped findMany on guild model",
-      "expected": "eslint error no-unscoped-prisma-query",
-      "evidence": "scopeMatrixArchitecture.test.ts; eslint-rules",
-      "status": "verified"
-    },
-    {
-      "id": "user-cross-scope",
-      "attack": "Economy virtual account / link of another discord user without manage perm",
-      "expected": "permission + guild/slot where clauses",
-      "evidence": "economyVirtualAccountScopeGuard; economyLinkServerScope",
-      "status": "verified"
-    }
-  ],
-  "roleMatrix": [
-    { "role": "Owner", "access": "full guild scopes via isOwner", "status": "verified" },
-    { "role": "Grant holder", "access": "only listed PermissionScope + membership", "status": "verified" },
-    { "role": "User no grant", "access": "403", "status": "verified" },
-    { "role": "DEV", "access": "global tools after DevSession; not guild owner bypass without identity gates", "status": "verified" },
-    { "role": "Bot Admin", "access": "global bot-admin after session; guild ops explicit guildId", "status": "verified" }
-  ]
+﻿{
+    "schemaVersion":  1,
+    "stage":  37,
+    "basedOnMainSha":  "39c9c5c7d237a5ca0d64dcd496fc7319e31a2049",
+    "scope":  "API authorization / scope / IDOR matrix: guild, gameserver/slot, user, owner/admin/DEV/bot-admin, grants, cross-scope attacks, missing scope fail-closed.",
+    "contracts":  {
+                      "missingGuildParam":  "Invalid/missing :guildId =\u003e 400 before data access.",
+                      "botNotPresent":  "Guild not in bot cache =\u003e 404 BOT_NOT_PRESENT (no existence oracle via grants alone).",
+                      "nonMember":  "Non-owner without Discord membership =\u003e 403 even if stale grant rows exist.",
+                      "permissionDeny":  "Missing PermissionScope =\u003e 403 Permission fehlt.",
+                      "queryBinding":  "Guild-scoped Prisma reads/writes must include guildId from req.guildScope, never attacker-controlled body guild alone.",
+                      "slotBinding":  "Economy/casino/whitelist bind nitradoConnId via activeSlotId/scope guards; cross-slot denied.",
+                      "devGlobal":  "DEV routes use GlobalDeveloperIdentity + DevSession; restricted guildIdRestrict fail-closed.",
+                      "botAdminGlobal":  "Bot-admin uses GlobalBotAdminIdentity + BotAdminSession; guild-bound ops require reqGuildId validation.",
+                      "dbMatrix":  "Prisma models with nitradoConnId also carry guildId; eslint no-unscoped-prisma-query set=all."
+                  },
+    "attackCases":  [
+                        {
+                            "id":  "cross-guild-param",
+                            "attack":  "Authenticated user calls /guilds/{otherGuildId}/...",
+                            "expected":  "403 membership/perm or 404 bot not present",
+                            "evidence":  "requireGuildPermission; tests/dashboard/requireGuildPermissionIdorGate.test.ts; dashboardViewScope.test.ts",
+                            "status":  "runtime-verified"
+                        },
+                        {
+                            "id":  "stale-grant-after-leave",
+                            "attack":  "DB grant remains after leaving guild",
+                            "expected":  "403 membership required via resolveDelegatedPermissionContext",
+                            "evidence":  "requireGuildPermissionIdorGate.test.ts non-member DENY; auth.ts membership check",
+                            "status":  "runtime-verified"
+                        },
+                        {
+                            "id":  "cross-slot-economy",
+                            "attack":  "slot query points to another guild connection",
+                            "expected":  "fail-closed scope guard",
+                            "evidence":  "economyScopeGuard; dashboardEconomySlotScope.test.ts",
+                            "status":  "verified"
+                        },
+                        {
+                            "id":  "whitelist-idor-id",
+                            "attack":  "Approve whitelist request id from another guild",
+                            "expected":  "findUnique/updateMany include guildId",
+                            "evidence":  "tests/security/crossGuild.test.ts",
+                            "status":  "verified"
+                        },
+                        {
+                            "id":  "ticket-instance-list",
+                            "attack":  "List tickets without guild bind",
+                            "expected":  "where guildId: scope.guildId",
+                            "evidence":  "tickets.ts instances",
+                            "status":  "verified"
+                        },
+                        {
+                            "id":  "audit-cursor-tamper",
+                            "attack":  "Cursor from guild A on guild B path",
+                            "expected":  "where always scope.guildId; cursor only createdAt/id",
+                            "evidence":  "audit.ts + audit integrity architecture",
+                            "status":  "verified"
+                        },
+                        {
+                            "id":  "dev-restrict-guild",
+                            "attack":  "Restricted DevSession accesses other guild diagnostics",
+                            "expected":  "rejectOutsideRestrictedGuild fail-closed",
+                            "evidence":  "devGlobalScopeFirewall; dashboardDevGlobalScopeArchitecture",
+                            "status":  "verified"
+                        },
+                        {
+                            "id":  "bot-admin-guild-ref",
+                            "attack":  "Bot-admin mutation with foreign guildId",
+                            "expected":  "guardBotAdminGuildReferences + reqGuildId snowflake validation",
+                            "evidence":  "botAdminGuildReferenceGuard; botAdmin.ts reqGuildId",
+                            "status":  "verified"
+                        },
+                        {
+                            "id":  "missing-scope-prisma",
+                            "attack":  "Introduce unscoped findMany on guild model",
+                            "expected":  "eslint error no-unscoped-prisma-query",
+                            "evidence":  "scopeMatrixArchitecture.test.ts; eslint-rules",
+                            "status":  "verified"
+                        },
+                        {
+                            "id":  "user-cross-scope",
+                            "attack":  "Economy virtual account / link of another discord user without manage perm",
+                            "expected":  "permission + guild/slot where clauses",
+                            "evidence":  "economyVirtualAccountScopeGuard; economyLinkServerScope",
+                            "status":  "verified"
+                        }
+                    ],
+    "roleMatrix":  [
+                       {
+                           "role":  "Owner",
+                           "access":  "full guild scopes via isOwner",
+                           "status":  "verified"
+                       },
+                       {
+                           "role":  "Grant holder",
+                           "access":  "only listed PermissionScope + membership",
+                           "status":  "verified"
+                       },
+                       {
+                           "role":  "User no grant",
+                           "access":  "403",
+                           "status":  "verified"
+                       },
+                       {
+                           "role":  "DEV",
+                           "access":  "global tools after DevSession; not guild owner bypass without identity gates",
+                           "status":  "verified"
+                       },
+                       {
+                           "role":  "Bot Admin",
+                           "access":  "global bot-admin after session; guild ops explicit guildId",
+                           "status":  "verified"
+                       }
+                   ]
 }

@@ -1,0 +1,31 @@
+{
+  "exactSha": "39c9c5c7d237a5ca0d64dcd496fc7319e31a2049",
+  "capturedAt": "2026-08-22T13:46:56.151Z",
+  "stage": 48,
+  "kind": "external-deps-baseline",
+  "contracts": {
+    "nitradoHttpTimeout15s": true,
+    "nitradoRetryBounded3": true,
+    "nitrado429RetryAfter": true,
+    "nitradoCircuitBreaker": true,
+    "aiProviderTimeout30s": true,
+    "ai429Handling": true,
+    "aiTransientRetry": true,
+    "aiFallbackMetrics": true,
+    "aiLatencyHistogram": true,
+    "economyScopeGuardIntact": true
+  },
+  "syntheticLocalTimerMs": {
+    "n": 40,
+    "p50": 15.941,
+    "p95": 16.069,
+    "p99": 16.099,
+    "note": "local setTimeout jitter only — not live AI/Nitrado RTT"
+  },
+  "residual": [
+    "No live AI provider calls (would need credentials + network policy)",
+    "No live Nitrado API calls (would need token + rate budget)",
+    "Circuit breaker behavior covered by unit tests; this probe pins source contracts"
+  ],
+  "contractsOk": true
+}

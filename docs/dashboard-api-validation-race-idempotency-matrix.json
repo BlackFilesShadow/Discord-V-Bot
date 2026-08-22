@@ -1,77 +1,77 @@
-{
-  "schemaVersion": 1,
-  "stage": 38,
-  "basedOnMainSha": "88d4761696a3625c060f840a2df4c19cab950085",
-  "scope": "API validation, race/ABA/lost-update, status taxonomy, and idempotency for dashboard mutations and relevant reads.",
-  "contracts": {
-    "idempotencyHeader": "X-Idempotency-Key 8..128; hash binds userId+method+url+key+bodyHash",
-    "parallel": "Second in-flight same hash => 409 processing",
-    "replayDone": "DONE claim within TTL returns cached status/body without re-run",
-    "non2xx": "Non-2xx releases claim for safe retry",
-    "staleProcessing": "PROCESSING older than 2m CAS takeover",
-    "storeDown": "Lookup failure => 503 IDEMPOTENCY_STORE_UNAVAILABLE fail-closed",
-    "clientRetry": "UI reuses pending key until 2xx decode (Stage 29)",
-    "validation": "Route-level integer/enum/string limits; bot-admin page strict integers Stage 28",
-    "raceDomain": "Domain CAS (whitelist updateMany, economy ledger keys) complements HTTP idempotency"
-  },
-  "cases": [
-    {
-      "id": "key-length",
-      "expected": "400 if key <8 or >128",
-      "evidence": "tests/security/idempotencyClaim.test.ts DENY invalid X-Idempotency-Key length",
-      "status": "runtime-verified"
-    },
-    {
-      "id": "body-mismatch-same-key",
-      "expected": "different bodyHash => different claim; no cross-body replay",
-      "evidence": "idempotencyClaim.test.ts isolates body mismatch",
-      "status": "runtime-verified"
-    },
-    {
-      "id": "route-mismatch-same-key",
-      "expected": "path in hash prevents cross-route replay",
-      "evidence": "idempotencyClaim.test.ts isolates route mismatch",
-      "status": "runtime-verified"
-    },
-    {
-      "id": "parallel-double",
-      "expected": "409 while PROCESSING; handler once",
-      "evidence": "idempotencyClaim.test.ts parallel identical requests",
-      "status": "runtime-verified"
-    },
-    {
-      "id": "success-replay",
-      "expected": "cached 2xx without handler re-run",
-      "evidence": "idempotencyClaim.test.ts cached result",
-      "status": "runtime-verified"
-    },
-    {
-      "id": "error-retry",
-      "expected": "claim deleted; retry allowed",
-      "evidence": "idempotencyClaim.test.ts non-success releases claim",
-      "status": "runtime-verified"
-    },
-    {
-      "id": "crash-stale",
-      "expected": "CAS takeover once",
-      "evidence": "idempotencyClaim.test.ts stale PROCESSING + expired DONE recovery",
-      "status": "runtime-verified"
-    },
-    {
-      "id": "store-unavailable",
-      "expected": "503 fail-closed; no mutation",
-      "evidence": "idempotencyClaim.test.ts IDEMPOTENCY_STORE_UNAVAILABLE",
-      "status": "runtime-verified"
-    },
-    {
-      "id": "validation-page",
-      "expected": "bot-admin non-int page 400",
-      "status": "verified-stage-28"
-    },
-    {
-      "id": "economy-ledger",
-      "expected": "domain idempotency keys prevent double pay",
-      "status": "verified"
-    }
-  ]
+﻿{
+    "schemaVersion":  1,
+    "stage":  38,
+    "basedOnMainSha":  "39c9c5c7d237a5ca0d64dcd496fc7319e31a2049",
+    "scope":  "API validation, race/ABA/lost-update, status taxonomy, and idempotency for dashboard mutations and relevant reads.",
+    "contracts":  {
+                      "idempotencyHeader":  "X-Idempotency-Key 8..128; hash binds userId+method+url+key+bodyHash",
+                      "parallel":  "Second in-flight same hash =\u003e 409 processing",
+                      "replayDone":  "DONE claim within TTL returns cached status/body without re-run",
+                      "non2xx":  "Non-2xx releases claim for safe retry",
+                      "staleProcessing":  "PROCESSING older than 2m CAS takeover",
+                      "storeDown":  "Lookup failure =\u003e 503 IDEMPOTENCY_STORE_UNAVAILABLE fail-closed",
+                      "clientRetry":  "UI reuses pending key until 2xx decode (Stage 29)",
+                      "validation":  "Route-level integer/enum/string limits; bot-admin page strict integers Stage 28",
+                      "raceDomain":  "Domain CAS (whitelist updateMany, economy ledger keys) complements HTTP idempotency"
+                  },
+    "cases":  [
+                  {
+                      "id":  "key-length",
+                      "expected":  "400 if key \u003c8 or \u003e128",
+                      "evidence":  "tests/security/idempotencyClaim.test.ts DENY invalid X-Idempotency-Key length",
+                      "status":  "runtime-verified"
+                  },
+                  {
+                      "id":  "body-mismatch-same-key",
+                      "expected":  "different bodyHash =\u003e different claim; no cross-body replay",
+                      "evidence":  "idempotencyClaim.test.ts isolates body mismatch",
+                      "status":  "runtime-verified"
+                  },
+                  {
+                      "id":  "route-mismatch-same-key",
+                      "expected":  "path in hash prevents cross-route replay",
+                      "evidence":  "idempotencyClaim.test.ts isolates route mismatch",
+                      "status":  "runtime-verified"
+                  },
+                  {
+                      "id":  "parallel-double",
+                      "expected":  "409 while PROCESSING; handler once",
+                      "evidence":  "idempotencyClaim.test.ts parallel identical requests",
+                      "status":  "runtime-verified"
+                  },
+                  {
+                      "id":  "success-replay",
+                      "expected":  "cached 2xx without handler re-run",
+                      "evidence":  "idempotencyClaim.test.ts cached result",
+                      "status":  "runtime-verified"
+                  },
+                  {
+                      "id":  "error-retry",
+                      "expected":  "claim deleted; retry allowed",
+                      "evidence":  "idempotencyClaim.test.ts non-success releases claim",
+                      "status":  "runtime-verified"
+                  },
+                  {
+                      "id":  "crash-stale",
+                      "expected":  "CAS takeover once",
+                      "evidence":  "idempotencyClaim.test.ts stale PROCESSING + expired DONE recovery",
+                      "status":  "runtime-verified"
+                  },
+                  {
+                      "id":  "store-unavailable",
+                      "expected":  "503 fail-closed; no mutation",
+                      "evidence":  "idempotencyClaim.test.ts IDEMPOTENCY_STORE_UNAVAILABLE",
+                      "status":  "runtime-verified"
+                  },
+                  {
+                      "id":  "validation-page",
+                      "expected":  "bot-admin non-int page 400",
+                      "status":  "verified-stage-28"
+                  },
+                  {
+                      "id":  "economy-ledger",
+                      "expected":  "domain idempotency keys prevent double pay",
+                      "status":  "verified"
+                  }
+              ]
 }

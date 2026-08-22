@@ -1,0 +1,66 @@
+{
+  "stage": 51,
+  "kind": "short-inprocess-soak",
+  "exactSha": "39c9c5c7d237a5ca0d64dcd496fc7319e31a2049",
+  "capturedAt": "2026-08-22T13:46:59.334Z",
+  "loops": 6,
+  "sampleMs": 30,
+  "minHeapMb": 4.74,
+  "maxHeapMb": 5.38,
+  "deltaMb": 0.64,
+  "heapSlopePerLoopMb": -0.016,
+  "samples": [
+    {
+      "i": 0,
+      "rssMb": 43.69,
+      "heapUsedMb": 4.82,
+      "heapTotalMb": 8.06,
+      "externalMb": 2.21,
+      "tMs": 30.2
+    },
+    {
+      "i": 1,
+      "rssMb": 44.01,
+      "heapUsedMb": 5.38,
+      "heapTotalMb": 8.06,
+      "externalMb": 2.46,
+      "tMs": 60.1
+    },
+    {
+      "i": 2,
+      "rssMb": 44.27,
+      "heapUsedMb": 5.33,
+      "heapTotalMb": 8.06,
+      "externalMb": 2.71,
+      "tMs": 90
+    },
+    {
+      "i": 3,
+      "rssMb": 44.52,
+      "heapUsedMb": 5.28,
+      "heapTotalMb": 8.06,
+      "externalMb": 2.96,
+      "tMs": 120
+    },
+    {
+      "i": 4,
+      "rssMb": 44.78,
+      "heapUsedMb": 5.05,
+      "heapTotalMb": 8.06,
+      "externalMb": 3.21,
+      "tMs": 150.1
+    },
+    {
+      "i": 5,
+      "rssMb": 45.04,
+      "heapUsedMb": 4.74,
+      "heapTotalMb": 8.06,
+      "externalMb": 3.46,
+      "tMs": 180.1
+    }
+  ],
+  "residual": [
+    "Short controlled soak only — not multi-hour production",
+    "Rate-limit map bounds covered by Stage 49 unit tests under churn"
+  ]
+}

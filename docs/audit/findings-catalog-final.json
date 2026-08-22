@@ -1,153 +1,153 @@
-{
-  "generatedAt": "2026-08-21T23:12:35.288Z",
-  "finalAuditedSha": "cf9d8e2530686ba8cef2063f6d5c726485a67f81",
-  "findings": [
-    {
-      "id": "F-S3-04",
-      "severity": "HIGH",
-      "status": "CLOSED",
-      "rootCause": "AiToolExecutor library without production consumer",
-      "fix": "toolRuntime + runtime wire + tests"
-    },
-    {
-      "id": "F-S2-01",
-      "severity": "HIGH",
-      "status": "CLOSED",
-      "rootCause": "same as F-S3-04",
-      "fix": "superseded"
-    },
-    {
-      "id": "F-S5-01",
-      "severity": "HIGH",
-      "status": "CLOSED",
-      "rootCause": "Windows CRLF autocrlf",
-      "fix": ".gitattributes LF"
-    },
-    {
-      "id": "F-S5-04",
-      "severity": "MEDIUM",
-      "status": "CLOSED",
-      "rootCause": "LF substring gates",
-      "fix": "normalizeSourceNewlines"
-    },
-    {
-      "id": "F-S5-06",
-      "severity": "MEDIUM",
-      "status": "CLOSED",
-      "rootCause": "WSL bash stub",
-      "fix": "scripts/resolve-bash.js"
-    },
-    {
-      "id": "F-S5-07",
-      "severity": "MEDIUM",
-      "status": "CLOSED",
-      "rootCause": "missing local CI env",
-      "fix": "tests/setupEnv.ts"
-    },
-    {
-      "id": "F-S5-02",
-      "severity": "HIGH",
-      "status": "PARTIAL",
-      "rootCause": "no local postgres/docker",
-      "fix": "compose.test + parity script; docker missing on host"
-    },
-    {
-      "id": "F-S5-05",
-      "severity": "MEDIUM",
-      "status": "PARTIAL",
-      "rootCause": "same",
-      "fix": "same"
-    },
-    {
-      "id": "F-S5-03",
-      "severity": "HIGH",
-      "status": "OPEN_EXCEPTION",
-      "rootCause": "deepmerge-ts via prisma",
-      "fix": "docs/audit/security-exception-deepmerge-ts.md"
-    },
-    {
-      "id": "F-S4-05",
-      "severity": "HIGH",
-      "status": "OPEN_EXCEPTION",
-      "rootCause": "same audit highs",
-      "fix": "same"
-    },
-    {
-      "id": "F-S4-15",
-      "severity": "BLOCKER",
-      "status": "BLOCKED",
-      "rootCause": "no prod access",
-      "fix": "none — requires authorized prod credentials"
-    },
-    {
-      "id": "F-S4-01",
-      "severity": "HIGH",
-      "status": "PARTIAL_CLOSED_UI_RUNTIME",
-      "rootCause": "auth E2E incomplete",
-      "fix": "stage-27-35-runtime-matrix + ServerSlot error/success toasts; residual live OAuth"
-    },
-    {
-      "id": "F-S4-02",
-      "severity": "HIGH",
-      "status": "PARTIAL_CLOSED_UI_RUNTIME",
-      "rootCause": "mobile auth E2E incomplete",
-      "fix": "stage-27-35-runtime-matrix + ServerSlot error/success toasts; residual live OAuth"
-    },
-    {
-      "id": "F-S4-03",
-      "severity": "HIGH",
-      "status": "OPEN",
-      "rootCause": "API security mostly structural",
-      "fix": null
-    },
-    {
-      "id": "F-S4-06",
-      "severity": "HIGH",
-      "status": "OPEN",
-      "rootCause": "no SHA-bound perf measurements",
-      "fix": null
-    },
-    {
-      "id": "F-S4-10",
-      "severity": "HIGH",
-      "status": "OPEN",
-      "rootCause": "no contiguous journey E2E",
-      "fix": null
-    },
-    {
-      "id": "F-S4-11",
-      "severity": "HIGH",
-      "status": "OPEN",
-      "rootCause": "no real chaos injection",
-      "fix": null
-    },
-    {
-      "id": "F-S4-12",
-      "severity": "MEDIUM",
-      "status": "OPEN",
-      "rootCause": "gesamtaudit needs clean release SHA",
-      "fix": null
-    },
-    {
-      "id": "F-S4-13",
-      "severity": "MEDIUM",
-      "status": "OPEN",
-      "rootCause": "release freeze not done",
-      "fix": null
-    },
-    {
-      "id": "F-S4-14",
-      "severity": "HIGH",
-      "status": "OPEN",
-      "rootCause": "final gates 1/2 not run",
-      "fix": null
-    },
-    {
-      "id": "F-PRE-14",
-      "severity": "MEDIUM",
-      "status": "OPEN",
-      "rootCause": "issue 73 protocol",
-      "fix": null
-    }
-  ]
+﻿{
+    "generatedAt":  "2026-08-22T13:48:03.1232201Z",
+    "finalAuditedSha":  "39c9c5c7d237a5ca0d64dcd496fc7319e31a2049",
+    "findings":  [
+                     {
+                         "id":  "F-S3-04",
+                         "severity":  "HIGH",
+                         "status":  "CLOSED",
+                         "rootCause":  "AiToolExecutor library without production consumer",
+                         "fix":  "toolRuntime + runtime wire + tests"
+                     },
+                     {
+                         "id":  "F-S2-01",
+                         "severity":  "HIGH",
+                         "status":  "CLOSED",
+                         "rootCause":  "same as F-S3-04",
+                         "fix":  "superseded"
+                     },
+                     {
+                         "id":  "F-S5-01",
+                         "severity":  "HIGH",
+                         "status":  "CLOSED",
+                         "rootCause":  "Windows CRLF autocrlf",
+                         "fix":  ".gitattributes LF"
+                     },
+                     {
+                         "id":  "F-S5-04",
+                         "severity":  "MEDIUM",
+                         "status":  "CLOSED",
+                         "rootCause":  "LF substring gates",
+                         "fix":  "normalizeSourceNewlines"
+                     },
+                     {
+                         "id":  "F-S5-06",
+                         "severity":  "MEDIUM",
+                         "status":  "CLOSED",
+                         "rootCause":  "WSL bash stub",
+                         "fix":  "scripts/resolve-bash.js"
+                     },
+                     {
+                         "id":  "F-S5-07",
+                         "severity":  "MEDIUM",
+                         "status":  "CLOSED",
+                         "rootCause":  "missing local CI env",
+                         "fix":  "tests/setupEnv.ts"
+                     },
+                     {
+                         "id":  "F-S5-02",
+                         "severity":  "HIGH",
+                         "status":  "PARTIAL",
+                         "rootCause":  "no local postgres/docker",
+                         "fix":  "compose.test + parity script; docker missing on host"
+                     },
+                     {
+                         "id":  "F-S5-05",
+                         "severity":  "MEDIUM",
+                         "status":  "PARTIAL",
+                         "rootCause":  "same",
+                         "fix":  "same"
+                     },
+                     {
+                         "id":  "F-S5-03",
+                         "severity":  "HIGH",
+                         "status":  "CLOSED",
+                         "rootCause":  "deepmerge-ts via prisma",
+                         "fix":  "deepmerge-ts override 8.0.2 + high audit green"
+                     },
+                     {
+                         "id":  "F-S4-05",
+                         "severity":  "HIGH",
+                         "status":  "CLOSED",
+                         "rootCause":  "same audit highs",
+                         "fix":  "SBOM blocking + deepmerge override + trivy CRITICAL + nested HIGH pins"
+                     },
+                     {
+                         "id":  "F-S4-15",
+                         "severity":  "BLOCKER",
+                         "status":  "BLOCKED",
+                         "rootCause":  "no prod access",
+                         "fix":  "none â€” requires authorized prod credentials"
+                     },
+                     {
+                         "id":  "F-S4-01",
+                         "severity":  "HIGH",
+                         "status":  "PARTIAL_CLOSED_UI_RUNTIME",
+                         "rootCause":  "auth E2E incomplete",
+                         "fix":  "stage-27-35-runtime-matrix + ServerSlot error/success toasts; residual live OAuth"
+                     },
+                     {
+                         "id":  "F-S4-02",
+                         "severity":  "HIGH",
+                         "status":  "PARTIAL_CLOSED_UI_RUNTIME",
+                         "rootCause":  "mobile auth E2E incomplete",
+                         "fix":  "stage-27-35-runtime-matrix + ServerSlot error/success toasts; residual live OAuth"
+                     },
+                     {
+                         "id":  "F-S4-03",
+                         "severity":  "HIGH",
+                         "status":  "CLOSED_RUNTIME",
+                         "rootCause":  "API security mostly structural",
+                         "fix":  "Stages 36-44 runtime gates + matrices; residual live OAuth/browser E2E only"
+                     },
+                     {
+                         "id":  "F-S4-06",
+                         "severity":  "HIGH",
+                         "status":  "PARTIAL_CLOSED",
+                         "rootCause":  "no SHA-bound perf measurements",
+                         "fix":  "SHA-bound perf artifacts under docs/audit/performance/39c9c5c7d237a5ca0d64dcd496fc7319e31a2049"
+                     },
+                     {
+                         "id":  "F-S4-10",
+                         "severity":  "HIGH",
+                         "status":  "OPEN",
+                         "rootCause":  "no contiguous journey E2E",
+                         "fix":  null
+                     },
+                     {
+                         "id":  "F-S4-11",
+                         "severity":  "HIGH",
+                         "status":  "PARTIAL_CLOSED",
+                         "rootCause":  "no real chaos injection",
+                         "fix":  "chaos-smoke controlled faults on 39c9c5c7d237a5ca0d64dcd496fc7319e31a2049; multi-service residual"
+                     },
+                     {
+                         "id":  "F-S4-12",
+                         "severity":  "MEDIUM",
+                         "status":  "OPEN",
+                         "rootCause":  "gesamtaudit needs clean release SHA",
+                         "fix":  null
+                     },
+                     {
+                         "id":  "F-S4-13",
+                         "severity":  "MEDIUM",
+                         "status":  "OPEN",
+                         "rootCause":  "release freeze not done",
+                         "fix":  null
+                     },
+                     {
+                         "id":  "F-S4-14",
+                         "severity":  "HIGH",
+                         "status":  "OPEN",
+                         "rootCause":  "final gates 1/2 not run",
+                         "fix":  null
+                     },
+                     {
+                         "id":  "F-PRE-14",
+                         "severity":  "MEDIUM",
+                         "status":  "IN_PROGRESS",
+                         "rootCause":  "issue 73 protocol",
+                         "fix":  "issue 73 tracker updates ongoing"
+                     }
+                 ]
 }

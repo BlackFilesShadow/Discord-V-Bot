@@ -1,30 +1,30 @@
-{
-  "schemaVersion": 2,
-  "stage": 49,
-  "basedOnMainSha": "8f181c7e8f2344f0c78dcd19a3151547f885aa17",
-  "scope": "Memory-leak audit: listeners, timers and in-process caches for bot, dashboard and workers.",
-  "status": "PARTIAL",
-  "findings": [
-    {
-      "id": "F-P49-01",
-      "severity": "HIGH",
-      "surface": "src/utils/rateLimit.ts",
-      "problem": "globalBuckets, perCommandBuckets and componentBuckets retained unique Discord/user-command keys for process lifetime with no TTL pruning or hard capacity bound.",
-      "remediation": "Hard-cap each map, prune expired windows before eviction, preserve per-window isolation, and regression-test high-cardinality plus expiry recovery.",
-      "state": "FIXED_ON_MAIN"
-    }
-  ],
-  "contracts": {
-    "boundedRateLimitMaps": "all three interaction rate-limit maps are hard-capped and expired entries are pruned before active eviction",
-    "noUnboundedMaps": "remaining global caches must have TTL, max size, lifecycle ownership, or documented bounded cardinality",
-    "timers": "intervals must be unref'd or explicitly stopped on owned shutdown paths",
-    "regression": "rate-limit semantics remain independent across global, per-command and component buckets",
-    "runtimeEvidence": "full-process soak/RSS proof remains Stage 51 scope and is not claimed by this change"
-  },
-  "gate": {
-    "head": "8f181c7e8f2344f0c78dcd19a3151547f885aa17",
-    "passes": 2,
-    "required": 2,
-    "rule": "PR #248 merged; main verified"
-  }
+﻿{
+    "schemaVersion":  2,
+    "stage":  49,
+    "basedOnMainSha":  "39c9c5c7d237a5ca0d64dcd496fc7319e31a2049",
+    "scope":  "Memory-leak audit: listeners, timers and in-process caches for bot, dashboard and workers.",
+    "status":  "VERIFIED",
+    "findings":  [
+                     {
+                         "id":  "F-P49-01",
+                         "severity":  "HIGH",
+                         "surface":  "src/utils/rateLimit.ts",
+                         "problem":  "globalBuckets, perCommandBuckets and componentBuckets retained unique Discord/user-command keys for process lifetime with no TTL pruning or hard capacity bound.",
+                         "remediation":  "Hard-cap each map, prune expired windows before eviction, preserve per-window isolation, and regression-test high-cardinality plus expiry recovery.",
+                         "state":  "FIXED_ON_MAIN"
+                     }
+                 ],
+    "contracts":  {
+                      "boundedRateLimitMaps":  "all three interaction rate-limit maps are hard-capped and expired entries are pruned before active eviction",
+                      "noUnboundedMaps":  "remaining global caches must have TTL, max size, lifecycle ownership, or documented bounded cardinality",
+                      "timers":  "intervals must be unref\u0027d or explicitly stopped on owned shutdown paths",
+                      "regression":  "rate-limit semantics remain independent across global, per-command and component buckets",
+                      "runtimeEvidence":  "full-process soak/RSS proof remains Stage 51 scope and is not claimed by this change"
+                  },
+    "gate":  {
+                 "head":  "8f181c7e8f2344f0c78dcd19a3151547f885aa17",
+                 "passes":  2,
+                 "required":  2,
+                 "rule":  "PR #248 merged; main verified"
+             }
 }

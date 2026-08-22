@@ -1,35 +1,24 @@
 ﻿{
-  "auditFreezeSha": "48bbcfface38068bc71ad7bcc5c1dd87616da514",
-  "currentMainSha": "48bbcfface38068bc71ad7bcc5c1dd87616da514",
-  "currentHeadSha": "48bbcfface38068bc71ad7bcc5c1dd87616da514",
-  "generatedAt": "2026-08-21T22:20:30Z",
-  "branch": "main",
-  "dirtyWorktree": true,
-  "diffSinceAuditFreeze": "none_on_origin_main_at_start; local uncommitted fix wave in progress",
-  "activeFindingsRevalidated": [
-    {"id":"F-S3-04","status":"FIXED_PENDING_COMMIT","notes":"toolRuntime production wiring + tests"},
-    {"id":"F-S2-01","status":"SUPERSEDED_BY_F-S3-04","notes":"same root cause"},
-    {"id":"F-S5-01","status":"FIXED_PENDING_COMMIT","notes":".gitattributes + setupEnv + local-ci script"},
-    {"id":"F-S5-02","status":"MITIGATED_PENDING_DB","notes":"docker-compose.test.yml + parity script"},
-    {"id":"F-S5-04","status":"FIXED_PENDING_COMMIT","notes":"normalizeSourceNewlines on architecture gates"},
-    {"id":"F-S5-05","status":"MITIGATED_PENDING_DB","notes":"compose test postgres port 5433"},
-    {"id":"F-S5-07","status":"FIXED_PENDING_COMMIT","notes":"tests/setupEnv.ts jest setupFiles"},
-    {"id":"F-S5-06","status":"FIXED_PENDING_COMMIT","notes":"resolve-bash prefers Git Bash"},
-    {"id":"F-S5-03","status":"OPEN","notes":"deepmerge-ts via prisma — no force fix"},
-    {"id":"F-S4-05","status":"OPEN","notes":"security audit high transitive"},
-    {"id":"F-S4-15","status":"BLOCKED","notes":"no production credentials"},
-    {"id":"F-S4-01","status":"OPEN","notes":"auth E2E matrices still structural"},
-    {"id":"F-S4-02","status":"OPEN","notes":"mobile auth E2E incomplete"},
-    {"id":"F-S4-03","status":"OPEN","notes":"API security runtime partial"},
-    {"id":"F-S4-06","status":"OPEN","notes":"perf measurement artifacts missing"},
-    {"id":"F-S4-10","status":"OPEN","notes":"full journey E2E missing"},
-    {"id":"F-S4-11","status":"OPEN","notes":"chaos injection missing"},
-    {"id":"F-S4-12","status":"OPEN","notes":"gesamtaudit needs post-fix SHA"},
-    {"id":"F-S4-13","status":"OPEN","notes":"release freeze after commits"},
-    {"id":"F-S4-14","status":"OPEN","notes":"final gate 2/2 not run"},
-    {"id":"F-PRE-14","status":"OPEN","notes":"issue 73 closure protocol"}
-  ],
-  "alreadyFixedSinceAudit": [],
-  "falsePositives": [],
-  "stillOpen": ["F-S4-15","F-S5-03","F-S4-05","F-S4-01","F-S4-02","F-S4-03","F-S4-06","F-S4-10","F-S4-11","F-S4-12","F-S4-13","F-S4-14","F-PRE-14"]
+    "closedThisWave":  [
+                           "F-S5-03",
+                           "F-S4-05",
+                           "F-S4-03 runtime",
+                           "Stage45 trivy"
+                       ],
+    "dirtyWorktree":  true,
+    "stillOpen":  [
+                      "F-S4-15",
+                      "F-S4-01 residual live OAuth",
+                      "F-S4-02 residual live OAuth",
+                      "F-S4-06 residual full-stack load",
+                      "F-S4-10 live journey",
+                      "F-S4-12",
+                      "F-S4-13",
+                      "F-S4-14",
+                      "F-PRE-14"
+                  ],
+    "branch":  "main",
+    "generatedAt":  "2026-08-22T13:48:03.1232201Z",
+    "currentMainSha":  "39c9c5c7d237a5ca0d64dcd496fc7319e31a2049",
+    "currentHeadSha":  "39c9c5c7d237a5ca0d64dcd496fc7319e31a2049"
 }

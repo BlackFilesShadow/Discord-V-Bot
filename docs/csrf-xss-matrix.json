@@ -1,30 +1,30 @@
-{
-  "schemaVersion": 1,
-  "stage": 41,
-  "basedOnMainSha": "9690db5ce22b4191d6ae184e6f7737fee23ea06e",
-  "scope": "CSRF on state-changing requests; XSS reflected/stored/DOM across dashboard rendering.",
-  "contracts": {
-    "oauthState": "OAuth state/nonce/PKCE",
-    "sameSite": "session cookie sameSite lax + httpOnly",
-    "mutations": "JSON API cookie auth; CORS credentials only to dashboard origin",
-    "xss": "React default escaping; no unsanitized user HTML sinks"
-  },
-  "cases": [
-    {
-      "id": "oauth-csrf-state",
-      "status": "runtime-verified"
-    },
-    {
-      "id": "cookie-samesite",
-      "status": "runtime-verified"
-    },
-    {
-      "id": "cors-credentials-origin",
-      "status": "runtime-verified"
-    },
-    {
-      "id": "react-escape-default",
-      "status": "runtime-verified"
-    }
-  ]
+﻿{
+    "schemaVersion":  1,
+    "stage":  41,
+    "basedOnMainSha":  "39c9c5c7d237a5ca0d64dcd496fc7319e31a2049",
+    "scope":  "CSRF on state-changing requests; XSS reflected/stored/DOM across dashboard rendering.",
+    "contracts":  {
+                      "oauthState":  "OAuth state/nonce/PKCE",
+                      "sameSite":  "session cookie sameSite lax + httpOnly",
+                      "mutations":  "JSON API cookie auth; CORS credentials only to dashboard origin",
+                      "xss":  "React default escaping; no unsanitized user HTML sinks"
+                  },
+    "cases":  [
+                  {
+                      "id":  "oauth-csrf-state",
+                      "status":  "runtime-verified"
+                  },
+                  {
+                      "id":  "cookie-samesite",
+                      "status":  "runtime-verified"
+                  },
+                  {
+                      "id":  "cors-credentials-origin",
+                      "status":  "runtime-verified"
+                  },
+                  {
+                      "id":  "react-escape-default",
+                      "status":  "runtime-verified"
+                  }
+              ]
 }

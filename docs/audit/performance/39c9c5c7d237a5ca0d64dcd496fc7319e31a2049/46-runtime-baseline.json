@@ -1,0 +1,54 @@
+{
+  "exactSha": "39c9c5c7d237a5ca0d64dcd496fc7319e31a2049",
+  "capturedAt": "2026-08-22T13:46:56.151Z",
+  "stage": 46,
+  "kind": "runtime-process-baseline",
+  "sampleMs": 1499,
+  "node": "v24.13.0",
+  "platform": "win32",
+  "cpuCount": 20,
+  "loadAvg": [
+    0,
+    0,
+    0
+  ],
+  "osMem": {
+    "totalMb": 32616.02,
+    "freeMb": 8795.93
+  },
+  "process": {
+    "rssMb": 46.83,
+    "heapUsedMb": 5.98,
+    "heapTotalMb": 9.81,
+    "externalMb": 1.96,
+    "arrayBuffersMb": 0.01,
+    "uptimeSec": 1.56
+  },
+  "eventLoopDelayMs": {
+    "min": 19.382,
+    "p50": 20.103,
+    "p99": 21.742,
+    "max": 76.022,
+    "mean": 20.987
+  },
+  "cpu": {
+    "userMs": 1500,
+    "systemMs": 15
+  },
+  "resources": {
+    "handlesApprox": 0,
+    "requests": 0,
+    "byType": {},
+    "handlesLegacy": 0
+  },
+  "metricsModule": {
+    "present": true,
+    "defaultMetricsPrefix": true,
+    "aiLatencyHistogram": true,
+    "dbQueryHistogram": true
+  },
+  "residual": [
+    "Idle/probe process only — not full bot + Discord gateway production RSS",
+    "GC pause histogram not exposed without --expose-gc"
+  ]
+}

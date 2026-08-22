@@ -1,105 +1,105 @@
-{
-  "generatedAt": "2026-08-22T04:48:59.923Z",
-  "baseSha": "54341a670150acd1df27f1d317d965f4491106a6",
-  "waves": [
-    {
-      "name": "wave-b-api-security-36-45",
-      "status": "merged_main_through_44_stage_45_in_wave_c",
-      "findings": [
-        "F-S4-03"
-      ]
-    },
-    {
-      "name": "wave-a-dashboard-27-35",
-      "status": "merged_main",
-      "findings": [
-        "F-S4-01",
-        "F-S4-02"
-      ],
-      "sha_base": "cf9d8e2530686ba8cef2063f6d5c726485a67f81"
-    },
-    {
-      "name": "wave-a-tool-eol-ci",
-      "status": "implemented_local",
-      "findings": [
-        "F-S3-04",
-        "F-S5-01",
-        "F-S5-04",
-        "F-S5-06",
-        "F-S5-07"
-      ]
-    },
-    {
-      "name": "wave-b-docker-db-parity",
-      "status": "blocked_no_docker",
-      "findings": [
-        "F-S5-02",
-        "F-S5-05"
-      ]
-    },
-    {
-      "name": "wave-c-deps-sbom",
-      "status": "merged_main_stage_45",
-      "findings": [
-        "F-S5-03",
-        "F-S4-05"
-      ],
-      "sha_base": "584ffa3deeba6a35391ed8f6463af415419a91fb",
-      "note": "deepmerge-ts HIGH closed via npm overrides 8.0.2; SBOM fail-closed; Stage 45 remains PARTIAL for container CVE scanner + passport-discord"
-    },
-    {
-      "name": "wave-d-e2e-api-mobile",
-      "status": "in_progress_dashboard_done_api_open",
-      "findings": [
-        "F-S4-03"
-      ]
-    },
-    {
-      "name": "wave-e-perf-chaos-journey",
-      "status": "in_progress_49_59_runtime",
-      "findings": [
-        "F-S4-06",
-        "F-S4-10",
-        "F-S4-11"
-      ],
-      "sha_base": "8f181c7e8f2344f0c78dcd19a3151547f885aa17",
-      "note": "49 rate-limit merged; 50-52/58-59 runtime evidence in flight"
-    },
-    {
-      "name": "wave-f-release-gates",
-      "status": "todo",
-      "findings": [
-        "F-S4-12",
-        "F-S4-13",
-        "F-S4-14"
-      ]
-    },
-    {
-      "name": "wave-g-prod",
-      "status": "blocked",
-      "findings": [
-        "F-S4-15"
-      ]
-    },
-    {
-      "name": "wave-i-cleanup-53-57",
-      "status": "in_progress_56_57",
-      "findings": [
-        "passport-removed",
-        "inflight-dev-residual"
-      ],
-      "sha_base": "f9f00881717ca49bd0f6cc85aa5a32556f6b409f",
-      "note": "54 VERIFIED; 56 entry split; 57 conservative"
-    },
-    {
-      "name": "wave-j-gesamtaudit-60-62",
-      "status": "in_progress",
-      "sha_base": "bdf190b881573a78896152e6ec0dbe6e542e7e1a"
-    },
-    {
-      "name": "wave-d-trivy-container-scan",
-      "status": "in_progress",
-      "sha_base": "e431b1e480f446ed3f6ff2f65f3a6811fcfcbcea"
-    }
-  ]
+﻿{
+    "generatedAt":  "2026-08-22T13:48:03.1232201Z",
+    "baseSha":  "39c9c5c7d237a5ca0d64dcd496fc7319e31a2049",
+    "waves":  [
+                  {
+                      "name":  "wave-b-api-security-36-45",
+                      "status":  "merged_main_through_44_stage_45_in_wave_c",
+                      "findings":  [
+                                       "F-S4-03"
+                                   ]
+                  },
+                  {
+                      "name":  "wave-a-dashboard-27-35",
+                      "status":  "merged_main",
+                      "findings":  [
+                                       "F-S4-01",
+                                       "F-S4-02"
+                                   ],
+                      "sha_base":  "cf9d8e2530686ba8cef2063f6d5c726485a67f81"
+                  },
+                  {
+                      "name":  "wave-a-tool-eol-ci",
+                      "status":  "implemented_local",
+                      "findings":  [
+                                       "F-S3-04",
+                                       "F-S5-01",
+                                       "F-S5-04",
+                                       "F-S5-06",
+                                       "F-S5-07"
+                                   ]
+                  },
+                  {
+                      "name":  "wave-b-docker-db-parity",
+                      "status":  "blocked_no_docker",
+                      "findings":  [
+                                       "F-S5-02",
+                                       "F-S5-05"
+                                   ]
+                  },
+                  {
+                      "name":  "wave-c-deps-sbom",
+                      "status":  "merged_main_stage_45_verified",
+                      "findings":  [
+                                       "F-S5-03",
+                                       "F-S4-05"
+                                   ],
+                      "sha_base":  "584ffa3deeba6a35391ed8f6463af415419a91fb",
+                      "note":  "Stage 45 VERIFIED after PR 256/257"
+                  },
+                  {
+                      "name":  "wave-d-e2e-api-mobile",
+                      "status":  "in_progress_dashboard_done_api_open",
+                      "findings":  [
+                                       "F-S4-03"
+                                   ]
+                  },
+                  {
+                      "name":  "wave-e-perf-chaos-journey",
+                      "status":  "evidence_on_main_partial_58_52",
+                      "findings":  [
+                                       "F-S4-06",
+                                       "F-S4-10",
+                                       "F-S4-11"
+                                   ],
+                      "sha_base":  "39c9c5c7d237a5ca0d64dcd496fc7319e31a2049",
+                      "note":  "49 rate-limit merged; 50-52/58-59 runtime evidence in flight"
+                  },
+                  {
+                      "name":  "wave-f-release-gates",
+                      "status":  "todo",
+                      "findings":  [
+                                       "F-S4-12",
+                                       "F-S4-13",
+                                       "F-S4-14"
+                                   ]
+                  },
+                  {
+                      "name":  "wave-g-prod",
+                      "status":  "blocked",
+                      "findings":  [
+                                       "F-S4-15"
+                                   ]
+                  },
+                  {
+                      "name":  "wave-i-cleanup-53-57",
+                      "status":  "in_progress_56_57",
+                      "findings":  [
+                                       "passport-removed",
+                                       "inflight-dev-residual"
+                                   ],
+                      "sha_base":  "f9f00881717ca49bd0f6cc85aa5a32556f6b409f",
+                      "note":  "54 VERIFIED; 56 entry split; 57 conservative"
+                  },
+                  {
+                      "name":  "wave-j-gesamtaudit-60-62",
+                      "status":  "in_progress",
+                      "sha_base":  "bdf190b881573a78896152e6ec0dbe6e542e7e1a"
+                  },
+                  {
+                      "name":  "wave-d-trivy-container-scan",
+                      "status":  "merged_main",
+                      "sha_base":  "39c9c5c7d237a5ca0d64dcd496fc7319e31a2049"
+                  }
+              ]
 }

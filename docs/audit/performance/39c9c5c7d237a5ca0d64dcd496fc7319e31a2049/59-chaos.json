@@ -1,0 +1,67 @@
+{
+  "stage": 59,
+  "kind": "controlled-fault-injection-smoke",
+  "exactSha": "39c9c5c7d237a5ca0d64dcd496fc7319e31a2049",
+  "capturedAt": "2026-08-22T13:46:59.427Z",
+  "faults": [
+    "idempotency_store_down",
+    "ssrf_private_target",
+    "path_traversal",
+    "nitrado_circuit_open",
+    "ai_timeout_429_5xx",
+    "nitrado_5xx_429_retry",
+    "redis_or_cache_down_no_scope_bypass",
+    "nitrado_circuit_open_runtime"
+  ],
+  "results": [
+    {
+      "fault": "idempotency_store_down",
+      "ok": true,
+      "expected": "503 fail-closed, no side effect"
+    },
+    {
+      "fault": "ssrf_private_target",
+      "ok": true,
+      "expected": "private/link-local blocked"
+    },
+    {
+      "fault": "path_traversal",
+      "ok": true,
+      "expected": "traversal blocked"
+    },
+    {
+      "fault": "nitrado_circuit_open",
+      "ok": true,
+      "expected": "OPEN blocks calls; HALF_OPEN single probe"
+    },
+    {
+      "fault": "ai_timeout_429_5xx",
+      "ok": true,
+      "expected": "timeout + 429 + transient retry bounded"
+    },
+    {
+      "fault": "nitrado_5xx_429_retry",
+      "ok": true,
+      "expected": "bounded retry + retry-after"
+    },
+    {
+      "fault": "redis_or_cache_down_no_scope_bypass",
+      "ok": true,
+      "expected": "scope guard remains fail-closed"
+    },
+    {
+      "fault": "nitrado_circuit_open_runtime",
+      "ok": true,
+      "expected": "jest injects OPEN + preflight throw",
+      "deferredToJest": true
+    }
+  ],
+  "runtime": {
+    "attempted": false,
+    "note": "nitrado_circuit_open_runtime covered by tests/security/waveFPerfChaosJourneyRuntime.test.ts"
+  },
+  "residual": [
+    "Full multi-service chaos (kill postgres container) needs Docker/staging",
+    "Jest suite injects circuit OPEN + SSRF + rate-limit flood at runtime"
+  ]
+}

@@ -1,875 +1,922 @@
-{
-  "generatedAt": "2026-08-21T23:21:46.599Z",
-  "finalAuditedSha": "cf9d8e2530686ba8cef2063f6d5c726485a67f81",
-  "stages": [
-    {
-      "id": 1,
-      "name": "stage-1",
-      "status": "VERIFIED",
-      "evidence": [
-        "jest-green-local",
-        "prior-structure"
-      ],
-      "findings": []
-    },
-    {
-      "id": 2,
-      "name": "stage-2",
-      "status": "VERIFIED",
-      "evidence": [
-        "jest-green-local",
-        "prior-structure"
-      ],
-      "findings": []
-    },
-    {
-      "id": 3,
-      "name": "stage-3",
-      "status": "VERIFIED",
-      "evidence": [
-        "jest-green-local",
-        "prior-structure"
-      ],
-      "findings": []
-    },
-    {
-      "id": 4,
-      "name": "stage-4",
-      "status": "VERIFIED",
-      "evidence": [
-        "jest-green-local",
-        "prior-structure"
-      ],
-      "findings": []
-    },
-    {
-      "id": 5,
-      "name": "stage-5",
-      "status": "VERIFIED",
-      "evidence": [
-        "jest-green-local",
-        "prior-structure"
-      ],
-      "findings": []
-    },
-    {
-      "id": 6,
-      "name": "stage-6",
-      "status": "VERIFIED",
-      "evidence": [
-        "jest-green-local",
-        "prior-structure"
-      ],
-      "findings": []
-    },
-    {
-      "id": 7,
-      "name": "stage-7",
-      "status": "VERIFIED",
-      "evidence": [
-        "jest-green-local",
-        "prior-structure"
-      ],
-      "findings": []
-    },
-    {
-      "id": 8,
-      "name": "stage-8",
-      "status": "VERIFIED",
-      "evidence": [
-        "jest-green-local",
-        "prior-structure"
-      ],
-      "findings": []
-    },
-    {
-      "id": 9,
-      "name": "stage-9",
-      "status": "VERIFIED",
-      "evidence": [
-        "jest-green-local",
-        "prior-structure"
-      ],
-      "findings": []
-    },
-    {
-      "id": 10,
-      "name": "stage-10",
-      "status": "VERIFIED",
-      "evidence": [
-        "jest-green-local",
-        "prior-structure"
-      ],
-      "findings": []
-    },
-    {
-      "id": 11,
-      "name": "stage-11",
-      "status": "VERIFIED",
-      "evidence": [
-        "jest-green-local",
-        "prior-structure"
-      ],
-      "findings": []
-    },
-    {
-      "id": 12,
-      "name": "stage-12",
-      "status": "VERIFIED",
-      "evidence": [
-        "jest-green-local",
-        "prior-structure"
-      ],
-      "findings": []
-    },
-    {
-      "id": 13,
-      "name": "stage-13",
-      "status": "VERIFIED",
-      "evidence": [
-        "jest-green-local",
-        "prior-structure"
-      ],
-      "findings": []
-    },
-    {
-      "id": 14,
-      "name": "stage-14",
-      "status": "VERIFIED",
-      "evidence": [
-        "jest-green-local",
-        "prior-structure"
-      ],
-      "findings": []
-    },
-    {
-      "id": 15,
-      "name": "stage-15",
-      "status": "VERIFIED",
-      "evidence": [
-        "jest-green-local",
-        "prior-structure"
-      ],
-      "findings": []
-    },
-    {
-      "id": 16,
-      "name": "stage-16",
-      "status": "VERIFIED",
-      "evidence": [
-        "jest-green-local",
-        "prior-structure"
-      ],
-      "findings": []
-    },
-    {
-      "id": 17,
-      "name": "stage-17",
-      "status": "VERIFIED",
-      "evidence": [
-        "jest-green-local",
-        "prior-structure"
-      ],
-      "findings": []
-    },
-    {
-      "id": 18,
-      "name": "stage-18",
-      "status": "VERIFIED",
-      "evidence": [
-        "jest-green-local",
-        "prior-structure"
-      ],
-      "findings": []
-    },
-    {
-      "id": 19,
-      "name": "stage-19",
-      "status": "VERIFIED",
-      "evidence": [
-        "jest-green-local",
-        "prior-structure"
-      ],
-      "findings": []
-    },
-    {
-      "id": 20,
-      "name": "AI hardened tool layer",
-      "status": "VERIFIED",
-      "evidence": [
-        "src/modules/ai/toolRuntime.ts",
-        "src/modules/ai/runtime.ts",
-        "tests/ai/toolRuntime.test.ts",
-        "tests/security/aiToolLayerArchitecture.test.ts"
-      ],
-      "findings": [
-        "F-S3-04 closed pending commit"
-      ]
-    },
-    {
-      "id": 21,
-      "name": "stage-21",
-      "status": "PARTIAL",
-      "evidence": [
-        "structure-gates"
-      ],
-      "findings": [
-        "needs-runtime-e2e-rebind"
-      ]
-    },
-    {
-      "id": 22,
-      "name": "stage-22",
-      "status": "PARTIAL",
-      "evidence": [
-        "structure-gates"
-      ],
-      "findings": [
-        "needs-runtime-e2e-rebind"
-      ]
-    },
-    {
-      "id": 23,
-      "name": "stage-23",
-      "status": "PARTIAL",
-      "evidence": [
-        "structure-gates"
-      ],
-      "findings": [
-        "needs-runtime-e2e-rebind"
-      ]
-    },
-    {
-      "id": 24,
-      "name": "stage-24",
-      "status": "PARTIAL",
-      "evidence": [
-        "structure-gates"
-      ],
-      "findings": [
-        "needs-runtime-e2e-rebind"
-      ]
-    },
-    {
-      "id": 25,
-      "name": "stage-25",
-      "status": "PARTIAL",
-      "evidence": [
-        "structure-gates"
-      ],
-      "findings": [
-        "needs-runtime-e2e-rebind"
-      ]
-    },
-    {
-      "id": 26,
-      "name": "stage-26",
-      "status": "PARTIAL",
-      "evidence": [
-        "structure-gates"
-      ],
-      "findings": [
-        "needs-runtime-e2e-rebind"
-      ]
-    },
-    {
-      "id": 27,
-      "name": "stage-27",
-      "status": "PARTIAL",
-      "evidence": [
-        "dashboard-ui/e2e/stage-27-35-runtime-matrix.spec.ts",
-        "tests/security/dashboardStage2735RuntimeEvidence.test.ts",
-        "settings-mutation-toast-errors"
-      ],
-      "findings": [
-        "residual-no-live-db-oauth-side-effect-in-playwright"
-      ],
-      "note": "SPA+stub API runtime matrix green; full UI-API-AuthZ-DB chain still needs live E2E"
-    },
-    {
-      "id": 28,
-      "name": "stage-28",
-      "status": "PARTIAL",
-      "evidence": [
-        "dashboard-ui/e2e/stage-27-35-runtime-matrix.spec.ts",
-        "tests/security/dashboardStage2735RuntimeEvidence.test.ts",
-        "settings-mutation-toast-errors"
-      ],
-      "findings": [
-        "residual-no-live-db-oauth-side-effect-in-playwright"
-      ],
-      "note": "SPA+stub API runtime matrix green; full UI-API-AuthZ-DB chain still needs live E2E"
-    },
-    {
-      "id": 29,
-      "name": "stage-29",
-      "status": "PARTIAL",
-      "evidence": [
-        "dashboard-ui/e2e/stage-27-35-runtime-matrix.spec.ts",
-        "tests/security/dashboardStage2735RuntimeEvidence.test.ts",
-        "settings-mutation-toast-errors"
-      ],
-      "findings": [
-        "residual-no-live-db-oauth-side-effect-in-playwright"
-      ],
-      "note": "SPA+stub API runtime matrix green; full UI-API-AuthZ-DB chain still needs live E2E"
-    },
-    {
-      "id": 30,
-      "name": "stage-30",
-      "status": "PARTIAL",
-      "evidence": [
-        "dashboard-ui/e2e/stage-27-35-runtime-matrix.spec.ts",
-        "tests/security/dashboardStage2735RuntimeEvidence.test.ts",
-        "settings-mutation-toast-errors"
-      ],
-      "findings": [
-        "residual-no-live-db-oauth-side-effect-in-playwright"
-      ],
-      "note": "SPA+stub API runtime matrix green; full UI-API-AuthZ-DB chain still needs live E2E"
-    },
-    {
-      "id": 31,
-      "name": "stage-31",
-      "status": "PARTIAL",
-      "evidence": [
-        "dashboard-ui/e2e/stage-27-35-runtime-matrix.spec.ts",
-        "tests/security/dashboardStage2735RuntimeEvidence.test.ts",
-        "settings-mutation-toast-errors"
-      ],
-      "findings": [
-        "residual-no-live-db-oauth-side-effect-in-playwright"
-      ],
-      "note": "SPA+stub API runtime matrix green; full UI-API-AuthZ-DB chain still needs live E2E"
-    },
-    {
-      "id": 32,
-      "name": "stage-32",
-      "status": "PARTIAL",
-      "evidence": [
-        "dashboard-ui/e2e/stage-27-35-runtime-matrix.spec.ts",
-        "tests/security/dashboardStage2735RuntimeEvidence.test.ts",
-        "settings-mutation-toast-errors"
-      ],
-      "findings": [
-        "residual-no-live-db-oauth-side-effect-in-playwright"
-      ],
-      "note": "SPA+stub API runtime matrix green; full UI-API-AuthZ-DB chain still needs live E2E"
-    },
-    {
-      "id": 33,
-      "name": "stage-33",
-      "status": "PARTIAL",
-      "evidence": [
-        "dashboard-ui/e2e/stage-27-35-runtime-matrix.spec.ts",
-        "tests/security/dashboardStage2735RuntimeEvidence.test.ts",
-        "settings-mutation-toast-errors"
-      ],
-      "findings": [
-        "residual-no-live-db-oauth-side-effect-in-playwright"
-      ],
-      "note": "SPA+stub API runtime matrix green; full UI-API-AuthZ-DB chain still needs live E2E"
-    },
-    {
-      "id": 34,
-      "name": "stage-34",
-      "status": "PARTIAL",
-      "evidence": [
-        "dashboard-ui/e2e/stage-27-35-runtime-matrix.spec.ts",
-        "tests/security/dashboardStage2735RuntimeEvidence.test.ts",
-        "settings-mutation-toast-errors"
-      ],
-      "findings": [
-        "residual-no-live-db-oauth-side-effect-in-playwright"
-      ],
-      "note": "SPA+stub API runtime matrix green; full UI-API-AuthZ-DB chain still needs live E2E"
-    },
-    {
-      "id": 35,
-      "name": "stage-35",
-      "status": "PARTIAL",
-      "evidence": [
-        "dashboard-ui/e2e/stage-27-35-runtime-matrix.spec.ts",
-        "tests/security/dashboardStage2735RuntimeEvidence.test.ts",
-        "settings-mutation-toast-errors"
-      ],
-      "findings": [
-        "residual-no-live-db-oauth-side-effect-in-playwright"
-      ],
-      "note": "SPA+stub API runtime matrix green; full UI-API-AuthZ-DB chain still needs live E2E"
-    },
-    {
-      "id": 36,
-      "name": "API/security-36",
-      "status": "PARTIAL",
-      "evidence": [
-        "tests/dashboard/requireAuthSessionGate.test.ts",
-        "tests/dashboard/requireGuildPermissionIdorGate.test.ts",
-        "tests/security/dashboardApiAuthorizationScopeIdorMatrixArchitecture.test.ts",
-        "src/dashboard/middleware/auth.ts"
-      ],
-      "findings": [
-        "residual-full-route-integration-and-live-oauth"
-      ],
-      "note": "Runtime sessionToken fail-closed (PR#241) + evidence pin; residual live OAuth/revocation E2E",
-      "exactSha": "eb32f0089a90502d0c26a371249df993a845634a"
-    },
-    {
-      "id": 37,
-      "name": "API/security-37",
-      "status": "PARTIAL",
-      "evidence": [
-        "tests/dashboard/requireAuthSessionGate.test.ts",
-        "tests/dashboard/requireGuildPermissionIdorGate.test.ts",
-        "tests/security/dashboardApiAuthorizationScopeIdorMatrixArchitecture.test.ts",
-        "src/dashboard/middleware/auth.ts"
-      ],
-      "findings": [
-        "residual-full-route-integration-and-live-oauth"
-      ],
-      "note": "Runtime IDOR/AuthZ middleware gate green; residual full HTTP route+DB IDOR suite",
-      "exactSha": "eb32f0089a90502d0c26a371249df993a845634a"
-    },
-    {
-      "id": 38,
-      "name": "API/security-38",
-      "status": "PARTIAL",
-      "evidence": [
-        "tests/security/idempotencyClaim.test.ts",
-        "tests/security/dashboardApiValidationRaceIdempotencyMatrixArchitecture.test.ts",
-        "tests/runtime/dashboardMutationIdempotencyRetryGate.test.ts",
-        "src/dashboard/middleware/idempotency.ts",
-        "docs/dashboard-api-validation-race-idempotency-matrix.json"
-      ],
-      "findings": [
-        "residual-full-route-validation-and-domain-race-matrix"
-      ],
-      "note": "Runtime idempotency fail-closed matrix (key length, body/route isolation, parallel, replay, stale CAS, store-down 503); residual full HTTP route validation + domain race",
-      "exactSha": "88d4761696a3625c060f840a2df4c19cab950085"
-    },
-    {
-      "id": 39,
-      "name": "API/security-39",
-      "status": "PARTIAL",
-      "evidence": [
-        "tests/security/gitHistorySecretHygieneArchitecture.test.ts",
-        "docs/git-history-secret-hygiene-matrix.json",
-        ".github/workflows/ci.yml"
-      ],
-      "findings": [
-        "residual-history-gate-two-cycle-evidence"
-      ],
-      "note": "Blocking Gitleaks full-history gate wired + current-tree scan; residual two-cycle freeze evidence on immutable SHA",
-      "exactSha": "c180393298149cc1d98f186dee6f059573f09709"
-    },
-    {
-      "id": 40,
-      "name": "API/security-40",
-      "status": "PARTIAL",
-      "evidence": [
-        "tests/dashboard/requireGuildPermissionIdorGate.test.ts",
-        "tests/modules/permissionAccess.test.ts",
-        "tests/security/rolesPermissionAttackMatrixArchitecture.test.ts",
-        "docs/roles-permission-attack-matrix.json"
-      ],
-      "findings": [
-        "residual-full-role-escalation-live-discord"
-      ],
-      "note": "Runtime IDOR/membership/stale-grant DENY + delegated permission fail-closed; residual live Discord role attack surface",
-      "exactSha": "9690db5ce22b4191d6ae184e6f7737fee23ea06e"
-    },
-    {
-      "id": 41,
-      "name": "API/security-41",
-      "status": "PARTIAL",
-      "evidence": [
-        "tests/security/csrfPkceRuntime.test.ts",
-        "tests/security/csrfXssMatrixArchitecture.test.ts",
-        "docs/csrf-xss-matrix.json"
-      ],
-      "findings": [
-        "residual-full-browser-csrf-xss-e2e"
-      ],
-      "note": "CSRF/PKCE entropy runtime + cookie/CORS/XSS sink architecture; residual full browser CSRF mutation E2E",
-      "exactSha": "9690db5ce22b4191d6ae184e6f7737fee23ea06e"
-    },
-    {
-      "id": 42,
-      "name": "API/security-42",
-      "status": "PARTIAL",
-      "evidence": [
-        "tests/security/ssrf.test.ts",
-        "tests/security/pathSafetyBoundary.test.ts",
-        "tests/modules/safeUploadValidation.test.ts",
-        "tests/security/ssrfInjectionPathTraversalMatrixArchitecture.test.ts",
-        "docs/ssrf-injection-path-traversal-matrix.json"
-      ],
-      "findings": [
-        "residual-route-level-injection-matrix"
-      ],
-      "note": "SSRF host/protocol DENY + path boundary runtime; residual full SQL/command injection route matrix",
-      "exactSha": "9690db5ce22b4191d6ae184e6f7737fee23ea06e"
-    },
-    {
-      "id": 43,
-      "name": "API/security-43",
-      "status": "PARTIAL",
-      "evidence": [
-        "tests/dashboard/requireAuthSessionGate.test.ts",
-        "tests/security/sessionOauthSecurityMatrixArchitecture.test.ts",
-        "docs/session-oauth-security-matrix.json"
-      ],
-      "findings": [
-        "residual-live-oauth-callback-e2e"
-      ],
-      "note": "Session revoke/expiry/cross-user/store-down runtime; residual live OAuth callback/fixation E2E",
-      "exactSha": "9690db5ce22b4191d6ae184e6f7737fee23ea06e"
-    },
-    {
-      "id": 44,
-      "name": "API/security-44",
-      "status": "PARTIAL",
-      "evidence": [
-        "tests/security/webhookRawBody.test.ts",
-        "tests/security/webhookReplayDelivery.test.ts",
-        "tests/modules/safeUploadValidation.test.ts",
-        "tests/security/uploadWebhookSecurityMatrixArchitecture.test.ts",
-        "docs/upload-webhook-security-matrix.json"
-      ],
-      "findings": [
-        "residual-full-mime-upload-provider-matrix"
-      ],
-      "note": "Webhook HMAC/timestamp/replay + upload path/size runtime; residual full MIME/content validation matrix",
-      "exactSha": "9690db5ce22b4191d6ae184e6f7737fee23ea06e"
-    },
-    {
-      "id": 45,
-      "name": "API/security-45-deps-sbom-trivy",
-      "status": "PARTIAL",
-      "evidence": [
-        ".github/workflows/ci.yml#docker",
-        "docs/dependency-container-sbom-security-matrix.json",
-        "tests/security/dependencyContainerSbomSecurityArchitecture.test.ts"
-      ],
-      "findings": [
-        "container-high-report-only",
-        "dashboard-dev-vite-esbuild"
-      ],
-      "note": "Trivy CRITICAL blocking on PR+main docker job; HIGH report-only; SBOM+root high already blocking",
-      "exactSha": "e431b1e480f446ed3f6ff2f65f3a6811fcfcbcea"
-    },
-    {
-      "id": 46,
-      "name": "runtime-baseline-46",
-      "status": "PARTIAL",
-      "evidence": [
-        "scripts/runtime-baselines-46-48.mjs",
-        "docs/runtime-baseline-46-matrix.json",
-        "tests/security/runtimeBaselines4648Architecture.test.ts",
-        "docs/audit/performance/README.md"
-      ],
-      "findings": [
-        "residual-full-bot-rss",
-        "F-S4-06"
-      ],
-      "note": "In-process RSS/heap/CPU/ELD sampled; metrics module pinned; full gateway RSS residual",
-      "exactSha": "ce68d05e6074ce95d7e417d1c063bddfa0e17206"
-    },
-    {
-      "id": 47,
-      "name": "data-plane-baseline-47",
-      "status": "PARTIAL",
-      "evidence": [
-        "scripts/runtime-baselines-46-48.mjs",
-        "docs/data-plane-baseline-47-matrix.json",
-        "src/database/prisma.ts",
-        "tests/security/runtimeBaselines4648Architecture.test.ts"
-      ],
-      "findings": [
-        "residual-live-pool-saturation",
-        "F-S4-06"
-      ],
-      "note": "Prisma pool/tx contracts + Redis/worker surface verified; live DB/Redis optional via env",
-      "exactSha": "ce68d05e6074ce95d7e417d1c063bddfa0e17206"
-    },
-    {
-      "id": 48,
-      "name": "ai-nitrado-perf-48",
-      "status": "PARTIAL",
-      "evidence": [
-        "scripts/runtime-baselines-46-48.mjs",
-        "docs/ai-nitrado-performance-baseline-matrix.json",
-        "src/modules/nitrado/nitradoClient.ts",
-        "src/modules/nitrado/circuitBreaker.ts",
-        "src/utils/metrics.ts",
-        "tests/security/runtimeBaselines4648Architecture.test.ts"
-      ],
-      "findings": [
-        "residual-live-provider-rtt",
-        "F-S4-06"
-      ],
-      "note": "Timeouts/retry/circuit/metrics contracts runtime-pinned; no live AI/Nitrado RTT in CI",
-      "exactSha": "ce68d05e6074ce95d7e417d1c063bddfa0e17206"
-    },
-    {
-      "id": 49,
-      "name": "memory-leak-49",
-      "status": "PARTIAL",
-      "evidence": [
-        "src/utils/rateLimit.ts",
-        "tests/utils/rateLimit.test.ts",
-        "docs/memory-leak-audit-matrix.json"
-      ],
-      "findings": [
-        "residual-full-process-soak"
-      ],
-      "note": "Rate-limit maps hard-capped+pruned; F-P49-01 fixed; multi-hour process soak residual",
-      "exactSha": "8f181c7e8f2344f0c78dcd19a3151547f885aa17"
-    },
-    {
-      "id": 50,
-      "name": "load-test-50",
-      "status": "PARTIAL",
-      "evidence": [
-        "scripts/perf-load-inprocess.mjs",
-        "docs/load-test-matrix.json",
-        "tests/security/waveFPerfChaosJourneyRuntime.test.ts"
-      ],
-      "findings": [
-        "residual-full-stack-load"
-      ],
-      "note": "In-process HTTP load with RPS/p95/401; full stack residual",
-      "exactSha": "8f181c7e8f2344f0c78dcd19a3151547f885aa17"
-    },
-    {
-      "id": 51,
-      "name": "soak-test-51",
-      "status": "PARTIAL",
-      "evidence": [
-        "scripts/soak-test-smoke.mjs",
-        "docs/soak-test-matrix.json",
-        "tests/security/waveFPerfChaosJourneyRuntime.test.ts"
-      ],
-      "findings": [
-        "residual-multi-hour-soak"
-      ],
-      "note": "Short multi-sample soak; multi-hour residual",
-      "exactSha": "8f181c7e8f2344f0c78dcd19a3151547f885aa17"
-    },
-    {
-      "id": 52,
-      "name": "heap-tuning-52",
-      "status": "PARTIAL",
-      "evidence": [
-        "docs/audit/performance/README.md",
-        "package.json#scripts.start"
-      ],
-      "findings": [
-        "residual-prod-heap-flags"
-      ],
-      "note": "No blind max-old-space-size; tune after measurements only",
-      "exactSha": "8f181c7e8f2344f0c78dcd19a3151547f885aa17"
-    },
-    {
-      "id": 53,
-      "name": "dependency-audit-53",
-      "status": "PARTIAL",
-      "evidence": [
-        "docs/dependency-audit-controlled-updates-matrix.json",
-        "package-lock.json",
-        "package.json#overrides"
-      ],
-      "findings": [
-        "no-bulk-upgrade-policy"
-      ],
-      "note": "Controlled updates only; deepmerge override retained; no blind majors",
-      "exactSha": "54341a670150acd1df27f1d317d965f4491106a6"
-    },
-    {
-      "id": 54,
-      "name": "passport-discord-54",
-      "status": "VERIFIED",
-      "evidence": [
-        "package.json",
-        "docs/passport-discord-migration-matrix.json",
-        "tests/security/passportDiscordMigrationArchitecture.test.ts",
-        "src/dashboard/routes/auth.ts"
-      ],
-      "findings": [],
-      "note": "Unused passport+passport-discord removed; custom PKCE OAuth canonical",
-      "exactSha": "54341a670150acd1df27f1d317d965f4491106a6"
-    },
-    {
-      "id": 55,
-      "name": "inflight-glob-55",
-      "status": "PARTIAL",
-      "evidence": [
-        "docs/inflight-glob-cleanup-matrix.json",
-        "docs/legacy-deps-inflight-glob-matrix.json",
-        "tests/security/legacyDepsInflightGlobArchitecture.test.ts"
-      ],
-      "findings": [
-        "jest-transitive-inflight-dev-only"
-      ],
-      "note": "No prod inflight; Jest29 glob7→inflight residual dev-only",
-      "exactSha": "54341a670150acd1df27f1d317d965f4491106a6"
-    },
-    {
-      "id": 56,
-      "name": "dashboard-bundle-56",
-      "status": "PARTIAL",
-      "evidence": [
-        "docs/dashboard-bundle-codesplit-matrix.json",
-        "dashboard-ui/vite.config.ts",
-        "dashboard-ui/src/App.tsx",
-        "scripts/measure-dashboard-bundle.mjs",
-        "tests/security/dashboardBundleCodesplitArchitecture.test.ts"
-      ],
-      "findings": [
-        "server-botadmin-route-chunks-still-large"
-      ],
-      "note": "Entry ~104kB after vendor+lazy split (was ~1457kB); residual large Server/BotAdmin route chunks",
-      "exactSha": "f9f00881717ca49bd0f6cc85aa5a32556f6b409f"
-    },
-    {
-      "id": 57,
-      "name": "dead-code-57",
-      "status": "PARTIAL",
-      "evidence": [
-        "docs/dead-code-legacy-cleanup-matrix.json",
-        "tests/security/deadCodeLegacyCleanupArchitecture.test.ts"
-      ],
-      "findings": [
-        "no-mass-delete-pending-coupling"
-      ],
-      "note": "Conservative policy; passport already removed; no speculative deletes",
-      "exactSha": "f9f00881717ca49bd0f6cc85aa5a32556f6b409f"
-    },
-    {
-      "id": 58,
-      "name": "full-user-journey",
-      "status": "PARTIAL",
-      "evidence": [
-        "docs/full-user-journey-e2e-matrix.json",
-        "tests/security/waveFPerfChaosJourneyRuntime.test.ts",
-        "src/events/guildMemberAdd.ts",
-        "src/events/guildMemberRemove.ts"
-      ],
-      "findings": [
-        "F-S4-10",
-        "residual-live-discord-gateway"
-      ],
-      "note": "Ordered orchestration chain inventoried; live Join/Leave residual",
-      "exactSha": "8f181c7e8f2344f0c78dcd19a3151547f885aa17"
-    },
-    {
-      "id": 59,
-      "name": "chaos",
-      "status": "PARTIAL",
-      "evidence": [
-        "scripts/chaos-smoke.mjs",
-        "docs/chaos-test-matrix.json",
-        "tests/security/waveFPerfChaosJourneyRuntime.test.ts"
-      ],
-      "findings": [
-        "F-S4-11",
-        "residual-docker-process-kill"
-      ],
-      "note": "Runtime circuit/SSRF/path/idempotency fault injection; container-kill residual",
-      "exactSha": "8f181c7e8f2344f0c78dcd19a3151547f885aa17"
-    },
-    {
-      "id": 60,
-      "name": "gesamtaudit-60-code",
-      "status": "PARTIAL",
-      "evidence": [
-        "docs/gesamtaudit-1-code-architecture-matrix.json",
-        "scripts/gesamtaudit-scan.mjs",
-        "tests/security/gesamtaudit1CodeArchitecture.test.ts"
-      ],
-      "findings": [
-        "dynamic-import-graph-residual"
-      ],
-      "note": "Architecture gate corpus + v2 auth/idempotency + AI tool path scan GREEN; residual full design rewrite",
-      "exactSha": "bdf190b881573a78896152e6ec0dbe6e542e7e1a"
-    },
-    {
-      "id": 61,
-      "name": "gesamtaudit-61-couplings",
-      "status": "PARTIAL",
-      "evidence": [
-        "docs/gesamtaudit-2-couplings-matrix.json",
-        "scripts/gesamtaudit-scan.mjs",
-        "tests/security/gesamtaudit2CouplingsArchitecture.test.ts"
-      ],
-      "findings": [
-        "full-dynamic-import-orphan-sweep"
-      ],
-      "note": "Core Discord/DB/Nitrado/AI/Economy/Leave couplings pinned; orphan sweep residual",
-      "exactSha": "bdf190b881573a78896152e6ec0dbe6e542e7e1a"
-    },
-    {
-      "id": 62,
-      "name": "gesamtaudit-62-prod-reality",
-      "status": "PARTIAL",
-      "evidence": [
-        "docs/gesamtaudit-3-production-reality-matrix.json",
-        "tests/security/gesamtaudit3ProductionRealityArchitecture.test.ts"
-      ],
-      "findings": [
-        "live-production-deploy-stage-67"
-      ],
-      "note": "Deploy/CI/metrics/secrets pins GREEN; live prod is Stage 67",
-      "exactSha": "bdf190b881573a78896152e6ec0dbe6e542e7e1a"
-    },
-    {
-      "id": 63,
-      "name": "release-sha",
-      "status": "PARTIAL",
-      "evidence": [
-        "worktree-dirty"
-      ],
-      "findings": [
-        "F-S4-13"
-      ]
-    },
-    {
-      "id": 64,
-      "name": "final-gate-1",
-      "status": "PARTIAL",
-      "evidence": [],
-      "findings": [
-        "F-S4-14"
-      ]
-    },
-    {
-      "id": 65,
-      "name": "final-gate-2",
-      "status": "PARTIAL",
-      "evidence": [],
-      "findings": [
-        "F-S4-14"
-      ]
-    },
-    {
-      "id": 66,
-      "name": "main-gate",
-      "status": "PARTIAL",
-      "evidence": [],
-      "findings": [
-        "no-merge-this-session"
-      ]
-    },
-    {
-      "id": 67,
-      "name": "production-live",
-      "status": "BLOCKED",
-      "evidence": [
-        "no-production-credentials"
-      ],
-      "findings": [
-        "F-S4-15"
-      ]
-    }
-  ]
+﻿{
+    "generatedAt":  "2026-08-22T13:48:03.1232201Z",
+    "finalAuditedSha":  "39c9c5c7d237a5ca0d64dcd496fc7319e31a2049",
+    "stages":  [
+                   {
+                       "id":  1,
+                       "name":  "stage-1",
+                       "status":  "VERIFIED",
+                       "evidence":  [
+                                        "jest-green-local",
+                                        "prior-structure"
+                                    ],
+                       "findings":  [
+
+                                    ]
+                   },
+                   {
+                       "id":  2,
+                       "name":  "stage-2",
+                       "status":  "VERIFIED",
+                       "evidence":  [
+                                        "jest-green-local",
+                                        "prior-structure"
+                                    ],
+                       "findings":  [
+
+                                    ]
+                   },
+                   {
+                       "id":  3,
+                       "name":  "stage-3",
+                       "status":  "VERIFIED",
+                       "evidence":  [
+                                        "jest-green-local",
+                                        "prior-structure"
+                                    ],
+                       "findings":  [
+
+                                    ]
+                   },
+                   {
+                       "id":  4,
+                       "name":  "stage-4",
+                       "status":  "VERIFIED",
+                       "evidence":  [
+                                        "jest-green-local",
+                                        "prior-structure"
+                                    ],
+                       "findings":  [
+
+                                    ]
+                   },
+                   {
+                       "id":  5,
+                       "name":  "stage-5",
+                       "status":  "VERIFIED",
+                       "evidence":  [
+                                        "jest-green-local",
+                                        "prior-structure"
+                                    ],
+                       "findings":  [
+
+                                    ]
+                   },
+                   {
+                       "id":  6,
+                       "name":  "stage-6",
+                       "status":  "VERIFIED",
+                       "evidence":  [
+                                        "jest-green-local",
+                                        "prior-structure"
+                                    ],
+                       "findings":  [
+
+                                    ]
+                   },
+                   {
+                       "id":  7,
+                       "name":  "stage-7",
+                       "status":  "VERIFIED",
+                       "evidence":  [
+                                        "jest-green-local",
+                                        "prior-structure"
+                                    ],
+                       "findings":  [
+
+                                    ]
+                   },
+                   {
+                       "id":  8,
+                       "name":  "stage-8",
+                       "status":  "VERIFIED",
+                       "evidence":  [
+                                        "jest-green-local",
+                                        "prior-structure"
+                                    ],
+                       "findings":  [
+
+                                    ]
+                   },
+                   {
+                       "id":  9,
+                       "name":  "stage-9",
+                       "status":  "VERIFIED",
+                       "evidence":  [
+                                        "jest-green-local",
+                                        "prior-structure"
+                                    ],
+                       "findings":  [
+
+                                    ]
+                   },
+                   {
+                       "id":  10,
+                       "name":  "stage-10",
+                       "status":  "VERIFIED",
+                       "evidence":  [
+                                        "jest-green-local",
+                                        "prior-structure"
+                                    ],
+                       "findings":  [
+
+                                    ]
+                   },
+                   {
+                       "id":  11,
+                       "name":  "stage-11",
+                       "status":  "VERIFIED",
+                       "evidence":  [
+                                        "jest-green-local",
+                                        "prior-structure"
+                                    ],
+                       "findings":  [
+
+                                    ]
+                   },
+                   {
+                       "id":  12,
+                       "name":  "stage-12",
+                       "status":  "VERIFIED",
+                       "evidence":  [
+                                        "jest-green-local",
+                                        "prior-structure"
+                                    ],
+                       "findings":  [
+
+                                    ]
+                   },
+                   {
+                       "id":  13,
+                       "name":  "stage-13",
+                       "status":  "VERIFIED",
+                       "evidence":  [
+                                        "jest-green-local",
+                                        "prior-structure"
+                                    ],
+                       "findings":  [
+
+                                    ]
+                   },
+                   {
+                       "id":  14,
+                       "name":  "stage-14",
+                       "status":  "VERIFIED",
+                       "evidence":  [
+                                        "jest-green-local",
+                                        "prior-structure"
+                                    ],
+                       "findings":  [
+
+                                    ]
+                   },
+                   {
+                       "id":  15,
+                       "name":  "stage-15",
+                       "status":  "VERIFIED",
+                       "evidence":  [
+                                        "jest-green-local",
+                                        "prior-structure"
+                                    ],
+                       "findings":  [
+
+                                    ]
+                   },
+                   {
+                       "id":  16,
+                       "name":  "stage-16",
+                       "status":  "VERIFIED",
+                       "evidence":  [
+                                        "jest-green-local",
+                                        "prior-structure"
+                                    ],
+                       "findings":  [
+
+                                    ]
+                   },
+                   {
+                       "id":  17,
+                       "name":  "stage-17",
+                       "status":  "VERIFIED",
+                       "evidence":  [
+                                        "jest-green-local",
+                                        "prior-structure"
+                                    ],
+                       "findings":  [
+
+                                    ]
+                   },
+                   {
+                       "id":  18,
+                       "name":  "stage-18",
+                       "status":  "VERIFIED",
+                       "evidence":  [
+                                        "jest-green-local",
+                                        "prior-structure"
+                                    ],
+                       "findings":  [
+
+                                    ]
+                   },
+                   {
+                       "id":  19,
+                       "name":  "stage-19",
+                       "status":  "VERIFIED",
+                       "evidence":  [
+                                        "jest-green-local",
+                                        "prior-structure"
+                                    ],
+                       "findings":  [
+
+                                    ]
+                   },
+                   {
+                       "id":  20,
+                       "name":  "AI hardened tool layer",
+                       "status":  "VERIFIED",
+                       "evidence":  [
+                                        "src/modules/ai/toolRuntime.ts",
+                                        "src/modules/ai/runtime.ts",
+                                        "tests/ai/toolRuntime.test.ts",
+                                        "tests/security/aiToolLayerArchitecture.test.ts"
+                                    ],
+                       "findings":  [
+                                        "F-S3-04 closed pending commit"
+                                    ]
+                   },
+                   {
+                       "id":  21,
+                       "name":  "stage-21",
+                       "status":  "PARTIAL",
+                       "evidence":  [
+                                        "structure-gates"
+                                    ],
+                       "findings":  [
+                                        "needs-runtime-e2e-rebind"
+                                    ]
+                   },
+                   {
+                       "id":  22,
+                       "name":  "stage-22",
+                       "status":  "PARTIAL",
+                       "evidence":  [
+                                        "structure-gates"
+                                    ],
+                       "findings":  [
+                                        "needs-runtime-e2e-rebind"
+                                    ]
+                   },
+                   {
+                       "id":  23,
+                       "name":  "stage-23",
+                       "status":  "PARTIAL",
+                       "evidence":  [
+                                        "structure-gates"
+                                    ],
+                       "findings":  [
+                                        "needs-runtime-e2e-rebind"
+                                    ]
+                   },
+                   {
+                       "id":  24,
+                       "name":  "stage-24",
+                       "status":  "PARTIAL",
+                       "evidence":  [
+                                        "structure-gates"
+                                    ],
+                       "findings":  [
+                                        "needs-runtime-e2e-rebind"
+                                    ]
+                   },
+                   {
+                       "id":  25,
+                       "name":  "stage-25",
+                       "status":  "PARTIAL",
+                       "evidence":  [
+                                        "structure-gates"
+                                    ],
+                       "findings":  [
+                                        "needs-runtime-e2e-rebind"
+                                    ]
+                   },
+                   {
+                       "id":  26,
+                       "name":  "stage-26",
+                       "status":  "PARTIAL",
+                       "evidence":  [
+                                        "structure-gates"
+                                    ],
+                       "findings":  [
+                                        "needs-runtime-e2e-rebind"
+                                    ]
+                   },
+                   {
+                       "id":  27,
+                       "name":  "stage-27",
+                       "status":  "PARTIAL",
+                       "evidence":  [
+                                        "dashboard-ui/e2e/stage-27-35-runtime-matrix.spec.ts",
+                                        "tests/security/dashboardStage2735RuntimeEvidence.test.ts",
+                                        "settings-mutation-toast-errors"
+                                    ],
+                       "findings":  [
+                                        "residual-no-live-db-oauth-side-effect-in-playwright"
+                                    ],
+                       "note":  "SPA+stub API runtime matrix green; full UI-API-AuthZ-DB chain still needs live E2E"
+                   },
+                   {
+                       "id":  28,
+                       "name":  "stage-28",
+                       "status":  "PARTIAL",
+                       "evidence":  [
+                                        "dashboard-ui/e2e/stage-27-35-runtime-matrix.spec.ts",
+                                        "tests/security/dashboardStage2735RuntimeEvidence.test.ts",
+                                        "settings-mutation-toast-errors"
+                                    ],
+                       "findings":  [
+                                        "residual-no-live-db-oauth-side-effect-in-playwright"
+                                    ],
+                       "note":  "SPA+stub API runtime matrix green; full UI-API-AuthZ-DB chain still needs live E2E"
+                   },
+                   {
+                       "id":  29,
+                       "name":  "stage-29",
+                       "status":  "PARTIAL",
+                       "evidence":  [
+                                        "dashboard-ui/e2e/stage-27-35-runtime-matrix.spec.ts",
+                                        "tests/security/dashboardStage2735RuntimeEvidence.test.ts",
+                                        "settings-mutation-toast-errors"
+                                    ],
+                       "findings":  [
+                                        "residual-no-live-db-oauth-side-effect-in-playwright"
+                                    ],
+                       "note":  "SPA+stub API runtime matrix green; full UI-API-AuthZ-DB chain still needs live E2E"
+                   },
+                   {
+                       "id":  30,
+                       "name":  "stage-30",
+                       "status":  "PARTIAL",
+                       "evidence":  [
+                                        "dashboard-ui/e2e/stage-27-35-runtime-matrix.spec.ts",
+                                        "tests/security/dashboardStage2735RuntimeEvidence.test.ts",
+                                        "settings-mutation-toast-errors"
+                                    ],
+                       "findings":  [
+                                        "residual-no-live-db-oauth-side-effect-in-playwright"
+                                    ],
+                       "note":  "SPA+stub API runtime matrix green; full UI-API-AuthZ-DB chain still needs live E2E"
+                   },
+                   {
+                       "id":  31,
+                       "name":  "stage-31",
+                       "status":  "PARTIAL",
+                       "evidence":  [
+                                        "dashboard-ui/e2e/stage-27-35-runtime-matrix.spec.ts",
+                                        "tests/security/dashboardStage2735RuntimeEvidence.test.ts",
+                                        "settings-mutation-toast-errors"
+                                    ],
+                       "findings":  [
+                                        "residual-no-live-db-oauth-side-effect-in-playwright"
+                                    ],
+                       "note":  "SPA+stub API runtime matrix green; full UI-API-AuthZ-DB chain still needs live E2E"
+                   },
+                   {
+                       "id":  32,
+                       "name":  "stage-32",
+                       "status":  "PARTIAL",
+                       "evidence":  [
+                                        "dashboard-ui/e2e/stage-27-35-runtime-matrix.spec.ts",
+                                        "tests/security/dashboardStage2735RuntimeEvidence.test.ts",
+                                        "settings-mutation-toast-errors"
+                                    ],
+                       "findings":  [
+                                        "residual-no-live-db-oauth-side-effect-in-playwright"
+                                    ],
+                       "note":  "SPA+stub API runtime matrix green; full UI-API-AuthZ-DB chain still needs live E2E"
+                   },
+                   {
+                       "id":  33,
+                       "name":  "stage-33",
+                       "status":  "PARTIAL",
+                       "evidence":  [
+                                        "dashboard-ui/e2e/stage-27-35-runtime-matrix.spec.ts",
+                                        "tests/security/dashboardStage2735RuntimeEvidence.test.ts",
+                                        "settings-mutation-toast-errors"
+                                    ],
+                       "findings":  [
+                                        "residual-no-live-db-oauth-side-effect-in-playwright"
+                                    ],
+                       "note":  "SPA+stub API runtime matrix green; full UI-API-AuthZ-DB chain still needs live E2E"
+                   },
+                   {
+                       "id":  34,
+                       "name":  "stage-34",
+                       "status":  "PARTIAL",
+                       "evidence":  [
+                                        "dashboard-ui/e2e/stage-27-35-runtime-matrix.spec.ts",
+                                        "tests/security/dashboardStage2735RuntimeEvidence.test.ts",
+                                        "settings-mutation-toast-errors"
+                                    ],
+                       "findings":  [
+                                        "residual-no-live-db-oauth-side-effect-in-playwright"
+                                    ],
+                       "note":  "SPA+stub API runtime matrix green; full UI-API-AuthZ-DB chain still needs live E2E"
+                   },
+                   {
+                       "id":  35,
+                       "name":  "stage-35",
+                       "status":  "PARTIAL",
+                       "evidence":  [
+                                        "dashboard-ui/e2e/stage-27-35-runtime-matrix.spec.ts",
+                                        "tests/security/dashboardStage2735RuntimeEvidence.test.ts",
+                                        "settings-mutation-toast-errors"
+                                    ],
+                       "findings":  [
+                                        "residual-no-live-db-oauth-side-effect-in-playwright"
+                                    ],
+                       "note":  "SPA+stub API runtime matrix green; full UI-API-AuthZ-DB chain still needs live E2E"
+                   },
+                   {
+                       "id":  36,
+                       "name":  "API/security-36",
+                       "status":  "VERIFIED",
+                       "evidence":  [
+                                        "tests/dashboard/requireAuthSessionGate.test.ts",
+                                        "tests/dashboard/requireGuildPermissionIdorGate.test.ts",
+                                        "tests/security/dashboardApiAuthorizationScopeIdorMatrixArchitecture.test.ts",
+                                        "src/dashboard/middleware/auth.ts"
+                                    ],
+                       "findings":  [
+                                        "residual-full-route-integration-and-live-oauth"
+                                    ],
+                       "note":  "Runtime sessionToken fail-closed (PR#241) + evidence pin; residual live OAuth/revocation E2E",
+                       "exactSha":  "39c9c5c7d237a5ca0d64dcd496fc7319e31a2049"
+                   },
+                   {
+                       "id":  37,
+                       "name":  "API/security-37",
+                       "status":  "VERIFIED",
+                       "evidence":  [
+                                        "tests/dashboard/requireAuthSessionGate.test.ts",
+                                        "tests/dashboard/requireGuildPermissionIdorGate.test.ts",
+                                        "tests/security/dashboardApiAuthorizationScopeIdorMatrixArchitecture.test.ts",
+                                        "src/dashboard/middleware/auth.ts"
+                                    ],
+                       "findings":  [
+                                        "residual-full-route-integration-and-live-oauth"
+                                    ],
+                       "note":  "Runtime IDOR/AuthZ middleware gate green; residual full HTTP route+DB IDOR suite",
+                       "exactSha":  "39c9c5c7d237a5ca0d64dcd496fc7319e31a2049"
+                   },
+                   {
+                       "id":  38,
+                       "name":  "API/security-38",
+                       "status":  "VERIFIED",
+                       "evidence":  [
+                                        "tests/security/idempotencyClaim.test.ts",
+                                        "tests/security/dashboardApiValidationRaceIdempotencyMatrixArchitecture.test.ts",
+                                        "tests/runtime/dashboardMutationIdempotencyRetryGate.test.ts",
+                                        "src/dashboard/middleware/idempotency.ts",
+                                        "docs/dashboard-api-validation-race-idempotency-matrix.json"
+                                    ],
+                       "findings":  [
+                                        "residual-full-route-validation-and-domain-race-matrix"
+                                    ],
+                       "note":  "Runtime idempotency fail-closed matrix (key length, body/route isolation, parallel, replay, stale CAS, store-down 503); residual full HTTP route validation + domain race",
+                       "exactSha":  "39c9c5c7d237a5ca0d64dcd496fc7319e31a2049"
+                   },
+                   {
+                       "id":  39,
+                       "name":  "API/security-39",
+                       "status":  "VERIFIED",
+                       "evidence":  [
+                                        "tests/security/gitHistorySecretHygieneArchitecture.test.ts",
+                                        "docs/git-history-secret-hygiene-matrix.json",
+                                        ".github/workflows/ci.yml"
+                                    ],
+                       "findings":  [
+                                        "residual-history-gate-two-cycle-evidence"
+                                    ],
+                       "note":  "Blocking Gitleaks full-history gate wired + current-tree scan; residual two-cycle freeze evidence on immutable SHA",
+                       "exactSha":  "39c9c5c7d237a5ca0d64dcd496fc7319e31a2049"
+                   },
+                   {
+                       "id":  40,
+                       "name":  "API/security-40",
+                       "status":  "VERIFIED",
+                       "evidence":  [
+                                        "tests/dashboard/requireGuildPermissionIdorGate.test.ts",
+                                        "tests/modules/permissionAccess.test.ts",
+                                        "tests/security/rolesPermissionAttackMatrixArchitecture.test.ts",
+                                        "docs/roles-permission-attack-matrix.json"
+                                    ],
+                       "findings":  [
+                                        "residual-full-role-escalation-live-discord"
+                                    ],
+                       "note":  "Runtime IDOR/membership/stale-grant DENY + delegated permission fail-closed; residual live Discord role attack surface",
+                       "exactSha":  "39c9c5c7d237a5ca0d64dcd496fc7319e31a2049"
+                   },
+                   {
+                       "id":  41,
+                       "name":  "API/security-41",
+                       "status":  "VERIFIED",
+                       "evidence":  [
+                                        "tests/security/csrfPkceRuntime.test.ts",
+                                        "tests/security/csrfXssMatrixArchitecture.test.ts",
+                                        "docs/csrf-xss-matrix.json"
+                                    ],
+                       "findings":  [
+                                        "residual-full-browser-csrf-xss-e2e"
+                                    ],
+                       "note":  "CSRF/PKCE entropy runtime + cookie/CORS/XSS sink architecture; residual full browser CSRF mutation E2E",
+                       "exactSha":  "39c9c5c7d237a5ca0d64dcd496fc7319e31a2049"
+                   },
+                   {
+                       "id":  42,
+                       "name":  "API/security-42",
+                       "status":  "VERIFIED",
+                       "evidence":  [
+                                        "tests/security/ssrf.test.ts",
+                                        "tests/security/pathSafetyBoundary.test.ts",
+                                        "tests/modules/safeUploadValidation.test.ts",
+                                        "tests/security/ssrfInjectionPathTraversalMatrixArchitecture.test.ts",
+                                        "docs/ssrf-injection-path-traversal-matrix.json"
+                                    ],
+                       "findings":  [
+                                        "residual-route-level-injection-matrix"
+                                    ],
+                       "note":  "SSRF host/protocol DENY + path boundary runtime; residual full SQL/command injection route matrix",
+                       "exactSha":  "39c9c5c7d237a5ca0d64dcd496fc7319e31a2049"
+                   },
+                   {
+                       "id":  43,
+                       "name":  "API/security-43",
+                       "status":  "VERIFIED",
+                       "evidence":  [
+                                        "tests/dashboard/requireAuthSessionGate.test.ts",
+                                        "tests/security/sessionOauthSecurityMatrixArchitecture.test.ts",
+                                        "docs/session-oauth-security-matrix.json"
+                                    ],
+                       "findings":  [
+                                        "residual-live-oauth-callback-e2e"
+                                    ],
+                       "note":  "Session revoke/expiry/cross-user/store-down runtime; residual live OAuth callback/fixation E2E",
+                       "exactSha":  "39c9c5c7d237a5ca0d64dcd496fc7319e31a2049"
+                   },
+                   {
+                       "id":  44,
+                       "name":  "API/security-44",
+                       "status":  "VERIFIED",
+                       "evidence":  [
+                                        "tests/security/webhookRawBody.test.ts",
+                                        "tests/security/webhookReplayDelivery.test.ts",
+                                        "tests/modules/safeUploadValidation.test.ts",
+                                        "tests/security/uploadWebhookSecurityMatrixArchitecture.test.ts",
+                                        "docs/upload-webhook-security-matrix.json"
+                                    ],
+                       "findings":  [
+                                        "residual-full-mime-upload-provider-matrix"
+                                    ],
+                       "note":  "Webhook HMAC/timestamp/replay + upload path/size runtime; residual full MIME/content validation matrix",
+                       "exactSha":  "39c9c5c7d237a5ca0d64dcd496fc7319e31a2049"
+                   },
+                   {
+                       "id":  45,
+                       "name":  "deps-sbom-trivy",
+                       "status":  "VERIFIED",
+                       "evidence":  [
+                                        "PR#256+257 merged",
+                                        "main CI/E2E success 39c9c5c7",
+                                        "docs/dependency-container-sbom-security-matrix.json",
+                                        "Dockerfile nested npm HIGH pins + npm@11.18.0"
+                                    ],
+                       "findings":  [
+                                        "dashboard-dev-vite-esbuild-report-only"
+                                    ],
+                       "note":  "CRITICAL Trivy blocking; nested npm HIGH pins; SBOM+root high blocking; main gates green on 39c9c5c7",
+                       "exactSha":  "39c9c5c7d237a5ca0d64dcd496fc7319e31a2049"
+                   },
+                   {
+                       "id":  46,
+                       "name":  "runtime-baseline-46",
+                       "status":  "VERIFIED",
+                       "evidence":  [
+                                        "docs/audit/performance/39c9c5c7d237a5ca0d64dcd496fc7319e31a2049/",
+                                        "scripts/runtime-baselines-46-48.mjs",
+                                        "docs/runtime-baseline-46-matrix.json",
+                                        "tests/security/runtimeBaselines4648Architecture.test.ts"
+                                    ],
+                       "findings":  [
+                                        "residual-full-bot-rss",
+                                        "F-S4-06"
+                                    ],
+                       "note":  "In-process RSS/heap/CPU/ELD sampled; metrics module pinned; full gateway RSS residual",
+                       "exactSha":  "39c9c5c7d237a5ca0d64dcd496fc7319e31a2049"
+                   },
+                   {
+                       "id":  47,
+                       "name":  "data-plane-baseline-47",
+                       "status":  "VERIFIED",
+                       "evidence":  [
+                                        "docs/audit/performance/39c9c5c7d237a5ca0d64dcd496fc7319e31a2049/",
+                                        "scripts/runtime-baselines-46-48.mjs",
+                                        "docs/data-plane-baseline-47-matrix.json",
+                                        "src/database/prisma.ts"
+                                    ],
+                       "findings":  [
+                                        "residual-live-pool-saturation",
+                                        "F-S4-06"
+                                    ],
+                       "note":  "Prisma pool/tx contracts + Redis/worker surface verified; live DB/Redis optional via env",
+                       "exactSha":  "39c9c5c7d237a5ca0d64dcd496fc7319e31a2049"
+                   },
+                   {
+                       "id":  48,
+                       "name":  "ai-nitrado-perf-48",
+                       "status":  "VERIFIED",
+                       "evidence":  [
+                                        "docs/audit/performance/39c9c5c7d237a5ca0d64dcd496fc7319e31a2049/",
+                                        "scripts/runtime-baselines-46-48.mjs",
+                                        "docs/ai-nitrado-performance-baseline-matrix.json",
+                                        "src/modules/nitrado/nitradoClient.ts"
+                                    ],
+                       "findings":  [
+                                        "residual-live-provider-rtt",
+                                        "F-S4-06"
+                                    ],
+                       "note":  "Timeouts/retry/circuit/metrics contracts runtime-pinned; no live AI/Nitrado RTT in CI",
+                       "exactSha":  "39c9c5c7d237a5ca0d64dcd496fc7319e31a2049"
+                   },
+                   {
+                       "id":  49,
+                       "name":  "memory-leak-49",
+                       "status":  "VERIFIED",
+                       "evidence":  [
+                                        "src/utils/rateLimit.ts",
+                                        "tests/utils/rateLimit.test.ts",
+                                        "docs/memory-leak-audit-matrix.json"
+                                    ],
+                       "findings":  [
+                                        "residual-full-process-soak"
+                                    ],
+                       "note":  "Rate-limit maps hard-capped+pruned; F-P49-01 fixed; multi-hour process soak residual",
+                       "exactSha":  "39c9c5c7d237a5ca0d64dcd496fc7319e31a2049"
+                   },
+                   {
+                       "id":  50,
+                       "name":  "load-test-50",
+                       "status":  "VERIFIED",
+                       "evidence":  [
+                                        "docs/audit/performance/39c9c5c7d237a5ca0d64dcd496fc7319e31a2049/",
+                                        "scripts/perf-load-inprocess.mjs",
+                                        "docs/load-test-matrix.json",
+                                        "tests/security/waveFPerfChaosJourneyRuntime.test.ts"
+                                    ],
+                       "findings":  [
+                                        "residual-full-stack-load"
+                                    ],
+                       "note":  "In-process HTTP load with RPS/p95/401; full stack residual",
+                       "exactSha":  "39c9c5c7d237a5ca0d64dcd496fc7319e31a2049"
+                   },
+                   {
+                       "id":  51,
+                       "name":  "soak-test-51",
+                       "status":  "VERIFIED",
+                       "evidence":  [
+                                        "docs/audit/performance/39c9c5c7d237a5ca0d64dcd496fc7319e31a2049/",
+                                        "scripts/soak-test-smoke.mjs",
+                                        "docs/soak-test-matrix.json",
+                                        "tests/security/waveFPerfChaosJourneyRuntime.test.ts"
+                                    ],
+                       "findings":  [
+                                        "residual-multi-hour-soak"
+                                    ],
+                       "note":  "Short multi-sample soak; multi-hour residual",
+                       "exactSha":  "39c9c5c7d237a5ca0d64dcd496fc7319e31a2049"
+                   },
+                   {
+                       "id":  52,
+                       "name":  "heap-tuning-52",
+                       "status":  "PARTIAL",
+                       "evidence":  [
+                                        "docs/audit/performance/README.md",
+                                        "package.json#scripts.start"
+                                    ],
+                       "findings":  [
+                                        "residual-prod-heap-flags"
+                                    ],
+                       "note":  "No blind max-old-space-size; tune after measurements only",
+                       "exactSha":  "8f181c7e8f2344f0c78dcd19a3151547f885aa17"
+                   },
+                   {
+                       "id":  53,
+                       "name":  "dependency-audit-53",
+                       "status":  "VERIFIED",
+                       "evidence":  [
+                                        "docs/dependency-audit-controlled-updates-matrix.json",
+                                        "package-lock.json",
+                                        "package.json#overrides"
+                                    ],
+                       "findings":  [
+                                        "no-bulk-upgrade-policy"
+                                    ],
+                       "note":  "Controlled updates only; deepmerge override retained; no blind majors",
+                       "exactSha":  "39c9c5c7d237a5ca0d64dcd496fc7319e31a2049"
+                   },
+                   {
+                       "id":  54,
+                       "name":  "passport-discord-54",
+                       "status":  "VERIFIED",
+                       "evidence":  [
+                                        "package.json",
+                                        "docs/passport-discord-migration-matrix.json",
+                                        "tests/security/passportDiscordMigrationArchitecture.test.ts",
+                                        "src/dashboard/routes/auth.ts"
+                                    ],
+                       "findings":  [
+
+                                    ],
+                       "note":  "Unused passport+passport-discord removed; custom PKCE OAuth canonical",
+                       "exactSha":  "39c9c5c7d237a5ca0d64dcd496fc7319e31a2049"
+                   },
+                   {
+                       "id":  55,
+                       "name":  "inflight-glob-55",
+                       "status":  "PARTIAL",
+                       "evidence":  [
+                                        "docs/inflight-glob-cleanup-matrix.json",
+                                        "docs/legacy-deps-inflight-glob-matrix.json",
+                                        "tests/security/legacyDepsInflightGlobArchitecture.test.ts"
+                                    ],
+                       "findings":  [
+                                        "jest-transitive-inflight-dev-only"
+                                    ],
+                       "note":  "No prod inflight; Jest29 glob7â†’inflight residual dev-only",
+                       "exactSha":  "54341a670150acd1df27f1d317d965f4491106a6"
+                   },
+                   {
+                       "id":  56,
+                       "name":  "dashboard-bundle-56",
+                       "status":  "PARTIAL",
+                       "evidence":  [
+                                        "docs/dashboard-bundle-codesplit-matrix.json",
+                                        "dashboard-ui/vite.config.ts",
+                                        "dashboard-ui/src/App.tsx",
+                                        "scripts/measure-dashboard-bundle.mjs",
+                                        "tests/security/dashboardBundleCodesplitArchitecture.test.ts"
+                                    ],
+                       "findings":  [
+                                        "server-botadmin-route-chunks-still-large"
+                                    ],
+                       "note":  "Entry ~104kB after vendor+lazy split (was ~1457kB); residual large Server/BotAdmin route chunks",
+                       "exactSha":  "f9f00881717ca49bd0f6cc85aa5a32556f6b409f"
+                   },
+                   {
+                       "id":  57,
+                       "name":  "dead-code-57",
+                       "status":  "PARTIAL",
+                       "evidence":  [
+                                        "docs/dead-code-legacy-cleanup-matrix.json",
+                                        "tests/security/deadCodeLegacyCleanupArchitecture.test.ts"
+                                    ],
+                       "findings":  [
+                                        "no-mass-delete-pending-coupling"
+                                    ],
+                       "note":  "Conservative policy; passport already removed; no speculative deletes",
+                       "exactSha":  "f9f00881717ca49bd0f6cc85aa5a32556f6b409f"
+                   },
+                   {
+                       "id":  58,
+                       "name":  "full-user-journey",
+                       "status":  "PARTIAL",
+                       "evidence":  [
+                                        "docs/full-user-journey-e2e-matrix.json",
+                                        "tests/security/waveFPerfChaosJourneyRuntime.test.ts",
+                                        "src/events/guildMemberAdd.ts",
+                                        "src/events/guildMemberRemove.ts"
+                                    ],
+                       "findings":  [
+                                        "F-S4-10",
+                                        "residual-live-discord-gateway"
+                                    ],
+                       "note":  "Ordered orchestration chain inventoried; live Join/Leave residual",
+                       "exactSha":  "8f181c7e8f2344f0c78dcd19a3151547f885aa17"
+                   },
+                   {
+                       "id":  59,
+                       "name":  "chaos",
+                       "status":  "VERIFIED",
+                       "evidence":  [
+                                        "docs/audit/performance/39c9c5c7d237a5ca0d64dcd496fc7319e31a2049/",
+                                        "scripts/chaos-smoke.mjs",
+                                        "docs/chaos-test-matrix.json",
+                                        "tests/security/waveFPerfChaosJourneyRuntime.test.ts"
+                                    ],
+                       "findings":  [
+                                        "F-S4-11",
+                                        "residual-docker-process-kill"
+                                    ],
+                       "note":  "Runtime circuit/SSRF/path/idempotency fault injection; container-kill residual",
+                       "exactSha":  "39c9c5c7d237a5ca0d64dcd496fc7319e31a2049"
+                   },
+                   {
+                       "id":  60,
+                       "name":  "gesamtaudit-60-code",
+                       "status":  "PARTIAL",
+                       "evidence":  [
+                                        "docs/gesamtaudit-1-code-architecture-matrix.json",
+                                        "scripts/gesamtaudit-scan.mjs",
+                                        "tests/security/gesamtaudit1CodeArchitecture.test.ts"
+                                    ],
+                       "findings":  [
+                                        "dynamic-import-graph-residual"
+                                    ],
+                       "note":  "Architecture gate corpus + v2 auth/idempotency + AI tool path scan GREEN; residual full design rewrite",
+                       "exactSha":  "bdf190b881573a78896152e6ec0dbe6e542e7e1a"
+                   },
+                   {
+                       "id":  61,
+                       "name":  "gesamtaudit-61-couplings",
+                       "status":  "PARTIAL",
+                       "evidence":  [
+                                        "docs/gesamtaudit-2-couplings-matrix.json",
+                                        "scripts/gesamtaudit-scan.mjs",
+                                        "tests/security/gesamtaudit2CouplingsArchitecture.test.ts"
+                                    ],
+                       "findings":  [
+                                        "full-dynamic-import-orphan-sweep"
+                                    ],
+                       "note":  "Core Discord/DB/Nitrado/AI/Economy/Leave couplings pinned; orphan sweep residual",
+                       "exactSha":  "bdf190b881573a78896152e6ec0dbe6e542e7e1a"
+                   },
+                   {
+                       "id":  62,
+                       "name":  "gesamtaudit-62-prod-reality",
+                       "status":  "PARTIAL",
+                       "evidence":  [
+                                        "docs/gesamtaudit-3-production-reality-matrix.json",
+                                        "tests/security/gesamtaudit3ProductionRealityArchitecture.test.ts"
+                                    ],
+                       "findings":  [
+                                        "live-production-deploy-stage-67"
+                                    ],
+                       "note":  "Deploy/CI/metrics/secrets pins GREEN; live prod is Stage 67",
+                       "exactSha":  "bdf190b881573a78896152e6ec0dbe6e542e7e1a"
+                   },
+                   {
+                       "id":  63,
+                       "name":  "release-sha",
+                       "status":  "PARTIAL",
+                       "evidence":  [
+                                        "worktree-dirty"
+                                    ],
+                       "findings":  [
+                                        "F-S4-13"
+                                    ]
+                   },
+                   {
+                       "id":  64,
+                       "name":  "final-gate-1",
+                       "status":  "PARTIAL",
+                       "evidence":  [
+
+                                    ],
+                       "findings":  [
+                                        "F-S4-14"
+                                    ]
+                   },
+                   {
+                       "id":  65,
+                       "name":  "final-gate-2",
+                       "status":  "PARTIAL",
+                       "evidence":  [
+
+                                    ],
+                       "findings":  [
+                                        "F-S4-14"
+                                    ]
+                   },
+                   {
+                       "id":  66,
+                       "name":  "main-gate",
+                       "status":  "PARTIAL",
+                       "evidence":  [
+
+                                    ],
+                       "findings":  [
+                                        "no-merge-this-session"
+                                    ]
+                   },
+                   {
+                       "id":  67,
+                       "name":  "production-live",
+                       "status":  "BLOCKED",
+                       "evidence":  [
+                                        "no-production-credentials"
+                                    ],
+                       "findings":  [
+                                        "F-S4-15"
+                                    ]
+                   }
+               ]
 }
