@@ -41,6 +41,8 @@ describe('Stage 45 dependency container SBOM security', () => {
     expect(docker).not.toMatch(/COPY\s+\.env\b/);
     expect(fs.existsSync(path.resolve(process.cwd(), 'package-lock.json'))).toBe(true);
     expect(fs.existsSync(path.resolve(process.cwd(), 'dashboard-ui/package-lock.json'))).toBe(true);
+    // Runtime image must refresh bundled npm so nested node-tar is past fixed CRITICAL CVEs.
+    expect(docker).toMatch(/npm install -g npm@11\.18\.0/);
   });
 
   it('pins deepmerge-ts override >=8 without prisma force-downgrade', () => {

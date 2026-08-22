@@ -50,6 +50,11 @@ WORKDIR /app
 # OpenSSL fuer Prisma + wget fuer Healthcheck
 RUN apk add --no-cache openssl wget
 
+# Base node images ship npm with nested node-tar; bump npm so Trivy CRITICAL
+# library findings on fixed CVEs (e.g. CVE-2026-59873 tar < 7.5.19) clear.
+RUN npm install -g npm@11.18.0 \
+ && npm cache clean --force
+
 # Non-Root-User
 RUN addgroup -S bot && adduser -S bot -G bot
 
