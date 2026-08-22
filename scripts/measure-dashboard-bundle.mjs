@@ -47,6 +47,7 @@ const envelope = {
   over500kb: over500.map((r) => r.name),
   contracts: {
     entryUnder500kb: entry ? entry.bytes < 500 * 1024 : false,
+    allChunksUnder500kb: over500.length === 0,
     hasVendorSplit: vendors.length > 0,
     hasDevRouteChunks: rows.some((r) => /LiveBotStatus|CommandCenter|ServerSlot/i.test(r.name)),
   },
@@ -66,3 +67,4 @@ if (process.env.WRITE_PERF_ARTIFACTS !== '0') {
 
 if (!envelope.contracts.entryUnder500kb) process.exit(3);
 if (!envelope.contracts.hasVendorSplit) process.exit(4);
+if (!envelope.contracts.allChunksUnder500kb) process.exit(5);
