@@ -140,6 +140,23 @@ jobs:
     name: Gate 2 · Playwright
     runs-on: ubuntu-latest
     timeout-minutes: 25
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: test
+          POSTGRES_PASSWORD: test
+          POSTGRES_DB: discord_v_bot_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+    env:
+      DATABASE_URL: postgresql://test:test@localhost:5432/discord_v_bot_test
+      E2E_REAL_DB: '1'
     defaults:
       run:
         working-directory: dashboard-ui
@@ -149,8 +166,18 @@ jobs:
         with:
           node-version: '22'
           cache: npm
-          cache-dependency-path: dashboard-ui/package-lock.json
+          cache-dependency-path: |
+            package-lock.json
+            dashboard-ui/package-lock.json
+      - name: Install backend dependencies
+        working-directory: .
+        run: npm ci
       - run: npm ci
+      - name: Prepare real E2E database
+        working-directory: .
+        run: |
+          npx prisma generate
+          npx prisma migrate deploy
       - name: Get Playwright version
         id: pw-version
         shell: bash
@@ -193,6 +220,7 @@ jobs:
       - run: npm run e2e
         env:
           CI: 'true'
+          E2E_REAL_DB: '1'
       - if: failure()
         uses: actions/upload-artifact@v5
         with:

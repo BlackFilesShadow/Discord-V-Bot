@@ -3,10 +3,12 @@ import DailyRotateFile from 'winston-daily-rotate-file';
 import path from 'path';
 import fs from 'fs';
 import { Writable } from 'node:stream';
+import { createRequire } from 'node:module';
 import { redactAuditDetails } from './auditRedaction';
 
 const LOG_DIR = process.env.LOG_DIR || './logs';
 const IS_TEST_RUNTIME = process.env.NODE_ENV === 'test' || Boolean(process.env.JEST_WORKER_ID);
+const requireRuntime = createRequire(__filename);
 
 // File-Rotation ist eine Production-Ressource. Unter Jest wuerden die
 // winston-daily-rotate-file-Transports Dateistreams/Rotation im Hintergrund
@@ -246,11 +248,17 @@ async function persistAuditRow(
     userAgent?: string | null;
   },
 ): Promise<void> {
-  // Lazy-Import gegen Zirkularitaet (logger laedt prisma laedt logger).
-  const prismaMod = await import('../database/prisma.js');
-  // CJS/ESM-Interop: Bei `export default` mit Node16+CJS landet der echte
-  // Client je nach Bundler unter `.default` oder `.default.default`.
-  const raw = prismaMod.default as unknown as { auditLog?: unknown; default?: { auditLog?: unknown } };
+  // Lazy-Require haelt den Logger beim Modulstart DB-frei. Der extensionlose
+  // Pfad wird unter ts-node/register auf `.ts` und im kompilierten dist auf
+  // `.js` aufgeloest; ein nativer `.js`-Import wuerde im Sourcebetrieb lautlos
+  // in logAuditDb.catch scheitern und den Audit-Trail verlieren.
+  const prismaMod = requireRuntime('../database/prisma') as {
+    default?: { auditLog?: unknown; default?: { auditLog?: unknown } };
+    auditLog?: unknown;
+  };
+  // CJS/ESM-Interop: Der echte Client kann direkt, unter `.default` oder bei
+  // einem doppelten Transpiler-Wrapper unter `.default.default` liegen.
+  const raw = (prismaMod.default ?? prismaMod) as { auditLog?: unknown; default?: { auditLog?: unknown } };
   const prisma = (raw && 'auditLog' in raw && raw.auditLog
     ? raw
     : raw?.default) as unknown as { auditLog: { create: (args: { data: Record<string, unknown> }) => Promise<unknown> } };
