@@ -1,15 +1,15 @@
 {
-  "generatedAt": "2026-08-22T20:41:05.505Z",
-  "finalAuditedSha": "a93b4b986308bf5be9fe5119e2c5eb0f72813254",
-  "auditFreezeSha": "a93b4b986308bf5be9fe5119e2c5eb0f72813254",
+  "generatedAt": "2026-08-22T21:27:06.764Z",
+  "finalAuditedSha": "2c16bcbe870f9d4818d7ed4726b95ef2879e30d9",
+  "auditFreezeSha": "2c16bcbe870f9d4818d7ed4726b95ef2879e30d9",
   "stagesTotal": 67,
   "counts": {
-    "VERIFIED": 49,
-    "PARTIAL": 17,
+    "VERIFIED": 51,
+    "PARTIAL": 15,
     "FAILED": 0,
     "BLOCKED": 1
   },
-  "score": 73,
+  "score": 76,
   "productionReady": false,
   "sourceOfTruth": "docs/audit/stage-matrix-1-67.json",
   "notes": "Derived deterministically; PARTIAL/BLOCKED stages retain explicit residuals and are never promoted by aggregation."

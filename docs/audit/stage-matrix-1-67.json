@@ -1,6 +1,6 @@
 {
-  "generatedAt": "2026-08-22T20:41:05.505Z",
-  "finalAuditedSha": "a93b4b986308bf5be9fe5119e2c5eb0f72813254",
+  "generatedAt": "2026-08-22T21:27:06.764Z",
+  "finalAuditedSha": "2c16bcbe870f9d4818d7ed4726b95ef2879e30d9",
   "stages": [
     {
       "id": 1,
@@ -566,15 +566,19 @@
     {
       "id": 46,
       "name": "runtime-baseline-i-46",
-      "status": "PARTIAL",
+      "status": "VERIFIED",
       "evidence": [
-        "docs/runtime-baseline-i-matrix.json"
+        "docs/runtime-baseline-i-matrix.json",
+        "scripts/runtime-series-46-49.mjs",
+        "tests/security/runtimeSeries4649.test.ts",
+        "docs/audit/performance/2c16bcbe870f9d4818d7ed4726b95ef2879e30d9/46-49-runtime-series.json",
+        "docs/audit/runtime-series-ci-evidence-pr267-2c16bcb.json",
+        "ci-run:32598792373:attempt-1",
+        "verification2-run:32598792420:attempt-1"
       ],
-      "findings": [
-        "residual-current-sha-rss-heap-cpu-gc-eventloop-series",
-        "F-S4-06"
-      ],
-      "note": "Harness exists, but a current-SHA measured series and full-process interpretation remain required."
+      "findings": [],
+      "note": "A bounded current-SHA 12-sample series records and interprets RSS, heap, external/array buffers, CPU, 63 GC events, event-loop p50/p99/max, active resources/requests/handles and listeners; both complete Jest jobs execute the regression.",
+      "exactSha": "2c16bcbe870f9d4818d7ed4726b95ef2879e30d9"
     },
     {
       "id": 47,
@@ -611,15 +615,20 @@
     {
       "id": 49,
       "name": "memory-leak-audit-49",
-      "status": "PARTIAL",
+      "status": "VERIFIED",
       "evidence": [
         "docs/memory-leak-audit-matrix.json",
-        "tests/security/waveFPerfChaosJourneyRuntime.test.ts"
+        "tests/security/waveFPerfChaosJourneyRuntime.test.ts",
+        "scripts/runtime-series-46-49.mjs",
+        "tests/security/runtimeSeries4649.test.ts",
+        "docs/audit/performance/2c16bcbe870f9d4818d7ed4726b95ef2879e30d9/46-49-runtime-series.json",
+        "docs/audit/runtime-series-ci-evidence-pr267-2c16bcb.json",
+        "ci-run:32598792373:attempt-1",
+        "verification2-run:32598792420:attempt-1"
       ],
-      "findings": [
-        "residual-current-sha-rss-heap-listener-handle-series"
-      ],
-      "note": "Bounded maps and churn regressions are green; an actual current-SHA RSS/heap/listener/handle series remains required."
+      "findings": [],
+      "note": "Bounded-map/timer/cache audits and churn regressions are supplemented by an exact-SHA allocation/recovery series: RSS 0.0338 MiB/sample, heap 0.0071 MiB/sample, active-resource slope 0 and listener slope 0. The longer full-stack soak remains Stage 51.",
+      "exactSha": "2c16bcbe870f9d4818d7ed4726b95ef2879e30d9"
     },
     {
       "id": 50,
@@ -852,10 +861,10 @@
       ]
     }
   ],
-  "auditFreezeSha": "a93b4b986308bf5be9fe5119e2c5eb0f72813254",
+  "auditFreezeSha": "2c16bcbe870f9d4818d7ed4726b95ef2879e30d9",
   "counts": {
-    "VERIFIED": 49,
-    "PARTIAL": 17,
+    "VERIFIED": 51,
+    "PARTIAL": 15,
     "FAILED": 0,
     "BLOCKED": 1
   }

@@ -7,22 +7,22 @@ Do not edit this report, the scoreboard, or the summary manually.
 
 | Field | Value |
 | --- | --- |
-| Generated | 2026-08-22T20:41:05.505Z |
-| Final audited/evidence SHA | `a93b4b986308bf5be9fe5119e2c5eb0f72813254` |
-| Audit freeze SHA | `a93b4b986308bf5be9fe5119e2c5eb0f72813254` |
+| Generated | 2026-08-22T21:27:06.764Z |
+| Final audited/evidence SHA | `2c16bcbe870f9d4818d7ed4726b95ef2879e30d9` |
+| Audit freeze SHA | `2c16bcbe870f9d4818d7ed4726b95ef2879e30d9` |
 | Stages total | 67 |
 
 ## Recalculated scoreboard
 
 | Status | Count |
 | --- | ---: |
-| VERIFIED | 49 |
-| PARTIAL | 17 |
+| VERIFIED | 51 |
+| PARTIAL | 15 |
 | FAILED | 0 |
 | BLOCKED | 1 |
 | **TOTAL** | **67** |
 
-**Current score: 73 / 100**
+**Current score: 76 / 100**
 
 **PRODUCTION READY: NO**
 
@@ -75,10 +75,10 @@ Do not edit this report, the scoreboard, or the summary manually.
 | 43 | VERIFIED | session-oauth-43 | `eb10b85130b4481e361a234cbb005b740ebd40b3` | VERIFIED by the real HTTP+PostgreSQL OAuth callback/SID rotation and token-cache revocation chain in both successful complete Jest jobs on PR #264 evidence head a31827d1593b8ac79e74dc2dd69e81beb90142d9 (CI/CD 32590954868; Verification 2 32590954874). Live Discord OAuth remains isolated to Stage 67. |
 | 44 | VERIFIED | upload-webhook-security-44 | `3f8f281fb25d5e2dae1b1e933fde056b315b1d95` | Webhook HMAC/replay + upload path/size + MIME magic-bytes/content validation runtime-verified; residual empty |
 | 45 | VERIFIED | stage-45-deps-sbom-trivy | `2a7c048d1d1a1206d0774da26d70c363cc225fcf` | Root/dashboard HIGH audit + SBOM + Trivy CRITICAL/HIGH blocking + Vite 6.4.3 on main |
-| 46 | PARTIAL | runtime-baseline-i-46 | — | residual-current-sha-rss-heap-cpu-gc-eventloop-series; F-S4-06 |
+| 46 | VERIFIED | runtime-baseline-i-46 | `2c16bcbe870f9d4818d7ed4726b95ef2879e30d9` | A bounded current-SHA 12-sample series records and interprets RSS, heap, external/array buffers, CPU, 63 GC events, event-loop p50/p99/max, active resources/requests/handles and listeners; both complete Jest jobs execute the regression. |
 | 47 | PARTIAL | runtime-baseline-ii-47 | — | residual-current-sha-db-redis-worker-queue-measurements; F-S4-06 |
 | 48 | PARTIAL | ai-nitrado-perf-48 | `ce68d05e6074ce95d7e417d1c063bddfa0e17206` | residual-live-provider-rtt; F-S4-06 |
-| 49 | PARTIAL | memory-leak-audit-49 | — | residual-current-sha-rss-heap-listener-handle-series |
+| 49 | VERIFIED | memory-leak-audit-49 | `2c16bcbe870f9d4818d7ed4726b95ef2879e30d9` | Bounded-map/timer/cache audits and churn regressions are supplemented by an exact-SHA allocation/recovery series: RSS 0.0338 MiB/sample, heap 0.0071 MiB/sample, active-resource slope 0 and listener slope 0. The longer full-stack soak remains Stage 51. |
 | 50 | PARTIAL | load-test-50 | `8f181c7e8f2344f0c78dcd19a3151547f885aa17` | residual-full-stack-load |
 | 51 | PARTIAL | soak-test-51 | `8f181c7e8f2344f0c78dcd19a3151547f885aa17` | residual-multi-hour-soak |
 | 52 | PARTIAL | ram-node-heap-tuning-52 | — | residual-stage-46-51-measurements-before-final-tuning-decision |
@@ -100,10 +100,8 @@ Do not edit this report, the scoreboard, or the summary manually.
 
 ## Remaining residuals (priority order)
 
-- Stage 46 (PARTIAL): residual-current-sha-rss-heap-cpu-gc-eventloop-series; F-S4-06
 - Stage 47 (PARTIAL): residual-current-sha-db-redis-worker-queue-measurements; F-S4-06
 - Stage 48 (PARTIAL): residual-live-provider-rtt; F-S4-06
-- Stage 49 (PARTIAL): residual-current-sha-rss-heap-listener-handle-series
 - Stage 50 (PARTIAL): residual-full-stack-load
 - Stage 51 (PARTIAL): residual-multi-hour-soak
 - Stage 52 (PARTIAL): residual-stage-46-51-measurements-before-final-tuning-decision

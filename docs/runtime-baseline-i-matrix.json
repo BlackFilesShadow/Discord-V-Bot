@@ -1,18 +1,22 @@
 {
-  "schemaVersion": 1,
+  "schemaVersion": 2,
   "stage": 46,
   "scope": "Runtime Baseline I: RAM, Heap, CPU, GC, Event Loop — reproducible measurement harness and documented idle bounds.",
   "contracts": {
-    "harness": "scripts/runtime-baseline-i.mjs prints RSS/heap/eventLoop delay samples",
-    "repro": "NODE_OPTIONS optional; seed not required for idle sample",
-    "idle": "Idle process sample without full Discord login",
-    "docs": "Thresholds are observational baselines, not hard production SLOs until Stage 52"
+    "harness": "scripts/runtime-series-46-49.mjs captures a bounded repeated allocation/recovery series with explicit GC when available",
+    "repro": "sample count, duration, settle interval and allocation size are bounded environment inputs",
+    "series": "12 current-SHA samples record memory, CPU, GC, event-loop delay, active resources, handles, requests and listeners",
+    "docs": "Thresholds are observational baselines; final heap tuning remains Stage 52"
   },
-  "metrics": ["rssMb", "heapUsedMb", "heapTotalMb", "externalMb", "eventLoopDelayMsP50", "eventLoopDelayMsP99", "cpuUserMs", "cpuSystemMs"],
-  "baselineNote": "Absolute values vary by host; a current-SHA series must capture RSS, heap, CPU, GC and event-loop behavior rather than only prove that the harness exists.",
-  "basedOnMainSha": "2a7c048d1d1a1206d0774da26d70c363cc225fcf",
-  "status": "PARTIAL",
-  "residual": [
-    "Current-SHA multi-sample full metric series has not yet been generated and interpreted"
-  ]
+  "metrics": ["rssMb", "heapUsedMb", "heapTotalMb", "externalMb", "arrayBuffersMb", "eventLoopDelayMsP50", "eventLoopDelayMsP99", "eventLoopDelayMsMax", "cpuUserMs", "cpuSystemMs", "gcDurationMsP50", "gcDurationMsP99", "activeResources", "activeRequests", "activeHandles", "listeners"],
+  "baselineNote": "On exact SHA 2c16bcbe870f9d4818d7ed4726b95ef2879e30d9, 12×750 ms samples observed 63 GC events; RSS slope was 0.0338 MiB/sample, heap slope 0.0071 MiB/sample, and active-resource/listener slopes were zero.",
+  "basedOnMainSha": "63b79799447a084b5dca65288acefd8fee757429",
+  "exactSha": "2c16bcbe870f9d4818d7ed4726b95ef2879e30d9",
+  "verification": {
+    "artifact": "docs/audit/performance/2c16bcbe870f9d4818d7ed4726b95ef2879e30d9/46-49-runtime-series.json",
+    "test": "tests/security/runtimeSeries4649.test.ts",
+    "ciEvidence": "docs/audit/runtime-series-ci-evidence-pr267-2c16bcb.json"
+  },
+  "status": "VERIFIED",
+  "residual": []
 }
