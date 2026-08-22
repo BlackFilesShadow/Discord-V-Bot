@@ -1,7 +1,6 @@
 {
   "schemaVersion": 1,
   "stage": 45,
-  "basedOnMainSha": "94d3f450ed0c7df7c7adfbd10f08f839d8b8d24b",
   "scope": "npm lockfile, production dependency audit (critical/high), CycloneDX SBOM gates, Dockerfile secrets posture, container build on main, Trivy CRITICAL+HIGH blocking, Vite/esbuild dashboard tree.",
   "contracts": {
     "dockerfile": "no COPY .env",
@@ -57,5 +56,6 @@
     "trivyHighBlocking": true,
     "overridePackage": "deepmerge-ts",
     "overrideVersion": "8.0.2"
-  }
+  },
+  "basedOnMainSha": "2a7c048d1d1a1206d0774da26d70c363cc225fcf"
 }

@@ -1,15 +1,14 @@
 {
   "schemaVersion": 1,
   "stage": 36,
-  "basedOnMainSha": "8ba95ffb35ad9ee7b675f31164b515e1d582aa7c",
   "scope": "API authentication matrix: session cookie, OAuth login/callback, auth middleware, unauthenticated/expired/revoked sessions, login/logout/status consistency between UI and API.",
   "contracts": {
     "v2Mount": "v2Router.use(requireAuth) applies to every /api/v2 route before domain routers.",
     "requireAuth": "Missing userId/discordId => 401. userId/discordId without persistent sessionToken => 401 SESSION_REVOKED. Every supplied sessionToken must resolve to an active, unexpired, user-bound Prisma Session row; otherwise 401 SESSION_REVOKED + cookie destroyed.",
-    "oauth": "Discord-only OAuth with state/nonce/PKCE; session.save before redirects.",
+    "oauth": "Discord-only OAuth with state/nonce/PKCE; regenerate the Express session before binding identity; session.save before redirects.",
     "logout": "Deactivates Prisma Session.isActive, clears tokenCache, destroys express-session.",
-    "status": "/auth/status returns authenticated false when DB session inactive/expired (UI source of truth).",
-    "apiMe": "/api/me behind requireAuth — unauthenticated or unbound legacy cookie => 401.",
+    "status": "/auth/status verifies the Prisma Session on every request, including OAuth token-cache hits; inactive/expired/user-mismatched rows return authenticated false.",
+    "apiMe": "/api/me uses the same canonical persistent-session requireAuth as /api/v2 — unauthenticated or unbound legacy cookie => 401.",
     "publicExceptions": "/auth/login|callback|status|logout paths; health/metrics/webhooks outside v2.",
     "storeFailure": "Session DB lookup failure => 503 SESSION_STORE_UNAVAILABLE fail-closed (no anonymous elevation)."
   },
@@ -45,16 +44,16 @@
     {
       "id": "oauth-callback",
       "scenario": "GET /auth/callback",
-      "expected": "Validate state; create user/session; session.save before redirect",
-      "evidence": "src/dashboard/routes/auth.ts",
-      "status": "verified"
+      "expected": "Validate state; create user/session; rotate Express SID; session.save before redirect",
+      "evidence": "src/dashboard/routes/auth.ts; tests/security/dashboardSecurityHttpDbIntegration.test.ts",
+      "status": "ci-pending-real-postgres"
     },
     {
       "id": "session-status-false",
       "scenario": "Inactive/expired Prisma session",
       "expected": "/auth/status authenticated:false",
-      "evidence": "auth.ts /status",
-      "status": "verified"
+      "evidence": "auth.ts /status; tests/security/dashboardSecurityHttpDbIntegration.test.ts",
+      "status": "ci-pending-real-postgres"
     },
     {
       "id": "session-revoked-api",
@@ -98,5 +97,9 @@
       "evidence": "dashboard-ui api.ts + App Protected",
       "status": "verified"
     }
+  ],
+  "basedOnMainSha": "eb10b85130b4481e361a234cbb005b740ebd40b3",
+  "residual": [
+    "Real PostgreSQL OAuth callback, SID rotation, revocation and /api/me chain must pass CI on this SHA"
   ]
 }

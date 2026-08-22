@@ -1,4 +1,8 @@
 # Step 6 aggregator — audit artifacts only
+$syncScript = Join-Path $PSScriptRoot '..\..\scripts\sync-masterplan-audit.mjs'
+& node $syncScript
+exit $LASTEXITCODE
+
 $ErrorActionPreference = 'Stop'
 $freeze = '48bbcfface38068bc71ad7bcc5c1dd87616da514'
 $now = (Get-Date).ToUniversalTime().ToString('yyyy-MM-ddTHH:mm:ssZ')

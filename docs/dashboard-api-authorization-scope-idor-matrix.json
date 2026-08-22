@@ -1,7 +1,6 @@
 {
   "schemaVersion": 1,
   "stage": 37,
-  "basedOnMainSha": "eb32f0089a90502d0c26a371249df993a845634a",
   "scope": "API authorization / scope / IDOR matrix: guild, gameserver/slot, user, owner/admin/DEV/bot-admin, grants, cross-scope attacks, missing scope fail-closed.",
   "contracts": {
     "missingGuildParam": "Invalid/missing :guildId => 400 before data access.",
@@ -84,6 +83,13 @@
       "expected": "permission + guild/slot where clauses",
       "evidence": "economyVirtualAccountScopeGuard; economyLinkServerScope",
       "status": "verified"
+    },
+    {
+      "id": "ticket-template-foreign-id-http-db",
+      "attack": "Owner of guild A submits a guild-B TicketTemplate id to the guild-A update route",
+      "expected": "404 before update; foreign PostgreSQL row remains unchanged",
+      "evidence": "tests/security/dashboardSecurityHttpDbIntegration.test.ts",
+      "status": "ci-pending-real-postgres"
     }
   ],
   "roleMatrix": [
@@ -92,5 +98,9 @@
     { "role": "User no grant", "access": "403", "status": "verified" },
     { "role": "DEV", "access": "global tools after DevSession; not guild owner bypass without identity gates", "status": "verified" },
     { "role": "Bot Admin", "access": "global bot-admin after session; guild ops explicit guildId", "status": "verified" }
+  ],
+  "basedOnMainSha": "eb10b85130b4481e361a234cbb005b740ebd40b3",
+  "residual": [
+    "Real PostgreSQL foreign-ID HTTP route proof must pass CI on this SHA"
   ]
 }

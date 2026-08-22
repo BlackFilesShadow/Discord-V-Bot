@@ -1,13 +1,12 @@
 {
   "schemaVersion": 1,
   "stage": 41,
-  "basedOnMainSha": "9690db5ce22b4191d6ae184e6f7737fee23ea06e",
   "scope": "CSRF on state-changing requests; XSS reflected/stored/DOM across dashboard rendering.",
   "contracts": {
     "oauthState": "OAuth state/nonce/PKCE",
     "sameSite": "session cookie sameSite lax + httpOnly",
-    "mutations": "JSON API cookie auth; CORS credentials only to dashboard origin",
-    "xss": "React default escaping; no unsanitized user HTML sinks"
+    "mutations": "SameSite=Lax plus exact Origin/Referer and Fetch-Metadata rejection for browser cookie mutations; CORS credentials only to dashboard origin",
+    "xss": "React default escaping plus TypeScript-AST rejection of dangerouslySetInnerHTML, innerHTML/outerHTML assignment, eval, new Function, document.write and static javascript: URL sinks"
   },
   "cases": [
     {
@@ -25,6 +24,18 @@
     {
       "id": "react-escape-default",
       "status": "runtime-verified"
+    },
+    {
+      "id": "cookie-mutation-origin",
+      "status": "runtime-verified-local"
+    },
+    {
+      "id": "dangerous-sink-ast-scan",
+      "status": "runtime-verified-local"
     }
+  ],
+  "basedOnMainSha": "eb10b85130b4481e361a234cbb005b740ebd40b3",
+  "residual": [
+    "Origin and AST regression gates must pass CI on this SHA"
   ]
 }

@@ -1,6 +1,6 @@
 {
-  "generatedAt": "2026-08-22T16:33:42.720Z",
-  "finalAuditedSha": "eaf8b42bb5d1fc194416324606f146196d04c8c0",
+  "generatedAt": "2026-08-22T17:58:55.170Z",
+  "finalAuditedSha": "eb10b85130b4481e361a234cbb005b740ebd40b3",
   "stages": [
     {
       "id": 1,
@@ -202,9 +202,8 @@
         "tests/ai/toolRuntime.test.ts",
         "tests/security/aiToolLayerArchitecture.test.ts"
       ],
-      "findings": [
-        "F-S3-04 closed pending commit"
-      ]
+      "findings": [],
+      "note": "Production tool runtime and fail-closed read-only registry are merged and regression-tested."
     },
     {
       "id": 21,
@@ -407,52 +406,48 @@
     },
     {
       "id": 36,
-      "name": "API/security-36",
+      "name": "api-authentication-36",
       "status": "PARTIAL",
       "evidence": [
+        "docs/dashboard-api-authentication-matrix.json",
         "tests/dashboard/requireAuthSessionGate.test.ts",
-        "tests/dashboard/requireGuildPermissionIdorGate.test.ts",
-        "tests/security/dashboardApiAuthorizationScopeIdorMatrixArchitecture.test.ts",
-        "src/dashboard/middleware/auth.ts"
+        "tests/security/dashboardSecurityHttpDbIntegration.test.ts"
       ],
       "findings": [
-        "residual-full-route-integration-and-live-oauth"
+        "residual-real-postgres-http-oauth-chain-awaits-ci"
       ],
-      "note": "Runtime sessionToken fail-closed (PR#241) + evidence pin; residual live OAuth/revocation E2E",
-      "exactSha": "eb32f0089a90502d0c26a371249df993a845634a"
+      "note": "Canonical /api/me AuthN, revocation-authoritative status and OAuth rotation implemented; real Postgres HTTP chain must pass CI before promotion.",
+      "exactSha": "eb10b85130b4481e361a234cbb005b740ebd40b3"
     },
     {
       "id": 37,
-      "name": "API/security-37",
+      "name": "api-authorization-idor-37",
       "status": "PARTIAL",
       "evidence": [
-        "tests/dashboard/requireAuthSessionGate.test.ts",
+        "docs/dashboard-api-authorization-scope-idor-matrix.json",
         "tests/dashboard/requireGuildPermissionIdorGate.test.ts",
-        "tests/security/dashboardApiAuthorizationScopeIdorMatrixArchitecture.test.ts",
-        "src/dashboard/middleware/auth.ts"
+        "tests/security/dashboardSecurityHttpDbIntegration.test.ts"
       ],
       "findings": [
-        "residual-full-route-integration-and-live-oauth"
+        "residual-real-postgres-foreign-id-http-chain-awaits-ci"
       ],
-      "note": "Runtime IDOR/AuthZ middleware gate green; residual full HTTP route+DB IDOR suite",
-      "exactSha": "eb32f0089a90502d0c26a371249df993a845634a"
+      "note": "Runtime guild/membership gates are green; the new foreign-ID HTTP+Postgres mutation proof must pass CI before promotion.",
+      "exactSha": "eb10b85130b4481e361a234cbb005b740ebd40b3"
     },
     {
       "id": 38,
-      "name": "API/security-38",
+      "name": "api-validation-race-idempotency-38",
       "status": "PARTIAL",
       "evidence": [
+        "docs/dashboard-api-validation-race-idempotency-matrix.json",
         "tests/security/idempotencyClaim.test.ts",
-        "tests/security/dashboardApiValidationRaceIdempotencyMatrixArchitecture.test.ts",
-        "tests/runtime/dashboardMutationIdempotencyRetryGate.test.ts",
-        "src/dashboard/middleware/idempotency.ts",
-        "docs/dashboard-api-validation-race-idempotency-matrix.json"
+        "tests/security/dashboardSecurityHttpDbIntegration.test.ts"
       ],
       "findings": [
-        "residual-full-route-validation-and-domain-race-matrix"
+        "residual-real-postgres-concurrent-claim-awaits-ci"
       ],
-      "note": "Runtime idempotency fail-closed matrix (key length, body/route isolation, parallel, replay, stale CAS, store-down 503); residual full HTTP route validation + domain race",
-      "exactSha": "88d4761696a3625c060f840a2df4c19cab950085"
+      "note": "Unit HTTP race/store-down coverage is green; the real PostgreSQL concurrent claim proof must pass CI before promotion.",
+      "exactSha": "eb10b85130b4481e361a234cbb005b740ebd40b3"
     },
     {
       "id": 39,
@@ -469,62 +464,58 @@
     },
     {
       "id": 40,
-      "name": "API/security-40",
-      "status": "PARTIAL",
+      "name": "roles-permission-attack-40",
+      "status": "VERIFIED",
       "evidence": [
-        "tests/dashboard/requireGuildPermissionIdorGate.test.ts",
-        "tests/modules/permissionAccess.test.ts",
-        "tests/security/rolesPermissionAttackMatrixArchitecture.test.ts",
-        "docs/roles-permission-attack-matrix.json"
+        "docs/roles-permission-attack-matrix.json",
+        "tests/modules/permissionAccess.test.ts"
       ],
-      "findings": [
-        "residual-full-role-escalation-live-discord"
-      ],
-      "note": "Runtime IDOR/membership/stale-grant DENY + delegated permission fail-closed; residual live Discord role attack surface",
-      "exactSha": "9690db5ce22b4191d6ae184e6f7737fee23ea06e"
+      "findings": [],
+      "note": "Permission/IDOR + stale grant + DEV/BotAdmin identity gates runtime-verified",
+      "exactSha": "2a7c048d1d1a1206d0774da26d70c363cc225fcf"
     },
     {
       "id": 41,
-      "name": "API/security-41",
+      "name": "csrf-xss-41",
       "status": "PARTIAL",
       "evidence": [
+        "docs/csrf-xss-matrix.json",
         "tests/security/csrfPkceRuntime.test.ts",
-        "tests/security/csrfXssMatrixArchitecture.test.ts",
-        "docs/csrf-xss-matrix.json"
+        "tests/security/csrfMutationOrigin.test.ts"
       ],
       "findings": [
-        "residual-full-browser-csrf-xss-e2e"
+        "residual-origin-and-ast-gates-await-ci"
       ],
-      "note": "CSRF/PKCE entropy runtime + cookie/CORS/XSS sink architecture; residual full browser CSRF mutation E2E",
-      "exactSha": "9690db5ce22b4191d6ae184e6f7737fee23ea06e"
+      "note": "Exact browser mutation Origin gate and TypeScript-AST sink scan are locally green; CI confirmation is pending.",
+      "exactSha": "eb10b85130b4481e361a234cbb005b740ebd40b3"
     },
     {
       "id": 42,
       "name": "ssrf-injection-path-42",
-      "status": "PARTIAL",
+      "status": "VERIFIED",
       "evidence": [
         "docs/ssrf-injection-path-traversal-matrix.json",
         "tests/security/sqlCommandInjectionSurfaceRuntime.test.ts",
         "tests/security/ssrf.test.ts"
       ],
       "findings": [],
-      "note": "SQL/command surface scan + SSRF/path runtime green; residual live egress SSRF (Stage 67/staging)",
-      "exactSha": "3f8f281fb25d5e2dae1b1e933fde056b315b1d95"
+      "note": "CI-local SSRF, SQL/command injection and path traversal contracts are closed. The explicitly external production-egress validation is transferred to Stage 67.",
+      "exactSha": "2a7c048d1d1a1206d0774da26d70c363cc225fcf"
     },
     {
       "id": 43,
-      "name": "API/security-43",
+      "name": "session-oauth-43",
       "status": "PARTIAL",
       "evidence": [
+        "docs/session-oauth-security-matrix.json",
         "tests/dashboard/requireAuthSessionGate.test.ts",
-        "tests/security/sessionOauthSecurityMatrixArchitecture.test.ts",
-        "docs/session-oauth-security-matrix.json"
+        "tests/security/dashboardSecurityHttpDbIntegration.test.ts"
       ],
       "findings": [
-        "residual-live-oauth-callback-e2e"
+        "residual-real-postgres-oauth-session-rotation-awaits-ci"
       ],
-      "note": "Session revoke/expiry/cross-user/store-down runtime; residual live OAuth callback/fixation E2E",
-      "exactSha": "9690db5ce22b4191d6ae184e6f7737fee23ea06e"
+      "note": "Rotation, revoke, expiry, cross-user and store-failure paths are implemented; real HTTP+Postgres callback proof awaits CI, live Discord remains Stage 67.",
+      "exactSha": "eb10b85130b4481e361a234cbb005b740ebd40b3"
     },
     {
       "id": 44,
@@ -541,51 +532,40 @@
     },
     {
       "id": 45,
-      "name": "API/security-45-deps-sbom-trivy",
+      "name": "stage-45-deps-sbom-trivy",
       "status": "VERIFIED",
       "evidence": [
-        ".github/workflows/ci.yml#docker",
-        "docs/dependency-container-sbom-security-matrix.json",
-        "tests/security/dependencyContainerSbomSecurityArchitecture.test.ts",
-        "main-ci:32579522108"
+        "docs/dependency-container-sbom-security-matrix.json"
       ],
       "findings": [],
-      "note": "Vite 6.4.3 + dashboard full HIGH blocking + Trivy CRITICAL/HIGH blocking + SBOM fail-closed; main 94d3f450 clean",
-      "exactSha": "94d3f450ed0c7df7c7adfbd10f08f839d8b8d24b"
+      "note": "Root/dashboard HIGH audit + SBOM + Trivy CRITICAL/HIGH blocking + Vite 6.4.3 on main",
+      "exactSha": "2a7c048d1d1a1206d0774da26d70c363cc225fcf"
     },
     {
       "id": 46,
-      "name": "runtime-baseline-46",
+      "name": "runtime-baseline-i-46",
       "status": "PARTIAL",
       "evidence": [
-        "scripts/runtime-baselines-46-48.mjs",
-        "docs/runtime-baseline-46-matrix.json",
-        "tests/security/runtimeBaselines4648Architecture.test.ts",
-        "docs/audit/performance/README.md"
+        "docs/runtime-baseline-i-matrix.json"
       ],
       "findings": [
-        "residual-full-bot-rss",
+        "residual-current-sha-rss-heap-cpu-gc-eventloop-series",
         "F-S4-06"
       ],
-      "note": "In-process RSS/heap/CPU/ELD sampled; metrics module pinned; full gateway RSS residual",
-      "exactSha": "ce68d05e6074ce95d7e417d1c063bddfa0e17206"
+      "note": "Harness exists, but a current-SHA measured series and full-process interpretation remain required."
     },
     {
       "id": 47,
-      "name": "data-plane-baseline-47",
+      "name": "runtime-baseline-ii-47",
       "status": "PARTIAL",
       "evidence": [
-        "scripts/runtime-baselines-46-48.mjs",
-        "docs/data-plane-baseline-47-matrix.json",
-        "src/database/prisma.ts",
-        "tests/security/runtimeBaselines4648Architecture.test.ts"
+        "docs/runtime-baseline-ii-matrix.json"
       ],
       "findings": [
-        "residual-live-pool-saturation",
+        "residual-current-sha-db-redis-worker-queue-measurements",
         "F-S4-06"
       ],
-      "note": "Prisma pool/tx contracts + Redis/worker surface verified; live DB/Redis optional via env",
-      "exactSha": "ce68d05e6074ce95d7e417d1c063bddfa0e17206"
+      "note": "Structural contracts exist; current-SHA DB/Redis/worker/queue measurements remain required."
     },
     {
       "id": 48,
@@ -608,18 +588,16 @@
     },
     {
       "id": 49,
-      "name": "memory-leak-49",
+      "name": "memory-leak-audit-49",
       "status": "PARTIAL",
       "evidence": [
-        "src/utils/rateLimit.ts",
-        "tests/utils/rateLimit.test.ts",
-        "docs/memory-leak-audit-matrix.json"
+        "docs/memory-leak-audit-matrix.json",
+        "tests/security/waveFPerfChaosJourneyRuntime.test.ts"
       ],
       "findings": [
-        "residual-full-process-soak"
+        "residual-current-sha-rss-heap-listener-handle-series"
       ],
-      "note": "Rate-limit maps hard-capped+pruned; F-P49-01 fixed; multi-hour process soak residual",
-      "exactSha": "8f181c7e8f2344f0c78dcd19a3151547f885aa17"
+      "note": "Bounded maps and churn regressions are green; an actual current-SHA RSS/heap/listener/handle series remains required."
     },
     {
       "id": 50,
@@ -653,17 +631,15 @@
     },
     {
       "id": 52,
-      "name": "heap-tuning-52",
+      "name": "ram-node-heap-tuning-52",
       "status": "PARTIAL",
       "evidence": [
-        "docs/audit/performance/README.md",
-        "package.json#scripts.start"
+        "docs/ram-node-heap-tuning-matrix.json"
       ],
       "findings": [
-        "residual-prod-heap-flags"
+        "residual-stage-46-51-measurements-before-final-tuning-decision"
       ],
-      "note": "No blind max-old-space-size; tune after measurements only",
-      "exactSha": "8f181c7e8f2344f0c78dcd19a3151547f885aa17"
+      "note": "No blind heap increase is allowed; final tuning/no-change decision depends on Stages 46-51 measurements."
     },
     {
       "id": 53,
@@ -716,17 +692,15 @@
     },
     {
       "id": 57,
-      "name": "dead-code-57",
+      "name": "dead-code-legacy-cleanup-57",
       "status": "PARTIAL",
       "evidence": [
-        "docs/dead-code-legacy-cleanup-matrix.json",
-        "tests/security/deadCodeLegacyCleanupArchitecture.test.ts"
+        "docs/dead-code-legacy-cleanup-matrix.json"
       ],
       "findings": [
-        "no-mass-delete-pending-coupling"
+        "residual-full-coupling-and-reference-analysis-before-cleanup"
       ],
-      "note": "Conservative policy; passport already removed; no speculative deletes",
-      "exactSha": "f9f00881717ca49bd0f6cc85aa5a32556f6b409f"
+      "note": "Passport removal is proven; the broader event/worker/registry coupling analysis is still required before declaring cleanup complete."
     },
     {
       "id": 58,
@@ -851,14 +825,15 @@
         "no-production-credentials"
       ],
       "findings": [
-        "F-S4-15"
+        "F-S4-15",
+        "stage-42-live-production-network-egress-validation"
       ]
     }
   ],
-  "auditFreezeSha": "eaf8b42bb5d1fc194416324606f146196d04c8c0",
+  "auditFreezeSha": "eb10b85130b4481e361a234cbb005b740ebd40b3",
   "counts": {
-    "VERIFIED": 33,
-    "PARTIAL": 33,
+    "VERIFIED": 35,
+    "PARTIAL": 31,
     "FAILED": 0,
     "BLOCKED": 1
   }

@@ -1,10 +1,9 @@
 {
   "schemaVersion": 1,
   "stage": 43,
-  "basedOnMainSha": "9690db5ce22b4191d6ae184e6f7737fee23ea06e",
   "scope": "Session fixation/rotation/expiry/logout/revoke, OAuth state/callback/redirect, cookie flags, cross-user isolation.",
   "contracts": {
-    "oauth": "state/nonce/PKCE + session.save before redirect",
+    "oauth": "state/nonce/PKCE + Express SID regeneration before identity binding + session.save before redirect",
     "revoke": "SESSION_REVOKED destroys cookie",
     "logout": "isActive false + destroy",
     "cookies": "httpOnly + sameSite lax + secure in production"
@@ -25,6 +24,18 @@
     {
       "id": "api-revoked-session",
       "status": "runtime-verified"
+    },
+    {
+      "id": "oauth-session-fixation-rotation",
+      "status": "ci-pending-real-postgres"
+    },
+    {
+      "id": "token-cache-cannot-bypass-db-revocation",
+      "status": "ci-pending-real-postgres"
     }
+  ],
+  "basedOnMainSha": "eb10b85130b4481e361a234cbb005b740ebd40b3",
+  "residual": [
+    "Real PostgreSQL OAuth callback/SID rotation/revocation chain must pass CI on this SHA; live Discord OAuth is Stage 67"
   ]
 }

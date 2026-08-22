@@ -1,4 +1,5 @@
 # Step 4: update stages 27-67 in stage-matrix-1-67.json (audit artifacts only)
+throw 'HISTORICAL_AUDIT_SCRIPT_DISABLED: use npm run audit:sync; canonical source is docs/audit/stage-matrix-1-67.json'
 $ErrorActionPreference = 'Stop'
 $root = (Get-Location).Path
 $path = Join-Path $root 'docs\audit\stage-matrix-1-67.json'

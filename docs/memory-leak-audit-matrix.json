@@ -1,9 +1,7 @@
 {
   "schemaVersion": 2,
   "stage": 49,
-  "basedOnMainSha": "8f181c7e8f2344f0c78dcd19a3151547f885aa17",
   "scope": "Memory-leak audit: listeners, timers and in-process caches for bot, dashboard and workers.",
-  "status": "PARTIAL",
   "findings": [
     {
       "id": "F-P49-01",
@@ -26,5 +24,10 @@
     "passes": 2,
     "required": 2,
     "rule": "PR #248 merged; main verified"
-  }
+  },
+  "basedOnMainSha": "2a7c048d1d1a1206d0774da26d70c363cc225fcf",
+  "status": "PARTIAL",
+  "residual": [
+    "Current-SHA RSS, heap, listeners and active handles must be sampled as a real series; the multi-hour soak remains Stage 51"
+  ]
 }

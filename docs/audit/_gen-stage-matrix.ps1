@@ -1,3 +1,4 @@
+throw 'HISTORICAL_AUDIT_SCRIPT_DISABLED: use npm run audit:sync; canonical source is docs/audit/stage-matrix-1-67.json'
 $ErrorActionPreference = 'Stop'
 $freeze = '48bbcfface38068bc71ad7bcc5c1dd87616da514'
 $stages = New-Object System.Collections.Generic.List[object]
