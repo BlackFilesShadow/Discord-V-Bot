@@ -435,11 +435,17 @@
       "name": "API/security-38",
       "status": "PARTIAL",
       "evidence": [
-        "architecture-gates"
+        "tests/security/idempotencyClaim.test.ts",
+        "tests/security/dashboardApiValidationRaceIdempotencyMatrixArchitecture.test.ts",
+        "tests/runtime/dashboardMutationIdempotencyRetryGate.test.ts",
+        "src/dashboard/middleware/idempotency.ts",
+        "docs/dashboard-api-validation-race-idempotency-matrix.json"
       ],
       "findings": [
-        "F-S4-03"
-      ]
+        "residual-full-route-validation-and-domain-race-matrix"
+      ],
+      "note": "Runtime idempotency fail-closed matrix (key length, body/route isolation, parallel, replay, stale CAS, store-down 503); residual full HTTP route validation + domain race",
+      "exactSha": "88d4761696a3625c060f840a2df4c19cab950085"
     },
     {
       "id": 39,

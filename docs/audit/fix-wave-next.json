@@ -1,10 +1,10 @@
 {
-  "generatedAt": "2026-08-22T03:45:04.595Z",
-  "baseSha": "eb32f0089a90502d0c26a371249df993a845634a",
+  "generatedAt": "2026-08-22T04:16:41.082Z",
+  "baseSha": "88d4761696a3625c060f840a2df4c19cab950085",
   "waves": [
     {
       "name": "wave-b-api-security-36-45",
-      "status": "in_progress",
+      "status": "in_progress_36_37_38_runtime",
       "findings": [
         "F-S4-03"
       ]
