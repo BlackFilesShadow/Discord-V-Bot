@@ -1,11 +1,35 @@
 {
   "schemaVersion": 1,
   "stage": 48,
-  "basedOnMainSha": "c6472086",
-  "scope": "AI & Nitrado performance baseline: latency hooks, timeout/retry/fallback contracts, rate limits, no scope softening via cache.",
+  "basedOnMainSha": "ce68d05e6074ce95d7e417d1c063bddfa0e17206",
+  "scope": "AI & Nitrado performance baseline: latency hooks, timeout/retry/fallback contracts, rate limits, circuit breaker, no scope softening via cache.",
   "contracts": {
-    "aiTimeouts": "provider clients must define timeouts",
-    "nitrado": "API client retries bounded",
-    "scope": "cache must not bypass guild/slot scope"
+    "aiTimeouts": "provider HTTP timeout 30000ms in aiHandler",
+    "ai429": "is429 + rateLimit recordCall + parseRetryAfter",
+    "aiTransientRetry": "one bounded retry on transient network errors",
+    "aiMetrics": "aiProviderLatencyHistogram + aiFallbackCounter",
+    "nitrado": "axios timeout 15000; attempts <= 3; parseRetryAfterMs on 429",
+    "nitradoCircuit": "NitradoCircuitBreaker CLOSED/OPEN/HALF_OPEN",
+    "scope": "economyScopeGuard requireSafeDashboardEconomyScope intact"
+  },
+  "cases": [
+    { "id": "nitrado-timeout-15s", "status": "runtime-verified" },
+    { "id": "nitrado-retry-bounded-3", "status": "runtime-verified" },
+    { "id": "nitrado-429-retry-after", "status": "runtime-verified" },
+    { "id": "nitrado-circuit-breaker", "status": "runtime-verified" },
+    { "id": "ai-timeout-30s", "status": "runtime-verified" },
+    { "id": "ai-429-and-transient", "status": "runtime-verified" },
+    { "id": "ai-latency-fallback-metrics", "status": "runtime-verified" },
+    { "id": "scope-guard-intact", "status": "runtime-verified" },
+    { "id": "live-provider-rtt", "status": "residual-needs-credentials" }
+  ],
+  "residual": [
+    "No live AI/Nitrado RTT in CI without secrets and rate budget",
+    "Synthetic local timer samples are not external dependency evidence"
+  ],
+  "verification": {
+    "probeScript": "scripts/runtime-baselines-46-48.mjs",
+    "artifact": "docs/audit/performance/<sha>/48-external-deps.json",
+    "architectureTest": "tests/security/runtimeBaselines4648Architecture.test.ts"
   }
 }

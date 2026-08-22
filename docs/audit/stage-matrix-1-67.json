@@ -564,39 +564,56 @@
     },
     {
       "id": 46,
-      "name": "perf-46",
+      "name": "runtime-baseline-46",
       "status": "PARTIAL",
       "evidence": [
+        "scripts/runtime-baselines-46-48.mjs",
+        "docs/runtime-baseline-46-matrix.json",
+        "tests/security/runtimeBaselines4648Architecture.test.ts",
         "docs/audit/performance/README.md"
       ],
       "findings": [
-        "F-S4-06",
-        "no-docker-host"
-      ]
+        "residual-full-bot-rss",
+        "F-S4-06"
+      ],
+      "note": "In-process RSS/heap/CPU/ELD sampled; metrics module pinned; full gateway RSS residual",
+      "exactSha": "ce68d05e6074ce95d7e417d1c063bddfa0e17206"
     },
     {
       "id": 47,
-      "name": "perf-47",
+      "name": "data-plane-baseline-47",
       "status": "PARTIAL",
       "evidence": [
-        "docs/audit/performance/README.md"
+        "scripts/runtime-baselines-46-48.mjs",
+        "docs/data-plane-baseline-47-matrix.json",
+        "src/database/prisma.ts",
+        "tests/security/runtimeBaselines4648Architecture.test.ts"
       ],
       "findings": [
-        "F-S4-06",
-        "no-docker-host"
-      ]
+        "residual-live-pool-saturation",
+        "F-S4-06"
+      ],
+      "note": "Prisma pool/tx contracts + Redis/worker surface verified; live DB/Redis optional via env",
+      "exactSha": "ce68d05e6074ce95d7e417d1c063bddfa0e17206"
     },
     {
       "id": 48,
-      "name": "perf-48",
+      "name": "ai-nitrado-perf-48",
       "status": "PARTIAL",
       "evidence": [
-        "docs/audit/performance/README.md"
+        "scripts/runtime-baselines-46-48.mjs",
+        "docs/ai-nitrado-performance-baseline-matrix.json",
+        "src/modules/nitrado/nitradoClient.ts",
+        "src/modules/nitrado/circuitBreaker.ts",
+        "src/utils/metrics.ts",
+        "tests/security/runtimeBaselines4648Architecture.test.ts"
       ],
       "findings": [
-        "F-S4-06",
-        "no-docker-host"
-      ]
+        "residual-live-provider-rtt",
+        "F-S4-06"
+      ],
+      "note": "Timeouts/retry/circuit/metrics contracts runtime-pinned; no live AI/Nitrado RTT in CI",
+      "exactSha": "ce68d05e6074ce95d7e417d1c063bddfa0e17206"
     },
     {
       "id": 49,
