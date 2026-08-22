@@ -407,46 +407,43 @@
     {
       "id": 36,
       "name": "api-authentication-36",
-      "status": "PARTIAL",
+      "status": "VERIFIED",
       "evidence": [
         "docs/dashboard-api-authentication-matrix.json",
         "tests/dashboard/requireAuthSessionGate.test.ts",
-        "tests/security/dashboardSecurityHttpDbIntegration.test.ts"
+        "tests/security/dashboardSecurityHttpDbIntegration.test.ts",
+        "docs/audit/security-api-ci-evidence-pr264-a31827d.json"
       ],
-      "findings": [
-        "residual-real-postgres-http-oauth-chain-awaits-ci"
-      ],
-      "note": "Canonical /api/me AuthN, revocation-authoritative status and OAuth rotation implemented; real Postgres HTTP chain must pass CI before promotion.",
+      "findings": [],
+      "note": "VERIFIED by the real HTTP+PostgreSQL OAuth callback, SID rotation, revocation, /api/me and /auth/status chain in both successful complete Jest jobs on PR #264 evidence head a31827d1593b8ac79e74dc2dd69e81beb90142d9 (CI/CD 32590954868; Verification 2 32590954874).",
       "exactSha": "eb10b85130b4481e361a234cbb005b740ebd40b3"
     },
     {
       "id": 37,
       "name": "api-authorization-idor-37",
-      "status": "PARTIAL",
+      "status": "VERIFIED",
       "evidence": [
         "docs/dashboard-api-authorization-scope-idor-matrix.json",
         "tests/dashboard/requireGuildPermissionIdorGate.test.ts",
-        "tests/security/dashboardSecurityHttpDbIntegration.test.ts"
+        "tests/security/dashboardSecurityHttpDbIntegration.test.ts",
+        "docs/audit/security-api-ci-evidence-pr264-a31827d.json"
       ],
-      "findings": [
-        "residual-real-postgres-foreign-id-http-chain-awaits-ci"
-      ],
-      "note": "Runtime guild/membership gates are green; the new foreign-ID HTTP+Postgres mutation proof must pass CI before promotion.",
+      "findings": [],
+      "note": "VERIFIED by the real HTTP+PostgreSQL foreign-guild TicketTemplate IDOR denial and unchanged-row assertion in both successful complete Jest jobs on PR #264 evidence head a31827d1593b8ac79e74dc2dd69e81beb90142d9 (CI/CD 32590954868; Verification 2 32590954874).",
       "exactSha": "eb10b85130b4481e361a234cbb005b740ebd40b3"
     },
     {
       "id": 38,
       "name": "api-validation-race-idempotency-38",
-      "status": "PARTIAL",
+      "status": "VERIFIED",
       "evidence": [
         "docs/dashboard-api-validation-race-idempotency-matrix.json",
         "tests/security/idempotencyClaim.test.ts",
-        "tests/security/dashboardSecurityHttpDbIntegration.test.ts"
+        "tests/security/dashboardSecurityHttpDbIntegration.test.ts",
+        "docs/audit/security-api-ci-evidence-pr264-a31827d.json"
       ],
-      "findings": [
-        "residual-real-postgres-concurrent-claim-awaits-ci"
-      ],
-      "note": "Unit HTTP race/store-down coverage is green; the real PostgreSQL concurrent claim proof must pass CI before promotion.",
+      "findings": [],
+      "note": "VERIFIED by the real concurrent HTTP+PostgreSQL claim test proving one claim and exactly one AuditLog side effect in both successful complete Jest jobs on PR #264 evidence head a31827d1593b8ac79e74dc2dd69e81beb90142d9 (CI/CD 32590954868; Verification 2 32590954874).",
       "exactSha": "eb10b85130b4481e361a234cbb005b740ebd40b3"
     },
     {
@@ -477,16 +474,15 @@
     {
       "id": 41,
       "name": "csrf-xss-41",
-      "status": "PARTIAL",
+      "status": "VERIFIED",
       "evidence": [
         "docs/csrf-xss-matrix.json",
         "tests/security/csrfPkceRuntime.test.ts",
-        "tests/security/csrfMutationOrigin.test.ts"
+        "tests/security/csrfMutationOrigin.test.ts",
+        "docs/audit/security-api-ci-evidence-pr264-a31827d.json"
       ],
-      "findings": [
-        "residual-origin-and-ast-gates-await-ci"
-      ],
-      "note": "Exact browser mutation Origin gate and TypeScript-AST sink scan are locally green; CI confirmation is pending.",
+      "findings": [],
+      "note": "VERIFIED by successful Origin/Fetch-Metadata regression tests and the TypeScript-AST sink scan in both complete Jest jobs on PR #264 evidence head a31827d1593b8ac79e74dc2dd69e81beb90142d9 (CI/CD 32590954868; Verification 2 32590954874).",
       "exactSha": "eb10b85130b4481e361a234cbb005b740ebd40b3"
     },
     {
@@ -505,16 +501,15 @@
     {
       "id": 43,
       "name": "session-oauth-43",
-      "status": "PARTIAL",
+      "status": "VERIFIED",
       "evidence": [
         "docs/session-oauth-security-matrix.json",
         "tests/dashboard/requireAuthSessionGate.test.ts",
-        "tests/security/dashboardSecurityHttpDbIntegration.test.ts"
+        "tests/security/dashboardSecurityHttpDbIntegration.test.ts",
+        "docs/audit/security-api-ci-evidence-pr264-a31827d.json"
       ],
-      "findings": [
-        "residual-real-postgres-oauth-session-rotation-awaits-ci"
-      ],
-      "note": "Rotation, revoke, expiry, cross-user and store-failure paths are implemented; real HTTP+Postgres callback proof awaits CI, live Discord remains Stage 67.",
+      "findings": [],
+      "note": "VERIFIED by the real HTTP+PostgreSQL OAuth callback/SID rotation and token-cache revocation chain in both successful complete Jest jobs on PR #264 evidence head a31827d1593b8ac79e74dc2dd69e81beb90142d9 (CI/CD 32590954868; Verification 2 32590954874). Live Discord OAuth remains isolated to Stage 67.",
       "exactSha": "eb10b85130b4481e361a234cbb005b740ebd40b3"
     },
     {
@@ -832,8 +827,8 @@
   ],
   "auditFreezeSha": "eb10b85130b4481e361a234cbb005b740ebd40b3",
   "counts": {
-    "VERIFIED": 35,
-    "PARTIAL": 31,
+    "VERIFIED": 40,
+    "PARTIAL": 26,
     "FAILED": 0,
     "BLOCKED": 1
   }

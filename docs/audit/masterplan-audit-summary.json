@@ -4,12 +4,12 @@
   "auditFreezeSha": "eb10b85130b4481e361a234cbb005b740ebd40b3",
   "stagesTotal": 67,
   "counts": {
-    "VERIFIED": 35,
-    "PARTIAL": 31,
+    "VERIFIED": 40,
+    "PARTIAL": 26,
     "FAILED": 0,
     "BLOCKED": 1
   },
-  "score": 52,
+  "score": 60,
   "productionReady": false,
   "sourceOfTruth": "docs/audit/stage-matrix-1-67.json",
   "notes": "Derived deterministically; PARTIAL/BLOCKED stages retain explicit residuals and are never promoted by aggregation."

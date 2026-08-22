@@ -27,15 +27,14 @@
     },
     {
       "id": "oauth-session-fixation-rotation",
-      "status": "ci-pending-real-postgres"
+      "status": "runtime-verified-ci"
     },
     {
       "id": "token-cache-cannot-bypass-db-revocation",
-      "status": "ci-pending-real-postgres"
+      "status": "runtime-verified-ci"
     }
   ],
   "basedOnMainSha": "eb10b85130b4481e361a234cbb005b740ebd40b3",
-  "residual": [
-    "Real PostgreSQL OAuth callback/SID rotation/revocation chain must pass CI on this SHA; live Discord OAuth is Stage 67"
-  ]
+  "ciEvidence": "docs/audit/security-api-ci-evidence-pr264-a31827d.json",
+  "residual": []
 }

@@ -1,0 +1,61 @@
+{
+  "schemaVersion": 1,
+  "pullRequest": 264,
+  "technicalSha": "eb10b85130b4481e361a234cbb005b740ebd40b3",
+  "evidenceHeadSha": "a31827d1593b8ac79e74dc2dd69e81beb90142d9",
+  "scope": [36, 37, 38, 41, 43],
+  "runs": [
+    {
+      "workflow": "CI/CD Pipeline",
+      "runId": 32590954868,
+      "attempt": 1,
+      "event": "pull_request",
+      "headSha": "a31827d1593b8ac79e74dc2dd69e81beb90142d9",
+      "status": "completed",
+      "conclusion": "success",
+      "url": "https://github.com/BlackFilesShadow/Discord-V-Bot/actions/runs/32590954868",
+      "createdAt": "2026-08-22T18:30:43Z",
+      "updatedAt": "2026-08-22T18:35:06Z",
+      "jobs": [
+        { "jobId": 97074637706, "name": "Security Audit", "conclusion": "success" },
+        { "jobId": 97074637776, "name": "Tests", "conclusion": "success", "proof": "PostgreSQL service, migrations, DB lifecycle and the complete Jest suite ran successfully." },
+        { "jobId": 97074637820, "name": "Lint & Build", "conclusion": "success", "proof": "lint:all and the TypeScript build ran successfully." },
+        { "jobId": 97074907823, "name": "Docker Build", "conclusion": "success" }
+      ]
+    },
+    {
+      "workflow": "Verification 2",
+      "runId": 32590954874,
+      "attempt": 1,
+      "event": "pull_request",
+      "headSha": "a31827d1593b8ac79e74dc2dd69e81beb90142d9",
+      "status": "completed",
+      "conclusion": "success",
+      "url": "https://github.com/BlackFilesShadow/Discord-V-Bot/actions/runs/32590954874",
+      "createdAt": "2026-08-22T18:30:43Z",
+      "updatedAt": "2026-08-22T18:41:23Z",
+      "jobs": [
+        { "jobId": 97074598953, "name": "Gate 2 · Lint & Build", "conclusion": "success" },
+        { "jobId": 97074599077, "name": "Gate 2 · Playwright", "conclusion": "success" },
+        { "jobId": 97074599089, "name": "Gate 2 · Security / SBOM", "conclusion": "success" },
+        { "jobId": 97074599093, "name": "Gate 2 · Tests / DB Lifecycle", "conclusion": "success", "proof": "PostgreSQL service, migrations, DB lifecycle and the complete Jest suite ran successfully." }
+      ]
+    },
+    {
+      "workflow": "E2E (Playwright)",
+      "runId": 32590954869,
+      "attempt": 1,
+      "event": "pull_request",
+      "headSha": "a31827d1593b8ac79e74dc2dd69e81beb90142d9",
+      "status": "completed",
+      "conclusion": "success",
+      "url": "https://github.com/BlackFilesShadow/Discord-V-Bot/actions/runs/32590954869",
+      "createdAt": "2026-08-22T18:30:43Z",
+      "updatedAt": "2026-08-22T18:44:51Z",
+      "jobs": [
+        { "jobId": 97074598943, "name": "Playwright Smoke", "conclusion": "success" }
+      ]
+    }
+  ],
+  "result": "All three required full workflows completed successfully on the same immutable evidence head. The real PostgreSQL HTTP integration suite was part of both successful complete Jest runs."
+}

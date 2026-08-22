@@ -27,15 +27,14 @@
     },
     {
       "id": "cookie-mutation-origin",
-      "status": "runtime-verified-local"
+      "status": "runtime-verified-ci"
     },
     {
       "id": "dangerous-sink-ast-scan",
-      "status": "runtime-verified-local"
+      "status": "runtime-verified-ci"
     }
   ],
   "basedOnMainSha": "eb10b85130b4481e361a234cbb005b740ebd40b3",
-  "residual": [
-    "Origin and AST regression gates must pass CI on this SHA"
-  ]
+  "ciEvidence": "docs/audit/security-api-ci-evidence-pr264-a31827d.json",
+  "residual": []
 }

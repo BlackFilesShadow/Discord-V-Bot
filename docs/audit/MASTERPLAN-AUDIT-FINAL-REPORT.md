@@ -16,13 +16,13 @@ Do not edit this report, the scoreboard, or the summary manually.
 
 | Status | Count |
 | --- | ---: |
-| VERIFIED | 35 |
-| PARTIAL | 31 |
+| VERIFIED | 40 |
+| PARTIAL | 26 |
 | FAILED | 0 |
 | BLOCKED | 1 |
 | **TOTAL** | **67** |
 
-**Current score: 52 / 100**
+**Current score: 60 / 100**
 
 **PRODUCTION READY: NO**
 
@@ -65,14 +65,14 @@ Do not edit this report, the scoreboard, or the summary manually.
 | 33 | PARTIAL | stage-33 | — | residual-no-live-db-oauth-side-effect-in-playwright |
 | 34 | PARTIAL | stage-34 | — | residual-no-live-db-oauth-side-effect-in-playwright |
 | 35 | PARTIAL | stage-35 | — | residual-no-live-db-oauth-side-effect-in-playwright |
-| 36 | PARTIAL | api-authentication-36 | `eb10b85130b4481e361a234cbb005b740ebd40b3` | residual-real-postgres-http-oauth-chain-awaits-ci |
-| 37 | PARTIAL | api-authorization-idor-37 | `eb10b85130b4481e361a234cbb005b740ebd40b3` | residual-real-postgres-foreign-id-http-chain-awaits-ci |
-| 38 | PARTIAL | api-validation-race-idempotency-38 | `eb10b85130b4481e361a234cbb005b740ebd40b3` | residual-real-postgres-concurrent-claim-awaits-ci |
+| 36 | VERIFIED | api-authentication-36 | `eb10b85130b4481e361a234cbb005b740ebd40b3` | VERIFIED by the real HTTP+PostgreSQL OAuth callback, SID rotation, revocation, /api/me and /auth/status chain in both successful complete Jest jobs on PR #264 evidence head a31827d1593b8ac79e74dc2dd69e81beb90142d9 (CI/CD 32590954868; Verification 2 32590954874). |
+| 37 | VERIFIED | api-authorization-idor-37 | `eb10b85130b4481e361a234cbb005b740ebd40b3` | VERIFIED by the real HTTP+PostgreSQL foreign-guild TicketTemplate IDOR denial and unchanged-row assertion in both successful complete Jest jobs on PR #264 evidence head a31827d1593b8ac79e74dc2dd69e81beb90142d9 (CI/CD 32590954868; Verification 2 32590954874). |
+| 38 | VERIFIED | api-validation-race-idempotency-38 | `eb10b85130b4481e361a234cbb005b740ebd40b3` | VERIFIED by the real concurrent HTTP+PostgreSQL claim test proving one claim and exactly one AuditLog side effect in both successful complete Jest jobs on PR #264 evidence head a31827d1593b8ac79e74dc2dd69e81beb90142d9 (CI/CD 32590954868; Verification 2 32590954874). |
 | 39 | VERIFIED | git-history-secret-hygiene-39 | `eaf8b42bb5d1fc194416324606f146196d04c8c0` | Gitleaks full-history blocking on CI security job; main clean |
 | 40 | VERIFIED | roles-permission-attack-40 | `2a7c048d1d1a1206d0774da26d70c363cc225fcf` | Permission/IDOR + stale grant + DEV/BotAdmin identity gates runtime-verified |
-| 41 | PARTIAL | csrf-xss-41 | `eb10b85130b4481e361a234cbb005b740ebd40b3` | residual-origin-and-ast-gates-await-ci |
+| 41 | VERIFIED | csrf-xss-41 | `eb10b85130b4481e361a234cbb005b740ebd40b3` | VERIFIED by successful Origin/Fetch-Metadata regression tests and the TypeScript-AST sink scan in both complete Jest jobs on PR #264 evidence head a31827d1593b8ac79e74dc2dd69e81beb90142d9 (CI/CD 32590954868; Verification 2 32590954874). |
 | 42 | VERIFIED | ssrf-injection-path-42 | `2a7c048d1d1a1206d0774da26d70c363cc225fcf` | CI-local SSRF, SQL/command injection and path traversal contracts are closed. The explicitly external production-egress validation is transferred to Stage 67. |
-| 43 | PARTIAL | session-oauth-43 | `eb10b85130b4481e361a234cbb005b740ebd40b3` | residual-real-postgres-oauth-session-rotation-awaits-ci |
+| 43 | VERIFIED | session-oauth-43 | `eb10b85130b4481e361a234cbb005b740ebd40b3` | VERIFIED by the real HTTP+PostgreSQL OAuth callback/SID rotation and token-cache revocation chain in both successful complete Jest jobs on PR #264 evidence head a31827d1593b8ac79e74dc2dd69e81beb90142d9 (CI/CD 32590954868; Verification 2 32590954874). Live Discord OAuth remains isolated to Stage 67. |
 | 44 | VERIFIED | upload-webhook-security-44 | `3f8f281fb25d5e2dae1b1e933fde056b315b1d95` | Webhook HMAC/replay + upload path/size + MIME magic-bytes/content validation runtime-verified; residual empty |
 | 45 | VERIFIED | stage-45-deps-sbom-trivy | `2a7c048d1d1a1206d0774da26d70c363cc225fcf` | Root/dashboard HIGH audit + SBOM + Trivy CRITICAL/HIGH blocking + Vite 6.4.3 on main |
 | 46 | PARTIAL | runtime-baseline-i-46 | — | residual-current-sha-rss-heap-cpu-gc-eventloop-series; F-S4-06 |
@@ -109,11 +109,6 @@ Do not edit this report, the scoreboard, or the summary manually.
 - Stage 33 (PARTIAL): residual-no-live-db-oauth-side-effect-in-playwright
 - Stage 34 (PARTIAL): residual-no-live-db-oauth-side-effect-in-playwright
 - Stage 35 (PARTIAL): residual-no-live-db-oauth-side-effect-in-playwright
-- Stage 36 (PARTIAL): residual-real-postgres-http-oauth-chain-awaits-ci
-- Stage 37 (PARTIAL): residual-real-postgres-foreign-id-http-chain-awaits-ci
-- Stage 38 (PARTIAL): residual-real-postgres-concurrent-claim-awaits-ci
-- Stage 41 (PARTIAL): residual-origin-and-ast-gates-await-ci
-- Stage 43 (PARTIAL): residual-real-postgres-oauth-session-rotation-awaits-ci
 - Stage 46 (PARTIAL): residual-current-sha-rss-heap-cpu-gc-eventloop-series; F-S4-06
 - Stage 47 (PARTIAL): residual-current-sha-db-redis-worker-queue-measurements; F-S4-06
 - Stage 48 (PARTIAL): residual-live-provider-rtt; F-S4-06

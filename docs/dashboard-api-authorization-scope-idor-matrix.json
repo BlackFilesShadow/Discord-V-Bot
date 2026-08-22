@@ -89,7 +89,7 @@
       "attack": "Owner of guild A submits a guild-B TicketTemplate id to the guild-A update route",
       "expected": "404 before update; foreign PostgreSQL row remains unchanged",
       "evidence": "tests/security/dashboardSecurityHttpDbIntegration.test.ts",
-      "status": "ci-pending-real-postgres"
+      "status": "runtime-verified-ci"
     }
   ],
   "roleMatrix": [
@@ -100,7 +100,6 @@
     { "role": "Bot Admin", "access": "global bot-admin after session; guild ops explicit guildId", "status": "verified" }
   ],
   "basedOnMainSha": "eb10b85130b4481e361a234cbb005b740ebd40b3",
-  "residual": [
-    "Real PostgreSQL foreign-ID HTTP route proof must pass CI on this SHA"
-  ]
+  "ciEvidence": "docs/audit/security-api-ci-evidence-pr264-a31827d.json",
+  "residual": []
 }

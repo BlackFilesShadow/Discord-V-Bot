@@ -76,11 +76,10 @@
       "id": "postgres-atomic-http-claim",
       "expected": "Two concurrent identical HTTP mutations create one PostgreSQL claim and exactly one side-effect row",
       "evidence": "tests/security/dashboardSecurityHttpDbIntegration.test.ts",
-      "status": "ci-pending-real-postgres"
+      "status": "runtime-verified-ci"
     }
   ],
   "basedOnMainSha": "eb10b85130b4481e361a234cbb005b740ebd40b3",
-  "residual": [
-    "Real PostgreSQL concurrent claim proof must pass CI on this SHA"
-  ]
+  "ciEvidence": "docs/audit/security-api-ci-evidence-pr264-a31827d.json",
+  "residual": []
 }

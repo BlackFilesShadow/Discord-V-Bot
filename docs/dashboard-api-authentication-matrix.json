@@ -46,14 +46,14 @@
       "scenario": "GET /auth/callback",
       "expected": "Validate state; create user/session; rotate Express SID; session.save before redirect",
       "evidence": "src/dashboard/routes/auth.ts; tests/security/dashboardSecurityHttpDbIntegration.test.ts",
-      "status": "ci-pending-real-postgres"
+      "status": "runtime-verified-ci"
     },
     {
       "id": "session-status-false",
       "scenario": "Inactive/expired Prisma session",
       "expected": "/auth/status authenticated:false",
       "evidence": "auth.ts /status; tests/security/dashboardSecurityHttpDbIntegration.test.ts",
-      "status": "ci-pending-real-postgres"
+      "status": "runtime-verified-ci"
     },
     {
       "id": "session-revoked-api",
@@ -99,7 +99,6 @@
     }
   ],
   "basedOnMainSha": "eb10b85130b4481e361a234cbb005b740ebd40b3",
-  "residual": [
-    "Real PostgreSQL OAuth callback, SID rotation, revocation and /api/me chain must pass CI on this SHA"
-  ]
+  "ciEvidence": "docs/audit/security-api-ci-evidence-pr264-a31827d.json",
+  "residual": []
 }
