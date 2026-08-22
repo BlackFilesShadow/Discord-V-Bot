@@ -1,5 +1,5 @@
 {
-  "generatedAt": "2026-08-22T15:47:45.592Z",
+  "generatedAt": "2026-08-22T16:33:42.720Z",
   "finalAuditedSha": "eaf8b42bb5d1fc194416324606f146196d04c8c0",
   "stages": [
     {
@@ -500,20 +500,16 @@
     },
     {
       "id": 42,
-      "name": "API/security-42",
+      "name": "ssrf-injection-path-42",
       "status": "PARTIAL",
       "evidence": [
-        "tests/security/ssrf.test.ts",
-        "tests/security/pathSafetyBoundary.test.ts",
-        "tests/modules/safeUploadValidation.test.ts",
-        "tests/security/ssrfInjectionPathTraversalMatrixArchitecture.test.ts",
-        "docs/ssrf-injection-path-traversal-matrix.json"
+        "docs/ssrf-injection-path-traversal-matrix.json",
+        "tests/security/sqlCommandInjectionSurfaceRuntime.test.ts",
+        "tests/security/ssrf.test.ts"
       ],
-      "findings": [
-        "residual-route-level-injection-matrix"
-      ],
-      "note": "SSRF host/protocol DENY + path boundary runtime; residual full SQL/command injection route matrix",
-      "exactSha": "9690db5ce22b4191d6ae184e6f7737fee23ea06e"
+      "findings": [],
+      "note": "SQL/command surface scan + SSRF/path runtime green; residual live egress SSRF (Stage 67/staging)",
+      "exactSha": "3f8f281fb25d5e2dae1b1e933fde056b315b1d95"
     },
     {
       "id": 43,
@@ -532,20 +528,16 @@
     },
     {
       "id": 44,
-      "name": "API/security-44",
-      "status": "PARTIAL",
+      "name": "upload-webhook-security-44",
+      "status": "VERIFIED",
       "evidence": [
-        "tests/security/webhookRawBody.test.ts",
-        "tests/security/webhookReplayDelivery.test.ts",
-        "tests/modules/safeUploadValidation.test.ts",
-        "tests/security/uploadWebhookSecurityMatrixArchitecture.test.ts",
-        "docs/upload-webhook-security-matrix.json"
+        "docs/upload-webhook-security-matrix.json",
+        "tests/security/uploadMimeContentValidationRuntime.test.ts",
+        "tests/security/webhookRawBody.test.ts"
       ],
-      "findings": [
-        "residual-full-mime-upload-provider-matrix"
-      ],
-      "note": "Webhook HMAC/timestamp/replay + upload path/size runtime; residual full MIME/content validation matrix",
-      "exactSha": "9690db5ce22b4191d6ae184e6f7737fee23ea06e"
+      "findings": [],
+      "note": "Webhook HMAC/replay + upload path/size + MIME magic-bytes/content validation runtime-verified; residual empty",
+      "exactSha": "3f8f281fb25d5e2dae1b1e933fde056b315b1d95"
     },
     {
       "id": 45,
@@ -865,8 +857,8 @@
   ],
   "auditFreezeSha": "eaf8b42bb5d1fc194416324606f146196d04c8c0",
   "counts": {
-    "VERIFIED": 32,
-    "PARTIAL": 34,
+    "VERIFIED": 33,
+    "PARTIAL": 33,
     "FAILED": 0,
     "BLOCKED": 1
   }

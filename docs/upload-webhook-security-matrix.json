@@ -1,21 +1,32 @@
 {
-  "schemaVersion": 1,
+  "schemaVersion": 2,
   "stage": 44,
-  "basedOnMainSha": "9690db5ce22b4191d6ae184e6f7737fee23ea06e",
-  "scope": "Upload type/size/path/storage; webhook signature/replay via raw body HMAC.",
+  "basedOnMainSha": "3f8f281fb25d5e2dae1b1e933fde056b315b1d95",
+  "scope": "Upload type/size/path/storage; webhook signature/replay via raw body HMAC; MIME/content validation.",
   "contracts": {
     "static": "only factions/media public",
     "private": "dev uploads not static",
-    "webhook": "rawBody HMAC verified"
+    "webhook": "rawBody HMAC verified + timestamp + replay claim",
+    "uploadPath": "lexical + realpath root bound; size cap 50MB on validate",
+    "mime": "image magic-bytes vs declared mime; xml/json structure validation; unknown ext rejected"
   },
   "cases": [
-    {
-      "id": "static-not-private",
-      "status": "runtime-verified"
-    },
-    {
-      "id": "webhook-rawbody",
-      "status": "runtime-verified"
-    }
-  ]
+    { "id": "static-not-private", "status": "runtime-verified" },
+    { "id": "webhook-rawbody", "status": "runtime-verified" },
+    { "id": "webhook-replay-claim", "status": "runtime-verified" },
+    { "id": "upload-path-size", "status": "runtime-verified" },
+    { "id": "mime-magic-bytes", "status": "runtime-verified" },
+    { "id": "content-xml-json-unknown", "status": "runtime-verified" }
+  ],
+  "evidence": {
+    "webhook": [
+      "tests/security/webhookRawBody.test.ts",
+      "tests/security/webhookReplayDelivery.test.ts"
+    ],
+    "upload": [
+      "tests/modules/safeUploadValidation.test.ts",
+      "tests/security/uploadMimeContentValidationRuntime.test.ts"
+    ]
+  },
+  "residual": []
 }
