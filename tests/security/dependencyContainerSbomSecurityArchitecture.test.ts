@@ -10,9 +10,13 @@ const m = JSON.parse(r('docs/dependency-container-sbom-security-matrix.json')) a
   verification: {
     sbomBlocking: boolean;
     rootHighBlocking: boolean;
+    dashboardFullHighBlocking?: boolean;
+    trivyCriticalBlocking?: boolean;
+    trivyHighBlocking?: boolean;
     overridePackage: string;
     overrideVersion: string;
   };
+  residual?: unknown[];
 };
 const docker = r('Dockerfile');
 const pkg = JSON.parse(r('package.json')) as {
@@ -27,12 +31,19 @@ describe('Stage 45 dependency container SBOM security', () => {
     expect(m.stage).toBe(45);
     expect(m.verification.sbomBlocking).toBe(true);
     expect(m.verification.rootHighBlocking).toBe(true);
+    expect(m.verification.dashboardFullHighBlocking).toBe(true);
+    expect(m.verification.trivyCriticalBlocking).toBe(true);
+    expect(m.verification.trivyHighBlocking).toBe(true);
     expect(m.contracts.sbom).toMatch(/blocking/i);
+    expect(m.contracts.trivyHigh).toMatch(/blocking/i);
+    expect(m.residual ?? []).toEqual([]);
     expect(m.cases.map((c) => c.id)).toEqual(
       expect.arrayContaining([
-        'root-audit-high-zero-via-override',
+        'root-audit-high-zero',
+        'dashboard-full-high-zero-vite-6-4-3',
         'sbom-generation-blocking-ci',
         'deepmerge-ts-override-ge-8',
+        'trivy-image-high-blocking',
       ]),
     );
   });
@@ -72,7 +83,7 @@ describe('Stage 45 dependency container SBOM security', () => {
     expect(ci).toMatch(/if-no-files-found:\s*error/);
   });
 
-  it('Docker job builds image on every run and blocks Trivy CRITICAL findings', () => {
+  it('Docker job builds image on every run and blocks Trivy CRITICAL and HIGH findings', () => {
     expect(ci).toMatch(/name:\s*Docker Build/);
     // no longer main-only skip for the job itself
     const dockerJob = ci.match(/docker:\n[\s\S]*?(?=\n  main-gate-status:)/)?.[0] ?? '';
@@ -81,8 +92,12 @@ describe('Stage 45 dependency container SBOM security', () => {
     expect(dockerJob).toMatch(/Trivy image scan \(CRITICAL blocking\)/);
     expect(dockerJob).toMatch(/aquasecurity\/trivy-action@v0\./);
     expect(dockerJob).toMatch(/severity:\s*CRITICAL/);
-    expect(dockerJob).toMatch(/exit-code:\s*'1'/);
-    expect(dockerJob).toMatch(/Trivy image scan \(HIGH report\)/);
+    expect(dockerJob).toMatch(/Trivy image scan \(HIGH blocking\)/);
+    expect(dockerJob).toMatch(/severity:\s*HIGH/);
+    expect(dockerJob).not.toMatch(/continue-on-error:\s*true/);
+    const highBlock = dockerJob.match(/- name: Trivy image scan \(HIGH blocking\)[\s\S]*$/)?.[0] ?? '';
+    expect(highBlock).toMatch(/exit-code:\s*'1'/);
+    expect(highBlock).not.toMatch(/exit-code:\s*'0'/);
   });
 
   it('Gate 2 Security/SBOM is blocking for root high and SBOM artifacts', () => {
