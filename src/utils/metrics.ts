@@ -66,6 +66,39 @@ export const dbQueryHistogram = new Histogram({
   registers: [metricsRegistry],
 });
 
+export const nitradoJobQueueDepthGauge = new Gauge({
+  name: 'vbot_nitrado_job_queue_depth',
+  help: 'Persistierte Nitrado-Outbox-Jobs nach festem Status',
+  labelNames: ['status'] as const,
+  registers: [metricsRegistry],
+});
+
+export const nitradoJobOldestPendingAgeGauge = new Gauge({
+  name: 'vbot_nitrado_job_oldest_pending_age_seconds',
+  help: 'Alter des aeltesten noch nicht abgeschlossenen Nitrado-Outbox-Jobs in Sekunden',
+  registers: [metricsRegistry],
+});
+
+export const nitradoJobWorkerInFlightGauge = new Gauge({
+  name: 'vbot_nitrado_job_worker_in_flight',
+  help: 'Anzahl aktuell als RUNNING persistierter Nitrado-Outbox-Jobs',
+  registers: [metricsRegistry],
+});
+
+export type NitradoJobMetricStatus = 'PENDING' | 'RUNNING' | 'DONE' | 'FAILED' | 'DEAD';
+
+/** Schreibt einen vollstaendigen, niedrig-kardinalen Queue-Snapshot. */
+export function setNitradoJobQueueMetrics(
+  depths: Partial<Record<NitradoJobMetricStatus, number>>,
+  oldestPendingAgeSeconds: number,
+): void {
+  for (const status of ['PENDING', 'RUNNING', 'DONE', 'FAILED', 'DEAD'] as const) {
+    nitradoJobQueueDepthGauge.set({ status }, Math.max(0, depths[status] ?? 0));
+  }
+  nitradoJobOldestPendingAgeGauge.set(Math.max(0, oldestPendingAgeSeconds));
+  nitradoJobWorkerInFlightGauge.set(Math.max(0, depths.RUNNING ?? 0));
+}
+
 export const rateLimitedCounter = new Counter({
   name: 'vbot_rate_limited_total',
   help: 'Anzahl Rate-Limit-Treffer',

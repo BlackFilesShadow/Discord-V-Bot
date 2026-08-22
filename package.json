@@ -35,6 +35,7 @@
     "loadtest": "ts-node scripts/loadtest.ts",
     "perf:baselines-46-48": "node scripts/runtime-baselines-46-48.mjs",
     "perf:series-46-49": "node --expose-gc scripts/runtime-series-46-49.mjs",
+    "perf:data-plane-47": "node scripts/data-plane-baseline-47.mjs",
     "perf:load": "node scripts/perf-load-inprocess.mjs",
     "perf:soak": "node scripts/soak-test-smoke.mjs",
     "perf:chaos": "node scripts/chaos-smoke.mjs",

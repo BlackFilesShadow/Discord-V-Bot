@@ -14,6 +14,7 @@ import {
   guildGauge,
   wsLatencyGauge,
   dbQueryHistogram,
+  setNitradoJobQueueMetrics,
   rateLimitedCounter,
   timed,
 } from '../../src/utils/metrics';
@@ -28,6 +29,9 @@ describe('metrics', () => {
     expect(text).toMatch(/vbot_guilds/);
     expect(text).toMatch(/vbot_discord_ws_latency_ms/);
     expect(text).toMatch(/vbot_db_query_duration_seconds/);
+    expect(text).toMatch(/vbot_nitrado_job_queue_depth/);
+    expect(text).toMatch(/vbot_nitrado_job_oldest_pending_age_seconds/);
+    expect(text).toMatch(/vbot_nitrado_job_worker_in_flight/);
     expect(text).toMatch(/vbot_rate_limited_total/);
     // Default-Process-Metriken via collectDefaultMetrics({prefix:'vbot_'})
     expect(text).toMatch(/vbot_process_/);
@@ -48,6 +52,18 @@ describe('metrics', () => {
     const text = await metricsRegistry.metrics();
     expect(text).toMatch(/vbot_guilds 42/);
     expect(text).toMatch(/vbot_discord_ws_latency_ms 123/);
+  });
+
+  it('exportiert einen vollstaendigen niedrig-kardinalen Nitrado-Queue-Snapshot', async () => {
+    setNitradoJobQueueMetrics({ PENDING: 6, RUNNING: 2, DONE: 1, FAILED: 1, DEAD: 1 }, 12.5);
+    const text = await metricsRegistry.metrics();
+    expect(text).toMatch(/vbot_nitrado_job_queue_depth\{status="PENDING"\} 6/);
+    expect(text).toMatch(/vbot_nitrado_job_queue_depth\{status="RUNNING"\} 2/);
+    expect(text).toMatch(/vbot_nitrado_job_queue_depth\{status="DONE"\} 1/);
+    expect(text).toMatch(/vbot_nitrado_job_queue_depth\{status="FAILED"\} 1/);
+    expect(text).toMatch(/vbot_nitrado_job_queue_depth\{status="DEAD"\} 1/);
+    expect(text).toMatch(/vbot_nitrado_job_oldest_pending_age_seconds 12.5/);
+    expect(text).toMatch(/vbot_nitrado_job_worker_in_flight 2/);
   });
 
   it('timed() misst Dauer eines async-Calls', async () => {
