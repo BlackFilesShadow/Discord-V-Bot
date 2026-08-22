@@ -1,11 +1,29 @@
 {
-  "schemaVersion": 1,
+  "schemaVersion": 2,
   "stage": 56,
-  "basedOnMainSha": "45caf9cd",
-  "scope": "Dashboard bundle >500kB / code splitting.",
+  "basedOnMainSha": "f9f00881717ca49bd0f6cc85aa5a32556f6b409f",
+  "scope": "Dashboard bundle >500kB remediation via measured vendor + route code-splitting.",
+  "baselineBefore": {
+    "entryJsKbApprox": 1457,
+    "note": "single index chunk pulled DEV catalog icons + eager Server/BotAdmin/ServerSlot"
+  },
   "contracts": {
-    "lazyDev": "DEV_PAGES use React.lazy",
-    "manualChunks": "vite config may define vendor splits",
-    "measure": "vite build reports chunk sizes"
-  }
+    "lazyDevPages": "DEV_PAGES use React.lazy + dynamic import('./pages/dev/...')",
+    "lazyHeavyRoutes": "Server, ServerSlot, Dev, BotAdmin lazy-loaded",
+    "entryNoDevCatalogIcons": "App imports DEV_TOOL_SLUGS (icon-free), not full lucide catalog",
+    "manualChunks": "vite manualChunks: vendor-react/router/query/socket/lucide/misc",
+    "measureScript": "scripts/measure-dashboard-bundle.mjs requires entry <500kB + vendor split",
+    "artifact": "docs/audit/performance/<sha>/56-bundle.json"
+  },
+  "cases": [
+    { "id": "entry-under-500kb", "status": "runtime-verified" },
+    { "id": "vendor-manual-chunks", "status": "runtime-verified" },
+    { "id": "dev-route-lazy", "status": "runtime-verified" },
+    { "id": "heavy-pages-lazy", "status": "runtime-verified" },
+    { "id": "slug-catalog-parity", "status": "runtime-verified" }
+  ],
+  "residual": [
+    "Server.tsx / BotAdmin still large route chunks (~180–380kB) — further split optional",
+    "gzip figures from vite log; measure script uses raw bytes"
+  ]
 }

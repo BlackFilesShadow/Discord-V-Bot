@@ -719,17 +719,34 @@
     },
     {
       "id": 56,
-      "name": "stage-56",
+      "name": "dashboard-bundle-56",
       "status": "PARTIAL",
-      "evidence": [],
-      "findings": []
+      "evidence": [
+        "docs/dashboard-bundle-codesplit-matrix.json",
+        "dashboard-ui/vite.config.ts",
+        "dashboard-ui/src/App.tsx",
+        "scripts/measure-dashboard-bundle.mjs",
+        "tests/security/dashboardBundleCodesplitArchitecture.test.ts"
+      ],
+      "findings": [
+        "server-botadmin-route-chunks-still-large"
+      ],
+      "note": "Entry ~104kB after vendor+lazy split (was ~1457kB); residual large Server/BotAdmin route chunks",
+      "exactSha": "f9f00881717ca49bd0f6cc85aa5a32556f6b409f"
     },
     {
       "id": 57,
-      "name": "stage-57",
+      "name": "dead-code-57",
       "status": "PARTIAL",
-      "evidence": [],
-      "findings": []
+      "evidence": [
+        "docs/dead-code-legacy-cleanup-matrix.json",
+        "tests/security/deadCodeLegacyCleanupArchitecture.test.ts"
+      ],
+      "findings": [
+        "no-mass-delete-pending-coupling"
+      ],
+      "note": "Conservative policy; passport already removed; no speculative deletes",
+      "exactSha": "f9f00881717ca49bd0f6cc85aa5a32556f6b409f"
     },
     {
       "id": 58,

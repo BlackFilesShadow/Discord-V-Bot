@@ -1,19 +1,75 @@
 import fs from 'node:fs';
 import path from 'node:path';
+import { execFileSync } from 'node:child_process';
 
-const m = JSON.parse(fs.readFileSync(path.resolve('docs/dashboard-bundle-codesplit-matrix.json'), 'utf8'));
-const app = fs.readFileSync(path.resolve('dashboard-ui/src/App.tsx'), 'utf8');
-const vite = fs.existsSync(path.resolve('dashboard-ui/vite.config.ts'))
-  ? fs.readFileSync(path.resolve('dashboard-ui/vite.config.ts'), 'utf8')
-  : fs.readFileSync(path.resolve('dashboard-ui/vite.config.mts'), 'utf8');
+const r = (p: string) => fs.readFileSync(path.resolve(process.cwd(), p), 'utf8');
+const m = JSON.parse(r('docs/dashboard-bundle-codesplit-matrix.json')) as {
+  stage: number;
+  contracts: Record<string, string>;
+  cases: Array<{ id: string }>;
+};
+const app = r('dashboard-ui/src/App.tsx');
+const vite = r('dashboard-ui/vite.config.ts');
+const slugs = r('dashboard-ui/src/lib/devToolSlugs.ts');
+const catalog = r('dashboard-ui/src/lib/devToolsCatalog.ts');
 
 describe('Stage 56 dashboard bundle codesplit', () => {
-  it('uses lazy routes for DEV pages', () => {
+  it('documents measured split contracts', () => {
     expect(m.stage).toBe(56);
-    expect(app).toContain('lazy(');
+    expect(m.cases.map((c) => c.id)).toEqual(
+      expect.arrayContaining(['entry-under-500kb', 'vendor-manual-chunks', 'dev-route-lazy']),
+    );
+    expect(m.contracts.manualChunks).toMatch(/vendor-react/);
+    expect(r('tests/security/dashboardBundleCodesplitArchitecture.test.ts')).not.toMatch(
+      /test\.(only|skip)|describe\.(only|skip)/,
+    );
+  });
+
+  it('App lazy-loads DEV + heavy routes and avoids catalog icon import in entry', () => {
     expect(app).toContain('lazyPage');
-    expect(app).toContain('DEV_PAGES');
     expect(app).toContain("import('./pages/dev/");
-    expect(vite.length).toBeGreaterThan(50);
+    expect(app).toContain("import('./pages/ServerSlot')");
+    expect(app).toContain("import('./pages/BotAdmin')");
+    expect(app).toContain("import('./pages/Dev')");
+    expect(app).toContain('DEV_TOOL_SLUGS');
+    expect(app).not.toMatch(/from ['"].*devToolsCatalog['"]/);
+    expect(slugs).toContain('bot-status');
+  });
+
+  it('vite manualChunks splits major vendors', () => {
+    expect(vite).toContain('manualChunks');
+    expect(vite).toContain('vendor-react');
+    expect(vite).toContain('vendor-router');
+    expect(vite).toContain('vendor-lucide');
+  });
+
+  it('DEV_TOOL_SLUGS stays in parity with DEV_TOOLS catalog slugs', () => {
+    const slugList = [...slugs.matchAll(/'([a-z0-9-]+)'/g)].map((x) => x[1]);
+    const catalogSlugs = [...catalog.matchAll(/slug:\s*'([a-z0-9-]+)'/g)].map((x) => x[1]);
+    expect(slugList.sort()).toEqual(catalogSlugs.sort());
+  });
+
+  it('measure script enforces entry <500kB when assets present', () => {
+    const assets = path.resolve('src/dashboard/public/assets');
+    if (!fs.existsSync(assets)) {
+      // CI builds UI before tests in some jobs; still pin script contracts
+      const script = r('scripts/measure-dashboard-bundle.mjs');
+      expect(script).toContain('entryUnder500kb');
+      expect(script).toContain('500 * 1024');
+      return;
+    }
+    const raw = execFileSync(process.execPath, ['scripts/measure-dashboard-bundle.mjs'], {
+      encoding: 'utf8',
+      env: { ...process.env, WRITE_PERF_ARTIFACTS: '0' },
+    });
+    const start = raw.indexOf('{');
+    const end = raw.lastIndexOf('}');
+    const data = JSON.parse(raw.slice(start, end + 1)) as {
+      contracts: { entryUnder500kb: boolean; hasVendorSplit: boolean };
+      entry: { kb: number };
+    };
+    expect(data.contracts.entryUnder500kb).toBe(true);
+    expect(data.contracts.hasVendorSplit).toBe(true);
+    expect(data.entry.kb).toBeLessThan(500);
   });
 });
