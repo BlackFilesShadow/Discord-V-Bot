@@ -24,12 +24,14 @@
     { "id": "sbom-generation-blocking-gate2", "status": "runtime-verified" },
     { "id": "deepmerge-ts-override-ge-8", "status": "runtime-verified" },
     { "id": "passport-discord-removed-stage-54", "status": "runtime-verified" },
-    { "id": "container-image-build-main", "status": "ci-wired" },
+    { "id": "container-image-build-pr-and-main", "status": "runtime-verified" },
+    { "id": "trivy-image-critical-blocking", "status": "runtime-verified" },
+    { "id": "trivy-image-high-report", "status": "runtime-verified" },
     { "id": "dashboard-dev-vite-esbuild-high-report-only", "status": "residual-dev-only" }
   ],
   "residual": [
     "Dashboard full (with dev) audit may report vite/esbuild HIGH — report-only; not in production omit=dev tree",
-    "No image vulnerability scanner (trivy/grype) wired yet — Stage 45 residual for container CVE scan",
+    "Container HIGH CVEs are report-only until base-image/policy accepts blocking HIGH",
     "passport-discord removed — see Stage 54"
   ],
   "verification": {

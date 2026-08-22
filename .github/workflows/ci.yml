@@ -232,17 +232,35 @@ jobs:
     name: Docker Build
     runs-on: ubuntu-latest
     needs: [lint-and-build, test, security]
-    if: github.ref == 'refs/heads/main'
+    # Stage 45: build + image CVE scan on PRs and main (main-gate still requires docker success on main).
     steps:
       - name: Checkout
         uses: actions/checkout@v5
       - name: Build Docker Image
         run: |
-          if [ -f Dockerfile ]; then
-            docker build -t discord-v-bot:${{ github.sha }} .
-          else
-            echo "Kein Dockerfile vorhanden, überspringe Docker Build"
-          fi
+          set -euo pipefail
+          test -f Dockerfile
+          docker build -t discord-v-bot:${{ github.sha }} .
+      - name: Trivy image scan (CRITICAL blocking)
+        uses: aquasecurity/trivy-action@v0.36.0
+        with:
+          image-ref: discord-v-bot:${{ github.sha }}
+          format: table
+          exit-code: '1'
+          ignore-unfixed: true
+          severity: CRITICAL
+          vuln-type: os,library
+      - name: Trivy image scan (HIGH report)
+        if: always()
+        continue-on-error: true
+        uses: aquasecurity/trivy-action@v0.36.0
+        with:
+          image-ref: discord-v-bot:${{ github.sha }}
+          format: table
+          exit-code: '0'
+          ignore-unfixed: true
+          severity: HIGH
+          vuln-type: os,library
 
   main-gate-status:
     name: Publish Main CI Gate Status
