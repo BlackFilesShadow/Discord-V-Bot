@@ -1,31 +1,43 @@
-# Security Exception: deepmerge-ts (HIGH)
+# Security Exception: deepmerge-ts (HIGH) — CLOSED via override
 
-**Date:** 2026-08-22  
-**Status:** OPEN — time-bounded exception  
+**Date opened:** 2026-08-22  
+**Date closed:** 2026-08-22  
+**Status:** CLOSED — technical mitigation applied (npm overrides)  
 **Advisory:** GHSA-ggr8-5vv4-36mx (stack exhaustion on recursive merge)  
-**Path:** `prisma@7.9.1` → `@prisma/config@7.9.1` → `deepmerge-ts@7.1.5`
+**Former path:** `prisma@7.9.1` → `@prisma/config@7.9.1` → `deepmerge-ts@7.1.5`  
+**Mitigated path:** same Prisma line with `overrides.deepmerge-ts = 8.0.2`
 
-## Why not force-fixed
+## Why force-fix was rejected
 
 `npm audit fix --force` would install `prisma@6.12.0` (major downgrade) and break Prisma 7 client/config contracts used by this repository.
 
-No Prisma 7.x release newer than 7.9.1 currently removes the transitive HIGH without a breaking force path (checked 2026-08-22: `npm view prisma version` = 7.9.1).
+## Applied fix (non-force)
 
-## Risk assessment
+```json
+"overrides": {
+  "deepmerge-ts": "8.0.2"
+}
+```
 
-- Affects Prisma CLI config merge, not the Discord/Nitrado runtime hot path.
-- Exploit requires attacker-controlled recursive object graphs fed into Prisma config merge (not exposed to end users of the bot).
-- Residual risk: local/CI developer tooling / malicious package config.
+Evidence (2026-08-22):
 
-## Required follow-up
+- `npm ls deepmerge-ts` → `deepmerge-ts@8.0.2 overridden`
+- `npm audit --audit-level=high` → `found 0 vulnerabilities`
+- `npm audit --omit=dev --audit-level=high` → `found 0 vulnerabilities`
+- `npx prisma validate` + `npx prisma generate` succeed on Prisma 7.9.1
 
-1. Re-check `npm audit` on every dependency bump of `prisma`.
-2. When Prisma publishes a fix line on 7.x, apply controlled upgrade + full migrate/client verification.
-3. Exception expires after 90 days or next Prisma minor, whichever first — re-open as BLOCKER if still unfixed and Prisma exposes merge to untrusted input.
+## Residual notes
+
+- Override must remain until upstream `@prisma/config` depends on `deepmerge-ts@>=8`.
+- Do not remove the override without re-running root high audit.
+- Dashboard **dev** tree may still report vite/esbuild issues under full (non-omit) audit; production `omit=dev` remains the release gate.
 
 ## Commands (evidence)
 
 ```
-npm audit --audit-level=high
 npm ls deepmerge-ts
+npm audit --audit-level=high
+npm audit --omit=dev --audit-level=high
+npx prisma validate
+npx prisma generate
 ```

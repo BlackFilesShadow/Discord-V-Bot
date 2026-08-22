@@ -1,15 +1,45 @@
 {
   "schemaVersion": 1,
   "stage": 45,
-  "basedOnMainSha": "2076eee1",
-  "scope": "npm lockfile, Dockerfile secrets posture, SBOM readiness, legacy deps tracking.",
+  "basedOnMainSha": "584ffa3deeba6a35391ed8f6463af415419a91fb",
+  "scope": "npm lockfile, production dependency audit (critical/high), CycloneDX SBOM gates, Dockerfile secrets posture, container build on main, legacy passport-discord tracking.",
   "contracts": {
     "dockerfile": "no COPY .env",
     "lockfile": "package-lock.json present",
-    "legacy": "passport-discord tracked for Stage 54 if present"
+    "rootAuditCritical": "blocking npm audit --audit-level=critical",
+    "rootAuditHigh": "blocking npm audit --audit-level=high (production tree after deepmerge-ts override)",
+    "dashboardProdHigh": "blocking npm audit --omit=dev --audit-level=high",
+    "sbom": "CycloneDX generation blocking for root + dashboard-ui; artifacts required",
+    "deepmergeOverride": "package.json overrides.deepmerge-ts >= 8.0.0 (GHSA-ggr8-5vv4-36mx)",
+    "legacy": "passport-discord tracked for Stage 54 if present",
+    "noForceAuditFix": "npm audit fix --force must not downgrade prisma to 6.x"
   },
   "cases": [
-    { "id": "dockerfile-no-env-copy", "status": "verified" },
-    { "id": "package-lock-present", "status": "verified" }
-  ]
+    { "id": "dockerfile-no-env-copy", "status": "runtime-verified" },
+    { "id": "package-lock-present", "status": "runtime-verified" },
+    { "id": "root-audit-critical-zero", "status": "runtime-verified" },
+    { "id": "root-audit-high-zero-via-override", "status": "runtime-verified" },
+    { "id": "dashboard-prod-high-zero", "status": "runtime-verified" },
+    { "id": "sbom-generation-blocking-ci", "status": "runtime-verified" },
+    { "id": "sbom-generation-blocking-gate2", "status": "runtime-verified" },
+    { "id": "deepmerge-ts-override-ge-8", "status": "runtime-verified" },
+    { "id": "passport-discord-tracked-stage-54", "status": "documented" },
+    { "id": "container-image-build-main", "status": "ci-wired" },
+    { "id": "dashboard-dev-vite-esbuild-high-report-only", "status": "residual-dev-only" }
+  ],
+  "residual": [
+    "Dashboard full (with dev) audit may report vite/esbuild HIGH — report-only; not in production omit=dev tree",
+    "No image vulnerability scanner (trivy/grype) wired yet — Stage 45 residual for container CVE scan",
+    "passport-discord still present — Stage 54 migration"
+  ],
+  "verification": {
+    "workflowCi": ".github/workflows/ci.yml",
+    "jobSecurity": "security",
+    "workflowGate2": ".github/workflows/verification2.yml",
+    "jobSecurity2": "security-2",
+    "sbomBlocking": true,
+    "rootHighBlocking": true,
+    "overridePackage": "deepmerge-ts",
+    "overrideVersion": "8.0.2"
+  }
 }

@@ -4,7 +4,7 @@
   "waves": [
     {
       "name": "wave-b-api-security-36-45",
-      "status": "in_progress_36_44_runtime",
+      "status": "merged_main_through_44_stage_45_in_wave_c",
       "findings": [
         "F-S4-03"
       ]
@@ -39,11 +39,13 @@
     },
     {
       "name": "wave-c-deps-sbom",
-      "status": "exception_documented",
+      "status": "in_progress_override_sbom_blocking",
       "findings": [
         "F-S5-03",
         "F-S4-05"
-      ]
+      ],
+      "sha_base": "584ffa3deeba6a35391ed8f6463af415419a91fb",
+      "note": "deepmerge-ts HIGH closed via npm overrides 8.0.2; SBOM fail-closed; Stage 45 remains PARTIAL for container CVE scanner + passport-discord"
     },
     {
       "name": "wave-d-e2e-api-mobile",
