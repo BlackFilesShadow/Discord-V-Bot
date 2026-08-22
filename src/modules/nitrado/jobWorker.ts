@@ -48,6 +48,10 @@ import {
   transitionClaimedNitradoJob,
   type NitradoJobClaim,
 } from './jobLease';
+import {
+  setNitradoJobQueueMetrics,
+  type NitradoJobMetricStatus,
+} from '../../utils/metrics';
 
 const JOB_POLL_INTERVAL_MS = 10_000;
 const MAX_PARALLEL = 4;
@@ -80,6 +84,46 @@ const KNOWN_OPERATIONS = new Set([
 
 let timer: NodeJS.Timeout | null = null;
 let running = false;
+
+export interface NitradoJobQueueSnapshot {
+  depths: Record<NitradoJobMetricStatus, number>;
+  oldestPendingAgeSeconds: number;
+}
+
+/**
+ * Stage 47: Ein produktiver Queue-Snapshot aus der persistenten Outbox.
+ * Die vier Statuslabels sind fest und bleiben damit Prometheus-sicher.
+ */
+export async function refreshNitradoJobQueueMetrics(now = new Date()): Promise<NitradoJobQueueSnapshot> {
+  const [grouped, oldestPending] = await Promise.all([
+    // eslint-disable-next-line local/no-unscoped-prisma-query -- globale Worker-Telemetrie ohne Guild-/User-Labels.
+    prisma.nitradoJob.groupBy({
+      by: ['status'],
+      _count: { _all: true },
+    }),
+    // eslint-disable-next-line local/no-unscoped-prisma-query -- globale Worker-Telemetrie; nur Zeitstempel, keine Payload.
+    prisma.nitradoJob.findFirst({
+      where: { status: 'PENDING' },
+      orderBy: { createdAt: 'asc' },
+      select: { createdAt: true },
+    }),
+  ]);
+  const depths: Record<NitradoJobMetricStatus, number> = {
+    PENDING: 0,
+    RUNNING: 0,
+    DONE: 0,
+    FAILED: 0,
+    DEAD: 0,
+  };
+  for (const row of grouped) {
+    depths[row.status] = row._count._all;
+  }
+  const oldestPendingAgeSeconds = oldestPending
+    ? Math.max(0, (now.getTime() - oldestPending.createdAt.getTime()) / 1_000)
+    : 0;
+  setNitradoJobQueueMetrics(depths, oldestPendingAgeSeconds);
+  return { depths, oldestPendingAgeSeconds };
+}
 
 interface JobPayload {
   gameId?: string;
@@ -737,6 +781,11 @@ async function pollOnce(): Promise<void> {
   } catch (e) {
     logger.error('NitradoJob-Worker pollOnce-Fehler:', e as Error);
   } finally {
+    try {
+      await refreshNitradoJobQueueMetrics();
+    } catch (metricsError) {
+      logger.warn(`NitradoJob-Worker Queue-Metrik fehlgeschlagen: ${(metricsError as Error).message}`);
+    }
     running = false;
   }
 }
