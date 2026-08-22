@@ -3,10 +3,7 @@ import { Routes, Route, Navigate } from 'react-router-dom';
 import { useAuth } from './lib/auth';
 import Login from './pages/Login';
 import Servers from './pages/Servers';
-import Server from './pages/Server';
-import ServerSlot from './pages/ServerSlot';
-import Dev, { DEV_TOOLS } from './pages/Dev';
-import BotAdmin from './pages/BotAdmin';
+import { DEV_TOOL_SLUGS } from './lib/devToolSlugs';
 import { Toaster } from './components/ui/Toast';
 
 function Protected({ children }: { children: JSX.Element }) {
@@ -68,13 +65,17 @@ const DEV_PAGES: Record<string, ComponentType> = {
   'nitrado-mirror': lazyPage(() => import('./pages/dev/NitradoMirror')),
 };
 
+const Server = lazyPage(() => import('./pages/Server'));
+const ServerSlot = lazyPage(() => import('./pages/ServerSlot'));
+const Dev = lazyPage(() => import('./pages/Dev'));
+const BotAdmin = lazyPage(() => import('./pages/BotAdmin'));
 const CommandCenter = lazyPage(() => import('./pages/dev/CommandCenter'));
 const SecureDevExport = lazyPage(() => import('./pages/dev/SecureDevExport'));
 
-const _missing = DEV_TOOLS.filter(t => !DEV_PAGES[t.slug]).map(t => t.slug);
+const _missing = DEV_TOOL_SLUGS.filter((slug) => !DEV_PAGES[slug]);
 if (_missing.length > 0) {
   // eslint-disable-next-line no-console
-  console.error('[DEV] DEV_TOOLS ohne Page-Mapping:', _missing);
+  console.error('[DEV] DEV_TOOL_SLUGS ohne Page-Mapping:', _missing);
 }
 
 export default function App() {
@@ -90,10 +91,10 @@ export default function App() {
           <Route index element={<Navigate to="bot-status" replace />} />
           <Route path="command-center" element={<CommandCenter />} />
           <Route path="secure-export" element={<SecureDevExport />} />
-          {DEV_TOOLS.map(t => {
-            const Page = DEV_PAGES[t.slug];
+          {DEV_TOOL_SLUGS.map((slug) => {
+            const Page = DEV_PAGES[slug];
             if (!Page) return null;
-            return <Route key={t.slug} path={t.slug} element={<Page />} />;
+            return <Route key={slug} path={slug} element={<Page />} />;
           })}
           <Route path="*" element={<Navigate to="bot-status" replace />} />
         </Route>

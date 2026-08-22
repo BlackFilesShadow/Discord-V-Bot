@@ -83,12 +83,13 @@
     },
     {
       "name": "wave-i-cleanup-53-57",
-      "status": "in_progress_53_55",
+      "status": "in_progress_56_57",
       "findings": [
         "passport-removed",
         "inflight-dev-residual"
       ],
-      "sha_base": "54341a670150acd1df27f1d317d965f4491106a6"
+      "sha_base": "f9f00881717ca49bd0f6cc85aa5a32556f6b409f",
+      "note": "54 VERIFIED; 56 entry split; 57 conservative"
     }
   ]
 }

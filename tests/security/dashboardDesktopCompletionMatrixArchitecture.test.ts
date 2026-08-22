@@ -39,7 +39,9 @@ describe('Stage 30 dashboard desktop completion matrix', () => {
     expect(app).toContain('path="/bot-admin"');
     expect(app).toContain('path="/dev"');
     expect(app).toContain('DEV_PAGES');
-    expect(app).toContain('DEV_TOOLS.filter');
+    expect(app).toContain('DEV_TOOL_SLUGS');
+    expect(app).toContain('DEV_TOOL_SLUGS.filter');
+    expect(app).toContain('DEV_TOOL_SLUGS.map');
   });
 
   it('binds desktop 1280 completion E2E and login evidence', () => {

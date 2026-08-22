@@ -1,11 +1,22 @@
 {
-  "schemaVersion": 1,
+  "schemaVersion": 2,
   "stage": 57,
-  "basedOnMainSha": "45caf9cd",
+  "basedOnMainSha": "f9f00881717ca49bd0f6cc85aa5a32556f6b409f",
   "scope": "Dead code / legacy cleanup only with proof — no speculative deletes.",
-  "decision": "No mass deletion in Stage 57. Inventory architecture gates remain; removals deferred to findings with zero dynamic references.",
+  "decision": "No mass deletion in Stage 57. Inventory architecture gates remain; only proven-unused packages removed (passport stack in Stage 54). Further removals require zero dynamic references across commands, workers, Discord handlers, AI tool registry, Nitrado registry.",
   "contracts": {
-    "proofRequired": "dynamic imports, commands, workers, flags must be checked",
-    "noRegression": "prefer keep over guess"
-  }
+    "proofRequired": "dynamic imports, commands, workers, flags, AI tools, Nitrado jobs must be checked",
+    "noRegression": "prefer keep over guess",
+    "completedRemovals": "passport + passport-discord unused direct deps removed Stage 54",
+    "forbidden": "no deleting registry-driven modules based on static import graph alone"
+  },
+  "cases": [
+    { "id": "no-mass-delete-policy", "status": "documented" },
+    { "id": "passport-stack-already-removed", "status": "runtime-verified" },
+    { "id": "ai-tool-registry-intact", "status": "runtime-verified" },
+    { "id": "nitrado-job-worker-intact", "status": "runtime-verified" }
+  ],
+  "residual": [
+    "Broader unused-export sweep deferred — coupling graph incomplete for event-driven surfaces"
+  ]
 }
