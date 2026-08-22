@@ -160,9 +160,17 @@ jobs:
   security:
     name: Security Audit
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
     steps:
-      - name: Checkout
+      - name: Checkout full history for secret scan
         uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
+      - name: Full-history secret scan (blocking)
+        uses: gitleaks/gitleaks-action@v3
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
       - name: Setup Node.js
         uses: actions/setup-node@v5
         with:
