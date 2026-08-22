@@ -1,6 +1,6 @@
 {
   "generatedAt": "2026-08-22T04:48:59.923Z",
-  "baseSha": "ce68d05e6074ce95d7e417d1c063bddfa0e17206",
+  "baseSha": "8f181c7e8f2344f0c78dcd19a3151547f885aa17",
   "waves": [
     {
       "name": "wave-b-api-security-36-45",
@@ -56,14 +56,14 @@
     },
     {
       "name": "wave-e-perf-chaos-journey",
-      "status": "in_progress_46_48_baselines",
+      "status": "in_progress_49_59_runtime",
       "findings": [
         "F-S4-06",
         "F-S4-10",
         "F-S4-11"
       ],
-      "sha_base": "ce68d05e6074ce95d7e417d1c063bddfa0e17206",
-      "note": "Stages 46-48 probe+matrices+architecture tests; remain PARTIAL for live env residuals"
+      "sha_base": "8f181c7e8f2344f0c78dcd19a3151547f885aa17",
+      "note": "49 rate-limit merged; 50-52/58-59 runtime evidence in flight"
     },
     {
       "name": "wave-f-release-gates",

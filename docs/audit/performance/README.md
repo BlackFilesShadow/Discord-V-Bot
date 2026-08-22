@@ -33,7 +33,10 @@ DATABASE_URL=... REDIS_URL=... npm run perf:baselines-46-48
 | 46 | Real in-process RSS/heap/CPU/ELD/handles + metrics module pins | Not full bot+gateway production RSS |
 | 47 | Prisma pool/tx contracts, Redis dep, NitradoJob worker surface; live ping if env set | Pool saturation / pg_stat_statements need live DB |
 | 48 | Source contracts for AI/Nitrado timeouts, 429, circuit, metrics | Live provider RTT needs credentials |
-| 49–52 | Separate load/soak/leak waves | Not claimed by Wave E |
+| 49 | Rate-limit map hard caps + prune (src/utils/rateLimit.ts) | Full-process multi-hour leak still residual |
+| 50 | `npm run perf:load` in-process HTTP RPS/p95 + 401 under load | Full dashboard+DB stack residual |
+| 51 | `npm run perf:soak` multi-sample heap series | Multi-hour staging soak residual |
+| 52 | No blind heap raise; tune only after 46–51 evidence | Production heap flags still residual |
 
 Structural scripts that exit 0 **without** numeric samples **must not** be counted as Stage-46 VERIFIED alone. The Wave E probe always samples process metrics.
 

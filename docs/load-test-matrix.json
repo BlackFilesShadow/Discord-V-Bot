@@ -1,10 +1,23 @@
 {
-  "schemaVersion": 1,
+  "schemaVersion": 2,
   "stage": 50,
-  "basedOnMainSha": "c6472086",
-  "scope": "Load test harness definition for API/dashboard paths (local synthetic).",
+  "basedOnMainSha": "8f181c7e8f2344f0c78dcd19a3151547f885aa17",
+  "scope": "Real in-process HTTP load: RPS, p50/p95/p99, errors, CPU/RSS delta; auth path 401 under load.",
   "contracts": {
-    "harness": "scripts/load-test-smoke.mjs concurrent fetch against optional BASE_URL",
-    "default": "Without BASE_URL exits 0 with skipped=true"
-  }
+    "inProcessHarness": "scripts/perf-load-inprocess.mjs",
+    "optionalExternal": "scripts/load-test-smoke.mjs skipped without LOAD_TEST_BASE_URL",
+    "metrics": "requests, rps, latency percentiles, status codes, resource deltas",
+    "authUnderLoad": "unauthenticated /api/* returns 401 (fail-closed)",
+    "artifact": "docs/audit/performance/<sha>/50-load.json"
+  },
+  "cases": [
+    { "id": "inprocess-load-rps-latency", "status": "runtime-verified" },
+    { "id": "auth-401-under-load", "status": "runtime-verified" },
+    { "id": "error-ratio-lt-1pct", "status": "runtime-verified" },
+    { "id": "external-dashboard-full-stack-load", "status": "residual-needs-running-stack" }
+  ],
+  "residual": [
+    "Not full bot+DB+Discord gateway load",
+    "Long soak under multi-service stack is Stage 51 residual"
+  ]
 }

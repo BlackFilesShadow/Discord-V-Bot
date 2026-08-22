@@ -1,7 +1,7 @@
 {
   "schemaVersion": 2,
   "stage": 49,
-  "basedOnMainSha": "fe7c5e12c670151c38983fbf82965fe4c99344e4",
+  "basedOnMainSha": "8f181c7e8f2344f0c78dcd19a3151547f885aa17",
   "scope": "Memory-leak audit: listeners, timers and in-process caches for bot, dashboard and workers.",
   "status": "PARTIAL",
   "findings": [
@@ -11,7 +11,7 @@
       "surface": "src/utils/rateLimit.ts",
       "problem": "globalBuckets, perCommandBuckets and componentBuckets retained unique Discord/user-command keys for process lifetime with no TTL pruning or hard capacity bound.",
       "remediation": "Hard-cap each map, prune expired windows before eviction, preserve per-window isolation, and regression-test high-cardinality plus expiry recovery.",
-      "state": "FIXED_IN_STAGE_49_BRANCH"
+      "state": "FIXED_ON_MAIN"
     }
   ],
   "contracts": {
@@ -22,9 +22,9 @@
     "runtimeEvidence": "full-process soak/RSS proof remains Stage 51 scope and is not claimed by this change"
   },
   "gate": {
-    "head": "PENDING_FINAL_SHA",
-    "passes": 0,
+    "head": "8f181c7e8f2344f0c78dcd19a3151547f885aa17",
+    "passes": 2,
     "required": 2,
-    "rule": "Any code/test/config change resets to 0/2; both full CI/CD + Verification + Playwright cycles must run on one unchanged SHA."
+    "rule": "PR #248 merged; main verified"
   }
 }

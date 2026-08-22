@@ -617,51 +617,62 @@
     },
     {
       "id": 49,
-      "name": "perf-49",
+      "name": "memory-leak-49",
       "status": "PARTIAL",
       "evidence": [
-        "docs/audit/performance/README.md"
+        "src/utils/rateLimit.ts",
+        "tests/utils/rateLimit.test.ts",
+        "docs/memory-leak-audit-matrix.json"
       ],
       "findings": [
-        "F-S4-06",
-        "no-docker-host"
-      ]
+        "residual-full-process-soak"
+      ],
+      "note": "Rate-limit maps hard-capped+pruned; F-P49-01 fixed; multi-hour process soak residual",
+      "exactSha": "8f181c7e8f2344f0c78dcd19a3151547f885aa17"
     },
     {
       "id": 50,
-      "name": "perf-50",
+      "name": "load-test-50",
       "status": "PARTIAL",
       "evidence": [
-        "docs/audit/performance/README.md"
+        "scripts/perf-load-inprocess.mjs",
+        "docs/load-test-matrix.json",
+        "tests/security/waveFPerfChaosJourneyRuntime.test.ts"
       ],
       "findings": [
-        "F-S4-06",
-        "no-docker-host"
-      ]
+        "residual-full-stack-load"
+      ],
+      "note": "In-process HTTP load with RPS/p95/401; full stack residual",
+      "exactSha": "8f181c7e8f2344f0c78dcd19a3151547f885aa17"
     },
     {
       "id": 51,
-      "name": "perf-51",
+      "name": "soak-test-51",
       "status": "PARTIAL",
       "evidence": [
-        "docs/audit/performance/README.md"
+        "scripts/soak-test-smoke.mjs",
+        "docs/soak-test-matrix.json",
+        "tests/security/waveFPerfChaosJourneyRuntime.test.ts"
       ],
       "findings": [
-        "F-S4-06",
-        "no-docker-host"
-      ]
+        "residual-multi-hour-soak"
+      ],
+      "note": "Short multi-sample soak; multi-hour residual",
+      "exactSha": "8f181c7e8f2344f0c78dcd19a3151547f885aa17"
     },
     {
       "id": 52,
-      "name": "perf-52",
+      "name": "heap-tuning-52",
       "status": "PARTIAL",
       "evidence": [
-        "docs/audit/performance/README.md"
+        "docs/audit/performance/README.md",
+        "package.json#scripts.start"
       ],
       "findings": [
-        "F-S4-06",
-        "no-docker-host"
-      ]
+        "residual-prod-heap-flags"
+      ],
+      "note": "No blind max-old-space-size; tune after measurements only",
+      "exactSha": "8f181c7e8f2344f0c78dcd19a3151547f885aa17"
     },
     {
       "id": 53,
@@ -702,19 +713,34 @@
       "id": 58,
       "name": "full-user-journey",
       "status": "PARTIAL",
-      "evidence": [],
+      "evidence": [
+        "docs/full-user-journey-e2e-matrix.json",
+        "tests/security/waveFPerfChaosJourneyRuntime.test.ts",
+        "src/events/guildMemberAdd.ts",
+        "src/events/guildMemberRemove.ts"
+      ],
       "findings": [
-        "F-S4-10"
-      ]
+        "F-S4-10",
+        "residual-live-discord-gateway"
+      ],
+      "note": "Ordered orchestration chain inventoried; live Join/Leave residual",
+      "exactSha": "8f181c7e8f2344f0c78dcd19a3151547f885aa17"
     },
     {
       "id": 59,
       "name": "chaos",
       "status": "PARTIAL",
-      "evidence": [],
+      "evidence": [
+        "scripts/chaos-smoke.mjs",
+        "docs/chaos-test-matrix.json",
+        "tests/security/waveFPerfChaosJourneyRuntime.test.ts"
+      ],
       "findings": [
-        "F-S4-11"
-      ]
+        "F-S4-11",
+        "residual-docker-process-kill"
+      ],
+      "note": "Runtime circuit/SSRF/path/idempotency fault injection; container-kill residual",
+      "exactSha": "8f181c7e8f2344f0c78dcd19a3151547f885aa17"
     },
     {
       "id": 60,

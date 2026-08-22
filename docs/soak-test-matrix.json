@@ -1,10 +1,18 @@
 {
-  "schemaVersion": 1,
+  "schemaVersion": 2,
   "stage": 51,
-  "basedOnMainSha": "c6472086",
-  "scope": "Soak test harness: repeated baseline samples for drift detection.",
+  "basedOnMainSha": "8f181c7e8f2344f0c78dcd19a3151547f885aa17",
+  "scope": "Short controlled soak with multi-sample heap/RSS series + rate-limit churn bounds.",
   "contracts": {
-    "harness": "scripts/soak-test-smoke.mjs loops Stage 46 baseline N times",
-    "default": "short local loop"
-  }
+    "harness": "scripts/soak-test-smoke.mjs",
+    "rateLimitChurn": "Jest Stage 51 churn + Stage 49 map caps",
+    "artifact": "docs/audit/performance/<sha>/51-soak.json",
+    "honesty": "Not multi-hour production soak"
+  },
+  "cases": [
+    { "id": "multi-sample-heap-series", "status": "runtime-verified" },
+    { "id": "rate-limit-flood-denies", "status": "runtime-verified" },
+    { "id": "multi-hour-production-soak", "status": "residual-needs-staging" }
+  ],
+  "residual": ["Multi-hour soak with full process set requires staging window"]
 }

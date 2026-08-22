@@ -1,11 +1,22 @@
 {
-  "schemaVersion": 1,
+  "schemaVersion": 2,
   "stage": 59,
-  "basedOnMainSha": "45caf9cd",
-  "scope": "Chaos test matrix: DB/Redis/Nitrado/AI/Discord/network failures — recovery, idempotency, no double effects.",
+  "basedOnMainSha": "8f181c7e8f2344f0c78dcd19a3151547f885aa17",
+  "scope": "Controlled fault injection: Nitrado circuit OPEN, SSRF, path traversal, idempotency store-down pin, AI/Nitrado retry contracts, scope no-bypass.",
   "contracts": {
-    "idempotency": "Stage 38 store fail-closed",
-    "providerErrors": "routes map provider failures to non-2xx",
-    "localHarness": "scripts/chaos-smoke.mjs documents injectable fault flags"
-  }
+    "runtimeHarness": "scripts/chaos-smoke.mjs + Jest circuit/SSRF/path injection",
+    "idempotency": "IDEMPOTENCY_STORE_UNAVAILABLE → 503 fail-closed",
+    "circuit": "NitradoCircuitOpenError on OPEN preflight",
+    "ssrf": "validatePublicHttpUrl denies private/metadata",
+    "path": "assertInsideRoot throws PathBoundaryError on escape"
+  },
+  "cases": [
+    { "id": "nitrado-circuit-open-blocks", "status": "runtime-verified" },
+    { "id": "ssrf-private-blocked", "status": "runtime-verified" },
+    { "id": "path-traversal-blocked", "status": "runtime-verified" },
+    { "id": "idempotency-store-down-pin", "status": "runtime-verified" },
+    { "id": "ai-nitrado-retry-timeout-pins", "status": "runtime-verified" },
+    { "id": "kill-postgres-container", "status": "residual-needs-docker" }
+  ],
+  "residual": ["Full multi-service process kill chaos needs Docker Compose staging"]
 }
