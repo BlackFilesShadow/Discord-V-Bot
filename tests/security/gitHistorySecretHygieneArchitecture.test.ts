@@ -25,6 +25,8 @@ const SECRET_PATTERNS: RegExp[] = [
   /discord\.com\/api\/webhooks\/\d+\/[A-Za-z0-9_-]{20,}/i,
   /\bghp_[A-Za-z0-9]{20,}\b/,
   /\bgithub_pat_[A-Za-z0-9_]{20,}\b/,
+  /\bgho_[A-Za-z0-9]{20,}\b/,
+  /\bghu_[A-Za-z0-9]{20,}\b/,
   /\bsk-[A-Za-z0-9]{32,}\b/,
   /\bAKIA[0-9A-Z]{16}\b/,
   /DISCORD_TOKEN\s*=\s*['"]?[A-Za-z0-9._-]{50,}/i,
@@ -94,5 +96,13 @@ describe('Stage 39 git history secret hygiene', () => {
       }
     }
     expect(hits).toEqual([]);
+  });
+
+  it('pins Stage 39 runtime evidence surfaces and forbids skip/only', () => {
+    const self = read('tests/security/gitHistorySecretHygieneArchitecture.test.ts');
+    expect(self).toContain('scans tracked source files for high-risk secret patterns');
+    expect(self).toContain('does not track real .env');
+    expect(self).toContain('keeps the CI full-history secret scan fail-closed and blocking');
+    expect(self).not.toMatch(/test\.(only|skip)|describe\.(only|skip)/);
   });
 });

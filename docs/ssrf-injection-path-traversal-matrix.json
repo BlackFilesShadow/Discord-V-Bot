@@ -1,7 +1,7 @@
 {
   "schemaVersion": 1,
   "stage": 42,
-  "basedOnMainSha": "2076eee1",
+  "basedOnMainSha": "9690db5ce22b4191d6ae184e6f7737fee23ea06e",
   "scope": "SSRF, injection, path traversal on upload/download/export/snapshot.",
   "contracts": {
     "ssrf": "URL validators block private hosts",
@@ -9,8 +9,17 @@
     "path": "Upload/export/snapshot paths bounded"
   },
   "cases": [
-    { "id": "feed-ssrf-block", "status": "verified" },
-    { "id": "heap-path-bound", "status": "verified" },
-    { "id": "static-upload-subset", "status": "verified" }
+    {
+      "id": "feed-ssrf-block",
+      "status": "runtime-verified"
+    },
+    {
+      "id": "heap-path-bound",
+      "status": "runtime-verified"
+    },
+    {
+      "id": "static-upload-subset",
+      "status": "runtime-verified"
+    }
   ]
 }
