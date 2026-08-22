@@ -50,6 +50,8 @@ describe('Dashboard-1W audit architecture', () => {
     expect(routeSource).toContain('details: redactAuditDetails(r.details)');
     expect(loggerSource).toContain("from './auditRedaction'");
     expect(loggerSource).toContain('details: redactAuditDetails(meta.details ?? null) as never');
+    expect(loggerSource).toContain("requireRuntime('../database/prisma')");
+    expect(loggerSource).not.toContain("import('../database/prisma.js')");
     expect(redactionSource).toContain('.replace(AUTH_HEADER_RE');
     expect(redactionSource.indexOf('.replace(AUTH_HEADER_RE')).toBeLessThan(
       redactionSource.indexOf('return redactText(secretRedacted)'),
