@@ -1,0 +1,48 @@
+{
+  "stage": 50,
+  "kind": "in-process-http-load",
+  "exactSha": "8f181c7e8f2344f0c78dcd19a3151547f885aa17",
+  "capturedAt": "2026-08-22T07:16:04.313Z",
+  "config": {
+    "durationMs": 600,
+    "concurrency": 25,
+    "requestsPerWorkerCap": 40,
+    "base": "http://127.0.0.1:60580"
+  },
+  "host": {
+    "node": "v24.13.0",
+    "platform": "win32",
+    "cpuCount": 20
+  },
+  "results": {
+    "requests": 1000,
+    "ok": 1000,
+    "errors": 0,
+    "errorRatio": 0,
+    "rps": 4345.41,
+    "elapsedSec": 0.23,
+    "latencyMs": {
+      "p50": 4.657,
+      "p95": 13.55,
+      "p99": 35.362,
+      "max": 39.29
+    },
+    "statusCodes": {
+      "200": 800,
+      "401": 200
+    },
+    "serverHitsHealth": 800,
+    "serverAuthDenied": 200
+  },
+  "resources": {
+    "cpuUserMs": 328,
+    "cpuSystemMs": 172,
+    "rssMbDelta": 38.21,
+    "heapUsedMbDelta": 16.22,
+    "heapUsedMbEnd": 23.83
+  },
+  "residual": [
+    "Synthetic health/auth endpoints only — not full dashboard+DB stack",
+    "Auth path asserts 401 fail-closed under load (no cookie)"
+  ]
+}

@@ -1,20 +1,73 @@
 {
-  "schemaVersion": 1,
+  "schemaVersion": 2,
   "stage": 58,
-  "basedOnMainSha": "45caf9cd",
-  "scope": "Full user journey E2E inventory: Join → rules → link → whitelist → economy → AI → DayZ → leave → cleanup → rejoin.",
+  "basedOnMainSha": "8f181c7e8f2344f0c78dcd19a3151547f885aa17",
+  "scope": "Orchestrated full-user-journey inventory with ordered chain Join→…→Leave→Cleanup→Rejoin. Live Discord OAuth/gateway remains residual.",
+  "status": "PARTIAL",
+  "orchestration": {
+    "ordered": [
+      "join",
+      "recognition-rules",
+      "account-link",
+      "gamesserver-link",
+      "whitelist",
+      "economy",
+      "reward-stats",
+      "ai-interaction",
+      "dayz-knowledge",
+      "nitrado-read",
+      "dashboard-login",
+      "dashboard-guild-server",
+      "admin-action",
+      "audit-log",
+      "leave",
+      "cleanup",
+      "whitelist-remove-economy-reset",
+      "session-link-cleanup",
+      "rejoin-fresh-state"
+    ],
+    "chainModules": [
+      "src/events/guildMemberAdd.ts",
+      "src/events/guildMemberRemove.ts",
+      "src/modules/moderation/leaveCleanupWorker.ts",
+      "src/modules/moderation/leaveCleanupRejoin.ts",
+      "src/modules/linking/linkService.ts",
+      "src/modules/economy/repository.ts",
+      "src/modules/ai/aiHandler.ts",
+      "src/modules/ai/toolRuntime.ts",
+      "src/dashboard/middleware/auth.ts",
+      "src/dashboard/middleware/economyScopeGuard.ts"
+    ]
+  },
   "contracts": {
-    "e2eEvidence": "existing authenticated playwright specs cover dashboard segments; full Discord join lifecycle requires live infra at Gate/Stage 67",
-    "local": "matrix maps journey steps to available specs/tests"
+    "singleChainInventory": "one ordered orchestration object — not only disconnected specs",
+    "leaveRejoinCas": "guildMemberRemove CAS on grant generation; rejoin blocked while leave cleanup open",
+    "dashboardSegments": "authenticated Playwright matrices cover UI segments",
+    "residualLiveDiscord": "full Join/Leave gateway + OAuth needs live infra / Stage 67"
   },
   "steps": [
-    { "id": "join", "coverage": "bot modules + live Gate" },
-    { "id": "recognition-rules", "coverage": "ai/userRecognition tests" },
-    { "id": "link", "coverage": "economy link scope tests" },
+    { "id": "join", "coverage": "guildMemberAdd + recognition sync" },
+    { "id": "recognition-rules", "coverage": "memberAwareness / userRecognition" },
+    { "id": "account-link", "coverage": "linkService" },
+    { "id": "gamesserver-link", "coverage": "nitrado connection scope" },
     { "id": "whitelist", "coverage": "whitelist e2e + crossGuild" },
-    { "id": "economy", "coverage": "economy authenticated e2e" },
-    { "id": "ai", "coverage": "ai unit tests" },
-    { "id": "dayz-live", "coverage": "liveServerKnowledge tests" },
-    { "id": "leave-cleanup-rejoin", "coverage": "membership fail-closed Stage 37/40" }
+    { "id": "economy", "coverage": "economy repository + dashboard scope" },
+    { "id": "reward-stats", "coverage": "linkRewards / economy" },
+    { "id": "ai-interaction", "coverage": "aiHandler + toolRuntime Stage 20" },
+    { "id": "dayz-knowledge", "coverage": "liveServerKnowledge tests" },
+    { "id": "nitrado-read", "coverage": "nitradoClient timeout/circuit" },
+    { "id": "dashboard-login", "coverage": "requireAuth session gate" },
+    { "id": "dashboard-guild-server", "coverage": "Playwright authenticated matrix" },
+    { "id": "admin-action", "coverage": "permission attack matrix + IDOR gates" },
+    { "id": "audit-log", "coverage": "dev AuditLogs UI + API" },
+    { "id": "leave", "coverage": "guildMemberRemove" },
+    { "id": "cleanup", "coverage": "leaveCleanupWorker" },
+    { "id": "whitelist-remove-economy-reset", "coverage": "leave cleanup steps" },
+    { "id": "session-link-cleanup", "coverage": "grant CAS + session residual" },
+    { "id": "rejoin-fresh-state", "coverage": "leaveCleanupRejoin + guildMemberAdd" }
+  ],
+  "residual": [
+    "End-to-end live Discord Join→Leave with real tokens not executed in CI",
+    "Stage remains PARTIAL until live gateway journey or authorized staging"
   ]
 }

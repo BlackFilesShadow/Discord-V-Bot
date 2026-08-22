@@ -1,0 +1,34 @@
+{
+  "stage": 51,
+  "kind": "short-inprocess-soak",
+  "exactSha": "8f181c7e8f2344f0c78dcd19a3151547f885aa17",
+  "capturedAt": "2026-08-22T07:16:41.233Z",
+  "loops": 2,
+  "sampleMs": 50,
+  "minHeapMb": 4.79,
+  "maxHeapMb": 5.4,
+  "deltaMb": 0.61,
+  "heapSlopePerLoopMb": -0.61,
+  "samples": [
+    {
+      "i": 0,
+      "rssMb": 47.05,
+      "heapUsedMb": 5.4,
+      "heapTotalMb": 7.81,
+      "externalMb": 2.21,
+      "tMs": 49.6
+    },
+    {
+      "i": 1,
+      "rssMb": 47.48,
+      "heapUsedMb": 4.79,
+      "heapTotalMb": 7.81,
+      "externalMb": 2.46,
+      "tMs": 99.5
+    }
+  ],
+  "residual": [
+    "Short controlled soak only — not multi-hour production",
+    "Rate-limit map bounds covered by Stage 49 unit tests under churn"
+  ]
+}
