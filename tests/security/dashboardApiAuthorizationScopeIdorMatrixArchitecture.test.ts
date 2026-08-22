@@ -20,6 +20,8 @@ const crossGuild = read('tests/security/crossGuild.test.ts');
 const scopeDb = read('tests/security/scopeMatrixArchitecture.test.ts');
 const viewScope = read('tests/security/dashboardViewScope.test.ts');
 const eslintRule = read('eslint-rules/no-unscoped-prisma-query.js');
+const runtimeIdor = read('tests/dashboard/requireGuildPermissionIdorGate.test.ts');
+const sessionGate = read('tests/dashboard/requireAuthSessionGate.test.ts');
 
 describe('Stage 37 API authorization / scope / IDOR matrix', () => {
   it('documents attack and role cases', () => {
@@ -58,5 +60,15 @@ describe('Stage 37 API authorization / scope / IDOR matrix', () => {
     expect(viewScope.length).toBeGreaterThan(100);
     expect(scopeDb).toContain('all direct Guild-scoped Prisma models');
     expect(eslintRule).toContain('DERIVED_GUILD_MODELS');
+  });
+
+  it('pins Stage 36/37 runtime middleware gates (session + IDOR deny matrix)', () => {
+    expect(sessionGate).toContain('rejects legacy cookie without persistent sessionToken');
+    expect(sessionGate).toContain('SESSION_REVOKED');
+    expect(runtimeIdor).toContain('DENY foreign guild when bot not present');
+    expect(runtimeIdor).toContain('DENY non-member even if stale grant');
+    expect(runtimeIdor).toContain('DENY member missing required permission scope');
+    expect(runtimeIdor).toContain('does not leak prior guildScope nitradoConnId across different guild');
+    expect(runtimeIdor).not.toMatch(/test\.(only|skip)|describe\.(only|skip)/);
   });
 });

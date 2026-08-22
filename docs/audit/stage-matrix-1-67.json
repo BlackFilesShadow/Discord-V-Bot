@@ -403,22 +403,32 @@
       "name": "API/security-36",
       "status": "PARTIAL",
       "evidence": [
-        "architecture-gates"
+        "tests/dashboard/requireAuthSessionGate.test.ts",
+        "tests/dashboard/requireGuildPermissionIdorGate.test.ts",
+        "tests/security/dashboardApiAuthorizationScopeIdorMatrixArchitecture.test.ts",
+        "src/dashboard/middleware/auth.ts"
       ],
       "findings": [
-        "F-S4-03"
-      ]
+        "residual-full-route-integration-and-live-oauth"
+      ],
+      "note": "Runtime sessionToken fail-closed (PR#241) + evidence pin; residual live OAuth/revocation E2E",
+      "exactSha": "eb32f0089a90502d0c26a371249df993a845634a"
     },
     {
       "id": 37,
       "name": "API/security-37",
       "status": "PARTIAL",
       "evidence": [
-        "architecture-gates"
+        "tests/dashboard/requireAuthSessionGate.test.ts",
+        "tests/dashboard/requireGuildPermissionIdorGate.test.ts",
+        "tests/security/dashboardApiAuthorizationScopeIdorMatrixArchitecture.test.ts",
+        "src/dashboard/middleware/auth.ts"
       ],
       "findings": [
-        "F-S4-03"
-      ]
+        "residual-full-route-integration-and-live-oauth"
+      ],
+      "note": "Runtime IDOR/AuthZ middleware gate green; residual full HTTP route+DB IDOR suite",
+      "exactSha": "eb32f0089a90502d0c26a371249df993a845634a"
     },
     {
       "id": 38,
