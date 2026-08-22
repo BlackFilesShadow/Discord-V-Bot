@@ -12,11 +12,12 @@
     "lazyHeavyRoutes": "Server, ServerSlot, Dev, BotAdmin lazy-loaded",
     "entryNoDevCatalogIcons": "App imports DEV_TOOL_SLUGS (icon-free), not full lucide catalog",
     "manualChunks": "vite manualChunks: vendor-react/router/query/socket/lucide/misc",
-    "measureScript": "scripts/measure-dashboard-bundle.mjs requires entry <500kB + vendor split",
+    "measureScript": "scripts/measure-dashboard-bundle.mjs requires entry <500kB, every emitted JS chunk <500kB, and vendor split",
     "artifact": "docs/audit/performance/<sha>/56-bundle.json"
   },
   "cases": [
     { "id": "entry-under-500kb", "status": "runtime-verified" },
+    { "id": "all-chunks-under-500kb", "status": "runtime-verified" },
     { "id": "vendor-manual-chunks", "status": "runtime-verified" },
     { "id": "dev-route-lazy", "status": "runtime-verified" },
     { "id": "heavy-pages-lazy", "status": "runtime-verified" },
