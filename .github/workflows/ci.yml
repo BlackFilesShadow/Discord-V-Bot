@@ -196,10 +196,9 @@ jobs:
       - name: Dashboard full audit (critical blocking)
         working-directory: dashboard-ui
         run: npm audit --audit-level=critical
-      - name: Dashboard full audit (high - report only)
+      - name: Dashboard full audit (high blocking)
         working-directory: dashboard-ui
         run: npm audit --audit-level=high
-        continue-on-error: true
 
       - name: Generate SBOMs (CycloneDX, blocking)
         shell: bash
