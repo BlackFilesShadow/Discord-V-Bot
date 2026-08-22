@@ -1,6 +1,6 @@
 {
-  "generatedAt": "2026-08-22T17:58:55.170Z",
-  "finalAuditedSha": "eb10b85130b4481e361a234cbb005b740ebd40b3",
+  "generatedAt": "2026-08-22T20:41:05.505Z",
+  "finalAuditedSha": "a93b4b986308bf5be9fe5119e2c5eb0f72813254",
   "stages": [
     {
       "id": 1,
@@ -280,129 +280,156 @@
     },
     {
       "id": 27,
-      "name": "stage-27",
-      "status": "PARTIAL",
+      "name": "dashboard-action-matrix-27",
+      "status": "VERIFIED",
       "evidence": [
         "dashboard-ui/e2e/stage-27-35-runtime-matrix.spec.ts",
+        "dashboard-ui/e2e/stage-27-35-real-http-db.spec.ts",
+        "scripts/e2e-dashboard-db-server.ts",
         "tests/security/dashboardStage2735RuntimeEvidence.test.ts",
-        "settings-mutation-toast-errors"
+        "docs/audit/dashboard-runtime-db-evidence-pr266-a93b4b9.json",
+        "e2e-run:32596586085:attempt-1:613-passed",
+        "verification2-run:32596586091:attempt-1"
       ],
-      "findings": [
-        "residual-no-live-db-oauth-side-effect-in-playwright"
-      ],
-      "note": "SPA+stub API runtime matrix green; full UI-API-AuthZ-DB chain still needs live E2E"
+      "findings": [],
+      "note": "The broad action matrix plus real Chromium→Express→OAuth/session→AuthZ→Prisma proof commits the settings mutation and exactly one idempotency/audit side effect in both independent Playwright jobs.",
+      "exactSha": "a93b4b986308bf5be9fe5119e2c5eb0f72813254"
     },
     {
       "id": 28,
-      "name": "stage-28",
-      "status": "PARTIAL",
+      "name": "pagination-search-filter-cursor-28",
+      "status": "VERIFIED",
       "evidence": [
         "dashboard-ui/e2e/stage-27-35-runtime-matrix.spec.ts",
+        "dashboard-ui/e2e/stage-27-35-real-http-db.spec.ts",
+        "scripts/e2e-dashboard-db-server.ts",
         "tests/security/dashboardStage2735RuntimeEvidence.test.ts",
-        "settings-mutation-toast-errors"
+        "docs/audit/dashboard-runtime-db-evidence-pr266-a93b4b9.json",
+        "e2e-run:32596586085:attempt-1:613-passed",
+        "verification2-run:32596586091:attempt-1"
       ],
-      "findings": [
-        "residual-no-live-db-oauth-side-effect-in-playwright"
-      ],
-      "note": "SPA+stub API runtime matrix green; full UI-API-AuthZ-DB chain still needs live E2E"
+      "findings": [],
+      "note": "Real PostgreSQL AuditLog data is searched and filtered through the production API; the UI appends cursor page two from 50 to all 55 rows without loss in both independent Playwright jobs.",
+      "exactSha": "a93b4b986308bf5be9fe5119e2c5eb0f72813254"
     },
     {
       "id": 29,
-      "name": "stage-29",
-      "status": "PARTIAL",
+      "name": "dashboard-error-state-matrix-29",
+      "status": "VERIFIED",
       "evidence": [
         "dashboard-ui/e2e/stage-27-35-runtime-matrix.spec.ts",
+        "dashboard-ui/e2e/stage-27-35-real-http-db.spec.ts",
+        "scripts/e2e-dashboard-db-server.ts",
         "tests/security/dashboardStage2735RuntimeEvidence.test.ts",
-        "settings-mutation-toast-errors"
+        "docs/audit/dashboard-runtime-db-evidence-pr266-a93b4b9.json",
+        "e2e-run:32596586085:attempt-1:613-passed",
+        "verification2-run:32596586091:attempt-1"
       ],
-      "findings": [
-        "residual-no-live-db-oauth-side-effect-in-playwright"
-      ],
-      "note": "SPA+stub API runtime matrix green; full UI-API-AuthZ-DB chain still needs live E2E"
+      "findings": [],
+      "note": "The broad error matrix is supplemented by a real persisted-session revocation: the production UI receives 401, renders no false success and PostgreSQL confirms no settings mutation.",
+      "exactSha": "a93b4b986308bf5be9fe5119e2c5eb0f72813254"
     },
     {
       "id": 30,
-      "name": "stage-30",
-      "status": "PARTIAL",
+      "name": "dashboard-desktop-completion-30",
+      "status": "VERIFIED",
       "evidence": [
         "dashboard-ui/e2e/stage-27-35-runtime-matrix.spec.ts",
+        "dashboard-ui/e2e/stage-27-35-real-http-db.spec.ts",
+        "scripts/e2e-dashboard-db-server.ts",
         "tests/security/dashboardStage2735RuntimeEvidence.test.ts",
-        "settings-mutation-toast-errors"
+        "docs/audit/dashboard-runtime-db-evidence-pr266-a93b4b9.json",
+        "e2e-run:32596586085:attempt-1:613-passed",
+        "verification2-run:32596586091:attempt-1"
       ],
-      "findings": [
-        "residual-no-live-db-oauth-side-effect-in-playwright"
-      ],
-      "note": "SPA+stub API runtime matrix green; full UI-API-AuthZ-DB chain still needs live E2E"
+      "findings": [],
+      "note": "The desktop completion matrix plus real authenticated PostgreSQL-backed server, guild and settings routes render at 1280 px without horizontal overflow in both independent Playwright jobs.",
+      "exactSha": "a93b4b986308bf5be9fe5119e2c5eb0f72813254"
     },
     {
       "id": 31,
-      "name": "stage-31",
-      "status": "PARTIAL",
+      "name": "mobile-matrix-320px-31",
+      "status": "VERIFIED",
       "evidence": [
         "dashboard-ui/e2e/stage-27-35-runtime-matrix.spec.ts",
+        "dashboard-ui/e2e/stage-27-35-real-http-db.spec.ts",
+        "scripts/e2e-dashboard-db-server.ts",
         "tests/security/dashboardStage2735RuntimeEvidence.test.ts",
-        "settings-mutation-toast-errors"
+        "docs/audit/dashboard-runtime-db-evidence-pr266-a93b4b9.json",
+        "e2e-run:32596586085:attempt-1:613-passed",
+        "verification2-run:32596586091:attempt-1"
       ],
-      "findings": [
-        "residual-no-live-db-oauth-side-effect-in-playwright"
-      ],
-      "note": "SPA+stub API runtime matrix green; full UI-API-AuthZ-DB chain still needs live E2E"
+      "findings": [],
+      "note": "The broad 320 px mobile matrix plus the real authenticated DB-backed settings route proves visible controls/navigation and no horizontal overflow.",
+      "exactSha": "a93b4b986308bf5be9fe5119e2c5eb0f72813254"
     },
     {
       "id": 32,
-      "name": "stage-32",
-      "status": "PARTIAL",
+      "name": "mobile-matrix-360px-32",
+      "status": "VERIFIED",
       "evidence": [
         "dashboard-ui/e2e/stage-27-35-runtime-matrix.spec.ts",
+        "dashboard-ui/e2e/stage-27-35-real-http-db.spec.ts",
+        "scripts/e2e-dashboard-db-server.ts",
         "tests/security/dashboardStage2735RuntimeEvidence.test.ts",
-        "settings-mutation-toast-errors"
+        "docs/audit/dashboard-runtime-db-evidence-pr266-a93b4b9.json",
+        "e2e-run:32596586085:attempt-1:613-passed",
+        "verification2-run:32596586091:attempt-1"
       ],
-      "findings": [
-        "residual-no-live-db-oauth-side-effect-in-playwright"
-      ],
-      "note": "SPA+stub API runtime matrix green; full UI-API-AuthZ-DB chain still needs live E2E"
+      "findings": [],
+      "note": "The broad 360 px mobile matrix plus the real authenticated DB-backed settings route proves visible controls/navigation and no horizontal overflow.",
+      "exactSha": "a93b4b986308bf5be9fe5119e2c5eb0f72813254"
     },
     {
       "id": 33,
-      "name": "stage-33",
-      "status": "PARTIAL",
+      "name": "mobile-matrix-375px-33",
+      "status": "VERIFIED",
       "evidence": [
         "dashboard-ui/e2e/stage-27-35-runtime-matrix.spec.ts",
+        "dashboard-ui/e2e/stage-27-35-real-http-db.spec.ts",
+        "scripts/e2e-dashboard-db-server.ts",
         "tests/security/dashboardStage2735RuntimeEvidence.test.ts",
-        "settings-mutation-toast-errors"
+        "docs/audit/dashboard-runtime-db-evidence-pr266-a93b4b9.json",
+        "e2e-run:32596586085:attempt-1:613-passed",
+        "verification2-run:32596586091:attempt-1"
       ],
-      "findings": [
-        "residual-no-live-db-oauth-side-effect-in-playwright"
-      ],
-      "note": "SPA+stub API runtime matrix green; full UI-API-AuthZ-DB chain still needs live E2E"
+      "findings": [],
+      "note": "The broad 375 px mobile matrix plus the real authenticated DB-backed settings route proves visible controls/navigation and no horizontal overflow.",
+      "exactSha": "a93b4b986308bf5be9fe5119e2c5eb0f72813254"
     },
     {
       "id": 34,
-      "name": "stage-34",
-      "status": "PARTIAL",
+      "name": "mobile-matrix-390px-34",
+      "status": "VERIFIED",
       "evidence": [
         "dashboard-ui/e2e/stage-27-35-runtime-matrix.spec.ts",
+        "dashboard-ui/e2e/stage-27-35-real-http-db.spec.ts",
+        "scripts/e2e-dashboard-db-server.ts",
         "tests/security/dashboardStage2735RuntimeEvidence.test.ts",
-        "settings-mutation-toast-errors"
+        "docs/audit/dashboard-runtime-db-evidence-pr266-a93b4b9.json",
+        "e2e-run:32596586085:attempt-1:613-passed",
+        "verification2-run:32596586091:attempt-1"
       ],
-      "findings": [
-        "residual-no-live-db-oauth-side-effect-in-playwright"
-      ],
-      "note": "SPA+stub API runtime matrix green; full UI-API-AuthZ-DB chain still needs live E2E"
+      "findings": [],
+      "note": "The broad 390 px mobile matrix plus the real authenticated DB-backed settings route proves visible controls/navigation and no horizontal overflow.",
+      "exactSha": "a93b4b986308bf5be9fe5119e2c5eb0f72813254"
     },
     {
       "id": 35,
-      "name": "stage-35",
-      "status": "PARTIAL",
+      "name": "mobile-matrix-430px-35",
+      "status": "VERIFIED",
       "evidence": [
         "dashboard-ui/e2e/stage-27-35-runtime-matrix.spec.ts",
+        "dashboard-ui/e2e/stage-27-35-real-http-db.spec.ts",
+        "scripts/e2e-dashboard-db-server.ts",
         "tests/security/dashboardStage2735RuntimeEvidence.test.ts",
-        "settings-mutation-toast-errors"
+        "docs/audit/dashboard-runtime-db-evidence-pr266-a93b4b9.json",
+        "e2e-run:32596586085:attempt-1:613-passed",
+        "verification2-run:32596586091:attempt-1"
       ],
-      "findings": [
-        "residual-no-live-db-oauth-side-effect-in-playwright"
-      ],
-      "note": "SPA+stub API runtime matrix green; full UI-API-AuthZ-DB chain still needs live E2E"
+      "findings": [],
+      "note": "The broad 430 px mobile matrix plus the real authenticated DB-backed settings route proves visible controls/navigation and no horizontal overflow.",
+      "exactSha": "a93b4b986308bf5be9fe5119e2c5eb0f72813254"
     },
     {
       "id": 36,
@@ -825,10 +852,10 @@
       ]
     }
   ],
-  "auditFreezeSha": "eb10b85130b4481e361a234cbb005b740ebd40b3",
+  "auditFreezeSha": "a93b4b986308bf5be9fe5119e2c5eb0f72813254",
   "counts": {
-    "VERIFIED": 40,
-    "PARTIAL": 26,
+    "VERIFIED": 49,
+    "PARTIAL": 17,
     "FAILED": 0,
     "BLOCKED": 1
   }

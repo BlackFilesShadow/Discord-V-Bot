@@ -1,0 +1,112 @@
+{
+  "schemaVersion": 1,
+  "pullRequest": 266,
+  "technicalSha": "a93b4b986308bf5be9fe5119e2c5eb0f72813254",
+  "evidenceHeadSha": "a93b4b986308bf5be9fe5119e2c5eb0f72813254",
+  "scope": [27, 28, 29, 30, 31, 32, 33, 34, 35],
+  "runtimeContract": {
+    "browser": "Playwright Chromium drives the production dashboard UI without page.route or route.fulfill in the real-db project.",
+    "http": "The real Express dashboard, OAuth callback, session middleware, AuthZ middleware and production v2 routers handle every request.",
+    "database": "A PostgreSQL service receives real Prisma migrations, seeds, queries and mutations.",
+    "externalBoundary": "Only Discord OAuth/user/guild HTTP responses and the Discord client gateway object are simulated at the server boundary; no dashboard API or database operation is mocked."
+  },
+  "playwrightProof": {
+    "totalPassed": 613,
+    "realDbTests": [
+      {
+        "ordinal": 609,
+        "stage": 27,
+        "name": "real authenticated settings action commits one DB side effect",
+        "proof": "OAuth login/callback creates Session and OAuthToken rows; UI PATCH updates ServerSettings and creates exactly one DONE IdempotencyKey plus one AuditLog row."
+      },
+      {
+        "ordinal": 610,
+        "stage": 28,
+        "name": "real AuditLog search/filter/cursor appends page two without loss",
+        "proof": "The UI reads 55 PostgreSQL AuditLog rows through the production API, applies search/category/guild filters and appends the second cursor page."
+      },
+      {
+        "ordinal": 611,
+        "stage": 29,
+        "name": "DB revocation reaches the real UI as 401 without false success",
+        "proof": "Revoking the persisted Session makes the production mutation return 401, renders the error state and leaves ServerSettings unchanged."
+      },
+      {
+        "ordinal": 612,
+        "stage": 30,
+        "name": "real authenticated desktop routes render DB-backed state",
+        "proof": "Desktop server list, guild and settings routes render authenticated PostgreSQL-backed state without horizontal overflow."
+      },
+      {
+        "ordinal": 613,
+        "stages": [31, 32, 33, 34, 35],
+        "name": "real DB-backed settings route remains usable at every required width",
+        "proof": "The authenticated production route renders controls and navigation without horizontal overflow at 320, 360, 375, 390 and 430 px."
+      }
+    ]
+  },
+  "runs": [
+    {
+      "workflow": "CI/CD Pipeline",
+      "runId": 32596586114,
+      "attempt": 1,
+      "event": "pull_request",
+      "headSha": "a93b4b986308bf5be9fe5119e2c5eb0f72813254",
+      "status": "completed",
+      "conclusion": "success",
+      "url": "https://github.com/BlackFilesShadow/Discord-V-Bot/actions/runs/32596586114",
+      "createdAt": "2026-08-22T20:24:28Z",
+      "updatedAt": "2026-08-22T20:28:29Z",
+      "jobs": [
+        { "jobId": 97088440563, "name": "Tests", "conclusion": "success" },
+        { "jobId": 97088440700, "name": "Lint & Build", "conclusion": "success" },
+        { "jobId": 97088440772, "name": "Security Audit", "conclusion": "success" },
+        { "jobId": 97088685913, "name": "Docker Build", "conclusion": "success" }
+      ]
+    },
+    {
+      "workflow": "E2E (Playwright)",
+      "runId": 32596586085,
+      "attempt": 1,
+      "event": "pull_request",
+      "headSha": "a93b4b986308bf5be9fe5119e2c5eb0f72813254",
+      "status": "completed",
+      "conclusion": "success",
+      "url": "https://github.com/BlackFilesShadow/Discord-V-Bot/actions/runs/32596586085",
+      "createdAt": "2026-08-22T20:24:28Z",
+      "updatedAt": "2026-08-22T20:39:48Z",
+      "jobs": [
+        {
+          "jobId": 97088440370,
+          "name": "Playwright Smoke",
+          "conclusion": "success",
+          "proof": "613 passed, including real-db-chromium tests 609-613 for Stages 27-35."
+        }
+      ]
+    },
+    {
+      "workflow": "Verification 2",
+      "runId": 32596586091,
+      "attempt": 1,
+      "event": "pull_request",
+      "headSha": "a93b4b986308bf5be9fe5119e2c5eb0f72813254",
+      "status": "completed",
+      "conclusion": "success",
+      "url": "https://github.com/BlackFilesShadow/Discord-V-Bot/actions/runs/32596586091",
+      "createdAt": "2026-08-22T20:24:28Z",
+      "updatedAt": "2026-08-22T20:39:49Z",
+      "jobs": [
+        { "jobId": 97088440358, "name": "Gate 2 · Security / SBOM", "conclusion": "success" },
+        { "jobId": 97088440446, "name": "Gate 2 · Tests / DB Lifecycle", "conclusion": "success" },
+        {
+          "jobId": 97088440460,
+          "name": "Gate 2 · Playwright",
+          "conclusion": "success",
+          "proof": "The independent complete Playwright job ran the same PostgreSQL-backed real-db project successfully."
+        },
+        { "jobId": 97088440468, "name": "Gate 2 · Lint & Build", "conclusion": "success" }
+      ]
+    }
+  ],
+  "result": "All three required complete workflows succeeded on the same immutable technical SHA. Two independent Playwright jobs executed the real browser-to-Express-to-AuthZ-to-PostgreSQL path successfully."
+}
