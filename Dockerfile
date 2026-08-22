@@ -50,9 +50,24 @@ WORKDIR /app
 # OpenSSL fuer Prisma + wget fuer Healthcheck
 RUN apk add --no-cache openssl wget
 
-# Base node images ship npm with nested node-tar; bump npm so Trivy CRITICAL
-# library findings on fixed CVEs (e.g. CVE-2026-59873 tar < 7.5.19) clear.
-RUN npm install -g npm@11.18.0 \
+# Base node images ship npm with nested library CVEs. Bump npm, then replace
+# nested copies of tar / brace-expansion / ip-address under the global npm tree
+# without reinstalling npm itself (npm --prefix hits unpublished @npmcli/docs).
+RUN set -e \
+ && npm install -g npm@11.18.0 \
+ && mkdir -p /tmp/harden \
+ && cd /tmp/harden \
+ && npm init -y >/dev/null \
+ && npm install tar@7.5.21 brace-expansion@5.0.9 ip-address@10.3.1 --no-fund --no-audit \
+ && for pkg in tar brace-expansion ip-address; do \
+      find /usr/local/lib/node_modules/npm -type d -name "$pkg" -print0 \
+        | while IFS= read -r -d '' dest; do \
+            rm -rf "$dest"; \
+            cp -a "/tmp/harden/node_modules/$pkg" "$dest"; \
+          done; \
+    done \
+ && cd / \
+ && rm -rf /tmp/harden \
  && npm cache clean --force
 
 # Non-Root-User
