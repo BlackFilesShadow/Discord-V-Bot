@@ -107,7 +107,8 @@ describe('stage 23 dashboard surface inventory architecture', () => {
     expect(sortedUnique(inventory.surfaces.map(surface => surface.id))).toEqual(sortedUnique(expectedIds));
     expect(app).toContain('<Route path="command-center" element={<CommandCenter />} />');
     expect(app).toContain('<Route path="secure-export" element={<SecureDevExport />} />');
-    expect(app).toContain('<Route key={t.slug} path={t.slug} element={<Page />} />');
+    expect(app).toContain('DEV_TOOL_SLUGS.map');
+    expect(app).toContain('<Route key={slug} path={slug} element={<Page />} />');
   });
 
   test('tracks all live tabs, views, and DEV catalog entries from their source declarations', () => {
