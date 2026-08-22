@@ -17,7 +17,12 @@ describe('Stage 56 dashboard bundle codesplit', () => {
   it('documents measured split contracts', () => {
     expect(m.stage).toBe(56);
     expect(m.cases.map((c) => c.id)).toEqual(
-      expect.arrayContaining(['entry-under-500kb', 'vendor-manual-chunks', 'dev-route-lazy']),
+      expect.arrayContaining([
+        'entry-under-500kb',
+        'all-chunks-under-500kb',
+        'vendor-manual-chunks',
+        'dev-route-lazy',
+      ]),
     );
     expect(m.contracts.manualChunks).toMatch(/vendor-react/);
     expect(r('tests/security/dashboardBundleCodesplitArchitecture.test.ts')).not.toMatch(
@@ -49,12 +54,14 @@ describe('Stage 56 dashboard bundle codesplit', () => {
     expect(slugList.sort()).toEqual(catalogSlugs.sort());
   });
 
-  it('measure script enforces entry <500kB when assets present', () => {
+  it('measure script enforces every emitted JS chunk <500kB when assets present', () => {
     const assets = path.resolve('src/dashboard/public/assets');
     if (!fs.existsSync(assets)) {
-      // CI builds UI before tests in some jobs; still pin script contracts
+      // CI builds UI before tests in some jobs; still pin script contracts.
       const script = r('scripts/measure-dashboard-bundle.mjs');
       expect(script).toContain('entryUnder500kb');
+      expect(script).toContain('allChunksUnder500kb');
+      expect(script).toContain('over500.length === 0');
       expect(script).toContain('500 * 1024');
       return;
     }
@@ -65,11 +72,18 @@ describe('Stage 56 dashboard bundle codesplit', () => {
     const start = raw.indexOf('{');
     const end = raw.lastIndexOf('}');
     const data = JSON.parse(raw.slice(start, end + 1)) as {
-      contracts: { entryUnder500kb: boolean; hasVendorSplit: boolean };
+      contracts: {
+        entryUnder500kb: boolean;
+        allChunksUnder500kb: boolean;
+        hasVendorSplit: boolean;
+      };
       entry: { kb: number };
+      over500kb: string[];
     };
     expect(data.contracts.entryUnder500kb).toBe(true);
+    expect(data.contracts.allChunksUnder500kb).toBe(true);
     expect(data.contracts.hasVendorSplit).toBe(true);
     expect(data.entry.kb).toBeLessThan(500);
+    expect(data.over500kb).toEqual([]);
   });
 });
