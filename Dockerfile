@@ -66,6 +66,7 @@ RUN set -e \
             cp -a "/tmp/harden/node_modules/$pkg" "$dest"; \
           done; \
     done \
+ && cd / \
  && rm -rf /tmp/harden \
  && npm cache clean --force
 
