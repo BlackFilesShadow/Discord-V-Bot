@@ -7,6 +7,7 @@ process.env.ENCRYPTION_KEY ||= 'test-encryption-key-0123456789abcdef';
 
 const mockDevSessionFindFirst = jest.fn();
 const mockDevSessionUpdateMany = jest.fn().mockResolvedValue({ count: 0 });
+const mockSessionFindUnique = jest.fn();
 const mockAuditFindMany = jest.fn();
 const mockPrismaSnapshot = jest.fn();
 const mockAiSnapshot = jest.fn();
@@ -16,6 +17,7 @@ const mockReadBackupStatus = jest.fn();
 jest.mock('../../src/database/prisma', () => ({
   __esModule: true,
   default: {
+    session: { findUnique: (...args: unknown[]) => mockSessionFindUnique(...args) },
     devSession: {
       findFirst: (...args: unknown[]) => mockDevSessionFindFirst(...args),
       updateMany: (...args: unknown[]) => mockDevSessionUpdateMany(...args),
@@ -41,6 +43,7 @@ import { requireAuth } from '../../src/dashboard/middleware/auth';
 import { devObservabilityRouter } from '../../src/dashboard/routes/v2/devObservability';
 
 const RESTRICTED_GUILD = '111111111111111111';
+const SESSION_TOKEN = 'stage36-dev-observability-session-token';
 
 function activeSession(scope: Record<string, unknown> = {}) {
   const now = Date.now();
@@ -54,6 +57,11 @@ function activeSession(scope: Record<string, unknown> = {}) {
 }
 
 function appFor(scope: Record<string, unknown> = {}) {
+  mockSessionFindUnique.mockResolvedValue({
+    isActive: true,
+    expiresAt: new Date(Date.now() + 60 * 60 * 1000),
+    userId: 'u1',
+  });
   mockDevSessionFindFirst.mockResolvedValue(activeSession(scope));
   const app = express();
   app.use(express.json());
@@ -63,6 +71,7 @@ function appFor(scope: Record<string, unknown> = {}) {
       userId: 'u1',
       discordId: '123456789012345678',
       role: 'DEVELOPER',
+      sessionToken: SESSION_TOKEN,
     });
     next();
   });
