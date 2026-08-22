@@ -1,0 +1,75 @@
+{
+  "schemaVersion": 1,
+  "pullRequest": 267,
+  "technicalSha": "2c16bcbe870f9d4818d7ed4726b95ef2879e30d9",
+  "basedOnMainSha": "63b79799447a084b5dca65288acefd8fee757429",
+  "scope": [46, 49],
+  "measurement": {
+    "artifact": "docs/audit/performance/2c16bcbe870f9d4818d7ed4726b95ef2879e30d9/46-49-runtime-series.json",
+    "capturedAt": "2026-08-22T21:26:28.486Z",
+    "sampleCount": 12,
+    "sampleMs": 750,
+    "allocationMbPerSample": 8,
+    "explicitGc": true,
+    "observedGcEvents": 63,
+    "rssSlopeMbPerSample": 0.0338,
+    "heapSlopeMbPerSample": 0.0071,
+    "activeResourceSlopePerSample": 0,
+    "listenerSlopePerSample": 0,
+    "interpretation": "The deterministic allocation/recovery series is stable: retained heap and RSS slopes are small, while active resources and process listeners do not grow. The separate long-duration/full-stack soak remains Stage 51 scope."
+  },
+  "runs": [
+    {
+      "workflow": "CI/CD Pipeline",
+      "runId": 32598792373,
+      "attempt": 1,
+      "event": "pull_request",
+      "headSha": "2c16bcbe870f9d4818d7ed4726b95ef2879e30d9",
+      "status": "completed",
+      "conclusion": "success",
+      "url": "https://github.com/BlackFilesShadow/Discord-V-Bot/actions/runs/32598792373",
+      "createdAt": "2026-08-22T21:09:58Z",
+      "updatedAt": "2026-08-22T21:14:25Z",
+      "jobs": [
+        { "jobId": 97093786915, "name": "Tests", "conclusion": "success", "proof": "The complete Jest suite executed the SHA-bound Stage 46/49 runtime-series regression." },
+        { "jobId": 97093787016, "name": "Lint & Build", "conclusion": "success" },
+        { "jobId": 97093787075, "name": "Security Audit", "conclusion": "success" },
+        { "jobId": 97094029487, "name": "Docker Build", "conclusion": "success" }
+      ]
+    },
+    {
+      "workflow": "E2E (Playwright)",
+      "runId": 32598792376,
+      "attempt": 1,
+      "event": "pull_request",
+      "headSha": "2c16bcbe870f9d4818d7ed4726b95ef2879e30d9",
+      "status": "completed",
+      "conclusion": "success",
+      "url": "https://github.com/BlackFilesShadow/Discord-V-Bot/actions/runs/32598792376",
+      "createdAt": "2026-08-22T21:09:58Z",
+      "updatedAt": "2026-08-22T21:25:16Z",
+      "jobs": [
+        { "jobId": 97093787032, "name": "Playwright Smoke", "conclusion": "success" }
+      ]
+    },
+    {
+      "workflow": "Verification 2",
+      "runId": 32598792420,
+      "attempt": 1,
+      "event": "pull_request",
+      "headSha": "2c16bcbe870f9d4818d7ed4726b95ef2879e30d9",
+      "status": "completed",
+      "conclusion": "success",
+      "url": "https://github.com/BlackFilesShadow/Discord-V-Bot/actions/runs/32598792420",
+      "createdAt": "2026-08-22T21:09:58Z",
+      "updatedAt": "2026-08-22T21:25:00Z",
+      "jobs": [
+        { "jobId": 97093787053, "name": "Gate 2 · Security / SBOM", "conclusion": "success" },
+        { "jobId": 97093787137, "name": "Gate 2 · Tests / DB Lifecycle", "conclusion": "success", "proof": "The independent complete Jest suite executed the same SHA-bound runtime-series regression with PostgreSQL lifecycle verification." },
+        { "jobId": 97093787140, "name": "Gate 2 · Lint & Build", "conclusion": "success" },
+        { "jobId": 97093787154, "name": "Gate 2 · Playwright", "conclusion": "success" }
+      ]
+    }
+  ],
+  "result": "All three complete Gate-1 workflows succeeded on the same immutable technical SHA. Both complete Jest jobs executed the bounded current-SHA runtime and leak-series regression."
+}

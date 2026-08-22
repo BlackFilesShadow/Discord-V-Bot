@@ -17,17 +17,16 @@
     "noUnboundedMaps": "remaining global caches must have TTL, max size, lifecycle ownership, or documented bounded cardinality",
     "timers": "intervals must be unref'd or explicitly stopped on owned shutdown paths",
     "regression": "rate-limit semantics remain independent across global, per-command and component buckets",
-    "runtimeEvidence": "full-process soak/RSS proof remains Stage 51 scope and is not claimed by this change"
+    "runtimeEvidence": "the exact-SHA allocation/recovery series records RSS, heap, active resources, requests, handles and listeners; the longer full-stack soak remains Stage 51 scope"
   },
-  "gate": {
-    "head": "8f181c7e8f2344f0c78dcd19a3151547f885aa17",
-    "passes": 2,
-    "required": 2,
-    "rule": "PR #248 merged; main verified"
+  "verification": {
+    "exactSha": "2c16bcbe870f9d4818d7ed4726b95ef2879e30d9",
+    "artifact": "docs/audit/performance/2c16bcbe870f9d4818d7ed4726b95ef2879e30d9/46-49-runtime-series.json",
+    "test": "tests/security/runtimeSeries4649.test.ts",
+    "ciEvidence": "docs/audit/runtime-series-ci-evidence-pr267-2c16bcb.json",
+    "interpretation": "RSS slope 0.0338 MiB/sample; heap slope 0.0071 MiB/sample; active-resource and listener slopes zero across 12 explicit-GC allocation/recovery samples."
   },
-  "basedOnMainSha": "2a7c048d1d1a1206d0774da26d70c363cc225fcf",
-  "status": "PARTIAL",
-  "residual": [
-    "Current-SHA RSS, heap, listeners and active handles must be sampled as a real series; the multi-hour soak remains Stage 51"
-  ]
+  "basedOnMainSha": "63b79799447a084b5dca65288acefd8fee757429",
+  "status": "VERIFIED",
+  "residual": []
 }

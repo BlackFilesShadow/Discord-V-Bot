@@ -1,0 +1,356 @@
+{
+  "exactSha": "2c16bcbe870f9d4818d7ed4726b95ef2879e30d9",
+  "capturedAt": "2026-08-22T21:26:28.486Z",
+  "stage46": {
+    "sampleCount": 12,
+    "sampleMs": 750,
+    "cpuCount": 20,
+    "loadAvg": [
+      0,
+      0,
+      0
+    ],
+    "osMemoryMb": {
+      "total": 32616.02,
+      "free": 9651.86
+    },
+    "gc": {
+      "explicitGcAvailable": true,
+      "observedEvents": 63,
+      "durationMsP50": 0.124,
+      "durationMsP99": 1.704,
+      "durationMsMax": 1.704
+    },
+    "samples": [
+      {
+        "index": 0,
+        "elapsedMs": 812.72,
+        "rssMb": 45.62,
+        "heapUsedMb": 4.47,
+        "heapTotalMb": 7.31,
+        "externalMb": 1.96,
+        "arrayBuffersMb": 0.01,
+        "heapDeltaMb": 0.06,
+        "cpuUserMs": 734,
+        "cpuSystemMs": 15,
+        "workloadChecksum": 3,
+        "eventLoopDelayMsP50": 10.043,
+        "eventLoopDelayMsP99": 15.786,
+        "eventLoopDelayMsMax": 21.578,
+        "resources": {
+          "count": 0,
+          "byType": {},
+          "requests": 0,
+          "handlesLegacy": 0,
+          "listeners": 1
+        }
+      },
+      {
+        "index": 1,
+        "elapsedMs": 810.45,
+        "rssMb": 45.54,
+        "heapUsedMb": 4.49,
+        "heapTotalMb": 6.31,
+        "externalMb": 1.96,
+        "arrayBuffersMb": 0.01,
+        "heapDeltaMb": 0.01,
+        "cpuUserMs": 750,
+        "cpuSystemMs": 0,
+        "workloadChecksum": 3,
+        "eventLoopDelayMsP50": 10.035,
+        "eventLoopDelayMsP99": 15.278,
+        "eventLoopDelayMsMax": 19.939,
+        "resources": {
+          "count": 0,
+          "byType": {},
+          "requests": 0,
+          "handlesLegacy": 0,
+          "listeners": 1
+        }
+      },
+      {
+        "index": 2,
+        "elapsedMs": 811.82,
+        "rssMb": 45.87,
+        "heapUsedMb": 4.52,
+        "heapTotalMb": 7.56,
+        "externalMb": 1.96,
+        "arrayBuffersMb": 0.01,
+        "heapDeltaMb": 0.03,
+        "cpuUserMs": 719,
+        "cpuSystemMs": 32,
+        "workloadChecksum": 3,
+        "eventLoopDelayMsP50": 10.043,
+        "eventLoopDelayMsP99": 16.048,
+        "eventLoopDelayMsMax": 20.431,
+        "resources": {
+          "count": 0,
+          "byType": {},
+          "requests": 0,
+          "handlesLegacy": 0,
+          "listeners": 1
+        }
+      },
+      {
+        "index": 3,
+        "elapsedMs": 811.4,
+        "rssMb": 45.96,
+        "heapUsedMb": 4.53,
+        "heapTotalMb": 6.56,
+        "externalMb": 1.96,
+        "arrayBuffersMb": 0.01,
+        "heapDeltaMb": 0.02,
+        "cpuUserMs": 703,
+        "cpuSystemMs": 0,
+        "workloadChecksum": 3,
+        "eventLoopDelayMsP50": 10.052,
+        "eventLoopDelayMsP99": 15.999,
+        "eventLoopDelayMsMax": 17.957,
+        "resources": {
+          "count": 0,
+          "byType": {},
+          "requests": 0,
+          "handlesLegacy": 0,
+          "listeners": 1
+        }
+      },
+      {
+        "index": 4,
+        "elapsedMs": 811.33,
+        "rssMb": 45.84,
+        "heapUsedMb": 4.54,
+        "heapTotalMb": 6.56,
+        "externalMb": 1.96,
+        "arrayBuffersMb": 0.01,
+        "heapDeltaMb": 0.01,
+        "cpuUserMs": 734,
+        "cpuSystemMs": 0,
+        "workloadChecksum": 3,
+        "eventLoopDelayMsP50": 10.06,
+        "eventLoopDelayMsP99": 15.958,
+        "eventLoopDelayMsMax": 17.449,
+        "resources": {
+          "count": 0,
+          "byType": {},
+          "requests": 0,
+          "handlesLegacy": 0,
+          "listeners": 1
+        }
+      },
+      {
+        "index": 5,
+        "elapsedMs": 808.94,
+        "rssMb": 45.76,
+        "heapUsedMb": 4.54,
+        "heapTotalMb": 6.56,
+        "externalMb": 1.96,
+        "arrayBuffersMb": 0.01,
+        "heapDeltaMb": 0,
+        "cpuUserMs": 750,
+        "cpuSystemMs": 0,
+        "workloadChecksum": 3,
+        "eventLoopDelayMsP50": 10.043,
+        "eventLoopDelayMsP99": 15.868,
+        "eventLoopDelayMsMax": 16.499,
+        "resources": {
+          "count": 0,
+          "byType": {},
+          "requests": 0,
+          "handlesLegacy": 0,
+          "listeners": 1
+        }
+      },
+      {
+        "index": 6,
+        "elapsedMs": 808.79,
+        "rssMb": 46.09,
+        "heapUsedMb": 4.55,
+        "heapTotalMb": 6.56,
+        "externalMb": 1.96,
+        "arrayBuffersMb": 0.01,
+        "heapDeltaMb": 0,
+        "cpuUserMs": 703,
+        "cpuSystemMs": 32,
+        "workloadChecksum": 3,
+        "eventLoopDelayMsP50": 10.06,
+        "eventLoopDelayMsP99": 15.86,
+        "eventLoopDelayMsMax": 16.138,
+        "resources": {
+          "count": 0,
+          "byType": {},
+          "requests": 0,
+          "handlesLegacy": 0,
+          "listeners": 1
+        }
+      },
+      {
+        "index": 7,
+        "elapsedMs": 815.04,
+        "rssMb": 45.88,
+        "heapUsedMb": 4.55,
+        "heapTotalMb": 6.56,
+        "externalMb": 1.96,
+        "arrayBuffersMb": 0.01,
+        "heapDeltaMb": 0,
+        "cpuUserMs": 734,
+        "cpuSystemMs": 15,
+        "workloadChecksum": 3,
+        "eventLoopDelayMsP50": 10.052,
+        "eventLoopDelayMsP99": 15.852,
+        "eventLoopDelayMsMax": 22.577,
+        "resources": {
+          "count": 0,
+          "byType": {},
+          "requests": 0,
+          "handlesLegacy": 0,
+          "listeners": 1
+        }
+      },
+      {
+        "index": 8,
+        "elapsedMs": 808.96,
+        "rssMb": 45.94,
+        "heapUsedMb": 4.55,
+        "heapTotalMb": 7.56,
+        "externalMb": 1.96,
+        "arrayBuffersMb": 0.01,
+        "heapDeltaMb": 0.01,
+        "cpuUserMs": 704,
+        "cpuSystemMs": 47,
+        "workloadChecksum": 3,
+        "eventLoopDelayMsP50": 10.043,
+        "eventLoopDelayMsP99": 15.778,
+        "eventLoopDelayMsMax": 18.088,
+        "resources": {
+          "count": 0,
+          "byType": {},
+          "requests": 0,
+          "handlesLegacy": 0,
+          "listeners": 1
+        }
+      },
+      {
+        "index": 9,
+        "elapsedMs": 813.53,
+        "rssMb": 45.91,
+        "heapUsedMb": 4.56,
+        "heapTotalMb": 6.56,
+        "externalMb": 1.96,
+        "arrayBuffersMb": 0.01,
+        "heapDeltaMb": 0,
+        "cpuUserMs": 718,
+        "cpuSystemMs": 0,
+        "workloadChecksum": 3,
+        "eventLoopDelayMsP50": 10.043,
+        "eventLoopDelayMsP99": 15.917,
+        "eventLoopDelayMsMax": 21.479,
+        "resources": {
+          "count": 0,
+          "byType": {},
+          "requests": 0,
+          "handlesLegacy": 0,
+          "listeners": 1
+        }
+      },
+      {
+        "index": 10,
+        "elapsedMs": 807.25,
+        "rssMb": 46.02,
+        "heapUsedMb": 4.56,
+        "heapTotalMb": 6.56,
+        "externalMb": 1.96,
+        "arrayBuffersMb": 0.01,
+        "heapDeltaMb": 0,
+        "cpuUserMs": 703,
+        "cpuSystemMs": 31,
+        "workloadChecksum": 3,
+        "eventLoopDelayMsP50": 10.043,
+        "eventLoopDelayMsP99": 15.876,
+        "eventLoopDelayMsMax": 16.146,
+        "resources": {
+          "count": 0,
+          "byType": {},
+          "requests": 0,
+          "handlesLegacy": 0,
+          "listeners": 1
+        }
+      },
+      {
+        "index": 11,
+        "elapsedMs": 810.81,
+        "rssMb": 46.05,
+        "heapUsedMb": 4.56,
+        "heapTotalMb": 6.56,
+        "externalMb": 1.96,
+        "arrayBuffersMb": 0.01,
+        "heapDeltaMb": 0,
+        "cpuUserMs": 704,
+        "cpuSystemMs": 32,
+        "workloadChecksum": 3,
+        "eventLoopDelayMsP50": 10.043,
+        "eventLoopDelayMsP99": 15.819,
+        "eventLoopDelayMsMax": 18.35,
+        "resources": {
+          "count": 0,
+          "byType": {},
+          "requests": 0,
+          "handlesLegacy": 0,
+          "listeners": 1
+        }
+      }
+    ]
+  },
+  "stage49": {
+    "rssSlopeMbPerSample": 0.0338,
+    "heapSlopeMbPerSample": 0.0071,
+    "activeResourceSlopePerSample": 0,
+    "listenerSlopePerSample": 0,
+    "first": {
+      "index": 0,
+      "elapsedMs": 812.72,
+      "rssMb": 45.62,
+      "heapUsedMb": 4.47,
+      "heapTotalMb": 7.31,
+      "externalMb": 1.96,
+      "arrayBuffersMb": 0.01,
+      "heapDeltaMb": 0.06,
+      "cpuUserMs": 734,
+      "cpuSystemMs": 15,
+      "workloadChecksum": 3,
+      "eventLoopDelayMsP50": 10.043,
+      "eventLoopDelayMsP99": 15.786,
+      "eventLoopDelayMsMax": 21.578,
+      "resources": {
+        "count": 0,
+        "byType": {},
+        "requests": 0,
+        "handlesLegacy": 0,
+        "listeners": 1
+      }
+    },
+    "last": {
+      "index": 11,
+      "elapsedMs": 810.81,
+      "rssMb": 46.05,
+      "heapUsedMb": 4.56,
+      "heapTotalMb": 6.56,
+      "externalMb": 1.96,
+      "arrayBuffersMb": 0.01,
+      "heapDeltaMb": 0,
+      "cpuUserMs": 704,
+      "cpuSystemMs": 32,
+      "workloadChecksum": 3,
+      "eventLoopDelayMsP50": 10.043,
+      "eventLoopDelayMsP99": 15.819,
+      "eventLoopDelayMsMax": 18.35,
+      "resources": {
+        "count": 0,
+        "byType": {},
+        "requests": 0,
+        "handlesLegacy": 0,
+        "listeners": 1
+      }
+    },
+    "interpretation": "Short deterministic allocation/recovery series. It can reveal monotonic retained growth, but does not replace the multi-hour Stage 51 soak."
+  }
+}
