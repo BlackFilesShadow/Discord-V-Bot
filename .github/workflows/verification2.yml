@@ -117,9 +117,9 @@ jobs:
         run: npm audit --omit=dev --audit-level=high
       - working-directory: dashboard-ui
         run: npm audit --audit-level=critical
-      - working-directory: dashboard-ui
+      - name: Dashboard full audit (high blocking)
+        working-directory: dashboard-ui
         run: npm audit --audit-level=high
-        continue-on-error: true
       - name: Generate SBOMs (blocking)
         shell: bash
         run: |
