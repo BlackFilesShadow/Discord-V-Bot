@@ -8,6 +8,8 @@ const read = (relative: string): string =>
 
 describe('Stage 27-35 dashboard runtime evidence', () => {
   const e2e = 'dashboard-ui/e2e/stage-27-35-runtime-matrix.spec.ts';
+  const realDbE2e = 'dashboard-ui/e2e/stage-27-35-real-http-db.spec.ts';
+  const harness = 'scripts/e2e-dashboard-db-server.ts';
   const slotUi = 'dashboard-ui/src/pages/ServerSlot.tsx';
   const api = 'dashboard-ui/src/lib/api.ts';
 
@@ -29,6 +31,34 @@ describe('Stage 27-35 dashboard runtime evidence', () => {
       expect(source).toContain(`status: ${status}`);
     }
     expect(source).not.toMatch(/test\.(only|skip)|describe\.(only|skip)/);
+  });
+
+  it('requires a real browser -> OAuth/session -> AuthZ -> PostgreSQL chain in both Playwright gates', () => {
+    expect(fs.existsSync(path.join(root, realDbE2e))).toBe(true);
+    expect(fs.existsSync(path.join(root, harness))).toBe(true);
+    const source = read(realDbE2e);
+    expect(source).toContain('/auth/login');
+    expect(source).toContain('/auth/callback');
+    expect(source).toContain('ServerSettings');
+    expect(source).toContain('IdempotencyKey');
+    expect(source).toContain('AuditLog');
+    expect(source).toContain('Session');
+    expect(source).toContain('OAuthToken');
+    expect(source).toContain('width: 320');
+    expect(source).toContain('width: 430');
+    expect(source).not.toMatch(/page\.route|route\.fulfill|test\.(only|skip)|describe\.(only|skip)/);
+
+    const server = read(harness);
+    expect(server).toContain("process.env.E2E_REAL_DB !== '1'");
+    expect(server).toContain("import('../src/dashboard/server')");
+    expect(server).toContain("import('../src/database/prisma')");
+
+    for (const workflow of ['.github/workflows/e2e.yml', '.github/workflows/verification2.yml']) {
+      const yaml = read(workflow);
+      expect(yaml).toContain("E2E_REAL_DB: '1'");
+      expect(yaml).toContain('npx prisma migrate deploy');
+      expect(yaml).toContain('postgres:');
+    }
   });
 
   it('settings mutations surface success and describeApiError failures (no silent fail)', () => {
