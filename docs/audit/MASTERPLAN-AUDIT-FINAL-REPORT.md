@@ -7,22 +7,22 @@ Do not edit this report, the scoreboard, or the summary manually.
 
 | Field | Value |
 | --- | --- |
-| Generated | 2026-08-22T21:27:06.764Z |
-| Final audited/evidence SHA | `2c16bcbe870f9d4818d7ed4726b95ef2879e30d9` |
-| Audit freeze SHA | `2c16bcbe870f9d4818d7ed4726b95ef2879e30d9` |
+| Generated | 2026-08-22T22:55:10.103Z |
+| Final audited/evidence SHA | `17c5f4306ac7640c863d4954e4b4f39e0c227bc6` |
+| Audit freeze SHA | `17c5f4306ac7640c863d4954e4b4f39e0c227bc6` |
 | Stages total | 67 |
 
 ## Recalculated scoreboard
 
 | Status | Count |
 | --- | ---: |
-| VERIFIED | 51 |
-| PARTIAL | 15 |
+| VERIFIED | 52 |
+| PARTIAL | 14 |
 | FAILED | 0 |
 | BLOCKED | 1 |
 | **TOTAL** | **67** |
 
-**Current score: 76 / 100**
+**Current score: 78 / 100**
 
 **PRODUCTION READY: NO**
 
@@ -76,7 +76,7 @@ Do not edit this report, the scoreboard, or the summary manually.
 | 44 | VERIFIED | upload-webhook-security-44 | `3f8f281fb25d5e2dae1b1e933fde056b315b1d95` | Webhook HMAC/replay + upload path/size + MIME magic-bytes/content validation runtime-verified; residual empty |
 | 45 | VERIFIED | stage-45-deps-sbom-trivy | `2a7c048d1d1a1206d0774da26d70c363cc225fcf` | Root/dashboard HIGH audit + SBOM + Trivy CRITICAL/HIGH blocking + Vite 6.4.3 on main |
 | 46 | VERIFIED | runtime-baseline-i-46 | `2c16bcbe870f9d4818d7ed4726b95ef2879e30d9` | A bounded current-SHA 12-sample series records and interprets RSS, heap, external/array buffers, CPU, 63 GC events, event-loop p50/p99/max, active resources/requests/handles and listeners; both complete Jest jobs execute the regression. |
-| 47 | PARTIAL | runtime-baseline-ii-47 | — | residual-current-sha-db-redis-worker-queue-measurements; F-S4-06 |
+| 47 | VERIFIED | runtime-baseline-ii-47 | `17c5f4306ac7640c863d4954e4b4f39e0c227bc6` | Two independent mandatory live jobs on the exact SHA measured PostgreSQL 16 pool saturation/backpressure, Redis 7 latency/concurrency/TTL and persistent queue depth/claim/index behavior. Productive depth, oldest-pending and in-flight gauges are wired; both artifacts have empty residuals. |
 | 48 | PARTIAL | ai-nitrado-perf-48 | `ce68d05e6074ce95d7e417d1c063bddfa0e17206` | residual-live-provider-rtt; F-S4-06 |
 | 49 | VERIFIED | memory-leak-audit-49 | `2c16bcbe870f9d4818d7ed4726b95ef2879e30d9` | Bounded-map/timer/cache audits and churn regressions are supplemented by an exact-SHA allocation/recovery series: RSS 0.0338 MiB/sample, heap 0.0071 MiB/sample, active-resource slope 0 and listener slope 0. The longer full-stack soak remains Stage 51. |
 | 50 | PARTIAL | load-test-50 | `8f181c7e8f2344f0c78dcd19a3151547f885aa17` | residual-full-stack-load |
@@ -100,7 +100,6 @@ Do not edit this report, the scoreboard, or the summary manually.
 
 ## Remaining residuals (priority order)
 
-- Stage 47 (PARTIAL): residual-current-sha-db-redis-worker-queue-measurements; F-S4-06
 - Stage 48 (PARTIAL): residual-live-provider-rtt; F-S4-06
 - Stage 50 (PARTIAL): residual-full-stack-load
 - Stage 51 (PARTIAL): residual-multi-hour-soak

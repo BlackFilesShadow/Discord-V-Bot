@@ -45,7 +45,7 @@ stage,status,name
 44,VERIFIED,upload-webhook-security-44
 45,VERIFIED,stage-45-deps-sbom-trivy
 46,VERIFIED,runtime-baseline-i-46
-47,PARTIAL,runtime-baseline-ii-47
+47,VERIFIED,runtime-baseline-ii-47
 48,PARTIAL,ai-nitrado-perf-48
 49,VERIFIED,memory-leak-audit-49
 50,PARTIAL,load-test-50
