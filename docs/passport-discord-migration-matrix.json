@@ -1,7 +1,7 @@
 {
   "schemaVersion": 2,
   "stage": 54,
-  "basedOnMainSha": "54341a670150acd1df27f1d317d965f4491106a6",
+  "basedOnMainSha": "eaf8b42bb5d1fc194416324606f146196d04c8c0",
   "scope": "Remove unused passport-discord / passport; custom Discord OAuth remains canonical.",
   "status": "REMOVED_UNUSED_DEPS",
   "finding": "Dashboard OAuth is implemented in src/dashboard/routes/auth.ts with custom Discord OAuth (state/PKCE). No src imports of passport or passport-discord existed.",
@@ -13,10 +13,22 @@
     "regression": "login/callback/logout/session gates from Stages 36/43"
   },
   "cases": [
-    { "id": "passport-discord-removed", "status": "runtime-verified" },
-    { "id": "passport-removed", "status": "runtime-verified" },
-    { "id": "custom-oauth-pkce-canonical", "status": "runtime-verified" },
-    { "id": "no-src-passport-import", "status": "runtime-verified" }
+    {
+      "id": "passport-discord-removed",
+      "status": "runtime-verified"
+    },
+    {
+      "id": "passport-removed",
+      "status": "runtime-verified"
+    },
+    {
+      "id": "custom-oauth-pkce-canonical",
+      "status": "runtime-verified"
+    },
+    {
+      "id": "no-src-passport-import",
+      "status": "runtime-verified"
+    }
   ],
   "residual": []
 }

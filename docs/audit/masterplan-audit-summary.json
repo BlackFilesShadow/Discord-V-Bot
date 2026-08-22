@@ -1,57 +1,19 @@
 {
-  "generatedAt": "2026-08-21T23:12:35.289Z",
-  "auditFreezeSha": "48bbcfface38068bc71ad7bcc5c1dd87616da514",
-  "finalAuditedSha": "cf9d8e2530686ba8cef2063f6d5c726485a67f81",
-  "worktreeDirty": true,
+  "generatedAt": "2026-08-22T15:47:45.592Z",
+  "finalAuditedSha": "eaf8b42bb5d1fc194416324606f146196d04c8c0",
+  "worktreeDirty": false,
   "stagesTotal": 67,
-  "VERIFIED": 20,
-  "PARTIAL": 46,
+  "VERIFIED": 32,
+  "PARTIAL": 34,
   "FAILED": 0,
   "BLOCKED": 1,
-  "score": 14,
+  "score": 48,
   "productionReady": false,
-  "cli": {
-    "jestLocal": "GREEN 436 passed, 3 skipped (DB integration without docker)",
-    "prisma": "not re-run full generate in this wave",
-    "docker": "NOT AVAILABLE on agent host",
-    "npmAuditHigh": "3 HIGH deepmerge-ts via prisma — exception documented",
-    "sbom": "not enforced blocking in this wave",
-    "finalGate1": "NOT RUN",
-    "finalGate2": "NOT RUN",
-    "productionDeploy": "BLOCKED",
-    "liveSmoke": "BLOCKED"
-  },
-  "closedFindingsThisWave": [
-    "F-S3-04",
-    "F-S2-01",
-    "F-S5-01",
-    "F-S5-04",
-    "F-S5-06",
-    "F-S5-07"
-  ],
-  "mitigatedFindings": [
-    "F-S5-02",
-    "F-S5-05"
-  ],
-  "openBlocker": [
-    "F-S4-15"
-  ],
-  "openHigh": [
-    "F-S5-03",
-    "F-S4-05",
-    "F-S4-01",
-    "F-S4-02",
-    "F-S4-03",
-    "F-S4-06",
-    "F-S4-10",
-    "F-S4-11",
-    "F-S4-12",
-    "F-S4-13",
-    "F-S4-14"
-  ],
-  "notes": "Wave A dashboard 27-35 runtime SPA evidence; CI Playwright required",
-  "verified": 29,
-  "partial": 37,
+  "notes": "Post Stage45 wave: closed 21-26 rebind, 39,53-56 on main eaf8b42bb5d1fc194416324606f146196d04c8c0; residual PARTIAL remain for API live OAuth, multi-hour perf, journey/chaos live, gesamtaudit rewrite, release freeze, Stage67 deploy",
+  "mainCiRun": "32581911733",
+  "mainPlaywrightRun": "32581911648",
+  "verified": 32,
+  "partial": 34,
   "failed": 0,
   "blocked": 1
 }
