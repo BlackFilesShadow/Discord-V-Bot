@@ -1,11 +1,44 @@
 {
-  "schemaVersion": 1,
+  "schemaVersion": 2,
   "stage": 53,
-  "basedOnMainSha": "45caf9cd",
+  "basedOnMainSha": "54341a670150acd1df27f1d317d965f4491106a6",
   "scope": "Dependency audit and controlled updates — no blind upgrades.",
-  "decision": "No bulk dependency upgrades in Stage 53. Lockfile retained; security follow-ups tracked for Gate phase and Stages 54-55.",
+  "decision": "No bulk dependency upgrades. Security-relevant dependency changes are isolated by stage and must carry package/lockfile diff review plus regression evidence before merge.",
+  "currentFacts": {
+    "nodeEngine": ">=22.0.0",
+    "packageManagerSourceOfTruth": "package-lock.json",
+    "deepmergeTsOverride": "8.0.2",
+    "passportDiscordDirect": "0.1.4",
+    "passportDirect": "0.7.0",
+    "prismaDeclared": "^7.8.0",
+    "prismaClientDeclared": "^7.8.0"
+  },
+  "controlledFollowups": [
+    {
+      "stage": 54,
+      "subject": "passport-discord",
+      "rule": "Prove runtime reachability/absence first; remove or migrate only with OAuth/session regression coverage."
+    },
+    {
+      "stage": 55,
+      "subject": "inflight/glob transitive chain",
+      "rule": "Trace exact dependency ancestry and runtime/dev relevance before any parent-package update."
+    },
+    {
+      "stage": 56,
+      "subject": "dashboard bundle",
+      "rule": "Measure build chunks before targeted code splitting; no speculative dependency churn."
+    }
+  ],
   "contracts": {
-    "lockfile": "package-lock.json is source of truth",
-    "noBlind": "Do not bump majors without Stage-scoped regression"
+    "lockfile": "package-lock.json remains mandatory and reviewed with every dependency mutation",
+    "noBlind": "No bulk/major upgrade without stage-scoped coupling analysis and regression tests",
+    "securityGate": "npm audit --audit-level=high is blocking after Stage 45 hardening",
+    "sbomGate": "CycloneDX SBOM generation is fail-closed after Stage 45 hardening",
+    "shaRule": "Any package.json/package-lock/test/config change resets the PR gate to 0/2"
+  },
+  "verification": {
+    "passA": "Manifest/lockfile/source-of-truth and security-gate contracts crosschecked on current main.",
+    "passB": "Follow-up work split by coupling boundary so passport OAuth, transitive legacy packages, and UI bundle work cannot be conflated into a blind update wave."
   }
 }
