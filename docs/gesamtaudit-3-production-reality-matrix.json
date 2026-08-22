@@ -1,12 +1,26 @@
 {
-  "schemaVersion": 1,
+  "schemaVersion": 2,
   "stage": 62,
-  "basedOnMainSha": "45caf9cd",
-  "scope": "Gesamtaudit 3: production reality — config, deploy, secrets, observability, backups readiness.",
+  "basedOnMainSha": "bdf190b881573a78896152e6ec0dbe6e542e7e1a",
+  "scope": "Gesamtaudit 3: production reality — deploy surfaces, secrets posture, metrics default, CI security gates, health.",
   "contracts": {
-    "envExample": "documents required secrets as placeholders",
-    "docker": "Dockerfile + compose present",
-    "deploy": "deploy/ scripts present",
-    "metrics": "METRICS_ENABLED default false"
-  }
+    "dockerfile": "present, no COPY .env",
+    "compose": "docker-compose.yml present",
+    "deploy": "deploy/ directory present",
+    "envExample": "SESSION_SECRET, ENCRYPTION_KEY, METRICS_ENABLED=false",
+    "ci": "root high audit + SBOM blocking",
+    "health": "dashboard server exposes health/ready surface"
+  },
+  "cases": [
+    { "id": "dockerfile-no-env-copy", "status": "runtime-verified" },
+    { "id": "compose-and-deploy", "status": "runtime-verified" },
+    { "id": "metrics-default-off", "status": "runtime-verified" },
+    { "id": "session-encryption-env-pins", "status": "runtime-verified" },
+    { "id": "ci-security-sbom-blocking", "status": "runtime-verified" },
+    { "id": "live-production-deploy", "status": "residual-stage-67" }
+  ],
+  "residual": [
+    "Authorized production deploy + live smoke is Stage 67 only",
+    "Backup/restore live verification needs staging credentials"
+  ]
 }

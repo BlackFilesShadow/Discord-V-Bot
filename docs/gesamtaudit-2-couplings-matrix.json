@@ -1,11 +1,26 @@
 {
-  "schemaVersion": 1,
+  "schemaVersion": 2,
   "stage": 61,
-  "basedOnMainSha": "45caf9cd",
-  "scope": "Gesamtaudit 2: cross-system couplings Discord↔DB↔Nitrado↔Economy↔AI↔Dashboard↔Workers↔Leave/Rejoin.",
+  "basedOnMainSha": "bdf190b881573a78896152e6ec0dbe6e542e7e1a",
+  "scope": "Gesamtaudit 2: cross-domain couplings Discord↔DB↔Nitrado↔AI↔Economy↔Dashboard↔Workers↔Leave/Rejoin↔Audit.",
   "contracts": {
-    "scope": "guildId+nitradoConnId on live player rows",
-    "leave": "membership required for grants",
-    "incident": "no fake side effects (Stage 27)"
-  }
+    "membership": "requireGuildPermission / GUILD_MEMBERSHIP_REQUIRED",
+    "economyScope": "requireSafeDashboardEconomyScope",
+    "nitradoJobs": "NitradoJob model + jobWorker consumer",
+    "leaveRejoin": "guildMemberRemove + leaveCleanupWorker + leaveCleanupRejoin",
+    "aiWiring": "runtime → toolRuntime",
+    "incidentFailClosed": "devIncident operational actions empty or gated"
+  },
+  "cases": [
+    { "id": "auth-membership-coupling", "status": "runtime-verified" },
+    { "id": "economy-scope-coupling", "status": "runtime-verified" },
+    { "id": "nitrado-job-producer-consumer", "status": "runtime-verified" },
+    { "id": "leave-rejoin-coupling", "status": "runtime-verified" },
+    { "id": "ai-runtime-tool-wiring", "status": "runtime-verified" },
+    { "id": "incident-fail-closed", "status": "runtime-verified" },
+    { "id": "full-dynamic-import-orphan-sweep", "status": "residual" }
+  ],
+  "residual": [
+    "Automated orphan detection for every event handler remains incomplete without full runtime registry dump"
+  ]
 }

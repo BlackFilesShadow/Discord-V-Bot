@@ -783,30 +783,47 @@
     },
     {
       "id": 60,
-      "name": "gesamtaudit-60",
+      "name": "gesamtaudit-60-code",
       "status": "PARTIAL",
-      "evidence": [],
+      "evidence": [
+        "docs/gesamtaudit-1-code-architecture-matrix.json",
+        "scripts/gesamtaudit-scan.mjs",
+        "tests/security/gesamtaudit1CodeArchitecture.test.ts"
+      ],
       "findings": [
-        "F-S4-12"
-      ]
+        "dynamic-import-graph-residual"
+      ],
+      "note": "Architecture gate corpus + v2 auth/idempotency + AI tool path scan GREEN; residual full design rewrite",
+      "exactSha": "bdf190b881573a78896152e6ec0dbe6e542e7e1a"
     },
     {
       "id": 61,
-      "name": "gesamtaudit-61",
+      "name": "gesamtaudit-61-couplings",
       "status": "PARTIAL",
-      "evidence": [],
+      "evidence": [
+        "docs/gesamtaudit-2-couplings-matrix.json",
+        "scripts/gesamtaudit-scan.mjs",
+        "tests/security/gesamtaudit2CouplingsArchitecture.test.ts"
+      ],
       "findings": [
-        "F-S4-12"
-      ]
+        "full-dynamic-import-orphan-sweep"
+      ],
+      "note": "Core Discord/DB/Nitrado/AI/Economy/Leave couplings pinned; orphan sweep residual",
+      "exactSha": "bdf190b881573a78896152e6ec0dbe6e542e7e1a"
     },
     {
       "id": 62,
-      "name": "gesamtaudit-62",
+      "name": "gesamtaudit-62-prod-reality",
       "status": "PARTIAL",
-      "evidence": [],
+      "evidence": [
+        "docs/gesamtaudit-3-production-reality-matrix.json",
+        "tests/security/gesamtaudit3ProductionRealityArchitecture.test.ts"
+      ],
       "findings": [
-        "F-S4-12"
-      ]
+        "live-production-deploy-stage-67"
+      ],
+      "note": "Deploy/CI/metrics/secrets pins GREEN; live prod is Stage 67",
+      "exactSha": "bdf190b881573a78896152e6ec0dbe6e542e7e1a"
     },
     {
       "id": 63,
