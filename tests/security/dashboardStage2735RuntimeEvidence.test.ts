@@ -10,6 +10,7 @@ describe('Stage 27-35 dashboard runtime evidence', () => {
   const e2e = 'dashboard-ui/e2e/stage-27-35-runtime-matrix.spec.ts';
   const realDbE2e = 'dashboard-ui/e2e/stage-27-35-real-http-db.spec.ts';
   const harness = 'scripts/e2e-dashboard-db-server.ts';
+  const harnessBootstrap = 'scripts/e2e-dashboard-db-server.cjs';
   const slotUi = 'dashboard-ui/src/pages/ServerSlot.tsx';
   const api = 'dashboard-ui/src/lib/api.ts';
 
@@ -36,6 +37,7 @@ describe('Stage 27-35 dashboard runtime evidence', () => {
   it('requires a real browser -> OAuth/session -> AuthZ -> PostgreSQL chain in both Playwright gates', () => {
     expect(fs.existsSync(path.join(root, realDbE2e))).toBe(true);
     expect(fs.existsSync(path.join(root, harness))).toBe(true);
+    expect(fs.existsSync(path.join(root, harnessBootstrap))).toBe(true);
     const source = read(realDbE2e);
     expect(source).toContain('/auth/login');
     expect(source).toContain('/auth/callback');
@@ -52,6 +54,11 @@ describe('Stage 27-35 dashboard runtime evidence', () => {
     expect(server).toContain("process.env.E2E_REAL_DB !== '1'");
     expect(server).toContain("requireRuntime('../src/dashboard/server')");
     expect(server).toContain("requireRuntime('../src/database/prisma')");
+
+    const bootstrap = read(harnessBootstrap);
+    expect(bootstrap).toContain("'tsconfig.test.json'");
+    expect(bootstrap).toContain("require('../node_modules/ts-node/register/transpile-only')");
+    expect(bootstrap).toContain("require('./e2e-dashboard-db-server.ts')");
 
     for (const workflow of ['.github/workflows/e2e.yml', '.github/workflows/verification2.yml']) {
       const yaml = read(workflow);

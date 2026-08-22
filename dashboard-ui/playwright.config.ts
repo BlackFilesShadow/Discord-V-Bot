@@ -57,7 +57,7 @@ export default defineConfig({
     // Timeout laeuft. Im Real-DB-Modus liefert der echte Dashboard-Server
     // denselben Build aus; sonst nutzt die isolierte Matrix Vite preview.
     command: realDb
-      ? 'node -r ../node_modules/ts-node/register/transpile-only ../scripts/e2e-dashboard-db-server.ts'
+      ? 'node ../scripts/e2e-dashboard-db-server.cjs'
       : 'npx vite preview --port 4173 --strictPort --host 127.0.0.1',
     url: 'http://127.0.0.1:4173',
     reuseExistingServer: !process.env.CI,
