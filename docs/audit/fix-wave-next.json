@@ -1,10 +1,17 @@
 {
-  "generatedAt": "2026-08-21T23:12:35.289Z",
-  "baseSha": "cf9d8e2530686ba8cef2063f6d5c726485a67f81",
+  "generatedAt": "2026-08-22T03:45:04.595Z",
+  "baseSha": "eb32f0089a90502d0c26a371249df993a845634a",
   "waves": [
     {
+      "name": "wave-b-api-security-36-45",
+      "status": "in_progress",
+      "findings": [
+        "F-S4-03"
+      ]
+    },
+    {
       "name": "wave-a-dashboard-27-35",
-      "status": "implemented_pending_ci",
+      "status": "merged_main",
       "findings": [
         "F-S4-01",
         "F-S4-02"

@@ -1,7 +1,7 @@
 {
   "schemaVersion": 1,
   "stage": 37,
-  "basedOnMainSha": "09b6ce43dc0ea49932d485579ca1e8316c32a3cc",
+  "basedOnMainSha": "eb32f0089a90502d0c26a371249df993a845634a",
   "scope": "API authorization / scope / IDOR matrix: guild, gameserver/slot, user, owner/admin/DEV/bot-admin, grants, cross-scope attacks, missing scope fail-closed.",
   "contracts": {
     "missingGuildParam": "Invalid/missing :guildId => 400 before data access.",
@@ -19,15 +19,15 @@
       "id": "cross-guild-param",
       "attack": "Authenticated user calls /guilds/{otherGuildId}/...",
       "expected": "403 membership/perm or 404 bot not present",
-      "evidence": "requireGuildPermission; tests/security/dashboardViewScope.test.ts",
-      "status": "verified"
+      "evidence": "requireGuildPermission; tests/dashboard/requireGuildPermissionIdorGate.test.ts; dashboardViewScope.test.ts",
+      "status": "runtime-verified"
     },
     {
       "id": "stale-grant-after-leave",
       "attack": "DB grant remains after leaving guild",
       "expected": "403 membership required via resolveDelegatedPermissionContext",
-      "evidence": "auth.ts requireGuildPermission delegated.member check",
-      "status": "verified"
+      "evidence": "requireGuildPermissionIdorGate.test.ts non-member DENY; auth.ts membership check",
+      "status": "runtime-verified"
     },
     {
       "id": "cross-slot-economy",
