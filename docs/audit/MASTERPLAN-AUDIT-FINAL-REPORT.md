@@ -1,131 +1,137 @@
-# MASTERPLAN FIX + RE-AUDIT COMPLETE (honest)
+# MASTERPLAN AUDIT – CURRENT RECONCILED STATE
+
+This report is generated deterministically from `docs/audit/stage-matrix-1-67.json`.
+Do not edit this report, the scoreboard, or the summary manually.
 
 ## Identity
 
 | Field | Value |
 | --- | --- |
-| Base Audit SHA | `48bbcfface38068bc71ad7bcc5c1dd87616da514` |
-| Final audited SHA | `48bbcfface38068bc71ad7bcc5c1dd87616da514` (worktree dirty — **not** a release freeze) |
-| Generated | 2026-08-22 |
-| Mode | Root-cause fix wave + re-crosscheck against current product code |
+| Generated | 2026-08-22T17:58:55.170Z |
+| Final audited/evidence SHA | `eb10b85130b4481e361a234cbb005b740ebd40b3` |
+| Audit freeze SHA | `eb10b85130b4481e361a234cbb005b740ebd40b3` |
+| Stages total | 67 |
+
+## Recalculated scoreboard
+
+| Status | Count |
+| --- | ---: |
+| VERIFIED | 40 |
+| PARTIAL | 26 |
+| FAILED | 0 |
+| BLOCKED | 1 |
+| **TOTAL** | **67** |
+
+**Current score: 60 / 100**
 
 **PRODUCTION READY: NO**
 
----
+## Complete stage matrix
 
-## Scoreboard (recalculated, not inherited)
+| Stage | Status | Name | Evidence SHA | Residual / note |
+| ---: | --- | --- | --- | --- |
+| 1 | VERIFIED | stage-1 | — | — |
+| 2 | VERIFIED | stage-2 | — | — |
+| 3 | VERIFIED | stage-3 | — | — |
+| 4 | VERIFIED | stage-4 | — | — |
+| 5 | VERIFIED | stage-5 | — | — |
+| 6 | VERIFIED | stage-6 | — | — |
+| 7 | VERIFIED | stage-7 | — | — |
+| 8 | VERIFIED | stage-8 | — | — |
+| 9 | VERIFIED | stage-9 | — | — |
+| 10 | VERIFIED | stage-10 | — | — |
+| 11 | VERIFIED | stage-11 | — | — |
+| 12 | VERIFIED | stage-12 | — | — |
+| 13 | VERIFIED | stage-13 | — | — |
+| 14 | VERIFIED | stage-14 | — | — |
+| 15 | VERIFIED | stage-15 | — | — |
+| 16 | VERIFIED | stage-16 | — | — |
+| 17 | VERIFIED | stage-17 | — | — |
+| 18 | VERIFIED | stage-18 | — | — |
+| 19 | VERIFIED | stage-19 | — | — |
+| 20 | VERIFIED | AI hardened tool layer | — | Production tool runtime and fail-closed read-only registry are merged and regression-tested. |
+| 21 | VERIFIED | dashboard-surface-prep-21 | `eaf8b42bb5d1fc194416324606f146196d04c8c0` | Rebind after 27-35 Playwright runtime matrix + authenticated e2e corpus on main |
+| 22 | VERIFIED | dashboard-action-prep-22 | `eaf8b42bb5d1fc194416324606f146196d04c8c0` | Rebind via authenticated action e2e suite (settings/economy/whitelist/tickets/...) |
+| 23 | VERIFIED | dashboard-surface-inventory-23 | `eaf8b42bb5d1fc194416324606f146196d04c8c0` | Surface inventory + runtime e2e matrix cover desktop/mobile routes |
+| 24 | VERIFIED | dashboard-button-matrix-24 | `eaf8b42bb5d1fc194416324606f146196d04c8c0` | Button matrix architecture + authenticated action e2e |
+| 25 | VERIFIED | dashboard-switch-matrix-25 | `eaf8b42bb5d1fc194416324606f146196d04c8c0` | Switch matrix architecture + settings mutation e2e |
+| 26 | VERIFIED | dashboard-crud-matrix-26 | `eaf8b42bb5d1fc194416324606f146196d04c8c0` | CRUD matrix + dev/server CRUD e2e |
+| 27 | PARTIAL | stage-27 | — | residual-no-live-db-oauth-side-effect-in-playwright |
+| 28 | PARTIAL | stage-28 | — | residual-no-live-db-oauth-side-effect-in-playwright |
+| 29 | PARTIAL | stage-29 | — | residual-no-live-db-oauth-side-effect-in-playwright |
+| 30 | PARTIAL | stage-30 | — | residual-no-live-db-oauth-side-effect-in-playwright |
+| 31 | PARTIAL | stage-31 | — | residual-no-live-db-oauth-side-effect-in-playwright |
+| 32 | PARTIAL | stage-32 | — | residual-no-live-db-oauth-side-effect-in-playwright |
+| 33 | PARTIAL | stage-33 | — | residual-no-live-db-oauth-side-effect-in-playwright |
+| 34 | PARTIAL | stage-34 | — | residual-no-live-db-oauth-side-effect-in-playwright |
+| 35 | PARTIAL | stage-35 | — | residual-no-live-db-oauth-side-effect-in-playwright |
+| 36 | VERIFIED | api-authentication-36 | `eb10b85130b4481e361a234cbb005b740ebd40b3` | VERIFIED by the real HTTP+PostgreSQL OAuth callback, SID rotation, revocation, /api/me and /auth/status chain in both successful complete Jest jobs on PR #264 evidence head a31827d1593b8ac79e74dc2dd69e81beb90142d9 (CI/CD 32590954868; Verification 2 32590954874). |
+| 37 | VERIFIED | api-authorization-idor-37 | `eb10b85130b4481e361a234cbb005b740ebd40b3` | VERIFIED by the real HTTP+PostgreSQL foreign-guild TicketTemplate IDOR denial and unchanged-row assertion in both successful complete Jest jobs on PR #264 evidence head a31827d1593b8ac79e74dc2dd69e81beb90142d9 (CI/CD 32590954868; Verification 2 32590954874). |
+| 38 | VERIFIED | api-validation-race-idempotency-38 | `eb10b85130b4481e361a234cbb005b740ebd40b3` | VERIFIED by the real concurrent HTTP+PostgreSQL claim test proving one claim and exactly one AuditLog side effect in both successful complete Jest jobs on PR #264 evidence head a31827d1593b8ac79e74dc2dd69e81beb90142d9 (CI/CD 32590954868; Verification 2 32590954874). |
+| 39 | VERIFIED | git-history-secret-hygiene-39 | `eaf8b42bb5d1fc194416324606f146196d04c8c0` | Gitleaks full-history blocking on CI security job; main clean |
+| 40 | VERIFIED | roles-permission-attack-40 | `2a7c048d1d1a1206d0774da26d70c363cc225fcf` | Permission/IDOR + stale grant + DEV/BotAdmin identity gates runtime-verified |
+| 41 | VERIFIED | csrf-xss-41 | `eb10b85130b4481e361a234cbb005b740ebd40b3` | VERIFIED by successful Origin/Fetch-Metadata regression tests and the TypeScript-AST sink scan in both complete Jest jobs on PR #264 evidence head a31827d1593b8ac79e74dc2dd69e81beb90142d9 (CI/CD 32590954868; Verification 2 32590954874). |
+| 42 | VERIFIED | ssrf-injection-path-42 | `2a7c048d1d1a1206d0774da26d70c363cc225fcf` | CI-local SSRF, SQL/command injection and path traversal contracts are closed. The explicitly external production-egress validation is transferred to Stage 67. |
+| 43 | VERIFIED | session-oauth-43 | `eb10b85130b4481e361a234cbb005b740ebd40b3` | VERIFIED by the real HTTP+PostgreSQL OAuth callback/SID rotation and token-cache revocation chain in both successful complete Jest jobs on PR #264 evidence head a31827d1593b8ac79e74dc2dd69e81beb90142d9 (CI/CD 32590954868; Verification 2 32590954874). Live Discord OAuth remains isolated to Stage 67. |
+| 44 | VERIFIED | upload-webhook-security-44 | `3f8f281fb25d5e2dae1b1e933fde056b315b1d95` | Webhook HMAC/replay + upload path/size + MIME magic-bytes/content validation runtime-verified; residual empty |
+| 45 | VERIFIED | stage-45-deps-sbom-trivy | `2a7c048d1d1a1206d0774da26d70c363cc225fcf` | Root/dashboard HIGH audit + SBOM + Trivy CRITICAL/HIGH blocking + Vite 6.4.3 on main |
+| 46 | PARTIAL | runtime-baseline-i-46 | — | residual-current-sha-rss-heap-cpu-gc-eventloop-series; F-S4-06 |
+| 47 | PARTIAL | runtime-baseline-ii-47 | — | residual-current-sha-db-redis-worker-queue-measurements; F-S4-06 |
+| 48 | PARTIAL | ai-nitrado-perf-48 | `ce68d05e6074ce95d7e417d1c063bddfa0e17206` | residual-live-provider-rtt; F-S4-06 |
+| 49 | PARTIAL | memory-leak-audit-49 | — | residual-current-sha-rss-heap-listener-handle-series |
+| 50 | PARTIAL | load-test-50 | `8f181c7e8f2344f0c78dcd19a3151547f885aa17` | residual-full-stack-load |
+| 51 | PARTIAL | soak-test-51 | `8f181c7e8f2344f0c78dcd19a3151547f885aa17` | residual-multi-hour-soak |
+| 52 | PARTIAL | ram-node-heap-tuning-52 | — | residual-stage-46-51-measurements-before-final-tuning-decision |
+| 53 | VERIFIED | dependency-audit-controlled-53 | `eaf8b42bb5d1fc194416324606f146196d04c8c0` | Controlled updates; lockfile + Stage45 high blocking; no blind majors |
+| 54 | VERIFIED | passport-discord-migration-54 | `eaf8b42bb5d1fc194416324606f146196d04c8c0` | passport/passport-discord removed; custom PKCE OAuth canonical |
+| 55 | VERIFIED | inflight-glob-cleanup-55 | `eaf8b42bb5d1fc194416324606f146196d04c8c0` | No prod inflight; Jest29 glob/inflight dev-only residual classified |
+| 56 | VERIFIED | dashboard-bundle-codesplit-56 | `eaf8b42bb5d1fc194416324606f146196d04c8c0` | All JS chunks <500kB on Vite 6.4.3; entry ~64kB; vendor+lazy split |
+| 57 | PARTIAL | dead-code-legacy-cleanup-57 | — | residual-full-coupling-and-reference-analysis-before-cleanup |
+| 58 | PARTIAL | full-user-journey | `8f181c7e8f2344f0c78dcd19a3151547f885aa17` | F-S4-10; residual-live-discord-gateway |
+| 59 | PARTIAL | chaos | `8f181c7e8f2344f0c78dcd19a3151547f885aa17` | F-S4-11; residual-docker-process-kill |
+| 60 | PARTIAL | gesamtaudit-60-code | `bdf190b881573a78896152e6ec0dbe6e542e7e1a` | dynamic-import-graph-residual |
+| 61 | PARTIAL | gesamtaudit-61-couplings | `bdf190b881573a78896152e6ec0dbe6e542e7e1a` | full-dynamic-import-orphan-sweep |
+| 62 | PARTIAL | gesamtaudit-62-prod-reality | `bdf190b881573a78896152e6ec0dbe6e542e7e1a` | live-production-deploy-stage-67 |
+| 63 | PARTIAL | release-sha | — | F-S4-13 |
+| 64 | PARTIAL | final-gate-1 | — | F-S4-14 |
+| 65 | PARTIAL | final-gate-2 | — | F-S4-14 |
+| 66 | PARTIAL | main-gate | — | no-merge-this-session |
+| 67 | BLOCKED | production-live | — | F-S4-15; stage-42-live-production-network-egress-validation |
 
-| Metric | Value |
-| --- | --- |
-| Stages total | 67 |
-| VERIFIED | 29 |
-| PARTIAL | 37 |
-| FAILED | 0 |
-| BLOCKED | 1 |
-| **CURRENT SCORE** | **14 / 100** |
+## Remaining residuals (priority order)
 
-Stage 20 moved FAILED → VERIFIED (production tool runtime + tests).  
-Stage 67 remains BLOCKED (no production credentials).  
-No FAILED stages remain in the recalculated matrix; residual risk is PARTIAL depth, not a single hard fail.
+- Stage 27 (PARTIAL): residual-no-live-db-oauth-side-effect-in-playwright
+- Stage 28 (PARTIAL): residual-no-live-db-oauth-side-effect-in-playwright
+- Stage 29 (PARTIAL): residual-no-live-db-oauth-side-effect-in-playwright
+- Stage 30 (PARTIAL): residual-no-live-db-oauth-side-effect-in-playwright
+- Stage 31 (PARTIAL): residual-no-live-db-oauth-side-effect-in-playwright
+- Stage 32 (PARTIAL): residual-no-live-db-oauth-side-effect-in-playwright
+- Stage 33 (PARTIAL): residual-no-live-db-oauth-side-effect-in-playwright
+- Stage 34 (PARTIAL): residual-no-live-db-oauth-side-effect-in-playwright
+- Stage 35 (PARTIAL): residual-no-live-db-oauth-side-effect-in-playwright
+- Stage 46 (PARTIAL): residual-current-sha-rss-heap-cpu-gc-eventloop-series; F-S4-06
+- Stage 47 (PARTIAL): residual-current-sha-db-redis-worker-queue-measurements; F-S4-06
+- Stage 48 (PARTIAL): residual-live-provider-rtt; F-S4-06
+- Stage 49 (PARTIAL): residual-current-sha-rss-heap-listener-handle-series
+- Stage 50 (PARTIAL): residual-full-stack-load
+- Stage 51 (PARTIAL): residual-multi-hour-soak
+- Stage 52 (PARTIAL): residual-stage-46-51-measurements-before-final-tuning-decision
+- Stage 57 (PARTIAL): residual-full-coupling-and-reference-analysis-before-cleanup
+- Stage 58 (PARTIAL): F-S4-10; residual-live-discord-gateway
+- Stage 59 (PARTIAL): F-S4-11; residual-docker-process-kill
+- Stage 60 (PARTIAL): dynamic-import-graph-residual
+- Stage 61 (PARTIAL): full-dynamic-import-orphan-sweep
+- Stage 62 (PARTIAL): live-production-deploy-stage-67
+- Stage 63 (PARTIAL): F-S4-13
+- Stage 64 (PARTIAL): F-S4-14
+- Stage 65 (PARTIAL): F-S4-14
+- Stage 66 (PARTIAL): no-merge-this-session
+- Stage 67 (BLOCKED): F-S4-15; stage-42-live-production-network-egress-validation
 
----
+## Integrity contract
 
-## What this wave actually fixed
-
-### Wave A — Dashboard Stages 27-35
-
-- Settings mutations: success toast + describeApiError failure toast/inline alert (no silent fail).
-- Playwright runtime matrix: mutation+idempotency, error taxonomy 400-500, audit cursor/filter, desktop 1280, mobile 320-430.
-- Jest evidence gate: 	ests/security/dashboardStage2735RuntimeEvidence.test.ts.
-- Residual: stubbed API (no live OAuth/prod DB side-effect in Playwright); full action inventory still relies on prior surface e2e + architecture matrices.
-
-
-### Stage 20 / F-S3-04 / F-S2-01 (AI tool layer)
-
-**Root cause:** `AiToolExecutor` existed as a library + unit tests without a production consumer; LLM paths could not be proven fail-closed for tool side effects.
-
-**Fix:**
-
-- `src/modules/ai/toolRuntime.ts` — production registry, authorizer (guild/gameserver scope, Discord membership, permissions), step-up wiring, idempotency cache, audit events, structured errors.
-- Registered tools are **READ_ONLY only** (`nitrado.connection.status`, `ai.tools.catalog`). Destructive Nitrado/DB mutations are intentionally **not** registered (fail-closed).
-- `src/modules/ai/runtime.ts` boots the production executor at AI loop start.
-- Tests: `tests/ai/toolRuntime.test.ts`, extended `tests/security/aiToolLayerArchitecture.test.ts`.
-
-**Evidence:** Jest green for tool runtime + architecture gates.
-
-### Local ↔ CI parity / F-S5-01,04,06,07 (+ partial 02,05)
-
-- `.gitattributes` — deterministic LF for text.
-- `tests/helpers/sourceText.ts` + architecture gates normalize CRLF without weakening assertions.
-- `tests/setupEnv.ts` — Jest `setupFiles` for non-secret CI-like env; valid 64-hex `ENCRYPTION_KEY`.
-- `scripts/resolve-bash.js` + `db:lifecycle` npm script prefer Git Bash over WSL stub.
-- `docker-compose.test.yml` + `scripts/local-ci-parity.ps1` + `npm run test:local-ci` for parity path.
-- DB integration suites gated via `tests/helpers/dbIntegration.ts` (CI/`RUN_DB_TESTS=1` only) so missing Docker does not fake-green or false-fail unit runs.
-
-**Host limit:** Docker CLI **not installed** on the agent workstation → full local DB lifecycle / integration cannot be executed here.
-
-### Dependency / SBOM / F-S5-03, F-S4-05
-
-- Confirmed: 3× HIGH `deepmerge-ts` via `prisma@7.9.1`.
-- **No** `npm audit fix --force` (would downgrade to Prisma 6.12.0).
-- Exception documented: `docs/audit/security-exception-deepmerge-ts.md`.
-- SBOM still not promoted to hard gate in this wave (remains open).
-
----
-
-## What remains OPEN (no greenwash)
-
-| ID | Severity | Status | Why |
-| --- | --- | --- | --- |
-| F-S4-15 | BLOCKER | BLOCKED | No authorized production deploy/live smoke credentials |
-| F-S5-03 / F-S4-05 | HIGH | OPEN_EXCEPTION | Transitive deepmerge-ts; Prisma force-fix unsafe |
-| F-S5-02 / F-S5-05 | HIGH/MED | PARTIAL | Compose path ready; Docker absent on host |
-| F-S4-01 / F-S4-02 | HIGH | OPEN | Authenticated desktop/mobile E2E matrices not re-proven |
-| F-S4-03 | HIGH | OPEN | API security still largely architecture/static |
-| F-S4-06 | HIGH | OPEN | No SHA-bound perf/load/soak artifacts (`docs/audit/performance/`) |
-| F-S4-10 | HIGH | OPEN | No contiguous full user journey E2E |
-| F-S4-11 | HIGH | OPEN | No real chaos fault injection |
-| F-S4-12–14 / F-PRE-14 | MED/HIGH | OPEN | Release freeze + dual final gates + main merge not done |
-
----
-
-## CLI / gates (this host)
-
-| Check | Result |
-| --- | --- |
-| Jest (`npx jest --coverage=false --ci`) | **GREEN** — 436 passed, 3 suites skipped (DB integration) |
-| Prisma generate/validate | Not fully re-run end-to-end this wave |
-| Lint / Build | Not full-run this wave |
-| `db:consistency` / `db:lifecycle` | Not run (no Postgres/Docker) |
-| `npm audit --audit-level=high` | **3 HIGH** (documented exception) |
-| SBOM blocking gate | Not enforced |
-| Dashboard Playwright / Mobile | Not re-run |
-| Final Gate 1 / 2 | **NOT RUN** |
-| Main Gate / Docker / Main Playwright | **NOT RUN** |
-| Production Deploy / Live Smoke | **BLOCKED** |
-
----
-
-## Findings closure policy applied
-
-Only findings with root-cause product fix + regression tests were moved toward CLOSED.  
-No assertion weakening, no fake production smoke, no Stage 67 mock.
-
----
-
-## Next waves (see `fix-wave-next.json`)
-
-1. Install Docker / CI runner → `npm run test:local-ci` green with DB integrations.  
-2. Authenticated E2E + mobile viewports + API negative security suite.  
-3. SHA-bound performance + chaos + full journey.  
-4. Release freeze SHA → Final Gate 1/2 identical SHA → main.  
-5. Production deploy + live smoke only with real credentials.
-
----
-
-## Explicit non-claims
-
-- **Not** 100/100.  
-- **Not** production ready.  
-- **Not** claiming main CI or Playwright green without evidence.  
-- Dirty worktree means Final audited SHA is **not** a release candidate until commit + gates.
+- `VERIFIED + PARTIAL + FAILED + BLOCKED = 67`.
+- Every non-VERIFIED stage names at least one residual/finding.
+- A VERIFIED stage cannot retain findings.
+- JSON, CSV, and Markdown outputs are UTF-8 without BOM and use LF line endings.
+- `npm run audit:check` fails on drift instead of silently regenerating in CI.

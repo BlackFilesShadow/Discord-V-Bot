@@ -12,6 +12,7 @@ const mw = read('src/dashboard/middleware/idempotency.ts');
 const v2 = read('src/dashboard/routes/v2.ts');
 const claimTest = read('tests/security/idempotencyClaim.test.ts');
 const clientGate = read('tests/runtime/dashboardMutationIdempotencyRetryGate.test.ts');
+const httpDbIntegration = read('tests/security/dashboardSecurityHttpDbIntegration.test.ts');
 
 describe('Stage 38 API validation / race / idempotency matrix', () => {
   it('documents cases', () => {
@@ -45,6 +46,9 @@ describe('Stage 38 API validation / race / idempotency matrix', () => {
     expect(claimTest).toContain('fail-closes with 503 IDEMPOTENCY_STORE_UNAVAILABLE');
     expect(claimTest).toContain('fuehrt bei zwei parallelen identischen Requests den Handler nur einmal aus');
     expect(claimTest).toContain('liefert bei erneutem Aufruf das gecachte Ergebnis ohne Handler-Rerun');
+    expect(httpDbIntegration).toContain('claims a concurrent mutation atomically in PostgreSQL');
+    expect(httpDbIntegration).toContain("expect(claim?.status).toBe('DONE')");
     expect(claimTest).not.toMatch(/test\.(only|skip)|describe\.(only|skip)/);
+    expect(httpDbIntegration).not.toMatch(/test\.(only|skip)|describe\.(only|skip)/);
   });
 });

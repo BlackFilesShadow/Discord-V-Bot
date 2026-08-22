@@ -24,6 +24,7 @@ import { readinessHandler } from './health';
 import prisma from '../database/prisma';
 import { metricsRegistry } from '../utils/metrics';
 import type { Client } from 'discord.js';
+import { createMutationOriginGuard } from './middleware/mutationOrigin';
 
 /**
  * Express `trust proxy`-Wert aus der Konfiguration parsen.
@@ -221,6 +222,7 @@ export async function startDashboard(client?: Client): Promise<DashboardRuntimeH
     },
   });
   app.use(sessionMiddleware);
+  app.use(createMutationOriginGuard(config.dashboard.url));
 
   // Request-Logging
   app.use((req, _res, next) => {

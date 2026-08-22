@@ -1,7 +1,7 @@
 {
   "schemaVersion": 2,
   "stage": 42,
-  "basedOnMainSha": "3f8f281fb25d5e2dae1b1e933fde056b315b1d95",
+  "basedOnMainSha": "eb10b85130b4481e361a234cbb005b740ebd40b3",
   "scope": "SSRF, SQL/command injection surface, path traversal on upload/download/export/snapshot.",
   "contracts": {
     "ssrf": "URL validators block private hosts/metadata",
@@ -27,6 +27,6 @@
     "path": "src/utils/pathSafety.ts"
   },
   "residual": [
-    "Live external SSRF against production network egress not exercised in CI (staging/Stage 67)"
+    "Live external SSRF against production network egress is explicitly transferred to Stage 67"
   ]
 }

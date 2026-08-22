@@ -250,38 +250,47 @@ authRouter.get('/callback', async (req: Request, res: Response) => {
       },
     });
 
-    // Session-Cookie setzen
-    (req.session as any).sessionToken = sessionToken;
-    (req.session as any).userId = dbUser.id;
-    (req.session as any).discordId = discordUser.id;
-    (req.session as any).role = dbUser.role;
-
-    // Cleanup
-    delete (req.session as any).oauthState;
-    delete (req.session as any).oauthNonce;
-    delete (req.session as any).pkceVerifier;
-
-    logAudit('OAUTH2_LOGIN_SUCCESS', 'AUTH', {
-      userId: dbUser.id, discordId: discordUser.id, ip: req.ip,
-    });
-
     // Sektion 12: 2FA-Pflicht NUR fuer ADMIN/SUPER_ADMIN.
     // DEVELOPER-Rolle hat eigenen Second-Factor via DEV-Login-Panel (Spec 1+5)
     // -> KEINE OAuth-2FA-Erzwingung fuer DEVELOPER (sonst 403-Lock + toter Redirect).
     let postLoginPath = '/servers';
+    let requires2FA = false;
     if (['ADMIN', 'SUPER_ADMIN'].includes(dbUser.role)) {
       const twoFA = await prisma.twoFactorAuth.findUnique({ where: { userId: dbUser.id } });
       if (twoFA?.isEnabled) {
-        (req.session as any).requires2FA = true;
+        requires2FA = true;
         // Frontend hat (noch) keine /auth/2fa-Page. Bis dahin landen wir auf /login
         // mit Hinweis (statt einer toten /auth/2fa-Route, die per SPA-Catch-All
         // auf /servers redirected → Protected → 403 → /login → Discord → Loop).
         postLoginPath = '/login?requires2FA=1';
-      } else {
-        // 2FA noch nicht eingerichtet -> nicht blockieren (Frontend-Setup-Flow folgt).
-        (req.session as any).requires2FA = false;
       }
     }
+
+    // Session fixation verhindern: OAuth-State/PKCE wurden auf der anonymen
+    // Pre-Login-Session validiert. Vor dem Binden der Identitaet wird die
+    // Express-Session-ID zwingend rotiert.
+    try {
+      await new Promise<void>((resolve, reject) => {
+        req.session.regenerate(err => (err ? reject(err) : resolve()));
+      });
+    } catch (error) {
+      tokenCache.delete(sessionToken);
+      await prisma.session.updateMany({
+        where: { token: sessionToken },
+        data: { isActive: false },
+      }).catch(() => undefined);
+      throw error;
+    }
+
+    (req.session as any).sessionToken = sessionToken;
+    (req.session as any).userId = dbUser.id;
+    (req.session as any).discordId = discordUser.id;
+    (req.session as any).role = dbUser.role;
+    (req.session as any).requires2FA = requires2FA;
+
+    logAudit('OAUTH2_LOGIN_SUCCESS', 'AUTH', {
+      userId: dbUser.id, discordId: discordUser.id, ip: req.ip,
+    });
 
     // KRITISCH: req.session.save() VOR redirect, sonst Race-Condition.
     // Browser landet auf /servers -> /api/me -> findet noch keine
@@ -291,6 +300,11 @@ authRouter.get('/callback', async (req: Request, res: Response) => {
       if (err) {
         logger.error('OAuth2 Callback: session.save fehlgeschlagen', err);
         logAudit('OAUTH2_SESSION_SAVE_ERROR', 'SECURITY', { ip: req.ip, err: err.message });
+        tokenCache.delete(sessionToken);
+        void prisma.session.updateMany({
+          where: { token: sessionToken },
+          data: { isActive: false },
+        }).catch(() => undefined);
         res.redirect(`${config.dashboard.url}/login?err=session`);
         return;
       }
@@ -481,19 +495,40 @@ authRouter.get('/status', async (req: Request, res: Response) => {
     return;
   }
 
-  const cachedToken = tokenCache.get(sessionToken);
-  if (!cachedToken || cachedToken.expiresAt <= new Date()) {
-    // Token abgelaufen, Refresh versuchen
-    const dbSession = await prisma.session.findUnique({
+  let dbSession;
+  try {
+    dbSession = await prisma.session.findUnique({
       where: { token: sessionToken },
       include: { user: true },
     });
+  } catch (error) {
+    logger.error('Auth-Status session lookup failed', error as Error);
+    res.status(503).json({
+      authenticated: false,
+      error: 'Session-Store nicht erreichbar.',
+      code: 'SESSION_STORE_UNAVAILABLE',
+    });
+    return;
+  }
 
-    if (!dbSession || !dbSession.isActive || dbSession.expiresAt <= new Date()) {
-      tokenCache.delete(sessionToken);
-      res.json({ authenticated: false });
-      return;
-    }
+  const cookieUserId = (req.session as any).userId;
+  if (
+    !dbSession
+    || !dbSession.isActive
+    || dbSession.expiresAt <= new Date()
+    || !cookieUserId
+    || dbSession.userId !== cookieUserId
+  ) {
+    tokenCache.delete(sessionToken);
+    await new Promise<void>(resolve => req.session.destroy(() => resolve()));
+    res.json({ authenticated: false });
+    return;
+  }
+
+  const cachedToken = tokenCache.get(sessionToken);
+  if (!cachedToken || cachedToken.expiresAt <= new Date()) {
+    // Token abgelaufen, Refresh versuchen. Die persistente Session wurde oben
+    // unabhaengig vom Cache bereits auf Aktivitaet, Ablauf und User-Bindung geprueft.
 
     // Token-Refresh (Sektion 12: Rotation erzwingen)
     const latestToken = await prisma.oAuthToken.findFirst({
@@ -537,6 +572,11 @@ authRouter.get('/status', async (req: Request, res: Response) => {
         logAudit('TOKEN_REFRESHED', 'AUTH', { userId: dbSession.userId });
       } catch {
         tokenCache.delete(sessionToken);
+        await prisma.session.updateMany({
+          where: { token: sessionToken },
+          data: { isActive: false },
+        }).catch(() => undefined);
+        await new Promise<void>(resolve => req.session.destroy(() => resolve()));
         res.json({ authenticated: false });
         return;
       }
@@ -548,15 +588,15 @@ authRouter.get('/status', async (req: Request, res: Response) => {
   res.json({
     authenticated: true,
     requires2FA,
-    userId: (req.session as any).userId,
-    role: (req.session as any).role,
+    userId: dbSession.userId,
+    role: dbSession.user.role,
   });
 });
 
 /**
  * Bereinigt abgelaufene Tokens aus dem Cache.
  */
-setInterval(() => {
+const tokenCleanupTimer = setInterval(() => {
   const now = new Date();
   for (const [key, value] of tokenCache) {
     if (value.expiresAt <= now) {
@@ -564,3 +604,4 @@ setInterval(() => {
     }
   }
 }, 5 * 60 * 1000);
+tokenCleanupTimer.unref();

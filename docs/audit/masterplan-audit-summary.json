@@ -1,19 +1,16 @@
 {
-  "generatedAt": "2026-08-22T16:33:42.720Z",
-  "finalAuditedSha": "eaf8b42bb5d1fc194416324606f146196d04c8c0",
-  "worktreeDirty": false,
+  "generatedAt": "2026-08-22T17:58:55.170Z",
+  "finalAuditedSha": "eb10b85130b4481e361a234cbb005b740ebd40b3",
+  "auditFreezeSha": "eb10b85130b4481e361a234cbb005b740ebd40b3",
   "stagesTotal": 67,
-  "VERIFIED": 33,
-  "PARTIAL": 33,
-  "FAILED": 0,
-  "BLOCKED": 1,
-  "score": 49,
+  "counts": {
+    "VERIFIED": 40,
+    "PARTIAL": 26,
+    "FAILED": 0,
+    "BLOCKED": 1
+  },
+  "score": 60,
   "productionReady": false,
-  "notes": "Stage 44 VERIFIED (MIME/webhook). Stage 42 SQL surface closed; live egress SSRF residual remains.",
-  "mainCiRun": "32581911733",
-  "mainPlaywrightRun": "32581911648",
-  "verified": 33,
-  "partial": 33,
-  "failed": 0,
-  "blocked": 1
+  "sourceOfTruth": "docs/audit/stage-matrix-1-67.json",
+  "notes": "Derived deterministically; PARTIAL/BLOCKED stages retain explicit residuals and are never promoted by aggregation."
 }

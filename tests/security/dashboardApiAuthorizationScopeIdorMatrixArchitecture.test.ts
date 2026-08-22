@@ -22,6 +22,7 @@ const viewScope = read('tests/security/dashboardViewScope.test.ts');
 const eslintRule = read('eslint-rules/no-unscoped-prisma-query.js');
 const runtimeIdor = read('tests/dashboard/requireGuildPermissionIdorGate.test.ts');
 const sessionGate = read('tests/dashboard/requireAuthSessionGate.test.ts');
+const httpDbIntegration = read('tests/security/dashboardSecurityHttpDbIntegration.test.ts');
 
 describe('Stage 37 API authorization / scope / IDOR matrix', () => {
   it('documents attack and role cases', () => {
@@ -69,6 +70,9 @@ describe('Stage 37 API authorization / scope / IDOR matrix', () => {
     expect(runtimeIdor).toContain('DENY non-member even if stale grant');
     expect(runtimeIdor).toContain('DENY member missing required permission scope');
     expect(runtimeIdor).toContain('does not leak prior guildScope nitradoConnId across different guild');
+    expect(httpDbIntegration).toContain('foreign-guild entity ID unreadable and immutable');
+    expect(httpDbIntegration).toContain('prisma.ticketTemplate.findUniqueOrThrow');
     expect(runtimeIdor).not.toMatch(/test\.(only|skip)|describe\.(only|skip)/);
+    expect(httpDbIntegration).not.toMatch(/test\.(only|skip)|describe\.(only|skip)/);
   });
 });

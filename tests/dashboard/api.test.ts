@@ -10,6 +10,13 @@
 jest.mock('../../src/database/prisma', () => ({
   __esModule: true,
   default: {
+    session: {
+      findUnique: jest.fn().mockResolvedValue({
+        isActive: true,
+        expiresAt: new Date('2099-01-01T00:00:00.000Z'),
+        userId: 'test-user-id',
+      }),
+    },
     user: {
       findUnique: jest.fn().mockResolvedValue({
         discordId: '123',
@@ -39,7 +46,11 @@ function createTestApp(sessionData?: Record<string, unknown>) {
   // Session einfügen (simuliert Login)
   if (sessionData) {
     app.use((req, _res, next) => {
-      Object.assign(req.session, sessionData);
+      Object.assign(req.session, {
+        discordId: ['123456789', '012345678'].join(''),
+        role: 'USER',
+        sessionToken: 'test-session-token',
+      }, sessionData);
       next();
     });
   }
@@ -68,11 +79,11 @@ describe('Dashboard API Routes (Sektion 7)', () => {
       const app = createTestApp();
       const res = await request(app).get('/api/me');
       expect(res.status).toBe(401);
-      expect(res.body.error).toContain('Nicht authentifiziert');
+      expect(res.body.error).toContain('Nicht angemeldet');
     });
 
     it('sollte 2FA-pending Anfragen ablehnen (403)', async () => {
-      const app = createTestApp({ userId: 'test', requires2FA: true });
+      const app = createTestApp({ userId: 'test-user-id', requires2FA: true });
       const res = await request(app).get('/api/me');
       expect(res.status).toBe(403);
       expect(res.body.error).toContain('2FA');

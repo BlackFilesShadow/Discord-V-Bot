@@ -37,6 +37,8 @@
     "perf:load": "node scripts/perf-load-inprocess.mjs",
     "perf:soak": "node scripts/soak-test-smoke.mjs",
     "perf:chaos": "node scripts/chaos-smoke.mjs",
+    "audit:sync": "node scripts/sync-masterplan-audit.mjs",
+    "audit:check": "node scripts/sync-masterplan-audit.mjs --check",
     "smoke": "bash deploy/smoke.sh"
   },
   "dependencies": {

@@ -1,3 +1,4 @@
+throw 'HISTORICAL_AUDIT_SCRIPT_DISABLED: use npm run audit:sync; canonical source is docs/audit/stage-matrix-1-67.json'
 $ErrorActionPreference = 'Stop'
 $matrixPath = Join-Path $PSScriptRoot 'stage-matrix-1-67.json'
 $m = Get-Content $matrixPath -Raw -Encoding UTF8 | ConvertFrom-Json

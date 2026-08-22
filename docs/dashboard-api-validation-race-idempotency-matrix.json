@@ -1,7 +1,6 @@
 {
   "schemaVersion": 1,
   "stage": 38,
-  "basedOnMainSha": "88d4761696a3625c060f840a2df4c19cab950085",
   "scope": "API validation, race/ABA/lost-update, status taxonomy, and idempotency for dashboard mutations and relevant reads.",
   "contracts": {
     "idempotencyHeader": "X-Idempotency-Key 8..128; hash binds userId+method+url+key+bodyHash",
@@ -72,6 +71,15 @@
       "id": "economy-ledger",
       "expected": "domain idempotency keys prevent double pay",
       "status": "verified"
+    },
+    {
+      "id": "postgres-atomic-http-claim",
+      "expected": "Two concurrent identical HTTP mutations create one PostgreSQL claim and exactly one side-effect row",
+      "evidence": "tests/security/dashboardSecurityHttpDbIntegration.test.ts",
+      "status": "runtime-verified-ci"
     }
-  ]
+  ],
+  "basedOnMainSha": "eb10b85130b4481e361a234cbb005b740ebd40b3",
+  "ciEvidence": "docs/audit/security-api-ci-evidence-pr264-a31827d.json",
+  "residual": []
 }

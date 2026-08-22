@@ -1,7 +1,7 @@
 {
   "schemaVersion": 2,
   "stage": 44,
-  "basedOnMainSha": "3f8f281fb25d5e2dae1b1e933fde056b315b1d95",
+  "basedOnMainSha": "eb10b85130b4481e361a234cbb005b740ebd40b3",
   "scope": "Upload type/size/path/storage; webhook signature/replay via raw body HMAC; MIME/content validation.",
   "contracts": {
     "static": "only factions/media public",

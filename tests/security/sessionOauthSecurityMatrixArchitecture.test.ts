@@ -7,6 +7,7 @@ const auth = r('src/dashboard/routes/auth.ts');
 const mw = r('src/dashboard/middleware/auth.ts');
 const server = r('src/dashboard/server.ts');
 const sessionRuntime = r('tests/dashboard/requireAuthSessionGate.test.ts');
+const httpDbIntegration = r('tests/security/dashboardSecurityHttpDbIntegration.test.ts');
 
 describe('Stage 43 session OAuth security matrix', () => {
   it('documents stage', () => {
@@ -15,6 +16,7 @@ describe('Stage 43 session OAuth security matrix', () => {
 
   it('covers OAuth persistence, logout revoke, and cookie flags', () => {
     expect(auth).toContain('session.save');
+    expect(auth).toContain('req.session.regenerate');
     expect(auth).toContain('isActive: false');
     expect(auth).toContain('req.session.destroy');
     expect(mw).toContain('SESSION_REVOKED');
@@ -27,6 +29,9 @@ describe('Stage 43 session OAuth security matrix', () => {
     expect(sessionRuntime).toContain('rejects expired prisma session token');
     expect(sessionRuntime).toContain('rejects session token bound to another user');
     expect(sessionRuntime).toContain('fails closed when prisma session lookup errors');
+    expect(httpDbIntegration).toContain('rotates the OAuth cookie session');
+    expect(httpDbIntegration).toContain('not.toBe(preLoginCookie)');
     expect(sessionRuntime).not.toMatch(/test\.(only|skip)|describe\.(only|skip)/);
+    expect(httpDbIntegration).not.toMatch(/test\.(only|skip)|describe\.(only|skip)/);
   });
 });
