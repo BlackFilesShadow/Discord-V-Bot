@@ -24,6 +24,16 @@ const globalBuckets = new Map<string, Bucket>();
 const perCommandBuckets = new Map<string, Bucket>();
 const componentBuckets = new Map<string, Bucket>();
 
+/**
+ * Harte Obergrenze je Bucket-Map. Ohne diese Grenze konnten einmalig gesehene
+ * Discord-IDs bzw. User×Command-Kombinationen bis zum Prozessneustart im Heap
+ * verbleiben. Bei Erreichen der Grenze werden zuerst abgelaufene Windows
+ * entfernt; nur wenn danach weiterhin kein Platz frei ist, wird der älteste
+ * verbleibende Eintrag verworfen. Dadurch bleibt der Speicher deterministisch
+ * begrenzt und das Fail-safe-Verhalten unter extremer Key-Kardinalität erhalten.
+ */
+export const RATE_LIMIT_BUCKET_MAX_ENTRIES = 50_000;
+
 export const RATE_LIMIT_GLOBAL_WINDOW_MS = 60_000;
 export const RATE_LIMIT_GLOBAL_MAX = 30;
 
@@ -44,9 +54,27 @@ export const RATE_LIMIT_PER_COMMAND_MAX = 10;
 export const RATE_LIMIT_COMPONENT_WINDOW_MS = 30_000;
 export const RATE_LIMIT_COMPONENT_MAX = 25;
 
+function pruneExpired(map: Map<string, Bucket>, now: number, windowMs: number): void {
+  for (const [key, entry] of map) {
+    if (now - entry.windowStart > windowMs) map.delete(key);
+  }
+}
+
+function ensureCapacity(map: Map<string, Bucket>, now: number, windowMs: number): void {
+  if (map.size < RATE_LIMIT_BUCKET_MAX_ENTRIES) return;
+
+  pruneExpired(map, now, windowMs);
+  while (map.size >= RATE_LIMIT_BUCKET_MAX_ENTRIES) {
+    const oldestKey = map.keys().next().value as string | undefined;
+    if (oldestKey === undefined) break;
+    map.delete(oldestKey);
+  }
+}
+
 function check(map: Map<string, Bucket>, key: string, windowMs: number, max: number, now: number): boolean {
   const entry = map.get(key);
   if (!entry || now - entry.windowStart > windowMs) {
+    if (!entry) ensureCapacity(map, now, windowMs);
     map.set(key, { count: 1, windowStart: now });
     return true;
   }
@@ -85,10 +113,19 @@ export function checkComponentRateLimit(userId: string, now: number = Date.now()
 }
 
 /**
- * Test-Hilfe: leert beide Buckets. NICHT in Produktion aufrufen.
+ * Test-Hilfe: leert alle Buckets. NICHT in Produktion aufrufen.
  */
 export function __resetRateLimits(): void {
   globalBuckets.clear();
   perCommandBuckets.clear();
   componentBuckets.clear();
+}
+
+/** Test-/Audit-Hilfe für die Stage-49-Boundedness-Verifikation. */
+export function __getRateLimitBucketStats(): { global: number; perCommand: number; component: number } {
+  return {
+    global: globalBuckets.size,
+    perCommand: perCommandBuckets.size,
+    component: componentBuckets.size,
+  };
 }
