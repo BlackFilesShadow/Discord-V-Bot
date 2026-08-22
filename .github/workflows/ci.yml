@@ -187,9 +187,8 @@ jobs:
 
       - name: Root npm audit (critical blocking)
         run: npm audit --audit-level=critical
-      - name: Root npm audit (high - report only)
+      - name: Root npm audit (high blocking)
         run: npm audit --audit-level=high
-        continue-on-error: true
 
       - name: Dashboard production audit (high blocking)
         working-directory: dashboard-ui
@@ -202,20 +201,23 @@ jobs:
         run: npm audit --audit-level=high
         continue-on-error: true
 
-      - name: Generate SBOMs (CycloneDX)
+      - name: Generate SBOMs (CycloneDX, blocking)
         shell: bash
         run: |
+          set -euo pipefail
           npx --yes @cyclonedx/cyclonedx-npm@latest \
             --output-format JSON \
             --output-file sbom.cyclonedx.json \
-            --omit dev || echo "Backend-SBOM-Generation fehlgeschlagen (non-blocking)"
+            --omit dev
+          test -s sbom.cyclonedx.json
           (
             cd dashboard-ui
             npx --yes @cyclonedx/cyclonedx-npm@latest \
               --output-format JSON \
               --output-file sbom.cyclonedx.json \
               --omit dev
-          ) || echo "Dashboard-SBOM-Generation fehlgeschlagen (non-blocking)"
+            test -s sbom.cyclonedx.json
+          )
       - name: Upload SBOM artifacts
         if: always()
         uses: actions/upload-artifact@v5
@@ -224,7 +226,7 @@ jobs:
           path: |
             sbom.cyclonedx.json
             dashboard-ui/sbom.cyclonedx.json
-          if-no-files-found: warn
+          if-no-files-found: error
 
   docker:
     name: Docker Build

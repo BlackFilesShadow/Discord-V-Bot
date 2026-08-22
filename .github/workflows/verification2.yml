@@ -111,8 +111,8 @@ jobs:
       - working-directory: dashboard-ui
         run: npm ci
       - run: npm audit --audit-level=critical
-      - run: npm audit --audit-level=high
-        continue-on-error: true
+      - name: Root npm audit (high blocking)
+        run: npm audit --audit-level=high
       - working-directory: dashboard-ui
         run: npm audit --omit=dev --audit-level=high
       - working-directory: dashboard-ui
@@ -120,11 +120,13 @@ jobs:
       - working-directory: dashboard-ui
         run: npm audit --audit-level=high
         continue-on-error: true
-      - name: Generate SBOMs
+      - name: Generate SBOMs (blocking)
         shell: bash
         run: |
+          set -euo pipefail
           npx --yes @cyclonedx/cyclonedx-npm@latest --output-format JSON --output-file sbom.cyclonedx.json --omit dev
-          (cd dashboard-ui && npx --yes @cyclonedx/cyclonedx-npm@latest --output-format JSON --output-file sbom.cyclonedx.json --omit dev)
+          test -s sbom.cyclonedx.json
+          (cd dashboard-ui && npx --yes @cyclonedx/cyclonedx-npm@latest --output-format JSON --output-file sbom.cyclonedx.json --omit dev && test -s sbom.cyclonedx.json)
       - if: always()
         uses: actions/upload-artifact@v5
         with:
@@ -132,7 +134,7 @@ jobs:
           path: |
             sbom.cyclonedx.json
             dashboard-ui/sbom.cyclonedx.json
-          if-no-files-found: warn
+          if-no-files-found: error
 
   playwright-2:
     name: Gate 2 · Playwright
