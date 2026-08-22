@@ -1,0 +1,29 @@
+{
+  "schemaVersion": 1,
+  "stage": 47,
+  "basedOnMainSha": "ce68d05e6074ce95d7e417d1c063bddfa0e17206",
+  "scope": "DB pool / transaction bounds / Redis dep / Nitrado worker surface. Live SELECT 1 / Redis PING when env present.",
+  "contracts": {
+    "prismaPoolMax": "10",
+    "poolTimeout": "20s path via URL + idleTimeoutMillis",
+    "txMaxWait": "5000ms",
+    "txTimeout": "15000ms",
+    "queryLatencyHook": "recordPrismaLatency",
+    "redis": "dependency + REDIS_URL in .env.example",
+    "workers": "NitradoJob model + jobWorker.ts"
+  },
+  "cases": [
+    { "id": "prisma-pool-max-10", "status": "runtime-verified" },
+    { "id": "transaction-bounds", "status": "runtime-verified" },
+    { "id": "query-latency-hook", "status": "runtime-verified" },
+    { "id": "redis-dep-and-env", "status": "runtime-verified" },
+    { "id": "nitrado-job-worker-surface", "status": "runtime-verified" },
+    { "id": "live-db-latency", "status": "optional-env" },
+    { "id": "live-redis-latency", "status": "optional-env" },
+    { "id": "slow-query-pg-stat", "status": "residual-needs-live-db" }
+  ],
+  "residual": [
+    "Live pool saturation / concurrent query matrix needs Docker Postgres",
+    "Worker queue depth gauges not yet Prometheus-exported as first-class series"
+  ]
+}

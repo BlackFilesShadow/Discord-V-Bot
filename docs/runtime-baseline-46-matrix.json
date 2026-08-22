@@ -1,0 +1,26 @@
+{
+  "schemaVersion": 1,
+  "stage": 46,
+  "basedOnMainSha": "ce68d05e6074ce95d7e417d1c063bddfa0e17206",
+  "scope": "In-process runtime baseline: RSS/heap/CPU/event-loop/handles + Prometheus metrics module wiring. Not full production bot RSS.",
+  "contracts": {
+    "probeScript": "scripts/runtime-baselines-46-48.mjs",
+    "artifactLayout": "docs/audit/performance/<sha>/46-runtime-baseline.json",
+    "metricsModule": "src/utils/metrics.ts collectDefaultMetrics prefix vbot_",
+    "eventLoopSample": "monitorEventLoopDelay p50/p99/max",
+    "memorySample": "process.memoryUsage rss/heapUsed/heapTotal/external"
+  },
+  "cases": [
+    { "id": "probe-script-present", "status": "runtime-verified" },
+    { "id": "metrics-default-collect-vbot-prefix", "status": "runtime-verified" },
+    { "id": "event-loop-delay-sampled", "status": "runtime-verified" },
+    { "id": "memory-rss-heap-sampled", "status": "runtime-verified" },
+    { "id": "sha-bound-artifact-writable", "status": "runtime-verified" },
+    { "id": "full-bot-production-rss", "status": "residual-needs-live-process" }
+  ],
+  "residual": [
+    "Probe runs outside Discord gateway / full worker set",
+    "GC detailed pauses require --expose-gc",
+    "Staging/production authorized metrics scrape still separate"
+  ]
+}

@@ -1,0 +1,31 @@
+{
+  "exactSha": "ce68d05e6074ce95d7e417d1c063bddfa0e17206",
+  "capturedAt": "2026-08-22T06:14:31.305Z",
+  "stage": 47,
+  "kind": "data-plane-baseline",
+  "contracts": {
+    "prismaPoolMax10": true,
+    "connectionLimitDefault10": true,
+    "poolTimeoutDefault20": true,
+    "transactionMaxWait5s": true,
+    "transactionTimeout15s": true,
+    "queryLatencyHook": true,
+    "redisDep": true,
+    "redisEnvExample": true,
+    "nitradoJobModel": true,
+    "workerSurface": true
+  },
+  "live": {
+    "database": {
+      "attempted": false
+    },
+    "redis": {
+      "attempted": false
+    }
+  },
+  "residual": [
+    "No DATABASE_URL — live DB latency not measured on this host",
+    "No REDIS_URL — live Redis latency not measured on this host"
+  ],
+  "contractsOk": true
+}

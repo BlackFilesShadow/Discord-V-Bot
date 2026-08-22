@@ -1,6 +1,6 @@
 {
   "generatedAt": "2026-08-22T04:48:59.923Z",
-  "baseSha": "9690db5ce22b4191d6ae184e6f7737fee23ea06e",
+  "baseSha": "ce68d05e6074ce95d7e417d1c063bddfa0e17206",
   "waves": [
     {
       "name": "wave-b-api-security-36-45",
@@ -39,7 +39,7 @@
     },
     {
       "name": "wave-c-deps-sbom",
-      "status": "in_progress_override_sbom_blocking",
+      "status": "merged_main_stage_45",
       "findings": [
         "F-S5-03",
         "F-S4-05"
@@ -56,12 +56,14 @@
     },
     {
       "name": "wave-e-perf-chaos-journey",
-      "status": "todo",
+      "status": "in_progress_46_48_baselines",
       "findings": [
         "F-S4-06",
         "F-S4-10",
         "F-S4-11"
-      ]
+      ],
+      "sha_base": "ce68d05e6074ce95d7e417d1c063bddfa0e17206",
+      "note": "Stages 46-48 probe+matrices+architecture tests; remain PARTIAL for live env residuals"
     },
     {
       "name": "wave-f-release-gates",

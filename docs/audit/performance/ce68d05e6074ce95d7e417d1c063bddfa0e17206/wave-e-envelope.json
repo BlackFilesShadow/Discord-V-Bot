@@ -1,0 +1,121 @@
+{
+  "exactSha": "ce68d05e6074ce95d7e417d1c063bddfa0e17206",
+  "capturedAt": "2026-08-22T06:14:31.305Z",
+  "host": {
+    "platform": "win32",
+    "node": "v24.13.0",
+    "cwd": "C:\\Users\\Andre\\Documents\\Discord-V-Bot"
+  },
+  "stages": {
+    "46": {
+      "stage": 46,
+      "kind": "runtime-process-baseline",
+      "sampleMs": 400,
+      "node": "v24.13.0",
+      "platform": "win32",
+      "cpuCount": 20,
+      "loadAvg": [
+        0,
+        0,
+        0
+      ],
+      "osMem": {
+        "totalMb": 32616.02,
+        "freeMb": 12778.35
+      },
+      "process": {
+        "rssMb": 42.79,
+        "heapUsedMb": 5.49,
+        "heapTotalMb": 8.31,
+        "externalMb": 1.96,
+        "arrayBuffersMb": 0.01,
+        "uptimeSec": 0.46
+      },
+      "eventLoopDelayMs": {
+        "min": 19.218,
+        "p50": 20.185,
+        "p99": 22.135,
+        "max": 22.135,
+        "mean": 20.302
+      },
+      "cpu": {
+        "userMs": 360,
+        "systemMs": 31
+      },
+      "resources": {
+        "handlesApprox": 0,
+        "requests": 0,
+        "byType": {},
+        "handlesLegacy": 0
+      },
+      "metricsModule": {
+        "present": true,
+        "defaultMetricsPrefix": true,
+        "aiLatencyHistogram": true,
+        "dbQueryHistogram": true
+      },
+      "residual": [
+        "Idle/probe process only — not full bot + Discord gateway production RSS",
+        "GC pause histogram not exposed without --expose-gc"
+      ]
+    },
+    "47": {
+      "stage": 47,
+      "kind": "data-plane-baseline",
+      "contracts": {
+        "prismaPoolMax10": true,
+        "connectionLimitDefault10": true,
+        "poolTimeoutDefault20": true,
+        "transactionMaxWait5s": true,
+        "transactionTimeout15s": true,
+        "queryLatencyHook": true,
+        "redisDep": true,
+        "redisEnvExample": true,
+        "nitradoJobModel": true,
+        "workerSurface": true
+      },
+      "live": {
+        "database": {
+          "attempted": false
+        },
+        "redis": {
+          "attempted": false
+        }
+      },
+      "residual": [
+        "No DATABASE_URL — live DB latency not measured on this host",
+        "No REDIS_URL — live Redis latency not measured on this host"
+      ],
+      "contractsOk": true
+    },
+    "48": {
+      "stage": 48,
+      "kind": "external-deps-baseline",
+      "contracts": {
+        "nitradoHttpTimeout15s": true,
+        "nitradoRetryBounded3": true,
+        "nitrado429RetryAfter": true,
+        "nitradoCircuitBreaker": true,
+        "aiProviderTimeout30s": true,
+        "ai429Handling": true,
+        "aiTransientRetry": true,
+        "aiFallbackMetrics": true,
+        "aiLatencyHistogram": true,
+        "economyScopeGuardIntact": true
+      },
+      "syntheticLocalTimerMs": {
+        "n": 40,
+        "p50": 15.973,
+        "p95": 16.166,
+        "p99": 16.797,
+        "note": "local setTimeout jitter only — not live AI/Nitrado RTT"
+      },
+      "residual": [
+        "No live AI provider calls (would need credentials + network policy)",
+        "No live Nitrado API calls (would need token + rate budget)",
+        "Circuit breaker behavior covered by unit tests; this probe pins source contracts"
+      ],
+      "contractsOk": true
+    }
+  }
+}

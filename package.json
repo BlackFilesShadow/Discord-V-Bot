@@ -33,6 +33,7 @@
     "clear-commands": "ts-node src/commands/clear.ts",
     "dashboard": "ts-node src/dashboard/server.ts",
     "loadtest": "ts-node scripts/loadtest.ts",
+    "perf:baselines-46-48": "node scripts/runtime-baselines-46-48.mjs",
     "smoke": "bash deploy/smoke.sh"
   },
   "dependencies": {
