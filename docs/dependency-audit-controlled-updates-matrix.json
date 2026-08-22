@@ -1,11 +1,18 @@
 {
-  "schemaVersion": 1,
+  "schemaVersion": 2,
   "stage": 53,
-  "basedOnMainSha": "45caf9cd",
-  "scope": "Dependency audit and controlled updates — no blind upgrades.",
-  "decision": "No bulk dependency upgrades in Stage 53. Lockfile retained; security follow-ups tracked for Gate phase and Stages 54-55.",
+  "basedOnMainSha": "54341a670150acd1df27f1d317d965f4491106a6",
+  "scope": "Dependency audit and controlled updates — no blind upgrades; targeted removals only.",
+  "decision": "No bulk dependency upgrades in Stage 53. Lockfile retained. Targeted removal of unused passport/passport-discord handled in Stage 54 without major bumps.",
   "contracts": {
     "lockfile": "package-lock.json is source of truth",
-    "noBlind": "Do not bump majors without Stage-scoped regression"
-  }
+    "noBlind": "Do not bump majors without Stage-scoped regression",
+    "securityGate": "root npm audit critical/high blocking remains from Stage 45",
+    "passportRemoval": "Stage 54 removes unused passport stack"
+  },
+  "cases": [
+    { "id": "lockfile-present", "status": "runtime-verified" },
+    { "id": "no-bulk-upgrade", "status": "documented" },
+    { "id": "deepmerge-override-retained", "status": "runtime-verified" }
+  ]
 }

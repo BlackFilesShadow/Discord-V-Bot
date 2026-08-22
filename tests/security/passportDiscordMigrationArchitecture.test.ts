@@ -1,20 +1,67 @@
 import fs from 'node:fs';
 import path from 'node:path';
+import { execSync } from 'node:child_process';
 
-const m = JSON.parse(fs.readFileSync(path.resolve('docs/passport-discord-migration-matrix.json'), 'utf8'));
-const pkg = JSON.parse(fs.readFileSync(path.resolve('package.json'), 'utf8'));
-const auth = fs.readFileSync(path.resolve('src/dashboard/routes/auth.ts'), 'utf8');
+const r = (p: string) => fs.readFileSync(path.resolve(process.cwd(), p), 'utf8');
+const m = JSON.parse(r('docs/passport-discord-migration-matrix.json')) as {
+  stage: number;
+  status: string;
+  cases: Array<{ id: string; status: string }>;
+};
+const pkg = JSON.parse(r('package.json')) as {
+  dependencies?: Record<string, string>;
+  devDependencies?: Record<string, string>;
+};
+const auth = r('src/dashboard/routes/auth.ts');
 
-describe('Stage 54 passport-discord migration', () => {
-  it('keeps custom OAuth as canonical auth path', () => {
+function walkTs(dir: string, acc: string[] = []): string[] {
+  if (!fs.existsSync(dir)) return acc;
+  for (const ent of fs.readdirSync(dir, { withFileTypes: true })) {
+    const p = path.join(dir, ent.name);
+    if (ent.isDirectory()) walkTs(p, acc);
+    else if (ent.isFile() && ent.name.endsWith('.ts')) acc.push(p);
+  }
+  return acc;
+}
+
+describe('Stage 54 passport-discord migration (removed unused)', () => {
+  it('package.json no longer depends on passport or passport-discord', () => {
     expect(m.stage).toBe(54);
+    expect(m.status).toBe('REMOVED_UNUSED_DEPS');
+    expect(pkg.dependencies?.passport).toBeUndefined();
+    expect(pkg.dependencies?.['passport-discord']).toBeUndefined();
+    expect(pkg.devDependencies?.['@types/passport']).toBeUndefined();
+    expect(pkg.devDependencies?.['@types/passport-discord']).toBeUndefined();
+    expect(m.cases.map((c) => c.id)).toEqual(
+      expect.arrayContaining(['passport-discord-removed', 'custom-oauth-pkce-canonical']),
+    );
+  });
+
+  it('canonical OAuth remains custom PKCE routes without passport imports', () => {
     expect(auth).toContain("authRouter.get('/login'");
     expect(auth).toContain('generatePKCE');
-    const deps = { ...pkg.dependencies, ...pkg.devDependencies };
-    // If passport-discord is present it is tracked; auth must not import it.
-    if (deps['passport-discord']) {
-      expect(auth).not.toContain('passport-discord');
+    expect(auth).not.toMatch(/passport-discord|from ['"]passport['"]|require\(['"]passport/);
+    const srcFiles = walkTs(path.resolve('src'));
+    for (const f of srcFiles) {
+      const body = fs.readFileSync(f, 'utf8');
+      expect(body).not.toMatch(/from ['"]passport-discord['"]|from ['"]passport['"]/);
+      expect(body).not.toMatch(/require\(['"]passport-discord['"]\)|require\(['"]passport['"]\)/);
     }
-    expect(auth).not.toMatch(/from ['"]passport['"]/);
+  });
+
+  it('npm ls shows passport packages empty and forbids skip/only', () => {
+    let out = '';
+    try {
+      out = execSync('npm ls passport passport-discord --json', {
+        encoding: 'utf8',
+        stdio: ['ignore', 'pipe', 'pipe'],
+      });
+    } catch (e: unknown) {
+      out = String((e as { stdout?: string }).stdout || '');
+    }
+    expect(out).not.toMatch(/"passport-discord"\s*:\s*\{/);
+    expect(out).not.toMatch(/passport-discord@0\.1/);
+    const self = r('tests/security/passportDiscordMigrationArchitecture.test.ts');
+    expect(self).not.toMatch(/test\.(only|skip)|describe\.(only|skip)/);
   });
 });

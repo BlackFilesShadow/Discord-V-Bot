@@ -556,10 +556,9 @@
       ],
       "findings": [
         "residual-container-cve-scanner",
-        "residual-dashboard-dev-vite-esbuild",
-        "passport-discord-stage-54"
+        "residual-dashboard-dev-vite-esbuild"
       ],
-      "note": "Root high cleared via deepmerge-ts@8 override; SBOM generation blocking in CI+Gate2; residual image CVE scan + dev-only dashboard high + passport-discord",
+      "note": "Root high cleared via deepmerge-ts@8 override; SBOM generation blocking in CI+Gate2; residual image CVE scan + dev-only dashboard high + passport-discord removed (Stage 54)",
       "exactSha": "584ffa3deeba6a35391ed8f6463af415419a91fb"
     },
     {
@@ -676,24 +675,47 @@
     },
     {
       "id": 53,
-      "name": "stage-53",
+      "name": "dependency-audit-53",
       "status": "PARTIAL",
-      "evidence": [],
-      "findings": []
+      "evidence": [
+        "docs/dependency-audit-controlled-updates-matrix.json",
+        "package-lock.json",
+        "package.json#overrides"
+      ],
+      "findings": [
+        "no-bulk-upgrade-policy"
+      ],
+      "note": "Controlled updates only; deepmerge override retained; no blind majors",
+      "exactSha": "54341a670150acd1df27f1d317d965f4491106a6"
     },
     {
       "id": 54,
-      "name": "stage-54",
-      "status": "PARTIAL",
-      "evidence": [],
-      "findings": []
+      "name": "passport-discord-54",
+      "status": "VERIFIED",
+      "evidence": [
+        "package.json",
+        "docs/passport-discord-migration-matrix.json",
+        "tests/security/passportDiscordMigrationArchitecture.test.ts",
+        "src/dashboard/routes/auth.ts"
+      ],
+      "findings": [],
+      "note": "Unused passport+passport-discord removed; custom PKCE OAuth canonical",
+      "exactSha": "54341a670150acd1df27f1d317d965f4491106a6"
     },
     {
       "id": 55,
-      "name": "stage-55",
+      "name": "inflight-glob-55",
       "status": "PARTIAL",
-      "evidence": [],
-      "findings": []
+      "evidence": [
+        "docs/inflight-glob-cleanup-matrix.json",
+        "docs/legacy-deps-inflight-glob-matrix.json",
+        "tests/security/legacyDepsInflightGlobArchitecture.test.ts"
+      ],
+      "findings": [
+        "jest-transitive-inflight-dev-only"
+      ],
+      "note": "No prod inflight; Jest29 glob7→inflight residual dev-only",
+      "exactSha": "54341a670150acd1df27f1d317d965f4491106a6"
     },
     {
       "id": 56,

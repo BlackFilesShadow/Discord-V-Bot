@@ -1,0 +1,20 @@
+{
+  "schemaVersion": 2,
+  "stage": 55,
+  "basedOnMainSha": "54341a670150acd1df27f1d317d965f4491106a6",
+  "scope": "inflight / legacy glob debt: production tree vs Jest transitive only.",
+  "contracts": {
+    "productionTree": "npm ls --omit=dev must not list inflight as production dependency",
+    "jestTransitive": "inflight@1.0.6 via jest glob@7 is accepted as dev-only residual until Jest major drops it",
+    "noForceAuditFix": "do not npm audit fix --force to chase dev-only inflight"
+  },
+  "cases": [
+    { "id": "prod-no-direct-inflight", "status": "runtime-verified" },
+    { "id": "prod-no-direct-glob7", "status": "runtime-verified" },
+    { "id": "archiver-glob10-ok", "status": "runtime-verified" },
+    { "id": "jest-inflight-dev-residual", "status": "documented" }
+  ],
+  "residual": [
+    "Jest 29 still pulls glob@7 → inflight in the dev tree; not in production omit=dev audit gate"
+  ]
+}

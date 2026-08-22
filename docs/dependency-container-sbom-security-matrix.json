@@ -11,7 +11,7 @@
     "dashboardProdHigh": "blocking npm audit --omit=dev --audit-level=high",
     "sbom": "CycloneDX generation blocking for root + dashboard-ui; artifacts required",
     "deepmergeOverride": "package.json overrides.deepmerge-ts >= 8.0.0 (GHSA-ggr8-5vv4-36mx)",
-    "legacy": "passport-discord tracked for Stage 54 if present",
+    "legacy": "passport-discord removed in Stage 54 (was unused)",
     "noForceAuditFix": "npm audit fix --force must not downgrade prisma to 6.x"
   },
   "cases": [
@@ -23,14 +23,14 @@
     { "id": "sbom-generation-blocking-ci", "status": "runtime-verified" },
     { "id": "sbom-generation-blocking-gate2", "status": "runtime-verified" },
     { "id": "deepmerge-ts-override-ge-8", "status": "runtime-verified" },
-    { "id": "passport-discord-tracked-stage-54", "status": "documented" },
+    { "id": "passport-discord-removed-stage-54", "status": "runtime-verified" },
     { "id": "container-image-build-main", "status": "ci-wired" },
     { "id": "dashboard-dev-vite-esbuild-high-report-only", "status": "residual-dev-only" }
   ],
   "residual": [
     "Dashboard full (with dev) audit may report vite/esbuild HIGH — report-only; not in production omit=dev tree",
     "No image vulnerability scanner (trivy/grype) wired yet — Stage 45 residual for container CVE scan",
-    "passport-discord still present — Stage 54 migration"
+    "passport-discord removed — see Stage 54"
   ],
   "verification": {
     "workflowCi": ".github/workflows/ci.yml",

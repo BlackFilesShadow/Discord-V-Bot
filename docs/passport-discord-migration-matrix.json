@@ -1,12 +1,22 @@
 {
-  "schemaVersion": 1,
+  "schemaVersion": 2,
   "stage": 54,
-  "basedOnMainSha": "45caf9cd",
-  "scope": "passport-discord@0.1.4 replacement evaluation.",
-  "finding": "Dashboard OAuth is implemented in src/dashboard/routes/auth.ts with custom Discord OAuth (state/PKCE), not passport-discord runtime path.",
-  "decision": "No runtime migration required if package absent or unused; if present as unused transitive/direct dep, document for removal without auth rewrite.",
+  "basedOnMainSha": "54341a670150acd1df27f1d317d965f4491106a6",
+  "scope": "Remove unused passport-discord / passport; custom Discord OAuth remains canonical.",
+  "status": "REMOVED_UNUSED_DEPS",
+  "finding": "Dashboard OAuth is implemented in src/dashboard/routes/auth.ts with custom Discord OAuth (state/PKCE). No src imports of passport or passport-discord existed.",
+  "decision": "Removed direct dependencies passport, passport-discord and related @types. No auth rewrite required.",
   "contracts": {
-    "authPath": "custom OAuth routes remain canonical",
+    "authPath": "custom OAuth routes remain canonical (login/callback/logout + PKCE)",
+    "noPassportImport": "src/** must not import passport or passport-discord",
+    "packageJson": "passport and passport-discord absent from dependencies and devDependencies",
     "regression": "login/callback/logout/session gates from Stages 36/43"
-  }
+  },
+  "cases": [
+    { "id": "passport-discord-removed", "status": "runtime-verified" },
+    { "id": "passport-removed", "status": "runtime-verified" },
+    { "id": "custom-oauth-pkce-canonical", "status": "runtime-verified" },
+    { "id": "no-src-passport-import", "status": "runtime-verified" }
+  ],
+  "residual": []
 }
