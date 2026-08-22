@@ -1,7 +1,7 @@
 {
   "schemaVersion": 2,
   "stage": 55,
-  "basedOnMainSha": "54341a670150acd1df27f1d317d965f4491106a6",
+  "basedOnMainSha": "eaf8b42bb5d1fc194416324606f146196d04c8c0",
   "scope": "inflight / legacy glob cleanup without blind overrides.",
   "decision": "No blind npm overrides for inflight. Production tree has no direct inflight; Jest 29 transitive inflight remains dev-only residual.",
   "contracts": {

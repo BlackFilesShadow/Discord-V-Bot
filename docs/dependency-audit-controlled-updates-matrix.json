@@ -1,7 +1,7 @@
 {
   "schemaVersion": 2,
   "stage": 53,
-  "basedOnMainSha": "54341a670150acd1df27f1d317d965f4491106a6",
+  "basedOnMainSha": "eaf8b42bb5d1fc194416324606f146196d04c8c0",
   "scope": "Dependency audit and controlled updates — no blind upgrades; targeted removals only.",
   "decision": "No bulk dependency upgrades in Stage 53. Lockfile retained. Targeted removal of unused passport/passport-discord handled in Stage 54 without major bumps.",
   "contracts": {
@@ -11,8 +11,17 @@
     "passportRemoval": "Stage 54 removes unused passport stack"
   },
   "cases": [
-    { "id": "lockfile-present", "status": "runtime-verified" },
-    { "id": "no-bulk-upgrade", "status": "documented" },
-    { "id": "deepmerge-override-retained", "status": "runtime-verified" }
+    {
+      "id": "lockfile-present",
+      "status": "runtime-verified"
+    },
+    {
+      "id": "no-bulk-upgrade",
+      "status": "documented"
+    },
+    {
+      "id": "deepmerge-override-retained",
+      "status": "runtime-verified"
+    }
   ]
 }

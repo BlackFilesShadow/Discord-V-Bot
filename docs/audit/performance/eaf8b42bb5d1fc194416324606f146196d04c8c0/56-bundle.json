@@ -1,0 +1,120 @@
+{
+  "stage": 56,
+  "kind": "dashboard-bundle-measure",
+  "exactSha": "eaf8b42bb5d1fc194416324606f146196d04c8c0",
+  "capturedAt": "2026-08-22T15:47:00.425Z",
+  "totals": {
+    "jsChunks": 59,
+    "totalJsKb": 933.86
+  },
+  "entry": {
+    "name": "index-X8SOMf04.js",
+    "bytes": 63878,
+    "kb": 62.38
+  },
+  "largest": [
+    {
+      "name": "Server-pkwcYe2J.js",
+      "bytes": 177604,
+      "kb": 173.44
+    },
+    {
+      "name": "vendor-react-C5RGK1zS.js",
+      "bytes": 138714,
+      "kb": 135.46
+    },
+    {
+      "name": "BotAdmin-1EItCGEV.js",
+      "bytes": 83652,
+      "kb": 81.69
+    },
+    {
+      "name": "ServerSlot-BVt515cd.js",
+      "bytes": 80568,
+      "kb": 78.68
+    },
+    {
+      "name": "vendor-misc-DqvAyA2v.js",
+      "bytes": 74565,
+      "kb": 72.82
+    },
+    {
+      "name": "index-X8SOMf04.js",
+      "bytes": 63878,
+      "kb": 62.38
+    },
+    {
+      "name": "vendor-lucide-6O_vZEvq.js",
+      "bytes": 57137,
+      "kb": 55.8
+    },
+    {
+      "name": "vendor-router-CT20jE2E.js",
+      "bytes": 38749,
+      "kb": 37.84
+    },
+    {
+      "name": "vendor-socket-BlztIDwr.js",
+      "bytes": 31408,
+      "kb": 30.67
+    },
+    {
+      "name": "EmojiPicker-DW1E7MIu.js",
+      "bytes": 30086,
+      "kb": 29.38
+    },
+    {
+      "name": "CommandCenter-CftM_A2T.js",
+      "bytes": 17130,
+      "kb": 16.73
+    },
+    {
+      "name": "MemberDetection-BhcnepH3.js",
+      "bytes": 9296,
+      "kb": 9.08
+    }
+  ],
+  "vendors": [
+    {
+      "name": "vendor-react-C5RGK1zS.js",
+      "bytes": 138714,
+      "kb": 135.46
+    },
+    {
+      "name": "vendor-misc-DqvAyA2v.js",
+      "bytes": 74565,
+      "kb": 72.82
+    },
+    {
+      "name": "vendor-lucide-6O_vZEvq.js",
+      "bytes": 57137,
+      "kb": 55.8
+    },
+    {
+      "name": "vendor-router-CT20jE2E.js",
+      "bytes": 38749,
+      "kb": 37.84
+    },
+    {
+      "name": "vendor-socket-BlztIDwr.js",
+      "bytes": 31408,
+      "kb": 30.67
+    },
+    {
+      "name": "vendor-query-C0Hnymwt.js",
+      "bytes": 2967,
+      "kb": 2.9
+    }
+  ],
+  "over500kb": [],
+  "contracts": {
+    "entryUnder500kb": true,
+    "allChunksUnder500kb": true,
+    "hasVendorSplit": true,
+    "hasDevRouteChunks": true
+  },
+  "residual": [
+    "gzip sizes not re-measured here (vite log is authoritative for gzip)",
+    "sourcemaps excluded from size rows"
+  ]
+}

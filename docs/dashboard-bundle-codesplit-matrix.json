@@ -1,7 +1,7 @@
 {
   "schemaVersion": 2,
   "stage": 56,
-  "basedOnMainSha": "f9f00881717ca49bd0f6cc85aa5a32556f6b409f",
+  "basedOnMainSha": "eaf8b42bb5d1fc194416324606f146196d04c8c0",
   "scope": "Dashboard bundle >500kB remediation via measured vendor + route code-splitting.",
   "baselineBefore": {
     "entryJsKbApprox": 1457,
@@ -16,15 +16,38 @@
     "artifact": "docs/audit/performance/<sha>/56-bundle.json"
   },
   "cases": [
-    { "id": "entry-under-500kb", "status": "runtime-verified" },
-    { "id": "all-chunks-under-500kb", "status": "runtime-verified" },
-    { "id": "vendor-manual-chunks", "status": "runtime-verified" },
-    { "id": "dev-route-lazy", "status": "runtime-verified" },
-    { "id": "heavy-pages-lazy", "status": "runtime-verified" },
-    { "id": "slug-catalog-parity", "status": "runtime-verified" }
+    {
+      "id": "entry-under-500kb",
+      "status": "runtime-verified"
+    },
+    {
+      "id": "all-chunks-under-500kb",
+      "status": "runtime-verified"
+    },
+    {
+      "id": "vendor-manual-chunks",
+      "status": "runtime-verified"
+    },
+    {
+      "id": "dev-route-lazy",
+      "status": "runtime-verified"
+    },
+    {
+      "id": "heavy-pages-lazy",
+      "status": "runtime-verified"
+    },
+    {
+      "id": "slug-catalog-parity",
+      "status": "runtime-verified"
+    }
   ],
   "residual": [
-    "Server.tsx / BotAdmin still large route chunks (~180–380kB) — further split optional",
     "gzip figures from vite log; measure script uses raw bytes"
-  ]
+  ],
+  "evidence": {
+    "mainSha": "eaf8b42bb5d1fc194416324606f146196d04c8c0",
+    "measure": "docs/audit/performance/eaf8b42bb5d1fc194416324606f146196d04c8c0/56-bundle.json",
+    "maxChunkKb": 177.6,
+    "entryKb": 62.38
+  }
 }
