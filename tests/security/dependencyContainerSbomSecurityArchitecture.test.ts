@@ -74,6 +74,7 @@ describe('Stage 45 dependency container SBOM security', () => {
     expect(dockerJob).toContain('docker build -t discord-v-bot:');
     expect(dockerJob).not.toMatch(/if:\s*github\.ref == 'refs\/heads\/main'/);
     expect(dockerJob).toMatch(/Trivy image scan \(CRITICAL blocking\)/);
+    expect(dockerJob).toMatch(/aquasecurity\/trivy-action@v0\./);
     expect(dockerJob).toMatch(/severity:\s*CRITICAL/);
     expect(dockerJob).toMatch(/exit-code:\s*'1'/);
     expect(dockerJob).toMatch(/Trivy image scan \(HIGH report\)/);
