@@ -1,6 +1,6 @@
 {
   "generatedAt": "2026-08-22T04:48:59.923Z",
-  "baseSha": "8f181c7e8f2344f0c78dcd19a3151547f885aa17",
+  "baseSha": "54341a670150acd1df27f1d317d965f4491106a6",
   "waves": [
     {
       "name": "wave-b-api-security-36-45",
@@ -80,6 +80,15 @@
       "findings": [
         "F-S4-15"
       ]
+    },
+    {
+      "name": "wave-i-cleanup-53-57",
+      "status": "in_progress_53_55",
+      "findings": [
+        "passport-removed",
+        "inflight-dev-residual"
+      ],
+      "sha_base": "54341a670150acd1df27f1d317d965f4491106a6"
     }
   ]
 }

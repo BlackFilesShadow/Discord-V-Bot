@@ -1,11 +1,13 @@
 {
-  "schemaVersion": 1,
+  "schemaVersion": 2,
   "stage": 55,
-  "basedOnMainSha": "45caf9cd",
-  "scope": "inflight@1.0.6 / legacy glob provenance cleanup evaluation.",
-  "decision": "No blind npm overrides. Document tree via npm ls at Gate phase; Stage 55 freezes no-override policy unless direct runtime consumer proven.",
+  "basedOnMainSha": "54341a670150acd1df27f1d317d965f4491106a6",
+  "scope": "inflight / legacy glob cleanup without blind overrides.",
+  "decision": "No blind npm overrides for inflight. Production tree has no direct inflight; Jest 29 transitive inflight remains dev-only residual.",
   "contracts": {
-    "noOverrideWithoutProof": "package.json overrides for inflight/glob require Stage note",
-    "lockfile": "retain lock until controlled update stage"
-  }
+    "noBlindOverride": "package.json overrides must not force-remove inflight via npms/empty",
+    "prod": "no direct inflight/glob@7 production dependency",
+    "archiver": "archiver may use glob@10"
+  },
+  "seeAlso": "docs/legacy-deps-inflight-glob-matrix.json"
 }

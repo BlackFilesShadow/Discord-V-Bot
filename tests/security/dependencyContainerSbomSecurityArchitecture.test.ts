@@ -84,9 +84,10 @@ describe('Stage 45 dependency container SBOM security', () => {
     execSync('npm audit --audit-level=critical', { encoding: 'utf8', stdio: 'pipe' });
   });
 
-  it('tracks passport-discord for Stage 54 and forbids skip/only', () => {
-    expect(pkg.dependencies?.['passport-discord']).toBeTruthy();
-    expect(m.cases.some((c) => c.id === 'passport-discord-tracked-stage-54')).toBe(true);
+  it('passport-discord removed (Stage 54) and forbids skip/only', () => {
+    expect(pkg.dependencies?.['passport-discord']).toBeUndefined();
+    expect(pkg.dependencies?.passport).toBeUndefined();
+    // Stage 45 residual case may still document historical tracking id — prefer removed
     const self = r('tests/security/dependencyContainerSbomSecurityArchitecture.test.ts');
     expect(self).not.toMatch(/test\.(only|skip)|describe\.(only|skip)/);
   });
