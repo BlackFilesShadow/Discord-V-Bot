@@ -195,7 +195,7 @@ async function measurePostgres() {
           claimLimit: poolMax,
           claimed: claimResult.rowCount,
           claimLatencyMs: round(claimLatencyMs),
-          statusNextRunIndexPresent: indexResult.rows.some(row => /\("status",\s*"nextRunAt"\)/.test(row.indexdef)),
+          statusNextRunIndexPresent: indexResult.rows.some(row => /\("?status"?,\s*"nextRunAt"\)/.test(row.indexdef)),
         },
       };
     } catch (error) {
