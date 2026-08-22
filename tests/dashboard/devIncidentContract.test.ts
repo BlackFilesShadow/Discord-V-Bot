@@ -11,10 +11,14 @@ process.env.DEV_REQUIRE_IP_ALLOWLIST = 'false';
 const mockDevSessionFindFirst = jest.fn();
 const mockDevSessionUpdateMany = jest.fn().mockResolvedValue({ count: 0 });
 const mockTwoFactorFindUnique = jest.fn();
+const mockSessionFindUnique = jest.fn();
 
 jest.mock('../../src/database/prisma', () => ({
   __esModule: true,
   default: {
+    session: {
+      findUnique: (...args: unknown[]) => mockSessionFindUnique(...args),
+    },
     devSession: {
       findFirst: (...args: unknown[]) => mockDevSessionFindFirst(...args),
       updateMany: (...args: unknown[]) => mockDevSessionUpdateMany(...args),
@@ -45,6 +49,7 @@ import {
 } from '../../src/dashboard/services/incidentResponse';
 
 const DEV_DISCORD_ID = '123456789012345678';
+const SESSION_TOKEN = 'stage36-dev-incident-session-token';
 
 function activeSession() {
   const now = Date.now();
@@ -58,6 +63,11 @@ function activeSession() {
 }
 
 function appFor() {
+  mockSessionFindUnique.mockResolvedValue({
+    isActive: true,
+    expiresAt: new Date(Date.now() + 60 * 60 * 1000),
+    userId: 'u1',
+  });
   mockDevSessionFindFirst.mockResolvedValue(activeSession());
   const app = express();
   app.use(express.json());
@@ -67,6 +77,7 @@ function appFor() {
       userId: 'u1',
       discordId: DEV_DISCORD_ID,
       role: 'DEVELOPER',
+      sessionToken: SESSION_TOKEN,
     });
     next();
   });
