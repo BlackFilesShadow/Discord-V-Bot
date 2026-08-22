@@ -37,4 +37,14 @@ describe('Stage 38 API validation / race / idempotency matrix', () => {
     expect(clientGate).toContain('releaseMutationIdempotencyKey');
     expect(clientGate).toContain('classifyTransportError');
   });
+
+  it('pins Stage 38 runtime negative matrix (length, isolation, store-down, no double side effect)', () => {
+    expect(claimTest).toContain('DENY invalid X-Idempotency-Key length with 400 before claim create');
+    expect(claimTest).toContain('isolates body mismatch under same key');
+    expect(claimTest).toContain('isolates route mismatch under same key');
+    expect(claimTest).toContain('fail-closes with 503 IDEMPOTENCY_STORE_UNAVAILABLE');
+    expect(claimTest).toContain('fuehrt bei zwei parallelen identischen Requests den Handler nur einmal aus');
+    expect(claimTest).toContain('liefert bei erneutem Aufruf das gecachte Ergebnis ohne Handler-Rerun');
+    expect(claimTest).not.toMatch(/test\.(only|skip)|describe\.(only|skip)/);
+  });
 });

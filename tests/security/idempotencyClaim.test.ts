@@ -107,6 +107,71 @@ beforeEach(() => {
 });
 
 describe('F-004 — atomare Idempotenz', () => {
+  it('DENY invalid X-Idempotency-Key length with 400 before claim create', async () => {
+    const app = makeApp();
+    const short = await request(app).post('/action').set('X-Idempotency-Key', 'short').send({ x: 1 });
+    expect(short.status).toBe(400);
+    expect(short.body.error).toMatch(/8\.\.128/);
+    const long = await request(app).post('/action').set('X-Idempotency-Key', 'k'.repeat(129)).send({ x: 1 });
+    expect(long.status).toBe(400);
+    expect(handlerCalls).toBe(0);
+    expect(prismaMock.idempotencyKey.create).not.toHaveBeenCalled();
+  });
+
+  it('isolates body mismatch under same key (different bodyHash => separate claims)', async () => {
+    const app = makeApp();
+    const a = await request(app).post('/action').set('X-Idempotency-Key', KEY).send({ x: 1 });
+    const b = await request(app).post('/action').set('X-Idempotency-Key', KEY).send({ x: 2 });
+    expect(a.status).toBe(200);
+    expect(b.status).toBe(200);
+    expect(handlerCalls).toBe(2);
+    expect(a.body.n).toBe(1);
+    expect(b.body.n).toBe(2);
+  });
+
+  it('isolates route mismatch under same key (path in hash prevents cross-route replay)', async () => {
+    const app = makeApp();
+    app.post('/other', idempotency, (_req, res) => {
+      handlerCalls += 1;
+      res.status(200).json({ route: 'other', n: handlerCalls });
+    });
+    const first = await request(app).post('/action').set('X-Idempotency-Key', KEY).send({ x: 1 });
+    expect(first.status).toBe(200);
+    expect(first.body).toEqual({ n: 1 });
+    const other = await request(app).post('/other').set('X-Idempotency-Key', KEY).send({ x: 1 });
+    expect(other.status).toBe(200);
+    expect(other.body).toEqual({ route: 'other', n: 2 });
+    expect(handlerCalls).toBe(2);
+  });
+
+  it('fail-closes with 503 IDEMPOTENCY_STORE_UNAVAILABLE when claim lookup fails after PK collision', async () => {
+    const app = makeApp();
+    const body = { x: 1 };
+    const hash = requestHash('/action', body);
+    store.set(hash, {
+      hash,
+      status: 'PROCESSING',
+      responseBody: null,
+      responseStatus: null,
+      createdAt: new Date(),
+      expiresAt: new Date(Date.now() + 60 * 60 * 1000),
+    });
+    prismaMock.idempotencyKey.findUnique.mockRejectedValueOnce(new Error('db down'));
+
+    const res = await request(app).post('/action').set('X-Idempotency-Key', KEY).send(body);
+    expect(res.status).toBe(503);
+    expect(res.body.code).toBe('IDEMPOTENCY_STORE_UNAVAILABLE');
+    expect(handlerCalls).toBe(0);
+  });
+
+  it('passes through without key and never touches claim store', async () => {
+    const app = makeApp();
+    const res = await request(app).post('/action').send({ x: 1 });
+    expect(res.status).toBe(200);
+    expect(handlerCalls).toBe(1);
+    expect(prismaMock.idempotencyKey.create).not.toHaveBeenCalled();
+  });
+
   it('fuehrt bei zwei parallelen identischen Requests den Handler nur einmal aus', async () => {
     const app = makeApp();
     const [a, b] = await Promise.all([
