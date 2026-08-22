@@ -1,7 +1,7 @@
 {
   "schemaVersion": 1,
   "stage": 44,
-  "basedOnMainSha": "2076eee1",
+  "basedOnMainSha": "9690db5ce22b4191d6ae184e6f7737fee23ea06e",
   "scope": "Upload type/size/path/storage; webhook signature/replay via raw body HMAC.",
   "contracts": {
     "static": "only factions/media public",
@@ -9,7 +9,13 @@
     "webhook": "rawBody HMAC verified"
   },
   "cases": [
-    { "id": "static-not-private", "status": "verified" },
-    { "id": "webhook-rawbody", "status": "verified" }
+    {
+      "id": "static-not-private",
+      "status": "runtime-verified"
+    },
+    {
+      "id": "webhook-rawbody",
+      "status": "runtime-verified"
+    }
   ]
 }

@@ -5,6 +5,7 @@ const r = (p: string) => fs.readFileSync(path.resolve(process.cwd(), p), 'utf8')
 const m = JSON.parse(r('docs/csrf-xss-matrix.json')) as { stage: number; cases: unknown[] };
 const auth = r('src/dashboard/routes/auth.ts');
 const server = r('src/dashboard/server.ts');
+const csrfRuntime = r('tests/security/csrfPkceRuntime.test.ts');
 
 function walk(dir: string, out: string[] = []): string[] {
   for (const ent of fs.readdirSync(dir, { withFileTypes: true })) {
@@ -38,5 +39,13 @@ describe('Stage 41 CSRF XSS matrix', () => {
       expect(t).not.toMatch(/dangerouslySetInnerHTML=\{\{\s*__html:\s*[^}]*\buser\b/);
       expect(t).not.toMatch(/dangerouslySetInnerHTML=\{\{\s*__html:\s*[^}]*\breq\./);
     }
+  });
+
+  it('pins Stage 41 CSRF/PKCE runtime entropy + OAuth hardening evidence', () => {
+    expect(csrfRuntime).toContain('generateCsrfToken yields unique 64-hex high-entropy values');
+    expect(csrfRuntime).toContain('generatePKCE binds challenge to verifier via S256');
+    expect(auth).toContain('generateCsrfToken');
+    expect(auth).toContain('generatePKCE');
+    expect(csrfRuntime).not.toMatch(/test\.(only|skip)|describe\.(only|skip)/);
   });
 });

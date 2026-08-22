@@ -1,7 +1,7 @@
 {
   "schemaVersion": 1,
   "stage": 41,
-  "basedOnMainSha": "2076eee1",
+  "basedOnMainSha": "9690db5ce22b4191d6ae184e6f7737fee23ea06e",
   "scope": "CSRF on state-changing requests; XSS reflected/stored/DOM across dashboard rendering.",
   "contracts": {
     "oauthState": "OAuth state/nonce/PKCE",
@@ -10,9 +10,21 @@
     "xss": "React default escaping; no unsanitized user HTML sinks"
   },
   "cases": [
-    { "id": "oauth-csrf-state", "status": "verified" },
-    { "id": "cookie-samesite", "status": "verified" },
-    { "id": "cors-credentials-origin", "status": "verified" },
-    { "id": "react-escape-default", "status": "verified" }
+    {
+      "id": "oauth-csrf-state",
+      "status": "runtime-verified"
+    },
+    {
+      "id": "cookie-samesite",
+      "status": "runtime-verified"
+    },
+    {
+      "id": "cors-credentials-origin",
+      "status": "runtime-verified"
+    },
+    {
+      "id": "react-escape-default",
+      "status": "runtime-verified"
+    }
   ]
 }

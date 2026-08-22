@@ -452,66 +452,95 @@
       "name": "API/security-39",
       "status": "PARTIAL",
       "evidence": [
-        "architecture-gates"
+        "tests/security/gitHistorySecretHygieneArchitecture.test.ts",
+        "docs/git-history-secret-hygiene-matrix.json",
+        ".github/workflows/ci.yml"
       ],
       "findings": [
-        "F-S4-03"
-      ]
+        "residual-history-gate-two-cycle-evidence"
+      ],
+      "note": "Blocking Gitleaks full-history gate wired + current-tree scan; residual two-cycle freeze evidence on immutable SHA",
+      "exactSha": "c180393298149cc1d98f186dee6f059573f09709"
     },
     {
       "id": 40,
       "name": "API/security-40",
       "status": "PARTIAL",
       "evidence": [
-        "architecture-gates"
+        "tests/dashboard/requireGuildPermissionIdorGate.test.ts",
+        "tests/modules/permissionAccess.test.ts",
+        "tests/security/rolesPermissionAttackMatrixArchitecture.test.ts",
+        "docs/roles-permission-attack-matrix.json"
       ],
       "findings": [
-        "F-S4-03"
-      ]
+        "residual-full-role-escalation-live-discord"
+      ],
+      "note": "Runtime IDOR/membership/stale-grant DENY + delegated permission fail-closed; residual live Discord role attack surface",
+      "exactSha": "9690db5ce22b4191d6ae184e6f7737fee23ea06e"
     },
     {
       "id": 41,
       "name": "API/security-41",
       "status": "PARTIAL",
       "evidence": [
-        "architecture-gates"
+        "tests/security/csrfPkceRuntime.test.ts",
+        "tests/security/csrfXssMatrixArchitecture.test.ts",
+        "docs/csrf-xss-matrix.json"
       ],
       "findings": [
-        "F-S4-03"
-      ]
+        "residual-full-browser-csrf-xss-e2e"
+      ],
+      "note": "CSRF/PKCE entropy runtime + cookie/CORS/XSS sink architecture; residual full browser CSRF mutation E2E",
+      "exactSha": "9690db5ce22b4191d6ae184e6f7737fee23ea06e"
     },
     {
       "id": 42,
       "name": "API/security-42",
       "status": "PARTIAL",
       "evidence": [
-        "architecture-gates"
+        "tests/security/ssrf.test.ts",
+        "tests/security/pathSafetyBoundary.test.ts",
+        "tests/modules/safeUploadValidation.test.ts",
+        "tests/security/ssrfInjectionPathTraversalMatrixArchitecture.test.ts",
+        "docs/ssrf-injection-path-traversal-matrix.json"
       ],
       "findings": [
-        "F-S4-03"
-      ]
+        "residual-route-level-injection-matrix"
+      ],
+      "note": "SSRF host/protocol DENY + path boundary runtime; residual full SQL/command injection route matrix",
+      "exactSha": "9690db5ce22b4191d6ae184e6f7737fee23ea06e"
     },
     {
       "id": 43,
       "name": "API/security-43",
       "status": "PARTIAL",
       "evidence": [
-        "architecture-gates"
+        "tests/dashboard/requireAuthSessionGate.test.ts",
+        "tests/security/sessionOauthSecurityMatrixArchitecture.test.ts",
+        "docs/session-oauth-security-matrix.json"
       ],
       "findings": [
-        "F-S4-03"
-      ]
+        "residual-live-oauth-callback-e2e"
+      ],
+      "note": "Session revoke/expiry/cross-user/store-down runtime; residual live OAuth callback/fixation E2E",
+      "exactSha": "9690db5ce22b4191d6ae184e6f7737fee23ea06e"
     },
     {
       "id": 44,
       "name": "API/security-44",
       "status": "PARTIAL",
       "evidence": [
-        "architecture-gates"
+        "tests/security/webhookRawBody.test.ts",
+        "tests/security/webhookReplayDelivery.test.ts",
+        "tests/modules/safeUploadValidation.test.ts",
+        "tests/security/uploadWebhookSecurityMatrixArchitecture.test.ts",
+        "docs/upload-webhook-security-matrix.json"
       ],
       "findings": [
-        "F-S4-03"
-      ]
+        "residual-full-mime-upload-provider-matrix"
+      ],
+      "note": "Webhook HMAC/timestamp/replay + upload path/size runtime; residual full MIME/content validation matrix",
+      "exactSha": "9690db5ce22b4191d6ae184e6f7737fee23ea06e"
     },
     {
       "id": 45,

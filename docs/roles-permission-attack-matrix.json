@@ -1,7 +1,7 @@
 {
   "schemaVersion": 1,
   "stage": 40,
-  "basedOnMainSha": "2076eee1",
+  "basedOnMainSha": "9690db5ce22b4191d6ae184e6f7737fee23ea06e",
   "scope": "Owner/Admin/DEV/User role grants, membership, leave/rejoin, stale grants, privilege escalation, permission cache, fail-closed.",
   "contracts": {
     "owner": "guild.ownerId match grants full owner path",
@@ -12,12 +12,33 @@
     "noFrontendAuthZ": "UI never sole authorization"
   },
   "cases": [
-    { "id": "owner-ok", "status": "verified" },
-    { "id": "grant-member-ok", "status": "verified" },
-    { "id": "grant-after-leave", "status": "verified" },
-    { "id": "user-no-grant", "status": "verified" },
-    { "id": "dev-without-session", "status": "verified" },
-    { "id": "bot-admin-without-session", "status": "verified" },
-    { "id": "privilege-escalation-body-role", "status": "verified" }
+    {
+      "id": "owner-ok",
+      "status": "runtime-verified"
+    },
+    {
+      "id": "grant-member-ok",
+      "status": "runtime-verified"
+    },
+    {
+      "id": "grant-after-leave",
+      "status": "runtime-verified"
+    },
+    {
+      "id": "user-no-grant",
+      "status": "runtime-verified"
+    },
+    {
+      "id": "dev-without-session",
+      "status": "runtime-verified"
+    },
+    {
+      "id": "bot-admin-without-session",
+      "status": "runtime-verified"
+    },
+    {
+      "id": "privilege-escalation-body-role",
+      "status": "runtime-verified"
+    }
   ]
 }
