@@ -50,15 +50,23 @@ WORKDIR /app
 # OpenSSL fuer Prisma + wget fuer Healthcheck
 RUN apk add --no-cache openssl wget
 
-# Base node images ship npm with nested library CVEs. Bump npm, then pin the
-# nested packages Trivy still flags as HIGH when only the npm major is raised
-# (tar, brace-expansion, ip-address). Keep pins explicit for reproducible scans.
-RUN npm install -g npm@11.18.0 \
- && npm --prefix /usr/local/lib/node_modules/npm install \
-      tar@7.5.21 \
-      brace-expansion@5.0.9 \
-      ip-address@10.3.1 \
-      --no-save --no-fund --no-audit \
+# Base node images ship npm with nested library CVEs. Bump npm, then replace
+# nested copies of tar / brace-expansion / ip-address under the global npm tree
+# without reinstalling npm itself (npm --prefix hits unpublished @npmcli/docs).
+RUN set -e \
+ && npm install -g npm@11.18.0 \
+ && mkdir -p /tmp/harden \
+ && cd /tmp/harden \
+ && npm init -y >/dev/null \
+ && npm install tar@7.5.21 brace-expansion@5.0.9 ip-address@10.3.1 --no-fund --no-audit \
+ && for pkg in tar brace-expansion ip-address; do \
+      find /usr/local/lib/node_modules/npm -type d -name "$pkg" -print0 \
+        | while IFS= read -r -d '' dest; do \
+            rm -rf "$dest"; \
+            cp -a "/tmp/harden/node_modules/$pkg" "$dest"; \
+          done; \
+    done \
+ && rm -rf /tmp/harden \
  && npm cache clean --force
 
 # Non-Root-User
