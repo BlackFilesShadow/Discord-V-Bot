@@ -1,10 +1,22 @@
 {
-  "schemaVersion": 1,
+  "schemaVersion": 2,
   "stage": 60,
-  "basedOnMainSha": "45caf9cd",
-  "scope": "Gesamtaudit 1: code & architecture — layering, contracts, architecture gates inventory.",
+  "basedOnMainSha": "bdf190b881573a78896152e6ec0dbe6e542e7e1a",
+  "scope": "Gesamtaudit 1: code & architecture — layering, v2 auth stack, architecture gate corpus, AI tool path.",
   "contracts": {
-    "gates": "tests/security/*Architecture*.test.ts form permanent drift gates",
-    "v2": "all dashboard API under /api/v2 with requireAuth+idempotency"
-  }
+    "gates": "tests/security/*Architecture*.test.ts form permanent drift gates (>=40)",
+    "v2": "all dashboard API under /api/v2 with requireAuth + idempotency",
+    "aiTools": "toolRuntime remains sole mutation path for AI tools",
+    "scan": "scripts/gesamtaudit-scan.mjs"
+  },
+  "cases": [
+    { "id": "arch-gate-corpus-ge-40", "status": "runtime-verified" },
+    { "id": "v2-requireAuth-idempotency", "status": "runtime-verified" },
+    { "id": "ai-tool-runtime-security-path", "status": "runtime-verified" },
+    { "id": "scan-exit-zero", "status": "runtime-verified" }
+  ],
+  "residual": [
+    "Full design-doc rewrite not required when gates already pin layers",
+    "Dynamic import graph completeness residual for Stage 61"
+  ]
 }
