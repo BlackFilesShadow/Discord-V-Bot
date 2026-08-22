@@ -1,0 +1,104 @@
+{
+  "schemaVersion": 1,
+  "stage": 47,
+  "exactSha": "17c5f4306ac7640c863d4954e4b4f39e0c227bc6",
+  "capturedAt": "2026-08-22T22:41:03.884Z",
+  "requiredLive": true,
+  "contracts": {
+    "prismaPoolMax10": true,
+    "transactionMaxWait5s": true,
+    "transactionTimeout15s": true,
+    "workerParallelBound4": true,
+    "workerCandidateBound": true,
+    "durableClaimLease": true,
+    "retryAndDeadLetter": true,
+    "queueModelAndIndex": true,
+    "queueDepthMetric": true,
+    "oldestPendingMetric": true,
+    "inFlightMetric": true,
+    "workerMetricRefresh": true
+  },
+  "postgres": {
+    "serverVersion": "16.15 (Debian 16.15-1.pgdg13+2)",
+    "selectOne": {
+      "count": 20,
+      "minMs": 0.239,
+      "p50Ms": 0.284,
+      "p95Ms": 0.55,
+      "p99Ms": 0.582,
+      "maxMs": 0.582
+    },
+    "saturation": {
+      "poolMax": 4,
+      "concurrency": 12,
+      "peakTotal": 4,
+      "peakIdle": 1,
+      "peakWaiting": 8,
+      "wait": {
+        "count": 12,
+        "minMs": 1.151,
+        "p50Ms": 48.623,
+        "p95Ms": 89.844,
+        "p99Ms": 89.844,
+        "maxMs": 89.844
+      },
+      "service": {
+        "count": 12,
+        "minMs": 40.363,
+        "p50Ms": 40.459,
+        "p95Ms": 41.423,
+        "p99Ms": 41.423,
+        "maxMs": 41.423
+      },
+      "errors": 0
+    },
+    "workerQueue": {
+      "seededDepths": {
+        "PENDING": 6,
+        "RUNNING": 2,
+        "DONE": 1,
+        "FAILED": 1,
+        "DEAD": 1
+      },
+      "depthLatencyMs": 0.67,
+      "oldestPendingAgeSeconds": 11,
+      "claimLimit": 4,
+      "claimed": 4,
+      "claimLatencyMs": 0.644,
+      "statusNextRunIndexPresent": true
+    }
+  },
+  "redis": {
+    "serverVersion": "7.4.11",
+    "ping": {
+      "count": 20,
+      "minMs": 0.189,
+      "p50Ms": 0.211,
+      "p95Ms": 0.363,
+      "p99Ms": 0.472,
+      "maxMs": 0.472
+    },
+    "setGetRoundTrip": {
+      "count": 20,
+      "minMs": 0.378,
+      "p50Ms": 0.406,
+      "p95Ms": 0.457,
+      "p99Ms": 0.64,
+      "maxMs": 0.64
+    },
+    "concurrentBurst": {
+      "operations": 32,
+      "finalValue": 32,
+      "latencyMs": 0.558
+    },
+    "ttlMs": 30000,
+    "errors": []
+  },
+  "thresholds": {
+    "latencyLimitMs": 2000,
+    "requirePoolWaiting": true,
+    "requireQueueClaimBound": 4,
+    "requireRedisBurstFinalValue": 32
+  },
+  "residual": []
+}

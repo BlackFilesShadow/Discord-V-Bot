@@ -1,16 +1,26 @@
 {
-  "schemaVersion": 1,
+  "schemaVersion": 2,
   "stage": 47,
-  "scope": "Runtime Baseline II: DB pool, queries, Redis, cache, worker queues, backpressure, retry, dead-letter.",
+  "scope": "Runtime Baseline II: PostgreSQL pool/backpressure, Redis, persistent worker queues, retries, dead-letter state and productive queue observability.",
   "contracts": {
-    "prisma": "single prisma client module",
-    "redis": "REDIS_URL optional cache path",
-    "workers": "nitrado jobs / queue processors have retry + failed status",
-    "harness": "scripts/runtime-baseline-ii-check.mjs verifies config surface without live infra"
+    "postgres": "live PostgreSQL 16 SELECT samples plus a 12-query saturation burst against a pool capped at 4",
+    "redis": "live Redis 7 PING, SET/GET, 32-operation concurrent INCR and TTL verification",
+    "workers": "persistent NitradoJob rows cover PENDING/RUNNING/DONE/FAILED/DEAD and claim through FOR UPDATE SKIP LOCKED with a bound of 4",
+    "observability": "productive Prometheus gauges export queue depth by status, oldest pending age and worker in-flight count",
+    "ci": "STAGE47_REQUIRE_LIVE=1 makes PostgreSQL, Redis and an empty residual mandatory in both complete test workflows"
   },
-  "basedOnMainSha": "2a7c048d1d1a1206d0774da26d70c363cc225fcf",
-  "status": "PARTIAL",
-  "residual": [
-    "Current-SHA DB, Redis, worker and queue measurements remain required"
-  ]
+  "baselineNote": "On exact SHA 17c5f4306ac7640c863d4954e4b4f39e0c227bc6, two independent live CI jobs observed PostgreSQL SELECT p99 <= 0.606 ms, Redis PING p99 <= 0.494 ms, Redis SET/GET p99 <= 0.927 ms, eight queued pool requests at saturation, an exact four-job claim bound and no residuals.",
+  "basedOnMainSha": "09f8e9e5f455b3ead1cd82de358af313e0f895e4",
+  "exactSha": "17c5f4306ac7640c863d4954e4b4f39e0c227bc6",
+  "verification": {
+    "artifacts": [
+      "docs/audit/performance/17c5f4306ac7640c863d4954e4b4f39e0c227bc6/47-data-plane.json",
+      "docs/audit/performance/17c5f4306ac7640c863d4954e4b4f39e0c227bc6/47-data-plane-verification2.json"
+    ],
+    "architectureTest": "tests/security/dataPlaneBaseline47Architecture.test.ts",
+    "auditTest": "tests/security/runtimeBaselineIIArchitecture.test.ts",
+    "ciEvidence": "docs/audit/data-plane-ci-evidence-pr269-17c5f43.json"
+  },
+  "status": "VERIFIED",
+  "residual": []
 }

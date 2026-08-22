@@ -1,0 +1,85 @@
+{
+  "schemaVersion": 1,
+  "pullRequest": 269,
+  "technicalSha": "17c5f4306ac7640c863d4954e4b4f39e0c227bc6",
+  "basedOnMainSha": "09f8e9e5f455b3ead1cd82de358af313e0f895e4",
+  "scope": [47],
+  "measurements": [
+    {
+      "workflow": "CI/CD Pipeline",
+      "artifact": "docs/audit/performance/17c5f4306ac7640c863d4954e4b4f39e0c227bc6/47-data-plane.json",
+      "capturedAt": "2026-08-22T22:41:03.884Z",
+      "postgresSelectP99Ms": 0.582,
+      "postgresPeakWaiting": 8,
+      "queueClaimed": 4,
+      "redisPingP99Ms": 0.472,
+      "redisSetGetP99Ms": 0.64,
+      "residual": []
+    },
+    {
+      "workflow": "Verification 2",
+      "artifact": "docs/audit/performance/17c5f4306ac7640c863d4954e4b4f39e0c227bc6/47-data-plane-verification2.json",
+      "capturedAt": "2026-08-22T22:41:02.205Z",
+      "postgresSelectP99Ms": 0.606,
+      "postgresPeakWaiting": 8,
+      "queueClaimed": 4,
+      "redisPingP99Ms": 0.494,
+      "redisSetGetP99Ms": 0.927,
+      "residual": []
+    }
+  ],
+  "runs": [
+    {
+      "workflow": "CI/CD Pipeline",
+      "runId": 32603061874,
+      "attempt": 1,
+      "event": "pull_request",
+      "headSha": "17c5f4306ac7640c863d4954e4b4f39e0c227bc6",
+      "status": "completed",
+      "conclusion": "success",
+      "url": "https://github.com/BlackFilesShadow/Discord-V-Bot/actions/runs/32603061874",
+      "createdAt": "2026-08-22T22:39:45Z",
+      "updatedAt": "2026-08-22T22:44:09Z",
+      "jobs": [
+        { "jobId": 97104115203, "name": "Lint & Build", "conclusion": "success" },
+        { "jobId": 97104115261, "name": "Tests", "conclusion": "success", "proof": "The mandatory live Stage 47 probe and SHA-bound artifact upload succeeded before the complete Jest suite." },
+        { "jobId": 97104115307, "name": "Security Audit", "conclusion": "success" },
+        { "jobId": 97104357022, "name": "Docker Build", "conclusion": "success", "proof": "Docker build and blocking Trivy CRITICAL/HIGH scans succeeded." }
+      ]
+    },
+    {
+      "workflow": "E2E (Playwright)",
+      "runId": 32603061857,
+      "attempt": 1,
+      "event": "pull_request",
+      "headSha": "17c5f4306ac7640c863d4954e4b4f39e0c227bc6",
+      "status": "completed",
+      "conclusion": "success",
+      "url": "https://github.com/BlackFilesShadow/Discord-V-Bot/actions/runs/32603061857",
+      "createdAt": "2026-08-22T22:39:45Z",
+      "updatedAt": "2026-08-22T22:54:45Z",
+      "jobs": [
+        { "jobId": 97104115093, "name": "Playwright Smoke", "conclusion": "success" }
+      ]
+    },
+    {
+      "workflow": "Verification 2",
+      "runId": 32603061863,
+      "attempt": 1,
+      "event": "pull_request",
+      "headSha": "17c5f4306ac7640c863d4954e4b4f39e0c227bc6",
+      "status": "completed",
+      "conclusion": "success",
+      "url": "https://github.com/BlackFilesShadow/Discord-V-Bot/actions/runs/32603061863",
+      "createdAt": "2026-08-22T22:39:45Z",
+      "updatedAt": "2026-08-22T22:54:46Z",
+      "jobs": [
+        { "jobId": 97104114938, "name": "Gate 2 · Playwright", "conclusion": "success" },
+        { "jobId": 97104115008, "name": "Gate 2 · Security / SBOM", "conclusion": "success" },
+        { "jobId": 97104115016, "name": "Gate 2 · Tests / DB Lifecycle", "conclusion": "success", "proof": "The independent mandatory live Stage 47 probe and SHA-bound artifact upload succeeded before the complete Jest suite." },
+        { "jobId": 97104115071, "name": "Gate 2 · Lint & Build", "conclusion": "success" }
+      ]
+    }
+  ],
+  "result": "All three complete Gate-1 workflows succeeded on the same immutable technical SHA. Two independent required-live jobs measured PostgreSQL, Redis and persistent worker queues with all contracts true and residuals empty."
+}

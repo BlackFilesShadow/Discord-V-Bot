@@ -1,29 +1,39 @@
 {
-  "schemaVersion": 1,
+  "schemaVersion": 2,
   "stage": 47,
-  "basedOnMainSha": "ce68d05e6074ce95d7e417d1c063bddfa0e17206",
-  "scope": "DB pool / transaction bounds / Redis dep / Nitrado worker surface. Live SELECT 1 / Redis PING when env present.",
+  "basedOnMainSha": "09f8e9e5f455b3ead1cd82de358af313e0f895e4",
+  "exactSha": "17c5f4306ac7640c863d4954e4b4f39e0c227bc6",
+  "scope": "Live PostgreSQL pool/backpressure, Redis latency/concurrency/TTL, persistent Nitrado worker queues and first-class queue metrics.",
   "contracts": {
-    "prismaPoolMax": "10",
-    "poolTimeout": "20s path via URL + idleTimeoutMillis",
+    "prismaPoolMax": "10 in production; the isolated saturation probe enforces max 4",
+    "poolTimeout": "20s path via URL plus idleTimeoutMillis",
     "txMaxWait": "5000ms",
     "txTimeout": "15000ms",
     "queryLatencyHook": "recordPrismaLatency",
-    "redis": "dependency + REDIS_URL in .env.example",
-    "workers": "NitradoJob model + jobWorker.ts"
+    "redis": "Redis 7 service plus mandatory live PING, SET/GET, concurrent INCR and TTL probes",
+    "workers": "durable NitradoJob claim lease, retry/dead-letter states and FOR UPDATE SKIP LOCKED",
+    "queueMetrics": "vbot_nitrado_job_queue_depth, vbot_nitrado_job_oldest_pending_age_seconds and vbot_nitrado_job_worker_in_flight"
   },
   "cases": [
     { "id": "prisma-pool-max-10", "status": "runtime-verified" },
     { "id": "transaction-bounds", "status": "runtime-verified" },
     { "id": "query-latency-hook", "status": "runtime-verified" },
-    { "id": "redis-dep-and-env", "status": "runtime-verified" },
+    { "id": "live-db-latency", "status": "dual-ci-live-verified" },
+    { "id": "pool-saturation-backpressure", "status": "dual-ci-live-verified" },
+    { "id": "live-redis-latency-concurrency-ttl", "status": "dual-ci-live-verified" },
     { "id": "nitrado-job-worker-surface", "status": "runtime-verified" },
-    { "id": "live-db-latency", "status": "optional-env" },
-    { "id": "live-redis-latency", "status": "optional-env" },
-    { "id": "slow-query-pg-stat", "status": "residual-needs-live-db" }
+    { "id": "worker-queue-status-depths", "status": "dual-ci-live-verified" },
+    { "id": "worker-claim-bound-4", "status": "dual-ci-live-verified" },
+    { "id": "worker-status-next-run-index", "status": "dual-ci-live-verified" },
+    { "id": "productive-queue-gauges", "status": "runtime-and-ci-verified" }
   ],
-  "residual": [
-    "Live pool saturation / concurrent query matrix needs Docker Postgres",
-    "Worker queue depth gauges not yet Prometheus-exported as first-class series"
-  ]
+  "verification": {
+    "artifacts": [
+      "docs/audit/performance/17c5f4306ac7640c863d4954e4b4f39e0c227bc6/47-data-plane.json",
+      "docs/audit/performance/17c5f4306ac7640c863d4954e4b4f39e0c227bc6/47-data-plane-verification2.json"
+    ],
+    "ciEvidence": "docs/audit/data-plane-ci-evidence-pr269-17c5f43.json"
+  },
+  "status": "VERIFIED",
+  "residual": []
 }

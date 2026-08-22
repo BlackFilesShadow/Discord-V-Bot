@@ -1,6 +1,6 @@
 {
-  "generatedAt": "2026-08-22T21:27:06.764Z",
-  "finalAuditedSha": "2c16bcbe870f9d4818d7ed4726b95ef2879e30d9",
+  "generatedAt": "2026-08-22T22:55:10.103Z",
+  "finalAuditedSha": "17c5f4306ac7640c863d4954e4b4f39e0c227bc6",
   "stages": [
     {
       "id": 1,
@@ -583,15 +583,21 @@
     {
       "id": 47,
       "name": "runtime-baseline-ii-47",
-      "status": "PARTIAL",
+      "status": "VERIFIED",
       "evidence": [
-        "docs/runtime-baseline-ii-matrix.json"
+        "docs/runtime-baseline-ii-matrix.json",
+        "docs/data-plane-baseline-47-matrix.json",
+        "scripts/data-plane-baseline-47.mjs",
+        "tests/security/dataPlaneBaseline47Architecture.test.ts",
+        "docs/audit/performance/17c5f4306ac7640c863d4954e4b4f39e0c227bc6/47-data-plane.json",
+        "docs/audit/performance/17c5f4306ac7640c863d4954e4b4f39e0c227bc6/47-data-plane-verification2.json",
+        "docs/audit/data-plane-ci-evidence-pr269-17c5f43.json",
+        "ci-run:32603061874:attempt-1",
+        "verification2-run:32603061863:attempt-1"
       ],
-      "findings": [
-        "residual-current-sha-db-redis-worker-queue-measurements",
-        "F-S4-06"
-      ],
-      "note": "Structural contracts exist; current-SHA DB/Redis/worker/queue measurements remain required."
+      "findings": [],
+      "note": "Two independent mandatory live jobs on the exact SHA measured PostgreSQL 16 pool saturation/backpressure, Redis 7 latency/concurrency/TTL and persistent queue depth/claim/index behavior. Productive depth, oldest-pending and in-flight gauges are wired; both artifacts have empty residuals.",
+      "exactSha": "17c5f4306ac7640c863d4954e4b4f39e0c227bc6"
     },
     {
       "id": 48,
@@ -861,10 +867,10 @@
       ]
     }
   ],
-  "auditFreezeSha": "2c16bcbe870f9d4818d7ed4726b95ef2879e30d9",
+  "auditFreezeSha": "17c5f4306ac7640c863d4954e4b4f39e0c227bc6",
   "counts": {
-    "VERIFIED": 51,
-    "PARTIAL": 15,
+    "VERIFIED": 52,
+    "PARTIAL": 14,
     "FAILED": 0,
     "BLOCKED": 1
   }

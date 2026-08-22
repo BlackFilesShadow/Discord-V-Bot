@@ -65,6 +65,15 @@ jobs:
           --health-interval 10s
           --health-timeout 5s
           --health-retries 5
+      redis:
+        image: redis:7.4-alpine
+        ports:
+          - 6379:6379
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
     env:
       DATABASE_URL: postgresql://test:test@localhost:5432/discord_v_bot_test
       DISCORD_TOKEN: test-token
@@ -106,6 +115,20 @@ jobs:
           pg_dump --version
       - name: Verify fresh/upgrade/backup-restore database lifecycle
         run: npm run db:lifecycle
+      - name: Stage 47 live PostgreSQL, Redis and worker-queue baseline
+        run: npm run perf:data-plane-47
+        env:
+          REDIS_URL: redis://localhost:6379
+          STAGE47_REQUIRE_LIVE: '1'
+          STAGE47_EXACT_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+          STAGE47_OUTPUT_PATH: stage47-artifacts/${{ github.event.pull_request.head.sha || github.sha }}.json
+      - name: Upload Stage 47 data-plane evidence
+        if: always()
+        uses: actions/upload-artifact@v5
+        with:
+          name: stage47-data-plane-ci-${{ github.run_id }}-${{ github.run_attempt }}
+          path: stage47-artifacts/*.json
+          if-no-files-found: warn
       - name: Run tests (no forceExit; leaked handles fail)
         id: jest
         shell: bash
