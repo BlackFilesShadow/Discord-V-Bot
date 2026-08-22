@@ -7,12 +7,14 @@ process.env.ENCRYPTION_KEY ||= 'test-encryption-key-0123456789abcdef';
 
 const mockDevSessionFindFirst = jest.fn();
 const mockDevSessionUpdateMany = jest.fn().mockResolvedValue({ count: 0 });
+const mockSessionFindUnique = jest.fn();
 const mockRaw = jest.fn();
 const mockGetStats = jest.fn();
 
 jest.mock('../../src/database/prisma', () => ({
   __esModule: true,
   default: {
+    session: { findUnique: (...args: unknown[]) => mockSessionFindUnique(...args) },
     devSession: {
       findFirst: (...args: unknown[]) => mockDevSessionFindFirst(...args),
       updateMany: (...args: unknown[]) => mockDevSessionUpdateMany(...args),
@@ -40,6 +42,8 @@ import { requireAuth } from '../../src/dashboard/middleware/auth';
 import { devDiagnosticsContractRouter } from '../../src/dashboard/routes/v2/devDiagnosticsContract';
 import { devStatusRouter } from '../../src/dashboard/routes/v2/devStatus';
 
+const SESSION_TOKEN = 'stage36-dev-diagnostics-session-token';
+
 function activeSession(scope: Record<string, unknown> = {}) {
   const now = Date.now();
   return {
@@ -52,6 +56,11 @@ function activeSession(scope: Record<string, unknown> = {}) {
 }
 
 function makeApp(scope: Record<string, unknown> = {}) {
+  mockSessionFindUnique.mockResolvedValue({
+    isActive: true,
+    expiresAt: new Date(Date.now() + 60 * 60 * 1000),
+    userId: 'u1',
+  });
   mockDevSessionFindFirst.mockResolvedValue(activeSession(scope));
   const app = express();
   app.use(express.json());
@@ -61,6 +70,7 @@ function makeApp(scope: Record<string, unknown> = {}) {
       userId: 'u1',
       discordId: '123456789012345678',
       role: 'DEVELOPER',
+      sessionToken: SESSION_TOKEN,
     });
     next();
   });

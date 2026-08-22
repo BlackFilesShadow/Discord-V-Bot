@@ -1,15 +1,15 @@
 {
   "schemaVersion": 1,
   "stage": 36,
-  "basedOnMainSha": "ebee0666e9130e3e7fea9fb6035aeebf42041e1b",
+  "basedOnMainSha": "8ba95ffb35ad9ee7b675f31164b515e1d582aa7c",
   "scope": "API authentication matrix: session cookie, OAuth login/callback, auth middleware, unauthenticated/expired/revoked sessions, login/logout/status consistency between UI and API.",
   "contracts": {
     "v2Mount": "v2Router.use(requireAuth) applies to every /api/v2 route before domain routers.",
-    "requireAuth": "Missing userId/discordId => 401. Pending 2FA => 403. When sessionToken present, Prisma Session must be active, unexpired, and user-bound else 401 SESSION_REVOKED + cookie destroyed.",
+    "requireAuth": "Missing userId/discordId => 401. userId/discordId without persistent sessionToken => 401 SESSION_REVOKED. Every supplied sessionToken must resolve to an active, unexpired, user-bound Prisma Session row; otherwise 401 SESSION_REVOKED + cookie destroyed.",
     "oauth": "Discord-only OAuth with state/nonce/PKCE; session.save before redirects.",
     "logout": "Deactivates Prisma Session.isActive, clears tokenCache, destroys express-session.",
     "status": "/auth/status returns authenticated false when DB session inactive/expired (UI source of truth).",
-    "apiMe": "/api/me behind requireAuth — unauthenticated 401.",
+    "apiMe": "/api/me behind requireAuth — unauthenticated or unbound legacy cookie => 401.",
     "publicExceptions": "/auth/login|callback|status|logout paths; health/metrics/webhooks outside v2.",
     "storeFailure": "Session DB lookup failure => 503 SESSION_STORE_UNAVAILABLE fail-closed (no anonymous elevation)."
   },
@@ -27,6 +27,13 @@
       "expected": "401",
       "evidence": "tests/dashboard/api.test.ts Auth-Middleware",
       "status": "verified"
+    },
+    {
+      "id": "legacy-cookie-unbound",
+      "scenario": "Express session still carries userId/discordId but no application sessionToken",
+      "expected": "401 SESSION_REVOKED; cookie destroyed; no request reaches domain handlers",
+      "evidence": "middleware/auth.ts requireAuth; tests/dashboard/requireAuthSessionGate.test.ts",
+      "status": "fixed-stage-36-hardening"
     },
     {
       "id": "oauth-login-start",
@@ -51,10 +58,17 @@
     },
     {
       "id": "session-revoked-api",
-      "scenario": "Cookie still has userId but Prisma session revoked/expired",
+      "scenario": "Cookie has sessionToken but Prisma session is missing/revoked/expired",
       "expected": "requireAuth 401 SESSION_REVOKED and destroy cookie",
-      "evidence": "middleware/auth.ts requireAuth Stage 36",
-      "status": "fixed-stage-36"
+      "evidence": "middleware/auth.ts requireAuth Stage 36; tests/dashboard/requireAuthSessionGate.test.ts",
+      "status": "verified"
+    },
+    {
+      "id": "session-user-mismatch",
+      "scenario": "Persistent sessionToken resolves to another userId",
+      "expected": "401 SESSION_REVOKED; no auth context established",
+      "evidence": "tests/dashboard/requireAuthSessionGate.test.ts",
+      "status": "verified"
     },
     {
       "id": "logout",
@@ -74,8 +88,8 @@
       "id": "session-store-down",
       "scenario": "Prisma session lookup throws",
       "expected": "503 SESSION_STORE_UNAVAILABLE",
-      "evidence": "requireAuth catch",
-      "status": "fixed-stage-36"
+      "evidence": "requireAuth catch; tests/dashboard/requireAuthSessionGate.test.ts",
+      "status": "verified"
     },
     {
       "id": "ui-api-consistency",

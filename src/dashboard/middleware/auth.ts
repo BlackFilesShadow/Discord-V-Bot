@@ -63,9 +63,11 @@ function getSession(req: Request): SessionShape {
 }
 
 /**
- * Stage 36: cookie/express-session alone is not enough when a parallel
- * application Session row exists — revoked/expired DB sessions must fail closed
- * for /api/v2 even if the cookie payload still carries userId.
+ * Stage 36: every authenticated dashboard request must be bound to the
+ * persistent application Session row created by the OAuth callback. A cookie
+ * carrying userId/discordId without sessionToken is stale/legacy state and must
+ * fail closed; otherwise revocation/expiry can be bypassed after partial
+ * session restoration.
  */
 export async function requireAuth(req: Request, res: Response, next: NextFunction): Promise<void> {
   const s = getSession(req);
@@ -74,34 +76,45 @@ export async function requireAuth(req: Request, res: Response, next: NextFunctio
     return;
   }
 
-  if (s.sessionToken) {
-    try {
-      const dbSession = await prisma.session.findUnique({
-        where: { token: s.sessionToken },
-        select: { isActive: true, expiresAt: true, userId: true },
+  if (!s.sessionToken) {
+    logAudit('SESSION_AUTH_REJECTED', 'SECURITY', {
+      userId: s.userId,
+      reason: 'missing_session_token',
+      ip: req.ip,
+    });
+    await new Promise<void>((resolve) => {
+      req.session.destroy(() => resolve());
+    });
+    res.status(401).json({ error: 'Session abgelaufen oder widerrufen.', code: 'SESSION_REVOKED' });
+    return;
+  }
+
+  try {
+    const dbSession = await prisma.session.findUnique({
+      where: { token: s.sessionToken },
+      select: { isActive: true, expiresAt: true, userId: true },
+    });
+    if (
+      !dbSession
+      || !dbSession.isActive
+      || dbSession.expiresAt <= new Date()
+      || dbSession.userId !== s.userId
+    ) {
+      logAudit('SESSION_AUTH_REJECTED', 'SECURITY', {
+        userId: s.userId,
+        reason: !dbSession ? 'missing' : !dbSession.isActive ? 'revoked' : dbSession.expiresAt <= new Date() ? 'expired' : 'user_mismatch',
+        ip: req.ip,
       });
-      if (
-        !dbSession
-        || !dbSession.isActive
-        || dbSession.expiresAt <= new Date()
-        || dbSession.userId !== s.userId
-      ) {
-        logAudit('SESSION_AUTH_REJECTED', 'SECURITY', {
-          userId: s.userId,
-          reason: !dbSession ? 'missing' : !dbSession.isActive ? 'revoked' : dbSession.expiresAt <= new Date() ? 'expired' : 'user_mismatch',
-          ip: req.ip,
-        });
-        await new Promise<void>((resolve) => {
-          req.session.destroy(() => resolve());
-        });
-        res.status(401).json({ error: 'Session abgelaufen oder widerrufen.', code: 'SESSION_REVOKED' });
-        return;
-      }
-    } catch (err) {
-      logger.error('requireAuth session lookup failed', err as Error);
-      res.status(503).json({ error: 'Session-Store nicht erreichbar.', code: 'SESSION_STORE_UNAVAILABLE' });
+      await new Promise<void>((resolve) => {
+        req.session.destroy(() => resolve());
+      });
+      res.status(401).json({ error: 'Session abgelaufen oder widerrufen.', code: 'SESSION_REVOKED' });
       return;
     }
+  } catch (err) {
+    logger.error('requireAuth session lookup failed', err as Error);
+    res.status(503).json({ error: 'Session-Store nicht erreichbar.', code: 'SESSION_STORE_UNAVAILABLE' });
+    return;
   }
 
   // 2FA-Erzwingung fuer privilegierte Rollen

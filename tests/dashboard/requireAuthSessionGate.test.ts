@@ -45,16 +45,29 @@ describe('requireAuth Stage 36 session gate', () => {
   it('rejects missing login', async () => {
     const res = await request(appWithSession({})).get('/probe');
     expect(res.status).toBe(401);
+    expect(findUnique).not.toHaveBeenCalled();
   });
 
-  it('allows valid cookie without sessionToken (legacy shape)', async () => {
+  it('rejects legacy cookie without persistent sessionToken', async () => {
     const res = await request(appWithSession({
       userId: 'u1',
       discordId: '123456789012345678',
       role: 'USER',
     })).get('/probe');
-    expect(res.status).toBe(200);
-    expect(res.body.ok).toBe(true);
+    expect(res.status).toBe(401);
+    expect(res.body.code).toBe('SESSION_REVOKED');
+    expect(findUnique).not.toHaveBeenCalled();
+  });
+
+  it('rejects missing prisma session row for supplied token', async () => {
+    findUnique.mockResolvedValue(null);
+    const res = await request(appWithSession({
+      userId: 'u1',
+      discordId: '123456789012345678',
+      sessionToken: 'tok-missing',
+    })).get('/probe');
+    expect(res.status).toBe(401);
+    expect(res.body.code).toBe('SESSION_REVOKED');
   });
 
   it('rejects revoked prisma session token', async () => {
@@ -79,6 +92,28 @@ describe('requireAuth Stage 36 session gate', () => {
     })).get('/probe');
     expect(res.status).toBe(401);
     expect(res.body.code).toBe('SESSION_REVOKED');
+  });
+
+  it('rejects session token bound to another user', async () => {
+    findUnique.mockResolvedValue({ isActive: true, expiresAt: new Date(Date.now() + 60_000), userId: 'u2' });
+    const res = await request(appWithSession({
+      userId: 'u1',
+      discordId: '123456789012345678',
+      sessionToken: 'tok-other-user',
+    })).get('/probe');
+    expect(res.status).toBe(401);
+    expect(res.body.code).toBe('SESSION_REVOKED');
+  });
+
+  it('fails closed when prisma session lookup errors', async () => {
+    findUnique.mockRejectedValue(new Error('db unavailable'));
+    const res = await request(appWithSession({
+      userId: 'u1',
+      discordId: '123456789012345678',
+      sessionToken: 'tok-db-error',
+    })).get('/probe');
+    expect(res.status).toBe(503);
+    expect(res.body.code).toBe('SESSION_STORE_UNAVAILABLE');
   });
 
   it('allows active matching prisma session', async () => {
