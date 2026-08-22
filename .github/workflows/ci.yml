@@ -249,14 +249,12 @@ jobs:
           ignore-unfixed: true
           severity: CRITICAL
           vuln-type: os,library
-      - name: Trivy image scan (HIGH report)
-        if: always()
-        continue-on-error: true
+      - name: Trivy image scan (HIGH blocking)
         uses: aquasecurity/trivy-action@v0.36.0
         with:
           image-ref: discord-v-bot:${{ github.sha }}
           format: table
-          exit-code: '0'
+          exit-code: '1'
           ignore-unfixed: true
           severity: HIGH
           vuln-type: os,library

@@ -1,40 +1,50 @@
 {
   "schemaVersion": 1,
   "stage": 45,
-  "basedOnMainSha": "584ffa3deeba6a35391ed8f6463af415419a91fb",
-  "scope": "npm lockfile, production dependency audit (critical/high), CycloneDX SBOM gates, Dockerfile secrets posture, container build on main, legacy passport-discord tracking.",
+  "basedOnMainSha": "94d3f450ed0c7df7c7adfbd10f08f839d8b8d24b",
+  "scope": "npm lockfile, production dependency audit (critical/high), CycloneDX SBOM gates, Dockerfile secrets posture, container build on main, Trivy CRITICAL+HIGH blocking, Vite/esbuild dashboard tree.",
   "contracts": {
     "dockerfile": "no COPY .env",
     "lockfile": "package-lock.json present",
     "rootAuditCritical": "blocking npm audit --audit-level=critical",
-    "rootAuditHigh": "blocking npm audit --audit-level=high (production tree after deepmerge-ts override)",
+    "rootAuditHigh": "blocking npm audit --audit-level=high",
     "dashboardProdHigh": "blocking npm audit --omit=dev --audit-level=high",
+    "dashboardFullHigh": "blocking npm audit --audit-level=high (includes Vite 6.4.3 line)",
     "sbom": "CycloneDX generation blocking for root + dashboard-ui; artifacts required",
     "deepmergeOverride": "package.json overrides.deepmerge-ts >= 8.0.0 (GHSA-ggr8-5vv4-36mx)",
     "legacy": "passport-discord removed in Stage 54 (was unused)",
+    "trivyCritical": "blocking on docker job",
+    "trivyHigh": "blocking on docker job (no continue-on-error)",
     "noForceAuditFix": "npm audit fix --force must not downgrade prisma to 6.x"
   },
   "cases": [
     { "id": "dockerfile-no-env-copy", "status": "runtime-verified" },
     { "id": "package-lock-present", "status": "runtime-verified" },
     { "id": "root-audit-critical-zero", "status": "runtime-verified" },
-    { "id": "root-audit-high-zero-via-override", "status": "runtime-verified" },
+    { "id": "root-audit-high-zero", "status": "runtime-verified" },
     { "id": "dashboard-prod-high-zero", "status": "runtime-verified" },
+    { "id": "dashboard-full-high-zero-vite-6-4-3", "status": "runtime-verified" },
     { "id": "sbom-generation-blocking-ci", "status": "runtime-verified" },
     { "id": "sbom-generation-blocking-gate2", "status": "runtime-verified" },
     { "id": "deepmerge-ts-override-ge-8", "status": "runtime-verified" },
     { "id": "passport-discord-removed-stage-54", "status": "runtime-verified" },
     { "id": "container-image-build-pr-and-main", "status": "runtime-verified" },
     { "id": "trivy-image-critical-blocking", "status": "runtime-verified" },
-    { "id": "trivy-image-high-report", "status": "runtime-verified" },
-    { "id": "runtime-npm-nested-high-pins", "status": "runtime-verified" },
-    { "id": "dashboard-dev-vite-esbuild-high-report-only", "status": "residual-dev-only" }
+    { "id": "trivy-image-high-blocking", "status": "runtime-verified" },
+    { "id": "runtime-npm-nested-high-pins", "status": "runtime-verified" }
   ],
-  "residual": [
-    "Dashboard full (with dev) audit may report vite/esbuild HIGH — report-only; not in production omit=dev tree",
-    "Container HIGH remains report-only in CI until a clean HIGH scan is proven on main; nested npm pins clear known fixed HIGH CVEs (tar/brace-expansion/ip-address)",
-    "passport-discord removed — see Stage 54"
-  ],
+  "residual": [],
+  "evidence": {
+    "mainSha": "94d3f450ed0c7df7c7adfbd10f08f839d8b8d24b",
+    "mainCiRun": "32579522108",
+    "mainPlaywrightRun": "32579522041",
+    "localRootAuditHigh": "0 vulnerabilities",
+    "localDashboardProdHigh": "0 vulnerabilities",
+    "localDashboardFullHigh": "0 vulnerabilities",
+    "trivyCriticalMain": "clean (0)",
+    "trivyHighMain": "clean (0) — CI upgraded to blocking",
+    "pr259": "merged Vite 6.4.3 + dashboard full HIGH blocking"
+  },
   "verification": {
     "workflowCi": ".github/workflows/ci.yml",
     "jobSecurity": "security",
@@ -42,6 +52,9 @@
     "jobSecurity2": "security-2",
     "sbomBlocking": true,
     "rootHighBlocking": true,
+    "dashboardFullHighBlocking": true,
+    "trivyCriticalBlocking": true,
+    "trivyHighBlocking": true,
     "overridePackage": "deepmerge-ts",
     "overrideVersion": "8.0.2"
   }

@@ -43,7 +43,7 @@ stage,status,name
 42,PARTIAL,API/security-42
 43,PARTIAL,API/security-43
 44,PARTIAL,API/security-44
-45,PARTIAL,stage-45
+45,VERIFIED,stage-45-deps-sbom-trivy
 46,PARTIAL,perf-46
 47,PARTIAL,perf-47
 48,PARTIAL,perf-48
