@@ -544,22 +544,19 @@
     },
     {
       "id": 45,
-      "name": "API/security-45-deps-sbom",
+      "name": "API/security-45-deps-sbom-trivy",
       "status": "PARTIAL",
       "evidence": [
-        "package.json#overrides.deepmerge-ts",
-        "docs/audit/security-exception-deepmerge-ts.md",
+        ".github/workflows/ci.yml#docker",
         "docs/dependency-container-sbom-security-matrix.json",
-        "tests/security/dependencyContainerSbomSecurityArchitecture.test.ts",
-        ".github/workflows/ci.yml#security",
-        ".github/workflows/verification2.yml#security-2"
+        "tests/security/dependencyContainerSbomSecurityArchitecture.test.ts"
       ],
       "findings": [
-        "residual-container-cve-scanner",
-        "residual-dashboard-dev-vite-esbuild"
+        "container-high-report-only",
+        "dashboard-dev-vite-esbuild"
       ],
-      "note": "Root high cleared via deepmerge-ts@8 override; SBOM generation blocking in CI+Gate2; residual image CVE scan + dev-only dashboard high + passport-discord removed (Stage 54)",
-      "exactSha": "584ffa3deeba6a35391ed8f6463af415419a91fb"
+      "note": "Trivy CRITICAL blocking on PR+main docker job; HIGH report-only; SBOM+root high already blocking",
+      "exactSha": "e431b1e480f446ed3f6ff2f65f3a6811fcfcbcea"
     },
     {
       "id": 46,

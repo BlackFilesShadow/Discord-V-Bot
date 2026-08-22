@@ -67,6 +67,18 @@ describe('Stage 45 dependency container SBOM security', () => {
     expect(ci).toMatch(/if-no-files-found:\s*error/);
   });
 
+  it('Docker job builds image on every run and blocks Trivy CRITICAL findings', () => {
+    expect(ci).toMatch(/name:\s*Docker Build/);
+    // no longer main-only skip for the job itself
+    const dockerJob = ci.match(/docker:\n[\s\S]*?(?=\n  main-gate-status:)/)?.[0] ?? '';
+    expect(dockerJob).toContain('docker build -t discord-v-bot:');
+    expect(dockerJob).not.toMatch(/if:\s*github\.ref == 'refs\/heads\/main'/);
+    expect(dockerJob).toMatch(/Trivy image scan \(CRITICAL blocking\)/);
+    expect(dockerJob).toMatch(/severity:\s*CRITICAL/);
+    expect(dockerJob).toMatch(/exit-code:\s*'1'/);
+    expect(dockerJob).toMatch(/Trivy image scan \(HIGH report\)/);
+  });
+
   it('Gate 2 Security/SBOM is blocking for root high and SBOM artifacts', () => {
     expect(gate2).toMatch(/Generate SBOMs \(blocking\)/);
     const sbom2 = gate2.match(/- name: Generate SBOMs \(blocking\)[\s\S]*?(?=\n\s+- if: always\(\))/)?.[0] ?? '';

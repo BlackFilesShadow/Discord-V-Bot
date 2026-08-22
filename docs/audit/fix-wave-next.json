@@ -95,6 +95,11 @@
       "name": "wave-j-gesamtaudit-60-62",
       "status": "in_progress",
       "sha_base": "bdf190b881573a78896152e6ec0dbe6e542e7e1a"
+    },
+    {
+      "name": "wave-d-trivy-container-scan",
+      "status": "in_progress",
+      "sha_base": "e431b1e480f446ed3f6ff2f65f3a6811fcfcbcea"
     }
   ]
 }
