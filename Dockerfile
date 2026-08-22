@@ -50,9 +50,15 @@ WORKDIR /app
 # OpenSSL fuer Prisma + wget fuer Healthcheck
 RUN apk add --no-cache openssl wget
 
-# Base node images ship npm with nested node-tar; bump npm so Trivy CRITICAL
-# library findings on fixed CVEs (e.g. CVE-2026-59873 tar < 7.5.19) clear.
+# Base node images ship npm with nested library CVEs. Bump npm, then pin the
+# nested packages Trivy still flags as HIGH when only the npm major is raised
+# (tar, brace-expansion, ip-address). Keep pins explicit for reproducible scans.
 RUN npm install -g npm@11.18.0 \
+ && npm --prefix /usr/local/lib/node_modules/npm install \
+      tar@7.5.21 \
+      brace-expansion@5.0.9 \
+      ip-address@10.3.1 \
+      --no-save --no-fund --no-audit \
  && npm cache clean --force
 
 # Non-Root-User

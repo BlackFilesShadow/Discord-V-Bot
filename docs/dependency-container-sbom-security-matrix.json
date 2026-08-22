@@ -27,11 +27,12 @@
     { "id": "container-image-build-pr-and-main", "status": "runtime-verified" },
     { "id": "trivy-image-critical-blocking", "status": "runtime-verified" },
     { "id": "trivy-image-high-report", "status": "runtime-verified" },
+    { "id": "runtime-npm-nested-high-pins", "status": "runtime-verified" },
     { "id": "dashboard-dev-vite-esbuild-high-report-only", "status": "residual-dev-only" }
   ],
   "residual": [
     "Dashboard full (with dev) audit may report vite/esbuild HIGH — report-only; not in production omit=dev tree",
-    "Container HIGH CVEs are report-only until base-image/policy accepts blocking HIGH",
+    "Container HIGH remains report-only in CI until a clean HIGH scan is proven on main; nested npm pins clear known fixed HIGH CVEs (tar/brace-expansion/ip-address)",
     "passport-discord removed — see Stage 54"
   ],
   "verification": {
