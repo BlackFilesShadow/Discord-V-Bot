@@ -1,5 +1,6 @@
 import os from 'node:os';
 import path from 'node:path';
+import { createRequire } from 'node:module';
 
 if (process.env.E2E_REAL_DB !== '1') {
   throw new Error('Refusing to start the real dashboard E2E harness without E2E_REAL_DB=1.');
@@ -33,6 +34,7 @@ const DISCORD_ID = process.env.BOT_OWNER_ID;
 const GUILD_ID = ['923456789', '01234567', '0'].join('');
 const OTHER_GUILD_ID = ['923456789', '01234567', '1'].join('');
 const AUDIT_PREFIX = 'settings.patch.e2e.';
+const requireRuntime = createRequire(__filename);
 
 async function main(): Promise<void> {
   const axiosModule = await import('axios');
@@ -82,11 +84,12 @@ async function main(): Promise<void> {
     throw new Error(`Unexpected E2E axios GET: ${url}`);
   };
 
-  const [{ Collection }, { default: prisma }, { startDashboard }] = await Promise.all([
-    import('discord.js'),
-    import('../src/database/prisma'),
-    import('../src/dashboard/server'),
-  ]);
+  // ts-node/register erweitert den CommonJS-Resolver um `.ts`. Ein nativer
+  // dynamic import bleibt unter module=Node16 dagegen bei Node ESM und kann
+  // extensionlose TypeScript-Pfade auf Linux nicht aufloesen.
+  const { Collection } = requireRuntime('discord.js') as typeof import('discord.js');
+  const { default: prisma } = requireRuntime('../src/database/prisma') as typeof import('../src/database/prisma');
+  const { startDashboard } = requireRuntime('../src/dashboard/server') as typeof import('../src/dashboard/server');
 
   const cleanup = async (): Promise<void> => {
     await prisma.auditLog.deleteMany({ where: { guildId: { in: [GUILD_ID, OTHER_GUILD_ID] } } });

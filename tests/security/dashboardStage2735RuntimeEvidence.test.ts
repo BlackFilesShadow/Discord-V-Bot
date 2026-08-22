@@ -50,8 +50,8 @@ describe('Stage 27-35 dashboard runtime evidence', () => {
 
     const server = read(harness);
     expect(server).toContain("process.env.E2E_REAL_DB !== '1'");
-    expect(server).toContain("import('../src/dashboard/server')");
-    expect(server).toContain("import('../src/database/prisma')");
+    expect(server).toContain("requireRuntime('../src/dashboard/server')");
+    expect(server).toContain("requireRuntime('../src/database/prisma')");
 
     for (const workflow of ['.github/workflows/e2e.yml', '.github/workflows/verification2.yml']) {
       const yaml = read(workflow);
