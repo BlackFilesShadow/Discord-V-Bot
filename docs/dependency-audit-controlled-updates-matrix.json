@@ -1,26 +1,37 @@
 {
-  "schemaVersion": 2,
+  "schemaVersion": 3,
   "stage": 53,
-  "basedOnMainSha": "eaf8b42bb5d1fc194416324606f146196d04c8c0",
-  "scope": "Dependency audit and controlled updates — no blind upgrades; targeted removals only.",
-  "decision": "No bulk dependency upgrades in Stage 53. Lockfile retained. Targeted removal of unused passport/passport-discord handled in Stage 54 without major bumps.",
+  "basedOnMainSha": "7b66cc4bb1b96dec9125375d7790389e59fa697d",
+  "scope": "Dependency audit and controlled updates — no blind upgrades; targeted changes only with stage-scoped regression evidence.",
+  "decision": "No bulk dependency upgrades in Stage 53. Current main keeps package-lock.json as source of truth, Node >=22, Prisma 7.8.x and the deepmerge-ts 8.0.2 override. The previously unused passport/passport-discord stack is already absent from current main and is not reintroduced.",
   "contracts": {
-    "lockfile": "package-lock.json is source of truth",
-    "noBlind": "Do not bump majors without Stage-scoped regression",
-    "securityGate": "root npm audit critical/high blocking remains from Stage 45",
-    "passportRemoval": "Stage 54 removes unused passport stack"
+    "lockfile": "package-lock.json lockfileVersion 3 is the install source of truth",
+    "noBlind": "Do not bump majors or broad dependency sets without a dedicated stage and regression proof",
+    "securityGate": "root npm audit critical/high blocking remains mandatory",
+    "nodeEngine": ">=22.0.0",
+    "prisma": "@prisma/client, @prisma/adapter-pg and prisma remain on the controlled 7.8.x line",
+    "deepmergeOverride": "deepmerge-ts remains pinned by override to 8.0.2",
+    "passport": "passport and passport-discord remain absent from root dependencies/devDependencies"
   },
   "cases": [
     {
-      "id": "lockfile-present",
+      "id": "lockfile-present-v3",
       "status": "runtime-verified"
     },
     {
       "id": "no-bulk-upgrade",
-      "status": "documented"
+      "status": "documented-and-ci-guarded"
     },
     {
       "id": "deepmerge-override-retained",
+      "status": "runtime-verified"
+    },
+    {
+      "id": "node-engine-controlled",
+      "status": "runtime-verified"
+    },
+    {
+      "id": "passport-stack-not-reintroduced",
       "status": "runtime-verified"
     }
   ]
