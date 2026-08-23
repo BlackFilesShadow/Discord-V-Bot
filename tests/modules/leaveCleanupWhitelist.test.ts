@@ -68,6 +68,7 @@ jest.mock('../../src/database/prisma', () => ({
 
 import { identityHash } from '../../src/modules/linking/identity';
 import { runLeaveWhitelistCleanupStep } from '../../src/modules/moderation/leaveCleanupWhitelist';
+import { WHITELIST_REMOVE_SAFETY_INTENT } from '../../src/modules/whitelist/whitelistJobSafety';
 
 const GUILD = '12345678901234567';
 const OTHER_GUILD = '22345678901234567';
@@ -134,7 +135,15 @@ describe('Leave-1B identity-safe whitelist cleanup', () => {
     expect(mockQueryRaw).toHaveBeenCalledTimes(2);
     expect(mockQueryRaw).toHaveBeenCalledWith('SELECT pg_advisory_xact_lock($1, $2)', expect.any(Number), expect.any(Number));
     expect(mockNitradoJobCreate).toHaveBeenCalledWith({
-      data: { guildId: GUILD, nitradoConnId: CONN, operation: 'WHITELIST_REMOVE', payload: { gameId: 'TARGETPLAYER' } },
+      data: {
+        guildId: GUILD,
+        nitradoConnId: CONN,
+        operation: 'WHITELIST_REMOVE',
+        payload: {
+          gameId: 'TARGETPLAYER',
+          removeSafetyIntent: WHITELIST_REMOVE_SAFETY_INTENT,
+        },
+      },
     });
   });
 
@@ -249,10 +258,20 @@ describe('Leave-1B identity-safe whitelist cleanup', () => {
 
     expect(result.removeJobsQueued).toBe(2);
     expect(mockNitradoJobCreate).toHaveBeenNthCalledWith(1, expect.objectContaining({
-      data: expect.objectContaining({ payload: { gameId: 'alpha' } }),
+      data: expect.objectContaining({
+        payload: expect.objectContaining({
+          gameId: 'alpha',
+          removeSafetyIntent: WHITELIST_REMOVE_SAFETY_INTENT,
+        }),
+      }),
     }));
     expect(mockNitradoJobCreate).toHaveBeenNthCalledWith(2, expect.objectContaining({
-      data: expect.objectContaining({ payload: { gameId: 'Zulu' } }),
+      data: expect.objectContaining({
+        payload: expect.objectContaining({
+          gameId: 'Zulu',
+          removeSafetyIntent: WHITELIST_REMOVE_SAFETY_INTENT,
+        }),
+      }),
     }));
   });
 
