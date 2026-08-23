@@ -12,6 +12,7 @@ import { redactText } from '../nitrado/mirror/redactor';
 import { cached } from '../../utils/responseCache';
 import { clampBlock, clampHistory } from './promptBudget';
 import { classifyProviderHttpStatus, updateAllRateLimitedState } from './providerFailure';
+import { requireStage48LoopbackUrl } from '../../utils/stage48Loopback';
 import { answerDayz129CatalogQuestion } from './dayz129Catalog';
 import {
   buildHallucinationGuardFallback,
@@ -735,9 +736,50 @@ function parseRetryAfter(error: unknown): number {
   return 0;
 }
 
-export async function callAI(messages: { role: string; content: string }[]): Promise<string> {
+export interface Stage48AiLabTransport {
+  baseUrl: string;
+  apiKey: string;
+  model: string;
+}
+
+export interface Stage48AiLabOptions {
+  providers: ProviderName[];
+  transports: Partial<Record<ProviderName, Stage48AiLabTransport>>;
+  retryDelayMs?: number;
+}
+
+export interface CallAiOptions {
+  stage48Lab?: Stage48AiLabOptions;
+}
+
+function normalizeStage48AiLab(options: Stage48AiLabOptions): Stage48AiLabOptions {
+  if (options.providers.length === 0) throw new Error('Stage-48-AI-Labor benoetigt mindestens einen Provider');
+  const providers = [...new Set(options.providers)];
+  const transports: Partial<Record<ProviderName, Stage48AiLabTransport>> = {};
+  for (const provider of providers) {
+    const transport = options.transports[provider];
+    if (!transport?.apiKey || !transport.model) {
+      throw new Error(`Stage-48-AI-Labortransport fuer ${provider} ist unvollstaendig`);
+    }
+    transports[provider] = {
+      ...transport,
+      baseUrl: requireStage48LoopbackUrl(transport.baseUrl),
+    };
+  }
+  return {
+    providers,
+    transports,
+    retryDelayMs: Math.min(1000, Math.max(0, options.retryDelayMs ?? 400)),
+  };
+}
+
+export async function callAI(
+  messages: { role: string; content: string }[],
+  options: CallAiOptions = {},
+): Promise<string> {
   const task = inferAiTaskProfile(messages);
-  const providers = await getProviderOrder(task);
+  const stage48Lab = options.stage48Lab ? normalizeStage48AiLab(options.stage48Lab) : null;
+  const providers = stage48Lab?.providers ?? await getProviderOrder(task);
 
   let redactedMessages: { role: string; content: string }[];
   try {
@@ -761,6 +803,15 @@ export async function callAI(messages: { role: string; content: string }[]): Pro
   const callProvider = async (
     provider: 'groq' | 'cerebras' | 'openrouter' | 'gemini' | 'openai',
   ): Promise<string | null> => {
+    const labTransport = stage48Lab?.transports[provider];
+    if (labTransport) {
+      return await callOpenAICompatible(
+        labTransport.baseUrl,
+        labTransport.apiKey,
+        labTransport.model,
+        messages,
+      );
+    }
     switch (provider) {
       case 'groq':
         if (!config.ai.groqApiKey) return null;
@@ -845,7 +896,7 @@ export async function callAI(messages: { role: string; content: string }[]): Pro
           break;
         }
         if (transient && attempt === 1) {
-          await new Promise(r => setTimeout(r, 400));
+          await new Promise(r => setTimeout(r, stage48Lab?.retryDelayMs ?? 400));
           continue;
         }
         void recordCall(provider as ProviderName, 'failure', latency, errMsg);

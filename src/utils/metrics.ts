@@ -99,6 +99,85 @@ export function setNitradoJobQueueMetrics(
   nitradoJobWorkerInFlightGauge.set(Math.max(0, depths.RUNNING ?? 0));
 }
 
+export type NitradoApiOpClass = 'READ' | 'WRITE';
+export type NitradoApiOperation =
+  | 'token'
+  | 'services'
+  | 'gameserver'
+  | 'settings'
+  | 'file_list'
+  | 'file_download_token'
+  | 'file_seek_token'
+  | 'restart'
+  | 'other';
+export type NitradoApiOutcome =
+  | 'success'
+  | 'rate_limit'
+  | 'server_error'
+  | 'client_error'
+  | 'transport_error'
+  | 'circuit_open';
+export type NitradoApiRetryReason = 'rate_limit' | 'server_error' | 'transport_error';
+
+export const nitradoApiRequestsCounter = new Counter({
+  name: 'vbot_nitrado_api_requests_total',
+  help: 'Abgeschlossene logische Nitrado-API-Requests nach niedrig-kardinaler Operation und Ergebnis',
+  labelNames: ['op_class', 'operation', 'outcome'] as const,
+  registers: [metricsRegistry],
+});
+
+export const nitradoApiRequestDurationHistogram = new Histogram({
+  name: 'vbot_nitrado_api_request_duration_seconds',
+  help: 'Dauer logischer Nitrado-API-Requests inklusive begrenzter Retries',
+  labelNames: ['op_class', 'operation', 'outcome'] as const,
+  buckets: [0.01, 0.025, 0.05, 0.1, 0.25, 0.5, 1, 2, 5, 10, 20, 30],
+  registers: [metricsRegistry],
+});
+
+export const nitradoApiRetriesCounter = new Counter({
+  name: 'vbot_nitrado_api_retries_total',
+  help: 'Tatsaechlich ausgefuehrte Nitrado-API-Retries nach fester Ursache',
+  labelNames: ['op_class', 'operation', 'reason'] as const,
+  registers: [metricsRegistry],
+});
+
+/** Entfernt dynamische Service-IDs aus dem Prometheus-Labelraum. */
+export function classifyNitradoApiOperation(path: string): NitradoApiOperation {
+  const clean = path.split('?')[0].replace(/\/+$/, '') || '/';
+  if (clean === '/token') return 'token';
+  if (clean === '/services') return 'services';
+  if (/^\/services\/[^/]+\/gameservers\/file_server\/list$/.test(clean)) return 'file_list';
+  if (/^\/services\/[^/]+\/gameservers\/file_server\/download$/.test(clean)) return 'file_download_token';
+  if (/^\/services\/[^/]+\/gameservers\/file_server\/seek$/.test(clean)) return 'file_seek_token';
+  if (/^\/services\/[^/]+\/gameservers\/settings$/.test(clean)) return 'settings';
+  if (/^\/services\/[^/]+\/gameservers\/restart$/.test(clean)) return 'restart';
+  if (/^\/services\/[^/]+\/gameservers$/.test(clean)) return 'gameserver';
+  return 'other';
+}
+
+export function recordNitradoApiRequest(input: {
+  opClass: NitradoApiOpClass;
+  operation: NitradoApiOperation;
+  outcome: NitradoApiOutcome;
+  durationMs: number;
+}): void {
+  const labels = { op_class: input.opClass, operation: input.operation, outcome: input.outcome };
+  nitradoApiRequestsCounter.inc(labels);
+  nitradoApiRequestDurationHistogram.observe(labels, Math.max(0, input.durationMs) / 1000);
+}
+
+export function recordNitradoApiRetry(input: {
+  opClass: NitradoApiOpClass;
+  operation: NitradoApiOperation;
+  reason: NitradoApiRetryReason;
+}): void {
+  nitradoApiRetriesCounter.inc({
+    op_class: input.opClass,
+    operation: input.operation,
+    reason: input.reason,
+  });
+}
+
 export const rateLimitedCounter = new Counter({
   name: 'vbot_rate_limited_total',
   help: 'Anzahl Rate-Limit-Treffer',
