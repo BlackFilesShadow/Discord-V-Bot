@@ -1,20 +1,24 @@
 {
-  "schemaVersion": 2,
+  "schemaVersion": 3,
   "stage": 55,
-  "basedOnMainSha": "54341a670150acd1df27f1d317d965f4491106a6",
-  "scope": "inflight / legacy glob debt: production tree vs Jest transitive only.",
+  "basedOnMainSha": "f4752393fbfeb09dd8f12945d8a4a47a7b686c22",
+  "scope": "inflight / legacy glob debt: production tree vs Jest transitive only, revalidated on current main after Stage 54.",
+  "decision": "Keep the dev-only Jest 29 inflight@1.0.6/glob@7 residual isolated; do not introduce blind overrides or force upgrades. Production remains clean and Stage 55 is complete when this provenance stays executable and all required gates pass on the final unchanged SHA.",
   "contracts": {
     "productionTree": "npm ls --omit=dev must not list inflight as production dependency",
-    "jestTransitive": "inflight@1.0.6 via jest glob@7 is accepted as dev-only residual until Jest major drops it",
-    "noForceAuditFix": "do not npm audit fix --force to chase dev-only inflight"
+    "jestTransitive": "inflight@1.0.6 via Jest 29 glob@7 is accepted as dev-only residual until a controlled Jest major removes it",
+    "noForceAuditFix": "do not npm audit fix --force to chase dev-only inflight",
+    "noBlindOverride": "package.json must not force-remove or redirect inflight/glob without a separately proven compatible consumer migration",
+    "shaRule": "one complete CI/CD + Verification 2 + Playwright cycle must pass on the final unchanged Stage 55 SHA"
   },
   "cases": [
     { "id": "prod-no-direct-inflight", "status": "runtime-verified" },
     { "id": "prod-no-direct-glob7", "status": "runtime-verified" },
     { "id": "archiver-glob10-ok", "status": "runtime-verified" },
-    { "id": "jest-inflight-dev-residual", "status": "documented" }
+    { "id": "jest-inflight-dev-residual", "status": "documented-controlled" },
+    { "id": "no-blind-override", "status": "architecture-guarded" }
   ],
   "residual": [
-    "Jest 29 still pulls glob@7 → inflight in the dev tree; not in production omit=dev audit gate"
+    "Jest 29 still pulls glob@7 -> inflight@1.0.6 in the dev tree; it is not part of the production omit=dev dependency tree and must only be removed by a controlled compatible Jest/toolchain update."
   ]
 }
