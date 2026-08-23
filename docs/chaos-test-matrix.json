@@ -1,14 +1,16 @@
 {
-  "schemaVersion": 2,
+  "schemaVersion": 3,
   "stage": 59,
-  "basedOnMainSha": "8f181c7e8f2344f0c78dcd19a3151547f885aa17",
+  "basedOnMainSha": "07aad8945afcc2a1589c2997862d12053b2a3a37",
   "scope": "Controlled fault injection: Nitrado circuit OPEN, SSRF, path traversal, idempotency store-down pin, AI/Nitrado retry contracts, scope no-bypass.",
+  "status": "PARTIAL",
   "contracts": {
     "runtimeHarness": "scripts/chaos-smoke.mjs + Jest circuit/SSRF/path injection",
     "idempotency": "IDEMPOTENCY_STORE_UNAVAILABLE → 503 fail-closed",
     "circuit": "NitradoCircuitOpenError on OPEN preflight",
     "ssrf": "validatePublicHttpUrl denies private/metadata",
-    "path": "assertInsideRoot throws PathBoundaryError on escape"
+    "path": "assertInsideRoot throws PathBoundaryError on escape",
+    "currentMainBinding": "Stage 59 evidence is rebound to main 07aad8945afcc2a1589c2997862d12053b2a3a37"
   },
   "cases": [
     { "id": "nitrado-circuit-open-blocks", "status": "runtime-verified" },
@@ -18,5 +20,7 @@
     { "id": "ai-nitrado-retry-timeout-pins", "status": "runtime-verified" },
     { "id": "kill-postgres-container", "status": "residual-needs-docker" }
   ],
-  "residual": ["Full multi-service process kill chaos needs Docker Compose staging"]
+  "residual": [
+    "Full multi-service process-kill chaos still requires an authorized Docker Compose or staging environment and is not claimed by CI."
+  ]
 }
