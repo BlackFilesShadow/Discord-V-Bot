@@ -4,28 +4,47 @@ import { execSync } from 'node:child_process';
 
 const r = (p: string) => fs.readFileSync(path.resolve(process.cwd(), p), 'utf8');
 const m = JSON.parse(r('docs/legacy-deps-inflight-glob-matrix.json')) as {
+  schemaVersion: number;
   stage: number;
+  basedOnMainSha: string;
+  decision: string;
+  contracts: Record<string, string>;
   cases: Array<{ id: string; status: string }>;
   residual: string[];
 };
 const pkg = JSON.parse(r('package.json')) as {
   dependencies?: Record<string, string>;
   devDependencies?: Record<string, string>;
+  overrides?: Record<string, unknown>;
 };
 
 describe('Stage 55 inflight/glob legacy deps', () => {
-  it('documents stage and residual honesty for Jest transitive inflight', () => {
+  it('binds the controlled residual decision to current main', () => {
     expect(m.stage).toBe(55);
+    expect(m.schemaVersion).toBeGreaterThanOrEqual(3);
+    expect(m.basedOnMainSha).toBe('f4752393fbfeb09dd8f12945d8a4a47a7b686c22');
+    expect(m.decision).toMatch(/dev-only Jest 29 inflight@1\.0\.6\/glob@7 residual isolated/i);
+    expect(m.contracts.shaRule).toMatch(/one complete CI\/CD \+ Verification 2 \+ Playwright cycle/i);
     expect(m.residual.join(' ')).toMatch(/jest/i);
     expect(m.cases.map((c) => c.id)).toEqual(
-      expect.arrayContaining(['prod-no-direct-inflight', 'jest-inflight-dev-residual']),
+      expect.arrayContaining([
+        'prod-no-direct-inflight',
+        'prod-no-direct-glob7',
+        'archiver-glob10-ok',
+        'jest-inflight-dev-residual',
+        'no-blind-override',
+      ]),
     );
+  });
+
+  it('keeps inflight and legacy glob out of direct production dependencies', () => {
     expect(pkg.dependencies?.inflight).toBeUndefined();
     expect(pkg.dependencies?.glob).toBeUndefined();
+    const overrides = JSON.stringify(pkg.overrides || {});
+    expect(overrides).not.toMatch(/\"inflight\"\s*:/i);
   });
 
   it('production omit=dev tree does not require inflight', () => {
-    // npm ls --omit=dev inflight should exit non-zero / empty when not found
     let code = 0;
     let out = '';
     try {
@@ -37,13 +56,10 @@ describe('Stage 55 inflight/glob legacy deps', () => {
       code = (e as { status?: number }).status ?? 1;
       out = String((e as { stdout?: string }).stdout || '');
     }
-    // Either empty dependencies or explicit missing
     const parsed = out ? JSON.parse(out) : {};
-    const hasInflight =
-      JSON.stringify(parsed).includes('"inflight"') &&
-      /"version":\s*"1\./.test(JSON.stringify(parsed));
+    const serialized = JSON.stringify(parsed);
+    const hasInflight = serialized.includes('"inflight"') && /"version":\s*"1\./.test(serialized);
     expect(hasInflight).toBe(false);
-    // non-zero exit from npm ls when missing is acceptable
     expect([0, 1]).toContain(code === undefined ? 0 : code);
   });
 
