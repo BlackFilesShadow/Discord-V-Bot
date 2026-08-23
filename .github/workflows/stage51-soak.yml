@@ -1,15 +1,13 @@
 name: Stage 51 Multi-Hour Soak
 
 on:
-  pull_request:
-    branches: [main]
   workflow_dispatch:
 
 permissions:
   contents: read
 
 concurrency:
-  group: stage51-soak-${{ github.event.pull_request.head.sha || github.sha }}
+  group: stage51-soak-${{ github.sha }}
   cancel-in-progress: false
 
 jobs:
@@ -73,8 +71,8 @@ jobs:
       - name: Run Stage 51 production runtime soak
         run: npx ts-node scripts/full-stack-soak-51.ts
         env:
-          STAGE51_EXACT_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
-          STAGE51_OUTPUT_PATH: stage51-artifacts/${{ github.event.pull_request.head.sha || github.sha }}-${{ github.run_id }}-${{ github.run_attempt }}.json
+          STAGE51_EXACT_SHA: ${{ github.sha }}
+          STAGE51_OUTPUT_PATH: stage51-artifacts/${{ github.sha }}-${{ github.run_id }}-${{ github.run_attempt }}.json
 
       - name: Upload Stage 51 soak evidence
         if: always()
