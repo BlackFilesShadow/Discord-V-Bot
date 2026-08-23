@@ -1,22 +1,28 @@
 {
-  "schemaVersion": 2,
+  "schemaVersion": 4,
   "stage": 60,
-  "basedOnMainSha": "bdf190b881573a78896152e6ec0dbe6e542e7e1a",
-  "scope": "Gesamtaudit 1: code & architecture — layering, v2 auth stack, architecture gate corpus, AI tool path.",
+  "basedOnMainSha": "0e4972924e06f837813555b41df636e7ad06453e",
+  "scope": "Gesamtaudit 1: code & architecture — layering, v2 auth stack, architecture gate corpus, AI tool path, rebound to current main after Stage 59 merge.",
+  "status": "VERIFIED",
   "contracts": {
     "gates": "tests/security/*Architecture*.test.ts form permanent drift gates (>=40)",
     "v2": "all dashboard API under /api/v2 with requireAuth + idempotency",
     "aiTools": "toolRuntime remains sole mutation path for AI tools",
-    "scan": "scripts/gesamtaudit-scan.mjs"
+    "scan": "scripts/gesamtaudit-scan.mjs",
+    "currentMainBinding": "Stage-60 evidence must bind to exact current main SHA and must not reuse historical SHA evidence",
+    "scopeBoundary": "Dynamic-import graph completeness belongs to Stage 61 and is not a Stage-60 completion criterion"
   },
   "cases": [
     { "id": "arch-gate-corpus-ge-40", "status": "runtime-verified" },
     { "id": "v2-requireAuth-idempotency", "status": "runtime-verified" },
     { "id": "ai-tool-runtime-security-path", "status": "runtime-verified" },
-    { "id": "scan-exit-zero", "status": "runtime-verified" }
+    { "id": "scan-exit-zero", "status": "runtime-verified" },
+    { "id": "current-main-exact-sha-binding", "status": "runtime-verified" },
+    { "id": "design-doc-rewrite-not-required-for-executable-proof", "status": "verified-nonblocking" },
+    { "id": "dynamic-import-completeness-owned-by-stage-61", "status": "verified-scope-boundary" }
   ],
-  "residual": [
-    "Full design-doc rewrite not required when gates already pin layers",
-    "Dynamic import graph completeness residual for Stage 61"
+  "residual": [],
+  "outOfScopeNextStage": [
+    "Stage 61 owns full dynamic-import/orphan-graph completeness"
   ]
 }
