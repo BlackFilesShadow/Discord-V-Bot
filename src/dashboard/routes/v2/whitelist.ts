@@ -321,16 +321,22 @@ whitelistRouter.post('/sync', requireGuildPermission('whitelist.manage'), async 
     res.json({ ok: true, preview: true, diff }); return;
   }
 
-  if ((direction === 'push' || direction === 'merge') && onlyLocal.length + (direction === 'push' ? onlyRemote.length : 0) > 0) {
+  // Sync ist absichtlich additiv/non-destructive. Ein Push/Merge braucht nur
+  // dann Remote-Write-Freigabe, wenn lokale Namen auf Nitrado hinzugefuegt
+  // werden. Remote-only Namen werden niemals durch Sync entfernt.
+  if ((direction === 'push' || direction === 'merge') && onlyLocal.length > 0) {
     if (!ensureNitradoWriteAllowed(req, res, { action: 'NITRADO_WHITELIST_SYNC_PUSH', danger: false })) return;
   }
 
   let dbInserted = 0, dbDeleted = 0, jobsCreated = 0;
   try {
     await withFreshAdmBinding(binding, async () => {
-      // Alle lokalen Auswirkungen des Remote-Snapshots laufen unter derselben
-      // revalidierten Binding-Grenze. Ein paralleler Rebind kann daher weder
-      // DB-Zeilen noch Outbox-Intents aus einem alten Server-Snapshot erzeugen.
+      // Alle Sync-Modi sind additiv:
+      // - pull/merge importieren remote-only Namen in den lokalen Spiegel,
+      // - push/merge fuegen local-only Namen remote hinzu,
+      // - KEIN Sync-Modus loescht lokale oder remote Whitelist-Eintraege.
+      // Destruktive Aktionen bleiben ausschliesslich dem gezielten Einzel-Remove,
+      // SERVER_BAN_ADD und dem verifizierten Bye-Cleanup vorbehalten.
       if (direction === 'pull' || direction === 'merge') {
         for (const name of onlyRemote) {
           try {
@@ -346,30 +352,9 @@ whitelistRouter.post('/sync', requireGuildPermission('whitelist.manage'), async 
           }
         }
       }
-      if (direction === 'pull') {
-        if (onlyLocal.length > 0) {
-          const r = await prisma.whitelistEntry.deleteMany({
-            where: { guildId: scope.guildId, nitradoConnId: connId, gameId: { in: onlyLocal } },
-          });
-          dbDeleted = r.count;
-          await prisma.whitelistRequest.updateMany({
-            where: { guildId: scope.guildId, nitradoConnId: connId, gameId: { in: onlyLocal }, status: 'APPROVED' },
-            data: { status: 'CANCELLED' },
-          });
-        }
-      }
       if (direction === 'push' || direction === 'merge') {
         for (const name of onlyLocal) {
           if (await enqueueWhitelistAdd(
-            prisma as unknown as WhitelistOutboxClient,
-            { guildId: scope.guildId, nitradoConnId: connId },
-            name,
-          )) jobsCreated++;
-        }
-      }
-      if (direction === 'push') {
-        for (const name of onlyRemote) {
-          if (await enqueueWhitelistRemove(
             prisma as unknown as WhitelistOutboxClient,
             { guildId: scope.guildId, nitradoConnId: connId },
             name,

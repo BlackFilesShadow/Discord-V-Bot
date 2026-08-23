@@ -4,6 +4,10 @@ import {
   type NitradoOutboxClient,
   type NitradoOutboxTxClient,
 } from '../nitrado/outboxLock';
+import {
+  WHITELIST_REMOVE_SAFETY_INTENT,
+  isAuthorizedWhitelistRemovePayload,
+} from './whitelistJobSafety';
 
 export type WhitelistJobOperation = 'WHITELIST_ADD' | 'WHITELIST_REMOVE';
 export type WhitelistOutboxClient = NitradoOutboxClient;
@@ -28,6 +32,13 @@ function sameGameId(payload: unknown, normalizedGameId: string): boolean {
   return gameId !== null && norm(gameId) === normalizedGameId;
 }
 
+function jobPayload(operation: WhitelistJobOperation, gameId: string): Record<string, string> {
+  if (operation === 'WHITELIST_REMOVE') {
+    return { gameId, removeSafetyIntent: WHITELIST_REMOVE_SAFETY_INTENT };
+  }
+  return { gameId };
+}
+
 async function ensureWhitelistJobInLock(
   tx: NitradoOutboxTxClient,
   scope: WhitelistOutboxScope,
@@ -44,14 +55,22 @@ async function ensureWhitelistJobInLock(
     },
     select: { payload: true },
   });
-  if (existing.some(job => sameGameId(job.payload, normalizedGameId))) return false;
+  const matching = existing.filter(job => sameGameId(job.payload, normalizedGameId));
+  if (operation === 'WHITELIST_ADD' && matching.length > 0) return false;
+  if (operation === 'WHITELIST_REMOVE' && matching.some(job => isAuthorizedWhitelistRemovePayload(job.payload))) {
+    return false;
+  }
 
+  // Ein aktiver Legacy-REMOVE ohne Safety-Marker darf einen neuen, autorisierten
+  // Remove nicht deduplizieren. Beide duerfen kurz koexistieren: Der alte Job
+  // wird bei UNTRACKED fail-closed zum No-op, der markierte Job traegt die neue
+  // explizite Outbox-Autorisierung.
   await tx.nitradoJob.create({
     data: {
       guildId: scope.guildId,
       nitradoConnId: scope.nitradoConnId,
       operation,
-      payload: { gameId },
+      payload: jobPayload(operation, gameId),
     },
   });
   return true;
@@ -64,6 +83,10 @@ async function ensureWhitelistJobInLock(
  * Connection-weite xact-Barriere, damit ein paralleler Service-Rebind entweder
  * diesen Enqueue vollstaendig vor seinem Cleanup sieht oder der Enqueue erst
  * nach dem abgeschlossenen Rebind committen kann.
+ *
+ * WHITELIST_REMOVE wird seit dem Produktions-Hotfix immer mit einem expliziten
+ * Safety-Intent markiert. Dadurch koennen Legacy-/Fremdjobs ohne Marker bei
+ * fehlender lokaler Zeile im Worker fail-closed neutralisiert werden.
  */
 export async function enqueueWhitelistJob(
   client: WhitelistOutboxClient,

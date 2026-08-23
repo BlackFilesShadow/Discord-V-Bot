@@ -3,6 +3,7 @@ import {
   enqueueWhitelistRemove,
   type WhitelistOutboxClient,
 } from '../../src/modules/whitelist/whitelistOutbox';
+import { WHITELIST_REMOVE_SAFETY_INTENT } from '../../src/modules/whitelist/whitelistJobSafety';
 
 const SCOPE = { guildId: 'guild-a', nitradoConnId: 'conn-a' };
 
@@ -48,6 +49,24 @@ describe('Nitrado-1A/1U Whitelist-Outbox', () => {
     });
   });
 
+  it('markiert jeden neuen REMOVE mit dem V2-Safety-Intent', async () => {
+    const { client, create } = makeClient();
+
+    await expect(enqueueWhitelistRemove(client, SCOPE, 'Player One')).resolves.toBe(true);
+
+    expect(create).toHaveBeenCalledWith({
+      data: {
+        guildId: 'guild-a',
+        nitradoConnId: 'conn-a',
+        operation: 'WHITELIST_REMOVE',
+        payload: {
+          gameId: 'Player One',
+          removeSafetyIntent: WHITELIST_REMOVE_SAFETY_INTENT,
+        },
+      },
+    });
+  });
+
   it('dedupliziert Namen case-insensitiv und trim-bewusst innerhalb derselben Operation', async () => {
     const { client, create } = makeClient([
       { operation: 'WHITELIST_ADD', payload: { gameId: ' PLAYER ONE ' } },
@@ -68,8 +87,43 @@ describe('Nitrado-1A/1U Whitelist-Outbox', () => {
       where: expect.objectContaining({ operation: 'WHITELIST_REMOVE' }),
     }));
     expect(remove.create).toHaveBeenCalledWith(expect.objectContaining({
-      data: expect.objectContaining({ operation: 'WHITELIST_REMOVE' }),
+      data: expect.objectContaining({
+        operation: 'WHITELIST_REMOVE',
+        payload: expect.objectContaining({
+          gameId: 'Player One',
+          removeSafetyIntent: WHITELIST_REMOVE_SAFETY_INTENT,
+        }),
+      }),
     }));
+  });
+
+  it('laesst einen aktiven unmarkierten Legacy-REMOVE keinen neuen sicheren REMOVE deduplizieren', async () => {
+    const remove = makeClient([
+      { operation: 'WHITELIST_REMOVE', payload: { gameId: 'Player One' } },
+    ]);
+
+    await expect(enqueueWhitelistRemove(remove.client, SCOPE, 'player one')).resolves.toBe(true);
+    expect(remove.create).toHaveBeenCalledTimes(1);
+    expect(remove.create).toHaveBeenCalledWith(expect.objectContaining({
+      data: expect.objectContaining({
+        payload: expect.objectContaining({
+          gameId: 'player one',
+          removeSafetyIntent: WHITELIST_REMOVE_SAFETY_INTENT,
+        }),
+      }),
+    }));
+  });
+
+  it('dedupliziert einen bereits aktiven markierten REMOVE fuer denselben Namen', async () => {
+    const remove = makeClient([
+      {
+        operation: 'WHITELIST_REMOVE',
+        payload: { gameId: ' PLAYER ONE ', removeSafetyIntent: WHITELIST_REMOVE_SAFETY_INTENT },
+      },
+    ]);
+
+    await expect(enqueueWhitelistRemove(remove.client, SCOPE, 'player one')).resolves.toBe(false);
+    expect(remove.create).not.toHaveBeenCalled();
   });
 
   it('teilt die Connection-Barriere pro Connection, aber trennt Subject-Locks nach Operation/Name', async () => {
