@@ -62,7 +62,17 @@ function dashboardWebsocketOrigins(): string[] {
  * - Developer-Bereich: Erweiterte Logs, Analytics, Fehlerberichte, API-Keys, Feature-Toggles
  */
 
-export async function startDashboard(client?: Client): Promise<DashboardRuntimeHandle> {
+export interface DashboardStartOptions {
+  /** Override used by isolated runtime probes; production keeps config.dashboard.port. */
+  port?: number;
+  /** Explicit bind host for isolated probes; production keeps the existing default bind. */
+  host?: string;
+}
+
+export async function startDashboard(
+  client?: Client,
+  options: DashboardStartOptions = {},
+): Promise<DashboardRuntimeHandle> {
   const app = express();
   if (client) {
     setWebhookClient(client);
@@ -385,11 +395,16 @@ export async function startDashboard(client?: Client): Promise<DashboardRuntimeH
         reject(error);
       };
       httpServer.once('error', onError);
-      httpServer.listen(config.dashboard.port, () => {
+      const onListening = () => {
         httpServer.off('error', onError);
-        logger.info(`Dashboard gestartet auf Port ${config.dashboard.port}`);
+        const address = httpServer.address();
+        const listeningPort = address && typeof address === 'object' ? address.port : options.port ?? config.dashboard.port;
+        logger.info(`Dashboard gestartet auf Port ${listeningPort}`);
         resolve();
-      });
+      };
+      const port = options.port ?? config.dashboard.port;
+      if (options.host) httpServer.listen(port, options.host, onListening);
+      else httpServer.listen(port, onListening);
     });
   } catch (error) {
     await runtime.stop().catch(stopError => {

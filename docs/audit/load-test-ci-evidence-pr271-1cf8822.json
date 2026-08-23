@@ -1,0 +1,103 @@
+{
+  "schemaVersion": 1,
+  "pullRequest": 271,
+  "technicalSha": "1cf8822b39615b94d52c28b32d03a481062a3bd2",
+  "basedOnMainSha": "9b0ed7a89124c8735454cc5e112067e8d3791e40",
+  "scope": [50],
+  "measurements": [
+    {
+      "workflow": "CI/CD Pipeline",
+      "artifactId": 9485462624,
+      "artifact": "docs/audit/performance/1cf8822b39615b94d52c28b32d03a481062a3bd2/50-load.json",
+      "sha256": "030a78cf4bde0015c78c51449af22a1ac5ba9d8686603ae3c79c10aa61de9ad2",
+      "capturedAt": "2026-08-23T01:37:55.615Z",
+      "requests": 2252,
+      "rps": 898.078,
+      "errorRate": 0,
+      "httpP50Ms": 19.053,
+      "httpP95Ms": 35.436,
+      "httpP99Ms": 60.78,
+      "databaseProbeP99Ms": 13.415,
+      "databasePeakConnections": 19,
+      "cpuUtilizationPercent": 145.252,
+      "heapUsedMb": { "start": 739.862, "end": 842.209, "peak": 843.014 },
+      "rssMb": { "start": 923.445, "end": 1061.531, "peak": 1061.531 },
+      "eventLoopP99Ms": 21.381,
+      "residual": []
+    },
+    {
+      "workflow": "Verification 2",
+      "artifactId": 9485464835,
+      "artifact": "docs/audit/performance/1cf8822b39615b94d52c28b32d03a481062a3bd2/50-load-verification2.json",
+      "sha256": "186295aa7e188428f00018213cd549dbf3f2a0b85c5d01f7d333c400b06286d0",
+      "capturedAt": "2026-08-23T01:38:05.545Z",
+      "requests": 1764,
+      "rps": 702.308,
+      "errorRate": 0,
+      "httpP50Ms": 24.645,
+      "httpP95Ms": 47.411,
+      "httpP99Ms": 110.711,
+      "databaseProbeP99Ms": 15.401,
+      "databasePeakConnections": 17,
+      "cpuUtilizationPercent": 149.118,
+      "heapUsedMb": { "start": 747.485, "end": 827.444, "peak": 830.114 },
+      "rssMb": { "start": 931.652, "end": 1048.598, "peak": 1048.598 },
+      "eventLoopP99Ms": 21.676,
+      "residual": []
+    }
+  ],
+  "runs": [
+    {
+      "workflow": "CI/CD Pipeline",
+      "runId": 32610762878,
+      "attempt": 1,
+      "event": "pull_request",
+      "headSha": "1cf8822b39615b94d52c28b32d03a481062a3bd2",
+      "status": "completed",
+      "conclusion": "success",
+      "url": "https://github.com/BlackFilesShadow/Discord-V-Bot/actions/runs/32610762878",
+      "createdAt": "2026-08-23T01:36:15Z",
+      "updatedAt": "2026-08-23T01:40:51Z",
+      "jobs": [
+        { "jobId": 97123345608, "name": "Tests", "conclusion": "success", "proof": "The mandatory Stage 50 production dashboard/PostgreSQL load probe and SHA-bound artifact upload succeeded before the complete Jest suite." },
+        { "jobId": 97123345616, "name": "Lint & Build", "conclusion": "success" },
+        { "jobId": 97123345509, "name": "Security Audit", "conclusion": "success", "proof": "Full-history Gitleaks, blocking high/critical npm audits and CycloneDX SBOM generation succeeded." },
+        { "jobId": 97123608773, "name": "Docker Build", "conclusion": "success", "proof": "Docker build and blocking Trivy CRITICAL/HIGH scans succeeded." }
+      ]
+    },
+    {
+      "workflow": "E2E (Playwright)",
+      "runId": 32610762873,
+      "attempt": 1,
+      "event": "pull_request",
+      "headSha": "1cf8822b39615b94d52c28b32d03a481062a3bd2",
+      "status": "completed",
+      "conclusion": "success",
+      "url": "https://github.com/BlackFilesShadow/Discord-V-Bot/actions/runs/32610762873",
+      "createdAt": "2026-08-23T01:36:15Z",
+      "updatedAt": "2026-08-23T01:56:36Z",
+      "jobs": [
+        { "jobId": 97123345481, "name": "Playwright Smoke", "conclusion": "success" }
+      ]
+    },
+    {
+      "workflow": "Verification 2",
+      "runId": 32610762908,
+      "attempt": 1,
+      "event": "pull_request",
+      "headSha": "1cf8822b39615b94d52c28b32d03a481062a3bd2",
+      "status": "completed",
+      "conclusion": "success",
+      "url": "https://github.com/BlackFilesShadow/Discord-V-Bot/actions/runs/32610762908",
+      "createdAt": "2026-08-23T01:36:15Z",
+      "updatedAt": "2026-08-23T01:51:29Z",
+      "jobs": [
+        { "jobId": 97123345476, "name": "Gate 2 · Lint & Build", "conclusion": "success" },
+        { "jobId": 97123345519, "name": "Gate 2 · Playwright", "conclusion": "success" },
+        { "jobId": 97123345535, "name": "Gate 2 · Security / SBOM", "conclusion": "success" },
+        { "jobId": 97123345546, "name": "Gate 2 · Tests / DB Lifecycle", "conclusion": "success", "proof": "The independent mandatory Stage 50 production dashboard/PostgreSQL load probe and SHA-bound artifact upload succeeded before the complete Jest suite." }
+      ]
+    }
+  ],
+  "result": "All three complete Gate-1 workflows succeeded on the same immutable technical SHA. Two independent mandatory jobs loaded the production dashboard over real loopback TCP with live PostgreSQL readiness/session-store traffic and fail-closed API authentication; both measured RPS, p50/p95/p99, zero request errors, CPU, heap, RSS, event-loop delay and database behaviour with every gate true, deterministic cleanup and empty residuals. Multi-sample long-duration soak remains the distinct Stage 51 scope, while credentialed external traffic remains Stage 67."
+}

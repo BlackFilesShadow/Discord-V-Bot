@@ -48,7 +48,7 @@ stage,status,name
 47,VERIFIED,runtime-baseline-ii-47
 48,VERIFIED,ai-nitrado-perf-48
 49,VERIFIED,memory-leak-audit-49
-50,PARTIAL,load-test-50
+50,VERIFIED,load-test-50
 51,PARTIAL,soak-test-51
 52,PARTIAL,ram-node-heap-tuning-52
 53,VERIFIED,dependency-audit-controlled-53

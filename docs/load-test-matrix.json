@@ -1,23 +1,46 @@
 {
-  "schemaVersion": 2,
+  "schemaVersion": 3,
   "stage": 50,
-  "basedOnMainSha": "8f181c7e8f2344f0c78dcd19a3151547f885aa17",
-  "scope": "Real in-process HTTP load: RPS, p50/p95/p99, errors, CPU/RSS delta; auth path 401 under load.",
+  "basedOnMainSha": "9b0ed7a89124c8735454cc5e112067e8d3791e40",
+  "scope": "Real production dashboard runtime over ephemeral loopback TCP with live PostgreSQL-backed readiness/session-store traffic, fail-closed API auth load, HTTP latency/RPS/error metrics, CPU/heap/RSS/event-loop metrics and database behaviour.",
   "contracts": {
-    "inProcessHarness": "scripts/perf-load-inprocess.mjs",
-    "optionalExternal": "scripts/load-test-smoke.mjs skipped without LOAD_TEST_BASE_URL",
-    "metrics": "requests, rps, latency percentiles, status codes, resource deltas",
-    "authUnderLoad": "unauthenticated /api/* returns 401 (fail-closed)",
-    "artifact": "docs/audit/performance/<sha>/50-load.json"
+    "fullStackHarness": "scripts/full-stack-load-50.ts",
+    "productionRuntime": "src/dashboard/server.ts startDashboard with the production middleware, routes, Socket.IO, Prisma and PostgreSQL session store",
+    "labIsolation": "ephemeral port bound explicitly to 127.0.0.1; no external network or credentials",
+    "liveDatabase": "STAGE50_REQUIRE_LIVE=1 requires DATABASE_URL and exercises /health/ready plus independent PostgreSQL probes",
+    "metrics": "requests, RPS, p50/p95/p99/max, error rate, status codes, concurrency, CPU, heap, RSS, external/array buffers, event-loop p50/p95/p99/max and PostgreSQL pool/statistics",
+    "authUnderLoad": "unauthenticated production /api/v2 path returns 401 fail-closed under concurrent load",
+    "artifact": "stage50-artifacts/<exact-sha>.json in two mandatory independent CI jobs"
   },
   "cases": [
-    { "id": "inprocess-load-rps-latency", "status": "runtime-verified" },
-    { "id": "auth-401-under-load", "status": "runtime-verified" },
-    { "id": "error-ratio-lt-1pct", "status": "runtime-verified" },
-    { "id": "external-dashboard-full-stack-load", "status": "residual-needs-running-stack" }
+    { "id": "production-dashboard-loopback-load", "status": "dual-ci-verified" },
+    { "id": "live-postgresql-readiness-session-store-load", "status": "dual-ci-verified" },
+    { "id": "auth-401-under-load", "status": "dual-ci-verified" },
+    { "id": "rps-p50-p95-p99-error-rate", "status": "dual-ci-verified" },
+    { "id": "cpu-heap-rss-event-loop", "status": "dual-ci-verified" },
+    { "id": "postgres-probe-pool-statistics", "status": "dual-ci-verified" },
+    { "id": "deterministic-runtime-cleanup", "status": "dual-ci-verified" }
   ],
-  "residual": [
-    "Not full bot+DB+Discord gateway load",
-    "Long soak under multi-service stack is Stage 51 residual"
-  ]
+  "residual": [],
+  "scopeBoundaries": {
+    "stage51": "Long-duration multi-sample soak is measured separately in Stage 51.",
+    "stage67": "Live Discord gateway and credentialed external-provider traffic require the owner-controlled production boundary."
+  },
+  "verification": {
+    "probeScript": "scripts/full-stack-load-50.ts",
+    "command": "STAGE50_REQUIRE_LIVE=1 npm run perf:load-50",
+    "ciArtifact": "stage50-artifacts/<exact-sha>.json",
+    "artifacts": [
+      "docs/audit/performance/1cf8822b39615b94d52c28b32d03a481062a3bd2/50-load.json",
+      "docs/audit/performance/1cf8822b39615b94d52c28b32d03a481062a3bd2/50-load-verification2.json"
+    ],
+    "ciEvidence": "docs/audit/load-test-ci-evidence-pr271-1cf8822.json",
+    "architectureTests": [
+      "tests/security/loadTestArchitecture.test.ts",
+      "tests/dashboard/runtime.test.ts"
+    ]
+  },
+  "status": "VERIFIED",
+  "exactSha": "1cf8822b39615b94d52c28b32d03a481062a3bd2",
+  "verifiedAt": "2026-08-23T01:58:55.698Z"
 }

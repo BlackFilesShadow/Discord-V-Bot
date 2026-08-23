@@ -110,4 +110,26 @@ describe('Dashboard runtime lifecycle (NIT-010)', () => {
     await runtime.stop();
     expect(httpServer.close).not.toHaveBeenCalled();
   });
+
+  it('exposes the actual listener address for isolated ephemeral-port probes', async () => {
+    const listenerAddress = { address: '127.0.0.1', family: 'IPv4', port: 32123 };
+    const httpServer = {
+      listening: false,
+      address: jest.fn(() => listenerAddress),
+      close: jest.fn(),
+    } as unknown as HttpServer;
+    const io = { close: jest.fn((cb?: () => void) => cb?.()) } as unknown as IOServer;
+    const sessionStore = { close: jest.fn(async () => undefined) };
+    const sessionPool = { end: jest.fn(async () => undefined) } as unknown as Pool;
+    const runtime = createDashboardRuntime({
+      httpServer,
+      io,
+      sessionStore,
+      sessionPool,
+      cleanups: [],
+    });
+
+    expect(runtime.address()).toEqual(listenerAddress);
+    await runtime.stop();
+  });
 });

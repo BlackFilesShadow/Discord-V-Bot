@@ -57,6 +57,7 @@ export interface DashboardRuntimeResources {
 }
 
 export interface DashboardRuntimeHandle {
+  address(): ReturnType<HttpServer['address']>;
   stop(): Promise<void>;
 }
 
@@ -94,6 +95,9 @@ export function createDashboardRuntime(resources: DashboardRuntimeResources): Da
   let stopPromise: Promise<void> | null = null;
 
   return {
+    address(): ReturnType<HttpServer['address']> {
+      return resources.httpServer.address();
+    },
     stop(): Promise<void> {
       if (stopPromise) return stopPromise;
       stopPromise = (async () => {

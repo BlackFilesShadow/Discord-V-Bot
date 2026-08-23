@@ -114,6 +114,19 @@ jobs:
           name: stage48-ai-nitrado-verification2-${{ github.run_id }}-${{ github.run_attempt }}
           path: stage48-artifacts/*.json
           if-no-files-found: error
+      - name: Stage 50 production dashboard and PostgreSQL load test
+        run: npm run perf:load-50
+        env:
+          STAGE50_REQUIRE_LIVE: '1'
+          STAGE50_EXACT_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+          STAGE50_OUTPUT_PATH: stage50-artifacts/${{ github.event.pull_request.head.sha || github.sha }}.json
+      - name: Upload Stage 50 full-stack load evidence
+        if: always()
+        uses: actions/upload-artifact@v5
+        with:
+          name: stage50-full-stack-load-verification2-${{ github.run_id }}-${{ github.run_attempt }}
+          path: stage50-artifacts/*.json
+          if-no-files-found: error
       - name: Run tests without leaked handles
         shell: bash
         run: |
