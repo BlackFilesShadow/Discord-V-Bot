@@ -1,5 +1,5 @@
 {
-  "schemaVersion": 2,
+  "schemaVersion": 3,
   "stage": 57,
   "scope": "Dead code / legacy cleanup only with proof — no speculative deletes.",
   "decision": "No mass deletion: passport cleanup is proven; no broader deletion is allowed until the event, worker, command, AI-tool and Nitrado registry coupling graph is complete.",
@@ -15,9 +15,10 @@
     { "id": "ai-tool-registry-intact", "status": "runtime-verified" },
     { "id": "nitrado-job-worker-intact", "status": "runtime-verified" }
   ],
-  "basedOnMainSha": "2a7c048d1d1a1206d0774da26d70c363cc225fcf",
+  "basedOnMainSha": "425cf4d7b70a9e417d1c6a6a9622e6330f9ceea9",
   "status": "PARTIAL",
   "residual": [
-    "Full dynamic coupling and reference analysis remains before Stage 57 can be VERIFIED"
+    "Full dynamic coupling and reference analysis remains before Stage 57 can be VERIFIED",
+    "No static-import-only deletion is accepted as evidence of dead code"
   ]
 }
