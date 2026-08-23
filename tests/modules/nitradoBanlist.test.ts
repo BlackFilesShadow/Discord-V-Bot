@@ -103,6 +103,20 @@ describe('NitradoClient official gameserver banlist contract', () => {
     }));
   });
 
+  it('schlaegt fehl wenn ein 2xx-Add remote auch nach bounded Re-Reads nicht sichtbar wird', async () => {
+    requestMock
+      .mockResolvedValueOnce({ status: 200, headers: {}, data: { data: {} } })
+      .mockResolvedValue(banlistResponse([]));
+    const client = new NitradoClient('token-1234');
+
+    await expect(client.addToBanlist('123', 'player-c'))
+      .rejects.toThrow('Banlist-Add konnte remote nicht bestaetigt werden');
+    expect(requestMock).toHaveBeenCalledTimes(4);
+    expect(requestMock.mock.calls.slice(1).every(([call]) =>
+      call.method === 'GET' && call.url === '/services/123/gameservers/games/banlist',
+    )).toBe(true);
+  });
+
   it('entfernt einen Bann ueber DELETE und bestaetigt die Abwesenheit mit frischem GET', async () => {
     requestMock
       .mockResolvedValueOnce({ status: 200, headers: {}, data: { data: {} } })
