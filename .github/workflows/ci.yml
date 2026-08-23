@@ -129,6 +129,19 @@ jobs:
           name: stage47-data-plane-ci-${{ github.run_id }}-${{ github.run_attempt }}
           path: stage47-artifacts/*.json
           if-no-files-found: warn
+      - name: Stage 48 AI and Nitrado loopback performance baseline
+        run: npm run perf:ai-nitrado-48
+        env:
+          STAGE48_REQUIRE_LAB: '1'
+          STAGE48_EXACT_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+          STAGE48_OUTPUT_PATH: stage48-artifacts/${{ github.event.pull_request.head.sha || github.sha }}.json
+      - name: Upload Stage 48 AI and Nitrado evidence
+        if: always()
+        uses: actions/upload-artifact@v5
+        with:
+          name: stage48-ai-nitrado-ci-${{ github.run_id }}-${{ github.run_attempt }}
+          path: stage48-artifacts/*.json
+          if-no-files-found: error
       - name: Run tests (no forceExit; leaked handles fail)
         id: jest
         shell: bash

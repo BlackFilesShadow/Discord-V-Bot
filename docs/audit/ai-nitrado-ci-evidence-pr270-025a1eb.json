@@ -1,0 +1,89 @@
+{
+  "schemaVersion": 1,
+  "pullRequest": 270,
+  "technicalSha": "025a1ebf134a1453b675c315ca641cd0c32918aa",
+  "basedOnMainSha": "d17d01cc4b6453f9ee84b07a30a2a6e6d325ea78",
+  "scope": [48],
+  "measurements": [
+    {
+      "workflow": "CI/CD Pipeline",
+      "artifactId": 9484511220,
+      "artifact": "docs/audit/performance/025a1ebf134a1453b675c315ca641cd0c32918aa/48-ai-nitrado.json",
+      "sha256": "822a71c4b609028232f4b07909c6b0ee29e0a5665835b88d626598fb0ebd8ed8",
+      "capturedAt": "2026-08-23T00:17:41.846Z",
+      "aiSuccessP99Ms": 115.082,
+      "aiPeakInFlight": 12,
+      "nitradoSuccessP99Ms": 13.252,
+      "nitradoPeakInFlight": 12,
+      "circuitFailFastMs": 0.091,
+      "residual": []
+    },
+    {
+      "workflow": "Verification 2",
+      "artifactId": 9484509365,
+      "artifact": "docs/audit/performance/025a1ebf134a1453b675c315ca641cd0c32918aa/48-ai-nitrado-verification2.json",
+      "sha256": "5cc3418fb8be74ce973a50903d002c05e6b99dfb5620b5ba776b8bc553e667f4",
+      "capturedAt": "2026-08-23T00:17:33.355Z",
+      "aiSuccessP99Ms": 129.187,
+      "aiPeakInFlight": 12,
+      "nitradoSuccessP99Ms": 13.853,
+      "nitradoPeakInFlight": 12,
+      "circuitFailFastMs": 0.064,
+      "residual": []
+    }
+  ],
+  "runs": [
+    {
+      "workflow": "CI/CD Pipeline",
+      "runId": 32607407461,
+      "attempt": 1,
+      "event": "pull_request",
+      "headSha": "025a1ebf134a1453b675c315ca641cd0c32918aa",
+      "status": "completed",
+      "conclusion": "success",
+      "url": "https://github.com/BlackFilesShadow/Discord-V-Bot/actions/runs/32607407461",
+      "createdAt": "2026-08-23T00:16:07Z",
+      "updatedAt": "2026-08-23T00:20:26Z",
+      "jobs": [
+        { "jobId": 97114548156, "name": "Tests", "conclusion": "success", "proof": "The mandatory Stage 48 probe and SHA-bound artifact upload succeeded against the migrated PostgreSQL service before the complete Jest suite." },
+        { "jobId": 97114548285, "name": "Lint & Build", "conclusion": "success" },
+        { "jobId": 97114548335, "name": "Security Audit", "conclusion": "success", "proof": "Full-history Gitleaks, high/critical npm audits and CycloneDX SBOM generation succeeded." },
+        { "jobId": 97114814244, "name": "Docker Build", "conclusion": "success", "proof": "Docker build and blocking Trivy CRITICAL/HIGH scans succeeded." }
+      ]
+    },
+    {
+      "workflow": "E2E (Playwright)",
+      "runId": 32607407450,
+      "attempt": 1,
+      "event": "pull_request",
+      "headSha": "025a1ebf134a1453b675c315ca641cd0c32918aa",
+      "status": "completed",
+      "conclusion": "success",
+      "url": "https://github.com/BlackFilesShadow/Discord-V-Bot/actions/runs/32607407450",
+      "createdAt": "2026-08-23T00:16:07Z",
+      "updatedAt": "2026-08-23T00:31:26Z",
+      "jobs": [
+        { "jobId": 97114548161, "name": "Playwright Smoke", "conclusion": "success" }
+      ]
+    },
+    {
+      "workflow": "Verification 2",
+      "runId": 32607407445,
+      "attempt": 1,
+      "event": "pull_request",
+      "headSha": "025a1ebf134a1453b675c315ca641cd0c32918aa",
+      "status": "completed",
+      "conclusion": "success",
+      "url": "https://github.com/BlackFilesShadow/Discord-V-Bot/actions/runs/32607407445",
+      "createdAt": "2026-08-23T00:16:07Z",
+      "updatedAt": "2026-08-23T00:31:24Z",
+      "jobs": [
+        { "jobId": 97114548075, "name": "Gate 2 · Security / SBOM", "conclusion": "success" },
+        { "jobId": 97114548209, "name": "Gate 2 · Playwright", "conclusion": "success" },
+        { "jobId": 97114548229, "name": "Gate 2 · Tests / DB Lifecycle", "conclusion": "success", "proof": "The independent mandatory Stage 48 probe and SHA-bound artifact upload succeeded against PostgreSQL before the complete Jest suite." },
+        { "jobId": 97114548304, "name": "Gate 2 · Lint & Build", "conclusion": "success" }
+      ]
+    }
+  ],
+  "result": "All three complete Gate-1 workflows succeeded on the same immutable technical SHA. Two independent mandatory real-TCP loopback jobs exercised production AI and Nitrado clients with measured latency/concurrency, bounded retries, provider fallback, rate-limit handling, circuit fail-fast and exported low-cardinality metrics; all contracts passed with empty residuals. Production-provider RTT remains explicitly reserved for credential-bound Stage 67."
+}

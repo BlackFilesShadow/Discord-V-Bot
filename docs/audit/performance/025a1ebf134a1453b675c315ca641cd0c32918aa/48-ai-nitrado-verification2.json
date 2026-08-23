@@ -1,0 +1,113 @@
+{
+  "schemaVersion": 1,
+  "stage": 48,
+  "exactSha": "025a1ebf134a1453b675c315ca641cd0c32918aa",
+  "capturedAt": "2026-08-23T00:17:33.355Z",
+  "environment": {
+    "transport": "real TCP over HTTP loopback",
+    "bindHost": "127.0.0.1",
+    "ephemeralPort": true,
+    "externalNetworkUsed": false,
+    "credentials": "runtime-random, never persisted",
+    "sampleCount": 20,
+    "concurrency": 12
+  },
+  "contracts": {
+    "requiredLab": true,
+    "loopbackOnlyOverride": true,
+    "productionAiClientPath": true,
+    "productionNitradoClientPath": true,
+    "productionTimeoutsUnchanged": true,
+    "realSocketTransport": true,
+    "aiProtocolValid": true,
+    "nitradoProtocolValid": true,
+    "boundedRetries": true,
+    "circuitFailFast": true,
+    "lowCardinalityMetrics": true
+  },
+  "thresholds": {
+    "successP99LimitMs": 750,
+    "minimumObservedConcurrency": 8,
+    "maximumAiTransientAttemptsPerProvider": 2,
+    "maximumNitradoAttemptsPerLogicalRequest": 3,
+    "circuitFailFastLimitMs": 250
+  },
+  "ai": {
+    "success": {
+      "latency": {
+        "count": 32,
+        "minMs": 14.198,
+        "p50Ms": 16.346,
+        "p95Ms": 37.659,
+        "p99Ms": 129.187,
+        "maxMs": 129.187
+      },
+      "errorCount": 0,
+      "requestCount": 32,
+      "peakInFlight": 12
+    },
+    "transientFallback": {
+      "firstProviderRequests": 2,
+      "fallbackProviderRequests": 1,
+      "result": "stage48:fallback"
+    },
+    "rateLimitFallback": {
+      "rateLimitedProviderRequests": 1,
+      "fallbackProviderRequests": 1,
+      "result": "stage48:fallback"
+    }
+  },
+  "nitrado": {
+    "success": {
+      "latency": {
+        "count": 32,
+        "minMs": 7.901,
+        "p50Ms": 9.111,
+        "p95Ms": 12.797,
+        "p99Ms": 13.853,
+        "maxMs": 13.853
+      },
+      "errorCount": 0,
+      "remoteRequestCount": 32,
+      "peakInFlight": 12
+    },
+    "retry503": {
+      "remoteRequestCount": 3,
+      "finalServiceCount": 1
+    },
+    "rate429": {
+      "remoteRequestCount": 2,
+      "finalServiceCount": 1
+    },
+    "circuit": {
+      "failedLogicalCalls": 2,
+      "state": "OPEN",
+      "remoteRequestsAtOpen": 5,
+      "remoteRequestsAfterFailFast": 5,
+      "failFastError": "NitradoCircuitOpenError",
+      "failFastLatencyMs": 0.064
+    }
+  },
+  "metricsPresent": {
+    "vbot_ai_provider_attempts_total": true,
+    "vbot_ai_provider_latency_seconds": true,
+    "vbot_ai_provider_fallback_total": true,
+    "vbot_nitrado_api_requests_total": true,
+    "vbot_nitrado_api_request_duration_seconds": true,
+    "vbot_nitrado_api_retries_total": true
+  },
+  "nitradoMetricSamples": {
+    "successRequests": 34,
+    "serverErrorRequests": 1,
+    "circuitOpenRequests": 2,
+    "serverErrorRetries": 5,
+    "rateLimitRetries": 1
+  },
+  "externalProductionBoundary": {
+    "status": "deferred-to-stage-67",
+    "reason": "Production-provider RTT requires owner-supplied credentials and an approved external rate budget.",
+    "claim": "Stage 48 makes no production-provider RTT or availability claim."
+  },
+  "residual": [],
+  "passed": true
+}

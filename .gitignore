@@ -54,3 +54,4 @@ sbom.cyclonedx.json
 
 # Stage 47 live data-plane evidence (generated/uploaded in CI)
 stage47-artifacts/
+stage48-artifacts/

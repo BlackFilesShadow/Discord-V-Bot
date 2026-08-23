@@ -14,6 +14,14 @@
 
 import axios, { type AxiosInstance, type AxiosRequestConfig } from 'axios';
 import { logger } from '../../utils/logger';
+import {
+  classifyNitradoApiOperation,
+  recordNitradoApiRequest,
+  recordNitradoApiRetry,
+  type NitradoApiOutcome,
+  type NitradoApiRetryReason,
+} from '../../utils/metrics';
+import { requireStage48LoopbackUrl } from '../../utils/stage48Loopback';
 import { getNitradoBreaker, opClassForMethod, NitradoCircuitOpenError } from './circuitBreaker';
 
 const NITRADO_BASE = 'https://api.nitrado.net';
@@ -156,13 +164,20 @@ interface SignedFileToken {
   token?: string;
 }
 
+export interface NitradoClientOptions {
+  stage48LabBaseUrl?: string;
+}
+
 export class NitradoClient {
   private readonly http: AxiosInstance;
 
-  constructor(rawToken: string) {
+  constructor(rawToken: string, options: NitradoClientOptions = {}) {
     if (!rawToken || rawToken.length < 8) throw new Error('Nitrado-Token leer/zu kurz');
+    const baseURL = options.stage48LabBaseUrl
+      ? requireStage48LoopbackUrl(options.stage48LabBaseUrl)
+      : NITRADO_BASE;
     this.http = axios.create({
-      baseURL: NITRADO_BASE,
+      baseURL,
       timeout: 15_000,
       headers: {
         Authorization: `Bearer ${rawToken}`,
@@ -173,14 +188,47 @@ export class NitradoClient {
   }
 
   private async request<T>(method: 'GET' | 'POST' | 'DELETE', path: string, opts: AxiosRequestConfig = {}): Promise<T> {
-    const breaker = getNitradoBreaker(opClassForMethod(method));
+    const opClass = opClassForMethod(method);
+    const operation = classifyNitradoApiOperation(path);
+    const startedAt = performance.now();
+
+    try {
+      const value = await this.requestWithRetries<T>(method, path, opts, opClass, operation);
+      recordNitradoApiRequest({ opClass, operation, outcome: 'success', durationMs: performance.now() - startedAt });
+      return value;
+    } catch (error) {
+      let outcome: NitradoApiOutcome = 'transport_error';
+      if (error instanceof NitradoCircuitOpenError) outcome = 'circuit_open';
+      else if (error instanceof NitradoApiError) {
+        if (error.status === 429) outcome = 'rate_limit';
+        else if (error.status !== null && error.status >= 500) outcome = 'server_error';
+        else if (error.status !== null) outcome = 'client_error';
+      }
+      recordNitradoApiRequest({ opClass, operation, outcome, durationMs: performance.now() - startedAt });
+      throw error;
+    }
+  }
+
+  private async requestWithRetries<T>(
+    method: 'GET' | 'POST' | 'DELETE',
+    path: string,
+    opts: AxiosRequestConfig,
+    opClass: 'READ' | 'WRITE',
+    operation: ReturnType<typeof classifyNitradoApiOperation>,
+  ): Promise<T> {
+    const breaker = getNitradoBreaker(opClass);
 
     let lastErr: Error | null = null;
+    let pendingRetryReason: NitradoApiRetryReason | null = null;
     for (let attempt = 1; attempt <= 3; attempt++) {
       // Nitrado-1V: Preflight vor JEDEM echten HTTP-Versuch. Wenn ein Failure
       // waehrend Retry 1 den Circuit oeffnet oder ein HALF_OPEN-Probe fehlschlaegt,
       // darf derselbe logische Request nicht noch weitere Remote-Versuche senden.
       breaker.preflight();
+      if (pendingRetryReason) {
+        recordNitradoApiRetry({ opClass, operation, reason: pendingRetryReason });
+        pendingRetryReason = null;
+      }
 
       try {
         const res = await this.http.request({ method, url: path, ...opts });
@@ -193,12 +241,14 @@ export class NitradoClient {
           if (attempt >= 3) {
             throw new NitradoApiError('Rate-Limit (429) nach mehreren Versuchen', 429, path);
           }
+          pendingRetryReason = 'rate_limit';
           await sleep(parseRetryAfterMs(res.headers['retry-after']));
           continue;
         }
         if (res.status >= 500) {
           breaker.recordFailure();
           if (attempt < 3) {
+            pendingRetryReason = 'server_error';
             await sleep(500 * Math.pow(2, attempt - 1));
             continue;
           }
@@ -224,6 +274,7 @@ export class NitradoClient {
         lastErr = e instanceof Error ? e : new Error(String(e));
         breaker.recordFailure();
         if (attempt < 3) {
+          pendingRetryReason = 'transport_error';
           await sleep(500 * Math.pow(2, attempt - 1));
           continue;
         }

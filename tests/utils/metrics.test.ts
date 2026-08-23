@@ -15,6 +15,9 @@ import {
   wsLatencyGauge,
   dbQueryHistogram,
   setNitradoJobQueueMetrics,
+  classifyNitradoApiOperation,
+  recordNitradoApiRequest,
+  recordNitradoApiRetry,
   rateLimitedCounter,
   timed,
 } from '../../src/utils/metrics';
@@ -32,9 +35,31 @@ describe('metrics', () => {
     expect(text).toMatch(/vbot_nitrado_job_queue_depth/);
     expect(text).toMatch(/vbot_nitrado_job_oldest_pending_age_seconds/);
     expect(text).toMatch(/vbot_nitrado_job_worker_in_flight/);
+    expect(text).toMatch(/vbot_nitrado_api_requests_total/);
+    expect(text).toMatch(/vbot_nitrado_api_request_duration_seconds/);
+    expect(text).toMatch(/vbot_nitrado_api_retries_total/);
     expect(text).toMatch(/vbot_rate_limited_total/);
     // Default-Process-Metriken via collectDefaultMetrics({prefix:'vbot_'})
     expect(text).toMatch(/vbot_process_/);
+  });
+
+  it('begrenzt Nitrado-API-Metriken auf feste Operations- und Ergebnislabels', async () => {
+    expect(classifyNitradoApiOperation('/services/987654/gameservers')).toBe('gameserver');
+    expect(classifyNitradoApiOperation('/services/987654/gameservers/file_server/seek')).toBe('file_seek_token');
+    expect(classifyNitradoApiOperation('/unknown/987654')).toBe('other');
+
+    recordNitradoApiRequest({
+      opClass: 'READ',
+      operation: 'services',
+      outcome: 'success',
+      durationMs: 12.5,
+    });
+    recordNitradoApiRetry({ opClass: 'READ', operation: 'services', reason: 'server_error' });
+    const text = await metricsRegistry.metrics();
+    expect(text).toMatch(/vbot_nitrado_api_requests_total\{op_class="READ",operation="services",outcome="success"\} 1/);
+    expect(text).toMatch(/vbot_nitrado_api_request_duration_seconds_count\{op_class="READ",operation="services",outcome="success"\} 1/);
+    expect(text).toMatch(/vbot_nitrado_api_retries_total\{op_class="READ",operation="services",reason="server_error"\} 1/);
+    expect(text).not.toContain('987654');
   });
 
   it('Counter inkrementieren ohne Fehler', async () => {
