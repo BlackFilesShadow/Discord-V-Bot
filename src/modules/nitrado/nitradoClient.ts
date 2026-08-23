@@ -2,10 +2,10 @@
  * Nitrado-API-Client.
  *
  * DayZ-spezifische Leitlinien:
- * - Whitelist und Bannliste werden als Gameserver-Settings unter
- *   `settings.general.whitelist` bzw. `settings.general.bans` verwaltet.
- *   Damit benutzt Ban denselben funktionierenden Read-Modify-Write-Pfad wie
- *   die bereits produktiv bestaetigte Whitelist.
+ * - Die Whitelist wird ueber das produktiv bestaetigte DayZ-Setting
+ *   `settings.general.whitelist` als Read-Modify-Write verwaltet.
+ * - Die Bannliste verwendet den offiziellen Nitrado-Gameserver-Endpunkt
+ *   `/gameservers/games/banlist` mit GET/POST/DELETE und `identifier`.
  * - ADM-Dateien werden ueber file_server/list gefunden. Fuer Live-Ingestion
  *   steht zusaetzlich file_server/seek bereit, damit nur neue Bytes gelesen
  *   werden muessen.
@@ -114,11 +114,9 @@ function dedupe(items: string[]): string[] {
 }
 
 /**
- * Kompatibilitaetsparser fuer den generischen Nitrado-Banlist-Endpoint.
- * Der produktive DayZ-Pfad verwendet `settings.general.bans`; dieser Parser
- * bleibt fuer Diagnose/Regression erhalten und akzeptiert sowohl den alten
- * `identifier`-Vertrag als auch das dokumentierte Player-Management-Format
- * `{ name, id, id_type }`.
+ * Kompatibilitaetsparser fuer den offiziellen Nitrado-Banlist-Endpoint.
+ * Akzeptiert sowohl den `identifier`-Vertrag als auch Player-Management-
+ * Formate mit `{ name, id, id_type }`. Unbekannte Shapes sind fail-closed.
  */
 export function parseNitradoBanlistData(data: unknown): NitradoBanlistEntry[] {
   let rawEntries: unknown[];
@@ -308,13 +306,26 @@ export class NitradoClient {
     return res.data.services ?? [];
   }
 
-  private async getGeneralSetting(serviceId: string, key: string): Promise<string> {
+  /**
+   * Liest die produktiv bestaetigte DayZ-Hard-Whitelist. String- und echte
+   * Boolean-Defaults (`true`/`false`) bedeuten eine noch leere Spieler-Liste.
+   * Fehlende oder unbekannte Shapes werden dagegen nicht mehr still als leer
+   * interpretiert, damit ein Read-Modify-Write keinen Remote-Zustand zerstoert.
+   */
+  private async getWhitelistSetting(serviceId: string): Promise<string> {
+    const path = `/services/${serviceId}/gameservers`;
     const res = await this.request<{
       data: { gameserver?: { settings?: { general?: Record<string, unknown> } } };
-    }>('GET', `/services/${serviceId}/gameservers`);
-    const value = res.data?.gameserver?.settings?.general?.[key];
-    if (typeof value !== 'string') return '';
-    if (value === 'true' || value === 'false') return '';
+    }>('GET', path);
+    const general = res.data?.gameserver?.settings?.general;
+    if (!general || !Object.prototype.hasOwnProperty.call(general, 'whitelist')) {
+      throw new NitradoApiError('Whitelist-Setting fehlt in Nitrado-Antwort', null, path);
+    }
+    const value = general.whitelist;
+    if (value === true || value === false || value === 'true' || value === 'false') return '';
+    if (typeof value !== 'string') {
+      throw new NitradoApiError('Unerwartetes Whitelist-Settingformat', null, path);
+    }
     return value;
   }
 
@@ -325,49 +336,88 @@ export class NitradoClient {
     });
   }
 
-  private async mutateGeneralList(
+  private async mutateWhitelist(
     serviceId: string,
-    key: 'whitelist' | 'bans',
     mutator: (current: string[]) => string[],
   ): Promise<boolean> {
-    const current = parseLines(await this.getGeneralSetting(serviceId, key));
+    const current = parseLines(await this.getWhitelistSetting(serviceId));
     const next = dedupe(mutator(current).map(s => s.trim()).filter(Boolean));
     if (current.length === next.length && current.every((value, index) => value === next[index])) return false;
-    await this.setSetting(serviceId, 'general', key, next.join('\r\n'));
+    await this.setSetting(serviceId, 'general', 'whitelist', next.join('\r\n'));
     return true;
   }
 
   async getWhitelist(serviceId: string): Promise<NitradoWhitelistEntry[]> {
-    return parseLines(await this.getGeneralSetting(serviceId, 'whitelist')).map(identifier => ({ identifier }));
+    return parseLines(await this.getWhitelistSetting(serviceId)).map(identifier => ({ identifier }));
   }
 
   async addToWhitelist(serviceId: string, identifier: string): Promise<void> {
     const id = identifier.trim();
     if (!id) throw new NitradoApiError('Leerer Identifier', null, 'whitelist');
-    await this.mutateGeneralList(serviceId, 'whitelist', list => list.includes(id) ? list : [...list, id]);
+    await this.mutateWhitelist(serviceId, list => list.includes(id) ? list : [...list, id]);
   }
 
   async removeFromWhitelist(serviceId: string, identifier: string): Promise<void> {
     const id = identifier.trim();
     if (!id) throw new NitradoApiError('Leerer Identifier', null, 'whitelist');
-    await this.mutateGeneralList(serviceId, 'whitelist', list => list.filter(entry => entry !== id));
+    await this.mutateWhitelist(serviceId, list => list.filter(entry => entry !== id));
   }
 
-  /** DayZ-Bannliste aus demselben Settings-Pfad wie die funktionierende Whitelist. */
+  /** Offizieller Nitrado-Gameserver-Banlist-Endpoint, fail-closed normalisiert. */
   async getBanlist(serviceId: string): Promise<NitradoBanlistEntry[]> {
-    return parseLines(await this.getGeneralSetting(serviceId, 'bans')).map(identifier => ({ identifier }));
+    const path = `/services/${serviceId}/gameservers/games/banlist`;
+    const res = await this.request<{ data?: unknown }>('GET', path);
+    if (!res || typeof res !== 'object' || !('data' in res)) {
+      throw new NitradoApiError('Banlist-Antwort ohne data-Feld', null, path);
+    }
+    return parseNitradoBanlistData(res.data);
+  }
+
+  /**
+   * Nach einem 2xx-Write wird der Remote-Zustand erneut gelesen. Damit gilt ein
+   * Ban/Unban erst als erfolgreich, wenn Nitrado den Sollzustand tatsaechlich
+   * zurueckliefert. Kurze Eventual-Consistency-Fenster werden bounded toleriert.
+   */
+  private async verifyBanlistMembership(
+    serviceId: string,
+    identifier: string,
+    expectedPresent: boolean,
+  ): Promise<void> {
+    const path = `/services/${serviceId}/gameservers/games/banlist`;
+    const normalized = identifier.toLowerCase();
+    for (let attempt = 1; attempt <= 3; attempt++) {
+      const remote = await this.getBanlist(serviceId);
+      const present = remote.some(entry => entry.identifier.toLowerCase() === normalized);
+      if (present === expectedPresent) return;
+      if (attempt < 3) await sleep(250 * attempt);
+    }
+    throw new NitradoApiError(
+      expectedPresent
+        ? 'Banlist-Add konnte remote nicht bestaetigt werden'
+        : 'Banlist-Remove konnte remote nicht bestaetigt werden',
+      null,
+      path,
+    );
   }
 
   async addToBanlist(serviceId: string, identifier: string): Promise<void> {
     const id = identifier.trim();
     if (!id) throw new NitradoApiError('Leerer Identifier', null, 'banlist');
-    await this.mutateGeneralList(serviceId, 'bans', list => list.includes(id) ? list : [...list, id]);
+    await this.request<unknown>('POST', `/services/${serviceId}/gameservers/games/banlist`, {
+      data: new URLSearchParams({ identifier: id }).toString(),
+      headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+    });
+    await this.verifyBanlistMembership(serviceId, id, true);
   }
 
   async removeFromBanlist(serviceId: string, identifier: string): Promise<void> {
     const id = identifier.trim();
     if (!id) throw new NitradoApiError('Leerer Identifier', null, 'banlist');
-    await this.mutateGeneralList(serviceId, 'bans', list => list.filter(entry => entry !== id));
+    await this.request<unknown>('DELETE', `/services/${serviceId}/gameservers/games/banlist`, {
+      data: new URLSearchParams({ identifier: id }).toString(),
+      headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+    });
+    await this.verifyBanlistMembership(serviceId, id, false);
   }
 
   async listAdmFiles(serviceId: string, profileDir: string): Promise<Array<{ name: string; modified_at: number; size: number }>> {
