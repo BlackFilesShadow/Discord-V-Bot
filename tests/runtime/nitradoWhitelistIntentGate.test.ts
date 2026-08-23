@@ -8,6 +8,7 @@ const worker = read('src/modules/nitrado/jobWorker.ts');
 const intent = read('src/modules/nitrado/whitelistIntent.ts');
 const safety = read('src/modules/whitelist/whitelistJobSafety.ts');
 const syncCron = read('src/modules/whitelist/whitelistSyncCron.ts');
+const dashboardWhitelist = read('src/dashboard/routes/v2/whitelist.ts');
 const serverBan = read('src/commands/dashboard/serverBan.ts');
 
 describe('Nitrado-1B whitelist intent reconciliation architecture gate', () => {
@@ -100,6 +101,19 @@ describe('Nitrado-1B whitelist intent reconciliation architecture gate', () => {
     expect(syncCron).not.toContain('for (const gameId of diff.toRemove)');
   });
 
+  it('keeps dashboard pull/push/merge additive and forbids bulk whitelist deletion', () => {
+    const start = dashboardWhitelist.indexOf("whitelistRouter.post('/sync'");
+    const end = dashboardWhitelist.indexOf("whitelistRouter.get('/channels'", start);
+    const syncRoute = dashboardWhitelist.slice(start, end);
+
+    expect(start).toBeGreaterThanOrEqual(0);
+    expect(end).toBeGreaterThan(start);
+    expect(syncRoute).toContain("if (direction === 'pull' || direction === 'merge')");
+    expect(syncRoute).toContain("if (direction === 'push' || direction === 'merge')");
+    expect(syncRoute).not.toContain('whitelistEntry.deleteMany');
+    expect(syncRoute).not.toContain('enqueueWhitelistRemove(');
+  });
+
   it('keeps server-ban local whitelist intent at PENDING_REMOVE before its remote ban outbox is queued', () => {
     const tx = serverBan.indexOf('const stored = await prisma.$transaction(async tx => {');
     const pendingRemove = serverBan.indexOf("syncState: 'PENDING_REMOVE'", tx);
@@ -110,5 +124,21 @@ describe('Nitrado-1B whitelist intent reconciliation architecture gate', () => {
     expect(pendingRemove).toBeGreaterThan(tx);
     expect(banWrite).toBeGreaterThan(pendingRemove);
     expect(banOutbox).toBeGreaterThan(banWrite);
+  });
+
+  it('keeps SERVER_BAN_ADD as exact whitelist-remove then exact banlist-add path', () => {
+    const banStart = worker.indexOf("case 'SERVER_BAN_ADD':");
+    const verifyIdentity = worker.indexOf('matchesBanIdentifier(sensitiveIdentifier, ban.identityHash, config.security.encryptionKey)', banStart);
+    const whitelistRemove = worker.indexOf('await client.removeFromWhitelist(conn.nitradoServerId, sensitiveIdentifier);', verifyIdentity);
+    const banlistRead = worker.indexOf('const before = await client.getBanlist(conn.nitradoServerId);', whitelistRemove);
+    const banlistAdd = worker.indexOf('await client.addToBanlist(conn.nitradoServerId, sensitiveIdentifier);', banlistRead);
+    const applied = worker.indexOf('data: { appliedRemotely: true }', banlistAdd);
+
+    expect(banStart).toBeGreaterThanOrEqual(0);
+    expect(verifyIdentity).toBeGreaterThan(banStart);
+    expect(whitelistRemove).toBeGreaterThan(verifyIdentity);
+    expect(banlistRead).toBeGreaterThan(whitelistRemove);
+    expect(banlistAdd).toBeGreaterThan(banlistRead);
+    expect(applied).toBeGreaterThan(banlistAdd);
   });
 });
