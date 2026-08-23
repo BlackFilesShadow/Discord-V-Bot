@@ -52,7 +52,8 @@ dashboard-ui/vite.config.d.ts
 # SBOM artifact (generated in CI)
 sbom.cyclonedx.json
 
-# Stage 47 live data-plane evidence (generated/uploaded in CI)
+# Performance evidence (generated/uploaded in CI)
 stage47-artifacts/
 stage48-artifacts/
 stage50-artifacts/
+stage51-artifacts/
