@@ -50,7 +50,7 @@ describe('Prisma advisory-lock void compatibility', () => {
     expect(prismaSource).toContain('query(compatibleArgs as typeof args)');
   });
 
-  it('guards every current production transaction advisory-lock SQL callsite behind $queryRawUnsafe', () => {
+  it('guards every current production transaction advisory-lock SQL callsite against void row decoding', () => {
     const root = path.resolve('src');
     const offending: string[] = [];
 
@@ -69,7 +69,9 @@ describe('Prisma advisory-lock void compatibility', () => {
         for (let i = 0; i < lines.length; i++) {
           if (!lines[i].includes('SELECT pg_advisory_xact_lock')) continue;
           const context = lines.slice(Math.max(0, i - 2), i + 1).join('\n');
-          if (!context.includes('$queryRawUnsafe')) {
+          const usesRewrittenQueryRaw = context.includes('$queryRawUnsafe');
+          const usesExecuteRawWithoutRowDecoding = context.includes('$executeRaw');
+          if (!usesRewrittenQueryRaw && !usesExecuteRawWithoutRowDecoding) {
             offending.push(`${path.relative(process.cwd(), full)}:${i + 1}`);
           }
         }
