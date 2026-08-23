@@ -1,33 +1,43 @@
 {
-  "schemaVersion": 2,
+  "schemaVersion": 3,
   "stage": 54,
-  "basedOnMainSha": "eaf8b42bb5d1fc194416324606f146196d04c8c0",
-  "scope": "Remove unused passport-discord / passport; custom Discord OAuth remains canonical.",
-  "status": "REMOVED_UNUSED_DEPS",
-  "finding": "Dashboard OAuth is implemented in src/dashboard/routes/auth.ts with custom Discord OAuth (state/PKCE). No src imports of passport or passport-discord existed.",
-  "decision": "Removed direct dependencies passport, passport-discord and related @types. No auth rewrite required.",
+  "basedOnMainSha": "b9b79beb1c10c3e0d0d86d2fc470913d23984162",
+  "scope": "Revalidate removal of unused passport-discord / passport on current main; custom Discord OAuth remains canonical.",
+  "status": "REMOVED_UNUSED_DEPS_REVALIDATED",
+  "finding": "Current main keeps dashboard OAuth in src/dashboard/routes/auth.ts with custom Discord OAuth using state/PKCE. package.json contains neither passport nor passport-discord, and the architecture test forbids source imports/requires of either package.",
+  "decision": "Keep the passport stack removed. No auth rewrite or dependency reintroduction is justified; custom OAuth remains the production path.",
   "contracts": {
     "authPath": "custom OAuth routes remain canonical (login/callback/logout + PKCE)",
-    "noPassportImport": "src/** must not import passport or passport-discord",
-    "packageJson": "passport and passport-discord absent from dependencies and devDependencies",
-    "regression": "login/callback/logout/session gates from Stages 36/43"
+    "noPassportImport": "src/** must not import or require passport or passport-discord",
+    "packageJson": "passport and passport-discord plus related @types remain absent from dependencies/devDependencies",
+    "lockfileRuntimeCheck": "npm ls passport passport-discord must remain empty",
+    "regression": "existing authenticated OAuth/session/Playwright gates must remain green on the final Stage-54 SHA",
+    "shaRule": "one complete CI/CD + Verification 2 + Playwright cycle is required on the final unchanged SHA"
   },
   "cases": [
     {
       "id": "passport-discord-removed",
-      "status": "runtime-verified"
+      "status": "architecture-verified"
     },
     {
       "id": "passport-removed",
-      "status": "runtime-verified"
+      "status": "architecture-verified"
     },
     {
       "id": "custom-oauth-pkce-canonical",
-      "status": "runtime-verified"
+      "status": "architecture-verified"
     },
     {
       "id": "no-src-passport-import",
-      "status": "runtime-verified"
+      "status": "architecture-verified"
+    },
+    {
+      "id": "package-tree-passport-empty",
+      "status": "ci-required"
+    },
+    {
+      "id": "oauth-session-e2e-regression",
+      "status": "ci-required"
     }
   ],
   "residual": []
