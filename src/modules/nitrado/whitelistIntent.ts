@@ -4,14 +4,20 @@ import {
   enqueueWhitelistRemove,
   type WhitelistOutboxClient,
 } from '../whitelist/whitelistOutbox';
+import { isAuthorizedWhitelistRemovePayload } from '../whitelist/whitelistJobSafety';
 
 export type WhitelistJobOperation = 'WHITELIST_ADD' | 'WHITELIST_REMOVE';
 export type WhitelistDesiredState = 'PRESENT' | 'PENDING_REMOVE' | 'UNTRACKED';
+export type WhitelistIntentReason =
+  | 'CURRENT_INTENT'
+  | 'SUPERSEDED_BY_REMOVE'
+  | 'SUPERSEDED_BY_PRESENT'
+  | 'UNTRACKED_REMOVE_NOT_AUTHORIZED';
 
 export interface WhitelistIntentDecision {
   execute: boolean;
   desiredState: WhitelistDesiredState;
-  reason: 'CURRENT_INTENT' | 'SUPERSEDED_BY_REMOVE' | 'SUPERSEDED_BY_PRESENT';
+  reason: WhitelistIntentReason;
 }
 
 export interface WhitelistIntentReconciliation extends WhitelistIntentDecision {
@@ -22,6 +28,12 @@ function norm(value: string): string {
   return value.trim().toLocaleLowerCase('en-US');
 }
 
+function payloadGameId(value: unknown): string | null {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return null;
+  const gameId = (value as Record<string, unknown>).gameId;
+  return typeof gameId === 'string' && gameId.trim() ? gameId.trim() : null;
+}
+
 /**
  * Liest unmittelbar vor oder nach einem Remote-Whitelist-Write die aktuelle
  * Source-of-Truth fuer exakt Guild + Gameserver + Spielernamen.
@@ -29,8 +41,8 @@ function norm(value: string): string {
  * Mehrere case-variierte Legacy-Zeilen werden konservativ zusammengefuehrt:
  * sobald irgendeine passende Zeile aktiv ist, gilt PRESENT. Nur wenn keine
  * aktive Zeile existiert, aber mindestens eine PENDING_REMOVE-Zeile, gilt der
- * Entfernen-Wunsch. Ohne lokale Zeile bleibt REMOVE fuer remote-only Eintraege
- * erlaubt, waehrend ein alter ADD als superseded gilt.
+ * Entfernen-Wunsch. Ohne lokale Zeile ist der Zustand UNTRACKED und damit fuer
+ * REMOVE zunaechst fail-closed.
  */
 export async function readWhitelistDesiredState(
   guildId: string,
@@ -53,8 +65,36 @@ export async function readWhitelistDesiredState(
 }
 
 /**
+ * Ein UNTRACKED-REMOVE darf nur dann remote laufen, wenn exakt der gerade
+ * RUNNING befindliche Job fuer denselben Namen den neuen Outbox-Safety-Marker
+ * traegt. Mehrdeutige parallele RUNNING-Jobs fuer denselben Namen sind bewusst
+ * fail-closed.
+ */
+async function hasAuthorizedRunningRemoveIntent(
+  guildId: string,
+  nitradoConnId: string,
+  rawGameId: string,
+): Promise<boolean> {
+  const target = norm(rawGameId);
+  const running = await prisma.nitradoJob.findMany({
+    where: {
+      guildId,
+      nitradoConnId,
+      operation: 'WHITELIST_REMOVE',
+      status: 'RUNNING',
+    },
+    select: { payload: true },
+  });
+  const matching = running.filter(job => {
+    const gameId = payloadGameId(job.payload);
+    return gameId !== null && norm(gameId) === target;
+  });
+  return matching.length === 1 && isAuthorizedWhitelistRemovePayload(matching[0].payload);
+}
+
+/**
  * Entscheidet die Remote-Ausfuehrung ausschliesslich nach dem AKTUELLEN lokalen
- * Sollzustand, nicht nach Job-Alter oder Retry-Reihenfolge.
+ * Sollzustand plus einer expliziten Safety-Grenze fuer remote-only Removes.
  *
  * ADD:
  *   PRESENT        -> ausfuehren
@@ -64,7 +104,7 @@ export async function readWhitelistDesiredState(
  * REMOVE:
  *   PRESENT        -> stale/superseded
  *   PENDING_REMOVE -> ausfuehren
- *   UNTRACKED      -> ausfuehren (bewusst: remote-only Remove bleibt moeglich)
+ *   UNTRACKED      -> nur mit exakt einem markierten RUNNING-Job ausfuehren
  */
 export async function decideWhitelistRemoteIntent(
   operation: WhitelistJobOperation,
@@ -80,9 +120,17 @@ export async function decideWhitelistRemoteIntent(
       : { execute: false, desiredState, reason: 'SUPERSEDED_BY_REMOVE' };
   }
 
-  return desiredState === 'PRESENT'
-    ? { execute: false, desiredState, reason: 'SUPERSEDED_BY_PRESENT' }
-    : { execute: true, desiredState, reason: 'CURRENT_INTENT' };
+  if (desiredState === 'PRESENT') {
+    return { execute: false, desiredState, reason: 'SUPERSEDED_BY_PRESENT' };
+  }
+  if (desiredState === 'PENDING_REMOVE') {
+    return { execute: true, desiredState, reason: 'CURRENT_INTENT' };
+  }
+
+  const authorized = await hasAuthorizedRunningRemoveIntent(guildId, nitradoConnId, gameId);
+  return authorized
+    ? { execute: true, desiredState, reason: 'CURRENT_INTENT' }
+    : { execute: false, desiredState, reason: 'UNTRACKED_REMOVE_NOT_AUTHORIZED' };
 }
 
 /**
@@ -93,9 +141,9 @@ export async function decideWhitelistRemoteIntent(
  * und danach vor dem DONE-Checkpoint gecrasht haben. Deshalb wird unter der
  * atomaren Nitrado-1A-Outbox-Grenze zuerst der aktuelle Gegen-Intent garantiert.
  *
- * Dieselbe Funktion wird nach einem erfolgreichen Remote-Write erneut benutzt.
- * Aendert sich der lokale Sollzustand waehrend des HTTP-Calls, entsteht dadurch
- * sofort ein deduplizierter Kompensationsjob.
+ * Ein unmarkierter UNTRACKED-REMOVE ist davon absichtlich ausgenommen: Er darf
+ * weder remote loeschen noch durch einen spekulativen ADD kompensiert werden.
+ * Der sichere Zustand ist ein write-freier No-op.
  */
 export async function reconcileWhitelistRemoteIntent(
   operation: WhitelistJobOperation,
@@ -105,6 +153,10 @@ export async function reconcileWhitelistRemoteIntent(
 ): Promise<WhitelistIntentReconciliation> {
   const decision = await decideWhitelistRemoteIntent(operation, guildId, nitradoConnId, gameId);
   if (decision.execute) {
+    return { ...decision, compensationQueued: false };
+  }
+
+  if (decision.reason === 'UNTRACKED_REMOVE_NOT_AUTHORIZED') {
     return { ...decision, compensationQueued: false };
   }
 
