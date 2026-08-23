@@ -1,0 +1,189 @@
+{
+  "schemaVersion": 1,
+  "stage": 50,
+  "exactSha": "1cf8822b39615b94d52c28b32d03a481062a3bd2",
+  "capturedAt": "2026-08-23T01:37:55.615Z",
+  "environment": {
+    "transport": "production dashboard over real TCP loopback",
+    "bindHost": "127.0.0.1",
+    "ephemeralPort": true,
+    "externalNetworkUsed": false,
+    "database": "live PostgreSQL via redacted DATABASE_URL",
+    "postgresVersion": "16.15 (Debian 16.15-1.pgdg13+2)",
+    "node": "v22.23.2",
+    "platform": "linux",
+    "cpuCount": 4
+  },
+  "config": {
+    "durationMs": 2500,
+    "concurrency": 20,
+    "requestTimeoutMs": 3000
+  },
+  "thresholds": {
+    "minimumRequests": 100,
+    "minimumRps": 10,
+    "maximumErrorRate": 0.01,
+    "httpP99LimitMs": 2000,
+    "dbP99LimitMs": 1000,
+    "eventLoopP99LimitMs": 500,
+    "minimumObservedConcurrency": 8,
+    "minimumDatabaseProbeSamples": 10
+  },
+  "http": {
+    "requests": 2252,
+    "passed": 2252,
+    "errors": 0,
+    "errorRate": 0,
+    "rps": 898.078,
+    "elapsedMs": 2507.577,
+    "peakInFlight": 20,
+    "latency": {
+      "count": 2252,
+      "minMs": 7.758,
+      "p50Ms": 19.053,
+      "p95Ms": 35.436,
+      "p99Ms": 60.78,
+      "maxMs": 187.492
+    },
+    "statusCodes": {
+      "200": 2138,
+      "401": 114
+    },
+    "routes": {
+      "liveness": {
+        "requests": 1120,
+        "passed": 1120,
+        "latency": {
+          "count": 1120,
+          "minMs": 7.841,
+          "p50Ms": 14.248,
+          "p95Ms": 21.242,
+          "p99Ms": 49.83,
+          "maxMs": 103.246
+        }
+      },
+      "readiness": {
+        "requests": 1018,
+        "passed": 1018,
+        "latency": {
+          "count": 1018,
+          "minMs": 10.126,
+          "p50Ms": 28.6,
+          "p95Ms": 38.753,
+          "p99Ms": 105.283,
+          "maxMs": 187.492
+        }
+      },
+      "authDenied": {
+        "requests": 114,
+        "passed": 114,
+        "latency": {
+          "count": 114,
+          "minMs": 7.758,
+          "p50Ms": 13.985,
+          "p95Ms": 19.931,
+          "p99Ms": 34.992,
+          "maxMs": 39.415
+        }
+      }
+    },
+    "errorKinds": {}
+  },
+  "database": {
+    "readinessRequests": 1018,
+    "readinessPassed": 1018,
+    "observerProbe": {
+      "latency": {
+        "count": 118,
+        "minMs": 1.191,
+        "p50Ms": 7.004,
+        "p95Ms": 12.05,
+        "p99Ms": 13.415,
+        "maxMs": 13.865
+      },
+      "errors": [],
+      "pool": {
+        "max": 4,
+        "peakTotal": 1,
+        "peakIdle": 1,
+        "peakWaiting": 0
+      }
+    },
+    "statisticsBefore": {
+      "xactCommit": 1113,
+      "xactRollback": 2,
+      "blocksRead": 725,
+      "blocksHit": 155355,
+      "tuplesReturned": 109728,
+      "connections": 1
+    },
+    "statisticsAfter": {
+      "xactCommit": 2304,
+      "xactRollback": 2,
+      "blocksRead": 737,
+      "blocksHit": 159027,
+      "tuplesReturned": 110764,
+      "connections": 19
+    },
+    "statisticsDelta": {
+      "xactCommit": 1191,
+      "xactRollback": 0,
+      "blocksRead": 12,
+      "blocksHit": 3672,
+      "tuplesReturned": 1036,
+      "connections": 19
+    },
+    "peakConnections": 19
+  },
+  "resources": {
+    "cpuUserMs": 3326.57,
+    "cpuSystemMs": 315.731,
+    "cpuTotalMs": 3642.301,
+    "cpuUtilizationPercent": 145.252,
+    "rssMb": {
+      "start": 923.445,
+      "end": 1061.531,
+      "peak": 1061.531
+    },
+    "heapUsedMb": {
+      "start": 739.862,
+      "end": 842.209,
+      "peak": 843.014
+    },
+    "externalPeakMb": 16.887,
+    "arrayBuffersPeakMb": 8.568,
+    "eventLoopDelayMs": {
+      "p50Ms": 13.173,
+      "p95Ms": 18.301,
+      "p99Ms": 21.381,
+      "maxMs": 26.493,
+      "meanMs": 13.704
+    }
+  },
+  "cleanup": {
+    "dashboardStopped": true,
+    "prismaDisconnected": true,
+    "observerPoolEnded": true,
+    "tempRemoved": true
+  },
+  "gates": {
+    "minimumRequests": true,
+    "minimumRps": true,
+    "errorRate": true,
+    "httpP99": true,
+    "observedConcurrency": true,
+    "databaseReadiness": true,
+    "authFailClosed": true,
+    "databaseProbeSamples": true,
+    "databaseProbeErrors": true,
+    "databaseProbeP99": true,
+    "eventLoopP99": true,
+    "resourceMeasurements": true
+  },
+  "scopeBoundaries": {
+    "stage51": "Long-duration multi-sample soak is measured separately in Stage 51.",
+    "stage67": "Live Discord gateway and credentialed external-provider traffic require the owner-controlled production boundary."
+  },
+  "residual": [],
+  "passed": true
+}

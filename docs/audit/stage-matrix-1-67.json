@@ -1,6 +1,6 @@
 {
-  "generatedAt": "2026-08-23T00:33:05.942Z",
-  "finalAuditedSha": "025a1ebf134a1453b675c315ca641cd0c32918aa",
+  "generatedAt": "2026-08-23T01:58:55.698Z",
+  "finalAuditedSha": "1cf8822b39615b94d52c28b32d03a481062a3bd2",
   "stages": [
     {
       "id": 1,
@@ -646,17 +646,24 @@
     {
       "id": 50,
       "name": "load-test-50",
-      "status": "PARTIAL",
+      "status": "VERIFIED",
       "evidence": [
-        "scripts/perf-load-inprocess.mjs",
+        "scripts/full-stack-load-50.ts",
         "docs/load-test-matrix.json",
-        "tests/security/waveFPerfChaosJourneyRuntime.test.ts"
+        "src/dashboard/server.ts",
+        "src/dashboard/runtime.ts",
+        "tests/security/loadTestArchitecture.test.ts",
+        "tests/dashboard/runtime.test.ts",
+        "docs/audit/performance/1cf8822b39615b94d52c28b32d03a481062a3bd2/50-load.json",
+        "docs/audit/performance/1cf8822b39615b94d52c28b32d03a481062a3bd2/50-load-verification2.json",
+        "docs/audit/load-test-ci-evidence-pr271-1cf8822.json",
+        "ci-run:32610762878:attempt-1",
+        "e2e-run:32610762873:attempt-1",
+        "verification2-run:32610762908:attempt-1"
       ],
-      "findings": [
-        "residual-full-stack-load"
-      ],
-      "note": "In-process HTTP load with RPS/p95/401; full stack residual",
-      "exactSha": "8f181c7e8f2344f0c78dcd19a3151547f885aa17"
+      "findings": [],
+      "note": "Two independent mandatory exact-SHA CI jobs loaded the production dashboard over real loopback TCP with live PostgreSQL readiness/session-store traffic and fail-closed API auth. CI measured 898.078 RPS at HTTP p50/p95/p99 19.053/35.436/60.780 ms; Verification 2 measured 702.308 RPS at 24.645/47.411/110.711 ms. Both had zero request errors, bounded database/event-loop latency, complete CPU/heap/RSS measurements, deterministic cleanup and empty residuals. Multi-sample long-duration soak remains the distinct Stage 51 scope; credentialed external traffic remains Stage 67.",
+      "exactSha": "1cf8822b39615b94d52c28b32d03a481062a3bd2"
     },
     {
       "id": 51,
@@ -876,8 +883,8 @@
   ],
   "auditFreezeSha": "025a1ebf134a1453b675c315ca641cd0c32918aa",
   "counts": {
-    "VERIFIED": 53,
-    "PARTIAL": 13,
+    "VERIFIED": 54,
+    "PARTIAL": 12,
     "FAILED": 0,
     "BLOCKED": 1
   }

@@ -13,17 +13,15 @@
     "artifact": "stage50-artifacts/<exact-sha>.json in two mandatory independent CI jobs"
   },
   "cases": [
-    { "id": "production-dashboard-loopback-load", "status": "mandatory-dual-ci-runtime" },
-    { "id": "live-postgresql-readiness-session-store-load", "status": "mandatory-dual-ci-runtime" },
-    { "id": "auth-401-under-load", "status": "mandatory-dual-ci-runtime" },
-    { "id": "rps-p50-p95-p99-error-rate", "status": "mandatory-dual-ci-runtime" },
-    { "id": "cpu-heap-rss-event-loop", "status": "mandatory-dual-ci-runtime" },
-    { "id": "postgres-probe-pool-statistics", "status": "mandatory-dual-ci-runtime" },
-    { "id": "deterministic-runtime-cleanup", "status": "mandatory-dual-ci-runtime" }
+    { "id": "production-dashboard-loopback-load", "status": "dual-ci-verified" },
+    { "id": "live-postgresql-readiness-session-store-load", "status": "dual-ci-verified" },
+    { "id": "auth-401-under-load", "status": "dual-ci-verified" },
+    { "id": "rps-p50-p95-p99-error-rate", "status": "dual-ci-verified" },
+    { "id": "cpu-heap-rss-event-loop", "status": "dual-ci-verified" },
+    { "id": "postgres-probe-pool-statistics", "status": "dual-ci-verified" },
+    { "id": "deterministic-runtime-cleanup", "status": "dual-ci-verified" }
   ],
-  "residual": [
-    "Exact-SHA artifacts from both mandatory CI jobs must be archived before audit promotion."
-  ],
+  "residual": [],
   "scopeBoundaries": {
     "stage51": "Long-duration multi-sample soak is measured separately in Stage 51.",
     "stage67": "Live Discord gateway and credentialed external-provider traffic require the owner-controlled production boundary."
@@ -32,12 +30,17 @@
     "probeScript": "scripts/full-stack-load-50.ts",
     "command": "STAGE50_REQUIRE_LIVE=1 npm run perf:load-50",
     "ciArtifact": "stage50-artifacts/<exact-sha>.json",
-    "artifacts": [],
-    "ciEvidence": null,
+    "artifacts": [
+      "docs/audit/performance/1cf8822b39615b94d52c28b32d03a481062a3bd2/50-load.json",
+      "docs/audit/performance/1cf8822b39615b94d52c28b32d03a481062a3bd2/50-load-verification2.json"
+    ],
+    "ciEvidence": "docs/audit/load-test-ci-evidence-pr271-1cf8822.json",
     "architectureTests": [
       "tests/security/loadTestArchitecture.test.ts",
       "tests/dashboard/runtime.test.ts"
     ]
   },
-  "status": "IMPLEMENTED_PENDING_DUAL_CI"
+  "status": "VERIFIED",
+  "exactSha": "1cf8822b39615b94d52c28b32d03a481062a3bd2",
+  "verifiedAt": "2026-08-23T01:58:55.698Z"
 }

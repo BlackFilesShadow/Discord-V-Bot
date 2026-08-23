@@ -7,8 +7,8 @@ Do not edit this report, the scoreboard, or the summary manually.
 
 | Field | Value |
 | --- | --- |
-| Generated | 2026-08-23T00:33:05.942Z |
-| Final audited/evidence SHA | `025a1ebf134a1453b675c315ca641cd0c32918aa` |
+| Generated | 2026-08-23T01:58:55.698Z |
+| Final audited/evidence SHA | `1cf8822b39615b94d52c28b32d03a481062a3bd2` |
 | Audit freeze SHA | `025a1ebf134a1453b675c315ca641cd0c32918aa` |
 | Stages total | 67 |
 
@@ -16,13 +16,13 @@ Do not edit this report, the scoreboard, or the summary manually.
 
 | Status | Count |
 | --- | ---: |
-| VERIFIED | 53 |
-| PARTIAL | 13 |
+| VERIFIED | 54 |
+| PARTIAL | 12 |
 | FAILED | 0 |
 | BLOCKED | 1 |
 | **TOTAL** | **67** |
 
-**Current score: 79 / 100**
+**Current score: 81 / 100**
 
 **PRODUCTION READY: NO**
 
@@ -79,7 +79,7 @@ Do not edit this report, the scoreboard, or the summary manually.
 | 47 | VERIFIED | runtime-baseline-ii-47 | `17c5f4306ac7640c863d4954e4b4f39e0c227bc6` | Two independent mandatory live jobs on the exact SHA measured PostgreSQL 16 pool saturation/backpressure, Redis 7 latency/concurrency/TTL and persistent queue depth/claim/index behavior. Productive depth, oldest-pending and in-flight gauges are wired; both artifacts have empty residuals. |
 | 48 | VERIFIED | ai-nitrado-perf-48 | `025a1ebf134a1453b675c315ca641cd0c32918aa` | Two independent mandatory exact-SHA CI jobs measured real-TCP loopback latency and concurrency through the production AI and Nitrado clients, bounded 503/429 retries, AI provider fallback, Nitrado circuit fail-fast and low-cardinality metrics. External production-provider RTT is an explicit Stage 67 credential boundary and is not claimed here. |
 | 49 | VERIFIED | memory-leak-audit-49 | `2c16bcbe870f9d4818d7ed4726b95ef2879e30d9` | Bounded-map/timer/cache audits and churn regressions are supplemented by an exact-SHA allocation/recovery series: RSS 0.0338 MiB/sample, heap 0.0071 MiB/sample, active-resource slope 0 and listener slope 0. The longer full-stack soak remains Stage 51. |
-| 50 | PARTIAL | load-test-50 | `8f181c7e8f2344f0c78dcd19a3151547f885aa17` | residual-full-stack-load |
+| 50 | VERIFIED | load-test-50 | `1cf8822b39615b94d52c28b32d03a481062a3bd2` | Two independent mandatory exact-SHA CI jobs loaded the production dashboard over real loopback TCP with live PostgreSQL readiness/session-store traffic and fail-closed API auth. CI measured 898.078 RPS at HTTP p50/p95/p99 19.053/35.436/60.780 ms; Verification 2 measured 702.308 RPS at 24.645/47.411/110.711 ms. Both had zero request errors, bounded database/event-loop latency, complete CPU/heap/RSS measurements, deterministic cleanup and empty residuals. Multi-sample long-duration soak remains the distinct Stage 51 scope; credentialed external traffic remains Stage 67. |
 | 51 | PARTIAL | soak-test-51 | `8f181c7e8f2344f0c78dcd19a3151547f885aa17` | residual-multi-hour-soak |
 | 52 | PARTIAL | ram-node-heap-tuning-52 | — | residual-stage-46-51-measurements-before-final-tuning-decision |
 | 53 | VERIFIED | dependency-audit-controlled-53 | `eaf8b42bb5d1fc194416324606f146196d04c8c0` | Controlled updates; lockfile + Stage45 high blocking; no blind majors |
@@ -100,7 +100,6 @@ Do not edit this report, the scoreboard, or the summary manually.
 
 ## Remaining residuals (priority order)
 
-- Stage 50 (PARTIAL): residual-full-stack-load
 - Stage 51 (PARTIAL): residual-multi-hour-soak
 - Stage 52 (PARTIAL): residual-stage-46-51-measurements-before-final-tuning-decision
 - Stage 57 (PARTIAL): residual-full-coupling-and-reference-analysis-before-cleanup
