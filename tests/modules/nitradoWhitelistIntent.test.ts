@@ -1,4 +1,5 @@
 const whitelistFindMany = jest.fn();
+const jobFindMany = jest.fn();
 const enqueueWhitelistAdd = jest.fn();
 const enqueueWhitelistRemove = jest.fn();
 
@@ -6,6 +7,7 @@ jest.mock('../../src/database/prisma', () => ({
   __esModule: true,
   default: {
     whitelistEntry: { findMany: whitelistFindMany },
+    nitradoJob: { findMany: jobFindMany },
   },
 }));
 
@@ -19,6 +21,7 @@ import {
   readWhitelistDesiredState,
   reconcileWhitelistRemoteIntent,
 } from '../../src/modules/nitrado/whitelistIntent';
+import { WHITELIST_REMOVE_SAFETY_INTENT } from '../../src/modules/whitelist/whitelistJobSafety';
 
 const GUILD = '123456789012345678';
 const CONN = 'c123456789012345678901234';
@@ -26,6 +29,7 @@ const CONN = 'c123456789012345678901234';
 beforeEach(() => {
   jest.clearAllMocks();
   whitelistFindMany.mockResolvedValue([]);
+  jobFindMany.mockResolvedValue([]);
   enqueueWhitelistAdd.mockResolvedValue(true);
   enqueueWhitelistRemove.mockResolvedValue(true);
 });
@@ -96,16 +100,64 @@ describe('Nitrado-1B whitelist source-of-truth intent', () => {
       });
   });
 
-  it('executes REMOVE for PENDING_REMOVE and also for intentionally remote-only targets', async () => {
-    whitelistFindMany.mockResolvedValueOnce([
+  it('executes REMOVE for PENDING_REMOVE without requiring a remote-only marker', async () => {
+    whitelistFindMany.mockResolvedValue([
       { gameId: 'PlayerOne', syncState: 'PENDING_REMOVE' },
     ]);
+
     await expect(decideWhitelistRemoteIntent('WHITELIST_REMOVE', GUILD, CONN, 'PlayerOne'))
       .resolves.toEqual({ execute: true, desiredState: 'PENDING_REMOVE', reason: 'CURRENT_INTENT' });
+    expect(jobFindMany).not.toHaveBeenCalled();
+  });
 
-    whitelistFindMany.mockResolvedValueOnce([]);
+  it('fails an untracked legacy REMOVE closed when its RUNNING job has no safety marker', async () => {
+    jobFindMany.mockResolvedValue([
+      { payload: { gameId: 'RemoteOnly' } },
+    ]);
+
     await expect(decideWhitelistRemoteIntent('WHITELIST_REMOVE', GUILD, CONN, 'RemoteOnly'))
+      .resolves.toEqual({
+        execute: false,
+        desiredState: 'UNTRACKED',
+        reason: 'UNTRACKED_REMOVE_NOT_AUTHORIZED',
+      });
+  });
+
+  it('executes an untracked REMOVE only for exactly one matching marked RUNNING job', async () => {
+    jobFindMany.mockResolvedValue([
+      {
+        payload: {
+          gameId: ' RemoteOnly ',
+          removeSafetyIntent: WHITELIST_REMOVE_SAFETY_INTENT,
+        },
+      },
+    ]);
+
+    await expect(decideWhitelistRemoteIntent('WHITELIST_REMOVE', GUILD, CONN, 'remoteonly'))
       .resolves.toEqual({ execute: true, desiredState: 'UNTRACKED', reason: 'CURRENT_INTENT' });
+    expect(jobFindMany).toHaveBeenCalledWith({
+      where: {
+        guildId: GUILD,
+        nitradoConnId: CONN,
+        operation: 'WHITELIST_REMOVE',
+        status: 'RUNNING',
+      },
+      select: { payload: true },
+    });
+  });
+
+  it('fails closed when two matching RUNNING remove jobs make provenance ambiguous', async () => {
+    jobFindMany.mockResolvedValue([
+      { payload: { gameId: 'RemoteOnly', removeSafetyIntent: WHITELIST_REMOVE_SAFETY_INTENT } },
+      { payload: { gameId: 'remoteonly' } },
+    ]);
+
+    await expect(decideWhitelistRemoteIntent('WHITELIST_REMOVE', GUILD, CONN, 'RemoteOnly'))
+      .resolves.toEqual({
+        execute: false,
+        desiredState: 'UNTRACKED',
+        reason: 'UNTRACKED_REMOVE_NOT_AUTHORIZED',
+      });
   });
 
   it('queues a REMOVE compensation before a superseded ADD can be treated as complete', async () => {
@@ -147,6 +199,20 @@ describe('Nitrado-1B whitelist source-of-truth intent', () => {
       { guildId: GUILD, nitradoConnId: CONN },
       'PlayerOne',
     );
+    expect(enqueueWhitelistRemove).not.toHaveBeenCalled();
+  });
+
+  it('does not speculate with an ADD compensation for an unauthorized untracked REMOVE', async () => {
+    jobFindMany.mockResolvedValue([{ payload: { gameId: 'RemoteOnly' } }]);
+
+    await expect(reconcileWhitelistRemoteIntent('WHITELIST_REMOVE', GUILD, CONN, 'RemoteOnly'))
+      .resolves.toEqual({
+        execute: false,
+        desiredState: 'UNTRACKED',
+        reason: 'UNTRACKED_REMOVE_NOT_AUTHORIZED',
+        compensationQueued: false,
+      });
+    expect(enqueueWhitelistAdd).not.toHaveBeenCalled();
     expect(enqueueWhitelistRemove).not.toHaveBeenCalled();
   });
 
