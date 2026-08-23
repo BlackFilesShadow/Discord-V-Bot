@@ -1,7 +1,7 @@
 /**
  * Production compatibility: bans use Nitrado's dedicated gameserver banlist
- * endpoint. Unknown response shapes must fail closed and never masquerade as an
- * empty remote list.
+ * endpoint. Unknown response shapes must fail closed and writes count as
+ * successful only after a fresh remote read confirms the requested state.
  */
 const requestMock = jest.fn();
 jest.mock('axios', () => ({
@@ -30,6 +30,10 @@ import {
 
 beforeEach(() => { jest.clearAllMocks(); });
 
+function banlistResponse(entries: unknown[]) {
+  return { status: 200, headers: {}, data: { data: { banlist: entries } } };
+}
+
 describe('parseNitradoBanlistData compatibility', () => {
   it('akzeptiert identifier-, id-, name- und String-Eintraege und dedupliziert', () => {
     expect(parseNitradoBanlistData({
@@ -56,11 +60,7 @@ describe('parseNitradoBanlistData compatibility', () => {
 
 describe('NitradoClient official gameserver banlist contract', () => {
   it('liest die Banlist ueber den dedizierten Nitrado-Endpunkt', async () => {
-    requestMock.mockResolvedValueOnce({
-      status: 200,
-      headers: {},
-      data: { data: { banlist: ['player-a', { identifier: 'player-b' }] } },
-    });
+    requestMock.mockResolvedValueOnce(banlistResponse(['player-a', { identifier: 'player-b' }]));
     const client = new NitradoClient('token-1234');
 
     await expect(client.getBanlist('123')).resolves.toEqual([
@@ -81,36 +81,48 @@ describe('NitradoClient official gameserver banlist contract', () => {
     await expect(client.getBanlist('123')).rejects.toThrow('Banlist-Antwort ohne data-Feld');
   });
 
-  it('fuegt einen Bann direkt ueber POST hinzu', async () => {
-    requestMock.mockResolvedValueOnce({ status: 200, headers: {}, data: { data: {} } });
+  it('fuegt einen Bann ueber POST hinzu und bestaetigt ihn mit frischem GET', async () => {
+    requestMock
+      .mockResolvedValueOnce({ status: 200, headers: {}, data: { data: {} } })
+      .mockResolvedValueOnce(banlistResponse(['player-c']));
     const client = new NitradoClient('token-1234');
 
     await client.addToBanlist('123', 'player-c');
 
-    expect(requestMock).toHaveBeenCalledTimes(1);
-    expect(requestMock).toHaveBeenCalledWith(expect.objectContaining({
+    expect(requestMock).toHaveBeenCalledTimes(2);
+    expect(requestMock).toHaveBeenNthCalledWith(1, expect.objectContaining({
       method: 'POST',
       url: '/services/123/gameservers/games/banlist',
       headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
     }));
     const post = requestMock.mock.calls[0][0] as { data: string };
     expect(new URLSearchParams(post.data).get('identifier')).toBe('player-c');
+    expect(requestMock).toHaveBeenNthCalledWith(2, expect.objectContaining({
+      method: 'GET',
+      url: '/services/123/gameservers/games/banlist',
+    }));
   });
 
-  it('entfernt einen Bann direkt ueber DELETE', async () => {
-    requestMock.mockResolvedValueOnce({ status: 200, headers: {}, data: { data: {} } });
+  it('entfernt einen Bann ueber DELETE und bestaetigt die Abwesenheit mit frischem GET', async () => {
+    requestMock
+      .mockResolvedValueOnce({ status: 200, headers: {}, data: { data: {} } })
+      .mockResolvedValueOnce(banlistResponse([]));
     const client = new NitradoClient('token-1234');
 
     await client.removeFromBanlist('123', 'player-b');
 
-    expect(requestMock).toHaveBeenCalledTimes(1);
-    expect(requestMock).toHaveBeenCalledWith(expect.objectContaining({
+    expect(requestMock).toHaveBeenCalledTimes(2);
+    expect(requestMock).toHaveBeenNthCalledWith(1, expect.objectContaining({
       method: 'DELETE',
       url: '/services/123/gameservers/games/banlist',
       headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
     }));
     const del = requestMock.mock.calls[0][0] as { data: string };
     expect(new URLSearchParams(del.data).get('identifier')).toBe('player-b');
+    expect(requestMock).toHaveBeenNthCalledWith(2, expect.objectContaining({
+      method: 'GET',
+      url: '/services/123/gameservers/games/banlist',
+    }));
   });
 
   it('weist leere Identifier vor jedem Remote-Write ab', async () => {
