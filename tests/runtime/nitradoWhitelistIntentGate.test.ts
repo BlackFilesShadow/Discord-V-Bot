@@ -75,13 +75,21 @@ describe('Nitrado-1B whitelist intent reconciliation architecture gate', () => {
     expect(finish).not.toContain('gameId:');
   });
 
-  it('requires an exact marked RUNNING job before UNTRACKED REMOVE can execute', () => {
+  it('requires marker PLUS active verified Bye identity before any UNTRACKED REMOVE can execute', () => {
     expect(safety).toContain("WHITELIST_REMOVE_SAFETY_INTENT = 'AUTHORIZED_REMOVE_V2'");
     expect(safety).toContain('removeSafetyIntent');
-    expect(intent).toContain('async function hasAuthorizedRunningRemoveIntent(');
+    expect(intent).toContain('async function hasAuthorizedVerifiedLeaveRemoveIntent(');
     expect(intent).toContain("operation: 'WHITELIST_REMOVE'");
     expect(intent).toContain("status: 'RUNNING'");
-    expect(intent).toContain('matching.length === 1 && isAuthorizedWhitelistRemovePayload(matching[0].payload)');
+    expect(intent).toContain('matchingJobs.length !== 1 || !isAuthorizedWhitelistRemovePayload');
+    expect(intent).toContain("requestType: 'PARTIAL_DELETION'");
+    expect(intent).toContain("status: 'IN_PROGRESS'");
+    expect(intent).toContain("details.step === 'WHITELIST'");
+    expect(intent).toContain("details.stage === 'RUNNING'");
+    expect(intent).toContain("status: 'VERIFIED'");
+    expect(intent).toContain('identityHash(session.gameId, config.security.encryptionKey)');
+    expect(intent).toContain('norm(session.playerName) !== target');
+    expect(intent).toContain('return provenDiscordIds.size === 1;');
     expect(intent).toContain("reason: 'UNTRACKED_REMOVE_NOT_AUTHORIZED'");
   });
 

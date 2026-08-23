@@ -1,14 +1,32 @@
 const whitelistFindMany = jest.fn();
 const jobFindMany = jest.fn();
+const deletionRequestFindMany = jest.fn();
+const gameIdentityLinkFindMany = jest.fn();
+const playerSessionFindMany = jest.fn();
 const enqueueWhitelistAdd = jest.fn();
 const enqueueWhitelistRemove = jest.fn();
+const mockIdentityHash = jest.fn((gameId: string) => `hash:${gameId}`);
+const mockReadLeaveCleanupDetails = jest.fn((value: unknown) => value);
 
 jest.mock('../../src/database/prisma', () => ({
   __esModule: true,
   default: {
     whitelistEntry: { findMany: whitelistFindMany },
     nitradoJob: { findMany: jobFindMany },
+    dataDeletionRequest: { findMany: deletionRequestFindMany },
+    gameIdentityLink: { findMany: gameIdentityLinkFindMany },
+    playerSession: { findMany: playerSessionFindMany },
   },
+}));
+
+jest.mock('../../src/config', () => ({
+  config: { security: { encryptionKey: 'test-encryption-key' } },
+}));
+
+jest.mock('../../src/modules/linking/identity', () => ({ identityHash: mockIdentityHash }));
+
+jest.mock('../../src/modules/moderation/leaveCleanupSaga', () => ({
+  readLeaveCleanupDetails: mockReadLeaveCleanupDetails,
 }));
 
 jest.mock('../../src/modules/whitelist/whitelistOutbox', () => ({
@@ -25,13 +43,48 @@ import { WHITELIST_REMOVE_SAFETY_INTENT } from '../../src/modules/whitelist/whit
 
 const GUILD = '123456789012345678';
 const CONN = 'c123456789012345678901234';
+// Niedrig-entropische Test-Snowflakes: absichtlich keine realen Discord-IDs.
+const DISCORD = '111111111111111111';
+
+function markedRunningRemoteOnly(gameId = 'RemoteOnly') {
+  jobFindMany.mockResolvedValue([
+    { payload: { gameId, removeSafetyIntent: WHITELIST_REMOVE_SAFETY_INTENT } },
+  ]);
+}
+
+function activeVerifiedBye(gameId = 'RemoteOnly', discordId = DISCORD, guid = 'GUID-1') {
+  deletionRequestFindMany.mockResolvedValue([
+    {
+      discordId,
+      details: {
+        kind: 'GUILD_LEAVE_CLEANUP_V1',
+        guildId: GUILD,
+        step: 'WHITELIST',
+        stage: 'RUNNING',
+        attempts: 0,
+        maxAttempts: 8,
+      },
+    },
+  ]);
+  gameIdentityLinkFindMany.mockResolvedValue([
+    { userDiscordId: discordId, identityHash: `hash:${guid}` },
+  ]);
+  playerSessionFindMany.mockResolvedValue([
+    { gameId: guid, playerName: gameId },
+  ]);
+}
 
 beforeEach(() => {
   jest.clearAllMocks();
   whitelistFindMany.mockResolvedValue([]);
   jobFindMany.mockResolvedValue([]);
+  deletionRequestFindMany.mockResolvedValue([]);
+  gameIdentityLinkFindMany.mockResolvedValue([]);
+  playerSessionFindMany.mockResolvedValue([]);
   enqueueWhitelistAdd.mockResolvedValue(true);
   enqueueWhitelistRemove.mockResolvedValue(true);
+  mockIdentityHash.mockImplementation((gameId: string) => `hash:${gameId}`);
+  mockReadLeaveCleanupDetails.mockImplementation((value: unknown) => value);
 });
 
 describe('Nitrado-1B whitelist source-of-truth intent', () => {
@@ -100,7 +153,7 @@ describe('Nitrado-1B whitelist source-of-truth intent', () => {
       });
   });
 
-  it('executes REMOVE for PENDING_REMOVE without requiring a remote-only marker', async () => {
+  it('executes REMOVE for PENDING_REMOVE without requiring any remote-only exception', async () => {
     whitelistFindMany.mockResolvedValue([
       { gameId: 'PlayerOne', syncState: 'PENDING_REMOVE' },
     ]);
@@ -108,6 +161,7 @@ describe('Nitrado-1B whitelist source-of-truth intent', () => {
     await expect(decideWhitelistRemoteIntent('WHITELIST_REMOVE', GUILD, CONN, 'PlayerOne'))
       .resolves.toEqual({ execute: true, desiredState: 'PENDING_REMOVE', reason: 'CURRENT_INTENT' });
     expect(jobFindMany).not.toHaveBeenCalled();
+    expect(deletionRequestFindMany).not.toHaveBeenCalled();
   });
 
   it('fails an untracked legacy REMOVE closed when its RUNNING job has no safety marker', async () => {
@@ -121,20 +175,30 @@ describe('Nitrado-1B whitelist source-of-truth intent', () => {
         desiredState: 'UNTRACKED',
         reason: 'UNTRACKED_REMOVE_NOT_AUTHORIZED',
       });
+    expect(deletionRequestFindMany).not.toHaveBeenCalled();
   });
 
-  it('executes an untracked REMOVE only for exactly one matching marked RUNNING job', async () => {
-    jobFindMany.mockResolvedValue([
-      {
-        payload: {
-          gameId: ' RemoteOnly ',
-          removeSafetyIntent: WHITELIST_REMOVE_SAFETY_INTENT,
-        },
-      },
-    ]);
+  it('fails a marked UNTRACKED REMOVE closed when there is no active verified Bye provenance', async () => {
+    markedRunningRemoteOnly();
 
-    await expect(decideWhitelistRemoteIntent('WHITELIST_REMOVE', GUILD, CONN, 'remoteonly'))
+    await expect(decideWhitelistRemoteIntent('WHITELIST_REMOVE', GUILD, CONN, 'RemoteOnly'))
+      .resolves.toEqual({
+        execute: false,
+        desiredState: 'UNTRACKED',
+        reason: 'UNTRACKED_REMOVE_NOT_AUTHORIZED',
+      });
+    expect(deletionRequestFindMany).toHaveBeenCalled();
+    expect(gameIdentityLinkFindMany).not.toHaveBeenCalled();
+    expect(playerSessionFindMany).not.toHaveBeenCalled();
+  });
+
+  it('executes UNTRACKED REMOVE only for one marked job plus exact active verified Bye identity', async () => {
+    markedRunningRemoteOnly(' RemoteOnly ');
+    activeVerifiedBye('remoteonly');
+
+    await expect(decideWhitelistRemoteIntent('WHITELIST_REMOVE', GUILD, CONN, 'REMOTEONLY'))
       .resolves.toEqual({ execute: true, desiredState: 'UNTRACKED', reason: 'CURRENT_INTENT' });
+
     expect(jobFindMany).toHaveBeenCalledWith({
       where: {
         guildId: GUILD,
@@ -144,12 +208,59 @@ describe('Nitrado-1B whitelist source-of-truth intent', () => {
       },
       select: { payload: true },
     });
+    expect(deletionRequestFindMany).toHaveBeenCalledWith({
+      where: {
+        requestType: 'PARTIAL_DELETION',
+        status: 'IN_PROGRESS',
+        details: { path: ['guildId'], equals: GUILD },
+      },
+      select: { discordId: true, details: true },
+      take: 500,
+    });
+    expect(gameIdentityLinkFindMany).toHaveBeenCalledWith({
+      where: {
+        guildId: GUILD,
+        nitradoConnId: CONN,
+        userDiscordId: { in: [DISCORD] },
+        status: 'VERIFIED',
+        identityHash: { not: null },
+      },
+      select: { userDiscordId: true, identityHash: true },
+    });
+    expect(playerSessionFindMany).toHaveBeenCalledWith({
+      where: { guildId: GUILD, nitradoConnId: CONN },
+      select: { gameId: true, playerName: true },
+      orderBy: { connectedAt: 'desc' },
+      take: 5000,
+    });
   });
 
-  it('fails closed when two matching RUNNING remove jobs make provenance ambiguous', async () => {
-    jobFindMany.mockResolvedValue([
-      { payload: { gameId: 'RemoteOnly', removeSafetyIntent: WHITELIST_REMOVE_SAFETY_INTENT } },
-      { payload: { gameId: 'remoteonly' } },
+  it('fails closed when the active Bye belongs to a different player identity', async () => {
+    markedRunningRemoteOnly();
+    activeVerifiedBye('SomeoneElse');
+
+    await expect(decideWhitelistRemoteIntent('WHITELIST_REMOVE', GUILD, CONN, 'RemoteOnly'))
+      .resolves.toEqual({
+        execute: false,
+        desiredState: 'UNTRACKED',
+        reason: 'UNTRACKED_REMOVE_NOT_AUTHORIZED',
+      });
+  });
+
+  it('fails closed when two active Bye identities ambiguously prove the same remote player name', async () => {
+    markedRunningRemoteOnly();
+    const otherDiscord = '222222222222222222';
+    deletionRequestFindMany.mockResolvedValue([
+      { discordId: DISCORD, details: { kind: 'GUILD_LEAVE_CLEANUP_V1', guildId: GUILD, step: 'WHITELIST', stage: 'RUNNING', attempts: 0, maxAttempts: 8 } },
+      { discordId: otherDiscord, details: { kind: 'GUILD_LEAVE_CLEANUP_V1', guildId: GUILD, step: 'WHITELIST', stage: 'RUNNING', attempts: 0, maxAttempts: 8 } },
+    ]);
+    gameIdentityLinkFindMany.mockResolvedValue([
+      { userDiscordId: DISCORD, identityHash: 'hash:GUID-1' },
+      { userDiscordId: otherDiscord, identityHash: 'hash:GUID-2' },
+    ]);
+    playerSessionFindMany.mockResolvedValue([
+      { gameId: 'GUID-1', playerName: 'RemoteOnly' },
+      { gameId: 'GUID-2', playerName: 'remoteonly' },
     ]);
 
     await expect(decideWhitelistRemoteIntent('WHITELIST_REMOVE', GUILD, CONN, 'RemoteOnly'))
@@ -158,6 +269,22 @@ describe('Nitrado-1B whitelist source-of-truth intent', () => {
         desiredState: 'UNTRACKED',
         reason: 'UNTRACKED_REMOVE_NOT_AUTHORIZED',
       });
+  });
+
+  it('fails closed when two matching RUNNING remove jobs make provenance ambiguous', async () => {
+    jobFindMany.mockResolvedValue([
+      { payload: { gameId: 'RemoteOnly', removeSafetyIntent: WHITELIST_REMOVE_SAFETY_INTENT } },
+      { payload: { gameId: 'remoteonly', removeSafetyIntent: WHITELIST_REMOVE_SAFETY_INTENT } },
+    ]);
+    activeVerifiedBye();
+
+    await expect(decideWhitelistRemoteIntent('WHITELIST_REMOVE', GUILD, CONN, 'RemoteOnly'))
+      .resolves.toEqual({
+        execute: false,
+        desiredState: 'UNTRACKED',
+        reason: 'UNTRACKED_REMOVE_NOT_AUTHORIZED',
+      });
+    expect(deletionRequestFindMany).not.toHaveBeenCalled();
   });
 
   it('queues a REMOVE compensation before a superseded ADD can be treated as complete', async () => {
@@ -203,7 +330,7 @@ describe('Nitrado-1B whitelist source-of-truth intent', () => {
   });
 
   it('does not speculate with an ADD compensation for an unauthorized untracked REMOVE', async () => {
-    jobFindMany.mockResolvedValue([{ payload: { gameId: 'RemoteOnly' } }]);
+    markedRunningRemoteOnly();
 
     await expect(reconcileWhitelistRemoteIntent('WHITELIST_REMOVE', GUILD, CONN, 'RemoteOnly'))
       .resolves.toEqual({

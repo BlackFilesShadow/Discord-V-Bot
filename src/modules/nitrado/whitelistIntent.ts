@@ -1,4 +1,7 @@
 import prisma from '../../database/prisma';
+import { config } from '../../config';
+import { identityHash } from '../linking/identity';
+import { readLeaveCleanupDetails } from '../moderation/leaveCleanupSaga';
 import {
   enqueueWhitelistAdd,
   enqueueWhitelistRemove,
@@ -42,7 +45,7 @@ function payloadGameId(value: unknown): string | null {
  * sobald irgendeine passende Zeile aktiv ist, gilt PRESENT. Nur wenn keine
  * aktive Zeile existiert, aber mindestens eine PENDING_REMOVE-Zeile, gilt der
  * Entfernen-Wunsch. Ohne lokale Zeile ist der Zustand UNTRACKED und damit fuer
- * REMOVE zunaechst fail-closed.
+ * REMOVE grundsaetzlich fail-closed.
  */
 export async function readWhitelistDesiredState(
   guildId: string,
@@ -65,12 +68,21 @@ export async function readWhitelistDesiredState(
 }
 
 /**
- * Ein UNTRACKED-REMOVE darf nur dann remote laufen, wenn exakt der gerade
- * RUNNING befindliche Job fuer denselben Namen den neuen Outbox-Safety-Marker
- * traegt. Mehrdeutige parallele RUNNING-Jobs fuer denselben Namen sind bewusst
- * fail-closed.
+ * Zweite, unabhaengige Sicherheitsgrenze fuer den einzigen legitimen Fall, in
+ * dem ein Spieler remote auf der Whitelist stehen kann, obwohl lokal noch kein
+ * WhitelistEntry existiert: der aktive Bye-Cleanup eines verifizierten Users.
+ *
+ * Ein Marker im NitradoJob allein reicht AUSDRUECKLICH NICHT. Fuer exakt den
+ * angeforderten Namen muessen gleichzeitig gelten:
+ * - genau ein passender markierter RUNNING-Remove-Job,
+ * - eine aktive Leave-Cleanup-Saga dieser Guild im WHITELIST-Step,
+ * - ein VERIFIED GameIdentityLink desselben Discord-Users auf diesem Server,
+ * - eine PlayerSession, deren GUID-HMAC zu diesem Link gehoert und deren
+ *   Playername exakt dem Remove-Ziel entspricht.
+ *
+ * Mehrdeutige Provenienz (zwei Leave-User fuer denselben Namen) failt geschlossen.
  */
-async function hasAuthorizedRunningRemoveIntent(
+async function hasAuthorizedVerifiedLeaveRemoveIntent(
   guildId: string,
   nitradoConnId: string,
   rawGameId: string,
@@ -85,16 +97,71 @@ async function hasAuthorizedRunningRemoveIntent(
     },
     select: { payload: true },
   });
-  const matching = running.filter(job => {
+  const matchingJobs = running.filter(job => {
     const gameId = payloadGameId(job.payload);
     return gameId !== null && norm(gameId) === target;
   });
-  return matching.length === 1 && isAuthorizedWhitelistRemovePayload(matching[0].payload);
+  if (matchingJobs.length !== 1 || !isAuthorizedWhitelistRemovePayload(matchingJobs[0].payload)) {
+    return false;
+  }
+
+  const leaveRequests = await prisma.dataDeletionRequest.findMany({
+    where: {
+      requestType: 'PARTIAL_DELETION',
+      status: 'IN_PROGRESS',
+      details: { path: ['guildId'], equals: guildId },
+    },
+    select: { discordId: true, details: true },
+    take: 500,
+  });
+  const activeDiscordIds = [...new Set(
+    leaveRequests
+      .filter(row => {
+        const details = readLeaveCleanupDetails(row.details);
+        return details?.guildId === guildId
+          && details.step === 'WHITELIST'
+          && details.stage === 'RUNNING';
+      })
+      .map(row => row.discordId),
+  )];
+  if (activeDiscordIds.length === 0) return false;
+
+  const links = await prisma.gameIdentityLink.findMany({
+    where: {
+      guildId,
+      nitradoConnId,
+      userDiscordId: { in: activeDiscordIds },
+      status: 'VERIFIED',
+      identityHash: { not: null },
+    },
+    select: { userDiscordId: true, identityHash: true },
+  });
+  if (links.length === 0) return false;
+
+  const sessions = await prisma.playerSession.findMany({
+    where: { guildId, nitradoConnId },
+    select: { gameId: true, playerName: true },
+    orderBy: { connectedAt: 'desc' },
+    take: 5000,
+  });
+
+  const provenDiscordIds = new Set<string>();
+  for (const session of sessions) {
+    if (!session.gameId || !session.playerName || norm(session.playerName) !== target) continue;
+    const sessionIdentityHash = identityHash(session.gameId, config.security.encryptionKey);
+    for (const link of links) {
+      if (link.identityHash === sessionIdentityHash) provenDiscordIds.add(link.userDiscordId);
+    }
+  }
+
+  return provenDiscordIds.size === 1;
 }
 
 /**
  * Entscheidet die Remote-Ausfuehrung ausschliesslich nach dem AKTUELLEN lokalen
- * Sollzustand plus einer expliziten Safety-Grenze fuer remote-only Removes.
+ * Sollzustand plus der verifizierten Bye-Provenienz fuer den Sonderfall
+ * UNTRACKED. Aktivierung, Sync, Reconcile oder ein Job-Marker allein duerfen
+ * niemals einen remote-only Namen loeschen.
  *
  * ADD:
  *   PRESENT        -> ausfuehren
@@ -104,7 +171,7 @@ async function hasAuthorizedRunningRemoveIntent(
  * REMOVE:
  *   PRESENT        -> stale/superseded
  *   PENDING_REMOVE -> ausfuehren
- *   UNTRACKED      -> nur mit exakt einem markierten RUNNING-Job ausfuehren
+ *   UNTRACKED      -> nur fuer exakt verifizierten aktiven Bye-Cleanup
  */
 export async function decideWhitelistRemoteIntent(
   operation: WhitelistJobOperation,
@@ -127,7 +194,7 @@ export async function decideWhitelistRemoteIntent(
     return { execute: true, desiredState, reason: 'CURRENT_INTENT' };
   }
 
-  const authorized = await hasAuthorizedRunningRemoveIntent(guildId, nitradoConnId, gameId);
+  const authorized = await hasAuthorizedVerifiedLeaveRemoveIntent(guildId, nitradoConnId, gameId);
   return authorized
     ? { execute: true, desiredState, reason: 'CURRENT_INTENT' }
     : { execute: false, desiredState, reason: 'UNTRACKED_REMOVE_NOT_AUTHORIZED' };
@@ -141,9 +208,9 @@ export async function decideWhitelistRemoteIntent(
  * und danach vor dem DONE-Checkpoint gecrasht haben. Deshalb wird unter der
  * atomaren Nitrado-1A-Outbox-Grenze zuerst der aktuelle Gegen-Intent garantiert.
  *
- * Ein unmarkierter UNTRACKED-REMOVE ist davon absichtlich ausgenommen: Er darf
- * weder remote loeschen noch durch einen spekulativen ADD kompensiert werden.
- * Der sichere Zustand ist ein write-freier No-op.
+ * Ein nicht verifiziertes UNTRACKED-REMOVE ist davon absichtlich ausgenommen:
+ * Es darf weder remote loeschen noch durch einen spekulativen ADD kompensiert
+ * werden. Der sichere Zustand ist ein write-freier No-op.
  */
 export async function reconcileWhitelistRemoteIntent(
   operation: WhitelistJobOperation,
