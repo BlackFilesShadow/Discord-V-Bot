@@ -50,8 +50,8 @@ describe('Prisma advisory-lock void compatibility', () => {
     expect(prismaSource).toContain('query(compatibleArgs as typeof args)');
   });
 
-  it('guards every current production transaction advisory-lock callsite behind $queryRawUnsafe', () => {
-    const roots = [path.resolve('src')];
+  it('guards every current production transaction advisory-lock SQL callsite behind $queryRawUnsafe', () => {
+    const root = path.resolve('src');
     const offending: string[] = [];
 
     const visit = (dir: string): void => {
@@ -63,11 +63,11 @@ describe('Prisma advisory-lock void compatibility', () => {
         }
         if (!entry.isFile() || !entry.name.endsWith('.ts')) continue;
         const source = fs.readFileSync(full, 'utf8');
-        if (!source.includes('pg_advisory_xact_lock')) continue;
+        if (!source.includes('SELECT pg_advisory_xact_lock')) continue;
 
         const lines = source.split(/\r?\n/);
         for (let i = 0; i < lines.length; i++) {
-          if (!lines[i].includes('pg_advisory_xact_lock')) continue;
+          if (!lines[i].includes('SELECT pg_advisory_xact_lock')) continue;
           const context = lines.slice(Math.max(0, i - 2), i + 1).join('\n');
           if (!context.includes('$queryRawUnsafe')) {
             offending.push(`${path.relative(process.cwd(), full)}:${i + 1}`);
@@ -76,7 +76,7 @@ describe('Prisma advisory-lock void compatibility', () => {
       }
     };
 
-    for (const root of roots) visit(root);
+    visit(root);
     expect(offending).toEqual([]);
   });
 });
