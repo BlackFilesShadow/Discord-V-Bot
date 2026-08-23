@@ -234,7 +234,7 @@ async function main(): Promise<void> {
   } finally {
     stop = true;
     eventLoop.disable();
-    if (server) await new Promise<void>((resolve, reject) => server!.close(error => error ? reject(error) : resolve()));
+    if (server) await server.stop();
     await observer.end().catch(() => undefined);
     await prisma.$disconnect().catch(() => undefined);
     fs.rmSync(tempRoot, { recursive: true, force: true });
