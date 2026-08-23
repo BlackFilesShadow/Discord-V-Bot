@@ -1,15 +1,17 @@
 {
-  "schemaVersion": 2,
+  "schemaVersion": 3,
   "stage": 62,
-  "basedOnMainSha": "bdf190b881573a78896152e6ec0dbe6e542e7e1a",
-  "scope": "Gesamtaudit 3: production reality — deploy surfaces, secrets posture, metrics default, CI security gates, health.",
+  "basedOnMainSha": "09adf32fbf5d06e0102634cec53ada3abd7ebe0d",
+  "scope": "Gesamtaudit 3: production reality — deploy surfaces, secrets posture, metrics default, CI security gates, health, rebound to current main after Stage 61 merge.",
+  "status": "PARTIAL",
   "contracts": {
     "dockerfile": "present, no COPY .env",
     "compose": "docker-compose.yml present",
     "deploy": "deploy/ directory present",
     "envExample": "SESSION_SECRET, ENCRYPTION_KEY, METRICS_ENABLED=false",
     "ci": "root high audit + SBOM blocking",
-    "health": "dashboard server exposes health/ready surface"
+    "health": "dashboard server exposes health/ready surface",
+    "currentMainBinding": "Stage-62 evidence must bind to exact current main SHA and must not reuse historical SHA evidence"
   },
   "cases": [
     { "id": "dockerfile-no-env-copy", "status": "runtime-verified" },
@@ -17,10 +19,12 @@
     { "id": "metrics-default-off", "status": "runtime-verified" },
     { "id": "session-encryption-env-pins", "status": "runtime-verified" },
     { "id": "ci-security-sbom-blocking", "status": "runtime-verified" },
-    { "id": "live-production-deploy", "status": "residual-stage-67" }
+    { "id": "current-main-exact-sha-binding", "status": "runtime-verified" },
+    { "id": "live-production-deploy", "status": "residual-final-deploy" },
+    { "id": "backup-restore-live-verification", "status": "residual-staging-credentials" }
   ],
   "residual": [
-    "Authorized production deploy + live smoke is Stage 67 only",
-    "Backup/restore live verification needs staging credentials"
+    "Authorized production deploy + live smoke remains part of the final deploy phase after Stage 62 and final gates",
+    "Backup/restore live verification requires authorized staging credentials; repository lifecycle gates remain the executable CI proof"
   ]
 }
