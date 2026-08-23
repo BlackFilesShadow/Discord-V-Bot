@@ -1,6 +1,7 @@
 import { PrismaClient } from '@prisma/client';
 import { PrismaPg } from '@prisma/adapter-pg';
 import { recordPrismaLatency } from '../dashboard/services/observability';
+import { rewritePrismaVoidRawQueryArgs } from './rawQueryCompatibility';
 
 /**
  * Prisma-Client mit getunten Connection-Pool-Defaults.
@@ -56,7 +57,12 @@ const prisma = new PrismaClient({
     $allOperations: async ({ model, operation, args, query }) => {
       const start = process.hrtime.bigint();
       try {
-        const res = await query(args);
+        // PostgreSQL advisory transaction locks return the pseudo-type `void`.
+        // PrismaPg 7.9.x rejects that result type with P2010 after the lock was
+        // already acquired. Rewrite only those exact raw SELECTs so the same
+        // transaction/parameters are preserved while Prisma sees an INT4 row.
+        const compatibleArgs = rewritePrismaVoidRawQueryArgs(operation, args);
+        const res = await query(compatibleArgs as typeof args);
         const ms = Number((process.hrtime.bigint() - start) / 1_000_000n);
         recordPrismaLatency(model, operation, ms, true);
         return res;
