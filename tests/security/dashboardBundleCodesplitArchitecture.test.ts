@@ -5,6 +5,8 @@ import { execFileSync } from 'node:child_process';
 const r = (p: string) => fs.readFileSync(path.resolve(process.cwd(), p), 'utf8');
 const m = JSON.parse(r('docs/dashboard-bundle-codesplit-matrix.json')) as {
   stage: number;
+  schemaVersion: number;
+  basedOnMainSha: string;
   contracts: Record<string, string>;
   cases: Array<{ id: string }>;
 };
@@ -14,8 +16,10 @@ const slugs = r('dashboard-ui/src/lib/devToolSlugs.ts');
 const catalog = r('dashboard-ui/src/lib/devToolsCatalog.ts');
 
 describe('Stage 56 dashboard bundle codesplit', () => {
-  it('documents measured split contracts', () => {
+  it('documents measured split contracts on the current main base', () => {
     expect(m.stage).toBe(56);
+    expect(m.schemaVersion).toBeGreaterThanOrEqual(3);
+    expect(m.basedOnMainSha).toBe('69caddd756bdb5e7f3cc5618d2e12e130c3705fd');
     expect(m.cases.map((c) => c.id)).toEqual(
       expect.arrayContaining([
         'entry-under-500kb',
@@ -25,6 +29,7 @@ describe('Stage 56 dashboard bundle codesplit', () => {
       ]),
     );
     expect(m.contracts.manualChunks).toMatch(/vendor-react/);
+    expect(m.contracts.gateRule).toMatch(/one complete CI\/CD \+ Verification 2 \+ Playwright cycle/);
     expect(r('tests/security/dashboardBundleCodesplitArchitecture.test.ts')).not.toMatch(
       /test\.(only|skip)|describe\.(only|skip)/,
     );
@@ -57,7 +62,6 @@ describe('Stage 56 dashboard bundle codesplit', () => {
   it('measure script enforces every emitted JS chunk <500kB when assets present', () => {
     const assets = path.resolve('src/dashboard/public/assets');
     if (!fs.existsSync(assets)) {
-      // CI builds UI before tests in some jobs; still pin script contracts.
       const script = r('scripts/measure-dashboard-bundle.mjs');
       expect(script).toContain('entryUnder500kb');
       expect(script).toContain('allChunksUnder500kb');
