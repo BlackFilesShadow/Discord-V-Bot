@@ -1,23 +1,24 @@
 {
-  "schemaVersion": 2,
+  "schemaVersion": 3,
   "stage": 57,
   "scope": "Dead code / legacy cleanup only with proof — no speculative deletes.",
-  "decision": "No mass deletion: passport cleanup is proven; no broader deletion is allowed until the event, worker, command, AI-tool and Nitrado registry coupling graph is complete.",
+  "decision": "No mass deletion: proven removals stay removed, but registry-driven or dynamically referenced modules are not deleted until coupling evidence proves they are unreachable.",
   "contracts": {
-    "proofRequired": "dynamic imports, commands, workers, flags, AI tools, Nitrado jobs must be checked",
+    "proofRequired": "dynamic imports, commands, workers, flags, AI tools, Nitrado jobs and registry-driven modules must be checked before deletion",
     "noRegression": "prefer keep over guess",
     "completedRemovals": "passport + passport-discord unused direct deps removed Stage 54",
-    "forbidden": "no deleting registry-driven modules based on static import graph alone"
+    "forbidden": "no deleting registry-driven modules based on static import graph alone",
+    "currentMainBinding": "Stage 57 evidence is bound to main 425cf4d7b70a9e417d1c6a6a9622e6330f9ceea9"
   },
   "cases": [
-    { "id": "no-mass-delete-policy", "status": "documented" },
+    { "id": "no-mass-delete-policy", "status": "runtime-verified" },
     { "id": "passport-stack-already-removed", "status": "runtime-verified" },
     { "id": "ai-tool-registry-intact", "status": "runtime-verified" },
     { "id": "nitrado-job-worker-intact", "status": "runtime-verified" }
   ],
-  "basedOnMainSha": "2a7c048d1d1a1206d0774da26d70c363cc225fcf",
+  "basedOnMainSha": "425cf4d7b70a9e417d1c6a6a9622e6330f9ceea9",
   "status": "PARTIAL",
   "residual": [
-    "Full dynamic coupling and reference analysis remains before Stage 57 can be VERIFIED"
+    "Full dynamic coupling and reference analysis remains required before Stage 57 can be marked VERIFIED; this revalidation intentionally does not mass-delete code."
   ]
 }
