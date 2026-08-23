@@ -52,7 +52,7 @@ describe('Stage 54 passport-discord migration (removed unused)', () => {
   it('canonical OAuth remains custom PKCE routes without passport imports', () => {
     expect(auth).toContain("authRouter.get('/login'");
     expect(auth).toContain("authRouter.get('/callback'");
-    expect(auth).toContain("authRouter.get('/logout'");
+    expect(auth).toContain("authRouter.post('/logout'");
     expect(auth).toContain('generatePKCE');
     expect(auth).not.toMatch(/passport-discord|from ['\"]passport['\"]|require\(['\"]passport/);
     const srcFiles = walkTs(path.resolve('src'));
