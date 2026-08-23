@@ -1,0 +1,86 @@
+name: Stage 51 Multi-Hour Soak
+
+on:
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: stage51-soak-${{ github.event.pull_request.head.sha || github.sha }}
+  cancel-in-progress: false
+
+jobs:
+  soak:
+    runs-on: ubuntu-latest
+    timeout-minutes: 170
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: test
+          POSTGRES_PASSWORD: test
+          POSTGRES_DB: discord_v_bot_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+    env:
+      DATABASE_URL: postgresql://test:test@localhost:5432/discord_v_bot_test
+      DISCORD_TOKEN: test-token
+      DISCORD_CLIENT_ID: test-client-id
+      DISCORD_CLIENT_SECRET: test-secret
+      BOT_OWNER_ID: '123456789012345678'
+      DASHBOARD_URL: http://127.0.0.1
+      STAGE51_REQUIRE_LIVE: '1'
+      STAGE51_DURATION_MS: '7200000'
+      STAGE51_CONCURRENCY: '4'
+      STAGE51_SAMPLE_INTERVAL_MS: '10000'
+    steps:
+      - name: Checkout exact candidate
+        uses: actions/checkout@v5
+
+      - name: Generate ephemeral test secrets
+        shell: bash
+        run: |
+          echo "ENCRYPTION_KEY=$(openssl rand -hex 32)" >> "$GITHUB_ENV"
+          echo "SESSION_SECRET=$(openssl rand -hex 32)" >> "$GITHUB_ENV"
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v5
+        with:
+          node-version: '22'
+          cache: npm
+          cache-dependency-path: package-lock.json
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Generate Prisma Client
+        run: npx prisma generate
+
+      - name: Apply production migrations
+        run: npx prisma migrate deploy
+
+      - name: Verify migration status
+        run: npx prisma migrate status
+
+      - name: Run Stage 51 production runtime soak
+        run: npx ts-node scripts/full-stack-soak-51.ts
+        env:
+          STAGE51_EXACT_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+          STAGE51_OUTPUT_PATH: stage51-artifacts/${{ github.event.pull_request.head.sha || github.sha }}-${{ github.run_id }}-${{ github.run_attempt }}.json
+
+      - name: Upload Stage 51 soak evidence
+        if: always()
+        uses: actions/upload-artifact@v5
+        with:
+          name: stage51-soak-${{ github.run_id }}-${{ github.run_attempt }}
+          path: stage51-artifacts/*.json
+          if-no-files-found: error
+          retention-days: 30
