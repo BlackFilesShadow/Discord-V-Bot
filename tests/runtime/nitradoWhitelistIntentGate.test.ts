@@ -6,6 +6,8 @@ const read = (relative: string) => normalizeSourceNewlines(fs.readFileSync(path.
 
 const worker = read('src/modules/nitrado/jobWorker.ts');
 const intent = read('src/modules/nitrado/whitelistIntent.ts');
+const safety = read('src/modules/whitelist/whitelistJobSafety.ts');
+const syncCron = read('src/modules/whitelist/whitelistSyncCron.ts');
 const serverBan = read('src/commands/dashboard/serverBan.ts');
 
 describe('Nitrado-1B whitelist intent reconciliation architecture gate', () => {
@@ -16,6 +18,7 @@ describe('Nitrado-1B whitelist intent reconciliation architecture gate', () => {
     expect(intent).toContain("operation === 'WHITELIST_ADD'");
     expect(intent).toContain("reason: 'SUPERSEDED_BY_REMOVE'");
     expect(intent).toContain("reason: 'SUPERSEDED_BY_PRESENT'");
+    expect(intent).toContain("reason: 'UNTRACKED_REMOVE_NOT_AUTHORIZED'");
   });
 
   it('guarantees the opposite 1A outbox intent before a superseded job can finish', () => {
@@ -72,12 +75,21 @@ describe('Nitrado-1B whitelist intent reconciliation architecture gate', () => {
     expect(finish).not.toContain('gameId:');
   });
 
-  it('keeps remote-only REMOVE valid while stale ADD without a local active row is discarded', () => {
-    expect(intent).toContain("desiredState === 'PRESENT'");
-    expect(intent).toContain("? { execute: true, desiredState, reason: 'CURRENT_INTENT' }");
-    expect(intent).toContain("return desiredState === 'PRESENT'");
-    expect(intent).toContain("? { execute: false, desiredState, reason: 'SUPERSEDED_BY_PRESENT' }");
-    expect(intent).toContain(": { execute: true, desiredState, reason: 'CURRENT_INTENT' };");
+  it('requires an exact marked RUNNING job before UNTRACKED REMOVE can execute', () => {
+    expect(safety).toContain("WHITELIST_REMOVE_SAFETY_INTENT = 'AUTHORIZED_REMOVE_V2'");
+    expect(safety).toContain('removeSafetyIntent');
+    expect(intent).toContain('async function hasAuthorizedRunningRemoveIntent(');
+    expect(intent).toContain("operation: 'WHITELIST_REMOVE'");
+    expect(intent).toContain("status: 'RUNNING'");
+    expect(intent).toContain('matching.length === 1 && isAuthorizedWhitelistRemovePayload(matching[0].payload)');
+    expect(intent).toContain("reason: 'UNTRACKED_REMOVE_NOT_AUTHORIZED'");
+  });
+
+  it('keeps background reconciliation non-destructive for remote-only names', () => {
+    expect(syncCron).toContain('const remoteOnly = diff.toRemove.filter');
+    expect(syncCron).toContain('for (const gameId of pendingRemoveRemote.values())');
+    expect(syncCron).toContain('remoteOnlyObserved: remoteOnly.length');
+    expect(syncCron).not.toContain('for (const gameId of diff.toRemove)');
   });
 
   it('keeps server-ban local whitelist intent at PENDING_REMOVE before its remote ban outbox is queued', () => {
