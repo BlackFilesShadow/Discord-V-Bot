@@ -62,6 +62,7 @@ jest.mock('../../src/modules/nitrado/configMutationLock', () => ({
 }));
 
 import { runWhitelistSyncOnce } from '../../src/modules/whitelist/whitelistSyncCron';
+import { WHITELIST_REMOVE_SAFETY_INTENT } from '../../src/modules/whitelist/whitelistJobSafety';
 
 const conn = {
   id: 'conn-1',
@@ -126,21 +127,28 @@ it('queued genau einen ADD-Job unter dem cross-process Subject-Lock wenn lokal r
   });
 });
 
-it('queued genau einen REMOVE-Job fuer einen remote-only Eintrag', async () => {
+it('behaelt einen remote-only Eintrag fail-closed und queued keinen REMOVE-Job', async () => {
   whitelistFindMany.mockResolvedValue([]);
   getWhitelist.mockResolvedValue([{ identifier: 'Ghost' }]);
 
   await runWhitelistSyncOnce();
 
-  expect(jobCreate).toHaveBeenCalledTimes(1);
-  expect(jobCreate).toHaveBeenCalledWith({
-    data: {
-      guildId: conn.guildId,
-      nitradoConnId: conn.id,
-      operation: 'WHITELIST_REMOVE',
-      payload: { gameId: 'Ghost' },
-    },
-  });
+  expect(jobCreate).not.toHaveBeenCalled();
+  expect(transaction).not.toHaveBeenCalled();
+});
+
+it('Produktionsregression: 0 lokale + 373 remote-only Eintraege erzeugen exakt 0 Loeschjobs', async () => {
+  whitelistFindMany.mockResolvedValue([]);
+  getWhitelist.mockResolvedValue(
+    Array.from({ length: 373 }, (_, index) => ({ identifier: `Player-${index + 1}` })),
+  );
+
+  await runWhitelistSyncOnce();
+
+  expect(jobCreate).not.toHaveBeenCalled();
+  expect(transaction).not.toHaveBeenCalled();
+  expect(whitelistDeleteMany).not.toHaveBeenCalled();
+  expect(releaseConnectionLock).toHaveBeenCalledTimes(1);
 });
 
 it('haelt PENDING_REMOVE lokal solange der Name remote noch existiert und queued REMOVE statt ADD', async () => {
@@ -157,7 +165,10 @@ it('haelt PENDING_REMOVE lokal solange der Name remote noch existiert und queued
       guildId: conn.guildId,
       nitradoConnId: conn.id,
       operation: 'WHITELIST_REMOVE',
-      payload: { gameId: 'Alice' },
+      payload: {
+        gameId: 'Alice',
+        removeSafetyIntent: WHITELIST_REMOVE_SAFETY_INTENT,
+      },
     },
   });
 });
