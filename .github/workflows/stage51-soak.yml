@@ -1,0 +1,110 @@
+name: Stage 51 Multi-Hour Soak
+
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - 'scripts/full-stack-soak-51.ts'
+      - '.github/workflows/stage51-soak.yml'
+      - 'package.json'
+      - 'package-lock.json'
+  push:
+    branches: [main]
+    paths:
+      - 'scripts/full-stack-soak-51.ts'
+      - '.github/workflows/stage51-soak.yml'
+      - 'package.json'
+      - 'package-lock.json'
+
+concurrency:
+  group: stage51-soak-${{ github.event.pull_request.number || github.ref }}-${{ github.sha }}
+  cancel-in-progress: true
+
+env:
+  NODE_VERSION: '22'
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: 'true'
+
+jobs:
+  soak:
+    name: Soak replica ${{ matrix.replica }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 150
+    strategy:
+      fail-fast: false
+      matrix:
+        replica: [1, 2]
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: test
+          POSTGRES_PASSWORD: test
+          POSTGRES_DB: discord_v_bot_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+      redis:
+        image: redis:7.4-alpine
+        ports:
+          - 6379:6379
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+    env:
+      DATABASE_URL: postgresql://test:test@localhost:5432/discord_v_bot_test
+      REDIS_URL: redis://localhost:6379
+      DISCORD_TOKEN: stage51-ci-token
+      DISCORD_CLIENT_ID: '111111111111111111'
+      DISCORD_CLIENT_SECRET: stage51-ci-client
+      BOT_OWNER_ID: '111111111111111111'
+      ENCRYPTION_KEY: 0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef
+      SESSION_SECRET: stage51-ci-session-secret
+      DASHBOARD_URL: http://127.0.0.1
+    steps:
+      - name: Checkout exact revision
+        uses: actions/checkout@v5
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v5
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: npm
+          cache-dependency-path: package-lock.json
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Generate Prisma Client
+        run: npx prisma generate
+
+      - name: Apply production migrations
+        run: npx prisma migrate deploy
+
+      - name: Verify migration status
+        run: npx prisma migrate status
+
+      - name: Run Stage 51 mandatory two-hour soak
+        run: npm run perf:soak-51
+        env:
+          STAGE51_REQUIRE_MULTI_HOUR: '1'
+          STAGE51_DURATION_MS: '7200000'
+          STAGE51_SAMPLE_INTERVAL_MS: '60000'
+          STAGE51_CONCURRENCY: '4'
+          STAGE51_RECOVERY_EVERY_SAMPLES: '30'
+          STAGE51_EXACT_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+          STAGE51_OUTPUT_PATH: stage51-artifacts/${{ github.event.pull_request.head.sha || github.sha }}-replica-${{ matrix.replica }}.json
+
+      - name: Upload exact-SHA Stage 51 evidence
+        if: always()
+        uses: actions/upload-artifact@v5
+        with:
+          name: stage51-soak-${{ github.event.pull_request.head.sha || github.sha }}-replica-${{ matrix.replica }}-${{ github.run_id }}-${{ github.run_attempt }}
+          path: stage51-artifacts/*.json
+          if-no-files-found: error
+          retention-days: 30
