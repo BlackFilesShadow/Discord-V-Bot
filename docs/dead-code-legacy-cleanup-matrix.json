@@ -1,24 +1,35 @@
 {
-  "schemaVersion": 3,
+  "schemaVersion": 4,
   "stage": 57,
-  "scope": "Dead code / legacy cleanup only with proof — no speculative deletes.",
-  "decision": "No mass deletion: proven removals stay removed, but registry-driven or dynamically referenced modules are not deleted until coupling evidence proves they are unreachable.",
+  "scope": "Dead code / legacy cleanup only with proof — dynamic, registry and worker coupling included.",
+  "decision": "Stage 57 cleanup analysis is complete for current main. Passport/passport-discord remain the only proven broad removal from this wave; registry-driven, dynamically imported, command-loaded, AI-tool and Nitrado-worker surfaces are proven reachable and must not be mass-deleted.",
   "contracts": {
-    "proofRequired": "dynamic imports, commands, workers, flags, AI tools, Nitrado jobs and registry-driven modules must be checked before deletion",
-    "noRegression": "prefer keep over guess",
+    "proofRequired": "dynamic imports, filesystem command loading, Discord dispatch, workers, AI tools, Nitrado jobs and registry-driven modules are part of deletion reachability",
+    "noRegression": "prefer keep over guess; deletion requires executable or runtime-code evidence of unreachability",
     "completedRemovals": "passport + passport-discord unused direct deps removed Stage 54",
     "forbidden": "no deleting registry-driven modules based on static import graph alone",
-    "currentMainBinding": "Stage 57 evidence is bound to main 425cf4d7b70a9e417d1c6a6a9622e6330f9ceea9"
+    "currentMainBinding": "Stage 57 analysis is bound to main 425cf4d7b70a9e417d1c6a6a9622e6330f9ceea9",
+    "couplingBaseline": "docs/audit/structure-coupling-map.json is the audited coupling inventory; Stage 57 revalidates its deletion-sensitive runtime anchors on current main"
+  },
+  "analysis": {
+    "entryAndSchedulers": "src/index.ts explicitly mounts Discord events, dashboard, Nitrado runtime, AI background loops and application schedulers; guild lifecycle also contains dynamic imports",
+    "commands": "src/commands/handler.ts filesystem-loads command directories with require(), so static-import-only orphan detection is invalid for command modules",
+    "interactionDynamics": "src/events/interactionCreate.ts dynamically imports feedback, ticket, lottery, self-role and whitelist handlers from component IDs",
+    "aiTools": "src/modules/ai/toolRuntime.ts registers production tools through registerProductionTools() and executeProductionAiTool() provides the canonical runtime path",
+    "nitrado": "src/modules/nitrado/runtime.ts starts/stops the durable Nitrado worker and related crons; jobWorker.ts dispatches the known operation registry",
+    "couplingMap": "docs/audit/structure-coupling-map.json records runtime-code HTTP mounts, bootstrap starts and domain chains including Nitrado whitelist/ban producers and consumers"
   },
   "cases": [
-    { "id": "no-mass-delete-policy", "status": "runtime-verified" },
+    { "id": "dynamic-import-reachability", "status": "runtime-verified" },
+    { "id": "filesystem-command-loader-reachability", "status": "runtime-verified" },
+    { "id": "discord-dispatch-reachability", "status": "runtime-verified" },
     { "id": "passport-stack-already-removed", "status": "runtime-verified" },
     { "id": "ai-tool-registry-intact", "status": "runtime-verified" },
-    { "id": "nitrado-job-worker-intact", "status": "runtime-verified" }
+    { "id": "nitrado-runtime-worker-chain-intact", "status": "runtime-verified" },
+    { "id": "audited-coupling-map-crosscheck", "status": "runtime-verified" },
+    { "id": "no-additional-safe-mass-delete", "status": "verified-decision" }
   ],
   "basedOnMainSha": "425cf4d7b70a9e417d1c6a6a9622e6330f9ceea9",
-  "status": "PARTIAL",
-  "residual": [
-    "Full dynamic coupling and reference analysis remains required before Stage 57 can be marked VERIFIED; this revalidation intentionally does not mass-delete code."
-  ]
+  "status": "VERIFIED",
+  "residual": []
 }
