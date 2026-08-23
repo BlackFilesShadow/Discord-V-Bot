@@ -1,15 +1,40 @@
 {
-  "schemaVersion": 1,
+  "schemaVersion": 2,
   "stage": 52,
   "scope": "RAM/Node heap tuning only from measured baselines — no blanket heap increase.",
   "contracts": {
-    "noBlindIncrease": "Dockerfile/compose must not set arbitrary huge --max-old-space-size without documented measurement",
-    "docs": "Tuning notes reference Stage 46-51 harnesses"
+    "noBlindIncrease": "Production runtime must not set arbitrary --max-old-space-size/NODE_OPTIONS without a measured requirement and documented rollback rationale.",
+    "docs": "Decision is derived from Stage 46-51 runtime, leak, load and >=2h soak evidence.",
+    "failClosed": "A future explicit heap override requires new measured evidence and therefore a fresh Stage-52 review/gate."
   },
-  "decision": "No production heap flag change in Stage 52; defaults retained pending measured Stages 46-51 evidence.",
-  "basedOnMainSha": "2a7c048d1d1a1206d0774da26d70c363cc225fcf",
-  "status": "PARTIAL",
-  "residual": [
-    "Stages 46-51 measurements are required before the final tuning/no-change decision"
-  ]
+  "decision": "No production heap flag change. Retain the Node.js/V8 default heap policy because measured production-runtime evidence shows healthy GC recovery, bounded heap usage and no sustained heap growth under the Stage-51 two-hour load.",
+  "basedOnMainSha": "44637ce0350e3346716ad528898c40e126fd1f92",
+  "measurementEvidence": {
+    "stage51ExactSha": "b540786f857f16f8ec422288f020b30328034278",
+    "stage51WorkflowRun": 32628364174,
+    "stage51Artifact": "stage51-soak-32628364174-1",
+    "durationMs": 7200000,
+    "requests": 1062972,
+    "failures": 0,
+    "httpP99Ms": 5.447,
+    "eventLoopP99Ms": 21.561,
+    "earlyHeapMb": 793.27,
+    "lateHeapMb": 775.86,
+    "heapGrowthMb": -17.41,
+    "maxHeapUsedMb": 1246.3,
+    "earlyRssMb": 1320.14,
+    "lateRssMb": 1409.58,
+    "rssGrowthMb": 89.44,
+    "maxRssMb": 1493.34,
+    "maxDbConnections": 5,
+    "maxActiveResources": 18,
+    "allSoakGatesPassed": true
+  },
+  "productionRuntimeInspection": {
+    "dockerfileHasNodeOptions": false,
+    "dockerfileHasMaxOldSpaceSize": false,
+    "reason": "No measured memory-pressure failure, OOM, sustained heap growth or event-loop degradation justifies constraining or increasing V8 old-space at this point."
+  },
+  "status": "VERIFIED",
+  "residual": []
 }
