@@ -1,7 +1,7 @@
 {
-  "schemaVersion": 2,
+  "schemaVersion": 3,
   "stage": 58,
-  "basedOnMainSha": "8f181c7e8f2344f0c78dcd19a3151547f885aa17",
+  "basedOnMainSha": "fa2ce23df33a5f712df4656d261ab93aa75066a8",
   "scope": "Orchestrated full-user-journey inventory with ordered chain Join→…→Leave→Cleanup→Rejoin. Live Discord OAuth/gateway remains residual.",
   "status": "PARTIAL",
   "orchestration": {
@@ -43,7 +43,8 @@
     "singleChainInventory": "one ordered orchestration object — not only disconnected specs",
     "leaveRejoinCas": "guildMemberRemove CAS on grant generation; rejoin blocked while leave cleanup open",
     "dashboardSegments": "authenticated Playwright matrices cover UI segments",
-    "residualLiveDiscord": "full Join/Leave gateway + OAuth needs live infra / Stage 67"
+    "currentMainBinding": "Stage 58 architecture evidence is rebound to main fa2ce23df33a5f712df4656d261ab93aa75066a8",
+    "residualLiveDiscord": "full Join/Leave gateway + OAuth needs authorized live/staging infra and is not claimed by CI"
   },
   "steps": [
     { "id": "join", "coverage": "guildMemberAdd + recognition sync" },
@@ -67,7 +68,7 @@
     { "id": "rejoin-fresh-state", "coverage": "leaveCleanupRejoin + guildMemberAdd" }
   ],
   "residual": [
-    "End-to-end live Discord Join→Leave with real tokens not executed in CI",
-    "Stage remains PARTIAL until live gateway journey or authorized staging"
+    "End-to-end live Discord Join→Leave with real tokens was not executed in CI",
+    "Stage remains PARTIAL until an authorized live/staging gateway journey proves the external Discord boundary"
   ]
 }
