@@ -8,6 +8,9 @@ describe('Stage 48 AI Nitrado performance baseline', () => {
   it('documents the exact loopback scope and keeps production boundaries explicit', () => {
     expect(m.stage).toBe(48);
     expect(m.schemaVersion).toBe(2);
+    expect(m.status).toBe('VERIFIED');
+    expect(m.exactSha).toMatch(/^[0-9a-f]{40}$/);
+    expect(m.cases.every((entry: { status: string }) => entry.status === 'dual-ci-verified')).toBe(true);
     expect(m.residual).toEqual([]);
     expect(m.externalProductionBoundary.stage).toBe(67);
     expect(m.externalProductionBoundary.claim).toMatch(/no production-provider RTT/i);
@@ -52,4 +55,31 @@ describe('Stage 48 AI Nitrado performance baseline', () => {
       expect(workflow).toContain('stage48-artifacts/*.json');
     },
   );
+
+  it('pins two independent byte-archived measurements and all Gate-1 runs to the technical SHA', () => {
+    expect(m.verification.artifacts).toHaveLength(2);
+    for (const artifactPath of m.verification.artifacts as string[]) {
+      expect(fs.existsSync(path.resolve(artifactPath))).toBe(true);
+      const artifact = JSON.parse(r(artifactPath));
+      expect(artifact.stage).toBe(48);
+      expect(artifact.exactSha).toBe(m.exactSha);
+      expect(artifact.passed).toBe(true);
+      expect(artifact.residual).toEqual([]);
+      expect(artifact.ai.success.errorCount).toBe(0);
+      expect(artifact.nitrado.success.errorCount).toBe(0);
+      expect(artifact.nitrado.circuit.remoteRequestsAfterFailFast).toBe(
+        artifact.nitrado.circuit.remoteRequestsAtOpen,
+      );
+    }
+
+    const evidence = JSON.parse(r(m.verification.ciEvidence));
+    expect(evidence.pullRequest).toBe(270);
+    expect(evidence.technicalSha).toBe(m.exactSha);
+    expect(evidence.runs).toHaveLength(3);
+    for (const run of evidence.runs as Array<{ attempt: number; headSha: string; conclusion: string }>) {
+      expect(run.attempt).toBe(1);
+      expect(run.headSha).toBe(m.exactSha);
+      expect(run.conclusion).toBe('success');
+    }
+  });
 });

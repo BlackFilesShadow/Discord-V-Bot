@@ -2,6 +2,7 @@
   "schemaVersion": 2,
   "stage": 48,
   "basedOnMainSha": "d17d01cc4b6453f9ee84b07a30a2a6e6d325ea78",
+  "exactSha": "025a1ebf134a1453b675c315ca641cd0c32918aa",
   "scope": "AI & Nitrado performance baseline over real loopback TCP: latency, concurrency, timeout/retry/fallback, rate limits, circuit breaker and low-cardinality metrics without external credentials.",
   "contracts": {
     "aiTimeouts": "provider HTTP timeout 30000ms in aiHandler",
@@ -16,18 +17,18 @@
     "scope": "economyScopeGuard requireSafeDashboardEconomyScope intact"
   },
   "cases": [
-    { "id": "nitrado-timeout-15s", "status": "ci-required" },
-    { "id": "nitrado-success-latency-concurrency", "status": "ci-required" },
-    { "id": "nitrado-retry-bounded-3", "status": "ci-required" },
-    { "id": "nitrado-429-retry-after", "status": "ci-required" },
-    { "id": "nitrado-circuit-breaker", "status": "ci-required", "proof": "opens after five remote failures and then fails fast without another socket request" },
-    { "id": "nitrado-low-cardinality-metrics", "status": "ci-required" },
-    { "id": "ai-timeout-30s", "status": "ci-required" },
-    { "id": "ai-success-latency-concurrency", "status": "ci-required" },
-    { "id": "ai-429-and-transient-fallback", "status": "ci-required" },
-    { "id": "ai-latency-fallback-metrics", "status": "ci-required" },
-    { "id": "loopback-only-lab-guard", "status": "ci-required" },
-    { "id": "scope-guard-intact", "status": "ci-required" }
+    { "id": "nitrado-timeout-15s", "status": "dual-ci-verified" },
+    { "id": "nitrado-success-latency-concurrency", "status": "dual-ci-verified" },
+    { "id": "nitrado-retry-bounded-3", "status": "dual-ci-verified" },
+    { "id": "nitrado-429-retry-after", "status": "dual-ci-verified" },
+    { "id": "nitrado-circuit-breaker", "status": "dual-ci-verified", "proof": "opens after five remote failures and then fails fast without another socket request" },
+    { "id": "nitrado-low-cardinality-metrics", "status": "dual-ci-verified" },
+    { "id": "ai-timeout-30s", "status": "dual-ci-verified" },
+    { "id": "ai-success-latency-concurrency", "status": "dual-ci-verified" },
+    { "id": "ai-429-and-transient-fallback", "status": "dual-ci-verified" },
+    { "id": "ai-latency-fallback-metrics", "status": "dual-ci-verified" },
+    { "id": "loopback-only-lab-guard", "status": "dual-ci-verified" },
+    { "id": "scope-guard-intact", "status": "dual-ci-verified" }
   ],
   "externalProductionBoundary": {
     "stage": 67,
@@ -39,12 +40,18 @@
     "probeScript": "scripts/ai-nitrado-performance-48.ts",
     "command": "STAGE48_REQUIRE_LAB=1 npm run perf:ai-nitrado-48",
     "ciArtifact": "stage48-artifacts/<exact-sha>.json",
-    "archive": "docs/audit/performance/<exact-sha>/48-ai-nitrado.json",
+    "artifacts": [
+      "docs/audit/performance/025a1ebf134a1453b675c315ca641cd0c32918aa/48-ai-nitrado.json",
+      "docs/audit/performance/025a1ebf134a1453b675c315ca641cd0c32918aa/48-ai-nitrado-verification2.json"
+    ],
+    "ciEvidence": "docs/audit/ai-nitrado-ci-evidence-pr270-025a1eb.json",
     "architectureTests": [
       "tests/security/aiNitradoPerformanceBaselineArchitecture.test.ts",
       "tests/security/runtimeBaselines4648Architecture.test.ts",
       "tests/utils/stage48Loopback.test.ts",
       "tests/utils/metrics.test.ts"
     ]
-  }
+  },
+  "status": "VERIFIED",
+  "verifiedAt": "2026-08-23T00:33:05.942Z"
 }

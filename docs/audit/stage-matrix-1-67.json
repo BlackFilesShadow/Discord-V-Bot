@@ -1,6 +1,6 @@
 {
-  "generatedAt": "2026-08-22T22:55:10.103Z",
-  "finalAuditedSha": "17c5f4306ac7640c863d4954e4b4f39e0c227bc6",
+  "generatedAt": "2026-08-23T00:33:05.942Z",
+  "finalAuditedSha": "025a1ebf134a1453b675c315ca641cd0c32918aa",
   "stages": [
     {
       "id": 1,
@@ -602,21 +602,28 @@
     {
       "id": 48,
       "name": "ai-nitrado-perf-48",
-      "status": "PARTIAL",
+      "status": "VERIFIED",
       "evidence": [
-        "scripts/runtime-baselines-46-48.mjs",
         "docs/ai-nitrado-performance-baseline-matrix.json",
+        "scripts/ai-nitrado-performance-48.ts",
+        "src/modules/ai/aiHandler.ts",
         "src/modules/nitrado/nitradoClient.ts",
         "src/modules/nitrado/circuitBreaker.ts",
         "src/utils/metrics.ts",
-        "tests/security/runtimeBaselines4648Architecture.test.ts"
+        "src/utils/stage48Loopback.ts",
+        "tests/security/aiNitradoPerformanceBaselineArchitecture.test.ts",
+        "tests/security/runtimeBaselines4648Architecture.test.ts",
+        "tests/utils/stage48Loopback.test.ts",
+        "docs/audit/performance/025a1ebf134a1453b675c315ca641cd0c32918aa/48-ai-nitrado.json",
+        "docs/audit/performance/025a1ebf134a1453b675c315ca641cd0c32918aa/48-ai-nitrado-verification2.json",
+        "docs/audit/ai-nitrado-ci-evidence-pr270-025a1eb.json",
+        "ci-run:32607407461:attempt-1",
+        "e2e-run:32607407450:attempt-1",
+        "verification2-run:32607407445:attempt-1"
       ],
-      "findings": [
-        "residual-live-provider-rtt",
-        "F-S4-06"
-      ],
-      "note": "Timeouts/retry/circuit/metrics contracts runtime-pinned; no live AI/Nitrado RTT in CI",
-      "exactSha": "ce68d05e6074ce95d7e417d1c063bddfa0e17206"
+      "findings": [],
+      "note": "Two independent mandatory exact-SHA CI jobs measured real-TCP loopback latency and concurrency through the production AI and Nitrado clients, bounded 503/429 retries, AI provider fallback, Nitrado circuit fail-fast and low-cardinality metrics. External production-provider RTT is an explicit Stage 67 credential boundary and is not claimed here.",
+      "exactSha": "025a1ebf134a1453b675c315ca641cd0c32918aa"
     },
     {
       "id": 49,
@@ -867,10 +874,10 @@
       ]
     }
   ],
-  "auditFreezeSha": "17c5f4306ac7640c863d4954e4b4f39e0c227bc6",
+  "auditFreezeSha": "025a1ebf134a1453b675c315ca641cd0c32918aa",
   "counts": {
-    "VERIFIED": 52,
-    "PARTIAL": 14,
+    "VERIFIED": 53,
+    "PARTIAL": 13,
     "FAILED": 0,
     "BLOCKED": 1
   }
