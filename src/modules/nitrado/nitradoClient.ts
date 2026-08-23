@@ -373,6 +373,33 @@ export class NitradoClient {
     return parseNitradoBanlistData(res.data);
   }
 
+  /**
+   * Nach einem 2xx-Write wird der Remote-Zustand erneut gelesen. Damit gilt ein
+   * Ban/Unban erst als erfolgreich, wenn Nitrado den Sollzustand tatsaechlich
+   * zurueckliefert. Kurze Eventual-Consistency-Fenster werden bounded toleriert.
+   */
+  private async verifyBanlistMembership(
+    serviceId: string,
+    identifier: string,
+    expectedPresent: boolean,
+  ): Promise<void> {
+    const path = `/services/${serviceId}/gameservers/games/banlist`;
+    const normalized = identifier.toLowerCase();
+    for (let attempt = 1; attempt <= 3; attempt++) {
+      const remote = await this.getBanlist(serviceId);
+      const present = remote.some(entry => entry.identifier.toLowerCase() === normalized);
+      if (present === expectedPresent) return;
+      if (attempt < 3) await sleep(250 * attempt);
+    }
+    throw new NitradoApiError(
+      expectedPresent
+        ? 'Banlist-Add konnte remote nicht bestaetigt werden'
+        : 'Banlist-Remove konnte remote nicht bestaetigt werden',
+      null,
+      path,
+    );
+  }
+
   async addToBanlist(serviceId: string, identifier: string): Promise<void> {
     const id = identifier.trim();
     if (!id) throw new NitradoApiError('Leerer Identifier', null, 'banlist');
@@ -380,6 +407,7 @@ export class NitradoClient {
       data: new URLSearchParams({ identifier: id }).toString(),
       headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
     });
+    await this.verifyBanlistMembership(serviceId, id, true);
   }
 
   async removeFromBanlist(serviceId: string, identifier: string): Promise<void> {
@@ -389,6 +417,7 @@ export class NitradoClient {
       data: new URLSearchParams({ identifier: id }).toString(),
       headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
     });
+    await this.verifyBanlistMembership(serviceId, id, false);
   }
 
   async listAdmFiles(serviceId: string, profileDir: string): Promise<Array<{ name: string; modified_at: number; size: number }>> {
