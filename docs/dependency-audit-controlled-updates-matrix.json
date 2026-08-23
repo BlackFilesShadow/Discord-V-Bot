@@ -1,27 +1,44 @@
 {
-  "schemaVersion": 2,
+  "schemaVersion": 3,
   "stage": 53,
-  "basedOnMainSha": "eaf8b42bb5d1fc194416324606f146196d04c8c0",
-  "scope": "Dependency audit and controlled updates — no blind upgrades; targeted removals only.",
-  "decision": "No bulk dependency upgrades in Stage 53. Lockfile retained. Targeted removal of unused passport/passport-discord handled in Stage 54 without major bumps.",
-  "contracts": {
-    "lockfile": "package-lock.json is source of truth",
-    "noBlind": "Do not bump majors without Stage-scoped regression",
-    "securityGate": "root npm audit critical/high blocking remains from Stage 45",
-    "passportRemoval": "Stage 54 removes unused passport stack"
+  "basedOnMainSha": "7b66cc4bb1b96dec9125375d7790389e59fa697d",
+  "scope": "Dependency audit and controlled updates — no blind upgrades; current-main revalidation after Stage 52.",
+  "decision": "No bulk dependency upgrades. package-lock.json remains the source of truth. Dependency changes stay isolated by coupling boundary and require manifest/lockfile review plus regression evidence before merge.",
+  "currentFacts": {
+    "nodeEngine": ">=22.0.0",
+    "packageManagerSourceOfTruth": "package-lock.json",
+    "deepmergeTsOverride": "8.0.2",
+    "passportDiscordDirectPresent": false,
+    "passportDirectPresent": false,
+    "prismaDeclared": "^7.8.0",
+    "prismaClientDeclared": "^7.8.0"
   },
-  "cases": [
+  "completedFollowups": [
     {
-      "id": "lockfile-present",
-      "status": "runtime-verified"
+      "stage": 54,
+      "subject": "passport-discord/passport",
+      "result": "unused direct passport stack removed after runtime reachability analysis"
     },
     {
-      "id": "no-bulk-upgrade",
-      "status": "documented"
+      "stage": 55,
+      "subject": "inflight/glob transitive chain",
+      "result": "ancestry and runtime/dev relevance audited before any parent-package action"
     },
     {
-      "id": "deepmerge-override-retained",
-      "status": "runtime-verified"
+      "stage": 56,
+      "subject": "dashboard bundle",
+      "result": "bundle measured and handled separately from dependency churn"
     }
-  ]
+  ],
+  "contracts": {
+    "lockfile": "package-lock.json remains mandatory and reviewed with every dependency mutation",
+    "noBlind": "No bulk or major upgrade without stage-scoped coupling analysis and regression tests",
+    "securityGate": "root npm audit critical/high blocking remains enabled",
+    "sbomGate": "CycloneDX SBOM generation remains fail-closed in the security pipeline",
+    "shaRule": "Any package.json/package-lock/test/config/workflow change creates a new final SHA and requires a fresh 0/1 PR gate cycle"
+  },
+  "verification": {
+    "passA": "Manifest, lockfile, Node engine, Prisma declarations and security-relevant overrides crosschecked on current main.",
+    "passB": "Previously isolated Stage 54-56 dependency and bundle follow-ups remain separated; no blind upgrade wave is reintroduced."
+  }
 }
