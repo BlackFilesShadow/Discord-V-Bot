@@ -17,6 +17,9 @@
  * - Lokale Eintraege bekommen einen ehrlichen SYNCED/LOCAL_ONLY-Status.
  * - PENDING_REMOVE bleibt lokal erhalten, bis ein frischer Remote-Read die
  *   Entfernung bestaetigt. Erst dann wird der lokale Spiegel final geloescht.
+ * - Remote-only Eintraege sind Fremdwahrheit und werden vom Hintergrund-Cron
+ *   niemals automatisch geloescht. Ein destruktiver Push bleibt eine explizite
+ *   Admin-Aktion ueber die vorhandenen Command-/Dashboard-Pfade.
  */
 
 import prisma from '../../database/prisma';
@@ -49,14 +52,18 @@ type WhitelistSyncConnection = {
   nitradoServerId: string | null;
 };
 
+function normGameId(value: string): string {
+  return value.trim().toLowerCase();
+}
+
 function payloadGameId(payload: unknown): string | null {
   if (!payload || typeof payload !== 'object' || Array.isArray(payload)) return null;
   const value = (payload as Record<string, unknown>).gameId;
-  return typeof value === 'string' ? value.trim().toLowerCase() : null;
+  return typeof value === 'string' ? normGameId(value) : null;
 }
 
 function jobKey(operation: string, gameId: string): string {
-  return `${operation}:${gameId.trim().toLowerCase()}`;
+  return `${operation}:${normGameId(gameId)}`;
 }
 
 /**
@@ -70,7 +77,7 @@ async function reconcileLockedConnection(conn: WhitelistSyncConnection): Promise
   const api = new NitradoClient(token);
   const remoteEntries = await api.getWhitelist(conn.nitradoServerId);
   const remoteNames = remoteEntries.map((e) => e.identifier);
-  const remoteNorm = new Set(remoteNames.map((n) => n.trim().toLowerCase()));
+  const remoteNorm = new Set(remoteNames.map(normGameId));
 
   const local = await prisma.whitelistEntry.findMany({
     where: { guildId: conn.guildId, nitradoConnId: conn.id },
@@ -79,16 +86,22 @@ async function reconcileLockedConnection(conn: WhitelistSyncConnection): Promise
 
   const desiredLocal = local.filter((entry) => entry.syncState !== 'PENDING_REMOVE');
   const localNames = desiredLocal.map((e) => e.gameId);
+  const pendingRemoveNorm = new Set(
+    local.filter((entry) => entry.syncState === 'PENDING_REMOVE').map((entry) => normGameId(entry.gameId)),
+  );
   const diff = diffWhitelist(localNames, remoteNames);
+  const remoteOnly = diff.toRemove.filter((name) => !pendingRemoveNorm.has(normGameId(name)));
   const now = new Date();
   let finalizedRemovals = 0;
+  const pendingRemoveRemote = new Map<string, string>();
 
   // Status ist eine Beobachtung des gerade gelesenen Remote-Zustands.
   // PENDING_REMOVE ist dagegen eine lokale Absicht und darf niemals wieder zu
   // LOCAL_ONLY/SYNCED umgeschrieben werden. Sobald der Name remote wirklich
   // fehlt, ist die Entfernung bestaetigt und der lokale Spiegel darf weg.
   for (const entry of local) {
-    const isRemote = remoteNorm.has(entry.gameId.trim().toLowerCase());
+    const normalized = normGameId(entry.gameId);
+    const isRemote = remoteNorm.has(normalized);
     if (entry.syncState === 'PENDING_REMOVE') {
       if (!isRemote) {
         const deleted = await prisma.whitelistEntry.deleteMany({
@@ -100,6 +113,8 @@ async function reconcileLockedConnection(conn: WhitelistSyncConnection): Promise
           },
         });
         finalizedRemovals += deleted.count;
+      } else {
+        pendingRemoveRemote.set(normalized, entry.gameId);
       }
       continue;
     }
@@ -138,7 +153,11 @@ async function reconcileLockedConnection(conn: WhitelistSyncConnection): Promise
     }
     queued.add(key);
   }
-  for (const gameId of diff.toRemove) {
+
+  // Nur ein expliziter lokaler PENDING_REMOVE-Sollzustand darf vom Cron einen
+  // Remove-Job erzeugen. `diff.toRemove` enthaelt zusaetzlich remote-only Namen
+  // und darf deshalb niemals direkt als Loeschliste verwendet werden.
+  for (const gameId of pendingRemoveRemote.values()) {
     const key = jobKey('WHITELIST_REMOVE', gameId);
     if (queued.has(key)) continue;
     if (await enqueueWhitelistRemove(outbox, { guildId: conn.guildId, nitradoConnId: conn.id }, gameId)) {
@@ -147,13 +166,14 @@ async function reconcileLockedConnection(conn: WhitelistSyncConnection): Promise
     queued.add(key);
   }
 
-  if (enqueued > 0 || diff.synced.length > 0 || finalizedRemovals > 0) {
+  if (enqueued > 0 || diff.synced.length > 0 || finalizedRemovals > 0 || remoteOnly.length > 0) {
     logAudit('WHITELIST_RECONCILED', 'WHITELIST', {
       guildId: conn.guildId,
       nitradoConnId: conn.id,
       synced: diff.synced.length,
       addQueued: diff.toAdd.length,
-      removeQueued: diff.toRemove.length,
+      removeQueued: pendingRemoveRemote.size,
+      remoteOnlyObserved: remoteOnly.length,
       newlyEnqueued: enqueued,
       finalizedRemovals,
     });
