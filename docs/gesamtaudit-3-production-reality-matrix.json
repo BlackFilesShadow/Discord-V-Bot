@@ -20,11 +20,11 @@
     { "id": "session-encryption-env-pins", "status": "runtime-verified" },
     { "id": "ci-security-sbom-blocking", "status": "runtime-verified" },
     { "id": "current-main-exact-sha-binding", "status": "runtime-verified" },
-    { "id": "live-production-deploy", "status": "residual-final-deploy" },
+    { "id": "live-production-deploy", "status": "residual-stage-67" },
     { "id": "backup-restore-live-verification", "status": "residual-staging-credentials" }
   ],
   "residual": [
-    "Authorized production deploy + live smoke remains part of the final deploy phase after Stage 62 and final gates",
+    "Authorized production deploy + live smoke remains part of the final deploy phase (Stage 67) after Stage 62 and final gates",
     "Backup/restore live verification requires authorized staging credentials; repository lifecycle gates remain the executable CI proof"
   ]
 }
