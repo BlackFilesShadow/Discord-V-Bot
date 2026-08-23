@@ -1,7 +1,7 @@
 {
-  "schemaVersion": 2,
+  "schemaVersion": 3,
   "stage": 56,
-  "basedOnMainSha": "eaf8b42bb5d1fc194416324606f146196d04c8c0",
+  "basedOnMainSha": "69caddd756bdb5e7f3cc5618d2e12e130c3705fd",
   "scope": "Dashboard bundle >500kB remediation via measured vendor + route code-splitting.",
   "baselineBefore": {
     "entryJsKbApprox": 1457,
@@ -13,41 +13,25 @@
     "entryNoDevCatalogIcons": "App imports DEV_TOOL_SLUGS (icon-free), not full lucide catalog",
     "manualChunks": "vite manualChunks: vendor-react/router/query/socket/lucide/misc",
     "measureScript": "scripts/measure-dashboard-bundle.mjs requires entry <500kB, every emitted JS chunk <500kB, and vendor split",
-    "artifact": "docs/audit/performance/<sha>/56-bundle.json"
+    "gateRule": "one complete CI/CD + Verification 2 + Playwright cycle on the final unchanged Stage 56 SHA",
+    "artifact": "current Stage 56 gate must re-measure the emitted dashboard assets; evidence from older SHAs is not substituted"
   },
   "cases": [
-    {
-      "id": "entry-under-500kb",
-      "status": "runtime-verified"
-    },
-    {
-      "id": "all-chunks-under-500kb",
-      "status": "runtime-verified"
-    },
-    {
-      "id": "vendor-manual-chunks",
-      "status": "runtime-verified"
-    },
-    {
-      "id": "dev-route-lazy",
-      "status": "runtime-verified"
-    },
-    {
-      "id": "heavy-pages-lazy",
-      "status": "runtime-verified"
-    },
-    {
-      "id": "slug-catalog-parity",
-      "status": "runtime-verified"
-    }
+    { "id": "entry-under-500kb", "status": "gate-revalidation-required" },
+    { "id": "all-chunks-under-500kb", "status": "gate-revalidation-required" },
+    { "id": "vendor-manual-chunks", "status": "architecture-pinned" },
+    { "id": "dev-route-lazy", "status": "architecture-pinned" },
+    { "id": "heavy-pages-lazy", "status": "architecture-pinned" },
+    { "id": "slug-catalog-parity", "status": "architecture-pinned" }
   ],
   "residual": [
     "gzip figures from vite log; measure script uses raw bytes"
   ],
-  "evidence": {
+  "previousEvidence": {
     "mainSha": "eaf8b42bb5d1fc194416324606f146196d04c8c0",
     "measure": "docs/audit/performance/eaf8b42bb5d1fc194416324606f146196d04c8c0/56-bundle.json",
     "maxChunkKb": 177.6,
-    "entryKb": 62.38
+    "entryKb": 62.38,
+    "note": "historical evidence only; not counted as the current Stage 56 gate"
   }
 }
