@@ -36,7 +36,7 @@ function fakeResponse(bytes: number[], contentType: string, status = 200): Respo
 describe('ticket transcript attachment archive', () => {
   it('archives a Discord image as durable inline data and reports exact bytes', async () => {
     const item = attachment();
-    const fetchMock = jest.fn(async () => fakeResponse([1, 2, 3, 4], 'image/png'));
+    const fetchMock = jest.fn(async (_input: string, _init?: RequestInit) => fakeResponse([1, 2, 3, 4], 'image/png'));
 
     const stats = await archiveTranscriptAttachments([{ attachments: [item] }], fetchMock);
 
