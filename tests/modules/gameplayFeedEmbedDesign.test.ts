@@ -5,7 +5,7 @@ process.env.DATABASE_URL ||= 'postgresql://test:test@localhost:5432/test';
 process.env.ENCRYPTION_KEY ||= '0'.repeat(64);
 process.env.SESSION_SECRET ||= 'test-session-secret';
 
-import { buildGameplayFeedEmbed } from '../../src/modules/gameplayFeeds/embedBuilder';
+import { buildGameplayFeedEmbed, placementObjectLabel } from '../../src/modules/gameplayFeeds/embedBuilder';
 import type { GameplayFeedView } from '../../src/modules/gameplayFeeds/types';
 
 const SERVER = 'Chernarus Main';
@@ -110,6 +110,38 @@ describe('approved V-Bot gameplay feed embed designs', () => {
     expect(json.fields?.[0]).toMatchObject({ name: 'Spieler', value: 'Builder' });
     expect(json.fields?.find(field => field.name === 'Objekt')?.value).toBe('Fence');
     expect(json.fields?.at(-1)).toMatchObject({ name: 'Server', value: SERVER });
+  });
+
+  it('cleans technical Placement classnames without changing ADM source data', () => {
+    expect(placementObjectLabel('Snare Trap<RabbitSnareTrap>')).toBe('Snare Trap');
+    expect(placementObjectLabel('Nameless Object<GardenPlot>')).toBe('Nameless Gartenplot');
+    expect(placementObjectLabel('Nameless Object<WatchtowerKit>')).toBe('Nameless Watchtower Kit');
+
+    const snareFields = fieldsFor(view({
+      kind: 'BUILD',
+      category: 'PLACEMENT',
+      eventType: 'PLACEMENT',
+      actorName: 'Builder',
+      targetName: null,
+      objectType: 'Snare Trap<RabbitSnareTrap>',
+      toolOrWeapon: null,
+      distanceMeters: null,
+      targetPosition: null,
+    }));
+    expect(snareFields.find(field => field.name === 'Objekt')?.value).toBe('Snare Trap');
+
+    const namelessFields = fieldsFor(view({
+      kind: 'BUILD',
+      category: 'PLACEMENT',
+      eventType: 'PLACEMENT',
+      actorName: 'Builder',
+      targetName: null,
+      objectType: 'Nameless Object<GardenPlot>',
+      toolOrWeapon: null,
+      distanceMeters: null,
+      targetPosition: null,
+    }));
+    expect(namelessFields.find(field => field.name === 'Objekt')?.value).toBe('Nameless Gartenplot');
   });
 
   it('keeps iZurvive linking in build report positions', () => {
