@@ -38,6 +38,11 @@ import {
 import prisma from '../../database/prisma';
 import { logger, logAudit } from '../../utils/logger';
 import { config } from '../../config';
+import {
+  archiveTranscriptAttachments,
+  isInlineTranscriptImage,
+  type TranscriptArchivedAttachment,
+} from './transcriptAttachmentArchive';
 
 const TRANSCRIPT_MAX_MSGS = 1000;
 const MAX_WELCOME_MESSAGES = 5;
@@ -197,7 +202,7 @@ interface CollectedMessage {
   isBot: boolean;
   createdAt: Date;
   content: string;
-  attachments: Array<{ name: string; url: string }>;
+  attachments: TranscriptArchivedAttachment[];
   hasEmbeds: boolean;
 }
 
@@ -206,9 +211,16 @@ function collectMessage(m: Message): CollectedMessage {
     ?? m.author?.globalName
     ?? m.author?.username
     ?? 'Unbekannt';
-  const attachments: Array<{ name: string; url: string }> = [];
+  const attachments: TranscriptArchivedAttachment[] = [];
   for (const a of m.attachments.values()) {
-    attachments.push({ name: a.name ?? 'attachment', url: a.url });
+    attachments.push({
+      id: a.id,
+      name: a.name ?? 'attachment',
+      url: a.url,
+      contentType: a.contentType ?? null,
+      size: a.size,
+      archivedDataUrl: null,
+    });
   }
   return {
     id: m.id,
@@ -283,9 +295,18 @@ function buildTranscriptHtml(meta: TranscriptMeta, msgs: CollectedMessage[]): st
       ? htmlEscape(m.content).replace(/\n/g, '<br>')
       : (m.hasEmbeds ? '<em class="muted">[Embed]</em>' : '<em class="muted">[ohne Text]</em>');
     const atts = m.attachments.length === 0 ? '' :
-      `<div class="atts">${m.attachments.map(a =>
-        `<a href="${htmlEscape(a.url)}" target="_blank" rel="noopener">📎 ${htmlEscape(a.name)}</a>`,
-      ).join('')}</div>`;
+    `<div class="atts">${m.attachments.map(a => {
+      const href = a.archivedDataUrl ?? a.url;
+      const safeHref = htmlEscape(href);
+      const safeName = htmlEscape(a.name);
+      const image = a.archivedDataUrl && isInlineTranscriptImage(a.contentType)
+        ? `<img src="${safeHref}" alt="${safeName}" loading="lazy">`
+        : '';
+      const linkAttrs = a.archivedDataUrl
+        ? ` download="${safeName}"`
+        : ' target="_blank" rel="noopener"';
+      return `<div class="att">${image}<a class="att-link" href="${safeHref}"${linkAttrs}>📎 ${safeName}</a></div>`;
+    }).join('')}</div>`;
     return `<div class="msg">
       <div class="hdr"><span class="name">${name}</span>${tag}<span class="ts">${ts}</span></div>
       <div class="body">${body}</div>
@@ -324,10 +345,14 @@ function buildTranscriptHtml(meta: TranscriptMeta, msgs: CollectedMessage[]): st
     background: #2a3440; color: #8ab4f8; }
   .msg .ts { margin-left: auto; color: #7d8896; font-variant-numeric: tabular-nums; font-size: 12px; }
   .msg .body { margin-top: 4px; white-space: pre-wrap; word-wrap: break-word; font-size: 14px; }
-  .msg .atts { margin-top: 6px; display: flex; flex-wrap: wrap; gap: 6px; }
-  .msg .atts a { font-size: 12px; color: #8ab4f8; text-decoration: none;
+  .msg .atts { margin-top: 8px; display: block; }
+  .msg .att { margin-top: 8px; }
+  .msg .att:first-child { margin-top: 0; }
+  .msg .att img { display: block; max-width: 100%; max-height: 720px; width: auto; height: auto;
+    object-fit: contain; border: 1px solid #2a313b; border-radius: 8px; background: #090b0e; margin-bottom: 6px; }
+  .msg .att-link { display: inline-block; font-size: 12px; color: #8ab4f8; text-decoration: none;
     background: #1a2027; padding: 3px 8px; border-radius: 4px; }
-  .msg .atts a:hover { background: #232b34; }
+  .msg .att-link:hover { background: #232b34; }
   .muted { color: #7d8896; }
   footer { margin-top: 28px; text-align: center; font-size: 11px; color: #5d6571; }
 </style>
@@ -541,6 +566,8 @@ export async function  purgeTemplateInstances(client: Client, templateId: string
         collectedMsgs = collected.map(collectMessage);
       }
 
+      const attachmentArchive = await archiveTranscriptAttachments(collectedMsgs);
+
       const meta: TranscriptMeta = {
         ticketLabel: template.label,
         ticketNumber: numStr,
@@ -612,6 +639,8 @@ export async function  purgeTemplateInstances(client: Client, templateId: string
       logAudit('TICKET_CLOSED_SYSTEM', 'TICKET', {
         guildId: inst.guildId, instanceId: inst.id, templateId,
         messages: collectedMsgs.length,
+      archivedAttachments: attachmentArchive.attachmentCount,
+      archivedAttachmentBytes: attachmentArchive.archivedBytes,
       });
       closed++;
     } catch (e) {
@@ -924,6 +953,7 @@ async function closeTicketLocked(btn: ButtonInteraction, instanceId: string): Pr
 
   await btn.deferReply({ flags: MessageFlags.Ephemeral });
 
+  let lockedChannel: TextChannel | null = null;
   try {
     const channel = await btn.client.channels.fetch(instance.channelId).catch(() => null);
 
@@ -942,6 +972,7 @@ async function closeTicketLocked(btn: ButtonInteraction, instanceId: string): Pr
 
     // G7: Channel sofort sperren, damit waehrend Transcript-Bau keine Messages mehr reinkommen.
     const ch = channel as TextChannel;
+    lockedChannel = ch;
     await ch.permissionOverwrites.edit(btn.guild!.roles.everyone.id, { SendMessages: false }).catch(() => {});
     await ch.permissionOverwrites.edit(instance.openerDiscordId, { SendMessages: false }).catch(() => {});
     if (instance.template.staffRoleId) {
@@ -986,6 +1017,9 @@ async function closeTicketLocked(btn: ButtonInteraction, instanceId: string): Pr
 
     const closedAt = new Date();
     const collectedMsgs = collected.map(collectMessage);
+  // Discord-Attachment-URLs laufen ab. Die Bytes muessen deshalb JETZT,
+  // vor DB-Abschluss und Channel-Loeschung, dauerhaft ins HTML-Archiv.
+  const attachmentArchive = await archiveTranscriptAttachments(collectedMsgs);
     const meta: TranscriptMeta = {
       ticketLabel: instance.template.label,
       ticketNumber: numStr,
@@ -1073,6 +1107,8 @@ async function closeTicketLocked(btn: ButtonInteraction, instanceId: string): Pr
       closedBy: btn.user.id, messages: collectedMsgs.length,
       transcriptBytes: transcriptBuf.length,
       transcriptTruncated,
+    archivedAttachments: attachmentArchive.attachmentCount,
+    archivedAttachmentBytes: attachmentArchive.archivedBytes,
     });
 
     await btn.editReply({ content: 'Ticket geschlossen. Channel wird in 5 Sekunden geloescht.' });
@@ -1080,13 +1116,27 @@ async function closeTicketLocked(btn: ButtonInteraction, instanceId: string): Pr
       ch.delete('Ticket geschlossen').catch(() => {});
     }, 5000);
   } catch (e) {
-    logger.error('Ticket-Close-Fehler', e as Error);
-    logAudit('TICKET_CLOSE_FAILED', 'TICKET', {
-      guildId: instance.guildId, instanceId: instance.id,
-      closedBy: btn.user.id, error: (e as Error).message,
-    });
-    await btn.editReply({ content: 'Konnte Ticket nicht schliessen. Bitte Admin informieren.' }).catch(() => {});
+  const error = e as Error;
+  logger.error('Ticket-Close-Fehler', error);
+  logAudit('TICKET_CLOSE_FAILED', 'TICKET', {
+    guildId: instance.guildId, instanceId: instance.id,
+    closedBy: btn.user.id, error: error.message,
+  });
+  // Fail-closed: Bei einem Archivfehler den Ticket-Channel NICHT loeschen und
+  // die zuvor gesetzten Schreibrechte fuer Opener/Staff wiederherstellen.
+  if (lockedChannel) {
+    await lockedChannel.permissionOverwrites.edit(instance.openerDiscordId, { SendMessages: true }).catch(() => {});
+    if (instance.template.staffRoleId) {
+      await lockedChannel.permissionOverwrites.edit(instance.template.staffRoleId, { SendMessages: true }).catch(() => {});
+    }
   }
+  const archiveFailed = error.message.startsWith('Ticket-Anh');
+  await btn.editReply({
+    content: archiveFailed
+      ? 'Ticket wurde NICHT geschlossen: Mindestens ein Bild/Anhang konnte nicht vollstaendig archiviert werden. Der Ticket-Channel bleibt erhalten. Bitte erneut versuchen oder einen Admin informieren.'
+      : 'Konnte Ticket nicht schliessen. Bitte Admin informieren.',
+  }).catch(() => {});
+}
 }
 
 /**
