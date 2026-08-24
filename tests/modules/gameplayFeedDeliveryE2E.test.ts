@@ -6,9 +6,8 @@
 import fs from 'node:fs';
 import path from 'node:path';
 
-jest.mock('../../src/database/prisma', () => ({
-  __esModule: true,
-  default: {
+jest.mock('../../src/database/prisma', () => {
+  const mockPrisma: any = {
     gameplayFeedDelivery: {
       updateMany: jest.fn(),
       create: jest.fn(),
@@ -26,9 +25,14 @@ jest.mock('../../src/database/prisma', () => ({
       findMany: jest.fn(),
       findFirst: jest.fn(),
     },
-    $transaction: jest.fn(async (ops: Promise<unknown>[]) => Promise.all(ops)),
-  },
-}));
+    $queryRaw: jest.fn(),
+  };
+  mockPrisma.$transaction = jest.fn(async (arg: Promise<unknown>[] | ((tx: typeof mockPrisma) => Promise<unknown>)) => {
+    if (typeof arg === 'function') return arg(mockPrisma);
+    return Promise.all(arg);
+  });
+  return { __esModule: true, default: mockPrisma };
+});
 
 jest.mock('../../src/utils/logger', () => ({
   __esModule: true,
@@ -57,6 +61,7 @@ const configUpdate = prisma.gameplayFeedConfig.updateMany as jest.Mock;
 const connectionFind = prisma.nitradoConnection.findFirst as jest.Mock;
 const eventFindMany = prisma.admEvent.findMany as jest.Mock;
 const eventFindFirst = prisma.admEvent.findFirst as jest.Mock;
+const queryRaw = prisma.$queryRaw as jest.Mock;
 const realtimeEmit = emitServerGameplayEvent as jest.Mock;
 
 const GUILD_ID = '111111111111111111';
@@ -170,8 +175,11 @@ beforeEach(() => {
   deliveryCreate.mockResolvedValue({ id: 'delivery-1' });
   deliveryFind.mockResolvedValue([]);
   configUpdate.mockResolvedValue({ count: 1 });
-  configFindFirst.mockResolvedValue({ id: 'feed-1' });
+  configFindFirst.mockImplementation((args: { where?: { id?: string; isActive?: boolean } }) => (
+    args?.where?.id === 'feed-1' && args.where.isActive === true ? { id: 'feed-1' } : null
+  ));
   connectionFind.mockResolvedValue({ id: CONN_ID });
+  queryRaw.mockResolvedValue([{ id: 'feed-1' }]);
 });
 
 describe('produktive ADM -> Discord Gameplay-Feed-Kette', () => {
