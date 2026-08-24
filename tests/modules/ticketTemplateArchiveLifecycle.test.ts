@@ -49,4 +49,11 @@ describe('ticket template archive lifecycle', () => {
     expect(transcriptRoute).toContain('transcriptHtml');
     expect(transcriptRoute).not.toContain('include: { template:');
   });
+
+  it('handles archived instances whose template relation is already null', () => {
+    expect(ticketSystem).toContain('managerRoleIds?: unknown } | null');
+    expect(ticketSystem).toContain('if (!instance.template) return false;');
+    expect(ticketSystem).toContain('if (tmId && inst.template)');
+    expect(ticketSystem).toContain('if (fresh?.template)');
+  });
 });
