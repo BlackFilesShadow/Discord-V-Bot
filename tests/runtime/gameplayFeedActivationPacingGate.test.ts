@@ -15,9 +15,12 @@ describe('Gameplay feed activation, pacing and Player List architecture gate', (
     expect(route).toContain('nitradoConnId: resolution.nitradoConnId');
   });
 
-  it('keeps queued deliveries and shapes backlog output to one persisted delivery per tick', () => {
+  it('keeps queued deliveries and shapes backlog output per Discord channel across configs', () => {
     expect(runtime).toContain('const DELIVERY_BATCH = 1;');
     expect(runtime).toContain('nextDeliveryAt');
+    expect(runtime).toContain('reserveChannelDeliverySlot');
+    expect(runtime).toContain('FOR UPDATE');
+    expect(runtime).toContain('channelId: config.channelId');
     expect(runtime).not.toContain('gameplayFeedDelivery.deleteMany');
     expect(runtime).toContain('nonce: eventNonce(event.id)');
     expect(runtime).toContain('enforceNonce: true');
@@ -26,6 +29,9 @@ describe('Gameplay feed activation, pacing and Player List architecture gate', (
   it('builds Player List only from PlayerSession and AdmEvent, without another Nitrado poller', () => {
     expect(runtime).toContain('prisma.playerSession.findMany');
     expect(runtime).toContain("'PLAYER_POSITION'::\"AdmEventType\"");
+    expect(runtime).toContain('connectedAt: true');
+    expect(runtime).toContain('positionAt.getTime() >= session.connectedAt.getTime()');
+    expect(runtime).toContain('playerListNonce(config.id, stateHash)');
     expect(runtime).toContain('message.edit');
     expect(runtime).not.toContain('new NitradoClient');
     expect(playerList).toContain('Position unbekannt');
