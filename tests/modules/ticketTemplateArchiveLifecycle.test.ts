@@ -10,6 +10,7 @@ describe('ticket template archive lifecycle', () => {
   );
   const ticketSystem = fs.readFileSync(path.join(root, 'src/modules/tickets/ticketSystem.ts'), 'utf8');
   const route = fs.readFileSync(path.join(root, 'src/dashboard/routes/v2/tickets.ts'), 'utf8');
+  const transcriptRoute = fs.readFileSync(path.join(root, 'src/dashboard/routes/transcripts.ts'), 'utf8');
 
   it('keeps archived TicketInstance rows when a template is deleted', () => {
     expect(schema).toContain('templateId             String?');
@@ -41,5 +42,11 @@ describe('ticket template archive lifecycle', () => {
   it('renders deleted-template ticket rows from immutable snapshots', () => {
     expect(route).toContain('i.template?.label ?? i.templateLabelSnapshot');
     expect(route).toContain('i.template?.slot ?? i.templateSlotSnapshot');
+  });
+
+  it('serves archived transcript HTML directly from TicketInstance without requiring its template', () => {
+    expect(transcriptRoute).toContain('prisma.ticketInstance.findUnique');
+    expect(transcriptRoute).toContain('transcriptHtml');
+    expect(transcriptRoute).not.toContain('include: { template:');
   });
 });
