@@ -34,14 +34,15 @@ describe('Nitrado-1V circuit probe/retry architecture gate', () => {
   it('closes reachable non-429 4xx probes without counting them as breaker failures', () => {
     const source = read('src/modules/nitrado/nitradoClient.ts');
     const serverError = source.indexOf('if (res.status >= 500) {');
-    const clientErrorComment = source.indexOf('Nicht-retrybare 4xx<>429', serverError);
-    const success = source.indexOf('breaker.recordSuccess();', clientErrorComment);
-    const clientError = source.indexOf('throw new NitradoApiError(', success);
+    const clientErrorPath = source.indexOf(
+      "        breaker.recordSuccess();\n        throw new NitradoApiError(",
+      serverError,
+    );
+    const catchBlock = source.indexOf('      } catch (e) {', clientErrorPath);
 
     expect(serverError).toBeGreaterThanOrEqual(0);
-    expect(clientErrorComment).toBeGreaterThan(serverError);
-    expect(success).toBeGreaterThan(clientErrorComment);
-    expect(clientError).toBeGreaterThan(success);
-    expect(source.slice(clientErrorComment, clientError)).not.toContain('breaker.recordFailure();');
+    expect(clientErrorPath).toBeGreaterThan(serverError);
+    expect(catchBlock).toBeGreaterThan(clientErrorPath);
+    expect(source.slice(clientErrorPath, catchBlock)).not.toContain('breaker.recordFailure();');
   });
 });

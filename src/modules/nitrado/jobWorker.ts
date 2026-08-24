@@ -526,9 +526,10 @@ export async function executeJob(claim: NitradoJobClaim): Promise<void> {
               });
             }
 
-            await ensureClaimOwned();
-            await client.removeFromWhitelist(conn.nitradoServerId, sensitiveIdentifier);
-
+            // Safety ordering: ein Spieler darf niemals zuerst aus der Whitelist
+            // verschwinden und danach wegen eines Ban-Backend-Fehlers ungebanned
+            // bleiben. Der Remote-Ban wird daher zuerst gelesen/gesetzt und von
+            // NitradoClient frisch bestaetigt. Erst danach folgt Whitelist-Remove.
             const before = await client.getBanlist(conn.nitradoServerId);
             const alreadyRemote = before.some(e =>
               matchesBanIdentifier(e.identifier, ban.identityHash, config.security.encryptionKey),
@@ -537,6 +538,9 @@ export async function executeJob(claim: NitradoJobClaim): Promise<void> {
               await ensureClaimOwned();
               await client.addToBanlist(conn.nitradoServerId, sensitiveIdentifier);
             }
+
+            await ensureClaimOwned();
+            await client.removeFromWhitelist(conn.nitradoServerId, sensitiveIdentifier);
 
             await prisma.serverBanEntry.updateMany({
               where: { id: ban.id, guildId: job.guildId, nitradoConnId: conn.id },
