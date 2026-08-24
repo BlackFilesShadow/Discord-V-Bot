@@ -1,7 +1,9 @@
 /**
- * Production compatibility: bans use Nitrado's dedicated gameserver banlist
- * endpoint. Unknown response shapes must fail closed and writes count as
- * successful only after a fresh remote read confirms the requested state.
+ * Production compatibility: DayZ Console bans use the live-proven
+ * `settings.general.bans` string through the gameserver settings contract.
+ * Missing/unknown shapes fail closed and every mutation is verified by a
+ * fresh remote read. The unsupported generic games/banlist endpoint must not
+ * be used by this path.
  */
 const requestMock = jest.fn();
 jest.mock('axios', () => ({
@@ -30,8 +32,12 @@ import {
 
 beforeEach(() => { jest.clearAllMocks(); });
 
-function banlistResponse(entries: unknown[]) {
-  return { status: 200, headers: {}, data: { data: { banlist: entries } } };
+function gameserverSettings(bans: unknown, whitelist: unknown = '') {
+  return {
+    status: 200,
+    headers: {},
+    data: { data: { gameserver: { settings: { general: { bans, whitelist } } } } },
+  };
 }
 
 describe('parseNitradoBanlistData compatibility', () => {
@@ -52,91 +58,117 @@ describe('parseNitradoBanlistData compatibility', () => {
     ]);
   });
 
-  it('behandelt unbekannte Antwortformate niemals als leere Liste', () => {
+  it('behandelt unbekannte Legacy-Antwortformate niemals als leere Liste', () => {
     expect(() => parseNitradoBanlistData({ somethingElse: [] })).toThrow(NitradoApiError);
     expect(() => parseNitradoBanlistData(null)).toThrow(NitradoApiError);
   });
 });
 
-describe('NitradoClient official gameserver banlist contract', () => {
-  it('liest die Banlist ueber den dedizierten Nitrado-Endpunkt', async () => {
-    requestMock.mockResolvedValueOnce(banlistResponse(['player-a', { identifier: 'player-b' }]));
+describe('NitradoClient DayZ Console ban settings contract', () => {
+  it('liest general.bans ueber /gameservers und akzeptiert CRLF/LF/CR', async () => {
+    requestMock.mockResolvedValueOnce(gameserverSettings('player-a\r\nplayer-b\rplayer-c\n'));
     const client = new NitradoClient('token-1234');
 
     await expect(client.getBanlist('123')).resolves.toEqual([
       { identifier: 'player-a' },
       { identifier: 'player-b' },
+      { identifier: 'player-c' },
     ]);
     expect(requestMock).toHaveBeenCalledTimes(1);
     expect(requestMock).toHaveBeenCalledWith(expect.objectContaining({
       method: 'GET',
-      url: '/services/123/gameservers/games/banlist',
+      url: '/services/123/gameservers',
     }));
   });
 
-  it('wirft bei erfolgreicher HTTP-Antwort ohne data-Feld fail-closed', async () => {
-    requestMock.mockResolvedValueOnce({ status: 200, headers: {}, data: { status: 'success' } });
+  it('failt geschlossen wenn general.bans fehlt oder kein String ist', async () => {
+    requestMock
+      .mockResolvedValueOnce({ status: 200, headers: {}, data: { data: { gameserver: { settings: { general: { whitelist: '' } } } } } })
+      .mockResolvedValueOnce(gameserverSettings(false));
     const client = new NitradoClient('token-1234');
 
-    await expect(client.getBanlist('123')).rejects.toThrow('Banlist-Antwort ohne data-Feld');
+    await expect(client.getBanlist('123')).rejects.toThrow('Banlist-Setting fehlt');
+    await expect(client.getBanlist('123')).rejects.toThrow('Unerwartetes Banlist-Settingformat');
   });
 
-  it('fuegt einen Bann ueber POST hinzu und bestaetigt ihn mit frischem GET', async () => {
+  it('fuegt einen Bann per Read-Modify-Write hinzu, erhaelt alle bestehenden Banns und bestaetigt frisch', async () => {
     requestMock
+      .mockResolvedValueOnce(gameserverSettings('player-a\r\nplayer-b'))
       .mockResolvedValueOnce({ status: 200, headers: {}, data: { data: {} } })
-      .mockResolvedValueOnce(banlistResponse(['player-c']));
+      .mockResolvedValueOnce(gameserverSettings('player-a\r\nplayer-b\r\nplayer-c'));
+    const client = new NitradoClient('token-1234');
+
+    await client.addToBanlist('123', 'player-c');
+
+    expect(requestMock).toHaveBeenCalledTimes(3);
+    expect(requestMock).toHaveBeenNthCalledWith(2, expect.objectContaining({
+      method: 'POST',
+      url: '/services/123/gameservers/settings',
+      headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+    }));
+    const post = requestMock.mock.calls[1][0] as { data: string };
+    const form = new URLSearchParams(post.data);
+    expect(form.get('category')).toBe('general');
+    expect(form.get('key')).toBe('bans');
+    expect(form.get('value')).toBe('player-a\r\nplayer-b\r\nplayer-c');
+    expect(requestMock).toHaveBeenNthCalledWith(3, expect.objectContaining({
+      method: 'GET',
+      url: '/services/123/gameservers',
+    }));
+  });
+
+  it('ist idempotent wenn derselbe Bann bereits remote existiert', async () => {
+    requestMock
+      .mockResolvedValueOnce(gameserverSettings('Player-C'))
+      .mockResolvedValueOnce(gameserverSettings('Player-C'));
     const client = new NitradoClient('token-1234');
 
     await client.addToBanlist('123', 'player-c');
 
     expect(requestMock).toHaveBeenCalledTimes(2);
-    expect(requestMock).toHaveBeenNthCalledWith(1, expect.objectContaining({
-      method: 'POST',
-      url: '/services/123/gameservers/games/banlist',
-      headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-    }));
-    const post = requestMock.mock.calls[0][0] as { data: string };
-    expect(new URLSearchParams(post.data).get('identifier')).toBe('player-c');
-    expect(requestMock).toHaveBeenNthCalledWith(2, expect.objectContaining({
-      method: 'GET',
-      url: '/services/123/gameservers/games/banlist',
-    }));
+    expect(requestMock.mock.calls.every(([call]) => call.method === 'GET')).toBe(true);
   });
 
-  it('schlaegt fehl wenn ein 2xx-Add remote auch nach bounded Re-Reads nicht sichtbar wird', async () => {
+  it('schlaegt fehl wenn ein Settings-Add remote auch nach bounded Re-Reads nicht sichtbar wird', async () => {
     requestMock
+      .mockResolvedValueOnce(gameserverSettings(''))
       .mockResolvedValueOnce({ status: 200, headers: {}, data: { data: {} } })
-      .mockResolvedValue(banlistResponse([]));
+      .mockResolvedValue(gameserverSettings(''));
     const client = new NitradoClient('token-1234');
 
     await expect(client.addToBanlist('123', 'player-c'))
       .rejects.toThrow('Banlist-Add konnte remote nicht bestaetigt werden');
-    expect(requestMock).toHaveBeenCalledTimes(4);
-    expect(requestMock.mock.calls.slice(1).every(([call]) =>
-      call.method === 'GET' && call.url === '/services/123/gameservers/games/banlist',
-    )).toBe(true);
+    expect(requestMock).toHaveBeenCalledTimes(5);
   });
 
-  it('entfernt einen Bann ueber DELETE und bestaetigt die Abwesenheit mit frischem GET', async () => {
+  it('entfernt exakt einen Bann per Read-Modify-Write und bestaetigt die Abwesenheit frisch', async () => {
     requestMock
+      .mockResolvedValueOnce(gameserverSettings('player-a\r\nplayer-b\r\nplayer-c'))
       .mockResolvedValueOnce({ status: 200, headers: {}, data: { data: {} } })
-      .mockResolvedValueOnce(banlistResponse([]));
+      .mockResolvedValueOnce(gameserverSettings('player-a\r\nplayer-c'));
     const client = new NitradoClient('token-1234');
 
-    await client.removeFromBanlist('123', 'player-b');
+    await client.removeFromBanlist('123', 'PLAYER-B');
 
-    expect(requestMock).toHaveBeenCalledTimes(2);
-    expect(requestMock).toHaveBeenNthCalledWith(1, expect.objectContaining({
-      method: 'DELETE',
-      url: '/services/123/gameservers/games/banlist',
-      headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-    }));
-    const del = requestMock.mock.calls[0][0] as { data: string };
-    expect(new URLSearchParams(del.data).get('identifier')).toBe('player-b');
-    expect(requestMock).toHaveBeenNthCalledWith(2, expect.objectContaining({
-      method: 'GET',
-      url: '/services/123/gameservers/games/banlist',
-    }));
+    expect(requestMock).toHaveBeenCalledTimes(3);
+    const post = requestMock.mock.calls[1][0] as { method: string; url: string; data: string };
+    expect(post.method).toBe('POST');
+    expect(post.url).toBe('/services/123/gameservers/settings');
+    const form = new URLSearchParams(post.data);
+    expect(form.get('key')).toBe('bans');
+    expect(form.get('value')).toBe('player-a\r\nplayer-c');
+  });
+
+  it('verwendet im DayZ-Console-Pfad niemals den nicht implementierten games/banlist-Endpunkt', async () => {
+    requestMock.mockResolvedValue(gameserverSettings(''));
+    const client = new NitradoClient('token-1234');
+
+    await client.getBanlist('123');
+    await client.addToBanlist('123', 'player-a');
+
+    expect(requestMock.mock.calls.every(([call]) =>
+      !String(call.url).includes('/gameservers/games/banlist'),
+    )).toBe(true);
   });
 
   it('weist leere Identifier vor jedem Remote-Write ab', async () => {
