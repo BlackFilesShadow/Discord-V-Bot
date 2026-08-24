@@ -1,14 +1,16 @@
-export type DeathFeedCategory = 'PVP' | 'DEATH' | 'SUICIDE' | 'NPC' | 'VEHICLE';
+export type DeathFeedCategory = 'PVP' | 'SUICIDE' | 'NPC' | 'VEHICLE';
 export type BuildFeedCategory = 'PLACEMENT' | 'BUILD' | 'DISMANTLE' | 'DESTROY';
 export type GameplayFeedCategory = DeathFeedCategory | BuildFeedCategory;
 export type GameplayFeedKindValue = 'DEATH' | 'BUILD' | 'PLAYER_LIST';
 
-export const DEATH_CATEGORIES: readonly DeathFeedCategory[] = ['PVP', 'DEATH', 'SUICIDE', 'NPC', 'VEHICLE'];
+export const DEATH_CATEGORIES: readonly DeathFeedCategory[] = ['PVP', 'SUICIDE', 'NPC', 'VEHICLE'];
 export const BUILD_CATEGORIES: readonly BuildFeedCategory[] = ['PLACEMENT', 'BUILD', 'DISMANTLE', 'DESTROY'];
 
+// PLAYER_DIED bleibt als kanonisches ADM-Rohereignis erhalten, wird aber bewusst
+// nicht mehr als Gameplay-Feed zugestellt. Der generische "died / bled out"-Feed
+// liefert auf Konsole keine belastbare, einheitliche Ursache fuer ein eigenes Embed.
 export const DEATH_EVENT_TYPES = [
   'PLAYER_KILLED',
-  'PLAYER_DIED',
   'PLAYER_SUICIDE',
   'NPC_KILL',
   'VEHICLE_DEATH',
@@ -57,7 +59,6 @@ export interface GameplayDisplayToggles {
 export function categoryForEvent(eventType: string): GameplayFeedCategory | null {
   switch (eventType) {
     case 'PLAYER_KILLED': return 'PVP';
-    case 'PLAYER_DIED': return 'DEATH';
     case 'PLAYER_SUICIDE': return 'SUICIDE';
     case 'NPC_KILL': return 'NPC';
     case 'VEHICLE_DEATH': return 'VEHICLE';
