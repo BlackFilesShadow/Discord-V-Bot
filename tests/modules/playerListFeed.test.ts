@@ -114,7 +114,7 @@ describe('Player List Feed embed and change detection', () => {
     }
     expect(json.reduce((sum, item) => sum + embedTextLength(item), 0)).toBeLessThanOrEqual(6000);
     const visible = json.flatMap(item => item.fields ?? []).map(field => field.value).join('\n');
-    expect(visible).toContain('Player_000');
-    expect(visible).toContain('Player_099');
+    expect(visible).toContain('Player\\_000');
+    expect(visible).toContain('Player\\_099');
   });
 });
