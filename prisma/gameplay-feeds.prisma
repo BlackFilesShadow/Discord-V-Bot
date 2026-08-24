@@ -33,31 +33,33 @@ model NitradoAdmProfileConfig {
 }
 
 model GameplayFeedConfig {
-  id                     String           @id @default(cuid())
-  guildId                String
-  nitradoConnId          String
-  kind                    GameplayFeedKind
-  channelId               String           @db.VarChar(32)
-  isActive                Boolean          @default(true)
-  categories              String[]
-  showActorCoords         Boolean          @default(true)
-  showTargetCoords        Boolean          @default(false)
-  showTool                Boolean          @default(true)
-  showDistance            Boolean          @default(true)
-  embedColor              String           @default("#dc2626") @db.VarChar(9)
-  legacyKillfeedConfigId  String?          @unique
-  cursorCreatedAt         DateTime         @default(now())
-  cursorEventId           String           @default("")
-  nextDeliveryAt          DateTime         @default(now())
-  lastMessageId           String?          @db.VarChar(32)
-  lastStateHash           String?          @db.VarChar(64)
-  lastPlayerCount         Int?
-  lastPlayerListAt        DateTime?
-  lastEventAt             DateTime?
-  lastPolledAt            DateTime?
-  lastErrorMsg            String?          @db.Text
-  createdAt               DateTime         @default(now())
-  updatedAt               DateTime         @updatedAt
+  id                        String           @id @default(cuid())
+  guildId                   String
+  nitradoConnId             String
+  kind                      GameplayFeedKind
+  channelId                 String           @db.VarChar(32)
+  isActive                  Boolean          @default(true)
+  categories                String[]
+  showActorCoords           Boolean          @default(true)
+  showTargetCoords          Boolean          @default(false)
+  showTool                  Boolean          @default(true)
+  showDistance              Boolean          @default(true)
+  embedColor                String           @default("#dc2626") @db.VarChar(9)
+  legacyKillfeedConfigId    String?          @unique
+  cursorCreatedAt           DateTime         @default(now())
+  cursorEventId             String           @default("")
+  nextDeliveryAt            DateTime         @default(now())
+  lastMessageId             String?          @db.VarChar(32)
+  lastStateHash             String?          @db.VarChar(64)
+  lastPlayerCount           Int?
+  lastPlayerListAt          DateTime?
+  playerListIntervalMinutes Int?
+  nextPlayerListPostAt      DateTime?
+  lastEventAt               DateTime?
+  lastPolledAt              DateTime?
+  lastErrorMsg              String?          @db.Text
+  createdAt                 DateTime         @default(now())
+  updatedAt                 DateTime         @updatedAt
 
   deliveries GameplayFeedDelivery[]
 

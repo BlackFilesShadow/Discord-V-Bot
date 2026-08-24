@@ -1,6 +1,6 @@
 import { useRef, useState } from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
-import { Crosshair, Hammer, Plus, Power, Trash2, Users } from 'lucide-react';
+import { Crosshair, Globe2, Hammer, Plus, Power, Trash2 } from 'lucide-react';
 import { api, ApiError } from '@/lib/api';
 import { Card, CardHeader, CardTitle } from '@/components/ui/Card';
 import { Button } from '@/components/ui/Button';
@@ -10,7 +10,7 @@ import { useToast } from '@/components/ui/Toast';
 import { useModalA11y } from '@/lib/useModalA11y';
 
 type FeedKind = 'DEATH' | 'BUILD' | 'PLAYER_LIST';
-type DeathCategory = 'PVP' | 'DEATH' | 'SUICIDE' | 'NPC' | 'VEHICLE';
+type DeathCategory = 'PVP' | 'SUICIDE' | 'NPC' | 'VEHICLE';
 type BuildCategory = 'PLACEMENT' | 'BUILD' | 'DISMANTLE' | 'DESTROY';
 type Category = DeathCategory | BuildCategory;
 
@@ -36,36 +36,37 @@ interface GameplayFeedConfig {
   lastSuccessAt: string | null;
   lastPlayerCount: number | null;
   lastPlayerListAt: string | null;
+  playerListIntervalMinutes: number | null;
+  nextPlayerListPostAt: string | null;
 }
 
 interface DiscordChannel { id: string; name: string; type: number; parentId: string | null }
 interface Slot { id: string; slot: number; alias: string; alias5: string; status: 'ACTIVE' | 'EXPIRED' | 'REVOKED' }
 
 const DEATH_LABELS: Record<DeathCategory, { label: string; icon: string }> = {
-  PVP: { label: 'PvP-Kills', icon: '💀' },
-  DEATH: { label: 'Allgemeiner Tod', icon: '☠️' },
-  SUICIDE: { label: 'Suizid', icon: '🩸' },
-  NPC: { label: 'NPC / Tiere / Zombies', icon: '🧟' },
-  VEHICLE: { label: 'Fahrzeug-Tod', icon: '🚗' },
+  PVP: { label: 'V-Kill Report', icon: '💀' },
+  SUICIDE: { label: 'Self Kill Report', icon: '🩸' },
+  NPC: { label: 'Wild Kill Report', icon: '☣️' },
+  VEHICLE: { label: 'Crash Kill Report', icon: '💥' },
 };
 
 const BUILD_LABELS: Record<BuildCategory, { label: string; icon: string }> = {
-  PLACEMENT: { label: 'Platziert', icon: '📦' },
-  BUILD: { label: 'Gebaut', icon: '🔨' },
-  DISMANTLE: { label: 'Demontiert', icon: '🧰' },
-  DESTROY: { label: 'Zerstört', icon: '💥' },
+  PLACEMENT: { label: 'Placement Report', icon: '📦' },
+  BUILD: { label: 'Build Report', icon: '🔨' },
+  DISMANTLE: { label: 'Dismantle Report', icon: '🔧' },
+  DESTROY: { label: 'Destruction Report', icon: '💥' },
 };
 
 const DEFAULTS: Record<FeedKind, Category[]> = {
-  DEATH: ['PVP', 'DEATH', 'SUICIDE', 'NPC', 'VEHICLE'],
+  DEATH: ['PVP', 'SUICIDE', 'NPC', 'VEHICLE'],
   BUILD: ['PLACEMENT', 'BUILD', 'DISMANTLE', 'DESTROY'],
   PLAYER_LIST: [],
 };
 
-function categoryMeta(kind: FeedKind, category: Category): { label: string; icon: string } {
+function categoryMeta(kind: FeedKind, category: Category): { label: string; icon: string } | null {
   return kind === 'DEATH'
-    ? DEATH_LABELS[category as DeathCategory]
-    : BUILD_LABELS[category as BuildCategory];
+    ? DEATH_LABELS[category as DeathCategory] ?? null
+    : BUILD_LABELS[category as BuildCategory] ?? null;
 }
 
 export function KillfeedTab({ guildId, isOwner, slots }: { guildId: string; isOwner: boolean; slots: Slot[] }) {
@@ -110,7 +111,7 @@ export function KillfeedTab({ guildId, isOwner, slots }: { guildId: string; isOw
   const configs = query.data?.configs ?? [];
   const channels = channelsQuery.data?.channels ?? [];
   const channelName = (id: string) => channels.find(c => c.id === id)?.name ?? id;
-  const title = kind === 'DEATH' ? 'Deathfeed' : kind === 'BUILD' ? 'Baufeed' : 'Player List Feed';
+  const title = kind === 'DEATH' ? 'Deathfeed' : kind === 'BUILD' ? 'Baufeed' : 'Online List';
 
   const invalidate = () => qc.invalidateQueries({ queryKey: ['gameplay-feeds', guildId, activeSlot, kind] });
 
@@ -119,7 +120,7 @@ export function KillfeedTab({ guildId, isOwner, slots }: { guildId: string; isOw
       <div className="flex items-center justify-between gap-3 flex-wrap">
         <div>
           <h2 className="text-lg font-semibold text-white inline-flex items-center gap-2">
-            {kind === 'DEATH' ? <Crosshair className="h-5 w-5 text-accent" /> : kind === 'BUILD' ? <Hammer className="h-5 w-5 text-accent" /> : <Users className="h-5 w-5 text-accent" />}
+            {kind === 'DEATH' ? <Crosshair className="h-5 w-5 text-accent" /> : kind === 'BUILD' ? <Hammer className="h-5 w-5 text-accent" /> : <Globe2 className="h-5 w-5 text-accent" />}
             Nitrado Gameplay-Feeds
           </h2>
           <p className="text-xs text-muted mt-0.5">
@@ -130,7 +131,7 @@ export function KillfeedTab({ guildId, isOwner, slots }: { guildId: string; isOw
           <Select value={kind} onChange={e => { setKind(e.target.value as FeedKind); setEditing(null); }}>
             <option value="DEATH">Deathfeed</option>
             <option value="BUILD">Baufeed</option>
-            <option value="PLAYER_LIST">Player List Feed</option>
+            <option value="PLAYER_LIST">🌐 Online List</option>
           </Select>
           <Select value={String(activeSlot)} onChange={e => { setActiveSlot(Number(e.target.value)); setEditing(null); }}>
             {slots.map(slot => (
@@ -163,7 +164,7 @@ export function KillfeedTab({ guildId, isOwner, slots }: { guildId: string; isOw
           onClick={() => { setKind('PLAYER_LIST'); setEditing(null); }}
           className={`rounded-lg border px-3 py-2 text-sm ${kind === 'PLAYER_LIST' ? 'border-accent text-white bg-accent/10' : 'border-border text-muted'}`}
         >
-          🎮 Player List Feed
+          🌐 Online List
         </button>
       </div>
 
@@ -188,7 +189,7 @@ export function KillfeedTab({ guildId, isOwner, slots }: { guildId: string; isOw
                 <div className="flex flex-wrap gap-1 mt-1.5">
                   {config.categories.map(category => {
                     const meta = categoryMeta(kind, category);
-                    return <span key={category} className="text-[10px] bg-bg-elev border border-border px-1.5 py-0.5 rounded">{meta.icon} {meta.label}</span>;
+                    return meta ? <span key={category} className="text-[10px] bg-bg-elev border border-border px-1.5 py-0.5 rounded">{meta.icon} {meta.label}</span> : null;
                   })}
                 </div>
                 <div className="text-[11px] text-muted mt-2 space-y-0.5">
@@ -200,9 +201,11 @@ export function KillfeedTab({ guildId, isOwner, slots }: { guildId: string; isOw
                     <div>Letzter Erfolg: <span className="text-white">{config.lastSuccessAt ? new Date(config.lastSuccessAt).toLocaleString() : '—'}</span></div>
                   </>}
                   {kind === 'PLAYER_LIST' && <>
-                    <div>Player-List-Feed: <span className="text-white">{config.isActive ? 'Aktiv' : 'Inaktiv'}</span> · Koordinaten: <span className="text-white">{config.showActorCoords ? 'Aktiv' : 'Inaktiv'}</span></div>
+                    <div>Online List: <span className="text-white">{config.isActive ? 'Aktiv' : 'Inaktiv'}</span> · Koordinaten: <span className="text-white">{config.showActorCoords ? 'Aktiv' : 'Inaktiv'}</span></div>
+                    <div>Intervall: <span className="text-white">{config.playerListIntervalMinutes ? `alle ${config.playerListIntervalMinutes} Min.` : 'Aus – nur bei Änderung'}</span></div>
                     <div>Spieler online: <span className="text-white">{config.lastPlayerCount ?? '—'}</span></div>
-                    <div>Letzte Listen-Aktualisierung: <span className="text-white">{config.lastPlayerListAt ? new Date(config.lastPlayerListAt).toLocaleString() : '—'}</span></div>
+                    <div>Letzte Online-List-Aktualisierung: <span className="text-white">{config.lastPlayerListAt ? new Date(config.lastPlayerListAt).toLocaleString() : '—'}</span></div>
+                    {config.playerListIntervalMinutes && <div>Nächster Intervall-Post: <span className="text-white">{config.nextPlayerListPostAt ? new Date(config.nextPlayerListPostAt).toLocaleString() : 'beim nächsten Poll'}</span></div>}
                   </>}
                   {config.lastErrorMsg && <div className="text-danger break-words">⚠ {config.lastErrorMsg}</div>}
                 </div>
@@ -297,6 +300,7 @@ function FeedEditor({
   const [showTool, setShowTool] = useState(existing?.showTool ?? true);
   const [showDistance, setShowDistance] = useState(existing?.showDistance ?? (kind === 'DEATH'));
   const [embedColor, setEmbedColor] = useState(existing?.embedColor ?? (kind === 'BUILD' ? '#eab308' : kind === 'PLAYER_LIST' ? '#2563eb' : '#dc2626'));
+  const [playerListIntervalMinutes, setPlayerListIntervalMinutes] = useState<number | null>(existing?.playerListIntervalMinutes ?? null);
   const [isActive, setIsActive] = useState(existing?.isActive ?? true);
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
@@ -316,7 +320,17 @@ function FeedEditor({
     }
     setBusy(true);
     try {
-      const body = { channelId, categories, showActorCoords, showTargetCoords, showTool, showDistance, embedColor, isActive };
+      const body = {
+        channelId,
+        categories,
+        showActorCoords,
+        showTargetCoords,
+        showTool,
+        showDistance,
+        embedColor,
+        isActive,
+        ...(kind === 'PLAYER_LIST' ? { playerListIntervalMinutes } : {}),
+      };
       const base = `/api/v2/guilds/${guildId}/killfeed`;
       if (existing) await api.patch(`${base}/${existing.id}?slot=${slot}&kind=${kind}`, body);
       else await api.post(`${base}?slot=${slot}&kind=${kind}`, body);
@@ -338,7 +352,7 @@ function FeedEditor({
         className="w-full max-w-2xl max-h-[92vh] overflow-y-auto rounded-2xl border border-border bg-bg-card p-5 shadow-2xl outline-none"
         onClick={event => event.stopPropagation()}
       >
-        <h3 className="text-lg font-semibold text-white">{kind === 'DEATH' ? 'Deathfeed' : kind === 'BUILD' ? 'Baufeed' : 'Player List Feed'} konfigurieren</h3>
+        <h3 className="text-lg font-semibold text-white">{kind === 'DEATH' ? 'Deathfeed' : kind === 'BUILD' ? 'Baufeed' : '🌐 Online List'} konfigurieren</h3>
         <div className="grid gap-4 mt-4">
           <label className="text-sm text-muted">Discord-Channel
             <Select className="mt-1 w-full" value={channelId} onChange={event => setChannelId(event.target.value)}>
@@ -352,6 +366,7 @@ function FeedEditor({
             <div className="grid sm:grid-cols-2 gap-2">
               {available.map(category => {
                 const meta = categoryMeta(kind, category);
+                if (!meta) return null;
                 return (
                   <label key={category} className="flex items-center gap-2 rounded-lg border border-border p-2 text-sm text-white">
                     <input type="checkbox" checked={categories.includes(category)} onChange={() => toggleCategory(category)} />
@@ -369,6 +384,23 @@ function FeedEditor({
             {kind === 'DEATH' && <label className="flex items-center gap-2"><input type="checkbox" checked={showDistance} onChange={e => setShowDistance(e.target.checked)} />Distanz</label>}
             <label className="flex items-center gap-2"><input type="checkbox" checked={isActive} onChange={e => setIsActive(e.target.checked)} />Aktiv</label>
           </div>
+
+          {kind === 'PLAYER_LIST' && (
+            <label className="text-sm text-muted">Online-List-Intervall
+              <Select
+                className="mt-1 w-full"
+                value={playerListIntervalMinutes === null ? 'off' : String(playerListIntervalMinutes)}
+                onChange={event => setPlayerListIntervalMinutes(event.target.value === 'off' ? null : Number(event.target.value))}
+              >
+                <option value="off">Aus – nur bei Änderung</option>
+                <option value="5">Alle 5 Minuten</option>
+                <option value="10">Alle 10 Minuten</option>
+                <option value="15">Alle 15 Minuten</option>
+                <option value="30">Alle 30 Minuten</option>
+                <option value="60">Alle 60 Minuten</option>
+              </Select>
+            </label>
+          )}
 
           <label className="text-sm text-muted">Embed-Farbe
             <Input className="mt-1" value={embedColor} onChange={event => setEmbedColor(event.target.value)} placeholder="#dc2626" />

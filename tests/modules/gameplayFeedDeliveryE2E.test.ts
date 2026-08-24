@@ -76,7 +76,7 @@ function feedConfig() {
     kind: 'DEATH',
     channelId: CHANNEL_ID,
     isActive: true,
-    categories: ['PVP', 'DEATH', 'SUICIDE', 'NPC', 'VEHICLE'],
+    categories: ['PVP', 'SUICIDE', 'NPC', 'VEHICLE'],
     showActorCoords: true,
     showTargetCoords: true,
     showTool: true,
@@ -90,6 +90,8 @@ function feedConfig() {
     lastStateHash: null,
     lastPlayerCount: null,
     lastPlayerListAt: null,
+    playerListIntervalMinutes: null,
+    nextPlayerListPostAt: null,
     lastEventAt: null,
     lastPolledAt: null,
     lastErrorMsg: null,
@@ -178,12 +180,12 @@ beforeEach(() => {
   configFindFirst.mockImplementation((args: { where?: { id?: string; isActive?: boolean } }) => (
     args?.where?.id === 'feed-1' && args.where.isActive === true ? { id: 'feed-1' } : null
   ));
-  connectionFind.mockResolvedValue({ id: CONN_ID });
+  connectionFind.mockResolvedValue({ id: CONN_ID, alias: 'Chernarus #1' });
   queryRaw.mockResolvedValue([{ id: 'feed-1' }]);
 });
 
 describe('produktive ADM -> Discord Gameplay-Feed-Kette', () => {
-  it('sendet einen neu gelesenen PvP-Kill clean, mit Kartenlinks und stabiler Discord-Nonce', async () => {
+  it('sendet einen neu gelesenen PvP-Kill im abgestimmten V-Kill-Layout mit Kartenlinks und Serveralias', async () => {
     const event = await persistedPvpEvent();
     const config = feedConfig();
     const delivery = pendingDelivery();
@@ -220,15 +222,17 @@ describe('produktive ADM -> Discord Gameplay-Feed-Kette', () => {
 
     const payload = send.mock.calls[0][0];
     const embed = payload.embeds[0].toJSON();
-    expect(embed.title).toBe('💀 PvP-Kill');
+    expect(embed.title).toBe('💀 V-Kill Report');
     expect(embed.fields).toEqual(expect.arrayContaining([
-      expect.objectContaining({ name: 'Opfer', value: 'Victim' }),
-      expect.objectContaining({ name: 'Killer', value: 'Killer' }),
+      expect.objectContaining({ name: 'Killer', value: 'Killer\nPos: [110,210,10](https://www.izurvive.com/#location=110;210;6)' }),
+      expect.objectContaining({ name: 'Opfer', value: 'Victim\nPos: [100,200,10](https://www.izurvive.com/#location=100;200;6)' }),
       expect.objectContaining({ name: 'Waffe', value: 'M4-A1' }),
       expect.objectContaining({ name: 'Distanz', value: '42.5 m' }),
-      expect.objectContaining({ name: 'Opfer-Position', value: '[100,200,10](https://www.izurvive.com/#location=100;200;6)' }),
-      expect.objectContaining({ name: 'Killer-Position', value: '[110,210,10](https://www.izurvive.com/#location=110;210;6)' }),
+      expect.objectContaining({ name: 'Server', value: 'Chernarus #1' }),
     ]));
+    const fieldNames = (embed.fields ?? []).map((field: { name: string }) => field.name);
+    expect(fieldNames).not.toContain('Opfer-Position');
+    expect(fieldNames).not.toContain('Killer-Position');
     expect(embed.footer).toBeUndefined();
     expect(embed.timestamp).toBeUndefined();
     expect(payload.nonce).toBe(event.id.slice(0, 25));
@@ -250,7 +254,7 @@ describe('produktive ADM -> Discord Gameplay-Feed-Kette', () => {
     }));
   });
 
-  it('unterdrueckt den generischen Tod, wenn derselbe Spieler direkt als Suizid erkannt wurde', async () => {
+  it('nimmt den generischen PLAYER_DIED-Typ nicht mehr in den Discord-Deathfeed-Scan auf', async () => {
     const config = feedConfig();
     const suicide = {
       id: 'suicide-event-1',
@@ -275,13 +279,17 @@ describe('produktive ADM -> Discord Gameplay-Feed-Kette', () => {
     };
 
     configFind.mockResolvedValue([config]);
+    // Der Mock liefert absichtlich mehr als die echte DB-Query. categoryAllowed
+    // muss den retired Typ zusaetzlich fail-closed ablehnen.
     eventFindMany.mockResolvedValue([suicide, genericDeath]);
-    eventFindFirst.mockImplementation(async (args: { where?: { eventType?: { in?: string[] } } }) => (
-      args?.where?.eventType?.in ? { id: suicide.id } : null
-    ));
 
     await runGameplayFeedsOnce();
 
+    const scan = eventFindMany.mock.calls.find(call => call[0]?.where?.eventType?.in)?.[0];
+    expect(scan?.where?.eventType?.in).toEqual(expect.arrayContaining([
+      'PLAYER_KILLED', 'PLAYER_SUICIDE', 'NPC_KILL', 'VEHICLE_DEATH',
+    ]));
+    expect(scan?.where?.eventType?.in).not.toContain('PLAYER_DIED');
     expect(deliveryCreate).toHaveBeenCalledTimes(1);
     expect(deliveryCreate).toHaveBeenCalledWith({
       data: expect.objectContaining({ admEventId: suicide.id, status: 'PENDING' }),

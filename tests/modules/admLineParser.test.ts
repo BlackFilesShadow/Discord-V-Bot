@@ -9,7 +9,7 @@ function ctxWithDate() {
 
 describe('admLineParser — Golden', () => {
   it('verwendet die neue Parser-Version fuer korrigierte Feed-Semantik', () => {
-    expect(ADM_PARSER_VERSION).toBe(2);
+    expect(ADM_PARSER_VERSION).toBe(3);
   });
 
   it('erkennt den Header und setzt das Basisdatum', () => {
@@ -59,19 +59,28 @@ describe('admLineParser — Golden', () => {
     expect(ev?.distanceMeters).toBeCloseTo(300.5);
   });
 
-  it('trennt normalen Tod, Suizid und NPC-Tod', () => {
+  it('trennt normalen Tod, Suizid und Wild-Tod', () => {
     expect(parseAdmLine('18:08:00 | Player "Alpha" (DEAD) (id=1 pos=<1,2,3>) died. Stats> Water: 0.0', ctxWithDate())?.eventType).toBe('PLAYER_DIED');
     expect(parseAdmLine('18:09:00 | Player "Alpha" (DEAD) (id=1 pos=<1,2,3>) committed suicide', ctxWithDate())?.eventType).toBe('PLAYER_SUICIDE');
-    const npc = parseAdmLine('18:10:00 | Player "Delta" (DEAD) (id=4 pos=<5,6,7>) killed by Wolf', ctxWithDate());
-    expect(npc?.eventType).toBe('NPC_KILL');
-    expect(npc?.targetName).toBe('Wolf');
+    const wild = parseAdmLine('18:10:00 | Player "Delta" (DEAD) (id=4 pos=<5,6,7>) killed by Wolf', ctxWithDate());
+    expect(wild?.eventType).toBe('NPC_KILL');
+    expect(wild?.targetName).toBe('Wolf');
   });
 
-  it('klassifiziert nicht-toedlichen Vehicle-Hit nicht als Fahrzeug-Tod', () => {
+  it('uebernimmt eine Suizidwaffe nur wenn sie in der ADM-Zeile belegt ist', () => {
+    const withWeapon = parseAdmLine('18:09:01 | Player "Alpha" (DEAD) (id=1 pos=<1,2,3>) committed suicide with IJ-70', ctxWithDate());
+    const withoutWeapon = parseAdmLine('18:09:02 | Player "Alpha" (DEAD) (id=1 pos=<1,2,3>) committed suicide', ctxWithDate());
+    expect(withWeapon?.eventType).toBe('PLAYER_SUICIDE');
+    expect(withWeapon?.toolOrWeapon).toBe('IJ-70');
+    expect(withoutWeapon?.toolOrWeapon).toBeNull();
+  });
+
+  it('klassifiziert nicht-toedlichen Vehicle-Hit nicht als Fahrzeug-Tod und erhaelt beim Crash das Fahrzeug', () => {
     const hit = parseAdmLine('18:11:00 | Player "Echo" (id=5 pos=<8,9,10>) hit by [vehicle] OffroadHatchback at speed 35 km/h', ctxWithDate());
     expect(hit?.eventType).toBe('PLAYER_HIT');
     const fatal = parseAdmLine('18:11:01 | Player "Echo" (DEAD) (id=5 pos=<8,9,10>) hit by [vehicle] OffroadHatchback at speed 78 km/h', ctxWithDate());
     expect(fatal?.eventType).toBe('VEHICLE_DEATH');
+    expect(fatal?.targetName).toBe('OffroadHatchback');
   });
 
   it('parst Placement, Build, Dismantle und Destroy inklusive Werkzeug', () => {

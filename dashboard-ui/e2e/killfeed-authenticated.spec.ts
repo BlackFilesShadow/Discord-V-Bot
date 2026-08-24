@@ -19,7 +19,7 @@ function feed(overrides: Record<string, unknown> = {}) {
     nitradoConnId: 'conn-1',
     channelId: CHANNEL_ID,
     isActive: true,
-    categories: ['PVP', 'DEATH'],
+    categories: ['PVP', 'SUICIDE'],
     showActorCoords: true,
     showTargetCoords: false,
     showTool: true,
@@ -28,6 +28,8 @@ function feed(overrides: Record<string, unknown> = {}) {
     lastEventAt: '2026-08-19T09:00:00.000Z',
     lastPolledAt: '2026-08-19T09:01:00.000Z',
     lastErrorMsg: null,
+    playerListIntervalMinutes: null,
+    nextPlayerListPostAt: null,
     ...overrides,
   };
 }
@@ -66,6 +68,8 @@ async function stub(page: Page, opts: { saveFailure?: boolean; listFailure?: boo
           showActorCoords: false,
           lastPlayerCount: 3,
           lastPlayerListAt: '2026-08-19T09:01:00.000Z',
+          playerListIntervalMinutes: 15,
+          nextPlayerListPostAt: '2026-08-19T09:15:00.000Z',
         } : { kind })],
       });
     }
@@ -123,7 +127,7 @@ test.describe('Authenticated Killfeed & ADM', () => {
       query: `?slot=${SLOT}&kind=DEATH`,
       body: {
         channelId: CHANNEL_ID,
-        categories: ['PVP', 'DEATH', 'SUICIDE', 'NPC', 'VEHICLE'],
+        categories: ['PVP', 'SUICIDE', 'NPC', 'VEHICLE'],
         showActorCoords: true,
         showTargetCoords: false,
         showTool: true,
@@ -175,19 +179,21 @@ test.describe('Authenticated Killfeed & ADM', () => {
     await expect(toggle).toBeEnabled();
   });
 
-  test('Player List Feed hat eigenen Scope, Observability und unabhängigen Koordinaten-Schalter', async ({ page }) => {
+  test('Online List hat eigenen Scope, Observability, Koordinaten-Schalter und Intervall', async ({ page }) => {
     const mutations = await stub(page);
     await page.goto(`/servers/${GUILD_ID}/server/${SLOT}?tab=killfeed`);
-    await page.getByRole('button', { name: /Player List Feed/ }).click();
+    await page.getByRole('button', { name: /Online List/ }).click();
 
     await expect(page.getByText('Spieler online:').locator('..')).toContainText('3');
-    await expect(page.getByText('Player-List-Feed:').locator('..')).toContainText('Aktiv · Koordinaten: Inaktiv');
+    await expect(page.getByText('Online List:').locator('..')).toContainText('Aktiv · Koordinaten: Inaktiv');
+    await expect(page.getByText('Intervall:').locator('..')).toContainText('alle 15 Min.');
 
     await page.getByRole('button', { name: /Neu/ }).click();
     const dialog = page.getByRole('dialog');
-    await expect(dialog.getByRole('heading', { name: 'Player List Feed konfigurieren' })).toBeVisible();
+    await expect(dialog.getByRole('heading', { name: '🌐 Online List konfigurieren' })).toBeVisible();
     await dialog.getByLabel('Discord-Channel').selectOption(CHANNEL_ID);
     await dialog.getByLabel('Koordinaten anzeigen').uncheck();
+    await dialog.getByLabel('Online-List-Intervall').selectOption('30');
     await dialog.getByRole('button', { name: 'Speichern' }).click();
 
     await expect.poll(() => mutations.find(row => row.method === 'POST' && row.query.includes('kind=PLAYER_LIST'))).toBeTruthy();
@@ -198,6 +204,7 @@ test.describe('Authenticated Killfeed & ADM', () => {
         channelId: CHANNEL_ID,
         categories: [],
         showActorCoords: false,
+        playerListIntervalMinutes: 30,
         isActive: true,
       }),
     });

@@ -123,7 +123,7 @@ export function buildPlayerListEmbeds(args: {
   for (let index = 0; index < chunks.length; index++) {
     const embed = new EmbedBuilder()
       .setColor(parseHex(args.embedColor))
-      .setTitle(index === 0 ? '🎮 Player List' : `🎮 Player List · Fortsetzung ${index + 1}`);
+      .setTitle(index === 0 ? '🌐 Online List' : `🌐 Online List · Fortsetzung ${index + 1}`);
 
     if (index === 0) {
       embed.addFields(
