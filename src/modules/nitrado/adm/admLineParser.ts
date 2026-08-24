@@ -6,7 +6,7 @@
  * IANA-Zeitzone konfiguriert ist, werden sie DST-sicher nach UTC aufgeloest.
  */
 
-export const ADM_PARSER_VERSION = 2;
+export const ADM_PARSER_VERSION = 3;
 
 export type AdmParsedType =
   | 'PLAYER_CONNECTED'
@@ -184,13 +184,27 @@ function parseBuildAction(content: string): { type: AdmParsedType; object: strin
   return object ? { type, object, tool } : null;
 }
 
-function extractWeapon(killerSegment: string): string | null {
-  const withIndex = killerSegment.search(/\bwith\s+/i);
+function extractWeapon(segment: string): string | null {
+  const withIndex = segment.search(/\bwith\s+/i);
   if (withIndex < 0) return null;
-  let weapon = killerSegment.slice(withIndex).replace(/^.*?\bwith\s+/i, '');
+  let weapon = segment.slice(withIndex).replace(/^.*?\bwith\s+/i, '');
   weapon = weapon.replace(/\s+from\s+[\d.]+\s*m(?:eters?)?\s*$/i, '');
   weapon = weapon.trim().replace(/[.\s]+$/, '');
   return weapon || null;
+}
+
+function extractVehicleCause(segment: string): string | null {
+  let cause = segment;
+  const hitBy = cause.search(/\bhit by\b/i);
+  if (hitBy >= 0) cause = cause.slice(hitBy + 'hit by'.length);
+  const killedBy = cause.search(/\bkilled by\b/i);
+  if (killedBy >= 0) cause = cause.slice(killedBy + 'killed by'.length);
+  cause = cause
+    .replace(/^\s*\[vehicle\]\s*/i, '')
+    .replace(/\s+at speed\s+\d+(?:\.\d+)?\s*km\/h.*$/i, '')
+    .replace(/[.\s]+$/, '')
+    .trim();
+  return cause || null;
 }
 
 function isBarePlayerPosition(content: string): boolean {
@@ -242,7 +256,11 @@ export function parseAdmLine(line: string, ctx: AdmDateContext): ParsedAdmEvent 
   }
 
   if (/committed suicide/i.test(content)) {
-    return finalize(fill(content, 'PLAYER_SUICIDE', extractActor(content)));
+    const event = fill(content, 'PLAYER_SUICIDE', extractActor(content));
+    // Manche ADM-Varianten liefern die verwendete Waffe nach "with" mit.
+    // Wenn sie fehlt, bleibt das Feld null statt eine Ursache zu erfinden.
+    event.toolOrWeapon = extractWeapon(content);
+    return finalize(event);
   }
 
   const killedByIndex = content.search(/\bkilled by\b/i);
@@ -257,7 +275,7 @@ export function parseAdmLine(line: string, ctx: AdmDateContext): ParsedAdmEvent 
 
     if (/^\[vehicle\]/i.test(killerSegment) || /\bat speed\s+\d+(?:\.\d+)?\s*km\/h/i.test(killerSegment)) {
       event.eventType = 'VEHICLE_DEATH';
-      event.targetName = killerSegment.replace(/^\[vehicle\]\s*/i, '').replace(/\s+at speed.*$/i, '').trim() || null;
+      event.targetName = extractVehicleCause(killerSegment);
       return finalize(event);
     }
 
@@ -285,7 +303,9 @@ export function parseAdmLine(line: string, ctx: AdmDateContext): ParsedAdmEvent 
   if (/\bhit by\b/i.test(content)) {
     const fatalVehicle = /\(DEAD\)/i.test(content)
       && (/\[vehicle\]/i.test(content) || /\bat speed\s+\d+(?:\.\d+)?\s*km\/h/i.test(content));
-    return finalize(fill(content, fatalVehicle ? 'VEHICLE_DEATH' : 'PLAYER_HIT', extractActor(content)));
+    const event = fill(content, fatalVehicle ? 'VEHICLE_DEATH' : 'PLAYER_HIT', extractActor(content));
+    if (fatalVehicle) event.targetName = extractVehicleCause(content);
+    return finalize(event);
   }
 
   const build = parseBuildAction(content);
