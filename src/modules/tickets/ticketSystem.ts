@@ -38,6 +38,11 @@ import {
 import prisma from '../../database/prisma';
 import { logger, logAudit } from '../../utils/logger';
 import { config } from '../../config';
+import {
+  archiveTranscriptAttachments,
+  isInlineTranscriptImage,
+  type TranscriptArchivedAttachment,
+} from './transcriptAttachmentArchive';
 
 const TRANSCRIPT_MAX_MSGS = 1000;
 const MAX_WELCOME_MESSAGES = 5;
@@ -197,7 +202,7 @@ interface CollectedMessage {
   isBot: boolean;
   createdAt: Date;
   content: string;
-  attachments: Array<{ name: string; url: string }>;
+  attachments: TranscriptArchivedAttachment[];
   hasEmbeds: boolean;
 }
 
@@ -206,9 +211,16 @@ function collectMessage(m: Message): CollectedMessage {
     ?? m.author?.globalName
     ?? m.author?.username
     ?? 'Unbekannt';
-  const attachments: Array<{ name: string; url: string }> = [];
+  const attachments: TranscriptArchivedAttachment[] = [];
   for (const a of m.attachments.values()) {
-    attachments.push({ name: a.name ?? 'attachment', url: a.url });
+    attachments.push({
+      id: a.id,
+      name: a.name ?? 'attachment',
+      url: a.url,
+      contentType: a.contentType ?? null,
+      size: a.size,
+      archivedDataUrl: null,
+    });
   }
   return {
     id: m.id,
@@ -283,9 +295,18 @@ function buildTranscriptHtml(meta: TranscriptMeta, msgs: CollectedMessage[]): st
       ? htmlEscape(m.content).replace(/\n/g, '<br>')
       : (m.hasEmbeds ? '<em class="muted">[Embed]</em>' : '<em class="muted">[ohne Text]</em>');
     const atts = m.attachments.length === 0 ? '' :
-      `<div class="atts">${m.attachments.map(a =>
-        `<a href="${htmlEscape(a.url)}" target="_blank" rel="noopener">📎 ${htmlEscape(a.name)}</a>`,
-      ).join('')}</div>`;
+    `<div class="atts">${m.attachments.map(a => {
+      const href = a.archivedDataUrl ?? a.url;
+      const safeHref = htmlEscape(href);
+      const safeName = htmlEscape(a.name);
+      const image = a.archivedDataUrl && isInlineTranscriptImage(a.contentType)
+        ? `<img src="${safeHref}" alt="${safeName}" loading="lazy">`
+        : '';
+      const linkAttrs = a.archivedDataUrl
+        ? ` download="${safeName}"`
+        : ' target="_blank" rel="noopener"';
+      return `<div class="att">${image}<a class="att-link" href="${safeHref}"${linkAttrs}>📎 ${safeName}</a></div>`;
+    }).join('')}</div>`;
     return `<div class="msg">
       <div class="hdr"><span class="name">${name}</span>${tag}<span class="ts">${ts}</span></div>
       <div class="body">${body}</div>
@@ -324,10 +345,14 @@ function buildTranscriptHtml(meta: TranscriptMeta, msgs: CollectedMessage[]): st
     background: #2a3440; color: #8ab4f8; }
   .msg .ts { margin-left: auto; color: #7d8896; font-variant-numeric: tabular-nums; font-size: 12px; }
   .msg .body { margin-top: 4px; white-space: pre-wrap; word-wrap: break-word; font-size: 14px; }
-  .msg .atts { margin-top: 6px; display: flex; flex-wrap: wrap; gap: 6px; }
-  .msg .atts a { font-size: 12px; color: #8ab4f8; text-decoration: none;
+  .msg .atts { margin-top: 8px; display: block; }
+  .msg .att { margin-top: 8px; }
+  .msg .att:first-child { margin-top: 0; }
+  .msg .att img { display: block; max-width: 100%; max-height: 720px; width: auto; height: auto;
+    object-fit: contain; border: 1px solid #2a313b; border-radius: 8px; background: #090b0e; margin-bottom: 6px; }
+  .msg .att-link { display: inline-block; font-size: 12px; color: #8ab4f8; text-decoration: none;
     background: #1a2027; padding: 3px 8px; border-radius: 4px; }
-  .msg .atts a:hover { background: #232b34; }
+  .msg .att-link:hover { background: #232b34; }
   .muted { color: #7d8896; }
   footer { margin-top: 28px; text-align: center; font-size: 11px; color: #5d6571; }
 </style>
@@ -541,6 +566,8 @@ export async function  purgeTemplateInstances(client: Client, templateId: string
         collectedMsgs = collected.map(collectMessage);
       }
 
+      const attachmentArchive = await archiveTranscriptAttachments(collectedMsgs);
+
       const meta: TranscriptMeta = {
         ticketLabel: template.label,
         ticketNumber: numStr,
@@ -612,6 +639,8 @@ export async function  purgeTemplateInstances(client: Client, templateId: string
       logAudit('TICKET_CLOSED_SYSTEM', 'TICKET', {
         guildId: inst.guildId, instanceId: inst.id, templateId,
         messages: collectedMsgs.length,
+      archivedAttachments: attachmentArchive.attachmentCount,
+      archivedAttachmentBytes: attachmentArchive.archivedBytes,
       });
       closed++;
     } catch (e) {
@@ -756,14 +785,24 @@ async function openTicketLocked(btn: ButtonInteraction, t: Awaited<ReturnType<ty
     // Globale ticketNumber bleibt als interne Eindeutigkeits-ID erhalten, fuer Channel-Name
     // + Embeds wird die per-Template Nummer verwendet (parallele Nummernkreise pro Template).
     const { createdInstance, templateNumber } = await prisma.$transaction(async (tx) => {
-      const updated = await tx.ticketTemplate.update({
-        where: { id: t.id },
+      // Delete-Fence: ein Button kann kurz vor einer Template-Loeschung geklickt
+      // worden sein. Nur ein weiterhin aktives Template darf den Counter erhoehen
+      // und eine neue Instance erzeugen. Sobald DELETE isActive=false gesetzt hat,
+      // scheitert dieser stale Open-Vorgang atomar.
+      const claimed = await tx.ticketTemplate.updateMany({
+        where: { id: t.id, isActive: true },
         data: { ticketCounter: { increment: 1 } },
+      });
+      if (claimed.count !== 1) throw new Error('TICKET_TEMPLATE_INACTIVE');
+      const updated = await tx.ticketTemplate.findUniqueOrThrow({
+        where: { id: t.id },
         select: { ticketCounter: true },
       });
       const inst = await tx.ticketInstance.create({
         data: {
           templateId: t.id,
+          templateLabelSnapshot: t.label,
+          templateSlotSnapshot: t.slot,
           guildId: guild.id,
           channelId: `pending:${btn.id}`,
           openerDiscordId: btn.user.id,
@@ -851,10 +890,10 @@ async function openTicketLocked(btn: ButtonInteraction, t: Awaited<ReturnType<ty
     // ungenutzt geloescht wird. Nur dekrementieren, wenn die Instance wirklich diese Nummer
     // bekommen hat und der Counter seitdem nicht weitergelaufen ist (Atomar via WHERE-Clause).
     if (instance) {
-      const inst = instance as unknown as { templateNumber?: number | null; templateId: string };
+      const inst = instance as unknown as { templateNumber?: number | null; templateId: string | null };
       const tn = inst.templateNumber;
       await prisma.ticketInstance.delete({ where: { id: instance.id } }).catch(() => {});
-      if (typeof tn === 'number' && tn > 0) {
+      if (inst.templateId && typeof tn === 'number' && tn > 0) {
         await prisma.ticketTemplate.updateMany({
           where: { id: inst.templateId, ticketCounter: tn },
           data: { ticketCounter: { decrement: 1 } },
@@ -864,7 +903,12 @@ async function openTicketLocked(btn: ButtonInteraction, t: Awaited<ReturnType<ty
     if (channel) {
       await channel.delete('Ticket-Open-Fehler, Cleanup').catch(() => {});
     }
-    await btn.editReply({ content: 'Konnte Ticket nicht erstellen. Bitte Admin informieren.' }).catch(() => {});
+    const unavailable = (e as Error).message === 'TICKET_TEMPLATE_INACTIVE';
+    await btn.editReply({
+      content: unavailable
+        ? 'Template ist nicht mehr verfuegbar.'
+        : 'Konnte Ticket nicht erstellen. Bitte Admin informieren.',
+    }).catch(() => {});
   }
 }
 
@@ -898,6 +942,13 @@ async function closeTicketLocked(btn: ButtonInteraction, instanceId: string): Pr
     await btn.reply({ content: 'Ticket bereits geschlossen.', flags: MessageFlags.Ephemeral });
     return;
   }
+  // OPEN-Tickets duerfen niemals ohne Template existieren. Ein null-Template ist
+  // nur fuer bereits CLOSED/archivierte Instanzen nach Template-Loeschung erlaubt.
+  if (!instance.template) {
+    logger.error(`Offenes Ticket ${instance.id} hat kein Template mehr — Close abgebrochen.`);
+    await btn.reply({ content: 'Ticket-Konfiguration fehlt. Bitte Admin informieren.', flags: MessageFlags.Ephemeral });
+    return;
+  }
 
   // Permission-Check: Server-Owner, Discord-Administrator, Staff-Rolle und Manager-Rollen
   // duerfen schliessen — UNABHAENGIG davon, ob sie der Opener sind. (Frueheres hartes
@@ -924,6 +975,7 @@ async function closeTicketLocked(btn: ButtonInteraction, instanceId: string): Pr
 
   await btn.deferReply({ flags: MessageFlags.Ephemeral });
 
+  let lockedChannel: TextChannel | null = null;
   try {
     const channel = await btn.client.channels.fetch(instance.channelId).catch(() => null);
 
@@ -942,6 +994,7 @@ async function closeTicketLocked(btn: ButtonInteraction, instanceId: string): Pr
 
     // G7: Channel sofort sperren, damit waehrend Transcript-Bau keine Messages mehr reinkommen.
     const ch = channel as TextChannel;
+    lockedChannel = ch;
     await ch.permissionOverwrites.edit(btn.guild!.roles.everyone.id, { SendMessages: false }).catch(() => {});
     await ch.permissionOverwrites.edit(instance.openerDiscordId, { SendMessages: false }).catch(() => {});
     if (instance.template.staffRoleId) {
@@ -986,6 +1039,9 @@ async function closeTicketLocked(btn: ButtonInteraction, instanceId: string): Pr
 
     const closedAt = new Date();
     const collectedMsgs = collected.map(collectMessage);
+  // Discord-Attachment-URLs laufen ab. Die Bytes muessen deshalb JETZT,
+  // vor DB-Abschluss und Channel-Loeschung, dauerhaft ins HTML-Archiv.
+  const attachmentArchive = await archiveTranscriptAttachments(collectedMsgs);
     const meta: TranscriptMeta = {
       ticketLabel: instance.template.label,
       ticketNumber: numStr,
@@ -1073,6 +1129,8 @@ async function closeTicketLocked(btn: ButtonInteraction, instanceId: string): Pr
       closedBy: btn.user.id, messages: collectedMsgs.length,
       transcriptBytes: transcriptBuf.length,
       transcriptTruncated,
+    archivedAttachments: attachmentArchive.attachmentCount,
+    archivedAttachmentBytes: attachmentArchive.archivedBytes,
     });
 
     await btn.editReply({ content: 'Ticket geschlossen. Channel wird in 5 Sekunden geloescht.' });
@@ -1080,13 +1138,27 @@ async function closeTicketLocked(btn: ButtonInteraction, instanceId: string): Pr
       ch.delete('Ticket geschlossen').catch(() => {});
     }, 5000);
   } catch (e) {
-    logger.error('Ticket-Close-Fehler', e as Error);
-    logAudit('TICKET_CLOSE_FAILED', 'TICKET', {
-      guildId: instance.guildId, instanceId: instance.id,
-      closedBy: btn.user.id, error: (e as Error).message,
-    });
-    await btn.editReply({ content: 'Konnte Ticket nicht schliessen. Bitte Admin informieren.' }).catch(() => {});
+  const error = e as Error;
+  logger.error('Ticket-Close-Fehler', error);
+  logAudit('TICKET_CLOSE_FAILED', 'TICKET', {
+    guildId: instance.guildId, instanceId: instance.id,
+    closedBy: btn.user.id, error: error.message,
+  });
+  // Fail-closed: Bei einem Archivfehler den Ticket-Channel NICHT loeschen und
+  // die zuvor gesetzten Schreibrechte fuer Opener/Staff wiederherstellen.
+  if (lockedChannel) {
+    await lockedChannel.permissionOverwrites.edit(instance.openerDiscordId, { SendMessages: true }).catch(() => {});
+    if (instance.template.staffRoleId) {
+      await lockedChannel.permissionOverwrites.edit(instance.template.staffRoleId, { SendMessages: true }).catch(() => {});
+    }
   }
+  const archiveFailed = error.message.startsWith('Ticket-Anh');
+  await btn.editReply({
+    content: archiveFailed
+      ? 'Ticket wurde NICHT geschlossen: Mindestens ein Bild/Anhang konnte nicht vollstaendig archiviert werden. Der Ticket-Channel bleibt erhalten. Bitte erneut versuchen oder einen Admin informieren.'
+      : 'Konnte Ticket nicht schliessen. Bitte Admin informieren.',
+  }).catch(() => {});
+}
 }
 
 /**
@@ -1234,7 +1306,7 @@ export async function handleAddUserSelect(select: UserSelectMenuInteraction): Pr
  * Owner / Discord-Administrator / Staff-Rolle / Manager-Rolle duerfen das Ticket verwalten.
  */
 type TicketWithTemplate = Awaited<ReturnType<typeof prisma.ticketInstance.findUnique>> & {
-  template: { staffRoleId: string | null; managerRoleIds?: unknown };
+  template: { staffRoleId: string | null; managerRoleIds?: unknown } | null;
 };
 
 async function canManageTicket(btn: ButtonInteraction, instance: TicketWithTemplate | null): Promise<boolean> {
@@ -1260,6 +1332,10 @@ function canManageTicketForMember(
   if (guildOwnerId && member.id === guildOwnerId) return true;
   // Discord-Administrator-Bypass: Server-Admins duerfen Ticket-Verwaltung machen.
   if (member.permissions && member.permissions.has(PermissionFlagsBits.Administrator)) return true;
+  // Nach einer Template-Loeschung bleibt das CLOSED Ticket als Archiv bestehen.
+  // Ohne Template sind historische Staff-/Manager-Rollen nicht mehr belastbar;
+  // Owner/Admin duerfen das Archiv weiterhin verwalten, andere werden abgewiesen.
+  if (!instance.template) return false;
   if (instance.template.staffRoleId && member.roles.cache.has(instance.template.staffRoleId)) return true;
   const managerRoleIds = (instance.template as unknown as { managerRoleIds?: unknown }).managerRoleIds;
   if (Array.isArray(managerRoleIds)) {
@@ -1366,7 +1442,7 @@ export async function handleCloseReasonModal(modal: ModalSubmitInteraction): Pro
   // Embed im Transcript-Channel komplett neu rendern (sicherer als Field-Index-Patch).
   const tmId = (inst as unknown as { transcriptMessageId?: string | null }).transcriptMessageId;
   let embedPatched = false;
-  if (tmId) {
+  if (tmId && inst.template) {
     try {
       const ch = await modal.client.channels.fetch(inst.template.transcriptChannelId).catch(() => null);
       if (ch && ch.isTextBased() && !ch.isDMBased()) {
@@ -1377,7 +1453,7 @@ export async function handleCloseReasonModal(modal: ModalSubmitInteraction): Pro
             where: { id: inst.id },
             include: { template: true },
           });
-          if (fresh) {
+          if (fresh?.template) {
             const fAny = fresh as unknown as {
               templateNumber?: number | null; ticketNumber?: number;
               closedByName?: string | null; claimedByName?: string | null;

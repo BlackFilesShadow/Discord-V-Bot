@@ -1139,10 +1139,12 @@ model TicketInstance {
   // Pro-Template fortlaufende Nummer. Wird beim Open atomar aus TicketTemplate.ticketCounter
   // gezogen und fuer Channel-Name + Embed + Transcript verwendet. Nullable fuer Legacy-Rows
   // vor der Migration 20260504_ticket_per_template_counter.
-  templateNumber      Int?
-  templateId          String
-  template            TicketTemplate @relation(fields: [templateId], references: [id], onDelete: Cascade)
-  guildId             String
+  templateNumber         Int?
+  templateId             String?
+  template               TicketTemplate? @relation(fields: [templateId], references: [id], onDelete: SetNull)
+  templateLabelSnapshot  String
+  templateSlotSnapshot   Int
+  guildId                String
   channelId           String         @unique // Discord-Channel des Tickets
   openerDiscordId     String
   openerName          String
