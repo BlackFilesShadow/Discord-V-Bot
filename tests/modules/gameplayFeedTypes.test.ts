@@ -21,11 +21,19 @@ const base = {
 };
 
 describe('Gameplay feed category semantics', () => {
-  it('trennt PvP und allgemeinen Tod', () => {
+  it('trennt PvP vom generischen PLAYER_DIED-Rohereignis', () => {
     expect(categoryForEvent('PLAYER_KILLED')).toBe('PVP');
-    expect(categoryForEvent('PLAYER_DIED')).toBe('DEATH');
     expect(kindForEvent('PLAYER_KILLED')).toBe('DEATH');
-    expect(kindForEvent('PLAYER_DIED')).toBe('DEATH');
+
+    // PLAYER_DIED bleibt als ADM-Rohereignis erhalten, ist aber bewusst kein
+    // zustellbarer Gameplay-Feed mehr. Dadurch wird kein unzuverlaessiger
+    // generischer Todesgrund als eigener Discord-Report dargestellt.
+    expect(categoryForEvent('PLAYER_DIED')).toBeNull();
+    expect(kindForEvent('PLAYER_DIED')).toBeNull();
+    expect(deriveGameplayFeedView(
+      { ...base, eventType: 'PLAYER_DIED' },
+      { showActorCoords: true, showTargetCoords: true, showTool: true, showDistance: true },
+    )).toBeNull();
   });
 
   it('ordnet alle Bauaktionen dem Baufeed zu', () => {
