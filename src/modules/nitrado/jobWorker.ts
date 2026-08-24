@@ -57,21 +57,16 @@ const JOB_POLL_INTERVAL_MS = 10_000;
 const MAX_PARALLEL = 4;
 const BACKOFF_BASE_SECONDS = 30;
 const CONN_LOCK_RETRY_MS = 1_000;
-// int4 namespace "NITR" fuer per-Connection Advisory Locks.
 const CONN_LOCK_NAMESPACE = 0x4e495452;
 
-// NIT-008: Retention. DONE kurz, DEAD laenger (Diagnose). Sweep max 1x/Stunde.
 const DONE_RETENTION_MS = 7 * 24 * 60 * 60 * 1000;
 const DEAD_RETENTION_MS = 30 * 24 * 60 * 60 * 1000;
 const RETENTION_INTERVAL_MS = 60 * 60 * 1000;
 let lastRetentionAt = 0;
 
-// Temporaere oder manuell aufgehobene Remote-Banns werden mindestens 1x/min zur
-// Removal-Outbox reconciled. REMOVE braucht keinen gespeicherten Klartext-ID.
 const BAN_RECONCILE_INTERVAL_MS = 60_000;
 let lastBanReconcileAt = 0;
 
-// NIT-007: bekannte Operationen. Alles andere -> sofort permanent DEAD.
 const KNOWN_OPERATIONS = new Set([
   'WHITELIST_ADD',
   'WHITELIST_REMOVE',
@@ -90,18 +85,12 @@ export interface NitradoJobQueueSnapshot {
   oldestPendingAgeSeconds: number;
 }
 
-/**
- * Stage 47: Ein produktiver Queue-Snapshot aus der persistenten Outbox.
- * Die vier Statuslabels sind fest und bleiben damit Prometheus-sicher.
- */
 export async function refreshNitradoJobQueueMetrics(now = new Date()): Promise<NitradoJobQueueSnapshot> {
   const [grouped, oldestPending] = await Promise.all([
-    // eslint-disable-next-line local/no-unscoped-prisma-query -- globale Worker-Telemetrie ohne Guild-/User-Labels.
     prisma.nitradoJob.groupBy({
       by: ['status'],
       _count: { _all: true },
     }),
-    // eslint-disable-next-line local/no-unscoped-prisma-query -- globale Worker-Telemetrie; nur Zeitstempel, keine Payload.
     prisma.nitradoJob.findFirst({
       where: { status: 'PENDING' },
       orderBy: { createdAt: 'asc' },
@@ -219,16 +208,11 @@ async function requeueForConnectionLock(claim: NitradoJobClaim): Promise<void> {
   }
 }
 
-/**
- * Legt Removal-Jobs fuer Remote-Banns an, die lokal bereits aufgehoben oder
- * zeitlich abgelaufen sind. Dedupe geschieht in banOutbox.
- */
 async function reconcileRemoteBanRemovals(now: Date): Promise<void> {
   if (Date.now() - lastBanReconcileAt < BAN_RECONCILE_INTERVAL_MS) return;
   lastBanReconcileAt = Date.now();
 
   try {
-    // eslint-disable-next-line local/no-unscoped-prisma-query -- absichtlicher globaler Reconcile ueber die eigene Ban-Registry; jeder erzeugte Job traegt Guild+Connection-Scope.
     const rows = await prisma.serverBanEntry.findMany({
       where: {
         appliedRemotely: true,
@@ -253,11 +237,6 @@ async function reconcileRemoteBanRemovals(now: Date): Promise<void> {
   }
 }
 
-/**
- * Nitrado-1B: Ein Retry darf niemals seine historische Operation ueber den
- * aktuellen lokalen Whitelist-Sollzustand stellen. Superseded Jobs werden erst
- * NACH garantiertem Gegen-Intent tokengefencet DONE quittiert.
- */
 async function finishSupersededWhitelistJob(args: {
   claim: NitradoJobClaim;
   operation: 'WHITELIST_ADD' | 'WHITELIST_REMOVE';
@@ -317,7 +296,6 @@ export async function executeJob(claim: NitradoJobClaim): Promise<void> {
     }, NITRADO_JOB_HEARTBEAT_INTERVAL_MS);
     heartbeatTimer.unref?.();
 
-    // eslint-disable-next-line local/no-unscoped-prisma-query -- Claim traegt Job-ID+Guild; die Lease wurde davor exakt fuer diesen Scope erneuert.
     const job = await prisma.nitradoJob.findUnique({ where: { id: claim.id } });
     if (!job || job.guildId !== claim.guildId || job.status !== 'RUNNING') return;
 
@@ -526,9 +504,10 @@ export async function executeJob(claim: NitradoJobClaim): Promise<void> {
               });
             }
 
-            await ensureClaimOwned();
-            await client.removeFromWhitelist(conn.nitradoServerId, sensitiveIdentifier);
-
+            // Safety ordering: ein Spieler darf niemals zuerst aus der Whitelist
+            // verschwinden und danach wegen eines Ban-Backend-Fehlers ungebanned
+            // bleiben. Der Remote-Ban wird daher zuerst gelesen/gesetzt und von
+            // NitradoClient frisch bestaetigt. Erst danach folgt Whitelist-Remove.
             const before = await client.getBanlist(conn.nitradoServerId);
             const alreadyRemote = before.some(e =>
               matchesBanIdentifier(e.identifier, ban.identityHash, config.security.encryptionKey),
@@ -537,6 +516,9 @@ export async function executeJob(claim: NitradoJobClaim): Promise<void> {
               await ensureClaimOwned();
               await client.addToBanlist(conn.nitradoServerId, sensitiveIdentifier);
             }
+
+            await ensureClaimOwned();
+            await client.removeFromWhitelist(conn.nitradoServerId, sensitiveIdentifier);
 
             await prisma.serverBanEntry.updateMany({
               where: { id: ban.id, guildId: job.guildId, nitradoConnId: conn.id },
@@ -736,9 +718,7 @@ async function pollOnce(): Promise<void> {
     if (Date.now() - lastRetentionAt > RETENTION_INTERVAL_MS) {
       lastRetentionAt = Date.now();
       const [doneDel, deadDel] = await Promise.all([
-        // eslint-disable-next-line local/no-unscoped-prisma-query -- Retention-Sweep ueber alle Guilds; loescht nur eigene, abgeschlossene Outbox-Jobs.
         prisma.nitradoJob.deleteMany({ where: { status: 'DONE', updatedAt: { lt: new Date(Date.now() - DONE_RETENTION_MS) } } }),
-        // eslint-disable-next-line local/no-unscoped-prisma-query -- Retention-Sweep ueber alle Guilds; loescht nur eigene, DEAD-Outbox-Jobs.
         prisma.nitradoJob.deleteMany({ where: { status: 'DEAD', updatedAt: { lt: new Date(Date.now() - DEAD_RETENTION_MS) } } }),
       ]);
       if (doneDel.count + deadDel.count > 0) {
@@ -746,7 +726,6 @@ async function pollOnce(): Promise<void> {
       }
     }
 
-    // eslint-disable-next-line local/no-unscoped-prisma-query -- Worker scannt globale Outbox; Scope-Check erfolgt im Claim+executeJob.
     const candidates = await prisma.nitradoJob.findMany({
       where: { status: 'PENDING', nextRunAt: { lte: new Date() } },
       orderBy: { nextRunAt: 'asc' },
@@ -755,7 +734,6 @@ async function pollOnce(): Promise<void> {
     });
     if (candidates.length === 0) return;
 
-    // eslint-disable-next-line local/no-unscoped-prisma-query -- nur RUNNING-Connection-IDs ermitteln
     const runningConns = await prisma.nitradoJob.findMany({
       where: { status: 'RUNNING' },
       select: { nitradoConnId: true },
@@ -801,10 +779,6 @@ export function stopNitradoJobWorker(): void {
   if (timer) { clearInterval(timer); timer = null; }
 }
 
-/**
- * NIT-010: Geordneter Shutdown — stoppt neue Polls und wartet, bis ein evtl.
- * laufender Poll (in-flight Jobs) fertig ist, bevor Prisma getrennt wird.
- */
 export async function drainAndStopJobWorker(timeoutMs = 10_000): Promise<void> {
   stopNitradoJobWorker();
   const start = Date.now();
