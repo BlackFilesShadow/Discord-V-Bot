@@ -18,68 +18,46 @@ jobs:
           ref: fix/ticket-transcript-archive-images
           fetch-depth: 0
 
-      - name: Apply narrow source patch
+      - name: Apply structural source patch
         shell: bash
         run: |
           python3 - <<'PY'
           from pathlib import Path
 
-          def replace_once(text: str, old: str, new: str, label: str) -> str:
+          path = Path('src/modules/tickets/ticketSystem.ts')
+          text = path.read_text()
+
+          def once(old: str, new: str, label: str) -> None:
+              global text
               count = text.count(old)
               if count != 1:
-                  raise SystemExit(f'{label}: expected exactly one match, got {count}')
-              return text.replace(old, new, 1)
+                  raise SystemExit(f'{label}: expected 1 match, got {count}')
+              text = text.replace(old, new, 1)
 
-          ticket_path = Path('src/modules/tickets/ticketSystem.ts')
-          text = ticket_path.read_text()
+          def section(start: str, end: str, replacement: str, label: str) -> None:
+              global text
+              s = text.find(start)
+              if s < 0:
+                  raise SystemExit(f'{label}: start marker missing')
+              e = text.find(end, s + len(start))
+              if e < 0:
+                  raise SystemExit(f'{label}: end marker missing')
+              text = text[:s] + replacement + text[e:]
 
-          text = replace_once(
-              text,
-              "import { config } from '../../config';\n\nconst TRANSCRIPT_MAX_MSGS = 1000;",
+          once(
+              "import { config } from '../../config';",
               """import { config } from '../../config';
           import {
             archiveTranscriptAttachments,
             isInlineTranscriptImage,
             type TranscriptArchivedAttachment,
-          } from './transcriptAttachmentArchive';
-
-          const TRANSCRIPT_MAX_MSGS = 1000;""",
-              'ticket archive import',
+          } from './transcriptAttachmentArchive';""",
+              'archive import',
           )
 
-          text = replace_once(
-              text,
-              '''interface CollectedMessage {
-            id: string;
-            authorId: string;
-            authorName: string;
-            isBot: boolean;
-            createdAt: Date;
-            content: string;
-            attachments: Array<{ name: string; url: string }>;
-            hasEmbeds: boolean;
-          }
-
-          function collectMessage(m: Message): CollectedMessage {
-            const authorName = m.member?.displayName
-              ?? m.author?.globalName
-              ?? m.author?.username
-              ?? 'Unbekannt';
-            const attachments: Array<{ name: string; url: string }> = [];
-            for (const a of m.attachments.values()) {
-              attachments.push({ name: a.name ?? 'attachment', url: a.url });
-            }
-            return {
-              id: m.id,
-              authorId: m.author?.id ?? '0',
-              authorName,
-              isBot: Boolean(m.author?.bot),
-              createdAt: m.createdAt,
-              content: m.content ?? '',
-              attachments,
-              hasEmbeds: m.embeds.length > 0,
-            };
-          }''',
+          section(
+              'interface CollectedMessage {',
+              '\n\ninterface TranscriptMeta {',
               '''interface CollectedMessage {
             id: string;
             authorId: string;
@@ -118,15 +96,12 @@ jobs:
               hasEmbeds: m.embeds.length > 0,
             };
           }''',
-              'collected attachment metadata',
+              'message attachment model',
           )
 
-          text = replace_once(
-              text,
-              '''    const atts = m.attachments.length === 0 ? '' :
-              `<div class="atts">${m.attachments.map(a =>
-                `<a href="${htmlEscape(a.url)}" target="_blank" rel="noopener">📎 ${htmlEscape(a.name)}</a>`,
-              ).join('')}</div>`;''',
+          section(
+              "    const atts = m.attachments.length === 0 ? '' :",
+              '    return `<div class="msg">',
               '''    const atts = m.attachments.length === 0 ? '' :
               `<div class="atts">${m.attachments.map(a => {
                 const href = a.archivedDataUrl ?? a.url;
@@ -139,16 +114,14 @@ jobs:
                   ? ` download="${safeName}"`
                   : ' target="_blank" rel="noopener"';
                 return `<div class="att">${image}<a class="att-link" href="${safeHref}"${linkAttrs}>📎 ${safeName}</a></div>`;
-              }).join('')}</div>`;''',
-              'inline archived image render',
+              }).join('')}</div>`;
+          ''',
+              'attachment html',
           )
 
-          text = replace_once(
-              text,
-              '''  .msg .atts { margin-top: 6px; display: flex; flex-wrap: wrap; gap: 6px; }
-            .msg .atts a { font-size: 12px; color: #8ab4f8; text-decoration: none;
-              background: #1a2027; padding: 3px 8px; border-radius: 4px; }
-            .msg .atts a:hover { background: #232b34; }''',
+          section(
+              '  .msg .atts {',
+              '  .muted {',
               '''  .msg .atts { margin-top: 8px; display: block; }
             .msg .att { margin-top: 8px; }
             .msg .att:first-child { margin-top: 0; }
@@ -156,187 +129,104 @@ jobs:
               object-fit: contain; border: 1px solid #2a313b; border-radius: 8px; background: #090b0e; margin-bottom: 6px; }
             .msg .att-link { display: inline-block; font-size: 12px; color: #8ab4f8; text-decoration: none;
               background: #1a2027; padding: 3px 8px; border-radius: 4px; }
-            .msg .att-link:hover { background: #232b34; }''',
-              'attachment transcript css',
+            .msg .att-link:hover { background: #232b34; }
+          ''',
+              'attachment css',
           )
 
-          text = replace_once(
-              text,
-              '''        collectedMsgs = collected.map(collectMessage);
-              }
+          # System-Close beim Template-Purge: ebenfalls vor einer Channel-Loeschung sichern.
+          sys_start = text.find('export async function  purgeTemplateInstances')
+          if sys_start < 0:
+              raise SystemExit('system close function missing')
+          sys_anchor = '        collectedMsgs = collected.map(collectMessage);\n      }\n\n      const meta: TranscriptMeta = {'
+          sys_pos = text.find(sys_anchor, sys_start)
+          if sys_pos < 0:
+              raise SystemExit('system close collection anchor missing')
+          text = text[:sys_pos] + sys_anchor.replace(
+              '\n\n      const meta: TranscriptMeta = {',
+              '\n\n      const attachmentArchive = await archiveTranscriptAttachments(collectedMsgs);\n\n      const meta: TranscriptMeta = {',
+          ) + text[sys_pos + len(sys_anchor):]
 
-              const meta: TranscriptMeta = {''',
-              '''        collectedMsgs = collected.map(collectMessage);
-              }
-
-              // Discord-CDN-URLs sind signiert und nicht als Langzeit-Archiv geeignet.
-              // Deshalb alle Anhaenge vor der Channel-Loeschung vollstaendig einbetten.
-              const attachmentArchive = await archiveTranscriptAttachments(collectedMsgs);
-
-              const meta: TranscriptMeta = {''',
-              'system close attachment archive',
-          )
-
-          text = replace_once(
-              text,
-              '''      logAudit('TICKET_CLOSED_SYSTEM', 'TICKET', {
-                guildId: inst.guildId, instanceId: inst.id, templateId,
-                messages: collectedMsgs.length,
-              });''',
-              '''      logAudit('TICKET_CLOSED_SYSTEM', 'TICKET', {
-                guildId: inst.guildId, instanceId: inst.id, templateId,
-                messages: collectedMsgs.length,
+          sys_log_start = text.find("      logAudit('TICKET_CLOSED_SYSTEM', 'TICKET', {", sys_start)
+          if sys_log_start < 0:
+              raise SystemExit('system audit missing')
+          sys_line = '        messages: collectedMsgs.length,'
+          sys_line_pos = text.find(sys_line, sys_log_start)
+          if sys_line_pos < 0:
+              raise SystemExit('system audit message line missing')
+          text = text[:sys_line_pos] + '''        messages: collectedMsgs.length,
                 archivedAttachments: attachmentArchive.attachmentCount,
-                archivedAttachmentBytes: attachmentArchive.archivedBytes,
-              });''',
-              'system close archive audit',
-          )
+                archivedAttachmentBytes: attachmentArchive.archivedBytes,'''+ text[sys_line_pos + len(sys_line):]
 
-          text = replace_once(
-              text,
-              '''  await btn.deferReply({ flags: MessageFlags.Ephemeral });
+          # Normaler Close: Channel nach dem Lock verfolgen, damit ein Archivfehler ihn nicht tot hinterlaesst.
+          manual_start = text.find('async function closeTicketLocked')
+          if manual_start < 0:
+              raise SystemExit('manual close function missing')
+          defer_anchor = '  await btn.deferReply({ flags: MessageFlags.Ephemeral });\n\n  try {'
+          defer_pos = text.find(defer_anchor, manual_start)
+          if defer_pos < 0:
+              raise SystemExit('manual defer anchor missing')
+          replacement = '  await btn.deferReply({ flags: MessageFlags.Ephemeral });\n\n  let lockedChannel: TextChannel | null = null;\n  try {'
+          text = text[:defer_pos] + replacement + text[defer_pos + len(defer_anchor):]
 
-            try {
-              const channel = await btn.client.channels.fetch(instance.channelId).catch(() => null);''',
-              '''  await btn.deferReply({ flags: MessageFlags.Ephemeral });
+          ch_anchor = '    const ch = channel as TextChannel;'
+          ch_pos = text.find(ch_anchor, manual_start)
+          if ch_pos < 0:
+              raise SystemExit('manual channel anchor missing')
+          text = text[:ch_pos] + ch_anchor + '\n    lockedChannel = ch;' + text[ch_pos + len(ch_anchor):]
 
-            let lockedChannel: TextChannel | null = null;
-            try {
-              const channel = await btn.client.channels.fetch(instance.channelId).catch(() => null);''',
-              'manual close locked channel tracking',
-          )
+          collect_anchor = '    const collectedMsgs = collected.map(collectMessage);'
+          collect_pos = text.find(collect_anchor, manual_start)
+          if collect_pos < 0:
+              raise SystemExit('manual collected messages anchor missing')
+          collect_insert = collect_anchor + '''
+            // Discord-Attachment-URLs laufen ab. Die Bytes muessen deshalb JETZT,
+            // vor DB-Abschluss und Channel-Loeschung, dauerhaft ins HTML-Archiv.
+            const attachmentArchive = await archiveTranscriptAttachments(collectedMsgs);'''
+          text = text[:collect_pos] + collect_insert + text[collect_pos + len(collect_anchor):]
 
-          text = replace_once(
-              text,
-              '''    const ch = channel as TextChannel;
-              await ch.permissionOverwrites.edit(btn.guild!.roles.everyone.id, { SendMessages: false }).catch(() => {});''',
-              '''    const ch = channel as TextChannel;
-              lockedChannel = ch;
-              await ch.permissionOverwrites.edit(btn.guild!.roles.everyone.id, { SendMessages: false }).catch(() => {});''',
-              'manual close lock assignment',
-          )
-
-          text = replace_once(
-              text,
-              '''    const closedAt = new Date();
-              const collectedMsgs = collected.map(collectMessage);
-              const meta: TranscriptMeta = {''',
-              '''    const closedAt = new Date();
-              const collectedMsgs = collected.map(collectMessage);
-              // Fail-closed: Erst wenn jeder Discord-Anhang vollstaendig lokal im
-              // persistierten HTML steckt, darf der Ticket-Channel geloescht werden.
-              const attachmentArchive = await archiveTranscriptAttachments(collectedMsgs);
-              const meta: TranscriptMeta = {''',
-              'manual close attachment archive',
-          )
-
-          text = replace_once(
-              text,
-              '''      closedBy: btn.user.id, messages: collectedMsgs.length,
-              transcriptBytes: transcriptBuf.length,
-              transcriptTruncated,
-            });''',
-              '''      closedBy: btn.user.id, messages: collectedMsgs.length,
-              transcriptBytes: transcriptBuf.length,
-              transcriptTruncated,
+          audit_start = text.find("    logAudit('TICKET_CLOSED', 'TICKET', {", manual_start)
+          if audit_start < 0:
+              raise SystemExit('manual close audit missing')
+          audit_line = '      transcriptTruncated,'
+          audit_pos = text.find(audit_line, audit_start)
+          if audit_pos < 0:
+              raise SystemExit('manual audit transcript line missing')
+          audit_insert = '''      transcriptTruncated,
               archivedAttachments: attachmentArchive.attachmentCount,
-              archivedAttachmentBytes: attachmentArchive.archivedBytes,
-            });''',
-              'manual close archive audit',
-          )
+              archivedAttachmentBytes: attachmentArchive.archivedBytes,'''
+          text = text[:audit_pos] + audit_insert + text[audit_pos + len(audit_line):]
 
-          text = replace_once(
-              text,
-              '''  } catch (e) {
-              logger.error('Ticket-Close-Fehler', e as Error);
-              logAudit('TICKET_CLOSE_FAILED', 'TICKET', {
-                guildId: instance.guildId, instanceId: instance.id,
-                closedBy: btn.user.id, error: (e as Error).message,
-              });
-              await btn.editReply({ content: 'Konnte Ticket nicht schliessen. Bitte Admin informieren.' }).catch(() => {});
-            }
-          }''',
-              '''  } catch (e) {
-              const error = e as Error;
-              logger.error('Ticket-Close-Fehler', error);
-              logAudit('TICKET_CLOSE_FAILED', 'TICKET', {
-                guildId: instance.guildId, instanceId: instance.id,
-                closedBy: btn.user.id, error: error.message,
-              });
-              // Bei fehlgeschlagener Archivierung bleibt der Channel absichtlich erhalten.
-              // Die zuvor gesetzte Schreibsperre wieder aufheben, damit das Ticket benutzbar bleibt.
-              if (lockedChannel) {
-                await lockedChannel.permissionOverwrites.edit(instance.openerDiscordId, { SendMessages: true }).catch(() => {});
-                if (instance.template.staffRoleId) {
-                  await lockedChannel.permissionOverwrites.edit(instance.template.staffRoleId, { SendMessages: true }).catch(() => {});
-                }
-              }
-              const archiveFailed = error.message.startsWith('Ticket-Anhang');
-              await btn.editReply({
-                content: archiveFailed
-                  ? 'Ticket wurde NICHT geschlossen: Mindestens ein Bild/Anhang konnte nicht vollstaendig archiviert werden. Der Ticket-Channel bleibt erhalten. Bitte erneut versuchen oder einen Admin informieren.'
-                  : 'Konnte Ticket nicht schliessen. Bitte Admin informieren.',
-              }).catch(() => {});
-            }
-          }''',
-              'manual close fail-closed response',
-          )
-
-          ticket_path.write_text(text)
-
-          route_path = Path('src/dashboard/routes/v2/tickets.ts')
-          route = route_path.read_text()
-          route = replace_once(
-              route,
-              '''  // F4: Vor Cascade alle offenen Discord-Channels schliessen + Embed entfernen.
-            const client = tryGetDashboardClient();
-            let purged: { closed: number; failed: number } = { closed: 0, failed: 0 };
-            if (client) {
-              purged = await purgeTemplateInstances(client, id).catch(() => ({ closed: 0, failed: 0 }));
-              if (existing.postedMessageId) {
-                await unpostTemplateEmbed(client, id).catch(() => {});
+          catch_start = text.find("  } catch (e) {\n    logger.error('Ticket-Close-Fehler'", manual_start)
+          catch_end_marker = '\n}\n\n/**\n * Add-User-Button:'
+          catch_end = text.find(catch_end_marker, catch_start)
+          if catch_start < 0 or catch_end < 0:
+              raise SystemExit('manual close catch markers missing')
+          catch_replacement = '''  } catch (e) {
+            const error = e as Error;
+            logger.error('Ticket-Close-Fehler', error);
+            logAudit('TICKET_CLOSE_FAILED', 'TICKET', {
+              guildId: instance.guildId, instanceId: instance.id,
+              closedBy: btn.user.id, error: error.message,
+            });
+            // Fail-closed: Bei einem Archivfehler den Ticket-Channel NICHT loeschen und
+            // die zuvor gesetzten Schreibrechte fuer Opener/Staff wiederherstellen.
+            if (lockedChannel) {
+              await lockedChannel.permissionOverwrites.edit(instance.openerDiscordId, { SendMessages: true }).catch(() => {});
+              if (instance.template.staffRoleId) {
+                await lockedChannel.permissionOverwrites.edit(instance.template.staffRoleId, { SendMessages: true }).catch(() => {});
               }
             }
+            const archiveFailed = error.message.startsWith('Ticket-Anh');
+            await btn.editReply({
+              content: archiveFailed
+                ? 'Ticket wurde NICHT geschlossen: Mindestens ein Bild/Anhang konnte nicht vollstaendig archiviert werden. Der Ticket-Channel bleibt erhalten. Bitte erneut versuchen oder einen Admin informieren.'
+                : 'Konnte Ticket nicht schliessen. Bitte Admin informieren.',
+            }).catch(() => {});
+          }'''
+          text = text[:catch_start] + catch_replacement + text[catch_end:]
 
-            await prisma.ticketTemplate.delete({ where: { id } });''',
-              '''  // F4: Vor Cascade alle offenen Discord-Channels vollstaendig archivieren/schliessen.
-            // Schon ein einzelner Archivierungsfehler blockiert den Template-Cascade.
-            const openCount = await prisma.ticketInstance.count({ where: { templateId: id, status: 'OPEN' } });
-            const client = tryGetDashboardClient();
-            let purged: { closed: number; failed: number } = { closed: 0, failed: 0 };
-            if (openCount > 0 && !client) {
-              res.status(503).json({ error: 'Template kann nicht geloescht werden: Bot ist nicht bereit und offene Tickets muessen zuerst vollstaendig archiviert werden.' });
-              return;
-            }
-            if (client) {
-              try {
-                purged = await purgeTemplateInstances(client, id);
-              } catch (err) {
-                logger.error('TicketTemplate purge vor Delete fehlgeschlagen:', err as Error);
-                res.status(500).json({ error: 'Template kann nicht geloescht werden: Ticket-Archivierung ist fehlgeschlagen.' });
-                return;
-              }
-              if (purged.failed > 0) {
-                logAuditDb('TICKET_TEMPLATE_DELETE_BLOCKED', 'TICKET', {
-                  actorUserId: req.auth!.userId,
-                  guildId: scope.guildId,
-                  details: { templateId: id, purged },
-                });
-                res.status(409).json({
-                  error: 'Template wurde nicht geloescht: Mindestens ein offenes Ticket konnte nicht vollstaendig inklusive Bilder/Anhaenge archiviert werden.',
-                  purged,
-                });
-                return;
-              }
-              if (existing.postedMessageId) {
-                await unpostTemplateEmbed(client, id).catch(() => {});
-              }
-            }
-
-            await prisma.ticketTemplate.delete({ where: { id } });''',
-              'template delete fail-closed archive gate',
-          )
-          route_path.write_text(route)
+          path.write_text(text)
           PY
 
       - name: Verify focused patch shape
@@ -345,7 +235,7 @@ jobs:
           test "$(grep -c 'archiveTranscriptAttachments(collectedMsgs)' src/modules/tickets/ticketSystem.ts)" -eq 2
           grep -q 'archivedDataUrl' src/modules/tickets/ticketSystem.ts
           grep -q 'class="att-link"' src/modules/tickets/ticketSystem.ts
-          grep -q 'purged.failed > 0' src/dashboard/routes/v2/tickets.ts
+          grep -q 'let lockedChannel: TextChannel | null = null' src/modules/tickets/ticketSystem.ts
           git diff --check
 
       - name: Commit source patch
@@ -353,6 +243,6 @@ jobs:
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add src/modules/tickets/ticketSystem.ts src/dashboard/routes/v2/tickets.ts
+          git add src/modules/tickets/ticketSystem.ts
           git commit -m "fix(tickets): preserve archived images in transcripts"
           git push origin HEAD:fix/ticket-transcript-archive-images
