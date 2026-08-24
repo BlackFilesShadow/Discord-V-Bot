@@ -1,0 +1,98 @@
+name: Apply nullable archived ticket type fix
+
+on:
+  push:
+    branches:
+      - fix/ticket-transcript-archive-images
+
+permissions:
+  contents: write
+
+jobs:
+  apply:
+    if: github.actor != 'github-actions[bot]'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          ref: fix/ticket-transcript-archive-images
+          fetch-depth: 0
+
+      - name: Patch nullable template contracts
+        shell: bash
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+
+          path = Path('src/modules/tickets/ticketSystem.ts')
+          text = path.read_text()
+
+          def once(old: str, new: str, label: str):
+              global text
+              count = text.count(old)
+              if count != 1:
+                  raise SystemExit(f'{label}: expected exactly one match, got {count}')
+              text = text.replace(old, new, 1)
+
+          once(
+              """type TicketWithTemplate = Awaited<ReturnType<typeof prisma.ticketInstance.findUnique>> & {
+  template: { staffRoleId: string | null; managerRoleIds?: unknown };
+};""",
+              """type TicketWithTemplate = Awaited<ReturnType<typeof prisma.ticketInstance.findUnique>> & {
+  template: { staffRoleId: string | null; managerRoleIds?: unknown } | null;
+};""",
+              'nullable helper type',
+          )
+
+          once(
+              """  // Discord-Administrator-Bypass: Server-Admins duerfen Ticket-Verwaltung machen.
+  if (member.permissions && member.permissions.has(PermissionFlagsBits.Administrator)) return true;
+  if (instance.template.staffRoleId && member.roles.cache.has(instance.template.staffRoleId)) return true;""",
+              """  // Discord-Administrator-Bypass: Server-Admins duerfen Ticket-Verwaltung machen.
+  if (member.permissions && member.permissions.has(PermissionFlagsBits.Administrator)) return true;
+  // Archivierte Tickets duerfen nach Template-Loeschung weiterbestehen. Ohne Template
+  // gibt es keine Staff-/Manager-Rollen mehr auszuwerten; Owner/Admin bleiben oben erlaubt.
+  if (!instance.template) return false;
+  if (instance.template.staffRoleId && member.roles.cache.has(instance.template.staffRoleId)) return true;""",
+              'helper null guard',
+          )
+
+          once(
+              """  if (tmId) {
+    try {
+      const ch = await modal.client.channels.fetch(inst.template.transcriptChannelId).catch(() => null);""",
+              """  if (tmId && inst.template) {
+    try {
+      const ch = await modal.client.channels.fetch(inst.template.transcriptChannelId).catch(() => null);""",
+              'reason archived template guard',
+          )
+
+          once(
+              """          if (fresh) {
+            const fAny = fresh as unknown as {""",
+              """          if (fresh?.template) {
+            const fAny = fresh as unknown as {""",
+              'fresh template guard',
+          )
+
+          path.write_text(text)
+          PY
+
+      - name: Verify patch
+        shell: bash
+        run: |
+          grep -q "managerRoleIds?: unknown } | null" src/modules/tickets/ticketSystem.ts
+          grep -q "if (!instance.template) return false;" src/modules/tickets/ticketSystem.ts
+          grep -q "if (tmId && inst.template)" src/modules/tickets/ticketSystem.ts
+          grep -q "if (fresh?.template)" src/modules/tickets/ticketSystem.ts
+          git diff --check
+
+      - name: Commit source fix and remove helper workflow
+        shell: bash
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git rm .github/workflows/apply-ticket-nullable-template-type-fix.yml
+          git add src/modules/tickets/ticketSystem.ts
+          git commit -m "fix(tickets): handle archived instances without templates"
+          git push origin HEAD:fix/ticket-transcript-archive-images
