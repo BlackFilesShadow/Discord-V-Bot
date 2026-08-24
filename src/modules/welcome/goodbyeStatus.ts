@@ -50,7 +50,7 @@ function statusLabel(state: GoodbyeRemoteState): string {
     case 'PENDING': return '🟡 Wartet auf Verarbeitung';
     case 'RUNNING': return '🟡 Entfernung läuft';
     case 'RETRY': return '🟠 Erneuter Versuch geplant';
-    case 'CONFIRMED': return '🟢 Entfernt und remote bestätigt';
+    case 'CONFIRMED': return '🟢 Nicht mehr auf der Whitelist – remote bestätigt';
     case 'NOT_PRESENT': return '⚪ War nicht auf der Whitelist';
     case 'NOT_LINKED': return '⚪ Nicht eindeutig zugeordnet – keine Entfernung';
     case 'FAILED': return '🔴 Entfernung endgültig fehlgeschlagen';
