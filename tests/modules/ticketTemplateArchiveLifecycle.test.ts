@@ -56,4 +56,10 @@ describe('ticket template archive lifecycle', () => {
     expect(ticketSystem).toContain('if (tmId && inst.template)');
     expect(ticketSystem).toContain('if (fresh?.template)');
   });
+
+  it('still updates the persisted close reason even if the deleted template prevents a Discord embed refresh', () => {
+    expect(ticketSystem).toContain('await prisma.ticketInstance.update({');
+    expect(ticketSystem).toContain('closeReason: next');
+    expect(ticketSystem.indexOf('closeReason: next')).toBeLessThan(ticketSystem.indexOf('if (tmId && inst.template)'));
+  });
 });
