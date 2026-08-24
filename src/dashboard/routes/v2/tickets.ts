@@ -5,7 +5,7 @@
  * GET    /                 -> alle Templates der Guild (max 5)
  * POST   /                 -> neuen Template anlegen (slot 1..5, eindeutig)
  * PUT    /:id              -> Patch
- * DELETE /:id              -> Loeschen (Cascade auf Instances)
+ * DELETE /:id              -> Template loeschen; archivierte Instances bleiben erhalten
  * POST   /:id/post         -> Embed im konfigurierten Channel posten/aktualisieren
  * GET    /instances        -> offene Tickets der Guild
  *
@@ -288,8 +288,8 @@ ticketsRouter.get('/instances', requireGuildPermission('tickets.manage'), async 
     instances: instances.map(i => ({
       id: i.id,
       ticketNumber: (i as unknown as { ticketNumber?: number }).ticketNumber ?? null,
-      templateLabel: i.template.label,
-      templateSlot: i.template.slot,
+      templateLabel: i.template?.label ?? i.templateLabelSnapshot,
+      templateSlot: i.template?.slot ?? i.templateSlotSnapshot,
       channelId: i.channelId,
       openerDiscordId: i.openerDiscordId,
       openerName: i.openerName,
@@ -440,18 +440,67 @@ ticketsRouter.delete('/:id', requireGuildPermission('tickets.manage'), async (re
   const existing = await prisma.ticketTemplate.findUnique({ where: { id } });
   if (!existing || existing.guildId !== scope.guildId) { res.status(404).json({ error: 'Template nicht gefunden.' }); return; }
 
-  // F4: Vor Cascade alle offenen Discord-Channels schliessen + Embed entfernen.
+  // Lifecycle-Fence: zuerst deaktivieren. Dadurch lehnt auch ein bereits
+  // ausgelieferter/staler Open-Button den atomaren Counter-Claim ab.
+  const wasActive = existing.isActive;
+  await prisma.ticketTemplate.update({ where: { id }, data: { isActive: false } });
+
+  const restoreTemplate = async (): Promise<void> => {
+    if (wasActive) {
+      await prisma.ticketTemplate.updateMany({ where: { id }, data: { isActive: true } }).catch(() => {});
+    }
+  };
+
+  const openBefore = await prisma.ticketInstance.count({ where: { templateId: id, status: 'OPEN' } });
   const client = tryGetDashboardClient();
   let purged: { closed: number; failed: number } = { closed: 0, failed: 0 };
-  if (client) {
-    purged = await purgeTemplateInstances(client, id).catch(() => ({ closed: 0, failed: 0 }));
-    if (existing.postedMessageId) {
-      await unpostTemplateEmbed(client, id).catch(() => {});
+
+  if (openBefore > 0 && !client) {
+    await restoreTemplate();
+    res.status(503).json({ error: 'Template wurde nicht geloescht: Offene Tickets muessen zuerst vollstaendig archiviert werden, aber der Bot ist nicht bereit.' });
+    return;
+  }
+
+  if (client && openBefore > 0) {
+    purged = await purgeTemplateInstances(client, id).catch(err => {
+      logger.error('TicketTemplate purge vor Delete fehlgeschlagen:', err as Error);
+      return { closed: 0, failed: openBefore };
+    });
+    if (purged.failed > 0) {
+      await restoreTemplate();
+      logAuditDb('TICKET_TEMPLATE_DELETE_BLOCKED', 'TICKET', {
+        actorUserId: req.auth!.userId, guildId: scope.guildId,
+        details: { templateId: id, reason: 'archive_failed', purged },
+      });
+      res.status(409).json({
+        error: 'Template wurde nicht geloescht: Mindestens ein offenes Ticket konnte nicht vollstaendig inklusive Bilder/Anhaenge archiviert werden.',
+        purged,
+      });
+      return;
     }
   }
 
+  // Nach dem Purge erneut pruefen. Durch isActive=false + Open-Transaction-Fence
+  // kann ab hier keine neue Instance mehr entstehen.
+  const remainingOpen = await prisma.ticketInstance.count({ where: { templateId: id, status: 'OPEN' } });
+  if (remainingOpen > 0) {
+    await restoreTemplate();
+    logAuditDb('TICKET_TEMPLATE_DELETE_BLOCKED', 'TICKET', {
+      actorUserId: req.auth!.userId, guildId: scope.guildId,
+      details: { templateId: id, reason: 'open_instances_remain', remainingOpen, purged },
+    });
+    res.status(409).json({ error: `Template wurde nicht geloescht: ${remainingOpen} offene Tickets sind noch vorhanden.` });
+    return;
+  }
+
+  if (client && existing.postedMessageId) {
+    await unpostTemplateEmbed(client, id).catch(() => {});
+  }
+
+  // DB-FK ist SET NULL: CLOSED TicketInstance-Zeilen, Transcript-HTML und
+  // archivierte Bildbytes bleiben erhalten. Label/Slot kommen danach aus Snapshots.
   await prisma.ticketTemplate.delete({ where: { id } });
-  logAuditDb('TICKET_TEMPLATE_DELETED', 'TICKET', { actorUserId: req.auth!.userId, guildId: scope.guildId, details: { templateId: id, slot: existing.slot, label: existing.label, purged } });
+  logAuditDb('TICKET_TEMPLATE_DELETED', 'TICKET', { actorUserId: req.auth!.userId, guildId: scope.guildId, details: { templateId: id, slot: existing.slot, label: existing.label, purged, preservedArchives: true } });
   emitGuildEvent(scope.guildId, { type: 'tickets.changed', payload: { guildId: scope.guildId, templateId: id } });
   res.status(204).end();
 });

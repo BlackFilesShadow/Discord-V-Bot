@@ -785,14 +785,24 @@ async function openTicketLocked(btn: ButtonInteraction, t: Awaited<ReturnType<ty
     // Globale ticketNumber bleibt als interne Eindeutigkeits-ID erhalten, fuer Channel-Name
     // + Embeds wird die per-Template Nummer verwendet (parallele Nummernkreise pro Template).
     const { createdInstance, templateNumber } = await prisma.$transaction(async (tx) => {
-      const updated = await tx.ticketTemplate.update({
-        where: { id: t.id },
+      // Delete-Fence: ein Button kann kurz vor einer Template-Loeschung geklickt
+      // worden sein. Nur ein weiterhin aktives Template darf den Counter erhoehen
+      // und eine neue Instance erzeugen. Sobald DELETE isActive=false gesetzt hat,
+      // scheitert dieser stale Open-Vorgang atomar.
+      const claimed = await tx.ticketTemplate.updateMany({
+        where: { id: t.id, isActive: true },
         data: { ticketCounter: { increment: 1 } },
+      });
+      if (claimed.count !== 1) throw new Error('TICKET_TEMPLATE_INACTIVE');
+      const updated = await tx.ticketTemplate.findUniqueOrThrow({
+        where: { id: t.id },
         select: { ticketCounter: true },
       });
       const inst = await tx.ticketInstance.create({
         data: {
           templateId: t.id,
+          templateLabelSnapshot: t.label,
+          templateSlotSnapshot: t.slot,
           guildId: guild.id,
           channelId: `pending:${btn.id}`,
           openerDiscordId: btn.user.id,
@@ -880,10 +890,10 @@ async function openTicketLocked(btn: ButtonInteraction, t: Awaited<ReturnType<ty
     // ungenutzt geloescht wird. Nur dekrementieren, wenn die Instance wirklich diese Nummer
     // bekommen hat und der Counter seitdem nicht weitergelaufen ist (Atomar via WHERE-Clause).
     if (instance) {
-      const inst = instance as unknown as { templateNumber?: number | null; templateId: string };
+      const inst = instance as unknown as { templateNumber?: number | null; templateId: string | null };
       const tn = inst.templateNumber;
       await prisma.ticketInstance.delete({ where: { id: instance.id } }).catch(() => {});
-      if (typeof tn === 'number' && tn > 0) {
+      if (inst.templateId && typeof tn === 'number' && tn > 0) {
         await prisma.ticketTemplate.updateMany({
           where: { id: inst.templateId, ticketCounter: tn },
           data: { ticketCounter: { decrement: 1 } },
@@ -893,7 +903,12 @@ async function openTicketLocked(btn: ButtonInteraction, t: Awaited<ReturnType<ty
     if (channel) {
       await channel.delete('Ticket-Open-Fehler, Cleanup').catch(() => {});
     }
-    await btn.editReply({ content: 'Konnte Ticket nicht erstellen. Bitte Admin informieren.' }).catch(() => {});
+    const unavailable = (e as Error).message === 'TICKET_TEMPLATE_INACTIVE';
+    await btn.editReply({
+      content: unavailable
+        ? 'Template ist nicht mehr verfuegbar.'
+        : 'Konnte Ticket nicht erstellen. Bitte Admin informieren.',
+    }).catch(() => {});
   }
 }
 
@@ -925,6 +940,13 @@ async function closeTicketLocked(btn: ButtonInteraction, instanceId: string): Pr
   });
   if (!instance || instance.status !== 'OPEN') {
     await btn.reply({ content: 'Ticket bereits geschlossen.', flags: MessageFlags.Ephemeral });
+    return;
+  }
+  // OPEN-Tickets duerfen niemals ohne Template existieren. Ein null-Template ist
+  // nur fuer bereits CLOSED/archivierte Instanzen nach Template-Loeschung erlaubt.
+  if (!instance.template) {
+    logger.error(`Offenes Ticket ${instance.id} hat kein Template mehr — Close abgebrochen.`);
+    await btn.reply({ content: 'Ticket-Konfiguration fehlt. Bitte Admin informieren.', flags: MessageFlags.Ephemeral });
     return;
   }
 
