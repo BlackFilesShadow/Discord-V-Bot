@@ -10,7 +10,6 @@
 
 import { createHash } from 'node:crypto';
 import {
-  AdmEventType,
   GameplayDeliveryStatus,
   GameplayFeedKind,
   Prisma,
@@ -43,13 +42,6 @@ const SCAN_BATCH = 200;
 const MAX_SCAN_BATCHES_PER_TICK = 5;
 const DELIVERY_BATCH = 1;
 const DELIVERY_SPACING_MS = 12_000;
-const DEATH_DEDUP_WINDOW_MS = 5_000;
-const SPECIFIC_DEATH_TYPES: AdmEventType[] = [
-  AdmEventType.PLAYER_KILLED,
-  AdmEventType.PLAYER_SUICIDE,
-  AdmEventType.NPC_KILL,
-  AdmEventType.VEHICLE_DEATH,
-];
 
 let timer: NodeJS.Timeout | null = null;
 let running = false;
@@ -63,9 +55,9 @@ function safeError(error: unknown): string {
   return message.replace(/Bearer\s+\S+/gi, 'Bearer [REDACTED]').slice(0, 1000);
 }
 
-function eventTypes(kind: GameplayFeedKind): AdmEventType[] {
+function eventTypes(kind: GameplayFeedKind): string[] {
   if (kind === GameplayFeedKind.PLAYER_LIST) return [];
-  return (kind === GameplayFeedKind.DEATH ? [...DEATH_EVENT_TYPES] : [...BUILD_EVENT_TYPES]) as AdmEventType[];
+  return kind === GameplayFeedKind.DEATH ? [...DEATH_EVENT_TYPES] : [...BUILD_EVENT_TYPES];
 }
 
 function eventNonce(eventId: string): string {
@@ -74,52 +66,15 @@ function eventNonce(eventId: string): string {
   return eventId.slice(0, 25);
 }
 
-function playerListNonce(configId: string, stateHash: string): string {
-  return createHash('sha256').update(`player-list\u0000${configId}\u0000${stateHash}`).digest('hex').slice(0, 25);
-}
-
-/**
- * DayZ kann fuer denselben finalen Tod mehrere ADM-Zeilen schreiben, z.B.
- * zuerst "committed suicide" und direkt danach ein generisches "died".
- * Der spezifische Grund ist fuer den Feed wertvoller; PLAYER_DIED wird deshalb
- * nur unterdrueckt, wenn fuer denselben Spieler/Ort im engen Zeitfenster bereits
- * ein spezifischer finaler Todesgrund existiert. Das AdmEvent selbst bleibt als
- * Rohdatenhistorie erhalten, nur die Discord-Zustellung wird dedupliziert.
- */
-async function genericDeathHasSpecificCause(
-  config: GameplayFeedConfig,
-  event: GameplayAdmEvent,
-): Promise<boolean> {
-  if (event.eventType !== 'PLAYER_DIED') return false;
-  if (!event.actorGameId && !event.actorName) return false;
-
-  const anchor = event.occurredAt ?? event.createdAt;
-  const from = new Date(anchor.getTime() - DEATH_DEDUP_WINDOW_MS);
-  const to = new Date(anchor.getTime() + DEATH_DEDUP_WINDOW_MS);
-  const identity = event.actorGameId
-    ? { actorGameId: event.actorGameId }
-    : { actorName: event.actorName! };
-  const timeRange = event.occurredAt
-    ? { occurredAt: { gte: from, lte: to } }
-    : { createdAt: { gte: from, lte: to } };
-
-  const specific = await prisma.admEvent.findFirst({
-    where: {
-      guildId: config.guildId,
-      nitradoConnId: config.nitradoConnId,
-      eventType: { in: SPECIFIC_DEATH_TYPES },
-      ...identity,
-      ...timeRange,
-      ...(event.actorPosition ? { actorPosition: event.actorPosition } : {}),
-    },
-    select: { id: true },
-  });
-  return specific !== null;
+function playerListNonce(configId: string, stateHash: string, postKey = 'state'): string {
+  return createHash('sha256')
+    .update(`online-list\u0000${configId}\u0000${stateHash}\u0000${postKey}`)
+    .digest('hex')
+    .slice(0, 25);
 }
 
 async function createDeliveryIfNeeded(config: GameplayFeedConfig, event: GameplayAdmEvent): Promise<void> {
   if (!categoryAllowed(config.kind, config.categories, event.eventType)) return;
-  if (await genericDeathHasSpecificCause(config, event)) return;
   try {
     await prisma.gameplayFeedDelivery.create({
       data: {
@@ -261,6 +216,7 @@ async function failDelivery(
 async function deliverOne(
   config: GameplayFeedConfig,
   delivery: GameplayFeedDelivery,
+  serverAlias: string,
 ): Promise<void> {
   const active = await prisma.gameplayFeedConfig.findFirst({
     where: {
@@ -367,7 +323,7 @@ async function deliverOne(
     if (!view) throw new Error(`Nicht unterstuetzter Gameplay-Eventtyp: ${event.eventType}`);
 
     const message = await textChannel.send({
-      embeds: [buildGameplayFeedEmbed(view, config.embedColor)],
+      embeds: [buildGameplayFeedEmbed(view, config.embedColor, serverAlias)],
       allowedMentions: { parse: [] },
       nonce: eventNonce(event.id),
       enforceNonce: true,
@@ -467,7 +423,13 @@ async function processPlayerListConfig(config: GameplayFeedConfig, serverAlias: 
     const entries = await currentPlayerList(config);
     const stateHash = playerListStateHash(entries, config.showActorCoords);
     const now = new Date();
-    if (config.lastStateHash === stateHash && config.lastMessageId) {
+    const intervalMinutes = config.playerListIntervalMinutes ?? 0;
+    const intervalMs = intervalMinutes > 0 ? intervalMinutes * 60_000 : 0;
+    const periodicDue = intervalMs > 0
+      && (!config.nextPlayerListPostAt || config.nextPlayerListPostAt.getTime() <= now.getTime());
+    const stateChanged = config.lastStateHash !== stateHash || !config.lastMessageId;
+
+    if (!stateChanged && !periodicDue) {
       await prisma.gameplayFeedConfig.updateMany({
         where: { id: config.id, guildId: config.guildId, nitradoConnId: config.nitradoConnId, isActive: true },
         data: { lastPolledAt: now, lastPlayerCount: entries.length },
@@ -478,9 +440,9 @@ async function processPlayerListConfig(config: GameplayFeedConfig, serverAlias: 
     const client = tryGetDashboardClient();
     if (!client) throw new Error('Discord-Client nicht verfuegbar');
     const channel = await client.channels.fetch(config.channelId).catch(() => null);
-    if (!channel || !channel.isTextBased() || channel.isDMBased()) throw new Error('Player-List-Channel nicht verfuegbar/Text-Channel');
+    if (!channel || !channel.isTextBased() || channel.isDMBased()) throw new Error('Online-List-Channel nicht verfuegbar/Text-Channel');
     const textChannel = channel as GuildTextBasedChannel;
-    if (textChannel.guildId !== config.guildId) throw new Error('Player-List-Channel gehoert nicht zur Guild');
+    if (textChannel.guildId !== config.guildId) throw new Error('Online-List-Channel gehoert nicht zur Guild');
     const embeds = buildPlayerListEmbeds({
       serverAlias,
       entries,
@@ -501,21 +463,31 @@ async function processPlayerListConfig(config: GameplayFeedConfig, serverAlias: 
     });
     if (stillActive !== 1) return;
 
-    let messageId = config.lastMessageId;
+    // Ein faelliges Intervall erzeugt bewusst einen neuen Discord-Post. Reine
+    // Zustandsaenderungen aktualisieren dagegen weiterhin die zuletzt gesendete
+    // Online List, damit Join/Leave/Positionsaenderungen nicht den Kanal fluten.
+    let messageId = periodicDue ? null : config.lastMessageId;
     if (messageId) {
       const message = await textChannel.messages.fetch(messageId).catch(() => null);
       if (message) await message.edit({ embeds, allowedMentions: { parse: [] } });
       else messageId = null;
     }
     if (!messageId) {
+      const postKey = periodicDue && intervalMs > 0
+        ? `interval:${Math.floor(now.getTime() / intervalMs)}`
+        : 'state';
       const message = await textChannel.send({
         embeds,
         allowedMentions: { parse: [] },
-        nonce: playerListNonce(config.id, stateHash),
+        nonce: playerListNonce(config.id, stateHash, postKey),
         enforceNonce: true,
       });
       messageId = message.id;
     }
+
+    const nextPlayerListPostAt = intervalMs > 0
+      ? (periodicDue ? new Date(now.getTime() + intervalMs) : config.nextPlayerListPostAt)
+      : null;
 
     await prisma.gameplayFeedConfig.updateMany({
       where: { id: config.id, guildId: config.guildId, nitradoConnId: config.nitradoConnId, isActive: true },
@@ -524,6 +496,7 @@ async function processPlayerListConfig(config: GameplayFeedConfig, serverAlias: 
         lastStateHash: stateHash,
         lastPlayerCount: entries.length,
         lastPlayerListAt: now,
+        nextPlayerListPostAt,
         lastEventAt: now,
         lastPolledAt: now,
         lastErrorMsg: null,
@@ -630,7 +603,7 @@ async function processConfig(config: GameplayFeedConfig): Promise<void> {
       });
       return;
     }
-    for (const delivery of due) await deliverOne(config, delivery);
+    for (const delivery of due) await deliverOne(config, delivery, connection.alias);
     await prisma.gameplayFeedConfig.updateMany({
       where: { id: config.id, guildId: config.guildId, nitradoConnId: config.nitradoConnId },
       data: { lastPolledAt: new Date() },
