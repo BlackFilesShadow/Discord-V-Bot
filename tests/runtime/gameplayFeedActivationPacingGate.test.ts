@@ -5,7 +5,7 @@ const route = fs.readFileSync(path.resolve(process.cwd(), 'src/dashboard/routes/
 const runtime = fs.readFileSync(path.resolve(process.cwd(), 'src/modules/gameplayFeeds/runtime.ts'), 'utf8');
 const playerList = fs.readFileSync(path.resolve(process.cwd(), 'src/modules/gameplayFeeds/playerListEmbed.ts'), 'utf8');
 
-describe('Gameplay feed activation, pacing and Player List architecture gate', () => {
+describe('Gameplay feed activation, pacing and Online List architecture gate', () => {
   it('locks activation and advances the ADM cursor to the latest scoped event', () => {
     expect(route).toContain('FOR UPDATE');
     expect(route).toContain('locked[0].isActive === false && parsed.data.isActive === true');
@@ -26,14 +26,23 @@ describe('Gameplay feed activation, pacing and Player List architecture gate', (
     expect(runtime).toContain('enforceNonce: true');
   });
 
-  it('builds Player List only from PlayerSession and AdmEvent, without another Nitrado poller', () => {
+  it('builds Online List only from PlayerSession and AdmEvent, without another Nitrado poller', () => {
     expect(runtime).toContain('prisma.playerSession.findMany');
     expect(runtime).toContain("'PLAYER_POSITION'::\"AdmEventType\"");
     expect(runtime).toContain('connectedAt: true');
     expect(runtime).toContain('positionAt.getTime() >= session.connectedAt.getTime()');
-    expect(runtime).toContain('playerListNonce(config.id, stateHash)');
+    expect(runtime).toContain('playerListNonce(config.id, stateHash, postKey)');
     expect(runtime).toContain('message.edit');
     expect(runtime).not.toContain('new NitradoClient');
+    expect(playerList).toContain('🌐 Online List');
     expect(playerList).toContain('Position unbekannt');
+  });
+
+  it('supports explicit periodic Online List posts without replacing change-based edits', () => {
+    expect(route).toContain('playerListIntervalMinutes');
+    expect(route).toContain('ONLINE_LIST_INTERVALS');
+    expect(runtime).toContain('periodicDue');
+    expect(runtime).toContain('let messageId = periodicDue ? null : config.lastMessageId;');
+    expect(runtime).toContain('nextPlayerListPostAt');
   });
 });
