@@ -124,21 +124,22 @@ describe('Nitrado-1B whitelist intent reconciliation architecture gate', () => {
     expect(pendingRemove).toBeGreaterThan(tx);
     expect(banWrite).toBeGreaterThan(pendingRemove);
     expect(banOutbox).toBeGreaterThan(banWrite);
+    expect(serverBan).toContain("remoteSequence: 'BAN_THEN_WHITELIST_REMOVE'");
   });
 
-  it('keeps SERVER_BAN_ADD as exact whitelist-remove then exact banlist-add path', () => {
+  it('keeps SERVER_BAN_ADD as exact ban-confirm then exact whitelist-remove path', () => {
     const banStart = worker.indexOf("case 'SERVER_BAN_ADD':");
     const verifyIdentity = worker.indexOf('matchesBanIdentifier(sensitiveIdentifier, ban.identityHash, config.security.encryptionKey)', banStart);
-    const whitelistRemove = worker.indexOf('await client.removeFromWhitelist(conn.nitradoServerId, sensitiveIdentifier);', verifyIdentity);
-    const banlistRead = worker.indexOf('const before = await client.getBanlist(conn.nitradoServerId);', whitelistRemove);
+    const banlistRead = worker.indexOf('const before = await client.getBanlist(conn.nitradoServerId);', verifyIdentity);
     const banlistAdd = worker.indexOf('await client.addToBanlist(conn.nitradoServerId, sensitiveIdentifier);', banlistRead);
-    const applied = worker.indexOf('data: { appliedRemotely: true }', banlistAdd);
+    const whitelistRemove = worker.indexOf('await client.removeFromWhitelist(conn.nitradoServerId, sensitiveIdentifier);', banlistAdd);
+    const applied = worker.indexOf('data: { appliedRemotely: true }', whitelistRemove);
 
     expect(banStart).toBeGreaterThanOrEqual(0);
     expect(verifyIdentity).toBeGreaterThan(banStart);
-    expect(whitelistRemove).toBeGreaterThan(verifyIdentity);
-    expect(banlistRead).toBeGreaterThan(whitelistRemove);
+    expect(banlistRead).toBeGreaterThan(verifyIdentity);
     expect(banlistAdd).toBeGreaterThan(banlistRead);
-    expect(applied).toBeGreaterThan(banlistAdd);
+    expect(whitelistRemove).toBeGreaterThan(banlistAdd);
+    expect(applied).toBeGreaterThan(whitelistRemove);
   });
 });
