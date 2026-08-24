@@ -33,11 +33,10 @@ jobs:
           ticket_path = Path('src/modules/tickets/ticketSystem.ts')
           text = ticket_path.read_text()
 
-          text = replace_once(text,
-          """import { config } from '../../config';
-
-          const TRANSCRIPT_MAX_MSGS = 1000;""",
-          """import { config } from '../../config';
+          text = replace_once(
+              text,
+              "import { config } from '../../config';\n\nconst TRANSCRIPT_MAX_MSGS = 1000;",
+              """import { config } from '../../config';
           import {
             archiveTranscriptAttachments,
             isInlineTranscriptImage,
@@ -45,10 +44,12 @@ jobs:
           } from './transcriptAttachmentArchive';
 
           const TRANSCRIPT_MAX_MSGS = 1000;""",
-          'ticket archive import')
+              'ticket archive import',
+          )
 
-          text = replace_once(text,
-          """interface CollectedMessage {
+          text = replace_once(
+              text,
+              '''interface CollectedMessage {
             id: string;
             authorId: string;
             authorName: string;
@@ -78,8 +79,8 @@ jobs:
               attachments,
               hasEmbeds: m.embeds.length > 0,
             };
-          }""",
-          """interface CollectedMessage {
+          }''',
+              '''interface CollectedMessage {
             id: string;
             authorId: string;
             authorName: string;
@@ -116,119 +117,137 @@ jobs:
               attachments,
               hasEmbeds: m.embeds.length > 0,
             };
-          }""",
-          'collected attachment metadata')
+          }''',
+              'collected attachment metadata',
+          )
 
-          text = replace_once(text,
-          """    const atts = m.attachments.length === 0 ? '' :
-              `<div class=\"atts\">${m.attachments.map(a =>
-                `<a href=\"${htmlEscape(a.url)}\" target=\"_blank\" rel=\"noopener\">📎 ${htmlEscape(a.name)}</a>`,
-              ).join('')}</div>`;""",
-          """    const atts = m.attachments.length === 0 ? '' :
-              `<div class=\"atts\">${m.attachments.map(a => {
+          text = replace_once(
+              text,
+              '''    const atts = m.attachments.length === 0 ? '' :
+              `<div class="atts">${m.attachments.map(a =>
+                `<a href="${htmlEscape(a.url)}" target="_blank" rel="noopener">📎 ${htmlEscape(a.name)}</a>`,
+              ).join('')}</div>`;''',
+              '''    const atts = m.attachments.length === 0 ? '' :
+              `<div class="atts">${m.attachments.map(a => {
                 const href = a.archivedDataUrl ?? a.url;
                 const safeHref = htmlEscape(href);
                 const safeName = htmlEscape(a.name);
                 const image = a.archivedDataUrl && isInlineTranscriptImage(a.contentType)
-                  ? `<img src=\"${safeHref}\" alt=\"${safeName}\" loading=\"lazy\">`
+                  ? `<img src="${safeHref}" alt="${safeName}" loading="lazy">`
                   : '';
                 const linkAttrs = a.archivedDataUrl
-                  ? ` download=\"${safeName}\"`
-                  : ' target=\"_blank\" rel=\"noopener\"';
-                return `<div class=\"att\">${image}<a class=\"att-link\" href=\"${safeHref}\"${linkAttrs}>📎 ${safeName}</a></div>`;
-              }).join('')}</div>`;""",
-          'inline archived image render')
+                  ? ` download="${safeName}"`
+                  : ' target="_blank" rel="noopener"';
+                return `<div class="att">${image}<a class="att-link" href="${safeHref}"${linkAttrs}>📎 ${safeName}</a></div>`;
+              }).join('')}</div>`;''',
+              'inline archived image render',
+          )
 
-          text = replace_once(text,
-          """  .msg .atts { margin-top: 6px; display: flex; flex-wrap: wrap; gap: 6px; }
+          text = replace_once(
+              text,
+              '''  .msg .atts { margin-top: 6px; display: flex; flex-wrap: wrap; gap: 6px; }
             .msg .atts a { font-size: 12px; color: #8ab4f8; text-decoration: none;
               background: #1a2027; padding: 3px 8px; border-radius: 4px; }
-            .msg .atts a:hover { background: #232b34; }""",
-          """  .msg .atts { margin-top: 8px; display: block; }
+            .msg .atts a:hover { background: #232b34; }''',
+              '''  .msg .atts { margin-top: 8px; display: block; }
             .msg .att { margin-top: 8px; }
             .msg .att:first-child { margin-top: 0; }
             .msg .att img { display: block; max-width: 100%; max-height: 720px; width: auto; height: auto;
               object-fit: contain; border: 1px solid #2a313b; border-radius: 8px; background: #090b0e; margin-bottom: 6px; }
             .msg .att-link { display: inline-block; font-size: 12px; color: #8ab4f8; text-decoration: none;
               background: #1a2027; padding: 3px 8px; border-radius: 4px; }
-            .msg .att-link:hover { background: #232b34; }""",
-          'attachment transcript css')
+            .msg .att-link:hover { background: #232b34; }''',
+              'attachment transcript css',
+          )
 
-          text = replace_once(text,
-          """        collectedMsgs = collected.map(collectMessage);
+          text = replace_once(
+              text,
+              '''        collectedMsgs = collected.map(collectMessage);
               }
 
-              const meta: TranscriptMeta = {""",
-          """        collectedMsgs = collected.map(collectMessage);
+              const meta: TranscriptMeta = {''',
+              '''        collectedMsgs = collected.map(collectMessage);
               }
 
-              // Discord-CDN-URLs sind signiert/abwaerts nicht dauerhaft. Vor jeder
-              // Channel-Loeschung alle Anhaenge vollstaendig in das Web-Transcript einbetten.
+              // Discord-CDN-URLs sind signiert und nicht als Langzeit-Archiv geeignet.
+              // Deshalb alle Anhaenge vor der Channel-Loeschung vollstaendig einbetten.
               const attachmentArchive = await archiveTranscriptAttachments(collectedMsgs);
 
-              const meta: TranscriptMeta = {""",
-          'system close attachment archive')
+              const meta: TranscriptMeta = {''',
+              'system close attachment archive',
+          )
 
-          text = replace_once(text,
-          """      logAudit('TICKET_CLOSED_SYSTEM', 'TICKET', {
+          text = replace_once(
+              text,
+              '''      logAudit('TICKET_CLOSED_SYSTEM', 'TICKET', {
                 guildId: inst.guildId, instanceId: inst.id, templateId,
                 messages: collectedMsgs.length,
-              });""",
-          """      logAudit('TICKET_CLOSED_SYSTEM', 'TICKET', {
+              });''',
+              '''      logAudit('TICKET_CLOSED_SYSTEM', 'TICKET', {
                 guildId: inst.guildId, instanceId: inst.id, templateId,
                 messages: collectedMsgs.length,
                 archivedAttachments: attachmentArchive.attachmentCount,
                 archivedAttachmentBytes: attachmentArchive.archivedBytes,
-              });""",
-          'system close archive audit')
+              });''',
+              'system close archive audit',
+          )
 
-          text = replace_once(text,
-          """  await btn.deferReply({ flags: MessageFlags.Ephemeral });
+          text = replace_once(
+              text,
+              '''  await btn.deferReply({ flags: MessageFlags.Ephemeral });
 
             try {
-              const channel = await btn.client.channels.fetch(instance.channelId).catch(() => null);""",
-          """  await btn.deferReply({ flags: MessageFlags.Ephemeral });
+              const channel = await btn.client.channels.fetch(instance.channelId).catch(() => null);''',
+              '''  await btn.deferReply({ flags: MessageFlags.Ephemeral });
 
             let lockedChannel: TextChannel | null = null;
             try {
-              const channel = await btn.client.channels.fetch(instance.channelId).catch(() => null);""",
-          'manual close locked channel tracking')
+              const channel = await btn.client.channels.fetch(instance.channelId).catch(() => null);''',
+              'manual close locked channel tracking',
+          )
 
-          text = replace_once(text,
-          """    const ch = channel as TextChannel;
-              await ch.permissionOverwrites.edit(btn.guild!.roles.everyone.id, { SendMessages: false }).catch(() => {});""",
-          """    const ch = channel as TextChannel;
+          text = replace_once(
+              text,
+              '''    const ch = channel as TextChannel;
+              await ch.permissionOverwrites.edit(btn.guild!.roles.everyone.id, { SendMessages: false }).catch(() => {});''',
+              '''    const ch = channel as TextChannel;
               lockedChannel = ch;
-              await ch.permissionOverwrites.edit(btn.guild!.roles.everyone.id, { SendMessages: false }).catch(() => {});""",
-          'manual close lock assignment')
+              await ch.permissionOverwrites.edit(btn.guild!.roles.everyone.id, { SendMessages: false }).catch(() => {});''',
+              'manual close lock assignment',
+          )
 
-          text = replace_once(text,
-          """    const closedAt = new Date();
+          text = replace_once(
+              text,
+              '''    const closedAt = new Date();
               const collectedMsgs = collected.map(collectMessage);
-              const meta: TranscriptMeta = {""",
-          """    const closedAt = new Date();
+              const meta: TranscriptMeta = {''',
+              '''    const closedAt = new Date();
               const collectedMsgs = collected.map(collectMessage);
-              // Fail-closed: Erst wenn jeder Discord-Anhang vollstaendig lokal in das
-              // persistierte HTML eingebettet ist, darf der Ticket-Channel geloescht werden.
+              // Fail-closed: Erst wenn jeder Discord-Anhang vollstaendig lokal im
+              // persistierten HTML steckt, darf der Ticket-Channel geloescht werden.
               const attachmentArchive = await archiveTranscriptAttachments(collectedMsgs);
-              const meta: TranscriptMeta = {""",
-          'manual close attachment archive')
+              const meta: TranscriptMeta = {''',
+              'manual close attachment archive',
+          )
 
-          text = replace_once(text,
-          """      closedBy: btn.user.id, messages: collectedMsgs.length,
+          text = replace_once(
+              text,
+              '''      closedBy: btn.user.id, messages: collectedMsgs.length,
               transcriptBytes: transcriptBuf.length,
               transcriptTruncated,
-            });""",
-          """      closedBy: btn.user.id, messages: collectedMsgs.length,
+            });''',
+              '''      closedBy: btn.user.id, messages: collectedMsgs.length,
               transcriptBytes: transcriptBuf.length,
               transcriptTruncated,
               archivedAttachments: attachmentArchive.attachmentCount,
               archivedAttachmentBytes: attachmentArchive.archivedBytes,
-            });""",
-          'manual close archive audit')
+            });''',
+              'manual close archive audit',
+          )
 
-          text = replace_once(text,
-          """  } catch (e) {
+          text = replace_once(
+              text,
+              '''  } catch (e) {
               logger.error('Ticket-Close-Fehler', e as Error);
               logAudit('TICKET_CLOSE_FAILED', 'TICKET', {
                 guildId: instance.guildId, instanceId: instance.id,
@@ -236,16 +255,16 @@ jobs:
               });
               await btn.editReply({ content: 'Konnte Ticket nicht schliessen. Bitte Admin informieren.' }).catch(() => {});
             }
-          }""",
-          """  } catch (e) {
+          }''',
+              '''  } catch (e) {
               const error = e as Error;
               logger.error('Ticket-Close-Fehler', error);
               logAudit('TICKET_CLOSE_FAILED', 'TICKET', {
                 guildId: instance.guildId, instanceId: instance.id,
                 closedBy: btn.user.id, error: error.message,
               });
-              // Der Channel bleibt bei einem Archivierungsfehler absichtlich bestehen.
-              // Schreibrechte des Openers/Staffs wiederherstellen, damit kein totes Ticket entsteht.
+              // Bei fehlgeschlagener Archivierung bleibt der Channel absichtlich erhalten.
+              // Die zuvor gesetzte Schreibsperre wieder aufheben, damit das Ticket benutzbar bleibt.
               if (lockedChannel) {
                 await lockedChannel.permissionOverwrites.edit(instance.openerDiscordId, { SendMessages: true }).catch(() => {});
                 if (instance.template.staffRoleId) {
@@ -259,15 +278,17 @@ jobs:
                   : 'Konnte Ticket nicht schliessen. Bitte Admin informieren.',
               }).catch(() => {});
             }
-          }""",
-          'manual close fail-closed response')
+          }''',
+              'manual close fail-closed response',
+          )
 
           ticket_path.write_text(text)
 
           route_path = Path('src/dashboard/routes/v2/tickets.ts')
           route = route_path.read_text()
-          route = replace_once(route,
-          """  // F4: Vor Cascade alle offenen Discord-Channels schliessen + Embed entfernen.
+          route = replace_once(
+              route,
+              '''  // F4: Vor Cascade alle offenen Discord-Channels schliessen + Embed entfernen.
             const client = tryGetDashboardClient();
             let purged: { closed: number; failed: number } = { closed: 0, failed: 0 };
             if (client) {
@@ -277,10 +298,9 @@ jobs:
               }
             }
 
-            await prisma.ticketTemplate.delete({ where: { id } });""",
-          """  // F4: Vor Cascade alle offenen Discord-Channels vollstaendig archivieren/schliessen.
-            // Bei auch nur einem Fehler darf der Template-Cascade NICHT laufen, sonst waeren
-            // Ticket-DB-Daten weg, obwohl der Discord-Channel/Anhang nicht sauber archiviert ist.
+            await prisma.ticketTemplate.delete({ where: { id } });''',
+              '''  // F4: Vor Cascade alle offenen Discord-Channels vollstaendig archivieren/schliessen.
+            // Schon ein einzelner Archivierungsfehler blockiert den Template-Cascade.
             const openCount = await prisma.ticketInstance.count({ where: { templateId: id, status: 'OPEN' } });
             const client = tryGetDashboardClient();
             let purged: { closed: number; failed: number } = { closed: 0, failed: 0 };
@@ -313,25 +333,26 @@ jobs:
               }
             }
 
-            await prisma.ticketTemplate.delete({ where: { id } });""",
-          'template delete fail-closed archive gate')
+            await prisma.ticketTemplate.delete({ where: { id } });''',
+              'template delete fail-closed archive gate',
+          )
           route_path.write_text(route)
           PY
 
       - name: Verify focused patch shape
         shell: bash
         run: |
-          grep -q "archiveTranscriptAttachments(collectedMsgs)" src/modules/tickets/ticketSystem.ts
-          grep -q "archivedDataUrl" src/modules/tickets/ticketSystem.ts
-          grep -q "purged.failed > 0" src/dashboard/routes/v2/tickets.ts
+          test "$(grep -c 'archiveTranscriptAttachments(collectedMsgs)' src/modules/tickets/ticketSystem.ts)" -eq 2
+          grep -q 'archivedDataUrl' src/modules/tickets/ticketSystem.ts
+          grep -q 'class="att-link"' src/modules/tickets/ticketSystem.ts
+          grep -q 'purged.failed > 0' src/dashboard/routes/v2/tickets.ts
           git diff --check
 
-      - name: Commit patch and remove temporary workflow
+      - name: Commit source patch
         shell: bash
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git rm .github/workflows/apply-ticket-transcript-archive-fix.yml
           git add src/modules/tickets/ticketSystem.ts src/dashboard/routes/v2/tickets.ts
           git commit -m "fix(tickets): preserve archived images in transcripts"
           git push origin HEAD:fix/ticket-transcript-archive-images
