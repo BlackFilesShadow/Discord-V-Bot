@@ -10,6 +10,7 @@
 
 import { createHash } from 'node:crypto';
 import {
+  AdmEventType,
   GameplayDeliveryStatus,
   GameplayFeedKind,
   Prisma,
@@ -55,9 +56,9 @@ function safeError(error: unknown): string {
   return message.replace(/Bearer\s+\S+/gi, 'Bearer [REDACTED]').slice(0, 1000);
 }
 
-function eventTypes(kind: GameplayFeedKind): string[] {
+function eventTypes(kind: GameplayFeedKind): AdmEventType[] {
   if (kind === GameplayFeedKind.PLAYER_LIST) return [];
-  return kind === GameplayFeedKind.DEATH ? [...DEATH_EVENT_TYPES] : [...BUILD_EVENT_TYPES];
+  return (kind === GameplayFeedKind.DEATH ? [...DEATH_EVENT_TYPES] : [...BUILD_EVENT_TYPES]) as AdmEventType[];
 }
 
 function eventNonce(eventId: string): string {
