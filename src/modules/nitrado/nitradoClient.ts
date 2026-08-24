@@ -356,7 +356,18 @@ export class NitradoClient {
   async removeFromWhitelist(serviceId: string, identifier: string): Promise<void> {
     const id = identifier.trim();
     if (!id) throw new NitradoApiError('Leerer Identifier', null, 'whitelist');
-    await this.mutateGeneralList(serviceId, 'whitelist', true, list => list.filter(entry => entry !== id));
+    const normalized = id.toLocaleLowerCase('en-US');
+    await this.mutateGeneralList(serviceId, 'whitelist', true, list =>
+      list.filter(entry => entry.toLocaleLowerCase('en-US') !== normalized),
+    );
+    const path = `/services/${serviceId}/gameservers`;
+    for (let attempt = 1; attempt <= 3; attempt++) {
+      const remote = await this.getWhitelist(serviceId);
+      const present = remote.some(entry => entry.identifier.toLocaleLowerCase('en-US') === normalized);
+      if (!present) return;
+      if (attempt < 3) await sleep(250 * attempt);
+    }
+    throw new NitradoApiError('Whitelist-Remove konnte remote nicht bestaetigt werden', null, path);
   }
 
   /** DayZ-Console-Bannliste aus dem live bestaetigten `settings.general.bans`. */

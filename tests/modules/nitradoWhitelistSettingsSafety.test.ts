@@ -74,4 +74,19 @@ describe('NitradoClient whitelist settings safety', () => {
     await expect(client.removeFromWhitelist('123', 'player-a')).rejects.toThrow('Unerwartetes Whitelist-Settingformat');
     expect(requestMock).toHaveBeenCalledTimes(1);
   });
+
+  it('quittiert Whitelist-Remove erst nach bestaetigtem Remote-Post-Read', async () => {
+    requestMock
+      .mockResolvedValueOnce(settings('PlayerOne\r\nPlayerTwo'))
+      .mockResolvedValueOnce({ status: 200, headers: {}, data: { data: {} } })
+      .mockResolvedValueOnce(settings('PlayerTwo'));
+    const client = new NitradoClient('token-1234');
+
+    await expect(client.removeFromWhitelist('123', 'playerone')).resolves.toBeUndefined();
+    expect(requestMock).toHaveBeenCalledTimes(3);
+    expect(requestMock).toHaveBeenNthCalledWith(3, expect.objectContaining({
+      method: 'GET',
+      url: '/services/123/gameservers',
+    }));
+  });
 });

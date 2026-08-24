@@ -139,6 +139,7 @@ describe('Leave-1A/1E/1F/1G durable cleanup saga', () => {
         details: expect.objectContaining({
           kind: LEAVE_CLEANUP_KIND,
           guildId: GUILD_A,
+          scope: 'STANDARD',
           step: 'WHITELIST',
           stage: 'QUEUED',
           attempts: 0,
@@ -251,6 +252,31 @@ describe('Leave-1A/1E/1F/1G durable cleanup saga', () => {
         claimToken: CLAIM_TOKEN,
       }) },
     }));
+  });
+
+  it('ends a new STANDARD cleanup after whitelist and scoped gameplay stats', async () => {
+    const now = new Date('2026-08-17T18:00:00.000Z');
+    const request = {
+      id: 'job-standard',
+      userId: `leave-job:v1:${GUILD_A}:${USER}`,
+      discordId: USER,
+      status: 'IN_PROGRESS' as const,
+      scheduledAt: now,
+      details: {
+        kind: LEAVE_CLEANUP_KIND,
+        guildId: GUILD_A,
+        scope: 'STANDARD' as const,
+        step: 'STATS_SESSIONS' as const,
+        stage: 'RUNNING' as const,
+        attempts: 0,
+        maxAttempts: 8,
+        claimedAt: now.toISOString(),
+        claimToken: CLAIM_TOKEN,
+      },
+    };
+
+    const next = await advanceLeaveCleanupStep(request, 'STATS_SESSIONS', new Date(now.getTime() + 1));
+    expect(readLeaveCleanupDetails(next.details)).toMatchObject({ scope: 'STANDARD', step: 'COMPLETE' });
   });
 
   it('rejects a stale worker that lost its claim fence instead of regressing a newer checkpoint', async () => {

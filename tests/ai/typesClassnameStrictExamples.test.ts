@@ -34,4 +34,30 @@ describe('strict classname examples', () => {
     expect(answerDayz129CatalogQuestion('Classname AK101')?.answer).toBe('Der Classname ist **`AK101`**.');
     expect(answerDayz129CatalogQuestion('Classname AK101_Green')?.answer).toBe('Der Classname ist **`AK101_Green`**.');
   });
+
+  it.each([
+    ['Seekiste', 'SeaChest'],
+    ['Sea Chest', 'SeaChest'],
+    ['Generator', 'PowerGenerator'],
+    ['Strom-Generator', 'PowerGenerator'],
+    ['Militärzelt', 'LargeTent'],
+  ])('resolves verified German/English alias %s', (input, expected) => {
+    expect(answerDayz129CatalogQuestion(`Classname ${input}`)?.answer)
+      .toBe(`Der Classname ist **\`${expected}\`**.`);
+  });
+
+  it('normalizes spacing, separators, plurals, umlauts and a bounded typo', () => {
+    expect(answerDayz129CatalogQuestion('Classname von den Feldrucksäcken grün')?.answer)
+      .toBe('Der Classname ist **`AliceBag_Green`**.');
+    expect(answerDayz129CatalogQuestion('Classname Strom_Generatoren')?.answer)
+      .toBe('Der Classname ist **`PowerGenerator`**.');
+    expect(answerDayz129CatalogQuestion('Classname Kampfstifel schwarz')?.answer)
+      .toBe('Der Classname ist **`CombatBoots_Black`**.');
+  });
+
+  it('does not guess short ambiguous weapon families', () => {
+    const text = answerDayz129CatalogQuestion('Classname AK')?.answer ?? '';
+    expect(text).toMatch(/keinen eindeutig passenden Classname/i);
+    expect(text).not.toMatch(/AK101|AK74|AKM/);
+  });
 });

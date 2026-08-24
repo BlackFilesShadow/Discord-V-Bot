@@ -197,10 +197,10 @@
     "dashboard-ui/src/pages/dev/XmlValidator.tsx"
   ],
   "reachableTsxCount": 96,
-  "buttonCount": 351,
+  "buttonCount": 352,
   "countsByKind": {
     "client-or-delegated": 66,
-    "client-state": 67,
+    "client-state": 68,
     "download-export": 7,
     "navigation-auth": 7,
     "read-request": 34,
@@ -5388,6 +5388,24 @@
     },
     {
       "id": "button-165",
+      "sourceKey": "dashboard-ui/src/components/KillfeedTab.tsx:161",
+      "file": "dashboard-ui/src/components/KillfeedTab.tsx",
+      "line": 161,
+      "component": "KillfeedTab",
+      "tag": "button",
+      "label": "🎮 Player List Feed",
+      "handler": "() => { setKind('PLAYER_LIST'); setEditing(null); }",
+      "kind": "client-state",
+      "hasDisabledGuard": false,
+      "hasLoadingGuard": false,
+      "type": "button",
+      "sourceId": "dashboard-ui/src/components/KillfeedTab.tsx#KillfeedTab:4",
+      "coverageRef": "dashboard-ui/src/components/KillfeedTab.tsx",
+      "profile": "client-state",
+      "pendingGuard": "not-applicable"
+    },
+    {
+      "id": "button-165-toggle",
       "sourceKey": "dashboard-ui/src/components/KillfeedTab.tsx:185",
       "file": "dashboard-ui/src/components/KillfeedTab.tsx",
       "line": 185,
@@ -5399,7 +5417,7 @@
       "hasDisabledGuard": true,
       "hasLoadingGuard": true,
       "type": "implicit-button",
-      "sourceId": "dashboard-ui/src/components/KillfeedTab.tsx#KillfeedTab:4",
+      "sourceId": "dashboard-ui/src/components/KillfeedTab.tsx#KillfeedTab:5",
       "coverageRef": "dashboard-ui/src/components/KillfeedTab.tsx",
       "profile": "write-request",
       "pendingGuard": "source-disabled-or-loading"
@@ -5417,7 +5435,7 @@
       "hasDisabledGuard": false,
       "hasLoadingGuard": false,
       "type": "implicit-button",
-      "sourceId": "dashboard-ui/src/components/KillfeedTab.tsx#KillfeedTab:5",
+      "sourceId": "dashboard-ui/src/components/KillfeedTab.tsx#KillfeedTab:6",
       "coverageRef": "dashboard-ui/src/components/KillfeedTab.tsx",
       "profile": "client-state",
       "pendingGuard": "not-applicable"
@@ -5435,7 +5453,7 @@
       "hasDisabledGuard": true,
       "hasLoadingGuard": true,
       "type": "implicit-button",
-      "sourceId": "dashboard-ui/src/components/KillfeedTab.tsx#KillfeedTab:6",
+      "sourceId": "dashboard-ui/src/components/KillfeedTab.tsx#KillfeedTab:7",
       "coverageRef": "dashboard-ui/src/components/KillfeedTab.tsx",
       "profile": "write-request",
       "pendingGuard": "source-disabled-or-loading"

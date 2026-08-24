@@ -12,6 +12,7 @@ import {
   AdmEventType,
   GameplayDeliveryStatus,
   GameplayFeedKind,
+  Prisma,
   type GameplayFeedConfig,
   type GameplayFeedDelivery,
 } from '@prisma/client';
@@ -28,13 +29,19 @@ import {
   deriveGameplayFeedView,
   type GameplayAdmEvent,
 } from './types';
+import {
+  buildPlayerListEmbeds,
+  playerListStateHash,
+  type PlayerListEntry,
+} from './playerListEmbed';
 
 const POLL_INTERVAL_MS = 15_000;
 const LEASE_MS = 60_000;
 const MAX_ATTEMPTS = 8;
 const SCAN_BATCH = 200;
 const MAX_SCAN_BATCHES_PER_TICK = 5;
-const DELIVERY_BATCH = 50;
+const DELIVERY_BATCH = 1;
+const DELIVERY_SPACING_MS = 12_000;
 const DEATH_DEDUP_WINDOW_MS = 5_000;
 const SPECIFIC_DEATH_TYPES: AdmEventType[] = [
   AdmEventType.PLAYER_KILLED,
@@ -56,6 +63,7 @@ function safeError(error: unknown): string {
 }
 
 function eventTypes(kind: GameplayFeedKind): AdmEventType[] {
+  if (kind === GameplayFeedKind.PLAYER_LIST) return [];
   return (kind === GameplayFeedKind.DEATH ? [...DEATH_EVENT_TYPES] : [...BUILD_EVENT_TYPES]) as AdmEventType[];
 }
 
@@ -236,7 +244,11 @@ async function failDelivery(
     }),
     prisma.gameplayFeedConfig.updateMany({
       where: { id: config.id, guildId: config.guildId, nitradoConnId: config.nitradoConnId },
-      data: { lastErrorMsg: message, lastPolledAt: new Date() },
+      data: {
+        lastErrorMsg: message,
+        lastPolledAt: new Date(),
+        nextDeliveryAt: new Date(Date.now() + DELIVERY_SPACING_MS),
+      },
     }),
   ]);
 }
@@ -245,6 +257,17 @@ async function deliverOne(
   config: GameplayFeedConfig,
   delivery: GameplayFeedDelivery,
 ): Promise<void> {
+  const active = await prisma.gameplayFeedConfig.findFirst({
+    where: {
+      id: config.id,
+      guildId: config.guildId,
+      nitradoConnId: config.nitradoConnId,
+      isActive: true,
+    },
+    select: { id: true },
+  });
+  if (!active) return;
+
   const claimed = await prisma.gameplayFeedDelivery.updateMany({
     where: {
       id: delivery.id,
@@ -313,6 +336,23 @@ async function deliverOne(
     const textChannel = channel as GuildTextBasedChannel;
     if (textChannel.guildId !== config.guildId) throw new Error('Feed-Channel gehoert nicht zur Guild');
 
+    const stillActive = await prisma.gameplayFeedConfig.findFirst({
+      where: {
+        id: config.id,
+        guildId: config.guildId,
+        nitradoConnId: config.nitradoConnId,
+        isActive: true,
+      },
+      select: { id: true },
+    });
+    if (!stillActive) {
+      await prisma.gameplayFeedDelivery.updateMany({
+        where: { id: delivery.id, status: GameplayDeliveryStatus.SENDING },
+        data: { status: GameplayDeliveryStatus.PENDING, leaseUntil: null },
+      });
+      return;
+    }
+
     const view = deriveGameplayFeedView(event, {
       showActorCoords: config.showActorCoords,
       showTargetCoords: config.showTargetCoords,
@@ -328,6 +368,10 @@ async function deliverOne(
       enforceNonce: true,
     });
     await markSent(config, claimedDelivery, event, message.id);
+    await prisma.gameplayFeedConfig.updateMany({
+      where: { id: config.id, guildId: config.guildId, nitradoConnId: config.nitradoConnId },
+      data: { nextDeliveryAt: new Date(Date.now() + DELIVERY_SPACING_MS) },
+    });
 
     emitServerGameplayEvent({
       guildId: config.guildId,
@@ -345,6 +389,118 @@ async function deliverOne(
     });
   } catch (error) {
     await failDelivery(config, claimedDelivery, error);
+  }
+}
+
+async function currentPlayerList(config: GameplayFeedConfig): Promise<PlayerListEntry[]> {
+  const sessions = await prisma.playerSession.findMany({
+    where: {
+      guildId: config.guildId,
+      nitradoConnId: config.nitradoConnId,
+      status: 'OPEN',
+    },
+    select: { gameId: true, playerName: true, updatedAt: true },
+    orderBy: [{ updatedAt: 'desc' }, { gameId: 'asc' }],
+  });
+  const latestSession = new Map<string, { gameId: string; playerName: string | null }>();
+  for (const session of sessions) {
+    if (!latestSession.has(session.gameId)) latestSession.set(session.gameId, session);
+  }
+  const gameIds = [...latestSession.keys()];
+  const positions = gameIds.length === 0 ? [] : await prisma.$queryRaw<Array<{
+    actorGameId: string | null;
+    actorPosition: string | null;
+  }>>(Prisma.sql`
+    SELECT DISTINCT ON ("actorGameId")
+           "actorGameId", "actorPosition"
+      FROM "AdmEvent"
+     WHERE "guildId"=${config.guildId}
+       AND "nitradoConnId"=${config.nitradoConnId}
+       AND "eventType"='PLAYER_POSITION'::"AdmEventType"
+       AND "actorGameId" IN (${Prisma.join(gameIds)})
+     ORDER BY "actorGameId", "createdAt" DESC, "id" DESC
+  `);
+  const latestPosition = new Map<string, string | null>();
+  for (const position of positions) {
+    if (position.actorGameId && !latestPosition.has(position.actorGameId)) {
+      latestPosition.set(position.actorGameId, position.actorPosition);
+    }
+  }
+  return [...latestSession.values()].map(session => ({
+    gameId: session.gameId,
+    playerName: session.playerName?.trim() || 'Unbekannt',
+    position: latestPosition.get(session.gameId) ?? null,
+  }));
+}
+
+async function processPlayerListConfig(config: GameplayFeedConfig, serverAlias: string): Promise<void> {
+  try {
+    const entries = await currentPlayerList(config);
+    const stateHash = playerListStateHash(entries, config.showActorCoords);
+    const now = new Date();
+    if (config.lastStateHash === stateHash && config.lastMessageId) {
+      await prisma.gameplayFeedConfig.updateMany({
+        where: { id: config.id, guildId: config.guildId, nitradoConnId: config.nitradoConnId, isActive: true },
+        data: { lastPolledAt: now, lastPlayerCount: entries.length },
+      });
+      return;
+    }
+
+    const client = tryGetDashboardClient();
+    if (!client) throw new Error('Discord-Client nicht verfuegbar');
+    const channel = await client.channels.fetch(config.channelId).catch(() => null);
+    if (!channel || !channel.isTextBased() || channel.isDMBased()) throw new Error('Player-List-Channel nicht verfuegbar/Text-Channel');
+    const textChannel = channel as GuildTextBasedChannel;
+    if (textChannel.guildId !== config.guildId) throw new Error('Player-List-Channel gehoert nicht zur Guild');
+    const embeds = buildPlayerListEmbeds({
+      serverAlias,
+      entries,
+      showCoordinates: config.showActorCoords,
+      embedColor: config.embedColor,
+      generatedAt: now,
+    });
+
+    // The dashboard can disable the feed while the ADM snapshot is being read.
+    // Re-check immediately before the only external side effect (Discord).
+    const stillActive = await prisma.gameplayFeedConfig.count({
+      where: {
+        id: config.id,
+        guildId: config.guildId,
+        nitradoConnId: config.nitradoConnId,
+        isActive: true,
+      },
+    });
+    if (stillActive !== 1) return;
+
+    let messageId = config.lastMessageId;
+    if (messageId) {
+      const message = await textChannel.messages.fetch(messageId).catch(() => null);
+      if (message) await message.edit({ embeds, allowedMentions: { parse: [] } });
+      else messageId = null;
+    }
+    if (!messageId) {
+      const message = await textChannel.send({ embeds, allowedMentions: { parse: [] } });
+      messageId = message.id;
+    }
+
+    await prisma.gameplayFeedConfig.updateMany({
+      where: { id: config.id, guildId: config.guildId, nitradoConnId: config.nitradoConnId, isActive: true },
+      data: {
+        lastMessageId: messageId,
+        lastStateHash: stateHash,
+        lastPlayerCount: entries.length,
+        lastPlayerListAt: now,
+        lastEventAt: now,
+        lastPolledAt: now,
+        lastErrorMsg: null,
+      },
+    });
+  } catch (error) {
+    const message = safeError(error);
+    await prisma.gameplayFeedConfig.updateMany({
+      where: { id: config.id, guildId: config.guildId, nitradoConnId: config.nitradoConnId },
+      data: { lastPolledAt: new Date(), lastErrorMsg: message },
+    });
   }
 }
 
@@ -366,8 +522,20 @@ async function processConfig(config: GameplayFeedConfig): Promise<void> {
     return;
   }
 
+  if (config.kind === GameplayFeedKind.PLAYER_LIST) {
+    await processPlayerListConfig(config, connection.alias);
+    return;
+  }
+
   try {
     await enqueueNewEvents(config);
+    if (config.nextDeliveryAt.getTime() > Date.now()) {
+      await prisma.gameplayFeedConfig.updateMany({
+        where: { id: config.id, guildId: config.guildId, nitradoConnId: config.nitradoConnId },
+        data: { lastPolledAt: new Date() },
+      });
+      return;
+    }
     const due = await prisma.gameplayFeedDelivery.findMany({
       where: {
         configId: config.id,

@@ -1,0 +1,29 @@
+enum GoodbyeDeliveryState {
+  PENDING
+  SENT
+  FAILED
+}
+
+model GoodbyeDelivery {
+  id                 String               @id @default(cuid())
+  guildId            String
+  discordId          String               @db.VarChar(32)
+  membershipKey      String               @db.VarChar(64)
+  cleanupRequestId   String?              @unique
+  channelId          String               @db.VarChar(32)
+  messageId          String?              @db.VarChar(32)
+  discordName        String               @db.VarChar(256)
+  guildName          String               @db.VarChar(256)
+  customMessage      String               @db.Text
+  leaveOccurredAt    DateTime
+  cleanupEnabled     Boolean              @default(false)
+  cleanupSnapshot    Json?
+  state              GoodbyeDeliveryState @default(PENDING)
+  lastError          String?              @db.Text
+  createdAt          DateTime             @default(now())
+  updatedAt          DateTime             @updatedAt
+
+  @@unique([guildId, membershipKey])
+  @@index([guildId, discordId, createdAt])
+  @@index([state, updatedAt])
+}
