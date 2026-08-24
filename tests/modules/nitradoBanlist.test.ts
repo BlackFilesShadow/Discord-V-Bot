@@ -160,7 +160,11 @@ describe('NitradoClient DayZ Console ban settings contract', () => {
   });
 
   it('verwendet im DayZ-Console-Pfad niemals den nicht implementierten games/banlist-Endpunkt', async () => {
-    requestMock.mockResolvedValue(gameserverSettings(''));
+    requestMock
+      .mockResolvedValueOnce(gameserverSettings(''))
+      .mockResolvedValueOnce(gameserverSettings(''))
+      .mockResolvedValueOnce({ status: 200, headers: {}, data: { data: {} } })
+      .mockResolvedValueOnce(gameserverSettings('player-a'));
     const client = new NitradoClient('token-1234');
 
     await client.getBanlist('123');
