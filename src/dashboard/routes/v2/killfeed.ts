@@ -27,6 +27,7 @@ export const killfeedRouter = Router({ mergeParams: true });
 
 const SNOWFLAKE_RE = /^\d{17,20}$/;
 const HEX_RE = /^#?[0-9a-fA-F]{6}$/;
+const ONLINE_LIST_INTERVALS = [5, 10, 15, 30, 60] as const;
 
 interface FeedBody {
   channelId?: string;
@@ -37,6 +38,7 @@ interface FeedBody {
   showTool?: boolean;
   showDistance?: boolean;
   embedColor?: string;
+  playerListIntervalMinutes?: number | null;
   // Legacy-Aliase fuer bestehende Dashboard-Clients.
   showShooterCoords?: boolean;
   showVictimCoords?: boolean;
@@ -105,6 +107,15 @@ function validateBody(
     data[key] = value;
   }
 
+  if (body.playerListIntervalMinutes !== undefined) {
+    if (kind !== 'PLAYER_LIST') return { ok: false, error: 'Intervall ist nur fuer die Online List erlaubt.' };
+    const interval = body.playerListIntervalMinutes;
+    if (interval !== null && !ONLINE_LIST_INTERVALS.includes(interval as (typeof ONLINE_LIST_INTERVALS)[number])) {
+      return { ok: false, error: 'Online-List-Intervall muss Aus, 5, 10, 15, 30 oder 60 Minuten sein.' };
+    }
+    data.playerListIntervalMinutes = interval;
+  }
+
   if (body.embedColor !== undefined) {
     if (typeof body.embedColor !== 'string' || !HEX_RE.test(body.embedColor)) {
       return { ok: false, error: 'embedColor muss Hex sein (z.B. #dc2626).' };
@@ -146,6 +157,8 @@ function responseConfig(row: {
   lastMessageId: string | null;
   lastPlayerCount: number | null;
   lastPlayerListAt: Date | null;
+  playerListIntervalMinutes: number | null;
+  nextPlayerListPostAt: Date | null;
   createdAt: Date;
   updatedAt: Date;
 }) {
@@ -172,6 +185,8 @@ function responseConfig(row: {
     lastMessageId: row.lastMessageId,
     lastPlayerCount: row.lastPlayerCount,
     lastPlayerListAt: row.lastPlayerListAt?.toISOString() ?? null,
+    playerListIntervalMinutes: row.playerListIntervalMinutes,
+    nextPlayerListPostAt: row.nextPlayerListPostAt?.toISOString() ?? null,
     createdAt: row.createdAt.toISOString(),
     updatedAt: row.updatedAt.toISOString(),
   };
@@ -260,6 +275,10 @@ killfeedRouter.post('/', requireGuildPermission('killfeed.manage'), async (req, 
         showTool: (data.showTool as boolean | undefined) ?? true,
         showDistance: kind === 'DEATH' ? ((data.showDistance as boolean | undefined) ?? true) : false,
         embedColor: (data.embedColor as string | undefined) ?? (kind === 'BUILD' ? '#eab308' : kind === 'PLAYER_LIST' ? '#2563eb' : '#dc2626'),
+        playerListIntervalMinutes: kind === 'PLAYER_LIST'
+          ? ((data.playerListIntervalMinutes as number | null | undefined) ?? null)
+          : null,
+        nextPlayerListPostAt: null,
         // Neue Configs starten am Jetzt-Punkt und replayen keinen historischen ADM-Backlog.
         cursorCreatedAt: new Date(),
         cursorEventId: '',
@@ -321,6 +340,9 @@ killfeedRouter.patch('/:id', requireGuildPermission('killfeed.manage'), async (r
       if (kind === 'PLAYER_LIST' && parsed.data.showActorCoords !== undefined) {
         updateData.lastStateHash = null;
       }
+      if (kind === 'PLAYER_LIST' && parsed.data.playerListIntervalMinutes !== undefined) {
+        updateData.nextPlayerListPostAt = parsed.data.playerListIntervalMinutes ? new Date() : null;
+      }
       if (locked[0].isActive === false && parsed.data.isActive === true && kind !== 'PLAYER_LIST') {
         const watermark = await tx.admEvent.findFirst({
           where: {
@@ -336,6 +358,7 @@ killfeedRouter.patch('/:id', requireGuildPermission('killfeed.manage'), async (r
       }
       if (locked[0].isActive === false && parsed.data.isActive === true && kind === 'PLAYER_LIST') {
         updateData.lastStateHash = null;
+        if (existing.playerListIntervalMinutes) updateData.nextPlayerListPostAt = new Date();
       }
       await tx.gameplayFeedConfig.updateMany({
         where: { id, guildId: scope.guildId, nitradoConnId: resolution.nitradoConnId, kind: kind as GameplayFeedKind },
