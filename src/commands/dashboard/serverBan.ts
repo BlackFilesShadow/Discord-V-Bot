@@ -6,8 +6,8 @@
  * - leerer Alias = alle aktiven verknuepften Gameserver;
  * - Ban markiert einen vorhandenen lokalen Whitelist-Eintrag PENDING_REMOVE,
  *   statt ihn vor Remote-Bestaetigung zu loeschen;
- * - SERVER_BAN_ADD entfernt remote zuerst exakt denselben Identifier aus
- *   general.whitelist und schreibt erst danach die Gameserver-Banlist;
+ * - SERVER_BAN_ADD bestaetigt zuerst exakt denselben Identifier in
+ *   `settings.general.bans` und entfernt ihn erst danach aus der Whitelist;
  * - `appliedRemotely` bleibt ein bestaetigter Zustand. /server-unban liest
  *   deshalb zuerst die echte Remote-Banlist und erfindet diesen Wert nie;
  * - Klartext-Identifier landen weder im ServerBanEntry noch in Audit-Logs.
@@ -226,9 +226,9 @@ export const serverBanCommand: Command = {
           expiryNoticeChannelId: expiresAt ? interaction.channelId : null,
           remoteQueued: stored.queued,
           whitelistState: 'PENDING_REMOVE',
-          remoteSequence: 'WHITELIST_REMOVE_THEN_BAN',
+          remoteSequence: 'BAN_THEN_WHITELIST_REMOVE',
         });
-        results.push(`✅ **${label}** — Whitelist-Entfernung und Bann ${stored.queued ? 'sicher eingereiht' : 'bereits in Bearbeitung'}.`);
+        results.push(`✅ **${label}** — Bann und anschliessende Whitelist-Entfernung ${stored.queued ? 'sicher eingereiht' : 'bereits in Bearbeitung'}.`);
       } catch (error) {
         failures++;
         const internalMessage = safeErrorMessage(error, identifier);
@@ -284,9 +284,6 @@ export const serverUnbanCommand: Command = {
     for (const target of targets) {
       const label = targetLabel(target);
       try {
-        // Nitrado-1Q: Der Alias-Snapshot aus der Command-Aufloesung ist nur
-        // Zielauswahl. Token + Service werden unter dem kanonischen kurzen
-        // Connection-Lock frisch gelesen. Remote-I/O findet ohne Lock statt.
         const binding = await readCurrentAdmBinding({ id: target.id, guildId: scope.guildId });
         if (!binding) {
           throw new Error('Nitrado-Bindung ist nicht mehr ACTIVE oder besitzt keine Service-ID.');
@@ -297,9 +294,6 @@ export const serverUnbanCommand: Command = {
           matchesBanIdentifier(row.identifier, identityHash, config.security.encryptionKey),
         );
 
-        // Erst wenn exakt dieselbe ACTIVE Token-/Service-/Binding-Version noch
-        // gueltig ist, darf die Remote-Beobachtung lokalen Ban-Zustand oder eine
-        // Remove-Outbox beeinflussen. Der DB-Commit liegt dabei unter dem Lock.
         const result = await withFreshAdmBinding(binding, () => prisma.$transaction(async tx => {
           const row = await tx.serverBanEntry.upsert({
             where: {
