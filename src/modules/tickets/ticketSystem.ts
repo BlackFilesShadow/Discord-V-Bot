@@ -1306,7 +1306,7 @@ export async function handleAddUserSelect(select: UserSelectMenuInteraction): Pr
  * Owner / Discord-Administrator / Staff-Rolle / Manager-Rolle duerfen das Ticket verwalten.
  */
 type TicketWithTemplate = Awaited<ReturnType<typeof prisma.ticketInstance.findUnique>> & {
-  template: { staffRoleId: string | null; managerRoleIds?: unknown };
+  template: { staffRoleId: string | null; managerRoleIds?: unknown } | null;
 };
 
 async function canManageTicket(btn: ButtonInteraction, instance: TicketWithTemplate | null): Promise<boolean> {
@@ -1332,6 +1332,10 @@ function canManageTicketForMember(
   if (guildOwnerId && member.id === guildOwnerId) return true;
   // Discord-Administrator-Bypass: Server-Admins duerfen Ticket-Verwaltung machen.
   if (member.permissions && member.permissions.has(PermissionFlagsBits.Administrator)) return true;
+  // Nach einer Template-Loeschung bleibt das CLOSED Ticket als Archiv bestehen.
+  // Ohne Template sind historische Staff-/Manager-Rollen nicht mehr belastbar;
+  // Owner/Admin duerfen das Archiv weiterhin verwalten, andere werden abgewiesen.
+  if (!instance.template) return false;
   if (instance.template.staffRoleId && member.roles.cache.has(instance.template.staffRoleId)) return true;
   const managerRoleIds = (instance.template as unknown as { managerRoleIds?: unknown }).managerRoleIds;
   if (Array.isArray(managerRoleIds)) {
@@ -1438,7 +1442,7 @@ export async function handleCloseReasonModal(modal: ModalSubmitInteraction): Pro
   // Embed im Transcript-Channel komplett neu rendern (sicherer als Field-Index-Patch).
   const tmId = (inst as unknown as { transcriptMessageId?: string | null }).transcriptMessageId;
   let embedPatched = false;
-  if (tmId) {
+  if (tmId && inst.template) {
     try {
       const ch = await modal.client.channels.fetch(inst.template.transcriptChannelId).catch(() => null);
       if (ch && ch.isTextBased() && !ch.isDMBased()) {
@@ -1449,7 +1453,7 @@ export async function handleCloseReasonModal(modal: ModalSubmitInteraction): Pro
             where: { id: inst.id },
             include: { template: true },
           });
-          if (fresh) {
+          if (fresh?.template) {
             const fAny = fresh as unknown as {
               templateNumber?: number | null; ticketNumber?: number;
               closedByName?: string | null; claimedByName?: string | null;
