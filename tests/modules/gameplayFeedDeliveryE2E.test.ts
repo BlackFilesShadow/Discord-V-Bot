@@ -230,8 +230,9 @@ describe('produktive ADM -> Discord Gameplay-Feed-Kette', () => {
       expect.objectContaining({ name: 'Distanz', value: '42.5 m' }),
       expect.objectContaining({ name: 'Server', value: 'Chernarus #1' }),
     ]));
-    expect(embed.fields?.map(field => field.name)).not.toContain('Opfer-Position');
-    expect(embed.fields?.map(field => field.name)).not.toContain('Killer-Position');
+    const fieldNames = (embed.fields ?? []).map((field: { name: string }) => field.name);
+    expect(fieldNames).not.toContain('Opfer-Position');
+    expect(fieldNames).not.toContain('Killer-Position');
     expect(embed.footer).toBeUndefined();
     expect(embed.timestamp).toBeUndefined();
     expect(payload.nonce).toBe(event.id.slice(0, 25));
