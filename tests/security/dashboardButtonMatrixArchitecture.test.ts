@@ -215,7 +215,7 @@ describe('stage 24 dashboard button matrix architecture', () => {
 
     expect(actual).toEqual(declared);
     expect(matrix.buttons).toHaveLength(matrix.buttonCount);
-    expect(matrix.buttons).toHaveLength(351);
+    expect(matrix.buttons).toHaveLength(352);
     expect(matrix.fileCoverage).toHaveLength(60);
     expect(matrix.reachableTsxCount).toBe(96);
 

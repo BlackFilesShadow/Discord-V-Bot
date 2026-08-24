@@ -1,7 +1,10 @@
 const mockFindUnique = jest.fn();
 const mockUpsert = jest.fn().mockResolvedValue({});
 const mockGetMemberProfile = jest.fn();
-const mockSendWelcomeMessages = jest.fn().mockResolvedValue(undefined);
+const mockGoodbyeCreate = jest.fn();
+const mockGoodbyeUpdateMany = jest.fn();
+const mockGoodbyeFindUnique = jest.fn();
+const mockGameIdentityFindMany = jest.fn();
 
 jest.mock('../../src/database/prisma', () => ({
   __esModule: true,
@@ -10,6 +13,12 @@ jest.mock('../../src/database/prisma', () => ({
       findUnique: mockFindUnique,
       upsert: mockUpsert,
     },
+    goodbyeDelivery: {
+      create: mockGoodbyeCreate,
+      updateMany: mockGoodbyeUpdateMany,
+      findUnique: mockGoodbyeFindUnique,
+    },
+    gameIdentityLink: { findMany: mockGameIdentityFindMany },
   },
 }));
 
@@ -21,16 +30,6 @@ jest.mock('../../src/modules/ai/memberAwareness', () => ({
 jest.mock('../../src/modules/ai/emoteResolver', () => ({
   __esModule: true,
   resolveCustomEmotes: (value: string) => value,
-}));
-
-jest.mock('../../src/modules/ai/triggers', () => ({
-  __esModule: true,
-  renderTemplate: (template: string, vars: { user?: string }) => template.replace(/\{user\}/g, vars.user ?? ''),
-}));
-
-jest.mock('../../src/modules/welcome/welcomeManager', () => ({
-  __esModule: true,
-  sendWelcomeMessages: mockSendWelcomeMessages,
 }));
 
 import {
@@ -45,6 +44,9 @@ import {
 beforeEach(() => {
   jest.clearAllMocks();
   mockUpsert.mockResolvedValue({});
+  mockGoodbyeCreate.mockResolvedValue({ id: 'goodbye-1', messageId: null });
+  mockGoodbyeUpdateMany.mockResolvedValue({ count: 1 });
+  mockGameIdentityFindMany.mockResolvedValue([]);
 });
 
 describe('Goodbye-1 guild-scoped identity and delivery', () => {
@@ -126,7 +128,8 @@ describe('Goodbye-1 guild-scoped identity and delivery', () => {
       value: { enabled: true, channelId: '12345678901234567', message: 'Bye {user} {mention}' },
     });
     mockGetMemberProfile.mockResolvedValue({ username: 'StoredUser', nickname: 'StoredNick' });
-    const channel = { send: jest.fn() };
+    const send = jest.fn().mockResolvedValue({ id: 'message-1' });
+    const channel = { send };
     const member = {
       guild: {
         id: 'guild-a',
@@ -140,10 +143,51 @@ describe('Goodbye-1 guild-scoped identity and delivery', () => {
 
     await expect(sendConfiguredGoodbye(member)).resolves.toBe('sent');
     expect(mockGetMemberProfile).toHaveBeenCalledWith('guild-a', 'discord-1');
-    expect(mockSendWelcomeMessages).toHaveBeenCalledWith(
-      expect.anything(),
-      { text: 'Bye StoredNick <@discord-1>' },
-    );
-    expect(mockSendWelcomeMessages.mock.calls[0][1]).not.toHaveProperty('mentionUserId');
+    expect(send).toHaveBeenCalledTimes(1);
+    const payload = send.mock.calls[0][0];
+    expect(payload.allowedMentions).toEqual({ parse: [] });
+    expect(payload.embeds[0].toJSON()).toMatchObject({
+      title: '👋 Bye Bye',
+      description: 'Bye StoredNick <@discord-1>',
+      fields: expect.arrayContaining([
+        expect.objectContaining({ name: 'Discord-Name', value: 'StoredNick' }),
+        expect.objectContaining({ name: 'Status', value: 'Server verlassen' }),
+        expect.objectContaining({ name: 'Datum' }),
+        expect.objectContaining({ name: 'Uhrzeit' }),
+      ]),
+    });
+    expect(mockGoodbyeUpdateMany).toHaveBeenCalledWith(expect.objectContaining({
+      data: expect.objectContaining({ messageId: 'message-1', state: 'SENT' }),
+    }));
+  });
+
+  it('still sends the independent Goodbye when cleanup identity lookup fails', async () => {
+    mockFindUnique.mockResolvedValue({
+      value: { enabled: true, channelId: '12345678901234567', message: 'Bye {user}' },
+    });
+    mockGetMemberProfile.mockResolvedValue({ username: 'StoredUser', nickname: null });
+    mockGameIdentityFindMany.mockRejectedValue(new Error('identity database unavailable'));
+    const send = jest.fn().mockResolvedValue({ id: 'message-2' });
+    const member = {
+      guild: {
+        id: 'guild-a', name: 'Guild A', memberCount: 40,
+        channels: { fetch: jest.fn().mockResolvedValue({ send, isTextBased: () => true, isDMBased: () => false }) },
+      },
+      user: { id: 'discord-1', username: 'GatewayName' },
+      nickname: null,
+    } as any;
+
+    await expect(sendConfiguredGoodbye(member, {
+      leaveOccurredAt: new Date('2026-08-24T10:00:00.000Z'),
+      cleanupEnabled: true,
+      cleanupRequestId: 'cleanup-1',
+    })).resolves.toBe('sent');
+
+    expect(send).toHaveBeenCalledTimes(1);
+    const json = send.mock.calls[0][0].embeds[0].toJSON();
+    expect(json.fields).toEqual(expect.arrayContaining([
+      expect.objectContaining({ name: 'Status', value: 'Server verlassen' }),
+      expect.objectContaining({ name: 'Whitelist-Status je Gameserver', value: expect.stringContaining('Nicht eindeutig') }),
+    ]));
   });
 });

@@ -12,7 +12,7 @@ import { tryGetDashboardClient } from '../../clientRegistry';
 import { validateBotChannelAccess } from '../../../utils/discordChannel';
 import { logAuditDb } from '../../../utils/logger';
 import { emitGuildEvent } from '../../socket/emitter';
-import { countWelcomeGraphemes, MAX_WELCOME_TEMPLATE_GRAPHEMES, sendWelcomeMessages } from '../../../modules/welcome/welcomeManager';
+import { countWelcomeGraphemes, MAX_WELCOME_TEMPLATE_GRAPHEMES } from '../../../modules/welcome/welcomeManager';
 import {
   disableGoodbye,
   getGoodbyeConfig,
@@ -23,6 +23,7 @@ import {
   type GoodbyeConfig,
 } from '../../../modules/welcome/goodbyeManager';
 import { resolveCustomEmotes } from '../../../modules/ai/emoteResolver';
+import { buildStructuredGoodbyeEmbed } from '../../../modules/welcome/goodbyeStatus';
 
 export const goodbyeRouter = Router({ mergeParams: true });
 
@@ -63,6 +64,7 @@ async function ensureGoodbyeChannel(channelId: string, guildId: string): Promise
   const requiredPerms: PermissionResolvable[] = [
     PermissionFlagsBits.ViewChannel,
     PermissionFlagsBits.SendMessages,
+    PermissionFlagsBits.EmbedLinks,
   ];
   const result = await validateBotChannelAccess(tryGetDashboardClient(), guildId, channelId, requiredPerms);
   return result.ok ? null : result.reason;
@@ -152,15 +154,27 @@ goodbyeRouter.post('/test', requireGuildPermission('welcome.manage'), async (req
         nickname: null,
       }, null);
 
+  const leaveOccurredAt = new Date();
   const rendered = renderGoodbyeMessage(cfg.message, {
     identity,
     guild: guild.name,
     memberCount: guild.memberCount,
+    occurredAt: leaveOccurredAt,
   });
   const finalText = resolveCustomEmotes(rendered, guild);
 
   try {
-    await sendWelcomeMessages(channel, { text: `🧪 **Goodbye-Test** — ${finalText}` });
+    await channel.send({
+      content: '🧪 Goodbye-Test',
+      embeds: [buildStructuredGoodbyeEmbed({
+        discordName: identity.displayName,
+        customMessage: finalText,
+        leaveOccurredAt,
+        cleanupEnabled: false,
+        cleanupSnapshot: null,
+      })],
+      allowedMentions: { parse: [] },
+    });
   } catch (err) {
     res.status(400).json({ error: err instanceof Error ? err.message : 'Testnachricht ist ungueltig.' });
     return;

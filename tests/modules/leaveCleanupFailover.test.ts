@@ -1,5 +1,6 @@
 const claimNext = jest.fn();
 const recoverStale = jest.fn();
+const recoverGoodbye = jest.fn();
 const whitelistStep = jest.fn();
 const statsStep = jest.fn();
 const linkEconomyStep = jest.fn();
@@ -48,6 +49,11 @@ jest.mock('../../src/modules/moderation/leaveCleanupSecurity', () => ({
   sanitizeLeaveCleanupError: (error: unknown) => error instanceof Error ? error.message : String(error),
 }));
 
+jest.mock('../../src/modules/welcome/goodbyeStatus', () => ({
+  recoverPendingGoodbyeDeliveries: recoverGoodbye,
+  updateGoodbyeCleanupFailure: jest.fn().mockResolvedValue(undefined),
+}));
+
 jest.mock('../../src/modules/moderation/leaveCleanupSaga', () => ({
   claimNextLeaveCleanupRequest: claimNext,
   recoverStaleLeaveCleanupRequests: recoverStale,
@@ -70,6 +76,7 @@ beforeEach(() => {
   jest.clearAllMocks();
   stopLeaveCleanupWorker();
   recoverStale.mockResolvedValue(0);
+  recoverGoodbye.mockResolvedValue(0);
   claimNext.mockResolvedValue(null);
   renewLease.mockImplementation(async (request: unknown) => request);
   finalizeRejoin.mockResolvedValue({ rejoined: false, profile: 'NONE', levelBaseline: false });

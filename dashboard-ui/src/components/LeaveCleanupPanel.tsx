@@ -49,7 +49,7 @@ export function LeaveCleanupPanel({ guildId }: { guildId: string }) {
     if (!changed) return;
     if (enabled && !saved) {
       const ok = confirm(
-        'Spielerdaten bei Austritt wirklich loeschen? Bei zukuenftigen Austritten werden Whitelist/Nitrado, Linking, Economy, Stats, XP und guild-spezifische Spielerdaten dauerhaft bereinigt. Der Vorgang laeuft persistent mit Retry/Recovery.',
+        'Cleanup bei Austritt aktivieren? Bei zukünftigen Austritten wird der verifiziert zugeordnete Spieler von der Nitrado-Whitelist entfernt und seine DayZ-Gameplay-Statistik für diese Guild und diese Gameserver-Verbindung zurückgesetzt. Linking, Economy, XP, Level, Balance, Identitäts- und Moderationsdaten bleiben erhalten.',
       );
       if (!ok) return;
     }
@@ -76,7 +76,7 @@ export function LeaveCleanupPanel({ guildId }: { guildId: string }) {
           <DatabaseZap className="h-5 w-5 text-danger" /> Spielerdaten bei Austritt
         </h2>
         <p className="text-xs text-muted mt-0.5">
-          Owner-only Lebenszyklus-Schalter fuer den vollstaendigen, persistenten Leave-Reset.
+          Owner-only Schalter für Whitelist-Entfernung und guild-/gameservergescoppten Gameplay-Statistik-Reset.
         </p>
       </div>
 
@@ -95,7 +95,7 @@ export function LeaveCleanupPanel({ guildId }: { guildId: string }) {
           <Switch
             checked={enabled}
             onChange={setEnabled}
-            label="Spielerdaten bei Austritt vollstaendig bereinigen"
+            label="Whitelist und Spielerstatistik bei Austritt bereinigen"
           />
 
           <div className="rounded-lg border border-danger/35 bg-danger/5 p-3 sm:p-4">
@@ -104,13 +104,13 @@ export function LeaveCleanupPanel({ guildId }: { guildId: string }) {
               <div className="min-w-0 text-xs text-muted space-y-2">
                 <p className="text-white/90 font-medium">Was bei EIN passiert</p>
                 <p>
-                  Der Austritt erzeugt einen persistenten Cleanup-Auftrag. Whitelist/Nitrado wird zuerst remote bestaetigt,
-                  danach werden Session-/ADM-Identitaet, Linking, Wallet/Bank/Reward-State, Stats/XP/Leaderboard und weitere
-                  guild-spezifische Spielerdaten bereinigt.
+                  Bei AUS passiert kein Cleanup. Bei EIN entfernt der Bot den verifiziert zugeordneten DayZ-Spieler
+                  von der Nitrado-Whitelist und setzt nur seine DayZ-Gameplay-Statistik für diese Guild und diese
+                  Gameserver-Verbindung zurück. Der Remote-Erfolg wird technisch bestätigt.
                 </p>
                 <p>
-                  Technische Anti-Replay-/Accounting-Beweise bleiben pseudonymisiert erhalten. Ein Rejoin beginnt mit frischem
-                  Spielerzustand; ein bereits verbrauchter Startbonus wird nicht erneut ausgezahlt.
+                  Nicht betroffen: Discord-/Game-Linking, Economy, Wallet/Bank/Rewards, XP, Level, Balance,
+                  Session-Identität außerhalb des Statistik-Resets, Moderationsdaten und sonstige Guild-Daten.
                 </p>
               </div>
             </div>

@@ -57,7 +57,17 @@ async function stub(page: Page, opts: { saveFailure?: boolean; listFailure?: boo
     if (path === `/api/v2/guilds/${GUILD_ID}/channels`) return json(route, { channels: [{ id: CHANNEL_ID, name: 'killfeed', type: 0, parentId: null }] });
     if (path === `/api/v2/guilds/${GUILD_ID}/killfeed` && method === 'GET') {
       if (opts.listFailure) return json(route, { error: 'Nitrado momentan nicht erreichbar' }, 503);
-      return json(route, { kind: url.searchParams.get('kind') ?? 'DEATH', configs: [feed()] });
+      const kind = url.searchParams.get('kind') ?? 'DEATH';
+      return json(route, {
+        kind,
+        configs: [feed(kind === 'PLAYER_LIST' ? {
+          kind,
+          categories: [],
+          showActorCoords: false,
+          lastPlayerCount: 3,
+          lastPlayerListAt: '2026-08-19T09:01:00.000Z',
+        } : { kind })],
+      });
     }
 
     if (method !== 'GET') {
@@ -163,6 +173,34 @@ test.describe('Authenticated Killfeed & ADM', () => {
       row.method === 'PATCH' && row.path === `/api/v2/guilds/${GUILD_ID}/killfeed/${CONFIG_ID}`
     )).length).toBe(1);
     await expect(toggle).toBeEnabled();
+  });
+
+  test('Player List Feed hat eigenen Scope, Observability und unabhängigen Koordinaten-Schalter', async ({ page }) => {
+    const mutations = await stub(page);
+    await page.goto(`/servers/${GUILD_ID}/server/${SLOT}?tab=killfeed`);
+    await page.getByRole('button', { name: /Player List Feed/ }).click();
+
+    await expect(page.getByText('Spieler online:').locator('..')).toContainText('3');
+    await expect(page.getByText('Player-List-Feed:').locator('..')).toContainText('Aktiv · Koordinaten: Inaktiv');
+
+    await page.getByRole('button', { name: /Neu/ }).click();
+    const dialog = page.getByRole('dialog');
+    await expect(dialog.getByRole('heading', { name: 'Player List Feed konfigurieren' })).toBeVisible();
+    await dialog.getByLabel('Discord-Channel').selectOption(CHANNEL_ID);
+    await dialog.getByLabel('Koordinaten anzeigen').uncheck();
+    await dialog.getByRole('button', { name: 'Speichern' }).click();
+
+    await expect.poll(() => mutations.find(row => row.method === 'POST' && row.query.includes('kind=PLAYER_LIST'))).toBeTruthy();
+    expect(mutations.find(row => row.method === 'POST' && row.query.includes('kind=PLAYER_LIST'))).toMatchObject({
+      path: `/api/v2/guilds/${GUILD_ID}/killfeed`,
+      query: `?slot=${SLOT}&kind=PLAYER_LIST`,
+      body: expect.objectContaining({
+        channelId: CHANNEL_ID,
+        categories: [],
+        showActorCoords: false,
+        isActive: true,
+      }),
+    });
   });
 
   test('503-Listenfehler wird als echter Fehlerzustand angezeigt', async ({ page }) => {

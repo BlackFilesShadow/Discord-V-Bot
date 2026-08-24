@@ -12,11 +12,11 @@ Die verbindliche Einzelinventur steht in [`dashboard-button-matrix.json`](./dash
 | Lesende Requests / Refresh / Retry | 34 |
 | Export / Download | 7 |
 | Navigation / Auth | 7 |
-| Client-State | 67 |
+| Client-State | 68 |
 | Clientseitig oder an geprüften Handler delegiert | 66 |
-| **Gesamt** | **351** |
+| **Gesamt** | **352** |
 
-Die 351 Button-Familien liegen in 60 produktiv erreichbaren TSX-Dateien innerhalb eines Importgraphen aus 96 TSX-Modulen. Eine Quellstelle innerhalb einer `map`-Schleife zählt als eine dynamische Button-Familie; ihre Laufzeitinstanzen erben denselben Vertrag.
+Die 352 Button-Familien liegen in 60 produktiv erreichbaren TSX-Dateien innerhalb eines Importgraphen aus 96 TSX-Modulen. Eine Quellstelle innerhalb einer `map`-Schleife zählt als eine dynamische Button-Familie; ihre Laufzeitinstanzen erben denselben Vertrag.
 
 Nicht doppelt gezählt werden:
 
@@ -54,7 +54,7 @@ Umgesetzt wurde deshalb:
 - explizite Single-Flight-Zustände mit sofortigen Ref-Locks und `finally`-Freigabe für Killfeed, übersetzte Posts, DEV-Uploads und Nitrado-Mirror-Browse/File/Refresh;
 - Sequenz-Invalidierung ohne liegenbleibende Loading-Sperren bei Upload-Kind- und Nitrado-Connection-Wechseln;
 - sichtbare Fehlerkanäle für die dabei gehärteten direkten Requests;
-- zugängliche Namen für sämtliche 351 Button-Familien;
+- zugängliche Namen für sämtliche 352 Button-Familien;
 - `type="button"` als sicherer Default der gemeinsamen `Button`-Komponente, während echte Submit-Buttons explizit `type="submit"` setzen;
 - Beibehaltung des globalen mobilen 44×44-Pixel-Touch-Vertrags für Shared- und native Buttons.
 

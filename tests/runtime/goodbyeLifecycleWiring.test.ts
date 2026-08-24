@@ -14,7 +14,7 @@ describe('Goodbye-1 + Leave-1E leave lifecycle wiring', () => {
     const enqueueAt = removeSource.indexOf('await enqueueLeaveCleanupRequest({');
     const syncAt = removeSource.indexOf('await syncMemberProfile(m);');
     const leftAt = removeSource.indexOf('await markMemberLeft(m.guild.id, m.user.id);');
-    const goodbyeAt = removeSource.indexOf('await sendConfiguredGoodbye(m);');
+    const goodbyeAt = removeSource.indexOf('await sendConfiguredGoodbye(m, {');
 
     expect(configAt).toBeGreaterThanOrEqual(0);
     expect(enqueueAt).toBeGreaterThan(configAt);
@@ -25,7 +25,7 @@ describe('Goodbye-1 + Leave-1E leave lifecycle wiring', () => {
 
   it('keeps goodbye best-effort and never performs destructive cleanup directly in the gateway event', () => {
     expect(removeSource).toContain("import { sendConfiguredGoodbye } from '../modules/welcome/goodbyeManager';");
-    expect(removeSource).toContain('await sendConfiguredGoodbye(m);');
+    expect(removeSource).toContain('await sendConfiguredGoodbye(m, {');
     expect(removeSource).toContain('} catch (goodbyeError) {');
     expect(removeSource).toContain('deletePlayerDataOnLeave');
     expect(removeSource).toContain('enqueueLeaveCleanupRequest');
@@ -53,7 +53,7 @@ describe('Goodbye-1 + Leave-1E leave lifecycle wiring', () => {
     const sendStart = managerSource.indexOf('export async function sendConfiguredGoodbye');
     const sendFunction = managerSource.slice(sendStart);
 
-    expect(sendFunction).toContain('sendWelcomeMessages(channel, { text: finalText });');
+    expect(sendFunction).toContain('allowedMentions: { parse: [] }');
     expect(sendFunction).not.toContain('mentionUserId');
   });
 });

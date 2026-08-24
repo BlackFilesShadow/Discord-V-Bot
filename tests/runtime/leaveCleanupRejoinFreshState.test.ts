@@ -34,7 +34,7 @@ describe('Leave-1G rejoin fresh-state architecture gate', () => {
     const firstEnqueue = removeSource.indexOf('await enqueueLeaveCleanupRequest({');
     const markLeft = removeSource.indexOf('await markMemberLeft(m.guild.id, m.user.id);');
     const secondEnqueue = removeSource.indexOf('await enqueueLeaveCleanupRequest({', firstEnqueue + 1);
-    const goodbye = removeSource.indexOf('await sendConfiguredGoodbye(m);');
+    const goodbye = removeSource.indexOf('await sendConfiguredGoodbye(m, {');
 
     expect(firstEnqueue).toBeGreaterThanOrEqual(0);
     expect(markLeft).toBeGreaterThan(firstEnqueue);
@@ -61,7 +61,7 @@ describe('Leave-1G rejoin fresh-state architecture gate', () => {
     expect(workerSource).toContain('async function runWithLeaseHeartbeat');
     expect(workerSource).toContain('currentRequest = await renewLeaveCleanupClaimLease(initialRequest, guildId, discordId);');
     expect(workerSource).toContain('currentRequest = await renewLeaveCleanupClaimLease(currentRequest, guildId, discordId);');
-    expect(workerSource).toContain('() => runLeaveWhitelistCleanupStep(guildId, discordId)');
+    expect(workerSource).toContain('() => runLeaveWhitelistCleanupStep(guildId, discordId, request.id)');
     expect(workerSource).toContain('() => runLeaveStatsSessionsCleanupStep(guildId, discordId)');
     expect(workerSource).toContain('() => runLeaveLinkEconomyAfterConfirmedWhitelistStep(guildId, discordId)');
     expect(workerSource).toContain('() => cleanupGuildMemberData(guildId, discordId)');

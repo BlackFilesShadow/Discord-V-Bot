@@ -24,6 +24,9 @@ const guildMemberRemoveEvent: BotEvent = {
   name: Events.GuildMemberRemove,
   execute: async (member: unknown) => {
     const m = member as GuildMember;
+    // Der fachliche Austrittszeitpunkt wird exakt einmal am Gateway-Eingang
+    // erfasst und spaeter bei keinem Retry/Status-Update veraendert.
+    const leaveOccurredAt = new Date();
 
     logAudit('MEMBER_LEAVE', 'SYSTEM', {
       discordId: m.user.id,
@@ -96,6 +99,7 @@ const guildMemberRemoveEvent: BotEvent = {
     // ein langsamer Discord-Goodbye-Versand kein Rejoin-/Relink-Fenster oeffnen.
     // AUS bedeutet weiterhin wirklich AUS: Dann wird kein Cleanup-Request erzeugt.
     let cleanupEnabled = false;
+    let cleanupRequestId: string | null = null;
     try {
       const leaveCfg = await getLeaveCleanupConfig(m.guild.id);
       cleanupEnabled = leaveCfg.deletePlayerDataOnLeave;
@@ -104,6 +108,7 @@ const guildMemberRemoveEvent: BotEvent = {
           guildId: m.guild.id,
           discordId: m.user.id,
         });
+        cleanupRequestId = queued.id;
         logger.info(
           `Leave-Cleanup ${queued.created ? 'eingequeued' : 'bereits vorhanden'}: ${m.user.id}@${m.guild.id}`,
         );
@@ -129,6 +134,7 @@ const guildMemberRemoveEvent: BotEvent = {
           guildId: m.guild.id,
           discordId: m.user.id,
         });
+        cleanupRequestId = confirmed.id;
         if (confirmed.created) {
           logger.warn(`Leave-Cleanup nach Left-Marker erneut eingequeued: ${m.user.id}@${m.guild.id}`);
         }
@@ -139,7 +145,11 @@ const guildMemberRemoveEvent: BotEvent = {
 
     // Goodbye bleibt best-effort und liegt bewusst NACH dem durable Enqueue.
     try {
-      const goodbyeResult = await sendConfiguredGoodbye(m);
+      const goodbyeResult = await sendConfiguredGoodbye(m, {
+        leaveOccurredAt,
+        cleanupEnabled,
+        cleanupRequestId,
+      });
       if (goodbyeResult === 'sent') {
         logger.info(`Goodbye gesendet: ${m.user.id}@${m.guild.id}`);
       } else if (goodbyeResult === 'missing_channel') {

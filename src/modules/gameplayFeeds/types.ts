@@ -1,7 +1,7 @@
 export type DeathFeedCategory = 'PVP' | 'DEATH' | 'SUICIDE' | 'NPC' | 'VEHICLE';
 export type BuildFeedCategory = 'PLACEMENT' | 'BUILD' | 'DISMANTLE' | 'DESTROY';
 export type GameplayFeedCategory = DeathFeedCategory | BuildFeedCategory;
-export type GameplayFeedKindValue = 'DEATH' | 'BUILD';
+export type GameplayFeedKindValue = 'DEATH' | 'BUILD' | 'PLAYER_LIST';
 
 export const DEATH_CATEGORIES: readonly DeathFeedCategory[] = ['PVP', 'DEATH', 'SUICIDE', 'NPC', 'VEHICLE'];
 export const BUILD_CATEGORIES: readonly BuildFeedCategory[] = ['PLACEMENT', 'BUILD', 'DISMANTLE', 'DESTROY'];
@@ -99,6 +99,7 @@ export function deriveGameplayFeedView(
 }
 
 export function categoryAllowed(kind: GameplayFeedKindValue, categories: readonly string[], eventType: string): boolean {
+  if (kind === 'PLAYER_LIST') return false;
   if (kindForEvent(eventType) !== kind) return false;
   const category = categoryForEvent(eventType);
   return category !== null && categories.includes(category);

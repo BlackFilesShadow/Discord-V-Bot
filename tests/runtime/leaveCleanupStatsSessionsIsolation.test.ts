@@ -52,12 +52,11 @@ describe('Leave-1D/1E production ordering and reset invariants', () => {
     expect(cleanupSource).toContain('\"targetGameId\"=CASE');
   });
 
-  it('resets Discord leaderboard/XP only through exact guild + Discord ownership', () => {
-    expect(cleanupSource).toContain('DELETE FROM \"LevelData\" d');
-    expect(cleanupSource).toContain('DELETE FROM \"XpRecord\" x');
-    expect(cleanupSource).toContain('d.\"guildId\"=$1');
-    expect(cleanupSource).toContain('x.\"guildId\"=$1');
-    expect(cleanupSource).toContain('u.\"discordId\"=$2');
+  it('keeps Discord XP, level and leaderboard outside the standard stats reset', () => {
+    expect(cleanupSource).not.toContain('DELETE FROM \"LevelData\"');
+    expect(cleanupSource).not.toContain('DELETE FROM \"XpRecord\"');
+    expect(cleanupSource).toContain('levelRowsDeleted: 0');
+    expect(cleanupSource).toContain('xpRowsDeleted: 0');
   });
 
   it('never exposes a raw game identifier in the public cleanup result contract', () => {

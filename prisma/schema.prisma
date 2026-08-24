@@ -2383,6 +2383,7 @@ model AdmEvent {
   createdAt       DateTime     @default(now())
 
   @@index([guildId, nitradoConnId, occurredAt])
+  @@index([guildId, nitradoConnId, eventType, actorGameId, createdAt])
   @@index([eventType, occurredAt])
 }
 

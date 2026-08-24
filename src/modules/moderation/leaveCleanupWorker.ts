@@ -18,6 +18,7 @@ import {
 import { sanitizeLeaveCleanupError } from './leaveCleanupSecurity';
 import { runLeaveStatsSessionsCleanupStep } from './leaveCleanupStatsSessions';
 import { runLeaveWhitelistCleanupStep } from './leaveCleanupWhitelist';
+import { recoverPendingGoodbyeDeliveries, updateGoodbyeCleanupFailure } from '../welcome/goodbyeStatus';
 
 const POLL_INTERVAL_MS = 15_000;
 const RECOVERY_INTERVAL_MS = 60_000;
@@ -149,7 +150,7 @@ export async function processLeaveCleanupRequest(
           guildId,
           discordId,
           renewed => { request = renewed; },
-          () => runLeaveWhitelistCleanupStep(guildId, discordId),
+          () => runLeaveWhitelistCleanupStep(guildId, discordId, request.id),
         );
         if (result.state !== 'DONE') {
           await deferLeaveCleanupRequest(request, 'WHITELIST_PENDING');
@@ -176,6 +177,10 @@ export async function processLeaveCleanupRequest(
       }
 
       if (details.step === 'LINK_ECONOMY') {
+        if (details.scope === 'STANDARD') {
+          request = await advanceLeaveCleanupStep(request, 'LINK_ECONOMY');
+          continue;
+        }
         const result = await runWithLeaseHeartbeat(
           request,
           guildId,
@@ -192,6 +197,10 @@ export async function processLeaveCleanupRequest(
       }
 
       if (details.step === 'GUILD_DATA') {
+        if (details.scope === 'STANDARD') {
+          request = await advanceLeaveCleanupStep(request, 'GUILD_DATA');
+          continue;
+        }
         const result = await runWithLeaseHeartbeat(
           request,
           guildId,
@@ -217,7 +226,9 @@ export async function processLeaveCleanupRequest(
         // Auch ein direkt nach Restart geladener COMPLETE-Claim wird vor dem
         // finalen Rejoin-Check noch einmal auf aktive Ownership erneuert.
         request = await renewLeaveCleanupClaimLease(request, guildId, discordId);
-        await finalizeLeaveRejoinState(request, guildId, discordId);
+        if (details.scope === 'FULL_PURGE_LEGACY') {
+          await finalizeLeaveRejoinState(request, guildId, discordId);
+        }
         await completeLeaveCleanupRequest(request, guildId, config.security.encryptionKey);
         return 'COMPLETED';
       }
@@ -242,6 +253,9 @@ export async function runLeaveCleanupWorkerOnce(): Promise<number> {
     // Instanz muss einen abgestorbenen Claim nach Ablauf der Lease uebernehmen
     // koennen, ohne selbst neu gestartet werden zu muessen.
     await recoverStaleIfDue();
+    await recoverPendingGoodbyeDeliveries().catch(error => {
+      logger.warn(`Goodbye-Zustellungs-Recovery fehlgeschlagen: ${sanitizeLeaveCleanupError(error)}`);
+    });
 
     for (let i = 0; i < MAX_JOBS_PER_TICK; i++) {
       const request = await claimNextLeaveCleanupRequest();
@@ -255,6 +269,13 @@ export async function runLeaveCleanupWorkerOnce(): Promise<number> {
         try {
           const state = await retryOrDeadLetterLeaveCleanupRequest(retryRequest, originalError);
           const message = sanitizeLeaveCleanupError(originalError);
+          await updateGoodbyeCleanupFailure(
+            retryRequest.id,
+            state === 'DEAD' ? 'FAILED' : 'RETRY',
+            message,
+          ).catch(statusError => {
+            logger.warn(`Goodbye-Cleanup-Status konnte nicht aktualisiert werden: ${sanitizeLeaveCleanupError(statusError)}`);
+          });
           if (state === 'DEAD') logger.error(`Leave-Cleanup DEAD: ${message}`);
           else logger.warn(`Leave-Cleanup Retry: ${message}`);
         } catch (retryError) {

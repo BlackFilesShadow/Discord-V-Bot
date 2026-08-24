@@ -16,6 +16,7 @@ jest.mock('../../src/database/prisma', () => ({
     },
     gameplayFeedConfig: {
       findMany: jest.fn(),
+      findFirst: jest.fn(),
       updateMany: jest.fn(),
     },
     nitradoConnection: {
@@ -51,6 +52,7 @@ const deliveryUpdate = prisma.gameplayFeedDelivery.updateMany as jest.Mock;
 const deliveryCreate = prisma.gameplayFeedDelivery.create as jest.Mock;
 const deliveryFind = prisma.gameplayFeedDelivery.findMany as jest.Mock;
 const configFind = prisma.gameplayFeedConfig.findMany as jest.Mock;
+const configFindFirst = prisma.gameplayFeedConfig.findFirst as jest.Mock;
 const configUpdate = prisma.gameplayFeedConfig.updateMany as jest.Mock;
 const connectionFind = prisma.nitradoConnection.findFirst as jest.Mock;
 const eventFindMany = prisma.admEvent.findMany as jest.Mock;
@@ -78,6 +80,11 @@ function feedConfig() {
     legacyKillfeedConfigId: null,
     cursorCreatedAt: new Date('2026-08-15T11:59:00.000Z'),
     cursorEventId: '',
+    nextDeliveryAt: new Date('2026-08-15T11:59:00.000Z'),
+    lastMessageId: null,
+    lastStateHash: null,
+    lastPlayerCount: null,
+    lastPlayerListAt: null,
     lastEventAt: null,
     lastPolledAt: null,
     lastErrorMsg: null,
@@ -163,6 +170,7 @@ beforeEach(() => {
   deliveryCreate.mockResolvedValue({ id: 'delivery-1' });
   deliveryFind.mockResolvedValue([]);
   configUpdate.mockResolvedValue({ count: 1 });
+  configFindFirst.mockResolvedValue({ id: 'feed-1' });
   connectionFind.mockResolvedValue({ id: CONN_ID });
 });
 
@@ -186,6 +194,8 @@ describe('produktive ADM -> Discord Gameplay-Feed-Kette', () => {
     deliveryFind.mockResolvedValue([delivery]);
 
     await runGameplayFeedsOnce();
+
+    expect(deliveryFind).toHaveBeenCalledWith(expect.objectContaining({ take: 1 }));
 
     expect(deliveryCreate).toHaveBeenCalledWith({
       data: expect.objectContaining({

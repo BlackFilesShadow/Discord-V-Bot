@@ -12,10 +12,12 @@ const RECEIPT_PREFIX = 'leave-receipt:v1:';
 
 export type LeaveCleanupStage = 'QUEUED' | 'RUNNING' | 'RETRY_WAIT' | 'COMPLETED' | 'DEAD';
 export type LeaveCleanupStep = 'WHITELIST' | 'STATS_SESSIONS' | 'LINK_ECONOMY' | 'GUILD_DATA' | 'COMPLETE';
+export type LeaveCleanupScope = 'STANDARD' | 'FULL_PURGE_LEGACY';
 
 export interface LeaveCleanupDetails {
   kind: typeof LEAVE_CLEANUP_KIND;
   guildId: string;
+  scope: LeaveCleanupScope;
   step: LeaveCleanupStep;
   stage: LeaveCleanupStage;
   attempts: number;
@@ -35,12 +37,20 @@ export interface LeaveCleanupRequestLike {
   details: unknown;
 }
 
-const NEXT_STEP: Record<Exclude<LeaveCleanupStep, 'COMPLETE'>, LeaveCleanupStep> = {
+const LEGACY_NEXT_STEP: Record<Exclude<LeaveCleanupStep, 'COMPLETE'>, LeaveCleanupStep> = {
   WHITELIST: 'STATS_SESSIONS',
   STATS_SESSIONS: 'LINK_ECONOMY',
   LINK_ECONOMY: 'GUILD_DATA',
   GUILD_DATA: 'COMPLETE',
 };
+
+function nextStep(details: LeaveCleanupDetails, step: Exclude<LeaveCleanupStep, 'COMPLETE'>): LeaveCleanupStep {
+  if (details.scope === 'STANDARD') {
+    if (step === 'WHITELIST') return 'STATS_SESSIONS';
+    return 'COMPLETE';
+  }
+  return LEGACY_NEXT_STEP[step];
+}
 
 function cleanSnowflake(value: string, label: string): string {
   const trimmed = value.trim();
@@ -71,6 +81,10 @@ export function readLeaveCleanupDetails(value: unknown): LeaveCleanupDetails | n
   return {
     kind: LEAVE_CLEANUP_KIND,
     guildId: row.guildId,
+    // Vor dieser Version bereits persistierte Jobs wurden unter dem damals
+    // ausdruecklichen Voll-Purge-Vertrag angelegt und bleiben separat legacy.
+    // Jeder neue normale Leave-Job wird dagegen immer STANDARD erzeugt.
+    scope: row.scope === 'STANDARD' ? 'STANDARD' : 'FULL_PURGE_LEGACY',
     step,
     stage,
     attempts,
@@ -87,6 +101,7 @@ function detailsJson(details: LeaveCleanupDetails): Prisma.InputJsonObject {
   return {
     kind: details.kind,
     guildId: details.guildId,
+    scope: details.scope,
     step: details.step,
     stage: details.stage,
     attempts: details.attempts,
@@ -193,6 +208,7 @@ export async function enqueueLeaveCleanupRequest(args: {
     const details: LeaveCleanupDetails = {
       kind: LEAVE_CLEANUP_KIND,
       guildId,
+      scope: 'STANDARD',
       step: 'WHITELIST',
       stage: 'QUEUED',
       attempts: 0,
@@ -231,6 +247,7 @@ export async function claimNextLeaveCleanupRequest(now: Date = new Date()): Prom
       const invalidDetails: LeaveCleanupDetails = {
         kind: LEAVE_CLEANUP_KIND,
         guildId: details?.guildId ?? 'invalid',
+        scope: details?.scope ?? 'FULL_PURGE_LEGACY',
         step: details?.step ?? 'WHITELIST',
         stage: 'DEAD',
         attempts: details?.attempts ?? 0,
@@ -342,10 +359,10 @@ export async function advanceLeaveCleanupStep(
     throw new Error('Leave-Cleanup Claim-Zeitstempel ist ungueltig.');
   }
   const nextClaimedAt = new Date(Math.max(now.getTime(), previousClaimedAt + 1)).toISOString();
-  const nextStep = NEXT_STEP[expectedStep];
+  const followingStep = nextStep(details, expectedStep);
   const nextDetails: LeaveCleanupDetails = {
     ...withoutLastError(details),
-    step: nextStep,
+    step: followingStep,
     stage: 'RUNNING',
     claimedAt: nextClaimedAt,
   };

@@ -47,6 +47,11 @@ jest.mock('../../src/modules/moderation/leaveCleanupSecurity', () => ({
   sanitizeLeaveCleanupError: (error: unknown) => error instanceof Error ? error.message : String(error),
 }));
 
+jest.mock('../../src/modules/welcome/goodbyeStatus', () => ({
+  updateGoodbyeCleanupFailure: jest.fn().mockResolvedValue(undefined),
+  recoverPendingGoodbyeDeliveries: jest.fn().mockResolvedValue(0),
+}));
+
 jest.mock('../../src/modules/moderation/leaveCleanupSaga', () => ({
   claimNextLeaveCleanupRequest: claimNext,
   advanceLeaveCleanupStep: advanceStep,
@@ -80,6 +85,7 @@ function request(step: string, id = 'job-1') {
     details: {
       kind: 'GUILD_LEAVE_CLEANUP_V1',
       guildId: GUILD,
+      scope: 'FULL_PURGE_LEGACY',
       step,
       stage: 'RUNNING',
       attempts: 0,
@@ -148,7 +154,7 @@ describe('Leave-1E/1G durable worker', () => {
     const result = await processLeaveCleanupRequest(request('WHITELIST'));
 
     expect(result).toBe('COMPLETED');
-    expect(whitelistStep).toHaveBeenCalledWith(GUILD, USER);
+    expect(whitelistStep).toHaveBeenCalledWith(GUILD, USER, 'job-1');
     expect(statsStep).toHaveBeenCalledWith(GUILD, USER);
     expect(linkEconomyStep).toHaveBeenCalledWith(GUILD, USER);
     expect(guildDataStep).toHaveBeenCalledWith(GUILD, USER);
@@ -355,6 +361,7 @@ describe('Leave-1E/1G durable worker', () => {
 
     await startLeaveCleanupWorker();
     expect(recoverStale).toHaveBeenCalledTimes(1);
+    await jest.advanceTimersByTimeAsync(0);
 
     stopLeaveCleanupWorker();
     jest.advanceTimersByTime(60_000);

@@ -172,7 +172,7 @@ export function GoodbyePanel({ guildId, canManage }: { guildId: string; canManag
           <LogOut className="h-5 w-5 text-accent" /> Abschied / Goodbye
         </h2>
         <p className="text-xs text-muted mt-0.5">
-          Sendet beim Austritt eine guild-spezifische Abschiedsnachricht und nutzt dafür die letzte bekannte Identität dieses Servers.
+          Sendet beim Austritt ein strukturiertes Embed mit Discord-Name, Status sowie festem Datum und fester Uhrzeit des Austritts.
         </p>
       </div>
 
@@ -181,7 +181,7 @@ export function GoodbyePanel({ guildId, canManage }: { guildId: string; canManag
           <div className="flex flex-wrap items-center justify-between gap-2">
             <div>
               <CardTitle>Goodbye-System</CardTitle>
-              <CardDesc>Channel, Nachricht und letzter bekannter Guild-Anzeigename.</CardDesc>
+              <CardDesc>Goodbye und optionaler Spieler-Cleanup sind getrennte Systeme. Ist Cleanup aktiv, wird sein technischer Nitrado-Status in derselben Nachricht aktualisiert.</CardDesc>
             </div>
             <Badge variant={enabled && configured ? 'ok' : 'neutral'}>
               {enabled && configured ? 'Aktiv' : configured ? 'Inaktiv' : 'Nicht konfiguriert'}

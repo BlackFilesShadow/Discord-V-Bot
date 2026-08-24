@@ -1,7 +1,7 @@
 /**
  * Gameplay-Feed-Routen. Der bestehende /killfeed-Pfad bleibt aus
- * Rueckwaertskompatibilitaet erhalten; `?kind=DEATH|BUILD` waehlt Deathfeed
- * oder Baufeed. Ohne kind gilt DEATH.
+ * Rueckwaertskompatibilitaet erhalten; `?kind=DEATH|BUILD|PLAYER_LIST`
+ * waehlt den Feed. Ohne kind gilt DEATH.
  */
 
 import { Router } from 'express';
@@ -15,7 +15,9 @@ import { tryGetDashboardClient } from '../../clientRegistry';
 import { validateBotChannelAccess } from '../../../utils/discordChannel';
 import { resolveDashboardGameServer, sendDashboardServerResolutionError } from './serverScope';
 import {
+  BUILD_EVENT_TYPES,
   BUILD_CATEGORIES,
+  DEATH_EVENT_TYPES,
   DEATH_CATEGORIES,
   categoryForEvent,
   type GameplayFeedKindValue,
@@ -43,10 +45,11 @@ interface FeedBody {
 
 function readKind(raw: unknown): GameplayFeedKindValue | null {
   const value = String(raw ?? 'DEATH').trim().toUpperCase();
-  return value === 'DEATH' || value === 'BUILD' ? value : null;
+  return value === 'DEATH' || value === 'BUILD' || value === 'PLAYER_LIST' ? value : null;
 }
 
 function allowedCategories(kind: GameplayFeedKindValue): readonly string[] {
+  if (kind === 'PLAYER_LIST') return [];
   return kind === 'DEATH' ? DEATH_CATEGORIES : BUILD_CATEGORIES;
 }
 
@@ -79,7 +82,7 @@ function validateBody(
     if (!Array.isArray(body.categories)) return { ok: false, error: 'categories muss Array sein.' };
     const allowed = allowedCategories(kind);
     const categories = Array.from(new Set(body.categories.map(value => String(value).trim().toUpperCase())));
-    if (categories.length === 0) return { ok: false, error: 'Mindestens eine Kategorie ist erforderlich.' };
+    if (categories.length === 0 && kind !== 'PLAYER_LIST') return { ok: false, error: 'Mindestens eine Kategorie ist erforderlich.' };
     for (const category of categories) {
       if (!allowed.includes(category)) return { ok: false, error: `Ungueltige ${kind}-Kategorie: ${category}.` };
     }
@@ -139,6 +142,10 @@ function responseConfig(row: {
   lastEventAt: Date | null;
   lastPolledAt: Date | null;
   lastErrorMsg: string | null;
+  nextDeliveryAt: Date;
+  lastMessageId: string | null;
+  lastPlayerCount: number | null;
+  lastPlayerListAt: Date | null;
   createdAt: Date;
   updatedAt: Date;
 }) {
@@ -161,6 +168,10 @@ function responseConfig(row: {
     lastEventAt: row.lastEventAt?.toISOString() ?? null,
     lastPolledAt: row.lastPolledAt?.toISOString() ?? null,
     lastErrorMsg: row.lastErrorMsg,
+    nextDeliveryAt: row.nextDeliveryAt.toISOString(),
+    lastMessageId: row.lastMessageId,
+    lastPlayerCount: row.lastPlayerCount,
+    lastPlayerListAt: row.lastPlayerListAt?.toISOString() ?? null,
     createdAt: row.createdAt.toISOString(),
     updatedAt: row.updatedAt.toISOString(),
   };
@@ -169,7 +180,7 @@ function responseConfig(row: {
 killfeedRouter.get('/', requireGuildPermission('killfeed.view'), async (req, res) => {
   const scope = req.guildScope!;
   const kind = readKind(req.query.kind);
-  if (!kind) { res.status(400).json({ error: 'kind muss DEATH oder BUILD sein.' }); return; }
+  if (!kind) { res.status(400).json({ error: 'kind muss DEATH, BUILD oder PLAYER_LIST sein.' }); return; }
   const resolution = await resolveDashboardGameServer(scope.guildId, scope.actorDiscordId, req.query.slot);
   if (resolution.kind !== 'RESOLVED') { sendDashboardServerResolutionError(res, resolution); return; }
 
@@ -181,13 +192,51 @@ killfeedRouter.get('/', requireGuildPermission('killfeed.view'), async (req, res
     },
     orderBy: { createdAt: 'asc' },
   });
-  res.json({ kind, configs: rows.map(responseConfig) });
+  const configs = await Promise.all(rows.map(async row => {
+    const [statusGroups, oldestOpen, lastSuccess] = await Promise.all([
+      prisma.gameplayFeedDelivery.groupBy({
+        by: ['status'],
+        where: { configId: row.id, guildId: scope.guildId, nitradoConnId: resolution.nitradoConnId },
+        _count: { _all: true },
+      }),
+      prisma.gameplayFeedDelivery.findFirst({
+        where: {
+          configId: row.id,
+          guildId: scope.guildId,
+          nitradoConnId: resolution.nitradoConnId,
+          status: { in: ['PENDING', 'SENDING', 'RETRY'] },
+        },
+        orderBy: { createdAt: 'asc' },
+        select: { createdAt: true },
+      }),
+      prisma.gameplayFeedDelivery.findFirst({
+        where: {
+          configId: row.id,
+          guildId: scope.guildId,
+          nitradoConnId: resolution.nitradoConnId,
+          status: 'SENT',
+        },
+        orderBy: { sentAt: 'desc' },
+        select: { sentAt: true },
+      }),
+    ]);
+    const counts = new Map(statusGroups.map(group => [group.status, group._count._all]));
+    return {
+      ...responseConfig(row),
+      openDeliveryCount: (counts.get('PENDING') ?? 0) + (counts.get('SENDING') ?? 0) + (counts.get('RETRY') ?? 0),
+      retryDeliveryCount: counts.get('RETRY') ?? 0,
+      failedDeliveryCount: counts.get('FAILED') ?? 0,
+      oldestOpenAt: oldestOpen?.createdAt.toISOString() ?? null,
+      lastSuccessAt: lastSuccess?.sentAt?.toISOString() ?? null,
+    };
+  }));
+  res.json({ kind, configs });
 });
 
 killfeedRouter.post('/', requireGuildPermission('killfeed.manage'), async (req, res) => {
   const scope = req.guildScope!;
   const kind = readKind(req.query.kind);
-  if (!kind) { res.status(400).json({ error: 'kind muss DEATH oder BUILD sein.' }); return; }
+  if (!kind) { res.status(400).json({ error: 'kind muss DEATH, BUILD oder PLAYER_LIST sein.' }); return; }
   const resolution = await resolveDashboardGameServer(scope.guildId, scope.actorDiscordId, req.query.slot);
   if (resolution.kind !== 'RESOLVED') { sendDashboardServerResolutionError(res, resolution); return; }
 
@@ -210,7 +259,7 @@ killfeedRouter.post('/', requireGuildPermission('killfeed.manage'), async (req, 
         showTargetCoords: (data.showTargetCoords as boolean | undefined) ?? false,
         showTool: (data.showTool as boolean | undefined) ?? true,
         showDistance: kind === 'DEATH' ? ((data.showDistance as boolean | undefined) ?? true) : false,
-        embedColor: (data.embedColor as string | undefined) ?? (kind === 'BUILD' ? '#eab308' : '#dc2626'),
+        embedColor: (data.embedColor as string | undefined) ?? (kind === 'BUILD' ? '#eab308' : kind === 'PLAYER_LIST' ? '#2563eb' : '#dc2626'),
         // Neue Configs starten am Jetzt-Punkt und replayen keinen historischen ADM-Backlog.
         cursorCreatedAt: new Date(),
         cursorEventId: '',
@@ -235,7 +284,7 @@ killfeedRouter.post('/', requireGuildPermission('killfeed.manage'), async (req, 
 killfeedRouter.patch('/:id', requireGuildPermission('killfeed.manage'), async (req, res) => {
   const scope = req.guildScope!;
   const kind = readKind(req.query.kind);
-  if (!kind) { res.status(400).json({ error: 'kind muss DEATH oder BUILD sein.' }); return; }
+  if (!kind) { res.status(400).json({ error: 'kind muss DEATH, BUILD oder PLAYER_LIST sein.' }); return; }
   const resolution = await resolveDashboardGameServer(scope.guildId, scope.actorDiscordId, req.query.slot);
   if (resolution.kind !== 'RESOLVED') { sendDashboardServerResolutionError(res, resolution); return; }
   const id = String(req.params.id);
@@ -253,9 +302,45 @@ killfeedRouter.patch('/:id', requireGuildPermission('killfeed.manage'), async (r
   }
 
   try {
-    await prisma.gameplayFeedConfig.updateMany({
-      where: { id, guildId: scope.guildId, nitradoConnId: resolution.nitradoConnId, kind: kind as GameplayFeedKind },
-      data: parsed.data,
+    await prisma.$transaction(async tx => {
+      const locked = await tx.$queryRaw<Array<{ id: string; isActive: boolean }>>`
+        SELECT "id", "isActive"
+          FROM "GameplayFeedConfig"
+         WHERE "id"=${id}
+           AND "guildId"=${scope.guildId}
+           AND "nitradoConnId"=${resolution.nitradoConnId}
+           AND "kind"=${kind}::"GameplayFeedKind"
+         FOR UPDATE`;
+      if (!locked[0]) throw new Error('CONFIG_SCOPE_LOST');
+
+      const updateData = { ...parsed.data };
+      if (parsed.data.channelId && parsed.data.channelId !== existing.channelId) {
+        updateData.lastMessageId = null;
+        updateData.lastStateHash = null;
+      }
+      if (kind === 'PLAYER_LIST' && parsed.data.showActorCoords !== undefined) {
+        updateData.lastStateHash = null;
+      }
+      if (locked[0].isActive === false && parsed.data.isActive === true && kind !== 'PLAYER_LIST') {
+        const watermark = await tx.admEvent.findFirst({
+          where: {
+            guildId: scope.guildId,
+            nitradoConnId: resolution.nitradoConnId,
+            eventType: { in: kind === 'DEATH' ? [...DEATH_EVENT_TYPES] : [...BUILD_EVENT_TYPES] },
+          },
+          orderBy: [{ createdAt: 'desc' }, { id: 'desc' }],
+          select: { createdAt: true, id: true },
+        });
+        updateData.cursorCreatedAt = watermark?.createdAt ?? new Date();
+        updateData.cursorEventId = watermark?.id ?? '';
+      }
+      if (locked[0].isActive === false && parsed.data.isActive === true && kind === 'PLAYER_LIST') {
+        updateData.lastStateHash = null;
+      }
+      await tx.gameplayFeedConfig.updateMany({
+        where: { id, guildId: scope.guildId, nitradoConnId: resolution.nitradoConnId, kind: kind as GameplayFeedKind },
+        data: updateData,
+      });
     });
     logAuditDb('GAMEPLAY_FEED_UPDATED', 'KILLFEED', {
       actorUserId: req.auth!.userId,
@@ -272,7 +357,7 @@ killfeedRouter.patch('/:id', requireGuildPermission('killfeed.manage'), async (r
 killfeedRouter.delete('/:id', requireGuildPermission('killfeed.manage'), async (req, res) => {
   const scope = req.guildScope!;
   const kind = readKind(req.query.kind);
-  if (!kind) { res.status(400).json({ error: 'kind muss DEATH oder BUILD sein.' }); return; }
+  if (!kind) { res.status(400).json({ error: 'kind muss DEATH, BUILD oder PLAYER_LIST sein.' }); return; }
   const resolution = await resolveDashboardGameServer(scope.guildId, scope.actorDiscordId, req.query.slot);
   if (resolution.kind !== 'RESOLVED') { sendDashboardServerResolutionError(res, resolution); return; }
   const id = String(req.params.id);

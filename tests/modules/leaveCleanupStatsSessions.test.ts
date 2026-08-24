@@ -79,8 +79,8 @@ describe('Leave-1D stats/session cleanup', () => {
       gameIdentities: 1,
       sessionsPseudonymized: 2,
       admEventsPseudonymized: 3,
-      levelRowsDeleted: 1,
-      xpRowsDeleted: 4,
+      levelRowsDeleted: 0,
+      xpRowsDeleted: 0,
     });
     const update = txExecute.mock.calls.find(call => String(call[0]).startsWith('UPDATE "PlayerSession"'));
     expect(update).toBeDefined();
@@ -148,17 +148,11 @@ describe('Leave-1D stats/session cleanup', () => {
     expect(call![4]).toBe(subjectKey());
   });
 
-  it('deletes Discord XP/leaderboard rows only through exact guild + Discord-user ownership', async () => {
+  it('never deletes Discord XP/level rows in the standard stats reset', async () => {
     await runLeaveStatsSessionsCleanupStep(GUILD, USER);
 
-    const level = txExecute.mock.calls.find(call => String(call[0]).startsWith('DELETE FROM "LevelData"'))!;
-    const xp = txExecute.mock.calls.find(call => String(call[0]).startsWith('DELETE FROM "XpRecord"'))!;
-    for (const call of [level, xp]) {
-      expect(String(call[0])).toContain('"guildId"=$1');
-      expect(String(call[0])).toContain('u."discordId"=$2');
-      expect(call[1]).toBe(GUILD);
-      expect(call[2]).toBe(USER);
-    }
+    expect(txExecute.mock.calls.some(call => String(call[0]).startsWith('DELETE FROM "LevelData"'))).toBe(false);
+    expect(txExecute.mock.calls.some(call => String(call[0]).startsWith('DELETE FROM "XpRecord"'))).toBe(false);
   });
 
   it('is retry-idempotent when session evidence is already pseudonymized', async () => {
@@ -172,17 +166,19 @@ describe('Leave-1D stats/session cleanup', () => {
     const sqls = txExecute.mock.calls.map(call => String(call[0]));
     expect(sqls.some(sql => sql.startsWith('UPDATE "PlayerSession"'))).toBe(false);
     expect(sqls.some(sql => sql.startsWith('UPDATE "AdmEvent"'))).toBe(false);
-    expect(sqls.some(sql => sql.startsWith('DELETE FROM "LevelData"'))).toBe(true);
-    expect(sqls.some(sql => sql.startsWith('DELETE FROM "XpRecord"'))).toBe(true);
+    expect(sqls.some(sql => sql.startsWith('DELETE FROM "LevelData"'))).toBe(false);
+    expect(sqls.some(sql => sql.startsWith('DELETE FROM "XpRecord"'))).toBe(false);
   });
 
-  it('fails closed when a VERIFIED link has neither raw nor already-pseudonymized session evidence', async () => {
+  it('does nothing when a VERIFIED link has neither raw nor already-pseudonymized session evidence', async () => {
     playerSessionFindMany.mockResolvedValue([
       { id: 'foreign', gameId: 'FOREIGN-GUID', playerName: 'ForeignPlayer', status: 'CLOSED' },
     ]);
 
-    await expect(runLeaveStatsSessionsCleanupStep(GUILD, USER)).rejects.toThrow(/keine sichere Session-Evidenz/);
-    expect(transaction).not.toHaveBeenCalled();
+    await expect(runLeaveStatsSessionsCleanupStep(GUILD, USER)).resolves.toMatchObject({
+      state: 'DONE', sessionsPseudonymized: 0, admEventsPseudonymized: 0,
+    });
+    expect(transaction).toHaveBeenCalledTimes(1);
   });
 
   it('paginates beyond 1000 sessions instead of silently missing an old verified identity', async () => {

@@ -11,7 +11,20 @@ const DISPLAY_ALIASES: Readonly<Record<string, string>> = {
   kampfstiefel: 'CombatBoots',
   combatboots: 'CombatBoots',
   feldrucksack: 'AliceBag',
+  feldrucksaecke: 'AliceBag',
   alicebag: 'AliceBag',
+  seekiste: 'SeaChest',
+  seekisten: 'SeaChest',
+  seachest: 'SeaChest',
+  generator: 'PowerGenerator',
+  generatoren: 'PowerGenerator',
+  stromgenerator: 'PowerGenerator',
+  stromgeneratoren: 'PowerGenerator',
+  powergenerator: 'PowerGenerator',
+  militaerzelt: 'LargeTent',
+  militaerzelte: 'LargeTent',
+  militarytent: 'LargeTent',
+  largetent: 'LargeTent',
 };
 
 const COLOR_SUFFIXES = new Set([
@@ -43,6 +56,24 @@ function fold(text: string): string {
 }
 
 function compact(text: string): string { return fold(text).replace(/[^a-z0-9]+/g, ''); }
+
+function editDistance(left: string, right: string): number {
+  const previous = Array.from({ length: right.length + 1 }, (_, index) => index);
+  for (let row = 1; row <= left.length; row++) {
+    let diagonal = previous[0];
+    previous[0] = row;
+    for (let column = 1; column <= right.length; column++) {
+      const above = previous[column];
+      previous[column] = Math.min(
+        above + 1,
+        previous[column - 1] + 1,
+        diagonal + (left[row - 1] === right[column - 1] ? 0 : 1),
+      );
+      diagonal = above;
+    }
+  }
+  return previous[right.length];
+}
 
 function cleanLookupText(question: string): string {
   return fold(question)
@@ -88,6 +119,34 @@ function requestedColors(question: string): string[] {
   return COLOR_WORDS.find((x) => x.re.test(q))?.suffixes ?? [];
 }
 
+function withoutColorWords(cleaned: string): string {
+  return compact(cleaned.replace(/\b(?:gruen|green|schwarz|black|braun|brown|grau|grey|gray|blau|blue|rot|red|orange|gelb|yellow|rosa|pink|weiss|white|beige|oliv|olive|khaki|tan|camo|tarn|tarnung)\b/gi, ' '));
+}
+
+/**
+ * Alias-Ranking: exakt vor konservativer Tippfehlerstufe. Die Fuzzy-Stufe ist
+ * absichtlich nur fuer mindestens sechs Zeichen und genau eine Edit-Operation
+ * aktiv. Mehrere gleich gute Ziel-Classnames bedeuten Ambiguitaet und liefern
+ * keinen Treffer; insbesondere darf ein kurzer Begriff wie "AK" nie geraten
+ * werden.
+ */
+function resolveAlias(query: string): string | null {
+  const exact = DISPLAY_ALIASES[query];
+  if (exact) return exact;
+  if (query.length < 6) return null;
+
+  const ranked = Object.entries(DISPLAY_ALIASES)
+    .map(([alias, target]) => ({ target, distance: editDistance(query, alias) }))
+    .filter(candidate => candidate.distance <= 1)
+    .sort((a, b) => a.distance - b.distance || a.target.localeCompare(b.target));
+  if (!ranked.length) return null;
+  const bestDistance = ranked[0].distance;
+  const bestTargets = Array.from(new Set(
+    ranked.filter(candidate => candidate.distance === bestDistance).map(candidate => candidate.target),
+  ));
+  return bestTargets.length === 1 ? bestTargets[0] : null;
+}
+
 function exactKnown(cleaned: string): string | null {
   const direct = base.getDayz129Index().allTypeNames.filter((name) => fold(name) === fold(cleaned));
   if (direct.length === 1) return direct[0];
@@ -130,11 +189,10 @@ function resolve(question: string): Resolution {
 
   const cleanedCompact = compact(cleaned);
   const colorTokens = requestedColors(cleaned);
-  const aliasKey = Object.keys(DISPLAY_ALIASES)
-    .sort((a, b) => b.length - a.length)
-    .find((key) => cleanedCompact.startsWith(key) || cleanedCompact === key);
-  if (aliasKey) {
-    const target = DISPLAY_ALIASES[aliasKey];
+  const aliasQuery = colorTokens.length > 0 ? withoutColorWords(cleaned) : cleanedCompact;
+  const aliasTarget = resolveAlias(aliasQuery);
+  if (aliasTarget) {
+    const target = aliasTarget;
     if (base.isKnownDayz129Identifier(target) && colorTokens.length === 0) return { matched: true, candidates: [target] };
     const family = familyCandidates(target, colorTokens);
     if (family.length) return { matched: true, candidates: family };
@@ -145,9 +203,7 @@ function resolve(question: string): Resolution {
     const split = splitColor(name);
     if (split.color) families.set(compact(split.baseName), split.baseName);
   }
-  const queryWithoutColor = colorTokens.length
-    ? compact(cleaned.replace(/\b(?:gruen|green|schwarz|black|braun|brown|grau|grey|gray|blau|blue|rot|red|orange|gelb|yellow|rosa|pink|weiss|white|beige|oliv|olive|khaki|tan|camo|tarn|tarnung)\b/gi, ' '))
-    : cleanedCompact;
+  const queryWithoutColor = colorTokens.length ? withoutColorWords(cleaned) : cleanedCompact;
   const familyBase = families.get(queryWithoutColor);
   if (familyBase) {
     const variants = familyCandidates(familyBase, colorTokens);

@@ -1,6 +1,6 @@
 import { useRef, useState } from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
-import { Crosshair, Hammer, Plus, Power, Trash2 } from 'lucide-react';
+import { Crosshair, Hammer, Plus, Power, Trash2, Users } from 'lucide-react';
 import { api, ApiError } from '@/lib/api';
 import { Card, CardHeader, CardTitle } from '@/components/ui/Card';
 import { Button } from '@/components/ui/Button';
@@ -9,7 +9,7 @@ import { Input } from '@/components/ui/Input';
 import { useToast } from '@/components/ui/Toast';
 import { useModalA11y } from '@/lib/useModalA11y';
 
-type FeedKind = 'DEATH' | 'BUILD';
+type FeedKind = 'DEATH' | 'BUILD' | 'PLAYER_LIST';
 type DeathCategory = 'PVP' | 'DEATH' | 'SUICIDE' | 'NPC' | 'VEHICLE';
 type BuildCategory = 'PLACEMENT' | 'BUILD' | 'DISMANTLE' | 'DESTROY';
 type Category = DeathCategory | BuildCategory;
@@ -29,6 +29,13 @@ interface GameplayFeedConfig {
   lastEventAt: string | null;
   lastPolledAt: string | null;
   lastErrorMsg: string | null;
+  openDeliveryCount: number;
+  retryDeliveryCount: number;
+  failedDeliveryCount: number;
+  oldestOpenAt: string | null;
+  lastSuccessAt: string | null;
+  lastPlayerCount: number | null;
+  lastPlayerListAt: string | null;
 }
 
 interface DiscordChannel { id: string; name: string; type: number; parentId: string | null }
@@ -52,6 +59,7 @@ const BUILD_LABELS: Record<BuildCategory, { label: string; icon: string }> = {
 const DEFAULTS: Record<FeedKind, Category[]> = {
   DEATH: ['PVP', 'DEATH', 'SUICIDE', 'NPC', 'VEHICLE'],
   BUILD: ['PLACEMENT', 'BUILD', 'DISMANTLE', 'DESTROY'],
+  PLAYER_LIST: [],
 };
 
 function categoryMeta(kind: FeedKind, category: Category): { label: string; icon: string } {
@@ -102,7 +110,7 @@ export function KillfeedTab({ guildId, isOwner, slots }: { guildId: string; isOw
   const configs = query.data?.configs ?? [];
   const channels = channelsQuery.data?.channels ?? [];
   const channelName = (id: string) => channels.find(c => c.id === id)?.name ?? id;
-  const title = kind === 'DEATH' ? 'Deathfeed' : 'Baufeed';
+  const title = kind === 'DEATH' ? 'Deathfeed' : kind === 'BUILD' ? 'Baufeed' : 'Player List Feed';
 
   const invalidate = () => qc.invalidateQueries({ queryKey: ['gameplay-feeds', guildId, activeSlot, kind] });
 
@@ -111,7 +119,7 @@ export function KillfeedTab({ guildId, isOwner, slots }: { guildId: string; isOw
       <div className="flex items-center justify-between gap-3 flex-wrap">
         <div>
           <h2 className="text-lg font-semibold text-white inline-flex items-center gap-2">
-            {kind === 'DEATH' ? <Crosshair className="h-5 w-5 text-accent" /> : <Hammer className="h-5 w-5 text-accent" />}
+            {kind === 'DEATH' ? <Crosshair className="h-5 w-5 text-accent" /> : kind === 'BUILD' ? <Hammer className="h-5 w-5 text-accent" /> : <Users className="h-5 w-5 text-accent" />}
             Nitrado Gameplay-Feeds
           </h2>
           <p className="text-xs text-muted mt-0.5">
@@ -122,6 +130,7 @@ export function KillfeedTab({ guildId, isOwner, slots }: { guildId: string; isOw
           <Select value={kind} onChange={e => { setKind(e.target.value as FeedKind); setEditing(null); }}>
             <option value="DEATH">Deathfeed</option>
             <option value="BUILD">Baufeed</option>
+            <option value="PLAYER_LIST">Player List Feed</option>
           </Select>
           <Select value={String(activeSlot)} onChange={e => { setActiveSlot(Number(e.target.value)); setEditing(null); }}>
             {slots.map(slot => (
@@ -134,7 +143,7 @@ export function KillfeedTab({ guildId, isOwner, slots }: { guildId: string; isOw
         </div>
       </div>
 
-      <div className="grid grid-cols-2 gap-2 max-w-md">
+      <div className="grid grid-cols-1 sm:grid-cols-3 gap-2 max-w-2xl">
         <button
           type="button"
           onClick={() => { setKind('DEATH'); setEditing(null); }}
@@ -148,6 +157,13 @@ export function KillfeedTab({ guildId, isOwner, slots }: { guildId: string; isOw
           className={`rounded-lg border px-3 py-2 text-sm ${kind === 'BUILD' ? 'border-accent text-white bg-accent/10' : 'border-border text-muted'}`}
         >
           🔨 Baufeed
+        </button>
+        <button
+          type="button"
+          onClick={() => { setKind('PLAYER_LIST'); setEditing(null); }}
+          className={`rounded-lg border px-3 py-2 text-sm ${kind === 'PLAYER_LIST' ? 'border-accent text-white bg-accent/10' : 'border-border text-muted'}`}
+        >
+          🎮 Player List Feed
         </button>
       </div>
 
@@ -178,6 +194,16 @@ export function KillfeedTab({ guildId, isOwner, slots }: { guildId: string; isOw
                 <div className="text-[11px] text-muted mt-2 space-y-0.5">
                   <div>Letzter Poll: <span className="text-white">{config.lastPolledAt ? new Date(config.lastPolledAt).toLocaleString() : '—'}</span></div>
                   <div>Letztes Event: <span className="text-white">{config.lastEventAt ? new Date(config.lastEventAt).toLocaleString() : '—'}</span></div>
+                  {kind !== 'PLAYER_LIST' && <>
+                    <div>Offene Zustellungen: <span className="text-white">{config.openDeliveryCount}</span> · Retry: <span className="text-white">{config.retryDeliveryCount}</span> · Final fehlgeschlagen: <span className="text-white">{config.failedDeliveryCount}</span></div>
+                    <div>Älteste offene: <span className="text-white">{config.oldestOpenAt ? new Date(config.oldestOpenAt).toLocaleString() : '—'}</span></div>
+                    <div>Letzter Erfolg: <span className="text-white">{config.lastSuccessAt ? new Date(config.lastSuccessAt).toLocaleString() : '—'}</span></div>
+                  </>}
+                  {kind === 'PLAYER_LIST' && <>
+                    <div>Player-List-Feed: <span className="text-white">{config.isActive ? 'Aktiv' : 'Inaktiv'}</span> · Koordinaten: <span className="text-white">{config.showActorCoords ? 'Aktiv' : 'Inaktiv'}</span></div>
+                    <div>Spieler online: <span className="text-white">{config.lastPlayerCount ?? '—'}</span></div>
+                    <div>Letzte Listen-Aktualisierung: <span className="text-white">{config.lastPlayerListAt ? new Date(config.lastPlayerListAt).toLocaleString() : '—'}</span></div>
+                  </>}
                   {config.lastErrorMsg && <div className="text-danger break-words">⚠ {config.lastErrorMsg}</div>}
                 </div>
               </div>
@@ -270,7 +296,7 @@ function FeedEditor({
   const [showTargetCoords, setShowTargetCoords] = useState(existing?.showTargetCoords ?? false);
   const [showTool, setShowTool] = useState(existing?.showTool ?? true);
   const [showDistance, setShowDistance] = useState(existing?.showDistance ?? (kind === 'DEATH'));
-  const [embedColor, setEmbedColor] = useState(existing?.embedColor ?? (kind === 'BUILD' ? '#eab308' : '#dc2626'));
+  const [embedColor, setEmbedColor] = useState(existing?.embedColor ?? (kind === 'BUILD' ? '#eab308' : kind === 'PLAYER_LIST' ? '#2563eb' : '#dc2626'));
   const [isActive, setIsActive] = useState(existing?.isActive ?? true);
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
@@ -284,8 +310,8 @@ function FeedEditor({
 
   const save = async () => {
     setError(null);
-    if (!channelId || categories.length === 0 || !/^#[0-9a-fA-F]{6}$/.test(embedColor)) {
-      setError('Channel, gültige Farbe und mindestens eine Kategorie sind erforderlich.');
+    if (!channelId || (kind !== 'PLAYER_LIST' && categories.length === 0) || !/^#[0-9a-fA-F]{6}$/.test(embedColor)) {
+      setError(kind === 'PLAYER_LIST' ? 'Channel und gültige Farbe sind erforderlich.' : 'Channel, gültige Farbe und mindestens eine Kategorie sind erforderlich.');
       return;
     }
     setBusy(true);
@@ -312,7 +338,7 @@ function FeedEditor({
         className="w-full max-w-2xl max-h-[92vh] overflow-y-auto rounded-2xl border border-border bg-bg-card p-5 shadow-2xl outline-none"
         onClick={event => event.stopPropagation()}
       >
-        <h3 className="text-lg font-semibold text-white">{kind === 'DEATH' ? 'Deathfeed' : 'Baufeed'} konfigurieren</h3>
+        <h3 className="text-lg font-semibold text-white">{kind === 'DEATH' ? 'Deathfeed' : kind === 'BUILD' ? 'Baufeed' : 'Player List Feed'} konfigurieren</h3>
         <div className="grid gap-4 mt-4">
           <label className="text-sm text-muted">Discord-Channel
             <Select className="mt-1 w-full" value={channelId} onChange={event => setChannelId(event.target.value)}>
@@ -321,7 +347,7 @@ function FeedEditor({
             </Select>
           </label>
 
-          <div>
+          {kind !== 'PLAYER_LIST' && <div>
             <div className="text-sm text-muted mb-2">Kategorien</div>
             <div className="grid sm:grid-cols-2 gap-2">
               {available.map(category => {
@@ -334,12 +360,12 @@ function FeedEditor({
                 );
               })}
             </div>
-          </div>
+          </div>}
 
           <div className="grid sm:grid-cols-2 gap-2 text-sm text-white">
-            <label className="flex items-center gap-2"><input type="checkbox" checked={showActorCoords} onChange={e => setShowActorCoords(e.target.checked)} />{kind === 'DEATH' ? 'Opfer-Position' : 'Spieler-Position'}</label>
+            <label className="flex items-center gap-2"><input type="checkbox" checked={showActorCoords} onChange={e => setShowActorCoords(e.target.checked)} />{kind === 'DEATH' ? 'Opfer-Position' : kind === 'BUILD' ? 'Spieler-Position' : 'Koordinaten anzeigen'}</label>
             {kind === 'DEATH' && <label className="flex items-center gap-2"><input type="checkbox" checked={showTargetCoords} onChange={e => setShowTargetCoords(e.target.checked)} />Killer-Position</label>}
-            <label className="flex items-center gap-2"><input type="checkbox" checked={showTool} onChange={e => setShowTool(e.target.checked)} />{kind === 'DEATH' ? 'Waffe / Ursache' : 'Werkzeug'}</label>
+            {kind !== 'PLAYER_LIST' && <label className="flex items-center gap-2"><input type="checkbox" checked={showTool} onChange={e => setShowTool(e.target.checked)} />{kind === 'DEATH' ? 'Waffe / Ursache' : 'Werkzeug'}</label>}
             {kind === 'DEATH' && <label className="flex items-center gap-2"><input type="checkbox" checked={showDistance} onChange={e => setShowDistance(e.target.checked)} />Distanz</label>}
             <label className="flex items-center gap-2"><input type="checkbox" checked={isActive} onChange={e => setIsActive(e.target.checked)} />Aktiv</label>
           </div>

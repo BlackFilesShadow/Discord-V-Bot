@@ -4,6 +4,7 @@
 enum GameplayFeedKind {
   DEATH
   BUILD
+  PLAYER_LIST
 }
 
 enum GameplayDeliveryStatus {
@@ -47,6 +48,11 @@ model GameplayFeedConfig {
   legacyKillfeedConfigId  String?          @unique
   cursorCreatedAt         DateTime         @default(now())
   cursorEventId           String           @default("")
+  nextDeliveryAt          DateTime         @default(now())
+  lastMessageId           String?          @db.VarChar(32)
+  lastStateHash           String?          @db.VarChar(64)
+  lastPlayerCount         Int?
+  lastPlayerListAt        DateTime?
   lastEventAt             DateTime?
   lastPolledAt            DateTime?
   lastErrorMsg            String?          @db.Text

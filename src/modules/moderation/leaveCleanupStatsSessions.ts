@@ -117,8 +117,8 @@ function waitingResult(links: number, gameIdentities: number): LeaveStatsSession
  * Geschlossene PlayerSessions bleiben als Anti-Replay-/Reward-Beweis erhalten;
  * nur Game-Identifier und Spielername werden entkoppelt. AdmEvent-IDs, eventKey,
  * Zeitstempel und Feed-Cursor bleiben bestehen, waehrend die personenbezogenen
- * Identitaetsfelder und die rohe ADM-Zeile pseudonymisiert werden. Discord-XP
- * wird guildgenau geloescht, wodurch der Spieler aus dem Leaderboard faellt.
+ * Identitaetsfelder und die rohe ADM-Zeile pseudonymisiert werden. Discord-XP,
+ * Level und Economy gehoeren ausdruecklich nicht zum normalen Leave-Cleanup.
  */
 export async function runLeaveStatsSessionsCleanupStep(
   guildId: string,
@@ -163,7 +163,10 @@ export async function runLeaveStatsSessionsCleanupStep(
     }
 
     if (!evidenceFound) {
-      throw new Error('Leave-Stats: verifizierte Spielidentitaet hat keine sichere Session-Evidenz; manuelle Klaerung erforderlich.');
+      // Ohne Session-Evidenz existiert kein sicher zuordenbares Statistikziel.
+      // Fail-closed bedeutet hier: nichts mutieren und nicht auf eine fremde
+      // Identitaet raten. Der Goodbye-Status bleibt entsprechend grau.
+      continue;
     }
   }
 
@@ -229,31 +232,12 @@ export async function runLeaveStatsSessionsCleanupStep(
       );
     }
 
-    const levelRowsDeleted = await trx.$executeRawUnsafe(
-      `DELETE FROM "LevelData" d
-        USING "User" u
-        WHERE d."guildId"=$1
-          AND d."userId"=u."id"
-          AND u."discordId"=$2`,
-      guildId,
-      userDiscordId,
-    );
-    const xpRowsDeleted = await trx.$executeRawUnsafe(
-      `DELETE FROM "XpRecord" x
-        USING "User" u
-        WHERE x."guildId"=$1
-          AND x."userId"=u."id"
-          AND u."discordId"=$2`,
-      guildId,
-      userDiscordId,
-    );
-
     return {
       waiting: false as const,
       sessionsPseudonymized,
       admEventsPseudonymized,
-      levelRowsDeleted,
-      xpRowsDeleted,
+      levelRowsDeleted: 0,
+      xpRowsDeleted: 0,
     };
   });
 

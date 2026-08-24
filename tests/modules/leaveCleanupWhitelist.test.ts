@@ -147,10 +147,10 @@ describe('Leave-1B identity-safe whitelist cleanup', () => {
     });
   });
 
-  it('fails closed when a verified GUID can no longer be mapped to a trusted session name', async () => {
+  it('fails closed without mutation when a verified GUID cannot be mapped to a trusted session name', async () => {
     mockPlayerSessionFindMany.mockResolvedValue([{ gameId: 'FOREIGN-GUID', playerName: 'TargetPlayer' }]);
 
-    await expect(runLeaveWhitelistCleanupStep(GUILD, USER)).rejects.toThrow(/nicht mehr sicher/);
+    await expect(runLeaveWhitelistCleanupStep(GUILD, USER)).resolves.toMatchObject({ state: 'DONE', names: 0 });
     expect(mockReadCurrentBinding).not.toHaveBeenCalled();
     expect(mockNitradoJobCreate).not.toHaveBeenCalled();
     expect(mockQueryRaw).not.toHaveBeenCalled();
