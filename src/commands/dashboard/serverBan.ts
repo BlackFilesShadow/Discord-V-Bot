@@ -284,6 +284,9 @@ export const serverUnbanCommand: Command = {
     for (const target of targets) {
       const label = targetLabel(target);
       try {
+        // Nitrado-1Q: Der Alias-Snapshot aus der Command-Aufloesung ist nur
+        // Zielauswahl. Token + Service werden unter dem kanonischen kurzen
+        // Connection-Lock frisch gelesen. Remote-I/O findet ohne Lock statt.
         const binding = await readCurrentAdmBinding({ id: target.id, guildId: scope.guildId });
         if (!binding) {
           throw new Error('Nitrado-Bindung ist nicht mehr ACTIVE oder besitzt keine Service-ID.');
@@ -294,6 +297,9 @@ export const serverUnbanCommand: Command = {
           matchesBanIdentifier(row.identifier, identityHash, config.security.encryptionKey),
         );
 
+        // Erst wenn exakt dieselbe ACTIVE Token-/Service-/Binding-Version noch
+        // gueltig ist, darf die Remote-Beobachtung lokalen Ban-Zustand oder eine
+        // Remove-Outbox beeinflussen. Der DB-Commit liegt dabei unter dem Lock.
         const result = await withFreshAdmBinding(binding, () => prisma.$transaction(async tx => {
           const row = await tx.serverBanEntry.upsert({
             where: {
