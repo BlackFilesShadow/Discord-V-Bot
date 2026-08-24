@@ -71,6 +71,43 @@ function addServer(embed: EmbedBuilder, serverAlias: string): void {
   });
 }
 
+function humanizePlacementClass(value: string): string {
+  const raw = value.trim();
+  if (!raw) return 'Objekt';
+
+  // Die sichtbare Bezeichnung soll spielerfreundlich bleiben. Bekannte
+  // DayZ-Kategorien koennen dabei gezielt lokalisiert werden; unbekannte
+  // Classnames werden nur lesbar getrennt und niemals verworfen.
+  if (/^GardenPlot$/i.test(raw)) return 'Gartenplot';
+
+  const readable = raw
+    .replace(/[_-]+/g, ' ')
+    .replace(/([a-z0-9])([A-Z])/g, '$1 $2')
+    .replace(/\s+/g, ' ')
+    .trim();
+  return readable || raw;
+}
+
+/**
+ * DayZ schreibt bei Placement-Aktionen teilweise sowohl einen Anzeigenamen als
+ * auch den technischen Classname, z.B. `Snare Trap<RabbitSnareTrap>`. Fuer den
+ * Discord-Report reicht der Anzeigename. Bei `Nameless Object<...>` ist der
+ * Classname dagegen die einzige brauchbare Kategorie und wird sichtbar erhalten.
+ * Die gespeicherten ADM-Rohdaten werden dadurch nicht veraendert.
+ */
+export function placementObjectLabel(value: string): string {
+  const raw = value.trim();
+  const wrapped = /^(.+?)\s*<([^<>]+)>\s*$/.exec(raw);
+  if (!wrapped) return raw;
+
+  const displayName = wrapped[1].trim();
+  const className = wrapped[2].trim();
+  if (/^Nameless(?:\s+Object)?$/i.test(displayName)) {
+    return `Nameless ${humanizePlacementClass(className)}`;
+  }
+  return displayName || humanizePlacementClass(className);
+}
+
 export function buildGameplayFeedEmbed(
   view: GameplayFeedView,
   embedColor: string,
@@ -143,7 +180,10 @@ export function buildGameplayFeedEmbed(
 
   embed.addFields({ name: 'Spieler', value: safeName(view.actorName), inline: false });
   if (view.objectType) {
-    embed.addFields({ name: 'Objekt', value: safeEmbedField(view.objectType, 256), inline: false });
+    const objectLabel = view.category === 'PLACEMENT'
+      ? placementObjectLabel(view.objectType)
+      : view.objectType;
+    embed.addFields({ name: 'Objekt', value: safeEmbedField(objectLabel, 256), inline: false });
   }
   if (view.toolOrWeapon) {
     embed.addFields({ name: 'Werkzeug', value: safeEmbedField(view.toolOrWeapon, 256), inline: false });
