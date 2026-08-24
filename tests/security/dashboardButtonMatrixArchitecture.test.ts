@@ -55,6 +55,14 @@ const root = process.cwd();
 const read = (relative: string): string => fs.readFileSync(path.resolve(root, relative), 'utf8');
 const matrix = JSON.parse(read('docs/dashboard-button-matrix.json')) as ButtonMatrix;
 
+// docs/dashboard-button-matrix.json is the immutable stage-24 inventory tied to
+// inventoriedMainSha. Intentional post-stage, label-only UI renames are tracked
+// explicitly here so the architecture gate stays strict for every other button
+// attribute without rewriting historical stage evidence.
+const POST_STAGE_LABEL_OVERRIDES: Readonly<Record<string, string>> = {
+  'dashboard-ui/src/components/KillfeedTab.tsx#KillfeedTab:4': '🌐 Online List',
+};
+
 function resolveUiModule(from: string, specifier: string): string | null {
   const srcRoot = path.resolve(root, 'dashboard-ui/src');
   let base: string;
@@ -219,7 +227,13 @@ describe('stage 24 dashboard button matrix architecture', () => {
     expect(matrix.fileCoverage).toHaveLength(60);
     expect(matrix.reachableTsxCount).toBe(96);
 
-    const declaredSignatures = matrix.buttons.map(({ id: _id, sourceKey: _sourceKey, line: _line, coverageRef: _coverageRef, profile: _profile, pendingGuard: _pendingGuard, ...button }) => button);
+    const overrideIds = Object.keys(POST_STAGE_LABEL_OVERRIDES);
+    expect(overrideIds.every(sourceId => matrix.buttons.some(button => button.sourceId === sourceId))).toBe(true);
+
+    const declaredSignatures = matrix.buttons.map(({ id: _id, sourceKey: _sourceKey, line: _line, coverageRef: _coverageRef, profile: _profile, pendingGuard: _pendingGuard, ...button }) => ({
+      ...button,
+      label: POST_STAGE_LABEL_OVERRIDES[button.sourceId] ?? button.label,
+    }));
     expect(currentButtonSignatures()).toEqual(declaredSignatures);
   });
 
