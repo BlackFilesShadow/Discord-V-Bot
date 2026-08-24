@@ -59,6 +59,18 @@ function assertDiscordAttachmentUrl(raw: string): URL {
   return parsed;
 }
 
+function parsedContentLength(response: Response): number | null {
+  const raw = response.headers.get('content-length');
+  if (raw === null || !/^\d+$/.test(raw.trim())) return null;
+  const value = Number(raw);
+  return Number.isSafeInteger(value) && value >= 0 ? value : null;
+}
+
+function hasContentEncoding(response: Response): boolean {
+  const value = response.headers.get('content-encoding')?.trim().toLowerCase();
+  return Boolean(value && value !== 'identity');
+}
+
 export function isInlineTranscriptImage(contentType: string | null): boolean {
   return INLINE_IMAGE_TYPES.has(normalizedContentType(contentType));
 }
@@ -68,8 +80,10 @@ export function isInlineTranscriptImage(contentType: string | null): boolean {
  * Web-Transcript. Discord-Attachment-URLs sind signiert und laufen ab; deshalb darf
  * transcriptHtml niemals von ihnen als Langzeit-Speicher abhaengen.
  *
- * Fail-closed: Kann auch nur ein Anhang nicht vollstaendig geladen/verifiziert werden,
- * wirft die Funktion. Der Close-Flow darf den Ticket-Channel dann nicht loeschen.
+ * Fail-closed: HTTP-/Netzwerkfehler, echte Transport-Laengenfehler und Groessenlimits
+ * brechen den Close-Flow ab. Discords Attachment.size ist dagegen nur Metadaten-/
+ * Preflight-Information und darf nicht als exakter Transport-Hash missbraucht werden:
+ * CDN-/HTTP-Auslieferung kann sich durch Content-Encoding von diesem Wert unterscheiden.
  */
 export async function archiveTranscriptAttachments(
   messages: TranscriptAttachmentMessage[],
@@ -107,6 +121,9 @@ export async function archiveTranscriptAttachments(
         method: 'GET',
         redirect: 'error',
         signal: controller.signal,
+        headers: {
+          'accept-encoding': 'identity',
+        },
       });
     } catch (error) {
       const detail = error instanceof Error ? error.message : String(error);
@@ -118,8 +135,9 @@ export async function archiveTranscriptAttachments(
     if (!response.ok) {
       throw new Error(`Ticket-Anhang ${attachment.name} konnte nicht archiviert werden (HTTP ${response.status}).`);
     }
-    const headerLength = Number(response.headers.get('content-length'));
-    if (Number.isFinite(headerLength) && headerLength > MAX_ARCHIVE_ATTACHMENT_BYTES) {
+
+    const headerLength = parsedContentLength(response);
+    if (headerLength !== null && headerLength > MAX_ARCHIVE_ATTACHMENT_BYTES) {
       throw new Error(`Ticket-Anhang ${attachment.name} ueberschreitet beim Download 25 MiB.`);
     }
 
@@ -127,8 +145,16 @@ export async function archiveTranscriptAttachments(
     if (bytes.length > MAX_ARCHIVE_ATTACHMENT_BYTES) {
       throw new Error(`Ticket-Anhang ${attachment.name} ueberschreitet beim Download 25 MiB.`);
     }
-    if (attachment.size > 0 && bytes.length !== attachment.size) {
-      throw new Error(`Ticket-Anhang ${attachment.name} wurde nicht vollstaendig geladen (${bytes.length}/${attachment.size} Bytes).`);
+    if (attachment.size > 0 && bytes.length === 0) {
+      throw new Error(`Ticket-Anhang ${attachment.name} wurde leer geladen.`);
+    }
+
+    // Content-Length beschreibt die uebertragene Representation. Node/undici kann
+    // Content-Encoding transparent dekomprimieren; in diesem Fall ist ein Byte-fuer-Byte-
+    // Vergleich mit dem Header ungueltig. Bei identity/unencoded Responses ist die
+    // Laenge dagegen ein belastbarer Transport-Integritaetscheck.
+    if (!hasContentEncoding(response) && headerLength !== null && bytes.length !== headerLength) {
+      throw new Error(`Ticket-Anhang ${attachment.name} wurde nicht vollstaendig geladen (${bytes.length}/${headerLength} Bytes).`);
     }
 
     archivedBytes += bytes.length;
@@ -136,7 +162,7 @@ export async function archiveTranscriptAttachments(
       throw new Error('Ticket-Anhaenge ueberschreiten beim Download zusammen 100 MiB.');
     }
 
-    const contentType = normalizedContentType(attachment.contentType ?? response.headers.get('content-type'));
+    const contentType = normalizedContentType(response.headers.get('content-type') ?? attachment.contentType);
     attachment.contentType = contentType;
     const dataUrlType = isInlineTranscriptImage(contentType) ? contentType : 'application/octet-stream';
     attachment.archivedDataUrl = `data:${dataUrlType};base64,${bytes.toString('base64')}`;
