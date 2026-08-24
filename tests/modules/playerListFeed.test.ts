@@ -7,6 +7,16 @@ process.env.SESSION_SECRET ||= 'test-session-secret';
 
 import { buildPlayerListEmbeds, playerListStateHash } from '../../src/modules/gameplayFeeds/playerListEmbed';
 
+function embedTextLength(json: ReturnType<ReturnType<typeof buildPlayerListEmbeds>[number]['toJSON']>): number {
+  let total = 0;
+  total += json.title?.length ?? 0;
+  total += json.description?.length ?? 0;
+  total += json.author?.name?.length ?? 0;
+  total += json.footer?.text?.length ?? 0;
+  for (const field of json.fields ?? []) total += field.name.length + field.value.length;
+  return total;
+}
+
 describe('Player List Feed embed and change detection', () => {
   const entries = [
     { gameId: 'guid-b', playerName: 'Bravo', position: null },
@@ -63,10 +73,10 @@ describe('Player List Feed embed and change detection', () => {
     expect(value).not.toMatch(/100,200|Position unbekannt|izurvive/i);
   });
 
-  it('does not treat pure position movement as a list change', () => {
+  it('updates visible coordinate state on movement but ignores movement when coordinates are disabled', () => {
     const moved = entries.map(entry => ({ ...entry, position: '900,900,0' }));
-    expect(playerListStateHash(entries, true)).toBe(playerListStateHash(moved, true));
-    expect(playerListStateHash(entries, false)).not.toBe(playerListStateHash(entries, true));
+    expect(playerListStateHash(entries, true)).not.toBe(playerListStateHash(moved, true));
+    expect(playerListStateHash(entries, false)).toBe(playerListStateHash(moved, false));
   });
 
   it('changes deterministically on join, disconnect and rename', () => {
@@ -87,7 +97,7 @@ describe('Player List Feed embed and change detection', () => {
     expect(playerListStateHash(afterDisconnects, false)).toBe(playerListStateHash([...afterDisconnects].reverse(), false));
   });
 
-  it('stays inside Discord embed/message limits for a large server', () => {
+  it('keeps a 100-player coordinate list inside the aggregate Discord embed limit', () => {
     const many = Array.from({ length: 100 }, (_, index) => ({
       gameId: `guid-${index}`,
       playerName: `Player_${String(index).padStart(3, '0')}`,
@@ -97,10 +107,14 @@ describe('Player List Feed embed and change detection', () => {
       serverAlias: 'Large Server', entries: many, showCoordinates: true, embedColor: '#2563eb',
     });
     expect(embeds.length).toBeLessThanOrEqual(10);
-    for (const embed of embeds) {
-      const json = embed.toJSON();
-      expect(json.fields?.length ?? 0).toBeLessThanOrEqual(25);
-      for (const field of json.fields ?? []) expect(field.value.length).toBeLessThanOrEqual(1024);
+    const json = embeds.map(embed => embed.toJSON());
+    for (const item of json) {
+      expect(item.fields?.length ?? 0).toBeLessThanOrEqual(25);
+      for (const field of item.fields ?? []) expect(field.value.length).toBeLessThanOrEqual(1024);
     }
+    expect(json.reduce((sum, item) => sum + embedTextLength(item), 0)).toBeLessThanOrEqual(6000);
+    const visible = json.flatMap(item => item.fields ?? []).map(field => field.value).join('\n');
+    expect(visible).toContain('Player_000');
+    expect(visible).toContain('Player_099');
   });
 });
