@@ -220,7 +220,7 @@ describe('Phase 7 — SERVER_BAN Outbox', () => {
     removeFromBanlist.mockResolvedValue(undefined);
   });
 
-  it('entfernt Whitelist vor dem HMAC-verifizierten Remote-Bann und scrubbt die Job-Payload', async () => {
+  it('setzt den HMAC-verifizierten Remote-Bann vor der Whitelist-Entfernung und scrubbt die Job-Payload', async () => {
     jobStore['ban-add'] = {
       id: 'ban-add', guildId: 'g1', nitradoConnId: 'conn-1', operation: 'SERVER_BAN_ADD',
       payload: { banId: 'ban-1', encryptedIdentifier: 'ciphertext' }, attempts: 0, maxAttempts: 8,
@@ -231,11 +231,11 @@ describe('Phase 7 — SERVER_BAN Outbox', () => {
 
     await executeJob(claim('ban-add'));
 
-    expect(removeFromWhitelist).toHaveBeenCalledWith('123', rawIdentifier);
     expect(getBanlist).toHaveBeenCalledWith('123');
     expect(addToBanlist).toHaveBeenCalledWith('123', rawIdentifier);
-    expect(removeFromWhitelist.mock.invocationCallOrder[0]).toBeLessThan(getBanlist.mock.invocationCallOrder[0]);
+    expect(removeFromWhitelist).toHaveBeenCalledWith('123', rawIdentifier);
     expect(getBanlist.mock.invocationCallOrder[0]).toBeLessThan(addToBanlist.mock.invocationCallOrder[0]);
+    expect(addToBanlist.mock.invocationCallOrder[0]).toBeLessThan(removeFromWhitelist.mock.invocationCallOrder[0]);
     expect(serverBanUpdateManyMock).toHaveBeenCalledWith(expect.objectContaining({
       data: { appliedRemotely: true },
     }));
@@ -265,7 +265,26 @@ describe('Phase 7 — SERVER_BAN Outbox', () => {
     expect(addToBanlist).toHaveBeenCalledWith('123', rawIdentifier);
   });
 
-  it('setzt keinen Remote-Bann, solange die Whitelist-Entfernung fehlschlaegt', async () => {
+  it('entfernt die Whitelist nicht, wenn der Remote-Bann fehlschlaegt', async () => {
+    jobStore['ban-remote-fail'] = {
+      id: 'ban-remote-fail', guildId: 'g1', nitradoConnId: 'conn-1', operation: 'SERVER_BAN_ADD',
+      payload: { banId: 'ban-1', encryptedIdentifier: 'ciphertext' }, attempts: 0, maxAttempts: 8,
+    };
+    serverBanFindFirstMock.mockResolvedValueOnce({
+      id: 'ban-1', identityHash: hash, active: true, expiresAt: null, appliedRemotely: false,
+    });
+    addToBanlist.mockRejectedValueOnce(new Error('ban write failed'));
+
+    await executeJob(claim('ban-remote-fail'));
+
+    expect(getBanlist).toHaveBeenCalledWith('123');
+    expect(addToBanlist).toHaveBeenCalledWith('123', rawIdentifier);
+    expect(removeFromWhitelist).not.toHaveBeenCalled();
+    expect(serverBanUpdateManyMock).not.toHaveBeenCalled();
+    expect(lastUpdateData()).toMatchObject({ status: 'PENDING', attempts: 1 });
+  });
+
+  it('markiert den Ban nicht als remote angewendet, wenn die Whitelist-Entfernung danach fehlschlaegt', async () => {
     jobStore['ban-wl-fail'] = {
       id: 'ban-wl-fail', guildId: 'g1', nitradoConnId: 'conn-1', operation: 'SERVER_BAN_ADD',
       payload: { banId: 'ban-1', encryptedIdentifier: 'ciphertext' }, attempts: 0, maxAttempts: 8,
@@ -277,8 +296,10 @@ describe('Phase 7 — SERVER_BAN Outbox', () => {
 
     await executeJob(claim('ban-wl-fail'));
 
-    expect(getBanlist).not.toHaveBeenCalled();
-    expect(addToBanlist).not.toHaveBeenCalled();
+    expect(getBanlist).toHaveBeenCalledWith('123');
+    expect(addToBanlist).toHaveBeenCalledWith('123', rawIdentifier);
+    expect(removeFromWhitelist).toHaveBeenCalledWith('123', rawIdentifier);
+    expect(serverBanUpdateManyMock).not.toHaveBeenCalled();
     expect(lastUpdateData()).toMatchObject({ status: 'PENDING', attempts: 1 });
   });
 
