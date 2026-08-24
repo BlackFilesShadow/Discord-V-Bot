@@ -8,6 +8,7 @@
  * technischen Marker im Embed benoetigen.
  */
 
+import { createHash } from 'node:crypto';
 import {
   AdmEventType,
   GameplayDeliveryStatus,
@@ -71,6 +72,10 @@ function eventNonce(eventId: string): string {
   // Discord erlaubt maximal 25 Zeichen. Prisma-CUIDs passen aktuell exakt in
   // dieses Limit; der Slice haelt die Zustellung auch fuer andere ID-Formate sicher.
   return eventId.slice(0, 25);
+}
+
+function playerListNonce(configId: string, stateHash: string): string {
+  return createHash('sha256').update(`player-list\u0000${configId}\u0000${stateHash}`).digest('hex').slice(0, 25);
 }
 
 /**
@@ -399,10 +404,14 @@ async function currentPlayerList(config: GameplayFeedConfig): Promise<PlayerList
       nitradoConnId: config.nitradoConnId,
       status: 'OPEN',
     },
-    select: { gameId: true, playerName: true, updatedAt: true },
+    select: { gameId: true, playerName: true, connectedAt: true, updatedAt: true },
     orderBy: [{ updatedAt: 'desc' }, { gameId: 'asc' }],
   });
-  const latestSession = new Map<string, { gameId: string; playerName: string | null }>();
+  const latestSession = new Map<string, {
+    gameId: string;
+    playerName: string | null;
+    connectedAt: Date | null;
+  }>();
   for (const session of sessions) {
     if (!latestSession.has(session.gameId)) latestSession.set(session.gameId, session);
   }
@@ -410,9 +419,11 @@ async function currentPlayerList(config: GameplayFeedConfig): Promise<PlayerList
   const positions = gameIds.length === 0 ? [] : await prisma.$queryRaw<Array<{
     actorGameId: string | null;
     actorPosition: string | null;
+    occurredAt: Date | null;
+    createdAt: Date;
   }>>(Prisma.sql`
     SELECT DISTINCT ON ("actorGameId")
-           "actorGameId", "actorPosition"
+           "actorGameId", "actorPosition", "occurredAt", "createdAt"
       FROM "AdmEvent"
      WHERE "guildId"=${config.guildId}
        AND "nitradoConnId"=${config.nitradoConnId}
@@ -420,17 +431,35 @@ async function currentPlayerList(config: GameplayFeedConfig): Promise<PlayerList
        AND "actorGameId" IN (${Prisma.join(gameIds)})
      ORDER BY "actorGameId", "createdAt" DESC, "id" DESC
   `);
-  const latestPosition = new Map<string, string | null>();
+  const latestPosition = new Map<string, {
+    position: string | null;
+    occurredAt: Date | null;
+    createdAt: Date;
+  }>();
   for (const position of positions) {
     if (position.actorGameId && !latestPosition.has(position.actorGameId)) {
-      latestPosition.set(position.actorGameId, position.actorPosition);
+      latestPosition.set(position.actorGameId, {
+        position: position.actorPosition,
+        occurredAt: position.occurredAt,
+        createdAt: position.createdAt,
+      });
     }
   }
-  return [...latestSession.values()].map(session => ({
-    gameId: session.gameId,
-    playerName: session.playerName?.trim() || 'Unbekannt',
-    position: latestPosition.get(session.gameId) ?? null,
-  }));
+  return [...latestSession.values()].map(session => {
+    const known = latestPosition.get(session.gameId);
+    const positionAt = known?.occurredAt ?? known?.createdAt ?? null;
+    // Ein neu verbundener Spieler darf niemals eine Position aus seiner vorigen
+    // Sitzung erben. Ohne aufgeloesten Connect-Zeitpunkt bleibt die Position
+    // deshalb fail-closed unbekannt, bis sichere aktuelle Evidenz vorliegt.
+    const position = session.connectedAt && positionAt && positionAt.getTime() >= session.connectedAt.getTime()
+      ? known?.position ?? null
+      : null;
+    return {
+      gameId: session.gameId,
+      playerName: session.playerName?.trim() || 'Unbekannt',
+      position,
+    };
+  });
 }
 
 async function processPlayerListConfig(config: GameplayFeedConfig, serverAlias: string): Promise<void> {
@@ -479,7 +508,12 @@ async function processPlayerListConfig(config: GameplayFeedConfig, serverAlias: 
       else messageId = null;
     }
     if (!messageId) {
-      const message = await textChannel.send({ embeds, allowedMentions: { parse: [] } });
+      const message = await textChannel.send({
+        embeds,
+        allowedMentions: { parse: [] },
+        nonce: playerListNonce(config.id, stateHash),
+        enforceNonce: true,
+      });
       messageId = message.id;
     }
 
@@ -502,6 +536,55 @@ async function processPlayerListConfig(config: GameplayFeedConfig, serverAlias: 
       data: { lastPolledAt: new Date(), lastErrorMsg: message },
     });
   }
+}
+
+/**
+ * Reserviert einen Discord-Ausgabe-Slot nicht nur pro Config, sondern pro
+ * Guild+Channel. Die kanonisch erste Config-Zeile des Channels dient als
+ * transaktionaler FOR-UPDATE-Mutex, damit auch mehrere Bot-Prozesse nicht
+ * gleichzeitig je einen Feedpost in denselben Channel schicken koennen.
+ */
+async function reserveChannelDeliverySlot(config: GameplayFeedConfig): Promise<boolean> {
+  const now = new Date();
+  const next = new Date(now.getTime() + DELIVERY_SPACING_MS);
+  return prisma.$transaction(async tx => {
+    const lock = await tx.$queryRaw<Array<{ id: string }>>(Prisma.sql`
+      SELECT "id"
+        FROM "GameplayFeedConfig"
+       WHERE "guildId"=${config.guildId}
+         AND "channelId"=${config.channelId}
+         AND "kind" <> 'PLAYER_LIST'::"GameplayFeedKind"
+       ORDER BY "id" ASC
+       LIMIT 1
+       FOR UPDATE
+    `);
+    if (!lock[0]) return false;
+
+    const blocked = await tx.gameplayFeedConfig.findFirst({
+      where: {
+        guildId: config.guildId,
+        channelId: config.channelId,
+        isActive: true,
+        kind: { not: GameplayFeedKind.PLAYER_LIST },
+        nextDeliveryAt: { gt: now },
+      },
+      select: { id: true },
+    });
+    if (blocked) return false;
+
+    const reserved = await tx.gameplayFeedConfig.updateMany({
+      where: {
+        id: config.id,
+        guildId: config.guildId,
+        nitradoConnId: config.nitradoConnId,
+        channelId: config.channelId,
+        isActive: true,
+        kind: { not: GameplayFeedKind.PLAYER_LIST },
+      },
+      data: { nextDeliveryAt: next },
+    });
+    return reserved.count === 1;
+  });
 }
 
 async function processConfig(config: GameplayFeedConfig): Promise<void> {
@@ -529,13 +612,6 @@ async function processConfig(config: GameplayFeedConfig): Promise<void> {
 
   try {
     await enqueueNewEvents(config);
-    if (config.nextDeliveryAt.getTime() > Date.now()) {
-      await prisma.gameplayFeedConfig.updateMany({
-        where: { id: config.id, guildId: config.guildId, nitradoConnId: config.nitradoConnId },
-        data: { lastPolledAt: new Date() },
-      });
-      return;
-    }
     const due = await prisma.gameplayFeedDelivery.findMany({
       where: {
         configId: config.id,
@@ -547,6 +623,13 @@ async function processConfig(config: GameplayFeedConfig): Promise<void> {
       orderBy: [{ nextAttemptAt: 'asc' }, { createdAt: 'asc' }],
       take: DELIVERY_BATCH,
     });
+    if (due.length === 0 || !(await reserveChannelDeliverySlot(config))) {
+      await prisma.gameplayFeedConfig.updateMany({
+        where: { id: config.id, guildId: config.guildId, nitradoConnId: config.nitradoConnId },
+        data: { lastPolledAt: new Date() },
+      });
+      return;
+    }
     for (const delivery of due) await deliverOne(config, delivery);
     await prisma.gameplayFeedConfig.updateMany({
       where: { id: config.id, guildId: config.guildId, nitradoConnId: config.nitradoConnId },
