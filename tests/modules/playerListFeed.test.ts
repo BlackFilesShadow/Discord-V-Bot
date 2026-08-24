@@ -17,7 +17,7 @@ function embedTextLength(json: ReturnType<ReturnType<typeof buildPlayerListEmbed
   return total;
 }
 
-describe('Player List Feed embed and change detection', () => {
+describe('Online List embed and change detection', () => {
   const entries = [
     { gameId: 'guid-b', playerName: 'Bravo', position: null },
     { gameId: 'guid-a', playerName: 'Alpha', position: '100,200,10' },
@@ -27,6 +27,7 @@ describe('Player List Feed embed and change detection', () => {
     const json = buildPlayerListEmbeds({
       serverAlias: 'Empty Server', entries: [], showCoordinates: false, embedColor: '#2563eb',
     })[0].toJSON();
+    expect(json.title).toBe('🌐 Online List');
     expect(json.fields).toEqual(expect.arrayContaining([
       expect.objectContaining({ name: 'Online', value: '0' }),
       expect.objectContaining({ name: 'Spieler', value: expect.stringMatching(/keine Spieler/i) }),
