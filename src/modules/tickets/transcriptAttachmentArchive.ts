@@ -138,7 +138,8 @@ export async function archiveTranscriptAttachments(
 
     const contentType = normalizedContentType(attachment.contentType ?? response.headers.get('content-type'));
     attachment.contentType = contentType;
-    attachment.archivedDataUrl = `data:${contentType};base64,${bytes.toString('base64')}`;
+    const dataUrlType = isInlineTranscriptImage(contentType) ? contentType : 'application/octet-stream';
+    attachment.archivedDataUrl = `data:${dataUrlType};base64,${bytes.toString('base64')}`;
   }
 
   return { attachmentCount: attachments.length, archivedBytes };
