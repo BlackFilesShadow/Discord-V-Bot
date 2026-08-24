@@ -175,7 +175,9 @@ beforeEach(() => {
   deliveryCreate.mockResolvedValue({ id: 'delivery-1' });
   deliveryFind.mockResolvedValue([]);
   configUpdate.mockResolvedValue({ count: 1 });
-  configFindFirst.mockResolvedValue(null);
+  configFindFirst.mockImplementation((args: { where?: { id?: string; isActive?: boolean } }) => (
+    args?.where?.id === 'feed-1' && args.where.isActive === true ? { id: 'feed-1' } : null
+  ));
   connectionFind.mockResolvedValue({ id: CONN_ID });
   queryRaw.mockResolvedValue([{ id: 'feed-1' }]);
 });
