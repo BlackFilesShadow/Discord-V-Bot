@@ -51,5 +51,6 @@ describe('Goodbye-1 dashboard wiring', () => {
     expect(panelSource).toContain("{ key: '{username}'");
     expect(panelSource).not.toContain("{ key: '{mention}'");
     expect(panelSource).toContain('erscheint automatisch anstelle des Namens im Feld „Discord-Name“');
+    expect(routeSource).toContain('discordMention: identity.mention');
   });
 });
