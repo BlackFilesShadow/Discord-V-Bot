@@ -47,8 +47,8 @@ Objekt und Werkzeug werden getrennt normalisiert, z.B. `built Fence with Shovel`
 - Positionsfelder sind klickbare iZurvive-Location-Links nach dem Format `#location=x;y;zoomlevel`.
 - Opfer-, Toeter- und Baupositionen verwenden denselben Link-Renderer.
 - Der sichtbare Serverbezug besteht ausschliesslich aus dem konfigurierten **Server-Alias**. Slotnummern und technische Connection-/Event-/Delivery-IDs werden nicht im Embed angezeigt.
-- Death-/Kill-Feeds (`PVP`, `SUICIDE`, `NPC`, `VEHICLE`) bleiben ohne zusaetzliche Ereigniszeit im sichtbaren Layout.
-- Nicht-Kill-Gameplay-Feeds (`PLACEMENT`, `BUILD`, `DISMANTLE`, `DESTROY`) zeigen **Ereigniszeit** direkt unter dem Feld **Server**.
+- Nur der eigentliche **V-Kill/PvP-Feed** (`PVP`) bleibt ohne zusaetzliche Ereigniszeit im sichtbaren Layout.
+- Self Kill, Wild Kill, Crash Kill sowie `PLACEMENT`, `BUILD`, `DISMANTLE` und `DESTROY` zeigen **Ereigniszeit** direkt unter dem Feld **Server**.
 - Die Online List zeigt **Stand** direkt unter dem Feld **Server**. Ein allgemeiner Discord-Embed-Zeitstempel wird dafuer nicht zusaetzlich verwendet.
 - Die technische Idempotenz liegt unsichtbar in Discord `nonce + enforce_nonce`, nicht in sichtbaren Embed-Inhalten.
 
@@ -110,4 +110,4 @@ Nach Merge und Migration:
 9. Nitrado-Dateiwechsel/Serverrestart, Botrestart und Discord-Fehler/Retry testen.
 10. Bestaetigen: kein generischer `PLAYER_DIED`-Discord-Post, keine verlorenen oder doppelten Posts, kein Cross-Server-Leak, saubere Embed-Darstellung und korrekte Kartenlinks.
 
-Die Regression `tests/modules/gameplayFeedDeliveryE2E.test.ts` beweist zusaetzlich die produktive Kernkette von einer rohen DayZ-ADM-PvP-Zeile ueber Persistenz und Kategorie-Ableitung bis zum Discord-Embed, den RETRY-Pfad sowie die Nicht-Zustellung generischer `PLAYER_DIED`-Rohereignisse. `tests/modules/gameplayFeedTypes.test.ts` prueft diese Kategoriegrenze explizit. `tests/modules/gameplayFeedEmbed.test.ts` prueft zusaetzlich die saubere Namensdarstellung, Alias-only-Serveranzeige, die unterschiedliche Zeitdarstellung fuer Death- und Nicht-Kill-Feeds sowie die iZurvive-Positionslinks.
+Die Regression `tests/modules/gameplayFeedDeliveryE2E.test.ts` beweist zusaetzlich die produktive Kernkette von einer rohen DayZ-ADM-PvP-Zeile ueber Persistenz und Kategorie-Ableitung bis zum Discord-Embed, den RETRY-Pfad sowie die Nicht-Zustellung generischer `PLAYER_DIED`-Rohereignisse. `tests/modules/gameplayFeedTypes.test.ts` prueft diese Kategoriegrenze explizit. `tests/modules/gameplayFeedEmbed.test.ts` und `tests/modules/gameplayFeedEmbedDesign.test.ts` pruefen zusaetzlich Alias-only-Serveranzeige, die fehlende Ereigniszeit nur beim V-Kill/PvP-Feed, die Ereigniszeit bei allen anderen sichtbaren Nitrado-Reports sowie die iZurvive-Positionslinks.
