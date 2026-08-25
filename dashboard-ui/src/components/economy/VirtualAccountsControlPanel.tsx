@@ -721,7 +721,7 @@ function LegacyAdminPayout({
     retry: false,
   });
   const options = useMemo<ComboboxOption[]>(() => {
-    const mapped = (members.data?.members ?? []).map(member => ({
+    const mapped: ComboboxOption[] = (members.data?.members ?? []).map(member => ({
       id: member.id,
       label: member.displayName || member.username,
       hint: `Discord ${member.discordId}`,
