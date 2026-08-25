@@ -32,8 +32,8 @@ export async function ensureBankTreasurySerialized(args: {
   const accountId = await prisma.$transaction(async tx => {
     const raw = rawDb(tx);
     const lockKey = `vbot:virtual-bank:${String(args.guildId)}:${String(args.nitradoConnId)}`;
-    await raw.$queryRawUnsafe<Array<{ locked: boolean }>>(
-      'SELECT pg_advisory_xact_lock(hashtext($1)) IS NULL AS locked',
+    await raw.$queryRawUnsafe<Array<{ pg_advisory_xact_lock: null }>>(
+      'SELECT pg_advisory_xact_lock(hashtext($1))',
       lockKey,
     );
 
@@ -59,7 +59,7 @@ export async function ensureBankTreasurySerialized(args: {
         String(args.guildId),
         String(args.nitradoConnId),
         name,
-        name.toLocaleLowerCase('de-DE'),
+        name.toLowerCase(),
         String(args.createdByDiscordId),
       );
       if (rows[0]) {
