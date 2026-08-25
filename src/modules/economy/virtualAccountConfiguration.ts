@@ -21,6 +21,7 @@ import {
   type VirtualAccountFinance,
 } from './virtualAccountFinance';
 import { getConfig } from './repository';
+import { assertEconomyScopeReady } from './scopeMigration';
 
 interface PreparedConfiguration {
   description: string | null;
@@ -34,6 +35,23 @@ interface PreparedConfiguration {
   exchangeAccountUnits: bigint | null;
   acceptUserTransfers: boolean;
   managers: UserDiscordId[];
+}
+
+interface LockedAccountConfigurationRow {
+  balance: bigint;
+  status: string;
+  acceptUserTransfers: boolean;
+}
+
+interface LockedFinanceConfigurationRow {
+  bankBalance: bigint;
+  currencyName: string;
+  currencyEmoji: string;
+  accountEmoji: string;
+  bannerUrl: string | null;
+  textStyle: string;
+  exchangePlayerUnits: bigint | null;
+  exchangeAccountUnits: bigint | null;
 }
 
 export interface ConfiguredVirtualAccountResult {
@@ -124,6 +142,10 @@ function uniqueConflict(error: unknown): boolean {
   return candidate.code === '23505' || candidate.code === 'P2002' || candidate.meta?.code === '23505';
 }
 
+function currencyKey(value: string): string {
+  return value.normalize('NFKC').trim().toLocaleLowerCase('de-DE');
+}
+
 export async function createConfiguredCustomVirtualAccount(args: {
   guildId: GuildId;
   nitradoConnId: NitradoConnId;
@@ -142,6 +164,7 @@ export async function createConfiguredCustomVirtualAccount(args: {
   managers: UserDiscordId[];
   createdByDiscordId: UserDiscordId;
 }): Promise<ConfiguredVirtualAccountResult> {
+  await assertEconomyScopeReady(args.guildId, args.nitradoConnId);
   const { name, nameKey } = normalizeVirtualAccountName(args.name);
   if (args.expiresAt && args.expiresAt.getTime() <= Date.now()) throw new Error('Ablaufzeit muss in der Zukunft liegen.');
   const cfg = await getConfig(args.guildId, args.nitradoConnId);
@@ -238,26 +261,53 @@ export async function updateConfiguredVirtualAccount(args: {
   managers: UserDiscordId[];
   updatedByDiscordId: UserDiscordId;
 }): Promise<ConfiguredVirtualAccountResult> {
-  const account = await getVirtualAccountById(args.guildId, args.nitradoConnId, args.accountId);
-  if (!account) throw new Error('Virtuelles Konto nicht gefunden.');
-  if (account.status === 'ARCHIVED') throw new Error('Archivierte Konten koennen nicht mehr konfiguriert werden.');
-  const defaults = await ensureVirtualAccountFinance(args.guildId, args.nitradoConnId, args.accountId);
-  const prepared = prepare({
-    description: args.description,
-    channelId: args.channelId,
-    currencyName: args.currencyName ?? defaults.currencyName,
-    currencyEmoji: args.currencyEmoji ?? defaults.currencyEmoji,
-    accountEmoji: args.accountEmoji ?? defaults.accountEmoji,
-    bannerUrl: args.bannerUrl === undefined ? defaults.bannerUrl : args.bannerUrl,
-    textStyle: args.textStyle ?? defaults.textStyle,
-    exchangePlayerUnits: args.exchangePlayerUnits === undefined ? defaults.exchangePlayerUnits : args.exchangePlayerUnits,
-    exchangeAccountUnits: args.exchangeAccountUnits === undefined ? defaults.exchangeAccountUnits : args.exchangeAccountUnits,
-    acceptUserTransfers: args.acceptUserTransfers === undefined ? account.acceptUserTransfers : args.acceptUserTransfers,
-    managers: args.managers,
-  });
+  await assertEconomyScopeReady(args.guildId, args.nitradoConnId);
 
   await prisma.$transaction(async tx => {
     const raw = rawDb(tx);
+    // Gleiche Lock-Reihenfolge wie Geldbewegungen: zuerst Basis-Konto, danach
+    // Finanzprofil. Dadurch kann eine Konfigurationsaenderung weder zwischen
+    // Debit/Credit geraten noch einen bereits finanzierten Saldo umetikettieren.
+    const accountRows = await raw.$queryRawUnsafe<LockedAccountConfigurationRow[]>(
+      'SELECT "balance", "status"::text AS status, "acceptUserTransfers" FROM "EconomyVirtualAccount" WHERE "id"=$1 AND "guildId"=$2 AND "nitradoConnId"=$3 LIMIT 1 FOR UPDATE',
+      args.accountId,
+      String(args.guildId),
+      String(args.nitradoConnId),
+    );
+    const account = accountRows[0];
+    if (!account) throw new Error('Virtuelles Konto nicht gefunden.');
+    if (account.status === 'ARCHIVED') throw new Error('Archivierte Konten koennen nicht mehr konfiguriert werden.');
+
+    const financeRows = await raw.$queryRawUnsafe<LockedFinanceConfigurationRow[]>(
+      'SELECT "bankBalance", "currencyName", "currencyEmoji", "accountEmoji", "bannerUrl", "textStyle", "exchangePlayerUnits", "exchangeAccountUnits" FROM "EconomyVirtualAccountFinance" WHERE "accountId"=$1 AND "guildId"=$2 AND "nitradoConnId"=$3 LIMIT 1 FOR UPDATE',
+      args.accountId,
+      String(args.guildId),
+      String(args.nitradoConnId),
+    );
+    const currentFinance = financeRows[0];
+    if (!currentFinance) throw new Error('Konto-Finanzprofil fehlt oder gehoert zu einem anderen Scope.');
+
+    const prepared = prepare({
+      description: args.description,
+      channelId: args.channelId,
+      currencyName: args.currencyName ?? currentFinance.currencyName,
+      currencyEmoji: args.currencyEmoji ?? currentFinance.currencyEmoji,
+      accountEmoji: args.accountEmoji ?? currentFinance.accountEmoji,
+      bannerUrl: args.bannerUrl === undefined ? currentFinance.bannerUrl : args.bannerUrl,
+      textStyle: args.textStyle ?? currentFinance.textStyle,
+      exchangePlayerUnits: args.exchangePlayerUnits === undefined ? currentFinance.exchangePlayerUnits : args.exchangePlayerUnits,
+      exchangeAccountUnits: args.exchangeAccountUnits === undefined ? currentFinance.exchangeAccountUnits : args.exchangeAccountUnits,
+      acceptUserTransfers: args.acceptUserTransfers === undefined ? account.acceptUserTransfers : args.acceptUserTransfers,
+      managers: args.managers,
+    });
+
+    if (
+      account.balance + currentFinance.bankBalance > 0n
+      && currencyKey(prepared.currencyName) !== currencyKey(currentFinance.currencyName)
+    ) {
+      throw new Error('Waehrungsname kann bei vorhandenem Wallet- oder Bankguthaben nicht geaendert werden. Zuerst beide Pockets auf 0 setzen.');
+    }
+
     const accountChanged = await raw.$executeRawUnsafe(
       'UPDATE "EconomyVirtualAccount" SET "acceptUserTransfers"=$4, "updatedAt"=CURRENT_TIMESTAMP WHERE "id"=$1 AND "guildId"=$2 AND "nitradoConnId"=$3 AND "status"<>\'ARCHIVED\'::"EconomyVirtualAccountStatus"',
       args.accountId,
