@@ -4,16 +4,37 @@ import { logger } from '../../utils/logger';
 import prisma from '../../database/prisma';
 import { liveSearch, looksFactQuestion, formatSearchResultsForPrompt } from './webSearch';
 import { asksAboutCommands, formatCatalogForPromptFocused } from './commandCatalog';
-import { recordCall, getRankedProviders, getConfiguredModel, isOnCooldown, markProviderUnavailable, ProviderName } from './providerStats';
+import {
+  recordCall,
+  getRankedProviders,
+  getConfiguredModel,
+  getAllCooldowns,
+  isOnCooldown,
+  markProviderUnavailable,
+  ProviderName,
+} from './providerStats';
 import { inferAiTaskProfile, providerSupportsTask, type AiTaskProfile } from './providerCapabilities';
 import { checkRateLimit } from '../../utils/rateLimiter';
-import { lookupNitradoHelp, looksLikeDayZFileQuestion, getDayZFileTruthBlock, isDayzTechnicalAdminQuestion, validateDayzTechnicalAnswer, buildDayzTechnicalFallback } from './nitradoHelp';
+import {
+  lookupNitradoHelp,
+  looksLikeDayZFileQuestion,
+  getDayZFileTruthBlock,
+  isDayzTechnicalAdminQuestion,
+  validateDayzTechnicalAnswer,
+  buildDayzTechnicalFallback,
+} from './nitradoHelp';
 import { redactText } from '../nitrado/mirror/redactor';
 import { cached } from '../../utils/responseCache';
 import { clampBlock, clampHistory } from './promptBudget';
 import { classifyProviderHttpStatus, updateAllRateLimitedState } from './providerFailure';
 import { requireStage48LoopbackUrl } from '../../utils/stage48Loopback';
 import { answerDayz129CatalogQuestion } from './dayz129Catalog';
+import {
+  classifyAiConversationDomain,
+  isDayzConversationDomain,
+  isMemoryTurnCompatible,
+  mayUseExternalConversationContext,
+} from './conversationIntent';
 import {
   buildHallucinationGuardFallback,
   consumeHallucinationGuardReference,
@@ -46,7 +67,7 @@ export interface AiResponse {
 }
 
 /**
- * Liefert den aktuellen Zeitstempel als deutscher String f\u00fcr System-Prompts.
+ * Liefert den aktuellen Zeitstempel als deutscher String für System-Prompts.
  * Damit kennt die AI immer Tag/Monat/Jahr/Uhrzeit.
  */
 export function getLiveTimeContext(): string {
@@ -75,12 +96,12 @@ export function getLiveTimeContext(): string {
   else if (hour >= 18 && hour < 22) daypart = 'Abend';
   const month = now.getMonth() + 1;
   let season = 'Winter';
-  if (month >= 3 && month <= 5) season = 'Fr\u00fchling';
+  if (month >= 3 && month <= 5) season = 'Frühling';
   else if (month >= 6 && month <= 8) season = 'Sommer';
   else if (month >= 9 && month <= 11) season = 'Herbst';
   return [
     'AUTORITATIVE ZEIT- UND DATUMSANGABEN (Europe/Berlin) - diese Werte sind FAKT, nutze sie direkt:',
-    `- Vollst\u00e4ndig: ${fmt.format(now)}`,
+    `- Vollständig: ${fmt.format(now)}`,
     `- Heutiges Datum: ${dateOnly}`,
     `- Wochentag: ${weekday}`,
     `- Aktuelle Uhrzeit: ${timeOnly} Uhr`,
@@ -94,7 +115,7 @@ export function getLiveTimeContext(): string {
     '- Gib JEDEN Wert (Wochentag, Datum, Uhrzeit, Monat, Jahr) HOECHSTENS EINMAL pro Antwort aus. Kein Teil darf doppelt vorkommen.',
     `- Vorzugsformat fuer kombinierte Fragen ("Tag/Datum/Uhrzeit/Jahr/Monat"): EIN Satz - z.B. "Heute ist ${weekday}, ${dateOnly}, ${timeOnly} Uhr." Punkt. KEIN nachgeschobenes "Jahr 2026, Monat April".`,
     '- Wenn Datum bereits den Monat und das Jahr enthaelt, sind Monat und Jahr damit beantwortet - NICHT noch einmal extra anfuegen.',
-    '- Vermeide Doppelungen wie "Fr\u00fchlingsabend, es ist Abend".',
+    '- Vermeide Doppelungen wie "Frühlingsabend, es ist Abend".',
   ].join('\n');
 }
 
@@ -173,7 +194,7 @@ export const BOT_PERSONA = [
   '- Wenn die Frage mehrdeutig ist: stelle EINE kurze Rueckfrage statt zu raten.',
   '',
   'STATUS-DISAMBIGUIERUNG:',
-  '- "Status", "System-Status", "Bot-Status", "wie laeuft\'s" ohne weiteren Kontext = DEIN eigener Bot-System-Status (Uptime, AI-Provider, Verbindung). Antworte mit deinem aktuellen Betriebszustand kurz und sachlich. Wenn dir konkrete Werte fehlen, sag das ehrlich ("Live-Metriken stehen mir hier nicht zur Verfuegung, aber ich bin online und antworte”).',
+  '- "Status", "System-Status", "Bot-Status", "wie laeuft\'s" ohne weiteren Kontext = DEIN eigener Bot-System-Status (Uptime, AI-Provider, Verbindung). Antworte mit deinem aktuellen Betriebszustand kurz und sachlich. Wenn dir konkrete Werte fehlen, sag das ehrlich ("Live-Metriken stehen mir hier nicht zur Verfuegung, aber ich bin online und antworte").',
   '- "Server-Status", "Status vom Server", "wie laeuft der Server" = Status DIESES Discord-Servers (Mitglieder/Aktivitaet/Boost). Nutze SERVER-KONTEXT.',
   '- Werfe NIEMALS Server-Stammdaten (Mitgliederzahl, Owner, Erstellungsdatum, Boost-Tier) raus, wenn der Nutzer nicht explizit nach dem SERVER gefragt hat.',
   '',
@@ -255,18 +276,18 @@ export function buildSelfIntroductionInstructions(): string {
 export function getKnowledgeBoundary(): string {
   const year = new Date().getFullYear();
   return [
-    `WICHTIG \u2013 Wissensstand: Dein internes Trainingswissen endet vor ${year}.`,
+    `WICHTIG – Wissensstand: Dein internes Trainingswissen endet vor ${year}.`,
     '',
     'PRIORITAET DER QUELLEN (in dieser Reihenfolge nutzen):',
-    '1. AUTORITATIVE ZEIT- UND DATUMSANGABEN (oben im Prompt) \u2192 fuer ALLES rund um Datum, Uhrzeit, Wochentag, Tageszeit, Jahreszeit, Jahr.',
-    '2. AKTUELLE WEB-RECHERCHE (falls vorhanden) \u2192 fuer alle anderen zeitabhaengigen Fakten (Politik, Personen, Sport, Preise, Releases). Nutze sie SELBSTBEWUSST und KONKRET, erfinde nichts hinzu.',
-    '3. Stabiles Allgemeinwissen \u2192 Mathematik, Geographie, Geschichte vor 2023, Naturwissenschaft, Sprache, Programmierung, Kultur, Definitionen, Erklaerungen, Anleitungen.',
+    '1. AUTORITATIVE ZEIT- UND DATUMSANGABEN (oben im Prompt) → fuer ALLES rund um Datum, Uhrzeit, Wochentag, Tageszeit, Jahreszeit, Jahr.',
+    '2. AKTUELLE WEB-RECHERCHE (falls vorhanden) → fuer alle anderen zeitabhaengigen Fakten (Politik, Personen, Sport, Preise, Releases). Nutze sie SELBSTBEWUSST und KONKRET, erfinde nichts hinzu.',
+    '3. Stabiles Allgemeinwissen → Mathematik, Geographie, Geschichte vor 2023, Naturwissenschaft, Sprache, Programmierung, Kultur, Definitionen, Erklaerungen, Anleitungen.',
     '',
     'NUR wenn KEINE Web-Recherche vorhanden ist UND die Frage einen aktuellen Zustand verlangt, der sich seit deinem Trainingsende geaendert haben koennte (amtierende Politiker, juengste Wahlergebnisse, aktuelle Sportstandings, Tageskurse, Wetter, neueste Releases), darfst du keine konkrete Aussage als sicher praesentieren.',
     'In diesem Fall sage kurz: "Dazu habe ich gerade keine aktuellen Daten."',
     '',
     'STILREGELN:',
-    '- Verweigere NIEMALS die Antwort auf Datum, Uhrzeit, Wochentag, Tageszeit oder Jahreszeit \u2013 diese stehen IMMER im Zeit-Block oben.',
+    '- Verweigere NIEMALS die Antwort auf Datum, Uhrzeit, Wochentag, Tageszeit oder Jahreszeit – diese stehen IMMER im Zeit-Block oben.',
     '- Verweigere NIEMALS die Antwort auf Allgemeinwissen, Erklaerungen, Definitionen, Anleitungen, Meinungen oder Smalltalk.',
     '- Nenne KEINE Quellen in der Antwort. Sage NICHT "laut Wikipedia", "laut meinen Quellen", "meinen Recherchen zufolge" o.ae. Antworte einfach direkt mit dem Fakt, als waere es selbstverstaendliches Wissen.',
     '- Erwaehne deinen Wissensstand oder Trainingsende NICHT von dir aus. Nur wenn der Nutzer explizit fragt.',
@@ -291,11 +312,18 @@ export async function answerQuestion(
       ? { context: optionsOrContext }
       : (optionsOrContext ?? {});
   const mode: AnswerMode = opts.mode ?? 'chat';
+  const domain = classifyAiConversationDomain(question);
+  const dayzDomain = isDayzConversationDomain(question);
   const guardContext = consumeHallucinationGuardReference(opts.context);
-  const context = guardContext.context;
-  const hallucinationGuard = guardContext.guard;
 
-  if (mode !== 'welcome') {
+  // Harte Quellengrenze: Eine allgemeine Frage bekommt weder den kompletten
+  // Channel-/Guild-Kontext noch einen alten DayZ-Halluzinationsguard. Damit ist
+  // die Trennung nicht nur eine Prompt-Bitte, sondern bereits vor dem Provider
+  // technisch erzwungen.
+  const context = mayUseExternalConversationContext(question) ? guardContext.context : null;
+  const hallucinationGuard = dayzDomain ? guardContext.guard : null;
+
+  if (mode !== 'welcome' && dayzDomain) {
     const guardPreflight = preflightLiveServerQuestion(question, hallucinationGuard);
     if (guardPreflight.handled && guardPreflight.response) {
       logger.info('[AI-16] Live-Server-Frage deterministisch vor Provider beantwortet/blockiert');
@@ -303,6 +331,9 @@ export async function answerQuestion(
     }
   }
 
+  // Der Classname-/1.29-Katalog bleibt bewusst als eigener deterministischer
+  // Preflight aktiv. So funktionieren auch etablierte Kurzfragen wie
+  // "Feldrucksack Grün" weiterhin ohne das Wort "DayZ".
   if (mode !== 'welcome') {
     try {
       const catalogAnswer = answerDayz129CatalogQuestion(question);
@@ -315,7 +346,9 @@ export async function answerQuestion(
     }
   }
 
-  if (mode !== 'welcome') {
+  // Nitrado-/DayZ-Hilfetexte duerfen nur bei einer eindeutig erkannten DayZ-
+  // Domain feuern. Vorher wurde dieser Lookup fuer jede normale Frage gestartet.
+  if (mode !== 'welcome' && dayzDomain) {
     try {
       const preflightHelp = lookupNitradoHelp(question);
       if (preflightHelp.directAnswer) {
@@ -344,7 +377,7 @@ export async function answerQuestion(
     }
   }
 
-  const dayzTechnical = mode !== 'welcome' && isDayzTechnicalAdminQuestion(question);
+  const dayzTechnical = mode !== 'welcome' && dayzDomain && isDayzTechnicalAdminQuestion(question);
   const wantWebSearch = (mode === 'chat' || mode === 'oneshot' || mode === 'trigger') && !dayzTechnical;
   const wantCatalog = mode === 'chat' || mode === 'oneshot';
   const wantKnowledgeBoundary = mode !== 'welcome';
@@ -372,7 +405,11 @@ export async function answerQuestion(
     if (useMemory) {
       try {
         const { getRecentTurns } = await import('./conversationMemory.js');
-        memoryTurns = await getRecentTurns(opts.userId!, opts.channelId!, opts.guildId ?? null);
+        const rawMemory = await getRecentTurns(opts.userId!, opts.channelId!, opts.guildId ?? null);
+        memoryTurns = rawMemory.filter(turn => isMemoryTurnCompatible(question, turn.content));
+        if (memoryTurns.length < rawMemory.length) {
+          logger.info(`[AI-Context-Isolation] ${rawMemory.length - memoryTurns.length} domainfremde Memory-Turn(s) verworfen (domain=${domain})`);
+        }
       } catch (e) {
         logger.warn(`conversationMemory laden fehlgeschlagen: ${String(e)}`);
       }
@@ -380,7 +417,7 @@ export async function answerQuestion(
 
     let nitradoHelpBlock: string | null = null;
     let nitradoHelpTopics: string[] = [];
-    if (mode === 'chat' || mode === 'oneshot' || mode === 'trigger') {
+    if (dayzDomain && (mode === 'chat' || mode === 'oneshot' || mode === 'trigger')) {
       try {
         const ans = lookupNitradoHelp(question);
         if (ans.found) {
@@ -474,7 +511,7 @@ export async function answerQuestion(
 
     return { success: true, result: safeResponse };
   } catch (error) {
-    const err = error as Error & { code?: string };
+    const err = error as Error & { code?: string; retryAfterMs?: number };
     logger.error('AI Wissensfrage Fehler:', {
       message: err?.message,
       stack: err?.stack?.split('\n').slice(0, 5).join('\n'),
@@ -482,9 +519,16 @@ export async function answerQuestion(
       code: err?.code,
     });
     if (err?.code === 'RATE_LIMIT' || /RATE_LIMIT|status code 429/.test(err?.message || '')) {
-      return { success: false, error: 'RATE_LIMIT', rateLimitSource: 'provider' };
+      return {
+        success: false,
+        error: 'RATE_LIMIT',
+        rateLimitSource: 'provider',
+        retryAfterSeconds: err.retryAfterMs && err.retryAfterMs > 0
+          ? Math.max(1, Math.ceil(err.retryAfterMs / 1000))
+          : undefined,
+      };
     }
-    return { success: false, error: 'AI nicht verf\u00fcgbar.' };
+    return { success: false, error: 'AI nicht verfügbar.' };
   }
 }
 
@@ -773,6 +817,26 @@ function normalizeStage48AiLab(options: Stage48AiLabOptions): Stage48AiLabOption
   };
 }
 
+function hasRuntimeApiKey(provider: ProviderName): boolean {
+  switch (provider) {
+    case 'groq': return Boolean(config.ai.groqApiKey);
+    case 'cerebras': return Boolean(config.ai.cerebrasApiKey);
+    case 'openrouter': return Boolean(config.ai.openrouterApiKey);
+    case 'gemini': return Boolean(config.ai.geminiApiKey);
+    case 'openai': return Boolean(config.ai.openaiApiKey);
+  }
+}
+
+function rateLimitError(retryAfterMs?: number): Error & { code: string; retryAfterMs?: number } {
+  const error = new Error('RATE_LIMIT: Alle geeigneten AI-Provider sind aktuell rate-limited oder im 429-Cooldown.') as Error & {
+    code: string;
+    retryAfterMs?: number;
+  };
+  error.code = 'RATE_LIMIT';
+  if (retryAfterMs && retryAfterMs > 0) error.retryAfterMs = retryAfterMs;
+  return error;
+}
+
 export async function callAI(
   messages: { role: string; content: string }[],
   options: CallAiOptions = {},
@@ -780,6 +844,21 @@ export async function callAI(
   const task = inferAiTaskProfile(messages);
   const stage48Lab = options.stage48Lab ? normalizeStage48AiLab(options.stage48Lab) : null;
   const providers = stage48Lab?.providers ?? await getProviderOrder(task);
+
+  // Wenn der Circuit-Breaker alle geeigneten Provider bereits wegen 429 aus
+  // der Rotation genommen hat, ist das weiterhin ein Provider-Rate-Limit und
+  // kein generischer Fehler. Vorher fiel genau dieser Folgerequest faelschlich
+  // auf "Kein AI-Provider verfügbar" und Discord zeigte danach die "Hmm"-Meldung.
+  if (!stage48Lab && providers.length === 0) {
+    const cooling = getAllCooldowns()
+      .filter(entry => hasRuntimeApiKey(entry.provider))
+      .filter(entry => providerSupportsTask(entry.provider, getConfiguredModel(entry.provider), task))
+      .filter(entry => entry.remainingMs > 0);
+    if (cooling.length > 0) {
+      const retryAfterMs = Math.min(...cooling.map(entry => entry.remainingMs));
+      throw rateLimitError(retryAfterMs);
+    }
+  }
 
   let redactedMessages: { role: string; content: string }[];
   try {
@@ -858,6 +937,7 @@ export async function callAI(
   let lastError: unknown = null;
   let allRateLimited = true;
   let anyAttempted = false;
+  let shortestRetryAfterMs = 0;
   logger.info(`callAI start, task=${task}, provider-Reihenfolge: ${providers.join(' -> ')}`);
   for (const provider of providers) {
     for (let attempt = 1; attempt <= 2; attempt++) {
@@ -892,6 +972,9 @@ export async function callAI(
         }
         if (is429) {
           const retryAfterMs = parseRetryAfter(error);
+          if (retryAfterMs > 0 && (shortestRetryAfterMs === 0 || retryAfterMs < shortestRetryAfterMs)) {
+            shortestRetryAfterMs = retryAfterMs;
+          }
           void recordCall(provider as ProviderName, 'rateLimit', latency, errMsg, { retryAfterMs });
           break;
         }
@@ -906,9 +989,17 @@ export async function callAI(
   }
 
   if (anyAttempted && allRateLimited) {
-    const e = new Error('RATE_LIMIT: Alle AI-Provider sind aktuell rate-limited (429).');
-    (e as Error & { code?: string }).code = 'RATE_LIMIT';
-    throw e;
+    const cooldownRetry = !stage48Lab
+      ? getAllCooldowns()
+          .filter(entry => hasRuntimeApiKey(entry.provider))
+          .filter(entry => providerSupportsTask(entry.provider, getConfiguredModel(entry.provider), task))
+          .map(entry => entry.remainingMs)
+          .filter(ms => ms > 0)
+      : [];
+    const retryAfterMs = shortestRetryAfterMs > 0
+      ? shortestRetryAfterMs
+      : (cooldownRetry.length > 0 ? Math.min(...cooldownRetry) : undefined);
+    throw rateLimitError(retryAfterMs);
   }
   const detail = lastError ? `: ${(lastError as Error)?.message || String(lastError)}` : '';
   throw new Error(`Kein AI-Provider verfügbar${detail}`);
