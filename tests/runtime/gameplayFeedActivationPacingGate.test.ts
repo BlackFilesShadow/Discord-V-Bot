@@ -22,7 +22,10 @@ describe('Gameplay feed activation, pacing and Online List architecture gate', (
     expect(runtime).toContain('FOR UPDATE');
     expect(runtime).toContain('channelId: config.channelId');
     expect(runtime).not.toContain('gameplayFeedDelivery.deleteMany');
-    expect(runtime).toContain('nonce: eventNonce(event.id)');
+    expect(runtime).toContain('function eventNonce(configId: string, eventId: string)');
+    expect(runtime).toContain('gameplay-feed\\u0000${configId}\\u0000${eventId}');
+    expect(runtime).toContain('nonce: eventNonce(config.id, event.id)');
+    expect(runtime).not.toContain('nonce: eventNonce(event.id)');
     expect(runtime).toContain('enforceNonce: true');
   });
 
