@@ -13,10 +13,8 @@ import {
   type EconomyPocket,
   type VirtualAccountStatus,
 } from '../../modules/economy/virtualAccounts';
-import {
-  depositUserIntoVirtualAccount,
-  ensureVirtualAccountFinance,
-} from '../../modules/economy/virtualAccountFinance';
+import { ensureVirtualAccountFinance } from '../../modules/economy/virtualAccountFinance';
+import { safeDepositUserIntoVirtualAccount } from '../../modules/economy/virtualAccountMoneySafety';
 import {
   postVirtualAccountArchive,
   syncVirtualAccountProjection,
@@ -153,7 +151,7 @@ export const virtualAccountCommand: Command = {
       const sourcePocket = (i.options.getString('quelle') ?? 'WALLET') as EconomyPocket;
       const reason = i.options.getString('grund') ?? 'Discord-Ueberweisung';
       try {
-        const result = await depositUserIntoVirtualAccount({
+        const result = await safeDepositUserIntoVirtualAccount({
           idempotencyKey: `discord-virtual-pay:${i.id}`,
           guildId: scope.guildId,
           nitradoConnId: connId,
