@@ -7,7 +7,10 @@ const read = (rel: string) => fs.readFileSync(path.join(ROOT, rel), 'utf8');
 describe('virtuelle Konten — Retry- und Replay-Sicherheit', () => {
   const legacyService = read('src/modules/economy/virtualAccounts.ts');
   const safety = read('src/modules/economy/virtualAccountMoneySafety.ts');
+  const configuration = read('src/modules/economy/virtualAccountConfiguration.ts');
+  const managerSafety = read('src/modules/economy/virtualAccountManagerPanelSafety.ts');
   const safetyRoute = read('src/dashboard/routes/v2/economyVirtualAccountTreasurySafety.ts');
+  const v2 = read('src/dashboard/routes/v2.ts');
   const panel = read('dashboard-ui/src/components/economy/VirtualAccountsControlPanel.tsx');
   const api = read('dashboard-ui/src/lib/api.ts');
 
@@ -23,6 +26,24 @@ describe('virtuelle Konten — Retry- und Replay-Sicherheit', () => {
     expect(safety).toContain('actual.sourceRef === expected.sourceRef');
   });
 
+  it('bindet Pocket-Transfer-Replays an Richtung UND Betrag', () => {
+    expect(safety).toContain('const sourceRef = `pocket-transfer:${args.from}->${args.to}:${args.amount.toString()}`;');
+    expect(safety).toContain("entryType: 'POCKET_TRANSFER'");
+    expect(safety).toContain('sourceRef,');
+    const replayCheck = safety.indexOf('const previous = await replay(key, raw);');
+    const firstDebit = safety.indexOf('if (args.from === \'WALLET\')', replayCheck);
+    expect(replayCheck).toBeGreaterThan(-1);
+    expect(firstDebit).toBeGreaterThan(replayCheck);
+  });
+
+  it('validiert Payout-Replays zusaetzlich gegen Spielerbetrag und Ziel-Pocket', () => {
+    expect(safety).toContain('async function assertPayoutPlayerReplay');
+    expect(safety).toContain("walletDelta: args.targetPocket === 'WALLET' ? args.playerAmount : 0n");
+    expect(safety).toContain("bankDelta: args.targetPocket === 'BANK' ? args.playerAmount : 0n");
+    expect(safety).toContain('playerAmount: result.playerCredited');
+    expect(safety).toContain('anderen Auszahlungsziel, Ziel-Pocket oder Spielerbetrag');
+  });
+
   it('priorisiert eine stabile Dashboard-Operation-ID und validiert deren Format vor dem Money-Service', () => {
     expect(safetyRoute).toContain("const value = typeof body.operationId === 'string' ? body.operationId.trim() : '';");
     expect(safetyRoute).toContain("if (!/^[A-Za-z0-9._:-]{1,80}$/.test(key))");
@@ -34,6 +55,31 @@ describe('virtuelle Konten — Retry- und Replay-Sicherheit', () => {
     expect(panel).toContain('operationId,');
     expect(panel).toContain('setOperationId(createIdempotencyKey());');
     expect(panel).toContain("onError: (error: Error) => onDone({ ok: false, text: error.message }),");
+  });
+
+  it('friert Waehrung und Wechselkurs unter denselben DB-Locks ein sobald Guthaben vorhanden ist', () => {
+    expect(configuration).toContain('LIMIT 1 FOR UPDATE');
+    expect(configuration).toContain('const funded = account.balance + currentFinance.bankBalance > 0n;');
+    expect(configuration).toContain('const currencyChanged = currencyKey(prepared.currencyName) !== currencyKey(currentFinance.currencyName);');
+    expect(configuration).toContain('funded && (currencyChanged || exchangeChanged(currentFinance, prepared))');
+    expect(configuration).toContain('Waehrung oder Wechselkurs kann bei vorhandenem Wallet- oder Bankguthaben nicht geaendert werden.');
+  });
+
+  it('persistiert Permission-Recovery vor Discord-Mutationen und loescht Tracking erst nach erfolgreicher Rueckgabe', () => {
+    const recovery = managerSafety.indexOf('await persistRecoveryPanel({');
+    const everyoneDeny = managerSafety.indexOf('await channel.permissionOverwrites.edit(guild.roles.everyone.id, { ViewChannel: false }');
+    expect(recovery).toBeGreaterThan(-1);
+    expect(everyoneDeny).toBeGreaterThan(recovery);
+    expect(managerSafety).toContain('await restorePanelStrict(client, previous, tracked);');
+    expect(managerSafety).toContain('await restoreAccessStrict(channel, row, \'V-Bot Kontoverwalter entfernt\');');
+    expect(managerSafety).not.toContain("restoreAccessStrict(channel, row, 'V-Bot Kontoverwalter entfernt').catch");
+    expect(safetyRoute).toContain('configureVirtualManagerPanelSafe');
+    expect(safetyRoute).toContain('refreshConfiguredVirtualManagerPanelSafe');
+  });
+
+  it('schuetzt auch den generischen DEV-Router mit der kanonischen GlobalDeveloperIdentity', () => {
+    expect(v2).toContain("v2Router.use('/dev', requireGlobalDeveloperIdentity, devRouter);");
+    expect(v2).not.toContain("v2Router.use('/dev', devRouter);");
   });
 
   it('nutzt den zentralen Generator fuer neue Dashboard-Mutationskeys und behaelt Pending-Keys fuer sichere Retries', () => {
