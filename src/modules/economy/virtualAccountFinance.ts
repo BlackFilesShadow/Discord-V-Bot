@@ -355,11 +355,15 @@ export async function depositUserIntoVirtualAccount(args: {
       return { booked: false };
     }
 
-    const sourceColumn = args.sourcePocket === 'WALLET' ? 'walletBalance' : 'bankBalance';
-    const debited = await raw.$executeRawUnsafe(
-      `UPDATE "EconomyAccount" SET "${sourceColumn}"="${sourceColumn}"-$4, "lifetimeSpent"="lifetimeSpent"+$4, "updatedAt"=CURRENT_TIMESTAMP WHERE "guildId"=$1 AND "nitradoConnId"=$2 AND "userDiscordId"=$3 AND "${sourceColumn}">=$4`,
-      String(args.guildId), String(args.nitradoConnId), String(args.userDiscordId), args.playerAmount,
-    );
+    const debited = args.sourcePocket === 'WALLET'
+      ? await raw.$executeRawUnsafe(
+        'UPDATE "EconomyAccount" SET "walletBalance"="walletBalance"-$4, "lifetimeSpent"="lifetimeSpent"+$4, "updatedAt"=CURRENT_TIMESTAMP WHERE "guildId"=$1 AND "nitradoConnId"=$2 AND "userDiscordId"=$3 AND "walletBalance">=$4',
+        String(args.guildId), String(args.nitradoConnId), String(args.userDiscordId), args.playerAmount,
+      )
+      : await raw.$executeRawUnsafe(
+        'UPDATE "EconomyAccount" SET "bankBalance"="bankBalance"-$4, "lifetimeSpent"="lifetimeSpent"+$4, "updatedAt"=CURRENT_TIMESTAMP WHERE "guildId"=$1 AND "nitradoConnId"=$2 AND "userDiscordId"=$3 AND "bankBalance">=$4',
+        String(args.guildId), String(args.nitradoConnId), String(args.userDiscordId), args.playerAmount,
+      );
     if (debited !== 1) throw new Error(args.sourcePocket === 'WALLET' ? 'Wallet zu klein.' : 'Bankguthaben zu klein.');
 
     const credited = await raw.$executeRawUnsafe(
@@ -490,8 +494,15 @@ export async function payoutVirtualAccountToUser(args: {
       if (changed !== 1) throw new Error('Virtuelle Bank hat zu wenig Guthaben.');
     }
     await ensureUser(raw, args.guildId, args.nitradoConnId, args.toUserDiscordId);
-    const targetColumn = args.targetPocket === 'WALLET' ? 'walletBalance' : 'bankBalance';
-    const credited = await raw.$executeRawUnsafe(`UPDATE "EconomyAccount" SET "${targetColumn}"="${targetColumn}"+$4, "lifetimeEarned"="lifetimeEarned"+$4, "updatedAt"=CURRENT_TIMESTAMP WHERE "guildId"=$1 AND "nitradoConnId"=$2 AND "userDiscordId"=$3`, String(args.guildId), String(args.nitradoConnId), String(args.toUserDiscordId), playerAmount);
+    const credited = args.targetPocket === 'WALLET'
+      ? await raw.$executeRawUnsafe(
+        'UPDATE "EconomyAccount" SET "walletBalance"="walletBalance"+$4, "lifetimeEarned"="lifetimeEarned"+$4, "updatedAt"=CURRENT_TIMESTAMP WHERE "guildId"=$1 AND "nitradoConnId"=$2 AND "userDiscordId"=$3',
+        String(args.guildId), String(args.nitradoConnId), String(args.toUserDiscordId), playerAmount,
+      )
+      : await raw.$executeRawUnsafe(
+        'UPDATE "EconomyAccount" SET "bankBalance"="bankBalance"+$4, "lifetimeEarned"="lifetimeEarned"+$4, "updatedAt"=CURRENT_TIMESTAMP WHERE "guildId"=$1 AND "nitradoConnId"=$2 AND "userDiscordId"=$3',
+        String(args.guildId), String(args.nitradoConnId), String(args.toUserDiscordId), playerAmount,
+      );
     if (credited !== 1) throw new Error('Spielerkonto konnte nicht gutgeschrieben werden.');
     await raw.$executeRawUnsafe(
       'INSERT INTO "EconomyVirtualAccountEntry" ("id", "idempotencyKey", "guildId", "nitradoConnId", "virtualAccountId", "delta", "entryType", "sourcePocket", "actorDiscordId", "userDiscordId", "reason", "sourceRef", "createdAt") VALUES ($1,$2,$3,$4,$5,$6,\'MANAGER_PAYOUT\',$7,$8,$9,$10,$11,CURRENT_TIMESTAMP)',
