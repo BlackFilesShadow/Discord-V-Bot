@@ -111,6 +111,21 @@ CREATE UNIQUE INDEX "EconomyVirtualManagerPanel_scope_key"
 CREATE UNIQUE INDEX "EconomyVirtualManagerPanel_message_key"
     ON "EconomyVirtualManagerPanel"("messageId") WHERE "messageId" IS NOT NULL;
 
+-- Nur von V-Bot verwaltete User-Overwrites werden hier getrackt. Beim Entfernen
+-- eines Kontoverwalters duerfen niemals fremde/manuell angelegte Channel-
+-- Overwrites geloescht werden.
+CREATE TABLE "EconomyVirtualManagerPanelAccess" (
+    "guildId" TEXT NOT NULL,
+    "nitradoConnId" TEXT NOT NULL,
+    "channelId" TEXT NOT NULL,
+    "userDiscordId" TEXT NOT NULL,
+    "createdAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
+
+    CONSTRAINT "EconomyVirtualManagerPanelAccess_pkey" PRIMARY KEY ("guildId", "nitradoConnId", "userDiscordId")
+);
+CREATE INDEX "EconomyVirtualManagerPanelAccess_channel_idx"
+    ON "EconomyVirtualManagerPanelAccess"("guildId", "nitradoConnId", "channelId");
+
 -- Backfill fuer alle bestehenden CUSTOM-, LOTTERY_POT- und MARKET_VENDOR-Konten.
 -- Die jeweilige Server-Economy-Waehrung wird als 1:1-Ausgangswert uebernommen;
 -- ein abweichender Kurs wird niemals implizit erzeugt.
