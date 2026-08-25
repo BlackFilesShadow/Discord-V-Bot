@@ -1,7 +1,7 @@
 /**
  * Whitelist-Kanal-Integration.
  *
- * Vier Kanaele pro (Guild + Slot):
+ * Vier Kanaele pro (Guild + Gameserver):
  *   - whitelistChannelId           Info-Kanal mit (genau 1) Command-Erklaerungs-Embed
  *   - whitelistRequestChannelId    Approval-Kanal mit Accept/Deny-Buttons fuer Admins
  *   - whitelistApproveLogChannelId Log fuer ANGENOMMENE Antraege
@@ -107,8 +107,8 @@ export async function ensureWhitelistInfoEmbed(guildId: string, nitradoConnId: s
       '',
       '**So funktioniert es:**',
       '1. Nutze `/whitelist-antrag` in diesem Kanal.',
-      '2. Trage bei `id` deinen **exakten Spielernamen** ein (1–64 Zeichen).',
-      '3. Sind mehrere aktive Server verbunden, wähle bei `slot` den gewünschten Server über seinen Alias aus. Bei nur einem aktiven Server ist keine Serverauswahl nötig.',
+      '2. Trage deinen **exakten Spielernamen** ein (1–64 Zeichen).',
+      '3. Sind mehrere aktive Server verbunden, wähle den gewünschten Server über seinen Alias aus. Bei nur einem aktiven Server ist keine Serverauswahl nötig.',
       '',
       'Dein Antrag wird anschließend **automatisch** an das zuständige Server-Team zur Prüfung weitergeleitet.',
       'Nach der Entscheidung wirst du über Annahme oder Ablehnung benachrichtigt.',
@@ -147,7 +147,7 @@ export async function postWhitelistApprovalEmbed(args: {
     where: { guildId_nitradoConnId: { guildId: args.guildId, nitradoConnId: args.nitradoConnId } },
   });
   if (!settings?.whitelistRequestChannelId) {
-    logger.warn(`Whitelist: Kein Request-Channel konfiguriert (guild=${args.guildId} slot=${args.nitradoConnId})`);
+    logger.warn(`Whitelist: Kein Request-Channel konfiguriert (guild=${args.guildId} connection=${args.nitradoConnId})`);
     return null;
   }
   const ch = await fetchTextChannel(args.guildId, settings.whitelistRequestChannelId);
@@ -160,7 +160,8 @@ export async function postWhitelistApprovalEmbed(args: {
       { name: 'Antragsteller', value: `<@${args.requesterDiscordId}>`, inline: true },
       { name: 'Beantragter Spielername', value: `\`${args.gameId}\``, inline: true },
     )
-    .setFooter({ text: `V-Bot • Whitelist • Request-ID: ${args.requestId}` })
+    // Die Request-ID bleibt ausschliesslich in Button-Custom-ID und Datenbank.
+    .setFooter({ text: 'V-Bot • Whitelist' })
     .setTimestamp(new Date());
 
   const row = new ActionRowBuilder<ButtonBuilder>().addComponents(
