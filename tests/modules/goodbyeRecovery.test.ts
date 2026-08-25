@@ -23,12 +23,13 @@ describe('Goodbye delivery restart recovery', () => {
     updateMany.mockResolvedValue({ count: 1 });
   });
 
-  it('CAS-claims a stale unsent intent and sends exactly one structured message', async () => {
+  it('CAS-claims a stale unsent intent and preserves join/leave dates in the recovered embed', async () => {
     const updatedAt = new Date('2026-08-24T10:00:00.000Z');
+    const joinedAt = new Date('2026-01-10T08:00:00.000Z');
     findMany.mockResolvedValue([{
       id: 'delivery-1', guildId: '111111111111111111', discordId: '222222222222222222',
       membershipKey: 'a'.repeat(64), cleanupRequestId: 'cleanup-1', channelId: '333333333333333333',
-      messageId: null, discordName: 'Nick', guildName: 'Guild', customMessage: 'Bye',
+      messageId: null, discordName: 'Nick', guildName: 'Guild', customMessage: 'Bye', joinedAt,
       leaveOccurredAt: new Date('2026-08-24T09:55:00.000Z'), cleanupEnabled: true,
       cleanupSnapshot: { servers: [{ nitradoConnId: 'conn-1', serverAlias: 'Server', playerNames: ['Player'], state: 'PENDING' }] },
       state: 'FAILED', lastError: 'old', createdAt: updatedAt, updatedAt,
@@ -43,6 +44,12 @@ describe('Goodbye delivery restart recovery', () => {
     await expect(recoverPendingGoodbyeDeliveries(new Date('2026-08-24T10:02:00.000Z'))).resolves.toBe(1);
     expect(send).toHaveBeenCalledTimes(1);
     expect(send.mock.calls[0][0].allowedMentions).toEqual({ parse: [] });
+    const embedJson = send.mock.calls[0][0].embeds[0].toJSON();
+    const names = embedJson.fields?.map((field: { name: string }) => field.name) ?? [];
+    expect(names.indexOf('Eintrittsdatum')).toBeGreaterThanOrEqual(0);
+    expect(names.indexOf('Austrittsdatum')).toBeGreaterThan(names.indexOf('Eintrittsdatum'));
+    expect(embedJson.fields?.find((field: { name: string }) => field.name === 'Discord-Name')?.value)
+      .toBe('<@222222222222222222>');
     expect(updateMany).toHaveBeenNthCalledWith(1, expect.objectContaining({
       where: expect.objectContaining({ id: 'delivery-1', messageId: null, state: 'FAILED', updatedAt }),
     }));
@@ -54,7 +61,7 @@ describe('Goodbye delivery restart recovery', () => {
   it('does not send when another worker wins the intent lease', async () => {
     findMany.mockResolvedValue([{
       id: 'delivery-2', guildId: '111111111111111111', channelId: '333333333333333333', messageId: null,
-      discordName: 'Nick', customMessage: 'Bye', leaveOccurredAt: new Date(), cleanupEnabled: false,
+      discordName: 'Nick', customMessage: 'Bye', joinedAt: null, leaveOccurredAt: new Date(), cleanupEnabled: false,
       cleanupSnapshot: null, state: 'PENDING', updatedAt: new Date('2026-08-24T10:00:00.000Z'),
     }]);
     updateMany.mockResolvedValueOnce({ count: 0 });
