@@ -146,6 +146,11 @@ function currencyKey(value: string): string {
   return value.normalize('NFKC').trim().toLocaleLowerCase('de-DE');
 }
 
+function exchangeChanged(current: LockedFinanceConfigurationRow, prepared: PreparedConfiguration): boolean {
+  return current.exchangePlayerUnits !== prepared.exchangePlayerUnits
+    || current.exchangeAccountUnits !== prepared.exchangeAccountUnits;
+}
+
 export async function createConfiguredCustomVirtualAccount(args: {
   guildId: GuildId;
   nitradoConnId: NitradoConnId;
@@ -301,11 +306,10 @@ export async function updateConfiguredVirtualAccount(args: {
       managers: args.managers,
     });
 
-    if (
-      account.balance + currentFinance.bankBalance > 0n
-      && currencyKey(prepared.currencyName) !== currencyKey(currentFinance.currencyName)
-    ) {
-      throw new Error('Waehrungsname kann bei vorhandenem Wallet- oder Bankguthaben nicht geaendert werden. Zuerst beide Pockets auf 0 setzen.');
+    const funded = account.balance + currentFinance.bankBalance > 0n;
+    const currencyChanged = currencyKey(prepared.currencyName) !== currencyKey(currentFinance.currencyName);
+    if (funded && (currencyChanged || exchangeChanged(currentFinance, prepared))) {
+      throw new Error('Waehrung oder Wechselkurs kann bei vorhandenem Wallet- oder Bankguthaben nicht geaendert werden. Zuerst beide Pockets auf 0 setzen.');
     }
 
     const accountChanged = await raw.$executeRawUnsafe(
