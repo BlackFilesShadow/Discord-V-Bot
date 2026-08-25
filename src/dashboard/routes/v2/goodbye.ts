@@ -170,6 +170,7 @@ goodbyeRouter.post('/test', requireGuildPermission('welcome.manage'), async (req
         discordName: identity.displayName,
         discordMention: identity.mention,
         customMessage: finalText,
+        joinedAt: actorMember?.joinedAt ?? null,
         leaveOccurredAt,
         cleanupEnabled: false,
         cleanupSnapshot: null,
