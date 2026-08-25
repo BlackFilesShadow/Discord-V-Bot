@@ -17,10 +17,12 @@ describe('privileged global identities', () => {
     expect(() => resolveBotOwnerId({ BOT_OWNER_ID: 'owner-name' } as NodeJS.ProcessEnv)).toThrow(/Snowflake/);
   });
 
-  it('never creates developer identity from role or password-equivalent context alone', () => {
+  it('keeps the canonical owner developer-eligible across DB role drift', () => {
     expect(isGlobalDeveloperIdentity(owner, 'DEVELOPER', owner)).toBe(true);
+    expect(isGlobalDeveloperIdentity(owner, 'ADMIN', owner)).toBe(true);
+    expect(isGlobalDeveloperIdentity(owner, 'USER', owner)).toBe(true);
     expect(isGlobalDeveloperIdentity('223456789012345678', 'DEVELOPER', owner)).toBe(false);
-    expect(isGlobalDeveloperIdentity(owner, 'ADMIN', owner)).toBe(false);
+    expect(isGlobalDeveloperIdentity(owner, 'DEVELOPER', '')).toBe(false);
   });
 
   it('limits bot-admin identity to privileged DB roles or canonical owner', () => {
