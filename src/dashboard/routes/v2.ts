@@ -129,7 +129,11 @@ v2Router.use('/dev/logs', requireGlobalDeveloperIdentity);
 // Aktionen (insb. Force-Revoke) verlangen zusaetzlich denselben kryptografisch
 // verifizierten Step-Up wie andere sensible DEV-Mutationen.
 v2Router.use('/dev/sessions', requireGlobalDeveloperIdentity, requireDev, requireVerifiedDevMutationStepUp);
-v2Router.use('/dev', devRouter);
+// Auch Login/Status und die historischen DEV-Endpunkte muessen durch dieselbe
+// kanonische BOT_OWNER_ID laufen. Der Gate normalisiert den authentifizierten
+// Owner-Request fuer nachgelagerte rollenbasierte Legacy-Checks, ohne die DB-
+// Rolle zu mutieren.
+v2Router.use('/dev', requireGlobalDeveloperIdentity, devRouter);
 
 v2Router.use('/dev/uploads', requireGlobalDeveloperIdentity, devUploadsRouter);
 v2Router.use('/dev/analytics', requireGlobalDeveloperIdentity, devAnalyticsRouter);
