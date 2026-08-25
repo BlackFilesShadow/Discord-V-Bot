@@ -5,7 +5,7 @@ import { api, ApiError } from '@/lib/api';
 import { Shell } from '@/components/Shell';
 import { Card } from '@/components/ui/Card';
 import { Button } from '@/components/ui/Button';
-import { useAuth } from '@/lib/auth';
+import { LegalFooter } from '@/components/LegalFooter';
 import { useDevSession } from '@/lib/devSession';
 
 interface Guild {
@@ -28,10 +28,7 @@ interface DevSnapshot {
 }
 
 export default function Servers() {
-  const { user } = useAuth();
-  const isDev = user?.role === 'DEVELOPER';
-  // DEV-Konsole erst nach korrekter DEV-Passwort-Eingabe sichtbar (active).
-  const devActive = useDevSession().active;
+  const dev = useDevSession();
 
   const { data, isLoading, isFetching, isError, error, refetch } = useQuery({
     queryKey: ['guilds'],
@@ -41,9 +38,9 @@ export default function Servers() {
 
   return (
     <Shell title="Server">
-      <div className="max-w-5xl mx-auto">
-        <div className="flex items-center justify-between mb-6">
-          <div>
+      <div className="max-w-5xl mx-auto min-w-0">
+        <div className="flex flex-wrap items-center justify-between gap-3 mb-6">
+          <div className="min-w-0">
             <h1 className="text-2xl sm:text-3xl font-bold text-white">Deine Server</h1>
             <p className="text-muted text-sm mt-1">Server, auf denen du Owner bist oder &quot;Server verwalten&quot;-Rechte hast.</p>
           </div>
@@ -61,7 +58,7 @@ export default function Servers() {
         {isError && (
           <Card glow>
             <p className="text-danger font-medium">Fehler beim Laden.</p>
-            <p className="text-muted text-sm mt-1">{(error as Error).message}</p>
+            <p className="text-muted text-sm mt-1 break-words">{(error as Error).message}</p>
             <Button onClick={() => refetch()} className="mt-4" size="sm" loading={isFetching}>Erneut versuchen</Button>
           </Card>
         )}
@@ -82,9 +79,10 @@ export default function Servers() {
           </div>
         )}
 
-        {isDev && devActive && <DevFooter />}
+        {dev.eligible && dev.active && <DevFooter />}
 
         <CreditsCard />
+        <LegalFooter className="mt-5 pb-3 sm:justify-end" />
       </div>
     </Shell>
   );
@@ -173,7 +171,7 @@ function DevFooter() {
         ) : (
           <span>Bot-Stats nicht verfuegbar.</span>
         )}
-        <Link to="/dev" className="ml-auto text-accent hover:underline">DEV-Konsole &rarr;</Link>
+        <Link to="/dev" className="sm:ml-auto min-h-11 inline-flex items-center text-accent hover:underline">DEV-Konsole &rarr;</Link>
       </div>
     </footer>
   );
@@ -195,8 +193,8 @@ function fmtMb(bytes: number): string {
 function GuildCard({ g }: { g: Guild }) {
   const initial = g.name.charAt(0).toUpperCase();
   return (
-    <Card interactive={g.botPresent} className="flex flex-col h-full">
-      <div className="flex items-start gap-3 mb-3">
+    <Card interactive={g.botPresent} className="flex flex-col h-full min-w-0">
+      <div className="flex items-start gap-3 mb-3 min-w-0">
         {g.iconUrl ? (
           <img src={g.iconUrl} alt="" className="h-12 w-12 rounded-lg object-cover border border-border" />
         ) : (
