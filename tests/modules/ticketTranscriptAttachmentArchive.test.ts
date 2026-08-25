@@ -16,7 +16,12 @@ function attachment(overrides: Partial<TranscriptArchivedAttachment> = {}): Tran
   };
 }
 
-function fakeResponse(bytes: number[], contentType: string, status = 200): Response {
+function fakeResponse(
+  bytes: number[],
+  contentType: string,
+  status = 200,
+  overrides: { contentLength?: number; contentEncoding?: string | null } = {},
+): Response {
   const body = Buffer.from(bytes);
   return {
     ok: status >= 200 && status < 300,
@@ -25,7 +30,8 @@ function fakeResponse(bytes: number[], contentType: string, status = 200): Respo
       get(name: string) {
         const key = name.toLowerCase();
         if (key === 'content-type') return contentType;
-        if (key === 'content-length') return String(body.length);
+        if (key === 'content-length') return String(overrides.contentLength ?? body.length);
+        if (key === 'content-encoding') return overrides.contentEncoding ?? null;
         return null;
       },
     } as Headers,
@@ -44,7 +50,11 @@ describe('ticket transcript attachment archive', () => {
     expect(item.contentType).toBe('image/png');
     expect(item.archivedDataUrl).toBe('data:image/png;base64,AQIDBA==');
     expect(fetchMock).toHaveBeenCalledTimes(1);
-    expect(fetchMock.mock.calls[0]?.[1]).toMatchObject({ method: 'GET', redirect: 'error' });
+    expect(fetchMock.mock.calls[0]?.[1]).toMatchObject({
+      method: 'GET',
+      redirect: 'error',
+      headers: { 'accept-encoding': 'identity' },
+    });
   });
 
   it('rejects non-Discord attachment hosts before any network request', async () => {
@@ -56,13 +66,45 @@ describe('ticket transcript attachment archive', () => {
     expect(fetchMock).not.toHaveBeenCalled();
   });
 
-  it('fails closed when the downloaded bytes do not match Discord metadata', async () => {
-    const item = attachment({ size: 5 });
+  it('accepts a complete Discord response when attachment metadata size differs from delivered bytes', async () => {
+    // Live Discord CDN can deliver a representation whose decoded byte count differs
+    // from the attachment metadata. The transport itself is complete (4/4 bytes).
+    const item = attachment({ size: 3 });
     const fetchMock = jest.fn(async () => fakeResponse([1, 2, 3, 4], 'image/png'));
 
+    const stats = await archiveTranscriptAttachments([{ attachments: [item] }], fetchMock);
+
+    expect(stats.archivedBytes).toBe(4);
+    expect(item.archivedDataUrl).toBe('data:image/png;base64,AQIDBA==');
+  });
+
+  it('fails closed when an unencoded HTTP response is shorter than Content-Length', async () => {
+    const item = attachment({ size: 5 });
+    const fetchMock = jest.fn(async () => fakeResponse(
+      [1, 2, 3, 4],
+      'image/png',
+      200,
+      { contentLength: 5 },
+    ));
+
     await expect(archiveTranscriptAttachments([{ attachments: [item] }], fetchMock))
-      .rejects.toThrow('nicht vollstaendig geladen');
+      .rejects.toThrow('nicht vollstaendig geladen (4/5 Bytes)');
     expect(item.archivedDataUrl).toBeNull();
+  });
+
+  it('does not compare decoded bytes to compressed Content-Length', async () => {
+    const item = attachment({ size: 3 });
+    const fetchMock = jest.fn(async () => fakeResponse(
+      [1, 2, 3, 4],
+      'image/png',
+      200,
+      { contentLength: 3, contentEncoding: 'gzip' },
+    ));
+
+    const stats = await archiveTranscriptAttachments([{ attachments: [item] }], fetchMock);
+
+    expect(stats.archivedBytes).toBe(4);
+    expect(item.archivedDataUrl).toBe('data:image/png;base64,AQIDBA==');
   });
 
   it('forces non-image attachments to download-safe octet-stream data URLs', async () => {
