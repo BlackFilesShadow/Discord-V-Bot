@@ -7,12 +7,13 @@ describe('Whitelist-Info-Embed', () => {
     'utf8',
   );
 
-  it('beschreibt den produktiven Whitelist-Antrag mit dem kanonischen Command', () => {
+  it('beschreibt den produktiven Whitelist-Antrag mit dem kanonischen Command und Alias-only Auswahl', () => {
     expect(source).toContain("statusTitle('INFO', 'Whitelist-Antrag')");
     expect(source).toContain('`/whitelist-antrag`');
     expect(source).toContain('bei `id` deinen **exakten Spielernamen**');
-    expect(source).toContain('bei `slot` den gewünschten Server über seinen Alias');
+    expect(source).toContain('wähle den gewünschten Server über seinen **Alias** aus');
     expect(source).toContain('Bei nur einem aktiven Server ist keine Serverauswahl nötig.');
+    expect(source).not.toContain('bei `slot`');
   });
 
   it('enthaelt die veraltete Whitelist-Command-Syntax nicht mehr', () => {
