@@ -25,6 +25,13 @@ interface ReplayRow {
   sourceRef: string | null;
 }
 
+interface PlayerLedgerReplayRow {
+  userDiscordId: string;
+  walletDelta: bigint;
+  bankDelta: bigint;
+  sourceRef: string | null;
+}
+
 function rawDb(): VirtualAccountRawDb {
   return prisma as unknown as VirtualAccountRawDb;
 }
@@ -79,6 +86,32 @@ function assertReplay(actual: ReplayRow | null, expected: ReplayRow): void {
   if (!same) throw new Error('Idempotency-Key wurde mit anderen Buchungsdaten wiederverwendet.');
 }
 
+async function assertDepositPlayerReplay(args: {
+  operationKey: string;
+  guildId: GuildId;
+  connId: NitradoConnId;
+  accountId: string;
+  userId: UserDiscordId;
+  sourcePocket: EconomyPocket;
+  playerAmount: bigint;
+}): Promise<void> {
+  const rows = await rawDb().$queryRawUnsafe<PlayerLedgerReplayRow[]>(
+    'SELECT "userDiscordId", "walletDelta", "bankDelta", "sourceRef" FROM "EconomyLedgerEntry" WHERE "idempotencyKey"=$1 AND "guildId"=$2 AND "nitradoConnId"=$3 LIMIT 1',
+    `${args.operationKey}:user`,
+    String(args.guildId),
+    String(args.connId),
+  );
+  const row = rows[0];
+  const expectedWallet = args.sourcePocket === 'WALLET' ? -args.playerAmount : 0n;
+  const expectedBank = args.sourcePocket === 'BANK' ? -args.playerAmount : 0n;
+  const same = !!row
+    && row.userDiscordId === String(args.userId)
+    && row.walletDelta === expectedWallet
+    && row.bankDelta === expectedBank
+    && row.sourceRef === `virtual-account:${args.accountId}`;
+  if (!same) throw new Error('Idempotency-Key wurde mit einem anderen urspruenglichen Spielerbetrag wiederverwendet.');
+}
+
 export async function safeDepositUserIntoVirtualAccount(args: {
   idempotencyKey: string;
   guildId: GuildId;
@@ -93,7 +126,8 @@ export async function safeDepositUserIntoVirtualAccount(args: {
   const result = await depositUserIntoVirtualAccount(args);
   if (!result.booked) {
     const reason = normalizedReason(args.reason, 'Einzahlung auf virtuelles Konto');
-    assertReplay(await replay(operationKey('virtual-deposit', args.guildId, args.nitradoConnId, args.idempotencyKey)), {
+    const key = operationKey('virtual-deposit', args.guildId, args.nitradoConnId, args.idempotencyKey);
+    assertReplay(await replay(key), {
       virtualAccountId: args.accountId,
       delta: result.accountCredited,
       entryType: 'USER_DEPOSIT',
@@ -102,6 +136,15 @@ export async function safeDepositUserIntoVirtualAccount(args: {
       userDiscordId: String(args.userDiscordId),
       reason,
       sourceRef: `virtual-account:${args.accountId}`,
+    });
+    await assertDepositPlayerReplay({
+      operationKey: key,
+      guildId: args.guildId,
+      connId: args.nitradoConnId,
+      accountId: args.accountId,
+      userId: args.userDiscordId,
+      sourcePocket: args.sourcePocket,
+      playerAmount: args.playerAmount,
     });
   }
   return result;
