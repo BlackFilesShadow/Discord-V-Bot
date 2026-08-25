@@ -15,6 +15,7 @@ model GoodbyeDelivery {
   discordName        String               @db.VarChar(256)
   guildName          String               @db.VarChar(256)
   customMessage      String               @db.Text
+  joinedAt           DateTime?
   leaveOccurredAt    DateTime
   cleanupEnabled     Boolean              @default(false)
   cleanupSnapshot    Json?
