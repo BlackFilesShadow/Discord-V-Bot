@@ -12,7 +12,7 @@ function embedTextLength(json: ReturnType<ReturnType<typeof buildPlayerListEmbed
   total += json.title?.length ?? 0;
   total += json.description?.length ?? 0;
   total += json.author?.name?.length ?? 0;
-  total += json.footer?.text ?? '' ? json.footer?.text?.length ?? 0 : 0;
+  total += json.footer?.text?.length ?? 0;
   for (const field of json.fields ?? []) total += field.name.length + field.value.length;
   return total;
 }
