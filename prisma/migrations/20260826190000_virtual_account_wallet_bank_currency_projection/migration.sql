@@ -125,7 +125,8 @@ CREATE UNIQUE INDEX "EconomyVirtualManagerPanel_message_key"
 
 -- Nur von V-Bot verwaltete User-Overwrites werden hier getrackt. Beim Entfernen
 -- eines Kontoverwalters duerfen niemals fremde/manuell angelegte Channel-
--- Overwrites geloescht werden.
+-- Overwrites geloescht werden. Die Tabelle bleibt absichtlich bootstrap-
+-- unabhaengig vom Panel-Row: Rechte werden vor dem finalen Message-Write getrackt.
 CREATE TABLE "EconomyVirtualManagerPanelAccess" (
     "guildId" TEXT NOT NULL,
     "nitradoConnId" TEXT NOT NULL,
@@ -139,11 +140,6 @@ CREATE TABLE "EconomyVirtualManagerPanelAccess" (
 );
 CREATE INDEX "EconomyVirtualManagerPanelAccess_channel_idx"
     ON "EconomyVirtualManagerPanelAccess"("guildId", "nitradoConnId", "channelId");
-ALTER TABLE "EconomyVirtualManagerPanelAccess"
-    ADD CONSTRAINT "EconomyVirtualManagerPanelAccess_panel_scope_fkey"
-    FOREIGN KEY ("guildId", "nitradoConnId")
-    REFERENCES "EconomyVirtualManagerPanel"("guildId", "nitradoConnId")
-    ON DELETE CASCADE ON UPDATE CASCADE;
 
 -- Backfill fuer alle bestehenden CUSTOM-, LOTTERY_POT- und MARKET_VENDOR-Konten.
 -- Die jeweilige Server-Economy-Waehrung wird als 1:1-Ausgangswert uebernommen;
@@ -154,7 +150,8 @@ INSERT INTO "EconomyVirtualAccountFinance" (
 )
 SELECT
   v."id", v."guildId", v."nitradoConnId", 0,
-  COALESCE(c."currencyName", 'Coins'), COALESCE(c."emoji", '💰'),
+  COALESCE(NULLIF(trim(c."currencyName"), ''), 'Coins'),
+  COALESCE(NULLIF(trim(c."emoji"), ''), '💰'),
   CASE
     WHEN v."kind"::text='LOTTERY_POT' THEN '🎟️'
     WHEN v."kind"::text='MARKET_VENDOR' THEN '🏴'
