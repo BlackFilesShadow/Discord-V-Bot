@@ -3,6 +3,7 @@
  * rohe DayZ-ADM-Zeile -> Parser/Ingest -> persistiertes AdmEvent -> Feed-Scan
  * -> Discord-Embed -> persistenter SENT/RETRY-Status.
  */
+import { createHash } from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
 
@@ -235,7 +236,11 @@ describe('produktive ADM -> Discord Gameplay-Feed-Kette', () => {
     expect(fieldNames).not.toContain('Killer-Position');
     expect(embed.footer).toBeUndefined();
     expect(embed.timestamp).toBeUndefined();
-    expect(payload.nonce).toBe(event.id.slice(0, 25));
+    const expectedNonce = createHash('sha256')
+      .update(`gameplay-feed\u0000${config.id}\u0000${event.id}`)
+      .digest('hex')
+      .slice(0, 25);
+    expect(payload.nonce).toBe(expectedNonce);
     expect(payload.enforceNonce).toBe(true);
 
     expect(deliveryUpdate).toHaveBeenCalledWith(expect.objectContaining({
