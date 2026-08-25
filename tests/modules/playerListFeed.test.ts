@@ -65,6 +65,24 @@ describe('Online List embed and change detection', () => {
     ]));
   });
 
+  it('places Stand directly below the server alias and does not use the generic embed timestamp', () => {
+    const generatedAt = new Date('2026-08-25T19:15:00.000Z');
+    const json = buildPlayerListEmbeds({
+      serverAlias: 'Alias Only', entries, showCoordinates: false, embedColor: '#2563eb', generatedAt,
+    })[0].toJSON();
+    const fields = json.fields ?? [];
+    const serverIndex = fields.findIndex(field => field.name === 'Server');
+
+    expect(fields[serverIndex]).toMatchObject({ name: 'Server', value: 'Alias Only', inline: false });
+    expect(fields[serverIndex + 1]).toMatchObject({
+      name: 'Stand',
+      value: `<t:${Math.floor(generatedAt.getTime() / 1000)}:F>`,
+      inline: false,
+    });
+    expect(json.timestamp).toBeUndefined();
+    expect(JSON.stringify(json)).not.toMatch(/Slot\s*\d+/i);
+  });
+
   it('omits every coordinate when the toggle is off', () => {
     const fields = buildPlayerListEmbeds({
       serverAlias: 'Server', entries, showCoordinates: false, embedColor: '#2563eb',

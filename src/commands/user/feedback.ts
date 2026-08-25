@@ -130,8 +130,6 @@ export async function handleFeedbackModal(modal: ModalSubmitInteraction): Promis
       category,
     });
 
-    // Admin-Channel-Notify: pro Guild (GuildProfile.feedbackChannelId)
-    // mit Fallback auf globalen ENV-Channel.
     let channelId: string | null = null;
     if (modal.guildId) {
       try {
@@ -142,7 +140,6 @@ export async function handleFeedbackModal(modal: ModalSubmitInteraction): Promis
         if (gp?.feedbackChannelId) channelId = gp.feedbackChannelId;
       } catch { /* */ }
     }
-    // Globaler Owner-Channel aus BotConfig (per /admin-feedback channel scope:global gesetzt).
     if (!channelId) {
       try {
         const cfg = await prisma.botConfig.findUnique({ where: { key: 'globalFeedbackChannelId' } });
@@ -150,7 +147,6 @@ export async function handleFeedbackModal(modal: ModalSubmitInteraction): Promis
         if (typeof v === 'string' && v) channelId = v;
       } catch { /* */ }
     }
-    // Letzter Fallback: ENV-Channel
     if (!channelId) channelId = config.features.feedbackChannelId || null;
     if (channelId) {
       try {
@@ -164,19 +160,16 @@ export async function handleFeedbackModal(modal: ModalSubmitInteraction): Promis
               gName = g?.name;
             } catch { /* */ }
           }
-          serverField = gName
-            ? `**${gName}**\n\`${modal.guildId}\``
-            : `\`${modal.guildId}\``;
+          serverField = gName ? `**${gName}**` : 'Discord-Server';
         }
         if (ch && ch.isTextBased()) {
           const embed = vEmbed(colorOf[category])
             .setTitle(`${labelDe[category]} • ${subject}`)
             .setDescription(message)
             .addFields(
-              { name: 'Von', value: `<@${modal.user.id}> (\`${modal.user.id}\`)`, inline: true },
+              { name: 'Von', value: `<@${modal.user.id}>`, inline: true },
               { name: 'Server', value: serverField, inline: true },
               { name: 'Status', value: '`OPEN`', inline: true },
-              { name: 'ID', value: `\`${fb.id}\``, inline: false },
             )
             .setFooter({ text: `${Brand.footerText} • Feedback` });
           const sent = await safeSend(ch as TextChannel, { embeds: [embed], allowedMentions: { parse: [] } });
@@ -198,9 +191,7 @@ export async function handleFeedbackModal(modal: ModalSubmitInteraction): Promis
       embeds: [
         vEmbed(Colors.Success)
           .setTitle('✅ Feedback erhalten')
-          .setDescription(
-            `Vielen Dank für dein Feedback!\nKategorie: **${labelDe[category]}**\nID: \`${fb.id}\``
-          ),
+          .setDescription(`Vielen Dank für dein Feedback!\nKategorie: **${labelDe[category]}**`),
       ],
     });
   } catch (e) {

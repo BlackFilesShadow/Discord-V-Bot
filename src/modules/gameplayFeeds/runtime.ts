@@ -4,8 +4,9 @@
  * Source-of-Truth ist AdmEvent. Pro Config wird ein persistenter Scan-Cursor
  * gefuehrt, wodurch neue Events auch bei >200/1000 Historieneintraegen sicher
  * erreicht werden. Discord-Zustellungen besitzen Lease/Retry und nutzen einen
- * stabilen Discord-Nonce pro ADM-Event, damit Retries keine sichtbaren
- * technischen Marker im Embed benoetigen.
+ * stabilen Discord-Nonce pro Feed-Config + ADM-Event, damit Retries keine sichtbaren
+ * technischen Marker im Embed benoetigen und dasselbe Ereignis weiterhin in
+ * mehreren bewusst konfigurierten Feed-Kanaelen zugestellt werden kann.
  */
 
 import { createHash } from 'node:crypto';
@@ -68,10 +69,14 @@ function eventTypes(kind: GameplayFeedKind): AdmEventType[] {
   return (kind === GameplayFeedKind.DEATH ? [...DEATH_EVENT_TYPES] : [...BUILD_EVENT_TYPES]) as AdmEventType[];
 }
 
-function eventNonce(eventId: string): string {
-  // Discord erlaubt maximal 25 Zeichen. Prisma-CUIDs passen aktuell exakt in
-  // dieses Limit; der Slice haelt die Zustellung auch fuer andere ID-Formate sicher.
-  return eventId.slice(0, 25);
+function eventNonce(configId: string, eventId: string): string {
+  // Discord prueft enforce_nonce laut API fuer denselben Autor ueber die letzten
+  // Minuten. Nur eventId waere deshalb zu breit: derselbe AdmEvent darf in zwei
+  // bewusst getrennten Feed-Configs/Kanaelen jeweils genau einmal erscheinen.
+  return createHash('sha256')
+    .update(`gameplay-feed\u0000${configId}\u0000${eventId}`)
+    .digest('hex')
+    .slice(0, 25);
 }
 
 function playerListNonce(configId: string, stateHash: string, postKey = 'state'): string {
@@ -333,7 +338,7 @@ async function deliverOne(
     const message = await textChannel.send({
       embeds: [buildGameplayFeedEmbed(view, config.embedColor, serverAlias)],
       allowedMentions: { parse: [] },
-      nonce: eventNonce(event.id),
+      nonce: eventNonce(config.id, event.id),
       enforceNonce: true,
     });
     await markSent(config, claimedDelivery, event, message.id);

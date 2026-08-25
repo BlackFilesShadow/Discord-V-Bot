@@ -50,8 +50,8 @@ function findSelectedTarget(targets: CommandServerTarget[], raw: string): Target
   const byId = targets.find(target => target.id === raw);
   if (byId) return byId;
 
-  // Numerischer Fallback bleibt eindeutig, weil Slots innerhalb der Guild
-  // eindeutig sind.
+  // Numerischer Fallback bleibt fuer bestehende Commands kompatibel, wird aber
+  // nicht mehr als sichtbarer Servername in Discord ausgegeben.
   const bySlot = targets.find(target => String(target.slot) === raw);
   if (bySlot) return bySlot;
 
@@ -62,6 +62,10 @@ function findSelectedTarget(targets: CommandServerTarget[], raw: string): Target
   if (aliasMatches.length === 1) return aliasMatches[0];
   if (aliasMatches.length > 1) return 'AMBIGUOUS';
   return null;
+}
+
+function visibleAlias(target: Pick<CommandServerTarget, 'alias'>): string {
+  return target.alias.trim() || 'DayZ-Server';
 }
 
 async function rejectMissingTargets(interaction: ChatInputCommandInteraction): Promise<null> {
@@ -76,7 +80,7 @@ async function rejectUnknownTarget(
   interaction: ChatInputCommandInteraction,
   targets: CommandServerTarget[],
 ): Promise<null> {
-  const available = targets.map(t => `• **${t.alias}** (Slot ${t.slot})`).join('\n');
+  const available = targets.map(t => `• **${visibleAlias(t)}**`).join('\n');
   await interaction.reply({
     content: `Der ausgewaehlte Server gehoert nicht zu den aktiven Gameservern dieser Guild.\n\n${available}`,
     flags: MessageFlags.Ephemeral,
@@ -89,9 +93,9 @@ async function rejectAmbiguousTarget(
   interaction: ChatInputCommandInteraction,
   targets: CommandServerTarget[],
 ): Promise<null> {
-  const available = targets.map(t => `• **${t.alias}** (Slot ${t.slot})`).join('\n');
+  const available = targets.map(t => `• **${visibleAlias(t)}**`).join('\n');
   await interaction.reply({
-    content: `Dieser Alias ist nicht eindeutig. Waehle den Server aus der Discord-Autocomplete-Liste oder verwende die eindeutige Slotnummer.\n\n${available}`,
+    content: `Dieser Alias ist nicht eindeutig. Waehle den Server aus der Discord-Autocomplete-Liste.\n\n${available}`,
     flags: MessageFlags.Ephemeral,
     allowedMentions: { parse: [] },
   });
@@ -99,10 +103,10 @@ async function rejectAmbiguousTarget(
 }
 
 /**
- * `slot` ist absichtlich eine String-Autocomplete-Option. Discord zeigt dem
- * Operator den hinterlegten Alias, waehrend als stabiler Wert die Connection-ID
- * uebertragen wird. Ohne Auswahl gilt die Operation fuer ALLE nutzbaren,
- * verknuepften Gameserver der Guild.
+ * `slot` bleibt aus Kompatibilitaetsgruenden der interne Optionsname. Discord
+ * zeigt dem Operator jedoch ausschliesslich den hinterlegten Alias, waehrend als
+ * stabiler Wert die Connection-ID uebertragen wird. Ohne Auswahl gilt die
+ * Operation fuer ALLE nutzbaren, verknuepften Gameserver der Guild.
  */
 export async function resolveSelectedOrAllServers(
   interaction: ChatInputCommandInteraction,
@@ -143,7 +147,7 @@ export async function resolveSingleServer(
 
   if (targets.length === 1) return targets[0];
 
-  const available = targets.map(t => `• **${t.alias}** (Slot ${t.slot})`).join('\n');
+  const available = targets.map(t => `• **${visibleAlias(t)}**`).join('\n');
   await interaction.reply({
     content: `Mehrere aktive Gameserver gefunden. Waehle fuer diesen Vorgang den Server ueber seinen Alias aus.\n\n${available}`,
     flags: MessageFlags.Ephemeral,
@@ -166,13 +170,13 @@ export async function autocompleteServerAlias(interaction: AutocompleteInteracti
       || String(t.slot).includes(focused))
     .slice(0, 25)
     .map(t => ({
-      name: `${t.alias} (Slot ${t.slot})`.slice(0, 100),
+      name: visibleAlias(t).slice(0, 100),
       value: t.id,
     }));
 
   await interaction.respond(choices);
 }
 
-export function targetLabel(target: Pick<CommandServerTarget, 'alias' | 'slot'>): string {
-  return `${target.alias} (Slot ${target.slot})`;
+export function targetLabel(target: Pick<CommandServerTarget, 'alias'>): string {
+  return visibleAlias(target);
 }

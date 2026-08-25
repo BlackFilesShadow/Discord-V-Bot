@@ -122,7 +122,10 @@ export function renderGoodbyeMessage(
     .replace(/\{user\}/g, vars.identity.displayName)
     .replace(/\{username\}/g, vars.identity.username)
     .replace(/\{nickname\}/g, vars.identity.nickname || vars.identity.username)
-    .replace(/\{mention\}/g, vars.identity.mention)
+    // Die Mention ist jetzt ein fester Bestandteil des Feldes "Discord-Name".
+    // Alte gespeicherte Templates mit {mention} bleiben kompatibel, erzeugen
+    // aber keine zweite, optisch losgeloeste Mention mehr in der Beschreibung.
+    .replace(/\{mention\}/g, '')
     .replace(/\{guild\}/g, vars.guild)
     .replace(/\{count\}/g, String(vars.memberCount))
     .replace(/\{member_count\}/g, String(vars.memberCount))
@@ -130,13 +133,16 @@ export function renderGoodbyeMessage(
     .replace(/\{time\}/g, time)
     .replace(/\{year\}/g, calendarParts.year ?? '')
     .replace(/\{month\}/g, calendarParts.month ?? '')
-    .replace(/\{day\}/g, calendarParts.day ?? '');
+    .replace(/\{day\}/g, calendarParts.day ?? '')
+    .replace(/[ \t]+\n/g, '\n')
+    .replace(/ {2,}/g, ' ')
+    .trim();
 }
 
 /**
  * Runtime-Zustellung beim GuildMemberRemove.
- * Mentions werden absichtlich NICHT freigeschaltet: {mention} kann im Text
- * angezeigt werden, pingt den bereits ausgetretenen Nutzer aber nicht.
+ * Die Discord-Mention wird ausschliesslich im Feld "Discord-Name" gerendert
+ * und durch allowedMentions weiterhin nie als Ping freigeschaltet.
  */
 export async function sendConfiguredGoodbye(
   member: GuildMember,
@@ -218,6 +224,7 @@ export async function sendConfiguredGoodbye(
     message = await channel.send({
       embeds: [buildStructuredGoodbyeEmbed({
         discordName: identity.displayName,
+        discordMention: identity.mention,
         customMessage: finalText,
         leaveOccurredAt,
         cleanupEnabled,

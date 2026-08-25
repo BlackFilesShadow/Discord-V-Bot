@@ -168,6 +168,7 @@ goodbyeRouter.post('/test', requireGuildPermission('welcome.manage'), async (req
       content: '🧪 Goodbye-Test',
       embeds: [buildStructuredGoodbyeEmbed({
         discordName: identity.displayName,
+        discordMention: identity.mention,
         customMessage: finalText,
         leaveOccurredAt,
         cleanupEnabled: false,

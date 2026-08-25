@@ -108,7 +108,7 @@ describe('timed server-ban expiry', () => {
     }));
   });
 
-  it('sendet die Ablaufmeldung im gespeicherten Command-Kanal genau nach Remote-Finalisierung', async () => {
+  it('sendet die Ablaufmeldung ohne sichtbare technische ID oder Slotnummer und dedupliziert per Nonce', async () => {
     db.serverBanEntry.findMany.mockResolvedValue([]);
     db.serverBanExpiryNotice.findMany.mockResolvedValue([{
       id: 'notice-1',
@@ -123,16 +123,13 @@ describe('timed server-ban expiry', () => {
     db.serverBanEntry.findFirst.mockResolvedValue({
       id: 'ban-3', reason: 'Testgrund', liftedAt: NOW,
     });
-    db.nitradoConnection.findFirst.mockResolvedValue({ alias: 'Test1', slot: 1 });
+    db.nitradoConnection.findFirst.mockResolvedValue({ alias: 'Test1' });
 
     const send = jest.fn().mockResolvedValue({ id: 'discord-message-1' });
-    const fetchMessages = jest.fn().mockResolvedValue(new Map());
     const channel = {
       guildId: 'g3',
       isTextBased: () => true,
       isDMBased: () => false,
-      messages: { fetch: fetchMessages },
-      client: { user: { id: 'bot-user' } },
       send,
     };
     getClient.mockReturnValue({
@@ -143,9 +140,15 @@ describe('timed server-ban expiry', () => {
 
     expect(send).toHaveBeenCalledTimes(1);
     const payload = send.mock.calls[0][0];
+    const embed = payload.embeds[0].toJSON();
     expect(payload.allowedMentions).toEqual({ parse: [] });
-    expect(payload.embeds[0].data.title).toBe('✅ Server-Bann abgelaufen');
-    expect(payload.embeds[0].data.footer?.text).toContain('ban-expiry:ban-3');
+    expect(payload.nonce).toBe('notice-1');
+    expect(payload.enforceNonce).toBe(true);
+    expect(embed.title).toBe('✅ Server-Bann abgelaufen');
+    expect(embed.footer?.text).toBe('Automatischer Ablauf • V Bot');
+    expect(embed.footer?.text).not.toMatch(/ban-|notice-|\bid\b/i);
+    expect(embed.fields?.find((field: any) => field.name === 'Server')?.value).toBe('Test1');
+    expect(JSON.stringify(embed)).not.toContain('Slot 1');
     expect(db.serverBanExpiryNotice.updateMany).toHaveBeenCalledWith(expect.objectContaining({
       where: { id: 'notice-1', status: 'SENDING' },
       data: expect.objectContaining({ status: 'SENT', messageId: 'discord-message-1', identifierEnc: null }),
@@ -168,15 +171,13 @@ describe('timed server-ban expiry', () => {
       .mockResolvedValueOnce({ reason: 'Alt', liftedAt: NOW })
       .mockResolvedValueOnce(null);
     db.serverBanExpiryNotice.findFirst.mockResolvedValue({ id: 'notice-race' });
-    db.nitradoConnection.findFirst.mockResolvedValue({ alias: 'Test1', slot: 1 });
+    db.nitradoConnection.findFirst.mockResolvedValue({ alias: 'Test1' });
 
     const send = jest.fn();
     const channel = {
       guildId: 'g-race',
       isTextBased: () => true,
       isDMBased: () => false,
-      messages: { fetch: jest.fn().mockResolvedValue(new Map()) },
-      client: { user: { id: 'bot-user' } },
       send,
     };
     getClient.mockReturnValue({ channels: { fetch: jest.fn().mockResolvedValue(channel) } });

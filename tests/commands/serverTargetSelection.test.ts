@@ -11,6 +11,7 @@ import {
   autocompleteServerAlias,
   resolveSelectedOrAllServers,
   resolveSingleServer,
+  targetLabel,
 } from '../../src/commands/dashboard/serverTargetSelection';
 
 const rows = [
@@ -79,17 +80,20 @@ describe('serverTargetSelection', () => {
     expect(interaction.reply).toHaveBeenCalledWith(expect.objectContaining({
       content: expect.stringContaining('nicht eindeutig'),
     }));
+    expect(interaction.reply.mock.calls[0][0].content).not.toContain('Slot');
   });
 
-  it('weist fremde/ungueltige Alias-Werte fail-closed ab', async () => {
+  it('weist fremde/ungueltige Alias-Werte fail-closed ab und zeigt nur Aliase', async () => {
     const interaction = chatInteraction('fremder-server');
     const result = await resolveSelectedOrAllServers(interaction, 'guild-1');
 
     expect(result).toBeNull();
     expect(interaction.reply).toHaveBeenCalledTimes(1);
+    expect(interaction.reply.mock.calls[0][0].content).toContain('Chernarus Main');
+    expect(interaction.reply.mock.calls[0][0].content).not.toContain('Slot');
   });
 
-  it('verlangt bei einem serverspezifischen Workflow und mehreren Servern einen Alias', async () => {
+  it('verlangt bei einem serverspezifischen Workflow und mehreren Servern einen Alias ohne Slotangaben', async () => {
     const interaction = chatInteraction(null);
     const result = await resolveSingleServer(interaction, 'guild-1');
 
@@ -97,6 +101,7 @@ describe('serverTargetSelection', () => {
     expect(interaction.reply).toHaveBeenCalledWith(expect.objectContaining({
       content: expect.stringContaining('Chernarus Main'),
     }));
+    expect(interaction.reply.mock.calls[0][0].content).not.toContain('Slot');
   });
 
   it('liefert bei genau einem Server ohne Auswahl automatisch diesen Server', async () => {
@@ -108,7 +113,7 @@ describe('serverTargetSelection', () => {
     expect(interaction.reply).not.toHaveBeenCalled();
   });
 
-  it('zeigt im Discord-Autocomplete den Alias, uebertraegt aber die stabile Connection-ID', async () => {
+  it('zeigt im Discord-Autocomplete nur den Alias, uebertraegt aber die stabile Connection-ID', async () => {
     const interaction = {
       guildId: 'guild-1',
       options: { getFocused: jest.fn(() => 'livo') },
@@ -118,7 +123,12 @@ describe('serverTargetSelection', () => {
     await autocompleteServerAlias(interaction);
 
     expect(interaction.respond).toHaveBeenCalledWith([
-      { name: 'Livonia PVE (Slot 2)', value: 'conn-b' },
+      { name: 'Livonia PVE', value: 'conn-b' },
     ]);
+  });
+
+  it('verwendet auch in Embed-Labels ausschliesslich den Alias', () => {
+    expect(targetLabel(rows[1])).toBe('Livonia PVE');
+    expect(targetLabel(rows[1])).not.toContain('Slot');
   });
 });

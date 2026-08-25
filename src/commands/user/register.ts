@@ -62,7 +62,6 @@ async function handleManufacturerRegistration(interaction: ChatInputCommandInter
   if (result.success) {
     embed.addFields({ name: 'Status', value: 'Warte auf Admin-Bestätigung', inline: true });
 
-    // Admin per PN benachrichtigen (Sektion 1: Anfrage an Admin per PN)
     try {
       const ownerUser = await interaction.client.users.fetch(config.discord.ownerId);
       const adminEmbed = vEmbed(Colors.Info)
@@ -73,9 +72,8 @@ async function handleManufacturerRegistration(interaction: ChatInputCommandInter
           Brand.divider
         )
         .addFields(
+          { name: '👤 Discord', value: `<@${interaction.user.id}>`, inline: true },
           { name: '📝 Grund', value: (reason || 'Kein Grund angegeben').slice(0, 1024), inline: false },
-          { name: '🆔 User-ID', value: `\`${interaction.user.id}\``, inline: true },
-          { name: '🔑 GUID', value: `\`${result.userId || 'N/A'}\``, inline: true },
         );
 
       const approveBtn = new ButtonBuilder()
@@ -91,7 +89,7 @@ async function handleManufacturerRegistration(interaction: ChatInputCommandInter
       const row = new ActionRowBuilder<ButtonBuilder>().addComponents(approveBtn, denyBtn);
 
       const dm = await ownerUser.createDM();
-      const sent = await safeSend(dm, { embeds: [adminEmbed], components: [row] });
+      const sent = await safeSend(dm, { embeds: [adminEmbed], components: [row], allowedMentions: { parse: [] } });
       if (!sent) {
         logger.warn(`register.manufacturer: Admin-PN an Owner ${config.discord.ownerId} nicht zustellbar.`);
         embed.addFields({ name: '⚠️ Hinweis', value: 'Admin-Benachrichtigung konnte nicht zugestellt werden, dein Antrag ist aber gespeichert.', inline: false });
@@ -106,7 +104,6 @@ async function handleManufacturerRegistration(interaction: ChatInputCommandInter
 }
 
 async function handlePasswordVerification(interaction: ChatInputCommandInteraction) {
-  // Ephemeral damit das Passwort nicht sichtbar ist
   await interaction.deferReply({ flags: MessageFlags.Ephemeral });
 
   const password = interaction.options.getString('password', true);
@@ -127,10 +124,7 @@ async function handlePasswordVerification(interaction: ChatInputCommandInteracti
     .setDescription(result.message);
 
   if (result.success) {
-    embed.addFields(
-      { name: 'GUID', value: user.id, inline: true },
-      { name: 'Status', value: 'Aktiv – Uploads freigeschaltet', inline: true },
-    );
+    embed.addFields({ name: 'Status', value: 'Aktiv – Uploads freigeschaltet', inline: true });
   }
 
   await interaction.editReply({ embeds: [embed] });

@@ -21,7 +21,7 @@ export function buildLinkingInfoEmbed(serverLabel: string): EmbedBuilder {
       `Verbinde deinen Discord-Account mit deinem Spieler auf **${serverLabel}**.\n\n`
       + '**So funktioniert es:**\n'
       + '1. Spiele zunächst mindestens **5 Minuten** auf dem DayZ-Server.\n'
-      + '2. Nutze `/link` und gib bei `id` deinen **exakten PSN-/Xbox-/DayZ-Spielernamen** ein.\n'
+      + '2. Nutze `/link` und gib deinen **exakten PSN-/Xbox-/DayZ-Spielernamen** ein.\n'
       + '3. V-Bot prüft automatisch die bereits erfassten ADM-/Session-Daten und die dazugehörige DayZ-GUID.\n'
       + '4. Ist die Mindestspielzeit erreicht und Name/GUID sind noch frei, wird dein Discord-Account automatisch verknüpft.\n\n'
       + 'Danach können aktivierte Spielzeit- und Server-Rewards eindeutig deinem Discord-Account gutgeschrieben werden.',
@@ -35,9 +35,9 @@ export function buildLinkingInfoEmbed(serverLabel: string): EmbedBuilder {
 async function serverLabel(guildId: string, nitradoConnId: string): Promise<string> {
   const row = await prisma.nitradoConnection.findFirst({
     where: { id: nitradoConnId, guildId },
-    select: { alias: true, slot: true },
+    select: { alias: true },
   });
-  return row ? `${row.alias} (Slot ${row.slot})` : 'ausgewählter DayZ-Server';
+  return row?.alias?.trim() || 'ausgewählter DayZ-Server';
 }
 
 export async function resolveLinkingTextChannel(
@@ -66,9 +66,9 @@ export async function resolveLinkingTextChannel(
 
 /**
  * Erstellt oder aktualisiert genau einen persistenten Info-Embed pro
- * Guild+Nitrado-Slot. Wurde die alte Nachricht gelöscht oder der Kanal
+ * Guild+Nitrado-Verbindung. Wurde die alte Nachricht gelöscht oder der Kanal
  * gewechselt, wird automatisch eine neue Nachricht erzeugt und deren ID
- * gespeichert.
+ * ausschliesslich intern gespeichert.
  */
 export async function publishLinkingInfoEmbed(args: {
   client: Client;
