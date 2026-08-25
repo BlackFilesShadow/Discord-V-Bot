@@ -17,14 +17,16 @@ import { logger } from '../../utils/logger';
 import { asGuildId, asNitradoConnId, asUserDiscordId, type GuildId, type NitradoConnId, type UserDiscordId } from '../../types/scope';
 import { getVirtualAccountById, type EconomyPocket, type VirtualAccountRawDb } from './virtualAccounts';
 import {
-  depositUserIntoVirtualAccount,
   ensureVirtualAccountFinance,
   listManagedVirtualAccounts,
-  payoutVirtualAccountToUser,
-  removeVirtualAccountAmount,
-  transferVirtualPocket,
   userManagesVirtualAccount,
 } from './virtualAccountFinance';
+import {
+  safeDepositUserIntoVirtualAccount,
+  safePayoutVirtualAccountToUser,
+  safeRemoveVirtualAccountAmount,
+  safeTransferVirtualPocket,
+} from './virtualAccountMoneySafety';
 import { postVirtualAccountArchive, syncVirtualAccountProjection } from './virtualAccountDiscord';
 import { getConfig } from './repository';
 
@@ -93,7 +95,7 @@ export async function handleVirtualAccountDepositButton(interaction: ButtonInter
     const finance = await ensureVirtualAccountFinance(scope.guildId, scope.connId, accountId);
     const modal = new ModalBuilder().setCustomId(`vacct:deposit_modal:${accountId}`).setTitle('Auf virtuelles Konto einzahlen');
     modal.addComponents(new ActionRowBuilder<TextInputBuilder>().addComponents(
-      amountInput().setLabel(`Betrag (${finance.currencyName})`).setPlaceholder(`z. B. 5000 · Abbuchung aus deinem Wallet`),
+      amountInput().setLabel(`Betrag (${finance.currencyName})`).setPlaceholder('z. B. 5000 · Abbuchung aus deinem Wallet'),
     ));
     await interaction.showModal(modal);
   } catch (error) {
@@ -106,7 +108,7 @@ export async function handleVirtualAccountDepositModal(interaction: ModalSubmitI
   try {
     const scope = await assertInteractionScope(interaction.guildId, accountId);
     const amount = parsePositiveAmount(interaction.fields.getTextInputValue('amount'));
-    const result = await depositUserIntoVirtualAccount({
+    const result = await safeDepositUserIntoVirtualAccount({
       idempotencyKey: interaction.id,
       guildId: scope.guildId,
       nitradoConnId: scope.connId,
@@ -198,14 +200,14 @@ export async function handleVirtualManagerSelect(interaction: StringSelectMenuIn
           { name: 'Bank', value: `${finance.bankBalance.toLocaleString('de-DE')} ${finance.currencyEmoji}`, inline: true },
           { name: 'Gesamt', value: `${(account.balance + finance.bankBalance).toLocaleString('de-DE')} ${finance.currencyEmoji}`, inline: true },
         );
-      const components = account.kind === 'LOTTERY_POT' ? [] : [new ActionRowBuilder<ButtonBuilder>().addComponents(
+      const components = account.kind === 'CUSTOM' ? [new ActionRowBuilder<ButtonBuilder>().addComponents(
         new ButtonBuilder().setCustomId(`vacct_mgr_move:wb:${accountId}`).setLabel('Wallet → Bank').setStyle(ButtonStyle.Primary),
         new ButtonBuilder().setCustomId(`vacct_mgr_move:bw:${accountId}`).setLabel('Bank → Wallet').setStyle(ButtonStyle.Secondary),
-      )];
+      )] : [];
       await interaction.update({ embeds: [embed], components });
       return;
     }
-    if (account.kind === 'LOTTERY_POT') throw new Error('Aktive/technische Lotterie-Pots dürfen nicht über generische Manageraktionen manipuliert werden.');
+    if (account.kind !== 'CUSTOM') throw new Error('Lotterie- und Markt-Systemkonten dürfen nicht über generische Manageraktionen manipuliert werden.');
     if (action === 'payout') {
       const modal = new ModalBuilder().setCustomId(`vacct_mgr_modal:payout:${accountId}`).setTitle('Auszahlung aus virtuellem Konto');
       modal.addComponents(
@@ -240,7 +242,8 @@ export async function handleVirtualManagerMoveButton(interaction: ButtonInteract
     await assertManager(interaction, accountId);
     const accountScope = await resolveAccountScope(accountId);
     const account = await getVirtualAccountById(accountScope.guildId, accountScope.connId, accountId);
-    if (!account || account.kind === 'LOTTERY_POT') throw new Error('Dieses Konto erlaubt keine generische Pocket-Verschiebung.');
+    if (!account || account.kind !== 'CUSTOM') throw new Error('Dieses Konto erlaubt keine generische Pocket-Verschiebung.');
+    if (direction !== 'wb' && direction !== 'bw') throw new Error('Pocket-Richtung ist ungültig.');
     const modal = new ModalBuilder().setCustomId(`vacct_mgr_modal:move_${direction}:${accountId}`).setTitle(direction === 'wb' ? 'Wallet → Bank' : 'Bank → Wallet');
     modal.addComponents(
       new ActionRowBuilder<TextInputBuilder>().addComponents(amountInput()),
@@ -265,7 +268,7 @@ export async function handleVirtualManagerModal(interaction: ModalSubmitInteract
     const scope = await assertManager(interaction, accountId);
     const account = await getVirtualAccountById(scope.guildId, scope.connId, accountId);
     if (!account) throw new Error('Virtuelles Konto nicht gefunden.');
-    if (account.kind === 'LOTTERY_POT') throw new Error('Lotterie-Pots dürfen nicht über generische Manageraktionen manipuliert werden.');
+    if (account.kind !== 'CUSTOM') throw new Error('Lotterie- und Markt-Systemkonten dürfen nicht über generische Manageraktionen manipuliert werden.');
 
     if (operation === 'payout') {
       const target = parseDiscordId(interaction.fields.getTextInputValue('target'));
@@ -274,7 +277,7 @@ export async function handleVirtualManagerModal(interaction: ModalSubmitInteract
       const sourcePocket = parsePocket(interaction.fields.getTextInputValue('source'), 'Quelle');
       const targetPocket = parsePocket(interaction.fields.getTextInputValue('targetPocket'), 'Ziel');
       const reason = interaction.fields.getTextInputValue('reason');
-      const result = await payoutVirtualAccountToUser({
+      const result = await safePayoutVirtualAccountToUser({
         idempotencyKey: interaction.id, guildId: scope.guildId, nitradoConnId: scope.connId, accountId,
         actorDiscordId: asUserDiscordId(interaction.user.id), toUserDiscordId: target,
         sourcePocket, targetPocket, accountAmount: amount, reason,
@@ -290,7 +293,7 @@ export async function handleVirtualManagerModal(interaction: ModalSubmitInteract
       const amount = parsePositiveAmount(interaction.fields.getTextInputValue('amount'));
       const pocket = parsePocket(interaction.fields.getTextInputValue('pocket'), 'Pocket');
       const reason = interaction.fields.getTextInputValue('reason');
-      const result = await removeVirtualAccountAmount({
+      const result = await safeRemoveVirtualAccountAmount({
         idempotencyKey: interaction.id, guildId: scope.guildId, nitradoConnId: scope.connId, accountId,
         actorDiscordId: asUserDiscordId(interaction.user.id), pocket, amount, reason,
       });
@@ -304,7 +307,7 @@ export async function handleVirtualManagerModal(interaction: ModalSubmitInteract
       const reason = interaction.fields.getTextInputValue('reason') || undefined;
       const from: EconomyPocket = operation === 'move_wb' ? 'WALLET' : 'BANK';
       const to: EconomyPocket = from === 'WALLET' ? 'BANK' : 'WALLET';
-      const result = await transferVirtualPocket({
+      const result = await safeTransferVirtualPocket({
         idempotencyKey: interaction.id, guildId: scope.guildId, nitradoConnId: scope.connId, accountId,
         actorDiscordId: asUserDiscordId(interaction.user.id), from, to, amount, reason,
       });
