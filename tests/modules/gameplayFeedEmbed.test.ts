@@ -18,6 +18,20 @@ function suicideView(): GameplayFeedView {
   };
 }
 
+function pvpView(): GameplayFeedView {
+  return {
+    ...suicideView(),
+    eventId: 'hidden-pvp-event-id',
+    category: 'PVP',
+    eventType: 'PLAYER_KILLED',
+    actorName: 'Victim',
+    targetName: 'Killer',
+    toolOrWeapon: 'M4-A1',
+    distanceMeters: 42,
+    targetPosition: '3010, 13210, 211.6',
+  };
+}
+
 function buildView(): GameplayFeedView {
   return {
     eventId: 'technical-event-id-must-stay-hidden',
@@ -36,7 +50,7 @@ function buildView(): GameplayFeedView {
 }
 
 describe('Gameplay-Feed Embed', () => {
-  it('rendert Namen ohne sichtbare Inline-Code-Escapes und ohne Footer/Zeitstempel', () => {
+  it('rendert Namen ohne sichtbare Inline-Code-Escapes und ohne Footer/Embed-Zeitstempel', () => {
     const embed = buildGameplayFeedEmbed(suicideView(), '#dc2626', 'Test Server').toJSON();
     const player = embed.fields?.find(field => field.name === 'Spieler');
 
@@ -53,16 +67,34 @@ describe('Gameplay-Feed Embed', () => {
       .toBe('https://www.izurvive.com/#location=3005;13205;6');
 
     const embed = buildGameplayFeedEmbed(suicideView(), '#dc2626', 'Test Server').toJSON();
-    const position = embed.fields?.find(field => field.name === 'Pos:');
+    const fields = embed.fields ?? [];
+    const position = fields.find(field => field.name === 'Pos:');
+    const serverIndex = fields.findIndex(field => field.name === 'Server');
     expect(position?.value)
       .toBe('[3005, 13205, 211.6](https://www.izurvive.com/#location=3005;13205;6)');
-    expect(embed.fields?.at(-1)).toMatchObject({ name: 'Server', value: 'Test Server' });
+    expect(fields[serverIndex]).toMatchObject({ name: 'Server', value: 'Test Server' });
+    expect(fields[serverIndex + 1]?.name).toBe('Ereigniszeit');
   });
 
-  it('laesst Death/Kill-Feeds ohne Ereigniszeit', () => {
-    const embed = buildGameplayFeedEmbed(suicideView(), '#dc2626', 'Kill Server').toJSON();
+  it('laesst ausschliesslich den V-Kill/PvP-Feed ohne Ereigniszeit', () => {
+    const embed = buildGameplayFeedEmbed(pvpView(), '#dc2626', 'Kill Server').toJSON();
     expect(embed.fields?.some(field => field.name === 'Ereigniszeit')).toBe(false);
     expect(embed.fields?.at(-1)).toMatchObject({ name: 'Server', value: 'Kill Server' });
+    expect(JSON.stringify(embed)).not.toContain('hidden-pvp-event-id');
+  });
+
+  it('zeigt Self-Kill die Ereigniszeit direkt unter dem Server-Alias', () => {
+    const embed = buildGameplayFeedEmbed(suicideView(), '#dc2626', 'Self Kill Server').toJSON();
+    const fields = embed.fields ?? [];
+    const serverIndex = fields.findIndex(field => field.name === 'Server');
+
+    expect(serverIndex).toBeGreaterThanOrEqual(0);
+    expect(fields[serverIndex]).toMatchObject({ name: 'Server', value: 'Self Kill Server', inline: false });
+    expect(fields[serverIndex + 1]).toMatchObject({
+      name: 'Ereigniszeit',
+      value: `<t:${Math.floor(new Date('2026-08-16T01:35:00.000Z').getTime() / 1000)}:F>`,
+      inline: false,
+    });
   });
 
   it('zeigt bei Nicht-Kill-Nitrado-Feeds die Ereigniszeit direkt unter dem Server-Alias und keine technische ID', () => {
