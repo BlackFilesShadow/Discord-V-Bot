@@ -16,7 +16,7 @@ import {
   refreshConfiguredVirtualManagerPanel,
   syncVirtualAccountProjection,
 } from '../../../modules/economy/virtualAccountDiscord';
-import { asUserDiscordId, type UserDiscordId } from '../../../types/scope';
+import { asUserDiscordId, type GuildId, type NitradoConnId, type UserDiscordId } from '../../../types/scope';
 
 export const economyVirtualAccountTreasurySafetyRouter = Router({ mergeParams: true });
 
@@ -40,8 +40,7 @@ async function readProjection(accountId: string, guildId: string, connId: string
   return rows[0] ?? null;
 }
 
-async function serializeAccount(guildId: NonNullable<Express.Request['guildScope']>['guildId'], connId: NonNullable<Express.Request['guildScope']>['nitradoConnId'], accountId: string) {
-  if (!connId) throw new Error('Economy-Gameserver-Scope fehlt.');
+async function serializeAccount(guildId: GuildId, connId: NitradoConnId, accountId: string) {
   const account = await getVirtualAccountById(guildId, connId, accountId);
   if (!account) throw new Error('Virtuelles Konto nicht gefunden.');
   const [finance, metadata, managers, projection] = await Promise.all([
@@ -130,8 +129,7 @@ async function validateManagers(guildId: string, raw: unknown): Promise<UserDisc
   return valid;
 }
 
-async function syncConfiguration(guildId: NonNullable<Express.Request['guildScope']>['guildId'], connId: NonNullable<Express.Request['guildScope']>['nitradoConnId'], accountId: string, actor: UserDiscordId): Promise<string | null> {
-  if (!connId) return 'Economy-Gameserver-Scope fehlt.';
+async function syncConfiguration(guildId: GuildId, connId: NitradoConnId, accountId: string, actor: UserDiscordId): Promise<string | null> {
   const client = tryGetDashboardClient();
   if (!client) return 'Bot ist nicht bereit; Discord-Projektion wurde noch nicht synchronisiert.';
   const warnings: string[] = [];
