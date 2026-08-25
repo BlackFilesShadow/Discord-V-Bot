@@ -30,7 +30,6 @@ const VARIABLES: Array<{ key: string; desc: string }> = [
   { key: '{user}', desc: 'Letzter bekannter Anzeigename; Guild-Nickname hat Vorrang' },
   { key: '{username}', desc: 'Letzter bekannter globaler Discord-Username' },
   { key: '{nickname}', desc: 'Letzter Guild-Nickname; fällt auf Username zurück' },
-  { key: '{mention}', desc: 'Discord-Erwähnung als Text; Goodbye löst keinen Ping aus' },
   { key: '{guild}', desc: 'Name des Servers' },
   { key: '{count}', desc: 'Aktuelle Mitgliederzahl nach dem Austritt' },
   { key: '{date}', desc: 'Aktuelles Datum' },
@@ -68,13 +67,17 @@ function renderPreview(template: string): string {
     .replace(/\{user\}/g, 'LetzterNick')
     .replace(/\{username\}/g, 'MaxMustermann')
     .replace(/\{nickname\}/g, 'LetzterNick')
-    .replace(/\{mention\}/g, '@MaxMustermann')
+    // Alte Vorlagen bleiben lesbar; die Mention wird im echten Embed automatisch
+    // im Feld "Discord-Name" angezeigt und nicht mehr in der Nachricht selbst.
+    .replace(/\{mention\}/g, '')
     .replace(/\{guild\}/g, 'Mein Server')
     .replace(/\{count\}/g, '127')
     .replace(/\{member_count\}/g, '127')
     .replace(/\{date\}/g, date)
     .replace(/\{time\}/g, time)
-    .replace(/\{year\}/g, String(now.getFullYear()));
+    .replace(/\{year\}/g, String(now.getFullYear()))
+    .replace(/ {2,}/g, ' ')
+    .trim();
 }
 
 export function GoodbyePanel({ guildId, canManage }: { guildId: string; canManage: boolean }) {
@@ -172,7 +175,7 @@ export function GoodbyePanel({ guildId, canManage }: { guildId: string; canManag
           <LogOut className="h-5 w-5 text-accent" /> Abschied / Goodbye
         </h2>
         <p className="text-xs text-muted mt-0.5">
-          Sendet beim Austritt ein strukturiertes Embed mit Discord-Name, Status sowie festem Datum und fester Uhrzeit des Austritts.
+          Sendet beim Austritt ein strukturiertes Embed. Die Discord-Erwähnung steht automatisch im Feld „Discord-Name“ und löst keinen Ping aus.
         </p>
       </div>
 
@@ -233,6 +236,9 @@ export function GoodbyePanel({ guildId, canManage }: { guildId: string; canManag
                 </button>
               ))}
             </div>
+            <p className="text-[11px] text-muted mt-2">
+              Die Discord-Erwähnung muss nicht als Platzhalter eingefügt werden; sie erscheint automatisch anstelle des Namens im Feld „Discord-Name“.
+            </p>
           </div>
 
           <div className="rounded-lg border border-border/60 bg-bg/60 p-3">
