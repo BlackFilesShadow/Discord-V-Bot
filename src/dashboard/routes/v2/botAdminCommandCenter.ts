@@ -357,7 +357,6 @@ botAdminCommandCenterRouter.put('/feedback-channel', async (req, res) => {
     res.status(400).json({ error: 'Ungültige channelId.' });
     return;
   }
-
   if (scope === 'global') {
     if (!isBotOwnerRequest(req)) {
       res.status(403).json({ error: 'Nur der Bot-Owner darf den globalen Feedback-Channel setzen.' });
@@ -452,12 +451,11 @@ botAdminCommandCenterRouter.patch('/feedback/:id', async (req, res) => {
         const message = await (channel as TextChannel).messages.fetch(updated.notifyMessageId).catch(() => null);
         if (message) {
           const embed = new EmbedBuilder()
-            .setTitle(`${updated.category} â€¢ ${updated.subject}`)
+            .setTitle(`${updated.category} • ${updated.subject}`)
             .setDescription(updated.message.slice(0, 3500))
             .addFields(
-              { name: 'Von', value: `<@${updated.userId}> (\`${updated.userId}\`)`, inline: true },
+              { name: 'Von', value: `<@${updated.userId}>`, inline: true },
               { name: 'Status', value: `\`${updated.status}\``, inline: true },
-              { name: 'ID', value: `\`${updated.id}\`` },
             );
           if (updated.adminNote) {
             embed.addFields({ name: 'Admin-Notiz', value: updated.adminNote.slice(0, 1024) });
