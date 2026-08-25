@@ -106,7 +106,7 @@ export async function ensureWhitelistInfoEmbed(guildId: string, nitradoConnId: s
       'Du möchtest Zugang zum Server? Stelle hier deinen Whitelist-Antrag.',
       '',
       '**So funktioniert es:**',
-      '1. Nutze `/whitelist-antrag` in diesem Kanal.',
+      '1. Nutze `/whitelist` in diesem Kanal.',
       '2. Trage deinen **exakten Spielernamen** ein (1–64 Zeichen).',
       '3. Sind mehrere aktive Server verbunden, wähle den gewünschten Server über seinen Alias aus. Bei nur einem aktiven Server ist keine Serverauswahl nötig.',
       '',
