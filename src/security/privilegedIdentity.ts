@@ -23,16 +23,19 @@ export function resolveBotOwnerId(env: NodeJS.ProcessEnv = process.env): string 
 }
 
 /**
- * GlobalDeveloperIdentity: DEV privileges belong to exactly one canonical
- * Discord identity and still require the DEVELOPER DB role. A password,
- * username/display-name or guild ownership can never create this identity.
+ * GlobalDeveloperIdentity: Die kanonische BOT_OWNER_ID ist die unverlierbare
+ * globale Developer-Identitaet. DB-Rollen bleiben fuer weitere Developer-
+ * Konten relevant, duerfen dem kanonischen Owner aber niemals durch Rollen-
+ * Drift, Recovery oder einen fehlerhaften Rollen-Write den DEV-Zugriff nehmen.
+ * Passwort/DEV-Session bleiben davon getrennte Step-up-Faktoren.
  */
 export function isGlobalDeveloperIdentity(
   discordId: string,
   role: PrivilegedRole,
   ownerId: string,
 ): boolean {
-  return Boolean(ownerId) && discordId === ownerId && role === 'DEVELOPER';
+  if (!ownerId || discordId !== ownerId) return false;
+  return true;
 }
 
 /**
