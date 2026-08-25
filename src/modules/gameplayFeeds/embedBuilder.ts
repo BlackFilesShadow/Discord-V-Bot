@@ -154,6 +154,7 @@ export function buildGameplayFeedEmbed(
     if (typeof view.distanceMeters === 'number' && Number.isFinite(view.distanceMeters)) {
       embed.addFields({ name: 'Distanz', value: `${view.distanceMeters} m`, inline: false });
     }
+    // Nur der eigentliche V-Kill/PvP-Feed bleibt ohne sichtbare Ereigniszeit.
     addServer(embed, serverAlias);
     return embed;
   }
@@ -170,7 +171,7 @@ export function buildGameplayFeedEmbed(
     });
     const pos = positionField(view.actorPosition);
     if (pos) embed.addFields({ name: 'Pos:', value: pos, inline: false });
-    addServer(embed, serverAlias);
+    addServer(embed, serverAlias, view.occurredAt, true);
     return embed;
   }
 
@@ -181,7 +182,7 @@ export function buildGameplayFeedEmbed(
     }
     const pos = positionField(view.actorPosition);
     if (pos) embed.addFields({ name: 'Pos:', value: pos, inline: false });
-    addServer(embed, serverAlias);
+    addServer(embed, serverAlias, view.occurredAt, true);
     return embed;
   }
 
@@ -192,7 +193,7 @@ export function buildGameplayFeedEmbed(
     }
     const pos = positionField(view.actorPosition);
     if (pos) embed.addFields({ name: 'Pos:', value: pos, inline: false });
-    addServer(embed, serverAlias);
+    addServer(embed, serverAlias, view.occurredAt, true);
     return embed;
   }
 
@@ -208,8 +209,8 @@ export function buildGameplayFeedEmbed(
   }
   const pos = positionField(view.actorPosition);
   if (pos) embed.addFields({ name: 'Position', value: pos, inline: false });
-  // Der Death-/Killfeed bleibt bewusst ohne Ereigniszeit. Alle anderen
-  // ereignisbasierten Nitrado-Gameplay-Feeds zeigen sie direkt unter dem Alias.
+  // Alle weiteren ereignisbasierten Nitrado-Feeds zeigen den Ereigniszeitpunkt
+  // direkt unter dem Alias.
   addServer(embed, serverAlias, view.occurredAt, true);
   return embed;
 }
