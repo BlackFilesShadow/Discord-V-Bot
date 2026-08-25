@@ -12,10 +12,12 @@ import {
   createConfiguredCustomVirtualAccount,
   updateConfiguredVirtualAccount,
 } from '../../../modules/economy/virtualAccountConfiguration';
+import { syncVirtualAccountProjection } from '../../../modules/economy/virtualAccountDiscord';
 import {
-  refreshConfiguredVirtualManagerPanel,
-  syncVirtualAccountProjection,
-} from '../../../modules/economy/virtualAccountDiscord';
+  configureVirtualManagerPanelSafe,
+  getVirtualManagerPanelSafe,
+  refreshConfiguredVirtualManagerPanelSafe,
+} from '../../../modules/economy/virtualAccountManagerPanelSafety';
 import { asUserDiscordId, type GuildId, type NitradoConnId, type UserDiscordId } from '../../../types/scope';
 
 export const economyVirtualAccountTreasurySafetyRouter = Router({ mergeParams: true });
@@ -139,7 +141,7 @@ async function syncConfiguration(guildId: GuildId, connId: NitradoConnId, accoun
     warnings.push(`Konto-Embed: ${(error as Error).message}`);
   }
   try {
-    await refreshConfiguredVirtualManagerPanel(client, guildId, connId, actor);
+    await refreshConfiguredVirtualManagerPanelSafe(client, guildId, connId, actor);
   } catch (error) {
     warnings.push(`Manager-Panel: ${(error as Error).message}`);
   }
@@ -233,6 +235,37 @@ economyVirtualAccountTreasurySafetyRouter.post('/control/bank-treasury', require
     res.json({ account: await serializeAccount(scope.guildId, connId, result.account.id) });
   } catch (error) {
     res.status(400).json({ error: (error as Error).message });
+  }
+});
+
+// Retry-safe roleless manager panel. These handlers intentionally shadow the
+// compatibility handlers in economyVirtualAccountControlRouter mounted after us.
+economyVirtualAccountTreasurySafetyRouter.get('/control/manager-panel', requireGuildPermission('economy.view'), async (req, res) => {
+  const scope = req.guildScope!;
+  const connId = scope.nitradoConnId;
+  if (!connId) { res.status(400).json({ error: 'Economy-Gameserver-Scope fehlt.' }); return; }
+  res.json({ panel: await getVirtualManagerPanelSafe(scope.guildId, connId) });
+});
+
+economyVirtualAccountTreasurySafetyRouter.put('/control/manager-panel', requireGuildPermission('economy.manage'), async (req, res) => {
+  const scope = req.guildScope!;
+  const connId = scope.nitradoConnId;
+  if (!connId) { res.status(400).json({ error: 'Economy-Gameserver-Scope fehlt.' }); return; }
+  const body = (req.body ?? {}) as Record<string, unknown>;
+  try {
+    const channelId = await validateNormalTextChannel(String(scope.guildId), body.channelId);
+    if (!channelId) throw new Error('Management-Channel ist erforderlich.');
+    const client = tryGetDashboardClient();
+    if (!client) { res.status(503).json({ error: 'Bot nicht bereit.' }); return; }
+    const panel = await configureVirtualManagerPanelSafe(client, {
+      guildId: scope.guildId,
+      nitradoConnId: connId,
+      channelId,
+      updatedByDiscordId: asUserDiscordId(scope.actorDiscordId),
+    });
+    res.json({ panel });
+  } catch (error) {
+    res.status(502).json({ error: (error as Error).message });
   }
 });
 
