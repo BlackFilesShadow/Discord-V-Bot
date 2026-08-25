@@ -161,11 +161,11 @@ async function resolveCommandServerScope(
       return null;
     case 'PROMPT_REQUIRED': {
       const options = resolution.options
-        .map(s => `• Slot ${s.slot}: **${s.alias}**`)
+        .map(s => `• **${s.alias.trim() || 'DayZ-Server'}**`)
         .join('\n');
       const instruction = acceptSlotOption
         ? 'Fuehre den Befehl erneut mit der Option `slot` aus.'
-        : 'Dieser Befehl hat noch keine explizite Slot-Auswahl und wird deshalb sicherheitshalber nicht ausgefuehrt.';
+        : 'Dieser Befehl hat noch keine explizite Serverauswahl und wird deshalb sicherheitshalber nicht ausgefuehrt.';
       await statusReply(
         interaction,
         'INFO',
