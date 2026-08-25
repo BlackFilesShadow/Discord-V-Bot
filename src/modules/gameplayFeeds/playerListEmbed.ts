@@ -26,9 +26,14 @@ function cleanPosition(position: string | null): string | null {
   return clean || null;
 }
 
-function positionValue(position: string | null, withLink: boolean): string {
+function positionValue(position: string | null, withLink: boolean): string | null {
   const clean = cleanPosition(position);
-  if (!clean) return 'Position unbekannt';
+  // Ein CONNECT kann im aktuellen ADM-File vor dem ersten PLAYER_POSITION
+  // eintreffen. In diesem kurzen Fenster darf die Online-Liste keinen falschen
+  // oder veralteten Wert anzeigen. Der Spieler bleibt sichtbar; die Position
+  // erscheint erst, sobald ein gueltiges Positionsereignis NACH diesem Connect
+  // vorhanden ist. Der State-Hash sorgt danach fuer das Live-Edit.
+  if (!clean) return null;
   if (!withLink) return safeEmbedField(clean, 128);
   const link = izurvivePositionUrl(clean);
   return link ? `[${safeEmbedField(clean, 128)}](${link})` : safeEmbedField(clean, 128);
@@ -36,7 +41,9 @@ function positionValue(position: string | null, withLink: boolean): string {
 
 function playerLine(entry: PlayerListEntry, showCoordinates: boolean, withLinks: boolean): string {
   const name = safeEmbedField(entry.playerName.trim() || 'Unbekannt', 128);
-  return showCoordinates ? `• ${name} — ${positionValue(entry.position, withLinks)}` : `• ${name}`;
+  if (!showCoordinates) return `• ${name}`;
+  const position = positionValue(entry.position, withLinks);
+  return position ? `• ${name} — ${position}` : `• ${name}`;
 }
 
 function fitLinesToMessageBudget(lines: string[]): string[] {
@@ -110,7 +117,7 @@ export function buildPlayerListEmbeds(args: {
     const linked = entries.map(entry => playerLine(entry, true, true));
     // iZurvive-Links sind die bevorzugte Darstellung. Falls ihre URL-Laenge
     // die Discord-Nachricht ueber das 6000-Zeichen-Limit treiben wuerde,
-    // bleiben alle Koordinaten sichtbar, aber ohne Link-Overhead.
+    // bleiben alle bereits bekannten Koordinaten sichtbar, aber ohne Link-Overhead.
     const linkedLength = linked.reduce((sum, line) => sum + line.length + 1, 0);
     lines = linkedLength <= PLAYER_LINES_BUDGET
       ? linked
@@ -142,7 +149,7 @@ export function buildPlayerListEmbeds(args: {
     if (index === chunks.length - 1) {
       embed.setFooter({
         text: args.showCoordinates
-          ? 'Koordinaten aus dem letzten gueltigen ADM-Positionsereignis der aktuellen Sitzung.'
+          ? 'Koordinaten erscheinen erst nach dem ersten gueltigen ADM-Positionsereignis der aktuellen Sitzung.'
           : 'Koordinaten sind deaktiviert.',
       });
     }
