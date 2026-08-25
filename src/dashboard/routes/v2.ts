@@ -30,6 +30,7 @@ import { permissionsRouter } from './v2/permissions';
 import { nitradoRouter } from './v2/nitrado';
 import { admSourceRouter } from './v2/admSource';
 import { economyRouter } from './v2/economy';
+import { economyVirtualAccountControlRouter } from './v2/economyVirtualAccountControl';
 import { economyVirtualAccountsRouter } from './v2/economyVirtualAccounts';
 import { economyLotteryRouter } from './v2/economyLottery';
 import { economyBlackMarketRouter } from './v2/economyBlackMarket';
@@ -95,7 +96,9 @@ v2Router.use('/guilds/:guildId/factions', requireFactionsDashboardAccess, factio
 v2Router.use('/guilds/:guildId/factions', factionApiErrorBoundary);
 
 v2Router.use('/guilds/:guildId/economy-scope', economyScopeRouter);
-v2Router.use('/guilds/:guildId/economy/virtual-accounts', requireEconomyDashboardAccess, requireSafeDashboardEconomyScope, economyVirtualAccountsRouter);
+// Control/Safety-Layer zuerst: neue Multi-Pocket-/Currency-/Discord-Funktionen
+// und die gehaerteten Archive/Payout-Routen muessen Legacy-Routen abfangen.
+v2Router.use('/guilds/:guildId/economy/virtual-accounts', requireEconomyDashboardAccess, requireSafeDashboardEconomyScope, economyVirtualAccountControlRouter, economyVirtualAccountsRouter);
 v2Router.use('/guilds/:guildId/economy/lottery', requireEconomyDashboardAccess, requireSafeDashboardEconomyScope, economyLotteryRouter);
 v2Router.use('/guilds/:guildId/economy/black-market', requireEconomyDashboardAccess, requireSafeDashboardEconomyScope, economyBlackMarketRouter);
 v2Router.use('/guilds/:guildId/economy', requireEconomyDashboardAccess, requireSafeDashboardEconomyScope, economyRouter);
