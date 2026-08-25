@@ -7,12 +7,14 @@ process.env.SESSION_SECRET ||= 'test-session-secret';
 
 import { buildStructuredGoodbyeEmbed, type GoodbyeCleanupSnapshot } from '../../src/modules/welcome/goodbyeStatus';
 
+const joinedAt = new Date('2026-01-10T08:00:00.000Z');
 const leftAt = new Date('2026-08-24T10:15:30.000Z');
 
 function embed(snapshot: GoodbyeCleanupSnapshot | null, cleanupEnabled = true) {
   return buildStructuredGoodbyeEmbed({
     discordName: 'DiscordNick',
     customMessage: 'Auf Wiedersehen!',
+    joinedAt,
     leaveOccurredAt: leftAt,
     cleanupEnabled,
     cleanupSnapshot: snapshot,
@@ -20,16 +22,33 @@ function embed(snapshot: GoodbyeCleanupSnapshot | null, cleanupEnabled = true) {
 }
 
 describe('structured Goodbye status embed', () => {
-  it('always uses the fixed leave timestamp and mandatory identity/status/date/time fields', () => {
+  it('uses the fixed leave timestamp and keeps join date before leave date', () => {
     const json = embed(null, false);
     expect(json.timestamp).toBe(leftAt.toISOString());
     expect(json.fields).toEqual(expect.arrayContaining([
       expect.objectContaining({ name: 'Discord-Name', value: 'DiscordNick' }),
       expect.objectContaining({ name: 'Status', value: 'Server verlassen' }),
-      expect.objectContaining({ name: 'Datum' }),
+      expect.objectContaining({ name: 'Eintrittsdatum' }),
+      expect.objectContaining({ name: 'Austrittsdatum' }),
       expect.objectContaining({ name: 'Uhrzeit', value: expect.stringContaining('Europe/Berlin') }),
     ]));
+    const fieldNames = json.fields?.map(field => field.name) ?? [];
+    expect(fieldNames.indexOf('Eintrittsdatum')).toBeGreaterThanOrEqual(0);
+    expect(fieldNames.indexOf('Austrittsdatum')).toBeGreaterThan(fieldNames.indexOf('Eintrittsdatum'));
+    expect(fieldNames).not.toContain('Datum');
     expect(json.fields?.some(field => field.name.includes('Whitelist'))).toBe(false);
+  });
+
+  it('renders unknown join date fail-closed instead of inventing one', () => {
+    const json = buildStructuredGoodbyeEmbed({
+      discordName: 'DiscordNick',
+      customMessage: '',
+      joinedAt: null,
+      leaveOccurredAt: leftAt,
+      cleanupEnabled: false,
+      cleanupSnapshot: null,
+    }).toJSON();
+    expect(json.fields?.find(field => field.name === 'Eintrittsdatum')?.value).toBe('Unbekannt');
   });
 
   it('renders the Discord mention exactly inside Discord-Name instead of above the embed', () => {
@@ -37,6 +56,7 @@ describe('structured Goodbye status embed', () => {
       discordName: 'DiscordNick',
       discordMention: '<@123456789>',
       customMessage: '',
+      joinedAt,
       leaveOccurredAt: leftAt,
       cleanupEnabled: false,
       cleanupSnapshot: null,

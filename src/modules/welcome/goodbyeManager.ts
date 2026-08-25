@@ -155,6 +155,7 @@ export async function sendConfiguredGoodbye(
   if (!channel || !channel.isTextBased() || channel.isDMBased()) return 'missing_channel';
 
   const identity = await resolveLastKnownGoodbyeIdentity(member);
+  const joinedAt = member.joinedAt ?? null;
   const leaveOccurredAt = context?.leaveOccurredAt ?? new Date();
   const rendered = renderGoodbyeMessage(cfg.message, {
     identity,
@@ -182,7 +183,7 @@ export async function sendConfiguredGoodbye(
       };
     }
   }
-  const membershipEpoch = member.joinedAt?.toISOString()
+  const membershipEpoch = joinedAt?.toISOString()
     ?? context?.cleanupRequestId
     ?? member.user.id;
   const membershipKey = createHash('sha256')
@@ -201,6 +202,7 @@ export async function sendConfiguredGoodbye(
         discordName: identity.displayName,
         guildName: member.guild.name,
         customMessage: finalText,
+        joinedAt,
         leaveOccurredAt,
         cleanupEnabled,
         cleanupSnapshot: cleanupSnapshot as unknown as Prisma.InputJsonObject,
@@ -226,6 +228,7 @@ export async function sendConfiguredGoodbye(
         discordName: identity.displayName,
         discordMention: identity.mention,
         customMessage: finalText,
+        joinedAt,
         leaveOccurredAt,
         cleanupEnabled,
         cleanupSnapshot,
