@@ -30,6 +30,7 @@ export interface GoodbyeCleanupSnapshot {
 
 export interface GoodbyeEmbedData {
   discordName: string;
+  discordMention?: string;
   customMessage: string;
   leaveOccurredAt: Date;
   cleanupEnabled: boolean;
@@ -84,10 +85,18 @@ function formatTime(value: Date): string {
 export function buildStructuredGoodbyeEmbed(data: GoodbyeEmbedData): EmbedBuilder {
   const embed = new EmbedBuilder()
     .setColor(embedColor(data.cleanupEnabled, data.cleanupSnapshot))
-    .setTitle('👋 Bye Bye')
-    .setDescription(safeEmbedField(data.customMessage, 4000))
+    .setTitle('👋 Bye Bye');
+
+  const customMessage = data.customMessage.trim();
+  if (customMessage) embed.setDescription(safeEmbedField(customMessage, 4000));
+
+  embed
     .addFields(
-      { name: 'Discord-Name', value: safeEmbedField(data.discordName, 256), inline: true },
+      {
+        name: 'Discord-Name',
+        value: safeEmbedField(data.discordMention?.trim() || data.discordName, 256),
+        inline: true,
+      },
       { name: 'Status', value: 'Server verlassen', inline: true },
       { name: 'Datum', value: formatDate(data.leaveOccurredAt), inline: true },
       { name: 'Uhrzeit', value: formatTime(data.leaveOccurredAt), inline: true },
@@ -161,7 +170,7 @@ export async function initialGoodbyeCleanupSnapshot(
     ))).sort((a, b) => a.localeCompare(b, 'de-DE'));
     servers.push({
       nitradoConnId: link.nitradoConnId,
-      serverAlias: connection?.alias || link.nitradoConnId,
+      serverAlias: connection?.alias || 'DayZ-Server',
       playerNames: names,
       state: names.length > 0 ? 'PENDING' : 'NOT_LINKED',
     });
@@ -187,6 +196,7 @@ async function editPersistedGoodbye(cleanupRequestId: string): Promise<void> {
   await message.edit({
     embeds: [buildStructuredGoodbyeEmbed({
       discordName: delivery.discordName,
+      discordMention: `<@${delivery.discordId}>`,
       customMessage: delivery.customMessage,
       leaveOccurredAt: delivery.leaveOccurredAt,
       cleanupEnabled: delivery.cleanupEnabled,
@@ -213,7 +223,7 @@ export async function updateGoodbyeCleanupServers(
       });
       server = {
         nitradoConnId: update.nitradoConnId,
-        serverAlias: connection?.alias || update.nitradoConnId,
+        serverAlias: connection?.alias || 'DayZ-Server',
         playerNames: update.playerNames ?? [],
         state: update.state,
       };
@@ -286,6 +296,7 @@ export async function recoverPendingGoodbyeDeliveries(now: Date = new Date()): P
       const message = await textChannel.send({
         embeds: [buildStructuredGoodbyeEmbed({
           discordName: row.discordName,
+          discordMention: `<@${row.discordId}>`,
           customMessage: row.customMessage,
           leaveOccurredAt: row.leaveOccurredAt,
           cleanupEnabled: row.cleanupEnabled,
