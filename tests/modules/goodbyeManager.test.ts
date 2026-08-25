@@ -124,13 +124,15 @@ describe('Goodbye-1 guild-scoped identity and delivery', () => {
     expect(rendered).not.toContain('<@333>');
   });
 
-  it('sends the Discord mention only in the Discord-Name field without enabling a ping', async () => {
+  it('sends the Discord mention only in Discord-Name and keeps Eintrittsdatum before Austrittsdatum', async () => {
     mockFindUnique.mockResolvedValue({
       value: { enabled: true, channelId: '12345678901234567', message: 'Bye {user} {mention}' },
     });
     mockGetMemberProfile.mockResolvedValue({ username: 'StoredUser', nickname: 'StoredNick' });
     const send = jest.fn().mockResolvedValue({ id: 'message-1' });
     const channel = { send };
+    const joinedAt = new Date('2025-04-27T12:00:00.000Z');
+    const leaveOccurredAt = new Date('2026-08-25T20:51:17.000Z');
     const member = {
       guild: {
         id: 'guild-a',
@@ -140,24 +142,37 @@ describe('Goodbye-1 guild-scoped identity and delivery', () => {
       },
       user: { id: 'discord-1', username: 'GatewayName' },
       nickname: 'GatewayNick',
+      joinedAt,
     } as any;
 
-    await expect(sendConfiguredGoodbye(member)).resolves.toBe('sent');
+    await expect(sendConfiguredGoodbye(member, { leaveOccurredAt, cleanupEnabled: false })).resolves.toBe('sent');
     expect(mockGetMemberProfile).toHaveBeenCalledWith('guild-a', 'discord-1');
     expect(send).toHaveBeenCalledTimes(1);
     const payload = send.mock.calls[0][0];
     expect(payload.allowedMentions).toEqual({ parse: [] });
-    expect(payload.embeds[0].toJSON()).toMatchObject({
+    const json = payload.embeds[0].toJSON();
+    expect(json).toMatchObject({
       title: '👋 Bye Bye',
       description: 'Bye StoredNick',
-      fields: expect.arrayContaining([
-        expect.objectContaining({ name: 'Discord-Name', value: '<@discord-1>' }),
-        expect.objectContaining({ name: 'Status', value: 'Server verlassen' }),
-        expect.objectContaining({ name: 'Datum' }),
-        expect.objectContaining({ name: 'Uhrzeit' }),
-      ]),
     });
-    expect(payload.embeds[0].toJSON().description).not.toContain('<@discord-1>');
+    expect(json.fields?.slice(0, 5).map((field: { name: string }) => field.name)).toEqual([
+      'Discord-Name',
+      'Status',
+      'Eintrittsdatum',
+      'Austrittsdatum',
+      'Uhrzeit',
+    ]);
+    expect(json.fields).toEqual(expect.arrayContaining([
+      expect.objectContaining({ name: 'Discord-Name', value: '<@discord-1>' }),
+      expect.objectContaining({ name: 'Status', value: 'Server verlassen' }),
+      expect.objectContaining({ name: 'Eintrittsdatum', value: '27. April 2025' }),
+      expect.objectContaining({ name: 'Austrittsdatum', value: '25. August 2026' }),
+      expect.objectContaining({ name: 'Uhrzeit' }),
+    ]));
+    expect(json.description).not.toContain('<@discord-1>');
+    expect(mockGoodbyeCreate).toHaveBeenCalledWith(expect.objectContaining({
+      data: expect.objectContaining({ joinedAt, leaveOccurredAt }),
+    }));
     expect(mockGoodbyeUpdateMany).toHaveBeenCalledWith(expect.objectContaining({
       data: expect.objectContaining({ messageId: 'message-1', state: 'SENT' }),
     }));
@@ -190,6 +205,8 @@ describe('Goodbye-1 guild-scoped identity and delivery', () => {
     expect(json.fields).toEqual(expect.arrayContaining([
       expect.objectContaining({ name: 'Discord-Name', value: '<@discord-1>' }),
       expect.objectContaining({ name: 'Status', value: 'Server verlassen' }),
+      expect.objectContaining({ name: 'Eintrittsdatum', value: 'Unbekannt' }),
+      expect.objectContaining({ name: 'Austrittsdatum' }),
       expect.objectContaining({ name: 'Whitelist-Status je Gameserver', value: expect.stringContaining('Nicht eindeutig') }),
     ]));
   });
