@@ -22,6 +22,7 @@ import prisma from '../../database/prisma';
 import { logger } from '../../utils/logger';
 import { tryGetDashboardClient } from '../../dashboard/clientRegistry';
 import { emitServerGameplayEvent } from '../../dashboard/socket/emitter';
+import { admBindingFileIdentityPrefix } from '../nitrado/adm/bindingState';
 import { buildGameplayFeedEmbed } from './embedBuilder';
 import {
   BUILD_EVENT_TYPES,
@@ -35,6 +36,12 @@ import {
   playerListStateHash,
   type PlayerListEntry,
 } from './playerListEmbed';
+import {
+  attachCurrentPositions,
+  resolveOnlinePresence,
+  type PlayerPositionEvent,
+  type PlayerPresenceEvent,
+} from './playerListRoster';
 
 const POLL_INTERVAL_MS = 15_000;
 const LEASE_MS = 60_000;
@@ -355,68 +362,70 @@ async function deliverOne(
 }
 
 async function currentPlayerList(config: GameplayFeedConfig): Promise<PlayerListEntry[]> {
-  const sessions = await prisma.playerSession.findMany({
+  // Die Online List ist ein Live-Roster und darf deshalb niemals historische
+  // PlayerSession.status=OPEN-Zeilen als Wahrheit verwenden. Ein Reconnect kann
+  // absichtlich eine alte Session OPEN lassen; fuer "online" entscheidet nur
+  // das neueste CONNECT/DISCONNECT der aktuell laufenden ADM-Datei.
+  const binding = await prisma.nitradoAdmBindingState.findUnique({
+    where: {
+      guildId_nitradoConnId: {
+        guildId: config.guildId,
+        nitradoConnId: config.nitradoConnId,
+      },
+    },
+    select: { bindingVersion: true },
+  });
+  const namespacePrefix = admBindingFileIdentityPrefix(binding?.bindingVersion ?? 0);
+  const latestCursor = await prisma.admSourceCursor.findFirst({
     where: {
       guildId: config.guildId,
       nitradoConnId: config.nitradoConnId,
-      status: 'OPEN',
+      ...(namespacePrefix ? { fileIdentity: { startsWith: namespacePrefix } } : {}),
     },
-    select: { gameId: true, playerName: true, connectedAt: true, updatedAt: true },
-    orderBy: [{ updatedAt: 'desc' }, { gameId: 'asc' }],
+    orderBy: [{ lastModifiedAt: 'desc' }, { fileName: 'desc' }],
+    select: { fileIdentity: true },
   });
-  const latestSession = new Map<string, {
-    gameId: string;
-    playerName: string | null;
-    connectedAt: Date | null;
-  }>();
-  for (const session of sessions) {
-    if (!latestSession.has(session.gameId)) latestSession.set(session.gameId, session);
-  }
-  const gameIds = [...latestSession.keys()];
-  const positions = gameIds.length === 0 ? [] : await prisma.$queryRaw<Array<{
-    actorGameId: string | null;
-    actorPosition: string | null;
-    occurredAt: Date | null;
-    createdAt: Date;
-  }>>(Prisma.sql`
-    SELECT DISTINCT ON ("actorGameId")
-           "actorGameId", "actorPosition", "occurredAt", "createdAt"
-      FROM "AdmEvent"
-     WHERE "guildId"=${config.guildId}
-       AND "nitradoConnId"=${config.nitradoConnId}
-       AND "eventType"='PLAYER_POSITION'::"AdmEventType"
-       AND "actorGameId" IN (${Prisma.join(gameIds)})
-     ORDER BY "actorGameId", "createdAt" DESC, "id" DESC
-  `);
-  const latestPosition = new Map<string, {
-    position: string | null;
-    occurredAt: Date | null;
-    createdAt: Date;
-  }>();
-  for (const position of positions) {
-    if (position.actorGameId && !latestPosition.has(position.actorGameId)) {
-      latestPosition.set(position.actorGameId, {
-        position: position.actorPosition,
-        occurredAt: position.occurredAt,
-        createdAt: position.createdAt,
-      });
-    }
-  }
-  return [...latestSession.values()].map(session => {
-    const known = latestPosition.get(session.gameId);
-    const positionAt = known?.occurredAt ?? known?.createdAt ?? null;
-    // Ein neu verbundener Spieler darf niemals eine Position aus seiner vorigen
-    // Sitzung erben. Ohne aufgeloesten Connect-Zeitpunkt bleibt die Position
-    // deshalb fail-closed unbekannt, bis sichere aktuelle Evidenz vorliegt.
-    const position = session.connectedAt && positionAt && positionAt.getTime() >= session.connectedAt.getTime()
-      ? known?.position ?? null
-      : null;
-    return {
-      gameId: session.gameId,
-      playerName: session.playerName?.trim() || 'Unbekannt',
-      position,
-    };
-  });
+  if (!latestCursor) return [];
+
+  const presenceEvents = await prisma.admEvent.findMany({
+    where: {
+      guildId: config.guildId,
+      nitradoConnId: config.nitradoConnId,
+      sourceFile: latestCursor.fileIdentity,
+      eventType: { in: [AdmEventType.PLAYER_CONNECTED, AdmEventType.PLAYER_DISCONNECTED] },
+      actorGameId: { not: null },
+    },
+    select: {
+      id: true,
+      eventType: true,
+      actorGameId: true,
+      actorName: true,
+      sourceByteStart: true,
+    },
+    orderBy: [{ sourceByteStart: 'desc' }, { id: 'desc' }],
+  }) as PlayerPresenceEvent[];
+
+  const online = resolveOnlinePresence(presenceEvents);
+  if (online.length === 0) return [];
+
+  const positions = await prisma.admEvent.findMany({
+    where: {
+      guildId: config.guildId,
+      nitradoConnId: config.nitradoConnId,
+      sourceFile: latestCursor.fileIdentity,
+      eventType: AdmEventType.PLAYER_POSITION,
+      actorGameId: { in: online.map(player => player.gameId) },
+    },
+    select: {
+      id: true,
+      actorGameId: true,
+      actorPosition: true,
+      sourceByteStart: true,
+    },
+    orderBy: [{ sourceByteStart: 'desc' }, { id: 'desc' }],
+  }) as PlayerPositionEvent[];
+
+  return attachCurrentPositions(online, positions);
 }
 
 async function processPlayerListConfig(config: GameplayFeedConfig, serverAlias: string): Promise<void> {
