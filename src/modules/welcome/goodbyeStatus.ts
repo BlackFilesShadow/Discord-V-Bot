@@ -32,6 +32,8 @@ export interface GoodbyeEmbedData {
   discordName: string;
   discordMention?: string;
   customMessage: string;
+  /** Discord-Beitrittszeitpunkt dieser konkreten Guild-Mitgliedschaft. */
+  joinedAt?: Date | null;
   leaveOccurredAt: Date;
   cleanupEnabled: boolean;
   cleanupSnapshot: GoodbyeCleanupSnapshot | null;
@@ -98,7 +100,12 @@ export function buildStructuredGoodbyeEmbed(data: GoodbyeEmbedData): EmbedBuilde
         inline: true,
       },
       { name: 'Status', value: 'Server verlassen', inline: true },
-      { name: 'Datum', value: formatDate(data.leaveOccurredAt), inline: true },
+      {
+        name: 'Eintrittsdatum',
+        value: data.joinedAt ? formatDate(data.joinedAt) : 'Unbekannt',
+        inline: true,
+      },
+      { name: 'Austrittsdatum', value: formatDate(data.leaveOccurredAt), inline: true },
       { name: 'Uhrzeit', value: formatTime(data.leaveOccurredAt), inline: true },
     )
     .setTimestamp(data.leaveOccurredAt);
@@ -198,6 +205,7 @@ async function editPersistedGoodbye(cleanupRequestId: string): Promise<void> {
       discordName: delivery.discordName,
       discordMention: `<@${delivery.discordId}>`,
       customMessage: delivery.customMessage,
+      joinedAt: delivery.joinedAt,
       leaveOccurredAt: delivery.leaveOccurredAt,
       cleanupEnabled: delivery.cleanupEnabled,
       cleanupSnapshot: readSnapshot(delivery.cleanupSnapshot),
@@ -298,6 +306,7 @@ export async function recoverPendingGoodbyeDeliveries(now: Date = new Date()): P
           discordName: row.discordName,
           discordMention: `<@${row.discordId}>`,
           customMessage: row.customMessage,
+          joinedAt: row.joinedAt,
           leaveOccurredAt: row.leaveOccurredAt,
           cleanupEnabled: row.cleanupEnabled,
           cleanupSnapshot: readSnapshot(row.cleanupSnapshot),
