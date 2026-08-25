@@ -63,12 +63,30 @@ function personWithPosition(name: string, position: string | null): string {
   return pos ? `${safe}\nPos: ${pos}` : safe;
 }
 
-function addServer(embed: EmbedBuilder, serverAlias: string): void {
+function eventTimeField(occurredAt: Date | null): string | null {
+  if (!occurredAt || Number.isNaN(occurredAt.getTime())) return null;
+  return `<t:${Math.floor(occurredAt.getTime() / 1000)}:F>`;
+}
+
+function addServer(
+  embed: EmbedBuilder,
+  serverAlias: string,
+  occurredAt: Date | null = null,
+  showEventTime = false,
+): void {
   embed.addFields({
     name: 'Server',
     value: safeEmbedField(serverAlias.trim() || 'DayZ-Server', 256),
     inline: false,
   });
+  if (showEventTime) {
+    const timestamp = eventTimeField(occurredAt);
+    if (timestamp) {
+      // Bewusst direkt nach dem Server-Alias und als eigene Zeile. So steht die
+      // Ereigniszeit weder ueber noch neben dem Servernamen.
+      embed.addFields({ name: 'Ereigniszeit', value: timestamp, inline: false });
+    }
+  }
 }
 
 function humanizePlacementClass(value: string): string {
@@ -190,6 +208,8 @@ export function buildGameplayFeedEmbed(
   }
   const pos = positionField(view.actorPosition);
   if (pos) embed.addFields({ name: 'Position', value: pos, inline: false });
-  addServer(embed, serverAlias);
+  // Der Death-/Killfeed bleibt bewusst ohne Ereigniszeit. Alle anderen
+  // ereignisbasierten Nitrado-Gameplay-Feeds zeigen sie direkt unter dem Alias.
+  addServer(embed, serverAlias, view.occurredAt, true);
   return embed;
 }
