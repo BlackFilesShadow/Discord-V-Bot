@@ -8,7 +8,7 @@ describe('Economy runtime scope unblock', () => {
   const scope = read('src/modules/economy/scopeMigration.ts');
   const slot = read('dashboard-ui/src/pages/ServerSlot.tsx');
   const resolver = read('dashboard-ui/src/components/economy/EconomyScopePanel.tsx');
-  const virtualAccounts = read('dashboard-ui/src/components/economy/VirtualAccountsPanel.tsx');
+  const virtualAccounts = read('dashboard-ui/src/components/economy/VirtualAccountsControlPanel.tsx');
   const lottery = read('dashboard-ui/src/components/economy/LotteryPanel.tsx');
   const market = read('dashboard-ui/src/components/economy/BlackMarketPanel.tsx');
 
