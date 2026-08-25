@@ -40,7 +40,18 @@ interface ManagerPanelRow {
   channelId: string;
   messageId: string | null;
   updatedByDiscordId: string;
+  previousEveryoneView: number;
 }
+
+interface ManagerAccessRow {
+  channelId: string;
+  userDiscordId: string;
+  previousViewChannel: number;
+  previousSendMessages: number;
+  previousReadHistory: number;
+}
+
+type TriState = -1 | 0 | 1;
 
 function rawDb(): VirtualAccountRawDb {
   return prisma as unknown as VirtualAccountRawDb;
@@ -124,13 +135,24 @@ async function readProjection(guildId: GuildId, connId: NitradoConnId, accountId
 }
 
 async function writeProjection(args: {
-  guildId: GuildId; connId: NitradoConnId; accountId: string; channelId: string | null;
-  messageId: string | null; archiveThreadId: string | null; error?: string | null;
-}) {
+  guildId: GuildId;
+  connId: NitradoConnId;
+  accountId: string;
+  channelId: string | null;
+  messageId: string | null;
+  archiveThreadId: string | null;
+  error?: string | null;
+}): Promise<void> {
   await rawDb().$executeRawUnsafe(
     'INSERT INTO "EconomyVirtualAccountProjection" ("accountId", "guildId", "nitradoConnId", "channelId", "messageId", "archiveThreadId", "lastSyncedAt", "lastSyncError", "createdAt", "updatedAt") VALUES ($1,$2,$3,$4,$5,$6,$7,$8,CURRENT_TIMESTAMP,CURRENT_TIMESTAMP) ON CONFLICT ("accountId") DO UPDATE SET "channelId"=EXCLUDED."channelId", "messageId"=EXCLUDED."messageId", "archiveThreadId"=EXCLUDED."archiveThreadId", "lastSyncedAt"=EXCLUDED."lastSyncedAt", "lastSyncError"=EXCLUDED."lastSyncError", "updatedAt"=CURRENT_TIMESTAMP',
-    args.accountId, String(args.guildId), String(args.connId), args.channelId, args.messageId, args.archiveThreadId,
-    args.error ? null : new Date(), args.error ? args.error.slice(0, 500) : null,
+    args.accountId,
+    String(args.guildId),
+    String(args.connId),
+    args.channelId,
+    args.messageId,
+    args.archiveThreadId,
+    args.error ? null : new Date(),
+    args.error ? args.error.slice(0, 500) : null,
   );
 }
 
@@ -139,35 +161,67 @@ function threadName(name: string): string {
   return `Archiv · ${clean}`.slice(0, 100) || 'Archiv · Virtuelles Konto';
 }
 
-/**
- * Discord is a projection only. Money has already committed before this runs.
- * A Discord failure is recorded and may be retried without changing balances.
- */
+async function retireProjection(client: Client, projection: ProjectionRow | null): Promise<void> {
+  if (!projection) return;
+  if (projection.messageId && projection.channelId) {
+    const channel = await client.channels.fetch(projection.channelId).catch(() => null);
+    if (channel?.isTextBased() && 'messages' in channel) {
+      const message = await (channel as TextChannel).messages.fetch(projection.messageId).catch(() => null);
+      await message?.delete().catch(() => undefined);
+    }
+  }
+  if (projection.archiveThreadId) {
+    const thread = await client.channels.fetch(projection.archiveThreadId).catch(() => null);
+    if (thread?.isThread()) {
+      await thread.setArchived(true, 'V-Bot Kontoprojektion verschoben/deaktiviert').catch(() => undefined);
+    }
+  }
+}
+
+async function requireProjectionPermissions(channel: TextChannel): Promise<void> {
+  const guild = channel.guild;
+  const me = guild.members.me ?? await guild.members.fetchMe().catch(() => null);
+  if (!me) throw new Error('V-Bot-Mitglied konnte in der Guild nicht aufgelöst werden.');
+  const perms = channel.permissionsFor(me);
+  const required = [
+    PermissionFlagsBits.ViewChannel,
+    PermissionFlagsBits.SendMessages,
+    PermissionFlagsBits.EmbedLinks,
+    PermissionFlagsBits.ReadMessageHistory,
+    PermissionFlagsBits.CreatePublicThreads,
+    PermissionFlagsBits.SendMessagesInThreads,
+  ];
+  if (!perms?.has(required)) {
+    throw new Error('V-Bot benötigt im Konto-Channel Lesen, Schreiben, Embed-Links sowie öffentliche Threads inkl. Thread-Nachrichten.');
+  }
+}
+
+/** Discord is only a projection. Balance changes are committed before this runs. */
 export async function syncVirtualAccountProjection(client: Client, guildId: GuildId, connId: NitradoConnId, accountId: string): Promise<ProjectionRow | null> {
   const account = await getVirtualAccountById(guildId, connId, accountId);
   if (!account) throw new Error('Virtuelles Konto nicht gefunden.');
   const metadata = await getVirtualAccountMetadata(guildId, connId, accountId);
+  const previous = await readProjection(guildId, connId, accountId);
+
   if (!metadata?.channelId) {
+    await retireProjection(client, previous);
     await writeProjection({ guildId, connId, accountId, channelId: null, messageId: null, archiveThreadId: null });
     return null;
   }
+
   const guild = client.guilds.cache.get(String(guildId));
   if (!guild) throw new Error('Bot ist nicht in der Discord-Guild.');
   const channel = await guild.channels.fetch(metadata.channelId).catch(() => null);
-  if (!channel || channel.type !== ChannelType.GuildText) throw new Error('Konto-Integration benoetigt einen normalen Discord-Textkanal.');
+  if (!channel || channel.type !== ChannelType.GuildText) throw new Error('Konto-Integration benötigt einen normalen Discord-Textkanal.');
+  await requireProjectionPermissions(channel);
 
-  const previous = await readProjection(guildId, connId, accountId);
   let message = previous?.channelId === channel.id && previous.messageId
     ? await channel.messages.fetch(previous.messageId).catch(() => null)
     : null;
 
   try {
-    if (previous?.channelId && previous.channelId !== channel.id && previous.messageId) {
-      const oldChannel = await guild.channels.fetch(previous.channelId).catch(() => null);
-      if (oldChannel?.isTextBased() && 'messages' in oldChannel) {
-        const oldMessage = await (oldChannel as TextChannel).messages.fetch(previous.messageId).catch(() => null);
-        await oldMessage?.delete().catch(() => undefined);
-      }
+    if (previous?.channelId && previous.channelId !== channel.id) {
+      await retireProjection(client, previous);
       message = null;
     }
 
@@ -185,12 +239,12 @@ export async function syncVirtualAccountProjection(client: Client, guildId: Guil
     }
 
     let archiveThreadId = previous?.channelId === channel.id ? previous.archiveThreadId : null;
-    let archiveThread = archiveThreadId ? await guild.channels.fetch(archiveThreadId).catch(() => null) : null;
-    if (!archiveThread || !archiveThread.isThread()) {
+    const existingThread = archiveThreadId ? await guild.channels.fetch(archiveThreadId).catch(() => null) : null;
+    if (!existingThread || !existingThread.isThread()) {
       const thread = await message.startThread({
         name: threadName(account.name),
         autoArchiveDuration: ThreadAutoArchiveDuration.OneWeek,
-        reason: 'V-Bot Transaktionsarchiv fuer virtuelles Konto',
+        reason: 'V-Bot Transaktionsarchiv für virtuelles Konto',
       });
       archiveThreadId = thread.id;
       await thread.send({
@@ -201,14 +255,21 @@ export async function syncVirtualAccountProjection(client: Client, guildId: Guil
           .setTimestamp()],
         allowedMentions: { parse: [] },
       });
+    } else if (existingThread.archived) {
+      await existingThread.setArchived(false, 'V-Bot Transaktionsarchiv reaktiviert').catch(() => undefined);
     }
 
     await writeProjection({ guildId, connId, accountId, channelId: channel.id, messageId: message.id, archiveThreadId });
     return await readProjection(guildId, connId, accountId);
   } catch (error) {
     await writeProjection({
-      guildId, connId, accountId, channelId: channel.id, messageId: message?.id ?? previous?.messageId ?? null,
-      archiveThreadId: previous?.archiveThreadId ?? null, error: (error as Error).message,
+      guildId,
+      connId,
+      accountId,
+      channelId: channel.id,
+      messageId: message?.id ?? previous?.messageId ?? null,
+      archiveThreadId: previous?.archiveThreadId ?? null,
+      error: (error as Error).message,
     });
     throw error;
   }
@@ -227,13 +288,21 @@ export async function postVirtualAccountArchive(client: Client, args: {
   reason?: string | null;
 }): Promise<void> {
   let projection = await readProjection(args.guildId, args.nitradoConnId, args.accountId);
-  if (!projection?.archiveThreadId) projection = await syncVirtualAccountProjection(client, args.guildId, args.nitradoConnId, args.accountId);
-  if (!projection?.archiveThreadId) throw new Error('Transaktionsarchiv ist nicht konfiguriert.');
+  let thread = projection?.archiveThreadId
+    ? await client.channels.fetch(projection.archiveThreadId).catch(() => null)
+    : null;
+  if (!thread || !thread.isThread()) {
+    projection = await syncVirtualAccountProjection(client, args.guildId, args.nitradoConnId, args.accountId);
+    thread = projection?.archiveThreadId
+      ? await client.channels.fetch(projection.archiveThreadId).catch(() => null)
+      : null;
+  }
+  if (!thread || !thread.isThread()) throw new Error('Transaktionsarchiv ist nicht konfiguriert oder nicht erreichbar.');
+  if (thread.archived) await thread.setArchived(false, 'V-Bot Transaktionsarchiv für Buchung reaktiviert').catch(() => undefined);
+
   const account = await getVirtualAccountById(args.guildId, args.nitradoConnId, args.accountId);
   const finance = await ensureVirtualAccountFinance(args.guildId, args.nitradoConnId, args.accountId);
   if (!account) throw new Error('Virtuelles Konto nicht gefunden.');
-  const thread = await client.channels.fetch(projection.archiveThreadId).catch(() => null);
-  if (!thread || !thread.isThread()) throw new Error('Transaktionsarchiv-Thread ist nicht erreichbar.');
   const fields = [
     { name: 'Konto', value: safeEmbedField(`${finance.accountEmoji} ${account.name}`, 256), inline: false },
     ...(args.actorDiscordId ? [{ name: 'User / Ausgeführt von', value: `<@${args.actorDiscordId}>`, inline: true }] : []),
@@ -275,80 +344,194 @@ function managerPanelButtons(connId: NitradoConnId) {
 }
 
 async function readManagerPanel(guildId: GuildId, connId: NitradoConnId): Promise<ManagerPanelRow | null> {
-  const rows = await rawDb().$queryRawUnsafe<ManagerPanelRow[]>('SELECT "id", "guildId", "nitradoConnId", "channelId", "messageId", "updatedByDiscordId" FROM "EconomyVirtualManagerPanel" WHERE "guildId"=$1 AND "nitradoConnId"=$2 LIMIT 1', String(guildId), String(connId));
+  const rows = await rawDb().$queryRawUnsafe<ManagerPanelRow[]>(
+    'SELECT "id", "guildId", "nitradoConnId", "channelId", "messageId", "updatedByDiscordId", "previousEveryoneView" FROM "EconomyVirtualManagerPanel" WHERE "guildId"=$1 AND "nitradoConnId"=$2 LIMIT 1',
+    String(guildId), String(connId),
+  );
   return rows[0] ?? null;
 }
 
+async function readManagerAccess(guildId: GuildId, connId: NitradoConnId): Promise<ManagerAccessRow[]> {
+  return rawDb().$queryRawUnsafe<ManagerAccessRow[]>(
+    'SELECT "channelId", "userDiscordId", "previousViewChannel", "previousSendMessages", "previousReadHistory" FROM "EconomyVirtualManagerPanelAccess" WHERE "guildId"=$1 AND "nitradoConnId"=$2',
+    String(guildId), String(connId),
+  );
+}
+
+function stateOf(overwrite: { allow: { has(flag: bigint): boolean }; deny: { has(flag: bigint): boolean } } | undefined, flag: bigint): TriState {
+  if (!overwrite) return 0;
+  if (overwrite.allow.has(flag)) return 1;
+  if (overwrite.deny.has(flag)) return -1;
+  return 0;
+}
+
+function permissionValue(state: number): boolean | null {
+  if (state === 1) return true;
+  if (state === -1) return false;
+  return null;
+}
+
+async function restoreTrackedManagerAccess(channel: TextChannel, row: ManagerAccessRow, reason: string): Promise<void> {
+  await channel.permissionOverwrites.edit(row.userDiscordId, {
+    ViewChannel: permissionValue(row.previousViewChannel),
+    SendMessages: permissionValue(row.previousSendMessages),
+    ReadMessageHistory: permissionValue(row.previousReadHistory),
+  }, { reason }).catch(() => undefined);
+}
+
+async function restorePanelChannel(client: Client, panel: ManagerPanelRow, tracked: ManagerAccessRow[]): Promise<void> {
+  const channel = await client.channels.fetch(panel.channelId).catch(() => null);
+  if (!channel || channel.type !== ChannelType.GuildText) return;
+  for (const row of tracked.filter(item => item.channelId === channel.id)) {
+    await restoreTrackedManagerAccess(channel, row, 'V-Bot Kontoverwalter-Zugriff zurückgesetzt');
+  }
+  await channel.permissionOverwrites.edit(channel.guild.roles.everyone.id, {
+    ViewChannel: permissionValue(panel.previousEveryoneView),
+  }, { reason: 'V-Bot Kontoverwalter-Kanal zurückgesetzt' }).catch(() => undefined);
+  if (panel.messageId) {
+    const message = await channel.messages.fetch(panel.messageId).catch(() => null);
+    await message?.delete().catch(() => undefined);
+  }
+}
+
+async function requireManagerPanelPermissions(channel: TextChannel): Promise<void> {
+  const guild = channel.guild;
+  const me = guild.members.me ?? await guild.members.fetchMe().catch(() => null);
+  if (!me) throw new Error('V-Bot-Mitglied konnte in der Guild nicht aufgelöst werden.');
+  const perms = channel.permissionsFor(me);
+  const required = [
+    PermissionFlagsBits.ViewChannel,
+    PermissionFlagsBits.SendMessages,
+    PermissionFlagsBits.EmbedLinks,
+    PermissionFlagsBits.ReadMessageHistory,
+    PermissionFlagsBits.ManageChannels,
+  ];
+  if (!perms?.has(required)) {
+    throw new Error('V-Bot benötigt im Management-Channel Lesen, Schreiben, Embed-Links und „Kanäle verwalten“.');
+  }
+}
+
 /**
- * Applies only overwrites tracked by V-Bot. Manual user overwrites are never
- * mass-deleted. @everyone is denied ViewChannel because this channel is the
- * manager surface; guild owner/Administrator still retain Discord-level access.
+ * Only ViewChannel/SendMessages/ReadMessageHistory are owned by V-Bot for
+ * manager users. Their previous tri-state is persisted and restored exactly.
  */
 export async function configureVirtualManagerPanel(client: Client, args: {
-  guildId: GuildId; nitradoConnId: NitradoConnId; channelId: string; updatedByDiscordId: UserDiscordId;
+  guildId: GuildId;
+  nitradoConnId: NitradoConnId;
+  channelId: string;
+  updatedByDiscordId: UserDiscordId;
 }): Promise<ManagerPanelRow> {
   const guild = client.guilds.cache.get(String(args.guildId));
   if (!guild) throw new Error('Bot ist nicht in der Discord-Guild.');
-  const channel = await guild.channels.fetch(args.channelId).catch(() => null);
-  if (!channel || channel.type !== ChannelType.GuildText) throw new Error('Kontoverwaltung benoetigt einen normalen Discord-Textkanal.');
-  if (!channel.permissionsFor(guild.members.me!).has(PermissionFlagsBits.ManageChannels)) throw new Error('V-Bot benoetigt „Kanäle verwalten“ fuer die managerbasierte Kanal-Integration.');
+  const fetched = await guild.channels.fetch(args.channelId).catch(() => null);
+  if (!fetched || fetched.type !== ChannelType.GuildText) throw new Error('Kontoverwaltung benötigt einen normalen Discord-Textkanal.');
+  const channel = fetched as TextChannel;
+  await requireManagerPanelPermissions(channel);
 
   const previous = await readManagerPanel(args.guildId, args.nitradoConnId);
-  const tracked = await rawDb().$queryRawUnsafe<Array<{ channelId: string; userDiscordId: string }>>(
-    'SELECT "channelId", "userDiscordId" FROM "EconomyVirtualManagerPanelAccess" WHERE "guildId"=$1 AND "nitradoConnId"=$2', String(args.guildId), String(args.nitradoConnId),
-  );
+  let tracked = await readManagerAccess(args.guildId, args.nitradoConnId);
+  let previousEveryoneView = previous?.channelId === channel.id
+    ? previous.previousEveryoneView
+    : stateOf(channel.permissionOverwrites.cache.get(guild.roles.everyone.id), PermissionFlagsBits.ViewChannel);
+
   if (previous?.channelId && previous.channelId !== channel.id) {
-    const oldChannel = await guild.channels.fetch(previous.channelId).catch(() => null);
-    if (oldChannel?.type === ChannelType.GuildText) {
-      for (const row of tracked.filter(item => item.channelId === oldChannel.id)) {
-        await oldChannel.permissionOverwrites.delete(row.userDiscordId, 'V-Bot Kontoverwalter-Zugriff entfernt').catch(() => undefined);
-      }
-    }
-    await rawDb().$executeRawUnsafe('DELETE FROM "EconomyVirtualManagerPanelAccess" WHERE "guildId"=$1 AND "nitradoConnId"=$2', String(args.guildId), String(args.nitradoConnId));
+    await restorePanelChannel(client, previous, tracked);
+    await rawDb().$executeRawUnsafe(
+      'DELETE FROM "EconomyVirtualManagerPanelAccess" WHERE "guildId"=$1 AND "nitradoConnId"=$2',
+      String(args.guildId), String(args.nitradoConnId),
+    );
+    tracked = [];
   }
 
   await channel.permissionOverwrites.edit(guild.roles.everyone.id, { ViewChannel: false }, { reason: 'V-Bot Kontoverwalter-Kanal' });
+
   const managers = await rawDb().$queryRawUnsafe<Array<{ userDiscordId: string }>>(
-    'SELECT DISTINCT "userDiscordId" FROM "EconomyVirtualAccountManager" WHERE "guildId"=$1 AND "nitradoConnId"=$2', String(args.guildId), String(args.nitradoConnId),
+    'SELECT DISTINCT "userDiscordId" FROM "EconomyVirtualAccountManager" WHERE "guildId"=$1 AND "nitradoConnId"=$2',
+    String(args.guildId), String(args.nitradoConnId),
   );
   const desired = new Set(managers.map(row => row.userDiscordId));
-  const currentTracked = previous?.channelId === channel.id ? tracked : [];
-  for (const row of currentTracked) {
+  const trackedMap = new Map(tracked.filter(item => item.channelId === channel.id).map(item => [item.userDiscordId, item]));
+
+  for (const row of trackedMap.values()) {
     if (!desired.has(row.userDiscordId)) {
-      await channel.permissionOverwrites.delete(row.userDiscordId, 'V-Bot Kontoverwalter entfernt').catch(() => undefined);
-      await rawDb().$executeRawUnsafe('DELETE FROM "EconomyVirtualManagerPanelAccess" WHERE "guildId"=$1 AND "nitradoConnId"=$2 AND "userDiscordId"=$3', String(args.guildId), String(args.nitradoConnId), row.userDiscordId);
+      await restoreTrackedManagerAccess(channel, row, 'V-Bot Kontoverwalter entfernt');
+      await rawDb().$executeRawUnsafe(
+        'DELETE FROM "EconomyVirtualManagerPanelAccess" WHERE "guildId"=$1 AND "nitradoConnId"=$2 AND "userDiscordId"=$3',
+        String(args.guildId), String(args.nitradoConnId), row.userDiscordId,
+      );
     }
   }
+
   for (const user of desired) {
-    const member = await guild.members.fetch(user).catch(() => null);
+    const member = guild.members.cache.get(user) ?? await guild.members.fetch(user).catch(() => null);
     if (!member || member.user.bot) continue;
+    if (!trackedMap.has(user)) {
+      const overwrite = channel.permissionOverwrites.cache.get(user);
+      const beforeView = stateOf(overwrite, PermissionFlagsBits.ViewChannel);
+      const beforeSend = stateOf(overwrite, PermissionFlagsBits.SendMessages);
+      const beforeHistory = stateOf(overwrite, PermissionFlagsBits.ReadMessageHistory);
+      await rawDb().$executeRawUnsafe(
+        'INSERT INTO "EconomyVirtualManagerPanelAccess" ("guildId", "nitradoConnId", "channelId", "userDiscordId", "previousViewChannel", "previousSendMessages", "previousReadHistory", "createdAt") VALUES ($1,$2,$3,$4,$5,$6,$7,CURRENT_TIMESTAMP) ON CONFLICT ("guildId", "nitradoConnId", "userDiscordId") DO NOTHING',
+        String(args.guildId), String(args.nitradoConnId), channel.id, user, beforeView, beforeSend, beforeHistory,
+      );
+    }
     await channel.permissionOverwrites.edit(user, {
       ViewChannel: true,
       SendMessages: true,
       ReadMessageHistory: true,
     }, { reason: 'V-Bot Kontoverwalter' });
-    await rawDb().$executeRawUnsafe(
-      'INSERT INTO "EconomyVirtualManagerPanelAccess" ("guildId", "nitradoConnId", "channelId", "userDiscordId", "createdAt") VALUES ($1,$2,$3,$4,CURRENT_TIMESTAMP) ON CONFLICT ("guildId", "nitradoConnId", "userDiscordId") DO UPDATE SET "channelId"=EXCLUDED."channelId"',
-      String(args.guildId), String(args.nitradoConnId), channel.id, user,
-    );
   }
 
-  let message = previous?.channelId === channel.id && previous.messageId ? await channel.messages.fetch(previous.messageId).catch(() => null) : null;
-  if (message) await message.edit({ embeds: [managerPanelEmbed()], components: managerPanelButtons(args.nitradoConnId), allowedMentions: { parse: [] } });
-  else message = await channel.send({ embeds: [managerPanelEmbed()], components: managerPanelButtons(args.nitradoConnId), allowedMentions: { parse: [] } });
+  let message = previous?.channelId === channel.id && previous.messageId
+    ? await channel.messages.fetch(previous.messageId).catch(() => null)
+    : null;
+  if (message) {
+    await message.edit({ embeds: [managerPanelEmbed()], components: managerPanelButtons(args.nitradoConnId), allowedMentions: { parse: [] } });
+  } else {
+    message = await channel.send({ embeds: [managerPanelEmbed()], components: managerPanelButtons(args.nitradoConnId), allowedMentions: { parse: [] } });
+  }
 
   const id = previous?.id ?? randomUUID();
   await rawDb().$executeRawUnsafe(
-    'INSERT INTO "EconomyVirtualManagerPanel" ("id", "guildId", "nitradoConnId", "channelId", "messageId", "updatedByDiscordId", "createdAt", "updatedAt") VALUES ($1,$2,$3,$4,$5,$6,CURRENT_TIMESTAMP,CURRENT_TIMESTAMP) ON CONFLICT ("guildId", "nitradoConnId") DO UPDATE SET "channelId"=EXCLUDED."channelId", "messageId"=EXCLUDED."messageId", "updatedByDiscordId"=EXCLUDED."updatedByDiscordId", "updatedAt"=CURRENT_TIMESTAMP',
-    id, String(args.guildId), String(args.nitradoConnId), channel.id, message.id, String(args.updatedByDiscordId),
+    'INSERT INTO "EconomyVirtualManagerPanel" ("id", "guildId", "nitradoConnId", "channelId", "messageId", "updatedByDiscordId", "previousEveryoneView", "createdAt", "updatedAt") VALUES ($1,$2,$3,$4,$5,$6,$7,CURRENT_TIMESTAMP,CURRENT_TIMESTAMP) ON CONFLICT ("guildId", "nitradoConnId") DO UPDATE SET "channelId"=EXCLUDED."channelId", "messageId"=EXCLUDED."messageId", "updatedByDiscordId"=EXCLUDED."updatedByDiscordId", "previousEveryoneView"=EXCLUDED."previousEveryoneView", "updatedAt"=CURRENT_TIMESTAMP',
+    id,
+    String(args.guildId),
+    String(args.nitradoConnId),
+    channel.id,
+    message.id,
+    String(args.updatedByDiscordId),
+    previousEveryoneView,
   );
   return (await readManagerPanel(args.guildId, args.nitradoConnId))!;
+}
+
+export async function disableVirtualManagerPanel(client: Client, guildId: GuildId, connId: NitradoConnId): Promise<void> {
+  const panel = await readManagerPanel(guildId, connId);
+  if (!panel) return;
+  const tracked = await readManagerAccess(guildId, connId);
+  await restorePanelChannel(client, panel, tracked);
+  await prisma.$transaction(async tx => {
+    const raw = tx as unknown as VirtualAccountRawDb;
+    await raw.$executeRawUnsafe(
+      'DELETE FROM "EconomyVirtualManagerPanelAccess" WHERE "guildId"=$1 AND "nitradoConnId"=$2',
+      String(guildId), String(connId),
+    );
+    await raw.$executeRawUnsafe(
+      'DELETE FROM "EconomyVirtualManagerPanel" WHERE "guildId"=$1 AND "nitradoConnId"=$2',
+      String(guildId), String(connId),
+    );
+  });
 }
 
 export async function refreshConfiguredVirtualManagerPanel(client: Client, guildId: GuildId, connId: NitradoConnId, updatedByDiscordId: UserDiscordId): Promise<void> {
   const panel = await readManagerPanel(guildId, connId);
   if (!panel) return;
-  await configureVirtualManagerPanel(client, { guildId, nitradoConnId: connId, channelId: panel.channelId, updatedByDiscordId });
+  await configureVirtualManagerPanel(client, {
+    guildId,
+    nitradoConnId: connId,
+    channelId: panel.channelId,
+    updatedByDiscordId,
+  });
 }
 
 export async function getVirtualManagerPanel(guildId: GuildId, connId: NitradoConnId): Promise<ManagerPanelRow | null> {
