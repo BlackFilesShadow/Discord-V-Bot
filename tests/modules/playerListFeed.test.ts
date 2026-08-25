@@ -12,7 +12,7 @@ function embedTextLength(json: ReturnType<ReturnType<typeof buildPlayerListEmbed
   total += json.title?.length ?? 0;
   total += json.description?.length ?? 0;
   total += json.author?.name?.length ?? 0;
-  total += json.footer?.text?.length ?? 0;
+  total += json.footer?.text ?? '' ? json.footer?.text?.length ?? 0 : 0;
   for (const field of json.fields ?? []) total += field.name.length + field.value.length;
   return total;
 }
@@ -34,7 +34,7 @@ describe('Online List embed and change detection', () => {
     ]));
   });
 
-  it('keeps a single player visible with and without a known coordinate', () => {
+  it('keeps a newly connected player visible without publishing a transient unknown position', () => {
     const without = buildPlayerListEmbeds({
       serverAlias: 'Server',
       entries: [{ gameId: 'one', playerName: 'Solo', position: null }],
@@ -47,11 +47,13 @@ describe('Online List embed and change detection', () => {
       showCoordinates: true,
       embedColor: '#2563eb',
     })[0].toJSON();
-    expect(without.fields?.find(field => field.name === 'Spieler')?.value).toMatch(/Solo.*Position unbekannt/s);
+    const pendingValue = without.fields?.find(field => field.name === 'Spieler')?.value ?? '';
+    expect(pendingValue).toContain('Solo');
+    expect(pendingValue).not.toMatch(/Position unbekannt|izurvive/i);
     expect(withPosition.fields?.find(field => field.name === 'Spieler')?.value).toMatch(/Solo.*50,60/s);
   });
 
-  it('shows server alias, online count, names, map link and explicit unknown position', () => {
+  it('shows server alias, online count and only current-session coordinates that are already known', () => {
     const json = buildPlayerListEmbeds({
       serverAlias: 'Chernarus #1', entries, showCoordinates: true, embedColor: '#2563eb',
     })[0].toJSON();
@@ -60,9 +62,10 @@ describe('Online List embed and change detection', () => {
       expect.objectContaining({ name: 'Online', value: '2' }),
       expect.objectContaining({
         name: 'Spieler',
-        value: expect.stringMatching(/Alpha.*izurvive\.com.*Bravo.*Position unbekannt/s),
+        value: expect.stringMatching(/Alpha.*izurvive\.com.*Bravo/s),
       }),
     ]));
+    expect(JSON.stringify(json)).not.toContain('Position unbekannt');
   });
 
   it('places Stand directly below the server alias and does not use the generic embed timestamp', () => {
@@ -90,6 +93,13 @@ describe('Online List embed and change detection', () => {
     const value = fields.map(field => field.value).join('\n');
     expect(value).toContain('Alpha');
     expect(value).not.toMatch(/100,200|Position unbekannt|izurvive/i);
+  });
+
+  it('updates visible coordinate state when the first current-session position arrives', () => {
+    const pending = [{ gameId: 'guid-a', playerName: 'Alpha', position: null }];
+    const resolved = [{ gameId: 'guid-a', playerName: 'Alpha', position: '900,900,0' }];
+    expect(playerListStateHash(pending, true)).not.toBe(playerListStateHash(resolved, true));
+    expect(playerListStateHash(pending, false)).toBe(playerListStateHash(resolved, false));
   });
 
   it('updates visible coordinate state on movement but ignores movement when coordinates are disabled', () => {
