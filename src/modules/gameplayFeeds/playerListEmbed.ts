@@ -77,6 +77,10 @@ function chunkLines(lines: string[]): string[] {
   return chunks.slice(0, MAX_EMBEDS);
 }
 
+function snapshotTimestamp(value: Date): string {
+  return `<t:${Math.floor(value.getTime() / 1000)}:F>`;
+}
+
 export function playerListStateHash(entries: PlayerListEntry[], showCoordinates: boolean): string {
   const stable = entries
     .map(entry => {
@@ -99,6 +103,7 @@ export function buildPlayerListEmbeds(args: {
   generatedAt?: Date;
 }): EmbedBuilder[] {
   const entries = [...args.entries].sort((a, b) => a.playerName.localeCompare(b.playerName, 'de-DE'));
+  const generatedAt = args.generatedAt ?? new Date();
 
   let lines: string[];
   if (entries.length === 0) {
@@ -127,7 +132,8 @@ export function buildPlayerListEmbeds(args: {
 
     if (index === 0) {
       embed.addFields(
-        { name: 'Server', value: safeEmbedField(args.serverAlias || 'DayZ-Server', 256), inline: true },
+        { name: 'Server', value: safeEmbedField(args.serverAlias || 'DayZ-Server', 256), inline: false },
+        { name: 'Zeitpunkt', value: snapshotTimestamp(generatedAt), inline: false },
         { name: 'Online', value: String(entries.length), inline: true },
       );
     }
@@ -139,7 +145,6 @@ export function buildPlayerListEmbeds(args: {
           ? 'Koordinaten aus dem letzten gueltigen ADM-Positionsereignis der aktuellen Sitzung.'
           : 'Koordinaten sind deaktiviert.',
       });
-      embed.setTimestamp(args.generatedAt ?? new Date());
     }
     embeds.push(embed);
   }

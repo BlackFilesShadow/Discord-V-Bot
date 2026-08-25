@@ -217,6 +217,7 @@ export async function sendConfiguredGoodbye(
   try {
     message = await channel.send({
       embeds: [buildStructuredGoodbyeEmbed({
+        discordId: identity.discordId,
         discordName: identity.displayName,
         customMessage: finalText,
         leaveOccurredAt,

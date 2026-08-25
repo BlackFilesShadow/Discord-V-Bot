@@ -35,9 +35,9 @@ export function buildLinkingInfoEmbed(serverLabel: string): EmbedBuilder {
 async function serverLabel(guildId: string, nitradoConnId: string): Promise<string> {
   const row = await prisma.nitradoConnection.findFirst({
     where: { id: nitradoConnId, guildId },
-    select: { alias: true, slot: true },
+    select: { alias: true },
   });
-  return row ? `${row.alias} (Slot ${row.slot})` : 'ausgewählter DayZ-Server';
+  return row?.alias || 'ausgewählter DayZ-Server';
 }
 
 export async function resolveLinkingTextChannel(
@@ -66,9 +66,9 @@ export async function resolveLinkingTextChannel(
 
 /**
  * Erstellt oder aktualisiert genau einen persistenten Info-Embed pro
- * Guild+Nitrado-Slot. Wurde die alte Nachricht gelöscht oder der Kanal
+ * Guild+Nitrado-Connection. Wurde die alte Nachricht gelöscht oder der Kanal
  * gewechselt, wird automatisch eine neue Nachricht erzeugt und deren ID
- * gespeichert.
+ * intern gespeichert.
  */
 export async function publishLinkingInfoEmbed(args: {
   client: Client;

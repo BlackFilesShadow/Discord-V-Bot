@@ -9,6 +9,7 @@ import { buildGameplayFeedEmbed, placementObjectLabel } from '../../src/modules/
 import type { GameplayFeedView } from '../../src/modules/gameplayFeeds/types';
 
 const SERVER = 'Chernarus Main';
+const EVENT_TIME = '<t:1787601600:F>';
 
 function view(overrides: Partial<GameplayFeedView>): GameplayFeedView {
   return {
@@ -33,16 +34,17 @@ function fieldsFor(feed: GameplayFeedView) {
 }
 
 describe('approved V-Bot gameplay feed embed designs', () => {
-  it('renders V-Kill Report with Killer before Opfer, inline Pos links and server alias last', () => {
+  it('renders V-Kill Report with Killer before Opfer and keeps the PVP kill feed without an event-time field', () => {
     const json = buildGameplayFeedEmbed(view({}), '#dc2626', SERVER).toJSON();
     expect(json.title).toBe('💀 V-Kill Report');
     expect(json.fields?.map(field => field.name)).toEqual(['Killer', 'Opfer', 'Waffe', 'Distanz', 'Server']);
     expect(json.fields?.[0].value).toBe('Killer\nPos: [110,210,10](https://www.izurvive.com/#location=110;210;6)');
     expect(json.fields?.[1].value).toBe('Victim\nPos: [100,200,10](https://www.izurvive.com/#location=100;200;6)');
     expect(json.fields?.at(-1)).toMatchObject({ name: 'Server', value: SERVER });
+    expect(json.fields?.some(field => field.name === 'Zeitpunkt')).toBe(false);
   });
 
-  it('renders Self Kill Report with weapon, Pos and server alias', () => {
+  it('renders Self Kill Report with weapon, Pos, alias and event time directly below the alias', () => {
     const json = buildGameplayFeedEmbed(view({
       category: 'SUICIDE',
       eventType: 'PLAYER_SUICIDE',
@@ -53,11 +55,13 @@ describe('approved V-Bot gameplay feed embed designs', () => {
       distanceMeters: null,
     }), '#dc2626', SERVER).toJSON();
     expect(json.title).toBe('🩸 Self Kill Report');
-    expect(json.fields?.map(field => field.name)).toEqual(['Spieler', 'Waffe', 'Pos:', 'Server']);
+    expect(json.fields?.map(field => field.name)).toEqual(['Spieler', 'Waffe', 'Pos:', 'Server', 'Zeitpunkt']);
     expect(json.fields?.find(field => field.name === 'Waffe')?.value).toBe('IJ-70');
+    expect(json.fields?.at(-2)).toMatchObject({ name: 'Server', value: SERVER });
+    expect(json.fields?.at(-1)).toMatchObject({ name: 'Zeitpunkt', value: EVENT_TIME });
   });
 
-  it('renders Wild Kill Report only for the visible Wild/Infizierten cause model', () => {
+  it('renders Wild Kill Report with event time below the server alias', () => {
     const json = buildGameplayFeedEmbed(view({
       category: 'NPC',
       eventType: 'NPC_KILL',
@@ -68,11 +72,12 @@ describe('approved V-Bot gameplay feed embed designs', () => {
       distanceMeters: null,
     }), '#dc2626', SERVER).toJSON();
     expect(json.title).toBe('☣️ Wild Kill Report');
-    expect(json.fields?.map(field => field.name)).toEqual(['Opfer', 'Ursache', 'Pos:', 'Server']);
+    expect(json.fields?.map(field => field.name)).toEqual(['Opfer', 'Ursache', 'Pos:', 'Server', 'Zeitpunkt']);
     expect(json.fields?.find(field => field.name === 'Ursache')?.value).toBe('Wolf');
+    expect(json.fields?.at(-1)).toMatchObject({ name: 'Zeitpunkt', value: EVENT_TIME });
   });
 
-  it('renders Crash Kill Report with vehicle cause, Pos and server alias', () => {
+  it('renders Crash Kill Report with vehicle cause and event time below the alias', () => {
     const json = buildGameplayFeedEmbed(view({
       category: 'VEHICLE',
       eventType: 'VEHICLE_DEATH',
@@ -82,8 +87,9 @@ describe('approved V-Bot gameplay feed embed designs', () => {
       distanceMeters: null,
     }), '#dc2626', SERVER).toJSON();
     expect(json.title).toBe('💥 Crash Kill Report');
-    expect(json.fields?.map(field => field.name)).toEqual(['Opfer', 'Fahrzeug / Ursache', 'Pos:', 'Server']);
+    expect(json.fields?.map(field => field.name)).toEqual(['Opfer', 'Fahrzeug / Ursache', 'Pos:', 'Server', 'Zeitpunkt']);
     expect(json.fields?.find(field => field.name === 'Fahrzeug / Ursache')?.value).toBe('OffroadHatchback');
+    expect(json.fields?.at(-1)).toMatchObject({ name: 'Zeitpunkt', value: EVENT_TIME });
   });
 
   const buildCases = [
@@ -93,7 +99,7 @@ describe('approved V-Bot gameplay feed embed designs', () => {
     ['DESTROY', 'DESTROY', '💥 Destruction Report'],
   ] as const;
 
-  it.each(buildCases)('renders %s as the approved report with server alias last', (_event, category, title) => {
+  it.each(buildCases)('renders %s with server alias followed directly by event time', (_event, category, title) => {
     const feed = view({
       kind: 'BUILD',
       category,
@@ -109,7 +115,9 @@ describe('approved V-Bot gameplay feed embed designs', () => {
     expect(json.title).toBe(title);
     expect(json.fields?.[0]).toMatchObject({ name: 'Spieler', value: 'Builder' });
     expect(json.fields?.find(field => field.name === 'Objekt')?.value).toBe('Fence');
-    expect(json.fields?.at(-1)).toMatchObject({ name: 'Server', value: SERVER });
+    expect(json.fields?.at(-2)).toMatchObject({ name: 'Server', value: SERVER });
+    expect(json.fields?.at(-1)).toMatchObject({ name: 'Zeitpunkt', value: EVENT_TIME });
+    expect(JSON.stringify(json)).not.toContain('event-1');
   });
 
   it('cleans technical Placement classnames without changing ADM source data', () => {

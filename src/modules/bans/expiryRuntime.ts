@@ -5,7 +5,7 @@
  * 1. Ablauf-Reconcile (alle 5s): expired + remote => REMOVE-Outbox; expired +
  *    remote bereits weg => lokale Ban-Wahrheit finalisieren und Notice READY.
  * 2. Discord-Notice: erst NACH bestaetigtem Remote-Unban. Retry/Lease und ein
- *    stabiler Footer-Marker verhindern verlorene oder doppelte Meldungen.
+ *    stabiler unsichtbarer Discord-Nonce verhindern verlorene oder doppelte Meldungen.
  */
 
 import { EmbedBuilder, type GuildTextBasedChannel } from 'discord.js';
@@ -24,10 +24,6 @@ const EXPIRED_BATCH = 200;
 
 let timer: NodeJS.Timeout | null = null;
 let running = false;
-
-function marker(banId: string): string {
-  return `ban-expiry:${banId}`;
-}
 
 function retryDelayMs(attempt: number): number {
   return Math.min(15 * 60_000, 15_000 * Math.pow(2, Math.max(0, attempt - 1)));
@@ -75,8 +71,6 @@ export async function reconcileExpiredServerBansOnce(now = new Date()): Promise<
       continue;
     }
 
-    // Remote ist bestaetigt weg (oder wurde nie gesetzt). Erst JETZT lokal
-    // finalisieren und die Ablaufmeldung freigeben.
     await prisma.$transaction(async tx => {
       const lifted = await tx.serverBanEntry.updateMany({
         where: {
@@ -114,24 +108,6 @@ export async function reconcileExpiredServerBansOnce(now = new Date()): Promise<
       remoteRemoved: true,
     });
   }
-}
-
-async function findExistingNotice(
-  channel: GuildTextBasedChannel,
-  banId: string,
-): Promise<string | null> {
-  try {
-    const messages = await channel.messages.fetch({ limit: 100 });
-    const needle = marker(banId);
-    for (const message of messages.values()) {
-      if (message.author.id !== channel.client.user.id) continue;
-      if (message.embeds.some(embed => embed.footer?.text?.includes(needle))) return message.id;
-    }
-  } catch {
-    // Best-effort-Reconciliation. Ein fehlendes Read-History-Recht wird danach
-    // vom normalen Send-Pfad sauber als Fehler behandelt.
-  }
-  return null;
 }
 
 async function markNoticeSent(id: string, messageId: string): Promise<void> {
@@ -217,7 +193,7 @@ async function deliverNotice(notice: {
       }),
       prisma.nitradoConnection.findFirst({
         where: { id: notice.nitradoConnId, guildId: notice.guildId },
-        select: { alias: true, slot: true },
+        select: { alias: true },
       }),
     ]);
     if (!ban) {
@@ -243,16 +219,6 @@ async function deliverNotice(notice: {
     const textChannel = channel as GuildTextBasedChannel;
     if (textChannel.guildId !== notice.guildId) throw new Error('Command-Kanal gehoert nicht zur erwarteten Guild.');
 
-    const existingMessageId = await findExistingNotice(textChannel, notice.banId);
-    if (existingMessageId) {
-      await markNoticeSent(notice.id, existingMessageId);
-      return;
-    }
-
-    // Letzte kanonische Race-Pruefung direkt vor dem externen Discord-Sideeffect:
-    // Ein Re-Ban setzt die Notice wieder PENDING und `active=true`, ein manueller
-    // Unban setzt sie CANCELLED. In beiden Faellen darf keine alte
-    // "Strafe vorbei"-Meldung mehr gesendet werden.
     const [freshNotice, freshBan] = await Promise.all([
       prisma.serverBanExpiryNotice.findFirst({
         where: {
@@ -282,9 +248,7 @@ async function deliverNotice(notice: {
       return;
     }
 
-    const serverLabel = connection
-      ? `${safeText(connection.alias, 'Server')} (Slot ${connection.slot})`
-      : 'Gameserver';
+    const serverLabel = connection ? safeText(connection.alias, 'Gameserver') : 'Gameserver';
     const expiresUnix = Math.floor(notice.expiresAt.getTime() / 1000);
     const embed = new EmbedBuilder()
       .setColor(0x22c55e)
@@ -296,12 +260,14 @@ async function deliverNotice(notice: {
         { name: 'Grund', value: safeText(ban.reason), inline: false },
         { name: 'Status', value: '✅ Von der Nitrado-Bannliste entfernt', inline: false },
       )
-      .setFooter({ text: `Automatischer Ablauf • V Bot • ${marker(notice.banId)}` })
+      .setFooter({ text: 'Automatischer Ablauf • V Bot' })
       .setTimestamp(ban.liftedAt ?? new Date());
 
     const message = await textChannel.send({
       embeds: [embed],
       allowedMentions: { parse: [] },
+      nonce: notice.id.slice(0, 25),
+      enforceNonce: true,
     });
     await markNoticeSent(notice.id, message.id);
 

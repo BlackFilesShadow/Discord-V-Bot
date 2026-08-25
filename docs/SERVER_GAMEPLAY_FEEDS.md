@@ -45,8 +45,12 @@ Objekt und Werkzeug werden getrennt normalisiert, z.B. `built Fence with Shovel`
 - Spielernamen werden Markdown-sicher gerendert, aber nicht mehr in einen Inline-Codeblock gepackt. Namen mit Unterstrichen wie `Void__Architect` erscheinen dadurch ohne sichtbare Escape-Zeichen.
 - Positionsfelder sind klickbare iZurvive-Location-Links nach dem Format `#location=x;y;zoomlevel`.
 - Opfer-, Toeter- und Baupositionen verwenden denselben Link-Renderer.
-- Technische Event-ID, Serveralias und Embed-Zeitstempel werden nicht mehr im sichtbaren Footer ausgegeben. Der Feed bleibt bewusst kompakt und clean.
-- Die technische Idempotenz liegt unsichtbar in Discord `nonce + enforce_nonce`, nicht mehr in sichtbaren Embed-Inhalten.
+- Technische Event-IDs werden in keinem Gameplay-Embed sichtbar ausgegeben. Sie bleiben ausschliesslich intern fuer Persistenz, Delivery und Diagnose erhalten.
+- Der sichtbare Serverbezug besteht nur aus dem konfigurierten **Server-Alias**; technische Connection-IDs oder Slotnummern gehoeren nicht in das Embed.
+- Der eigentliche PvP-`V-Kill Report` bleibt bewusst kompakt und endet mit dem Server-Alias. Er erhaelt kein zusaetzliches sichtbares Ereigniszeit-Feld.
+- `Self Kill Report`, `Wild Kill Report`, `Crash Kill Report` sowie `Placement`, `Build`, `Dismantle` und `Destruction` zeigen direkt **unter** dem Server-Alias ein Feld `Zeitpunkt`. Es basiert auf `AdmEvent.occurredAt` und wird als Discord-Zeitstempel dargestellt; fehlt eine belastbare Ereigniszeit, steht dort `Nicht ermittelbar`.
+- Die `Online List` zeigt unter dem Server-Alias den Zeitpunkt des erzeugten Live-Snapshots. Der allgemeine Discord-Embed-Zeitstempel wird dafuer nicht zusaetzlich verwendet.
+- Die technische Idempotenz liegt unsichtbar in Discord `nonce + enforce_nonce`, nicht in sichtbaren Embed-Inhalten.
 
 ## Persistenz und Zustellung
 
@@ -104,6 +108,6 @@ Nach Merge und Migration:
 7. Auf dem verbundenen Server **nach** aktivierter Feed-Konfiguration einen neuen PvP-Kill, normalen Tod, Suizid, NPC-/Tier-Tod, Fahrzeugtod sowie Placement/Build/Dismantle/Destroy erzeugen.
 8. Fuer ein neues Live-Ereignis bis zu etwa 45 Sekunden einplanen: ADM-Poll maximal 30 Sekunden plus Gameplay-Feed-Poll maximal 15 Sekunden.
 9. Nitrado-Dateiwechsel/Serverrestart, Botrestart und Discord-Fehler/Retry testen.
-10. Bestaetigen: keine doppelten generischen/spezifischen Todesposts, keine verlorenen Posts, kein Cross-Server-Leak, saubere Embed-Darstellung und korrekte Kartenlinks.
+10. Bestaetigen: keine doppelten generischen/spezifischen Todesposts, keine verlorenen Posts, kein Cross-Server-Leak, keine sichtbaren technischen IDs/Slotnummern, Alias-only-Darstellung, korrekte Zeitfeld-Reihenfolge und korrekte Kartenlinks.
 
-Die Regression `tests/modules/gameplayFeedDeliveryE2E.test.ts` beweist zusaetzlich die produktive Kernkette von einer rohen DayZ-ADM-PvP-Zeile ueber Persistenz und Kategorie-Ableitung bis zum Discord-Embed, den RETRY-Pfad sowie die Unterdrueckung eines generischen `PLAYER_DIED` neben einem spezifischen Todesereignis. `tests/modules/gameplayFeedEmbed.test.ts` prueft die saubere Namensdarstellung, den fehlenden Footer/Zeitstempel und die iZurvive-Positionslinks.
+Die Regression `tests/modules/gameplayFeedDeliveryE2E.test.ts` beweist zusaetzlich die produktive Kernkette von einer rohen DayZ-ADM-PvP-Zeile ueber Persistenz und Kategorie-Ableitung bis zum Discord-Embed, den RETRY-Pfad sowie die Unterdrueckung eines generischen `PLAYER_DIED` neben einem spezifischen Todesereignis. `tests/modules/gameplayFeedEmbed.test.ts` und `tests/modules/gameplayFeedEmbedDesign.test.ts` pruefen Namensdarstellung, unsichtbare Event-IDs, iZurvive-Positionslinks sowie die definierte Alias-/Zeitpunkt-Reihenfolge fuer die einzelnen Feed-Typen.

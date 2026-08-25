@@ -29,6 +29,7 @@ export interface GoodbyeCleanupSnapshot {
 }
 
 export interface GoodbyeEmbedData {
+  discordId: string;
   discordName: string;
   customMessage: string;
   leaveOccurredAt: Date;
@@ -81,18 +82,32 @@ function formatTime(value: Date): string {
   }).format(value)} (${TIME_ZONE})`;
 }
 
+function cleanDescription(message: string, discordId: string): string {
+  // Die User-Mention wird im strukturierten Embed ausschliesslich im Feld
+  // "Discord-Name" dargestellt. Das gilt auch dann, wenn das Template selbst
+  // gar keinen {mention}-Platzhalter enthaelt.
+  return message
+    .split(`<@${discordId}>`).join('')
+    .split(`<@!${discordId}>`).join('')
+    .replace(/[ \t]+\n/g, '\n')
+    .replace(/\n{3,}/g, '\n\n')
+    .trim();
+}
+
 export function buildStructuredGoodbyeEmbed(data: GoodbyeEmbedData): EmbedBuilder {
   const embed = new EmbedBuilder()
     .setColor(embedColor(data.cleanupEnabled, data.cleanupSnapshot))
-    .setTitle('👋 Bye Bye')
-    .setDescription(safeEmbedField(data.customMessage, 4000))
-    .addFields(
-      { name: 'Discord-Name', value: safeEmbedField(data.discordName, 256), inline: true },
-      { name: 'Status', value: 'Server verlassen', inline: true },
-      { name: 'Datum', value: formatDate(data.leaveOccurredAt), inline: true },
-      { name: 'Uhrzeit', value: formatTime(data.leaveOccurredAt), inline: true },
-    )
-    .setTimestamp(data.leaveOccurredAt);
+    .setTitle('👋 Bye Bye');
+
+  const description = cleanDescription(data.customMessage, data.discordId);
+  if (description) embed.setDescription(safeEmbedField(description, 4000));
+
+  embed.addFields(
+    { name: 'Discord-Name', value: `<@${data.discordId}>`, inline: true },
+    { name: 'Status', value: 'Server verlassen', inline: true },
+    { name: 'Datum', value: formatDate(data.leaveOccurredAt), inline: true },
+    { name: 'Uhrzeit', value: formatTime(data.leaveOccurredAt), inline: true },
+  ).setTimestamp(data.leaveOccurredAt);
 
   if (!data.cleanupEnabled) return embed;
   const servers = data.cleanupSnapshot?.servers.length
@@ -147,10 +162,6 @@ export async function initialGoodbyeCleanupSnapshot(
         select: { alias: true },
       }),
     ]);
-    // A last-seen ADM label alone is not sufficient provenance. The displayed
-    // name must both belong to the VERIFIED GUID link and exist in the managed,
-    // remotely-synced whitelist mirror. The cleanup step performs a fresh
-    // Nitrado read and replaces this snapshot with the exact remote spelling.
     const linkedSessionNames = new Set(sessions.flatMap(session =>
       identityHash(session.gameId, config.security.encryptionKey) === link.identityHash && session.playerName?.trim()
         ? [session.playerName.trim().toLocaleLowerCase('en-US')]
@@ -161,7 +172,7 @@ export async function initialGoodbyeCleanupSnapshot(
     ))).sort((a, b) => a.localeCompare(b, 'de-DE'));
     servers.push({
       nitradoConnId: link.nitradoConnId,
-      serverAlias: connection?.alias || link.nitradoConnId,
+      serverAlias: connection?.alias || 'DayZ-Server',
       playerNames: names,
       state: names.length > 0 ? 'PENDING' : 'NOT_LINKED',
     });
@@ -186,6 +197,7 @@ async function editPersistedGoodbye(cleanupRequestId: string): Promise<void> {
   if (!message) return;
   await message.edit({
     embeds: [buildStructuredGoodbyeEmbed({
+      discordId: delivery.discordId,
       discordName: delivery.discordName,
       customMessage: delivery.customMessage,
       leaveOccurredAt: delivery.leaveOccurredAt,
@@ -213,7 +225,7 @@ export async function updateGoodbyeCleanupServers(
       });
       server = {
         nitradoConnId: update.nitradoConnId,
-        serverAlias: connection?.alias || update.nitradoConnId,
+        serverAlias: connection?.alias || 'DayZ-Server',
         playerNames: update.playerNames ?? [],
         state: update.state,
       };
@@ -253,11 +265,6 @@ export async function updateGoodbyeCleanupFailure(
   if (updates.length > 0) await updateGoodbyeCleanupServers(cleanupRequestId, updates);
 }
 
-/**
- * Restart-/Failover-Recovery fuer einen Prozessabbruch zwischen persistiertem
- * Delivery-Intent und Discord-Send. updatedAt ist der CAS-Lease: nur ein Worker
- * darf eine mindestens 60 Sekunden alte PENDING/FAILED-Zeile uebernehmen.
- */
 export async function recoverPendingGoodbyeDeliveries(now: Date = new Date()): Promise<number> {
   const staleBefore = new Date(now.getTime() - 60_000);
   const rows = await prisma.goodbyeDelivery.findMany({
@@ -285,6 +292,7 @@ export async function recoverPendingGoodbyeDeliveries(now: Date = new Date()): P
       if (textChannel.guildId !== row.guildId) throw new Error('Goodbye-Channel gehoert nicht zur Guild');
       const message = await textChannel.send({
         embeds: [buildStructuredGoodbyeEmbed({
+          discordId: row.discordId,
           discordName: row.discordName,
           customMessage: row.customMessage,
           leaveOccurredAt: row.leaveOccurredAt,

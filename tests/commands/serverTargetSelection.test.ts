@@ -11,6 +11,7 @@ import {
   autocompleteServerAlias,
   resolveSelectedOrAllServers,
   resolveSingleServer,
+  targetLabel,
 } from '../../src/commands/dashboard/serverTargetSelection';
 
 const rows = [
@@ -120,5 +121,10 @@ describe('serverTargetSelection', () => {
     expect(interaction.respond).toHaveBeenCalledWith([
       { name: 'Livonia PVE (Slot 2)', value: 'conn-b' },
     ]);
+  });
+
+  it('rendert sichtbare Server-Labels in Embeds nur als Alias ohne Slotnummer', () => {
+    expect(targetLabel(rows[0])).toBe('Chernarus Main');
+    expect(targetLabel(rows[1])).toBe('Livonia PVE');
   });
 });

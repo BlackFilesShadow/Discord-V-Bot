@@ -184,7 +184,6 @@ export const whitelistCommand: Command = {
       .setColor(0x5865F2)
       .setDescription(`Deine Anfrage wurde fuer **${targetLabel(target)}** an das Server-Team weitergeleitet.`)
       .addFields({ name: 'Beantragter Name', value: `\`${id}\`` })
-      .setFooter({ text: `Request-ID: ${created.id}` })
       .setTimestamp(new Date());
     await i.reply({ embeds: [ack], flags: MessageFlags.Ephemeral });
   }),

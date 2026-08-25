@@ -1,7 +1,7 @@
 /**
  * Whitelist-Kanal-Integration.
  *
- * Vier Kanaele pro (Guild + Slot):
+ * Vier Kanaele pro (Guild + Gameserver):
  *   - whitelistChannelId           Info-Kanal mit (genau 1) Command-Erklaerungs-Embed
  *   - whitelistRequestChannelId    Approval-Kanal mit Accept/Deny-Buttons fuer Admins
  *   - whitelistApproveLogChannelId Log fuer ANGENOMMENE Antraege
@@ -20,7 +20,6 @@ import { logger } from '../../utils/logger';
 import { safeEmbedField } from '../../utils/embedSanitize';
 import { Colors, statusTitle } from '../../utils/embedDesign';
 
-/** Max-Laenge fuer Whitelist-Reason (Eingabe + Anzeige, einheitlich). */
 export const WHITELIST_REASON_MAX = 500;
 
 let warnedClientMissing = false;
@@ -51,7 +50,6 @@ async function fetchTextChannel(guildId: string, channelId: string | null | unde
   return ch as GuildTextBasedChannel;
 }
 
-/** Loescht best-effort das eine Info-Embed aus einem alten Kanal. */
 export async function deleteOldInfoEmbed(guildId: string, channelId: string, messageId: string): Promise<void> {
   const ch = await fetchTextChannel(guildId, channelId);
   if (!ch) return;
@@ -62,7 +60,6 @@ export async function deleteOldInfoEmbed(guildId: string, channelId: string, mes
   await msg.delete().catch(() => null);
 }
 
-/** Finalisiert das Approval-Embed und entfernt die Buttons. */
 export async function finalizeApprovalEmbed(args: {
   guildId: string; channelId: string; messageId: string;
   approved: boolean; decidedByDiscordId: string;
@@ -89,7 +86,6 @@ export async function finalizeApprovalEmbed(args: {
   await msg.edit({ embeds: [finalEmbed], components: [] }).catch(() => null);
 }
 
-/** Postet/aktualisiert das eine Command-Erklaerungs-Embed im Info-Kanal. */
 export async function ensureWhitelistInfoEmbed(guildId: string, nitradoConnId: string): Promise<{ posted: boolean; updated: boolean; messageId?: string }> {
   const settings = await prisma.serverSettings.findUnique({
     where: { guildId_nitradoConnId: { guildId, nitradoConnId } },
@@ -108,7 +104,7 @@ export async function ensureWhitelistInfoEmbed(guildId: string, nitradoConnId: s
       '**So funktioniert es:**',
       '1. Nutze `/whitelist-antrag` in diesem Kanal.',
       '2. Trage bei `id` deinen **exakten Spielernamen** ein (1–64 Zeichen).',
-      '3. Sind mehrere aktive Server verbunden, wähle bei `slot` den gewünschten Server über seinen Alias aus. Bei nur einem aktiven Server ist keine Serverauswahl nötig.',
+      '3. Sind mehrere aktive Server verbunden, wähle den gewünschten Server über seinen **Alias** aus. Bei nur einem aktiven Server ist keine Serverauswahl nötig.',
       '',
       'Dein Antrag wird anschließend **automatisch** an das zuständige Server-Team zur Prüfung weitergeleitet.',
       'Nach der Entscheidung wirst du über Annahme oder Ablehnung benachrichtigt.',
@@ -138,7 +134,6 @@ export async function ensureWhitelistInfoEmbed(guildId: string, nitradoConnId: s
   return { posted: true, updated: false, messageId: sent.id };
 }
 
-/** Postet das Approval-Embed im konfigurierten Request-Kanal. */
 export async function postWhitelistApprovalEmbed(args: {
   guildId: string; nitradoConnId: string; requestId: string;
   requesterDiscordId: string; gameId: string;
@@ -147,7 +142,7 @@ export async function postWhitelistApprovalEmbed(args: {
     where: { guildId_nitradoConnId: { guildId: args.guildId, nitradoConnId: args.nitradoConnId } },
   });
   if (!settings?.whitelistRequestChannelId) {
-    logger.warn(`Whitelist: Kein Request-Channel konfiguriert (guild=${args.guildId} slot=${args.nitradoConnId})`);
+    logger.warn(`Whitelist: Kein Request-Channel konfiguriert (guild=${args.guildId} connection=${args.nitradoConnId})`);
     return null;
   }
   const ch = await fetchTextChannel(args.guildId, settings.whitelistRequestChannelId);
@@ -160,7 +155,7 @@ export async function postWhitelistApprovalEmbed(args: {
       { name: 'Antragsteller', value: `<@${args.requesterDiscordId}>`, inline: true },
       { name: 'Beantragter Spielername', value: `\`${args.gameId}\``, inline: true },
     )
-    .setFooter({ text: `V-Bot • Whitelist • Request-ID: ${args.requestId}` })
+    .setFooter({ text: 'V-Bot • Whitelist' })
     .setTimestamp(new Date());
 
   const row = new ActionRowBuilder<ButtonBuilder>().addComponents(
@@ -184,7 +179,6 @@ export async function postWhitelistApprovalEmbed(args: {
   return sent.id;
 }
 
-/** Schickt dem User per DM eine Benachrichtigung, dass die Anfrage eingegangen ist. */
 export async function notifyRequesterPending(guildId: string, requesterDiscordId: string, gameId: string): Promise<void> {
   const c = client();
   if (!c) return;
@@ -203,7 +197,6 @@ export async function notifyRequesterPending(guildId: string, requesterDiscordId
   }
 }
 
-/** Schickt dem User die Entscheidung per DM. */
 export async function notifyRequesterDecision(args: {
   requesterDiscordId: string; gameId: string; approved: boolean; reason?: string;
 }): Promise<void> {
@@ -229,7 +222,6 @@ export async function notifyRequesterDecision(args: {
   }
 }
 
-/** Postet die Entscheidung strikt in den konfigurierten Approve- oder Deny-Log-Kanal. */
 export async function postDecisionLog(args: {
   guildId: string; nitradoConnId: string; approved: boolean;
   requesterDiscordId: string; gameId: string;

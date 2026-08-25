@@ -123,7 +123,8 @@ describe('Goodbye-1 guild-scoped identity and delivery', () => {
     expect(rendered).toBe('StoredNick|StoredUser|StoredNick|<@333>|Guild A|42|42');
   });
 
-  it('sends a configured goodbye without enabling a Discord mention ping', async () => {
+  it('sends a configured goodbye without enabling a Discord mention ping and keeps the mention in Discord-Name', async () => {
+    const discordId = 'discord-1';
     mockFindUnique.mockResolvedValue({
       value: { enabled: true, channelId: '12345678901234567', message: 'Bye {user} {mention}' },
     });
@@ -137,20 +138,20 @@ describe('Goodbye-1 guild-scoped identity and delivery', () => {
         memberCount: 41,
         channels: { fetch: jest.fn().mockResolvedValue({ ...channel, isTextBased: () => true, isDMBased: () => false }) },
       },
-      user: { id: 'discord-1', username: 'GatewayName' },
+      user: { id: discordId, username: 'GatewayName' },
       nickname: 'GatewayNick',
     } as any;
 
     await expect(sendConfiguredGoodbye(member)).resolves.toBe('sent');
-    expect(mockGetMemberProfile).toHaveBeenCalledWith('guild-a', 'discord-1');
+    expect(mockGetMemberProfile).toHaveBeenCalledWith('guild-a', discordId);
     expect(send).toHaveBeenCalledTimes(1);
     const payload = send.mock.calls[0][0];
     expect(payload.allowedMentions).toEqual({ parse: [] });
     expect(payload.embeds[0].toJSON()).toMatchObject({
       title: '👋 Bye Bye',
-      description: 'Bye StoredNick <@discord-1>',
+      description: 'Bye StoredNick',
       fields: expect.arrayContaining([
-        expect.objectContaining({ name: 'Discord-Name', value: 'StoredNick' }),
+        expect.objectContaining({ name: 'Discord-Name', value: `<@${discordId}>` }),
         expect.objectContaining({ name: 'Status', value: 'Server verlassen' }),
         expect.objectContaining({ name: 'Datum' }),
         expect.objectContaining({ name: 'Uhrzeit' }),

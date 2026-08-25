@@ -114,14 +114,14 @@ async function resolveCommandServerScope(
         await statusReply(
           interaction,
           'ERROR',
-          'Ungueltiger Gameserver-Slot',
-          `Slot muss zwischen 1 und ${MAX_GAME_SERVERS_PER_GUILD} liegen. Historische Slots ausserhalb dieses Bereichs sind nur noch Legacy und fuer Mutationen gesperrt.`,
+          'Ungueltige Gameserver-Auswahl',
+          'Der ausgewaehlte Gameserver ist nicht zulaessig oder gehoert zu einer gesperrten Legacy-Konfiguration.',
         );
         return null;
       }
       requestedNitradoConnId = connections.find(c => c.slot === requestedSlot)?.id;
       if (!requestedNitradoConnId) {
-        await statusReply(interaction, 'ERROR', 'Gameserver nicht nutzbar', `Slot ${requestedSlot} ist nicht als aktiver Gameserver nutzbar.`);
+        await statusReply(interaction, 'ERROR', 'Gameserver nicht nutzbar', 'Der ausgewaehlte Gameserver ist nicht als aktiver Gameserver nutzbar.');
         return null;
       }
     }
@@ -142,7 +142,7 @@ async function resolveCommandServerScope(
         interaction,
         'ERROR',
         'Kein Gameserver verbunden',
-        'Kein aktiver Nitrado-Gameserver ist konfiguriert. Bitte zuerst im Dashboard einen Slot mit einem Gameserver verbinden.',
+        'Kein aktiver Nitrado-Gameserver ist konfiguriert. Bitte zuerst im Dashboard einen Gameserver verbinden.',
       );
       return null;
     case 'SERVER_NOT_FOUND':
@@ -155,17 +155,17 @@ async function resolveCommandServerScope(
       await statusReply(
         interaction,
         'ERROR',
-        'Legacy-Slot gesperrt',
-        `Slot ${resolution.scope.slot} ist ein Legacy-Slot. Maximal ${MAX_GAME_SERVERS_PER_GUILD} aktive Gameserver sind erlaubt; migriere den Slot zuerst im Dashboard.`,
+        'Legacy-Gameserver gesperrt',
+        'Dieser Gameserver gehoert zu einer Legacy-Konfiguration und ist fuer Mutationen gesperrt. Migriere die Serverzuordnung zuerst im Dashboard.',
       );
       return null;
     case 'PROMPT_REQUIRED': {
       const options = resolution.options
-        .map(s => `• Slot ${s.slot}: **${s.alias}**`)
+        .map(s => `• **${s.alias}**`)
         .join('\n');
       const instruction = acceptSlotOption
-        ? 'Fuehre den Befehl erneut mit der Option `slot` aus.'
-        : 'Dieser Befehl hat noch keine explizite Slot-Auswahl und wird deshalb sicherheitshalber nicht ausgefuehrt.';
+        ? 'Fuehre den Befehl erneut mit der gewuenschten Serverauswahl aus.'
+        : 'Dieser Befehl hat noch keine explizite Serverauswahl und wird deshalb sicherheitshalber nicht ausgefuehrt.';
       await statusReply(
         interaction,
         'INFO',
@@ -263,7 +263,7 @@ export function withGuildScope(opts: WithGuildScopeOptions, handler: ScopedHandl
           interaction,
           'ERROR',
           'Funktion deaktiviert',
-          `${labels[opts.requireSlotToggle]} Aktivierung: Dashboard → Server → Slot → Server-Toggles.`,
+          `${labels[opts.requireSlotToggle]} Aktivierung: Dashboard → Server → Server-Toggles.`,
         );
         return;
       }

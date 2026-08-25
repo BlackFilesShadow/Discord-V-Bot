@@ -46,17 +46,12 @@ export async function listCommandServerTargets(guildId: string): Promise<Command
 }
 
 function findSelectedTarget(targets: CommandServerTarget[], raw: string): TargetLookup {
-  // Der Autocomplete uebertraegt immer die eindeutige Connection-ID.
   const byId = targets.find(target => target.id === raw);
   if (byId) return byId;
 
-  // Numerischer Fallback bleibt eindeutig, weil Slots innerhalb der Guild
-  // eindeutig sind.
   const bySlot = targets.find(target => String(target.slot) === raw);
   if (bySlot) return bySlot;
 
-  // Manuell eingetippte Aliase sind nur erlaubt, wenn genau EIN Server passt.
-  // Doppelte Aliase duerfen niemals still den ersten Server auswaehlen.
   const normalized = raw.toLowerCase();
   const aliasMatches = targets.filter(target => target.alias.toLowerCase() === normalized);
   if (aliasMatches.length === 1) return aliasMatches[0];
@@ -98,12 +93,6 @@ async function rejectAmbiguousTarget(
   return null;
 }
 
-/**
- * `slot` ist absichtlich eine String-Autocomplete-Option. Discord zeigt dem
- * Operator den hinterlegten Alias, waehrend als stabiler Wert die Connection-ID
- * uebertragen wird. Ohne Auswahl gilt die Operation fuer ALLE nutzbaren,
- * verknuepften Gameserver der Guild.
- */
 export async function resolveSelectedOrAllServers(
   interaction: ChatInputCommandInteraction,
   guildId: string,
@@ -120,12 +109,6 @@ export async function resolveSelectedOrAllServers(
   return [selected];
 }
 
-/**
- * Fuer Workflows, die fachlich genau EINEN Server benoetigen (z.B. ein
- * Whitelist-Antrag mit serverspezifischem Approval-Kanal). Bei genau einem
- * verknuepften Server ist keine Auswahl noetig; bei mehreren ist der Alias
- * verpflichtend.
- */
 export async function resolveSingleServer(
   interaction: ChatInputCommandInteraction,
   guildId: string,
@@ -173,6 +156,7 @@ export async function autocompleteServerAlias(interaction: AutocompleteInteracti
   await interaction.respond(choices);
 }
 
+/** Visible embed/server labels use only the configured alias. Slot numbers stay internal/UI-only. */
 export function targetLabel(target: Pick<CommandServerTarget, 'alias' | 'slot'>): string {
-  return `${target.alias} (Slot ${target.slot})`;
+  return target.alias;
 }

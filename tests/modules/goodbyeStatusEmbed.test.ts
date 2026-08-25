@@ -8,11 +8,13 @@ process.env.SESSION_SECRET ||= 'test-session-secret';
 import { buildStructuredGoodbyeEmbed, type GoodbyeCleanupSnapshot } from '../../src/modules/welcome/goodbyeStatus';
 
 const leftAt = new Date('2026-08-24T10:15:30.000Z');
+const DISCORD_ID = 'discord-test-user';
 
-function embed(snapshot: GoodbyeCleanupSnapshot | null, cleanupEnabled = true) {
+function embed(snapshot: GoodbyeCleanupSnapshot | null, cleanupEnabled = true, customMessage = 'Auf Wiedersehen!') {
   return buildStructuredGoodbyeEmbed({
+    discordId: DISCORD_ID,
     discordName: 'DiscordNick',
-    customMessage: 'Auf Wiedersehen!',
+    customMessage,
     leaveOccurredAt: leftAt,
     cleanupEnabled,
     cleanupSnapshot: snapshot,
@@ -24,12 +26,19 @@ describe('structured Goodbye status embed', () => {
     const json = embed(null, false);
     expect(json.timestamp).toBe(leftAt.toISOString());
     expect(json.fields).toEqual(expect.arrayContaining([
-      expect.objectContaining({ name: 'Discord-Name', value: 'DiscordNick' }),
+      expect.objectContaining({ name: 'Discord-Name', value: `<@${DISCORD_ID}>` }),
       expect.objectContaining({ name: 'Status', value: 'Server verlassen' }),
       expect.objectContaining({ name: 'Datum' }),
       expect.objectContaining({ name: 'Uhrzeit', value: expect.stringContaining('Europe/Berlin') }),
     ]));
     expect(json.fields?.some(field => field.name.includes('Whitelist'))).toBe(false);
+  });
+
+  it('keeps the Discord mention exclusively in the Discord-Name field even when the template contains it', () => {
+    const json = embed(null, false, `<@${DISCORD_ID}>\nWir sehen uns!`);
+    expect(json.description).toBe('Wir sehen uns!');
+    expect(json.fields?.find(field => field.name === 'Discord-Name')?.value).toBe(`<@${DISCORD_ID}>`);
+    expect(json.description).not.toContain(DISCORD_ID);
   });
 
   it.each([

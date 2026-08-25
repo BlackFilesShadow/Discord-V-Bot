@@ -118,9 +118,9 @@ function linkFailureCopy(result: Extract<PlayerNameLinkResult, { ok: false }>): 
 async function serverLabel(guildId: string, nitradoConnId: string): Promise<string> {
   const row = await prisma.nitradoConnection.findFirst({
     where: { id: nitradoConnId, guildId },
-    select: { alias: true, slot: true },
+    select: { alias: true },
   });
-  return row ? `${row.alias} (Slot ${row.slot})` : 'ausgewählter DayZ-Server';
+  return row?.alias || 'ausgewählter DayZ-Server';
 }
 
 export const linkCommand: Command = {

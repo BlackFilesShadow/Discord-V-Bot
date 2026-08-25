@@ -71,6 +71,25 @@ function addServer(embed: EmbedBuilder, serverAlias: string): void {
   });
 }
 
+function eventTimestamp(value: Date | null): string {
+  if (!value || Number.isNaN(value.getTime())) return 'Nicht ermittelbar';
+  return `<t:${Math.floor(value.getTime() / 1000)}:F>`;
+}
+
+/**
+ * Bei allen Nitrado-Ereignis-Embeds ausser dem eigentlichen PvP-Killfeed steht
+ * die Ereigniszeit sichtbar direkt unter dem Server-Alias. Technische Event-IDs
+ * bleiben weiterhin ausschliesslich intern und werden nie gerendert.
+ */
+function addServerAndEventTime(embed: EmbedBuilder, serverAlias: string, occurredAt: Date | null): void {
+  addServer(embed, serverAlias);
+  embed.addFields({
+    name: 'Zeitpunkt',
+    value: eventTimestamp(occurredAt),
+    inline: false,
+  });
+}
+
 function humanizePlacementClass(value: string): string {
   const raw = value.trim();
   if (!raw) return 'Objekt';
@@ -152,7 +171,7 @@ export function buildGameplayFeedEmbed(
     });
     const pos = positionField(view.actorPosition);
     if (pos) embed.addFields({ name: 'Pos:', value: pos, inline: false });
-    addServer(embed, serverAlias);
+    addServerAndEventTime(embed, serverAlias, view.occurredAt);
     return embed;
   }
 
@@ -163,7 +182,7 @@ export function buildGameplayFeedEmbed(
     }
     const pos = positionField(view.actorPosition);
     if (pos) embed.addFields({ name: 'Pos:', value: pos, inline: false });
-    addServer(embed, serverAlias);
+    addServerAndEventTime(embed, serverAlias, view.occurredAt);
     return embed;
   }
 
@@ -174,7 +193,7 @@ export function buildGameplayFeedEmbed(
     }
     const pos = positionField(view.actorPosition);
     if (pos) embed.addFields({ name: 'Pos:', value: pos, inline: false });
-    addServer(embed, serverAlias);
+    addServerAndEventTime(embed, serverAlias, view.occurredAt);
     return embed;
   }
 
@@ -190,6 +209,6 @@ export function buildGameplayFeedEmbed(
   }
   const pos = positionField(view.actorPosition);
   if (pos) embed.addFields({ name: 'Position', value: pos, inline: false });
-  addServer(embed, serverAlias);
+  addServerAndEventTime(embed, serverAlias, view.occurredAt);
   return embed;
 }

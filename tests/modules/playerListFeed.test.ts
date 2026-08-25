@@ -51,18 +51,23 @@ describe('Online List embed and change detection', () => {
     expect(withPosition.fields?.find(field => field.name === 'Spieler')?.value).toMatch(/Solo.*50,60/s);
   });
 
-  it('shows server alias, online count, names, map link and explicit unknown position', () => {
+  it('shows alias first, snapshot time directly below it, then online count and players', () => {
+    const generatedAt = new Date('2026-08-25T18:30:00.000Z');
     const json = buildPlayerListEmbeds({
-      serverAlias: 'Chernarus #1', entries, showCoordinates: true, embedColor: '#2563eb',
+      serverAlias: 'Chernarus #1', entries, showCoordinates: true, embedColor: '#2563eb', generatedAt,
     })[0].toJSON();
-    expect(json.fields).toEqual(expect.arrayContaining([
+    expect(json.fields?.slice(0, 3)).toEqual([
       expect.objectContaining({ name: 'Server', value: 'Chernarus #1' }),
+      expect.objectContaining({ name: 'Zeitpunkt', value: '<t:1787682600:F>' }),
       expect.objectContaining({ name: 'Online', value: '2' }),
+    ]);
+    expect(json.fields).toEqual(expect.arrayContaining([
       expect.objectContaining({
         name: 'Spieler',
         value: expect.stringMatching(/Alpha.*izurvive\.com.*Bravo.*Position unbekannt/s),
       }),
     ]));
+    expect(json.timestamp).toBeUndefined();
   });
 
   it('omits every coordinate when the toggle is off', () => {
