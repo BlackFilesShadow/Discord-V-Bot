@@ -240,10 +240,15 @@ export async function syncVirtualAccountProjection(client: Client, guildId: Guil
 
     let archiveThreadId = previous?.channelId === channel.id ? previous.archiveThreadId : null;
     const existingThread = archiveThreadId ? await guild.channels.fetch(archiveThreadId).catch(() => null) : null;
-    if (!existingThread || !existingThread.isThread()) {
-      const thread = await message.startThread({
+    if (!existingThread || !existingThread.isThread() || existingThread.parentId !== channel.id) {
+      // Eigenstaendiger Public Thread statt Message-Thread: Wird ein Archiv von
+      // Discord/Admin geloescht, kann V-Bot auf demselben Haupt-Embed jederzeit
+      // eine neue Archivinstanz erzeugen. OneDay ist fuer normale Guilds sicher
+      // verfuegbar; bei jeder Buchung wird ein archivierter Thread reaktiviert.
+      const thread = await channel.threads.create({
         name: threadName(account.name),
-        autoArchiveDuration: ThreadAutoArchiveDuration.OneWeek,
+        autoArchiveDuration: ThreadAutoArchiveDuration.OneDay,
+        type: ChannelType.PublicThread,
         reason: 'V-Bot Transaktionsarchiv für virtuelles Konto',
       });
       archiveThreadId = thread.id;
