@@ -99,6 +99,7 @@ export function buildPlayerListEmbeds(args: {
   generatedAt?: Date;
 }): EmbedBuilder[] {
   const entries = [...args.entries].sort((a, b) => a.playerName.localeCompare(b.playerName, 'de-DE'));
+  const generatedAt = args.generatedAt ?? new Date();
 
   let lines: string[];
   if (entries.length === 0) {
@@ -127,8 +128,13 @@ export function buildPlayerListEmbeds(args: {
 
     if (index === 0) {
       embed.addFields(
-        { name: 'Server', value: safeEmbedField(args.serverAlias || 'DayZ-Server', 256), inline: true },
-        { name: 'Online', value: String(entries.length), inline: true },
+        { name: 'Server', value: safeEmbedField(args.serverAlias || 'DayZ-Server', 256), inline: false },
+        {
+          name: 'Stand',
+          value: `<t:${Math.floor(generatedAt.getTime() / 1000)}:F>`,
+          inline: false,
+        },
+        { name: 'Online', value: String(entries.length), inline: false },
       );
     }
 
@@ -139,7 +145,6 @@ export function buildPlayerListEmbeds(args: {
           ? 'Koordinaten aus dem letzten gueltigen ADM-Positionsereignis der aktuellen Sitzung.'
           : 'Koordinaten sind deaktiviert.',
       });
-      embed.setTimestamp(args.generatedAt ?? new Date());
     }
     embeds.push(embed);
   }
