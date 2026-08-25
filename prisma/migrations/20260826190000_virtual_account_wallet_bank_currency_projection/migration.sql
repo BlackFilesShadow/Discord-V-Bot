@@ -24,6 +24,7 @@ CREATE TABLE "EconomyVirtualAccountFinance" (
     CONSTRAINT "EconomyVirtualAccountFinance_bank_nonnegative" CHECK ("bankBalance" >= 0),
     CONSTRAINT "EconomyVirtualAccountFinance_currency_name_nonempty" CHECK (char_length(trim("currencyName")) BETWEEN 1 AND 40),
     CONSTRAINT "EconomyVirtualAccountFinance_currency_emoji_nonempty" CHECK (char_length(trim("currencyEmoji")) BETWEEN 1 AND 100),
+    CONSTRAINT "EconomyVirtualAccountFinance_account_emoji_nonempty" CHECK (char_length(trim("accountEmoji")) BETWEEN 1 AND 100),
     CONSTRAINT "EconomyVirtualAccountFinance_text_style_check" CHECK ("textStyle" IN ('NORMAL','BOLD','ITALIC','BOLD_ITALIC')),
     CONSTRAINT "EconomyVirtualAccountFinance_purpose_check" CHECK ("accountPurpose" IN ('GENERAL','BANK_TREASURY')),
     CONSTRAINT "EconomyVirtualAccountFinance_exchange_pair_check" CHECK (
@@ -33,8 +34,9 @@ CREATE TABLE "EconomyVirtualAccountFinance" (
 );
 
 ALTER TABLE "EconomyVirtualAccountFinance"
-    ADD CONSTRAINT "EconomyVirtualAccountFinance_account_fkey"
-    FOREIGN KEY ("accountId") REFERENCES "EconomyVirtualAccount"("id")
+    ADD CONSTRAINT "EconomyVirtualAccountFinance_account_scope_fkey"
+    FOREIGN KEY ("accountId", "guildId", "nitradoConnId")
+    REFERENCES "EconomyVirtualAccount"("id", "guildId", "nitradoConnId")
     ON DELETE CASCADE ON UPDATE CASCADE;
 
 CREATE INDEX "EconomyVirtualAccountFinance_scope_idx"
@@ -57,12 +59,16 @@ CREATE TABLE "EconomyVirtualAccountProjection" (
     "createdAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
     "updatedAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
 
-    CONSTRAINT "EconomyVirtualAccountProjection_pkey" PRIMARY KEY ("accountId")
+    CONSTRAINT "EconomyVirtualAccountProjection_pkey" PRIMARY KEY ("accountId"),
+    CONSTRAINT "EconomyVirtualAccountProjection_channel_snowflake" CHECK ("channelId" IS NULL OR "channelId" ~ '^[0-9]{17,20}$'),
+    CONSTRAINT "EconomyVirtualAccountProjection_message_snowflake" CHECK ("messageId" IS NULL OR "messageId" ~ '^[0-9]{17,20}$'),
+    CONSTRAINT "EconomyVirtualAccountProjection_thread_snowflake" CHECK ("archiveThreadId" IS NULL OR "archiveThreadId" ~ '^[0-9]{17,20}$')
 );
 
 ALTER TABLE "EconomyVirtualAccountProjection"
-    ADD CONSTRAINT "EconomyVirtualAccountProjection_account_fkey"
-    FOREIGN KEY ("accountId") REFERENCES "EconomyVirtualAccount"("id")
+    ADD CONSTRAINT "EconomyVirtualAccountProjection_account_scope_fkey"
+    FOREIGN KEY ("accountId", "guildId", "nitradoConnId")
+    REFERENCES "EconomyVirtualAccount"("id", "guildId", "nitradoConnId")
     ON DELETE CASCADE ON UPDATE CASCADE;
 
 CREATE INDEX "EconomyVirtualAccountProjection_scope_idx"
@@ -81,12 +87,15 @@ CREATE TABLE "EconomyVirtualAccountManager" (
     "addedByDiscordId" TEXT NOT NULL,
     "createdAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
 
-    CONSTRAINT "EconomyVirtualAccountManager_pkey" PRIMARY KEY ("id")
+    CONSTRAINT "EconomyVirtualAccountManager_pkey" PRIMARY KEY ("id"),
+    CONSTRAINT "EconomyVirtualAccountManager_user_snowflake" CHECK ("userDiscordId" ~ '^[0-9]{17,20}$'),
+    CONSTRAINT "EconomyVirtualAccountManager_actor_snowflake" CHECK ("addedByDiscordId" ~ '^[0-9]{17,20}$')
 );
 
 ALTER TABLE "EconomyVirtualAccountManager"
-    ADD CONSTRAINT "EconomyVirtualAccountManager_account_fkey"
-    FOREIGN KEY ("accountId") REFERENCES "EconomyVirtualAccount"("id")
+    ADD CONSTRAINT "EconomyVirtualAccountManager_account_scope_fkey"
+    FOREIGN KEY ("accountId", "guildId", "nitradoConnId")
+    REFERENCES "EconomyVirtualAccount"("id", "guildId", "nitradoConnId")
     ON DELETE CASCADE ON UPDATE CASCADE;
 
 CREATE UNIQUE INDEX "EconomyVirtualAccountManager_account_user_key"
@@ -104,7 +113,10 @@ CREATE TABLE "EconomyVirtualManagerPanel" (
     "createdAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
     "updatedAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
 
-    CONSTRAINT "EconomyVirtualManagerPanel_pkey" PRIMARY KEY ("id")
+    CONSTRAINT "EconomyVirtualManagerPanel_pkey" PRIMARY KEY ("id"),
+    CONSTRAINT "EconomyVirtualManagerPanel_channel_snowflake" CHECK ("channelId" ~ '^[0-9]{17,20}$'),
+    CONSTRAINT "EconomyVirtualManagerPanel_message_snowflake" CHECK ("messageId" IS NULL OR "messageId" ~ '^[0-9]{17,20}$'),
+    CONSTRAINT "EconomyVirtualManagerPanel_actor_snowflake" CHECK ("updatedByDiscordId" ~ '^[0-9]{17,20}$')
 );
 CREATE UNIQUE INDEX "EconomyVirtualManagerPanel_scope_key"
     ON "EconomyVirtualManagerPanel"("guildId", "nitradoConnId");
@@ -121,10 +133,17 @@ CREATE TABLE "EconomyVirtualManagerPanelAccess" (
     "userDiscordId" TEXT NOT NULL,
     "createdAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
 
-    CONSTRAINT "EconomyVirtualManagerPanelAccess_pkey" PRIMARY KEY ("guildId", "nitradoConnId", "userDiscordId")
+    CONSTRAINT "EconomyVirtualManagerPanelAccess_pkey" PRIMARY KEY ("guildId", "nitradoConnId", "userDiscordId"),
+    CONSTRAINT "EconomyVirtualManagerPanelAccess_channel_snowflake" CHECK ("channelId" ~ '^[0-9]{17,20}$'),
+    CONSTRAINT "EconomyVirtualManagerPanelAccess_user_snowflake" CHECK ("userDiscordId" ~ '^[0-9]{17,20}$')
 );
 CREATE INDEX "EconomyVirtualManagerPanelAccess_channel_idx"
     ON "EconomyVirtualManagerPanelAccess"("guildId", "nitradoConnId", "channelId");
+ALTER TABLE "EconomyVirtualManagerPanelAccess"
+    ADD CONSTRAINT "EconomyVirtualManagerPanelAccess_panel_scope_fkey"
+    FOREIGN KEY ("guildId", "nitradoConnId")
+    REFERENCES "EconomyVirtualManagerPanel"("guildId", "nitradoConnId")
+    ON DELETE CASCADE ON UPDATE CASCADE;
 
 -- Backfill fuer alle bestehenden CUSTOM-, LOTTERY_POT- und MARKET_VENDOR-Konten.
 -- Die jeweilige Server-Economy-Waehrung wird als 1:1-Ausgangswert uebernommen;
