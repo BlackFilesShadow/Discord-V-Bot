@@ -32,6 +32,21 @@ describe('structured Goodbye status embed', () => {
     expect(json.fields?.some(field => field.name.includes('Whitelist'))).toBe(false);
   });
 
+  it('renders the Discord mention exactly inside Discord-Name instead of above the embed', () => {
+    const json = buildStructuredGoodbyeEmbed({
+      discordName: 'DiscordNick',
+      discordMention: '<@123456789>',
+      customMessage: '',
+      leaveOccurredAt: leftAt,
+      cleanupEnabled: false,
+      cleanupSnapshot: null,
+    }).toJSON();
+
+    expect(json.description).toBeUndefined();
+    expect(json.fields?.find(field => field.name === 'Discord-Name')?.value).toBe('<@123456789>');
+    expect(JSON.stringify(json)).not.toContain('DiscordNick');
+  });
+
   it.each([
     ['PENDING', 0xeab308, 'Wartet'],
     ['RUNNING', 0xeab308, 'läuft'],
