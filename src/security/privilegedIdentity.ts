@@ -31,11 +31,10 @@ export function resolveBotOwnerId(env: NodeJS.ProcessEnv = process.env): string 
  */
 export function isGlobalDeveloperIdentity(
   discordId: string,
-  role: PrivilegedRole,
+  _role: PrivilegedRole,
   ownerId: string,
 ): boolean {
-  if (!ownerId || discordId !== ownerId) return false;
-  return true;
+  return Boolean(ownerId) && discordId === ownerId;
 }
 
 /**
