@@ -21,15 +21,16 @@ Serverinterne Live-Feeds fuehren keine zweite Gameplay-Wahrheit ein. Die normali
 
 ### Deathfeed
 
+Zustellbare Discord-Kategorien:
+
 - `PLAYER_KILLED` -> `PVP`
-- `PLAYER_DIED` -> `DEATH`
 - `PLAYER_SUICIDE` -> `SUICIDE`
 - `NPC_KILL` -> `NPC`
 - `VEHICLE_DEATH` -> `VEHICLE`
 
-Ein normaler `PLAYER_DIED` ist **kein PvP-Kill**. Ein nicht-toedlicher `hit by [vehicle]` bleibt `PLAYER_HIT` und erscheint nicht im Deathfeed.
+`PLAYER_DIED` bleibt als kanonisches ADM-Rohereignis fuer Diagnose/Historie erhalten, wird aber bewusst **nicht** als eigener Discord-Gameplay-Feed zugestellt. Die generische DayZ-Zeile liefert auf Konsole keinen belastbaren einheitlichen Todesgrund. Ein nicht-toedlicher `hit by [vehicle]` bleibt ebenfalls nur Rohdaten (`PLAYER_HIT`) und erscheint nicht im Deathfeed.
 
-DayZ kann fuer denselben finalen Tod mehrere ADM-Zeilen schreiben, beispielsweise einen spezifischen `PLAYER_SUICIDE` und unmittelbar danach einen generischen `PLAYER_DIED`. Beide `AdmEvent`-Datensaetze bleiben fuer Diagnose und Historie erhalten. Fuer Discord wird der generische `PLAYER_DIED` jedoch unterdrueckt, wenn fuer denselben Spieler und dieselbe Position innerhalb von +/- 5 Sekunden bereits `PLAYER_KILLED`, `PLAYER_SUICIDE`, `NPC_KILL` oder `VEHICLE_DEATH` existiert. Dadurch wird ein Ereignis nicht gleichzeitig als z.B. **Suizid** und **Tod** gepostet.
+DayZ kann fuer denselben finalen Tod mehrere ADM-Zeilen schreiben, beispielsweise einen spezifischen `PLAYER_SUICIDE` und unmittelbar danach einen generischen `PLAYER_DIED`. Beide Datensaetze bleiben in `AdmEvent`; sichtbar zugestellt wird nur das spezifische, unterstuetzte Todesereignis. Dadurch entsteht kein zweiter generischer "Tod"-Post neben Suizid/PvP/NPC/Fahrzeugtod.
 
 ### Baufeed
 
@@ -104,9 +105,9 @@ Nach Merge und Migration:
 4. Pruefen, dass fuer den Zielserver eine aktive `GameplayFeedConfig` mit dem gewuenschten Discord-Channel vorhanden ist.
 5. Linking-Challenge und PlayerSession/Reward-Postprocessing auf einem Testslot pruefen.
 6. DayZ-Servereinstellungen fuer Death-/Baufeed pruefen: die benoetigten Admin-Logs muessen serverseitig aktiviert sein.
-7. Auf dem verbundenen Server **nach** aktivierter Feed-Konfiguration einen neuen PvP-Kill, normalen Tod, Suizid, NPC-/Tier-Tod, Fahrzeugtod sowie Placement/Build/Dismantle/Destroy erzeugen.
+7. Auf dem verbundenen Server **nach** aktivierter Feed-Konfiguration einen neuen PvP-Kill, Suizid, NPC-/Tier-Tod, Fahrzeugtod sowie Placement/Build/Dismantle/Destroy erzeugen. Einen generischen `PLAYER_DIED` zusaetzlich als Rohdaten-Kontrolle pruefen; dafuer darf kein eigener Discord-Post entstehen.
 8. Fuer ein neues Live-Ereignis bis zu etwa 45 Sekunden einplanen: ADM-Poll maximal 30 Sekunden plus Gameplay-Feed-Poll maximal 15 Sekunden.
 9. Nitrado-Dateiwechsel/Serverrestart, Botrestart und Discord-Fehler/Retry testen.
-10. Bestaetigen: keine doppelten generischen/spezifischen Todesposts, keine verlorenen Posts, kein Cross-Server-Leak, saubere Embed-Darstellung und korrekte Kartenlinks.
+10. Bestaetigen: kein generischer `PLAYER_DIED`-Discord-Post, keine verlorenen oder doppelten Posts, kein Cross-Server-Leak, saubere Embed-Darstellung und korrekte Kartenlinks.
 
-Die Regression `tests/modules/gameplayFeedDeliveryE2E.test.ts` beweist zusaetzlich die produktive Kernkette von einer rohen DayZ-ADM-PvP-Zeile ueber Persistenz und Kategorie-Ableitung bis zum Discord-Embed, den RETRY-Pfad sowie die Unterdrueckung eines generischen `PLAYER_DIED` neben einem spezifischen Todesereignis. `tests/modules/gameplayFeedEmbed.test.ts` prueft zusaetzlich die saubere Namensdarstellung, Alias-only-Serveranzeige, die unterschiedliche Zeitdarstellung fuer Death- und Nicht-Kill-Feeds sowie die iZurvive-Positionslinks.
+Die Regression `tests/modules/gameplayFeedDeliveryE2E.test.ts` beweist zusaetzlich die produktive Kernkette von einer rohen DayZ-ADM-PvP-Zeile ueber Persistenz und Kategorie-Ableitung bis zum Discord-Embed, den RETRY-Pfad sowie die Nicht-Zustellung generischer `PLAYER_DIED`-Rohereignisse. `tests/modules/gameplayFeedTypes.test.ts` prueft diese Kategoriegrenze explizit. `tests/modules/gameplayFeedEmbed.test.ts` prueft zusaetzlich die saubere Namensdarstellung, Alias-only-Serveranzeige, die unterschiedliche Zeitdarstellung fuer Death- und Nicht-Kill-Feeds sowie die iZurvive-Positionslinks.
