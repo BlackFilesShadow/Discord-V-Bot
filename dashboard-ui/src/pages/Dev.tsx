@@ -27,10 +27,10 @@ export default function DevLayout() {
   const { user } = useAuth();
   const dev = useDevSession();
 
-  if (!user || user.role !== 'DEVELOPER') {
+  if (!user) {
     return (
       <Shell title="Dev-Konsole" back="/servers">
-        <Card glow className="max-w-md mx-auto"><CardHeader><CardTitle><AlertTriangle className="h-4 w-4 inline mr-1 text-danger" /> Kein Zugriff</CardTitle><CardDesc>Diese Konsole ist auf DEVELOPER-Konten beschraenkt.</CardDesc></CardHeader></Card>
+        <Card glow className="max-w-md mx-auto"><CardHeader><CardTitle><AlertTriangle className="h-4 w-4 inline mr-1 text-danger" /> Kein Zugriff</CardTitle><CardDesc>Bitte zuerst mit Discord anmelden.</CardDesc></CardHeader></Card>
       </Shell>
     );
   }
@@ -45,9 +45,9 @@ export default function DevLayout() {
     );
   }
 
-  // Die Rolle allein ist nicht die globale DEV-Identitaet. Erst das serverseitig
-  // bestaetigte `eligible` (kanonische Discord-ID + aktuelle DB-Rolle) darf den
-  // Passwort-Step-up bzw. die geschuetzte Shell erreichbar machen.
+  // UI-Rollenlabels sind keine Berechtigungsquelle. Nur die serverseitig
+  // bestaetigte kanonische GlobalDeveloperIdentity entscheidet, ob der Step-up
+  // und die geschuetzte Shell erreichbar sind.
   if (!dev.eligible) {
     return (
       <Shell title="Dev-Konsole" back="/servers">
