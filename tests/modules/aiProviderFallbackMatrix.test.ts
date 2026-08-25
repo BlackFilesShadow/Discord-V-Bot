@@ -57,15 +57,18 @@ jest.mock('../../src/modules/ai/dayz129Catalog', () => ({ answerDayz129CatalogQu
 
 const mockRecordCall = jest.fn();
 const mockGetRankedProviders = jest.fn();
+const mockGetAllCooldowns = jest.fn();
 const mockMarkProviderUnavailable = jest.fn();
+const mockIsOnCooldown = jest.fn();
 
 jest.mock('../../src/modules/ai/providerStats', () => ({
   __esModule: true,
   recordCall: (...args: unknown[]) => mockRecordCall(...args),
   getRankedProviders: (...args: unknown[]) => mockGetRankedProviders(...args),
+  getAllCooldowns: (...args: unknown[]) => mockGetAllCooldowns(...args),
   markProviderUnavailable: (...args: unknown[]) => mockMarkProviderUnavailable(...args),
-  getConfiguredModel: jest.fn(() => 'known-model'),
-  isOnCooldown: jest.fn(() => false),
+  getConfiguredModel: jest.fn((provider: string) => provider === 'openrouter' ? 'custom/model' : 'known-model'),
+  isOnCooldown: (...args: unknown[]) => mockIsOnCooldown(...args),
 }));
 
 jest.mock('../../src/modules/ai/providerCapabilities', () => ({
@@ -117,6 +120,8 @@ describe('callAI circuit-breaker and fallback matrix', () => {
   beforeEach(() => {
     jest.clearAllMocks();
     mockGetRankedProviders.mockResolvedValue(['groq', 'cerebras']);
+    mockGetAllCooldowns.mockReturnValue([]);
+    mockIsOnCooldown.mockReturnValue(false);
   });
 
   test.each([401, 403, 404])('HTTP %i sperrt Provider ohne Same-Provider-Retry und faellt weiter', async (status) => {
@@ -165,6 +170,27 @@ describe('callAI circuit-breaker and fallback matrix', () => {
     expect(post).toHaveBeenCalledTimes(2);
     expect(mockRecordCall).toHaveBeenCalledWith('groq', 'rateLimit', expect.any(Number), expect.any(String), { retryAfterMs: 0 });
     expect(mockRecordCall).toHaveBeenCalledWith('cerebras', 'rateLimit', expect.any(Number), expect.any(String), { retryAfterMs: 0 });
+  });
+
+  it('behaelt RATE_LIMIT auch beim Folgerequest, wenn alle geeigneten Provider bereits im 429-Cooldown sind', async () => {
+    mockGetRankedProviders.mockResolvedValue([]);
+    mockIsOnCooldown.mockReturnValue(true);
+    mockGetAllCooldowns.mockReturnValue([
+      { provider: 'groq', remainingMs: 45_000, consecutive: 1 },
+      { provider: 'cerebras', remainingMs: 60_000, consecutive: 1 },
+    ]);
+
+    await expect(callAI(messages)).rejects.toMatchObject({ code: 'RATE_LIMIT', retryAfterMs: 45_000 });
+    expect(post).not.toHaveBeenCalled();
+  });
+
+  it('verwechselt leere Providerliste ohne aktiven 429-Cooldown nicht mit Rate-Limit', async () => {
+    mockGetRankedProviders.mockResolvedValue([]);
+    mockIsOnCooldown.mockReturnValue(true);
+    mockGetAllCooldowns.mockReturnValue([]);
+
+    await expect(callAI(messages)).rejects.not.toMatchObject({ code: 'RATE_LIMIT' });
+    expect(post).not.toHaveBeenCalled();
   });
 
   it('retried 503 genau einmal auf demselben Provider und akzeptiert danach Erfolg', async () => {
