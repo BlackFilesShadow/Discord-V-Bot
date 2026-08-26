@@ -55,13 +55,16 @@ const root = process.cwd();
 const read = (relative: string): string => fs.readFileSync(path.resolve(root, relative), 'utf8');
 const matrix = JSON.parse(read('docs/dashboard-button-matrix.json')) as ButtonMatrix;
 
-// docs/dashboard-button-matrix.json is the immutable stage-24 inventory tied to
-// inventoriedMainSha. Intentional post-stage, label-only UI renames are tracked
-// explicitly here so the architecture gate stays strict for every other button
-// attribute without rewriting historical stage evidence.
+// docs/dashboard-button-matrix.json is immutable stage-24 evidence tied to
+// inventoriedMainSha. Intentional post-stage changes are tracked explicitly here
+// so historical evidence is preserved while the live replacement surfaces stay
+// under an equally strict architecture gate.
 const POST_STAGE_LABEL_OVERRIDES: Readonly<Record<string, string>> = {
   'dashboard-ui/src/components/KillfeedTab.tsx#KillfeedTab:4': '🌐 Online List',
 };
+const HISTORICAL_VIRTUAL_ACCOUNT_PANEL = 'dashboard-ui/src/components/economy/VirtualAccountsPanel.tsx';
+const CURRENT_VIRTUAL_ACCOUNT_PANEL = 'dashboard-ui/src/components/economy/VirtualAccountsControlPanel.tsx';
+const CURRENT_VIRTUAL_ACCOUNT_BUTTON_COUNT = 14;
 
 function resolveUiModule(from: string, specifier: string): string | null {
   const srcRoot = path.resolve(root, 'dashboard-ui/src');
@@ -221,7 +224,14 @@ describe('stage 24 dashboard button matrix architecture', () => {
       .map(entry => ({ file: entry.file, count: matrix.buttons.filter(button => button.file === entry.file).length }))
       .sort((a, b) => a.file.localeCompare(b.file));
 
-    expect(actual).toEqual(declared);
+    // Preserve the immutable stage-24 inventory while requiring the deliberate
+    // post-stage replacement to be present with its exact reviewed button count.
+    expect(actual.filter(entry => entry.file !== CURRENT_VIRTUAL_ACCOUNT_PANEL))
+      .toEqual(declared.filter(entry => entry.file !== HISTORICAL_VIRTUAL_ACCOUNT_PANEL));
+    expect(actual.find(entry => entry.file === CURRENT_VIRTUAL_ACCOUNT_PANEL))
+      .toEqual({ file: CURRENT_VIRTUAL_ACCOUNT_PANEL, count: CURRENT_VIRTUAL_ACCOUNT_BUTTON_COUNT });
+    expect(actual.some(entry => entry.file === HISTORICAL_VIRTUAL_ACCOUNT_PANEL)).toBe(false);
+
     expect(matrix.buttons).toHaveLength(matrix.buttonCount);
     expect(matrix.buttons).toHaveLength(352);
     expect(matrix.fileCoverage).toHaveLength(60);
@@ -234,7 +244,19 @@ describe('stage 24 dashboard button matrix architecture', () => {
       ...button,
       label: POST_STAGE_LABEL_OVERRIDES[button.sourceId] ?? button.label,
     }));
-    expect(currentButtonSignatures()).toEqual(declaredSignatures);
+    const currentSignatures = currentButtonSignatures();
+    expect(currentSignatures.filter(button => button.file !== CURRENT_VIRTUAL_ACCOUNT_PANEL))
+      .toEqual(declaredSignatures.filter(button => button.file !== HISTORICAL_VIRTUAL_ACCOUNT_PANEL));
+
+    const replacement = currentSignatures.filter(button => button.file === CURRENT_VIRTUAL_ACCOUNT_PANEL);
+    expect(replacement).toHaveLength(CURRENT_VIRTUAL_ACCOUNT_BUTTON_COUNT);
+    expect(replacement.every(button => button.label !== '<dynamic-or-icon-only>' && button.label.trim().length > 0)).toBe(true);
+    // Native buttons must state type explicitly; shared Button has the separately
+    // verified safe type="button" default from the shared component.
+    expect(replacement.every(button => button.tag === 'Button' || button.type !== 'implicit-button')).toBe(true);
+    const directAsync = replacement.filter(button => /\.mutate\(|\.refetch\(/.test(button.handler));
+    expect(directAsync.length).toBeGreaterThan(0);
+    expect(directAsync.every(button => button.hasDisabledGuard || button.hasLoadingGuard)).toBe(true);
   });
 
   test('maps every button to all eight mandatory checks and real surface evidence', () => {
