@@ -125,7 +125,7 @@ describe('stage 25 dashboard switch matrix architecture', () => {
       'dashboard-ui/src/components/EmbedBuilderTab.tsx',
       'dashboard-ui/src/components/WelcomeCoreTab.tsx',
       'dashboard-ui/src/components/ReactionEmbedsTab.tsx',
-      'dashboard-ui/src/components/economy/VirtualAccountsPanel.tsx',
+      'dashboard-ui/src/components/economy/VirtualAccountsControlPanel.tsx',
     ]);
     const files = new Set(switches().map(entry => entry.file));
     expect([...files].sort()).toEqual([...reviewed].sort());
