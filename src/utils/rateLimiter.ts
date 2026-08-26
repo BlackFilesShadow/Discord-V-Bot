@@ -88,6 +88,18 @@ export async function checkRateLimit(
       resetAt: new Date(now.getTime() + config.windowMs),
     };
   } catch (_error) {
+    // Externe AI-Provider verursachen reale Kontingent-/Kostenlast. Wenn der
+    // persistente Quota-Store ausfällt, darf dieser eine Pfad deshalb nicht
+    // fail-open unbegrenzt Provider-Aufrufe erzeugen. Andere lokale Aktionen
+    // behalten das historische Availability-Verhalten.
+    if (action === 'ai') {
+      logSecurity('AI_RATE_LIMIT_STORE_UNAVAILABLE', 'HIGH', { identifier, action });
+      return {
+        allowed: false,
+        remaining: 0,
+        resetAt: new Date(now.getTime() + config.windowMs),
+      };
+    }
     return {
       allowed: true,
       remaining: config.maxRequests,
