@@ -64,7 +64,9 @@ describe('virtuelle Economy-Konten — Production-Invarianten', () => {
 
   it('bietet keine physische Delete-Route und verbietet Archivierung mit Restguthaben', () => {
     expect(routes).not.toMatch(/economyVirtualAccountsRouter\.delete\s*\(/);
-    expect(service).toContain("if (current.balance !== 0n) throw new Error('Konto besitzt noch Guthaben");
+    expect(service).toContain('current.balance !== 0n || finance.bankBalance !== 0n');
+    expect(service).toContain('Konto-Finanzprofil fehlt; Archivierung wird sicherheitshalber abgebrochen.');
+    expect(service).toContain('Wallet und Bank muessen 0 sein.');
     expect(service).toContain("' FOR UPDATE'");
     expect(controlSafety).toContain("account.kind !== 'CUSTOM'");
   });
