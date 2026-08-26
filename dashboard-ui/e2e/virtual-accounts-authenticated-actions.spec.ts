@@ -165,8 +165,13 @@ async function gotoVirtualAccounts(page: Page): Promise<void> {
   await expect(page.getByRole('heading', { name: 'Virtuelle Konten' })).toBeVisible();
 }
 
+function payoutPanel(page: Page) {
+  return page.getByRole('button', { name: 'Auszahlen', exact: true })
+    .locator('xpath=ancestor::div[contains(@class,"rounded-lg")][1]');
+}
+
 async function selectPayoutMember(page: Page): Promise<void> {
-  const payout = page.getByText('Admin-Auszahlung', { exact: true }).locator('xpath=ancestor::div[contains(@class,"rounded-lg")][1]');
+  const payout = payoutPanel(page);
   await payout.getByRole('button', { name: /Guild-Mitglied suchen/ }).click();
   await expect(page.getByRole('option', { name: /Alice/ })).toBeVisible();
   await page.getByRole('option', { name: /Alice/ }).click();
@@ -206,11 +211,12 @@ test.describe('Authenticated virtual-account actions', () => {
     });
     await expect(page.getByText(/Konto „Turnierkasse“ erstellt/)).toBeVisible();
 
-    const zeroRow = page.getByText('Leere Kasse', { exact: true }).locator('xpath=ancestor::div[contains(@class,"rounded-lg")][1]');
-    await zeroRow.getByRole('button', { name: 'Audit' }).click();
+    const zeroRow = page.getByText('Leere Kasse', { exact: false })
+      .locator('xpath=ancestor::div[.//button[normalize-space()="Audit"]][1]');
+    await zeroRow.getByRole('button', { name: 'Audit', exact: true }).click();
     await expect(page.getByText(/Audit Test/)).toBeVisible();
 
-    await zeroRow.getByRole('button', { name: 'Archivieren' }).click();
+    await zeroRow.getByRole('button', { name: 'Archivieren', exact: true }).click();
     await expect.poll(() => mutation(mutations, `/api/v2/guilds/${GUILD_ID}/economy/virtual-accounts/${ZERO_ACCOUNT}/archive`)).toBeTruthy();
     expect(mutation(mutations, `/api/v2/guilds/${GUILD_ID}/economy/virtual-accounts/${ZERO_ACCOUNT}/archive`)?.query).toBe(`?slot=${SLOT}`);
   });
@@ -219,14 +225,14 @@ test.describe('Authenticated virtual-account actions', () => {
     const mutations = await stubEconomy(page);
     await gotoVirtualAccounts(page);
 
-    const payout = page.getByText('Admin-Auszahlung', { exact: true }).locator('xpath=ancestor::div[contains(@class,"rounded-lg")][1]');
+    const payout = payoutPanel(page);
     await payout.getByText('Konto', { exact: true }).locator('..').locator('select').selectOption(FUNDED_ACCOUNT);
     await selectPayoutMember(page);
     await payout.getByText('Betrag in Konto-Währung').locator('..').locator('input').fill('250');
     await payout.getByText('Quelle', { exact: true }).locator('..').locator('select').selectOption('BANK');
     await payout.getByText('Ziel beim Spieler').locator('..').locator('select').selectOption('BANK');
     await payout.getByPlaceholder('Mindestens 3 Zeichen').fill('Turnier Refund');
-    await payout.getByRole('button', { name: 'Auszahlen' }).click();
+    await payout.getByRole('button', { name: 'Auszahlen', exact: true }).click();
 
     const path = `/api/v2/guilds/${GUILD_ID}/economy/virtual-accounts/${FUNDED_ACCOUNT}/payout`;
     await expect.poll(() => mutation(mutations, path)).toBeTruthy();
@@ -247,12 +253,12 @@ test.describe('Authenticated virtual-account actions', () => {
     await stubEconomy(page, { payoutError: true });
     await gotoVirtualAccounts(page);
 
-    const payout = page.getByText('Admin-Auszahlung', { exact: true }).locator('xpath=ancestor::div[contains(@class,"rounded-lg")][1]');
+    const payout = payoutPanel(page);
     await payout.getByText('Konto', { exact: true }).locator('..').locator('select').selectOption(FUNDED_ACCOUNT);
     await selectPayoutMember(page);
     await payout.getByText('Betrag in Konto-Währung').locator('..').locator('input').fill('250');
     await payout.getByPlaceholder('Mindestens 3 Zeichen').fill('Turnier Refund');
-    await payout.getByRole('button', { name: 'Auszahlen' }).click();
+    await payout.getByRole('button', { name: 'Auszahlen', exact: true }).click();
 
     await expect(page.getByText(/PAYOUT_TARGET_STALE/)).toBeVisible();
     await expect(page.getByText('Admin-Auszahlung atomar gebucht.')).toHaveCount(0);
@@ -264,7 +270,7 @@ for (const width of [320, 360, 375, 390, 430] as const) {
     await stubEconomy(page);
     await page.setViewportSize({ width, height: 1000 });
     await gotoVirtualAccounts(page);
-    await expect(page.getByText('Admin-Auszahlung', { exact: true })).toBeVisible();
+    await expect(page.getByRole('button', { name: 'Auszahlen', exact: true })).toBeVisible();
     await noOverflow(page);
   });
 }
