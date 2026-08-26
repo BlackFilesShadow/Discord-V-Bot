@@ -180,6 +180,51 @@ function strongPrefixCandidate(cleaned: string): string | null {
   return secondLen - firstLen >= 3 ? matches[0] : null;
 }
 
+/**
+ * Vollindex-Fallback fuer natuerliche englische/technische Bezeichnungen.
+ * Anders als die historische Handvoll DISPLAY_ALIASES arbeitet dieser Pfad
+ * ueber ALLE Classnames der eingebetteten types.xml-Datensaetze. Er bleibt
+ * fail-closed: kurze/mehrdeutige Fragmente wie "AK" werden niemals geraten.
+ */
+function fullIndexCandidates(cleaned: string): string[] {
+  const query = compact(cleaned);
+  if (query.length < 4) return [];
+  const names = base.getDayz129Index().allTypeNames;
+
+  const prefixFamily = names
+    .filter(name => compact(name).startsWith(query))
+    .sort((a, b) => compact(a).length - compact(b).length || a.localeCompare(b));
+  if (prefixFamily.length > 0 && prefixFamily.length <= 25) return prefixFamily;
+
+  const queryTokens = fold(cleaned).split(/[^a-z0-9]+/).filter(token => token.length >= 3);
+  if (queryTokens.length === 0) return [];
+  const ranked = names.map((name) => {
+    const source = name
+      .replace(/([a-z0-9])([A-Z])/g, '$1 $2')
+      .replace(/[_-]+/g, ' ');
+    const tokens = fold(source).split(/[^a-z0-9]+/).filter(Boolean);
+    let score = 0;
+    for (const q of queryTokens) {
+      const exact = tokens.some(token => token === q);
+      const prefix = tokens.some(token => token.startsWith(q) || q.startsWith(token));
+      const contains = tokens.some(token => token.includes(q) || q.includes(token));
+      if (exact) score += 4;
+      else if (prefix) score += 2;
+      else if (contains && q.length >= 5) score += 1;
+      else return { name, score: -1 };
+    }
+    if (compact(name).includes(query)) score += 3;
+    return { name, score };
+  }).filter(row => row.score > 0)
+    .sort((a, b) => b.score - a.score || compact(a.name).length - compact(b.name).length || a.name.localeCompare(b.name));
+
+  if (ranked.length === 0) return [];
+  const best = ranked[0].score;
+  const strong = ranked.filter(row => row.score >= Math.max(best - 1, queryTokens.length * 2));
+  if (strong.length === 1) return [strong[0].name];
+  return strong.length <= 25 ? strong.map(row => row.name) : [];
+}
+
 function resolve(question: string): Resolution {
   const cleaned = cleanLookupText(question);
   if (!cleaned) return { matched: false, candidates: [] };
@@ -212,6 +257,9 @@ function resolve(question: string): Resolution {
 
   const prefix = strongPrefixCandidate(cleaned);
   if (prefix) return { matched: true, candidates: [prefix] };
+
+  const fullIndex = fullIndexCandidates(cleaned);
+  if (fullIndex.length) return { matched: true, candidates: fullIndex };
 
   return { matched: false, candidates: [] };
 }
