@@ -30,8 +30,9 @@ export interface GoodbyeCleanupSnapshot {
 
 export interface GoodbyeEmbedData {
   discordName: string;
-  /** Legacy input retained for call-site compatibility; never rendered as the visible name. */
+  /** Native Discord-Mention; wird nur gerendert, wenn sie zuvor sicher aufgeloest wurde. */
   discordMention?: string;
+  discordMentionResolved?: boolean;
   customMessage: string;
   /** Discord-Beitrittszeitpunkt dieser konkreten Guild-Mitgliedschaft. */
   joinedAt?: Date | null;
@@ -41,6 +42,34 @@ export interface GoodbyeEmbedData {
 }
 
 const TIME_ZONE = 'Europe/Berlin';
+const DISCORD_SNOWFLAKE_ONLY_RE = /^\d{17,20}$/;
+const DISCORD_MENTION_ONLY_RE = /^<@!?\d{17,20}>$/;
+const DISCORD_MENTION_ANY_RE = /<@!?\d{17,20}>/g;
+const DISCORD_SNOWFLAKE_ANY_RE = /(^|[^\d])(\d{17,20})(?=$|[^\d])/g;
+
+/**
+ * Sichtbare Goodbye-Texte duerfen niemals eine rohe Discord-Snowflake zeigen.
+ * Das gilt auch fuer alte persistierte Namen, manuell gespeicherte Templates,
+ * Cleanup-Fehlertexte und unerwartete Fallbacks.
+ */
+export function sanitizeGoodbyeVisibleText(
+  value: string | null | undefined,
+  fallback = 'Discord-Nutzer',
+  maxLength = 1024,
+): string {
+  let text = String(value ?? '').normalize('NFKC').trim();
+  if (!text) return fallback;
+  text = text.replace(DISCORD_MENTION_ANY_RE, 'Discord-Nutzer');
+  text = text.replace(DISCORD_SNOWFLAKE_ANY_RE, (_match, prefix: string) => `${prefix}Discord-Nutzer`);
+  text = text.trim();
+  if (!text || DISCORD_SNOWFLAKE_ONLY_RE.test(text) || DISCORD_MENTION_ONLY_RE.test(text)) return fallback;
+  return safeEmbedField(text, maxLength);
+}
+
+function safeResolvedMention(value: string | undefined, resolved: boolean | undefined): string | null {
+  if (!resolved || !value || !DISCORD_MENTION_ONLY_RE.test(value)) return null;
+  return value.replace('<@!', '<@');
+}
 
 function readSnapshot(value: unknown): GoodbyeCleanupSnapshot | null {
   if (!value || typeof value !== 'object' || Array.isArray(value)) return null;
@@ -82,7 +111,7 @@ function formatTime(value: Date): string {
   return `${new Intl.DateTimeFormat('de-DE', {
     timeStyle: 'medium',
     timeZone: TIME_ZONE,
-  }).format(value)} (${TIME_ZONE})`;
+  }).format(value)} Uhr`;
 }
 
 export function buildStructuredGoodbyeEmbed(data: GoodbyeEmbedData): EmbedBuilder {
@@ -90,28 +119,27 @@ export function buildStructuredGoodbyeEmbed(data: GoodbyeEmbedData): EmbedBuilde
     .setColor(embedColor(data.cleanupEnabled, data.cleanupSnapshot))
     .setTitle('👋 Bye Bye');
 
-  const customMessage = data.customMessage.trim();
-  if (customMessage) embed.setDescription(safeEmbedField(customMessage, 4000));
+  const customMessage = sanitizeGoodbyeVisibleText(data.customMessage, '', 4000);
+  if (customMessage) embed.setDescription(customMessage);
 
+  const safeName = sanitizeGoodbyeVisibleText(data.discordName, 'Discord-Nutzer', 256);
+  const mention = safeResolvedMention(data.discordMention, data.discordMentionResolved);
+  const identityLine = mention ?? safeName;
+  const joined = data.joinedAt ? formatDate(data.joinedAt) : 'Unbekannt';
+
+  // Eine einzige, nicht-inline Detailgruppe verhindert das von Discord erzeugte
+  // 3+2-Raster und bleibt auf Desktop/Mobile stabil ausgerichtet.
   embed
-    .addFields(
-      {
-        name: 'Discord-Name',
-        // Ein GuildMemberRemove kann eine Mention nach dem Leave nicht mehr
-        // sauber aufloesen. Deshalb wird hier immer der bereits persistierte
-        // lesbare Display-/Discord-Name gezeigt und niemals die Snowflake-ID.
-        value: safeEmbedField(data.discordName, 256),
-        inline: true,
-      },
-      { name: 'Status', value: 'Server verlassen', inline: true },
-      {
-        name: 'Eintrittsdatum',
-        value: data.joinedAt ? formatDate(data.joinedAt) : 'Unbekannt',
-        inline: true,
-      },
-      { name: 'Austrittsdatum', value: formatDate(data.leaveOccurredAt), inline: true },
-      { name: 'Uhrzeit', value: formatTime(data.leaveOccurredAt), inline: true },
-    )
+    .addFields({
+      name: '👤 Mitglied',
+      value: [
+        `**Discord:** ${identityLine}`,
+        '**Status:** Server verlassen',
+        `**Beigetreten:** ${joined}`,
+        `**Ausgetreten:** ${formatDate(data.leaveOccurredAt)} · ${formatTime(data.leaveOccurredAt)}`,
+      ].join('\n'),
+      inline: false,
+    })
     .setTimestamp(data.leaveOccurredAt);
 
   if (!data.cleanupEnabled) return embed;
@@ -119,19 +147,25 @@ export function buildStructuredGoodbyeEmbed(data: GoodbyeEmbedData): EmbedBuilde
     ? data.cleanupSnapshot.servers
     : [{ nitradoConnId: null, serverAlias: 'Keine eindeutige Serverzuordnung', playerNames: [], state: 'NOT_LINKED' as const }];
   const playerLines = servers.map(server => {
-    const players = server.playerNames.length > 0 ? server.playerNames.join(', ') : 'Nicht eindeutig zugeordnet';
-    return `**${safeEmbedField(server.serverAlias, 128)}:** ${safeEmbedField(players, 512)}`;
+    const serverAlias = sanitizeGoodbyeVisibleText(server.serverAlias, 'DayZ-Server', 128);
+    const players = server.playerNames.length > 0
+      ? server.playerNames.map(player => sanitizeGoodbyeVisibleText(player, 'Unbekannter Spieler', 128)).join(', ')
+      : 'Nicht eindeutig zugeordnet';
+    return `**${serverAlias}:** ${sanitizeGoodbyeVisibleText(players, 'Nicht eindeutig zugeordnet', 512)}`;
   });
   const statusLines = servers.map(server => {
+    const serverAlias = sanitizeGoodbyeVisibleText(server.serverAlias, 'DayZ-Server', 128);
     const confirmed = server.state === 'CONFIRMED' && server.confirmedAt
       ? ` · bestätigt ${formatDate(new Date(server.confirmedAt))}, ${formatTime(new Date(server.confirmedAt))}`
       : '';
-    const error = server.state === 'FAILED' && server.error ? ` · ${safeEmbedField(server.error, 180)}` : '';
-    return `**${safeEmbedField(server.serverAlias, 128)}:** ${statusLabel(server.state)}${confirmed}${error}`;
+    const error = server.state === 'FAILED' && server.error
+      ? ` · ${sanitizeGoodbyeVisibleText(server.error, 'Remote-Fehler', 180)}`
+      : '';
+    return `**${serverAlias}:** ${statusLabel(server.state)}${confirmed}${error}`;
   });
   embed.addFields(
-    { name: 'Zugeordneter DayZ-Spieler', value: safeEmbedField(playerLines.join('\n'), 1024) },
-    { name: 'Whitelist-Status je Gameserver', value: safeEmbedField(statusLines.join('\n'), 1024) },
+    { name: '🎮 Zugeordneter DayZ-Spieler', value: sanitizeGoodbyeVisibleText(playerLines.join('\n'), 'Nicht eindeutig zugeordnet', 1024), inline: false },
+    { name: '🛡️ Whitelist-Status je Gameserver', value: sanitizeGoodbyeVisibleText(statusLines.join('\n'), 'Kein Status verfügbar', 1024), inline: false },
   );
   return embed;
 }
@@ -200,10 +234,13 @@ async function editPersistedGoodbye(cleanupRequestId: string): Promise<void> {
   if (textChannel.guildId !== delivery.guildId) return;
   const message = await textChannel.messages.fetch(delivery.messageId).catch(() => null);
   if (!message) return;
+  const resolvedUser = await client.users.fetch(delivery.discordId).catch(() => null);
+  const resolvedName = resolvedUser?.globalName?.trim() || resolvedUser?.username?.trim() || delivery.discordName;
   await message.edit({
     embeds: [buildStructuredGoodbyeEmbed({
-      discordName: delivery.discordName,
-      discordMention: `<@${delivery.discordId}>`,
+      discordName: resolvedName,
+      discordMention: resolvedUser ? `<@${delivery.discordId}>` : undefined,
+      discordMentionResolved: Boolean(resolvedUser),
       customMessage: delivery.customMessage,
       joinedAt: delivery.joinedAt,
       leaveOccurredAt: delivery.leaveOccurredAt,
@@ -301,10 +338,13 @@ export async function recoverPendingGoodbyeDeliveries(now: Date = new Date()): P
       if (!channel || !channel.isTextBased() || channel.isDMBased()) throw new Error('Goodbye-Channel nicht verfuegbar');
       const textChannel = channel as GuildTextBasedChannel;
       if (textChannel.guildId !== row.guildId) throw new Error('Goodbye-Channel gehoert nicht zur Guild');
+      const resolvedUser = await client.users.fetch(row.discordId).catch(() => null);
+      const resolvedName = resolvedUser?.globalName?.trim() || resolvedUser?.username?.trim() || row.discordName;
       const message = await textChannel.send({
         embeds: [buildStructuredGoodbyeEmbed({
-          discordName: row.discordName,
-          discordMention: `<@${row.discordId}>`,
+          discordName: resolvedName,
+          discordMention: resolvedUser ? `<@${row.discordId}>` : undefined,
+          discordMentionResolved: Boolean(resolvedUser),
           customMessage: row.customMessage,
           joinedAt: row.joinedAt,
           leaveOccurredAt: row.leaveOccurredAt,
