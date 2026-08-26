@@ -10,6 +10,7 @@ describe('virtuelle Konten — Retry- und Replay-Sicherheit', () => {
   const configuration = read('src/modules/economy/virtualAccountConfiguration.ts');
   const managerSafety = read('src/modules/economy/virtualAccountManagerPanelSafety.ts');
   const safetyRoute = read('src/dashboard/routes/v2/economyVirtualAccountTreasurySafety.ts');
+  const fallbackRoute = read('src/dashboard/routes/v2/economyVirtualAccountControl.ts');
   const v2 = read('src/dashboard/routes/v2.ts');
   const panel = read('dashboard-ui/src/components/economy/VirtualAccountsControlPanel.tsx');
   const api = read('dashboard-ui/src/lib/api.ts');
@@ -70,6 +71,18 @@ describe('virtuelle Konten — Retry- und Replay-Sicherheit', () => {
     expect(safetyRoute).toContain("idempotencyKey: operationId(body, req.header('x-idempotency-key'))");
     expect(safetyRoute).not.toContain('Date.now()');
     expect(safetyRoute).toContain('safePayoutVirtualAccountToUser({');
+  });
+
+  it('haertet auch den nachgelagerten Control-Fallback gegen Mount-Reihenfolge-Regressionen', () => {
+    expect(fallbackRoute).toContain('configureVirtualManagerPanelSafe');
+    expect(fallbackRoute).toContain('getVirtualManagerPanelSafe');
+    expect(fallbackRoute).toContain('refreshConfiguredVirtualManagerPanelSafe');
+    expect(fallbackRoute).toContain('safePayoutVirtualAccountToUser');
+    expect(fallbackRoute).toContain("idempotencyKey: operationId(body, req.header('x-idempotency-key'))");
+    const payout = fallbackRoute.slice(fallbackRoute.indexOf("post('/:accountId/payout'"));
+    expect(payout).not.toContain('Date.now()');
+    expect(fallbackRoute).not.toContain('configureVirtualManagerPanel,');
+    expect(fallbackRoute).not.toContain('payoutVirtualAccountToUser,');
   });
 
   it('behaelt die Payout-Operation-ID bei einem fehlgeschlagenen Retry und rotiert sie bei Payload-Aenderung', () => {
