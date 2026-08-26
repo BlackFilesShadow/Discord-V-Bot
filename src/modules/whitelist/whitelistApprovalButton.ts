@@ -10,7 +10,7 @@ import prisma from '../../database/prisma';
 import { logger, logAudit } from '../../utils/logger';
 import { emitGuildEvent } from '../../dashboard/socket/emitter';
 import { Colors, statusTitle } from '../../utils/embedDesign';
-import { notifyRequesterDecision, postDecisionLog } from './whitelistChannels';
+import { notifyRequesterDecision } from './whitelistChannels';
 import { enqueueWhitelistAdd, type WhitelistOutboxClient } from './whitelistOutbox';
 import { resolveDelegatedPermissionContext } from '../permissions/access';
 
@@ -133,7 +133,7 @@ export async function handleWhitelistApprovalButton(btn: ButtonInteraction): Pro
         btn,
         responseEmbed('INFO', 'Anfrage bereits bearbeitet', 'Diese Anfrage wurde bereits von jemand anderem entschieden.'),
       );
-      await btn.message.edit({ components: [] }).catch(() => null);
+      await btn.message.delete().catch(() => btn.message.edit({ components: [] }).catch(() => null));
       return;
     }
 
@@ -153,28 +153,16 @@ export async function handleWhitelistApprovalButton(btn: ButtonInteraction): Pro
       });
     }
 
-    const finalEmbed = EmbedBuilder.from(btn.message.embeds[0] ?? new EmbedBuilder())
-      .setColor(isApprove ? Colors.Success : Colors.Error)
-      .setTitle(statusTitle(
-        isApprove ? 'SUCCESS' : 'ERROR',
-        isApprove ? 'Whitelist-Antrag angenommen' : 'Whitelist-Antrag abgelehnt',
-      ))
-      .addFields({ name: isApprove ? 'Angenommen von' : 'Abgelehnt von', value: `<@${btn.user.id}>` });
-    await btn.message.edit({ embeds: [finalEmbed], components: [] }).catch(() => null);
+    // Nach der Entscheidung bleibt kein dauerhaftes Accept/Deny-Embed im Kanal.
+    // Die sichtbaren Ergebnisse sind ausschliesslich die DM an den Antragsteller
+    // und die ephemere Bestaetigung fuer den entscheidenden Admin.
+    await btn.message.delete().catch(() => btn.message.edit({ components: [] }).catch(() => null));
 
     await Promise.allSettled([
       notifyRequesterDecision({
         requesterDiscordId: reqRow.requesterDiscordId,
         gameId: reqRow.gameId,
         approved: isApprove,
-      }),
-      postDecisionLog({
-        guildId: reqRow.guildId,
-        nitradoConnId: reqRow.nitradoConnId,
-        approved: isApprove,
-        requesterDiscordId: reqRow.requesterDiscordId,
-        gameId: reqRow.gameId,
-        decidedByDiscordId: btn.user.id,
       }),
     ]);
 
