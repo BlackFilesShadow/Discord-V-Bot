@@ -84,9 +84,11 @@ function parsePocket(value: unknown, fallback: EconomyPocket, label: string): Ec
   return value;
 }
 
-function operationId(body: Record<string, unknown>, fallback: string): string {
-  const value = typeof body.operationId === 'string' ? body.operationId.trim() : '';
-  const key = value || fallback;
+function operationId(body: Record<string, unknown>, headerValue: string | undefined): string {
+  const bodyValue = typeof body.operationId === 'string' ? body.operationId.trim() : '';
+  const headerKey = typeof headerValue === 'string' ? headerValue.trim() : '';
+  const key = bodyValue || headerKey;
+  if (!key) throw new Error('operationId oder X-Idempotency-Key ist fuer Geldbuchungen erforderlich.');
   if (!/^[A-Za-z0-9._:-]{1,80}$/.test(key)) throw new Error('operationId ist ungueltig.');
   return key;
 }
@@ -303,7 +305,7 @@ economyVirtualAccountTreasurySafetyRouter.post('/:accountId/payout', requireGuil
     const reason = typeof body.reason === 'string' ? body.reason : 'Dashboard-Auszahlung';
 
     const result = await safePayoutVirtualAccountToUser({
-      idempotencyKey: operationId(body, `dashboard-${req.auth!.userId}-${Date.now()}`),
+      idempotencyKey: operationId(body, req.header('x-idempotency-key')),
       guildId: scope.guildId,
       nitradoConnId: connId,
       accountId,
