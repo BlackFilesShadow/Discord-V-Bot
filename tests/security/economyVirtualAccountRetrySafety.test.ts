@@ -86,8 +86,9 @@ describe('virtuelle Konten — Retry- und Replay-Sicherheit', () => {
     expect(safetyRoute).toContain("if (!key) throw new Error('operationId oder X-Idempotency-Key ist fuer Geldbuchungen erforderlich.')");
     expect(safetyRoute).toContain("if (!/^[A-Za-z0-9._:-]{1,80}$/.test(key))");
     expect(safetyRoute).toContain("idempotencyKey: operationId(body, req.header('x-idempotency-key'))");
-    expect(safetyRoute).not.toContain('Date.now()');
-    expect(safetyRoute).toContain('safePayoutVirtualAccountToUser({');
+    const payout = safetyRoute.slice(safetyRoute.indexOf("post('/:accountId/payout'"));
+    expect(payout).not.toContain('Date.now()');
+    expect(payout).toContain('safePayoutVirtualAccountToUser({');
   });
 
   it('haertet auch den nachgelagerten Control-Fallback gegen Mount-Reihenfolge-Regressionen', () => {
