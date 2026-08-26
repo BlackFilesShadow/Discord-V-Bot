@@ -65,6 +65,8 @@ const POST_STAGE_LABEL_OVERRIDES: Readonly<Record<string, string>> = {
 const HISTORICAL_VIRTUAL_ACCOUNT_PANEL = 'dashboard-ui/src/components/economy/VirtualAccountsPanel.tsx';
 const CURRENT_VIRTUAL_ACCOUNT_PANEL = 'dashboard-ui/src/components/economy/VirtualAccountsControlPanel.tsx';
 const CURRENT_VIRTUAL_ACCOUNT_BUTTON_COUNT = 14;
+const CURRENT_BLACK_MARKET_PANEL = 'dashboard-ui/src/components/economy/BlackMarketPanel.tsx';
+const CURRENT_BLACK_MARKET_BUTTON_COUNT = 11;
 
 function resolveUiModule(from: string, specifier: string): string | null {
   const srcRoot = path.resolve(root, 'dashboard-ui/src');
@@ -224,12 +226,17 @@ describe('stage 24 dashboard button matrix architecture', () => {
       .map(entry => ({ file: entry.file, count: matrix.buttons.filter(button => button.file === entry.file).length }))
       .sort((a, b) => a.file.localeCompare(b.file));
 
-    // Preserve the immutable stage-24 inventory while requiring the deliberate
-    // post-stage replacement to be present with its exact reviewed button count.
-    expect(actual.filter(entry => entry.file !== CURRENT_VIRTUAL_ACCOUNT_PANEL))
-      .toEqual(declared.filter(entry => entry.file !== HISTORICAL_VIRTUAL_ACCOUNT_PANEL));
+    // Preserve the immutable stage-24 inventory while requiring deliberate
+    // post-stage surfaces to be present with their exact reviewed button counts.
+    expect(actual.filter(entry => (
+      entry.file !== CURRENT_VIRTUAL_ACCOUNT_PANEL && entry.file !== CURRENT_BLACK_MARKET_PANEL
+    ))).toEqual(declared.filter(entry => (
+      entry.file !== HISTORICAL_VIRTUAL_ACCOUNT_PANEL && entry.file !== CURRENT_BLACK_MARKET_PANEL
+    )));
     expect(actual.find(entry => entry.file === CURRENT_VIRTUAL_ACCOUNT_PANEL))
       .toEqual({ file: CURRENT_VIRTUAL_ACCOUNT_PANEL, count: CURRENT_VIRTUAL_ACCOUNT_BUTTON_COUNT });
+    expect(actual.find(entry => entry.file === CURRENT_BLACK_MARKET_PANEL))
+      .toEqual({ file: CURRENT_BLACK_MARKET_PANEL, count: CURRENT_BLACK_MARKET_BUTTON_COUNT });
     expect(actual.some(entry => entry.file === HISTORICAL_VIRTUAL_ACCOUNT_PANEL)).toBe(false);
 
     expect(matrix.buttons).toHaveLength(matrix.buttonCount);
@@ -245,8 +252,11 @@ describe('stage 24 dashboard button matrix architecture', () => {
       label: POST_STAGE_LABEL_OVERRIDES[button.sourceId] ?? button.label,
     }));
     const currentSignatures = currentButtonSignatures();
-    expect(currentSignatures.filter(button => button.file !== CURRENT_VIRTUAL_ACCOUNT_PANEL))
-      .toEqual(declaredSignatures.filter(button => button.file !== HISTORICAL_VIRTUAL_ACCOUNT_PANEL));
+    expect(currentSignatures.filter(button => (
+      button.file !== CURRENT_VIRTUAL_ACCOUNT_PANEL && button.file !== CURRENT_BLACK_MARKET_PANEL
+    ))).toEqual(declaredSignatures.filter(button => (
+      button.file !== HISTORICAL_VIRTUAL_ACCOUNT_PANEL && button.file !== CURRENT_BLACK_MARKET_PANEL
+    )));
 
     const replacement = currentSignatures.filter(button => button.file === CURRENT_VIRTUAL_ACCOUNT_PANEL);
     expect(replacement).toHaveLength(CURRENT_VIRTUAL_ACCOUNT_BUTTON_COUNT);
@@ -257,6 +267,14 @@ describe('stage 24 dashboard button matrix architecture', () => {
     const directAsync = replacement.filter(button => /\.mutate\(|\.refetch\(/.test(button.handler));
     expect(directAsync.length).toBeGreaterThan(0);
     expect(directAsync.every(button => button.hasDisabledGuard || button.hasLoadingGuard)).toBe(true);
+
+    const blackMarket = currentSignatures.filter(button => button.file === CURRENT_BLACK_MARKET_PANEL);
+    expect(blackMarket).toHaveLength(CURRENT_BLACK_MARKET_BUTTON_COUNT);
+    expect(blackMarket.every(button => button.label !== '<dynamic-or-icon-only>' && button.label.trim().length > 0)).toBe(true);
+    expect(blackMarket.every(button => button.tag === 'Button' || button.type !== 'implicit-button')).toBe(true);
+    const blackMarketDirectAsync = blackMarket.filter(button => /\.mutate\(|\.refetch\(/.test(button.handler));
+    expect(blackMarketDirectAsync.length).toBeGreaterThan(0);
+    expect(blackMarketDirectAsync.every(button => button.hasDisabledGuard || button.hasLoadingGuard)).toBe(true);
   });
 
   test('maps every button to all eight mandatory checks and real surface evidence', () => {
