@@ -33,6 +33,17 @@ export type {
 
 export { searchTypes as searchDayz129Types };
 
+function looksTechnicalIdentifier(token: string): boolean {
+  return /[0-9_.-]/.test(token)
+    || /[a-z][A-Z]/.test(token)
+    || /^[A-Z0-9_]{3,}$/.test(token);
+}
+
+function hasKnownTechnicalIdentifier(question: string): boolean {
+  const tokens = String(question || '').match(/[A-Za-z0-9_.-]{2,128}/g) ?? [];
+  return tokens.some(token => looksTechnicalIdentifier(token) && isKnownDayz129Identifier(token));
+}
+
 function explicitCatalogIntent(question: string): boolean {
   const q = String(question || '').normalize('NFKC').trim();
   if (!q) return false;
@@ -40,15 +51,10 @@ function explicitCatalogIntent(question: string): boolean {
     return true;
   }
 
-  // Ein alleinstehender, technisch aussehender Identifier darf weiterhin direkt
-  // aufgeloest werden. Normale Woerter wie "Apple" oder "Jacke" reichen bewusst
-  // nicht mehr aus, weil sie auch ausserhalb von DayZ vorkommen koennen.
-  if (/^[A-Za-z0-9_.-]{2,128}$/.test(q)
-    && (/[0-9_.-]/.test(q) || /^[A-Z0-9_]{3,}$/.test(q))
-    && isKnownDayz129Identifier(q)) {
-    return true;
-  }
-  return false;
+  // Reale technische Identifier wie WoodenPlank, M4A1 oder StaticHeliCrash
+  // bleiben auch ohne ausgeschriebenes "DayZ" nutzbar. Normale Woerter wie
+  // "Apple" reichen bewusst nicht, obwohl sie zufaellig ein DayZ-Typ sein koennen.
+  return hasKnownTechnicalIdentifier(q);
 }
 
 function looksReferentialFollowUp(question: string): boolean {
