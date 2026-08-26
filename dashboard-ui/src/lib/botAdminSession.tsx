@@ -49,35 +49,48 @@ export function BotAdminSessionProvider({ children }: { children: ReactNode }) {
   const [expiresAt, setExpiresAt] = useState<string | null>(null);
   const [loading, setLoading] = useState<boolean>(true);
 
+  const applyStatus = useCallback((status: BotAdminStatus): void => {
+    setActive(status.active);
+    setExpiresAt(status.expiresAt);
+    writeHint(status.active);
+  }, []);
+
   const refresh = useCallback(async (): Promise<void> => {
     try {
       const s = await api.get<BotAdminStatus>('/api/v2/bot-admin/status');
-      setActive(s.active);
-      setExpiresAt(s.expiresAt);
-      writeHint(s.active);
+      applyStatus(s);
     } catch (e) {
-      if (e instanceof ApiError && e.status === 401) {
-        setActive(false); setExpiresAt(null);
-        writeHint(false);
+      if (e instanceof ApiError && (e.status === 401 || e.status === 403)) {
+        applyStatus({ active: false, expiresAt: null });
       }
     } finally {
       setLoading(false);
     }
-  }, []);
+  }, [applyStatus]);
 
   const login = useCallback(async (password: string): Promise<void> => {
-    const r = await api.post<{ ok: true; expiresAt: string }>('/api/v2/bot-admin/login', { password });
-    setActive(true);
-    setExpiresAt(r.expiresAt);
-    writeHint(true);
-  }, []);
+    await api.post<{ ok: true; expiresAt: string }>('/api/v2/bot-admin/login', { password });
+
+    // Ein 200 vom Passwort-Endpunkt allein reicht nicht: bevor die UI in den
+    // geschuetzten Bereich navigiert, bestaetigt derselbe Server die frisch
+    // persistierte BotAdminSession. Damit kann kein optimistischer UI-State
+    // mehr direkt in "Bot-Admin-Session erforderlich" zurueckfallen.
+    const status = await api.get<BotAdminStatus>('/api/v2/bot-admin/status');
+    if (!status.active || !status.expiresAt) {
+      applyStatus({ active: false, expiresAt: null });
+      throw new ApiError(
+        'Passwort wurde akzeptiert, aber die Bot-Admin-Session konnte nicht bestaetigt werden.',
+        503,
+        'BOTADMIN_SESSION_CONFIRMATION_FAILED',
+      );
+    }
+    applyStatus(status);
+  }, [applyStatus]);
 
   const logout = useCallback(async (): Promise<void> => {
     try { await api.post('/api/v2/bot-admin/logout'); } catch { /* ignore */ }
-    setActive(false);
-    setExpiresAt(null);
-    writeHint(false);
-  }, []);
+    applyStatus({ active: false, expiresAt: null });
+  }, [applyStatus]);
 
   useEffect(() => {
     void refresh();
