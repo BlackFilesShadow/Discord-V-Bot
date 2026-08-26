@@ -1,5 +1,6 @@
 import type { DayzCatalogAnswer } from './dayz129CatalogBase';
 import {
+  enrichDayz129FollowUp as enrichDayz129FollowUpBase,
   isKnownDayz129Identifier,
 } from './dayz129CatalogBase';
 import { answer as answerGeneralDayz129Question, searchTypes } from './dayz129CatalogPriorityV4';
@@ -10,7 +11,6 @@ export {
   getDayz129Index,
   searchDayz129Events,
   isKnownDayz129Identifier,
-  enrichDayz129FollowUp,
   getDayz129CatalogStats,
 } from './dayz129CatalogBase';
 export type { Dayz129Map, Dayz129Index, DayzCatalogAnswer } from './dayz129CatalogBase';
@@ -49,6 +49,24 @@ function explicitCatalogIntent(question: string): boolean {
     return true;
   }
   return false;
+}
+
+function looksReferentialFollowUp(question: string): boolean {
+  const q = String(question || '').normalize('NFKC').trim().toLocaleLowerCase('de-DE');
+  if (!q || q.length > 160) return false;
+  return /^(?:und\s+)?(?:wie\s+genau|warum(?:\s+das)?|was\s+bedeutet\s+(?:das|der\s+wert)|was\s+heisst\s+das|was\s+heißt\s+das|zeig(?:e)?\s+(?:mir\s+)?(?:ein\s+)?beispiel|nochmal|dazu|welcher\s+wert|welche\s+werte|auf\s+(?:chernarus|livonia|sakhal)|und\s+wie|und\s+was)\b/.test(q)
+    || /\b(?:das|dazu|davon|darin|dieser|diese|dieses|der\s+wert|die\s+werte)\b/.test(q);
+}
+
+/**
+ * Nur echte referenzielle Folgefragen duerfen aus einer vorherigen DayZ-Antwort
+ * mit Classname/Event/Datei angereichert werden. Breite Formulierungen wie
+ * "kannst du ..." reichen nicht mehr aus und koennen keine neue allgemeine
+ * Frage versehentlich in die DayZ-Domain ziehen.
+ */
+export function enrichDayz129FollowUp(question: string, previousAssistantText?: string | null): string {
+  if (!looksReferentialFollowUp(question)) return question;
+  return enrichDayz129FollowUpBase(question, previousAssistantText);
 }
 
 /**
