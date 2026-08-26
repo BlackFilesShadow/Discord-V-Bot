@@ -8,11 +8,6 @@ const OPENAI_COMPATIBLE_HOSTS = new Set([
   'api.openai.com',
 ]);
 
-const GEMINI_MODELS_WITHOUT_LEGACY_SAMPLING = [
-  'gemini-3.6-flash',
-  'gemini-3.5-flash-lite',
-] as const;
-
 const HARD_SYSTEM_MARKERS = [
   'AI_TASK_PROFILE:',
   'Du bist V-Bot Prime',
@@ -39,6 +34,23 @@ function parseUrl(rawUrl?: string): URL | null {
 function geminiModelFromPath(pathname: string): string | null {
   const match = pathname.match(/\/models\/([^/:]+):generateContent$/);
   return match?.[1] ? decodeURIComponent(match[1]) : null;
+}
+
+/**
+ * Google hat den Legacy-Sampling-Vertrag ab Gemini 3.6 Flash fuer alle
+ * nachfolgenden Gemini-Generationen abgeschafft. 3.5 Flash-Lite nutzt denselben
+ * neuen Vertrag. Offizielle spaetere 3.x/4.x IDs werden deshalb kompatibel
+ * normalisiert, ohne beliebige Custom-/Enterprise-Modellnamen anzufassen.
+ */
+function usesModernGeminiSamplingContract(model: string | null): boolean {
+  if (!model) return false;
+  const lower = model.toLowerCase();
+  if (lower === 'gemini-3.5-flash-lite') return true;
+  const match = /^gemini-(\d+)(?:\.(\d+))?-/.exec(lower);
+  if (!match) return false;
+  const major = Number(match[1]);
+  const minor = Number(match[2] ?? 0);
+  return major > 3 || (major === 3 && minor >= 6);
 }
 
 function isMandatorySystemMessage(content: string, index: number): boolean {
@@ -161,9 +173,7 @@ export function normalizeAiProviderRequest(
     && url.pathname.endsWith(':generateContent')
   ) {
     const model = geminiModelFromPath(url.pathname);
-    const isKnownModernModel = Boolean(
-      model && (GEMINI_MODELS_WITHOUT_LEGACY_SAMPLING as readonly string[]).includes(model),
-    );
+    const isKnownModernModel = usesModernGeminiSamplingContract(model);
 
     if (!isKnownModernModel) {
       if (data.contents === undefined) return data;
