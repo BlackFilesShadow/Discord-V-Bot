@@ -33,6 +33,8 @@ export type {
 
 export { searchTypes as searchDayz129Types };
 
+const KNOWN_DAYZ_FILE_ALIASES_RE = /\b(?:types?|events?|messages?|globals?)\.xml\b|\beconomy\.xml\b|\bserverdz\.cfg\b|\bcfggameplay\.json\b/i;
+
 function looksTechnicalIdentifier(token: string): boolean {
   return /[0-9_.-]/.test(token)
     || /[a-z][A-Z]/.test(token)
@@ -47,7 +49,8 @@ function hasKnownTechnicalIdentifier(question: string): boolean {
 function explicitCatalogIntent(question: string): boolean {
   const q = String(question || '').normalize('NFKC').trim();
   if (!q) return false;
-  if (/\b(?:dayz|classname|class name|typename|type name|itemname|item name|eventname|event name|types?\.xml|events?\.xml|serverdz\.cfg|cfggameplay\.json)\b/i.test(q)) {
+  if (/\b(?:dayz|classname|class name|typename|type name|itemname|item name|eventname|event name)\b/i.test(q)
+    || KNOWN_DAYZ_FILE_ALIASES_RE.test(q)) {
     return true;
   }
 
