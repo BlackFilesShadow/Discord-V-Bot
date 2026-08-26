@@ -26,11 +26,29 @@ describe('virtuelle Konten — Retry- und Replay-Sicherheit', () => {
     expect(safety).toContain('actual.sourceRef === expected.sourceRef');
   });
 
+  it('berechnet die erste Einzahlung erst nach Konto-, Finance- und Config-Lock', () => {
+    expect(safety).not.toContain('depositUserIntoVirtualAccount');
+    const depositStart = safety.indexOf('export async function safeDepositUserIntoVirtualAccount');
+    const accountLock = safety.indexOf('LockedDepositAccountRow[]>(', depositStart);
+    const financeLock = safety.indexOf('LockedDepositFinanceRow[]>(', depositStart);
+    const configLock = safety.indexOf('LIMIT 1 FOR SHARE', depositStart);
+    const conversion = safety.indexOf('convertPlayerToLockedAccount(args.playerAmount', depositStart);
+    const debit = safety.indexOf('UPDATE "EconomyAccount" SET "walletBalance"', depositStart);
+    expect(accountLock).toBeGreaterThan(depositStart);
+    expect(financeLock).toBeGreaterThan(accountLock);
+    expect(configLock).toBeGreaterThan(financeLock);
+    expect(conversion).toBeGreaterThan(configLock);
+    expect(debit).toBeGreaterThan(conversion);
+    expect(safety).toContain('await assertDepositPlayerReplay({');
+    expect(safety).toContain('}, raw);');
+    expect(safety).toContain('await writeDepositPlayerLedger(raw, {');
+  });
+
   it('bindet Pocket-Transfer-Replays an Richtung UND Betrag', () => {
     expect(safety).toContain('const sourceRef = `pocket-transfer:${args.from}->${args.to}:${args.amount.toString()}`;');
     expect(safety).toContain("entryType: 'POCKET_TRANSFER'");
     expect(safety).toContain('sourceRef,');
-    const replayCheck = safety.indexOf('const previous = await replay(key, raw);');
+    const replayCheck = safety.indexOf('const previous = await replay(key, raw);', safety.indexOf('safeTransferVirtualPocket'));
     const firstDebit = safety.indexOf('if (args.from === \'WALLET\')', replayCheck);
     expect(replayCheck).toBeGreaterThan(-1);
     expect(firstDebit).toBeGreaterThan(replayCheck);
