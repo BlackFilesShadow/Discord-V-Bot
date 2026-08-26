@@ -43,14 +43,16 @@ describe('Goodbye-1 dashboard wiring', () => {
     expect(panelSource).toContain('channel.type === 0 || channel.type === 5');
   });
 
-  it('wires config, test and disable actions and keeps the mention automatic', () => {
+  it('wires config, test and disable actions and documents the safe automatic mention', () => {
     expect(panelSource).toContain('`/api/v2/guilds/${guildId}/goodbye/config`');
     expect(panelSource).toContain('`/api/v2/guilds/${guildId}/goodbye/test`');
     expect(panelSource).toContain('`/api/v2/guilds/${guildId}/goodbye/disable`');
     expect(panelSource).toContain("{ key: '{nickname}'");
     expect(panelSource).toContain("{ key: '{username}'");
     expect(panelSource).not.toContain("{ key: '{mention}'");
-    expect(panelSource).toContain('erscheint automatisch anstelle des Namens im Feld „Discord-Name“');
-    expect(routeSource).toContain('discordMention: identity.mention');
+    expect(panelSource).toContain('Sie erscheint nur nach sicherer Discord-Auflösung im Bereich „Mitglied“');
+    expect(panelSource).toContain('niemals eine ID-Nummer');
+    expect(routeSource).toContain('discordMention: actorUser ? identity.mention : undefined');
+    expect(routeSource).toContain('discordMentionResolved: Boolean(actorUser)');
   });
 });
