@@ -55,12 +55,29 @@ describe('virtuelle Konten — Retry- und Replay-Sicherheit', () => {
     expect(firstDebit).toBeGreaterThan(replayCheck);
   });
 
-  it('validiert Payout-Replays zusaetzlich gegen Spielerbetrag und Ziel-Pocket', () => {
-    expect(safety).toContain('async function assertPayoutPlayerReplay');
-    expect(safety).toContain("walletDelta: args.targetPocket === 'WALLET' ? args.playerAmount : 0n");
-    expect(safety).toContain("bankDelta: args.targetPocket === 'BANK' ? args.playerAmount : 0n");
-    expect(safety).toContain('playerAmount: result.playerCredited');
-    expect(safety).toContain('anderen Auszahlungsziel, Ziel-Pocket oder Spielerbetrag');
+  it('macht Payout-FX atomar und behaelt bei Replays den urspruenglich gutgeschriebenen Spielerbetrag', () => {
+    expect(safety).not.toContain('payoutVirtualAccountToUser,');
+    expect(safety).toContain('async function payoutReplayPlayerAmount');
+    expect(safety).toContain("actual.walletDelta <= 0n || actual.bankDelta !== 0n");
+    expect(safety).toContain("actual.bankDelta <= 0n || actual.walletDelta !== 0n");
+
+    const payoutStart = safety.indexOf('export async function safePayoutVirtualAccountToUser');
+    const accountLock = safety.indexOf('LockedDepositAccountRow[]>(', payoutStart);
+    const financeLock = safety.indexOf('LockedDepositFinanceRow[]>(', payoutStart);
+    const replayCheck = safety.indexOf('const previous = await replay(key, raw);', payoutStart);
+    const replayAmount = safety.indexOf('await payoutReplayPlayerAmount({', replayCheck);
+    const configLock = safety.indexOf('LIMIT 1 FOR SHARE', payoutStart);
+    const conversion = safety.indexOf('convertLockedAccountToPlayer(args.accountAmount', payoutStart);
+    const debit = safety.indexOf('const debited = args.sourcePocket', payoutStart);
+
+    expect(accountLock).toBeGreaterThan(payoutStart);
+    expect(financeLock).toBeGreaterThan(accountLock);
+    expect(replayCheck).toBeGreaterThan(financeLock);
+    expect(replayAmount).toBeGreaterThan(replayCheck);
+    expect(configLock).toBeGreaterThan(replayAmount);
+    expect(conversion).toBeGreaterThan(configLock);
+    expect(debit).toBeGreaterThan(conversion);
+    expect(safety).toContain('await writePayoutPlayerLedger(raw, {');
   });
 
   it('fordert fuer Dashboard-Payouts eine stabile Operation-ID oder den zentralen Idempotency-Header', () => {
