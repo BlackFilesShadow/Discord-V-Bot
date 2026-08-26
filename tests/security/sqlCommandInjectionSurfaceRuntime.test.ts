@@ -83,10 +83,16 @@ describe('Stage 42 SQL / command injection surface runtime scan', () => {
         }
         sites.push({ file: rel(file), index: m.index });
         if (/^`/.test(arg) && /\$\{/.test(arg)) {
-          // Allow only identifier allowlist slots used for Economy pocket columns.
-          // Values must still be bound via $1.. — never user-controlled identifiers.
+          // Allow only reviewed identifier/static-fragment slots. Runtime values must
+          // still be bound via $1.. and the reusable purchase fragment must remain
+          // a no-interpolation constant.
           const embeds = [...arg.matchAll(/\$\{([^}]+)\}/g)].map((x) => x[1].trim());
-          const allowed = new Set(['column', 'earnedSql']);
+          const allowed = new Set([
+            'column',
+            'earnedSql',
+            'PURCHASE_SELECT',
+            "PURCHASE_SELECT.replace('LEFT JOIN', 'JOIN')",
+          ]);
           const bad = embeds.filter((e) => !allowed.has(e));
           if (bad.length) {
             offenders.push(`${rel(file)} first-arg template embeds \${${bad.join(',')}}: ${arg.slice(0, 100)}`);
@@ -98,6 +104,15 @@ describe('Stage 42 SQL / command injection surface runtime scan', () => {
             }
             if (embeds.includes('earnedSql') && !/lifetimeEarned/.test(ctx) && !/earnedSql\s*=/.test(ctx)) {
               offenders.push(`${rel(file)} \${earnedSql} without allowlisted construction nearby`);
+            }
+            const purchaseEmbeds = embeds.filter((e) => (
+              e === 'PURCHASE_SELECT' || e === "PURCHASE_SELECT.replace('LEFT JOIN', 'JOIN')"
+            ));
+            if (purchaseEmbeds.length > 0) {
+              const definition = text.match(/const\s+PURCHASE_SELECT\s*=\s*(`[^`]*`|'[^']*'|"[^"]*");/);
+              if (!definition || /\$\{/.test(definition[1])) {
+                offenders.push(`${rel(file)} PURCHASE_SELECT must remain a static no-interpolation SQL fragment`);
+              }
             }
           }
         }
