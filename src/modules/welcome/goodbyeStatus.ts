@@ -30,6 +30,7 @@ export interface GoodbyeCleanupSnapshot {
 
 export interface GoodbyeEmbedData {
   discordName: string;
+  /** Legacy input retained for call-site compatibility; never rendered as the visible name. */
   discordMention?: string;
   customMessage: string;
   /** Discord-Beitrittszeitpunkt dieser konkreten Guild-Mitgliedschaft. */
@@ -96,7 +97,10 @@ export function buildStructuredGoodbyeEmbed(data: GoodbyeEmbedData): EmbedBuilde
     .addFields(
       {
         name: 'Discord-Name',
-        value: safeEmbedField(data.discordMention?.trim() || data.discordName, 256),
+        // Ein GuildMemberRemove kann eine Mention nach dem Leave nicht mehr
+        // sauber aufloesen. Deshalb wird hier immer der bereits persistierte
+        // lesbare Display-/Discord-Name gezeigt und niemals die Snowflake-ID.
+        value: safeEmbedField(data.discordName, 256),
         inline: true,
       },
       { name: 'Status', value: 'Server verlassen', inline: true },
@@ -163,10 +167,6 @@ export async function initialGoodbyeCleanupSnapshot(
         select: { alias: true },
       }),
     ]);
-    // A last-seen ADM label alone is not sufficient provenance. The displayed
-    // name must both belong to the VERIFIED GUID link and exist in the managed,
-    // remotely-synced whitelist mirror. The cleanup step performs a fresh
-    // Nitrado read and replaces this snapshot with the exact remote spelling.
     const linkedSessionNames = new Set(sessions.flatMap(session =>
       identityHash(session.gameId, config.security.encryptionKey) === link.identityHash && session.playerName?.trim()
         ? [session.playerName.trim().toLocaleLowerCase('en-US')]
