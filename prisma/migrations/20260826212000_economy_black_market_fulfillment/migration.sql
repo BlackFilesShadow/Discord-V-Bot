@@ -3,6 +3,13 @@
 -- markiert, damit sie nach dem Rollout nicht versehentlich erneut geliefert
 -- oder refundiert werden.
 
+-- Scoped Child-FKs duerfen nicht nur auf die globale Purchase-ID vertrauen.
+-- Die bestehende Tabelle hatte zwar eine globale PK auf id, aber noch keinen
+-- expliziten Scope-Key fuer (id, guildId, nitradoConnId).
+ALTER TABLE "EconomyMarketPurchase"
+  ADD CONSTRAINT "EconomyMarketPurchase_id_scope_key"
+  UNIQUE ("id", "guildId", "nitradoConnId");
+
 CREATE TABLE "EconomyMarketListingItem" (
   "id" TEXT NOT NULL,
   "listingId" TEXT NOT NULL,
