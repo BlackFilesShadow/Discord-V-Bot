@@ -56,6 +56,7 @@ beforeEach(() => {
       actorDiscordId: String(U), userDiscordId: String(U), reason: 'Ueberweisung auf virtuelles Konto',
       sourceRef: 'virtual-account:virtual-1', createdAt: new Date('2026-08-16T10:00:00Z'),
     }];
+    if (sql.includes('FROM "EconomyVirtualAccountFinance"')) return [{ bankBalance: 0n }];
     if (sql.startsWith('INSERT INTO "EconomyVirtualAccount"')) return [baseAccount(0n)];
     if (sql.startsWith('UPDATE "EconomyVirtualAccount"') && sql.includes('RETURNING')) {
       const amount = typeof values[3] === 'bigint' ? values[3] as bigint : 0n;
@@ -176,23 +177,41 @@ describe('virtuelles Konto -> User und Archivierung', () => {
     expect(ledger[6]).toBe(120n);
   });
 
-  it('verweigert Archivierung bei offenem Guthaben', async () => {
+  it('verweigert Archivierung bei offenem Wallet-Guthaben', async () => {
     await expect(archiveVirtualAccount({
       guildId: G, nitradoConnId: C, accountId: 'virtual-1', actorDiscordId: U,
     })).rejects.toThrow('noch Guthaben');
     expect(mockQueryRaw.mock.calls.filter(([sql]) => String(sql).startsWith('UPDATE "EconomyVirtualAccount"') && String(sql).includes('ARCHIVED'))).toHaveLength(0);
   });
 
-  it('archiviert ein leeres Konto unter Row-Lock', async () => {
+  it('verweigert Archivierung bei offenem Bankguthaben unter Finance-Row-Lock', async () => {
     mockQueryRaw.mockImplementation(async (sql: string) => {
+      if (sql.includes('FROM "EconomyVirtualAccountFinance"')) return [{ bankBalance: 25n }];
+      if (sql.includes('FROM "EconomyVirtualAccount"')) return [baseAccount(0n)];
+      return [];
+    });
+    await expect(archiveVirtualAccount({
+      guildId: G, nitradoConnId: C, accountId: 'virtual-1', actorDiscordId: U,
+    })).rejects.toThrow('noch Guthaben');
+    const financeLock = mockQueryRaw.mock.calls.find(([sql]) => String(sql).includes('FROM "EconomyVirtualAccountFinance"'))!;
+    expect(String(financeLock[0])).toContain('FOR UPDATE');
+    expect(financeLock.slice(1, 4)).toEqual(['virtual-1', String(G), String(C)]);
+  });
+
+  it('archiviert ein leeres Konto erst nach Account- und Finance-Row-Lock', async () => {
+    mockQueryRaw.mockImplementation(async (sql: string) => {
+      if (sql.includes('FROM "EconomyVirtualAccountFinance"')) return [{ bankBalance: 0n }];
       if (sql.includes('FROM "EconomyVirtualAccount"')) return [baseAccount(0n)];
       if (sql.startsWith('UPDATE "EconomyVirtualAccount"') && sql.includes('ARCHIVED')) return [{ ...baseAccount(0n), status: 'ARCHIVED', archivedAt: new Date() }];
       return [];
     });
     const result = await archiveVirtualAccount({ guildId: G, nitradoConnId: C, accountId: 'virtual-1', actorDiscordId: U });
     expect(result.status).toBe('ARCHIVED');
-    const lockRead = mockQueryRaw.mock.calls.find(([sql]) => String(sql).includes('FOR UPDATE'))!;
-    expect(lockRead[2]).toBe(String(G));
-    expect(lockRead[3]).toBe(String(C));
+    const locks = mockQueryRaw.mock.calls.filter(([sql]) => String(sql).includes('FOR UPDATE'));
+    expect(locks).toHaveLength(2);
+    expect(String(locks[0][0])).toContain('FROM "EconomyVirtualAccount"');
+    expect(String(locks[1][0])).toContain('FROM "EconomyVirtualAccountFinance"');
+    expect(locks[0].slice(1, 4)).toEqual(['virtual-1', String(G), String(C)]);
+    expect(locks[1].slice(1, 4)).toEqual(['virtual-1', String(G), String(C)]);
   });
 });
