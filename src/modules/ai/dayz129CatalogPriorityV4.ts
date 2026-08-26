@@ -80,14 +80,73 @@ function isTechnicalAdminIntent(question: string): boolean {
   if (!question) return false;
   const q = fold(question);
   if (!hasDayzContext(question)) return false;
-
-  // Questions that merely name a concrete config file are handled by the
-  // deterministic catalog (including unknown-file handling) below. The generic
-  // firewall is for change/tuning intent that would otherwise reach free text.
   if (explicitConfigFileToken(question)) return false;
-
   return CHANGE_VERBS.test(q)
     && (TECHNICAL_ADMIN_MARKERS.test(q) || CONFIGURABLE_CONCEPTS.test(q));
+}
+
+function directCentralEconomyExplanation(question: string): DayzCatalogAnswer | null {
+  const q = fold(question);
+  const explanationIntent = /\b(was|wofuer|wozu|bedeut|erklaer|erklär|funktioniert|unterschied|macht)\b/.test(q);
+  const fileIntent = /\btypes?\.xml\b/.test(q);
+  const ceIntent = fileIntent || /\bdayz\b|\bcentral economy\b|\bce\b/.test(q);
+  if (!explanationIntent && !fileIntent) return null;
+
+  if (fileIntent && !/\b(nominal|min|lifetime|restock|quantmin|quantmax|flags?|usage|value|category|tag)\b/.test(q)) {
+    return {
+      answer: [
+        '`db/types.xml` ist die Spawnable-Types-Konfiguration der DayZ Central Economy.',
+        'Sie definiert die in der Economy bekannten Typen/Classnames und deren Präsenz-Limiter wie `nominal` und `min` sowie weitere CE-Metadaten wie `lifetime`, `restock`, Flags, Kategorien, Usage-, Value- und Tag-Zuordnungen.',
+        'Wichtig: Die Datei beschreibt die Economy-Regeln eines Typs – sie ist keine einfache Liste von festen Spawnpunkten. Spawnmöglichkeiten und Kartenstruktur kommen aus weiteren CE-Dateien.',
+      ].join('\n'),
+      topic: 'file',
+      ids: ['dayz129:file:types.xml'],
+    };
+  }
+
+  if (ceIntent && /\bnominal\b/.test(q)) {
+    return {
+      answer: '`nominal` ist der Zielbestand eines Typs, den die Central Economy im Rahmen ihrer Regeln anstrebt. Es bedeutet **nicht**, dass exakt diese Zahl jederzeit sichtbar auf dem Boden liegt oder gleichzeitig an festen Punkten spawnt. Ob vorhandene Exemplare mitgezählt werden und ob nachgespawnt werden kann, hängt zusätzlich von CE-Flags, `min`, verfügbaren Spawnplätzen und weiteren Economy-Bedingungen ab.',
+      topic: 'file', ids: ['dayz129:ce:nominal'],
+    };
+  }
+  if (ceIntent && /\bmin\b|minimum/.test(q)) {
+    return {
+      answer: '`min` ist der untere Präsenz-Limiter eines Typs in der Central Economy. Sinkt der für die CE relevante Bestand entsprechend ab, entsteht Nachspawn-Bedarf in Richtung `nominal`. Das ist **keine Garantie**, dass sofort oder an einem bestimmten Ort ein neues Item erscheint; die CE muss weiterhin einen zulässigen Spawnplatz und ihre übrigen Bedingungen erfüllen.',
+      topic: 'file', ids: ['dayz129:ce:min'],
+    };
+  }
+  if (ceIntent && /\blifetime\b/.test(q)) {
+    return {
+      answer: '`lifetime` ist eine Zeitangabe in Sekunden für die Persistenz bzw. Cleanup-Bewertung eines CE-Typs. Sie ist **kein Respawn-Timer**. Ob ein Objekt tatsächlich entfernt wird, hängt zusätzlich von Cleanup-Bedingungen ab – zum Beispiel Spielerabstand und möglichen Lifetime-Refresh-Mechanismen wie Flaggen.',
+      topic: 'file', ids: ['dayz129:ce:lifetime'],
+    };
+  }
+  if (ceIntent && /\brestock\b/.test(q)) {
+    return {
+      answer: '`restock` steuert das zeitliche Nachfüllen/Respawn-Verhalten der Central Economy. Der Wert ist **kein fester Countdown**, nach dem ein genommenes Item garantiert am selben Spawnpunkt wieder erscheint. CE-Limiter, verfügbare Lootpunkte und weitere Spawnbedingungen entscheiden mit.',
+      topic: 'file', ids: ['dayz129:ce:restock'],
+    };
+  }
+  if (ceIntent && /\bquantmin\b|\bquantmax\b/.test(q)) {
+    return {
+      answer: '`quantmin` und `quantmax` begrenzen die Startmenge bei Typen mit einer Quantity/Füllmenge, zum Beispiel bei geeigneten Magazinen oder Behältern. `-1` bedeutet bei vielen Vanilla-Einträgen, dass für diesen CE-Eintrag keine solche Mengen-Spanne vorgegeben wird. Das ist getrennt von `nominal`/`min`, die den Typbestand steuern.',
+      topic: 'file', ids: ['dayz129:ce:quantity'],
+    };
+  }
+  if (ceIntent && /\bflags?\b|count_in_(?:cargo|hoarder|map|player)|\bdeloot\b|\bcrafted\b/.test(q)) {
+    return {
+      answer: 'Die `flags` in `types.xml` bestimmen unter anderem, **wo vorhandene Exemplare für die CE-Zählung berücksichtigt werden** (`count_in_cargo`, `count_in_hoarder`, `count_in_map`, `count_in_player`) und enthalten zusätzliche Kennzeichnungen wie `crafted` oder `deloot`. Deshalb darf `nominal` nie isoliert als „so viele liegen auf der Map“ erklärt werden.',
+      topic: 'file', ids: ['dayz129:ce:flags'],
+    };
+  }
+  if (ceIntent && /\busage\b|\bvalue\b|\bcategory\b|\btag\b|\btier\b/.test(q)) {
+    return {
+      answer: '`usage`, `value`, `category` und `tag` sind CE-Limiter/Zuordnungen. Sie verbinden einen Typ mit passenden Economy-Bereichen und Definitionen, zum Beispiel Usage-Gruppen oder Value/Tier-Zonen. Diese Namen müssen zu den jeweiligen Limit-Definitionen der Mission passen; sie sind keine frei erfundenen Beschreibungsfelder.',
+      topic: 'file', ids: ['dayz129:ce:limiters'],
+    };
+  }
+  return null;
 }
 
 function directTechnicalAnswer(question: string): DayzCatalogAnswer | null {
@@ -165,10 +224,6 @@ export const searchTypes = v3.searchTypes;
 
 export function answer(question: string): DayzCatalogAnswer | null {
   if (!question) return null;
-
-  // Foreign config files must not be claimed by the DayZ catalog merely because
-  // they end in .xml/.json/.cfg/.c. Known DayZ files still work without the
-  // word "DayZ"; unknown files require explicit DayZ context.
   if (isUnscopedForeignConfigFile(question)) return null;
 
   const explicit = explicitLookupIntent(question);
@@ -179,23 +234,25 @@ export function answer(question: string): DayzCatalogAnswer | null {
     if (exact) return exactAnswer(exact);
   }
 
-  // Case-insensitive matching is allowed only for explicit classname requests
-  // and only when it is unique. This deliberately refuses collisions such as
-  // Ammo_40mm_ChemGas vs Ammo_40mm_Chemgas instead of returning the wrong one.
   if (explicit) {
     const unique = uniqueCaseInsensitiveMention(question);
     if (unique) return exactAnswer(unique);
+
+    // Ein expliziter Classname-Wunsch muss vor allgemeiner Datei-Hilfe gewinnen.
+    // Dadurch wird z. B. "wie heißt die Tundra in der types.xml?" als
+    // Winchester70 aufgeloest, statt nur types.xml zu erklaeren. V3 arbeitet
+    // dabei auf dem vollstaendigen eingebetteten 1.29-Types-Index und bleibt bei
+    // unklaren/fehlenden Treffern fail-closed.
+    const resolved = v3.answer(question);
+    if (resolved) return resolved;
   }
 
-  // Known technical topics must win over fuzzy type/event matching. Otherwise
-  // strings such as "loot" or "serverTimeAcceleration" can be consumed by a
-  // weaker catalog match before the safety response is reached.
+  const ceExplanation = directCentralEconomyExplanation(question);
+  if (ceExplanation) return ceExplanation;
+
   const direct = directTechnicalAnswer(question);
   if (direct) return direct;
 
-  // Unsupported change/tuning intent fails closed before fuzzy event matching.
-  // Concrete file questions are deliberately excluded and stay on the normal
-  // deterministic file/unknown-file catalog path.
   const guarded = failClosedTechnicalAnswer(question);
   if (guarded) return guarded;
 

@@ -1,13 +1,13 @@
 /**
  * Whitelist-Kanal-Integration.
  *
- * Vier Kanaele pro (Guild + Gameserver):
+ * Kanaele pro (Guild + Gameserver):
  *   - whitelistChannelId           Info-Kanal mit (genau 1) Command-Erklaerungs-Embed
  *   - whitelistRequestChannelId    Approval-Kanal mit Accept/Deny-Buttons fuer Admins
- *   - whitelistApproveLogChannelId Log fuer ANGENOMMENE Antraege
- *   - whitelistDenyLogChannelId    Log fuer ABGELEHNTE Antraege
+ *   - whitelistApproveLogChannelId optionaler Kanal fuer temporaere Annahme-Bestaetigungen
+ *   - whitelistDenyLogChannelId    optionaler Kanal fuer temporaere Ablehnungs-Bestaetigungen
  *
- * Strikt: Logs landen NUR im konfigurierten Kanal, nirgendwo anders.
+ * Entscheidungen hinterlassen bewusst KEIN dauerhaftes Accept/Deny-Embed.
  */
 
 import {
@@ -22,6 +22,7 @@ import { Colors, statusTitle } from '../../utils/embedDesign';
 
 /** Max-Laenge fuer Whitelist-Reason (Eingabe + Anzeige, einheitlich). */
 export const WHITELIST_REASON_MAX = 500;
+const DECISION_CONFIRMATION_TTL_MS = 15_000;
 
 let warnedClientMissing = false;
 function client(): Client | null {
@@ -62,7 +63,10 @@ export async function deleteOldInfoEmbed(guildId: string, channelId: string, mes
   await msg.delete().catch(() => null);
 }
 
-/** Finalisiert das Approval-Embed und entfernt die Buttons. */
+/**
+ * Eine entschiedene Anfrage wird aus dem Approval-Kanal entfernt. Historischer
+ * Funktionsname bleibt fuer Dashboard-/Runtime-Kompatibilitaet bestehen.
+ */
 export async function finalizeApprovalEmbed(args: {
   guildId: string; channelId: string; messageId: string;
   approved: boolean; decidedByDiscordId: string;
@@ -70,23 +74,14 @@ export async function finalizeApprovalEmbed(args: {
   const ch = await fetchTextChannel(args.guildId, args.channelId);
   if (!ch) return;
   const msg = await ch.messages.fetch(args.messageId).catch(() => null);
-  if (!msg) {
-    await prisma.whitelistRequest.updateMany({
-      where: { messageId: args.messageId, guildId: args.guildId },
-      data: { messageId: null },
-    }).catch(() => null);
-    return;
+  if (msg) {
+    const c = client();
+    if (!c?.user || msg.author.id === c.user.id) await msg.delete().catch(() => null);
   }
-  const c = client();
-  if (c?.user && msg.author.id !== c.user.id) return;
-  const finalEmbed = EmbedBuilder.from(msg.embeds[0] ?? new EmbedBuilder())
-    .setColor(args.approved ? Colors.Success : Colors.Error)
-    .setTitle(statusTitle(
-      args.approved ? 'SUCCESS' : 'ERROR',
-      args.approved ? 'Whitelist-Antrag angenommen' : 'Whitelist-Antrag abgelehnt',
-    ))
-    .addFields({ name: args.approved ? 'Angenommen von' : 'Abgelehnt von', value: `<@${args.decidedByDiscordId}>` });
-  await msg.edit({ embeds: [finalEmbed], components: [] }).catch(() => null);
+  await prisma.whitelistRequest.updateMany({
+    where: { messageId: args.messageId, guildId: args.guildId },
+    data: { messageId: null },
+  }).catch(() => null);
 }
 
 /** Postet/aktualisiert das eine Command-Erklaerungs-Embed im Info-Kanal. */
@@ -160,7 +155,6 @@ export async function postWhitelistApprovalEmbed(args: {
       { name: 'Antragsteller', value: `<@${args.requesterDiscordId}>`, inline: true },
       { name: 'Beantragter Spielername', value: `\`${args.gameId}\``, inline: true },
     )
-    // Die Request-ID bleibt ausschliesslich in Button-Custom-ID und Datenbank.
     .setFooter({ text: 'V-Bot • Whitelist' })
     .setTimestamp(new Date());
 
@@ -230,7 +224,11 @@ export async function notifyRequesterDecision(args: {
   }
 }
 
-/** Postet die Entscheidung strikt in den konfigurierten Approve- oder Deny-Log-Kanal. */
+/**
+ * Kompatibilitaetsfunktion fuer Dashboard-Entscheidungen: falls ein separater
+ * Entscheidungs-Kanal konfiguriert ist, wird dort nur eine kurze Bestaetigung
+ * gesendet und automatisch wieder geloescht. Es entsteht kein permanentes Log.
+ */
 export async function postDecisionLog(args: {
   guildId: string; nitradoConnId: string; approved: boolean;
   requesterDiscordId: string; gameId: string;
@@ -255,9 +253,11 @@ export async function postDecisionLog(args: {
       { name: 'Spielername', value: `\`${args.gameId}\``, inline: true },
       { name: args.approved ? 'Angenommen von' : 'Abgelehnt von', value: `<@${args.decidedByDiscordId}>`, inline: false },
     )
-    .setFooter({ text: 'V-Bot • Whitelist' })
+    .setFooter({ text: 'V-Bot • Whitelist • temporär' })
     .setTimestamp(new Date());
   if (args.reason) embed.addFields({ name: 'Begruendung', value: safeEmbedField(args.reason, WHITELIST_REASON_MAX) });
 
-  await ch.send({ embeds: [embed] });
+  const sent = await ch.send({ embeds: [embed] });
+  const timer = setTimeout(() => { void sent.delete().catch(() => null); }, DECISION_CONFIRMATION_TTL_MS);
+  timer.unref?.();
 }

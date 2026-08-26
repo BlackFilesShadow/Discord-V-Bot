@@ -124,7 +124,7 @@ describe('Goodbye-1 guild-scoped identity and delivery', () => {
     expect(rendered).not.toContain('<@333>');
   });
 
-  it('sends the Discord mention only in Discord-Name and keeps Eintrittsdatum before Austrittsdatum', async () => {
+  it('shows the readable Discord name and keeps Eintrittsdatum before Austrittsdatum', async () => {
     mockFindUnique.mockResolvedValue({
       value: { enabled: true, channelId: '12345678901234567', message: 'Bye {user} {mention}' },
     });
@@ -163,7 +163,7 @@ describe('Goodbye-1 guild-scoped identity and delivery', () => {
       'Uhrzeit',
     ]);
     expect(json.fields).toEqual(expect.arrayContaining([
-      expect.objectContaining({ name: 'Discord-Name', value: '<@discord-1>' }),
+      expect.objectContaining({ name: 'Discord-Name', value: 'StoredNick' }),
       expect.objectContaining({ name: 'Status', value: 'Server verlassen' }),
       expect.objectContaining({ name: 'Eintrittsdatum', value: '27. April 2025' }),
       expect.objectContaining({ name: 'Austrittsdatum', value: '25. August 2026' }),
@@ -203,7 +203,7 @@ describe('Goodbye-1 guild-scoped identity and delivery', () => {
     expect(send).toHaveBeenCalledTimes(1);
     const json = send.mock.calls[0][0].embeds[0].toJSON();
     expect(json.fields).toEqual(expect.arrayContaining([
-      expect.objectContaining({ name: 'Discord-Name', value: '<@discord-1>' }),
+      expect.objectContaining({ name: 'Discord-Name', value: 'StoredUser' }),
       expect.objectContaining({ name: 'Status', value: 'Server verlassen' }),
       expect.objectContaining({ name: 'Eintrittsdatum', value: 'Unbekannt' }),
       expect.objectContaining({ name: 'Austrittsdatum' }),

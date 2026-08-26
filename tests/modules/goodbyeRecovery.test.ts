@@ -23,7 +23,7 @@ describe('Goodbye delivery restart recovery', () => {
     updateMany.mockResolvedValue({ count: 1 });
   });
 
-  it('CAS-claims a stale unsent intent and preserves join/leave dates in the recovered embed', async () => {
+  it('CAS-claims a stale unsent intent and preserves join/leave dates and readable name in the recovered embed', async () => {
     const updatedAt = new Date('2026-08-24T10:00:00.000Z');
     const joinedAt = new Date('2026-01-10T08:00:00.000Z');
     findMany.mockResolvedValue([{
@@ -49,7 +49,7 @@ describe('Goodbye delivery restart recovery', () => {
     expect(names.indexOf('Eintrittsdatum')).toBeGreaterThanOrEqual(0);
     expect(names.indexOf('Austrittsdatum')).toBeGreaterThan(names.indexOf('Eintrittsdatum'));
     expect(embedJson.fields?.find((field: { name: string }) => field.name === 'Discord-Name')?.value)
-      .toBe('<@222222222222222222>');
+      .toBe('Nick');
     expect(updateMany).toHaveBeenNthCalledWith(1, expect.objectContaining({
       where: expect.objectContaining({ id: 'delivery-1', messageId: null, state: 'FAILED', updatedAt }),
     }));

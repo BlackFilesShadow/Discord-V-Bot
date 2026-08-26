@@ -113,7 +113,7 @@ describe('AI provider request compatibility', () => {
     });
   });
 
-  it('entfernt bei den bekannten modernen Gemini-Modellen alte Sampling-Parameter und behaelt das Output-Limit', () => {
+  it.each(['gemini-3.7-flash', 'gemini-3.6-flash'])('entfernt bei %s alte Sampling-Parameter und behaelt das Output-Limit', (model) => {
     const input = {
       contents: [{ role: 'user', parts: [{ text: 'Hallo' }] }],
       generationConfig: {
@@ -126,7 +126,7 @@ describe('AI provider request compatibility', () => {
     };
 
     expect(normalizeAiProviderRequest(
-      'https://generativelanguage.googleapis.com/v1beta/models/gemini-3.6-flash:generateContent',
+      `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent`,
       input,
     )).toEqual({
       contents: input.contents,
@@ -136,6 +136,17 @@ describe('AI provider request compatibility', () => {
       },
     });
     expect(input.generationConfig.temperature).toBe(0.85);
+  });
+
+  it('normalisiert auch zukuenftige offizielle Gemini-Generationen ab 3.6 ohne Custom-Modelle anzufassen', () => {
+    const input = {
+      contents: [{ role: 'user', parts: [{ text: 'Hallo' }] }],
+      generationConfig: { temperature: 0.4, topP: 0.8, topK: 20 },
+    };
+    expect(normalizeAiProviderRequest(
+      'https://generativelanguage.googleapis.com/v1beta/models/gemini-3.8-flash:generateContent',
+      input,
+    )).toEqual({ contents: input.contents, generationConfig: {} });
   });
 
   it('veraendert unbekannte oder explizite Gemini-Modelle nicht eigenmaechtig', () => {

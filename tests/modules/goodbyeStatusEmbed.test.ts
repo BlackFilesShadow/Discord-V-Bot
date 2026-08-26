@@ -51,7 +51,7 @@ describe('structured Goodbye status embed', () => {
     expect(json.fields?.find(field => field.name === 'Eintrittsdatum')?.value).toBe('Unbekannt');
   });
 
-  it('renders the Discord mention exactly inside Discord-Name instead of above the embed', () => {
+  it('renders the readable Discord name even when a legacy mention is present', () => {
     const json = buildStructuredGoodbyeEmbed({
       discordName: 'DiscordNick',
       discordMention: '<@123456789>',
@@ -63,8 +63,8 @@ describe('structured Goodbye status embed', () => {
     }).toJSON();
 
     expect(json.description).toBeUndefined();
-    expect(json.fields?.find(field => field.name === 'Discord-Name')?.value).toBe('<@123456789>');
-    expect(JSON.stringify(json)).not.toContain('DiscordNick');
+    expect(json.fields?.find(field => field.name === 'Discord-Name')?.value).toBe('DiscordNick');
+    expect(JSON.stringify(json)).not.toContain('<@123456789>');
   });
 
   it.each([

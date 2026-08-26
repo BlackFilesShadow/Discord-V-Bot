@@ -215,7 +215,7 @@ CEREBRAS_MODEL=gpt-oss-120b
 OPENROUTER_API_KEY=
 OPENROUTER_MODEL=meta-llama/llama-3.3-70b-instruct:free
 GEMINI_API_KEY=
-GEMINI_MODEL=gemini-3.6-flash
+GEMINI_MODEL=gemini-3.7-flash
 OPENAI_API_KEY=
 OPENAI_MODEL=gpt-5.6-luna
 

@@ -37,7 +37,8 @@ describe('DayZ 1.29 complete grounded catalog', () => {
     const types = answerDayz129CatalogQuestion('Was ist die Types.xml?')?.answer ?? '';
     expect(types).toMatch(/Central Economy/i);
     expect(types).toMatch(/nominal/i);
-    expect(types).toMatch(/WoodenPlank/);
+    expect(types).toMatch(/Typen|Classnames/i);
+    expect(types).toMatch(/keine einfache Liste von festen Spawnpunkten/i);
   });
 
   test('natural German type and event search stays on real identifiers', () => {

@@ -30,8 +30,8 @@ export const AI_MODEL_DEFAULTS: Readonly<Record<AiProviderName, string>> = Objec
   // spaeter separat modernisiert.
   openrouter: 'meta-llama/llama-3.3-70b-instruct:free',
 
-  // Google: stabile GA-Variante.
-  gemini: 'gemini-3.6-flash',
+  // Google: aktuelle stabile GA-Flash-Variante (August 2026).
+  gemini: 'gemini-3.7-flash',
 
   // OpenAI: aktuelle GPT-5.6-Familie. Luna ist der moderne, kostensensitive
   // High-Volume-Fallback; qualitaetsbasierte Terra/Sol-Auswahl folgt spaeter im

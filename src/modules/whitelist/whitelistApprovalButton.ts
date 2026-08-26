@@ -10,7 +10,7 @@ import prisma from '../../database/prisma';
 import { logger, logAudit } from '../../utils/logger';
 import { emitGuildEvent } from '../../dashboard/socket/emitter';
 import { Colors, statusTitle } from '../../utils/embedDesign';
-import { notifyRequesterDecision, postDecisionLog } from './whitelistChannels';
+import { notifyRequesterDecision } from './whitelistChannels';
 import { enqueueWhitelistAdd, type WhitelistOutboxClient } from './whitelistOutbox';
 import { resolveDelegatedPermissionContext } from '../permissions/access';
 
@@ -51,6 +51,30 @@ async function replyEphemeral(btn: ButtonInteraction, embed: EmbedBuilder): Prom
 
 async function followUpEphemeral(btn: ButtonInteraction, embed: EmbedBuilder): Promise<void> {
   await btn.followUp({ embeds: [embed], flags: MessageFlags.Ephemeral, allowedMentions: { parse: [] } }).catch(() => null);
+}
+
+/**
+ * Die Anfrage soll nach einer Entscheidung nicht als permanentes Accept/Deny-
+ * Embed stehen bleiben. In Discord ist delete() vorhanden; die defensive
+ * Feature-Pruefung haelt aber Tests/Partials und seltene Race-Zustaende sicher.
+ */
+async function removeRequestMessage(btn: ButtonInteraction): Promise<void> {
+  const message = btn.message as typeof btn.message & {
+    delete?: () => Promise<unknown>;
+    edit?: (options: { components: never[] }) => Promise<unknown>;
+  };
+  if (typeof message.delete === 'function') {
+    try {
+      await message.delete();
+      return;
+    } catch {
+      // Best effort: falls Loeschen wegen eines Discord-Races scheitert,
+      // wenigstens die Buttons unbrauchbar machen.
+    }
+  }
+  if (typeof message.edit === 'function') {
+    await message.edit({ components: [] }).catch(() => null);
+  }
 }
 
 export async function handleWhitelistApprovalButton(btn: ButtonInteraction): Promise<void> {
@@ -133,7 +157,7 @@ export async function handleWhitelistApprovalButton(btn: ButtonInteraction): Pro
         btn,
         responseEmbed('INFO', 'Anfrage bereits bearbeitet', 'Diese Anfrage wurde bereits von jemand anderem entschieden.'),
       );
-      await btn.message.edit({ components: [] }).catch(() => null);
+      await removeRequestMessage(btn);
       return;
     }
 
@@ -153,28 +177,16 @@ export async function handleWhitelistApprovalButton(btn: ButtonInteraction): Pro
       });
     }
 
-    const finalEmbed = EmbedBuilder.from(btn.message.embeds[0] ?? new EmbedBuilder())
-      .setColor(isApprove ? Colors.Success : Colors.Error)
-      .setTitle(statusTitle(
-        isApprove ? 'SUCCESS' : 'ERROR',
-        isApprove ? 'Whitelist-Antrag angenommen' : 'Whitelist-Antrag abgelehnt',
-      ))
-      .addFields({ name: isApprove ? 'Angenommen von' : 'Abgelehnt von', value: `<@${btn.user.id}>` });
-    await btn.message.edit({ embeds: [finalEmbed], components: [] }).catch(() => null);
+    // Nach der Entscheidung bleibt kein dauerhaftes Accept/Deny-Embed im Kanal.
+    // Die sichtbaren Ergebnisse sind ausschliesslich die DM an den Antragsteller
+    // und die ephemere Bestaetigung fuer den entscheidenden Admin.
+    await removeRequestMessage(btn);
 
     await Promise.allSettled([
       notifyRequesterDecision({
         requesterDiscordId: reqRow.requesterDiscordId,
         gameId: reqRow.gameId,
         approved: isApprove,
-      }),
-      postDecisionLog({
-        guildId: reqRow.guildId,
-        nitradoConnId: reqRow.nitradoConnId,
-        approved: isApprove,
-        requesterDiscordId: reqRow.requesterDiscordId,
-        gameId: reqRow.gameId,
-        decidedByDiscordId: btn.user.id,
       }),
     ]);
 
