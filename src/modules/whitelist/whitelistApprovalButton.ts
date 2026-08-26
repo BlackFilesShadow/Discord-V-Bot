@@ -53,6 +53,30 @@ async function followUpEphemeral(btn: ButtonInteraction, embed: EmbedBuilder): P
   await btn.followUp({ embeds: [embed], flags: MessageFlags.Ephemeral, allowedMentions: { parse: [] } }).catch(() => null);
 }
 
+/**
+ * Die Anfrage soll nach einer Entscheidung nicht als permanentes Accept/Deny-
+ * Embed stehen bleiben. In Discord ist delete() vorhanden; die defensive
+ * Feature-Pruefung haelt aber Tests/Partials und seltene Race-Zustaende sicher.
+ */
+async function removeRequestMessage(btn: ButtonInteraction): Promise<void> {
+  const message = btn.message as typeof btn.message & {
+    delete?: () => Promise<unknown>;
+    edit?: (options: { components: never[] }) => Promise<unknown>;
+  };
+  if (typeof message.delete === 'function') {
+    try {
+      await message.delete();
+      return;
+    } catch {
+      // Best effort: falls Loeschen wegen eines Discord-Races scheitert,
+      // wenigstens die Buttons unbrauchbar machen.
+    }
+  }
+  if (typeof message.edit === 'function') {
+    await message.edit({ components: [] }).catch(() => null);
+  }
+}
+
 export async function handleWhitelistApprovalButton(btn: ButtonInteraction): Promise<void> {
   const isApprove = btn.customId.startsWith('wlreq:a:');
   const isDeny = btn.customId.startsWith('wlreq:d:');
@@ -133,7 +157,7 @@ export async function handleWhitelistApprovalButton(btn: ButtonInteraction): Pro
         btn,
         responseEmbed('INFO', 'Anfrage bereits bearbeitet', 'Diese Anfrage wurde bereits von jemand anderem entschieden.'),
       );
-      await btn.message.delete().catch(() => btn.message.edit({ components: [] }).catch(() => null));
+      await removeRequestMessage(btn);
       return;
     }
 
@@ -156,7 +180,7 @@ export async function handleWhitelistApprovalButton(btn: ButtonInteraction): Pro
     // Nach der Entscheidung bleibt kein dauerhaftes Accept/Deny-Embed im Kanal.
     // Die sichtbaren Ergebnisse sind ausschliesslich die DM an den Antragsteller
     // und die ephemere Bestaetigung fuer den entscheidenden Admin.
-    await btn.message.delete().catch(() => btn.message.edit({ components: [] }).catch(() => null));
+    await removeRequestMessage(btn);
 
     await Promise.allSettled([
       notifyRequesterDecision({
