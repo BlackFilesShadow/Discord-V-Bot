@@ -15,16 +15,16 @@ import {
   ensureBankTreasury,
   ensureVirtualAccountFinance,
   listVirtualAccountManagers,
-  payoutVirtualAccountToUser,
   replaceVirtualAccountManagers,
   updateVirtualAccountFinance,
 } from '../../../modules/economy/virtualAccountFinance';
+import { safePayoutVirtualAccountToUser } from '../../../modules/economy/virtualAccountMoneySafety';
 import {
-  configureVirtualManagerPanel,
-  getVirtualManagerPanel,
-  refreshConfiguredVirtualManagerPanel,
-  syncVirtualAccountProjection,
-} from '../../../modules/economy/virtualAccountDiscord';
+  configureVirtualManagerPanelSafe,
+  getVirtualManagerPanelSafe,
+  refreshConfiguredVirtualManagerPanelSafe,
+} from '../../../modules/economy/virtualAccountManagerPanelSafety';
+import { syncVirtualAccountProjection } from '../../../modules/economy/virtualAccountDiscord';
 import { logAuditDb } from '../../../utils/logger';
 
 export const economyVirtualAccountControlRouter = Router({ mergeParams: true });
@@ -56,9 +56,11 @@ function parseExpiry(value: unknown): Date | null {
   return date;
 }
 
-function operationId(body: Record<string, unknown>, fallback: string): string {
-  const value = typeof body.operationId === 'string' ? body.operationId.trim() : '';
-  const key = value || fallback;
+function operationId(body: Record<string, unknown>, headerValue: string | undefined): string {
+  const bodyValue = typeof body.operationId === 'string' ? body.operationId.trim() : '';
+  const headerKey = typeof headerValue === 'string' ? headerValue.trim() : '';
+  const key = bodyValue || headerKey;
+  if (!key) throw new Error('operationId oder X-Idempotency-Key ist fuer Geldbuchungen erforderlich.');
   if (!/^[A-Za-z0-9._:-]{1,80}$/.test(key)) throw new Error('operationId ist ungueltig.');
   return key;
 }
@@ -196,7 +198,7 @@ economyVirtualAccountControlRouter.post('/control/accounts', requireGuildPermiss
     });
     const syncWarning = await bestEffortProjection(req, created.account.id);
     const client = tryGetDashboardClient();
-    if (client) await refreshConfiguredVirtualManagerPanel(client, scope.guildId, connId, asUserDiscordId(scope.actorDiscordId)).catch(() => undefined);
+    if (client) await refreshConfiguredVirtualManagerPanelSafe(client, scope.guildId, connId, asUserDiscordId(scope.actorDiscordId)).catch(() => undefined);
     logAuditDb('ECONOMY_VIRTUAL_ACCOUNT_CREATED_V2', 'ECONOMY', { actorUserId: req.auth!.userId, guildId: scope.guildId, details: { accountId: created.account.id, nitradoConnId: connId, channelId, managers: managers.length } });
     res.status(201).json({ account: await serializeAccount(scope.guildId, connId, created.account.id), syncWarning });
   } catch (error) { res.status(400).json({ error: (error as Error).message }); }
@@ -230,7 +232,7 @@ economyVirtualAccountControlRouter.put('/control/accounts/:accountId', requireGu
     await replaceVirtualAccountManagers({ guildId: scope.guildId, nitradoConnId: connId, accountId, userDiscordIds: managers, addedByDiscordId: asUserDiscordId(scope.actorDiscordId) });
     const syncWarning = await bestEffortProjection(req, accountId);
     const client = tryGetDashboardClient();
-    if (client) await refreshConfiguredVirtualManagerPanel(client, scope.guildId, connId, asUserDiscordId(scope.actorDiscordId)).catch(() => undefined);
+    if (client) await refreshConfiguredVirtualManagerPanelSafe(client, scope.guildId, connId, asUserDiscordId(scope.actorDiscordId)).catch(() => undefined);
     res.json({ account: await serializeAccount(scope.guildId, connId, accountId), syncWarning });
   } catch (error) { res.status(400).json({ error: (error as Error).message }); }
 });
@@ -255,7 +257,7 @@ economyVirtualAccountControlRouter.post('/control/bank-treasury', requireGuildPe
 
 economyVirtualAccountControlRouter.get('/control/manager-panel', requireGuildPermission('economy.view'), async (req, res) => {
   const { scope, connId } = scoped(req);
-  res.json({ panel: await getVirtualManagerPanel(scope.guildId, connId) });
+  res.json({ panel: await getVirtualManagerPanelSafe(scope.guildId, connId) });
 });
 
 economyVirtualAccountControlRouter.put('/control/manager-panel', requireGuildPermission('economy.manage'), async (req, res) => {
@@ -268,7 +270,7 @@ economyVirtualAccountControlRouter.put('/control/manager-panel', requireGuildPer
   const client = tryGetDashboardClient();
   if (!client) { res.status(503).json({ error: 'Bot nicht bereit.' }); return; }
   try {
-    const panel = await configureVirtualManagerPanel(client, { guildId: scope.guildId, nitradoConnId: connId, channelId, updatedByDiscordId: asUserDiscordId(scope.actorDiscordId) });
+    const panel = await configureVirtualManagerPanelSafe(client, { guildId: scope.guildId, nitradoConnId: connId, channelId, updatedByDiscordId: asUserDiscordId(scope.actorDiscordId) });
     res.json({ panel });
   } catch (error) { res.status(502).json({ error: (error as Error).message }); }
 });
@@ -311,7 +313,10 @@ economyVirtualAccountControlRouter.post('/:accountId/archive', requireGuildPermi
 
 // Safety override fuer den bisherigen Dashboard-Payout. User-GUID bleibt fuer
 // Abwaertskompatibilitaet akzeptiert, wird aber unmittelbar vor der Buchung in
-// ein aktives menschliches Guild-Mitglied aufgeloest.
+// ein aktives menschliches Guild-Mitglied aufgeloest. Auch dieser Fallback nutzt
+// dieselbe stabile Idempotenz und denselben Safe-Money-Service wie der vordere
+// Safety-Router, damit ein spaeterer Mount-Refactor keine Sicherheitsregression
+// erzeugen kann.
 economyVirtualAccountControlRouter.post('/:accountId/payout', requireGuildPermission('economy.manage'), async (req, res) => {
   const { scope, connId } = scoped(req);
   const body = (req.body ?? {}) as Record<string, unknown>;
@@ -327,11 +332,12 @@ economyVirtualAccountControlRouter.post('/:accountId/payout', requireGuildPermis
     const member = guild ? (guild.members.cache.get(user.discordId) ?? await guild.members.fetch(user.discordId).catch(() => null)) : null;
     if (!member || member.user.bot) throw new Error('Auszahlungsziel ist kein aktives menschliches Mitglied dieser Guild.');
     const amount = BigInt(String(body.amount ?? '0'));
+    if (amount <= 0n) throw new Error('Betrag muss groesser als 0 sein.');
     const sourcePocket = body.sourcePocket === 'BANK' ? 'BANK' : 'WALLET';
     const targetPocket = body.targetPocket === 'BANK' ? 'BANK' : 'WALLET';
     const reason = typeof body.reason === 'string' ? body.reason : 'Dashboard-Auszahlung';
-    const result = await payoutVirtualAccountToUser({
-      idempotencyKey: operationId(body, `dashboard-${req.auth!.userId}-${Date.now()}`),
+    const result = await safePayoutVirtualAccountToUser({
+      idempotencyKey: operationId(body, req.header('x-idempotency-key')),
       guildId: scope.guildId, nitradoConnId: connId, accountId,
       actorDiscordId: asUserDiscordId(scope.actorDiscordId), toUserDiscordId: asUserDiscordId(user.discordId),
       sourcePocket, targetPocket, accountAmount: amount, reason,
