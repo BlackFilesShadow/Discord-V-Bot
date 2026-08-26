@@ -42,7 +42,7 @@ export function getProviderCapabilityProfile(provider: ProviderName, rawModel: s
     };
   }
 
-  if (provider === 'gemini' && lower === 'gemini-3.6-flash') {
+  if (provider === 'gemini' && (lower === 'gemini-3.7-flash' || lower === 'gemini-3.6-flash')) {
     return {
       provider, model,
       capabilities: caps('chat', 'fast', 'structured', 'reasoning', 'long_context', 'tool'),
