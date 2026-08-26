@@ -46,6 +46,19 @@ const root = process.cwd();
 const read = (relative: string): string => fs.readFileSync(path.resolve(root, relative), 'utf8');
 const inventory = JSON.parse(read('docs/dashboard-surface-inventory.json')) as Inventory;
 
+// Stage 23 is immutable historical evidence. Public legal pages were introduced
+// deliberately after that inventory and are tracked here as explicit post-stage
+// additions instead of rewriting the original inventoriedMainSha evidence.
+const POST_STAGE_PUBLIC_PAGES = [
+  'dashboard-ui/src/pages/legal/LegalLayout.tsx',
+  'dashboard-ui/src/pages/legal/Privacy.tsx',
+  'dashboard-ui/src/pages/legal/Terms.tsx',
+] as const;
+const POST_STAGE_PUBLIC_ROUTES = [
+  '<Route path="/legal/privacy" element={<Privacy />} />',
+  '<Route path="/legal/terms" element={<Terms />} />',
+] as const;
+
 function sortedUnique(values: Iterable<string>): string[] {
   return [...new Set(values)].sort();
 }
@@ -56,7 +69,7 @@ function quotedUnion(source: string, declaration: string): string[] {
 }
 
 describe('stage 23 dashboard surface inventory architecture', () => {
-  test('keeps one complete, typed record for every currently routed UI surface', () => {
+  test('keeps one complete, typed record for every stage-23 routed UI surface', () => {
     expect(inventory.schemaVersion).toBe(1);
     expect(inventory.stage).toBe(23);
     expect(inventory.inventoriedMainSha).toMatch(/^[a-f0-9]{40}$/);
@@ -84,7 +97,7 @@ describe('stage 23 dashboard surface inventory architecture', () => {
     }
   });
 
-  test('matches the literal App routes and every nested route family', () => {
+  test('matches the historical App routes and explicitly gates post-stage public legal routes', () => {
     const app = read('dashboard-ui/src/App.tsx');
     const expectedTopLevel = [
       '/login', '/servers', '/servers/:guildId', '/servers/:guildId/server/:slot', '/bot-admin', '/dev',
@@ -93,6 +106,10 @@ describe('stage 23 dashboard surface inventory architecture', () => {
     for (const route of expectedTopLevel) {
       expect(app).toContain(`path="${route}"`);
     }
+
+    for (const route of POST_STAGE_PUBLIC_ROUTES) expect(app).toContain(route);
+    expect(app.indexOf(POST_STAGE_PUBLIC_ROUTES[0])).toBeLessThan(app.indexOf('<Route path="/servers" element={<Protected>'));
+    expect(app.indexOf(POST_STAGE_PUBLIC_ROUTES[1])).toBeLessThan(app.indexOf('<Route path="/servers" element={<Protected>'));
 
     const expectedIds = [
       'public-login',
@@ -128,16 +145,19 @@ describe('stage 23 dashboard surface inventory architecture', () => {
     expect(inventory.devSpecialSlugs).toEqual(['command-center', 'secure-export']);
   });
 
-  test('accounts for every routed page module and validates referenced evidence/source files', () => {
+  test('accounts for every routed page module including reviewed post-stage legal pages', () => {
     const pageFiles = fs.readdirSync(path.resolve(root, 'dashboard-ui/src/pages'), { recursive: true })
       .map(value => String(value).replace(/\\/g, '/'))
       .filter(value => value.endsWith('.tsx'))
       .map(value => `dashboard-ui/src/pages/${value}`);
     const coveredPages = inventory.surfaces.flatMap(surface => surface.ui.map(value => value.split('#')[0]));
     const ignoredPages = inventory.ignoredUiModules.map(entry => entry.path);
-    expect(sortedUnique([...coveredPages, ...ignoredPages]).filter(value => value.includes('/pages/')))
+    expect(sortedUnique([...coveredPages, ...ignoredPages, ...POST_STAGE_PUBLIC_PAGES]).filter(value => value.includes('/pages/')))
       .toEqual(sortedUnique(pageFiles));
 
+    for (const publicPage of POST_STAGE_PUBLIC_PAGES) {
+      expect(fs.existsSync(path.resolve(root, publicPage))).toBe(true);
+    }
     for (const ignored of inventory.ignoredUiModules) {
       expect(ignored.reason.length).toBeGreaterThan(20);
       expect(fs.existsSync(path.resolve(root, ignored.path))).toBe(true);
