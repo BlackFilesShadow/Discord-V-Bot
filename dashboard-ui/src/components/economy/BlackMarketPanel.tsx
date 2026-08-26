@@ -1,6 +1,6 @@
 import { useMemo, useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { Archive, PackagePlus, RefreshCw, ShoppingCart, Store, Truck } from 'lucide-react';
+import { Archive, Check, PackagePlus, RefreshCw, RotateCcw, ShoppingCart, Store, Truck, WalletCards } from 'lucide-react';
 import { api } from '@/lib/api';
 import { Badge } from '@/components/ui/Badge';
 import { Button } from '@/components/ui/Button';
@@ -8,10 +8,17 @@ import { Card, CardHeader, CardTitle } from '@/components/ui/Card';
 import { Input } from '@/components/ui/Input';
 import { Select } from '@/components/ui/Select';
 
+interface DeliveryItem {
+  className: string;
+  quantity: number;
+}
+
 interface Vendor {
   id: string;
   name: string;
   balance: string;
+  pendingLiability: string;
+  withdrawableBalance: string;
   status: 'ACTIVE' | 'EXPIRED' | 'ARCHIVED';
   createdAt: string;
 }
@@ -28,6 +35,7 @@ interface Listing {
   active: boolean;
   archivedAt: string | null;
   createdAt: string;
+  deliveryItems: DeliveryItem[];
 }
 
 interface Purchase {
@@ -40,6 +48,12 @@ interface Purchase {
   unitPrice: string;
   amount: string;
   createdAt: string;
+  fulfillmentStatus: 'PENDING' | 'DELIVERED' | 'REFUNDED' | 'LEGACY';
+  deliveryItems: DeliveryItem[];
+  fulfilledAt: string | null;
+  fulfillmentNote: string | null;
+  refundedAt: string | null;
+  refundReason: string | null;
 }
 
 interface DashboardMeta {
@@ -52,32 +66,67 @@ interface PurchaseDraft {
   sourcePocket: 'WALLET' | 'BANK';
 }
 
+interface VendorPayoutDraft {
+  targetUserId: string;
+  amount: string;
+  targetPocket: 'WALLET' | 'BANK';
+}
+
 const MAX_MARKET_PRICE = 1_000_000_000_000_000n;
 const MAX_MARKET_STOCK = 1_000_000_000;
+const SNOWFLAKE_RE = /^\d{17,20}$/;
 
 function fmt(value: string): string {
   try { return BigInt(value).toLocaleString('de-DE'); } catch { return value; }
+}
+
+function bundleText(items: DeliveryItem[]): string {
+  return items.length ? items.map(item => `${item.className} × ${item.quantity}`).join(' · ') : 'Liefer-Bundle fehlt';
+}
+
+function bundleDraft(items: DeliveryItem[]): string {
+  return items.map(item => `${item.className} x${item.quantity}`).join('\n');
+}
+
+function parseBundleDraft(value: string): DeliveryItem[] | null {
+  const lines = value.split(/\r?\n/).map(line => line.trim()).filter(Boolean);
+  if (lines.length < 1 || lines.length > 50) return null;
+  const out: DeliveryItem[] = [];
+  for (const line of lines) {
+    const match = /^([A-Za-z0-9_.-]{1,128})(?:\s*[xX*: ]\s*(\d{1,4}))?$/.exec(line);
+    if (!match) return null;
+    const quantity = Number(match[2] ?? '1');
+    if (!Number.isSafeInteger(quantity) || quantity < 1 || quantity > 1000) return null;
+    out.push({ className: match[1], quantity });
+  }
+  return out;
+}
+
+function fulfillmentBadge(status: Purchase['fulfillmentStatus']) {
+  if (status === 'PENDING') return <Badge variant="warn">OFFEN</Badge>;
+  if (status === 'DELIVERED') return <Badge variant="ok">GELIEFERT</Badge>;
+  if (status === 'REFUNDED') return <Badge variant="neutral">REFUNDIERT</Badge>;
+  return <Badge variant="neutral">LEGACY</Badge>;
 }
 
 export function BlackMarketPanel({ guildId, slot }: { guildId: string; slot: string }) {
   const qc = useQueryClient();
   const scope = `slot=${encodeURIComponent(slot)}`;
   const [vendorName, setVendorName] = useState('');
-  const [listing, setListing] = useState({ vendorAccountId: '', sku: '', name: '', description: '', price: '', stock: '0', maxPerPurchase: '10' });
+  const [listing, setListing] = useState({ vendorAccountId: '', sku: '', name: '', description: '', price: '', stock: '0', maxPerPurchase: '10', bundle: '' });
   const [restock, setRestock] = useState<Record<string, string>>({});
+  const [bundleDrafts, setBundleDrafts] = useState<Record<string, string>>({});
   const [purchaseDrafts, setPurchaseDrafts] = useState<Record<string, PurchaseDraft>>({});
+  const [payoutDrafts, setPayoutDrafts] = useState<Record<string, VendorPayoutDraft>>({});
+  const [refundReasons, setRefundReasons] = useState<Record<string, string>>({});
   const [message, setMessage] = useState<{ ok: boolean; text: string } | null>(null);
 
-  // Teilt sich bewusst denselben Query-Key wie ServerSlot. So gibt es eine
-  // kanonische Berechtigungswahrheit fuer Buyer-vs-Manager-UI ohne neue Rechte.
   const dashboardMeta = useQuery({
     queryKey: ['dashboard-slot-meta', guildId, slot],
     queryFn: () => api.get<DashboardMeta>(`/api/v2/guilds/${guildId}/dashboard`),
     retry: false,
   });
-  const canManage = Boolean(
-    dashboardMeta.data?.isOwner || dashboardMeta.data?.permissions.includes('economy.manage'),
-  );
+  const canManage = Boolean(dashboardMeta.data?.isOwner || dashboardMeta.data?.permissions.includes('economy.manage'));
 
   const vendors = useQuery({
     queryKey: ['economy-black-market-vendors', guildId, slot],
@@ -118,6 +167,27 @@ export function BlackMarketPanel({ guildId, slot }: { guildId: string; slot: str
     onError: (error: Error) => setMessage({ ok: false, text: error.message }),
   });
 
+  const payoutVendor = useMutation({
+    mutationFn: (vars: { id: string; draft: VendorPayoutDraft }) => api.post<{ booked: boolean; vendor: Vendor }>(
+      `/api/v2/guilds/${guildId}/economy/black-market/vendors/${vars.id}/payout?${scope}`,
+      { targetUserId: vars.draft.targetUserId, amount: vars.draft.amount, targetPocket: vars.draft.targetPocket },
+    ),
+    onSuccess: result => {
+      setMessage({ ok: true, text: result.booked ? 'Haendlerguthaben ausgezahlt.' : 'Diese Auszahlung war bereits verarbeitet.' });
+      invalidate();
+    },
+    onError: (error: Error) => setMessage({ ok: false, text: `Auszahlung fehlgeschlagen: ${error.message}` }),
+  });
+
+  const archiveVendor = useMutation({
+    mutationFn: (id: string) => api.post<Vendor>(`/api/v2/guilds/${guildId}/economy/black-market/vendors/${id}/archive?${scope}`, {}),
+    onSuccess: vendor => {
+      setMessage({ ok: true, text: `Haendler „${vendor.name}“ archiviert.` });
+      invalidate();
+    },
+    onError: (error: Error) => setMessage({ ok: false, text: `Archivierung fehlgeschlagen: ${error.message}` }),
+  });
+
   const createListing = useMutation({
     mutationFn: () => api.post<Listing>(`/api/v2/guilds/${guildId}/economy/black-market/listings?${scope}`, {
       vendorAccountId: listing.vendorAccountId,
@@ -127,13 +197,27 @@ export function BlackMarketPanel({ guildId, slot }: { guildId: string; slot: str
       price: listing.price.trim(),
       stock: Number(listing.stock),
       maxPerPurchase: Number(listing.maxPerPurchase),
+      deliveryItems: parseBundleDraft(listing.bundle),
     }),
     onSuccess: row => {
-      setListing(current => ({ ...current, sku: '', name: '', description: '', price: '', stock: '0', maxPerPurchase: '10' }));
-      setMessage({ ok: true, text: `Angebot „${row.name}“ erstellt.` });
+      setListing(current => ({ ...current, sku: '', name: '', description: '', price: '', stock: '0', maxPerPurchase: '10', bundle: '' }));
+      setMessage({ ok: true, text: `Angebot „${row.name}“ mit Liefer-Bundle erstellt.` });
       invalidate();
     },
     onError: (error: Error) => setMessage({ ok: false, text: error.message }),
+  });
+
+  const updateBundle = useMutation({
+    mutationFn: (vars: { id: string; deliveryItems: DeliveryItem[] }) => api.put<Listing>(
+      `/api/v2/guilds/${guildId}/economy/black-market/listings/${vars.id}/items?${scope}`,
+      { deliveryItems: vars.deliveryItems },
+    ),
+    onSuccess: row => {
+      setBundleDrafts(current => ({ ...current, [row.id]: bundleDraft(row.deliveryItems) }));
+      setMessage({ ok: true, text: `Liefer-Bundle fuer „${row.name}“ gespeichert.` });
+      invalidate();
+    },
+    onError: (error: Error) => setMessage({ ok: false, text: `Bundle konnte nicht gespeichert werden: ${error.message}` }),
   });
 
   const restockListing = useMutation({
@@ -167,7 +251,7 @@ export function BlackMarketPanel({ guildId, slot }: { guildId: string; slot: str
       setMessage({
         ok: true,
         text: result.booked
-          ? `Kauf gebucht: ${result.purchase.quantity}× fuer ${fmt(result.purchase.amount)}.`
+          ? `Bestellung ${result.purchase.id} gebucht: ${result.purchase.quantity}× fuer ${fmt(result.purchase.amount)}. Status: OFFEN.`
           : 'Dieser Kauf war bereits verarbeitet; es wurde nicht doppelt gebucht.',
       });
       setPurchaseDrafts(current => ({ ...current, [vars.id]: { quantity: '1', sourcePocket: vars.sourcePocket } }));
@@ -176,15 +260,41 @@ export function BlackMarketPanel({ guildId, slot }: { guildId: string; slot: str
     onError: (error: Error) => setMessage({ ok: false, text: `Kauf fehlgeschlagen: ${error.message}` }),
   });
 
+  const deliverPurchase = useMutation({
+    mutationFn: (id: string) => api.post<{ changed: boolean; purchase: Purchase }>(
+      `/api/v2/guilds/${guildId}/economy/black-market/purchases/${id}/deliver?${scope}`,
+      {},
+    ),
+    onSuccess: result => {
+      setMessage({ ok: true, text: result.changed ? `Bestellung ${result.purchase.id} als geliefert markiert.` : 'Bestellung war bereits geliefert.' });
+      invalidate();
+    },
+    onError: (error: Error) => setMessage({ ok: false, text: `Lieferstatus fehlgeschlagen: ${error.message}` }),
+  });
+
+  const refundPurchase = useMutation({
+    mutationFn: (vars: { id: string; reason: string }) => api.post<{ booked: boolean; purchase: Purchase }>(
+      `/api/v2/guilds/${guildId}/economy/black-market/purchases/${vars.id}/refund?${scope}`,
+      { reason: vars.reason },
+    ),
+    onSuccess: result => {
+      setMessage({ ok: true, text: result.booked ? `Bestellung ${result.purchase.id} vollständig refundiert; Bestand wurde zurückgebucht.` : 'Dieser Refund war bereits verarbeitet.' });
+      invalidate();
+    },
+    onError: (error: Error) => setMessage({ ok: false, text: `Refund fehlgeschlagen: ${error.message}` }),
+  });
+
   const activeVendors = useMemo(() => (vendors.data?.vendors ?? []).filter(v => v.status === 'ACTIVE'), [vendors.data]);
   const vendorNameValid = vendorName.trim().length >= 1 && vendorName.trim().length <= 80;
+  const createBundle = parseBundleDraft(listing.bundle);
   const listingValid = listing.vendorAccountId.length > 0
     && /^[A-Za-z0-9][A-Za-z0-9._:-]{0,79}$/.test(listing.sku.trim())
     && listing.name.trim().length >= 1 && listing.name.trim().length <= 120
     && listing.description.length <= 500
     && /^\d+$/.test(listing.price) && BigInt(listing.price || '0') >= 1n && BigInt(listing.price || '0') <= MAX_MARKET_PRICE
     && /^\d+$/.test(listing.stock) && Number.isSafeInteger(Number(listing.stock)) && Number(listing.stock) <= MAX_MARKET_STOCK
-    && /^\d+$/.test(listing.maxPerPurchase) && Number(listing.maxPerPurchase) >= 1 && Number(listing.maxPerPurchase) <= 1000;
+    && /^\d+$/.test(listing.maxPerPurchase) && Number(listing.maxPerPurchase) >= 1 && Number(listing.maxPerPurchase) <= 1000
+    && createBundle !== null;
 
   return (
     <Card>
@@ -207,7 +317,7 @@ export function BlackMarketPanel({ guildId, slot }: { guildId: string; slot: str
       </CardHeader>
 
       <p className="text-xs text-muted mb-4">
-        Serverseparater Haendler mit eigenem MARKET_VENDOR-Konto. Bestand und Zahlung werden beim Kauf atomar gebucht; die Ausgabe der DayZ-Items bleibt bewusst manuell.
+        Geld, Bestand und Bestellung werden atomar gebucht. Jedes Angebot besitzt ein validiertes DayZ-Classname-Bundle; offene Bestellungen werden nach manueller DayZ-Ausgabe als geliefert markiert oder vollständig refundiert.
       </p>
 
       {canManage && (
@@ -218,13 +328,35 @@ export function BlackMarketPanel({ guildId, slot }: { guildId: string; slot: str
             <Button disabled={createVendor.isPending || vendors.isError || listings.isError || !vendorNameValid} onClick={() => { setMessage(null); createVendor.mutate(); }}>
               {createVendor.isPending ? 'Erstelle…' : 'Haendler erstellen'}
             </Button>
-            <div className="space-y-1 pt-2 border-t border-border/50">
-              {(vendors.data?.vendors ?? []).map(vendor => (
-                <div key={vendor.id} className="flex items-center justify-between gap-2 text-xs py-1.5">
-                  <span className="truncate text-white">{vendor.name}</span>
-                  <span className="flex items-center gap-2"><Badge variant={vendor.status === 'ACTIVE' ? 'ok' : 'neutral'}>{vendor.status}</Badge><strong>{fmt(vendor.balance)}</strong></span>
-                </div>
-              ))}
+            <div className="space-y-3 pt-2 border-t border-border/50">
+              {(vendors.data?.vendors ?? []).map(vendor => {
+                const draft = payoutDrafts[vendor.id] ?? { targetUserId: '', amount: '', targetPocket: 'WALLET' as const };
+                const payoutValid = vendor.status === 'ACTIVE' && SNOWFLAKE_RE.test(draft.targetUserId) && /^\d+$/.test(draft.amount) && BigInt(draft.amount || '0') > 0n && BigInt(draft.amount || '0') <= BigInt(vendor.withdrawableBalance);
+                return (
+                  <div key={vendor.id} className="rounded border border-border/40 p-2 space-y-2 text-xs">
+                    <div className="flex items-center justify-between gap-2">
+                      <span className="truncate text-white font-medium">{vendor.name}</span>
+                      <Badge variant={vendor.status === 'ACTIVE' ? 'ok' : 'neutral'}>{vendor.status}</Badge>
+                    </div>
+                    <div className="grid grid-cols-3 gap-2 text-muted">
+                      <span>Saldo <strong className="text-white block">{fmt(vendor.balance)}</strong></span>
+                      <span>Reserviert <strong className="text-white block">{fmt(vendor.pendingLiability)}</strong></span>
+                      <span>Frei <strong className="text-white block">{fmt(vendor.withdrawableBalance)}</strong></span>
+                    </div>
+                    {vendor.status === 'ACTIVE' && (
+                      <div className="grid gap-2 sm:grid-cols-[1fr,110px,110px,auto,auto] items-end">
+                        <Input aria-label={`Auszahlungsziel ${vendor.name}`} value={draft.targetUserId} onChange={e => setPayoutDrafts(current => ({ ...current, [vendor.id]: { ...draft, targetUserId: e.target.value.trim() } }))} placeholder="Discord User-ID" />
+                        <Input aria-label={`Auszahlungsbetrag ${vendor.name}`} value={draft.amount} onChange={e => setPayoutDrafts(current => ({ ...current, [vendor.id]: { ...draft, amount: e.target.value.trim() } }))} inputMode="numeric" placeholder="Betrag" />
+                        <Select aria-label={`Auszahlungszielkonto ${vendor.name}`} value={draft.targetPocket} onChange={e => setPayoutDrafts(current => ({ ...current, [vendor.id]: { ...draft, targetPocket: e.target.value as 'WALLET' | 'BANK' } }))}>
+                          <option value="WALLET">Wallet</option><option value="BANK">Bank</option>
+                        </Select>
+                        <Button size="sm" variant="ghost" disabled={!payoutValid || payoutVendor.isPending} onClick={() => payoutVendor.mutate({ id: vendor.id, draft })}><WalletCards className="h-3.5 w-3.5 mr-1" />Auszahlen</Button>
+                        <Button aria-label={`Haendler ${vendor.name} archivieren`} size="sm" variant="danger" disabled={archiveVendor.isPending} onClick={() => archiveVendor.mutate(vendor.id)}><Archive className="h-3.5 w-3.5" /></Button>
+                      </div>
+                    )}
+                  </div>
+                );
+              })}
               {vendors.isError && <p className="text-danger text-xs">Haendler konnten nicht geladen werden: {(vendors.error as Error).message}</p>}
             </div>
           </div>
@@ -243,6 +375,17 @@ export function BlackMarketPanel({ guildId, slot }: { guildId: string; slot: str
               <Input value={listing.maxPerPurchase} onChange={e => setListing(current => ({ ...current, maxPerPurchase: e.target.value.trim() }))} inputMode="numeric" placeholder="Max. pro Kauf" />
               <Input value={listing.description} onChange={e => setListing(current => ({ ...current, description: e.target.value }))} maxLength={500} placeholder="Beschreibung (optional)" />
             </div>
+            <label className="text-xs block">
+              <span className="text-muted block mb-1">DayZ-Liefer-Bundle — eine Zeile pro Classname, optional <code>xMenge</code></span>
+              <textarea
+                aria-label="DayZ-Liefer-Bundle"
+                value={listing.bundle}
+                onChange={e => setListing(current => ({ ...current, bundle: e.target.value }))}
+                rows={4}
+                placeholder={'M4A1 x1\nMag_STANAG_60Rnd x2'}
+                className="w-full rounded-md border border-border bg-bg-elev px-3 py-2 text-sm text-white placeholder:text-muted focus:outline-none focus:ring-1 focus:ring-accent"
+              />
+            </label>
             <Button disabled={createListing.isPending || !listingValid} onClick={() => { setMessage(null); createListing.mutate(); }}>
               {createListing.isPending ? 'Erstelle…' : 'Angebot erstellen'}
             </Button>
@@ -254,24 +397,22 @@ export function BlackMarketPanel({ guildId, slot }: { guildId: string; slot: str
         <p className="text-sm font-medium text-white mb-2 inline-flex items-center gap-1.5"><Truck className="h-3.5 w-3.5" />Angebote</p>
         <div className="space-y-2">
           {(listings.data?.listings ?? []).map(row => {
+            const currentItems = row.deliveryItems ?? [];
             const draftStock = restock[row.id] ?? String(row.stock);
-            const stockValid = /^\d+$/.test(draftStock)
-              && Number.isSafeInteger(Number(draftStock))
-              && Number(draftStock) <= MAX_MARKET_STOCK;
+            const stockValid = /^\d+$/.test(draftStock) && Number.isSafeInteger(Number(draftStock)) && Number(draftStock) <= MAX_MARKET_STOCK;
+            const currentBundleDraft = bundleDrafts[row.id] ?? bundleDraft(currentItems);
+            const parsedBundle = parseBundleDraft(currentBundleDraft);
             const buyDraft = purchaseDrafts[row.id] ?? { quantity: '1', sourcePocket: 'WALLET' as const };
             const buyQuantity = Number(buyDraft.quantity);
-            const buyValid = row.active
-              && row.stock > 0
-              && /^\d+$/.test(buyDraft.quantity)
-              && Number.isSafeInteger(buyQuantity)
-              && buyQuantity >= 1
-              && buyQuantity <= Math.min(1000, row.maxPerPurchase, row.stock);
+            const buyValid = row.active && currentItems.length > 0 && row.stock > 0 && /^\d+$/.test(buyDraft.quantity)
+              && Number.isSafeInteger(buyQuantity) && buyQuantity >= 1 && buyQuantity <= Math.min(1000, row.maxPerPurchase, row.stock);
             return (
               <div key={row.id} className="rounded-lg border border-border/60 bg-bg-elev/40 p-3">
                 <div className="flex flex-wrap items-start justify-between gap-3">
                   <div className="min-w-0 flex-1">
                     <div className="flex flex-wrap items-center gap-2"><strong className="text-white">{row.name}</strong><Badge variant={row.active ? 'ok' : 'neutral'}>{row.active ? 'AKTIV' : 'ARCHIVIERT'}</Badge></div>
                     <p className="text-xs text-muted mt-1">{row.sku} · Preis {fmt(row.price)} · Bestand {row.stock} · Limit {row.maxPerPurchase}</p>
+                    <p className={`text-xs mt-1 ${currentItems.length ? 'text-muted/80' : 'text-danger'}`}>📦 {bundleText(currentItems)}</p>
                     {row.description && <p className="text-xs text-muted/80 mt-1">{row.description}</p>}
                   </div>
                   {row.active && canManage && (
@@ -283,45 +424,25 @@ export function BlackMarketPanel({ guildId, slot }: { guildId: string; slot: str
                   )}
                 </div>
 
+                {row.active && canManage && (
+                  <div className="mt-3 pt-3 border-t border-border/50 grid gap-2 sm:grid-cols-[1fr,auto] items-end">
+                    <textarea
+                      aria-label={`Liefer-Bundle ${row.name}`}
+                      value={currentBundleDraft}
+                      onChange={e => setBundleDrafts(current => ({ ...current, [row.id]: e.target.value }))}
+                      rows={2}
+                      className="w-full rounded-md border border-border bg-bg px-3 py-2 text-xs text-white focus:outline-none focus:ring-1 focus:ring-accent"
+                    />
+                    <Button size="sm" variant="ghost" disabled={!parsedBundle || updateBundle.isPending} onClick={() => parsedBundle && updateBundle.mutate({ id: row.id, deliveryItems: parsedBundle })}>Bundle speichern</Button>
+                  </div>
+                )}
+
                 {row.active && (
                   <div className="mt-3 pt-3 border-t border-border/50 flex flex-wrap items-end gap-2">
-                    <label className="text-xs">
-                      <span className="text-muted block mb-1">Kaufmenge</span>
-                      <Input
-                        aria-label={`Kaufmenge ${row.name}`}
-                        className="w-20"
-                        value={buyDraft.quantity}
-                        onChange={e => setPurchaseDrafts(current => ({
-                          ...current,
-                          [row.id]: { ...buyDraft, quantity: e.target.value.trim() },
-                        }))}
-                        inputMode="numeric"
-                      />
-                    </label>
-                    <label className="text-xs">
-                      <span className="text-muted block mb-1">Bezahlen aus</span>
-                      <Select
-                        aria-label={`Bezahlen aus ${row.name}`}
-                        value={buyDraft.sourcePocket}
-                        onChange={e => setPurchaseDrafts(current => ({
-                          ...current,
-                          [row.id]: { ...buyDraft, sourcePocket: e.target.value as 'WALLET' | 'BANK' },
-                        }))}
-                      >
-                        <option value="WALLET">Wallet</option>
-                        <option value="BANK">Bank</option>
-                      </Select>
-                    </label>
-                    <Button
-                      size="sm"
-                      disabled={!buyValid || purchaseListing.isPending}
-                      onClick={() => {
-                        setMessage(null);
-                        purchaseListing.mutate({ id: row.id, quantity: buyQuantity, sourcePocket: buyDraft.sourcePocket });
-                      }}
-                    >
-                      <ShoppingCart className="h-3.5 w-3.5 mr-1" />{purchaseListing.isPending ? 'Buche…' : 'Kaufen'}
-                    </Button>
+                    <label className="text-xs"><span className="text-muted block mb-1">Kaufmenge</span><Input aria-label={`Kaufmenge ${row.name}`} className="w-20" value={buyDraft.quantity} onChange={e => setPurchaseDrafts(current => ({ ...current, [row.id]: { ...buyDraft, quantity: e.target.value.trim() } }))} inputMode="numeric" /></label>
+                    <label className="text-xs"><span className="text-muted block mb-1">Bezahlen aus</span><Select aria-label={`Bezahlen aus ${row.name}`} value={buyDraft.sourcePocket} onChange={e => setPurchaseDrafts(current => ({ ...current, [row.id]: { ...buyDraft, sourcePocket: e.target.value as 'WALLET' | 'BANK' } }))}><option value="WALLET">Wallet</option><option value="BANK">Bank</option></Select></label>
+                    <Button size="sm" disabled={!buyValid || purchaseListing.isPending} onClick={() => { setMessage(null); purchaseListing.mutate({ id: row.id, quantity: buyQuantity, sourcePocket: buyDraft.sourcePocket }); }}><ShoppingCart className="h-3.5 w-3.5 mr-1" />{purchaseListing.isPending ? 'Buche…' : 'Kaufen'}</Button>
+                    {currentItems.length === 0 && <span className="text-xs text-danger">Kauf gesperrt: Liefer-Bundle fehlt</span>}
                     {row.stock === 0 && <span className="text-xs text-muted">Ausverkauft</span>}
                   </div>
                 )}
@@ -335,15 +456,30 @@ export function BlackMarketPanel({ guildId, slot }: { guildId: string; slot: str
 
       {canManage && (
         <div className="mt-5 pt-4 border-t border-border">
-          <p className="text-sm font-medium text-white mb-2">Letzte Kaeufe</p>
-          <div className="space-y-1 max-h-52 overflow-y-auto">
-            {(purchases.data?.purchases ?? []).map(purchase => (
-              <div key={purchase.id} className="grid sm:grid-cols-[1fr,auto,auto] gap-2 text-xs border-b border-border/40 py-1.5 last:border-0">
-                <span className="text-muted truncate">User {purchase.userDiscordId}</span>
-                <span>{purchase.quantity}× · {fmt(purchase.amount)}</span>
-                <span className="text-muted/70">{new Date(purchase.createdAt).toLocaleString('de-DE')}</span>
-              </div>
-            ))}
+          <p className="text-sm font-medium text-white mb-2">Bestellungen & Auslieferung</p>
+          <div className="space-y-2 max-h-[34rem] overflow-y-auto">
+            {(purchases.data?.purchases ?? []).map(purchase => {
+              const reason = refundReasons[purchase.id] ?? '';
+              return (
+                <div key={purchase.id} className="rounded border border-border/40 p-2 text-xs space-y-2">
+                  <div className="flex flex-wrap items-center justify-between gap-2">
+                    <span className="text-muted">User <strong className="text-white">{purchase.userDiscordId}</strong> · {purchase.quantity}× · {fmt(purchase.amount)} · {purchase.sourcePocket}</span>
+                    {fulfillmentBadge(purchase.fulfillmentStatus)}
+                  </div>
+                  <div className="text-muted/80">ID <code>{purchase.id}</code> · {new Date(purchase.createdAt).toLocaleString('de-DE')}</div>
+                  <div className="text-muted/80">📦 {bundleText(purchase.deliveryItems ?? [])}</div>
+                  {purchase.fulfillmentNote && <div className="text-muted/80">Notiz: {purchase.fulfillmentNote}</div>}
+                  {purchase.refundReason && <div className="text-muted/80">Refund: {purchase.refundReason}</div>}
+                  {purchase.fulfillmentStatus === 'PENDING' && (
+                    <div className="flex flex-wrap items-center gap-2 pt-1">
+                      <Button size="sm" variant="ghost" disabled={deliverPurchase.isPending || refundPurchase.isPending} onClick={() => deliverPurchase.mutate(purchase.id)}><Check className="h-3.5 w-3.5 mr-1" />Geliefert</Button>
+                      <Input aria-label={`Refund-Grund ${purchase.id}`} className="min-w-52 flex-1" value={reason} onChange={e => setRefundReasons(current => ({ ...current, [purchase.id]: e.target.value }))} maxLength={500} placeholder="Refund-Grund" />
+                      <Button size="sm" variant="danger" disabled={reason.trim().length < 1 || deliverPurchase.isPending || refundPurchase.isPending} onClick={() => refundPurchase.mutate({ id: purchase.id, reason: reason.trim() })}><RotateCcw className="h-3.5 w-3.5 mr-1" />Refund</Button>
+                    </div>
+                  )}
+                </div>
+              );
+            })}
             {purchases.isError && <p className="text-danger text-xs">Kaufhistorie konnte nicht geladen werden: {(purchases.error as Error).message}</p>}
           </div>
         </div>

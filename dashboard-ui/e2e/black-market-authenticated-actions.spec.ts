@@ -8,11 +8,14 @@ const MAX_PRICE = '1000000000000000';
 const MAX_STOCK = 1_000_000_000;
 
 type Pocket = 'WALLET' | 'BANK';
+interface DeliveryItem { className: string; quantity: number; }
 
 interface Vendor {
   id: string;
   name: string;
   balance: string;
+  pendingLiability: string;
+  withdrawableBalance: string;
   status: 'ACTIVE' | 'EXPIRED' | 'ARCHIVED';
   createdAt: string;
 }
@@ -29,6 +32,25 @@ interface Listing {
   active: boolean;
   archivedAt: string | null;
   createdAt: string;
+  deliveryItems: DeliveryItem[];
+}
+
+interface Purchase {
+  id: string;
+  listingId: string;
+  vendorAccountId: string;
+  userDiscordId: string;
+  sourcePocket: Pocket;
+  quantity: number;
+  unitPrice: string;
+  amount: string;
+  createdAt: string;
+  fulfillmentStatus: 'PENDING' | 'DELIVERED' | 'REFUNDED' | 'LEGACY';
+  deliveryItems: DeliveryItem[];
+  fulfilledAt: string | null;
+  fulfillmentNote: string | null;
+  refundedAt: string | null;
+  refundReason: string | null;
 }
 
 interface Mutation {
@@ -49,21 +71,25 @@ async function stubBlackMarket(page: Page, opts: { canManage: boolean; purchaseE
   let vendorReads = 0;
   let purchaseHistoryReads = 0;
   let vendors: Vendor[] = [{
-    id: 'vendor-1', name: 'Nachtmarkt', balance: '9000', status: 'ACTIVE', createdAt: '2026-08-18T12:00:00.000Z',
+    id: 'vendor-1', name: 'Nachtmarkt', balance: '9000', pendingLiability: '5000', withdrawableBalance: '4000', status: 'ACTIVE', createdAt: '2026-08-18T12:00:00.000Z',
   }];
   let listings: Listing[] = [
     {
       id: 'listing-1', vendorAccountId: 'vendor-1', sku: 'M4-KIT', name: 'M4 Kit', description: 'Testangebot',
       price: '2500', stock: 5, maxPerPurchase: 3, active: true, archivedAt: null, createdAt: '2026-08-18T12:30:00.000Z',
+      deliveryItems: [{ className: 'M4A1', quantity: 1 }, { className: 'Mag_STANAG_60Rnd', quantity: 2 }],
     },
     {
       id: 'listing-archived', vendorAccountId: 'vendor-1', sku: 'OLD-KIT', name: 'Altes Kit', description: null,
       price: '500', stock: 0, maxPerPurchase: 1, active: false, archivedAt: '2026-08-18T13:30:00.000Z', createdAt: '2026-08-18T13:00:00.000Z',
+      deliveryItems: [{ className: 'Apple', quantity: 1 }],
     },
   ];
-  let purchases = [{
+  let purchases: Purchase[] = [{
     id: 'purchase-1', listingId: 'listing-1', vendorAccountId: 'vendor-1', userDiscordId: OTHER_USER,
-    sourcePocket: 'WALLET' as Pocket, quantity: 2, unitPrice: '2500', amount: '5000', createdAt: '2026-08-19T06:20:00.000Z',
+    sourcePocket: 'WALLET', quantity: 2, unitPrice: '2500', amount: '5000', createdAt: '2026-08-19T06:20:00.000Z',
+    fulfillmentStatus: 'PENDING', deliveryItems: [{ className: 'M4A1', quantity: 2 }],
+    fulfilledAt: null, fulfillmentNote: null, refundedAt: null, refundReason: null,
   }];
 
   await page.route('**/api/me', route => json(route, {
@@ -125,7 +151,7 @@ async function stubBlackMarket(page: Page, opts: { canManage: boolean; purchaseE
       }
       const body = req.postDataJSON() as Record<string, unknown>;
       mutations.push({ kind: 'vendor', path, query: url.search, body, idempotencyKey: req.headers()['x-idempotency-key'] ?? null });
-      const vendor: Vendor = { id: 'vendor-2', name: String(body.name), balance: '0', status: 'ACTIVE', createdAt: '2026-08-19T12:00:00.000Z' };
+      const vendor: Vendor = { id: 'vendor-2', name: String(body.name), balance: '0', pendingLiability: '0', withdrawableBalance: '0', status: 'ACTIVE', createdAt: '2026-08-19T12:00:00.000Z' };
       vendors = [...vendors, vendor];
       return json(route, vendor, 201);
     }
@@ -141,6 +167,7 @@ async function stubBlackMarket(page: Page, opts: { canManage: boolean; purchaseE
         id: 'listing-2', vendorAccountId: String(body.vendorAccountId), sku: String(body.sku).toUpperCase(), name: String(body.name),
         description: body.description == null ? null : String(body.description), price: String(body.price), stock: Number(body.stock),
         maxPerPurchase: Number(body.maxPerPurchase), active: true, archivedAt: null, createdAt: '2026-08-19T12:10:00.000Z',
+        deliveryItems: (body.deliveryItems ?? []) as DeliveryItem[],
       };
       listings = [...listings, row];
       return json(route, row, 201);
@@ -173,9 +200,12 @@ async function stubBlackMarket(page: Page, opts: { canManage: boolean; purchaseE
       const amount = (BigInt(before.price) * BigInt(quantity)).toString();
       const updated = { ...before, stock: before.stock - quantity };
       listings = listings.map(row => row.id === id ? updated : row);
-      const purchase = {
+      const purchase: Purchase = {
         id: 'purchase-2', listingId: id, vendorAccountId: before.vendorAccountId, userDiscordId: USER_ID,
         sourcePocket: String(body.sourcePocket) as Pocket, quantity, unitPrice: before.price, amount, createdAt: '2026-08-19T12:30:00.000Z',
+        fulfillmentStatus: 'PENDING',
+        deliveryItems: before.deliveryItems.map(item => ({ ...item, quantity: item.quantity * quantity })),
+        fulfilledAt: null, fulfillmentNote: null, refundedAt: null, refundReason: null,
       };
       purchases = [purchase, ...purchases];
       return json(route, { booked: true, purchase, listing: updated });
@@ -211,7 +241,7 @@ test.describe('Black Market authenticated action contract', () => {
     await expect(page.getByText('Altes Kit')).toHaveCount(0);
     await expect(page.getByText('Haendler anlegen')).toHaveCount(0);
     await expect(page.getByText('Angebot anlegen')).toHaveCount(0);
-    await expect(page.getByText('Letzte Kaeufe')).toHaveCount(0);
+    await expect(page.getByText('Bestellungen & Auslieferung')).toHaveCount(0);
     await expect.poll(state.vendorReads).toBe(0);
     await expect.poll(state.purchaseHistoryReads).toBe(0);
     await expect.poll(() => state.listingQueries.some(query => query.includes(`slot=${SLOT}`) && query.includes('includeInactive=false'))).toBe(true);
@@ -228,7 +258,7 @@ test.describe('Black Market authenticated action contract', () => {
     expect(purchase.idempotencyKey).toBeTruthy();
     expect(purchase.idempotencyKey).toMatch(/^[A-Za-z0-9._:-]+$/);
     expect(`dashboard:${purchase.idempotencyKey}`.length).toBeLessThanOrEqual(48);
-    await expect(page.getByText('Kauf gebucht: 2× fuer 5.000.')).toBeVisible();
+    await expect(page.getByText(/Bestellung purchase-2 gebucht: 2× fuer 5\.000/)).toBeVisible();
   });
 
   test('economy.manage deckt Create, Restock, Archive, History und Backend-Grenzen ab', async ({ page }) => {
@@ -238,7 +268,7 @@ test.describe('Black Market authenticated action contract', () => {
     await expect(page.getByText('Haendler anlegen')).toBeVisible();
     await expect(page.getByText('Angebot anlegen')).toBeVisible();
     await expect(page.getByText('Altes Kit')).toBeVisible();
-    await expect(page.getByText('Letzte Kaeufe')).toBeVisible();
+    await expect(page.getByText('Bestellungen & Auslieferung')).toBeVisible();
     await expect.poll(state.vendorReads).toBeGreaterThan(0);
     await expect.poll(state.purchaseHistoryReads).toBeGreaterThan(0);
     await expect.poll(() => state.listingQueries.some(query => query.includes('includeInactive=true'))).toBe(true);
@@ -264,6 +294,7 @@ test.describe('Black Market authenticated action contract', () => {
     await page.getByPlaceholder('Produktname').fill('Event Kit');
     await page.getByPlaceholder('Preis').fill(`${MAX_PRICE}1`);
     await page.getByPlaceholder('Bestand').fill(String(MAX_STOCK + 1));
+    await page.getByLabel('DayZ-Liefer-Bundle').fill('M4A1 x1\nMag_STANAG_60Rnd x2');
     await expect(page.getByRole('button', { name: 'Angebot erstellen', exact: true })).toBeDisabled();
     await page.getByPlaceholder('Preis').fill(MAX_PRICE);
     await page.getByPlaceholder('Bestand').fill('5');
@@ -271,17 +302,19 @@ test.describe('Black Market authenticated action contract', () => {
     await expect.poll(() => mutationOf(state, 'listing')).toBeTruthy();
     expect(mutationOf(state, 'listing')).toMatchObject({
       query: `?slot=${SLOT}`,
-      body: { vendorAccountId: 'vendor-2', sku: 'event-kit', name: 'Event Kit', price: MAX_PRICE, stock: 5, maxPerPurchase: 10 },
+      body: {
+        vendorAccountId: 'vendor-2', sku: 'event-kit', name: 'Event Kit', price: MAX_PRICE, stock: 5, maxPerPurchase: 10,
+        deliveryItems: [{ className: 'M4A1', quantity: 1 }, { className: 'Mag_STANAG_60Rnd', quantity: 2 }],
+      },
     });
   });
 
   test('zeigt Kauf-Fehler sichtbar statt False-Success', async ({ page }) => {
     await stubBlackMarket(page, { canManage: false, purchaseError: true });
     await page.goto(`/servers/${GUILD_ID}/server/${SLOT}?tab=economy`);
-
     await page.getByRole('button', { name: 'Kaufen', exact: true }).click();
     await expect(page.getByText(/Kauf fehlgeschlagen: Nicht genug Guthaben/)).toBeVisible();
-    await expect(page.getByText(/Kauf gebucht:/)).toHaveCount(0);
+    await expect(page.getByText(/Bestellung .* gebucht:/)).toHaveCount(0);
   });
 
   for (const width of [320, 360, 375, 390, 430]) {
