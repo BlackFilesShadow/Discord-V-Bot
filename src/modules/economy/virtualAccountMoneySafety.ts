@@ -9,7 +9,6 @@ import {
 } from './virtualAccounts';
 import {
   ensureVirtualAccountFinance,
-  payoutVirtualAccountToUser,
   removeVirtualAccountAmount,
   type VirtualAccountFinance,
 } from './virtualAccountFinance';
@@ -146,25 +145,31 @@ async function assertDepositPlayerReplay(args: {
   );
 }
 
-async function assertPayoutPlayerReplay(args: {
+async function payoutReplayPlayerAmount(args: {
   operationKey: string;
   guildId: GuildId;
   connId: NitradoConnId;
   accountId: string;
   userId: UserDiscordId;
   targetPocket: EconomyPocket;
-  playerAmount: bigint;
-}): Promise<void> {
-  assertPlayerLedgerReplay(
-    await playerLedgerReplay(args.operationKey, args.guildId, args.connId),
-    {
-      userDiscordId: String(args.userId),
-      walletDelta: args.targetPocket === 'WALLET' ? args.playerAmount : 0n,
-      bankDelta: args.targetPocket === 'BANK' ? args.playerAmount : 0n,
-      sourceRef: `virtual-account:${args.accountId}`,
-    },
-    'Idempotency-Key wurde mit einem anderen Auszahlungsziel, Ziel-Pocket oder Spielerbetrag wiederverwendet.',
-  );
+}, db: VirtualAccountRawDb): Promise<bigint> {
+  const actual = await playerLedgerReplay(args.operationKey, args.guildId, args.connId, db);
+  const baseMatches = actual !== null
+    && actual.userDiscordId === String(args.userId)
+    && actual.sourceRef === `virtual-account:${args.accountId}`;
+  if (!baseMatches || !actual) {
+    throw new Error('Idempotency-Key wurde mit einem anderen Auszahlungsziel oder Ziel-Pocket wiederverwendet.');
+  }
+  if (args.targetPocket === 'WALLET') {
+    if (actual.walletDelta <= 0n || actual.bankDelta !== 0n) {
+      throw new Error('Idempotency-Key wurde mit einem anderen Auszahlungsziel oder Ziel-Pocket wiederverwendet.');
+    }
+    return actual.walletDelta;
+  }
+  if (actual.bankDelta <= 0n || actual.walletDelta !== 0n) {
+    throw new Error('Idempotency-Key wurde mit einem anderen Auszahlungsziel oder Ziel-Pocket wiederverwendet.');
+  }
+  return actual.bankDelta;
 }
 
 function currencyKey(value: string): string {
@@ -181,6 +186,18 @@ function convertPlayerToLockedAccount(amount: bigint, serverCurrencyName: string
     throw new Error('Betrag kann mit dem konfigurierten Wechselkurs nicht ohne Rundungsverlust umgerechnet werden.');
   }
   return numerator / finance.exchangePlayerUnits;
+}
+
+function convertLockedAccountToPlayer(amount: bigint, serverCurrencyName: string, finance: LockedDepositFinanceRow): bigint {
+  if (currencyKey(serverCurrencyName) === currencyKey(finance.currencyName)) return amount;
+  if (!finance.exchangePlayerUnits || !finance.exchangeAccountUnits) {
+    throw new Error(`Keine Wechselrate von ${finance.currencyName} zu ${serverCurrencyName} konfiguriert.`);
+  }
+  const numerator = amount * finance.exchangePlayerUnits;
+  if (numerator % finance.exchangeAccountUnits !== 0n) {
+    throw new Error('Betrag kann mit dem konfigurierten Wechselkurs nicht ohne Rundungsverlust umgerechnet werden.');
+  }
+  return numerator / finance.exchangeAccountUnits;
 }
 
 async function writeDepositPlayerLedger(raw: VirtualAccountRawDb, args: {
@@ -220,6 +237,42 @@ async function writeDepositPlayerLedger(raw: VirtualAccountRawDb, args: {
     bankDelta,
     ledgerReason,
     sourceRef,
+  );
+  if (changed !== 1) throw new Error('User-Ledger-Idempotenzkonflikt.');
+}
+
+async function ensurePayoutUser(raw: VirtualAccountRawDb, guildId: GuildId, connId: NitradoConnId, userId: UserDiscordId): Promise<void> {
+  await raw.$executeRawUnsafe(
+    'INSERT INTO "EconomyAccount" ("id", "guildId", "nitradoConnId", "userDiscordId", "walletBalance", "bankBalance", "lifetimeEarned", "lifetimeSpent", "createdAt", "updatedAt") VALUES ($1,$2,$3,$4,0,0,0,0,CURRENT_TIMESTAMP,CURRENT_TIMESTAMP) ON CONFLICT ("guildId", "nitradoConnId", "userDiscordId") DO NOTHING',
+    randomUUID(), String(guildId), String(connId), String(userId),
+  );
+}
+
+async function writePayoutPlayerLedger(raw: VirtualAccountRawDb, args: {
+  key: string;
+  guildId: GuildId;
+  connId: NitradoConnId;
+  userId: UserDiscordId;
+  targetPocket: EconomyPocket;
+  playerAmount: bigint;
+  reason: string;
+  actorDiscordId: UserDiscordId;
+  accountId: string;
+  accountName: string;
+}): Promise<void> {
+  const walletDelta = args.targetPocket === 'WALLET' ? args.playerAmount : 0n;
+  const bankDelta = args.targetPocket === 'BANK' ? args.playerAmount : 0n;
+  const ledgerReason = `${args.reason} <- ${args.accountName}`.slice(0, 180);
+  const sourceRef = `virtual-account:${args.accountId}`;
+  await raw.$executeRawUnsafe(
+    'INSERT INTO "EconomyTransaction" ("id", "guildId", "nitradoConnId", "userDiscordId", "delta", "type", "reason", "actorDiscordId", "counterpartDiscordId", "createdAt") VALUES ($1,$2,$3,$4,$5,\'TRANSFER\'::"EconomyTxType",$6,$7,NULL,CURRENT_TIMESTAMP)',
+    randomUUID(), String(args.guildId), String(args.connId), String(args.userId), args.playerAmount,
+    ledgerReason, String(args.actorDiscordId),
+  );
+  const changed = await raw.$executeRawUnsafe(
+    'INSERT INTO "EconomyLedgerEntry" ("id", "idempotencyKey", "guildId", "nitradoConnId", "userDiscordId", "walletDelta", "bankDelta", "type", "reason", "buckets", "sourceRef", "createdAt") VALUES ($1,$2,$3,$4,$5,$6,$7,\'TRANSFER\'::"EconomyTxType",$8,0,$9,CURRENT_TIMESTAMP) ON CONFLICT ("idempotencyKey") DO NOTHING',
+    randomUUID(), `${args.key}:user`, String(args.guildId), String(args.connId), String(args.userId),
+    walletDelta, bankDelta, ledgerReason, sourceRef,
   );
   if (changed !== 1) throw new Error('User-Ledger-Idempotenzkonflikt.');
 }
@@ -271,8 +324,6 @@ export async function safeDepositUserIntoVirtualAccount(args: {
     const finance = financeRows[0];
     if (!finance) throw new Error('Konto-Finanzprofil fehlt.');
 
-    // Bestehende EconomyConfig-Zeilen werden fuer die Dauer der Buchung geteilt
-    // gelockt. Ein paralleles Currency-Update derselben Zeile muss damit warten.
     const configRows = await raw.$queryRawUnsafe<Array<{ currencyName: string }>>(
       'SELECT "currencyName" FROM "EconomyConfig" WHERE "guildId"=$1 AND "nitradoConnId"=$2 LIMIT 1 FOR SHARE',
       String(args.guildId),
@@ -496,6 +547,13 @@ export async function safeRemoveVirtualAccountAmount(args: {
   return result;
 }
 
+/**
+ * Auszahlung und FX-Berechnung laufen in einer Transaktion unter denselben
+ * Konto-/Finance-/Config-Locks wie Einzahlungen und Konfigurationsaenderungen.
+ * Bei einem Retry wird der urspruenglich gutgeschriebene Spielerbetrag aus dem
+ * Ledger gelesen. Ein spaeter geaenderter Wechselkurs veraendert damit niemals
+ * die Semantik einer bereits verarbeiteten Operation.
+ */
 export async function safePayoutVirtualAccountToUser(args: {
   idempotencyKey: string;
   guildId: GuildId;
@@ -507,13 +565,37 @@ export async function safePayoutVirtualAccountToUser(args: {
   targetPocket: EconomyPocket;
   accountAmount: bigint;
   reason: string;
-}) {
+}): Promise<{ booked: boolean; account: VirtualAccountRow; finance: VirtualAccountFinance; accountDebited: bigint; playerCredited: bigint }> {
   await assertCustomAccount(args.guildId, args.nitradoConnId, args.accountId);
+  if (args.accountAmount <= 0n) throw new Error('Betrag muss groesser als 0 sein.');
+  if (args.sourcePocket !== 'WALLET' && args.sourcePocket !== 'BANK') throw new Error('Quellkonto ungueltig.');
+  if (args.targetPocket !== 'WALLET' && args.targetPocket !== 'BANK') throw new Error('Zielkonto ungueltig.');
+  await ensureVirtualAccountFinance(args.guildId, args.nitradoConnId, args.accountId);
+
+  const key = operationKey('virtual-payout', args.guildId, args.nitradoConnId, args.idempotencyKey);
   const reason = strictReason(args.reason, 'Auszahlungsgrund');
-  const result = await payoutVirtualAccountToUser({ ...args, reason });
-  if (!result.booked) {
-    const key = operationKey('virtual-payout', args.guildId, args.nitradoConnId, args.idempotencyKey);
-    assertReplay(await replay(key), {
+  const result = await prisma.$transaction(async tx => {
+    const raw = rawDb(tx);
+    const accountRows = await raw.$queryRawUnsafe<LockedDepositAccountRow[]>(
+      'SELECT "kind"::text AS kind, "name", "balance", "status"::text AS status, "acceptUserTransfers" FROM "EconomyVirtualAccount" WHERE "id"=$1 AND "guildId"=$2 AND "nitradoConnId"=$3 LIMIT 1 FOR UPDATE',
+      args.accountId,
+      String(args.guildId),
+      String(args.nitradoConnId),
+    );
+    const account = accountRows[0];
+    if (!account) throw new Error('Virtuelles Konto nicht gefunden.');
+    if (account.kind !== 'CUSTOM') throw new Error('Lotterie- und Markt-Systemkonten duerfen nur durch ihre jeweilige Fachfunktion Geld bewegen.');
+
+    const financeRows = await raw.$queryRawUnsafe<LockedDepositFinanceRow[]>(
+      'SELECT "bankBalance", "currencyName", "exchangePlayerUnits", "exchangeAccountUnits" FROM "EconomyVirtualAccountFinance" WHERE "accountId"=$1 AND "guildId"=$2 AND "nitradoConnId"=$3 LIMIT 1 FOR UPDATE',
+      args.accountId,
+      String(args.guildId),
+      String(args.nitradoConnId),
+    );
+    const finance = financeRows[0];
+    if (!finance) throw new Error('Konto-Finanzprofil fehlt.');
+
+    const expected: ReplayRow = {
       virtualAccountId: args.accountId,
       delta: -args.accountAmount,
       entryType: 'MANAGER_PAYOUT',
@@ -522,16 +604,86 @@ export async function safePayoutVirtualAccountToUser(args: {
       userDiscordId: String(args.toUserDiscordId),
       reason,
       sourceRef: `virtual-account:${args.accountId}`,
-    });
-    await assertPayoutPlayerReplay({
-      operationKey: key,
+    };
+    const previous = await replay(key, raw);
+    if (previous) {
+      assertReplay(previous, expected);
+      const playerAmount = await payoutReplayPlayerAmount({
+        operationKey: key,
+        guildId: args.guildId,
+        connId: args.nitradoConnId,
+        accountId: args.accountId,
+        userId: args.toUserDiscordId,
+        targetPocket: args.targetPocket,
+      }, raw);
+      return { booked: false, playerAmount };
+    }
+
+    if (account.status === 'ARCHIVED') throw new Error('Archiviertes Konto kann nicht mehr buchen.');
+
+    const configRows = await raw.$queryRawUnsafe<Array<{ currencyName: string }>>(
+      'SELECT "currencyName" FROM "EconomyConfig" WHERE "guildId"=$1 AND "nitradoConnId"=$2 LIMIT 1 FOR SHARE',
+      String(args.guildId),
+      String(args.nitradoConnId),
+    );
+    const serverCurrencyName = configRows[0]?.currencyName ?? 'Coins';
+    const playerAmount = convertLockedAccountToPlayer(args.accountAmount, serverCurrencyName, finance);
+    if (playerAmount <= 0n) throw new Error('Umgerechneter Betrag muss groesser als 0 sein.');
+
+    const debited = args.sourcePocket === 'WALLET'
+      ? await raw.$executeRawUnsafe(
+        'UPDATE "EconomyVirtualAccount" SET "balance"="balance"-$4, "updatedAt"=CURRENT_TIMESTAMP WHERE "id"=$1 AND "guildId"=$2 AND "nitradoConnId"=$3 AND "status"<>\'ARCHIVED\'::"EconomyVirtualAccountStatus" AND "balance">=$4',
+        args.accountId, String(args.guildId), String(args.nitradoConnId), args.accountAmount,
+      )
+      : await raw.$executeRawUnsafe(
+        'UPDATE "EconomyVirtualAccountFinance" SET "bankBalance"="bankBalance"-$4, "updatedAt"=CURRENT_TIMESTAMP WHERE "accountId"=$1 AND "guildId"=$2 AND "nitradoConnId"=$3 AND "bankBalance">=$4',
+        args.accountId, String(args.guildId), String(args.nitradoConnId), args.accountAmount,
+      );
+    if (debited !== 1) throw new Error(args.sourcePocket === 'WALLET' ? 'Virtuelles Wallet hat zu wenig Guthaben.' : 'Virtuelle Bank hat zu wenig Guthaben.');
+
+    await ensurePayoutUser(raw, args.guildId, args.nitradoConnId, args.toUserDiscordId);
+    const credited = args.targetPocket === 'WALLET'
+      ? await raw.$executeRawUnsafe(
+        'UPDATE "EconomyAccount" SET "walletBalance"="walletBalance"+$4, "lifetimeEarned"="lifetimeEarned"+$4, "updatedAt"=CURRENT_TIMESTAMP WHERE "guildId"=$1 AND "nitradoConnId"=$2 AND "userDiscordId"=$3',
+        String(args.guildId), String(args.nitradoConnId), String(args.toUserDiscordId), playerAmount,
+      )
+      : await raw.$executeRawUnsafe(
+        'UPDATE "EconomyAccount" SET "bankBalance"="bankBalance"+$4, "lifetimeEarned"="lifetimeEarned"+$4, "updatedAt"=CURRENT_TIMESTAMP WHERE "guildId"=$1 AND "nitradoConnId"=$2 AND "userDiscordId"=$3',
+        String(args.guildId), String(args.nitradoConnId), String(args.toUserDiscordId), playerAmount,
+      );
+    if (credited !== 1) throw new Error('Spielerkonto konnte nicht gutgeschrieben werden.');
+
+    await raw.$executeRawUnsafe(
+      'INSERT INTO "EconomyVirtualAccountEntry" ("id", "idempotencyKey", "guildId", "nitradoConnId", "virtualAccountId", "delta", "entryType", "sourcePocket", "actorDiscordId", "userDiscordId", "reason", "sourceRef", "createdAt") VALUES ($1,$2,$3,$4,$5,$6,\'MANAGER_PAYOUT\',$7,$8,$9,$10,$11,CURRENT_TIMESTAMP)',
+      randomUUID(), key, String(args.guildId), String(args.nitradoConnId), args.accountId,
+      -args.accountAmount, args.sourcePocket, String(args.actorDiscordId), String(args.toUserDiscordId), reason,
+      `virtual-account:${args.accountId}`,
+    );
+    await writePayoutPlayerLedger(raw, {
+      key,
       guildId: args.guildId,
       connId: args.nitradoConnId,
-      accountId: args.accountId,
       userId: args.toUserDiscordId,
       targetPocket: args.targetPocket,
-      playerAmount: result.playerCredited,
+      playerAmount,
+      reason,
+      actorDiscordId: args.actorDiscordId,
+      accountId: args.accountId,
+      accountName: account.name,
     });
-  }
-  return result;
+    return { booked: true, playerAmount };
+  });
+
+  const [account, finance] = await Promise.all([
+    getVirtualAccountById(args.guildId, args.nitradoConnId, args.accountId),
+    ensureVirtualAccountFinance(args.guildId, args.nitradoConnId, args.accountId),
+  ]);
+  if (!account) throw new Error('Virtuelles Konto konnte nach Auszahlung nicht gelesen werden.');
+  return {
+    booked: result.booked,
+    account,
+    finance,
+    accountDebited: args.accountAmount,
+    playerCredited: result.playerAmount,
+  };
 }
