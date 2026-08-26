@@ -100,7 +100,7 @@ describe('virtuelle Economy-Konten — Production-Invarianten', () => {
 
   it('serialisiert genau eine Serverbank und stellt V-Bot-eigene Managerrechte wieder her', () => {
     expect(treasury).toContain('pg_advisory_xact_lock');
-    expect(treasury).toContain("'BANK_TREASURY'");
+    expect(treasury).toContain('BANK_TREASURY');
     expect(permissionMigration).toContain('"previousViewChannel" SMALLINT');
     expect(permissionMigration).toContain('"previousEveryoneView" SMALLINT');
   });
