@@ -26,11 +26,11 @@ describe('AI provider capability registry', () => {
     expect(taskAffinity('cerebras', 'gpt-oss-120b', 'fast')).toBeGreaterThan(1);
   });
 
-  it('kennt Gemini 3.6 Flash als structured/tool/reasoning/long-context Provider', () => {
-    expect(providerSupportsTask('gemini', 'gemini-3.6-flash', 'structured')).toBe(true);
-    expect(providerSupportsTask('gemini', 'gemini-3.6-flash', 'tool')).toBe(true);
-    expect(providerSupportsTask('gemini', 'gemini-3.6-flash', 'reasoning')).toBe(true);
-    expect(providerSupportsTask('gemini', 'gemini-3.6-flash', 'long_context')).toBe(true);
+  it.each(['gemini-3.7-flash', 'gemini-3.6-flash'])('kennt %s als structured/tool/reasoning/long-context Provider', (model) => {
+    expect(providerSupportsTask('gemini', model, 'structured')).toBe(true);
+    expect(providerSupportsTask('gemini', model, 'tool')).toBe(true);
+    expect(providerSupportsTask('gemini', model, 'reasoning')).toBe(true);
+    expect(providerSupportsTask('gemini', model, 'long_context')).toBe(true);
   });
 
   it('kennt GPT-5.6 Luna gemaess aktuellem Modellvertrag', () => {
