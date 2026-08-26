@@ -41,15 +41,12 @@ describe('Post-deploy runtime hygiene', () => {
 
     expect(modelRegistry).toContain("groq: 'openai/gpt-oss-120b'");
     expect(modelRegistry).toContain("cerebras: 'gpt-oss-120b'");
-    expect(modelRegistry).toContain("gemini: 'gemini-3.6-flash'");
+    expect(modelRegistry).toContain("gemini: 'gemini-3.7-flash'");
     expect(modelRegistry).toContain("openai: 'gpt-5.6-luna'");
     expect(modelRegistry).toContain("'llama-3.3-70b-versatile': AI_MODEL_DEFAULTS.groq");
     expect(modelRegistry).toContain("'gpt-4': AI_MODEL_DEFAULTS.openai");
 
-    // .env.example bleibt fuer Gemini bereits auf dem produktiven GA-Default;
-    // die uebrigen Provider-Defaults werden in einer separaten Setup-/Doku-Etappe
-    // synchronisiert, weil dieses Testfile keine Deployment-Dateien veraendert.
-    expect(env).toContain('GEMINI_MODEL=gemini-3.6-flash');
+    expect(env).toContain('GEMINI_MODEL=gemini-3.7-flash');
     expect(env).not.toContain('GEMINI_MODEL=gemini-2.0-flash');
   });
 
