@@ -57,15 +57,24 @@ describe('DayZ 1.29 complete grounded catalog', () => {
       .toBe('Der Classname ist **`M4A1`**.');
   });
 
-  test('explicit detail questions still return grounded values', () => {
-    const a = answerDayz129CatalogQuestion('Welche Werte hat WoodenPlank?')?.answer ?? '';
-    expect(a).toMatch(/Chernarus/);
-    expect(a).toMatch(/Livonia/);
-    expect(a).toMatch(/Sakhal/);
-    expect(a).toMatch(/crafted=1/);
+  test('explicit technical identifiers still work without spelling out DayZ', () => {
+    const wooden = answerDayz129CatalogQuestion('Welche Werte hat WoodenPlank?')?.answer ?? '';
+    expect(wooden).toMatch(/Chernarus/);
+    expect(wooden).toMatch(/crafted=1/);
+
     const sakhal = answerDayz129CatalogQuestion('Welche Werte hat M4A1 auf Sakhal?')?.answer ?? '';
     expect(sakhal).toMatch(/Sakhal/);
     expect(sakhal).not.toMatch(/Chernarus|Livonia/);
+
+    const event = answerDayz129CatalogQuestion('Event StaticHeliCrash auf Livonia')?.answer ?? '';
+    expect(event).toMatch(/Livonia/);
+  });
+
+  test('ambiguous general words cannot accidentally trigger the DayZ catalog', () => {
+    expect(answerDayz129CatalogQuestion('Apple')).toBeNull();
+    expect(answerDayz129CatalogQuestion('Welche Vitamine hat Apple?')).toBeNull();
+    expect(answerDayz129CatalogQuestion('Erzähl mir etwas über eine Jacke.')).toBeNull();
+    expect(answerDayz129CatalogQuestion('Wie funktioniert ein Zelt beim Camping?')).toBeNull();
   });
 
   test('never presents vanilla catalog values as current live-server values', () => {
@@ -87,10 +96,16 @@ describe('DayZ 1.29 complete grounded catalog', () => {
     expect(a?.answer).toMatch(/erfinde/i);
   });
 
-  test('generic follow-up keeps the resolved subject', () => {
+  test('generic referential follow-up keeps the resolved DayZ subject', () => {
     expect(enrichDayz129FollowUp('welche Werte?', '**DayZ-Classname: `WoodenPlank`**'))
       .toBe('Classname WoodenPlank: welche Werte?');
     expect(enrichDayz129FollowUp('und auf Livonia?', '**DayZ-Event: `StaticHeliCrash`**'))
       .toBe('Event StaticHeliCrash: und auf Livonia?');
+  });
+
+  test('a new general question is never converted into a DayZ follow-up just because the previous answer was DayZ', () => {
+    const question = 'kannst du mir Photosynthese erklären?';
+    expect(enrichDayz129FollowUp(question, '**DayZ-Classname: `WoodenPlank`**')).toBe(question);
+    expect(enrichDayz129FollowUp('Erzähl mir einen Witz.', '**DayZ-Event: `StaticHeliCrash`**')).toBe('Erzähl mir einen Witz.');
   });
 });
