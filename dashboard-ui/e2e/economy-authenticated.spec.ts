@@ -95,18 +95,18 @@ async function stubAuthenticatedEconomy(page: Page, opts: { purchaseError?: bool
       return;
     }
     if (path === `/api/v2/guilds/${GUILD_ID}/economy/black-market/vendors`) {
-      await json(route, { vendors: [{ id: 'vendor-1', name: 'Nachtmarkt', balance: '9000', status: 'ACTIVE', createdAt: '2026-08-18T12:00:00.000Z' }] });
+      await json(route, { vendors: [{ id: 'vendor-1', name: 'Nachtmarkt', balance: '9000', pendingLiability: '5000', withdrawableBalance: '4000', status: 'ACTIVE', createdAt: '2026-08-18T12:00:00.000Z' }] });
       return;
     }
     if (path === `/api/v2/guilds/${GUILD_ID}/economy/black-market/listings`) {
-      await json(route, { listings: [{ id: 'listing-1', vendorAccountId: 'vendor-1', sku: 'M4-KIT', name: 'M4 Kit', description: 'Testangebot', price: '2500', stock: 5, maxPerPurchase: 2, active: true, archivedAt: null, createdAt: '2026-08-18T12:30:00.000Z' }] });
+      await json(route, { listings: [{ id: 'listing-1', vendorAccountId: 'vendor-1', sku: 'M4-KIT', name: 'M4 Kit', description: 'Testangebot', price: '2500', stock: 5, maxPerPurchase: 2, active: true, archivedAt: null, createdAt: '2026-08-18T12:30:00.000Z', deliveryItems: [{ className: 'M4A1', quantity: 1 }, { className: 'Mag_STANAG_60Rnd', quantity: 2 }] }] });
       return;
     }
     if (path === `/api/v2/guilds/${GUILD_ID}/economy/black-market/purchases`) {
       if (opts.purchaseError) {
         await json(route, { error: 'Guild-Scope fehlt nach Auth-Middleware.' }, 500);
       } else {
-        await json(route, { purchases: [{ id: 'purchase-1', listingId: 'listing-1', vendorAccountId: 'vendor-1', userDiscordId: OTHER_USER, sourcePocket: 'WALLET', quantity: 2, unitPrice: '2500', amount: '5000', createdAt: '2026-08-19T06:20:00.000Z' }] });
+        await json(route, { purchases: [{ id: 'purchase-1', listingId: 'listing-1', vendorAccountId: 'vendor-1', userDiscordId: OTHER_USER, sourcePocket: 'WALLET', quantity: 2, unitPrice: '2500', amount: '5000', createdAt: '2026-08-19T06:20:00.000Z', fulfillmentStatus: 'PENDING', deliveryItems: [{ className: 'M4A1', quantity: 2 }], fulfilledAt: null, fulfillmentNote: null, refundedAt: null, refundReason: null }] });
       }
       return;
     }
@@ -134,7 +134,7 @@ async function stubAuthenticatedEconomy(page: Page, opts: { purchaseError?: bool
 }
 
 test.describe('Economy authenticated E2E', () => {
-  test('rendert Kernzustand + Kaufhistorie und sendet kanonische Mutationen', async ({ page }) => {
+  test('rendert Kernzustand + Bestellhistorie und sendet kanonische Mutationen', async ({ page }) => {
     const writes = await stubAuthenticatedEconomy(page);
     await page.setViewportSize({ width: 1280, height: 900 });
     await page.goto(`/servers/${GUILD_ID}/server/${SLOT}?tab=economy`);
@@ -143,9 +143,11 @@ test.describe('Economy authenticated E2E', () => {
     await expect(page.getByText(/12\.500/)).toBeVisible();
     await expect(page.getByText('Economy-Konfiguration')).toBeVisible();
     await expect(page.getByText('Schwarzmarkt')).toBeVisible();
-    await expect(page.getByText('Letzte Kaeufe')).toBeVisible();
+    await expect(page.getByText('Bestellungen & Auslieferung')).toBeVisible();
     await expect(page.getByText(`User ${OTHER_USER}`)).toBeVisible();
     await expect(page.getByText(/2× · 5\.000/)).toBeVisible();
+    await expect(page.getByText('OFFEN')).toBeVisible();
+    await expect(page.getByText(/M4A1 × 2/)).toBeVisible();
 
     const currencyInput = page.getByText('Waehrungsname').locator('..').locator('input');
     await currencyInput.fill('Chaoten-Dollar');
