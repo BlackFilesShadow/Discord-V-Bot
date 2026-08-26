@@ -257,9 +257,17 @@ export async function systemUserToVirtualAccount<TPreflight, TMutation>(args: Sy
   });
 }
 
-/** Atomare Systemkonto -> User-Buchung mit fachlicher Begleitmutation. */
-export async function systemVirtualAccountToUser<TMutation>(args: SystemVirtualToUserArgs, hooks: {
-  mutate: (ctx: SystemTransferContext<undefined>) => Promise<TMutation>;
+/**
+ * Atomare Systemkonto -> User-Buchung mit fachlicher Begleitmutation.
+ * `beforeLock` laeuft vor dem Systemkonto-Lock und erlaubt dem Fachmodul eine
+ * kanonische Lock-Reihenfolge (z.B. Listing -> Bestellung -> Vendor).
+ * `beforeDebit` laeuft nach dem Systemkonto-Lock und eignet sich fuer
+ * Saldo-/Reserve-Invarianten, die unter demselben Lock geprueft werden muessen.
+ */
+export async function systemVirtualAccountToUser<TPreflight = undefined, TMutation = void>(args: SystemVirtualToUserArgs, hooks: {
+  beforeLock?: (raw: VirtualAccountRawDb) => Promise<TPreflight>;
+  beforeDebit?: (ctx: SystemTransferContext<TPreflight>) => Promise<void>;
+  mutate: (ctx: SystemTransferContext<TPreflight>) => Promise<TMutation>;
 }): Promise<{ booked: boolean; account: VirtualAccountRow; mutation?: TMutation }> {
   if (args.amount <= 0n) throw new Error('Betrag muss > 0 sein.');
   const pocket = args.targetPocket ?? 'WALLET';
@@ -280,7 +288,14 @@ export async function systemVirtualAccountToUser<TMutation>(args: SystemVirtualT
       return { booked: false, account: toVirtualAccount(account) };
     }
 
+    const preflight = hooks.beforeLock
+      ? await hooks.beforeLock(raw)
+      : undefined as TPreflight;
     const account = await findLockedAccount(raw, args);
+    if (hooks.beforeDebit) {
+      await hooks.beforeDebit({ raw, preflight, account: toVirtualAccount(account) });
+    }
+
     const claimed = await raw.$executeRawUnsafe(
       'INSERT INTO "EconomyVirtualAccountEntry" ("id", "idempotencyKey", "guildId", "nitradoConnId", "virtualAccountId", "delta", "entryType", "sourcePocket", "actorDiscordId", "userDiscordId", "reason", "sourceRef", "createdAt") VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,CURRENT_TIMESTAMP) ON CONFLICT ("idempotencyKey") DO NOTHING',
       randomUUID(), key, expected.guildId, expected.nitradoConnId, expected.virtualAccountId, expected.delta,
@@ -314,7 +329,7 @@ export async function systemVirtualAccountToUser<TMutation>(args: SystemVirtualT
       actorDiscordId: args.actorDiscordId, sourceRef: expected.sourceRef,
     });
 
-    const mutation = await hooks.mutate({ raw, preflight: undefined, account: toVirtualAccount(debitRows[0]) });
+    const mutation = await hooks.mutate({ raw, preflight, account: toVirtualAccount(debitRows[0]) });
     return { booked: true, account: toVirtualAccount(debitRows[0]), mutation };
   });
 }
