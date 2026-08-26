@@ -237,6 +237,14 @@ export function answer(question: string): DayzCatalogAnswer | null {
   if (explicit) {
     const unique = uniqueCaseInsensitiveMention(question);
     if (unique) return exactAnswer(unique);
+
+    // Ein expliziter Classname-Wunsch muss vor allgemeiner Datei-Hilfe gewinnen.
+    // Dadurch wird z. B. "wie heißt die Tundra in der types.xml?" als
+    // Winchester70 aufgeloest, statt nur types.xml zu erklaeren. V3 arbeitet
+    // dabei auf dem vollstaendigen eingebetteten 1.29-Types-Index und bleibt bei
+    // unklaren/fehlenden Treffern fail-closed.
+    const resolved = v3.answer(question);
+    if (resolved) return resolved;
   }
 
   const ceExplanation = directCentralEconomyExplanation(question);
