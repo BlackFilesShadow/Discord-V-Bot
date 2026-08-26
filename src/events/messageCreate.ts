@@ -5,6 +5,11 @@ import prisma from '../database/prisma';
 import { detectSpam } from '../utils/rateLimiter';
 import { answerQuestion } from '../modules/ai/aiHandler';
 import { enrichDayz129FollowUp } from '../modules/ai/dayz129Catalog';
+import {
+  isDayzConversationDomain,
+  isMemoryTurnCompatible,
+  mayUseExternalConversationContext,
+} from '../modules/ai/conversationIntent';
 import { buildServerUserContext } from '../modules/ai/contextBuilder';
 import { trackMemberActivity } from '../modules/ai/memberAwareness';
 import { hasOpenLeaveCleanupRequest } from '../modules/moderation/leaveCleanupGuard';
@@ -309,13 +314,10 @@ const messageCreateEvent: BotEvent = {
     try {
       const botId = msg.client.user?.id;
       const isMentioned = botId ? msg.mentions.users.has(botId) : false;
-      const isReplyToBot =
-        msg.reference?.messageId
-          ? await msg.channel.messages
-              .fetch(msg.reference.messageId)
-              .then(m => m.author.id === botId)
-              .catch(() => false)
-          : false;
+      const referencedBotMessage = msg.reference?.messageId
+        ? await msg.channel.messages.fetch(msg.reference.messageId).catch(() => null)
+        : null;
+      const isReplyToBot = referencedBotMessage?.author.id === botId;
 
       // ===== OWNER-DEFINIERTE TRIGGER (max 10/Guild) =====
       if (msg.guildId) {
@@ -417,61 +419,63 @@ const messageCreateEvent: BotEvent = {
 
           let aiQuestion = question;
 
-          // Letzte ~15 Nachrichten als Konversations-Kontext (inkl. Bot-Antworten,
-          // damit der Bot weiss, was er selbst eben gesagt hat und Pronomen wie
-          // "er", "sie", "das" auf vorherige Nachrichten beziehen kann).
-          let context: string | undefined;
-          try {
-            const recent = await msg.channel.messages.fetch({ limit: 15, before: msg.id });
-            const me = msg.client.user?.id;
-            if (me) {
-              const recentBotMessages = Array.from(recent.values())
-                .filter(m => m.author.id === me && (m.content?.trim()?.length ?? 0) > 0);
-              for (const previousBot of recentBotMessages) {
-                const enriched = enrichDayz129FollowUp(question, previousBot.content);
-                if (enriched !== question) {
-                  aiQuestion = enriched;
-                  break;
-                }
-              }
-              if (aiQuestion !== question) logger.info(`[DayZ-Grounding] Folgefrage kontextualisiert: ${aiQuestion.slice(0, 120)}`);
+          // Eine implizite DayZ-Folgefrage darf NUR aus der Nachricht entstehen,
+          // auf die der Nutzer direkt antwortet. Frueher wurden bis zu 15 alte
+          // Bot-Antworten durchsucht; dadurch konnte eine alte DayZ-Antwort eine
+          // spaetere allgemeine Frage in die falsche Domain ziehen.
+          if (isReplyToBot
+            && referencedBotMessage?.content?.trim()
+            && isDayzConversationDomain(referencedBotMessage.content)) {
+            const enriched = enrichDayz129FollowUp(question, referencedBotMessage.content);
+            if (enriched !== question) {
+              aiQuestion = enriched;
+              logger.info(`[DayZ-Grounding] direkte Folgefrage kontextualisiert: ${aiQuestion.slice(0, 120)}`);
             }
-            const ctxLines = Array.from(recent.values())
-              .reverse()
-              .filter(m => {
-                const txt = m.content?.trim() || '';
-                return txt.length > 0;
-              })
-              .slice(-12)
-              .map(m => {
-                const isBot = m.author.id === me;
-                const speaker = isBot ? 'V-Bot (du selbst)' : m.author.username;
-                let txt = m.content;
-                for (const [, user] of m.mentions.users) {
-                  txt = txt.replace(new RegExp(`<@!?${user.id}>`, 'g'), `@${user.username}`);
-                }
-                return `${speaker}: ${txt.slice(0, 400)}`;
-              });
-            if (ctxLines.length > 0) {
-              context = [
-                'Hier ist der bisherige Verlauf des Gespraechs in diesem Channel (chronologisch, aelteste zuerst).',
-                'Nutze ihn, um Pronomen (er, sie, es, das, ihn, ihm) und Bezuege ("der oben genannte", "wie eben gesagt") aufzuloesen.',
-                'Achte besonders auf deine eigenen vorherigen Antworten ("V-Bot (du selbst)") - du musst konsistent bleiben.',
-                '',
-                ctxLines.join('\n'),
-                '',
-                `Aktueller Sprecher der naechsten Frage: ${msg.author.username}`,
-              ].join('\n');
-            }
-          } catch { /* Kontext ist optional */ }
+          }
 
-          const serverUserCtx = await buildServerUserContext({
-            guild: msg.guild,
-            channel: msg.channel as any,
-            member: msg.member ?? undefined,
-            user: msg.author,
-            question: aiQuestion,
-          });
+          let context: string | undefined;
+          if (mayUseExternalConversationContext(aiQuestion)) {
+            try {
+              const recent = await msg.channel.messages.fetch({ limit: 15, before: msg.id });
+              const me = msg.client.user?.id;
+              const ctxLines = Array.from(recent.values())
+                .reverse()
+                .filter(m => {
+                  const txt = m.content?.trim() || '';
+                  return txt.length > 0 && isMemoryTurnCompatible(aiQuestion, txt);
+                })
+                .slice(-12)
+                .map(m => {
+                  const isBot = m.author.id === me;
+                  const speaker = isBot ? 'V-Bot (du selbst)' : m.author.username;
+                  let txt = m.content;
+                  for (const [, user] of m.mentions.users) {
+                    txt = txt.replace(new RegExp(`<@!?${user.id}>`, 'g'), `@${user.username}`);
+                  }
+                  return `${speaker}: ${txt.slice(0, 400)}`;
+                });
+              if (ctxLines.length > 0) {
+                context = [
+                  'Hier ist ausschliesslich domain-kompatibler Verlauf dieses Channels (chronologisch, aelteste zuerst).',
+                  'Nutze ihn nur fuer Bezuege der aktuellen Domain. Vermische keine anderen Themenbereiche.',
+                  '',
+                  ctxLines.join('\n'),
+                  '',
+                  `Aktueller Sprecher der naechsten Frage: ${msg.author.username}`,
+                ].join('\n');
+              }
+            } catch { /* Kontext ist optional */ }
+          }
+
+          const serverUserCtx = mayUseExternalConversationContext(aiQuestion)
+            ? await buildServerUserContext({
+                guild: msg.guild,
+                channel: msg.channel as any,
+                member: msg.member ?? undefined,
+                user: msg.author,
+                question: aiQuestion,
+              })
+            : null;
           const mergedContext = [serverUserCtx, context].filter(Boolean).join('\n\n') || undefined;
 
           const r = await answerQuestion(aiQuestion, {
