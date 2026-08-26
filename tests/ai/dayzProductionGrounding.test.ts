@@ -4,7 +4,7 @@ import { answerDayz129CatalogQuestion, getDayz129CatalogStats } from '../../src/
 describe('DayZ production grounding', () => {
   it('keeps the complete embedded types.xml union available', () => {
     const stats = getDayz129CatalogStats();
-    expect(stats.totalTypeNames).toBeGreaterThanOrEqual(1974);
+    expect(stats.types).toBeGreaterThanOrEqual(1974);
   });
 
   it.each([
