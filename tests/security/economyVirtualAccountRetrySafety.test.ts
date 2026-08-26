@@ -62,9 +62,13 @@ describe('virtuelle Konten — Retry- und Replay-Sicherheit', () => {
     expect(safety).toContain('anderen Auszahlungsziel, Ziel-Pocket oder Spielerbetrag');
   });
 
-  it('priorisiert eine stabile Dashboard-Operation-ID und validiert deren Format vor dem Money-Service', () => {
-    expect(safetyRoute).toContain("const value = typeof body.operationId === 'string' ? body.operationId.trim() : '';");
+  it('fordert fuer Dashboard-Payouts eine stabile Operation-ID oder den zentralen Idempotency-Header', () => {
+    expect(safetyRoute).toContain("const bodyValue = typeof body.operationId === 'string' ? body.operationId.trim() : '';");
+    expect(safetyRoute).toContain("const headerKey = typeof headerValue === 'string' ? headerValue.trim() : '';");
+    expect(safetyRoute).toContain("if (!key) throw new Error('operationId oder X-Idempotency-Key ist fuer Geldbuchungen erforderlich.')");
     expect(safetyRoute).toContain("if (!/^[A-Za-z0-9._:-]{1,80}$/.test(key))");
+    expect(safetyRoute).toContain("idempotencyKey: operationId(body, req.header('x-idempotency-key'))");
+    expect(safetyRoute).not.toContain('Date.now()');
     expect(safetyRoute).toContain('safePayoutVirtualAccountToUser({');
   });
 
