@@ -22,9 +22,14 @@ const data = new SlashCommandBuilder()
     ))))
   .addSubcommand(sc => addSlot(sc.setName('orders').setDescription('Zeigt deine letzten Schwarzmarkt-Bestellungen und Lieferstatus.')));
 
-function bundleText(items: Array<{ className: string; quantity: number }>): string {
+function bounded(text: string, max: number): string {
+  if (text.length <= max) return text;
+  return `${text.slice(0, Math.max(0, max - 16))}\n… gekürzt`;
+}
+
+function bundleText(items: Array<{ className: string; quantity: number }>, max = 1200): string {
   if (items.length === 0) return '⚠️ Liefer-Bundle noch nicht konfiguriert';
-  return items.map(item => `\`${item.className}\` × ${item.quantity}`).join(', ');
+  return bounded(items.map(item => `\`${item.className}\` × ${item.quantity}`).join(', '), max);
 }
 
 function statusLabel(status: string): string {
@@ -48,12 +53,12 @@ export const blackMarketCommand: Command = {
       const description = visible.length
         ? visible.map(row => [
           `**${row.name}** — ${row.price.toLocaleString('de-DE')} ${cfg.emoji} — Bestand: ${row.stock}`,
-          bundleText(row.deliveryItems),
+          bundleText(row.deliveryItems, 700),
           `\`${row.id}\` (${row.sku})`,
         ].join('\n')).join('\n\n')
         : 'Aktuell sind keine Angebote verfuegbar.';
       await interaction.reply({
-        embeds: [new EmbedBuilder().setColor(0x2F3136).setTitle('🕶️ Schwarzmarkt').setDescription(description.slice(0, 4000))],
+        embeds: [new EmbedBuilder().setColor(0x2F3136).setTitle('🕶️ Schwarzmarkt').setDescription(bounded(description, 4000))],
         flags: MessageFlags.Ephemeral,
         allowedMentions: { parse: [] },
       });
@@ -66,13 +71,13 @@ export const blackMarketCommand: Command = {
         ? purchases.map(row => [
           `**${statusLabel(row.fulfillmentStatus)} · ${row.quantity}× · ${row.amount.toLocaleString('de-DE')} ${cfg.emoji}**`,
           `Bestellung: \`${row.id}\``,
-          `Lieferung: ${bundleText(row.deliveryItems)}`,
-          row.refundReason ? `Refund-Grund: ${row.refundReason}` : null,
-          row.fulfillmentNote ? `Liefernotiz: ${row.fulfillmentNote}` : null,
+          `Lieferung: ${bundleText(row.deliveryItems, 500)}`,
+          row.refundReason ? `Refund-Grund: ${bounded(row.refundReason, 300)}` : null,
+          row.fulfillmentNote ? `Liefernotiz: ${bounded(row.fulfillmentNote, 300)}` : null,
         ].filter(Boolean).join('\n')).join('\n\n')
         : 'Du hast auf diesem Gameserver noch keine Schwarzmarkt-Bestellungen.';
       await interaction.reply({
-        embeds: [new EmbedBuilder().setColor(0x3498DB).setTitle('📦 Deine Schwarzmarkt-Bestellungen').setDescription(description.slice(0, 4000))],
+        embeds: [new EmbedBuilder().setColor(0x3498DB).setTitle('📦 Deine Schwarzmarkt-Bestellungen').setDescription(bounded(description, 4000))],
         flags: MessageFlags.Ephemeral,
         allowedMentions: { parse: [] },
       });
@@ -90,16 +95,17 @@ export const blackMarketCommand: Command = {
         sourcePocket,
         idempotencyKey: `discord-slash:${interaction.id}`,
       });
-      const delivery = bundleText(result.purchase.deliveryItems);
+      const delivery = bundleText(result.purchase.deliveryItems, 900);
+      const content = result.booked
+        ? `✅ ${result.purchase.quantity}× **${result.listing.name}** gekauft für **${result.purchase.amount.toLocaleString('de-DE')} ${cfg.emoji}** aus ${sourcePocket === 'BANK' ? 'der Bank' : 'dem Wallet'}.\n📦 Bestellung: \`${result.purchase.id}\` · Status: **Offen**\n${delivery}\nDas Server-Team markiert die Bestellung nach der manuellen DayZ-Ausgabe als geliefert.`
+        : `✅ Dieser Kauf war bereits verarbeitet: ${result.purchase.quantity}× **${result.listing.name}** · Bestellung \`${result.purchase.id}\` · ${statusLabel(result.purchase.fulfillmentStatus)}.`;
       await interaction.reply({
-        content: result.booked
-          ? `✅ ${result.purchase.quantity}× **${result.listing.name}** gekauft für **${result.purchase.amount.toLocaleString('de-DE')} ${cfg.emoji}** aus ${sourcePocket === 'BANK' ? 'der Bank' : 'dem Wallet'}.\n📦 Bestellung: \`${result.purchase.id}\` · Status: **Offen**\n${delivery}\nDas Server-Team markiert die Bestellung nach der manuellen DayZ-Ausgabe als geliefert.`
-          : `✅ Dieser Kauf war bereits verarbeitet: ${result.purchase.quantity}× **${result.listing.name}** · Bestellung \`${result.purchase.id}\` · ${statusLabel(result.purchase.fulfillmentStatus)}.`,
+        content: bounded(content, 1900),
         flags: MessageFlags.Ephemeral,
         allowedMentions: { parse: [] },
       });
     } catch (error) {
-      await interaction.reply({ content: `❌ ${(error as Error).message}`, flags: MessageFlags.Ephemeral, allowedMentions: { parse: [] } });
+      await interaction.reply({ content: bounded(`❌ ${(error as Error).message}`, 1900), flags: MessageFlags.Ephemeral, allowedMentions: { parse: [] } });
     }
   }),
 };
