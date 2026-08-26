@@ -28,7 +28,8 @@ describe('Economy system-account manipulation boundary', () => {
     const payBlock = command.slice(command.indexOf("if (sub === 'pay')"));
     expect(payBlock).toContain("if (account.kind !== 'CUSTOM')");
     expect(payBlock).toContain('Systemkonto geschützt');
-    expect(payBlock.indexOf("account.kind !== 'CUSTOM'")).toBeLessThan(payBlock.indexOf('transferUserToVirtualAccount'));
+    expect(payBlock).toContain('safeDepositUserIntoVirtualAccount');
+    expect(payBlock.indexOf("account.kind !== 'CUSTOM'")).toBeLessThan(payBlock.indexOf('safeDepositUserIntoVirtualAccount'));
   });
 
   test('system money paths remain kind-pinned under the same transaction and locked account', () => {

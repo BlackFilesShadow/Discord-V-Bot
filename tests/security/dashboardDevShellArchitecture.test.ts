@@ -10,8 +10,9 @@ const devSessionSource = read('dashboard-ui/src/lib/devSession.tsx');
 const pinnedSource = read('dashboard-ui/src/components/dev/PinnedToolsRow.tsx');
 
 describe('Dashboard-2A DEV shell architecture', () => {
-  test('DEV password affordance requires role and server-confirmed GlobalDeveloperIdentity', () => {
-    expect(devPanelSource).toContain("if (!user || user.role !== 'DEVELOPER') return null;");
+  test('DEV password affordance trusts authenticated user plus server-confirmed GlobalDeveloperIdentity', () => {
+    expect(devPanelSource).toContain('if (!user) return null;');
+    expect(devPanelSource).not.toContain("user.role !== 'DEVELOPER'");
     expect(devPanelSource).toContain('const { active, eligible, loading, login, logout, expiresAt } = useDevSession();');
     expect(devPanelSource).toContain('if (!eligible) return null;');
   });
@@ -26,6 +27,7 @@ describe('Dashboard-2A DEV shell architecture', () => {
     expect(eligibleGate).toBeGreaterThan(loadingGate);
     expect(activeGate).toBeGreaterThan(eligibleGate);
     expect(outlet).toBeGreaterThan(activeGate);
+    expect(devPageSource).not.toContain("user.role !== 'DEVELOPER'");
   });
 
   test('privileged client state starts fail-closed and every failed refresh clears it', () => {

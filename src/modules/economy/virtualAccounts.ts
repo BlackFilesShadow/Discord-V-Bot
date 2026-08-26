@@ -325,9 +325,21 @@ export async function archiveVirtualAccount(args: {
     const current = await findVirtualAccountById(raw, args.guildId, args.nitradoConnId, args.accountId, true);
     if (!current) throw new Error('Virtuelles Konto nicht gefunden.');
     if (current.status === 'ARCHIVED') return toVirtualAccount(current);
-    if (current.balance !== 0n) throw new Error('Konto besitzt noch Guthaben und kann nicht archiviert werden. Zuerst vollstaendig auszahlen/refunden.');
+
+    const financeRows = await raw.$queryRawUnsafe<Array<{ bankBalance: bigint }>>(
+      'SELECT "bankBalance" FROM "EconomyVirtualAccountFinance" WHERE "accountId"=$1 AND "guildId"=$2 AND "nitradoConnId"=$3 LIMIT 1 FOR UPDATE',
+      args.accountId,
+      String(args.guildId),
+      String(args.nitradoConnId),
+    );
+    const finance = financeRows[0];
+    if (!finance) throw new Error('Konto-Finanzprofil fehlt; Archivierung wird sicherheitshalber abgebrochen.');
+    if (current.balance !== 0n || finance.bankBalance !== 0n) {
+      throw new Error('Konto besitzt noch Guthaben und kann nicht archiviert werden. Wallet und Bank muessen 0 sein.');
+    }
+
     const rows = await raw.$queryRawUnsafe<DbVirtualAccountRow[]>(
-      'UPDATE "EconomyVirtualAccount" SET "status"=\'ARCHIVED\'::"EconomyVirtualAccountStatus", "archivedAt"=CURRENT_TIMESTAMP, "archivedByDiscordId"=$4, "updatedAt"=CURRENT_TIMESTAMP WHERE "id"=$1 AND "guildId"=$2 AND "nitradoConnId"=$3 RETURNING "id", "guildId", "nitradoConnId", "kind"::text AS kind, "name", "nameKey", "balance", "status"::text AS status, "acceptUserTransfers", "expiresAt", "archivedAt", "archivedByDiscordId", "createdByDiscordId", "createdAt", "updatedAt"',
+      'UPDATE "EconomyVirtualAccount" SET "status"=\'ARCHIVED\'::"EconomyVirtualAccountStatus", "archivedAt"=CURRENT_TIMESTAMP, "archivedByDiscordId"=$4, "updatedAt"=CURRENT_TIMESTAMP WHERE "id"=$1 AND "guildId"=$2 AND "nitradoConnId"=$3 AND "status"<>\'ARCHIVED\'::"EconomyVirtualAccountStatus" AND "balance"=0 RETURNING "id", "guildId", "nitradoConnId", "kind"::text AS kind, "name", "nameKey", "balance", "status"::text AS status, "acceptUserTransfers", "expiresAt", "archivedAt", "archivedByDiscordId", "createdByDiscordId", "createdAt", "updatedAt"',
       args.accountId, String(args.guildId), String(args.nitradoConnId), String(args.actorDiscordId),
     );
     if (!rows[0]) throw new Error('Virtuelles Konto konnte nicht archiviert werden.');

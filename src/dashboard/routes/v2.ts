@@ -30,6 +30,8 @@ import { permissionsRouter } from './v2/permissions';
 import { nitradoRouter } from './v2/nitrado';
 import { admSourceRouter } from './v2/admSource';
 import { economyRouter } from './v2/economy';
+import { economyVirtualAccountTreasurySafetyRouter } from './v2/economyVirtualAccountTreasurySafety';
+import { economyVirtualAccountControlRouter } from './v2/economyVirtualAccountControl';
 import { economyVirtualAccountsRouter } from './v2/economyVirtualAccounts';
 import { economyLotteryRouter } from './v2/economyLottery';
 import { economyBlackMarketRouter } from './v2/economyBlackMarket';
@@ -95,7 +97,16 @@ v2Router.use('/guilds/:guildId/factions', requireFactionsDashboardAccess, factio
 v2Router.use('/guilds/:guildId/factions', factionApiErrorBoundary);
 
 v2Router.use('/guilds/:guildId/economy-scope', economyScopeRouter);
-v2Router.use('/guilds/:guildId/economy/virtual-accounts', requireEconomyDashboardAccess, requireSafeDashboardEconomyScope, economyVirtualAccountsRouter);
+// Safety-Layer zuerst: die transaktional serialisierte Serverbank muss den
+// gleichnamigen Kompatibilitaetspfad des allgemeinen Control-Routers abfangen.
+v2Router.use(
+  '/guilds/:guildId/economy/virtual-accounts',
+  requireEconomyDashboardAccess,
+  requireSafeDashboardEconomyScope,
+  economyVirtualAccountTreasurySafetyRouter,
+  economyVirtualAccountControlRouter,
+  economyVirtualAccountsRouter,
+);
 v2Router.use('/guilds/:guildId/economy/lottery', requireEconomyDashboardAccess, requireSafeDashboardEconomyScope, economyLotteryRouter);
 v2Router.use('/guilds/:guildId/economy/black-market', requireEconomyDashboardAccess, requireSafeDashboardEconomyScope, economyBlackMarketRouter);
 v2Router.use('/guilds/:guildId/economy', requireEconomyDashboardAccess, requireSafeDashboardEconomyScope, economyRouter);
@@ -118,7 +129,11 @@ v2Router.use('/dev/logs', requireGlobalDeveloperIdentity);
 // Aktionen (insb. Force-Revoke) verlangen zusaetzlich denselben kryptografisch
 // verifizierten Step-Up wie andere sensible DEV-Mutationen.
 v2Router.use('/dev/sessions', requireGlobalDeveloperIdentity, requireDev, requireVerifiedDevMutationStepUp);
-v2Router.use('/dev', devRouter);
+// Auch Login/Status und die historischen DEV-Endpunkte muessen durch dieselbe
+// kanonische BOT_OWNER_ID laufen. Der Gate normalisiert den authentifizierten
+// Owner-Request fuer nachgelagerte rollenbasierte Legacy-Checks, ohne die DB-
+// Rolle zu mutieren.
+v2Router.use('/dev', requireGlobalDeveloperIdentity, devRouter);
 
 v2Router.use('/dev/uploads', requireGlobalDeveloperIdentity, devUploadsRouter);
 v2Router.use('/dev/analytics', requireGlobalDeveloperIdentity, devAnalyticsRouter);

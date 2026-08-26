@@ -55,10 +55,10 @@ beforeEach(() => {
 });
 
 describe('Phase 10 — GlobalDeveloperIdentity', () => {
-  it('akzeptiert nur exakte Owner-ID plus bereits vorhandene DEVELOPER-Rolle', () => {
+  it('bindet globale DEV-Berechtigung ausschliesslich an die kanonische Owner-ID', () => {
     expect(isGlobalDeveloperEligible(OWNER_ID, 'DEVELOPER', OWNER_ID)).toBe(true);
+    expect(isGlobalDeveloperEligible(OWNER_ID, 'USER', OWNER_ID)).toBe(true);
     expect(isGlobalDeveloperEligible('999999999999999999', 'DEVELOPER', OWNER_ID)).toBe(false);
-    expect(isGlobalDeveloperEligible(OWNER_ID, 'USER', OWNER_ID)).toBe(false);
     expect(isGlobalDeveloperEligible(OWNER_ID, 'DEVELOPER', '')).toBe(false);
   });
 
@@ -88,18 +88,18 @@ describe('Phase 10 — GlobalDeveloperIdentity', () => {
     expect(devSessionUpdateMany).toHaveBeenCalledTimes(1);
   });
 
-  it('macht einen Rollenentzug aus der DB sofort wirksam', async () => {
+  it('haelt den kanonischen Owner bei DB-Rollen-Drift erreichbar und normalisiert nur den Request-Snapshot', async () => {
     userFindUnique.mockResolvedValue({ role: 'USER' });
-    const { req, session } = makeRequest(OWNER_ID, 'DEVELOPER');
+    const { req, session } = makeRequest(OWNER_ID, 'USER');
     const { res, status } = makeResponse();
     const next = jest.fn() as NextFunction;
 
     await requireGlobalDeveloperIdentity(req, res, next);
 
-    expect(next).not.toHaveBeenCalled();
-    expect(status).toHaveBeenCalledWith(403);
-    expect((req as unknown as { auth: { role: string } }).auth.role).toBe('USER');
-    expect(session.role).toBe('USER');
-    expect(devSessionUpdateMany).toHaveBeenCalledTimes(1);
+    expect(next).toHaveBeenCalledTimes(1);
+    expect(status).not.toHaveBeenCalled();
+    expect((req as unknown as { auth: { role: string } }).auth.role).toBe('DEVELOPER');
+    expect(session.role).toBe('DEVELOPER');
+    expect(devSessionUpdateMany).not.toHaveBeenCalled();
   });
 });

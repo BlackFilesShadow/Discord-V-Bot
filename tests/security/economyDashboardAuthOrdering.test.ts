@@ -166,10 +166,11 @@ describe('Economy dashboard auth -> gameserver scope ordering', () => {
 
   it('montiert Economy und Casino immer mit Domain-Auth vor dem Gameserver-Scope-Guard', () => {
     const source = fs.readFileSync(path.join(__dirname, '..', '..', 'src', 'dashboard', 'routes', 'v2.ts'), 'utf8');
-    expect(source).toContain("'/guilds/:guildId/economy/virtual-accounts', requireEconomyDashboardAccess, requireSafeDashboardEconomyScope");
-    expect(source).toContain("'/guilds/:guildId/economy/lottery', requireEconomyDashboardAccess, requireSafeDashboardEconomyScope");
-    expect(source).toContain("'/guilds/:guildId/economy/black-market', requireEconomyDashboardAccess, requireSafeDashboardEconomyScope");
-    expect(source).toContain("'/guilds/:guildId/economy', requireEconomyDashboardAccess, requireSafeDashboardEconomyScope");
-    expect(source).toContain("'/guilds/:guildId/casino', requireCasinoDashboardAccess, requireSafeDashboardEconomyScope");
+    const compact = source.replace(/\s+/g, ' ');
+    expect(compact).toContain("'/guilds/:guildId/economy/virtual-accounts', requireEconomyDashboardAccess, requireSafeDashboardEconomyScope");
+    expect(compact).toContain("'/guilds/:guildId/economy/lottery', requireEconomyDashboardAccess, requireSafeDashboardEconomyScope");
+    expect(compact).toContain("'/guilds/:guildId/economy/black-market', requireEconomyDashboardAccess, requireSafeDashboardEconomyScope");
+    expect(compact).toContain("'/guilds/:guildId/economy', requireEconomyDashboardAccess, requireSafeDashboardEconomyScope");
+    expect(compact).toContain("'/guilds/:guildId/casino', requireCasinoDashboardAccess, requireSafeDashboardEconomyScope");
   });
 });

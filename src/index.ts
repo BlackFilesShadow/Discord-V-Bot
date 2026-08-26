@@ -7,7 +7,7 @@ import prisma from './database/prisma';
 import fs from 'fs';
 
 import readyEvent, { stopReadyRuntime } from './events/ready';
-import interactionCreateEvent from './events/interactionCreate';
+import interactionCreateEvent from './events/interactionCreateComposite';
 import guildMemberAddEvent from './events/guildMemberAdd';
 import guildMemberRemoveEvent from './events/guildMemberRemove';
 import guildMemberUpdateEvent from './events/guildMemberUpdate';

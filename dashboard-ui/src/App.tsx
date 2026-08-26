@@ -3,6 +3,8 @@ import { Routes, Route, Navigate } from 'react-router-dom';
 import { useAuth } from './lib/auth';
 import Login from './pages/Login';
 import Servers from './pages/Servers';
+import Privacy from './pages/legal/Privacy';
+import Terms from './pages/legal/Terms';
 import { DEV_TOOL_SLUGS } from './lib/devToolSlugs';
 import { Toaster } from './components/ui/Toast';
 
@@ -83,6 +85,8 @@ export default function App() {
     <Toaster>
       <Routes>
         <Route path="/login" element={<Login />} />
+        <Route path="/legal/privacy" element={<Privacy />} />
+        <Route path="/legal/terms" element={<Terms />} />
         <Route path="/servers" element={<Protected><Servers /></Protected>} />
         <Route path="/servers/:guildId" element={<Protected><Server /></Protected>} />
         <Route path="/servers/:guildId/server/:slot" element={<Protected><ServerSlot /></Protected>} />

@@ -94,6 +94,27 @@ export async function getVirtualAccountMetadataMap(
   return new Map(rows.map(row => [row.accountId, toMetadata(row)]));
 }
 
+/** Additive metadata upsert used by CUSTOM and system accounts alike. */
+export async function upsertVirtualAccountMetadata(args: {
+  guildId: GuildId;
+  nitradoConnId: NitradoConnId;
+  accountId: string;
+  description?: unknown;
+  channelId?: unknown;
+}): Promise<VirtualAccountMetadata> {
+  await assertEconomyScopeReady(args.guildId, args.nitradoConnId);
+  const account = await getVirtualAccountById(args.guildId, args.nitradoConnId, args.accountId);
+  if (!account) throw new Error('Virtuelles Konto nicht gefunden.');
+  const description = normalizeVirtualAccountDescription(args.description);
+  const channelId = normalizeVirtualAccountChannelId(args.channelId);
+  const rows = await rawDb().$queryRawUnsafe<DbMetadataRow[]>(
+    'INSERT INTO "EconomyVirtualAccountMetadata" ("accountId", "guildId", "nitradoConnId", "description", "channelId", "createdAt", "updatedAt") VALUES ($1,$2,$3,$4,$5,CURRENT_TIMESTAMP,CURRENT_TIMESTAMP) ON CONFLICT ("accountId") DO UPDATE SET "description"=EXCLUDED."description", "channelId"=EXCLUDED."channelId", "updatedAt"=CURRENT_TIMESTAMP WHERE "EconomyVirtualAccountMetadata"."guildId"=EXCLUDED."guildId" AND "EconomyVirtualAccountMetadata"."nitradoConnId"=EXCLUDED."nitradoConnId" RETURNING "accountId", "guildId", "nitradoConnId", "description", "channelId", "createdAt", "updatedAt"',
+    args.accountId, String(args.guildId), String(args.nitradoConnId), description, channelId,
+  );
+  if (!rows[0]) throw new Error('Metadaten konnten nicht aktualisiert werden.');
+  return toMetadata(rows[0]);
+}
+
 export async function createCustomVirtualAccountWithMetadata(args: {
   guildId: GuildId;
   nitradoConnId: NitradoConnId;

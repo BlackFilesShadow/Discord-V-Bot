@@ -41,7 +41,8 @@ describe('Gameplay feed activation, pacing and Online List architecture gate', (
     expect(runtime).toContain('message.edit');
     expect(runtime).not.toContain('new NitradoClient');
     expect(playerList).toContain('🌐 Online List');
-    expect(playerList).toContain('Position unbekannt');
+    expect(playerList).not.toContain('Position unbekannt');
+    expect(playerList).toContain('return position ? `• ${name} — ${position}` : `• ${name}`;');
   });
 
   it('supports explicit periodic Online List posts without replacing change-based edits', () => {

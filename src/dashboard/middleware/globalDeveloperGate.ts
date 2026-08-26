@@ -8,9 +8,11 @@ import { isGlobalDeveloperEligible } from '../../modules/auth/globalDeveloperIde
  * Zentrales Gate fuer jede privilegierte DEV-HTTP-Flaeche.
  *
  * Wichtig: Das Gate vertraut nicht blind auf die Session-Rolle, sondern liest
- * die aktuelle DB-Rolle. Ein Rollenentzug, geloeschter DB-User oder eine
- * geaenderte Owner-ID wird dadurch sofort wirksam. Veraltete aktive DevSessions
- * werden bei Ablehnung best-effort widerrufen.
+ * die aktuelle DB-Rolle. Fuer die kanonische BOT_OWNER_ID ist die globale
+ * Developer-Identitaet unverlierbar; nach erfolgreicher Identitaetspruefung
+ * wird der Request fuer nachgelagerte Legacy-`requireDev`-Rollenchecks auf
+ * DEVELOPER normalisiert. Passwort, DevSession, MFA und IP-Step-up bleiben
+ * weiterhin separat erforderlich.
  */
 export async function requireGlobalDeveloperIdentity(
   req: Request,
@@ -57,11 +59,6 @@ export async function requireGlobalDeveloperIdentity(
   }
 
   const currentRole = dbUser.role;
-  if (currentRole !== req.auth.role) {
-    (req.session as unknown as { role?: string }).role = currentRole;
-    req.auth.role = currentRole;
-  }
-
   if (!isGlobalDeveloperEligible(String(req.auth.discordId), currentRole)) {
     await revokeActiveSessions();
 
@@ -73,6 +70,16 @@ export async function requireGlobalDeveloperIdentity(
     });
     res.status(403).json({ error: 'Keine globale DEV-Berechtigung.', code: 'DEV_IDENTITY_REQUIRED' });
     return;
+  }
+
+  // Downstream requireDev ist historisch rollenbasiert. Fuer die kanonische
+  // globale Owner-Identitaet wird nur der authentifizierte Request/Session-
+  // Snapshot normalisiert; die DB-Rolle muss fuer Recovery nicht mutiert werden.
+  // Damit bleibt der Owner auch bei DB-Rollen-Drift erreichbar, ohne fremden
+  // Accounts eine Rolle zu verleihen.
+  if (req.auth.role !== 'DEVELOPER') {
+    req.auth.role = 'DEVELOPER';
+    (req.session as unknown as { role?: string }).role = 'DEVELOPER';
   }
 
   next();

@@ -3,7 +3,7 @@ import path from 'node:path';
 
 const root = process.cwd();
 const slot = fs.readFileSync(path.join(root, 'dashboard-ui', 'src', 'pages', 'ServerSlot.tsx'), 'utf8');
-const virtualAccounts = fs.readFileSync(path.join(root, 'dashboard-ui', 'src', 'components', 'economy', 'VirtualAccountsPanel.tsx'), 'utf8');
+const virtualAccounts = fs.readFileSync(path.join(root, 'dashboard-ui', 'src', 'components', 'economy', 'VirtualAccountsControlPanel.tsx'), 'utf8');
 const lottery = fs.readFileSync(path.join(root, 'dashboard-ui', 'src', 'components', 'economy', 'LotteryPanel.tsx'), 'utf8');
 const market = fs.readFileSync(path.join(root, 'dashboard-ui', 'src', 'components', 'economy', 'BlackMarketPanel.tsx'), 'utf8');
 
@@ -32,11 +32,14 @@ describe('Dashboard Economy Slot Scope', () => {
     expect(slot).toContain('<AdminPayForm guildId={guildId} slot={slot} />');
   });
 
-  it('isoliert virtuelle Konten inklusive Audit pro Slot', () => {
+  it('isoliert virtuelle Konten inklusive Control, Managerpanel, Audit und Payout pro Slot', () => {
     expect(virtualAccounts).toContain("{ guildId, slot }: { guildId: string; slot: string }");
-    expect(virtualAccounts).toContain("['economy-virtual-accounts', guildId, slot]");
-    expect(virtualAccounts).toContain('${scope}&includeArchived=true');
+    expect(virtualAccounts).toContain("['economy-virtual-control', guildId, slot]");
+    expect(virtualAccounts).toContain('/control/accounts?slot=${encodeURIComponent(slot)}');
+    expect(virtualAccounts).toContain("['economy-virtual-manager-panel', guildId, slot]");
+    expect(virtualAccounts).toContain('/control/manager-panel?slot=${encodeURIComponent(slot)}');
     expect(virtualAccounts).toContain("['economy-virtual-account-audit', guildId, slot, auditAccountId]");
+    expect(virtualAccounts).toContain('/payout?slot=${encodeURIComponent(slot)}');
   });
 
   it('isoliert Lotterie und Schwarzmarkt pro Slot', () => {
