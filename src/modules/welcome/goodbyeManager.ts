@@ -8,6 +8,7 @@ import { resolveCustomEmotes } from '../ai/emoteResolver';
 import {
   buildStructuredGoodbyeEmbed,
   initialGoodbyeCleanupSnapshot,
+  sanitizeGoodbyeVisibleText,
   type GoodbyeCleanupSnapshot,
 } from './goodbyeStatus';
 
@@ -78,18 +79,28 @@ export async function disableGoodbye(guildId: string, updatedBy: string): Promis
  * Die persistierte guild-spezifische Identitaet hat Vorrang vor dem Gateway-
  * Fallback. Rollen/Permissions aus dem Recognition-Profil werden bewusst nicht
  * gelesen und koennen daher niemals Authorization beeinflussen.
+ *
+ * Eine Discord-ID ist KEIN gueltiger sichtbarer Namens-Fallback. Selbst wenn
+ * ein alter Datensatz oder eine defekte Gateway-Antwort eine Snowflake als
+ * Namen liefert, wird sie vor Persistenz/Rendern auf einen neutralen Text
+ * reduziert.
  */
 export function resolveGoodbyeIdentity(
   fallback: { discordId: string; username: string; nickname?: string | null },
   stored: StoredIdentity,
 ): GoodbyeIdentity {
-  const username = stored?.username?.trim() || fallback.username.trim() || fallback.discordId;
-  const nickname = stored?.nickname?.trim() || fallback.nickname?.trim() || null;
+  const usernameCandidate = stored?.username?.trim() || fallback.username.trim();
+  const username = sanitizeGoodbyeVisibleText(usernameCandidate, 'Discord-Nutzer', 256);
+  const nicknameCandidate = stored?.nickname?.trim() || fallback.nickname?.trim() || '';
+  const nickname = nicknameCandidate
+    ? sanitizeGoodbyeVisibleText(nicknameCandidate, '', 256) || null
+    : null;
+  const displayName = nickname || username || 'Discord-Nutzer';
   return {
     discordId: fallback.discordId,
     username,
     nickname,
-    displayName: nickname || username,
+    displayName,
     mention: `<@${fallback.discordId}>`,
   };
 }
@@ -122,9 +133,9 @@ export function renderGoodbyeMessage(
     .replace(/\{user\}/g, vars.identity.displayName)
     .replace(/\{username\}/g, vars.identity.username)
     .replace(/\{nickname\}/g, vars.identity.nickname || vars.identity.username)
-    // Die Mention ist jetzt ein fester Bestandteil des Feldes "Discord-Name".
-    // Alte gespeicherte Templates mit {mention} bleiben kompatibel, erzeugen
-    // aber keine zweite, optisch losgeloeste Mention mehr in der Beschreibung.
+    // Die Mention ist fester Bestandteil der strukturierten Nutzerzeile.
+    // Alte Templates mit {mention} bleiben kompatibel, erzeugen aber keine
+    // zweite, losgeloeste Mention in der Beschreibung.
     .replace(/\{mention\}/g, '')
     .replace(/\{guild\}/g, vars.guild)
     .replace(/\{count\}/g, String(vars.memberCount))
@@ -141,8 +152,8 @@ export function renderGoodbyeMessage(
 
 /**
  * Runtime-Zustellung beim GuildMemberRemove.
- * Die Discord-Mention wird ausschliesslich im Feld "Discord-Name" gerendert
- * und durch allowedMentions weiterhin nie als Ping freigeschaltet.
+ * Die Discord-Mention wird nur aus dem real vorhandenen GuildMember erzeugt
+ * und durch allowedMentions nie als Ping freigeschaltet.
  */
 export async function sendConfiguredGoodbye(
   member: GuildMember,
@@ -163,7 +174,7 @@ export async function sendConfiguredGoodbye(
     memberCount: member.guild.memberCount,
     occurredAt: leaveOccurredAt,
   });
-  const finalText = resolveCustomEmotes(rendered, member.guild);
+  const finalText = sanitizeGoodbyeVisibleText(resolveCustomEmotes(rendered, member.guild), '', 4000);
   const cleanupEnabled = context?.cleanupEnabled === true;
   let cleanupSnapshot: GoodbyeCleanupSnapshot | null = null;
   if (cleanupEnabled) {
@@ -227,6 +238,7 @@ export async function sendConfiguredGoodbye(
       embeds: [buildStructuredGoodbyeEmbed({
         discordName: identity.displayName,
         discordMention: identity.mention,
+        discordMentionResolved: true,
         customMessage: finalText,
         joinedAt,
         leaveOccurredAt,
