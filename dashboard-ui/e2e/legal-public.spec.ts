@@ -14,13 +14,13 @@ test('Datenschutz und Nutzungsbedingungen sind ohne Login direkt erreichbar', as
 
   await page.goto('/legal/privacy');
   await expect(page).toHaveURL(/\/legal\/privacy$/);
-  await expect(page.getByRole('heading', { name: 'Datenschutzerklärung' })).toBeVisible();
+  await expect(page.getByRole('heading', { name: 'Datenschutzerklärung', exact: true })).toBeVisible();
   await expect(page.getByText(/identify/)).toBeVisible();
   await expect(page.getByText(/Löschung/).first()).toBeVisible();
 
   await page.goto('/legal/terms');
   await expect(page).toHaveURL(/\/legal\/terms$/);
-  await expect(page.getByRole('heading', { name: 'Nutzungsbedingungen' })).toBeVisible();
+  await expect(page.getByRole('heading', { name: 'Nutzungsbedingungen', exact: true })).toBeVisible();
   await expect(page.getByText(/virtuelle Konten/i).first()).toBeVisible();
 });
 
@@ -37,10 +37,10 @@ for (const width of [320, 360, 375, 390, 430] as const) {
     await unauthenticated(page);
     await page.setViewportSize({ width, height: 900 });
     await page.goto('/legal/privacy');
-    await expect(page.getByRole('heading', { name: 'Datenschutzerklärung' })).toBeVisible();
+    await expect(page.getByRole('heading', { name: 'Datenschutzerklärung', exact: true })).toBeVisible();
     await expectNoOverflow(page);
     await page.goto('/legal/terms');
-    await expect(page.getByRole('heading', { name: 'Nutzungsbedingungen' })).toBeVisible();
+    await expect(page.getByRole('heading', { name: 'Nutzungsbedingungen', exact: true })).toBeVisible();
     await expectNoOverflow(page);
   });
 }
