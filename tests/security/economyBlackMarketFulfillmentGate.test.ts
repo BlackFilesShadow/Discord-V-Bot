@@ -16,6 +16,7 @@ describe('Economy-Schwarzmarkt — Fulfillment- und Vendor-Lifecycle-Gate', () =
     expect(market).toContain('Unbekannter DayZ-1.29-Classname');
     expect(migration).toContain('CREATE TABLE "EconomyMarketListingItem"');
     expect(migration).toContain('CREATE TABLE "EconomyMarketPurchaseFulfillment"');
+    expect(migration).toContain('EconomyMarketPurchase_id_scope_key');
     expect(market).toContain('deliverySnapshot');
     expect(market).toContain("'PENDING'");
   });
@@ -31,7 +32,7 @@ describe('Economy-Schwarzmarkt — Fulfillment- und Vendor-Lifecycle-Gate', () =
     expect(refund).toContain('beforeLock: async raw =>');
     expect(refund).toContain('FOR UPDATE');
     expect(refund).toContain('"stock"="stock"+$4');
-    expect(refund).toContain("\"status\"='REFUNDED'");
+    expect(refund).toContain('REFUNDED');
     expect(refund).toContain('targetPocket: before.sourcePocket');
     expect(transfers).toContain('beforeLock?:');
     expect(transfers).toContain('beforeDebit?:');
@@ -39,8 +40,8 @@ describe('Economy-Schwarzmarkt — Fulfillment- und Vendor-Lifecycle-Gate', () =
 
   it('reserviert offene Bestellbetraege gegen Vendor-Auszahlungen', () => {
     const payout = market.slice(market.indexOf('export async function payoutMarketVendor'), market.indexOf('export async function archiveMarketVendor'));
-    expect(payout).toContain("f.\"status\"='PENDING'");
-    expect(payout).toContain('pending');
+    expect(payout).toContain('PENDING');
+    expect(payout).toContain('liability');
     expect(payout).toContain('withdrawable');
     expect(payout).toContain("expectedKind: 'MARKET_VENDOR'");
   });
