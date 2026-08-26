@@ -1,5 +1,6 @@
 import { answerDayz129CatalogQuestion, getDayz129CatalogStats } from '../../src/modules/ai/dayz129Catalog';
 
+// Production regression: deterministic DayZ answers must stay grounded before provider routing.
 describe('DayZ production grounding', () => {
   it('keeps the complete embedded types.xml union available', () => {
     const stats = getDayz129CatalogStats();
