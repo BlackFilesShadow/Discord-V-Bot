@@ -137,7 +137,7 @@ describe('Goodbye-1 guild-scoped identity and delivery', () => {
     expect(rendered).not.toContain('<@333>');
   });
 
-  it('renders the safely resolved user mention inside the stable member block', async () => {
+  it('renders the last known @name instead of a raw mention token after a real leave', async () => {
     const discordId = '2'.repeat(18);
     mockFindUnique.mockResolvedValue({
       value: { enabled: true, channelId: '12345678901234567', message: 'Bye {user} {mention}' },
@@ -171,7 +171,8 @@ describe('Goodbye-1 guild-scoped identity and delivery', () => {
     });
     expect(json.fields).toHaveLength(1);
     expect(json.fields?.[0]).toMatchObject({ name: '👤 Mitglied', inline: false });
-    expect(json.fields?.[0].value).toContain(`**Discord:** <@${discordId}>`);
+    expect(json.fields?.[0].value).toContain('**Discord:** @StoredNick');
+    expect(json.fields?.[0].value).not.toContain(discordId);
     expect(json.fields?.[0].value).toContain('**Status:** Server verlassen');
     expect(json.fields?.[0].value).toContain('**Beigetreten:** 27. April 2025');
     expect(json.fields?.[0].value).toContain('**Ausgetreten:** 25. August 2026');
@@ -209,7 +210,9 @@ describe('Goodbye-1 guild-scoped identity and delivery', () => {
 
     expect(send).toHaveBeenCalledTimes(1);
     const json = send.mock.calls[0][0].embeds[0].toJSON();
-    expect(json.fields?.find((field: { name: string }) => field.name === '👤 Mitglied')?.value).toContain(`**Discord:** <@${discordId}>`);
+    const memberValue = json.fields?.find((field: { name: string }) => field.name === '👤 Mitglied')?.value;
+    expect(memberValue).toContain('**Discord:** @StoredUser');
+    expect(memberValue).not.toContain(discordId);
     expect(json.fields?.find((field: { name: string }) => field.name.includes('Whitelist'))?.value).toContain('Nicht eindeutig');
   });
 });
