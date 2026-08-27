@@ -96,7 +96,7 @@ describe('Goodbye-1 guild-scoped identity and delivery', () => {
   });
 
   it('never promotes a raw Discord snowflake into username/displayName', () => {
-    const snowflake = '123456789012345678';
+    const snowflake = '1'.repeat(18);
     const identity = resolveGoodbyeIdentity(
       { discordId: snowflake, username: snowflake, nickname: null },
       { username: snowflake, nickname: snowflake },
@@ -138,7 +138,7 @@ describe('Goodbye-1 guild-scoped identity and delivery', () => {
   });
 
   it('renders the safely resolved user mention inside the stable member block', async () => {
-    const discordId = '123456789012345678';
+    const discordId = '2'.repeat(18);
     mockFindUnique.mockResolvedValue({
       value: { enabled: true, channelId: '12345678901234567', message: 'Bye {user} {mention}' },
     });
@@ -185,7 +185,7 @@ describe('Goodbye-1 guild-scoped identity and delivery', () => {
   });
 
   it('still sends the independent Goodbye when cleanup identity lookup fails', async () => {
-    const discordId = '223456789012345678';
+    const discordId = '3'.repeat(18);
     mockFindUnique.mockResolvedValue({
       value: { enabled: true, channelId: '12345678901234567', message: 'Bye {user}' },
     });
