@@ -85,6 +85,19 @@ describe('AI provider cooldown classification', () => {
     ]));
   });
 
+  it('unterdrueckt globales RATE_LIMIT bei gemischten 402/404- und 429-Circuits', () => {
+    markProviderUnavailable('cerebras', 'http_402');
+    markProviderUnavailable('openrouter', 'http_404');
+    markRateLimited('groq', 45_000);
+    markRateLimited('gemini', 30_000);
+
+    expect(isOnCooldown('cerebras')).toBe(true);
+    expect(isOnCooldown('openrouter')).toBe(true);
+    expect(isOnCooldown('groq')).toBe(true);
+    expect(isOnCooldown('gemini')).toBe(true);
+    expect(getAllCooldowns()).toEqual([]);
+  });
+
   it('kuerzt einen expliziten langen Retry-After nicht auf den 5-Minuten-Backoff', () => {
     markRateLimited('openrouter', 30 * 60_000);
 

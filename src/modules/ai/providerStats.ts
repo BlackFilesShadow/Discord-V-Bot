@@ -253,23 +253,37 @@ export function getCooldownRemainingMs(provider: ProviderName): number {
 }
 
 /**
- * Nur echte 429-Cooldowns werden hier zurueckgegeben. Harte Provider-Circuits
- * (401/403/404, falsches Modell, abgeschalteter Endpoint) blockieren Routing
- * weiterhin via isOnCooldown(), duerfen aber niemals die Discord-Meldung
- * "KI-Anbieter sind gerade im Rate-Limit" ausloesen.
+ * Dieses Signal wird vom Zero-Provider-Fallback in callAI verwendet. Es darf
+ * nur dann 429-Cooldowns liefern, wenn unter den AKTIVEN Circuits der
+ * konfigurierten Provider kein harter Provider-/Billing-/Modell-Circuit liegt.
+ * Sonst waere eine gemischte Lage wie Cerebras 402 + OpenRouter 404 +
+ * Groq/Gemini 429 beim Folgerequest faelschlich wieder ein globales RATE_LIMIT.
  *
- * Vollstaendige Circuit-Diagnostik bleibt ueber getStats() erhalten, inklusive
- * cooldownReason/cooldownRemainingMs/cooldownStreak fuer das Bot-Admin-Dashboard.
+ * Die vollstaendige Circuit-Diagnostik bleibt unabhaengig davon ueber
+ * getStats() erhalten (cooldownReason/cooldownRemainingMs/cooldownStreak).
  */
 export function getAllCooldowns(): Array<{ provider: ProviderName; remainingMs: number; consecutive: number }> {
   const now = Date.now();
-  const out: Array<{ provider: ProviderName; remainingMs: number; consecutive: number }> = [];
-  for (const p of ALL_PROVIDERS) {
-    const c = getActiveCooldown(p, now);
-    if (!c || c.reason !== '429_rate_limit') continue;
-    out.push({ provider: p, remainingMs: c.until - now, consecutive: c.consecutive });
+  const activeConfigured: Array<{ provider: ProviderName; state: CooldownState }> = [];
+
+  for (const provider of ALL_PROVIDERS) {
+    if (!isConfigured(provider)) continue;
+    const state = getActiveCooldown(provider, now);
+    if (state) activeConfigured.push({ provider, state });
   }
-  return out;
+
+  // Fail-closed fuer die globale Klassifikation: Sobald ein konfigurierter
+  // Provider aus einem anderen Grund als 429 im Circuit ist, ist die Gesamtlage
+  // gemischt und darf nicht als "alle Provider rate-limited" erscheinen.
+  if (activeConfigured.some(({ state }) => state.reason !== '429_rate_limit')) return [];
+
+  return activeConfigured
+    .filter(({ state }) => state.reason === '429_rate_limit')
+    .map(({ provider, state }) => ({
+      provider,
+      remainingMs: state.until - now,
+      consecutive: state.consecutive,
+    }));
 }
 
 export async function recordCall(
