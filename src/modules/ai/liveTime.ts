@@ -67,7 +67,7 @@ function normalizeQuestion(value: string): string {
     .toLocaleLowerCase('de-DE')
     .normalize('NFKD')
     .replace(/[\u0300-\u036f]/g, '')
-    .replace(/[?!.,;:]+/g, ' ')
+    .replace(/[-–—?!.,;:]+/g, ' ')
     .replace(/\s+/g, ' ')
     .trim();
 }
