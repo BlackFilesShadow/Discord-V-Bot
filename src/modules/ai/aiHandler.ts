@@ -42,6 +42,8 @@ import {
   preflightLiveServerQuestion,
   validateLiveServerAnswer,
 } from './dayzHallucinationGuard';
+import { answerLiveTimeQuestion, buildLiveTimeContext } from './liveTime';
+import { normalizeAiProviderRequest } from './providerRequestCompatibility';
 
 /**
  * AI-Integration (Sektion 4):
@@ -68,55 +70,11 @@ export interface AiResponse {
 
 /**
  * Liefert den aktuellen Zeitstempel als deutscher String für System-Prompts.
- * Damit kennt die AI immer Tag/Monat/Jahr/Uhrzeit.
+ * Europe/Berlin ist die einzige kanonische Kalenderquelle; damit bleibt auch
+ * die UTC-/Jahresgrenze korrekt.
  */
 export function getLiveTimeContext(): string {
-  const now = new Date();
-  const fmt = new Intl.DateTimeFormat('de-DE', {
-    weekday: 'long',
-    year: 'numeric',
-    month: 'long',
-    day: 'numeric',
-    hour: '2-digit',
-    minute: '2-digit',
-    timeZone: 'Europe/Berlin',
-  });
-  const dateOnly = new Intl.DateTimeFormat('de-DE', {
-    weekday: 'long', year: 'numeric', month: 'long', day: 'numeric', timeZone: 'Europe/Berlin',
-  }).format(now);
-  const timeOnly = new Intl.DateTimeFormat('de-DE', {
-    hour: '2-digit', minute: '2-digit', timeZone: 'Europe/Berlin',
-  }).format(now);
-  const weekday = new Intl.DateTimeFormat('de-DE', { weekday: 'long', timeZone: 'Europe/Berlin' }).format(now);
-  const hour = Number(new Intl.DateTimeFormat('de-DE', { hour: '2-digit', hour12: false, timeZone: 'Europe/Berlin' }).format(now));
-  let daypart = 'Nacht';
-  if (hour >= 5 && hour < 11) daypart = 'Morgen';
-  else if (hour >= 11 && hour < 14) daypart = 'Mittag';
-  else if (hour >= 14 && hour < 18) daypart = 'Nachmittag';
-  else if (hour >= 18 && hour < 22) daypart = 'Abend';
-  const month = now.getMonth() + 1;
-  let season = 'Winter';
-  if (month >= 3 && month <= 5) season = 'Frühling';
-  else if (month >= 6 && month <= 8) season = 'Sommer';
-  else if (month >= 9 && month <= 11) season = 'Herbst';
-  return [
-    'AUTORITATIVE ZEIT- UND DATUMSANGABEN (Europe/Berlin) - diese Werte sind FAKT, nutze sie direkt:',
-    `- Vollständig: ${fmt.format(now)}`,
-    `- Heutiges Datum: ${dateOnly}`,
-    `- Wochentag: ${weekday}`,
-    `- Aktuelle Uhrzeit: ${timeOnly} Uhr`,
-    `- Tageszeit: ${daypart}`,
-    `- Jahreszeit: ${season}`,
-    `- Jahr: ${now.getFullYear()}`,
-    '',
-    'REGELN fuer Zeit-/Datumsfragen:',
-    `- Fragt der Nutzer nach Datum, Wochentag, Uhrzeit, Tageszeit, Jahr oder Jahreszeit: antworte DIREKT und SICHER mit obigen Werten. NIEMALS "weiss ich nicht" oder "nicht tagesaktuell" sagen.`,
-    `- NIEMALS Tageszeit halluzinieren (z.B. nicht "Nacht" sagen, wenn oben "${daypart}" steht).`,
-    '- Gib JEDEN Wert (Wochentag, Datum, Uhrzeit, Monat, Jahr) HOECHSTENS EINMAL pro Antwort aus. Kein Teil darf doppelt vorkommen.',
-    `- Vorzugsformat fuer kombinierte Fragen ("Tag/Datum/Uhrzeit/Jahr/Monat"): EIN Satz - z.B. "Heute ist ${weekday}, ${dateOnly}, ${timeOnly} Uhr." Punkt. KEIN nachgeschobenes "Jahr 2026, Monat April".`,
-    '- Wenn Datum bereits den Monat und das Jahr enthaelt, sind Monat und Jahr damit beantwortet - NICHT noch einmal extra anfuegen.',
-    '- Vermeide Doppelungen wie "Frühlingsabend, es ist Abend".',
-  ].join('\n');
+  return buildLiveTimeContext();
 }
 
 export const BOT_PERSONA = [
@@ -322,6 +280,19 @@ export async function answerQuestion(
   // technisch erzwungen.
   const context = mayUseExternalConversationContext(question) ? guardContext.context : null;
   const hallucinationGuard = dayzDomain ? guardContext.guard : null;
+
+  // Zeit, Datum, Wochentag, Monat, Jahr und Jahreszeit sind lokale autoritative
+  // Fakten. Dieser Pfad liegt bewusst VOR User-/Provider-Rate-Limits, Websuche
+  // und Provider-Routing. Die Screenshot-Frage darf daher selbst bei komplett
+  // ausgefallenen/429-Providerketten niemals in die generische Fehlerantwort
+  // fallen.
+  if (mode !== 'welcome') {
+    const timeAnswer = answerLiveTimeQuestion(question);
+    if (timeAnswer) {
+      logger.info('[AI-Time] provider-unabhaengige Europe/Berlin-Antwort');
+      return { success: true, result: timeAnswer };
+    }
+  }
 
   if (mode !== 'welcome' && dayzDomain) {
     const guardPreflight = preflightLiveServerQuestion(question, hallucinationGuard);
@@ -689,17 +660,19 @@ async function callOpenAICompatible(
   messages: { role: string; content: string }[],
   extraHeaders?: Record<string, string>,
 ): Promise<string> {
+  const url = `${baseUrl}/chat/completions`;
+  const body = normalizeAiProviderRequest(url, {
+    model,
+    messages,
+    max_tokens: 1500,
+    temperature: 0.85,
+    top_p: 0.92,
+    presence_penalty: 0.6,
+    frequency_penalty: 0.4,
+  });
   const response = await axios.post(
-    `${baseUrl}/chat/completions`,
-    {
-      model,
-      messages,
-      max_tokens: 1500,
-      temperature: 0.85,
-      top_p: 0.92,
-      presence_penalty: 0.6,
-      frequency_penalty: 0.4,
-    },
+    url,
+    body,
     {
       headers: {
         Authorization: `Bearer ${apiKey}`,
@@ -709,7 +682,7 @@ async function callOpenAICompatible(
       timeout: 30000,
     },
   );
-  return response.data.choices[0]?.message?.content || '';
+  return String(response.data?.choices?.[0]?.message?.content ?? '').trim();
 }
 
 async function callGemini(
@@ -745,19 +718,28 @@ async function callGemini(
   }
 
   const contents = merged.map(m => ({ role: m.role, parts: [{ text: m.text }] }));
+  const url = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent`;
+  const body = normalizeAiProviderRequest(url, {
+    contents,
+    generationConfig: {
+      maxOutputTokens: 1500,
+    },
+  });
 
   const response = await axios.post(
-    `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent`,
-    {
-      contents,
-      generationConfig: {
-        maxOutputTokens: 1500,
-      },
-    },
+    url,
+    body,
     { headers: { 'Content-Type': 'application/json', 'x-goog-api-key': apiKey }, timeout: 30000 },
   );
 
-  return response.data.candidates?.[0]?.content?.parts?.[0]?.text || '';
+  const parts = response.data?.candidates?.[0]?.content?.parts;
+  if (!Array.isArray(parts)) return '';
+  return parts
+    .filter((part: { thought?: unknown; text?: unknown }) => part?.thought !== true && typeof part?.text === 'string')
+    .map((part: { text?: unknown }) => String(part.text).trim())
+    .filter(Boolean)
+    .join('\n')
+    .trim();
 }
 
 function parseRetryAfter(error: unknown): number {
@@ -947,9 +929,21 @@ export async function callAI(
           break;
         }
         const latency = Date.now() - t0;
-        logger.info(`callAI provider=${provider} ERFOLG (${result.length} chars, ${latency}ms)`);
+        const visibleResult = result.trim();
+        if (!visibleResult) {
+          // HTTP 200 ohne sichtbaren Text ist kein Erfolg. Ohne diese Grenze
+          // entstand success=true/result='' und messageCreate zeigte danach die
+          // generische "Hmm"-Fehlermeldung statt den naechsten Provider zu testen.
+          anyAttempted = true;
+          allRateLimited = false;
+          lastError = new Error('AI_PROVIDER_EMPTY_RESPONSE');
+          logger.warn(`AI-Provider ${provider} lieferte eine leere Textantwort (${latency}ms); Fallback wird fortgesetzt.`);
+          void recordCall(provider as ProviderName, 'failure', latency, 'empty_response');
+          break;
+        }
+        logger.info(`callAI provider=${provider} ERFOLG (${visibleResult.length} chars, ${latency}ms)`);
         void recordCall(provider as ProviderName, 'success', latency);
-        return result;
+        return visibleResult;
       } catch (error) {
         anyAttempted = true;
         lastError = error;
@@ -1018,5 +1012,6 @@ async function getProviderOrder(task: AiTaskProfile): Promise<('groq' | 'cerebra
   ];
   const primary = config.ai.provider;
   return [primary, ...all.filter(p => p !== primary)]
+    .filter((p) => hasRuntimeApiKey(p))
     .filter((p) => !isOnCooldown(p) && providerSupportsTask(p, getConfiguredModel(p), task));
 }
