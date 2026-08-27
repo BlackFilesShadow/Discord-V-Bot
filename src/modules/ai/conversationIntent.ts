@@ -43,6 +43,13 @@ export function looksLikeConversationFollowUp(question: string): boolean {
     return true;
   }
 
+  // Interrogative mit eindeutigem Rueckbezug. Dadurch funktionieren natuerliche
+  // Folgefragen wie "Warum ist das so?" oder "Wie kann ich das aendern?", ohne
+  // neue Fragen wie "Was ist Photosynthese?" faelschlich zu vererben.
+  if (/^(?:und\s+)?(?:warum|wieso|weshalb|wie|was)\b.{0,120}\b(?:das|dazu|davon|damit|daran|dabei|darauf|es|so)\b/.test(q)) {
+    return true;
+  }
+
   if (/\b(?:wie eben|wie gerade|wie oben|das eben|das gerade|deine antwort|deine letzte antwort|was du meinst|was meinst du damit|was ist damit|mehr dazu|noch mehr dazu|weiter dazu)\b/.test(q)) {
     return true;
   }
