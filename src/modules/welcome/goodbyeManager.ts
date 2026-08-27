@@ -152,8 +152,11 @@ export function renderGoodbyeMessage(
 
 /**
  * Runtime-Zustellung beim GuildMemberRemove.
- * Die Discord-Mention wird nur aus dem real vorhandenen GuildMember erzeugt
- * und durch allowedMentions nie als Ping freigeschaltet.
+ * Zu diesem Zeitpunkt ist das Mitglied bereits aus der Guild entfernt. Ein
+ * nativer <@ID>-Token kann deshalb im Embed als rohe Discord-ID stehen bleiben.
+ * Die strukturierte Nutzerzeile nutzt hier bewusst den letzten sicheren
+ * @Anzeigenamen; echte native Mentions bleiben dem Dashboard-Test vorbehalten,
+ * solange der Nutzer noch in der Guild aufloesbar ist.
  */
 export async function sendConfiguredGoodbye(
   member: GuildMember,
@@ -238,7 +241,7 @@ export async function sendConfiguredGoodbye(
       embeds: [buildStructuredGoodbyeEmbed({
         discordName: identity.displayName,
         discordMention: identity.mention,
-        discordMentionResolved: true,
+        discordMentionResolved: false,
         customMessage: finalText,
         joinedAt,
         leaveOccurredAt,

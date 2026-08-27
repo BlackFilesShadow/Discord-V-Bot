@@ -27,7 +27,7 @@ describe('structured Goodbye status embed', () => {
     expect(json.timestamp).toBe(leftAt.toISOString());
     expect(json.fields).toHaveLength(1);
     expect(json.fields?.[0]).toMatchObject({ name: '👤 Mitglied', inline: false });
-    expect(json.fields?.[0].value).toContain('**Discord:** DiscordNick');
+    expect(json.fields?.[0].value).toContain('**Discord:** @DiscordNick');
     expect(json.fields?.[0].value).toContain('**Status:** Server verlassen');
     expect(json.fields?.[0].value).toContain('**Beigetreten:** 10. Januar 2026');
     expect(json.fields?.[0].value).toContain('**Ausgetreten:** 24. August 2026');
@@ -58,7 +58,7 @@ describe('structured Goodbye status embed', () => {
       cleanupEnabled: false,
       cleanupSnapshot: null,
     }).toJSON();
-    expect(unresolved.fields?.[0].value).toContain('**Discord:** DiscordNick');
+    expect(unresolved.fields?.[0].value).toContain('**Discord:** @DiscordNick');
     expect(JSON.stringify(unresolved)).not.toContain(snowflake);
 
     const resolved = buildStructuredGoodbyeEmbed({
@@ -102,7 +102,7 @@ describe('structured Goodbye status embed', () => {
 
   it.each([
     ['PENDING', 0xeab308, 'Wartet'],
-    ['RUNNING', 0xeab308, 'läuft'],
+    ['RUNNING', 0xeab308, 'Entfernung läuft'],
     ['RETRY', 0xf97316, 'Erneuter Versuch'],
     ['CONFIRMED', 0x16a34a, 'remote bestätigt'],
     ['FAILED', 0xdc2626, 'endgültig fehlgeschlagen'],

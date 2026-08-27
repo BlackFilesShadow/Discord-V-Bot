@@ -23,7 +23,7 @@ describe('Goodbye delivery restart recovery', () => {
     updateMany.mockResolvedValue({ count: 1 });
   });
 
-  it('CAS-claims a stale unsent intent and preserves join/leave dates with a resolved mention in the recovered embed', async () => {
+  it('CAS-claims a stale unsent intent and preserves join/leave dates with the resolved visible name', async () => {
     const updatedAt = new Date('2026-08-24T10:00:00.000Z');
     const joinedAt = new Date('2026-01-10T08:00:00.000Z');
     const discordId = '222222222222222222';
@@ -48,7 +48,8 @@ describe('Goodbye delivery restart recovery', () => {
     expect(send.mock.calls[0][0].allowedMentions).toEqual({ parse: [] });
     const embedJson = send.mock.calls[0][0].embeds[0].toJSON();
     expect(embedJson.fields?.[0]).toMatchObject({ name: '👤 Mitglied', inline: false });
-    expect(embedJson.fields?.[0].value).toContain(`**Discord:** <@${discordId}>`);
+    expect(embedJson.fields?.[0].value).toContain('**Discord:** @Resolved Name');
+    expect(embedJson.fields?.[0].value).not.toContain(discordId);
     expect(embedJson.fields?.[0].value).toContain('**Beigetreten:** 10. Januar 2026');
     expect(embedJson.fields?.[0].value).toContain('**Ausgetreten:** 24. August 2026');
     expect(updateMany).toHaveBeenNthCalledWith(1, expect.objectContaining({
@@ -79,7 +80,7 @@ describe('Goodbye delivery restart recovery', () => {
 
     await expect(recoverPendingGoodbyeDeliveries(new Date('2026-08-24T10:02:00.000Z'))).resolves.toBe(1);
     const serialized = JSON.stringify(send.mock.calls[0][0].embeds[0].toJSON());
-    expect(serialized).toContain('ReadableNick');
+    expect(serialized).toContain('@ReadableNick');
     expect(serialized).not.toContain(discordId);
   });
 
