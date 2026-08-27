@@ -69,6 +69,10 @@ describe('AI conversation-domain isolation', () => {
     'Warum?',
     'Wieso?',
     'Wie genau?',
+    'Warum ist das so?',
+    'Wie funktioniert das?',
+    'Wie kann ich das ändern?',
+    'Was ist damit gemeint?',
     'Was meinst du damit?',
     'Kannst du das genauer erklären?',
     'Und was ist damit?',
@@ -80,6 +84,8 @@ describe('AI conversation-domain isolation', () => {
   test.each([
     'Und was ist Photosynthese?',
     'Was ist die Hauptstadt von Frankreich?',
+    'Warum ist Photosynthese wichtig?',
+    'Wie funktioniert ein Verbrennungsmotor?',
     'Kannst du Kuchen backen?',
     'Erzähl mir einen Witz.',
   ])('erkennt neue Sachfrage nicht faelschlich als Folgefrage: %s', (question) => {
@@ -92,8 +98,8 @@ describe('AI conversation-domain isolation', () => {
       { role: 'assistant' as const, content: 'Nominal ist der Zielbestand.' },
     ];
 
-    expect(resolveMemoryConversationDomain('Warum?', turns)).toBe('dayz');
-    expect(filterCompatibleMemoryTurns('Warum?', turns)).toEqual(turns);
+    expect(resolveMemoryConversationDomain('Warum ist das so?', turns)).toBe('dayz');
+    expect(filterCompatibleMemoryTurns('Warum ist das so?', turns)).toEqual(turns);
   });
 
   test('referentielle Folgefrage erbt im gescopten Memory Discord-Server-Kontext', () => {
@@ -117,6 +123,6 @@ describe('AI conversation-domain isolation', () => {
   });
 
   test('ungescopter Channel-Turn bleibt auch bei kurzer Folgefrage strikt isoliert', () => {
-    expect(isMemoryTurnCompatible('Warum?', 'In types.xml steuerst du nominal und lifetime.')).toBe(false);
+    expect(isMemoryTurnCompatible('Warum ist das so?', 'In types.xml steuerst du nominal und lifetime.')).toBe(false);
   });
 });
