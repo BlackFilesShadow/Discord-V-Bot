@@ -138,6 +138,84 @@ describe('AI conversation memory scope firewall', () => {
     });
   });
 
+  it('wartet beim Read auf einen bereits gestarteten Write desselben Scopes', async () => {
+    let release!: () => void;
+    const writeGate = new Promise<void>((resolve) => { release = resolve; });
+    turns.create.mockImplementationOnce(async () => {
+      await writeGate;
+      return {};
+    });
+    turns.findMany.mockResolvedValue([
+      { role: 'user', content: 'Direkt davor' },
+    ]);
+
+    const pendingWrite = recordTurn('user-race', 'channel-race', 'user', 'Direkt davor', 'guild-race');
+    await Promise.resolve();
+
+    const pendingRead = getRecentTurns('user-race', 'channel-race', 'guild-race');
+    await Promise.resolve();
+    await Promise.resolve();
+
+    expect(turns.findMany).not.toHaveBeenCalled();
+
+    release();
+    await pendingWrite;
+    await expect(pendingRead).resolves.toEqual([
+      { role: 'user', content: 'Direkt davor' },
+    ]);
+    expect(turns.findMany).toHaveBeenCalledTimes(1);
+  });
+
+  it('blockiert einen anderen Guild-Scope nicht durch einen fremden pending Write', async () => {
+    let release!: () => void;
+    const writeGate = new Promise<void>((resolve) => { release = resolve; });
+    turns.create.mockImplementationOnce(async () => {
+      await writeGate;
+      return {};
+    });
+
+    const pendingWrite = recordTurn('same-user', 'same-channel', 'user', 'Guild A', 'guild-A');
+    await Promise.resolve();
+
+    await getRecentTurns('same-user', 'same-channel', 'guild-B');
+    expect(turns.findMany).toHaveBeenCalledTimes(1);
+    expect(turns.findMany).toHaveBeenCalledWith(expect.objectContaining({
+      where: expect.objectContaining({ guildId: 'guild-B' }),
+    }));
+
+    release();
+    await pendingWrite;
+  });
+
+  it('serialisiert parallele Writes innerhalb desselben Dialog-Scopes', async () => {
+    let release!: () => void;
+    const firstGate = new Promise<void>((resolve) => { release = resolve; });
+    turns.create
+      .mockImplementationOnce(async () => {
+        await firstGate;
+        return {};
+      })
+      .mockResolvedValueOnce({});
+
+    const first = recordTurn('user-order', 'channel-order', 'user', 'Frage', 'guild-order');
+    const second = recordTurn('user-order', 'channel-order', 'assistant', 'Antwort', 'guild-order');
+    await Promise.resolve();
+    await Promise.resolve();
+
+    expect(turns.create).toHaveBeenCalledTimes(1);
+
+    release();
+    await Promise.all([first, second]);
+
+    expect(turns.create).toHaveBeenCalledTimes(2);
+    expect(turns.create).toHaveBeenNthCalledWith(1, expect.objectContaining({
+      data: expect.objectContaining({ role: 'user', content: 'Frage' }),
+    }));
+    expect(turns.create).toHaveBeenNthCalledWith(2, expect.objectContaining({
+      data: expect.objectContaining({ role: 'assistant', content: 'Antwort' }),
+    }));
+  });
+
   it('enthaelt keinerlei Legacy-Scope-Inferenz mehr', () => {
     const source = fs.readFileSync(
       path.join(process.cwd(), 'src/modules/ai/conversationMemory.ts'),
