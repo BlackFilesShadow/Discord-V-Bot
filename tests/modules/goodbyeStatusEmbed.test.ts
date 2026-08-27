@@ -47,7 +47,7 @@ describe('structured Goodbye status embed', () => {
   });
 
   it('renders a native mention only after the Discord user was explicitly resolved', () => {
-    const snowflake = '123456789012345678';
+    const snowflake = '4'.repeat(18);
     const unresolved = buildStructuredGoodbyeEmbed({
       discordName: 'DiscordNick',
       discordMention: `<@${snowflake}>`,
@@ -75,7 +75,7 @@ describe('structured Goodbye status embed', () => {
   });
 
   it('scrubs raw Discord snowflakes from every visible non-mention surface', () => {
-    const snowflake = '987654321098765432';
+    const snowflake = '5'.repeat(18);
     const json = buildStructuredGoodbyeEmbed({
       discordName: snowflake,
       discordMention: `<@${snowflake}>`,
