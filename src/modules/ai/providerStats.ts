@@ -33,6 +33,10 @@ export interface ProviderStat {
   lastFailureAt: Date | null;
   lastError: string | null;
   configured: boolean;
+  /** Aktiver Routing-Circuit, unabhaengig davon ob 429 oder Provider-/Modellfehler. */
+  cooldownReason: string | null;
+  cooldownRemainingMs: number;
+  cooldownStreak: number;
 }
 
 function isConfigured(p: ProviderName): boolean {
@@ -84,6 +88,16 @@ function endCooldownWrite(provider: ProviderName): void {
 
 function hasPendingCooldownWrite(provider: ProviderName): boolean {
   return (pendingCooldownWrites.get(provider) ?? 0) > 0;
+}
+
+function getActiveCooldown(provider: ProviderName, now = Date.now()): CooldownState | null {
+  const state = cooldowns.get(provider);
+  if (!state) return null;
+  if (now >= state.until) {
+    cooldowns.delete(provider);
+    return null;
+  }
+  return state;
 }
 
 export async function hydrateCooldownsFromDb(): Promise<void> {
@@ -174,7 +188,7 @@ export function stopProviderCooldownSync(): void {
 }
 
 function applyRateLimitedCooldown(provider: ProviderName, retryAfterMs?: number): CooldownState & { durationMs: number } {
-  const prev = cooldowns.get(provider);
+  const prev = getActiveCooldown(provider);
   const previousRateLimitStreak = prev?.reason === '429_rate_limit' ? prev.consecutive : 0;
   const consecutive = previousRateLimitStreak + 1;
   const backoff = Math.min(COOLDOWN_BASE_MS * Math.pow(2, consecutive - 1), COOLDOWN_MAX_MS);
@@ -196,7 +210,7 @@ export function markRateLimited(provider: ProviderName, retryAfterMs?: number): 
 
 export function markProviderUnavailable(provider: ProviderName, reason: string): void {
   const until = Date.now() + UNAVAILABLE_COOLDOWN_MS;
-  const prev = cooldowns.get(provider);
+  const prev = getActiveCooldown(provider);
   const previousUnavailableStreak = prev?.reason !== '429_rate_limit' ? prev?.consecutive ?? 0 : 0;
   const consecutive = previousUnavailableStreak + 1;
   cooldowns.set(provider, { until, consecutive, reason });
@@ -230,23 +244,12 @@ export function clearCooldown(provider: ProviderName): void {
 }
 
 export function isOnCooldown(provider: ProviderName): boolean {
-  const c = cooldowns.get(provider);
-  if (!c) return false;
-  if (Date.now() >= c.until) {
-    cooldowns.delete(provider);
-    return false;
-  }
-  return true;
+  return getActiveCooldown(provider) !== null;
 }
 
 export function getCooldownRemainingMs(provider: ProviderName): number {
-  const c = cooldowns.get(provider);
-  if (!c) return 0;
-  if (Date.now() >= c.until) {
-    cooldowns.delete(provider);
-    return 0;
-  }
-  return c.until - Date.now();
+  const c = getActiveCooldown(provider);
+  return c ? c.until - Date.now() : 0;
 }
 
 /**
@@ -254,18 +257,16 @@ export function getCooldownRemainingMs(provider: ProviderName): number {
  * (401/403/404, falsches Modell, abgeschalteter Endpoint) blockieren Routing
  * weiterhin via isOnCooldown(), duerfen aber niemals die Discord-Meldung
  * "KI-Anbieter sind gerade im Rate-Limit" ausloesen.
+ *
+ * Vollstaendige Circuit-Diagnostik bleibt ueber getStats() erhalten, inklusive
+ * cooldownReason/cooldownRemainingMs/cooldownStreak fuer das Bot-Admin-Dashboard.
  */
 export function getAllCooldowns(): Array<{ provider: ProviderName; remainingMs: number; consecutive: number }> {
   const now = Date.now();
   const out: Array<{ provider: ProviderName; remainingMs: number; consecutive: number }> = [];
   for (const p of ALL_PROVIDERS) {
-    const c = cooldowns.get(p);
-    if (!c) continue;
-    if (now >= c.until) {
-      cooldowns.delete(p);
-      continue;
-    }
-    if (c.reason !== '429_rate_limit') continue;
+    const c = getActiveCooldown(p, now);
+    if (!c || c.reason !== '429_rate_limit') continue;
     out.push({ provider: p, remainingMs: c.until - now, consecutive: c.consecutive });
   }
   return out;
@@ -355,6 +356,7 @@ export async function getStats(): Promise<ProviderStat[]> {
   const rows = await prisma.aiProviderStat.findMany();
   const map = new Map<string, typeof rows[number]>();
   for (const r of rows) map.set(r.provider, r);
+  const now = Date.now();
   return ALL_PROVIDERS.map((p) => {
     const r = map.get(p);
     const success = r?.successCount ?? 0;
@@ -362,6 +364,7 @@ export async function getStats(): Promise<ProviderStat[]> {
     const rate = r?.rateLimitCount ?? 0;
     const total = success + fail + rate;
     const totalLatency = r ? Number(r.totalLatencyMs) : 0;
+    const circuit = getActiveCooldown(p, now);
     return {
       provider: p,
       successCount: success,
@@ -373,6 +376,9 @@ export async function getStats(): Promise<ProviderStat[]> {
       lastFailureAt: r?.lastFailureAt ?? null,
       lastError: r?.lastError ?? null,
       configured: isConfigured(p),
+      cooldownReason: circuit?.reason ?? null,
+      cooldownRemainingMs: circuit ? Math.max(0, circuit.until - now) : 0,
+      cooldownStreak: circuit?.consecutive ?? 0,
     };
   });
 }
