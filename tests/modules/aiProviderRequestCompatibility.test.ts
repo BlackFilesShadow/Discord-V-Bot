@@ -68,7 +68,7 @@ describe('AI provider request compatibility', () => {
 
   it('modernisiert OpenRouter ohne provider-spezifische Felder unnoetig zu entfernen', () => {
     const input = {
-      model: 'meta-llama/llama-3.3-70b-instruct:free',
+      model: 'openrouter/free',
       max_tokens: 900,
       temperature: 0.8,
       top_p: 0.95,

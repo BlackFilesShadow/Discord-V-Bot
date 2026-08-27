@@ -25,10 +25,10 @@ export const AI_MODEL_DEFAULTS: Readonly<Record<AiProviderName, string>> = Objec
   // Cerebras: aktuelles oeffentliches Produktionsmodell.
   cerebras: 'gpt-oss-120b',
 
-  // OpenRouter: bewusst ein konkretes kostenloses Modell statt Zufallsrouter,
-  // damit Antwortverhalten reproduzierbarer bleibt. Provider-/Task-Routing wird
-  // spaeter separat modernisiert.
-  openrouter: 'meta-llama/llama-3.3-70b-instruct:free',
+  // OpenRouter: feste :free-Varianten koennen kurzfristig aus dem Katalog
+  // verschwinden. Der offizielle Free-Router waehlt aus den aktuell
+  // verfuegbaren kostenlosen Modellen und bleibt dadurch als Fallback lebendig.
+  openrouter: 'openrouter/free',
 
   // Google: aktuelle stabile GA-Flash-Variante (August 2026).
   gemini: 'gemini-3.7-flash',
@@ -47,7 +47,9 @@ const LEGACY_MODEL_MIGRATIONS: Readonly<Record<AiProviderName, Readonly<Record<s
     'llama-3.3-70b': AI_MODEL_DEFAULTS.cerebras,
     'llama3.1-70b': AI_MODEL_DEFAULTS.cerebras,
   }),
-  openrouter: Object.freeze({}),
+  openrouter: Object.freeze({
+    'meta-llama/llama-3.3-70b-instruct:free': AI_MODEL_DEFAULTS.openrouter,
+  }),
   gemini: Object.freeze({
     'gemini-2.0-flash': AI_MODEL_DEFAULTS.gemini,
     'gemini-2.0-flash-001': AI_MODEL_DEFAULTS.gemini,

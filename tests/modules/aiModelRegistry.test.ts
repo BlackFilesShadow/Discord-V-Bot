@@ -14,6 +14,7 @@ describe('AI model registry', () => {
   it('verwendet produktionsfaehige aktuelle Defaults fuer die kritischen Provider', () => {
     expect(AI_MODEL_DEFAULTS.groq).toBe('openai/gpt-oss-120b');
     expect(AI_MODEL_DEFAULTS.cerebras).toBe('gpt-oss-120b');
+    expect(AI_MODEL_DEFAULTS.openrouter).toBe('openrouter/free');
     expect(AI_MODEL_DEFAULTS.gemini).toBe('gemini-3.7-flash');
     expect(AI_MODEL_DEFAULTS.openai).toBe('gpt-5.6-luna');
   });
@@ -21,6 +22,7 @@ describe('AI model registry', () => {
   it('migriert bekannte abgeschaltete oder veraltete Legacy-Modelle kontrolliert', () => {
     expect(resolveAiModel('groq', 'llama-3.3-70b-versatile')).toBe('openai/gpt-oss-120b');
     expect(resolveAiModel('cerebras', 'llama-3.3-70b')).toBe('gpt-oss-120b');
+    expect(resolveAiModel('openrouter', 'meta-llama/llama-3.3-70b-instruct:free')).toBe('openrouter/free');
     expect(resolveAiModel('gemini', 'gemini-2.0-flash')).toBe('gemini-3.7-flash');
     expect(resolveAiModel('gemini', 'gemini-2.0-flash-lite')).toBe('gemini-3.5-flash-lite');
     expect(resolveAiModel('openai', 'gpt-4')).toBe('gpt-5.6-luna');
@@ -43,7 +45,7 @@ describe('AI model registry', () => {
     expect(isKnownLegacyAiModel('groq', 'llama-3.3-70b-versatile')).toBe(true);
     expect(isKnownLegacyAiModel('openai', 'gpt-4')).toBe(true);
     expect(isKnownLegacyAiModel('openai', 'gpt-5.4-mini')).toBe(true);
-    expect(isKnownLegacyAiModel('openrouter', 'meta-llama/llama-3.3-70b-instruct:free')).toBe(false);
+    expect(isKnownLegacyAiModel('openrouter', 'meta-llama/llama-3.3-70b-instruct:free')).toBe(true);
   });
 
   it('validiert AI_PROVIDER fail-closed statt unbekannte Werte zu casten', () => {

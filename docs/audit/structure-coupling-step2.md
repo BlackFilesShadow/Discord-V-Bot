@@ -54,7 +54,6 @@ main (src/index.ts)
 ready (src/events/ready.ts)
   restoreAllFeeds (leaderboard)
   startAuditLogRetentionScheduler
-  startProviderCooldownSync (AI providerStats hydrate)
   startMemberSyncScheduler
   startLeaveCleanupWorker
 
@@ -244,6 +243,7 @@ Interactive:
     → provider stack (modelRegistry, providerStats, providerFailure, …)
 
 Background (startAiBackgroundLoops):
+  providerStats cooldown hydrate + periodic sync
   guildAwareness bootstrap + content sync
   embeddings check + backfill (best-effort)
   conversationMemory cleanup

@@ -26,15 +26,15 @@ describe('AI provider capability registry', () => {
     expect(taskAffinity('cerebras', 'gpt-oss-120b', 'fast')).toBeGreaterThan(1);
   });
 
-  it('kennt den kanonischen OpenRouter-Llama-Fallback als Chat/Long-Context Modell', () => {
-    const model = 'meta-llama/llama-3.3-70b-instruct:free';
+  it('kennt den kanonischen OpenRouter-Free-Router als promptbasierten Fallback', () => {
+    const model = 'openrouter/free';
     const p = getProviderCapabilityProfile('openrouter', model);
     expect(p.knownModel).toBe(true);
     expect(providerSupportsTask('openrouter', model, 'chat')).toBe(true);
     expect(providerSupportsTask('openrouter', model, 'fast')).toBe(true);
     expect(providerSupportsTask('openrouter', model, 'long_context')).toBe(true);
-    expect(providerSupportsTask('openrouter', model, 'structured')).toBe(false);
-    expect(providerSupportsTask('openrouter', model, 'reasoning')).toBe(false);
+    expect(providerSupportsTask('openrouter', model, 'structured')).toBe(true);
+    expect(providerSupportsTask('openrouter', model, 'reasoning')).toBe(true);
     expect(providerSupportsTask('openrouter', model, 'tool')).toBe(false);
   });
 

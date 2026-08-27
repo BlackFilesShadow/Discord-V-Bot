@@ -10,6 +10,12 @@ const DISPLAY_ALIASES: Readonly<Record<string, string>> = {
   winchester: 'Winchester70',
   kampfstiefel: 'CombatBoots',
   combatboots: 'CombatBoots',
+  kampfanzugshose: 'TTSKOPants',
+  kampfanzughose: 'TTSKOPants',
+  kampfhose: 'TTSKOPants',
+  combatpants: 'TTSKOPants',
+  bduhose: 'BDUPants',
+  bdupants: 'BDUPants',
   feldrucksack: 'AliceBag',
   feldrucksaecke: 'AliceBag',
   alicebag: 'AliceBag',
@@ -202,7 +208,9 @@ function fullIndexCandidates(cleaned: string): string[] {
     const source = name
       .replace(/([a-z0-9])([A-Z])/g, '$1 $2')
       .replace(/[_-]+/g, ' ');
-    const tokens = fold(source).split(/[^a-z0-9]+/).filter(Boolean);
+    // Kurze technische Fragmente sind nicht semantisch. Insbesondere darf das
+    // einzelne "K" aus MP5K nicht zu jedem deutschen Wort mit K passen.
+    const tokens = fold(source).split(/[^a-z0-9]+/).filter(token => token.length >= 3);
     let score = 0;
     for (const q of queryTokens) {
       const exact = tokens.some(token => token === q);

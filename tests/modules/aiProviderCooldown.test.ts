@@ -19,6 +19,7 @@ jest.mock('../../src/database/prisma', () => ({
     aiProviderStat: {
       update: jest.fn().mockResolvedValue({}),
       create: jest.fn().mockResolvedValue({}),
+      upsert: jest.fn().mockResolvedValue({}),
       updateMany: jest.fn().mockResolvedValue({ count: 0 }),
     },
   },

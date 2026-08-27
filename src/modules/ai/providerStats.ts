@@ -61,9 +61,24 @@ export function getConfiguredModel(p: ProviderName): string {
 
 interface CooldownState { until: number; consecutive: number }
 const cooldowns = new Map<ProviderName, CooldownState>();
+const pendingCooldownWrites = new Map<ProviderName, number>();
 const COOLDOWN_BASE_MS = 30_000;
 const COOLDOWN_MAX_MS = 300_000;
 const UNAVAILABLE_COOLDOWN_MS = 15 * 60_000;
+
+function beginCooldownWrite(provider: ProviderName): void {
+  pendingCooldownWrites.set(provider, (pendingCooldownWrites.get(provider) ?? 0) + 1);
+}
+
+function endCooldownWrite(provider: ProviderName): void {
+  const remaining = (pendingCooldownWrites.get(provider) ?? 1) - 1;
+  if (remaining > 0) pendingCooldownWrites.set(provider, remaining);
+  else pendingCooldownWrites.delete(provider);
+}
+
+function hasPendingCooldownWrite(provider: ProviderName): boolean {
+  return (pendingCooldownWrites.get(provider) ?? 0) > 0;
+}
 
 export async function hydrateCooldownsFromDb(): Promise<void> {
   try {
@@ -78,20 +93,28 @@ export async function hydrateCooldownsFromDb(): Promise<void> {
       if (!ALL_PROVIDERS.includes(r.provider as ProviderName)) continue;
       if (!r.cooldownUntil) continue;
       const provider = r.provider as ProviderName;
+      seen.add(provider);
+      // Ein lokales Call-Ergebnis ist neuer als dieser gerade gelesene
+      // Snapshot. Bis sein atomarer DB-Upsert beendet ist, darf der Sync weder
+      // einen alten Cooldown reaktivieren noch einen neuen lokal loeschen.
+      if (hasPendingCooldownWrite(provider)) continue;
       const until = r.cooldownUntil.getTime();
       if (now >= until) {
         expiredProviders.push(provider);
-        if ((cooldowns.get(provider)?.until ?? 0) <= now) cooldowns.delete(provider);
+        cooldowns.delete(provider);
         continue;
       }
       cooldowns.set(provider, {
         until,
         consecutive: r.cooldownStreak ?? 1,
       });
-      seen.add(provider);
     }
-    for (const [p, state] of cooldowns) {
-      if (!seen.has(p) && state.until <= now) cooldowns.delete(p);
+    for (const [p] of cooldowns) {
+      // Fehlt ein Provider im DB-Snapshot, wurde sein Circuit ggf. von einer
+      // anderen Bot-Instanz nach Erfolg geloescht. Die DB ist nach Abschluss
+      // lokaler Writes die kanonische Quelle, auch wenn der lokale Timer noch
+      // nicht abgelaufen ist.
+      if (!seen.has(p) && !hasPendingCooldownWrite(p)) cooldowns.delete(p);
     }
     if (expiredProviders.length > 0) {
       await prisma.aiProviderStat.updateMany({
@@ -108,19 +131,37 @@ export async function hydrateCooldownsFromDb(): Promise<void> {
 }
 
 let syncTimer: NodeJS.Timeout | null = null;
-export function scheduleProviderCooldownSync(intervalMs = 60_000): void {
+let syncStart: Promise<void> | null = null;
+let syncGeneration = 0;
+
+export async function scheduleProviderCooldownSync(intervalMs = 60_000): Promise<void> {
   if (syncTimer) return;
-  void hydrateCooldownsFromDb();
-  syncTimer = setInterval(() => { void hydrateCooldownsFromDb(); }, intervalMs);
-  syncTimer.unref?.();
+  if (syncStart) return syncStart;
+
+  const generation = syncGeneration;
+  const start = (async () => {
+    await hydrateCooldownsFromDb();
+    // stopProviderCooldownSync kann waehrend der initialen DB-Abfrage laufen.
+    // Danach darf kein verwaister Timer mehr neu entstehen.
+    if (generation !== syncGeneration || syncTimer) return;
+    syncTimer = setInterval(() => { void hydrateCooldownsFromDb(); }, intervalMs);
+    syncTimer.unref?.();
+  })();
+  syncStart = start;
+  try {
+    await start;
+  } finally {
+    if (syncStart === start) syncStart = null;
+  }
 }
 
 export function stopProviderCooldownSync(): void {
+  syncGeneration += 1;
   if (syncTimer) clearInterval(syncTimer);
   syncTimer = null;
 }
 
-export function markRateLimited(provider: ProviderName, retryAfterMs?: number): number {
+function applyRateLimitedCooldown(provider: ProviderName, retryAfterMs?: number): CooldownState & { durationMs: number } {
   const prev = cooldowns.get(provider);
   const consecutive = (prev?.consecutive ?? 0) + 1;
   const backoff = Math.min(COOLDOWN_BASE_MS * Math.pow(2, consecutive - 1), COOLDOWN_MAX_MS);
@@ -130,8 +171,13 @@ export function markRateLimited(provider: ProviderName, retryAfterMs?: number): 
   const until = Date.now() + ms;
   cooldowns.set(provider, { until, consecutive });
   logger.info(`providerStats: ${provider} cooldown ${Math.round(ms / 1000)}s (${consecutive}x 429 in Folge)`);
-  persistCooldown(provider, until, '429_rate_limit', consecutive);
-  return ms;
+  return { until, consecutive, durationMs: ms };
+}
+
+export function markRateLimited(provider: ProviderName, retryAfterMs?: number): number {
+  const state = applyRateLimitedCooldown(provider, retryAfterMs);
+  persistCooldown(provider, state.until, '429_rate_limit', state.consecutive);
+  return state.durationMs;
 }
 
 export function markProviderUnavailable(provider: ProviderName, reason: string): void {
@@ -143,16 +189,14 @@ export function markProviderUnavailable(provider: ProviderName, reason: string):
 }
 
 function persistCooldown(provider: ProviderName, until: number, reason: string, streak: number): void {
-  void prisma.aiProviderStat.update({
+  beginCooldownWrite(provider);
+  void prisma.aiProviderStat.upsert({
     where: { provider },
-    data: { cooldownUntil: new Date(until), cooldownReason: reason, cooldownStreak: streak },
+    update: { cooldownUntil: new Date(until), cooldownReason: reason, cooldownStreak: streak },
+    create: { provider, cooldownUntil: new Date(until), cooldownReason: reason, cooldownStreak: streak },
   }).catch((e: unknown) => {
-    if ((e as { code?: string }).code === 'P2025') {
-      void prisma.aiProviderStat.create({
-        data: { provider, cooldownUntil: new Date(until), cooldownReason: reason, cooldownStreak: streak },
-      }).catch(() => { /* ignore secondary error */ });
-    }
-  });
+    logger.warn(`providerStats.persistCooldown fehlgeschlagen: ${String(e)}`);
+  }).finally(() => endCooldownWrite(provider));
 }
 
 function clearCooldownInMemory(provider: ProviderName): void {
@@ -161,10 +205,12 @@ function clearCooldownInMemory(provider: ProviderName): void {
 
 export function clearCooldown(provider: ProviderName): void {
   clearCooldownInMemory(provider);
+  beginCooldownWrite(provider);
   void prisma.aiProviderStat.updateMany({
     where: { provider, cooldownUntil: { not: null } },
     data: { cooldownUntil: null, cooldownReason: null, cooldownStreak: 0 },
-  }).catch(() => { /* ignore */ });
+  }).catch(() => { /* ignore */ })
+    .finally(() => endCooldownWrite(provider));
 }
 
 export function isOnCooldown(provider: ProviderName): boolean {
@@ -223,8 +269,11 @@ export async function recordCall(
     logger.warn(`providerStats.recordCall observability fehlgeschlagen: ${String(e)}`);
   }
 
+  let rateLimitState: (CooldownState & { durationMs: number }) | null = null;
   if (outcome === 'success') clearCooldownInMemory(provider);
-  if (outcome === 'rateLimit') markRateLimited(provider, opts?.retryAfterMs);
+  if (outcome === 'rateLimit') rateLimitState = applyRateLimitedCooldown(provider, opts?.retryAfterMs);
+  const writesCooldown = outcome === 'success' || outcome === 'rateLimit';
+  if (writesCooldown) beginCooldownWrite(provider);
   try {
     const now = new Date();
     const data: Record<string, unknown> = {};
@@ -239,6 +288,9 @@ export async function recordCall(
       data.rateLimitCount = { increment: 1 };
       data.lastFailureAt = now;
       data.lastError = (error || '429 Rate Limit').slice(0, 500);
+      data.cooldownUntil = new Date(rateLimitState!.until);
+      data.cooldownReason = '429_rate_limit';
+      data.cooldownStreak = rateLimitState!.consecutive;
     } else {
       data.failureCount = { increment: 1 };
       data.lastFailureAt = now;
@@ -256,10 +308,15 @@ export async function recordCall(
         lastSuccessAt: outcome === 'success' ? now : null,
         lastFailureAt: outcome !== 'success' ? now : null,
         lastError: outcome !== 'success' ? (error || '').slice(0, 500) : null,
+        cooldownUntil: outcome === 'rateLimit' ? new Date(rateLimitState!.until) : null,
+        cooldownReason: outcome === 'rateLimit' ? '429_rate_limit' : null,
+        cooldownStreak: outcome === 'rateLimit' ? rateLimitState!.consecutive : 0,
       },
     });
   } catch (e) {
     logger.warn(`providerStats.recordCall fehlgeschlagen: ${String(e)}`);
+  } finally {
+    if (writesCooldown) endCooldownWrite(provider);
   }
 }
 

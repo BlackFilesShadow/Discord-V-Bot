@@ -54,14 +54,15 @@ export function getProviderCapabilityProfile(provider: ProviderName, rawModel: s
     };
   }
 
-  // Kanonischer OpenRouter-Fallback aus modelRegistry: offizieller Modellpfad
-  // mit 131k Kontext. Bewusst nur die belegten textbasierten Faehigkeiten
-  // freigeben; structured/reasoning/tool bleiben fuer OpenRouter fail-closed.
-  if (provider === 'openrouter' && lower === 'meta-llama/llama-3.3-70b-instruct:free') {
+  // Offizieller dynamischer Free-Router. OpenRouter filtert seine aktuell
+  // verfuegbaren Gratis-Modelle anhand der Request-Anforderungen. Fuer V-Bots
+  // promptbasierte JSON-/DayZ-Aufgaben ist er deshalb ein zulässiger letzter
+  // Fallback; native Tool-Ausfuehrung bleibt bewusst gesperrt.
+  if (provider === 'openrouter' && lower === 'openrouter/free') {
     return {
       provider, model,
-      capabilities: caps('chat', 'fast', 'long_context'),
-      affinity: { fast: 1.04, long_context: 1.04 },
+      capabilities: caps('chat', 'fast', 'structured', 'reasoning', 'long_context'),
+      affinity: { fast: 1.02, long_context: 1.02 },
       knownModel: true,
     };
   }

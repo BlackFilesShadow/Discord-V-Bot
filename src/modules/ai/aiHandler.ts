@@ -31,8 +31,8 @@ import { requireStage48LoopbackUrl } from '../../utils/stage48Loopback';
 import { answerDayz129CatalogQuestion } from './dayz129Catalog';
 import {
   classifyAiConversationDomain,
+  filterCompatibleMemoryTurns,
   isDayzConversationDomain,
-  isMemoryTurnCompatible,
   mayUseExternalConversationContext,
 } from './conversationIntent';
 import {
@@ -377,7 +377,7 @@ export async function answerQuestion(
       try {
         const { getRecentTurns } = await import('./conversationMemory.js');
         const rawMemory = await getRecentTurns(opts.userId!, opts.channelId!, opts.guildId ?? null);
-        memoryTurns = rawMemory.filter(turn => isMemoryTurnCompatible(question, turn.content));
+        memoryTurns = filterCompatibleMemoryTurns(question, rawMemory);
         if (memoryTurns.length < rawMemory.length) {
           logger.info(`[AI-Context-Isolation] ${rawMemory.length - memoryTurns.length} domainfremde Memory-Turn(s) verworfen (domain=${domain})`);
         }

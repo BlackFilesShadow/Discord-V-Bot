@@ -37,6 +37,7 @@ import {
   getCooldownRemainingMs,
   hydrateCooldownsFromDb,
   isOnCooldown,
+  markRateLimited,
   recordCall,
 } from '../../src/modules/ai/providerStats';
 
@@ -48,8 +49,10 @@ const stats = prisma.aiProviderStat as unknown as {
   upsert: jest.Mock;
 };
 
-beforeEach(() => {
+beforeEach(async () => {
   for (const provider of ALL_PROVIDERS) clearCooldown(provider);
+  await Promise.resolve();
+  await Promise.resolve();
   jest.clearAllMocks();
 });
 
@@ -68,6 +71,11 @@ describe('AI provider circuit-breaker restart lifecycle', () => {
   });
 
   it('bereinigt abgelaufene persistente Cooldowns statt stale DB-Zustand mitzuschleppen', async () => {
+    markRateLimited('cerebras', 120_000);
+    await Promise.resolve();
+    await Promise.resolve();
+    expect(isOnCooldown('cerebras')).toBe(true);
+
     const expired = new Date(Date.now() - 5_000);
     stats.findMany.mockResolvedValue([
       { provider: 'cerebras', cooldownUntil: expired, cooldownStreak: 4 },
@@ -101,6 +109,40 @@ describe('AI provider circuit-breaker restart lifecycle', () => {
     }));
     // recordCall(success) darf nicht auf einen vorher vorhandenen In-Memory-Circuit angewiesen sein.
     expect(stats.updateMany).not.toHaveBeenCalled();
+  });
+
+  it('persistiert 429-Circuit und Statistik gemeinsam in genau einem Upsert', async () => {
+    await recordCall('groq', 'rateLimit', 87, 'HTTP 429', { retryAfterMs: 45_000 });
+
+    expect(stats.upsert).toHaveBeenCalledTimes(1);
+    expect(stats.upsert).toHaveBeenCalledWith(expect.objectContaining({
+      where: { provider: 'groq' },
+      update: expect.objectContaining({
+        rateLimitCount: { increment: 1 },
+        cooldownUntil: expect.any(Date),
+        cooldownReason: '429_rate_limit',
+        cooldownStreak: 1,
+      }),
+      create: expect.objectContaining({
+        provider: 'groq',
+        rateLimitCount: 1,
+        cooldownUntil: expect.any(Date),
+        cooldownReason: '429_rate_limit',
+        cooldownStreak: 1,
+      }),
+    }));
+  });
+
+  it('uebernimmt einen von einer anderen Instanz geloeschten DB-Circuit sofort', async () => {
+    markRateLimited('cerebras', 120_000);
+    await Promise.resolve();
+    await Promise.resolve();
+    expect(isOnCooldown('cerebras')).toBe(true);
+
+    stats.findMany.mockResolvedValue([]);
+    await hydrateCooldownsFromDb();
+
+    expect(isOnCooldown('cerebras')).toBe(false);
   });
 
   it('clearCooldown bereinigt persistent auch wenn lokal kein Circuit mehr existiert', () => {

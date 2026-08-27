@@ -27,7 +27,7 @@ export async function startAiBackgroundLoops(client: Client): Promise<void> {
     // beim AI-Lifecycle aus der DB hydriert und anschliessend synchron gehalten
     // werden, damit Restart/Multi-Instance nicht erneut in bekannte 429-/Model-
     // Fehler laeuft.
-    scheduleProviderCooldownSync();
+    await scheduleProviderCooldownSync();
 
     // AI-18: fail-closed production tool registry must be live before chat loops.
     // No destructive tools are registered; LLM proposals only execute via toolRuntime.
