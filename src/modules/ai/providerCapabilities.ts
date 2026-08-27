@@ -42,6 +42,18 @@ export function getProviderCapabilityProfile(provider: ProviderName, rawModel: s
     };
   }
 
+  // Kanonischer OpenRouter-Fallback aus modelRegistry: offizieller Modellpfad
+  // mit 131k Kontext. Bewusst nur die belegten textbasierten Faehigkeiten
+  // freigeben; structured/reasoning/tool bleiben fuer OpenRouter fail-closed.
+  if (provider === 'openrouter' && lower === 'meta-llama/llama-3.3-70b-instruct:free') {
+    return {
+      provider, model,
+      capabilities: caps('chat', 'fast', 'long_context'),
+      affinity: { fast: 1.04, long_context: 1.04 },
+      knownModel: true,
+    };
+  }
+
   if (provider === 'gemini' && (lower === 'gemini-3.7-flash' || lower === 'gemini-3.6-flash')) {
     return {
       provider, model,
@@ -85,11 +97,13 @@ export function taskAffinity(provider: ProviderName, model: string, task: AiTask
  * Later system messages can contain server/RAG/web/user-derived context and must
  * never be able to steer provider selection. DayZ technical routing is supplied
  * explicitly by answerQuestion via the internal AI_TASK_PROFILE marker.
+ *
+ * Long-context routing is based on the actual conversation payload, not on
+ * injected system/persona/web blocks. Otherwise a short fact question can be
+ * promoted to long_context merely because V-Bot adds a large system prompt,
+ * which incorrectly removes chat-capable fallback providers.
  */
 export function inferAiTaskProfile(messages: Array<{ role: string; content: string }>): AiTaskProfile {
-  const chars = messages.reduce((sum, m) => sum + String(m.content || '').length, 0);
-  if (chars >= 24_000) return 'long_context';
-
   const firstSystem = String(messages.find((m) => m.role === 'system')?.content || '').toLowerCase();
   if (/^ai_task_profile:\s*reasoning\b/.test(firstSystem)) return 'reasoning';
   if (/ausschliesslich[^\n]{0,160}json|ausschließlich[^\n]{0,160}json|response[_ -]?format|json schema/.test(firstSystem)) {
@@ -101,5 +115,11 @@ export function inferAiTaskProfile(messages: Array<{ role: string; content: stri
   if (/analysiere den kontext|moderationshinweis|erfahrener discord-moderator|reasoning task/.test(firstSystem)) {
     return 'reasoning';
   }
+
+  const conversationChars = messages
+    .filter((m) => m.role !== 'system')
+    .reduce((sum, m) => sum + String(m.content || '').length, 0);
+  if (conversationChars >= 24_000) return 'long_context';
+
   return 'chat';
 }
