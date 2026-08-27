@@ -1,3 +1,7 @@
+import prisma from '../../database/prisma';
+import { config } from '../../config';
+import { identityHash } from '../linking/identity';
+import { hasOpenLeaveCleanupRequest } from '../moderation/leaveCleanupGuard';
 import {
   withNitradoOutboxConnectionLock,
   withNitradoOutboxSubjectLock,
@@ -15,6 +19,16 @@ export type WhitelistOutboxClient = NitradoOutboxClient;
 export interface WhitelistOutboxScope {
   guildId: string;
   nitradoConnId: string;
+}
+
+export class WhitelistAddBlockedByLeaveCleanupError extends Error {
+  readonly status = 409;
+  readonly code = 'LEAVE_CLEANUP_PENDING';
+
+  constructor() {
+    super('Dieser Spieler kann erst wieder auf die Whitelist gesetzt werden, wenn sein vorheriger Austritts-Cleanup erfolgreich abgeschlossen ist.');
+    this.name = 'WhitelistAddBlockedByLeaveCleanupError';
+  }
 }
 
 function norm(value: string): string {
@@ -37,6 +51,56 @@ function jobPayload(operation: WhitelistJobOperation, gameId: string): Record<st
     return { gameId, removeSafetyIntent: WHITELIST_REMOVE_SAFETY_INTENT };
   }
   return { gameId };
+}
+
+/**
+ * Ein alter Leave-Cleanup darf nach bereits abgeschlossenem WHITELIST-Step
+ * nicht durch einen Rejoin + erneutes ADD unterlaufen werden. Der Guard sitzt
+ * zentral vor JEDEM WHITELIST_ADD-Outbox-Intent, damit Dashboard, Buttons,
+ * Commands und interne Caller dieselbe Invariante teilen.
+ *
+ * Die Zuordnung bleibt fail-closed gegen Fremdloeschungen: Ein Name blockiert
+ * nur dann, wenn vorhandene Session-Evidenz -> GUID-HMAC -> VERIFIED Link exakt
+ * auf einen Discord-User mit offenem Cleanup in derselben Guild/Connection zeigt.
+ */
+async function assertNoOpenLeaveCleanupForWhitelistAdd(
+  scope: WhitelistOutboxScope,
+  gameId: string,
+): Promise<void> {
+  const sessions = await prisma.playerSession.findMany({
+    where: {
+      guildId: scope.guildId,
+      nitradoConnId: scope.nitradoConnId,
+      playerName: { equals: gameId, mode: 'insensitive' },
+    },
+    select: { gameId: true },
+    distinct: ['gameId'],
+  });
+  if (sessions.length === 0) return;
+
+  const hashes = Array.from(new Set(
+    sessions
+      .map(session => session.gameId?.trim())
+      .filter((value): value is string => Boolean(value))
+      .map(rawGameId => identityHash(rawGameId, config.security.encryptionKey)),
+  ));
+  if (hashes.length === 0) return;
+
+  const links = await prisma.gameIdentityLink.findMany({
+    where: {
+      guildId: scope.guildId,
+      nitradoConnId: scope.nitradoConnId,
+      status: 'VERIFIED',
+      identityHash: { in: hashes },
+    },
+    select: { userDiscordId: true },
+  });
+
+  for (const discordId of new Set(links.map(link => link.userDiscordId))) {
+    if (await hasOpenLeaveCleanupRequest(scope.guildId, discordId)) {
+      throw new WhitelistAddBlockedByLeaveCleanupError();
+    }
+  }
 }
 
 async function ensureWhitelistJobInLock(
@@ -96,6 +160,9 @@ export async function enqueueWhitelistJob(
 ): Promise<boolean> {
   const gameId = rawGameId.trim();
   if (!gameId) throw new Error('Whitelist-Outbox: leerer Gameserver-Identifier.');
+  if (operation === 'WHITELIST_ADD') {
+    await assertNoOpenLeaveCleanupForWhitelistAdd(scope, gameId);
+  }
   const normalizedGameId = norm(gameId);
   const lockSubject = [
     'nitrado-whitelist-outbox:v1',

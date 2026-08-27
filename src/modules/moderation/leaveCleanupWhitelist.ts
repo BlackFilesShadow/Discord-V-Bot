@@ -52,6 +52,8 @@ type RemoteWhitelistRead = {
   identifiers: string[];
 };
 
+const SESSION_PAGE_SIZE = 1000;
+
 function norm(value: string): string {
   return value.trim().toLocaleLowerCase('en-US');
 }
@@ -89,18 +91,32 @@ async function trustedNamesForLink(
   nitradoConnId: string,
   linkHash: string,
 ): Promise<Set<string>> {
-  const sessions = await prisma.playerSession.findMany({
-    where: { guildId, nitradoConnId },
-    select: { gameId: true, playerName: true },
-    orderBy: { connectedAt: 'desc' },
-    take: 5000,
-  });
-
   const trusted = new Set<string>();
-  for (const session of sessions) {
-    if (!session.gameId || identityHash(session.gameId, config.security.encryptionKey) !== linkHash) continue;
-    if (session.playerName?.trim()) trusted.add(norm(session.playerName));
+  let cursor: string | undefined;
+
+  // Die Whitelist-Zuordnung darf nicht von einem willkuerlichen "letzte 5000"
+  // Fenster abhaengen. Ein lange inaktiver, aber weiterhin verifiziert gelinkter
+  // Spieler muss auch auf grossen Servern sicher gefunden werden. Deshalb wird
+  // die komplette Session-Historie stabil und speicherschonend paginiert.
+  for (;;) {
+    const page = await prisma.playerSession.findMany({
+      where: { guildId, nitradoConnId },
+      select: { id: true, gameId: true, playerName: true },
+      orderBy: { id: 'asc' },
+      take: SESSION_PAGE_SIZE,
+      ...(cursor ? { cursor: { id: cursor }, skip: 1 } : {}),
+    });
+
+    for (const session of page) {
+      if (!session.gameId || identityHash(session.gameId, config.security.encryptionKey) !== linkHash) continue;
+      if (session.playerName?.trim()) trusted.add(norm(session.playerName));
+    }
+
+    if (page.length < SESSION_PAGE_SIZE) break;
+    cursor = page[page.length - 1]?.id;
+    if (!cursor) break;
   }
+
   return trusted;
 }
 

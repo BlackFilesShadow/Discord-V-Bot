@@ -18,6 +18,7 @@ const CONN_ID = 'caaaaaaaaaaaaaaaaaaaaaaaa';
 const jobFindMany = jest.fn().mockResolvedValue([]);
 const jobCreate = jest.fn().mockResolvedValue({});
 const queryRaw = jest.fn().mockResolvedValue([]);
+const playerSessionFindMany = jest.fn().mockResolvedValue([]);
 
 const txStub = {
   $queryRawUnsafe: queryRaw,
@@ -39,6 +40,7 @@ const prismaMock = {
     findFirst: jest.fn().mockResolvedValue({ id: CONN_ID }),
   },
   whitelistEntry: { upsert: jest.fn().mockResolvedValue({}) },
+  playerSession: { findMany: playerSessionFindMany },
   nitradoJob: { findMany: jobFindMany, create: jobCreate },
   whitelistRequest: {
     findFirst: jest.fn().mockResolvedValue({
@@ -127,6 +129,7 @@ beforeEach(() => {
   txStub.whitelistEntry.updateMany.mockResolvedValue({ count: 1 });
   txStub.whitelistEntry.create.mockResolvedValue({});
   txStub.whitelistEntry.upsert.mockResolvedValue({});
+  playerSessionFindMany.mockResolvedValue([]);
   jobFindMany.mockResolvedValue([]);
   jobCreate.mockResolvedValue({});
   queryRaw.mockResolvedValue([]);

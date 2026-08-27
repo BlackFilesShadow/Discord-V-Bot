@@ -150,8 +150,11 @@ const guildMemberAddEvent: BotEvent = {
       try {
         const wcfg = await getWelcomeConfig(m.guild.id);
         if (wcfg && wcfg.enabled && wcfg.channelId) {
-          const channel = m.guild.channels.cache.get(wcfg.channelId) as TextChannel | undefined;
-          if (channel?.isTextBased()) {
+          // Nicht nur den Cache verwenden: ein gueltig konfigurierter Channel
+          // darf nach Cache-Eviction/Shard-Refresh nicht still ausfallen.
+          const fetchedChannel = await m.guild.channels.fetch(wcfg.channelId).catch(() => null);
+          if (fetchedChannel?.isTextBased() && !fetchedChannel.isDMBased()) {
+            const channel = fetchedChannel as TextChannel;
             const userMention = `<@${m.user.id}>`;
             const memberCount = m.guild.memberCount;
 

@@ -9,7 +9,7 @@ import {
   type Message,
 } from 'discord.js';
 import prisma from '../../database/prisma';
-import { renderTemplate } from '../ai/triggers';
+import { config } from '../../config';
 import { safeSend } from '../../utils/safeSend';
 
 /**
@@ -153,16 +153,41 @@ export async function disableWelcome(guildId: string, updatedBy: string): Promis
  * Mention-Platzhalter ist ausschliesslich `vars.mention` die kanonische Quelle.
  */
 export function renderWelcomeMessage(message: string, vars: { user: string; mention: string; guild: string; memberCount: number }): string {
-  return renderTemplate(message, { user: vars.mention })
+  const now = new Date();
+  const date = new Intl.DateTimeFormat('de-DE', { dateStyle: 'long', timeZone: 'Europe/Berlin' }).format(now);
+  const time = new Intl.DateTimeFormat('de-DE', { timeStyle: 'short', timeZone: 'Europe/Berlin' }).format(now);
+  const calendarParts = Object.fromEntries(
+    new Intl.DateTimeFormat('en-CA', {
+      timeZone: 'Europe/Berlin', year: 'numeric', month: 'numeric', day: 'numeric',
+    }).formatToParts(now).map(part => [part.type, part.value]),
+  );
+  const year = calendarParts.year ?? '';
+  const month = calendarParts.month ? String(Number(calendarParts.month)) : '';
+  const day = calendarParts.day ? String(Number(calendarParts.day)) : '';
+
+  return message
+    .replace(/\{user\}/g, vars.mention)
     .replace(/\{mention\}/g, vars.mention)
+    .replace(/\{channel\}/g, '')
     .replace(/\{guild\}/g, vars.guild)
     .replace(/\{count\}/g, String(vars.memberCount))
-    .replace(/\{member_count\}/g, String(vars.memberCount));
+    .replace(/\{member_count\}/g, String(vars.memberCount))
+    .replace(/\{date\}/g, date)
+    .replace(/\{time\}/g, time)
+    .replace(/\{year\}/g, year)
+    .replace(/\{month\}/g, month)
+    .replace(/\{day\}/g, day);
 }
 
 export function resolveWelcomeMediaSource(mediaUrl: string): string {
   if (mediaUrl.startsWith('/uploads/')) {
-    return path.join(process.cwd(), mediaUrl.replace(/^\/+/, ''));
+    const relative = mediaUrl.replace(/^\/uploads\//, '');
+    const base = path.resolve(config.upload.dir);
+    const resolved = path.resolve(base, relative);
+    if (resolved !== base && !resolved.startsWith(base + path.sep)) {
+      throw new Error('Ungueltiger lokaler Willkommensmedien-Pfad.');
+    }
+    return resolved;
   }
   return mediaUrl;
 }
