@@ -95,6 +95,19 @@ describe('Goodbye-1 guild-scoped identity and delivery', () => {
     expect(identity.mention).toBe('<@222>');
   });
 
+  it('never promotes a raw Discord snowflake into username/displayName', () => {
+    const snowflake = '1'.repeat(18);
+    const identity = resolveGoodbyeIdentity(
+      { discordId: snowflake, username: snowflake, nickname: null },
+      { username: snowflake, nickname: snowflake },
+    );
+
+    expect(identity.username).toBe('Discord-Nutzer');
+    expect(identity.nickname).toBe('Discord-Nutzer');
+    expect(identity.displayName).toBe('Discord-Nutzer');
+    expect(identity.mention).toBe(`<@${snowflake}>`);
+  });
+
   it('loads the last known identity from exactly guildId + discordId', async () => {
     mockGetMemberProfile.mockResolvedValue({ username: 'StoredName', nickname: 'StoredNick' });
     const member = {
@@ -124,7 +137,8 @@ describe('Goodbye-1 guild-scoped identity and delivery', () => {
     expect(rendered).not.toContain('<@333>');
   });
 
-  it('shows the readable Discord name and keeps Eintrittsdatum before Austrittsdatum', async () => {
+  it('renders the safely resolved user mention inside the stable member block', async () => {
+    const discordId = '2'.repeat(18);
     mockFindUnique.mockResolvedValue({
       value: { enabled: true, channelId: '12345678901234567', message: 'Bye {user} {mention}' },
     });
@@ -140,13 +154,13 @@ describe('Goodbye-1 guild-scoped identity and delivery', () => {
         memberCount: 41,
         channels: { fetch: jest.fn().mockResolvedValue({ ...channel, isTextBased: () => true, isDMBased: () => false }) },
       },
-      user: { id: 'discord-1', username: 'GatewayName' },
+      user: { id: discordId, username: 'GatewayName' },
       nickname: 'GatewayNick',
       joinedAt,
     } as any;
 
     await expect(sendConfiguredGoodbye(member, { leaveOccurredAt, cleanupEnabled: false })).resolves.toBe('sent');
-    expect(mockGetMemberProfile).toHaveBeenCalledWith('guild-a', 'discord-1');
+    expect(mockGetMemberProfile).toHaveBeenCalledWith('guild-a', discordId);
     expect(send).toHaveBeenCalledTimes(1);
     const payload = send.mock.calls[0][0];
     expect(payload.allowedMentions).toEqual({ parse: [] });
@@ -155,23 +169,15 @@ describe('Goodbye-1 guild-scoped identity and delivery', () => {
       title: '👋 Bye Bye',
       description: 'Bye StoredNick',
     });
-    expect(json.fields?.slice(0, 5).map((field: { name: string }) => field.name)).toEqual([
-      'Discord-Name',
-      'Status',
-      'Eintrittsdatum',
-      'Austrittsdatum',
-      'Uhrzeit',
-    ]);
-    expect(json.fields).toEqual(expect.arrayContaining([
-      expect.objectContaining({ name: 'Discord-Name', value: 'StoredNick' }),
-      expect.objectContaining({ name: 'Status', value: 'Server verlassen' }),
-      expect.objectContaining({ name: 'Eintrittsdatum', value: '27. April 2025' }),
-      expect.objectContaining({ name: 'Austrittsdatum', value: '25. August 2026' }),
-      expect.objectContaining({ name: 'Uhrzeit' }),
-    ]));
-    expect(json.description).not.toContain('<@discord-1>');
+    expect(json.fields).toHaveLength(1);
+    expect(json.fields?.[0]).toMatchObject({ name: '👤 Mitglied', inline: false });
+    expect(json.fields?.[0].value).toContain(`**Discord:** <@${discordId}>`);
+    expect(json.fields?.[0].value).toContain('**Status:** Server verlassen');
+    expect(json.fields?.[0].value).toContain('**Beigetreten:** 27. April 2025');
+    expect(json.fields?.[0].value).toContain('**Ausgetreten:** 25. August 2026');
+    expect(json.description).not.toContain(discordId);
     expect(mockGoodbyeCreate).toHaveBeenCalledWith(expect.objectContaining({
-      data: expect.objectContaining({ joinedAt, leaveOccurredAt }),
+      data: expect.objectContaining({ joinedAt, leaveOccurredAt, discordName: 'StoredNick' }),
     }));
     expect(mockGoodbyeUpdateMany).toHaveBeenCalledWith(expect.objectContaining({
       data: expect.objectContaining({ messageId: 'message-1', state: 'SENT' }),
@@ -179,6 +185,7 @@ describe('Goodbye-1 guild-scoped identity and delivery', () => {
   });
 
   it('still sends the independent Goodbye when cleanup identity lookup fails', async () => {
+    const discordId = '3'.repeat(18);
     mockFindUnique.mockResolvedValue({
       value: { enabled: true, channelId: '12345678901234567', message: 'Bye {user}' },
     });
@@ -190,7 +197,7 @@ describe('Goodbye-1 guild-scoped identity and delivery', () => {
         id: 'guild-a', name: 'Guild A', memberCount: 40,
         channels: { fetch: jest.fn().mockResolvedValue({ send, isTextBased: () => true, isDMBased: () => false }) },
       },
-      user: { id: 'discord-1', username: 'GatewayName' },
+      user: { id: discordId, username: 'GatewayName' },
       nickname: null,
     } as any;
 
@@ -202,12 +209,7 @@ describe('Goodbye-1 guild-scoped identity and delivery', () => {
 
     expect(send).toHaveBeenCalledTimes(1);
     const json = send.mock.calls[0][0].embeds[0].toJSON();
-    expect(json.fields).toEqual(expect.arrayContaining([
-      expect.objectContaining({ name: 'Discord-Name', value: 'StoredUser' }),
-      expect.objectContaining({ name: 'Status', value: 'Server verlassen' }),
-      expect.objectContaining({ name: 'Eintrittsdatum', value: 'Unbekannt' }),
-      expect.objectContaining({ name: 'Austrittsdatum' }),
-      expect.objectContaining({ name: 'Whitelist-Status je Gameserver', value: expect.stringContaining('Nicht eindeutig') }),
-    ]));
+    expect(json.fields?.find((field: { name: string }) => field.name === '👤 Mitglied')?.value).toContain(`**Discord:** <@${discordId}>`);
+    expect(json.fields?.find((field: { name: string }) => field.name.includes('Whitelist'))?.value).toContain('Nicht eindeutig');
   });
 });

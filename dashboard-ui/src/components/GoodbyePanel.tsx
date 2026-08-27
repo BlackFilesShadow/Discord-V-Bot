@@ -67,8 +67,8 @@ function renderPreview(template: string): string {
     .replace(/\{user\}/g, 'LetzterNick')
     .replace(/\{username\}/g, 'MaxMustermann')
     .replace(/\{nickname\}/g, 'LetzterNick')
-    // Alte Vorlagen bleiben lesbar; die Mention wird im echten Embed automatisch
-    // im Feld "Discord-Name" angezeigt und nicht mehr in der Nachricht selbst.
+    // Alte Vorlagen bleiben lesbar; die sichere Mention wird im echten Embed
+    // separat im strukturierten Bereich "Mitglied" gerendert.
     .replace(/\{mention\}/g, '')
     .replace(/\{guild\}/g, 'Mein Server')
     .replace(/\{count\}/g, '127')
@@ -175,7 +175,7 @@ export function GoodbyePanel({ guildId, canManage }: { guildId: string; canManag
           <LogOut className="h-5 w-5 text-accent" /> Abschied / Goodbye
         </h2>
         <p className="text-xs text-muted mt-0.5">
-          Sendet beim Austritt ein strukturiertes Embed. Die Discord-Erwähnung steht automatisch im Feld „Discord-Name“ und löst keinen Ping aus.
+          Sendet beim Austritt ein sauber strukturiertes Embed. Eine sicher aufgelöste Discord-Erwähnung steht im Bereich „Mitglied“, löst keinen Ping aus und rohe Discord-IDs werden niemals angezeigt.
         </p>
       </div>
 
@@ -237,7 +237,7 @@ export function GoodbyePanel({ guildId, canManage }: { guildId: string; canManag
               ))}
             </div>
             <p className="text-[11px] text-muted mt-2">
-              Die Discord-Erwähnung muss nicht als Platzhalter eingefügt werden; sie erscheint automatisch anstelle des Namens im Feld „Discord-Name“.
+              Die Discord-Erwähnung muss nicht als Platzhalter eingefügt werden. Sie erscheint nur nach sicherer Discord-Auflösung im Bereich „Mitglied“; andernfalls wird ausschließlich ein lesbarer Name bzw. „Discord-Nutzer“ angezeigt — niemals eine ID-Nummer.
             </p>
           </div>
 
@@ -245,7 +245,7 @@ export function GoodbyePanel({ guildId, canManage }: { guildId: string; canManag
             <p className="text-xs font-medium text-white/90 mb-1">Vorschau</p>
             <p className="text-sm text-white/90 whitespace-pre-wrap break-words">{renderPreview(message) || '—'}</p>
             <p className="text-[11px] text-muted mt-2">
-              Beispiel: letzter Guild-Nickname „LetzterNick“. Gespeicherte Rollen oder Permissions werden für Goodbye niemals als Berechtigungsquelle verwendet.
+              Beispiel: letzter Guild-Nickname „LetzterNick“. Im echten Embed werden Identität, Status sowie Eintritt/Austritt in einer stabilen Mitgliedsgruppe dargestellt.
             </p>
           </div>
 
@@ -256,7 +256,7 @@ export function GoodbyePanel({ guildId, canManage }: { guildId: string; canManag
             </div>
             <div className="rounded-lg border border-border/50 p-2.5">
               <span className="text-white/90 block">Identitätsquelle</span>
-              GuildMemberProfile → letzter Guild-Nickname → Username-Fallback
+              GuildMemberProfile → letzter Guild-Nickname → Discord-Username → sicherer Text-Fallback
             </div>
           </div>
         </div>

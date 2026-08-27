@@ -146,7 +146,7 @@ test.describe('Economy authenticated E2E', () => {
     await expect(page.getByText('Bestellungen & Auslieferung')).toBeVisible();
     await expect(page.getByText(`User ${OTHER_USER}`)).toBeVisible();
     await expect(page.getByText(/2× · 5\.000/)).toBeVisible();
-    await expect(page.getByText('OFFEN')).toBeVisible();
+    await expect(page.getByText('OFFEN', { exact: true })).toBeVisible();
     await expect(page.getByText(/M4A1 × 2/)).toBeVisible();
 
     const currencyInput = page.getByText('Waehrungsname').locator('..').locator('input');

@@ -146,11 +146,14 @@ goodbyeRouter.post('/test', requireGuildPermission('welcome.manage'), async (req
 
   const actorMember = guild.members.cache.get(scope.actorDiscordId)
     ?? await guild.members.fetch(scope.actorDiscordId).catch(() => null);
+  const actorUser = actorMember?.user
+    ?? client.users.cache.get(scope.actorDiscordId)
+    ?? await client.users.fetch(scope.actorDiscordId).catch(() => null);
   const identity = actorMember
     ? await resolveLastKnownGoodbyeIdentity(actorMember)
     : resolveGoodbyeIdentity({
         discordId: scope.actorDiscordId,
-        username: scope.actorDiscordId,
+        username: actorUser?.username ?? 'Discord-Nutzer',
         nickname: null,
       }, null);
 
@@ -168,7 +171,8 @@ goodbyeRouter.post('/test', requireGuildPermission('welcome.manage'), async (req
       content: '🧪 Goodbye-Test',
       embeds: [buildStructuredGoodbyeEmbed({
         discordName: identity.displayName,
-        discordMention: identity.mention,
+        discordMention: actorUser ? identity.mention : undefined,
+        discordMentionResolved: Boolean(actorUser),
         customMessage: finalText,
         joinedAt: actorMember?.joinedAt ?? null,
         leaveOccurredAt,
