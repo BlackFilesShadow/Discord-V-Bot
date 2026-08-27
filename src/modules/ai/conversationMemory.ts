@@ -16,6 +16,9 @@ import { logger } from '../../utils/logger';
  * - TTL: 24h. Aeltere Turns werden beim Read ausgeschlossen + periodisch geloescht.
  * - Cap: max 10 Turns (= 5 Wechsel) pro gescopptem Kontext.
  * - Inhalt wird auf 4000 Zeichen pro Turn beschnitten.
+ * - Writes desselben Scopes werden serialisiert; Reads warten auf bereits
+ *   gestartete Writes. Dadurch kann eine schnelle Folgefrage nicht mehr die
+ *   unmittelbar vorherige Antwort verpassen.
  */
 
 const MAX_TURNS_PER_CONTEXT = 10;
@@ -30,6 +33,52 @@ export interface ConversationTurn {
   content: string;
 }
 
+/**
+ * Nur Prozess-lokale Synchronisation fuer denselben bereits explizit gescoppten
+ * Dialog. Das ist kein zusaetzlicher Datenspeicher; die kanonische Persistenz
+ * bleibt PostgreSQL. Der Key enthaelt ausschliesslich den internen Scope.
+ */
+const pendingWrites = new Map<string, Promise<void>>();
+
+function memoryScopeKey(
+  userId: string,
+  channelId: string,
+  guildId: ConversationGuildScope,
+): string {
+  return `${guildId ?? 'dm'}\u0000${channelId}\u0000${userId}`;
+}
+
+/**
+ * Wartet bis alle bereits gestarteten Writes eines Dialogs abgearbeitet sind.
+ * Nach einem scheinbar leeren Queue-Zustand wird einmal in die Microtask-Queue
+ * yielded. Das faengt den produktiven Aufrufer ab, der User- und Assistant-Turn
+ * direkt nacheinander in einer async Sequenz schreibt.
+ */
+async function waitForPendingWrites(
+  userId: string,
+  channelId: string,
+  guildId: ConversationGuildScope,
+): Promise<void> {
+  const key = memoryScopeKey(userId, channelId, guildId);
+
+  for (let guard = 0; guard < 12; guard++) {
+    const pending = pendingWrites.get(key);
+    if (pending) {
+      await pending.catch(() => undefined);
+      continue;
+    }
+
+    // Der zweite Turn eines Exchanges kann unmittelbar nach Aufloesung des
+    // ersten Promises eingereiht werden. Ein Microtask-Yield verhindert, dass
+    // der Read genau in diese schmale Luecke faellt.
+    await Promise.resolve();
+    if (!pendingWrites.has(key)) return;
+  }
+
+  // Defensiver letzter Wait bei ungewoehnlich langer lokaler Write-Kette.
+  await pendingWrites.get(key)?.catch(() => undefined);
+}
+
 export async function recordTurn(
   userId: string,
   channelId: string,
@@ -39,17 +88,34 @@ export async function recordTurn(
 ): Promise<void> {
   const trimmed = (content || '').trim().slice(0, MAX_CONTENT_PER_TURN);
   if (trimmed.length === 0) return;
-  try {
-    await prisma.aiConversationTurn.create({
-      data: { userId, channelId, guildId, role, content: trimmed },
+
+  const key = memoryScopeKey(userId, channelId, guildId);
+  const previous = pendingWrites.get(key) ?? Promise.resolve();
+
+  const write = previous
+    .catch(() => undefined)
+    .then(async () => {
+      try {
+        await prisma.aiConversationTurn.create({
+          data: { userId, channelId, guildId, role, content: trimmed },
+        });
+      } catch (e) {
+        logger.warn(`conversationMemory.recordTurn fehlgeschlagen: ${String(e)}`);
+      }
     });
-  } catch (e) {
-    logger.warn(`conversationMemory.recordTurn fehlgeschlagen: ${String(e)}`);
+
+  pendingWrites.set(key, write);
+  try {
+    await write;
+  } finally {
+    if (pendingWrites.get(key) === write) pendingWrites.delete(key);
   }
 }
 
 /**
  * Liest History ausschliesslich aus dem explizit angegebenen Guild-/DM-Scope.
+ * Bereits gestartete lokale Writes desselben Scopes werden zuerst abgeschlossen,
+ * damit unmittelbar aufeinanderfolgende Nachrichten konsistenten Kontext sehen.
  */
 export async function getRecentTurns(
   userId: string,
@@ -58,6 +124,8 @@ export async function getRecentTurns(
   limit = MAX_TURNS_PER_CONTEXT,
 ): Promise<ConversationTurn[]> {
   try {
+    await waitForPendingWrites(userId, channelId, guildId);
+
     const cutoff = new Date(Date.now() - TTL_MS);
     const safeLimit = Math.max(1, Math.min(Number.isFinite(limit) ? Math.trunc(limit) : MAX_TURNS_PER_CONTEXT, MAX_TURNS_PER_CONTEXT));
     const rows = await prisma.aiConversationTurn.findMany({
@@ -93,6 +161,7 @@ export async function clearConversation(
   guildId: ConversationGuildScope,
 ): Promise<number> {
   try {
+    await waitForPendingWrites(userId, channelId, guildId);
     const r = await prisma.aiConversationTurn.deleteMany({
       where: { userId, channelId, guildId },
     });
