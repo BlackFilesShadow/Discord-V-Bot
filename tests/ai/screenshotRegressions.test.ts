@@ -53,6 +53,20 @@ describe('Screenshot regressions', () => {
     expect(answer?.answer).toBe('Der Classname ist **`CombatBoots_Green`**.');
   });
 
+  test('Kampfanzugshose aus dem Produktions-Screenshot löst auf TTSKOPants statt MP5K auf', () => {
+    const answer = answerDayz129CatalogQuestion('weißt du die Classname von Der Kampfanzugshose');
+    expect(answer?.answer).toBe('Der Classname ist **`TTSKOPants`**.');
+    expect(searchDayz129Types('Kampfanzugshose', 5)).toEqual(['TTSKOPants']);
+    expect(answer?.answer).not.toContain('MP5K');
+  });
+
+  test('unbekannte Classname-Suchen raten weder MP5K noch einen anderen Einbuchstaben-Treffer', () => {
+    expect(searchDayz129Types('xyzunbekannt', 5)).toEqual([]);
+    const answer = answerDayz129CatalogQuestion('Wie lautet der Classname von xyzunbekannt?');
+    expect(answer?.answer).toMatch(/keinen eindeutig passenden Classname/i);
+    expect(answer?.answer).not.toContain('MP5K');
+  });
+
   test('KI-System hinter V-Bot ist weder direkt noch global eine Entwicklerfrage', () => {
     const text = 'Die V AI Cloud ist das zentrale KI-System hinter dem V-Bot, welcher KI Anbieter aktuell verfügbar ist.';
     const re = new RegExp(DEVELOPER_IDENTITY_TRIGGER_PATTERN, 'i');

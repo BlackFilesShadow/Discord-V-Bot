@@ -7,22 +7,11 @@ import {
   startAuditLogRetentionScheduler,
   stopAuditLogRetentionScheduler,
 } from '../modules/logging/auditRetentionScheduler';
-import { hydrateCooldownsFromDb } from '../modules/ai/providerStats';
 import { startMemberSyncScheduler, stopMemberSyncScheduler } from '../modules/members/memberSyncScheduler';
 import { startLeaveCleanupWorker, stopLeaveCleanupWorker } from '../modules/moderation/leaveCleanupWorker';
 import { BOT_PRODUCT_NAME } from '../content/botInfo';
 
 let gaugeTimer: NodeJS.Timeout | null = null;
-let providerCooldownTimer: NodeJS.Timeout | null = null;
-
-function startProviderCooldownSync(): void {
-  if (providerCooldownTimer) return;
-  void hydrateCooldownsFromDb();
-  providerCooldownTimer = setInterval(() => {
-    void hydrateCooldownsFromDb();
-  }, 60_000);
-  providerCooldownTimer.unref?.();
-}
 
 /** Ready-Event: Bot ist verbunden und bereit. */
 const readyEvent: BotEvent = {
@@ -56,7 +45,6 @@ const readyEvent: BotEvent = {
     }
 
     startAuditLogRetentionScheduler();
-    startProviderCooldownSync();
     startMemberSyncScheduler(c);
     await startLeaveCleanupWorker();
   },
@@ -70,10 +58,6 @@ export function stopReadyRuntime(): void {
   if (gaugeTimer) {
     clearInterval(gaugeTimer);
     gaugeTimer = null;
-  }
-  if (providerCooldownTimer) {
-    clearInterval(providerCooldownTimer);
-    providerCooldownTimer = null;
   }
   stopLeaveCleanupWorker();
   stopMemberSyncScheduler();

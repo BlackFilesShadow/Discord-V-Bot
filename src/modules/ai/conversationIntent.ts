@@ -50,6 +50,13 @@ export function isDayzConversationDomain(question: string): boolean {
   return classifyAiConversationDomain(question) === 'dayz';
 }
 
+function areDomainsCompatible(current: AiConversationDomain, previous: AiConversationDomain): boolean {
+  if (current === 'general') return previous === 'general';
+  if (current === 'dayz') return previous === 'dayz';
+  if (current === 'user_profile') return previous === 'user_profile' || previous === 'discord_server';
+  return previous === 'discord_server' || previous === 'user_profile';
+}
+
 /**
  * Memory ist nur innerhalb derselben Domain zulaessig. So kann eine alte
  * DayZ-Antwort niemals eine spaetere normale Wissens-/Smalltalkfrage steuern.
@@ -57,10 +64,32 @@ export function isDayzConversationDomain(question: string): boolean {
 export function isMemoryTurnCompatible(question: string, turnText: string): boolean {
   const current = classifyAiConversationDomain(question);
   const previous = classifyAiConversationDomain(turnText);
-  if (current === 'general') return previous === 'general';
-  if (current === 'dayz') return previous === 'dayz';
-  if (current === 'user_profile') return previous === 'user_profile' || previous === 'discord_server';
-  return previous === 'discord_server' || previous === 'user_profile';
+  return areDomainsCompatible(current, previous);
+}
+
+/**
+ * Filtert gespeicherte Dialoge paarweise anhand der Nutzerfrage, die eine
+ * Assistentenantwort ausgeloest hat. Eine DayZ-Antwort kann sprachlich sehr
+ * allgemein sein ("Das ist der Zielbestand") und waere bei isolierter
+ * Textklassifikation faelschlich in spaeteren Smalltalk gelangt. Umgekehrt
+ * bleibt eine normale Antwort erhalten, auch wenn sie das Wort DayZ nur als
+ * Beispiel nennt.
+ */
+export function filterCompatibleMemoryTurns<T extends { role: 'user' | 'assistant'; content: string }>(
+  question: string,
+  turns: readonly T[],
+): T[] {
+  const current = classifyAiConversationDomain(question);
+  let activePairCompatible: boolean | null = null;
+
+  return turns.filter((turn) => {
+    if (turn.role === 'user') {
+      activePairCompatible = areDomainsCompatible(current, classifyAiConversationDomain(turn.content));
+      return activePairCompatible;
+    }
+    if (activePairCompatible !== null) return activePairCompatible;
+    return areDomainsCompatible(current, classifyAiConversationDomain(turn.content));
+  });
 }
 
 /**

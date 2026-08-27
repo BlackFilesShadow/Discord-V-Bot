@@ -24,6 +24,11 @@ jest.mock('../../src/modules/ai/translatedPostScheduler', () => ({
   stopTranslatedPostScheduler: jest.fn(),
 }));
 
+jest.mock('../../src/modules/ai/providerStats', () => ({
+  scheduleProviderCooldownSync: jest.fn().mockResolvedValue(undefined),
+  stopProviderCooldownSync: jest.fn(),
+}));
+
 import type { Client } from 'discord.js';
 import { startAiBackgroundLoops, stopAiBackgroundLoops } from '../../src/modules/ai/runtime';
 
@@ -44,6 +49,10 @@ const conversationMemory = jest.requireMock('../../src/modules/ai/conversationMe
 const translatedPostScheduler = jest.requireMock('../../src/modules/ai/translatedPostScheduler') as {
   startTranslatedPostScheduler: jest.Mock;
   stopTranslatedPostScheduler: jest.Mock;
+};
+const providerStats = jest.requireMock('../../src/modules/ai/providerStats') as {
+  scheduleProviderCooldownSync: jest.Mock;
+  stopProviderCooldownSync: jest.Mock;
 };
 
 describe('AI runtime lifecycle', () => {
@@ -66,6 +75,7 @@ describe('AI runtime lifecycle', () => {
     expect(conversationMemory.cleanupOld).toHaveBeenCalledTimes(1);
     expect(conversationMemory.startConversationCleanupLoop).toHaveBeenCalledTimes(1);
     expect(translatedPostScheduler.startTranslatedPostScheduler).toHaveBeenCalledTimes(1);
+    expect(providerStats.scheduleProviderCooldownSync).toHaveBeenCalledTimes(1);
   });
 
   it('stoppt alle gestarteten Loop-Grenzen idempotent und erlaubt danach Neustart', async () => {
@@ -76,6 +86,7 @@ describe('AI runtime lifecycle', () => {
     expect(translatedPostScheduler.stopTranslatedPostScheduler).toHaveBeenCalledTimes(2);
     expect(conversationMemory.stopConversationCleanupLoop).toHaveBeenCalledTimes(2);
     expect(guildAwareness.stopContentSyncLoop).toHaveBeenCalledTimes(2);
+    expect(providerStats.stopProviderCooldownSync).toHaveBeenCalledTimes(2);
 
     await startAiBackgroundLoops(client);
     expect(guildAwareness.bootstrapGuildAwareness).toHaveBeenCalledTimes(2);

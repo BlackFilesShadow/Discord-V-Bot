@@ -34,7 +34,7 @@ export type {
 export { searchTypes as searchDayz129Types };
 
 const KNOWN_DAYZ_FILE_ALIASES_RE = /\b(?:types?|events?|messages?|globals?)\.xml\b|\beconomy\.xml\b|\bserverdz\.cfg\b|\bcfggameplay\.json\b/i;
-const VERIFIED_NATURAL_DAYZ_ALIAS_RE = /\b(?:m4|tundra|kampfstiefel|feldrucks(?:ack|aecke)|alicebag|seekiste|sea\s+chest|strom[-_ ]?generator|militaerzelt|militärzelt|military\s*tent|largetent)\b/i;
+const VERIFIED_NATURAL_DAYZ_ALIAS_RE = /\b(?:m4|tundra|kampfstiefel|kampfanzugs?hose|kampfhose|combat\s*pants|bduhose|bdu\s*pants|feldrucks(?:ack|aecke)|alicebag|seekiste|sea\s+chest|strom[-_ ]?generator|militaerzelt|militärzelt|military\s*tent|largetent)\b/i;
 const STRONG_CE_TERM_RE = /\b(?:restock|nominal|quantmin|quantmax|count_in_(?:cargo|hoarder|map|player)|deloot|crafted)\b/i;
 
 function looksTechnicalIdentifier(token: string): boolean {

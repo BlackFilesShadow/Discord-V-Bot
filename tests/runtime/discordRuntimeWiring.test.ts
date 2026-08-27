@@ -34,7 +34,8 @@ describe('Discord runtime production wiring invariants', () => {
 
     expect(readySource).toContain('export function stopReadyRuntime(): void');
     expect(readySource).toContain('clearInterval(gaugeTimer);');
-    expect(readySource).toContain('clearInterval(providerCooldownTimer);');
+    expect(readySource).not.toContain('providerCooldownTimer');
+    expect(readySource).not.toContain('hydrateCooldownsFromDb');
     expect(readySource).toContain('stopMemberSyncScheduler();');
     expect(readySource).toContain('stopAuditLogRetentionScheduler();');
     expect(readySource).toContain('stopAllLeaderboardFeeds();');

@@ -177,7 +177,6 @@
     "readyStarts": [
       "restoreAllFeeds",
       "startAuditLogRetentionScheduler",
-      "startProviderCooldownSync",
       "startMemberSyncScheduler",
       "startLeaveCleanupWorker"
     ],

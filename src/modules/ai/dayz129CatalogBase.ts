@@ -292,7 +292,11 @@ function candidateScore(name: string, query: string, tokens: string[]): number {
   const qCompact = compact(query);
   if (nameCompact === qCompact) return 1000;
   if (qCompact.length >= 4 && nameCompact === qCompact.replace(/^(classname|class|typename|type)/, '')) return 950;
-  const nameTokens = splitIdentifier(name);
+  // Einbuchstaben-Segmente aus Classnames (z. B. das abschliessende "K" in
+  // MP5K) sind keine belastbaren Suchmerkmale. Sonst matcht jede deutsche
+  // Bezeichnung mit K als Prefix auf MP5K und wird als angeblich eindeutiger
+  // Classname ausgegeben.
+  const nameTokens = splitIdentifier(name).filter((token) => token.length >= 3);
   let score = 0;
   for (const token of tokens) {
     if (token.length < 2) continue;
