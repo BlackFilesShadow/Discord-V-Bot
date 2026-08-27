@@ -52,6 +52,7 @@ jest.mock('../../src/utils/responseCache', () => ({ cached: jest.fn() }));
 jest.mock('../../src/modules/ai/promptBudget', () => ({
   clampBlock: jest.fn((_kind: string, value: string) => value),
   clampHistory: jest.fn((value: unknown[]) => value),
+  getTotalPromptBudget: jest.fn(() => 32_000),
 }));
 jest.mock('../../src/modules/ai/dayz129Catalog', () => ({ answerDayz129CatalogQuestion: jest.fn(() => null) }));
 
