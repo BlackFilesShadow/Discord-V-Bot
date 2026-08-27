@@ -2,7 +2,9 @@ import {
   classifyAiConversationDomain,
   filterCompatibleMemoryTurns,
   isMemoryTurnCompatible,
+  looksLikeConversationFollowUp,
   mayUseExternalConversationContext,
+  resolveMemoryConversationDomain,
 } from '../../src/modules/ai/conversationIntent';
 
 describe('AI conversation-domain isolation', () => {
@@ -61,5 +63,60 @@ describe('AI conversation-domain isolation', () => {
 
     expect(filterCompatibleMemoryTurns('Na, alles fit?', turns)).toEqual(turns.slice(2));
     expect(filterCompatibleMemoryTurns('Wie ändere ich nominal in DayZ?', turns)).toEqual(turns.slice(0, 2));
+  });
+
+  test.each([
+    'Warum?',
+    'Wieso?',
+    'Wie genau?',
+    'Was meinst du damit?',
+    'Kannst du das genauer erklären?',
+    'Und was ist damit?',
+    'Mehr dazu',
+  ])('erkennt eine echte referentielle Folgefrage: %s', (question) => {
+    expect(looksLikeConversationFollowUp(question)).toBe(true);
+  });
+
+  test.each([
+    'Und was ist Photosynthese?',
+    'Was ist die Hauptstadt von Frankreich?',
+    'Kannst du Kuchen backen?',
+    'Erzähl mir einen Witz.',
+  ])('erkennt neue Sachfrage nicht faelschlich als Folgefrage: %s', (question) => {
+    expect(looksLikeConversationFollowUp(question)).toBe(false);
+  });
+
+  test('referentielle Folgefrage erbt im gescopten Memory die letzte DayZ-Domain', () => {
+    const turns = [
+      { role: 'user' as const, content: 'Was bedeutet nominal in DayZ?' },
+      { role: 'assistant' as const, content: 'Nominal ist der Zielbestand.' },
+    ];
+
+    expect(resolveMemoryConversationDomain('Warum?', turns)).toBe('dayz');
+    expect(filterCompatibleMemoryTurns('Warum?', turns)).toEqual(turns);
+  });
+
+  test('referentielle Folgefrage erbt im gescopten Memory Discord-Server-Kontext', () => {
+    const turns = [
+      { role: 'user' as const, content: 'Wie viele Mitglieder hat der Discord-Server?' },
+      { role: 'assistant' as const, content: 'Der Server hat aktuell 120 Mitglieder.' },
+    ];
+
+    expect(resolveMemoryConversationDomain('Und was ist damit?', turns)).toBe('discord_server');
+    expect(filterCompatibleMemoryTurns('Und was ist damit?', turns)).toEqual(turns);
+  });
+
+  test('neue allgemeine Sachfrage kapert trotz vorherigem DayZ-Dialog keine alte Domain', () => {
+    const turns = [
+      { role: 'user' as const, content: 'Was bedeutet nominal in DayZ?' },
+      { role: 'assistant' as const, content: 'Nominal ist der Zielbestand.' },
+    ];
+
+    expect(resolveMemoryConversationDomain('Und was ist Photosynthese?', turns)).toBe('general');
+    expect(filterCompatibleMemoryTurns('Und was ist Photosynthese?', turns)).toEqual([]);
+  });
+
+  test('ungescopter Channel-Turn bleibt auch bei kurzer Folgefrage strikt isoliert', () => {
+    expect(isMemoryTurnCompatible('Warum?', 'In types.xml steuerst du nominal und lifetime.')).toBe(false);
   });
 });
