@@ -60,11 +60,14 @@ describe('Welcome/Goodbye/Leave-Cleanup reliability regressions', () => {
     expect(welcomeRoute).toContain('if (body.isActive)');
   });
 
-  it('uses one Berlin calendar source for welcome year/month/day/date/time', () => {
+  it('uses one Berlin calendar source while preserving unpadded year/month/day placeholder semantics', () => {
     expect(welcomeManager).toContain("timeZone: 'Europe/Berlin', year: 'numeric', month: 'numeric', day: 'numeric'");
-    expect(welcomeManager).toContain(".replace(/\\{year\\}/g, calendarParts.year ?? '')");
-    expect(welcomeManager).toContain(".replace(/\\{month\\}/g, calendarParts.month ?? '')");
-    expect(welcomeManager).toContain(".replace(/\\{day\\}/g, calendarParts.day ?? '')");
+    expect(welcomeManager).toContain("const year = calendarParts.year ?? '';");
+    expect(welcomeManager).toContain("const month = calendarParts.month ? String(Number(calendarParts.month)) : '';");
+    expect(welcomeManager).toContain("const day = calendarParts.day ? String(Number(calendarParts.day)) : '';");
+    expect(welcomeManager).toContain(".replace(/\\{year\\}/g, year)");
+    expect(welcomeManager).toContain(".replace(/\\{month\\}/g, month)");
+    expect(welcomeManager).toContain(".replace(/\\{day\\}/g, day)");
   });
 
   it('paginates complete session evidence in both cleanup identification and remote-remove authorization', () => {
