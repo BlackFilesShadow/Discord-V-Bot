@@ -46,6 +46,10 @@ function isConfigured(p: ProviderName): boolean {
 }
 
 export function getConfiguredModel(p: ProviderName): string {
+  // Ein Provider ohne API-Key ist fuer die Runtime nicht konfiguriert. Der
+  // Capability-Notfallpfad in aiHandler darf ihn deshalb nicht allein wegen
+  // einer Default-Modell-ID wieder in die Rotation aufnehmen.
+  if (!isConfigured(p)) return '';
   switch (p) {
     case 'groq': return config.ai.groqModel;
     case 'cerebras': return config.ai.cerebrasModel;
