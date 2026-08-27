@@ -87,6 +87,10 @@ function ok(content = 'fallback-ok') {
   return { data: { choices: [{ message: { content } }] } };
 }
 
+function geminiOk(content = 'gemini-ok') {
+  return { data: { candidates: [{ content: { parts: [{ text: content }] } }] } };
+}
+
 function httpError(status: number, headers: Record<string, string> = {}) {
   const error = new Error(`Request failed with status code ${status}`) as Error & {
     response: { status: number; headers: Record<string, string> };
@@ -172,6 +176,22 @@ describe('callAI circuit-breaker and fallback matrix', () => {
     expect(mockRecordCall).toHaveBeenCalledWith('cerebras', 'rateLimit', expect.any(Number), expect.any(String), { retryAfterMs: 0 });
   });
 
+  it('erholt sich nach all-provider-429 beim Folgerequest ueber einen verfuegbaren Chat-Fallback', async () => {
+    mockGetRankedProviders
+      .mockResolvedValueOnce(['groq', 'cerebras'])
+      .mockResolvedValueOnce(['openrouter']);
+    post
+      .mockRejectedValueOnce(httpError(429))
+      .mockRejectedValueOnce(httpError(429))
+      .mockResolvedValueOnce(ok('recovered-via-openrouter'));
+
+    await expect(callAI(messages)).rejects.toMatchObject({ code: 'RATE_LIMIT' });
+    await expect(callAI([{ role: 'user', content: 'Was fuer ein Jahr haben wir heute?' }])).resolves.toBe('recovered-via-openrouter');
+
+    expect(post).toHaveBeenCalledTimes(3);
+    expect(String(post.mock.calls[2][0])).toContain('openrouter.ai');
+  });
+
   it('behaelt RATE_LIMIT auch beim Folgerequest, wenn alle geeigneten Provider bereits im 429-Cooldown sind', async () => {
     mockGetRankedProviders.mockResolvedValue([]);
     mockIsOnCooldown.mockReturnValue(true);
@@ -191,6 +211,21 @@ describe('callAI circuit-breaker and fallback matrix', () => {
 
     await expect(callAI(messages)).rejects.not.toMatchObject({ code: 'RATE_LIMIT' });
     expect(post).not.toHaveBeenCalled();
+  });
+
+  it('sendet Gemini-3.x ohne deprecated Sampling-Parameter', async () => {
+    mockGetRankedProviders.mockResolvedValue(['gemini']);
+    post.mockResolvedValueOnce(geminiOk());
+
+    await expect(callAI(messages)).resolves.toBe('gemini-ok');
+
+    expect(post).toHaveBeenCalledTimes(1);
+    expect(String(post.mock.calls[0][0])).toContain('generativelanguage.googleapis.com');
+    const body = post.mock.calls[0][1] as { generationConfig?: Record<string, unknown> };
+    expect(body.generationConfig).toEqual({ maxOutputTokens: 1500 });
+    expect(body.generationConfig).not.toHaveProperty('temperature');
+    expect(body.generationConfig).not.toHaveProperty('topP');
+    expect(body.generationConfig).not.toHaveProperty('topK');
   });
 
   it('retried 503 genau einmal auf demselben Provider und akzeptiert danach Erfolg', async () => {

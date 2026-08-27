@@ -752,9 +752,6 @@ async function callGemini(
       contents,
       generationConfig: {
         maxOutputTokens: 1500,
-        temperature: 0.85,
-        topP: 0.92,
-        topK: 40,
       },
     },
     { headers: { 'Content-Type': 'application/json', 'x-goog-api-key': apiKey }, timeout: 30000 },

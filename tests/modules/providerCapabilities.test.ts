@@ -26,6 +26,18 @@ describe('AI provider capability registry', () => {
     expect(taskAffinity('cerebras', 'gpt-oss-120b', 'fast')).toBeGreaterThan(1);
   });
 
+  it('kennt den kanonischen OpenRouter-Llama-Fallback als Chat/Long-Context Modell', () => {
+    const model = 'meta-llama/llama-3.3-70b-instruct:free';
+    const p = getProviderCapabilityProfile('openrouter', model);
+    expect(p.knownModel).toBe(true);
+    expect(providerSupportsTask('openrouter', model, 'chat')).toBe(true);
+    expect(providerSupportsTask('openrouter', model, 'fast')).toBe(true);
+    expect(providerSupportsTask('openrouter', model, 'long_context')).toBe(true);
+    expect(providerSupportsTask('openrouter', model, 'structured')).toBe(false);
+    expect(providerSupportsTask('openrouter', model, 'reasoning')).toBe(false);
+    expect(providerSupportsTask('openrouter', model, 'tool')).toBe(false);
+  });
+
   it.each(['gemini-3.7-flash', 'gemini-3.6-flash'])('kennt %s als structured/tool/reasoning/long-context Provider', (model) => {
     expect(providerSupportsTask('gemini', model, 'structured')).toBe(true);
     expect(providerSupportsTask('gemini', model, 'tool')).toBe(true);
@@ -77,10 +89,17 @@ describe('AI task classifier', () => {
     ])).toBe('reasoning');
   });
 
-  it('stuft sehr grossen Kontext als long_context ein', () => {
+  it('laesst eine kurze Faktfrage trotz grossem System-/Web-Kontext auf chat', () => {
     expect(inferAiTaskProfile([
       { role: 'system', content: 'x'.repeat(25_000) },
-      { role: 'user', content: 'fasse zusammen' },
+      { role: 'user', content: 'Was fuer ein Jahr haben wir heute?' },
+    ])).toBe('chat');
+  });
+
+  it('stuft echten grossen Conversation-Payload weiterhin als long_context ein', () => {
+    expect(inferAiTaskProfile([
+      { role: 'system', content: 'V-Bot Persona' },
+      { role: 'user', content: 'x'.repeat(25_000) },
     ])).toBe('long_context');
   });
 
