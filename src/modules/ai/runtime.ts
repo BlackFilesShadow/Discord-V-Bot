@@ -14,6 +14,7 @@ import { logger } from '../../utils/logger';
 import { stopContentSyncLoop } from './guildAwareness';
 import { stopConversationCleanupLoop } from './conversationMemory';
 import { stopTranslatedPostScheduler } from './translatedPostScheduler';
+import { scheduleProviderCooldownSync, stopProviderCooldownSync } from './providerStats';
 import { getProductionAiToolExecutor, listProductionAiToolNames } from './toolRuntime';
 
 let started = false;
@@ -22,6 +23,12 @@ export async function startAiBackgroundLoops(client: Client): Promise<void> {
   if (started) return;
 
   try {
+    // Provider-Cooldowns sind persistenter Runtime-Zustand. Sie muessen direkt
+    // beim AI-Lifecycle aus der DB hydriert und anschliessend synchron gehalten
+    // werden, damit Restart/Multi-Instance nicht erneut in bekannte 429-/Model-
+    // Fehler laeuft.
+    scheduleProviderCooldownSync();
+
     // AI-18: fail-closed production tool registry must be live before chat loops.
     // No destructive tools are registered; LLM proposals only execute via toolRuntime.
     const toolExecutor = getProductionAiToolExecutor();
@@ -62,6 +69,7 @@ export async function startAiBackgroundLoops(client: Client): Promise<void> {
 }
 
 export function stopAiBackgroundLoops(): void {
+  stopProviderCooldownSync();
   stopTranslatedPostScheduler();
   stopConversationCleanupLoop();
   stopContentSyncLoop();
