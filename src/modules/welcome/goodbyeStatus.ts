@@ -30,7 +30,7 @@ export interface GoodbyeCleanupSnapshot {
 
 export interface GoodbyeEmbedData {
   discordName: string;
-  /** Native Discord-Mention; wird nur gerendert, wenn sie zuvor sicher aufgeloest wurde. */
+  /** Native Discord-Mention; nur nutzen, solange Discord sie in der Guild sicher aufloesen kann. */
   discordMention?: string;
   discordMentionResolved?: boolean;
   customMessage: string;
@@ -69,6 +69,11 @@ export function sanitizeGoodbyeVisibleText(
 function safeResolvedMention(value: string | undefined, resolved: boolean | undefined): string | null {
   if (!resolved || !value || !DISCORD_MENTION_ONLY_RE.test(value)) return null;
   return value.replace('<@!', '<@');
+}
+
+function visibleAtName(value: string): string {
+  const name = value.replace(/^@+/, '').trim() || 'Discord-Nutzer';
+  return `@${name}`;
 }
 
 function readSnapshot(value: unknown): GoodbyeCleanupSnapshot | null {
@@ -124,7 +129,11 @@ export function buildStructuredGoodbyeEmbed(data: GoodbyeEmbedData): EmbedBuilde
 
   const safeName = sanitizeGoodbyeVisibleText(data.discordName, 'Discord-Nutzer', 256);
   const mention = safeResolvedMention(data.discordMention, data.discordMentionResolved);
-  const identityLine = mention ?? safeName;
+  // Ein echter Leave entfernt den Nutzer vor dem Rendern aus dem Guild-Kontext.
+  // Discord kann <@snowflake> im Embed dann clientseitig als rohe ID anzeigen.
+  // Deshalb ist @Name der sichere sichtbare Fallback; ein nativer Mention-Token
+  // wird nur fuer Kontexte benutzt, in denen der Nutzer noch aufloesbar ist.
+  const identityLine = mention ?? visibleAtName(safeName);
   const joined = data.joinedAt ? formatDate(data.joinedAt) : 'Unbekannt';
 
   // Eine einzige, nicht-inline Detailgruppe verhindert das von Discord erzeugte
@@ -240,7 +249,10 @@ async function editPersistedGoodbye(cleanupRequestId: string): Promise<void> {
     embeds: [buildStructuredGoodbyeEmbed({
       discordName: resolvedName,
       discordMention: resolvedUser ? `<@${delivery.discordId}>` : undefined,
-      discordMentionResolved: Boolean(resolvedUser),
+      // users.fetch() beweist nur eine globale User-Aufloesung, nicht mehr die
+      // Guild-Mitgliedschaft. Nach dem Leave darf deshalb kein nativer Token
+      // erneut in das Embed geschrieben werden.
+      discordMentionResolved: false,
       customMessage: delivery.customMessage,
       joinedAt: delivery.joinedAt,
       leaveOccurredAt: delivery.leaveOccurredAt,
@@ -344,7 +356,7 @@ export async function recoverPendingGoodbyeDeliveries(now: Date = new Date()): P
         embeds: [buildStructuredGoodbyeEmbed({
           discordName: resolvedName,
           discordMention: resolvedUser ? `<@${row.discordId}>` : undefined,
-          discordMentionResolved: Boolean(resolvedUser),
+          discordMentionResolved: false,
           customMessage: row.customMessage,
           joinedAt: row.joinedAt,
           leaveOccurredAt: row.leaveOccurredAt,
