@@ -89,7 +89,9 @@ describe('Nitrado-1B whitelist intent reconciliation architecture gate', () => {
     expect(intent).toContain("details.stage === 'RUNNING'");
     expect(intent).toContain("status: 'VERIFIED'");
     expect(intent).toContain('identityHash(session.gameId, config.security.encryptionKey)');
-    expect(intent).toContain('norm(session.playerName) !== target');
+    expect(intent).toContain('norm(session.playerName) === target');
+    expect(intent).toContain("orderBy: { id: 'asc' }");
+    expect(intent).toContain('cursor: { id: cursor }, skip: 1');
     expect(intent).toContain('return provenDiscordIds.size === 1;');
     expect(intent).toContain("reason: 'UNTRACKED_REMOVE_NOT_AUTHORIZED'");
   });

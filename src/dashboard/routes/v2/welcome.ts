@@ -8,7 +8,7 @@ import multer from 'multer';
 import * as path from 'node:path';
 import * as fs from 'node:fs/promises';
 import { randomUUID } from 'node:crypto';
-import { PermissionFlagsBits, type PermissionResolvable } from 'discord.js';
+import { PermissionFlagsBits, type Guild, type PermissionResolvable, type Role } from 'discord.js';
 import { requireGuildPermission } from '../../middleware/auth';
 import prisma from '../../../database/prisma';
 import {
@@ -58,6 +58,41 @@ function imageExtFor(mime: string): string {
 
 function localWelcomeMediaRe(guildId: string): RegExp {
   return new RegExp(`^/uploads/media/welcome/${guildId}/[A-Za-z0-9_-]+\\.(jpe?g|png|webp|gif)$`, 'i');
+}
+
+function localWelcomeMediaPath(guildId: string, publicUrl: string | null | undefined): string | null {
+  if (!publicUrl || !localWelcomeMediaRe(guildId).test(publicUrl)) return null;
+  const prefix = `/uploads/media/welcome/${guildId}/`;
+  const filename = publicUrl.slice(prefix.length);
+  const guildDir = path.resolve(WELCOME_UPLOADS_BASE, guildId);
+  const absolute = path.resolve(guildDir, filename);
+  if (!absolute.startsWith(guildDir + path.sep)) return null;
+  return absolute;
+}
+
+async function removeWelcomeMediaFile(guildId: string, publicUrl: string | null | undefined): Promise<boolean> {
+  const filePath = localWelcomeMediaPath(guildId, publicUrl);
+  if (!filePath) return false;
+  return fs.unlink(filePath).then(() => true).catch(() => false);
+}
+
+async function ensureAutoRoleActorAccess(
+  guild: Guild,
+  role: Role,
+  actorDiscordId: string,
+  isOwner: boolean,
+): Promise<string | null> {
+  if (isOwner) return null;
+  const actor = guild.members.cache.get(actorDiscordId)
+    ?? await guild.members.fetch(actorDiscordId).catch(() => null);
+  if (!actor) return 'Der verwaltende Nutzer ist kein aktuelles Mitglied dieser Guild.';
+  if (!actor.permissions.has(PermissionFlagsBits.ManageRoles)) {
+    return 'Zum Konfigurieren von Auto-Rollen ist für delegierte Manager zusätzlich die Discord-Berechtigung "Rollen verwalten" erforderlich.';
+  }
+  if (role.position >= actor.roles.highest.position) {
+    return 'Die Zielrolle muss unter der höchsten Discord-Rolle des verwaltenden Nutzers liegen.';
+  }
+  return null;
 }
 
 interface WelcomeBody {
@@ -113,7 +148,7 @@ function validateBody(b: WelcomeBody, guildId: string):
 
 async function ensureChannel(channelId: string, guildId: string, mediaUrl?: string): Promise<string | null> {
   const client = tryGetDashboardClient();
-  if (!client) return null;
+  if (!client) return 'Bot nicht bereit; Channel konnte nicht sicher validiert werden.';
 
   const requiredPerms: PermissionResolvable[] = [
     PermissionFlagsBits.ViewChannel,
@@ -175,7 +210,13 @@ welcomeRouter.post('/config', requireGuildPermission('welcome.manage'), async (r
   const channelErr = await ensureChannel(v.data.channelId, scope.guildId, v.data.mediaUrl);
   if (channelErr) { res.status(400).json({ error: channelErr }); return; }
 
+  const previous = await getWelcomeConfig(scope.guildId);
   await setWelcomeConfig(scope.guildId, v.data, scope.actorDiscordId);
+  // Erst NACH erfolgreicher Config-Persistenz genau das vorher aktive lokale
+  // Medium entfernen. Andere parallel hochgeladene Entwürfe bleiben erhalten.
+  if (previous?.mediaUrl && previous.mediaUrl !== v.data.mediaUrl) {
+    await removeWelcomeMediaFile(scope.guildId, previous.mediaUrl).catch(() => false);
+  }
   logAuditDb('WELCOME_CONFIG_SAVED', 'WELCOME', {
     actorUserId: req.auth!.userId, guildId: scope.guildId,
     details: { channelId: v.data.channelId, mode: v.data.mode, enabled: v.data.enabled },
@@ -269,13 +310,9 @@ welcomeRouter.post(
 
     const dir = path.join(WELCOME_UPLOADS_BASE, scope.guildId);
     await fs.mkdir(dir, { recursive: true });
-    try {
-      const entries = await fs.readdir(dir);
-      for (const entry of entries) {
-        await fs.unlink(path.join(dir, entry)).catch(() => {});
-      }
-    } catch { /* ignore */ }
 
+    // Upload ist nur ein Entwurf. Bestehende aktive Medien bleiben unangetastet,
+    // bis /config die neue URL erfolgreich persistiert hat.
     const filename = `welcome-${randomUUID()}${imageExtFor(file.mimetype)}`;
     await fs.writeFile(path.join(dir, filename), file.buffer);
     const publicUrl = `/uploads/media/welcome/${scope.guildId}/${filename}`;
@@ -293,19 +330,14 @@ welcomeRouter.delete('/media', requireGuildPermission('welcome.manage'), async (
   const existing = await getWelcomeConfig(scope.guildId);
   const prevUrl = existing?.mediaUrl;
 
-  let fileDeleted = false;
-  if (prevUrl && localWelcomeMediaRe(scope.guildId).test(prevUrl)) {
-    const abs = path.join(process.cwd(), prevUrl.replace(/^\/+/, ''));
-    const guildDir = path.join(WELCOME_UPLOADS_BASE, scope.guildId);
-    if (abs.startsWith(guildDir + path.sep)) {
-      await fs.unlink(abs).then(() => { fileDeleted = true; }).catch(() => {});
-    }
-  }
-
+  // Zuerst die persistierte Referenz entfernen. Ein Dateisystemfehler darf
+  // niemals eine Config hinterlassen, die auf eine bereits fehlende Datei zeigt.
   if (existing) {
     await setWelcomeConfig(scope.guildId, { ...existing, mediaUrl: undefined }, scope.actorDiscordId);
     emitGuildEvent(scope.guildId, { type: 'welcome.changed', payload: { guildId: scope.guildId } });
   }
+
+  const fileDeleted = await removeWelcomeMediaFile(scope.guildId, prevUrl);
 
   logAuditDb('WELCOME_MEDIA_REMOVED', 'WELCOME', {
     actorUserId: req.auth!.userId, guildId: scope.guildId,
@@ -339,6 +371,9 @@ welcomeRouter.post('/autoroles', requireGuildPermission('welcome.manage'), async
   if (role.position >= me.roles.highest.position) {
     res.status(400).json({ error: 'Bot-Rolle steht nicht ueber der Zielrolle — Vergabe nicht moeglich.' }); return;
   }
+
+  const actorRoleError = await ensureAutoRoleActorAccess(guild, role, scope.actorDiscordId, scope.isOwner);
+  if (actorRoleError) { res.status(403).json({ error: actorRoleError }); return; }
 
   const dup = await prisma.autoRole.findFirst({
     where: { guildId: scope.guildId, roleId: role.id, triggerType: 'JOIN' },
@@ -378,6 +413,17 @@ welcomeRouter.patch('/autoroles/:id', requireGuildPermission('welcome.manage'), 
   }
   const row = await prisma.autoRole.findFirst({ where: { id, guildId: scope.guildId } });
   if (!row) { res.status(404).json({ error: 'Auto-Rolle nicht gefunden.' }); return; }
+
+  if (body.isActive) {
+    const client = tryGetDashboardClient();
+    if (!client) { res.status(503).json({ error: 'Bot nicht bereit.' }); return; }
+    const guild = client.guilds.cache.get(scope.guildId);
+    if (!guild) { res.status(404).json({ error: 'Bot ist nicht in dieser Guild.' }); return; }
+    const role = guild.roles.cache.get(row.roleId);
+    if (!role) { res.status(400).json({ error: 'Zielrolle existiert nicht mehr in dieser Guild.' }); return; }
+    const actorRoleError = await ensureAutoRoleActorAccess(guild, role, scope.actorDiscordId, scope.isOwner);
+    if (actorRoleError) { res.status(403).json({ error: actorRoleError }); return; }
+  }
 
   const updated = await prisma.autoRole.update({ where: { id: row.id }, data: { isActive: body.isActive } });
   logAuditDb('AUTOROLE_TOGGLED', 'AUTOROLE', {

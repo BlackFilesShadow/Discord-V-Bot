@@ -1,6 +1,32 @@
+const mockPlayerSessionFindMany = jest.fn();
+const mockGameIdentityLinkFindMany = jest.fn();
+const mockHasOpenLeaveCleanupRequest = jest.fn();
+const mockIdentityHash = jest.fn((gameId: string) => `hash:${gameId}`);
+
+jest.mock('../../src/database/prisma', () => ({
+  __esModule: true,
+  default: {
+    playerSession: { findMany: mockPlayerSessionFindMany },
+    gameIdentityLink: { findMany: mockGameIdentityLinkFindMany },
+  },
+}));
+
+jest.mock('../../src/config', () => ({
+  config: { security: { encryptionKey: 'test-encryption-key' } },
+}));
+
+jest.mock('../../src/modules/linking/identity', () => ({
+  identityHash: mockIdentityHash,
+}));
+
+jest.mock('../../src/modules/moderation/leaveCleanupGuard', () => ({
+  hasOpenLeaveCleanupRequest: mockHasOpenLeaveCleanupRequest,
+}));
+
 import {
   enqueueWhitelistAdd,
   enqueueWhitelistRemove,
+  WhitelistAddBlockedByLeaveCleanupError,
   type WhitelistOutboxClient,
 } from '../../src/modules/whitelist/whitelistOutbox';
 import { WHITELIST_REMOVE_SAFETY_INTENT } from '../../src/modules/whitelist/whitelistJobSafety';
@@ -24,6 +50,14 @@ function makeClient(existingJobs: ExistingJob[] = []) {
   } as WhitelistOutboxClient;
   return { client, create, findMany, queryRaw };
 }
+
+beforeEach(() => {
+  jest.clearAllMocks();
+  mockPlayerSessionFindMany.mockResolvedValue([]);
+  mockGameIdentityLinkFindMany.mockResolvedValue([]);
+  mockHasOpenLeaveCleanupRequest.mockResolvedValue(false);
+  mockIdentityHash.mockImplementation((gameId: string) => `hash:${gameId}`);
+});
 
 describe('Nitrado-1A/1U Whitelist-Outbox', () => {
   it('legt ADD erst unter Connection- und danach Subject-xact-lock an', async () => {
@@ -49,11 +83,55 @@ describe('Nitrado-1A/1U Whitelist-Outbox', () => {
     });
   });
 
-  it('markiert jeden neuen REMOVE mit dem V2-Safety-Intent', async () => {
+  it('blockiert ein erneutes ADD fuer einen verifiziert zugeordneten Spieler mit offenem Leave-Cleanup', async () => {
+    const { client, create, queryRaw } = makeClient();
+    mockPlayerSessionFindMany.mockResolvedValue([{ gameId: 'GUID-1' }]);
+    mockGameIdentityLinkFindMany.mockResolvedValue([{ userDiscordId: 'user-1' }]);
+    mockHasOpenLeaveCleanupRequest.mockResolvedValue(true);
+
+    let thrown: unknown;
+    try {
+      await enqueueWhitelistAdd(client, SCOPE, 'Player One');
+    } catch (error) {
+      thrown = error;
+    }
+
+    expect(thrown).toBeInstanceOf(WhitelistAddBlockedByLeaveCleanupError);
+    expect(thrown).toMatchObject({ status: 409, code: 'LEAVE_CLEANUP_PENDING' });
+    expect(mockPlayerSessionFindMany).toHaveBeenCalledWith(expect.objectContaining({
+      where: expect.objectContaining({
+        guildId: SCOPE.guildId,
+        nitradoConnId: SCOPE.nitradoConnId,
+      }),
+    }));
+    expect(mockGameIdentityLinkFindMany).toHaveBeenCalledWith(expect.objectContaining({
+      where: expect.objectContaining({
+        guildId: SCOPE.guildId,
+        nitradoConnId: SCOPE.nitradoConnId,
+        status: 'VERIFIED',
+      }),
+    }));
+    expect(queryRaw).not.toHaveBeenCalled();
+    expect(create).not.toHaveBeenCalled();
+  });
+
+  it('laesst denselben verifizierten Spieler nach abgeschlossenem Leave-Cleanup wieder normal zu', async () => {
+    const { client, create } = makeClient();
+    mockPlayerSessionFindMany.mockResolvedValue([{ gameId: 'GUID-1' }]);
+    mockGameIdentityLinkFindMany.mockResolvedValue([{ userDiscordId: 'user-1' }]);
+    mockHasOpenLeaveCleanupRequest.mockResolvedValue(false);
+
+    await expect(enqueueWhitelistAdd(client, SCOPE, 'Player One')).resolves.toBe(true);
+    expect(create).toHaveBeenCalledTimes(1);
+  });
+
+  it('markiert jeden neuen REMOVE mit dem V2-Safety-Intent und prueft dafuer keinen ADD-Barrier', async () => {
     const { client, create } = makeClient();
 
     await expect(enqueueWhitelistRemove(client, SCOPE, 'Player One')).resolves.toBe(true);
 
+    expect(mockPlayerSessionFindMany).not.toHaveBeenCalled();
+    expect(mockHasOpenLeaveCleanupRequest).not.toHaveBeenCalled();
     expect(create).toHaveBeenCalledWith({
       data: {
         guildId: 'guild-a',
@@ -142,11 +220,12 @@ describe('Nitrado-1A/1U Whitelist-Outbox', () => {
     expect(a.queryRaw.mock.calls[1].slice(1)).not.toEqual(c.queryRaw.mock.calls[1].slice(1));
   });
 
-  it('lehnt leere Identifier ab, bevor ein DB-Lock oder Job entsteht', async () => {
+  it('lehnt leere Identifier ab, bevor Lifecycle-Lookup, DB-Lock oder Job entsteht', async () => {
     const { client, create, queryRaw } = makeClient();
 
     await expect(enqueueWhitelistAdd(client, SCOPE, '   ')).rejects.toThrow(/leerer Gameserver-Identifier/);
 
+    expect(mockPlayerSessionFindMany).not.toHaveBeenCalled();
     expect(queryRaw).not.toHaveBeenCalled();
     expect(create).not.toHaveBeenCalled();
   });

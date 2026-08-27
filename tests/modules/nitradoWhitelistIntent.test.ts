@@ -70,7 +70,7 @@ function activeVerifiedBye(gameId = 'RemoteOnly', discordId = DISCORD, guid = 'G
     { userDiscordId: discordId, identityHash: `hash:${guid}` },
   ]);
   playerSessionFindMany.mockResolvedValue([
-    { gameId: guid, playerName: gameId },
+    { id: 'session-1', gameId: guid, playerName: gameId },
   ]);
 }
 
@@ -229,9 +229,9 @@ describe('Nitrado-1B whitelist source-of-truth intent', () => {
     });
     expect(playerSessionFindMany).toHaveBeenCalledWith({
       where: { guildId: GUILD, nitradoConnId: CONN },
-      select: { gameId: true, playerName: true },
-      orderBy: { connectedAt: 'desc' },
-      take: 5000,
+      select: { id: true, gameId: true, playerName: true },
+      orderBy: { id: 'asc' },
+      take: 1000,
     });
   });
 
@@ -259,8 +259,8 @@ describe('Nitrado-1B whitelist source-of-truth intent', () => {
       { userDiscordId: otherDiscord, identityHash: 'hash:GUID-2' },
     ]);
     playerSessionFindMany.mockResolvedValue([
-      { gameId: 'GUID-1', playerName: 'RemoteOnly' },
-      { gameId: 'GUID-2', playerName: 'remoteonly' },
+      { id: 'session-1', gameId: 'GUID-1', playerName: 'RemoteOnly' },
+      { id: 'session-2', gameId: 'GUID-2', playerName: 'remoteonly' },
     ]);
 
     await expect(decideWhitelistRemoteIntent('WHITELIST_REMOVE', GUILD, CONN, 'RemoteOnly'))

@@ -10,6 +10,7 @@ const connectionFindFirst = jest.fn();
 const whitelistFindMany = jest.fn();
 const whitelistUpdateMany = jest.fn(async () => ({ count: 1 }));
 const whitelistDeleteMany = jest.fn(async () => ({ count: 1 }));
+const playerSessionFindMany = jest.fn();
 const jobFindMany = jest.fn();
 const jobCreate = jest.fn(async () => ({}));
 const queryRaw = jest.fn(async () => []);
@@ -35,6 +36,7 @@ jest.mock('../../src/database/prisma', () => ({
       updateMany: whitelistUpdateMany,
       deleteMany: whitelistDeleteMany,
     },
+    playerSession: { findMany: playerSessionFindMany },
     nitradoJob: { findMany: jobFindMany, create: jobCreate },
   },
 }));
@@ -85,6 +87,7 @@ beforeEach(() => {
   whitelistFindMany.mockResolvedValue([]);
   whitelistUpdateMany.mockResolvedValue({ count: 1 });
   whitelistDeleteMany.mockResolvedValue({ count: 1 });
+  playerSessionFindMany.mockResolvedValue([]);
   jobFindMany.mockResolvedValue([]);
   jobCreate.mockResolvedValue({});
   queryRaw.mockResolvedValue([]);
@@ -200,8 +203,6 @@ it('dupliziert keinen bereits PENDING/RUNNING identischen Job und benoetigt dann
 
   await runWhitelistSyncOnce();
 
-  // Fast-path erkennt den Job bereits vor dem atomaren Outbox-Helper. Der
-  // Connection-Lock bleibt davon unabhaengig bis zum Reconcile-Ende gehalten.
   expect(transaction).not.toHaveBeenCalled();
   expect(jobCreate).not.toHaveBeenCalled();
   expect(releaseConnectionLock).toHaveBeenCalledTimes(1);

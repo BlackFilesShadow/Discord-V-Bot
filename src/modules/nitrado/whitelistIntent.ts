@@ -27,6 +27,8 @@ export interface WhitelistIntentReconciliation extends WhitelistIntentDecision {
   compensationQueued: boolean;
 }
 
+const SESSION_PAGE_SIZE = 1000;
+
 function norm(value: string): string {
   return value.trim().toLocaleLowerCase('en-US');
 }
@@ -65,6 +67,38 @@ export async function readWhitelistDesiredState(
   if (matching.some(row => row.syncState !== 'PENDING_REMOVE')) return 'PRESENT';
   if (matching.some(row => row.syncState === 'PENDING_REMOVE')) return 'PENDING_REMOVE';
   return 'UNTRACKED';
+}
+
+async function listSessionEvidenceForName(
+  guildId: string,
+  nitradoConnId: string,
+  target: string,
+): Promise<Array<{ gameId: string; playerName: string | null }>> {
+  const matches: Array<{ gameId: string; playerName: string | null }> = [];
+  let cursor: string | undefined;
+
+  // Sicherheits-Provenienz darf nicht von einem "letzte 5000"-Fenster
+  // abhaengen. Ein lange inaktiver, verifiziert gelinkter Spieler bleibt ein
+  // gueltiges Remove-Ziel; deshalb wird die komplette History stabil paginiert.
+  for (;;) {
+    const page = await prisma.playerSession.findMany({
+      where: { guildId, nitradoConnId },
+      select: { id: true, gameId: true, playerName: true },
+      orderBy: { id: 'asc' },
+      take: SESSION_PAGE_SIZE,
+      ...(cursor ? { cursor: { id: cursor }, skip: 1 } : {}),
+    });
+    for (const session of page) {
+      if (session.gameId && session.playerName && norm(session.playerName) === target) {
+        matches.push({ gameId: session.gameId, playerName: session.playerName });
+      }
+    }
+    if (page.length < SESSION_PAGE_SIZE) break;
+    cursor = page[page.length - 1]?.id;
+    if (!cursor) break;
+  }
+
+  return matches;
 }
 
 /**
@@ -138,16 +172,10 @@ async function hasAuthorizedVerifiedLeaveRemoveIntent(
   });
   if (links.length === 0) return false;
 
-  const sessions = await prisma.playerSession.findMany({
-    where: { guildId, nitradoConnId },
-    select: { gameId: true, playerName: true },
-    orderBy: { connectedAt: 'desc' },
-    take: 5000,
-  });
+  const sessions = await listSessionEvidenceForName(guildId, nitradoConnId, target);
 
   const provenDiscordIds = new Set<string>();
   for (const session of sessions) {
-    if (!session.gameId || !session.playerName || norm(session.playerName) !== target) continue;
     const sessionIdentityHash = identityHash(session.gameId, config.security.encryptionKey);
     for (const link of links) {
       if (link.identityHash === sessionIdentityHash) provenDiscordIds.add(link.userDiscordId);

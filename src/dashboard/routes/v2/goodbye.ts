@@ -61,12 +61,14 @@ export function validateGoodbyeBody(b: GoodbyeBody):
 }
 
 async function ensureGoodbyeChannel(channelId: string, guildId: string): Promise<string | null> {
+  const client = tryGetDashboardClient();
+  if (!client) return 'Bot nicht bereit; Channel konnte nicht sicher validiert werden.';
   const requiredPerms: PermissionResolvable[] = [
     PermissionFlagsBits.ViewChannel,
     PermissionFlagsBits.SendMessages,
     PermissionFlagsBits.EmbedLinks,
   ];
-  const result = await validateBotChannelAccess(tryGetDashboardClient(), guildId, channelId, requiredPerms);
+  const result = await validateBotChannelAccess(client, guildId, channelId, requiredPerms);
   return result.ok ? null : result.reason;
 }
 
