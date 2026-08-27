@@ -24,6 +24,18 @@ export function getProviderCapabilityProfile(provider: ProviderName, rawModel: s
   const model = String(rawModel || '').trim();
   const lower = model.toLowerCase();
 
+  // Leere Modell-ID bedeutet in der Runtime: Provider ist nicht konfiguriert.
+  // Das ist strenger als ein bewusst gesetztes unbekanntes/custom Modell und
+  // darf deshalb auch fuer normalen Chat keine implizite Capability erhalten.
+  if (!model) {
+    return {
+      provider, model,
+      capabilities: caps(),
+      affinity: {},
+      knownModel: false,
+    };
+  }
+
   if (provider === 'groq' && lower === 'openai/gpt-oss-120b') {
     return {
       provider, model,

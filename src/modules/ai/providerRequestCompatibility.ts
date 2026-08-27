@@ -1,5 +1,6 @@
 import axios from 'axios';
 import { composePromptWithinBudget, getTotalPromptBudget, type PromptRole } from './promptBudget';
+import { answerLiveTimeQuestion } from './liveTime';
 
 const OPENAI_COMPATIBLE_HOSTS = new Set([
   'api.groq.com',
@@ -29,6 +30,15 @@ function parseUrl(rawUrl?: string): URL | null {
   } catch {
     return null;
   }
+}
+
+function isKnownAiUrl(rawUrl?: string): boolean {
+  const url = parseUrl(rawUrl);
+  if (!url) return false;
+  return (
+    (OPENAI_COMPATIBLE_HOSTS.has(url.hostname) && url.pathname.endsWith('/chat/completions'))
+    || (url.hostname === 'generativelanguage.googleapis.com' && url.pathname.endsWith(':generateContent'))
+  );
 }
 
 function geminiModelFromPath(pathname: string): string | null {
@@ -197,18 +207,149 @@ export function normalizeAiProviderRequest(
   return data;
 }
 
+function payloadText(value: unknown): string {
+  if (!isRecord(value)) return '';
+  if (Array.isArray(value.messages)) {
+    return value.messages
+      .filter((message): message is Record<string, unknown> => isRecord(message))
+      .map(message => typeof message.content === 'string' ? message.content : '')
+      .join('\n');
+  }
+  if (Array.isArray(value.contents)) {
+    return value.contents
+      .filter((entry): entry is Record<string, unknown> => isRecord(entry))
+      .flatMap(entry => Array.isArray(entry.parts) ? entry.parts : [])
+      .filter((part): part is Record<string, unknown> => isRecord(part))
+      .map(part => typeof part.text === 'string' ? part.text : '')
+      .join('\n');
+  }
+  return '';
+}
+
+function lastUserText(value: unknown): string {
+  if (!isRecord(value)) return '';
+  if (Array.isArray(value.messages)) {
+    for (let i = value.messages.length - 1; i >= 0; i--) {
+      const message = value.messages[i];
+      if (!isRecord(message) || message.role !== 'user' || typeof message.content !== 'string') continue;
+      return message.content;
+    }
+  }
+  if (Array.isArray(value.contents)) {
+    for (let i = value.contents.length - 1; i >= 0; i--) {
+      const entry = value.contents[i];
+      if (!isRecord(entry) || entry.role !== 'user' || !Array.isArray(entry.parts)) continue;
+      const text = entry.parts
+        .filter((part): part is Record<string, unknown> => isRecord(part) && typeof part.text === 'string')
+        .map(part => part.text as string)
+        .join('\n')
+        .trim();
+      if (text) return text;
+    }
+  }
+  return '';
+}
+
+function localTimeFastPath(requestUrl: string | undefined, data: unknown): string | null {
+  if (!isKnownAiUrl(requestUrl)) return null;
+  // Nur der normale Wissensfragen-Prompt besitzt diesen autoritativen Marker.
+  // Sentiment/Translation/Moderation duerfen durch einen zufaelligen Zeittext
+  // im User-Payload niemals in eine freie Textantwort umgebogen werden.
+  if (!payloadText(data).includes('AUTORITATIVE ZEIT- UND DATUMSANGABEN')) return null;
+  return answerLiveTimeQuestion(lastUserText(data));
+}
+
+function syntheticAiResponseData(requestUrl: string | undefined, answer: string): unknown {
+  const url = parseUrl(requestUrl);
+  if (url?.hostname === 'generativelanguage.googleapis.com') {
+    return { candidates: [{ content: { parts: [{ text: answer }] } }] };
+  }
+  return { choices: [{ message: { content: answer } }] };
+}
+
+function extractOpenAiText(data: unknown): string {
+  if (!isRecord(data) || !Array.isArray(data.choices)) return '';
+  const first = data.choices[0];
+  if (!isRecord(first) || !isRecord(first.message)) return '';
+  return typeof first.message.content === 'string' ? first.message.content.trim() : '';
+}
+
+function extractGeminiText(data: unknown): string {
+  if (!isRecord(data) || !Array.isArray(data.candidates)) return '';
+  const first = data.candidates[0];
+  if (!isRecord(first) || !isRecord(first.content) || !Array.isArray(first.content.parts)) return '';
+  return first.content.parts
+    .filter((part): part is Record<string, unknown> => isRecord(part) && part.thought !== true && typeof part.text === 'string')
+    .map(part => String(part.text).trim())
+    .filter(Boolean)
+    .join('\n')
+    .trim();
+}
+
+/**
+ * Vereinheitlicht Gemini-Mehrteilantworten und stellt fuer alle bekannten
+ * Provider sicher, dass HTTP 200 ohne sichtbaren Text NICHT als Erfolg gilt.
+ */
+export function normalizeAiProviderResponse(
+  requestUrl: string | undefined,
+  data: unknown,
+): { data: unknown; text: string } {
+  const url = parseUrl(requestUrl);
+  if (!url || !isKnownAiUrl(requestUrl)) return { data, text: '' };
+
+  if (url.hostname === 'generativelanguage.googleapis.com') {
+    const text = extractGeminiText(data);
+    if (!text || !isRecord(data) || !Array.isArray(data.candidates) || !isRecord(data.candidates[0])) {
+      return { data, text };
+    }
+    const candidate = data.candidates[0] as Record<string, unknown>;
+    const content = isRecord(candidate.content) ? candidate.content : {};
+    const normalizedCandidate = { ...candidate, content: { ...content, parts: [{ text }] } };
+    return { data: { ...data, candidates: [normalizedCandidate, ...data.candidates.slice(1)] }, text };
+  }
+
+  return { data, text: extractOpenAiText(data) };
+}
+
 let installed = false;
 
 /**
- * Installiert genau einen eng begrenzten Request-Normalizer auf der von V-Bot
- * verwendeten Axios-Instanz. Nicht-AI-URLs werden objektsemantisch
- * unveraendert weitergereicht.
+ * Installiert genau eine eng begrenzte Kompatibilitaetsschicht auf der von
+ * V-Bot verwendeten Axios-Instanz. Sie normalisiert Provider-Payloads,
+ * beantwortet autoritative lokale Zeitfragen ohne externen Provider und laesst
+ * leere 200-Providerantworten als retry-/fallback-faehigen Fehler weiterlaufen.
  */
 export function installAiProviderRequestCompatibility(): void {
   if (installed) return;
   axios.interceptors.request.use((request) => {
     request.data = normalizeAiProviderRequest(request.url, request.data);
+    const localAnswer = localTimeFastPath(request.url, request.data);
+    if (localAnswer) {
+      request.adapter = async (adapterConfig) => ({
+        data: syntheticAiResponseData(request.url, localAnswer),
+        status: 200,
+        statusText: 'OK',
+        headers: {},
+        config: adapterConfig,
+      } as any);
+    }
     return request;
+  });
+  axios.interceptors.response.use((response) => {
+    if (!isKnownAiUrl(response.config?.url)) return response;
+    const normalized = normalizeAiProviderResponse(response.config?.url, response.data);
+    response.data = normalized.data;
+    if (!normalized.text) {
+      const error = new Error('AI_PROVIDER_EMPTY_RESPONSE') as Error & {
+        response?: { status: number; headers: unknown };
+      };
+      // 502 klassifiziert die leere Providerantwort als transienten Upstream-
+      // Fehler. callAI darf denselben Provider einmal retryen und faellt danach
+      // kontrolliert zum naechsten Provider weiter.
+      error.response = { status: 502, headers: response.headers };
+      throw error;
+    }
+    return response;
   });
   installed = true;
 }

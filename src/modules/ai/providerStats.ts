@@ -4,6 +4,7 @@ import { logger } from '../../utils/logger';
 import { config } from '../../config';
 import { providerSupportsTask, taskAffinity, type AiTaskProfile } from './providerCapabilities';
 import { recordAiFallback, recordAiProviderAttempt } from './aiObservability';
+import { normalizeAiProviderRequest } from './providerRequestCompatibility';
 
 /**
  * Provider-Health-Tracking + adaptive Reihenfolge.
@@ -45,6 +46,10 @@ function isConfigured(p: ProviderName): boolean {
 }
 
 export function getConfiguredModel(p: ProviderName): string {
+  // Ein Provider ohne API-Key ist fuer die Runtime nicht konfiguriert. Der
+  // Capability-Notfallpfad in aiHandler darf ihn deshalb nicht allein wegen
+  // einer Default-Modell-ID wieder in die Rotation aufnehmen.
+  if (!isConfigured(p)) return '';
   switch (p) {
     case 'groq': return config.ai.groqModel;
     case 'cerebras': return config.ai.cerebrasModel;
@@ -108,6 +113,11 @@ export function scheduleProviderCooldownSync(intervalMs = 60_000): void {
   void hydrateCooldownsFromDb();
   syncTimer = setInterval(() => { void hydrateCooldownsFromDb(); }, intervalMs);
   syncTimer.unref?.();
+}
+
+export function stopProviderCooldownSync(): void {
+  if (syncTimer) clearInterval(syncTimer);
+  syncTimer = null;
 }
 
 export function markRateLimited(provider: ProviderName, retryAfterMs?: number): number {
@@ -305,6 +315,20 @@ export async function getRankedProviders(task: AiTaskProfile = 'chat'): Promise<
   return scored;
 }
 
+function extractGeminiReply(data: unknown): string {
+  const candidate = (data as {
+    candidates?: Array<{ content?: { parts?: Array<{ text?: unknown; thought?: unknown }> } }>;
+  })?.candidates?.[0];
+  const parts = candidate?.content?.parts;
+  if (!Array.isArray(parts)) return '';
+  return parts
+    .filter(part => part?.thought !== true && typeof part?.text === 'string')
+    .map(part => String(part.text).trim())
+    .filter(Boolean)
+    .join('\n')
+    .trim();
+}
+
 export async function probeProvider(provider: ProviderName): Promise<{
   ok: boolean;
   latencyMs: number;
@@ -319,12 +343,17 @@ export async function probeProvider(provider: ProviderName): Promise<{
     let reply = '';
     if (provider === 'gemini') {
       const url = `https://generativelanguage.googleapis.com/v1beta/models/${config.ai.geminiModel}:generateContent`;
+      const rawBody = {
+        contents: [{ role: 'user', parts: [{ text: 'Antworte nur mit: pong' }] }],
+        generationConfig: { maxOutputTokens: 128 },
+      };
+      const body = normalizeAiProviderRequest(url, rawBody);
       const res = await axios.post(
         url,
-        { contents: [{ role: 'user', parts: [{ text: 'ping' }] }], generationConfig: { maxOutputTokens: 5 } },
+        body,
         { headers: { 'Content-Type': 'application/json', 'x-goog-api-key': config.ai.geminiApiKey }, timeout: 10000 },
       );
-      reply = res.data?.candidates?.[0]?.content?.parts?.[0]?.text || '';
+      reply = extractGeminiReply(res.data);
     } else {
       const cfg: Record<ProviderName, { url: string; key: string; model: string } | null> = {
         groq:       { url: 'https://api.groq.com/openai/v1', key: config.ai.groqApiKey, model: config.ai.groqModel },
@@ -335,17 +364,27 @@ export async function probeProvider(provider: ProviderName): Promise<{
       };
       const c = cfg[provider];
       if (!c) return { ok: false, latencyMs: 0, error: 'Unbekannter Provider' };
+      const url = `${c.url}/chat/completions`;
+      const rawBody = {
+        model: c.model,
+        messages: [{ role: 'user', content: 'Antworte nur mit: pong' }],
+        max_completion_tokens: 128,
+      };
+      const body = normalizeAiProviderRequest(url, rawBody);
       const res = await axios.post(
-        `${c.url}/chat/completions`,
-        { model: c.model, messages: [{ role: 'user', content: 'ping' }], max_tokens: 5 },
+        url,
+        body,
         {
           headers: { Authorization: `Bearer ${c.key}`, 'Content-Type': 'application/json' },
           timeout: 10000,
         },
       );
-      reply = res.data.choices?.[0]?.message?.content || '';
+      reply = String(res.data?.choices?.[0]?.message?.content ?? '').trim();
     }
     const latency = Date.now() - t0;
+    if (!reply) {
+      return { ok: false, latencyMs: latency, error: 'Provider lieferte eine leere Textantwort' };
+    }
     return { ok: true, latencyMs: latency, reply: reply.slice(0, 80) };
   } catch (e) {
     const latency = Date.now() - t0;
