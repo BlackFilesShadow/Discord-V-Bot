@@ -22,20 +22,15 @@ function embed(snapshot: GoodbyeCleanupSnapshot | null, cleanupEnabled = true) {
 }
 
 describe('structured Goodbye status embed', () => {
-  it('uses the fixed leave timestamp and keeps join date before leave date', () => {
+  it('renders one stable non-inline member block instead of the old shifted 3+2 field grid', () => {
     const json = embed(null, false);
     expect(json.timestamp).toBe(leftAt.toISOString());
-    expect(json.fields).toEqual(expect.arrayContaining([
-      expect.objectContaining({ name: 'Discord-Name', value: 'DiscordNick' }),
-      expect.objectContaining({ name: 'Status', value: 'Server verlassen' }),
-      expect.objectContaining({ name: 'Eintrittsdatum' }),
-      expect.objectContaining({ name: 'Austrittsdatum' }),
-      expect.objectContaining({ name: 'Uhrzeit', value: expect.stringContaining('Europe/Berlin') }),
-    ]));
-    const fieldNames = json.fields?.map(field => field.name) ?? [];
-    expect(fieldNames.indexOf('Eintrittsdatum')).toBeGreaterThanOrEqual(0);
-    expect(fieldNames.indexOf('Austrittsdatum')).toBeGreaterThan(fieldNames.indexOf('Eintrittsdatum'));
-    expect(fieldNames).not.toContain('Datum');
+    expect(json.fields).toHaveLength(1);
+    expect(json.fields?.[0]).toMatchObject({ name: '👤 Mitglied', inline: false });
+    expect(json.fields?.[0].value).toContain('**Discord:** DiscordNick');
+    expect(json.fields?.[0].value).toContain('**Status:** Server verlassen');
+    expect(json.fields?.[0].value).toContain('**Beigetreten:** 10. Januar 2026');
+    expect(json.fields?.[0].value).toContain('**Ausgetreten:** 24. August 2026');
     expect(json.fields?.some(field => field.name.includes('Whitelist'))).toBe(false);
   });
 
@@ -48,23 +43,61 @@ describe('structured Goodbye status embed', () => {
       cleanupEnabled: false,
       cleanupSnapshot: null,
     }).toJSON();
-    expect(json.fields?.find(field => field.name === 'Eintrittsdatum')?.value).toBe('Unbekannt');
+    expect(json.fields?.[0].value).toContain('**Beigetreten:** Unbekannt');
   });
 
-  it('renders the readable Discord name even when a legacy mention is present', () => {
-    const json = buildStructuredGoodbyeEmbed({
+  it('renders a native mention only after the Discord user was explicitly resolved', () => {
+    const snowflake = '4'.repeat(18);
+    const unresolved = buildStructuredGoodbyeEmbed({
       discordName: 'DiscordNick',
-      discordMention: '<@123456789>',
+      discordMention: `<@${snowflake}>`,
+      discordMentionResolved: false,
       customMessage: '',
       joinedAt,
       leaveOccurredAt: leftAt,
       cleanupEnabled: false,
       cleanupSnapshot: null,
     }).toJSON();
+    expect(unresolved.fields?.[0].value).toContain('**Discord:** DiscordNick');
+    expect(JSON.stringify(unresolved)).not.toContain(snowflake);
 
-    expect(json.description).toBeUndefined();
-    expect(json.fields?.find(field => field.name === 'Discord-Name')?.value).toBe('DiscordNick');
-    expect(JSON.stringify(json)).not.toContain('<@123456789>');
+    const resolved = buildStructuredGoodbyeEmbed({
+      discordName: 'DiscordNick',
+      discordMention: `<@${snowflake}>`,
+      discordMentionResolved: true,
+      customMessage: '',
+      joinedAt,
+      leaveOccurredAt: leftAt,
+      cleanupEnabled: false,
+      cleanupSnapshot: null,
+    }).toJSON();
+    expect(resolved.fields?.[0].value).toContain(`**Discord:** <@${snowflake}>`);
+  });
+
+  it('scrubs raw Discord snowflakes from every visible non-mention surface', () => {
+    const snowflake = '5'.repeat(18);
+    const json = buildStructuredGoodbyeEmbed({
+      discordName: snowflake,
+      discordMention: `<@${snowflake}>`,
+      discordMentionResolved: false,
+      customMessage: `Bye ${snowflake} und <@${snowflake}>`,
+      joinedAt,
+      leaveOccurredAt: leftAt,
+      cleanupEnabled: true,
+      cleanupSnapshot: {
+        servers: [{
+          nitradoConnId: 'conn-1',
+          serverAlias: snowflake,
+          playerNames: [snowflake],
+          state: 'FAILED',
+          error: `Fehler fuer ${snowflake}`,
+        }],
+      },
+    }).toJSON();
+
+    const serialized = JSON.stringify(json);
+    expect(serialized).not.toContain(snowflake);
+    expect(serialized).toContain('Discord-Nutzer');
   });
 
   it.each([
