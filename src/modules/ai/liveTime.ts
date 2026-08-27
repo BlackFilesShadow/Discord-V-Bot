@@ -72,12 +72,63 @@ function normalizeQuestion(value: string): string {
     .trim();
 }
 
+function formatRuntimeUptime(totalSeconds: number): string {
+  const seconds = Math.max(0, Math.floor(totalSeconds));
+  const days = Math.floor(seconds / 86_400);
+  const hours = Math.floor((seconds % 86_400) / 3_600);
+  const minutes = Math.floor((seconds % 3_600) / 60);
+
+  if (days > 0) return `${days}d ${hours}h`;
+  if (hours > 0) return `${hours}h ${minutes}m`;
+  if (minutes > 0) return `${minutes}m`;
+  return `${seconds}s`;
+}
+
+const LOCAL_BOT_STATUS_TRIGGERS = new Set([
+  'status',
+  'bot status',
+  'botstatus',
+  'v bot status',
+  'vbot status',
+  'system status',
+  'systemstatus',
+  'wie laufts',
+  'wie lauft es',
+  'wie lauft der bot',
+  'bist du online',
+  'bot online',
+]);
+
 /**
- * Provider-unabhaengiger Fast-Path fuer Fakten, die V-Bot selbst autoritativ
- * aus Europe/Berlin kennt. Diese Fragen duerfen niemals an einem externen
- * Provider, dessen Rate-Limit oder einer leeren Completion scheitern.
+ * Provider-unabhaengiger Fast-Path fuer den eigenen Bot-/Runtime-Status.
+ * Eine Statusfrage darf nicht erst einen externen LLM-Provider benoetigen:
+ * Wenn dieser Code ausgefuehrt wird, verarbeitet der V-Bot-Prozess die Anfrage
+ * bereits erfolgreich. Detaillierte Provider-/Discord-Metriken bleiben bewusst
+ * im DEV-Dashboard, statt hier einen externen Health-Probe auszufuehren.
+ */
+export function answerLocalBotStatusQuestion(
+  question: string,
+  uptimeSeconds: number = process.uptime(),
+): string | null {
+  const q = normalizeQuestion(question);
+  if (!LOCAL_BOT_STATUS_TRIGGERS.has(q)) return null;
+
+  return [
+    '🟢 **V-Bot ist online.**',
+    `Runtime: aktiv · Uptime: **${formatRuntimeUptime(uptimeSeconds)}**`,
+    'Diese Statusantwort läuft lokal und benötigt keinen externen KI-Provider.',
+  ].join('\n');
+}
+
+/**
+ * Provider-unabhaengiger Fast-Path fuer autoritative lokale Fakten. Neben
+ * Europe/Berlin-Zeitfragen wird hier auch der eigene Runtime-Status abgefangen,
+ * damit beides selbst bei komplett ausgefallenen/429-Providerketten funktioniert.
  */
 export function answerLiveTimeQuestion(question: string, now: Date = new Date()): string | null {
+  const localStatus = answerLocalBotStatusQuestion(question);
+  if (localStatus) return localStatus;
+
   const q = normalizeQuestion(question);
   if (!q) return null;
 
