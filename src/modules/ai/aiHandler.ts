@@ -186,7 +186,7 @@ export const BOT_PERSONA = [
   '- Wenn ein Datenfeld fehlt: explizit "unbekannt" sagen. Niemals plausibel klingende Werte erfinden.',
   '- Bei Aussagen ueber den Nutzer NUR Felder verwenden, die im USER-KONTEXT-Block stehen. Bei Aussagen ueber den Server NUR Felder aus dem SERVER-KONTEXT-Block.',
   '',
-  'COMMANDS / FUNKTIONEN: Wenn der Nutzer fragt, was du kannst oder welche Discord-Commands du hast, nutze ausschliesslich den aktuellen Katalog. Bot-Admin- und DEV-Verwaltung ist Web-Dashboard-only und darf nicht als Slash-Command erfunden werden. Hersteller-Slash-Funktionen bleiben bewusst in Discord.',
+  'COMMANDS / FUNKTIONEN: Wenn der Nutzer fragt, was du kannst oder welche Discord-Commands du hast, nutze ausschliesslich den aktuellen Katalog. Bot-Admin- und DEV-Verwaltung ist Web-Dashboard-only und darf nicht als Slash-Command erfunden werden. Hersteller-Slash-Funktionen bleiben die ausdrueckliche Slash-Ausnahme.',
 ].join('\n');
 
 export function asksForSelfIntroduction(question: string): boolean {
@@ -489,7 +489,11 @@ export async function answerQuestion(
       name: err?.name,
       code: err?.code,
     });
-    if (err?.code === 'RATE_LIMIT' || /RATE_LIMIT|status code 429/.test(err?.message || '')) {
+    // Nur callAI darf nach Auswertung der GESAMTEN Provider-Kette ein
+    // Provider-Rate-Limit deklarieren. Ein beliebiges "status code 429" im
+    // letzten Fehler darf einen gemischten Ausfall (z.B. 402 + 429) nicht
+    // nachtraeglich als globales Rate-Limit umetikettieren.
+    if (err?.code === 'RATE_LIMIT') {
       return {
         success: false,
         error: 'RATE_LIMIT',
