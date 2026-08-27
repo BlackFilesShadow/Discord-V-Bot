@@ -413,7 +413,7 @@ function WhitelistPanel({ guildId, slot }: { guildId: string; slot: string }) {
             <Plus className="h-3 w-3 mr-1" /> Hinzufuegen
           </Button>
         </div>
-        {add.error && <p className="text-red-400 text-xs mb-2">{(add.error as Error).message}</p>}
+        {add.error && <p className="text-danger text-xs mb-2">{(add.error as Error).message}</p>}
 
         {entries.isLoading && <p className="text-muted">Lade…</p>}
         <div className="space-y-1 max-h-72 overflow-y-auto pr-1">
@@ -479,15 +479,15 @@ function WhitelistPanel({ guildId, slot }: { guildId: string; slot: string }) {
             </Button>
             {sync.isPending && <span className="text-xs text-muted self-center">Laeuft…</span>}
           </div>
-          {syncResult && <p className="text-xs text-green-400">{syncResult}</p>}
+          {syncResult && <p className="text-xs text-ok">{syncResult}</p>}
           {syncDiff && (
             <div className="bg-bg-elev rounded-md border border-border p-3 text-xs space-y-2">
               <div className="flex flex-wrap gap-3 text-muted">
                 <span>Lokal: <span className="text-white font-mono">{syncDiff.counts.local}</span></span>
                 <span>Nitrado: <span className="text-white font-mono">{syncDiff.counts.remote}</span></span>
                 <span>Gemeinsam: <span className="text-white font-mono">{syncDiff.counts.both}</span></span>
-                <span>Nur lokal: <span className="text-yellow-400 font-mono">{syncDiff.counts.onlyLocal}</span></span>
-                <span>Nur Nitrado: <span className="text-yellow-400 font-mono">{syncDiff.counts.onlyRemote}</span></span>
+                <span>Nur lokal: <span className="text-warn font-mono">{syncDiff.counts.onlyLocal}</span></span>
+                <span>Nur Nitrado: <span className="text-warn font-mono">{syncDiff.counts.onlyRemote}</span></span>
               </div>
               {syncDiff.onlyLocal.length > 0 && (
                 <div>
@@ -634,7 +634,7 @@ function WhitelistChannelsCard({ guildId, slot }: { guildId: string; slot: strin
     <Card>
       <CardHeader><CardTitle>Kanal-Integration (Whitelist)</CardTitle></CardHeader>
       {channelsForbidden && (
-        <p className="text-xs text-yellow-400 mb-3">
+        <p className="text-xs text-warn mb-3">
           Channel-Liste nicht verfuegbar (nur Owner kann Kanaele waehlen).
         </p>
       )}
@@ -699,7 +699,7 @@ function WhitelistChannelsCard({ guildId, slot }: { guildId: string; slot: strin
           </Button>
         </div>
         {msg && (
-          <p className={`text-xs ${msg.ok ? 'text-green-400' : 'text-danger'}`}>{msg.text}</p>
+          <p className={`text-xs ${msg.ok ? 'text-ok' : 'text-danger'}`}>{msg.text}</p>
         )}
       </div>
     </Card>
@@ -816,7 +816,7 @@ function EconomyLinksPanel({ guildId, slot }: { guildId: string; slot: string })
         <p className="text-[11px] text-muted">
           Die DayZ-GUID wird serverseitig aus den ADM-/Session-Daten zum exakten Spielernamen aufgeloest und nicht manuell eingegeben.
         </p>
-        {force.error && <p className="text-red-400 text-xs">{(force.error as Error).message}</p>}
+        {force.error && <p className="text-danger text-xs">{(force.error as Error).message}</p>}
       </div>
     </Card>
   );
@@ -1373,7 +1373,7 @@ function AdminPayForm({ guildId, slot }: { guildId: string; slot: string }) {
         {pay.isPending ? 'Buche…' : 'Buchung ausfuehren'}
       </Button>
       {msg && (
-        <p className={`text-xs ${msg.ok ? 'text-green-400' : 'text-danger'}`}>{msg.text}</p>
+        <p className={`text-xs ${msg.ok ? 'text-ok' : 'text-danger'}`}>{msg.text}</p>
       )}
     </div>
   );

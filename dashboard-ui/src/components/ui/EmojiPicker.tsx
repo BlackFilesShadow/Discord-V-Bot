@@ -79,7 +79,7 @@ export function EmojiPicker({
             role="button"
             tabIndex={0}
             aria-label="Emoji entfernen"
-            className="text-muted hover:text-red-400"
+            className="text-muted hover:text-danger"
             onClick={(e) => { e.stopPropagation(); onChange(''); }}
             onKeyDown={(e) => { if (e.key === 'Enter') { e.stopPropagation(); onChange(''); } }}
           >

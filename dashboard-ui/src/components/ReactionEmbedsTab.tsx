@@ -603,7 +603,7 @@ export function ReactionEmbedsTab({ guildId, canManage }: { guildId: string; can
                           ariaLabel={`Option ${idx + 1} aktiv`}
                           disabled={busy}
                         />
-                        <button type="button" className="text-muted hover:text-red-400" onClick={() => removeOption(idx)} aria-label={`Option ${idx + 1} entfernen`}><Trash2 size={15} /></button>
+                        <button type="button" className="text-muted hover:text-danger" onClick={() => removeOption(idx)} aria-label={`Option ${idx + 1} entfernen`}><Trash2 size={15} /></button>
                       </div>
 
                       <div className="grid grid-cols-2 gap-2">
@@ -634,7 +634,7 @@ export function ReactionEmbedsTab({ guildId, canManage }: { guildId: string; can
                             {o.roleIds.map(rid => (
                               <span key={rid} className="inline-flex items-center gap-1 rounded bg-bg-elev border border-border px-2 py-0.5 text-xs text-white">
                                 {roleName(rid)}
-                                <button type="button" className="text-muted hover:text-red-400" onClick={() => removeRoleFromOption(idx, rid)} aria-label={`Rolle ${roleName(rid)} aus Option ${idx + 1} entfernen`}><X size={12} /></button>
+                                <button type="button" className="text-muted hover:text-danger" onClick={() => removeRoleFromOption(idx, rid)} aria-label={`Rolle ${roleName(rid)} aus Option ${idx + 1} entfernen`}><X size={12} /></button>
                               </span>
                             ))}
                           </div>

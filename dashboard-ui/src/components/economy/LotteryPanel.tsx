@@ -223,7 +223,7 @@ export function LotteryPanel({ guildId, slot }: { guildId: string; slot: string 
         </div>
       </div>
 
-      {message && <p className={`mt-3 text-xs ${message.ok ? 'text-green-400' : 'text-danger'}`}>{message.text}</p>}
+      {message && <p className={`mt-3 text-xs ${message.ok ? 'text-ok' : 'text-danger'}`}>{message.text}</p>}
     </Card>
   );
 }

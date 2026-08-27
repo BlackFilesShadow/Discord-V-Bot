@@ -230,9 +230,9 @@ export default function Observability(): JSX.Element {
                       <div key={`${l.ts}:${i}`} className="border-b border-zinc-900 px-2 py-1 whitespace-pre-wrap break-words">
                         <span className="text-zinc-500">{new Date(l.ts).toISOString().slice(11, 23)} </span>
                         <span className={
-                          l.level === 'error' ? 'text-red-400'
-                            : l.level === 'warn' ? 'text-amber-400'
-                              : l.level === 'info' ? 'text-emerald-400'
+                          l.level === 'error' ? 'text-danger'
+                            : l.level === 'warn' ? 'text-warn'
+                              : l.level === 'info' ? 'text-info'
                                 : 'text-zinc-400'
                         }>{l.level.padEnd(5)} </span>
                         <span className="text-zinc-200">{l.message}</span>

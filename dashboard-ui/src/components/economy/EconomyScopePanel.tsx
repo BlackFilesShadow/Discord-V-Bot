@@ -87,7 +87,7 @@ export function EconomyScopePanel({ guildId, slot }: { guildId: string; slot: st
             {resolve.isPending ? <><RefreshCw className="h-3.5 w-3.5 animate-spin mr-1" />Ordne zu…</> : 'Zuordnen & Economy freigeben'}
           </Button>
         </div>
-        {message && <p className={`text-xs ${resolve.isError ? 'text-danger' : 'text-green-400'}`}>{message}</p>}
+        {message && <p className={`text-xs ${resolve.isError ? 'text-danger' : 'text-ok'}`}>{message}</p>}
       </div>
     </Card>
   );

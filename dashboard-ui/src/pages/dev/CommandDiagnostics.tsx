@@ -140,7 +140,7 @@ export default function Page(): JSX.Element {
         if (!r.hasData) flags.push('keine data');
         if (r.nameTooLong) flags.push('Name >32');
         return flags.length ? (
-          <span className="text-xs text-amber-400">{flags.join(', ')}</span>
+          <span className="text-xs text-warn">{flags.join(', ')}</span>
         ) : (
           <span className="text-muted">–</span>
         );
@@ -190,11 +190,11 @@ export default function Page(): JSX.Element {
                 <CardTitle>/status Kollision</CardTitle>
                 <CardDesc>
                   {data.collisions.statusResolved ? (
-                    <span className="inline-flex items-center gap-1 text-emerald-400">
+                    <span className="inline-flex items-center gap-1 text-ok">
                       <CheckCircle2 className="h-4 w-4" /> beseitigt — keine Namens-Kollisionen
                     </span>
                   ) : (
-                    <span className="inline-flex items-center gap-1 text-amber-400">
+                    <span className="inline-flex items-center gap-1 text-warn">
                       <AlertTriangle className="h-4 w-4" /> {data.collisions.count} Kollision(en) erkannt
                     </span>
                   )}
@@ -206,18 +206,18 @@ export default function Page(): JSX.Element {
                 <CardTitle>Integrität</CardTitle>
                 <CardDesc>
                   {integrityIssues === 0 ? (
-                    <span className="inline-flex items-center gap-1 text-emerald-400">
+                    <span className="inline-flex items-center gap-1 text-ok">
                       <CheckCircle2 className="h-4 w-4" /> keine defekten Commands
                     </span>
                   ) : (
-                    <span className="inline-flex items-center gap-1 text-amber-400">
+                    <span className="inline-flex items-center gap-1 text-warn">
                       <AlertTriangle className="h-4 w-4" /> {integrityIssues} Hinweis(e)
                     </span>
                   )}
                 </CardDesc>
               </CardHeader>
               {data.integrity.missingSpecKeep.length > 0 && (
-                <p className="px-1 text-xs text-amber-400">
+                <p className="px-1 text-xs text-warn">
                   Spec-Keep nicht registriert: {data.integrity.missingSpecKeep.map((n) => `/${n}`).join(', ')}
                 </p>
               )}
@@ -250,7 +250,7 @@ export default function Page(): JSX.Element {
                     onClick={() => setCat(c)}
                     className={`rounded border px-2 py-1 text-xs ${
                       cat === c
-                        ? 'border-emerald-500 bg-emerald-500/10 text-emerald-300'
+                        ? 'border-ok bg-ok/10 text-ok'
                         : 'border-zinc-700 text-muted'
                     }`}
                   >
