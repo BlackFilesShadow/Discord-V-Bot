@@ -13,6 +13,7 @@ import { requireGuildPermission } from '../../middleware/auth';
 import {
   getConfig, getAccountOrZero, recentTransactions,
 } from '../../../modules/economy/repository';
+import { getInterestBasisPoints, interestBasisPointsToPercent, parseInterestPercent, setInterestBasisPoints } from '../../../modules/economy/interestRate';
 import { applyDashboardAdminPay } from '../../../modules/economy/dashboardAdminPay';
 import { asUserDiscordId } from '../../../types/scope';
 import { logAuditDb } from '../../../utils/logger';
@@ -39,7 +40,7 @@ async function economyEnabled(guildId: string, nitradoConnId: string): Promise<b
   return settings?.economyActive ?? false;
 }
 
-function configPayload(connId: string, cfg: Awaited<ReturnType<typeof getConfig>>, enabled: boolean) {
+function configPayload(connId: string, cfg: Awaited<ReturnType<typeof getConfig>>, enabled: boolean, interestBasisPoints: number) {
   return {
     nitradoConnId: connId,
     currencyName: cfg.currencyName,
@@ -47,25 +48,30 @@ function configPayload(connId: string, cfg: Awaited<ReturnType<typeof getConfig>
     enabled,
     startBalance: cfg.startBalance,
     playtimeRewardPercent: cfg.playtimeRewardPercent,
-    bankInterestPercent: cfg.bankInterestPercent,
+    bankInterestPercent: interestBasisPointsToPercent(interestBasisPoints),
+    bankInterestBasisPoints: interestBasisPoints,
     bankChannelId: cfg.bankChannelId,
   };
 }
 
 economyRouter.get('/config', requireGuildPermission('economy.view'), async (req, res) => {
   const { scope, connId } = scoped(req);
-  const [cfg, enabled] = await Promise.all([
+  const [cfg, enabled, interestBasisPoints] = await Promise.all([
     getConfig(scope.guildId, connId),
     economyEnabled(scope.guildId, connId),
+    getInterestBasisPoints(scope.guildId, connId),
   ]);
-  res.json(configPayload(connId, cfg, enabled));
+  res.json(configPayload(connId, cfg, enabled, interestBasisPoints));
 });
 
 economyRouter.put('/config', requireGuildPermission('economy.manage'), async (req, res) => {
   const { scope, connId } = scoped(req);
   const b = req.body ?? {};
-  const current = await getConfig(scope.guildId, connId);
-  const currentEnabled = await economyEnabled(scope.guildId, connId);
+  const [current, currentEnabled, currentInterestBasisPoints] = await Promise.all([
+    getConfig(scope.guildId, connId),
+    economyEnabled(scope.guildId, connId),
+    getInterestBasisPoints(scope.guildId, connId),
+  ]);
 
   const patch: Record<string, unknown> = {};
   if (typeof b.currencyName === 'string' && b.currencyName.length >= 1 && b.currencyName.length <= 40) patch.currencyName = b.currencyName;
@@ -73,20 +79,23 @@ economyRouter.put('/config', requireGuildPermission('economy.manage'), async (re
   if (typeof b.enabled === 'boolean') patch.enabled = b.enabled;
   if (typeof b.startBalance === 'number' && Number.isInteger(b.startBalance) && b.startBalance >= 0 && b.startBalance <= 1_000_000_000) patch.startBalance = b.startBalance;
   if (typeof b.playtimeRewardPercent === 'number' && Number.isInteger(b.playtimeRewardPercent) && b.playtimeRewardPercent >= 0 && b.playtimeRewardPercent <= 1000) patch.playtimeRewardPercent = b.playtimeRewardPercent;
-  if (typeof b.bankInterestPercent === 'number' && Number.isInteger(b.bankInterestPercent) && b.bankInterestPercent >= 0 && b.bankInterestPercent <= 100) patch.bankInterestPercent = b.bankInterestPercent;
+  if (Object.prototype.hasOwnProperty.call(b, 'bankInterestPercent')) {
+    try { patch.bankInterestBasisPoints = parseInterestPercent(b.bankInterestPercent); }
+    catch (error) { res.status(400).json({ error: (error as Error).message }); return; }
+  }
   if (b.bankChannelId === null || (typeof b.bankChannelId === 'string' && /^\d{17,20}$/.test(b.bankChannelId))) patch.bankChannelId = b.bankChannelId;
   if (Object.keys(patch).length === 0) {
     res.status(400).json({ error: 'Keine gueltigen Economy-Felder.' });
     return;
   }
 
+  const interestBasisPoints = (patch.bankInterestBasisPoints as number | undefined) ?? currentInterestBasisPoints;
   const merged = {
     currencyName: (patch.currencyName as string | undefined) ?? current.currencyName,
     emoji: (patch.emoji as string | undefined) ?? current.emoji,
     enabled: (patch.enabled as boolean | undefined) ?? currentEnabled,
     startBalance: (patch.startBalance as number | undefined) ?? current.startBalance,
     playtimeRewardPercent: (patch.playtimeRewardPercent as number | undefined) ?? current.playtimeRewardPercent,
-    bankInterestPercent: (patch.bankInterestPercent as number | undefined) ?? current.bankInterestPercent,
     bankChannelId: Object.prototype.hasOwnProperty.call(patch, 'bankChannelId')
       ? (patch.bankChannelId as string | null)
       : current.bankChannelId,
@@ -103,7 +112,7 @@ economyRouter.put('/config', requireGuildPermission('economy.manage'), async (re
         enabled: merged.enabled,
         startBalance: merged.startBalance,
         playtimeRewardPercent: merged.playtimeRewardPercent,
-        bankInterestPercent: merged.bankInterestPercent,
+        bankInterestPercent: Math.floor(interestBasisPoints / 100),
         bankChannelId: merged.bankChannelId,
       },
       update: {
@@ -112,10 +121,11 @@ economyRouter.put('/config', requireGuildPermission('economy.manage'), async (re
         enabled: merged.enabled,
         startBalance: merged.startBalance,
         playtimeRewardPercent: merged.playtimeRewardPercent,
-        bankInterestPercent: merged.bankInterestPercent,
+        bankInterestPercent: Math.floor(interestBasisPoints / 100),
         bankChannelId: merged.bankChannelId,
       },
     });
+    await setInterestBasisPoints(scope.guildId, connId, interestBasisPoints, tx);
     await tx.serverSettings.upsert({
       where: { guildId_nitradoConnId: { guildId: scope.guildId, nitradoConnId: connId } },
       create: { guildId: scope.guildId, nitradoConnId: connId, economyActive: merged.enabled },
@@ -128,14 +138,17 @@ economyRouter.put('/config', requireGuildPermission('economy.manage'), async (re
     });
   });
 
-  const cfg = await getConfig(scope.guildId, connId);
+  const [cfg, savedInterestBasisPoints] = await Promise.all([
+    getConfig(scope.guildId, connId),
+    getInterestBasisPoints(scope.guildId, connId),
+  ]);
   logAuditDb('ECONOMY_CONFIG_UPDATED', 'ECONOMY', {
     actorUserId: req.auth!.userId,
     guildId: scope.guildId,
     details: { nitradoConnId: connId, fields: Object.keys(patch), canonicalActivation: 'ServerSettings.economyActive' },
   });
   emitGuildEvent(scope.guildId, { type: 'settings.changed', payload: { guildId: scope.guildId, slotId: connId } });
-  res.json(configPayload(connId, cfg, merged.enabled));
+  res.json(configPayload(connId, cfg, merged.enabled, savedInterestBasisPoints));
 });
 
 economyRouter.get('/accounts/:userDiscordId', requireGuildPermission('economy.view'), async (req, res) => {
@@ -210,8 +223,9 @@ interface OverviewCasinoGame { type: string; enabled: boolean }
 economyRouter.get('/overview', requireGuildPermission('economy.view'), async (req, res) => {
   const { scope, connId } = scoped(req);
   const guildId = scope.guildId;
-  const [cfg, enabled, accountAggRows, linkCountRows, txCountRows, recentTx, casinoRounds, casinoGames] = await Promise.all([
+  const [cfg, interestBasisPoints, enabled, accountAggRows, linkCountRows, txCountRows, recentTx, casinoRounds, casinoGames] = await Promise.all([
     getConfig(guildId, connId),
+    getInterestBasisPoints(guildId, connId),
     economyEnabled(guildId, connId),
     rawDb.$queryRawUnsafe<OverviewAggregate[]>(
       'SELECT COALESCE(SUM("walletBalance"),0) AS wallet, COALESCE(SUM("bankBalance"),0) AS bank, COUNT(*)::bigint AS count FROM "EconomyAccount" WHERE "guildId"=$1 AND "nitradoConnId"=$2',
@@ -259,7 +273,8 @@ economyRouter.get('/overview', requireGuildPermission('economy.view'), async (re
     bank: {
       totalWallet: (accAgg.wallet ?? 0n).toString(),
       totalBank: (accAgg.bank ?? 0n).toString(),
-      interestPercent: cfg.bankInterestPercent,
+      interestPercent: interestBasisPointsToPercent(interestBasisPoints),
+      interestBasisPoints,
       bankChannelId: cfg.bankChannelId,
     },
     casino: {
