@@ -63,12 +63,22 @@ describe('Economy-Lotterie — Production-Sicherheitsinvarianten', () => {
   });
 
   it('macht Auszahlung und Refunds deterministisch idempotent und restart-fest', () => {
+    const settlement = lottery.slice(
+      lottery.indexOf('async function prepareSettlement'),
+      lottery.indexOf('async function completeWinnerPayout'),
+    );
+    const refunds = lottery.slice(
+      lottery.indexOf('async function processRefunds'),
+      lottery.indexOf('async function announceTerminalRound'),
+    );
     expect(lottery).toContain('idempotencyKey: `lottery-payout:${round.id}`');
     expect(lottery).toContain('idempotencyKey: `lottery-refund:${round.id}:${entry.userDiscordId}`');
     expect(lottery).toContain("{ status: { in: ['DRAWING', 'REFUNDING'] } }");
     expect(lottery).toContain('refundedAt: null');
-    expect(lottery).toContain("status: 'REFUNDING'");
-    expect(lottery).toContain("status: 'REFUNDED'");
+    expect(settlement).toContain('REFUNDING');
+    expect(settlement).toContain('LotteryRoundStatus');
+    expect(refunds).toContain('REFUNDED');
+    expect(refunds).toContain('LotteryRoundStatus');
   });
 
   it('behandelt parallele identische Ticketkaeufe als Replay statt als neues Limit-Ereignis', () => {
