@@ -1,6 +1,7 @@
 -- Economy completion 2026-08-28:
 -- 1) Lotterie-Gewinn als Freitext mit getrenntem aktiven Wert und dauerhaftem Snapshot.
--- 2) Schwarzmarkt-Lieferpositionen sind Freitext statt DayZ-Classname.
+-- 2) Schwarzmarkt-Lieferpositionen sind fachlich Freitext statt DayZ-Classname.
+--    Die bestehende physische Spalte bleibt aus Rueckwaertskompatibilitaet erhalten.
 -- 3) Bankzins bekommt feste Basispunkt-Praezision (100 bp = 1,00 %) ohne Float-Geldrechnung.
 
 ALTER TABLE "LotteryRound"
@@ -13,19 +14,15 @@ ALTER TABLE "LotteryRound"
   ADD CONSTRAINT "LotteryRound_prize_snapshot_check"
     CHECK ("prizeSnapshot" IS NULL OR char_length(trim("prizeSnapshot")) BETWEEN 1 AND 256);
 
--- Bestehende Schwarzmarkt-Daten bleiben 1:1 erhalten; nur die fachlich falsche
--- Classname-Bezeichnung wird auf den jetzt freien Itemtext umgestellt.
+-- Die Spalte "className" enthaelt kuenftig ausschliesslich freien Itemtext.
+-- Kein Types.xml-/DayZ-Katalog-Constraint. Alte Werte bleiben unveraendert lesbar.
 ALTER TABLE "EconomyMarketListingItem"
   DROP CONSTRAINT IF EXISTS "EconomyMarketListingItem_classname_check";
-DROP INDEX IF EXISTS "EconomyMarketListingItem_listing_class_key";
 ALTER TABLE "EconomyMarketListingItem"
-  RENAME COLUMN "className" TO "itemText";
+  ALTER COLUMN "className" TYPE VARCHAR(256);
 ALTER TABLE "EconomyMarketListingItem"
-  ALTER COLUMN "itemText" TYPE VARCHAR(256),
-  ADD CONSTRAINT "EconomyMarketListingItem_item_text_check"
-    CHECK (char_length(trim("itemText")) BETWEEN 1 AND 256);
-CREATE UNIQUE INDEX "EconomyMarketListingItem_listing_item_key"
-  ON "EconomyMarketListingItem"("listingId", "itemText");
+  ADD CONSTRAINT "EconomyMarketListingItem_free_item_text_check"
+    CHECK (char_length(trim("className")) BETWEEN 1 AND 256);
 
 ALTER TABLE "EconomyConfig"
   ADD COLUMN "bankInterestBasisPoints" INTEGER;
