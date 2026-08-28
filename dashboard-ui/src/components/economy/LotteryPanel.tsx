@@ -59,7 +59,7 @@ interface LotteryForm {
 const MAX_TICKET_PRICE = 1_000_000_000_000n;
 const MIN_END_DELAY_MS = 60_000;
 const MAX_END_DELAY_MS = 30 * 24 * 60 * 60 * 1000;
-const DEFAULT_DURATION_MS = 60 * 60 * 1000;
+const DEFAULT_END_DELAY_MS = 60 * 60 * 1000;
 
 function hasControlChars(value: string): boolean {
   for (const char of value) {
@@ -89,39 +89,41 @@ function localDateTimeValue(date: Date): string {
   return local.toISOString().slice(0, 16);
 }
 
-function roundUpToMinute(timestamp: number): number {
-  return Math.ceil(timestamp / 60_000) * 60_000;
+function roundUpToMinute(date: Date): Date {
+  return new Date(Math.ceil(date.getTime() / 60_000) * 60_000);
 }
 
 function earliestEndTimestamp(now = Date.now()): number {
   // datetime-local has minute precision. Rounding upward after adding the
   // backend minimum keeps a real >=60s buffer even when the current minute is
   // already nearly over.
-  return roundUpToMinute(now + MIN_END_DELAY_MS);
+  return roundUpToMinute(new Date(now + MIN_END_DELAY_MS)).getTime();
 }
 
-function defaultEndValue(now = Date.now()): string {
-  return localDateTimeValue(new Date(roundUpToMinute(now + DEFAULT_DURATION_MS)));
+function defaultLotteryEndLocal(): string {
+  return localDateTimeValue(roundUpToMinute(new Date(Date.now() + DEFAULT_END_DELAY_MS)));
 }
 
-function emptyLotteryForm(now = Date.now()): LotteryForm {
+function emptyLotteryForm(): LotteryForm {
   return {
     channelId: '',
     prizeText: '',
     ticketPrice: '',
     maxTicketsPerUser: '10',
     minParticipants: '2',
-    endsAt: defaultEndValue(now),
+    endsAt: defaultLotteryEndLocal(),
   };
 }
 
 function validateLotteryForm(form: LotteryForm, textChannels: ChannelOption[], now = Date.now()): string | null {
-  if (!textChannels.some(channel => channel.id === form.channelId)) return 'Bitte einen gültigen Discord-Channel auswählen.';
+  const channelValid = textChannels.some(channel => channel.id === form.channelId);
+  if (!channelValid) return 'Bitte einen gültigen Discord-Channel auswählen.';
   const prize = form.prizeText.trim();
   if (prize.length < 1 || prize.length > 256 || hasControlChars(prize)) return 'Gewinn muss 1–256 gültige Zeichen enthalten.';
   if (!/^\d+$/.test(form.ticketPrice)) return 'Ticketpreis muss eine positive ganze Zahl sein.';
   const ticketPrice = BigInt(form.ticketPrice || '0');
-  if (ticketPrice < 1n || ticketPrice > MAX_TICKET_PRICE) return 'Ticketpreis liegt außerhalb des erlaubten Bereichs.';
+  const ticketValid = ticketPrice >= 1n && ticketPrice <= MAX_TICKET_PRICE;
+  if (!ticketValid) return 'Ticketpreis liegt außerhalb des erlaubten Bereichs.';
   const maxTickets = Number(form.maxTicketsPerUser);
   if (!Number.isInteger(maxTickets) || maxTickets < 1 || maxTickets > 10_000) return 'Max. Tickets pro User muss zwischen 1 und 10.000 liegen.';
   const minParticipants = Number(form.minParticipants);
@@ -129,8 +131,8 @@ function validateLotteryForm(form: LotteryForm, textChannels: ChannelOption[], n
   const endsAtMs = form.endsAt ? new Date(form.endsAt).getTime() : Number.NaN;
   if (!Number.isFinite(endsAtMs)) return 'Bitte eine gültige Endzeit auswählen.';
   const delay = endsAtMs - now;
-  if (delay < MIN_END_DELAY_MS) return 'Die Endzeit muss beim Start mindestens 1 volle Minute in der Zukunft liegen.';
-  if (delay > MAX_END_DELAY_MS) return 'Die Endzeit darf maximal 30 Tage in der Zukunft liegen.';
+  if (delay < MIN_END_DELAY_MS) return 'Endzeit muss mindestens 1 Minute in der Zukunft liegen.';
+  if (delay > MAX_END_DELAY_MS) return 'Endzeit darf maximal 30 Tage in der Zukunft liegen.';
   return null;
 }
 
@@ -214,7 +216,7 @@ export function LotteryPanel({ guildId, slot }: { guildId: string; slot: string 
   });
 
   const active = current.data?.round ?? null;
-  const formValidationError = validateLotteryForm(form, textChannels, Date.now());
+  const formValidation = validateLotteryForm(form, textChannels, Date.now());
 
   return (
     <Card>
@@ -287,7 +289,7 @@ export function LotteryPanel({ guildId, slot }: { guildId: string; slot: string 
             <label className="text-sm"><span className="text-muted">Max. Tickets pro User</span><Input value={form.maxTicketsPerUser} onChange={e => setForm({ ...form, maxTicketsPerUser: e.target.value.trim() })} inputMode="numeric" /></label>
             <label className="text-sm"><span className="text-muted">Mindestteilnehmer</span><Input value={form.minParticipants} onChange={e => setForm({ ...form, minParticipants: e.target.value.trim() })} inputMode="numeric" /></label>
             <label className="text-sm md:col-span-2">
-              <span className="text-muted">Endzeit (mindestens 1 volle Minute bis maximal 30 Tage)</span>
+              <span className="text-muted">Endzeit (1 Minute bis 30 Tage)</span>
               <Input
                 type="datetime-local"
                 min={localDateTimeValue(new Date(earliestEndTimestamp()))}
@@ -296,8 +298,8 @@ export function LotteryPanel({ guildId, slot }: { guildId: string; slot: string 
               />
             </label>
           </div>
-          {formValidationError && <p className="text-xs text-danger" role="alert">{formValidationError}</p>}
-          <Button disabled={create.isPending || current.isError || history.isError || channels.isLoading || channels.isError || Boolean(formValidationError)} onClick={() => { setMessage(null); create.mutate(); }}>
+          {formValidation && <p className="text-xs text-danger" role="alert">{formValidation}</p>}
+          <Button disabled={create.isPending || current.isError || history.isError || channels.isLoading || channels.isError || Boolean(formValidation)} onClick={() => { setMessage(null); create.mutate(); }}>
             {create.isPending ? 'Starte…' : 'Lotterie starten'}
           </Button>
         </div>

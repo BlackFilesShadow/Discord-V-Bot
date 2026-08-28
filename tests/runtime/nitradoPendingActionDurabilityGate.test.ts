@@ -58,8 +58,8 @@ describe('Nitrado-1E durable pending action architecture gate', () => {
     expect(linkSection.lastIndexOf('await finish(')).toBeGreaterThan(linkSection.indexOf('await applySuccessfulLinkEconomyEffects({'));
 
     const unlinkSection = privileged.slice(unlinkAt, catchAt);
-    expect(unlinkSection.indexOf('await unlinkUser(')).toBeGreaterThanOrEqual(0);
-    expect(unlinkSection.indexOf('await deactivateLinkRewardState(')).toBeGreaterThan(unlinkSection.indexOf('await unlinkUser('));
+    expect(unlinkSection.indexOf('await forceAdminUnlinkUser(')).toBeGreaterThanOrEqual(0);
+    expect(unlinkSection.indexOf('await deactivateLinkRewardState(')).toBeGreaterThan(unlinkSection.indexOf('await forceAdminUnlinkUser('));
     expect(unlinkSection.indexOf('await finish(')).toBeGreaterThan(unlinkSection.indexOf('await deactivateLinkRewardState('));
   });
 
