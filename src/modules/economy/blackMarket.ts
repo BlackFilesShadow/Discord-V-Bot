@@ -299,11 +299,8 @@ export async function createMarketListing(args: {
   const sku = args.sku?.trim() ? cleanSku(args.sku) : `ITEM-${randomUUID().replace(/-/g, '').slice(0, 16).toUpperCase()}`;
   const name = normalizeMarketItemText(args.name, MAX_TEXT.name);
   const description = cleanOptionalText(args.description, MAX_TEXT.description, 'Beschreibung');
-  const items = args.deliveryItems === undefined
-    ? [{ itemText: name, quantity: 1 }]
-    : parseMarketDeliveryItems(args.deliveryItems, true).length > 0
-      ? parseMarketDeliveryItems(args.deliveryItems, true)
-      : [{ itemText: name, quantity: 1 }];
+  const parsedItems = args.deliveryItems === undefined ? [] : parseMarketDeliveryItems(args.deliveryItems, true);
+  const items = parsedItems.length > 0 ? parsedItems : [{ itemText: name, quantity: 1 }];
   try {
     const row = await prisma.$transaction(async tx => {
       const created = await tx.economyMarketListing.create({
@@ -454,8 +451,8 @@ async function existingPurchase(key: string): Promise<MarketPurchaseView | null>
 export async function getMarketPurchase(guildId: GuildId, nitradoConnId: NitradoConnId, purchaseId: string): Promise<MarketPurchaseView | null> {
   await assertEconomyScopeReady(guildId, nitradoConnId);
   const rows = await rawDb().$queryRawUnsafe<DbPurchaseBase[]>(
-    `${PURCHASE_SELECT} WHERE p."id"=$1 AND p."guildId"=$2 AND p."nitradoConnId"=$3 LIMIT $4`,
-    purchaseId, String(guildId), String(nitradoConnId), 1,
+    `${PURCHASE_SELECT} WHERE p."id"=$1 AND p."guildId"=$2 AND p."nitradoConnId"=$3 LIMIT 1`,
+    purchaseId, String(guildId), String(nitradoConnId),
   );
   return rows[0] ? toPurchase(rows[0]) : null;
 }
