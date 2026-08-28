@@ -667,7 +667,7 @@ export function VirtualAccountsControlPanel({ guildId, slot }: { guildId: string
         {rows.map(account => {
           const pocketsEmpty = BigInt(account.walletBalance) === 0n && BigInt(account.bankBalance) === 0n;
           const canArchive = account.kind === 'CUSTOM' && account.status !== 'ARCHIVED' && pocketsEmpty;
-          const canDelete = account.kind === 'CUSTOM' && account.accountPurpose === 'GENERAL' && pocketsEmpty;
+          const canDelete = account.kind === 'CUSTOM' && account.accountPurpose === 'GENERAL';
           const deleteArmed = deleteConfirmId === account.id;
           return (
             <div key={account.id} className="rounded-lg border border-border/60 bg-bg-elev/40 p-3">
@@ -727,7 +727,7 @@ export function VirtualAccountsControlPanel({ guildId, slot }: { guildId: string
                         }
                         remove.mutate(account.id);
                       }}
-                      title={canDelete ? 'Nur unbenutzte Konten ohne Finanz-/Audit-Historie können dauerhaft gelöscht werden.' : 'Löschen erst bei Wallet=0 und Bank=0 möglich.'}
+                      title="Beim Löschen werden Wallet und Bank atomar auf 0 gesetzt. Konten mit Buchungs- oder geschützter Systemhistorie bleiben geschützt."
                     >
                       <Trash2 className="h-3.5 w-3.5 mr-1" />{deleteArmed ? 'Wirklich löschen?' : 'Löschen'}
                     </Button>
@@ -736,7 +736,7 @@ export function VirtualAccountsControlPanel({ guildId, slot }: { guildId: string
               </div>
 
               {deleteArmed && canDelete && (
-                <p className="mt-2 text-[11px] text-danger">Dauerhaftes Löschen ist nur ohne Buchungs-/Systemhistorie möglich. Klicke „Wirklich löschen?“ erneut zur Bestätigung.</p>
+                <p className="mt-2 text-[11px] text-danger">Beim Löschen werden Wallet und Bank atomar auf 0 gesetzt. Dauerhaftes Löschen bleibt nur ohne Buchungs- oder geschützte Systemhistorie möglich. Klicke „Wirklich löschen?“ erneut zur Bestätigung.</p>
               )}
 
               {editingId === account.id && (
