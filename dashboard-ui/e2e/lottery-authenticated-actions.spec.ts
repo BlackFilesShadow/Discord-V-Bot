@@ -6,6 +6,7 @@ const SLOT = '1';
 const TEXT_CHANNEL_ID = '123456789012345679';
 const ANNOUNCEMENT_CHANNEL_ID = '123456789012345680';
 const MAX_TICKET_PRICE = '1000000000000';
+const PRIZE_TEXT = '🎁 Event-Gewinn';
 
 type LotteryStatus = 'ACTIVE' | 'DRAWING' | 'REFUNDING' | 'FINISHED' | 'REFUNDED';
 
@@ -14,6 +15,9 @@ interface LotteryRound {
   potAccountId: string;
   channelId: string;
   messageId: string | null;
+  prizeText: string | null;
+  activePrizeText: string | null;
+  prizeSnapshot: string | null;
   ticketPrice: string;
   maxTicketsPerUser: number;
   minParticipants: number;
@@ -40,11 +44,15 @@ async function json(route: Route, body: unknown, status = 200): Promise<void> {
 }
 
 function round(status: LotteryStatus = 'ACTIVE'): LotteryRound {
+  const terminal = status === 'FINISHED' || status === 'REFUNDED';
   return {
     id: 'round-12345678',
     potAccountId: 'pot-1',
     channelId: TEXT_CHANNEL_ID,
     messageId: 'message-1',
+    prizeText: PRIZE_TEXT,
+    activePrizeText: terminal ? null : PRIZE_TEXT,
+    prizeSnapshot: terminal ? PRIZE_TEXT : null,
     ticketPrice: '250',
     maxTicketsPerUser: 10,
     minParticipants: 2,
@@ -135,9 +143,13 @@ async function stubLottery(page: Page, opts: { canManage: boolean; active?: bool
       const body = req.postDataJSON() as Record<string, unknown>;
       mutations.push({ kind: 'create', path, query: url.search, body });
       if (opts.createError) return json(route, { error: 'Lotterie-Channel ist kein beschreibbarer Text-Channel.' }, 400);
+      const prizeText = String(body.prizeText);
       currentRound = {
         ...round('ACTIVE'),
         channelId: String(body.channelId),
+        prizeText,
+        activePrizeText: prizeText,
+        prizeSnapshot: null,
         ticketPrice: String(body.ticketPrice),
         maxTicketsPerUser: Number(body.maxTicketsPerUser),
         minParticipants: Number(body.minParticipants),
@@ -148,7 +160,17 @@ async function stubLottery(page: Page, opts: { canManage: boolean; active?: bool
     if (path === `${lotteryBase}/round-12345678/end-now` && method === 'POST') {
       const body = (req.postDataJSON() ?? {}) as Record<string, unknown>;
       mutations.push({ kind: 'end', path, query: url.search, body });
-      const finished = { ...(currentRound ?? round('ACTIVE')), status: 'FINISHED' as const, finalPot: '3000', potBalance: '0' };
+      const source = currentRound ?? round('ACTIVE');
+      const snapshot = source.activePrizeText ?? source.prizeText;
+      const finished: LotteryRound = {
+        ...source,
+        status: 'FINISHED',
+        prizeText: snapshot,
+        activePrizeText: null,
+        prizeSnapshot: snapshot,
+        finalPot: '3000',
+        potBalance: '0',
+      };
       currentRound = null;
       history = [finished, ...history];
       return json(route, finished);
@@ -178,12 +200,13 @@ async function noPageOverflow(page: Page): Promise<void> {
 }
 
 test.describe('Lottery authenticated dashboard contract', () => {
-  test('economy.view sieht Status/History, aber keine Manage-Aktionen', async ({ page }) => {
+  test('economy.view sieht Status/History inklusive Gewinn, aber keine Manage-Aktionen', async ({ page }) => {
     await stubLottery(page, { canManage: false, active: true });
     await page.goto(`/servers/${GUILD_ID}/server/${SLOT}?tab=economy`);
 
     await expect(page.getByText('Lotterie', { exact: true })).toBeVisible();
     await expect(page.getByText('Aktuelle Runde')).toBeVisible();
+    await expect(page.getByText(PRIZE_TEXT, { exact: true }).first()).toBeVisible();
     await expect(page.getByText('Letzte Runden')).toBeVisible();
     await expect(page.getByRole('button', { name: 'Jetzt beenden', exact: true })).toHaveCount(0);
     await expect(page.getByText('Neue Runde starten')).toHaveCount(0);
@@ -198,7 +221,7 @@ test.describe('Lottery authenticated dashboard contract', () => {
     await expect(page.getByRole('button', { name: 'Lotterie starten', exact: true })).toHaveCount(0);
   });
 
-  test('economy.manage erstellt und beendet eine Runde im exakten Guild+Slot-Contract', async ({ page }) => {
+  test('economy.manage erstellt und beendet eine Runde mit Freitext-Gewinn im exakten Guild+Slot-Contract', async ({ page }) => {
     const state = await stubLottery(page, { canManage: true, active: false });
     await page.goto(`/servers/${GUILD_ID}/server/${SLOT}?tab=economy`);
 
@@ -207,12 +230,13 @@ test.describe('Lottery authenticated dashboard contract', () => {
     await expect(channel).toBeVisible();
     await expect(channel.locator('option')).toHaveCount(3); // Placeholder + Text + Announcement; Category/Forum ausgeschlossen.
     await channel.selectOption(TEXT_CHANNEL_ID);
+    await page.getByLabel('Gewinn', { exact: true }).fill(PRIZE_TEXT);
 
-    await page.getByLabel('Ticketpreis').fill(`${MAX_TICKET_PRICE}1`);
+    await page.getByLabel(/Ticketpreis/).fill(`${MAX_TICKET_PRICE}1`);
     await page.getByLabel('Endzeit (1 Minute bis 30 Tage)').fill(await browserLocalDateTime(page, 2 * 60 * 60 * 1000));
     await expect(page.getByRole('button', { name: 'Lotterie starten', exact: true })).toBeDisabled();
 
-    await page.getByLabel('Ticketpreis').fill(MAX_TICKET_PRICE);
+    await page.getByLabel(/Ticketpreis/).fill(MAX_TICKET_PRICE);
     await page.getByLabel('Endzeit (1 Minute bis 30 Tage)').fill(await browserLocalDateTime(page, 31 * 24 * 60 * 60 * 1000));
     await expect(page.getByRole('button', { name: 'Lotterie starten', exact: true })).toBeDisabled();
 
@@ -226,13 +250,14 @@ test.describe('Lottery authenticated dashboard contract', () => {
     expect(create.query).toBe(`?slot=${SLOT}`);
     expect(create.body).toMatchObject({
       channelId: TEXT_CHANNEL_ID,
+      prizeText: PRIZE_TEXT,
       ticketPrice: MAX_TICKET_PRICE,
       maxTicketsPerUser: 10,
       minParticipants: 2,
     });
     expect(Date.parse(String(create.body.endsAt))).toBeGreaterThan(Date.now() + 60_000);
     expect(Date.parse(String(create.body.endsAt))).toBeLessThanOrEqual(Date.now() + 30 * 24 * 60 * 60 * 1000);
-    await expect(page.getByText(/Lotterie gestartet\. Runde round-12/)).toBeVisible();
+    await expect(page.getByText(`Lotterie „${PRIZE_TEXT}“ gestartet.`)).toBeVisible();
 
     await expect(page.getByRole('button', { name: 'Jetzt beenden', exact: true })).toBeVisible();
     await page.getByRole('button', { name: 'Jetzt beenden', exact: true }).click();
@@ -243,6 +268,7 @@ test.describe('Lottery authenticated dashboard contract', () => {
       body: {},
     });
     await expect(page.getByText('Runde ausgewertet: FINISHED.')).toBeVisible();
+    await expect(page.getByText(PRIZE_TEXT, { exact: true }).first()).toBeVisible();
   });
 
   test('zeigt Create-Backendfehler sichtbar und keinen False-Success', async ({ page }) => {
@@ -252,12 +278,13 @@ test.describe('Lottery authenticated dashboard contract', () => {
     const channel = page.getByRole('combobox', { name: 'Discord-Channel', exact: true });
     await expect(channel).toBeVisible();
     await channel.selectOption(TEXT_CHANNEL_ID);
-    await page.getByLabel('Ticketpreis').fill('250');
+    await page.getByLabel('Gewinn', { exact: true }).fill(PRIZE_TEXT);
+    await page.getByLabel(/Ticketpreis/).fill('250');
     await page.getByLabel('Endzeit (1 Minute bis 30 Tage)').fill(await browserLocalDateTime(page, 2 * 60 * 60 * 1000));
     await page.getByRole('button', { name: 'Lotterie starten', exact: true }).click();
 
     await expect(page.getByText(/Lotterie konnte nicht gestartet werden: Lotterie-Channel ist kein beschreibbarer Text-Channel/)).toBeVisible();
-    await expect(page.getByText(/Lotterie gestartet\. Runde/)).toHaveCount(0);
+    await expect(page.getByText(/Lotterie „.*“ gestartet\./)).toHaveCount(0);
   });
 
   for (const width of [320, 360, 375, 390, 430]) {
@@ -266,6 +293,7 @@ test.describe('Lottery authenticated dashboard contract', () => {
       await page.setViewportSize({ width, height: 900 });
       await page.goto(`/servers/${GUILD_ID}/server/${SLOT}?tab=economy`);
       await expect(page.getByText('Neue Runde starten')).toBeVisible();
+      await expect(page.getByLabel('Gewinn', { exact: true })).toBeVisible();
       await expect(page.getByRole('button', { name: 'Lotterie starten', exact: true })).toBeVisible();
       await noPageOverflow(page);
     });
