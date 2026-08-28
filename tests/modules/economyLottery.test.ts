@@ -1,4 +1,4 @@
-import { selectWeightedWinner, validateLotteryConfig } from '../../src/modules/economy/lottery';
+import { normalizeLotteryPrizeText, selectWeightedWinner, validateLotteryConfig } from '../../src/modules/economy/lottery';
 
 describe('Economy-Lotterie — pure Invarianten', () => {
   it('ordnet gewichtete Ticketindizes deterministisch den Usern zu', () => {
@@ -23,6 +23,18 @@ describe('Economy-Lotterie — pure Invarianten', () => {
   it('verweigert kaputte Ticketgewichte', () => {
     expect(() => selectWeightedWinner([{ userDiscordId: '111', ticketCount: 0 }], 0)).toThrow();
     expect(() => selectWeightedWinner([{ userDiscordId: '111', ticketCount: 1.5 }], 0)).toThrow();
+  });
+
+  it('uebernimmt Gewinn-Freitext inklusive Emoji ohne DayZ-Classname-Abhaengigkeit', () => {
+    expect(normalizeLotteryPrizeText('  🔫 M4A1  ')).toBe('🔫 M4A1');
+    expect(normalizeLotteryPrizeText('🚗 Fahrzeug nach Wahl')).toBe('🚗 Fahrzeug nach Wahl');
+    expect(normalizeLotteryPrizeText('<:m4:123456789012345678> M4A1')).toBe('<:m4:123456789012345678> M4A1');
+  });
+
+  it('verweigert leere oder technisch ungueltige Gewinntexte', () => {
+    expect(() => normalizeLotteryPrizeText('   ')).toThrow();
+    expect(() => normalizeLotteryPrizeText(`M4A1\u0000`)).toThrow();
+    expect(() => normalizeLotteryPrizeText('x'.repeat(257))).toThrow();
   });
 
   it('akzeptiert nur begrenzte produktive Round-Konfiguration', () => {
