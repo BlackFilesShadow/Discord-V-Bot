@@ -17,8 +17,12 @@ describe('Economy-Lotterie — Gewinn-Lifecycle-Sicherheitsgate', () => {
   });
 
   it('entfernt den aktiven Gewinn erst in erfolgreichen Terminalzustaenden', () => {
-    const winner = lottery.slice(lottery.indexOf('async function completeWinnerPayout'), lottery.indexOf('async function processRefunds'));
-    const refund = lottery.slice(lottery.indexOf('async function processRefunds'), lottery.indexOf('async function announceTerminalRound'));
+    const winner = lottery
+      .slice(lottery.indexOf('async function completeWinnerPayout'), lottery.indexOf('async function processRefunds'))
+      .replace(/\\'/g, "'");
+    const refund = lottery
+      .slice(lottery.indexOf('async function processRefunds'), lottery.indexOf('async function announceTerminalRound'))
+      .replace(/\\'/g, "'");
 
     expect(winner).toContain('"status"=\'FINISHED\'::"LotteryRoundStatus"');
     expect(winner).toContain('"activePrizeText"=NULL');
