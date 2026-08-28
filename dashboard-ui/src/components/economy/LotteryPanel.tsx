@@ -51,6 +51,14 @@ const MAX_TICKET_PRICE = 1_000_000_000_000n;
 const MIN_END_DELAY_MS = 60_000;
 const MAX_END_DELAY_MS = 30 * 24 * 60 * 60 * 1000;
 
+function hasControlChars(value: string): boolean {
+  for (const char of value) {
+    const code = char.codePointAt(0);
+    if (code !== undefined && (code < 0x20 || code === 0x7f)) return true;
+  }
+  return false;
+}
+
 function fmt(value: string | null): string {
   if (value === null) return '—';
   try { return BigInt(value).toLocaleString('de-DE'); } catch { return value; }
@@ -154,7 +162,7 @@ export function LotteryPanel({ guildId, slot }: { guildId: string; slot: string 
   const channelValid = textChannels.some(channel => channel.id === form.channelId);
   const prizeValid = form.prizeText.trim().length >= 1
     && form.prizeText.trim().length <= 256
-    && !/[\u0000-\u001f\u007f]/.test(form.prizeText.trim());
+    && !hasControlChars(form.prizeText.trim());
   const ticketValid = /^\d+$/.test(form.ticketPrice)
     && BigInt(form.ticketPrice || '0') >= 1n
     && BigInt(form.ticketPrice || '0') <= MAX_TICKET_PRICE;
