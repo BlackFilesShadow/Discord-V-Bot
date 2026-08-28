@@ -293,7 +293,7 @@ test.describe('Black Market authenticated action contract', () => {
     await expect.poll(() => mutationOf(state, 'vendor')).toBeTruthy();
     expect(mutationOf(state, 'vendor')).toMatchObject({ query: `?slot=${SLOT}`, body: { name: 'Event-Haendler' } });
 
-    await page.getByPlaceholder('z. B. 🔫 M4A1').fill('🎁 Event Kit');
+    await page.getByRole('textbox', { name: 'Gegenstand / Item' }).fill('🎁 Event Kit');
     await page.getByPlaceholder('Preis').fill(`${MAX_PRICE}1`);
     await page.getByPlaceholder('Bestand').fill(String(MAX_STOCK + 1));
     await expect(page.getByRole('button', { name: 'Angebot erstellen', exact: true })).toBeDisabled();
