@@ -7,6 +7,7 @@ import {
   isValidPlayerName,
   resolvePlayerIdentityByName,
   unlinkUser,
+  type LinkClient,
   type LinkScope,
   type SessionLinkClient,
 } from './linkService';
@@ -281,7 +282,7 @@ export async function reconcileAdminForcedLinks(args: {
 
 /** ForceUnlink kennt keine PlayerSession-Voraussetzung und entfernt auch den provisional Namen. */
 export async function forceAdminUnlinkUser(scope: LinkScope, userDiscordId: string, now: Date = new Date()): Promise<boolean> {
-  const unlinked = await unlinkUser(prisma, scope, userDiscordId, now);
+  const unlinked = await unlinkUser(prisma as unknown as LinkClient, scope, userDiscordId, now);
   const cleared = await rawDb().$executeRawUnsafe(
     'UPDATE "GameIdentityLink" SET "forcedPlayerName"=NULL, "updatedAt"=CURRENT_TIMESTAMP WHERE "guildId"=$1 AND "nitradoConnId"=$2 AND "userDiscordId"=$3 AND "forcedPlayerName" IS NOT NULL',
     scope.guildId,
