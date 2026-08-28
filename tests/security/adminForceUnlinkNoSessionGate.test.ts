@@ -10,7 +10,7 @@ describe('force-unlink no-session gate', () => {
     const unlinkStart = service.indexOf('export async function forceAdminUnlinkUser');
     expect(unlinkStart).toBeGreaterThanOrEqual(0);
     const unlinkBody = service.slice(unlinkStart);
-    expect(unlinkBody).toContain('unlinkUser(prisma, scope, userDiscordId, now)');
+    expect(unlinkBody).toContain('unlinkUser(prisma as unknown as LinkClient, scope, userDiscordId, now)');
     expect(unlinkBody).not.toContain('resolvePlayerIdentityByName');
     expect(command).toContain('forceAdminUnlinkUser(linkScope, targetUserId)');
   });
