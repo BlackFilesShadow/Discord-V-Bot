@@ -205,7 +205,7 @@ export async function notifyRequesterPending(guildId: string, requesterDiscordId
 
 /** Schickt dem User die Entscheidung per DM. */
 export async function notifyRequesterDecision(args: {
-  requesterDiscordId: string; gameId: string; approved: boolean; reason?: string;
+  requesterDiscordId: string; gameId: string; approved: boolean; reason?: string; description?: string;
 }): Promise<void> {
   const c = client();
   if (!c) return;
@@ -221,8 +221,8 @@ export async function notifyRequesterDecision(args: {
       .setFooter({ text: 'V-Bot • Whitelist' })
       .setTimestamp(new Date());
     if (args.reason) embed.addFields({ name: 'Begruendung', value: safeEmbedField(args.reason, WHITELIST_REASON_MAX) });
-    if (args.approved) embed.setDescription('Du wurdest auf die Whitelist gesetzt. Viel Spass!');
-    else embed.setDescription('Dein Antrag wurde abgelehnt.');
+    if (args.approved) embed.setDescription(args.description ?? 'Du wurdest auf die Whitelist gesetzt. Viel Spass!');
+    else embed.setDescription(args.description ?? 'Dein Antrag wurde abgelehnt.');
     await user.send({ embeds: [embed] });
   } catch (e) {
     logger.warn(`Whitelist: Entscheidungs-DM an ${args.requesterDiscordId} fehlgeschlagen: ${(e as Error).message}`);
