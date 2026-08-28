@@ -317,7 +317,7 @@ function FactionSystemConfigCard({ guildId, canManage }: { guildId: string; canM
         Server-Default: Fraktionen ohne <em>eigenen</em> Embed-Channel werden hier gepostet.
         Zusätzlich pflegt der Bot hier eine automatisch aktualisierte Übersichtsliste aller Fraktionen.
       </p>
-      {cfg.isError && <p className="text-red-400 text-xs mb-2">{(cfg.error as Error).message}</p>}
+      {cfg.isError && <p className="text-danger text-xs mb-2">{(cfg.error as Error).message}</p>}
       {canManage ? (
         <div className="flex gap-2 items-center">
           <div className="flex-1">
@@ -342,7 +342,7 @@ function FactionSystemConfigCard({ guildId, canManage }: { guildId: string; canM
           {cfg.data?.factionChannelId ? `Sammel-Channel konfiguriert (${cfg.data.factionChannelId}).` : 'Kein Sammel-Channel konfiguriert.'}
         </p>
       )}
-      {save.error && canManage && <p className="text-red-400 text-xs mt-1">{(save.error as Error).message}</p>}
+      {save.error && canManage && <p className="text-danger text-xs mt-1">{(save.error as Error).message}</p>}
       {cfg.data?.listMessageId && (
         <p className="text-xs text-muted mt-1">📌 Übersicht aktiv (msg {cfg.data.listMessageId.slice(0, 8)}…)</p>
       )}
@@ -498,7 +498,7 @@ function FactionsPanel({ guildId, canManage }: { guildId: string; canManage: boo
       <CardHeader><CardTitle>Fraktionssystem</CardTitle></CardHeader>
       <FactionSystemConfigCard guildId={guildId} canManage={canManage} />
       {list.isLoading && <p className="text-muted">Lade…</p>}
-      {list.error && <p className="text-red-400 text-sm">{(list.error as Error).message}</p>}
+      {list.error && <p className="text-danger text-sm">{(list.error as Error).message}</p>}
 
       {/* Liste bestehender Fraktionen */}
       <div className="space-y-2 mb-6">
@@ -829,7 +829,7 @@ function FactionsPanel({ guildId, canManage }: { guildId: string; canManage: boo
             />
           </div>
 
-          {uploadErr && <p className="text-red-400 text-xs">{uploadErr}</p>}
+          {uploadErr && <p className="text-danger text-xs">{uploadErr}</p>}
 
           <div className="flex items-center gap-2">
             {editingId ? (
@@ -848,7 +848,7 @@ function FactionsPanel({ guildId, canManage }: { guildId: string; canManage: boo
               </Button>
             )}
             {(create.error || update.error) && (
-              <p className="text-red-400 text-xs">{((create.error || update.error) as Error).message}</p>
+              <p className="text-danger text-xs">{((create.error || update.error) as Error).message}</p>
             )}
           </div>
         </div>

@@ -485,7 +485,7 @@ export function BlackMarketPanel({ guildId, slot }: { guildId: string; slot: str
         </div>
       )}
 
-      {message && <p className={`mt-3 text-xs ${message.ok ? 'text-green-400' : 'text-danger'}`}>{message.text}</p>}
+      {message && <p className={`mt-3 text-xs ${message.ok ? 'text-ok' : 'text-danger'}`}>{message.text}</p>}
     </Card>
   );
 }

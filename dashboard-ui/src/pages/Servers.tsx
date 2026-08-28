@@ -91,12 +91,12 @@ export default function Servers() {
 function CreditsCard() {
   return (
     <div className="mt-12 mx-auto max-w-2xl">
-      <div className="relative rounded-2xl p-[1.5px] bg-gradient-to-br from-red-500/70 via-red-700/40 to-red-900/70 shadow-[0_0_40px_-8px_rgba(239,68,68,0.45)]">
-        <div className="rounded-[14px] bg-gradient-to-b from-[#0c0c12]/95 to-[#06060a]/95 backdrop-blur-md p-6 sm:p-8">
+      <div className="relative rounded-2xl p-[1.5px] bg-gradient-to-br from-accent/70 via-accent-dim/45 to-border/60 shadow-glow-sm">
+        <div className="rounded-[14px] bg-gradient-to-b from-bg-card/95 to-bg/95 backdrop-blur-md p-6 sm:p-8">
           <div className="flex items-center justify-center gap-3 mb-5">
-            <span className="h-px flex-1 bg-gradient-to-r from-transparent to-red-500/40" />
-            <span className="text-[11px] tracking-[0.35em] text-red-400/90 uppercase font-semibold">Credits</span>
-            <span className="h-px flex-1 bg-gradient-to-l from-transparent to-red-500/40" />
+            <span className="h-px flex-1 bg-gradient-to-r from-transparent to-accent/40" />
+            <span className="text-xs tracking-[0.35em] text-accent uppercase font-semibold">Credits</span>
+            <span className="h-px flex-1 bg-gradient-to-l from-transparent to-accent/40" />
           </div>
 
           <div className="grid gap-5 sm:grid-cols-2 text-sm">
@@ -116,9 +116,9 @@ function CreditsCard() {
               {['BeatsOneElite', 'Blubbi', 'Celinchen0502', 'EoX-Kyrios', 'Mabra'].map(n => (
                 <span
                   key={n}
-                  className="px-3 py-1 text-xs rounded-full bg-red-500/10 border border-red-500/30 text-red-200/95
-                             shadow-[inset_0_1px_0_rgba(255,255,255,0.06),0_0_12px_-4px_rgba(239,68,68,0.55)]
-                             hover:bg-red-500/15 hover:border-red-500/50 transition-colors"
+                  className="px-3 py-1 text-xs rounded-full bg-accent/10 border border-accent/30 text-accent-hover
+                             shadow-[inset_0_1px_0_rgba(255,255,255,0.06)]
+                             hover:bg-accent/15 hover:border-accent/50 transition-colors"
                 >
                   {n}
                 </span>

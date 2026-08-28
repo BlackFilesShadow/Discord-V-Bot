@@ -615,7 +615,7 @@ export function EmbedBuilderTab({ guildId, canManage }: { guildId: string; canMa
                       <div className="flex items-center gap-1">
                         <button type="button" onClick={() => moveField(i, -1)} disabled={i === 0} className="rounded p-1 text-muted hover:text-white disabled:opacity-30 focus-ring" aria-label="Nach oben"><ArrowUp className="h-3.5 w-3.5" /></button>
                         <button type="button" onClick={() => moveField(i, 1)} disabled={i === form.fields.length - 1} className="rounded p-1 text-muted hover:text-white disabled:opacity-30 focus-ring" aria-label="Nach unten"><ArrowDown className="h-3.5 w-3.5" /></button>
-                        <button type="button" onClick={() => removeField(i)} className="rounded p-1 text-red-400 hover:text-red-300 focus-ring" aria-label="Feld entfernen"><Trash2 className="h-3.5 w-3.5" /></button>
+                        <button type="button" onClick={() => removeField(i)} className="rounded p-1 text-danger hover:text-danger/80 focus-ring" aria-label="Feld entfernen"><Trash2 className="h-3.5 w-3.5" /></button>
                       </div>
                     </div>
                     <Input value={f.name} maxLength={LIMITS.fieldName} onChange={e => updateField(i, { name: e.target.value })} placeholder="Feld-Titel" className="mb-2" />

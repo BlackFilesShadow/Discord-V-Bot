@@ -24,7 +24,7 @@ export function Badge({ variant = 'neutral', children, className, pulse }: Badge
   return (
     <span
       className={twMerge(
-        'inline-flex items-center gap-1.5 px-2 py-0.5 rounded-full text-[10.5px] font-medium tracking-wide',
+        'inline-flex items-center gap-1.5 px-2 py-0.5 rounded-full text-[11px] leading-4 font-medium tracking-wide',
         cls[variant],
         className,
       )}

@@ -50,7 +50,7 @@ export function Tabs({ tabs, value, defaultValue, onChange, className, children 
                 <span className="text-[9px] px-1.5 py-0.5 rounded bg-white/[0.06] text-muted">{t.badge}</span>
               )}
               {isActive && (
-                <span className="absolute left-2 right-2 -bottom-px h-px bg-gradient-to-r from-transparent via-accent to-transparent shadow-[0_0_8px_rgba(239,68,68,0.6)]" />
+                <span className="absolute left-2 right-2 -bottom-px h-px bg-gradient-to-r from-transparent via-accent to-transparent shadow-glow-sm" />
               )}
             </button>
           );

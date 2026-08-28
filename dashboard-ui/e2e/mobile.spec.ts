@@ -166,10 +166,26 @@ test.describe('Dashboard Theme', () => {
     const toggle = page.getByTestId('theme-toggle');
     await expect(html).toHaveAttribute('data-theme', 'obsidian');
     await expect(html).toHaveClass(/dark/);
+    await expect.poll(() => page.evaluate(() => {
+      const css = getComputedStyle(document.documentElement);
+      return {
+        accent: css.getPropertyValue('--color-accent').trim(),
+        danger: css.getPropertyValue('--color-danger').trim(),
+        onAccent: css.getPropertyValue('--color-on-accent').trim(),
+      };
+    })).toEqual({ accent: '210 43 58', danger: '248 113 113', onAccent: '255 255 255' });
 
     await toggle.click();
     await expect(html).toHaveAttribute('data-theme', 'ice');
     await expect(html).toHaveClass(/dark/);
+    await expect.poll(() => page.evaluate(() => {
+      const css = getComputedStyle(document.documentElement);
+      return {
+        accent: css.getPropertyValue('--color-accent').trim(),
+        danger: css.getPropertyValue('--color-danger').trim(),
+        onAccent: css.getPropertyValue('--color-on-accent').trim(),
+      };
+    })).toEqual({ accent: '125 211 252', danger: '251 113 133', onAccent: '8 24 42' });
     expect(await page.evaluate(() => sessionStorage.getItem('ui.theme.session'))).toBe('ice');
     expect(await page.evaluate(() => localStorage.getItem('ui.theme'))).toBeNull();
 

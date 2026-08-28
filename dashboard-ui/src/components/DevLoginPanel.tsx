@@ -99,10 +99,10 @@ export function DevLoginPanel() {
         className={
           'flex flex-1 min-w-0 items-center h-11 rounded-md border bg-bg-elev/70 ' +
           'md:inline-flex md:w-auto md:h-8 pl-2 pr-1 gap-1 transition-colors ' +
-          (err ? 'border-danger/60 focus-within:border-danger' : 'border-red-900/50 focus-within:border-red-500/80')
+          (err ? 'border-danger/60 focus-within:border-danger' : 'border-accent-dim/50 focus-within:border-accent/80')
         }
       >
-        <KeyRound className="h-3.5 w-3.5 text-red-400/90 shrink-0" aria-hidden />
+        <KeyRound className="h-3.5 w-3.5 text-accent shrink-0" aria-hidden />
         <label htmlFor="dev-pw" className="sr-only">DEV Passwort</label>
         <input
           id="dev-pw"
@@ -121,7 +121,7 @@ export function DevLoginPanel() {
           disabled={!pw || busy}
           title="Entsperren"
           aria-label="DEV-Console entsperren"
-          className="inline-flex items-center justify-center h-11 w-11 md:h-6 md:w-6 rounded bg-gradient-to-br from-red-600 to-red-800 hover:from-red-500 hover:to-red-700 shadow-[0_0_10px_rgba(239,68,68,0.45)] disabled:opacity-40 disabled:cursor-not-allowed text-[#fff] focus-ring"
+          className="btn-premium-primary inline-flex items-center justify-center h-11 w-11 md:h-6 md:w-6 rounded disabled:opacity-40 disabled:cursor-not-allowed focus-ring"
         >
           {busy ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Check className="h-3.5 w-3.5" strokeWidth={3} />}
         </button>

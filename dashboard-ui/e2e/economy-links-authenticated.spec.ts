@@ -113,7 +113,7 @@ test.describe('Authenticated Economy-Links', () => {
     await page.getByPlaceholder('Discord-ID').fill(NEW_USER);
     await page.getByPlaceholder('Spielername').fill(NEW_PLAYER);
     await page.getByRole('button', { name: 'Setzen' }).click();
-    await expect(page.locator('.text-red-400').filter({ hasText: /./ })).toBeVisible();
+    await expect(page.locator('.text-danger').filter({ hasText: /./ })).toBeVisible();
   });
 });
 

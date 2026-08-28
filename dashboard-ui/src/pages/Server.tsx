@@ -1330,7 +1330,7 @@ function TicketEditModal({
                         type="button"
                         onClick={() => removeMessage(i)}
                         disabled={messages.length <= 1}
-                        className="text-danger hover:text-red-400 disabled:opacity-30 px-1"
+                        className="text-danger hover:text-danger/80 disabled:opacity-30 px-1"
                         title="Entfernen"
                       >
                         <Trash2 className="h-3.5 w-3.5" />
@@ -1453,10 +1453,10 @@ function TicketEditModal({
                       onClick={() => setManagerRoleIds(prev => checked ? prev.filter(x => x !== r.id) : [...prev, r.id])}
                       className={`text-xs px-2 py-1 rounded-md border transition ${
                         checked
-                          ? 'border-amber-400 bg-amber-400/15 text-amber-300'
+                          ? 'border-warn bg-warn/15 text-warn'
                           : disabled
                             ? 'border-border bg-bg-card text-muted opacity-40 cursor-not-allowed'
-                            : 'border-border bg-bg-card text-fg hover:border-amber-400/50'
+                            : 'border-border bg-bg-card text-fg hover:border-warn/50'
                       }`}
                     >
                       @{r.name}
@@ -1615,10 +1615,10 @@ function AliasRow({ guildId, slot }: { guildId: string; slot: Slot }) {
         </Button>
       </div>
       {msg && (
-        <p className={`text-xs mt-2 ${msg.ok ? 'text-green-400' : 'text-danger'}`}>{msg.text}</p>
+        <p className={`text-xs mt-2 ${msg.ok ? 'text-ok' : 'text-danger'}`}>{msg.text}</p>
       )}
       {slot.status !== 'ACTIVE' && (
-        <p className="text-xs mt-2 text-amber-400 inline-flex items-center gap-1">
+        <p className="text-xs mt-2 text-warn inline-flex items-center gap-1">
           <AlertTriangle className="h-3 w-3" /> Slot-Status: {slot.status}
         </p>
       )}
