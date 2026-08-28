@@ -307,7 +307,7 @@ test.describe('Black Market authenticated action contract', () => {
         vendorAccountId: 'vendor-2', name: '🎁 Event Kit', description: null, price: MAX_PRICE, stock: 5, maxPerPurchase: 10,
       },
     });
-    await expect(page.getByText('🎁 Event Kit')).toBeVisible();
+    await expect(page.getByText('🎁 Event Kit', { exact: true })).toBeVisible();
   });
 
   test('zeigt Kauf-Fehler sichtbar statt False-Success', async ({ page }) => {
