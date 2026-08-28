@@ -81,6 +81,14 @@ const MAX_MARKET_PRICE = 1_000_000_000_000_000n;
 const MAX_MARKET_STOCK = 1_000_000_000;
 const SNOWFLAKE_RE = /^\d{17,20}$/;
 
+function hasControlChars(value: string): boolean {
+  for (const char of value) {
+    const code = char.codePointAt(0);
+    if (code !== undefined && (code < 0x20 || code === 0x7f)) return true;
+  }
+  return false;
+}
+
 function fmt(value: string): string {
   try { return BigInt(value).toLocaleString('de-DE'); } catch { return value; }
 }
@@ -271,7 +279,7 @@ export function BlackMarketPanel({ guildId, slot }: { guildId: string; slot: str
   const vendorNameValid = vendorName.trim().length >= 1 && vendorName.trim().length <= 80;
   const listingValid = listing.vendorAccountId.length > 0
     && listing.name.trim().length >= 1 && listing.name.trim().length <= 120
-    && !/[\u0000-\u001f\u007f]/.test(listing.name.trim())
+    && !hasControlChars(listing.name.trim())
     && listing.description.length <= 500
     && /^\d+$/.test(listing.price) && BigInt(listing.price || '0') >= 1n && BigInt(listing.price || '0') <= MAX_MARKET_PRICE
     && /^\d+$/.test(listing.stock) && Number.isSafeInteger(Number(listing.stock)) && Number(listing.stock) <= MAX_MARKET_STOCK
