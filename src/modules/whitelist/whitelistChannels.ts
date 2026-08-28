@@ -169,6 +169,11 @@ export async function postWhitelistApprovalEmbed(args: {
       .setLabel('Ablehnen')
       .setEmoji('❌')
       .setStyle(ButtonStyle.Danger),
+    new ButtonBuilder()
+      .setCustomId(`wlreq:u:${args.requestId}`)
+      .setLabel('Universal Whitelist')
+      .setEmoji('🌐')
+      .setStyle(ButtonStyle.Primary),
   );
 
   const sent = await ch.send({ embeds: [embed], components: [row] });
