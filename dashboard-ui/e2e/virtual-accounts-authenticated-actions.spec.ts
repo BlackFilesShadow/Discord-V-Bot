@@ -251,7 +251,8 @@ test.describe('Authenticated virtual-account actions', () => {
     await row.getByRole('button', { name: 'Löschen', exact: true }).click();
     expect(mutation(mutations, deletePath)).toBeUndefined();
     await expect(row.getByRole('button', { name: 'Wirklich löschen?', exact: true })).toBeVisible();
-    await expect(page.getByText(/Dauerhaftes Löschen ist nur ohne Buchungs-\/Systemhistorie möglich/)).toBeVisible();
+    await expect(page.getByText(/Beim Löschen werden Wallet und Bank atomar auf 0 gesetzt\./)).toBeVisible();
+    await expect(page.getByText(/Dauerhaftes Löschen bleibt nur ohne Buchungs- oder geschützte Systemhistorie möglich\./)).toBeVisible();
 
     await row.getByRole('button', { name: 'Wirklich löschen?', exact: true }).click();
     await expect.poll(() => mutation(mutations, deletePath)).toBeTruthy();
