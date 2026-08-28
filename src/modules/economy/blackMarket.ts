@@ -124,7 +124,7 @@ function cleanText(value: string, max: number, label: string): string {
 }
 
 /** Freitext bleibt bis auf Rand-Whitespace exakt erhalten. */
-export function normalizeMarketItemText(value: unknown, max = MAX_TEXT.itemText): string {
+export function normalizeMarketItemText(value: unknown, max: number = MAX_TEXT.itemText): string {
   if (typeof value !== 'string') throw new Error('Item muss Text sein.');
   const clean = value.trim();
   if (!clean || clean.length > max || /[\u0000-\u001f\u007f]/.test(clean)) {
@@ -454,8 +454,8 @@ async function existingPurchase(key: string): Promise<MarketPurchaseView | null>
 export async function getMarketPurchase(guildId: GuildId, nitradoConnId: NitradoConnId, purchaseId: string): Promise<MarketPurchaseView | null> {
   await assertEconomyScopeReady(guildId, nitradoConnId);
   const rows = await rawDb().$queryRawUnsafe<DbPurchaseBase[]>(
-    `${PURCHASE_SELECT} WHERE p."id"=$1 AND p."guildId"=$2 AND p."nitradoConnId"=$3 LIMIT 1`,
-    purchaseId, String(guildId), String(nitradoConnId),
+    `${PURCHASE_SELECT} WHERE p."id"=$1 AND p."guildId"=$2 AND p."nitradoConnId"=$3 LIMIT $4`,
+    purchaseId, String(guildId), String(nitradoConnId), 1,
   );
   return rows[0] ? toPurchase(rows[0]) : null;
 }
