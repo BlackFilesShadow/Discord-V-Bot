@@ -3,7 +3,6 @@ import { randomUUID } from 'node:crypto';
 import prisma from '../../database/prisma';
 import type { GuildId, NitradoConnId, UserDiscordId } from '../../types/scope';
 import { logAudit } from '../../utils/logger';
-import { getDayz129Index } from '../ai/dayz129CatalogBase';
 import { assertEconomyScopeReady } from './scopeMigration';
 import { getConfig } from './repository';
 import {
@@ -20,10 +19,14 @@ const MAX_STOCK = 1_000_000_000;
 const MAX_PER_PURCHASE = 1000;
 const MAX_BUNDLE_ITEMS = 50;
 const MAX_BUNDLE_QUANTITY = 1000;
-const MAX_TEXT = { sku: 80, name: 120, description: 500, className: 128, note: 500 } as const;
+const MAX_TEXT = { sku: 80, name: 120, description: 500, itemText: 256, note: 500 } as const;
 
+/**
+ * Frei eingegebener Gegenstand. Emoji/Custom-Emoji sind Teil von itemText.
+ * Es gibt bewusst keine DayZ-Classname-/types.xml-Abhaengigkeit.
+ */
 export interface MarketDeliveryItem {
-  className: string;
+  itemText: string;
   quantity: number;
 }
 
@@ -108,8 +111,6 @@ interface DbPurchaseBase {
 }
 interface DbLiability { vendorAccountId: string; liability: bigint }
 
-let canonicalTypes: Map<string, string> | null = null;
-
 function rawDb(): VirtualAccountRawDb {
   return prisma as unknown as VirtualAccountRawDb;
 }
@@ -119,6 +120,16 @@ function cleanText(value: string, max: number, label: string): string {
   if (/[\r\n\t\u0000-\u001f\u007f]/.test(normalized)) throw new Error(`${label} ist ungueltig.`);
   const clean = normalized.trim().replace(/\s+/g, ' ');
   if (!clean || clean.length > max) throw new Error(`${label} muss 1..${max} Zeichen enthalten.`);
+  return clean;
+}
+
+/** Freitext bleibt bis auf Rand-Whitespace exakt erhalten. */
+export function normalizeMarketItemText(value: unknown, max = MAX_TEXT.itemText): string {
+  if (typeof value !== 'string') throw new Error('Item muss Text sein.');
+  const clean = value.trim();
+  if (!clean || clean.length > max || /[\u0000-\u001f\u007f]/.test(clean)) {
+    throw new Error(`Item muss 1..${max} druckbare Zeichen enthalten.`);
+  }
   return clean;
 }
 
@@ -151,35 +162,29 @@ function validateMaxPerPurchase(value: number): void {
   if (!Number.isSafeInteger(value) || value < 1 || value > MAX_PER_PURCHASE) throw new Error(`Kauflimit muss zwischen 1 und ${MAX_PER_PURCHASE} liegen.`);
 }
 
-function canonicalDayzClassName(value: string): string {
-  const className = cleanText(value, MAX_TEXT.className, 'DayZ-Classname');
-  if (!canonicalTypes) {
-    canonicalTypes = new Map(getDayz129Index().allTypeNames.map(name => [name.toLocaleLowerCase('de-DE'), name]));
-  }
-  const canonical = canonicalTypes.get(className.toLocaleLowerCase('de-DE'));
-  if (!canonical) throw new Error(`Unbekannter DayZ-1.29-Classname: ${className}`);
-  return canonical;
-}
-
+/**
+ * API-kompatibel: neue Clients senden itemText. Historische/alte Clients duerfen
+ * noch className liefern; dieser Wert wird aber nur als freier Text behandelt.
+ */
 export function parseMarketDeliveryItems(value: unknown, allowEmpty = false): MarketDeliveryItem[] {
   if (!Array.isArray(value)) throw new Error('deliveryItems muss ein Array sein.');
   if ((!allowEmpty && value.length < 1) || value.length > MAX_BUNDLE_ITEMS) {
-    throw new Error(`Liefer-Bundle muss ${allowEmpty ? '0' : '1'}..${MAX_BUNDLE_ITEMS} Eintraege enthalten.`);
+    throw new Error(`Lieferliste muss ${allowEmpty ? '0' : '1'}..${MAX_BUNDLE_ITEMS} Eintraege enthalten.`);
   }
   const combined = new Map<string, number>();
   for (const item of value) {
-    if (!item || typeof item !== 'object' || Array.isArray(item)) throw new Error('Liefer-Bundle enthaelt einen ungueltigen Eintrag.');
+    if (!item || typeof item !== 'object' || Array.isArray(item)) throw new Error('Lieferliste enthaelt einen ungueltigen Eintrag.');
     const row = item as Record<string, unknown>;
-    const className = canonicalDayzClassName(String(row.className ?? ''));
+    const itemText = normalizeMarketItemText(row.itemText ?? row.className);
     const quantity = typeof row.quantity === 'number' ? row.quantity : Number(row.quantity ?? 1);
     if (!Number.isSafeInteger(quantity) || quantity < 1 || quantity > MAX_BUNDLE_QUANTITY) {
-      throw new Error(`Menge fuer ${className} muss 1..${MAX_BUNDLE_QUANTITY} sein.`);
+      throw new Error(`Menge fuer ${itemText} muss 1..${MAX_BUNDLE_QUANTITY} sein.`);
     }
-    const next = (combined.get(className) ?? 0) + quantity;
-    if (next > MAX_BUNDLE_QUANTITY) throw new Error(`Gesamtmenge fuer ${className} darf ${MAX_BUNDLE_QUANTITY} nicht ueberschreiten.`);
-    combined.set(className, next);
+    const next = (combined.get(itemText) ?? 0) + quantity;
+    if (next > MAX_BUNDLE_QUANTITY) throw new Error(`Gesamtmenge fuer ${itemText} darf ${MAX_BUNDLE_QUANTITY} nicht ueberschreiten.`);
+    combined.set(itemText, next);
   }
-  return [...combined.entries()].map(([className, quantity]) => ({ className, quantity }));
+  return [...combined.entries()].map(([itemText, quantity]) => ({ itemText, quantity }));
 }
 
 function parseStoredItems(value: unknown): MarketDeliveryItem[] {
@@ -187,8 +192,9 @@ function parseStoredItems(value: unknown): MarketDeliveryItem[] {
   return value.flatMap(item => {
     if (!item || typeof item !== 'object' || Array.isArray(item)) return [];
     const row = item as Record<string, unknown>;
-    if (typeof row.className !== 'string' || !Number.isSafeInteger(Number(row.quantity))) return [];
-    return [{ className: row.className, quantity: Number(row.quantity) }];
+    const storedText = typeof row.itemText === 'string' ? row.itemText : typeof row.className === 'string' ? row.className : null;
+    if (!storedText || !Number.isSafeInteger(Number(row.quantity))) return [];
+    return [{ itemText: storedText, quantity: Number(row.quantity) }];
   });
 }
 
@@ -209,10 +215,10 @@ function attachListingItems(rows: DbListing[], items: Array<DbListingItem & { li
   const grouped = new Map<string, MarketDeliveryItem[]>();
   for (const item of items) {
     const list = grouped.get(item.listingId) ?? [];
-    list.push({ className: item.className, quantity: item.quantity });
+    list.push({ itemText: item.className, quantity: item.quantity });
     grouped.set(item.listingId, list);
   }
-  return rows.map(row => ({ ...row, deliveryItems: grouped.get(row.id) ?? [] }));
+  return rows.map(row => ({ ...row, deliveryItems: grouped.get(row.id) ?? [{ itemText: row.name, quantity: 1 }] }));
 }
 
 async function insertListingItems(raw: VirtualAccountRawDb, args: {
@@ -221,7 +227,7 @@ async function insertListingItems(raw: VirtualAccountRawDb, args: {
   for (const item of args.items) {
     await raw.$executeRawUnsafe(
       'INSERT INTO "EconomyMarketListingItem" ("id","listingId","guildId","nitradoConnId","className","quantity","createdAt") VALUES ($1,$2,$3,$4,$5,$6,CURRENT_TIMESTAMP)',
-      randomUUID(), args.listingId, String(args.guildId), String(args.nitradoConnId), item.className, item.quantity,
+      randomUUID(), args.listingId, String(args.guildId), String(args.nitradoConnId), item.itemText, item.quantity,
     );
   }
 }
@@ -274,7 +280,7 @@ export async function createMarketListing(args: {
   guildId: GuildId;
   nitradoConnId: NitradoConnId;
   vendorAccountId: string;
-  sku: string;
+  sku?: string;
   name: string;
   description?: string | null;
   price: bigint;
@@ -287,13 +293,17 @@ export async function createMarketListing(args: {
   validatePrice(args.price);
   validateStock(args.stock);
   validateMaxPerPurchase(args.maxPerPurchase);
-  const items = args.deliveryItems === undefined ? [] : parseMarketDeliveryItems(args.deliveryItems, true);
   const vendor = await getVirtualAccountById(args.guildId, args.nitradoConnId, args.vendorAccountId);
   if (!vendor || vendor.kind !== 'MARKET_VENDOR') throw new Error('MARKET_VENDOR-Systemkonto nicht gefunden.');
   if (vendor.status !== 'ACTIVE') throw new Error('Vendor-Systemkonto ist nicht aktiv.');
-  const sku = cleanSku(args.sku);
-  const name = cleanText(args.name, MAX_TEXT.name, 'Listing-Name');
+  const sku = args.sku?.trim() ? cleanSku(args.sku) : `ITEM-${randomUUID().replace(/-/g, '').slice(0, 16).toUpperCase()}`;
+  const name = normalizeMarketItemText(args.name, MAX_TEXT.name);
   const description = cleanOptionalText(args.description, MAX_TEXT.description, 'Beschreibung');
+  const items = args.deliveryItems === undefined
+    ? [{ itemText: name, quantity: 1 }]
+    : parseMarketDeliveryItems(args.deliveryItems, true).length > 0
+      ? parseMarketDeliveryItems(args.deliveryItems, true)
+      : [{ itemText: name, quantity: 1 }];
   try {
     const row = await prisma.$transaction(async tx => {
       const created = await tx.economyMarketListing.create({
@@ -316,7 +326,7 @@ export async function createMarketListing(args: {
     return { ...row, deliveryItems: items };
   } catch (error) {
     const candidate = error as { code?: string };
-    if (candidate?.code === 'P2002') throw new Error('Diese SKU existiert auf diesem Gameserver bereits.');
+    if (candidate?.code === 'P2002') throw new Error('Diese interne Angebots-ID existiert auf diesem Gameserver bereits.');
     throw error;
   }
 }
@@ -338,7 +348,7 @@ export async function getMarketListing(guildId: GuildId, nitradoConnId: NitradoC
     prisma.economyMarketListing.findFirst({ where: { id: listingId, guildId: String(guildId), nitradoConnId: String(nitradoConnId) } }),
     loadListingItems(rawDb(), guildId, nitradoConnId, listingId),
   ]);
-  return row ? { ...row, deliveryItems: items.map(({ className, quantity }) => ({ className, quantity })) } : null;
+  return row ? { ...row, deliveryItems: items.length > 0 ? items.map(({ className, quantity }) => ({ itemText: className, quantity })) : [{ itemText: row.name, quantity: 1 }] } : null;
 }
 
 export async function setMarketListingItems(args: {
@@ -364,7 +374,7 @@ export async function setMarketListingItems(args: {
     await insertListingItems(raw, { listingId: args.listingId, guildId: args.guildId, nitradoConnId: args.nitradoConnId, items });
   });
   const row = await getMarketListing(args.guildId, args.nitradoConnId, args.listingId);
-  if (!row) throw new Error('Listing konnte nach Bundle-Update nicht gelesen werden.');
+  if (!row) throw new Error('Listing konnte nach Item-Update nicht gelesen werden.');
   logAudit('MARKET_LISTING_DELIVERY_ITEMS_UPDATED', 'ECONOMY', {
     guildId: args.guildId, nitradoConnId: args.nitradoConnId, listingId: args.listingId,
     actorDiscordId: args.actorDiscordId, deliveryItems: items,
@@ -487,7 +497,6 @@ export async function buyMarketListing(args: {
   await assertEnabled(args.guildId, args.nitradoConnId);
   const initial = await getMarketListing(args.guildId, args.nitradoConnId, args.listingId);
   if (!initial || !initial.active || initial.archivedAt) throw new Error('Aktives Listing nicht gefunden.');
-  if (initial.deliveryItems.length === 0) throw new Error('Dieses Angebot hat noch kein DayZ-Liefer-Bundle und kann nicht gekauft werden.');
   if (args.quantity > initial.maxPerPurchase) throw new Error(`Pro Kauf sind maximal ${initial.maxPerPurchase} erlaubt.`);
   const amount = initial.price * BigInt(args.quantity);
 
@@ -516,9 +525,10 @@ export async function buyMarketListing(args: {
       if (listing.vendorAccountId !== initial.vendorAccountId || listing.price !== initial.price) throw new Error('Listing wurde waehrend des Kaufs geaendert. Bitte erneut versuchen.');
       if (args.quantity > listing.maxPerPurchase) throw new Error(`Pro Kauf sind maximal ${listing.maxPerPurchase} erlaubt.`);
       if (listing.stock < args.quantity) throw new Error(`Nicht genug Bestand. Verfuegbar: ${listing.stock}.`);
-      const deliveryItems = (await loadListingItems(raw, args.guildId, args.nitradoConnId, args.listingId))
-        .map(({ className, quantity }) => ({ className, quantity }));
-      if (deliveryItems.length === 0) throw new Error('Dieses Angebot hat noch kein DayZ-Liefer-Bundle und kann nicht gekauft werden.');
+      const storedItems = await loadListingItems(raw, args.guildId, args.nitradoConnId, args.listingId);
+      const deliveryItems = storedItems.length > 0
+        ? storedItems.map(({ className, quantity }) => ({ itemText: className, quantity }))
+        : [{ itemText: listing.name, quantity: 1 }];
       return { listing, deliveryItems };
     },
     mutate: async ({ raw, preflight }) => {
@@ -533,7 +543,7 @@ export async function buyMarketListing(args: {
         purchaseId, key, args.listingId, String(args.guildId), String(args.nitradoConnId), preflight.listing.vendorAccountId,
         String(args.userDiscordId), sourcePocket, args.quantity, preflight.listing.price, amount,
       );
-      const deliverySnapshot = preflight.deliveryItems.map(item => ({ className: item.className, quantity: item.quantity * args.quantity }));
+      const deliverySnapshot = preflight.deliveryItems.map(item => ({ itemText: item.itemText, quantity: item.quantity * args.quantity }));
       await raw.$executeRawUnsafe(
         'INSERT INTO "EconomyMarketPurchaseFulfillment" ("purchaseId","guildId","nitradoConnId","status","deliveryItems","createdAt","updatedAt") VALUES ($1,$2,$3,\'PENDING\',$4::jsonb,CURRENT_TIMESTAMP,CURRENT_TIMESTAMP)',
         purchaseId, String(args.guildId), String(args.nitradoConnId), JSON.stringify(deliverySnapshot),
