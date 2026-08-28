@@ -407,12 +407,11 @@ export async function requireDev(req: Request, res: Response, next: NextFunction
 }
 
 /**
- * Bot-Admin-only: braucht eine aktive, nicht-widerrufene, nicht-abgelaufene
- * BotAdminSession (erzeugt per Passwort-Login, siehe routes/v2/botAdmin.ts).
- *
- * Bewusst KEIN Rollen-Gate: das korrekte BOT_ADMIN_PASSWORD ist die
- * Berechtigung (analog DEV-Doktrin "Passwort = Zugang"). Anders als DEV ohne
- * MFA-/IP-Zwang — der Bereich ist Support-orientiert, nicht technisch.
+ * Bot-Admin-Zugriff: entweder eine aktive BotAdminSession ODER fuer eine
+ * DEVELOPER-Identitaet die bereits gueltige DEV-Session. Der DEV-Fallback
+ * delegiert bewusst an `requireDev`, damit Session-Ablauf, Auto-Extension,
+ * optionales MFA und optionale IP-Allowlist exakt dieselben Sicherheitsregeln
+ * behalten wie im DEV-Bereich. Eine DEVELOPER-Rolle allein reicht niemals.
  */
 export async function requireBotAdmin(req: Request, res: Response, next: NextFunction): Promise<void> {
   if (!req.auth) { res.status(401).json({ error: 'Nicht angemeldet.' }); return; }
@@ -421,14 +420,20 @@ export async function requireBotAdmin(req: Request, res: Response, next: NextFun
     orderBy: { createdAt: 'desc' },
     select: { id: true, userDiscordId: true, expiresAt: true },
   });
-  if (!session) {
-    res.status(403).json({ error: 'Bot-Admin-Session erforderlich.', code: 'BOTADMIN_LOGIN_REQUIRED' });
+  if (session) {
+    req.botAdminSession = {
+      id: session.id,
+      userDiscordId: session.userDiscordId,
+      expiresAt: session.expiresAt,
+    };
+    next();
     return;
   }
-  req.botAdminSession = {
-    id: session.id,
-    userDiscordId: session.userDiscordId,
-    expiresAt: session.expiresAt,
-  };
-  next();
+
+  if (req.auth.role === 'DEVELOPER') {
+    await requireDev(req, res, next);
+    return;
+  }
+
+  res.status(403).json({ error: 'Bot-Admin-Session erforderlich.', code: 'BOTADMIN_LOGIN_REQUIRED' });
 }
