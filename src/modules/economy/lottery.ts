@@ -26,6 +26,7 @@ let lotterySchedulerBusy = false;
 const LOTTERY_INTERVAL_MS = 5_000;
 const MAX_TOTAL_TICKETS = 1_000_000_000;
 const REFUND_BATCH = 50;
+const MAX_PRIZE_TEXT = 256;
 
 export type LotteryStatus = 'ACTIVE' | 'DRAWING' | 'REFUNDING' | 'FINISHED' | 'REFUNDED';
 
@@ -40,6 +41,8 @@ export interface LotteryRoundView {
   maxTicketsPerUser: number;
   minParticipants: number;
   status: LotteryStatus;
+  activePrizeText: string | null;
+  prizeSnapshot: string | null;
   endsAt: Date;
   winnerDiscordId: string | null;
   winningTicketNumber: number | null;
@@ -67,6 +70,8 @@ interface DbLotteryRound {
   minParticipants: number;
   status: LotteryStatus;
   activeScopeKey: string | null;
+  activePrizeText: string | null;
+  prizeSnapshot: string | null;
   endsAt: Date;
   winnerDiscordId: string | null;
   winningTicketNumber: number | null;
@@ -102,6 +107,19 @@ function makePurchaseKey(roundId: string, idempotencyKey: string): string {
   const key = idempotencyKey.normalize('NFKC').trim();
   if (!key || key.length > 40 || !/^[A-Za-z0-9._:-]+$/.test(key)) throw new Error('Kauf-Idempotency-Key ungueltig.');
   return `lottery-purchase:${roundId}:${key}`;
+}
+
+/**
+ * Lotteriepreise sind bewusst freier Text. Emoji/Custom-Emoji duerfen direkt
+ * Bestandteil der Eingabe sein; es gibt keine DayZ-Classname-Validierung.
+ */
+export function normalizeLotteryPrizeText(value: unknown): string {
+  if (typeof value !== 'string') throw new Error('Gewinn muss Text sein.');
+  const text = value.trim();
+  if (!text || text.length > MAX_PRIZE_TEXT || /[\u0000-\u0008\u000b\u000c\u000e-\u001f\u007f]/.test(text)) {
+    throw new Error(`Gewinn muss 1..${MAX_PRIZE_TEXT} druckbare Zeichen enthalten.`);
+  }
+  return text;
 }
 
 export function validateLotteryConfig(args: {
@@ -176,7 +194,9 @@ export async function getLotteryEntry(roundId: string, userDiscordId: UserDiscor
 export async function createLotteryEmbed(round: LotteryRoundView): Promise<EmbedBuilder> {
   const cfg = await getConfig(asGuildId(round.guildId), asNitradoConnId(round.nitradoConnId));
   const active = round.status === 'ACTIVE' && round.endsAt.getTime() > Date.now();
+  const prizeText = round.activePrizeText ?? round.prizeSnapshot;
   const lines: string[] = [Brand.divider];
+  if (prizeText) lines.push(`🏆 **Gewinn:** ${prizeText}`);
   if (active) {
     lines.push(`🎟️ **Ticket:** ${round.ticketPrice.toLocaleString('de-DE')} ${cfg.emoji}`);
     lines.push(`💰 **Pot:** ${round.potBalance.toLocaleString('de-DE')} ${cfg.emoji}`);
@@ -238,6 +258,7 @@ export async function createLotteryRound(args: {
   guildId: GuildId;
   nitradoConnId: NitradoConnId;
   channelId: string;
+  prizeText: string;
   ticketPrice: bigint;
   maxTicketsPerUser: number;
   minParticipants: number;
@@ -245,6 +266,7 @@ export async function createLotteryRound(args: {
   createdByDiscordId: UserDiscordId;
 }): Promise<LotteryRoundView> {
   validateLotteryConfig(args);
+  const prizeText = normalizeLotteryPrizeText(args.prizeText);
   await assertEconomyScopeReady(args.guildId, args.nitradoConnId);
   const cfg = await getConfig(args.guildId, args.nitradoConnId);
   if (!cfg.enabled) throw new Error('Economy ist auf diesem Gameserver deaktiviert.');
@@ -260,7 +282,8 @@ export async function createLotteryRound(args: {
   const preview: LotteryRoundView = {
     id: roundId, guildId: String(args.guildId), nitradoConnId: String(args.nitradoConnId), potAccountId: potId,
     channelId: args.channelId, messageId: null, ticketPrice: args.ticketPrice,
-    maxTicketsPerUser: args.maxTicketsPerUser, minParticipants: args.minParticipants, status: 'ACTIVE', endsAt: args.endsAt,
+    maxTicketsPerUser: args.maxTicketsPerUser, minParticipants: args.minParticipants, status: 'ACTIVE',
+    activePrizeText: prizeText, prizeSnapshot: prizeText, endsAt: args.endsAt,
     winnerDiscordId: null, winningTicketNumber: null, participantCount: 0, totalTickets: 0, finalPot: null,
     drawnAt: null, settledAt: null, announcedAt: null, createdByDiscordId: String(args.createdByDiscordId),
     createdAt: new Date(), updatedAt: new Date(), potBalance: 0n,
@@ -305,6 +328,13 @@ export async function createLotteryRound(args: {
           createdByDiscordId: String(args.createdByDiscordId),
         },
       });
+      const raw = tx as unknown as VirtualAccountRawDb;
+      const prizeStored = await raw.$executeRawUnsafe(
+        'UPDATE "LotteryRound" SET "activePrizeText"=$2, "prizeSnapshot"=$2 WHERE "id"=$1',
+        roundId,
+        prizeText,
+      );
+      if (prizeStored !== 1) throw new Error('Lotterie-Gewinn konnte nicht atomar gespeichert werden.');
     });
   } catch (error) {
     await message.delete().catch(() => undefined);
@@ -317,7 +347,7 @@ export async function createLotteryRound(args: {
 
   logAudit('LOTTERY_CREATED', 'ECONOMY', {
     guildId: args.guildId, nitradoConnId: args.nitradoConnId, roundId, potAccountId: potId,
-    ticketPrice: args.ticketPrice.toString(), maxTicketsPerUser: args.maxTicketsPerUser,
+    prizeText, ticketPrice: args.ticketPrice.toString(), maxTicketsPerUser: args.maxTicketsPerUser,
     minParticipants: args.minParticipants, endsAt: args.endsAt.toISOString(),
   });
   return (await fetchRoundViewById(roundId))!;
@@ -497,7 +527,7 @@ async function completeWinnerPayout(round: LotteryRoundView): Promise<void> {
   }, {
     mutate: async ({ raw }) => {
       const changed = await raw.$executeRawUnsafe(
-        'UPDATE "LotteryRound" SET "status"=\'FINISHED\'::"LotteryRoundStatus", "activeScopeKey"=NULL, "settledAt"=CURRENT_TIMESTAMP, "updatedAt"=CURRENT_TIMESTAMP WHERE "id"=$1 AND "status"=\'DRAWING\'::"LotteryRoundStatus"',
+        'UPDATE "LotteryRound" SET "status"=\'FINISHED\'::"LotteryRoundStatus", "activeScopeKey"=NULL, "activePrizeText"=NULL, "settledAt"=CURRENT_TIMESTAMP, "updatedAt"=CURRENT_TIMESTAMP WHERE "id"=$1 AND "status"=\'DRAWING\'::"LotteryRoundStatus"',
         round.id,
       );
       if (changed !== 1) throw new Error('Lotterie konnte nach Auszahlung nicht finalisiert werden.');
@@ -546,11 +576,15 @@ async function processRefunds(round: LotteryRoundView): Promise<boolean> {
   const terminal = await fetchRoundViewById(round.id);
   if (!terminal) throw new Error('Refund-Runde ist beim Finalisieren verschwunden.');
   if (terminal.potBalance !== 0n) throw new Error('Refund-Runde kann mit Restguthaben im Pot nicht finalisiert werden.');
-  const changed = await prisma.lotteryRound.updateMany({
-    where: { id: round.id, status: 'REFUNDING' },
-    data: { status: 'REFUNDED', activeScopeKey: null, settledAt: new Date() },
+
+  const changed = await prisma.$transaction(async tx => {
+    const raw = tx as unknown as VirtualAccountRawDb;
+    return raw.$executeRawUnsafe(
+      'UPDATE "LotteryRound" SET "status"=\'REFUNDED\'::"LotteryRoundStatus", "activeScopeKey"=NULL, "activePrizeText"=NULL, "settledAt"=CURRENT_TIMESTAMP, "updatedAt"=CURRENT_TIMESTAMP WHERE "id"=$1 AND "status"=\'REFUNDING\'::"LotteryRoundStatus"',
+      round.id,
+    );
   });
-  if (changed.count !== 1) {
+  if (changed !== 1) {
     const current = await prisma.lotteryRound.findUnique({ where: { id: round.id }, select: { status: true } });
     if (current?.status !== 'REFUNDED') throw new Error('Refund-Runde konnte nicht finalisiert werden.');
   }
@@ -570,8 +604,9 @@ async function announceTerminalRound(client: Client, roundId: string): Promise<v
 
   const channel = await client.channels.fetch(round.channelId).catch(() => null);
   if (!channel || !channel.isTextBased() || !('send' in channel)) throw new Error('Lotterie-Ergebnis-Channel nicht erreichbar.');
+  const prize = round.prizeSnapshot ? ` Gewinn: **${round.prizeSnapshot}**.` : '';
   await (channel as TextChannel).send({
-    content: `🎉 Glueckwunsch <@${round.winnerDiscordId}>! Du hast den Lotterie-Pot gewonnen.`,
+    content: `🎉 Glueckwunsch <@${round.winnerDiscordId}>!${prize} Der Lotterie-Pot wurde ausgezahlt.`,
     allowedMentions: { users: [round.winnerDiscordId], parse: [] },
     nonce: `lottery-result-${round.id}`,
     enforceNonce: true,
@@ -661,9 +696,6 @@ export function startLotteryScheduler(client: Client): void {
     try {
       const guildIds = [...client.guilds.cache.keys()];
       if (guildIds.length === 0) return;
-      // Geldkritische Settlement-Arbeit darf niemals hinter alten, nicht
-      // zustellbaren Ergebnis-Ankuendigungen verhungern. Deshalb werden beide
-      // Workloads getrennt begrenzt und Settlement-Runden immer zuerst verarbeitet.
       const settlementRounds = await prisma.lotteryRound.findMany({
         where: {
           guildId: { in: guildIds },
