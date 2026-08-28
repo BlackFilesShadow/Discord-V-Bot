@@ -7,6 +7,7 @@ import {
   getCurrentLotteryRound,
   getLotteryRoundById,
   listLotteryHistory,
+  normalizeLotteryPrizeText,
   type LotteryRoundView,
 } from '../../../modules/economy/lottery';
 import { asUserDiscordId } from '../../../types/scope';
@@ -26,6 +27,7 @@ function serialize(round: LotteryRoundView | null) {
   if (!round) return null;
   return {
     ...round,
+    prizeText: round.activePrizeText ?? round.prizeSnapshot,
     ticketPrice: round.ticketPrice.toString(),
     finalPot: round.finalPot?.toString() ?? null,
     potBalance: round.potBalance.toString(),
@@ -82,11 +84,13 @@ economyLotteryRouter.post('/rounds', requireGuildPermission('economy.manage'), a
     res.status(400).json({ error: 'channelId muss eine Discord-Kanal-ID sein.' }); return;
   }
   try {
+    const prizeText = normalizeLotteryPrizeText(body.prizeText);
     const round = await createLotteryRound({
       client: getDashboardClient(),
       guildId: scope.guildId,
       nitradoConnId: connId,
       channelId: body.channelId,
+      prizeText,
       ticketPrice: parseAmount(body.ticketPrice),
       maxTicketsPerUser: parseIntRange(body.maxTicketsPerUser, 1, 10_000, 'maxTicketsPerUser'),
       minParticipants: parseIntRange(body.minParticipants, 2, 100_000, 'minParticipants'),
