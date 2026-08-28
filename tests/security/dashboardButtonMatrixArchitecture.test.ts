@@ -66,7 +66,7 @@ const HISTORICAL_VIRTUAL_ACCOUNT_PANEL = 'dashboard-ui/src/components/economy/Vi
 const CURRENT_VIRTUAL_ACCOUNT_PANEL = 'dashboard-ui/src/components/economy/VirtualAccountsControlPanel.tsx';
 const CURRENT_VIRTUAL_ACCOUNT_BUTTON_COUNT = 14;
 const CURRENT_BLACK_MARKET_PANEL = 'dashboard-ui/src/components/economy/BlackMarketPanel.tsx';
-const CURRENT_BLACK_MARKET_BUTTON_COUNT = 11;
+const CURRENT_BLACK_MARKET_BUTTON_COUNT = 10;
 
 function resolveUiModule(from: string, specifier: string): string | null {
   const srcRoot = path.resolve(root, 'dashboard-ui/src');
