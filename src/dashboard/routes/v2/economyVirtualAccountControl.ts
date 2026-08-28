@@ -6,25 +6,24 @@ import { requireGuildPermission } from '../../middleware/auth';
 import { tryGetDashboardClient } from '../../clientRegistry';
 import { asUserDiscordId, type UserDiscordId } from '../../../types/scope';
 import { archiveVirtualAccount, getVirtualAccountById, listVirtualAccounts, type VirtualAccountRawDb } from '../../../modules/economy/virtualAccounts';
+import { getVirtualAccountMetadata } from '../../../modules/economy/virtualAccountMetadata';
 import {
-  createCustomVirtualAccountWithMetadata,
-  getVirtualAccountMetadata,
-  upsertVirtualAccountMetadata,
-} from '../../../modules/economy/virtualAccountMetadata';
+  createConfiguredCustomVirtualAccount,
+  updateConfiguredVirtualAccount,
+} from '../../../modules/economy/virtualAccountConfiguration';
 import {
   ensureBankTreasury,
   ensureVirtualAccountFinance,
   listVirtualAccountManagers,
-  replaceVirtualAccountManagers,
-  updateVirtualAccountFinance,
 } from '../../../modules/economy/virtualAccountFinance';
+import { deleteUnusedVirtualAccount } from '../../../modules/economy/virtualAccountDeletion';
 import { safePayoutVirtualAccountToUser } from '../../../modules/economy/virtualAccountMoneySafety';
 import {
   configureVirtualManagerPanelSafe,
   getVirtualManagerPanelSafe,
   refreshConfiguredVirtualManagerPanelSafe,
 } from '../../../modules/economy/virtualAccountManagerPanelSafety';
-import { syncVirtualAccountProjection } from '../../../modules/economy/virtualAccountDiscord';
+import { retireVirtualAccountProjection, syncVirtualAccountProjection } from '../../../modules/economy/virtualAccountDiscord';
 import { logAuditDb } from '../../../utils/logger';
 
 export const economyVirtualAccountControlRouter = Router({ mergeParams: true });
@@ -77,6 +76,17 @@ async function validateNormalTextChannel(guildId: string, raw: unknown): Promise
   return channel.id;
 }
 
+async function validateAccountChannels(guildId: string, body: Record<string, unknown>): Promise<{ channelId: string | null; archiveChannelId: string | null }> {
+  const [channelId, archiveChannelId] = await Promise.all([
+    validateNormalTextChannel(guildId, body.channelId),
+    validateNormalTextChannel(guildId, body.archiveChannelId),
+  ]);
+  if (!channelId && archiveChannelId) throw new Error('Ein Archiv-Kanal ist nur zusammen mit einem Hauptkanal zulaessig.');
+  if (channelId && !archiveChannelId) throw new Error('Fuer eine Discord-Integration ist ein separater Archiv-Kanal erforderlich.');
+  if (channelId && archiveChannelId && channelId === archiveChannelId) throw new Error('Hauptkanal und Archiv-Kanal muessen getrennte Kanaele sein.');
+  return { channelId, archiveChannelId };
+}
+
 async function validateManagers(guildId: string, raw: unknown): Promise<UserDiscordId[]> {
   if (raw === undefined || raw === null) return [];
   if (!Array.isArray(raw) || raw.length > 25) throw new Error('managers muss eine Liste mit maximal 25 Discord-IDs sein.');
@@ -126,6 +136,7 @@ async function serializeAccount(guildId: Parameters<typeof ensureVirtualAccountF
     createdAt: account.createdAt,
     description: metadata?.description ?? null,
     channelId: metadata?.channelId ?? null,
+    archiveChannelId: metadata?.archiveChannelId ?? null,
     currencyName: finance.currencyName,
     currencyEmoji: finance.currencyEmoji,
     accountEmoji: finance.accountEmoji,
@@ -165,41 +176,39 @@ economyVirtualAccountControlRouter.post('/control/accounts', requireGuildPermiss
   const { scope, connId } = scoped(req);
   const body = (req.body ?? {}) as Record<string, unknown>;
   if (typeof body.name !== 'string') { res.status(400).json({ error: 'name fehlt.' }); return; }
-  let channelId: string | null;
+  let channels: { channelId: string | null; archiveChannelId: string | null };
   let managers: UserDiscordId[];
   let expiresAt: Date | null;
   try {
-    channelId = await validateNormalTextChannel(String(scope.guildId), body.channelId);
+    channels = await validateAccountChannels(String(scope.guildId), body);
     managers = await validateManagers(String(scope.guildId), body.managers);
     expiresAt = parseExpiry(body.expiresAt);
   } catch (error) { res.status(400).json({ error: (error as Error).message }); return; }
 
   try {
-    const created = await createCustomVirtualAccountWithMetadata({
-      guildId: scope.guildId, nitradoConnId: connId, name: body.name,
-      description: body.description, channelId, expiresAt,
-      acceptUserTransfers: body.acceptUserTransfers === undefined ? true : body.acceptUserTransfers === true,
-      createdByDiscordId: asUserDiscordId(scope.actorDiscordId),
-    });
-    const defaults = await ensureVirtualAccountFinance(scope.guildId, connId, created.account.id);
-    await updateVirtualAccountFinance({
-      guildId: scope.guildId, nitradoConnId: connId, accountId: created.account.id,
-      currencyName: body.currencyName ?? defaults.currencyName,
-      currencyEmoji: body.currencyEmoji ?? defaults.currencyEmoji,
-      accountEmoji: body.accountEmoji ?? defaults.accountEmoji,
+    const created = await createConfiguredCustomVirtualAccount({
+      guildId: scope.guildId,
+      nitradoConnId: connId,
+      name: body.name,
+      description: body.description,
+      channelId: channels.channelId,
+      archiveChannelId: channels.archiveChannelId,
+      expiresAt,
+      currencyName: body.currencyName,
+      currencyEmoji: body.currencyEmoji,
+      accountEmoji: body.accountEmoji,
       bannerUrl: body.bannerUrl,
-      textStyle: body.textStyle ?? defaults.textStyle,
+      textStyle: body.textStyle,
       exchangePlayerUnits: body.exchangePlayerUnits,
       exchangeAccountUnits: body.exchangeAccountUnits,
-    });
-    await replaceVirtualAccountManagers({
-      guildId: scope.guildId, nitradoConnId: connId, accountId: created.account.id,
-      userDiscordIds: managers, addedByDiscordId: asUserDiscordId(scope.actorDiscordId),
+      acceptUserTransfers: body.acceptUserTransfers === undefined ? true : body.acceptUserTransfers,
+      managers,
+      createdByDiscordId: asUserDiscordId(scope.actorDiscordId),
     });
     const syncWarning = await bestEffortProjection(req, created.account.id);
     const client = tryGetDashboardClient();
     if (client) await refreshConfiguredVirtualManagerPanelSafe(client, scope.guildId, connId, asUserDiscordId(scope.actorDiscordId)).catch(() => undefined);
-    logAuditDb('ECONOMY_VIRTUAL_ACCOUNT_CREATED_V2', 'ECONOMY', { actorUserId: req.auth!.userId, guildId: scope.guildId, details: { accountId: created.account.id, nitradoConnId: connId, channelId, managers: managers.length } });
+    logAuditDb('ECONOMY_VIRTUAL_ACCOUNT_CREATED_V2', 'ECONOMY', { actorUserId: req.auth!.userId, guildId: scope.guildId, details: { accountId: created.account.id, nitradoConnId: connId, channelId: channels.channelId, archiveChannelId: channels.archiveChannelId, managers: managers.length } });
     res.status(201).json({ account: await serializeAccount(scope.guildId, connId, created.account.id), syncWarning });
   } catch (error) { res.status(400).json({ error: (error as Error).message }); }
 });
@@ -211,29 +220,46 @@ economyVirtualAccountControlRouter.put('/control/accounts/:accountId', requireGu
   const account = await getVirtualAccountById(scope.guildId, connId, accountId);
   if (!account) { res.status(404).json({ error: 'Virtuelles Konto nicht gefunden.' }); return; }
   try {
-    const channelId = await validateNormalTextChannel(String(scope.guildId), body.channelId);
+    const channels = await validateAccountChannels(String(scope.guildId), body);
     const managers = await validateManagers(String(scope.guildId), body.managers);
-    await upsertVirtualAccountMetadata({ guildId: scope.guildId, nitradoConnId: connId, accountId, description: body.description, channelId });
-    const defaults = await ensureVirtualAccountFinance(scope.guildId, connId, accountId);
-    await updateVirtualAccountFinance({
-      guildId: scope.guildId, nitradoConnId: connId, accountId,
-      currencyName: body.currencyName ?? defaults.currencyName,
-      currencyEmoji: body.currencyEmoji ?? defaults.currencyEmoji,
-      accountEmoji: body.accountEmoji ?? defaults.accountEmoji,
-      bannerUrl: body.bannerUrl === undefined ? defaults.bannerUrl : body.bannerUrl,
-      textStyle: body.textStyle ?? defaults.textStyle,
-      exchangePlayerUnits: body.exchangePlayerUnits === undefined ? defaults.exchangePlayerUnits : body.exchangePlayerUnits,
-      exchangeAccountUnits: body.exchangeAccountUnits === undefined ? defaults.exchangeAccountUnits : body.exchangeAccountUnits,
+    await updateConfiguredVirtualAccount({
+      guildId: scope.guildId,
+      nitradoConnId: connId,
+      accountId,
+      description: body.description,
+      channelId: channels.channelId,
+      archiveChannelId: channels.archiveChannelId,
+      currencyName: body.currencyName,
+      currencyEmoji: body.currencyEmoji,
+      accountEmoji: body.accountEmoji,
+      bannerUrl: body.bannerUrl,
+      textStyle: body.textStyle,
+      exchangePlayerUnits: body.exchangePlayerUnits,
+      exchangeAccountUnits: body.exchangeAccountUnits,
+      acceptUserTransfers: body.acceptUserTransfers,
+      managers,
+      updatedByDiscordId: asUserDiscordId(scope.actorDiscordId),
     });
-    if (body.acceptUserTransfers !== undefined) {
-      if (typeof body.acceptUserTransfers !== 'boolean') throw new Error('acceptUserTransfers muss boolean sein.');
-      await rawDb().$executeRawUnsafe('UPDATE "EconomyVirtualAccount" SET "acceptUserTransfers"=$4, "updatedAt"=CURRENT_TIMESTAMP WHERE "id"=$1 AND "guildId"=$2 AND "nitradoConnId"=$3', accountId, String(scope.guildId), String(connId), body.acceptUserTransfers);
-    }
-    await replaceVirtualAccountManagers({ guildId: scope.guildId, nitradoConnId: connId, accountId, userDiscordIds: managers, addedByDiscordId: asUserDiscordId(scope.actorDiscordId) });
     const syncWarning = await bestEffortProjection(req, accountId);
     const client = tryGetDashboardClient();
     if (client) await refreshConfiguredVirtualManagerPanelSafe(client, scope.guildId, connId, asUserDiscordId(scope.actorDiscordId)).catch(() => undefined);
+    logAuditDb('ECONOMY_VIRTUAL_ACCOUNT_UPDATED_V2', 'ECONOMY', { actorUserId: req.auth!.userId, guildId: scope.guildId, details: { accountId, nitradoConnId: connId, channelId: channels.channelId, archiveChannelId: channels.archiveChannelId, managers: managers.length } });
     res.json({ account: await serializeAccount(scope.guildId, connId, accountId), syncWarning });
+  } catch (error) { res.status(400).json({ error: (error as Error).message }); }
+});
+
+economyVirtualAccountControlRouter.delete('/control/accounts/:accountId', requireGuildPermission('economy.manage'), async (req, res) => {
+  const { scope, connId } = scoped(req);
+  const accountId = String(req.params.accountId);
+  const account = await getVirtualAccountById(scope.guildId, connId, accountId);
+  if (!account) { res.status(404).json({ error: 'Virtuelles Konto nicht gefunden.' }); return; }
+  try {
+    const client = tryGetDashboardClient();
+    if (client) await retireVirtualAccountProjection(client, scope.guildId, connId, accountId);
+    const deleted = await deleteUnusedVirtualAccount({ guildId: scope.guildId, nitradoConnId: connId, accountId });
+    if (client) await refreshConfiguredVirtualManagerPanelSafe(client, scope.guildId, connId, asUserDiscordId(scope.actorDiscordId)).catch(() => undefined);
+    logAuditDb('ECONOMY_VIRTUAL_ACCOUNT_DELETED', 'ECONOMY', { actorUserId: req.auth!.userId, guildId: scope.guildId, details: { accountId, accountName: deleted.name, nitradoConnId: connId } });
+    res.json({ ok: true, deleted });
   } catch (error) { res.status(400).json({ error: (error as Error).message }); }
 });
 

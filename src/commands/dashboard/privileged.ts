@@ -5,14 +5,12 @@ import prisma from '../../database/prisma';
 import { withGuildScope } from '../middleware/withGuildScope';
 import { adminPay } from '../../modules/economy/repository';
 import { applyPendingAdminMoneyAction } from '../../modules/economy/pendingAdminMoney';
+import { isValidPlayerName } from '../../modules/linking/linkService';
 import {
-  forceLinkByPlayerName,
-  isValidPlayerName,
-  unlinkUser,
-  type LinkClient,
-  type PlayerNameLinkResult,
-  type SessionLinkClient,
-} from '../../modules/linking/linkService';
+  forceAdminLinkByPlayerName,
+  forceAdminUnlinkUser,
+  type AdminForceLinkResult,
+} from '../../modules/linking/adminForceLink';
 import {
   applySuccessfulLinkEconomyEffects,
   deactivateLinkRewardState,
@@ -86,19 +84,15 @@ function payloadString(payload: Record<string, unknown>, key: string): string {
   return value;
 }
 
-function forceLinkFailure(result: Extract<PlayerNameLinkResult, { ok: false }>): string {
+function forceLinkFailure(result: Extract<AdminForceLinkResult, { ok: false }>): string {
   switch (result.reason) {
-    case 'PLAYER_NOT_SEEN':
-      return `Der Spielername ${result.playerName || '—'} wurde auf diesem Gameserver noch nicht in den ADM-/Session-Daten erkannt.`;
-    case 'AMBIGUOUS_PLAYER_NAME':
-      return `Der Spielername ${result.playerName} wurde mit mehreren DayZ-GUIDs beobachtet und ist deshalb nicht eindeutig.`;
+    case 'INVALID_PLAYER_NAME':
+      return 'Der Spielername ist ungueltig. Erwartet werden 1–64 Zeichen ohne Zeilenumbrueche.';
     case 'PLAYER_NAME_TAKEN':
     case 'IDENTITY_TAKEN':
       return 'Dieser Spielername bzw. die dazugehörige DayZ-GUID ist bereits mit einem anderen Discord-Account verknuepft.';
     case 'USER_ALREADY_LINKED':
       return 'Der Ziel-Discord-Account ist auf diesem Gameserver bereits mit einer anderen DayZ-Identitaet verknuepft.';
-    case 'PLAYTIME_TOO_SHORT':
-      return 'Die Spielzeit reicht fuer eine normale Verknuepfung noch nicht aus.';
   }
 }
 
@@ -152,7 +146,7 @@ export const removeMoneyCommand: Command = {
 export const forceLinkCommand: Command = {
   data: slotOption(new SlashCommandBuilder()
     .setName('force-link')
-    .setDescription('Berechtigt: Verknuepft einen Discord-User mit einem bereits erkannten DayZ-Spielernamen.')
+    .setDescription('Admin: Verknuepft einen Discord-User direkt mit einem DayZ-Spielernamen.')
     .addUserOption(o => o.setName('user').setDescription('Discord-User').setRequired(true))
     .addStringOption(o => o.setName('id').setDescription('Exakter PSN-/Xbox-/DayZ-Spielername').setRequired(true).setMinLength(1).setMaxLength(64)) as SlashCommandBuilder),
   execute: withGuildScope({ requirePerm: 'economy.manage', acceptSlotOption: true }, async (i, scope) => {
@@ -160,18 +154,24 @@ export const forceLinkCommand: Command = {
     if (target.bot) { await reply(i, 'Bots koennen nicht mit Spielidentitaeten verknuepft werden.'); return; }
     const playerName = i.options.getString('id', true).trim();
     if (!isValidPlayerName(playerName)) { await reply(i, 'Ungueltiger Spielername. Erwartet werden 1–64 Zeichen ohne Zeilenumbrueche.'); return; }
-    await queueAction(i, scope, ACTIONS.FORCE_LINK, { targetUserId: target.id, playerName }, `Force-Link von <@${target.id}> mit **${playerName}** ist vorbereitet. Die DayZ-GUID wird beim Bestaetigen aus den Server-Sessions aufgeloest.`);
+    await queueAction(
+      i,
+      scope,
+      ACTIONS.FORCE_LINK,
+      { targetUserId: target.id, playerName },
+      `Force-Link von <@${target.id}> mit **${playerName}** ist vorbereitet. Als Admin-Aktion wird die normale ADM-/Session-Anwesenheits- und Spielzeitregel umgangen.`,
+    );
   }),
 };
 
 export const forceUnlinkCommand: Command = {
   data: slotOption(new SlashCommandBuilder()
     .setName('force-unlink')
-    .setDescription('Berechtigt: Bereitet das Entfernen einer aktiven Discord ↔ DayZ-Verknuepfung vor.')
+    .setDescription('Admin: Entfernt eine Discord ↔ DayZ-Verknuepfung direkt ohne Session-Voraussetzung.')
     .addUserOption(o => o.setName('user').setDescription('Discord-User').setRequired(true)) as SlashCommandBuilder),
   execute: withGuildScope({ requirePerm: 'economy.manage', acceptSlotOption: true }, async (i, scope) => {
     const target = i.options.getUser('user', true);
-    await queueAction(i, scope, ACTIONS.FORCE_UNLINK, { targetUserId: target.id }, `Force-Unlink fuer <@${target.id}> ist vorbereitet.`);
+    await queueAction(i, scope, ACTIONS.FORCE_UNLINK, { targetUserId: target.id }, `Force-Unlink fuer <@${target.id}> ist vorbereitet. Die ADM-/Session-Erkennung ist fuer diese Admin-Aktion nicht erforderlich.`);
   }),
 };
 
@@ -266,24 +266,27 @@ export const confirmActionCommand: Command = {
         const playerName = payloadString(payload, 'playerName');
         if (!isValidPlayerName(playerName)) throw new Error('Pending-Action-Spielername ist ungueltig.');
         const linkScope = { guildId: scope.guildId, nitradoConnId };
-        const result = await forceLinkByPlayerName(
-          prisma as unknown as SessionLinkClient,
-          linkScope,
-          targetUserId,
+        const result = await forceAdminLinkByPlayerName({
+          scope: linkScope,
+          userDiscordId: targetUserId,
           playerName,
-          config.security.encryptionKey,
-        );
+          secret: config.security.encryptionKey,
+        });
         if (!result.ok) {
           await finish(forceLinkFailure(result));
           return;
         }
-        const startBalance = await applySuccessfulLinkEconomyEffects({
-          scope: linkScope,
-          userDiscordId: targetUserId,
-          gameId: result.gameId,
-          secret: config.security.encryptionKey,
-          newLink: !result.alreadyLinked,
-        });
+
+        let startBalance = { granted: false, amount: 0n };
+        if (result.gameId) {
+          startBalance = await applySuccessfulLinkEconomyEffects({
+            scope: linkScope,
+            userDiscordId: targetUserId,
+            gameId: result.gameId,
+            secret: config.security.encryptionKey,
+            newLink: result.newIdentityBinding,
+          });
+        }
         logAudit('LINK_FORCE_CREATED', 'LINKING', {
           guildId: scope.guildId,
           nitradoConnId,
@@ -291,17 +294,22 @@ export const confirmActionCommand: Command = {
           target: targetUserId,
           playerName: result.playerName,
           actionId: id,
+          identityResolved: Boolean(result.gameId),
+          pendingIdentityResolution: result.pendingIdentityResolution,
           startBalanceGranted: startBalance.granted,
           startBalanceAmount: startBalance.amount.toString(),
           idempotentReplay: result.alreadyLinked,
         });
-        await finish(`Force-Link wurde ausgefuehrt: <@${targetUserId}> ↔ **${result.playerName}**.${startBalance.granted ? ` Startguthaben: +${startBalance.amount.toLocaleString('de-DE')}.` : ''}`);
+        const pending = result.pendingIdentityResolution
+          ? ' Die Admin-Verknuepfung ist sofort aktiv; die echte DayZ-GUID und GUID-basierte Rewards werden beim ersten eindeutigen ADM-/Session-Treffer automatisch nachgezogen.'
+          : '';
+        await finish(`Force-Link wurde ausgefuehrt: <@${targetUserId}> ↔ **${result.playerName}**.${startBalance.granted ? ` Startguthaben: +${startBalance.amount.toLocaleString('de-DE')}.` : ''}${pending}`);
         return;
       }
 
       if (action.actionType === ACTIONS.FORCE_UNLINK) {
         const linkScope = { guildId: scope.guildId, nitradoConnId };
-        const removed = await unlinkUser(prisma as unknown as LinkClient, linkScope, targetUserId);
+        const removed = await forceAdminUnlinkUser(linkScope, targetUserId);
         // Absichtlich auch bei removed=false: Ein Retry nach Crash zwischen
         // Link-Unlink und Reward-Deaktivierung muss den halbfertigen Zustand heilen.
         await deactivateLinkRewardState(linkScope, targetUserId);
@@ -314,7 +322,7 @@ export const confirmActionCommand: Command = {
           actionId: id,
           idempotentReplay: !removed,
         });
-        await finish('Force-Unlink wurde verarbeitet. Die aktive Identitaet und ihre Reward-Berechtigung sind deaktiviert.');
+        await finish('Force-Unlink wurde verarbeitet. Die aktive Identitaet, ein eventueller provisional Admin-Link und die Reward-Berechtigung sind deaktiviert.');
         return;
       }
 

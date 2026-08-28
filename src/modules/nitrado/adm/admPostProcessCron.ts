@@ -17,7 +17,8 @@ import { getSlotEconomyConfig, type SlotConfigClient } from '../../economy/slotC
 import { bookPendingRewards, type RewardBookingClient } from '../../economy/rewardBooking';
 import { bookPlaytimeRewards, type PlaytimeBookingClient } from '../../economy/playtimeBooking';
 import { assertEconomyScopeReady } from '../../economy/scopeMigration';
-import { resolveRewardIdentity, resolveRewardUserAt } from '../../linking/linkRewards';
+import { resolveRewardIdentity, resolveRewardUserAt, applySuccessfulLinkEconomyEffects } from '../../linking/linkRewards';
+import { reconcileAdminForcedLinks } from '../../linking/adminForceLink';
 import { identityHash } from '../../linking/identity';
 
 const INTERVAL_MS = 60_000;
@@ -36,6 +37,33 @@ async function processConnection(conn: ScopedConnection): Promise<void> {
     await aggregatePlayerSessions(prisma as unknown as PlayerSessionClient, scopeRef);
   } catch (error) {
     logger.warn(`ADM-Postprocess: PlayerSession-Aggregation fehlgeschlagen fuer ${conn.id}: ${(error as Error).message}`);
+  }
+
+  // Admin-Force-Links duerfen bereits vor dem ersten ADM-Treffer existieren.
+  // Sobald der exakte Name auf diesem Gameserver eindeutig einer GUID zugeordnet
+  // werden kann, wird die echte HMAC gebunden. Economy-Hooks sind idempotent und
+  // werden auch fuer bereits gebundene Force-Links erneut sichergestellt, damit
+  // ein Crash zwischen GUID-Commit und Reward-Aktivierung selbstheilend bleibt.
+  try {
+    const reconciled = await reconcileAdminForcedLinks({
+      scope: scopeRef,
+      secret: config.security.encryptionKey,
+    });
+    for (const link of reconciled) {
+      try {
+        await applySuccessfulLinkEconomyEffects({
+          scope: scopeRef,
+          userDiscordId: link.userDiscordId,
+          gameId: link.gameId,
+          secret: config.security.encryptionKey,
+          newLink: link.newIdentityBinding,
+        });
+      } catch (error) {
+        logger.warn(`ADM-Postprocess: Force-Link-Economy-Hook fehlgeschlagen fuer ${conn.id}/${link.userDiscordId}: ${(error as Error).message}`);
+      }
+    }
+  } catch (error) {
+    logger.warn(`ADM-Postprocess: Admin-Force-Link-Reconciliation fehlgeschlagen fuer ${conn.id}: ${(error as Error).message}`);
   }
 
   try {

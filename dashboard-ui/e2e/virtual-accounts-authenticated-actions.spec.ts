@@ -5,8 +5,11 @@ const USER_ID = '437718598876268545';
 const MEMBER_DISCORD_ID = '223456789012345678';
 const MEMBER_GUID = '11111111-1111-4111-8111-111111111111';
 const SLOT = '1';
+const LIVE_CHANNEL_ID = '123456789012345679';
+const ARCHIVE_CHANNEL_ID = '123456789012345680';
 const ZERO_ACCOUNT = 'acct-zero';
 const FUNDED_ACCOUNT = 'acct-funded';
+const DELETE_ACCOUNT = 'acct-delete';
 
 interface Mutation {
   method: string;
@@ -35,6 +38,7 @@ function account(id: string, name: string, walletBalance: string, bankBalance = 
     createdAt: '2026-08-19T10:00:00.000Z',
     description: id === FUNDED_ACCOUNT ? 'Eventtopf' : null,
     channelId: null,
+    archiveChannelId: null,
     currencyName: 'Maeuse',
     currencyEmoji: '🐭',
     accountEmoji: '🏦',
@@ -93,14 +97,17 @@ async function stubEconomy(page: Page, opts: { payoutError?: boolean } = {}) {
       servers: [],
     });
     if (path === `/api/v2/guilds/${GUILD_ID}/economy/overview`) return json(route, {
-      economy: { enabled: true, currencyName: 'Maeuse', emoji: '🐭', accounts: 2, links: 0, transactions: 0 },
+      economy: { enabled: true, currencyName: 'Maeuse', emoji: '🐭', accounts: 3, links: 0, transactions: 0 },
       bank: { totalWallet: '0', totalBank: '0', interestPercent: 3, bankChannelId: null },
       casino: { gamesConfigured: 0, gamesEnabled: 0, rounds: 0, totalBet: '0', totalPayout: '0', houseEdge: '0', stats: [] },
       recentTransactions: [],
       coupling: { sharedCurrency: true, sharedBalance: true, directlyBooked: true, sharedModels: [], casinoStatsMovable: false, raceConditionsGuarded: true, centralTransactionService: 'ledger' },
     });
     if (path === `/api/v2/guilds/${GUILD_ID}/channels`) return json(route, {
-      channels: [{ id: '123456789012345679', name: 'events', type: 0, parentId: null }],
+      channels: [
+        { id: LIVE_CHANNEL_ID, name: 'events', type: 0, parentId: null },
+        { id: ARCHIVE_CHANNEL_ID, name: 'events-archiv', type: 0, parentId: null },
+      ],
     });
 
     if (path === `/api/v2/guilds/${GUILD_ID}/economy/virtual-accounts/control/members` && method === 'GET') return json(route, {
@@ -111,7 +118,11 @@ async function stubEconomy(page: Page, opts: { payoutError?: boolean } = {}) {
     });
     if (path === `/api/v2/guilds/${GUILD_ID}/economy/virtual-accounts/control/manager-panel` && method === 'GET') return json(route, { panel: null });
     if (path === `/api/v2/guilds/${GUILD_ID}/economy/virtual-accounts/control/accounts` && method === 'GET') return json(route, {
-      accounts: [account(ZERO_ACCOUNT, 'Leere Kasse', '0'), account(FUNDED_ACCOUNT, 'Eventkasse', '5000', '250')],
+      accounts: [
+        account(ZERO_ACCOUNT, 'Leere Kasse', '0'),
+        account(FUNDED_ACCOUNT, 'Eventkasse', '5000', '250'),
+        account(DELETE_ACCOUNT, 'Löschbare Kasse', '0'),
+      ],
     });
     if (path === `/api/v2/guilds/${GUILD_ID}/economy/virtual-accounts/control/accounts` && method === 'POST') {
       const body = req.postDataJSON() as Record<string, unknown>;
@@ -121,12 +132,17 @@ async function stubEconomy(page: Page, opts: { payoutError?: boolean } = {}) {
           ...account('acct-created', String(body.name), '0'),
           description: body.description,
           channelId: body.channelId,
+          archiveChannelId: body.archiveChannelId,
           currencyName: body.currencyName,
           currencyEmoji: body.currencyEmoji,
           accountEmoji: body.accountEmoji,
         },
         syncWarning: null,
       }, 201);
+    }
+    if (path === `/api/v2/guilds/${GUILD_ID}/economy/virtual-accounts/control/accounts/${DELETE_ACCOUNT}` && method === 'DELETE') {
+      mutations.push({ method, path, query: url.search, body: null });
+      return json(route, { ok: true, deleted: { id: DELETE_ACCOUNT, name: 'Löschbare Kasse' } });
     }
     if (path === `/api/v2/guilds/${GUILD_ID}/economy/virtual-accounts/${ZERO_ACCOUNT}/entries` && method === 'GET') return json(route, {
       entries: [{ id: 'entry-1', delta: '250', entryType: 'ADMIN', sourcePocket: null, actorDiscordId: USER_ID, userDiscordId: null, reason: 'Audit Test', createdAt: '2026-08-19T10:05:00.000Z' }],
@@ -183,13 +199,15 @@ async function noOverflow(page: Page): Promise<void> {
 }
 
 test.describe('Authenticated virtual-account actions', () => {
-  test('Create, Audit und Archive bleiben exakt Guild+Slot-gescoped', async ({ page }) => {
+  test('Create, Audit und Archive bleiben exakt Guild+Slot-gescoped und nutzen getrennte Live-/Archivkanaele', async ({ page }) => {
     const mutations = await stubEconomy(page);
     await gotoVirtualAccounts(page);
 
     await page.getByPlaceholder('z. B. Eventkasse').fill('Turnierkasse');
     await page.getByPlaceholder('Zweck des Kontos…').fill('Gewinne fuer das Turnier');
-    await page.getByText('Hauptkanal / Live-Embed').locator('..').locator('select').selectOption('123456789012345679');
+    await page.getByText('Hauptkanal / Live-Embed').locator('..').locator('select').selectOption(LIVE_CHANNEL_ID);
+    await expect(page.getByText('Bei Discord-Integration muss ein separater Archiv-Kanal ausgewählt werden.')).toBeVisible();
+    await page.getByText('Archiv-Kanal / Transaktions-Threads').locator('..').locator('select').selectOption(ARCHIVE_CHANNEL_ID);
     await page.getByRole('button', { name: 'Konto erstellen' }).click();
 
     const createPath = `/api/v2/guilds/${GUILD_ID}/economy/virtual-accounts/control/accounts`;
@@ -200,7 +218,8 @@ test.describe('Authenticated virtual-account actions', () => {
       body: {
         name: 'Turnierkasse',
         description: 'Gewinne fuer das Turnier',
-        channelId: '123456789012345679',
+        channelId: LIVE_CHANNEL_ID,
+        archiveChannelId: ARCHIVE_CHANNEL_ID,
         currencyName: 'Coins',
         currencyEmoji: '💰',
         accountEmoji: '🏦',
@@ -219,6 +238,25 @@ test.describe('Authenticated virtual-account actions', () => {
     await zeroRow.getByRole('button', { name: 'Archivieren', exact: true }).click();
     await expect.poll(() => mutation(mutations, `/api/v2/guilds/${GUILD_ID}/economy/virtual-accounts/${ZERO_ACCOUNT}/archive`)).toBeTruthy();
     expect(mutation(mutations, `/api/v2/guilds/${GUILD_ID}/economy/virtual-accounts/${ZERO_ACCOUNT}/archive`)?.query).toBe(`?slot=${SLOT}`);
+  });
+
+  test('Hard-Delete verlangt zwei Klicks und bleibt exakt Guild+Slot-gescoped', async ({ page }) => {
+    const mutations = await stubEconomy(page);
+    await gotoVirtualAccounts(page);
+
+    const deletePath = `/api/v2/guilds/${GUILD_ID}/economy/virtual-accounts/control/accounts/${DELETE_ACCOUNT}`;
+    const row = page.getByText('Löschbare Kasse', { exact: false })
+      .locator('xpath=ancestor::div[.//button[normalize-space()="Löschen"]][1]');
+
+    await row.getByRole('button', { name: 'Löschen', exact: true }).click();
+    expect(mutation(mutations, deletePath)).toBeUndefined();
+    await expect(row.getByRole('button', { name: 'Wirklich löschen?', exact: true })).toBeVisible();
+    await expect(page.getByText(/Dauerhaftes Löschen ist nur ohne Buchungs-\/Systemhistorie möglich/)).toBeVisible();
+
+    await row.getByRole('button', { name: 'Wirklich löschen?', exact: true }).click();
+    await expect.poll(() => mutation(mutations, deletePath)).toBeTruthy();
+    expect(mutation(mutations, deletePath)).toMatchObject({ method: 'DELETE', query: `?slot=${SLOT}`, body: null });
+    await expect(page.getByText('Konto „Löschbare Kasse“ wurde dauerhaft gelöscht.')).toBeVisible();
   });
 
   test('Payout nutzt kanonische User-GUID, beide Pockets, Idempotency und exakten Slot-Scope', async ({ page }) => {

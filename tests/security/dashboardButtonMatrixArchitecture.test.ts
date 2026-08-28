@@ -67,7 +67,7 @@ const POST_STAGE_HANDLER_OVERRIDES: Readonly<Record<string, string>> = {
 };
 const HISTORICAL_VIRTUAL_ACCOUNT_PANEL = 'dashboard-ui/src/components/economy/VirtualAccountsPanel.tsx';
 const CURRENT_VIRTUAL_ACCOUNT_PANEL = 'dashboard-ui/src/components/economy/VirtualAccountsControlPanel.tsx';
-const CURRENT_VIRTUAL_ACCOUNT_BUTTON_COUNT = 14;
+const CURRENT_VIRTUAL_ACCOUNT_BUTTON_COUNT = 15;
 const CURRENT_BLACK_MARKET_PANEL = 'dashboard-ui/src/components/economy/BlackMarketPanel.tsx';
 const CURRENT_BLACK_MARKET_BUTTON_COUNT = 10;
 
