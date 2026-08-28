@@ -246,7 +246,7 @@ test.describe('Black Market authenticated action contract', () => {
     await expect.poll(state.vendorReads).toBe(0);
     await expect.poll(state.purchaseHistoryReads).toBe(0);
     await expect.poll(() => state.listingQueries.some(query => query.includes(`slot=${SLOT}`) && query.includes('includeInactive=false'))).toBe(true);
-    await expect(page.getByText(/2\.500 🐭/)).toBeVisible();
+    await expect(page.getByText('2.500 🐭', { exact: true })).toBeVisible();
 
     await page.getByLabel('Kaufmenge M4 Kit').fill('2');
     await page.getByLabel('Bezahlen aus M4 Kit').selectOption('BANK');
@@ -271,7 +271,7 @@ test.describe('Black Market authenticated action contract', () => {
     await expect(page.getByText('Angebot anlegen')).toBeVisible();
     await expect(page.getByText('Altes Kit')).toBeVisible();
     await expect(page.getByText('Bestellungen & Auslieferung')).toBeVisible();
-    await expect(page.getByText('🔫 M4A1')).toBeVisible();
+    await expect(page.getByText('🔫 M4A1 × 2', { exact: true })).toBeVisible();
     await expect.poll(state.vendorReads).toBeGreaterThan(0);
     await expect.poll(state.purchaseHistoryReads).toBeGreaterThan(0);
     await expect.poll(() => state.listingQueries.some(query => query.includes('includeInactive=true'))).toBe(true);
