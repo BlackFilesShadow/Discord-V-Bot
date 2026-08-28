@@ -62,6 +62,9 @@ const matrix = JSON.parse(read('docs/dashboard-button-matrix.json')) as ButtonMa
 const POST_STAGE_LABEL_OVERRIDES: Readonly<Record<string, string>> = {
   'dashboard-ui/src/components/KillfeedTab.tsx#KillfeedTab:4': '🌐 Online List',
 };
+const POST_STAGE_HANDLER_OVERRIDES: Readonly<Record<string, string>> = {
+  'dashboard-ui/src/components/economy/LotteryPanel.tsx#LotteryPanel:1': '() => { void current.refetch(); void history.refetch(); void currency.refetch(); }',
+};
 const HISTORICAL_VIRTUAL_ACCOUNT_PANEL = 'dashboard-ui/src/components/economy/VirtualAccountsPanel.tsx';
 const CURRENT_VIRTUAL_ACCOUNT_PANEL = 'dashboard-ui/src/components/economy/VirtualAccountsControlPanel.tsx';
 const CURRENT_VIRTUAL_ACCOUNT_BUTTON_COUNT = 14;
@@ -244,12 +247,16 @@ describe('stage 24 dashboard button matrix architecture', () => {
     expect(matrix.fileCoverage).toHaveLength(60);
     expect(matrix.reachableTsxCount).toBe(96);
 
-    const overrideIds = Object.keys(POST_STAGE_LABEL_OVERRIDES);
-    expect(overrideIds.every(sourceId => matrix.buttons.some(button => button.sourceId === sourceId))).toBe(true);
+    const overrideIds = new Set([
+      ...Object.keys(POST_STAGE_LABEL_OVERRIDES),
+      ...Object.keys(POST_STAGE_HANDLER_OVERRIDES),
+    ]);
+    expect([...overrideIds].every(sourceId => matrix.buttons.some(button => button.sourceId === sourceId))).toBe(true);
 
     const declaredSignatures = matrix.buttons.map(({ id: _id, sourceKey: _sourceKey, line: _line, coverageRef: _coverageRef, profile: _profile, pendingGuard: _pendingGuard, ...button }) => ({
       ...button,
       label: POST_STAGE_LABEL_OVERRIDES[button.sourceId] ?? button.label,
+      handler: POST_STAGE_HANDLER_OVERRIDES[button.sourceId] ?? button.handler,
     }));
     const currentSignatures = currentButtonSignatures();
     expect(currentSignatures.filter(button => (
