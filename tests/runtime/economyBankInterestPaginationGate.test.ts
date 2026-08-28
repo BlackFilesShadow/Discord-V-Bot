@@ -26,7 +26,7 @@ describe('Economy-1I bank-interest pagination architecture', () => {
   it('creates the daily completion marker only after the pagination loop', () => {
     const loop = source.indexOf('for (;;)');
     const pageBreak = source.indexOf('if (accounts.length < pageSize) break;', loop);
-    const runMarker = source.indexOf('await client.bankInterestRun.create', pageBreak);
+    const runMarker = source.indexOf('await createRunMarker(client, {', pageBreak);
 
     expect(loop).toBeGreaterThanOrEqual(0);
     expect(pageBreak).toBeGreaterThan(loop);
