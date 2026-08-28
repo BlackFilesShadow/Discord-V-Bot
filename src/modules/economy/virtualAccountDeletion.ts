@@ -26,9 +26,11 @@ export interface DeletedVirtualAccount {
 }
 
 /**
- * Hard-delete is intentionally stricter than archive. Financial/audit history
- * is never destroyed: only an unused CUSTOM/GENERAL account with zero in both
- * pockets and no history/reference may be physically removed.
+ * Hard-delete remains restricted to CUSTOM/GENERAL accounts without protected
+ * booking/system history. The delete action itself owns the financial reset:
+ * callers do not have to empty wallet/bank manually before deleting. Both
+ * pockets are reset to zero under the same row locks immediately before the
+ * physical delete, so no parallel money movement can race the reset/delete.
  */
 export async function deleteUnusedVirtualAccount(args: {
   guildId: GuildId;
@@ -59,9 +61,6 @@ export async function deleteUnusedVirtualAccount(args: {
       const finance = finances[0];
       if (!finance) throw new Error('Konto-Finanzprofil fehlt; Loeschung wird aus Sicherheitsgruenden abgebrochen.');
       if (finance.accountPurpose !== 'GENERAL') throw new Error('Die Serverbank ist ein geschuetztes Systemkonto und kann nicht geloescht werden.');
-      if (account.balance !== 0n || finance.bankBalance !== 0n) {
-        throw new Error('Loeschen ist nur bei Wallet=0 und Bank=0 moeglich.');
-      }
 
       const entries = await raw.$queryRawUnsafe<Array<{ exists: boolean }>>(
         'SELECT EXISTS(SELECT 1 FROM "EconomyVirtualAccountEntry" WHERE "virtualAccountId"=$1 LIMIT 1) AS exists',
@@ -82,6 +81,22 @@ export async function deleteUnusedVirtualAccount(args: {
       if (protectedRefs[0]?.protected) {
         throw new Error('Dieses Konto wird von Lotterie-/Markt-Historie referenziert und kann nicht geloescht werden.');
       }
+
+      const financeReset = await raw.$executeRawUnsafe(
+        'UPDATE "EconomyVirtualAccountFinance" SET "bankBalance"=0, "updatedAt"=CURRENT_TIMESTAMP WHERE "accountId"=$1 AND "guildId"=$2 AND "nitradoConnId"=$3',
+        args.accountId,
+        String(args.guildId),
+        String(args.nitradoConnId),
+      );
+      if (financeReset !== 1) throw new Error('Konto-Finanzprofil wurde parallel veraendert; Loeschung abgebrochen.');
+
+      const walletReset = await raw.$executeRawUnsafe(
+        'UPDATE "EconomyVirtualAccount" SET "balance"=0, "updatedAt"=CURRENT_TIMESTAMP WHERE "id"=$1 AND "guildId"=$2 AND "nitradoConnId"=$3 AND "kind"=\'CUSTOM\'::"EconomyVirtualAccountKind"',
+        args.accountId,
+        String(args.guildId),
+        String(args.nitradoConnId),
+      );
+      if (walletReset !== 1) throw new Error('Virtuelles Konto wurde parallel veraendert; Loeschung abgebrochen.');
 
       const deleted = await raw.$executeRawUnsafe(
         'DELETE FROM "EconomyVirtualAccount" WHERE "id"=$1 AND "guildId"=$2 AND "nitradoConnId"=$3 AND "kind"=\'CUSTOM\'::"EconomyVirtualAccountKind" AND "balance"=0',
