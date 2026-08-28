@@ -11,7 +11,7 @@ import { ApiError } from '@/lib/api';
 
 export function BotAdminLoginPanel() {
   const { user } = useAuth();
-  const { active, loading, login, logout, expiresAt } = useBotAdminSession();
+  const { active, loading, login, logout, expiresAt, source } = useBotAdminSession();
   const navigate = useNavigate();
   const [pw, setPw] = useState('');
   const [busy, setBusy] = useState(false);
@@ -51,25 +51,32 @@ export function BotAdminLoginPanel() {
 
   if (active) {
     const expLabel = expiresAt ? new Date(expiresAt).toLocaleTimeString() : 'Aktiv';
+    const viaDev = source === 'dev';
     return (
       <span data-testid="botadmin-login-panel" className="inline-flex items-center gap-1">
-        <span className="status-pill" data-state="ok" title={`Bot-Admin-Session aktiv bis ${expLabel}`}>
+        <span
+          className="status-pill"
+          data-state="ok"
+          title={viaDev ? `Bot-Admin-Zugriff ueber DEV-Session bis ${expLabel}` : `Bot-Admin-Session aktiv bis ${expLabel}`}
+        >
           <span className="relative inline-flex h-1.5 w-1.5">
             <span className="absolute inline-flex h-full w-full rounded-full bg-current opacity-60 animate-ping" />
             <span className="relative inline-flex h-1.5 w-1.5 rounded-full bg-current" />
           </span>
-          ADMIN
+          {viaDev ? 'ADMIN · DEV' : 'ADMIN'}
         </span>
-        <button
-          type="button"
-          onClick={onLogout}
-          disabled={busy}
-          title="Bot-Admin-Session beenden"
-          aria-label="Bot-Admin-Session beenden"
-          className="inline-flex items-center justify-center h-11 w-11 md:h-7 md:w-7 rounded-md text-muted hover:text-white hover:bg-bg-elev focus-ring disabled:opacity-50"
-        >
-          <LogOut className="h-3.5 w-3.5" />
-        </button>
+        {!viaDev && (
+          <button
+            type="button"
+            onClick={onLogout}
+            disabled={busy}
+            title="Bot-Admin-Session beenden"
+            aria-label="Bot-Admin-Session beenden"
+            className="inline-flex items-center justify-center h-11 w-11 md:h-7 md:w-7 rounded-md text-muted hover:text-white hover:bg-bg-elev focus-ring disabled:opacity-50"
+          >
+            <LogOut className="h-3.5 w-3.5" />
+          </button>
+        )}
       </span>
     );
   }
