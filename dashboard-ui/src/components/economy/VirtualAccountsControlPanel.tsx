@@ -18,6 +18,7 @@ import { Badge } from '@/components/ui/Badge';
 import { Button } from '@/components/ui/Button';
 import { Card, CardHeader, CardTitle } from '@/components/ui/Card';
 import { Combobox, type ComboboxOption } from '@/components/ui/Combobox';
+import { EmojiPicker } from '@/components/ui/EmojiPicker';
 import { Input } from '@/components/ui/Input';
 import { Select } from '@/components/ui/Select';
 import { Switch } from '@/components/ui/Switch';
@@ -333,11 +334,11 @@ function AccountFields({
       </label>
       <label className="text-sm">
         <span className="text-muted">Währungs-Emoji</span>
-        <Input value={draft.currencyEmoji} onChange={event => patch({ currencyEmoji: event.target.value })} maxLength={100} disabled={disabled} />
+        <EmojiPicker value={draft.currencyEmoji} onChange={currencyEmoji => patch({ currencyEmoji })} disabled={disabled} placeholder="Währungs-Emoji wählen…" />
       </label>
       <label className="text-sm">
         <span className="text-muted">Konto-Emoji</span>
-        <Input value={draft.accountEmoji} onChange={event => patch({ accountEmoji: event.target.value })} maxLength={100} disabled={disabled} />
+        <EmojiPicker value={draft.accountEmoji} onChange={accountEmoji => patch({ accountEmoji })} disabled={disabled} placeholder="Konto-Emoji wählen…" />
       </label>
       <label className="text-sm">
         <span className="text-muted">Banner/GIF (HTTPS)</span>
