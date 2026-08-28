@@ -1,16 +1,15 @@
 /**
- * Bank-Zins-Cron (Phase 5). Stuendlicher Sweep; die Tages-Idempotenz kommt aus
- * BankInterestRun (Guild+Gameserver+Tag) + serverbezogenen Ledger-Keys.
- *
- * Legacy-NULL-Configs gehoeren ausschliesslich in den Economy-Scope-
- * Migrationspfad und werden hier gar nicht mehr als ausfuehrbare Jobs geladen.
- * Dadurch gibt es keinen wiederholten Runtime-Warnspam; eine mehrdeutige
- * Migration bleibt weiterhin fail-closed und muss vom Owner aufgeloest werden.
+ * Stuendlicher Bank-Zins-Sweep. Tages-Idempotenz liegt in den jeweiligen
+ * servergescoppten Ledger-Keys/Markern. Spielerbanken und die echte
+ * BANK_TREASURY werden mit demselben konfigurierten Basispunkt-Satz behandelt;
+ * andere virtuelle Konten sind ausgeschlossen.
  */
 
 import prisma from '../../database/prisma';
 import { logger, logAudit } from '../../utils/logger';
 import { runDailyInterestForServer, interestDateKey, type BankInterestClient } from './bankInterest';
+import { getInterestBasisPoints } from './interestRate';
+import { runDailyTreasuryInterestForServer } from './virtualAccountInterest';
 
 let running = false;
 let timer: NodeJS.Timeout | null = null;
@@ -20,35 +19,45 @@ export async function runInterestSweepOnce(now = new Date()): Promise<void> {
   running = true;
   try {
     // Globaler Scheduler-Sweep ist absichtlich guilduebergreifend. Nur bereits
-    // servergescopte Configs sind operative Wahrheit.
+    // servergescopte und aktivierte Configs werden betrachtet. Der exakte Satz
+    // wird danach ueber die additive Basispunkt-Spalte gelesen.
     // eslint-disable-next-line local/no-unscoped-prisma-query
     const configs = await prisma.economyConfig.findMany({
       where: {
         enabled: true,
-        bankInterestPercent: { gt: 0 },
         nitradoConnId: { not: null },
       },
-      select: { guildId: true, nitradoConnId: true, bankInterestPercent: true },
+      select: { guildId: true, nitradoConnId: true },
     });
+
     for (const c of configs) {
-      // Prisma behaelt Nullable-Typen trotz `not:null` im Select. Dieser Guard
-      // ist nur Type-Narrowing und erzeugt absichtlich keine Runtime-Warnung.
       if (!c.nitradoConnId) continue;
       try {
+        const basisPoints = await getInterestBasisPoints(c.guildId, c.nitradoConnId);
+        if (basisPoints <= 0) continue;
         const runDate = interestDateKey(now, 'Europe/Berlin');
-        const r = await runDailyInterestForServer(prisma as unknown as BankInterestClient, {
+        const player = await runDailyInterestForServer(prisma as unknown as BankInterestClient, {
           guildId: c.guildId,
           nitradoConnId: c.nitradoConnId,
-          percent: c.bankInterestPercent,
+          basisPoints,
           runDate,
         });
-        if (!r.skipped && r.credited > 0) {
+        const treasury = await runDailyTreasuryInterestForServer({
+          guildId: c.guildId,
+          nitradoConnId: c.nitradoConnId,
+          basisPoints,
+          runDate,
+        });
+        if ((!player.skipped && player.credited > 0) || treasury.credited > 0) {
           logAudit('BANK_INTEREST_RUN', 'ECONOMY', {
             guildId: c.guildId,
             nitradoConnId: c.nitradoConnId,
             runDate,
-            accounts: r.credited,
-            total: r.total.toString(),
+            basisPoints,
+            playerAccounts: player.credited,
+            playerTotal: player.total.toString(),
+            treasuryAccounts: treasury.credited,
+            treasuryTotal: treasury.total.toString(),
           });
         }
       } catch (e) {

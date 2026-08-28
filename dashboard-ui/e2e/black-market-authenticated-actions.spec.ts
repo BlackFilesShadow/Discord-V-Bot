@@ -8,7 +8,7 @@ const MAX_PRICE = '1000000000000000';
 const MAX_STOCK = 1_000_000_000;
 
 type Pocket = 'WALLET' | 'BANK';
-interface DeliveryItem { className: string; quantity: number; }
+interface DeliveryItem { itemText: string; quantity: number; }
 
 interface Vendor {
   id: string;
@@ -77,18 +77,18 @@ async function stubBlackMarket(page: Page, opts: { canManage: boolean; purchaseE
     {
       id: 'listing-1', vendorAccountId: 'vendor-1', sku: 'M4-KIT', name: 'M4 Kit', description: 'Testangebot',
       price: '2500', stock: 5, maxPerPurchase: 3, active: true, archivedAt: null, createdAt: '2026-08-18T12:30:00.000Z',
-      deliveryItems: [{ className: 'M4A1', quantity: 1 }, { className: 'Mag_STANAG_60Rnd', quantity: 2 }],
+      deliveryItems: [{ itemText: '🔫 M4A1', quantity: 1 }, { itemText: 'Mag_STANAG_60Rnd', quantity: 2 }],
     },
     {
       id: 'listing-archived', vendorAccountId: 'vendor-1', sku: 'OLD-KIT', name: 'Altes Kit', description: null,
       price: '500', stock: 0, maxPerPurchase: 1, active: false, archivedAt: '2026-08-18T13:30:00.000Z', createdAt: '2026-08-18T13:00:00.000Z',
-      deliveryItems: [{ className: 'Apple', quantity: 1 }],
+      deliveryItems: [{ itemText: 'Apple', quantity: 1 }],
     },
   ];
   let purchases: Purchase[] = [{
     id: 'purchase-1', listingId: 'listing-1', vendorAccountId: 'vendor-1', userDiscordId: OTHER_USER,
     sourcePocket: 'WALLET', quantity: 2, unitPrice: '2500', amount: '5000', createdAt: '2026-08-19T06:20:00.000Z',
-    fulfillmentStatus: 'PENDING', deliveryItems: [{ className: 'M4A1', quantity: 2 }],
+    fulfillmentStatus: 'PENDING', deliveryItems: [{ itemText: '🔫 M4A1', quantity: 2 }],
     fulfilledAt: null, fulfillmentNote: null, refundedAt: null, refundReason: null,
   }];
 
@@ -163,11 +163,12 @@ async function stubBlackMarket(page: Page, opts: { canManage: boolean; purchaseE
       }
       const body = req.postDataJSON() as Record<string, unknown>;
       mutations.push({ kind: 'listing', path, query: url.search, body, idempotencyKey: req.headers()['x-idempotency-key'] ?? null });
+      const itemText = String(body.name);
       const row: Listing = {
-        id: 'listing-2', vendorAccountId: String(body.vendorAccountId), sku: String(body.sku).toUpperCase(), name: String(body.name),
+        id: 'listing-2', vendorAccountId: String(body.vendorAccountId), sku: 'ITEM-E2E', name: itemText,
         description: body.description == null ? null : String(body.description), price: String(body.price), stock: Number(body.stock),
         maxPerPurchase: Number(body.maxPerPurchase), active: true, archivedAt: null, createdAt: '2026-08-19T12:10:00.000Z',
-        deliveryItems: (body.deliveryItems ?? []) as DeliveryItem[],
+        deliveryItems: [{ itemText, quantity: 1 }],
       };
       listings = [...listings, row];
       return json(route, row, 201);
@@ -245,6 +246,7 @@ test.describe('Black Market authenticated action contract', () => {
     await expect.poll(state.vendorReads).toBe(0);
     await expect.poll(state.purchaseHistoryReads).toBe(0);
     await expect.poll(() => state.listingQueries.some(query => query.includes(`slot=${SLOT}`) && query.includes('includeInactive=false'))).toBe(true);
+    await expect(page.getByText('2.500 🐭', { exact: true })).toBeVisible();
 
     await page.getByLabel('Kaufmenge M4 Kit').fill('2');
     await page.getByLabel('Bezahlen aus M4 Kit').selectOption('BANK');
@@ -258,10 +260,10 @@ test.describe('Black Market authenticated action contract', () => {
     expect(purchase.idempotencyKey).toBeTruthy();
     expect(purchase.idempotencyKey).toMatch(/^[A-Za-z0-9._:-]+$/);
     expect(`dashboard:${purchase.idempotencyKey}`.length).toBeLessThanOrEqual(48);
-    await expect(page.getByText(/Bestellung purchase-2 gebucht: 2× fuer 5\.000/)).toBeVisible();
+    await expect(page.getByText(/Bestellung purchase-2 gebucht: 2× fuer 5\.000 🐭/)).toBeVisible();
   });
 
-  test('economy.manage deckt Create, Restock, Archive, History und Backend-Grenzen ab', async ({ page }) => {
+  test('economy.manage deckt Freitext-Create, Restock, Archive, History und Backend-Grenzen ab', async ({ page }) => {
     const state = await stubBlackMarket(page, { canManage: true });
     await page.goto(`/servers/${GUILD_ID}/server/${SLOT}?tab=economy`);
 
@@ -269,6 +271,7 @@ test.describe('Black Market authenticated action contract', () => {
     await expect(page.getByText('Angebot anlegen')).toBeVisible();
     await expect(page.getByText('Altes Kit')).toBeVisible();
     await expect(page.getByText('Bestellungen & Auslieferung')).toBeVisible();
+    await expect(page.getByText('🔫 M4A1 × 2', { exact: true })).toBeVisible();
     await expect.poll(state.vendorReads).toBeGreaterThan(0);
     await expect.poll(state.purchaseHistoryReads).toBeGreaterThan(0);
     await expect.poll(() => state.listingQueries.some(query => query.includes('includeInactive=true'))).toBe(true);
@@ -290,11 +293,9 @@ test.describe('Black Market authenticated action contract', () => {
     await expect.poll(() => mutationOf(state, 'vendor')).toBeTruthy();
     expect(mutationOf(state, 'vendor')).toMatchObject({ query: `?slot=${SLOT}`, body: { name: 'Event-Haendler' } });
 
-    await page.getByPlaceholder('SKU').fill('event-kit');
-    await page.getByPlaceholder('Produktname').fill('Event Kit');
+    await page.getByRole('textbox', { name: 'Gegenstand / Item' }).fill('🎁 Event Kit');
     await page.getByPlaceholder('Preis').fill(`${MAX_PRICE}1`);
     await page.getByPlaceholder('Bestand').fill(String(MAX_STOCK + 1));
-    await page.getByLabel('DayZ-Liefer-Bundle').fill('M4A1 x1\nMag_STANAG_60Rnd x2');
     await expect(page.getByRole('button', { name: 'Angebot erstellen', exact: true })).toBeDisabled();
     await page.getByPlaceholder('Preis').fill(MAX_PRICE);
     await page.getByPlaceholder('Bestand').fill('5');
@@ -303,10 +304,10 @@ test.describe('Black Market authenticated action contract', () => {
     expect(mutationOf(state, 'listing')).toMatchObject({
       query: `?slot=${SLOT}`,
       body: {
-        vendorAccountId: 'vendor-2', sku: 'event-kit', name: 'Event Kit', price: MAX_PRICE, stock: 5, maxPerPurchase: 10,
-        deliveryItems: [{ className: 'M4A1', quantity: 1 }, { className: 'Mag_STANAG_60Rnd', quantity: 2 }],
+        vendorAccountId: 'vendor-2', name: '🎁 Event Kit', description: null, price: MAX_PRICE, stock: 5, maxPerPurchase: 10,
       },
     });
+    await expect(page.getByText('🎁 Event Kit', { exact: true })).toBeVisible();
   });
 
   test('zeigt Kauf-Fehler sichtbar statt False-Success', async ({ page }) => {

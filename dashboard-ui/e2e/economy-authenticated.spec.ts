@@ -99,14 +99,14 @@ async function stubAuthenticatedEconomy(page: Page, opts: { purchaseError?: bool
       return;
     }
     if (path === `/api/v2/guilds/${GUILD_ID}/economy/black-market/listings`) {
-      await json(route, { listings: [{ id: 'listing-1', vendorAccountId: 'vendor-1', sku: 'M4-KIT', name: 'M4 Kit', description: 'Testangebot', price: '2500', stock: 5, maxPerPurchase: 2, active: true, archivedAt: null, createdAt: '2026-08-18T12:30:00.000Z', deliveryItems: [{ className: 'M4A1', quantity: 1 }, { className: 'Mag_STANAG_60Rnd', quantity: 2 }] }] });
+      await json(route, { listings: [{ id: 'listing-1', vendorAccountId: 'vendor-1', sku: 'M4-KIT', name: 'M4 Kit', description: 'Testangebot', price: '2500', stock: 5, maxPerPurchase: 2, active: true, archivedAt: null, createdAt: '2026-08-18T12:30:00.000Z', deliveryItems: [{ itemText: 'M4A1', quantity: 1 }, { itemText: 'Mag_STANAG_60Rnd', quantity: 2 }] }] });
       return;
     }
     if (path === `/api/v2/guilds/${GUILD_ID}/economy/black-market/purchases`) {
       if (opts.purchaseError) {
         await json(route, { error: 'Guild-Scope fehlt nach Auth-Middleware.' }, 500);
       } else {
-        await json(route, { purchases: [{ id: 'purchase-1', listingId: 'listing-1', vendorAccountId: 'vendor-1', userDiscordId: OTHER_USER, sourcePocket: 'WALLET', quantity: 2, unitPrice: '2500', amount: '5000', createdAt: '2026-08-19T06:20:00.000Z', fulfillmentStatus: 'PENDING', deliveryItems: [{ className: 'M4A1', quantity: 2 }], fulfilledAt: null, fulfillmentNote: null, refundedAt: null, refundReason: null }] });
+        await json(route, { purchases: [{ id: 'purchase-1', listingId: 'listing-1', vendorAccountId: 'vendor-1', userDiscordId: OTHER_USER, sourcePocket: 'WALLET', quantity: 2, unitPrice: '2500', amount: '5000', createdAt: '2026-08-19T06:20:00.000Z', fulfillmentStatus: 'PENDING', deliveryItems: [{ itemText: 'M4A1', quantity: 2 }], fulfilledAt: null, fulfillmentNote: null, refundedAt: null, refundReason: null }] });
       }
       return;
     }

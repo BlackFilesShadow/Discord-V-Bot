@@ -10,20 +10,27 @@ describe('Economy-Schwarzmarkt — Fulfillment- und Vendor-Lifecycle-Gate', () =
   const route = read('src/dashboard/routes/v2/economyBlackMarket.ts');
   const command = read('src/commands/dashboard/blackMarket.ts');
   const migration = read('prisma/migrations/20260826212000_economy_black_market_fulfillment/migration.sql');
+  const completionMigration = read('prisma/migrations/20260828124500_economy_lottery_market_interest_completion/migration.sql');
 
-  it('persistiert kanonische DayZ-Classname-Bundles und unveraenderliche Kauf-Snapshots', () => {
-    expect(market).toContain('getDayz129Index().allTypeNames');
-    expect(market).toContain('Unbekannter DayZ-1.29-Classname');
+  it('persistiert freien Itemtext ohne DayZ-Katalog und bewahrt unveraenderliche Kauf-Snapshots', () => {
+    expect(market).toContain('normalizeMarketItemText');
+    expect(market).toContain('row.itemText ?? row.className');
+    expect(market).not.toContain('getDayz129Index');
+    expect(market).not.toContain('Unbekannter DayZ-1.29-Classname');
+    expect(completionMigration).toContain('fachlich Freitext statt DayZ-Classname');
     expect(migration).toContain('CREATE TABLE "EconomyMarketListingItem"');
     expect(migration).toContain('CREATE TABLE "EconomyMarketPurchaseFulfillment"');
     expect(migration).toContain('EconomyMarketPurchase_id_scope_key');
     expect(market).toContain('deliverySnapshot');
+    expect(market).toContain('itemText: item.itemText');
     expect(market).toContain("'PENDING'");
   });
 
-  it('blockiert Kaeufe ohne Liefer-Bundle und multipliziert das Bundle mit der Kaufmenge', () => {
-    expect(market).toContain('noch kein DayZ-Liefer-Bundle');
+  it('erstellt bei einfachen Angeboten automatisch den Item-Snapshot und multipliziert ihn mit der Kaufmenge', () => {
+    expect(market).toContain("[{ itemText: name, quantity: 1 }]");
+    expect(market).toContain("[{ itemText: listing.name, quantity: 1 }]");
     expect(market).toContain('quantity: item.quantity * args.quantity');
+    expect(market).not.toContain('noch kein DayZ-Liefer-Bundle');
   });
 
   it('macht Refund atomar mit Vendor-Abbuchung, User-Gutschrift, Status und Bestandsrueckgabe', () => {
@@ -62,6 +69,7 @@ describe('Economy-Schwarzmarkt — Fulfillment- und Vendor-Lifecycle-Gate', () =
     expect(command).toContain("setName('orders')");
     expect(command).toContain("setName('quelle')");
     expect(command).toContain('listMarketPurchasesForUser');
+    expect(command).toContain('item.itemText');
   });
 
   it('markiert Altkaeufe explizit als LEGACY statt sie erneut auszuliefern', () => {

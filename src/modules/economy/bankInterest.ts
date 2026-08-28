@@ -1,30 +1,41 @@
 /**
- * BankInterest (Phase 5) — tagesidempotente, gameserver-gescoppte Bankzinsen.
+ * Tagesidempotente, gameserver-gescoppte Bankzinsen.
  *
- * Zinsen werden pro Guild+Gameserver+Tag genau einmal gutgeschrieben.
- * Doppelte Absicherung:
- *  - BankInterestRun (guildServerRunDate) markiert den Tageslauf,
- *  - der Ledger-Key `interest:<guild>:<server>:<date>:<subject>` verhindert je
- *    User eine Doppelbuchung, ohne die Discord-ID im unveraenderlichen Key zu
- *    konservieren (auch bei Teilabbruch + Retry).
- *
- * Economy-1I: Positive Bankkonten werden vollstaendig per stabiler Keyset-
- * Pagination (`createdAt`, `id`) abgearbeitet. Der Tageslauf wird erst NACH der
- * letzten Seite markiert. Damit koennen grosse Server nicht mehr hinter einem
- * festen `take`-Fenster abgeschnitten werden; Crash-/Parallel-Retries bleiben
- * durch die bestehenden Ledger-Keys idempotent.
- *
- * Standard bankInterestPercent=0 -> es passiert nichts (dormant).
+ * Geld wird ausschliesslich mit BigInt berechnet. Zinssaetze werden als
+ * Basispunkte behandelt (100 bp = 1,00 %), damit auch z. B. 2,50 % ohne
+ * Floating-Point-Geldrechnung exakt funktionieren.
  */
 
+import { randomUUID } from 'node:crypto';
 import { config } from '../../config';
 import { bookLedgerEntry, type LedgerClient } from './ledger';
 import { economySubjectKey } from './subjectKey';
 
+export const MAX_INTEREST_BASIS_POINTS = 10_000;
+
+export function normalizeInterestBasisPoints(value: number): number {
+  if (!Number.isInteger(value) || value < 0 || value > MAX_INTEREST_BASIS_POINTS) {
+    throw new Error('bankInterestBasisPoints muss 0..10000 sein.');
+  }
+  return value;
+}
+
 /** Zinsbetrag (Abrundung) fuer ein Bankguthaben. Nie negativ. */
+export function computeInterestBasisPoints(bankBalance: bigint, basisPoints: number): bigint {
+  const bp = normalizeInterestBasisPoints(basisPoints);
+  if (bankBalance <= 0n || bp <= 0) return 0n;
+  return (bankBalance * BigInt(bp)) / 10_000n;
+}
+
+/**
+ * Legacy-Helfer fuer bestehende Aufrufer/Tests mit ganzen Prozentwerten.
+ * Neue Runtime-Pfade verwenden computeInterestBasisPoints direkt.
+ */
 export function computeInterest(bankBalance: bigint, percent: number): bigint {
-  if (bankBalance <= 0n || percent <= 0) return 0n;
-  return (bankBalance * BigInt(Math.floor(percent))) / 100n;
+  if (!Number.isInteger(percent) || percent < 0 || percent > 100) {
+    throw new Error('percent muss als ganze Zahl 0..100 angegeben werden.');
+  }
+  return computeInterestBasisPoints(bankBalance, percent * 100);
 }
 
 /** Tagesschluessel YYYY-MM-DD in der angegebenen Zeitzone. */
@@ -58,6 +69,7 @@ export interface BankInterestClient extends LedgerClient {
       update: Record<string, unknown>;
     }) => Promise<unknown>;
   };
+  $executeRawUnsafe?: (query: string, ...values: unknown[]) => Promise<number>;
 }
 
 export interface BankInterestScope {
@@ -80,20 +92,52 @@ function afterInterestCursor(cursor: InterestCursor | null): Record<string, unkn
   };
 }
 
+async function createRunMarker(
+  client: BankInterestClient,
+  args: BankInterestScope & { runDate: string; basisPoints: number; credited: number; total: bigint },
+): Promise<void> {
+  try {
+    if (client.$executeRawUnsafe) {
+      await client.$executeRawUnsafe(
+        'INSERT INTO "BankInterestRun" ("id","guildId","nitradoConnId","runDate","interestPercent","interestBasisPoints","accountsCredited","totalCredited","createdAt") VALUES ($1,$2,$3,$4,$5,$6,$7,$8,CURRENT_TIMESTAMP)',
+        randomUUID(),
+        args.guildId,
+        args.nitradoConnId,
+        args.runDate,
+        Math.floor(args.basisPoints / 100),
+        args.basisPoints,
+        args.credited,
+        args.total,
+      );
+      return;
+    }
+    await client.bankInterestRun.create({
+      data: {
+        guildId: args.guildId,
+        nitradoConnId: args.nitradoConnId,
+        runDate: args.runDate,
+        interestPercent: Math.floor(args.basisPoints / 100),
+        accountsCredited: args.credited,
+        totalCredited: args.total,
+      },
+    });
+  } catch (error) {
+    if (!isUniqueViolation(error)) throw error;
+  }
+}
+
 /**
  * Fuehrt den Tages-Zinslauf fuer exakt einen Gameserver aus.
- *
- * `limit` ist aus Kompatibilitaetsgruenden der Name der Option und bezeichnet
- * jetzt die PAGE-SIZE, nicht mehr die maximale Gesamtzahl der Konten. Der Lauf
- * paginiert bis zum Ende. Bereits erfasste Server-Tage werden uebersprungen;
- * einzelne User sind zusaetzlich ueber den serverbezogenen Ledger-Key gegen
- * Crash-/Parallel-Retries abgesichert.
+ * `limit` ist die PAGE-SIZE, nicht die maximale Kontenzahl.
  */
 export async function runDailyInterestForServer(
   client: BankInterestClient,
-  args: BankInterestScope & { percent: number; runDate: string; limit?: number },
+  args: BankInterestScope & { basisPoints?: number; percent?: number; runDate: string; limit?: number },
 ): Promise<{ credited: number; total: bigint; skipped: boolean }> {
-  if (args.percent <= 0) return { credited: 0, total: 0n, skipped: true };
+  const basisPoints = args.basisPoints !== undefined
+    ? normalizeInterestBasisPoints(args.basisPoints)
+    : normalizeInterestBasisPoints((args.percent ?? 0) * 100);
+  if (basisPoints <= 0) return { credited: 0, total: 0n, skipped: true };
 
   const already = await client.bankInterestRun.findUnique({
     where: {
@@ -130,10 +174,8 @@ export async function runDailyInterestForServer(
     });
     if (accounts.length === 0) break;
 
-    // `a` bleibt absichtlich der lokale Name: ein bestehendes Privacy-
-    // Architektur-Gate pinnt genau diesen HMAC-Aufruf gegen rohe Discord-IDs.
     for (const a of accounts) {
-      const interest = computeInterest(a.bankBalance, args.percent);
+      const interest = computeInterestBasisPoints(a.bankBalance, basisPoints);
       if (interest <= 0n) continue;
       const subjectKey = economySubjectKey(args.guildId, a.userDiscordId, config.security.encryptionKey);
       const result = await bookLedgerEntry(client, {
@@ -156,26 +198,14 @@ export async function runDailyInterestForServer(
     if (accounts.length < pageSize) break;
   }
 
-  // Tageslauf erst NACH der letzten Seite erfassen. Bei Crash davor startet der
-  // naechste Sweep wieder vorne; bereits gebuchte User bleiben durch ihren
-  // Ledger-Key No-op. Bei Parallel-Runs ist ausschliesslich die erwartete
-  // Unique-Kollision des Tagesmarkers toleriert. Echte DB-Fehler muessen den
-  // Lauf fehlschlagen lassen, damit Monitoring/Retry nicht faelschlich Erfolg
-  // melden.
-  try {
-    await client.bankInterestRun.create({
-      data: {
-        guildId: args.guildId,
-        nitradoConnId: args.nitradoConnId,
-        runDate: args.runDate,
-        interestPercent: Math.floor(args.percent),
-        accountsCredited: credited,
-        totalCredited: total,
-      },
-    });
-  } catch (error) {
-    if (!isUniqueViolation(error)) throw error;
-  }
+  await createRunMarker(client, {
+    guildId: args.guildId,
+    nitradoConnId: args.nitradoConnId,
+    runDate: args.runDate,
+    basisPoints,
+    credited,
+    total,
+  });
 
   return { credited, total, skipped: false };
 }
