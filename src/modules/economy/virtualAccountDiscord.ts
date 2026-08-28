@@ -178,7 +178,23 @@ async function retireProjection(client: Client, projection: ProjectionRow | null
   }
 }
 
-async function requireProjectionPermissions(channel: TextChannel): Promise<void> {
+async function requireLiveProjectionPermissions(channel: TextChannel): Promise<void> {
+  const guild = channel.guild;
+  const me = guild.members.me ?? await guild.members.fetchMe().catch(() => null);
+  if (!me) throw new Error('V-Bot-Mitglied konnte in der Guild nicht aufgelöst werden.');
+  const perms = channel.permissionsFor(me);
+  const required = [
+    PermissionFlagsBits.ViewChannel,
+    PermissionFlagsBits.SendMessages,
+    PermissionFlagsBits.EmbedLinks,
+    PermissionFlagsBits.ReadMessageHistory,
+  ];
+  if (!perms?.has(required)) {
+    throw new Error('V-Bot benötigt im Live-Kanal Lesen, Schreiben, Embed-Links und Nachrichtenverlauf.');
+  }
+}
+
+async function requireArchiveProjectionPermissions(channel: TextChannel): Promise<void> {
   const guild = channel.guild;
   const me = guild.members.me ?? await guild.members.fetchMe().catch(() => null);
   if (!me) throw new Error('V-Bot-Mitglied konnte in der Guild nicht aufgelöst werden.');
@@ -192,7 +208,7 @@ async function requireProjectionPermissions(channel: TextChannel): Promise<void>
     PermissionFlagsBits.SendMessagesInThreads,
   ];
   if (!perms?.has(required)) {
-    throw new Error('V-Bot benötigt im Konto-Channel Lesen, Schreiben, Embed-Links sowie öffentliche Threads inkl. Thread-Nachrichten.');
+    throw new Error('V-Bot benötigt im separaten Archiv-Kanal Lesen, Schreiben, Embed-Links sowie öffentliche Threads inkl. Thread-Nachrichten.');
   }
 }
 
@@ -208,12 +224,25 @@ export async function syncVirtualAccountProjection(client: Client, guildId: Guil
     await writeProjection({ guildId, connId, accountId, channelId: null, messageId: null, archiveThreadId: null });
     return null;
   }
+  if (!metadata.archiveChannelId) {
+    throw new Error('Fuer die Discord-Integration fehlt der separate Archiv-Kanal. Bitte Hauptkanal und Archiv-Kanal getrennt konfigurieren.');
+  }
+  if (metadata.channelId === metadata.archiveChannelId) {
+    throw new Error('Hauptkanal und Archiv-Kanal muessen getrennte Discord-Kanaele sein.');
+  }
 
   const guild = client.guilds.cache.get(String(guildId));
   if (!guild) throw new Error('Bot ist nicht in der Discord-Guild.');
-  const channel = await guild.channels.fetch(metadata.channelId).catch(() => null);
-  if (!channel || channel.type !== ChannelType.GuildText) throw new Error('Konto-Integration benötigt einen normalen Discord-Textkanal.');
-  await requireProjectionPermissions(channel);
+  const [liveFetched, archiveFetched] = await Promise.all([
+    guild.channels.fetch(metadata.channelId).catch(() => null),
+    guild.channels.fetch(metadata.archiveChannelId).catch(() => null),
+  ]);
+  if (!liveFetched || liveFetched.type !== ChannelType.GuildText) throw new Error('Konto-Integration benötigt einen normalen Discord-Textkanal als Hauptkanal.');
+  if (!archiveFetched || archiveFetched.type !== ChannelType.GuildText) throw new Error('Konto-Integration benötigt einen normalen Discord-Textkanal als separaten Archiv-Kanal.');
+  const channel = liveFetched as TextChannel;
+  const archiveChannel = archiveFetched as TextChannel;
+  await requireLiveProjectionPermissions(channel);
+  await requireArchiveProjectionPermissions(archiveChannel);
 
   let message = previous?.channelId === channel.id && previous.messageId
     ? await channel.messages.fetch(previous.messageId).catch(() => null)
@@ -238,14 +267,18 @@ export async function syncVirtualAccountProjection(client: Client, guildId: Guil
       message = await channel.send({ embeds: [embed], components, allowedMentions: { parse: [] } });
     }
 
-    let archiveThreadId = previous?.channelId === channel.id ? previous.archiveThreadId : null;
-    const existingThread = archiveThreadId ? await guild.channels.fetch(archiveThreadId).catch(() => null) : null;
-    if (!existingThread || !existingThread.isThread() || existingThread.parentId !== channel.id) {
-      // Eigenstaendiger Public Thread statt Message-Thread: Wird ein Archiv von
-      // Discord/Admin geloescht, kann V-Bot auf demselben Haupt-Embed jederzeit
-      // eine neue Archivinstanz erzeugen. OneDay ist fuer normale Guilds sicher
-      // verfuegbar; bei jeder Buchung wird ein archivierter Thread reaktiviert.
-      const thread = await channel.threads.create({
+    let archiveThreadId = previous?.archiveThreadId ?? null;
+    let existingThread = archiveThreadId ? await guild.channels.fetch(archiveThreadId).catch(() => null) : null;
+    if (existingThread?.isThread() && existingThread.parentId !== archiveChannel.id) {
+      await existingThread.setArchived(true, 'V-Bot Archiv-Kanal wurde geaendert').catch(() => undefined);
+      existingThread = null;
+      archiveThreadId = null;
+    }
+    if (!existingThread || !existingThread.isThread()) {
+      // Archiv-Threads gehoeren ausdruecklich in den separat konfigurierten
+      // Archiv-Kanal. Dadurch entstehen keine Discord-Systemmeldungen ueber
+      // neu gestartete Threads mehr im eigentlichen Live-/Kontokanal.
+      const thread = await archiveChannel.threads.create({
         name: threadName(account.name),
         autoArchiveDuration: ThreadAutoArchiveDuration.OneDay,
         type: ChannelType.PublicThread,
@@ -277,6 +310,15 @@ export async function syncVirtualAccountProjection(client: Client, guildId: Guil
       error: (error as Error).message,
     });
     throw error;
+  }
+}
+
+/** Retires Discord artifacts before a safe hard-delete. */
+export async function retireVirtualAccountProjection(client: Client, guildId: GuildId, connId: NitradoConnId, accountId: string): Promise<void> {
+  const projection = await readProjection(guildId, connId, accountId);
+  await retireProjection(client, projection);
+  if (projection) {
+    await writeProjection({ guildId, connId, accountId, channelId: null, messageId: null, archiveThreadId: null });
   }
 }
 

@@ -9,11 +9,14 @@ describe('virtuelle Economy-Konten — Production-Invarianten', () => {
   const migration = read('prisma/migrations/20260816124500_economy_virtual_accounts/migration.sql');
   const extensionMigration = read('prisma/migrations/20260826190000_virtual_account_wallet_bank_currency_projection/migration.sql');
   const permissionMigration = read('prisma/migrations/20260826193000_virtual_manager_permission_restore/migration.sql');
+  const completionMigration = read('prisma/migrations/20260828214500_admin_force_link_virtual_archive_channel/migration.sql');
   const service = read('src/modules/economy/virtualAccounts.ts');
   const moneySafety = read('src/modules/economy/virtualAccountMoneySafety.ts');
   const configuration = read('src/modules/economy/virtualAccountConfiguration.ts');
+  const deletion = read('src/modules/economy/virtualAccountDeletion.ts');
   const treasury = read('src/modules/economy/virtualAccountTreasury.ts');
   const controlSafety = read('src/dashboard/routes/v2/economyVirtualAccountTreasurySafety.ts');
+  const control = read('src/dashboard/routes/v2/economyVirtualAccountControl.ts');
   const routes = read('src/dashboard/routes/v2/economyVirtualAccounts.ts');
   const v2 = read('src/dashboard/routes/v2.ts');
   const command = read('src/commands/dashboard/virtualAccounts.ts');
@@ -62,13 +65,36 @@ describe('virtuelle Economy-Konten — Production-Invarianten', () => {
     expect(routes).toContain("requireGuildPermission('economy.manage')");
   });
 
-  it('bietet keine physische Delete-Route und verbietet Archivierung mit Restguthaben', () => {
-    expect(routes).not.toMatch(/economyVirtualAccountsRouter\.delete\s*\(/);
+  it('erlaubt Hard-Delete nur fuer unbenutzte CUSTOM/GENERAL-Konten ohne Geld oder Historie', () => {
+    expect(control).toContain("delete('/control/accounts/:accountId'");
+    expect(control).toContain("requireGuildPermission('economy.manage')");
+    expect(control).toContain('deleteUnusedVirtualAccount');
+    expect(deletion).toContain("account.kind !== 'CUSTOM'");
+    expect(deletion).toContain("finance.accountPurpose !== 'GENERAL'");
+    expect(deletion).toContain('account.balance !== 0n || finance.bankBalance !== 0n');
+    expect(deletion).toContain('FOR UPDATE');
+    expect(deletion).toContain('"EconomyVirtualAccountEntry"');
+    expect(deletion).toContain('"LotteryRound"');
+    expect(deletion).toContain('"EconomyMarketListing"');
+    expect(deletion).toContain('"EconomyMarketPurchase"');
+    expect(deletion).toContain('DELETE FROM "EconomyVirtualAccount"');
+    expect(deletion).toContain("candidate.code === '23503'");
+    expect(migration).toContain('ON DELETE RESTRICT ON UPDATE CASCADE');
+  });
+
+  it('verbietet weiterhin Archivierung mit Restguthaben und schuetzt Systemkonten', () => {
     expect(service).toContain('current.balance !== 0n || finance.bankBalance !== 0n');
     expect(service).toContain('Konto-Finanzprofil fehlt; Archivierung wird sicherheitshalber abgebrochen.');
     expect(service).toContain('Wallet und Bank muessen 0 sein.');
     expect(service).toContain("' FOR UPDATE'");
     expect(controlSafety).toContain("account.kind !== 'CUSTOM'");
+  });
+
+  it('erzwingt getrennte Live- und Archivkanaele bereits auf DB-Ebene', () => {
+    expect(completionMigration).toContain('ADD COLUMN IF NOT EXISTS "archiveChannelId" VARCHAR(20)');
+    expect(completionMigration).toContain('EconomyVirtualAccountMetadata_archive_channel_snowflake');
+    expect(completionMigration).toContain('EconomyVirtualAccountMetadata_channels_distinct');
+    expect(completionMigration).toContain('"channelId" <> "archiveChannelId"');
   });
 
   it('verhindert Einzahlungen in inaktive oder fuer User gesperrte Konten', () => {

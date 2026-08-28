@@ -8,7 +8,7 @@ import {
   type VirtualAccountRow,
 } from './virtualAccounts';
 import {
-  normalizeVirtualAccountChannelId,
+  normalizeVirtualAccountChannels,
   normalizeVirtualAccountDescription,
 } from './virtualAccountMetadata';
 import {
@@ -26,6 +26,7 @@ import { assertEconomyScopeReady } from './scopeMigration';
 interface PreparedConfiguration {
   description: string | null;
   channelId: string | null;
+  archiveChannelId: string | null;
   currencyName: string;
   currencyEmoji: string;
   accountEmoji: string;
@@ -83,6 +84,7 @@ function normalizeExchange(playerRaw: unknown, accountRaw: unknown): { player: b
 function prepare(args: {
   description?: unknown;
   channelId?: unknown;
+  archiveChannelId?: unknown;
   currencyName: unknown;
   currencyEmoji: unknown;
   accountEmoji: unknown;
@@ -100,9 +102,11 @@ function prepare(args: {
     if (!/^\d{17,20}$/.test(String(id))) throw new Error('Ungueltige Discord-ID in Kontoverwaltern.');
   }
   const exchange = normalizeExchange(args.exchangePlayerUnits, args.exchangeAccountUnits);
+  const channels = normalizeVirtualAccountChannels(args.channelId, args.archiveChannelId);
   return {
     description: normalizeVirtualAccountDescription(args.description),
-    channelId: normalizeVirtualAccountChannelId(args.channelId),
+    channelId: channels.channelId,
+    archiveChannelId: channels.archiveChannelId,
     currencyName: normalizeCurrencyName(args.currencyName),
     currencyEmoji: normalizeCurrencyEmoji(args.currencyEmoji),
     accountEmoji: normalizeAccountEmoji(args.accountEmoji),
@@ -157,6 +161,7 @@ export async function createConfiguredCustomVirtualAccount(args: {
   name: string;
   description?: unknown;
   channelId?: unknown;
+  archiveChannelId?: unknown;
   expiresAt?: Date | null;
   currencyName?: unknown;
   currencyEmoji?: unknown;
@@ -176,6 +181,7 @@ export async function createConfiguredCustomVirtualAccount(args: {
   const prepared = prepare({
     description: args.description,
     channelId: args.channelId,
+    archiveChannelId: args.archiveChannelId,
     currencyName: args.currencyName ?? cfg.currencyName,
     currencyEmoji: args.currencyEmoji ?? cfg.emoji,
     accountEmoji: args.accountEmoji ?? '🏦',
@@ -205,12 +211,13 @@ export async function createConfiguredCustomVirtualAccount(args: {
       if (accountChanged !== 1) throw new Error('Virtuelles Konto konnte nicht erstellt werden.');
 
       const metadataChanged = await raw.$executeRawUnsafe(
-        'INSERT INTO "EconomyVirtualAccountMetadata" ("accountId", "guildId", "nitradoConnId", "description", "channelId", "createdAt", "updatedAt") VALUES ($1,$2,$3,$4,$5,CURRENT_TIMESTAMP,CURRENT_TIMESTAMP)',
+        'INSERT INTO "EconomyVirtualAccountMetadata" ("accountId", "guildId", "nitradoConnId", "description", "channelId", "archiveChannelId", "createdAt", "updatedAt") VALUES ($1,$2,$3,$4,$5,$6,CURRENT_TIMESTAMP,CURRENT_TIMESTAMP)',
         accountId,
         String(args.guildId),
         String(args.nitradoConnId),
         prepared.description,
         prepared.channelId,
+        prepared.archiveChannelId,
       );
       if (metadataChanged !== 1) throw new Error('Kontometadaten konnten nicht erstellt werden.');
 
@@ -255,6 +262,7 @@ export async function updateConfiguredVirtualAccount(args: {
   accountId: string;
   description?: unknown;
   channelId?: unknown;
+  archiveChannelId?: unknown;
   currencyName?: unknown;
   currencyEmoji?: unknown;
   accountEmoji?: unknown;
@@ -295,6 +303,7 @@ export async function updateConfiguredVirtualAccount(args: {
     const prepared = prepare({
       description: args.description,
       channelId: args.channelId,
+      archiveChannelId: args.archiveChannelId,
       currencyName: args.currencyName ?? currentFinance.currencyName,
       currencyEmoji: args.currencyEmoji ?? currentFinance.currencyEmoji,
       accountEmoji: args.accountEmoji ?? currentFinance.accountEmoji,
@@ -322,12 +331,13 @@ export async function updateConfiguredVirtualAccount(args: {
     if (accountChanged !== 1) throw new Error('Virtuelles Konto wurde parallel archiviert oder entfernt.');
 
     await raw.$executeRawUnsafe(
-      'INSERT INTO "EconomyVirtualAccountMetadata" ("accountId", "guildId", "nitradoConnId", "description", "channelId", "createdAt", "updatedAt") VALUES ($1,$2,$3,$4,$5,CURRENT_TIMESTAMP,CURRENT_TIMESTAMP) ON CONFLICT ("accountId") DO UPDATE SET "description"=EXCLUDED."description", "channelId"=EXCLUDED."channelId", "updatedAt"=CURRENT_TIMESTAMP',
+      'INSERT INTO "EconomyVirtualAccountMetadata" ("accountId", "guildId", "nitradoConnId", "description", "channelId", "archiveChannelId", "createdAt", "updatedAt") VALUES ($1,$2,$3,$4,$5,$6,CURRENT_TIMESTAMP,CURRENT_TIMESTAMP) ON CONFLICT ("accountId") DO UPDATE SET "description"=EXCLUDED."description", "channelId"=EXCLUDED."channelId", "archiveChannelId"=EXCLUDED."archiveChannelId", "updatedAt"=CURRENT_TIMESTAMP',
       args.accountId,
       String(args.guildId),
       String(args.nitradoConnId),
       prepared.description,
       prepared.channelId,
+      prepared.archiveChannelId,
     );
     const financeChanged = await raw.$executeRawUnsafe(
       'UPDATE "EconomyVirtualAccountFinance" SET "currencyName"=$4, "currencyEmoji"=$5, "accountEmoji"=$6, "bannerUrl"=$7, "textStyle"=$8, "exchangePlayerUnits"=$9, "exchangeAccountUnits"=$10, "updatedAt"=CURRENT_TIMESTAMP WHERE "accountId"=$1 AND "guildId"=$2 AND "nitradoConnId"=$3',

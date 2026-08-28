@@ -11,6 +11,7 @@ import {
   Send,
   Settings,
   ShieldCheck,
+  Trash2,
   Users,
 } from 'lucide-react';
 import { api, createIdempotencyKey } from '@/lib/api';
@@ -45,6 +46,7 @@ interface VirtualAccountControl {
   createdAt: string;
   description: string | null;
   channelId: string | null;
+  archiveChannelId: string | null;
   currencyName: string;
   currencyEmoji: string;
   accountEmoji: string;
@@ -106,6 +108,7 @@ interface AccountMutationResponse {
 interface AccountDraft {
   description: string;
   channelId: string;
+  archiveChannelId: string;
   currencyName: string;
   currencyEmoji: string;
   accountEmoji: string;
@@ -145,6 +148,7 @@ function emptyDraft(): CreateDraft {
     name: '',
     description: '',
     channelId: '',
+    archiveChannelId: '',
     currencyName: 'Coins',
     currencyEmoji: '💰',
     accountEmoji: '🏦',
@@ -162,6 +166,7 @@ function draftFromAccount(account: VirtualAccountControl): AccountDraft {
   return {
     description: account.description ?? '',
     channelId: account.channelId ?? '',
+    archiveChannelId: account.archiveChannelId ?? '',
     currencyName: account.currencyName,
     currencyEmoji: account.currencyEmoji,
     accountEmoji: account.accountEmoji,
@@ -178,6 +183,7 @@ function mutationBody(draft: AccountDraft): Record<string, unknown> {
   return {
     description: draft.description.trim() || null,
     channelId: draft.channelId || null,
+    archiveChannelId: draft.archiveChannelId || null,
     currencyName: draft.currencyName.trim(),
     currencyEmoji: draft.currencyEmoji.trim(),
     accountEmoji: draft.accountEmoji.trim(),
@@ -191,6 +197,9 @@ function mutationBody(draft: AccountDraft): Record<string, unknown> {
 }
 
 function validateDraft(draft: AccountDraft): string | null {
+  if (draft.channelId && !draft.archiveChannelId) return 'Bei Discord-Integration muss ein separater Archiv-Kanal ausgewählt werden.';
+  if (!draft.channelId && draft.archiveChannelId) return 'Ein Archiv-Kanal benötigt einen Hauptkanal.';
+  if (draft.channelId && draft.archiveChannelId && draft.channelId === draft.archiveChannelId) return 'Hauptkanal und Archiv-Kanal müssen verschieden sein.';
   if (!draft.currencyName.trim() || draft.currencyName.trim().length > 40) return 'Währungsname muss 1..40 Zeichen enthalten.';
   if (!draft.currencyEmoji.trim() || draft.currencyEmoji.trim().length > 100) return 'Währungs-Emoji fehlt oder ist zu lang.';
   if (!draft.accountEmoji.trim() || draft.accountEmoji.trim().length > 100) return 'Konto-Emoji fehlt oder ist zu lang.';
@@ -314,9 +323,27 @@ function AccountFields({
       </label>
       <label className="text-sm">
         <span className="text-muted">Hauptkanal / Live-Embed</span>
-        <Select value={draft.channelId} onChange={event => patch({ channelId: event.target.value })} disabled={disabled}>
+        <Select
+          value={draft.channelId}
+          onChange={event => {
+            const channelId = event.target.value;
+            patch({ channelId, ...(channelId ? {} : { archiveChannelId: '' }), ...(channelId === draft.archiveChannelId ? { archiveChannelId: '' } : {}) });
+          }}
+          disabled={disabled}
+        >
           <option value="">— Discord-Integration aus —</option>
           {channels.map(channel => <option key={channel.id} value={channel.id}>#{channel.name}</option>)}
+        </Select>
+      </label>
+      <label className="text-sm">
+        <span className="text-muted">Archiv-Kanal / Transaktions-Threads</span>
+        <Select
+          value={draft.archiveChannelId}
+          onChange={event => patch({ archiveChannelId: event.target.value })}
+          disabled={disabled || !draft.channelId}
+        >
+          <option value="">{draft.channelId ? '— separaten Archiv-Kanal wählen —' : '— zuerst Hauptkanal wählen —'}</option>
+          {channels.filter(channel => channel.id !== draft.channelId).map(channel => <option key={channel.id} value={channel.id}>#{channel.name}</option>)}
         </Select>
       </label>
       <label className="text-sm">
@@ -412,6 +439,7 @@ export function VirtualAccountsControlPanel({ guildId, slot }: { guildId: string
   const [createDraft, setCreateDraft] = useState<CreateDraft>(emptyDraft);
   const [editingId, setEditingId] = useState<string | null>(null);
   const [auditAccountId, setAuditAccountId] = useState<string>('');
+  const [deleteConfirmId, setDeleteConfirmId] = useState<string | null>(null);
   const [managerChannel, setManagerChannel] = useState<string>('');
   const [managerChannelTouched, setManagerChannelTouched] = useState(false);
 
@@ -517,10 +545,29 @@ export function VirtualAccountsControlPanel({ guildId, slot }: { guildId: string
     ),
     onSuccess: () => {
       setEditingId(null);
+      setDeleteConfirmId(null);
       setMessage({ ok: true, text: 'Konto archiviert.' });
       void qc.invalidateQueries({ queryKey: ['economy-virtual-control', guildId, slot] });
     },
     onError: (error: Error) => setMessage({ ok: false, text: error.message }),
+  });
+
+  const remove = useMutation({
+    mutationFn: (accountId: string) => api.del<{ ok: boolean; deleted: { id: string; name: string } }>(
+      `/api/v2/guilds/${guildId}/economy/virtual-accounts/control/accounts/${accountId}?slot=${encodeURIComponent(slot)}`,
+    ),
+    onSuccess: result => {
+      setEditingId(null);
+      setAuditAccountId('');
+      setDeleteConfirmId(null);
+      setMessage({ ok: true, text: `Konto „${result.deleted.name}“ wurde dauerhaft gelöscht.` });
+      void qc.invalidateQueries({ queryKey: ['economy-virtual-control', guildId, slot] });
+      void qc.invalidateQueries({ queryKey: ['economy-virtual-manager-panel', guildId, slot] });
+    },
+    onError: (error: Error) => {
+      setDeleteConfirmId(null);
+      setMessage({ ok: false, text: error.message });
+    },
   });
 
   const audit = useQuery({
@@ -544,7 +591,7 @@ export function VirtualAccountsControlPanel({ guildId, slot }: { guildId: string
       </CardHeader>
 
       <p className="text-xs text-muted mb-4">
-        Jedes Konto besitzt ein eigenes Wallet und Bankkonto, eigene Währung/Emojis und optional ein Discord-Live-Embed mit Transaktionsarchiv. Lotterie- und Markt-Systemkonten bleiben fachlich geschützt.
+        Jedes Konto besitzt ein eigenes Wallet und Bankkonto, eigene Währung/Emojis und optional ein Discord-Live-Embed. Bei aktivierter Discord-Integration liegt das Transaktionsarchiv zwingend in einem separaten Kanal. Lotterie-, Markt- und Serverbank-Systemkonten bleiben fachlich geschützt.
       </p>
 
       {message && (
@@ -618,7 +665,10 @@ export function VirtualAccountsControlPanel({ guildId, slot }: { guildId: string
       <div className="space-y-3">
         {rows.length === 0 && !accounts.isLoading && <p className="text-muted text-sm">Noch keine virtuellen Konten.</p>}
         {rows.map(account => {
-          const canArchive = account.kind === 'CUSTOM' && account.status !== 'ARCHIVED' && BigInt(account.walletBalance) === 0n && BigInt(account.bankBalance) === 0n;
+          const pocketsEmpty = BigInt(account.walletBalance) === 0n && BigInt(account.bankBalance) === 0n;
+          const canArchive = account.kind === 'CUSTOM' && account.status !== 'ARCHIVED' && pocketsEmpty;
+          const canDelete = account.kind === 'CUSTOM' && account.accountPurpose === 'GENERAL' && pocketsEmpty;
+          const deleteArmed = deleteConfirmId === account.id;
           return (
             <div key={account.id} className="rounded-lg border border-border/60 bg-bg-elev/40 p-3">
               <div className="flex flex-wrap items-start justify-between gap-3">
@@ -639,33 +689,55 @@ export function VirtualAccountsControlPanel({ guildId, slot }: { guildId: string
                     {' · '}Manager: {account.managers.length}
                     {' · '}Einzahlungen: {account.acceptUserTransfers && account.status === 'ACTIVE' ? 'offen' : 'gesperrt'}
                     {' · '}{account.channelId ? `Live in #${channelNames.get(account.channelId) ?? account.channelId}` : 'Discord-Integration aus'}
+                    {account.archiveChannelId ? ` · Archiv in #${channelNames.get(account.archiveChannelId) ?? account.archiveChannelId}` : account.channelId ? ' · Archiv-Kanal fehlt' : ''}
                   </p>
                   {account.projection?.lastSyncError && <p className="text-[11px] text-danger mt-1">Discord-Syncfehler: {account.projection.lastSyncError}</p>}
                   {account.projection?.lastSyncedAt && !account.projection.lastSyncError && <p className="text-[11px] text-success mt-1">Live-Sync: {new Date(account.projection.lastSyncedAt).toLocaleString('de-DE')}</p>}
                 </div>
                 <div className="flex flex-wrap gap-2">
-                  <Button size="sm" variant="outline" onClick={() => setEditingId(editingId === account.id ? null : account.id)} disabled={account.status === 'ARCHIVED'}>
+                  <Button size="sm" variant="outline" onClick={() => { setDeleteConfirmId(null); setEditingId(editingId === account.id ? null : account.id); }} disabled={account.status === 'ARCHIVED'}>
                     <Settings className="h-3.5 w-3.5 mr-1" />Konfigurieren
                   </Button>
-                  <Button size="sm" variant="ghost" disabled={!account.channelId || syncAccount.isPending} onClick={() => syncAccount.mutate(account.id)}>
+                  <Button size="sm" variant="ghost" disabled={!account.channelId || !account.archiveChannelId || syncAccount.isPending} onClick={() => { setDeleteConfirmId(null); syncAccount.mutate(account.id); }}>
                     <RefreshCw className="h-3.5 w-3.5 mr-1" />Sync
                   </Button>
-                  <Button size="sm" variant="ghost" onClick={() => setAuditAccountId(auditAccountId === account.id ? '' : account.id)}>
+                  <Button size="sm" variant="ghost" onClick={() => { setDeleteConfirmId(null); setAuditAccountId(auditAccountId === account.id ? '' : account.id); }}>
                     <History className="h-3.5 w-3.5 mr-1" />Audit
                   </Button>
                   {account.kind === 'CUSTOM' && account.status !== 'ARCHIVED' && (
                     <Button
                       size="sm"
                       variant="danger"
-                      disabled={!canArchive || archive.isPending}
-                      onClick={() => archive.mutate(account.id)}
+                      disabled={!canArchive || archive.isPending || remove.isPending}
+                      onClick={() => { setDeleteConfirmId(null); archive.mutate(account.id); }}
                       title={canArchive ? 'Konto archivieren' : 'Archivieren erst bei Wallet=0 und Bank=0 möglich.'}
                     >
                       <Archive className="h-3.5 w-3.5 mr-1" />Archivieren
                     </Button>
                   )}
+                  {account.kind === 'CUSTOM' && account.accountPurpose === 'GENERAL' && (
+                    <Button
+                      size="sm"
+                      variant="danger"
+                      disabled={!canDelete || remove.isPending || archive.isPending}
+                      onClick={() => {
+                        if (!deleteArmed) {
+                          setDeleteConfirmId(account.id);
+                          return;
+                        }
+                        remove.mutate(account.id);
+                      }}
+                      title={canDelete ? 'Nur unbenutzte Konten ohne Finanz-/Audit-Historie können dauerhaft gelöscht werden.' : 'Löschen erst bei Wallet=0 und Bank=0 möglich.'}
+                    >
+                      <Trash2 className="h-3.5 w-3.5 mr-1" />{deleteArmed ? 'Wirklich löschen?' : 'Löschen'}
+                    </Button>
+                  )}
                 </div>
               </div>
+
+              {deleteArmed && canDelete && (
+                <p className="mt-2 text-[11px] text-danger">Dauerhaftes Löschen ist nur ohne Buchungs-/Systemhistorie möglich. Klicke „Wirklich löschen?“ erneut zur Bestätigung.</p>
+              )}
 
               {editingId === account.id && (
                 <AccountEditor account={account} guildId={guildId} slot={slot} channels={textChannels} onDone={setMessage} />

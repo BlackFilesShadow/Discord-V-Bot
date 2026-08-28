@@ -14,6 +14,7 @@ export interface VirtualAccountMetadata {
   nitradoConnId: NitradoConnId;
   description: string | null;
   channelId: string | null;
+  archiveChannelId: string | null;
   createdAt: Date;
   updatedAt: Date;
 }
@@ -24,6 +25,7 @@ interface DbMetadataRow {
   nitradoConnId: string;
   description: string | null;
   channelId: string | null;
+  archiveChannelId: string | null;
   createdAt: Date;
   updatedAt: Date;
 }
@@ -71,13 +73,31 @@ export function normalizeVirtualAccountChannelId(input: unknown): string | null 
   return clean;
 }
 
+export function normalizeVirtualAccountChannels(channelRaw: unknown, archiveChannelRaw: unknown): {
+  channelId: string | null;
+  archiveChannelId: string | null;
+} {
+  const channelId = normalizeVirtualAccountChannelId(channelRaw);
+  const archiveChannelId = normalizeVirtualAccountChannelId(archiveChannelRaw);
+  if (!channelId && archiveChannelId) {
+    throw new Error('Ein Archiv-Kanal ist nur zusammen mit einem Hauptkanal zulaessig.');
+  }
+  if (channelId && !archiveChannelId) {
+    throw new Error('Fuer eine Discord-Integration muss ein separater Archiv-Kanal ausgewaehlt werden.');
+  }
+  if (channelId && archiveChannelId && channelId === archiveChannelId) {
+    throw new Error('Hauptkanal und Archiv-Kanal muessen getrennte Discord-Kanaele sein.');
+  }
+  return { channelId, archiveChannelId };
+}
+
 export async function getVirtualAccountMetadata(
   guildId: GuildId,
   nitradoConnId: NitradoConnId,
   accountId: string,
 ): Promise<VirtualAccountMetadata | null> {
   const rows = await rawDb().$queryRawUnsafe<DbMetadataRow[]>(
-    'SELECT "accountId", "guildId", "nitradoConnId", "description", "channelId", "createdAt", "updatedAt" FROM "EconomyVirtualAccountMetadata" WHERE "accountId"=$1 AND "guildId"=$2 AND "nitradoConnId"=$3 LIMIT 1',
+    'SELECT "accountId", "guildId", "nitradoConnId", "description", "channelId", "archiveChannelId", "createdAt", "updatedAt" FROM "EconomyVirtualAccountMetadata" WHERE "accountId"=$1 AND "guildId"=$2 AND "nitradoConnId"=$3 LIMIT 1',
     accountId, String(guildId), String(nitradoConnId),
   );
   return rows[0] ? toMetadata(rows[0]) : null;
@@ -88,7 +108,7 @@ export async function getVirtualAccountMetadataMap(
   nitradoConnId: NitradoConnId,
 ): Promise<Map<string, VirtualAccountMetadata>> {
   const rows = await rawDb().$queryRawUnsafe<DbMetadataRow[]>(
-    'SELECT "accountId", "guildId", "nitradoConnId", "description", "channelId", "createdAt", "updatedAt" FROM "EconomyVirtualAccountMetadata" WHERE "guildId"=$1 AND "nitradoConnId"=$2',
+    'SELECT "accountId", "guildId", "nitradoConnId", "description", "channelId", "archiveChannelId", "createdAt", "updatedAt" FROM "EconomyVirtualAccountMetadata" WHERE "guildId"=$1 AND "nitradoConnId"=$2',
     String(guildId), String(nitradoConnId),
   );
   return new Map(rows.map(row => [row.accountId, toMetadata(row)]));
@@ -101,15 +121,16 @@ export async function upsertVirtualAccountMetadata(args: {
   accountId: string;
   description?: unknown;
   channelId?: unknown;
+  archiveChannelId?: unknown;
 }): Promise<VirtualAccountMetadata> {
   await assertEconomyScopeReady(args.guildId, args.nitradoConnId);
   const account = await getVirtualAccountById(args.guildId, args.nitradoConnId, args.accountId);
   if (!account) throw new Error('Virtuelles Konto nicht gefunden.');
   const description = normalizeVirtualAccountDescription(args.description);
-  const channelId = normalizeVirtualAccountChannelId(args.channelId);
+  const { channelId, archiveChannelId } = normalizeVirtualAccountChannels(args.channelId, args.archiveChannelId);
   const rows = await rawDb().$queryRawUnsafe<DbMetadataRow[]>(
-    'INSERT INTO "EconomyVirtualAccountMetadata" ("accountId", "guildId", "nitradoConnId", "description", "channelId", "createdAt", "updatedAt") VALUES ($1,$2,$3,$4,$5,CURRENT_TIMESTAMP,CURRENT_TIMESTAMP) ON CONFLICT ("accountId") DO UPDATE SET "description"=EXCLUDED."description", "channelId"=EXCLUDED."channelId", "updatedAt"=CURRENT_TIMESTAMP WHERE "EconomyVirtualAccountMetadata"."guildId"=EXCLUDED."guildId" AND "EconomyVirtualAccountMetadata"."nitradoConnId"=EXCLUDED."nitradoConnId" RETURNING "accountId", "guildId", "nitradoConnId", "description", "channelId", "createdAt", "updatedAt"',
-    args.accountId, String(args.guildId), String(args.nitradoConnId), description, channelId,
+    'INSERT INTO "EconomyVirtualAccountMetadata" ("accountId", "guildId", "nitradoConnId", "description", "channelId", "archiveChannelId", "createdAt", "updatedAt") VALUES ($1,$2,$3,$4,$5,$6,CURRENT_TIMESTAMP,CURRENT_TIMESTAMP) ON CONFLICT ("accountId") DO UPDATE SET "description"=EXCLUDED."description", "channelId"=EXCLUDED."channelId", "archiveChannelId"=EXCLUDED."archiveChannelId", "updatedAt"=CURRENT_TIMESTAMP WHERE "EconomyVirtualAccountMetadata"."guildId"=EXCLUDED."guildId" AND "EconomyVirtualAccountMetadata"."nitradoConnId"=EXCLUDED."nitradoConnId" RETURNING "accountId", "guildId", "nitradoConnId", "description", "channelId", "archiveChannelId", "createdAt", "updatedAt"',
+    args.accountId, String(args.guildId), String(args.nitradoConnId), description, channelId, archiveChannelId,
   );
   if (!rows[0]) throw new Error('Metadaten konnten nicht aktualisiert werden.');
   return toMetadata(rows[0]);
@@ -121,13 +142,14 @@ export async function createCustomVirtualAccountWithMetadata(args: {
   name: string;
   description?: unknown;
   channelId?: unknown;
+  archiveChannelId?: unknown;
   expiresAt?: Date | null;
   acceptUserTransfers?: boolean;
   createdByDiscordId: UserDiscordId;
 }): Promise<{ account: VirtualAccountRow; metadata: VirtualAccountMetadata }> {
   const { name, nameKey } = normalizeVirtualAccountName(args.name);
   const description = normalizeVirtualAccountDescription(args.description);
-  const channelId = normalizeVirtualAccountChannelId(args.channelId);
+  const { channelId, archiveChannelId } = normalizeVirtualAccountChannels(args.channelId, args.archiveChannelId);
   if (args.expiresAt && args.expiresAt.getTime() <= Date.now()) throw new Error('Ablaufzeit muss in der Zukunft liegen.');
   await assertEconomyScopeReady(args.guildId, args.nitradoConnId);
 
@@ -143,8 +165,8 @@ export async function createCustomVirtualAccountWithMetadata(args: {
       if (accountChanged !== 1) throw new Error('Virtuelles Konto konnte nicht erstellt werden.');
 
       const metadataChanged = await raw.$executeRawUnsafe(
-        'INSERT INTO "EconomyVirtualAccountMetadata" ("accountId", "guildId", "nitradoConnId", "description", "channelId", "createdAt", "updatedAt") VALUES ($1,$2,$3,$4,$5,CURRENT_TIMESTAMP,CURRENT_TIMESTAMP)',
-        accountId, String(args.guildId), String(args.nitradoConnId), description, channelId,
+        'INSERT INTO "EconomyVirtualAccountMetadata" ("accountId", "guildId", "nitradoConnId", "description", "channelId", "archiveChannelId", "createdAt", "updatedAt") VALUES ($1,$2,$3,$4,$5,$6,CURRENT_TIMESTAMP,CURRENT_TIMESTAMP)',
+        accountId, String(args.guildId), String(args.nitradoConnId), description, channelId, archiveChannelId,
       );
       if (metadataChanged !== 1) throw new Error('Metadaten des virtuellen Kontos konnten nicht erstellt werden.');
     });

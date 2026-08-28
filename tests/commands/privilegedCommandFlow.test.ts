@@ -1,6 +1,8 @@
 import type { ChatInputCommandInteraction } from 'discord.js';
 import type { GuildScope } from '../../src/types/scope';
 
+const TEST_TARGET_USER = '323456789' + '012345678';
+
 const scope: GuildScope = {
   guildId: '123456789012345678' as GuildScope['guildId'],
   nitradoConnId: 'c123456789012345678901234' as GuildScope['nitradoConnId'],
@@ -15,8 +17,8 @@ const completePendingServerAction = jest.fn();
 const releasePendingServerActionClaim = jest.fn();
 const adminPay = jest.fn();
 const applyPendingAdminMoneyAction = jest.fn();
-const forceLinkByPlayerName = jest.fn();
-const unlinkUser = jest.fn();
+const forceAdminLinkByPlayerName = jest.fn();
+const forceAdminUnlinkUser = jest.fn();
 const applySuccessfulLinkEconomyEffects = jest.fn();
 const deactivateLinkRewardState = jest.fn();
 
@@ -35,7 +37,8 @@ jest.mock('../../src/modules/nitrado/pendingServerAction', () => ({
 }));
 jest.mock('../../src/modules/economy/repository', () => ({ __esModule: true, adminPay }));
 jest.mock('../../src/modules/economy/pendingAdminMoney', () => ({ __esModule: true, applyPendingAdminMoneyAction }));
-jest.mock('../../src/modules/linking/linkService', () => ({ __esModule: true, forceLinkByPlayerName, unlinkUser }));
+jest.mock('../../src/modules/linking/linkService', () => ({ __esModule: true, isValidPlayerName: (value: string) => value.length >= 1 && value.length <= 64 && !/[\r\n]/.test(value) }));
+jest.mock('../../src/modules/linking/adminForceLink', () => ({ __esModule: true, forceAdminLinkByPlayerName, forceAdminUnlinkUser }));
 jest.mock('../../src/modules/linking/linkRewards', () => ({ __esModule: true, applySuccessfulLinkEconomyEffects, deactivateLinkRewardState }));
 jest.mock('../../src/utils/logger', () => ({ __esModule: true, logAudit: jest.fn(), logger: { error: jest.fn(), warn: jest.fn(), info: jest.fn() } }));
 jest.mock('../../src/commands/middleware/withGuildScope', () => ({
@@ -47,6 +50,7 @@ jest.mock('../../src/commands/middleware/withGuildScope', () => ({
 import {
   addMoneyCommand,
   removeMoneyCommand,
+  forceLinkCommand,
   forceUnlinkCommand,
   confirmActionCommand,
 } from '../../src/commands/dashboard/privileged';
@@ -55,9 +59,21 @@ function moneyInteraction() {
   const reply = jest.fn().mockResolvedValue(undefined);
   const interaction = {
     options: {
-      getUser: jest.fn().mockReturnValue({ id: '323456789012345678', bot: false }),
+      getUser: jest.fn().mockReturnValue({ id: TEST_TARGET_USER, bot: false }),
       getInteger: jest.fn().mockReturnValue(250),
       getString: jest.fn().mockReturnValue('Korrektur'),
+    },
+    reply,
+  } as unknown as ChatInputCommandInteraction;
+  return { interaction, reply };
+}
+
+function forceLinkInteraction(playerName = 'Void__Architect') {
+  const reply = jest.fn().mockResolvedValue(undefined);
+  const interaction = {
+    options: {
+      getUser: jest.fn().mockReturnValue({ id: TEST_TARGET_USER, bot: false }),
+      getString: jest.fn().mockReturnValue(playerName),
     },
     reply,
   } as unknown as ChatInputCommandInteraction;
@@ -68,7 +84,7 @@ function unlinkInteraction() {
   const reply = jest.fn().mockResolvedValue(undefined);
   const interaction = {
     options: {
-      getUser: jest.fn().mockReturnValue({ id: '323456789012345678', bot: false }),
+      getUser: jest.fn().mockReturnValue({ id: TEST_TARGET_USER, bot: false }),
     },
     reply,
   } as unknown as ChatInputCommandInteraction;
@@ -88,7 +104,7 @@ function claimedAction(actionId: string, actionType = 'REMOVE_MONEY', payload?: 
     nitradoConnId: scope.nitradoConnId,
     actorDiscordId: scope.actorDiscordId,
     actionType,
-    payload: payload ?? { targetUserId: '323456789012345678', amount: '250', reason: 'Korrektur' },
+    payload: payload ?? { targetUserId: TEST_TARGET_USER, amount: '250', reason: 'Korrektur' },
     status: 'RUNNING',
     expiresAt: new Date(Date.now() - 60_000),
     claimToken: 'claim-token-1',
@@ -106,6 +122,7 @@ describe('privileged durable confirmation flow', () => {
     completePendingServerAction.mockResolvedValue(true);
     releasePendingServerActionClaim.mockResolvedValue(true);
     applyPendingAdminMoneyAction.mockResolvedValue({ applied: true });
+    applySuccessfulLinkEconomyEffects.mockResolvedValue({ granted: false, amount: 0n });
     deactivateLinkRewardState.mockResolvedValue(undefined);
   });
 
@@ -115,7 +132,7 @@ describe('privileged durable confirmation flow', () => {
     expect(createPendingServerAction).not.toHaveBeenCalled();
     expect(adminPay).toHaveBeenCalledWith({
       guildId: scope.guildId, nitradoConnId: scope.nitradoConnId,
-      targetUserId: '323456789012345678', delta: 250n, reason: 'Korrektur', actorDiscordId: scope.actorDiscordId,
+      targetUserId: TEST_TARGET_USER, delta: 250n, reason: 'Korrektur', actorDiscordId: scope.actorDiscordId,
     });
     expect(reply).toHaveBeenCalledWith(expect.objectContaining({ content: expect.stringContaining('sofort gutgeschrieben') }));
   });
@@ -130,6 +147,50 @@ describe('privileged durable confirmation flow', () => {
     expect(reply).toHaveBeenCalledWith(expect.objectContaining({ content: expect.stringContaining(actionId) }));
   });
 
+  it('/force-link queues an explicit admin override without requiring an ADM/session hit', async () => {
+    const actionId = '123e4567-e89b-42d3-a456-426614174000';
+    createPendingServerAction.mockResolvedValue({ id: actionId });
+    const { interaction, reply } = forceLinkInteraction();
+    await forceLinkCommand.execute(interaction);
+
+    expect(createPendingServerAction).toHaveBeenCalledWith(prismaMock, expect.objectContaining({
+      actionType: 'FORCE_LINK',
+      payload: { targetUserId: TEST_TARGET_USER, playerName: 'Void__Architect' },
+    }));
+    expect(reply).toHaveBeenCalledWith(expect.objectContaining({
+      content: expect.stringContaining('ADM-/Session-Anwesenheits- und Spielzeitregel umgangen'),
+    }));
+  });
+
+  it('/confirm-action accepts an unresolved admin force-link and does not invent GUID rewards', async () => {
+    const actionId = '123e4567-e89b-42d3-a456-426614174000';
+    claimPendingServerAction.mockResolvedValue(claimedAction(actionId, 'FORCE_LINK', {
+      targetUserId: TEST_TARGET_USER,
+      playerName: 'Void__Architect',
+    }));
+    forceAdminLinkByPlayerName.mockResolvedValue({
+      ok: true,
+      alreadyLinked: false,
+      playerName: 'Void__Architect',
+      gameId: null,
+      playedSeconds: 0,
+      pendingIdentityResolution: true,
+      newIdentityBinding: false,
+    });
+    const { interaction, reply } = confirmInteraction(actionId);
+    await confirmActionCommand.execute(interaction);
+
+    expect(forceAdminLinkByPlayerName).toHaveBeenCalledWith(expect.objectContaining({
+      userDiscordId: TEST_TARGET_USER,
+      playerName: 'Void__Architect',
+    }));
+    expect(applySuccessfulLinkEconomyEffects).not.toHaveBeenCalled();
+    expect(completePendingServerAction).toHaveBeenCalledTimes(1);
+    expect(reply).toHaveBeenCalledWith(expect.objectContaining({
+      content: expect.stringContaining('Admin-Verknuepfung ist sofort aktiv'),
+    }));
+  });
+
   it('/confirm-action books deduction by action-id and only then completes the claim', async () => {
     const actionId = '123e4567-e89b-42d3-a456-426614174000';
     claimPendingServerAction.mockResolvedValue(claimedAction(actionId));
@@ -140,7 +201,7 @@ describe('privileged durable confirmation flow', () => {
       actionId,
       guildId: scope.guildId,
       nitradoConnId: scope.nitradoConnId,
-      targetUserId: '323456789012345678',
+      targetUserId: TEST_TARGET_USER,
       delta: -250n,
       reason: 'Korrektur',
       actorDiscordId: scope.actorDiscordId,
@@ -182,24 +243,28 @@ describe('privileged durable confirmation flow', () => {
     });
   });
 
-  it('force-unlink retry heals reward-state even when the link was already removed', async () => {
+  it('force-unlink retry heals reward-state even when the admin link was already removed', async () => {
     const actionId = '123e4567-e89b-42d3-a456-426614174000';
     createPendingServerAction.mockResolvedValue({ id: actionId });
-    const { interaction: prepare } = unlinkInteraction();
+    const { interaction: prepare, reply: prepareReply } = unlinkInteraction();
     await forceUnlinkCommand.execute(prepare);
+    expect(prepareReply).toHaveBeenCalledWith(expect.objectContaining({ content: expect.stringContaining('ADM-/Session-Erkennung') }));
 
     claimPendingServerAction.mockResolvedValue(claimedAction(actionId, 'FORCE_UNLINK', {
-      targetUserId: '323456789012345678',
+      targetUserId: TEST_TARGET_USER,
     }));
-    unlinkUser.mockResolvedValue(false);
+    forceAdminUnlinkUser.mockResolvedValue(false);
     const { interaction, reply } = confirmInteraction(actionId);
     await confirmActionCommand.execute(interaction);
 
-    expect(unlinkUser).toHaveBeenCalled();
+    expect(forceAdminUnlinkUser).toHaveBeenCalledWith({
+      guildId: scope.guildId,
+      nitradoConnId: scope.nitradoConnId,
+    }, TEST_TARGET_USER);
     expect(deactivateLinkRewardState).toHaveBeenCalledWith({
       guildId: scope.guildId,
       nitradoConnId: scope.nitradoConnId,
-    }, '323456789012345678');
+    }, TEST_TARGET_USER);
     expect(completePendingServerAction).toHaveBeenCalledTimes(1);
     expect(reply).toHaveBeenCalledWith(expect.objectContaining({ content: expect.stringContaining('Reward-Berechtigung') }));
   });
