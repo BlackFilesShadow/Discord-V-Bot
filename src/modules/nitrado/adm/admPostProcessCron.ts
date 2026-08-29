@@ -19,6 +19,7 @@ import { bookPlaytimeRewards, type PlaytimeBookingClient } from '../../economy/p
 import { assertEconomyScopeReady } from '../../economy/scopeMigration';
 import { resolveRewardIdentity, resolveRewardUserAt, applySuccessfulLinkEconomyEffects } from '../../linking/linkRewards';
 import { reconcileAdminForcedLinks } from '../../linking/adminForceLink';
+import { reconcileVerifiedLinkEconomyEffects } from '../../linking/linkEconomyReconcile';
 import { identityHash } from '../../linking/identity';
 
 const INTERVAL_MS = 60_000;
@@ -64,6 +65,26 @@ async function processConnection(conn: ScopedConnection): Promise<void> {
     }
   } catch (error) {
     logger.warn(`ADM-Postprocess: Admin-Force-Link-Reconciliation fehlgeschlagen fuer ${conn.id}: ${(error as Error).message}`);
+  }
+
+  // Der normale /link-Pfad persistiert den sicheren Identity-Link und aktiviert
+  // direkt danach den Economy-State. Ein Prozessabbruch genau zwischen diesen
+  // beiden Commits darf den User aber nicht dauerhaft als "verknuepft, jedoch
+  // ohne Rewards" zuruecklassen. Der Reconciler betrachtet deshalb alle
+  // VERIFIED Links dieses Gameservers und repariert ausschliesslich fehlende,
+  // veraltete oder noch nicht fertig ausgewertete Economy-States.
+  try {
+    const repair = await reconcileVerifiedLinkEconomyEffects(
+      scopeRef,
+      config.security.encryptionKey,
+    );
+    if (repair.repaired > 0 || repair.failed > 0 || repair.unresolved > 0) {
+      logger.info(
+        `ADM-Postprocess: Link-Economy-Reconcile ${conn.id}: repaired=${repair.repaired}, unresolved=${repair.unresolved}, failed=${repair.failed}`,
+      );
+    }
+  } catch (error) {
+    logger.warn(`ADM-Postprocess: Link-Economy-Reconciliation fehlgeschlagen fuer ${conn.id}: ${(error as Error).message}`);
   }
 
   try {

@@ -47,9 +47,10 @@ export interface WithGuildScopeOptions {
   /** Falls true, wird KEIN Nitrado-Slot aufgeloest (Guild-only Cmd, z.B. /perms). */
   guildOnly?: boolean;
   /**
-   * Falls true, akzeptiert die `slot`-Slash-Option als explizite Auswahl
-   * (1..MAX_GAME_SERVERS_PER_GUILD). Ohne Auswahl wird nur dann automatisch
-   * aufgeloest, wenn exakt ein nutzbarer aktiver Server existiert.
+   * Falls true, akzeptiert die historische `slot`-Slash-Option als explizite
+   * Gameserver-Auswahl. Discord uebertraegt dabei bevorzugt die eindeutige
+   * Connection-ID aus dem Alias-Autocomplete. Alias und numerischer Slot werden
+   * fuer manuelle Eingaben bzw. eine laufende Deploy-Migration weiter akzeptiert.
    */
   acceptSlotOption?: boolean;
   /** Wenn gesetzt: prueft ob das Toggle in `ServerSettings` (per Slot) `true` ist. */
@@ -84,6 +85,48 @@ async function statusReply(
   }
 }
 
+type RequestedServerSelection =
+  | { kind: 'SELECTED'; id: NitradoConnId }
+  | { kind: 'AMBIGUOUS_ALIAS' }
+  | { kind: 'INVALID_SLOT'; slot: number }
+  | { kind: 'NOT_FOUND'; value: string }
+  | { kind: 'NONE' };
+
+/**
+ * Kompatibilitaetsresolver fuer den internen Optionsnamen `slot`.
+ * Prioritaet: Connection-ID (Autocomplete) -> numerischer Legacy-Slot -> Alias.
+ * Doppelte Aliase werden bewusst nie still auf den ersten Treffer aufgeloest.
+ */
+export function resolveRequestedServerSelection(
+  connections: ScopeCandidate[],
+  rawValue: string | number | boolean | undefined,
+): RequestedServerSelection {
+  if (rawValue === undefined || rawValue === false) return { kind: 'NONE' };
+  const raw = String(rawValue).trim();
+  if (!raw) return { kind: 'NONE' };
+
+  const byId = connections.find(connection => String(connection.id) === raw);
+  if (byId) return { kind: 'SELECTED', id: byId.id };
+
+  if (/^\d+$/.test(raw)) {
+    const slot = Number(raw);
+    if (!Number.isSafeInteger(slot) || slot < 1 || slot > MAX_GAME_SERVERS_PER_GUILD) {
+      return { kind: 'INVALID_SLOT', slot };
+    }
+    const bySlot = connections.find(connection => connection.slot === slot);
+    return bySlot
+      ? { kind: 'SELECTED', id: bySlot.id }
+      : { kind: 'NOT_FOUND', value: raw };
+  }
+
+  const normalizedAlias = raw.toLocaleLowerCase('de-DE');
+  const aliasMatches = connections.filter(connection =>
+    connection.alias.trim().toLocaleLowerCase('de-DE') === normalizedAlias);
+  if (aliasMatches.length === 1) return { kind: 'SELECTED', id: aliasMatches[0].id };
+  if (aliasMatches.length > 1) return { kind: 'AMBIGUOUS_ALIAS' };
+  return { kind: 'NOT_FOUND', value: raw };
+}
+
 async function resolveCommandServerScope(
   interaction: ChatInputCommandInteraction,
   guildId: ReturnType<typeof asGuildId>,
@@ -106,25 +149,37 @@ async function resolveCommandServerScope(
     }));
 
   let requestedNitradoConnId: NitradoConnId | undefined;
-  let requestedSlot: number | undefined;
   if (acceptSlotOption) {
-    requestedSlot = interaction.options.getInteger('slot') ?? undefined;
-    if (requestedSlot !== undefined) {
-      if (requestedSlot < 1 || requestedSlot > MAX_GAME_SERVERS_PER_GUILD) {
-        await statusReply(
-          interaction,
-          'ERROR',
-          'Ungueltiger Gameserver-Slot',
-          `Slot muss zwischen 1 und ${MAX_GAME_SERVERS_PER_GUILD} liegen. Historische Slots ausserhalb dieses Bereichs sind nur noch Legacy und fuer Mutationen gesperrt.`,
-        );
-        return null;
-      }
-      requestedNitradoConnId = connections.find(c => c.slot === requestedSlot)?.id;
-      if (!requestedNitradoConnId) {
-        await statusReply(interaction, 'ERROR', 'Gameserver nicht nutzbar', `Slot ${requestedSlot} ist nicht als aktiver Gameserver nutzbar.`);
-        return null;
-      }
+    const rawValue = interaction.options.get('slot')?.value;
+    const selected = resolveRequestedServerSelection(connections, rawValue);
+    if (selected.kind === 'INVALID_SLOT') {
+      await statusReply(
+        interaction,
+        'ERROR',
+        'Ungueltiger Gameserver-Slot',
+        `Slot muss zwischen 1 und ${MAX_GAME_SERVERS_PER_GUILD} liegen. Historische Slots ausserhalb dieses Bereichs sind nur noch Legacy und fuer Mutationen gesperrt.`,
+      );
+      return null;
     }
+    if (selected.kind === 'AMBIGUOUS_ALIAS') {
+      await statusReply(
+        interaction,
+        'ERROR',
+        'Gameserver-Alias nicht eindeutig',
+        'Dieser Alias existiert mehrfach. Waehle den Gameserver aus der Discord-Autocomplete-Liste, damit die eindeutige Verbindung verwendet wird.',
+      );
+      return null;
+    }
+    if (selected.kind === 'NOT_FOUND') {
+      await statusReply(
+        interaction,
+        'ERROR',
+        'Gameserver nicht nutzbar',
+        `Der ausgewaehlte Gameserver (${selected.value}) ist in dieser Guild nicht als nutzbarer Gameserver gebunden.`,
+      );
+      return null;
+    }
+    if (selected.kind === 'SELECTED') requestedNitradoConnId = selected.id;
   }
 
   const resolution = resolveOrPromptGameServerScope({
@@ -164,7 +219,7 @@ async function resolveCommandServerScope(
         .map(s => `• **${s.alias.trim() || 'DayZ-Server'}**`)
         .join('\n');
       const instruction = acceptSlotOption
-        ? 'Fuehre den Befehl erneut mit der Option `slot` aus.'
+        ? 'Fuehre den Befehl erneut aus und waehle bei `slot` den Gameserver-Alias aus der Liste.'
         : 'Dieser Befehl hat noch keine explizite Serverauswahl und wird deshalb sicherheitshalber nicht ausgefuehrt.';
       await statusReply(
         interaction,

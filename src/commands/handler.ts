@@ -1,7 +1,8 @@
-import { Collection, REST, Routes } from 'discord.js';
+import { ApplicationCommandOptionType, Collection, REST, Routes } from 'discord.js';
 import { Command, ExtendedClient } from '../types';
 import { logger } from '../utils/logger';
 import { classifyCommand } from './inventory';
+import { autocompleteServerAlias } from './dashboard/serverTargetSelection';
 import path from 'path';
 import fs from 'fs';
 
@@ -39,6 +40,87 @@ function canonicalizeCommandName(command: Command): Command {
   return command;
 }
 
+type CommandJson = ReturnType<Command['data']['toJSON']>;
+type JsonOption = {
+  name?: string;
+  type?: number;
+  description?: string;
+  autocomplete?: boolean;
+  options?: JsonOption[];
+  choices?: unknown;
+  min_value?: number;
+  max_value?: number;
+  min_length?: number;
+  max_length?: number;
+  [key: string]: unknown;
+};
+
+/**
+ * `slot` ist historisch der interne Optionsname fuer Gameserver. Fuer Discord
+ * wird diese Option zentral als String-Autocomplete publiziert. Damit muessen
+ * alte Commands nicht jeweils ihre eigene Alias-UI implementieren und alle
+ * sichtbaren Serverauswahlen verwenden dieselbe Connection-ID als stabilen Wert.
+ */
+function normalizeServerAliasOption(option: JsonOption): JsonOption {
+  const nested = Array.isArray(option.options)
+    ? option.options.map(normalizeServerAliasOption)
+    : undefined;
+  const base: JsonOption = nested ? { ...option, options: nested } : { ...option };
+  if (base.name !== 'slot') return base;
+
+  base.type = ApplicationCommandOptionType.String;
+  base.description = 'Gameserver ueber Alias auswaehlen';
+  base.autocomplete = true;
+  delete base.choices;
+  delete base.min_value;
+  delete base.max_value;
+  delete base.min_length;
+  delete base.max_length;
+  return base;
+}
+
+export function normalizeServerAliasOptionsForDeploy(json: CommandJson): CommandJson {
+  return normalizeServerAliasOption(json as unknown as JsonOption) as unknown as CommandJson;
+}
+
+function containsSlotOption(option: JsonOption): boolean {
+  if (option.name === 'slot') return true;
+  return Array.isArray(option.options) && option.options.some(containsSlotOption);
+}
+
+const aliasAutocompleteWrapped = new WeakSet<Command>();
+
+/**
+ * Der zentrale Dispatcher ruft weiterhin genau `command.autocomplete` auf.
+ * Commands mit einer `slot`-Option erhalten hier einen Wrapper, der fuer diese
+ * Option immer den gemeinsamen Gameserver-Alias-Resolver nutzt und vorhandene
+ * Autocomplete-Handler fuer andere Optionen unveraendert weiterreicht.
+ */
+function attachServerAliasAutocomplete(command: Command): Command {
+  if (aliasAutocompleteWrapped.has(command)) return command;
+  if (!containsSlotOption(command.data.toJSON() as unknown as JsonOption)) return command;
+
+  const existing = command.autocomplete;
+  command.autocomplete = async interaction => {
+    const focused = interaction.options.getFocused(true);
+    if (focused.name === 'slot') {
+      await autocompleteServerAlias(interaction);
+      return;
+    }
+    if (existing) {
+      await existing(interaction);
+      return;
+    }
+    await interaction.respond([]);
+  };
+  aliasAutocompleteWrapped.add(command);
+  return command;
+}
+
+function commandDeployJson(command: Command): CommandJson {
+  return normalizeServerAliasOptionsForDeploy(command.data.toJSON());
+}
+
 /**
  * Command-Handler: Laedt alle Slash-Commands atomar in eine neue Collection.
  * Die aktive Runtime-Registry wird erst ersetzt, wenn der komplette Loader-
@@ -53,7 +135,7 @@ export async function loadCommands(client: ExtendedClient): Promise<void> {
   const strict = process.env.COMMAND_LOADER_STRICT !== 'false';
 
   const registerCommand = (rawCommand: Command, sourceFile: string): void => {
-    const cmd = canonicalizeCommandName(rawCommand);
+    const cmd = attachServerAliasAutocomplete(canonicalizeCommandName(rawCommand));
     const existing = commandSources.get(cmd.data.name);
     if (existing && existing !== sourceFile) {
       collisionCount++;
@@ -130,7 +212,7 @@ export async function loadCommands(client: ExtendedClient): Promise<void> {
 /** Registriert alle geladenen Commands in genau einem Discord-Scope. */
 export async function deployCommands(client: ExtendedClient, token: string, clientId: string, guildId?: string): Promise<void> {
   const rest = new REST({ version: '10' }).setToken(token);
-  const commandData = client.commands.map(command => command.data.toJSON());
+  const commandData = client.commands.map(commandDeployJson);
   try {
     if (guildId) {
       await rest.put(Routes.applicationGuildCommands(clientId, guildId), { body: commandData });
@@ -162,7 +244,7 @@ export function splitCommandsByScope(client: ExtendedClient): {
     });
     if (!classification.staysInDiscord) continue;
 
-    const json = cmd.data.toJSON();
+    const json = commandDeployJson(cmd);
     if (classification.category === 'admin' || classification.category === 'dev') globalCmds.push(json);
     else guildCmds.push(json);
   }
