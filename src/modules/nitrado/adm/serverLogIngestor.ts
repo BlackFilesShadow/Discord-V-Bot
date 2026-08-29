@@ -122,8 +122,13 @@ export interface AdmSourceMeta {
 
 export interface AdmPersistClient {
   admEvent: { createMany: (args: { data: unknown[]; skipDuplicates?: boolean }) => Promise<{ count: number }> };
+  flagActivityEvent: { createMany: (args: { data: unknown[]; skipDuplicates?: boolean }) => Promise<{ count: number }> };
   admSourceCursor: { upsert: (args: unknown) => Promise<unknown> };
   $transaction: <T>(fn: (tx: AdmPersistClient) => Promise<T>) => Promise<T>;
+}
+
+function isFlagEvent(event: RawAdmEvent): boolean {
+  return event.eventType === 'FLAG_RAISED' || event.eventType === 'FLAG_LOWERED';
 }
 
 export async function persistAdmEvents(
@@ -133,15 +138,24 @@ export async function persistAdmEvents(
   result: IngestResult,
   contentFingerprint: string | null,
 ): Promise<{ inserted: number }> {
-  const rows = result.events.map((event) => ({
+  const sourceFile = meta.sourceFile ?? meta.fileName;
+  const keyed = result.events.map(event => ({
+    event,
     eventKey: computeEventKey(scope.guildId, scope.nitradoConnId, meta.fileIdentity, event.byteStart, event.rawLine),
+  }));
+
+  // Flaggenzeilen bleiben fuer die unveraenderte zentrale AdmEventType-Enum als
+  // UNKNOWN-Rohereignis erhalten. Parallel wird derselbe stabile eventKey in
+  // FlagActivityEvent kanonisch als RAISED/LOWERED gespeichert.
+  const rows = keyed.map(({ event, eventKey }) => ({
+    eventKey,
     guildId: scope.guildId,
     nitradoConnId: scope.nitradoConnId,
-    sourceFile: meta.sourceFile ?? meta.fileName,
+    sourceFile,
     sourceByteStart: BigInt(event.byteStart),
     sourceByteEnd: BigInt(event.byteEnd),
     occurredAt: event.occurredAt,
-    eventType: event.eventType,
+    eventType: isFlagEvent(event) ? 'UNKNOWN' : event.eventType,
     actorGameId: event.actorGameId,
     actorName: event.actorName,
     targetGameId: event.targetGameId,
@@ -156,11 +170,32 @@ export async function persistAdmEvents(
     parseStatus: event.parseStatus,
   }));
 
+  const flagRows = keyed
+    .filter(({ event }) => isFlagEvent(event))
+    .map(({ event, eventKey }) => ({
+      eventKey,
+      guildId: scope.guildId,
+      nitradoConnId: scope.nitradoConnId,
+      sourceFile,
+      sourceByteStart: BigInt(event.byteStart),
+      occurredAt: event.occurredAt,
+      action: event.eventType === 'FLAG_RAISED' ? 'RAISED' : 'LOWERED',
+      actorGameId: event.actorGameId,
+      actorName: event.actorName,
+      actorPosition: event.actorPosition,
+      flagType: event.objectType,
+      flagPosition: event.targetPosition,
+      rawLine: event.rawLine,
+    }));
+
   return client.$transaction(async (tx) => {
     let inserted = 0;
     if (rows.length > 0) {
       const created = await tx.admEvent.createMany({ data: rows, skipDuplicates: true });
       inserted = created.count;
+    }
+    if (flagRows.length > 0) {
+      await tx.flagActivityEvent.createMany({ data: flagRows, skipDuplicates: true });
     }
     await tx.admSourceCursor.upsert({
       where: {
