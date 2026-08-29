@@ -86,6 +86,12 @@ interface UniversalTargetResult {
   error?: string;
 }
 
+interface UniversalClaimResult {
+  claimLost: boolean;
+  results: UniversalTargetResult[];
+  remainingTargets: Array<{ id: string; alias: string; slot: number }>;
+}
+
 async function enqueueUniversalWhitelist(args: {
   guildId: string;
   gameId: string;
@@ -130,6 +136,88 @@ async function enqueueUniversalWhitelist(args: {
       return { ...target, ok: false, error: (error as Error).message };
     }
   }));
+}
+
+/**
+ * Der Universal-Request wird erst dann APPROVED, wenn mindestens EIN Ziel in
+ * derselben DB-Transaktion samt WhitelistEntry + Outbox-Intent sicher committed
+ * werden kann. Damit ist APPROVED kein temporaerer Vorab-Claim mehr: ein
+ * Prozessabsturz vor dem ersten erfolgreichen Commit rollt den Status zusammen
+ * mit Entry/Outbox auf PENDING zurueck. Fehlgeschlagene Ziele werden weiterhin
+ * unabhaengig behandelt, damit ein einzelner Server den restlichen Fan-out nicht
+ * blockiert.
+ */
+async function claimUniversalWhitelistOnFirstSuccessfulTarget(args: {
+  requestId: string;
+  guildId: string;
+  gameId: string;
+  actorDiscordId: string;
+  decidedAt: Date;
+  targets: Array<{ id: string; alias: string; slot: number }>;
+}): Promise<UniversalClaimResult> {
+  const results: UniversalTargetResult[] = [];
+
+  for (let index = 0; index < args.targets.length; index += 1) {
+    const target = args.targets[index];
+    try {
+      const claimed = await prisma.$transaction(async tx => {
+        const claim = await tx.whitelistRequest.updateMany({
+          where: { id: args.requestId, guildId: args.guildId, status: 'PENDING' },
+          data: {
+            status: 'APPROVED',
+            decidedByDiscordId: args.actorDiscordId,
+            decidedAt: args.decidedAt,
+          },
+        });
+        if (claim.count !== 1) return false;
+
+        await tx.whitelistEntry.upsert({
+          where: {
+            guildId_nitradoConnId_gameId: {
+              guildId: args.guildId,
+              nitradoConnId: target.id,
+              gameId: args.gameId,
+            },
+          },
+          update: {
+            source: 'REQUEST',
+            approvedByDiscordId: args.actorDiscordId,
+            approvedAt: args.decidedAt,
+            syncState: 'LOCAL_ONLY',
+            lastSyncedAt: null,
+          },
+          create: {
+            guildId: args.guildId,
+            nitradoConnId: target.id,
+            gameId: args.gameId,
+            source: 'REQUEST',
+            approvedByDiscordId: args.actorDiscordId,
+          },
+        });
+        await enqueueWhitelistAdd(
+          tx as unknown as WhitelistOutboxClient,
+          { guildId: args.guildId, nitradoConnId: target.id },
+          args.gameId,
+        );
+        return true;
+      });
+
+      if (!claimed) {
+        return { claimLost: true, results, remainingTargets: [] };
+      }
+
+      results.push({ ...target, ok: true });
+      return {
+        claimLost: false,
+        results,
+        remainingTargets: args.targets.slice(index + 1),
+      };
+    } catch (error) {
+      results.push({ ...target, ok: false, error: (error as Error).message });
+    }
+  }
+
+  return { claimLost: false, results, remainingTargets: [] };
 }
 
 export async function handleWhitelistApprovalButton(btn: ButtonInteraction): Promise<void> {
@@ -186,51 +274,37 @@ export async function handleWhitelistApprovalButton(btn: ButtonInteraction): Pro
     const decidedAt = new Date();
 
     if (isUniversal) {
-      const claim = await prisma.whitelistRequest.updateMany({
-        where: { id: requestId, guildId: reqRow.guildId, status: 'PENDING' },
-        data: {
-          status: 'APPROVED',
-          decidedByDiscordId: btn.user.id,
-          decidedAt,
-        },
-      });
-      if (claim.count !== 1) {
-        await followUpEphemeral(
-          btn,
-          responseEmbed('INFO', 'Anfrage bereits bearbeitet', 'Diese Anfrage wurde bereits von jemand anderem entschieden.'),
-        );
-        // Ein konkurrierender Universal-Worker kann APPROVED nur temporaer als
-        // Claim halten und bei komplettem Fan-out-Fehler wieder auf PENDING
-        // zuruecksetzen. Nur der Claim-Owner darf deshalb das Request-Embed
-        // nach einem tatsaechlich erfolgreichen/teilweisen Abschluss entfernen.
-        return;
-      }
-
-      const results = await enqueueUniversalWhitelist({
+      const claim = await claimUniversalWhitelistOnFirstSuccessfulTarget({
+        requestId,
         guildId: reqRow.guildId,
         gameId: reqRow.gameId,
         actorDiscordId: btn.user.id,
         decidedAt,
         targets: universalTargets,
       });
+
+      if (claim.claimLost) {
+        await followUpEphemeral(
+          btn,
+          responseEmbed('INFO', 'Anfrage bereits bearbeitet', 'Diese Anfrage wurde bereits von jemand anderem entschieden.'),
+        );
+        return;
+      }
+
+      const remainingResults = claim.remainingTargets.length > 0
+        ? await enqueueUniversalWhitelist({
+          guildId: reqRow.guildId,
+          gameId: reqRow.gameId,
+          actorDiscordId: btn.user.id,
+          decidedAt,
+          targets: claim.remainingTargets,
+        })
+        : [];
+      const results = [...claim.results, ...remainingResults];
       const succeeded = results.filter(result => result.ok);
       const failed = results.filter(result => !result.ok);
 
       if (succeeded.length === 0) {
-        await prisma.whitelistRequest.updateMany({
-          where: {
-            id: requestId,
-            guildId: reqRow.guildId,
-            status: 'APPROVED',
-            decidedByDiscordId: btn.user.id,
-            decidedAt,
-          },
-          data: {
-            status: 'PENDING',
-            decidedByDiscordId: null,
-            decidedAt: null,
-          },
-        });
         logAudit('WL_REQUEST_UNIVERSAL_FAILED', 'WHITELIST', {
           guildId: reqRow.guildId,
           requestId,
