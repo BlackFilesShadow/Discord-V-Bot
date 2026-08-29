@@ -11,6 +11,8 @@ const TITLES: Record<GameplayFeedView['category'], string> = {
   BUILD: '🔨 Build Report',
   DISMANTLE: '🔧 Dismantle Report',
   DESTROY: '💥 Destruction Report',
+  RAISED: '🚩 Flagge hochgezogen',
+  LOWERED: '🏳️ Flagge heruntergelassen',
 };
 
 const IZURVIVE_BASE_URL = 'https://www.izurvive.com/';
@@ -57,6 +59,11 @@ function positionField(value: string | null): string | null {
   return url ? `[${display}](${url})` : display;
 }
 
+function plainPositionField(value: string | null): string | null {
+  const clean = cleanPosition(value);
+  return clean ? safeEmbedField(clean, 128) : null;
+}
+
 function personWithPosition(name: string, position: string | null): string {
   const safe = safeName(name);
   const pos = positionField(position);
@@ -82,8 +89,6 @@ function addServer(
   if (showEventTime) {
     const timestamp = eventTimeField(occurredAt);
     if (timestamp) {
-      // Bewusst direkt nach dem Server-Alias und als eigene Zeile. So steht die
-      // Ereigniszeit weder ueber noch neben dem Servernamen.
       embed.addFields({ name: 'Ereigniszeit', value: timestamp, inline: false });
     }
   }
@@ -92,10 +97,6 @@ function addServer(
 function humanizePlacementClass(value: string): string {
   const raw = value.trim();
   if (!raw) return 'Objekt';
-
-  // Die sichtbare Bezeichnung soll spielerfreundlich bleiben. Bekannte
-  // DayZ-Kategorien koennen dabei gezielt lokalisiert werden; unbekannte
-  // Classnames werden nur lesbar getrennt und niemals verworfen.
   if (/^GardenPlot$/i.test(raw)) return 'Gartenplot';
 
   const readable = raw
@@ -106,13 +107,6 @@ function humanizePlacementClass(value: string): string {
   return readable || raw;
 }
 
-/**
- * DayZ schreibt bei Placement-Aktionen teilweise sowohl einen Anzeigenamen als
- * auch den technischen Classname, z.B. `Snare Trap<RabbitSnareTrap>`. Fuer den
- * Discord-Report reicht der Anzeigename. Bei `Nameless Object<...>` ist der
- * Classname dagegen die einzige brauchbare Kategorie und wird sichtbar erhalten.
- * Die gespeicherten ADM-Rohdaten werden dadurch nicht veraendert.
- */
 export function placementObjectLabel(value: string): string {
   const raw = value.trim();
   const wrapped = /^(.+?)\s*<([^<>]+)>\s*$/.exec(raw);
@@ -135,6 +129,19 @@ export function buildGameplayFeedEmbed(
     .setColor(parseHex(embedColor))
     .setTitle(TITLES[view.category]);
 
+  if (view.kind === 'FLAG') {
+    addServer(embed, serverAlias, view.occurredAt, true);
+    embed.addFields({ name: 'Spieler', value: safeName(view.actorName), inline: false });
+    if (view.objectType) {
+      embed.addFields({ name: 'Flagge', value: safeEmbedField(view.objectType, 256), inline: false });
+    }
+    const flagPos = plainPositionField(view.targetPosition);
+    if (flagPos) embed.addFields({ name: 'Flaggen-Koordinaten', value: flagPos, inline: false });
+    const actorPos = plainPositionField(view.actorPosition);
+    if (actorPos) embed.addFields({ name: 'Spieler-Koordinaten', value: actorPos, inline: false });
+    return embed;
+  }
+
   if (view.category === 'PVP') {
     embed.addFields({
       name: 'Killer',
@@ -154,16 +161,12 @@ export function buildGameplayFeedEmbed(
     if (typeof view.distanceMeters === 'number' && Number.isFinite(view.distanceMeters)) {
       embed.addFields({ name: 'Distanz', value: `${view.distanceMeters} m`, inline: false });
     }
-    // Nur der eigentliche V-Kill/PvP-Feed bleibt ohne sichtbare Ereigniszeit.
     addServer(embed, serverAlias);
     return embed;
   }
 
   if (view.category === 'SUICIDE') {
     embed.addFields({ name: 'Spieler', value: safeName(view.actorName), inline: false });
-    // Die offizielle DayZ-ADM-Suizidzeile nennt die verwendete Waffe nicht
-    // zwingend. Das Feld bleibt im abgestimmten Layout sichtbar und erfindet
-    // bei fehlender ADM-Evidenz bewusst keinen Wert.
     embed.addFields({
       name: 'Waffe',
       value: safeEmbedField(view.toolOrWeapon ?? 'Nicht durch ADM ermittelbar', 256),
@@ -209,8 +212,6 @@ export function buildGameplayFeedEmbed(
   }
   const pos = positionField(view.actorPosition);
   if (pos) embed.addFields({ name: 'Position', value: pos, inline: false });
-  // Alle weiteren ereignisbasierten Nitrado-Feeds zeigen den Ereigniszeitpunkt
-  // direkt unter dem Alias.
   addServer(embed, serverAlias, view.occurredAt, true);
   return embed;
 }
