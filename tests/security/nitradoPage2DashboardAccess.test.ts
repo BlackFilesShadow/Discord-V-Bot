@@ -81,11 +81,11 @@ describe('Dashboard full access contract', () => {
     expect(nitrado).toContain("nitradoRouter.delete('/:slot', requireGuildOwner");
   });
 
-  it('keeps the Page-2 dashboard UI gate aligned with dashboard.access', () => {
+  it('keeps the Page-2 dashboard UI gate aligned with dashboard.access and exposes the Economy tab', () => {
     const ui = read('dashboard-ui/src/pages/ServerSlot.tsx');
 
     expect(ui).toContain("dashboardMeta.data?.permissions.includes('dashboard.access')");
     expect(ui).toContain("dashboardMeta.data?.permissions.includes('killfeed.manage')");
-    expect(ui).toContain("tab === 'economy'");
+    expect(ui).toContain("['economy', 'Economy', Coins]");
   });
 });
