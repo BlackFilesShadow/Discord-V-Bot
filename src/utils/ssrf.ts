@@ -170,12 +170,17 @@ function safeAgents(): { httpAgent: http.Agent; httpsAgent: https.Agent } {
  * (gepinnter lookup), folgt Redirects manuell und validiert jeden Hop erneut,
  * und begrenzt die Antwortgroesse. Fuer alle Fetches von nutzergesteuerten URLs
  * (Feeds, externe Bilder) zu verwenden.
+ *
+ * Der dritte Parameter bleibt rueckwaertskompatibel eine Redirect-Grenze. Ein
+ * optionaler String darf von eng gescopten Aufrufern als Diagnose-Label
+ * uebergeben werden; er veraendert die Sicherheits-/Redirect-Grenzen nicht.
  */
 export async function safeAxiosGet<T = unknown>(
   rawUrl: string,
   config: AxiosRequestConfig = {},
-  maxRedirects = 5,
+  maxRedirectsOrLabel: number | string = 5,
 ): Promise<AxiosResponse<T>> {
+  const maxRedirects = typeof maxRedirectsOrLabel === 'number' ? maxRedirectsOrLabel : 5;
   const { httpAgent, httpsAgent } = safeAgents();
   let current = rawUrl;
   for (let hop = 0; hop <= maxRedirects; hop++) {

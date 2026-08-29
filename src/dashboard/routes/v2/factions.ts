@@ -16,7 +16,7 @@
  *  - Embed-Channel-Existenz wird vorab geprueft -> klare Fehlermeldung.
  *  - Keine serveruebergreifende Sichtbarkeit: alle Queries scopen via guildId.
  */
-import { Router } from 'express';
+import { Router, type RequestHandler } from 'express';
 import multer from 'multer';
 import * as path from 'node:path';
 import * as fs from 'node:fs/promises';
@@ -32,12 +32,12 @@ import { asGuildId } from '../../../types/scope';
 import { validateBotChannelAccess } from '../../../utils/discordChannel';
 import { PermissionFlagsBits } from 'discord.js';
 import { config } from '../../../config';
-import { isBlockedHost } from '../../../utils/ssrf';
+import { isBlockedHost, safeAxiosGet } from '../../../utils/ssrf';
 
 export const factionsRouter = Router({ mergeParams: true });
 
-const URL_RE = /^https?:\/\/[^\s<>"]{4,2000}$/i;
-const LOCAL_PATH_RE = /^\/uploads\/factions\/\d{17,20}\/[A-Za-z0-9_-]+\/[A-Za-z0-9_-]+\.(jpe?g|png|webp|gif|mp4|webm|mov)$/i;
+const URL_RE = /^https:\/\/[^\s<>"]{4,2000}$/i;
+const LOCAL_PATH_RE = /^\/uploads\/factions\/(\d{17,20})\/([A-Za-z0-9_-]+)\/([A-Za-z0-9_-]+\.(jpe?g|png|webp|gif))$/i;
 const SNOWFLAKE_RE = /^\d{17,20}$/;
 const HEX_RE = /^#?[0-9a-fA-F]{6}$/;
 const VALID_POLICY = new Set(['OPEN', 'REQUEST', 'CLOSED']);
@@ -48,23 +48,37 @@ const DESCRIPTION_MAX = 1000;
 
 const UPLOADS_BASE = config.upload.factionsDir;
 const MAX_UPLOAD_BYTES = 25 * 1024 * 1024; // 25 MB
-const ALLOWED_MIME = new Set([
-  'image/jpeg', 'image/png', 'image/webp', 'image/gif',
-  'video/mp4', 'video/webm', 'video/quicktime',
-]);
+const ALLOWED_MIME = new Set(['image/jpeg', 'image/png', 'image/webp', 'image/gif']);
 const ALLOWED_KIND = new Set(['flag', 'banner', 'media']);
+type AssetKind = 'flag' | 'banner' | 'media';
 
 const upload = multer({
-  // memoryStorage wird für die Magic-Number-Prüfung (verifyMagicNumber) und das
-  // anschließende Schreiben auf Platte benötigt. RAM-Obergrenze pro Request =
-  // fileSize (siehe MAX_UPLOAD_BYTES), nur 1 Datei gleichzeitig.
+  // memoryStorage wird für die Magic-Number-Prüfung und das anschließende
+  // Schreiben auf Platte benötigt. RAM-Obergrenze pro Request = fileSize.
   storage: multer.memoryStorage(),
   limits: { fileSize: MAX_UPLOAD_BYTES, files: 1, fields: 10, parts: 12 },
   fileFilter: (_req, file, cb) => {
     if (ALLOWED_MIME.has(file.mimetype)) cb(null, true);
-    else cb(new Error('Nur JPG/PNG/WEBP/GIF/MP4/WEBM/MOV erlaubt.'));
+    else cb(new Error('Nur JPG/PNG/WEBP/GIF erlaubt. Videos sind fuer Discord-Embed-Bilder nicht zulaessig.'));
   },
 });
+
+const uploadSingleFile: RequestHandler = (req, res, next) => {
+  upload.single('file')(req, res, (err: unknown) => {
+    if (!err) { next(); return; }
+    if (err instanceof multer.MulterError && err.code === 'LIMIT_FILE_SIZE') {
+      res.status(413).json({
+        error: `Datei zu gross (max ${MAX_UPLOAD_BYTES / 1024 / 1024} MB).`,
+        code: 'ASSET_TOO_LARGE',
+      });
+      return;
+    }
+    res.status(400).json({
+      error: err instanceof Error ? err.message : 'Upload fehlgeschlagen.',
+      code: 'ASSET_UPLOAD_REJECTED',
+    });
+  });
+};
 
 function extFor(mime: string): string {
   switch (mime) {
@@ -72,17 +86,14 @@ function extFor(mime: string): string {
     case 'image/png':  return '.png';
     case 'image/webp': return '.webp';
     case 'image/gif':  return '.gif';
-    case 'video/mp4':  return '.mp4';
-    case 'video/webm': return '.webm';
-    case 'video/quicktime': return '.mov';
     default: return '.bin';
   }
 }
 
 /**
- * Magic-Number-Pruefung (Task 7): verhindert Mime-Spoofing. Der Client-MIME
- * wird NICHT vertraut — der tatsaechliche Datei-Inhalt muss zum MIME passen.
- * Gibt true zurueck, wenn der Header zum angegebenen MIME-Type passt.
+ * Magic-Number-Pruefung: verhindert Mime-Spoofing. Die Video-Faelle bleiben
+ * ausschliesslich fuer Rueckwaertskompatibilitaet bestehender Unit-Tests/Alt-Daten
+ * erkennbar; neue Uploads lassen nur die vier Bild-MIME-Typen durch.
  */
 export function verifyMagicNumber(mime: string, buf: Buffer): boolean {
   if (buf.length < 12) return false;
@@ -102,13 +113,9 @@ export function verifyMagicNumber(mime: string, buf: Buffer): boolean {
       return hex(0, 4) === '1a45dfa3';
     case 'video/mp4':
     case 'video/quicktime': {
-      // ISO-BMFF: box-typ an Offset 4. mp4/mov teilen sich das ftyp-Format;
-      // mov erlaubt zusaetzlich moov/mdat/wide/free/skip als ersten Box-Typ.
       const box = ascii(4, 4);
       if (box === 'ftyp') return true;
-      if (mime === 'video/quicktime') {
-        return ['moov', 'mdat', 'wide', 'free', 'skip', 'pnot'].includes(box);
-      }
+      if (mime === 'video/quicktime') return ['moov', 'mdat', 'wide', 'free', 'skip', 'pnot'].includes(box);
       return false;
     }
     default:
@@ -116,16 +123,148 @@ export function verifyMagicNumber(mime: string, buf: Buffer): boolean {
   }
 }
 
+function detectImage(buf: Buffer): { mime: string; ext: string } | null {
+  for (const mime of ALLOWED_MIME) {
+    if (verifyMagicNumber(mime, buf)) return { mime, ext: extFor(mime) };
+  }
+  return null;
+}
+
 function isAcceptableAssetRef(s: string): boolean {
   if (LOCAL_PATH_RE.test(s)) return true;
   if (!URL_RE.test(s)) return false;
-  // SSRF-Schutz: blockiere private IPs, localhost, link-local, javascript:/data:.
-  // URLs werden zwar nicht serverseitig gefetcht, aber Discord-Embeds könnten sie laden
-  // — zudem verhindert dies Stored-XSS via javascript:/data:-URIs.
   let u: URL;
   try { u = new URL(s); } catch { return false; }
-  if (u.protocol !== 'http:' && u.protocol !== 'https:') return false;
+  if (u.protocol !== 'https:') return false;
   if (isBlockedHost(u.hostname)) return false;
+  return true;
+}
+
+class AssetValidationError extends Error {}
+
+interface MaterializedAsset {
+  url: string | null;
+  createdPath?: string;
+  draftPath?: string;
+}
+
+function assetField(kind: AssetKind): 'flagUrl' | 'bannerUrl' | 'mediaUrl' {
+  return kind === 'flag' ? 'flagUrl' : kind === 'banner' ? 'bannerUrl' : 'mediaUrl';
+}
+
+function ownedLocalPath(url: string | null | undefined, guildId: string, factionId: string): string | null {
+  if (!url) return null;
+  const m = LOCAL_PATH_RE.exec(url);
+  if (!m || m[1] !== guildId || m[2] !== factionId) return null;
+  const full = path.resolve(UPLOADS_BASE, guildId, factionId, m[3]);
+  const root = path.resolve(UPLOADS_BASE, guildId, factionId);
+  return full.startsWith(`${root}${path.sep}`) ? full : null;
+}
+
+async function writePermanentAsset(
+  guildId: string,
+  factionId: string,
+  kind: AssetKind,
+  buffer: Buffer,
+  ext: string,
+): Promise<{ url: string; fullPath: string }> {
+  const dir = path.resolve(UPLOADS_BASE, guildId, factionId);
+  await fs.mkdir(dir, { recursive: true });
+  const filename = `${kind}-${randomUUID()}${ext}`;
+  const fullPath = path.resolve(dir, filename);
+  if (!fullPath.startsWith(`${dir}${path.sep}`)) throw new AssetValidationError('Ungueltiger Asset-Pfad.');
+  await fs.writeFile(fullPath, buffer, { flag: 'wx' });
+  return { url: `/uploads/factions/${guildId}/${factionId}/${filename}`, fullPath };
+}
+
+async function materializeAssetRef(
+  guildId: string,
+  factionId: string,
+  kind: AssetKind,
+  value: string | null,
+): Promise<MaterializedAsset> {
+  if (!value) return { url: null };
+
+  const local = LOCAL_PATH_RE.exec(value);
+  if (local) {
+    const [, assetGuildId, ownerId, filename] = local;
+    if (assetGuildId !== guildId) throw new AssetValidationError('Asset gehoert zu einer anderen Guild.');
+    if (!(filename.startsWith(`${kind}-`) || filename.startsWith(`${kind}.`))) {
+      throw new AssetValidationError(`Asset passt nicht zum Typ ${kind}.`);
+    }
+    if (ownerId !== '_drafts' && ownerId !== factionId) {
+      throw new AssetValidationError('Asset gehoert zu einer anderen Fraktion.');
+    }
+
+    const sourceDir = path.resolve(UPLOADS_BASE, guildId, ownerId);
+    const sourcePath = path.resolve(sourceDir, filename);
+    if (!sourcePath.startsWith(`${sourceDir}${path.sep}`)) throw new AssetValidationError('Ungueltiger Asset-Pfad.');
+    const buffer = await fs.readFile(sourcePath).catch(() => null);
+    if (!buffer) throw new AssetValidationError('Asset-Datei wurde nicht gefunden. Bitte erneut hochladen.');
+    const detected = detectImage(buffer);
+    if (!detected) throw new AssetValidationError('Asset ist kein gueltiges JPG/PNG/WEBP/GIF.');
+    if (buffer.length > MAX_UPLOAD_BYTES) throw new AssetValidationError('Asset ist groesser als 25 MB.');
+
+    if (ownerId === factionId) return { url: value };
+    const stored = await writePermanentAsset(guildId, factionId, kind, buffer, detected.ext);
+    return { url: stored.url, createdPath: stored.fullPath, draftPath: sourcePath };
+  }
+
+  let parsed: URL;
+  try { parsed = new URL(value); } catch { throw new AssetValidationError('Asset-URL ist ungueltig.'); }
+  if (parsed.protocol !== 'https:') throw new AssetValidationError('Externe Assets muessen HTTPS verwenden.');
+  if (isBlockedHost(parsed.hostname)) throw new AssetValidationError('Asset-URL verweist auf ein nicht oeffentliches Ziel.');
+
+  try {
+    const response = await safeAxiosGet(value, {
+      responseType: 'arraybuffer',
+      maxContentLength: MAX_UPLOAD_BYTES,
+      maxBodyLength: MAX_UPLOAD_BYTES,
+      headers: { Accept: 'image/png,image/jpeg,image/webp,image/gif' },
+    }, 'faction-asset');
+    const buffer = Buffer.isBuffer(response.data) ? response.data : Buffer.from(response.data as ArrayBuffer);
+    if (buffer.length > MAX_UPLOAD_BYTES) throw new AssetValidationError('Asset ist groesser als 25 MB.');
+    const detected = detectImage(buffer);
+    if (!detected) throw new AssetValidationError('Externe URL liefert kein gueltiges JPG/PNG/WEBP/GIF.');
+    const stored = await writePermanentAsset(guildId, factionId, kind, buffer, detected.ext);
+    return { url: stored.url, createdPath: stored.fullPath };
+  } catch (e) {
+    if (e instanceof AssetValidationError) throw e;
+    throw new AssetValidationError(`Externes Asset konnte nicht sicher geladen werden: ${(e as Error).message}`);
+  }
+}
+
+async function materializeAssetFields(
+  data: Record<string, unknown>,
+  guildId: string,
+  factionId: string,
+): Promise<{ patch: Record<string, string | null>; createdPaths: string[]; draftPaths: string[] }> {
+  const patch: Record<string, string | null> = {};
+  const createdPaths: string[] = [];
+  const draftPaths: string[] = [];
+  try {
+    for (const kind of ['flag', 'banner', 'media'] as const) {
+      const field = assetField(kind);
+      if (!Object.prototype.hasOwnProperty.call(data, field)) continue;
+      const out = await materializeAssetRef(guildId, factionId, kind, (data[field] as string | null | undefined) ?? null);
+      patch[field] = out.url;
+      if (out.createdPath) createdPaths.push(out.createdPath);
+      if (out.draftPath) draftPaths.push(out.draftPath);
+    }
+    return { patch, createdPaths, draftPaths };
+  } catch (e) {
+    await Promise.all(createdPaths.map(p => fs.unlink(p).catch(() => {})));
+    throw e;
+  }
+}
+
+async function cleanupPaths(paths: string[]): Promise<void> {
+  await Promise.all(paths.map(p => fs.unlink(p).catch(() => {})));
+}
+
+function assetErrorResponse(res: Parameters<RequestHandler>[1], e: unknown): boolean {
+  if (!(e instanceof AssetValidationError)) return false;
+  res.status(400).json({ error: e.message, code: 'INVALID_FACTION_ASSET' });
   return true;
 }
 
@@ -159,14 +298,14 @@ function validateBody(b: FactionBody, partial: boolean): { ok: true; data: Recor
   if (b.flagUrl !== undefined) {
     if (b.flagUrl === null || b.flagUrl === '') data.flagUrl = null;
     else if (typeof b.flagUrl === 'string' && isAcceptableAssetRef(b.flagUrl)) data.flagUrl = b.flagUrl;
-    else return { ok: false, error: 'flagUrl muss URL oder Upload-Pfad sein.' };
+    else return { ok: false, error: 'flagUrl muss HTTPS-URL oder Upload-Pfad sein.' };
   }
 
   for (const k of ['bannerUrl', 'mediaUrl'] as const) {
     if (b[k] !== undefined) {
       if (b[k] === null || b[k] === '') data[k] = null;
       else if (typeof b[k] === 'string' && isAcceptableAssetRef(b[k] as string)) data[k] = b[k];
-      else return { ok: false, error: `${k} muss URL oder Upload-Pfad sein.` };
+      else return { ok: false, error: `${k} muss HTTPS-URL oder Upload-Pfad sein.` };
     }
   }
 
@@ -308,14 +447,15 @@ factionsRouter.post('/', requireGuildPermission('factions.manage'), async (req, 
     if (err) { res.status(400).json({ error: err }); return; }
   }
 
+  let f;
   try {
-    const f = await prisma.faction.create({
+    f = await prisma.faction.create({
       data: {
         guildId: scope.guildId,
         name: v.data.name as string,
-        flagUrl: (v.data.flagUrl as string | null | undefined) ?? null,
-        bannerUrl: (v.data.bannerUrl as string | null | undefined) ?? null,
-        mediaUrl: (v.data.mediaUrl as string | null | undefined) ?? null,
+        flagUrl: null,
+        bannerUrl: null,
+        mediaUrl: null,
         description: (v.data.description as string | null | undefined) ?? null,
         color: (v.data.color as string | null | undefined) ?? null,
         leaderDiscordId: (v.data.leaderDiscordId as string | null | undefined) ?? null,
@@ -328,32 +468,47 @@ factionsRouter.post('/', requireGuildPermission('factions.manage'), async (req, 
         isActive: (v.data.isActive as boolean | undefined) ?? true,
       },
     });
-    logAuditDb('FACTION_CREATED', 'FACTION', {
-      actorUserId: req.auth!.userId, guildId: scope.guildId,
-      details: { factionId: f.id, name: f.name },
-    });
-    // Embed posten — Faction-spezifischer Channel ODER System-Sammelkanal (Fallback im Modul).
-    const effectiveCh = await effectiveEmbedChannel({ embedChannelId: f.embedChannelId, guildId: scope.guildId });
-    if (effectiveCh) await refreshEmbed(f.id, scope.guildId, req.auth!.userId, 'create');
-    // Faction-Rolle an Leitung/Stellv./Schatzmeister vergeben (falls gesetzt).
-    if (f.roleId) {
-      const cli = tryGetDashboardClient();
-      if (cli) {
-        for (const uid of [f.leaderDiscordId, f.deputyDiscordId, f.treasurerDiscordId]) {
-          if (uid) await assignFactionRole(cli, scope.guildId, uid, f.roleId);
-        }
-      }
-    }
-    // Uebersichts-Liste auto-refresh.
-    await refreshList(scope.guildId, req.auth!.userId, 'faction-created');
-    emitGuildEvent(scope.guildId, { type: 'faction.changed', payload: { guildId: scope.guildId, factionId: f.id } });
-    res.status(201).json({ id: f.id, name: f.name });
   } catch (e) {
     if ((e as { code?: string }).code === 'P2002') {
       res.status(409).json({ error: 'Fraktion mit diesem Namen existiert schon.' }); return;
     }
     throw e;
   }
+
+  let assets: Awaited<ReturnType<typeof materializeAssetFields>> | null = null;
+  try {
+    assets = await materializeAssetFields(v.data, scope.guildId, f.id);
+    if (Object.keys(assets.patch).length > 0) {
+      // eslint-disable-next-line local/no-unscoped-prisma-query -- f.id wurde gerade im Guild-Scope erzeugt.
+      f = await prisma.faction.update({ where: { id: f.id }, data: assets.patch });
+    }
+    await cleanupPaths(assets.draftPaths);
+  } catch (e) {
+    if (assets) await cleanupPaths(assets.createdPaths);
+    await fs.rm(path.resolve(UPLOADS_BASE, scope.guildId, f.id), { recursive: true, force: true }).catch(() => {});
+    // eslint-disable-next-line local/no-unscoped-prisma-query -- Rollback der unmittelbar zuvor erzeugten Faction.
+    await prisma.faction.delete({ where: { id: f.id } }).catch(() => {});
+    if (assetErrorResponse(res, e)) return;
+    throw e;
+  }
+
+  logAuditDb('FACTION_CREATED', 'FACTION', {
+    actorUserId: req.auth!.userId, guildId: scope.guildId,
+    details: { factionId: f.id, name: f.name },
+  });
+  const effectiveCh = await effectiveEmbedChannel({ embedChannelId: f.embedChannelId, guildId: scope.guildId });
+  if (effectiveCh) await refreshEmbed(f.id, scope.guildId, req.auth!.userId, 'create');
+  if (f.roleId) {
+    const cli = tryGetDashboardClient();
+    if (cli) {
+      for (const uid of [f.leaderDiscordId, f.deputyDiscordId, f.treasurerDiscordId]) {
+        if (uid) await assignFactionRole(cli, scope.guildId, uid, f.roleId);
+      }
+    }
+  }
+  await refreshList(scope.guildId, req.auth!.userId, 'faction-created');
+  emitGuildEvent(scope.guildId, { type: 'faction.changed', payload: { guildId: scope.guildId, factionId: f.id } });
+  res.status(201).json({ id: f.id, name: f.name });
 });
 
 factionsRouter.patch('/:id', requireGuildPermission('factions.manage'), async (req, res) => {
@@ -373,24 +528,42 @@ factionsRouter.patch('/:id', requireGuildPermission('factions.manage'), async (r
     if (err) { res.status(400).json({ error: err }); return; }
   }
 
+  let assets: Awaited<ReturnType<typeof materializeAssetFields>>;
+  try {
+    assets = await materializeAssetFields(v.data, scope.guildId, existing.id);
+  } catch (e) {
+    if (assetErrorResponse(res, e)) return;
+    throw e;
+  }
+
   if (willChangeChannel && existing.embedMessageId) {
     const client = tryGetDashboardClient();
     if (client) await unpostFactionEmbed(client, existing.id).catch(() => {});
   }
 
   try {
+    const nextData = { ...v.data, ...assets.patch };
     // eslint-disable-next-line local/no-unscoped-prisma-query -- existing.id wurde via guildId-Scope verifiziert.
-    const updated = await prisma.faction.update({ where: { id: existing.id }, data: v.data });
+    const updated = await prisma.faction.update({ where: { id: existing.id }, data: nextData });
+    await cleanupPaths(assets.draftPaths);
+    for (const kind of ['flag', 'banner', 'media'] as const) {
+      const field = assetField(kind);
+      if (!Object.prototype.hasOwnProperty.call(assets.patch, field)) continue;
+      const before = existing[field];
+      const after = assets.patch[field];
+      if (before && before !== after) {
+        const oldPath = ownedLocalPath(before, scope.guildId, existing.id);
+        if (oldPath) await fs.unlink(oldPath).catch(() => {});
+      }
+    }
     logAuditDb('FACTION_UPDATED', 'FACTION', {
       actorUserId: req.auth!.userId, guildId: scope.guildId,
-      details: { factionId: id, fields: Object.keys(v.data) },
+      details: { factionId: id, fields: Object.keys(nextData) },
     });
-    // Rolle-Wechsel: alte Rolle von allen entfernen, neue zuweisen.
     if (v.data.roleId !== undefined && existing.roleId !== updated.roleId) {
       const cli = tryGetDashboardClient();
       if (cli) {
         if (existing.roleId) {
-          // alte Rolle abnehmen
           // eslint-disable-next-line local/no-unscoped-prisma-query -- updated.id intern verifiziert.
           const mems = await prisma.factionMember.findMany({ where: { factionId: updated.id }, select: { userDiscordId: true } });
           const all = new Set<string>(mems.map(m => m.userDiscordId));
@@ -400,7 +573,6 @@ factionsRouter.patch('/:id', requireGuildPermission('factions.manage'), async (r
         if (updated.roleId) await syncFactionRoleAll(cli, updated.id);
       }
     } else if (updated.roleId) {
-      // Leadership-Wechsel: ggf. neue Leader-Rolle zuweisen.
       const cli = tryGetDashboardClient();
       if (cli) {
         for (const uid of [updated.leaderDiscordId, updated.deputyDiscordId, updated.treasurerDiscordId]) {
@@ -409,13 +581,12 @@ factionsRouter.patch('/:id', requireGuildPermission('factions.manage'), async (r
       }
     }
     const effectiveCh = await effectiveEmbedChannel({ embedChannelId: updated.embedChannelId, guildId: scope.guildId });
-    if (effectiveCh) {
-      await refreshEmbed(updated.id, scope.guildId, req.auth!.userId, 'update');
-    }
+    if (effectiveCh) await refreshEmbed(updated.id, scope.guildId, req.auth!.userId, 'update');
     await refreshList(scope.guildId, req.auth!.userId, 'faction-updated');
     emitGuildEvent(scope.guildId, { type: 'faction.changed', payload: { guildId: scope.guildId, factionId: id } });
     res.json({ ok: true });
   } catch (e) {
+    await cleanupPaths(assets.createdPaths);
     if ((e as { code?: string }).code === 'P2002') {
       res.status(409).json({ error: 'Fraktion mit diesem Namen existiert schon.' }); return;
     }
@@ -455,7 +626,6 @@ factionsRouter.delete('/:id', requireGuildPermission('factions.manage'), async (
     if (client) await unpostFactionEmbed(client, existing.id).catch(() => {});
   }
 
-  // Faction-Rolle von allen Mitgliedern entfernen (best-effort).
   if (existing.roleId) {
     const cli = tryGetDashboardClient();
     if (cli) {
@@ -467,7 +637,6 @@ factionsRouter.delete('/:id', requireGuildPermission('factions.manage'), async (
     }
   }
 
-  // Hochgeladene Dateien dieser Fraktion entfernen.
   const factionDir = path.join(UPLOADS_BASE, scope.guildId, existing.id);
   await fs.rm(factionDir, { recursive: true, force: true }).catch(() => {});
 
@@ -476,20 +645,19 @@ factionsRouter.delete('/:id', requireGuildPermission('factions.manage'), async (
   logAuditDb('FACTION_DELETED', 'FACTION', {
     actorUserId: req.auth!.userId, guildId: scope.guildId, details: { factionId: id, name: existing.name },
   });
-  // Liste auto-refresh (zeigt Loeschung in Discord-Sammelkanal).
   await refreshList(scope.guildId, req.auth!.userId, 'faction-deleted');
   emitGuildEvent(scope.guildId, { type: 'faction.changed', payload: { guildId: scope.guildId, factionId: id } });
   res.json({ ok: true });
 });
+
 /**
- * Draft-Upload (ohne Faction-ID): wird beim Anlegen einer neuen Fraktion verwendet,
- * solange noch keine ID existiert. Datei wird unter `_drafts/<uuid>.<ext>` abgelegt
- * und die zurueckgegebene URL spaeter in `flagUrl|bannerUrl|mediaUrl` persistiert.
+ * Draft-Upload (ohne Faction-ID): die Datei wird nach erfolgreichem Create/Patch
+ * in den permanenten Guild/Faction-Pfad uebernommen. Nur echte Bilder/GIFs.
  */
 factionsRouter.post(
   '/upload',
   requireGuildPermission('factions.manage'),
-  upload.single('file'),
+  uploadSingleFile,
   async (req, res) => {
     const scope = req.guildScope!;
     const kind = String(req.query.kind ?? '').toLowerCase();
@@ -498,38 +666,30 @@ factionsRouter.post(
       return;
     }
     const file = req.file;
-    if (!file) { res.status(400).json({ error: 'Keine Datei.' }); return; }
+    if (!file) { res.status(400).json({ error: 'Keine Datei.', code: 'ASSET_FILE_MISSING' }); return; }
     if (!ALLOWED_MIME.has(file.mimetype)) {
-      res.status(400).json({ error: 'Unerlaubter MIME-Type.' });
-      return;
-    }
-    if (file.size > MAX_UPLOAD_BYTES) {
-      res.status(400).json({ error: `Datei zu gross (max ${MAX_UPLOAD_BYTES / 1024 / 1024} MB).` });
+      res.status(400).json({ error: 'Nur JPG/PNG/WEBP/GIF erlaubt.', code: 'UNSUPPORTED_ASSET_TYPE' });
       return;
     }
     if (!verifyMagicNumber(file.mimetype, file.buffer)) {
-      res.status(400).json({ error: 'Dateiinhalt passt nicht zum MIME-Type (Magic-Number-Pruefung fehlgeschlagen).' });
+      res.status(400).json({ error: 'Dateiinhalt passt nicht zum MIME-Type.', code: 'INVALID_ASSET_CONTENT' });
       return;
     }
     const ext = extFor(file.mimetype);
     const dir = path.join(UPLOADS_BASE, scope.guildId, '_drafts');
     await fs.mkdir(dir, { recursive: true });
 
-    // Cleanup verwaister Draft-Uploads (>24h alt) — verhindert Disk-Leak
-    // wenn User Datei hochlaedt aber Faction nie erstellt. Best-Effort.
     try {
       const entries = await fs.readdir(dir);
       const cutoff = Date.now() - 24 * 60 * 60 * 1000;
       for (const entry of entries) {
         const stat = await fs.stat(path.join(dir, entry)).catch(() => null);
-        if (stat && stat.mtimeMs < cutoff) {
-          await fs.unlink(path.join(dir, entry)).catch(() => {});
-        }
+        if (stat && stat.mtimeMs < cutoff) await fs.unlink(path.join(dir, entry)).catch(() => {});
       }
     } catch { /* best-effort cleanup */ }
 
     const filename = `${kind}-${randomUUID()}${ext}`;
-    await fs.writeFile(path.join(dir, filename), file.buffer);
+    await fs.writeFile(path.join(dir, filename), file.buffer, { flag: 'wx' });
     const publicUrl = `/uploads/factions/${scope.guildId}/_drafts/${filename}`;
     logAuditDb('FACTION_ASSET_UPLOADED', 'FACTION', {
       actorUserId: req.auth!.userId, guildId: scope.guildId,
@@ -539,11 +699,10 @@ factionsRouter.post(
   },
 );
 
-
 factionsRouter.post(
   '/:id/upload',
   requireGuildPermission('factions.manage'),
-  upload.single('file'),
+  uploadSingleFile,
   async (req, res) => {
     const scope = req.guildScope!;
     const id = String(req.params.id);
@@ -553,58 +712,44 @@ factionsRouter.post(
       return;
     }
     const file = req.file;
-    if (!file) { res.status(400).json({ error: 'Keine Datei.' }); return; }
+    if (!file) { res.status(400).json({ error: 'Keine Datei.', code: 'ASSET_FILE_MISSING' }); return; }
     if (!ALLOWED_MIME.has(file.mimetype)) {
-      res.status(400).json({ error: 'Unerlaubter MIME-Type.' });
+      res.status(400).json({ error: 'Nur JPG/PNG/WEBP/GIF erlaubt.', code: 'UNSUPPORTED_ASSET_TYPE' });
       return;
     }
-    if (file.size > MAX_UPLOAD_BYTES) {
-      res.status(400).json({ error: `Datei zu gross (max ${MAX_UPLOAD_BYTES / 1024 / 1024} MB).` });
+    if (!verifyMagicNumber(file.mimetype, file.buffer)) {
+      res.status(400).json({ error: 'Dateiinhalt passt nicht zum MIME-Type.', code: 'INVALID_ASSET_CONTENT' });
       return;
     }
 
     const existing = await prisma.faction.findFirst({ where: { id, guildId: scope.guildId } });
     if (!existing) { res.status(404).json({ error: 'Fraktion nicht gefunden.' }); return; }
 
-    if (!verifyMagicNumber(file.mimetype, file.buffer)) {
-      res.status(400).json({ error: 'Dateiinhalt passt nicht zum MIME-Type (Magic-Number-Pruefung fehlgeschlagen).' });
-      return;
-    }
+    const typedKind = kind as AssetKind;
+    const detected = detectImage(file.buffer);
+    if (!detected) { res.status(400).json({ error: 'Ungueltiger Bildinhalt.', code: 'INVALID_ASSET_CONTENT' }); return; }
+    const stored = await writePermanentAsset(scope.guildId, existing.id, typedKind, file.buffer, detected.ext);
+    const field = assetField(typedKind);
+    const previous = existing[field];
 
-    const ext = extFor(file.mimetype);
-    const dir = path.join(UPLOADS_BASE, scope.guildId, existing.id);
-    await fs.mkdir(dir, { recursive: true });
-
-    // Alte Datei dieses kind loeschen (jede Endung).
     try {
-      const entries = await fs.readdir(dir);
-      for (const entry of entries) {
-        if (entry.startsWith(`${kind}.`)) {
-          await fs.unlink(path.join(dir, entry)).catch(() => {});
-        }
-      }
-    } catch { /* ignore */ }
+      // eslint-disable-next-line local/no-unscoped-prisma-query -- existing.id wurde via guildId-Scope verifiziert.
+      await prisma.faction.update({ where: { id: existing.id }, data: { [field]: stored.url } });
+    } catch (e) {
+      await fs.unlink(stored.fullPath).catch(() => {});
+      throw e;
+    }
+    const oldPath = ownedLocalPath(previous, scope.guildId, existing.id);
+    if (oldPath && oldPath !== stored.fullPath) await fs.unlink(oldPath).catch(() => {});
 
-    const filename = `${kind}${ext}`;
-    const fullPath = path.join(dir, filename);
-    await fs.writeFile(fullPath, file.buffer);
-
-    const publicUrl = `/uploads/factions/${scope.guildId}/${existing.id}/${filename}`;
-    const field = kind === 'flag' ? 'flagUrl' : kind === 'banner' ? 'bannerUrl' : 'mediaUrl';
-
-    // eslint-disable-next-line local/no-unscoped-prisma-query -- existing.id wurde via guildId-Scope verifiziert.
-    await prisma.faction.update({
-      where: { id: existing.id },
-      data: { [field]: publicUrl },
-    });
     logAuditDb('FACTION_ASSET_UPLOADED', 'FACTION', {
       actorUserId: req.auth!.userId, guildId: scope.guildId,
-      details: { factionId: existing.id, kind, mime: file.mimetype, size: file.size },
+      details: { factionId: existing.id, kind, mime: detected.mime, size: file.size },
     });
     const effCh3 = await effectiveEmbedChannel({ embedChannelId: existing.embedChannelId, guildId: scope.guildId });
     if (effCh3) await refreshEmbed(existing.id, scope.guildId, req.auth!.userId, `upload-${kind}`);
     emitGuildEvent(scope.guildId, { type: 'faction.changed', payload: { guildId: scope.guildId, factionId: existing.id } });
-    res.json({ url: publicUrl });
+    res.json({ url: stored.url });
   },
 );
 
@@ -615,17 +760,11 @@ factionsRouter.delete('/:id/asset', requireGuildPermission('factions.manage'), a
   if (!ALLOWED_KIND.has(kind)) { res.status(400).json({ error: 'kind muss flag|banner|media sein.' }); return; }
   const existing = await prisma.faction.findFirst({ where: { id, guildId: scope.guildId } });
   if (!existing) { res.status(404).json({ error: 'Fraktion nicht gefunden.' }); return; }
-  const field = kind === 'flag' ? 'flagUrl' : kind === 'banner' ? 'bannerUrl' : 'mediaUrl';
-  const current = (existing as unknown as Record<string, string | null>)[field];
+  const field = assetField(kind as AssetKind);
+  const current = existing[field];
 
-  // Nur lokale Uploads physisch loeschen; externe URLs bleiben unberuehrt.
-  if (current && LOCAL_PATH_RE.test(current)) {
-    const rel = current.replace(/^\//, ''); // 'uploads/factions/.../...'
-    const full = path.resolve(process.cwd(), rel);
-    if (full.startsWith(UPLOADS_BASE)) {
-      await fs.unlink(full).catch(() => {});
-    }
-  }
+  const full = ownedLocalPath(current, scope.guildId, existing.id);
+  if (full) await fs.unlink(full).catch(() => {});
 
   // eslint-disable-next-line local/no-unscoped-prisma-query -- existing.id wurde via guildId-Scope verifiziert.
   await prisma.faction.update({ where: { id: existing.id }, data: { [field]: null } });
@@ -673,9 +812,7 @@ factionsRouter.delete('/:id/members/:userDiscordId', requireGuildPermission('fac
   const f = await prisma.faction.findFirst({ where: { id: String(req.params.id), guildId: scope.guildId } });
   if (!f) { res.status(404).json({ error: 'Fraktion nicht gefunden.' }); return; }
   // eslint-disable-next-line local/no-unscoped-prisma-query -- f.id wurde oben mit guildId-Scope verifiziert; FactionMember erbt Scope via FK
-  const out = await prisma.factionMember.deleteMany({
-    where: { factionId: f.id, userDiscordId: target },
-  });
+  const out = await prisma.factionMember.deleteMany({ where: { factionId: f.id, userDiscordId: target } });
   if (out.count === 0) { res.status(404).json({ error: 'Member nicht gefunden.' }); return; }
   logAuditDb('FACTION_MEMBER_REMOVED', 'FACTION', { actorUserId: req.auth!.userId, guildId: scope.guildId, details: { factionId: f.id, target } });
   if (f.roleId) {
@@ -695,11 +832,7 @@ factionsRouter.delete('/:id/members/:userDiscordId', requireGuildPermission('fac
 
 factionsRouter.get('/system-config', requireGuildPermission('factions.view'), async (req, res) => {
   const scope = req.guildScope!;
-  // Strikter Read-only-Vertrag: ein Viewer-GET darf nie lazy-init/create/upsert
-  // ausloesen. Eine nie konfigurierte Guild erhaelt kanonische Defaults.
-  const cfg = await prisma.factionSystemConfig.findUnique({
-    where: { guildId: scope.guildId },
-  });
+  const cfg = await prisma.factionSystemConfig.findUnique({ where: { guildId: scope.guildId } });
   res.json({
     factionChannelId: cfg?.factionChannelId ?? null,
     listMessageId: cfg?.listMessageId ?? null,
@@ -720,14 +853,10 @@ factionsRouter.put('/system-config', requireGuildPermission('factions.manage'), 
     if (err) { res.status(400).json({ error: err }); return; }
   }
 
-  const before = await prisma.factionSystemConfig.findUnique({
-    where: { guildId: scope.guildId },
-  });
+  const before = await prisma.factionSystemConfig.findUnique({ where: { guildId: scope.guildId } });
   const oldChannelId = before?.factionChannelId ?? null;
   const channelChanged = oldChannelId !== newChId;
 
-  // Bei Channel-Wechsel: alte Uebersicht + alle Faction-Embeds entfernen, die den
-  // System-Channel als Fallback nutzten (faction.embedChannelId IS NULL).
   if (channelChanged && oldChannelId) {
     const client = tryGetDashboardClient();
     if (client) {
@@ -736,33 +865,20 @@ factionsRouter.put('/system-config', requireGuildPermission('factions.manage'), 
         where: { guildId: scope.guildId, embedChannelId: null, embedMessageId: { not: null } },
         select: { id: true },
       });
-      for (const of of orphanFactions) {
-        await unpostFactionEmbed(client, of.id).catch(() => {});
-      }
+      for (const of of orphanFactions) await unpostFactionEmbed(client, of.id).catch(() => {});
     }
   }
 
-  // First-write und Update teilen dieselbe atomare DB-Operation. Damit gibt es
-  // keinen findUnique->create-P2002-Race mehr; die vorgelagerte per-Guild
-  // Advisory-Lock-Barriere serialisiert zusaetzlich parallele Dashboard-Mutationen.
   const updated = await prisma.factionSystemConfig.upsert({
     where: { guildId: scope.guildId },
-    create: {
-      guildId: scope.guildId,
-      factionChannelId: newChId,
-      listMessageId: null,
-    },
-    update: {
-      factionChannelId: newChId,
-      ...(channelChanged ? { listMessageId: null } : {}),
-    },
+    create: { guildId: scope.guildId, factionChannelId: newChId, listMessageId: null },
+    update: { factionChannelId: newChId, ...(channelChanged ? { listMessageId: null } : {}) },
   });
   logAuditDb('FACTION_SYSTEM_CONFIG_UPDATED', 'FACTION', {
     actorUserId: req.auth!.userId, guildId: scope.guildId,
     details: { factionChannelId: newChId, channelChanged },
   });
 
-  // Wenn neuer Channel gesetzt: Faction-Embeds (ohne eigenen Channel) + Liste neu posten.
   if (newChId) {
     const client = tryGetDashboardClient();
     if (client) {
@@ -783,11 +899,7 @@ factionsRouter.put('/system-config', requireGuildPermission('factions.manage'), 
   }
 
   emitGuildEvent(scope.guildId, { type: 'faction.changed', payload: { guildId: scope.guildId, factionId: 'system-config' } });
-  res.json({
-    factionChannelId: updated.factionChannelId,
-    listMessageId: updated.listMessageId,
-    updatedAt: updated.updatedAt.toISOString(),
-  });
+  res.json({ factionChannelId: updated.factionChannelId, listMessageId: updated.listMessageId, updatedAt: updated.updatedAt.toISOString() });
 });
 
 // ============================================================================
@@ -800,7 +912,6 @@ factionsRouter.get('/lookups/channels', requireGuildPermission('factions.manage'
   if (!client) { res.json({ channels: [] }); return; }
   const guild = await client.guilds.fetch(asGuildId(scope.guildId)).catch(() => null);
   if (!guild) { res.status(404).json({ error: 'Guild nicht erreichbar.' }); return; }
-  // Nur Text-/Announcement-/Forum-Channel.
   const TEXT_TYPES = new Set([0, 5, 15]);
   const channels = guild.channels.cache
     .filter(ch => TEXT_TYPES.has(ch.type as number))
@@ -817,29 +928,22 @@ factionsRouter.get('/lookups/members', requireGuildPermission('factions.manage')
   const guild = await client.guilds.fetch(asGuildId(scope.guildId)).catch(() => null);
   if (!guild) { res.status(404).json({ error: 'Guild nicht erreichbar.' }); return; }
 
-  // Wenn Suche < 2 Zeichen: Top-25 (cache) zurueck.
   let members;
-  if (q.length >= 2) {
-    members = await guild.members.fetch({ query: q, limit: 25 }).catch(() => null);
-  } else {
-    members = guild.members.cache;
-  }
+  if (q.length >= 2) members = await guild.members.fetch({ query: q, limit: 25 }).catch(() => null);
+  else members = guild.members.cache;
   if (!members) { res.json({ members: [] }); return; }
 
-  const list = Array.from(members.values())
-    .slice(0, 25)
-    .map(m => ({
-      id: m.id,
-      username: m.user.username,
-      globalName: m.user.globalName ?? null,
-      displayName: m.displayName,
-      avatarUrl: m.user.displayAvatarURL({ size: 64 }),
-      bot: m.user.bot,
-    }));
+  const list = Array.from(members.values()).slice(0, 25).map(m => ({
+    id: m.id,
+    username: m.user.username,
+    globalName: m.user.globalName ?? null,
+    displayName: m.displayName,
+    avatarUrl: m.user.displayAvatarURL({ size: 64 }),
+    bot: m.user.bot,
+  }));
   res.json({ members: list });
 });
 
-// Lookup einzelner User (zum Auflösen einer gespeicherten Discord-ID -> Anzeige).
 factionsRouter.get('/lookups/members/:userId', requireGuildPermission('factions.view'), async (req, res) => {
   const scope = req.guildScope!;
   const userId = String(req.params.userId);
@@ -869,14 +973,8 @@ factionsRouter.get('/lookups/roles', requireGuildPermission('factions.manage'), 
   const me = guild.members.me;
   const myTop = me?.roles.highest.position ?? 0;
   const roles = guild.roles.cache
-    .filter(r => !r.managed && r.id !== guild.id) // @everyone + integration-roles ausblenden
-    .map(r => ({
-      id: r.id,
-      name: r.name,
-      color: r.hexColor,
-      position: r.position,
-      assignable: r.position < myTop,
-    }))
+    .filter(r => !r.managed && r.id !== guild.id)
+    .map(r => ({ id: r.id, name: r.name, color: r.hexColor, position: r.position, assignable: r.position < myTop }))
     .sort((a, b) => b.position - a.position);
   res.json({ roles });
 });

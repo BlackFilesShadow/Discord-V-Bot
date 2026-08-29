@@ -25,6 +25,7 @@ import { logAudit, logger } from '../../utils/logger';
 const postLocks = new Map<string, Promise<unknown>>();
 
 const UPLOADS_BASE = path.resolve(process.cwd(), 'uploads', 'factions');
+const LEGACY_VIDEO_URL_RE = /\.(?:mp4|webm|mov)(?:$|[?#])/i;
 
 const STATUS_LABELS: Record<string, { label: string; emoji: string }> = {
   ACTIVE: { label: 'Aktiv', emoji: '🟢' },
@@ -40,6 +41,11 @@ function parseColor(hex: string | null | undefined, fallback = 0xdc2626): number
   return parseInt(m[1], 16);
 }
 
+function usableRemoteImageUrl(url: string | null | undefined): string | null {
+  if (!url || !/^https?:\/\//i.test(url) || LEGACY_VIDEO_URL_RE.test(url)) return null;
+  return url;
+}
+
 interface FactionEmbedData {
   id: string;
   guildId: string;
@@ -49,6 +55,7 @@ interface FactionEmbedData {
   color: string | null;
   flagUrl: string | null;
   bannerUrl: string | null;
+  mediaUrl: string | null;
   leaderDiscordId: string | null;
   deputyDiscordId: string | null;
   treasurerDiscordId: string | null;
@@ -65,7 +72,7 @@ interface FactionEmbedData {
 
 function buildEmbed(
   f: FactionEmbedData,
-  attachmentNames: { flag?: string; banner?: string },
+  attachmentNames: { flag?: string; large?: string },
   guildName: string,
 ): EmbedBuilder {
   const status = STATUS_LABELS[f.status] ?? STATUS_LABELS.ACTIVE;
@@ -112,10 +119,18 @@ function buildEmbed(
   );
 
   if (attachmentNames.flag) e.setThumbnail(`attachment://${attachmentNames.flag}`);
-  else if (f.flagUrl && /^https?:\/\//i.test(f.flagUrl)) e.setThumbnail(f.flagUrl);
+  else {
+    const flagUrl = usableRemoteImageUrl(f.flagUrl);
+    if (flagUrl) e.setThumbnail(flagUrl);
+  }
 
-  if (attachmentNames.banner) e.setImage(`attachment://${attachmentNames.banner}`);
-  else if (f.bannerUrl && /^https?:\/\//i.test(f.bannerUrl)) e.setImage(f.bannerUrl);
+  // mediaUrl ist das explizite grosse Embed-Medium. bannerUrl bleibt aus
+  // Kompatibilitaetsgruenden der Fallback, falls kein mediaUrl gesetzt ist.
+  if (attachmentNames.large) e.setImage(`attachment://${attachmentNames.large}`);
+  else {
+    const largeUrl = usableRemoteImageUrl(f.mediaUrl) ?? usableRemoteImageUrl(f.bannerUrl);
+    if (largeUrl) e.setImage(largeUrl);
+  }
 
   return e;
 }
@@ -126,24 +141,27 @@ function buildEmbed(
  */
 async function buildAttachments(f: FactionEmbedData): Promise<{
   files: AttachmentBuilder[];
-  names: { flag?: string; banner?: string };
+  names: { flag?: string; large?: string };
 }> {
   const files: AttachmentBuilder[] = [];
-  const names: { flag?: string; banner?: string } = {};
+  const names: { flag?: string; large?: string } = {};
+  const candidates: Array<{ slot: 'flag' | 'large'; url: string | null }> = [
+    { slot: 'flag', url: f.flagUrl },
+    { slot: 'large', url: f.mediaUrl ?? f.bannerUrl },
+  ];
 
-  for (const kind of ['flag', 'banner'] as const) {
-    const url = kind === 'flag' ? f.flagUrl : f.bannerUrl;
+  for (const { slot, url } of candidates) {
     if (!url || !url.startsWith('/uploads/factions/')) continue;
     const rel = url.replace(/^\//, '');
     const full = path.resolve(process.cwd(), rel);
-    if (!full.startsWith(UPLOADS_BASE)) continue; // Path-Traversal-Schutz
+    if (!full.startsWith(`${UPLOADS_BASE}${path.sep}`)) continue; // Path-Traversal-Schutz
     try {
       const buf = await fs.readFile(full);
       const filename = path.basename(full);
       files.push(new AttachmentBuilder(buf, { name: filename }));
-      names[kind] = filename;
+      names[slot] = filename;
     } catch (e) {
-      logger.warn(`Faction-Asset (${kind}) nicht ladbar: ${(e as Error).message}`);
+      logger.warn(`Faction-Asset (${slot}) nicht ladbar: ${(e as Error).message}`);
     }
   }
   return { files, names };
@@ -174,6 +192,7 @@ async function loadFaction(factionId: string): Promise<FactionEmbedData | null> 
     color: f.color,
     flagUrl: f.flagUrl,
     bannerUrl: f.bannerUrl,
+    mediaUrl: f.mediaUrl,
     leaderDiscordId: f.leaderDiscordId,
     deputyDiscordId: f.deputyDiscordId,
     treasurerDiscordId: f.treasurerDiscordId,
