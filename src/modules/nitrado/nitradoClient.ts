@@ -462,8 +462,18 @@ export class NitradoClient {
    * Live-Sync bei transienten CDN/FileServer-Fehlern nicht nach einem Versuch
    * abbricht und Statuscodes nicht als rohe Axios-Fehler verloren gehen.
    */
-  private async fetchSignedText(meta: SignedFileToken, maxBytes: number, fullPath: string): Promise<string> {
+  private async fetchSignedText(
+    meta: SignedFileToken,
+    maxBytes: number,
+    fullPath: string,
+    range?: { offset: number; count: number },
+  ): Promise<string> {
     if (!meta.url) throw new NitradoApiError('Keine Download-URL', null, fullPath);
+
+    const params = {
+      ...(meta.token ? { token: meta.token } : {}),
+      ...(range ? { offset: range.offset, count: range.count } : {}),
+    };
 
     let lastErr: Error | null = null;
     for (let attempt = 1; attempt <= 3; attempt++) {
@@ -471,7 +481,7 @@ export class NitradoClient {
         const res = await axios.get<string>(meta.url, {
           responseType: 'text',
           timeout: 30_000,
-          params: meta.token ? { token: meta.token } : undefined,
+          params: Object.keys(params).length > 0 ? params : undefined,
           maxContentLength: maxBytes,
           maxBodyLength: maxBytes,
           validateStatus: () => true,
@@ -517,9 +527,38 @@ export class NitradoClient {
     return this.fetchSignedText(token, MAX_DOWNLOAD_BYTES, fullPath);
   }
 
+  private isSeekDownloadFallbackError(error: unknown, seekPath: string): error is NitradoApiError {
+    if (!(error instanceof NitradoApiError) || error.endpoint !== seekPath) return false;
+    return /length limit exceeded|use file download instead/i.test(error.message);
+  }
+
+  private async downloadFileRangeViaDownload(
+    serviceId: string,
+    fullPath: string,
+    offset: number,
+    length: number,
+  ): Promise<string> {
+    const meta = await this.request<{ data: { token?: SignedFileToken } }>(
+      'GET',
+      `/services/${serviceId}/gameservers/file_server/download`,
+      { params: { file: fullPath } },
+    );
+    const token = meta.data?.token;
+    if (!token?.url) throw new NitradoApiError('Keine Download-URL', null, fullPath);
+    return this.fetchSignedText(
+      token,
+      Math.min(length + 4096, MAX_SEEK_BYTES),
+      fullPath,
+      { offset, count: length },
+    );
+  }
+
   /**
-   * Liest einen Byte-Bereich einer Datei ueber file_server/seek. Das ist der
-   * produktive Live-ADM-Pfad und verhindert wiederholte Voll-Downloads.
+   * Liest einen Byte-Bereich primaer ueber file_server/seek. Falls Nitrado fuer
+   * genau diesen Seek den dokumentierten Length-Limit-Hinweis liefert, wird
+   * derselbe Byte-Bereich ueber den signierten file_server/download-Pfad mit
+   * offset/count gelesen. Cursor, Chunk-Groesse und ADM-Ingestion bleiben damit
+   * unveraendert; alle anderen Seek-Fehler werden weiterhin unveraendert geworfen.
    */
   async downloadFileRange(serviceId: string, fullPath: string, offset: number, length: number): Promise<string> {
     if (!Number.isSafeInteger(offset) || offset < 0) {
@@ -528,14 +567,21 @@ export class NitradoClient {
     if (!Number.isSafeInteger(length) || length <= 0 || length > MAX_SEEK_BYTES) {
       throw new NitradoApiError('Ungueltige Seek-Laenge', null, fullPath);
     }
-    const meta = await this.request<{ data: { token?: SignedFileToken } }>(
-      'GET',
-      `/services/${serviceId}/gameservers/file_server/seek`,
-      { params: { file: fullPath, offset, length, mode: 'raw' } },
-    );
-    const token = meta.data?.token;
-    if (!token?.url) throw new NitradoApiError('Keine Seek-URL', null, fullPath);
-    return this.fetchSignedText(token, Math.min(length + 4096, MAX_SEEK_BYTES), fullPath);
+
+    const seekPath = `/services/${serviceId}/gameservers/file_server/seek`;
+    try {
+      const meta = await this.request<{ data: { token?: SignedFileToken } }>(
+        'GET',
+        seekPath,
+        { params: { file: fullPath, offset, length, mode: 'raw' } },
+      );
+      const token = meta.data?.token;
+      if (!token?.url) throw new NitradoApiError('Keine Seek-URL', null, fullPath);
+      return this.fetchSignedText(token, Math.min(length + 4096, MAX_SEEK_BYTES), fullPath);
+    } catch (error) {
+      if (!this.isSeekDownloadFallbackError(error, seekPath)) throw error;
+      return this.downloadFileRangeViaDownload(serviceId, fullPath, offset, length);
+    }
   }
 
   async restart(serviceId: string, message?: string): Promise<void> {
