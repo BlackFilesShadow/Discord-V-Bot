@@ -1,12 +1,10 @@
 /**
  * Gameplay-Feed Runtime V2.
  *
- * Source-of-Truth ist AdmEvent. Pro Config wird ein persistenter Scan-Cursor
- * gefuehrt, wodurch neue Events auch bei >200/1000 Historieneintraegen sicher
- * erreicht werden. Discord-Zustellungen besitzen Lease/Retry und nutzen einen
- * stabilen Discord-Nonce pro Feed-Config + ADM-Event, damit Retries keine sichtbaren
- * technischen Marker im Embed benoetigen und dasselbe Ereignis weiterhin in
- * mehreren bewusst konfigurierten Feed-Kanaelen zugestellt werden kann.
+ * Source-of-Truth sind AdmEvent bzw. fuer kanonische Flaggenaktionen
+ * FlagActivityEvent. Pro Config wird ein persistenter Scan-Cursor gefuehrt,
+ * wodurch neue Events auch bei grosser Historie sicher erreicht werden.
+ * Discord-Zustellungen besitzen Lease/Retry und einen stabilen Discord-Nonce.
  */
 
 import { createHash } from 'node:crypto';
@@ -18,13 +16,19 @@ import {
   type GameplayFeedConfig,
   type GameplayFeedDelivery,
 } from '@prisma/client';
-import type { GuildTextBasedChannel } from 'discord.js';
+import {
+  ActionRowBuilder,
+  ButtonBuilder,
+  ButtonStyle,
+  type GuildTextBasedChannel,
+} from 'discord.js';
 import prisma from '../../database/prisma';
 import { logger } from '../../utils/logger';
 import { tryGetDashboardClient } from '../../dashboard/clientRegistry';
 import { emitServerGameplayEvent } from '../../dashboard/socket/emitter';
 import { admBindingFileIdentityPrefix } from '../nitrado/adm/bindingState';
 import { buildGameplayFeedEmbed } from './embedBuilder';
+import { buildFlagActivityCustomId } from './flagActivity';
 import {
   BUILD_EVENT_TYPES,
   DEATH_EVENT_TYPES,
@@ -65,14 +69,11 @@ function safeError(error: unknown): string {
 }
 
 function eventTypes(kind: GameplayFeedKind): AdmEventType[] {
-  if (kind === GameplayFeedKind.PLAYER_LIST) return [];
+  if (kind === GameplayFeedKind.PLAYER_LIST || kind === GameplayFeedKind.FLAG) return [];
   return (kind === GameplayFeedKind.DEATH ? [...DEATH_EVENT_TYPES] : [...BUILD_EVENT_TYPES]) as AdmEventType[];
 }
 
 function eventNonce(configId: string, eventId: string): string {
-  // Discord prueft enforce_nonce laut API fuer denselben Autor ueber die letzten
-  // Minuten. Nur eventId waere deshalb zu breit: derselbe AdmEvent darf in zwei
-  // bewusst getrennten Feed-Configs/Kanaelen jeweils genau einmal erscheinen.
   return createHash('sha256')
     .update(`gameplay-feed\u0000${configId}\u0000${eventId}`)
     .digest('hex')
@@ -84,6 +85,34 @@ function playerListNonce(configId: string, stateHash: string, postKey = 'state')
     .update(`online-list\u0000${configId}\u0000${stateHash}\u0000${postKey}`)
     .digest('hex')
     .slice(0, 25);
+}
+
+function flagRowToGameplayEvent(row: {
+  id: string;
+  action: 'RAISED' | 'LOWERED';
+  occurredAt: Date | null;
+  createdAt: Date;
+  actorGameId: string | null;
+  actorName: string | null;
+  actorPosition: string | null;
+  flagType: string | null;
+  flagPosition: string | null;
+}): GameplayAdmEvent {
+  return {
+    id: row.id,
+    eventType: row.action === 'RAISED' ? 'FLAG_RAISED' : 'FLAG_LOWERED',
+    occurredAt: row.occurredAt,
+    createdAt: row.createdAt,
+    actorGameId: row.actorGameId,
+    actorName: row.actorName,
+    targetGameId: null,
+    targetName: 'TerritoryFlag',
+    objectType: row.flagType,
+    toolOrWeapon: null,
+    distanceMeters: null,
+    actorPosition: row.actorPosition,
+    targetPosition: row.flagPosition,
+  };
 }
 
 async function createDeliveryIfNeeded(config: GameplayFeedConfig, event: GameplayAdmEvent): Promise<void> {
@@ -104,40 +133,81 @@ async function createDeliveryIfNeeded(config: GameplayFeedConfig, event: Gamepla
   }
 }
 
+async function scanFlagEvents(
+  config: GameplayFeedConfig,
+  cursorCreatedAt: Date,
+  cursorEventId: string,
+): Promise<GameplayAdmEvent[]> {
+  const rows = await prisma.flagActivityEvent.findMany({
+    where: {
+      guildId: config.guildId,
+      nitradoConnId: config.nitradoConnId,
+      OR: [
+        { createdAt: { gt: cursorCreatedAt } },
+        { createdAt: cursorCreatedAt, id: { gt: cursorEventId } },
+      ],
+    },
+    orderBy: [{ createdAt: 'asc' }, { id: 'asc' }],
+    take: SCAN_BATCH,
+    select: {
+      id: true,
+      action: true,
+      occurredAt: true,
+      createdAt: true,
+      actorGameId: true,
+      actorName: true,
+      actorPosition: true,
+      flagType: true,
+      flagPosition: true,
+    },
+  });
+  return rows.map(row => flagRowToGameplayEvent(row));
+}
+
+async function scanAdmEvents(
+  config: GameplayFeedConfig,
+  cursorCreatedAt: Date,
+  cursorEventId: string,
+): Promise<GameplayAdmEvent[]> {
+  return prisma.admEvent.findMany({
+    where: {
+      guildId: config.guildId,
+      nitradoConnId: config.nitradoConnId,
+      eventType: { in: eventTypes(config.kind) },
+      OR: [
+        { createdAt: { gt: cursorCreatedAt } },
+        { createdAt: cursorCreatedAt, id: { gt: cursorEventId } },
+      ],
+    },
+    orderBy: [{ createdAt: 'asc' }, { id: 'asc' }],
+    take: SCAN_BATCH,
+    select: {
+      id: true,
+      eventType: true,
+      occurredAt: true,
+      createdAt: true,
+      actorGameId: true,
+      actorName: true,
+      targetGameId: true,
+      targetName: true,
+      objectType: true,
+      toolOrWeapon: true,
+      distanceMeters: true,
+      actorPosition: true,
+      targetPosition: true,
+    },
+  }) as Promise<GameplayAdmEvent[]>;
+}
+
 /** Scannt ausschliesslich hinter dem persistenten High-Watermark. */
 async function enqueueNewEvents(config: GameplayFeedConfig): Promise<void> {
   let cursorCreatedAt = config.cursorCreatedAt;
   let cursorEventId = config.cursorEventId;
 
   for (let batchNo = 0; batchNo < MAX_SCAN_BATCHES_PER_TICK; batchNo++) {
-    const events = await prisma.admEvent.findMany({
-      where: {
-        guildId: config.guildId,
-        nitradoConnId: config.nitradoConnId,
-        eventType: { in: eventTypes(config.kind) },
-        OR: [
-          { createdAt: { gt: cursorCreatedAt } },
-          { createdAt: cursorCreatedAt, id: { gt: cursorEventId } },
-        ],
-      },
-      orderBy: [{ createdAt: 'asc' }, { id: 'asc' }],
-      take: SCAN_BATCH,
-      select: {
-        id: true,
-        eventType: true,
-        occurredAt: true,
-        createdAt: true,
-        actorGameId: true,
-        actorName: true,
-        targetGameId: true,
-        targetName: true,
-        objectType: true,
-        toolOrWeapon: true,
-        distanceMeters: true,
-        actorPosition: true,
-        targetPosition: true,
-      },
-    }) as GameplayAdmEvent[];
+    const events = config.kind === GameplayFeedKind.FLAG
+      ? await scanFlagEvents(config, cursorCreatedAt, cursorEventId)
+      : await scanAdmEvents(config, cursorCreatedAt, cursorEventId);
 
     if (events.length === 0) break;
     for (const event of events) await createDeliveryIfNeeded(config, event);
@@ -226,6 +296,45 @@ async function failDelivery(
   ]);
 }
 
+async function loadDeliveryEvent(config: GameplayFeedConfig, eventId: string): Promise<GameplayAdmEvent | null> {
+  if (config.kind === GameplayFeedKind.FLAG) {
+    const row = await prisma.flagActivityEvent.findFirst({
+      where: { id: eventId, guildId: config.guildId, nitradoConnId: config.nitradoConnId },
+      select: {
+        id: true,
+        action: true,
+        occurredAt: true,
+        createdAt: true,
+        actorGameId: true,
+        actorName: true,
+        actorPosition: true,
+        flagType: true,
+        flagPosition: true,
+      },
+    });
+    return row ? flagRowToGameplayEvent(row) : null;
+  }
+
+  return prisma.admEvent.findFirst({
+    where: { id: eventId, guildId: config.guildId, nitradoConnId: config.nitradoConnId },
+    select: {
+      id: true,
+      eventType: true,
+      occurredAt: true,
+      createdAt: true,
+      actorGameId: true,
+      actorName: true,
+      targetGameId: true,
+      targetName: true,
+      objectType: true,
+      toolOrWeapon: true,
+      distanceMeters: true,
+      actorPosition: true,
+      targetPosition: true,
+    },
+  }) as Promise<GameplayAdmEvent | null>;
+}
+
 async function deliverOne(
   config: GameplayFeedConfig,
   delivery: GameplayFeedDelivery,
@@ -260,29 +369,8 @@ async function deliverOne(
 
   const claimedDelivery = { ...delivery, status: GameplayDeliveryStatus.SENDING } as GameplayFeedDelivery;
   try {
-    const event = await prisma.admEvent.findFirst({
-      where: {
-        id: delivery.admEventId,
-        guildId: config.guildId,
-        nitradoConnId: config.nitradoConnId,
-      },
-      select: {
-        id: true,
-        eventType: true,
-        occurredAt: true,
-        createdAt: true,
-        actorGameId: true,
-        actorName: true,
-        targetGameId: true,
-        targetName: true,
-        objectType: true,
-        toolOrWeapon: true,
-        distanceMeters: true,
-        actorPosition: true,
-        targetPosition: true,
-      },
-    }) as GameplayAdmEvent | null;
-    if (!event) throw new Error('ADM-Ereignis fuer Feed-Zustellung nicht mehr vorhanden');
+    const event = await loadDeliveryEvent(config, delivery.admEventId);
+    if (!event) throw new Error('Gameplay-Ereignis fuer Feed-Zustellung nicht mehr vorhanden');
     if (!categoryAllowed(config.kind, config.categories, event.eventType)) {
       await prisma.gameplayFeedDelivery.updateMany({
         where: {
@@ -335,8 +423,19 @@ async function deliverOne(
     });
     if (!view) throw new Error(`Nicht unterstuetzter Gameplay-Eventtyp: ${event.eventType}`);
 
+    const components = view.kind === 'FLAG'
+      ? [new ActionRowBuilder<ButtonBuilder>().addComponents(
+          new ButtonBuilder()
+            .setCustomId(buildFlagActivityCustomId(event.id))
+            .setStyle(ButtonStyle.Secondary)
+            .setEmoji('🔎')
+            .setLabel('Kurz-Online prüfen'),
+        )]
+      : [];
+
     const message = await textChannel.send({
       embeds: [buildGameplayFeedEmbed(view, config.embedColor, serverAlias)],
+      components,
       allowedMentions: { parse: [] },
       nonce: eventNonce(config.id, event.id),
       enforceNonce: true,
@@ -367,10 +466,6 @@ async function deliverOne(
 }
 
 async function currentPlayerList(config: GameplayFeedConfig): Promise<PlayerListEntry[]> {
-  // Die Online List ist ein Live-Roster und darf deshalb niemals historische
-  // PlayerSession.status=OPEN-Zeilen als Wahrheit verwenden. Ein Reconnect kann
-  // absichtlich eine alte Session OPEN lassen; fuer "online" entscheidet nur
-  // das neueste CONNECT/DISCONNECT der aktuell laufenden ADM-Datei.
   const binding = await prisma.nitradoAdmBindingState.findUnique({
     where: {
       guildId_nitradoConnId: {
@@ -466,8 +561,6 @@ async function processPlayerListConfig(config: GameplayFeedConfig, serverAlias: 
       generatedAt: now,
     });
 
-    // The dashboard can disable the feed while the ADM snapshot is being read.
-    // Re-check immediately before the only external side effect (Discord).
     const stillActive = await prisma.gameplayFeedConfig.count({
       where: {
         id: config.id,
@@ -478,9 +571,6 @@ async function processPlayerListConfig(config: GameplayFeedConfig, serverAlias: 
     });
     if (stillActive !== 1) return;
 
-    // Ein faelliges Intervall erzeugt bewusst einen neuen Discord-Post. Reine
-    // Zustandsaenderungen aktualisieren dagegen weiterhin die zuletzt gesendete
-    // Online List, damit Join/Leave/Positionsaenderungen nicht den Kanal fluten.
     let messageId = periodicDue ? null : config.lastMessageId;
     if (messageId) {
       const message = await textChannel.messages.fetch(messageId).catch(() => null);
@@ -526,12 +616,6 @@ async function processPlayerListConfig(config: GameplayFeedConfig, serverAlias: 
   }
 }
 
-/**
- * Reserviert einen Discord-Ausgabe-Slot nicht nur pro Config, sondern pro
- * Guild+Channel. Die kanonisch erste Config-Zeile des Channels dient als
- * transaktionaler FOR-UPDATE-Mutex, damit auch mehrere Bot-Prozesse nicht
- * gleichzeitig je einen Feedpost in denselben Channel schicken koennen.
- */
 async function reserveChannelDeliverySlot(config: GameplayFeedConfig): Promise<boolean> {
   const now = new Date();
   const next = new Date(now.getTime() + DELIVERY_SPACING_MS);
@@ -637,9 +721,6 @@ export async function runGameplayFeedsOnce(): Promise<void> {
   if (running) return;
   running = true;
   try {
-    // Globaler Recovery-Sweep; jede spaetere Zustellung ist wieder strikt an
-    // configId+guildId+nitradoConnId gebunden. Der Discord-Nonce verhindert,
-    // dass ein Retry nach einem erfolgreichen Send einen sichtbaren Duplikatpost erzeugt.
     // eslint-disable-next-line local/no-unscoped-prisma-query -- globaler Lease-Recovery-Sweep
     await prisma.gameplayFeedDelivery.updateMany({
       where: {
