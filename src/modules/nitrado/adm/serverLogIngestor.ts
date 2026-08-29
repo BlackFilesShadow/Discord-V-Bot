@@ -122,7 +122,10 @@ export interface AdmSourceMeta {
 
 export interface AdmPersistClient {
   admEvent: { createMany: (args: { data: unknown[]; skipDuplicates?: boolean }) => Promise<{ count: number }> };
-  flagActivityEvent: { createMany: (args: { data: unknown[]; skipDuplicates?: boolean }) => Promise<{ count: number }> };
+  // Optional im Test-/Legacy-Client: Nur echte Flaggenereignisse benoetigen
+  // diesen Port. Der produktive PrismaClient besitzt ihn durch das additive
+  // FlagActivityEvent-Schema immer.
+  flagActivityEvent?: { createMany: (args: { data: unknown[]; skipDuplicates?: boolean }) => Promise<{ count: number }> };
   admSourceCursor: { upsert: (args: unknown) => Promise<unknown> };
   $transaction: <T>(fn: (tx: AdmPersistClient) => Promise<T>) => Promise<T>;
 }
@@ -195,6 +198,9 @@ export async function persistAdmEvents(
       inserted = created.count;
     }
     if (flagRows.length > 0) {
+      if (!tx.flagActivityEvent) {
+        throw new Error('FlagActivityEvent-Persistenz ist fuer ein erkanntes Flaggenereignis nicht verfuegbar');
+      }
       await tx.flagActivityEvent.createMany({ data: flagRows, skipDuplicates: true });
     }
     await tx.admSourceCursor.upsert({
