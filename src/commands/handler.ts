@@ -60,6 +60,11 @@ type JsonOption = {
  * wird diese Option zentral als String-Autocomplete publiziert. Damit muessen
  * alte Commands nicht jeweils ihre eigene Alias-UI implementieren und alle
  * sichtbaren Serverauswahlen verwenden dieselbe Connection-ID als stabilen Wert.
+ *
+ * Wichtig: Nur OPTIONS duerfen normalisiert werden. Es existiert zugleich der
+ * echte Slash-Command `/slot` (Casino). Dessen Root-Objekt muss ein Chat-Input-
+ * Command bleiben und darf niemals wegen seines Namens in einen String-Option-
+ * Typ umgeschrieben werden.
  */
 function normalizeServerAliasOption(option: JsonOption): JsonOption {
   const nested = Array.isArray(option.options)
@@ -80,12 +85,21 @@ function normalizeServerAliasOption(option: JsonOption): JsonOption {
 }
 
 export function normalizeServerAliasOptionsForDeploy(json: CommandJson): CommandJson {
-  return normalizeServerAliasOption(json as unknown as JsonOption) as unknown as CommandJson;
+  const root = json as unknown as JsonOption;
+  if (!Array.isArray(root.options)) return { ...json };
+  return {
+    ...json,
+    options: root.options.map(normalizeServerAliasOption),
+  } as CommandJson;
 }
 
 function containsSlotOption(option: JsonOption): boolean {
   if (option.name === 'slot') return true;
   return Array.isArray(option.options) && option.options.some(containsSlotOption);
+}
+
+function commandContainsSlotOption(json: JsonOption): boolean {
+  return Array.isArray(json.options) && json.options.some(containsSlotOption);
 }
 
 const aliasAutocompleteWrapped = new WeakSet<Command>();
@@ -98,7 +112,7 @@ const aliasAutocompleteWrapped = new WeakSet<Command>();
  */
 function attachServerAliasAutocomplete(command: Command): Command {
   if (aliasAutocompleteWrapped.has(command)) return command;
-  if (!containsSlotOption(command.data.toJSON() as unknown as JsonOption)) return command;
+  if (!commandContainsSlotOption(command.data.toJSON() as unknown as JsonOption)) return command;
 
   const existing = command.autocomplete;
   command.autocomplete = async interaction => {
