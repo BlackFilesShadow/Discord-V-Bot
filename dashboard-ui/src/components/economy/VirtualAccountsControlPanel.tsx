@@ -553,14 +553,19 @@ export function VirtualAccountsControlPanel({ guildId, slot }: { guildId: string
   });
 
   const remove = useMutation({
-    mutationFn: (accountId: string) => api.del<{ ok: boolean; deleted: { id: string; name: string } }>(
+    mutationFn: (accountId: string) => api.del<{ ok: boolean; deleted: { id: string; name: string; mode: 'HARD_DELETED' | 'CONTROL_HIDDEN' } }>(
       `/api/v2/guilds/${guildId}/economy/virtual-accounts/control/accounts/${accountId}?slot=${encodeURIComponent(slot)}`,
     ),
     onSuccess: result => {
       setEditingId(null);
       setAuditAccountId('');
       setDeleteConfirmId(null);
-      setMessage({ ok: true, text: `Konto „${result.deleted.name}“ wurde dauerhaft gelöscht.` });
+      setMessage({
+        ok: true,
+        text: result.deleted.mode === 'CONTROL_HIDDEN'
+          ? `Lotterie-Konto „${result.deleted.name}“ wurde aus der Kontoverwaltung entfernt. Historie und Audit bleiben erhalten.`
+          : `Konto „${result.deleted.name}“ wurde dauerhaft gelöscht.`,
+      });
       void qc.invalidateQueries({ queryKey: ['economy-virtual-control', guildId, slot] });
       void qc.invalidateQueries({ queryKey: ['economy-virtual-manager-panel', guildId, slot] });
     },
@@ -667,7 +672,10 @@ export function VirtualAccountsControlPanel({ guildId, slot }: { guildId: string
         {rows.map(account => {
           const pocketsEmpty = BigInt(account.walletBalance) === 0n && BigInt(account.bankBalance) === 0n;
           const canArchive = account.kind === 'CUSTOM' && account.status !== 'ARCHIVED' && pocketsEmpty;
-          const canDelete = account.kind === 'CUSTOM' && account.accountPurpose === 'GENERAL';
+          const customDeleteSupported = account.kind === 'CUSTOM' && account.accountPurpose === 'GENERAL';
+          const archivedLotteryDeleteSupported = account.kind === 'LOTTERY_POT' && account.status === 'ARCHIVED' && account.accountPurpose === 'GENERAL';
+          const deleteSupported = customDeleteSupported || archivedLotteryDeleteSupported;
+          const canDelete = customDeleteSupported || (archivedLotteryDeleteSupported && pocketsEmpty);
           const deleteArmed = deleteConfirmId === account.id;
           return (
             <div key={account.id} className="rounded-lg border border-border/60 bg-bg-elev/40 p-3">
@@ -715,7 +723,7 @@ export function VirtualAccountsControlPanel({ guildId, slot }: { guildId: string
                       <Archive className="h-3.5 w-3.5 mr-1" />Archivieren
                     </Button>
                   )}
-                  {account.kind === 'CUSTOM' && account.accountPurpose === 'GENERAL' && (
+                  {deleteSupported && (
                     <Button
                       size="sm"
                       variant="danger"
@@ -727,7 +735,11 @@ export function VirtualAccountsControlPanel({ guildId, slot }: { guildId: string
                         }
                         remove.mutate(account.id);
                       }}
-                      title="Beim Löschen werden Wallet und Bank atomar auf 0 gesetzt. Konten mit Buchungs- oder geschützter Systemhistorie bleiben geschützt."
+                      title={archivedLotteryDeleteSupported
+                        ? (canDelete
+                          ? 'Archivierten Lotterie-Pot aus der Kontoverwaltung entfernen. Lotterie- und Audit-Historie bleiben erhalten.'
+                          : 'Lotterie-Pot kann erst bei Wallet=0 und Bank=0 entfernt werden.')
+                        : 'Beim Löschen werden Wallet und Bank atomar auf 0 gesetzt. Konten mit Buchungs- oder geschützter Systemhistorie bleiben geschützt.'}
                     >
                       <Trash2 className="h-3.5 w-3.5 mr-1" />{deleteArmed ? 'Wirklich löschen?' : 'Löschen'}
                     </Button>
@@ -736,7 +748,11 @@ export function VirtualAccountsControlPanel({ guildId, slot }: { guildId: string
               </div>
 
               {deleteArmed && canDelete && (
-                <p className="mt-2 text-[11px] text-danger">Beim Löschen werden Wallet und Bank atomar auf 0 gesetzt. Dauerhaftes Löschen bleibt nur ohne Buchungs- oder geschützte Systemhistorie möglich. Klicke „Wirklich löschen?“ erneut zur Bestätigung.</p>
+                <p className="mt-2 text-[11px] text-danger">
+                  {archivedLotteryDeleteSupported
+                    ? 'Der archivierte Lotterie-Pot wird aus der Kontoverwaltung entfernt. Die historische Lotterie, Buchungen und Audit-Daten bleiben erhalten. Klicke „Wirklich löschen?“ erneut zur Bestätigung.'
+                    : 'Beim Löschen werden Wallet und Bank atomar auf 0 gesetzt. Dauerhaftes Löschen bleibt nur ohne Buchungs- oder geschützte Systemhistorie möglich. Klicke „Wirklich löschen?“ erneut zur Bestätigung.'}
+                </p>
               )}
 
               {editingId === account.id && (
