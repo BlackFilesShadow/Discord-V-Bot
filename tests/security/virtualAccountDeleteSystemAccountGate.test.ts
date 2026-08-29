@@ -10,7 +10,7 @@ describe('virtual account system hard-delete gate', () => {
     expect(source).toContain('Schwarzmarkt-Systemkonten koennen nicht geloescht werden.');
     expect(source).toContain("finance.accountPurpose !== 'GENERAL'");
     expect(source).toContain('Die Serverbank ist ein geschuetztes Systemkonto und kann nicht geloescht werden.');
-    expect(source).toContain(String.raw`AND \"kind\"=\'CUSTOM\'::\"EconomyVirtualAccountKind\"`);
+    expect(source).toContain(String.raw`AND "kind"=\'CUSTOM\'::"EconomyVirtualAccountKind"`);
   });
 
   it('allows only archived zero-balance lottery pots to be hidden from control without deleting history', () => {
