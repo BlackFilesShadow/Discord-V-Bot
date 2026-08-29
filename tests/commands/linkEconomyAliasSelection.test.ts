@@ -57,6 +57,35 @@ describe('Link/Economy + zentrale Gameserver-Alias-Auswahl', () => {
     expect(slot && 'autocomplete' in slot ? slot.autocomplete : undefined).toBe(true);
   });
 
+  it('laesst den echten Slash-Command /slot als Chat-Input stehen und normalisiert nur seine slot-Option', () => {
+    const json = new SlashCommandBuilder()
+      .setName('slot')
+      .setDescription('Casino Slot')
+      .addIntegerOption(option => option
+        .setName('einsatz')
+        .setDescription('Einsatz')
+        .setRequired(true)
+        .setMinValue(1))
+      .addIntegerOption(option => option
+        .setName('slot')
+        .setDescription('legacy slot')
+        .setMinValue(1)
+        .setMaxValue(4))
+      .toJSON();
+
+    const normalized = normalizeServerAliasOptionsForDeploy(json);
+    const einsatz = normalized.options?.find(option => option.name === 'einsatz');
+    const serverSlot = normalized.options?.find(option => option.name === 'slot');
+
+    expect(normalized.name).toBe('slot');
+    expect(normalized.type).toBe(1);
+    expect(normalized.description).toBe('Casino Slot');
+    expect('autocomplete' in normalized).toBe(false);
+    expect(einsatz?.type).toBe(ApplicationCommandOptionType.Integer);
+    expect(serverSlot?.type).toBe(ApplicationCommandOptionType.String);
+    expect(serverSlot && 'autocomplete' in serverSlot ? serverSlot.autocomplete : undefined).toBe(true);
+  });
+
   it('loest Connection-ID, Alias und numerischen Legacy-Slot deterministisch auf', () => {
     const targets: ScopeCandidate[] = [
       candidate('conn-a', 1, 'Chernarus'),
@@ -121,5 +150,16 @@ describe('Link/Economy + zentrale Gameserver-Alias-Auswahl', () => {
     expect(linking).not.toContain('row.gameId.slice(');
     expect(linking).not.toContain('row.gameId?.slice(');
     expect(service).toContain('gameId: session?.gameId ?? null');
+  });
+
+  it('bezeichnet den Multi-Provider-Aufruf nicht als eigenen LLM-Provider', () => {
+    const knowledge = fs.readFileSync(path.join(ROOT, 'src/modules/ai/guildKnowledge.ts'), 'utf8');
+
+    expect(knowledge).toContain('AI-Provider-Antwort zu kurz');
+    expect(knowledge).toContain('AI-Provider-Aufruf fehlgeschlagen');
+    expect(knowledge).toContain('const providerResponse = await callAI(');
+    expect(knowledge).not.toContain('LLM-Antwort zu kurz');
+    expect(knowledge).not.toContain('LLM-Call fehlgeschlagen');
+    expect(knowledge).not.toContain('const llm = await callAI(');
   });
 });
