@@ -37,6 +37,10 @@ NODE_VERSION="22"
 DB_NAME="discord_v_bot"
 DB_USER="discordbot"
 DB_PASS=""
+# Optionaler Betreiberwert fuer eine neue Installation. Der Wert wird niemals
+# geloggt oder ins Repository geschrieben. Ohne Vorgabe bleibt der sichere
+# Zufalls-Default bestehen.
+REQUESTED_BOT_ADMIN_PASSWORD="${BOT_ADMIN_PASSWORD:-}"
 
 # ----- System-Updates -----
 info "System wird aktualisiert..."
@@ -159,7 +163,11 @@ if [[ ! -f "$ENV_FILE" ]]; then
   # config.security.encryptionKey ist ein 32-Byte-Schluessel in Hexdarstellung.
   ENCRYPTION_KEY=$(openssl rand -hex 32)
   DEV_PASSWORD=$(openssl rand -hex 32)
-  BOT_ADMIN_PASSWORD=$(openssl rand -hex 32)
+  if [[ -n "$REQUESTED_BOT_ADMIN_PASSWORD" ]]; then
+    BOT_ADMIN_PASSWORD="$REQUESTED_BOT_ADMIN_PASSWORD"
+  else
+    BOT_ADMIN_PASSWORD=$(openssl rand -hex 32)
+  fi
 
   cat > "$ENV_FILE" <<ENVEOF
 # =============================================
@@ -189,7 +197,7 @@ ADMIN_PASSWORD_HASH=
 TWO_FACTOR_ISSUER=Discord-V-Bot
 ENCRYPTION_KEY=${ENCRYPTION_KEY}
 
-# Developer/Bot-Admin Step-up-Secrets — zufaellig erzeugt, nicht ausgeben.
+# Developer/Bot-Admin Step-up-Secrets — nicht ausgeben.
 DEV_PASSWORD=${DEV_PASSWORD}
 DEV_REQUIRE_MFA=false
 DEV_REQUIRE_IP_ALLOWLIST=false
@@ -244,9 +252,11 @@ else
   warn ".env existiert bereits — wird nicht überschrieben"
 fi
 
-# DB_PASS wird nach der .env-Erzeugung nicht mehr benoetigt und weder geloggt
-# noch in der Zusammenfassung ausgegeben.
+# Temporäre Secrets werden nach der .env-Erzeugung nicht mehr benoetigt und
+# weder geloggt noch in der Zusammenfassung ausgegeben.
 DB_PASS=""
+REQUESTED_BOT_ADMIN_PASSWORD=""
+BOT_ADMIN_PASSWORD=""
 
 # ----- Datenbank-Migration -----
 info "Datenbank-Schema wird via Migrationen angewendet..."
