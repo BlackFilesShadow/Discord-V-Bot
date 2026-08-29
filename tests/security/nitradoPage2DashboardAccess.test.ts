@@ -21,7 +21,7 @@ function delegatedScope(...permissions: PermissionScope[]): GuildScope {
   };
 }
 
-describe('Dashboard full access -> Nitrado Page 2 contract', () => {
+describe('Dashboard full access contract', () => {
   it('lets dashboard.access inherit Page-2 killfeed/ADM management but not owner-only Nitrado Page 1 powers', () => {
     const scope = delegatedScope('dashboard.access');
 
@@ -33,6 +33,15 @@ describe('Dashboard full access -> Nitrado Page 2 contract', () => {
     expect(hasPermission(scope, 'permissions.manage')).toBe(false);
   });
 
+  it('lets dashboard.access inherit full Economy and Casino dashboard access', () => {
+    const scope = delegatedScope('dashboard.access');
+
+    expect(hasPermission(scope, 'economy.view')).toBe(true);
+    expect(hasPermission(scope, 'economy.manage')).toBe(true);
+    expect(hasPermission(scope, 'casino.view')).toBe(true);
+    expect(hasPermission(scope, 'casino.manage')).toBe(true);
+  });
+
   it('protects every ADM source Page-2 operation with killfeed.manage instead of owner-only auth', () => {
     const adm = read('src/dashboard/routes/v2/admSource.ts');
 
@@ -42,6 +51,23 @@ describe('Dashboard full access -> Nitrado Page 2 contract', () => {
     expect(adm).toContain("admSourceRouter.get('/', requireGuildPermission('killfeed.manage')");
     expect(adm).toContain("admSourceRouter.patch('/', requireGuildPermission('killfeed.manage')");
     expect(adm).toContain("admSourceRouter.post('/rediscover', requireGuildPermission('killfeed.manage')");
+  });
+
+  it('keeps Economy config, lottery and virtual-account control on delegable economy scopes', () => {
+    const economy = read('src/dashboard/routes/v2/economy.ts');
+    const lottery = read('src/dashboard/routes/v2/economyLottery.ts');
+    const virtualAccounts = read('src/dashboard/routes/v2/economyVirtualAccountControl.ts');
+
+    expect(economy).toContain("economyRouter.get('/config', requireGuildPermission('economy.view')");
+    expect(economy).toContain("economyRouter.put('/config', requireGuildPermission('economy.manage')");
+    expect(economy).toContain("economyRouter.get('/overview', requireGuildPermission('economy.view')");
+    expect(economy).toContain("economyRouter.post('/accounts/:userDiscordId/admin-pay', requireGuildPermission('economy.manage')");
+
+    expect(lottery).toContain("economyLotteryRouter.get('/current', requireGuildPermission('economy.view')");
+    expect(lottery).toContain("economyLotteryRouter.post('/rounds', requireGuildPermission('economy.manage')");
+
+    expect(virtualAccounts).toContain("economyVirtualAccountControlRouter.get('/control/accounts', requireGuildPermission('economy.view')");
+    expect(virtualAccounts).toContain("economyVirtualAccountControlRouter.post('/control/accounts', requireGuildPermission('economy.manage')");
   });
 
   it('keeps Nitrado Page 1 token/service/slot administration owner-only', () => {
@@ -60,5 +86,6 @@ describe('Dashboard full access -> Nitrado Page 2 contract', () => {
 
     expect(ui).toContain("dashboardMeta.data?.permissions.includes('dashboard.access')");
     expect(ui).toContain("dashboardMeta.data?.permissions.includes('killfeed.manage')");
+    expect(ui).toContain("tab === 'economy'");
   });
 });
