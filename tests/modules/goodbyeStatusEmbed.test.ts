@@ -13,7 +13,7 @@ const leftAt = new Date('2026-08-24T10:15:30.000Z');
 function embed(snapshot: GoodbyeCleanupSnapshot | null, cleanupEnabled = true) {
   return buildStructuredGoodbyeEmbed({
     discordName: 'DiscordNick',
-    customMessage: 'Auf Wiedersehen!',
+    customMessage: '',
     joinedAt,
     leaveOccurredAt: leftAt,
     cleanupEnabled,
@@ -22,16 +22,21 @@ function embed(snapshot: GoodbyeCleanupSnapshot | null, cleanupEnabled = true) {
 }
 
 describe('structured Goodbye status embed', () => {
-  it('renders one stable non-inline member block instead of the old shifted 3+2 field grid', () => {
+  it('renders a clear identity block and a compact, stable membership timeline', () => {
     const json = embed(null, false);
     expect(json.timestamp).toBe(leftAt.toISOString());
-    expect(json.fields).toHaveLength(1);
+    expect(json.author?.name).toBe('V-Bot Prime • Abschiedsmeldung');
+    expect(json.title).toBe('👋 Abschied von @DiscordNick');
+    expect(json.footer?.text).toBe('V-Bot Prime • Austritt dokumentiert');
+    expect(json.description).toBeUndefined();
+    expect(json.fields).toHaveLength(3);
     expect(json.fields?.[0]).toMatchObject({ name: '👤 Mitglied', inline: false });
     expect(json.fields?.[0].value).toContain('**Discord:** @DiscordNick');
     expect(json.fields?.[0].value).toContain('**Status:** Server verlassen');
-    expect(json.fields?.[0].value).toContain('**Beigetreten:** 10. Januar 2026');
-    expect(json.fields?.[0].value).toContain('**Ausgetreten:** 24. August 2026');
-    expect(json.fields?.some(field => field.name.includes('Whitelist'))).toBe(false);
+    expect(json.fields?.[1]).toMatchObject({ name: '📅 Mitglied seit', value: '10. Januar 2026', inline: true });
+    expect(json.fields?.[2]).toMatchObject({ name: '🚪 Ausgetreten', inline: true });
+    expect(json.fields?.[2].value).toContain('24. August 2026');
+    expect(json.fields?.some(field => field.name.includes('Whitelist-Bereinigung'))).toBe(false);
   });
 
   it('renders unknown join date fail-closed instead of inventing one', () => {
@@ -43,7 +48,7 @@ describe('structured Goodbye status embed', () => {
       cleanupEnabled: false,
       cleanupSnapshot: null,
     }).toJSON();
-    expect(json.fields?.[0].value).toContain('**Beigetreten:** Unbekannt');
+    expect(json.fields?.[1]).toMatchObject({ name: '📅 Mitglied seit', value: 'Unbekannt' });
   });
 
   it('renders a native mention only after the Discord user was explicitly resolved', () => {
@@ -113,7 +118,7 @@ describe('structured Goodbye status embed', () => {
       ...(state === 'CONFIRMED' ? { confirmedAt: '2026-08-24T10:16:30.000Z' } : {}),
     }] });
     expect(json.color).toBe(color);
-    expect(json.fields?.find(field => field.name.includes('Whitelist'))?.value).toContain(wording);
+    expect(json.fields?.find(field => field.name.includes('Whitelist-Bereinigung'))?.value).toContain(wording);
     expect(json.timestamp).toBe(leftAt.toISOString());
   });
 
@@ -122,7 +127,7 @@ describe('structured Goodbye status embed', () => {
       { nitradoConnId: 'a', serverAlias: 'Server A', playerNames: ['Player'], state: 'CONFIRMED', confirmedAt: '2026-08-24T10:16:30.000Z' },
       { nitradoConnId: 'b', serverAlias: 'Server B', playerNames: ['Player'], state: 'FAILED', error: 'Remote-Fehler' },
     ] });
-    const status = json.fields?.find(field => field.name.includes('Whitelist'))?.value ?? '';
+    const status = json.fields?.find(field => field.name.includes('Whitelist-Bereinigung'))?.value ?? '';
     expect(json.color).toBe(0xdc2626);
     expect(status).toContain('Server A');
     expect(status).toContain('Server B');

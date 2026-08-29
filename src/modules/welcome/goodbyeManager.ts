@@ -4,7 +4,6 @@ import { Prisma } from '@prisma/client';
 import prisma from '../../database/prisma';
 import { logger } from '../../utils/logger';
 import { getMemberProfile } from '../ai/memberAwareness';
-import { resolveCustomEmotes } from '../ai/emoteResolver';
 import {
   buildStructuredGoodbyeEmbed,
   initialGoodbyeCleanupSnapshot,
@@ -18,12 +17,12 @@ import {
  * Absichtlich im bestehenden Welcome-Modul angesiedelt: gleiche BotConfig-
  * Architektur, gleiche sichere Discord-Zustellung und gleiche Dashboard-
  * Permission-Familie. Es entsteht keine zweite, konkurrierende Messaging-
- * Architektur.
+ * Architektur. Der sichtbare Inhalt ist ein festes strukturiertes Embed;
+ * konfigurierbar bleiben nur Aktivierung und separater Ziel-Channel.
  */
 export interface GoodbyeConfig {
   enabled: boolean;
   channelId: string;
-  message: string;
 }
 
 export interface GoodbyeIdentity {
@@ -52,7 +51,13 @@ const KEY = (guildId: string) => `goodbye:${guildId}`;
 export async function getGoodbyeConfig(guildId: string): Promise<GoodbyeConfig | null> {
   const cfg = await prisma.botConfig.findUnique({ where: { key: KEY(guildId) } });
   if (!cfg) return null;
-  return cfg.value as unknown as GoodbyeConfig;
+  const value = cfg.value as { enabled?: unknown; channelId?: unknown };
+  if (typeof value.channelId !== 'string') return null;
+
+  // Goodbye nutzt ab jetzt ausschliesslich das feste strukturierte Embed. Alte
+  // Textvorlagen bleiben in der Datenbank harmlos, werden aber bewusst nicht
+  // mehr ausgelesen oder erneut ausgespielt.
+  return { enabled: value.enabled === true, channelId: value.channelId };
 }
 
 export async function setGoodbyeConfig(guildId: string, cfg: GoodbyeConfig, updatedBy: string): Promise<void> {
@@ -117,39 +122,6 @@ export async function resolveLastKnownGoodbyeIdentity(member: GuildMember): Prom
   );
 }
 
-export function renderGoodbyeMessage(
-  message: string,
-  vars: { identity: GoodbyeIdentity; guild: string; memberCount: number; occurredAt?: Date },
-): string {
-  const occurredAt = vars.occurredAt ?? new Date();
-  const date = new Intl.DateTimeFormat('de-DE', { dateStyle: 'long', timeZone: 'Europe/Berlin' }).format(occurredAt);
-  const time = new Intl.DateTimeFormat('de-DE', { timeStyle: 'short', timeZone: 'Europe/Berlin' }).format(occurredAt);
-  const calendarParts = Object.fromEntries(
-    new Intl.DateTimeFormat('en-CA', {
-      timeZone: 'Europe/Berlin', year: 'numeric', month: 'numeric', day: 'numeric',
-    }).formatToParts(occurredAt).map(part => [part.type, part.value]),
-  );
-  return message
-    .replace(/\{user\}/g, vars.identity.displayName)
-    .replace(/\{username\}/g, vars.identity.username)
-    .replace(/\{nickname\}/g, vars.identity.nickname || vars.identity.username)
-    // Die Mention ist fester Bestandteil der strukturierten Nutzerzeile.
-    // Alte Templates mit {mention} bleiben kompatibel, erzeugen aber keine
-    // zweite, losgeloeste Mention in der Beschreibung.
-    .replace(/\{mention\}/g, '')
-    .replace(/\{guild\}/g, vars.guild)
-    .replace(/\{count\}/g, String(vars.memberCount))
-    .replace(/\{member_count\}/g, String(vars.memberCount))
-    .replace(/\{date\}/g, date)
-    .replace(/\{time\}/g, time)
-    .replace(/\{year\}/g, calendarParts.year ?? '')
-    .replace(/\{month\}/g, calendarParts.month ?? '')
-    .replace(/\{day\}/g, calendarParts.day ?? '')
-    .replace(/[ \t]+\n/g, '\n')
-    .replace(/ {2,}/g, ' ')
-    .trim();
-}
-
 /**
  * Runtime-Zustellung beim GuildMemberRemove.
  * Zu diesem Zeitpunkt ist das Mitglied bereits aus der Guild entfernt. Ein
@@ -163,7 +135,7 @@ export async function sendConfiguredGoodbye(
   context?: GoodbyeLifecycleContext,
 ): Promise<GoodbyeDeliveryResult> {
   const cfg = await getGoodbyeConfig(member.guild.id);
-  if (!cfg?.enabled || !cfg.channelId || !cfg.message.trim()) return 'disabled';
+  if (!cfg?.enabled || !cfg.channelId) return 'disabled';
 
   const channel = await member.guild.channels.fetch(cfg.channelId).catch(() => null);
   if (!channel || !channel.isTextBased() || channel.isDMBased()) return 'missing_channel';
@@ -171,13 +143,6 @@ export async function sendConfiguredGoodbye(
   const identity = await resolveLastKnownGoodbyeIdentity(member);
   const joinedAt = member.joinedAt ?? null;
   const leaveOccurredAt = context?.leaveOccurredAt ?? new Date();
-  const rendered = renderGoodbyeMessage(cfg.message, {
-    identity,
-    guild: member.guild.name,
-    memberCount: member.guild.memberCount,
-    occurredAt: leaveOccurredAt,
-  });
-  const finalText = sanitizeGoodbyeVisibleText(resolveCustomEmotes(rendered, member.guild), '', 4000);
   const cleanupEnabled = context?.cleanupEnabled === true;
   let cleanupSnapshot: GoodbyeCleanupSnapshot | null = null;
   if (cleanupEnabled) {
@@ -215,7 +180,7 @@ export async function sendConfiguredGoodbye(
         channelId: cfg.channelId,
         discordName: identity.displayName,
         guildName: member.guild.name,
-        customMessage: finalText,
+        customMessage: '',
         joinedAt,
         leaveOccurredAt,
         cleanupEnabled,
@@ -242,7 +207,7 @@ export async function sendConfiguredGoodbye(
         discordName: identity.displayName,
         discordMention: identity.mention,
         discordMentionResolved: false,
-        customMessage: finalText,
+        customMessage: '',
         joinedAt,
         leaveOccurredAt,
         cleanupEnabled,

@@ -73,6 +73,8 @@ const CURRENT_VIRTUAL_ACCOUNT_PANEL = 'dashboard-ui/src/components/economy/Virtu
 const CURRENT_VIRTUAL_ACCOUNT_BUTTON_COUNT = 15;
 const CURRENT_BLACK_MARKET_PANEL = 'dashboard-ui/src/components/economy/BlackMarketPanel.tsx';
 const CURRENT_BLACK_MARKET_BUTTON_COUNT = 10;
+const CURRENT_GOODBYE_PANEL = 'dashboard-ui/src/components/GoodbyePanel.tsx';
+const CURRENT_GOODBYE_BUTTON_COUNT = 3;
 
 function resolveUiModule(from: string, specifier: string): string | null {
   const srcRoot = path.resolve(root, 'dashboard-ui/src');
@@ -238,9 +240,13 @@ describe('stage 24 dashboard button matrix architecture', () => {
     // Preserve the immutable stage-24 inventory while requiring deliberate
     // post-stage surfaces to be present with their exact reviewed button counts.
     expect(normalizedActual.filter(entry => (
-      entry.file !== CURRENT_VIRTUAL_ACCOUNT_PANEL && entry.file !== CURRENT_BLACK_MARKET_PANEL
+      entry.file !== CURRENT_VIRTUAL_ACCOUNT_PANEL
+      && entry.file !== CURRENT_BLACK_MARKET_PANEL
+      && entry.file !== CURRENT_GOODBYE_PANEL
     ))).toEqual(declared.filter(entry => (
-      entry.file !== HISTORICAL_VIRTUAL_ACCOUNT_PANEL && entry.file !== CURRENT_BLACK_MARKET_PANEL
+      entry.file !== HISTORICAL_VIRTUAL_ACCOUNT_PANEL
+      && entry.file !== CURRENT_BLACK_MARKET_PANEL
+      && entry.file !== CURRENT_GOODBYE_PANEL
     )));
     expect(actual.find(entry => entry.file === CURRENT_KILLFEED_PANEL))
       .toEqual({ file: CURRENT_KILLFEED_PANEL, count: CURRENT_KILLFEED_BUTTON_COUNT });
@@ -248,6 +254,8 @@ describe('stage 24 dashboard button matrix architecture', () => {
       .toEqual({ file: CURRENT_VIRTUAL_ACCOUNT_PANEL, count: CURRENT_VIRTUAL_ACCOUNT_BUTTON_COUNT });
     expect(actual.find(entry => entry.file === CURRENT_BLACK_MARKET_PANEL))
       .toEqual({ file: CURRENT_BLACK_MARKET_PANEL, count: CURRENT_BLACK_MARKET_BUTTON_COUNT });
+    expect(actual.find(entry => entry.file === CURRENT_GOODBYE_PANEL))
+      .toEqual({ file: CURRENT_GOODBYE_PANEL, count: CURRENT_GOODBYE_BUTTON_COUNT });
     expect(actual.some(entry => entry.file === HISTORICAL_VIRTUAL_ACCOUNT_PANEL)).toBe(false);
 
     expect(matrix.buttons).toHaveLength(matrix.buttonCount);
@@ -277,9 +285,13 @@ describe('stage 24 dashboard button matrix architecture', () => {
         return ordinal > 5 ? { ...button, sourceId: `${prefix}${ordinal - 1}` } : button;
       });
     expect(normalizedCurrentSignatures.filter(button => (
-      button.file !== CURRENT_VIRTUAL_ACCOUNT_PANEL && button.file !== CURRENT_BLACK_MARKET_PANEL
+      button.file !== CURRENT_VIRTUAL_ACCOUNT_PANEL
+      && button.file !== CURRENT_BLACK_MARKET_PANEL
+      && button.file !== CURRENT_GOODBYE_PANEL
     ))).toEqual(declaredSignatures.filter(button => (
-      button.file !== HISTORICAL_VIRTUAL_ACCOUNT_PANEL && button.file !== CURRENT_BLACK_MARKET_PANEL
+      button.file !== HISTORICAL_VIRTUAL_ACCOUNT_PANEL
+      && button.file !== CURRENT_BLACK_MARKET_PANEL
+      && button.file !== CURRENT_GOODBYE_PANEL
     )));
 
     const flagFeedButton = currentSignatures.find(button => button.sourceId === CURRENT_FLAG_FEED_BUTTON_SOURCE_ID);

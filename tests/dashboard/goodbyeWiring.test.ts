@@ -43,15 +43,16 @@ describe('Goodbye-1 dashboard wiring', () => {
     expect(panelSource).toContain('channel.type === 0 || channel.type === 5');
   });
 
-  it('wires config, test and disable actions and documents the safe automatic mention', () => {
+  it('keeps a separate channel while using one fixed Goodbye embed instead of a text template', () => {
     expect(panelSource).toContain('`/api/v2/guilds/${guildId}/goodbye/config`');
     expect(panelSource).toContain('`/api/v2/guilds/${guildId}/goodbye/test`');
     expect(panelSource).toContain('`/api/v2/guilds/${guildId}/goodbye/disable`');
-    expect(panelSource).toContain("{ key: '{nickname}'");
-    expect(panelSource).toContain("{ key: '{username}'");
-    expect(panelSource).not.toContain("{ key: '{mention}'");
-    expect(panelSource).toContain('Sie erscheint nur nach sicherer Discord-Auflösung im Bereich „Mitglied“');
-    expect(panelSource).toContain('niemals eine ID-Nummer');
+    expect(panelSource).toContain('Vordefiniertes Abschieds-Embed');
+    expect(panelSource).toContain('Bye Bye aktivieren');
+    expect(panelSource).not.toContain('Abschiedsnachricht');
+    expect(panelSource).not.toContain('Verfügbare Platzhalter');
+    expect(routeSource).not.toContain('countWelcomeGraphemes');
+    expect(routeSource).not.toContain('message darf nicht leer sein');
     expect(routeSource).toContain('discordMention: actorUser ? identity.mention : undefined');
     expect(routeSource).toContain('discordMentionResolved: Boolean(actorUser)');
   });

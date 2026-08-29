@@ -23,7 +23,7 @@ describe('Goodbye delivery restart recovery', () => {
     updateMany.mockResolvedValue({ count: 1 });
   });
 
-  it('CAS-claims a stale unsent intent and preserves join/leave dates with the resolved visible name', async () => {
+  it('CAS-claims a stale unsent intent, retains the timeline and ignores legacy free text', async () => {
     const updatedAt = new Date('2026-08-24T10:00:00.000Z');
     const joinedAt = new Date('2026-01-10T08:00:00.000Z');
     const discordId = '222222222222222222';
@@ -50,8 +50,11 @@ describe('Goodbye delivery restart recovery', () => {
     expect(embedJson.fields?.[0]).toMatchObject({ name: '👤 Mitglied', inline: false });
     expect(embedJson.fields?.[0].value).toContain('**Discord:** @Resolved Name');
     expect(embedJson.fields?.[0].value).not.toContain(discordId);
-    expect(embedJson.fields?.[0].value).toContain('**Beigetreten:** 10. Januar 2026');
-    expect(embedJson.fields?.[0].value).toContain('**Ausgetreten:** 24. August 2026');
+    expect(embedJson.fields?.[1]).toMatchObject({ name: '📅 Mitglied seit', value: '10. Januar 2026', inline: true });
+    expect(embedJson.fields?.[2]).toMatchObject({ name: '🚪 Ausgetreten', inline: true });
+    expect(embedJson.fields?.[2].value).toContain('24. August 2026');
+    expect(embedJson.description).toBeUndefined();
+    expect(JSON.stringify(embedJson)).not.toContain('Bye');
     expect(updateMany).toHaveBeenNthCalledWith(1, expect.objectContaining({
       where: expect.objectContaining({ id: 'delivery-1', messageId: null, state: 'FAILED', updatedAt }),
     }));

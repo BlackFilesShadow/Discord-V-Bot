@@ -64,7 +64,6 @@ async function stubLifecycle(page: Page, permissions: string[], forbidden = fals
         configured: true,
         enabled: false,
         channelId: CHANNEL_ID,
-        message: 'Auf Wiedersehen {user}!',
       });
     }
 
@@ -124,7 +123,7 @@ test.describe('Welcome/Goodbye authenticated dashboard contract', () => {
 
     await expect(page.getByText(/Nur-Lesezugriff/)).toBeVisible();
     await expect(page.getByText('Willkommen {user} auf {guild}!')).toBeVisible();
-    await expect(page.getByText('Auf Wiedersehen {user}!')).toBeVisible();
+    await expect(page.getByText('Vordefiniertes strukturiertes Abschieds-Embed')).toBeVisible();
     await expect(page.getByText(`Discord-Channel ${CHANNEL_ID}`).first()).toBeVisible();
     await expect(page.getByRole('button', { name: 'Speichern', exact: true })).toHaveCount(0);
     await expect(page.getByRole('button', { name: /Test senden/ })).toHaveCount(0);
@@ -150,12 +149,12 @@ test.describe('Welcome/Goodbye authenticated dashboard contract', () => {
     await expect(page.getByRole('heading', { name: 'Willkommen', exact: true })).toBeVisible();
     await expect(page.getByRole('heading', { name: 'Abschied / Goodbye' })).toBeVisible();
 
-    const saveButtons = page.getByRole('button', { name: 'Speichern', exact: true });
-    await expect(saveButtons).toHaveCount(2);
-    await saveButtons.nth(0).click();
+    await page.getByRole('button', { name: 'Speichern', exact: true }).click();
     await expect.poll(() => state.mutations.some(m => m.method === 'POST' && m.path === `/api/v2/guilds/${GUILD_ID}/welcome/config`)).toBe(true);
-    await saveButtons.nth(1).click();
+    await page.getByRole('button', { name: 'Bye Bye aktivieren', exact: true }).click();
     await expect.poll(() => state.mutations.some(m => m.method === 'POST' && m.path === `/api/v2/guilds/${GUILD_ID}/goodbye/config`)).toBe(true);
+    const goodbyeMutation = state.mutations.find(m => m.method === 'POST' && m.path === `/api/v2/guilds/${GUILD_ID}/goodbye/config`);
+    expect(goodbyeMutation?.body).toEqual({ enabled: true, channelId: CHANNEL_ID });
 
     for (const mutation of state.mutations) {
       expect(mutation.path).toContain(`/api/v2/guilds/${GUILD_ID}/`);

@@ -120,7 +120,6 @@ describe('stage 25 dashboard switch matrix architecture', () => {
     const reviewed = new Set([
       'dashboard-ui/src/pages/ServerSlot.tsx',
       'dashboard-ui/src/components/LeaveCleanupPanel.tsx',
-      'dashboard-ui/src/components/GoodbyePanel.tsx',
       'dashboard-ui/src/components/FeedsTab.tsx',
       'dashboard-ui/src/components/EmbedBuilderTab.tsx',
       'dashboard-ui/src/components/WelcomeCoreTab.tsx',

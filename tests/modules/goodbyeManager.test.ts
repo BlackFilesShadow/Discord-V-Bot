@@ -27,14 +27,8 @@ jest.mock('../../src/modules/ai/memberAwareness', () => ({
   getMemberProfile: mockGetMemberProfile,
 }));
 
-jest.mock('../../src/modules/ai/emoteResolver', () => ({
-  __esModule: true,
-  resolveCustomEmotes: (value: string) => value,
-}));
-
 import {
   getGoodbyeConfig,
-  renderGoodbyeMessage,
   resolveGoodbyeIdentity,
   resolveLastKnownGoodbyeIdentity,
   sendConfiguredGoodbye,
@@ -55,17 +49,19 @@ describe('Goodbye-1 guild-scoped identity and delivery', () => {
       value: { enabled: true, channelId: '12345678901234567', message: 'Tschuess {user}' },
     });
 
-    await getGoodbyeConfig('guild-a');
+    await expect(getGoodbyeConfig('guild-a')).resolves.toEqual({ enabled: true, channelId: '12345678901234567' });
     await setGoodbyeConfig(
       'guild-b',
-      { enabled: true, channelId: '12345678901234567', message: 'Bye' },
+      { enabled: true, channelId: '12345678901234567' },
       'actor-1',
     );
 
     expect(mockFindUnique).toHaveBeenCalledWith({ where: { key: 'goodbye:guild-a' } });
     expect(mockUpsert).toHaveBeenCalledWith(expect.objectContaining({
       where: { key: 'goodbye:guild-b' },
-      create: expect.objectContaining({ key: 'goodbye:guild-b', category: 'welcome', updatedBy: 'actor-1' }),
+      create: expect.objectContaining({
+        key: 'goodbye:guild-b', category: 'welcome', updatedBy: 'actor-1', value: { enabled: true, channelId: '12345678901234567' },
+      }),
     }));
   });
 
@@ -122,22 +118,7 @@ describe('Goodbye-1 guild-scoped identity and delivery', () => {
     expect(identity.displayName).toBe('StoredNick');
   });
 
-  it('renders identity placeholders but removes the legacy mention placeholder from the message body', () => {
-    const identity = resolveGoodbyeIdentity(
-      { discordId: '333', username: 'Fallback', nickname: null },
-      { username: 'StoredUser', nickname: 'StoredNick' },
-    );
-
-    const rendered = renderGoodbyeMessage(
-      '{user}|{username}|{nickname}|{mention}|{guild}|{count}|{member_count}',
-      { identity, guild: 'Guild A', memberCount: 42 },
-    );
-
-    expect(rendered).toBe('StoredNick|StoredUser|StoredNick||Guild A|42|42');
-    expect(rendered).not.toContain('<@333>');
-  });
-
-  it('renders the last known @name instead of a raw mention token after a real leave', async () => {
+  it('uses the fixed embed and ignores a legacy message template after a real leave', async () => {
     const discordId = '2'.repeat(18);
     mockFindUnique.mockResolvedValue({
       value: { enabled: true, channelId: '12345678901234567', message: 'Bye {user} {mention}' },
@@ -166,19 +147,19 @@ describe('Goodbye-1 guild-scoped identity and delivery', () => {
     expect(payload.allowedMentions).toEqual({ parse: [] });
     const json = payload.embeds[0].toJSON();
     expect(json).toMatchObject({
-      title: '👋 Bye Bye',
-      description: 'Bye StoredNick',
+      title: '👋 Abschied von @StoredNick',
     });
-    expect(json.fields).toHaveLength(1);
+    expect(json.description).toBeUndefined();
+    expect(json.fields).toHaveLength(3);
     expect(json.fields?.[0]).toMatchObject({ name: '👤 Mitglied', inline: false });
     expect(json.fields?.[0].value).toContain('**Discord:** @StoredNick');
     expect(json.fields?.[0].value).not.toContain(discordId);
     expect(json.fields?.[0].value).toContain('**Status:** Server verlassen');
-    expect(json.fields?.[0].value).toContain('**Beigetreten:** 27. April 2025');
-    expect(json.fields?.[0].value).toContain('**Ausgetreten:** 25. August 2026');
-    expect(json.description).not.toContain(discordId);
+    expect(json.fields?.[1]).toMatchObject({ name: '📅 Mitglied seit', value: '27. April 2025', inline: true });
+    expect(json.fields?.[2]).toMatchObject({ name: '🚪 Ausgetreten', inline: true });
+    expect(json.fields?.[2].value).toContain('25. August 2026');
     expect(mockGoodbyeCreate).toHaveBeenCalledWith(expect.objectContaining({
-      data: expect.objectContaining({ joinedAt, leaveOccurredAt, discordName: 'StoredNick' }),
+      data: expect.objectContaining({ joinedAt, leaveOccurredAt, discordName: 'StoredNick', customMessage: '' }),
     }));
     expect(mockGoodbyeUpdateMany).toHaveBeenCalledWith(expect.objectContaining({
       data: expect.objectContaining({ messageId: 'message-1', state: 'SENT' }),

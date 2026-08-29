@@ -27,7 +27,7 @@ import { asGuildId } from '../../types/scope';
 import { logAudit, logger } from '../../utils/logger';
 import { emitGuildEvent } from '../../dashboard/socket/emitter';
 import { buildStatusEmbed, type EmbedStatus } from '../../utils/statusEmbed';
-import { assignFactionRole, removeFactionRole } from '../../modules/factions/factionEmbed';
+import { assignFactionRole, postFactionEmbed, postFactionList, removeFactionRole } from '../../modules/factions/factionEmbed';
 
 const FACTION_STATUS: Record<string, { label: string; emoji: string }> = {
   ACTIVE: { label: 'Aktiv', emoji: '🟢' },
@@ -39,6 +39,24 @@ const FACTION_STATUS: Record<string, { label: string; emoji: string }> = {
 function factionColor(hex: string | null | undefined): number {
   const m = hex ? /^#?([0-9a-fA-F]{6})$/.exec(hex.trim()) : null;
   return m ? parseInt(m[1], 16) : 0xdc2626;
+}
+
+/**
+ * Die Slash-Commands aendern Mitgliedschaften direkt. Falls die dauerhafte
+ * Fraktionspraesentation konfiguriert ist, muss sie denselben Datenstand ohne
+ * Einfluss auf die zeitkritische Command-Antwort spiegeln.
+ */
+function refreshPersistentFactionEmbeds(
+  client: ChatInputCommandInteraction['client'],
+  guildId: string,
+  factionId: string,
+): void {
+  void postFactionEmbed(client, factionId).catch(error => {
+    logger.debug(`Faction-Embed nach Mitgliedschaftswechsel nicht aktualisiert (${factionId}): ${(error as Error).message}`);
+  });
+  void postFactionList(client, guildId).catch(error => {
+    logger.debug(`Faction-Liste nach Mitgliedschaftswechsel nicht aktualisiert (${guildId}): ${(error as Error).message}`);
+  });
 }
 
 async function statusReply(
@@ -263,6 +281,7 @@ export const joinCommand: Command = {
       role: result.role,
       roleSynced,
     });
+    refreshPersistentFactionEmbeds(interaction.client, String(scope.guildId), result.factionId);
     emitGuildEvent(scope.guildId, { type: 'faction.changed', payload: { guildId: scope.guildId, factionId: result.factionId } });
 
     if (result.role === 'MEMBER') {
@@ -328,6 +347,7 @@ export const leaveCommand: Command = {
       user: scope.actorDiscordId,
       roleSynced,
     });
+    refreshPersistentFactionEmbeds(interaction.client, String(scope.guildId), member.factionId);
     emitGuildEvent(scope.guildId, { type: 'faction.changed', payload: { guildId: scope.guildId, factionId: member.factionId } });
     await statusReply(interaction, roleSynced ? 'SUCCESS' : 'INFO', roleSynced ? 'Fraktion verlassen' : 'Mitgliedschaft entfernt, Rollen-Sync offen', {
       description: roleSynced
