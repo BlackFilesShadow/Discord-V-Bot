@@ -55,7 +55,10 @@ describe('Flag activity feeds', () => {
     const customId = buildFlagActivityCustomId(eventId);
     expect(customId).toMatch(/^flagshort:v1:c[a-z0-9]{24}:[a-f0-9]{20}$/);
     expect(verifyFlagActivityCustomId(customId)).toBe(eventId);
-    expect(verifyFlagActivityCustomId(`${customId.slice(0, -1)}0`)).toBeNull();
+    const tampered = customId.endsWith('0')
+      ? `${customId.slice(0, -1)}1`
+      : `${customId.slice(0, -1)}0`;
+    expect(verifyFlagActivityCustomId(tampered)).toBeNull();
     expect(verifyFlagActivityCustomId('flagshort:v1:invalid:deadbeef')).toBeNull();
   });
 
