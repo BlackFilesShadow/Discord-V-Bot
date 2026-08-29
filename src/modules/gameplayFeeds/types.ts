@@ -1,10 +1,12 @@
 export type DeathFeedCategory = 'PVP' | 'SUICIDE' | 'NPC' | 'VEHICLE';
 export type BuildFeedCategory = 'PLACEMENT' | 'BUILD' | 'DISMANTLE' | 'DESTROY';
-export type GameplayFeedCategory = DeathFeedCategory | BuildFeedCategory;
-export type GameplayFeedKindValue = 'DEATH' | 'BUILD' | 'PLAYER_LIST';
+export type FlagFeedCategory = 'RAISED' | 'LOWERED';
+export type GameplayFeedCategory = DeathFeedCategory | BuildFeedCategory | FlagFeedCategory;
+export type GameplayFeedKindValue = 'DEATH' | 'BUILD' | 'PLAYER_LIST' | 'FLAG';
 
 export const DEATH_CATEGORIES: readonly DeathFeedCategory[] = ['PVP', 'SUICIDE', 'NPC', 'VEHICLE'];
 export const BUILD_CATEGORIES: readonly BuildFeedCategory[] = ['PLACEMENT', 'BUILD', 'DISMANTLE', 'DESTROY'];
+export const FLAG_CATEGORIES: readonly FlagFeedCategory[] = ['RAISED', 'LOWERED'];
 
 // PLAYER_DIED bleibt als kanonisches ADM-Rohereignis erhalten, wird aber bewusst
 // nicht mehr als Gameplay-Feed zugestellt. Der generische "died / bled out"-Feed
@@ -17,6 +19,7 @@ export const DEATH_EVENT_TYPES = [
 ] as const;
 
 export const BUILD_EVENT_TYPES = ['PLACEMENT', 'BUILD', 'DISMANTLE', 'DESTROY'] as const;
+export const FLAG_EVENT_TYPES = ['FLAG_RAISED', 'FLAG_LOWERED'] as const;
 
 export interface GameplayAdmEvent {
   id: string;
@@ -66,6 +69,8 @@ export function categoryForEvent(eventType: string): GameplayFeedCategory | null
     case 'BUILD': return 'BUILD';
     case 'DISMANTLE': return 'DISMANTLE';
     case 'DESTROY': return 'DESTROY';
+    case 'FLAG_RAISED': return 'RAISED';
+    case 'FLAG_LOWERED': return 'LOWERED';
     default: return null;
   }
 }
@@ -73,6 +78,7 @@ export function categoryForEvent(eventType: string): GameplayFeedCategory | null
 export function kindForEvent(eventType: string): GameplayFeedKindValue | null {
   if ((DEATH_EVENT_TYPES as readonly string[]).includes(eventType)) return 'DEATH';
   if ((BUILD_EVENT_TYPES as readonly string[]).includes(eventType)) return 'BUILD';
+  if ((FLAG_EVENT_TYPES as readonly string[]).includes(eventType)) return 'FLAG';
   return null;
 }
 
