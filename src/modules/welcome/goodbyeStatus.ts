@@ -2,6 +2,7 @@ import { EmbedBuilder, type GuildTextBasedChannel } from 'discord.js';
 import { Prisma } from '@prisma/client';
 import prisma from '../../database/prisma';
 import { config } from '../../config';
+import { Brand } from '../../utils/embedDesign';
 import { safeEmbedField } from '../../utils/embedSanitize';
 import { tryGetDashboardClient } from '../../dashboard/clientRegistry';
 import { identityHash } from '../linking/identity';
@@ -120,14 +121,7 @@ function formatTime(value: Date): string {
 }
 
 export function buildStructuredGoodbyeEmbed(data: GoodbyeEmbedData): EmbedBuilder {
-  const embed = new EmbedBuilder()
-    .setColor(embedColor(data.cleanupEnabled, data.cleanupSnapshot))
-    .setTitle('👋 Bye Bye');
-
-  const customMessage = sanitizeGoodbyeVisibleText(data.customMessage, '', 4000);
-  if (customMessage) embed.setDescription(customMessage);
-
-  const safeName = sanitizeGoodbyeVisibleText(data.discordName, 'Discord-Nutzer', 256);
+  const safeName = sanitizeGoodbyeVisibleText(data.discordName, 'Discord-Nutzer', 232);
   const mention = safeResolvedMention(data.discordMention, data.discordMentionResolved);
   // Ein echter Leave entfernt den Nutzer vor dem Rendern aus dem Guild-Kontext.
   // Discord kann <@snowflake> im Embed dann clientseitig als rohe ID anzeigen.
@@ -136,19 +130,30 @@ export function buildStructuredGoodbyeEmbed(data: GoodbyeEmbedData): EmbedBuilde
   const identityLine = mention ?? visibleAtName(safeName);
   const joined = data.joinedAt ? formatDate(data.joinedAt) : 'Unbekannt';
 
-  // Eine einzige, nicht-inline Detailgruppe verhindert das von Discord erzeugte
-  // 3+2-Raster und bleibt auf Desktop/Mobile stabil ausgerichtet.
+  const embed = new EmbedBuilder()
+    .setColor(embedColor(data.cleanupEnabled, data.cleanupSnapshot))
+    .setAuthor({ name: `${Brand.footerText} • Abschiedsmeldung` })
+    .setTitle(safeEmbedField(`👋 Abschied von ${visibleAtName(safeName)}`, 256))
+    .setFooter({ text: `${Brand.footerText} • Austritt dokumentiert` });
+
+  const customMessage = sanitizeGoodbyeVisibleText(data.customMessage, '', 4000);
+  if (customMessage) embed.setDescription(customMessage);
+
+  // Identitaet bleibt breit und gut lesbar; die zwei Zeitangaben bilden darunter
+  // eine stabile, kompakte Kennzahlenzeile auf Desktop und Mobile.
   embed
-    .addFields({
-      name: '👤 Mitglied',
+    .addFields(
+      {
+        name: '👤 Mitglied',
       value: [
         `**Discord:** ${identityLine}`,
         '**Status:** Server verlassen',
-        `**Beigetreten:** ${joined}`,
-        `**Ausgetreten:** ${formatDate(data.leaveOccurredAt)} · ${formatTime(data.leaveOccurredAt)}`,
       ].join('\n'),
       inline: false,
-    })
+      },
+      { name: '📅 Mitglied seit', value: joined, inline: true },
+      { name: '🚪 Ausgetreten', value: `${formatDate(data.leaveOccurredAt)}\n${formatTime(data.leaveOccurredAt)}`, inline: true },
+    )
     .setTimestamp(data.leaveOccurredAt);
 
   if (!data.cleanupEnabled) return embed;
@@ -173,8 +178,8 @@ export function buildStructuredGoodbyeEmbed(data: GoodbyeEmbedData): EmbedBuilde
     return `**${serverAlias}:** ${statusLabel(server.state)}${confirmed}${error}`;
   });
   embed.addFields(
-    { name: '🎮 Zugeordneter DayZ-Spieler', value: sanitizeGoodbyeVisibleText(playerLines.join('\n'), 'Nicht eindeutig zugeordnet', 1024), inline: false },
-    { name: '🛡️ Whitelist-Status je Gameserver', value: sanitizeGoodbyeVisibleText(statusLines.join('\n'), 'Kein Status verfügbar', 1024), inline: false },
+    { name: '🎮 DayZ-Verknüpfung', value: sanitizeGoodbyeVisibleText(playerLines.join('\n'), 'Nicht eindeutig zugeordnet', 1024), inline: false },
+    { name: '🛡️ Whitelist-Bereinigung', value: sanitizeGoodbyeVisibleText(statusLines.join('\n'), 'Kein Status verfügbar', 1024), inline: false },
   );
   return embed;
 }
@@ -253,7 +258,9 @@ async function editPersistedGoodbye(cleanupRequestId: string): Promise<void> {
       // Guild-Mitgliedschaft. Nach dem Leave darf deshalb kein nativer Token
       // erneut in das Embed geschrieben werden.
       discordMentionResolved: false,
-      customMessage: delivery.customMessage,
+      // Alte gespeicherte Freitextvorlagen duerfen bei einem Cleanup-Refresh
+      // nicht wieder in das jetzt feste Abschieds-Embed gelangen.
+      customMessage: '',
       joinedAt: delivery.joinedAt,
       leaveOccurredAt: delivery.leaveOccurredAt,
       cleanupEnabled: delivery.cleanupEnabled,
@@ -357,7 +364,8 @@ export async function recoverPendingGoodbyeDeliveries(now: Date = new Date()): P
           discordName: resolvedName,
           discordMention: resolvedUser ? `<@${row.discordId}>` : undefined,
           discordMentionResolved: false,
-          customMessage: row.customMessage,
+          // Auch Restart-Recovery folgt ausschliesslich dem festen Embed.
+          customMessage: '',
           joinedAt: row.joinedAt,
           leaveOccurredAt: row.leaveOccurredAt,
           cleanupEnabled: row.cleanupEnabled,

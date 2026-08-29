@@ -18,7 +18,6 @@ interface GoodbyeConfig {
   configured: boolean;
   enabled: boolean;
   channelId: string;
-  message: string;
 }
 
 function status(configured: boolean, enabled: boolean): { label: string; variant: 'ok' | 'neutral' } {
@@ -109,8 +108,8 @@ export function WelcomeReadOnlyPanel({ guildId }: { guildId: string }) {
           <p className="text-white break-all">{channelLabel(goodbye.data?.channelId ?? '')}</p>
         </div>
         <div className="rounded-lg border border-border/60 bg-bg/60 p-3 mt-3 min-w-0">
-          <p className="text-xs text-muted mb-1">Gespeicherte Nachricht</p>
-          <p className="text-sm text-white/90 whitespace-pre-wrap break-words">{goodbye.data?.message || '—'}</p>
+          <p className="text-xs text-muted mb-1">Ausgabe</p>
+          <p className="text-sm text-white/90">Vordefiniertes strukturiertes Abschieds-Embed</p>
         </div>
       </Card>
     </div>

@@ -12,17 +12,14 @@ import { tryGetDashboardClient } from '../../clientRegistry';
 import { validateBotChannelAccess } from '../../../utils/discordChannel';
 import { logAuditDb } from '../../../utils/logger';
 import { emitGuildEvent } from '../../socket/emitter';
-import { countWelcomeGraphemes, MAX_WELCOME_TEMPLATE_GRAPHEMES } from '../../../modules/welcome/welcomeManager';
 import {
   disableGoodbye,
   getGoodbyeConfig,
-  renderGoodbyeMessage,
   resolveGoodbyeIdentity,
   resolveLastKnownGoodbyeIdentity,
   setGoodbyeConfig,
   type GoodbyeConfig,
 } from '../../../modules/welcome/goodbyeManager';
-import { resolveCustomEmotes } from '../../../modules/ai/emoteResolver';
 import { buildStructuredGoodbyeEmbed } from '../../../modules/welcome/goodbyeStatus';
 
 export const goodbyeRouter = Router({ mergeParams: true });
@@ -32,7 +29,6 @@ const SNOWFLAKE_RE = /^\d{17,20}$/;
 interface GoodbyeBody {
   enabled?: boolean;
   channelId?: string;
-  message?: string;
 }
 
 export function validateGoodbyeBody(b: GoodbyeBody):
@@ -41,21 +37,11 @@ export function validateGoodbyeBody(b: GoodbyeBody):
   if (typeof b.channelId !== 'string' || !SNOWFLAKE_RE.test(b.channelId)) {
     return { ok: false, error: 'channelId muss eine Discord-Snowflake sein.' };
   }
-  if (typeof b.message !== 'string' || b.message.trim().length === 0) {
-    return { ok: false, error: 'message darf nicht leer sein.' };
-  }
-  if (countWelcomeGraphemes(b.message) > MAX_WELCOME_TEMPLATE_GRAPHEMES) {
-    return {
-      ok: false,
-      error: `message darf maximal ${MAX_WELCOME_TEMPLATE_GRAPHEMES} sichtbare Zeichen lang sein.`,
-    };
-  }
   return {
     ok: true,
     data: {
       enabled: b.enabled !== false,
       channelId: b.channelId,
-      message: b.message,
     },
   };
 }
@@ -73,12 +59,11 @@ async function ensureGoodbyeChannel(channelId: string, guildId: string): Promise
 }
 
 function serialize(cfg: GoodbyeConfig | null) {
-  if (!cfg) return { configured: false, enabled: false, channelId: '', message: '' };
+  if (!cfg) return { configured: false, enabled: false, channelId: '' };
   return {
     configured: true,
     enabled: cfg.enabled,
     channelId: cfg.channelId,
-    message: cfg.message,
   };
 }
 
@@ -129,7 +114,7 @@ goodbyeRouter.post('/test', requireGuildPermission('welcome.manage'), async (req
 
   const body = req.body as GoodbyeBody;
   let cfg: GoodbyeConfig | null;
-  if (body && typeof body.channelId === 'string' && body.message !== undefined) {
+  if (body && typeof body.channelId === 'string') {
     const checked = validateGoodbyeBody(body);
     if (!checked.ok) { res.status(400).json({ error: checked.error }); return; }
     cfg = checked.data;
@@ -160,13 +145,6 @@ goodbyeRouter.post('/test', requireGuildPermission('welcome.manage'), async (req
       }, null);
 
   const leaveOccurredAt = new Date();
-  const rendered = renderGoodbyeMessage(cfg.message, {
-    identity,
-    guild: guild.name,
-    memberCount: guild.memberCount,
-    occurredAt: leaveOccurredAt,
-  });
-  const finalText = resolveCustomEmotes(rendered, guild);
 
   try {
     await channel.send({
@@ -175,7 +153,7 @@ goodbyeRouter.post('/test', requireGuildPermission('welcome.manage'), async (req
         discordName: identity.displayName,
         discordMention: actorUser ? identity.mention : undefined,
         discordMentionResolved: Boolean(actorUser),
-        customMessage: finalText,
+        customMessage: '',
         joinedAt: actorMember?.joinedAt ?? null,
         leaveOccurredAt,
         cleanupEnabled: false,

@@ -14,6 +14,11 @@ import { createContext, useCallback, useContext, useEffect, useState, type React
 import { api, ApiError } from './api';
 
 const SS_HINT = 'botAdminSession.optimistic';
+// Ein Strict-Mode-Remount darf eine noch offene Statusantwort ebenfalls nicht
+// wieder gueltig machen. Das Modul lebt pro Browser-Tab genau einmal und ist
+// daher die passende Grenze fuer diese Session-Generationen.
+let statusRequestGeneration = 0;
+let verifiedSessionEpoch = 0;
 
 export type BotAdminAccessSource = 'bot-admin' | 'dev' | null;
 
@@ -60,6 +65,10 @@ export function BotAdminSessionProvider({ children }: { children: ReactNode }) {
   const [expiresAt, setExpiresAt] = useState<string | null>(null);
   const [source, setSource] = useState<BotAdminAccessSource>(null);
   const [loading, setLoading] = useState<boolean>(true);
+  // Status-Antworten koennen sich überlappen (Initial-Load, Window-Focus,
+  // Polling und Login-Bestaetigung). Nur die juengste darf den UI-Zustand
+  // setzen; sonst kann eine alte "inaktiv"-Antwort eine neue Session sofort
+  // wieder verdecken.
 
   const applyStatus = useCallback((status: BotAdminStatus, nextSource: BotAdminAccessSource): void => {
     setActive(status.active);
@@ -69,8 +78,14 @@ export function BotAdminSessionProvider({ children }: { children: ReactNode }) {
   }, []);
 
   const refresh = useCallback(async (): Promise<void> => {
+    const generation = ++statusRequestGeneration;
+    const sessionEpoch = verifiedSessionEpoch;
     try {
       const botAdmin = await api.get<BotAdminStatus>('/api/v2/bot-admin/status');
+      if (generation !== statusRequestGeneration) return;
+      // Eine Antwort, die vor einer erfolgreich bestaetigten Anmeldung
+      // gestartet wurde, darf diese neue Session niemals wiederrufen.
+      if (!botAdmin.active && sessionEpoch !== verifiedSessionEpoch) return;
       if (botAdmin.active) {
         applyStatus(botAdmin, 'bot-admin');
         return;
@@ -80,6 +95,7 @@ export function BotAdminSessionProvider({ children }: { children: ReactNode }) {
       // bestaetigte DEV-Session darf als zweiter Zugriffsweg gelten.
       try {
         const dev = await api.get<DevStatus>('/api/v2/dev/status');
+        if (generation !== statusRequestGeneration || sessionEpoch !== verifiedSessionEpoch) return;
         if (dev.active && dev.eligible) {
           applyStatus({ active: true, expiresAt: dev.expiresAt ?? null }, 'dev');
           return;
@@ -90,13 +106,15 @@ export function BotAdminSessionProvider({ children }: { children: ReactNode }) {
         if (!(e instanceof ApiError) || (e.status !== 401 && e.status !== 403)) throw e;
       }
 
+      if (generation !== statusRequestGeneration || sessionEpoch !== verifiedSessionEpoch) return;
       applyStatus({ active: false, expiresAt: null }, null);
     } catch (e) {
+      if (generation !== statusRequestGeneration || sessionEpoch !== verifiedSessionEpoch) return;
       if (e instanceof ApiError && (e.status === 401 || e.status === 403)) {
         applyStatus({ active: false, expiresAt: null }, null);
       }
     } finally {
-      setLoading(false);
+      if (generation === statusRequestGeneration) setLoading(false);
     }
   }, [applyStatus]);
 
@@ -107,7 +125,9 @@ export function BotAdminSessionProvider({ children }: { children: ReactNode }) {
     // geschuetzten Bereich navigiert, bestaetigt derselbe Server die frisch
     // persistierte BotAdminSession. Damit kann kein optimistischer UI-State
     // mehr direkt in "Bot-Admin-Session erforderlich" zurueckfallen.
+    const generation = ++statusRequestGeneration;
     const status = await api.get<BotAdminStatus>('/api/v2/bot-admin/status');
+    if (generation !== statusRequestGeneration) return;
     if (!status.active || !status.expiresAt) {
       applyStatus({ active: false, expiresAt: null }, null);
       throw new ApiError(
@@ -116,6 +136,7 @@ export function BotAdminSessionProvider({ children }: { children: ReactNode }) {
         'BOTADMIN_SESSION_CONFIRMATION_FAILED',
       );
     }
+    ++verifiedSessionEpoch;
     applyStatus(status, 'bot-admin');
   }, [applyStatus]);
 
@@ -127,6 +148,10 @@ export function BotAdminSessionProvider({ children }: { children: ReactNode }) {
       return;
     }
     try { await api.post('/api/v2/bot-admin/logout'); } catch { /* ignore */ }
+    // Auch eine vor dem Logout gestartete Status-Abfrage darf den lokalen
+    // Logout nicht nachtraeglich mit einem alten "aktiv" ueberschreiben.
+    ++statusRequestGeneration;
+    ++verifiedSessionEpoch;
     applyStatus({ active: false, expiresAt: null }, null);
   }, [applyStatus, refresh, source]);
 

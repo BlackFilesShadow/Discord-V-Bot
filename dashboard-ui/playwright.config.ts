@@ -1,7 +1,11 @@
 import { defineConfig, devices } from '@playwright/test';
+import path from 'node:path';
+import { fileURLToPath } from 'node:url';
 
 const realDb = process.env.E2E_REAL_DB === '1';
 const realDbSpec = /stage-27-35-real-http-db\.spec\.ts/;
+const dashboardUiRoot = path.dirname(fileURLToPath(import.meta.url));
+const e2ePort = Number(process.env.E2E_PORT ?? '4173');
 
 /**
  * Playwright-Konfig fuer Frontend-Smoke-Tests des V-Bot-Dashboards.
@@ -28,7 +32,7 @@ export default defineConfig({
   timeout: 30_000,
   expect: { timeout: 5_000 },
   use: {
-    baseURL: 'http://127.0.0.1:4173',
+    baseURL: `http://127.0.0.1:${e2ePort}`,
     trace: 'on-first-retry',
     screenshot: 'only-on-failure',
   },
@@ -58,8 +62,12 @@ export default defineConfig({
     // denselben Build aus; sonst nutzt die isolierte Matrix Vite preview.
     command: realDb
       ? 'node ../scripts/e2e-dashboard-db-server.cjs'
-      : 'npx vite preview --port 4173 --strictPort --host 127.0.0.1',
-    url: 'http://127.0.0.1:4173',
+      : `npx vite preview --outDir ../src/dashboard/public --port ${e2ePort} --strictPort --host 127.0.0.1`,
+    // Playwright wird auch aus dem Repository-Root aufgerufen. Der feste
+    // Arbeitsordner verhindert, dass versehentlich ein Build einer anderen
+    // Worktree-Kopie auf Port 4173 getestet wird.
+    cwd: dashboardUiRoot,
+    url: `http://127.0.0.1:${e2ePort}`,
     reuseExistingServer: !process.env.CI,
     timeout: 30_000,
   },

@@ -20,6 +20,61 @@ async function stubBase(page: Page): Promise<void> {
   }));
 }
 
+test('eine alte Statusantwort kann eine frisch bestätigte Bot-Admin-Session nicht überschreiben', async ({ page }) => {
+  let sessionActive = false;
+  let holdNextStatus = false;
+  let staleStatusRoute: Route | undefined;
+
+  await page.route('**/api/me', route => json(route, { user: USER }));
+  await page.route('**/auth/status', route => json(route, { authenticated: true, user: USER }));
+  await page.route('**/api/v2/dev/status', route => json(route, { active: false, eligible: true, expiresAt: null }));
+  await page.route('**/api/v2/bot-admin/status', async route => {
+    if (holdNextStatus) {
+      holdNextStatus = false;
+      staleStatusRoute = route;
+      return;
+    }
+    await json(route, sessionActive
+      ? { active: true, expiresAt: '2026-08-20T12:00:00.000Z' }
+      : { active: false, expiresAt: null });
+  });
+  await page.route('**/api/v2/bot-admin/login', async route => {
+    expect(route.request().postDataJSON()).toEqual({ password: 'richtiges-passwort' });
+    sessionActive = true;
+    await json(route, { ok: true, expiresAt: '2026-08-20T12:00:00.000Z' });
+  });
+  await page.route('**/api/v2/bot-admin/guilds', route => json(route, { items: [] }));
+  await page.route('**/api/v2/bot-admin/overview', route => json(route, {
+    stats: { openAppeals: 0, newFeedback: 0, pendingValidations: 0, uploadEnabled: true, suspendedUsers: 0, deletedPackages: 0, criticalWarnings: 0 },
+    recentBroadcasts: [], recentExports: [], recentAdminActions: [],
+  }));
+
+  await page.goto('/bot-admin');
+  await expect(page.getByLabel('Bot-Admin Passwort')).toBeVisible();
+
+  // Ein Focus-Refresh startet noch vor dem Login und liefert erst danach den
+  // alten inaktiven Status. Genau dieser Ablauf trat im Dashboard real auf.
+  holdNextStatus = true;
+  await page.evaluate(() => window.dispatchEvent(new Event('focus')));
+  await expect.poll(() => Boolean(staleStatusRoute)).toBe(true);
+
+  await page.getByLabel('Bot-Admin Passwort').fill('richtiges-passwort');
+  await page.getByRole('button', { name: 'Bot-Admin entsperren' }).click();
+  await expect(page.getByTestId('botadmin-login-panel').locator('[data-state="ok"]')).toBeVisible();
+
+  await staleStatusRoute!.fulfill({
+    status: 200,
+    contentType: 'application/json',
+    body: JSON.stringify({ active: false, expiresAt: null }),
+  });
+
+  // Die verzögerte Antwort wurde verarbeitet; der Sessionindikator muss auch
+  // danach aktiv bleiben. Die eigentliche Seiten-Navigation hat auf Mobile
+  // ein eigenes, bewusst reduziertes Layout und ist nicht Teil dieses Vertrags.
+  await page.waitForTimeout(250);
+  await expect(page.getByTestId('botadmin-login-panel').locator('[data-state="ok"]')).toBeVisible();
+});
+
 test('Appeal-Entscheidung sendet den exakten Intent und schließt erst nach Erfolg', async ({ page }) => {
   await stubBase(page);
   let body: unknown = null;

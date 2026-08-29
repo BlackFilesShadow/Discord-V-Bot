@@ -42,7 +42,7 @@ describe('Goodbye-1 + Leave-1E leave lifecycle wiring', () => {
 
   it('does not reuse persisted role or permission context as goodbye authorization', () => {
     const identityStart = managerSource.indexOf('export async function resolveLastKnownGoodbyeIdentity');
-    const identityEnd = managerSource.indexOf('export function renderGoodbyeMessage', identityStart);
+    const identityEnd = managerSource.indexOf('export async function sendConfiguredGoodbye', identityStart);
     const identityFunction = managerSource.slice(identityStart, identityEnd);
 
     expect(identityFunction).toContain('getMemberProfile(member.guild.id, member.user.id)');
