@@ -6,7 +6,7 @@
  * IANA-Zeitzone konfiguriert ist, werden sie DST-sicher nach UTC aufgeloest.
  */
 
-export const ADM_PARSER_VERSION = 3;
+export const ADM_PARSER_VERSION = 4;
 
 export type AdmParsedType =
   | 'PLAYER_CONNECTED'
@@ -22,6 +22,8 @@ export type AdmParsedType =
   | 'DISMANTLE'
   | 'DESTROY'
   | 'PLAYER_POSITION'
+  | 'FLAG_RAISED'
+  | 'FLAG_LOWERED'
   | 'UNKNOWN';
 
 export type AdmParseStatus = 'OK' | 'UNKNOWN' | 'UNRESOLVED_TIMESTAMP';
@@ -55,6 +57,7 @@ const NAME_RE = /"([^"]+)"/;
 const ID_RE = /id=([^\s,)]+)/;
 const POS_RE = /pos=<([^>]+)>/;
 const DISTANCE_RE = /\bfrom\s+([\d.]+)\s*m(?:eters?)?\b/i;
+const FLAG_ACTION_RE = /\bhas\s+(raised|lowered)\s+(.+?)\s+on\s+TerritoryFlag\s+at\s+<([^>]+)>/i;
 
 export function resolveBaseDate(text: string, fileName?: string): Date | null {
   for (const line of text.split(/\r?\n/, 8)) {
@@ -99,8 +102,6 @@ function wallClockToUtc(
   });
 
   let guess = targetWallAsUtc;
-  // Two correction passes handle normal zone offsets and DST transitions
-  // without a third-party timezone dependency.
   for (let pass = 0; pass < 3; pass++) {
     const parts = formatter.formatToParts(new Date(guess));
     const value = (type: Intl.DateTimeFormatPartTypes): number =>
@@ -184,6 +185,17 @@ function parseBuildAction(content: string): { type: AdmParsedType; object: strin
   return object ? { type, object, tool } : null;
 }
 
+function parseFlagAction(content: string): ParsedAdmEvent | null {
+  const match = FLAG_ACTION_RE.exec(content);
+  if (!match) return null;
+  const actor = extractActor(content);
+  const event = fill(content, match[1].toLowerCase() === 'raised' ? 'FLAG_RAISED' : 'FLAG_LOWERED', actor);
+  event.objectType = cleanActionValue(match[2]);
+  event.targetName = 'TerritoryFlag';
+  event.targetPosition = match[3].trim() || null;
+  return event;
+}
+
 function extractWeapon(segment: string): string | null {
   const withIndex = segment.search(/\bwith\s+/i);
   if (withIndex < 0) return null;
@@ -255,10 +267,11 @@ export function parseAdmLine(line: string, ctx: AdmDateContext): ParsedAdmEvent 
     return finalize(fill(content, 'PLAYER_DISCONNECTED', extractActor(content)));
   }
 
+  const flag = parseFlagAction(content);
+  if (flag) return finalize(flag);
+
   if (/committed suicide/i.test(content)) {
     const event = fill(content, 'PLAYER_SUICIDE', extractActor(content));
-    // Manche ADM-Varianten liefern die verwendete Waffe nach "with" mit.
-    // Wenn sie fehlt, bleibt das Feld null statt eine Ursache zu erfinden.
     event.toolOrWeapon = extractWeapon(content);
     return finalize(event);
   }
