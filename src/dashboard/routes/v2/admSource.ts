@@ -1,5 +1,5 @@
 import { Router, type Request, type Response } from 'express';
-import { requireGuildOwner } from '../../middleware/auth';
+import { requireGuildPermission } from '../../middleware/auth';
 import prisma from '../../../database/prisma';
 import { getSlot } from '../../../modules/nitrado/repository';
 import { NitradoClient } from '../../../modules/nitrado/nitradoClient';
@@ -61,7 +61,10 @@ async function resolveSlotContext(req: Request, res: Response): Promise<SlotCont
   };
 }
 
-admSourceRouter.get('/', requireGuildOwner, async (req, res) => {
+// Page 2 (Killfeed & ADM) teilt bewusst denselben delegierbaren Manage-Scope.
+// `dashboard.access` erbt diesen Scope ueber die zentrale hasPermission-Logik,
+// waehrend Page-1-Operationen (Token/Service/Slot) weiterhin Owner-only bleiben.
+admSourceRouter.get('/', requireGuildPermission('killfeed.manage'), async (req, res) => {
   try {
     const ctx = await resolveSlotContext(req, res);
     if (!ctx) return;
@@ -88,7 +91,7 @@ admSourceRouter.get('/', requireGuildOwner, async (req, res) => {
   }
 });
 
-admSourceRouter.patch('/', requireGuildOwner, async (req, res) => {
+admSourceRouter.patch('/', requireGuildPermission('killfeed.manage'), async (req, res) => {
   try {
     const ctx = await resolveSlotContext(req, res);
     if (!ctx) return;
@@ -128,7 +131,7 @@ admSourceRouter.patch('/', requireGuildOwner, async (req, res) => {
   }
 });
 
-admSourceRouter.post('/rediscover', requireGuildOwner, async (req, res) => {
+admSourceRouter.post('/rediscover', requireGuildPermission('killfeed.manage'), async (req, res) => {
   try {
     const ctx = await resolveSlotContext(req, res);
     if (!ctx) return;
