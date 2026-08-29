@@ -63,5 +63,19 @@ export async function requireGlobalBotAdminIdentity(
     return;
   }
 
+  // Der kanonische BOT_OWNER_ID ist zugleich die unverlierbare globale
+  // Developer-Identitaet. Auf /dev normalisiert requireGlobalDeveloperIdentity
+  // diesen Request bereits auf DEVELOPER; ohne dieselbe request-lokale
+  // Normalisierung wuerde /bot-admin den frischen DB-Role-Snapshot (z.B. USER)
+  // an requireBotAdmin weiterreichen und eine vorhandene, gueltige DevSession
+  // faelschlich mit "Bot-Admin-Session erforderlich" ablehnen.
+  //
+  // Wichtig: Es wird KEINE BotAdminSession erzeugt und die persistente DB-Rolle
+  // bleibt unveraendert. Downstream muss weiterhin requireBotAdmin/requireDev
+  // bestehen, inklusive Session-Ablauf, MFA und IP-Allowlist.
+  if (config.discord.ownerId && String(req.auth.discordId) === config.discord.ownerId) {
+    req.auth.role = 'DEVELOPER';
+  }
+
   next();
 }
