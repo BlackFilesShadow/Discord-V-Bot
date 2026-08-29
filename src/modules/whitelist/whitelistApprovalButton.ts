@@ -199,7 +199,10 @@ export async function handleWhitelistApprovalButton(btn: ButtonInteraction): Pro
           btn,
           responseEmbed('INFO', 'Anfrage bereits bearbeitet', 'Diese Anfrage wurde bereits von jemand anderem entschieden.'),
         );
-        await removeRequestMessage(btn);
+        // Ein konkurrierender Universal-Worker kann APPROVED nur temporaer als
+        // Claim halten und bei komplettem Fan-out-Fehler wieder auf PENDING
+        // zuruecksetzen. Nur der Claim-Owner darf deshalb das Request-Embed
+        // nach einem tatsaechlich erfolgreichen/teilweisen Abschluss entfernen.
         return;
       }
 
