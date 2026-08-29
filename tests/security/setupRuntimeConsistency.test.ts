@@ -32,6 +32,25 @@ describe('Bare-metal setup runtime consistency', () => {
     expect(setup).toContain('ReadWritePaths=${BOT_DIR}/uploads ${BOT_DIR}/logs ${BOT_DIR}/private');
   });
 
+  it('respektiert ein explizites Bot-Admin-Secret fuer neue Installationen ohne es auszugeben', () => {
+    const capture = 'REQUESTED_BOT_ADMIN_PASSWORD="${BOT_ADMIN_PASSWORD:-}"';
+    const operatorBranch = 'if [[ -n "$REQUESTED_BOT_ADMIN_PASSWORD" ]]';
+    const copyOperatorSecret = 'BOT_ADMIN_PASSWORD="$REQUESTED_BOT_ADMIN_PASSWORD"';
+    const envWrite = 'BOT_ADMIN_PASSWORD=${BOT_ADMIN_PASSWORD}';
+
+    expect(setup).toContain(capture);
+    expect(setup).toContain(operatorBranch);
+    expect(setup).toContain(copyOperatorSecret);
+    expect(setup).toContain('BOT_ADMIN_PASSWORD=$(openssl rand -hex 32)');
+    expect(setup).toContain('REQUESTED_BOT_ADMIN_PASSWORD=""');
+    expect(setup).toContain('BOT_ADMIN_PASSWORD=""');
+    expect(setup).not.toContain('echo "$REQUESTED_BOT_ADMIN_PASSWORD"');
+    expect(setup).not.toContain('echo "$BOT_ADMIN_PASSWORD"');
+
+    expect(setup.indexOf(capture)).toBeLessThan(setup.indexOf(operatorBranch));
+    expect(setup.indexOf(operatorBranch)).toBeLessThan(setup.indexOf(envWrite));
+  });
+
   it('behandelt bestehende DB-Rollen ohne bekannte .env fail-closed und loggt kein DB-Passwort', () => {
     expect(setup).toContain("PostgreSQL-User '${DB_USER}' existiert bereits, aber ${ENV_FILE} fehlt");
     expect(setup).toContain('DB_PASS=$(openssl rand -hex 32)');
