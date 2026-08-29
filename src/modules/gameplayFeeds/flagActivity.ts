@@ -1,5 +1,5 @@
 import { createHmac, timingSafeEqual } from 'node:crypto';
-import { AdmEventType } from '@prisma/client';
+import { AdmEventType, GameplayFeedKind } from '@prisma/client';
 import { EmbedBuilder, MessageFlags, type ButtonInteraction } from 'discord.js';
 import { config } from '../../config';
 import prisma from '../../database/prisma';
@@ -148,7 +148,7 @@ function sessionDetails(
 
 export async function handleFlagActivityButton(interaction: ButtonInteraction): Promise<void> {
   const eventId = verifyFlagActivityCustomId(interaction.customId);
-  if (!eventId || !interaction.guildId || !interaction.guild) {
+  if (!eventId || !interaction.guildId || !interaction.guild || !interaction.channelId) {
     await interaction.reply({ content: 'Ungültige oder abgelaufene Flaggen-Interaktion.', flags: MessageFlags.Ephemeral });
     return;
   }
@@ -159,11 +159,48 @@ export async function handleFlagActivityButton(interaction: ButtonInteraction): 
 
   await interaction.deferReply({ flags: MessageFlags.Ephemeral });
 
+  // Der signierte Event-Verweis reicht nicht allein: Er muss genau zu der
+  // gespeicherten SENT-Delivery dieser Discord-Nachricht und dieses Channels
+  // gehoeren. Erst daraus wird der Gameserver-Scope bestimmt. Kopierte Buttons
+  // aus anderen Nachrichten/Channels/Guilds scheitern fail-closed.
+  const delivery = await prisma.gameplayFeedDelivery.findFirst({
+    where: {
+      admEventId: eventId,
+      guildId: interaction.guildId,
+      channelId: interaction.channelId,
+      messageId: interaction.message.id,
+      status: 'SENT',
+    },
+    select: { configId: true, nitradoConnId: true },
+  });
+  if (!delivery) {
+    await interaction.editReply({ content: 'Die Flaggen-Interaktion gehört nicht zu dieser Feed-Nachricht.' });
+    return;
+  }
+
+  const feedConfig = await prisma.gameplayFeedConfig.findFirst({
+    where: {
+      id: delivery.configId,
+      guildId: interaction.guildId,
+      nitradoConnId: delivery.nitradoConnId,
+      kind: GameplayFeedKind.FLAG,
+    },
+    select: { id: true },
+  });
+  if (!feedConfig) {
+    await interaction.editReply({ content: 'Der zugehörige Flaggen-Feed ist nicht mehr vorhanden.' });
+    return;
+  }
+
   const event = await prisma.flagActivityEvent.findFirst({
-    where: { id: eventId, guildId: interaction.guildId },
+    where: {
+      id: eventId,
+      guildId: interaction.guildId,
+      nitradoConnId: delivery.nitradoConnId,
+    },
   });
   if (!event) {
-    await interaction.editReply({ content: 'Das Flaggenereignis ist in diesem Discord nicht vorhanden.' });
+    await interaction.editReply({ content: 'Das Flaggenereignis ist in diesem Gameserver-Scope nicht vorhanden.' });
     return;
   }
 
@@ -268,7 +305,7 @@ export async function handleFlagActivityButton(interaction: ButtonInteraction): 
   } else {
     for (const session of shortOthers) {
       embed.addFields({
-        name: `⚠️ Kurzzeit-Session · ${safeEmbedField(session.playerName || session.gameId, 200)}`,
+        name: `⚠️ Kurzzeit-Session · ${safeEmbedField(session.playerName || 'Unbekannter Spieler', 200)}`,
         value: safeEmbedField(sessionDetails(
           session,
           eventAt,
