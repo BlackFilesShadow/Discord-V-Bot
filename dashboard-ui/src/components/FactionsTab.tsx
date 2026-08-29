@@ -814,18 +814,24 @@ function FactionsPanel({ guildId, canManage }: { guildId: string; canManage: boo
           })()}
 
           {/* Upload-Bereich */}
-          <div className="grid gap-3 md:grid-cols-2">
+          <div className="grid gap-3 md:grid-cols-3">
             <FileUploadField
-              label="Flagge (optional) — JPG, PNG, GIF, WEBP, MP4"
+              label="Flagge (optional) — JPG, PNG, GIF, WEBP · max. 25 MB"
               currentUrl={draft.flagUrl}
               onUpload={f => handleUpload('flagUrl', f)}
               onClear={() => setDraft(d => ({ ...d, flagUrl: '' }))}
             />
             <FileUploadField
-              label="Armbinde (optional) — JPG, PNG, GIF, WEBP, MP4"
+              label="Armbinde (optional) — JPG, PNG, GIF, WEBP · max. 25 MB"
               currentUrl={draft.bannerUrl}
               onUpload={f => handleUpload('bannerUrl', f)}
               onClear={() => setDraft(d => ({ ...d, bannerUrl: '' }))}
+            />
+            <FileUploadField
+              label="Embed-Banner (optional, GIF animiert) — JPG, PNG, GIF, WEBP · max. 25 MB"
+              currentUrl={draft.mediaUrl}
+              onUpload={f => handleUpload('mediaUrl', f)}
+              onClear={() => setDraft(d => ({ ...d, mediaUrl: '' }))}
             />
           </div>
 
@@ -870,7 +876,7 @@ function FileUploadField({ label, currentUrl, onUpload, onClear }: {
       <div className="flex items-center gap-2">
         <input
           type="file"
-          accept="image/jpeg,image/png,image/gif,image/webp,video/mp4"
+          accept="image/jpeg,image/png,image/gif,image/webp"
           aria-label={label}
           onChange={e => { const f = e.target.files?.[0]; if (f) onUpload(f); e.target.value = ''; }}
           className="text-xs text-white file:mr-2 file:px-2 file:py-1 file:rounded file:border-0 file:bg-accent file:text-white file:cursor-pointer"
