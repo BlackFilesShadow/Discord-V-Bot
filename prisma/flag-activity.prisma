@@ -1,0 +1,31 @@
+// Kanonische Flaggenaktivitaeten aus DayZ-ADM. Die Rohzeile bleibt parallel in
+// AdmEvent erhalten; diese additive Domaene vermeidet eine riskante Aenderung
+// des zentralen AdmEventType-Enums und liefert trotzdem strikt typisierte
+// FLAG_RAISED/FLAG_LOWERED-Daten fuer Feed und Analyse.
+
+enum FlagActivityAction {
+  RAISED
+  LOWERED
+}
+
+model FlagActivityEvent {
+  id              String             @id @default(cuid())
+  eventKey        String             @unique @db.VarChar(64)
+  guildId         String
+  nitradoConnId   String
+  sourceFile      String
+  sourceByteStart BigInt
+  occurredAt      DateTime?
+  action          FlagActivityAction
+  actorGameId     String?
+  actorName       String?
+  actorPosition   String?
+  flagType        String?
+  flagPosition    String?
+  rawLine         String             @db.Text
+  createdAt       DateTime           @default(now())
+
+  @@index([guildId, nitradoConnId, createdAt, id])
+  @@index([guildId, nitradoConnId, occurredAt])
+  @@index([guildId, nitradoConnId, actorGameId, occurredAt])
+}
