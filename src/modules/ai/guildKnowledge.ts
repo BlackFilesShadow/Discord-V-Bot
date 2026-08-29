@@ -773,18 +773,18 @@ export async function regenerateAiBrief(guildId: string): Promise<string | null>
       'Keine Markdown-Formatierung, keine Aufzaehlungen, kein Code-Block.',
     ].join('\n');
     const userPrompt = ['Server-Fakten:', ...facts.map((f) => `- ${f}`)].join('\n');
-    const llm = await callAI([
+    const providerResponse = await callAI([
       { role: 'system', content: sysPrompt },
       { role: 'user', content: userPrompt },
     ]);
-    const cleaned = llm.trim().replace(/^["'`]+|["'`]+$/g, '').slice(0, 1500);
+    const cleaned = providerResponse.trim().replace(/^["'`]+|["'`]+$/g, '').slice(0, 1500);
     if (cleaned.length >= 40) {
       brief = cleaned;
     } else {
-      logger.warn(`regenerateAiBrief: LLM-Antwort zu kurz (${cleaned.length}ch), nutze deterministischen Fallback.`);
+      logger.warn(`regenerateAiBrief: AI-Provider-Antwort zu kurz (${cleaned.length}ch), nutze deterministischen Fallback.`);
     }
   } catch (e) {
-    logger.warn(`regenerateAiBrief: LLM-Call fehlgeschlagen (${String(e)}), nutze deterministischen Fallback.`);
+    logger.warn(`regenerateAiBrief: AI-Provider-Aufruf fehlgeschlagen (${String(e)}), nutze deterministischen Fallback.`);
   }
 
   await prisma.guildProfile.update({
