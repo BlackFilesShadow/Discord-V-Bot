@@ -85,7 +85,8 @@ describe('Nitrado-1M ADM binding freshness architecture gate', () => {
     const ingestor = source('src/modules/nitrado/adm/serverLogIngestor.ts');
 
     expect(ingestor).toContain('sourceFile?: string;');
-    expect(ingestor).toContain('sourceFile: meta.sourceFile ?? meta.fileName');
+    expect(ingestor).toContain('const sourceFile = meta.sourceFile ?? meta.fileName;');
+    expect((ingestor.match(/\n\s+sourceFile,/g) ?? []).length).toBeGreaterThanOrEqual(2);
     expect(ingestor).toContain('fileName: meta.fileName');
   });
 });
