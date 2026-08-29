@@ -3,6 +3,12 @@ import path from 'node:path';
 import { newDateContext, parseAdmLine } from '../../src/modules/nitrado/adm/admLineParser';
 import { ingestFullFile, persistAdmEvents } from '../../src/modules/nitrado/adm/serverLogIngestor';
 import { categoryForEvent, kindForEvent } from '../../src/modules/gameplayFeeds/types';
+import {
+  buildFlagActivityCustomId,
+  horizontalDistanceMeters,
+  parseHorizontalPosition,
+  verifyFlagActivityCustomId,
+} from '../../src/modules/gameplayFeeds/flagActivity';
 
 describe('Flag activity feeds', () => {
   test('parses raised territory flag with actor and separate flag coordinates', () => {
@@ -35,6 +41,22 @@ describe('Flag activity feeds', () => {
     expect(event?.objectType).toBe('Flag_Base');
     expect(categoryForEvent(event!.eventType)).toBe('LOWERED');
     expect(kindForEvent(event!.eventType)).toBe('FLAG');
+  });
+
+  test('normalizes 3D positions to horizontal X/Z and calculates distance without using height', () => {
+    expect(parseHorizontalPosition('9662.8, 294.2, 8788.5')).toEqual({ x: 9662.8, z: 8788.5 });
+    expect(parseHorizontalPosition('10, 20')).toEqual({ x: 10, z: 20 });
+    expect(parseHorizontalPosition('invalid')).toBeNull();
+    expect(horizontalDistanceMeters('0, 999, 0', '3, 1, 4')).toBe(5);
+  });
+
+  test('signed analysis button accepts only the untampered event reference', () => {
+    const eventId = 'cabcdefghijklmnopqrstuvwx';
+    const customId = buildFlagActivityCustomId(eventId);
+    expect(customId).toMatch(/^flagshort:v1:c[a-z0-9]{24}:[a-f0-9]{20}$/);
+    expect(verifyFlagActivityCustomId(customId)).toBe(eventId);
+    expect(verifyFlagActivityCustomId(`${customId.slice(0, -1)}0`)).toBeNull();
+    expect(verifyFlagActivityCustomId('flagshort:v1:invalid:deadbeef')).toBeNull();
   });
 
   test('persists flag raw event compatibly and canonical flag domain idempotently', async () => {
@@ -94,7 +116,7 @@ describe('Flag activity feeds', () => {
     expect(route).toContain("kind === 'FLAG' && categories.length !== 1");
     expect(runtime).toContain('buildFlagActivityCustomId(event.id)');
     expect(runtime).toContain(".setLabel('Kurz-Online prüfen')");
-    expect(composite).toContain("flagshort:v1:");
+    expect(composite).toContain('flagshort:v1:');
     expect(ui).toContain('🚩 Flaggen-Feed');
     expect(ui).toContain('Flagge hoch');
     expect(ui).toContain('Flagge runter');
