@@ -451,6 +451,14 @@ export async function removeVirtualAccountAmount(args: {
       const changed = await raw.$executeRawUnsafe('UPDATE "EconomyVirtualAccount" SET "balance"="balance"-$4, "updatedAt"=CURRENT_TIMESTAMP WHERE "id"=$1 AND "guildId"=$2 AND "nitradoConnId"=$3 AND "status"<>\'ARCHIVED\'::"EconomyVirtualAccountStatus" AND "balance">=$4', args.accountId, String(args.guildId), String(args.nitradoConnId), args.amount);
       if (changed !== 1) throw new Error('Virtuelles Wallet hat zu wenig Guthaben oder ist archiviert.');
     } else {
+      // Hard-Delete und alle anderen gekoppelten Geldpfade locken zuerst das
+      // Basiskonto. Das BANK-Remove uebernimmt dieselbe Reihenfolge, bevor das
+      // Finance-UPDATE dessen Row-Lock nimmt; damit entsteht kein Finance->Account
+      // Lock-Zyklus gegen deleteUnusedVirtualAccount (Account->Finance).
+      await raw.$queryRawUnsafe<Array<{ id: string }>>(
+        'SELECT "id" FROM "EconomyVirtualAccount" WHERE "id"=$1 AND "guildId"=$2 AND "nitradoConnId"=$3 LIMIT 1 FOR UPDATE',
+        args.accountId, String(args.guildId), String(args.nitradoConnId),
+      );
       const changed = await raw.$executeRawUnsafe('UPDATE "EconomyVirtualAccountFinance" f SET "bankBalance"=f."bankBalance"-$4, "updatedAt"=CURRENT_TIMESTAMP FROM "EconomyVirtualAccount" a WHERE f."accountId"=$1 AND f."guildId"=$2 AND f."nitradoConnId"=$3 AND a."id"=f."accountId" AND a."status"<>\'ARCHIVED\'::"EconomyVirtualAccountStatus" AND f."bankBalance">=$4', args.accountId, String(args.guildId), String(args.nitradoConnId), args.amount);
       if (changed !== 1) throw new Error('Virtuelle Bank hat zu wenig Guthaben oder ist archiviert.');
     }
