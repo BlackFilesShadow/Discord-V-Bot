@@ -16,7 +16,7 @@ import {
   ensureVirtualAccountFinance,
   listVirtualAccountManagers,
 } from '../../../modules/economy/virtualAccountFinance';
-import { deleteUnusedVirtualAccount } from '../../../modules/economy/virtualAccountDeletion';
+import { deleteUnusedVirtualAccount, listHiddenVirtualAccountIds } from '../../../modules/economy/virtualAccountDeletion';
 import { safePayoutVirtualAccountToUser } from '../../../modules/economy/virtualAccountMoneySafety';
 import {
   configureVirtualManagerPanelSafe,
@@ -167,8 +167,13 @@ async function bestEffortProjection(req: Parameters<Parameters<typeof economyVir
 // weiter unten in diesem Router bewusst vor ihnen abgefangen.
 economyVirtualAccountControlRouter.get('/control/accounts', requireGuildPermission('economy.view'), async (req, res) => {
   const { scope, connId } = scoped(req);
-  const accounts = await listVirtualAccounts(scope.guildId, connId, true);
-  const serialized = (await Promise.all(accounts.map(account => serializeAccount(scope.guildId, connId, account.id)))).filter(Boolean);
+  const [accounts, hiddenIds] = await Promise.all([
+    listVirtualAccounts(scope.guildId, connId, true),
+    listHiddenVirtualAccountIds({ guildId: scope.guildId, nitradoConnId: connId }),
+  ]);
+  const serialized = (await Promise.all(
+    accounts.filter(account => !hiddenIds.has(account.id)).map(account => serializeAccount(scope.guildId, connId, account.id)),
+  )).filter(Boolean);
   res.json({ accounts: serialized });
 });
 
@@ -258,7 +263,7 @@ economyVirtualAccountControlRouter.delete('/control/accounts/:accountId', requir
     if (client) await retireVirtualAccountProjection(client, scope.guildId, connId, accountId);
     const deleted = await deleteUnusedVirtualAccount({ guildId: scope.guildId, nitradoConnId: connId, accountId });
     if (client) await refreshConfiguredVirtualManagerPanelSafe(client, scope.guildId, connId, asUserDiscordId(scope.actorDiscordId)).catch(() => undefined);
-    logAuditDb('ECONOMY_VIRTUAL_ACCOUNT_DELETED', 'ECONOMY', { actorUserId: req.auth!.userId, guildId: scope.guildId, details: { accountId, accountName: deleted.name, nitradoConnId: connId } });
+    logAuditDb('ECONOMY_VIRTUAL_ACCOUNT_DELETED', 'ECONOMY', { actorUserId: req.auth!.userId, guildId: scope.guildId, details: { accountId, accountName: deleted.name, deletionMode: deleted.mode, nitradoConnId: connId } });
     res.json({ ok: true, deleted });
   } catch (error) { res.status(400).json({ error: (error as Error).message }); }
 });
