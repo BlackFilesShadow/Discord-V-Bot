@@ -69,6 +69,7 @@ const DEFAULTS: Record<FeedKind, Category[]> = {
   PLAYER_LIST: [],
   FLAG: ['RAISED'],
 };
+const FLAG_OPTIONS: FlagCategory[] = ['RAISED', 'LOWERED'];
 
 function categoryMeta(kind: FeedKind, category: Category): { label: string; icon: string } | null {
   if (kind === 'DEATH') return DEATH_LABELS[category as DeathCategory] ?? null;
@@ -313,7 +314,7 @@ function FeedEditor({
   const [busy, setBusy] = useState(false);
   const modalRef = useModalA11y<HTMLDivElement>(onClose);
   const textChannels = channels.filter(channel => channel.type === 0 || channel.type === 5);
-  const available = DEFAULTS[kind];
+  const available: Category[] = kind === 'FLAG' ? FLAG_OPTIONS : DEFAULTS[kind];
 
   const toggleCategory = (category: Category) => {
     if (kind === 'FLAG') {

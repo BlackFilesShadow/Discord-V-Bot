@@ -65,6 +65,9 @@ const POST_STAGE_LABEL_OVERRIDES: Readonly<Record<string, string>> = {
 const POST_STAGE_HANDLER_OVERRIDES: Readonly<Record<string, string>> = {
   'dashboard-ui/src/components/economy/LotteryPanel.tsx#LotteryPanel:1': '() => { void current.refetch(); void history.refetch(); void currency.refetch(); }',
 };
+const CURRENT_KILLFEED_PANEL = 'dashboard-ui/src/components/KillfeedTab.tsx';
+const CURRENT_KILLFEED_BUTTON_COUNT = 10;
+const CURRENT_FLAG_FEED_BUTTON_SOURCE_ID = `${CURRENT_KILLFEED_PANEL}#KillfeedTab:5`;
 const HISTORICAL_VIRTUAL_ACCOUNT_PANEL = 'dashboard-ui/src/components/economy/VirtualAccountsPanel.tsx';
 const CURRENT_VIRTUAL_ACCOUNT_PANEL = 'dashboard-ui/src/components/economy/VirtualAccountsControlPanel.tsx';
 const CURRENT_VIRTUAL_ACCOUNT_BUTTON_COUNT = 15;
@@ -228,14 +231,19 @@ describe('stage 24 dashboard button matrix architecture', () => {
     const declared = matrix.fileCoverage
       .map(entry => ({ file: entry.file, count: matrix.buttons.filter(button => button.file === entry.file).length }))
       .sort((a, b) => a.file.localeCompare(b.file));
+    const normalizedActual = actual.map(entry => (
+      entry.file === CURRENT_KILLFEED_PANEL ? { ...entry, count: entry.count - 1 } : entry
+    ));
 
     // Preserve the immutable stage-24 inventory while requiring deliberate
     // post-stage surfaces to be present with their exact reviewed button counts.
-    expect(actual.filter(entry => (
+    expect(normalizedActual.filter(entry => (
       entry.file !== CURRENT_VIRTUAL_ACCOUNT_PANEL && entry.file !== CURRENT_BLACK_MARKET_PANEL
     ))).toEqual(declared.filter(entry => (
       entry.file !== HISTORICAL_VIRTUAL_ACCOUNT_PANEL && entry.file !== CURRENT_BLACK_MARKET_PANEL
     )));
+    expect(actual.find(entry => entry.file === CURRENT_KILLFEED_PANEL))
+      .toEqual({ file: CURRENT_KILLFEED_PANEL, count: CURRENT_KILLFEED_BUTTON_COUNT });
     expect(actual.find(entry => entry.file === CURRENT_VIRTUAL_ACCOUNT_PANEL))
       .toEqual({ file: CURRENT_VIRTUAL_ACCOUNT_PANEL, count: CURRENT_VIRTUAL_ACCOUNT_BUTTON_COUNT });
     expect(actual.find(entry => entry.file === CURRENT_BLACK_MARKET_PANEL))
@@ -259,11 +267,34 @@ describe('stage 24 dashboard button matrix architecture', () => {
       handler: POST_STAGE_HANDLER_OVERRIDES[button.sourceId] ?? button.handler,
     }));
     const currentSignatures = currentButtonSignatures();
-    expect(currentSignatures.filter(button => (
+    const normalizedCurrentSignatures = currentSignatures
+      .filter(button => button.sourceId !== CURRENT_FLAG_FEED_BUTTON_SOURCE_ID)
+      .map(button => {
+        if (button.file !== CURRENT_KILLFEED_PANEL || button.component !== 'KillfeedTab') return button;
+        const prefix = `${CURRENT_KILLFEED_PANEL}#KillfeedTab:`;
+        if (!button.sourceId.startsWith(prefix)) return button;
+        const ordinal = Number(button.sourceId.slice(prefix.length));
+        return ordinal > 5 ? { ...button, sourceId: `${prefix}${ordinal - 1}` } : button;
+      });
+    expect(normalizedCurrentSignatures.filter(button => (
       button.file !== CURRENT_VIRTUAL_ACCOUNT_PANEL && button.file !== CURRENT_BLACK_MARKET_PANEL
     ))).toEqual(declaredSignatures.filter(button => (
       button.file !== HISTORICAL_VIRTUAL_ACCOUNT_PANEL && button.file !== CURRENT_BLACK_MARKET_PANEL
     )));
+
+    const flagFeedButton = currentSignatures.find(button => button.sourceId === CURRENT_FLAG_FEED_BUTTON_SOURCE_ID);
+    expect(flagFeedButton).toMatchObject({
+      file: CURRENT_KILLFEED_PANEL,
+      component: 'KillfeedTab',
+      tag: 'button',
+      label: '🚩 Flaggen-Feed',
+      kind: 'client-state',
+      hasDisabledGuard: false,
+      hasLoadingGuard: false,
+      type: 'button',
+    });
+    expect(flagFeedButton?.handler).toContain("setKind('FLAG')");
+    expect(flagFeedButton?.handler).toContain('setEditing(null)');
 
     const replacement = currentSignatures.filter(button => button.file === CURRENT_VIRTUAL_ACCOUNT_PANEL);
     expect(replacement).toHaveLength(CURRENT_VIRTUAL_ACCOUNT_BUTTON_COUNT);
