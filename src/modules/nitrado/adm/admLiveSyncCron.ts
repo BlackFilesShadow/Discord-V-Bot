@@ -13,6 +13,11 @@ import { config } from '../../../config';
 import { decrypt } from '../../../utils/security';
 import { logger, logAudit } from '../../../utils/logger';
 import { NitradoClient } from '../nitradoClient';
+import {
+  resolveAdmRemoteFilePath,
+  selectAdmRemoteFiles,
+  type AdmRemoteFile,
+} from './admRemoteFile';
 import { recordAdmSourceError, resolveAdmProfile } from './profileResolver';
 import {
   ingestChunk,
@@ -43,12 +48,7 @@ let timer: NodeJS.Timeout | null = null;
 let running = false;
 
 type LiveConn = AdmBindingSnapshot;
-
-interface AdmFile {
-  name: string;
-  modified_at: number;
-  size: number;
-}
+type AdmFile = AdmRemoteFile;
 
 function safeError(error: unknown): string {
   return (error instanceof Error ? error.message : String(error))
@@ -159,12 +159,13 @@ async function baselineCurrentFile(
   profileDir: string,
   file: AdmFile,
 ): Promise<void> {
+  const remotePath = resolveAdmRemoteFilePath(profileDir, file);
   let newOffset = file.size;
   let tail = '';
   if (file.size > 0) {
     const length = Math.min(BASELINE_TAIL_BYTES, file.size);
     const start = file.size - length;
-    tail = await client.downloadFileRange(conn.nitradoServerId, `${profileDir}/${file.name}`, start, length);
+    tail = await client.downloadFileRange(conn.nitradoServerId, remotePath, start, length);
     const newline = tail.lastIndexOf('\n');
     if (newline >= 0) {
       newOffset = start + Buffer.byteLength(tail.slice(0, newline + 1), 'utf8');
@@ -199,6 +200,7 @@ async function ingestFile(
 ): Promise<void> {
   if (!Number.isSafeInteger(file.size) || file.size < 0) throw new Error(`Ungueltige ADM-Dateigroesse fuer ${file.name}`);
   const sourceIdentity = admBindingFileIdentity(conn.bindingVersion, file.name);
+  const remotePath = resolveAdmRemoteFilePath(profileDir, file);
   let offset = startOffset > file.size ? 0 : startOffset;
   let context = await dateContextForOffset(conn, sourceIdentity, file.name, offset, timeZone);
 
@@ -206,7 +208,7 @@ async function ingestFile(
     const length = Math.min(RANGE_BYTES, file.size - offset);
     const chunk = await client.downloadFileRange(
       conn.nitradoServerId,
-      `${profileDir}/${file.name}`,
+      remotePath,
       offset,
       length,
     );
@@ -275,7 +277,7 @@ async function processConnection(scope: { id: string; guildId: string }): Promis
       client,
       writeFence,
     );
-    const files = (await client.listAdmFiles(conn.nitradoServerId, profile.profileDir))
+    const files = selectAdmRemoteFiles(await client.listDir(conn.nitradoServerId, profile.profileDir))
       .filter(file => Number.isSafeInteger(file.modified_at) && Number.isSafeInteger(file.size) && file.size >= 0)
       .sort((a, b) => a.modified_at - b.modified_at || a.name.localeCompare(b.name));
     if (files.length === 0) {
