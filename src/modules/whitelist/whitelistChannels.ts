@@ -280,8 +280,8 @@ async function postTemporaryDecisionNotice(args: {
     ))
     .setColor(args.approved ? Colors.Success : Colors.Error)
     .setDescription(args.approved
-      ? 'Deine Whitelist-Anfrage wurde angenommen. Weitere Informationen findest du in deiner DM.'
-      : 'Deine Whitelist-Anfrage wurde abgelehnt. Weitere Informationen findest du in deiner DM.')
+      ? 'Deine Whitelist-Anfrage wurde angenommen. Bei Fragen oder für weitere Informationen wende dich bitte an den Support.'
+      : 'Deine Whitelist-Anfrage wurde abgelehnt. Bei Fragen oder für weitere Informationen wende dich bitte an den Support.')
     .addFields({ name: 'Beantragter Spielername', value: `\`${args.gameId}\`` })
     .setFooter({ text: 'V-Bot • Whitelist • temporäre Information' })
     .setTimestamp(args.decidedAt);
