@@ -44,9 +44,13 @@ jest.mock('../../src/utils/logger', () => ({
 }));
 
 jest.mock('../../src/dashboard/middleware/auth', () => ({
-  requireGuildOwner: (req: { auth?: unknown; guildScope?: unknown }, _res: unknown, next: () => void) => {
+  requireGuildPermission: (_perm: string) => (
+    req: { auth?: unknown; guildScope?: unknown },
+    _res: unknown,
+    next: () => void,
+  ) => {
     req.auth = { userId: 'u1', discordId: ACTOR, role: 'USER' };
-    req.guildScope = { guildId: GUILD, actorDiscordId: ACTOR, permissions: [] };
+    req.guildScope = { guildId: GUILD, actorDiscordId: ACTOR, isOwner: false, permissions: ['dashboard.access'] };
     next();
   },
 }));
