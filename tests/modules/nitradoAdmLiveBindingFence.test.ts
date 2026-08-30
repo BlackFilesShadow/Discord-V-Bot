@@ -5,7 +5,7 @@ const eventFindFirst = jest.fn();
 const feedUpdateMany = jest.fn();
 const resolveProfile = jest.fn();
 const recordSourceError = jest.fn();
-const listAdmFiles = jest.fn();
+const listDir = jest.fn();
 const downloadFileRange = jest.fn();
 const persistAdmEvents = jest.fn();
 const ingestChunk = jest.fn();
@@ -45,7 +45,7 @@ jest.mock('../../src/utils/logger', () => ({
 }));
 
 jest.mock('../../src/modules/nitrado/nitradoClient', () => ({
-  NitradoClient: jest.fn().mockImplementation(() => ({ listAdmFiles, downloadFileRange })),
+  NitradoClient: jest.fn().mockImplementation(() => ({ listDir, downloadFileRange })),
 }));
 
 jest.mock('../../src/modules/nitrado/adm/profileResolver', () => ({
@@ -75,7 +75,13 @@ beforeEach(() => {
   findConnections.mockResolvedValue([{ id: BINDING.id, guildId: BINDING.guildId }]);
   readBinding.mockResolvedValue(BINDING);
   resolveProfile.mockResolvedValue({ profileDir: '/profiles', timeZone: null, source: 'AUTO' });
-  listAdmFiles.mockResolvedValue([{ name: 'DayZServer.ADM', modified_at: 100, size: 4 }]);
+  listDir.mockResolvedValue([{
+    name: 'DayZServer.ADM',
+    type: 'file',
+    modified_at: 100,
+    size: 4,
+    path: '/games/example/noftp/dayzps/config/DayZServer.ADM',
+  }]);
   downloadFileRange.mockResolvedValue('abc\n');
   cursorFindFirst.mockResolvedValue(null);
   cursorFindUnique.mockResolvedValue(null);
@@ -99,6 +105,13 @@ describe('Nitrado-1M live ADM binding fence', () => {
     await runAdmLiveSyncOnce();
 
     expect(readBinding).toHaveBeenCalledWith({ id: BINDING.id, guildId: BINDING.guildId });
+    expect(listDir).toHaveBeenCalledWith(BINDING.nitradoServerId, '/profiles');
+    expect(downloadFileRange).toHaveBeenCalledWith(
+      BINDING.nitradoServerId,
+      '/games/example/noftp/dayzps/config/DayZServer.ADM',
+      0,
+      4,
+    );
     expect(cursorFindFirst).toHaveBeenCalledWith(expect.objectContaining({
       where: expect.objectContaining({
         guildId: BINDING.guildId,
@@ -129,7 +142,12 @@ describe('Nitrado-1M live ADM binding fence', () => {
 
     await runAdmLiveSyncOnce();
 
-    expect(downloadFileRange).toHaveBeenCalled();
+    expect(downloadFileRange).toHaveBeenCalledWith(
+      BINDING.nitradoServerId,
+      '/games/example/noftp/dayzps/config/DayZServer.ADM',
+      0,
+      4,
+    );
     expect(persistAdmEvents).not.toHaveBeenCalled();
     expect(verifyChallenges).not.toHaveBeenCalled();
     expect(feedUpdateMany).not.toHaveBeenCalled();
