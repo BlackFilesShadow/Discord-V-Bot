@@ -21,9 +21,18 @@ jest.mock('../../src/database/prisma', () => ({
 }));
 
 jest.mock('../../src/dashboard/middleware/auth', () => ({
-  requireGuildOwner: (req: { auth?: unknown; guildScope?: unknown }, _res: unknown, next: () => void) => {
+  requireGuildPermission: (_perm: string) => (
+    req: { auth?: unknown; guildScope?: unknown },
+    _res: unknown,
+    next: () => void,
+  ) => {
     req.auth = { userId: 'user-internal-id', discordId: ACTOR_ID, role: 'USER' };
-    req.guildScope = { guildId: GUILD_ID, actorDiscordId: ACTOR_ID, permissions: [] };
+    req.guildScope = {
+      guildId: GUILD_ID,
+      actorDiscordId: ACTOR_ID,
+      isOwner: false,
+      permissions: ['dashboard.access'],
+    };
     next();
   },
 }));
