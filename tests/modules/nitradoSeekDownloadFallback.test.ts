@@ -146,6 +146,20 @@ describe('Nitrado ranged file fallback', () => {
     expect(fetchSignedText).not.toHaveBeenCalled();
   });
 
+  it('does not turn an API seek 404 into the signed download fallback', async () => {
+    const client = new NitradoClient('test-token');
+    const { request, fetchSignedText } = stubTransport(client);
+    const seekPath = '/services/12345/gameservers/file_server/seek';
+    const original = new NitradoApiError('HTTP 404', 404, seekPath);
+    request.mockRejectedValue(original);
+
+    await expect(client.downloadFileRange('12345', '/logs/server.ADM', 0, 4096))
+      .rejects.toBe(original);
+
+    expect(request).toHaveBeenCalledTimes(1);
+    expect(fetchSignedText).not.toHaveBeenCalled();
+  });
+
   it('does not mask authentication failures from the signed seek URL', async () => {
     const client = new NitradoClient('test-token');
     const { request, fetchSignedText } = stubTransport(client);
