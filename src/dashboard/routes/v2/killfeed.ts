@@ -1,6 +1,6 @@
 /**
  * Gameplay-Feed-Routen. Der bestehende /killfeed-Pfad bleibt aus
- * Rueckwaertskompatibilitaet erhalten; `?kind=DEATH|BUILD|PLAYER_LIST|FLAG`
+ * Rueckwaertskompatibilitaet erhalten; `?kind=DEATH|BUILD|PLACEMENT|PLAYER_LIST|FLAG`
  * waehlt den Feed. Ohne kind gilt DEATH.
  */
 
@@ -20,6 +20,7 @@ import {
   DEATH_EVENT_TYPES,
   DEATH_CATEGORIES,
   FLAG_CATEGORIES,
+  PLACEMENT_CATEGORIES,
   categoryForEvent,
   type GameplayFeedKindValue,
 } from '../../../modules/gameplayFeeds/types';
@@ -47,13 +48,20 @@ interface FeedBody {
 
 function readKind(raw: unknown): GameplayFeedKindValue | null {
   const value = String(raw ?? 'DEATH').trim().toUpperCase();
-  return value === 'DEATH' || value === 'BUILD' || value === 'PLAYER_LIST' || value === 'FLAG' ? value : null;
+  return value === 'DEATH'
+    || value === 'BUILD'
+    || value === 'PLACEMENT'
+    || value === 'PLAYER_LIST'
+    || value === 'FLAG'
+    ? value
+    : null;
 }
 
 function allowedCategories(kind: GameplayFeedKindValue): readonly string[] {
   if (kind === 'PLAYER_LIST') return [];
   if (kind === 'DEATH') return DEATH_CATEGORIES;
   if (kind === 'BUILD') return BUILD_CATEGORIES;
+  if (kind === 'PLACEMENT') return PLACEMENT_CATEGORIES;
   return FLAG_CATEGORIES;
 }
 
@@ -90,6 +98,9 @@ function validateBody(
     if (categories.length === 0 && kind !== 'PLAYER_LIST') return { ok: false, error: 'Mindestens eine Kategorie ist erforderlich.' };
     if (kind === 'FLAG' && categories.length !== 1) {
       return { ok: false, error: 'Ein Flaggen-Feed muss genau RAISED oder LOWERED enthalten, damit beide Kanaele getrennt bleiben.' };
+    }
+    if (kind === 'PLACEMENT' && (categories.length !== 1 || categories[0] !== 'PLACEMENT')) {
+      return { ok: false, error: 'Ein Placement-Feed darf ausschliesslich die Kategorie PLACEMENT enthalten.' };
     }
     for (const category of categories) {
       if (!allowed.includes(category)) return { ok: false, error: `Ungueltige ${kind}-Kategorie: ${category}.` };
@@ -200,7 +211,7 @@ function responseConfig(row: {
 }
 
 function invalidKind(res: Parameters<typeof killfeedRouter.get>[1] extends never ? never : any): void {
-  res.status(400).json({ error: 'kind muss DEATH, BUILD, PLAYER_LIST oder FLAG sein.' });
+  res.status(400).json({ error: 'kind muss DEATH, BUILD, PLACEMENT, PLAYER_LIST oder FLAG sein.' });
 }
 
 killfeedRouter.get('/', requireGuildPermission('killfeed.view'), async (req, res) => {
@@ -278,7 +289,7 @@ killfeedRouter.post('/', requireGuildPermission('killfeed.manage'), async (req, 
         showTool: kind === 'FLAG' ? false : ((data.showTool as boolean | undefined) ?? true),
         showDistance: kind === 'DEATH' ? ((data.showDistance as boolean | undefined) ?? true) : false,
         embedColor: (data.embedColor as string | undefined)
-          ?? (kind === 'BUILD'
+          ?? (kind === 'BUILD' || kind === 'PLACEMENT'
             ? '#eab308'
             : kind === 'PLAYER_LIST'
               ? '#2563eb'
