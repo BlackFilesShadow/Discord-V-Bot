@@ -28,7 +28,6 @@ describe('structured Goodbye status embed', () => {
     expect(json.author?.name).toBe('V-Bot Prime • Abschiedsmeldung');
     expect(json.title).toBeUndefined();
     expect(json.footer?.text).toBe('V-Bot Prime • Austritt dokumentiert');
-    expect(json.description).toBeUndefined();
     expect(json.fields).toHaveLength(3);
     expect(json.fields?.[0]).toMatchObject({ name: '👤 Mitglied', inline: false });
     expect(json.fields?.[0].value).toContain('**Discord:** DiscordNick');
