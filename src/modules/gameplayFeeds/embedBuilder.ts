@@ -158,7 +158,9 @@ export function buildGameplayFeedEmbed(
     embed.addFields({ name: 'Aktion', value: action, inline: true });
     embed.addFields({ name: 'Spieler', value: safeName(view.actorName), inline: true });
     if (view.objectType) {
-      const rawFlag = safeEmbedField(view.objectType, 128);
+      // Classnames are shown inside inline code. Keep the general sanitizer,
+      // but restore escaped underscores because they are literal in code spans.
+      const rawFlag = safeEmbedField(view.objectType, 128).replace(/\\_/g, '_');
       const readableFlag = safeEmbedField(flagObjectLabel(view.objectType), 128);
       embed.addFields({
         name: 'Flagge',
