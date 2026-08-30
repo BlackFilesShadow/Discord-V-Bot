@@ -17,6 +17,7 @@ async function json(route: Route, body: unknown, status = 200): Promise<void> {
 async function stubLifecycle(page: Page, permissions: string[], forbidden = false, isOwner = false) {
   const mutations: Mutation[] = [];
   const manageLookups: string[] = [];
+  const hasFullAccess = isOwner || permissions.includes('dashboard.access');
 
   await page.route('**/api/me', route => json(route, {
     user: { discordId: USER_ID, username: 'lifecycle-user', avatar: null, role: 'ADMIN' },
@@ -67,7 +68,7 @@ async function stubLifecycle(page: Page, permissions: string[], forbidden = fals
       });
     }
     if (path === `${base}/leave-cleanup/config` && method === 'GET') {
-      if (!isOwner) return json(route, { error: 'Nur der Server-Owner darf Leave-Cleanup verwalten.' }, 403);
+      if (!hasFullAccess) return json(route, { error: 'Dashboard-Vollzugriff erforderlich.' }, 403);
       return json(route, {
         configured: true,
         deletePlayerDataOnLeave: false,
@@ -103,6 +104,7 @@ async function stubLifecycle(page: Page, permissions: string[], forbidden = fals
       return json(route, { configured: true, ...body });
     }
     if (path === `${base}/leave-cleanup/config` && method === 'POST') {
+      if (!hasFullAccess) return json(route, { error: 'Dashboard-Vollzugriff erforderlich.' }, 403);
       const body = mutationBody() ?? {};
       mutations.push({ method, path, body });
       return json(route, { configured: true, ...body });
@@ -154,7 +156,7 @@ test.describe('Welcome/Goodbye authenticated dashboard contract', () => {
     expect(state.mutations).toEqual([]);
   });
 
-  test('welcome.manage zeigt den Cleanup im Goodbye-Bereich sichtbar, ohne Owner-Schutz zu lockern', async ({ page }) => {
+  test('welcome.manage zeigt den Cleanup im Goodbye-Bereich sichtbar, ohne Vollzugriff zu erteilen', async ({ page }) => {
     const state = await stubLifecycle(page, ['welcome.view', 'welcome.manage']);
     await openWelcome(page);
 
@@ -162,7 +164,8 @@ test.describe('Welcome/Goodbye authenticated dashboard contract', () => {
     await expect(page.getByRole('heading', { name: 'Abschied / Goodbye' })).toBeVisible();
     await expect(page.getByTestId('goodbye-leave-cleanup-owner-only')).toBeVisible();
     await expect(page.getByText('Spieler-Cleanup', { exact: true })).toBeVisible();
-    await expect(page.getByText(/Nur der Discord-Server-Owner kann sie ein- oder ausschalten/)).toBeVisible();
+    await expect(page.getByText(/Discord-Server-Owner/)).toBeVisible();
+    await expect(page.getByText(/dashboard\.access/)).toBeVisible();
     await expect(page.getByRole('switch', { name: 'Whitelist und Spielerstatistik bei Austritt bereinigen' })).toHaveCount(0);
 
     await page.getByRole('button', { name: 'Speichern', exact: true }).click();
@@ -180,6 +183,28 @@ test.describe('Welcome/Goodbye authenticated dashboard contract', () => {
       `/api/v2/guilds/${GUILD_ID}/roles`,
       `/api/v2/guilds/${GUILD_ID}/welcome/autoroles`,
     ]));
+  });
+
+  test('dashboard.access kann den sichtbaren Cleanup wie der Owner sicher aktivieren', async ({ page }) => {
+    const state = await stubLifecycle(page, ['dashboard.access']);
+    await openWelcome(page);
+
+    const cleanup = page.getByTestId('goodbye-leave-cleanup');
+    const cleanupSwitch = page.getByRole('switch', { name: 'Whitelist und Spielerstatistik bei Austritt bereinigen' });
+    await expect(cleanup).toBeVisible();
+    await expect(cleanupSwitch).toBeVisible();
+    await expect(page.getByTestId('goodbye-leave-cleanup-owner-only')).toHaveCount(0);
+
+    await cleanupSwitch.click();
+    page.once('dialog', dialog => dialog.accept());
+    await page.getByRole('button', { name: 'Cleanup speichern', exact: true }).click();
+
+    await expect.poll(() => state.mutations.some(m => (
+      m.method === 'POST'
+      && m.path === `/api/v2/guilds/${GUILD_ID}/leave-cleanup/config`
+      && m.body?.deletePlayerDataOnLeave === true
+    ))).toBe(true);
+    await noPageOverflow(page);
   });
 
   test('Server-Owner kann den sichtbaren Cleanup im Goodbye-Bereich weiterhin sicher aktivieren', async ({ page }) => {
