@@ -59,11 +59,6 @@ function positionField(value: string | null): string | null {
   return url ? `[${display}](${url})` : display;
 }
 
-function plainPositionField(value: string | null): string | null {
-  const clean = cleanPosition(value);
-  return clean ? safeEmbedField(clean, 128) : null;
-}
-
 function formatCoordinate(value: number): string {
   return Number.isInteger(value) ? String(value) : value.toFixed(2).replace(/0+$/, '').replace(/\.$/, '');
 }
