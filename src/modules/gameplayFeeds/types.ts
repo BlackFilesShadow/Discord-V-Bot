@@ -1,11 +1,13 @@
 export type DeathFeedCategory = 'PVP' | 'SUICIDE' | 'NPC' | 'VEHICLE';
-export type BuildFeedCategory = 'PLACEMENT' | 'BUILD' | 'DISMANTLE' | 'DESTROY';
+export type BuildFeedCategory = 'BUILD' | 'DISMANTLE' | 'DESTROY';
+export type PlacementFeedCategory = 'PLACEMENT';
 export type FlagFeedCategory = 'RAISED' | 'LOWERED';
-export type GameplayFeedCategory = DeathFeedCategory | BuildFeedCategory | FlagFeedCategory;
-export type GameplayFeedKindValue = 'DEATH' | 'BUILD' | 'PLAYER_LIST' | 'FLAG';
+export type GameplayFeedCategory = DeathFeedCategory | BuildFeedCategory | PlacementFeedCategory | FlagFeedCategory;
+export type GameplayFeedKindValue = 'DEATH' | 'BUILD' | 'PLACEMENT' | 'PLAYER_LIST' | 'FLAG';
 
 export const DEATH_CATEGORIES: readonly DeathFeedCategory[] = ['PVP', 'SUICIDE', 'NPC', 'VEHICLE'];
-export const BUILD_CATEGORIES: readonly BuildFeedCategory[] = ['PLACEMENT', 'BUILD', 'DISMANTLE', 'DESTROY'];
+export const BUILD_CATEGORIES: readonly BuildFeedCategory[] = ['BUILD', 'DISMANTLE', 'DESTROY'];
+export const PLACEMENT_CATEGORIES: readonly PlacementFeedCategory[] = ['PLACEMENT'];
 export const FLAG_CATEGORIES: readonly FlagFeedCategory[] = ['RAISED', 'LOWERED'];
 
 // PLAYER_DIED bleibt als kanonisches ADM-Rohereignis erhalten, wird aber bewusst
@@ -18,6 +20,10 @@ export const DEATH_EVENT_TYPES = [
   'VEHICLE_DEATH',
 ] as const;
 
+// Gemeinsamer DB-Scan-Superset fuer die zwei strikt getrennten semantischen
+// Feed-Klassen BUILD und PLACEMENT. categoryAllowed() verhindert jede
+// Cross-Delivery; damit kann die bestehende Runtime ohne historische Luecken
+// beide Typen ueber denselben ADM-Scan-Mechanismus verarbeiten.
 export const BUILD_EVENT_TYPES = ['PLACEMENT', 'BUILD', 'DISMANTLE', 'DESTROY'] as const;
 export const FLAG_EVENT_TYPES = ['FLAG_RAISED', 'FLAG_LOWERED'] as const;
 
@@ -77,7 +83,8 @@ export function categoryForEvent(eventType: string): GameplayFeedCategory | null
 
 export function kindForEvent(eventType: string): GameplayFeedKindValue | null {
   if ((DEATH_EVENT_TYPES as readonly string[]).includes(eventType)) return 'DEATH';
-  if ((BUILD_EVENT_TYPES as readonly string[]).includes(eventType)) return 'BUILD';
+  if (eventType === 'PLACEMENT') return 'PLACEMENT';
+  if (eventType === 'BUILD' || eventType === 'DISMANTLE' || eventType === 'DESTROY') return 'BUILD';
   if ((FLAG_EVENT_TYPES as readonly string[]).includes(eventType)) return 'FLAG';
   return null;
 }
