@@ -1,5 +1,5 @@
 /**
- * Permissions: nur Owner darf delegieren.
+ * Permissions: Guild-Owner oder expliziter dashboard.access-Vollzugriff darf delegieren.
  *
  * GET    /                              listet alle Grants
  * PUT    /:userDiscordId/:scope         setzt scope=true
@@ -7,7 +7,7 @@
  * DELETE /:userDiscordId                loescht alle Grants des Users
  */
 import { Router, type Response } from 'express';
-import { requireGuildOwner } from '../../middleware/auth';
+import { requireGuildPermission } from '../../middleware/auth';
 import {
   listGrants, setGrantScope, deleteGrant, deleteGrantForMembershipEpoch,
   listRoleGrants, setRoleGrantScope, deleteRoleGrant,
@@ -76,7 +76,7 @@ async function enrichGrants(
   }));
 }
 
-permissionsRouter.get('/', requireGuildOwner, async (req, res) => {
+permissionsRouter.get('/', requireGuildPermission('dashboard.access'), async (req, res) => {
   const scope = req.guildScope!;
   const [grants, roleGrants] = await Promise.all([
     listGrants(scope.guildId),
@@ -169,7 +169,7 @@ async function resolveAssignableRole(guildId: string, roleId: string) {
 
 // ── Role-based grants (registered BEFORE the user catch-all routes!) ──────
 
-permissionsRouter.put('/roles/:roleId/:scope', requireGuildOwner, async (req, res) => {
+permissionsRouter.put('/roles/:roleId/:scope', requireGuildPermission('dashboard.access'), async (req, res) => {
   const scope = req.guildScope!;
   const roleId = String(req.params.roleId);
   if (!SNOWFLAKE_RE.test(roleId)) { res.status(400).json({ error: 'roleId ungueltig.' }); return; }
@@ -189,7 +189,7 @@ permissionsRouter.put('/roles/:roleId/:scope', requireGuildOwner, async (req, re
   res.json({ permissions: out.permissions });
 });
 
-permissionsRouter.delete('/roles/:roleId/:scope', requireGuildOwner, async (req, res) => {
+permissionsRouter.delete('/roles/:roleId/:scope', requireGuildPermission('dashboard.access'), async (req, res) => {
   const scope = req.guildScope!;
   const roleId = String(req.params.roleId);
   if (!SNOWFLAKE_RE.test(roleId)) { res.status(400).json({ error: 'roleId ungueltig.' }); return; }
@@ -202,7 +202,7 @@ permissionsRouter.delete('/roles/:roleId/:scope', requireGuildOwner, async (req,
   res.json({ permissions: out.permissions });
 });
 
-permissionsRouter.delete('/roles/:roleId', requireGuildOwner, async (req, res) => {
+permissionsRouter.delete('/roles/:roleId', requireGuildPermission('dashboard.access'), async (req, res) => {
   const scope = req.guildScope!;
   const roleId = String(req.params.roleId);
   if (!SNOWFLAKE_RE.test(roleId)) { res.status(400).json({ error: 'roleId ungueltig.' }); return; }
@@ -215,7 +215,7 @@ permissionsRouter.delete('/roles/:roleId', requireGuildOwner, async (req, res) =
 
 // ── User-based grants ─────────────────────────────────────────────────────
 
-permissionsRouter.put('/:userDiscordId/:scope', requireGuildOwner, async (req, res) => {
+permissionsRouter.put('/:userDiscordId/:scope', requireGuildPermission('dashboard.access'), async (req, res) => {
   const scope = req.guildScope!;
   let target;
   try { target = asUserDiscordId(String(req.params.userDiscordId)); } catch { res.status(400).json({ error: 'userDiscordId ungueltig.' }); return; }
@@ -255,7 +255,7 @@ permissionsRouter.put('/:userDiscordId/:scope', requireGuildOwner, async (req, r
   }
 });
 
-permissionsRouter.delete('/:userDiscordId/:scope', requireGuildOwner, async (req, res) => {
+permissionsRouter.delete('/:userDiscordId/:scope', requireGuildPermission('dashboard.access'), async (req, res) => {
   const scope = req.guildScope!;
   let target;
   try { target = asUserDiscordId(String(req.params.userDiscordId)); } catch { res.status(400).json({ error: 'userDiscordId ungueltig.' }); return; }
@@ -291,7 +291,7 @@ permissionsRouter.delete('/:userDiscordId/:scope', requireGuildOwner, async (req
   }
 });
 
-permissionsRouter.delete('/:userDiscordId', requireGuildOwner, async (req, res) => {
+permissionsRouter.delete('/:userDiscordId', requireGuildPermission('dashboard.access'), async (req, res) => {
   const scope = req.guildScope!;
   let target;
   try { target = asUserDiscordId(String(req.params.userDiscordId)); } catch { res.status(400).json({ error: 'userDiscordId ungueltig.' }); return; }
