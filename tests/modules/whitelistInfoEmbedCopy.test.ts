@@ -7,9 +7,9 @@ describe('Whitelist-Info-Embed', () => {
     'utf8',
   );
 
-  it('beschreibt den produktiven Whitelist-Antrag ohne technische Slot-/ID-Sprache im sichtbaren Embed', () => {
-    expect(source).toContain("statusTitle('INFO', 'Whitelist-Antrag')");
-    expect(source).toContain('`/whitelist`');
+  it('erklaert Whitelist und verweist auf den produktiven Antrag-Command ohne technische Slot-/ID-Sprache', () => {
+    expect(source).toContain("statusTitle('INFO', 'Whitelist')");
+    expect(source).toContain('`/whitelist-antrag`');
     expect(source).toContain('Trage deinen **exakten Spielernamen** ein');
     expect(source).toContain('wähle den gewünschten Server über seinen Alias aus');
     expect(source).toContain('Bei nur einem aktiven Server ist keine Serverauswahl nötig.');
@@ -17,8 +17,9 @@ describe('Whitelist-Info-Embed', () => {
     expect(source).not.toContain('Request-ID: ${args.requestId}');
   });
 
-  it('enthaelt die veraltete Whitelist-Command-Syntax nicht mehr', () => {
+  it('enthaelt keine veraltete oder falsche Member-Antrag-Syntax', () => {
     expect(source).not.toContain('/whitelist id:');
+    expect(source).not.toContain('1. Nutze `/whitelist` in diesem Kanal.');
     expect(source).not.toContain("statusTitle('INFO', 'Whitelist-System')");
   });
 });
