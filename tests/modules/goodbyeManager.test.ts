@@ -80,6 +80,17 @@ describe('Goodbye-1 guild-scoped identity and delivery', () => {
     });
   });
 
+  it('keeps markdown-sensitive Discord names raw until the embed render step', () => {
+    const identity = resolveGoodbyeIdentity(
+      { discordId: '111', username: '_gateway_user_', nickname: null },
+      { username: '_steffi_b_', nickname: null },
+    );
+
+    expect(identity.username).toBe('_steffi_b_');
+    expect(identity.displayName).toBe('_steffi_b_');
+    expect(identity.username).not.toContain('\\_');
+  });
+
   it('falls back deterministically when no persisted guild profile exists', () => {
     const identity = resolveGoodbyeIdentity(
       { discordId: '222', username: 'GatewayName', nickname: null },
@@ -146,13 +157,12 @@ describe('Goodbye-1 guild-scoped identity and delivery', () => {
     const payload = send.mock.calls[0][0];
     expect(payload.allowedMentions).toEqual({ parse: [] });
     const json = payload.embeds[0].toJSON();
-    expect(json).toMatchObject({
-      title: '👋 Abschied von @StoredNick',
-    });
+    expect(json.title).toBeUndefined();
     expect(json.description).toBeUndefined();
     expect(json.fields).toHaveLength(3);
     expect(json.fields?.[0]).toMatchObject({ name: '👤 Mitglied', inline: false });
-    expect(json.fields?.[0].value).toContain('**Discord:** @StoredNick');
+    expect(json.fields?.[0].value).toContain('**Discord:** StoredNick');
+    expect(json.fields?.[0].value).not.toContain('@StoredNick');
     expect(json.fields?.[0].value).not.toContain(discordId);
     expect(json.fields?.[0].value).toContain('**Status:** Server verlassen');
     expect(json.fields?.[1]).toMatchObject({ name: '📅 Mitglied seit', value: '27. April 2025', inline: true });
@@ -192,7 +202,8 @@ describe('Goodbye-1 guild-scoped identity and delivery', () => {
     expect(send).toHaveBeenCalledTimes(1);
     const json = send.mock.calls[0][0].embeds[0].toJSON();
     const memberValue = json.fields?.find((field: { name: string }) => field.name === '👤 Mitglied')?.value;
-    expect(memberValue).toContain('**Discord:** @StoredUser');
+    expect(memberValue).toContain('**Discord:** StoredUser');
+    expect(memberValue).not.toContain('@StoredUser');
     expect(memberValue).not.toContain(discordId);
     expect(json.fields?.find((field: { name: string }) => field.name.includes('Whitelist'))?.value).toContain('Nicht eindeutig');
   });
