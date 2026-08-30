@@ -6,6 +6,9 @@ import { useDevStatus } from '@/lib/useDevStatus';
 interface ProviderRow {
   provider: string;
   configured: boolean;
+  model: string;
+  knownModel: boolean;
+  capabilities: string[];
   successCount: number;
   failureCount: number;
   rateLimitCount: number;
@@ -14,6 +17,9 @@ interface ProviderRow {
   lastSuccessAt: string | null;
   lastFailureAt: string | null;
   lastError: string | null;
+  cooldownReason: string | null;
+  cooldownRemainingMs: number;
+  cooldownStreak: number;
 }
 
 interface Anomaly {
@@ -24,6 +30,15 @@ interface Anomaly {
 }
 
 interface AiStats {
+  configuration: {
+    primary: string;
+    primaryConfigured: boolean;
+    configuredProviders: string[];
+    fallbackProviders: string[];
+    configuredCount: number;
+    resilience: 'unavailable' | 'single_provider' | 'redundant';
+    warnings: string[];
+  };
   providers: ProviderRow[];
   anomalies: Anomaly[];
   thresholds: { highFailureRatio: number; highRateLimitRatio: number; highLatencyMs: number; staleHours: number };
@@ -57,6 +72,21 @@ export default function AiProviderStats() {
 
       {data && (
         <>
+          <Card>
+            <CardHeader>
+              <CardTitle>Runtime-Konfiguration: {data.configuration.resilience}</CardTitle>
+              <CardDesc>
+                Primaer: {data.configuration.primary} · Konfiguriert: {data.configuration.configuredProviders.join(', ') || 'keiner'}
+                {' · '}Fallbacks: {data.configuration.fallbackProviders.join(', ') || 'keiner'}
+              </CardDesc>
+            </CardHeader>
+            {data.configuration.warnings.length > 0 && (
+              <ul className="space-y-1 text-xs text-warn">
+                {data.configuration.warnings.map(warning => <li key={warning}>• {warning}</li>)}
+              </ul>
+            )}
+          </Card>
+
           <Card>
             <CardHeader>
               <CardTitle>
@@ -105,7 +135,12 @@ export default function AiProviderStats() {
               <tbody>
                 {data.providers.map(p => (
                   <tr key={p.provider} className="border-t border-border/20">
-                    <td className="py-1 font-mono">{p.provider}</td>
+                    <td className="py-1">
+                      <div className="font-mono">{p.provider}</div>
+                      <div className="text-[10px] text-muted break-all">
+                        {p.model || '-'}{p.model && !p.knownModel ? ' · unverifiziert' : ''}
+                      </div>
+                    </td>
                     <td>{p.configured ? <span className="text-ok">ja</span> : <span className="text-muted">nein</span>}</td>
                     <td className="text-right">{p.successCount}</td>
                     <td className="text-right text-danger">{p.failureCount}</td>
@@ -114,7 +149,14 @@ export default function AiProviderStats() {
                     <td className={`text-right ${p.successRate >= 0.95 ? 'text-ok' : p.successRate >= 0.7 ? 'text-warn' : 'text-danger'}`}>
                       {(p.successRate * 100).toFixed(1)}%
                     </td>
-                    <td className="text-muted text-[10px] break-all">{p.lastError ?? '-'}</td>
+                    <td className="text-muted text-[10px] break-all">
+                      <div>{p.lastError ?? '-'}</div>
+                      {p.cooldownReason && (
+                        <div className="text-warn">
+                          Circuit: {p.cooldownReason} · {Math.ceil(p.cooldownRemainingMs / 1000)}s · Streak {p.cooldownStreak}
+                        </div>
+                      )}
+                    </td>
                   </tr>
                 ))}
               </tbody>

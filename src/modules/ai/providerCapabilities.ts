@@ -67,11 +67,16 @@ export function getProviderCapabilityProfile(provider: ProviderName, rawModel: s
     };
   }
 
-  if (provider === 'gemini' && (lower === 'gemini-3.7-flash' || lower === 'gemini-3.6-flash')) {
+  if (
+    provider === 'gemini'
+    && (lower === 'gemini-3.7-flash' || lower === 'gemini-3.6-flash' || lower === 'gemini-3.5-flash-lite')
+  ) {
     return {
       provider, model,
       capabilities: caps('chat', 'fast', 'structured', 'reasoning', 'long_context', 'tool'),
-      affinity: { fast: 1.12, long_context: 1.18, structured: 1.06 },
+      affinity: lower.endsWith('-lite')
+        ? { fast: 1.16, long_context: 1.08, structured: 1.03 }
+        : { fast: 1.12, long_context: 1.18, structured: 1.06 },
       knownModel: true,
     };
   }

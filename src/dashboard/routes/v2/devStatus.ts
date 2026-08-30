@@ -20,7 +20,7 @@ import { requireDev } from '../../middleware/auth';
 import prisma from '../../../database/prisma';
 import { tryGetDashboardClient } from '../../clientRegistry';
 import { logger } from '../../../utils/logger';
-import { getStats } from '../../../modules/ai/providerStats';
+import { getProviderConfigurationHealth, getStats } from '../../../modules/ai/providerStats';
 import { nitradoWriteProtectionStatus } from '../../middleware/nitradoWriteGuard';
 import { config } from '../../../config';
 import { getMemberSyncStatus } from '../../../modules/members/memberSyncScheduler';
@@ -470,9 +470,13 @@ devStatusRouter.get('/ai-providers', async (_req, res) => {
     const stats = await getStats();
     const anomalies = detectAnomalies(stats);
     res.json({
+      configuration: getProviderConfigurationHealth(),
       providers: stats.map(s => ({
         provider: s.provider,
         configured: s.configured,
+        model: s.model,
+        knownModel: s.knownModel,
+        capabilities: s.capabilities,
         successCount: s.successCount,
         failureCount: s.failureCount,
         rateLimitCount: s.rateLimitCount,
@@ -481,6 +485,9 @@ devStatusRouter.get('/ai-providers', async (_req, res) => {
         lastSuccessAt: s.lastSuccessAt,
         lastFailureAt: s.lastFailureAt,
         lastError: s.lastError,
+        cooldownReason: s.cooldownReason,
+        cooldownRemainingMs: s.cooldownRemainingMs,
+        cooldownStreak: s.cooldownStreak,
       })),
       anomalies,
       thresholds: {

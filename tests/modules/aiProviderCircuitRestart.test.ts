@@ -70,7 +70,7 @@ describe('AI provider circuit-breaker restart lifecycle', () => {
     expect(stats.updateMany).not.toHaveBeenCalled();
   });
 
-  it('bereinigt abgelaufene persistente Cooldowns statt stale DB-Zustand mitzuschleppen', async () => {
+  it('bereinigt abgelaufene persistente harte Circuits weiterhin vollstaendig', async () => {
     markRateLimited('cerebras', 120_000);
     await Promise.resolve();
     await Promise.resolve();
@@ -78,7 +78,7 @@ describe('AI provider circuit-breaker restart lifecycle', () => {
 
     const expired = new Date(Date.now() - 5_000);
     stats.findMany.mockResolvedValue([
-      { provider: 'cerebras', cooldownUntil: expired, cooldownStreak: 4 },
+      { provider: 'cerebras', cooldownUntil: expired, cooldownStreak: 4, cooldownReason: 'http_401' },
     ]);
 
     await hydrateCooldownsFromDb();
@@ -92,6 +92,49 @@ describe('AI provider circuit-breaker restart lifecycle', () => {
       },
       data: { cooldownUntil: null, cooldownReason: null, cooldownStreak: 0 },
     });
+  });
+
+  it('behaelt einen abgelaufenen persistenten 429-Streak nach Restart ohne Routing-Sperre', async () => {
+    stats.findMany.mockResolvedValue([
+      {
+        provider: 'groq',
+        cooldownUntil: new Date(Date.now() - 5_000),
+        cooldownStreak: 2,
+        cooldownReason: '429_rate_limit',
+      },
+    ]);
+
+    await hydrateCooldownsFromDb();
+
+    expect(isOnCooldown('groq')).toBe(false);
+    expect(getCooldownRemainingMs('groq')).toBe(0);
+    expect(stats.updateMany).not.toHaveBeenCalled();
+
+    await recordCall('groq', 'rateLimit', 87, 'HTTP 429');
+
+    expect(getCooldownRemainingMs('groq')).toBeGreaterThan(110_000);
+    expect(getCooldownRemainingMs('groq')).toBeLessThanOrEqual(120_000);
+    expect(stats.upsert).toHaveBeenCalledWith(expect.objectContaining({
+      where: { provider: 'groq' },
+      update: expect.objectContaining({ cooldownReason: '429_rate_limit', cooldownStreak: 3 }),
+    }));
+  });
+
+  it('setzt einen behaltenen 429-Streak nach externem DB-Clear beim Sync zurueck', async () => {
+    stats.findMany.mockResolvedValueOnce([
+      {
+        provider: 'groq',
+        cooldownUntil: new Date(Date.now() - 5_000),
+        cooldownStreak: 3,
+        cooldownReason: '429_rate_limit',
+      },
+    ]);
+    await hydrateCooldownsFromDb();
+
+    stats.findMany.mockResolvedValueOnce([]);
+    await hydrateCooldownsFromDb();
+
+    expect(markRateLimited('groq')).toBe(30_000);
   });
 
   it('setzt bei Erfolg den persistenten Circuit atomar im Stat-Upsert zurueck', async () => {

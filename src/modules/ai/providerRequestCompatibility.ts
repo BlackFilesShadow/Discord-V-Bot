@@ -1,6 +1,5 @@
 import axios from 'axios';
 import { composePromptWithinBudget, getTotalPromptBudget, type PromptRole } from './promptBudget';
-import { answerLiveTimeQuestion } from './liveTime';
 
 const OPENAI_COMPATIBLE_HOSTS = new Set([
   'api.groq.com',
@@ -207,66 +206,6 @@ export function normalizeAiProviderRequest(
   return data;
 }
 
-function payloadText(value: unknown): string {
-  if (!isRecord(value)) return '';
-  if (Array.isArray(value.messages)) {
-    return value.messages
-      .filter((message): message is Record<string, unknown> => isRecord(message))
-      .map(message => typeof message.content === 'string' ? message.content : '')
-      .join('\n');
-  }
-  if (Array.isArray(value.contents)) {
-    return value.contents
-      .filter((entry): entry is Record<string, unknown> => isRecord(entry))
-      .flatMap(entry => Array.isArray(entry.parts) ? entry.parts : [])
-      .filter((part): part is Record<string, unknown> => isRecord(part))
-      .map(part => typeof part.text === 'string' ? part.text : '')
-      .join('\n');
-  }
-  return '';
-}
-
-function lastUserText(value: unknown): string {
-  if (!isRecord(value)) return '';
-  if (Array.isArray(value.messages)) {
-    for (let i = value.messages.length - 1; i >= 0; i--) {
-      const message = value.messages[i];
-      if (!isRecord(message) || message.role !== 'user' || typeof message.content !== 'string') continue;
-      return message.content;
-    }
-  }
-  if (Array.isArray(value.contents)) {
-    for (let i = value.contents.length - 1; i >= 0; i--) {
-      const entry = value.contents[i];
-      if (!isRecord(entry) || entry.role !== 'user' || !Array.isArray(entry.parts)) continue;
-      const text = entry.parts
-        .filter((part): part is Record<string, unknown> => isRecord(part) && typeof part.text === 'string')
-        .map(part => part.text as string)
-        .join('\n')
-        .trim();
-      if (text) return text;
-    }
-  }
-  return '';
-}
-
-function localTimeFastPath(requestUrl: string | undefined, data: unknown): string | null {
-  if (!isKnownAiUrl(requestUrl)) return null;
-  // Nur der normale Wissensfragen-Prompt besitzt diesen autoritativen Marker.
-  // Sentiment/Translation/Moderation duerfen durch einen zufaelligen Zeittext
-  // im User-Payload niemals in eine freie Textantwort umgebogen werden.
-  if (!payloadText(data).includes('AUTORITATIVE ZEIT- UND DATUMSANGABEN')) return null;
-  return answerLiveTimeQuestion(lastUserText(data));
-}
-
-function syntheticAiResponseData(requestUrl: string | undefined, answer: string): unknown {
-  const url = parseUrl(requestUrl);
-  if (url?.hostname === 'generativelanguage.googleapis.com') {
-    return { candidates: [{ content: { parts: [{ text: answer }] } }] };
-  }
-  return { choices: [{ message: { content: answer } }] };
-}
-
 function extractOpenAiText(data: unknown): string {
   if (!isRecord(data) || !Array.isArray(data.choices)) return '';
   const first = data.choices[0];
@@ -315,24 +254,17 @@ let installed = false;
 
 /**
  * Installiert genau eine eng begrenzte Kompatibilitaetsschicht auf der von
- * V-Bot verwendeten Axios-Instanz. Sie normalisiert Provider-Payloads,
- * beantwortet autoritative lokale Zeitfragen ohne externen Provider und laesst
+ * V-Bot verwendeten Axios-Instanz. Sie normalisiert Provider-Payloads und laesst
  * leere 200-Providerantworten als retry-/fallback-faehigen Fehler weiterlaufen.
+ * Die Transportgrenze interpretiert Inhalte niemals als neue Nutzerfrage:
+ * Gemini kann System-Preamble und Nutzertext in einem Content zusammenfassen.
+ * Lokale Zeit-/Statusantworten gehoeren ausschliesslich in answerQuestion vor
+ * der Prompt-Assemblierung, nicht in einen synthetischen Netzwerk-Adapter.
  */
 export function installAiProviderRequestCompatibility(): void {
   if (installed) return;
   axios.interceptors.request.use((request) => {
     request.data = normalizeAiProviderRequest(request.url, request.data);
-    const localAnswer = localTimeFastPath(request.url, request.data);
-    if (localAnswer) {
-      request.adapter = async (adapterConfig) => ({
-        data: syntheticAiResponseData(request.url, localAnswer),
-        status: 200,
-        statusText: 'OK',
-        headers: {},
-        config: adapterConfig,
-      } as any);
-    }
     return request;
   });
   axios.interceptors.response.use((response) => {

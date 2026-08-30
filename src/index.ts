@@ -31,6 +31,7 @@ import { assertProductionEnv } from './utils/envValidation';
 import { startNitradoRuntime, type NitradoRuntimeHandle } from './modules/nitrado/runtime';
 import { startAiBackgroundLoops, stopAiBackgroundLoops } from './modules/ai/runtime';
 import { installAiProviderRequestCompatibility } from './modules/ai/providerRequestCompatibility';
+import { getProviderConfigurationHealth } from './modules/ai/providerStats';
 import { installDiscordLifecycleObservers, registerBotEventsSafely } from './runtime/discordRuntime';
 import { BOT_PRODUCT_NAME } from './content/botInfo';
 
@@ -39,6 +40,9 @@ async function main(): Promise<void> {
   logger.info(`${BOT_PRODUCT_NAME} startet...`);
 
   assertProductionEnv();
+  for (const warning of getProviderConfigurationHealth().warnings) {
+    logger.warn(`[AI-Konfiguration] ${warning}`);
+  }
   installAiProviderRequestCompatibility();
 
   if (!fs.existsSync(config.upload.dir)) {

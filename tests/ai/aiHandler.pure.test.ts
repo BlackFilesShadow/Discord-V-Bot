@@ -20,6 +20,7 @@ import {
   buildSelfIntroductionInstructions,
   getKnowledgeBoundary,
   getLiveTimeContext,
+  getBotPersonaForRequest,
   BOT_PERSONA,
 } from '../../src/modules/ai/aiHandler';
 
@@ -131,6 +132,25 @@ describe('aiHandler – pure helpers', () => {
     it('enthaelt Anti-Floskel-Regeln und Persona-Kerncharakter', () => {
       expect(BOT_PERSONA).toMatch(/KERNCHARAKTER/);
       expect(BOT_PERSONA).toMatch(/Marketing/);
+    });
+
+    it('nutzt fuer allgemeinen Chat einen deutlich kleineren Persona-Prompt', () => {
+      const general = getBotPersonaForRequest('general');
+      expect(general).toMatch(/V-Bot Prime/);
+      expect(general).toMatch(/1-2 Saetzen/);
+      expect(general.length).toBeLessThan(BOT_PERSONA.length / 2);
+      expect(general).not.toMatch(/SERVER-KANAELE/);
+    });
+
+    it('behaelt fuer Guild-/User-/DayZ-Kontext alle Sicherheitsregeln', () => {
+      expect(getBotPersonaForRequest('dayz')).toBe(BOT_PERSONA);
+      expect(getBotPersonaForRequest('discord_server')).toBe(BOT_PERSONA);
+      expect(getBotPersonaForRequest('user_profile')).toBe(BOT_PERSONA);
+    });
+
+    it('haengt Command-Regeln nur bei einer Command-/Self-Intro-Frage an', () => {
+      expect(getBotPersonaForRequest('general', false)).not.toMatch(/COMMANDS \/ FUNKTIONEN/);
+      expect(getBotPersonaForRequest('general', true)).toMatch(/COMMANDS \/ FUNKTIONEN/);
     });
   });
 });

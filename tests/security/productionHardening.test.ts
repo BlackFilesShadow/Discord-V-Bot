@@ -12,6 +12,14 @@
 import * as path from 'node:path';
 import { collectProductionEnvErrors, isDiscordSnowflake } from '../../src/utils/envValidation';
 
+const AI_KEY_FIXTURES = [
+  { key: 'GROQ_API_KEY', placeholder: 'your_groq_api_key_here' },
+  { key: 'CEREBRAS_API_KEY', placeholder: 'your_cerebras_api_key_here' },
+  { key: 'OPENROUTER_API_KEY', placeholder: 'your_openrouter_api_key_here' },
+  { key: 'GEMINI_API_KEY', placeholder: 'your_gemini_api_key_here' },
+  { key: 'OPENAI_API_KEY', placeholder: 'your_openai_api_key_here' },
+] as const;
+
 function validProdEnv(): Record<string, string> {
   return {
     NODE_ENV: 'production',
@@ -41,6 +49,47 @@ describe('collectProductionEnvErrors', () => {
     env.OPENAI_API_KEY = '';
     expect(collectProductionEnvErrors(env)).toEqual([]);
   });
+
+  it.each(['fehlend', 'leer', 'whitespace'])('behaelt optionale AI-Keys ausserhalb des fatalen Startvertrags (%s)', (state) => {
+    const env = validProdEnv();
+    for (const { key } of AI_KEY_FIXTURES) {
+      if (state === 'fehlend') delete env[key];
+      else env[key] = state === 'leer' ? '' : ' \t\r\n ';
+    }
+
+    expect(collectProductionEnvErrors(env)).toEqual([]);
+  });
+
+  it.each(AI_KEY_FIXTURES)('akzeptiert $key als einzigen echten Key mit Rand-Whitespace', ({ key }) => {
+    const env = validProdEnv();
+    for (const fixture of AI_KEY_FIXTURES) env[fixture.key] = '';
+    env[key] = ' \tfixture-ai-key-not-real\r\n ';
+
+    expect(collectProductionEnvErrors(env)).toEqual([]);
+  });
+
+  it.each(AI_KEY_FIXTURES)('lehnt einen ausdruecklich gesetzten $key-Platzhalter weiterhin ab', ({ key, placeholder }) => {
+    const env = validProdEnv();
+    for (const fixture of AI_KEY_FIXTURES) env[fixture.key] = '';
+    env[key] = ` \t${placeholder}\n `;
+
+    const errors = collectProductionEnvErrors(env);
+    expect(errors).toEqual([
+      expect.stringContaining(`${key} trägt noch den Platzhalterwert`),
+    ]);
+  });
+
+  it.each(AI_KEY_FIXTURES.filter(({ key }) => key !== 'GROQ_API_KEY'))(
+    'lehnt einen $key-Platzhalter auch neben einem echten Primaer-Key ab',
+    ({ key, placeholder }) => {
+      const env = validProdEnv();
+      env[key] = placeholder;
+
+      const errors = collectProductionEnvErrors(env);
+      expect(errors).toEqual([expect.stringContaining(`${key} trägt noch den Platzhalterwert`)]);
+      expect(errors.join('\n')).not.toContain(env.GROQ_API_KEY);
+    },
+  );
 
   it('bricht bei Platzhalter-DISCORD_TOKEN ab', () => {
     const env = validProdEnv();
@@ -120,6 +169,25 @@ describe('collectProductionEnvErrors', () => {
 });
 
 describe('assertProductionEnv (Start-Gate)', () => {
+  it.each(['fehlend', 'leer', 'whitespace'])('sperrt den Production-Start nicht allein wegen optionaler AI-Keys (%s)', (state) => {
+    const { assertProductionEnv } = require('../../src/utils/envValidation');
+    const env = validProdEnv();
+    for (const { key } of AI_KEY_FIXTURES) {
+      if (state === 'fehlend') delete env[key];
+      else env[key] = state === 'leer' ? '' : ' \t\r\n ';
+    }
+    const logs: string[] = [];
+    const exit = jest.spyOn(process, 'exit').mockImplementation((() => undefined) as never);
+
+    try {
+      assertProductionEnv(env, (message: string) => logs.push(message));
+      expect(exit).not.toHaveBeenCalled();
+      expect(logs.join('\n')).not.toContain('START ABGEBROCHEN');
+    } finally {
+      exit.mockRestore();
+    }
+  });
+
   it('bricht in Production bei unsicherer Konfiguration ab (process.exit + Meldung)', () => {
     const { assertProductionEnv } = require('../../src/utils/envValidation');
     const env = validProdEnv();
