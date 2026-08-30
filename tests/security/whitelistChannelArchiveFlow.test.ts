@@ -33,7 +33,7 @@ describe('Whitelist channel + archive flow regression', () => {
 
   it('routes Discord button decisions and dashboard decisions through the same archive output path', () => {
     expect(approvalButton).toContain("import { notifyRequesterDecision, postDecisionLog } from './whitelistChannels'");
-    expect(approvalButton.match(/postDecisionLog\(\{/g) ?? []).toHaveLength(2);
+    expect(approvalButton.split('postDecisionLog({').length - 1).toBe(2);
     expect(dashboardRoute).toContain('postDecisionLog({');
   });
 
