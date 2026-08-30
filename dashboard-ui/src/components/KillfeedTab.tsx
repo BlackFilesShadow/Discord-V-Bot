@@ -9,11 +9,12 @@ import { Input } from '@/components/ui/Input';
 import { useToast } from '@/components/ui/Toast';
 import { useModalA11y } from '@/lib/useModalA11y';
 
-type FeedKind = 'DEATH' | 'BUILD' | 'PLAYER_LIST' | 'FLAG';
+type FeedKind = 'DEATH' | 'BUILD' | 'PLACEMENT' | 'PLAYER_LIST' | 'FLAG';
 type DeathCategory = 'PVP' | 'SUICIDE' | 'NPC' | 'VEHICLE';
-type BuildCategory = 'PLACEMENT' | 'BUILD' | 'DISMANTLE' | 'DESTROY';
+type BuildCategory = 'BUILD' | 'DISMANTLE' | 'DESTROY';
+type PlacementCategory = 'PLACEMENT';
 type FlagCategory = 'RAISED' | 'LOWERED';
-type Category = DeathCategory | BuildCategory | FlagCategory;
+type Category = DeathCategory | BuildCategory | PlacementCategory | FlagCategory;
 
 interface GameplayFeedConfig {
   id: string;
@@ -52,10 +53,13 @@ const DEATH_LABELS: Record<DeathCategory, { label: string; icon: string }> = {
 };
 
 const BUILD_LABELS: Record<BuildCategory, { label: string; icon: string }> = {
-  PLACEMENT: { label: 'Placement Report', icon: '📦' },
   BUILD: { label: 'Build Report', icon: '🔨' },
   DISMANTLE: { label: 'Dismantle Report', icon: '🔧' },
   DESTROY: { label: 'Destruction Report', icon: '💥' },
+};
+
+const PLACEMENT_LABELS: Record<PlacementCategory, { label: string; icon: string }> = {
+  PLACEMENT: { label: 'Placement Report', icon: '📦' },
 };
 
 const FLAG_LABELS: Record<FlagCategory, { label: string; icon: string }> = {
@@ -65,7 +69,8 @@ const FLAG_LABELS: Record<FlagCategory, { label: string; icon: string }> = {
 
 const DEFAULTS: Record<FeedKind, Category[]> = {
   DEATH: ['PVP', 'SUICIDE', 'NPC', 'VEHICLE'],
-  BUILD: ['PLACEMENT', 'BUILD', 'DISMANTLE', 'DESTROY'],
+  BUILD: ['BUILD', 'DISMANTLE', 'DESTROY'],
+  PLACEMENT: ['PLACEMENT'],
   PLAYER_LIST: [],
   FLAG: ['RAISED'],
 };
@@ -74,6 +79,7 @@ const FLAG_OPTIONS: FlagCategory[] = ['RAISED', 'LOWERED'];
 function categoryMeta(kind: FeedKind, category: Category): { label: string; icon: string } | null {
   if (kind === 'DEATH') return DEATH_LABELS[category as DeathCategory] ?? null;
   if (kind === 'BUILD') return BUILD_LABELS[category as BuildCategory] ?? null;
+  if (kind === 'PLACEMENT') return PLACEMENT_LABELS[category as PlacementCategory] ?? null;
   if (kind === 'FLAG') return FLAG_LABELS[category as FlagCategory] ?? null;
   return null;
 }
@@ -81,6 +87,7 @@ function categoryMeta(kind: FeedKind, category: Category): { label: string; icon
 function feedTitle(kind: FeedKind): string {
   if (kind === 'DEATH') return 'Deathfeed';
   if (kind === 'BUILD') return 'Baufeed';
+  if (kind === 'PLACEMENT') return 'Placement-Feed';
   if (kind === 'FLAG') return 'Flaggen-Feed';
   return 'Online List';
 }
@@ -132,7 +139,7 @@ export function KillfeedTab({ guildId, isOwner, slots }: { guildId: string; isOw
 
   const kindIcon = kind === 'DEATH'
     ? <Crosshair className="h-5 w-5 text-accent" />
-    : kind === 'BUILD'
+    : kind === 'BUILD' || kind === 'PLACEMENT'
       ? <Hammer className="h-5 w-5 text-accent" />
       : kind === 'FLAG'
         ? <Flag className="h-5 w-5 text-accent" />
@@ -152,6 +159,7 @@ export function KillfeedTab({ guildId, isOwner, slots }: { guildId: string; isOw
           <Select value={kind} onChange={e => { setKind(e.target.value as FeedKind); setEditing(null); }}>
             <option value="DEATH">Deathfeed</option>
             <option value="BUILD">Baufeed</option>
+            <option value="PLACEMENT">📦 Placement-Feed</option>
             <option value="PLAYER_LIST">🌐 Online List</option>
             <option value="FLAG">🚩 Flaggen-Feed</option>
           </Select>
@@ -166,12 +174,19 @@ export function KillfeedTab({ guildId, isOwner, slots }: { guildId: string; isOw
         </div>
       </div>
 
-      <div className="grid grid-cols-2 lg:grid-cols-4 gap-2 max-w-3xl">
+      <div className="grid grid-cols-2 lg:grid-cols-5 gap-2 max-w-5xl">
         <button type="button" onClick={() => { setKind('DEATH'); setEditing(null); }} className={`rounded-lg border px-3 py-2 text-sm ${kind === 'DEATH' ? 'border-accent text-white bg-accent/10' : 'border-border text-muted'}`}>💀 Deathfeed</button>
         <button type="button" onClick={() => { setKind('BUILD'); setEditing(null); }} className={`rounded-lg border px-3 py-2 text-sm ${kind === 'BUILD' ? 'border-accent text-white bg-accent/10' : 'border-border text-muted'}`}>🔨 Baufeed</button>
+        <button type="button" onClick={() => { setKind('PLACEMENT'); setEditing(null); }} className={`rounded-lg border px-3 py-2 text-sm ${kind === 'PLACEMENT' ? 'border-accent text-white bg-accent/10' : 'border-border text-muted'}`}>📦 Placement</button>
         <button type="button" onClick={() => { setKind('PLAYER_LIST'); setEditing(null); }} className={`rounded-lg border px-3 py-2 text-sm ${kind === 'PLAYER_LIST' ? 'border-accent text-white bg-accent/10' : 'border-border text-muted'}`}>🌐 Online List</button>
         <button type="button" onClick={() => { setKind('FLAG'); setEditing(null); }} className={`rounded-lg border px-3 py-2 text-sm ${kind === 'FLAG' ? 'border-accent text-white bg-accent/10' : 'border-border text-muted'}`}>🚩 Flaggen-Feed</button>
       </div>
+
+      {kind === 'PLACEMENT' && (
+        <Card className="!p-3">
+          <p className="text-sm text-muted"><strong className="text-white">Placement</strong> ist strikt vom Baufeed getrennt. Hier werden ausschließlich ADM-Ereignisse vom Typ <strong className="text-white">PLACEMENT</strong> zugestellt.</p>
+        </Card>
+      )}
 
       {kind === 'FLAG' && (
         <Card className="!p-3">
@@ -305,9 +320,9 @@ function FeedEditor({
   const [categories, setCategories] = useState<Category[]>(existing?.categories ?? DEFAULTS[kind]);
   const [showActorCoords, setShowActorCoords] = useState(existing?.showActorCoords ?? true);
   const [showTargetCoords, setShowTargetCoords] = useState(existing?.showTargetCoords ?? (kind === 'FLAG'));
-  const [showTool, setShowTool] = useState(existing?.showTool ?? (kind !== 'FLAG'));
+  const [showTool, setShowTool] = useState(existing?.showTool ?? (kind !== 'FLAG' && kind !== 'PLACEMENT'));
   const [showDistance, setShowDistance] = useState(existing?.showDistance ?? (kind === 'DEATH'));
-  const [embedColor, setEmbedColor] = useState(existing?.embedColor ?? (kind === 'BUILD' ? '#eab308' : kind === 'PLAYER_LIST' ? '#2563eb' : kind === 'FLAG' ? '#22c55e' : '#dc2626'));
+  const [embedColor, setEmbedColor] = useState(existing?.embedColor ?? (kind === 'BUILD' || kind === 'PLACEMENT' ? '#eab308' : kind === 'PLAYER_LIST' ? '#2563eb' : kind === 'FLAG' ? '#22c55e' : '#dc2626'));
   const [playerListIntervalMinutes, setPlayerListIntervalMinutes] = useState<number | null>(existing?.playerListIntervalMinutes ?? null);
   const [isActive, setIsActive] = useState(existing?.isActive ?? true);
   const [error, setError] = useState<string | null>(null);
@@ -322,18 +337,25 @@ function FeedEditor({
       if (!existing) setEmbedColor(category === 'RAISED' ? '#22c55e' : '#eab308');
       return;
     }
+    if (kind === 'PLACEMENT') {
+      setCategories(['PLACEMENT']);
+      return;
+    }
     setCategories(current => current.includes(category) ? current.filter(value => value !== category) : [...current, category]);
   };
 
   const save = async () => {
     setError(null);
     const invalidFlagCategories = kind === 'FLAG' && categories.length !== 1;
-    if (!channelId || (kind !== 'PLAYER_LIST' && categories.length === 0) || invalidFlagCategories || !/^#[0-9a-fA-F]{6}$/.test(embedColor)) {
+    const invalidPlacementCategories = kind === 'PLACEMENT' && (categories.length !== 1 || categories[0] !== 'PLACEMENT');
+    if (!channelId || (kind !== 'PLAYER_LIST' && categories.length === 0) || invalidFlagCategories || invalidPlacementCategories || !/^#[0-9a-fA-F]{6}$/.test(embedColor)) {
       setError(kind === 'FLAG'
         ? 'Channel, gültige Farbe und genau eine Flaggen-Aktion sind erforderlich.'
-        : kind === 'PLAYER_LIST'
-          ? 'Channel und gültige Farbe sind erforderlich.'
-          : 'Channel, gültige Farbe und mindestens eine Kategorie sind erforderlich.');
+        : kind === 'PLACEMENT'
+          ? 'Channel, gültige Farbe und ausschließlich PLACEMENT sind erforderlich.'
+          : kind === 'PLAYER_LIST'
+            ? 'Channel und gültige Farbe sind erforderlich.'
+            : 'Channel, gültige Farbe und mindestens eine Kategorie sind erforderlich.');
       return;
     }
     setBusy(true);
@@ -343,7 +365,7 @@ function FeedEditor({
         categories,
         showActorCoords,
         showTargetCoords,
-        showTool: kind === 'FLAG' ? false : showTool,
+        showTool: kind === 'FLAG' || kind === 'PLACEMENT' ? false : showTool,
         showDistance: kind === 'FLAG' ? false : showDistance,
         embedColor,
         isActive,
@@ -360,6 +382,16 @@ function FeedEditor({
     }
   };
 
+  const editorTitle = kind === 'DEATH'
+    ? 'Deathfeed'
+    : kind === 'BUILD'
+      ? 'Baufeed'
+      : kind === 'PLACEMENT'
+        ? '📦 Placement-Feed'
+        : kind === 'FLAG'
+          ? '🚩 Flaggen-Feed'
+          : '🌐 Online List';
+
   return (
     <div className="fixed inset-0 z-50 grid place-items-center bg-black/70 backdrop-blur-sm p-4" onClick={onClose}>
       <div
@@ -370,7 +402,7 @@ function FeedEditor({
         className="w-full max-w-2xl max-h-[92vh] overflow-y-auto rounded-2xl border border-border bg-bg-card p-5 shadow-2xl outline-none"
         onClick={event => event.stopPropagation()}
       >
-        <h3 className="text-lg font-semibold text-white">{kind === 'DEATH' ? 'Deathfeed' : kind === 'BUILD' ? 'Baufeed' : kind === 'FLAG' ? '🚩 Flaggen-Feed' : '🌐 Online List'} konfigurieren</h3>
+        <h3 className="text-lg font-semibold text-white">{editorTitle} konfigurieren</h3>
         <div className="grid gap-4 mt-4">
           <label className="text-sm text-muted">Discord-Channel
             <Select className="mt-1 w-full" value={channelId} onChange={event => setChannelId(event.target.value)}>
@@ -380,14 +412,14 @@ function FeedEditor({
           </label>
 
           {kind !== 'PLAYER_LIST' && <div>
-            <div className="text-sm text-muted mb-2">{kind === 'FLAG' ? 'Flaggen-Aktion – genau eine auswählen' : 'Kategorien'}</div>
+            <div className="text-sm text-muted mb-2">{kind === 'FLAG' ? 'Flaggen-Aktion – genau eine auswählen' : kind === 'PLACEMENT' ? 'Placement – fest getrennt vom Baufeed' : 'Kategorien'}</div>
             <div className="grid sm:grid-cols-2 gap-2">
               {available.map(category => {
                 const meta = categoryMeta(kind, category);
                 if (!meta) return null;
                 return (
                   <label key={category} className="flex items-center gap-2 rounded-lg border border-border p-2 text-sm text-white">
-                    <input type={kind === 'FLAG' ? 'radio' : 'checkbox'} name={kind === 'FLAG' ? 'flag-action' : undefined} checked={categories.includes(category)} onChange={() => toggleCategory(category)} />
+                    <input type={kind === 'FLAG' || kind === 'PLACEMENT' ? 'radio' : 'checkbox'} name={kind === 'FLAG' ? 'flag-action' : kind === 'PLACEMENT' ? 'placement-action' : undefined} checked={categories.includes(category)} onChange={() => toggleCategory(category)} />
                     <span>{meta.icon} {meta.label}</span>
                   </label>
                 );
@@ -396,9 +428,9 @@ function FeedEditor({
           </div>}
 
           <div className="grid sm:grid-cols-2 gap-2 text-sm text-white">
-            <label className="flex items-center gap-2"><input type="checkbox" checked={showActorCoords} onChange={e => setShowActorCoords(e.target.checked)} />{kind === 'DEATH' ? 'Opfer-Position' : kind === 'BUILD' ? 'Spieler-Position' : kind === 'FLAG' ? 'Spieler-Koordinaten' : 'Koordinaten anzeigen'}</label>
+            <label className="flex items-center gap-2"><input type="checkbox" checked={showActorCoords} onChange={e => setShowActorCoords(e.target.checked)} />{kind === 'DEATH' ? 'Opfer-Position' : kind === 'BUILD' || kind === 'PLACEMENT' ? 'Spieler-Position' : kind === 'FLAG' ? 'Spieler-Koordinaten' : 'Koordinaten anzeigen'}</label>
             {(kind === 'DEATH' || kind === 'FLAG') && <label className="flex items-center gap-2"><input type="checkbox" checked={showTargetCoords} onChange={e => setShowTargetCoords(e.target.checked)} />{kind === 'FLAG' ? 'Flaggen-Koordinaten' : 'Killer-Position'}</label>}
-            {kind !== 'PLAYER_LIST' && kind !== 'FLAG' && <label className="flex items-center gap-2"><input type="checkbox" checked={showTool} onChange={e => setShowTool(e.target.checked)} />{kind === 'DEATH' ? 'Waffe / Ursache' : 'Werkzeug'}</label>}
+            {kind !== 'PLAYER_LIST' && kind !== 'FLAG' && kind !== 'PLACEMENT' && <label className="flex items-center gap-2"><input type="checkbox" checked={showTool} onChange={e => setShowTool(e.target.checked)} />{kind === 'DEATH' ? 'Waffe / Ursache' : 'Werkzeug'}</label>}
             {kind === 'DEATH' && <label className="flex items-center gap-2"><input type="checkbox" checked={showDistance} onChange={e => setShowDistance(e.target.checked)} />Distanz</label>}
             <label className="flex items-center gap-2"><input type="checkbox" checked={isActive} onChange={e => setIsActive(e.target.checked)} />Aktiv</label>
           </div>
