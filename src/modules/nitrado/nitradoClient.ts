@@ -309,7 +309,8 @@ export class NitradoClient {
   ): Promise<string> {
     const path = `/services/${serviceId}/gameservers`;
     const res = await this.request<{
-      data: { gameserver?: { settings?: { general?: Record<string, unknown> } } }>('GET', path);
+      data: { gameserver?: { settings?: { general?: Record<string, unknown> } } };
+    }>('GET', path);
     const general = res.data?.gameserver?.settings?.general;
     if (!general || !Object.prototype.hasOwnProperty.call(general, key)) {
       throw new NitradoApiError(`${key === 'bans' ? 'Banlist' : 'Whitelist'}-Setting fehlt in Nitrado-Antwort`, null, path);
