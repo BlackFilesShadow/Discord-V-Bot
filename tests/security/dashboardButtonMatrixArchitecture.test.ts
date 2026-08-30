@@ -66,8 +66,9 @@ const POST_STAGE_HANDLER_OVERRIDES: Readonly<Record<string, string>> = {
   'dashboard-ui/src/components/economy/LotteryPanel.tsx#LotteryPanel:1': '() => { void current.refetch(); void history.refetch(); void currency.refetch(); }',
 };
 const CURRENT_KILLFEED_PANEL = 'dashboard-ui/src/components/KillfeedTab.tsx';
-const CURRENT_KILLFEED_BUTTON_COUNT = 10;
-const CURRENT_FLAG_FEED_BUTTON_SOURCE_ID = `${CURRENT_KILLFEED_PANEL}#KillfeedTab:5`;
+const CURRENT_KILLFEED_BUTTON_COUNT = 11;
+const CURRENT_PLACEMENT_FEED_BUTTON_SOURCE_ID = `${CURRENT_KILLFEED_PANEL}#KillfeedTab:4`;
+const CURRENT_FLAG_FEED_BUTTON_SOURCE_ID = `${CURRENT_KILLFEED_PANEL}#KillfeedTab:6`;
 const HISTORICAL_VIRTUAL_ACCOUNT_PANEL = 'dashboard-ui/src/components/economy/VirtualAccountsPanel.tsx';
 const CURRENT_VIRTUAL_ACCOUNT_PANEL = 'dashboard-ui/src/components/economy/VirtualAccountsControlPanel.tsx';
 const CURRENT_VIRTUAL_ACCOUNT_BUTTON_COUNT = 15;
@@ -234,7 +235,7 @@ describe('stage 24 dashboard button matrix architecture', () => {
       .map(entry => ({ file: entry.file, count: matrix.buttons.filter(button => button.file === entry.file).length }))
       .sort((a, b) => a.file.localeCompare(b.file));
     const normalizedActual = actual.map(entry => (
-      entry.file === CURRENT_KILLFEED_PANEL ? { ...entry, count: entry.count - 1 } : entry
+      entry.file === CURRENT_KILLFEED_PANEL ? { ...entry, count: entry.count - 2 } : entry
     ));
 
     // Preserve the immutable stage-24 inventory while requiring deliberate
@@ -276,13 +277,18 @@ describe('stage 24 dashboard button matrix architecture', () => {
     }));
     const currentSignatures = currentButtonSignatures();
     const normalizedCurrentSignatures = currentSignatures
-      .filter(button => button.sourceId !== CURRENT_FLAG_FEED_BUTTON_SOURCE_ID)
+      .filter(button => (
+        button.sourceId !== CURRENT_PLACEMENT_FEED_BUTTON_SOURCE_ID
+        && button.sourceId !== CURRENT_FLAG_FEED_BUTTON_SOURCE_ID
+      ))
       .map(button => {
         if (button.file !== CURRENT_KILLFEED_PANEL || button.component !== 'KillfeedTab') return button;
         const prefix = `${CURRENT_KILLFEED_PANEL}#KillfeedTab:`;
         if (!button.sourceId.startsWith(prefix)) return button;
         const ordinal = Number(button.sourceId.slice(prefix.length));
-        return ordinal > 5 ? { ...button, sourceId: `${prefix}${ordinal - 1}` } : button;
+        if (ordinal > 6) return { ...button, sourceId: `${prefix}${ordinal - 2}` };
+        if (ordinal > 4) return { ...button, sourceId: `${prefix}${ordinal - 1}` };
+        return button;
       });
     expect(normalizedCurrentSignatures.filter(button => (
       button.file !== CURRENT_VIRTUAL_ACCOUNT_PANEL
@@ -293,6 +299,20 @@ describe('stage 24 dashboard button matrix architecture', () => {
       && button.file !== CURRENT_BLACK_MARKET_PANEL
       && button.file !== CURRENT_GOODBYE_PANEL
     )));
+
+    const placementFeedButton = currentSignatures.find(button => button.sourceId === CURRENT_PLACEMENT_FEED_BUTTON_SOURCE_ID);
+    expect(placementFeedButton).toMatchObject({
+      file: CURRENT_KILLFEED_PANEL,
+      component: 'KillfeedTab',
+      tag: 'button',
+      label: '📦 Placement',
+      kind: 'client-state',
+      hasDisabledGuard: false,
+      hasLoadingGuard: false,
+      type: 'button',
+    });
+    expect(placementFeedButton?.handler).toContain("setKind('PLACEMENT')");
+    expect(placementFeedButton?.handler).toContain('setEditing(null)');
 
     const flagFeedButton = currentSignatures.find(button => button.sourceId === CURRENT_FLAG_FEED_BUTTON_SOURCE_ID);
     expect(flagFeedButton).toMatchObject({
