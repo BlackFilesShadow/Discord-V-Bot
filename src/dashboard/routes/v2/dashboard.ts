@@ -12,7 +12,7 @@ import { requireGuildPermission } from '../../middleware/auth';
 import { getOrCreate as getOrCreateLink } from '../../../modules/dashboard/repository';
 import { listSlots } from '../../../modules/nitrado/repository';
 import { listGrants } from '../../../modules/permissions/repository';
-import { asUserDiscordId } from '../../../types/scope';
+import { asUserDiscordId, effectiveDashboardPermissions } from '../../../types/scope';
 import type { GuildScope, NitradoConnId } from '../../../types/scope';
 import { hasPermission as scopeHas } from '../../../types/scope';
 import prisma from '../../../database/prisma';
@@ -38,7 +38,7 @@ dashboardRouter.get('/', requireGuildPermission('dashboard.view'), async (req, r
     guildId: scope.guildId,
     alias5: link.alias5,
     isOwner: scope.isOwner,
-    permissions: Array.from(scope.permissions),
+    permissions: effectiveDashboardPermissions(scope),
     slots: slots.map(s => ({
       id: s.id,
       slot: s.slot,
