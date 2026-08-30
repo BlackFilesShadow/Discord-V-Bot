@@ -118,13 +118,14 @@ describe('Dashboard full access contract', () => {
     expect(ui).not.toContain('<NitradoTab guildId={guildId} isOwner={isOwner}');
   });
 
-  it('keeps global Bot-Admin and Dev access outside the guild dashboard.access contract', () => {
+  it('keeps global Bot-Admin, Dev and slash-command authorization outside dashboard.access', () => {
     const auth = read('src/dashboard/middleware/auth.ts');
+    const scopeSource = read('src/types/scope.ts');
 
     expect(auth).toContain('export function requireDevSession');
     expect(auth).toContain('export function requireBotAdminSession');
-    expect(auth).not.toContain("requireDevSession = requireGuildPermission('dashboard.access')");
-    expect(auth).not.toContain("requireBotAdminSession = requireGuildPermission('dashboard.access')");
+    expect(scopeSource).toContain('export function hasCommandPermission');
+    expect(scopeSource).toContain("return scope.permissions.has(perm);");
   });
 
   it('keeps the Page-2 dashboard UI gate aligned with dashboard.access and exposes the Economy tab', () => {
