@@ -45,7 +45,7 @@ describe('Goodbye-1 dashboard wiring', () => {
     expect(wrapperSource).not.toContain('<LeaveCleanupPanel guildId={props.guildId} />');
     expect(cleanupSource).toContain('data-testid="goodbye-leave-cleanup"');
     expect(cleanupSource).toContain('data-testid="goodbye-leave-cleanup-owner-only"');
-    expect(cleanupSource).toContain("permissions?.includes('dashboard.access')");
+    expect(cleanupSource).toContain("const hasFullAccess = isOwner || ownerQ.data?.permissions?.includes('dashboard.access') === true;");
     expect(cleanupSource).toContain('enabled: !!guildId && hasFullAccess');
     expect(cleanupSource).toContain('<code>dashboard.access</code>');
     expect(cleanupSource).toContain('(Vollzugriff)');
