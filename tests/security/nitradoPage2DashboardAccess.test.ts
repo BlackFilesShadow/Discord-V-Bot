@@ -160,7 +160,8 @@ describe('Dashboard full access contract', () => {
     expect(auth).toContain("if (req.auth.role !== 'DEVELOPER')");
     expect(auth).toContain('await requireDev(req, res, next);');
     expect(scopeSource).toContain('export function hasCommandPermission');
-    expect(scopeSource).toContain("return scope.permissions.has(perm);");
+    expect(scopeSource).toContain('if (scope.permissions.has(perm)) return true;');
+    expect(scopeSource).toContain("return scope.permissions.has('commands.all') && !NON_DELEGABLE_SCOPES.has(perm);");
   });
 
   it('keeps the Page-2 dashboard UI gate aligned with dashboard.access and exposes the Economy tab', () => {
