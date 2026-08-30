@@ -13,6 +13,7 @@ const routeSource = read('src/dashboard/routes/v2/leaveCleanup.ts');
 const v2Source = read('src/dashboard/routes/v2.ts');
 const panelSource = read('dashboard-ui/src/components/LeaveCleanupPanel.tsx');
 const welcomeSource = read('dashboard-ui/src/components/WelcomeTab.tsx');
+const goodbyeSource = read('dashboard-ui/src/components/GoodbyePanel.tsx');
 const linkSource = read('src/modules/linking/linkService.ts');
 const rewardSource = read('src/modules/linking/linkRewards.ts');
 
@@ -23,9 +24,10 @@ describe('Leave-1E productive orchestration + toggle wiring', () => {
     expect(configSource).not.toContain("feature.");
   });
 
-  it('requires the real guild owner and rejects malformed config bodies before persistence', () => {
-    expect(routeSource).toContain("leaveCleanupRouter.get('/config', requireGuildOwner");
-    expect(routeSource).toContain("leaveCleanupRouter.post('/config', requireGuildOwner");
+  it('requires explicit dashboard full access and rejects malformed config bodies before persistence', () => {
+    expect(routeSource).toContain("leaveCleanupRouter.get('/config', requireGuildPermission('dashboard.access')");
+    expect(routeSource).toContain("leaveCleanupRouter.post('/config', requireGuildPermission('dashboard.access')");
+    expect(routeSource).not.toContain('requireGuildOwner');
     expect(routeSource).toContain("if (!body || typeof body !== 'object' || Array.isArray(body)) return null;");
     expect(routeSource).toContain("if (typeof value !== 'boolean') return null;");
     expect(routeSource).toContain('const parsed = parseBody(req.body);');
@@ -82,13 +84,15 @@ describe('Leave-1E productive orchestration + toggle wiring', () => {
     expect(rewardSource).toContain('assertNoOpenLeaveCleanupRequest(scope.guildId, userDiscordId)');
   });
 
-  it('renders the destructive toggle owner-only and mobile-responsive in the member lifecycle area', () => {
+  it('renders the destructive toggle only for Owner or dashboard.access and embeds it in Goodbye responsively', () => {
     expect(panelSource).toContain("const isOwner = ownerQ.data?.isOwner === true;");
-    expect(panelSource).toContain('if (!isOwner) return null;');
-    expect(panelSource).toContain('enabled: !!guildId && isOwner');
+    expect(panelSource).toContain("const hasFullAccess = isOwner || ownerQ.data?.permissions?.includes('dashboard.access') === true;");
+    expect(panelSource).toContain('if (!hasFullAccess)');
+    expect(panelSource).toContain('enabled: !!guildId && hasFullAccess');
     expect(panelSource).toContain('confirm(');
-    expect(panelSource).toContain('grid-cols-1 sm:grid-cols-2');
+    expect(panelSource).toContain('grid grid-cols-1 sm:grid-cols-2');
     expect(panelSource).toContain('w-full sm:w-auto');
-    expect(welcomeSource).toContain('<LeaveCleanupPanel guildId={props.guildId} />');
+    expect(goodbyeSource).toContain('<LeaveCleanupPanel guildId={guildId} embedded />');
+    expect(welcomeSource).not.toContain('<LeaveCleanupPanel guildId={props.guildId} />');
   });
 });
