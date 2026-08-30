@@ -47,13 +47,14 @@ describe('Goodbye delivery restart recovery', () => {
     expect(send).toHaveBeenCalledTimes(1);
     expect(send.mock.calls[0][0].allowedMentions).toEqual({ parse: [] });
     const embedJson = send.mock.calls[0][0].embeds[0].toJSON();
+    expect(embedJson.title).toBeUndefined();
     expect(embedJson.fields?.[0]).toMatchObject({ name: '👤 Mitglied', inline: false });
-    expect(embedJson.fields?.[0].value).toContain('**Discord:** @Resolved Name');
+    expect(embedJson.fields?.[0].value).toContain('**Discord:** Resolved Name');
+    expect(embedJson.fields?.[0].value).not.toContain('@Resolved Name');
     expect(embedJson.fields?.[0].value).not.toContain(discordId);
     expect(embedJson.fields?.[1]).toMatchObject({ name: '📅 Mitglied seit', value: '10. Januar 2026', inline: true });
     expect(embedJson.fields?.[2]).toMatchObject({ name: '🚪 Ausgetreten', inline: true });
     expect(embedJson.fields?.[2].value).toContain('24. August 2026');
-    expect(embedJson.description).toBeUndefined();
     expect(JSON.stringify(embedJson)).not.toContain('Bye');
     expect(updateMany).toHaveBeenNthCalledWith(1, expect.objectContaining({
       where: expect.objectContaining({ id: 'delivery-1', messageId: null, state: 'FAILED', updatedAt }),
@@ -83,7 +84,8 @@ describe('Goodbye delivery restart recovery', () => {
 
     await expect(recoverPendingGoodbyeDeliveries(new Date('2026-08-24T10:02:00.000Z'))).resolves.toBe(1);
     const serialized = JSON.stringify(send.mock.calls[0][0].embeds[0].toJSON());
-    expect(serialized).toContain('@ReadableNick');
+    expect(serialized).toContain('ReadableNick');
+    expect(serialized).not.toContain('@ReadableNick');
     expect(serialized).not.toContain(discordId);
   });
 

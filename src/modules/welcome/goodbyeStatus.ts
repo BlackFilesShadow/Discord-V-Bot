@@ -31,7 +31,7 @@ export interface GoodbyeCleanupSnapshot {
 
 export interface GoodbyeEmbedData {
   discordName: string;
-  /** Native Discord-Mention; nur nutzen, solange Discord sie in der Guild sicher aufloesen kann. */
+  /** Legacy compatibility only; Goodbye renders the resolved visible name, never a mention token. */
   discordMention?: string;
   discordMentionResolved?: boolean;
   customMessage: string;
@@ -48,6 +48,34 @@ const DISCORD_MENTION_ONLY_RE = /^<@!?\d{17,20}>$/;
 const DISCORD_MENTION_ANY_RE = /<@!?\d{17,20}>/g;
 const DISCORD_SNOWFLAKE_ANY_RE = /(^|[^\d])(\d{17,20})(?=$|[^\d])/g;
 
+function scrubGoodbyeVisibleText(
+  value: string | null | undefined,
+  fallback: string,
+): string {
+  let text = String(value ?? '').normalize('NFKC').trim();
+  if (!text) return fallback;
+  text = text.replace(DISCORD_MENTION_ANY_RE, 'Discord-Nutzer');
+  text = text.replace(DISCORD_SNOWFLAKE_ANY_RE, (_match, prefix: string) => `${prefix}Discord-Nutzer`);
+  text = text.trim();
+  if (!text || DISCORD_SNOWFLAKE_ONLY_RE.test(text) || DISCORD_MENTION_ONLY_RE.test(text)) return fallback;
+  return text;
+}
+
+/**
+ * Normalisiert einen Discord-Namen fuer Persistenz/Weitergabe, ohne Markdown-
+ * Escapes einzubauen. Das Embed escaped den Namen genau einmal beim Rendern.
+ */
+export function normalizeGoodbyeIdentityName(
+  value: string | null | undefined,
+  fallback = 'Discord-Nutzer',
+  maxLength = 256,
+): string {
+  const text = scrubGoodbyeVisibleText(value, fallback);
+  if (text.length <= maxLength) return text;
+  const cut = Math.max(1, maxLength - 3);
+  return `${text.slice(0, cut)}...`;
+}
+
 /**
  * Sichtbare Goodbye-Texte duerfen niemals eine rohe Discord-Snowflake zeigen.
  * Das gilt auch fuer alte persistierte Namen, manuell gespeicherte Templates,
@@ -58,23 +86,7 @@ export function sanitizeGoodbyeVisibleText(
   fallback = 'Discord-Nutzer',
   maxLength = 1024,
 ): string {
-  let text = String(value ?? '').normalize('NFKC').trim();
-  if (!text) return fallback;
-  text = text.replace(DISCORD_MENTION_ANY_RE, 'Discord-Nutzer');
-  text = text.replace(DISCORD_SNOWFLAKE_ANY_RE, (_match, prefix: string) => `${prefix}Discord-Nutzer`);
-  text = text.trim();
-  if (!text || DISCORD_SNOWFLAKE_ONLY_RE.test(text) || DISCORD_MENTION_ONLY_RE.test(text)) return fallback;
-  return safeEmbedField(text, maxLength);
-}
-
-function safeResolvedMention(value: string | undefined, resolved: boolean | undefined): string | null {
-  if (!resolved || !value || !DISCORD_MENTION_ONLY_RE.test(value)) return null;
-  return value.replace('<@!', '<@');
-}
-
-function visibleAtName(value: string): string {
-  const name = value.replace(/^@+/, '').trim() || 'Discord-Nutzer';
-  return `@${name}`;
+  return safeEmbedField(scrubGoodbyeVisibleText(value, fallback), maxLength);
 }
 
 function readSnapshot(value: unknown): GoodbyeCleanupSnapshot | null {
@@ -122,34 +134,28 @@ function formatTime(value: Date): string {
 
 export function buildStructuredGoodbyeEmbed(data: GoodbyeEmbedData): EmbedBuilder {
   const safeName = sanitizeGoodbyeVisibleText(data.discordName, 'Discord-Nutzer', 232);
-  const mention = safeResolvedMention(data.discordMention, data.discordMentionResolved);
-  // Ein echter Leave entfernt den Nutzer vor dem Rendern aus dem Guild-Kontext.
-  // Discord kann <@snowflake> im Embed dann clientseitig als rohe ID anzeigen.
-  // Deshalb ist @Name der sichere sichtbare Fallback; ein nativer Mention-Token
-  // wird nur fuer Kontexte benutzt, in denen der Nutzer noch aufloesbar ist.
-  const identityLine = mention ?? visibleAtName(safeName);
   const joined = data.joinedAt ? formatDate(data.joinedAt) : 'Unbekannt';
 
   const embed = new EmbedBuilder()
     .setColor(embedColor(data.cleanupEnabled, data.cleanupSnapshot))
     .setAuthor({ name: `${Brand.footerText} • Abschiedsmeldung` })
-    .setTitle(safeEmbedField(`👋 Abschied von ${visibleAtName(safeName)}`, 256))
     .setFooter({ text: `${Brand.footerText} • Austritt dokumentiert` });
 
   const customMessage = sanitizeGoodbyeVisibleText(data.customMessage, '', 4000);
   if (customMessage) embed.setDescription(customMessage);
 
-  // Identitaet bleibt breit und gut lesbar; die zwei Zeitangaben bilden darunter
-  // eine stabile, kompakte Kennzahlenzeile auf Desktop und Mobile.
+  // Der Discord-Name erscheint bewusst nur einmal im Mitglied-Block. Kein
+  // @-Praefix und kein Mention-Token: nach einem Leave muss die Darstellung
+  // unabhaengig von Discords Guild-Mention-Aufloesung korrekt lesbar bleiben.
   embed
     .addFields(
       {
         name: '👤 Mitglied',
-      value: [
-        `**Discord:** ${identityLine}`,
-        '**Status:** Server verlassen',
-      ].join('\n'),
-      inline: false,
+        value: [
+          `**Discord:** ${safeName}`,
+          '**Status:** Server verlassen',
+        ].join('\n'),
+        inline: false,
       },
       { name: '📅 Mitglied seit', value: joined, inline: true },
       { name: '🚪 Ausgetreten', value: `${formatDate(data.leaveOccurredAt)}\n${formatTime(data.leaveOccurredAt)}`, inline: true },
@@ -253,13 +259,6 @@ async function editPersistedGoodbye(cleanupRequestId: string): Promise<void> {
   await message.edit({
     embeds: [buildStructuredGoodbyeEmbed({
       discordName: resolvedName,
-      discordMention: resolvedUser ? `<@${delivery.discordId}>` : undefined,
-      // users.fetch() beweist nur eine globale User-Aufloesung, nicht mehr die
-      // Guild-Mitgliedschaft. Nach dem Leave darf deshalb kein nativer Token
-      // erneut in das Embed geschrieben werden.
-      discordMentionResolved: false,
-      // Alte gespeicherte Freitextvorlagen duerfen bei einem Cleanup-Refresh
-      // nicht wieder in das jetzt feste Abschieds-Embed gelangen.
       customMessage: '',
       joinedAt: delivery.joinedAt,
       leaveOccurredAt: delivery.leaveOccurredAt,
@@ -362,9 +361,6 @@ export async function recoverPendingGoodbyeDeliveries(now: Date = new Date()): P
       const message = await textChannel.send({
         embeds: [buildStructuredGoodbyeEmbed({
           discordName: resolvedName,
-          discordMention: resolvedUser ? `<@${row.discordId}>` : undefined,
-          discordMentionResolved: false,
-          // Auch Restart-Recovery folgt ausschliesslich dem festen Embed.
           customMessage: '',
           joinedAt: row.joinedAt,
           leaveOccurredAt: row.leaveOccurredAt,

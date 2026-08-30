@@ -22,21 +22,37 @@ function embed(snapshot: GoodbyeCleanupSnapshot | null, cleanupEnabled = true) {
 }
 
 describe('structured Goodbye status embed', () => {
-  it('renders a clear identity block and a compact, stable membership timeline', () => {
+  it('renders the member name only in the identity block and keeps the compact membership timeline', () => {
     const json = embed(null, false);
     expect(json.timestamp).toBe(leftAt.toISOString());
     expect(json.author?.name).toBe('V-Bot Prime • Abschiedsmeldung');
-    expect(json.title).toBe('👋 Abschied von @DiscordNick');
+    expect(json.title).toBeUndefined();
     expect(json.footer?.text).toBe('V-Bot Prime • Austritt dokumentiert');
-    expect(json.description).toBeUndefined();
     expect(json.fields).toHaveLength(3);
     expect(json.fields?.[0]).toMatchObject({ name: '👤 Mitglied', inline: false });
-    expect(json.fields?.[0].value).toContain('**Discord:** @DiscordNick');
+    expect(json.fields?.[0].value).toContain('**Discord:** DiscordNick');
+    expect(json.fields?.[0].value).not.toContain('@DiscordNick');
     expect(json.fields?.[0].value).toContain('**Status:** Server verlassen');
     expect(json.fields?.[1]).toMatchObject({ name: '📅 Mitglied seit', value: '10. Januar 2026', inline: true });
     expect(json.fields?.[2]).toMatchObject({ name: '🚪 Ausgetreten', inline: true });
     expect(json.fields?.[2].value).toContain('24. August 2026');
     expect(json.fields?.some(field => field.name.includes('Whitelist-Bereinigung'))).toBe(false);
+  });
+
+  it('renders markdown-sensitive Discord names with exactly one escaping layer', () => {
+    const json = buildStructuredGoodbyeEmbed({
+      discordName: '_steffi_b_',
+      customMessage: '',
+      joinedAt,
+      leaveOccurredAt: leftAt,
+      cleanupEnabled: false,
+      cleanupSnapshot: null,
+    }).toJSON();
+
+    const member = json.fields?.[0].value ?? '';
+    expect(member).toContain('**Discord:** \\_steffi\\_b\\_');
+    expect(member).not.toContain('\\\\_');
+    expect(json.title).toBeUndefined();
   });
 
   it('renders unknown join date fail-closed instead of inventing one', () => {
@@ -51,7 +67,7 @@ describe('structured Goodbye status embed', () => {
     expect(json.fields?.[1]).toMatchObject({ name: '📅 Mitglied seit', value: 'Unbekannt' });
   });
 
-  it('renders a native mention only after the Discord user was explicitly resolved', () => {
+  it('never renders a native mention token, even when one was explicitly resolved', () => {
     const snowflake = '4'.repeat(18);
     const unresolved = buildStructuredGoodbyeEmbed({
       discordName: 'DiscordNick',
@@ -63,7 +79,7 @@ describe('structured Goodbye status embed', () => {
       cleanupEnabled: false,
       cleanupSnapshot: null,
     }).toJSON();
-    expect(unresolved.fields?.[0].value).toContain('**Discord:** @DiscordNick');
+    expect(unresolved.fields?.[0].value).toContain('**Discord:** DiscordNick');
     expect(JSON.stringify(unresolved)).not.toContain(snowflake);
 
     const resolved = buildStructuredGoodbyeEmbed({
@@ -76,7 +92,8 @@ describe('structured Goodbye status embed', () => {
       cleanupEnabled: false,
       cleanupSnapshot: null,
     }).toJSON();
-    expect(resolved.fields?.[0].value).toContain(`**Discord:** <@${snowflake}>`);
+    expect(resolved.fields?.[0].value).toContain('**Discord:** DiscordNick');
+    expect(JSON.stringify(resolved)).not.toContain(snowflake);
   });
 
   it('scrubs raw Discord snowflakes from every visible non-mention surface', () => {
