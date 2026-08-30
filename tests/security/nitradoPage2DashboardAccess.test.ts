@@ -100,9 +100,6 @@ describe('Dashboard full access contract', () => {
     expect(virtualAccounts).toContain("economyVirtualAccountControlRouter.get('/control/accounts', requireGuildPermission('economy.view')");
     expect(virtualAccounts).toContain("economyVirtualAccountControlRouter.post('/control/accounts', requireGuildPermission('economy.manage')");
 
-    // Diese Unterpanels pruefen economy.manage aus den Dashboard-Metadaten.
-    // effectiveDashboardPermissions stellt sicher, dass dashboard.access dort
-    // nicht nur Backend-, sondern auch sichtbaren UI-Vollzugriff erhaelt.
     expect(lotteryUi).toContain("permissions.includes('economy.manage')");
     expect(blackMarketUi).toContain("permissions.includes('economy.manage')");
   });
@@ -137,7 +134,6 @@ describe('Dashboard full access contract', () => {
     expect((audit.match(/requireGuildPermission\('dashboard\.access'\)/g) ?? []).length).toBe(2);
     expect((cleanup.match(/requireGuildPermission\('dashboard\.access'\)/g) ?? []).length).toBe(2);
 
-    // Die bestehende Sperre fuer echte Non-delegable Scopes bleibt unveraendert.
     expect(permissions).toContain('NON_DELEGABLE_SCOPES.has(perm)');
     expect(permissions).toContain('availableScopes: PERMISSION_SCOPES.filter(s => !NON_DELEGABLE_SCOPES.has(s))');
   });
@@ -159,8 +155,10 @@ describe('Dashboard full access contract', () => {
     const auth = read('src/dashboard/middleware/auth.ts');
     const scopeSource = read('src/types/scope.ts');
 
-    expect(auth).toContain('export function requireDevSession');
-    expect(auth).toContain('export function requireBotAdminSession');
+    expect(auth).toContain('export async function requireDev(');
+    expect(auth).toContain('export async function requireBotAdmin(');
+    expect(auth).toContain("if (req.auth.role !== 'DEVELOPER')");
+    expect(auth).toContain('await requireDev(req, res, next);');
     expect(scopeSource).toContain('export function hasCommandPermission');
     expect(scopeSource).toContain("return scope.permissions.has(perm);");
   });
