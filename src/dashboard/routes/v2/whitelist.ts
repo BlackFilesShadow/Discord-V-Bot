@@ -237,6 +237,7 @@ whitelistRouter.post('/requests/:id/decision', requireGuildPermission('whitelist
         guildId: scope.guildId, nitradoConnId: reqRow.nitradoConnId, approved: approve,
         requesterDiscordId: reqRow.requesterDiscordId, gameId: reqRow.gameId,
         decidedByDiscordId: scope.actorDiscordId, reason: reason || undefined,
+        decidedAt,
       }),
       reqRow.messageId ? finalizeApprovalEmbed({
         guildId: scope.guildId, channelId: reqRow.channelId, messageId: reqRow.messageId,
