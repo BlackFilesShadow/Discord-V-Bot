@@ -11,7 +11,7 @@ import prisma from '../../database/prisma';
 import { logger, logAudit } from '../../utils/logger';
 import { emitGuildEvent } from '../../dashboard/socket/emitter';
 import { Colors, statusTitle } from '../../utils/embedDesign';
-import { notifyRequesterDecision } from './whitelistChannels';
+import { notifyRequesterDecision, postDecisionLog } from './whitelistChannels';
 import { enqueueWhitelistAdd, type WhitelistOutboxClient } from './whitelistOutbox';
 import { resolveDelegatedPermissionContext } from '../permissions/access';
 
@@ -338,6 +338,15 @@ export async function handleWhitelistApprovalButton(btn: ButtonInteraction): Pro
             ? `Deine Universal-Whitelist wurde für alle ${succeeded.length} aktiven Gameserver zur Synchronisierung eingereiht.`
             : `Dein Antrag wurde angenommen. Die Universal-Whitelist konnte für ${succeeded.length} von ${results.length} aktiven Gameservern eingereiht werden; das Server-Team wurde über die fehlgeschlagenen Ziele informiert.`,
         }),
+        postDecisionLog({
+          guildId: reqRow.guildId,
+          nitradoConnId: reqRow.nitradoConnId,
+          approved: true,
+          requesterDiscordId: reqRow.requesterDiscordId,
+          gameId: reqRow.gameId,
+          decidedByDiscordId: btn.user.id,
+          decidedAt,
+        }),
       ]);
 
       emitGuildEvent(reqRow.guildId, {
@@ -429,9 +438,8 @@ export async function handleWhitelistApprovalButton(btn: ButtonInteraction): Pro
       });
     }
 
-    // Nach der Entscheidung bleibt kein dauerhaftes Accept/Deny-Embed im Kanal.
-    // Die sichtbaren Ergebnisse sind ausschliesslich die DM an den Antragsteller
-    // und die ephemere Bestaetigung fuer den entscheidenden Admin.
+    // Das offene Button-Embed verschwindet nach der Entscheidung. Die dauerhafte
+    // Historie wird getrennt im konfigurierten Annahme-/Ablehnungs-Archiv erzeugt.
     await removeRequestMessage(btn);
 
     await Promise.allSettled([
@@ -439,6 +447,15 @@ export async function handleWhitelistApprovalButton(btn: ButtonInteraction): Pro
         requesterDiscordId: reqRow.requesterDiscordId,
         gameId: reqRow.gameId,
         approved: isApprove,
+      }),
+      postDecisionLog({
+        guildId: reqRow.guildId,
+        nitradoConnId: reqRow.nitradoConnId,
+        approved: isApprove,
+        requesterDiscordId: reqRow.requesterDiscordId,
+        gameId: reqRow.gameId,
+        decidedByDiscordId: btn.user.id,
+        decidedAt,
       }),
     ]);
 
