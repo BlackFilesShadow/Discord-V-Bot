@@ -536,8 +536,7 @@ export class NitradoClient {
     if (error.endpoint === seekPath) {
       return /length limit exceeded|use file download instead/i.test(error.message);
     }
-    return error.status === 404
-      && error.endpoint === fullPath
+    return error.endpoint === fullPath
       && /^Download HTTP 404$/i.test(error.message);
   }
 
