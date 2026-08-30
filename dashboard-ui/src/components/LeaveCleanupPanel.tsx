@@ -113,7 +113,7 @@ export function LeaveCleanupPanel({ guildId, embedded = false }: LeaveCleanupPan
       size={embedded ? 'sm' : undefined}
       className={embedded ? 'w-full sm:w-auto shrink-0' : 'w-full sm:w-auto'}
     >
-      <Save className="h-4 w-4 mr-1" /> {busy ? 'Speichert…' : embedded ? 'Cleanup speichern' : 'Einstellung speichern'}
+      <Save className="h-4 w-4 mr-1" /> {busy ? 'Speichert…' : 'Einstellung speichern'}
     </Button>
   );
 
