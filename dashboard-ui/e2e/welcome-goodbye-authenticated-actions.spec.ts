@@ -164,8 +164,8 @@ test.describe('Welcome/Goodbye authenticated dashboard contract', () => {
     await expect(page.getByRole('heading', { name: 'Abschied / Goodbye' })).toBeVisible();
     await expect(page.getByTestId('goodbye-leave-cleanup-owner-only')).toBeVisible();
     await expect(page.getByText('Spieler-Cleanup', { exact: true })).toBeVisible();
-    await expect(page.getByText(/Discord-Server-Owner/)).toBeVisible();
-    await expect(page.getByText(/dashboard\.access/)).toBeVisible();
+    await expect(page.getByTestId('goodbye-leave-cleanup-owner-only')).toContainText('Discord-Server-Owner');
+    await expect(page.getByTestId('goodbye-leave-cleanup-owner-only')).toContainText('dashboard.access');
     await expect(page.getByRole('switch', { name: 'Whitelist und Spielerstatistik bei Austritt bereinigen' })).toHaveCount(0);
 
     await page.getByRole('button', { name: 'Speichern', exact: true }).click();
