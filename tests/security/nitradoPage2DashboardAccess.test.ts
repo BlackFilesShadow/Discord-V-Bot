@@ -3,6 +3,7 @@ import path from 'node:path';
 import {
   asGuildId,
   asUserDiscordId,
+  effectiveDashboardPermissions,
   hasPermission,
   type GuildScope,
   type PermissionScope,
@@ -42,6 +43,34 @@ describe('Dashboard full access contract', () => {
     expect(hasPermission(scope, 'dev.console')).toBe(false);
   });
 
+  it('publishes effective delegable scopes to dashboard UI without exposing protected scope identities', () => {
+    const effective = effectiveDashboardPermissions(delegatedScope('dashboard.access'));
+
+    expect(effective).toEqual(expect.arrayContaining([
+      'dashboard.access',
+      'dashboard.view',
+      'whitelist.view',
+      'whitelist.manage',
+      'economy.view',
+      'economy.manage',
+      'casino.view',
+      'casino.manage',
+      'killfeed.view',
+      'killfeed.manage',
+      'factions.view',
+      'factions.manage',
+      'welcome.view',
+      'welcome.manage',
+    ]));
+    expect(effective).not.toContain('nitrado.manage');
+    expect(effective).not.toContain('nitrado.danger');
+    expect(effective).not.toContain('permissions.manage');
+    expect(effective).not.toContain('dev.console');
+
+    const dashboardRoute = read('src/dashboard/routes/v2/dashboard.ts');
+    expect(dashboardRoute).toContain('permissions: effectiveDashboardPermissions(scope)');
+  });
+
   it('protects every ADM source Page-2 operation with killfeed.manage instead of owner-only auth', () => {
     const adm = read('src/dashboard/routes/v2/admSource.ts');
 
@@ -57,6 +86,8 @@ describe('Dashboard full access contract', () => {
     const economy = read('src/dashboard/routes/v2/economy.ts');
     const lottery = read('src/dashboard/routes/v2/economyLottery.ts');
     const virtualAccounts = read('src/dashboard/routes/v2/economyVirtualAccountControl.ts');
+    const lotteryUi = read('dashboard-ui/src/components/economy/LotteryPanel.tsx');
+    const blackMarketUi = read('dashboard-ui/src/components/economy/BlackMarketPanel.tsx');
 
     expect(economy).toContain("economyRouter.get('/config', requireGuildPermission('economy.view')");
     expect(economy).toContain("economyRouter.put('/config', requireGuildPermission('economy.manage')");
@@ -68,6 +99,12 @@ describe('Dashboard full access contract', () => {
 
     expect(virtualAccounts).toContain("economyVirtualAccountControlRouter.get('/control/accounts', requireGuildPermission('economy.view')");
     expect(virtualAccounts).toContain("economyVirtualAccountControlRouter.post('/control/accounts', requireGuildPermission('economy.manage')");
+
+    // Diese Unterpanels pruefen economy.manage aus den Dashboard-Metadaten.
+    // effectiveDashboardPermissions stellt sicher, dass dashboard.access dort
+    // nicht nur Backend-, sondern auch sichtbaren UI-Vollzugriff erhaelt.
+    expect(lotteryUi).toContain("permissions.includes('economy.manage')");
+    expect(blackMarketUi).toContain("permissions.includes('economy.manage')");
   });
 
   it('opens all Nitrado Page-1 slot/token/service/alias operations to explicit dashboard.access', () => {
