@@ -37,7 +37,7 @@ describe('Whitelist channel + archive flow regression', () => {
     expect(dashboardRoute).toContain('postDecisionLog({');
   });
 
-  it('keeps the user decision notice temporary but never auto-deletes the archive entry', () => {
+  it('keeps the user decision notice temporary, points the user to support, and never auto-deletes the archive entry', () => {
     const noticeStart = channels.indexOf('async function postTemporaryDecisionNotice');
     const archiveStart = channels.indexOf('async function postPermanentDecisionArchive');
     const commonStart = channels.indexOf('export async function postDecisionLog');
@@ -51,6 +51,8 @@ describe('Whitelist channel + archive flow regression', () => {
 
     expect(noticeBody).toContain('DECISION_NOTICE_TTL_MS');
     expect(noticeBody).toContain('sent.delete()');
+    expect(noticeBody).toContain('Bei Fragen oder für weitere Informationen wende dich bitte an den Support.');
+    expect(noticeBody).not.toContain('Weitere Informationen findest du in deiner DM.');
     expect(archiveBody).not.toContain('.delete(');
     expect(archiveBody).toContain(".setFooter({ text: 'V-Bot • Whitelist • Archiv' })");
   });
