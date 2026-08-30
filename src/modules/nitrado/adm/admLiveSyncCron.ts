@@ -1,10 +1,10 @@
 /**
  * Kanonischer Live-ADM-Ingest fuer alle aktiven Nitrado-Gameserver.
  *
- * Nitrados file_server/seek liest nur neue Bytes nach AdmSourceCursor. Dieser
- * Pfad ist damit die einzige Datei-Quelle fuer Death/Baufeed, Linking, Rewards
- * und PlayerSessions. Alte Voll-Downloads und NITRADO_ADM_DIR sind nicht mehr
- * Teil der Runtime.
+ * Nitrados file_server/seek liest nur neue Bytes nach AdmSourceCursor. Der
+ * Live-Pfad nutzt bewusst kleine, produktiv verifizierte Byte-Ranges, damit
+ * DayZ-PS-FileServer keine grossen Seek-Requests mit 5xx/404 beantworten. Alte
+ * Voll-Downloads und NITRADO_ADM_DIR sind nicht Teil der Runtime.
  */
 
 import crypto from 'crypto';
@@ -13,6 +13,7 @@ import { config } from '../../../config';
 import { decrypt } from '../../../utils/security';
 import { logger, logAudit } from '../../../utils/logger';
 import { NitradoClient } from '../nitradoClient';
+import { NitradoCircuitOpenError } from '../circuitBreaker';
 import {
   resolveAdmRemoteFilePath,
   selectAdmRemoteFiles,
@@ -40,8 +41,16 @@ import {
 } from './bindingFence';
 
 const POLL_INTERVAL_MS = 30_000;
-const RANGE_BYTES = 512 * 1024;
-const BASELINE_TAIL_BYTES = 64 * 1024;
+// Realer DayZ-PS-FileServer: 4 KiB ist stabil; groessere Seek-Ranges koennen
+// bereits bei ~100 KiB mit 5xx bzw. signierten 404 abbrechen. 4048 entspricht
+// zudem der konservativen Seek-Groesse des offiziellen Nitrado-Clients.
+const NITRADO_SAFE_SEEK_BYTES = 4048;
+const RANGE_BYTES = NITRADO_SAFE_SEEK_BYTES;
+const BASELINE_TAIL_BYTES = NITRADO_SAFE_SEEK_BYTES;
+// Kleine Ranges duerfen nicht in einen Request-Sturm kippen, wenn historische
+// ADM-Dateien nachgeholt werden. Pro Datei werden daher pro Poll hoechstens
+// 8 Ranges (= 32.384 Byte) verarbeitet; der Cursor setzt im naechsten Poll fort.
+const MAX_RANGES_PER_FILE_PER_TICK = 8;
 const MAX_FILES_PER_TICK = 8;
 
 let timer: NodeJS.Timeout | null = null;
@@ -66,6 +75,27 @@ function completeLines(content: string): string {
   const cr = content.lastIndexOf('\r');
   const end = Math.max(lf, cr);
   return end >= 0 ? content.slice(0, end + 1) : '';
+}
+
+async function downloadValidatedRange(
+  client: NitradoClient,
+  serviceId: string,
+  remotePath: string,
+  offset: number,
+  length: number,
+): Promise<string> {
+  const chunk = await client.downloadFileRange(serviceId, remotePath, offset, length);
+  const returnedBytes = Buffer.byteLength(chunk, 'utf8');
+  // Manche Nitrado-Download-Tokens ignorieren offset/count und liefern die
+  // komplette Datei. Solche Antworten duerfen niemals mit einem Range-Offset
+  // persistiert werden, sonst waeren Cursor und Event-Bytepositionen korrupt.
+  if (returnedBytes > length) {
+    throw new Error(
+      `Nitrado-Range fuer ${remotePath} lieferte ${returnedBytes} Byte statt maximal ${length}; `
+      + 'Range-Parameter wurden vom FileServer moeglicherweise ignoriert.',
+    );
+  }
+  return chunk;
 }
 
 async function verifyLinkChallengesUnsafe(conn: LiveConn, content: string): Promise<void> {
@@ -165,7 +195,7 @@ async function baselineCurrentFile(
   if (file.size > 0) {
     const length = Math.min(BASELINE_TAIL_BYTES, file.size);
     const start = file.size - length;
-    tail = await client.downloadFileRange(conn.nitradoServerId, remotePath, start, length);
+    tail = await downloadValidatedRange(client, conn.nitradoServerId, remotePath, start, length);
     const newline = tail.lastIndexOf('\n');
     if (newline >= 0) {
       newOffset = start + Buffer.byteLength(tail.slice(0, newline + 1), 'utf8');
@@ -203,15 +233,18 @@ async function ingestFile(
   const remotePath = resolveAdmRemoteFilePath(profileDir, file);
   let offset = startOffset > file.size ? 0 : startOffset;
   let context = await dateContextForOffset(conn, sourceIdentity, file.name, offset, timeZone);
+  let rangeReads = 0;
 
-  while (offset < file.size) {
+  while (offset < file.size && rangeReads < MAX_RANGES_PER_FILE_PER_TICK) {
     const length = Math.min(RANGE_BYTES, file.size - offset);
-    const chunk = await client.downloadFileRange(
+    const chunk = await downloadValidatedRange(
+      client,
       conn.nitradoServerId,
       remotePath,
       offset,
       length,
     );
+    rangeReads += 1;
     if (chunk.length === 0) break;
 
     const result = ingestChunk(chunk, offset, { fileName: file.name, dateCtx: context });
@@ -242,6 +275,13 @@ async function ingestFile(
     context = result.events.length > 0
       ? await dateContextForOffset(conn, sourceIdentity, file.name, offset, timeZone)
       : context;
+  }
+
+  if (offset < file.size && rangeReads >= MAX_RANGES_PER_FILE_PER_TICK) {
+    logger.debug(
+      `ADM-Live-Sync ${conn.id}: ${file.name} wird im naechsten Poll bei Byte ${offset}/${file.size} fortgesetzt `
+      + `(Range-Budget ${MAX_RANGES_PER_FILE_PER_TICK} erreicht).`,
+    );
   }
 }
 
@@ -323,6 +363,7 @@ async function processConnection(scope: { id: string; guildId: string }): Promis
       ) candidates.push(file);
     }
 
+    let firstFileError: string | null = null;
     for (const file of candidates.slice(0, MAX_FILES_PER_TICK)) {
       const fileIdentity = admBindingFileIdentity(conn.bindingVersion, file.name);
       const cursor = await prisma.admSourceCursor.findUnique({
@@ -334,16 +375,27 @@ async function processConnection(scope: { id: string; guildId: string }): Promis
           },
         },
       });
-      await ingestFile(
-        conn,
-        client,
-        profile.profileDir,
-        profile.timeZone,
-        file,
-        cursor ? Number(cursor.processedByteOffset) : 0,
-      );
+      try {
+        await ingestFile(
+          conn,
+          client,
+          profile.profileDir,
+          profile.timeZone,
+          file,
+          cursor ? Number(cursor.processedByteOffset) : 0,
+        );
+      } catch (error) {
+        if (isAdmBindingFenceError(error)) throw error;
+        const message = safeError(error);
+        firstFileError ??= `${file.name}: ${message}`;
+        logger.warn(`ADM-Live-Sync ${conn.id}: Datei ${file.name} fehlgeschlagen: ${message}`);
+        // Ein offener globaler READ-Circuit kann die folgenden Dateien aktuell
+        // ohnehin nicht erreichen. Nicht noch sieben identische Fail-fast-Logs
+        // erzeugen; der naechste Poll versucht nach dem Cooldown erneut.
+        if (error instanceof NitradoCircuitOpenError) break;
+      }
     }
-    await setSourceStatus(conn, null);
+    await setSourceStatus(conn, firstFileError);
   } catch (error) {
     if (isAdmBindingFenceError(error)) {
       logger.debug(`ADM-Live-Sync ${conn.id}: Remote-Ergebnis wegen geaenderter/beschaeftigter Binding verworfen.`);
