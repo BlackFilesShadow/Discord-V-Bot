@@ -14,9 +14,10 @@ async function json(route: Route, body: unknown, status = 200): Promise<void> {
   await route.fulfill({ status, contentType: 'application/json', body: JSON.stringify(body) });
 }
 
-async function stubLifecycle(page: Page, permissions: string[], forbidden = false) {
+async function stubLifecycle(page: Page, permissions: string[], forbidden = false, isOwner = false) {
   const mutations: Mutation[] = [];
   const manageLookups: string[] = [];
+  const hasFullAccess = isOwner || permissions.includes('dashboard.access');
 
   await page.route('**/api/me', route => json(route, {
     user: { discordId: USER_ID, username: 'lifecycle-user', avatar: null, role: 'ADMIN' },
@@ -38,10 +39,10 @@ async function stubLifecycle(page: Page, permissions: string[], forbidden = fals
       return json(route, {
         guildId: GUILD_ID,
         alias5: 'CHAOS',
-        isOwner: false,
+        isOwner,
         permissions,
         slots: [],
-        grantsCount: 1,
+        grantsCount: isOwner ? 0 : 1,
       });
     }
 
@@ -64,6 +65,13 @@ async function stubLifecycle(page: Page, permissions: string[], forbidden = fals
         configured: true,
         enabled: false,
         channelId: CHANNEL_ID,
+      });
+    }
+    if (path === `${base}/leave-cleanup/config` && method === 'GET') {
+      if (!hasFullAccess) return json(route, { error: 'Dashboard-Vollzugriff erforderlich.' }, 403);
+      return json(route, {
+        configured: true,
+        deletePlayerDataOnLeave: false,
       });
     }
 
@@ -91,6 +99,12 @@ async function stubLifecycle(page: Page, permissions: string[], forbidden = fals
       return json(route, { configured: true, ...body });
     }
     if (path === `${base}/goodbye/config` && method === 'POST') {
+      const body = mutationBody() ?? {};
+      mutations.push({ method, path, body });
+      return json(route, { configured: true, ...body });
+    }
+    if (path === `${base}/leave-cleanup/config` && method === 'POST') {
+      if (!hasFullAccess) return json(route, { error: 'Dashboard-Vollzugriff erforderlich.' }, 403);
       const body = mutationBody() ?? {};
       mutations.push({ method, path, body });
       return json(route, { configured: true, ...body });
@@ -142,12 +156,17 @@ test.describe('Welcome/Goodbye authenticated dashboard contract', () => {
     expect(state.mutations).toEqual([]);
   });
 
-  test('welcome.manage-Oberflaeche behaelt Save-Aktionen im exakten Guild-Scope', async ({ page }) => {
+  test('welcome.manage zeigt den Cleanup im Goodbye-Bereich sichtbar, ohne Vollzugriff zu erteilen', async ({ page }) => {
     const state = await stubLifecycle(page, ['welcome.view', 'welcome.manage']);
     await openWelcome(page);
 
     await expect(page.getByRole('heading', { name: 'Willkommen', exact: true })).toBeVisible();
     await expect(page.getByRole('heading', { name: 'Abschied / Goodbye' })).toBeVisible();
+    await expect(page.getByTestId('goodbye-leave-cleanup-owner-only')).toBeVisible();
+    await expect(page.getByText('Spieler-Cleanup', { exact: true })).toBeVisible();
+    await expect(page.getByTestId('goodbye-leave-cleanup-owner-only')).toContainText('Discord-Server-Owner');
+    await expect(page.getByTestId('goodbye-leave-cleanup-owner-only')).toContainText('dashboard.access');
+    await expect(page.getByRole('switch', { name: 'Whitelist und Spielerstatistik bei Austritt bereinigen' })).toHaveCount(0);
 
     await page.getByRole('button', { name: 'Speichern', exact: true }).click();
     await expect.poll(() => state.mutations.some(m => m.method === 'POST' && m.path === `/api/v2/guilds/${GUILD_ID}/welcome/config`)).toBe(true);
@@ -164,6 +183,50 @@ test.describe('Welcome/Goodbye authenticated dashboard contract', () => {
       `/api/v2/guilds/${GUILD_ID}/roles`,
       `/api/v2/guilds/${GUILD_ID}/welcome/autoroles`,
     ]));
+  });
+
+  test('dashboard.access kann den sichtbaren Cleanup wie der Owner sicher aktivieren', async ({ page }) => {
+    const state = await stubLifecycle(page, ['dashboard.access']);
+    await openWelcome(page);
+
+    const cleanup = page.getByTestId('goodbye-leave-cleanup');
+    const cleanupSwitch = page.getByRole('switch', { name: 'Whitelist und Spielerstatistik bei Austritt bereinigen' });
+    await expect(cleanup).toBeVisible();
+    await expect(cleanupSwitch).toBeVisible();
+    await expect(page.getByTestId('goodbye-leave-cleanup-owner-only')).toHaveCount(0);
+
+    await cleanupSwitch.click();
+    page.once('dialog', dialog => dialog.accept());
+    await page.getByRole('button', { name: 'Einstellung speichern', exact: true }).click();
+
+    await expect.poll(() => state.mutations.some(m => (
+      m.method === 'POST'
+      && m.path === `/api/v2/guilds/${GUILD_ID}/leave-cleanup/config`
+      && m.body?.deletePlayerDataOnLeave === true
+    ))).toBe(true);
+    await noPageOverflow(page);
+  });
+
+  test('Server-Owner kann den sichtbaren Cleanup im Goodbye-Bereich weiterhin sicher aktivieren', async ({ page }) => {
+    const state = await stubLifecycle(page, [], false, true);
+    await openWelcome(page);
+
+    const cleanup = page.getByTestId('goodbye-leave-cleanup');
+    const cleanupSwitch = page.getByRole('switch', { name: 'Whitelist und Spielerstatistik bei Austritt bereinigen' });
+    await expect(cleanup).toBeVisible();
+    await expect(cleanupSwitch).toBeVisible();
+    await expect(page.getByTestId('goodbye-leave-cleanup-owner-only')).toHaveCount(0);
+
+    await cleanupSwitch.click();
+    page.once('dialog', dialog => dialog.accept());
+    await page.getByRole('button', { name: 'Einstellung speichern', exact: true }).click();
+
+    await expect.poll(() => state.mutations.some(m => (
+      m.method === 'POST'
+      && m.path === `/api/v2/guilds/${GUILD_ID}/leave-cleanup/config`
+      && m.body?.deletePlayerDataOnLeave === true
+    ))).toBe(true);
+    await noPageOverflow(page);
   });
 
   for (const width of [320, 360, 375, 390, 430]) {

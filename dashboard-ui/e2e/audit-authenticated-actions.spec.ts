@@ -51,7 +51,6 @@ async function stubAudit(page: Page, options: AuditStubOptions = {}) {
 
     if (path === `${base}/audit/categories`) {
       categoryReads += 1;
-      if (!owner) return json(route, { error: 'Nur der Server-Owner darf das.' }, 403);
       return json(route, {
         categories: [
           { category: 'ADMIN', count: 3 },
@@ -62,7 +61,6 @@ async function stubAudit(page: Page, options: AuditStubOptions = {}) {
 
     if (path === `${base}/audit`) {
       auditQueries.push(url.search);
-      if (!owner) return json(route, { error: 'Nur der Server-Owner darf das.' }, 403);
       if (url.searchParams.get('action') === 'FAIL') {
         return json(route, { error: 'Audit backend unavailable' }, 503);
       }
@@ -136,7 +134,7 @@ async function expectNoHorizontalOverflow(page: Page): Promise<void> {
   expect(overflow).toBeLessThanOrEqual(1);
 }
 
-test.describe('Audit authenticated Owner contract', () => {
+test.describe('Audit authenticated full-access contract', () => {
   test('Owner bekommt Kategorien, verlustfreie Cursor-Pagination, Details und applied search', async ({ page }) => {
     const state = await stubAudit(page);
     await openAudit(page);
@@ -146,7 +144,6 @@ test.describe('Audit authenticated Owner contract', () => {
     await expect.poll(state.categoryReads).toBeGreaterThan(0);
     await expect.poll(() => state.auditQueries().length).toBeGreaterThan(0);
 
-    // Gleicher Timestamp auf Seite 1 darf die zweite Zeile nicht verschlucken.
     await page.getByText('PERM_GRANTED', { exact: true }).click();
     await expect(page.getByText(/\[REDACTED\]/).first()).toBeVisible();
 
@@ -154,7 +151,6 @@ test.describe('Audit authenticated Owner contract', () => {
     await expect(page.getByText('ROLE_REVOKED', { exact: true })).toBeVisible();
     await expect.poll(() => state.auditQueries().some(query => new URLSearchParams(query).get('cursor') === NEXT_CURSOR)).toBe(true);
 
-    // Tippen allein darf keinen neuen Request mit einem alten Cursor ausloesen.
     const readsBeforeTyping = state.auditQueries().length;
     await page.getByLabel('Audit-Aktion').fill('TICKET_');
     await page.waitForTimeout(300);
@@ -193,14 +189,13 @@ test.describe('Audit authenticated Owner contract', () => {
     await expect(page.getByText('ROLE_REVOKED', { exact: true })).toHaveCount(0);
   });
 
-  test('Nicht-Owner mit dashboard.access sieht keinen Audit-Tab und ruft keine Audit-API auf', async ({ page }) => {
+  test('Nicht-Owner mit dashboard.access sieht Audit-Tab und darf die Guild-Audit-API lesen', async ({ page }) => {
     const state = await stubAudit(page, { owner: false });
-    await page.goto(`/servers/${GUILD_ID}`);
+    await openAudit(page);
 
-    await expect(page.getByRole('heading', { name: 'CHAOS' })).toBeVisible();
-    await expect(page.getByRole('button', { name: 'Audit-Log' })).toHaveCount(0);
-    expect(state.categoryReads()).toBe(0);
-    expect(state.auditQueries()).toEqual([]);
+    await expect(page.getByText('PERM_GRANTED', { exact: true })).toBeVisible();
+    await expect.poll(state.categoryReads).toBeGreaterThan(0);
+    await expect.poll(() => state.auditQueries().length).toBeGreaterThan(0);
   });
 });
 

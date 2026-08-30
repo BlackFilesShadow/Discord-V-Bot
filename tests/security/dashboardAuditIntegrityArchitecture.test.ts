@@ -13,9 +13,10 @@ const schemaSource = read('prisma/schema.prisma');
 const migrationSource = read('prisma/migrations/20260820060000_audit_log_cursor_indexes/migration.sql');
 
 describe('Dashboard-1W audit architecture', () => {
-  test('audit HTTP surfaces stay Owner-only and reject the lossy timestamp cursor', () => {
-    expect(routeSource).toContain("auditRouter.get('/', requireGuildOwner");
-    expect(routeSource).toContain("auditRouter.get('/categories', requireGuildOwner");
+  test('audit HTTP surfaces require explicit dashboard full access and reject the lossy timestamp cursor', () => {
+    expect(routeSource).toContain("auditRouter.get('/', requireGuildPermission('dashboard.access')");
+    expect(routeSource).toContain("auditRouter.get('/categories', requireGuildPermission('dashboard.access')");
+    expect(routeSource).not.toContain('requireGuildOwner');
     expect(routeSource).toContain('if (req.query.before !== undefined)');
     expect(routeSource).toContain('parseAuditLimit(req.query.limit)');
     expect(routeSource).toContain('parseAuditCategory(req.query.category)');
@@ -34,9 +35,11 @@ describe('Dashboard-1W audit architecture', () => {
     expect(contractSource).toContain('{ createdAt: cursor.createdAt, id: { lt: cursor.id } }');
   });
 
-  test('UI mirrors Owner-only auth and does not maintain a second mutable cursor/page truth', () => {
+  test('UI mirrors dashboard full access without faking ownership and keeps one cursor truth', () => {
     expect(uiSource).toContain("{ key: 'audit', label: 'Audit-Log', icon: Activity, ownerOnly: true }");
-    expect(uiSource).toContain("tab === 'audit' && guildId && isOwner && <AuditTab guildId={guildId} />");
+    expect(uiSource).toContain("const hasFullAccess = isOwner || perms.includes('dashboard.access');");
+    expect(uiSource).toContain('if (t.ownerOnly && !hasFullAccess) return false;');
+    expect(uiSource).toContain("tab === 'audit' && guildId && hasFullAccess && <AuditTab guildId={guildId} />");
     expect(uiSource).toContain('useInfiniteQuery');
     expect(uiSource).toMatch(
       /getNextPageParam:\s*\(?lastPage\)?\s*=>\s*lastPage\.nextCursor\s*\?\?\s*undefined/,

@@ -10,6 +10,7 @@ import { useToast } from '@/components/ui/Toast';
 
 interface DashboardOwnerState {
   isOwner: boolean;
+  permissions: string[];
 }
 
 interface LeaveCleanupConfigState {
@@ -17,7 +18,12 @@ interface LeaveCleanupConfigState {
   deletePlayerDataOnLeave: boolean;
 }
 
-export function LeaveCleanupPanel({ guildId }: { guildId: string }) {
+interface LeaveCleanupPanelProps {
+  guildId: string;
+  embedded?: boolean;
+}
+
+export function LeaveCleanupPanel({ guildId, embedded = false }: LeaveCleanupPanelProps) {
   const qc = useQueryClient();
   const toast = useToast();
   const ownerQ = useQuery({
@@ -26,10 +32,11 @@ export function LeaveCleanupPanel({ guildId }: { guildId: string }) {
     enabled: !!guildId,
   });
   const isOwner = ownerQ.data?.isOwner === true;
+  const hasFullAccess = isOwner || ownerQ.data?.permissions?.includes('dashboard.access') === true;
   const cfgQ = useQuery({
     queryKey: ['leave-cleanup', guildId],
     queryFn: () => api.get<LeaveCleanupConfigState>(`/api/v2/guilds/${guildId}/leave-cleanup/config`),
-    enabled: !!guildId && isOwner,
+    enabled: !!guildId && hasFullAccess,
   });
 
   const [enabled, setEnabled] = useState(false);
@@ -39,8 +46,38 @@ export function LeaveCleanupPanel({ guildId }: { guildId: string }) {
     if (cfgQ.data) setEnabled(cfgQ.data.deletePlayerDataOnLeave);
   }, [cfgQ.data]);
 
-  if (!isOwner) return null;
-  if (cfgQ.isLoading) return <div className="h-40 rounded-xl skeleton" />;
+  if (ownerQ.isLoading) {
+    return embedded
+      ? <div className="h-24 rounded-lg skeleton" data-testid="goodbye-leave-cleanup-loading" />
+      : <div className="h-40 rounded-xl skeleton" />;
+  }
+
+  if (!hasFullAccess) {
+    if (!embedded) return null;
+    return (
+      <div
+        className="rounded-lg border border-border/60 bg-bg-elev/35 p-3 sm:p-4"
+        data-testid="goodbye-leave-cleanup-owner-only"
+      >
+        <div className="flex items-start gap-2.5">
+          <ShieldAlert className="h-5 w-5 text-muted shrink-0 mt-0.5" />
+          <div className="min-w-0">
+            <p className="text-xs font-medium text-white/90">Spieler-Cleanup</p>
+            <p className="text-xs text-muted mt-1 leading-relaxed">
+              Diese Austritts-Bereinigung ist weiterhin vorhanden. Ein- oder ausschalten darf sie der Discord-Server-Owner
+              oder ein Mitglied mit <code>dashboard.access</code> (Vollzugriff).
+            </p>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+  if (cfgQ.isLoading) {
+    return embedded
+      ? <div className="h-24 rounded-lg skeleton" data-testid="goodbye-leave-cleanup-loading" />
+      : <div className="h-40 rounded-xl skeleton" />;
+  }
 
   const saved = cfgQ.data?.deletePlayerDataOnLeave ?? false;
   const changed = enabled !== saved;
@@ -69,6 +106,52 @@ export function LeaveCleanupPanel({ guildId }: { guildId: string }) {
     }
   }
 
+  const saveButton = (
+    <Button
+      onClick={save}
+      disabled={busy || !changed}
+      size={embedded ? 'sm' : undefined}
+      className={embedded ? 'w-full sm:w-auto shrink-0' : 'w-full sm:w-auto'}
+    >
+      <Save className="h-4 w-4 mr-1" /> {busy ? 'Speichert…' : 'Einstellung speichern'}
+    </Button>
+  );
+
+  if (embedded) {
+    return (
+      <div
+        className="rounded-lg border border-danger/35 bg-danger/5 p-3 sm:p-4 space-y-3"
+        data-testid="goodbye-leave-cleanup"
+      >
+        <div className="flex flex-wrap items-start justify-between gap-2">
+          <div className="min-w-0">
+            <p className="text-xs font-medium text-white/90 inline-flex items-center gap-2">
+              <DatabaseZap className="h-4 w-4 text-danger" /> Spieler-Cleanup (optional)
+            </p>
+            <p className="text-[11px] text-muted mt-1 leading-relaxed">
+              Entfernt beim Austritt den verifiziert zugeordneten Spieler von der Nitrado-Whitelist und setzt nur die
+              guild-/gameservergescoppte DayZ-Gameplay-Statistik zurück. Economy, XP, Level, Balance und Linking bleiben erhalten.
+            </p>
+          </div>
+          <Badge variant={saved ? 'danger' : 'neutral'}>{saved ? 'EIN' : 'AUS'}</Badge>
+        </div>
+
+        <Switch
+          checked={enabled}
+          onChange={setEnabled}
+          label="Whitelist und Spielerstatistik bei Austritt bereinigen"
+        />
+
+        <div className="flex flex-col sm:flex-row sm:items-center gap-2 sm:justify-between">
+          <p className="text-[11px] text-muted">
+            Owner oder <code>dashboard.access</code> (Vollzugriff). Bereits eingereihte Cleanup-Aufträge werden auch nach dem Ausschalten sicher beendet.
+          </p>
+          {saveButton}
+        </div>
+      </div>
+    );
+  }
+
   return (
     <div className="space-y-4">
       <div>
@@ -76,7 +159,7 @@ export function LeaveCleanupPanel({ guildId }: { guildId: string }) {
           <DatabaseZap className="h-5 w-5 text-danger" /> Spielerdaten bei Austritt
         </h2>
         <p className="text-xs text-muted mt-0.5">
-          Owner-only Schalter für Whitelist-Entfernung und guild-/gameservergescoppten Gameplay-Statistik-Reset.
+          Vollzugriff-Schalter für Whitelist-Entfernung und guild-/gameservergescoppten Gameplay-Statistik-Reset.
         </p>
       </div>
 
@@ -134,9 +217,7 @@ export function LeaveCleanupPanel({ guildId }: { guildId: string }) {
       </Card>
 
       <div className="flex flex-col sm:flex-row gap-2">
-        <Button onClick={save} disabled={busy || !changed} className="w-full sm:w-auto">
-          <Save className="h-4 w-4 mr-1" /> {busy ? 'Speichert…' : 'Einstellung speichern'}
-        </Button>
+        {saveButton}
       </div>
     </div>
   );

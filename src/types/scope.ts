@@ -104,6 +104,31 @@ export function hasPermission(scope: GuildScope, perm: PermissionScope): boolean
 }
 
 /**
+ * Liefert die effektiven delegierbaren Dashboard-Scopes fuer die UI.
+ *
+ * `GuildScope.permissions` bleibt absichtlich die rohe Grant-Menge, damit
+ * Authorization-Entscheidungen weiterhin zentral ueber `hasPermission`
+ * erfolgen. Fuer die Dashboard-Metadaten muss ein explizites
+ * `dashboard.access` aber als echter Vollzugriff sichtbar sein; sonst koennen
+ * Unterkomponenten (z.B. Economy/Lotterie/Schwarzmarkt) trotz erlaubtem
+ * Backend faelschlich ihre Manage-Oberflaeche verstecken.
+ *
+ * Non-delegable Scope-IDs werden dadurch NICHT freigeschaltet. Owner-/Nitrado-
+ * Page-1-/Permission-/Audit-Sonderflaechen werden separat ueber den expliziten
+ * `dashboard.access`-Gate geschuetzt. Bot-Admin/Dev und Commands bleiben davon
+ * unberuehrt.
+ */
+export function effectiveDashboardPermissions(scope: GuildScope): PermissionScope[] {
+  const effective = new Set<PermissionScope>(scope.permissions);
+  if (scope.permissions.has('dashboard.access')) {
+    for (const perm of PERMISSION_SCOPES) {
+      if (!NON_DELEGABLE_SCOPES.has(perm)) effective.add(perm);
+    }
+  }
+  return Array.from(effective);
+}
+
+/**
  * Discord-Command-Aufloesung.
  *
  * Wichtig: `dashboard.access` wird hier absichtlich NICHT als Bypass verwendet.

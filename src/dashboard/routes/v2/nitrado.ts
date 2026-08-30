@@ -1,5 +1,5 @@
 /**
- * Nitrado-Slot-Verwaltung. NUR Owner — niemals delegierbar.
+ * Nitrado-Slot-Verwaltung. Guild-Owner oder expliziter dashboard.access-Vollzugriff.
  *
  * GET    /              listet alle Slots (alias5 sichtbar, Token nie)
  * POST   /              { slot, alias, token, nitradoServerId? } -> validiert Token, speichert verschluesselt
@@ -7,7 +7,7 @@
  * GET    /:slot/services proxy zu NitradoClient.listServices()
  */
 import { Router, type Response } from 'express';
-import { requireGuildOwner } from '../../middleware/auth';
+import { requireGuildPermission } from '../../middleware/auth';
 import {
   listSlots,
   createSlot,
@@ -83,7 +83,7 @@ function respondConnectionBusy(res: Response): void {
   });
 }
 
-nitradoRouter.get('/', requireGuildOwner, async (req, res) => {
+nitradoRouter.get('/', requireGuildPermission('dashboard.access'), async (req, res) => {
   const scope = req.guildScope!;
   const slots = await listSlots(scope.guildId);
   res.json({
@@ -100,7 +100,7 @@ nitradoRouter.get('/', requireGuildOwner, async (req, res) => {
   });
 });
 
-nitradoRouter.post('/', requireGuildOwner, async (req, res) => {
+nitradoRouter.post('/', requireGuildPermission('dashboard.access'), async (req, res) => {
   const scope = req.guildScope!;
   const { slot, alias, token, nitradoServerId } = req.body ?? {};
   if (typeof slot !== 'number' || !Number.isInteger(slot) || slot < 1 || slot > 5) { res.status(400).json({ error: 'slot 1..5' }); return; }
@@ -150,7 +150,7 @@ nitradoRouter.post('/', requireGuildOwner, async (req, res) => {
   }
 });
 
-nitradoRouter.patch('/:slot/token', requireGuildOwner, async (req, res) => {
+nitradoRouter.patch('/:slot/token', requireGuildPermission('dashboard.access'), async (req, res) => {
   const scope = req.guildScope!;
   const slot = Number(String(req.params.slot));
   if (!Number.isInteger(slot) || slot < 1 || slot > 5) { res.status(400).json({ error: 'slot 1..5' }); return; }
@@ -199,7 +199,7 @@ nitradoRouter.patch('/:slot/token', requireGuildOwner, async (req, res) => {
   res.json({ ok: true, slot: updated.slot, status: updated.status, serviceReset: serviceMismatch });
 });
 
-nitradoRouter.patch('/:slot/alias', requireGuildOwner, async (req, res) => {
+nitradoRouter.patch('/:slot/alias', requireGuildPermission('dashboard.access'), async (req, res) => {
   const scope = req.guildScope!;
   const slot = Number(String(req.params.slot));
   if (!Number.isInteger(slot) || slot < 1 || slot > 5) { res.status(400).json({ error: 'slot 1..5' }); return; }
@@ -221,7 +221,7 @@ nitradoRouter.patch('/:slot/alias', requireGuildOwner, async (req, res) => {
   res.json({ ok: true, slot: updated.slot, alias: updated.alias, alias5: updated.alias5 });
 });
 
-nitradoRouter.patch('/:slot/service', requireGuildOwner, async (req, res) => {
+nitradoRouter.patch('/:slot/service', requireGuildPermission('dashboard.access'), async (req, res) => {
   const scope = req.guildScope!;
   const slot = Number(String(req.params.slot));
   if (!Number.isInteger(slot) || slot < 1 || slot > 5) { res.status(400).json({ error: 'slot 1..5' }); return; }
@@ -266,7 +266,7 @@ nitradoRouter.patch('/:slot/service', requireGuildOwner, async (req, res) => {
   res.json({ ok: true, slot: updated.slot, nitradoServerId: updated.nitradoServerId });
 });
 
-nitradoRouter.delete('/:slot', requireGuildOwner, async (req, res) => {
+nitradoRouter.delete('/:slot', requireGuildPermission('dashboard.access'), async (req, res) => {
   const scope = req.guildScope!;
   const slot = Number(String(req.params.slot));
   if (!Number.isInteger(slot) || slot < 1 || slot > 5) { res.status(400).json({ error: 'slot 1..5' }); return; }
@@ -282,7 +282,7 @@ nitradoRouter.delete('/:slot', requireGuildOwner, async (req, res) => {
   res.json({ ok: true, deletedId: id });
 });
 
-nitradoRouter.get('/:slot/services', requireGuildOwner, async (req, res) => {
+nitradoRouter.get('/:slot/services', requireGuildPermission('dashboard.access'), async (req, res) => {
   const scope = req.guildScope!;
   const slot = Number(String(req.params.slot));
   if (!Number.isInteger(slot) || slot < 1 || slot > 5) { res.status(400).json({ error: 'slot 1..5' }); return; }

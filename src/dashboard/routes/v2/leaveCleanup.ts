@@ -1,5 +1,5 @@
 import { Router } from 'express';
-import { requireGuildOwner } from '../../middleware/auth';
+import { requireGuildPermission } from '../../middleware/auth';
 import { logAuditDb } from '../../../utils/logger';
 import {
   getLeaveCleanupConfig,
@@ -16,12 +16,12 @@ function parseBody(body: unknown): LeaveCleanupConfig | null {
   return { deletePlayerDataOnLeave: value };
 }
 
-leaveCleanupRouter.get('/config', requireGuildOwner, async (req, res) => {
+leaveCleanupRouter.get('/config', requireGuildPermission('dashboard.access'), async (req, res) => {
   const scope = req.guildScope!;
   res.json(await getLeaveCleanupConfig(scope.guildId));
 });
 
-leaveCleanupRouter.post('/config', requireGuildOwner, async (req, res) => {
+leaveCleanupRouter.post('/config', requireGuildPermission('dashboard.access'), async (req, res) => {
   const scope = req.guildScope!;
   const parsed = parseBody(req.body);
   if (!parsed) {

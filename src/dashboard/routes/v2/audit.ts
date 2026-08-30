@@ -1,13 +1,13 @@
 /* eslint-disable local/no-unscoped-prisma-query -- Stage 64: guild boundary enforced at auth/API or entity-id unique after prior guild check; Prisma update/delete require unique where. */
 /**
- * Audit-Log per Guild — strikt Owner-only.
+ * Audit-Log per Guild — Guild-Owner oder expliziter dashboard.access-Vollzugriff.
  *
  * GET /  ?category=&action=&limit=&cursor=  -> bis zu 100 Eintraege
  * GET /categories                           -> verfuegbare Kategorien (in DB vorhanden)
  */
 import { Router } from 'express';
 import type { Prisma } from '@prisma/client';
-import { requireGuildOwner } from '../../middleware/auth';
+import { requireGuildPermission } from '../../middleware/auth';
 import prisma from '../../../database/prisma';
 import { redactAuditDetails } from '../../../utils/auditRedaction';
 import {
@@ -28,7 +28,7 @@ function respondAuditValidationError(res: import('express').Response, error: unk
   return true;
 }
 
-auditRouter.get('/', requireGuildOwner, async (req, res) => {
+auditRouter.get('/', requireGuildPermission('dashboard.access'), async (req, res) => {
   const scope = req.guildScope!;
 
   try {
@@ -92,7 +92,7 @@ auditRouter.get('/', requireGuildOwner, async (req, res) => {
   }
 });
 
-auditRouter.get('/categories', requireGuildOwner, async (req, res) => {
+auditRouter.get('/categories', requireGuildPermission('dashboard.access'), async (req, res) => {
   const scope = req.guildScope!;
   const groups = await prisma.auditLog.groupBy({
     by: ['category'],
