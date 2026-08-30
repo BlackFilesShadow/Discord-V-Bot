@@ -309,8 +309,7 @@ export class NitradoClient {
   ): Promise<string> {
     const path = `/services/${serviceId}/gameservers`;
     const res = await this.request<{
-      data: { gameserver?: { settings?: { general?: Record<string, unknown> } } };
-    }>('GET', path);
+      data: { gameserver?: { settings?: { general?: Record<string, unknown> } } }>('GET', path);
     const general = res.data?.gameserver?.settings?.general;
     if (!general || !Object.prototype.hasOwnProperty.call(general, key)) {
       throw new NitradoApiError(`${key === 'bans' ? 'Banlist' : 'Whitelist'}-Setting fehlt in Nitrado-Antwort`, null, path);
@@ -536,7 +535,8 @@ export class NitradoClient {
     if (error.endpoint === seekPath) {
       return /length limit exceeded|use file download instead/i.test(error.message);
     }
-    return error.endpoint === fullPath
+    return error.status === 404
+      && error.endpoint === fullPath
       && /^Download HTTP 404$/i.test(error.message);
   }
 
@@ -586,7 +586,8 @@ export class NitradoClient {
       );
       const token = meta.data?.token;
       if (!token?.url) throw new NitradoApiError('Keine Seek-URL', null, fullPath);
-      return this.fetchSignedText(token, Math.min(length + 4096, MAX_SEEK_BYTES), fullPath);
+      const chunk = await this.fetchSignedText(token, Math.min(length + 4096, MAX_SEEK_BYTES), fullPath);
+      return chunk;
     } catch (error) {
       if (!this.isSeekDownloadFallbackError(error, seekPath, fullPath)) throw error;
       return this.downloadFileRangeViaDownload(serviceId, fullPath, offset, length);
