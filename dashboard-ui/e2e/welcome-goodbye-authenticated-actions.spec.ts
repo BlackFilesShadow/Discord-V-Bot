@@ -197,7 +197,7 @@ test.describe('Welcome/Goodbye authenticated dashboard contract', () => {
 
     await cleanupSwitch.click();
     page.once('dialog', dialog => dialog.accept());
-    await page.getByRole('button', { name: 'Cleanup speichern', exact: true }).click();
+    await page.getByRole('button', { name: 'Einstellung speichern', exact: true }).click();
 
     await expect.poll(() => state.mutations.some(m => (
       m.method === 'POST'
@@ -219,7 +219,7 @@ test.describe('Welcome/Goodbye authenticated dashboard contract', () => {
 
     await cleanupSwitch.click();
     page.once('dialog', dialog => dialog.accept());
-    await page.getByRole('button', { name: 'Cleanup speichern', exact: true }).click();
+    await page.getByRole('button', { name: 'Einstellung speichern', exact: true }).click();
 
     await expect.poll(() => state.mutations.some(m => (
       m.method === 'POST'
