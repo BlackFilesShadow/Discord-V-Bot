@@ -114,6 +114,8 @@ describe('Flag activity feeds', () => {
     expect(flagObjectLabel('Flag_RSTA')).toBe('RSTA');
     const embed = buildGameplayFeedEmbed({
       eventId: 'flag-raised-1',
+      kind: 'FLAG',
+      category: 'RAISED',
       eventType: 'FLAG_RAISED',
       occurredAt: new Date('2026-08-30T12:36:44.000Z'),
       actorName: 'JtReaper',
@@ -140,6 +142,8 @@ describe('Flag activity feeds', () => {
   test('renders lowered flag activity with the matching action and title', () => {
     const embed = buildGameplayFeedEmbed({
       eventId: 'flag-lowered-1',
+      kind: 'FLAG',
+      category: 'LOWERED',
       eventType: 'FLAG_LOWERED',
       occurredAt: new Date('2026-08-30T12:43:08.000Z'),
       actorName: 'Survivor Two',
