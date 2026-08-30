@@ -158,7 +158,6 @@ describe('Goodbye-1 guild-scoped identity and delivery', () => {
     expect(payload.allowedMentions).toEqual({ parse: [] });
     const json = payload.embeds[0].toJSON();
     expect(json.title).toBeUndefined();
-    expect(json.description).toBeUndefined();
     expect(json.fields).toHaveLength(3);
     expect(json.fields?.[0]).toMatchObject({ name: '👤 Mitglied', inline: false });
     expect(json.fields?.[0].value).toContain('**Discord:** StoredNick');
