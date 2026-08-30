@@ -82,6 +82,56 @@ describe('Nitrado ranged file fallback', () => {
     );
   });
 
+  it('falls back when the signed seek URL returns 404 and preserves offset/count', async () => {
+    const client = new NitradoClient('test-token');
+    const { request, fetchSignedText } = stubTransport(client);
+    const seekPath = '/services/12345/gameservers/file_server/seek';
+    const downloadPath = '/services/12345/gameservers/file_server/download';
+    const fullPath = '/games/example/noftp/dayzps/config/DayZServer_PS4.ADM';
+    const seekToken = { url: 'https://signed.example/seek', token: 'seek-token' };
+    const downloadToken = { url: 'https://signed.example/download', token: 'download-token' };
+    const signed404 = new NitradoApiError('Download HTTP 404', 404, fullPath);
+
+    request.mockImplementation(async (_method, path) => {
+      if (path === seekPath) return { data: { token: seekToken } };
+      if (path === downloadPath) return { data: { token: downloadToken } };
+      throw new Error(`Unexpected request: ${path}`);
+    });
+    fetchSignedText
+      .mockRejectedValueOnce(signed404)
+      .mockResolvedValueOnce('fallback-chunk');
+
+    await expect(client.downloadFileRange('12345', fullPath, 111516, 512 * 1024))
+      .resolves.toBe('fallback-chunk');
+
+    expect(request).toHaveBeenCalledTimes(2);
+    expect(request).toHaveBeenNthCalledWith(
+      1,
+      'GET',
+      seekPath,
+      { params: { file: fullPath, offset: 111516, length: 512 * 1024, mode: 'raw' } },
+    );
+    expect(request).toHaveBeenNthCalledWith(
+      2,
+      'GET',
+      downloadPath,
+      { params: { file: fullPath } },
+    );
+    expect(fetchSignedText).toHaveBeenNthCalledWith(
+      1,
+      seekToken,
+      (512 * 1024) + 4096,
+      fullPath,
+    );
+    expect(fetchSignedText).toHaveBeenNthCalledWith(
+      2,
+      downloadToken,
+      (512 * 1024) + 4096,
+      fullPath,
+      { offset: 111516, count: 512 * 1024 },
+    );
+  });
+
   it('does not mask unrelated seek failures', async () => {
     const client = new NitradoClient('test-token');
     const { request, fetchSignedText } = stubTransport(client);
@@ -94,6 +144,22 @@ describe('Nitrado ranged file fallback', () => {
 
     expect(request).toHaveBeenCalledTimes(1);
     expect(fetchSignedText).not.toHaveBeenCalled();
+  });
+
+  it('does not mask authentication failures from the signed seek URL', async () => {
+    const client = new NitradoClient('test-token');
+    const { request, fetchSignedText } = stubTransport(client);
+    const fullPath = '/logs/server.ADM';
+    const seekToken = { url: 'https://signed.example/seek', token: 'seek-token' };
+    const original = new NitradoApiError('Download HTTP 403', 403, fullPath);
+    request.mockResolvedValue({ data: { token: seekToken } });
+    fetchSignedText.mockRejectedValue(original);
+
+    await expect(client.downloadFileRange('12345', fullPath, 0, 4096))
+      .rejects.toBe(original);
+
+    expect(request).toHaveBeenCalledTimes(1);
+    expect(fetchSignedText).toHaveBeenCalledTimes(1);
   });
 
   it('does not trigger fallback for the same text from a different endpoint', async () => {
@@ -111,6 +177,33 @@ describe('Nitrado ranged file fallback', () => {
 
     expect(request).toHaveBeenCalledTimes(1);
     expect(fetchSignedText).not.toHaveBeenCalled();
+  });
+
+  it('keeps a 404 visible when the ranged download fallback also returns 404', async () => {
+    const client = new NitradoClient('test-token');
+    const { request, fetchSignedText } = stubTransport(client);
+    const seekPath = '/services/12345/gameservers/file_server/seek';
+    const downloadPath = '/services/12345/gameservers/file_server/download';
+    const fullPath = '/logs/server.ADM';
+    const seekToken = { url: 'https://signed.example/seek', token: 'seek-token' };
+    const downloadToken = { url: 'https://signed.example/download', token: 'download-token' };
+    const seek404 = new NitradoApiError('Download HTTP 404', 404, fullPath);
+    const download404 = new NitradoApiError('Download HTTP 404', 404, fullPath);
+
+    request.mockImplementation(async (_method, path) => {
+      if (path === seekPath) return { data: { token: seekToken } };
+      if (path === downloadPath) return { data: { token: downloadToken } };
+      throw new Error(`Unexpected request: ${path}`);
+    });
+    fetchSignedText
+      .mockRejectedValueOnce(seek404)
+      .mockRejectedValueOnce(download404);
+
+    await expect(client.downloadFileRange('12345', fullPath, 0, 4096))
+      .rejects.toBe(download404);
+
+    expect(request).toHaveBeenCalledTimes(2);
+    expect(fetchSignedText).toHaveBeenCalledTimes(2);
   });
 
   it('passes token, offset and count to the signed download request', async () => {
