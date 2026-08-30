@@ -48,7 +48,7 @@ describe('Goodbye-1 dashboard wiring', () => {
     expect(cleanupSource).toContain("permissions?.includes('dashboard.access')");
     expect(cleanupSource).toContain('enabled: !!guildId && hasFullAccess');
     expect(cleanupSource).toContain('<code>dashboard.access</code>');
-    expect(cleanupSource).toContain('Vollzugriff');
+    expect(cleanupSource).toContain('(Vollzugriff)');
     expect(cleanupSource).toContain('`/api/v2/guilds/${guildId}/leave-cleanup/config`');
     expect(cleanupRouteSource).toContain("requireGuildPermission('dashboard.access')");
     expect(cleanupRouteSource).not.toContain('requireGuildOwner');
