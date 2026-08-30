@@ -55,11 +55,13 @@ describe('#293 gameplay feed semantic isolation', () => {
     expect(ui).not.toContain("BUILD: ['PLACEMENT', 'BUILD', 'DISMANTLE', 'DESTROY']");
   });
 
-  it('API contract exposes PLACEMENT and uses its dedicated category set', () => {
+  it('API and socket contracts expose PLACEMENT as a first-class feed kind', () => {
     const route = fs.readFileSync(path.resolve('src/dashboard/routes/v2/killfeed.ts'), 'utf8');
+    const emitter = fs.readFileSync(path.resolve('src/dashboard/socket/emitter.ts'), 'utf8');
     expect(route).toContain("value === 'PLACEMENT'");
     expect(route).toContain("if (kind === 'PLACEMENT') return PLACEMENT_CATEGORIES");
     expect(route).toContain('Ein Placement-Feed darf ausschliesslich die Kategorie PLACEMENT enthalten.');
+    expect(emitter).toContain("kind?: 'DEATH' | 'BUILD' | 'PLACEMENT' | 'PLAYER_LIST' | 'FLAG'");
   });
 
   it('migration splits mixed configs and transfers existing placement deliveries', () => {
