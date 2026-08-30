@@ -106,6 +106,17 @@ export function LeaveCleanupPanel({ guildId, embedded = false }: LeaveCleanupPan
     }
   }
 
+  const saveButton = (
+    <Button
+      onClick={save}
+      disabled={busy || !changed}
+      size={embedded ? 'sm' : undefined}
+      className={embedded ? 'w-full sm:w-auto shrink-0' : 'w-full sm:w-auto'}
+    >
+      <Save className="h-4 w-4 mr-1" /> {busy ? 'Speichert…' : embedded ? 'Cleanup speichern' : 'Einstellung speichern'}
+    </Button>
+  );
+
   if (embedded) {
     return (
       <div
@@ -135,9 +146,7 @@ export function LeaveCleanupPanel({ guildId, embedded = false }: LeaveCleanupPan
           <p className="text-[11px] text-muted">
             Owner oder <code>dashboard.access</code> (Vollzugriff). Bereits eingereihte Cleanup-Aufträge werden auch nach dem Ausschalten sicher beendet.
           </p>
-          <Button onClick={save} disabled={busy || !changed} size="sm" className="w-full sm:w-auto shrink-0">
-            <Save className="h-4 w-4 mr-1" /> {busy ? 'Speichert…' : 'Cleanup speichern'}
-          </Button>
+          {saveButton}
         </div>
       </div>
     );
@@ -208,9 +217,7 @@ export function LeaveCleanupPanel({ guildId, embedded = false }: LeaveCleanupPan
       </Card>
 
       <div className="flex flex-col sm:flex-row gap-2">
-        <Button onClick={save} disabled={busy || !changed} className="w-full sm:w-auto">
-          <Save className="h-4 w-4 mr-1" /> {busy ? 'Speichert…' : 'Einstellung speichern'}
-        </Button>
+        {saveButton}
       </div>
     </div>
   );
