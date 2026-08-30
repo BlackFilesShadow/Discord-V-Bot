@@ -14,6 +14,7 @@ import {
   type ProviderName,
   getStats,
   getRankedProviders,
+  getProviderConfigurationHealth,
   probeProvider,
   getAllCooldowns,
   clearCooldown,
@@ -265,6 +266,7 @@ botAdminCommandCenterRouter.get('/providers', async (_req, res) => {
     stats,
     order,
     cooldowns: getAllCooldowns(),
+    configuration: getProviderConfigurationHealth(),
     primary: config.ai.provider,
     providers: ALL_PROVIDERS,
   });

@@ -9,6 +9,7 @@ import {
   getRankedProviders,
   getConfiguredModel,
   getAllCooldowns,
+  getCooldownRemainingMs,
   isOnCooldown,
   markProviderUnavailable,
   ProviderName,
@@ -26,7 +27,10 @@ import {
 import { redactText } from '../nitrado/mirror/redactor';
 import { cached } from '../../utils/responseCache';
 import { clampBlock, clampHistory } from './promptBudget';
-import { classifyProviderHttpStatus, updateAllRateLimitedState } from './providerFailure';
+import {
+  classifyProviderError,
+  safeProviderFailureLabel,
+} from './providerFailure';
 import { requireStage48LoopbackUrl } from '../../utils/stage48Loopback';
 import { answerDayz129CatalogQuestion } from './dayz129Catalog';
 import {
@@ -34,6 +38,7 @@ import {
   filterCompatibleMemoryTurns,
   isDayzConversationDomain,
   mayUseExternalConversationContext,
+  resolveMemoryConversationDomain,
 } from './conversationIntent';
 import {
   buildHallucinationGuardFallback,
@@ -42,7 +47,12 @@ import {
   preflightLiveServerQuestion,
   validateLiveServerAnswer,
 } from './dayzHallucinationGuard';
-import { answerLiveTimeQuestion, buildLiveTimeContext } from './liveTime';
+import {
+  answerLiveTimeQuestion,
+  buildLiveTimeContext,
+  shouldIncludeLiveTimeContext,
+} from './liveTime';
+import { answerLocalConversationTurn } from './localConversation';
 import { normalizeAiProviderRequest } from './providerRequestCompatibility';
 
 /**
@@ -189,6 +199,36 @@ export const BOT_PERSONA = [
   'COMMANDS / FUNKTIONEN: Wenn der Nutzer fragt, was du kannst oder welche Discord-Commands du hast, nutze ausschliesslich den aktuellen Katalog. Bot-Admin- und DEV-Verwaltung ist Web-Dashboard-only und darf nicht als Slash-Command erfunden werden. Hersteller-Slash-Funktionen bleiben die ausdrueckliche Slash-Ausnahme.',
 ].join('\n');
 
+const COMMAND_PERSONA_MARKER = '\nCOMMANDS / FUNKTIONEN:';
+const GENERAL_BOT_PERSONA = [
+  'Du bist V-Bot Prime, eine ruhige, praezise und hilfsbereite Assistenz-KI.',
+  'Antworte auf Deutsch, klar, direkt und natuerlich. Kein Marketing-Ton, keine Floskeln und keine unnoetigen Wiederholungen.',
+  'Passe die Laenge an: Smalltalk und einfache Fakten in 1-2 Saetzen; Erklaerungen kompakt; technische Tiefe nur wenn die Frage sie verlangt.',
+  'Antworte genau auf die Frage. Ist sie mehrdeutig, stelle eine kurze Rueckfrage statt zu raten.',
+  'Sprich den Nutzer nie namentlich oder mit @-Mention an. Nutze hoechstens ein dezentes Emoji und nur wenn es passt.',
+  'Erfinde keine aktuellen Fakten, Funktionen, Quellen oder Messwerte. Wenn benoetigte aktuelle Daten fehlen, sage das kurz und ehrlich.',
+  'Server-/Nutzerdaten nur aus dem passenden freigegebenen Kontext verwenden. Private Admin-/Mod-/Staff-/Log-/Ticket-Kanaele oder Rollen niemals nennen, bestaetigen, vermuten oder erfinden.',
+  'Vermeide wortgleiche Wiederholungen vorheriger Antworten. Bei Bundeskanzler/Praesident ohne Laenderangabe ist Deutschland gemeint.',
+].join('\n');
+
+/**
+ * Allgemeine Wissensfragen erhalten nur den stilistischen Persona-Kern. Die
+ * umfangreichen Server-/Rollen-/User-Grenzen werden erst angehaengt, wenn die
+ * Frage tatsaechlich eine dieser Kontext-Domains nutzt. Das erhaelt die
+ * Sicherheitsregeln an ihrer Einsatzstelle, spart bei normalem Chat aber einen
+ * grossen Teil des Provider-Prompts und damit TPM-Quota.
+ */
+export function getBotPersonaForRequest(
+  domain: ReturnType<typeof classifyAiConversationDomain>,
+  includeCommandRules = false,
+): string {
+  if (domain !== 'general') return BOT_PERSONA;
+
+  const commandIndex = BOT_PERSONA.indexOf(COMMAND_PERSONA_MARKER);
+  if (!includeCommandRules || commandIndex < 0) return GENERAL_BOT_PERSONA;
+  return `${GENERAL_BOT_PERSONA}\n${BOT_PERSONA.slice(commandIndex + 1)}`;
+}
+
 export function asksForSelfIntroduction(question: string): boolean {
   const q = question.toLowerCase();
   return (
@@ -231,13 +271,15 @@ export function buildSelfIntroductionInstructions(): string {
   ].join('\n');
 }
 
-export function getKnowledgeBoundary(): string {
+export function getKnowledgeBoundary(hasLiveTimeContext = true): string {
   const year = new Date().getFullYear();
   return [
     `WICHTIG – Wissensstand: Dein internes Trainingswissen endet vor ${year}.`,
     '',
     'PRIORITAET DER QUELLEN (in dieser Reihenfolge nutzen):',
-    '1. AUTORITATIVE ZEIT- UND DATUMSANGABEN (oben im Prompt) → fuer ALLES rund um Datum, Uhrzeit, Wochentag, Tageszeit, Jahreszeit, Jahr.',
+    ...(hasLiveTimeContext
+      ? ['1. AUTORITATIVE ZEIT- UND DATUMSANGABEN (oben im Prompt) → fuer ALLES rund um Datum, Uhrzeit, Wochentag, Tageszeit, Jahreszeit, Jahr.']
+      : []),
     '2. AKTUELLE WEB-RECHERCHE (falls vorhanden) → fuer alle anderen zeitabhaengigen Fakten (Politik, Personen, Sport, Preise, Releases). Nutze sie SELBSTBEWUSST und KONKRET, erfinde nichts hinzu.',
     '3. Stabiles Allgemeinwissen → Mathematik, Geographie, Geschichte vor 2023, Naturwissenschaft, Sprache, Programmierung, Kultur, Definitionen, Erklaerungen, Anleitungen.',
     '',
@@ -245,7 +287,9 @@ export function getKnowledgeBoundary(): string {
     'In diesem Fall sage kurz: "Dazu habe ich gerade keine aktuellen Daten."',
     '',
     'STILREGELN:',
-    '- Verweigere NIEMALS die Antwort auf Datum, Uhrzeit, Wochentag, Tageszeit oder Jahreszeit – diese stehen IMMER im Zeit-Block oben.',
+    ...(hasLiveTimeContext
+      ? ['- Verweigere NIEMALS die Antwort auf Datum, Uhrzeit, Wochentag, Tageszeit oder Jahreszeit – diese stehen im Zeit-Block oben.']
+      : []),
     '- Verweigere NIEMALS die Antwort auf Allgemeinwissen, Erklaerungen, Definitionen, Anleitungen, Meinungen oder Smalltalk.',
     '- Nenne KEINE Quellen in der Antwort. Sage NICHT "laut Wikipedia", "laut meinen Quellen", "meinen Recherchen zufolge" o.ae. Antworte einfach direkt mit dem Fakt, als waere es selbstverstaendliches Wissen.',
     '- Erwaehne deinen Wissensstand oder Trainingsende NICHT von dir aus. Nur wenn der Nutzer explizit fragt.',
@@ -291,6 +335,14 @@ export async function answerQuestion(
     if (timeAnswer) {
       logger.info('[AI-Time] provider-unabhaengige Europe/Berlin-Antwort');
       return { success: true, result: timeAnswer };
+    }
+  }
+
+  if (mode === 'chat' || mode === 'oneshot') {
+    const localConversationAnswer = answerLocalConversationTurn(question);
+    if (localConversationAnswer) {
+      logger.info('[AI-Local] provider-unabhaengiger Gespraechsoeffner');
+      return { success: true, result: localConversationAnswer };
     }
   }
 
@@ -367,9 +419,10 @@ export async function answerQuestion(
       }
     }
 
-    const catalogBlock: string | null =
-      wantCatalog && asksAboutCommands(question) ? formatCatalogForPromptFocused(question) : null;
+    const asksForCommands = wantCatalog && asksAboutCommands(question);
+    const catalogBlock: string | null = asksForCommands ? formatCatalogForPromptFocused(question) : null;
     const introBlock: string | null = wantCatalog && asksForSelfIntroduction(question) ? buildSelfIntroductionInstructions() : null;
+    let personaDomain = domain;
 
     const useMemory = (mode === 'chat' || mode === 'oneshot') && !!opts.userId && !!opts.channelId;
     let memoryTurns: { role: 'user' | 'assistant'; content: string }[] = [];
@@ -377,6 +430,7 @@ export async function answerQuestion(
       try {
         const { getRecentTurns } = await import('./conversationMemory.js');
         const rawMemory = await getRecentTurns(opts.userId!, opts.channelId!, opts.guildId ?? null);
+        personaDomain = resolveMemoryConversationDomain(question, rawMemory);
         memoryTurns = filterCompatibleMemoryTurns(question, rawMemory);
         if (memoryTurns.length < rawMemory.length) {
           logger.info(`[AI-Context-Isolation] ${rawMemory.length - memoryTurns.length} domainfremde Memory-Turn(s) verworfen (domain=${domain})`);
@@ -386,6 +440,7 @@ export async function answerQuestion(
       }
     }
 
+    const persona = getBotPersonaForRequest(personaDomain, asksForCommands || Boolean(introBlock));
     let nitradoHelpBlock: string | null = null;
     let nitradoHelpTopics: string[] = [];
     if (dayzDomain && (mode === 'chat' || mode === 'oneshot' || mode === 'trigger')) {
@@ -430,11 +485,12 @@ export async function answerQuestion(
       }
     }
 
+    const includeLiveTime = shouldIncludeLiveTimeContext(question);
     const response = await callAI([
       ...(dayzTechnical ? [{ role: 'system' as const, content: 'AI_TASK_PROFILE: reasoning' }] : []),
-      { role: 'system', content: BOT_PERSONA },
-      { role: 'system', content: getLiveTimeContext() },
-      ...(wantKnowledgeBoundary ? [{ role: 'system' as const, content: getKnowledgeBoundary() }] : []),
+      { role: 'system', content: persona },
+      ...(includeLiveTime ? [{ role: 'system' as const, content: getLiveTimeContext() }] : []),
+      ...(wantKnowledgeBoundary ? [{ role: 'system' as const, content: getKnowledgeBoundary(includeLiveTime) }] : []),
       ...(catalogBlock ? [{ role: 'system' as const, content: clampBlock('commandContext', catalogBlock)! }] : []),
       ...(introBlock ? [{ role: 'system' as const, content: introBlock }] : []),
       ...(liveBlock ? [{ role: 'system' as const, content: clampBlock('knowledge', liveBlock)! }] : []),
@@ -746,23 +802,6 @@ async function callGemini(
     .trim();
 }
 
-function parseRetryAfter(error: unknown): number {
-  const headers = (error as { response?: { headers?: Record<string, string> } })?.response?.headers;
-  if (!headers) return 0;
-  const ms = headers['retry-after-ms'];
-  if (ms && /^\d+$/.test(ms.trim())) return Number(ms.trim());
-  const ra = headers['retry-after'];
-  if (ra) {
-    const s = ra.trim();
-    if (/^\d+$/.test(s)) return Number(s) * 1000;
-    const date = Date.parse(s);
-    if (!Number.isNaN(date)) return Math.max(0, date - Date.now());
-  }
-  const reset = headers['x-ratelimit-reset'] ?? headers['x-ratelimit-reset-requests'];
-  if (reset && /^\d+(\.\d+)?$/.test(reset.trim())) return Math.round(Number(reset.trim()) * 1000);
-  return 0;
-}
-
 export interface Stage48AiLabTransport {
   baseUrl: string;
   apiKey: string;
@@ -917,12 +956,13 @@ export async function callAI(
     }
   };
 
-  let lastError: unknown = null;
+  let lastSafeError = '';
   let allRateLimited = true;
   let anyAttempted = false;
-  let shortestRetryAfterMs = 0;
+  const retryAtByProvider = new Map<ProviderName, number>();
   logger.info(`callAI start, task=${task}, provider-Reihenfolge: ${providers.join(' -> ')}`);
-  for (const provider of providers) {
+  for (const [providerIndex, provider] of providers.entries()) {
+    const isLastProvider = providerIndex === providers.length - 1;
     for (let attempt = 1; attempt <= 2; attempt++) {
       const t0 = Date.now();
       try {
@@ -940,44 +980,56 @@ export async function callAI(
           // generische "Hmm"-Fehlermeldung statt den naechsten Provider zu testen.
           anyAttempted = true;
           allRateLimited = false;
-          lastError = new Error('AI_PROVIDER_EMPTY_RESPONSE');
+          lastSafeError = 'AI_PROVIDER_EMPTY_RESPONSE';
           logger.warn(`AI-Provider ${provider} lieferte eine leere Textantwort (${latency}ms); Fallback wird fortgesetzt.`);
-          void recordCall(provider as ProviderName, 'failure', latency, 'empty_response');
+          await recordCall(provider as ProviderName, 'failure', latency, 'empty_response');
           break;
         }
         logger.info(`callAI provider=${provider} ERFOLG (${visibleResult.length} chars, ${latency}ms)`);
-        void recordCall(provider as ProviderName, 'success', latency);
+        await recordCall(provider as ProviderName, 'success', latency);
         return visibleResult;
       } catch (error) {
         anyAttempted = true;
-        lastError = error;
         const latency = Date.now() - t0;
-        const status = (error as { response?: { status?: number } })?.response?.status;
-        const { isRateLimit: is429, isAuthOrModel } = classifyProviderHttpStatus(status);
-        allRateLimited = updateAllRateLimitedState(allRateLimited, status);
-        const transient = isTransient(error);
-        const errMsg = (error as Error)?.message || String(error);
+        const classification = classifyProviderError(error);
+        const { status, isRateLimit: is429, isAuthOrModel, retryAfterMs } = classification;
+        allRateLimited = allRateLimited && is429;
+        const transient = !isAuthOrModel && isTransient(error);
+        const safeError = safeProviderFailureLabel(classification, error);
+        lastSafeError = safeError;
+        const requestSuffix = classification.requestIdHash ? ` requestIdHash=${classification.requestIdHash}` : '';
         logger.warn(
-          `AI-Provider ${provider} Versuch ${attempt}/2 fehlgeschlagen${transient ? ' (transient)' : ''}: ${errMsg}`,
+          `AI-Provider ${provider} Versuch ${attempt}/2 fehlgeschlagen${transient ? ' (transient)' : ''}: ${safeError}${requestSuffix}`,
         );
         if (isAuthOrModel) {
-          markProviderUnavailable(provider as ProviderName, `http_${status}`);
-          void recordCall(provider as ProviderName, 'failure', latency, errMsg);
+          markProviderUnavailable(provider as ProviderName, classification.circuitReason ?? `http_${status ?? 'unknown'}`);
+          await recordCall(provider as ProviderName, 'failure', latency, safeError);
           break;
         }
         if (is429) {
-          const retryAfterMs = parseRetryAfter(error);
-          if (retryAfterMs > 0 && (shortestRetryAfterMs === 0 || retryAfterMs < shortestRetryAfterMs)) {
-            shortestRetryAfterMs = retryAfterMs;
+          await recordCall(provider as ProviderName, 'rateLimit', latency, safeError, { retryAfterMs });
+          const activeCooldownMs = getCooldownRemainingMs(provider);
+          const effectiveRetryMs = activeCooldownMs > 0
+            ? activeCooldownMs
+            : retryAfterMs > 0 ? Math.max(1000, retryAfterMs) : 0;
+          if (effectiveRetryMs > 0) retryAtByProvider.set(provider, Date.now() + effectiveRetryMs);
+          // Gibt der einzige/letzte Provider eine kurze explizite Wartezeit vor,
+          // erholen wir uns einmal lokal. Mit vorhandenen Fallbacks wechseln wir
+          // weiterhin sofort, damit ein Provider-429 die Antwort nicht verzoegert.
+          if (isLastProvider && attempt === 1 && retryAfterMs > 0 && effectiveRetryMs <= 10_000) {
+            await new Promise(r => setTimeout(r, effectiveRetryMs));
+            // Ein paralleler Request kann den Circuit zwischenzeitlich
+            // verlaengert haben. Niemals innerhalb des Circuits senden.
+            if (isOnCooldown(provider)) break;
+            continue;
           }
-          void recordCall(provider as ProviderName, 'rateLimit', latency, errMsg, { retryAfterMs });
           break;
         }
         if (transient && attempt === 1) {
           await new Promise(r => setTimeout(r, stage48Lab?.retryDelayMs ?? 400));
           continue;
         }
-        void recordCall(provider as ProviderName, 'failure', latency, errMsg);
+        await recordCall(provider as ProviderName, 'failure', latency, safeError);
         break;
       }
     }
@@ -991,12 +1043,15 @@ export async function callAI(
           .map(entry => entry.remainingMs)
           .filter(ms => ms > 0)
       : [];
-    const retryAfterMs = shortestRetryAfterMs > 0
-      ? shortestRetryAfterMs
-      : (cooldownRetry.length > 0 ? Math.min(...cooldownRetry) : undefined);
+    const trackedRetry = [...retryAtByProvider.values()]
+      .map(until => until - Date.now())
+      .filter(ms => ms > 0);
+    const retryAfterMs = cooldownRetry.length > 0
+      ? Math.min(...cooldownRetry)
+      : trackedRetry.length > 0 ? Math.min(...trackedRetry) : undefined;
     throw rateLimitError(retryAfterMs);
   }
-  const detail = lastError ? `: ${(lastError as Error)?.message || String(lastError)}` : '';
+  const detail = lastSafeError ? `: ${lastSafeError}` : '';
   throw new Error(`Kein AI-Provider verfügbar${detail}`);
 }
 

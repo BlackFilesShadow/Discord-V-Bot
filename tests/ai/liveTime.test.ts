@@ -2,6 +2,7 @@ import {
   answerLiveTimeQuestion,
   buildLiveTimeContext,
   getBerlinLiveTimeSnapshot,
+  shouldIncludeLiveTimeContext,
 } from '../../src/modules/ai/liveTime';
 
 describe('provider-unabhaengige Live-Zeit', () => {
@@ -32,4 +33,18 @@ describe('provider-unabhaengige Live-Zeit', () => {
     expect(answerLiveTimeQuestion('Wie funktioniert die DayZ Central Economy?', new Date())).toBeNull();
     expect(answerLiveTimeQuestion('Wer ist Bundeskanzler?', new Date())).toBeNull();
   });
+
+  it.each([
+    'In wie vielen Tagen ist Weihnachten?',
+    'Wann ist der nächste Freitag?',
+    'Welches Datum ist übermorgen?',
+    'Wie alt ist Berlin?',
+  ])('behaelt den Zeitkontext fuer relative Fragen: %s', question => {
+    expect(shouldIncludeLiveTimeContext(question)).toBe(true);
+  });
+
+  it.each(['hey', 'ich hab ne frage', 'Wie funktioniert Photosynthese?'])(
+    'laesst den grossen Zeitblock bei zeitfremden Fragen weg: %s',
+    question => expect(shouldIncludeLiveTimeContext(question)).toBe(false),
+  );
 });

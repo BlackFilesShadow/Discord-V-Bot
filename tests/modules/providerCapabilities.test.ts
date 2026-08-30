@@ -38,7 +38,10 @@ describe('AI provider capability registry', () => {
     expect(providerSupportsTask('openrouter', model, 'tool')).toBe(false);
   });
 
-  it.each(['gemini-3.7-flash', 'gemini-3.6-flash'])('kennt %s als structured/tool/reasoning/long-context Provider', (model) => {
+  it.each(['gemini-3.7-flash', 'gemini-3.6-flash', 'gemini-3.5-flash-lite'])('kennt %s als structured/tool/reasoning/long-context Provider', (model) => {
+    expect(getProviderCapabilityProfile('gemini', model).knownModel).toBe(true);
+    expect(providerSupportsTask('gemini', model, 'chat')).toBe(true);
+    expect(providerSupportsTask('gemini', model, 'fast')).toBe(true);
     expect(providerSupportsTask('gemini', model, 'structured')).toBe(true);
     expect(providerSupportsTask('gemini', model, 'tool')).toBe(true);
     expect(providerSupportsTask('gemini', model, 'reasoning')).toBe(true);

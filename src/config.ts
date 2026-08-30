@@ -17,6 +17,10 @@ function optionalEnv(key: string, defaultValue: string = ''): string {
   return process.env[key] || defaultValue;
 }
 
+function optionalSecretEnv(key: string): string {
+  return optionalEnv(key, '').trim();
+}
+
 const metricsToken = optionalEnv('METRICS_TOKEN', '').trim();
 const metricsRequested = optionalEnv('METRICS_ENABLED', 'false') === 'true';
 
@@ -74,15 +78,15 @@ export const config = {
   // abgeschaltete Provider-Modelle nicht ueber alte .env-Werte wiederkehren.
   ai: {
     provider: parseAiProvider(optionalEnv('AI_PROVIDER', 'groq')),
-    groqApiKey: optionalEnv('GROQ_API_KEY'),
+    groqApiKey: optionalSecretEnv('GROQ_API_KEY'),
     groqModel: resolveAiModel('groq', optionalEnv('GROQ_MODEL')),
-    cerebrasApiKey: optionalEnv('CEREBRAS_API_KEY'),
+    cerebrasApiKey: optionalSecretEnv('CEREBRAS_API_KEY'),
     cerebrasModel: resolveAiModel('cerebras', optionalEnv('CEREBRAS_MODEL')),
-    openrouterApiKey: optionalEnv('OPENROUTER_API_KEY'),
+    openrouterApiKey: optionalSecretEnv('OPENROUTER_API_KEY'),
     openrouterModel: resolveAiModel('openrouter', optionalEnv('OPENROUTER_MODEL')),
-    geminiApiKey: optionalEnv('GEMINI_API_KEY'),
+    geminiApiKey: optionalSecretEnv('GEMINI_API_KEY'),
     geminiModel: resolveAiModel('gemini', optionalEnv('GEMINI_MODEL')),
-    openaiApiKey: optionalEnv('OPENAI_API_KEY'),
+    openaiApiKey: optionalSecretEnv('OPENAI_API_KEY'),
     openaiModel: resolveAiModel('openai', optionalEnv('OPENAI_MODEL')),
   },
 

@@ -5,6 +5,7 @@ import {
   parseAiProvider,
   resolveAiModel,
 } from '../../src/modules/ai/modelRegistry';
+import { providerSupportsTask } from '../../src/modules/ai/providerCapabilities';
 
 describe('AI model registry', () => {
   it('hat genau die unterstuetzten Provider als zentrale Registry', () => {
@@ -34,6 +35,17 @@ describe('AI model registry', () => {
     expect(resolveAiModel('groq', 'enterprise/custom-model')).toBe('enterprise/custom-model');
     expect(resolveAiModel('cerebras', 'dedicated/private-model')).toBe('dedicated/private-model');
   });
+
+  it.each(['gemini-2.0-flash-lite', 'gemini-2.0-flash-lite-001', 'gemini-3.1-flash-lite'])(
+    'erhaelt nach der Legacy-Migration von %s die benoetigten Task-Capabilities',
+    (legacyModel) => {
+      const model = resolveAiModel('gemini', ` ${legacyModel} `);
+      expect(model).toBe('gemini-3.5-flash-lite');
+      for (const task of ['chat', 'fast', 'structured', 'reasoning', 'long_context', 'tool'] as const) {
+        expect(providerSupportsTask('gemini', model, task)).toBe(true);
+      }
+    },
+  );
 
   it('liefert bei leerer Modellkonfiguration den zentralen Default', () => {
     expect(resolveAiModel('groq', '')).toBe(AI_MODEL_DEFAULTS.groq);

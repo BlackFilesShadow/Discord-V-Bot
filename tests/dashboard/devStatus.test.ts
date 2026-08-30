@@ -57,19 +57,29 @@ jest.mock('../../src/dashboard/clientRegistry', () => ({
 
 jest.mock('../../src/modules/ai/providerStats', () => ({
   __esModule: true,
+  getProviderConfigurationHealth: jest.fn(() => ({
+    primary: 'groq', primaryConfigured: true,
+    configuredProviders: ['groq'], fallbackProviders: [],
+    configuredCount: 1, resilience: 'single_provider',
+    warnings: ['Nur ein AI-Provider ist konfiguriert.'],
+  })),
   getStats: jest.fn().mockResolvedValue([
     {
       provider: 'groq', configured: true,
+      model: 'openai/gpt-oss-120b', knownModel: true, capabilities: ['chat', 'reasoning'],
       successCount: 100, failureCount: 50, rateLimitCount: 5,
       avgLatencyMs: 1200, successRate: 0.6452,
       lastSuccessAt: new Date(), lastFailureAt: new Date(),
       lastError: 'mocked-error',
+      cooldownReason: '429_rate_limit', cooldownRemainingMs: 30_000, cooldownStreak: 2,
     },
     {
       provider: 'cerebras', configured: false,
+      model: '', knownModel: false, capabilities: [],
       successCount: 0, failureCount: 0, rateLimitCount: 0,
       avgLatencyMs: 0, successRate: 0,
       lastSuccessAt: null, lastFailureAt: null, lastError: null,
+      cooldownReason: null, cooldownRemainingMs: 0, cooldownStreak: 0,
     },
   ]),
 }));
@@ -189,6 +199,17 @@ describe('/api/v2/dev/status — Endpunkte', () => {
     const r = await request(devApp()).get('/api/v2/dev/status/ai-providers');
     expect(r.status).toBe(200);
     expect(r.body.providers).toHaveLength(2);
+    expect(r.body.configuration).toMatchObject({
+      configuredCount: 1, resilience: 'single_provider', fallbackProviders: [],
+    });
+    expect(r.body.providers[0]).toMatchObject({
+      model: 'openai/gpt-oss-120b',
+      knownModel: true,
+      capabilities: ['chat', 'reasoning'],
+      cooldownReason: '429_rate_limit',
+      cooldownRemainingMs: 30_000,
+      cooldownStreak: 2,
+    });
     const reasons = r.body.anomalies.map((a: { reason: string }) => a.reason);
     expect(reasons).toContain('high_failure_rate');
     const dump = JSON.stringify(r.body);

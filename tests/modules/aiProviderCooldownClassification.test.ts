@@ -85,6 +85,26 @@ describe('AI provider cooldown classification', () => {
     ]));
   });
 
+  it('wertet einen behaltenen abgelaufenen 429-Streak nicht als aktiven Rate-Limit-Circuit', async () => {
+    stats.findMany.mockResolvedValue([
+      {
+        provider: 'groq',
+        cooldownUntil: new Date(Date.now() - 5_000),
+        cooldownStreak: 3,
+        cooldownReason: '429_rate_limit',
+      },
+    ]);
+
+    await hydrateCooldownsFromDb();
+
+    expect(isOnCooldown('groq')).toBe(false);
+    expect(getAllCooldowns()).toEqual([]);
+    expect(markRateLimited('groq')).toBe(240_000);
+    expect(getAllCooldowns()).toEqual([
+      expect.objectContaining({ provider: 'groq', consecutive: 4 }),
+    ]);
+  });
+
   it('unterdrueckt globales RATE_LIMIT bei gemischten 402/404- und 429-Circuits', () => {
     markProviderUnavailable('cerebras', 'http_402');
     markProviderUnavailable('openrouter', 'http_404');

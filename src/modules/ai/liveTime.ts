@@ -72,6 +72,18 @@ function normalizeQuestion(value: string): string {
     .trim();
 }
 
+/**
+ * Der grosse Zeitblock wird nur fuer wirklich zeitbezogene Provider-Fragen
+ * benoetigt. Direkte Zeitfragen beantwortet answerLiveTimeQuestion() bereits
+ * lokal; relative/zusammengesetzte Fragen behalten hiermit dennoch den
+ * autoritativen Europe/Berlin-Kontext.
+ */
+export function shouldIncludeLiveTimeContext(question: string): boolean {
+  const q = normalizeQuestion(question);
+  return /\b(?:heute|morgen|(?:u|ue)bermorgen|gestern|vorgestern|jetzt|gerade|aktuell|wann|datum|uhr|uhrzeit|wochentag|tageszeit|jahreszeit|tag(?:e|en)?|monat(?:e|en)?|jahr(?:e|en)?|wochen?|wochenende|fruhling|sommer|herbst|winter|montag|dienstag|mittwoch|donnerstag|freitag|samstag|sonntag)\b/.test(q)
+    || /\bwie (?:lange|alt)\b/.test(q);
+}
+
 function formatRuntimeUptime(totalSeconds: number): string {
   const seconds = Math.max(0, Math.floor(totalSeconds));
   const days = Math.floor(seconds / 86_400);

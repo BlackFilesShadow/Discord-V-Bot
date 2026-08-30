@@ -4,6 +4,7 @@ import { logger, logAudit } from '../utils/logger';
 import prisma from '../database/prisma';
 import { detectSpam } from '../utils/rateLimiter';
 import { answerQuestion } from '../modules/ai/aiHandler';
+import { formatProviderRateLimitMessage } from '../modules/ai/rateLimitMessage';
 import { enrichDayz129FollowUp } from '../modules/ai/dayz129Catalog';
 import {
   isDayzConversationDomain,
@@ -350,7 +351,7 @@ const messageCreateEvent: BotEvent = {
                 } else if (r.error === 'RATE_LIMIT') {
                   responseText = r.rateLimitSource === 'user'
                     ? `⏳ Du hast gerade viele KI-Anfragen gesendet. Bitte warte noch etwa ${r.retryAfterSeconds ?? 60} Sekunden.`
-                    : '⏳ Die KI-Anbieter sind gerade im Rate-Limit. Bitte versuch es in ein paar Minuten nochmal.';
+                    : formatProviderRateLimitMessage(r.retryAfterSeconds);
                 } else {
                   // Fallback: stiller Skip statt hässlicher Fehlermeldung
                   return;
@@ -505,7 +506,7 @@ const messageCreateEvent: BotEvent = {
               r.error === 'RATE_LIMIT'
                 ? (r.rateLimitSource === 'user'
                     ? `⏳ Du hast gerade viele KI-Anfragen gesendet. Bitte warte noch etwa ${r.retryAfterSeconds ?? 60} Sekunden.`
-                    : '⏳ Die KI-Anbieter sind gerade im Rate-Limit. Bitte versuch es in ein paar Minuten nochmal.')
+                    : formatProviderRateLimitMessage(r.retryAfterSeconds))
                 : "🤔 Hmm, da hat gerade etwas nicht geklappt. Versuch's bitte gleich nochmal.";
             await msg.reply({
               content: userMsg,

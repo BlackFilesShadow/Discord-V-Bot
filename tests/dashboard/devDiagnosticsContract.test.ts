@@ -32,6 +32,12 @@ jest.mock('../../src/dashboard/clientRegistry', () => ({
 
 jest.mock('../../src/modules/ai/providerStats', () => ({
   __esModule: true,
+  getProviderConfigurationHealth: jest.fn(() => ({
+    primary: 'groq', primaryConfigured: false,
+    configuredProviders: [], fallbackProviders: [],
+    configuredCount: 0, resilience: 'unavailable',
+    warnings: ['Kein AI-Provider-API-Key konfiguriert.'],
+  })),
   getStats: (...args: unknown[]) => mockGetStats(...args),
 }));
 

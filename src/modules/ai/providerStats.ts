@@ -2,9 +2,20 @@ import axios from 'axios';
 import prisma from '../../database/prisma';
 import { logger } from '../../utils/logger';
 import { config } from '../../config';
-import { providerSupportsTask, taskAffinity, type AiTaskProfile } from './providerCapabilities';
+import {
+  getProviderCapabilityProfile,
+  providerSupportsTask,
+  taskAffinity,
+  type AiCapability,
+  type AiTaskProfile,
+} from './providerCapabilities';
 import { recordAiFallback, recordAiProviderAttempt } from './aiObservability';
 import { normalizeAiProviderRequest } from './providerRequestCompatibility';
+import {
+  classifyProviderError,
+  safeProviderFailureLabel,
+  type ProviderFailureKind,
+} from './providerFailure';
 
 /**
  * Provider-Health-Tracking + adaptive Reihenfolge.
@@ -24,6 +35,9 @@ export const ALL_PROVIDERS: ProviderName[] = ['groq', 'cerebras', 'openrouter', 
 
 export interface ProviderStat {
   provider: ProviderName;
+  model: string;
+  knownModel: boolean;
+  capabilities: AiCapability[];
   successCount: number;
   failureCount: number;
   rateLimitCount: number;
@@ -37,6 +51,16 @@ export interface ProviderStat {
   cooldownReason: string | null;
   cooldownRemainingMs: number;
   cooldownStreak: number;
+}
+
+export interface ProviderConfigurationHealth {
+  primary: ProviderName;
+  primaryConfigured: boolean;
+  configuredProviders: ProviderName[];
+  fallbackProviders: ProviderName[];
+  configuredCount: number;
+  resilience: 'unavailable' | 'single_provider' | 'redundant';
+  warnings: string[];
 }
 
 function isConfigured(p: ProviderName): boolean {
@@ -61,6 +85,45 @@ export function getConfiguredModel(p: ProviderName): string {
     case 'gemini': return config.ai.geminiModel;
     case 'openai': return config.ai.openaiModel;
   }
+}
+
+/** Sichere Konfigurationsdiagnose: nur Namen/Modelle, niemals API-Key-Werte. */
+export function getProviderConfigurationHealth(): ProviderConfigurationHealth {
+  const primary = config.ai.provider as ProviderName;
+  const configuredProviders = ALL_PROVIDERS.filter(isConfigured);
+  const warnings: string[] = [];
+
+  if (configuredProviders.length === 0) {
+    warnings.push('Kein AI-Provider-API-Key konfiguriert. Externe KI-Antworten sind nicht verfuegbar; andere Botfunktionen bleiben nutzbar.');
+  } else if (configuredProviders.length === 1) {
+    warnings.push('Nur ein AI-Provider ist konfiguriert; bei dessen Quota-/Billing-Ausfall gibt es keinen Fallback.');
+  }
+  if (!configuredProviders.includes(primary)) {
+    warnings.push(`Der gewaehlte Primaerprovider ${primary} hat keinen nutzbaren API-Key.`);
+  }
+  for (const provider of configuredProviders) {
+    const profile = getProviderCapabilityProfile(provider, getConfiguredModel(provider));
+    if (!profile.knownModel) {
+      warnings.push(`${provider}: Modell ${profile.model || '(leer)'} ist nicht in der Capability-Registry verifiziert.`);
+    }
+  }
+  if (configuredProviders.includes('openrouter') && getConfiguredModel('openrouter') === 'openrouter/free') {
+    warnings.push('OpenRouter openrouter/free ist ein niedrig limitierter Fallback und keine alleinige Hochlast-Konfiguration.');
+  }
+
+  return {
+    primary,
+    primaryConfigured: configuredProviders.includes(primary),
+    configuredProviders,
+    fallbackProviders: configuredProviders.filter(provider => provider !== primary),
+    configuredCount: configuredProviders.length,
+    resilience: configuredProviders.length === 0
+      ? 'unavailable'
+      : configuredProviders.length === 1
+        ? 'single_provider'
+        : 'redundant',
+    warnings,
+  };
 }
 
 interface CooldownState {
@@ -94,7 +157,10 @@ function getActiveCooldown(provider: ProviderName, now = Date.now()): CooldownSt
   const state = cooldowns.get(provider);
   if (!state) return null;
   if (now >= state.until) {
-    cooldowns.delete(provider);
+    // Ablauf erlaubt einen neuen Versuch, beweist aber noch keine Erholung.
+    // Den 429-Streak bis Erfolg/explicit clear behalten, sonst startet jeder
+    // erneute Fehler nach Ablauf wieder mit nur 30 Sekunden Backoff.
+    if (state.reason !== '429_rate_limit') cooldowns.delete(provider);
     return null;
   }
   return state;
@@ -124,7 +190,9 @@ export async function hydrateCooldownsFromDb(): Promise<void> {
       // einen alten Cooldown reaktivieren noch einen neuen lokal loeschen.
       if (hasPendingCooldownWrite(provider)) continue;
       const until = r.cooldownUntil.getTime();
-      if (now >= until) {
+      // Auch abgelaufene 429-Zeilen behalten: ihr Timer sperrt nicht mehr,
+      // ihr Streak muss aber einen Restart und den periodischen Sync ueberleben.
+      if (now >= until && r.cooldownReason !== '429_rate_limit') {
         expiredProviders.push(provider);
         cooldowns.delete(provider);
         continue;
@@ -188,7 +256,7 @@ export function stopProviderCooldownSync(): void {
 }
 
 function applyRateLimitedCooldown(provider: ProviderName, retryAfterMs?: number): CooldownState & { durationMs: number } {
-  const prev = getActiveCooldown(provider);
+  const prev = cooldowns.get(provider);
   const previousRateLimitStreak = prev?.reason === '429_rate_limit' ? prev.consecutive : 0;
   const consecutive = previousRateLimitStreak + 1;
   const backoff = Math.min(COOLDOWN_BASE_MS * Math.pow(2, consecutive - 1), COOLDOWN_MAX_MS);
@@ -379,8 +447,13 @@ export async function getStats(): Promise<ProviderStat[]> {
     const total = success + fail + rate;
     const totalLatency = r ? Number(r.totalLatencyMs) : 0;
     const circuit = getActiveCooldown(p, now);
+    const model = getConfiguredModel(p);
+    const capability = getProviderCapabilityProfile(p, model);
     return {
       provider: p,
+      model,
+      knownModel: capability.knownModel,
+      capabilities: [...capability.capabilities],
       successCount: success,
       failureCount: fail,
       rateLimitCount: rate,
@@ -442,6 +515,11 @@ export async function probeProvider(provider: ProviderName): Promise<{
   latencyMs: number;
   error?: string;
   reply?: string;
+  classification?: ProviderFailureKind;
+  httpStatus?: number;
+  providerCode?: string;
+  retryAfterMs?: number;
+  requestIdHash?: string;
 }> {
   if (!isConfigured(provider)) {
     return { ok: false, latencyMs: 0, error: 'Kein API-Key konfiguriert' };
@@ -496,8 +574,16 @@ export async function probeProvider(provider: ProviderName): Promise<{
     return { ok: true, latencyMs: latency, reply: reply.slice(0, 80) };
   } catch (e) {
     const latency = Date.now() - t0;
-    const err = e as { response?: { status?: number }; message?: string };
-    const msg = err?.response?.status ? `HTTP ${err.response.status}` : (err?.message || String(e));
-    return { ok: false, latencyMs: latency, error: msg };
+    const classification = classifyProviderError(e);
+    return {
+      ok: false,
+      latencyMs: latency,
+      error: safeProviderFailureLabel(classification, e),
+      classification: classification.kind,
+      ...(classification.status ? { httpStatus: classification.status } : {}),
+      ...(classification.providerCode ? { providerCode: classification.providerCode } : {}),
+      ...(classification.retryAfterMs > 0 ? { retryAfterMs: classification.retryAfterMs } : {}),
+      ...(classification.requestIdHash ? { requestIdHash: classification.requestIdHash } : {}),
+    };
   }
 }

@@ -26,6 +26,8 @@ const PLACEHOLDER_SECRETS: ReadonlyArray<{ key: string; placeholder: string }> =
   { key: 'DEV_PASSWORD', placeholder: 'change_me_to_a_long_random_secret' },
   { key: 'BOT_ADMIN_PASSWORD', placeholder: 'change_me_to_a_different_long_random_secret' },
   { key: 'GROQ_API_KEY', placeholder: 'your_groq_api_key_here' },
+  { key: 'CEREBRAS_API_KEY', placeholder: 'your_cerebras_api_key_here' },
+  { key: 'OPENROUTER_API_KEY', placeholder: 'your_openrouter_api_key_here' },
   { key: 'GEMINI_API_KEY', placeholder: 'your_gemini_api_key_here' },
   { key: 'OPENAI_API_KEY', placeholder: 'your_openai_api_key_here' },
 ];

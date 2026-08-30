@@ -59,6 +59,7 @@ jest.mock('../../src/modules/ai/dayz129Catalog', () => ({ answerDayz129CatalogQu
 const mockRecordCall = jest.fn();
 const mockGetRankedProviders = jest.fn();
 const mockGetAllCooldowns = jest.fn();
+const mockGetCooldownRemainingMs = jest.fn();
 const mockMarkProviderUnavailable = jest.fn();
 const mockIsOnCooldown = jest.fn();
 
@@ -67,6 +68,7 @@ jest.mock('../../src/modules/ai/providerStats', () => ({
   recordCall: (...args: unknown[]) => mockRecordCall(...args),
   getRankedProviders: (...args: unknown[]) => mockGetRankedProviders(...args),
   getAllCooldowns: (...args: unknown[]) => mockGetAllCooldowns(...args),
+  getCooldownRemainingMs: (...args: unknown[]) => mockGetCooldownRemainingMs(...args),
   markProviderUnavailable: (...args: unknown[]) => mockMarkProviderUnavailable(...args),
   getConfiguredModel: jest.fn((provider: string) => provider === 'openrouter' ? 'custom/model' : 'known-model'),
   isOnCooldown: (...args: unknown[]) => mockIsOnCooldown(...args),
@@ -92,11 +94,11 @@ function geminiOk(content = 'gemini-ok') {
   return { data: { candidates: [{ content: { parts: [{ text: content }] } }] } };
 }
 
-function httpError(status: number, headers: Record<string, string> = {}) {
+function httpError(status: number, headers: Record<string, string> = {}, data?: unknown) {
   const error = new Error(`Request failed with status code ${status}`) as Error & {
-    response: { status: number; headers: Record<string, string> };
+    response: { status: number; headers: Record<string, string>; data?: unknown };
   };
-  error.response = { status, headers };
+  error.response = { status, headers, data };
   return error;
 }
 
@@ -126,6 +128,7 @@ describe('callAI circuit-breaker and fallback matrix', () => {
     jest.clearAllMocks();
     mockGetRankedProviders.mockResolvedValue(['groq', 'cerebras']);
     mockGetAllCooldowns.mockReturnValue([]);
+    mockGetCooldownRemainingMs.mockReturnValue(0);
     mockIsOnCooldown.mockReturnValue(false);
   });
 
@@ -166,6 +169,84 @@ describe('callAI circuit-breaker and fallback matrix', () => {
       expect.any(String),
       { retryAfterMs: 2000 },
     );
+  });
+
+  it('behandelt 429 insufficient_quota als harten Providerfehler und nutzt den Fallback', async () => {
+    post
+      .mockRejectedValueOnce(httpError(429, {}, {
+        error: { code: 'insufficient_quota', message: 'Check billing.' },
+      }))
+      .mockResolvedValueOnce(ok('billing-fallback'));
+
+    await expect(callAI(messages)).resolves.toBe('billing-fallback');
+
+    expect(mockMarkProviderUnavailable).toHaveBeenCalledWith('groq', 'provider_insufficient_quota');
+    expect(mockRecordCall).toHaveBeenCalledWith(
+      'groq',
+      'failure',
+      expect.any(Number),
+      'http_429:insufficient_quota',
+    );
+    expect(mockRecordCall).not.toHaveBeenCalledWith(
+      'groq',
+      'rateLimit',
+      expect.anything(),
+      expect.anything(),
+      expect.anything(),
+    );
+  });
+
+  it('wartet beim einzigen Provider einmal auf eine kurze explizite Retry-After-Zeit', async () => {
+    jest.useFakeTimers();
+    try {
+      mockGetRankedProviders.mockResolvedValue(['groq']);
+      post
+        .mockRejectedValueOnce(httpError(429, { 'retry-after-ms': '5' }))
+        .mockResolvedValueOnce(ok('retry-after-recovered'));
+
+      const pending = callAI(messages);
+      await jest.advanceTimersByTimeAsync(999);
+      expect(post).toHaveBeenCalledTimes(1);
+      await jest.advanceTimersByTimeAsync(1);
+      await expect(pending).resolves.toBe('retry-after-recovered');
+      expect(post).toHaveBeenCalledTimes(2);
+      expect(mockRecordCall).toHaveBeenCalledWith(
+        'groq',
+        'rateLimit',
+        expect.any(Number),
+        'http_429',
+        { retryAfterMs: 5 },
+      );
+      expect(mockRecordCall).toHaveBeenCalledWith('groq', 'success', expect.any(Number));
+    } finally {
+      jest.useRealTimers();
+    }
+  });
+
+  it('meldet nach einem fehlgeschlagenen kurzen Retry die neue laengere Wartezeit', async () => {
+    jest.useFakeTimers();
+    try {
+      mockGetRankedProviders.mockResolvedValue(['groq']);
+      post
+        .mockRejectedValueOnce(httpError(429, { 'retry-after-ms': '5' }))
+        .mockRejectedValueOnce(httpError(429, { 'retry-after': '60' }));
+      const pending = callAI(messages).catch(error => error);
+
+      await jest.advanceTimersByTimeAsync(1000);
+      expect(await pending).toMatchObject({ code: 'RATE_LIMIT', retryAfterMs: 60_000 });
+      expect(post).toHaveBeenCalledTimes(2);
+    } finally {
+      jest.useRealTimers();
+    }
+  });
+
+  it('umgeht trotz kurzem Retry-After keinen laengeren aktiven Circuit', async () => {
+    mockGetRankedProviders.mockResolvedValue(['groq']);
+    mockGetCooldownRemainingMs.mockReturnValue(60_000);
+    post.mockRejectedValueOnce(httpError(429, { 'retry-after-ms': '5' }));
+
+    await expect(callAI(messages)).rejects.toMatchObject({ code: 'RATE_LIMIT' });
+    expect(post).toHaveBeenCalledTimes(1);
   });
 
   it('liefert RATE_LIMIT nur wenn wirklich alle versuchten Provider 429 liefern', async () => {
@@ -254,7 +335,7 @@ describe('callAI circuit-breaker and fallback matrix', () => {
     expect(String(post.mock.calls[0][0])).toContain('api.groq.com');
     expect(String(post.mock.calls[1][0])).toContain('api.groq.com');
     expect(String(post.mock.calls[2][0])).toContain('api.cerebras.ai');
-    expect(mockRecordCall).toHaveBeenCalledWith('groq', 'failure', expect.any(Number), 'timeout');
+    expect(mockRecordCall).toHaveBeenCalledWith('groq', 'failure', expect.any(Number), 'network_etimedout');
     expect(mockRecordCall).toHaveBeenCalledWith('cerebras', 'success', expect.any(Number));
   });
 
@@ -272,5 +353,15 @@ describe('callAI circuit-breaker and fallback matrix', () => {
       expect((error as Error).message).toContain('Kein AI-Provider verfügbar');
     }
     expect(post).toHaveBeenCalledTimes(3);
+  });
+
+  it('uebernimmt weder rohe Provider-Fehlertexte noch Secrets in den finalen Fehler', async () => {
+    mockGetRankedProviders.mockResolvedValue(['groq']);
+    post.mockRejectedValueOnce(networkError('ERR_BAD_REQUEST', 'Authorization: Bearer fixture-secret'));
+
+    await expect(callAI(messages)).rejects.toThrow('Kein AI-Provider verfügbar: network_err_bad_request');
+    expect(mockRecordCall).toHaveBeenCalledWith(
+      'groq', 'failure', expect.any(Number), 'network_err_bad_request',
+    );
   });
 });
