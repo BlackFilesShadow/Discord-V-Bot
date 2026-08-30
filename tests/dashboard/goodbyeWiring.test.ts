@@ -8,6 +8,7 @@ const routeSource = read('src/dashboard/routes/v2/goodbye.ts');
 const emitterSource = read('src/dashboard/socket/emitter.ts');
 const wrapperSource = read('dashboard-ui/src/components/WelcomeTab.tsx');
 const panelSource = read('dashboard-ui/src/components/GoodbyePanel.tsx');
+const cleanupSource = read('dashboard-ui/src/components/LeaveCleanupPanel.tsx');
 
 describe('Goodbye-1 dashboard wiring', () => {
   it('mounts the goodbye router under the authenticated v2 guild scope', () => {
@@ -34,6 +35,18 @@ describe('Goodbye-1 dashboard wiring', () => {
     expect(wrapperSource).toContain("import { GoodbyePanel } from './GoodbyePanel';");
     expect(wrapperSource).toContain('<WelcomeCoreTab {...props} />');
     expect(wrapperSource).toContain('<GoodbyePanel {...props} />');
+  });
+
+  it('keeps the owner-only cleanup control visibly coupled to Goodbye without duplicating it', () => {
+    expect(panelSource).toContain("import { LeaveCleanupPanel } from './LeaveCleanupPanel';");
+    expect(panelSource).toContain('<LeaveCleanupPanel guildId={guildId} embedded />');
+    expect(wrapperSource).not.toContain("import { LeaveCleanupPanel } from './LeaveCleanupPanel';");
+    expect(wrapperSource).not.toContain('<LeaveCleanupPanel guildId={props.guildId} />');
+    expect(cleanupSource).toContain('data-testid="goodbye-leave-cleanup"');
+    expect(cleanupSource).toContain('data-testid="goodbye-leave-cleanup-owner-only"');
+    expect(cleanupSource).toContain('Nur der Discord-Server-Owner kann sie ein- oder ausschalten.');
+    expect(cleanupSource).toContain('enabled: !!guildId && isOwner');
+    expect(cleanupSource).toContain('`/api/v2/guilds/${guildId}/leave-cleanup/config`');
   });
 
   it('uses the existing guild channel cache and a real channel dropdown', () => {
