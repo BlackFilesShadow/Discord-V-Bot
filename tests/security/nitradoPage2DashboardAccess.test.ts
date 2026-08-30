@@ -119,12 +119,12 @@ describe('Dashboard full access contract', () => {
   });
 
   it('keeps global Bot-Admin and Dev access outside the guild dashboard.access contract', () => {
-    const serverUi = read('dashboard-ui/src/pages/Server.tsx');
     const auth = read('src/dashboard/middleware/auth.ts');
 
-    expect(serverUi).toContain('Globale Bot-Admin-/Dev-Sessions bleiben davon ausdrücklich getrennt.');
     expect(auth).toContain('export function requireDevSession');
     expect(auth).toContain('export function requireBotAdminSession');
+    expect(auth).not.toContain("requireDevSession = requireGuildPermission('dashboard.access')");
+    expect(auth).not.toContain("requireBotAdminSession = requireGuildPermission('dashboard.access')");
   });
 
   it('keeps the Page-2 dashboard UI gate aligned with dashboard.access and exposes the Economy tab', () => {
