@@ -77,10 +77,11 @@ export default function Server() {
 
   const isOwner = dash.data?.isOwner ?? false;
   const perms = dash.data?.permissions ?? [];
-  // `dashboard.access` = Vollzugriff fuer alle delegierbaren Scopes (siehe Backend `hasPermission`).
+  // `dashboard.access` = kompletter Vollzugriff auf dieses Guild-Dashboard.
+  // Globale Bot-Admin-/Dev-Sessions bleiben davon ausdrücklich getrennt.
   const hasFullAccess = isOwner || perms.includes('dashboard.access');
   const visibleTabs = tabs.filter(t => {
-    if (t.ownerOnly && !isOwner) return false;
+    if (t.ownerOnly && !hasFullAccess) return false;
     return true;
   });
 
@@ -157,9 +158,9 @@ export default function Server() {
               <p className="text-muted text-sm">{dash.data.slots.length} Slots &middot; {dash.data.grantsCount} delegierte Berechtigungen</p>
             </header>
 
-            {tab === 'nitrado' && guildId && <NitradoTab guildId={guildId} isOwner={isOwner} slots={dash.data.slots} />}
-            {tab === 'aliases' && guildId && isOwner && <AliasesTab guildId={guildId} slots={dash.data.slots} />}
-            {tab === 'permissions' && guildId && isOwner && <PermissionsTab guildId={guildId} />}
+            {tab === 'nitrado' && guildId && <NitradoTab guildId={guildId} canManage={hasFullAccess} slots={dash.data.slots} />}
+            {tab === 'aliases' && guildId && hasFullAccess && <AliasesTab guildId={guildId} slots={dash.data.slots} />}
+            {tab === 'permissions' && guildId && hasFullAccess && <PermissionsTab guildId={guildId} />}
             {tab === 'tickets' && guildId && <TicketsTab guildId={guildId} canManage={hasFullAccess || perms.includes('tickets.manage')} />}
             {tab === 'factions' && guildId && <FactionsTab guildId={guildId} slots={dash.data.slots} />}
             {tab === 'welcome' && guildId && <WelcomeTab guildId={guildId} canManage={hasFullAccess || perms.includes('welcome.manage')} />}
@@ -167,7 +168,7 @@ export default function Server() {
             {tab === 'reaction-embeds' && guildId && <ReactionEmbedsTab guildId={guildId} canManage={hasFullAccess || perms.includes('reactionroles.manage')} />}
             {tab === 'feeds' && guildId && <FeedsTab guildId={guildId} canManage={hasFullAccess || perms.includes('feeds.manage')} />}
             {tab === 'translate' && guildId && <TranslatedPostsTab guildId={guildId} canManage={hasFullAccess || perms.includes('translate.manage')} />}
-            {tab === 'audit' && guildId && isOwner && <AuditTab guildId={guildId} />}
+            {tab === 'audit' && guildId && hasFullAccess && <AuditTab guildId={guildId} />}
           </>
         )}
       </div>
@@ -185,7 +186,7 @@ function statusColor(status: Slot['status']): string {
   return 'text-danger';
 }
 
-function NitradoTab({ guildId, isOwner, slots }: { guildId: string; isOwner: boolean; slots: Slot[] }) {
+function NitradoTab({ guildId, canManage, slots }: { guildId: string; canManage: boolean; slots: Slot[] }) {
   const qc = useQueryClient();
   const toast = useToast();
   const [showAdd, setShowAdd] = useState(false);
@@ -196,11 +197,11 @@ function NitradoTab({ guildId, isOwner, slots }: { guildId: string; isOwner: boo
     onError: error => toast.error(error instanceof ApiError ? error.message : 'Nitrado-Slot konnte nicht gelöscht werden.'),
   });
 
-  if (!isOwner) {
+  if (!canManage) {
     return (
       <Card glow>
         <CardHeader><CardTitle>Nicht erlaubt</CardTitle></CardHeader>
-        <p className="text-muted text-sm">Nur der Discord-Server-Owner kann Nitrado-Verbindungen und Slots verwalten.</p>
+        <p className="text-muted text-sm">Nur der Discord-Server-Owner oder ein Mitglied mit <code>dashboard.access</code> kann Nitrado-Verbindungen und Slots verwalten.</p>
       </Card>
     );
   }
@@ -1528,7 +1529,7 @@ function TicketEditModal({
 }
 
 // ============================================================================
-// Server-Aliase — Owner kann Anzeige-Namen der Slots umbenennen (alias5 fix)
+// Server-Aliase — Owner oder dashboard.access kann Anzeige-Namen der Slots umbenennen (alias5 fix)
 // ============================================================================
 
 function AliasesTab({ guildId, slots }: { guildId: string; slots: Slot[] }) {
@@ -1626,7 +1627,7 @@ function AliasRow({ guildId, slot }: { guildId: string; slot: Slot }) {
   );
 }
 // ============================================================================
-// Audit-Log (Owner-only)
+// Audit-Log (Owner oder dashboard.access)
 // ============================================================================
 
 interface AuditEntry {
@@ -1693,7 +1694,7 @@ function AuditTab({ guildId }: { guildId: string }) {
       <Card>
         <CardHeader>
           <CardTitle>Audit-Log</CardTitle>
-          <CardDesc>Letzte Aktionen in diesem Server (nur fuer Owner sichtbar).</CardDesc>
+          <CardDesc>Letzte Aktionen in diesem Server (Owner oder dashboard.access-Vollzugriff).</CardDesc>
         </CardHeader>
         <div className="grid sm:grid-cols-3 gap-3 mt-3">
           <div>
