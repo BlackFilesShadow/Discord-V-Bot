@@ -527,9 +527,18 @@ export class NitradoClient {
     return this.fetchSignedText(token, MAX_DOWNLOAD_BYTES, fullPath);
   }
 
-  private isSeekDownloadFallbackError(error: unknown, seekPath: string): error is NitradoApiError {
-    if (!(error instanceof NitradoApiError) || error.endpoint !== seekPath) return false;
-    return /length limit exceeded|use file download instead/i.test(error.message);
+  private isSeekDownloadFallbackError(
+    error: unknown,
+    seekPath: string,
+    fullPath: string,
+  ): error is NitradoApiError {
+    if (!(error instanceof NitradoApiError)) return false;
+    if (error.endpoint === seekPath) {
+      return /length limit exceeded|use file download instead/i.test(error.message);
+    }
+    return error.status === 404
+      && error.endpoint === fullPath
+      && /^Download HTTP 404$/i.test(error.message);
   }
 
   private async downloadFileRangeViaDownload(
@@ -555,10 +564,11 @@ export class NitradoClient {
 
   /**
    * Liest einen Byte-Bereich primaer ueber file_server/seek. Falls Nitrado fuer
-   * genau diesen Seek den dokumentierten Length-Limit-Hinweis liefert, wird
-   * derselbe Byte-Bereich ueber den signierten file_server/download-Pfad mit
-   * offset/count gelesen. Cursor, Chunk-Groesse und ADM-Ingestion bleiben damit
-   * unveraendert; alle anderen Seek-Fehler werden weiterhin unveraendert geworfen.
+   * genau diesen Seek den dokumentierten Length-Limit-Hinweis liefert oder die
+   * vom Seek ausgestellte signierte URL mit HTTP 404 antwortet, wird derselbe
+   * Byte-Bereich ueber den signierten file_server/download-Pfad mit offset/count
+   * gelesen. API-Seek-404, Auth-Fehler und andere Clientfehler bleiben sichtbar.
+   * Cursor, Chunk-Groesse und ADM-Ingestion bleiben unveraendert.
    */
   async downloadFileRange(serviceId: string, fullPath: string, offset: number, length: number): Promise<string> {
     if (!Number.isSafeInteger(offset) || offset < 0) {
@@ -577,9 +587,10 @@ export class NitradoClient {
       );
       const token = meta.data?.token;
       if (!token?.url) throw new NitradoApiError('Keine Seek-URL', null, fullPath);
-      return this.fetchSignedText(token, Math.min(length + 4096, MAX_SEEK_BYTES), fullPath);
+      const chunk = await this.fetchSignedText(token, Math.min(length + 4096, MAX_SEEK_BYTES), fullPath);
+      return chunk;
     } catch (error) {
-      if (!this.isSeekDownloadFallbackError(error, seekPath)) throw error;
+      if (!this.isSeekDownloadFallbackError(error, seekPath, fullPath)) throw error;
       return this.downloadFileRangeViaDownload(serviceId, fullPath, offset, length);
     }
   }
