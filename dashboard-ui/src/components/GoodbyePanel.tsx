@@ -7,6 +7,7 @@ import { Button } from '@/components/ui/Button';
 import { Select } from '@/components/ui/Select';
 import { Badge } from '@/components/ui/Badge';
 import { useToast } from '@/components/ui/Toast';
+import { LeaveCleanupPanel } from './LeaveCleanupPanel';
 
 interface GoodbyeConfig {
   configured: boolean;
@@ -137,6 +138,10 @@ export function GoodbyePanel({ guildId, canManage }: { guildId: string; canManag
           <div className="rounded-lg border border-border/50 p-2.5 text-xs text-muted">
             <span className="text-white/90 block">Ziel-Channel</span>
             {selectedChannelName ? `# ${selectedChannelName}` : 'Noch nicht ausgewählt'}
+          </div>
+
+          <div className="border-t border-border/60 pt-4">
+            <LeaveCleanupPanel guildId={guildId} embedded />
           </div>
         </div>
       </Card>
