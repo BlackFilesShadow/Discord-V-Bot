@@ -7,7 +7,7 @@ import { getMemberProfile } from '../ai/memberAwareness';
 import {
   buildStructuredGoodbyeEmbed,
   initialGoodbyeCleanupSnapshot,
-  sanitizeGoodbyeVisibleText,
+  normalizeGoodbyeIdentityName,
   type GoodbyeCleanupSnapshot,
 } from './goodbyeStatus';
 
@@ -85,20 +85,19 @@ export async function disableGoodbye(guildId: string, updatedBy: string): Promis
  * Fallback. Rollen/Permissions aus dem Recognition-Profil werden bewusst nicht
  * gelesen und koennen daher niemals Authorization beeinflussen.
  *
- * Eine Discord-ID ist KEIN gueltiger sichtbarer Namens-Fallback. Selbst wenn
- * ein alter Datensatz oder eine defekte Gateway-Antwort eine Snowflake als
- * Namen liefert, wird sie vor Persistenz/Rendern auf einen neutralen Text
- * reduziert.
+ * Eine Discord-ID ist KEIN gueltiger sichtbarer Namens-Fallback. Namen werden
+ * hier nur normalisiert und Snowflakes entfernt; Markdown-Escaping passiert
+ * erst beim Embed-Rendern genau einmal.
  */
 export function resolveGoodbyeIdentity(
   fallback: { discordId: string; username: string; nickname?: string | null },
   stored: StoredIdentity,
 ): GoodbyeIdentity {
   const usernameCandidate = stored?.username?.trim() || fallback.username.trim();
-  const username = sanitizeGoodbyeVisibleText(usernameCandidate, 'Discord-Nutzer', 256);
+  const username = normalizeGoodbyeIdentityName(usernameCandidate, 'Discord-Nutzer', 256);
   const nicknameCandidate = stored?.nickname?.trim() || fallback.nickname?.trim() || '';
   const nickname = nicknameCandidate
-    ? sanitizeGoodbyeVisibleText(nicknameCandidate, '', 256) || null
+    ? normalizeGoodbyeIdentityName(nicknameCandidate, '', 256) || null
     : null;
   const displayName = nickname || username || 'Discord-Nutzer';
   return {
@@ -123,12 +122,9 @@ export async function resolveLastKnownGoodbyeIdentity(member: GuildMember): Prom
 }
 
 /**
- * Runtime-Zustellung beim GuildMemberRemove.
- * Zu diesem Zeitpunkt ist das Mitglied bereits aus der Guild entfernt. Ein
- * nativer <@ID>-Token kann deshalb im Embed als rohe Discord-ID stehen bleiben.
- * Die strukturierte Nutzerzeile nutzt hier bewusst den letzten sicheren
- * @Anzeigenamen; echte native Mentions bleiben dem Dashboard-Test vorbehalten,
- * solange der Nutzer noch in der Guild aufloesbar ist.
+ * Runtime-Zustellung beim GuildMemberRemove. Der Nutzer ist zu diesem Zeitpunkt
+ * bereits aus der Guild entfernt; deshalb rendert das Abschieds-Embed bewusst
+ * nur den aufgeloesten sichtbaren Namen und niemals einen nativen Mention-Token.
  */
 export async function sendConfiguredGoodbye(
   member: GuildMember,
@@ -205,8 +201,6 @@ export async function sendConfiguredGoodbye(
     message = await channel.send({
       embeds: [buildStructuredGoodbyeEmbed({
         discordName: identity.displayName,
-        discordMention: identity.mention,
-        discordMentionResolved: false,
         customMessage: '',
         joinedAt,
         leaveOccurredAt,
