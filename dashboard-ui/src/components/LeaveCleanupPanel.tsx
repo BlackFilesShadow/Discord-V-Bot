@@ -10,6 +10,7 @@ import { useToast } from '@/components/ui/Toast';
 
 interface DashboardOwnerState {
   isOwner: boolean;
+  permissions: string[];
 }
 
 interface LeaveCleanupConfigState {
@@ -31,10 +32,11 @@ export function LeaveCleanupPanel({ guildId, embedded = false }: LeaveCleanupPan
     enabled: !!guildId,
   });
   const isOwner = ownerQ.data?.isOwner === true;
+  const hasFullAccess = isOwner || ownerQ.data?.permissions?.includes('dashboard.access') === true;
   const cfgQ = useQuery({
     queryKey: ['leave-cleanup', guildId],
     queryFn: () => api.get<LeaveCleanupConfigState>(`/api/v2/guilds/${guildId}/leave-cleanup/config`),
-    enabled: !!guildId && isOwner,
+    enabled: !!guildId && hasFullAccess,
   });
 
   const [enabled, setEnabled] = useState(false);
@@ -50,7 +52,7 @@ export function LeaveCleanupPanel({ guildId, embedded = false }: LeaveCleanupPan
       : <div className="h-40 rounded-xl skeleton" />;
   }
 
-  if (!isOwner) {
+  if (!hasFullAccess) {
     if (!embedded) return null;
     return (
       <div
@@ -62,8 +64,8 @@ export function LeaveCleanupPanel({ guildId, embedded = false }: LeaveCleanupPan
           <div className="min-w-0">
             <p className="text-xs font-medium text-white/90">Spieler-Cleanup</p>
             <p className="text-xs text-muted mt-1 leading-relaxed">
-              Diese Austritts-Bereinigung ist weiterhin vorhanden, bleibt wegen der Nitrado-Whitelist-Mutation aber bewusst Owner-only.
-              Nur der Discord-Server-Owner kann sie ein- oder ausschalten.
+              Diese Austritts-Bereinigung ist weiterhin vorhanden. Ein- oder ausschalten darf sie der Discord-Server-Owner
+              oder ein Mitglied mit <code>dashboard.access</code> (Vollzugriff).
             </p>
           </div>
         </div>
@@ -131,7 +133,7 @@ export function LeaveCleanupPanel({ guildId, embedded = false }: LeaveCleanupPan
 
         <div className="flex flex-col sm:flex-row sm:items-center gap-2 sm:justify-between">
           <p className="text-[11px] text-muted">
-            Owner-only. Bereits eingereihte Cleanup-Aufträge werden auch nach dem Ausschalten sicher beendet.
+            Owner oder <code>dashboard.access</code> (Vollzugriff). Bereits eingereihte Cleanup-Aufträge werden auch nach dem Ausschalten sicher beendet.
           </p>
           <Button onClick={save} disabled={busy || !changed} size="sm" className="w-full sm:w-auto shrink-0">
             <Save className="h-4 w-4 mr-1" /> {busy ? 'Speichert…' : 'Cleanup speichern'}
@@ -148,7 +150,7 @@ export function LeaveCleanupPanel({ guildId, embedded = false }: LeaveCleanupPan
           <DatabaseZap className="h-5 w-5 text-danger" /> Spielerdaten bei Austritt
         </h2>
         <p className="text-xs text-muted mt-0.5">
-          Owner-only Schalter für Whitelist-Entfernung und guild-/gameservergescoppten Gameplay-Statistik-Reset.
+          Vollzugriff-Schalter für Whitelist-Entfernung und guild-/gameservergescoppten Gameplay-Statistik-Reset.
         </p>
       </div>
 
