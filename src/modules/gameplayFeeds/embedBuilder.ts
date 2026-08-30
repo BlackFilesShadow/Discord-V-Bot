@@ -59,9 +59,33 @@ function positionField(value: string | null): string | null {
   return url ? `[${display}](${url})` : display;
 }
 
-function plainPositionField(value: string | null): string | null {
+function formatCoordinate(value: number): string {
+  return Number.isInteger(value) ? String(value) : value.toFixed(2).replace(/0+$/, '').replace(/\.$/, '');
+}
+
+function flagPositionField(value: string | null): string | null {
   const clean = cleanPosition(value);
-  return clean ? safeEmbedField(clean, 128) : null;
+  if (!clean) return null;
+  const parts = clean.split(',').map(part => Number(part.trim()));
+  if (parts.length < 2 || parts.some(part => !Number.isFinite(part))) {
+    return safeEmbedField(clean, 128);
+  }
+  const x = parts[0];
+  const z = parts.length >= 3 ? parts[2] : parts[1];
+  const horizontal = `X: ${formatCoordinate(x)} • Z: ${formatCoordinate(z)}`;
+  if (parts.length < 3) return horizontal;
+  return `${horizontal}\nHöhe: ${formatCoordinate(parts[1])}`;
+}
+
+export function flagObjectLabel(value: string): string {
+  const raw = value.trim();
+  if (!raw) return 'Unbekannt';
+  const readable = raw
+    .replace(/^Flag_/i, '')
+    .replace(/[_-]+/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+  return readable || raw;
 }
 
 function personWithPosition(name: string, position: string | null): string {
@@ -130,15 +154,25 @@ export function buildGameplayFeedEmbed(
     .setTitle(TITLES[view.category]);
 
   if (view.kind === 'FLAG') {
-    addServer(embed, serverAlias, view.occurredAt, true);
-    embed.addFields({ name: 'Spieler', value: safeName(view.actorName), inline: false });
+    const action = view.category === 'RAISED' ? 'Hochgezogen' : 'Heruntergelassen';
+    embed.addFields({ name: 'Aktion', value: action, inline: true });
+    embed.addFields({ name: 'Spieler', value: safeName(view.actorName), inline: true });
     if (view.objectType) {
-      embed.addFields({ name: 'Flagge', value: safeEmbedField(view.objectType, 256), inline: false });
+      // Classnames are shown inside inline code. Keep the general sanitizer,
+      // but restore escaped underscores because they are literal in code spans.
+      const rawFlag = safeEmbedField(view.objectType, 128).replace(/\\_/g, '_');
+      const readableFlag = safeEmbedField(flagObjectLabel(view.objectType), 128);
+      embed.addFields({
+        name: 'Flagge',
+        value: readableFlag === rawFlag ? rawFlag : `${readableFlag}\nClassname: \`${rawFlag}\``,
+        inline: false,
+      });
     }
-    const flagPos = plainPositionField(view.targetPosition);
-    if (flagPos) embed.addFields({ name: 'Flaggen-Koordinaten', value: flagPos, inline: false });
-    const actorPos = plainPositionField(view.actorPosition);
-    if (actorPos) embed.addFields({ name: 'Spieler-Koordinaten', value: actorPos, inline: false });
+    const flagPos = flagPositionField(view.targetPosition);
+    if (flagPos) embed.addFields({ name: 'Flaggen-Position', value: flagPos, inline: false });
+    const actorPos = flagPositionField(view.actorPosition);
+    if (actorPos) embed.addFields({ name: 'Spieler-Position', value: actorPos, inline: false });
+    addServer(embed, serverAlias, view.occurredAt, true);
     return embed;
   }
 

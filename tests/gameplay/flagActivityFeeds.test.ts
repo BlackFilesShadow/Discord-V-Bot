@@ -2,6 +2,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { newDateContext, parseAdmLine } from '../../src/modules/nitrado/adm/admLineParser';
 import { ingestFullFile, persistAdmEvents } from '../../src/modules/nitrado/adm/serverLogIngestor';
+import { buildGameplayFeedEmbed, flagObjectLabel } from '../../src/modules/gameplayFeeds/embedBuilder';
 import { categoryForEvent, kindForEvent } from '../../src/modules/gameplayFeeds/types';
 import {
   buildFlagActivityCustomId,
@@ -107,6 +108,59 @@ describe('Flag activity feeds', () => {
       flagPosition: '4, 5, 6',
     });
     expect(flagRows[0].eventKey).toBe(admRows[0].eventKey);
+  });
+
+  test('renders raised flag activity as a readable Discord embed while retaining the classname', () => {
+    expect(flagObjectLabel('Flag_RSTA')).toBe('RSTA');
+    const embed = buildGameplayFeedEmbed({
+      eventId: 'flag-raised-1',
+      kind: 'FLAG',
+      category: 'RAISED',
+      eventType: 'FLAG_RAISED',
+      occurredAt: new Date('2026-08-30T12:36:44.000Z'),
+      actorName: 'JtReaper',
+      targetName: 'TerritoryFlag',
+      objectType: 'Flag_RSTA',
+      toolOrWeapon: null,
+      distanceMeters: null,
+      actorPosition: '9713.25, 167.81, 13149.40',
+      targetPosition: '9714.855469, 168.180801, 13150.735352',
+    }, '#22c55e', 'Die Chaoten').toJSON();
+
+    expect(embed.title).toBe('🚩 Flagge hochgezogen');
+    expect(embed.fields).toEqual(expect.arrayContaining([
+      expect.objectContaining({ name: 'Aktion', value: 'Hochgezogen' }),
+      expect.objectContaining({ name: 'Spieler', value: 'JtReaper' }),
+      expect.objectContaining({ name: 'Flagge', value: 'RSTA\nClassname: `Flag_RSTA`' }),
+      expect.objectContaining({ name: 'Flaggen-Position', value: 'X: 9714.86 • Z: 13150.74\nHöhe: 168.18' }),
+      expect.objectContaining({ name: 'Spieler-Position', value: 'X: 9713.25 • Z: 13149.4\nHöhe: 167.81' }),
+      expect.objectContaining({ name: 'Server', value: 'Die Chaoten' }),
+      expect.objectContaining({ name: 'Ereigniszeit', value: '<t:1788093404:F>' }),
+    ]));
+  });
+
+  test('renders lowered flag activity with the matching action and title', () => {
+    const embed = buildGameplayFeedEmbed({
+      eventId: 'flag-lowered-1',
+      kind: 'FLAG',
+      category: 'LOWERED',
+      eventType: 'FLAG_LOWERED',
+      occurredAt: new Date('2026-08-30T12:43:08.000Z'),
+      actorName: 'Survivor Two',
+      targetName: 'TerritoryFlag',
+      objectType: 'Flag_Base',
+      toolOrWeapon: null,
+      distanceMeters: null,
+      actorPosition: null,
+      targetPosition: '9663.215820, 294.325684, 8789.842773',
+    }, '#eab308', 'Die Chaoten').toJSON();
+
+    expect(embed.title).toBe('🏳️ Flagge heruntergelassen');
+    expect(embed.fields).toEqual(expect.arrayContaining([
+      expect.objectContaining({ name: 'Aktion', value: 'Heruntergelassen' }),
+      expect.objectContaining({ name: 'Flagge', value: 'Base\nClassname: `Flag_Base`' }),
+      expect.objectContaining({ name: 'Flaggen-Position', value: 'X: 9663.22 • Z: 8789.84\nHöhe: 294.33' }),
+    ]));
   });
 
   test('architecture keeps raised/lowered separate and wires signed analysis button', () => {
