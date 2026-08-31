@@ -7,6 +7,7 @@ import { Button } from '@/components/ui/Button';
 import { Card, CardHeader, CardTitle } from '@/components/ui/Card';
 import { Input } from '@/components/ui/Input';
 import { Select } from '@/components/ui/Select';
+import { BlackMarketDiscordSettings } from './BlackMarketDiscordSettings';
 
 interface DeliveryItem {
   itemText: string;
@@ -30,7 +31,6 @@ interface Listing {
   name: string;
   description: string | null;
   price: string;
-  stock: number;
   maxPerPurchase: number;
   active: boolean;
   archivedAt: string | null;
@@ -78,7 +78,6 @@ interface VendorPayoutDraft {
 }
 
 const MAX_MARKET_PRICE = 1_000_000_000_000_000n;
-const MAX_MARKET_STOCK = 1_000_000_000;
 const SNOWFLAKE_RE = /^\d{17,20}$/;
 
 function hasControlChars(value: string): boolean {
@@ -108,12 +107,15 @@ function fulfillmentBadge(status: Purchase['fulfillmentStatus']) {
   return <Badge variant="neutral">LEGACY</Badge>;
 }
 
+function syncText(base: string, syncWarning?: string | null): string {
+  return syncWarning ? `${base} Discord-Sync: ${syncWarning}` : base;
+}
+
 export function BlackMarketPanel({ guildId, slot }: { guildId: string; slot: string }) {
   const qc = useQueryClient();
   const scope = `slot=${encodeURIComponent(slot)}`;
   const [vendorName, setVendorName] = useState('');
-  const [listing, setListing] = useState({ vendorAccountId: '', name: '', description: '', price: '', stock: '0', maxPerPurchase: '10' });
-  const [restock, setRestock] = useState<Record<string, string>>({});
+  const [listing, setListing] = useState({ vendorAccountId: '', name: '', description: '', price: '', maxPerPurchase: '10' });
   const [purchaseDrafts, setPurchaseDrafts] = useState<Record<string, PurchaseDraft>>({});
   const [payoutDrafts, setPayoutDrafts] = useState<Record<string, VendorPayoutDraft>>({});
   const [refundReasons, setRefundReasons] = useState<Record<string, string>>({});
@@ -158,6 +160,8 @@ export function BlackMarketPanel({ guildId, slot }: { guildId: string; slot: str
     void qc.invalidateQueries({ queryKey: ['economy-black-market-vendors', guildId, slot] });
     void qc.invalidateQueries({ queryKey: ['economy-black-market-listings', guildId, slot] });
     void qc.invalidateQueries({ queryKey: ['economy-black-market-purchases', guildId, slot] });
+    void qc.invalidateQueries({ queryKey: ['economy-black-market-discord', guildId, slot] });
+    void qc.invalidateQueries({ queryKey: ['economy-virtual-control', guildId, slot] });
     void qc.invalidateQueries({ queryKey: ['economy-virtual-accounts', guildId, slot] });
     void qc.invalidateQueries({ queryKey: ['economy-overview', guildId, slot] });
   };
@@ -174,59 +178,46 @@ export function BlackMarketPanel({ guildId, slot }: { guildId: string; slot: str
   });
 
   const payoutVendor = useMutation({
-    mutationFn: (vars: { id: string; draft: VendorPayoutDraft }) => api.post<{ booked: boolean; vendor: Vendor }>(
+    mutationFn: (vars: { id: string; draft: VendorPayoutDraft }) => api.post<{ booked: boolean; vendor: Vendor; syncWarning?: string | null }>(
       `/api/v2/guilds/${guildId}/economy/black-market/vendors/${vars.id}/payout?${scope}`,
       { targetUserId: vars.draft.targetUserId, amount: vars.draft.amount, targetPocket: vars.draft.targetPocket },
     ),
     onSuccess: result => {
-      setMessage({ ok: true, text: result.booked ? 'Haendlerguthaben ausgezahlt.' : 'Diese Auszahlung war bereits verarbeitet.' });
+      setMessage({ ok: true, text: syncText(result.booked ? 'Haendlerguthaben ausgezahlt.' : 'Diese Auszahlung war bereits verarbeitet.', result.syncWarning) });
       invalidate();
     },
     onError: (error: Error) => setMessage({ ok: false, text: `Auszahlung fehlgeschlagen: ${error.message}` }),
   });
 
   const archiveVendor = useMutation({
-    mutationFn: (id: string) => api.post<Vendor>(`/api/v2/guilds/${guildId}/economy/black-market/vendors/${id}/archive?${scope}`, {}),
+    mutationFn: (id: string) => api.post<Vendor & { syncWarning?: string | null }>(`/api/v2/guilds/${guildId}/economy/black-market/vendors/${id}/archive?${scope}`, {}),
     onSuccess: vendor => {
-      setMessage({ ok: true, text: `Haendler „${vendor.name}“ archiviert.` });
+      setMessage({ ok: true, text: syncText(`Haendler „${vendor.name}“ archiviert.`, vendor.syncWarning) });
       invalidate();
     },
     onError: (error: Error) => setMessage({ ok: false, text: `Archivierung fehlgeschlagen: ${error.message}` }),
   });
 
   const createListing = useMutation({
-    mutationFn: () => api.post<Listing>(`/api/v2/guilds/${guildId}/economy/black-market/listings?${scope}`, {
+    mutationFn: () => api.post<Listing & { syncWarning?: string | null }>(`/api/v2/guilds/${guildId}/economy/black-market/listings?${scope}`, {
       vendorAccountId: listing.vendorAccountId,
       name: listing.name,
       description: listing.description.trim() || null,
       price: listing.price.trim(),
-      stock: Number(listing.stock),
       maxPerPurchase: Number(listing.maxPerPurchase),
     }),
     onSuccess: row => {
-      setListing(current => ({ ...current, name: '', description: '', price: '', stock: '0', maxPerPurchase: '10' }));
-      setMessage({ ok: true, text: `Angebot „${row.name}“ erstellt.` });
-      invalidate();
-    },
-    onError: (error: Error) => setMessage({ ok: false, text: error.message }),
-  });
-
-  const restockListing = useMutation({
-    mutationFn: ({ id, stock }: { id: string; stock: number }) => api.post<Listing>(
-      `/api/v2/guilds/${guildId}/economy/black-market/listings/${id}/restock?${scope}`,
-      { stock },
-    ),
-    onSuccess: row => {
-      setMessage({ ok: true, text: `Bestand fuer „${row.name}“ aktualisiert.` });
+      setListing(current => ({ ...current, name: '', description: '', price: '', maxPerPurchase: '10' }));
+      setMessage({ ok: true, text: syncText(`Angebot „${row.name}“ erstellt.`, row.syncWarning) });
       invalidate();
     },
     onError: (error: Error) => setMessage({ ok: false, text: error.message }),
   });
 
   const archiveListing = useMutation({
-    mutationFn: (id: string) => api.post<Listing>(`/api/v2/guilds/${guildId}/economy/black-market/listings/${id}/archive?${scope}`, {}),
+    mutationFn: (id: string) => api.post<Listing & { syncWarning?: string | null }>(`/api/v2/guilds/${guildId}/economy/black-market/listings/${id}/archive?${scope}`, {}),
     onSuccess: row => {
-      setMessage({ ok: true, text: `Angebot „${row.name}“ archiviert.` });
+      setMessage({ ok: true, text: syncText(`Angebot „${row.name}“ archiviert.`, row.syncWarning) });
       invalidate();
     },
     onError: (error: Error) => setMessage({ ok: false, text: error.message }),
@@ -234,16 +225,16 @@ export function BlackMarketPanel({ guildId, slot }: { guildId: string; slot: str
 
   const purchaseListing = useMutation({
     mutationFn: (vars: { id: string; quantity: number; sourcePocket: 'WALLET' | 'BANK' }) =>
-      api.post<{ booked: boolean; purchase: Purchase; listing: Listing }>(
+      api.post<{ booked: boolean; purchase: Purchase; listing: Listing; syncWarning?: string | null }>(
         `/api/v2/guilds/${guildId}/economy/black-market/listings/${vars.id}/purchase?${scope}`,
         { quantity: vars.quantity, sourcePocket: vars.sourcePocket },
       ),
     onSuccess: (result, vars) => {
       setMessage({
         ok: true,
-        text: result.booked
+        text: syncText(result.booked
           ? `Bestellung ${result.purchase.id} gebucht: ${result.purchase.quantity}× fuer ${money(result.purchase.amount, currencyEmoji)}. Status: OFFEN.`
-          : 'Dieser Kauf war bereits verarbeitet; es wurde nicht doppelt gebucht.',
+          : 'Dieser Kauf war bereits verarbeitet; es wurde nicht doppelt gebucht.', result.syncWarning),
       });
       setPurchaseDrafts(current => ({ ...current, [vars.id]: { quantity: '1', sourcePocket: vars.sourcePocket } }));
       invalidate();
@@ -264,12 +255,12 @@ export function BlackMarketPanel({ guildId, slot }: { guildId: string; slot: str
   });
 
   const refundPurchase = useMutation({
-    mutationFn: (vars: { id: string; reason: string }) => api.post<{ booked: boolean; purchase: Purchase }>(
+    mutationFn: (vars: { id: string; reason: string }) => api.post<{ booked: boolean; purchase: Purchase; syncWarning?: string | null }>(
       `/api/v2/guilds/${guildId}/economy/black-market/purchases/${vars.id}/refund?${scope}`,
       { reason: vars.reason },
     ),
     onSuccess: result => {
-      setMessage({ ok: true, text: result.booked ? `Bestellung ${result.purchase.id} vollständig refundiert; Bestand wurde zurückgebucht.` : 'Dieser Refund war bereits verarbeitet.' });
+      setMessage({ ok: true, text: syncText(result.booked ? `Bestellung ${result.purchase.id} vollständig refundiert.` : 'Dieser Refund war bereits verarbeitet.', result.syncWarning) });
       invalidate();
     },
     onError: (error: Error) => setMessage({ ok: false, text: `Refund fehlgeschlagen: ${error.message}` }),
@@ -282,7 +273,6 @@ export function BlackMarketPanel({ guildId, slot }: { guildId: string; slot: str
     && !hasControlChars(listing.name.trim())
     && listing.description.length <= 500
     && /^\d+$/.test(listing.price) && BigInt(listing.price || '0') >= 1n && BigInt(listing.price || '0') <= MAX_MARKET_PRICE
-    && /^\d+$/.test(listing.stock) && Number.isSafeInteger(Number(listing.stock)) && Number(listing.stock) <= MAX_MARKET_STOCK
     && /^\d+$/.test(listing.maxPerPurchase) && Number(listing.maxPerPurchase) >= 1 && Number(listing.maxPerPurchase) <= 1000;
 
   return (
@@ -307,8 +297,10 @@ export function BlackMarketPanel({ guildId, slot }: { guildId: string; slot: str
       </CardHeader>
 
       <p className="text-xs text-muted mb-4">
-        Gegenstände sind Freitext: schreibe sie genau so hinein, wie sie angezeigt werden sollen — inklusive Emoji, z. B. „🔫 M4A1“. Preis und Bestand bleiben getrennte Felder; V-Bot ergänzt automatisch die Server-Währung {currencyName} {currencyEmoji}. Geld, Bestand und Bestellung werden atomar gebucht.
+        Gegenstände sind Freitext: schreibe sie genau so hinein, wie sie angezeigt werden sollen — inklusive Emoji, z. B. „🔫 M4A1“. Angebote besitzen keinen Mengenbestand mehr; verfügbar ist ein Angebot, solange es aktiv ist. V-Bot ergänzt automatisch die Server-Währung {currencyName} {currencyEmoji}. Kauf, Zahlung und Bestellung bleiben atomar gebucht.
       </p>
+
+      <BlackMarketDiscordSettings guildId={guildId} slot={slot} canManage={canManage} onMessage={setMessage} />
 
       {canManage && (
         <div className="grid gap-4 xl:grid-cols-2">
@@ -367,14 +359,10 @@ export function BlackMarketPanel({ guildId, slot }: { guildId: string; slot: str
                 <Input value={listing.price} onChange={e => setListing(current => ({ ...current, price: e.target.value.trim() }))} inputMode="numeric" placeholder="Preis" />
               </label>
               <label className="text-xs">
-                <span className="text-muted block mb-1">Bestand</span>
-                <Input value={listing.stock} onChange={e => setListing(current => ({ ...current, stock: e.target.value.trim() }))} inputMode="numeric" placeholder="Bestand" />
-              </label>
-              <label className="text-xs">
                 <span className="text-muted block mb-1">Max. pro Kauf</span>
                 <Input value={listing.maxPerPurchase} onChange={e => setListing(current => ({ ...current, maxPerPurchase: e.target.value.trim() }))} inputMode="numeric" placeholder="Max. pro Kauf" />
               </label>
-              <label className="text-xs">
+              <label className="text-xs sm:col-span-2">
                 <span className="text-muted block mb-1">Beschreibung (optional)</span>
                 <Input value={listing.description} onChange={e => setListing(current => ({ ...current, description: e.target.value }))} maxLength={500} placeholder="Beschreibung" />
               </label>
@@ -390,26 +378,20 @@ export function BlackMarketPanel({ guildId, slot }: { guildId: string; slot: str
         <p className="text-sm font-medium text-white mb-2 inline-flex items-center gap-1.5"><Truck className="h-3.5 w-3.5" />Angebote</p>
         <div className="space-y-2">
           {(listings.data?.listings ?? []).map(row => {
-            const draftStock = restock[row.id] ?? String(row.stock);
-            const stockValid = /^\d+$/.test(draftStock) && Number.isSafeInteger(Number(draftStock)) && Number(draftStock) <= MAX_MARKET_STOCK;
             const buyDraft = purchaseDrafts[row.id] ?? { quantity: '1', sourcePocket: 'WALLET' as const };
             const buyQuantity = Number(buyDraft.quantity);
-            const buyValid = row.active && row.stock > 0 && /^\d+$/.test(buyDraft.quantity)
-              && Number.isSafeInteger(buyQuantity) && buyQuantity >= 1 && buyQuantity <= Math.min(1000, row.maxPerPurchase, row.stock);
+            const buyValid = row.active && /^\d+$/.test(buyDraft.quantity)
+              && Number.isSafeInteger(buyQuantity) && buyQuantity >= 1 && buyQuantity <= Math.min(1000, row.maxPerPurchase);
             return (
               <div key={row.id} className="rounded-lg border border-border/60 bg-bg-elev/40 p-3">
                 <div className="flex flex-wrap items-start justify-between gap-3">
                   <div className="min-w-0 flex-1">
                     <div className="flex flex-wrap items-center gap-2"><strong className="text-white break-words">{row.name}</strong><Badge variant={row.active ? 'ok' : 'neutral'}>{row.active ? 'AKTIV' : 'ARCHIVIERT'}</Badge></div>
-                    <p className="text-xs text-muted mt-1">Preis <strong className="text-white">{money(row.price, currencyEmoji)}</strong> · Bestand {row.stock} · Limit {row.maxPerPurchase}</p>
+                    <p className="text-xs text-muted mt-1">Preis <strong className="text-white">{money(row.price, currencyEmoji)}</strong> · Limit {row.maxPerPurchase}</p>
                     {row.description && <p className="text-xs text-muted/80 mt-1">{row.description}</p>}
                   </div>
                   {row.active && canManage && (
-                    <div className="flex flex-wrap items-center gap-2">
-                      <Input aria-label={`Bestand ${row.name}`} className="w-24" value={draftStock} onChange={e => setRestock({ ...restock, [row.id]: e.target.value.trim() })} inputMode="numeric" />
-                      <Button size="sm" variant="ghost" disabled={!stockValid || restockListing.isPending} onClick={() => restockListing.mutate({ id: row.id, stock: Number(draftStock) })}>Bestand</Button>
-                      <Button aria-label={`Angebot ${row.name} archivieren`} size="sm" variant="danger" disabled={archiveListing.isPending} onClick={() => archiveListing.mutate(row.id)}><Archive className="h-3.5 w-3.5" /></Button>
-                    </div>
+                    <Button aria-label={`Angebot ${row.name} archivieren`} size="sm" variant="danger" disabled={archiveListing.isPending} onClick={() => archiveListing.mutate(row.id)}><Archive className="h-3.5 w-3.5" /></Button>
                   )}
                 </div>
 
@@ -418,7 +400,6 @@ export function BlackMarketPanel({ guildId, slot }: { guildId: string; slot: str
                     <label className="text-xs"><span className="text-muted block mb-1">Kaufmenge</span><Input aria-label={`Kaufmenge ${row.name}`} className="w-20" value={buyDraft.quantity} onChange={e => setPurchaseDrafts(current => ({ ...current, [row.id]: { ...buyDraft, quantity: e.target.value.trim() } }))} inputMode="numeric" /></label>
                     <label className="text-xs"><span className="text-muted block mb-1">Bezahlen aus</span><Select aria-label={`Bezahlen aus ${row.name}`} value={buyDraft.sourcePocket} onChange={e => setPurchaseDrafts(current => ({ ...current, [row.id]: { ...buyDraft, sourcePocket: e.target.value as 'WALLET' | 'BANK' } }))}><option value="WALLET">Wallet</option><option value="BANK">Bank</option></Select></label>
                     <Button size="sm" disabled={!buyValid || purchaseListing.isPending} onClick={() => { setMessage(null); purchaseListing.mutate({ id: row.id, quantity: buyQuantity, sourcePocket: buyDraft.sourcePocket }); }}><ShoppingCart className="h-3.5 w-3.5 mr-1" />{purchaseListing.isPending ? 'Buche…' : 'Kaufen'}</Button>
-                    {row.stock === 0 && <span className="text-xs text-muted">Ausverkauft</span>}
                   </div>
                 )}
               </div>
