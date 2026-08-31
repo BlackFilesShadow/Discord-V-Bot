@@ -20,7 +20,7 @@ describe('virtual account removal regression', () => {
   });
 
   it('zeroes non-empty CUSTOM pockets atomically with audit entries and frees deleted treasury identity', () => {
-    expect(deletion).toContain("'CONTROL_DELETE_RESET'");
+    expect(deletion).toContain('CONTROL_DELETE_RESET');
     expect(deletion).toContain('args.account.balance > 0n');
     expect(deletion).toContain('args.finance.bankBalance > 0n');
     expect(deletion).toContain('SET "bankBalance"=0');
