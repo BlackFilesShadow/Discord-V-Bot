@@ -5,7 +5,7 @@ import { MAX_GAME_SERVERS_PER_GUILD } from '../../modules/nitrado/gameServerScop
 import { listMarketListings, listMarketPurchasesForUser } from '../../modules/economy/blackMarket';
 import { buyInventorylessMarketListing } from '../../modules/economy/blackMarketInventoryless';
 import { syncMarketDiscordProjection } from '../../modules/economy/blackMarketDiscord';
-import { syncVirtualAccountProjection } from '../../modules/economy/virtualAccountDiscord';
+import { syncVirtualAccountProjectionLive } from '../../modules/economy/virtualAccountLiveUpdates';
 import { getConfig } from '../../modules/economy/repository';
 import { logger } from '../../utils/logger';
 
@@ -112,7 +112,7 @@ export const blackMarketCommand: Command = {
       if (result.booked) {
         void Promise.all([
           syncMarketDiscordProjection(interaction.client, scope.guildId, connId),
-          syncVirtualAccountProjection(interaction.client, scope.guildId, connId, result.purchase.vendorAccountId),
+          syncVirtualAccountProjectionLive(interaction.client, scope.guildId, connId, result.purchase.vendorAccountId),
         ]).catch(error => logger.error(`Schwarzmarkt Live-Sync nach Slash-Kauf fehlgeschlagen (${result.purchase.id}):`, error as Error));
       }
     } catch (error) {
