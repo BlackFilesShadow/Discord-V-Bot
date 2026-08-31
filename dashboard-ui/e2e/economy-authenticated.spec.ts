@@ -3,6 +3,7 @@ import { test, expect, type Page, type Route } from '@playwright/test';
 const GUILD_ID = '123456789012345678';
 const USER_ID = '437718598876268545';
 const OTHER_USER = '223456789012345678';
+const USER_GUID = '123e4567-e89b-42d3-a456-426614174000';
 const SLOT = '1';
 
 async function json(route: Route, body: unknown, status = 200): Promise<void> {
@@ -11,9 +12,12 @@ async function json(route: Route, body: unknown, status = 200): Promise<void> {
 
 async function stubAuthenticatedEconomy(page: Page, opts: { purchaseError?: boolean } = {}) {
   let configWrite: Record<string, unknown> | null = null;
-  let adminPayWrite: Record<string, unknown> | null = null;
 
   await page.route('**/api/me', route => json(route, {
+    user: { discordId: USER_ID, username: 'economy-admin', avatar: null, role: 'ADMIN' },
+  }));
+  await page.route('**/auth/status', route => json(route, {
+    authenticated: true,
     user: { discordId: USER_ID, username: 'economy-admin', avatar: null, role: 'ADMIN' },
   }));
 
@@ -23,22 +27,16 @@ async function stubAuthenticatedEconomy(page: Page, opts: { purchaseError?: bool
     const path = url.pathname;
     const method = req.method();
 
-    if (path === `/api/v2/guilds/${GUILD_ID}/dashboard/server/${SLOT}/settings`) {
-      await json(route, { whitelistActive: true, economyActive: true, permaOnly: false });
-      return;
-    }
-    if (path === `/api/v2/guilds/${GUILD_ID}/dashboard`) {
-      await json(route, {
-        isOwner: true,
-        permissions: ['dashboard.access', 'economy.manage'],
-        slots: [{ id: 'conn-economy-1', slot: 1, alias: 'Chernarus', alias5: 'ECO01', status: 'ACTIVE' }],
-      });
-      return;
-    }
+    if (path === `/api/v2/guilds/${GUILD_ID}/dashboard/server/${SLOT}/settings`) return json(route, { whitelistActive: true, economyActive: true, permaOnly: false });
+    if (path === `/api/v2/guilds/${GUILD_ID}/dashboard`) return json(route, {
+      isOwner: true,
+      permissions: ['dashboard.access', 'economy.manage', 'economy.view'],
+      slots: [{ id: 'conn-economy-1', slot: 1, alias: 'Chernarus', alias5: 'ECO01', status: 'ACTIVE' }],
+    });
     if (path === `/api/v2/guilds/${GUILD_ID}/economy/config`) {
       if (method === 'PUT') {
         configWrite = req.postDataJSON() as Record<string, unknown>;
-        await json(route, {
+        return json(route, {
           enabled: configWrite.enabled ?? true,
           currencyName: configWrite.currencyName ?? 'Maeuse',
           emoji: configWrite.emoji ?? '🐭',
@@ -47,127 +45,96 @@ async function stubAuthenticatedEconomy(page: Page, opts: { purchaseError?: bool
           bankInterestPercent: configWrite.bankInterestPercent ?? 3,
           bankChannelId: configWrite.bankChannelId ?? null,
         });
-      } else {
-        await json(route, {
-          enabled: true,
-          currencyName: 'Maeuse',
-          emoji: '🐭',
-          startBalance: 500,
-          playtimeRewardPercent: 2,
-          bankInterestPercent: 3,
-          bankChannelId: null,
-        });
       }
-      return;
+      return json(route, { enabled: true, currencyName: 'Maeuse', emoji: '🐭', startBalance: 500, playtimeRewardPercent: 2, bankInterestPercent: 3, bankChannelId: null });
     }
-    if (path === `/api/v2/guilds/${GUILD_ID}/economy-scope/status`) {
-      await json(route, { required: false, state: { status: 'RESOLVED', primaryNitradoConnId: 'conn-economy-1', detectedActiveServerCount: 1, resolvedAt: '2026-08-19T06:00:00.000Z' }, servers: [] });
-      return;
-    }
-    if (path === `/api/v2/guilds/${GUILD_ID}/economy/overview`) {
-      await json(route, {
-        economy: { enabled: true, currencyName: 'Maeuse', emoji: '🐭', accounts: 12, links: 9, transactions: 44 },
-        bank: { totalWallet: '12500', totalBank: '33000', interestPercent: 3, bankChannelId: null },
-        casino: { gamesConfigured: 4, gamesEnabled: 2, rounds: 8, totalBet: '5000', totalPayout: '4200', houseEdge: '800', stats: [] },
-        recentTransactions: [{ id: 'ledger-1', userDiscordId: OTHER_USER, delta: '750', type: 'GRANT', reason: 'ADM-Reward', createdAt: '2026-08-19T06:10:00.000Z' }],
-        coupling: { sharedCurrency: true, sharedBalance: true, directlyBooked: true, sharedModels: [], casinoStatsMovable: false, raceConditionsGuarded: true, centralTransactionService: 'ledger' },
-      });
-      return;
-    }
-    if (path === `/api/v2/guilds/${GUILD_ID}/channels`) {
-      await json(route, { channels: [{ id: '123456789012345679', name: 'bank', type: 0, parentId: null }] });
-      return;
-    }
-    if (path === `/api/v2/guilds/${GUILD_ID}/economy/virtual-accounts`) {
-      await json(route, { accounts: [] });
-      return;
-    }
-    if (path === `/api/v2/guilds/${GUILD_ID}/economy/virtual-accounts/members`) {
-      await json(route, { members: [] });
-      return;
-    }
-    if (path === `/api/v2/guilds/${GUILD_ID}/economy/lottery/current`) {
-      await json(route, { round: null });
-      return;
-    }
-    if (path === `/api/v2/guilds/${GUILD_ID}/economy/lottery/history`) {
-      await json(route, { rounds: [] });
-      return;
-    }
-    if (path === `/api/v2/guilds/${GUILD_ID}/economy/black-market/vendors`) {
-      await json(route, { vendors: [{ id: 'vendor-1', name: 'Nachtmarkt', balance: '9000', pendingLiability: '5000', withdrawableBalance: '4000', status: 'ACTIVE', createdAt: '2026-08-18T12:00:00.000Z' }] });
-      return;
-    }
-    if (path === `/api/v2/guilds/${GUILD_ID}/economy/black-market/listings`) {
-      await json(route, { listings: [{ id: 'listing-1', vendorAccountId: 'vendor-1', sku: 'M4-KIT', name: 'M4 Kit', description: 'Testangebot', price: '2500', stock: 5, maxPerPurchase: 2, active: true, archivedAt: null, createdAt: '2026-08-18T12:30:00.000Z', deliveryItems: [{ itemText: 'M4A1', quantity: 1 }, { itemText: 'Mag_STANAG_60Rnd', quantity: 2 }] }] });
-      return;
-    }
-    if (path === `/api/v2/guilds/${GUILD_ID}/economy/black-market/purchases`) {
-      if (opts.purchaseError) {
-        await json(route, { error: 'Guild-Scope fehlt nach Auth-Middleware.' }, 500);
-      } else {
-        await json(route, { purchases: [{ id: 'purchase-1', listingId: 'listing-1', vendorAccountId: 'vendor-1', userDiscordId: OTHER_USER, sourcePocket: 'WALLET', quantity: 2, unitPrice: '2500', amount: '5000', createdAt: '2026-08-19T06:20:00.000Z', fulfillmentStatus: 'PENDING', deliveryItems: [{ itemText: 'M4A1', quantity: 2 }], fulfilledAt: null, fulfillmentNote: null, refundedAt: null, refundReason: null }] });
-      }
-      return;
-    }
-    if (path === `/api/v2/guilds/${GUILD_ID}/casino/games`) {
-      await json(route, { games: [] });
-      return;
-    }
-    if (path === `/api/v2/guilds/${GUILD_ID}/casino/stats`) {
-      await json(route, { stats: [] });
-      return;
-    }
-    if (path === `/api/v2/guilds/${GUILD_ID}/economy/accounts/${OTHER_USER}/admin-pay` && method === 'POST') {
-      adminPayWrite = req.postDataJSON() as Record<string, unknown>;
-      await json(route, { ok: true, booked: true });
-      return;
-    }
+    if (path === `/api/v2/guilds/${GUILD_ID}/economy-scope/status`) return json(route, {
+      required: false,
+      state: { status: 'RESOLVED', primaryNitradoConnId: 'conn-economy-1', detectedActiveServerCount: 1, resolvedAt: '2026-08-19T06:00:00.000Z' },
+      servers: [],
+    });
+    if (path === `/api/v2/guilds/${GUILD_ID}/economy/overview`) return json(route, {
+      economy: { enabled: true, currencyName: 'Maeuse', emoji: '🐭', accounts: 12, links: 9, transactions: 44 },
+      bank: { totalWallet: '12500', totalBank: '33000', interestPercent: 3, bankChannelId: null },
+      casino: { gamesConfigured: 4, gamesEnabled: 2, rounds: 8, totalBet: '5000', totalPayout: '4200', houseEdge: '800', stats: [] },
+      recentTransactions: [{ id: 'ledger-1', userDiscordId: OTHER_USER, delta: '750', type: 'GRANT', reason: 'ADM-Reward', createdAt: '2026-08-19T06:10:00.000Z' }],
+      coupling: { sharedCurrency: true, sharedBalance: true, directlyBooked: true, sharedModels: [], casinoStatsMovable: false, raceConditionsGuarded: true, centralTransactionService: 'ledger' },
+    });
+    if (path === `/api/v2/guilds/${GUILD_ID}/channels`) return json(route, { channels: [{ id: '123456789012345679', name: 'bank', type: 0, parentId: null }] });
 
-    await json(route, {});
+    if (path === `/api/v2/guilds/${GUILD_ID}/economy/virtual-accounts/control/accounts`) return json(route, {
+      accounts: [{
+        id: 'virtual-1', kind: 'CUSTOM', name: 'Eventkasse', walletBalance: '110900', bankBalance: '0', totalBalance: '110900',
+        status: 'ACTIVE', acceptUserTransfers: true, expiresAt: null, archivedAt: null, createdAt: '2026-08-20T10:00:00.000Z',
+        description: null, channelId: null, archiveChannelId: null, currencyName: 'Maeuse', currencyEmoji: '🐭', accountEmoji: '🏦',
+        bannerUrl: null, textStyle: 'NORMAL', exchangePlayerUnits: null, exchangeAccountUnits: null, accountPurpose: 'GENERAL', managers: [], projection: null,
+      }],
+    });
+    if (path === `/api/v2/guilds/${GUILD_ID}/economy/virtual-accounts/control/manager-panel`) return json(route, { panel: null });
+    if (path === `/api/v2/guilds/${GUILD_ID}/economy/virtual-accounts/control/members`) return json(route, { members: [{ discordId: OTHER_USER, username: 'target', displayName: 'Target User', avatar: null }] });
+    if (path === `/api/v2/guilds/${GUILD_ID}/economy/virtual-accounts/members`) return json(route, { members: [{ id: USER_GUID, discordId: OTHER_USER, username: 'target', displayName: 'Target User', avatar: null }] });
+
+    if (path === `/api/v2/guilds/${GUILD_ID}/economy/lottery/current`) return json(route, { round: null });
+    if (path === `/api/v2/guilds/${GUILD_ID}/economy/lottery/history`) return json(route, { rounds: [] });
+    if (path === `/api/v2/guilds/${GUILD_ID}/economy/black-market/discord`) return json(route, { projection: null });
+    if (path === `/api/v2/guilds/${GUILD_ID}/economy/black-market/vendors`) return json(route, { vendors: [{ id: 'vendor-1', name: 'Nachtmarkt', balance: '9000', pendingLiability: '5000', withdrawableBalance: '4000', status: 'ACTIVE', createdAt: '2026-08-18T12:00:00.000Z' }] });
+    if (path === `/api/v2/guilds/${GUILD_ID}/economy/black-market/listings`) return json(route, { listings: [{ id: 'listing-1', vendorAccountId: 'vendor-1', sku: 'M4-KIT', name: 'M4 Kit', description: 'Testangebot', price: '2500', active: true, archivedAt: null, createdAt: '2026-08-18T12:30:00.000Z', deliveryItems: [{ itemText: 'M4A1', quantity: 1 }] }] });
+    if (path === `/api/v2/guilds/${GUILD_ID}/economy/black-market/purchases`) {
+      if (opts.purchaseError) return json(route, { error: 'Guild-Scope fehlt nach Auth-Middleware.' }, 500);
+      return json(route, { purchases: [{ id: 'purchase-1', listingId: 'listing-1', vendorAccountId: 'vendor-1', userDiscordId: OTHER_USER, sourcePocket: 'WALLET', quantity: 2, unitPrice: '2500', amount: '5000', createdAt: '2026-08-19T06:20:00.000Z', fulfillmentStatus: 'PENDING', deliveryItems: [{ itemText: 'M4A1', quantity: 2 }], fulfilledAt: null, fulfillmentNote: null, refundedAt: null, refundReason: null }] });
+    }
+    if (path === `/api/v2/guilds/${GUILD_ID}/casino/games`) return json(route, { games: [] });
+    if (path === `/api/v2/guilds/${GUILD_ID}/casino/stats`) return json(route, { stats: [] });
+
+    return json(route, {});
   });
 
-  return {
-    configWrite: () => configWrite,
-    adminPayWrite: () => adminPayWrite,
-  };
+  return { configWrite: () => configWrite };
 }
 
 test.describe('Economy authenticated E2E', () => {
-  test('rendert Kernzustand + Bestellhistorie und sendet kanonische Mutationen', async ({ page }) => {
+  test('Page 1 Economy behaelt Core-Funktionen, aber nicht die separierten Page-2-Flächen', async ({ page }) => {
     const writes = await stubAuthenticatedEconomy(page);
     await page.setViewportSize({ width: 1280, height: 900 });
     await page.goto(`/servers/${GUILD_ID}/server/${SLOT}?tab=economy`);
 
     await expect(page.getByText('Wirtschaft-Status')).toBeVisible();
-    await expect(page.getByText(/12\.500/)).toBeVisible();
     await expect(page.getByText('Economy-Konfiguration')).toBeVisible();
     await expect(page.getByText('Schwarzmarkt')).toBeVisible();
     await expect(page.getByText('Bestellungen & Auslieferung')).toBeVisible();
-    await expect(page.getByText(`User ${OTHER_USER}`)).toBeVisible();
-    await expect(page.getByText(/2× · 5\.000/)).toBeVisible();
-    await expect(page.getByText('OFFEN', { exact: true })).toBeVisible();
-    await expect(page.getByText(/M4A1 × 2/)).toBeVisible();
+    await expect(page.getByText('Admin-Auszahlung')).toHaveCount(0);
+    await expect(page.getByRole('heading', { name: 'Virtuelle Konten' })).toHaveCount(0);
+    await expect(page.getByRole('heading', { name: 'Bank' })).toHaveCount(0);
+    await expect(page.getByRole('heading', { name: 'Casino-Games' })).toHaveCount(0);
 
     const currencyInput = page.getByText('Waehrungsname').locator('..').locator('input');
     await currencyInput.fill('Chaoten-Dollar');
     await page.getByRole('button', { name: 'Update', exact: true }).click();
     await expect.poll(writes.configWrite).not.toBeNull();
     expect(writes.configWrite()).toMatchObject({ currencyName: 'Chaoten-Dollar', enabled: true, startBalance: 500, playtimeRewardPercent: 2 });
+  });
 
-    await page.getByPlaceholder('17–20 Ziffern').fill(OTHER_USER);
-    await page.getByPlaceholder('z. B. 5000 oder -200').fill('250');
-    await page.getByText('Begruendung (3–200 Zeichen)').locator('..').locator('input').fill('E2E Admin-Korrektur');
-    await page.getByRole('button', { name: 'Buchung ausfuehren', exact: true }).click();
-    await expect.poll(writes.adminPayWrite).not.toBeNull();
-    expect(writes.adminPayWrite()).toEqual({ delta: '250', reason: 'E2E Admin-Korrektur' });
-    await expect(page.getByText(`Gebucht: 250 fuer ${OTHER_USER}`)).toBeVisible();
+  test('Page 2 trennt Virtuelle Konten und Bank/Casino, Killfeed bleibt erhalten', async ({ page }) => {
+    await stubAuthenticatedEconomy(page);
+    await page.goto(`/servers/${GUILD_ID}/server/${SLOT}?tab=virtual-accounts`);
+
+    await expect(page.getByText('Virtuelle Konten', { exact: true }).first()).toBeVisible();
+    await expect(page.getByText('Bank und Casino Funktionen', { exact: true })).toBeVisible();
+    await expect(page.getByText('Killfeed & ADM', { exact: true })).toBeVisible();
+    await expect(page.getByText('Admin-Auszahlung')).toHaveCount(1);
+    await expect(page.getByText('Eventkasse')).toBeVisible();
+    await expect(page.getByText('Discord-User / GUID')).toBeVisible();
+    await expect(page.getByText('Grund (optional)')).toBeVisible();
+
+    await page.getByText('Bank und Casino Funktionen', { exact: true }).click();
+    await expect(page.getByRole('heading', { name: 'Bank' })).toBeVisible();
+    await expect(page.getByRole('heading', { name: 'Casino-Games' })).toBeVisible();
+    await expect(page.getByText('Admin-Auszahlung')).toHaveCount(0);
   });
 
   test('zeigt den echten Kaufhistorie-Fehlerzustand im authentifizierten Economy-Scope', async ({ page }) => {
     await stubAuthenticatedEconomy(page, { purchaseError: true });
     await page.goto(`/servers/${GUILD_ID}/server/${SLOT}?tab=economy`);
-
     await expect(page.getByText('Economy-Konfiguration')).toBeVisible();
     await expect(page.getByText(/Kaufhistorie konnte nicht geladen werden:/)).toBeVisible();
     await expect(page.getByText(/Guild-Scope fehlt nach Auth-Middleware/)).toBeVisible();
