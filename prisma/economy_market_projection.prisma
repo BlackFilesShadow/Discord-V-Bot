@@ -1,17 +1,37 @@
 model EconomyMarketDiscordProjection {
-  id                 String   @id
+  id                 String   @id @default(cuid())
   guildId            String
   nitradoConnId      String
   catalogChannelId   String?
-  catalogMessageId   String?  @unique
   directBuyEnabled   Boolean  @default(false)
   directBuyChannelId String?
-  directBuyMessageId String?  @unique
   lastSyncedAt       DateTime?
   lastSyncError      String?  @db.VarChar(500)
   createdAt          DateTime @default(now())
   updatedAt          DateTime @updatedAt
+  messages           EconomyMarketDiscordMessage[]
 
   @@unique([guildId, nitradoConnId])
   @@index([guildId, nitradoConnId])
+}
+
+model EconomyMarketDiscordMessage {
+  id            String   @id @default(cuid())
+  projectionId  String
+  guildId       String
+  nitradoConnId String
+  kind          String   @db.VarChar(20)
+  pageIndex     Int?
+  listingId     String?
+  channelId     String
+  messageId     String   @unique
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  projection EconomyMarketDiscordProjection @relation(fields: [projectionId], references: [id], onDelete: Cascade)
+
+  @@unique([projectionId, kind, pageIndex])
+  @@unique([projectionId, kind, listingId])
+  @@index([guildId, nitradoConnId, kind])
+  @@index([listingId])
 }
