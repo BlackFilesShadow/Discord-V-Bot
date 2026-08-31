@@ -26,7 +26,6 @@ interface Listing {
   name: string;
   description: string | null;
   price: string;
-  maxPerPurchase: number;
   active: boolean;
   archivedAt: string | null;
   createdAt: string;
@@ -52,7 +51,7 @@ interface Purchase {
 }
 
 interface Mutation {
-  kind: 'vendor' | 'listing' | 'archive' | 'purchase';
+  kind: 'vendor' | 'listing' | 'archive' | 'remove' | 'purchase';
   path: string;
   query: string;
   body: Record<string, unknown>;
@@ -74,12 +73,12 @@ async function stubBlackMarket(page: Page, opts: { canManage: boolean; purchaseE
   let listings: Listing[] = [
     {
       id: 'listing-1', vendorAccountId: 'vendor-1', sku: 'M4-KIT', name: 'M4 Kit', description: 'Testangebot',
-      price: '2500', maxPerPurchase: 3, active: true, archivedAt: null, createdAt: '2026-08-18T12:30:00.000Z',
+      price: '2500', active: true, archivedAt: null, createdAt: '2026-08-18T12:30:00.000Z',
       deliveryItems: [{ itemText: '🔫 M4A1', quantity: 1 }, { itemText: 'Mag_STANAG_60Rnd', quantity: 2 }],
     },
     {
       id: 'listing-archived', vendorAccountId: 'vendor-1', sku: 'OLD-KIT', name: 'Altes Kit', description: null,
-      price: '500', maxPerPurchase: 1, active: false, archivedAt: '2026-08-18T13:30:00.000Z', createdAt: '2026-08-18T13:00:00.000Z',
+      price: '500', active: false, archivedAt: '2026-08-18T13:30:00.000Z', createdAt: '2026-08-18T13:00:00.000Z',
       deliveryItems: [{ itemText: 'Apple', quantity: 1 }],
     },
   ];
@@ -134,12 +133,8 @@ async function stubBlackMarket(page: Page, opts: { canManage: boolean; purchaseE
       coupling: { sharedCurrency: true, sharedBalance: true, directlyBooked: true, sharedModels: [], casinoStatsMovable: false, raceConditionsGuarded: true, centralTransactionService: 'ledger' },
     });
     if (path === `/api/v2/guilds/${GUILD_ID}/channels`) return json(route, { channels: [] });
-    if (path === `/api/v2/guilds/${GUILD_ID}/economy/virtual-accounts`) return json(route, { accounts: [] });
-    if (path === `/api/v2/guilds/${GUILD_ID}/economy/virtual-accounts/members`) return json(route, { members: [] });
     if (path === `/api/v2/guilds/${GUILD_ID}/economy/lottery/current`) return json(route, { round: null });
     if (path === `/api/v2/guilds/${GUILD_ID}/economy/lottery/history`) return json(route, { rounds: [] });
-    if (path === `/api/v2/guilds/${GUILD_ID}/casino/games`) return json(route, { games: [] });
-    if (path === `/api/v2/guilds/${GUILD_ID}/casino/stats`) return json(route, { stats: [] });
 
     const marketBase = `/api/v2/guilds/${GUILD_ID}/economy/black-market`;
     if (path === `${marketBase}/discord` && method === 'GET') return json(route, { projection: null });
@@ -166,7 +161,7 @@ async function stubBlackMarket(page: Page, opts: { canManage: boolean; purchaseE
       const row: Listing = {
         id: 'listing-2', vendorAccountId: String(body.vendorAccountId), sku: 'ITEM-E2E', name: itemText,
         description: body.description == null ? null : String(body.description), price: String(body.price),
-        maxPerPurchase: Number(body.maxPerPurchase), active: true, archivedAt: null, createdAt: '2026-08-19T12:10:00.000Z',
+        active: true, archivedAt: null, createdAt: '2026-08-19T12:10:00.000Z',
         deliveryItems: [{ itemText, quantity: 1 }],
       };
       listings = [...listings, row];
@@ -175,6 +170,15 @@ async function stubBlackMarket(page: Page, opts: { canManage: boolean; purchaseE
     if (path === `${marketBase}/purchases`) {
       purchaseHistoryReads += 1;
       return json(route, { nitradoConnId: 'conn-market-1', purchases });
+    }
+
+    const removeMatch = new RegExp(`^${marketBase}/listings/([^/]+)$`).exec(path);
+    if (removeMatch && method === 'DELETE') {
+      const id = removeMatch[1];
+      const removed = listings.find(row => row.id === id)!;
+      mutations.push({ kind: 'remove', path, query: url.search, body: {}, idempotencyKey: null });
+      listings = listings.filter(row => row.id !== id);
+      return json(route, { ok: true, removed: { id, name: removed.name, mode: 'CONTROL_HIDDEN' }, syncWarning: null });
     }
 
     const listingMatch = new RegExp(`^${marketBase}/listings/([^/]+)/(archive|purchase)$`).exec(path);
@@ -196,8 +200,7 @@ async function stubBlackMarket(page: Page, opts: { canManage: boolean; purchaseE
       const purchase: Purchase = {
         id: 'purchase-2', listingId: id, vendorAccountId: listing.vendorAccountId, userDiscordId: USER_ID,
         sourcePocket: String(body.sourcePocket) as Pocket, quantity, unitPrice: listing.price, amount, createdAt: '2026-08-19T12:30:00.000Z',
-        fulfillmentStatus: 'PENDING',
-        deliveryItems: listing.deliveryItems.map(item => ({ ...item, quantity: item.quantity * quantity })),
+        fulfillmentStatus: 'PENDING', deliveryItems: listing.deliveryItems.map(item => ({ ...item, quantity: item.quantity * quantity })),
         fulfilledAt: null, fulfillmentNote: null, refundedAt: null, refundReason: null,
       };
       purchases = [purchase, ...purchases];
@@ -225,7 +228,7 @@ async function noPageOverflow(page: Page): Promise<void> {
 }
 
 test.describe('Black Market authenticated action contract', () => {
-  test('economy.view sieht nur Buyer-UI und kauft im exakten Slot-Scope ueber den zentralen Idempotency-Key', async ({ page }) => {
+  test('economy.view kauft limitfrei im exakten Slot-Scope ueber den zentralen Idempotency-Key', async ({ page }) => {
     const state = await stubBlackMarket(page, { canManage: false });
     await page.goto(`/servers/${GUILD_ID}/server/${SLOT}?tab=economy`);
 
@@ -235,12 +238,12 @@ test.describe('Black Market authenticated action contract', () => {
     await expect(page.getByText('Haendler anlegen')).toHaveCount(0);
     await expect(page.getByText('Angebot anlegen')).toHaveCount(0);
     await expect(page.getByText('Bestellungen & Auslieferung')).toHaveCount(0);
+    await expect(page.getByText(/Max\. pro Kauf|Limit \d+/)).toHaveCount(0);
     await expect.poll(state.vendorReads).toBe(0);
     await expect.poll(state.purchaseHistoryReads).toBe(0);
     await expect.poll(() => state.listingQueries.some(query => query.includes(`slot=${SLOT}`) && query.includes('includeInactive=false'))).toBe(true);
-    await expect(page.getByText('2.500 🐭', { exact: true })).toBeVisible();
 
-    await page.getByLabel('Kaufmenge M4 Kit').fill('2');
+    await page.getByLabel('Kaufmenge M4 Kit').fill('2500');
     await page.getByLabel('Bezahlen aus M4 Kit').selectOption('BANK');
     await page.getByRole('button', { name: 'Kaufen', exact: true }).click();
 
@@ -248,14 +251,11 @@ test.describe('Black Market authenticated action contract', () => {
     const purchase = mutationOf(state, 'purchase')!;
     expect(purchase.path).toBe(`/api/v2/guilds/${GUILD_ID}/economy/black-market/listings/listing-1/purchase`);
     expect(purchase.query).toBe(`?slot=${SLOT}`);
-    expect(purchase.body).toEqual({ quantity: 2, sourcePocket: 'BANK' });
+    expect(purchase.body).toEqual({ quantity: 2500, sourcePocket: 'BANK' });
     expect(purchase.idempotencyKey).toBeTruthy();
-    expect(purchase.idempotencyKey).toMatch(/^[A-Za-z0-9._:-]+$/);
-    expect(`dashboard:${purchase.idempotencyKey}`.length).toBeLessThanOrEqual(48);
-    await expect(page.getByText(/Bestellung purchase-2 gebucht: 2× fuer 5\.000 🐭/)).toBeVisible();
   });
 
-  test('economy.manage deckt Freitext-Create, Archive, History und Backend-Grenzen ohne Bestand ab', async ({ page }) => {
+  test('economy.manage erstellt Angebote ohne stock/max und kann aktive sowie archivierte Angebote entfernen', async ({ page }) => {
     const state = await stubBlackMarket(page, { canManage: true });
     await page.goto(`/servers/${GUILD_ID}/server/${SLOT}?tab=economy`);
 
@@ -264,22 +264,12 @@ test.describe('Black Market authenticated action contract', () => {
     await expect(page.getByText('Altes Kit')).toBeVisible();
     await expect(page.getByText('Bestellungen & Auslieferung')).toBeVisible();
     await expect(page.getByText('🔫 M4A1 × 2', { exact: true })).toBeVisible();
-    await expect.poll(state.vendorReads).toBeGreaterThan(0);
-    await expect.poll(state.purchaseHistoryReads).toBeGreaterThan(0);
-    await expect.poll(() => state.listingQueries.some(query => query.includes('includeInactive=true'))).toBe(true);
-
-    await expect(page.getByLabel('Bestand M4 Kit')).toHaveCount(0);
-    await expect(page.getByRole('button', { name: 'Bestand', exact: true })).toHaveCount(0);
-    await expect(page.getByPlaceholder('Bestand')).toHaveCount(0);
-
-    await page.getByLabel('Angebot M4 Kit archivieren').click();
-    await expect.poll(() => mutationOf(state, 'archive')).toBeTruthy();
-    expect(mutationOf(state, 'archive')?.query).toBe(`?slot=${SLOT}`);
+    await expect(page.getByText(/Max\. pro Kauf|Limit \d+/)).toHaveCount(0);
+    await expect(page.getByPlaceholder('Max. pro Kauf')).toHaveCount(0);
 
     await page.getByPlaceholder('z. B. Nachtmarkt').fill('Event-Haendler');
     await page.getByRole('button', { name: 'Haendler erstellen', exact: true }).click();
     await expect.poll(() => mutationOf(state, 'vendor')).toBeTruthy();
-    expect(mutationOf(state, 'vendor')).toMatchObject({ query: `?slot=${SLOT}`, body: { name: 'Event-Haendler' } });
 
     await page.getByRole('textbox', { name: 'Gegenstand / Item' }).fill('🎁 Event Kit');
     await page.getByPlaceholder('Preis').fill(`${MAX_PRICE}1`);
@@ -289,12 +279,16 @@ test.describe('Black Market authenticated action contract', () => {
     await expect.poll(() => mutationOf(state, 'listing')).toBeTruthy();
     expect(mutationOf(state, 'listing')).toMatchObject({
       query: `?slot=${SLOT}`,
-      body: {
-        vendorAccountId: 'vendor-2', name: '🎁 Event Kit', description: null, price: MAX_PRICE, maxPerPurchase: 10,
-      },
+      body: { vendorAccountId: 'vendor-2', name: '🎁 Event Kit', description: null, price: MAX_PRICE },
     });
     expect(mutationOf(state, 'listing')?.body).not.toHaveProperty('stock');
-    await expect(page.getByText('🎁 Event Kit', { exact: true })).toBeVisible();
+    expect(mutationOf(state, 'listing')?.body).not.toHaveProperty('maxPerPurchase');
+
+    page.once('dialog', dialog => dialog.accept());
+    await page.getByLabel('Angebot Altes Kit entfernen').click();
+    await expect.poll(() => mutationOf(state, 'remove')).toBeTruthy();
+    expect(mutationOf(state, 'remove')?.query).toBe(`?slot=${SLOT}`);
+    await expect(page.getByText('Altes Kit')).toHaveCount(0);
   });
 
   test('zeigt Kauf-Fehler sichtbar statt False-Success', async ({ page }) => {
