@@ -41,21 +41,18 @@ function purchaseKey(listingId: string, external: string): string {
   return `market:${listingId}:${cleanExternalKey(external)}`;
 }
 
-async function existingPurchaseByKey(key: string): Promise<MarketPurchaseView | null> {
+async function existingPurchaseByKey(
+  guildId: GuildId,
+  nitradoConnId: NitradoConnId,
+  key: string,
+): Promise<MarketPurchaseView | null> {
   const rows = await rawDb().$queryRawUnsafe<Array<{ id: string }>>(
-    'SELECT "id" FROM "EconomyMarketPurchase" WHERE "idempotencyKey"=$1 LIMIT 1',
+    'SELECT "id" FROM "EconomyMarketPurchase" WHERE "idempotencyKey"=$1 AND "guildId"=$2 AND "nitradoConnId"=$3 LIMIT 1',
     key,
+    String(guildId),
+    String(nitradoConnId),
   );
-  return rows[0] ? getMarketPurchaseFromId(rows[0].id) : null;
-
-  async function getMarketPurchaseFromId(id: string): Promise<MarketPurchaseView | null> {
-    const scope = await rawDb().$queryRawUnsafe<Array<{ guildId: string; nitradoConnId: string }>>(
-      'SELECT "guildId", "nitradoConnId" FROM "EconomyMarketPurchase" WHERE "id"=$1 LIMIT 1',
-      id,
-    );
-    const row = scope[0];
-    return row ? getMarketPurchase(row.guildId as GuildId, row.nitradoConnId as NitradoConnId, id) : null;
-  }
+  return rows[0] ? getMarketPurchase(guildId, nitradoConnId, rows[0].id) : null;
 }
 
 function assertReplay(row: MarketPurchaseView, args: {
@@ -76,12 +73,12 @@ function assertReplay(row: MarketPurchaseView, args: {
 }
 
 /**
- * Inventoryless market purchase.
+ * Mengenunabhaengiger Schwarzmarkt-Kauf.
  *
- * Offers are availability-by-activation, not a quantity stock. The purchase
- * still locks the listing, verifies price/vendor/max-per-purchase, debits the
- * buyer, credits the vendor and creates purchase+fulfillment in one database
- * transaction. No stock check/decrement exists in this path.
+ * Angebote sind durch active/archivedAt verfuegbar, nicht durch einen Bestand.
+ * Der Kauf sperrt das Listing weiterhin innerhalb derselben DB-Transaktion,
+ * prueft Preis/Vendor/Kauflimit, bucht User -> Vendor und erzeugt Bestellung +
+ * Fulfillment atomar. Es gibt bewusst keine Bestandspruefung oder -mutation.
  */
 export async function buyInventorylessMarketListing(args: {
   guildId: GuildId;
@@ -99,7 +96,7 @@ export async function buyInventorylessMarketListing(args: {
   if (sourcePocket !== 'WALLET' && sourcePocket !== 'BANK') throw new Error('Quellkonto ungueltig.');
   const key = purchaseKey(args.listingId, args.idempotencyKey);
 
-  const replay = await existingPurchaseByKey(key);
+  const replay = await existingPurchaseByKey(args.guildId, args.nitradoConnId, key);
   if (replay) {
     assertReplay(replay, { ...args, sourcePocket });
     const listing = await getMarketListing(args.guildId, args.nitradoConnId, args.listingId);
@@ -166,7 +163,7 @@ export async function buyInventorylessMarketListing(args: {
     },
   });
 
-  const purchase = await existingPurchaseByKey(key);
+  const purchase = await existingPurchaseByKey(args.guildId, args.nitradoConnId, key);
   const listing = await getMarketListing(args.guildId, args.nitradoConnId, args.listingId);
   if (!purchase || !listing) throw new Error('Schwarzmarkt-Kauf konnte nicht vollstaendig gelesen werden.');
   assertReplay(purchase, { ...args, sourcePocket });
