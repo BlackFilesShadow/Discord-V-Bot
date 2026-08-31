@@ -142,7 +142,17 @@ async function stubEconomy(page: Page, opts: { payoutError?: boolean } = {}) {
     }
     if (path === `/api/v2/guilds/${GUILD_ID}/economy/virtual-accounts/control/accounts/${DELETE_ACCOUNT}` && method === 'DELETE') {
       mutations.push({ method, path, query: url.search, body: null });
-      return json(route, { ok: true, deleted: { id: DELETE_ACCOUNT, name: 'Löschbare Kasse' } });
+      return json(route, {
+        ok: true,
+        deleted: {
+          id: DELETE_ACCOUNT,
+          name: 'Löschbare Kasse',
+          mode: 'HARD_DELETED',
+          walletRemoved: '0',
+          bankRemoved: '0',
+          domainPreserved: false,
+        },
+      });
     }
     if (path === `/api/v2/guilds/${GUILD_ID}/economy/virtual-accounts/${ZERO_ACCOUNT}/entries` && method === 'GET') return json(route, {
       entries: [{ id: 'entry-1', delta: '250', entryType: 'ADMIN', sourcePocket: null, actorDiscordId: USER_ID, userDiscordId: null, reason: 'Audit Test', createdAt: '2026-08-19T10:05:00.000Z' }],
@@ -177,7 +187,7 @@ function mutation(mutations: Mutation[], path: string) {
 }
 
 async function gotoVirtualAccounts(page: Page): Promise<void> {
-  await page.goto(`/servers/${GUILD_ID}/server/${SLOT}?tab=economy`);
+  await page.goto(`/servers/${GUILD_ID}/server/${SLOT}?tab=virtual-accounts`);
   await expect(page.getByRole('heading', { name: 'Virtuelle Konten' })).toBeVisible();
 }
 
@@ -188,7 +198,7 @@ function payoutPanel(page: Page) {
 
 async function selectPayoutMember(page: Page): Promise<void> {
   const payout = payoutPanel(page);
-  await payout.getByRole('button', { name: /Guild-Mitglied suchen/ }).click();
+  await payout.getByRole('button', { name: /Discord-User suchen/ }).click();
   await expect(page.getByRole('option', { name: /Alice/ })).toBeVisible();
   await page.getByRole('option', { name: /Alice/ }).click();
 }
@@ -251,13 +261,13 @@ test.describe('Authenticated virtual-account actions', () => {
     await row.getByRole('button', { name: 'Löschen', exact: true }).click();
     expect(mutation(mutations, deletePath)).toBeUndefined();
     await expect(row.getByRole('button', { name: 'Wirklich löschen?', exact: true })).toBeVisible();
-    await expect(page.getByText(/Beim Löschen werden Wallet und Bank atomar auf 0 gesetzt\./)).toBeVisible();
-    await expect(page.getByText(/Dauerhaftes Löschen bleibt nur ohne Buchungs- oder geschützte Systemhistorie möglich\./)).toBeVisible();
+    await expect(page.getByText(/vorhandenes Wallet-\/Bankguthaben kontrolliert auf 0 gesetzt und historisch protokolliert/)).toBeVisible();
+    await expect(page.getByText(/Lotterie-\/Markt-Systemkonten behalten ihre Fachlogik und Historie unverändert/)).toBeVisible();
 
     await row.getByRole('button', { name: 'Wirklich löschen?', exact: true }).click();
     await expect.poll(() => mutation(mutations, deletePath)).toBeTruthy();
     expect(mutation(mutations, deletePath)).toMatchObject({ method: 'DELETE', query: `?slot=${SLOT}`, body: null });
-    await expect(page.getByText('Konto „Löschbare Kasse“ wurde dauerhaft gelöscht.')).toBeVisible();
+    await expect(page.getByText(/Das leere Konto wurde dauerhaft gelöscht/)).toBeVisible();
   });
 
   test('Payout nutzt kanonische User-GUID, beide Pockets, Idempotency und exakten Slot-Scope', async ({ page }) => {
@@ -270,7 +280,7 @@ test.describe('Authenticated virtual-account actions', () => {
     await payout.getByText('Betrag in Konto-Währung').locator('..').locator('input').fill('250');
     await payout.getByText('Quelle', { exact: true }).locator('..').locator('select').selectOption('BANK');
     await payout.getByText('Ziel beim Spieler').locator('..').locator('select').selectOption('BANK');
-    await payout.getByPlaceholder('Mindestens 3 Zeichen').fill('Turnier Refund');
+    await payout.getByPlaceholder('Optional').fill('Turnier Refund');
     await payout.getByRole('button', { name: 'Auszahlen', exact: true }).click();
 
     const path = `/api/v2/guilds/${GUILD_ID}/economy/virtual-accounts/${FUNDED_ACCOUNT}/payout`;
@@ -296,7 +306,7 @@ test.describe('Authenticated virtual-account actions', () => {
     await payout.getByText('Konto', { exact: true }).locator('..').locator('select').selectOption(FUNDED_ACCOUNT);
     await selectPayoutMember(page);
     await payout.getByText('Betrag in Konto-Währung').locator('..').locator('input').fill('250');
-    await payout.getByPlaceholder('Mindestens 3 Zeichen').fill('Turnier Refund');
+    await payout.getByPlaceholder('Optional').fill('Turnier Refund');
     await payout.getByRole('button', { name: 'Auszahlen', exact: true }).click();
 
     await expect(page.getByText(/PAYOUT_TARGET_STALE/)).toBeVisible();

@@ -19,7 +19,7 @@ import { EconomyScopePanel } from '@/components/economy/EconomyScopePanel';
 import { KillfeedTab } from '@/components/KillfeedTab';
 import { Settings, Shield, Coins, Link as LinkIcon, Trash2, Plus, Check, X, Banknote, Dice5, RefreshCw, Crosshair } from 'lucide-react';
 
-type Tab = 'settings' | 'whitelist' | 'economy' | 'links' | 'killfeed';
+type Tab = 'settings' | 'whitelist' | 'economy' | 'links' | 'virtual-accounts' | 'bank-casino' | 'killfeed';
 
 interface ServerSettingsState {
   whitelistActive: boolean;
@@ -80,12 +80,19 @@ export default function ServerSlot() {
   const toast = useToast();
   const initialTab = ((): Tab => {
     const t = searchParams.get('tab');
-    if (t === 'settings' || t === 'whitelist' || t === 'economy' || t === 'links' || t === 'killfeed') return t;
+    if (
+      t === 'settings'
+      || t === 'whitelist'
+      || t === 'economy'
+      || t === 'links'
+      || t === 'virtual-accounts'
+      || t === 'bank-casino'
+      || t === 'killfeed'
+    ) return t;
     return 'settings';
   })();
   const [tab, setTab] = useState<Tab>(initialTab);
 
-  // Tab-Wechsel in URL persistieren (Deep-Link, Back-Button).
   useEffect(() => {
     if (searchParams.get('tab') !== tab) {
       const next = new URLSearchParams(searchParams);
@@ -146,6 +153,8 @@ export default function ServerSlot() {
   );
   const currentKillfeedSlots = (dashboardMeta.data?.slots ?? []).filter(row => String(row.slot) === slot);
 
+  // Page 1 bleibt absichtlich unverändert. Die beiden neuen Einträge trennen nur
+  // die bisher im Economy-Panel eingebetteten Oberflächen auf Page 2 auf.
   const pageOneTabs = [
     ['settings', 'Settings', Settings],
     ['whitelist', 'Whitelist', Shield],
@@ -153,6 +162,8 @@ export default function ServerSlot() {
     ['links', 'Economy-Links', LinkIcon],
   ] as const;
   const pageTwoTabs = [
+    ['virtual-accounts', 'Virtuelle Konten', Banknote],
+    ['bank-casino', 'Bank und Casino Funktionen', Dice5],
     ['killfeed', 'Killfeed & ADM', Crosshair],
   ] as const;
   const tabs = [...pageOneTabs, ...pageTwoTabs] as const;
@@ -185,7 +196,6 @@ export default function ServerSlot() {
   return (
     <Shell title={`Slot #${slot}`} back={`/servers/${guildId}`} sidebar={sidebar}>
       <div className="max-w-3xl mx-auto space-y-6">
-        {/* Mobile: horizontale Tab-Leiste, da die Sidebar nur hinterm Menue liegt. */}
         <nav
           className="md:hidden -mx-4 px-4 flex gap-2 overflow-x-auto pb-1"
           aria-label="Slot-Funktionen"
@@ -204,6 +214,7 @@ export default function ServerSlot() {
             </button>
           ))}
         </nav>
+
         {tab === 'settings' && (
           <Card>
             <CardHeader><CardTitle>Server-Toggles</CardTitle></CardHeader>
@@ -220,32 +231,15 @@ export default function ServerSlot() {
             )}
             {settings.data && (
               <div className="space-y-4">
-                <Switch
-                  checked={settings.data.whitelistActive}
-                  onChange={v => updateSettings.mutate({ whitelistActive: v })}
-                  label="Whitelist aktiv"
-                  disabled={updateSettings.isPending}
-                />
-                <Switch
-                  checked={settings.data.economyActive}
-                  onChange={v => updateSettings.mutate({ economyActive: v })}
-                  label="Economy aktiv"
-                  disabled={updateSettings.isPending}
-                />
-                <Switch
-                  checked={settings.data.permaOnly}
-                  onChange={v => updateSettings.mutate({ permaOnly: v })}
-                  label="Perma-Only Modus"
-                  disabled={updateSettings.isPending}
-                />
+                <Switch checked={settings.data.whitelistActive} onChange={v => updateSettings.mutate({ whitelistActive: v })} label="Whitelist aktiv" disabled={updateSettings.isPending} />
+                <Switch checked={settings.data.economyActive} onChange={v => updateSettings.mutate({ economyActive: v })} label="Economy aktiv" disabled={updateSettings.isPending} />
+                <Switch checked={settings.data.permaOnly} onChange={v => updateSettings.mutate({ permaOnly: v })} label="Perma-Only Modus" disabled={updateSettings.isPending} />
               </div>
             )}
           </Card>
         )}
 
-        {tab === 'whitelist' && guildId && slot && (
-          <WhitelistPanel guildId={guildId} slot={slot} />
-        )}
+        {tab === 'whitelist' && guildId && slot && <WhitelistPanel guildId={guildId} slot={slot} />}
 
         {tab === 'economy' && guildId && (
           <EconomyTab
@@ -260,8 +254,23 @@ export default function ServerSlot() {
           />
         )}
 
-        {tab === 'links' && guildId && slot && (
-          <EconomyLinksPanel guildId={guildId} slot={slot} />
+        {tab === 'links' && guildId && slot && <EconomyLinksPanel guildId={guildId} slot={slot} />}
+
+        {tab === 'virtual-accounts' && guildId && slot && (
+          <VirtualAccountsPanel guildId={guildId} slot={slot} />
+        )}
+
+        {tab === 'bank-casino' && guildId && slot && (
+          <BankCasinoArea
+            guildId={guildId}
+            slot={slot}
+            data={economy.data}
+            loading={economy.isLoading}
+            onSave={patch => updateEconomy.mutate(patch)}
+            pending={updateEconomy.isPending}
+            error={economy.isError ? (economy.error as Error).message : null}
+            saveError={updateEconomy.isError ? (updateEconomy.error as Error).message : null}
+          />
         )}
 
         {tab === 'killfeed' && guildId && slot && (
@@ -282,6 +291,7 @@ export default function ServerSlot() {
     </Shell>
   );
 }
+
 // ----------------------------------------------------------------------------
 // Whitelist
 // ----------------------------------------------------------------------------
@@ -385,9 +395,7 @@ function WhitelistPanel({ guildId, slot }: { guildId: string; slot: string }) {
       }
       void qc.invalidateQueries({ queryKey: ['whitelist', guildId, slot] });
     },
-    onError: (err: Error) => {
-      setSyncResult(`Fehler: ${err.message}`);
-    },
+    onError: (err: Error) => setSyncResult(`Fehler: ${err.message}`),
   });
 
   return (
@@ -397,167 +405,134 @@ function WhitelistPanel({ guildId, slot }: { guildId: string; slot: string }) {
       </div>
 
       <div className="space-y-6">
-      <Card>
-        <CardHeader><CardTitle>Whitelist (Spielername)</CardTitle></CardHeader>
-        <div className="flex gap-2 mb-4">
-          <Input
-            placeholder="Spielername (1-64 Zeichen)"
-            value={newId}
-            onChange={e => setNewId(e.target.value)}
-            maxLength={64}
-          />
-          <Button
-            disabled={!NAME_RE.test(newId.trim()) || add.isPending}
-            onClick={() => add.mutate(newId.trim())}
-          >
-            <Plus className="h-3 w-3 mr-1" /> Hinzufuegen
-          </Button>
-        </div>
-        {add.error && <p className="text-danger text-xs mb-2">{(add.error as Error).message}</p>}
-
-        {entries.isLoading && <p className="text-muted">Lade…</p>}
-        <div className="space-y-1 max-h-72 overflow-y-auto pr-1">
-          {entries.data?.entries.length === 0 && <p className="text-muted text-sm">Keine Eintraege.</p>}
-          {entries.data?.entries.map(e => (
-            <div key={e.gameId} className="flex items-center justify-between bg-bg-elev rounded-md px-3 py-1.5 border border-border text-sm">
-              <div>
-                <span className="font-mono text-white">{e.gameId}</span>
-                <span className="text-muted text-xs ml-3">{e.source} · {new Date(e.approvedAt).toLocaleString()}</span>
-              </div>
-              <Button size="sm" variant="danger" onClick={() => remove.mutate(e.gameId)} loading={remove.isPending} aria-label={`Whitelist-Eintrag ${e.gameId} entfernen`}>
-                <Trash2 className="h-3 w-3" />
-              </Button>
-            </div>
-          ))}
-        </div>
-
-        <div className="mt-6 pt-4 border-t border-border space-y-3">
-          <div className="flex items-center gap-2">
-            <RefreshCw className="h-4 w-4 text-muted" />
-            <h4 className="text-sm font-semibold text-white">Synchronisation DB &harr; Nitrado</h4>
+        <Card>
+          <CardHeader><CardTitle>Whitelist (Spielername)</CardTitle></CardHeader>
+          <div className="flex gap-2 mb-4">
+            <Input placeholder="Spielername (1-64 Zeichen)" value={newId} onChange={e => setNewId(e.target.value)} maxLength={64} />
+            <Button disabled={!NAME_RE.test(newId.trim()) || add.isPending} onClick={() => add.mutate(newId.trim())}>
+              <Plus className="h-3 w-3 mr-1" /> Hinzufuegen
+            </Button>
           </div>
-          <div className="flex flex-wrap items-center gap-2 text-xs">
-            <span className="text-muted">Richtung:</span>
-            {(['merge', 'pull', 'push'] as const).map(d => (
-              <button
-                key={d}
-                type="button"
-                onClick={() => setSyncDirection(d)}
-                className={`px-2 py-1 rounded border ${syncDirection === d ? 'bg-bg-elev border-primary text-white' : 'border-border text-muted hover:text-white'}`}
-              >
-                {d === 'merge' ? 'Merge (beide vereinen)' : d === 'pull' ? 'Pull (Nitrado -> DB)' : 'Push (DB -> Nitrado)'}
-              </button>
+          {add.error && <p className="text-danger text-xs mb-2">{(add.error as Error).message}</p>}
+
+          {entries.isLoading && <p className="text-muted">Lade…</p>}
+          <div className="space-y-1 max-h-72 overflow-y-auto pr-1">
+            {entries.data?.entries.length === 0 && <p className="text-muted text-sm">Keine Eintraege.</p>}
+            {entries.data?.entries.map(e => (
+              <div key={e.gameId} className="flex items-center justify-between bg-bg-elev rounded-md px-3 py-1.5 border border-border text-sm">
+                <div>
+                  <span className="font-mono text-white">{e.gameId}</span>
+                  <span className="text-muted text-xs ml-3">{e.source} · {new Date(e.approvedAt).toLocaleString()}</span>
+                </div>
+                <Button size="sm" variant="danger" onClick={() => remove.mutate(e.gameId)} loading={remove.isPending} aria-label={`Whitelist-Eintrag ${e.gameId} entfernen`}>
+                  <Trash2 className="h-3 w-3" />
+                </Button>
+              </div>
             ))}
           </div>
-          <div className="flex flex-wrap gap-2">
-            <Button
-              size="sm"
-              variant="ghost"
-              disabled={sync.isPending}
-              onClick={() => { setSyncResult(null); sync.mutate({ mode: 'preview', direction: syncDirection }); }}
-            >
-              Vorschau
-            </Button>
-            <Button
-              size="sm"
-              disabled={sync.isPending}
-              onClick={() => {
-                let reason: string | undefined;
-                if (syncDirection === 'push' || syncDirection === 'merge') {
-                  const r = window.prompt(`Begruendung fuer Nitrado-Sync (${syncDirection}):`, '');
-                  if (r === null) return;
-                  if (r.trim().length < 3) { setSyncResult('Begruendung erforderlich (min. 3 Zeichen).'); return; }
-                  reason = r.trim();
-                } else if (!confirm(`Synchronisation (${syncDirection}) jetzt ausfuehren?`)) {
-                  return;
-                }
-                setSyncResult(null);
-                sync.mutate({ mode: 'apply', direction: syncDirection, reason });
-              }}
-            >
-              Anwenden
-            </Button>
-            {sync.isPending && <span className="text-xs text-muted self-center">Laeuft…</span>}
-          </div>
-          {syncResult && <p className="text-xs text-ok">{syncResult}</p>}
-          {syncDiff && (
-            <div className="bg-bg-elev rounded-md border border-border p-3 text-xs space-y-2">
-              <div className="flex flex-wrap gap-3 text-muted">
-                <span>Lokal: <span className="text-white font-mono">{syncDiff.counts.local}</span></span>
-                <span>Nitrado: <span className="text-white font-mono">{syncDiff.counts.remote}</span></span>
-                <span>Gemeinsam: <span className="text-white font-mono">{syncDiff.counts.both}</span></span>
-                <span>Nur lokal: <span className="text-warn font-mono">{syncDiff.counts.onlyLocal}</span></span>
-                <span>Nur Nitrado: <span className="text-warn font-mono">{syncDiff.counts.onlyRemote}</span></span>
-              </div>
-              {syncDiff.onlyLocal.length > 0 && (
-                <div>
-                  <div className="text-muted mb-1">Nur in DB ({syncDiff.onlyLocal.length}):</div>
-                  <div className="flex flex-wrap gap-1 max-h-32 overflow-y-auto">
-                    {syncDiff.onlyLocal.slice(0, 50).map(n => (
-                      <span key={`l-${n}`} className="px-1.5 py-0.5 rounded bg-bg border border-border font-mono">{n}</span>
-                    ))}
-                    {syncDiff.onlyLocal.length > 50 && <span className="text-muted">+{syncDiff.onlyLocal.length - 50} weitere…</span>}
-                  </div>
-                </div>
-              )}
-              {syncDiff.onlyRemote.length > 0 && (
-                <div>
-                  <div className="text-muted mb-1">Nur auf Nitrado ({syncDiff.onlyRemote.length}):</div>
-                  <div className="flex flex-wrap gap-1 max-h-32 overflow-y-auto">
-                    {syncDiff.onlyRemote.slice(0, 50).map(n => (
-                      <span key={`r-${n}`} className="px-1.5 py-0.5 rounded bg-bg border border-border font-mono">{n}</span>
-                    ))}
-                    {syncDiff.onlyRemote.length > 50 && <span className="text-muted">+{syncDiff.onlyRemote.length - 50} weitere…</span>}
-                  </div>
-                </div>
-              )}
-            </div>
-          )}
-        </div>
-      </Card>
 
-      <Card>
-        <CardHeader><CardTitle>Pending-Requests</CardTitle></CardHeader>
-        {requests.isLoading && <p className="text-muted">Lade…</p>}
-        <div className="space-y-2 max-h-96 overflow-y-auto pr-1">
-          {requests.data?.requests.length === 0 && <p className="text-muted text-sm">Keine offenen Requests.</p>}
-          {requests.data?.requests.map(r => (
-            <div key={r.id} className="bg-bg-elev rounded-md border border-border p-3 space-y-2">
-              <div className="flex items-center justify-between text-sm">
-                <div>
-                  <p className="text-white font-mono">{r.gameId}</p>
-                  <p className="text-muted text-xs">von {r.requesterDiscordId} · {new Date(r.createdAt).toLocaleString()}</p>
+          <div className="mt-6 pt-4 border-t border-border space-y-3">
+            <div className="flex items-center gap-2">
+              <RefreshCw className="h-4 w-4 text-muted" />
+              <h4 className="text-sm font-semibold text-white">Synchronisation DB &harr; Nitrado</h4>
+            </div>
+            <div className="flex flex-wrap items-center gap-2 text-xs">
+              <span className="text-muted">Richtung:</span>
+              {(['merge', 'pull', 'push'] as const).map(d => (
+                <button
+                  key={d}
+                  type="button"
+                  onClick={() => setSyncDirection(d)}
+                  className={`px-2 py-1 rounded border ${syncDirection === d ? 'bg-bg-elev border-primary text-white' : 'border-border text-muted hover:text-white'}`}
+                >
+                  {d === 'merge' ? 'Merge (beide vereinen)' : d === 'pull' ? 'Pull (Nitrado -> DB)' : 'Push (DB -> Nitrado)'}
+                </button>
+              ))}
+            </div>
+            <div className="flex flex-wrap gap-2">
+              <Button size="sm" variant="ghost" disabled={sync.isPending} onClick={() => { setSyncResult(null); sync.mutate({ mode: 'preview', direction: syncDirection }); }}>
+                Vorschau
+              </Button>
+              <Button
+                size="sm"
+                disabled={sync.isPending}
+                onClick={() => {
+                  let reason: string | undefined;
+                  if (syncDirection === 'push' || syncDirection === 'merge') {
+                    const r = window.prompt(`Begruendung fuer Nitrado-Sync (${syncDirection}):`, '');
+                    if (r === null) return;
+                    if (r.trim().length < 3) { setSyncResult('Begruendung erforderlich (min. 3 Zeichen).'); return; }
+                    reason = r.trim();
+                  } else if (!confirm(`Synchronisation (${syncDirection}) jetzt ausfuehren?`)) {
+                    return;
+                  }
+                  setSyncResult(null);
+                  sync.mutate({ mode: 'apply', direction: syncDirection, reason });
+                }}
+              >
+                Anwenden
+              </Button>
+              {sync.isPending && <span className="text-xs text-muted self-center">Laeuft…</span>}
+            </div>
+            {syncResult && <p className="text-xs text-ok">{syncResult}</p>}
+            {syncDiff && (
+              <div className="bg-bg-elev rounded-md border border-border p-3 text-xs space-y-2">
+                <div className="flex flex-wrap gap-3 text-muted">
+                  <span>Lokal: <span className="text-white font-mono">{syncDiff.counts.local}</span></span>
+                  <span>Nitrado: <span className="text-white font-mono">{syncDiff.counts.remote}</span></span>
+                  <span>Gemeinsam: <span className="text-white font-mono">{syncDiff.counts.both}</span></span>
+                  <span>Nur lokal: <span className="text-warn font-mono">{syncDiff.counts.onlyLocal}</span></span>
+                  <span>Nur Nitrado: <span className="text-warn font-mono">{syncDiff.counts.onlyRemote}</span></span>
+                </div>
+                {syncDiff.onlyLocal.length > 0 && (
+                  <div>
+                    <div className="text-muted mb-1">Nur in DB ({syncDiff.onlyLocal.length}):</div>
+                    <div className="flex flex-wrap gap-1 max-h-32 overflow-y-auto">
+                      {syncDiff.onlyLocal.slice(0, 50).map(n => <span key={`l-${n}`} className="px-1.5 py-0.5 rounded bg-bg border border-border font-mono">{n}</span>)}
+                      {syncDiff.onlyLocal.length > 50 && <span className="text-muted">+{syncDiff.onlyLocal.length - 50} weitere…</span>}
+                    </div>
+                  </div>
+                )}
+                {syncDiff.onlyRemote.length > 0 && (
+                  <div>
+                    <div className="text-muted mb-1">Nur auf Nitrado ({syncDiff.onlyRemote.length}):</div>
+                    <div className="flex flex-wrap gap-1 max-h-32 overflow-y-auto">
+                      {syncDiff.onlyRemote.slice(0, 50).map(n => <span key={`r-${n}`} className="px-1.5 py-0.5 rounded bg-bg border border-border font-mono">{n}</span>)}
+                      {syncDiff.onlyRemote.length > 50 && <span className="text-muted">+{syncDiff.onlyRemote.length - 50} weitere…</span>}
+                    </div>
+                  </div>
+                )}
+              </div>
+            )}
+          </div>
+        </Card>
+
+        <Card>
+          <CardHeader><CardTitle>Pending-Requests</CardTitle></CardHeader>
+          {requests.isLoading && <p className="text-muted">Lade…</p>}
+          <div className="space-y-2 max-h-96 overflow-y-auto pr-1">
+            {requests.data?.requests.length === 0 && <p className="text-muted text-sm">Keine offenen Requests.</p>}
+            {requests.data?.requests.map(r => (
+              <div key={r.id} className="bg-bg-elev rounded-md border border-border p-3 space-y-2">
+                <div className="flex items-center justify-between text-sm">
+                  <div>
+                    <p className="text-white font-mono">{r.gameId}</p>
+                    <p className="text-muted text-xs">von {r.requesterDiscordId} · {new Date(r.createdAt).toLocaleString()}</p>
+                  </div>
+                </div>
+                <div className="flex gap-2">
+                  <Input placeholder="Begruendung (optional)" value={reasonById[r.id] ?? ''} onChange={e => setReasonById(s => ({ ...s, [r.id]: e.target.value }))} maxLength={500} />
+                  <Button size="sm" disabled={decide.isPending} aria-label={`Whitelist-Anfrage ${r.gameId} genehmigen`} onClick={() => decide.mutate({ id: r.id, approve: true, reason: reasonById[r.id] || undefined })}>
+                    <Check className="h-3 w-3" />
+                  </Button>
+                  <Button size="sm" variant="danger" disabled={decide.isPending} aria-label={`Whitelist-Anfrage ${r.gameId} ablehnen`} onClick={() => decide.mutate({ id: r.id, approve: false, reason: reasonById[r.id] || undefined })}>
+                    <X className="h-3 w-3" />
+                  </Button>
                 </div>
               </div>
-              <div className="flex gap-2">
-                <Input
-                  placeholder="Begruendung (optional)"
-                  value={reasonById[r.id] ?? ''}
-                  onChange={e => setReasonById(s => ({ ...s, [r.id]: e.target.value }))}
-                  maxLength={500}
-                />
-                <Button
-                  size="sm"
-                  disabled={decide.isPending}
-                  aria-label={`Whitelist-Anfrage ${r.gameId} genehmigen`}
-                  onClick={() => decide.mutate({ id: r.id, approve: true, reason: reasonById[r.id] || undefined })}
-                >
-                  <Check className="h-3 w-3" />
-                </Button>
-                <Button
-                  size="sm"
-                  variant="danger"
-                  disabled={decide.isPending}
-                  aria-label={`Whitelist-Anfrage ${r.gameId} ablehnen`}
-                  onClick={() => decide.mutate({ id: r.id, approve: false, reason: reasonById[r.id] || undefined })}
-                >
-                  <X className="h-3 w-3" />
-                </Button>
-              </div>
-            </div>
-          ))}
-        </div>
-      </Card>
+            ))}
+          </div>
+        </Card>
       </div>
     </div>
   );
@@ -624,7 +599,7 @@ function WhitelistChannelsCard({ guildId, slot }: { guildId: string; slot: strin
 
   const channelsForbidden = channels.isError;
   const channelControlsDisabled = channelsForbidden || cfg.isFetching || cfg.isError;
-  const opts = (channels.data?.channels ?? []).filter(c => c.type === 0 || c.type === 5); // Text + Announcement
+  const opts = (channels.data?.channels ?? []).filter(c => c.type === 0 || c.type === 5);
   const updateDraft = (patch: Partial<WhitelistChannelsState>) => {
     setDraftDirty(true);
     setDraft(prev => ({ ...prev, ...patch }));
@@ -633,50 +608,14 @@ function WhitelistChannelsCard({ guildId, slot }: { guildId: string; slot: strin
   return (
     <Card>
       <CardHeader><CardTitle>Kanal-Integration (Whitelist)</CardTitle></CardHeader>
-      {channelsForbidden && (
-        <p className="text-xs text-warn mb-3">
-          Channel-Liste nicht verfuegbar (nur Owner kann Kanaele waehlen).
-        </p>
-      )}
-      {cfg.isLoading && (
-        <p className="text-xs text-muted mb-3">Whitelist-Kanal-Konfiguration wird geladen…</p>
-      )}
-      {cfg.isError && (
-        <p className="text-xs text-danger mb-3">Whitelist-Kanal-Konfiguration konnte nicht geladen werden.</p>
-      )}
+      {channelsForbidden && <p className="text-xs text-warn mb-3">Channel-Liste nicht verfuegbar (nur Owner kann Kanaele waehlen).</p>}
+      {cfg.isLoading && <p className="text-xs text-muted mb-3">Whitelist-Kanal-Konfiguration wird geladen…</p>}
+      {cfg.isError && <p className="text-xs text-danger mb-3">Whitelist-Kanal-Konfiguration konnte nicht geladen werden.</p>}
       <div className="space-y-4">
-        <ChannelPicker
-          label="Info-Kanal (1× Command-Erklaerung als Embed)"
-          help="Sobald ein Kanal gewaehlt wird, postet der Bot dort automatisch genau ein Embed mit der /whitelist-Anleitung. Wechselst du den Kanal, wird das Embed neu gepostet."
-          value={draft.infoChannelId}
-          onChange={v => updateDraft({ infoChannelId: v })}
-          options={opts}
-          forbidden={channelControlsDisabled}
-        />
-        <ChannelPicker
-          label="Whitelist-Annahme-Kanal (Approval mit Buttons)"
-          help="Hier landen Anfragen als Embed mit Annehmen/Ablehnen-Buttons. Nur Mitglieder mit 'Server verwalten' koennen entscheiden."
-          value={draft.requestChannelId}
-          onChange={v => updateDraft({ requestChannelId: v })}
-          options={opts}
-          forbidden={channelControlsDisabled}
-        />
-        <ChannelPicker
-          label="Log-Kanal: ANGENOMMEN"
-          help="Jede Annahme wird strikt nur in diesem Kanal protokolliert (mit Antragsteller, Spielername, Admin)."
-          value={draft.approveLogChannelId}
-          onChange={v => updateDraft({ approveLogChannelId: v })}
-          options={opts}
-          forbidden={channelControlsDisabled}
-        />
-        <ChannelPicker
-          label="Log-Kanal: ABGELEHNT"
-          help="Jede Ablehnung wird strikt nur in diesem Kanal protokolliert."
-          value={draft.denyLogChannelId}
-          onChange={v => updateDraft({ denyLogChannelId: v })}
-          options={opts}
-          forbidden={channelControlsDisabled}
-        />
+        <ChannelPicker label="Info-Kanal (1× Command-Erklaerung als Embed)" help="Sobald ein Kanal gewaehlt wird, postet der Bot dort automatisch genau ein Embed mit der /whitelist-Anleitung. Wechselst du den Kanal, wird das Embed neu gepostet." value={draft.infoChannelId} onChange={v => updateDraft({ infoChannelId: v })} options={opts} forbidden={channelControlsDisabled} />
+        <ChannelPicker label="Whitelist-Annahme-Kanal (Approval mit Buttons)" help="Hier landen Anfragen als Embed mit Annehmen/Ablehnen-Buttons. Nur Mitglieder mit 'Server verwalten' koennen entscheiden." value={draft.requestChannelId} onChange={v => updateDraft({ requestChannelId: v })} options={opts} forbidden={channelControlsDisabled} />
+        <ChannelPicker label="Log-Kanal: ANGENOMMEN" help="Jede Annahme wird strikt nur in diesem Kanal protokolliert (mit Antragsteller, Spielername, Admin)." value={draft.approveLogChannelId} onChange={v => updateDraft({ approveLogChannelId: v })} options={opts} forbidden={channelControlsDisabled} />
+        <ChannelPicker label="Log-Kanal: ABGELEHNT" help="Jede Ablehnung wird strikt nur in diesem Kanal protokolliert." value={draft.denyLogChannelId} onChange={v => updateDraft({ denyLogChannelId: v })} options={opts} forbidden={channelControlsDisabled} />
 
         <div className="flex flex-wrap gap-2">
           <Button
@@ -690,17 +629,11 @@ function WhitelistChannelsCard({ guildId, slot }: { guildId: string; slot: strin
           >
             {save.isPending ? 'Speichere…' : 'Speichern'}
           </Button>
-          <Button
-            variant="ghost"
-            disabled={repost.isPending || channelControlsDisabled || !draft.infoChannelId}
-            onClick={() => { setMsg(null); repost.mutate(); }}
-          >
+          <Button variant="ghost" disabled={repost.isPending || channelControlsDisabled || !draft.infoChannelId} onClick={() => { setMsg(null); repost.mutate(); }}>
             Info-Embed neu posten
           </Button>
         </div>
-        {msg && (
-          <p className={`text-xs ${msg.ok ? 'text-ok' : 'text-danger'}`}>{msg.text}</p>
-        )}
+        {msg && <p className={`text-xs ${msg.ok ? 'text-ok' : 'text-danger'}`}>{msg.text}</p>}
       </div>
     </Card>
   );
@@ -727,9 +660,7 @@ function ChannelPicker({
         onChange={e => onChange(e.target.value === '' ? null : e.target.value)}
       >
         <option value="">— nicht gesetzt —</option>
-        {options.map(c => (
-          <option key={c.id} value={c.id}>#{c.name}</option>
-        ))}
+        {options.map(c => <option key={c.id} value={c.id}>#{c.name}</option>)}
       </select>
     </label>
   );
@@ -787,12 +718,8 @@ function EconomyLinksPanel({ guildId, slot }: { guildId: string; slot: string })
                 <span className="text-muted">↔</span>
                 <span className="text-accent">✅ verifiziert</span>
               </div>
-              <p className="mt-1 text-xs text-muted break-all">
-                Spielername: <span className="font-mono text-white">{l.playerName}</span>
-              </p>
-              <p className="mt-0.5 text-xs text-muted break-all">
-                DayZ-GUID: <span className="font-mono text-white">{l.gameId}</span>
-              </p>
+              <p className="mt-1 text-xs text-muted break-all">Spielername: <span className="font-mono text-white">{l.playerName}</span></p>
+              <p className="mt-0.5 text-xs text-muted break-all">DayZ-GUID: <span className="font-mono text-white">{l.gameId}</span></p>
             </div>
             <Button size="sm" variant="danger" onClick={() => unlink.mutate(l.userDiscordId)} loading={unlink.isPending} aria-label={`Economy-Link ${l.userDiscordId} entfernen`}>
               <Trash2 className="h-3 w-3" />
@@ -806,16 +733,11 @@ function EconomyLinksPanel({ guildId, slot }: { guildId: string; slot: string })
         <div className="grid gap-2 md:grid-cols-[1fr,1fr,auto]">
           <Input placeholder="Discord-ID" value={grant.user} onChange={e => setGrant({ ...grant, user: e.target.value.trim() })} maxLength={20} />
           <Input placeholder="Spielername" value={grant.playerName} onChange={e => setGrant({ ...grant, playerName: e.target.value })} maxLength={64} />
-          <Button
-            disabled={!SNOWFLAKE_RE.test(grant.user) || !NAME_RE.test(grant.playerName.trim()) || force.isPending}
-            onClick={() => force.mutate({ ...grant, playerName: grant.playerName.trim() })}
-          >
+          <Button disabled={!SNOWFLAKE_RE.test(grant.user) || !NAME_RE.test(grant.playerName.trim()) || force.isPending} onClick={() => force.mutate({ ...grant, playerName: grant.playerName.trim() })}>
             {force.isPending ? 'Setze…' : 'Setzen'}
           </Button>
         </div>
-        <p className="text-[11px] text-muted">
-          Die DayZ-GUID wird serverseitig aus den ADM-/Session-Daten zum exakten Spielernamen aufgeloest und nicht manuell eingegeben.
-        </p>
+        <p className="text-[11px] text-muted">Die DayZ-GUID wird serverseitig aus den ADM-/Session-Daten zum exakten Spielernamen aufgeloest und nicht manuell eingegeben.</p>
         {force.error && <p className="text-danger text-xs">{(force.error as Error).message}</p>}
       </div>
     </Card>
@@ -823,7 +745,7 @@ function EconomyLinksPanel({ guildId, slot }: { guildId: string; slot: string })
 }
 
 // ----------------------------------------------------------------------------
-// Economy Tab (Konfiguration + Bank + Casino + Admin-Pay)
+// Economy Core
 // ----------------------------------------------------------------------------
 
 interface EconomyOverviewData {
@@ -846,7 +768,6 @@ function fmtBig(s: string): string {
   try { return BigInt(s).toLocaleString('de-DE'); } catch { return s; }
 }
 
-// Wirtschaft-Status: ersetzt den frueheren Economy-`/status` Discord-Command.
 function EconomyOverview({ guildId, slot }: { guildId: string; slot: string }) {
   const q = useQuery({
     queryKey: ['economy-overview', guildId, slot],
@@ -873,66 +794,34 @@ function EconomyOverview({ guildId, slot }: { guildId: string; slot: string }) {
       </CardHeader>
 
       <div className="grid grid-cols-2 md:grid-cols-4 gap-3 mt-2">
-        <div className="rounded-lg border border-border/60 bg-bg/40 p-3">
-          <p className="text-[11px] text-muted">Konten</p>
-          <p className="text-lg font-semibold text-white">{d.economy.accounts.toLocaleString('de-DE')}</p>
-        </div>
-        <div className="rounded-lg border border-border/60 bg-bg/40 p-3">
-          <p className="text-[11px] text-muted">Verknüpfungen</p>
-          <p className="text-lg font-semibold text-white">{d.economy.links.toLocaleString('de-DE')}</p>
-        </div>
-        <div className="rounded-lg border border-border/60 bg-bg/40 p-3">
-          <p className="text-[11px] text-muted">Wallet gesamt</p>
-          <p className="text-lg font-semibold text-white">{fmtBig(d.bank.totalWallet)} {d.economy.emoji}</p>
-        </div>
-        <div className="rounded-lg border border-border/60 bg-bg/40 p-3">
-          <p className="text-[11px] text-muted">Bank gesamt</p>
-          <p className="text-lg font-semibold text-white">{fmtBig(d.bank.totalBank)} {d.economy.emoji}</p>
-        </div>
+        <div className="rounded-lg border border-border/60 bg-bg/40 p-3"><p className="text-[11px] text-muted">Konten</p><p className="text-lg font-semibold text-white">{d.economy.accounts.toLocaleString('de-DE')}</p></div>
+        <div className="rounded-lg border border-border/60 bg-bg/40 p-3"><p className="text-[11px] text-muted">Verknüpfungen</p><p className="text-lg font-semibold text-white">{d.economy.links.toLocaleString('de-DE')}</p></div>
+        <div className="rounded-lg border border-border/60 bg-bg/40 p-3"><p className="text-[11px] text-muted">Wallet gesamt</p><p className="text-lg font-semibold text-white">{fmtBig(d.bank.totalWallet)} {d.economy.emoji}</p></div>
+        <div className="rounded-lg border border-border/60 bg-bg/40 p-3"><p className="text-[11px] text-muted">Bank gesamt</p><p className="text-lg font-semibold text-white">{fmtBig(d.bank.totalBank)} {d.economy.emoji}</p></div>
       </div>
 
-      {/* Casino-Status */}
       <div className="mt-4">
         <p className="text-xs font-medium text-white/90 mb-2 inline-flex items-center gap-1.5"><Dice5 className="h-3.5 w-3.5" />Casino</p>
         <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
-          <div className="rounded-lg border border-border/60 bg-bg/40 p-3">
-            <p className="text-[11px] text-muted">Spiele aktiv</p>
-            <p className="text-lg font-semibold text-white">{d.casino.gamesEnabled}/{d.casino.gamesConfigured}</p>
-          </div>
-          <div className="rounded-lg border border-border/60 bg-bg/40 p-3">
-            <p className="text-[11px] text-muted">Runden</p>
-            <p className="text-lg font-semibold text-white">{d.casino.rounds.toLocaleString('de-DE')}</p>
-          </div>
-          <div className="rounded-lg border border-border/60 bg-bg/40 p-3">
-            <p className="text-[11px] text-muted">Einsätze gesamt</p>
-            <p className="text-lg font-semibold text-white">{fmtBig(d.casino.totalBet)} {d.economy.emoji}</p>
-          </div>
-          <div className="rounded-lg border border-border/60 bg-bg/40 p-3">
-            <p className="text-[11px] text-muted">House Edge</p>
-            <p className="text-lg font-semibold text-white">{fmtBig(d.casino.houseEdge)} {d.economy.emoji}</p>
-          </div>
+          <div className="rounded-lg border border-border/60 bg-bg/40 p-3"><p className="text-[11px] text-muted">Spiele aktiv</p><p className="text-lg font-semibold text-white">{d.casino.gamesEnabled}/{d.casino.gamesConfigured}</p></div>
+          <div className="rounded-lg border border-border/60 bg-bg/40 p-3"><p className="text-[11px] text-muted">Runden</p><p className="text-lg font-semibold text-white">{d.casino.rounds.toLocaleString('de-DE')}</p></div>
+          <div className="rounded-lg border border-border/60 bg-bg/40 p-3"><p className="text-[11px] text-muted">Einsätze gesamt</p><p className="text-lg font-semibold text-white">{fmtBig(d.casino.totalBet)} {d.economy.emoji}</p></div>
+          <div className="rounded-lg border border-border/60 bg-bg/40 p-3"><p className="text-[11px] text-muted">House Edge</p><p className="text-lg font-semibold text-white">{fmtBig(d.casino.houseEdge)} {d.economy.emoji}</p></div>
         </div>
         {d.casino.stats.length > 0 && (
           <div className="mt-2 flex flex-wrap gap-2">
-            {d.casino.stats.map(s => (
-              <Badge key={s.type} variant="neutral">
-                {s.type}: {s.rounds} Runden · {s.wins}W/{s.losses}L
-              </Badge>
-            ))}
+            {d.casino.stats.map(s => <Badge key={s.type} variant="neutral">{s.type}: {s.rounds} Runden · {s.wins}W/{s.losses}L</Badge>)}
           </div>
         )}
       </div>
 
-      {/* Letzte Transaktionen */}
       {d.recentTransactions.length > 0 && (
         <div className="mt-4">
           <p className="text-xs font-medium text-white/90 mb-2">Letzte Transaktionen</p>
           <div className="divide-y divide-border/50">
             {d.recentTransactions.map(t => (
               <div key={t.id} className="flex items-center gap-2.5 py-1.5 text-xs">
-                <span className={`font-mono shrink-0 ${BigInt(t.delta) >= 0n ? 'text-ok' : 'text-danger'}`}>
-                  {BigInt(t.delta) >= 0n ? '+' : ''}{fmtBig(t.delta)}
-                </span>
+                <span className={`font-mono shrink-0 ${BigInt(t.delta) >= 0n ? 'text-ok' : 'text-danger'}`}>{BigInt(t.delta) >= 0n ? '+' : ''}{fmtBig(t.delta)}</span>
                 <span className="text-muted shrink-0">{t.type}</span>
                 <span className="text-muted/70 truncate">{t.reason ?? ''}</span>
                 <span className="text-muted/50 ml-auto shrink-0">{new Date(t.createdAt).toLocaleString('de-DE')}</span>
@@ -942,7 +831,6 @@ function EconomyOverview({ guildId, slot }: { guildId: string; slot: string }) {
         </div>
       )}
 
-      {/* Casino/Bank-Kopplung */}
       <div className="mt-4 rounded-lg border border-border/60 bg-bg-elev/40 p-3">
         <p className="text-xs font-medium text-white/90 mb-2">Casino/Bank-Kopplung</p>
         <div className="grid sm:grid-cols-2 gap-x-4 gap-y-1 text-[11px] text-muted">
@@ -971,21 +859,11 @@ function EconomyTab({
   error: string | null;
   saveError: string | null;
 }) {
-  const channels = useQuery({
-    queryKey: ['guild-channels', guildId],
-    queryFn: () => api.get<{ channels: ChannelOption[] }>(`/api/v2/guilds/${guildId}/channels`),
-    retry: false,
-  });
-  const channelOptions = channels.data?.channels ?? [];
-  const channelsForbidden = channels.isError;
-
   return (
     <div className="space-y-6">
       <EconomyScopePanel guildId={guildId} slot={slot} />
       <EconomyOverview guildId={guildId} slot={slot} />
-      {saveError && (
-        <Card><p className="text-danger text-sm">Economy-/Bank-Konfiguration konnte nicht gespeichert werden: {saveError}</p></Card>
-      )}
+      {saveError && <Card><p className="text-danger text-sm">Economy-Konfiguration konnte nicht gespeichert werden: {saveError}</p></Card>}
       <Card>
         <CardHeader><CardTitle>Economy-Konfiguration</CardTitle></CardHeader>
         {loading && <p className="text-muted">Lade…</p>}
@@ -993,34 +871,8 @@ function EconomyTab({
         {data && <EconomyForm value={data} onSave={onSave} pending={pending} />}
       </Card>
 
-      {data && (
-        <Card>
-          <CardHeader><CardTitle><span className="inline-flex items-center gap-2"><Banknote className="h-4 w-4" />Bank</span></CardTitle></CardHeader>
-          <BankForm
-            value={data}
-            onSave={onSave}
-            pending={pending}
-            channels={channelOptions}
-            channelsForbidden={channelsForbidden}
-          />
-        </Card>
-      )}
-
-      <VirtualAccountsPanel guildId={guildId} slot={slot} />
-
       <LotteryPanel guildId={guildId} slot={slot} />
-
       <BlackMarketPanel guildId={guildId} slot={slot} />
-
-      <Card>
-        <CardHeader><CardTitle><span className="inline-flex items-center gap-2"><Dice5 className="h-4 w-4" />Casino-Games</span></CardTitle></CardHeader>
-        <CasinoTable guildId={guildId} slot={slot} />
-      </Card>
-
-      <Card>
-        <CardHeader><CardTitle>Admin-Auszahlung</CardTitle></CardHeader>
-        <AdminPayForm guildId={guildId} slot={slot} />
-      </Card>
     </div>
   );
 }
@@ -1049,11 +901,7 @@ function EconomyForm({
 
   return (
     <div className="space-y-4">
-      <Switch
-        checked={draft.enabled}
-        onChange={v => setDraft({ ...draft, enabled: v })}
-        label="Economy aktiviert"
-      />
+      <Switch checked={draft.enabled} onChange={v => setDraft({ ...draft, enabled: v })} label="Economy aktiviert" />
       <div className="grid grid-cols-2 gap-3">
         <label className="text-sm">
           <span className="text-muted">Waehrungsname</span>
@@ -1065,17 +913,11 @@ function EconomyForm({
         </label>
         <label className="text-sm">
           <span className="text-muted">Startguthaben (neue Members)</span>
-          <Input
-            type="number" min={0} max={1000000000} value={draft.startBalance}
-            onChange={e => setDraft({ ...draft, startBalance: Math.max(0, Math.min(1_000_000_000, Math.floor(Number(e.target.value) || 0))) })}
-          />
+          <Input type="number" min={0} max={1000000000} value={draft.startBalance} onChange={e => setDraft({ ...draft, startBalance: Math.max(0, Math.min(1_000_000_000, Math.floor(Number(e.target.value) || 0))) })} />
         </label>
         <label className="text-sm">
           <span className="text-muted">Spielzeit-Belohnung %/min</span>
-          <Input
-            type="number" min={0} max={1000} value={draft.playtimeRewardPercent}
-            onChange={e => setDraft({ ...draft, playtimeRewardPercent: Math.max(0, Math.min(1000, Math.floor(Number(e.target.value) || 0))) })}
-          />
+          <Input type="number" min={0} max={1000} value={draft.playtimeRewardPercent} onChange={e => setDraft({ ...draft, playtimeRewardPercent: Math.max(0, Math.min(1000, Math.floor(Number(e.target.value) || 0))) })} />
         </label>
       </div>
       <Button onClick={() => onSave({
@@ -1092,8 +934,47 @@ function EconomyForm({
 }
 
 // ----------------------------------------------------------------------------
-// BankForm
+// Page 2: Bank + Casino (nur UI-Separierung, identische APIs/Services)
 // ----------------------------------------------------------------------------
+
+function BankCasinoArea({
+  guildId, slot, data, loading, onSave, pending, error, saveError,
+}: {
+  guildId: string;
+  slot: string;
+  data: EconomyConfigState | undefined;
+  loading: boolean;
+  onSave: (p: Partial<EconomyConfigState>) => void;
+  pending: boolean;
+  error: string | null;
+  saveError: string | null;
+}) {
+  const channels = useQuery({
+    queryKey: ['guild-channels', guildId],
+    queryFn: () => api.get<{ channels: ChannelOption[] }>(`/api/v2/guilds/${guildId}/channels`),
+    retry: false,
+  });
+  const channelOptions = channels.data?.channels ?? [];
+  const channelsForbidden = channels.isError;
+
+  return (
+    <div className="space-y-6">
+      {saveError && <Card><p className="text-danger text-sm">Bank-Konfiguration konnte nicht gespeichert werden: {saveError}</p></Card>}
+      {loading && <Card><p className="text-muted">Lade Bank-Konfiguration…</p></Card>}
+      {error && <Card><p className="text-danger text-sm">Bank-Konfiguration konnte nicht geladen werden: {error}</p></Card>}
+      {data && (
+        <Card>
+          <CardHeader><CardTitle><span className="inline-flex items-center gap-2"><Banknote className="h-4 w-4" />Bank</span></CardTitle></CardHeader>
+          <BankForm value={data} onSave={onSave} pending={pending} channels={channelOptions} channelsForbidden={channelsForbidden} />
+        </Card>
+      )}
+      <Card>
+        <CardHeader><CardTitle><span className="inline-flex items-center gap-2"><Dice5 className="h-4 w-4" />Casino-Games</span></CardTitle></CardHeader>
+        <CasinoTable guildId={guildId} slot={slot} />
+      </Card>
+    </div>
+  );
+}
 
 function BankForm({
   value, onSave, pending, channels, channelsForbidden,
@@ -1114,9 +995,7 @@ function BankForm({
 
   return (
     <div className="space-y-4">
-      <p className="text-xs text-muted">
-        Der Bank-Channel zeigt Kontostaende und Bankaktionen an. Zinsen werden taeglich auf das Bankguthaben gutgeschrieben.
-      </p>
+      <p className="text-xs text-muted">Der Bank-Channel zeigt Kontostaende und Bankaktionen an. Zinsen werden taeglich auf das Bankguthaben gutgeschrieben.</p>
       <div className="grid grid-cols-2 gap-3">
         <label className="text-sm">
           <span className="text-muted">Bank-Channel</span>
@@ -1125,25 +1004,17 @@ function BankForm({
           ) : (
             <Select value={bankChannelId} onChange={e => setBankChannelId(e.target.value)}>
               <option value="">— kein Channel —</option>
-              {textChannels.map(c => (
-                <option key={c.id} value={c.id}>#{c.name}</option>
-              ))}
+              {textChannels.map(c => <option key={c.id} value={c.id}>#{c.name}</option>)}
             </Select>
           )}
         </label>
         <label className="text-sm">
           <span className="text-muted">Tageszins (%)</span>
-          <Input
-            type="number" min={0} max={100} step={1} value={interest}
-            onChange={e => setInterest(Math.max(0, Math.min(100, Math.floor(Number(e.target.value) || 0))))}
-          />
+          <Input type="number" min={0} max={100} step={1} value={interest} onChange={e => setInterest(Math.max(0, Math.min(100, Math.floor(Number(e.target.value) || 0))))} />
         </label>
       </div>
       <Button
-        onClick={() => onSave({
-          bankChannelId: bankChannelId === '' ? null : bankChannelId,
-          bankInterestPercent: interest,
-        })}
+        onClick={() => onSave({ bankChannelId: bankChannelId === '' ? null : bankChannelId, bankInterestPercent: interest })}
         disabled={pending || (bankChannelId !== '' && !SNOWFLAKE_RE.test(bankChannelId))}
       >
         {pending ? 'Speichere…' : 'Bank speichern'}
@@ -1151,10 +1022,6 @@ function BankForm({
     </div>
   );
 }
-
-// ----------------------------------------------------------------------------
-// Casino-Table + Stats
-// ----------------------------------------------------------------------------
 
 const CASINO_TYPES = ['SLOT', 'COINFLIP', 'DICE', 'BLACKJACK'] as const;
 
@@ -1187,9 +1054,7 @@ function CasinoTable({ guildId, slot }: { guildId: string; slot: string }) {
     <div className="space-y-3">
       {games.isLoading && <p className="text-muted text-sm">Lade…</p>}
       {games.isError && <p className="text-danger text-sm">Casino-Daten nicht verfuegbar.</p>}
-      {update.isError && (
-        <p className="text-danger text-sm">Casino-Konfiguration konnte nicht gespeichert werden: {(update.error as Error).message}</p>
-      )}
+      {update.isError && <p className="text-danger text-sm">Casino-Konfiguration konnte nicht gespeichert werden: {(update.error as Error).message}</p>}
       {games.data && (
         <div className="overflow-x-auto">
           <table className="w-full text-sm">
@@ -1208,25 +1073,8 @@ function CasinoTable({ guildId, slot }: { guildId: string; slot: string }) {
             <tbody>
               {CASINO_TYPES.map(type => {
                 const game = byType.get(type) ?? null;
-                const gameKey = [
-                  type,
-                  game?.enabled ?? 'new',
-                  game?.winChancePct ?? 'fixed',
-                  game?.fixedOdds ?? '',
-                  game?.payoutMult ?? 2,
-                  game?.minBet ?? '1',
-                  game?.maxBet ?? '1000',
-                ].join(':');
-                return (
-                  <CasinoRow
-                    key={gameKey}
-                    type={type}
-                    game={game}
-                    stat={statsByType.get(type) ?? null}
-                    onSave={patch => update.mutate({ type, patch })}
-                    pending={update.isPending}
-                  />
-                );
+                const gameKey = [type, game?.enabled ?? 'new', game?.winChancePct ?? 'fixed', game?.fixedOdds ?? '', game?.payoutMult ?? 2, game?.minBet ?? '1', game?.maxBet ?? '1000'].join(':');
+                return <CasinoRow key={gameKey} type={type} game={game} stat={statsByType.get(type) ?? null} onSave={patch => update.mutate({ type, patch })} pending={update.isPending} />;
               })}
             </tbody>
           </table>
@@ -1257,58 +1105,31 @@ function CasinoRow({
   });
   const wl = stat ? `${stat.wins} / ${stat.draws} / ${stat.losses}` : '— / — / —';
   const winChanceValid = type !== 'SLOT' || (
-    typeof draft.winChancePct === 'number' &&
-    Number.isInteger(draft.winChancePct) &&
-    draft.winChancePct >= 1 &&
-    draft.winChancePct <= 99
+    typeof draft.winChancePct === 'number' && Number.isInteger(draft.winChancePct) && draft.winChancePct >= 1 && draft.winChancePct <= 99
   );
-  const isValid =
-    winChanceValid &&
-    draft.payoutMult >= 1 && draft.payoutMult <= 100 &&
-    /^\d+$/.test(draft.minBet) && /^\d+$/.test(draft.maxBet) &&
-    BigInt(draft.minBet) >= 1n && BigInt(draft.maxBet) >= BigInt(draft.minBet);
+  const isValid = winChanceValid
+    && draft.payoutMult >= 1 && draft.payoutMult <= 100
+    && /^\d+$/.test(draft.minBet) && /^\d+$/.test(draft.maxBet)
+    && BigInt(draft.minBet) >= 1n && BigInt(draft.maxBet) >= BigInt(draft.minBet);
 
   return (
     <tr className="border-t border-border">
       <td className="py-2 pr-2 font-medium">{type}</td>
-      <td className="py-2 pr-2">
-        <Switch checked={draft.enabled} onChange={v => setDraft({ ...draft, enabled: v })} ariaLabel={`Casino ${type} aktiv`} />
-      </td>
+      <td className="py-2 pr-2"><Switch checked={draft.enabled} onChange={v => setDraft({ ...draft, enabled: v })} ariaLabel={`Casino ${type} aktiv`} /></td>
       <td className="py-2 pr-2">
         {type === 'SLOT' ? (
-          <Input
-            type="number"
-            min={1}
-            max={99}
-            value={draft.winChancePct ?? 50}
-            onChange={e => setDraft({ ...draft, winChancePct: Math.max(1, Math.min(99, Math.floor(Number(e.target.value) || 0))) })}
-            className="w-20"
-          />
+          <Input type="number" min={1} max={99} value={draft.winChancePct ?? 50} onChange={e => setDraft({ ...draft, winChancePct: Math.max(1, Math.min(99, Math.floor(Number(e.target.value) || 0))) })} className="w-20" />
         ) : (
           <span className="inline-flex min-h-10 items-center text-xs text-muted whitespace-nowrap">{fixedOdds ?? 'feste Regel'}</span>
         )}
       </td>
-      <td className="py-2 pr-2">
-        <Input type="number" min={1} max={100} step="0.1" value={draft.payoutMult}
-          onChange={e => setDraft({ ...draft, payoutMult: Math.max(1, Math.min(100, Number(e.target.value) || 1)) })}
-          className="w-24"
-        />
-      </td>
-      <td className="py-2 pr-2">
-        <Input value={draft.minBet} onChange={e => setDraft({ ...draft, minBet: e.target.value.trim() })} className="w-24" />
-      </td>
-      <td className="py-2 pr-2">
-        <Input value={draft.maxBet} onChange={e => setDraft({ ...draft, maxBet: e.target.value.trim() })} className="w-28" />
-      </td>
+      <td className="py-2 pr-2"><Input type="number" min={1} max={100} step="0.1" value={draft.payoutMult} onChange={e => setDraft({ ...draft, payoutMult: Math.max(1, Math.min(100, Number(e.target.value) || 1)) })} className="w-24" /></td>
+      <td className="py-2 pr-2"><Input value={draft.minBet} onChange={e => setDraft({ ...draft, minBet: e.target.value.trim() })} className="w-24" /></td>
+      <td className="py-2 pr-2"><Input value={draft.maxBet} onChange={e => setDraft({ ...draft, maxBet: e.target.value.trim() })} className="w-28" /></td>
       <td className="py-2 pr-2 text-muted whitespace-nowrap">{wl}</td>
       <td className="py-2">
         <Button size="sm" disabled={pending || !isValid} onClick={() => {
-          const patch: Partial<CasinoGameRow> = {
-            enabled: draft.enabled,
-            payoutMult: draft.payoutMult,
-            minBet: draft.minBet,
-            maxBet: draft.maxBet,
-          };
+          const patch: Partial<CasinoGameRow> = { enabled: draft.enabled, payoutMult: draft.payoutMult, minBet: draft.minBet, maxBet: draft.maxBet };
           if (type === 'SLOT') patch.winChancePct = draft.winChancePct;
           onSave(patch);
         }}>
@@ -1316,65 +1137,5 @@ function CasinoRow({
         </Button>
       </td>
     </tr>
-  );
-}
-
-// ----------------------------------------------------------------------------
-// Admin-Pay
-// ----------------------------------------------------------------------------
-
-function AdminPayForm({ guildId, slot }: { guildId: string; slot: string }) {
-  const [userId, setUserId] = useState('');
-  const [delta, setDelta] = useState('');
-  const [reason, setReason] = useState('');
-  const [msg, setMsg] = useState<{ ok: boolean; text: string } | null>(null);
-
-  const pay = useMutation({
-    mutationFn: () => api.post(`/api/v2/guilds/${guildId}/economy/accounts/${userId}/admin-pay?slot=${encodeURIComponent(slot)}`, {
-      delta, reason,
-    }),
-    onSuccess: () => {
-      setMsg({ ok: true, text: `Gebucht: ${delta} fuer ${userId}` });
-      setUserId(''); setDelta(''); setReason('');
-    },
-    onError: (e: unknown) => {
-      const text = e instanceof Error ? e.message : 'Fehler.';
-      setMsg({ ok: false, text });
-    },
-  });
-
-  const deltaValid = /^-?\d+$/.test(delta) && delta !== '0' && delta !== '-0';
-  const userValid = SNOWFLAKE_RE.test(userId);
-  const reasonValid = reason.trim().length >= 3 && reason.trim().length <= 200;
-
-  return (
-    <div className="space-y-3">
-      <p className="text-xs text-muted">
-        Direkt-Buchung auf das Wallet eines Members. Positive Werte = Gutschrift, negative = Abbuchung. Wird im Audit-Log erfasst.
-      </p>
-      <div className="grid grid-cols-2 gap-3">
-        <label className="text-sm">
-          <span className="text-muted">Discord-User-ID</span>
-          <Input value={userId} onChange={e => setUserId(e.target.value.trim())} placeholder="17–20 Ziffern" />
-        </label>
-        <label className="text-sm">
-          <span className="text-muted">Betrag (Delta)</span>
-          <Input value={delta} onChange={e => setDelta(e.target.value.trim())} placeholder="z. B. 5000 oder -200" />
-        </label>
-      </div>
-      <label className="text-sm block">
-        <span className="text-muted">Begruendung (3–200 Zeichen)</span>
-        <Input value={reason} onChange={e => setReason(e.target.value)} maxLength={200} />
-      </label>
-      <Button
-        disabled={pay.isPending || !userValid || !deltaValid || !reasonValid}
-        onClick={() => { setMsg(null); pay.mutate(); }}
-      >
-        {pay.isPending ? 'Buche…' : 'Buchung ausfuehren'}
-      </Button>
-      {msg && (
-        <p className={`text-xs ${msg.ok ? 'text-ok' : 'text-danger'}`}>{msg.text}</p>
-      )}
-    </div>
   );
 }

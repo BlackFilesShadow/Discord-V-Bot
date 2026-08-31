@@ -122,12 +122,6 @@ function isUnknownDiscordResource(error: unknown, code: number): boolean {
   return value === code || value === String(code);
 }
 
-/**
- * Unknown Message (10008) means the managed message is genuinely gone and may
- * be recreated. Permission, rate-limit and transient API errors are propagated
- * so the projection never creates a duplicate merely because Discord could not
- * be read at that moment.
- */
 async function fetchManagedMessage(channel: TextChannel, messageId: string): Promise<Message | null> {
   try {
     return await channel.messages.fetch(messageId);
@@ -159,8 +153,6 @@ async function deleteDiscordMessage(client: Client, row: ProjectionMessageRow): 
 }
 
 async function removeProjectionMessage(client: Client, row: ProjectionMessageRow): Promise<void> {
-  // Keep database ownership when Discord deletion fails. Otherwise the next
-  // sync would forget the still-existing message and create an unmanaged clone.
   await deleteDiscordMessage(client, row);
   await prisma.economyMarketDiscordMessage.deleteMany({ where: { id: row.id, projectionId: row.projectionId } });
 }
@@ -187,7 +179,7 @@ function catalogEmbed(args: {
     const description = listing.description ? `\n${safeEmbedField(listing.description, 500)}` : '';
     embed.addFields({
       name: safeEmbedField(listing.name, 250),
-      value: `Preis: **${listing.price.toLocaleString('de-DE')} ${args.currencyEmoji}** · Max. pro Kauf: **${listing.maxPerPurchase}**${description}`,
+      value: `Preis: **${listing.price.toLocaleString('de-DE')} ${args.currencyEmoji}**${description}`,
       inline: false,
     });
   }
@@ -200,10 +192,9 @@ function directBuyEmbed(listing: MarketListingView, currencyName: string, curren
     .setTitle(`🛍️ ${safeEmbedField(listing.name, 220)}`)
     .addFields(
       { name: 'Preis', value: `**${listing.price.toLocaleString('de-DE')} ${currencyEmoji}**`, inline: true },
-      { name: 'Max. pro Kauf', value: `**${listing.maxPerPurchase}**`, inline: true },
       { name: 'Währung', value: safeEmbedField(`${currencyName} ${currencyEmoji}`, 200), inline: true },
     )
-    .setFooter({ text: 'V-Bot · Direktkauf · Live-Sync' })
+    .setFooter({ text: 'V-Bot · Direktkauf · Live-Sync · ohne Bestands-/Kauflimit' })
     .setTimestamp(listing.updatedAt);
   if (listing.description) embed.setDescription(safeEmbedDescription(listing.description));
   return embed;
@@ -378,12 +369,6 @@ async function syncUnsafe(client: Client, guildId: GuildId, connId: NitradoConnI
   }
 }
 
-/**
- * Immediate live sync with per-scope serialization. Parallel dashboard changes,
- * direct purchases and account mutations therefore cannot create duplicate
- * catalog/direct-buy messages or mix one listing's Discord projection with
- * another listing.
- */
 export function syncMarketDiscordProjection(client: Client, guildId: GuildId, connId: NitradoConnId): Promise<MarketDiscordProjectionView | null> {
   const key = scopeKey(guildId, connId);
   const previous = syncInFlight.get(key) ?? Promise.resolve(null);

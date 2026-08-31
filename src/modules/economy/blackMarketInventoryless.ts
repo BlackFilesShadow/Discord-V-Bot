@@ -8,14 +8,15 @@ import { getMarketListing, getMarketPurchase, type MarketListingView, type Marke
 import { systemUserToVirtualAccount } from './systemVirtualTransfers';
 import type { EconomyPocket, VirtualAccountRawDb } from './virtualAccounts';
 
-const MAX_PER_PURCHASE = 1000;
+// EconomyMarketPurchase.quantity is PostgreSQL INTEGER. This is a storage/type
+// boundary, not a configurable business limit and is never shown as "Max pro Kauf".
+const POSTGRES_INT_MAX = 2_147_483_647;
 
 interface LockedListing {
   id: string;
   vendorAccountId: string;
   name: string;
   price: bigint;
-  maxPerPurchase: number;
   active: boolean;
   archivedAt: Date | null;
   updatedAt: Date;
@@ -29,7 +30,6 @@ interface ListingItemRow {
 interface ExpectedListingSnapshot {
   expectedUnitPrice?: bigint;
   expectedVendorAccountId?: string;
-  expectedMaxPerPurchase?: number;
   expectedUpdatedAt?: Date;
 }
 
@@ -83,12 +83,10 @@ function assertReplay(row: MarketPurchaseView, args: {
 function assertExpectedSnapshot(listing: {
   vendorAccountId: string;
   price: bigint;
-  maxPerPurchase: number;
   updatedAt: Date;
 }, expected: ExpectedListingSnapshot): void {
   const stale = (expected.expectedUnitPrice !== undefined && listing.price !== expected.expectedUnitPrice)
     || (expected.expectedVendorAccountId !== undefined && listing.vendorAccountId !== expected.expectedVendorAccountId)
-    || (expected.expectedMaxPerPurchase !== undefined && listing.maxPerPurchase !== expected.expectedMaxPerPurchase)
     || (expected.expectedUpdatedAt !== undefined && listing.updatedAt.getTime() !== expected.expectedUpdatedAt.getTime());
   if (stale) {
     throw new Error('Die Direktkauf-Anzeige ist veraltet. Bitte den Kauf ueber die aktuelle Nachricht erneut oeffnen.');
@@ -96,17 +94,17 @@ function assertExpectedSnapshot(listing: {
 }
 
 /**
- * Mengenunabhaengiger Schwarzmarkt-Kauf.
+ * Bestands- und limitfreier Schwarzmarkt-Kauf.
  *
- * Angebote sind durch active/archivedAt verfuegbar, nicht durch einen Bestand.
- * Der Kauf sperrt das Listing weiterhin innerhalb derselben DB-Transaktion,
- * prueft Preis/Vendor/Kauflimit, bucht User -> Vendor und erzeugt Bestellung +
- * Fulfillment atomar. Es gibt bewusst keine Bestandspruefung oder -mutation.
+ * Angebote sind durch active/archivedAt verfügbar, nicht durch Bestand oder ein
+ * konfigurierbares Max-pro-Kauf. Der Kauf sperrt das Listing weiterhin innerhalb
+ * derselben DB-Transaktion, prüft Preis/Vendor, bucht User -> Vendor und erzeugt
+ * Bestellung + Fulfillment atomar. Einzige Mengenobergrenze ist der technische
+ * PostgreSQL-INTEGER-Datentyp der historischen Purchase-Tabelle.
  *
  * Direktkauf darf optional einen zuvor angezeigten Listing-Snapshot mitsenden.
  * Dieser wird sowohl vor der Buchung als auch unter dem FOR-UPDATE-Lock erneut
- * geprueft, damit Preis-/Haendler-/Limit-Aenderungen keinen veralteten Kauf
- * ausloesen koennen.
+ * geprüft, damit Preis-/Händler-Änderungen keinen veralteten Kauf auslösen.
  */
 export async function buyInventorylessMarketListing(args: {
   guildId: GuildId;
@@ -118,11 +116,10 @@ export async function buyInventorylessMarketListing(args: {
   idempotencyKey: string;
   expectedUnitPrice?: bigint;
   expectedVendorAccountId?: string;
-  expectedMaxPerPurchase?: number;
   expectedUpdatedAt?: Date;
 }): Promise<{ booked: boolean; purchase: MarketPurchaseView; listing: MarketListingView }> {
-  if (!Number.isSafeInteger(args.quantity) || args.quantity < 1 || args.quantity > MAX_PER_PURCHASE) {
-    throw new Error(`Menge muss zwischen 1 und ${MAX_PER_PURCHASE} liegen.`);
+  if (!Number.isSafeInteger(args.quantity) || args.quantity < 1 || args.quantity > POSTGRES_INT_MAX) {
+    throw new Error('Kaufmenge ist technisch nicht darstellbar.');
   }
   const sourcePocket = args.sourcePocket ?? 'WALLET';
   if (sourcePocket !== 'WALLET' && sourcePocket !== 'BANK') throw new Error('Quellkonto ungueltig.');
@@ -144,7 +141,6 @@ export async function buyInventorylessMarketListing(args: {
   const initial = await getMarketListing(args.guildId, args.nitradoConnId, args.listingId);
   if (!initial || !initial.active || initial.archivedAt) throw new Error('Aktives Listing nicht gefunden.');
   assertExpectedSnapshot(initial, args);
-  if (args.quantity > initial.maxPerPurchase) throw new Error(`Pro Kauf sind maximal ${initial.maxPerPurchase} erlaubt.`);
   const amount = initial.price * BigInt(args.quantity);
 
   const transfer = await systemUserToVirtualAccount({
@@ -164,7 +160,7 @@ export async function buyInventorylessMarketListing(args: {
   }, {
     beforeClaim: async raw => {
       const rows = await raw.$queryRawUnsafe<LockedListing[]>(
-        'SELECT "id", "vendorAccountId", "name", "price", "maxPerPurchase", "active", "archivedAt", "updatedAt" FROM "EconomyMarketListing" WHERE "id"=$1 AND "guildId"=$2 AND "nitradoConnId"=$3 LIMIT 1 FOR UPDATE',
+        'SELECT "id", "vendorAccountId", "name", "price", "active", "archivedAt", "updatedAt" FROM "EconomyMarketListing" WHERE "id"=$1 AND "guildId"=$2 AND "nitradoConnId"=$3 LIMIT 1 FOR UPDATE',
         args.listingId, String(args.guildId), String(args.nitradoConnId),
       );
       const listing = rows[0];
@@ -173,7 +169,6 @@ export async function buyInventorylessMarketListing(args: {
       if (listing.vendorAccountId !== initial.vendorAccountId || listing.price !== initial.price) {
         throw new Error('Listing wurde waehrend des Kaufs geaendert. Bitte erneut versuchen.');
       }
-      if (args.quantity > listing.maxPerPurchase) throw new Error(`Pro Kauf sind maximal ${listing.maxPerPurchase} erlaubt.`);
       const storedItems = await raw.$queryRawUnsafe<ListingItemRow[]>(
         'SELECT "className", "quantity" FROM "EconomyMarketListingItem" WHERE "listingId"=$1 AND "guildId"=$2 AND "nitradoConnId"=$3 ORDER BY "className"',
         args.listingId, String(args.guildId), String(args.nitradoConnId),
@@ -214,6 +209,7 @@ export async function buyInventorylessMarketListing(args: {
     booked: transfer.booked,
     fulfillmentStatus: purchase.fulfillmentStatus,
     inventoryless: true,
+    configuredPurchaseLimit: false,
   });
   return { booked: transfer.booked, purchase, listing };
 }

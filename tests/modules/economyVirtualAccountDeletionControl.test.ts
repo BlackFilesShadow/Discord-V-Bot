@@ -4,17 +4,18 @@ import path from 'node:path';
 const root = path.resolve(__dirname, '../..');
 const read = (file: string) => fs.readFileSync(path.join(root, file), 'utf8');
 
-test('active custom account deletion zeros money and preserves historical accounts by hiding them', () => {
+test('virtual account removal is balance/status independent while preserving domain history', () => {
   const deletion = read('src/modules/economy/virtualAccountDeletion.ts');
   const route = read('src/dashboard/routes/v2/economyVirtualAccountControl.ts');
   const ui = read('dashboard-ui/src/components/economy/VirtualAccountsControlPanel.tsx');
 
-  expect(deletion).toContain('CUSTOM/GENERAL may be deleted while active');
+  expect(deletion).toContain('status- and balance-independent');
   expect(deletion).toContain('SET "bankBalance"=0');
   expect(deletion).toContain('SET "balance"=0');
   expect(deletion).toContain('EconomyVirtualAccountControlHidden');
   expect(deletion).toContain('CONTROL_DELETE_RESET');
-  expect(ui).toContain("const customDeleteSupported = account.kind === 'CUSTOM'");
+  expect(deletion).toContain("account.kind === 'LOTTERY_POT' || account.kind === 'MARKET_VENDOR'");
+  expect(ui).toContain("{deleteArmed ? 'Wirklich löschen?' : 'Löschen'}");
   expect(route.indexOf('deleteUnusedVirtualAccount')).toBeLessThan(route.indexOf('retireVirtualAccountProjection', route.indexOf("delete('/control/accounts/:accountId'")));
 });
 

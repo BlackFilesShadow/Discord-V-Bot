@@ -19,7 +19,7 @@ const data = new SlashCommandBuilder()
   .addSubcommand(sc => addSlot(sc.setName('list').setDescription('Zeigt aktive Angebote dieses Gameservers.')))
   .addSubcommand(sc => addSlot(sc.setName('buy').setDescription('Kauft ein Angebot aus Wallet oder Bank.')
     .addStringOption(o => o.setName('listing').setDescription('Listing-ID aus /black-market list').setRequired(true).setMaxLength(40))
-    .addIntegerOption(o => o.setName('quantity').setDescription('Menge').setRequired(true).setMinValue(1).setMaxValue(1000))
+    .addIntegerOption(o => o.setName('quantity').setDescription('Menge').setRequired(true).setMinValue(1).setMaxValue(2_147_483_647))
     .addStringOption(o => o.setName('quelle').setDescription('Bezahlen aus Wallet oder Bank').setRequired(false).addChoices(
       { name: 'Wallet', value: 'WALLET' },
       { name: 'Bank', value: 'BANK' },
@@ -57,7 +57,7 @@ export const blackMarketCommand: Command = {
       const description = visible.length
         ? visible.map(row => [
           `**${row.name}**`,
-          `💰 Preis: **${row.price.toLocaleString('de-DE')} ${cfg.emoji}** · Max. pro Kauf: **${row.maxPerPurchase}**`,
+          `💰 Preis: **${row.price.toLocaleString('de-DE')} ${cfg.emoji}**`,
           row.description || null,
           `Listing-ID: \`${row.id}\``,
         ].filter(Boolean).join('\n')).join('\n\n')

@@ -11,14 +11,12 @@ describe('market direct-buy hardening', () => {
       id: 'listing-1',
       vendorAccountId: 'vendor-1',
       price: 2500n,
-      maxPerPurchase: 3,
       updatedAt: new Date('2026-08-31T12:00:00.000Z'),
     };
     const version = marketDirectBuyVersion(base);
     expect(version).toMatch(/^[a-f0-9]{12}$/);
     expect(marketDirectBuyVersion({ ...base, price: 2501n })).not.toBe(version);
     expect(marketDirectBuyVersion({ ...base, vendorAccountId: 'vendor-2' })).not.toBe(version);
-    expect(marketDirectBuyVersion({ ...base, maxPerPurchase: 4 })).not.toBe(version);
     expect(marketDirectBuyVersion({ ...base, updatedAt: new Date('2026-08-31T12:00:01.000Z') })).not.toBe(version);
   });
 
@@ -34,14 +32,15 @@ describe('market direct-buy hardening', () => {
     expect(contract).toContain('p."directBuyChannelId"=m."channelId"');
     expect(contract).toContain('l."active"=TRUE');
     expect(contract).toContain('l."archivedAt" IS NULL');
+    expect(contract).not.toContain('maxPerPurchase');
 
     expect(interactions).toContain('messageId: interaction.message.id');
     expect(interactions).toContain('message.author.id !== botId');
     expect(interactions).toContain('assertCurrentDiscordMessage');
     expect(interactions).toContain('expectedUnitPrice: context.price');
     expect(interactions).toContain('expectedVendorAccountId: context.vendorAccountId');
-    expect(interactions).toContain('expectedMaxPerPurchase: context.maxPerPurchase');
     expect(interactions).toContain('expectedUpdatedAt: context.updatedAt');
+    expect(interactions).not.toContain('expectedMaxPerPurchase');
 
     expect(purchase).toContain('expectedUnitPrice?: bigint');
     expect(purchase).toContain('expectedVendorAccountId?: string');
@@ -49,10 +48,13 @@ describe('market direct-buy hardening', () => {
     expect(purchase).toContain('assertExpectedSnapshot(initial, args)');
     expect(purchase).toContain('assertExpectedSnapshot(listing, args)');
     expect(purchase).toContain('LIMIT 1 FOR UPDATE');
+    expect(purchase).not.toContain('args.quantity > listing.maxPerPurchase');
+    expect(purchase).not.toContain('listing.stock');
 
     expect(projection).toContain('marketDirectBuyVersion(listing)');
     expect(projection).toContain('fetchManagedMessage');
     expect(projection).toContain('isUnknownDiscordResource(error, 10008)');
+    expect(projection).not.toContain('Max. pro Kauf');
   });
 
   test('a Discord receipt failure after booking is never reported as a rejected purchase', () => {

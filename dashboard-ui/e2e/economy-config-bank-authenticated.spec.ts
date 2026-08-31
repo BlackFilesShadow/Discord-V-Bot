@@ -173,7 +173,7 @@ test.describe('Economy Config + Bank authenticated contract', () => {
 
   test('Bank-Write sendet nur Bankfelder im exakten Slot-Scope', async ({ page }) => {
     const state = await stubEconomyConfig(page);
-    await page.goto(`/servers/${GUILD_ID}/server/${SLOT}?tab=economy`);
+    await page.goto(`/servers/${GUILD_ID}/server/${SLOT}?tab=bank-casino`);
 
     await expect(bankSelect(page)).toBeVisible();
     await bankSelect(page).selectOption(BANK_CHANNEL);
@@ -200,7 +200,7 @@ test.describe('Economy Config + Bank authenticated contract', () => {
     await currencyInput(page).fill('Gueltig');
     state.failNextPut();
     await page.getByRole('button', { name: 'Update', exact: true }).click();
-    await expect(page.getByText(/Economy-\/Bank-Konfiguration konnte nicht gespeichert werden:/)).toBeVisible();
+    await expect(page.getByText(/Economy-Konfiguration konnte nicht gespeichert werden:/)).toBeVisible();
     await expect(page.getByText(/ECONOMY_CONFIG_BLOCKED/)).toBeVisible();
   });
 
@@ -229,8 +229,11 @@ for (const width of [320, 360, 375, 390, 430] as const) {
     await page.goto(`/servers/${GUILD_ID}/server/${SLOT}?tab=economy`);
 
     await expect(page.getByRole('heading', { name: 'Economy-Konfiguration' })).toBeVisible();
-    await expect(page.getByRole('heading', { name: 'Bank' })).toBeVisible();
     await expect(page.getByRole('button', { name: 'Update', exact: true })).toBeVisible();
+    await noPageOverflow(page);
+
+    await page.goto(`/servers/${GUILD_ID}/server/${SLOT}?tab=bank-casino`);
+    await expect(page.getByRole('heading', { name: 'Bank' })).toBeVisible();
     await expect(page.getByRole('button', { name: 'Bank speichern', exact: true })).toBeVisible();
     await noPageOverflow(page);
   });

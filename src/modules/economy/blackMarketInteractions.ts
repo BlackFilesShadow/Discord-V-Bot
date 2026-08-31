@@ -72,7 +72,9 @@ function parseQuantity(value: string): number {
   const clean = value.trim();
   if (!/^\d+$/.test(clean)) throw new Error('Kaufmenge muss eine positive ganze Zahl sein.');
   const quantity = Number(clean);
-  if (!Number.isSafeInteger(quantity) || quantity < 1 || quantity > 1000) throw new Error('Kaufmenge muss zwischen 1 und 1000 liegen.');
+  if (!Number.isSafeInteger(quantity) || quantity < 1 || quantity > 2_147_483_647) {
+    throw new Error('Kaufmenge ist technisch nicht darstellbar.');
+  }
   return quantity;
 }
 
@@ -158,7 +160,7 @@ export async function handleMarketDirectBuyButton(interaction: ButtonInteraction
         .setStyle(TextInputStyle.Short)
         .setRequired(true)
         .setMinLength(1)
-        .setMaxLength(4)
+        .setMaxLength(10)
         .setValue('1'),
     ));
     await interaction.showModal(modal);
@@ -198,7 +200,6 @@ export async function handleMarketDirectBuyModal(interaction: ModalSubmitInterac
       idempotencyKey: `discord-direct:${interaction.id}`,
       expectedUnitPrice: context.price,
       expectedVendorAccountId: context.vendorAccountId,
-      expectedMaxPerPurchase: context.maxPerPurchase,
       expectedUpdatedAt: context.updatedAt,
     });
   } catch (error) {
@@ -224,8 +225,6 @@ export async function handleMarketDirectBuyModal(interaction: ModalSubmitInterac
     });
     confirmationDelivered = true;
   } catch (replyFailure) {
-    // The database booking is already committed at this point. Never report the
-    // purchase as rejected merely because Discord could not deliver the receipt.
     logger.error(`Discord-Bestätigung nach sicher gebuchtem Direktkauf fehlgeschlagen (${result.purchase.id}):`, replyFailure as Error);
   }
 

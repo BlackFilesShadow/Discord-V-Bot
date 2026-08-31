@@ -17,16 +17,18 @@ describe('Killfeed dashboard placement', () => {
     expect(server).not.toContain('<KillfeedTab ');
   });
 
-  it('liegt im konkreten Gameserver-Slot direkt unter Page 2', () => {
-    expect(slot).toContain("type Tab = 'settings' | 'whitelist' | 'economy' | 'links' | 'killfeed'");
+  it('bleibt im konkreten Gameserver-Slot auf Page 2 neben den zwei separierten Economy-Oberflaechen', () => {
+    expect(slot).toContain("type Tab = 'settings' | 'whitelist' | 'economy' | 'links' | 'virtual-accounts' | 'bank-casino' | 'killfeed'");
     expect(slot).toContain('>Page 1</p>');
     expect(slot).toContain('>Page 2</p>');
+    expect(slot).toContain("['virtual-accounts', 'Virtuelle Konten', Banknote]");
+    expect(slot).toContain("['bank-casino', 'Bank und Casino Funktionen', Dice5]");
     expect(slot).toContain("['killfeed', 'Killfeed & ADM', Crosshair]");
     expect(slot).toContain('<KillfeedTab guildId={guildId} isOwner={true} slots={currentKillfeedSlots} />');
     expect(slot.match(/<KillfeedTab /g)?.length).toBe(1);
   });
 
-  it('beschraenkt Page 2 auf den aktuell sichtbaren Slot und die kanonische Killfeed-Berechtigung', () => {
+  it('beschraenkt Killfeed weiterhin auf den aktuell sichtbaren Slot und die kanonische Killfeed-Berechtigung', () => {
     expect(slot).toContain("filter(row => String(row.slot) === slot)");
     expect(slot).toContain("permissions.includes('killfeed.manage')");
     expect(slot).toContain("permissions.includes('dashboard.access')");
