@@ -6,7 +6,7 @@
  * IANA-Zeitzone konfiguriert ist, werden sie DST-sicher nach UTC aufgeloest.
  */
 
-export const ADM_PARSER_VERSION = 4;
+export const ADM_PARSER_VERSION = 5;
 
 export type AdmParsedType =
   | 'PLAYER_CONNECTED'
@@ -57,7 +57,8 @@ const NAME_RE = /"([^"]+)"/;
 const ID_RE = /id=([^\s,)]+)/;
 const POS_RE = /pos=<([^>]+)>/;
 const DISTANCE_RE = /\bfrom\s+([\d.]+)\s*m(?:eters?)?\b/i;
-const FLAG_ACTION_RE = /\bhas\s+(raised|lowered)\s+(.+?)\s+on\s+TerritoryFlag\s+at\s+<([^>]+)>/i;
+const FLAG_ACTION_RE = /^Player\s+"([^"]+)"\s*\(id=([^\s,)]+)\s+pos=<([^>]+)>\)\s+has\s+(raised|lowered)\s+(.+?)\s+on\s+TerritoryFlag\s+at\s+<([^>]+)>\s*\.?\s*$/i;
+const COORDINATE_TRIPLET_RE = /^\s*[+-]?(?:\d+(?:\.\d+)?|\.\d+)\s*,\s*[+-]?(?:\d+(?:\.\d+)?|\.\d+)\s*,\s*[+-]?(?:\d+(?:\.\d+)?|\.\d+)\s*$/;
 
 export function resolveBaseDate(text: string, fileName?: string): Date | null {
   for (const line of text.split(/\r?\n/, 8)) {
@@ -186,13 +187,25 @@ function parseBuildAction(content: string): { type: AdmParsedType; object: strin
 }
 
 function parseFlagAction(content: string): ParsedAdmEvent | null {
+  // TerritoryFlag actions are accepted only in the canonical DayZ player-action
+  // shape. Chat/report text can contain the same English words and must never
+  // become a gameplay event merely because an unanchored substring matches.
   const match = FLAG_ACTION_RE.exec(content);
   if (!match) return null;
-  const actor = extractActor(content);
-  const event = fill(content, match[1].toLowerCase() === 'raised' ? 'FLAG_RAISED' : 'FLAG_LOWERED', actor);
-  event.objectType = cleanActionValue(match[2]);
+  const actorPosition = match[3].trim();
+  const flagPosition = match[6].trim();
+  if (!COORDINATE_TRIPLET_RE.test(actorPosition) || !COORDINATE_TRIPLET_RE.test(flagPosition)) return null;
+  const objectType = cleanActionValue(match[5]);
+  if (!objectType || /[\r\n\t\u0000-\u001f\u007f]/.test(objectType)) return null;
+
+  const event = fill(content, match[4].toLowerCase() === 'raised' ? 'FLAG_RAISED' : 'FLAG_LOWERED', {
+    name: match[1],
+    id: match[2],
+    pos: actorPosition,
+  });
+  event.objectType = objectType;
   event.targetName = 'TerritoryFlag';
-  event.targetPosition = match[3].trim() || null;
+  event.targetPosition = flagPosition;
   return event;
 }
 
