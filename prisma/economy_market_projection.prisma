@@ -1,0 +1,17 @@
+model EconomyMarketDiscordProjection {
+  id                 String   @id
+  guildId            String
+  nitradoConnId      String
+  catalogChannelId   String?
+  catalogMessageId   String?  @unique
+  directBuyEnabled   Boolean  @default(false)
+  directBuyChannelId String?
+  directBuyMessageId String?  @unique
+  lastSyncedAt       DateTime?
+  lastSyncError      String?  @db.VarChar(500)
+  createdAt          DateTime @default(now())
+  updatedAt          DateTime @updatedAt
+
+  @@unique([guildId, nitradoConnId])
+  @@index([guildId, nitradoConnId])
+}
