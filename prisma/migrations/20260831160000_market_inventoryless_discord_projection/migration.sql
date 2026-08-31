@@ -8,10 +8,8 @@ CREATE TABLE "EconomyMarketDiscordProjection" (
   "guildId" TEXT NOT NULL,
   "nitradoConnId" TEXT NOT NULL,
   "catalogChannelId" TEXT,
-  "catalogMessageId" TEXT,
   "directBuyEnabled" BOOLEAN NOT NULL DEFAULT FALSE,
   "directBuyChannelId" TEXT,
-  "directBuyMessageId" TEXT,
   "lastSyncedAt" TIMESTAMP(3),
   "lastSyncError" VARCHAR(500),
   "createdAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
@@ -28,9 +26,47 @@ CREATE TABLE "EconomyMarketDiscordProjection" (
 
 CREATE UNIQUE INDEX "EconomyMarketDiscordProjection_scope_key"
   ON "EconomyMarketDiscordProjection"("guildId", "nitradoConnId");
-CREATE UNIQUE INDEX "EconomyMarketDiscordProjection_catalogMessageId_key"
-  ON "EconomyMarketDiscordProjection"("catalogMessageId") WHERE "catalogMessageId" IS NOT NULL;
-CREATE UNIQUE INDEX "EconomyMarketDiscordProjection_directBuyMessageId_key"
-  ON "EconomyMarketDiscordProjection"("directBuyMessageId") WHERE "directBuyMessageId" IS NOT NULL;
 CREATE INDEX "EconomyMarketDiscordProjection_scope_idx"
   ON "EconomyMarketDiscordProjection"("guildId", "nitradoConnId");
+
+CREATE TABLE "EconomyMarketDiscordMessage" (
+  "id" TEXT NOT NULL,
+  "projectionId" TEXT NOT NULL,
+  "guildId" TEXT NOT NULL,
+  "nitradoConnId" TEXT NOT NULL,
+  "kind" VARCHAR(20) NOT NULL,
+  "pageIndex" INTEGER,
+  "listingId" TEXT,
+  "channelId" TEXT NOT NULL,
+  "messageId" TEXT NOT NULL,
+  "createdAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  "updatedAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
+
+  CONSTRAINT "EconomyMarketDiscordMessage_pkey" PRIMARY KEY ("id"),
+  CONSTRAINT "EconomyMarketDiscordMessage_projection_fkey"
+    FOREIGN KEY ("projectionId") REFERENCES "EconomyMarketDiscordProjection"("id") ON DELETE CASCADE ON UPDATE CASCADE,
+  CONSTRAINT "EconomyMarketDiscordMessage_kind_check"
+    CHECK ("kind" IN ('CATALOG','DIRECT_BUY')),
+  CONSTRAINT "EconomyMarketDiscordMessage_channel_check"
+    CHECK ("channelId" ~ '^[0-9]{17,20}$'),
+  CONSTRAINT "EconomyMarketDiscordMessage_message_check"
+    CHECK ("messageId" ~ '^[0-9]{17,20}$'),
+  CONSTRAINT "EconomyMarketDiscordMessage_shape_check"
+    CHECK (
+      ("kind"='CATALOG' AND "pageIndex" IS NOT NULL AND "listingId" IS NULL)
+      OR ("kind"='DIRECT_BUY' AND "pageIndex" IS NULL AND "listingId" IS NOT NULL)
+    )
+);
+
+CREATE UNIQUE INDEX "EconomyMarketDiscordMessage_message_key"
+  ON "EconomyMarketDiscordMessage"("messageId");
+CREATE UNIQUE INDEX "EconomyMarketDiscordMessage_catalog_page_key"
+  ON "EconomyMarketDiscordMessage"("projectionId", "kind", "pageIndex")
+  WHERE "kind"='CATALOG';
+CREATE UNIQUE INDEX "EconomyMarketDiscordMessage_direct_listing_key"
+  ON "EconomyMarketDiscordMessage"("projectionId", "kind", "listingId")
+  WHERE "kind"='DIRECT_BUY';
+CREATE INDEX "EconomyMarketDiscordMessage_scope_kind_idx"
+  ON "EconomyMarketDiscordMessage"("guildId", "nitradoConnId", "kind");
+CREATE INDEX "EconomyMarketDiscordMessage_listing_idx"
+  ON "EconomyMarketDiscordMessage"("listingId");
