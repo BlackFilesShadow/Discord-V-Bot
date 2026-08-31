@@ -25,7 +25,7 @@ describe('virtual account removal regression', () => {
     expect(deletion).toContain('args.finance.bankBalance > 0n');
     expect(deletion).toContain('SET "bankBalance"=0');
     expect(deletion).toContain('SET "balance"=0');
-    expect(deletion).toContain("'BANK_TREASURY' THEN 'GENERAL'");
+    expect(deletion).toMatch(/accountPurpose[^\n]*BANK_TREASURY[^\n]*GENERAL/);
     expect(deletion).toContain('const mustPreserveRow = hasMoney');
   });
 
@@ -48,7 +48,7 @@ describe('virtual account removal regression', () => {
   });
 
   it('shows one two-click delete action next to Audit for all account kinds/statuses/balances', () => {
-    expect(ui).toContain("<History className=\"h-3.5 w-3.5 mr-1\" />Audit");
+    expect(ui).toContain('<History className="h-3.5 w-3.5 mr-1" />Audit');
     expect(ui).toContain("'Wirklich löschen?' : 'Löschen'");
     expect(ui).toContain('disabled={remove.isPending || archive.isPending}');
     expect(ui).not.toContain('const deleteSupported =');

@@ -23,23 +23,21 @@ describe('Virtual account delete route regression', () => {
     expect(service).toContain('return await prisma.$transaction(async tx =>');
   });
 
-  it('resets bank and wallet to zero under the same locks before the hard delete', () => {
+  it('retires non-empty CUSTOM accounts under locks and hard-deletes only fresh empty CUSTOM rows', () => {
     expect(service).toContain('FOR UPDATE');
+    expect(service).toContain('const hasMoney = account.balance !== 0n || finance.bankBalance !== 0n;');
+    expect(service).toContain('const mustPreserveRow = hasMoney');
+    expect(service).toContain('return retireCustomAccount');
     expect(service).toContain('UPDATE "EconomyVirtualAccountFinance" SET "bankBalance"=0');
     expect(service).toContain('UPDATE "EconomyVirtualAccount" SET "balance"=0');
     expect(service).toContain('DELETE FROM "EconomyVirtualAccount"');
-
-    const bankReset = service.indexOf('UPDATE "EconomyVirtualAccountFinance" SET "bankBalance"=0');
-    const walletReset = service.indexOf('UPDATE "EconomyVirtualAccount" SET "balance"=0');
-    const hardDelete = service.indexOf('DELETE FROM "EconomyVirtualAccount"');
-    expect(bankReset).toBeGreaterThan(-1);
-    expect(walletReset).toBeGreaterThan(bankReset);
-    expect(hardDelete).toBeGreaterThan(walletReset);
+    expect(service).toContain(String.raw`AND "kind"=\'CUSTOM\'::"EconomyVirtualAccountKind" AND "balance"=0`);
   });
 
-  it('keeps history and system-account protections fail closed', () => {
-    expect(service).toContain("if (account.kind !== 'CUSTOM')");
-    expect(service).toContain("if (finance.accountPurpose !== 'GENERAL')");
+  it('keeps immutable history and domain-owned system accounts fail closed', () => {
+    expect(service).toContain("account.kind === 'LOTTERY_POT' || account.kind === 'MARKET_VENDOR'");
+    expect(service).toContain('return hideDomainOwnedAccount');
+    expect(service).toContain("if (account.kind !== 'CUSTOM') throw new Error('Unbekannter virtueller Kontotyp; Loeschung sicherheitshalber abgebrochen.')");
     expect(service).toContain('EconomyVirtualAccountEntry');
     expect(service).toContain('LotteryRound');
     expect(service).toContain('EconomyMarketListing');

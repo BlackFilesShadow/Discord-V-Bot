@@ -65,32 +65,32 @@ describe('virtuelle Economy-Konten — Production-Invarianten', () => {
     expect(routes).toContain("requireGuildPermission('economy.manage')");
   });
 
-  it('erlaubt Hard-Delete nur fuer unbenutzte CUSTOM/GENERAL-Konten und setzt Geld atomar vor dem Delete auf null', () => {
+  it('entfernt jede sichtbare Kontoart status- und saldounabhaengig ohne Fachhistorie zu zerstoeren', () => {
     expect(control).toContain("delete('/control/accounts/:accountId'");
     expect(control).toContain("requireGuildPermission('economy.manage')");
     expect(control).toContain('deleteUnusedVirtualAccount');
+    expect(deletion).toContain("account.kind === 'LOTTERY_POT' || account.kind === 'MARKET_VENDOR'");
+    expect(deletion).toContain('return hideDomainOwnedAccount');
     expect(deletion).toContain("account.kind !== 'CUSTOM'");
-    expect(deletion).toContain("finance.accountPurpose !== 'GENERAL'");
     expect(deletion).toContain('FOR UPDATE');
+    expect(deletion).toContain('CONTROL_DELETE_RESET');
     expect(deletion).toContain('UPDATE "EconomyVirtualAccountFinance" SET "bankBalance"=0');
     expect(deletion).toContain('UPDATE "EconomyVirtualAccount" SET "balance"=0');
+    expect(deletion).toContain('BANK_TREASURY');
+    expect(deletion).toContain('GENERAL');
     expect(deletion).toContain('"EconomyVirtualAccountEntry"');
     expect(deletion).toContain('"LotteryRound"');
     expect(deletion).toContain('"EconomyMarketListing"');
     expect(deletion).toContain('"EconomyMarketPurchase"');
+    expect(deletion).toContain('const hasMoney = account.balance !== 0n || finance.bankBalance !== 0n;');
+    expect(deletion).toContain('const mustPreserveRow = hasMoney');
     expect(deletion).toContain('DELETE FROM "EconomyVirtualAccount"');
+    expect(deletion).toContain(String.raw`AND "kind"=\'CUSTOM\'::"EconomyVirtualAccountKind" AND "balance"=0`);
     expect(deletion).toContain("candidate.code === '23503'");
     expect(migration).toContain('ON DELETE RESTRICT ON UPDATE CASCADE');
-
-    const financeReset = deletion.indexOf('UPDATE "EconomyVirtualAccountFinance" SET "bankBalance"=0');
-    const walletReset = deletion.indexOf('UPDATE "EconomyVirtualAccount" SET "balance"=0');
-    const hardDelete = deletion.indexOf('DELETE FROM "EconomyVirtualAccount"');
-    expect(financeReset).toBeGreaterThan(-1);
-    expect(walletReset).toBeGreaterThan(financeReset);
-    expect(hardDelete).toBeGreaterThan(walletReset);
   });
 
-  it('verbietet weiterhin Archivierung mit Restguthaben und schuetzt Systemkonten', () => {
+  it('verbietet weiterhin Archivierung mit Restguthaben und schuetzt Systemkonten in der Archiv-Fachfunktion', () => {
     expect(service).toContain('current.balance !== 0n || finance.bankBalance !== 0n');
     expect(service).toContain('Konto-Finanzprofil fehlt; Archivierung wird sicherheitshalber abgebrochen.');
     expect(service).toContain('Wallet und Bank muessen 0 sein.');

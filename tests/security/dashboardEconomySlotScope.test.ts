@@ -8,12 +8,13 @@ const lottery = fs.readFileSync(path.join(root, 'dashboard-ui', 'src', 'componen
 const market = fs.readFileSync(path.join(root, 'dashboard-ui', 'src', 'components', 'economy', 'BlackMarketPanel.tsx'), 'utf8');
 
 describe('Dashboard Economy Slot Scope', () => {
-  it('isoliert Economy-Config/Overview/Admin-Pay und React-Query-Cache pro Slot', () => {
+  it('isoliert Economy-Config/Overview und die verbleibende sichere Auszahlung pro Slot', () => {
     expect(slot).toContain("queryKey: ['economy', guildId, slot]");
     expect(slot).toContain('/economy/config?slot=${encodeURIComponent(slot!)}');
     expect(slot).toContain("queryKey: ['economy-overview', guildId, slot]");
     expect(slot).toContain('/economy/overview?slot=${encodeURIComponent(slot)}');
-    expect(slot).toContain('/admin-pay?slot=${encodeURIComponent(slot)}');
+    expect(slot).not.toContain('/admin-pay?slot=${encodeURIComponent(slot)}');
+    expect(virtualAccounts).toContain('/payout?slot=${encodeURIComponent(slot)}');
   });
 
   it('isoliert Casino-Reads und Writes pro Slot', () => {
@@ -24,12 +25,14 @@ describe('Dashboard Economy Slot Scope', () => {
     expect(slot).toContain('/casino/games/${vars.type}?slot=${encodeURIComponent(slot)}');
   });
 
-  it('gibt den Slot an alle Economy-Unterpanels weiter', () => {
+  it('gibt den Slot an alle Economy-Unterpanels weiter und trennt nur deren UI auf Page 2', () => {
     expect(slot).toContain('<VirtualAccountsPanel guildId={guildId} slot={slot} />');
     expect(slot).toContain('<LotteryPanel guildId={guildId} slot={slot} />');
     expect(slot).toContain('<BlackMarketPanel guildId={guildId} slot={slot} />');
     expect(slot).toContain('<CasinoTable guildId={guildId} slot={slot} />');
-    expect(slot).toContain('<AdminPayForm guildId={guildId} slot={slot} />');
+    expect(slot).toContain("tab === 'virtual-accounts'");
+    expect(slot).toContain("tab === 'bank-casino'");
+    expect(slot).not.toContain('<AdminPayForm guildId={guildId} slot={slot} />');
   });
 
   it('isoliert virtuelle Konten inklusive Control, Managerpanel, Audit und Payout pro Slot', () => {
