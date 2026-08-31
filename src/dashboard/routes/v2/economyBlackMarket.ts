@@ -14,16 +14,20 @@ import {
   listMarketVendors,
   markMarketPurchaseDelivered,
   payoutMarketVendor,
-  refundMarketPurchase,
   setMarketListingItems,
 } from '../../../modules/economy/blackMarket';
 import { buyInventorylessMarketListing } from '../../../modules/economy/blackMarketInventoryless';
+import { refundInventorylessMarketPurchase } from '../../../modules/economy/blackMarketInventorylessRefund';
+import {
+  listHiddenMarketListingIds,
+  removeMarketListingFromControl,
+} from '../../../modules/economy/blackMarketControlDeletion';
 import {
   configureMarketDiscordProjection,
   getMarketDiscordProjection,
   syncMarketDiscordProjection,
 } from '../../../modules/economy/blackMarketDiscord';
-import { syncVirtualAccountProjection } from '../../../modules/economy/virtualAccountDiscord';
+import { syncVirtualAccountProjectionLive } from '../../../modules/economy/virtualAccountLiveUpdates';
 
 export const economyBlackMarketRouter = Router({ mergeParams: true });
 type Req = Parameters<Parameters<typeof economyBlackMarketRouter.get>[1]>[0];
@@ -53,7 +57,7 @@ function operationKey(req: Req, prefix: string): string {
   return candidate;
 }
 const listingJson = (row: Awaited<ReturnType<typeof listMarketListings>>[number]) => {
-  const { stock: _legacyStock, ...rest } = row;
+  const { stock: _legacyStock, maxPerPurchase: _legacyMaxPerPurchase, ...rest } = row;
   return { ...rest, price: row.price.toString() };
 };
 const purchaseJson = (row: Awaited<ReturnType<typeof listMarketPurchases>>[number]) => ({ ...row, unitPrice: row.unitPrice.toString(), amount: row.amount.toString() });
@@ -81,7 +85,7 @@ async function immediateVirtualSync(req: Req, accountId: string): Promise<string
   const client = tryGetDashboardClient();
   if (!client) return 'Bot nicht bereit; virtueller Kontostand konnte noch nicht synchronisiert werden.';
   try {
-    await syncVirtualAccountProjection(client, scope.guildId, connId, accountId);
+    await syncVirtualAccountProjectionLive(client, scope.guildId, connId, accountId);
     return null;
   } catch (error) {
     return (error as Error).message;
@@ -133,8 +137,11 @@ economyBlackMarketRouter.post('/vendors/:vendorId/archive', requireGuildPermissi
 
 economyBlackMarketRouter.get('/listings', requireGuildPermission('economy.view'), async (req, res) => {
   const { scope, connId } = scoped(req);
-  const rows = await listMarketListings(scope.guildId, connId, req.query.includeInactive === 'true');
-  res.json({ nitradoConnId: connId, listings: rows.map(listingJson) });
+  const [rows, hiddenIds] = await Promise.all([
+    listMarketListings(scope.guildId, connId, req.query.includeInactive === 'true'),
+    listHiddenMarketListingIds({ guildId: scope.guildId, nitradoConnId: connId }),
+  ]);
+  res.json({ nitradoConnId: connId, listings: rows.filter(row => !hiddenIds.has(row.id)).map(listingJson) });
 });
 
 economyBlackMarketRouter.post('/listings', requireGuildPermission('economy.manage'), async (req, res) => {
@@ -149,7 +156,7 @@ economyBlackMarketRouter.post('/listings', requireGuildPermission('economy.manag
       description: req.body?.description == null ? null : String(req.body.description),
       price: parseBig(req.body?.price, 'price'),
       stock: 0,
-      maxPerPurchase: parseIntSafe(req.body?.maxPerPurchase ?? 10, 'maxPerPurchase'),
+      maxPerPurchase: 1,
       deliveryItems: req.body?.deliveryItems,
       createdByDiscordId: asUserDiscordId(scope.actorDiscordId),
     });
@@ -167,10 +174,8 @@ economyBlackMarketRouter.put('/listings/:listingId/items', requireGuildPermissio
   } catch (error) { res.status(400).json({ error: (error as Error).message }); }
 });
 
-// Bestand ist fachlich entfernt. Der alte Endpunkt bleibt nur als expliziter
-// Kompatibilitaets-Gate bestehen und mutiert keine Daten mehr.
 economyBlackMarketRouter.post('/listings/:listingId/restock', requireGuildPermission('economy.manage'), async (_req, res) => {
-  res.status(410).json({ error: 'Bestand wurde aus Schwarzmarkt-Angeboten entfernt. Angebote sind aktiv oder archiviert und haben keine Mengenbegrenzung.' });
+  res.status(410).json({ error: 'Bestand und Max-pro-Kauf wurden aus Schwarzmarkt-Angeboten entfernt. Angebote sind nur aktiv, entfernt oder historisch referenziert.' });
 });
 
 economyBlackMarketRouter.post('/listings/:listingId/archive', requireGuildPermission('economy.manage'), async (req, res) => {
@@ -179,6 +184,25 @@ economyBlackMarketRouter.post('/listings/:listingId/archive', requireGuildPermis
     const row = await archiveMarketListing({ guildId: scope.guildId, nitradoConnId: connId, listingId: String(req.params.listingId), actorDiscordId: asUserDiscordId(scope.actorDiscordId) });
     const syncWarning = await immediateMarketSync(req);
     res.json({ ...listingJson(row), syncWarning });
+  } catch (error) { res.status(400).json({ error: (error as Error).message }); }
+});
+
+economyBlackMarketRouter.delete('/listings/:listingId', requireGuildPermission('economy.manage'), async (req, res) => {
+  const { scope, connId } = scoped(req);
+  try {
+    const removed = await removeMarketListingFromControl({
+      guildId: scope.guildId,
+      nitradoConnId: connId,
+      listingId: String(req.params.listingId),
+      actorDiscordId: asUserDiscordId(scope.actorDiscordId),
+    });
+    const syncWarning = await immediateMarketSync(req);
+    logAuditDb('MARKET_LISTING_REMOVED', 'ECONOMY', {
+      actorUserId: req.auth!.userId,
+      guildId: scope.guildId,
+      details: { nitradoConnId: connId, listingId: removed.id, listingName: removed.name, mode: removed.mode },
+    });
+    res.json({ ok: true, removed, syncWarning });
   } catch (error) { res.status(400).json({ error: (error as Error).message }); }
 });
 
@@ -226,13 +250,9 @@ economyBlackMarketRouter.post('/purchases/:purchaseId/deliver', requireGuildPerm
 economyBlackMarketRouter.post('/purchases/:purchaseId/refund', requireGuildPermission('economy.manage'), async (req, res) => {
   const { scope, connId } = scoped(req);
   try {
-    const result = await refundMarketPurchase({ guildId: scope.guildId, nitradoConnId: connId, purchaseId: String(req.params.purchaseId), actorDiscordId: asUserDiscordId(scope.actorDiscordId), reason: String(req.body?.reason ?? '') });
-    const [marketWarning, virtualWarning] = await Promise.all([
-      immediateMarketSync(req),
-      immediateVirtualSync(req, result.purchase.vendorAccountId),
-    ]);
-    const syncWarning = [marketWarning, virtualWarning].filter(Boolean).join(' · ') || null;
-    res.json({ booked: result.booked, purchase: purchaseJson(result.purchase), syncWarning });
+    const result = await refundInventorylessMarketPurchase({ guildId: scope.guildId, nitradoConnId: connId, purchaseId: String(req.params.purchaseId), actorDiscordId: asUserDiscordId(scope.actorDiscordId), reason: String(req.body?.reason ?? '') });
+    const virtualWarning = await immediateVirtualSync(req, result.purchase.vendorAccountId);
+    res.json({ booked: result.booked, purchase: purchaseJson(result.purchase), syncWarning: virtualWarning });
   } catch (error) { res.status(400).json({ error: (error as Error).message }); }
 });
 
