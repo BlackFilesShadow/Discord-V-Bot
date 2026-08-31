@@ -260,8 +260,15 @@ economyVirtualAccountControlRouter.delete('/control/accounts/:accountId', requir
   if (!account) { res.status(404).json({ error: 'Virtuelles Konto nicht gefunden.' }); return; }
   try {
     const client = tryGetDashboardClient();
+    const deleted = await deleteUnusedVirtualAccount({
+      guildId: scope.guildId,
+      nitradoConnId: connId,
+      accountId,
+      actorDiscordId: asUserDiscordId(scope.actorDiscordId),
+    });
+    // Discord is retired only after the database transaction has committed. A
+    // failed delete must never remove a still-live account projection/thread.
     if (client) await retireVirtualAccountProjection(client, scope.guildId, connId, accountId);
-    const deleted = await deleteUnusedVirtualAccount({ guildId: scope.guildId, nitradoConnId: connId, accountId });
     if (client) await refreshConfiguredVirtualManagerPanelSafe(client, scope.guildId, connId, asUserDiscordId(scope.actorDiscordId)).catch(() => undefined);
     logAuditDb('ECONOMY_VIRTUAL_ACCOUNT_DELETED', 'ECONOMY', { actorUserId: req.auth!.userId, guildId: scope.guildId, details: { accountId, accountName: deleted.name, deletionMode: deleted.mode, nitradoConnId: connId } });
     res.json({ ok: true, deleted });

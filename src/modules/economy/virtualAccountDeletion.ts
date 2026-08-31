@@ -1,5 +1,6 @@
+import { randomUUID } from 'node:crypto';
 import prisma from '../../database/prisma';
-import type { GuildId, NitradoConnId } from '../../types/scope';
+import type { GuildId, NitradoConnId, UserDiscordId } from '../../types/scope';
 import { assertEconomyScopeReady } from './scopeMigration';
 import type { VirtualAccountRawDb } from './virtualAccounts';
 
@@ -29,10 +30,9 @@ export interface DeletedVirtualAccount {
 }
 
 /**
- * Archived lottery pots remain required by immutable lottery/ledger history.
- * They can therefore be removed from the control surface without deleting the
- * underlying accounting row. CUSTOM/GENERAL accounts keep the strict hard
- * delete path when no protected history exists.
+ * Historical accounts remain physically present when immutable accounting or
+ * domain references exist. They are hidden from account control instead of
+ * cascading history away. Fresh CUSTOM accounts can still be hard-deleted.
  */
 export async function listHiddenVirtualAccountIds(args: {
   guildId: GuildId;
@@ -47,21 +47,64 @@ export async function listHiddenVirtualAccountIds(args: {
   return new Set(rows.map(row => row.accountId));
 }
 
+async function hideAccount(raw: VirtualAccountRawDb, args: {
+  account: LockedAccountRow;
+  finance: LockedFinanceRow;
+  guildId: GuildId;
+  nitradoConnId: NitradoConnId;
+  actorDiscordId?: UserDiscordId;
+}): Promise<DeletedVirtualAccount> {
+  const reason = 'Konto gelöscht; Restguthaben wurde kontrolliert auf 0 gesetzt.';
+
+  if (args.account.balance > 0n) {
+    await raw.$executeRawUnsafe(
+      'INSERT INTO "EconomyVirtualAccountEntry" ("id", "idempotencyKey", "guildId", "nitradoConnId", "virtualAccountId", "delta", "entryType", "sourcePocket", "actorDiscordId", "userDiscordId", "reason", "sourceRef", "createdAt") VALUES ($1,$2,$3,$4,$5,$6,\'CONTROL_DELETE_RESET\',\'WALLET\',$7,NULL,$8,\'control-delete\',CURRENT_TIMESTAMP) ON CONFLICT ("idempotencyKey") DO NOTHING',
+      randomUUID(), `control-delete:${args.account.id}:wallet`, String(args.guildId), String(args.nitradoConnId), args.account.id,
+      -args.account.balance, args.actorDiscordId ? String(args.actorDiscordId) : null, reason,
+    );
+  }
+  if (args.finance.bankBalance > 0n) {
+    await raw.$executeRawUnsafe(
+      'INSERT INTO "EconomyVirtualAccountEntry" ("id", "idempotencyKey", "guildId", "nitradoConnId", "virtualAccountId", "delta", "entryType", "sourcePocket", "actorDiscordId", "userDiscordId", "reason", "sourceRef", "createdAt") VALUES ($1,$2,$3,$4,$5,$6,\'CONTROL_DELETE_RESET\',\'BANK\',$7,NULL,$8,\'control-delete\',CURRENT_TIMESTAMP) ON CONFLICT ("idempotencyKey") DO NOTHING',
+      randomUUID(), `control-delete:${args.account.id}:bank`, String(args.guildId), String(args.nitradoConnId), args.account.id,
+      -args.finance.bankBalance, args.actorDiscordId ? String(args.actorDiscordId) : null, reason,
+    );
+  }
+
+  const financeReset = await raw.$executeRawUnsafe(
+    'UPDATE "EconomyVirtualAccountFinance" SET "bankBalance"=0, "updatedAt"=CURRENT_TIMESTAMP WHERE "accountId"=$1 AND "guildId"=$2 AND "nitradoConnId"=$3',
+    args.account.id, String(args.guildId), String(args.nitradoConnId),
+  );
+  if (financeReset !== 1) throw new Error('Konto-Finanzprofil wurde parallel veraendert; Loeschung abgebrochen.');
+
+  const walletReset = await raw.$executeRawUnsafe(
+    'UPDATE "EconomyVirtualAccount" SET "balance"=0, "status"=\'ARCHIVED\'::"EconomyVirtualAccountStatus", "acceptUserTransfers"=false, "archivedAt"=COALESCE("archivedAt", CURRENT_TIMESTAMP), "archivedByDiscordId"=COALESCE("archivedByDiscordId", $4), "updatedAt"=CURRENT_TIMESTAMP WHERE "id"=$1 AND "guildId"=$2 AND "nitradoConnId"=$3',
+    args.account.id, String(args.guildId), String(args.nitradoConnId), args.actorDiscordId ? String(args.actorDiscordId) : null,
+  );
+  if (walletReset !== 1) throw new Error('Virtuelles Konto wurde parallel veraendert; Loeschung abgebrochen.');
+
+  const hidden = await raw.$executeRawUnsafe(
+    'INSERT INTO "EconomyVirtualAccountControlHidden" ("accountId", "guildId", "nitradoConnId", "hiddenAt") VALUES ($1,$2,$3,CURRENT_TIMESTAMP) ON CONFLICT ("accountId") DO UPDATE SET "hiddenAt"=CURRENT_TIMESTAMP WHERE "EconomyVirtualAccountControlHidden"."guildId"=EXCLUDED."guildId" AND "EconomyVirtualAccountControlHidden"."nitradoConnId"=EXCLUDED."nitradoConnId"',
+    args.account.id, String(args.guildId), String(args.nitradoConnId),
+  );
+  if (hidden !== 1) throw new Error('Konto konnte nicht sicher aus der Kontoverwaltung entfernt werden.');
+  return { id: args.account.id, name: args.account.name, mode: 'CONTROL_HIDDEN' };
+}
+
 /**
- * Hard-delete remains restricted to CUSTOM/GENERAL accounts without protected
- * booking/system history. The delete action itself owns the financial reset:
- * callers do not have to empty wallet/bank manually before deleting. Both
- * pockets are reset to zero under the same row locks immediately before the
- * physical delete, so no parallel money movement can race the reset/delete.
- *
- * LOTTERY_POT is intentionally different: a terminal archived pot with zero
- * wallet/bank is only hidden from account control. LotteryRound and ledger
- * references stay intact for audit/history and can never be silently erased.
+ * Delete is one atomic operation from the dashboard user's perspective:
+ * - CUSTOM/GENERAL may be deleted while active and with a non-zero balance.
+ * - Wallet and bank are locked and reset to zero inside the same transaction.
+ * - If immutable booking/domain history exists, the row is archived + hidden
+ *   rather than physically deleted, preserving the audit trail.
+ * - Fresh CUSTOM accounts without history are physically deleted after reset.
+ * - System accounts remain fail-closed; terminal lottery pots can only be hidden.
  */
 export async function deleteUnusedVirtualAccount(args: {
   guildId: GuildId;
   nitradoConnId: NitradoConnId;
   accountId: string;
+  actorDiscordId?: UserDiscordId;
 }): Promise<DeletedVirtualAccount> {
   await assertEconomyScopeReady(args.guildId, args.nitradoConnId);
 
@@ -111,24 +154,13 @@ export async function deleteUnusedVirtualAccount(args: {
           throw new Error('Das Lotterie-Konto gehoert noch zu einer nicht abgeschlossenen Runde und kann nicht entfernt werden.');
         }
 
-        const hidden = await raw.$executeRawUnsafe(
-          'INSERT INTO "EconomyVirtualAccountControlHidden" ("accountId", "guildId", "nitradoConnId", "hiddenAt") VALUES ($1,$2,$3,CURRENT_TIMESTAMP) ON CONFLICT ("accountId") DO UPDATE SET "hiddenAt"=CURRENT_TIMESTAMP WHERE "EconomyVirtualAccountControlHidden"."guildId"=EXCLUDED."guildId" AND "EconomyVirtualAccountControlHidden"."nitradoConnId"=EXCLUDED."nitradoConnId"',
-          args.accountId,
-          String(args.guildId),
-          String(args.nitradoConnId),
-        );
-        if (hidden !== 1) throw new Error('Lotterie-Konto konnte nicht sicher aus der Kontoverwaltung entfernt werden.');
-        return { id: account.id, name: account.name, mode: 'CONTROL_HIDDEN' };
+        return hideAccount(raw, { account, finance, guildId: args.guildId, nitradoConnId: args.nitradoConnId, actorDiscordId: args.actorDiscordId });
       }
 
       const entries = await raw.$queryRawUnsafe<Array<{ exists: boolean }>>(
         'SELECT EXISTS(SELECT 1 FROM "EconomyVirtualAccountEntry" WHERE "virtualAccountId"=$1 LIMIT 1) AS exists',
         args.accountId,
       );
-      if (entries[0]?.exists) {
-        throw new Error('Dieses Konto besitzt Buchungshistorie und darf deshalb nicht hart geloescht werden. Bitte archivieren.');
-      }
-
       const protectedRefs = await raw.$queryRawUnsafe<Array<{ protected: boolean }>>(
         `SELECT (
           EXISTS(SELECT 1 FROM "LotteryRound" WHERE "potAccountId"=$1 LIMIT 1)
@@ -137,8 +169,9 @@ export async function deleteUnusedVirtualAccount(args: {
         ) AS protected`,
         args.accountId,
       );
-      if (protectedRefs[0]?.protected) {
-        throw new Error('Dieses Konto wird von Lotterie-/Markt-Historie referenziert und kann nicht geloescht werden.');
+
+      if (entries[0]?.exists || protectedRefs[0]?.protected) {
+        return hideAccount(raw, { account, finance, guildId: args.guildId, nitradoConnId: args.nitradoConnId, actorDiscordId: args.actorDiscordId });
       }
 
       const financeReset = await raw.$executeRawUnsafe(
@@ -169,7 +202,7 @@ export async function deleteUnusedVirtualAccount(args: {
   } catch (error) {
     const candidate = typeof error === 'object' && error !== null ? error as { code?: string; meta?: { code?: string } } : {};
     if (candidate.code === '23503' || candidate.meta?.code === '23503') {
-      throw new Error('Das Konto wird noch von geschuetzter Historie referenziert und kann nicht geloescht werden. Bitte archivieren.');
+      throw new Error('Das Konto wird noch von geschuetzter Historie referenziert und kann nicht geloescht werden. Bitte erneut laden; die Historie bleibt erhalten.');
     }
     throw error;
   }

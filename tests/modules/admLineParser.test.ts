@@ -9,7 +9,7 @@ function ctxWithDate() {
 
 describe('admLineParser — Golden', () => {
   it('verwendet die neue Parser-Version fuer korrigierte Feed-Semantik', () => {
-    expect(ADM_PARSER_VERSION).toBe(4);
+    expect(ADM_PARSER_VERSION).toBe(5);
   });
 
   it('erkennt den Header und setzt das Basisdatum', () => {

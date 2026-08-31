@@ -95,10 +95,16 @@ export function computeEventKey(
   fileIdentity: string,
   byteStart: number,
   rawLine: string,
+  occurredAt: Date | null = null,
 ): string {
+  // `rawLine` is deliberately stored without its HH:mm:ss prefix. Include the
+  // resolved timestamp explicitly so a rotated/reused filename with the same
+  // byte offset and identical action on a later day cannot collapse into the
+  // previous day's event key. Replays of the same event remain idempotent.
+  const timestampIdentity = occurredAt?.toISOString() ?? 'unresolved';
   return crypto
     .createHash('sha256')
-    .update(`${guildId}\u0000${nitradoConnId}\u0000${fileIdentity}\u0000${byteStart}\u0000${rawLine}`)
+    .update(`${guildId}\u0000${nitradoConnId}\u0000${fileIdentity}\u0000${byteStart}\u0000${timestampIdentity}\u0000${rawLine}`)
     .digest('hex');
 }
 
@@ -144,7 +150,7 @@ export async function persistAdmEvents(
   const sourceFile = meta.sourceFile ?? meta.fileName;
   const keyed = result.events.map(event => ({
     event,
-    eventKey: computeEventKey(scope.guildId, scope.nitradoConnId, meta.fileIdentity, event.byteStart, event.rawLine),
+    eventKey: computeEventKey(scope.guildId, scope.nitradoConnId, meta.fileIdentity, event.byteStart, event.rawLine, event.occurredAt),
   }));
 
   // Flaggenzeilen bleiben fuer die unveraenderte zentrale AdmEventType-Enum als
