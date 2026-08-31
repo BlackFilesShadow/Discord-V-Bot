@@ -60,12 +60,14 @@ CREATE TABLE "EconomyMarketDiscordMessage" (
 
 CREATE UNIQUE INDEX "EconomyMarketDiscordMessage_message_key"
   ON "EconomyMarketDiscordMessage"("messageId");
-CREATE UNIQUE INDEX "EconomyMarketDiscordMessage_catalog_page_key"
-  ON "EconomyMarketDiscordMessage"("projectionId", "kind", "pageIndex")
-  WHERE "kind"='CATALOG';
-CREATE UNIQUE INDEX "EconomyMarketDiscordMessage_direct_listing_key"
-  ON "EconomyMarketDiscordMessage"("projectionId", "kind", "listingId")
-  WHERE "kind"='DIRECT_BUY';
+-- PostgreSQL erlaubt bei UNIQUE mehrere NULL-Werte. Diese beiden vollstaendigen
+-- Unique-Indizes entsprechen damit direkt den Prisma-@@unique-Deklarationen;
+-- die Shape-Constraint stellt sicher, dass jeweils genau der fachlich relevante
+-- Schluessel belegt ist.
+CREATE UNIQUE INDEX "EconomyMarketDiscordMessage_projectionId_kind_pageIndex_key"
+  ON "EconomyMarketDiscordMessage"("projectionId", "kind", "pageIndex");
+CREATE UNIQUE INDEX "EconomyMarketDiscordMessage_projectionId_kind_listingId_key"
+  ON "EconomyMarketDiscordMessage"("projectionId", "kind", "listingId");
 CREATE INDEX "EconomyMarketDiscordMessage_scope_kind_idx"
   ON "EconomyMarketDiscordMessage"("guildId", "nitradoConnId", "kind");
 CREATE INDEX "EconomyMarketDiscordMessage_listing_idx"
