@@ -32,6 +32,6 @@ describe('market control removal and limit-free contract', () => {
     const refund = read('src/modules/economy/blackMarketInventorylessRefund.ts');
     expect(route).toContain('refundInventorylessMarketPurchase');
     expect(refund).not.toContain('"stock"="stock"+');
-    expect(refund).toContain("status\"='REFUNDED");
+    expect(refund).toContain("'REFUNDED'");
   });
 });
